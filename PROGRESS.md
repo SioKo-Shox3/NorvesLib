@@ -3496,3 +3496,22 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `verify-SCN-FIX-SKINNED-PATH-TEST-2.txt`: ctest（-V）で `SkinnedRenderPathContractTest passed`（main の最後の出力。1849 行の後ろの `TestCoordinatorDistinguishesRecoverableAndFatalBeginFrameStatuses`・`TestRuntimeCompilerAcceptsSkinnedShaders`・`TestVulkanBeginFrameFaultClassification`・`TestSubmissionSerialExhaustionNeverWrapsOrSubmits` まで走った）、100% tests passed、EXIT=0。
 - Next: TASKS.md の未完の次の項目（SCN-FIX-RENDERGRAPH-COMPILE-TEST など）。
 - Notes: 共有のレイアウトを返さないデバイスでは、デバッグ描画のような任意のポストプロセスの初期化失敗がビュー全体の描画を止める（`View::Render` が PostProcessStack の失敗で戻る）。本番の Vulkan では起きないので直していない。ほかの試験の偽デバイス（`RenderGraphCompileTest` など）が coordinator や View を通すなら、同じ口が要りうる。
+
+### SCN-ECS-FIF-POST-A（2026-10-13、反復 1・run 20261013-230533）
+
+- `TemporalAAPass`・`BloomPass`・`ToneMappingPass`・`SSAOPass`・`MotionBlurPass` の、毎フレーム `Update` で書き換えていたメンバの定数と記述子セットを消し、Execute（MotionBlur は Apply）ごとにフレームの持ち主から借りる形にした。メンバに残るのは共有の記述子セットのレイアウト（`GetOrCreateDescriptorSetLayout` で初期化に 1 回引く）・パイプライン・render pass・framebuffer・サンプラ・GPU だけが使う資源（TAA の履歴、Bloom の段のテクスチャ、SSAO の可視率）・初期化で 1 回だけ書く資源（Bloom のレンズの汚れ、ToneMapping の LUT）。
+  - TAA: 解決と書き戻しの 2 つのセットを借り、1 つの定数の切れ端を両方の binding 4 に結ぶ（以前も 1 つのバッファを共有していた）。
+  - Bloom: 合成のセットと定数に加え、段ごとの縮小・拡大の定数とセットも毎フレーム借りる（段の資源 `BloomMipLevel` はテクスチャと framebuffer だけになった）。
+  - ToneMapping・SSAO: Parallel の区間の記録でも、文脈の `FrameResources`（区間ごとの口）から借りる。Parallel にできるかの判定（`DeclaresAllLayoutChanges`）はセットの代わりにレイアウトが揃っているかを見る。
+  - MotionBlur: 3 つの段のセットを借り、1 つの定数の切れ端を 3 つの binding 4 に結ぶ。
+- 借りられなかったフレームは、そのフレームだけ働かずに出力を整える（TAA と MotionBlur は SceneColor を変えずに ShaderResource へ移し、TAA は履歴を捨てる。Bloom・ToneMapping は空の render pass、SSAO は状態の移し替えのパスだけを積む）。
+- 持ち主の無い文脈（RenderingCoordinator を通さない検査。ToneMapping の LUT・フィルムグレインの GPU 試験、MotionBlur の PT 参照の試験が `Apply`・`Execute` を直接呼ぶ）では、LightingPass と同じく使い回さない定数と記述子セットを作り、提出の完了を知る手段が無いのでパスを手放す（Shutdown）まで `m_UnownedBuffers`・`m_UnownedDescriptorSets` に持つ。本番の経路は常に借りる。
+- 5 パスのコードに飛行中の番号・`FrameIndex`・`FrameUseRing` の扱いは無い（grep で 0 件）。
+- 検証（`.harness/runs/20261013-230533/`）:
+  - `baseline-build.txt`: 変更前の RelWithDebInfo の Game のビルド EXIT=0、error 0。
+  - `verify-SCN-ECS-FIF-POST-A-1.txt`: RelWithDebInfo の Game のビルド EXIT=0、error 0。
+  - `verify-SCN-ECS-FIF-POST-A-2.txt`: 決定論の起動画面の撮影を SCN-MEGA-BASE-RWDI と比較、`indirect_lighting=rtgi`、mean_luminance_difference=0・psnr_db=100・mismatched_pixel_ratio=3E-06・within_limits=True、result=pass、EXIT=0。PNG は天球・地面・球・岩・家と影が以前どおり。
+  - `verify-SCN-ECS-FIF-POST-A-3.txt`: EXIT=0。`FRAME_RESOURCE_UNPROTECTED_SUMMARY count=6 resources=6`（反復 65 の 17 から、TemporalAAPass 2 組・BloomPass 4 組・ToneMappingPass 2 組・SSAOPass 3 組の 11 組が消えた）。残りは SSRPass・VolumetricsPass・VignettePass の 6 組（SCN-ECS-FIF-POST-B の対象）。Game.log の ERROR 0、借りの失敗 0（Upload.Failures=0・Descriptor.Failures=0）、ページ・pool は最初のフレームで 1 つずつ足した後は足していない。借りは最後のフレームで切れ端 97・記述子セット 93。
+  - 起動画面で無効のパス: MotionBlurPass（起動画面では働かず、変更前の撮影にも組は出ていなかった）。ビルドが通ることと、コードの照合（メンバの定数・3 つのセットが無く、Apply が `BorrowDescriptorSet` と `BindFrameParams` で借りたセットを `EnqueueFullscreenPass` へ渡す）で確かめた。撮影は増やしていない。
+- Next: TASKS.md の未完の次の項目（SCN-ECS-FIF-POST-B など）。
+- Notes: 借りる口（持ち主から借り、持ち主の無い文脈では作ってパスを手放すまで持つ）を 5 パスと LightingPass がそれぞれ持っているので、共通の口（`FrameResourceLane` の隣など）にまとめるのが候補（この項目の paths の外）。持ち主の無い文脈・借りの失敗のフレームを起こす検査は書いていない（verify が名指ししていないため）。`Docs/Architecture/FrameResourceWriteGuard.md` の守られていない組の一覧に、この 5 パスが借りる形になったことは書いていない（paths の外）。編集で LF だけの行が混じっていた BloomPass・ToneMappingPass・SSAOPass（.h と .cpp）の行末が CRLF に揃ったので、変えていない行を元の行末へ戻した（`git diff --numstat` と `--ignore-cr-at-eol` が一致）。

@@ -1,6 +1,7 @@
 ﻿// ラスタの動きぼけ（MotionBlurPass）の実装。Coreの登録済みのSceneView.cppから取り込む。
 #include "Rendering/MotionBlurPass.h"
 #include "Rendering/CameraViewConstants.h"
+#include "Rendering/FrameResourceOwner.h"
 #include "Rendering/RenderGraph/RenderGraphBuilder.h"
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
 #include "Rendering/RenderGraph/RenderGraphResources.h"
@@ -16,6 +17,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <initializer_list>
 
 namespace NorvesLib::Core::Rendering
 {
@@ -140,6 +142,65 @@ namespace NorvesLib::Core::Rendering
                    context.GetActiveDebugMode() == DebugViewMode::Normal &&
                    ComputeMotionBlurShutterFraction(settings) > 0.0f;
         }
+
+        // 記述子セットをフレームの持ち主から借りる。持ち主の無い文脈（RenderingCoordinator を通さない検査）では
+        // 使い回さないセットを作り、提出の完了を知る手段が無いのでパスを手放すまで unownedSets に持つ
+        RHI::DescriptorSetPtr BorrowDescriptorSet(ViewRenderContext& context,
+                                                  RHI::IDevice& device,
+                                                  const RHI::DescriptorSetLayoutPtr& layout,
+                                                  const RHI::DescriptorSetDesc& desc,
+                                                  Container::VariableArray<RHI::DescriptorSetPtr>& unownedSets)
+        {
+            if (FrameResourceLane* frameResources = context.FrameResources)
+            {
+                return frameResources->AllocateDescriptorSet(layout).Set;
+            }
+            RHI::DescriptorSetPtr descriptorSet = device.CreateDescriptorSet(desc);
+            if (descriptorSet)
+            {
+                unownedSets.push_back(descriptorSet);
+            }
+            return descriptorSet;
+        }
+
+        // 定数をフレームの持ち主から借りて params を書き、3 つの段のセットの ParamsBinding へ結ぶ。持ち主の無い
+        // 文脈では使い回さない専用のバッファを作り、パスを手放すまで unownedBuffers に持つ（BorrowDescriptorSet と同じ理由）
+        bool BindFrameParams(ViewRenderContext& context,
+                             RHI::IDevice& device,
+                             std::initializer_list<RHI::IDescriptorSet*> sets,
+                             const GPUMotionBlurParams& params,
+                             Container::VariableArray<RHI::BufferPtr>& unownedBuffers)
+        {
+            RHI::BufferPtr buffer;
+            uint32_t offset = 0u;
+            if (FrameResourceLane* frameResources = context.FrameResources)
+            {
+                const FrameUploadAllocation allocation = frameResources->AllocateConstants(params);
+                if (!allocation.IsValid())
+                {
+                    return false;
+                }
+                buffer = allocation.Buffer;
+                offset = allocation.GetOffset32();
+            }
+            else
+            {
+                buffer = device.CreateBuffer(RHI::BufferDesc(sizeof(GPUMotionBlurParams),
+                                                             RHI::ResourceUsage::ConstantBuffer, true,
+                                                             "MotionBlurParams.Unowned"));
+                if (!buffer)
+                {
+                    return false;
+                }
+                buffer->Update(&params, sizeof(params));
+                unownedBuffers.push_back(buffer);
+            }
+            for (RHI::IDescriptorSet* set : sets)
+            {
+                set->BindConstantBuffer(ParamsBinding, buffer, offset, sizeof(GPUMotionBlurParams));
+            }
+            return true;
+        }
     } // namespace MotionBlurPassDetail
 
     MotionBlurPass::~MotionBlurPass()
@@ -164,27 +225,17 @@ namespace NorvesLib::Core::Rendering
         m_TileMaxShader = context.ShaderMgr->LoadShader("MotionBlurTileMax.frag", RHI::ShaderStage::Pixel);
         m_GatherShader = context.ShaderMgr->LoadShader("MotionBlur.frag", RHI::ShaderStage::Pixel);
         m_ResolveShader = context.ShaderMgr->LoadShader("MotionBlurResolve.frag", RHI::ShaderStage::Pixel);
-        RHI::BufferDesc paramsDesc(sizeof(GPUMotionBlurParams), RHI::ResourceUsage::ConstantBuffer,
-                                   true, "MotionBlurParams");
-        m_ParamsBuffer = m_VertexShader && m_TileMaxShader && m_GatherShader && m_ResolveShader
-                             ? m_Device->CreateBuffer(paramsDesc)
-                             : RHI::BufferPtr{};
         m_PointSampler = CreatePointSampler(*m_Device);
-        m_TileMaxDescriptorSet = m_Device->CreateDescriptorSet(CreateTileMaxDescriptorSetDesc());
-        m_GatherDescriptorSet = m_Device->CreateDescriptorSet(CreateGatherDescriptorSetDesc());
-        m_ResolveDescriptorSet = m_Device->CreateDescriptorSet(CreateResolveDescriptorSetDesc());
-        if (!m_ParamsBuffer || !m_PointSampler || !m_TileMaxDescriptorSet || !m_GatherDescriptorSet ||
-            !m_ResolveDescriptorSet)
+        // セットは Apply ごとに借りる。レイアウトは同じ形のパスと共有する 1 つをデバイスから引く
+        m_TileMaxDescriptorSetLayout = m_Device->GetOrCreateDescriptorSetLayout(CreateTileMaxDescriptorSetDesc());
+        m_GatherDescriptorSetLayout = m_Device->GetOrCreateDescriptorSetLayout(CreateGatherDescriptorSetDesc());
+        m_ResolveDescriptorSetLayout = m_Device->GetOrCreateDescriptorSetLayout(CreateResolveDescriptorSetDesc());
+        if (!m_VertexShader || !m_TileMaxShader || !m_GatherShader || !m_ResolveShader || !m_PointSampler ||
+            !m_TileMaxDescriptorSetLayout || !m_GatherDescriptorSetLayout || !m_ResolveDescriptorSetLayout)
         {
-            NORVES_LOG_ERROR("MotionBlurPass", "Failed to create shaders, samplers or descriptor sets");
+            NORVES_LOG_ERROR("MotionBlurPass", "シェーダー・サンプラー・記述子セットのレイアウトの作成に失敗");
             Shutdown();
             return false;
-        }
-        for (const RHI::DescriptorSetPtr& descriptorSet :
-             {m_TileMaxDescriptorSet, m_GatherDescriptorSet, m_ResolveDescriptorSet})
-        {
-            descriptorSet->BindConstantBuffer(ParamsBinding, m_ParamsBuffer, 0u,
-                                              sizeof(GPUMotionBlurParams));
         }
         m_bInitialized = true;
         return true;
@@ -203,11 +254,12 @@ namespace NorvesLib::Core::Rendering
         m_TileMaxFramebuffer.reset();
         m_TileMaxRenderPass.reset();
         m_TileMaxTexture.reset();
-        m_ResolveDescriptorSet.reset();
-        m_GatherDescriptorSet.reset();
-        m_TileMaxDescriptorSet.reset();
+        m_UnownedDescriptorSets.clear();
+        m_UnownedBuffers.clear();
+        m_ResolveDescriptorSetLayout.reset();
+        m_GatherDescriptorSetLayout.reset();
+        m_TileMaxDescriptorSetLayout.reset();
         m_PointSampler.reset();
-        m_ParamsBuffer.reset();
         m_ResolveShader.reset();
         m_GatherShader.reset();
         m_TileMaxShader.reset();
@@ -341,25 +393,45 @@ namespace NorvesLib::Core::Rendering
         params.TileInfo[0] = static_cast<float>(MotionBlurTileSize);
         params.TileInfo[1] = static_cast<float>(m_TileMaxTexture->GetWidth());
         params.TileInfo[2] = static_cast<float>(m_TileMaxTexture->GetHeight());
-        m_ParamsBuffer->Update(&params, sizeof(params));
 
-        m_TileMaxDescriptorSet->BindTexture(0u, velocity);
-        m_TileMaxDescriptorSet->BindSampler(0u, m_PointSampler);
-        m_TileMaxDescriptorSet->BindTexture(1u, sceneDepth);
-        m_TileMaxDescriptorSet->BindSampler(1u, m_PointSampler);
-        m_TileMaxDescriptorSet->Update();
-        m_GatherDescriptorSet->BindTexture(0u, velocity);
-        m_GatherDescriptorSet->BindSampler(0u, m_PointSampler);
-        m_GatherDescriptorSet->BindTexture(1u, sceneDepth);
-        m_GatherDescriptorSet->BindSampler(1u, m_PointSampler);
-        m_GatherDescriptorSet->BindTexture(2u, sceneColor);
-        m_GatherDescriptorSet->BindSampler(2u, m_PointSampler);
-        m_GatherDescriptorSet->BindTexture(3u, m_TileMaxTexture);
-        m_GatherDescriptorSet->BindSampler(3u, m_PointSampler);
-        m_GatherDescriptorSet->Update();
-        m_ResolveDescriptorSet->BindTexture(0u, m_GatherTexture);
-        m_ResolveDescriptorSet->BindSampler(0u, m_PointSampler);
-        m_ResolveDescriptorSet->Update();
+        // 定数と記述子セットはこの Apply の分をフレームの持ち主から借りる（3 つの段で同じ定数を読む）
+        const RHI::DescriptorSetPtr tileMaxDescriptorSet =
+            BorrowDescriptorSet(context, *m_Device, m_TileMaxDescriptorSetLayout, CreateTileMaxDescriptorSetDesc(),
+                                m_UnownedDescriptorSets);
+        const RHI::DescriptorSetPtr gatherDescriptorSet =
+            BorrowDescriptorSet(context, *m_Device, m_GatherDescriptorSetLayout, CreateGatherDescriptorSetDesc(),
+                                m_UnownedDescriptorSets);
+        const RHI::DescriptorSetPtr resolveDescriptorSet =
+            BorrowDescriptorSet(context, *m_Device, m_ResolveDescriptorSetLayout, CreateResolveDescriptorSetDesc(),
+                                m_UnownedDescriptorSets);
+        if (!tileMaxDescriptorSet || !gatherDescriptorSet || !resolveDescriptorSet ||
+            !BindFrameParams(context, *m_Device,
+                             {tileMaxDescriptorSet.get(), gatherDescriptorSet.get(), resolveDescriptorSet.get()},
+                             params, m_UnownedBuffers))
+        {
+            NORVES_LOG_ERROR("MotionBlurPass", "定数か記述子セットを借りられないため、このフレームは動きぼけを掛けません");
+            context.EnqueueTextureBarrier(sceneColor, RHI::ResourceState::RenderTarget,
+                                          RHI::ResourceState::ShaderResource);
+            return false;
+        }
+
+        tileMaxDescriptorSet->BindTexture(0u, velocity);
+        tileMaxDescriptorSet->BindSampler(0u, m_PointSampler);
+        tileMaxDescriptorSet->BindTexture(1u, sceneDepth);
+        tileMaxDescriptorSet->BindSampler(1u, m_PointSampler);
+        tileMaxDescriptorSet->Update();
+        gatherDescriptorSet->BindTexture(0u, velocity);
+        gatherDescriptorSet->BindSampler(0u, m_PointSampler);
+        gatherDescriptorSet->BindTexture(1u, sceneDepth);
+        gatherDescriptorSet->BindSampler(1u, m_PointSampler);
+        gatherDescriptorSet->BindTexture(2u, sceneColor);
+        gatherDescriptorSet->BindSampler(2u, m_PointSampler);
+        gatherDescriptorSet->BindTexture(3u, m_TileMaxTexture);
+        gatherDescriptorSet->BindSampler(3u, m_PointSampler);
+        gatherDescriptorSet->Update();
+        resolveDescriptorSet->BindTexture(0u, m_GatherTexture);
+        resolveDescriptorSet->BindSampler(0u, m_PointSampler);
+        resolveDescriptorSet->Update();
 
         const RHI::Viewport viewport = context.GetActiveLocalViewport();
         const RHI::ScissorRect scissor = context.GetActiveLocalScissor();
@@ -373,19 +445,19 @@ namespace NorvesLib::Core::Rendering
         context.EnqueueTextureBarrier(m_TileMaxTexture, RHI::ResourceState::Undefined,
                                       RHI::ResourceState::RenderTarget);
         context.EnqueueFullscreenPass(m_TileMaxRenderPass, m_TileMaxFramebuffer, tileViewport, tileScissor,
-                                      m_TileMaxPipeline, m_TileMaxDescriptorSet);
+                                      m_TileMaxPipeline, tileMaxDescriptorSet);
         // 2. SceneColor・深度・velocity・tileから、ぼかした色を中間textureへ書く。
         context.EnqueueTextureBarrier(sceneColor, RHI::ResourceState::RenderTarget,
                                       RHI::ResourceState::ShaderResource);
         context.EnqueueTextureBarrier(m_GatherTexture, RHI::ResourceState::Undefined,
                                       RHI::ResourceState::RenderTarget);
         context.EnqueueFullscreenPass(m_GatherRenderPass, m_GatherFramebuffer, viewport, scissor,
-                                      m_GatherPipeline, m_GatherDescriptorSet);
+                                      m_GatherPipeline, gatherDescriptorSet);
         // 3. SceneColorへそのまま書き戻す。
         context.EnqueueTextureBarrier(sceneColor, RHI::ResourceState::ShaderResource,
                                       RHI::ResourceState::RenderTarget);
         context.EnqueueFullscreenPass(m_ResolveRenderPass, m_ResolveFramebuffer, viewport, scissor,
-                                      m_ResolvePipeline, m_ResolveDescriptorSet);
+                                      m_ResolvePipeline, resolveDescriptorSet);
         return true;
     }
 

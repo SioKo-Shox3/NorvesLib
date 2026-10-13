@@ -1,6 +1,7 @@
 ﻿// TAA のパス（TemporalAAPass）の実装。Coreの登録済みのSceneView.cppから取り込む。
 #include "Rendering/TemporalAAPass.h"
 #include "Rendering/CameraViewConstants.h"
+#include "Rendering/FrameResourceOwner.h"
 #include "Rendering/RenderGraph/RenderGraphBuilder.h"
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
 #include "Rendering/RenderGraph/RenderGraphResources.h"
@@ -15,6 +16,7 @@
 #include "Logging/LogMacros.h"
 
 #include <cmath>
+#include <initializer_list>
 
 namespace NorvesLib::Core::Rendering
 {
@@ -133,6 +135,65 @@ namespace NorvesLib::Core::Rendering
         {
             return context.CurrentViewport ? context.CurrentViewport->ViewportId : UINT32_MAX;
         }
+
+        // 記述子セットをフレームの持ち主から借りる。持ち主の無い文脈（RenderingCoordinator を通さない検査）では
+        // 使い回さないセットを作り、提出の完了を知る手段が無いのでパスを手放すまで unownedSets に持つ
+        RHI::DescriptorSetPtr BorrowDescriptorSet(ViewRenderContext& context,
+                                                  RHI::IDevice& device,
+                                                  const RHI::DescriptorSetLayoutPtr& layout,
+                                                  const RHI::DescriptorSetDesc& desc,
+                                                  Container::VariableArray<RHI::DescriptorSetPtr>& unownedSets)
+        {
+            if (FrameResourceLane* frameResources = context.FrameResources)
+            {
+                return frameResources->AllocateDescriptorSet(layout).Set;
+            }
+            RHI::DescriptorSetPtr descriptorSet = device.CreateDescriptorSet(desc);
+            if (descriptorSet)
+            {
+                unownedSets.push_back(descriptorSet);
+            }
+            return descriptorSet;
+        }
+
+        // 定数をフレームの持ち主から借りて params を書き、解決と書き戻しのセットの ParamsBinding へ結ぶ。持ち主の無い
+        // 文脈では使い回さない専用のバッファを作り、パスを手放すまで unownedBuffers に持つ（BorrowDescriptorSet と同じ理由）
+        bool BindFrameParams(ViewRenderContext& context,
+                             RHI::IDevice& device,
+                             std::initializer_list<RHI::IDescriptorSet*> sets,
+                             const GPUTemporalAAParams& params,
+                             Container::VariableArray<RHI::BufferPtr>& unownedBuffers)
+        {
+            RHI::BufferPtr buffer;
+            uint32_t offset = 0u;
+            if (FrameResourceLane* frameResources = context.FrameResources)
+            {
+                const FrameUploadAllocation allocation = frameResources->AllocateConstants(params);
+                if (!allocation.IsValid())
+                {
+                    return false;
+                }
+                buffer = allocation.Buffer;
+                offset = allocation.GetOffset32();
+            }
+            else
+            {
+                buffer = device.CreateBuffer(RHI::BufferDesc(sizeof(GPUTemporalAAParams),
+                                                             RHI::ResourceUsage::ConstantBuffer, true,
+                                                             "TemporalAAParams.Unowned"));
+                if (!buffer)
+                {
+                    return false;
+                }
+                buffer->Update(&params, sizeof(params));
+                unownedBuffers.push_back(buffer);
+            }
+            for (RHI::IDescriptorSet* set : sets)
+            {
+                set->BindConstantBuffer(ParamsBinding, buffer, offset, sizeof(GPUTemporalAAParams));
+            }
+            return true;
+        }
     } // namespace TemporalAAPassDetail
 
     TemporalAAPass::TemporalAAPass()
@@ -162,24 +223,18 @@ namespace NorvesLib::Core::Rendering
         m_VertexShader = context.ShaderMgr->LoadShader("fullscreen.vert", RHI::ShaderStage::Vertex);
         m_ResolveShader = context.ShaderMgr->LoadShader("temporal_aa.frag", RHI::ShaderStage::Pixel);
         m_CopyShader = context.ShaderMgr->LoadShader("temporal_aa_copy.frag", RHI::ShaderStage::Pixel);
-        RHI::BufferDesc paramsDesc(sizeof(GPUTemporalAAParams), RHI::ResourceUsage::ConstantBuffer,
-                                   true, "TemporalAAParams");
-        m_ParamsBuffer = m_VertexShader && m_ResolveShader && m_CopyShader
-                             ? m_Device->CreateBuffer(paramsDesc)
-                             : RHI::BufferPtr{};
         m_PointSampler = CreateSampler(*m_Device, RHI::FilterMode::Point);
         m_LinearSampler = CreateSampler(*m_Device, RHI::FilterMode::Linear);
-        m_ResolveDescriptorSet = m_Device->CreateDescriptorSet(CreateResolveDescriptorSetDesc());
-        m_CopyDescriptorSet = m_Device->CreateDescriptorSet(CreateCopyDescriptorSetDesc());
-        if (!m_ParamsBuffer || !m_PointSampler || !m_LinearSampler || !m_ResolveDescriptorSet ||
-            !m_CopyDescriptorSet)
+        // セットは Execute ごとに借りる。レイアウトは同じ形のパスと共有する 1 つをデバイスから引く
+        m_ResolveDescriptorSetLayout = m_Device->GetOrCreateDescriptorSetLayout(CreateResolveDescriptorSetDesc());
+        m_CopyDescriptorSetLayout = m_Device->GetOrCreateDescriptorSetLayout(CreateCopyDescriptorSetDesc());
+        if (!m_VertexShader || !m_ResolveShader || !m_CopyShader || !m_PointSampler || !m_LinearSampler ||
+            !m_ResolveDescriptorSetLayout || !m_CopyDescriptorSetLayout)
         {
-            NORVES_LOG_ERROR("TemporalAAPass", "シェーダー・サンプラー・ディスクリプタセットの作成に失敗");
+            NORVES_LOG_ERROR("TemporalAAPass", "シェーダー・サンプラー・ディスクリプタセットのレイアウトの作成に失敗");
             Shutdown();
             return false;
         }
-        m_ResolveDescriptorSet->BindConstantBuffer(ParamsBinding, m_ParamsBuffer, 0u, sizeof(GPUTemporalAAParams));
-        m_CopyDescriptorSet->BindConstantBuffer(ParamsBinding, m_ParamsBuffer, 0u, sizeof(GPUTemporalAAParams));
         m_bInitialized = true;
         return true;
     }
@@ -220,11 +275,12 @@ namespace NorvesLib::Core::Rendering
             m_HistoryObjectStateMismatchCount = 0u;
         }
         ReleaseSizedResources();
-        m_CopyDescriptorSet.reset();
-        m_ResolveDescriptorSet.reset();
+        m_UnownedDescriptorSets.clear();
+        m_UnownedBuffers.clear();
+        m_CopyDescriptorSetLayout.reset();
+        m_ResolveDescriptorSetLayout.reset();
         m_LinearSampler.reset();
         m_PointSampler.reset();
-        m_ParamsBuffer.reset();
         m_CopyShader.reset();
         m_ResolveShader.reset();
         m_VertexShader.reset();
@@ -401,24 +457,41 @@ namespace NorvesLib::Core::Rendering
         params.Blend[3] = TemporalAASharpenStrength;
         params.Jitter[0] = m_FrameJitter.PixelX;
         params.Jitter[1] = m_FrameJitter.PixelY;
-        m_ParamsBuffer->Update(&params, sizeof(params));
+
+        // 定数と記述子セットはこの Execute の分をフレームの持ち主から借りる（解決と書き戻しで同じ定数を読む）
+        const RHI::DescriptorSetPtr resolveDescriptorSet =
+            BorrowDescriptorSet(context, *m_Device, m_ResolveDescriptorSetLayout, CreateResolveDescriptorSetDesc(),
+                                m_UnownedDescriptorSets);
+        const RHI::DescriptorSetPtr copyDescriptorSet =
+            BorrowDescriptorSet(context, *m_Device, m_CopyDescriptorSetLayout, CreateCopyDescriptorSetDesc(),
+                                m_UnownedDescriptorSets);
+        if (!resolveDescriptorSet || !copyDescriptorSet ||
+            !BindFrameParams(context, *m_Device, {resolveDescriptorSet.get(), copyDescriptorSet.get()}, params,
+                             m_UnownedBuffers))
+        {
+            NORVES_LOG_ERROR("TemporalAAPass", "定数か記述子セットを借りられないため、このフレームは TAA を掛けません");
+            m_History.Invalidate();
+            context.EnqueueTextureBarrier(sceneColor, RHI::ResourceState::RenderTarget,
+                                          RHI::ResourceState::ShaderResource);
+            return;
+        }
 
         const uint32_t writeIndex = m_HistoryWriteIndex;
         const uint32_t readIndex = 1u - writeIndex;
         // 履歴が無いときは読む方の履歴が未初期化のことがあるので、代わりに SceneColor を結ぶ（シェーダーは読まない）。
         const RHI::TexturePtr& historyInput = bUseHistory ? m_HistoryTextures[readIndex] : sceneColor;
-        m_ResolveDescriptorSet->BindTexture(0u, sceneColor);
-        m_ResolveDescriptorSet->BindSampler(0u, m_PointSampler);
-        m_ResolveDescriptorSet->BindTexture(1u, historyInput);
-        m_ResolveDescriptorSet->BindSampler(1u, m_LinearSampler);
-        m_ResolveDescriptorSet->BindTexture(2u, velocity);
-        m_ResolveDescriptorSet->BindSampler(2u, m_PointSampler);
-        m_ResolveDescriptorSet->BindTexture(3u, sceneDepth);
-        m_ResolveDescriptorSet->BindSampler(3u, m_PointSampler);
-        m_ResolveDescriptorSet->Update();
-        m_CopyDescriptorSet->BindTexture(0u, m_HistoryTextures[writeIndex]);
-        m_CopyDescriptorSet->BindSampler(0u, m_PointSampler);
-        m_CopyDescriptorSet->Update();
+        resolveDescriptorSet->BindTexture(0u, sceneColor);
+        resolveDescriptorSet->BindSampler(0u, m_PointSampler);
+        resolveDescriptorSet->BindTexture(1u, historyInput);
+        resolveDescriptorSet->BindSampler(1u, m_LinearSampler);
+        resolveDescriptorSet->BindTexture(2u, velocity);
+        resolveDescriptorSet->BindSampler(2u, m_PointSampler);
+        resolveDescriptorSet->BindTexture(3u, sceneDepth);
+        resolveDescriptorSet->BindSampler(3u, m_PointSampler);
+        resolveDescriptorSet->Update();
+        copyDescriptorSet->BindTexture(0u, m_HistoryTextures[writeIndex]);
+        copyDescriptorSet->BindSampler(0u, m_PointSampler);
+        copyDescriptorSet->Update();
 
         const RHI::Viewport viewport = context.GetActiveLocalViewport();
         const RHI::ScissorRect scissor = context.GetActiveLocalScissor();
@@ -428,12 +501,12 @@ namespace NorvesLib::Core::Rendering
         context.EnqueueTextureBarrier(m_HistoryTextures[writeIndex], RHI::ResourceState::Undefined,
                                       RHI::ResourceState::RenderTarget);
         context.EnqueueFullscreenPass(m_HistoryRenderPass, m_HistoryFramebuffers[writeIndex], viewport, scissor,
-                                      m_ResolvePipeline, m_ResolveDescriptorSet);
+                                      m_ResolvePipeline, resolveDescriptorSet);
         // 2. SceneColor へ、軽くシャープ化して書き戻す（履歴はシャープ化の前の色のまま）。
         context.EnqueueTextureBarrier(sceneColor, RHI::ResourceState::ShaderResource,
                                       RHI::ResourceState::RenderTarget);
         context.EnqueueFullscreenPass(m_CopyRenderPass, m_CopyFramebuffer, viewport, scissor,
-                                      m_CopyPipeline, m_CopyDescriptorSet);
+                                      m_CopyPipeline, copyDescriptorSet);
 
         m_HistoryWriteIndex = readIndex;
         m_History.Record(historyQuery, *camera);

@@ -1,4 +1,5 @@
 ﻿#include "Rendering/ToneMappingPass.h"
+#include "Rendering/FrameResourceOwner.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Rendering/RenderTypes.h"
 #include "Rendering/ToneMappingPassGpuTypes.h"
@@ -165,6 +166,40 @@ namespace NorvesLib::Core::Rendering
             }
             return lutTexture;
         }
+
+        // binding 0: SceneColor（combined image sampler）
+        // binding 1: ToneMappingParams UBO
+        // binding 2: 表示変換の3D LUT（combined image sampler）
+        // binding 3: 見た目の3D LUT（combined image sampler）
+        RHI::DescriptorSetDesc CreateToneMappingDescriptorSetDesc()
+        {
+            RHI::DescriptorSetDesc dsDesc;
+
+            RHI::DescriptorBinding sceneColorBinding;
+            sceneColorBinding.binding = 0;
+            sceneColorBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+            sceneColorBinding.stages = RHI::ShaderStage::Pixel;
+            dsDesc.bindings.push_back(sceneColorBinding);
+
+            RHI::DescriptorBinding paramsBinding;
+            paramsBinding.binding = 1;
+            paramsBinding.type = RHI::ResourceBindType::ConstantBuffer;
+            paramsBinding.stages = RHI::ShaderStage::Pixel;
+            dsDesc.bindings.push_back(paramsBinding);
+
+            RHI::DescriptorBinding colorLutBinding;
+            colorLutBinding.binding = 2;
+            colorLutBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+            colorLutBinding.stages = RHI::ShaderStage::Pixel;
+            dsDesc.bindings.push_back(colorLutBinding);
+
+            RHI::DescriptorBinding lookLutBinding;
+            lookLutBinding.binding = 3;
+            lookLutBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+            lookLutBinding.stages = RHI::ShaderStage::Pixel;
+            dsDesc.bindings.push_back(lookLutBinding);
+            return dsDesc;
+        }
     } // namespace
 
     static constexpr uint32_t TONEMAPPING_PARAMS_SIZE = sizeof(GPUToneMappingParams);
@@ -259,14 +294,13 @@ namespace NorvesLib::Core::Rendering
         }
 
         // ========================================
-        // パラメータUBOバッファ作成
+        // 記述子セットのレイアウト（同じ形のパスと共有する 1 つをデバイスから引く。セットと定数は Execute ごとに借りる）
         // ========================================
-        RHI::BufferDesc paramsUboDesc(
-            TONEMAPPING_PARAMS_SIZE, RHI::ResourceUsage::ConstantBuffer, true, "ToneMappingParamsUBO");
-        m_ParamsBuffer = m_Device->CreateBuffer(paramsUboDesc);
-        if (!m_ParamsBuffer)
+        m_ToneMappingDescriptorSetLayout =
+            m_Device->GetOrCreateDescriptorSetLayout(CreateToneMappingDescriptorSetDesc());
+        if (!m_ToneMappingDescriptorSetLayout)
         {
-            NORVES_LOG_ERROR("ToneMappingPass", "Failed to create params buffer");
+            NORVES_LOG_ERROR("ToneMappingPass", "記述子セットのレイアウトを作れませんでした");
             return false;
         }
 
@@ -289,8 +323,9 @@ namespace NorvesLib::Core::Rendering
         m_ToneMappingPipeline.reset();
         m_ToneMappingVertexShader.reset();
         m_ToneMappingFragmentShader.reset();
-        m_ParamsBuffer.reset();
-        m_ToneMappingDescriptorSet.reset();
+        m_UnownedDescriptorSets.clear();
+        m_UnownedBuffers.clear();
+        m_ToneMappingDescriptorSetLayout.reset();
         m_SceneColorSampler.reset();
         m_ColorLutTexture.reset();
         m_ColorLutFallbackTexture.reset();
@@ -348,7 +383,6 @@ namespace NorvesLib::Core::Rendering
             !m_ToneMappingRenderPass ||
             !m_ToneMappingFramebuffer ||
             !m_ToneMappingPipeline ||
-            !m_ToneMappingDescriptorSet ||
             m_FramebufferOutputTexture != m_OutputTexture.get() ||
             m_bRenderPassUsesRenderGraphInitialState;
 
@@ -369,8 +403,7 @@ namespace NorvesLib::Core::Rendering
         if (!m_Device ||
             !outputTexture ||
             !m_ToneMappingVertexShader ||
-            !m_ToneMappingFragmentShader ||
-            !m_ParamsBuffer)
+            !m_ToneMappingFragmentShader)
         {
             return false;
         }
@@ -383,8 +416,7 @@ namespace NorvesLib::Core::Rendering
             !RenderPassSignatureEquals(m_RenderPassSignature, signature) ||
             !m_ToneMappingRenderPass ||
             !m_ToneMappingFramebuffer ||
-            !m_ToneMappingPipeline ||
-            !m_ToneMappingDescriptorSet;
+            !m_ToneMappingPipeline;
 
         m_OutputTexture = outputTexture;
         if (!bResourcesChanged)
@@ -395,7 +427,6 @@ namespace NorvesLib::Core::Rendering
         m_ToneMappingRenderPass.reset();
         m_ToneMappingFramebuffer.reset();
         m_ToneMappingPipeline.reset();
-        m_ToneMappingDescriptorSet.reset();
         m_RenderPassSignature = {};
 
         // ========================================
@@ -438,48 +469,8 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
-        // ========================================
-        // ディスクリプタセット作成
-        // ========================================
-        // binding 0: SceneColor（combined image sampler）
-        // binding 1: ToneMappingParams UBO
-        // binding 2: 表示変換の3D LUT（combined image sampler）
-        // binding 3: 見た目の3D LUT（combined image sampler）
-        RHI::DescriptorSetDesc dsDesc;
-
-        RHI::DescriptorBinding sceneColorBinding;
-        sceneColorBinding.binding = 0;
-        sceneColorBinding.type = RHI::ResourceBindType::CombinedImageSampler;
-        sceneColorBinding.stages = RHI::ShaderStage::Pixel;
-        dsDesc.bindings.push_back(sceneColorBinding);
-
-        RHI::DescriptorBinding paramsBinding;
-        paramsBinding.binding = 1;
-        paramsBinding.type = RHI::ResourceBindType::ConstantBuffer;
-        paramsBinding.stages = RHI::ShaderStage::Pixel;
-        dsDesc.bindings.push_back(paramsBinding);
-
-        RHI::DescriptorBinding colorLutBinding;
-        colorLutBinding.binding = 2;
-        colorLutBinding.type = RHI::ResourceBindType::CombinedImageSampler;
-        colorLutBinding.stages = RHI::ShaderStage::Pixel;
-        dsDesc.bindings.push_back(colorLutBinding);
-
-        RHI::DescriptorBinding lookLutBinding;
-        lookLutBinding.binding = 3;
-        lookLutBinding.type = RHI::ResourceBindType::CombinedImageSampler;
-        lookLutBinding.stages = RHI::ShaderStage::Pixel;
-        dsDesc.bindings.push_back(lookLutBinding);
-
-        m_ToneMappingDescriptorSet = m_Device->CreateDescriptorSet(dsDesc);
-        if (!m_ToneMappingDescriptorSet)
-        {
-            NORVES_LOG_ERROR("ToneMappingPass", "Failed to create descriptor set");
-            return false;
-        }
-
-        // UBOバインド（テクスチャはExecute時にバインド）
-        m_ToneMappingDescriptorSet->BindConstantBuffer(1, m_ParamsBuffer, 0, TONEMAPPING_PARAMS_SIZE);
+        // ディスクリプタセットの形（セットは Execute のたびに借りる）
+        const RHI::DescriptorSetDesc dsDesc = CreateToneMappingDescriptorSetDesc();
 
         // ========================================
         // パイプライン作成（フルスクリーン描画）
@@ -755,7 +746,7 @@ namespace NorvesLib::Core::Rendering
         if (!m_ToneMappingRenderPass ||
             !m_ToneMappingFramebuffer ||
             !m_ToneMappingPipeline ||
-            !m_ToneMappingDescriptorSet)
+            !m_ToneMappingDescriptorSetLayout)
         {
             NORVES_LOG_WARNING("ToneMappingPass", "ToneMapping resources not ready, skipping");
             return;
@@ -831,7 +822,43 @@ namespace NorvesLib::Core::Rendering
             }
         }
         params.lookLutIntensity = lookLutIntensity;
-        m_ParamsBuffer->Update(&params, sizeof(GPUToneMappingParams));
+
+        // 定数と記述子セットはこの Execute の分をフレームの持ち主から借りる。持ち主の無い文脈（RenderingCoordinator を
+        // 通さない検査）では使い回さない定数と記述子セットを作り、提出の完了を知る手段が無いのでパスを手放すまで持つ
+        RHI::DescriptorSetPtr descriptorSet;
+        RHI::BufferPtr paramsBuffer;
+        uint32_t paramsOffset = 0;
+        if (FrameResourceLane* frameResources = context.FrameResources)
+        {
+            const FrameUploadAllocation paramsAllocation = frameResources->AllocateConstants(params);
+            if (paramsAllocation.IsValid())
+            {
+                paramsBuffer = paramsAllocation.Buffer;
+                paramsOffset = paramsAllocation.GetOffset32();
+            }
+            descriptorSet = frameResources->AllocateDescriptorSet(m_ToneMappingDescriptorSetLayout).Set;
+        }
+        else if (m_Device)
+        {
+            paramsBuffer = m_Device->CreateBuffer(RHI::BufferDesc(
+                TONEMAPPING_PARAMS_SIZE, RHI::ResourceUsage::ConstantBuffer, true, "ToneMappingParamsUBO.Unowned"));
+            if (paramsBuffer)
+            {
+                paramsBuffer->Update(&params, TONEMAPPING_PARAMS_SIZE);
+                m_UnownedBuffers.push_back(paramsBuffer);
+            }
+            descriptorSet = m_Device->CreateDescriptorSet(CreateToneMappingDescriptorSetDesc());
+            if (descriptorSet)
+            {
+                m_UnownedDescriptorSets.push_back(descriptorSet);
+            }
+        }
+        if (!paramsBuffer || !descriptorSet)
+        {
+            NORVES_LOG_ERROR("ToneMappingPass", "定数か記述子セットを借りられないため、このフレームはトーンマップを描きません");
+            EnqueueEmptyNativePass(context);
+            return;
+        }
 
         // トーンマッピング結果をSharedResourceRegistryに登録
         if (bRegisterLegacyBridge && context.SharedResources)
@@ -839,14 +866,15 @@ namespace NorvesLib::Core::Rendering
             context.SharedResources->RegisterTexturePtr("ToneMappedColor", m_OutputTexture);
         }
 
-        // SceneColorテクスチャをディスクリプタセットにバインド
-        m_ToneMappingDescriptorSet->BindTexture(0, sceneColorPtr);
-        m_ToneMappingDescriptorSet->BindSampler(0, m_SceneColorSampler);
-        m_ToneMappingDescriptorSet->BindTexture(2, colorLut);
-        m_ToneMappingDescriptorSet->BindSampler(2, m_ColorLutSampler);
-        m_ToneMappingDescriptorSet->BindTexture(3, lookLut);
-        m_ToneMappingDescriptorSet->BindSampler(3, m_ColorLutSampler);
-        m_ToneMappingDescriptorSet->Update();
+        // 定数と、SceneColor・LUT のテクスチャを借りたディスクリプタセットにバインド
+        descriptorSet->BindConstantBuffer(1, paramsBuffer, paramsOffset, TONEMAPPING_PARAMS_SIZE);
+        descriptorSet->BindTexture(0, sceneColorPtr);
+        descriptorSet->BindSampler(0, m_SceneColorSampler);
+        descriptorSet->BindTexture(2, colorLut);
+        descriptorSet->BindSampler(2, m_ColorLutSampler);
+        descriptorSet->BindTexture(3, lookLut);
+        descriptorSet->BindSampler(3, m_ColorLutSampler);
+        descriptorSet->Update();
 
         RHI::Viewport viewport = context.GetActiveLocalViewport();
         RHI::ScissorRect scissor = context.GetActiveLocalScissor();
@@ -856,7 +884,7 @@ namespace NorvesLib::Core::Rendering
                                       viewport,
                                       scissor,
                                       m_ToneMappingPipeline,
-                                      m_ToneMappingDescriptorSet);
+                                      descriptorSet);
     }
 
     uint32_t ToneMappingPass::PrepareColorLut()
@@ -1009,10 +1037,10 @@ namespace NorvesLib::Core::Rendering
     bool ToneMappingPass::DeclaresAllLayoutChanges() const
     {
         // 入力をグラフから読めるフレーム（SharedResources の旧経路を読み書きしない）で、パイプラインと
-        // ディスクリプタセットが揃っているときだけ。それ以外は Serial に残す。
+        // ディスクリプタセットのレイアウトが揃っているときだけ。それ以外は Serial に残す。
         return IsInitialized() && !m_bLegacyInputFallbackActive && m_InputSceneColorHandle.IsValid() &&
                m_OutputHandle.IsValid() && m_ToneMappingRenderPass && m_ToneMappingFramebuffer &&
-               m_ToneMappingPipeline && m_ToneMappingDescriptorSet;
+               m_ToneMappingPipeline && m_ToneMappingDescriptorSetLayout;
     }
 
     RGRecordPolicy ToneMappingPass::GetRecordPolicy() const

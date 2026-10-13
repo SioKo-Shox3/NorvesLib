@@ -1,4 +1,5 @@
 ﻿#include "Rendering/BloomPass.h"
+#include "Rendering/FrameResourceOwner.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Rendering/RenderTypes.h"
 #include "Rendering/SSRPass.h"
@@ -303,14 +304,14 @@ namespace NorvesLib::Core::Rendering
         }
 
         // ========================================
-        // パラメータUBOバッファ作成
+        // 記述子セットのレイアウト（同じ形のパスと共有する 1 つをデバイスから引く。セットと定数は毎フレーム借りる）
         // ========================================
-        RHI::BufferDesc paramsUboDesc(
-            BLOOM_PARAMS_SIZE, RHI::ResourceUsage::ConstantBuffer, true, "BloomParamsUBO");
-        m_ParamsBuffer = m_Device->CreateBuffer(paramsUboDesc);
-        if (!m_ParamsBuffer)
+        m_CompositeDescriptorSetLayout = m_Device->GetOrCreateDescriptorSetLayout(MakeSamplerParamsLayout(3));
+        m_DownsampleDescriptorSetLayout = m_Device->GetOrCreateDescriptorSetLayout(MakeSamplerParamsLayout(1));
+        m_UpsampleDescriptorSetLayout = m_Device->GetOrCreateDescriptorSetLayout(MakeSamplerParamsLayout(2));
+        if (!m_CompositeDescriptorSetLayout || !m_DownsampleDescriptorSetLayout || !m_UpsampleDescriptorSetLayout)
         {
-            NORVES_LOG_ERROR("BloomPass", "Failed to create params buffer");
+            NORVES_LOG_ERROR("BloomPass", "記述子セットのレイアウトを作れませんでした");
             return false;
         }
 
@@ -356,8 +357,11 @@ namespace NorvesLib::Core::Rendering
         m_BloomPipeline.reset();
         m_BloomVertexShader.reset();
         m_BloomFragmentShader.reset();
-        m_ParamsBuffer.reset();
-        m_BloomDescriptorSet.reset();
+        m_UnownedDescriptorSets.clear();
+        m_UnownedBuffers.clear();
+        m_CompositeDescriptorSetLayout.reset();
+        m_DownsampleDescriptorSetLayout.reset();
+        m_UpsampleDescriptorSetLayout.reset();
         m_SceneColorSampler.reset();
         m_LensDirtTexture.reset();
         m_Device = nullptr;
@@ -403,7 +407,6 @@ namespace NorvesLib::Core::Rendering
             !m_BloomRenderPass ||
             !m_BloomFramebuffer ||
             !m_BloomPipeline ||
-            !m_BloomDescriptorSet ||
             m_FramebufferOutputTexture != m_OutputTexture.get() ||
             m_bRenderPassUsesRenderGraphInitialState;
 
@@ -424,8 +427,7 @@ namespace NorvesLib::Core::Rendering
         if (!m_Device ||
             !outputTexture ||
             !m_BloomVertexShader ||
-            !m_BloomFragmentShader ||
-            !m_ParamsBuffer)
+            !m_BloomFragmentShader)
         {
             return false;
         }
@@ -442,8 +444,7 @@ namespace NorvesLib::Core::Rendering
             bUseRenderGraphInitialState != m_bRenderPassUsesRenderGraphInitialState ||
             !m_BloomRenderPass ||
             !m_BloomFramebuffer ||
-            !m_BloomPipeline ||
-            !m_BloomDescriptorSet;
+            !m_BloomPipeline;
 
         m_OutputTexture = outputTexture;
         if (!bResourcesChanged)
@@ -454,7 +455,6 @@ namespace NorvesLib::Core::Rendering
         m_BloomRenderPass.reset();
         m_BloomFramebuffer.reset();
         m_BloomPipeline.reset();
-        m_BloomDescriptorSet.reset();
 
         // ========================================
         // レンダーパス作成（1カラー、デプスなし）
@@ -499,23 +499,13 @@ namespace NorvesLib::Core::Rendering
         }
 
         // ========================================
-        // ディスクリプタセット作成
+        // ディスクリプタセットの形（セットは Execute のたびに借りる）
         // ========================================
         // binding 0: SceneColor（combined image sampler）
         // binding 1: 積み上げたブルーム（combined image sampler）
         // binding 2: レンズダートの模様（combined image sampler）
         // binding 3: BloomCompositeParams UBO
         const RHI::DescriptorSetDesc dsDesc = MakeSamplerParamsLayout(3);
-
-        m_BloomDescriptorSet = m_Device->CreateDescriptorSet(dsDesc);
-        if (!m_BloomDescriptorSet)
-        {
-            NORVES_LOG_ERROR("BloomPass", "Failed to create descriptor set");
-            return false;
-        }
-
-        // UBOバインド（テクスチャはExecute時にバインド）
-        m_BloomDescriptorSet->BindConstantBuffer(3, m_ParamsBuffer, 0, BLOOM_PARAMS_SIZE);
 
         // ========================================
         // パイプライン作成（フルスクリーン描画）
@@ -665,15 +655,19 @@ namespace NorvesLib::Core::Rendering
                                      const RHI::TexturePtr& sceneColorPtr,
                                      bool bRegisterLegacyBridge)
     {
-        if (!m_BloomRenderPass || !m_BloomFramebuffer || !m_BloomPipeline || !m_BloomDescriptorSet ||
-            m_MipLevels.empty())
+        if (!m_BloomRenderPass || !m_BloomFramebuffer || !m_BloomPipeline || m_MipLevels.empty())
         {
             NORVES_LOG_WARNING("BloomPass", "Bloom resources not ready, skipping");
             return;
         }
 
         // 縮小・拡大の段を積む（合成が読む最上段のテクスチャを毎フレーム書き直す）
-        EnqueueMipChain(context, sceneColorPtr);
+        if (!EnqueueMipChain(context, sceneColorPtr))
+        {
+            NORVES_LOG_ERROR("BloomPass", "縮小・拡大の段の定数か記述子セットを借りられないため、このフレームはブルームを描きません");
+            EnqueueEmptyNativePass(context);
+            return;
+        }
 
         // 合成パラメータ更新
         GPUBloomParams params = {};
@@ -696,20 +690,31 @@ namespace NorvesLib::Core::Rendering
             std::isfinite(m_Settings.LensDirtThreshold) ? std::max(m_Settings.LensDirtThreshold, 0.0f) : 0.0f;
         params.lensDirtSceneRatio =
             std::isfinite(m_Settings.LensDirtSceneRatio) ? std::max(m_Settings.LensDirtSceneRatio, 0.0f) : 0.0f;
-        m_ParamsBuffer->Update(&params, sizeof(GPUBloomParams));
+
+        // 合成の定数と記述子セットはこの Execute の分をフレームの持ち主から借りる
+        const RHI::DescriptorSetPtr compositeDescriptorSet =
+            BorrowDescriptorSet(context, m_CompositeDescriptorSetLayout, MakeSamplerParamsLayout(3));
+        if (!compositeDescriptorSet ||
+            !BindFrameConstants(context, *compositeDescriptorSet, 3, &params, BLOOM_PARAMS_SIZE,
+                                "BloomParamsUBO.Unowned"))
+        {
+            NORVES_LOG_ERROR("BloomPass", "合成の定数か記述子セットを借りられないため、このフレームはブルームを描きません");
+            EnqueueEmptyNativePass(context);
+            return;
+        }
 
         // 最上段の拡大結果（1段だけのときは縮小結果）を合成で読む
         const BloomMipLevel &topLevel = m_MipLevels[0];
         const RHI::TexturePtr &bloomTexture =
             topLevel.UpTexture ? topLevel.UpTexture : topLevel.DownTexture;
 
-        m_BloomDescriptorSet->BindTexture(0, sceneColorPtr);
-        m_BloomDescriptorSet->BindSampler(0, m_SceneColorSampler);
-        m_BloomDescriptorSet->BindTexture(1, bloomTexture);
-        m_BloomDescriptorSet->BindSampler(1, m_SceneColorSampler);
-        m_BloomDescriptorSet->BindTexture(2, m_LensDirtTexture);
-        m_BloomDescriptorSet->BindSampler(2, m_SceneColorSampler);
-        m_BloomDescriptorSet->Update();
+        compositeDescriptorSet->BindTexture(0, sceneColorPtr);
+        compositeDescriptorSet->BindSampler(0, m_SceneColorSampler);
+        compositeDescriptorSet->BindTexture(1, bloomTexture);
+        compositeDescriptorSet->BindSampler(1, m_SceneColorSampler);
+        compositeDescriptorSet->BindTexture(2, m_LensDirtTexture);
+        compositeDescriptorSet->BindSampler(2, m_SceneColorSampler);
+        compositeDescriptorSet->Update();
 
         RHI::Viewport viewport = context.GetActiveLocalViewport();
         RHI::ScissorRect scissor = context.GetActiveLocalScissor();
@@ -719,7 +724,7 @@ namespace NorvesLib::Core::Rendering
                                       viewport,
                                       scissor,
                                       m_BloomPipeline,
-                                      m_BloomDescriptorSet);
+                                      compositeDescriptorSet);
 
         // ブルーム適用済みSceneColorとしてSharedResourceRegistryに上書き登録
         // → 後段のToneMappingPassが "SceneColor" として読み取る
@@ -817,10 +822,7 @@ namespace NorvesLib::Core::Rendering
 
             mip.DownTexture = m_Device->CreateTexture(
                 RHI::TextureDesc::RenderTarget(mip.Width, mip.Height, m_Settings.OutputFormat, "BloomDownsample"));
-            mip.DownParamsBuffer = m_Device->CreateBuffer(RHI::BufferDesc(
-                BLOOM_DOWNSAMPLE_PARAMS_SIZE, RHI::ResourceUsage::ConstantBuffer, true, "BloomDownsampleParamsUBO"));
-            mip.DownDescriptorSet = m_Device->CreateDescriptorSet(downLayout);
-            if (!mip.DownTexture || !mip.DownParamsBuffer || !mip.DownDescriptorSet)
+            if (!mip.DownTexture)
             {
                 NORVES_LOG_ERROR("BloomPass", "Failed to create bloom downsample level %zu", level);
                 ReleaseMipChain();
@@ -839,7 +841,6 @@ namespace NorvesLib::Core::Rendering
                 ReleaseMipChain();
                 return false;
             }
-            mip.DownDescriptorSet->BindConstantBuffer(1, mip.DownParamsBuffer, 0, BLOOM_DOWNSAMPLE_PARAMS_SIZE);
 
             // 最下段は拡大の元になるだけなので拡大結果を持たない
             if (level + 1 >= levelCount)
@@ -849,10 +850,7 @@ namespace NorvesLib::Core::Rendering
 
             mip.UpTexture = m_Device->CreateTexture(
                 RHI::TextureDesc::RenderTarget(mip.Width, mip.Height, m_Settings.OutputFormat, "BloomUpsample"));
-            mip.UpParamsBuffer = m_Device->CreateBuffer(RHI::BufferDesc(
-                BLOOM_UPSAMPLE_PARAMS_SIZE, RHI::ResourceUsage::ConstantBuffer, true, "BloomUpsampleParamsUBO"));
-            mip.UpDescriptorSet = m_Device->CreateDescriptorSet(upLayout);
-            if (!mip.UpTexture || !mip.UpParamsBuffer || !mip.UpDescriptorSet)
+            if (!mip.UpTexture)
             {
                 NORVES_LOG_ERROR("BloomPass", "Failed to create bloom upsample level %zu", level);
                 ReleaseMipChain();
@@ -871,7 +869,6 @@ namespace NorvesLib::Core::Rendering
                 ReleaseMipChain();
                 return false;
             }
-            mip.UpDescriptorSet->BindConstantBuffer(2, mip.UpParamsBuffer, 0, BLOOM_UPSAMPLE_PARAMS_SIZE);
         }
 
         m_MipLevels = std::move(levels);
@@ -892,58 +889,128 @@ namespace NorvesLib::Core::Rendering
         m_MipChainRequestedCount = 0;
     }
 
-    void BloomPass::EnqueueMipChain(ViewRenderContext &context, const RHI::TexturePtr& sceneColorPtr)
+    bool BloomPass::EnqueueMipChain(ViewRenderContext &context, const RHI::TexturePtr& sceneColorPtr)
     {
         const size_t levelCount = m_MipLevels.size();
+        const RHI::DescriptorSetDesc downLayout = MakeSamplerParamsLayout(1);
+        const RHI::DescriptorSetDesc upLayout = MakeSamplerParamsLayout(2);
 
+        // 段ごとの定数と記述子セットは、この Execute の分をフレームの持ち主から借りる
         // 縮小: SceneColor → 段0 → 段1 → …
         for (size_t level = 0; level < levelCount; ++level)
         {
-            BloomMipLevel &mip = m_MipLevels[level];
+            const BloomMipLevel &mip = m_MipLevels[level];
 
             GPUBloomDownsampleParams downParams = {};
             downParams.firstLevel = level == 0 ? 1.0f : 0.0f;
             downParams.threshold = m_Settings.Threshold;
             downParams.softKnee = m_Settings.SoftKnee;
-            mip.DownParamsBuffer->Update(&downParams, sizeof(GPUBloomDownsampleParams));
+
+            const RHI::DescriptorSetPtr downDescriptorSet =
+                BorrowDescriptorSet(context, m_DownsampleDescriptorSetLayout, downLayout);
+            if (!downDescriptorSet ||
+                !BindFrameConstants(context, *downDescriptorSet, 1, &downParams, BLOOM_DOWNSAMPLE_PARAMS_SIZE,
+                                    "BloomDownsampleParamsUBO.Unowned"))
+            {
+                return false;
+            }
 
             const RHI::TexturePtr &source = level == 0 ? sceneColorPtr : m_MipLevels[level - 1].DownTexture;
-            mip.DownDescriptorSet->BindTexture(0, source);
-            mip.DownDescriptorSet->BindSampler(0, m_SceneColorSampler);
-            mip.DownDescriptorSet->Update();
+            downDescriptorSet->BindTexture(0, source);
+            downDescriptorSet->BindSampler(0, m_SceneColorSampler);
+            downDescriptorSet->Update();
 
             context.EnqueueFullscreenPass(m_MipRenderPass,
                                           mip.DownFramebuffer,
                                           MakeMipViewport(mip.Width, mip.Height),
                                           MakeMipScissor(mip.Width, mip.Height),
                                           m_DownsamplePipeline,
-                                          mip.DownDescriptorSet);
+                                          downDescriptorSet);
         }
 
         // 拡大: 最下段から上へ、下の段をテントで広げてこの段の縮小結果へ加える
         for (size_t level = levelCount - 1; level-- > 0;)
         {
-            BloomMipLevel &mip = m_MipLevels[level];
+            const BloomMipLevel &mip = m_MipLevels[level];
             const BloomMipLevel &lower = m_MipLevels[level + 1];
 
             GPUBloomUpsampleParams upParams = {};
             upParams.radius = m_Settings.Radius;
-            mip.UpParamsBuffer->Update(&upParams, sizeof(GPUBloomUpsampleParams));
+
+            const RHI::DescriptorSetPtr upDescriptorSet =
+                BorrowDescriptorSet(context, m_UpsampleDescriptorSetLayout, upLayout);
+            if (!upDescriptorSet ||
+                !BindFrameConstants(context, *upDescriptorSet, 2, &upParams, BLOOM_UPSAMPLE_PARAMS_SIZE,
+                                    "BloomUpsampleParamsUBO.Unowned"))
+            {
+                return false;
+            }
 
             const RHI::TexturePtr &lowerTexture = lower.UpTexture ? lower.UpTexture : lower.DownTexture;
-            mip.UpDescriptorSet->BindTexture(0, lowerTexture);
-            mip.UpDescriptorSet->BindSampler(0, m_SceneColorSampler);
-            mip.UpDescriptorSet->BindTexture(1, mip.DownTexture);
-            mip.UpDescriptorSet->BindSampler(1, m_SceneColorSampler);
-            mip.UpDescriptorSet->Update();
+            upDescriptorSet->BindTexture(0, lowerTexture);
+            upDescriptorSet->BindSampler(0, m_SceneColorSampler);
+            upDescriptorSet->BindTexture(1, mip.DownTexture);
+            upDescriptorSet->BindSampler(1, m_SceneColorSampler);
+            upDescriptorSet->Update();
 
             context.EnqueueFullscreenPass(m_MipRenderPass,
                                           mip.UpFramebuffer,
                                           MakeMipViewport(mip.Width, mip.Height),
                                           MakeMipScissor(mip.Width, mip.Height),
                                           m_UpsamplePipeline,
-                                          mip.UpDescriptorSet);
+                                          upDescriptorSet);
         }
+        return true;
+    }
+
+    RHI::DescriptorSetPtr BloomPass::BorrowDescriptorSet(ViewRenderContext &context,
+                                                         const RHI::DescriptorSetLayoutPtr &layout,
+                                                         const RHI::DescriptorSetDesc &desc)
+    {
+        if (FrameResourceLane *frameResources = context.FrameResources)
+        {
+            return frameResources->AllocateDescriptorSet(layout).Set;
+        }
+        // 持ち主の無い文脈（RenderingCoordinator を通さない検査）: 使い回さないセットを作る。提出の完了を知る手段が
+        // 無いので、記録したコマンドが読み終える前に破棄されないようパスを手放すまで持つ
+        RHI::DescriptorSetPtr descriptorSet = m_Device ? m_Device->CreateDescriptorSet(desc) : RHI::DescriptorSetPtr{};
+        if (descriptorSet)
+        {
+            m_UnownedDescriptorSets.push_back(descriptorSet);
+        }
+        return descriptorSet;
+    }
+
+    bool BloomPass::BindFrameConstants(ViewRenderContext &context,
+                                       RHI::IDescriptorSet &set,
+                                       uint32_t binding,
+                                       const void *data,
+                                       uint32_t size,
+                                       const char *unownedDebugName)
+    {
+        if (FrameResourceLane *frameResources = context.FrameResources)
+        {
+            const FrameUploadAllocation allocation =
+                frameResources->AllocateUploadData(data, size, FrameUploadUsage::Constants);
+            if (!allocation.IsValid())
+            {
+                return false;
+            }
+            set.BindConstantBuffer(binding, allocation.Buffer, allocation.GetOffset32(), allocation.GetSize32());
+            return true;
+        }
+        // 持ち主の無い文脈: 使い回さない専用のバッファを作り、パスを手放すまで持つ（BorrowDescriptorSet と同じ理由）
+        RHI::BufferPtr buffer = m_Device ? m_Device->CreateBuffer(RHI::BufferDesc(
+                                               size, RHI::ResourceUsage::ConstantBuffer, true, unownedDebugName))
+                                         : RHI::BufferPtr{};
+        if (!buffer)
+        {
+            return false;
+        }
+        buffer->Update(data, size);
+        set.BindConstantBuffer(binding, buffer, 0, size);
+        m_UnownedBuffers.push_back(std::move(buffer));
+        return true;
     }
 
     bool BloomPass::EnqueueEmptyNativePass(ViewRenderContext &context) const

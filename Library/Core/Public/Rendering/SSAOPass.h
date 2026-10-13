@@ -2,6 +2,8 @@
 
 #include "Rendering/IViewPass.h"
 #include "Rendering/RenderGraph/IRenderGraphPass.h"
+#include "Container/Containers.h"
+#include "RHI/IDescriptorSet.h"
 #include "RHI/RHITypes.h"
 
 namespace NorvesLib::Core::Rendering
@@ -131,6 +133,17 @@ namespace NorvesLib::Core::Rendering
                                         const RHI::TexturePtr &normalTexture,
                                         bool bRegisterLegacyBridge);
         bool TryEnqueueNativeTransitionPasses(ViewRenderContext &context) const;
+        /** @brief 記述子セットを借りる（持ち主の無い文脈では使い回さないセットを作り、パスを手放すまで持つ） */
+        RHI::DescriptorSetPtr BorrowDescriptorSet(ViewRenderContext &context,
+                                                  const RHI::DescriptorSetLayoutPtr &layout,
+                                                  const RHI::DescriptorSetDesc &desc);
+        /** @brief 定数を借りて data を書き、set の binding へ結ぶ（持ち主の無い文脈は BorrowDescriptorSet と同じ扱い） */
+        bool BindFrameConstants(ViewRenderContext &context,
+                                RHI::IDescriptorSet &set,
+                                uint32_t binding,
+                                const void *data,
+                                uint32_t size,
+                                const char *unownedDebugName);
 
         // 設定
         SSAOSettings m_Settings;
@@ -151,16 +164,20 @@ namespace NorvesLib::Core::Rendering
         RHI::PipelinePtr m_SSAOPipeline;
         RHI::ShaderPtr m_SSAOVertexShader;
         RHI::ShaderPtr m_SSAOFragmentShader;
-        RHI::BufferPtr m_SSAOParamsBuffer;
-        RHI::DescriptorSetPtr m_SSAODescriptorSet;
+        // 共有の記述子セットのレイアウト（定数と記述子セットは Execute ごとにフレームの持ち主から借りる）
+        RHI::DescriptorSetLayoutPtr m_SSAODescriptorSetLayout;
 
         // ブラーパス
         RHI::RenderPassPtr m_BlurRenderPass;
         RHI::FramebufferPtr m_BlurFramebuffer;
         RHI::PipelinePtr m_BlurPipeline;
         RHI::ShaderPtr m_BlurFragmentShader;
-        RHI::BufferPtr m_BlurParamsBuffer;
-        RHI::DescriptorSetPtr m_BlurDescriptorSet;
+        RHI::DescriptorSetLayoutPtr m_BlurDescriptorSetLayout;
+
+        // 持ち主の無い文脈（RenderingCoordinator を通さない検査）で作った使い回さない定数と記述子セット。
+        // 提出の完了を知る手段が無いので、パスを手放すまで持つ
+        Container::VariableArray<RHI::BufferPtr> m_UnownedBuffers;
+        Container::VariableArray<RHI::DescriptorSetPtr> m_UnownedDescriptorSets;
 
         // サンプラー（シェーダーは texelFetch で読むが、結合サンプラーの記述子に要る）
         RHI::SamplerPtr m_LinearClampSampler;

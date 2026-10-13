@@ -6,6 +6,8 @@
 #include "Rendering/RenderGraph/IRenderGraphPass.h"
 #include "Rendering/SceneProxy.h"
 #include "Rendering/TemporalAA.h"
+#include "Container/Containers.h"
+#include "RHI/IDescriptorSet.h"
 #include "RHI/RHITypes.h"
 
 #include <cstdint>
@@ -105,11 +107,15 @@ namespace NorvesLib::Core::Rendering
         RHI::ShaderPtr m_VertexShader;
         RHI::ShaderPtr m_ResolveShader;
         RHI::ShaderPtr m_CopyShader;
-        RHI::BufferPtr m_ParamsBuffer;
         RHI::SamplerPtr m_PointSampler;
         RHI::SamplerPtr m_LinearSampler;
-        RHI::DescriptorSetPtr m_ResolveDescriptorSet;
-        RHI::DescriptorSetPtr m_CopyDescriptorSet;
+        // 共有の記述子セットのレイアウト（定数と記述子セットは Execute ごとにフレームの持ち主から借りる）
+        RHI::DescriptorSetLayoutPtr m_ResolveDescriptorSetLayout;
+        RHI::DescriptorSetLayoutPtr m_CopyDescriptorSetLayout;
+        // 持ち主の無い文脈（RenderingCoordinator を通さない検査）で作った使い回さない定数と記述子セット。
+        // 提出の完了を知る手段が無いので、パスを手放すまで持つ
+        Container::VariableArray<RHI::BufferPtr> m_UnownedBuffers;
+        Container::VariableArray<RHI::DescriptorSetPtr> m_UnownedDescriptorSets;
 
         // 履歴の2枚を交互に書く（書いた方が次のフレームの読む方になる）。
         RHI::TexturePtr m_HistoryTextures[2];

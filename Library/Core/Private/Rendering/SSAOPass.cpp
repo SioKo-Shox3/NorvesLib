@@ -1,4 +1,5 @@
 ﻿#include "Rendering/SSAOPass.h"
+#include "Rendering/FrameResourceOwner.h"
 #include "Rendering/GBufferPass.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Rendering/SharedResourceRegistry.h"
@@ -172,20 +173,12 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
-        // パラメータUBO
+        // 記述子セットのレイアウト（同じ形のパスと共有する 1 つをデバイスから引く。セットと定数は Execute ごとに借りる）
+        m_SSAODescriptorSetLayout = m_Device->GetOrCreateDescriptorSetLayout(CreateSSAODescriptorSetDesc());
+        m_BlurDescriptorSetLayout = m_Device->GetOrCreateDescriptorSetLayout(CreateSSAOBlurDescriptorSetDesc());
+        if (!m_SSAODescriptorSetLayout || !m_BlurDescriptorSetLayout)
         {
-            RHI::BufferDesc desc(SSAO_PARAMS_SIZE, RHI::ResourceUsage::ConstantBuffer, true, "SSAOParamsUBO");
-            m_SSAOParamsBuffer = m_Device->CreateBuffer(desc);
-        }
-        // 雑音除去パラメータUBO
-        {
-            RHI::BufferDesc desc(BLUR_PARAMS_SIZE, RHI::ResourceUsage::ConstantBuffer, true, "SSAOBlurParamsUBO");
-            m_BlurParamsBuffer = m_Device->CreateBuffer(desc);
-        }
-
-        if (!m_SSAOParamsBuffer || !m_BlurParamsBuffer)
-        {
-            NORVES_LOG_ERROR("SSAOPass", "Failed to create UBO buffers");
+            NORVES_LOG_ERROR("SSAOPass", "記述子セットのレイアウトを作れませんでした");
             return false;
         }
 
@@ -217,14 +210,14 @@ namespace NorvesLib::Core::Rendering
         m_SSAOPipeline.reset();
         m_SSAOVertexShader.reset();
         m_SSAOFragmentShader.reset();
-        m_SSAOParamsBuffer.reset();
-        m_SSAODescriptorSet.reset();
+        m_SSAODescriptorSetLayout.reset();
         m_BlurRenderPass.reset();
         m_BlurFramebuffer.reset();
         m_BlurPipeline.reset();
         m_BlurFragmentShader.reset();
-        m_BlurParamsBuffer.reset();
-        m_BlurDescriptorSet.reset();
+        m_BlurDescriptorSetLayout.reset();
+        m_UnownedDescriptorSets.clear();
+        m_UnownedBuffers.clear();
         m_LinearClampSampler.reset();
         m_Device = nullptr;
         m_CurrentWidth = 0;
@@ -611,18 +604,6 @@ namespace NorvesLib::Core::Rendering
         }
 
         RHI::DescriptorSetDesc ssaoDsDesc = CreateSSAODescriptorSetDesc();
-        if (!m_SSAODescriptorSet)
-        {
-            m_SSAODescriptorSet = m_Device->CreateDescriptorSet(ssaoDsDesc);
-            if (!m_SSAODescriptorSet)
-            {
-                NORVES_LOG_ERROR("SSAOPass", "Failed to create SSAO descriptor set");
-                return false;
-            }
-
-            m_SSAODescriptorSet->BindConstantBuffer(2, m_SSAOParamsBuffer, 0, SSAO_PARAMS_SIZE);
-        }
-
         if (m_SSAOPipeline)
         {
             return true;
@@ -746,18 +727,6 @@ namespace NorvesLib::Core::Rendering
         }
 
         RHI::DescriptorSetDesc blurDsDesc = CreateSSAOBlurDescriptorSetDesc();
-        if (!m_BlurDescriptorSet)
-        {
-            m_BlurDescriptorSet = m_Device->CreateDescriptorSet(blurDsDesc);
-            if (!m_BlurDescriptorSet)
-            {
-                NORVES_LOG_ERROR("SSAOPass", "Failed to create SSAO blur descriptor set");
-                return false;
-            }
-
-            m_BlurDescriptorSet->BindConstantBuffer(2, m_BlurParamsBuffer, 0, BLUR_PARAMS_SIZE);
-        }
-
         if (m_BlurPipeline)
         {
             return true;
@@ -801,8 +770,8 @@ namespace NorvesLib::Core::Rendering
         if (!context.CommandList ||
             !m_SSAOPipeline ||
             !m_BlurPipeline ||
-            !m_SSAODescriptorSet ||
-            !m_BlurDescriptorSet ||
+            !m_SSAODescriptorSetLayout ||
+            !m_BlurDescriptorSetLayout ||
             m_CurrentWidth == 0 ||
             m_CurrentHeight == 0)
         {
@@ -859,39 +828,52 @@ namespace NorvesLib::Core::Rendering
                                         ? m_Settings.Intensity
                                         : 1.0f;
 
-        m_SSAOParamsBuffer->Update(&ssaoParams, SSAO_PARAMS_SIZE);
+        blurParams.texelSize[0] = 1.0f / static_cast<float>(m_CurrentWidth);
+        blurParams.texelSize[1] = 1.0f / static_cast<float>(m_CurrentHeight);
+        blurParams.texelSize[2] = 0.0f;
+        blurParams.texelSize[3] = 0.0f;
 
-        m_SSAODescriptorSet->BindTexture(0, depthTexture);
-        m_SSAODescriptorSet->BindSampler(0, m_LinearClampSampler);
-        m_SSAODescriptorSet->BindTexture(1, normalTexture);
-        m_SSAODescriptorSet->BindSampler(1, m_LinearClampSampler);
-        m_SSAODescriptorSet->Update();
+        // SSAO と雑音除去の定数と記述子セットは、この Execute の分をフレームの持ち主から借りる
+        const RHI::DescriptorSetPtr ssaoDescriptorSet =
+            BorrowDescriptorSet(context, m_SSAODescriptorSetLayout, CreateSSAODescriptorSetDesc());
+        const RHI::DescriptorSetPtr blurDescriptorSet =
+            BorrowDescriptorSet(context, m_BlurDescriptorSetLayout, CreateSSAOBlurDescriptorSetDesc());
+        if (!ssaoDescriptorSet || !blurDescriptorSet ||
+            !BindFrameConstants(context, *ssaoDescriptorSet, 2, &ssaoParams, SSAO_PARAMS_SIZE,
+                                "SSAOParamsUBO.Unowned") ||
+            !BindFrameConstants(context, *blurDescriptorSet, 2, &blurParams, BLUR_PARAMS_SIZE,
+                                "SSAOBlurParamsUBO.Unowned"))
+        {
+            NORVES_LOG_ERROR("SSAOPass", "定数か記述子セットを借りられないため、このフレームは SSAO を描きません");
+            TryEnqueueNativeTransitionPasses(context);
+            return;
+        }
+
+        ssaoDescriptorSet->BindTexture(0, depthTexture);
+        ssaoDescriptorSet->BindSampler(0, m_LinearClampSampler);
+        ssaoDescriptorSet->BindTexture(1, normalTexture);
+        ssaoDescriptorSet->BindSampler(1, m_LinearClampSampler);
+        ssaoDescriptorSet->Update();
 
         context.EnqueueFullscreenPass(m_SSAORenderPass,
                                       m_SSAOFramebuffer,
                                       viewport,
                                       scissor,
                                       m_SSAOPipeline,
-                                      m_SSAODescriptorSet);
+                                      ssaoDescriptorSet);
 
-        blurParams.texelSize[0] = 1.0f / static_cast<float>(m_CurrentWidth);
-        blurParams.texelSize[1] = 1.0f / static_cast<float>(m_CurrentHeight);
-        blurParams.texelSize[2] = 0.0f;
-        blurParams.texelSize[3] = 0.0f;
-        m_BlurParamsBuffer->Update(&blurParams, BLUR_PARAMS_SIZE);
-
-        m_BlurDescriptorSet->BindTexture(0, m_SSAORawTexture);
-        m_BlurDescriptorSet->BindSampler(0, m_LinearClampSampler);
-        m_BlurDescriptorSet->BindTexture(1, depthTexture);
-        m_BlurDescriptorSet->BindSampler(1, m_LinearClampSampler);
-        m_BlurDescriptorSet->Update();
+        blurDescriptorSet->BindTexture(0, m_SSAORawTexture);
+        blurDescriptorSet->BindSampler(0, m_LinearClampSampler);
+        blurDescriptorSet->BindTexture(1, depthTexture);
+        blurDescriptorSet->BindSampler(1, m_LinearClampSampler);
+        blurDescriptorSet->Update();
 
         context.EnqueueFullscreenPass(m_BlurRenderPass,
                                       m_BlurFramebuffer,
                                       viewport,
                                       scissor,
                                       m_BlurPipeline,
-                                      m_BlurDescriptorSet);
+                                      blurDescriptorSet);
 
         if (bRegisterLegacyBridge && context.SharedResources)
         {
@@ -939,14 +921,64 @@ namespace NorvesLib::Core::Rendering
         return bEnqueued;
     }
 
+    RHI::DescriptorSetPtr SSAOPass::BorrowDescriptorSet(ViewRenderContext &context,
+                                                        const RHI::DescriptorSetLayoutPtr &layout,
+                                                        const RHI::DescriptorSetDesc &desc)
+    {
+        if (FrameResourceLane *frameResources = context.FrameResources)
+        {
+            return frameResources->AllocateDescriptorSet(layout).Set;
+        }
+        // 持ち主の無い文脈（RenderingCoordinator を通さない検査）: 使い回さないセットを作る。提出の完了を知る手段が
+        // 無いので、記録したコマンドが読み終える前に破棄されないようパスを手放すまで持つ
+        RHI::DescriptorSetPtr descriptorSet = m_Device ? m_Device->CreateDescriptorSet(desc) : RHI::DescriptorSetPtr{};
+        if (descriptorSet)
+        {
+            m_UnownedDescriptorSets.push_back(descriptorSet);
+        }
+        return descriptorSet;
+    }
+
+    bool SSAOPass::BindFrameConstants(ViewRenderContext &context,
+                                      RHI::IDescriptorSet &set,
+                                      uint32_t binding,
+                                      const void *data,
+                                      uint32_t size,
+                                      const char *unownedDebugName)
+    {
+        if (FrameResourceLane *frameResources = context.FrameResources)
+        {
+            const FrameUploadAllocation allocation =
+                frameResources->AllocateUploadData(data, size, FrameUploadUsage::Constants);
+            if (!allocation.IsValid())
+            {
+                return false;
+            }
+            set.BindConstantBuffer(binding, allocation.Buffer, allocation.GetOffset32(), allocation.GetSize32());
+            return true;
+        }
+        // 持ち主の無い文脈: 使い回さない専用のバッファを作り、パスを手放すまで持つ（BorrowDescriptorSet と同じ理由）
+        RHI::BufferPtr buffer = m_Device ? m_Device->CreateBuffer(RHI::BufferDesc(
+                                               size, RHI::ResourceUsage::ConstantBuffer, true, unownedDebugName))
+                                         : RHI::BufferPtr{};
+        if (!buffer)
+        {
+            return false;
+        }
+        buffer->Update(data, size);
+        set.BindConstantBuffer(binding, buffer, 0, size);
+        m_UnownedBuffers.push_back(std::move(buffer));
+        return true;
+    }
+
     bool SSAOPass::DeclaresAllLayoutChanges() const
     {
         // GBuffer をグラフから読めるフレーム（SharedResources の旧経路を読み書きしない）で、パイプラインと
-        // ディスクリプタセットが揃っているときだけ。それ以外は Serial に残す。
+        // ディスクリプタセットのレイアウトが揃っているときだけ。それ以外は Serial に残す。
         return IsInitialized() && !m_bLegacyInputFallbackActive && m_GBufferDepthHandle.IsValid() &&
                m_GBufferNormalHandle.IsValid() && m_SSAORawHandle.IsValid() && m_SSAOBlurredHandle.IsValid() &&
-               m_SSAORenderPass && m_SSAOFramebuffer && m_SSAOPipeline && m_SSAODescriptorSet && m_BlurRenderPass &&
-               m_BlurFramebuffer && m_BlurPipeline && m_BlurDescriptorSet;
+               m_SSAORenderPass && m_SSAOFramebuffer && m_SSAOPipeline && m_SSAODescriptorSetLayout &&
+               m_BlurRenderPass && m_BlurFramebuffer && m_BlurPipeline && m_BlurDescriptorSetLayout;
     }
 
     RGRecordPolicy SSAOPass::GetRecordPolicy() const

@@ -1019,7 +1019,7 @@
 - notes: 2026-10-12 親が SCN-FIX-RENDER-TESTS-FAILING を 2 つに分けた。作業ツリーでほかのコミットへ切り替えない（`git checkout <rev>`・`--detach`・`git switch`・`git bisect`・`git stash`・ファイルを古い版で上書きする `git checkout <rev> -- <path>` を使わない。2026-10-12 の反復 66 は古いコミットへ切り替えたまま壁時計で止められ、次の反復が古い TASKS.md で動いた）。古い版は `git show <rev>:<path>`・`git log -p`・`git diff <a> <b>` で読み、ビルドして比べることはしない。
 
 ## SCN-ECS-FIF-POST-A: TAA・Bloom・ToneMapping・SSAO・MotionBlur のフレームごとのデータを借りる形へ移す
-- status: todo
+- status: done
 - done-when: 次のパスは、メンバの定数バッファ 1 つと記述子セット 1 組を Execute のたびに `Update` で書き換える。毎フレーム書く定数と記述子をフレームの持ち主から借りる形へ移す: `TemporalAAPass`（`m_ParamsBuffer`・`m_ResolveDescriptorSet`・`m_CopyDescriptorSet`）、`BloomPass`（`m_ParamsBuffer`・`m_BloomDescriptorSet`・ミップごとの Down/Up の定数と記述子）、`ToneMappingPass`（`m_ParamsBuffer`・`m_ToneMappingDescriptorSet`）、`SSAOPass`（SSAO と Blur の定数と記述子）、`MotionBlurPass`（`m_ParamsBuffer` と 3 つの記述子）。 パスのコードから飛行中の番号・フレームごとの組（`FrameUseRing` を含む）の扱いを持たない。初期化で 1 回だけ書くもの（LUT・レンズの汚れ・ミップごとの作成時の定数）と GPU だけが使う資源（TAA の履歴・HiZ のピラミッド）はメンバのまま。対象のパスの `FRAME_RESOURCE_UNPROTECTED` が 0。起動画面の比較が pass。起動画面で無効のパスは、ビルドとコードの照合で確かめて PROGRESS に書く（撮影を増やさない）。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-ECS-FIF-POST-A`

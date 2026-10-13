@@ -4,6 +4,8 @@
 #include "Rendering/IViewPass.h"
 #include "Rendering/RenderGraph/IRenderGraphPass.h"
 #include "Rendering/SceneProxy.h"
+#include "Container/Containers.h"
+#include "RHI/IDescriptorSet.h"
 #include "RHI/RHITypes.h"
 
 #include <algorithm>
@@ -98,11 +100,15 @@ namespace NorvesLib::Core::Rendering
         RHI::ShaderPtr m_TileMaxShader;
         RHI::ShaderPtr m_GatherShader;
         RHI::ShaderPtr m_ResolveShader;
-        RHI::BufferPtr m_ParamsBuffer;
         RHI::SamplerPtr m_PointSampler;
-        RHI::DescriptorSetPtr m_TileMaxDescriptorSet;
-        RHI::DescriptorSetPtr m_GatherDescriptorSet;
-        RHI::DescriptorSetPtr m_ResolveDescriptorSet;
+        // 共有の記述子セットのレイアウト（定数と記述子セットは Apply ごとにフレームの持ち主から借りる）
+        RHI::DescriptorSetLayoutPtr m_TileMaxDescriptorSetLayout;
+        RHI::DescriptorSetLayoutPtr m_GatherDescriptorSetLayout;
+        RHI::DescriptorSetLayoutPtr m_ResolveDescriptorSetLayout;
+        // 持ち主の無い文脈（RenderingCoordinator を通さない検査）で作った使い回さない定数と記述子セット。
+        // 提出の完了を知る手段が無いので、パスを手放すまで持つ
+        Container::VariableArray<RHI::BufferPtr> m_UnownedBuffers;
+        Container::VariableArray<RHI::DescriptorSetPtr> m_UnownedDescriptorSets;
 
         RHI::TexturePtr m_TileMaxTexture;
         RHI::RenderPassPtr m_TileMaxRenderPass;

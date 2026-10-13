@@ -2,6 +2,7 @@
 
 #include "IViewPass.h"
 #include "Rendering/RenderGraph/IRenderGraphPass.h"
+#include "RHI/IDescriptorSet.h"
 #include "RHI/RHITypes.h"
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
@@ -171,25 +172,32 @@ namespace NorvesLib::Core::Rendering
         uint32_t GetActiveMipCount() const { return static_cast<uint32_t>(m_MipLevels.size()); }
 
     private:
-        /** @brief 縮小・拡大の1段分の資源 */
+        /** @brief 縮小・拡大の1段分の資源（定数と記述子セットは毎フレーム借りるので持たない） */
         struct BloomMipLevel
         {
             uint32_t Width = 0;
             uint32_t Height = 0;
             RHI::TexturePtr DownTexture;
             RHI::FramebufferPtr DownFramebuffer;
-            RHI::DescriptorSetPtr DownDescriptorSet;
-            RHI::BufferPtr DownParamsBuffer;
             // 拡大の結果（最下段では作らない）
             RHI::TexturePtr UpTexture;
             RHI::FramebufferPtr UpFramebuffer;
-            RHI::DescriptorSetPtr UpDescriptorSet;
-            RHI::BufferPtr UpParamsBuffer;
         };
 
         bool EnsureMipChain(uint32_t width, uint32_t height);
         void ReleaseMipChain();
-        void EnqueueMipChain(ViewRenderContext &context, const RHI::TexturePtr& sceneColorPtr);
+        bool EnqueueMipChain(ViewRenderContext &context, const RHI::TexturePtr& sceneColorPtr);
+        /** @brief 記述子セットを借りる（持ち主の無い文脈では使い回さないセットを作り、パスを手放すまで持つ） */
+        RHI::DescriptorSetPtr BorrowDescriptorSet(ViewRenderContext &context,
+                                                  const RHI::DescriptorSetLayoutPtr &layout,
+                                                  const RHI::DescriptorSetDesc &desc);
+        /** @brief 定数を借りて data を書き、set の binding へ結ぶ（持ち主の無い文脈は BorrowDescriptorSet と同じ扱い） */
+        bool BindFrameConstants(ViewRenderContext &context,
+                                RHI::IDescriptorSet &set,
+                                uint32_t binding,
+                                const void *data,
+                                uint32_t size,
+                                const char *unownedDebugName);
         bool PrepareResources(uint32_t width,
                               uint32_t height,
                               const RHI::TexturePtr& outputTexture,
@@ -213,9 +221,15 @@ namespace NorvesLib::Core::Rendering
         RHI::PipelinePtr m_BloomPipeline;
         RHI::ShaderPtr m_BloomVertexShader;
         RHI::ShaderPtr m_BloomFragmentShader;
-        RHI::BufferPtr m_ParamsBuffer;
-        RHI::DescriptorSetPtr m_BloomDescriptorSet;
         RHI::SamplerPtr m_SceneColorSampler;
+        // 共有の記述子セットのレイアウト（合成・縮小・拡大。定数と記述子セットは毎フレーム、フレームの持ち主から借りる）
+        RHI::DescriptorSetLayoutPtr m_CompositeDescriptorSetLayout;
+        RHI::DescriptorSetLayoutPtr m_DownsampleDescriptorSetLayout;
+        RHI::DescriptorSetLayoutPtr m_UpsampleDescriptorSetLayout;
+        // 持ち主の無い文脈（RenderingCoordinator を通さない検査）で作った使い回さない定数と記述子セット。
+        // 提出の完了を知る手段が無いので、パスを手放すまで持つ
+        VariableArray<RHI::BufferPtr> m_UnownedBuffers;
+        VariableArray<RHI::DescriptorSetPtr> m_UnownedDescriptorSets;
 
         // レンズダートの模様（Initialize で手続きで作る。外部の画像は使わない）
         RHI::TexturePtr m_LensDirtTexture;

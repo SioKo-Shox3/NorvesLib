@@ -2,6 +2,7 @@
 
 #include "IViewPass.h"
 #include "Rendering/RenderGraph/IRenderGraphPass.h"
+#include "RHI/IDescriptorSet.h"
 #include "RHI/RHITypes.h"
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
@@ -275,9 +276,13 @@ namespace NorvesLib::Core::Rendering
         RHI::PipelinePtr m_ToneMappingPipeline;
         RHI::ShaderPtr m_ToneMappingVertexShader;
         RHI::ShaderPtr m_ToneMappingFragmentShader;
-        RHI::BufferPtr m_ParamsBuffer;
-        RHI::DescriptorSetPtr m_ToneMappingDescriptorSet;
         RHI::SamplerPtr m_SceneColorSampler;
+        // 共有の記述子セットのレイアウト（定数と記述子セットは Execute ごとにフレームの持ち主から借りる）
+        RHI::DescriptorSetLayoutPtr m_ToneMappingDescriptorSetLayout;
+        // 持ち主の無い文脈（RenderingCoordinator を通さない検査）で作った使い回さない定数と記述子セット。
+        // 提出の完了を知る手段が無いので、パスを手放すまで持つ
+        Container::VariableArray<RHI::BufferPtr> m_UnownedBuffers;
+        Container::VariableArray<RHI::DescriptorSetPtr> m_UnownedDescriptorSets;
 
         // 表示変換の3D LUT（binding 2）。LUT演算子以外では 1×1×1 の代替を結ぶ
         RHI::TexturePtr m_ColorLutTexture;
