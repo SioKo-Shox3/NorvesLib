@@ -1117,7 +1117,7 @@
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Build -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views overview -GpuTimingFrames 300 -GameArgs banana-count=10000 -OutDir .harness/runs/scene-capture/SCN-ECS-MEASURE-FIF/bananas`
 - verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-ECS-MEASURE-FIF/bananas --timing --min-frames 300 --require-scope RT.WaitFrameFence`
 - paths: Docs/RenderingValidation/SceneLauncherAcceptance.md, TASKS.md, PROGRESS.md
-- notes: 2026-10-12 親が足した。計測だけ。 2026-10-12 親: 計測の見直し（ユーザーの指摘「節目に計測を入れても意味があるのかを考えるべき」。計測ごとに、問い・結果で変わる判断・測らずに分からないかの 3 点を書き、書けないものは置かない。Sol の批評を反映）。借りた数・時間の表と照明の記録の時間は、判断を変えないので外した。 2026-10-14 反復 6: バナナは測れて、毎フレームの同期の提出（`GenerateSunDiskTexture`）が重なりを消していると分かった（SCN-ECS-FIX-SUN-DISK-UPLOAD を足した）。mega-stress 5 万個は 2 フレームで VRAM が溢れて撮れない（SCN-ECS-FIX-STRESS-VRAM-FIF2 を足した）。2 つを直した後に両方を撮り直す（結果と表は PROGRESS の反復 6）。
+- notes: 2026-10-12 親が足した。計測だけ。 2026-10-12 親: 計測の見直し（ユーザーの指摘「節目に計測を入れても意味があるのかを考えるべき」。計測ごとに、問い・結果で変わる判断・測らずに分からないかの 3 点を書き、書けないものは置かない。Sol の批評を反映）。借りた数・時間の表と照明の記録の時間は、判断を変えないので外した。 2026-10-14 反復 6: バナナは測れて、毎フレームの同期の提出（`GenerateSunDiskTexture`）が重なりを消していると分かった（SCN-ECS-FIX-SUN-DISK-UPLOAD を足した）。mega-stress 5 万個は 2 フレームで VRAM が溢れて撮れない（SCN-ECS-FIX-STRESS-VRAM-FIF2 を足した）。2 つを直した後に両方を撮り直す（結果と表は PROGRESS の反復 6）。 2026-10-14 親: 案 A。反復 6 の診断で、毎フレームの `SkyAtmospherePass::GenerateSunDiskTexture` の同期の提出が前のフレームの GPU を待ち（`RHI.ImmediateSubmitWait` median 8.1 ms）、2 フレームでは mega-stress 5万個が VRAM の確保で止まると分かった。直前の 2 つの FIX の後にこの項目をやり直し、ほかに重なりを妨げる待ちが残っていないかを確かめる。
 
 ## SCN-ECS-RT-PARALLEL-WIDEN: 記録の重いパスを並列に記録できる形にし、並列の記録を既定にする
 - status: todo
