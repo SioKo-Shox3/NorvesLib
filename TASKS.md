@@ -1079,7 +1079,7 @@
 - notes: 2026-10-12 SCN-ECS-FIF-AUDIT（反復 43）で足した。ログの出し方は `FRAME_PACING`（SCN-ECS-FIX-GT-PACING）にそろえる（ApplicationProcessor が撮影の終わりに出す。RenderWorld から読む口が要れば足す）。危険地帯（RHI/Vulkan）。 2026-10-12 親: 計測の見直し（ユーザーの指摘「節目に計測を入れても意味があるのかを考えるべき」。計測ごとに、問い・結果で変わる判断・測らずに分からないかの 3 点を書き、書けないものは置かない。Sol の批評を反映）。300 フレームの性能の撮影は外した。
 
 ## SCN-ECS-FIF-SWITCH: 2 フレームを重ねて描く
-- status: todo
+- status: done
 - done-when: SCN-ECS-FIF-AUDIT の表の全行が直った後に行う。`MAX_FRAMES_IN_FLIGHT` を 2 にする（開発ビルドは `--frames-in-flight=1` で 1 に戻せる。Release は 2）。Debug の起動画面（2）で検証レイヤーのエラーが 0、RelWithDebInfo の起動画面の比較が pass、mega-stress と バナナ と起動画面のシーンの周回が pass（シーンの出入りで資源を解放する前に、両方のスロットの完了を待つ）。効果はこの項目では測らず、節目の計測（SCN-ECS-MEASURE-FIF）で確かめる。 合わせて: 起動画面と周回で `FRAME_RESOURCE_UNPROTECTED_SUMMARY count=0` と `FRAME_RESOURCE_STALE` が 0、落ち着いた後の作成数（`RHI_CREATE` の行）が 0。起動画面だけの 0 件は通っていない機能の安全を示さないので、`--render-parallel-record=on,frame-arena-initial-kb=4`（並列の記録と、借りる領域のページを足す道）の起動画面 1 本でも 0 件で、ページを足した回数が 1 以上であることを確かめる。同じフレームの 2 回目の Execute・中止・終了時の読み戻しの吐き出しは、FRAME-OWNER・READBACK の試験の結果を PROGRESS に挙げる。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -OutDir .harness/runs/startup-capture/SCN-ECS-FIF-SWITCH-debug`

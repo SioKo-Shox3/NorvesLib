@@ -3640,7 +3640,7 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 ### SCN-ECS-FIF-SWITCH（2026-10-14、反復 4〜5・run 20261014-005646）
 
 - `VulkanSwapChain` の `MAX_FRAMES_IN_FLIGHT` を 2 にした。実際に使うスロットの数 `m_framesInFlight` を作成時に 1 回決め、同期オブジェクト・スロットの番号の回し方・`GetMaxFramesInFlight` はこの数を使う。開発ビルドだけ `--frames-in-flight=<1|2>`（Game が `NORVES_FRAMES_IN_FLIGHT` へ渡す）で 1 に戻せる。Release は常に 2。起動時に `FRAMES_IN_FLIGHT count=<n> max=2` を出す。
-- シーンの出入り: 各シーンの終わり（`MegaBananasRoutine`・`MegaStressRoutine`・`Rendering3DTestRoutine`）と ApplicationProcessor は資源を手放す前に `RenderWorld::WaitForRender`（RenderThread の待ちの後に `Device::WaitIdle`）を呼ぶので、両方のスロットの完了を待ってから解放する（変更は要らなかった）。
+- シーンの出入り: 各シーンの終わり（`MegaBananasRoutine`・`MegaStressRoutine` の `Leave` の先頭、`Rendering3DTestRoutine::Leave` の後始末の開始の前）と ApplicationProcessor の終了は、資源を手放す前に無条件で `RenderWorld::WaitForRender`（RenderThread の待ちの後に `Device::WaitIdle`）を呼ぶので、両方のスロットの完了を待ってから解放する。Rendering3DTest は反復 5 まで F11 の部品があるときだけ待っていたので、反復 7 で無条件の待ちを足した（下の追記）。
 - 一時の描画先のプール（`TransientResourcePool::EndFrame`）: 使った描画先を鍵ごとの並びの後ろへ足していたので、借りなかった物が前へ回り、同じ役目に返る texture がフレームごとにずれていた。2 フレームでは各スロットの 5 つの texture の巡回が 10 フレーム周期になり、framebuffer の鍵の手放し（8 フレーム）より長いため、Rendering3DTest（対話の起動）で LightingPass・ForwardPass の透明・VolumetricsPass・PresentationPass の overlay の framebuffer を毎フレーム 2〜4 個作り直していた（1 フレームでは周期 5 で手放しより短く、出ていなかった）。使った物を借りた順のまま先頭へ戻すようにし、同じ順に借りるフレームには同じ texture が返る。周回の `RHI_CREATE` の行は 818 → 26（各シーンへ入った直後だけ。1 フレームの周回と同じ形）。
 - 検証（`.harness/runs/20261014-005646/`）:
   - `verify-SCN-ECS-FIF-SWITCH-1.txt`: RelWithDebInfo の Game のビルド EXIT=0、error 0（警告 3 件は変更していない既存の行と libwebsockets の設定）。
@@ -3680,3 +3680,14 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `verify-SCN-ECS-MEASURE-FIF-4.txt`: `CHECK_CAPTURE_METRICS result=pass views=overview`、EXIT=0。
 - Next: SCN-ECS-FIX-STRESS-VRAM-FIF2 と SCN-ECS-FIX-SUN-DISK-UPLOAD を直した後に、この項目の両方の撮影をやり直して表を埋める（SCN-ECS-FIF-SYNC-SUBMIT-SCOPE の Notes の「直すかは MEASURE-FIF で見てから」はこの結果で決まった）。
 - Notes: 提出・完了の通し番号はトレースに出ていないので、呼び出し元の特定は `IMMEDIATE_SUBMIT` の描画フレームごとの数（毎フレーム 1 回はこの呼び出し元だけ）と、窓の RenderThread の `RHI.ImmediateSubmitWait` が各フレーム 1 回であることの突き合わせで行った。集計のスクリプトは作業用の一時のもので、リポジトリには入れていない。
+
+### SCN-ECS-FIF-SWITCH の評価の指摘への対応（2026-10-14、反復 7・run 20261014-005646）
+
+- `Rendering3DTestRoutine::Leave` は、後始末（`CleanupM9WorldAcceptance` 以降）と Leave 直後の `GameModeScope::Cleanup` の前に待つ箇所が F11 の部品の後始末の中にしか無く、通常の `rendering3dtest → launcher` では待たずに資源を手放していた。退出のログ（`CAMERA_COMPONENT_SMOKE stage=exit`）の後、後始末の開始の前に無条件の `WaitForRender()` を足した（F11 の分岐の中の待ちは残した。2 回目は待つものが無いので直ちに返る）。
+- 検証（`.harness/runs/20261014-005646/`。親の注記どおり、ビルドと起動画面の比較と周回だけ回した）:
+  - `verify-SCN-ECS-FIF-SWITCH-8.txt`: RelWithDebInfo の Game のビルド EXIT=0、error 0。
+  - `verify-SCN-ECS-FIF-SWITCH-9.txt`: 決定論の撮影を SCN-MEGA-BASE-RWDI と比較、mean_luminance_difference=0.0021・psnr_db=60.066・within_limits=True、result=pass、EXIT=0（反復 5 と同じ値）。ログは `FRAMES_IN_FLIGHT count=2`・`FRAME_RESOURCE_UNPROTECTED_SUMMARY count=0 frames=181`・`FRAME_RESOURCE_STALE` 0・ERROR 0。
+  - `verify-SCN-ECS-FIF-SWITCH-10.txt`（ログは `verify-SCN-ECS-FIF-SWITCH-10.Game.log`）: rendering3dtest・mega-bananas・mega-stress の 3 周 `SCENE_CYCLE_SMOKE_RUN result=pass`、EXIT=0。`FRAMES_IN_FLIGHT count=2`、`FRAME_RESOURCE_UNPROTECTED_SUMMARY count=0 frames=3121`、`FRAME_RESOURCE_STALE` 0・`FRAME_RESOURCE_OWNER_UNRETIRED` 0・ERROR 0、`3Dレンダリングテスト終了` 3 回。`RHI_CREATE` の行の並びは反復 5 の周回と同じ形（各シーンへ入った直後と Rendering3DTest の入りの後の 3 フレームの束だけ）。
+  - `verify-SCN-ECS-FIF-SWITCH-11.txt`: 撮影の `FRAME_RESOURCE_UNPROTECTED_SUMMARY count=0` の照合 EXIT=0。
+- Next: SCN-ECS-FIX-STRESS-VRAM-FIF2・SCN-ECS-FIX-SUN-DISK-UPLOAD → SCN-ECS-MEASURE-FIF の撮り直し。
+- Notes: `Rendering3DTestRoutine.cpp` は行末の混在を保った（numstat の 2 通りが 4/0 で一致）。

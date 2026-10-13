@@ -3972,6 +3972,10 @@ namespace Game::GameModes
             "CAMERA_COMPONENT_SMOKE stage=exit rendered=%llu",
             static_cast<unsigned long long>(finalRenderedFrameCount));
 
+        // 2 フレームを重ねて描くので、後始末と Leave 直後の Scope::Cleanup が資源を手放す前に、
+        // 両方のスロットで描画中のフレームを完了させる（F11 の部品の有無に関わらず待つ）。
+        ctx.EngineRef.GetRenderWorld().WaitForRender();
+
         // failed Enter と通常 Leave が同じ冪等cleanupを使い、借用登録・module service・
         // Scope外texture・M9 snapshot memberを先に閉じる。
         CleanupM9WorldAcceptance(ctx, data);
