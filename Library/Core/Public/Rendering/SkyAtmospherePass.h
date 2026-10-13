@@ -13,6 +13,8 @@ namespace NorvesLib::RHI
 
 namespace NorvesLib::Core::Rendering
 {
+    class FrameResourceLane;
+
     struct SkyAtmospherePassSettings
     {
         uint32_t TransmittanceWidth = 128;
@@ -75,11 +77,13 @@ namespace NorvesLib::Core::Rendering
         float ResolvePreExposure(const ViewRenderContext& context) const;
         bool EnsureResources();
         bool GenerateLutResources(const SkyAtmosphereParameters& parameters,
-                                  float preExposure);
+                                  float preExposure,
+                                  FrameResourceLane* frameResources);
         bool GenerateTransmittanceLut(const SkyAtmosphereModel& model);
         bool GenerateRadianceLut(const SkyAtmosphereModel& model);
         bool GenerateSunDiskTexture(const SkyAtmosphereParameters& parameters,
-                                    float preExposure);
+                                    float preExposure,
+                                    FrameResourceLane* frameResources);
         bool CreateTexture(RHI::TexturePtr& outTexture,
                            uint32_t width,
                            uint32_t height,
@@ -103,6 +107,16 @@ namespace NorvesLib::Core::Rendering
         bool m_bLutValid = false;
         float m_LastSunDiskPreExposedLuminance = 0.0f;
         bool m_bLastSunDiskSaturated = false;
+        // 太陽の円盤は事前露出でフレームごとに変わるので、フレームの持ち主から借りた領域に書き、
+        // グラフの記録の中でコピーする。借りた切れ端はこのフレームの Execute でだけ使う。
+        // texture へのコピーは参照の範囲を元のバッファの終わりまで取るので、借りた切れ端から GPU だけが使う
+        // 中継のバッファへ大きさどおりに写してから texture へ写す（同じページの後の切れ端を参照済みにしない）。
+        RHI::BufferPtr m_SunDiskStagingBuffer;
+        RHI::BufferPtr m_SunDiskUploadBuffer;
+        uint64_t m_SunDiskUploadOffset = 0;
+        bool m_bSunDiskCopyPending = false;
+        // 作った直後の texture は layout が未定義なので、最初の 1 回だけ同期の書き込みで読み取りの layout にする。
+        bool m_bSunDiskTextureInitialized = false;
         bool m_bSnapshotEnabled = false;
         bool m_bPrepared = false;
     };

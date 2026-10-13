@@ -1,9 +1,11 @@
 ﻿#include "Rendering/SkyAtmospherePass.h"
 
+#include "Rendering/FrameResourceOwner.h"
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
 #include "Rendering/ShaderManager.h"
 #include "Rendering/SkyAtmosphere.h"
 #include "Rendering/ViewRenderContext.h"
+#include "RHI/ICommandList.h"
 #include "RHI/IDevice.h"
 #include "RHI/ITexture.h"
 #include "Logging/LogMacros.h"
@@ -19,6 +21,8 @@ namespace NorvesLib::Core::Rendering
     {
         constexpr float kPi = 3.14159265358979323846f;
         constexpr float kFp16Max = 65504.0f;
+        // 太陽の円盤の 1×1 の R16G16B16A16_FLOAT の 1 画素の大きさ
+        constexpr uint64_t kSunDiskPixelBytes = 4u * sizeof(uint16_t);
 
         uint16_t FloatToHalfRne(float value)
         {
@@ -205,6 +209,11 @@ namespace NorvesLib::Core::Rendering
         m_bLutValid = false;
         m_LastSunDiskPreExposedLuminance = 0.0f;
         m_bLastSunDiskSaturated = false;
+        m_SunDiskStagingBuffer.reset();
+        m_SunDiskUploadBuffer.reset();
+        m_SunDiskUploadOffset = 0;
+        m_bSunDiskCopyPending = false;
+        m_bSunDiskTextureInitialized = false;
         m_bSnapshotEnabled = false;
         m_bPrepared = false;
         m_bInitialized = false;
@@ -268,15 +277,29 @@ namespace NorvesLib::Core::Rendering
 
     bool SkyAtmospherePass::EnsureResources()
     {
-        return CreateTexture(m_TransmittanceTexture,
-                             m_Settings.TransmittanceWidth,
-                             m_Settings.TransmittanceHeight,
-                             "SkyAtmosphere.Transmittance") &&
-               CreateTexture(m_RadianceTexture,
-                             m_Settings.RadianceWidth,
-                             m_Settings.RadianceHeight,
-                             "SkyAtmosphere.Radiance") &&
-               CreateTexture(m_SunDiskTexture, 1u, 1u, "SkyAtmosphere.SunDisk");
+        const RHI::ITexture* previousSunDisk = m_SunDiskTexture.get();
+        const bool bCreated = CreateTexture(m_TransmittanceTexture,
+                                            m_Settings.TransmittanceWidth,
+                                            m_Settings.TransmittanceHeight,
+                                            "SkyAtmosphere.Transmittance") &&
+                              CreateTexture(m_RadianceTexture,
+                                            m_Settings.RadianceWidth,
+                                            m_Settings.RadianceHeight,
+                                            "SkyAtmosphere.Radiance") &&
+                              CreateTexture(m_SunDiskTexture, 1u, 1u, "SkyAtmosphere.SunDisk");
+        if (m_SunDiskTexture.get() != previousSunDisk)
+        {
+            m_bSunDiskTextureInitialized = false;
+        }
+        if (bCreated && !m_SunDiskStagingBuffer)
+        {
+            m_SunDiskStagingBuffer = m_Device->CreateBuffer(RHI::BufferDesc(
+                kSunDiskPixelBytes,
+                RHI::ResourceUsage::TransferSrc | RHI::ResourceUsage::TransferDst,
+                false,
+                "SkyAtmosphere.SunDiskStaging"));
+        }
+        return bCreated && m_SunDiskStagingBuffer != nullptr;
     }
 
     bool SkyAtmospherePass::GenerateTransmittanceLut(const SkyAtmosphereModel& model)
@@ -363,8 +386,12 @@ namespace NorvesLib::Core::Rendering
 
     bool SkyAtmospherePass::GenerateSunDiskTexture(
         const SkyAtmosphereParameters& parameters,
-        float preExposure)
+        float preExposure,
+        FrameResourceLane* frameResources)
     {
+        m_SunDiskUploadBuffer.reset();
+        m_SunDiskUploadOffset = 0;
+        m_bSunDiskCopyPending = false;
         if (!m_SunDiskTexture)
         {
             return false;
@@ -386,7 +413,28 @@ namespace NorvesLib::Core::Rendering
             FloatToHalfRne(safeValue * std::clamp(transmittance.y, 0.0f, 1.0f)),
             FloatToHalfRne(safeValue * std::clamp(transmittance.z, 0.0f, 1.0f)),
             FloatToHalfRne(1.0f)};
-        m_SunDiskTexture->Update(pixel, sizeof(pixel), sizeof(pixel));
+        if (m_bSunDiskTextureInitialized && frameResources != nullptr)
+        {
+            // フレームの持ち主から借りた領域に書き、Execute でこのフレームの記録の中へコピーを積む。
+            // 前のフレームの読みとの順序は、グラフが宣言どおりに入れるバリアが守る（同期の提出はしない）。
+            const FrameUploadAllocation allocation =
+                frameResources->AllocateUploadData(pixel, sizeof(pixel), FrameUploadUsage::Storage);
+            if (!allocation.IsValid())
+            {
+                NORVES_LOG_WARNING("SkyAtmospherePass",
+                                   "Failed to borrow upload memory for the sun disk texture");
+                return false;
+            }
+            m_SunDiskUploadBuffer = allocation.Buffer;
+            m_SunDiskUploadOffset = allocation.Offset;
+            m_bSunDiskCopyPending = true;
+        }
+        else
+        {
+            // 作った直後（layout が未定義）と、フレームの持ち主の無い文脈（検査）だけ同期で書く。
+            m_SunDiskTexture->Update(pixel, sizeof(pixel), sizeof(pixel));
+            m_bSunDiskTextureInitialized = true;
+        }
         m_LastSunDiskPreExposedLuminance = safeValue;
         m_bLastSunDiskSaturated = bSaturated;
         return std::isfinite(safeValue) && safeValue <= safetyLimit;
@@ -394,7 +442,8 @@ namespace NorvesLib::Core::Rendering
 
     bool SkyAtmospherePass::GenerateLutResources(
         const SkyAtmosphereParameters& parameters,
-        float preExposure)
+        float preExposure,
+        FrameResourceLane* frameResources)
     {
         if (!m_bLutValid || !AreSkyAtmosphereParametersEqual(m_LutParameters, parameters))
         {
@@ -423,7 +472,7 @@ namespace NorvesLib::Core::Rendering
             m_LutSunGroundTransmittance = model.GetSunGroundTransmittance();
             m_bLutValid = true;
         }
-        return GenerateSunDiskTexture(parameters, preExposure);
+        return GenerateSunDiskTexture(parameters, preExposure, frameResources);
     }
 
     void SkyAtmospherePass::PublishContextResources(ViewRenderContext& context, bool bValid)
@@ -468,7 +517,8 @@ namespace NorvesLib::Core::Rendering
         }
 
         const float preExposure = ResolvePreExposure(*context);
-        m_bPrepared = EnsureResources() && GenerateLutResources(m_LastParameters, preExposure);
+        m_bPrepared = EnsureResources() &&
+                      GenerateLutResources(m_LastParameters, preExposure, context->FrameResources);
         if (!m_bPrepared)
         {
             NORVES_LOG_WARNING("SkyAtmospherePass",
@@ -492,6 +542,7 @@ namespace NorvesLib::Core::Rendering
             !sunDiskResource.IsValid())
         {
             m_bPrepared = false;
+            m_bSunDiskCopyPending = false;
             return;
         }
 
@@ -511,24 +562,70 @@ namespace NorvesLib::Core::Rendering
                      RHI::ResourceState::ShaderResource);
         builder.Read(m_RadianceHandle.ToResourceHandle(),
                      RHI::ResourceState::ShaderResource);
-        builder.Read(m_SunDiskHandle.ToResourceHandle(),
-                     RHI::ResourceState::ShaderResource);
+        if (m_bSunDiskCopyPending)
+        {
+            // このパスがコピーで書き、パスの中で読み取りの状態へ戻す。後の読み手はグラフがこの後へ並べる。
+            builder.Write(m_SunDiskHandle.ToResourceHandle(),
+                          RHI::ResourceState::CopyDest,
+                          RHI::ResourceState::ShaderResource);
+        }
+        else
+        {
+            builder.Read(m_SunDiskHandle.ToResourceHandle(),
+                         RHI::ResourceState::ShaderResource);
+        }
         builder.PreserveInsertionOrder();
     }
 
     void SkyAtmospherePass::Execute(RenderGraphResources& resources,
                                     ViewRenderContext& context)
     {
+        const bool bCopyPending = m_bSunDiskCopyPending;
+        m_bSunDiskCopyPending = false;
         if (!m_bPrepared || !m_TransmittanceHandle.IsValid() ||
             !m_RadianceHandle.IsValid() || !m_SunDiskHandle.IsValid())
         {
+            m_SunDiskUploadBuffer.reset();
             PublishContextResources(context, false);
             return;
         }
 
-        const bool bResourcesResolved = resources.GetTexture(m_TransmittanceHandle) != nullptr &&
-                                        resources.GetTexture(m_RadianceHandle) != nullptr &&
-                                        resources.GetTexture(m_SunDiskHandle) != nullptr;
+        const RHI::TexturePtr sunDiskTexture = resources.GetTexture(m_SunDiskHandle);
+        bool bResourcesResolved = resources.GetTexture(m_TransmittanceHandle) != nullptr &&
+                                  resources.GetTexture(m_RadianceHandle) != nullptr &&
+                                  sunDiskTexture != nullptr;
+        if (bCopyPending && sunDiskTexture && context.CommandList)
+        {
+            // グラフが入れたバリアで CopyDest にある。宣言した最後の状態（ShaderResource）へはパスの中で戻す。
+            if (m_SunDiskUploadBuffer && m_SunDiskStagingBuffer)
+            {
+                // 中継のバッファは前のフレームの texture へのコピーが読み終えてから書く
+                context.CommandList->BufferBarrier(m_SunDiskStagingBuffer,
+                                                   RHI::ResourceState::CopySource,
+                                                   RHI::ResourceState::CopyDest,
+                                                   0u,
+                                                   kSunDiskPixelBytes);
+                context.CommandList->CopyBuffer(m_SunDiskUploadBuffer,
+                                                m_SunDiskStagingBuffer,
+                                                kSunDiskPixelBytes,
+                                                m_SunDiskUploadOffset,
+                                                0u);
+                context.CommandList->BufferBarrier(m_SunDiskStagingBuffer,
+                                                   RHI::ResourceState::CopyDest,
+                                                   RHI::ResourceState::CopySource,
+                                                   0u,
+                                                   kSunDiskPixelBytes);
+                context.CommandList->CopyBufferToTexture(m_SunDiskStagingBuffer,
+                                                         sunDiskTexture,
+                                                         1u,
+                                                         1u,
+                                                         0u);
+            }
+            context.CommandList->TextureBarrier(sunDiskTexture,
+                                                RHI::ResourceState::CopyDest,
+                                                RHI::ResourceState::ShaderResource);
+        }
+        m_SunDiskUploadBuffer.reset();
         PublishContextResources(context, bResourcesResolved);
     }
 

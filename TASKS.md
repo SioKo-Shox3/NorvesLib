@@ -1101,7 +1101,7 @@
 - notes: 2026-10-14 SCN-ECS-MEASURE-FIF（反復 6）で足した。2 フレームの撮影の失敗は `.harness/runs/scene-capture/SCN-ECS-MEASURE-FIF/stress-try1`・`stress-try2`、1 フレームの比較は `stress-fif1`。危険地帯（RHI/Vulkan・メモリ・資源の寿命）。SCN-ECS-MEASURE-FIF の mega-stress の計測はこの項目を待つ。
 
 ## SCN-ECS-FIX-SUN-DISK-UPLOAD: 太陽の円盤の texture を毎フレーム同期の単発提出で書くのをやめる
-- status: todo
+- status: done
 - done-when: `SkyAtmospherePass::GenerateSunDiskTexture` は 1×1 の texture を毎フレーム `VulkanTexture::Update`（単発の提出の後に `graphicsQueue.waitIdle()`）で書いている。2 フレームではこの待ちが前のフレームの GPU の完了まで RenderThread を止め、CPU と GPU の重なりを消している（SCN-ECS-MEASURE-FIF: バナナ 1 万本 overview で窓の 300 フレームすべてに 1 回ずつ出て、`RHI.ImmediateSubmitWait` が median 8.1 ms・p95 11.4 ms、`RT.WaitFrameFence` は p95 0.005 ms）。値はフレームごとの事前露出で変わるので、フレームの記録の中で書く形（フレームの持ち主から借りた領域からのコピーをコマンドに積む、または定数としてシェーダへ渡す）へ移し、毎フレームの同期の提出を無くす。空の見た目は変えない（起動画面の比較が pass）。起動画面の撮影のログで、落ち着いた後に出続ける `IMMEDIATE_SUBMIT` の呼び出し元が無い（どの呼び出し元も `frames` が 8 以下）。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-ECS-FIX-SUN-DISK-UPLOAD`

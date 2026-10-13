@@ -3718,3 +3718,18 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `check-SCN-ECS-FIX-STRESS-VRAM-FIF2-fif1.txt`: 変更後の `--frames-in-flight=1` の撮影（pass、ERROR 0）と保持だけ直した 2 フレームの撮影の `VRAM_BUDGET`。
 - Next: SCN-ECS-FIX-SUN-DISK-UPLOAD → SCN-ECS-MEASURE-FIF の撮り直し。
 - Notes: 2 フレームの立ち上がりの山（13.8 GB）は 1 フレーム（10.1 GB）より高い。伸ばした古い物は「手放したフレームの次のフレームの完了」まで残り、2 フレームではその完了が 1 フレーム遅いので、立ち上がりの数フレームの古い物が重なる。さらに下げるなら、大きな確保の前に遅延破棄の列が大きいとき前の提出の完了を待って先に破棄する（RHI。提出のロックの下で CreateBuffer を呼ぶ所があると待ちが自分を止めるので、ロックに頼らない待ち方が要る）か、列の大きさを読み込みの済んでいないメッシュも含めて先に見積もる形があるが、今回は入れていない。山の値は 1 秒おきの標本なので、本当の山はこれより高いことがある。記録の表を共有にした後の `VisibilityResolveVulkanTest` などの ctest は走らせていない（verify の名指しなし）。`MegaGeometryPass.cpp`（LF）・`VisibilityRasterPass.cpp`・`VisibilityRasterPass.h` は行末を保った（numstat の 2 通りが一致）。
+
+### SCN-ECS-FIX-SUN-DISK-UPLOAD（2026-10-14、反復 9・run 20261014-005646）
+
+- 直したこと（`SkyAtmospherePass`）:
+  - 太陽の円盤の 1×1 の画素を、毎フレーム `VulkanTexture::Update`（同期の単発の提出）で書くのをやめ、Declare でフレームの持ち主から借りた領域（`AllocateUploadData`、Storage）へ書き、Execute でこのフレームの記録の中へコピーを積む形にした。グラフには円盤を `Write(CopyDest → 最後の状態 ShaderResource)` で宣言し、前のフレームの読み（fragment・compute・ray tracing）との順序はグラフが入れるバリアが守る。パスの中でコピーの後に `CopyDest → ShaderResource` へ戻す。
+  - 借りたページから texture へ直接写すと、Vulkan の `CopyBufferToTexture` が元のバッファの参照の範囲を切れ端の始まりからページの終わりまで取るので、同じフレームで後のパスが同じページの後ろの切れ端へ書くのが `FRAME_RESOURCE_UNPROTECTED kind=buffer_recorded_same_frame` として 8 組出た（最初の試し）。借りた切れ端から GPU だけが使う 8 B の中継のバッファ（`SkyAtmosphere.SunDiskStaging`）へ大きさどおりに `CopyBuffer` してから texture へ写す形にして、0 組に戻した。中継のバッファは前のフレームのコピーの読みの後に書く（`CopySource → CopyDest`、書いた後に `CopyDest → CopySource`）。
+  - 作った直後の texture（layout が未定義）と、フレームの持ち主の無い文脈（検査）だけは従来どおり同期で 1 回書く。
+- 検証（`.harness/runs/20261014-005646/`）:
+  - `baseline-build-SUN-DISK.txt`: 変更前の RelWithDebInfo の Game のビルド EXIT=0。
+  - `verify-SCN-ECS-FIX-SUN-DISK-UPLOAD-1〜3.txt`: 最初の試し（中継のバッファなし）。ビルド・比較・照合はすべて EXIT=0 だが、ログに `FRAME_RESOURCE_UNPROTECTED_SUMMARY count=8` が出たので直した。
+  - `verify-SCN-ECS-FIX-SUN-DISK-UPLOAD-4.txt`: RelWithDebInfo の Game のビルド EXIT=0、error 0。
+  - `verify-SCN-ECS-FIX-SUN-DISK-UPLOAD-5.txt`: 決定論の撮影を SCN-MEGA-BASE-RWDI と比較、mean_luminance_difference=0.0021・psnr_db=60.066・within_limits=True、result=pass、EXIT=0（反復 7 と同じ値）。PNG は通常の起動画面。
+  - `verify-SCN-ECS-FIX-SUN-DISK-UPLOAD-6.txt`: `IMMEDIATE_SUBMIT` の照合 EXIT=0。`SkyAtmospherePass::GenerateSunDiskTexture` は `count=1 frames=1 first_frame=0 last_frame=0`（変更前は毎フレーム）。19 の呼び出し元のうち 18 が `frames=1`、BLAS の構築だけ `frames=4`。撮影のログは `FRAMES_IN_FLIGHT count=2`・`[ERROR]` 0・`FRAME_RESOURCE_UNPROTECTED_SUMMARY count=0 frames=181`・`FRAME_RESOURCE_STALE` 0・`unhandled exception` 0。
+- Next: SCN-ECS-MEASURE-FIF の撮り直し（`RHI.ImmediateSubmitWait` が窓から消えたかと、2 フレームの重なりの効果はそこで見る。この項目では性能を測っていない）。
+- Notes: 根本は RHI の `CopyBufferToTexture`・`CopyBufferToTextureRegion` が元のバッファの参照の範囲を `~0ull`（ページの終わりまで）で記録すること。直すなら画素の大きさから範囲を出す形だが RHI は今回の paths の外なので、中継のバッファで避けた。同じ形で借りた領域から texture へ写すパスを足すときは同じ偽の検出が出る。`SkyAtmospherePass.cpp`・`SkyAtmospherePass.h` は CRLF を保った（numstat の 2 通りが一致）。PathTracing の ctest（`PathTracingVulkanTest` など、円盤を読む）は verify の名指しがないので走らせていない。
