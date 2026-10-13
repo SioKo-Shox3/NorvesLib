@@ -3733,3 +3733,30 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `verify-SCN-ECS-FIX-SUN-DISK-UPLOAD-6.txt`: `IMMEDIATE_SUBMIT` の照合 EXIT=0。`SkyAtmospherePass::GenerateSunDiskTexture` は `count=1 frames=1 first_frame=0 last_frame=0`（変更前は毎フレーム）。19 の呼び出し元のうち 18 が `frames=1`、BLAS の構築だけ `frames=4`。撮影のログは `FRAMES_IN_FLIGHT count=2`・`[ERROR]` 0・`FRAME_RESOURCE_UNPROTECTED_SUMMARY count=0 frames=181`・`FRAME_RESOURCE_STALE` 0・`unhandled exception` 0。
 - Next: SCN-ECS-MEASURE-FIF の撮り直し（`RHI.ImmediateSubmitWait` が窓から消えたかと、2 フレームの重なりの効果はそこで見る。この項目では性能を測っていない）。
 - Notes: 根本は RHI の `CopyBufferToTexture`・`CopyBufferToTextureRegion` が元のバッファの参照の範囲を `~0ull`（ページの終わりまで）で記録すること。直すなら画素の大きさから範囲を出す形だが RHI は今回の paths の外なので、中継のバッファで避けた。同じ形で借りた領域から texture へ写すパスを足すときは同じ偽の検出が出る。`SkyAtmospherePass.cpp`・`SkyAtmospherePass.h` は CRLF を保った（numstat の 2 通りが一致）。PathTracing の ctest（`PathTracingVulkanTest` など、円盤を読む）は verify の名指しがないので走らせていない。
+
+### SCN-ECS-MEASURE-FIF（2026-10-14、反復 10・run 20261014-005646、撮り直し）
+
+- 分け方は反復 6 と同じ（RenderThread のトレースの区間を `RT.WaitPacket` の始まりで描画フレームに切り、窓は metrics.json の 300 フレーム。各列はフレームごとの値の median・p95）。集計の出力は `check-SCN-ECS-MEASURE-FIF-stress-split-r10.txt`・`check-SCN-ECS-MEASURE-FIF-bananas-split-r10.txt`。どちらも `FRAMES_IN_FLIGHT count=2`。
+
+| 列（ms） | mega-stress 5 万個 close median | p95 | バナナ 1 万本 overview median | p95 |
+|---|---|---|---|---|
+| GPU のフレーム（metrics.json） | 37.226 | 44.204 | 11.817 | 14.930 |
+| RenderThread の 1 フレーム | 37.310 | 45.530 | 12.078 | 16.034 |
+| CPU の作業 | 5.927 | 11.966 | 5.384 | 7.998 |
+| GPU に依存する待ち（計） | 31.035 | 37.416 | 6.355 | 10.003 |
+| └ `RT.WaitFrameFence` | 30.961 | 37.348 | 6.275 | 9.951 |
+| └ `RHI.ImmediateSubmitWait` | 0（窓で 0 回） | 0 | 0（窓で 0 回） | 0 |
+| └ `RT.AcquireImage` | 0.010 | 0.015 | 0.010 | 0.015 |
+| └ `RT.Present` | 0.063 | 0.103 | 0.056 | 0.099 |
+| パケット待ち | 0.000 | 0.000 | 0.000 | 0.000 |
+
+- 答え: 残っていない。`RT.WaitFrameFence` 以外の GPU に依存する待ちは、`RHI.ImmediateSubmitWait` が窓の 300 フレームで 0 回（RenderThread 以外のスレッドでも 0 回）、`RT.AcquireImage`・`RT.Present` は p95 0.1 ms 前後で、足す `SCN-ECS-FIX-*` は無い。反復 6 のバナナで毎フレーム 8.1 ms 出ていた `GenerateSunDiskTexture` の待ちは消えた（`IMMEDIATE_SUBMIT caller=SkyAtmospherePass::GenerateSunDiskTexture count=1 frames=1 first_frame=0`）。
+- 重なり: 両シーンとも RenderThread の 1 フレームは GPU のフレームとほぼ同じで（37.3 / 37.2、12.1 / 11.8）、CPU の作業と GPU の時間の和（43 / 17）より短い。CPU の記録は GPU の処理と重なり、残りの待ちは GPU が律速のときの `RT.WaitFrameFence` だけ。バナナの RenderThread の 1 フレームは反復 6 の 12.853 → 12.078 ms、GPU に依存する待ちのうちフェンス以外は 8.2 ms → 0.07 ms。
+- 窓の外の同期の提出（参考）: どの呼び出し元も初期化のフレームか立ち上がりだけ。mega-stress の `RayTracingSceneSubsystem::BuildAccelerationStructures` は描画フレーム 0〜10 に 15 回・待ちの最大 3673 ms（5 万個の BLAS/TLAS の初回の構築）、`CreateAndUploadCookedTexture` は main スレッドのフレーム 0〜1 に 74〜75 回。
+- 検証（`.harness/runs/20261014-005646/`）:
+  - `verify-SCN-ECS-MEASURE-FIF-5.txt`: mega-stress 5 万個 close の撮影（ビルド込み）`CAPTURE_SCENE result=pass`、EXIT=0。Game.log は `[ERROR]` 0・`unhandled exception` 0・`FRAME_RESOURCE_UNPROTECTED_SUMMARY count=0`。
+  - `verify-SCN-ECS-MEASURE-FIF-6.txt`: `CHECK_CAPTURE_METRICS result=pass views=close`、EXIT=0。
+  - `verify-SCN-ECS-MEASURE-FIF-7.txt`: バナナ 1 万本 overview の撮影（ビルド込み）`CAPTURE_SCENE result=pass`、EXIT=0。Game.log は `[ERROR]` 0・`FRAME_RESOURCE_UNPROTECTED_SUMMARY count=0`。
+  - `verify-SCN-ECS-MEASURE-FIF-8.txt`: `CHECK_CAPTURE_METRICS result=pass views=overview`、EXIT=0。
+- Next: TASKS.md の未完の次の項目（SCN-ECS-FIF-SYNC-SUBMIT-SCOPE の待っていた答えは「直す呼び出し元は無い」）。
+- Notes: 記録の時間の上位（窓のフレームごとの合計の median。並列の記録の項目の材料）: mega-stress は `RG.Record.VisibilityRasterPass` 1.003・`MegaGeometryPass` 0.533・`ShadowMapPass` 0.406・`VirtualShadowMapPass` 0.221 ms、バナナは `VisibilityRasterPass` 0.587・`LightingPass` 0.460・`VirtualShadowMapPass` 0.268・`MegaGeometryPass` 0.147 ms。反復 6 のバナナの撮影は `.harness/runs/scene-capture/SCN-ECS-MEASURE-FIF/bananas-iter6` へ移した。集計のスクリプトは作業用の一時のもので、リポジトリには入れていない。フレームの時間の合否はここでは決めていない（SCN-MEGA-ACCEPT-1M）。
