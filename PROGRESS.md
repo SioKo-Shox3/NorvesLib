@@ -3999,3 +3999,16 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 節・クラスタの列の容量を 1 にした一時的なビルド（戻した）でバナナ overview を撮り SCN-MEGA-BASE と比べて pass（psnr 66.265 dB、`aux-SCN-MEGA-TWOPASS-CLUSTERS-overflow.txt`）。`cluster_overflow=2832 rescan=1 bvh_pass2_fallback=1`、`MEGA_OCCLUSION` は溢れないときと同じ（pass1=364821・pass2_tested=2833・occluded=2833。見直しで 1 パス目の描いた分を重ねて判定していない）、`[ERROR]` 0。
 - Next: SCN-MEGA-VSM-RANGES。
 - Notes: 前の HZB を使えないフレームは遮蔽なしで全部を描く（以前は前のフレームで見えたクラスタだけを 1 パス目が描き、残りを 2 パス目が今の HZB で選んだ）。100 万本でカメラの切れ目の 1 フレームが重くなりうる（SCN-MEGA-ACCEPT-1M で見る）。子のページの要求は 1 パス目が描いた時点でも出す（以前は 2 パス目の今の HZB で見えたときだけ）。撮影で節の列は 1 要素しか通らず、2 パス目の回した節の dispatch・節の溢れ（node_overflow）は実機ではほぼ通っていない（クラスタの溢れと同じ関数で見直しへ入る）。`GeometryPageRequestVulkanTest`（ctest から外した写しの試験）は `cluster_cull.comp` の束縛（binding 5）と引数が変わったが直していない。性能は測っていない（SCN-MEGA-ACCEPT-1M で判断）。試験の追加はしていない。
+
+### SCN-MEGA-VSM-RANGES（2026-10-14、反復 9・run 20261014-061910）
+- Done: VSM の組の絞り込み（`vsm_mega_cull_pairs.comp`）の前段に、太陽の段の範囲（AABB）と席の受け手の領域の判定を置いた。
+  - 組の絞り込みの 1 ワークグループの 64 席は、描く順の表を 64 席ずつ区切った範囲（`BvhRangeSeats`）の 1 つに当たる。太陽の段では、候補の席の境界の球を包む AABB をワークグループで畳み込み、ライト空間の外接の箱が受け手の領域の外なら範囲の全席が組を作らない。通った範囲の席も、境界の球のライト空間の矩形（`SphereHasDirtyPage` が引くのと同じ矩形）で同じ判定をしてから従来の判定へ進む。点光源の面は判定しない（従来どおり Range で絞る）。境界を持たない投影物が範囲に 1 つでもあれば範囲では落とさない。
+  - 受け手の領域（binding 22 の定数、`BuildMegaReceiverRegion`）: XY はカメラの XY（段 0 の中心。ページへスナップ済み）から「受け手距離 + 余白 + 段 0 の 1 ページ」+ その段のページの 1.5 倍の半径の円に掛かること。受け手距離は `MaxShadowDistance × VirtualShadowMapThresholdDistanceScale`（段の選び方のしきい値と同じ前提）、余白は最も粗い段の 1 ページ。太陽の向き（手前）へは制限せず（従来の深度の範囲のまま）、奥は「深度の原点 + 深度のスナップの刻みの半分 + 受け手距離 + 余白」より奥だけにある投影物を落とす。
+  - dirty のページはどれも今のフレームに受け手の印付けで要求されたページ（`vsm_allocate.comp` の段階 2）なので、XY の判定は dirty のページの判定より多くは落とさない。深度の上限はカメラが深度の原点のスナップの枠の中にいる間（出れば太陽の段の全ページが無効になる）の受け手を覆うので、キャッシュに残るページに投影物の欠けを作らない。
+- 検証（`.harness/runs/20261014-061910/`）:
+  - `verify-SCN-MEGA-VSM-RANGES-1.txt`: RelWithDebInfo の Game のビルド EXIT=0、error 0。シェーダーは BOM を除いた写しで `glslc` によりコンパイルを確かめた。
+  - `verify-SCN-MEGA-VSM-RANGES-2.txt`: 起動画面 default の決定的撮影の比較 result=pass（psnr 60.068 dB、輝度差 0.0021、EXIT=0）。`default.Game.log` の `[ERROR]` 0、`VSM_MEGA_CULL overflow=0`。PNG は家・球・岩・地面・影が以前どおり。
+  - `verify-SCN-MEGA-VSM-RANGES-3.txt`: バナナ 1 万本 horizon result=pass（EXIT=0）。`horizon.Game.log` の `[ERROR]` 0、`VSM_MEGA_CULL instances=8464 clusters=233124 overflow=0`（静止で以降は 0）。PNG はバナナと影が以前どおり。TWOPASS-INSTANCES の horizon（`prev`・`legacy`）と比べて psnr 60.449 / 60.136 dB（以前の 2 枚どうしは 59.936 dB）。
+- 補助（verify の外）: 受け手距離を一時的に 5 m・余白 0 にしたビルド（戻した）で同じ horizon を撮り（`aux-SCN-MEGA-VSM-RANGES-radius5.txt`）、組が 8464 → 2555 に減り、中ほどから奥のバナナの影が消える（既定との psnr 43.864 dB、差は 594〜890 行）ことで、判定と定数の束縛が効くことを確かめた。元のコードで Game をビルドし直した。
+- Next: SCN-MEGA-VSM-BVH-SUN。
+- Notes: 範囲の AABB は MegaGeometryPass の範囲の表（`m_RangeBoundsBuffer`）を使わず、組の絞り込みの中で席の境界の球から畳み込んだ（表を VSM へ渡すには `MegaGeometryPass.h` と `VirtualShadowMapPass.cpp` を触るが、paths の外のため）。席ごとの影の表の読み込みは残るので、表を渡せば範囲で落ちた席の読み込みも省ける。カメラの深度はクリップマップに無いので、深度の原点からスナップの刻みの半分（`VirtualShadowMapClipmap.cpp` の `DepthSnapRatio` = 0.25 の半分を `ReceiverDepthSnapSlackRatio` に写した）の余裕を取った。視錐台の端の受け手の直線距離が `MaxShadowDistance` の 2 倍を超える画角（前方に対する横・縦のずれの比の二乗和が 3 超）では、その先の受け手が置くページの投影物を落としうる（段のしきい値と同じ前提）。撮影は静止で dirty のページが最初のフレームだけなので、範囲で落ちた数は統計に出していない。性能は測っていない（SCN-MEGA-ACCEPT-1M で判断）。試験の追加はしていない。

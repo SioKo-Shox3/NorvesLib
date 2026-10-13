@@ -9,6 +9,13 @@
 // 通った組だけを一覧にして、vsm_mega_cull.comp を間接 dispatch で出す。
 //
 // 1 スレッド = 1 つの（インスタンス、スライス）の組。dispatch は (ceil(インスタンスの数 / 64), 1, スライスの数)。
+// 1 ワークグループの 64 席は、描く順の表を 64 席ずつ区切った範囲（MegaGeometryPass の BvhRangeSeats）の 1 つに当たる。
+// 太陽の段では、まず範囲の AABB（席の境界の球を包む）を受け手の領域（binding 22）と比べ、外なら範囲の席は組を作らない。
+// 通った範囲の席も、境界の球を同じ領域と比べてから下の判定へ進む。
+// 受け手の領域は、カメラからの直線距離が受け手距離の内側の受け手が置くページに届く投影物の集まりで、ライト空間では
+// カメラの XY を中心に「受け手距離 + そのスライスのページの対角」の半径の円に XY が掛かり、太陽の向き（手前）へは深度の範囲まで延び、
+// 奥は受け手が取りうる最も奥の深度までの柱。dirty のページはどれも受け手の印付けで要求されたページ（vsm_allocate.comp の段階 2）なので、
+// XY の判定は dirty のページの判定より多くは落とさない（キャッシュに残るページに投影物の欠けを作らない）。
 // 判定は vsm_mega_cull.comp の（1）と同じ: 影を落とすインスタンスで、ワークグループを持ち、境界が無いか、境界の球が
 // スライスの範囲・深度の範囲に入り dirty のページを含む。使わないスライス（ページの一辺が 0）は何も通さない。
 // 通った組は binding 21 の一覧へ (インスタンスの表の番号 << 8) | スライスの番号 で追加し、組の最大のワークグループ数を持つ。
@@ -60,29 +67,121 @@ layout(std430, set = 0, binding = 21) buffer VsmMegaPairs
     uint pairEntries[];
 };
 
+// binding 22: 太陽の段の受け手の領域（VirtualShadowMapRaster.cpp の GPUMegaReceiverRegion と同じ並び）
+layout(std140, set = 0, binding = 22) uniform VsmMegaReceiverRegion
+{
+    // xy: カメラのライト空間の XY、z: 受け手が取りうる最も奥のライト空間の深度、w: 受け手のライト空間の XY の半径（ページの対角を除く）
+    vec4 receiverRegion;
+    // x: 1 = 判定する（太陽のクリップマップが無いときは 0）
+    uvec4 receiverControl;
+};
+
+// 範囲の AABB の畳み込み（ワークグループの 64 席）。境界を持たない投影物が 1 つでもあれば、範囲の判定はしない
+shared vec3 sRangeMin[64];
+shared vec3 sRangeMax[64];
+shared uint sRangeUnbounded;
+
+/**
+ * @brief ライト空間の箱（中心・半分の大きさ。xy = ライト空間の XY、z = 深度）が、太陽の段 level の受け手の領域の外にあるか
+ *
+ * XY は、カメラの XY から矩形までの距離が「受け手の半径 + その段のページの対角」を超えれば外（その矩形が掛かるページに受け手は無い）。
+ * 深度は、最も手前の点が受け手の最も奥の深度より奥なら外（どの受け手より奥にあり影を落とさない）。
+ */
+bool LightBoxOutsideReceivers(uint level, vec3 lightCenter, vec3 lightHalf)
+{
+    if (lightCenter.z - lightHalf.z > receiverRegion.z)
+    {
+        return true;
+    }
+    const vec2 nearest = clamp(receiverRegion.xy, lightCenter.xy - lightHalf.xy, lightCenter.xy + lightHalf.xy);
+    // ページの対角（√2 ページ）に、丸めの余裕を足して 1.5 ページ
+    const float radius = receiverRegion.w + vsmSlices[level].info.x * 1.5;
+    const vec2 offset = nearest - receiverRegion.xy;
+    return dot(offset, offset) > radius * radius;
+}
+
+/** @brief ワールドの AABB（中心・半分の大きさ）を、ライト空間の外接の箱にして LightBoxOutsideReceivers で判定する */
+bool WorldBoxOutsideReceivers(uint level, vec3 center, vec3 halfExtent)
+{
+    const vec3 lightCenter = vec3(LightXY(center), dot(center, megaParams.lightDirection.xyz));
+    const vec3 lightHalf = vec3(dot(abs(megaParams.lightRight.xyz), halfExtent),
+                                dot(abs(megaParams.lightUp.xyz), halfExtent),
+                                dot(abs(megaParams.lightDirection.xyz), halfExtent));
+    return LightBoxOutsideReceivers(level, lightCenter, lightHalf);
+}
+
 void main()
 {
     const uint level = gl_WorkGroupID.z;
+    const uint localIndex = gl_LocalInvocationID.x;
     const uint instanceIndex = gl_GlobalInvocationID.x;
     const uint instanceCount = megaParams.counts.w;
 
-    bool bPassed = false;
+    bool bCandidate = false;
+    bool bBounded = false;
+    ShadowInstance shadow;
     uint groups = 0u;
     if (level < megaParams.counts.x && vsmSlices[level].info.x > 0.0 && instanceIndex < instanceCount)
     {
-        const ShadowInstance shadow = shadowInstances[instanceIndex];
+        shadow = shadowInstances[instanceIndex];
         // そのインスタンスのワークグループの数は、次のインスタンスの最初のワークグループの番号との差（最後のインスタンスは全体の数との差）
         const uint endGroup = instanceIndex + 1u < instanceCount ? shadowInstances[instanceIndex + 1u].info.x : megaParams.counts.z;
         groups = endGroup - shadow.info.x;
-        if (groups > 0u && (shadow.info.y & SHADOW_FLAG_CASTER) != 0u)
+        bCandidate = groups > 0u && (shadow.info.y & SHADOW_FLAG_CASTER) != 0u;
+        bBounded = (shadow.info.y & SHADOW_FLAG_BOUNDS) != 0u;
+    }
+
+    // 受け手の領域の判定は太陽の段だけ（点光源の面は LevelOverlapsSphere が Range で絞る）。level はワークグループで同じなので、
+    // 下の barrier はワークグループの全スレッドが同じ道で通る
+    const bool bReceiverTest = receiverControl.x != 0u && level < megaParams.counts.x && vsmSlices[level].info.x > 0.0 &&
+                               !IsPerspectiveSlice(vsmSlices[level]);
+    bool bPassed = bCandidate;
+    if (bReceiverTest)
+    {
+        // 範囲の AABB: 候補の席の境界の球を包む箱を畳み込む（候補でない席は空の箱）
+        if (localIndex == 0u)
         {
-            bPassed = true;
-            if ((shadow.info.y & SHADOW_FLAG_BOUNDS) != 0u)
+            sRangeUnbounded = 0u;
+        }
+        sRangeMin[localIndex] = bCandidate && bBounded ? shadow.boundsSphere.xyz - vec3(shadow.boundsSphere.w) : vec3(3.0e38);
+        sRangeMax[localIndex] = bCandidate && bBounded ? shadow.boundsSphere.xyz + vec3(shadow.boundsSphere.w) : vec3(-3.0e38);
+        barrier();
+        if (bCandidate && !bBounded)
+        {
+            atomicOr(sRangeUnbounded, 1u);
+        }
+        for (uint stride = 32u; stride > 0u; stride >>= 1u)
+        {
+            if (localIndex < stride)
             {
-                bPassed = LevelOverlapsSphere(level, shadow.boundsSphere.xyz, shadow.boundsSphere.w) &&
-                          SphereHasDirtyPage(level, shadow.boundsSphere.xyz, shadow.boundsSphere.w);
+                sRangeMin[localIndex] = min(sRangeMin[localIndex], sRangeMin[localIndex + stride]);
+                sRangeMax[localIndex] = max(sRangeMax[localIndex], sRangeMax[localIndex + stride]);
+            }
+            barrier();
+        }
+        const vec3 rangeMin = sRangeMin[0];
+        const vec3 rangeMax = sRangeMax[0];
+        // 候補が 1 つも無い範囲は箱が空（どの席も下で落ちる）。境界の無い候補があれば範囲では落とさない
+        if (sRangeUnbounded == 0u && all(lessThanEqual(rangeMin, rangeMax)) &&
+            WorldBoxOutsideReceivers(level, (rangeMin + rangeMax) * 0.5, (rangeMax - rangeMin) * 0.5))
+        {
+            bPassed = false;
+        }
+        // 通った範囲の席は、自分の境界の球のライト空間の外接の箱（SphereHasDirtyPage が引くページと同じ矩形）でも同じ判定をする
+        if (bPassed && bBounded)
+        {
+            const vec3 center = shadow.boundsSphere.xyz;
+            const vec3 lightCenter = vec3(LightXY(center), dot(center, megaParams.lightDirection.xyz));
+            if (LightBoxOutsideReceivers(level, lightCenter, vec3(shadow.boundsSphere.w)))
+            {
+                bPassed = false;
             }
         }
+    }
+    if (bPassed && bBounded)
+    {
+        bPassed = LevelOverlapsSphere(level, shadow.boundsSphere.xyz, shadow.boundsSphere.w) &&
+                  SphereHasDirtyPage(level, shadow.boundsSphere.xyz, shadow.boundsSphere.w);
     }
     if (bPassed)
     {

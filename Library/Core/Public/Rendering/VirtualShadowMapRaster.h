@@ -316,8 +316,11 @@ namespace NorvesLib::Core::Rendering
      * VsmCullChunks（4）。
      *   1. dirty の階層（vsm_dirty_mips.comp）: ページの表の「割り当て済みで dirty」のページから、段ごとのページの mip（128² → 1）の
      *      ビット列を作る。
-     *   2. 組の絞り込み（vsm_mega_cull_pairs.comp）: 1 スレッド = 1 つの（インスタンス、段）の組。インスタンスの境界のライト空間の矩形が、
-     *      その段の範囲・深度の範囲に入り、dirty のページを含む組だけを一覧にし、選択の間接 dispatch の引数を作る。
+     *   2. 組の絞り込み（vsm_mega_cull_pairs.comp）: 1 スレッド = 1 つの（インスタンス、段）の組。太陽の段では、まず 1 ワークグループの
+     *      64 席（描く順の表の範囲）の AABB を受け手の領域（カメラの XY から「受け手距離 + 段のページの対角」の円に掛かり、太陽の向きへ延び、
+     *      奥は受け手の最も奥の深度まで）と比べ、外の範囲の席は組を作らない。通った席も境界を同じ領域と比べる。
+     *      続けて、インスタンスの境界のライト空間の矩形が、その段の範囲・深度の範囲に入り、dirty のページを含む組だけを一覧にし、
+     *      選択の間接 dispatch の引数を作る。
      *      組ごとに 1 回だけ判定するので、選択のワークグループがインスタンスの判定を繰り返さない。
      *      続けて vsm_mega_cull_args.comp（1 スレッド）が、組の数と組のワークグループ数の最大から間接 dispatch の引数を書く。
      *   3. 選択（vsm_mega_cull.comp。主の経路の Common/MegaGeometryCull.glsl の判定の本体を正射影の LOD で使う）: 通った組だけを間接 dispatch で受け持ち、
@@ -358,6 +361,8 @@ namespace NorvesLib::Core::Rendering
         {
             RHI::BufferPtr CullUniform;
             RHI::BufferPtr ParamsUniform;
+            /** @brief 太陽の段の受け手の領域（組の絞り込みが読む定数） */
+            RHI::BufferPtr RegionUniform;
             /** @brief スライスの表（GPUVsmSlice の配列。ホストが書く storage buffer） */
             RHI::BufferPtr Slices;
             RHI::DescriptorSetPtr DirtySet;
