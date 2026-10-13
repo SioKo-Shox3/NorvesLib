@@ -3760,3 +3760,24 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `verify-SCN-ECS-MEASURE-FIF-8.txt`: `CHECK_CAPTURE_METRICS result=pass views=overview`、EXIT=0。
 - Next: TASKS.md の未完の次の項目（SCN-ECS-FIF-SYNC-SUBMIT-SCOPE の待っていた答えは「直す呼び出し元は無い」）。
 - Notes: 記録の時間の上位（窓のフレームごとの合計の median。並列の記録の項目の材料）: mega-stress は `RG.Record.VisibilityRasterPass` 1.003・`MegaGeometryPass` 0.533・`ShadowMapPass` 0.406・`VirtualShadowMapPass` 0.221 ms、バナナは `VisibilityRasterPass` 0.587・`LightingPass` 0.460・`VirtualShadowMapPass` 0.268・`MegaGeometryPass` 0.147 ms。反復 6 のバナナの撮影は `.harness/runs/scene-capture/SCN-ECS-MEASURE-FIF/bananas-iter6` へ移した。集計のスクリプトは作業用の一時のもので、リポジトリには入れていない。フレームの時間の合否はここでは決めていない（SCN-MEGA-ACCEPT-1M）。
+
+### SCN-ECS-DIAG-GPU-FIF2（2026-10-14、反復 11・run 20261014-005646、診断）
+
+- 測り方: HEAD（dcad63b8。4fb8c816 とコードは同じ）の RelWithDebInfo を 1 回ビルドし、mega-stress 5 万個 close・1920×1080・`-GpuTimingFrames 300` を `--frames-in-flight=1`・2・1・2 の順に続けて 4 本撮った（`.harness/runs/scene-capture/SCN-ECS-DIAG-GPU-FIF2/fif<1|2>-<a|b>`）。各撮影の間 `nvidia-smi --query-gpu=timestamp,clocks.sm,clocks.mem,power.draw,temperature.gpu,clocks_throttle_reasons.active --format=csv -lms 500` を `<撮影>.nvsmi.csv` に記録し、窓（metrics.json の `window_first_frame`〜`window_last_frame` のトレースの時刻の範囲）に入った標本だけを集計した。GPU は RTX 4080（ドライバ 610.88、電力の上限 320 W）。集計の出力は `check-SCN-ECS-DIAG-GPU-FIF2-clock.txt`。パスの値は metrics.json の `gpu_pass_ms` の median（ms。`MegaGeometry` は `VisibilityRasterPass` と同じ値で、Cull・Draw などを含む）。
+
+| 撮影（順に撮った） | 重ね | GPU のフレーム median | p95 | RenderThread の 1 フレーム median | `MegaGeometry` | `MegaGeometryCull1` | `MegaGeometryCull2` | `MegaGeometryDraw1` | `VisRasterSw1` | `LightingPass` | 窓の間の SM のクロック median（範囲） | 電力 median | 温度 max | throttle の理由 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| `fif1-a` | 1 | 33.580 | 35.045 | 38.687 | 29.584 | 10.577 | 8.896 | 4.255 | 4.085 | 1.965 | 2760 MHz（2760〜2760、24 標本） | 145.9 W | 54 ℃ | 0x0（無し）24/24 |
+| `fif2-a` | 2 | 33.328 | 35.262 | 33.288 | 29.797 | 11.249 | 9.418 | 4.291 | 3.872 | 1.683 | 2745 MHz（2745〜2760、20 標本） | 156.2 W | 56 ℃ | 0x0（無し）20/20 |
+| `fif1-b` | 1 | 33.620 | 34.909 | 38.624 | 29.742 | 10.613 | 9.539 | 4.385 | 4.160 | 1.886 | 2745 MHz（2745〜2745、23 標本） | 148.1 W | 56 ℃ | 0x0（無し）23/23 |
+| `fif2-b` | 2 | 34.395 | 36.404 | 34.362 | 30.577 | 11.009 | 9.883 | 4.500 | 4.192 | 1.719 | 2745 MHz（2745〜2745、22 標本） | 157.4 W | 58 ℃ | 0x0（無し）22/22 |
+
+- 判断: 受け入れて記録する（`SCN-ECS-FIX-*` は足さない）。同じビルドで交互に撮ると、2 フレームの GPU のフレームの median は 1 フレームと 33.3〜34.4 ms 対 33.6 ms で、平均の差は +0.26 ms（+0.8%）、組の中の差は -0.25・+0.78 ms で、2 フレームの 2 本の間の揺れ（1.07 ms）より小さい。SM のクロックは 4 本とも 2745〜2760 MHz、メモリのクロックは 11201 MHz で同じ、throttle の理由は窓の全標本で 0x0（電力・温度の上限は効いていない）。2 フレームは GPU が休まないぶん電力が約 10 W 高い（146〜148 → 156〜157 W）が、上限の半分に届かない。
+- SCN-ECS-MEASURE-FIF の 40.0 ms（`stress`、03:14）と 34.5 ms（`stress-fif1`、02:24）の差は、同じコードの 2 フレームが今回 33.3〜34.4 ms なので、2 フレームの重ねの費用ではない。そのときのクロックは記録が無く直接は確かめられないが、全パスが一様に遅い形と、同じコードで再現しないことから、撮影の時点の GPU の状態（クロック・ほかの GPU の負荷）によるものと見る。VRAM は溢れていない（`VRAM_BUDGET` の最後の行は `stress` 8731 MB／予算 12194 MB、今回の 2 フレーム 8703〜8705 MB／12218〜12227 MB、1 フレーム 8453 MB）。
+- 2 フレームの重ねの効果: RenderThread の 1 フレームの median が 38.6 → 33.3〜34.4 ms（-4.3〜-5.3 ms）。GPU の時間を増やさずに CPU の記録が GPU と重なっている。
+- 検証（`.harness/runs/20261014-005646/`）:
+  - `verify-SCN-ECS-DIAG-GPU-FIF2-1.txt`: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`、EXIT=0。
+  - `verify-SCN-ECS-DIAG-GPU-FIF2-2.txt`〜`-5.txt`: 撮影 `fif1-a`・`fif2-a`・`fif1-b`・`fif2-b` の `CAPTURE_SCENE result=pass`、EXIT=0。Game.log は 4 本とも `FRAMES_IN_FLIGHT count=` が指定どおり、`[ERROR]` 0・`unhandled exception` 0・`FRAME_RESOURCE_UNPROTECTED_SUMMARY count=0`。
+  - `verify-SCN-ECS-DIAG-GPU-FIF2-6.txt`: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-ECS-DIAG-GPU-FIF2/fif2-a --timing --min-frames 300` → `CHECK_CAPTURE_METRICS result=pass views=close`、EXIT=0。
+- Next: TASKS.md の未完の次の項目（60 fps の判定は SCN-MEGA-ACCEPT-1M の実際の条件で行う）。
+- Notes: 2 フレームでは `MegaGeometryCull1`＋`Cull2` が両組とも +0.7〜+1.2 ms（+4〜6%）で、`LightingPass` が -0.2〜-0.3 ms 速い。フレームの合計では揺れの中なので項目は足していないが、カリングを詰めるときの候補として残す。撮影は `-Build` を付けず、最初に 1 回ビルドしてから 4 本を同じ exe で撮った。集計のスクリプトは作業用の一時のもので、リポジトリには入れていない。

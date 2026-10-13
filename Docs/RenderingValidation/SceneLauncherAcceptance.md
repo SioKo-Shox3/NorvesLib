@@ -94,3 +94,33 @@
 - **3 万本の GPU 時間は計測のたびに揺れる**: フレームが CPU 律速で GPU が空く時間が長く、同じ視点でも中央値が最大 20% 動く（3 万 close の `fix1` は 45.7 ms、最新は 56〜57 ms で、パスごとに全体が遅い）。p95 は 65〜77 ms、最大は 142 ms。2 万・3 万本の値は目安。
 - 他の GPU・ドライバでは測っていない。本数の上限は `--banana-count` で 65,536（可視ビットは 1 クラスタ 1 bit に詰めておらず、約 550 MB まで増える）。
 - CSM に MegaGeometry を描かない間は、CSM のテクスチャ（`shadow_map_pool_mb` の分）に MegaGeometry の影は入らない。CSM を読む物（半透明・ボリュームのフォグ・検証表示）が出た時点で描き戻す。
+
+## mega-stress の 2 フレームの重ねの GPU 時間（クロックとの切り分け）
+
+判定日: 2026-10-14。ブランチ `feature/scene-launcher`。タスク SCN-ECS-DIAG-GPU-FIF2。証拠は `.harness/runs/20261014-005646/verify-SCN-ECS-DIAG-GPU-FIF2-*.txt`・`check-SCN-ECS-DIAG-GPU-FIF2-clock.txt` と `.harness/runs/scene-capture/SCN-ECS-DIAG-GPU-FIF2/`。
+
+### 測り方
+
+- 同じ RelWithDebInfo の Game で、mega-stress 5 万個 close・1920×1080・`-GpuTimingFrames 300` を `--frames-in-flight=1`・2・1・2 の順に続けて撮った。
+- 各撮影の間 `nvidia-smi`（SM・メモリのクロック、電力、温度、throttle の理由）を 500 ms ごとに記録し、計測の窓（300 フレーム）の時刻の範囲に入った標本だけを集計した。GPU は RTX 4080（ドライバ 610.88、電力の上限 320 W）。
+- パスの値は `gpu_pass_ms` の median（ms）。`MegaGeometry` は Cull・Draw などを含む合計。
+
+### 結果
+
+| 撮影（順に撮った） | 重ね | GPU のフレーム median | p95 | RenderThread の 1 フレーム median | `MegaGeometry` | `MegaGeometryCull1` | `MegaGeometryCull2` | `MegaGeometryDraw1` | `VisRasterSw1` | `LightingPass` | 窓の間の SM のクロック median（範囲） | 電力 median | 温度 max | throttle の理由 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| `fif1-a` | 1 | 33.580 | 35.045 | 38.687 | 29.584 | 10.577 | 8.896 | 4.255 | 4.085 | 1.965 | 2760 MHz（2760〜2760、24 標本） | 145.9 W | 54 ℃ | 0x0（無し）24/24 |
+| `fif2-a` | 2 | 33.328 | 35.262 | 33.288 | 29.797 | 11.249 | 9.418 | 4.291 | 3.872 | 1.683 | 2745 MHz（2745〜2760、20 標本） | 156.2 W | 56 ℃ | 0x0（無し）20/20 |
+| `fif1-b` | 1 | 33.620 | 34.909 | 38.624 | 29.742 | 10.613 | 9.539 | 4.385 | 4.160 | 1.886 | 2745 MHz（2745〜2745、23 標本） | 148.1 W | 56 ℃ | 0x0（無し）23/23 |
+| `fif2-b` | 2 | 34.395 | 36.404 | 34.362 | 30.577 | 11.009 | 9.883 | 4.500 | 4.192 | 1.719 | 2745 MHz（2745〜2745、22 標本） | 157.4 W | 58 ℃ | 0x0（無し）22/22 |
+
+### 判断
+
+- 2 フレームの重ねによる GPU の費用は、フレームの median で +0.26 ms（+0.8%）で、同じ設定の 2 本の間の揺れ（1.07 ms）より小さい。クロックは 4 本とも同じで、throttle は起きていない。
+- SCN-ECS-MEASURE-FIF の撮影で出た 2 フレーム 40.0 ms・1 フレーム 34.5 ms の差は、同じコードで再現しない。全パスが一様に遅い形から、その撮影の時点の GPU の状態によるものと見て、2 フレームの重ねの費用とは扱わない。VRAM は溢れていない。
+- RenderThread の 1 フレームは 2 フレームの重ねで 38.6 → 33.3〜34.4 ms に縮む。
+
+### 既知の限界
+
+- 2 フレームでは `MegaGeometryCull1`＋`MegaGeometryCull2` が +0.7〜+1.2 ms（+4〜6%）、`LightingPass` が -0.2〜-0.3 ms。フレームの合計では揺れの中に収まる。
+- 40.0 ms の撮影のときのクロックは記録が無い。他の GPU・ドライバでは測っていない。60 fps の判定はこの節では行わない（SCN-MEGA-ACCEPT-1M）。
