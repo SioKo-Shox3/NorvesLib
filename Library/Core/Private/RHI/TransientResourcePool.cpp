@@ -71,11 +71,18 @@ namespace NorvesLib::RHI
 
     void TransientResourcePool::EndFrame()
     {
+        // 使った描画先は鍵ごとの並びの先頭へ、借りた順のまま戻す。次に同じスロットを使うフレームが同じ順に借りれば、
+        // 同じ役目に同じ texture が返る（後ろへ足すと、借りなかった物が前へ回り、役目と texture の組が周回ごとにずれる。
+        // ずれると鍵に texture を含む framebuffer を持ち続けられず、毎フレーム作り直すことになる）。
+        Core::Container::Map<RenderTargetKey, size_t> insertPositions;
         for (auto& resource : m_UsedRenderTargets)
         {
             resource.LastUsedFrameSlot = m_CurrentFrameSlot;
             resource.LastUsedSerial = m_CurrentSerial;
-            m_RTPool[resource.TextureKey].push_back(resource);
+            auto& resources = m_RTPool[resource.TextureKey];
+            size_t& insertPosition = insertPositions[resource.TextureKey];
+            resources.insert(resources.begin() + static_cast<ptrdiff_t>(insertPosition), resource);
+            ++insertPosition;
         }
 
         for (auto& resource : m_UsedBuffers)
