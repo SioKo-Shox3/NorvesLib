@@ -143,9 +143,9 @@ layout(set = 0, binding = 0) uniform CullUniforms
     float swRasterMaxPixels; // 振り分ける画面上の半径（画素）のしきい値（以下ならソフト）
     float swRasterNearPlane; // 近平面までの距離（視点から視線方向に測る）。これと交わるクラスタは振り分けない
     uint orthoLod;           // 1 なら LOD を正射影で選ぶ（VSM の影。誤差 ÷ g_OrthoTexelMeters を lodBias（texel）と比べ、透視の投影を使わない）。0 なら透視（主の経路）
-    uint orthoReserved0;     // 予約（std140 で次の 16 バイトの境まで詰める）
-    uint orthoReserved1;
-    uint orthoReserved2;
+    uint bvhNodeCapacity;    // BVH のたどりの節の列 1 本の容量（要素。cluster_bvh_cull.comp だけが読む）
+    uint bvhLeafCapacity;    // BVH のたどりの葉の列の容量（要素）
+    uint bvhPass2Capacity;   // 2 パス目の根の入力の容量（要素）
 } cullData;
 
 const uint CULL_PASS_SINGLE = 0u;
@@ -164,6 +164,11 @@ const uint STAT_SW_OVERFLOW = 7u;  // 小さいが一覧が満杯で積めなか
 const uint STAT_SW_ZEROED = 8u;    // ハードのコマンドを空振り（instanceCount = 0）にしたクラスタ（両パスの合計。swRasterEnabled=2 のときだけ）
 // 9・10 は visbuffer_sw_raster.comp が数える（9 = 矩形の上限を超えて描かなかった三角形、10 = 走ったワークグループ）
 const uint STAT_DRAW_DROPPED = 11u; // 区間の描画コマンドの上限（section.y）を超えて積めなかった可視クラスタ（両パスの合計）
+// BVH のたどり（cluster_bvh_cull.comp。bStatsEnabled によらず、溢れたときだけ数える）
+const uint STAT_BVH_OVERFLOW = 12u;       // 節・葉の列の容量を超えて積めず、判定から落ちた要素（両パスの合計）
+const uint STAT_BVH_PASS2_FALLBACK = 13u; // 2 パス目の根の入力の容量を超えた根（1 以上なら 2 パス目は全部の根を見直す）
+const uint STAT_BVH_NODE_PEAK = 14u;      // 節の列の 1 段へ積もうとした数の最大（両パス。容量を超えた分も含む。64 要素の粒度）
+const uint STAT_BVH_LEAF_PEAK = 15u;      // 葉の列へ積もうとした数の最大（両パス。容量を超えた分も含む。8 要素の粒度）
 
 const uint DEBUG_PAYLOAD_MODE_NONE = 0u;
 const uint DEBUG_PAYLOAD_MODE_CLUSTER_INDEX = 1u;
@@ -199,7 +204,7 @@ layout(std430, set = 0, binding = 5) buffer VisibleLastFrameBuffer
 // set 0, binding 6: 統計（STAT_*。1フレームの全インスタンスの合計）。bStatsEnabled=0 では使わない。
 layout(std430, set = 0, binding = 6) buffer StatsBuffer
 {
-    uint stats[12];
+    uint stats[16];
 };
 
 // set 0, binding 7: 材質の区間の表（x = コマンドの先頭の位置（全パス通しの添え字）, y = 区間のコマンドの最大数）。
@@ -216,13 +221,16 @@ layout(std430, set = 0, binding = 8) writeonly buffer DrawInfoBuffer
     uvec2 drawInfos[];
 };
 
-// set 0, binding 9: BVH のたどりの列（x = インスタンスの番号, y = 節の番号）。段ごと・葉ごとに別の範囲を使う。
+// set 0, binding 9: BVH のたどりの列（x = インスタンスの番号, y = 節の番号）。容量は固定で、節の列 2 本（段ごとに
+// 入力と出力を入れ替える。各 bvhNodeCapacity 要素）と葉の列（bvhLeafCapacity 要素）を並べる。
 layout(std430, set = 0, binding = 9) buffer BvhQueueBuffer
 {
     uvec2 bvhQueue[];
 };
 
-// set 0, binding 10: BVH のたどりのカウンタ。添え字 s（1以上）は段 s の入力の列の数、BVH_LEAF_COUNTER は葉の列の数。
+// set 0, binding 10: BVH のたどりのカウンタ（各パスの頭で 0 にする）。添え字 s（1以上）は段 s の入力の列へ積もうとした数、
+// BVH_LEAF_COUNTER は葉の列へ積もうとした数（容量を超えた分も数えるので、読む側は容量で頭打ちにする）。
+// BVH_ARGS_BASE からは段 s（1以上）と葉の段の間接 dispatch の引数（VkDispatchIndirectCommand。BVH_ARGS_STRIDE 語ずつ）。
 layout(std430, set = 0, binding = 10) buffer BvhCounterBuffer
 {
     uint bvhCounters[];
@@ -265,6 +273,10 @@ const uint SW_RASTER_HEADER_STRIDE = 4u;
 const uint SW_RASTER_MAX_GROUPS_X = 65535u;
 
 const uint BVH_LEAF_COUNTER = 16u;
+// 間接 dispatch の引数の位置（語）: 段 s は BVH_ARGS_BASE + s * BVH_ARGS_STRIDE、葉の段は BVH_ARGS_BASE + BVH_LEAF_COUNTER * BVH_ARGS_STRIDE
+// （MegaGeometryPass.cpp の BvhArgsBaseWords・BvhArgsStrideWords と一致）
+const uint BVH_ARGS_BASE = 32u;
+const uint BVH_ARGS_STRIDE = 4u;
 const uint BVH_STAGE_CLUSTERS = 0xFFFFFFFFu;
 // 葉が持つクラスタの最大数（GROUP_BVH_MAX_LEAF_CLUSTERS）。葉の列の1要素を、この数のスレッドが1クラスタずつ受け持つ
 const uint BVH_LEAF_SLOTS = 8u;

@@ -44,6 +44,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <cwchar>
+#include <exception>
 #include <iterator>
 
 namespace NorvesLib::Core::Rendering
@@ -100,8 +101,10 @@ namespace NorvesLib::Core::Rendering
         // 統計（cluster_cull.comp の stats[12]）のバイト数。0〜3 は pass1・pass2_tested・pass2_drawn・occluded、
         // 4〜7 はソフトウェアラスタの振り分け（pass1 の一覧・pass2 の一覧・ハードだけ・一覧が満杯で積めなかった数）、
         // 8 はハードのコマンドを空振りにした数、9・10 は visbuffer_sw_raster.comp が数える（矩形の上限を超えた三角形・走ったワークグループ）、
-        // 11 は区間の描画コマンドの上限（MaxDrawCount）を超えて積めなかった可視クラスタの数（両パスの合計）
-        constexpr uint32_t StatsBufferWords = 12u;
+        // 11 は区間の描画コマンドの上限（MaxDrawCount）を超えて積めなかった可視クラスタの数（両パスの合計）、
+        // 12 は BVH のたどりの列の容量を超えて落ちた要素の数（両パスの合計）、13 は 2 パス目の根の入力の容量を超えたか（1 なら超えた）、
+        // 14・15 は BVH の節の列の 1 段・葉の列へ積もうとした数の最大（容量を超えた分も含む）
+        constexpr uint32_t StatsBufferWords = 16u;
         constexpr uint32_t StatsBufferBytes = StatsBufferWords * sizeof(uint32_t);
 
         // ソフトウェアラスタの一覧（cluster_cull.comp の SwRasterBuffer）。先頭はパスごとの間接 dispatch の引数（x・y・z）と
@@ -111,12 +114,37 @@ namespace NorvesLib::Core::Rendering
 
         // グループの BVH のたどり（cluster_bvh_cull.comp）。BvhStageClusters は葉のクラスタの判定の段の印、
         // BvhLeafSlots は葉の列の1要素を受け持つスレッドの数（葉が持つクラスタの最大数）、
-        // BvhCounterCount はカウンタの数（添え字 s は段 s の入力の数、BvhLeafCounter は葉の列の数）
+        // BvhCounterCount はカウンタのバッファの語数（添え字 s は段 s の入力の数、BvhLeafCounter は葉の列の数。
+        // BvhArgsBaseWords からは段 s（1以上）と葉の段の間接 dispatch の引数が BvhArgsStrideWords 語ずつ並ぶ。
+        // Common/MegaGeometryCull.glsl の BVH_LEAF_COUNTER・BVH_ARGS_BASE・BVH_ARGS_STRIDE と一致）
         constexpr uint32_t BvhStageClusters = 0xFFFFFFFFu;
         constexpr uint32_t BvhLeafSlots = MegaGeometry::GROUP_BVH_MAX_LEAF_CLUSTERS;
-        constexpr uint32_t BvhCounterCount = 32;
+        constexpr uint32_t BvhLeafCounter = 16;
+        constexpr uint32_t BvhArgsBaseWords = 32;
+        constexpr uint32_t BvhArgsStrideWords = 4;
+        constexpr uint32_t BvhCounterCount = 128;
         constexpr uint32_t BvhCounterBytes = BvhCounterCount * sizeof(uint32_t);
-        constexpr uint32_t BvhMinQueueEntries = 64;
+        static_assert(BvhArgsBaseWords + (BvhLeafCounter + 1u) * BvhArgsStrideWords <= BvhCounterCount,
+                      "BVH の間接 dispatch の引数がカウンタのバッファに収まりません");
+        static_assert(MegaGeometry::GROUP_BVH_MAX_LEVELS <= BvhLeafCounter,
+                      "BVH の段のカウンタが葉の列のカウンタと重なります");
+
+        // BVH のたどりの列の容量（要素。1 要素 = uvec2）。本数やメッシュによらず固定で、節の列 2 本（段ごとに入力と出力を
+        // 入れ替える）と葉の列を並べる。超えた要素は積まずに数える（MEGA_CAPACITY の bvh_overflow）。
+        // 大きさの目安: mega-stress 5 万個の既定の視点で、節の列の 1 段へ積もうとした数の最大が約 349 万、葉の列が約 115 万
+        // （MEGA_CAPACITY の bvh_node_peak・bvh_leaf_peak）
+        constexpr uint32_t BvhNodeQueueCapacity = 1u << 22;
+        constexpr uint32_t BvhLeafQueueCapacity = 1u << 22;
+        constexpr uint64_t BvhQueueEntries = 2ull * BvhNodeQueueCapacity + BvhLeafQueueCapacity;
+        static_assert(BvhQueueEntries <= 0x3FFFFFFFull, "BVH の列の位置が uint32 に収まりません");
+        static_assert(static_cast<uint64_t>(BvhLeafQueueCapacity) * BvhLeafSlots <= 0xFFFFFFFFull,
+                      "葉の段のスレッドの番号が uint32 に収まりません");
+
+        // 2 パス目の根の入力（cluster_bvh_cull.comp の binding 14）。頭の 8 語（2 パス目の段 0 の間接 dispatch の引数・
+        // 積もうとした数・容量を超えた数・予約）の後ろに、1 パス目の段 0 が視錐台と LOD を通った根のインスタンスの番号を積む。
+        // 各パスの頭で 0 にするカウンタとは別に持ち、1 パス目の前に頭だけを 0 にする
+        constexpr uint32_t BvhPass2HeaderWords = 8;
+        constexpr uint32_t BvhPass2Capacity = 1u << 20;
 
         // 手放したバッファ（作り直した「見えた」ビット・IndirectDraw のバッファなど）を、パスが持ち続けるフレーム数。
         // 手放したフレームの記録（古い中身のコピーを含む）が終わった次のフレームで参照を落とす。GPU の完了までの保持は
@@ -530,7 +558,8 @@ namespace NorvesLib::Core::Rendering
         m_BvhCullShader.reset();
         m_BvhQueueBuffer.reset();
         m_BvhCounterBuffer.reset();
-        m_BvhQueueCapacity = 0;
+        m_BvhPass2Buffer.reset();
+        m_bBvhQueueAllocFailedLogged = false;
         m_LoggedBvhInstances = 0xFFFFFFFFu;
         m_LoggedBvhLevels = 0xFFFFFFFFu;
         m_LoggedFlatInstances = 0xFFFFFFFFu;
@@ -1373,7 +1402,8 @@ namespace NorvesLib::Core::Rendering
 
     bool MegaGeometryPass::IsSceneBvhAvailable() const
     {
-        return m_Settings.bUseGroupBVH && m_BvhCullPipeline && m_BvhQueueBuffer && m_BvhCounterBuffer;
+        // 列（m_BvhQueueBuffer）は BVH のインスタンスが初めて現れた記録で作る。作れなければその記録は描画を見送る
+        return m_Settings.bUseGroupBVH && m_BvhCullPipeline && m_BvhCounterBuffer;
     }
 
     bool MegaGeometryPass::CanTraverseSceneBvh(const MegaGeometry::MegaMeshGPUData *data) const
@@ -2557,44 +2587,29 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        // BVH のたどりの列の配置: 段 k（1以上）の入力の列、続けて葉の列。段 0 の入力はインスタンスの表の先頭
-        // （根の節）なので列を持たない。各節の親は1つなので、段 k の列は「段 k の節の数のインスタンスの合計」を超えない
+        // BVH のたどりの列の配置（容量は固定）: 節の列 0・節の列 1・葉の列。段 0 の入力はインスタンスの表の先頭
+        // （根の節）か 2 パス目の根の入力なので列を持たない。段 s（1以上）は節の列 s & 1 を読み、次の段の列 (s + 1) & 1 へ書く
         const uint32_t bvhLevelCount = static_cast<uint32_t>(bvhLevelCapacity.size());
-        VariableArray<uint32_t> bvhQueueBase(static_cast<size_t>(bvhLevelCount) + 1u, 0u);
-        uint64_t bvhQueueEntries = 0;
-        for (uint32_t level = 1; level < bvhLevelCount; ++level)
-        {
-            bvhQueueBase[level] = static_cast<uint32_t>(bvhQueueEntries);
-            bvhQueueEntries += bvhLevelCapacity[level];
-            if (bvhQueueEntries > 0x3FFFFFFFull)
-            {
-                break;
-            }
-        }
-        bvhQueueBase[bvhLevelCount] = static_cast<uint32_t>(bvhQueueEntries);
-        bvhQueueEntries += bvhLeafCapacity;
-        if (bvhQueueEntries > 0x3FFFFFFFull || bvhLeafCapacity * BvhLeafSlots > 0xFFFFFFFFull)
-        {
-            NORVES_LOG_ERROR("MegaGeometryPass", "MEGA_BVH_QUEUE_TOO_LARGE entries=%llu",
-                             static_cast<unsigned long long>(bvhQueueEntries));
-            recordEmptyRenderPass();
-            return;
-        }
+        const auto bvhNodeQueueBase = [](uint32_t stage) -> uint32_t { return (stage & 1u) * BvhNodeQueueCapacity; };
+        constexpr uint32_t bvhLeafQueueBase = 2u * BvhNodeQueueCapacity;
         if (bvhInstanceCount != m_LoggedBvhInstances || bvhLevelCount != m_LoggedBvhLevels ||
             static_cast<uint32_t>(instanceTable.size()) - bvhInstanceCount != m_LoggedFlatInstances)
         {
             m_LoggedBvhInstances = bvhInstanceCount;
             m_LoggedBvhLevels = bvhLevelCount;
             m_LoggedFlatInstances = static_cast<uint32_t>(instanceTable.size()) - bvhInstanceCount;
+            // scene_leaves は全インスタンスの葉の合計（列の容量ではない）。列の容量は本数によらず固定
             NORVES_LOG_INFO("MegaGeometryPass",
                             "MEGA_BVH bvh_instances=%u flat_instances=%u levels=%u "
-                            "leaf_capacity=%llu queue_entries=%llu "
+                            "scene_leaves=%llu node_queue_capacity=%u leaf_queue_capacity=%u pass2_capacity=%u "
                             "flat_groups=%llu dispatches_per_pass=%u",
                             bvhInstanceCount,
                             static_cast<uint32_t>(instanceTable.size()) - bvhInstanceCount,
                             bvhLevelCount,
                             static_cast<unsigned long long>(bvhLeafCapacity),
-                            static_cast<unsigned long long>(bvhQueueEntries),
+                            BvhNodeQueueCapacity,
+                            BvhLeafQueueCapacity,
+                            BvhPass2Capacity,
                             static_cast<unsigned long long>(totalGroups),
                             (totalGroups > 0 ? 1u : 0u) + (bvhInstanceCount > 0 ? bvhLevelCount + 1u : 0u));
         }
@@ -2677,11 +2692,16 @@ namespace NorvesLib::Core::Rendering
         if (!EnsureBatchBuffers(static_cast<uint32_t>(commandsTotal), sectionCount * passCount) ||
             !EnsureFrameSlot(frameSlot, sectionCount * passCount, sectionCount) ||
             (bvhInstanceCount > 0 &&
-             (!EnsureBvhBuffers(static_cast<uint32_t>(bvhQueueEntries)) ||
-              !EnsureBvhStageResources(frameSlot, 0, bvhLevelCount + 1u) ||
+             (!EnsureBvhStageResources(frameSlot, 0, bvhLevelCount + 1u) ||
               (bTwoPass && !EnsureBvhStageResources(frameSlot, 1, bvhLevelCount + 1u)))))
         {
             NORVES_LOG_ERROR("MegaGeometryPass", "まとめた描画の資源を用意できませんでした");
+            recordEmptyRenderPass();
+            return;
+        }
+        // BVH の固定容量の列。作れなければ（VRAM の不足など）このフレームの描画を見送る（ERROR は作れなくなった最初の 1 回だけ）
+        if (bvhInstanceCount > 0 && !EnsureBvhQueueBuffers())
+        {
             recordEmptyRenderPass();
             return;
         }
@@ -2909,6 +2929,9 @@ namespace NorvesLib::Core::Rendering
         baseUniform.VisibleReadStamp = static_cast<uint32_t>(m_OcclusionFrameCount);
         baseUniform.VisibleWriteStamp = static_cast<uint32_t>(m_OcclusionFrameCount) + 1u;
         baseUniform.BvhRootCount = bvhInstanceCount;
+        baseUniform.BvhNodeCapacity = BvhNodeQueueCapacity;
+        baseUniform.BvhLeafCapacity = BvhLeafQueueCapacity;
+        baseUniform.BvhPass2Capacity = BvhPass2Capacity;
         baseUniform.PageRequestCapacity = pageRequestCapacity;
         baseUniform.bSwRasterEnabled = bSwRasterSkipHardware ? 2u : (bSwRasterBin ? 1u : 0u);
         baseUniform.SwRasterCapacity = bSwRasterBin ? swRasterCapacity : 0u;
@@ -2981,6 +3004,8 @@ namespace NorvesLib::Core::Rendering
 
         // BVH のたどりの列・カウンタを、このフレームで使い始めたか（最初のパスの前に Common から使える状態にする）
         bool bBvhBuffersUsed = false;
+        // 2 パス目の根の入力を、このフレームの 1 パス目が書いたか（2 パス目の段 0 はそれを読む。書かなければ全部の根を判定する）
+        bool bBvhPass2Used = false;
 
         // cullPass: 0=従来の1回の判定、1=1パス目、2=2パス目。hiZTexture は2パス目の遮蔽の判定が読む HZB（null なら判定しない）
         auto recordCull = [&](uint32_t cullPass, const RHI::TexturePtr &hiZTexture) -> void
@@ -3044,10 +3069,13 @@ namespace NorvesLib::Core::Rendering
                                                  static_cast<uint32_t>(sectionCount * passCount * 2u * sizeof(uint32_t)));
                 descriptorSet->BindStorageBuffer(8, m_DrawInfoBuffer, 0,
                                                  static_cast<uint32_t>(m_DrawInfoBuffer->GetSize()));
-                // binding 9・10: BVH のたどりの列とカウンタ（BVH を使わない経路は触らない）
-                descriptorSet->BindStorageBuffer(9, m_BvhQueueBuffer, 0,
-                                                 static_cast<uint32_t>(m_BvhQueueBuffer->GetSize()));
+                // binding 9・10・14: BVH のたどりの列・カウンタ・2 パス目の根の入力（BVH を使わない経路は触らない。
+                // BVH のインスタンスがまだ現れず列を作っていなければ、代わりにカウンタを結ぶ）
+                const RHI::BufferPtr &bvhQueue = m_BvhQueueBuffer ? m_BvhQueueBuffer : m_BvhCounterBuffer;
+                const RHI::BufferPtr &bvhPass2 = m_BvhPass2Buffer ? m_BvhPass2Buffer : m_BvhCounterBuffer;
+                descriptorSet->BindStorageBuffer(9, bvhQueue, 0, static_cast<uint32_t>(bvhQueue->GetSize()));
                 descriptorSet->BindStorageBuffer(10, m_BvhCounterBuffer, 0, BvhCounterBytes);
+                descriptorSet->BindStorageBuffer(14, bvhPass2, 0, static_cast<uint32_t>(bvhPass2->GetSize()));
                 // binding 11・12: ページの表（このフレームの常駐）と、ページの要求の列
                 descriptorSet->BindStorageBuffer(11, frameSlot.PageTableBuffer, 0,
                                                  static_cast<uint32_t>(frameSlot.PageTableBuffer->GetSize()));
@@ -3119,7 +3147,7 @@ namespace NorvesLib::Core::Rendering
                     }
                 }
 
-                // 列とカウンタを使える状態にし、カウンタをパスごとに0へ戻す
+                // 列とカウンタを使える状態にし、カウンタと間接 dispatch の引数をパスごとに0へ戻す
                 cmdList->BufferBarrier(m_BvhCounterBuffer,
                                        bBvhBuffersUsed ? RHI::ResourceState::UnorderedAccess : RHI::ResourceState::Common,
                                        RHI::ResourceState::CopyDest);
@@ -3130,24 +3158,30 @@ namespace NorvesLib::Core::Rendering
                 }
                 cmdList->FillBuffer(m_BvhCounterBuffer, 0, BvhCounterBytes, 0);
                 cmdList->BufferBarrier(m_BvhCounterBuffer, RHI::ResourceState::CopyDest, RHI::ResourceState::UnorderedAccess);
+                cmdList->BufferBarrier(m_BvhCounterBuffer, RHI::ResourceState::CopyDest, RHI::ResourceState::IndirectArgument);
 
+                // 2 パス目の根の入力: 1 パス目の前に頭（引数・数）だけを 0 にし、1 パス目の段 0 が積む。2 パス目はその書き込みを
+                // 段 0 の入力と間接 dispatch の引数として読む（各パスの頭で 0 にするカウンタとは別のバッファ）
+                if (cullPass == CULL_PASS_FIRST)
+                {
+                    cmdList->BufferBarrier(m_BvhPass2Buffer, RHI::ResourceState::Common, RHI::ResourceState::CopyDest);
+                    cmdList->FillBuffer(m_BvhPass2Buffer, 0, BvhPass2HeaderWords * sizeof(uint32_t), 0);
+                    cmdList->BufferBarrier(m_BvhPass2Buffer, RHI::ResourceState::CopyDest, RHI::ResourceState::UnorderedAccess);
+                    bBvhPass2Used = true;
+                }
+                const bool bPass2Roots = bSecond && bBvhPass2Used;
+                if (bPass2Roots)
+                {
+                    cmdList->BufferBarrier(m_BvhPass2Buffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
+                    cmdList->BufferBarrier(m_BvhPass2Buffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::IndirectArgument);
+                }
+
+                // 段 0（根）は 1 パス目・1 回の判定ならインスタンスの数で、2 パス目なら根の入力の引数で dispatch する。
+                // 段 1 以降と葉の段は、前の段が積んだ数（容量で頭打ち）から書いた引数で間接 dispatch する
                 cmdList->SetPipeline(m_BvhCullPipeline);
                 for (uint32_t stage = 0; stage <= bvhLevelCount; ++stage)
                 {
                     const bool bClusterStage = stage == bvhLevelCount;
-                    uint64_t stageThreads = 0;
-                    if (bClusterStage)
-                    {
-                        stageThreads = bvhLeafCapacity * BvhLeafSlots;
-                    }
-                    else
-                    {
-                        stageThreads = stage == 0 ? static_cast<uint64_t>(bvhInstanceCount) : bvhLevelCapacity[stage];
-                    }
-                    if (stageThreads == 0)
-                    {
-                        continue;
-                    }
 
 #if NORVES_ENABLE_STATS
                     // 段ごとの GPU 時間（段 0 = インスタンスごとの根の判定。最後の段 = 葉のクラスタの判定）。
@@ -3166,18 +3200,38 @@ namespace NorvesLib::Core::Rendering
 
                     CullUniformData stageUniform = uniformData;
                     stageUniform.BvhStage = bClusterStage ? BvhStageClusters : stage;
-                    stageUniform.BvhInputBase = (!bClusterStage && stage >= 1) ? bvhQueueBase[stage] : 0u;
-                    stageUniform.BvhNextBase = stage + 1 < bvhLevelCount ? bvhQueueBase[stage + 1] : bvhQueueBase[bvhLevelCount];
-                    stageUniform.BvhLeafBase = bvhQueueBase[bvhLevelCount];
+                    stageUniform.BvhInputBase = (!bClusterStage && stage >= 1) ? bvhNodeQueueBase(stage) : 0u;
+                    stageUniform.BvhNextBase = bvhNodeQueueBase(stage + 1u);
+                    stageUniform.BvhLeafBase = bvhLeafQueueBase;
                     const BvhStageDraw &stageDraw = frameSlot.BvhStages[passIndex][stage];
                     stageDraw.Uniform->Update(&stageUniform, sizeof(CullUniformData));
                     bindCullDescriptors(stageDraw.DescriptorSet, stageDraw.Uniform);
                     cmdList->SetDescriptorSet(stageDraw.DescriptorSet, 0);
-                    dispatchThreads(stageThreads);
+                    bool bDispatched = true;
+                    if (stage == 0 && !bPass2Roots)
+                    {
+                        dispatchThreads(bvhInstanceCount);
+                    }
+                    else if (stage == 0)
+                    {
+                        bDispatched = cmdList->DispatchIndirect(m_BvhPass2Buffer, 0);
+                    }
+                    else
+                    {
+                        const uint32_t argsStage = bClusterStage ? BvhLeafCounter : stage;
+                        const uint64_t argsOffset =
+                            static_cast<uint64_t>(BvhArgsBaseWords + argsStage * BvhArgsStrideWords) * sizeof(uint32_t);
+                        bDispatched = cmdList->DispatchIndirect(m_BvhCounterBuffer, argsOffset);
+                    }
+                    if (!bDispatched)
+                    {
+                        NORVES_LOG_ERROR("MegaGeometryPass", "MEGA_BVH_INDIRECT_FAILED pass=%u stage=%u", passIndex + 1u, stage);
+                    }
 
-                    // 次の段が、この段が積んだ列とカウンタを読む
+                    // 次の段が、この段が積んだ列・カウンタ（シェーダーの読み取り）と引数（間接 dispatch）を読む
                     cmdList->BufferBarrier(m_BvhQueueBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
                     cmdList->BufferBarrier(m_BvhCounterBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
+                    cmdList->BufferBarrier(m_BvhCounterBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::IndirectArgument);
                 }
             }
 
@@ -3409,6 +3463,10 @@ namespace NorvesLib::Core::Rendering
         {
             cmdList->BufferBarrier(m_BvhQueueBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::Common);
             cmdList->BufferBarrier(m_BvhCounterBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::Common);
+        }
+        if (bBvhPass2Used)
+        {
+            cmdList->BufferBarrier(m_BvhPass2Buffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::Common);
         }
 
         if (m_bVisibilityPlanEnabled || bStaged)
@@ -3681,50 +3739,105 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
-        // BVH のたどりの列・カウンタ（平らな判定のディスクリプタセットも binding 9・10 に結ぶので、常に作っておく）
-        return EnsureBvhBuffers(BvhMinQueueEntries);
+        // BVH のたどりのカウンタ（平らな判定のディスクリプタセットも binding 9・10・14 に結ぶので、常に作っておく。
+        // 固定容量の列と 2 パス目の根の入力は、BVH のインスタンスが初めて現れた記録で作る）
+        return EnsureBvhCounterBuffer();
     }
 
-    bool MegaGeometryPass::EnsureBvhBuffers(uint32_t queueEntries)
+    bool MegaGeometryPass::EnsureBvhCounterBuffer()
     {
         if (!m_Device)
         {
             return false;
         }
-
-        if (m_BvhQueueBuffer && m_BvhCounterBuffer && queueEntries <= m_BvhQueueCapacity)
+        if (m_BvhCounterBuffer)
         {
             return true;
         }
 
-        const uint32_t newCapacity = NextPowerOfTwo(std::max({queueEntries, m_BvhQueueCapacity, BvhMinQueueEntries}));
-        RHI::BufferDesc queueDesc(static_cast<uint64_t>(newCapacity) * 2u * sizeof(uint32_t),
-                                  RHI::ResourceUsage::StorageBuffer,
-                                  false,
-                                  "MegaGeometry_BvhQueue");
-        RHI::BufferPtr queueBuffer = m_Device->CreateBuffer(queueDesc);
-        RHI::BufferPtr counterBuffer = m_BvhCounterBuffer;
-        if (!counterBuffer)
-        {
-            RHI::BufferDesc counterDesc(BvhCounterBytes,
-                                        RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::TransferDst,
-                                        false,
-                                        "MegaGeometry_BvhCounters");
-            counterBuffer = m_Device->CreateBuffer(counterDesc);
-        }
-        if (!queueBuffer || !counterBuffer)
+        // 頭は段ごとの間接 dispatch の引数になるので IndirectBuffer も持つ。各パスの頭で FillBuffer で 0 にする
+        RHI::BufferDesc counterDesc(BvhCounterBytes,
+                                    RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::IndirectBuffer |
+                                        RHI::ResourceUsage::TransferDst,
+                                    false,
+                                    "MegaGeometry_BvhCounters");
+        m_BvhCounterBuffer = m_Device->CreateBuffer(counterDesc);
+        return m_BvhCounterBuffer != nullptr;
+    }
+
+    bool MegaGeometryPass::EnsureBvhQueueBuffers()
+    {
+        if (!m_Device || !m_BvhCounterBuffer)
         {
             return false;
         }
-
-        // 古い列は、直前のフレームのGPUがまだ使っているかもしれないので、しばらく保持してから破棄する
-        if (m_BvhQueueBuffer)
+        if (m_BvhQueueBuffer && m_BvhPass2Buffer)
         {
-            m_RetiredBuffers.push_back(RetiredBuffer{m_BvhQueueBuffer, m_RenderFrameCount});
+            return true;
         }
+
+        // 容量は固定なので作り直さない。割り当ての失敗（VRAM の不足）は例外で届くので、ここで受けて描画を見送る側へ返す
+        RHI::BufferPtr queueBuffer = m_BvhQueueBuffer;
+        RHI::BufferPtr pass2Buffer = m_BvhPass2Buffer;
+        const uint64_t queueBytes = BvhQueueEntries * 2u * sizeof(uint32_t);
+        const uint64_t pass2Bytes = (static_cast<uint64_t>(BvhPass2HeaderWords) + BvhPass2Capacity) * sizeof(uint32_t);
+        try
+        {
+            if (!queueBuffer)
+            {
+                RHI::BufferDesc queueDesc(queueBytes, RHI::ResourceUsage::StorageBuffer, false, "MegaGeometry_BvhQueue");
+                queueBuffer = m_Device->CreateBuffer(queueDesc);
+            }
+            if (!pass2Buffer)
+            {
+                // 頭は 2 パス目の段 0 の間接 dispatch の引数になるので IndirectBuffer も持つ。1 パス目の前に頭を FillBuffer で 0 にする
+                RHI::BufferDesc pass2Desc(pass2Bytes,
+                                          RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::IndirectBuffer |
+                                              RHI::ResourceUsage::TransferDst,
+                                          false,
+                                          "MegaGeometry_BvhPass2Roots");
+                pass2Buffer = m_Device->CreateBuffer(pass2Desc);
+            }
+        }
+        catch (const std::exception &exception)
+        {
+            if (!m_bBvhQueueAllocFailedLogged)
+            {
+                NORVES_LOG_ERROR("MegaGeometryPass",
+                                 "MEGA_BVH_QUEUE_ALLOC_FAILED queue_bytes=%llu pass2_bytes=%llu reason=%s。描画を見送ります",
+                                 static_cast<unsigned long long>(queueBytes),
+                                 static_cast<unsigned long long>(pass2Bytes),
+                                 exception.what());
+                m_bBvhQueueAllocFailedLogged = true;
+            }
+            return false;
+        }
+        if (!queueBuffer || !pass2Buffer)
+        {
+            if (!m_bBvhQueueAllocFailedLogged)
+            {
+                NORVES_LOG_ERROR("MegaGeometryPass",
+                                 "MEGA_BVH_QUEUE_ALLOC_FAILED queue_bytes=%llu pass2_bytes=%llu reason=null。描画を見送ります",
+                                 static_cast<unsigned long long>(queueBytes),
+                                 static_cast<unsigned long long>(pass2Bytes));
+                m_bBvhQueueAllocFailedLogged = true;
+            }
+            // 作れた方は持っておき、次の記録で残りだけを作り直す
+            m_BvhQueueBuffer = queueBuffer;
+            m_BvhPass2Buffer = pass2Buffer;
+            return false;
+        }
+
         m_BvhQueueBuffer = queueBuffer;
-        m_BvhCounterBuffer = counterBuffer;
-        m_BvhQueueCapacity = newCapacity;
+        m_BvhPass2Buffer = pass2Buffer;
+        m_bBvhQueueAllocFailedLogged = false;
+        NORVES_LOG_INFO("MegaGeometryPass",
+                        "VRAM_LEDGER bvh_queue mb=%.2f node_capacity=%u leaf_capacity=%u pass2_mb=%.2f pass2_capacity=%u",
+                        static_cast<double>(queueBytes) / (1024.0 * 1024.0),
+                        BvhNodeQueueCapacity,
+                        BvhLeafQueueCapacity,
+                        static_cast<double>(pass2Bytes) / (1024.0 * 1024.0),
+                        BvhPass2Capacity);
         return true;
     }
 
@@ -3881,6 +3994,7 @@ namespace NorvesLib::Core::Rendering
         addBinding(11, RHI::ResourceBindType::RWBuffer);             // ページの表（常駐 + 要求の印）
         addBinding(12, RHI::ResourceBindType::RWBuffer);             // ページの要求の列
         addBinding(13, RHI::ResourceBindType::RWBuffer);             // ソフトウェアラスタの一覧と間接 dispatch の引数
+        addBinding(14, RHI::ResourceBindType::RWBuffer);             // BVH のたどりの 2 パス目の根の入力と間接 dispatch の引数
         addBinding(MegaMeshTableBindingIndex, RHI::ResourceBindType::StructuredBuffer); // メッシュの表
         return desc;
     }
@@ -5424,13 +5538,18 @@ namespace NorvesLib::Core::Rendering
                                 static_cast<unsigned long long>(pending.RenderFrame),
                                 static_cast<long long>(pending.EpochFrame));
             }
-            // 描かれなかったクラスタの数（0 が合格）と、インスタンス数に比例して膨らむバッファの大きさ
+            // 描かれなかったクラスタの数（0 が合格）と、インスタンス数に比例して膨らむバッファの大きさ。
+            // bvh_overflow は BVH のたどりの固定容量の列を超えて判定から落ちた要素の数（0 が合格）、bvh_pass2_fallback は
+            // 2 パス目の根の入力が溢れて全部の根を判定し直したか、bvh_node_peak・bvh_leaf_peak は節の列の 1 段・葉の列へ
+            // 積もうとした数の最大（容量を超えた分も含む）。BVH の列（bvh_queue_bytes）は本数によらず一定
             const auto bufferBytes = [](const RHI::BufferPtr &buffer) -> unsigned long long
             { return buffer ? static_cast<unsigned long long>(buffer->GetSize()) : 0ull; };
             NORVES_LOG_INFO("MegaGeometryPass",
                             "MEGA_CAPACITY draw_dropped=%u max_draw_count=%u command_capacity=%u "
                             "visibility_bytes=%llu indirect_bytes=%llu draw_info_bytes=%llu "
-                            "bvh_queue_bytes=%llu sw_raster_bytes=%llu frame=%llu epoch_frame=%lld",
+                            "bvh_queue_bytes=%llu bvh_pass2_bytes=%llu bvh_overflow=%u bvh_pass2_fallback=%u "
+                            "bvh_node_peak=%u bvh_leaf_peak=%u "
+                            "sw_raster_bytes=%llu frame=%llu epoch_frame=%lld",
                             stats[11],
                             m_Settings.MaxDrawCount,
                             m_CommandCapacity,
@@ -5438,6 +5557,11 @@ namespace NorvesLib::Core::Rendering
                             bufferBytes(m_IndirectDrawBuffer),
                             bufferBytes(m_DrawInfoBuffer),
                             bufferBytes(m_BvhQueueBuffer),
+                            bufferBytes(m_BvhPass2Buffer),
+                            stats[12],
+                            stats[13],
+                            stats[14],
+                            stats[15],
                             bufferBytes(m_SwRasterBuffer),
                             static_cast<unsigned long long>(pending.RenderFrame),
                             static_cast<long long>(pending.EpochFrame));

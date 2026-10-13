@@ -45,7 +45,9 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         float SwRasterMaxPixels;      // 振り分ける画面上の半径（画素）のしきい値
         float SwRasterNearPlane;      // 近平面までの距離
         uint32_t OrthoLod;            // 1 なら LOD を正射影で選ぶ（VSM の影）。0 なら透視（主の経路）
-        uint32_t OrthoReserved[3];    // 予約（std140 で 16 バイトの境まで詰める）
+        uint32_t BvhNodeCapacity;     // BVH のたどりの節の列 1 本の容量（要素。主の経路の cluster_bvh_cull.comp だけが読む）
+        uint32_t BvhLeafCapacity;     // BVH のたどりの葉の列の容量（要素）
+        uint32_t BvhPass2Capacity;    // 2 パス目の根の入力の容量（要素）
     };
     // ソフトウェアラスタの 4 語は、行列 2 つ・視点・平面 6 つ・語 21 個の後ろに並ぶ（cluster_cull.comp の CullUniforms と同じ std140 の位置）。
     // 正射影の LOD の印は、その 4 語の直後

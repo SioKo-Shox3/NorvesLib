@@ -917,11 +917,15 @@ namespace NorvesLib::Core::Rendering
          */
         bool EnsureBatchBuffers(uint32_t commandCapacity, uint32_t counterCapacity);
 
+        /** @brief BVH のたどりのカウンタ（間接 dispatch の引数を含む）を作る。平らな判定のディスクリプタセットも結ぶので初期化で作る */
+        bool EnsureBvhCounterBuffer();
+
         /**
-         * @brief BVH のたどりの列とカウンタを、必要な数に収まる大きさにする（足りなければ作り直し、古いものは遅れて破棄）
-         * @param queueEntries 列の要素数（uvec2）。段ごとの列と葉の列を1本に並べた合計
+         * @brief BVH のたどりの固定容量の列と 2 パス目の根の入力を作る（作り直さない）
+         *
+         * 割り当てに失敗したら例外を投げずに false を返し、最初の 1 回だけ ERROR を出す（呼ぶ側はそのフレームの描画を見送る）。
          */
-        bool EnsureBvhBuffers(uint32_t queueEntries);
+        bool EnsureBvhQueueBuffers();
 
         /**
          * @brief ソフトウェアラスタの一覧のバッファを、パスごとに capacity 個のクラスタを収められる大きさで用意する
@@ -1005,10 +1009,13 @@ namespace NorvesLib::Core::Rendering
         RHI::PipelinePtr m_BvhCullPipeline;
         RHI::ShaderPtr m_BvhCullShader;
 
-        // BVH のたどりの列（uvec2: インスタンスの番号・節の番号。段ごとの列と葉の列）とカウンタ。全インスタンス・全パスで共用する
+        // BVH のたどりの列（uvec2: インスタンスの番号・節の番号。固定容量の節の列 2 本と葉の列）・カウンタと間接 dispatch の引数・
+        // 2 パス目の根の入力。全インスタンス・全パスで共用する。列と根の入力は BVH のインスタンスが初めて現れたときに作る
         RHI::BufferPtr m_BvhQueueBuffer;
         RHI::BufferPtr m_BvhCounterBuffer;
-        uint32_t m_BvhQueueCapacity = 0; // m_BvhQueueBuffer の要素数
+        RHI::BufferPtr m_BvhPass2Buffer;
+        // 列を作れなかったことを記録したか（作れるまで描画を見送り、ERROR は続けて出さない）
+        bool m_bBvhQueueAllocFailedLogged = false;
         // 最後に記録した BVH のたどりの規模（変わったときだけ記録する）
         uint32_t m_LoggedBvhInstances = 0xFFFFFFFFu;
         uint32_t m_LoggedBvhLevels = 0xFFFFFFFFu;

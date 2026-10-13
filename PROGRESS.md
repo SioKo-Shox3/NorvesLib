@@ -3834,3 +3834,19 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 補助（verify の外）: 起動画面の 6 メッシュは焼き込みの BVH を持つので、新しい表を引く道を通すために大球を実行時に作る起動（`-GameArgs rendering3dtest-big-sphere-source=runtime`）で撮り比べた。`--mega-flat-path` 付き（`aux-SCN-MEGA-FLAT-TO-BVH-runtime-flat.txt`）は `bvh_instances=0 flat_instances=6`、既定（`aux-SCN-MEGA-FLAT-TO-BVH-runtime-bvh.txt`）は `bvh_instances=6 flat_instances=0`。どちらも `MEGA_OCCLUSION pass1=2280 pass2_tested=2287 pass2_drawn=0 occluded=7` で同じクラスタを描き、画像の比較は psnr_db=100・max_channel_difference=1、`[ERROR]` 0。
 - Next: SCN-MEGA-BVH-INDIRECT。
 - Notes: paths に MegaGeometryResourceStore.cpp/.h と MegaGeometryTypes.h を足した（BVH はストアの中にあり、GPU へ書くのはストアの区画の組み立て）。実行時の階層のクラスタは親の誤差が既定の最大値なので節の LOD では枝を切らず、節の判定は視錐台と遮蔽だけが効く（葉の判定は平らな経路と同じ `ProcessCluster`）。影（CSM・VSM）の判定は今までどおり BVH をたどらない。BVH の列は葉の数の分だけ大きくなる（実行時の大球を含む起動画面で leaf_capacity 12,858・queue 28,236。容量の固定は BVH-INDIRECT）。試験の追加はしていない。
+
+### SCN-MEGA-BVH-INDIRECT（2026-10-14、反復 4・run 20261014-033121）
+- Done: BVH のたどりの列を固定容量にし、段 1 以降と葉の段を GPU が書いた引数で間接 dispatch する（`ICommandList::DispatchIndirect`）。
+  - 列（`MegaGeometry_BvhQueue`、96 MB）は節の列 2 本（各 4,194,304 要素。段 s は列 s & 1 を読み、次の段の列 (s + 1) & 1 へ書く）と葉の列（4,194,304 要素）。本数・メッシュによらず一定で、BVH のインスタンスが初めて現れた記録で 1 回だけ作る。
+  - `cluster_bvh_cull.comp` は積む前に容量を確かめ、超えた要素は積まずに統計 12（`bvh_overflow`）へ数える。カウンタは積もうとした数で、読む側は min(数, 容量)。間接 dispatch の引数は、ワークグループの先頭の要素を積んだスレッドが min(数, 容量) から atomicMax で書く（カウンタのバッファの語 32 以降。段 s は 32 + 4s、葉は 32 + 64）。
+  - 2 パス目の根の入力を別のバッファ（`MegaGeometry_BvhPass2Roots`、binding 14、4 MB）に持つ。1 パス目の前に頭だけを 0 にし（各パスの頭で 0 にするカウンタとは別）、1 パス目の段 0 が視錐台と LOD を通った根を積み、2 パス目の段 0 はそれを入力と間接 dispatch の引数として読む。容量（1,048,576）を超えたら 2 パス目は全部の根を判定し直す（統計 13 `bvh_pass2_fallback`）。
+  - 列を作れなかったら（VRAM の不足の例外を受ける）、そのフレームの描画を見送り `MEGA_BVH_QUEUE_ALLOC_FAILED` を ERROR で 1 回出す。
+  - `MEGA_CAPACITY` に `bvh_pass2_bytes`・`bvh_overflow`・`bvh_pass2_fallback`・`bvh_node_peak`・`bvh_leaf_peak`（積もうとした数の最大）を足した。`MEGA_BVH` の `leaf_capacity`・`queue_entries` は `scene_leaves`（全インスタンスの葉の合計）と固定の容量に置き換えた。定数バッファの予約 3 語を容量 3 つに使った。
+- 検証（`.harness/runs/20261014-033121/`）:
+  - `verify-SCN-MEGA-BVH-INDIRECT-1.txt`: RelWithDebInfo の Game のビルド EXIT=0。
+  - `verify-SCN-MEGA-BVH-INDIRECT-2.txt`: バナナ 1 万本 overview を SCN-MEGA-BASE と比較、mean_luminance_difference=0.0001・psnr_db=70.53・within_limits=True、result=pass、EXIT=0。Game.log の `[ERROR]` 0、`MEGA_CAPACITY bvh_queue_bytes=100663296 bvh_overflow=0 bvh_pass2_fallback=0`（全行）、`MEGA_OCCLUSION pass1=364821 pass2_tested=367654 occluded=2833` は基準と同じ。PNG はバナナの散布と 3 つの山が以前どおり。
+- 補助（verify の外、notes の確認）:
+  - mega-stress 5 万個（`aux-SCN-MEGA-BVH-INDIRECT-stress50k.txt`、3 視点）: 落ちずに result=pass、`[ERROR]` 0、`bvh_queue_bytes=100663296`（1 万本と同じ）・`bvh_overflow=0`。`bvh_node_peak` は最大 3,623,747（aerial）、`bvh_leaf_peak` は最大 1,192,897。VRAM の使用は約 6.7 GB（以前は 14,975 MB で落ちた）。PNG に欠けは無い。
+  - バナナ 10 万本 + mega-stress 5000 個の混在（`aux-SCN-MEGA-BVH-INDIRECT-mixed100k.txt`）: 落ちずに result=pass、`[ERROR]` 0、`bvh_overflow=0`、`bvh_node_peak=1538951`。
+- Next: SCN-MEGA-INSTANCE-CULL。
+- Notes: 容量の配分は測って決めた。最初の配分（節の列 2,097,152・葉の列 8,388,608）では 5 万個で節の列が溢れ（`bvh_overflow` 約 250 万、影だけ残って物が欠けた）、試しに容量を大きくした撮影（`.harness/runs/scene-capture/SCN-MEGA-BVH-INDIRECT/probe50k`）で節の列の 1 段の最大が約 349 万・葉の列が約 115 万と分かったので、総量 96 MB のまま節 4M・葉 4M に配った。aerial の節の列の使用は容量の 86%。mega-stress のメッシュの多くは節の LOD で枝を切らない（実行時の階層）ので、節の列の需要は視錐台の中の葉の数に比例する。100 万本・混在の容量の足りる・足りないは SCN-MEGA-ACCEPT-1M の `bvh_overflow`・`bvh_node_peak` で判断する。2 パス目の段 0 は 1 パス目の根の選別を引き継ぐので、2 パス目に判定する根は視錐台の中だけになった（性能は測っていない）。試験の追加はしていない。
