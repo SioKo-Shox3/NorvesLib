@@ -4,6 +4,7 @@
 #include "Rendering/FrameUseRing.h"
 #include "Rendering/HiZPyramidPass.h"
 #include "Rendering/IViewPass.h"
+#include "Math/Matrix4x4.h"
 #include "Rendering/MegaGeometry/GeometryPageTable.h"
 #include "Rendering/MegaGeometry/MegaGeometryCullUniforms.h"
 #include "Rendering/MegaGeometry/MegaGeometryTypes.h"
@@ -49,6 +50,111 @@ namespace NorvesLib::Core::Rendering
         uint32_t IndexAddress[2];
     };
     static_assert(sizeof(MegaGeometryShadowInstance) == 48, "Common/VirtualShadowMapMegaCull.glsl の ShadowInstance と大きさが一致しません");
+
+    /**
+     * @brief HZB を作ったときの契約。次のフレームが前のフレームの HZB を遮蔽の判定に使えるかを、これと今のフレームの値で決める
+     *
+     * HZB 自身が「どのフレームの、どの VP・寸法・シーンで描いた深度か」を持つ。前のゲームパケットのカメラ
+     * （PreviousMainCamera）には頼らない（描画がゲームのフレームを飛ばす・描き直すと、前に描いたものと一致しない）。
+     */
+    struct MegaHiZContract
+    {
+        bool bValid = false;          // 最後まで作れた HZB か（今のフレームの値として使うときは、作れる見込みがあるか）
+        uint64_t RenderFrame = 0;     // 作った記録のフレームの数え（フレームの通し番号が変わるたびに 1 進む）
+        uint64_t GameFrame = 0;       // 描いたゲームのフレームの番号（パケットの FrameNumber）
+        Math::Matrix4x4 ViewProjection = Math::Matrix4x4::Identity; // 深度を描いた VP（TAA のジッタ込み）
+        uint32_t DepthWidth = 0;      // 元の深度の寸法
+        uint32_t DepthHeight = 0;
+        uint64_t SceneGeneration = 0; // シーンの世代（差分の同期の写しの世代。全量の同期では 0）
+        uint64_t SceneResyncCount = 0; // インスタンスを全部作り直した回数（全量の再同期で進む）
+        uint64_t CameraId = 0;
+        uint64_t SourceCameraId = 0;  // GameThread のカメラの識別（替わったらカメラの切れ目）
+        uint32_t ViewId = UINT32_MAX;
+        uint32_t ViewportId = UINT32_MAX;
+    };
+
+    /** @brief 前のフレームの HZB が使えるか（Ready）と、使えない理由 */
+    enum class MegaPrevHiZStatus : uint8_t
+    {
+        Ready,      // 使える
+        Epoch,      // 決定的な撮影のエポックの先頭（時間的な状態を捨てる）
+        Missing,    // 前の HZB が無い（最初のフレーム・作れなかった）
+        View,       // 別のビュー・ビューポートが作った
+        Resize,     // 深度の寸法が替わった
+        Stale,      // 直前の記録のフレームで作っていない（遮蔽を使わなかったフレーム・描かなかったフレームを挟んだ）
+        PacketGap,  // ゲームのフレームが飛んだ・戻った（パケットの破棄・描画の見送りを挟んだ）
+        Generation, // シーンの世代が替わった
+        Resync,     // インスタンスを全部作り直した（全量の再同期）
+        CameraCut,  // カメラが替わった
+    };
+
+    /** @brief ログの理由の文字列（MEGA_PREV_HIZ の reason=） */
+    inline const char *ToString(MegaPrevHiZStatus status)
+    {
+        switch (status)
+        {
+        case MegaPrevHiZStatus::Ready: return "ready";
+        case MegaPrevHiZStatus::Epoch: return "epoch";
+        case MegaPrevHiZStatus::Missing: return "missing";
+        case MegaPrevHiZStatus::View: return "view";
+        case MegaPrevHiZStatus::Resize: return "resize";
+        case MegaPrevHiZStatus::Stale: return "stale";
+        case MegaPrevHiZStatus::PacketGap: return "packet_gap";
+        case MegaPrevHiZStatus::Generation: return "generation";
+        case MegaPrevHiZStatus::Resync: return "resync";
+        case MegaPrevHiZStatus::CameraCut: return "camera_cut";
+        }
+        return "unknown";
+    }
+
+    /**
+     * @brief 前のフレームの HZB（previous の契約）を、今のフレーム（current）の遮蔽の判定に使えるかを決める
+     * @param bEpochStart 決定的な撮影のエポックの先頭のフレーム
+     *
+     * 同じゲームのフレームを描き直す（GameFrame が同じ）のは飛びとしない。VP の違い（カメラの動き・ジッタ）は理由にしない
+     * （判定の側が前の VP で投影し直す）。
+     */
+    inline MegaPrevHiZStatus EvaluatePreviousHiZ(const MegaHiZContract &previous, const MegaHiZContract &current,
+                                                 bool bEpochStart)
+    {
+        if (bEpochStart)
+        {
+            return MegaPrevHiZStatus::Epoch;
+        }
+        if (!previous.bValid)
+        {
+            return MegaPrevHiZStatus::Missing;
+        }
+        if (previous.ViewId != current.ViewId || previous.ViewportId != current.ViewportId)
+        {
+            return MegaPrevHiZStatus::View;
+        }
+        if (previous.DepthWidth != current.DepthWidth || previous.DepthHeight != current.DepthHeight)
+        {
+            return MegaPrevHiZStatus::Resize;
+        }
+        if (previous.RenderFrame + 1u != current.RenderFrame)
+        {
+            return MegaPrevHiZStatus::Stale;
+        }
+        if (current.GameFrame < previous.GameFrame || current.GameFrame > previous.GameFrame + 1u)
+        {
+            return MegaPrevHiZStatus::PacketGap;
+        }
+        if (previous.SceneGeneration != current.SceneGeneration)
+        {
+            return MegaPrevHiZStatus::Generation;
+        }
+        if (previous.SceneResyncCount != current.SceneResyncCount)
+        {
+            return MegaPrevHiZStatus::Resync;
+        }
+        if (previous.CameraId != current.CameraId || previous.SourceCameraId != current.SourceCameraId)
+        {
+            return MegaPrevHiZStatus::CameraCut;
+        }
+        return MegaPrevHiZStatus::Ready;
+    }
 
     /** @brief VSM のキャッシュで描き直すワールドの範囲（AABB） */
     struct MegaGeometryShadowBox
@@ -422,6 +528,8 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief 記録したフレームの数（フレームの通し番号が変わるたびに 1 進む。通し番号が無い記録は記録ごとに 1 進む） */
         uint64_t GetRenderFrameCount() const { return m_RenderFrameCount; }
+        /** @brief 最後に記録した 2 パスのフレームで、前のフレームの HZB が使えたか（Ready）と使えない理由 */
+        MegaPrevHiZStatus GetPreviousHiZStatus() const { return m_PrevHiZStatus; }
         /** @brief フレームごとの資源の組の数（選んだ飛行中のフレームの番号の枠。検査用） */
         uint32_t GetFrameSlotCapacity() const { return m_FrameSlots.GetCapacity(); }
         /** @brief 手放して GPU の使い終わりを待っているバッファの数（検査用） */
@@ -993,6 +1101,13 @@ namespace NorvesLib::Core::Rendering
          */
         bool CanUseTwoPassOcclusion(const MegaGeometryPassCommand &command);
 
+        /**
+         * @brief 前のフレームの HZB の判定（m_PrevHiZStatus）を MEGA_PREV_HIZ の行に出す（開発ビルドだけ）
+         *
+         * 判定が変わったフレームと、判定 300 回ごとに出す（毎フレームは出さない）。
+         */
+        void LogPreviousHiZStatus(const MegaHiZContract &previous, const MegaHiZContract &current, int64_t epochFrame);
+
         /** @brief GBuffer の描画を止めるか（止める設定で、解決が実際に使えるとき） */
         bool ShouldSkipGBufferDraw(DebugViewMode mode) const;
 
@@ -1126,9 +1241,21 @@ namespace NorvesLib::Core::Rendering
         RHI::RenderPassPtr m_SecondGBufferRenderPass;
         RHI::FramebufferPtr m_SecondGBufferFramebuffer;
 
-        // 遮蔽カリング（2パス）
-        HiZPyramid m_HiZ;
+        // 遮蔽カリング（2パス）。HZB は 2 枚を交互に作り、それぞれが作ったときの契約を持つ。m_HiZIndex は最後に作った方
+        // （今のフレームは もう一方へ作り、前のフレームの HZB を残す）
+        HiZPyramid m_HiZ[2];
+        MegaHiZContract m_HiZContracts[2];
+        uint32_t m_HiZIndex = 0;
         bool m_bHiZReady = false;
+        // 前のフレームの HZB が使えるかの最後の判定（判定にはまだ使わない）と、ログの変化の検出・数え
+        MegaPrevHiZStatus m_PrevHiZStatus = MegaPrevHiZStatus::Missing;
+        bool m_bPrevHiZLogged = false;
+        MegaPrevHiZStatus m_PrevHiZLoggedStatus = MegaPrevHiZStatus::Missing;
+        uint64_t m_PrevHiZReadyCount = 0;
+        uint64_t m_PrevHiZNotReadyCount = 0;
+        // 今のシーンの世代（Setup が写しから受け取る）と、インスタンスを全部作り直した回数
+        uint64_t m_SceneGeneration = 0;
+        uint64_t m_SceneResyncCount = 0;
         // 従来の経路が binding 5・6 に結ぶ代わりのバッファ（シェーダーは触らない）
         RHI::BufferPtr m_DummyVisibilityBuffer;
         RHI::BufferPtr m_DummyStatsBuffer;

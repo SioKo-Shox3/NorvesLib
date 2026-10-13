@@ -622,7 +622,8 @@ namespace NorvesLib::Core::Rendering
 #endif
 
         // 遮蔽カリング（2パス）の HZB。作れなければ従来の1回の判定で描く
-        m_bHiZReady = m_HiZ.Initialize(m_Device, context.ShaderMgr);
+        // 前のフレームの HZB を残すため 2 枚を交互に作る
+        m_bHiZReady = m_HiZ[0].Initialize(m_Device, context.ShaderMgr) && m_HiZ[1].Initialize(m_Device, context.ShaderMgr);
 
         // GBuffer描画用シェーダーの読み込み（MegaGeometry専用GBuffer互換シェーダー）
         if (context.ShaderMgr)
@@ -805,8 +806,16 @@ namespace NorvesLib::Core::Rendering
         m_bDropVisibilityContinuity = false;
         m_bOcclusionFallbackLogged = false;
         m_bBatchUnsupportedLogged = false;
-        m_HiZ.Shutdown();
+        m_HiZ[0].Shutdown();
+        m_HiZ[1].Shutdown();
+        m_HiZContracts[0] = MegaHiZContract{};
+        m_HiZContracts[1] = MegaHiZContract{};
+        m_HiZIndex = 0;
         m_bHiZReady = false;
+        m_PrevHiZStatus = MegaPrevHiZStatus::Missing;
+        m_bPrevHiZLogged = false;
+        m_PrevHiZReadyCount = 0;
+        m_PrevHiZNotReadyCount = 0;
 
         m_DrawPipeline.reset();
         m_DrawWireframePipeline.reset();
@@ -946,6 +955,8 @@ namespace NorvesLib::Core::Rendering
         const bool bSameSource = bFromMirror && context.SnapshotMegaGeometryProxies == m_InstanceSourceProxies;
         const bool bReuseInstances = bSameSource && context.SnapshotMegaRevision == m_InstanceSourceRevision;
         bool bPatchedInstances = false;
+        // 前のフレームの HZB の契約に載せるシーンの世代（差分の同期の写しの世代。全量の同期では世代が来ないので 0）
+        m_SceneGeneration = context.SnapshotMegaMirror != nullptr ? context.SnapshotMegaMirror->GetGeneration() : 0;
         if (!bReuseInstances && bSameSource && context.SnapshotMegaMirror != nullptr &&
             context.SnapshotMegaMirror->CanPatchFrom(m_InstanceSourceRevision) &&
             m_Instances.size() == context.SnapshotMegaGeometryProxies->size())
@@ -958,7 +969,9 @@ namespace NorvesLib::Core::Rendering
         }
         if (!bReuseInstances && !bPatchedInstances)
         {
-            // 作り直したインスタンスは、席の表の番号を決め直し、全部の席の行を確かめる
+            // 作り直したインスタンスは、席の表の番号を決め直し、全部の席の行を確かめる。前のフレームの HZB の契約では
+            // 全量の再同期として数える（描いた番号が前のフレームと同じ席を指す保証が無い）
+            ++m_SceneResyncCount;
             m_bSceneRowsAllDirty = true;
             m_bSceneSlotsDirty = true;
             m_SceneDirtyPositions.clear();
@@ -3305,7 +3318,7 @@ namespace NorvesLib::Core::Rendering
             {
                 uniformData.HiZWidth = m_DepthTexture->GetWidth();
                 uniformData.HiZHeight = m_DepthTexture->GetHeight();
-                uniformData.HiZMipCount = m_HiZ.GetMipCount();
+                uniformData.HiZMipCount = m_HiZ[m_HiZIndex].GetMipCount();
                 uniformData.bHiZEnabled = 1;
             }
             frameSlot.CullUniform[passIndex]->Update(&uniformData, sizeof(CullUniformData));
@@ -3802,7 +3815,29 @@ namespace NorvesLib::Core::Rendering
             // 深度（GBufferPass の不透明＋1パス目。sink があるときは ID のラスタが描いた塊＋1パス目＋合流した値）から HZB を作る
             // （深度は1パス目の終わりで ShaderResource）。
             // 作れなかったときは遮蔽の判定をしない（1パス目で描かなかったクラスタを全て描く）
-            const bool bHiZBuilt = m_HiZ.Build(cmdList, m_DepthTexture);
+            // HZB は 2 枚を交互に作る。前のフレームが作った方（m_HiZIndex）とその契約を残し、今のフレームはもう一方へ作る。
+            // 前の HZB が今のフレームの遮蔽の判定に使えるかを、契約と今のフレームの値で決める（判定にはまだ使わない）
+            MegaHiZContract currentContract;
+            currentContract.bValid = true;
+            currentContract.RenderFrame = m_RenderFrameCount;
+            currentContract.GameFrame = command.FrameNumber;
+            currentContract.ViewProjection = cameraConstants.ViewProjectionMatrix;
+            currentContract.DepthWidth = m_DepthTexture->GetWidth();
+            currentContract.DepthHeight = m_DepthTexture->GetHeight();
+            currentContract.SceneGeneration = m_SceneGeneration;
+            currentContract.SceneResyncCount = m_SceneResyncCount;
+            currentContract.CameraId = command.MainCamera.CameraId;
+            currentContract.SourceCameraId = command.MainCamera.SourceCameraId;
+            currentContract.ViewId = command.ViewId;
+            currentContract.ViewportId = command.ViewportId;
+            const uint32_t previousHiZIndex = m_HiZIndex;
+            m_PrevHiZStatus = EvaluatePreviousHiZ(m_HiZContracts[previousHiZIndex], currentContract,
+                                                  m_bDropVisibilityContinuity);
+            LogPreviousHiZStatus(m_HiZContracts[previousHiZIndex], currentContract, epochFrame);
+            m_HiZIndex = 1u - previousHiZIndex;
+            const bool bHiZBuilt = m_HiZ[m_HiZIndex].Build(cmdList, m_DepthTexture);
+            currentContract.bValid = bHiZBuilt;
+            m_HiZContracts[m_HiZIndex] = currentContract;
 
             // 1パス目が描いたクラスタの使用の印（ページの表の要求の印と要求の列）を、2パス目の書き込みへ見せる。
             // 同じフレームの印での重複の省略と、列の件数の加算が、パスをまたいで続くため
@@ -3813,7 +3848,7 @@ namespace NorvesLib::Core::Rendering
             }
 
             // 2パス目: 判定を通った全クラスタを HZB で判定し、1パス目で描かなかった見えるものを描く
-            recordCull(CULL_PASS_SECOND, bHiZBuilt ? m_HiZ.GetTexture() : RHI::TexturePtr{});
+            recordCull(CULL_PASS_SECOND, bHiZBuilt ? m_HiZ[m_HiZIndex].GetTexture() : RHI::TexturePtr{});
             if (bStaged)
             {
                 sink->RecordSecondPassDraws(cmdList, stagedPlan);
@@ -4079,6 +4114,8 @@ namespace NorvesLib::Core::Rendering
         m_Instances.push_back(instance);
         m_InstanceSourceRevision = 0;
         m_InstanceSourceProxies = nullptr;
+        // 前のフレームの HZB の契約: 席の表を決め直すので全量の再同期として数える
+        ++m_SceneResyncCount;
         m_bSceneSlotsDirty = true;
         m_bSceneRowsAllDirty = true;
         m_bSceneTablesValid = false;
@@ -4092,6 +4129,7 @@ namespace NorvesLib::Core::Rendering
         FlushShadowRebuildWithoutInstances();
         m_InstanceSourceRevision = 0;
         m_InstanceSourceProxies = nullptr;
+        ++m_SceneResyncCount;
         m_bSceneSlotsDirty = true;
         m_bSceneRowsAllDirty = true;
         m_bSceneTablesValid = false;
@@ -5843,12 +5881,58 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
-        if (!m_HiZ.Resize(depthWidth, depthHeight))
+        // 2 枚とも同じ寸法にする（寸法が替わると前の HZB は作り直されて消えるが、契約の寸法が違うので使わない）
+        if (!m_HiZ[0].Resize(depthWidth, depthHeight) || !m_HiZ[1].Resize(depthWidth, depthHeight))
         {
             logFallbackOnce("hiz");
             return false;
         }
         return true;
+    }
+
+    void MegaGeometryPass::LogPreviousHiZStatus(const MegaHiZContract &previous, const MegaHiZContract &current,
+                                                int64_t epochFrame)
+    {
+        const bool bReady = m_PrevHiZStatus == MegaPrevHiZStatus::Ready;
+        if (bReady)
+        {
+            ++m_PrevHiZReadyCount;
+        }
+        else
+        {
+            ++m_PrevHiZNotReadyCount;
+        }
+#if NORVES_BUILD_DEVELOPMENT
+        const uint64_t evaluations = m_PrevHiZReadyCount + m_PrevHiZNotReadyCount;
+        const bool bChanged = !m_bPrevHiZLogged || m_PrevHiZLoggedStatus != m_PrevHiZStatus;
+        if (!bChanged && evaluations % 300u != 0u)
+        {
+            return;
+        }
+        m_bPrevHiZLogged = true;
+        m_PrevHiZLoggedStatus = m_PrevHiZStatus;
+        // 前の HZB の契約（作ったフレーム・ゲームのフレーム・寸法・世代・作り直しの回数）と今のフレームの値を並べる
+        NORVES_LOG_INFO("MegaGeometryPass",
+                        "MEGA_PREV_HIZ ready=%u reason=%s frame=%llu epoch_frame=%lld render_frame=%llu "
+                        "prev_render_frame=%llu prev_frame=%llu size=%ux%u prev_size=%ux%u generation=%llu "
+                        "prev_generation=%llu resync=%llu prev_resync=%llu ready_frames=%llu not_ready_frames=%llu",
+                        bReady ? 1u : 0u, ToString(m_PrevHiZStatus),
+                        static_cast<unsigned long long>(current.GameFrame), static_cast<long long>(epochFrame),
+                        static_cast<unsigned long long>(current.RenderFrame),
+                        static_cast<unsigned long long>(previous.RenderFrame),
+                        static_cast<unsigned long long>(previous.GameFrame), current.DepthWidth, current.DepthHeight,
+                        previous.DepthWidth, previous.DepthHeight,
+                        static_cast<unsigned long long>(current.SceneGeneration),
+                        static_cast<unsigned long long>(previous.SceneGeneration),
+                        static_cast<unsigned long long>(current.SceneResyncCount),
+                        static_cast<unsigned long long>(previous.SceneResyncCount),
+                        static_cast<unsigned long long>(m_PrevHiZReadyCount),
+                        static_cast<unsigned long long>(m_PrevHiZNotReadyCount));
+#else
+        (void)previous;
+        (void)current;
+        (void)epochFrame;
+#endif
     }
 
     uint32_t MegaGeometryPass::AssignVisibilityRegion(uint32_t tableSlot, const VisibilityRequest &request)

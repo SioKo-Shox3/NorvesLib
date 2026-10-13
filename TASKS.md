@@ -1188,7 +1188,7 @@
 - notes: 危険地帯。GBuffer の経路（sink 無し）も同じ詰めた列を描く。今の番号の対応は `visbuffer_records.comp` 113 行付近。 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
 
 ## SCN-MEGA-PREV-HIZ: HZB を 2 枚にし、描いた番号・VP（ジッタ込み）・寸法・シーンの世代を契約として持たせる（準備）
-- status: todo
+- status: done
 - done-when: 2 フレーム目から `MEGA_PREV_HIZ ready=1` が出る。エポックの先頭・解像度の変更・カメラの切れ目・全量の再同期・パケットの飛びでは `ready=0` と理由が出る。判定にはまだ使わない。起動画面の比較が pass。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-MEGA-PREV-HIZ`

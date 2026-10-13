@@ -3940,3 +3940,14 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `verify-SCN-MEGA-BINNING-SWITCH-7.txt`: バナナ 1 万本 overview の比較 result=pass（psnr 65.86 dB、輝度差 0、EXIT=0）。`overview.Game.log` の `[ERROR]` 0、`SW_RASTER_BIN` 10 行すべて `zeroed=0`（落ち着いた後 `pass1=361769 hw=3052 overflow=0`）、`MEGA_CAPACITY` 10 行すべて `draw_dropped=0 visible_list_overflow=0`。PNG はバナナの散布と 3 つの山が以前どおり。
 - Next: SCN-MEGA-PREV-HIZ。
 - Notes: 撮影した 2 シーンは記録の枠に届かないので、直した頭打ちの経路は GPU の実機では通っていない（評価者の CPU 上の再現の条件 `MaxDrawCount=2`・ハード `[5,1]` に当たる枠の不足は、詰めた経路の枠が min(全パスのコマンドの数, 列の容量) なので通常の撮影では起きない）。試験の追加はしていない。
+
+### SCN-MEGA-PREV-HIZ（2026-10-14、反復 5・run 20261014-061910）
+- Done: HZB を 2 枚（`m_HiZ[2]`）にして交互に作り、作った側に契約 `MegaHiZContract`（作った記録のフレームの数え・描いたゲームのフレームの番号・ジッタ込みの VP・元の深度の寸法・シーンの世代・インスタンスを全部作り直した回数・`CameraId`/`SourceCameraId`・ビュー/ビューポート）を持たせた。2 パスのフレームは、HZB を作る前に前のフレームの 1 枚の契約と今のフレームの値を `EvaluatePreviousHiZ` で比べ、`MegaPrevHiZStatus`（ready / epoch / missing / view / resize / stale / packet_gap / generation / resync / camera_cut）を決めて `GetPreviousHiZStatus()` で公開する。判定にはまだ使わない（2 パス目は今までどおり今のフレームの HZB で判定）。
+  - VP は `PreviousMainCamera` を使わず、深度を描いたフレームの `CameraViewConstants::ViewProjectionMatrix`（ジッタ込み）を自分で保存する。
+  - 全量の再同期は、`Setup` がインスタンスを作り直したとき（基準の適用・写しの版の取り逃がし・全量の同期）と `AddMegaMeshInstance`/`ClearMegaMeshInstances` で数える。シーンの世代は `Setup` が写し（`MegaGeometryMirror::GetGeneration`）から受け取る（全量の同期では 0）。パケットの飛びはゲームのフレームの番号が 2 以上進む・戻るとき（同じ番号の描き直しは飛びにしない）。カメラの切れ目は TAA と同じく `SourceCameraId`（と `CameraId`）が替わったとき。寸法が替わると 2 枚とも作り直す。
+  - 開発ビルドは判定が変わったフレームと 300 回ごとに `MEGA_PREV_HIZ ready=<0|1> reason=<理由> frame epoch_frame render_frame prev_render_frame prev_frame size prev_size generation prev_generation resync prev_resync ready_frames not_ready_frames` を出す。
+- 検証（`.harness/runs/20261014-061910/`）:
+  - `verify-SCN-MEGA-PREV-HIZ-1.txt`: RelWithDebInfo の Game のビルド EXIT=0、error 0。
+  - `verify-SCN-MEGA-PREV-HIZ-2.txt`: 起動画面 default の決定的撮影の比較 result=pass（psnr 60.066 dB、輝度差 0.0021、EXIT=0）。`default.Game.log` の `[ERROR]` 0。`MEGA_PREV_HIZ` は 4 行: 最初の 2 パスのフレームで `ready=0 reason=missing`、次のフレームから `ready=1`、エポックの先頭（`epoch_frame=0`）で `ready=0 reason=epoch`、`epoch_frame=1` から `ready=1`（`ready_frames=113 not_ready_frames=2`）。PNG は家・球・岩・地面が以前どおり。
+- Next: SCN-MEGA-TWOPASS-INSTANCES。
+- Notes: 撮影で実際に出た理由は missing・epoch だけで、resize・camera_cut・resync・packet_gap・generation・stale・view は実機の起動では通していない（コードの判定だけ）。全量の同期（`--mega-scene-full-sync`）は毎フレームインスタンスを作り直すので常に `reason=resync` になる。1 フレームに複数のビューポートで記録すると、交互の 2 枚を別のビューポートが使うので `reason=view` になる（ビューごとの HZB は持たない）。HZB の 2 枚目の分だけ GPU メモリが増える（1280×720 で R32 の半分の解像度の全ミップ、約 1.2 MB）。試験の追加はしていない。
