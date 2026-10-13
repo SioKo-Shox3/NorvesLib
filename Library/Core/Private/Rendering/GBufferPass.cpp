@@ -1287,7 +1287,7 @@ namespace NorvesLib::Core::Rendering
         if (!m_GBufferRenderPass)
         {
             resetPipelines();
-            NORVES_LOG_ERROR("GBufferPass", "Failed to create GBuffer render pass");
+            NORVES_LOG_ERROR("GBufferPass", "GBuffer の render pass を作れなかった");
             return false;
         }
         if (m_GBufferRenderPass != previousRenderPass)

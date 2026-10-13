@@ -2475,6 +2475,31 @@ namespace NorvesLib::RHI::Vulkan
             }
         }
 
+        // レンダーパスの互換の条件（attachment の数・形式・サンプル数）を値で鍵にする。
+        // Vulkan では pipeline と framebuffer は互換のレンダーパスならどれとでも使え、作成に使った
+        // レンダーパスより長く生きてよい。アドレスで引くと、非所有で渡されたレンダーパスが破棄されて
+        // アドレスが別の形式のレンダーパスに再利用されたとき、古い物が返ってしまう。
+        // サンプル数は VulkanRenderPass が常に 1 で作るので鍵に入れない（MSAA を足したら入れる）。
+        void AppendRenderPassCompatibilityKey(VariableArray<uint64_t> &key, const RenderPassPtr &renderPass)
+        {
+            if (!renderPass)
+            {
+                key.push_back(~0ull);
+                return;
+            }
+            const RenderPassDesc &desc = static_cast<const VulkanRenderPass *>(renderPass.get())->GetDesc();
+            key.push_back(desc.colorAttachments.size());
+            for (const AttachmentDesc &attachment : desc.colorAttachments)
+            {
+                AppendEnumKey(key, attachment.format);
+            }
+            key.push_back(desc.hasDepthStencil ? 1u : 0u);
+            if (desc.hasDepthStencil)
+            {
+                AppendEnumKey(key, desc.depthStencilAttachment.format);
+            }
+        }
+
         void AppendDescriptorSetLayoutsKey(VariableArray<uint64_t> &key,
                                            const VariableArray<DescriptorSetDesc> &layouts)
         {
@@ -2503,8 +2528,9 @@ namespace NorvesLib::RHI::Vulkan
             key.push_back(face.reference);
         }
 
-        // パイプラインは記述子の全部を鍵にする。シェーダーとレンダーパスはアドレスで引く
-        // （持ち続けるパイプラインが記述子の写しで生かすので、鍵がある間は使い回されない）
+        // パイプラインは記述子の全部を鍵にする。シェーダーはアドレスで引く
+        // （持ち続けるパイプラインが記述子の写しで生かすので、鍵がある間は使い回されない）。
+        // レンダーパスはアドレスでなく互換の条件の値で引く（非所有で渡されることがあるため）
         void AppendGraphicsPipelineKey(VariableArray<uint64_t> &key, const GraphicsPipelineDesc &desc)
         {
             key.push_back(0x47u); // グラフィックスとコンピュートの鍵を分ける
@@ -2568,7 +2594,7 @@ namespace NorvesLib::RHI::Vulkan
                 AppendFloatKey(key, value);
             }
 
-            AppendPointerKey(key, desc.renderPass.get());
+            AppendRenderPassCompatibilityKey(key, desc.renderPass);
             AppendDescriptorSetLayoutsKey(key, desc.descriptorSetLayouts);
         }
 
@@ -2580,10 +2606,13 @@ namespace NorvesLib::RHI::Vulkan
         }
 
         // フレームバッファはレンダーパスと attachment の view の組（テクスチャの ID と layer）・大きさを鍵にする。
-        // Vulkan のテクスチャでない attachment があれば false（持ち続けずにその場で作る）
+        // Vulkan のテクスチャでない attachment があれば false（持ち続けずにその場で作る）。
+        // レンダーパスはアドレス（GetRenderPass で同じ物を返すため）に加えて互換の条件の値も入れ、
+        // 非所有で渡されたレンダーパスのアドレスが再利用されても、互換でない物は返さない
         bool TryAppendFramebufferKey(VariableArray<uint64_t> &key, const FramebufferDesc &desc)
         {
             AppendPointerKey(key, desc.renderPass.get());
+            AppendRenderPassCompatibilityKey(key, desc.renderPass);
             key.push_back(desc.width);
             key.push_back(desc.height);
             key.push_back(desc.colorTargets.size());

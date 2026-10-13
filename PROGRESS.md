@@ -3565,3 +3565,16 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `verify-SCN-ECS-FIF-RHI-OBJECT-CACHE-3.txt`: `--rg-transient-slots=2` の起動画面の比較 pass（PSNR 100 dB）、EXIT=0。ログ（`...-slots2/default.Game.log`）は `RG_TRANSIENT_SLOTS slots=2 frames_in_flight=1`、`RHI_CREATE` はフレーム 0・フレーム 1（もう 1 つのスロットの描画先の framebuffer 14）・フレーム 2（pipeline 2）だけで、落ち着いた後のフレームの作成は 0。`RHI_CREATE_SUMMARY` は framebuffer 82・render pass 18・pipeline 60 に対し、使い回しが framebuffer 2537・render pass 1705・pipeline 1866（持ち続けなければ毎フレーム作り直していた分）。ERROR 0、`FRAME_RESOURCE_UNPROTECTED_SUMMARY count=0`。
 - Next: TASKS.md の未完の次の項目。
 - Notes: 撮影では鍵を手放す道（`evicted`）は通っていない（起動画面では描画先の組が替わらないため。シーンの出入り・解像度の変更で通る）。手放すまでの 8 フレームは、持ち続ける framebuffer がパスの持つ描画先の texture を生かすので、解像度の変更やシーンを出た後に古い texture がその間残る。スロット 2 では pipeline の Create の呼び出しが毎フレーム約 11 回残っている（使い回しで作成は 0。パスが署名の変化で pipeline も作り直しに行く所。鍵を引く費用だけ）。`Debug/Stats.h`（paths の外）には足していないので、作成数はログの行で見る。持ち続ける物を起こす検査（同じ鍵で同じ物・texture が替われば別の物・手放し）は書いていない（verify が名指ししていないため）。`VulkanDevice.h`・`.cpp`・`IDevice.h`・`GBufferPass.cpp`・`RenderingCoordinator.cpp`・`TransientResourcePool.*` は行末の混在をそのまま保った（numstat の 2 通りが一致）。
+
+### SCN-ECS-FIF-RHI-OBJECT-CACHE（2026-10-14、反復 1・run 20261014-003223、評価の差し戻しの直し）
+
+- pipeline の鍵から render pass のアドレスを外し、render pass の互換の条件（attachment の数・形式、depth の有無と形式）を値で入れた（`VulkanDevice.cpp` の `AppendRenderPassCompatibilityKey`）。ImGui・Dummy のオーバーレイは非所有の参照で render pass を渡すので、アドレスで引くと render pass の破棄の後にアドレスが別の形式の render pass に再利用されたとき古い pipeline が返り得た。Vulkan では pipeline は互換の render pass ならどれとでも使え、作成に使った render pass より長く生きてよいので、値の鍵で安全に使い回せる。サンプル数は `VulkanRenderPass` が常に 1 で作るので鍵に入れていない（MSAA を足したら入れる）。
+  - framebuffer の鍵は `GetRenderPass` が同じ物を返すようアドレスを残し、互換の条件の値も足した（アドレスが再利用されても互換でない framebuffer は返さない）。
+  - 評価の non-blocking: `GBufferPass.cpp` の render pass を作れなかったときのログの説明文を日本語にした。
+  - 評価の指摘 2（統計につなぐ）は親が完了条件をログに直したので対象外。
+- 検証（`.harness/runs/20261014-003223/`）:
+  - `verify-SCN-ECS-FIF-RHI-OBJECT-CACHE-1.txt`: RelWithDebInfo の Game のビルド EXIT=0。
+  - `verify-SCN-ECS-FIF-RHI-OBJECT-CACHE-2.txt`: 起動画面の比較 pass（PSNR 100 dB、輝度の差 0）、EXIT=0。ログは `RG_TRANSIENT_SLOTS slots=1`、`RHI_CREATE` はフレーム 0（framebuffer 68・render pass 18・pipeline 58）とフレーム 2（pipeline 2）だけで、撮影（frame=169）までの落ち着いた後のフレームの作成は 0。ERROR 0、`FRAME_RESOURCE_UNPROTECTED_SUMMARY count=0`。
+  - `verify-SCN-ECS-FIF-RHI-OBJECT-CACHE-3.txt`: `--rg-transient-slots=2` の起動画面の比較 pass（PSNR 100 dB）、EXIT=0。ログは `RG_TRANSIENT_SLOTS slots=2 frames_in_flight=1`、`RHI_CREATE` はフレーム 0・1（もう 1 つのスロットの framebuffer 14）・2（pipeline 2）だけで、落ち着いた後のフレームの作成は 0。`RHI_CREATE_SUMMARY` は使い回しが framebuffer 2537・render pass 1705・pipeline 1866。ERROR 0、`FRAME_RESOURCE_UNPROTECTED_SUMMARY count=0`。
+- Next: TASKS.md の未完の次の項目。
+- Notes: アドレスの再利用の再現（非所有の render pass を破棄して別形式で作り直す）は GPU 上では起こしていない（起動画面では render pass が替わらないため）。鍵が値になったことはコードで確かめた。`VulkanDevice.cpp`・`GBufferPass.cpp` は行末の混在をそのまま保った（numstat の 2 通りが一致）。
