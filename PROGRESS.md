@@ -3814,3 +3814,12 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 補助（done-when の外）: Debug のバナナ 1 万本 overview（on）を撮った（`.harness/runs/scene-capture/SCN-ECS-RT-PARALLEL-WIDEN/bananas-debug-on`）。result=pass、検証レイヤーのログ 0 バイト、`[ERROR]` 0、ラスタ・MegaGeometry・VSM・Lighting を含む並びでリスト 11 本。
 - Next: TASKS.md の未完の次の項目。
 - Notes: 基準との psnr 60.066 は on と off で同じで、SCN-ECS-FIF-SWITCH の撮影（60.068）と同じ程度の、この変更より前からある差。on と off の性能の比べはしていない（SCN-MEGA-ACCEPT-1M）。スキンの描画があるフレームの ShadowMap・GBuffer は直列で、スキンの描画を同時に記録するには共有のパレットの記録（`SkinnedMeshGpuStore::PrepareDraw`・`MarkLastUse`）を準備段へ寄せる必要がある。NeuralMaterialDecode・SkinningCompute・SSR・Volumetrics・Forward などは Serial のまま（記録の時間の上位ではない）。準備段を経ずに記録するパス（1 本の記録・並びが 1 つ）の失敗の道（影・GBuffer の資源が揃わないフレーム）は、記録が無いまま宣言の最終の layout が書き戻される。
+
+### SCN-MEGA-BVH-LEAF-SPLIT（2026-10-14、反復 2・run 20261014-033121）
+- Done: BVH を持たずに渡されたメッシュ（v1.0・手続き・実行時に作るメッシュ）に、`MegaGeometryResourceStore::CreateMegaMesh` が葉 8 クラスタ以下のグループの BVH を作る。構築は新しいヘッダ `Rendering/MegaGeometry/MegaGeometryBvhBuilder.h`（`BuildClusterBVH`・`ValidateClusterBVH`）。LOD の段ごとに分け、段の中を中心の広がりが最も大きい軸で再帰的に二分して葉を作り（左に 8 の倍数を渡すので葉は最後の 1 つを除き 8 個で埋まる）、隣り合う節を 8 個ずつ束ねて上の段を組み、幅優先に並べる。葉は並べ替えの表（`ClusterOrder`）の連続した範囲で、クラスタの記録は並べ替えない（今の描画は不変）。結果はエントリの `BuiltBVH` に持つだけで GPU へは書かない。開発ビルドでは検査（`AnalyzeGroupBVH` の構造・表が全クラスタを 1 回ずつ持つ・葉の球が下のクラスタの球と親の球を、内部の節の球が子の球を包む・親の誤差の最大が下以上）を行い、`MEGA_BVH_BUILD mesh=… built=… nodes=… leaves=… levels=… violations=… build_ms=…` を出す。
+- 検証（`.harness/runs/20261014-033121/`）:
+  - `verify-SCN-MEGA-BVH-LEAF-SPLIT-1.txt`: RelWithDebInfo の Game のビルド EXIT=0、error 0。
+  - `verify-SCN-MEGA-BVH-LEAF-SPLIT-2.txt`: 決定論の起動画面の撮影を SCN-MEGA-BASE-RWDI と比較、mean_luminance_difference=0.002・psnr_db=60.068・mismatched_pixel_ratio=0.148・within_limits=True、result=pass、EXIT=0。PNG は天球・地面・球・岩・家と影が以前どおり。Game.log の `[ERROR]` 0。
+- 補助（verify の外）: 起動画面の 6 メッシュは全て焼き込み済みの BVH（v1.1）を持つので、上の撮影では構築が走らない（`MEGA_BVH_BUILD` 0 行）。大球を実行時に作る `-GameArgs rendering3dtest-big-sphere-source=runtime` で 1 本撮り（`aux-SCN-MEGA-BVH-LEAF-SPLIT-runtime-sphere.txt`、`.harness/runs/startup-capture/SCN-MEGA-BVH-LEAF-SPLIT-runtime-sphere`）、`MEGA_BVH_BUILD mesh="BigCobbleSphere" built=1 clusters=10912 nodes=1561 leaves=1364 levels=5 violations=0 build_ms=2.383`、`[ERROR]` 0、result=pass。
+- Next: SCN-MEGA-FLAT-TO-BVH（`BuiltBVH` の `ClusterOrder` でクラスタを並べ直して GPU へ書き、BVH の経路へ流す。実行時の LOD 階層のクラスタの `ParentStart` は並べ替えに合わせて付け替えが要る）。
+- Notes: 葉は焼き込みの v1.1 と違い、1 つのグループのメンバに限らない（LOD の段だけで分ける）。実行時の階層・v0 のクラスタは親の誤差が既定の最大値なので、節の LOD の判定では枝を切らない（保守的）。親の球は親のグループを持つクラスタ（`GroupId` が有効）だけ包む。試験の追加はしていない（ValidateClusterBVH の検査を開発ビルドの実行時に回す形）。

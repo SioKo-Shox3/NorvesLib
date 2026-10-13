@@ -257,6 +257,34 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
+        // BVH を持たずに渡されたメッシュ（v1.0・手続き・実行時に作るメッシュ）に、葉 8 クラスタ以下のグループの BVH を作る。
+        // 葉は並べ替えの表の連続した範囲で、クラスタの記録は並べ替えない。まだ描画には使わない
+        MegaGeometry::BuiltClusterBVH builtBVH;
+        if (createInfo.GroupBVH.empty())
+        {
+            const LoadProfileClock::time_point bvhStart = LoadProfileNow();
+            const bool bBuilt = MegaGeometry::BuildClusterBVH(*uploadClusters, builtBVH);
+            const double bvhBuildMs = LoadProfileElapsedMs(bvhStart);
+            uint32_t bvhViolations = bBuilt ? 0u : 1u;
+#if NORVES_BUILD_DEVELOPMENT
+            if (bBuilt)
+            {
+                bvhViolations = MegaGeometry::ValidateClusterBVH(*uploadClusters, builtBVH);
+            }
+#endif
+            NORVES_LOG_INFO("MegaGeometryResources",
+                            "MEGA_BVH_BUILD mesh=\"%s\" built=%d clusters=%u nodes=%u leaves=%u levels=%u "
+                            "violations=%u build_ms=%.3f",
+                            createInfo.DebugName.c_str(), bBuilt ? 1 : 0, static_cast<uint32_t>(uploadClusters->size()),
+                            static_cast<uint32_t>(builtBVH.Nodes.size()), builtBVH.LeafCount,
+                            static_cast<uint32_t>(builtBVH.LevelNodeCounts.size()), bvhViolations, bvhBuildMs);
+            if (bvhViolations > 0u)
+            {
+                NORVES_LOG_ERROR("MegaGeometryResources", "実行時に作ったグループの BVH が約束を破っています: %s violations=%u",
+                                 createInfo.DebugName.c_str(), bvhViolations);
+            }
+        }
+
         // ページの親子の関係(クラスタごとの子のページ)とメッシュのページの数を、グループの表から求める。
         // 焼き込み済みの階層だけがページを持つ。それ以外は 1 ページで常駐のまま
         Container::VariableArray<uint32_t> childPageIds;
@@ -612,6 +640,7 @@ namespace NorvesLib::Core::Rendering
             entry.Data = std::move(gpuData);
             entry.Region = std::move(regionHolder);
             entry.StagedBytes = std::move(stagedBytes);
+            entry.BuiltBVH = std::move(builtBVH);
             if (!pageLinks.PinnedPages.empty())
             {
                 entry.PinnedPages.assign(pageLinks.PageCount, 0);

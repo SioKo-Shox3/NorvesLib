@@ -4,6 +4,7 @@
 #include "Rendering/GeometryPool.h"
 #include "Rendering/MegaGeometry/GeometryPageLayout.h"
 #include "Rendering/MegaGeometry/GeometryPageTable.h"
+#include "Rendering/MegaGeometry/MegaGeometryBvhBuilder.h"
 #include "Rendering/MegaGeometry/MegaGeometryTypes.h"
 #include "Rendering/RenderTypes.h"
 #include "Container/Containers.h"
@@ -193,6 +194,9 @@ namespace NorvesLib::Core::Rendering
             Container::VariableArray<uint8_t> StagedBytes;
             // 常駐のまま固定するページ（ページの番号で引く。1 が固定。ComputeGeometryPageLinks の PinnedPages）
             Container::VariableArray<uint8_t> PinnedPages;
+            // BVH を持たずに渡されたメッシュに実行時に作ったグループの BVH と、葉の並びのクラスタの並べ替えの表。
+            // まだ描画には使わない（GPU へは書かない）
+            MegaGeometry::BuiltClusterBVH BuiltBVH;
             uint64_t EnqueuedBytes = 0;
             bool bFullyEnqueued = false;
             // 全てのコピーが完了したと確かめた後は、問い合わせを省く
