@@ -1054,7 +1054,7 @@
 - notes: 2026-10-12 親が足した（ユーザーの要望: フレームのデータが消える時期などを使う側が気にせずに、ImGui やデバッグ描画などの描画を足せる仕組みにする。パスごとに飛行中のスロットを持たせる直しをやめ、共通の仕組みから借りる形にした。Sol の批評を反映）。危険地帯（RHI/Vulkan・資源の寿命）。 2026-10-13 親: 評価の 1 周目の指摘 2（作成数を統計につなぐ）は、作成数がログで確かめられていて判断を変えないので、完了条件をログに直した。指摘 1（pipeline の鍵が非所有の render pass のアドレスに依存し、アドレスの再利用で別の形式の古い pipeline が返る）は直す（render pass の互換の条件を値として鍵に入れる、またはデバイスが元の所有の参照を保つ）。
 
 ## SCN-ECS-FIF-DDGI: DDGI の照射・距離のアトラスと履歴をビューごとの組にし、CPU が書くデータを借りる形へ移す
-- status: done
+- status: doing
 - done-when: `DDGIProbePass` の `FrameResources` は FrameIndex × ViewId × ViewportId ごとに（`DDGIProbePass.cpp` 396 行付近）、CPU が書く定数・instance・結果のバッファと、照射・距離のアトラスとその履歴（GPU が前のフレームの値を積む）を一緒に持つ。2 にすると履歴が 2 つに分かれ、2 フレームおきに積まれて交互に表示される。ViewId × ViewportId ごとに現在・履歴のピンポンの一式（703 行付近の入れ替えを保つ。1 枚へのその場の更新にしない）と状態（`*AtlasState`・`bAtlasValid`・`AtlasProbeCount`）を持たせ、CPU が書く定数・記述子は Execute ごとにフレームの持ち主から借りる。GPU の結果のバッファとアトラスは GPU の資源として持つ。受け取り側（`LightingPass.cpp` 4381 行付近は FrameIndex を渡す）・getter・履歴の無効化・ビューの消滅と ID の使い回しも直す。DDGI の `FRAME_RESOURCE_UNPROTECTED` が 0。DDGI を有効にする構成（試験か起動の引数）があれば 1 本撮り、履歴の更新回数と収束が今と同じであることを PROGRESS に書く（無ければビルドとコードの照合で確かめて書く）。起動画面の比較が pass。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-ECS-FIF-DDGI`
