@@ -162,6 +162,19 @@ namespace NorvesLib::Core::Rendering
         // 前のフレームの HZB（cluster_bvh_cull.comp の binding 26。1 パス目だけが読む）
         constexpr uint32_t PrevHiZBinding = 26;
 
+        // 「見えた」印の周期。印は 1〜VisibleStampPeriod の 31 ビットで回し、最上位ビットは 1 パス目の印だけが立てる
+        // （1 パス目の印は書く印に最上位ビットを足した値なので、読む印・書く印・0 のどれとも一致しない）。
+        // 周回の始まり（書く印が 1 に戻るフレーム）は全部の区画を 0 から始め、前の周回の印と一致させない
+        constexpr uint64_t VisibleStampPeriod = 0x7FFFFFFFull;
+        constexpr uint32_t VisiblePass1StampBit = 0x80000000u;
+
+        // 記録の回数（1 から数える）から「見えた」印を作る。0 は使わない（0 で埋めた直後・見えなかったクラスタ）
+        uint32_t VisibleStampOf(uint64_t frameCount)
+        {
+            return frameCount == 0 ? static_cast<uint32_t>(VisibleStampPeriod)
+                                   : static_cast<uint32_t>((frameCount - 1u) % VisibleStampPeriod) + 1u;
+        }
+
         // インスタンスの判定の範囲（cluster_bvh_cull.comp の範囲の段・mega_scene_scatter.comp の段 2）。BVH を持つインスタンスを
         // 描く順に BvhRangeSeats 席ずつ区切り、範囲ごとの AABB（vec4 × 2 = RangeBoundsBytes）を常駐の表に持つ。範囲の段は
         // 通った範囲を節の列 0 へ積み、席の段は 1 範囲 = 1 ワークグループ（64 スレッド）で席を判定する。
@@ -3166,18 +3179,14 @@ namespace NorvesLib::Core::Rendering
                                            : 1.0f;
         baseUniform.DebugPayloadMode = debugPayloadMode;
         // 「見えた」印: 前のフレームの2パス目が書いた値（今のフレームの番号）と、今のフレームが書く値。
-        // 0（バッファを0で埋めた直後・見えなかった）とは決して一致しない（番号は1から数える）
-        baseUniform.VisibleReadStamp = static_cast<uint32_t>(m_OcclusionFrameCount);
-        baseUniform.VisibleWriteStamp = static_cast<uint32_t>(m_OcclusionFrameCount) + 1u;
-        // 1 パス目が描いたクラスタへ書く印（前のフレームの HZB を使う経路だけ）。読む印・書く印・0 のどれとも一致しない値
-        // （書く印の最上位のビットを反転する。0 になるときだけ全ビット 1 にする）
+        // 0（バッファを0で埋めた直後・見えなかった）とは決して一致しない。31 ビットで回る（VisibleStampOf）
+        baseUniform.VisibleReadStamp = VisibleStampOf(m_OcclusionFrameCount);
+        baseUniform.VisibleWriteStamp = VisibleStampOf(m_OcclusionFrameCount + 1u);
+        // 1 パス目が描いたクラスタへ書く印（前のフレームの HZB を使う経路だけ）。書く印に最上位のビットを足すので、
+        // 「見えた」印（最上位のビットが 0）・0 のどれとも一致しない。前の周回の 1 パス目の印は周回の始まりに消える
         if (bTwoPass && m_Settings.bTwoPassPrevHiZ)
         {
-            baseUniform.VisiblePass1Stamp = baseUniform.VisibleWriteStamp ^ 0x80000000u;
-            if (baseUniform.VisiblePass1Stamp == 0u)
-            {
-                baseUniform.VisiblePass1Stamp = 0xFFFFFFFFu;
-            }
+            baseUniform.VisiblePass1Stamp = baseUniform.VisibleWriteStamp | VisiblePass1StampBit;
         }
         baseUniform.BvhDeferCapacity = BvhDeferCapacity;
         baseUniform.BvhRootCount = bvhInstanceCount;
@@ -6149,8 +6158,10 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
-        // 決定的な撮影のエポックの最初のフレームは、全部の区画を0から始める
-        const bool bClearAll = m_bDropVisibilityContinuity;
+        // 決定的な撮影のエポックの最初のフレームと、「見えた」印の周回の始まり（このフレームの書く印が 1）は、
+        // 全部の区画を0から始める。周回の始まりのフレームがここを通らなくても、次のフレームは連続の条件を満たす区画が
+        // 無いので、使う区画はすべて 0 から始まる
+        const bool bClearAll = m_bDropVisibilityContinuity || VisibleStampOf(m_OcclusionFrameCount + 1u) == 1u;
         bool bCopyDest = false;
         if (!m_VisibilityBuffer || requiredElements > m_VisibilityCapacity)
         {

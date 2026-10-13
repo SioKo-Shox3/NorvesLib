@@ -3967,4 +3967,16 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - バナナ 1 万本の low・horizon を `--mega-twopass=legacy` で撮り（`aux-...-legacy.txt`）、既定の経路と比べて pass（low psnr 100 dB、horizon 59.936 dB、`aux-...-prev.txt`）。既定の経路は `deferred_seats=2`・`pass2_tested=2`・`pass2_passed=0`、`[ERROR]` 0。
   - 回した範囲の列を必ず溢れさせたシェーダー（一時的な変更。戻した）で同じ 2 視点を撮り、旧経路と比べて pass（low psnr 100 dB、horizon 61.549 dB、`aux-...-overflow.txt`）。`defer_overflow=2`/`1`・`rescan=1`、`[ERROR]` 0。
 - Next: SCN-MEGA-TWOPASS-CLUSTERS。
-- Notes: 撮影で範囲ごと回した範囲（`deferred_ranges`）は 0 で、範囲の段の前の HZB の判定は実機では通っていない（席の判定と同じ関数で、球は AABB を包む）。前の HZB は前のフレームの 1 パス目の深度から作ったもので、そのフレームの 2 パス目の描画を含まない（隠れる判定が少なめになる側）。溢れたときは溢れた範囲だけでなく全部の根を見直す（溢れた範囲を特定する印を持たないため）。1 パス目の印は過去のフレームの印と 2^31 フレーム後に一致しうるが、そのときは前のフレームで見えた扱いで 1 パス目に描くだけ（重ね描きはしない）。性能は測っていない（SCN-MEGA-ACCEPT-1M で判断）。統計のバッファは 32 → 48 語。試験の追加はしていない。
+- Notes: 撮影で範囲ごと回した範囲（`deferred_ranges`）は 0 で、範囲の段の前の HZB の判定は実機では通っていない（席の判定と同じ関数で、球は AABB を包む）。前の HZB は前のフレームの 1 パス目の深度から作ったもので、そのフレームの 2 パス目の描画を含まない（隠れる判定が少なめになる側）。溢れたときは溢れた範囲だけでなく全部の根を見直す（溢れた範囲を特定する印を持たないため）。1 パス目の印と「見えた」印の周回での衝突は反復 7 で直した（下の節）。性能は測っていない（SCN-MEGA-ACCEPT-1M で判断）。統計のバッファは 32 → 48 語。試験の追加はしていない。
+
+### SCN-MEGA-TWOPASS-INSTANCES（2026-10-14、反復 7・run 20261014-061910。評価の差し戻しへの対応）
+- Done: 「見えた」印と 1 パス目の印が周回で衝突し、見えるクラスタを取りこぼす件を直した。
+  - 「見えた」印（読む印・書く印）を 1〜2^31−1 の 31 ビットで回し（`VisibleStampOf`）、1 パス目の印は書く印に最上位のビットを足した値にした。1 パス目の印は「見えた」印・0 のどれとも一致しない。
+  - 書く印が 1 に戻るフレーム（周回の始まり）は `UpdateVisibilityLayout` が全部の区画を 0 で埋め、前の周回の「見えた」印・1 パス目の印を残さない。そのフレームが 2 パスでなく通らなくても、次のフレームは連続の条件を満たす区画が無いので使う区画は 0 から始まる。
+  - 前の反復の Notes にあった「衝突時は 1 パス目に描くだけ」は誤りだったので消した（2 パス目が描画済みと誤認して描かない側だった）。
+- 検証（`.harness/runs/20261014-061910/`）:
+  - `verify-SCN-MEGA-TWOPASS-INSTANCES-4.txt`: RelWithDebInfo の Game のビルド EXIT=0。
+  - `verify-SCN-MEGA-TWOPASS-INSTANCES-5.txt`: 旋回（遮蔽 Off との一致）f60・f75・f90 すべて within_limits（psnr 60.882 / 60.432 / 59.258 dB、輝度差 0.0007 / 0.0072 / 0.0391）、result=pass、EXIT=0。`default-orbit.Game.log` の `[ERROR]` 0、エポックの先頭は `prev_hiz=0 reason=epoch`。
+  - `verify-SCN-MEGA-TWOPASS-INSTANCES-6.txt`: 起動画面 default の決定的撮影の比較 result=pass（psnr 60.066 dB、輝度差 0.0021、EXIT=0）。`default.Game.log` の `[ERROR]` 0、`prev_hiz=1 reason=ready pass1_seats=6`。PNG は家・球・岩・地面が以前どおり。
+- Next: SCN-MEGA-TWOPASS-CLUSTERS。
+- Notes: 周回の始まりは約 2^31 記録ごと（60fps で約 414 日）で、実機では通していない（印の値は Python で周回の前後を計算して確かめた）。ページの要求の印（`requestStamp`）も書く印を使うので 31 ビットで回るが、一致しても同じフレームの要求を 1 回省くだけ。試験の追加はしていない。
