@@ -3781,3 +3781,36 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `verify-SCN-ECS-DIAG-GPU-FIF2-6.txt`: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-ECS-DIAG-GPU-FIF2/fif2-a --timing --min-frames 300` → `CHECK_CAPTURE_METRICS result=pass views=close`、EXIT=0。
 - Next: TASKS.md の未完の次の項目（60 fps の判定は SCN-MEGA-ACCEPT-1M の実際の条件で行う）。
 - Notes: 2 フレームでは `MegaGeometryCull1`＋`Cull2` が両組とも +0.7〜+1.2 ms（+4〜6%）で、`LightingPass` が -0.2〜-0.3 ms 速い。フレームの合計では揺れの中なので項目は足していないが、カリングを詰めるときの候補として残す。撮影は `-Build` を付けず、最初に 1 回ビルドしてから 4 本を同じ exe で撮った。集計のスクリプトは作業用の一時のもので、リポジトリには入れていない。
+
+### SCN-ECS-RT-PARALLEL-WIDEN（2026-10-14、反復 1・run 20261014-033121）
+
+- 共通の仕組み（RenderGraph・SceneRenderer）:
+  - 並列の記録を既定 on にした（`NORVES_RENDER_PARALLEL_RECORD` が未設定・1 で on、0 のときだけ 1 本。`--render-parallel-record=off` で戻せる）。
+  - 続く Parallel のパスが 1 つだけの並びは、リストを分けず今のリストへ直列で記録する。
+  - 前のパスの記録の結果（CPU の状態）を読むパスは `IRenderGraphPass::ReadsRecordingOf(earlierPass)` を返し、RenderGraph はその前で同時に記録する並びを切る（前の並びを記録し終えてから準備段と記録を始める。GPU の依存は従来どおりグラフのバリアと提出の順）。
+  - Execute が写しの context へ公開した値を後のパスへ戻す `FinishParallelRecord`（並びの後に RenderThread でグラフの順に呼ぶ）を足した。
+  - 区間の保留のコマンド（影・GBuffer の描画など）を、ほかの区間と同時に流せる並びならワーカーで区間のリストへ流す。SceneRenderer の直前のパイプラインと統計を区間ごとの `SceneRendererRecordState` にし、統計は並びの後に足し込む。MegaGeometry の記録とスキンの描画を含む並びは従来どおり RenderThread で流す。
+  - パスだけが持つ Texture の遷移の補助 `TransitionPassOwnedTexture`（状態を明示したバリアの後に共有の layout も書く。layout を宣言から決める区間のリストは共有の layout を書かないため）。
+  - `IRenderGraphPass` の Parallel の約束を書き直した（バッファのバリアは可、Execute で禁止は単発の提出を伴う転送・context への公開・同時に書く共有の CPU の状態。資源とパイプラインの作成はデバイスが排他するので可）。
+- 監査の表（記録の時間の上位は MEASURE-FIF の表。変更後の方針）:
+
+| パス | 並列にできなかった理由 | 外し方 | 今の方針 |
+|---|---|---|---|
+| VisibilityRasterPass | Execute の中で MegaGeometry の記録（2 パスの遮蔽・HZB）を進め、材質の定数の 1x1 テクスチャを転送つきで作る。HZB のピラミッドを自分で遷移。後のパス（分類・解決・VSM）が Execute で作る表を読む | 定数のテクスチャは MegaGeometryPass の準備段で作る。ピラミッドは `TransitionPassOwnedTexture`（深度は ShaderResource のまま）。後のパスは `ReadsRecordingOf` で並びを分ける。初期化と framebuffer は準備段 | Parallel |
+| MegaGeometryPass | Execute で表の準備（PrepareSceneTables）と記録をラスタへ移すかを決め、ラスタがそれを読む。移さないフレームは中で自分でバリアを張る記録を積む | 添付の解決・Setup・表の準備・移すかの判定を準備段（RenderThread）へ。Execute は添付の状態遷移を積むだけ | 記録をラスタへ移すフレームだけ Parallel |
+| ShadowMapPass | Execute で PhysicalLighting（カスケード・クリップマップ・方向光の影）を公開。描画は保留のコマンドで RenderThread に直列で流れていた。スキンのパレットの記録は GBuffer・スキニングと共有 | 行列と公開を `PlanShadowFrame` に分け、準備段で公開。保留のコマンドはワーカーで流す。スキンの影の描画があるフレームは直列 | Parallel（スキンの影が無いフレーム） |
+| GBufferPass | 材質の灰色テクスチャを転送つきで作る。保留のコマンドの直列の流し。スキンのパレット | 灰色テクスチャを準備段で作り、準備段を経たフレームの Execute は作らない。保留のコマンドはワーカーで流す。スキンの描画があるフレームは直列 | Parallel（スキンの描画が無いフレーム） |
+| VirtualShadowMapPass | 点光源の並びを Execute で公開。MegaGeometry の影の入力・無効化と、スキニングの instance を読む | 公開を準備段へ。MegaGeometryPass・VisibilityRasterPass・SkinningComputePass の後で並びを分ける。パスの中のバリアはバッファだけ（layout を持たない） | Parallel |
+| LightingPass | Execute で PhysicalLighting（照明・DDGI・RTGI・光線追跡の影など）を公開。空の IBL・raw252 の検証の像・DDGI の既定のアトラスを転送つきで作る。RTGI・DDGI・光線追跡の影の Texture を自分で遷移。RTGI の出力が dispatch の前に断る道で宣言の最終の状態（ShaderResource）にならない | 公開は `FinishParallelRecord` で戻す。転送つきの作成を準備段へ。パス専有の Texture は `TransitionPassOwnedTexture`。RTGI の出力は断る道でも ShaderResource へ移す | Parallel（GBuffer をグラフから読み、旧経路の登録をしないとき） |
+| SkyAtmospherePass | Execute で SkyAtmosphere を公開 | 準備段で同じ値を公開 | Parallel |
+| MaterialTileClassifyPass | ラスタの表を読み、解決がその結果を読む | ― | Serial のまま（前後のどちらとも同時に記録できない） |
+
+- 起動画面の並列の並び（Debug・on）: `RG_PARALLEL_RECORD_PASSES passes=ShadowMapPass,GBufferPass,MegaGeometryPass,VisibilityRasterPass,VisibilityResolvePass,SSAOPass,SkyAtmospherePass,VirtualShadowMapPass,LightingPass,ToneMappingPass,VignettePass`、区間ごとのリストは 1 フレーム 10 本。
+- 検証（`.harness/runs/20261014-033121/`）:
+  - `verify-SCN-ECS-RT-PARALLEL-WIDEN-1.txt`: RelWithDebInfo の Game のビルド EXIT=0、error 0。
+  - `verify-SCN-ECS-RT-PARALLEL-WIDEN-2.txt`: Debug の起動画面（on）`CAPTURE_STARTUP_SCENE result=pass`、EXIT=0。`vulkan_validation` は error_count=0・warning_count=0・vuid_count=0（`default.Validation.log` は 0 行。Threading の UNASSIGNED も数える）。Game.log は `RENDER_PARALLEL_RECORD enabled=1`、`[ERROR]` 0。画像は天球・地面・球・岩・家が以前どおり。
+  - `verify-SCN-ECS-RT-PARALLEL-WIDEN-3.txt`: off の決定論の撮影を SCN-MEGA-BASE-RWDI と比較、psnr_db=60.066・within_limits=True、result=pass、EXIT=0（`enabled=0`）。
+  - `verify-SCN-ECS-RT-PARALLEL-WIDEN-4.txt`: 既定（on）の決定論の撮影を同じ基準と比較、psnr_db=60.066・within_limits=True、result=pass、EXIT=0（`enabled=1`・リスト 10 本）。
+- 補助（done-when の外）: Debug のバナナ 1 万本 overview（on）を撮った（`.harness/runs/scene-capture/SCN-ECS-RT-PARALLEL-WIDEN/bananas-debug-on`）。result=pass、検証レイヤーのログ 0 バイト、`[ERROR]` 0、ラスタ・MegaGeometry・VSM・Lighting を含む並びでリスト 11 本。
+- Next: TASKS.md の未完の次の項目。
+- Notes: 基準との psnr 60.066 は on と off で同じで、SCN-ECS-FIF-SWITCH の撮影（60.068）と同じ程度の、この変更より前からある差。on と off の性能の比べはしていない（SCN-MEGA-ACCEPT-1M）。スキンの描画があるフレームの ShadowMap・GBuffer は直列で、スキンの描画を同時に記録するには共有のパレットの記録（`SkinnedMeshGpuStore::PrepareDraw`・`MarkLastUse`）を準備段へ寄せる必要がある。NeuralMaterialDecode・SkinningCompute・SSR・Volumetrics・Forward などは Serial のまま（記録の時間の上位ではない）。準備段を経ずに記録するパス（1 本の記録・並びが 1 つ）の失敗の道（影・GBuffer の資源が揃わないフレーム）は、記録が無いまま宣言の最終の layout が書き戻される。

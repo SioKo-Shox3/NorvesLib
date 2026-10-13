@@ -173,6 +173,10 @@ namespace NorvesLib::Core::Rendering
 
         void Declare(RenderGraphBuilder &builder) override;
         void Execute(RenderGraphResources& resources, ViewRenderContext& context) override;
+        bool DeclaresAllLayoutChanges() const override;
+        RGRecordPolicy GetRecordPolicy() const override;
+        void PrepareParallelRecord(RenderGraphResources& resources, ViewRenderContext& context) override;
+        void FinishParallelRecord(const ViewRenderContext& recordedContext, ViewRenderContext& context) override;
 
         // ========================================
         // 出力アクセス

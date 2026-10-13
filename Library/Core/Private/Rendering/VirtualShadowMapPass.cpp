@@ -12,6 +12,7 @@
 #include "Rendering/ShaderManager.h"
 #include "Rendering/SkinningComputePass.h"
 #include "Rendering/ViewRenderContext.h"
+#include "Rendering/VisibilityRasterPass.h"
 #include "Rendering/VirtualShadowMapCasters.h"
 #include "Rendering/VirtualShadowMapPages.h"
 #include "Rendering/VirtualShadowMapRaster.h"
@@ -1151,6 +1152,8 @@ namespace NorvesLib::Core::Rendering
         m_bMegaCullRecorded = false;
         m_bMegaDrawRecorded = false;
         m_LastCasterChunkCount = 0;
+        const bool bPointLightsPrepared = m_bPointLightsPrepared;
+        m_bPointLightsPrepared = false;
         if (!m_bActive || !m_bDeclared || !m_Pages || !m_Raster || !m_Casters || !context.CommandList)
         {
             return;
@@ -1160,8 +1163,12 @@ namespace NorvesLib::Core::Rendering
 
         if (m_PointShadowMethod == PointShadowMethod::Vsm)
         {
-            UpdatePointLights(context);
-            // 照明・影の測定が同じ並びで点光源の面のページを読む（LightCount が 0 の間はキューブのまま）
+            if (!bPointLightsPrepared)
+            {
+                UpdatePointLights(context);
+            }
+            // 照明・影の測定が同じ並びで点光源の面のページを読む（LightCount が 0 の間はキューブのまま）。
+            // 並列の記録では写した context へ書くので、後のパスへは準備段の公開が届く
             context.PhysicalLighting.PublishPointVsmLights(m_PointLights);
         }
 
@@ -1354,6 +1361,50 @@ namespace NorvesLib::Core::Rendering
         {
             commandList->BufferBarrier(buffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::Common);
         }
+    }
+
+    bool VirtualShadowMapPass::DeclaresAllLayoutChanges() const
+    {
+        // グラフの Texture は深度を読むだけ（ShaderResource）で、ページの描画の render pass は添付を持たない。
+        // パスの中のバリアはすべてバッファ（宣言の Common へ戻す）なので layout を変えない
+        return true;
+    }
+
+    RGRecordPolicy VirtualShadowMapPass::GetRecordPolicy() const
+    {
+        // Execute が書くのは自分のメンバ・リング・バッファと MegaGeometry の影の無効化の取り出しだけ。後のパスが読む
+        // 点光源の並びの公開は準備段で済ませる。MegaGeometry を記録するパスとは ReadsRecordingOf で並びを分ける
+        return RGRecordPolicy::Parallel;
+    }
+
+    void VirtualShadowMapPass::PrepareParallelRecord(RenderGraphResources& resources, ViewRenderContext& context)
+    {
+        (void)resources;
+        m_bPointLightsPrepared = false;
+        if (!m_bActive || !m_bDeclared || m_PointShadowMethod != PointShadowMethod::Vsm)
+        {
+            return;
+        }
+
+        // LightingPass・ShadowProbePass が読む点光源の並びを、写す前の context へ公開する（Execute はこの並びで記録する）
+        UpdatePointLights(context);
+        context.PhysicalLighting.PublishPointVsmLights(m_PointLights);
+        m_bPointLightsPrepared = true;
+    }
+
+    bool VirtualShadowMapPass::ReadsRecordingOf(const IRenderGraphPass& earlierPass) const
+    {
+        // MegaGeometry の投影物の入力・影の無効化（MegaGeometryPass と、その記録を担う VisibilityRasterPass が Execute で書く）と、
+        // スキニングの instance の並び（SkinningComputePass の Execute が作る）を読む
+        if (m_MegaPass && &earlierPass == static_cast<const IRenderGraphPass*>(m_MegaPass))
+        {
+            return true;
+        }
+        if (m_SkinningPass && &earlierPass == static_cast<const IRenderGraphPass*>(m_SkinningPass))
+        {
+            return true;
+        }
+        return dynamic_cast<const VisibilityRasterPass*>(&earlierPass) != nullptr;
     }
 
 } // namespace NorvesLib::Core::Rendering

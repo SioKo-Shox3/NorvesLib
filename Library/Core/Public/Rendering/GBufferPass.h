@@ -105,6 +105,9 @@ namespace NorvesLib::Core::Rendering
 
         void Declare(RenderGraphBuilder &builder) override;
         void Execute(RenderGraphResources& resources, ViewRenderContext& context) override;
+        bool DeclaresAllLayoutChanges() const override;
+        RGRecordPolicy GetRecordPolicy() const override;
+        void PrepareParallelRecord(RenderGraphResources& resources, ViewRenderContext& context) override;
 
         // ========================================
         // SceneView連携
@@ -210,6 +213,8 @@ namespace NorvesLib::Core::Rendering
         RHI::PipelinePtr SelectGBufferPipeline(DebugViewMode mode) const;
         bool IsMaterialDescriptorCacheEnabled();
         RHI::TexturePtr GetOrCreateConstantGrayTexture(float value);
+        // 描く不透明の材質が使う 1x1 の灰色テクスチャ（作成と転送を伴う）を、並列の記録の前に作る
+        void PrepareConstantMaterialTextures(const ViewRenderContext& context);
         void EnqueueGBufferGeometryPass(ViewRenderContext& context,
                                         Container::TSharedPtr<Container::VariableArray<DrawCommand>> drawCommands,
                                         const RHI::Viewport &viewport,
@@ -332,6 +337,10 @@ namespace NorvesLib::Core::Rendering
         RHI::SamplerPtr m_DefaultLinearSampler;
         // 材質のスカラー値（金属度・粗さ）を表す 1x1 の灰色テクスチャ。8bit の値ごとに初回だけ作る。
         Container::UnorderedMap<uint32_t, RHI::TexturePtr> m_ConstantGrayTextures;
+        // 準備段が灰色テクスチャを作ったフレーム（Execute は作らず、無ければ既定のテクスチャを使う）
+        bool m_bConstantTexturesPrepared = false;
+        // このフレームの不透明の描画にスキンの描画があるか（共有のパレットの記録を書くので、あるフレームは直列で記録する）
+        bool m_bHasSkinnedDraws = false;
     };
 
 } // namespace NorvesLib::Core::Rendering

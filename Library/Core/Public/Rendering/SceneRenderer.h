@@ -37,6 +37,18 @@ namespace NorvesLib::Core::Rendering
     };
 
     /**
+     * @brief FrameCommand を記録する間の状態（直前にバインドしたパイプラインと、記録した分の統計）
+     *
+     * 並列の記録の区間は区間ごとにこの状態を持ち、同じ SceneRenderer から同時に記録する。
+     * 区間の統計は記録の後に RenderThread で SceneRenderer::MergeStats へ足す。
+     */
+    struct SceneRendererRecordState
+    {
+        RHI::PipelinePtr BoundPipeline;
+        SceneRendererStats Stats;
+    };
+
+    /**
      * @brief RHIを使用して実際の描画を行うクラス
      *
      * SceneViewからDrawCommandを受け取り、
@@ -150,6 +162,30 @@ namespace NorvesLib::Core::Rendering
                                   RHI::ICommandList *commandList);
 
         /**
+         * @brief FrameCommand を、呼び出し側が持つ記録の状態で実行します（並列の記録の区間のワーカーから呼ぶ）
+         *
+         * SceneRenderer のメンバは読むだけなので、CanExecuteFrameCommandsConcurrently が true の並びは
+         * 別々の state とコマンドリストで同時に呼べる。
+         * @param commands FrameCommand配列
+         * @param commandList コマンドリスト
+         * @param state 区間ごとの記録の状態
+         */
+        void ExecuteFrameCommands(const Container::VariableArray<FrameCommand> &commands,
+                                  RHI::ICommandList *commandList,
+                                  SceneRendererRecordState &state) const;
+
+        /**
+         * @brief FrameCommand の並びを、ほかの区間と同時に記録してよいか
+         *
+         * MegaGeometry の記録（パスの状態を書き換える）と、スキンの描画（共有のパレットの記録へ最後の利用を書く）を
+         * 含む並びは false（RenderThread で直列に流す）。
+         */
+        static bool CanExecuteFrameCommandsConcurrently(const Container::VariableArray<FrameCommand> &commands);
+
+        /** @brief 区間ごとに記録した統計を足し込みます（RenderThread で記録の後に呼ぶ） */
+        void MergeStats(const SceneRendererStats &stats);
+
+        /**
          * @brief 単一DrawCommandのメッシュ描画をコマンドリストに記録します
          *
          * パスがUBOとディスクリプタセットを準備した後、
@@ -187,7 +223,7 @@ namespace NorvesLib::Core::Rendering
          * @brief 統計情報を取得します
          * @return 統計情報
          */
-        const SceneRendererStats &GetStats() const { return m_Stats; }
+        const SceneRendererStats &GetStats() const { return m_RecordState.Stats; }
 
         /**
          * @brief 統計情報をリセットします
@@ -200,14 +236,32 @@ namespace NorvesLib::Core::Rendering
          * @param command DrawCommand
          * @param commandList コマンドリスト
          */
-        void ExecuteDrawCommand(const DrawCommand &command, RHI::ICommandList *commandList);
+        void ExecuteDrawCommand(const DrawCommand &command,
+                                RHI::ICommandList *commandList,
+                                SceneRendererRecordState &state) const;
 
         /**
          * @brief 単一のFrameCommandを実行します
          * @param command FrameCommand
          * @param commandList コマンドリスト
          */
-        void ExecuteFrameCommand(const FrameCommand &command, RHI::ICommandList *commandList);
+        void ExecuteFrameCommand(const FrameCommand &command,
+                                 RHI::ICommandList *commandList,
+                                 SceneRendererRecordState &state) const;
+
+        bool RecordMeshDrawCall(const DrawCommand &command,
+                                RHI::ICommandList *commandList,
+                                MeshResources *meshResources,
+                                RHI::DescriptorSetPtr descriptorSet,
+                                uint32_t descriptorSetSlot,
+                                SceneRendererStats &stats) const;
+
+        bool RecordSkinnedDrawCall(const DrawCommand &command,
+                                   RHI::ICommandList *commandList,
+                                   SkinnedMeshResources *skinnedMeshResources,
+                                   RHI::DescriptorSetPtr descriptorSet,
+                                   uint32_t descriptorSetSlot,
+                                   SceneRendererStats &stats) const;
 
         /**
          * @brief バッチされたDrawCommandを実行します
@@ -227,11 +281,10 @@ namespace NorvesLib::Core::Rendering
         // デフォルトパイプライン（マテリアルシステム完成まで使用）
         RHI::PipelinePtr m_DefaultPipeline;
 
-        // 前回バインドしたパイプライン（冗長なバインドを避けるため）
-        RHI::PipelinePtr m_BoundPipeline;
+        // RenderThread で記録するときの状態（前回バインドしたパイプラインと統計）
+        SceneRendererRecordState m_RecordState;
         SkinnedMeshResources* m_SkinnedMeshResources = nullptr;
 
-        SceneRendererStats m_Stats;
         uint64_t m_CurrentFrame = 0;
 
         bool m_bInitialized = false;

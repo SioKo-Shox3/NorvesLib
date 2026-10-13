@@ -3,6 +3,7 @@
 #include "Rendering/LightingPassLightPacking.h"
 #include "Rendering/DirectionalShadowLightSelection.h"
 #include "Rendering/ViewRenderContext.h"
+#include "Rendering/RenderGraph/PassOwnedTextureBarrier.h"
 #include "Rendering/GBufferPass.h"
 #include "Rendering/SSAOPass.h"
 #include "Rendering/SharedResourceRegistry.h"
@@ -3324,9 +3325,10 @@ namespace NorvesLib::Core::Rendering
 
         if (m_RTGIDenoisedTextureState != RHI::ResourceState::UnorderedAccess)
         {
-            context.CommandList->TextureBarrier(m_RTGIDenoisedTexture,
-                                                 m_RTGIDenoisedTextureState,
-                                                 RHI::ResourceState::UnorderedAccess);
+            TransitionPassOwnedTexture(*context.CommandList,
+                                       m_RTGIDenoisedTexture,
+                                       m_RTGIDenoisedTextureState,
+                                       RHI::ResourceState::UnorderedAccess);
             m_RTGIDenoisedTextureState = RHI::ResourceState::UnorderedAccess;
         }
 
@@ -3352,9 +3354,10 @@ namespace NorvesLib::Core::Rendering
         context.CommandList->SetPipeline(m_RTGIDenoiserPipeline);
         context.CommandList->SetDescriptorSet(denoiserDescriptorSet);
         context.CommandList->Dispatch(groupCountX, groupCountY, 1u);
-        context.CommandList->TextureBarrier(m_RTGIDenoisedTexture,
-                                             RHI::ResourceState::UnorderedAccess,
-                                             RHI::ResourceState::ShaderResource);
+        TransitionPassOwnedTexture(*context.CommandList,
+                                   m_RTGIDenoisedTexture,
+                                   RHI::ResourceState::UnorderedAccess,
+                                   RHI::ResourceState::ShaderResource);
         m_RTGIDenoisedTextureState = RHI::ResourceState::ShaderResource;
         return true;
     }
@@ -3555,8 +3558,18 @@ namespace NorvesLib::Core::Rendering
                                    const GPULightingParams& lightingParams)
     try
     {
-        const auto fail = [this]() -> bool
+        // グラフの RTGI の出力は UnorderedAccess で渡され、宣言の最終の状態は ShaderResource。dispatch の前に断る道でも
+        // パスの中で最終の状態へ移す（layout を宣言から決める区間は、記録の後に宣言の最終の layout を書き戻すため）
+        bool bOutputReadable = false;
+        const auto fail = [this, &context, &rtgiDiffuseIndirectTexture, &bOutputReadable]() -> bool
         {
+            if (!bOutputReadable && rtgiDiffuseIndirectTexture && context.CommandList)
+            {
+                context.CommandList->TextureBarrier(rtgiDiffuseIndirectTexture,
+                                                    RHI::ResourceState::UnorderedAccess,
+                                                    RHI::ResourceState::ShaderResource);
+                bOutputReadable = true;
+            }
             InvalidateRTGIHistory();
             return false;
         };
@@ -3790,12 +3803,13 @@ namespace NorvesLib::Core::Rendering
                                                 RHI::ResourceState beforeState,
                                                 RHI::ResourceState afterState)
         {
-            context.CommandList->TextureBarrier(slot.Radiance, beforeState, afterState);
-            context.CommandList->TextureBarrier(slot.Age, beforeState, afterState);
-            context.CommandList->TextureBarrier(slot.Confidence, beforeState, afterState);
-            context.CommandList->TextureBarrier(slot.Depth, beforeState, afterState);
-            context.CommandList->TextureBarrier(slot.Normal, beforeState, afterState);
-            context.CommandList->TextureBarrier(slot.Material, beforeState, afterState);
+            // 履歴はこのパスだけが持つ（記述子の書き込みが読む共有の layout も書く）
+            TransitionPassOwnedTexture(*context.CommandList, slot.Radiance, beforeState, afterState);
+            TransitionPassOwnedTexture(*context.CommandList, slot.Age, beforeState, afterState);
+            TransitionPassOwnedTexture(*context.CommandList, slot.Confidence, beforeState, afterState);
+            TransitionPassOwnedTexture(*context.CommandList, slot.Depth, beforeState, afterState);
+            TransitionPassOwnedTexture(*context.CommandList, slot.Normal, beforeState, afterState);
+            TransitionPassOwnedTexture(*context.CommandList, slot.Material, beforeState, afterState);
         };
 
         if (m_RTGIHistorySlotState[readHistoryIndex] != RHI::ResourceState::ShaderResource)
@@ -3978,6 +3992,7 @@ namespace NorvesLib::Core::Rendering
             rtgiDiffuseIndirectTexture,
             RHI::ResourceState::UnorderedAccess,
             RHI::ResourceState::ShaderResource);
+        bOutputReadable = true;
         transitionHistorySlot(writeHistory,
                               RHI::ResourceState::UnorderedAccess,
                               RHI::ResourceState::ShaderResource);
@@ -5183,6 +5198,64 @@ namespace NorvesLib::Core::Rendering
 
         NORVES_LOG_INFO("LightingPass", "BRDF LUT generated");
         return true;
+    }
+
+    bool LightingPass::DeclaresAllLayoutChanges() const
+    {
+        // GBuffer をグラフから読み（旧経路の SharedResources を読み書きしない）、出力の render pass の finalState が宣言
+        // （ShaderResource）と一致し、RTGI の出力はパスの中で宣言の最終の状態へ移す。RTGI・DDGI・光線追跡の影の履歴・
+        // アトラス・可視の Texture はこのパスだけが持ち、TransitionPassOwnedTexture で遷移する
+        return m_bInitialized && !m_bLegacyInputFallbackActive && !m_bRegisterLegacyBridge &&
+               m_GBufferAlbedoHandle.IsValid() && m_GBufferNormalHandle.IsValid() &&
+               m_GBufferMaterialHandle.IsValid() && m_GBufferDepthHandle.IsValid() &&
+               m_GBufferVelocityHandle.IsValid() && m_GBufferEmissiveHandle.IsValid() &&
+               m_SceneColorHandle.IsValid() && m_IndirectSpecularHandle.IsValid() &&
+               m_SpecularReflectanceHandle.IsValid();
+    }
+
+    RGRecordPolicy LightingPass::GetRecordPolicy() const
+    {
+        // Execute が書くのは自分のメンバ・子のパス（DDGI・光線追跡の影）・区間の借りる口だけ。PhysicalLighting への公開は
+        // FinishParallelRecord で後のパス（Forward など）へ戻す。単発の提出を伴う作成は準備段で済ませる
+        return DeclaresAllLayoutChanges() ? RGRecordPolicy::Parallel : RGRecordPolicy::Serial;
+    }
+
+    void LightingPass::PrepareParallelRecord(RenderGraphResources& resources, ViewRenderContext& context)
+    {
+        (void)resources;
+        if (!m_bInitialized && !Initialize(context))
+        {
+            return;
+        }
+
+        // 単発の提出を伴う転送（検証の像・空の IBL・DDGI の既定のアトラス）を、記録の前に RenderThread で済ませる。
+        // Execute は同じ入力で引き直すので、作り直さずに使う
+        const uint32_t debugViewMode = static_cast<uint32_t>(context.GetActiveDebugMode());
+        if (debugViewMode == 252u &&
+            (!m_ValidationRaw252EnvironmentTexture ||
+             !m_ValidationRaw252DiffuseIrradianceTexture ||
+             !m_ValidationRaw252PrefilteredSpecularTexture) &&
+            !GenerateValidationSnapshots())
+        {
+            NORVES_LOG_ERROR("LightingPass", "Failed to create lazy raw252 validation snapshots");
+        }
+        // 空の公開は SkyAtmospherePass の準備段が先に済ませている
+        if (context.SkyAtmosphere.bSnapshotEnabled && context.SkyAtmosphere.bValid &&
+            context.SkyAtmosphere.RadianceTexture && context.SkyAtmosphere.TransmittanceTexture &&
+            context.SkyAtmosphere.SunDiskTexture && context.SkyAtmosphere.Sampler)
+        {
+            EnsureSkyAtmosphereIbl(context.SkyAtmosphere.Parameters,
+                                   context.SkyAtmosphere.RadianceTexture->GetWidth(),
+                                   context.SkyAtmosphere.RadianceTexture->GetHeight());
+        }
+        m_DDGIProbePass.PrepareRecord(context);
+    }
+
+    void LightingPass::FinishParallelRecord(const ViewRenderContext& recordedContext, ViewRenderContext& context)
+    {
+        // Execute が写しへ公開した照明・影の代わり・光線追跡の影・DDGI・RTGI・点光源のキューブを、後のパスへ戻す。
+        // 同じ並びのほかのパスの PhysicalLighting の公開は準備段で済んでいて、写しにも入っている
+        context.PhysicalLighting = recordedContext.PhysicalLighting;
     }
 
 } // namespace NorvesLib::Core::Rendering

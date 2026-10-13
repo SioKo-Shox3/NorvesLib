@@ -891,6 +891,9 @@ namespace NorvesLib::Core::Rendering
 
     void MegaGeometryPass::Declare(RenderGraphBuilder &builder)
     {
+        // 前のフレームで準備したまま積まなかった結果は使わない
+        m_bFramePrepared = false;
+        m_DeclaredDebugMode = builder.GetContext() ? builder.GetContext()->GetActiveDebugMode() : DebugViewMode::Normal;
         m_IndirectDrawBufferHandle = {};
         m_DrawCountBufferHandle = {};
         m_GBufferAlbedoHandle = {};
@@ -1021,6 +1024,23 @@ namespace NorvesLib::Core::Rendering
 
     void MegaGeometryPass::Execute(RenderGraphResources &resources, ViewRenderContext &context)
     {
+        // 準備段（並列の記録）を経たフレームは、添付の解決・Setup・表の準備が済んでいる。同じ並びで ID のラスタが
+        // 記録を進めるので、ここではパスの状態を書き換えず、決めてあるものを積むだけにする
+        const bool bPrepared = m_bFramePrepared;
+        if (!bPrepared)
+        {
+            ResolveGraphGBufferTextures(resources);
+            Setup(context);
+        }
+        Execute(context);
+        if (!bPrepared)
+        {
+            m_bPreferRenderGraphGBufferResources = false;
+        }
+    }
+
+    void MegaGeometryPass::ResolveGraphGBufferTextures(RenderGraphResources &resources)
+    {
         RHI::TexturePtr graphAlbedoTexture = m_GBufferAlbedoHandle.IsValid()
                                                  ? resources.GetTexture(m_GBufferAlbedoHandle)
                                                  : nullptr;
@@ -1067,10 +1087,74 @@ namespace NorvesLib::Core::Rendering
             m_DepthTexture.reset();
             m_VelocityTexture.reset();
         }
+    }
 
+    bool MegaGeometryPass::DeclaresAllLayoutChanges() const
+    {
+        // グラフの Texture は GBuffer の添付だけで、添付の状態遷移の render pass の finalState が宣言（ShaderResource）と一致する。
+        // 間接描画の引数・数のバッファは layout を持たない
+        return m_bInitialized;
+    }
+
+    RGRecordPolicy MegaGeometryPass::GetRecordPolicy() const
+    {
+        // 記録を ID のラスタへ移すフレームだけ。表の準備と移すかの判定は準備段（RenderThread）で済ませ、Execute は
+        // 添付の状態遷移を積むだけになる。移さないフレームは MegaGeometry の記録（中で自分でバリアを張る）を積むので直列
+        const bool bDeferredRecord = m_bVisibilityPlanEnabled && m_VisibilityRaster &&
+                                     m_VisibilityRaster->IsExecutionPlanned() &&
+                                     ShouldSkipGBufferDraw(m_DeclaredDebugMode);
+        return DeclaresAllLayoutChanges() && bDeferredRecord ? RGRecordPolicy::Parallel : RGRecordPolicy::Serial;
+    }
+
+    void MegaGeometryPass::PrepareParallelRecord(RenderGraphResources &resources, ViewRenderContext &context)
+    {
+        ResolveGraphGBufferTextures(resources);
         Setup(context);
-        Execute(context);
+        m_PreparedAction = PrepareFrame(context);
+        m_bFramePrepared = true;
+        // 記録（ID のラスタの Execute）と同時に読まれないよう、ここで戻す（Execute の添付の状態遷移は決めた結果で積む）
         m_bPreferRenderGraphGBufferResources = false;
+        if (m_bFrameRecordDeferred)
+        {
+            PrepareConstantMaterialTextures();
+        }
+    }
+
+    void MegaGeometryPass::PrepareConstantMaterialTextures()
+    {
+        if (!m_Device)
+        {
+            return;
+        }
+        if (!m_ConstantMaterialTextures)
+        {
+            m_ConstantMaterialTextures = Container::MakeUnique<ConstantMaterialTextureCache>();
+        }
+        // 記録の区間ごとの材質と同じ条件で引く（ORM を張る材質の分も作るが、1x1 で 8bit の値ごとに 1 枚だけ）
+        for (const SceneSection &section : m_SceneTables.Sections)
+        {
+            if (!section.Representative)
+            {
+                continue;
+            }
+            const auto &mat = section.Representative->Material;
+            if (!std::isfinite(mat.Metallic) || !std::isfinite(mat.Roughness) || !std::isfinite(mat.OcclusionStrength))
+            {
+                continue;
+            }
+            if (mat.Metallic >= 0)
+            {
+                (void)m_ConstantMaterialTextures->GetOrCreate(m_Device, mat.Metallic);
+            }
+            if (mat.Roughness >= 0)
+            {
+                (void)m_ConstantMaterialTextures->GetOrCreate(m_Device, mat.Roughness);
+            }
+            if (mat.OcclusionStrength != 1)
+            {
+                (void)m_ConstantMaterialTextures->GetOrCreate(m_Device, mat.OcclusionStrength);
+            }
+        }
     }
 
     // ========================================
@@ -1087,19 +1171,11 @@ namespace NorvesLib::Core::Rendering
 
     void MegaGeometryPass::Execute(ViewRenderContext &context)
     {
-        m_bFrameRecordDeferred = false;
-
-        const bool bCanEnqueueEmptyTransitionPass =
-            m_bPreferRenderGraphGBufferResources &&
-            m_GBufferRenderPass &&
-            m_GBufferFramebuffer;
-        auto enqueueEmptyTransitionPass = [this, &context, bCanEnqueueEmptyTransitionPass]() -> void
+        // 準備段が決めたフレームはその結果で積む（1 本の記録ではここで決める）
+        const PreparedFrameAction action = m_bFramePrepared ? m_PreparedAction : PrepareFrame(context);
+        m_bFramePrepared = false;
+        if (action == PreparedFrameAction::EmptyTransition)
         {
-            if (!bCanEnqueueEmptyTransitionPass)
-            {
-                return;
-            }
-
             context.EnqueueFullscreenPass(m_GBufferRenderPass,
                                           m_GBufferFramebuffer,
                                           context.GetActiveLocalViewport(),
@@ -1108,7 +1184,23 @@ namespace NorvesLib::Core::Rendering
                                           RHI::DescriptorSetPtr{},
                                           0,
                                           0);
-        };
+        }
+        else if (action == PreparedFrameAction::Record)
+        {
+            context.EnqueueMegaGeometryPass(this);
+        }
+    }
+
+    MegaGeometryPass::PreparedFrameAction MegaGeometryPass::PrepareFrame(ViewRenderContext &context)
+    {
+        m_bFrameRecordDeferred = false;
+
+        const bool bCanEnqueueEmptyTransitionPass =
+            m_bPreferRenderGraphGBufferResources &&
+            m_GBufferRenderPass &&
+            m_GBufferFramebuffer;
+        const PreparedFrameAction emptyTransition =
+            bCanEnqueueEmptyTransitionPass ? PreparedFrameAction::EmptyTransition : PreparedFrameAction::None;
 
         if (m_Instances.empty() || !m_CullPipeline || !context.Resources.MegaGeometry)
         {
@@ -1116,8 +1208,7 @@ namespace NorvesLib::Core::Rendering
             {
                 ReleaseIdleMeshRegionOwners(context.FrameIndex, context.ResolveRenderFrameSerial());
             }
-            enqueueEmptyTransitionPass();
-            return;
+            return emptyTransition;
         }
 
         bool bDrawPipelinesReady = m_DrawPipeline != nullptr;
@@ -1127,14 +1218,12 @@ namespace NorvesLib::Core::Rendering
 
         if (!m_GBufferRenderPass || !m_GBufferFramebuffer || !bDrawPipelinesReady)
         {
-            enqueueEmptyTransitionPass();
-            return;
+            return emptyTransition;
         }
 
         if (!context.GetActiveCamera())
         {
-            enqueueEmptyTransitionPass();
-            return;
+            return emptyTransition;
         }
 
         // 表を書く共通の前段: インスタンスの表・メッシュの表・影の表を、読み手のどのパス（主のカリングと描画、
@@ -1150,11 +1239,10 @@ namespace NorvesLib::Core::Rendering
             ShouldSkipGBufferDraw(context.GetActiveDebugMode()))
         {
             m_bFrameRecordDeferred = true;
-            enqueueEmptyTransitionPass();
-            return;
+            return emptyTransition;
         }
 
-        context.EnqueueMegaGeometryPass(this);
+        return PreparedFrameAction::Record;
     }
 
     namespace

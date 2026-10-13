@@ -43,6 +43,11 @@ namespace NorvesLib::Core::Rendering
     {
     public:
         bool Execute(ViewRenderContext& context);
+        /**
+         * @brief 並列の記録の前に RenderThread で呼ぶ。Execute が初回に作るパイプラインと既定のアトラス（転送を伴う）を
+         *        先に作り、記録の最中に単発の提出をしない（Execute を呼ぶ見込みのない文脈では何もしない）
+         */
+        void PrepareRecord(ViewRenderContext& context);
         void Shutdown();
 
         /** @brief ビュー・ビューポートの組の最後のレイの結果のバッファ（無ければ nullptr） */

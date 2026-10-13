@@ -2160,4 +2160,41 @@ namespace NorvesLib::Core::Rendering
         commandList->EndRenderPass();
     }
 
+    bool VisibilityRasterPass::DeclaresAllLayoutChanges() const
+    {
+        // グラフの Texture は ID と深度の添付で、render pass の finalState（ShaderResource）が宣言と一致する。HZB の深度の
+        // バリアは ShaderResource のまま、ピラミッドはこのパスだけが持つ（TransitionPassOwnedTexture）
+        return m_bInitialized && m_IdHandle.IsValid() && m_DepthHandle.IsValid();
+    }
+
+    RGRecordPolicy VisibilityRasterPass::GetRecordPolicy() const
+    {
+        // Execute が書くのは自分の表・統計と MegaGeometry の記録の状態（後のパスは ReadsRecordingOf で並びを分ける）。
+        // 単発の提出を伴う材質の定数のテクスチャは MegaGeometryPass の準備段が作る
+        return DeclaresAllLayoutChanges() ? RGRecordPolicy::Parallel : RGRecordPolicy::Serial;
+    }
+
+    void VisibilityRasterPass::PrepareParallelRecord(RenderGraphResources& resources, ViewRenderContext& context)
+    {
+        // 初期化（パイプライン・既定の資源）と framebuffer の作り直しを、記録の前に RenderThread で済ませる
+        if (!m_bInitialized && !Initialize(context))
+        {
+            return;
+        }
+        const RHI::TexturePtr idTexture = m_IdHandle.IsValid() ? resources.GetTexture(m_IdHandle) : RHI::TexturePtr{};
+        const RHI::TexturePtr depthTexture = m_DepthHandle.IsValid() ? resources.GetTexture(m_DepthHandle) : RHI::TexturePtr{};
+        if (idTexture && depthTexture && idTexture->GetWidth() == depthTexture->GetWidth() &&
+            idTexture->GetHeight() == depthTexture->GetHeight())
+        {
+            EnsureFramebuffer(idTexture, depthTexture);
+        }
+    }
+
+    bool VisibilityRasterPass::ReadsRecordingOf(const IRenderGraphPass& earlierPass) const
+    {
+        // スキニングの instance の並び（SkinningComputePass の Execute が作る）を読む。MegaGeometryPass の表と記録の移し先は、
+        // 並列の記録では MegaGeometryPass の準備段が決める
+        return m_SkinningComputePass && &earlierPass == static_cast<const IRenderGraphPass*>(m_SkinningComputePass);
+    }
+
 } // namespace NorvesLib::Core::Rendering

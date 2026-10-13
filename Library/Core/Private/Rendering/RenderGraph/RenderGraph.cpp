@@ -805,14 +805,19 @@ namespace NorvesLib::Core::Rendering
             while (orderIndex < segment.EndOrderIndex)
             {
                 // 続く Parallel のパスは、区間ごとのリストへ同時に記録する（Parallel のパスは計画した区間にだけある）。
-                if (context.RecordListSource && context.CommandList && m_ParallelRecordOrders[orderIndex])
+                // 前のパスの記録の結果（CPU の状態）を読むパスの前で並びを切り、前の並びを記録し終えてから準備・記録する。
+                // 並びが 1 つだけなら同時に記録する相手が無いので、リストを分けず今のリストへ直列で記録する。
+                uint32_t parallelEnd = orderIndex;
+                if (context.RecordListSource && context.CommandList)
                 {
-                    uint32_t parallelEnd = orderIndex + 1;
-                    while (parallelEnd < segment.EndOrderIndex && m_ParallelRecordOrders[parallelEnd])
+                    while (parallelEnd < segment.EndOrderIndex && m_ParallelRecordOrders[parallelEnd] &&
+                           !ReadsRecordingInRange(orderIndex, parallelEnd))
                     {
                         ++parallelEnd;
                     }
-
+                }
+                if (parallelEnd - orderIndex >= 2)
+                {
                     if (!RecordParallelPasses(orderIndex,
                                               parallelEnd,
                                               segment,
@@ -2293,6 +2298,19 @@ namespace NorvesLib::Core::Rendering
         }
     }
 
+    bool RenderGraph::ReadsRecordingInRange(uint32_t firstOrderIndex, uint32_t orderIndex) const
+    {
+        const IRenderGraphPass* pass = m_Passes[m_CompiledPassOrder[orderIndex]];
+        for (uint32_t earlierIndex = firstOrderIndex; earlierIndex < orderIndex; ++earlierIndex)
+        {
+            if (pass->ReadsRecordingOf(*m_Passes[m_CompiledPassOrder[earlierIndex]]))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
     bool RenderGraph::IsParallelRecordPass(uint32_t passIndex) const
     {
         if (!ValidatePassIndex(passIndex) || !m_Passes[passIndex] ||
@@ -2556,6 +2574,10 @@ namespace NorvesLib::Core::Rendering
             }
 
             Container::VariableArray<uint8_t> recorded(parallelCount, static_cast<uint8_t>(0));
+            // ワーカーで流した保留のコマンドが宣言に無い layout を変えたか（ログは RenderThread で出す）
+            Container::VariableArray<uint8_t> undeclaredLayoutCommands(parallelCount, static_cast<uint8_t>(0));
+            // 区間ごとの SceneRenderer の記録の状態（統計は記録の後に足し込む）
+            Container::VariableArray<SceneRendererRecordState> recordStates(parallelCount);
             Container::VariableArray<RHI::GPUTimestampScopeHandle> timestampHandles(parallelCount);
             parallelStages.Begin("RG.ParallelRecord");
             Thread::JobSystem::Get().ParallelFor(
@@ -2589,15 +2611,37 @@ namespace NorvesLib::Core::Rendering
                         segmentContext.CommandList->EndDebugMarker();
                     }
 #endif
+                    // 区間の保留のコマンド（影・GBuffer の描画など）は、ほかの区間と同時に流せる並びなら、ワーカーで
+                    // その区間のリストの末尾（パスの後）へ流し、GPU の区間もここで閉じる。流せない並び（MegaGeometry の記録・
+                    // スキンの描画）は RenderThread で後から流す。
+                    Container::VariableArray<FrameCommand>& pendingCommands = segmentPendingCommands[index];
+                    if (!pendingCommands.empty() && segmentContext.Renderer &&
+                        SceneRenderer::CanExecuteFrameCommandsConcurrently(pendingCommands))
+                    {
+                        undeclaredLayoutCommands[index] = HasUndeclaredLayoutCommands(&pendingCommands) ? 1 : 0;
+                        segmentContext.Renderer->ExecuteFrameCommands(pendingCommands,
+                                                                      segmentContext.CommandList,
+                                                                      recordStates[index]);
+                        pendingCommands.clear();
+                    }
+                    if (pendingCommands.empty() && timestampHandles[index].IsValid())
+                    {
+                        segmentContext.CommandList->EndGPUTimestampScope(timestampHandles[index]);
+                        timestampHandles[index] = RHI::GPUTimestampScopeHandle{};
+                    }
                     recorded[index] = 1;
                 });
             laneLease.Release();
 
-            // 区間の保留のコマンドは、RenderThread でその区間のリストの末尾（パスの後）へ流す。
+            // ワーカーで流せなかった保留のコマンドは、RenderThread でその区間のリストの末尾（パスの後）へ流す。
             parallelStages.Begin("RG.ParallelFinish");
             bool bAllRecorded = true;
             for (uint32_t index = 0; index < parallelCount; ++index)
             {
+                if (context.Renderer)
+                {
+                    context.Renderer->MergeStats(recordStates[index].Stats);
+                }
                 if (!recorded[index])
                 {
                     bAllRecorded = false;
@@ -2605,8 +2649,10 @@ namespace NorvesLib::Core::Rendering
                 }
 
                 ++m_LastExecutedPassCount;
+                // Execute が写しの context へ公開した値を、後のパスが使う context へグラフの順に戻す
+                m_Passes[m_CompiledPassOrder[firstOrderIndex + index]]->FinishParallelRecord(segmentContexts[index], context);
                 const Container::VariableArray<FrameCommand>& pendingCommands = segmentPendingCommands[index];
-                if (HasUndeclaredLayoutCommands(&pendingCommands))
+                if (undeclaredLayoutCommands[index] || HasUndeclaredLayoutCommands(&pendingCommands))
                 {
                     NORVES_LOG_ERROR("RenderGraph",
                                      "Pass '%s' declares all layout changes but enqueued a layout-changing frame command",

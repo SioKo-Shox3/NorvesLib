@@ -9,6 +9,7 @@
 #include "Rendering/SceneProxy.h"
 #include "Rendering/ShaderManager.h"
 #include "Rendering/ViewRenderContext.h"
+#include "Rendering/RenderGraph/PassOwnedTextureBarrier.h"
 #include "RHI/IDevice.h"
 #include "RHI/ICommandList.h"
 #include "RHI/IDescriptorSet.h"
@@ -543,6 +544,32 @@ namespace NorvesLib::Core::Rendering
         return descriptorSet;
     }
 
+    void DDGIProbePass::PrepareRecord(ViewRenderContext& context)
+    {
+        // Execute と同じ前提（光線追跡の TLAS・影を落とす物・装置の機能・正しい体積）がそろうときだけ作る
+        if (context.Device == nullptr || context.CommandList == nullptr || context.SnapshotScene == nullptr ||
+            context.SnapshotRayTracingScene == nullptr || context.SnapshotRayTracingScene->TopLevel == nullptr ||
+            !context.SnapshotRayTracingScene->HasShadowCasters())
+        {
+            return;
+        }
+        const RHI::DeviceCapabilities& capabilities = context.Capabilities != nullptr
+            ? *context.Capabilities
+            : context.Device->GetCapabilities();
+        if (!capabilities.RayTracing.bAccelerationStructure || !capabilities.RayTracing.bRayQuery ||
+            !capabilities.bBufferDeviceAddress || !capabilities.bShaderInt64)
+        {
+            return;
+        }
+        const DDGIVolumeParameters& volume = context.SnapshotScene->DDGIVolume;
+        const uint32_t probeCount = GetDDGIProbeCount(volume);
+        if (!IsDDGIVolumeValid(volume) || probeCount == 0u || probeCount > DDGIMaxProbeCount)
+        {
+            return;
+        }
+        EnsurePipeline(context);
+    }
+
     bool DDGIProbePass::Execute(ViewRenderContext& context)
     {
         // LightingPass の中から呼ばれるので、守られていない上書きの見張りへはこのパスの名前で報告する
@@ -936,7 +963,8 @@ namespace NorvesLib::Core::Rendering
             {
                 if (m_DefaultIrradianceAtlasState == RHI::ResourceState::Undefined)
                 {
-                    context.CommandList->TextureBarrier(
+                    TransitionPassOwnedTexture(
+                        *context.CommandList,
                         m_DefaultIrradianceAtlas,
                         RHI::ResourceState::Undefined,
                         RHI::ResourceState::ShaderResource,
@@ -948,7 +976,8 @@ namespace NorvesLib::Core::Rendering
                 }
                 if (m_DefaultDistanceAtlasState == RHI::ResourceState::Undefined)
                 {
-                    context.CommandList->TextureBarrier(
+                    TransitionPassOwnedTexture(
+                        *context.CommandList,
                         m_DefaultDistanceAtlas,
                         RHI::ResourceState::Undefined,
                         RHI::ResourceState::ShaderResource,
@@ -963,7 +992,8 @@ namespace NorvesLib::Core::Rendering
             {
                 if (viewResources->HistoryIrradianceAtlasState != RHI::ResourceState::ShaderResource)
                 {
-                    context.CommandList->TextureBarrier(
+                    TransitionPassOwnedTexture(
+                        *context.CommandList,
                         previousIrradianceAtlas,
                         viewResources->HistoryIrradianceAtlasState,
                         RHI::ResourceState::ShaderResource,
@@ -975,7 +1005,8 @@ namespace NorvesLib::Core::Rendering
                 }
                 if (viewResources->HistoryDistanceAtlasState != RHI::ResourceState::ShaderResource)
                 {
-                    context.CommandList->TextureBarrier(
+                    TransitionPassOwnedTexture(
+                        *context.CommandList,
                         previousDistanceAtlas,
                         viewResources->HistoryDistanceAtlasState,
                         RHI::ResourceState::ShaderResource,
@@ -1037,7 +1068,8 @@ namespace NorvesLib::Core::Rendering
             resultBufferSize);
         viewResources->ResultState = RHI::ResourceState::ShaderResource;
 
-        context.CommandList->TextureBarrier(
+        TransitionPassOwnedTexture(
+            *context.CommandList,
             viewResources->IrradianceAtlas,
             viewResources->IrradianceAtlasState,
             RHI::ResourceState::UnorderedAccess,
@@ -1045,7 +1077,8 @@ namespace NorvesLib::Core::Rendering
             0u,
             0u,
             0u);
-        context.CommandList->TextureBarrier(
+        TransitionPassOwnedTexture(
+            *context.CommandList,
             viewResources->DistanceAtlas,
             viewResources->DistanceAtlasState,
             RHI::ResourceState::UnorderedAccess,
@@ -1084,7 +1117,8 @@ namespace NorvesLib::Core::Rendering
             (atlasTexelCount + DDGIProbeRayWorkgroupSize - 1u) /
             DDGIProbeRayWorkgroupSize;
         context.CommandList->Dispatch(atlasGroupCountX, 1u, 1u);
-        context.CommandList->TextureBarrier(
+        TransitionPassOwnedTexture(
+            *context.CommandList,
             viewResources->IrradianceAtlas,
             RHI::ResourceState::UnorderedAccess,
             RHI::ResourceState::ShaderResource,
@@ -1092,7 +1126,8 @@ namespace NorvesLib::Core::Rendering
             0u,
             0u,
             0u);
-        context.CommandList->TextureBarrier(
+        TransitionPassOwnedTexture(
+            *context.CommandList,
             viewResources->DistanceAtlas,
             RHI::ResourceState::UnorderedAccess,
             RHI::ResourceState::ShaderResource,

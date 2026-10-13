@@ -371,6 +371,8 @@ namespace NorvesLib::Core::Rendering
         void BuildRecordSegments();
         void BuildRecordListSegments();
         bool IsParallelRecordPass(uint32_t passIndex) const;
+        // orderIndex のパスが、[firstOrderIndex, orderIndex) のどれかのパスの記録の結果を読むか（同時に記録する並びの切れ目）
+        bool ReadsRecordingInRange(uint32_t firstOrderIndex, uint32_t orderIndex) const;
         bool RecordSerialPass(uint32_t orderIndex,
                               const RGRecordSegment& segment,
                               RenderGraphResources& resources,

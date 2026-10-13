@@ -1128,7 +1128,7 @@
 - notes: 2026-10-14 親が足した。撮影は反復の中で 4 本（`CaptureScene.ps1 -Build -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views close -GpuTimingFrames 300 -GameArgs stress-entities=50000,frames-in-flight=<1|2> -OutDir .harness/runs/scene-capture/SCN-ECS-DIAG-GPU-FIF2/fif<1|2>-<a|b>`）。診断だけで、コードは変えない（原因が見つかったら FIX の項目を足す）。 2026-10-14 親: 評価の 1 周目は、2 フレームでカリング（Cull1＋Cull2）が +0.7〜+1.2 ms になる費用の原因の特定と FIX の追加、前の 40.0 ms の原因が未確定であることを理由に差し戻した。カリングの経路は後の SCN-MEGA の項目（BVH の作り直し・インスタンスのカリング・2 パスの遮蔽）で作り変えると決まっていて、今の経路の費用を追っても判断を変えない（ユーザーの方針: 改修が決まった土台で測らない）。フレームの合計では重ねの費用は揺れの中（+0.26 ms）、クロックは一定で throttle も無い、という答えで問いは閉じたので、親が done にした。前の 40.0 ms の原因は未確定（クロックの記録が無い）として残す。
 
 ## SCN-ECS-RT-PARALLEL-WIDEN: 記録の重いパスを並列に記録できる形にし、並列の記録を既定にする
-- status: todo
+- status: done
 - done-when: SCN-ECS-MEASURE-FIF の後に行う。並列に記録できる構造にすることはユーザーの設計の方針（「描画の積み込みをマルチスレッド化しないと Vulkan を使う意味がない」）なので、性能の差を実装の条件にしない。RenderThread の記録の時間の上位のパス（MEASURE-FIF の表の `RG.Record.*`。VisibilityRaster・Lighting・ShadowMap・VirtualShadowMap など）について、Parallel にできない理由（自分でバリアを張る・共有の CPU の状態）を外し、依存を保ったまま複数のワーカーで記録できるようにする（監査の表を PROGRESS に書き足す）。並列の記録を既定 on にし（`--render-parallel-record=off` で 1 本に戻せる）、並列にする仕事が無い束は直列で記録する。on・off とも起動画面の比較が pass、Debug の起動画面（on）で検証レイヤーのエラーが 0（Threading を含む）。on と off の性能の比べはこの項目ではしない（SCN-MEGA-ACCEPT-1M で CPU の記録の道が 16.6 ms を妨げたときに、同じ負荷で比べて既定や分け方を決める）。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -GameArgs render-parallel-record=on -OutDir .harness/runs/startup-capture/SCN-ECS-RT-PARALLEL-WIDEN-debug-on`

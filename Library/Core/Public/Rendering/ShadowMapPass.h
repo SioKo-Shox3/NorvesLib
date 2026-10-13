@@ -20,6 +20,7 @@ namespace NorvesLib::Core::Rendering
     struct SkinnedRenderPathContractTestAccess;
     /** @brief CSM・点光源のキューブへ描く MegaGeometry の投影物の、席ごとの写し（ShadowMapPass.cpp が定義する） */
     struct ShadowMapMegaCasterCache;
+    struct ShadowMapFramePlan;
 
     /**
      * @brief シャドウマップパス設定
@@ -98,6 +99,9 @@ namespace NorvesLib::Core::Rendering
         void Execute(ViewRenderContext &context) override;
         void Declare(RenderGraphBuilder &builder) override;
         void Execute(RenderGraphResources &resources, ViewRenderContext &context) override;
+        bool DeclaresAllLayoutChanges() const override;
+        RGRecordPolicy GetRecordPolicy() const override;
+        void PrepareParallelRecord(RenderGraphResources &resources, ViewRenderContext &context) override;
 
         // ========================================
         // SceneView連携
@@ -167,6 +171,17 @@ namespace NorvesLib::Core::Rendering
         /** @brief 選ばれた点光源ごとにキューブの6面を描きます */
         void ExecutePointShadows(ViewRenderContext& context);
 
+        /** @brief 影を描く資源（render pass・framebuffer・パイプライン）が揃っているか */
+        bool AreShadowResourcesReady() const;
+
+        /**
+         * @brief カスケードの行列と、照明・VSM が読む影の公開（PhysicalLighting）を作ります
+         *
+         * 並列の記録では準備段（RenderThread）で写す前の context へ公開し、Execute は作った行列で描く。
+         * 1 本の記録では Execute の中で呼ぶ。
+         */
+        void PlanShadowFrame(ViewRenderContext& context);
+
         // 設定
         ShadowMapPassSettings m_Settings;
 
@@ -200,6 +215,10 @@ namespace NorvesLib::Core::Rendering
         const VirtualShadowMapPass* m_pSunVsmPass = nullptr;
         // MegaGeometry の投影物の席ごとの写しと範囲の AABB（RenderThread の写しの変わった席だけ直す）
         Container::TUniquePtr<ShadowMapMegaCasterCache> m_MegaCasters;
+        // PlanShadowFrame が作ったフレームの行列（次の Execute が 1 回だけ読む）
+        Container::TUniquePtr<ShadowMapFramePlan> m_FramePlan;
+        // このフレームの描画にスキンの影の描画があるか（共有のパレットの記録を書くので、あるフレームは直列で記録する）
+        bool m_bHasSkinnedCasters = false;
         // CSM_MEGA_SKIPPED を出したか（省いた間は 1 回だけ出し、描き戻したら出し直す）
         bool m_bLoggedCsmMegaSkipped = false;
         // VSM_CLIPMAP / VSM_TEXEL を出したか（起動後に 1 回だけ出す）

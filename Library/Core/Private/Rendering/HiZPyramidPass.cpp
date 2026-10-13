@@ -1,4 +1,5 @@
 ﻿#include "Rendering/HiZPyramidPass.h"
+#include "Rendering/RenderGraph/PassOwnedTextureBarrier.h"
 #include "Rendering/FrameResourceOwner.h"
 #include "Rendering/ShaderManager.h"
 #include "Rendering/ViewRenderContext.h"
@@ -321,10 +322,11 @@ namespace NorvesLib::Core::Rendering
                                     0, 0, 0, 0);
 
         // 全ミップを書き込める状態へ（前のフレームの内容は使わない）
-        commandList->TextureBarrier(m_Pyramid,
-                                    RHI::ResourceState::Undefined,
-                                    RHI::ResourceState::UnorderedAccess,
-                                    0, 0, m_MipCount, 0);
+        TransitionPassOwnedTexture(*commandList,
+                                   m_Pyramid,
+                                   RHI::ResourceState::Undefined,
+                                   RHI::ResourceState::UnorderedAccess,
+                                   0, 0, m_MipCount, 0);
 
         for (uint32_t mip = 0; mip < m_MipCount; ++mip)
         {
@@ -347,10 +349,11 @@ namespace NorvesLib::Core::Rendering
                                   1);
         }
 
-        commandList->TextureBarrier(m_Pyramid,
-                                    RHI::ResourceState::UnorderedAccess,
-                                    RHI::ResourceState::ShaderResource,
-                                    0, 0, m_MipCount, 0);
+        TransitionPassOwnedTexture(*commandList,
+                                   m_Pyramid,
+                                   RHI::ResourceState::UnorderedAccess,
+                                   RHI::ResourceState::ShaderResource,
+                                   0, 0, m_MipCount, 0);
         return true;
     }
 

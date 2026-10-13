@@ -1227,4 +1227,11 @@ namespace NorvesLib::Core::Rendering
         materials.clear();
     }
 
+    bool VisibilityResolvePass::ReadsRecordingOf(const IRenderGraphPass& earlierPass) const
+    {
+        // ラスタの表（記録の表・材質・MegaGeometry の instance）と、材質のタイルの分類の結果を準備段と Execute で読む
+        return (m_RasterPass && &earlierPass == static_cast<const IRenderGraphPass*>(m_RasterPass)) ||
+               (m_ClassifyPass && &earlierPass == static_cast<const IRenderGraphPass*>(m_ClassifyPass));
+    }
+
 } // namespace NorvesLib::Core::Rendering

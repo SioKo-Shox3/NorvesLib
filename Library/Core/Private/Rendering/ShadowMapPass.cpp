@@ -622,6 +622,18 @@ namespace NorvesLib::Core::Rendering
         }
     } // namespace
 
+    // PlanShadowFrame が作るフレームの行列。Execute が描画の定数に使う
+    struct ShadowMapFramePlan
+    {
+        CascadedShadowMatrixResult Cascades;
+        float LightView[PhysicalLightingShadowCascadeCount][16] = {};
+        float LightProjection[PhysicalLightingShadowCascadeCount][16] = {};
+        uint32_t MegaCasterCount = 0u;
+        uint32_t InstanceDataSize = 0u;
+        // 作ってから Execute がまだ読んでいない
+        bool bPlanned = false;
+    };
+
     ShadowMapPass::ShadowMapPass(const ShadowMapPassSettings &settings)
         : m_Settings(settings)
     {
@@ -944,6 +956,23 @@ namespace NorvesLib::Core::Rendering
     void ShadowMapPass::Declare(RenderGraphBuilder &builder)
     {
         m_ShadowMapHandle = {};
+        // 前のフレームで準備したまま描かなかった行列は使わない
+        if (m_FramePlan)
+        {
+            m_FramePlan->bPlanned = false;
+        }
+        m_bHasSkinnedCasters = false;
+        if (const ViewRenderContext* skinnedContext = builder.GetContext())
+        {
+            for (const DrawCommand& command : skinnedContext->GetActiveDrawCommands())
+            {
+                if (command.Draw.bCastShadow && command.Draw.PayloadKind == DrawPayloadKind::Skinned)
+                {
+                    m_bHasSkinnedCasters = true;
+                    break;
+                }
+            }
+        }
         if (m_bInitialized &&
             m_ShadowMapTexture &&
             m_ShadowFramebuffers.size() == CSM_CASCADE_COUNT)
@@ -1039,143 +1068,24 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        if (!m_ShadowRenderPass ||
-            m_ShadowFramebuffers.size() != CSM_CASCADE_COUNT ||
-            !m_ShadowPipeline || !m_SkinnedShadowPipeline)
+        if (!AreShadowResourcesReady())
         {
             NORVES_LOG_WARNING("ShadowMapPass", "Shadow resources not ready, skipping");
             return;
         }
 
-        context.ActiveShadowMapSettings = &m_Settings;
-        CascadedShadowMatrixSettings cascadedSettings =
-            MakeDefaultCascadedShadowMatrixSettings();
-        cascadedSettings.ShadowMapResolution = m_Settings.Resolution;
-        cascadedSettings.MaxShadowDistance = m_Settings.MaxShadowDistance;
-        cascadedSettings.Directional = MakeDirectionalShadowMatrixSettings(m_Settings);
-
-        const uint64_t instanceDataSize64 = context.InstanceDataBuffer
-                                                ? context.InstanceDataBuffer->GetSize()
-                                                : 0;
-        const uint32_t instanceDataSize = instanceDataSize64 > 0xFFFFFFFFull
-                                              ? 0xFFFFFFFFu
-                                              : static_cast<uint32_t>(instanceDataSize64);
-
-        // カスケードの視錐台の切片より光源側の遮蔽物もnear面で切り取らないよう、影を落とす
-        // 物体の境界球を光源側の深度範囲に含める。MegaGeometryは下で実際に描くキャスターの
-        // 境界球だけを含める（描かない物で深度範囲とPCSSの探索半径を広げない）。
-        // MegaGeometry は RenderThread の写しの変わった席だけを直した席ごとの写しから、範囲（格子）ごとの AABB を含める
-        // （物の数ではなく範囲の数だけを見る。範囲に物が 1 つなら、その物の境界球そのもの）
-        const uint32_t megaCasterCount = SyncMegaShadowCasters(m_MegaCasters, context, instanceDataSize);
-        Container::VariableArray<BoundingSphere> casterBounds;
-        CollectDirectionalShadowCasterBounds(context.SnapshotMeshProxies,
-                                             context.SnapshotSkinnedMeshProxies,
-                                             nullptr,
-                                             casterBounds);
-        if (megaCasterCount != 0u)
+        // 行列と影の公開は、準備段が作ったフレームなら作り直さない（1 本の記録ではここで作る）
+        if (!m_FramePlan || !m_FramePlan->bPlanned)
         {
-            m_MegaCasters->Ranges.AppendBounds(casterBounds);
+            PlanShadowFrame(context);
         }
-        const CascadedShadowMatrixResult cascadedShadowMatrices =
-            BuildCascadedShadowLightMatrices(context.SnapshotLightProxies,
-                                             context.GetActiveCamera(),
-                                             cascadedSettings,
-                                             &casterBounds);
-
-        // 各カスケードのライトビュー・プロジェクションをGPU用データへ変換する。
-        float lightViewData[PhysicalLightingShadowCascadeCount][16] = {};
-        float lightProjData[PhysicalLightingShadowCascadeCount][16] = {};
-        float splitDistances[PhysicalLightingShadowSplitCount] = {};
-        for (uint32_t cascadeIndex = 0;
-             cascadeIndex < PhysicalLightingShadowCascadeCount;
-             ++cascadeIndex)
-        {
-            if (cascadedShadowMatrices.bEnabled)
-            {
-                const Math::Matrix4x4 lightProjMat =
-                    context.Device->AdjustProjectionForClipSpace(
-                        cascadedShadowMatrices.Cascades[cascadeIndex].Projection,
-                        false);
-                CopyShadowMatrixToShaderData(
-                    cascadedShadowMatrices.Cascades[cascadeIndex].View,
-                    lightViewData[cascadeIndex]);
-                CopyShadowMatrixToShaderData(lightProjMat, lightProjData[cascadeIndex]);
-            }
-            else
-            {
-                CopyIdentityShadowMatricesToShaderData(
-                    lightViewData[cascadeIndex],
-                    lightProjData[cascadeIndex]);
-            }
-        }
-        if (cascadedShadowMatrices.bEnabled)
-        {
-            for (uint32_t splitIndex = 0;
-                 splitIndex < PhysicalLightingShadowSplitCount;
-                 ++splitIndex)
-            {
-                splitDistances[splitIndex] = cascadedShadowMatrices.SplitDistances[splitIndex];
-            }
-
-            // 分割とテクセルの大きさはカメラのnear・画角・影の最大距離だけで決まるため、
-            // 分割の奥が変わったときだけ記録する。
-            const float splitFar = cascadedShadowMatrices.SplitDistances[CSM_CASCADE_COUNT];
-            if (splitFar != m_LoggedCascadeSplitFar)
-            {
-                m_LoggedCascadeSplitFar = splitFar;
-                NORVES_LOG_INFO("ShadowMapPass",
-                                "CSMの分割: csm_splits=%.3f,%.3f,%.3f,%.3f,%.3f m "
-                                "csm_texel_m=%.4f,%.4f,%.4f,%.4f",
-                                cascadedShadowMatrices.SplitDistances[0],
-                                cascadedShadowMatrices.SplitDistances[1],
-                                cascadedShadowMatrices.SplitDistances[2],
-                                cascadedShadowMatrices.SplitDistances[3],
-                                cascadedShadowMatrices.SplitDistances[4],
-                                cascadedShadowMatrices.Cascades[0].TexelSize,
-                                cascadedShadowMatrices.Cascades[1].TexelSize,
-                                cascadedShadowMatrices.Cascades[2].TexelSize,
-                                cascadedShadowMatrices.Cascades[3].TexelSize);
-            }
-        }
-        context.PhysicalLighting.PublishCascadedShadow(
-            &lightViewData[0][0],
-            &lightProjData[0][0],
-            splitDistances,
-            cascadedShadowMatrices.bEnabled ? cascadedShadowMatrices.CascadeCount : 0u,
-            cascadedShadowMatrices.LightId,
-            cascadedShadowMatrices.bEnabled);
-        // --shadow-method=vsm: 太陽のクリップマップを CSM の行列と同じ太陽・カメラから毎フレーム作って公開する。描画は CSM のまま
-        if (m_ShadowMethod == ShadowMethod::Vsm)
-        {
-            VirtualShadowMapClipmapSettings clipmapSettings;
-            clipmapSettings.MaxShadowDistance = m_Settings.MaxShadowDistance;
-            const CameraProxy* activeCamera = context.GetActiveCamera();
-            const VirtualShadowMapClipmap clipmap =
-                activeCamera != nullptr
-                    ? BuildVirtualShadowMapClipmap(context.SnapshotLightProxies, *activeCamera, clipmapSettings)
-                    : VirtualShadowMapClipmap{};
-            context.PhysicalLighting.PublishSunClipmap(clipmap);
-            if (clipmap.bEnabled && !m_bLoggedVsmClipmap)
-            {
-                m_bLoggedVsmClipmap = true;
-                LogVirtualShadowMapClipmapOnce(clipmap, cascadedShadowMatrices, *activeCamera,
-                                               context.GetActiveRenderHeight());
-            }
-        }
-        // R1の単一行列利用者にはcascade 0を公開し、P6移行まで互換性を保つ。
-        context.PhysicalLighting.PublishDirectionalShadow(
-            lightViewData[0],
-            lightProjData[0],
-            cascadedShadowMatrices.LightId,
-            cascadedShadowMatrices.bEnabled,
-            m_ShadowMapTexture,
-            m_ShadowSampler);
-
-        // SharedResourceRegistry は legacy/fallback bridge の互換経路でのみ公開する。
-        if (m_bRegisterLegacyBridge && context.SharedResources)
-        {
-            context.SharedResources->RegisterTexturePtr("ShadowMap", m_ShadowMapTexture);
-        }
+        const ShadowMapFramePlan& plan = *m_FramePlan;
+        m_FramePlan->bPlanned = false;
+        const CascadedShadowMatrixResult& cascadedShadowMatrices = plan.Cascades;
+        const auto& lightViewData = plan.LightView;
+        const auto& lightProjData = plan.LightProjection;
+        const uint32_t megaCasterCount = plan.MegaCasterCount;
+        const uint32_t instanceDataSize = plan.InstanceDataSize;
 
         RHI::Viewport viewport;
         viewport.x = 0.0f;
@@ -1416,6 +1326,181 @@ namespace NorvesLib::Core::Rendering
         }
 
         ExecutePointShadows(context);
+    }
+
+    bool ShadowMapPass::AreShadowResourcesReady() const
+    {
+        return m_ShadowRenderPass && m_ShadowFramebuffers.size() == CSM_CASCADE_COUNT && m_ShadowPipeline &&
+               m_SkinnedShadowPipeline;
+    }
+
+    void ShadowMapPass::PlanShadowFrame(ViewRenderContext &context)
+    {
+        if (!m_FramePlan)
+        {
+            m_FramePlan = Container::MakeUnique<ShadowMapFramePlan>();
+        }
+        ShadowMapFramePlan& plan = *m_FramePlan;
+        context.ActiveShadowMapSettings = &m_Settings;
+        CascadedShadowMatrixSettings cascadedSettings =
+            MakeDefaultCascadedShadowMatrixSettings();
+        cascadedSettings.ShadowMapResolution = m_Settings.Resolution;
+        cascadedSettings.MaxShadowDistance = m_Settings.MaxShadowDistance;
+        cascadedSettings.Directional = MakeDirectionalShadowMatrixSettings(m_Settings);
+
+        const uint64_t instanceDataSize64 = context.InstanceDataBuffer
+                                                ? context.InstanceDataBuffer->GetSize()
+                                                : 0;
+        const uint32_t instanceDataSize = instanceDataSize64 > 0xFFFFFFFFull
+                                              ? 0xFFFFFFFFu
+                                              : static_cast<uint32_t>(instanceDataSize64);
+
+        // カスケードの視錐台の切片より光源側の遮蔽物もnear面で切り取らないよう、影を落とす
+        // 物体の境界球を光源側の深度範囲に含める。MegaGeometryは下で実際に描くキャスターの
+        // 境界球だけを含める（描かない物で深度範囲とPCSSの探索半径を広げない）。
+        // MegaGeometry は RenderThread の写しの変わった席だけを直した席ごとの写しから、範囲（格子）ごとの AABB を含める
+        // （物の数ではなく範囲の数だけを見る。範囲に物が 1 つなら、その物の境界球そのもの）
+        const uint32_t megaCasterCount = SyncMegaShadowCasters(m_MegaCasters, context, instanceDataSize);
+        Container::VariableArray<BoundingSphere> casterBounds;
+        CollectDirectionalShadowCasterBounds(context.SnapshotMeshProxies,
+                                             context.SnapshotSkinnedMeshProxies,
+                                             nullptr,
+                                             casterBounds);
+        if (megaCasterCount != 0u)
+        {
+            m_MegaCasters->Ranges.AppendBounds(casterBounds);
+        }
+        const CascadedShadowMatrixResult cascadedShadowMatrices =
+            BuildCascadedShadowLightMatrices(context.SnapshotLightProxies,
+                                             context.GetActiveCamera(),
+                                             cascadedSettings,
+                                             &casterBounds);
+
+        // 各カスケードのライトビュー・プロジェクションをGPU用データへ変換する。
+        float lightViewData[PhysicalLightingShadowCascadeCount][16] = {};
+        float lightProjData[PhysicalLightingShadowCascadeCount][16] = {};
+        float splitDistances[PhysicalLightingShadowSplitCount] = {};
+        for (uint32_t cascadeIndex = 0;
+             cascadeIndex < PhysicalLightingShadowCascadeCount;
+             ++cascadeIndex)
+        {
+            if (cascadedShadowMatrices.bEnabled)
+            {
+                const Math::Matrix4x4 lightProjMat =
+                    context.Device->AdjustProjectionForClipSpace(
+                        cascadedShadowMatrices.Cascades[cascadeIndex].Projection,
+                        false);
+                CopyShadowMatrixToShaderData(
+                    cascadedShadowMatrices.Cascades[cascadeIndex].View,
+                    lightViewData[cascadeIndex]);
+                CopyShadowMatrixToShaderData(lightProjMat, lightProjData[cascadeIndex]);
+            }
+            else
+            {
+                CopyIdentityShadowMatricesToShaderData(
+                    lightViewData[cascadeIndex],
+                    lightProjData[cascadeIndex]);
+            }
+        }
+        if (cascadedShadowMatrices.bEnabled)
+        {
+            for (uint32_t splitIndex = 0;
+                 splitIndex < PhysicalLightingShadowSplitCount;
+                 ++splitIndex)
+            {
+                splitDistances[splitIndex] = cascadedShadowMatrices.SplitDistances[splitIndex];
+            }
+
+            // 分割とテクセルの大きさはカメラのnear・画角・影の最大距離だけで決まるため、
+            // 分割の奥が変わったときだけ記録する。
+            const float splitFar = cascadedShadowMatrices.SplitDistances[CSM_CASCADE_COUNT];
+            if (splitFar != m_LoggedCascadeSplitFar)
+            {
+                m_LoggedCascadeSplitFar = splitFar;
+                NORVES_LOG_INFO("ShadowMapPass",
+                                "CSMの分割: csm_splits=%.3f,%.3f,%.3f,%.3f,%.3f m "
+                                "csm_texel_m=%.4f,%.4f,%.4f,%.4f",
+                                cascadedShadowMatrices.SplitDistances[0],
+                                cascadedShadowMatrices.SplitDistances[1],
+                                cascadedShadowMatrices.SplitDistances[2],
+                                cascadedShadowMatrices.SplitDistances[3],
+                                cascadedShadowMatrices.SplitDistances[4],
+                                cascadedShadowMatrices.Cascades[0].TexelSize,
+                                cascadedShadowMatrices.Cascades[1].TexelSize,
+                                cascadedShadowMatrices.Cascades[2].TexelSize,
+                                cascadedShadowMatrices.Cascades[3].TexelSize);
+            }
+        }
+        context.PhysicalLighting.PublishCascadedShadow(
+            &lightViewData[0][0],
+            &lightProjData[0][0],
+            splitDistances,
+            cascadedShadowMatrices.bEnabled ? cascadedShadowMatrices.CascadeCount : 0u,
+            cascadedShadowMatrices.LightId,
+            cascadedShadowMatrices.bEnabled);
+        // --shadow-method=vsm: 太陽のクリップマップを CSM の行列と同じ太陽・カメラから毎フレーム作って公開する。描画は CSM のまま
+        if (m_ShadowMethod == ShadowMethod::Vsm)
+        {
+            VirtualShadowMapClipmapSettings clipmapSettings;
+            clipmapSettings.MaxShadowDistance = m_Settings.MaxShadowDistance;
+            const CameraProxy* activeCamera = context.GetActiveCamera();
+            const VirtualShadowMapClipmap clipmap =
+                activeCamera != nullptr
+                    ? BuildVirtualShadowMapClipmap(context.SnapshotLightProxies, *activeCamera, clipmapSettings)
+                    : VirtualShadowMapClipmap{};
+            context.PhysicalLighting.PublishSunClipmap(clipmap);
+            if (clipmap.bEnabled && !m_bLoggedVsmClipmap)
+            {
+                m_bLoggedVsmClipmap = true;
+                LogVirtualShadowMapClipmapOnce(clipmap, cascadedShadowMatrices, *activeCamera,
+                                               context.GetActiveRenderHeight());
+            }
+        }
+        // R1の単一行列利用者にはcascade 0を公開し、P6移行まで互換性を保つ。
+        context.PhysicalLighting.PublishDirectionalShadow(
+            lightViewData[0],
+            lightProjData[0],
+            cascadedShadowMatrices.LightId,
+            cascadedShadowMatrices.bEnabled,
+            m_ShadowMapTexture,
+            m_ShadowSampler);
+
+        // SharedResourceRegistry は legacy/fallback bridge の互換経路でのみ公開する。
+        if (m_bRegisterLegacyBridge && context.SharedResources)
+        {
+            context.SharedResources->RegisterTexturePtr("ShadowMap", m_ShadowMapTexture);
+        }
+
+        plan.Cascades = cascadedShadowMatrices;
+        std::memcpy(plan.LightView, lightViewData, sizeof(plan.LightView));
+        std::memcpy(plan.LightProjection, lightProjData, sizeof(plan.LightProjection));
+        plan.MegaCasterCount = megaCasterCount;
+        plan.InstanceDataSize = instanceDataSize;
+        plan.bPlanned = true;
+    }
+
+    bool ShadowMapPass::DeclaresAllLayoutChanges() const
+    {
+        // グラフの Texture は影の地図とキューブ配列だけで、どちらも render pass の finalState（ShaderResource）が宣言と一致する。
+        // 旧経路の SharedResources へは登録しない
+        return m_bInitialized && !m_bRegisterLegacyBridge;
+    }
+
+    RGRecordPolicy ShadowMapPass::GetRecordPolicy() const
+    {
+        // 行列と PhysicalLighting への公開は準備段で済ませ、Execute は区間の借りる口から定数を借りて描画を積むだけ。
+        // スキンの影の描画は共有のパレットの記録へ書くので、あるフレームは直列で記録する
+        return DeclaresAllLayoutChanges() && !m_bHasSkinnedCasters ? RGRecordPolicy::Parallel : RGRecordPolicy::Serial;
+    }
+
+    void ShadowMapPass::PrepareParallelRecord(RenderGraphResources &resources, ViewRenderContext &context)
+    {
+        (void)resources;
+        // VSM・照明・ボリュームのフォグが読むカスケードとクリップマップを、写す前の context へ公開する
+        if (context.CommandList && AreShadowResourcesReady())
+        {
+            PlanShadowFrame(context);
+        }
     }
 
     bool ShadowMapPass::EnsurePointShadowResources(const ViewRenderContext& context)

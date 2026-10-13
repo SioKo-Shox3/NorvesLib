@@ -364,6 +364,10 @@ namespace NorvesLib::Core::Rendering
 
         void Declare(RenderGraphBuilder& builder) override;
         void Execute(RenderGraphResources& resources, ViewRenderContext& context) override;
+        bool DeclaresAllLayoutChanges() const override;
+        RGRecordPolicy GetRecordPolicy() const override;
+        void PrepareParallelRecord(RenderGraphResources& resources, ViewRenderContext& context) override;
+        bool ReadsRecordingOf(const IRenderGraphPass& earlierPass) const override;
 
         /** @brief スキニングの投影物の取り出し元（同じ View のパス。null ならスキニングの投影物は描かない） */
         void SetSkinningComputePass(const SkinningComputePass* pass) { m_SkinningPass = pass; }
@@ -476,6 +480,8 @@ namespace NorvesLib::Core::Rendering
         /** @brief 直近に作った点光源のスライスの並びと、VSM_POINT を出したか */
         VirtualShadowMapPointLights m_PointLights;
         bool m_bPointLightsLogged = false;
+        // 準備段が点光源の並びを作って公開したフレーム（次の Execute が 1 回だけ読み、作り直さない）
+        bool m_bPointLightsPrepared = false;
         RHI::IDevice* m_Device = nullptr;
         GpuResources* m_Gpu = nullptr;
         bool m_bActive = false;

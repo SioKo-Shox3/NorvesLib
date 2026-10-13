@@ -163,7 +163,7 @@ namespace Game
 #if NORVES_BUILD_DEVELOPMENT
         constexpr const TCHAR *kMegaLodErrorPxOption = TEXT("--mega-lod-error-px=");
 #endif
-        // --render-parallel-record=on|off: 監査したパスを区間ごとのリストへ同時に記録するか（既定 off）。
+        // --render-parallel-record=on|off: 監査したパスを区間ごとのリストへ同時に記録するか（既定 on）。
         // off では全パスを 1 本のリストへ記録する。環境変数 NORVES_RENDER_PARALLEL_RECORD（1 で on）で描画側へ渡す。
         constexpr const TCHAR *kRenderParallelRecordOption = TEXT("--render-parallel-record=");
 #if NORVES_BUILD_DEVELOPMENT

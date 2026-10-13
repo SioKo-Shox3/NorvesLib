@@ -58,7 +58,7 @@ namespace NorvesLib::Core::Rendering
         }
 
         m_DefaultPipeline.reset();
-        m_BoundPipeline.reset();
+        m_RecordState.BoundPipeline.reset();
         m_Device = nullptr;
         m_ResourceCache = nullptr;
         m_TransientPool = nullptr;
@@ -105,7 +105,7 @@ namespace NorvesLib::Core::Rendering
         ExecuteDrawCommands(drawCommands, commandList);
 
         auto endTime = std::chrono::high_resolution_clock::now();
-        m_Stats.RenderTimeMs = std::chrono::duration<float, std::milli>(endTime - startTime).count();
+        m_RecordState.Stats.RenderTimeMs = std::chrono::duration<float, std::milli>(endTime - startTime).count();
     }
 
     void SceneRenderer::ExecuteDrawCommands(const Container::VariableArray<DrawCommand> &commands,
@@ -126,7 +126,7 @@ namespace NorvesLib::Core::Rendering
         // 現時点では単純に順次実行
         for (const DrawCommand &command : commands)
         {
-            ExecuteDrawCommand(command, commandList);
+            ExecuteDrawCommand(command, commandList, m_RecordState);
         }
     }
 
@@ -140,11 +140,61 @@ namespace NorvesLib::Core::Rendering
 
         for (const FrameCommand &command : commands)
         {
-            ExecuteFrameCommand(command, commandList);
+            ExecuteFrameCommand(command, commandList, m_RecordState);
         }
     }
 
-    void SceneRenderer::ExecuteDrawCommand(const DrawCommand &command, RHI::ICommandList *commandList)
+    void SceneRenderer::ExecuteFrameCommands(const Container::VariableArray<FrameCommand> &commands,
+                                             RHI::ICommandList *commandList,
+                                             SceneRendererRecordState &state) const
+    {
+        if (commands.empty() || !commandList)
+        {
+            return;
+        }
+
+        for (const FrameCommand &command : commands)
+        {
+            ExecuteFrameCommand(command, commandList, state);
+        }
+    }
+
+    bool SceneRenderer::CanExecuteFrameCommandsConcurrently(const Container::VariableArray<FrameCommand> &commands)
+    {
+        for (const FrameCommand &command : commands)
+        {
+            if (command.Type == FrameCommandType::MegaGeometryPass)
+            {
+                return false;
+            }
+            if (command.Type != FrameCommandType::GeometryPass || !command.GeometryPass.DrawCommands)
+            {
+                continue;
+            }
+            for (const DrawCommand &drawCommand : *command.GeometryPass.DrawCommands)
+            {
+                if (drawCommand.Draw.PayloadKind == DrawPayloadKind::Skinned)
+                {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    void SceneRenderer::MergeStats(const SceneRendererStats &stats)
+    {
+        SceneRendererStats &total = m_RecordState.Stats;
+        total.DrawCallCount += stats.DrawCallCount;
+        total.SkinnedGBufferDrawCallCount += stats.SkinnedGBufferDrawCallCount;
+        total.SkinnedShadowDrawCallCount += stats.SkinnedShadowDrawCallCount;
+        total.DispatchCount += stats.DispatchCount;
+        total.TriangleCount += stats.TriangleCount;
+    }
+
+    void SceneRenderer::ExecuteDrawCommand(const DrawCommand &command,
+                                           RHI::ICommandList *commandList,
+                                           SceneRendererRecordState &state) const
     {
         if (!commandList)
         {
@@ -177,7 +227,7 @@ namespace NorvesLib::Core::Rendering
                 command.Compute.ThreadGroupCountY,
                 command.Compute.ThreadGroupCountZ);
 
-            ++m_Stats.DispatchCount;
+            ++state.Stats.DispatchCount;
             return;
         }
 
@@ -192,10 +242,10 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        if (pipeline != m_BoundPipeline)
+        if (pipeline != state.BoundPipeline)
         {
             commandList->SetPipeline(pipeline);
-            m_BoundPipeline = pipeline;
+            state.BoundPipeline = pipeline;
         }
 
         // ディスクリプタセットをバインド
@@ -224,8 +274,8 @@ namespace NorvesLib::Core::Rendering
             commandList->SetIndexBuffer(mesh2D.IndexBuffer, mesh2D.IndexBufferOffsetBytes, mesh2D.IndexType);
             commandList->DrawIndexed(mesh2D.IndexCount, mesh2D.IndexOffset, mesh2D.VertexOffset);
 
-            ++m_Stats.DrawCallCount;
-            m_Stats.TriangleCount += mesh2D.IndexCount / 3;
+            ++state.Stats.DrawCallCount;
+            state.Stats.TriangleCount += mesh2D.IndexCount / 3;
             return;
         }
 
@@ -265,14 +315,16 @@ namespace NorvesLib::Core::Rendering
         }
 
         // 統計更新
-        ++m_Stats.DrawCallCount;
+        ++state.Stats.DrawCallCount;
         if (draw.IndexCount > 0)
         {
-            m_Stats.TriangleCount += draw.IndexCount / 3;
+            state.Stats.TriangleCount += draw.IndexCount / 3;
         }
     }
 
-    void SceneRenderer::ExecuteFrameCommand(const FrameCommand &command, RHI::ICommandList *commandList)
+    void SceneRenderer::ExecuteFrameCommand(const FrameCommand &command,
+                                            RHI::ICommandList *commandList,
+                                            SceneRendererRecordState &state) const
     {
         if (!commandList)
         {
@@ -292,15 +344,15 @@ namespace NorvesLib::Core::Rendering
             commandList->BeginRenderPass(geometryPass.RenderPass, geometryPass.Framebuffer);
             commandList->SetViewport(geometryPass.Viewport);
             commandList->SetScissor(geometryPass.Scissor);
-            m_BoundPipeline = nullptr;
+            state.BoundPipeline = nullptr;
 
             for (const DrawCommand &drawCommand : *geometryPass.DrawCommands)
             {
                 RHI::PipelinePtr pipeline = drawCommand.Pipeline ? drawCommand.Pipeline : m_DefaultPipeline;
-                if (pipeline && pipeline != m_BoundPipeline)
+                if (pipeline && pipeline != state.BoundPipeline)
                 {
                     commandList->SetPipeline(pipeline);
-                    m_BoundPipeline = pipeline;
+                    state.BoundPipeline = pipeline;
                 }
 
                 if (drawCommand.Draw.PayloadKind == DrawPayloadKind::Skinned)
@@ -309,7 +361,8 @@ namespace NorvesLib::Core::Rendering
                                           commandList,
                                           m_SkinnedMeshResources,
                                           drawCommand.DescriptorSet,
-                                          drawCommand.DescriptorSetSlot);
+                                          drawCommand.DescriptorSetSlot,
+                                          state.Stats);
                     continue;
                 }
 
@@ -319,11 +372,12 @@ namespace NorvesLib::Core::Rendering
                                        commandList,
                                        geometryPass.Meshes,
                                        drawCommand.DescriptorSet,
-                                       drawCommand.DescriptorSetSlot);
+                                       drawCommand.DescriptorSetSlot,
+                                       state.Stats);
                     continue;
                 }
 
-                ExecuteDrawCommand(drawCommand, commandList);
+                ExecuteDrawCommand(drawCommand, commandList, state);
             }
 
             commandList->EndRenderPass();
@@ -341,7 +395,7 @@ namespace NorvesLib::Core::Rendering
             commandList->BeginRenderPass(fullscreenPass.RenderPass, fullscreenPass.Framebuffer);
             commandList->SetViewport(fullscreenPass.Viewport);
             commandList->SetScissor(fullscreenPass.Scissor);
-            m_BoundPipeline = nullptr;
+            state.BoundPipeline = nullptr;
 
             if (fullscreenPass.Pipeline && fullscreenPass.VertexCount > 0)
             {
@@ -353,8 +407,8 @@ namespace NorvesLib::Core::Rendering
                 }
 
                 commandList->Draw(fullscreenPass.VertexCount, 0);
-                ++m_Stats.DrawCallCount;
-                m_Stats.TriangleCount += fullscreenPass.VertexCount / 3;
+                ++state.Stats.DrawCallCount;
+                state.Stats.TriangleCount += fullscreenPass.VertexCount / 3;
             }
 
             commandList->EndRenderPass();
@@ -377,14 +431,14 @@ namespace NorvesLib::Core::Rendering
             commandList->BeginRenderPass(debugDraw.RenderPass, debugDraw.Framebuffer);
             commandList->SetViewport(debugDraw.Viewport);
             commandList->SetScissor(debugDraw.Scissor);
-            m_BoundPipeline = nullptr;
+            state.BoundPipeline = nullptr;
 
             commandList->SetPipeline(debugDraw.Pipeline);
             commandList->SetDescriptorSet(debugDraw.DescriptorSet, 0);
             commandList->SetVertexBuffer(debugDraw.VertexBuffer, debugDraw.VertexBufferOffset, 0);
             commandList->Draw(debugDraw.VertexCount, 0);
 
-            ++m_Stats.DrawCallCount;
+            ++state.Stats.DrawCallCount;
 
             commandList->EndRenderPass();
             return;
@@ -443,17 +497,17 @@ namespace NorvesLib::Core::Rendering
         // バッチ実行（同じマテリアル/パイプラインのコマンドをまとめて処理）
         for (size_t i = startIndex; i < startIndex + count && i < commands.size(); ++i)
         {
-            ExecuteDrawCommand(commands[i], commandList);
+            ExecuteDrawCommand(commands[i], commandList, m_RecordState);
         }
     }
 
     void SceneRenderer::ResetStats()
     {
-        m_Stats = SceneRendererStats{};
+        m_RecordState.Stats = SceneRendererStats{};
 
         if (m_ResourceCache)
         {
-            m_Stats.GPUMemoryUsed = m_ResourceCache->GetGPUMemoryUsage();
+            m_RecordState.Stats.GPUMemoryUsed = m_ResourceCache->GetGPUMemoryUsage();
         }
     }
 
@@ -462,6 +516,16 @@ namespace NorvesLib::Core::Rendering
                                            MeshResources *meshResources,
                                            RHI::DescriptorSetPtr descriptorSet,
                                            uint32_t descriptorSetSlot)
+    {
+        return RecordMeshDrawCall(command, commandList, meshResources, descriptorSet, descriptorSetSlot, m_RecordState.Stats);
+    }
+
+    bool SceneRenderer::RecordMeshDrawCall(const DrawCommand &command,
+                                           RHI::ICommandList *commandList,
+                                           MeshResources *meshResources,
+                                           RHI::DescriptorSetPtr descriptorSet,
+                                           uint32_t descriptorSetSlot,
+                                           SceneRendererStats &stats) const
     {
         if (!commandList || !meshResources)
         {
@@ -499,8 +563,8 @@ namespace NorvesLib::Core::Rendering
             command.Draw.FirstInstance);
 
         // 統計更新
-        ++m_Stats.DrawCallCount;
-        m_Stats.TriangleCount += indexCount / 3;
+        ++stats.DrawCallCount;
+        stats.TriangleCount += indexCount / 3;
 
         return true;
     }
@@ -511,6 +575,18 @@ namespace NorvesLib::Core::Rendering
         SkinnedMeshResources* skinnedMeshResources,
         RHI::DescriptorSetPtr descriptorSet,
         uint32_t descriptorSetSlot)
+    {
+        return RecordSkinnedDrawCall(command, commandList, skinnedMeshResources, descriptorSet, descriptorSetSlot,
+                                     m_RecordState.Stats);
+    }
+
+    bool SceneRenderer::RecordSkinnedDrawCall(
+        const DrawCommand& command,
+        RHI::ICommandList* commandList,
+        SkinnedMeshResources* skinnedMeshResources,
+        RHI::DescriptorSetPtr descriptorSet,
+        uint32_t descriptorSetSlot,
+        SceneRendererStats& stats) const
     {
         if (!commandList || !skinnedMeshResources ||
             command.Draw.PayloadKind != DrawPayloadKind::Skinned ||
@@ -553,15 +629,15 @@ namespace NorvesLib::Core::Rendering
         commandList->SetIndexBuffer(command.Skinned.Prepared.IndexBuffer, 0, RHI::IndexType::Uint32);
         commandList->DrawIndexed(range.IndexCount, range.IndexOffset, 0);
 
-        ++m_Stats.DrawCallCount;
-        m_Stats.TriangleCount += range.IndexCount / 3;
+        ++stats.DrawCallCount;
+        stats.TriangleCount += range.IndexCount / 3;
         if (command.Skinned.PassKind == SkinnedMeshPassKind::GBuffer)
         {
-            ++m_Stats.SkinnedGBufferDrawCallCount;
+            ++stats.SkinnedGBufferDrawCallCount;
         }
         else if (command.Skinned.PassKind == SkinnedMeshPassKind::Shadow)
         {
-            ++m_Stats.SkinnedShadowDrawCallCount;
+            ++stats.SkinnedShadowDrawCallCount;
         }
         return true;
     }

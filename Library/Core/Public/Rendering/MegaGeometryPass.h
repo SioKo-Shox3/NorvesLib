@@ -187,6 +187,9 @@ namespace NorvesLib::Core::Rendering
         void Execute(ViewRenderContext &context) override;
         void Declare(RenderGraphBuilder &builder) override;
         void Execute(RenderGraphResources &resources, ViewRenderContext &context) override;
+        bool DeclaresAllLayoutChanges() const override;
+        RGRecordPolicy GetRecordPolicy() const override;
+        void PrepareParallelRecord(RenderGraphResources &resources, ViewRenderContext &context) override;
 
         class IDrawSink;
 
@@ -940,6 +943,23 @@ namespace NorvesLib::Core::Rendering
         /** @brief GBuffer の描画を止めるか（止める設定で、解決が実際に使えるとき） */
         bool ShouldSkipGBufferDraw(DebugViewMode mode) const;
 
+        /** @brief Execute が積むもの（準備段が決める） */
+        enum class PreparedFrameAction : uint8_t
+        {
+            None,
+            // GBuffer の添付の状態遷移だけ（描かない・記録を ID のラスタへ移した）
+            EmptyTransition,
+            // 記録を保留のコマンドとして積む
+            Record,
+        };
+
+        /** @brief グラフの GBuffer の Texture を引いて、添付に使うかを決める */
+        void ResolveGraphGBufferTextures(RenderGraphResources &resources);
+        /** @brief 表の準備（PrepareSceneTables）と、記録を ID のラスタへ移すかを決め、Execute が積むものを返す */
+        PreparedFrameAction PrepareFrame(ViewRenderContext &context);
+        /** @brief 記録（ID のラスタのワーカー）が引く材質の定数の 1x1 テクスチャ（作成と転送を伴う）を先に作る */
+        void PrepareConstantMaterialTextures();
+
         /**
          * @brief インスタンスの席の「見えた」ビットの区画を決め、先頭（要素の位置）を返す（BuildSceneTables が呼ぶ。CPU だけ）
          *
@@ -1247,6 +1267,11 @@ namespace NorvesLib::Core::Rendering
         const VisibilityRasterPass* m_VisibilityRaster = nullptr;
         // このフレームの記録を ID のラスタへ移したか（Execute(context) が決め、ラスタが TakeFrameRecordDeferred で取り出す）
         bool m_bFrameRecordDeferred = false;
+        // 準備段が PrepareFrame を済ませたフレーム（次の Execute が 1 回だけ読む）と、そのとき決めた積むもの
+        bool m_bFramePrepared = false;
+        PreparedFrameAction m_PreparedAction = PreparedFrameAction::None;
+        // Declare の時点の表示（記録を ID のラスタへ移すかの判定に使う）
+        DebugViewMode m_DeclaredDebugMode = DebugViewMode::Normal;
         VisibilityDrawPlan m_VisibilityPlan;
         // 描画の写しを作ったフレームの IndirectDraw・カウンタ・描画情報のバッファが、Common へ戻されないまま残っているか
         bool m_bVisibilityBuffersHeld = false;

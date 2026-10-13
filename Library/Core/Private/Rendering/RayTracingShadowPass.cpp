@@ -8,6 +8,7 @@
 #include "Rendering/SceneProxy.h"
 #include "Rendering/ShaderManager.h"
 #include "Rendering/ViewRenderContext.h"
+#include "Rendering/RenderGraph/PassOwnedTextureBarrier.h"
 #include "RHI/IDevice.h"
 #include "RHI/ICommandList.h"
 #include "RHI/IDescriptorSet.h"
@@ -325,22 +326,25 @@ namespace NorvesLib::Core::Rendering
         descriptorSet->Update();
 
         const RHI::ResourceState previousState = frameResources->VisibilityState;
-        context.CommandList->TextureBarrier(frameResources->VisibilityTexture,
-                                            previousState,
-                                            RHI::ResourceState::RayTracingStorage);
+        TransitionPassOwnedTexture(*context.CommandList,
+                                   frameResources->VisibilityTexture,
+                                   previousState,
+                                   RHI::ResourceState::RayTracingStorage);
         context.CommandList->SetPipeline(m_Pipeline);
         context.CommandList->SetDescriptorSet(descriptorSet, 0u);
         if (!context.CommandList->TraceRays(frameResources->Width, frameResources->Height, 1u))
         {
-            context.CommandList->TextureBarrier(frameResources->VisibilityTexture,
-                                                RHI::ResourceState::RayTracingStorage,
-                                                RHI::ResourceState::ShaderResource);
+            TransitionPassOwnedTexture(*context.CommandList,
+                                       frameResources->VisibilityTexture,
+                                       RHI::ResourceState::RayTracingStorage,
+                                       RHI::ResourceState::ShaderResource);
             frameResources->VisibilityState = RHI::ResourceState::ShaderResource;
             return false;
         }
-        context.CommandList->TextureBarrier(frameResources->VisibilityTexture,
-                                            RHI::ResourceState::RayTracingStorage,
-                                            RHI::ResourceState::ShaderResource);
+        TransitionPassOwnedTexture(*context.CommandList,
+                                   frameResources->VisibilityTexture,
+                                   RHI::ResourceState::RayTracingStorage,
+                                   RHI::ResourceState::ShaderResource);
         frameResources->VisibilityState = RHI::ResourceState::ShaderResource;
         outVisibilityTexture = frameResources->VisibilityTexture;
         return true;

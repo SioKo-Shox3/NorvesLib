@@ -470,6 +470,7 @@ namespace NorvesLib::Core::Rendering
         // 区間ごとの記録の前に、ラスタのパスが集めた材質の既定・定数のテクスチャを直列で作る
         // （同じフレームの Execute はテクスチャを作らない）。
         void PrepareParallelRecord(RenderGraphResources& resources, ViewRenderContext& context) override;
+        bool ReadsRecordingOf(const IRenderGraphPass& earlierPass) const override;
 
         /** @brief 記録の表・材質の表・インスタンスの表の取り出し元（同じ View の
          * VisibilityRasterPass） */

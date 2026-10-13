@@ -591,9 +591,7 @@ namespace NorvesLib::Core::Rendering
         }
 
         const RHI::TexturePtr sunDiskTexture = resources.GetTexture(m_SunDiskHandle);
-        bool bResourcesResolved = resources.GetTexture(m_TransmittanceHandle) != nullptr &&
-                                  resources.GetTexture(m_RadianceHandle) != nullptr &&
-                                  sunDiskTexture != nullptr;
+        const bool bResourcesResolved = AreGraphResourcesResolved(resources);
         if (bCopyPending && sunDiskTexture && context.CommandList)
         {
             // グラフが入れたバリアで CopyDest にある。宣言した最後の状態（ShaderResource）へはパスの中で戻す。
@@ -626,7 +624,35 @@ namespace NorvesLib::Core::Rendering
                                                 RHI::ResourceState::ShaderResource);
         }
         m_SunDiskUploadBuffer.reset();
+        // 並列の記録では写した context へ書くので後のパスに届かない（届けるのは準備段の公開）。1 本の記録ではここが公開する
         PublishContextResources(context, bResourcesResolved);
+    }
+
+    bool SkyAtmospherePass::AreGraphResourcesResolved(RenderGraphResources& resources) const
+    {
+        return m_bPrepared && m_TransmittanceHandle.IsValid() && m_RadianceHandle.IsValid() && m_SunDiskHandle.IsValid() &&
+               resources.GetTexture(m_TransmittanceHandle) != nullptr &&
+               resources.GetTexture(m_RadianceHandle) != nullptr &&
+               resources.GetTexture(m_SunDiskHandle) != nullptr;
+    }
+
+    bool SkyAtmospherePass::DeclaresAllLayoutChanges() const
+    {
+        // グラフの Texture は太陽の円盤だけを変え、宣言（CopyDest で書き、最終の ShaderResource）のとおりに
+        // 状態を明示したバリアで戻す。中継のバッファのバリアは layout を持たない
+        return true;
+    }
+
+    RGRecordPolicy SkyAtmospherePass::GetRecordPolicy() const
+    {
+        // Execute が書くのは自分のメンバ（中継のバッファの取り置き）だけで、LightingPass などが読む公開は準備段で済ませる
+        return RGRecordPolicy::Parallel;
+    }
+
+    void SkyAtmospherePass::PrepareParallelRecord(RenderGraphResources& resources, ViewRenderContext& context)
+    {
+        // 後のパス（LightingPass・VolumetricsPass）が読む空の公開を、写す前の context へ Execute と同じ値で書く
+        PublishContextResources(context, AreGraphResourcesResolved(resources));
     }
 
 } // namespace NorvesLib::Core::Rendering

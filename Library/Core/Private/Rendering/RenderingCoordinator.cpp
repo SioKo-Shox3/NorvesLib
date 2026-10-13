@@ -559,8 +559,8 @@ namespace NorvesLib::Core::Rendering
             uint32_t m_AcquiredCount = 0u;
         };
 
-        // --render-parallel-record（Game が NORVES_RENDER_PARALLEL_RECORD へ渡す）。1 のときだけ Parallel のパスを区間ごとのリストへ記録し、
-        // 既定（未設定・0）は全パスを 1 本へ記録する（節目の計測で on の rt の p95 が off を下回らなかったため）
+        // --render-parallel-record（Game が NORVES_RENDER_PARALLEL_RECORD へ渡す）。既定（未設定・1）は Parallel のパスを区間ごとの
+        // リストへ同時に記録し、0 のときだけ全パスを 1 本へ記録する
         bool ResolveParallelRecordEnabled()
         {
             char* value = nullptr;
@@ -569,7 +569,7 @@ namespace NorvesLib::Core::Rendering
             {
                 value = nullptr;
             }
-            const bool bEnabled = value != nullptr && std::strcmp(value, "1") == 0;
+            const bool bEnabled = value == nullptr || std::strcmp(value, "0") != 0;
             std::free(value);
             return bEnabled;
         }

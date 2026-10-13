@@ -127,6 +127,10 @@ namespace NorvesLib::Core::Rendering
     {
     public:
         VisibilityRasterPass();
+        bool DeclaresAllLayoutChanges() const override;
+        RGRecordPolicy GetRecordPolicy() const override;
+        void PrepareParallelRecord(RenderGraphResources& resources, ViewRenderContext& context) override;
+        bool ReadsRecordingOf(const IRenderGraphPass& earlierPass) const override;
         ~VisibilityRasterPass() override;
 
         const char* GetName() const override { return "VisibilityRasterPass"; }

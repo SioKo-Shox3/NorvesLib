@@ -340,6 +340,19 @@ namespace NorvesLib::Core::Rendering
     void GBufferPass::Declare(RenderGraphBuilder &builder)
     {
         const ViewRenderContext *context = builder.GetContext();
+        m_bConstantTexturesPrepared = false;
+        m_bHasSkinnedDraws = false;
+        if (context)
+        {
+            for (const DrawCommand& command : context->GetActiveOpaqueCommands())
+            {
+                if (command.Draw.PayloadKind == DrawPayloadKind::Skinned)
+                {
+                    m_bHasSkinnedDraws = true;
+                    break;
+                }
+            }
+        }
 
         uint32_t width = m_Settings.Width;
         uint32_t height = m_Settings.Height;
@@ -475,6 +488,77 @@ namespace NorvesLib::Core::Rendering
         }
 
         Execute(context);
+        m_bConstantTexturesPrepared = false;
+    }
+
+    bool GBufferPass::DeclaresAllLayoutChanges() const
+    {
+        // 添付はすべてグラフの Texture で、render pass の finalState（ShaderResource）が宣言と一致する。
+        // 旧経路の SharedResources へは登録しない
+        return m_bInitialized && !m_bRegisterLegacyBridge && m_AlbedoHandle.IsValid() && m_NormalHandle.IsValid() &&
+               m_MaterialHandle.IsValid() && m_EmissiveHandle.IsValid() && m_VelocityHandle.IsValid() &&
+               m_DepthHandle.IsValid();
+    }
+
+    RGRecordPolicy GBufferPass::GetRecordPolicy() const
+    {
+        // Execute は区間の借りる口から定数と記述子を借りて描画を積むだけ（材質の灰色テクスチャは準備段で作る）。
+        // スキンの描画は共有のパレットの記録へ書くので、あるフレームは直列で記録する
+        return DeclaresAllLayoutChanges() && !m_bHasSkinnedDraws ? RGRecordPolicy::Parallel : RGRecordPolicy::Serial;
+    }
+
+    void GBufferPass::PrepareParallelRecord(RenderGraphResources& resources, ViewRenderContext& context)
+    {
+        if (!m_bInitialized && !Initialize(context))
+        {
+            return;
+        }
+        // 出力が変わったフレームの render pass・framebuffer の作り直しを先に済ませる（Execute は同じなら何も作らない）
+        RHI::TexturePtr albedo = resources.GetTexture(m_AlbedoHandle);
+        RHI::TexturePtr normal = resources.GetTexture(m_NormalHandle);
+        RHI::TexturePtr material = resources.GetTexture(m_MaterialHandle);
+        RHI::TexturePtr emissive = resources.GetTexture(m_EmissiveHandle);
+        RHI::TexturePtr velocity = resources.GetTexture(m_VelocityHandle);
+        RHI::TexturePtr depth = resources.GetTexture(m_DepthHandle);
+        if (albedo && normal && material && emissive && velocity && depth)
+        {
+            PrepareGBufferAttachments(albedo->GetWidth(), albedo->GetHeight(), albedo, normal, material, emissive,
+                                      velocity, depth, true);
+        }
+        PrepareConstantMaterialTextures(context);
+        m_bConstantTexturesPrepared = true;
+    }
+
+    void GBufferPass::PrepareConstantMaterialTextures(const ViewRenderContext& context)
+    {
+        // Execute の BuildMaterialDescriptor と同じ条件（スカラー値があり、その枠のテクスチャが無い）で作る
+        const auto* materials = context.Resources.Materials;
+        if (!materials || ShouldSkipDraws(context.Device, context.GetActiveDebugMode()))
+        {
+            return;
+        }
+        for (const DrawCommand& command : context.GetActiveOpaqueCommands())
+        {
+            MaterialHandle materialHandle;
+            materialHandle.Id = command.Draw.MaterialHandle.Id;
+            if (!materialHandle.IsValid())
+            {
+                continue;
+            }
+            const auto* matData = materials->GetData(materialHandle);
+            if (!matData)
+            {
+                continue;
+            }
+            if (matData->Metallic >= 0.0f && !matData->MetallicTexture.IsValid())
+            {
+                GetOrCreateConstantGrayTexture(matData->Metallic);
+            }
+            if (matData->Roughness >= 0.0f && !matData->RoughnessTexture.IsValid())
+            {
+                GetOrCreateConstantGrayTexture(matData->Roughness);
+            }
+        }
     }
 
     void GBufferPass::Execute(ViewRenderContext &context)
@@ -842,7 +926,8 @@ namespace NorvesLib::Core::Rendering
         {
             return found->second;
         }
-        if (!m_Device)
+        // 準備段を経たフレームの Execute（並列の記録のワーカー）は、転送を伴う作成をしない（呼び出し側は既定の値へ戻る）
+        if (!m_Device || m_bConstantTexturesPrepared)
         {
             return nullptr;
         }

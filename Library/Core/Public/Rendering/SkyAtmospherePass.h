@@ -48,6 +48,9 @@ namespace NorvesLib::Core::Rendering
 
         void Declare(RenderGraphBuilder& builder) override;
         void Execute(RenderGraphResources& resources, ViewRenderContext& context) override;
+        bool DeclaresAllLayoutChanges() const override;
+        RGRecordPolicy GetRecordPolicy() const override;
+        void PrepareParallelRecord(RenderGraphResources& resources, ViewRenderContext& context) override;
 
         const SkyAtmospherePassSettings& GetSettings() const { return m_Settings; }
         const SkyAtmosphereParameters& GetLastParameters() const { return m_LastParameters; }
@@ -89,6 +92,7 @@ namespace NorvesLib::Core::Rendering
                            uint32_t height,
                            const char* debugName);
         void PublishContextResources(ViewRenderContext& context, bool bValid);
+        bool AreGraphResourcesResolved(RenderGraphResources& resources) const;
 
         SkyAtmospherePassSettings m_Settings;
         RHI::IDevice* m_Device = nullptr;
