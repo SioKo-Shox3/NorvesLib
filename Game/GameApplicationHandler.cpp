@@ -176,6 +176,9 @@ namespace Game
         // --rg-transient-slots=<n>: RenderGraph の一時の資源のスロットの数（1 から 4。開発ビルドだけ）。飛行中のフレームの数より
         // 多くすると、描画先の texture がフレームごとに替わる形を作れる。環境変数 NORVES_RG_TRANSIENT_SLOTS で描画側へ渡す。
         constexpr const TCHAR *kRenderGraphTransientSlotsOption = TEXT("--rg-transient-slots=");
+        // --frames-in-flight=<n>: 重ねて描くフレームの数（1 か 2。既定 2。開発ビルドだけ。Release は常に 2）。
+        // 1 にすると、前のフレームの GPU の完了を待ってから次のフレームを記録する。環境変数 NORVES_FRAMES_IN_FLIGHT で描画側へ渡す。
+        constexpr const TCHAR *kFramesInFlightOption = TEXT("--frames-in-flight=");
 #endif
         // --engine-checks=<名前,...>: 開発ビルドの検査（Debug/EngineChecks.h）を名前で有効にする。結果は ENGINE_CHECK の行でログへ出る。
         // --engine-checks-selftest-fail: 配線の確認用の検査 ENGINE_CHECK_SELFTEST を fail で報告させる（落ちる出力の確認用）。
@@ -1221,6 +1224,20 @@ namespace Game
                 char slotsText[16] = {};
                 std::snprintf(slotsText, sizeof(slotsText), "%u", slots);
                 _putenv_s("NORVES_RG_TRANSIENT_SLOTS", slotsText);
+                continue;
+            }
+            if (TryStripPrefix(args[i], kFramesInFlightOption, sceneValue))
+            {
+                // スワップチェーンの作成（RHI の初期化）より前に環境変数へ渡す
+                uint32_t framesInFlight = 0;
+                if (!TryParseUInt32(sceneValue, framesInFlight) || framesInFlight == 0 || framesInFlight > 2u)
+                {
+                    LOG_ERROR("--frames-in-flight は 1 か 2 で指定してください");
+                    return false;
+                }
+                char framesText[16] = {};
+                std::snprintf(framesText, sizeof(framesText), "%u", framesInFlight);
+                _putenv_s("NORVES_FRAMES_IN_FLIGHT", framesText);
                 continue;
             }
 #endif

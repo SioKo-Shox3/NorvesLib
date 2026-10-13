@@ -148,7 +148,7 @@ namespace NorvesLib::RHI::Vulkan
         bool ConsumePresentationDirty() override;
 
         uint32_t GetCurrentFrameIndex() const override { return m_currentFrame; }
-        uint32_t GetMaxFramesInFlight() const override { return MAX_FRAMES_IN_FLIGHT; }
+        uint32_t GetMaxFramesInFlight() const override { return m_framesInFlight; }
 
         // Vulkan固有の機能
         vk::SwapchainKHR GetVkSwapchain() const { return m_swapChain; }
@@ -189,7 +189,11 @@ namespace NorvesLib::RHI::Vulkan
         uint32_t m_currentFrame = 0;
         uint64_t m_nextSubmissionSerial = 0;
         uint64_t m_completedSubmissionSerial = 0;
-        static constexpr int MAX_FRAMES_IN_FLIGHT = 1;
+        // 重ねて描くフレームの数（飛行中のスロットの数）。CPU が次のフレームを記録する間に GPU が前のフレームを描く。
+        static constexpr uint32_t MAX_FRAMES_IN_FLIGHT = 2;
+        // 実際に使うスロットの数。開発ビルドだけ --frames-in-flight（Game が NORVES_FRAMES_IN_FLIGHT へ渡す）で 1 に戻せる。
+        // 作成時に 1 回決め、スワップチェーンの寿命の間は変えない。
+        uint32_t m_framesInFlight = MAX_FRAMES_IN_FLIGHT;
         bool m_bPresentationDirty = false;
 
         // 初期化メソッド

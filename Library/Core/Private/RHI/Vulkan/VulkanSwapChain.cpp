@@ -8,6 +8,7 @@
 #include <stdexcept>
 #include <algorithm>
 #include <chrono>
+#include <cstdlib>
 #include "Container/Containers.h"
 
 // Windowsのインクルード（ヘッダで定義済みだが追加インクルードが必要）
@@ -63,12 +64,42 @@ namespace NorvesLib::RHI::Vulkan
             FrameStageScope(const FrameStageScope &) = delete;
             FrameStageScope &operator=(const FrameStageScope &) = delete;
         };
+
+        // 重ねて描くフレームの数を決める。Release は常に上限。開発ビルドだけ --frames-in-flight
+        // （Game が NORVES_FRAMES_IN_FLIGHT へ渡す）で 1 から上限までに替えられる。
+        uint32_t ResolveFramesInFlight(uint32_t maxFramesInFlight)
+        {
+            uint32_t framesInFlight = maxFramesInFlight;
+#if NORVES_BUILD_DEVELOPMENT
+            char *value = nullptr;
+            size_t length = 0;
+            if (_dupenv_s(&value, &length, "NORVES_FRAMES_IN_FLIGHT") == 0 && value != nullptr)
+            {
+                char *end = nullptr;
+                const unsigned long count = std::strtoul(value, &end, 10);
+                if (end != value && end != nullptr && *end == 0 && count >= 1 && count <= maxFramesInFlight)
+                {
+                    framesInFlight = static_cast<uint32_t>(count);
+                }
+                else
+                {
+                    NORVES_LOG_WARNING("VulkanSwapChain",
+                                       "NORVES_FRAMES_IN_FLIGHT=%s は 1 から %u までの整数でないので %u を使います",
+                                       value, maxFramesInFlight, maxFramesInFlight);
+                }
+            }
+            std::free(value);
+#endif
+            return framesInFlight;
+        }
     } // namespace
 
     // コンストラクタ
     VulkanSwapChain::VulkanSwapChain(TSharedPtr<VulkanDevice> device, const SwapChainDesc &desc)
-        : m_device(device), m_desc(desc), m_width(desc.width), m_height(desc.height)
+        : m_device(device), m_desc(desc), m_width(desc.width), m_height(desc.height),
+          m_framesInFlight(ResolveFramesInFlight(MAX_FRAMES_IN_FLIGHT))
     {
+        NORVES_LOG_INFO("VulkanSwapChain", "FRAMES_IN_FLIGHT count=%u max=%u", m_framesInFlight, MAX_FRAMES_IN_FLIGHT);
         CreateSurface();
         CreateSwapChain();
         CreateImageViews();
@@ -95,7 +126,7 @@ namespace NorvesLib::RHI::Vulkan
         m_device->EndDeferredDestroyTracking();
 
         // 同期オブジェクトのクリーンアップ（描画の完了のセマフォは画像ごとなので CleanupSwapChain で破棄する）
-        for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
+        for (size_t i = 0; i < m_framesInFlight; i++)
         {
             m_device->GetVkDevice().destroySemaphore(m_imageAvailableSemaphores[i]);
             m_device->GetVkDevice().destroyFence(m_inFlightFences[i]);
@@ -390,7 +421,7 @@ namespace NorvesLib::RHI::Vulkan
         }
 
         // 次のフレームに進む
-        m_currentFrame = (m_currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
+        m_currentFrame = (m_currentFrame + 1) % m_framesInFlight;
         result.Status = SwapChainEndFrameStatus::Success;
         return result;
     }
@@ -567,17 +598,17 @@ namespace NorvesLib::RHI::Vulkan
     // 同期オブジェクトの作成
     void VulkanSwapChain::CreateSyncObjects()
     {
-        m_imageAvailableSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
-        m_inFlightFences.resize(MAX_FRAMES_IN_FLIGHT);
-        m_frameSlotSubmissionSerials.resize(MAX_FRAMES_IN_FLIGHT, 0);
-        m_frameSlotCommandLists.resize(MAX_FRAMES_IN_FLIGHT);
+        m_imageAvailableSemaphores.resize(m_framesInFlight);
+        m_inFlightFences.resize(m_framesInFlight);
+        m_frameSlotSubmissionSerials.resize(m_framesInFlight, 0);
+        m_frameSlotCommandLists.resize(m_framesInFlight);
 
         vk::SemaphoreCreateInfo semaphoreInfo = {};
 
         vk::FenceCreateInfo fenceInfo = {};
         fenceInfo.flags = vk::FenceCreateFlagBits::eSignaled; // 初期状態はシグナル
 
-        for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
+        for (size_t i = 0; i < m_framesInFlight; i++)
         {
             m_imageAvailableSemaphores[i] = m_device->GetVkDevice().createSemaphore(semaphoreInfo).value;
             m_inFlightFences[i] = m_device->GetVkDevice().createFence(fenceInfo).value;
