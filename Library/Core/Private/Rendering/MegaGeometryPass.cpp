@@ -89,9 +89,11 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t BvhCounterBytes = BvhCounterCount * sizeof(uint32_t);
         constexpr uint32_t BvhMinQueueEntries = 64;
 
-        // 手放したバッファ（作り直した「見えた」ビット・IndirectDraw のバッファなど）を破棄するまでのフレーム数。
-        // フレームの飛行数は2以下なので、GPUはこれより前に使い終わっている
-        constexpr uint64_t RetiredBufferFrames = 8;
+        // 手放したバッファ（作り直した「見えた」ビット・IndirectDraw のバッファなど）を、パスが持ち続けるフレーム数。
+        // 手放したフレームの記録（古い中身のコピーを含む）が終わった次のフレームで参照を落とす。GPU の完了までの保持は
+        // RHI の遅延破棄（参照を落とした後の提出の完了で破棄する）が受け持つ。立ち上がりで列を倍々に伸ばすと古い物が
+        // 数 GB になるので、フレーム数で長く持つと VRAM の山が上がる
+        constexpr uint64_t RetiredBufferFrames = 0;
 
         bool IsFiniteSphere(const BoundingSphere &sphere)
         {
@@ -5238,7 +5240,7 @@ namespace NorvesLib::Core::Rendering
 
     void MegaGeometryPass::ReleaseStaleBuffers()
     {
-        // 手放したバッファは、一定のフレーム後にはGPUがとうに使い終わっているので破棄する
+        // 手放したフレームより後のフレームなら参照を落とす（GPU が使い終わるまでの破棄の遅延は RHI が行う）
         for (size_t index = 0; index < m_RetiredBuffers.size();)
         {
             if (m_RenderFrameCount - m_RetiredBuffers[index].RetiredFrame > RetiredBufferFrames)

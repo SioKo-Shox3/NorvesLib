@@ -1092,7 +1092,7 @@
 - notes: 2026-10-12 親が足した。危険地帯（RHI/Vulkan・RenderThread・資源の寿命）。 2026-10-14 親: 評価の 2 周目（`blocked/SCN-ECS-FIF-SWITCH.md`）の残りは 1 点だけ。`Rendering3DTestRoutine::Leave` が後始末の前に無条件で `WaitForRender()` を呼ばない（F11 の部品があるときだけ待つ。`Rendering3DTestRoutine.cpp` 1727・3941 行付近）。後始末の開始の前に無条件で待つ 1 行を足し、PROGRESS の「各シーンの終わりで待つ」の記述を実コードに合わせる。他の verify・証拠は評価者が確認済みなので、直したら起動画面の比較と周回だけ回せばよい。
 
 ## SCN-ECS-FIX-STRESS-VRAM-FIF2: 2 フレームの mega-stress 5 万個の立ち上がりで VRAM が溢れて RenderThread が止まるのを直す
-- status: todo
+- status: done
 - done-when: 2 フレーム（既定）で mega-stress 5 万個 close の撮影が pass し、Game.log に `unhandled exception` と ERROR が 0。今は 2 回とも、MegaGeometry の列が伸びきるフレーム（`MEGA_BVH bvh_instances=50000`）の後に `VulkanBuffer` の `allocateMemory` が失敗して RenderThread が止まる（`--frames-in-flight=1` では通るが、`VRAM_BUDGET` の使用量の山が 12.2 GB で予算 12.2〜15.3 GB に届いている）。立ち上がりで倍々に伸ばす大きな列（`visbuffer_records` 256→2048 MB・BVH の列 2 GiB・visibility など）の古い物が `RetiredBufferFrames`（8 フレーム）と RHI の遅延破棄で生き残る分と、2 フレームで増えた分のどれが溢れさせたかを特定し、山を下げる（例: 伸ばす前に必要な大きさまで一度に取る・古い物を GPU の完了で早く手放す）。直した後の 2 フレームと 1 フレームの `VRAM_BUDGET` の山を PROGRESS に書く。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Build -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views close -GameArgs stress-entities=50000 -OutDir .harness/runs/scene-capture/SCN-ECS-FIX-STRESS-VRAM-FIF2`

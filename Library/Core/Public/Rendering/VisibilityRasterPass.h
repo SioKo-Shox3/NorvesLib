@@ -299,19 +299,10 @@ namespace NorvesLib::Core::Rendering
         /**
          * @brief 1回の Execute が使う資源の組（GPU
          * が前のフレームで読んでいるかもしれないため、Execute のたびに FrameUseRing
-         * から別の組を受け取る）
+         * から別の組を受け取る）。記録の表は GPU だけが書くので組に入れず、パスが 1 つ持つ（m_RecordTable）
          */
         struct FrameSlot
         {
-            /**
-             * 記録の表。GPU 専用のメモリに置く（MegaGeometry
-             * の範囲を計算が書くので、ホスト可視のメモリだと PCIe
-             * 越しの書き込みが時間の大半になる）。MegaGeometry の範囲は GPU
-             * が、残りはホストが RecordUpload へ書いたものをコピーして作る
-             */
-            RHI::BufferPtr RecordTable;
-            uint32_t RecordCapacity = 0; // 要素数
-            RHI::ResourceState RecordState = RHI::ResourceState::Common;
             RHI::BufferPtr RecordUpload; // ホストが書く記録（手続き・スキニング）の置き場。host-visible で、コピーの元になる
             uint32_t RecordUploadCapacity = 0; // 要素数
             RHI::BufferPtr FrameUniform;                 // view・projection
@@ -532,6 +523,17 @@ namespace NorvesLib::Core::Rendering
         // 最後にログへ書いた内訳（変わったときだけ書く）
         VisibilityRasterFrameStats m_LoggedStats;
         bool m_bLoggedStats = false;
+        /**
+         * 記録の表。GPU 専用のメモリに置く（MegaGeometry の範囲を計算が書くので、ホスト可視のメモリだと PCIe
+         * 越しの書き込みが時間の大半になる）。MegaGeometry の範囲は GPU が、残りはホストが組の RecordUpload へ
+         * 書いたものをコピーして作る。書くのも読むのも同じキューの GPU だけなので、飛行中のフレームの組ごとには持たない。
+         * 前のフレームの読み手（解決・分類・合流）の後に次のフレームの書き込みが並ぶことは、書く前のバリア
+         * （m_RecordState → CopyDest / UnorderedAccess）が保証する。数万体のシーンでは 2 GiB になるので、組ごとに持つと
+         * 飛行中のフレームの数だけ VRAM が増える。伸ばすときの古い表は参照を落とし、GPU の完了までの保持は RHI の遅延破棄が受け持つ
+         */
+        RHI::BufferPtr m_RecordTable;
+        uint32_t m_RecordCapacity = 0; // 要素数
+        RHI::ResourceState m_RecordState = RHI::ResourceState::Common;
         RHI::BufferPtr m_LastRecordTable;
         uint64_t m_LastRecordTableBytes = 0;
         RHI::BufferPtr m_LastMaterialTable;

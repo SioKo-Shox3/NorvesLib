@@ -3691,3 +3691,30 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `verify-SCN-ECS-FIF-SWITCH-11.txt`: 撮影の `FRAME_RESOURCE_UNPROTECTED_SUMMARY count=0` の照合 EXIT=0。
 - Next: SCN-ECS-FIX-STRESS-VRAM-FIF2・SCN-ECS-FIX-SUN-DISK-UPLOAD → SCN-ECS-MEASURE-FIF の撮り直し。
 - Notes: `Rendering3DTestRoutine.cpp` は行末の混在を保った（numstat の 2 通りが 4/0 で一致）。
+
+### SCN-ECS-FIX-STRESS-VRAM-FIF2（2026-10-14、反復 8・run 20261014-005646）
+
+- 溢れさせた分の特定（MEASURE-FIF の失敗の撮影 `stress-try1`・`stress-try2` と 1 フレームの `stress-fif1` の `VRAM_LEDGER`・`MEGA_BVH`・`VRAM_BUDGET` の並び）:
+  - 2 フレームで増えた分: `VisibilityRasterPass` の記録の表（`VisBuffer_DrawRecords`）が飛行中のフレームの組（FrameUseRing の枠）ごとにあり、5 万個では 1 つ 2 GiB（command_slots 最大 26989696 × 64 B を 2 の冪へ切り上げ）。1 フレームでは 1 枚、2 フレームでは 2 枚になり、落ち着いた後の使用量が 2 GB 増える（1 フレーム 8453 MB に対し、保持だけ直した 2 フレームの撮影 `try/a1` は 10745 MB）。失敗の 2 回は、2 枚目の表が 2048 MB へ伸びる所（1 フレームでは `visbuffer_records mb=2048` が出るフレーム）の後に止まった。
+  - 立ち上がりの山: `MegaGeometryPass` が倍々に伸ばす列（BVH の列 64 MB → 1 GiB → 2 GiB、visibility 39 MB → 677 MB → 1.36 GB、IndirectDraw・DrawInfo・ソフトウェアラスタの一覧）の古い物を `RetiredBufferFrames`（8 フレーム）持ち、さらに参照を落とした後に RHI の遅延破棄が提出の完了まで残すので、伸ばした古い物が全部同時に生きていた（合計 4 GB 前後）。1 フレームの山 12224 MB は落ち着いた後の 8453 MB にこの分が乗ったもの。
+- 直したこと:
+  - `VisibilityRasterPass`: 記録の表を組から外してパスに 1 つ（`m_RecordTable`・`m_RecordCapacity`・`m_RecordState`）にした。表は GPU だけが書き読みし（ホストの記録は組ごとの `RecordUpload` からのコピー）、同じキューで前のフレームの読み手（解決・分類・合流）の後に次のフレームの書き込みが並ぶことは、書く前のバリア（`GenericRead` → `CopyDest`/`UnorderedAccess`。`GenericRead` の段は頂点・フラグメント・計算・転送・間接引数を含む）が保証する（MegaGeometry の IndirectDraw などと同じ形）。伸ばすときの古い表は参照を落とし、GPU の完了までは RHI の遅延破棄が残す。Shutdown で表を手放す。
+  - `MegaGeometryPass`: `RetiredBufferFrames` を 8 → 0 にした（手放したフレームの次のフレームの記録の終わりで参照を落とし、GPU の完了までの保持は RHI の遅延破棄に任せる。手放したフレームの古い中身のコピーの記録は残る）。
+- `VRAM_BUDGET` の `heap_usage_mb`（1 秒おきの標本。立ち上がりの山と落ち着いた後）:
+
+| 撮影 | 山 | 落ち着いた後 |
+|---|---|---|
+| 1 フレーム・変更前（MEASURE-FIF `stress-fif1`） | 12224 | 8453 |
+| 2 フレーム・変更前（`stress-try1`・`try2`） | 止まった（2043 の後の標本なし） | — |
+| 2 フレーム・保持だけ直した（`try/a1`、pass） | 15826 | 10745〜10751 |
+| **2 フレーム・変更後（verify の撮影）** | **13778** | **8698〜8699** |
+| **1 フレーム・変更後（`try/fif1`）** | **10061** | **8453** |
+
+- 検証（`.harness/runs/20261014-005646/`）:
+  - `baseline-build-STRESS-VRAM.txt`: 変更前の RelWithDebInfo の Game のビルド EXIT=0。
+  - `verify-SCN-ECS-FIX-STRESS-VRAM-FIF2-1.txt`: RelWithDebInfo の Game のビルド EXIT=0、error 0（警告は libwebsockets の設定の MSB8065 だけ）。
+  - `verify-SCN-ECS-FIX-STRESS-VRAM-FIF2-2.txt`: mega-stress 5 万個 close の撮影 `CAPTURE_SCENE result=pass`、EXIT=0。Game.log は `FRAMES_IN_FLIGHT count=2`・`[ERROR]` 0・`unhandled exception` 0・`FRAME_RESOURCE_STALE` 0・`FRAME_RESOURCE_UNPROTECTED_SUMMARY count=0`、`visbuffer_records` は 256 → 512 → 1024 → 2048 の 1 系列だけ。PNG は MEASURE-FIF の 1 フレームの撮影（`stress-fif1`）と見た目が同じ（mean_luminance 121.495 / 120.461）。
+  - `verify-SCN-ECS-FIX-STRESS-VRAM-FIF2-3.txt`: `FRAMES_IN_FLIGHT count=2` かつ `unhandled exception` なしの照合 EXIT=0。
+  - `check-SCN-ECS-FIX-STRESS-VRAM-FIF2-fif1.txt`: 変更後の `--frames-in-flight=1` の撮影（pass、ERROR 0）と保持だけ直した 2 フレームの撮影の `VRAM_BUDGET`。
+- Next: SCN-ECS-FIX-SUN-DISK-UPLOAD → SCN-ECS-MEASURE-FIF の撮り直し。
+- Notes: 2 フレームの立ち上がりの山（13.8 GB）は 1 フレーム（10.1 GB）より高い。伸ばした古い物は「手放したフレームの次のフレームの完了」まで残り、2 フレームではその完了が 1 フレーム遅いので、立ち上がりの数フレームの古い物が重なる。さらに下げるなら、大きな確保の前に遅延破棄の列が大きいとき前の提出の完了を待って先に破棄する（RHI。提出のロックの下で CreateBuffer を呼ぶ所があると待ちが自分を止めるので、ロックに頼らない待ち方が要る）か、列の大きさを読み込みの済んでいないメッシュも含めて先に見積もる形があるが、今回は入れていない。山の値は 1 秒おきの標本なので、本当の山はこれより高いことがある。記録の表を共有にした後の `VisibilityResolveVulkanTest` などの ctest は走らせていない（verify の名指しなし）。`MegaGeometryPass.cpp`（LF）・`VisibilityRasterPass.cpp`・`VisibilityRasterPass.h` は行末を保った（numstat の 2 通りが一致）。

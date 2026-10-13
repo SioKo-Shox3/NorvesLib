@@ -554,6 +554,9 @@ namespace NorvesLib::Core::Rendering
         m_SwRaster.Shutdown();
         m_Merge.Shutdown();
         m_FrameSlots.Clear();
+        m_RecordTable.reset();
+        m_RecordCapacity = 0;
+        m_RecordState = RHI::ResourceState::Common;
         m_ProceduralChunkScratch = Container::VariableArray<MeshIndexChunk>{};
         m_SkinnedChunkScratch = Container::VariableArray<MeshIndexChunk>{};
         m_MaterialEntryScratch = Container::VariableArray<VisibilityBuffer::MaterialEntry>{};
@@ -782,9 +785,9 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
-        // この組を最後に使ったのは、同じ飛行中のフレームの番号の前のフレーム（フェンスで GPU の完了を待ってある）なので、
-        // 作り直して置き換えてよい。同じフレームの別の Execute には別の組が渡る
-        if (!slot.RecordTable || slot.RecordCapacity < recordCapacity)
+        // 記録の表はパスに 1 つ。前のフレーム（まだ GPU が読んでいるかもしれない）の表は、参照を落とすと RHI の遅延破棄が
+        // 今の記録の提出の完了まで残すので、ここで置き換えてよい。新しい表の最初の書き込みは Common からのバリアで始まる
+        if (!m_RecordTable || m_RecordCapacity < recordCapacity)
         {
             const uint32_t capacity = std::max(64u, NextPowerOfTwo(recordCapacity));
             // GPU 専用のメモリ（ホストが書く記録は RecordUpload からのコピーで入れる）
@@ -797,9 +800,9 @@ namespace NorvesLib::Core::Rendering
             {
                 return false;
             }
-            slot.RecordTable = buffer;
-            slot.RecordCapacity = capacity;
-            slot.RecordState = RHI::ResourceState::Common;
+            m_RecordTable = buffer;
+            m_RecordCapacity = capacity;
+            m_RecordState = RHI::ResourceState::Common;
             NORVES_LOG_INFO("VisibilityRasterPass",
                             "VRAM_LEDGER visbuffer_records mb=%.2f",
                             static_cast<double>(desc.Size) / BytesPerMegabyte);
@@ -1293,7 +1296,7 @@ namespace NorvesLib::Core::Rendering
             slot.RecordSet->BindStorageBuffer(3, plan->SectionBuffer, 0, ClampBindSize(plan->SectionBufferBytes));
             slot.RecordSet->BindStorageBuffer(4, plan->DrawInfoBuffer, 0, ClampBindSize(plan->DrawInfoBuffer->GetSize()));
             slot.RecordSet->BindStorageBuffer(5, slot.SectionAddresses, 0, ClampBindSize(addresses.size() * sizeof(uint32_t)));
-            slot.RecordSet->BindStorageBuffer(6, slot.RecordTable, 0, ClampBindSize(tableBytes));
+            slot.RecordSet->BindStorageBuffer(6, m_RecordTable, 0, ClampBindSize(tableBytes));
             slot.RecordSet->BindStorageBuffer(7, slot.SectionMaterials, 0, ClampBindSize(sectionMaterials.size() * sizeof(uint32_t)));
             slot.RecordSet->BindStorageBuffer(8, slot.RecordArgs, 0, ClampBindSize(slot.RecordArgs->GetSize()));
             slot.RecordSet->Update();
@@ -1318,9 +1321,9 @@ namespace NorvesLib::Core::Rendering
         {
             slot.MeshSet->BindConstantBuffer(0, slot.FrameUniform, 0, FrameUniformBytes);
             slot.MeshSet->BindStorageBuffer(1, context.InstanceDataBuffer, 0, ClampBindSize(context.InstanceDataBuffer->GetSize()));
-            slot.MeshSet->BindStorageBuffer(2, slot.RecordTable, 0, ClampBindSize(tableBytes));
+            slot.MeshSet->BindStorageBuffer(2, m_RecordTable, 0, ClampBindSize(tableBytes));
             // メッシュの表は読まないが、同じ形のセットなので有効なバッファを結んでおく
-            slot.MeshSet->BindStorageBuffer(MegaMeshTableBinding, slot.RecordTable, 0, ClampBindSize(tableBytes));
+            slot.MeshSet->BindStorageBuffer(MegaMeshTableBinding, m_RecordTable, 0, ClampBindSize(tableBytes));
             slot.MeshSet->Update();
         }
         const RHI::BufferPtr& skinnedVertices = m_Work.SkinnedVertices;
@@ -1329,8 +1332,8 @@ namespace NorvesLib::Core::Rendering
         {
             slot.SkinnedSet->BindConstantBuffer(0, slot.FrameUniform, 0, FrameUniformBytes);
             slot.SkinnedSet->BindStorageBuffer(1, skinnedVertices, 0, ClampBindSize(skinnedVertices->GetSize()));
-            slot.SkinnedSet->BindStorageBuffer(2, slot.RecordTable, 0, ClampBindSize(tableBytes));
-            slot.SkinnedSet->BindStorageBuffer(MegaMeshTableBinding, slot.RecordTable, 0, ClampBindSize(tableBytes));
+            slot.SkinnedSet->BindStorageBuffer(2, m_RecordTable, 0, ClampBindSize(tableBytes));
+            slot.SkinnedSet->BindStorageBuffer(MegaMeshTableBinding, m_RecordTable, 0, ClampBindSize(tableBytes));
             slot.SkinnedSet->Update();
         }
         return PrepareResult::Ready;
@@ -1355,10 +1358,10 @@ namespace NorvesLib::Core::Rendering
 
         RHI::ICommandList* commandList = m_Work.CommandList;
         FrameSlot& slot = *m_Work.Slot;
-        commandList->BufferBarrier(slot.RecordTable, slot.RecordState, RHI::ResourceState::CopyDest);
-        commandList->CopyBuffer(slot.RecordUpload, slot.RecordTable, m_Work.UploadBytes, 0, m_Work.UploadDstOffset);
-        commandList->BufferBarrier(slot.RecordTable, RHI::ResourceState::CopyDest, RHI::ResourceState::GenericRead);
-        slot.RecordState = RHI::ResourceState::GenericRead;
+        commandList->BufferBarrier(m_RecordTable, m_RecordState, RHI::ResourceState::CopyDest);
+        commandList->CopyBuffer(slot.RecordUpload, m_RecordTable, m_Work.UploadBytes, 0, m_Work.UploadDstOffset);
+        commandList->BufferBarrier(m_RecordTable, RHI::ResourceState::CopyDest, RHI::ResourceState::GenericRead);
+        m_RecordState = RHI::ResourceState::GenericRead;
         return true;
     }
 
@@ -1382,7 +1385,7 @@ namespace NorvesLib::Core::Rendering
         slot.RecordArgsState = RHI::ResourceState::GenericRead;
 
         // 積まれたコマンドの数だけのワークグループで記録を書く
-        commandList->BufferBarrier(slot.RecordTable, slot.RecordState, RHI::ResourceState::UnorderedAccess);
+        commandList->BufferBarrier(m_RecordTable, m_RecordState, RHI::ResourceState::UnorderedAccess);
         commandList->SetPipeline(m_RecordsPipeline);
         commandList->SetDescriptorSet(slot.RecordSet, 0);
         if (!commandList->DispatchIndirect(slot.RecordArgs, 0))
@@ -1409,8 +1412,8 @@ namespace NorvesLib::Core::Rendering
                                    static_cast<unsigned long long>(groupLimit));
             }
         }
-        commandList->BufferBarrier(slot.RecordTable, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::GenericRead);
-        slot.RecordState = RHI::ResourceState::GenericRead;
+        commandList->BufferBarrier(m_RecordTable, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::GenericRead);
+        m_RecordState = RHI::ResourceState::GenericRead;
     }
 
     void VisibilityRasterPass::RecordMegaDraws(const MegaGeometryPass::VisibilityDrawPlan& plan,
@@ -1522,8 +1525,8 @@ namespace NorvesLib::Core::Rendering
         // MegaGeometry の範囲は 2 パス目の後に計算が書く
         if (!RecordCpuRecordUpload())
         {
-            commandList->BufferBarrier(slot.RecordTable, slot.RecordState, RHI::ResourceState::GenericRead);
-            slot.RecordState = RHI::ResourceState::GenericRead;
+            commandList->BufferBarrier(m_RecordTable, m_RecordState, RHI::ResourceState::GenericRead);
+            m_RecordState = RHI::ResourceState::GenericRead;
         }
 
         // 64bit のバッファを空で埋める（ソフトウェアラスタが書く前。1 回目の合流が読む）
@@ -1645,7 +1648,7 @@ namespace NorvesLib::Core::Rendering
         inputs.InstanceBufferBytes = plan.InstanceBufferBytes;
         inputs.MeshBuffer = plan.MeshBuffer;
         inputs.MeshBufferBytes = plan.MeshBufferBytes;
-        inputs.RecordTable = m_Work.Slot->RecordTable;
+        inputs.RecordTable = m_RecordTable;
         inputs.RecordTableBytes = m_Work.TableBytes;
         inputs.KeyBuffer = m_Merge.GetKeyBuffer();
         inputs.KeyWidth = m_Merge.GetKeyWidth();
@@ -1711,7 +1714,7 @@ namespace NorvesLib::Core::Rendering
         m_Stats.bRendered = true;
         m_Stats.bMerged = m_Stats.MergeCount > 0;
         m_Stats.KeyBufferBytes = m_Work.bMerge ? m_Merge.GetKeyBufferBytes() : 0u;
-        m_LastRecordTable = slot.RecordTable;
+        m_LastRecordTable = m_RecordTable;
         m_LastRecordTableBytes = m_Work.TableBytes;
         m_LastMaterialTable = slot.MaterialTable;
         m_LastMaterialTableCount = static_cast<uint32_t>(materialEntries.size());
@@ -1897,9 +1900,9 @@ namespace NorvesLib::Core::Rendering
         }
         else if (!bUploaded)
         {
-            commandList->BufferBarrier(slot.RecordTable, slot.RecordState, RHI::ResourceState::GenericRead);
+            commandList->BufferBarrier(m_RecordTable, m_RecordState, RHI::ResourceState::GenericRead);
         }
-        slot.RecordState = RHI::ResourceState::GenericRead;
+        m_RecordState = RHI::ResourceState::GenericRead;
 
         // 64bit のバッファを空で埋める（ソフトウェアラスタが書く前。描画の後の合流が読む）
         RecordMergeClear();
