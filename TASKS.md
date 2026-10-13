@@ -1162,7 +1162,7 @@
 - notes: 今は最悪値で dispatch（1983〜2009 行付近）、列は全節の総和（1351〜1373 行付近）。 2026-10-11 親: 今の BVH の列はインスタンスの数とメッシュから最大の容量を取るので、mega-stress 5万個で leaf_capacity 7,514 万・queue 1 億 6,517 万になり、VRAM（使用 14,975 MB / 予算 11,847 MB）を超えて RenderThread がバッファの割り当てに失敗して落ちる。この項目の固定容量の列で、5万個の mega-stress が落ちずに描けることを確かめる。 2026-10-11 親: バナナ 10万本 + mega-stress 5000 個の混在でも同じく VRAM を超える（SCN-MEGA-MIXED-LOAD の記録）。そのとき `VulkanBuffer.cpp` の割り当て失敗の例外が描画スレッドで捕まらず、Game が 0xC0000409 で落ちる。固定容量の列にしたうえで、列の割り当てに失敗したら落ちずにその描画を見送り、ERROR を出す形にする。10万本 + 5000 個の混在が落ちずに描けることも確かめる。 2026-10-13 親: ユーザーの指示（邪魔な試験は実行から外す。コード上の確からしさを見るだけの試験は意味が薄い）で、既存の試験の束の ctest を verify から外した。
 
 ## SCN-MEGA-INSTANCE-CULL: 範囲とインスタンスの専用のカリングを、BVH の段 0 の前に置く
-- status: todo
+- status: done
 - done-when: 範囲（AABB）→ 席の順に判定する（1 席 1 スレッド。メッシュの球 × 倍率の締まった球で、視錐台・HZB・距離・画素の大きさ）。通った席だけを BVH の段 1 へ渡す。バナナの比較と起動画面の比較が pass。性能はこの項目では測らず、SCN-MEGA-ACCEPT-1M の受入れで判断する。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Build -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views overview -GameArgs banana-count=10000 -CompareWith .harness/runs/scene-capture/SCN-MEGA-BASE -OutDir .harness/runs/scene-capture/SCN-MEGA-INSTANCE-CULL/det`

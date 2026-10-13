@@ -114,8 +114,8 @@ namespace NorvesLib::Core::Rendering
 
         // グループの BVH のたどり（cluster_bvh_cull.comp）。BvhStageClusters は葉のクラスタの判定の段の印、
         // BvhLeafSlots は葉の列の1要素を受け持つスレッドの数（葉が持つクラスタの最大数）、
-        // BvhCounterCount はカウンタのバッファの語数（添え字 s は段 s の入力の数、BvhLeafCounter は葉の列の数。
-        // BvhArgsBaseWords からは段 s（1以上）と葉の段の間接 dispatch の引数が BvhArgsStrideWords 語ずつ並ぶ。
+        // BvhCounterCount はカウンタのバッファの語数（添え字 s は段 s の入力の数（段 0 は範囲の段が積んだ範囲の数）、BvhLeafCounter は葉の列の数。
+        // BvhArgsBaseWords からは段 s と葉の段の間接 dispatch の引数が BvhArgsStrideWords 語ずつ並ぶ。
         // Common/MegaGeometryCull.glsl の BVH_LEAF_COUNTER・BVH_ARGS_BASE・BVH_ARGS_STRIDE と一致）
         constexpr uint32_t BvhStageClusters = 0xFFFFFFFFu;
         constexpr uint32_t BvhLeafSlots = MegaGeometry::GROUP_BVH_MAX_LEAF_CLUSTERS;
@@ -145,6 +145,26 @@ namespace NorvesLib::Core::Rendering
         // 各パスの頭で 0 にするカウンタとは別に持ち、1 パス目の前に頭だけを 0 にする
         constexpr uint32_t BvhPass2HeaderWords = 8;
         constexpr uint32_t BvhPass2Capacity = 1u << 20;
+
+        // インスタンスの判定の範囲（cluster_bvh_cull.comp の範囲の段・mega_scene_scatter.comp の段 2）。BVH を持つインスタンスを
+        // 描く順に BvhRangeSeats 席ずつ区切り、範囲ごとの AABB（vec4 × 2 = RangeBoundsBytes）を常駐の表に持つ。範囲の段は
+        // 通った範囲を節の列 0 へ積み、席の段は 1 範囲 = 1 ワークグループ（64 スレッド）で席を判定する。
+        // BvhStageRanges は範囲の段の印、RangeBoundsBinding はカリングのディスクリプタセットの binding
+        constexpr uint32_t BvhRangeSeats = 64;
+        constexpr uint32_t BvhStageRanges = 0xFFFFFFFEu;
+        constexpr uint32_t RangeBoundsBytes = 8u * sizeof(float);
+        constexpr uint32_t RangeBoundsBinding = 15;
+
+        // 画素の大きさの判定（席の段）を使える描く範囲か: 描く範囲が描画先の全体（上下の反転は可）のときだけ判定する
+        // （画素の中心の位置を、カリングと描画で同じに数えられるときだけ）
+        bool IsPixelCullViewport(const RHI::Viewport &viewport, uint32_t width, uint32_t height)
+        {
+            const float fullWidth = static_cast<float>(width);
+            const float fullHeight = static_cast<float>(height);
+            const bool bUpright = viewport.y == 0.0f && viewport.height == fullHeight;
+            const bool bFlipped = viewport.y == fullHeight && viewport.height == -fullHeight;
+            return width > 0 && height > 0 && viewport.x == 0.0f && viewport.width == fullWidth && (bUpright || bFlipped);
+        }
 
         // 手放したバッファ（作り直した「見えた」ビット・IndirectDraw のバッファなど）を、パスが持ち続けるフレーム数。
         // 手放したフレームの記録（古い中身のコピーを含む）が終わった次のフレームで参照を落とす。GPU の完了までの保持は
@@ -350,6 +370,37 @@ namespace NorvesLib::Core::Rendering
         if (statsEveryFrameValue != nullptr && std::strcmp(statsEveryFrameValue, "1") == 0)
         {
             m_Settings.bStatsEveryFrame = true;
+        }
+
+        // インスタンスの判定の距離（m）を環境変数で替えられるようにする（既定は距離で落とさない）
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4996)
+#endif
+        const char *cullDistanceValue = std::getenv("NORVES_MEGA_INSTANCE_CULL_DISTANCE");
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
+        if (cullDistanceValue != nullptr && cullDistanceValue[0] != '\0')
+        {
+            char *end = nullptr;
+            const float distance = std::strtof(cullDistanceValue, &end);
+            if (end != cullDistanceValue && *end == '\0' && std::isfinite(distance) && distance > 0.0f)
+            {
+                m_Settings.InstanceCullDistance = distance;
+            }
+        }
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4996)
+#endif
+        const char *pixelCullValue = std::getenv("NORVES_MEGA_INSTANCE_PIXEL_CULL");
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
+        if (pixelCullValue != nullptr && (std::strcmp(pixelCullValue, "0") == 0 || std::strcmp(pixelCullValue, "off") == 0))
+        {
+            m_Settings.bInstancePixelCull = false;
         }
 
         // 区間のコマンドの最大数を環境変数で替えられるようにする（本数を増やした測定で、描かれないクラスタを出さないため）
@@ -587,6 +638,9 @@ namespace NorvesLib::Core::Rendering
         m_InstanceTableCapacity = 0;
         m_MeshTableBuffer.reset();
         m_MeshTableCapacity = 0;
+        m_RangeBoundsBuffer.reset();
+        m_RangeBoundsCapacity = 0;
+        m_RangeBoundsRowCount = 0;
         m_SlotRowCopies.clear();
         m_SlotRowStates.clear();
         m_SlotRowChangedStamps.clear();
@@ -1436,6 +1490,16 @@ namespace NorvesLib::Core::Rendering
         mesh.VertexBase = static_cast<uint32_t>(vertexBase);
         mesh.IndexBase = static_cast<uint32_t>(indexBase);
         mesh.PageTableBase = gpuData.PageTableBase;
+        // 締まった境界球（全段のクラスタの形を包むメッシュの球）。有限で半径が正のときだけ載せ、無ければ判定は根の節の球を使う
+        const BoundingSphere &bounds = gpuData.TotalBounds;
+        if (std::isfinite(bounds.CenterX) && std::isfinite(bounds.CenterY) && std::isfinite(bounds.CenterZ) &&
+            std::isfinite(bounds.Radius) && bounds.Radius > 0.0f)
+        {
+            mesh.BoundsSphere[0] = bounds.CenterX;
+            mesh.BoundsSphere[1] = bounds.CenterY;
+            mesh.BoundsSphere[2] = bounds.CenterZ;
+            mesh.BoundsSphere[3] = bounds.Radius;
+        }
         if (bTraverseBvh)
         {
             const uint64_t bvhAddress = clusterAddress + gpuData.GroupBVHBufferOffsetBytes;
@@ -2587,8 +2651,8 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        // BVH のたどりの列の配置（容量は固定）: 節の列 0・節の列 1・葉の列。段 0 の入力はインスタンスの表の先頭
-        // （根の節）か 2 パス目の根の入力なので列を持たない。段 s（1以上）は節の列 s & 1 を読み、次の段の列 (s + 1) & 1 へ書く
+        // BVH のたどりの列の配置（容量は固定）: 節の列 0・節の列 1・葉の列。段 0（席）の入力は、範囲の段が節の列 0 へ積んだ
+        // 範囲の一覧か 2 パス目の根の入力。段 s（1以上）は節の列 s & 1 を読み、次の段の列 (s + 1) & 1 へ書く
         const uint32_t bvhLevelCount = static_cast<uint32_t>(bvhLevelCapacity.size());
         const auto bvhNodeQueueBase = [](uint32_t stage) -> uint32_t { return (stage & 1u) * BvhNodeQueueCapacity; };
         constexpr uint32_t bvhLeafQueueBase = 2u * BvhNodeQueueCapacity;
@@ -2602,7 +2666,7 @@ namespace NorvesLib::Core::Rendering
             NORVES_LOG_INFO("MegaGeometryPass",
                             "MEGA_BVH bvh_instances=%u flat_instances=%u levels=%u "
                             "scene_leaves=%llu node_queue_capacity=%u leaf_queue_capacity=%u pass2_capacity=%u "
-                            "flat_groups=%llu dispatches_per_pass=%u",
+                            "flat_groups=%llu dispatches_per_pass=%u instance_ranges=%u",
                             bvhInstanceCount,
                             static_cast<uint32_t>(instanceTable.size()) - bvhInstanceCount,
                             bvhLevelCount,
@@ -2611,7 +2675,8 @@ namespace NorvesLib::Core::Rendering
                             BvhLeafQueueCapacity,
                             BvhPass2Capacity,
                             static_cast<unsigned long long>(totalGroups),
-                            (totalGroups > 0 ? 1u : 0u) + (bvhInstanceCount > 0 ? bvhLevelCount + 1u : 0u));
+                            (totalGroups > 0 ? 1u : 0u) + (bvhInstanceCount > 0 ? bvhLevelCount + 2u : 0u),
+                            (bvhInstanceCount + BvhRangeSeats - 1u) / BvhRangeSeats);
         }
 
         // 「前のフレームで見えた」ビットの配置（2パスのときだけ）。作れなければ従来の1回の判定で描く
@@ -2692,8 +2757,8 @@ namespace NorvesLib::Core::Rendering
         if (!EnsureBatchBuffers(static_cast<uint32_t>(commandsTotal), sectionCount * passCount) ||
             !EnsureFrameSlot(frameSlot, sectionCount * passCount, sectionCount) ||
             (bvhInstanceCount > 0 &&
-             (!EnsureBvhStageResources(frameSlot, 0, bvhLevelCount + 1u) ||
-              (bTwoPass && !EnsureBvhStageResources(frameSlot, 1, bvhLevelCount + 1u)))))
+             (!EnsureBvhStageResources(frameSlot, 0, bvhLevelCount + 2u) ||
+              (bTwoPass && !EnsureBvhStageResources(frameSlot, 1, bvhLevelCount + 2u)))))
         {
             NORVES_LOG_ERROR("MegaGeometryPass", "まとめた描画の資源を用意できませんでした");
             recordEmptyRenderPass();
@@ -2932,6 +2997,15 @@ namespace NorvesLib::Core::Rendering
         baseUniform.BvhNodeCapacity = BvhNodeQueueCapacity;
         baseUniform.BvhLeafCapacity = BvhLeafQueueCapacity;
         baseUniform.BvhPass2Capacity = BvhPass2Capacity;
+        // インスタンスの判定: 範囲の数・距離・画素の大きさ（描く範囲が描画先の全体のときだけ）
+        const uint32_t bvhRangeCount = (bvhInstanceCount + BvhRangeSeats - 1u) / BvhRangeSeats;
+        baseUniform.BvhRangeCount = bvhRangeCount;
+        baseUniform.InstanceCullDistance = m_Settings.InstanceCullDistance;
+        if (m_Settings.bInstancePixelCull && IsPixelCullViewport(command.Viewport, m_CurrentWidth, m_CurrentHeight))
+        {
+            baseUniform.PixelCullWidth = static_cast<float>(m_CurrentWidth);
+            baseUniform.PixelCullHeight = static_cast<float>(m_CurrentHeight);
+        }
         baseUniform.PageRequestCapacity = pageRequestCapacity;
         baseUniform.bSwRasterEnabled = bSwRasterSkipHardware ? 2u : (bSwRasterBin ? 1u : 0u);
         baseUniform.SwRasterCapacity = bSwRasterBin ? swRasterCapacity : 0u;
@@ -3076,6 +3150,10 @@ namespace NorvesLib::Core::Rendering
                 descriptorSet->BindStorageBuffer(9, bvhQueue, 0, static_cast<uint32_t>(bvhQueue->GetSize()));
                 descriptorSet->BindStorageBuffer(10, m_BvhCounterBuffer, 0, BvhCounterBytes);
                 descriptorSet->BindStorageBuffer(14, bvhPass2, 0, static_cast<uint32_t>(bvhPass2->GetSize()));
+                // binding 15: 範囲の境界（常駐の表を書けた記録だけが走るので在る。無ければ代わりにカウンタを結ぶ）
+                const RHI::BufferPtr &rangeBounds = m_RangeBoundsBuffer ? m_RangeBoundsBuffer : m_BvhCounterBuffer;
+                descriptorSet->BindStorageBuffer(RangeBoundsBinding, rangeBounds, 0,
+                                                 static_cast<uint32_t>(rangeBounds->GetSize()));
                 // binding 11・12: ページの表（このフレームの常駐）と、ページの要求の列
                 descriptorSet->BindStorageBuffer(11, frameSlot.PageTableBuffer, 0,
                                                  static_cast<uint32_t>(frameSlot.PageTableBuffer->GetSize()));
@@ -3176,9 +3254,32 @@ namespace NorvesLib::Core::Rendering
                     cmdList->BufferBarrier(m_BvhPass2Buffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::IndirectArgument);
                 }
 
-                // 段 0（根）は 1 パス目・1 回の判定ならインスタンスの数で、2 パス目なら根の入力の引数で dispatch する。
+                // 1 パス目・1 回の判定は、範囲の段が通った範囲を節の列 0 へ積み、段 0（席）はその範囲の数から書いた引数で
+                // 間接 dispatch する（1 範囲 = 1 ワークグループ）。2 パス目の段 0 は根の入力の引数で dispatch する。
                 // 段 1 以降と葉の段は、前の段が積んだ数（容量で頭打ち）から書いた引数で間接 dispatch する
                 cmdList->SetPipeline(m_BvhCullPipeline);
+                const bool bSeatsFromRanges = !bPass2Roots;
+                if (bSeatsFromRanges)
+                {
+#if NORVES_ENABLE_STATS
+                    char rangeTimestampName[32] = {};
+                    std::snprintf(rangeTimestampName, sizeof(rangeTimestampName), "MegaBvhC%uRange", passIndex + 1u);
+                    ScopedGpuTimestamp rangeTimestamp(cmdList, rangeTimestampName);
+#endif
+                    CullUniformData rangeUniform = uniformData;
+                    rangeUniform.BvhStage = BvhStageRanges;
+                    rangeUniform.BvhNextBase = bvhNodeQueueBase(0);
+                    rangeUniform.BvhLeafBase = bvhLeafQueueBase;
+                    const BvhStageDraw &rangeDraw = frameSlot.BvhStages[passIndex][bvhLevelCount + 1u];
+                    rangeDraw.Uniform->Update(&rangeUniform, sizeof(CullUniformData));
+                    bindCullDescriptors(rangeDraw.DescriptorSet, rangeDraw.Uniform);
+                    cmdList->SetDescriptorSet(rangeDraw.DescriptorSet, 0);
+                    dispatchThreads(bvhRangeCount);
+                    // 席の段が、範囲の段が積んだ一覧・カウンタと引数を読む
+                    cmdList->BufferBarrier(m_BvhQueueBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
+                    cmdList->BufferBarrier(m_BvhCounterBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
+                    cmdList->BufferBarrier(m_BvhCounterBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::IndirectArgument);
+                }
                 for (uint32_t stage = 0; stage <= bvhLevelCount; ++stage)
                 {
                     const bool bClusterStage = stage == bvhLevelCount;
@@ -3200,7 +3301,8 @@ namespace NorvesLib::Core::Rendering
 
                     CullUniformData stageUniform = uniformData;
                     stageUniform.BvhStage = bClusterStage ? BvhStageClusters : stage;
-                    stageUniform.BvhInputBase = (!bClusterStage && stage >= 1) ? bvhNodeQueueBase(stage) : 0u;
+                    stageUniform.BvhInputBase = !bClusterStage ? bvhNodeQueueBase(stage) : 0u;
+                    stageUniform.bBvhSeatsFromRanges = (stage == 0 && bSeatsFromRanges) ? 1u : 0u;
                     stageUniform.BvhNextBase = bvhNodeQueueBase(stage + 1u);
                     stageUniform.BvhLeafBase = bvhLeafQueueBase;
                     const BvhStageDraw &stageDraw = frameSlot.BvhStages[passIndex][stage];
@@ -3208,16 +3310,13 @@ namespace NorvesLib::Core::Rendering
                     bindCullDescriptors(stageDraw.DescriptorSet, stageDraw.Uniform);
                     cmdList->SetDescriptorSet(stageDraw.DescriptorSet, 0);
                     bool bDispatched = true;
-                    if (stage == 0 && !bPass2Roots)
-                    {
-                        dispatchThreads(bvhInstanceCount);
-                    }
-                    else if (stage == 0)
+                    if (stage == 0 && !bSeatsFromRanges)
                     {
                         bDispatched = cmdList->DispatchIndirect(m_BvhPass2Buffer, 0);
                     }
                     else
                     {
+                        // 段 0 の引数（範囲の段が書く）は段 0 の位置にある
                         const uint32_t argsStage = bClusterStage ? BvhLeafCounter : stage;
                         const uint64_t argsOffset =
                             static_cast<uint64_t>(BvhArgsBaseWords + argsStage * BvhArgsStrideWords) * sizeof(uint32_t);
@@ -3995,6 +4094,7 @@ namespace NorvesLib::Core::Rendering
         addBinding(12, RHI::ResourceBindType::RWBuffer);             // ページの要求の列
         addBinding(13, RHI::ResourceBindType::RWBuffer);             // ソフトウェアラスタの一覧と間接 dispatch の引数
         addBinding(14, RHI::ResourceBindType::RWBuffer);             // BVH のたどりの 2 パス目の根の入力と間接 dispatch の引数
+        addBinding(RangeBoundsBinding, RHI::ResourceBindType::StructuredBuffer); // 範囲の境界（インスタンスの判定の範囲の段）
         addBinding(MegaMeshTableBindingIndex, RHI::ResourceBindType::StructuredBuffer); // メッシュの表
         return desc;
     }
@@ -4050,6 +4150,7 @@ namespace NorvesLib::Core::Rendering
         addBinding(2, RHI::ResourceBindType::RWBuffer);         // 描く順の表
         addBinding(3, RHI::ResourceBindType::RWBuffer);         // 影の表
         addBinding(4, RHI::ResourceBindType::RWBuffer);         // メッシュの表
+        addBinding(5, RHI::ResourceBindType::RWBuffer);         // 範囲の境界
         return desc;
     }
 
@@ -4373,17 +4474,61 @@ namespace NorvesLib::Core::Rendering
         }
 
         // ----------------------------------------
+        // 3b. 範囲の境界: 描く順の行が変わった範囲だけを作り直す（メッシュの表が変わったら、境界の球が変わりうるので全部）
+        // ----------------------------------------
+        const uint32_t rangeCount = (entryCount + BvhRangeSeats - 1u) / BvhRangeSeats;
+        bool bRangeTableGrown = false;
+        bool bRangeTableCopied = false;
+        if (!EnsureResidentTable(m_RangeBoundsBuffer, m_RangeBoundsCapacity, rangeCount, 16u, RangeBoundsBytes,
+                                 "MegaGeometry_RangeBounds", commandList, bRangeTableGrown, bRangeTableCopied))
+        {
+            invalidateCopies();
+            return false;
+        }
+        Container::VariableArray<uint32_t> dirtyRanges;
+        if ((bRangeTableGrown && !bRangeTableCopied) || meshRecords > 0)
+        {
+            dirtyRanges.reserve(rangeCount);
+            for (uint32_t range = 0; range < rangeCount; ++range)
+            {
+                dirtyRanges.push_back(range);
+            }
+        }
+        else
+        {
+            // entryIndices は昇順なので、同じ範囲は続けて並ぶ
+            for (const uint32_t index : entryIndices)
+            {
+                const uint32_t range = index / BvhRangeSeats;
+                if (dirtyRanges.empty() || dirtyRanges.back() != range)
+                {
+                    dirtyRanges.push_back(range);
+                }
+            }
+            // 行が減ったら、末尾の範囲から消えた行の境界を外す（行の中身が変わっていなくても作り直す）
+            if (entryCount > 0 && entryCount < m_RangeBoundsRowCount)
+            {
+                const uint32_t lastRange = (entryCount - 1u) / BvhRangeSeats;
+                if (dirtyRanges.empty() || dirtyRanges.back() != lastRange)
+                {
+                    dirtyRanges.push_back(lastRange);
+                }
+            }
+        }
+        m_RangeBoundsRowCount = entryCount;
+
+        // ----------------------------------------
         // 4. 記録の列を staging へ書き、散在書き込みを記録する（書くものが無ければ何もしない）
         // ----------------------------------------
         constexpr uint32_t HeaderWords = 4u;
         constexpr uint32_t RowRecordWords = 4u + 32u;    // 席の番号の uvec4 + 席の行（128 B）
         constexpr uint32_t EntryRecordWords = 8u;        // 2 語の uvec4
         constexpr uint32_t ShadowRecordWords = 4u + 12u; // 描く順の番号の uvec4 + 影の表の行（48 B）
-        constexpr uint32_t MeshRecordWords = 4u + 16u;   // メッシュの表の番号の uvec4 + メッシュの表の行（64 B）
+        constexpr uint32_t MeshRecordWords = 4u + 20u;   // メッシュの表の番号の uvec4 + メッシュの表の行（80 B）
         constexpr uint32_t RegionAlignWords = 64u;       // 区画の先頭を 256 B にそろえる（storage のオフセットの整列）
         static_assert(sizeof(GPUMegaSlotRow) == 32u * sizeof(uint32_t));
         static_assert(sizeof(MegaGeometryShadowInstance) == 12u * sizeof(uint32_t));
-        static_assert(sizeof(GPUMegaMesh) == 16u * sizeof(uint32_t));
+        static_assert(sizeof(GPUMegaMesh) == 20u * sizeof(uint32_t));
 
         const uint32_t rowCount = static_cast<uint32_t>(rowSlots.size());
         const uint32_t entryRecords = static_cast<uint32_t>(entryIndices.size());
@@ -4396,12 +4541,18 @@ namespace NorvesLib::Core::Rendering
                                    static_cast<uint64_t>(meshRecords) * MeshRecordWords
                              : 0u;
         const uint64_t tableRegionOffsetWords = (rowRegionWords + RegionAlignWords - 1u) / RegionAlignWords * RegionAlignWords;
-        const uint64_t uploadBytes = (rowRegionWords + tableRegionWords) * sizeof(uint32_t);
+        // 段 2 の記録: 作り直す範囲の番号を 1 語ずつ（uvec4 に 4 つ詰める）
+        const uint32_t rangeRecords = static_cast<uint32_t>(dirtyRanges.size());
+        const uint64_t rangeRegionWords =
+            rangeRecords > 0 ? HeaderWords + (static_cast<uint64_t>(rangeRecords) + 3u) / 4u * 4u : 0u;
+        const uint64_t rangeRegionOffsetWords =
+            (tableRegionOffsetWords + tableRegionWords + RegionAlignWords - 1u) / RegionAlignWords * RegionAlignWords;
+        const uint64_t uploadBytes = (rowRegionWords + tableRegionWords + rangeRegionWords) * sizeof(uint32_t);
         if (bCopiedAnyTable)
         {
             ++m_SceneUploadStats.Grows;
         }
-        if (rowRegionWords == 0 && tableRegionWords == 0)
+        if (rowRegionWords == 0 && tableRegionWords == 0 && rangeRegionWords == 0)
         {
             if (bCopiedAnyTable)
             {
@@ -4411,7 +4562,8 @@ namespace NorvesLib::Core::Rendering
             return true;
         }
 
-        const uint64_t totalWords = tableRegionOffsetWords + tableRegionWords;
+        const uint64_t totalWords = rangeRegionWords > 0 ? rangeRegionOffsetWords + rangeRegionWords
+                                                         : tableRegionOffsetWords + tableRegionWords;
         if (totalWords * sizeof(uint32_t) > 0xFFFFFFFFull)
         {
             NORVES_LOG_ERROR("MegaGeometryPass", "MEGA_SCENE_UPLOAD_TOO_LARGE bytes=%llu",
@@ -4464,6 +4616,14 @@ namespace NorvesLib::Core::Rendering
                 record += MeshRecordWords;
             }
         }
+        if (rangeRegionWords > 0)
+        {
+            uint32_t *region = words + rangeRegionOffsetWords;
+            region[0] = rangeRecords;
+            region[1] = 2u; // 段 2
+            region[2] = entryCount;
+            std::memcpy(region + HeaderWords, dirtyRanges.data(), static_cast<size_t>(rangeRecords) * sizeof(uint32_t));
+        }
 
         // staging はフレームスロットのもの（この組を前に使ったフレームの GPU の仕事は終わっている）
         const uint64_t stagingBytes = totalWords * sizeof(uint32_t);
@@ -4510,6 +4670,7 @@ namespace NorvesLib::Core::Rendering
                                              static_cast<uint32_t>(m_InstanceTableBuffer->GetSize()));
             descriptorSet->BindStorageBuffer(3, m_ShadowTableBuffer, 0, static_cast<uint32_t>(m_ShadowTableBuffer->GetSize()));
             descriptorSet->BindStorageBuffer(4, m_MeshTableBuffer, 0, static_cast<uint32_t>(m_MeshTableBuffer->GetSize()));
+            descriptorSet->BindStorageBuffer(5, m_RangeBoundsBuffer, 0, static_cast<uint32_t>(m_RangeBoundsBuffer->GetSize()));
             descriptorSet->Update();
         };
         const auto dispatchRecords = [commandList](uint64_t records) -> void
@@ -4522,7 +4683,8 @@ namespace NorvesLib::Core::Rendering
 
         // 前のフレームの読み手（カリング・頂点・解決・VSM）が読み終えてから書き、書き終えてから読ませる。
         // 同じキューの記録の順なので、パイプラインのバリアで足りる
-        const RHI::BufferPtr residentTables[] = {m_SlotTableBuffer, m_InstanceTableBuffer, m_ShadowTableBuffer, m_MeshTableBuffer};
+        const RHI::BufferPtr residentTables[] = {m_SlotTableBuffer, m_InstanceTableBuffer, m_ShadowTableBuffer, m_MeshTableBuffer,
+                                                 m_RangeBoundsBuffer};
         for (const RHI::BufferPtr &table : residentTables)
         {
             commandList->BufferBarrier(table, RHI::ResourceState::GenericRead, RHI::ResourceState::UnorderedAccess);
@@ -4541,6 +4703,16 @@ namespace NorvesLib::Core::Rendering
             bindTables(slot.SceneScatterDescriptorSet[1], tableRegionOffsetWords, tableRegionWords);
             commandList->SetDescriptorSet(slot.SceneScatterDescriptorSet[1], 0);
             dispatchRecords(tableRecords);
+        }
+        if (rangeRegionWords > 0)
+        {
+            // 段 2 が段 1 の書いた描く順の表とメッシュの表から範囲の境界を作るので、段 1 の書き込みを見せる
+            commandList->BufferBarrier(m_InstanceTableBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
+            commandList->BufferBarrier(m_MeshTableBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
+            bindTables(slot.SceneScatterDescriptorSet[2], rangeRegionOffsetWords, rangeRegionWords);
+            commandList->SetDescriptorSet(slot.SceneScatterDescriptorSet[2], 0);
+            // 1 ワークグループ = 1 範囲
+            dispatchRecords(static_cast<uint64_t>(rangeRecords) * BvhRangeSeats);
         }
         for (const RHI::BufferPtr &table : residentTables)
         {

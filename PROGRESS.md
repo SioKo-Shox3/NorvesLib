@@ -3850,3 +3850,21 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - バナナ 10 万本 + mega-stress 5000 個の混在（`aux-SCN-MEGA-BVH-INDIRECT-mixed100k.txt`）: 落ちずに result=pass、`[ERROR]` 0、`bvh_overflow=0`、`bvh_node_peak=1538951`。
 - Next: SCN-MEGA-INSTANCE-CULL。
 - Notes: 容量の配分は測って決めた。最初の配分（節の列 2,097,152・葉の列 8,388,608）では 5 万個で節の列が溢れ（`bvh_overflow` 約 250 万、影だけ残って物が欠けた）、試しに容量を大きくした撮影（`.harness/runs/scene-capture/SCN-MEGA-BVH-INDIRECT/probe50k`）で節の列の 1 段の最大が約 349 万・葉の列が約 115 万と分かったので、総量 96 MB のまま節 4M・葉 4M に配った。aerial の節の列の使用は容量の 86%。mega-stress のメッシュの多くは節の LOD で枝を切らない（実行時の階層）ので、節の列の需要は視錐台の中の葉の数に比例する。100 万本・混在の容量の足りる・足りないは SCN-MEGA-ACCEPT-1M の `bvh_overflow`・`bvh_node_peak` で判断する。2 パス目の段 0 は 1 パス目の根の選別を引き継ぐので、2 パス目に判定する根は視錐台の中だけになった（性能は測っていない）。試験の追加はしていない。
+
+### SCN-MEGA-INSTANCE-CULL（2026-10-14、反復 5・run 20261014-033121）
+- Done: BVH の段 0 の前に、範囲とインスタンス（席）の専用の判定を置いた。
+  - 範囲: BVH を持つインスタンスを描く順に 64 席ずつ区切った範囲の AABB を、常駐の表（`MegaGeometry_RangeBounds`、範囲ごとに vec4 × 2）に持つ。`UpdateResidentSceneTables` が、描く順の行の記録を送った範囲だけ（メッシュの表が変わったとき・表を作り直したときは全部、行が減ったときは末尾の範囲も）を記録し、`mega_scene_scatter.comp` の段 2（1 ワークグループ = 1 範囲）が段 1 の後に行の締まった球の AABB を合わせて書く。締まった球を持たない行のある範囲は印を付けて常に通す。
+  - 範囲の段（`cluster_bvh_cull.comp`、`BVH_STAGE_RANGES`。1 パス目と 1 回の判定だけ）: 1 範囲 1 スレッドで、AABB を視錐台・距離で判定し、通った範囲を節の列 0 へ積み（カウンタ 0）、席の段の間接 dispatch の引数（1 範囲 = 1 ワークグループ）を書く。
+  - 席の段（段 0）: 1 席 1 スレッドで、締まった球（メッシュの表に足した `boundsSphere` = `MegaMeshGPUData::TotalBounds` × 拡大率。無ければ根の節の球）で視錐台・距離・画素の大きさ・HZB（2 パス目だけ）を判定し、通った席だけ根の節の LOD を判定して、根の子を段 1 の列へ渡す（2 パス目の根の入力へも積む）。2 パス目は従来どおり 1 パス目が残した根の入力（溢れたら全部の席）を読む。段 1 以降の判定は変えていない。
+  - 画素の大きさ: 球を包む AABB の 8 点を投影した矩形が画素の中心（k + 0.5）を 1 つも含まなければ落とす（余裕 1/32 画素）。描く範囲が描画先の全体のときだけ判定する。`NORVES_MEGA_INSTANCE_PIXEL_CULL=0` で切れる。
+  - 距離: `MegaGeometryPassSettings::InstanceCullDistance`（既定 0 = 落とさない。`NORVES_MEGA_INSTANCE_CULL_DISTANCE` で替えられる）。
+  - メッシュの表の行を 64 B → 80 B にした（`GPUMegaMesh::BoundsSphere`・`MegaMeshEntry::boundsSphere`）。カリングの定数に `BvhRangeCount`・`bBvhSeatsFromRanges`・`InstanceCullDistance`・`PixelCullWidth`・`PixelCullHeight` を足した。GPU 時間の名前に範囲の段 `MegaBvhC<パス>Range` を足した。`MEGA_BVH` に `instance_ranges` を足した（`dispatches_per_pass` は範囲の段を含む）。
+- 検証（`.harness/runs/20261014-033121/`）:
+  - `verify-SCN-MEGA-INSTANCE-CULL-3.txt`: 最終のコードの RelWithDebInfo の Game のビルド EXIT=0、error 0。
+  - `verify-SCN-MEGA-INSTANCE-CULL-4.txt`: 最終のコードのバナナ 1 万本 overview を SCN-MEGA-BASE と比較、mean_luminance_difference=0.0001・psnr_db=69.246・mismatched_pixel_ratio=0.000212・within_limits=True、result=pass、EXIT=0。Game.log の `[ERROR]` 0、`MEGA_BVH bvh_instances=10000 instance_ranges=157`、`bvh_overflow=0 bvh_pass2_fallback=0`、`MEGA_OCCLUSION pass1=364438 pass2_tested=367271 occluded=2833`（BVH-INDIRECT の 364,821・367,654 より少ない分は、根の節の球では視錐台にかかり締まった球では外れる席のクラスタ）。PNG はバナナの散布と 3 つの山が以前どおり。
+  - `-1.txt`・`-2.txt` は画素の判定を切る環境変数を足す前の同じ検証（ビルド EXIT=0、psnr_db=65.552・pass）。
+- 補助（verify の外、画素の大きさの判定が画像を変えないことの確認。`.harness/runs/scene-capture/SCN-MEGA-INSTANCE-CULL/`）:
+  - 1920x1080 overview では画素の判定で落ちる席は無い（on/off で描いたクラスタ数が同じ）。同じ版を 2 回撮った差（地平線付近の 69 画素）が on/off の差（68 画素）と同じ程度で、基準との差はこの揺れ。
+  - 192x108 horizon（`aux-...-horizon-tiny-*.txt`）では判定が働き、描いたクラスタが 78,641 → 78,347。off 同士の差は最大 2、on（2 回目・3 回目）と off の差は最大 5（画素数 11〜15）で揺れの程度。1 回目の on だけ 4 画素が最大 42 違ったが、同じ設定の 2・3 回目どうしは最大 2 で、1 回目の外れ値。余裕を 0.25 画素にすると何も落ちない（落ちる席は画素の中心の近くを通る細いものだけ）。
+- Next: SCN-MEGA-BINNING-PREP。
+- Notes: 範囲は描く順の連続した 64 行で、バナナの散布の席の順（Poisson disk の生成順。空間で並べていない）のままなので、範囲の AABB は広く、範囲の段で落ちる量は少ない見込み（1 万本 overview で 157 範囲）。範囲を空間で締めるには散布の席を空間の順（セル・Morton など）に並べる必要があり、Game の配置（`BananaLayout.cpp`）か席の割り当ての変更になる（このタスクの paths の外）。性能は測っていない（SCN-MEGA-ACCEPT-1M）。距離の判定は既定で切ってある（既定の見た目を変えないため）。HZB は今は 2 パス目の席の判定だけ（1 パス目は SCN-MEGA-TWOPASS-INSTANCES）。試験の追加はしていない。

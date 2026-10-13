@@ -48,6 +48,11 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         uint32_t BvhNodeCapacity;     // BVH のたどりの節の列 1 本の容量（要素。主の経路の cluster_bvh_cull.comp だけが読む）
         uint32_t BvhLeafCapacity;     // BVH のたどりの葉の列の容量（要素）
         uint32_t BvhPass2Capacity;    // 2 パス目の根の入力の容量（要素）
+        uint32_t BvhRangeCount;       // 範囲（BVH のインスタンスを描く順に 64 席ずつ区切ったもの）の数。範囲の段の入力の数
+        uint32_t bBvhSeatsFromRanges; // 1 なら席の段（段 0）は、範囲の段が積んだ範囲の一覧から席を引く（1 範囲 = 1 ワークグループ）
+        float InstanceCullDistance;   // 0 より大きければ、締まった球（範囲は AABB）の最も近い点がこれより遠い席・範囲を落とす（m）
+        float PixelCullWidth;         // 0 より大きければ、席の締まった球を包む矩形が画素の中心を 1 つも含まないとき落とす（描く範囲の幅。画素）
+        float PixelCullHeight;        // 同じ判定の描く範囲の高さ（画素）
     };
     // ソフトウェアラスタの 4 語は、行列 2 つ・視点・平面 6 つ・語 21 個の後ろに並ぶ（cluster_cull.comp の CullUniforms と同じ std140 の位置）。
     // 正射影の LOD の印は、その 4 語の直後

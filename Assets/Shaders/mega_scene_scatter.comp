@@ -12,8 +12,13 @@
 //   影の表（48 B）とメッシュの表（64 B）の変わった行を写す。段 0 の書き込みの後（バリアを挟んで）に走る。
 //   描く順の記録 1 件 = 2 語: [0] = (描く順の番号, 席の番号, メッシュの表の番号, 最初のワークグループ), [1].x = 「見えた」印の先頭
 //   影の記録 1 件 = 4 語: [0].x = 描く順の番号, [1..3] = 影の表の行
-//   メッシュの記録 1 件 = 5 語: [0].x = メッシュの表の番号, [1..4] = メッシュの表の行
+//   メッシュの記録 1 件 = 6 語: [0].x = メッシュの表の番号, [1..5] = メッシュの表の行
 //   header.x = 描く順の記録の数, header.z = 影の記録の数, header.w = メッシュの記録の数。記録はこの順に続けて並ぶ
+// 段 2（header.y == 2）: 範囲（描く順の行を 64 個ずつ区切ったもの）の境界（AABB）を、段 1 の書き込みの後（バリアを挟んで）に
+//   描く順の表とメッシュの表から作り直す。1 ワークグループ = 1 範囲で、各スレッドが 1 行の締まった球（メッシュの球を変換し、
+//   半径に拡大率を掛けたもの）の AABB を出し、ワークグループで合わせる。
+//   記録 = 作り直す範囲の番号（1 語ずつ、uvec4 に 4 つ詰める）。header.x = 範囲の数, header.z = 描く順の表の行の数
+//   範囲の境界の 1 要素 = vec4 × 2: [0] = (最小の xyz, 印), [1] = (最大の xyz, 0)。印は RANGE_FLAG_*（float で持つ）
 // ========================================
 
 layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
@@ -43,19 +48,106 @@ layout(std430, set = 0, binding = 3) buffer SceneShadowRows
     uvec4 shadowWords[];
 };
 
-// メッシュの表（MegaMeshEntry。1 行 4 語）
+// メッシュの表（MegaMeshEntry。1 行 5 語）
 layout(std430, set = 0, binding = 4) buffer SceneMeshRows
 {
     uvec4 meshWords[];
 };
 
+// 範囲の境界（範囲ごとに vec4 × 2。cluster_bvh_cull.comp の範囲の段が読む）
+layout(std430, set = 0, binding = 5) buffer SceneRangeBounds
+{
+    vec4 rangeBounds[];
+};
+
 const uint SlotRowWords = 8u;
 const uint InstanceRowWords = 9u;
 const uint ShadowRowWords = 3u;
-const uint MeshRowWords = 4u;
+const uint MeshRowWords = 5u;
+// メッシュの表の行の中の、締まった境界球の語（MegaMeshEntry::boundsSphere）
+const uint MeshBoundsWord = 4u;
+// 1 つの範囲の行の数（ワークグループの大きさと同じ。MegaGeometryPass.cpp の BvhRangeSeats と一致）
+const uint RangeSeats = 64u;
+// 範囲の印（cluster_bvh_cull.comp の RANGE_FLAG_* と一致）: 行を持つ・締まった球を持たない行がある（境界が無いので常に通す）
+const uint RANGE_FLAG_HAS_ROWS = 1u;
+const uint RANGE_FLAG_UNBOUNDED = 2u;
+
+shared vec3 s_RangeMin[RangeSeats];
+shared vec3 s_RangeMax[RangeSeats];
+shared uint s_RangeFlags[RangeSeats];
+
+/**
+ * @brief 段 2: このワークグループの範囲の境界を、描く順の表とメッシュの表から作り直す
+ *
+ * 範囲の番号はワークグループで共通なので、早く返る道もワークグループ全体で同じ（barrier の前で分かれない）。
+ */
+void BuildRangeBounds()
+{
+    const uint flatGroup = gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x;
+    if (flatGroup >= header.x)
+    {
+        return;
+    }
+    const uint range = recordWords[flatGroup >> 2u][flatGroup & 3u];
+    const uint lane = gl_LocalInvocationID.x;
+    const uint row = range * RangeSeats + lane;
+
+    vec3 lo = vec3(3.0e38);
+    vec3 hi = vec3(-3.0e38);
+    uint flags = 0u;
+    if (row < header.z)
+    {
+        flags = RANGE_FLAG_HAS_ROWS;
+        const uint rowBase = row * InstanceRowWords;
+        const uint meshIndex = instanceWords[rowBase + SlotRowWords].x;
+        const vec4 sphere = uintBitsToFloat(meshWords[meshIndex * MeshRowWords + MeshBoundsWord]);
+        // 変換の列 0〜3（列 3 が平行移動。Common/MegaGeometryCull.glsl の TransformClusterCenterToWorld・ComputeWorldRadiusScale と同じ）
+        const vec3 axisX = uintBitsToFloat(instanceWords[rowBase + 0u]).xyz;
+        const vec3 axisY = uintBitsToFloat(instanceWords[rowBase + 1u]).xyz;
+        const vec3 axisZ = uintBitsToFloat(instanceWords[rowBase + 2u]).xyz;
+        const vec3 origin = uintBitsToFloat(instanceWords[rowBase + 3u]).xyz;
+        const vec3 center = origin + axisX * sphere.x + axisY * sphere.y + axisZ * sphere.z;
+        const float radius = sphere.w * max(length(axisX), max(length(axisY), length(axisZ)));
+        const bool bFinite = !any(isnan(center)) && !any(isinf(center)) && !isnan(radius) && !isinf(radius);
+        if (sphere.w > 0.0 && bFinite)
+        {
+            lo = center - vec3(radius);
+            hi = center + vec3(radius);
+        }
+        else
+        {
+            flags |= RANGE_FLAG_UNBOUNDED;
+        }
+    }
+    s_RangeMin[lane] = lo;
+    s_RangeMax[lane] = hi;
+    s_RangeFlags[lane] = flags;
+    barrier();
+    for (uint stride = RangeSeats / 2u; stride > 0u; stride >>= 1u)
+    {
+        if (lane < stride)
+        {
+            s_RangeMin[lane] = min(s_RangeMin[lane], s_RangeMin[lane + stride]);
+            s_RangeMax[lane] = max(s_RangeMax[lane], s_RangeMax[lane + stride]);
+            s_RangeFlags[lane] |= s_RangeFlags[lane + stride];
+        }
+        barrier();
+    }
+    if (lane == 0u)
+    {
+        rangeBounds[range * 2u] = vec4(s_RangeMin[0], float(s_RangeFlags[0]));
+        rangeBounds[range * 2u + 1u] = vec4(s_RangeMax[0], 0.0);
+    }
+}
 
 void main()
 {
+    if (header.y == 2u)
+    {
+        BuildRangeBounds();
+        return;
+    }
+
     // 記録の通し番号（dispatch は x 方向の上限を避けて 2 次元で出す）
     const uint flatGroup = gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x;
     uint index = flatGroup * 64u + gl_LocalInvocationID.x;

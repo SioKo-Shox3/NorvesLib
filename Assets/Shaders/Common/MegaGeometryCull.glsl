@@ -146,6 +146,11 @@ layout(set = 0, binding = 0) uniform CullUniforms
     uint bvhNodeCapacity;    // BVH のたどりの節の列 1 本の容量（要素。cluster_bvh_cull.comp だけが読む）
     uint bvhLeafCapacity;    // BVH のたどりの葉の列の容量（要素）
     uint bvhPass2Capacity;   // 2 パス目の根の入力の容量（要素）
+    uint bvhRangeCount;      // 範囲（BVH のインスタンスを描く順に 64 席ずつ区切ったもの）の数（cluster_bvh_cull.comp だけが読む）
+    uint bvhSeatsFromRanges; // 1 なら席の段（段0）は範囲の段が積んだ範囲の一覧から席を引く
+    float instanceCullDistance; // 0 より大きければ、締まった球（範囲は AABB）の最も近い点がこれより遠い席・範囲を落とす（m）
+    float pixelCullWidth;    // 0 より大きければ、席の締まった球を包む矩形が画素の中心を含まないとき落とす（描く範囲の幅。画素）
+    float pixelCullHeight;   // 同じ判定の描く範囲の高さ（画素）
 } cullData;
 
 const uint CULL_PASS_SINGLE = 0u;
@@ -228,9 +233,9 @@ layout(std430, set = 0, binding = 9) buffer BvhQueueBuffer
     uvec2 bvhQueue[];
 };
 
-// set 0, binding 10: BVH のたどりのカウンタ（各パスの頭で 0 にする）。添え字 s（1以上）は段 s の入力の列へ積もうとした数、
+// set 0, binding 10: BVH のたどりのカウンタ（各パスの頭で 0 にする）。添え字 s は段 s の入力の列へ積もうとした数（0 は範囲の段が積んだ範囲の数）、
 // BVH_LEAF_COUNTER は葉の列へ積もうとした数（容量を超えた分も数えるので、読む側は容量で頭打ちにする）。
-// BVH_ARGS_BASE からは段 s（1以上）と葉の段の間接 dispatch の引数（VkDispatchIndirectCommand。BVH_ARGS_STRIDE 語ずつ）。
+// BVH_ARGS_BASE からは段 s と葉の段の間接 dispatch の引数（VkDispatchIndirectCommand。BVH_ARGS_STRIDE 語ずつ）。
 layout(std430, set = 0, binding = 10) buffer BvhCounterBuffer
 {
     uint bvhCounters[];

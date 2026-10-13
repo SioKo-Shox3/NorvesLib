@@ -138,6 +138,20 @@ namespace NorvesLib::Core::Rendering
          * 環境変数 NORVES_MEGA_STATS_EVERY_FRAME が 1 なら true にする。
          */
         bool bStatsEveryFrame = false;
+
+        /**
+         * @brief インスタンスの判定の距離（m）。0 より大きければ、締まった球（範囲は AABB）の最も近い点がこれより遠い席・範囲を描かない
+         *
+         * 既定は 0（距離では落とさない）。環境変数 NORVES_MEGA_INSTANCE_CULL_DISTANCE（正の数）で替えられる。
+         */
+        float InstanceCullDistance = 0.0f;
+
+        /**
+         * @brief 席の締まった球を包む矩形が画素の中心を 1 つも含まないインスタンスを描かないか（既定。画像は変わらない）
+         *
+         * 環境変数 NORVES_MEGA_INSTANCE_PIXEL_CULL が 0 か off なら false にする（撮り比べ用）。
+         */
+        bool bInstancePixelCull = true;
     };
 
     /**
@@ -487,8 +501,9 @@ namespace NorvesLib::Core::Rendering
             uint32_t BvhAddressHigh;
             uint32_t BvhNodeCount;
             uint32_t PageTableBase;        // ページの表の中の、このメッシュのページの範囲の先頭
+            float BoundsSphere[4];         // メッシュ全体の締まった境界球（ローカル。半径 0 なら無い）。インスタンスと範囲の判定が使う
         };
-        static_assert(sizeof(GPUMegaMesh) == 64, "Common/MegaInstanceTable.glsl の MegaMeshEntry と大きさが一致しません");
+        static_assert(sizeof(GPUMegaMesh) == 80, "Common/MegaInstanceTable.glsl の MegaMeshEntry と大きさが一致しません");
 
         /**
          * @brief 席の表の1要素（席ごと 128 B。mega_scene_scatter.comp の SceneSlotRows と一致）
@@ -590,7 +605,7 @@ namespace NorvesLib::Core::Rendering
             // 常駐の表へ散在書き込みする記録の列（host-visible の staging）と、段ごとのディスクリプタセット
             RHI::BufferPtr SceneStaging;
             uint64_t SceneStagingCapacity = 0; // バイト数
-            RHI::DescriptorSetPtr SceneScatterDescriptorSet[2];
+            RHI::DescriptorSetPtr SceneScatterDescriptorSet[3];
             // この組を使った記録のメッシュの表が指すメッシュの区画（頂点・インデックス・クラスタ・BVH）の持ち主。
             // 組を次に使うとき（その記録の提出の GPU の仕事が終わった後）まで保ち、区画を空きへ戻さない
             Container::VariableArray<Container::TSharedPtr<void>> MeshRegionOwners;
@@ -620,7 +635,7 @@ namespace NorvesLib::Core::Rendering
         /** @brief フレームスロットに、このフレームの区間の数を収める資源（区間の表・カリングと描画の UBO・ディスクリプタセット）を用意する */
         bool EnsureFrameSlot(FrameSlot &slot, uint32_t sectionTableEntries, uint32_t sectionCount);
 
-        /** @brief 常駐の表の散在書き込みのディスクリプタセットの形（mega_scene_scatter.comp の binding 0〜4） */
+        /** @brief 常駐の表の散在書き込みのディスクリプタセットの形（mega_scene_scatter.comp の binding 0〜5） */
         static RHI::DescriptorSetDesc BuildSceneScatterDescriptorSetDesc();
 
         /**
@@ -1165,6 +1180,11 @@ namespace NorvesLib::Core::Rendering
         uint32_t m_InstanceTableCapacity = 0;
         RHI::BufferPtr m_MeshTableBuffer;
         uint32_t m_MeshTableCapacity = 0;
+        // 範囲の境界（描く順の行を 64 個ずつ区切った範囲の AABB。範囲ごとに vec4 × 2）。行の変わった範囲だけを GPU が作り直す
+        // （mega_scene_scatter.comp の段 2）。m_RangeBoundsRowCount は境界を作ったときの描く順の行の数（減ったら末尾の範囲を作り直す）
+        RHI::BufferPtr m_RangeBoundsBuffer;
+        uint32_t m_RangeBoundsCapacity = 0;
+        uint32_t m_RangeBoundsRowCount = 0;
         // 常駐の表の中身の写し（CPU）。散在書き込みは写しと違う行だけを送る。席の行の状態は 0 = 中身なし、
         // 1 = GPU の表にある、2 = 中身は覚えているが GPU の表に無い（更新に失敗した後。送り直すが変わったとは見なさない）。
         // 表を広げるときは古い表の中身を GPU でコピーするので、状態はそのまま引き継ぐ
