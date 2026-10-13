@@ -605,7 +605,7 @@ namespace NorvesLib::Core::Rendering
             // 常駐の表へ散在書き込みする記録の列（host-visible の staging）と、段ごとのディスクリプタセット
             RHI::BufferPtr SceneStaging;
             uint64_t SceneStagingCapacity = 0; // バイト数
-            RHI::DescriptorSetPtr SceneScatterDescriptorSet[3];
+            RHI::DescriptorSetPtr SceneScatterDescriptorSet[4];
             // この組を使った記録のメッシュの表が指すメッシュの区画（頂点・インデックス・クラスタ・BVH）の持ち主。
             // 組を次に使うとき（その記録の提出の GPU の仕事が終わった後）まで保ち、区画を空きへ戻さない
             Container::VariableArray<Container::TSharedPtr<void>> MeshRegionOwners;

@@ -3868,3 +3868,16 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 192x108 horizon（`aux-...-horizon-tiny-*.txt`）では判定が働き、描いたクラスタが 78,641 → 78,347。off 同士の差は最大 2、on（2 回目・3 回目）と off の差は最大 5（画素数 11〜15）で揺れの程度。1 回目の on だけ 4 画素が最大 42 違ったが、同じ設定の 2・3 回目どうしは最大 2 で、1 回目の外れ値。余裕を 0.25 画素にすると何も落ちない（落ちる席は画素の中心の近くを通る細いものだけ）。
 - Next: SCN-MEGA-BINNING-PREP。
 - Notes: 範囲は描く順の連続した 64 行で、バナナの散布の席の順（Poisson disk の生成順。空間で並べていない）のままなので、範囲の AABB は広く、範囲の段で落ちる量は少ない見込み（1 万本 overview で 157 範囲）。範囲を空間で締めるには散布の席を空間の順（セル・Morton など）に並べる必要があり、Game の配置（`BananaLayout.cpp`）か席の割り当ての変更になる（このタスクの paths の外）。性能は測っていない（SCN-MEGA-ACCEPT-1M）。距離の判定は既定で切ってある（既定の見た目を変えないため）。HZB は今は 2 パス目の席の判定だけ（1 パス目は SCN-MEGA-TWOPASS-INSTANCES）。試験の追加はしていない。
+
+### SCN-MEGA-INSTANCE-CULL（2026-10-14、反復 6・run 20261014-033121。評価の差し戻しへの対応）
+- Done: 席と範囲の判定に使う締まった球が、実行時の LOD の簡略化した段の形を包むようにした。
+  - 差し戻しの内容: 実行時の LOD の `TotalBounds` は最も細かい段のクラスタだけから作る（`LODHierarchyBuilder.cpp`）ので、簡略化で外へ動いた頂点を包まず、席の段が見える席を落としうる。
+  - `mega_scene_scatter.comp` に段 3 を足した。メッシュの表を書き直したとき、段 1 の後・段 2 の前に、1 ワークグループ = 1 メッシュで全段のクラスタの球（クラスタ配列のデバイスアドレスから読む）を見て、球の中心はそのまま半径を max(|c_i − 中心| + r_i) × 1.0001 まで広げる（縮めない）。クラスタの球が有限でないメッシュは半径 0（締まった球が無い扱い。席は根の節の球、範囲は常に通す）。範囲の AABB（段 2）と席の段は、広げた同じ球を読む。
+  - 球を GPU で直すのは、球を作る `LODHierarchyBuilder.cpp`・`MegaGeometryResourceStore.cpp` がこのタスクの paths の外で、クラスタの球は GPU の表にしか無いため。焼き込み済みの階層・cooked のメッシュの球も同じ段で全クラスタを包む値へ広がる。
+  - 開発ビルドの常駐の表の検査（`MEGA_SCENE_GROW_CHECK`）は、メッシュの行の末尾の語（半径）を写しと比べないようにした（GPU が広げるため）。散在書き込みのディスクリプタセットを段ごと 3 → 4 にした。
+- 検証（`.harness/runs/20261014-033121/`）:
+  - `verify-SCN-MEGA-INSTANCE-CULL-8.txt`: 最終のコードの RelWithDebInfo の Game のビルド EXIT=0、error 0（`-5.txt` は同じ C++ でシェーダーを直す前のビルド、EXIT=0）。
+  - `verify-SCN-MEGA-INSTANCE-CULL-7.txt`: バナナ 1 万本 overview を SCN-MEGA-BASE と比較、mean_luminance_difference=0・psnr_db=66.396・mismatched_pixel_ratio=0.000212・within_limits=True、result=pass、EXIT=0。`overview.Game.log` の `[ERROR]` 0、`bvh_overflow=0 bvh_pass2_fallback=0`、`MEGA_SCENE_GROW_CHECK mesh_rows=1 mismatch=0`、`MEGA_OCCLUSION pass1=364821 pass2_tested=367654`（前の反復の締まった球では 364,438。差の 383 クラスタは、LOD0 の球では外れていた席のクラスタで、球を広げて戻った。BVH-INDIRECT の値と同じ）。PNG はバナナの散布と 3 つの山が以前どおり。
+  - `-6.txt` はシェーダーの `const` の付いた buffer_reference の変数でコンパイルに失敗した版（result=fail）。直した後の `-7.txt` が合格。
+- Next: SCN-MEGA-BINNING-PREP。
+- Notes: 影の表の球（`ResolveShadowBounds` が `TotalBounds` から作る）も実行時の LOD の段を包まない同じ根の問題を持つ（このタスクの前から。影の経路は paths の外）。根本は `LODHierarchyBuilder.cpp` で全段のクラスタを `TotalBounds` へ合わせることで、そうすれば段 3 は何も広げない。試験の追加はしていない。

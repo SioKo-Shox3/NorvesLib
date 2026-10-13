@@ -1,4 +1,6 @@
 ﻿#version 460
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_buffer_reference_uvec2 : require
 
 // ========================================
 // MegaGeometry の常駐の表へ、このフレームの差分を書く（MegaGeometryPass::UpdateResidentSceneTables）
@@ -9,7 +11,7 @@
 // 段 0（header.y == 0）: 席の表（席ごと 128 B: 変換・前の変換）へ、変わった席の行を写す。
 //   記録 1 件 = 9 語（uvec4）: [0].x = 席の番号, [1..4] = 変換, [5..8] = 前の変換
 // 段 1（header.y == 1）: 描く順の表（Common/MegaInstanceTable.glsl の MegaInstanceRow。144 B）を席の表から組み、
-//   影の表（48 B）とメッシュの表（64 B）の変わった行を写す。段 0 の書き込みの後（バリアを挟んで）に走る。
+//   影の表（48 B）とメッシュの表（80 B）の変わった行を写す。段 0 の書き込みの後（バリアを挟んで）に走る。
 //   描く順の記録 1 件 = 2 語: [0] = (描く順の番号, 席の番号, メッシュの表の番号, 最初のワークグループ), [1].x = 「見えた」印の先頭
 //   影の記録 1 件 = 4 語: [0].x = 描く順の番号, [1..3] = 影の表の行
 //   メッシュの記録 1 件 = 6 語: [0].x = メッシュの表の番号, [1..5] = メッシュの表の行
@@ -19,6 +21,11 @@
 //   半径に拡大率を掛けたもの）の AABB を出し、ワークグループで合わせる。
 //   記録 = 作り直す範囲の番号（1 語ずつ、uvec4 に 4 つ詰める）。header.x = 範囲の数, header.z = 描く順の表の行の数
 //   範囲の境界の 1 要素 = vec4 × 2: [0] = (最小の xyz, 印), [1] = (最大の xyz, 0)。印は RANGE_FLAG_*（float で持つ）
+// 段 3（header.y == 3）: メッシュの表の締まった境界球の半径を、そのメッシュの全段のクラスタの球を包むまで広げる。段 1 の
+//   書き込みの後・段 2 の前（それぞれバリアを挟んで）に走る。ホストの球（MegaMeshGPUData::TotalBounds）は実行時の LOD では
+//   最も細かい段だけから作るので、簡略化で外へ動いた頂点を包まない。中心はそのまま、半径を max(|c_i - 中心| + r_i) にする。
+//   1 ワークグループ = 1 メッシュで、メッシュの表の番号はワークグループの通し番号。記録は持たない。header.x = メッシュの数
+//   クラスタの球が有限でないメッシュは、半径を 0（締まった球が無い。判定は根の節の球を使う）にする。
 // ========================================
 
 layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
@@ -75,6 +82,79 @@ const uint RANGE_FLAG_UNBOUNDED = 2u;
 shared vec3 s_RangeMin[RangeSeats];
 shared vec3 s_RangeMax[RangeSeats];
 shared uint s_RangeFlags[RangeSeats];
+
+// メッシュの表の行の中の、クラスタ配列の語（MegaMeshEntry::clusterInfo。x,y = デバイスアドレス, z = クラスタ数）
+const uint MeshClusterWord = 1u;
+
+// クラスタ配列（Common/MegaGeometryCull.glsl の GPUClusterData と同じ 112 B の並び。段 3 は先頭の境界球だけを読む）
+struct ScatterClusterData
+{
+    vec4 boundsSphere; // center.xyz + radius
+    vec4 unused0[6];
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer ScatterClusterArray
+{
+    ScatterClusterData clusters[];
+};
+
+shared float s_MeshReach[RangeSeats];
+shared uint s_MeshInvalid[RangeSeats];
+
+/**
+ * @brief 段 3: このワークグループのメッシュの締まった境界球の半径を、全段のクラスタの球を包むまで広げる
+ *
+ * メッシュの番号はワークグループで共通なので、早く返る道もワークグループ全体で同じ（barrier の前で分かれない）。
+ */
+void GrowMeshBounds()
+{
+    const uint meshIndex = gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x;
+    if (meshIndex >= header.x)
+    {
+        return;
+    }
+    const uint lane = gl_LocalInvocationID.x;
+    const uint boundsWord = meshIndex * MeshRowWords + MeshBoundsWord;
+    const vec4 sphere = uintBitsToFloat(meshWords[boundsWord]);
+    // 締まった球を持たないメッシュ（判定は根の節の球を使う）はそのまま
+    if (!(sphere.w > 0.0))
+    {
+        return;
+    }
+    const uvec4 clusterInfo = meshWords[meshIndex * MeshRowWords + MeshClusterWord];
+    ScatterClusterArray clusterArray = ScatterClusterArray(clusterInfo.xy);
+
+    float reach = 0.0;
+    uint invalid = 0u;
+    for (uint cluster = lane; cluster < clusterInfo.z; cluster += RangeSeats)
+    {
+        const vec4 bounds = clusterArray.clusters[cluster].boundsSphere;
+        if (any(isnan(bounds)) || any(isinf(bounds)))
+        {
+            invalid = 1u;
+            continue;
+        }
+        reach = max(reach, distance(bounds.xyz, sphere.xyz) + max(bounds.w, 0.0));
+    }
+    s_MeshReach[lane] = reach;
+    s_MeshInvalid[lane] = invalid;
+    barrier();
+    for (uint stride = RangeSeats / 2u; stride > 0u; stride >>= 1u)
+    {
+        if (lane < stride)
+        {
+            s_MeshReach[lane] = max(s_MeshReach[lane], s_MeshReach[lane + stride]);
+            s_MeshInvalid[lane] |= s_MeshInvalid[lane + stride];
+        }
+        barrier();
+    }
+    if (lane == 0u)
+    {
+        // 距離の丸めの分だけ少し広げる（半径は縮めない）
+        const float radius = s_MeshInvalid[0] != 0u ? 0.0 : max(sphere.w, s_MeshReach[0] * 1.0001);
+        meshWords[boundsWord] = uvec4(floatBitsToUint(sphere.xyz), floatBitsToUint(radius));
+    }
+}
 
 /**
  * @brief 段 2: このワークグループの範囲の境界を、描く順の表とメッシュの表から作り直す
@@ -145,6 +225,11 @@ void main()
     if (header.y == 2u)
     {
         BuildRangeBounds();
+        return;
+    }
+    if (header.y == 3u)
+    {
+        GrowMeshBounds();
         return;
     }
 

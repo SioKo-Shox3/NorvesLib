@@ -1490,7 +1490,8 @@ namespace NorvesLib::Core::Rendering
         mesh.VertexBase = static_cast<uint32_t>(vertexBase);
         mesh.IndexBase = static_cast<uint32_t>(indexBase);
         mesh.PageTableBase = gpuData.PageTableBase;
-        // 締まった境界球（全段のクラスタの形を包むメッシュの球）。有限で半径が正のときだけ載せ、無ければ判定は根の節の球を使う
+        // 締まった境界球。有限で半径が正のときだけ載せ、無ければ判定は根の節の球を使う。実行時の LOD の TotalBounds は最も細かい段
+        // だけから作るので、表へ写した後に mega_scene_scatter.comp の段 3 が、半径を全段のクラスタの球を包むまで広げる
         const BoundingSphere &bounds = gpuData.TotalBounds;
         if (std::isfinite(bounds.CenterX) && std::isfinite(bounds.CenterY) && std::isfinite(bounds.CenterZ) &&
             std::isfinite(bounds.Radius) && bounds.Radius > 0.0f)
@@ -4547,7 +4548,12 @@ namespace NorvesLib::Core::Rendering
             rangeRecords > 0 ? HeaderWords + (static_cast<uint64_t>(rangeRecords) + 3u) / 4u * 4u : 0u;
         const uint64_t rangeRegionOffsetWords =
             (tableRegionOffsetWords + tableRegionWords + RegionAlignWords - 1u) / RegionAlignWords * RegionAlignWords;
-        const uint64_t uploadBytes = (rowRegionWords + tableRegionWords + rangeRegionWords) * sizeof(uint32_t);
+        // 段 3 の区画: ヘッダだけ（メッシュの表を書き直したときに、全メッシュの締まった球の半径を広げる。メッシュの表の番号は
+        // ワークグループの通し番号）
+        const uint64_t boundsRegionWords = meshRecords > 0 ? HeaderWords : 0u;
+        const uint64_t boundsRegionOffsetWords =
+            (rangeRegionOffsetWords + rangeRegionWords + RegionAlignWords - 1u) / RegionAlignWords * RegionAlignWords;
+        const uint64_t uploadBytes = (rowRegionWords + tableRegionWords + rangeRegionWords + boundsRegionWords) * sizeof(uint32_t);
         if (bCopiedAnyTable)
         {
             ++m_SceneUploadStats.Grows;
@@ -4562,8 +4568,9 @@ namespace NorvesLib::Core::Rendering
             return true;
         }
 
-        const uint64_t totalWords = rangeRegionWords > 0 ? rangeRegionOffsetWords + rangeRegionWords
-                                                         : tableRegionOffsetWords + tableRegionWords;
+        const uint64_t totalWords = boundsRegionWords > 0  ? boundsRegionOffsetWords + boundsRegionWords
+                                    : rangeRegionWords > 0 ? rangeRegionOffsetWords + rangeRegionWords
+                                                           : tableRegionOffsetWords + tableRegionWords;
         if (totalWords * sizeof(uint32_t) > 0xFFFFFFFFull)
         {
             NORVES_LOG_ERROR("MegaGeometryPass", "MEGA_SCENE_UPLOAD_TOO_LARGE bytes=%llu",
@@ -4623,6 +4630,12 @@ namespace NorvesLib::Core::Rendering
             region[1] = 2u; // 段 2
             region[2] = entryCount;
             std::memcpy(region + HeaderWords, dirtyRanges.data(), static_cast<size_t>(rangeRecords) * sizeof(uint32_t));
+        }
+        if (boundsRegionWords > 0)
+        {
+            uint32_t *region = words + boundsRegionOffsetWords;
+            region[0] = meshRecords;
+            region[1] = 3u; // 段 3
         }
 
         // staging はフレームスロットのもの（この組を前に使ったフレームの GPU の仕事は終わっている）
@@ -4703,6 +4716,16 @@ namespace NorvesLib::Core::Rendering
             bindTables(slot.SceneScatterDescriptorSet[1], tableRegionOffsetWords, tableRegionWords);
             commandList->SetDescriptorSet(slot.SceneScatterDescriptorSet[1], 0);
             dispatchRecords(tableRecords);
+        }
+        if (boundsRegionWords > 0)
+        {
+            // 段 3 が段 1 の写したメッシュの行（クラスタ配列のアドレス・ホストの球）を読んで半径を広げるので、段 1 の書き込みを見せる。
+            // 段 2 はこの後のバリアの後に、広げた半径を読む
+            commandList->BufferBarrier(m_MeshTableBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
+            bindTables(slot.SceneScatterDescriptorSet[3], boundsRegionOffsetWords, boundsRegionWords);
+            commandList->SetDescriptorSet(slot.SceneScatterDescriptorSet[3], 0);
+            // 1 ワークグループ（64 スレッド）= 1 メッシュ
+            dispatchRecords(static_cast<uint64_t>(meshRecords) * 64u);
         }
         if (rangeRegionWords > 0)
         {
@@ -4931,24 +4954,27 @@ namespace NorvesLib::Core::Rendering
                 ++slotMismatches;
             }
         }
-        const auto countRows = [&](uint64_t base, uint32_t rows, uint64_t rowBytes) -> uint32_t
+        // compareBytes は行の先頭から比べるバイト数（行の大きさ以下）
+        const auto countRows = [&](uint64_t base, uint32_t rows, uint64_t rowBytes, uint64_t compareBytes) -> uint32_t
         {
             uint32_t count = 0;
             for (uint32_t row = 0; row < rows; ++row)
             {
                 const uint64_t at = base + static_cast<uint64_t>(row) * rowBytes;
-                if (std::memcmp(mapped + at, expected + at, static_cast<size_t>(rowBytes)) != 0)
+                if (std::memcmp(mapped + at, expected + at, static_cast<size_t>(compareBytes)) != 0)
                 {
                     ++count;
                 }
             }
             return count;
         };
-        const uint32_t entryMismatches = countRows(slotBytes, slot.SceneCheckEntryRows, sizeof(GPUMegaInstance));
-        const uint32_t shadowMismatches =
-            countRows(slotBytes + instanceBytes, slot.SceneCheckEntryRows, sizeof(MegaGeometryShadowInstance));
-        const uint32_t meshMismatches =
-            countRows(slotBytes + instanceBytes + shadowBytes, slot.SceneCheckMeshRows, sizeof(GPUMegaMesh));
+        const uint32_t entryMismatches =
+            countRows(slotBytes, slot.SceneCheckEntryRows, sizeof(GPUMegaInstance), sizeof(GPUMegaInstance));
+        const uint32_t shadowMismatches = countRows(slotBytes + instanceBytes, slot.SceneCheckEntryRows,
+                                                    sizeof(MegaGeometryShadowInstance), sizeof(MegaGeometryShadowInstance));
+        // メッシュの行の末尾の語（締まった球の半径）は mega_scene_scatter.comp の段 3 が GPU で広げるので、写しと比べない
+        const uint32_t meshMismatches = countRows(slotBytes + instanceBytes + shadowBytes, slot.SceneCheckMeshRows,
+                                                  sizeof(GPUMegaMesh), offsetof(GPUMegaMesh, BoundsSphere) + 3u * sizeof(float));
         slot.SceneCheckReadback->Unmap();
 
         const uint32_t mismatches = slotMismatches + entryMismatches + shadowMismatches + meshMismatches;
