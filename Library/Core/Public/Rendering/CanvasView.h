@@ -4,6 +4,7 @@
 #include "Rendering/IBoardProxySink.h"
 #include "Rendering/View.h"
 #include "Rendering/ViewRenderPlan.h"
+#include "RHI/IDescriptorSet.h"
 #include "RHI/RHITypes.h"
 
 namespace NorvesLib::Core::Rendering
@@ -92,6 +93,10 @@ namespace NorvesLib::Core::Rendering
         uint64_t m_NextBoardInsertionSequence = 0;
         RHI::TexturePtr m_BoardFallbackWhiteTexture;
         RHI::SamplerPtr m_BoardPointClampSampler;
+        // フレームの持ち主から板の記述子セットを借りるときの共有のレイアウト（EnsureBoardSharedResources で 1 回引く）
+        RHI::DescriptorSetLayoutPtr m_BoardDescriptorSetLayout;
+        // フレームの持ち主から層の合成の記述子セットを借りるときの共有のレイアウト（EnsureBoardSharedResources で 1 回引く）
+        RHI::DescriptorSetLayoutPtr m_LayerCompositeDescriptorSetLayout;
         bool m_bBoardInstanceBatchingEnabled = true;
 
         friend class CanvasBoardPass;

@@ -3,6 +3,7 @@
 
 #include "Rendering/ViewRenderContext.h"
 #include "Rendering/FramePacket.h"
+#include "Rendering/FrameResourceOwner.h"
 #include "Rendering/ShaderManager.h"
 #include "Rendering/DrawCommand.h"
 #include "Rendering/SceneRenderer.h"
@@ -18,6 +19,7 @@
 #include "imgui.h"
 
 #include <cstddef>
+#include <cstring>
 
 namespace NorvesLib::Modules::Gui
 {
@@ -161,10 +163,10 @@ namespace NorvesLib::Modules::Gui
 
     bool ImGuiOverlayPass::Initialize(Core::Rendering::ViewRenderContext &context)
     {
-        // seam②(RenderThread・録画窓内): mesh2d パイプライン + per-slot DescriptorSet +
-        // VB/IB/UBO 用 DynamicBufferRing を生成する。ShaderManager は seam の
-        // ViewRenderContext からのみ得られるためここで構築する。パイプライン/バッファ生成は
-        // テクスチャ Status を触らず MT 安全(フォントテクスチャは①で GameThread が確定済み)。
+        // seam②(RenderThread・録画窓内): mesh2d パイプラインを生成し、借りる DescriptorSet の
+        // 共有レイアウトを引く。ShaderManager は seam の ViewRenderContext からのみ得られるため
+        // ここで構築する。パイプライン生成はテクスチャ Status を触らず MT 安全(フォントテクスチャは
+        // ①で GameThread が確定済み)。頂点/インデックス/UBO と DescriptorSet は Execute ごとに借りる。
         if (m_bInitialized)
         {
             return true;
@@ -256,69 +258,24 @@ namespace NorvesLib::Modules::Gui
             return false;
         }
 
-        // ---- VB/IB/UBO リング(飛行中のスロットごと=IN_FLIGHT_SET_COUNT 組) ----
-        // 初期容量は控えめに確保し、不足時に DynamicBufferRing が 2 倍リサイズする
-        // (VB/IB は実描画量で伸びる。UBO は固定 16B なのでリサイズしない)。拡張はスロットの
-        // 古いバッファを置き換えるが、飛行中のスロットで引くので前の利用は GPU 完了済み。
-        constexpr uint32_t slotCount = IN_FLIGHT_SET_COUNT;
-        const bool bRingsOk =
-            m_VertexRing.Initialize(context.Device, slotCount, RHI::ResourceUsage::VertexBuffer,
-                                    static_cast<uint64_t>(sizeof(ImDrawVert)) * 4096ull) &&
-            m_IndexRing.Initialize(context.Device, slotCount, RHI::ResourceUsage::IndexBuffer,
-                                   static_cast<uint64_t>(sizeof(ImDrawIdx)) * 8192ull) &&
-            m_UniformRing.Initialize(context.Device, slotCount, RHI::ResourceUsage::ConstantBuffer,
-                                     static_cast<uint64_t>(sizeof(Mesh2DTransform)));
-        if (!bRingsOk)
+        // ---- 借りる DescriptorSet の共有レイアウト(パイプラインのレイアウトと同じ形) ----
+        // レイアウトの作成・キャッシュはデバイスが持ち、Execute はこのレイアウトでフレームの持ち主の
+        // pool から確保するだけ(毎フレームのレイアウト・pool の作成は起きない)。
+        m_DescriptorSetLayout = context.Device->GetOrCreateDescriptorSetLayout(descriptorSetDesc);
+        if (!m_DescriptorSetLayout)
         {
-            NORVES_LOG_WARNING(kLogCategory, "Initialize(seam) failed: DynamicBufferRing init");
+            NORVES_LOG_WARNING(kLogCategory, "Initialize(seam) failed: GetOrCreateDescriptorSetLayout");
             m_Pipeline.reset();
-            m_VertexRing.Shutdown();
-            m_IndexRing.Shutdown();
-            m_UniformRing.Shutdown();
             return false;
         }
 
-        // ---- 飛行中のスロットごとの DescriptorSet(共有フォントテクスチャ/サンプラー + 同じスロットの UBO) ----
-        // 各組の DescriptorSet を「binding1=共有フォントテクスチャ/サンプラー(不変)」+
-        // 「binding0=同じ飛行中スロットの固定 UBO buffer」で一度だけ束ねて Update する。UBO は固定 16B で
-        // リサイズしないため DynamicBufferRing のスロット buffer は安定(Initialize 時の実体)。
-        // 以後 Execute は UBO の中身のみ書き換え(CPU マップ)、DescriptorSet を再 Update しない
-        // (=描画中に vkUpdateDescriptorSets を起こさず、in-flight 中の DescriptorSet 更新を避ける)。
-        for (uint32_t i = 0; i < slotCount; ++i)
-        {
-            RHI::DescriptorSetPtr descriptorSet = context.Device->CreateDescriptorSet(descriptorSetDesc);
-            if (!descriptorSet)
-            {
-                NORVES_LOG_WARNING(kLogCategory, "Initialize(seam) failed: CreateDescriptorSet slot %u", i);
-                m_Pipeline.reset();
-                m_VertexRing.Shutdown();
-                m_IndexRing.Shutdown();
-                m_UniformRing.Shutdown();
-                for (uint32_t j = 0; j < slotCount; ++j)
-                {
-                    m_SlotDescriptorSets[j].reset();
-                }
-                return false;
-            }
-
-            // 当該スロットの安定 UBO buffer を取得する(Upload(slot, nullptr, 0) は書き込まず
-            // スロット buffer を返す)。
-            RHI::BufferPtr uboBuffer = m_UniformRing.Upload(i, nullptr, 0);
-            descriptorSet->BindConstantBuffer(0, uboBuffer, 0,
-                                              static_cast<uint32_t>(sizeof(Mesh2DTransform)));
-            descriptorSet->BindTexture(1, m_FontTexture);
-            descriptorSet->BindSampler(1, m_FontSampler);
-            descriptorSet->Update();
-            m_SlotDescriptorSets[i] = descriptorSet;
-        }
-
         // フォントアトラスの TexID は InitializeGameThread(GameThread・全フレームキャプチャ前)で
-        // 既にセンチネル確定済み。Execute は cmd.GetTexID() を解決に使わず常に当該スロットの
+        // 既にセンチネル確定済み。Execute は cmd.GetTexID() を解決に使わず常に借りた
         // DescriptorSet をバインドするため、ここでの SetTexID 再設定は不要(RenderThread から
         // imgui コンテキスト状態を書き換えない=スレッド安全)。
 
         m_bInitialized = true;
-        NORVES_LOG_INFO(kLogCategory, "Initialize(seam): mesh2d pipeline + rings + descriptor ready");
+        NORVES_LOG_INFO(kLogCategory, "Initialize(seam): mesh2d pipeline + descriptor layout ready");
         return true;
     }
 
@@ -326,14 +283,8 @@ namespace NorvesLib::Modules::Gui
     {
         // RenderThread 静止後・device 生存中に ImGuiModule から駆動される。全 RHI リソースを
         // 本パスが所有しているため明示解放する(順序は任意・参照カウントで安全)。
-        for (uint32_t i = 0; i < IN_FLIGHT_SET_COUNT; ++i)
-        {
-            m_SlotDescriptorSets[i].reset();
-        }
+        m_DescriptorSetLayout.reset();
         m_Pipeline.reset();
-        m_VertexRing.Shutdown();
-        m_IndexRing.Shutdown();
-        m_UniformRing.Shutdown();
         m_FontSampler.reset();
         m_FontTexture.reset();
         m_PendingDrawData = nullptr;
@@ -382,14 +333,11 @@ namespace NorvesLib::Modules::Gui
         {
             return;
         }
-        // GPU 資源の組は飛行中のスロットで選ぶ(パケットのスロットは GPU の完了を保証しない)。
-        // 組の数を超える飛行中スロットは、前の提出が読む組を書き換えうるので描かない。
-        const uint32_t inFlightIndex = context.FrameIndex;
-        if (inFlightIndex >= IN_FLIGHT_SET_COUNT)
+        // GPU 資源(頂点/インデックス/UBO/DescriptorSet)はフレームの持ち主から借りる。持ち主の無い
+        // 文脈では、前の提出との重なりを守れないので描かない。
+        if (context.FrameResources == nullptr)
         {
-            NORVES_LOG_WARNING(kLogCategory,
-                               "Execute skipped: FrameIndex %u exceeds in-flight set count %u",
-                               inFlightIndex, IN_FLIGHT_SET_COUNT);
+            NORVES_LOG_WARNING(kLogCategory, "Execute skipped: FrameResources null");
             return;
         }
         const ImGuiDrawSnapshot &snapshot = m_SlotSnapshots[slotIndex];
@@ -410,30 +358,21 @@ namespace NorvesLib::Modules::Gui
         commandList->BeginRenderPass(NonOwning(context.OverlayLoadRenderPass),
                                      NonOwning(context.OverlayLoadFramebuffer));
 
-        RenderDrawData(context, drawData, inFlightIndex);
+        RenderDrawData(context, drawData);
 
         commandList->EndRenderPass();
     }
 
     void ImGuiOverlayPass::RenderDrawData(Core::Rendering::ViewRenderContext &context,
-                                          const ::ImDrawData *drawData,
-                                          uint32_t inFlightIndex)
+                                          const ::ImDrawData *drawData)
     {
         RHI::ICommandList *commandList = context.CommandList;
+        Core::Rendering::FrameResourceLane &frameResources = *context.FrameResources;
 
-        const int totalVtx = drawData->TotalVtxCount;
-        const int totalIdx = drawData->TotalIdxCount;
-        if (totalVtx <= 0 || totalIdx <= 0)
-        {
-            return;
-        }
-
-        // 全 ImDrawList の頂点/インデックスを 1 本ずつへ連結する(imgui_impl_vulkan と同方式)。
-        // ImDrawVert は mesh2d 頂点(pos/uv/col・stride 20)と完全一致のためそのままコピーできる。
-        Core::Container::VariableArray<ImDrawVert> vertices;
-        Core::Container::VariableArray<ImDrawIdx> indices;
-        vertices.reserve(static_cast<size_t>(totalVtx));
-        indices.reserve(static_cast<size_t>(totalIdx));
+        // 写す頂点/インデックスの数は各 ImDrawList の実体から数える(TotalVtxCount と食い違っても
+        // 借りた切れ端の外へ書かない)。
+        uint64_t vertexCount = 0;
+        uint64_t indexCount = 0;
         for (int n = 0; n < drawData->CmdListsCount; ++n)
         {
             const ::ImDrawList *list = drawData->CmdLists[n];
@@ -441,33 +380,50 @@ namespace NorvesLib::Modules::Gui
             {
                 continue;
             }
-            for (int v = 0; v < list->VtxBuffer.Size; ++v)
-            {
-                vertices.push_back(list->VtxBuffer[v]);
-            }
-            for (int i = 0; i < list->IdxBuffer.Size; ++i)
-            {
-                indices.push_back(list->IdxBuffer[i]);
-            }
+            vertexCount += static_cast<uint64_t>(list->VtxBuffer.Size);
+            indexCount += static_cast<uint64_t>(list->IdxBuffer.Size);
         }
-        if (vertices.empty() || indices.empty())
+        if (vertexCount == 0 || indexCount == 0)
         {
             return;
         }
 
-        // 飛行中スロットの VB/IB へ Upload する(同じスロットの前の利用は BeginFrame のフェンスで
-        // GPU 完了済みなので、書き換えや拡張による置き換えは前の提出と重ならない)。
-        RHI::BufferPtr vertexBuffer = m_VertexRing.Upload(
-            inFlightIndex, vertices.data(), static_cast<uint64_t>(vertices.size()) * sizeof(ImDrawVert));
-        RHI::BufferPtr indexBuffer = m_IndexRing.Upload(
-            inFlightIndex, indices.data(), static_cast<uint64_t>(indices.size()) * sizeof(ImDrawIdx));
-        if (!vertexBuffer || !indexBuffer)
+        // 全 ImDrawList の頂点/インデックスを、借りた切れ端 1 つずつへ連結して写す(imgui_impl_vulkan と
+        // 同方式)。ImDrawVert は mesh2d 頂点(pos/uv/col・stride 20)と完全一致のためそのまま写せる。
+        // 切れ端は借りたフレームの回収まで戻らず、前の提出や同じフレームの別の借りと重ならない。
+        const Core::Rendering::FrameUploadAllocation vertexAllocation = frameResources.AllocateUpload(
+            vertexCount * sizeof(ImDrawVert), Core::Rendering::FrameUploadUsage::Vertex);
+        const Core::Rendering::FrameUploadAllocation indexAllocation = frameResources.AllocateUpload(
+            indexCount * sizeof(ImDrawIdx), Core::Rendering::FrameUploadUsage::Index);
+        if (!vertexAllocation.IsValid() || !indexAllocation.IsValid())
         {
-            NORVES_LOG_WARNING(kLogCategory, "RenderDrawData: VB/IB upload failed");
+            NORVES_LOG_WARNING(kLogCategory, "RenderDrawData: VB/IB allocation failed");
             return;
         }
+        auto *vertexDst = static_cast<ImDrawVert *>(vertexAllocation.CPUAddress);
+        auto *indexDst = static_cast<ImDrawIdx *>(indexAllocation.CPUAddress);
+        for (int n = 0; n < drawData->CmdListsCount; ++n)
+        {
+            const ::ImDrawList *list = drawData->CmdLists[n];
+            if (list == nullptr)
+            {
+                continue;
+            }
+            const size_t listVertexBytes = static_cast<size_t>(list->VtxBuffer.Size) * sizeof(ImDrawVert);
+            const size_t listIndexBytes = static_cast<size_t>(list->IdxBuffer.Size) * sizeof(ImDrawIdx);
+            if (listVertexBytes != 0)
+            {
+                std::memcpy(vertexDst, list->VtxBuffer.Data, listVertexBytes);
+            }
+            if (listIndexBytes != 0)
+            {
+                std::memcpy(indexDst, list->IdxBuffer.Data, listIndexBytes);
+            }
+            vertexDst += list->VtxBuffer.Size;
+            indexDst += list->IdxBuffer.Size;
+        }
 
-        // ---- UBO(scale/translate)を更新する ----
+        // ---- UBO(scale/translate)を借りる ----
         // DisplaySize から NDC への線形変換。framebufferScale はピクセル↔フレームバッファの
         // 密度差(Retina 等)。Windows では通常 (1,1)。
         const ImVec2 displayPos = drawData->DisplayPos;
@@ -482,21 +438,20 @@ namespace NorvesLib::Modules::Gui
         transform.Scale[1] = 2.0f / displaySize.y;
         transform.Translate[0] = -1.0f - displayPos.x * transform.Scale[0];
         transform.Translate[1] = -1.0f - displayPos.y * transform.Scale[1];
-        // UBO は固定 16B でリサイズしないため、スロット buffer は Initialize で DescriptorSet へ
-        // 束ねた安定実体。ここでは中身のみ CPU マップ書き換えする(DescriptorSet は再 Update
-        // しない=描画中の vkUpdateDescriptorSets を起こさない)。飛行中のスロットで引くので、
-        // 同じ buffer を読んだ前の提出は BeginFrame のフェンスで GPU 完了済み。
-        RHI::BufferPtr uniformBuffer = m_UniformRing.Upload(inFlightIndex, &transform, sizeof(transform));
-        if (!uniformBuffer)
+        // UBO の切れ端と DescriptorSet をこの描画の分だけ借り、切れ端と共有フォントテクスチャ/
+        // サンプラーを束ねる(借りたセットは借りたフレームの回収まで前の提出が読むことは無い)。
+        const Core::Rendering::FrameUploadAllocation uniformAllocation = frameResources.AllocateConstants(transform);
+        RHI::DescriptorSetPtr descriptorSet = frameResources.AllocateDescriptorSet(m_DescriptorSetLayout).Set;
+        if (!uniformAllocation.IsValid() || !descriptorSet)
         {
-            NORVES_LOG_WARNING(kLogCategory, "RenderDrawData: UBO upload failed");
+            NORVES_LOG_WARNING(kLogCategory, "RenderDrawData: UBO/DescriptorSet allocation failed");
             return;
         }
-        RHI::DescriptorSetPtr descriptorSet = m_SlotDescriptorSets[inFlightIndex];
-        if (!descriptorSet)
-        {
-            return;
-        }
+        descriptorSet->BindConstantBuffer(0, uniformAllocation.Buffer, uniformAllocation.GetOffset32(),
+                                          static_cast<uint32_t>(sizeof(Mesh2DTransform)));
+        descriptorSet->BindTexture(1, m_FontTexture);
+        descriptorSet->BindSampler(1, m_FontSampler);
+        descriptorSet->Update();
 
         // back buffer 全体を覆う viewport(Mesh2D 経路は viewport を設定しないため明示する)。
         const float fbWidth = static_cast<float>(context.OverlayLoadFramebuffer->GetWidth());
@@ -556,8 +511,10 @@ namespace NorvesLib::Modules::Gui
                 command.Pipeline = m_Pipeline;
                 command.DescriptorSet = descriptorSet;
                 command.DescriptorSetSlot = 0;
-                command.Mesh2D.VertexBuffer = vertexBuffer;
-                command.Mesh2D.IndexBuffer = indexBuffer;
+                command.Mesh2D.VertexBuffer = vertexAllocation.Buffer;
+                command.Mesh2D.IndexBuffer = indexAllocation.Buffer;
+                command.Mesh2D.VertexBufferOffsetBytes = vertexAllocation.Offset;
+                command.Mesh2D.IndexBufferOffsetBytes = indexAllocation.Offset;
                 command.Mesh2D.IndexCount = cmd.ElemCount;
                 command.Mesh2D.IndexOffset = globalIdxOffset + cmd.IdxOffset;
                 command.Mesh2D.VertexOffset = static_cast<int32_t>(globalVtxOffset + cmd.VtxOffset);

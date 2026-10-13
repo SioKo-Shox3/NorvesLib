@@ -1,5 +1,6 @@
 ﻿#include "Rendering/CanvasView.h"
 #include "Rendering/DrawCommand.h"
+#include "Rendering/FrameResourceOwner.h"
 #include "Rendering/RenderGraph/IRenderGraphPass.h"
 #include "Rendering/RenderGraph/RenderGraph.h"
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
@@ -491,7 +492,10 @@ namespace NorvesLib::Core::Rendering
         }
 
     private:
+        // 板 1 枚の記述子セットを用意する。フレームの持ち主がいればこの描画の分を借りる（借りたフレームの回収まで
+        // 使えるので保持は要らない）。持ち主の無い文脈では使い回さないセットを作り、保持の組に入れて持つ
         RHI::DescriptorSetPtr CreateBoardDescriptorSet(ViewRenderContext& context,
+                                                       CanvasView::RetainedBoardFrameResources &retainedResources,
                                                        const RHI::TexturePtr &texture,
                                                        const RHI::SamplerPtr &sampler)
         {
@@ -503,10 +507,25 @@ namespace NorvesLib::Core::Rendering
                 return nullptr;
             }
 
-            const RHI::DescriptorSetDesc descriptorSetDesc = CreateBoardDescriptorSetDesc();
-            RHI::DescriptorSetPtr descriptorSet = context.Device->CreateDescriptorSet(descriptorSetDesc);
+            RHI::DescriptorSetPtr descriptorSet;
+            if (FrameResourceLane* frameResources = context.FrameResources)
+            {
+                if (m_Owner && m_Owner->m_BoardDescriptorSetLayout)
+                {
+                    descriptorSet = frameResources->AllocateDescriptorSet(m_Owner->m_BoardDescriptorSetLayout).Set;
+                }
+            }
+            else
+            {
+                descriptorSet = context.Device->CreateDescriptorSet(CreateBoardDescriptorSetDesc());
+                if (descriptorSet)
+                {
+                    retainedResources.DescriptorSets.push_back(descriptorSet);
+                }
+            }
             if (!descriptorSet)
             {
+                NORVES_LOG_ERROR("CanvasView", "板の記述子セットを用意できないため、このフレームは残りの板を描きません");
                 return nullptr;
             }
 
@@ -609,6 +628,7 @@ namespace NorvesLib::Core::Rendering
                                                                     context,
                                                                     m_Owner->m_BoardFallbackWhiteTexture);
                 RHI::DescriptorSetPtr descriptorSet = CreateBoardDescriptorSet(context,
+                                                                              retainedResources,
                                                                               texture,
                                                                               m_Owner->m_BoardPointClampSampler);
                 if (!descriptorSet)
@@ -622,7 +642,6 @@ namespace NorvesLib::Core::Rendering
                 executableCommand.DescriptorSet = descriptorSet;
                 executableCommand.DescriptorSetSlot = 0;
                 retainedResources.BoundTextures.push_back(texture);
-                retainedResources.DescriptorSets.push_back(descriptorSet);
                 executableCommands.push_back(executableCommand);
             }
 
@@ -731,11 +750,8 @@ namespace NorvesLib::Core::Rendering
             }
 
             RHI::PipelinePtr pipeline = CreateCompositePipeline(renderPass, context);
-            RHI::BufferPtr opacityBuffer = CreateOpacityBuffer(context);
-            RHI::DescriptorSetPtr descriptorSet = CreateCompositeDescriptorSet(context,
-                                                                               layerTexture,
-                                                                               opacityBuffer);
-            if (!pipeline || !opacityBuffer || !descriptorSet)
+            RHI::DescriptorSetPtr descriptorSet = CreateCompositeDescriptorSet(context, layerTexture);
+            if (!pipeline || !descriptorSet)
             {
                 return;
             }
@@ -747,9 +763,7 @@ namespace NorvesLib::Core::Rendering
             CanvasView::AddRetainedRenderPass(*m_RetainedResources, renderPass);
             CanvasView::AddRetainedFramebuffer(*m_RetainedResources, framebuffer);
             CanvasView::AddRetainedSampler(*m_RetainedResources, m_Owner->m_BoardPointClampSampler);
-            CanvasView::AddRetainedOpacityBuffer(*m_RetainedResources, opacityBuffer);
             m_RetainedResources->Pipelines.push_back(pipeline);
-            m_RetainedResources->DescriptorSets.push_back(descriptorSet);
             m_RetainedResources->BoundTextures.push_back(layerTexture);
 
             context.CommandList->BeginRenderPass(renderPass, framebuffer);
@@ -793,48 +807,65 @@ namespace NorvesLib::Core::Rendering
             return context.Device->CreateGraphicsPipeline(pipelineDesc);
         }
 
-        RHI::BufferPtr CreateOpacityBuffer(ViewRenderContext& context)
+        // 層の合成の不透明度の定数と記述子セットを用意する。フレームの持ち主がいればこの合成の分を借りる（借りたフレームの
+        // 回収まで使えるので保持は要らない）。持ち主の無い文脈では使い回さない定数とセットを作り、保持の組に入れて持つ
+        RHI::DescriptorSetPtr CreateCompositeDescriptorSet(ViewRenderContext& context,
+                                                          const RHI::TexturePtr &layerTexture)
         {
-            if (!context.Device)
-            {
-                return nullptr;
-            }
-
-            RHI::BufferPtr buffer = context.Device->CreateBuffer(
-                RHI::BufferDesc(CanvasLayerOpacityParamsSize,
-                                RHI::ResourceUsage::ConstantBuffer,
-                                true,
-                                "CanvasLayerOpacityParams"));
-            if (!buffer)
+            if (!context.Device || !layerTexture || !m_Owner->m_BoardPointClampSampler)
             {
                 return nullptr;
             }
 
             CanvasLayerOpacityParams params;
             params.Opacity = ClampCanvasLayerOpacity(m_LayerSnapshot.Opacity);
-            buffer->Update(&params, CanvasLayerOpacityParamsSize, 0u);
-            return buffer;
-        }
+            static_assert(sizeof(CanvasLayerOpacityParams) == CanvasLayerOpacityParamsSize,
+                          "層の不透明度の定数の大きさがシェーダの UBO と合わない");
 
-        RHI::DescriptorSetPtr CreateCompositeDescriptorSet(ViewRenderContext& context,
-                                                          const RHI::TexturePtr &layerTexture,
-                                                          const RHI::BufferPtr &opacityBuffer)
-        {
-            if (!context.Device || !layerTexture || !opacityBuffer || !m_Owner->m_BoardPointClampSampler)
+            RHI::BufferPtr opacityBuffer;
+            uint32_t opacityOffset = 0u;
+            RHI::DescriptorSetPtr descriptorSet;
+            if (FrameResourceLane* frameResources = context.FrameResources)
             {
-                return nullptr;
+                const FrameUploadAllocation opacityAllocation = frameResources->AllocateConstants(params);
+                if (opacityAllocation.IsValid())
+                {
+                    opacityBuffer = opacityAllocation.Buffer;
+                    opacityOffset = opacityAllocation.GetOffset32();
+                }
+                if (m_Owner->m_LayerCompositeDescriptorSetLayout)
+                {
+                    descriptorSet =
+                        frameResources->AllocateDescriptorSet(m_Owner->m_LayerCompositeDescriptorSetLayout).Set;
+                }
             }
-
-            RHI::DescriptorSetPtr descriptorSet =
-                context.Device->CreateDescriptorSet(CreateCanvasLayerCompositeDescriptorSetDesc());
-            if (!descriptorSet)
+            else
             {
+                opacityBuffer = context.Device->CreateBuffer(
+                    RHI::BufferDesc(CanvasLayerOpacityParamsSize,
+                                    RHI::ResourceUsage::ConstantBuffer,
+                                    true,
+                                    "CanvasLayerOpacityParams"));
+                if (opacityBuffer)
+                {
+                    opacityBuffer->Update(&params, CanvasLayerOpacityParamsSize, 0u);
+                    CanvasView::AddRetainedOpacityBuffer(*m_RetainedResources, opacityBuffer);
+                }
+                descriptorSet = context.Device->CreateDescriptorSet(CreateCanvasLayerCompositeDescriptorSetDesc());
+                if (descriptorSet)
+                {
+                    m_RetainedResources->DescriptorSets.push_back(descriptorSet);
+                }
+            }
+            if (!opacityBuffer || !descriptorSet)
+            {
+                NORVES_LOG_ERROR("CanvasView", "層の合成の定数か記述子セットを用意できないため、このフレームはこの層を合成しません");
                 return nullptr;
             }
 
             descriptorSet->BindTexture(0, layerTexture);
             descriptorSet->BindSampler(0, m_Owner->m_BoardPointClampSampler);
-            descriptorSet->BindConstantBuffer(1, opacityBuffer, 0u, CanvasLayerOpacityParamsSize);
+            descriptorSet->BindConstantBuffer(1, opacityBuffer, opacityOffset, CanvasLayerOpacityParamsSize);
             descriptorSet->Update();
             return descriptorSet;
         }
@@ -1364,6 +1395,18 @@ namespace NorvesLib::Core::Rendering
                 NORVES_LOG_ERROR("CanvasView", "Failed to create board point clamp sampler");
                 return false;
             }
+        }
+
+        // フレームの持ち主から借りるセットのレイアウト。作れない描画バックエンドでは null のままで、借りる経路だけが
+        // 描かない（持ち主の無い文脈はレイアウトを使わない）
+        if (!m_BoardDescriptorSetLayout)
+        {
+            m_BoardDescriptorSetLayout = device->GetOrCreateDescriptorSetLayout(CreateBoardDescriptorSetDesc());
+        }
+        if (!m_LayerCompositeDescriptorSetLayout)
+        {
+            m_LayerCompositeDescriptorSetLayout =
+                device->GetOrCreateDescriptorSetLayout(CreateCanvasLayerCompositeDescriptorSetDesc());
         }
 
         return true;

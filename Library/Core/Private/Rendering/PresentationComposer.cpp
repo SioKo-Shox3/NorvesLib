@@ -1,5 +1,6 @@
-#include "Rendering/PresentationComposer.h"
+﻿#include "Rendering/PresentationComposer.h"
 #include "Rendering/FrameCommand.h"
+#include "Rendering/PresentationPass.h"
 #include "Rendering/RenderGraph/RenderGraph.h"
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
 #include "Rendering/SceneRenderer.h"
@@ -41,14 +42,16 @@ namespace NorvesLib::Core::Rendering
         request.CommandList->SetScissor(scissor);
 
         const RHI::TexturePtr presentationTexture = ResolvePresentationTexture(context);
-        const bool bCanBlitToSwapChain =
-            presentationTexture && request.BlitPipeline && request.BlitDescriptorSet;
+        // Blit の記述子セットはこの合成の分をフレームの持ち主から借りる（持ち主の無い文脈は request の使い回しのセット）
+        RHI::DescriptorSetPtr blitDescriptorSet;
+        if (presentationTexture && request.BlitPipeline)
+        {
+            blitDescriptorSet = PreparePresentationBlitDescriptorSet(
+                context, renderPass, presentationTexture, request.BlitSampler, request.BlitDescriptorSet);
+        }
+        const bool bCanBlitToSwapChain = static_cast<bool>(blitDescriptorSet);
         if (bCanBlitToSwapChain)
         {
-            request.BlitDescriptorSet->BindTexture(0, presentationTexture);
-            request.BlitDescriptorSet->BindSampler(0, request.BlitSampler);
-            request.BlitDescriptorSet->Update();
-
             if (request.OutCaptureSource)
             {
                 request.OutCaptureSource->Texture = presentationTexture;
@@ -64,7 +67,7 @@ namespace NorvesLib::Core::Rendering
             viewport,
             scissor,
             bCanBlitToSwapChain ? request.BlitPipeline : nullptr,
-            bCanBlitToSwapChain ? request.BlitDescriptorSet : nullptr));
+            bCanBlitToSwapChain ? blitDescriptorSet : nullptr));
         request.Renderer->ExecuteFrameCommands(commands, request.CommandList);
         return true;
     }

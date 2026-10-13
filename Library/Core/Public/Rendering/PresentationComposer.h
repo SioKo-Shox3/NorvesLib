@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "Rendering/FrameCaptureTypes.h"
 #include "RHI/RHITypes.h"
@@ -24,6 +24,7 @@ namespace NorvesLib::Core::Rendering
         RHI::FramebufferPtr ClearFramebuffer;
         RHI::FramebufferPtr LoadFramebuffer;
         RHI::PipelinePtr BlitPipeline;
+        /** フレームの持ち主の無い文脈でだけ使う記述子セット（持ち主がいれば合成ごとに借りる。PreparePresentationBlitDescriptorSet） */
         RHI::DescriptorSetPtr BlitDescriptorSet;
         RHI::SamplerPtr BlitSampler;
 
