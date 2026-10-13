@@ -3897,3 +3897,13 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 補助（verify の外、照合が違いを見つけることの確認）: 全体の列の 5 番目の要素だけクラスタの番号を 1 ビット変えたシェーダーで撮った（`aux-SCN-MEGA-BINNING-PREP-fault.txt`、`.harness/runs/scene-capture/SCN-MEGA-BINNING-PREP/fault`）。数は一致したまま `MEGA_BIN mismatch=2 ... hash_mismatch=2` が ERROR で出た。シェーダーは元に戻した。
 - Next: SCN-MEGA-BINNING-SWITCH。
 - Notes: 撮影のスクリプトは Game.log の ERROR では落ちない（`-RequireChecks` の ENGINE_CHECK だけを見る）ので、`MEGA_BIN` の合否はログを開いて確かめた。照合を ENGINE_CHECK に載せるには、描画スレッドから `EngineChecks`（GameThread だけが読み書きする）へ渡す口が要る（このタスクの paths の外）。`GeometryPageRequestVulkanTest`（ctest、GPU）は `cluster_cull.comp` を自前のディスクリプタセットの形（binding 0〜13・22）で作るので、`cluster_cull.comp` が binding 23・24 を使うようになった分を足す必要がある（試験は paths の外で、verify にも無い）。全体の列の容量（約 419 万）は 5000 個の mega-stress で最大 42 万。100 万本・混在の足りる・足りないは SCN-MEGA-ACCEPT-1M の `visible_list_overflow`・`visible_list_peak` で判断する。性能は測っていない。試験の追加はしていない。
+
+### SCN-MEGA-BINNING-PREP（2026-10-14、反復 1・run 20261014-061910、評価の 1 周目の差し戻しへの対応）
+- Done: 全体の列を確保できなかったときも `MEGA_CAPACITY` の枠と溢れが正しく出るようにした。全体の列へ積もうとした数（数えのバッファの頭の語 0）を、照合の有無によらず統計を読み戻すフレームごとに `CopyBuffer` で統計の 16 へ写す（照合のシェーダー `mega_bin_check.comp` の同じ語への書き込みは外し、書き手を 1 つにした）。フレームの列の容量（確保できなければ 0）を `PendingStats::VisibleListCapacity` に持ち、照合の `listed` と `MEGA_CAPACITY` の `visible_list_capacity`・`visible_list_overflow`（積もうとした数 − 容量）・`visible_list_peak`（読み戻したフレームごと）をこれから出す。数えのバッファは写しの後に UnorderedAccess へ戻す（照合したフレームは IndirectArgument から）。
+- 評価の指摘 1（`GeometryPageRequestVulkanTest` が束縛 23・24 を持たない）は、親の決定どおり直していない（ctest から外した写しの試験）。
+- 検証（`.harness/runs/20261014-061910/`）:
+  - `verify-SCN-MEGA-BINNING-PREP-1.txt`: RelWithDebInfo の Game のビルド EXIT=0、error 0。
+  - `verify-SCN-MEGA-BINNING-PREP-2.txt`: mega-stress 5000 個（動き 1%・区画 64 m）overview、result=pass、EXIT=0。`-2.stress.Game.log` の `[ERROR]` 0、`MEGA_BIN` 7 行すべて mismatch=0（例: `entries=350066 old=350066 sw_entries=343958 old_sw=343958 bins=56`。`entries` は写した数から出すので、写しの経路が照合と一致することの確認にもなる）、`MEGA_CAPACITY` 7 行すべて `visible_list_capacity=4194304 visible_list_overflow=0`・`draw_dropped=0`・`bvh_overflow=0`、`visible_list_peak` は最大 422444（前の反復と同じ）。
+  - `verify-SCN-MEGA-BINNING-PREP-3.txt`: バナナ 1 万本 overview、result=pass、EXIT=0。`-3.bananas.Game.log` の `[ERROR]` 0、`MEGA_BIN` 10 行すべて mismatch=0（例: `entries=364821 old=364821 sw_entries=361769 old_sw=361769 bins=4`）、`visible_list_overflow=0`・`visible_list_peak` は最大 367658、`MEGA_OCCLUSION pass1=364821 pass2_tested=367654 occluded=2833` は前の反復と同じ。PNG はバナナの散布と 3 つの山が以前どおり。
+- Next: SCN-MEGA-BINNING-SWITCH。
+- Notes: 列の確保の失敗そのものは実機で再現していない（64 MB の確保は通る）。確保できないときシェーダーは列の代わりに結んだ仮のバッファの長さ（8 要素）を容量として見るが、その 8 要素は使えないので、ログの容量は 0 として積もうとした数をそのまま溢れに出す。試験の追加はしていない。

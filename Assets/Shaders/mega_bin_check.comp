@@ -113,7 +113,6 @@ void main()
 
     if (index == 0u)
     {
-        stats[STAT_BIN_LIST_ATTEMPTED] = binCounters[BIN_LIST_COUNTER];
         stats[STAT_BIN_OLD_COUNT] = oldTotal;
         stats[STAT_BIN_OLD_SW] = swFirst + swSecond;
     }

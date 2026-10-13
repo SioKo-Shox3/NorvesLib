@@ -1159,6 +1159,7 @@ namespace NorvesLib::Core::Rendering
             uint32_t SwDispatches = 0; // このフレームで sink が記録したソフトの dispatch の数（GPU の統計ではなく CPU の記録の数）
             bool bBinCheck = false;    // このフレームが binning の新旧の照合を記録し、統計の 17〜30 が有効
             uint32_t BinCount = 0;     // 区画の数（パスの数 × 区間の数 × 2）
+            uint32_t VisibleListCapacity = 0; // このフレームの全体の列の要素の数（列を確保できなかったときは 0）。統計の 16 は照合によらず有効
         };
         bool m_bStatsEpochActive = false;
         bool m_bDropVisibilityContinuity = false; // 決定的な撮影のエポックの最初のフレーム: 見えたビットを引き継がない

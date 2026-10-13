@@ -170,6 +170,7 @@ namespace NorvesLib::Core::Rendering
         // 旧の区間の接頭和（要素の数 + 1）が続く
         constexpr uint32_t BinCounterBinding = 24;
         constexpr uint32_t BinCheckMarkBinding = 25;
+        constexpr uint32_t BinListCounterWord = 0; // 全体の列へ積もうとした数（BIN_LIST_COUNTER）
         constexpr uint32_t BinCheckArgsWord = 4;
         constexpr uint32_t BinCountWord = 8;
         constexpr uint32_t BinSlotWord = 9;
@@ -3184,6 +3185,7 @@ namespace NorvesLib::Core::Rendering
         {
             statsSlot->bBinCheck = bBinCheck;
             statsSlot->BinCount = binCount;
+            statsSlot->VisibleListCapacity = m_VisibleListBuffer ? VisibleListCapacity : 0u;
         }
         // 数えを 0 にし、頭の語（区画の数・区間の表の要素の数・ソフトの一覧の容量・照合の印）を書く。
         // 転送どうしの書き込みが重ならないよう、頭の語の前後を分けて 0 で埋める
@@ -3735,9 +3737,19 @@ namespace NorvesLib::Core::Rendering
 
             if (statsSlot)
             {
-                // 統計のシェーダーの書き込みを、ホストの読み取りへ見せる。提出の完了の後に OnFrameReadback で受け取る
+                // 全体の列へ積もうとした数を、照合とは別に数えのバッファから統計へ写す（列を確保できず照合しないフレームでも
+                // MEGA_CAPACITY の溢れと最大を出すため）。数えは照合の間接 dispatch の引数として読まれた後か、判定と接頭和の書き込みの後
+                cmdList->BufferBarrier(m_BinCounterBuffer,
+                                       bBinCheck ? RHI::ResourceState::IndirectArgument : RHI::ResourceState::UnorderedAccess,
+                                       RHI::ResourceState::CopySource);
+                cmdList->BufferBarrier(statsBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::CopyDest);
+                cmdList->CopyBuffer(m_BinCounterBuffer, statsBuffer, sizeof(uint32_t),
+                                    static_cast<uint64_t>(BinListCounterWord) * sizeof(uint32_t),
+                                    static_cast<uint64_t>(StatBinListAttempted) * sizeof(uint32_t));
+                cmdList->BufferBarrier(m_BinCounterBuffer, RHI::ResourceState::CopySource, RHI::ResourceState::UnorderedAccess);
+                // 統計のシェーダーと写しの書き込みを、ホストの読み取りへ見せる。提出の完了の後に OnFrameReadback で受け取る
                 cmdList->BufferBarrier(statsBuffer,
-                                       RHI::ResourceState::UnorderedAccess,
+                                       RHI::ResourceState::CopyDest,
                                        RHI::ResourceState::HostRead);
                 m_PendingStats.push_back(*statsSlot);
             }
@@ -6009,15 +6021,16 @@ namespace NorvesLib::Core::Rendering
         // 書いたフレームの提出は完了している
         // エポックが始まっていれば相対フレームが30の倍数のフレームで出す（撮影の間で同じ相対フレームを突き合わせられる）
         const bool bSampleFrame = pending.EpochFrame >= 0 ? (pending.EpochFrame % 30 == 0) : (pending.Frame % 30 == 0);
+        // 全体の列へ積もうとした数は、照合の有無・列の確保の成否によらず読み戻したフレームごとに有効
+        const uint32_t visibleListAttempted = stats[StatBinListAttempted];
+        m_VisibleListPeak = std::max(m_VisibleListPeak, visibleListAttempted);
 
         // 可視クラスタの binning の新旧の照合（照合したフレームごと）。新は全体の列（容量で頭打ち）、旧は区間ごとのコマンドと
         // ソフトの一覧。数・範囲の外の要素・詰めた位置の重なり・区間ごとの数・集合の hash の和のどれかが違えば mismatch に数え、
         // 0 でなければ ERROR で出す（続けて違うときは、記録するフレームだけ出す）
         if (pending.bBinCheck)
         {
-            const uint32_t attempted = stats[StatBinListAttempted];
-            m_VisibleListPeak = std::max(m_VisibleListPeak, attempted);
-            const uint32_t listed = std::min(attempted, VisibleListCapacity);
+            const uint32_t listed = std::min(visibleListAttempted, pending.VisibleListCapacity);
             const auto difference = [](uint32_t a, uint32_t b) -> uint32_t { return a > b ? a - b : b - a; };
             const auto hashDiffers = [stats](uint32_t newWord, uint32_t oldWord) -> uint32_t
             { return (stats[newWord] != stats[oldWord] || stats[newWord + 1u] != stats[oldWord + 1u]) ? 1u : 0u; };
@@ -6080,11 +6093,11 @@ namespace NorvesLib::Core::Rendering
             // 2 パス目の根の入力が溢れて全部の根を判定し直したか、bvh_node_peak・bvh_leaf_peak は節の列の 1 段・葉の列へ
             // 積もうとした数の最大（容量を超えた分も含む）。BVH の列（bvh_queue_bytes）は本数によらず一定。
             // visible_list_* は可視クラスタの全体の列（全パス通しの固定容量）: 枠（要素数・バイト数）、このフレームの溢れ
-            // （積もうとした数 − 容量。0 が合格）、積もうとした数の最大（照合したフレームの読み戻しから）
+            // （積もうとした数 − 容量。列を確保できなかったときは容量 0 で、積もうとした数がそのまま溢れ。0 が合格）、
+            // 積もうとした数の最大（読み戻したフレームから）
             const auto bufferBytes = [](const RHI::BufferPtr &buffer) -> unsigned long long
             { return buffer ? static_cast<unsigned long long>(buffer->GetSize()) : 0ull; };
-            const uint32_t visibleListAttempted = pending.bBinCheck ? stats[StatBinListAttempted] : 0u;
-            const uint32_t visibleListCapacity = m_VisibleListBuffer ? VisibleListCapacity : 0u;
+            const uint32_t visibleListCapacity = pending.VisibleListCapacity;
             NORVES_LOG_INFO("MegaGeometryPass",
                             "MEGA_CAPACITY draw_dropped=%u max_draw_count=%u command_capacity=%u "
                             "visibility_bytes=%llu indirect_bytes=%llu draw_info_bytes=%llu "

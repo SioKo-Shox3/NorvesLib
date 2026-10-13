@@ -324,7 +324,7 @@ const uint BIN_CHECK_STAMP_WORD = 11u;
 const uint BIN_HEADER_WORDS = 16u;
 
 // 統計（binding 6）の binning の語（MegaGeometryPass.cpp の OnFrameReadback が読む）
-const uint STAT_BIN_LIST_ATTEMPTED = 16u; // 全体の列へ積もうとした数（mega_bin_prefix.comp が書く）
+const uint STAT_BIN_LIST_ATTEMPTED = 16u; // 全体の列へ積もうとした数（統計を読み戻すフレームごとに、照合とは別にホストが数えの BIN_LIST_COUNTER から写す）
 const uint STAT_BIN_OLD_COUNT = 17u;      // 旧の経路のコマンドの数（両パス）
 const uint STAT_BIN_NEW_SW = 18u;         // 全体の列のうちソフトの区画の要素の数
 const uint STAT_BIN_OLD_SW = 19u;         // 旧の経路のソフトの一覧の要素の数（両パス）
