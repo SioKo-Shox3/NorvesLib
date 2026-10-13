@@ -43,6 +43,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <cwchar>
 #include <iterator>
 
 namespace NorvesLib::Core::Rendering
@@ -53,6 +54,34 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t VirtualTextureFeedbackBindingIndex = 7;
         // メッシュの表の binding（Common/MegaInstanceTable.glsl の MEGA_MESH_BINDING。カリングと描画のセットで同じ番号）
         constexpr uint32_t MegaMeshTableBindingIndex = 22;
+
+        // 値を持たない起動引数（flag）があるか。起動引数は ApplicationProcessor の外（描画の層）でも読めるよう、
+        // プロセスのコマンドラインを直接見る（VirtualShadowMapPass の --vsm-cache と同じ）
+        bool HasProcessCommandLineFlag(const wchar_t *flag)
+        {
+#if defined(_WIN32)
+            const wchar_t *commandLine = GetCommandLineW();
+            if (commandLine == nullptr)
+            {
+                return false;
+            }
+            const size_t flagLength = std::wcslen(flag);
+            for (const wchar_t *found = std::wcsstr(commandLine, flag); found != nullptr;
+                 found = std::wcsstr(found + 1, flag))
+            {
+                // 引数の先頭から末尾までが flag と一致するものだけ（--mega-flat-path-x などを取り違えない）
+                const bool bStartsArgument = found == commandLine || found[-1] == L' ' || found[-1] == L'"';
+                const wchar_t next = found[flagLength];
+                if (bStartsArgument && (next == L'\0' || next == L' ' || next == L'"'))
+                {
+                    return true;
+                }
+            }
+#else
+            (void)flag;
+#endif
+            return false;
+        }
     } // namespace
 
     using namespace Container;
@@ -263,7 +292,7 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
-        // グループの BVH のたどりを切って、平らなクラスタの列だけで判定する（撮り比べ用）
+        // グループの BVH のたどりを切って、平らなクラスタの列だけで判定する（撮り比べ用。既定はたどる）
 #if defined(_MSC_VER)
 #pragma warning(push)
 #pragma warning(disable : 4996)
@@ -273,6 +302,11 @@ namespace NorvesLib::Core::Rendering
 #pragma warning(pop)
 #endif
         if (bvhValue != nullptr && (std::strcmp(bvhValue, "0") == 0 || std::strcmp(bvhValue, "off") == 0))
+        {
+            m_Settings.bUseGroupBVH = false;
+        }
+        // 既定は全インスタンスを BVH の経路でたどる。--mega-flat-path で平らな経路（cluster_cull.comp・FirstGroup の接頭和）へ戻す
+        if (HasProcessCommandLineFlag(L"--mega-flat-path"))
         {
             m_Settings.bUseGroupBVH = false;
         }
@@ -1344,7 +1378,8 @@ namespace NorvesLib::Core::Rendering
 
     bool MegaGeometryPass::CanTraverseSceneBvh(const MegaGeometry::MegaMeshGPUData *data) const
     {
-        // グループの BVH を持つメッシュ（NVMESH v1.1）は BVH をたどって判定し、それ以外は平らなクラスタの列で判定する
+        // グループの BVH を持つメッシュ（NVMESH v1.1 の焼き込み、または読み込み時に実行時に作ったもの）は BVH をたどって判定し、
+        // BVH を作れなかったメッシュだけが平らなクラスタの列で判定する
         return IsSceneBvhAvailable() && data && data->GroupBVHNodeCount > 0 && data->GroupBVHBufferBytes > 0 &&
                !data->GroupBVHLevelNodeCounts.empty() &&
                data->GroupBVHLevelNodeCounts.size() <= MegaGeometry::GROUP_BVH_MAX_LEVELS;

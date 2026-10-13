@@ -258,8 +258,10 @@ namespace NorvesLib::Core::Rendering
         }
 
         // BVH を持たずに渡されたメッシュ（v1.0・手続き・実行時に作るメッシュ）に、葉 8 クラスタ以下のグループの BVH を作る。
-        // 葉は並べ替えの表の連続した範囲で、クラスタの記録は並べ替えない。まだ描画には使わない
+        // 葉は並べ替えの表の連続した範囲で、クラスタの記録は並べ替えない。区画の末尾へ節と並べ替えの表を書き、
+        // 描画は BVH の経路でたどる（葉のクラスタの判定が表でクラスタの番号を引く）
         MegaGeometry::BuiltClusterBVH builtBVH;
+        bool bUploadBuiltBVH = false;
         if (createInfo.GroupBVH.empty())
         {
             const LoadProfileClock::time_point bvhStart = LoadProfileNow();
@@ -280,8 +282,15 @@ namespace NorvesLib::Core::Rendering
                             static_cast<uint32_t>(builtBVH.LevelNodeCounts.size()), bvhViolations, bvhBuildMs);
             if (bvhViolations > 0u)
             {
+                // 約束を破った BVH は GPU へ書かず、このメッシュは平らなクラスタの列で判定する
                 NORVES_LOG_ERROR("MegaGeometryResources", "実行時に作ったグループの BVH が約束を破っています: %s violations=%u",
                                  createInfo.DebugName.c_str(), bvhViolations);
+            }
+            else
+            {
+                bUploadBuiltBVH = true;
+                groupBVHLevelNodeCounts = builtBVH.LevelNodeCounts;
+                groupBVHLeafCount = builtBVH.LeafCount;
             }
         }
 
@@ -361,9 +370,12 @@ namespace NorvesLib::Core::Rendering
         const uint64_t clusterRegionOffset = 0;
         const uint64_t vertexRegionOffset = AlignUpBytes(clusterBytes, RegionAlignmentBytes);
         const uint64_t indexRegionOffset = AlignUpBytes(vertexRegionOffset + vertexBytes, RegionAlignmentBytes);
-        // グループの BVH は区画の末尾（BVH が無いメッシュの区画は従来のまま）
+        // グループの BVH は区画の末尾。実行時に作った BVH は、節の配列の直後にクラスタの並べ替えの表（uint32）を続ける
+        const uint32_t groupBVHNodeCount = bUploadBuiltBVH ? static_cast<uint32_t>(builtBVH.Nodes.size())
+                                                           : static_cast<uint32_t>(createInfo.GroupBVH.size());
+        const uint64_t groupBVHNodeBytes = static_cast<uint64_t>(groupBVHNodeCount) * sizeof(MegaGeometry::GPUGroupBVHNode);
         const uint64_t groupBVHBytes =
-            static_cast<uint64_t>(createInfo.GroupBVH.size()) * sizeof(MegaGeometry::GPUGroupBVHNode);
+            groupBVHNodeBytes + (bUploadBuiltBVH ? static_cast<uint64_t>(builtBVH.ClusterOrder.size()) * sizeof(uint32_t) : 0ull);
         const uint64_t groupBVHRegionOffset =
             groupBVHBytes > 0 ? AlignUpBytes(indexRegionOffset + indexBytes, RegionAlignmentBytes) : 0;
         const uint64_t regionBytes = groupBVHBytes > 0 ? groupBVHRegionOffset + groupBVHBytes : indexRegionOffset + indexBytes;
@@ -458,7 +470,23 @@ namespace NorvesLib::Core::Rendering
         const double vertexUploadMs = LoadProfileElapsedMs(vertexStageStartTime) + allocateMs;
         auto indexStageStartTime = LoadProfileNow();
         std::memcpy(stagedBytes.data() + indexRegionOffset, uploadIndexData, static_cast<size_t>(indexBytes));
-        if (groupBVHBytes > 0)
+        if (bUploadBuiltBVH)
+        {
+            // 葉の First・Count は並べ替えの表の位置なので、GPU が表を引くよう葉に印を付けて書く
+            for (uint32_t nodeIndex = 0; nodeIndex < groupBVHNodeCount; ++nodeIndex)
+            {
+                MegaGeometry::GPUGroupBVHNode node = builtBVH.Nodes[nodeIndex];
+                if ((node.Flags & MegaGeometry::GPU_GROUP_BVH_NODE_FLAG_LEAF) != 0u)
+                {
+                    node.Flags |= MegaGeometry::GPU_GROUP_BVH_NODE_FLAG_CLUSTER_ORDER;
+                }
+                std::memcpy(stagedBytes.data() + groupBVHRegionOffset + static_cast<size_t>(nodeIndex) * sizeof(node), &node,
+                            sizeof(node));
+            }
+            std::memcpy(stagedBytes.data() + groupBVHRegionOffset + groupBVHNodeBytes, builtBVH.ClusterOrder.data(),
+                        builtBVH.ClusterOrder.size() * sizeof(uint32_t));
+        }
+        else if (groupBVHBytes > 0)
         {
             std::memcpy(stagedBytes.data() + groupBVHRegionOffset, createInfo.GroupBVH.data(),
                         static_cast<size_t>(groupBVHBytes));
@@ -486,7 +514,7 @@ namespace NorvesLib::Core::Rendering
         {
             gpuData.GroupBVHBufferOffsetBytes = leaseRef.GetOffsetBytes() + groupBVHRegionOffset;
             gpuData.GroupBVHBufferBytes = groupBVHBytes;
-            gpuData.GroupBVHNodeCount = static_cast<uint32_t>(createInfo.GroupBVH.size());
+            gpuData.GroupBVHNodeCount = groupBVHNodeCount;
             gpuData.GroupBVHLeafCount = groupBVHLeafCount;
             gpuData.GroupBVHLevelNodeCounts = groupBVHLevelNodeCounts;
         }
@@ -640,7 +668,6 @@ namespace NorvesLib::Core::Rendering
             entry.Data = std::move(gpuData);
             entry.Region = std::move(regionHolder);
             entry.StagedBytes = std::move(stagedBytes);
-            entry.BuiltBVH = std::move(builtBVH);
             if (!pageLinks.PinnedPages.empty())
             {
                 entry.PinnedPages.assign(pageLinks.PageCount, 0);

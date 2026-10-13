@@ -81,11 +81,20 @@ struct BvhNode
 };
 
 const uint BVH_NODE_FLAG_LEAF = 1u;
+// 葉の First・Count が、節の配列の直後に置いたクラスタの並べ替えの表の位置（実行時に作った BVH。
+// MegaGeometryTypes.h の GPU_GROUP_BVH_NODE_FLAG_CLUSTER_ORDER と同じ）
+const uint BVH_NODE_FLAG_CLUSTER_ORDER = 2u;
 
 // このメッシュの BVH の節の配列（インスタンスの表の bvhInfo.xy のデバイスアドレスから引く）
 layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer BvhNodeArray
 {
     BvhNode nodes[];
+};
+
+// 実行時に作った BVH のクラスタの並べ替えの表（位置 → クラスタの番号）。節の配列（bvhInfo.z 個）の直後に置く
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer BvhClusterOrderArray
+{
+    uint clusters[];
 };
 
 struct DrawIndexedIndirectCommand

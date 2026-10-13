@@ -5,8 +5,9 @@
 // ========================================
 // Mega Geometry クラスタカリング コンピュートシェーダー（グループの BVH をたどる経路）
 //
-// グループの BVH（NVMESH v1.1）を持つメッシュのインスタンスを、BVH の段ごとの dispatch でたどる（1パスにつき、
-// 段の数 + 葉のクラスタの判定の1回）。BVH を持たないメッシュは cluster_cull.comp が受け持つ。
+// グループの BVH（NVMESH v1.1 の焼き込み、または読み込み時に実行時に作ったもの）を持つメッシュのインスタンスを、BVH の
+// 段ごとの dispatch でたどる（1パスにつき、段の数 + 葉のクラスタの判定の1回）。BVH を持たないメッシュ（実行時に作れなかった
+// もの）と、--mega-flat-path のときの全インスタンスは cluster_cull.comp が受け持つ。
 //
 // 節の判定の段（bvhStage = 段の番号）:
 //   入力の列（段0はインスタンスの表の先頭 bvhRootCount 個の根の節。段1以降は前の段が積んだ列）の各要素（インスタンス・節）を
@@ -15,7 +16,8 @@
 //   葉は葉の列へ積む。入力の数は bvhCounters[bvhStage]（段0は bvhRootCount）で、列の大きさ（dispatch の大きさ）は
 //   CPU が段ごとの節の数の合計から決める（各節の親は1つなので、段の列はあふれない）。
 // 葉のクラスタの判定（bvhStage = BVH_STAGE_CLUSTERS）:
-//   葉の列の1要素を BVH_LEAF_SLOTS 個のスレッドが1クラスタずつ受け持ち、cluster_cull.comp と同じ判定
+//   葉の列の1要素を BVH_LEAF_SLOTS 個のスレッドが1クラスタずつ受け持ち（実行時に作った BVH の葉は、節の配列の直後の
+//   並べ替えの表でクラスタの番号を引く）、cluster_cull.comp と同じ判定
 //   （ProcessCluster）にかけて描画コマンドを積む。
 //
 // 段の間は CPU が UAV のバリアを入れ、段ごとのカウンタ（bvhCounters）は各パスの先頭で0にする。
@@ -114,7 +116,17 @@ void ClusterStage()
     g_LODSphere = instance.lodSphere;
     g_Clusters = ClusterArray(uvec2(instance.clusterInfo.x, instance.clusterInfo.y));
 
-    ProcessCluster(instanceIndex, instance, node.info.y + memberSlot);
+    // 焼き込みの BVH の葉はクラスタの連続した範囲。実行時に作った BVH の葉は並べ替えの表の範囲なので、表でクラスタの番号を引く
+    uint clusterIndex = node.info.y + memberSlot;
+    if ((node.info.w & BVH_NODE_FLAG_CLUSTER_ORDER) != 0u)
+    {
+        uint carry;
+        uint orderLow = uaddCarry(instance.bvhInfo.x, instance.bvhInfo.z * 32u, carry);
+        BvhClusterOrderArray order = BvhClusterOrderArray(uvec2(orderLow, instance.bvhInfo.y + carry));
+        clusterIndex = order.clusters[clusterIndex];
+    }
+
+    ProcessCluster(instanceIndex, instance, clusterIndex);
 }
 
 void main()

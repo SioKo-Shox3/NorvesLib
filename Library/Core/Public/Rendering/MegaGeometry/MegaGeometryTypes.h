@@ -114,6 +114,10 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
 
     /** @brief GPUGroupBVHNode::Flags: 葉（First から Count 個のクラスタを持つ） */
     constexpr uint32_t GPU_GROUP_BVH_NODE_FLAG_LEAF = 1u;
+    /** @brief GPUGroupBVHNode::Flags（GPU へ書いた葉だけ）: First・Count がクラスタの番号ではなく、節の配列の直後に置いた
+     * 並べ替えの表（uint32 の列。位置 → クラスタの番号）の位置（実行時に作った BVH。MegaGeometryBvhBuilder.h）。
+     * Common/MegaGeometryCull.glsl の BVH_NODE_FLAG_CLUSTER_ORDER と同じ */
+    constexpr uint32_t GPU_GROUP_BVH_NODE_FLAG_CLUSTER_ORDER = 2u;
     /** @brief 葉が持つクラスタの最大数・内部の節が持つ子の最大数・BVH
      * の段の最大数（NVMESH v1.1 と同じ） */
     constexpr uint32_t GROUP_BVH_MAX_LEAF_CLUSTERS = 8;
@@ -493,6 +497,7 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
          *
          * クラスタ・頂点・インデックスと同じ塊のバッファにあり、GPU
          * はデバイスアドレス（塊の先頭 + オフセット）で引く。
+         * 実行時に作った BVH は、節の配列の直後にクラスタの並べ替えの表（ClusterCount 個の uint32）が続き、大きさに含む。
          */
         uint64_t GroupBVHBufferOffsetBytes = 0;
         uint64_t GroupBVHBufferBytes = 0;

@@ -124,10 +124,11 @@ namespace NorvesLib::Core::Rendering
         float LODBias = 1.0f;
 
         /**
-         * @brief グループの BVH（NVMESH v1.1）を持つメッシュで、BVH をたどって判定するか
+         * @brief グループの BVH（NVMESH v1.1 の焼き込み、または読み込み時に実行時に作ったもの）を持つメッシュで、BVH を
+         * たどって判定するか（既定。BVH を作れなかったメッシュだけが平らなクラスタの列で判定する）
          *
-         * false なら全メッシュを平らなクラスタの列で判定する（BVH をたどった選択と平らな選択の撮り比べ用）。
-         * 環境変数 NORVES_MEGA_BVH が 0 か off なら false にする。
+         * false なら全メッシュを平らなクラスタの列（cluster_cull.comp）で判定する（BVH をたどった選択と平らな選択の撮り比べ用）。
+         * 起動引数 --mega-flat-path、または環境変数 NORVES_MEGA_BVH が 0 か off なら false にする。
          */
         bool bUseGroupBVH = true;
 
