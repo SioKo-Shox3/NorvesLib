@@ -16,7 +16,6 @@
 #include "RHI/IPipeline.h"
 #include "RHI/IRenderPass.h"
 
-#include <cmath>
 #include <limits>
 
 namespace NorvesLib::Core::Rendering
@@ -69,17 +68,6 @@ namespace NorvesLib::Core::Rendering
         // ページの一辺・texel・範囲の原点はスライスの表（GPUVsmSlice。DirtyBindSlices・MegaBindSlices）にある
         static_assert(sizeof(GPUMegaCullParams) == 80, "Common/VirtualShadowMapMegaCull.glsl の VsmMegaCullParams と同じ大きさにすること");
 
-        // vsm_mega_cull_pairs.comp の VsmMegaReceiverRegion（std140）と同じ並び。太陽の段の受け手の領域（範囲・席の判定に使う）
-        struct GPUMegaReceiverRegion
-        {
-            float region[4];     // xy = カメラのライト空間の XY、z = 受け手が取りうる最も奥のライト空間の深度、w = 受け手の XY の半径
-            uint32_t control[4]; // x = 1 なら判定する
-        };
-        static_assert(sizeof(GPUMegaReceiverRegion) == 32, "vsm_mega_cull_pairs.comp の VsmMegaReceiverRegion と同じ大きさにすること");
-        // 深度の原点のスナップの刻みの半分の、深度の範囲の片側に対する割合（VirtualShadowMapClipmap.cpp の DepthSnapRatio = 0.25 の半分）。
-        // カメラの深度は深度の原点からこれ以上離れない。離れると深度の原点が動き、太陽の段の全ページが無効になる
-        constexpr double ReceiverDepthSnapSlackRatio = 0.125;
-
         // vsm_dirty_mips.comp: 14 = 定数、15 = VSM のページの表、16 = dirty の階層、17 = スライスの表
         constexpr uint32_t DirtyBindParams = 14;
         constexpr uint32_t DirtyBindPageTable = 15;
@@ -102,8 +90,7 @@ namespace NorvesLib::Core::Rendering
         // 主の経路のメッシュの表（Common/MegaInstanceTable.glsl の MEGA_MESH_BINDING。カリングと影の塊の記録の両方が読む）
         constexpr uint32_t MegaBindMeshes = 22;
         // vsm_mega_chunks.comp: 1 = インスタンスの表、14 = 定数、15 = 出力の一覧、18 = 影の表、19 = 影の塊の記録の出力
-        // vsm_mega_cull_pairs.comp: 14 = 定数、15 = 出力の一覧、16 = dirty の階層、17 = 統計、18 = 影の表、20 = スライスの表、21 = 組の一覧、
-        // 22 = 太陽の段の受け手の領域
+        // vsm_mega_cull_pairs.comp: 14 = 定数、15 = 出力の一覧、16 = dirty の階層、17 = 統計、18 = 影の表、20 = スライスの表、21 = 組の一覧
         // 組の一覧の頭 8 語（組の数・最大のワークグループ数・予約 2 語・間接 dispatch の引数 4 語）。引数は頭から 16 バイト目
         constexpr uint32_t PairsBindParams = 14;
         constexpr uint32_t PairsBindList = 15;
@@ -112,7 +99,6 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t PairsBindShadowInstances = 18;
         constexpr uint32_t PairsBindSlices = 20;
         constexpr uint32_t PairsBindPairs = 21;
-        constexpr uint32_t PairsBindRegion = 22;
         // vsm_mega_cull_args.comp: 21 = 組の一覧（間接 dispatch の引数を書く）
         constexpr uint32_t ArgsBindPairs = 21;
         constexpr uint32_t PairsHeaderWords = 8;
@@ -187,7 +173,6 @@ namespace NorvesLib::Core::Rendering
             desc.bindings.push_back(MakeBinding(PairsBindShadowInstances, RHI::ResourceBindType::StructuredBuffer, RHI::ShaderStage::Compute));
             desc.bindings.push_back(MakeBinding(PairsBindSlices, RHI::ResourceBindType::StructuredBuffer, RHI::ShaderStage::Compute));
             desc.bindings.push_back(MakeBinding(PairsBindPairs, RHI::ResourceBindType::RWBuffer, RHI::ShaderStage::Compute));
-            desc.bindings.push_back(MakeBinding(PairsBindRegion, RHI::ResourceBindType::ConstantBuffer, RHI::ShaderStage::Compute));
             return desc;
         }
 
@@ -313,36 +298,6 @@ namespace NorvesLib::Core::Rendering
             params.counts[1] = listCapacity;
             params.counts[2] = totalGroups;
             return true;
-        }
-
-        // 太陽の段の受け手の領域。影を受けるのはカメラの前方への距離が MaxShadowDistance 以内の受け手で、その直線距離は
-        // MaxShadowDistance × VirtualShadowMapThresholdDistanceScale 以内（段の選び方のしきい値と同じ前提）。半径にはさらに、
-        // 照明のフィルタ・法線のずらしの余白として最も粗い段の 1 ページと、カメラの XY を段 0 の中心（ページの格子へスナップ済み）から
-        // 取る誤差として段 0 の 1 ページを足す。奥の深度は、カメラの深度の上限（深度の原点 + スナップの刻みの半分）+ 受け手の距離 + 余白。
-        // クリップマップが使えないか影の距離が不正なら判定しない（control.x = 0）
-        GPUMegaReceiverRegion BuildMegaReceiverRegion(const VirtualShadowMapClipmap* clipmap)
-        {
-            GPUMegaReceiverRegion region = {};
-            if (!IsUsableClipmap(clipmap) || !std::isfinite(clipmap->Settings.MaxShadowDistance) ||
-                !(clipmap->Settings.MaxShadowDistance > 0.0f))
-            {
-                return region;
-            }
-            const VirtualShadowMapClipmapLevel& first = clipmap->Levels[0];
-            const VirtualShadowMapClipmapLevel& last = clipmap->Levels[clipmap->LevelCount - 1u];
-            const double receiverMeters = static_cast<double>(clipmap->Settings.MaxShadowDistance) * VirtualShadowMapThresholdDistanceScale;
-            const double marginMeters = static_cast<double>(last.PageMeters);
-            const double cameraX = static_cast<double>(first.CenterPageX) * static_cast<double>(first.PageMeters);
-            const double cameraY = static_cast<double>(first.CenterPageY) * static_cast<double>(first.PageMeters);
-            const double deepestDepth = clipmap->DepthCenter +
-                                        static_cast<double>(clipmap->Settings.DepthRangeMeters) * ReceiverDepthSnapSlackRatio +
-                                        receiverMeters + marginMeters;
-            region.region[0] = static_cast<float>(cameraX);
-            region.region[1] = static_cast<float>(cameraY);
-            region.region[2] = static_cast<float>(deepestDepth);
-            region.region[3] = static_cast<float>(receiverMeters + marginMeters + static_cast<double>(first.PageMeters));
-            region.control[0] = 1u;
-            return region;
         }
 
         // クリップマップが使える入力か。使えるなら params へ値を書く。
@@ -856,11 +811,6 @@ namespace NorvesLib::Core::Rendering
             use.ParamsUniform = m_Device->CreateBuffer(
                 RHI::BufferDesc(sizeof(GPUMegaCullParams), RHI::ResourceUsage::ConstantBuffer, true, "VsmMegaCullParams"));
         }
-        if (!use.RegionUniform)
-        {
-            use.RegionUniform = m_Device->CreateBuffer(RHI::BufferDesc(
-                sizeof(GPUMegaReceiverRegion), RHI::ResourceUsage::ConstantBuffer, true, "VsmMegaCullReceiverRegion"));
-        }
         if (!use.Slices)
         {
             use.Slices = m_Device->CreateBuffer(RHI::BufferDesc(
@@ -887,7 +837,7 @@ namespace NorvesLib::Core::Rendering
             use.ChunkSet = m_Device->CreateDescriptorSet(MakeMegaChunksLayout());
         }
         outUse = &use;
-        return use.CullUniform && use.ParamsUniform && use.RegionUniform && use.Slices && use.DirtySet && use.PairsSet && use.ArgsSet && use.CullSet && use.ChunkSet;
+        return use.CullUniform && use.ParamsUniform && use.Slices && use.DirtySet && use.PairsSet && use.ArgsSet && use.CullSet && use.ChunkSet;
     }
 
     bool VirtualShadowMapMegaCull::EnsurePairs(Use& use, uint32_t capacity)
@@ -995,8 +945,6 @@ namespace NorvesLib::Core::Rendering
 
         use->CullUniform->Update(&cullUniform, sizeof(cullUniform));
         use->ParamsUniform->Update(&params, sizeof(params));
-        const GPUMegaReceiverRegion region = BuildMegaReceiverRegion(dispatch.Clipmap);
-        use->RegionUniform->Update(&region, sizeof(region));
         GPUVsmSlice sliceStorage[VirtualShadowMapMaxSlices];
         const GPUVsmSlice* slices = dispatch.Slices;
         if (slices == nullptr)
@@ -1021,8 +969,9 @@ namespace NorvesLib::Core::Rendering
             commandList->BufferBarrier(dispatch.DirtyBits, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
         }
 
-        // ----- 組の絞り込み: 1 スレッド = 1 つの（インスタンス、スライス）の組。太陽の段は範囲（64 席）の AABB と席の境界を受け手の領域と比べ、
-        // 外の範囲・席は組を作らない。インスタンスの判定を組ごとに 1 回だけ行い、通った組の一覧と選択の間接 dispatch の引数を作る -----
+        // ----- 組の絞り込み: 1 スレッド = 1 つの（インスタンス、スライス）の組。太陽の段は範囲（64 席）の AABB が受け手の要求した
+        // dirty のページに届かなければ範囲の席は組を作らない。インスタンスの判定を組ごとに 1 回だけ行い、通った組の一覧と
+        // 選択の間接 dispatch の引数を作る -----
         use->PairsSet->BindConstantBuffer(PairsBindParams, use->ParamsUniform, 0, sizeof(params));
         use->PairsSet->BindStorageBuffer(PairsBindList, dispatch.List, 0, ClampBindSize(listBytes));
         use->PairsSet->BindStorageBuffer(PairsBindDirtyBits, dispatch.DirtyBits, 0, ClampBindSize(VirtualShadowMap::MegaDirtyBitsBytes(sliceCount)));
@@ -1030,7 +979,6 @@ namespace NorvesLib::Core::Rendering
         use->PairsSet->BindStorageBuffer(PairsBindShadowInstances, dispatch.ShadowInstances, 0, ClampBindSize(dispatch.ShadowInstances->GetSize()));
         use->PairsSet->BindStorageBuffer(PairsBindSlices, use->Slices, 0, sliceBytes);
         use->PairsSet->BindStorageBuffer(PairsBindPairs, use->Pairs, 0, ClampBindSize(use->Pairs->GetSize()));
-        use->PairsSet->BindConstantBuffer(PairsBindRegion, use->RegionUniform, 0, sizeof(region));
         use->PairsSet->Update();
         {
             ScopedGpuTimestamp pairsTimestamp(commandList, "VsmCullPairs");

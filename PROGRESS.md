@@ -4012,3 +4012,15 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 補助（verify の外）: 受け手距離を一時的に 5 m・余白 0 にしたビルド（戻した）で同じ horizon を撮り（`aux-SCN-MEGA-VSM-RANGES-radius5.txt`）、組が 8464 → 2555 に減り、中ほどから奥のバナナの影が消える（既定との psnr 43.864 dB、差は 594〜890 行）ことで、判定と定数の束縛が効くことを確かめた。元のコードで Game をビルドし直した。
 - Next: SCN-MEGA-VSM-BVH-SUN。
 - Notes: 範囲の AABB は MegaGeometryPass の範囲の表（`m_RangeBoundsBuffer`）を使わず、組の絞り込みの中で席の境界の球から畳み込んだ（表を VSM へ渡すには `MegaGeometryPass.h` と `VirtualShadowMapPass.cpp` を触るが、paths の外のため）。席ごとの影の表の読み込みは残るので、表を渡せば範囲で落ちた席の読み込みも省ける。カメラの深度はクリップマップに無いので、深度の原点からスナップの刻みの半分（`VirtualShadowMapClipmap.cpp` の `DepthSnapRatio` = 0.25 の半分を `ReceiverDepthSnapSlackRatio` に写した）の余裕を取った。視錐台の端の受け手の直線距離が `MaxShadowDistance` の 2 倍を超える画角（前方に対する横・縦のずれの比の二乗和が 3 超）では、その先の受け手が置くページの投影物を落としうる（段のしきい値と同じ前提）。撮影は静止で dirty のページが最初のフレームだけなので、範囲で落ちた数は統計に出していない。性能は測っていない（SCN-MEGA-ACCEPT-1M で判断）。試験の追加はしていない。
+
+### SCN-MEGA-VSM-RANGES 差し戻しの修正（2026-10-14、反復 10・run 20261014-061910）
+- 差し戻し: 受け手の領域の半径を `MaxShadowDistance × 2` に決めていたので、広い画角（縦 120° など）で前方の距離は影の距離の内側なのに直線距離が半径を超える受け手の投影物まで範囲・席で落としていた。
+- Done: カメラからの距離で作る受け手の領域（binding 22 の定数 `GPUMegaReceiverRegion`・`BuildMegaReceiverRegion`・`RegionUniform`・席ごとの領域の判定）を消し、範囲の判定を dirty のページの階層で行うようにした。
+  - 太陽の段で、64 席の範囲の AABB のライト空間の外接の箱が深度の範囲の外か、箱の XY を包む正方形（1 mm 広げる）が覆うページに dirty のページが 1 つも無ければ、範囲の全席が組を作らない。dirty のページは受け手距離の内側の受け手が今のフレームに要求したページで、太陽の向きへは深度の範囲まで延ばした柱になる。受け手の印付けが画角に応じて選んだページそのものを使うので、カメラの画角・縦横比に依らない。
+  - dirty の階層をたどるのは範囲につき 1 スレッド（結果を共有メモリで配る）。箱は範囲のどの席の境界の球の矩形も含むので、範囲の判定は席の判定（`LevelOverlapsSphere`・`SphereHasDirtyPage`）より多くは落とさない。評価者の再現（受け手 (210,0,70)、投影物 (210,2,70)・半径 1）は投影物の矩形が受け手のページに掛かるので落ちない。
+- 検証（`.harness/runs/20261014-061910/`）:
+  - `verify-SCN-MEGA-VSM-RANGES-4.txt`: RelWithDebInfo の Game のビルド EXIT=0、error 0。`vsm_mega_cull_pairs.comp` は BOM を除いた写しで `glslc` によりコンパイルを確かめた。
+  - `verify-SCN-MEGA-VSM-RANGES-5.txt`: 起動画面 default の決定的撮影の比較 result=pass（psnr 60.068 dB、輝度差 0.0021、EXIT=0）。`default.Game.log` の `[ERROR]` 0、`VSM_MEGA_CULL overflow=0`。PNG は家・球・岩・地面・影が以前どおり。
+  - `verify-SCN-MEGA-VSM-RANGES-6.txt`: バナナ 1 万本 horizon result=pass（EXIT=0）。`horizon.Game.log` の `[ERROR]` 0、`VSM_MEGA_CULL instances=9067 clusters=251084 overflow=0`（静止で以降は 0）。PNG はバナナと影が以前どおり。
+- Next: SCN-MEGA-VSM-BVH-SUN。
+- Notes: 前の反復の深度の上限（受け手の最も奥の深度より奥の投影物を落とす）は、受け手の深度の上限を画角なしに保証できないので外した（太陽の向きの奥は従来の深度の範囲まで）。画角を VSM の組の絞り込みへ渡すには `VirtualShadowMapPass.cpp`（paths の外）を触る。範囲の判定は席の判定より多く落とさないので組の数は範囲の判定が無いときと同じになり（9067。前の反復の 8464 はカメラの距離で余分に落としていた分）、効くのは範囲の 64 席の判定を 1 回にまとめる分だけ。範囲で落ちた数は統計に出していない。性能は測っていない（SCN-MEGA-ACCEPT-1M で判断）。試験の追加はしていない。
