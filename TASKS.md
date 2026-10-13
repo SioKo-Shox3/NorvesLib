@@ -1091,6 +1091,24 @@
 - paths: Library/Core/Private/RHI, Library/Core/Public/RHI, Library/Core/Private/Rendering, Library/Core/Public/Rendering, Game/GameApplicationHandler.cpp, Game/GameModes/Rendering3DTest/Rendering3DTestRoutine.cpp, TASKS.md, PROGRESS.md
 - notes: 2026-10-12 親が足した。危険地帯（RHI/Vulkan・RenderThread・資源の寿命）。 2026-10-14 親: 評価の 2 周目（`blocked/SCN-ECS-FIF-SWITCH.md`）の残りは 1 点だけ。`Rendering3DTestRoutine::Leave` が後始末の前に無条件で `WaitForRender()` を呼ばない（F11 の部品があるときだけ待つ。`Rendering3DTestRoutine.cpp` 1727・3941 行付近）。後始末の開始の前に無条件で待つ 1 行を足し、PROGRESS の「各シーンの終わりで待つ」の記述を実コードに合わせる。他の verify・証拠は評価者が確認済みなので、直したら起動画面の比較と周回だけ回せばよい。
 
+## SCN-ECS-FIX-STRESS-VRAM-FIF2: 2 フレームの mega-stress 5 万個の立ち上がりで VRAM が溢れて RenderThread が止まるのを直す
+- status: todo
+- done-when: 2 フレーム（既定）で mega-stress 5 万個 close の撮影が pass し、Game.log に `unhandled exception` と ERROR が 0。今は 2 回とも、MegaGeometry の列が伸びきるフレーム（`MEGA_BVH bvh_instances=50000`）の後に `VulkanBuffer` の `allocateMemory` が失敗して RenderThread が止まる（`--frames-in-flight=1` では通るが、`VRAM_BUDGET` の使用量の山が 12.2 GB で予算 12.2〜15.3 GB に届いている）。立ち上がりで倍々に伸ばす大きな列（`visbuffer_records` 256→2048 MB・BVH の列 2 GiB・visibility など）の古い物が `RetiredBufferFrames`（8 フレーム）と RHI の遅延破棄で生き残る分と、2 フレームで増えた分のどれが溢れさせたかを特定し、山を下げる（例: 伸ばす前に必要な大きさまで一度に取る・古い物を GPU の完了で早く手放す）。直した後の 2 フレームと 1 フレームの `VRAM_BUDGET` の山を PROGRESS に書く。
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Build -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views close -GameArgs stress-entities=50000 -OutDir .harness/runs/scene-capture/SCN-ECS-FIX-STRESS-VRAM-FIF2`
+- verify: `python -c "import sys;t=open(r'.harness/runs/scene-capture/SCN-ECS-FIX-STRESS-VRAM-FIF2/close.Game.log',encoding='utf-8',errors='replace').read();sys.exit(0 if 'FRAMES_IN_FLIGHT count=2' in t and 'unhandled exception' not in t else 1)"`
+- paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Library/Core/Private/RHI, Library/Core/Public/RHI, TASKS.md, PROGRESS.md
+- notes: 2026-10-14 SCN-ECS-MEASURE-FIF（反復 6）で足した。2 フレームの撮影の失敗は `.harness/runs/scene-capture/SCN-ECS-MEASURE-FIF/stress-try1`・`stress-try2`、1 フレームの比較は `stress-fif1`。危険地帯（RHI/Vulkan・メモリ・資源の寿命）。SCN-ECS-MEASURE-FIF の mega-stress の計測はこの項目を待つ。
+
+## SCN-ECS-FIX-SUN-DISK-UPLOAD: 太陽の円盤の texture を毎フレーム同期の単発提出で書くのをやめる
+- status: todo
+- done-when: `SkyAtmospherePass::GenerateSunDiskTexture` は 1×1 の texture を毎フレーム `VulkanTexture::Update`（単発の提出の後に `graphicsQueue.waitIdle()`）で書いている。2 フレームではこの待ちが前のフレームの GPU の完了まで RenderThread を止め、CPU と GPU の重なりを消している（SCN-ECS-MEASURE-FIF: バナナ 1 万本 overview で窓の 300 フレームすべてに 1 回ずつ出て、`RHI.ImmediateSubmitWait` が median 8.1 ms・p95 11.4 ms、`RT.WaitFrameFence` は p95 0.005 ms）。値はフレームごとの事前露出で変わるので、フレームの記録の中で書く形（フレームの持ち主から借りた領域からのコピーをコマンドに積む、または定数としてシェーダへ渡す）へ移し、毎フレームの同期の提出を無くす。空の見た目は変えない（起動画面の比較が pass）。起動画面の撮影のログで、落ち着いた後に出続ける `IMMEDIATE_SUBMIT` の呼び出し元が無い（どの呼び出し元も `frames` が 8 以下）。
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-ECS-FIX-SUN-DISK-UPLOAD`
+- verify: `python -c "import re,sys;t=open(r'.harness/runs/startup-capture/SCN-ECS-FIX-SUN-DISK-UPLOAD/default.Game.log',encoding='utf-8',errors='replace').read();m=re.findall(r'IMMEDIATE_SUBMIT caller=(\S+) .*? frames=(\d+)',t);sys.exit(0 if m and all(int(f)<=8 for c,f in m) else 1)"`
+- paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Assets/Shaders, TASKS.md, PROGRESS.md
+- notes: 2026-10-14 SCN-ECS-MEASURE-FIF（反復 6）で足した。毎フレーム出る同期の単発提出の呼び出し元はこれだけ（ほかは初期化のフレーム 0、BLAS の構築はフレーム 0〜4、焼いた texture の読み込みは main スレッドのフレーム 1）。効果は SCN-ECS-MEASURE-FIF の撮り直しで見る（この項目では性能を測らない）。危険地帯（RenderThread・資源の寿命）。
+
 ## SCN-ECS-MEASURE-FIF: 2 フレームの重ねの後に、CPU と GPU の重なりを妨げる待ちが残っていないかを調べる（診断）
 - status: todo
 - done-when: 問い: 2 フレームにした後も、CPU の記録と GPU の処理の重なりを失わせる待ち（同期の単発提出・画像の取得・表示など）が残っているか。変わる判断: 残っていれば、その呼び出し元を直す項目を足す（SCN-ECS-FIF-SYNC-SUBMIT-SCOPE はこの答えを待っている）。測る理由: 待ちの実害は時間でしか見えない。mega-stress 5万個 close とバナナ 1万本 overview（2 フレーム）で、描画フレームごとに RenderThread の時間を「CPU の作業」「GPU に依存する待ち（`RT.WaitFrameFence`・`RHI.ImmediateSubmitWait`・`RT.AcquireImage`・`RT.Present`）」「パケット待ち」に分け、それぞれの median と p95 を PROGRESS の表に書く（区間の median の和では判定しない。フレームごとに分けてから集計する）。`RT.WaitFrameFence` 以外の GPU に依存する待ちが p95 で 1 フレームに現れていれば、提出・完了の番号と区間から呼び出し元と止めた時間を特定し、呼び出し元ごとに `SCN-ECS-FIX-<名前>` を足す（無ければ無いと書く）。フレームの時間の合否はここでは決めない（目標の判定は SCN-MEGA-ACCEPT-1M）。
@@ -1099,7 +1117,7 @@
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Build -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views overview -GpuTimingFrames 300 -GameArgs banana-count=10000 -OutDir .harness/runs/scene-capture/SCN-ECS-MEASURE-FIF/bananas`
 - verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-ECS-MEASURE-FIF/bananas --timing --min-frames 300 --require-scope RT.WaitFrameFence`
 - paths: Docs/RenderingValidation/SceneLauncherAcceptance.md, TASKS.md, PROGRESS.md
-- notes: 2026-10-12 親が足した。計測だけ。 2026-10-12 親: 計測の見直し（ユーザーの指摘「節目に計測を入れても意味があるのかを考えるべき」。計測ごとに、問い・結果で変わる判断・測らずに分からないかの 3 点を書き、書けないものは置かない。Sol の批評を反映）。借りた数・時間の表と照明の記録の時間は、判断を変えないので外した。
+- notes: 2026-10-12 親が足した。計測だけ。 2026-10-12 親: 計測の見直し（ユーザーの指摘「節目に計測を入れても意味があるのかを考えるべき」。計測ごとに、問い・結果で変わる判断・測らずに分からないかの 3 点を書き、書けないものは置かない。Sol の批評を反映）。借りた数・時間の表と照明の記録の時間は、判断を変えないので外した。 2026-10-14 反復 6: バナナは測れて、毎フレームの同期の提出（`GenerateSunDiskTexture`）が重なりを消していると分かった（SCN-ECS-FIX-SUN-DISK-UPLOAD を足した）。mega-stress 5 万個は 2 フレームで VRAM が溢れて撮れない（SCN-ECS-FIX-STRESS-VRAM-FIF2 を足した）。2 つを直した後に両方を撮り直す（結果と表は PROGRESS の反復 6）。
 
 ## SCN-ECS-RT-PARALLEL-WIDEN: 記録の重いパスを並列に記録できる形にし、並列の記録を既定にする
 - status: todo

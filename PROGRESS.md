@@ -3654,3 +3654,29 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 同じフレームの 2 回目の Execute・中止・終了時の読み戻しの吐き出しの根拠: `FrameResourceOwnerTest`（SCN-ECS-FIF-FRAME-OWNER、`ctest -R "^FrameResource"` Passed。同じフレームの 2 回目の Execute が前の分を戻さない・中止と提出も中止もしないまま次の開始が来た分の回収・2 スロットの回収・通し番号の振り直し・世代の拒否）と `FrameResourceUploadArenaTest`（SCN-ECS-FIF-UPLOAD-ARENA。中止は次の開始で戻る・完了していないスロットは戻らない）。終了時の吐き出しは READBACK の撮影（`Flushed=2`）と今回の撮影（`Flushed=4`、Requests と Delivered が一致）で確かめた。読み戻しの取り消し（中止したフレーム）を起こす試験は無い（READBACK の Notes のとおり）。
 - Next: SCN-ECS-MEASURE-FIF（2 フレームの効果の節目の計測）ほか TASKS.md の未完の項目。
 - Notes: プールの並びを直す前の周回（毎フレームの作成あり）と直した後の周回は `.harness/runs/scene-cycle-smoke-diag/`、1 フレームの比較の周回は `.harness/runs/scene-cycle-smoke-fif1/` に残した（作成元の特定には一時の計装を使い、コミット前に外した）。`TransientResourcePool.cpp` は LF・BOM のまま（numstat の 2 通りが一致）。バッファのプール（`m_BufferPool`）は framebuffer の鍵に関わらないので並べ方を変えていない。
+
+### SCN-ECS-MEASURE-FIF（2026-10-14、反復 6・run 20261014-005646、未完: mega-stress が 2 フレームで撮れない）
+
+- 分け方: RenderThread の区間をトレース（`*.trace.csv` の Scope 行。時刻は区間の終わり）から描画フレームごとに切った。フレーム i は `RT.WaitPacket` の i 回目の始まりから i+1 回目の始まりまで。パケット待ち = `RT.WaitPacket` の長さ、GPU に依存する待ち = その間に終わった RenderThread の `RT.WaitFrameFence`・`RHI.ImmediateSubmitWait`・`RT.AcquireImage`・`RT.Present` の合計、CPU の作業 = 残り。窓は metrics.json の `window_first_frame`〜`window_last_frame`（300 フレーム）。各列の median・p95 はフレームごとの値から求めた（列の median の和ではない）。集計の出力は `check-SCN-ECS-MEASURE-FIF-*-split.txt`。
+- バナナ 1 万本 overview（2 フレーム、`FRAMES_IN_FLIGHT count=2`。GPU のフレーム median 10.59 ms・p95 13.80 ms）:
+
+| 列（ms） | median | p95 | max |
+|---|---|---|---|
+| RenderThread の 1 フレーム | 12.853 | 16.135 | 31.578 |
+| CPU の作業 | 4.533 | 5.896 | 20.647 |
+| GPU に依存する待ち（計） | 8.193 | 11.477 | 12.429 |
+| └ `RT.WaitFrameFence` | 0.003 | 0.005 | 0.011 |
+| └ `RHI.ImmediateSubmitWait` | 8.139 | 11.421 | 12.370 |
+| └ `RT.AcquireImage` | 0.005 | 0.008 | 0.023 |
+| └ `RT.Present` | 0.046 | 0.064 | 0.207 |
+| パケット待ち | 0.000 | 0.000 | 0.003 |
+
+- 答え: 残っている。`RT.WaitFrameFence` 以外の GPU に依存する待ちが p95 で 11.4 ms（1 フレームの 7 割）あり、窓の 300 フレームすべてに 1 回ずつ出る。呼び出し元は `IMMEDIATE_SUBMIT caller=SkyAtmospherePass::GenerateSunDiskTexture thread=render count=649 max_per_frame=1 via=VulkanTexture::Update frames=649 first_frame=0 last_frame=648 gpu_wait_ms=5571.137 max_gpu_wait_ms=23.572`（描画フレームの番号で毎フレーム 1 回。窓の 300 回の待ちは呼び出し 1 回あたり median 8.1 ms）。1×1 の太陽の円盤の texture を毎フレーム単発の提出で書き、`waitIdle` で前のフレームの GPU の完了まで止まるので、フェンスの待ちがこちらへ移っただけで CPU と GPU は重なっていない（RenderThread の 1 フレーム ≒ CPU の作業 + GPU の待ち）。ほかの呼び出し元は窓の外（初期化はフレーム 0、`RayTracingSceneSubsystem::BuildAccelerationStructures` はフレーム 0〜4、`CreateAndUploadCookedTexture` は main スレッドのフレーム 1 に 75 回）。→ `SCN-ECS-FIX-SUN-DISK-UPLOAD` を足した。`RT.AcquireImage`・`RT.Present` は p95 0.1 ms 未満で、直す項目は足していない。
+- mega-stress 5 万個 close（2 フレーム）: 撮れない。2 回とも（`stress-try1`・`stress-try2`）、`MEGA_BVH bvh_instances=50000` の後に `RenderThread stopped after an unhandled exception`（`VulkanBuffer` の `allocateMemory` の失敗）で止まり、有効な描画フレームが 5 件だけで `CAPTURE_SCENE result=fail`、EXIT=1（`verify-SCN-ECS-MEASURE-FIF-1.txt`・`-1b.txt`）。`--frames-in-flight=1` では pass（`check-SCN-ECS-MEASURE-FIF-stress-fif1.txt`）で、そのときも `VRAM_BUDGET` の使用量の山は 12224 MB（予算 12186 MB）まで上がっている。→ `SCN-ECS-FIX-STRESS-VRAM-FIF2` を足した。
+- 参考（問いの条件ではない）: mega-stress 5 万個 close の 1 フレームでは RenderThread の 1 フレーム median 40.197・p95 47.176、CPU の作業 5.227・9.515、`RT.WaitFrameFence` 34.450・39.725、`RHI.ImmediateSubmitWait` 0.216・0.621（同じ `GenerateSunDiskTexture` が毎フレーム出るが、フェンスで GPU が空になった後なので短い）、パケット待ち 0。
+- 検証（`.harness/runs/20261014-005646/`）:
+  - `verify-SCN-ECS-MEASURE-FIF-1.txt`・`-1b.txt`: mega-stress の撮影 EXIT=1（上のとおり）。verify 2（その CheckCaptureMetrics）は撮影が無いので走らせていない。
+  - `verify-SCN-ECS-MEASURE-FIF-3.txt`: バナナの撮影 `CAPTURE_SCENE result=pass`、EXIT=0。
+  - `verify-SCN-ECS-MEASURE-FIF-4.txt`: `CHECK_CAPTURE_METRICS result=pass views=overview`、EXIT=0。
+- Next: SCN-ECS-FIX-STRESS-VRAM-FIF2 と SCN-ECS-FIX-SUN-DISK-UPLOAD を直した後に、この項目の両方の撮影をやり直して表を埋める（SCN-ECS-FIF-SYNC-SUBMIT-SCOPE の Notes の「直すかは MEASURE-FIF で見てから」はこの結果で決まった）。
+- Notes: 提出・完了の通し番号はトレースに出ていないので、呼び出し元の特定は `IMMEDIATE_SUBMIT` の描画フレームごとの数（毎フレーム 1 回はこの呼び出し元だけ）と、窓の RenderThread の `RHI.ImmediateSubmitWait` が各フレーム 1 回であることの突き合わせで行った。集計のスクリプトは作業用の一時のもので、リポジトリには入れていない。
