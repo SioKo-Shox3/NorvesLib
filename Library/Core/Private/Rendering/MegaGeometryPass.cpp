@@ -4207,7 +4207,7 @@ namespace NorvesLib::Core::Rendering
         }
 
         // 数え（区間の数で大きさが変わる。足りないときだけ作り直す）。頭は照合の間接 dispatch の引数になるので IndirectBuffer も持ち、
-        // フレームの頭に FillBuffer で 0 にする
+        // フレームの頭に FillBuffer で 0 にする。積もうとした数を統計へ CopyBuffer で写すので転送元にもなる
         const uint64_t counterWords = BinCounterWords(slotCount);
         if (counterWords > 0xFFFFFFFFull / sizeof(uint32_t))
         {
@@ -4217,7 +4217,8 @@ namespace NorvesLib::Core::Rendering
         {
             const uint32_t newWords = NextPowerOfTwo(std::max(static_cast<uint32_t>(counterWords), m_BinCounterCapacity));
             RHI::BufferDesc desc(static_cast<uint64_t>(newWords) * sizeof(uint32_t),
-                                 RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::IndirectBuffer | RHI::ResourceUsage::TransferDst,
+                                 RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::IndirectBuffer | RHI::ResourceUsage::TransferSrc |
+                                     RHI::ResourceUsage::TransferDst,
                                  false,
                                  "MegaGeometry_BinCounters");
             RHI::BufferPtr buffer = m_Device->CreateBuffer(desc);

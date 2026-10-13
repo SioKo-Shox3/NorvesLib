@@ -3907,3 +3907,12 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `verify-SCN-MEGA-BINNING-PREP-3.txt`: バナナ 1 万本 overview、result=pass、EXIT=0。`-3.bananas.Game.log` の `[ERROR]` 0、`MEGA_BIN` 10 行すべて mismatch=0（例: `entries=364821 old=364821 sw_entries=361769 old_sw=361769 bins=4`）、`visible_list_overflow=0`・`visible_list_peak` は最大 367658、`MEGA_OCCLUSION pass1=364821 pass2_tested=367654 occluded=2833` は前の反復と同じ。PNG はバナナの散布と 3 つの山が以前どおり。
 - Next: SCN-MEGA-BINNING-SWITCH。
 - Notes: 列の確保の失敗そのものは実機で再現していない（64 MB の確保は通る）。確保できないときシェーダーは列の代わりに結んだ仮のバッファの長さ（8 要素）を容量として見るが、その 8 要素は使えないので、ログの容量は 0 として積もうとした数をそのまま溢れに出す。試験の追加はしていない。
+
+### SCN-MEGA-BINNING-PREP（2026-10-14、反復 2・run 20261014-061910、評価の 2 周目の差し戻しへの対応）
+- Done: 数えのバッファ（`MegaGeometry_BinCounters`）の作成の使用フラグに `TransferSrc` を足した。前の反復で足した、積もうとした数を統計へ写す `CopyBuffer` がこのバッファを転送元に使うのに、フラグが `StorageBuffer | IndirectBuffer | TransferDst` だけで `VUID-vkCmdCopyBuffer-srcBuffer-00118` に当たっていた（Vulkan の実装はフラグをそのまま写し、自動では足さない）。統計の写し先（借りた読み戻し先）は既に `FillBuffer` の転送先として使っている。
+- 検証（`.harness/runs/20261014-061910/`）:
+  - `verify-SCN-MEGA-BINNING-PREP-4.txt`: RelWithDebInfo の Game のビルド EXIT=0、error 0（`MegaGeometryPass.cpp` を再コンパイル）。
+  - `verify-SCN-MEGA-BINNING-PREP-5.txt`: mega-stress 5000 個 overview、result=pass、EXIT=0。`-5.stress.Game.log` の `[ERROR]` 0、`MEGA_BIN` 7 行すべて mismatch=0（例: `entries=350066 old=350066 sw_entries=343958 old_sw=343958 bins=56`）、`MEGA_CAPACITY` 7 行すべて `visible_list_capacity=4194304 visible_list_overflow=0 draw_dropped=0 bvh_overflow=0`、`visible_list_peak` は最大 422444（前の反復と同じ）。
+  - `verify-SCN-MEGA-BINNING-PREP-6.txt`: バナナ 1 万本 overview、result=pass、EXIT=0。`-6.bananas.Game.log` の `[ERROR]` 0、`MEGA_BIN` 10 行すべて mismatch=0、`visible_list_overflow=0`・`visible_list_peak` は最大 367658、`MEGA_OCCLUSION pass1=364821 pass2_tested=367654 occluded=2833` は前と同じ。PNG はバナナの散布と 3 つの山が以前どおり。
+- Next: SCN-MEGA-BINNING-SWITCH。
+- Notes: 検証レイヤーは撮影のスクリプトでは Debug の構成だけで有効になり、verify（RelWithDebInfo）では VUID を見ていない。Debug の Game のビルドと撮影はしていない。試験の追加はしていない。
