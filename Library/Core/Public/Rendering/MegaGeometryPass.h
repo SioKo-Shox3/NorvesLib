@@ -268,14 +268,6 @@ namespace NorvesLib::Core::Rendering
          */
         bool bUseBinning = true;
 
-        /**
-         * @brief 2 パスの遮蔽で、範囲・インスタンスの 1 パス目を前のフレームの HZB で判定するか（既定）
-         *
-         * true なら、契約が合うフレームの 1 パス目は前の HZB に隠れた範囲・席をたどらずに 2 パス目の別の列へ回し、
-         * 2 パス目が今のフレームの HZB で判定する。1 パス目が描いたクラスタには印を書き、2 パス目はその印で重ねて描かない。
-         * 起動引数 --mega-twopass=legacy なら false（1 パス目は遮蔽の判定をせず、判定を通った全部の根を 2 パス目が判定し直す旧の経路）。
-         */
-        bool bTwoPassPrevHiZ = true;
     };
 
     /**
@@ -618,8 +610,8 @@ namespace NorvesLib::Core::Rendering
             float PreviousWorldMatrix[16]; // 直前のフレームの変換（velocity 用）
             uint32_t MeshIndex;            // メッシュの表の番号
             uint32_t FirstGroup;           // このインスタンスの最初のワークグループの通し番号
-            uint32_t VisibleOffset;        // 「見えた」ビットの先頭（全インスタンス共通の配列の中の位置）
-            uint32_t Reserved;
+            uint32_t Reserved0;
+            uint32_t Reserved1;
         };
         static_assert(sizeof(GPUMegaInstance) == 144, "Common/MegaInstanceTable.glsl の MegaInstanceRow と大きさが一致しません");
 
@@ -658,13 +650,12 @@ namespace NorvesLib::Core::Rendering
         };
         static_assert(sizeof(GPUMegaSlotRow) == 128, "mega_scene_scatter.comp の席の表の行と大きさが一致しません");
 
-        /** @brief 描く順の表の 1 行の出所（席・メッシュの表の番号・ワークグループ・「見えた」印の先頭）。CPU 側の値 */
+        /** @brief 描く順の表の 1 行の出所（席・メッシュの表の番号・ワークグループ）。CPU 側の値 */
         struct GPUMegaEntry
         {
             uint32_t Slot = 0;
             uint32_t MeshIndex = 0;
             uint32_t FirstGroup = 0;
-            uint32_t VisibleOffset = 0;
         };
 
         /**
@@ -672,9 +663,9 @@ namespace NorvesLib::Core::Rendering
          */
         struct MegaMeshInstance
         {
-            // 「前のフレームで見えた」ビットを引き継ぐ鍵（プロキシのObjectId。0のインスタンスは並びの番号で代用する）
+            // 影のキャッシュの記録を引き継ぐ鍵（プロキシのObjectId。0のインスタンスは並びの番号で代用する）
             uint64_t ObjectId = 0;
-            // コンポーネントの世代（作り直されたら変わる）。同じ ObjectId でも別のコンポーネントなら見えたビットを捨てる
+            // コンポーネントの世代（作り直されたら変わる）。同じ ObjectId でも別のコンポーネントなら引き継がない
             uint64_t ComponentId = 0;
             MegaGeometry::MegaMeshHandle Handle;
             float WorldMatrix[16];
@@ -767,7 +758,8 @@ namespace NorvesLib::Core::Rendering
             uint64_t PageTableVersion = 0;  // バッファの中身の版（PageTableBuffer が無いときは意味を持たない）
             RHI::BufferPtr CullUniform[2]; // パスごとのカリング用UBO
             RHI::DescriptorSetPtr CullDescriptorSet[2];
-            // BVH のたどり: パスごとに、節の判定の段 + 葉のクラスタの判定の段の数だけ（段ごとにUBOの中身が違うため別々に持つ）
+            // BVH のたどり: パスごとに、節の判定の段 + 葉のクラスタの判定の段 + 範囲の段（2 パス目はさらに回した範囲・節・クラスタの段）
+            // の数だけ（段ごとにUBOの中身が違うため別々に持つ）
             Container::VariableArray<BvhStageDraw> BvhStages[2];
             Container::VariableArray<SectionDraw> Sections;
         };
@@ -791,19 +783,6 @@ namespace NorvesLib::Core::Rendering
         bool EnsureResidentTable(RHI::BufferPtr &buffer, uint32_t &capacity, uint32_t required, uint32_t minimumCapacity,
                                  uint64_t elementBytes, const char *debugName, RHI::ICommandList *commandList,
                                  bool &bOutGrown, bool &bOutCopied);
-
-        /** @brief 「見えた」ビットの区画を要求するインスタンス1つ分 */
-        struct VisibilityRequest
-        {
-            uint64_t Key = 0;
-            uint64_t MeshId = 0;
-            uint64_t ComponentId = 0;
-            const void *ClusterBufferIdentity = nullptr;
-            uint64_t ClusterBufferOffsetBytes = 0;
-            uint32_t ClusterCount = 0;
-            uint32_t TableSlot = 0; // 区画を持つ席
-            uint32_t Offset = 0;    // 区画の先頭（要素の位置。AssignVisibilityRegion が決める）
-        };
 
         /**
          * @brief 材質の区間: 同じ材質（値とテクスチャ）で、メッシュを置くプールの塊が同じインスタンスの集まり。区間ごとに
@@ -840,8 +819,6 @@ namespace NorvesLib::Core::Rendering
             Container::VariableArray<GPUMegaMesh> Meshes;
             // メッシュの表の行と同じ並びの、メッシュの区画の持ち主（MegaMeshGPUData::RegionOwner）
             Container::VariableArray<Container::TSharedPtr<void>> MeshOwners;
-            // 「見えた」ビットの区画の要求（インスタンスの表と同じ並び）
-            Container::VariableArray<VisibilityRequest> VisibilityRequests;
             // 影の表（インスタンスの表と同じ並び）。影を落とすインスタンスだけが、影の判定のワークグループを持つ
             Container::VariableArray<MegaGeometryShadowInstance> ShadowInstances;
             uint64_t ShadowTotalGroups = 0;
@@ -866,8 +843,7 @@ namespace NorvesLib::Core::Rendering
         /**
          * @brief m_Instances とロード済みのメッシュから、このフレームの表を作る（CPU だけ。GPU のバッファには書かない）
          *
-         * インスタンスの並びは BVH をたどるインスタンスが先。「見えた」ビットの先頭は、席ごとの区画（AssignVisibilityRegion）の
-         * 位置を書く。2パスでないフレームはシェーダーが読まない。
+         * インスタンスの並びは BVH をたどるインスタンスが先。
          * 前に作った表（m_SceneTables）を持ち続け、並びが変わらない（インスタンスの作り直し・メッシュの準備や中身の変化・BVH の
          * 使える状態の変化が無い）フレームは、直したインスタンスの行だけを書き換える（PatchSceneTables）。
          */
@@ -921,12 +897,6 @@ namespace NorvesLib::Core::Rendering
         /** @brief メッシュの表の 1 行を組む（区画のアドレスと基点は引けることを確かめた値） */
         static GPUMegaMesh MakeSceneMeshRow(const MegaGeometry::MegaMeshGPUData &gpuData, uint64_t clusterAddress,
                                             uint64_t vertexBase, uint64_t indexBase, uint32_t sectionIndex, bool bTraverseBvh);
-        /** @brief インスタンス 1 つの「見えた」ビットの区画の要求を組む（Offset は呼び出し側が決める） */
-        static VisibilityRequest MakeSceneVisibilityRequest(const MegaMeshInstance &instance, size_t instanceIndex,
-                                                            const MegaGeometry::MegaMeshGPUData &gpuData);
-
-        /** @brief 「見えた」ビットの区画を決めずに、今の割り当てから区画の先頭を引く（合わなければ ~0u） */
-        uint32_t PeekVisibilityRegion(uint32_t tableSlot, const VisibilityRequest &request) const;
 
         /**
          * @brief m_Instances の席の表の番号（TableSlot）を決める（m_bSceneSlotsDirty のときだけ）
@@ -1024,8 +994,8 @@ namespace NorvesLib::Core::Rendering
         /**
          * @brief m_Instances の全部から表を作る
          *
-         * @param bCommit true なら「見えた」区画を決め（AssignVisibilityRegion）、差分更新の出所（席の行・メッシュ・載らなかったメッシュ）を
-         * 覚える。false なら何も変えずに作る（開発ビルドの照合。区画は今の割り当てを引くだけ）
+         * @param bCommit true なら差分更新の出所（席の行・メッシュ・載らなかったメッシュ）を覚える。
+         * false なら何も変えずに作る（開発ビルドの照合）
          * @param outRecords m_Instances と同じ並びの、影の表へ載せた記録（載らなかったインスタンスは投影物でない記録）
          */
         void ComposeSceneTables(const MegaGeometryPassCommand &command, SceneTables &tables, bool bCommit,
@@ -1137,27 +1107,6 @@ namespace NorvesLib::Core::Rendering
         /** @brief 記録（ID のラスタのワーカー）が引く材質の定数の 1x1 テクスチャ（作成と転送を伴う）を先に作る */
         void PrepareConstantMaterialTextures();
 
-        /**
-         * @brief インスタンスの席の「見えた」ビットの区画を決め、先頭（要素の位置）を返す（BuildSceneTables が呼ぶ。CPU だけ）
-         *
-         * 同じ席が同じクラスタ数で続く間は同じ区画を返す。鍵・コンポーネント・メッシュが替わったら中身を引き継げない印を付け、
-         * クラスタ数が替わったら区画を手放して取り直す。区画は手放された同じクラスタ数の区画から取り、無ければ末尾から
-         * 切り出す。末尾がバッファの容量を超えるときは、前の表にも載らなかった席の区画を先に手放してから取り直す。
-         */
-        uint32_t AssignVisibilityRegion(uint32_t tableSlot, const VisibilityRequest &request);
-
-        /**
-         * @brief 「前のフレームで見えた」ビットのバッファを、このフレームの区画に合わせる
-         *
-         * ビットは全インスタンスで1本のバッファに、席ごとの区画（AssignVisibilityRegion）で持つ。区画の末尾が容量を超えたときだけ、
-         * 1/8 の余裕を足したバッファを作り直し、古い中身を同じ位置へ1回のコピーで写す（区画は動かない）。
-         * 直前のフレームに描かれていなかった区画・取り直した区画だけを0で埋める（隣り合う区画はまとめて埋める）。
-         * LODの切り替えでは、選ばれなくなったクラスタを2パス目が0に書き戻すので、古いビットは残らない。
-         *
-         * @return false ならバッファを作れなかった（2パスの遮蔽カリングは使えない）
-         */
-        bool UpdateVisibilityLayout(RHI::ICommandList *commandList, Container::VariableArray<VisibilityRequest> &requests);
-
         /** @brief 手放した古いバッファを、GPUが使い終わった後に破棄する */
         void ReleaseStaleBuffers();
 
@@ -1265,8 +1214,7 @@ namespace NorvesLib::Core::Rendering
         // 今のシーンの世代（Setup が写しから受け取る）と、インスタンスを全部作り直した回数
         uint64_t m_SceneGeneration = 0;
         uint64_t m_SceneResyncCount = 0;
-        // 従来の経路が binding 5・6 に結ぶ代わりのバッファ（シェーダーは触らない）
-        RHI::BufferPtr m_DummyVisibilityBuffer;
+        // 従来の経路が binding 6 に結ぶ代わりのバッファ（シェーダーは触らない）
         RHI::BufferPtr m_DummyStatsBuffer;
 
         // ソフトウェアラスタの振り分け: パスごとの一覧と間接 dispatch の引数（binding 13）。振り分けないフレームは触らず、
@@ -1279,33 +1227,11 @@ namespace NorvesLib::Core::Rendering
         bool m_bSwRasterBinned = false;
         bool m_bSwRasterFallbackLogged = false;
 
-        // 「前のフレームで見えた」ビット（全インスタンスで1本）と、席（TableSlot）ごとの区画。区画は席が同じインスタンスを
-        // 同じクラスタ数のメッシュで描き続ける間は動かさない（インスタンスの出入りで他の区画を動かさない）
-        struct VisibilityRegion
-        {
-            uint64_t Key = 0;
-            uint64_t MeshId = 0;
-            uint64_t ComponentId = 0;
-            const void *ClusterBufferIdentity = nullptr;
-            uint64_t ClusterBufferOffsetBytes = 0;
-            uint32_t ClusterCount = 0; // 0 は区画を持たない
-            uint32_t Offset = 0;       // 区画の先頭（要素の位置）
-            uint64_t LastUsedFrame = 0; // 記録がビットを使った m_OcclusionFrameCount（0 は中身を引き継げない）
-            uint64_t LastBuildStamp = 0; // 最後に表へ載せた m_VisibilityBuildStamp（回収の判定）
-        };
         struct RetiredBuffer
         {
             RHI::BufferPtr Buffer;
             uint64_t RetiredFrame = 0; // 退避したときの m_RenderFrameCount
         };
-        RHI::BufferPtr m_VisibilityBuffer; // uint32_t[]。1=前のフレームで見えた
-        uint64_t m_VisibilityCapacity = 0; // m_VisibilityBuffer の要素数
-        Container::VariableArray<VisibilityRegion> m_VisibilityRegions; // TableSlot ごと
-        // 手放した区画の先頭（クラスタ数ごと）と、区画を切り出した末尾（要素の位置）
-        Container::UnorderedMap<uint32_t, Container::VariableArray<uint32_t>> m_VisibilityFreeRegions;
-        uint64_t m_VisibilityAllocatedEnd = 0;
-        uint64_t m_VisibilityBuildStamp = 0;
-        uint64_t m_VisibilitySweepStamp = 0; // 前の表に載らなかった席の区画を手放した m_VisibilityBuildStamp（1回の表で1度まで）
         Container::VariableArray<RetiredBuffer> m_RetiredBuffers;
         uint64_t m_OcclusionFrameCount = 0;
 
@@ -1322,12 +1248,11 @@ namespace NorvesLib::Core::Rendering
             bool bBinCheck = false;    // このフレームが binning の新旧の照合を記録し、統計の 17〜30 が有効
             uint32_t BinCount = 0;     // 区画の数（パスの数 × 区間の数 × 2）
             uint32_t VisibleListCapacity = 0; // このフレームの全体の列の要素の数（列を確保できなかったときは 0）。統計の 16 は照合によらず有効
-            bool bTwoPassPrevHiZ = false; // 前のフレームの HZB を使う経路か（--mega-twopass=legacy なら false）
-            bool bPrevHiZUsed = false;    // このフレームの 1 パス目が前の HZB で判定したか。統計の 31〜37 は前の HZB を使う経路で有効
+            bool bPrevHiZUsed = false;    // このフレームの 1 パス目が前の HZB で判定したか（使わないフレームは統計の 31〜41 が 0）
             MegaPrevHiZStatus PrevHiZStatus = MegaPrevHiZStatus::Missing; // 前の HZB が使えるかの判定
         };
         bool m_bStatsEpochActive = false;
-        bool m_bDropVisibilityContinuity = false; // 決定的な撮影のエポックの最初のフレーム: 見えたビットを引き継がない
+        bool m_bDropOcclusionContinuity = false; // 決定的な撮影のエポックの最初のフレーム: 前のフレームの HZB を使わない
         FrameReadbackReceiver m_StatsReadback{this};
         Container::VariableArray<PendingStats> m_PendingStats;
         bool m_bStatsLoggedOnce = false;

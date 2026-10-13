@@ -3980,3 +3980,22 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `verify-SCN-MEGA-TWOPASS-INSTANCES-6.txt`: 起動画面 default の決定的撮影の比較 result=pass（psnr 60.066 dB、輝度差 0.0021、EXIT=0）。`default.Game.log` の `[ERROR]` 0、`prev_hiz=1 reason=ready pass1_seats=6`。PNG は家・球・岩・地面が以前どおり。
 - Next: SCN-MEGA-TWOPASS-CLUSTERS。
 - Notes: 周回の始まりは約 2^31 記録ごと（60fps で約 414 日）で、実機では通していない（印の値は Python で周回の前後を計算して確かめた）。ページの要求の印（`requestStamp`）も書く印を使うので 31 ビットで回るが、一致しても同じフレームの要求を 1 回省くだけ。試験の追加はしていない。
+
+### SCN-MEGA-TWOPASS-CLUSTERS（2026-10-14、反復 8・run 20261014-061910）
+- Done: 節・葉・クラスタの 1 パス目も前のフレームの HZB で判定し、隠れたものを 2 パス目の列へ回すようにして、クラスタごとの「見えた」ビットを消した。
+  - 1 パス目: 節の段は視錐台・LOD を通った節が前の HZB に隠れていれば（インスタンス, 節）を節の列へ積んで枝をたどらない。葉の段は判定を通ったクラスタが前の HZB に隠れていれば描かずに（インスタンス, クラスタ）をクラスタの列へ積み、隠れていなければ描いて子のページの要求と自分のページの使用の印を出す（2 パス目はそのクラスタを判定しないので）。
+  - 2 パス目: 回された範囲の席（前の項目のまま）・節（1 要素 1 スレッド、今の HZB で判定して子を段 1 の列へ）を段 0 の後に、回されたクラスタ（1 要素 1 スレッド）を葉の段の後に判定する。1 パス目がたどった席を 2 パス目が根から判定し直すこと（2 パス目の根の入力）はやめた。
+  - 溢れ: 範囲・節・クラスタのどの列が溢れても、2 パス目は 3 つの列を使わず全部の根を席の遮蔽なしで見直す（TWOPASS-INSTANCES と同じ規則）。重ねて描かないよう、見直しは 1 パス目の道（範囲・席・節が前の HZB に隠れなかったか）を判定し直して列の要素の y の最上位ビットで運び、葉のクラスタで 1 パス目が描いたかを決める。
+  - 平らな判定（`cluster_cull.comp`）は列を持たず、2 パス目も全クラスタを見て、1 パス目が描いたか（判定を通り前の HZB に隠れない）を判定し直す。前の HZB を BVH の無いシーンでも使う（`bvhInstanceCount > 0` の条件を外した）。
+  - 前の HZB を使えないフレーム（エポックの先頭・カメラの切れ目など）は 1 パス目が遮蔽の判定をせずに判定を通った全部を描き、2 パス目へは何も回さない。
+  - 消したもの: binding 5 の「見えた」ビットのバッファ、席ごとの区画（`AssignVisibilityRegion`・`PeekVisibilityRegion`・`UpdateVisibilityLayout`・`VisibilityRequest`・`VisibilityRegion`）、インスタンスの表の「見えた」印の先頭（`GPUMegaEntry::VisibleOffset`。GPU の行の語は予約で 0）、`--mega-twopass=legacy`（「見えた」ビットに頼る経路なので消えた）。ページの要求の重複を省く記録ごとの印は `PageRequestStamp`（`PageRequestStampOf`）として残した。
+  - ユニフォームの並びは変えず、空いた語を `BvhDeferClusterCapacity`・`PageRequestStamp`・`BvhDeferNodeCapacity`・`PrevHiZMipCount` にした。binding 14 の頭は 32 語、節の列 2^21・クラスタの列 2^22 要素（`bvh_pass2_bytes` は約 51 MB。前の根の入力 1M 語は無くなった）。統計の 38〜41 に回した節・クラスタと溢れを足し、`MEGA_TWOPASS` に `deferred_nodes deferred_clusters node_overflow cluster_overflow` を出す（`mode=` は消した）。`MEGA_CAPACITY visibility_bytes` はスクリプトが読む鍵として残し 0。
+- 検証（`.harness/runs/20261014-061910/`）:
+  - `verify-SCN-MEGA-TWOPASS-CLUSTERS-1.txt`: RelWithDebInfo の Game のビルド EXIT=0。シェーダーは BOM を除いた写しで `glslc` により cluster_bvh_cull・cluster_cull・vsm_mega_cull・vsm_mega_chunks・mega_bin_*・mega_scene_scatter・visbuffer_sw_raster のコンパイルも確かめた。
+  - `verify-SCN-MEGA-TWOPASS-CLUSTERS-2.txt`: バナナ 1 万本 overview と SCN-MEGA-BASE の比較 pass（psnr 69.297 dB、輝度差 0.0001、EXIT=0）。`overview.Game.log` の `[ERROR]` 0、エポックの先頭は `prev_hiz=0 reason=epoch`（1 パス目が 367658 クラスタを描く）、以降 `prev_hiz=1 pass1_seats=2611 deferred_nodes=1 deferred_clusters=2833`、`MEGA_OCCLUSION pass1=364821 pass2_tested=2833 pass2_drawn=0 occluded=2833`、`MEGA_CAPACITY draw_dropped=0 bvh_overflow=0 bvh_pass2_fallback=0 visible_list_overflow=0`。PNG はバナナの散布・山・影・床が以前どおり。
+  - `verify-SCN-MEGA-TWOPASS-CLUSTERS-3.txt`: 下の溢れの確認の後、元の容量で再ビルド EXIT=0。
+- 補助（verify の外）:
+  - 旋回（遮蔽 Off との一致）f60・f75・f90 すべて within_limits（psnr 60.907 / 60.424 / 59.274 dB、`aux-SCN-MEGA-TWOPASS-CLUSTERS-orbit.txt`）、result=pass。`default-orbit.Game.log` の `[ERROR]` 0、溢れ 0、`deferred_clusters=6〜7`。
+  - 節・クラスタの列の容量を 1 にした一時的なビルド（戻した）でバナナ overview を撮り SCN-MEGA-BASE と比べて pass（psnr 66.265 dB、`aux-SCN-MEGA-TWOPASS-CLUSTERS-overflow.txt`）。`cluster_overflow=2832 rescan=1 bvh_pass2_fallback=1`、`MEGA_OCCLUSION` は溢れないときと同じ（pass1=364821・pass2_tested=2833・occluded=2833。見直しで 1 パス目の描いた分を重ねて判定していない）、`[ERROR]` 0。
+- Next: SCN-MEGA-VSM-RANGES。
+- Notes: 前の HZB を使えないフレームは遮蔽なしで全部を描く（以前は前のフレームで見えたクラスタだけを 1 パス目が描き、残りを 2 パス目が今の HZB で選んだ）。100 万本でカメラの切れ目の 1 フレームが重くなりうる（SCN-MEGA-ACCEPT-1M で見る）。子のページの要求は 1 パス目が描いた時点でも出す（以前は 2 パス目の今の HZB で見えたときだけ）。撮影で節の列は 1 要素しか通らず、2 パス目の回した節の dispatch・節の溢れ（node_overflow）は実機ではほぼ通っていない（クラスタの溢れと同じ関数で見直しへ入る）。`GeometryPageRequestVulkanTest`（ctest から外した写しの試験）は `cluster_cull.comp` の束縛（binding 5）と引数が変わったが直していない。性能は測っていない（SCN-MEGA-ACCEPT-1M で判断）。試験の追加はしていない。

@@ -12,7 +12,7 @@
 //   記録 1 件 = 9 語（uvec4）: [0].x = 席の番号, [1..4] = 変換, [5..8] = 前の変換
 // 段 1（header.y == 1）: 描く順の表（Common/MegaInstanceTable.glsl の MegaInstanceRow。144 B）を席の表から組み、
 //   影の表（48 B）とメッシュの表（80 B）の変わった行を写す。段 0 の書き込みの後（バリアを挟んで）に走る。
-//   描く順の記録 1 件 = 2 語: [0] = (描く順の番号, 席の番号, メッシュの表の番号, 最初のワークグループ), [1].x = 「見えた」印の先頭
+//   描く順の記録 1 件 = 2 語: [0] = (描く順の番号, 席の番号, メッシュの表の番号, 最初のワークグループ), [1] = 予約
 //   影の記録 1 件 = 4 語: [0].x = 描く順の番号, [1..3] = 影の表の行
 //   メッシュの記録 1 件 = 6 語: [0].x = メッシュの表の番号, [1..5] = メッシュの表の行
 //   header.x = 描く順の記録の数, header.z = 影の記録の数, header.w = メッシュの記録の数。記録はこの順に続けて並ぶ
@@ -260,14 +260,13 @@ void main()
     {
         const uint base = index * 2u;
         const uvec4 entry = recordWords[base];
-        const uint visibleOffset = recordWords[base + 1u].x;
         const uint dense = entry.x;
         const uint slot = entry.y;
         for (uint word = 0u; word < SlotRowWords; ++word)
         {
             instanceWords[dense * InstanceRowWords + word] = slotWords[slot * SlotRowWords + word];
         }
-        instanceWords[dense * InstanceRowWords + SlotRowWords] = uvec4(entry.z, entry.w, visibleOffset, 0u);
+        instanceWords[dense * InstanceRowWords + SlotRowWords] = uvec4(entry.z, entry.w, 0u, 0u);
         return;
     }
     index -= entryCount;

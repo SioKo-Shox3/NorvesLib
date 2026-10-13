@@ -32,8 +32,8 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         uint32_t CullPass;      // 0=従来（遮蔽の判定なし）, 1=1パス目, 2=2パス目
         uint32_t bStatsEnabled; // 1なら統計バッファへ数える
         uint32_t SectionBase;   // 区間の表・カウンタのうちこのパスの先頭（1パス目は0、2パス目は区間の数）
-        uint32_t VisibleReadStamp;  // 1パス目が「前のフレームで見えた」とみなす印の値（前のフレームの2パス目が書いた値）
-        uint32_t VisibleWriteStamp; // 2パス目が見えたクラスタへ書く印の値
+        uint32_t BvhDeferClusterCapacity; // 2 パス目へ回したクラスタの列の容量（要素。主の経路の cluster_bvh_cull.comp だけが読む）
+        uint32_t PageRequestStamp; // この記録の印（ページの要求の重複を省く。0 にはならず、記録ごとに変わる）
         uint32_t BvhStage;      // BVH のたどり: 節の判定の段の番号（BvhStageClusters なら葉のクラスタの判定。平らな判定では使わない）
         uint32_t BvhInputBase;  // この段の入力の列の先頭（要素）
         uint32_t BvhNextBase;   // 次の段の列の先頭
@@ -47,14 +47,15 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         uint32_t OrthoLod;            // 1 なら LOD を正射影で選ぶ（VSM の影）。0 なら透視（主の経路）
         uint32_t BvhNodeCapacity;     // BVH のたどりの節の列 1 本の容量（要素。主の経路の cluster_bvh_cull.comp だけが読む）
         uint32_t BvhLeafCapacity;     // BVH のたどりの葉の列の容量（要素）
-        uint32_t BvhPass2Capacity;    // 2 パス目の根の入力の容量（要素）
+        uint32_t BvhDeferNodeCapacity; // 2 パス目へ回した節の列の容量（要素）
         uint32_t BvhRangeCount;       // 範囲（BVH のインスタンスを描く順に 64 席ずつ区切ったもの）の数。範囲の段の入力の数
         uint32_t bBvhSeatsFromRanges; // 1 なら席の段（段 0）は、範囲の段が積んだ範囲の一覧から席を引く（1 範囲 = 1 ワークグループ）
         float InstanceCullDistance;   // 0 より大きければ、締まった球（範囲は AABB）の最も近い点がこれより遠い席・範囲を落とす（m）
         float PixelCullWidth;         // 0 より大きければ、席の締まった球を包む矩形が画素の中心を 1 つも含まないとき落とす（描く範囲の幅。画素）
         float PixelCullHeight;        // 同じ判定の描く範囲の高さ（画素）
-        uint32_t VisiblePass1Stamp;   // 0 でなければ、1 パス目が描いたクラスタへ書く印（2 パス目はその印で「1 パス目で描いた」を知る）。0 は旧の経路
-        uint32_t bPrevHiZEnabled;     // 1 なら 1 パス目の範囲・席を前のフレームの HZB で判定し、隠れたものを 2 パス目へ回す
+        uint32_t PrevHiZMipCount;     // 前のフレームの HZB のミップの数（寸法は HiZWidth・HiZHeight と同じことを契約で確かめてある）
+        uint32_t bPrevHiZEnabled;     // 1 なら前のフレームの HZB を使う: 1 パス目は範囲・席・節・クラスタを判定して隠れたものを 2 パス目へ回し、
+                                      // 2 パス目は 1 パス目が描いたかを判定し直す
         float PrevViewProjection[16]; // 前のフレームの HZB の深度を描いた VP（シェーダーの並び。TAA のジッタ込み）
         uint32_t BvhDeferCapacity;    // 2 パス目へ回した範囲の列の容量（要素）
     };

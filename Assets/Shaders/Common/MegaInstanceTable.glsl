@@ -4,7 +4,7 @@
 // ========================================
 // MegaGeometry のインスタンスの表とメッシュの表、その読み方
 //
-// インスタンスの表は描く順の行ごとの値（変換・前の変換・メッシュの表の番号・最初のワークグループ・「見えた」印の先頭）だけを持ち、
+// インスタンスの表は描く順の行ごとの値（変換・前の変換・メッシュの表の番号・最初のワークグループ）だけを持ち、
 // メッシュごとに決まる値（LOD の球・クラスタ配列・材質の区間・頂点とインデックスの基点・BVH・ページの表の先頭）はメッシュの表に置く。
 // 読み手はどちらの表も直接読まず、LoadMegaInstance(index) で両方を合わせた MegaInstance を受け取る。
 // どちらも device-local の常駐の表で、インスタンスの表は席の表（席ごと 128 B）から GPU が組む（mega_scene_scatter.comp）。
@@ -24,7 +24,7 @@ struct MegaInstanceRow
 {
     mat4 world;
     mat4 previousWorld;   // 直前のフレームの変換（velocity 用）
-    uvec4 info;           // x = メッシュの表の番号, y = 最初のワークグループの通し番号, z = 「見えた」印の先頭, w = 予約
+    uvec4 info;           // x = メッシュの表の番号, y = 最初のワークグループの通し番号, z・w = 予約
 };
 
 // メッシュの表の1要素（C++ の MegaGeometryPass::GPUMegaMesh と一致。80 バイト）
@@ -44,7 +44,7 @@ struct MegaInstance
     mat4 previousWorld;   // 直前のフレームの変換（velocity 用）
     vec4 lodSphere;       // LODの選択に使うメッシュ共通の境界球（ローカル。w<=0ならクラスタごとの中心で選ぶ）
     uvec4 clusterInfo;    // x,y = クラスタ配列のデバイスアドレス（下位・上位）, z = クラスタ数, w = 最初のワークグループの通し番号
-    uvec4 drawInfo;       // x = 材質の区間の番号, y = 頂点の基点（塊の先頭から。頂点単位）, z = インデックスの基点（塊の先頭から。インデックス単位）, w = 「見えた」印の先頭
+    uvec4 drawInfo;       // x = 材質の区間の番号, y = 頂点の基点（塊の先頭から。頂点単位）, z = インデックスの基点（塊の先頭から。インデックス単位）, w = 予約
     uvec4 bvhInfo;        // x,y = BVH の節の配列のデバイスアドレス（下位・上位。BVH が無ければ 0）, z = 節の数, w = ページの表の先頭（このメッシュのページの範囲の先頭）
     vec4 boundsSphere;    // メッシュ全体の締まった境界球（ローカル。w<=0 なら無い）
 };
@@ -69,7 +69,7 @@ MegaInstance LoadMegaInstance(uint index)
     instance.previousWorld = row.previousWorld;
     instance.lodSphere = mesh.lodSphere;
     instance.clusterInfo = uvec4(mesh.clusterInfo.xyz, row.info.y);
-    instance.drawInfo = uvec4(mesh.drawInfo.xyz, row.info.z);
+    instance.drawInfo = uvec4(mesh.drawInfo.xyz, 0u);
     instance.bvhInfo = mesh.bvhInfo;
     instance.boundsSphere = mesh.boundsSphere;
     return instance;

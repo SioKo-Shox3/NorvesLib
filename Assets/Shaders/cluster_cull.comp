@@ -9,7 +9,7 @@
 // 1回の dispatch で全部処理する（1パスにつき1回）。BVH を持つメッシュは cluster_bvh_cull.comp が受け持つので、
 // そのインスタンスはワークグループを持たない（インスタンスの表の clusterInfo.w が次のインスタンスと同じ）。
 // 入力: インスタンスの表SSBO（変換・メッシュのクラスタ配列のアドレス・材質の区間の番号など）+ カメラ情報UBO
-//       （+ 2パス時は「前のフレームで見えた」印とHi-Z）
+//       （+ 2パス時は前のフレームと今のフレームの Hi-Z）
 // 出力: 材質の区間ごとの IndirectDraw コマンド + 区間ごとの可視クラスタ数カウンタ + コマンドごとの描画情報
 //
 // ワークグループ（64スレッド）は1つのインスタンスの連続した64クラスタを受け持つ。ワークグループの通し番号から、
@@ -59,5 +59,6 @@ void main()
     g_LODSphere = instance.lodSphere;
     g_Clusters = ClusterArray(uvec2(instance.clusterInfo.x, instance.clusterInfo.y));
 
-    ProcessCluster(instanceIndex, instance, clusterIndex);
+    // 平らな判定は1パス目も全クラスタを見るので、2パス目は1パス目が描いたかを判定し直す（bPass1Reached = true）
+    ProcessCluster(instanceIndex, instance, clusterIndex, true);
 }
