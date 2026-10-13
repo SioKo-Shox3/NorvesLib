@@ -103,8 +103,11 @@ namespace NorvesLib::Core::Rendering
         // 8 はハードのコマンドを空振りにした数、9・10 は visbuffer_sw_raster.comp が数える（矩形の上限を超えた三角形・走ったワークグループ）、
         // 11 は区間の描画コマンドの上限（MaxDrawCount）を超えて積めなかった可視クラスタの数（両パスの合計）、
         // 12 は BVH のたどりの列の容量を超えて落ちた要素の数（両パスの合計）、13 は 2 パス目の根の入力の容量を超えたか（1 なら超えた）、
-        // 14・15 は BVH の節の列の 1 段・葉の列へ積もうとした数の最大（容量を超えた分も含む）
-        constexpr uint32_t StatsBufferWords = 16u;
+        // 14・15 は BVH の節の列の 1 段・葉の列へ積もうとした数の最大（容量を超えた分も含む）。
+        // 16 からは可視クラスタの binning（Common/MegaGeometryCull.glsl の STAT_BIN_*）: 16 は全体の列へ積もうとした数、
+        // 17〜30 は新旧の照合（17 = 旧のコマンドの数、18・19 = 新・旧のソフトの数、20 = 範囲の外の要素、21 = 詰めた位置の重なり、
+        // 22 = 数の違う区間、23・24 / 25・26 = 新・旧の集合の hash の和、27・28 / 29・30 = 新・旧のソフトの集合の hash の和）
+        constexpr uint32_t StatsBufferWords = 32u;
         constexpr uint32_t StatsBufferBytes = StatsBufferWords * sizeof(uint32_t);
 
         // ソフトウェアラスタの一覧（cluster_cull.comp の SwRasterBuffer）。先頭はパスごとの間接 dispatch の引数（x・y・z）と
@@ -154,6 +157,43 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t BvhStageRanges = 0xFFFFFFFEu;
         constexpr uint32_t RangeBoundsBytes = 8u * sizeof(float);
         constexpr uint32_t RangeBoundsBinding = 15;
+
+        // 可視クラスタの全体の列（Common/MegaGeometryCull.glsl の binding 23）。要素は uvec4（席・クラスタの番号・区画・区画の中の位置）で、
+        // 全パス通しの固定容量（本数・区間の数によらない）。超えた要素は積まずに数える（MEGA_CAPACITY の visible_list_overflow）。
+        // 大きさの目安: バナナ 1 万本 overview の 1 パス目で約 36 万クラスタ
+        constexpr uint32_t VisibleListBinding = 23;
+        constexpr uint32_t VisibleListCapacity = 1u << 22;
+        constexpr uint64_t VisibleListBytes = static_cast<uint64_t>(VisibleListCapacity) * 4u * sizeof(uint32_t);
+        // binning の数え（binding 24）。頭の語の位置は Common/MegaGeometryCull.glsl の BIN_* と一致（[0] = 列へ積もうとした数、
+        // [BinCheckArgsWord..+2] = 照合の間接 dispatch の引数、[BinCountWord] = 区画の数、[BinSlotWord] = 区間の表の要素の数、
+        // [BinSwCapacityWord] = ソフトの一覧の容量、[BinCheckStampWord] = 照合の印）。頭の後ろに区画の数・区画の先頭（各 2 × 要素の数）と、
+        // 旧の区間の接頭和（要素の数 + 1）が続く
+        constexpr uint32_t BinCounterBinding = 24;
+        constexpr uint32_t BinCheckMarkBinding = 25;
+        constexpr uint32_t BinCheckArgsWord = 4;
+        constexpr uint32_t BinCountWord = 8;
+        constexpr uint32_t BinSlotWord = 9;
+        constexpr uint32_t BinSwCapacityWord = 10;
+        constexpr uint32_t BinCheckStampWord = 11;
+        constexpr uint32_t BinHeaderWords = 16;
+        // 区間の表の要素の数 slotCount に要る数えの語数
+        constexpr uint64_t BinCounterWords(uint32_t slotCount)
+        {
+            return static_cast<uint64_t>(BinHeaderWords) + 5ull * slotCount + 1u;
+        }
+        // 統計の binning の語（Common/MegaGeometryCull.glsl の STAT_BIN_*）
+        constexpr uint32_t StatBinListAttempted = 16;
+        constexpr uint32_t StatBinOldCount = 17;
+        constexpr uint32_t StatBinNewSw = 18;
+        constexpr uint32_t StatBinOldSw = 19;
+        constexpr uint32_t StatBinInvalid = 20;
+        constexpr uint32_t StatBinDuplicate = 21;
+        constexpr uint32_t StatBinSectionMismatch = 22;
+        constexpr uint32_t StatBinNewHash = 23;
+        constexpr uint32_t StatBinOldHash = 25;
+        constexpr uint32_t StatBinNewSwHash = 27;
+        constexpr uint32_t StatBinOldSwHash = 29;
+        static_assert(StatBinOldSwHash + 2u <= StatsBufferWords, "binning の統計が統計のバッファに収まりません");
 
         // 画素の大きさの判定（席の段）を使える描く範囲か: 描く範囲が描画先の全体（上下の反転は可）のときだけ判定する
         // （画素の中心の位置を、カリングと描画で同じに数えられるときだけ）
@@ -531,6 +571,31 @@ namespace NorvesLib::Core::Rendering
                                                    "をたどるカリングを作れないため、平らなクラスタの列で判定します");
         }
 
+        // 可視クラスタの binning の接頭和と、開発ビルドの新旧の照合（どちらもカリングと同じディスクリプタセットの形）。
+        // 作れなくても描画は区間ごとのコマンドで続ける
+        const auto createBinPipeline = [&](const char *path, RHI::ShaderPtr &shader, RHI::PipelinePtr &pipeline) -> void
+        {
+            if (context.ShaderMgr)
+            {
+                shader = context.ShaderMgr->LoadShader(path, RHI::ShaderStage::Compute);
+            }
+            if (shader)
+            {
+                RHI::ComputePipelineDesc binPipelineDesc;
+                binPipelineDesc.computeShader = shader;
+                binPipelineDesc.descriptorSetLayouts.push_back(BuildCullDescriptorSetDesc());
+                pipeline = m_Device->CreateComputePipeline(binPipelineDesc);
+            }
+            if (!pipeline)
+            {
+                NORVES_LOG_WARNING("MegaGeometryPass", "MEGA_BIN_UNAVAILABLE shader=%s", path);
+            }
+        };
+        createBinPipeline("mega_bin_prefix.comp", m_BinPrefixShader, m_BinPrefixPipeline);
+#if NORVES_BUILD_DEVELOPMENT
+        createBinPipeline("mega_bin_check.comp", m_BinCheckShader, m_BinCheckPipeline);
+#endif
+
         // 遮蔽カリング（2パス）の HZB。作れなければ従来の1回の判定で描く
         m_bHiZReady = m_HiZ.Initialize(m_Device, context.ShaderMgr);
 
@@ -614,6 +679,19 @@ namespace NorvesLib::Core::Rendering
         m_LoggedBvhInstances = 0xFFFFFFFFu;
         m_LoggedBvhLevels = 0xFFFFFFFFu;
         m_LoggedFlatInstances = 0xFFFFFFFFu;
+        m_BinPrefixPipeline.reset();
+        m_BinPrefixShader.reset();
+        m_BinCheckPipeline.reset();
+        m_BinCheckShader.reset();
+        m_VisibleListBuffer.reset();
+        m_BinCounterBuffer.reset();
+        m_BinCounterCapacity = 0;
+        m_BinCheckMarkBuffer.reset();
+        m_bBinCheckMarksCleared = false;
+        m_bVisibleListAllocFailedLogged = false;
+        m_VisibleListPeak = 0;
+        m_bBinCheckLoggedOnce = false;
+        m_bBinMismatchLogged = false;
         m_IndirectDrawBuffer.reset();
         m_DrawCountBuffer.reset();
         m_DrawInfoBuffer.reset();
@@ -2771,6 +2849,15 @@ namespace NorvesLib::Core::Rendering
             recordEmptyRenderPass();
             return;
         }
+        // 可視クラスタの binning の数え（区間の表の要素ごとにハード/ソフトの 2 区画）と全体の列
+        const uint32_t binSlotCount = sectionCount * passCount;
+        const uint32_t binCount = binSlotCount * 2u;
+        if (!EnsureBinBuffers(binSlotCount))
+        {
+            NORVES_LOG_ERROR("MegaGeometryPass", "可視クラスタの binning の数えのバッファを用意できませんでした");
+            recordEmptyRenderPass();
+            return;
+        }
 
         // ソフトウェアラスタの一覧。作れなければ振り分けずにハードだけで描く
         const uint32_t swRasterCapacity = static_cast<uint32_t>(commandsPerPass);
@@ -3077,6 +3164,67 @@ namespace NorvesLib::Core::Rendering
             cmdList->BufferBarrier(m_SwRasterBuffer, RHI::ResourceState::CopyDest, RHI::ResourceState::UnorderedAccess);
         }
 
+        // 可視クラスタの binning: 新旧の照合は、開発ビルドで統計を読み戻す 2 パスのフレームで、全体の列と照合の印があるときだけ
+        bool bBinCheck = false;
+#if NORVES_BUILD_DEVELOPMENT
+        bBinCheck = statsSlot != nullptr && bTwoPass && m_BinPrefixPipeline && m_BinCheckPipeline && m_VisibleListBuffer &&
+                    m_BinCheckMarkBuffer;
+#endif
+        uint32_t binCheckStamp = 0;
+        if (bBinCheck)
+        {
+            // 照合ごとに変わる印（0 は使わない）。印の配列を 0 で埋め直さずに、前の照合の書き込みと区別する
+            if (++m_BinCheckStamp == 0)
+            {
+                ++m_BinCheckStamp;
+            }
+            binCheckStamp = m_BinCheckStamp;
+        }
+        if (statsSlot)
+        {
+            statsSlot->bBinCheck = bBinCheck;
+            statsSlot->BinCount = binCount;
+        }
+        // 数えを 0 にし、頭の語（区画の数・区間の表の要素の数・ソフトの一覧の容量・照合の印）を書く。
+        // 転送どうしの書き込みが重ならないよう、頭の語の前後を分けて 0 で埋める
+        {
+            const uint64_t binWordsBytes = BinCounterWords(binSlotCount) * sizeof(uint32_t);
+            const uint64_t headerValuesOffset = static_cast<uint64_t>(BinCountWord) * sizeof(uint32_t);
+            const uint64_t headerValuesEnd = static_cast<uint64_t>(BinCheckStampWord + 1u) * sizeof(uint32_t);
+            const auto fillBinWord = [&](uint32_t word, uint32_t value) -> void
+            {
+                cmdList->FillBuffer(m_BinCounterBuffer, static_cast<uint64_t>(word) * sizeof(uint32_t), sizeof(uint32_t), value);
+            };
+            cmdList->BufferBarrier(m_BinCounterBuffer, RHI::ResourceState::Common, RHI::ResourceState::CopyDest);
+            cmdList->FillBuffer(m_BinCounterBuffer, 0, headerValuesOffset, 0);
+            fillBinWord(BinCountWord, binCount);
+            fillBinWord(BinSlotWord, binSlotCount);
+            fillBinWord(BinSwCapacityWord, bSwRasterBin ? swRasterCapacity : 0u);
+            fillBinWord(BinCheckStampWord, binCheckStamp);
+            cmdList->FillBuffer(m_BinCounterBuffer, headerValuesEnd, binWordsBytes - headerValuesEnd, 0);
+            cmdList->BufferBarrier(m_BinCounterBuffer, RHI::ResourceState::CopyDest, RHI::ResourceState::UnorderedAccess);
+        }
+        if (m_VisibleListBuffer)
+        {
+            // 列の中身は積んだ分だけが読まれるので消さない
+            cmdList->BufferBarrier(m_VisibleListBuffer, RHI::ResourceState::Common, RHI::ResourceState::UnorderedAccess);
+        }
+        if (bBinCheck)
+        {
+            // 照合の印は作った直後だけ 0 で埋める（以後は照合ごとに変わる印で区別する）
+            if (!m_bBinCheckMarksCleared)
+            {
+                cmdList->BufferBarrier(m_BinCheckMarkBuffer, RHI::ResourceState::Common, RHI::ResourceState::CopyDest);
+                cmdList->FillBuffer(m_BinCheckMarkBuffer, 0, m_BinCheckMarkBuffer->GetSize(), 0);
+                cmdList->BufferBarrier(m_BinCheckMarkBuffer, RHI::ResourceState::CopyDest, RHI::ResourceState::UnorderedAccess);
+                m_bBinCheckMarksCleared = true;
+            }
+            else
+            {
+                cmdList->BufferBarrier(m_BinCheckMarkBuffer, RHI::ResourceState::Common, RHI::ResourceState::UnorderedAccess);
+            }
+        }
+
         // BVH のたどりの列・カウンタを、このフレームで使い始めたか（最初のパスの前に Common から使える状態にする）
         bool bBvhBuffersUsed = false;
         // 2 パス目の根の入力を、このフレームの 1 パス目が書いたか（2 パス目の段 0 はそれを読む。書かなければ全部の根を判定する）
@@ -3170,6 +3318,14 @@ namespace NorvesLib::Core::Rendering
                 {
                     descriptorSet->BindStorageBuffer(13, m_DummyStatsBuffer, 0, StatsBufferBytes);
                 }
+                // binding 23〜25: 可視クラスタの全体の列・binning の数え・照合の印。列を作れなかった・照合しないときは代わりのバッファを
+                // 結ぶ（列は代わりのバッファの長さを容量として積み、その中身は読まれない）
+                const RHI::BufferPtr &visibleList = m_VisibleListBuffer ? m_VisibleListBuffer : m_DummyStatsBuffer;
+                const RHI::BufferPtr &binMarks = bBinCheck ? m_BinCheckMarkBuffer : m_DummyStatsBuffer;
+                descriptorSet->BindStorageBuffer(VisibleListBinding, visibleList, 0, static_cast<uint32_t>(visibleList->GetSize()));
+                descriptorSet->BindStorageBuffer(BinCounterBinding, m_BinCounterBuffer, 0,
+                                                 static_cast<uint32_t>(m_BinCounterBuffer->GetSize()));
+                descriptorSet->BindStorageBuffer(BinCheckMarkBinding, binMarks, 0, static_cast<uint32_t>(binMarks->GetSize()));
                 descriptorSet->Update();
             };
 
@@ -3183,12 +3339,13 @@ namespace NorvesLib::Core::Rendering
             };
 
             // ----------------------------------------
-            // 3. 平らな判定（BVH を持たないインスタンス。全部を1回の dispatch で）
+            // 3. 平らな判定（BVH を持たないインスタンス。全部を1回の dispatch で）。
+            //    このパスのセットは binning の接頭和・照合も使うので、平らな判定が無いパスでも結ぶ
             // ----------------------------------------
+            const RHI::DescriptorSetPtr &cullDescriptorSet = frameSlot.CullDescriptorSet[passIndex];
+            bindCullDescriptors(cullDescriptorSet, frameSlot.CullUniform[passIndex]);
             if (totalGroups > 0)
             {
-                const RHI::DescriptorSetPtr &cullDescriptorSet = frameSlot.CullDescriptorSet[passIndex];
-                bindCullDescriptors(cullDescriptorSet, frameSlot.CullUniform[passIndex]);
                 cmdList->SetPipeline(m_CullPipeline);
                 cmdList->SetDescriptorSet(cullDescriptorSet, 0);
                 dispatchThreads(totalGroups * 64u);
@@ -3332,6 +3489,46 @@ namespace NorvesLib::Core::Rendering
                     cmdList->BufferBarrier(m_BvhQueueBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
                     cmdList->BufferBarrier(m_BvhCounterBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
                     cmdList->BufferBarrier(m_BvhCounterBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::IndirectArgument);
+                }
+            }
+
+            // ----------------------------------------
+            // 3c. 可視クラスタの binning: 区画の数の接頭和（各パス）と、開発ビルドの新旧の照合（2 パス目の後）
+            // ----------------------------------------
+            if (m_BinPrefixPipeline)
+            {
+                ScopedGpuTimestamp binTimestamp(cmdList, bSecond ? "MegaBin2" : "MegaBin1");
+                // 判定の書き込み（数え・全体の列・区間のカウンタ・ソフトの一覧の頭）を接頭和へ見せる
+                cmdList->BufferBarrier(m_BinCounterBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
+                cmdList->BufferBarrier(m_DrawCountBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
+                if (bSwRasterBin)
+                {
+                    cmdList->BufferBarrier(m_SwRasterBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
+                }
+                cmdList->SetPipeline(m_BinPrefixPipeline);
+                cmdList->SetDescriptorSet(cullDescriptorSet, 0);
+                cmdList->Dispatch(1, 1, 1);
+                // 次の書き手（照合・次のパスの判定）が接頭和の書き込みの後に読み書きする
+                cmdList->BufferBarrier(m_BinCounterBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
+
+                if (bBinCheck && bSecond)
+                {
+                    // 照合は全体の列・区間のコマンド・描画情報・ソフトの一覧を読み、統計と照合の印へ書く。
+                    // 引数は接頭和が数えのバッファの頭へ書いた間接 dispatch の引数
+                    if (m_VisibleListBuffer)
+                    {
+                        cmdList->BufferBarrier(m_VisibleListBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
+                    }
+                    cmdList->BufferBarrier(m_IndirectDrawBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
+                    cmdList->BufferBarrier(m_DrawInfoBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
+                    cmdList->BufferBarrier(statsBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
+                    cmdList->BufferBarrier(m_BinCounterBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::IndirectArgument);
+                    cmdList->SetPipeline(m_BinCheckPipeline);
+                    cmdList->SetDescriptorSet(cullDescriptorSet, 0);
+                    if (!cmdList->DispatchIndirect(m_BinCounterBuffer, static_cast<uint64_t>(BinCheckArgsWord) * sizeof(uint32_t)))
+                    {
+                        NORVES_LOG_ERROR("MegaGeometryPass", "MEGA_BIN_CHECK_DISPATCH_FAILED");
+                    }
                 }
             }
 
@@ -3567,6 +3764,17 @@ namespace NorvesLib::Core::Rendering
         if (bBvhPass2Used)
         {
             cmdList->BufferBarrier(m_BvhPass2Buffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::Common);
+        }
+
+        // binning の数え・全体の列・照合の印を次のフレーム用に戻す
+        cmdList->BufferBarrier(m_BinCounterBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::Common);
+        if (m_VisibleListBuffer)
+        {
+            cmdList->BufferBarrier(m_VisibleListBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::Common);
+        }
+        if (bBinCheck)
+        {
+            cmdList->BufferBarrier(m_BinCheckMarkBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::Common);
         }
 
         if (m_bVisibilityPlanEnabled || bStaged)
@@ -3979,6 +4187,97 @@ namespace NorvesLib::Core::Rendering
         return true;
     }
 
+    bool MegaGeometryPass::EnsureBinBuffers(uint32_t slotCount)
+    {
+        if (!m_Device || slotCount == 0)
+        {
+            return false;
+        }
+
+        // 数え（区間の数で大きさが変わる。足りないときだけ作り直す）。頭は照合の間接 dispatch の引数になるので IndirectBuffer も持ち、
+        // フレームの頭に FillBuffer で 0 にする
+        const uint64_t counterWords = BinCounterWords(slotCount);
+        if (counterWords > 0xFFFFFFFFull / sizeof(uint32_t))
+        {
+            return false;
+        }
+        if (!m_BinCounterBuffer || counterWords > m_BinCounterCapacity)
+        {
+            const uint32_t newWords = NextPowerOfTwo(std::max(static_cast<uint32_t>(counterWords), m_BinCounterCapacity));
+            RHI::BufferDesc desc(static_cast<uint64_t>(newWords) * sizeof(uint32_t),
+                                 RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::IndirectBuffer | RHI::ResourceUsage::TransferDst,
+                                 false,
+                                 "MegaGeometry_BinCounters");
+            RHI::BufferPtr buffer = m_Device->CreateBuffer(desc);
+            if (!buffer)
+            {
+                return false;
+            }
+            // 古いバッファは、直前のフレームのGPUがまだ使っているかもしれないので、しばらく保持してから破棄する
+            if (m_BinCounterBuffer)
+            {
+                m_RetiredBuffers.push_back(RetiredBuffer{m_BinCounterBuffer, m_RenderFrameCount});
+            }
+            m_BinCounterBuffer = buffer;
+            m_BinCounterCapacity = newWords;
+        }
+
+        // 全体の列と照合の印（固定容量で作り直さない）。割り当ての失敗（VRAM の不足）は例外で届くので受け、以後は作らずに
+        // 代わりのバッファを結ぶ（判定は列を溢れとして数えるだけになり、描画は区間ごとのコマンドで続く）
+        if (!m_VisibleListBuffer && !m_bVisibleListAllocFailedLogged)
+        {
+            const bool bWantMarks = m_BinCheckPipeline != nullptr;
+            const uint64_t markBytes = static_cast<uint64_t>(VisibleListCapacity) * sizeof(uint32_t);
+            RHI::BufferPtr listBuffer;
+            RHI::BufferPtr markBuffer;
+            const char *failure = nullptr;
+            try
+            {
+                RHI::BufferDesc listDesc(VisibleListBytes, RHI::ResourceUsage::StorageBuffer, false, "MegaGeometry_VisibleList");
+                listBuffer = m_Device->CreateBuffer(listDesc);
+                if (bWantMarks)
+                {
+                    RHI::BufferDesc markDesc(markBytes,
+                                             RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::TransferDst,
+                                             false,
+                                             "MegaGeometry_BinCheckMarks");
+                    markBuffer = m_Device->CreateBuffer(markDesc);
+                }
+                if (!listBuffer || (bWantMarks && !markBuffer))
+                {
+                    failure = "null";
+                }
+            }
+            catch (const std::exception &exception)
+            {
+                NORVES_LOG_ERROR("MegaGeometryPass",
+                                 "MEGA_VISIBLE_LIST_ALLOC_FAILED list_bytes=%llu reason=%s。全体の列を使わずに描きます",
+                                 static_cast<unsigned long long>(VisibleListBytes),
+                                 exception.what());
+                m_bVisibleListAllocFailedLogged = true;
+                return true;
+            }
+            if (failure)
+            {
+                NORVES_LOG_ERROR("MegaGeometryPass",
+                                 "MEGA_VISIBLE_LIST_ALLOC_FAILED list_bytes=%llu reason=%s。全体の列を使わずに描きます",
+                                 static_cast<unsigned long long>(VisibleListBytes),
+                                 failure);
+                m_bVisibleListAllocFailedLogged = true;
+                return true;
+            }
+            m_VisibleListBuffer = listBuffer;
+            m_BinCheckMarkBuffer = markBuffer;
+            m_bBinCheckMarksCleared = false;
+            NORVES_LOG_INFO("MegaGeometryPass",
+                            "VRAM_LEDGER visible_list mb=%.2f capacity=%u check_marks_mb=%.2f",
+                            static_cast<double>(VisibleListBytes) / (1024.0 * 1024.0),
+                            VisibleListCapacity,
+                            markBuffer ? static_cast<double>(markBytes) / (1024.0 * 1024.0) : 0.0);
+        }
+        return true;
+    }
+
     bool MegaGeometryPass::EnsureBvhStageResources(FrameSlot &slot, uint32_t passIndex, uint32_t stageCount)
     {
         // FrameUseRing の枠（FrameSlot）の資源。Acquire と作成が別の区間（準備の段と記録の段）になることがあるので、
@@ -4097,6 +4396,9 @@ namespace NorvesLib::Core::Rendering
         addBinding(14, RHI::ResourceBindType::RWBuffer);             // BVH のたどりの 2 パス目の根の入力と間接 dispatch の引数
         addBinding(RangeBoundsBinding, RHI::ResourceBindType::StructuredBuffer); // 範囲の境界（インスタンスの判定の範囲の段）
         addBinding(MegaMeshTableBindingIndex, RHI::ResourceBindType::StructuredBuffer); // メッシュの表
+        addBinding(VisibleListBinding, RHI::ResourceBindType::RWBuffer);  // 可視クラスタの全体の列
+        addBinding(BinCounterBinding, RHI::ResourceBindType::RWBuffer);   // binning の数え・接頭和・照合の引数
+        addBinding(BinCheckMarkBinding, RHI::ResourceBindType::RWBuffer); // 照合の印（開発ビルドの照合だけが使う）
         return desc;
     }
 
@@ -5707,6 +6009,43 @@ namespace NorvesLib::Core::Rendering
         // 書いたフレームの提出は完了している
         // エポックが始まっていれば相対フレームが30の倍数のフレームで出す（撮影の間で同じ相対フレームを突き合わせられる）
         const bool bSampleFrame = pending.EpochFrame >= 0 ? (pending.EpochFrame % 30 == 0) : (pending.Frame % 30 == 0);
+
+        // 可視クラスタの binning の新旧の照合（照合したフレームごと）。新は全体の列（容量で頭打ち）、旧は区間ごとのコマンドと
+        // ソフトの一覧。数・範囲の外の要素・詰めた位置の重なり・区間ごとの数・集合の hash の和のどれかが違えば mismatch に数え、
+        // 0 でなければ ERROR で出す（続けて違うときは、記録するフレームだけ出す）
+        if (pending.bBinCheck)
+        {
+            const uint32_t attempted = stats[StatBinListAttempted];
+            m_VisibleListPeak = std::max(m_VisibleListPeak, attempted);
+            const uint32_t listed = std::min(attempted, VisibleListCapacity);
+            const auto difference = [](uint32_t a, uint32_t b) -> uint32_t { return a > b ? a - b : b - a; };
+            const auto hashDiffers = [stats](uint32_t newWord, uint32_t oldWord) -> uint32_t
+            { return (stats[newWord] != stats[oldWord] || stats[newWord + 1u] != stats[oldWord + 1u]) ? 1u : 0u; };
+            const uint32_t hashMismatch = hashDiffers(StatBinNewHash, StatBinOldHash) + hashDiffers(StatBinNewSwHash, StatBinOldSwHash);
+            const uint32_t mismatch = difference(listed, stats[StatBinOldCount]) + difference(stats[StatBinNewSw], stats[StatBinOldSw]) +
+                                      stats[StatBinInvalid] + stats[StatBinDuplicate] + stats[StatBinSectionMismatch] + hashMismatch;
+            if (mismatch != 0 && (!m_bBinMismatchLogged || bSampleFrame))
+            {
+                NORVES_LOG_ERROR("MegaGeometryPass",
+                                 "MEGA_BIN mismatch=%u entries=%u old=%u sw_entries=%u old_sw=%u invalid=%u duplicate=%u "
+                                 "section_mismatch=%u hash_mismatch=%u bins=%u frame=%llu epoch_frame=%lld",
+                                 mismatch, listed, stats[StatBinOldCount], stats[StatBinNewSw], stats[StatBinOldSw],
+                                 stats[StatBinInvalid], stats[StatBinDuplicate], stats[StatBinSectionMismatch], hashMismatch,
+                                 pending.BinCount,
+                                 static_cast<unsigned long long>(pending.RenderFrame),
+                                 static_cast<long long>(pending.EpochFrame));
+                m_bBinMismatchLogged = true;
+            }
+            else if (mismatch == 0 && (!m_bBinCheckLoggedOnce || bSampleFrame || m_Settings.bStatsEveryFrame))
+            {
+                NORVES_LOG_INFO("MegaGeometryPass",
+                                "MEGA_BIN mismatch=0 entries=%u old=%u sw_entries=%u old_sw=%u bins=%u frame=%llu epoch_frame=%lld",
+                                listed, stats[StatBinOldCount], stats[StatBinNewSw], stats[StatBinOldSw], pending.BinCount,
+                                static_cast<unsigned long long>(pending.RenderFrame),
+                                static_cast<long long>(pending.EpochFrame));
+                m_bBinCheckLoggedOnce = true;
+            }
+        }
         if (!m_bStatsLoggedOnce || bSampleFrame || m_Settings.bStatsEveryFrame)
         {
             NORVES_LOG_INFO("MegaGeometryPass",
@@ -5739,14 +6078,19 @@ namespace NorvesLib::Core::Rendering
             // 描かれなかったクラスタの数（0 が合格）と、インスタンス数に比例して膨らむバッファの大きさ。
             // bvh_overflow は BVH のたどりの固定容量の列を超えて判定から落ちた要素の数（0 が合格）、bvh_pass2_fallback は
             // 2 パス目の根の入力が溢れて全部の根を判定し直したか、bvh_node_peak・bvh_leaf_peak は節の列の 1 段・葉の列へ
-            // 積もうとした数の最大（容量を超えた分も含む）。BVH の列（bvh_queue_bytes）は本数によらず一定
+            // 積もうとした数の最大（容量を超えた分も含む）。BVH の列（bvh_queue_bytes）は本数によらず一定。
+            // visible_list_* は可視クラスタの全体の列（全パス通しの固定容量）: 枠（要素数・バイト数）、このフレームの溢れ
+            // （積もうとした数 − 容量。0 が合格）、積もうとした数の最大（照合したフレームの読み戻しから）
             const auto bufferBytes = [](const RHI::BufferPtr &buffer) -> unsigned long long
             { return buffer ? static_cast<unsigned long long>(buffer->GetSize()) : 0ull; };
+            const uint32_t visibleListAttempted = pending.bBinCheck ? stats[StatBinListAttempted] : 0u;
+            const uint32_t visibleListCapacity = m_VisibleListBuffer ? VisibleListCapacity : 0u;
             NORVES_LOG_INFO("MegaGeometryPass",
                             "MEGA_CAPACITY draw_dropped=%u max_draw_count=%u command_capacity=%u "
                             "visibility_bytes=%llu indirect_bytes=%llu draw_info_bytes=%llu "
                             "bvh_queue_bytes=%llu bvh_pass2_bytes=%llu bvh_overflow=%u bvh_pass2_fallback=%u "
                             "bvh_node_peak=%u bvh_leaf_peak=%u "
+                            "visible_list_capacity=%u visible_list_bytes=%llu visible_list_overflow=%u visible_list_peak=%u "
                             "sw_raster_bytes=%llu frame=%llu epoch_frame=%lld",
                             stats[11],
                             m_Settings.MaxDrawCount,
@@ -5760,6 +6104,10 @@ namespace NorvesLib::Core::Rendering
                             stats[13],
                             stats[14],
                             stats[15],
+                            visibleListCapacity,
+                            bufferBytes(m_VisibleListBuffer),
+                            visibleListAttempted > visibleListCapacity ? visibleListAttempted - visibleListCapacity : 0u,
+                            m_VisibleListPeak,
                             bufferBytes(m_SwRasterBuffer),
                             static_cast<unsigned long long>(pending.RenderFrame),
                             static_cast<long long>(pending.EpochFrame));

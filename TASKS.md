@@ -1170,7 +1170,7 @@
 - notes: 範囲の段は PROBE-100K が要ると判断したときだけ作る（要らなければ席の判定だけ）。 （ECS 計画の対応）範囲は、散布の連続した席の範囲。 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
 
 ## SCN-MEGA-BINNING-PREP: 可視クラスタの全体の列と、区間 × ハード/ソフトの数え・接頭和を足す（準備・描画は旧経路）
-- status: todo
+- status: done
 - done-when: カリングが今の書き込みに加えて全体の列へも積む。数えと接頭和を計算し、開発ビルドで新旧を「席・メッシュ・クラスタ・LOD の集合」として比べる（順番では比べない。`MEGA_BIN mismatch=0`）。全体の枠と溢れを `MEGA_CAPACITY` に出す。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Views overview -Build -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GameArgs stress-entities=5000,stress-moving-percent=1,stress-stream-cell=64 -OutDir .harness/runs/scene-capture/SCN-MEGA-BINNING-PREP/check`

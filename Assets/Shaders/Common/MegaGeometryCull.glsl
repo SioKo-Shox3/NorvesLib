@@ -39,6 +39,13 @@
 //
 // クラスタ配列・グループのBVHの節の配列はジオメトリの共有プールの塊の中にあり、塊が複数あっても1回の dispatch で
 // 読めるよう、インスタンスごとのデバイスアドレス（buffer_reference）で引く。
+//
+// 可視クラスタの全体の列（binning の準備。描画はまだ区間ごとのコマンドの経路）:
+//   描くと決めたクラスタは、区間ごとのコマンドに加えて、全パス通しの 1 本の固定容量の列（binding 23）へも積む。
+//   要素は (席, クラスタの番号, 区画, 区画の中の位置)。区画は「パスの区間 × ハード/ソフト」（(sectionBase + 区間) × 2 + ソフトなら 1）で、
+//   区画の数（binding 24）を積むときに数え、区画の中の位置はその数の atomicAdd の戻り値。各パスの判定の後に
+//   mega_bin_prefix.comp が数えの接頭和を作るので、区画の先頭 + 区画の中の位置で、区画ごとに詰めた並びの位置が決まる。
+//   列の容量を超えた要素は積まず、数え（binding 24 の先頭の語）だけ進める（溢れ）。
 // ========================================
 
 #ifndef NORVES_MEGA_GEOMETRY_CULL_GLSL
@@ -184,8 +191,13 @@ const uint DEBUG_PAYLOAD_MODE_LOD_LEVEL = 2u;
 #define MEGA_MESH_BINDING 22
 #include "Common/MegaInstanceTable.glsl"
 
+// 描画コマンド・描画情報（binding 2・8）の修飾子。判定は書くだけ。新旧の照合（mega_bin_check.comp）は空に定めて読む
+#ifndef MEGA_DRAW_OUTPUT_ACCESS
+#define MEGA_DRAW_OUTPUT_ACCESS writeonly
+#endif
+
 // set 0, binding 2: IndirectDrawコマンド出力（区間ごとに連続した範囲）
-layout(std430, set = 0, binding = 2) writeonly buffer IndirectDrawBuffer
+layout(std430, set = 0, binding = 2) MEGA_DRAW_OUTPUT_ACCESS buffer IndirectDrawBuffer
 {
     DrawIndexedIndirectCommand drawCommands[];
 };
@@ -207,9 +219,11 @@ layout(std430, set = 0, binding = 5) buffer VisibleLastFrameBuffer
 };
 
 // set 0, binding 6: 統計（STAT_*。1フレームの全インスタンスの合計）。bStatsEnabled=0 では使わない。
+// 16 語目からは binning の数えと新旧の照合（mega_bin_prefix.comp・mega_bin_check.comp。STAT_BIN_*）。
+// 結ぶ大きさは使う側で違う（VSM の判定は 16 語より短くてよい）ので、長さを決めない
 layout(std430, set = 0, binding = 6) buffer StatsBuffer
 {
-    uint stats[16];
+    uint stats[];
 };
 
 // set 0, binding 7: 材質の区間の表（x = コマンドの先頭の位置（全パス通しの添え字）, y = 区間のコマンドの最大数）。
@@ -221,7 +235,7 @@ layout(std430, set = 0, binding = 7) readonly buffer SectionBuffer
 
 // set 0, binding 8: コマンドごとの描画情報（x = インスタンスの番号, y = デバッグ表示・LODの段の payload）。
 // コマンドの firstInstance がこの添え字（コマンドの通しの位置）なので、頂点シェーダーが gl_InstanceIndex で引く。
-layout(std430, set = 0, binding = 8) writeonly buffer DrawInfoBuffer
+layout(std430, set = 0, binding = 8) MEGA_DRAW_OUTPUT_ACCESS buffer DrawInfoBuffer
 {
     uvec2 drawInfos[];
 };
@@ -282,6 +296,62 @@ const uint BVH_LEAF_COUNTER = 16u;
 // （MegaGeometryPass.cpp の BvhArgsBaseWords・BvhArgsStrideWords と一致）
 const uint BVH_ARGS_BASE = 32u;
 const uint BVH_ARGS_STRIDE = 4u;
+
+// set 0, binding 23: 可視クラスタの全体の列（全パス通し。容量は結んだ大きさ）。
+// x = 席（インスタンスの表の番号）, y = クラスタの番号, z = 区画（(sectionBase + 区間) × 2 + ソフトなら 1）, w = 区画の中の位置
+layout(std430, set = 0, binding = 23) buffer VisibleClusterListBuffer
+{
+    uvec4 visibleClusters[];
+};
+
+// set 0, binding 24: binning の数え（フレームの頭でホストが 0 にし、頭の語を書く）。並びは MegaGeometryPass.cpp の Bin*Word と一致:
+//   [BIN_LIST_COUNTER] = 全体の列へ積もうとした数（容量を超えた分も数える）
+//   [BIN_CHECK_ARGS..+2] = 新旧の照合（mega_bin_check.comp）の間接 dispatch の引数（mega_bin_prefix.comp が書く）
+//   [BIN_COUNT_WORD] = 区画の数 B、[BIN_SLOT_WORD] = 区間の表の要素の数（パスの数 × 区間の数）、
+//   [BIN_SW_CAPACITY_WORD] = ソフトの一覧のパスごとの容量（0 なら一覧が無い）、[BIN_CHECK_STAMP_WORD] = 照合の印
+//   [BIN_HEADER_WORDS + b] = 区画 b の数、[BIN_HEADER_WORDS + B + b] = 区画 b の先頭（接頭和。全パス通し）、
+//   [BIN_HEADER_WORDS + 2B + s] = 旧の経路の区間 s までのコマンドの数の和（照合用。s = 0..区間の表の要素の数）
+layout(std430, set = 0, binding = 24) buffer BinCounterBuffer
+{
+    uint binCounters[];
+};
+const uint BIN_LIST_COUNTER = 0u;
+const uint BIN_CHECK_ARGS = 4u;
+const uint BIN_COUNT_WORD = 8u;
+const uint BIN_SLOT_WORD = 9u;
+const uint BIN_SW_CAPACITY_WORD = 10u;
+const uint BIN_CHECK_STAMP_WORD = 11u;
+const uint BIN_HEADER_WORDS = 16u;
+
+// 統計（binding 6）の binning の語（MegaGeometryPass.cpp の OnFrameReadback が読む）
+const uint STAT_BIN_LIST_ATTEMPTED = 16u; // 全体の列へ積もうとした数（mega_bin_prefix.comp が書く）
+const uint STAT_BIN_OLD_COUNT = 17u;      // 旧の経路のコマンドの数（両パス）
+const uint STAT_BIN_NEW_SW = 18u;         // 全体の列のうちソフトの区画の要素の数
+const uint STAT_BIN_OLD_SW = 19u;         // 旧の経路のソフトの一覧の要素の数（両パス）
+const uint STAT_BIN_INVALID = 20u;        // 区画・位置・席・クラスタの番号が範囲の外の要素の数
+const uint STAT_BIN_DUPLICATE = 21u;      // 区画の先頭 + 区画の中の位置が他の要素と重なった数
+const uint STAT_BIN_SECTION_MISMATCH = 22u; // 区画の数の和が旧の経路の区間のコマンドの数と違う区間の数
+const uint STAT_BIN_NEW_HASH = 23u;       // 23・24 = 新の集合の要素の鍵の 2 通りの hash の和、25・26 = 旧の集合の同じ和
+const uint STAT_BIN_OLD_HASH = 25u;
+const uint STAT_BIN_NEW_SW_HASH = 27u;    // 27・28 = 新のソフトの集合、29・30 = 旧のソフトの一覧の同じ和
+const uint STAT_BIN_OLD_SW_HASH = 29u;
+
+/**
+ * @brief 描くと決めたクラスタを可視クラスタの全体の列へ積み、区画の数を数える
+ *
+ * 列の位置を先に取り、容量に入ったものだけ区画の数を数える（区画の数の和 = 列に入った要素の数のまま保つ）。
+ */
+void AppendVisibleCluster(uint instanceIndex, uint clusterIndex, uint sectionSlot, bool bSoftware)
+{
+    uint entry = atomicAdd(binCounters[BIN_LIST_COUNTER], 1u);
+    if (entry >= uint(visibleClusters.length()))
+    {
+        return; // 溢れ（数えだけ進める。MEGA_CAPACITY の visible_list_overflow）
+    }
+    uint bin = sectionSlot * 2u + (bSoftware ? 1u : 0u);
+    uint local = atomicAdd(binCounters[BIN_HEADER_WORDS + bin], 1u);
+    visibleClusters[entry] = uvec4(instanceIndex, clusterIndex, bin, local);
+}
 const uint BVH_STAGE_CLUSTERS = 0xFFFFFFFFu;
 // 葉が持つクラスタの最大数（GROUP_BVH_MAX_LEAF_CLUSTERS）。葉の列の1要素を、この数のスレッドが1クラスタずつ受け持つ
 const uint BVH_LEAF_SLOTS = 8u;
@@ -797,11 +867,15 @@ bool AppendSwRasterList(uint commandIndex)
  * コマンドはハードのラスタのために必ず積む（一覧への振り分けは描画を減らさない）。
  * swRasterEnabled=2 は、ソフトウェアラスタが実際に走るフレーム: 一覧へ積めたクラスタは、ハードのコマンドの
  * instanceCount を 0 にして描かない（ソフトが代わりに描く）。一覧が満杯で積めなかったクラスタは、ハードが描く。
+ * 区間の最大数によらず、可視クラスタの全体の列へも積む（区画のハード/ソフトは画面上の大きさの判断で決める）。
  */
 void EmitDrawCommand(uint instanceIndex, MegaInstance instance, uint clusterIndex, GPUClusterData cluster)
 {
     uint sectionSlot = cullData.sectionBase + instance.drawInfo.x;
     uvec2 section = sections[sectionSlot];
+    // ソフトへ振り分ける大きさか（区間ごとのコマンドの経路と全体の列で同じ判断を使う）
+    bool bSmall = cullData.swRasterEnabled != 0u && IsSwRasterSmallCluster(cluster);
+    AppendVisibleCluster(instanceIndex, clusterIndex, sectionSlot, bSmall);
     uint slot = atomicAdd(sectionCounts[sectionSlot], 1u);
 
     // 区間の最大数を超えた分は積まない（描画の数も区間の最大数で頭打ちになる）
@@ -817,7 +891,6 @@ void EmitDrawCommand(uint instanceIndex, MegaInstance instance, uint clusterInde
 
         if (cullData.swRasterEnabled != 0u)
         {
-            bool bSmall = IsSwRasterSmallCluster(cluster);
             bool bBinned = bSmall && AppendSwRasterList(commandIndex);
             if (bBinned && cullData.swRasterEnabled == 2u)
             {

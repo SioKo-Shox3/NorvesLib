@@ -1,0 +1,232 @@
+﻿#version 460
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_buffer_reference_uvec2 : require
+
+// ========================================
+// Mega Geometry の可視クラスタの binning: 新旧の照合（開発ビルドで、統計を読み戻す 2 パスのフレームの 2 パス目の後）
+//
+// 新（可視クラスタの全体の列と区画の数え・接頭和）と旧（区間ごとのコマンドとソフトの一覧）を、順番ではなく集合として比べる。
+// 各要素の鍵 (パス, 区間, 席, メッシュ, クラスタ) の 2 通りの hash の和を、新旧それぞれで統計（STAT_BIN_*）へ足し、
+// ホスト（MegaGeometryPass::OnFrameReadback）が和と数を比べて MEGA_BIN mismatch を出す。
+// 旧のコマンドはクラスタの番号を持たないので、クラスタはインデックスの範囲（メッシュの基点を引いた先頭・数・頂点の基点）で表し、
+// 新の要素はクラスタの記録から同じ範囲を引く（LOD の段はクラスタで決まる）。
+// ソフトの区画は、旧のソフトの一覧（パスごとのコマンドの位置）と、区間を除いた鍵で別に比べる。
+// あわせて、区画の先頭 + 区画の中の位置が全体の列の数の範囲で重ならない（区画ごとに詰めた並びが全体の列の置換になる）こと、
+// 区間ごとの区画の数の和が旧の区間のコマンドの数と同じことを確かめる。
+// 間接 dispatch の引数と旧の区間の接頭和は mega_bin_prefix.comp が書く。ディスクリプタセットはカリングと同じ形。
+// ========================================
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+// 描画コマンド・描画情報を読む（共通部の書き込みの関数も取り込むので readonly にはせず、修飾子を空にする）
+#define MEGA_DRAW_OUTPUT_ACCESS
+#include "Common/MegaGeometryCull.glsl"
+
+// set 0, binding 25: 照合の印（全体の列と同じ要素数）。区画の先頭 + 区画の中の位置へ照合ごとに変わる印を交換で書き、
+// 前の値が同じ印なら位置が重なっている
+layout(std430, set = 0, binding = 25) buffer BinCheckMarkBuffer
+{
+    uint binCheckMarks[];
+};
+
+// ソフトの集合の鍵では区間を比べない（旧のソフトの一覧は区間を持たない）
+const uint KEY_NO_SECTION = 0xFFFFFFFFu;
+
+uint HashMix(uint h, uint value)
+{
+    value *= 0xCC9E2D51u;
+    value = (value << 15u) | (value >> 17u);
+    value *= 0x1B873593u;
+    h ^= value;
+    h = (h << 13u) | (h >> 19u);
+    return h * 5u + 0xE6546B64u;
+}
+
+uint HashFinish(uint h)
+{
+    h ^= h >> 16u;
+    h *= 0x85EBCA6Bu;
+    h ^= h >> 13u;
+    h *= 0xC2B2AE35u;
+    h ^= h >> 16u;
+    return h;
+}
+
+/**
+ * @brief 鍵の 2 通りの hash（種の違う同じ混ぜ方）
+ * @param range クラスタのインデックスの範囲（x = メッシュの基点からの先頭, y = 数, z = メッシュの基点からの頂点の基点）
+ */
+uvec2 HashKey(uint pass, uint section, uint seat, uint mesh, uvec3 range)
+{
+    uint words[7] = uint[7](pass, section, seat, mesh, range.x, range.y, range.z);
+    uvec2 h = uvec2(0x9E3779B9u, 0x7F4A7C15u);
+    for (uint i = 0u; i < 7u; ++i)
+    {
+        h.x = HashMix(h.x, words[i]);
+        h.y = HashMix(h.y, words[i]);
+    }
+    return uvec2(HashFinish(h.x ^ 7u), HashFinish(h.y ^ 7u));
+}
+
+void AddHash(uint statIndex, uvec2 h)
+{
+    atomicAdd(stats[statIndex], h.x);
+    atomicAdd(stats[statIndex + 1u], h.y);
+}
+
+/**
+ * @brief 旧の経路のコマンド 1 つの鍵の範囲（席は描画情報から引く）。席が範囲の外なら false
+ */
+bool LoadOldCommand(uint commandIndex, out uint seat, out uint mesh, out uvec3 range)
+{
+    seat = drawInfos[commandIndex].x;
+    mesh = 0u;
+    range = uvec3(0u);
+    if (seat >= cullData.instanceCount)
+    {
+        return false;
+    }
+    MegaInstance instance = LoadMegaInstance(seat);
+    DrawIndexedIndirectCommand command = drawCommands[commandIndex];
+    mesh = megaInstanceRows[seat].info.x;
+    range = uvec3(command.firstIndex - instance.drawInfo.z,
+                  command.indexCount,
+                  uint(command.vertexOffset - int(instance.drawInfo.y)));
+    return true;
+}
+
+void main()
+{
+    uint index = (gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x) * 64u + gl_LocalInvocationID.x;
+
+    uint binCount = binCounters[BIN_COUNT_WORD];
+    uint slotCount = binCounters[BIN_SLOT_WORD];
+    uint swCapacity = binCounters[BIN_SW_CAPACITY_WORD];
+    uint stamp = binCounters[BIN_CHECK_STAMP_WORD];
+    uint sectionCount = slotCount / 2u; // 照合は 2 パスのフレームだけ走る
+    uint offsetBase = BIN_HEADER_WORDS + binCount;
+    uint oldBase = BIN_HEADER_WORDS + 2u * binCount;
+    uint listed = min(binCounters[BIN_LIST_COUNTER], uint(visibleClusters.length()));
+    uint oldTotal = binCounters[oldBase + slotCount];
+    uint swFirst = swCapacity != 0u ? min(swRaster[3u], swCapacity) : 0u;
+    uint swSecond = swCapacity != 0u ? min(swRaster[SW_RASTER_HEADER_STRIDE + 3u], swCapacity) : 0u;
+
+    if (index == 0u)
+    {
+        stats[STAT_BIN_LIST_ATTEMPTED] = binCounters[BIN_LIST_COUNTER];
+        stats[STAT_BIN_OLD_COUNT] = oldTotal;
+        stats[STAT_BIN_OLD_SW] = swFirst + swSecond;
+    }
+
+    // 新: 全体の列の要素
+    if (index < listed)
+    {
+        uvec4 entry = visibleClusters[index];
+        uint seat = entry.x;
+        uint bin = entry.z;
+        bool bValid = bin < binCount && seat < cullData.instanceCount && sectionCount != 0u;
+        if (bValid)
+        {
+            bValid = entry.w < binCounters[BIN_HEADER_WORDS + bin];
+        }
+        if (bValid)
+        {
+            uint destination = binCounters[offsetBase + bin] + entry.w;
+            bValid = destination < listed;
+            if (bValid && atomicExchange(binCheckMarks[destination], stamp) == stamp)
+            {
+                atomicAdd(stats[STAT_BIN_DUPLICATE], 1u);
+            }
+        }
+        MegaInstance instance;
+        uint pass = 0u;
+        uint section = 0u;
+        if (bValid)
+        {
+            instance = LoadMegaInstance(seat);
+            uint slot = bin >> 1u;
+            pass = slot / sectionCount;
+            section = slot - pass * sectionCount;
+            bValid = entry.y < instance.clusterInfo.z && pass < 2u && section == instance.drawInfo.x;
+        }
+        if (!bValid)
+        {
+            atomicAdd(stats[STAT_BIN_INVALID], 1u);
+        }
+        else
+        {
+            GPUClusterData cluster = ClusterArray(uvec2(instance.clusterInfo.x, instance.clusterInfo.y)).clusters[entry.y];
+            uint mesh = megaInstanceRows[seat].info.x;
+            uvec3 range = cluster.indexInfo.xyz;
+            AddHash(STAT_BIN_NEW_HASH, HashKey(pass, section, seat, mesh, range));
+            if ((bin & 1u) != 0u)
+            {
+                atomicAdd(stats[STAT_BIN_NEW_SW], 1u);
+                AddHash(STAT_BIN_NEW_SW_HASH, HashKey(pass, KEY_NO_SECTION, seat, mesh, range));
+            }
+        }
+    }
+
+    // 旧: 区間ごとのコマンド（index 番目を含む区間を、区間の接頭和から二分探索で引く）
+    if (index < oldTotal && slotCount != 0u)
+    {
+        uint low = 0u;
+        uint high = slotCount - 1u;
+        while (low < high)
+        {
+            uint mid = (low + high + 1u) >> 1u;
+            if (binCounters[oldBase + mid] <= index)
+            {
+                low = mid;
+            }
+            else
+            {
+                high = mid - 1u;
+            }
+        }
+        uint slot = low;
+        uint commandIndex = sections[slot].x + (index - binCounters[oldBase + slot]);
+        uint seat;
+        uint mesh;
+        uvec3 range;
+        if (LoadOldCommand(commandIndex, seat, mesh, range))
+        {
+            uint pass = sectionCount != 0u ? slot / sectionCount : 0u;
+            AddHash(STAT_BIN_OLD_HASH, HashKey(pass, slot - pass * sectionCount, seat, mesh, range));
+        }
+        else
+        {
+            atomicAdd(stats[STAT_BIN_INVALID], 1u);
+        }
+    }
+
+    // 旧: ソフトの一覧（パスごとのコマンドの位置）
+    if (index < swFirst + swSecond)
+    {
+        uint pass = index < swFirst ? 0u : 1u;
+        uint position = pass == 0u ? index : index - swFirst;
+        uint commandIndex = swRaster[SW_RASTER_HEADER_WORDS + pass * swCapacity + position];
+        uint seat;
+        uint mesh;
+        uvec3 range;
+        if (LoadOldCommand(commandIndex, seat, mesh, range))
+        {
+            AddHash(STAT_BIN_OLD_SW_HASH, HashKey(pass, KEY_NO_SECTION, seat, mesh, range));
+        }
+        else
+        {
+            atomicAdd(stats[STAT_BIN_INVALID], 1u);
+        }
+    }
+
+    // 区間ごとの数: ハードとソフトの区画の数の和が、旧の区間のコマンドの数（区間の最大数で頭打ち）と同じか
+    if (index < slotCount)
+    {
+        uint newCount = binCounters[BIN_HEADER_WORDS + index * 2u] + binCounters[BIN_HEADER_WORDS + index * 2u + 1u];
+        uint oldCount = binCounters[oldBase + index + 1u] - binCounters[oldBase + index];
+        if (newCount != oldCount)
+        {
+            atomicAdd(stats[STAT_BIN_SECTION_MISMATCH], 1u);
+        }
+    }
+}

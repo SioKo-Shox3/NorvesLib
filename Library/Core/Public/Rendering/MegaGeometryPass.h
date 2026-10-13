@@ -949,6 +949,16 @@ namespace NorvesLib::Core::Rendering
          */
         bool EnsureSwRasterBuffer(uint32_t capacity);
 
+        /**
+         * @brief 可視クラスタの binning のバッファ（全体の固定容量の列・区画の数え・開発ビルドの照合の印）を用意する
+         *
+         * 数えは区間の表の要素の数 slotCount（パスの数 × 区間の数）を収める大きさで、足りないときだけ作り直す。
+         * 全体の列と照合の印は固定容量で作り直さない。列を作れなかったら（VRAM の不足）最初の 1 回だけ ERROR を出し、
+         * 代わりのバッファを結ぶ（判定は列の容量 0 として溢れを数え、描画は区間ごとのコマンドで続ける）。
+         * @return false なら数えのバッファを作れなかった（呼ぶ側はそのフレームの描画を見送る）
+         */
+        bool EnsureBinBuffers(uint32_t slotCount);
+
         /** @brief フレームスロットに、BVH のたどりの段 stageCount 個ぶんの UBO・ディスクリプタセットを用意する */
         bool EnsureBvhStageResources(FrameSlot &slot, uint32_t passIndex, uint32_t stageCount);
 
@@ -1035,6 +1045,24 @@ namespace NorvesLib::Core::Rendering
         uint32_t m_LoggedBvhInstances = 0xFFFFFFFFu;
         uint32_t m_LoggedBvhLevels = 0xFFFFFFFFu;
         uint32_t m_LoggedFlatInstances = 0xFFFFFFFFu;
+
+        // 可視クラスタの binning（準備。描画はまだ区間ごとのコマンド）: 判定が積む全体の固定容量の列（binding 23。uvec4: 席・クラスタ・
+        // 区画・区画の中の位置）、区画の数え・接頭和・照合の引数（binding 24）、開発ビルドの照合の印（binding 25）。
+        // 接頭和は各パスの判定の後に mega_bin_prefix.comp、新旧の照合は 2 パス目の後に mega_bin_check.comp が作る
+        RHI::PipelinePtr m_BinPrefixPipeline;
+        RHI::ShaderPtr m_BinPrefixShader;
+        RHI::PipelinePtr m_BinCheckPipeline;
+        RHI::ShaderPtr m_BinCheckShader;
+        RHI::BufferPtr m_VisibleListBuffer;
+        RHI::BufferPtr m_BinCounterBuffer;
+        uint32_t m_BinCounterCapacity = 0; // m_BinCounterBuffer の語数
+        RHI::BufferPtr m_BinCheckMarkBuffer;
+        bool m_bBinCheckMarksCleared = false; // 照合の印を作った後に 0 で埋めたか
+        bool m_bVisibleListAllocFailedLogged = false;
+        uint32_t m_BinCheckStamp = 0;     // 照合ごとに進める印（0 は使わない）
+        uint32_t m_VisibleListPeak = 0;   // 全体の列へ積もうとした数の最大（読み戻した統計から）
+        bool m_bBinCheckLoggedOnce = false; // MEGA_BIN（一致）を出したか
+        bool m_bBinMismatchLogged = false;  // MEGA_BIN の不一致を出したか
 
         // カリング・描画用GPUバッファ（全インスタンス・全パスで1組。コマンドは区間ごとの連続した範囲で、
         // パスごとに別の範囲を使う。範囲の配置は区間の表が持つ）
@@ -1129,6 +1157,8 @@ namespace NorvesLib::Core::Rendering
             int64_t EpochFrame = -1;   // 決定的な撮影のエポックからの相対フレーム。エポック前は -1
             bool bSwRasterBin = false; // このフレームがソフトウェアラスタの振り分けを行い、統計の 4〜7 が有効
             uint32_t SwDispatches = 0; // このフレームで sink が記録したソフトの dispatch の数（GPU の統計ではなく CPU の記録の数）
+            bool bBinCheck = false;    // このフレームが binning の新旧の照合を記録し、統計の 17〜30 が有効
+            uint32_t BinCount = 0;     // 区画の数（パスの数 × 区間の数 × 2）
         };
         bool m_bStatsEpochActive = false;
         bool m_bDropVisibilityContinuity = false; // 決定的な撮影のエポックの最初のフレーム: 見えたビットを引き継がない

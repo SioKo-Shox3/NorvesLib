@@ -1,0 +1,100 @@
+﻿#version 460
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_buffer_reference_uvec2 : require
+
+// ========================================
+// Mega Geometry の可視クラスタの binning: 区画の数の接頭和（各パスの判定の後に 1 ワークグループで 1 回）
+//
+// 判定（Common/MegaGeometryCull.glsl の AppendVisibleCluster）が数えた区画（パスの区間 × ハード/ソフト）の数から、
+// 区画ごとの先頭（排他的な接頭和。全パス通し）を binCounters へ書く。1 パス目の後は 2 パス目の区画が 0 なので、
+// 2 パス目の後に作り直しても 1 パス目の区画の先頭は変わらない（記録の番号を両パスを通じて保てる）。
+// あわせて、旧の経路（区間ごとのコマンド）の区間ごとの数の接頭和と、新旧の照合（mega_bin_check.comp）の
+// 間接 dispatch の引数を書く。
+// ディスクリプタセットはカリングと同じ形（MegaGeometryPass::BuildCullDescriptorSetDesc）を使う。
+// ========================================
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+#include "Common/MegaGeometryCull.glsl"
+
+const uint SCAN_WIDTH = 256u;
+
+shared uint s_Scan[SCAN_WIDTH];
+
+/**
+ * @brief ワークグループの 256 個の値の包含的な和（Hillis-Steele）。戻り値は自分までの和、s_Scan[255] は全体の和
+ */
+uint ScanInclusive(uint value)
+{
+    uint lane = gl_LocalInvocationID.x;
+    s_Scan[lane] = value;
+    barrier();
+    for (uint offset = 1u; offset < SCAN_WIDTH; offset <<= 1u)
+    {
+        uint add = lane >= offset ? s_Scan[lane - offset] : 0u;
+        barrier();
+        s_Scan[lane] += add;
+        barrier();
+    }
+    return s_Scan[lane];
+}
+
+void main()
+{
+    uint lane = gl_LocalInvocationID.x;
+    uint binCount = binCounters[BIN_COUNT_WORD];
+    uint slotCount = binCounters[BIN_SLOT_WORD];
+    uint offsetBase = BIN_HEADER_WORDS + binCount;
+    uint oldBase = BIN_HEADER_WORDS + 2u * binCount;
+
+    // 1. 区画の数の排他的な接頭和（256 個ずつ、前の塊までの和を足して進む）
+    uint carry = 0u;
+    for (uint base = 0u; base < binCount; base += SCAN_WIDTH)
+    {
+        uint index = base + lane;
+        uint value = index < binCount ? binCounters[BIN_HEADER_WORDS + index] : 0u;
+        uint inclusive = ScanInclusive(value);
+        if (index < binCount)
+        {
+            binCounters[offsetBase + index] = carry + inclusive - value;
+        }
+        carry += s_Scan[SCAN_WIDTH - 1u];
+        barrier();
+    }
+
+    // 2. 旧の経路の区間ごとのコマンドの数（区間の最大数で頭打ち）の接頭和。末尾（slotCount 番目）に全体の数
+    uint oldCarry = 0u;
+    for (uint base = 0u; base < slotCount; base += SCAN_WIDTH)
+    {
+        uint index = base + lane;
+        uint value = index < slotCount ? min(sectionCounts[index], sections[index].y) : 0u;
+        uint inclusive = ScanInclusive(value);
+        if (index < slotCount)
+        {
+            binCounters[oldBase + index] = oldCarry + inclusive - value;
+        }
+        oldCarry += s_Scan[SCAN_WIDTH - 1u];
+        barrier();
+    }
+
+    if (lane == 0u)
+    {
+        binCounters[oldBase + slotCount] = oldCarry;
+
+        // 3. 照合の間接 dispatch の引数: 列の要素・旧のコマンド・旧のソフトの一覧・区間のうち最も多い数のスレッド
+        uint attempted = binCounters[BIN_LIST_COUNTER];
+        uint listed = min(attempted, uint(visibleClusters.length()));
+        uint swCapacity = binCounters[BIN_SW_CAPACITY_WORD];
+        uint swTotal = 0u;
+        if (swCapacity != 0u)
+        {
+            swTotal = min(swRaster[3u], swCapacity) + min(swRaster[SW_RASTER_HEADER_STRIDE + 3u], swCapacity);
+        }
+        uint threads = max(max(listed, oldCarry), max(swTotal, slotCount));
+        uint groups = (threads + 63u) / 64u;
+        uint groupsX = min(groups, SW_RASTER_MAX_GROUPS_X);
+        binCounters[BIN_CHECK_ARGS + 0u] = groupsX;
+        binCounters[BIN_CHECK_ARGS + 1u] = groupsX == 0u ? 0u : (groups + groupsX - 1u) / groupsX;
+        binCounters[BIN_CHECK_ARGS + 2u] = 1u;
+    }
+}

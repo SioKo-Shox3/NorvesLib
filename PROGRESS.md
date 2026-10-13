@@ -3881,3 +3881,19 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `-6.txt` はシェーダーの `const` の付いた buffer_reference の変数でコンパイルに失敗した版（result=fail）。直した後の `-7.txt` が合格。
 - Next: SCN-MEGA-BINNING-PREP。
 - Notes: 影の表の球（`ResolveShadowBounds` が `TotalBounds` から作る）も実行時の LOD の段を包まない同じ根の問題を持つ（このタスクの前から。影の経路は paths の外）。根本は `LODHierarchyBuilder.cpp` で全段のクラスタを `TotalBounds` へ合わせることで、そうすれば段 3 は何も広げない。試験の追加はしていない。
+
+### SCN-MEGA-BINNING-PREP（2026-10-14、反復 7・run 20261014-033121）
+- Done: カリングが描くと決めたクラスタを、区間ごとのコマンドに加えて可視クラスタの全体の列へも積み、区画（パスの区間 × ハード/ソフト）の数えと接頭和を作る。描画は今までどおり区間ごとのコマンド。
+  - 全体の列（`MegaGeometry_VisibleList`、binding 23、uvec4 × 4,194,304 = 64 MB）は全パス通しの固定容量。要素は (席, クラスタの番号, 区画, 区画の中の位置)。区画は `(sectionBase + 区間) × 2 + ソフトなら 1`。`EmitDrawCommand` が `AppendVisibleCluster` で、列の位置を先に取り、容量に入ったものだけ区画の数を数える（区画の数の和 = 列に入った要素の数）。区間の最大数（`MaxDrawCount`）によらず積む。ハード/ソフトは区間ごとのコマンドの経路と同じ画面上の大きさの判断（`IsSwRasterSmallCluster`）。
+  - 数え（`MegaGeometry_BinCounters`、binding 24）: 頭 16 語（列へ積もうとした数・照合の間接 dispatch の引数・区画の数・区間の表の要素の数・ソフトの一覧の容量・照合の印）、区画の数、区画の先頭（接頭和）、旧の区間の接頭和。区間の数で大きさが変わり、足りないときだけ作り直す。フレームの頭で 0 にし、頭の語を書く（転送の書き込みが重ならないよう分けて埋める）。
+  - 接頭和（`mega_bin_prefix.comp`、1 ワークグループ）を各パスの判定の後に走らせる。1 パス目の後は 2 パス目の区画が 0 なので、2 パス目の後に作り直しても 1 パス目の区画の先頭は変わらない（記録の番号を両パスを通じて保てる形）。
+  - 新旧の照合（`mega_bin_check.comp`、開発ビルドで統計を読み戻す 2 パスのフレームの 2 パス目の後、間接 dispatch）: 新（全体の列）と旧（区間ごとのコマンドとソフトの一覧）を順番でなく集合で比べる。鍵は (パス, 区間, 席, メッシュ, クラスタ)。旧のコマンドはクラスタの番号を持たないので、クラスタはインデックスの範囲（メッシュの基点を引いた先頭・数・頂点の基点）で表し、新の要素はクラスタの記録から同じ範囲を引く（LOD の段はクラスタで決まる）。2 通りの hash の和と数、範囲の外の要素、区画の先頭 + 区画の中の位置の重なり（照合の印 `MegaGeometry_BinCheckMarks`、binding 25、16 MB）、区間ごとの数、ソフトの集合を比べ、ホストが `MEGA_BIN mismatch=<n> entries old sw_entries old_sw bins` を出す（0 でなければ ERROR）。
+  - `MEGA_CAPACITY` に `visible_list_capacity`・`visible_list_bytes`・`visible_list_overflow`（積もうとした数 − 容量）・`visible_list_peak` を足した。統計のバッファを 16 → 32 語にし、`Common/MegaGeometryCull.glsl` の統計の配列を長さ無しにした（VSM の判定は短い範囲を結ぶため）。カリングのディスクリプタセットの形に binding 23〜25 を足し、各パスのセットは平らな判定が無くても結ぶ（接頭和・照合が同じセットを使う）。GPU 時間の名前に `MegaBin1`・`MegaBin2` を足した。
+- 検証（`.harness/runs/20261014-033121/`）:
+  - `verify-SCN-MEGA-BINNING-PREP-4.txt`: 最終のコードの RelWithDebInfo の Game のビルド EXIT=0、error 0。
+  - `verify-SCN-MEGA-BINNING-PREP-5.txt`: mega-stress 5000 個（動き 1%・区画 64 m）overview、result=pass、EXIT=0。`-5.stress.Game.log` の `[ERROR]` 0、`MEGA_BIN` 7 行すべて mismatch=0（例: `entries=350066 old=350066 sw_entries=343958 old_sw=343958 bins=56`。`MEGA_OCCLUSION pass1=350066 pass2_drawn=0`・`SW_RASTER_BIN pass1=343958 pass2=0` と一致）、`MEGA_CAPACITY` 全行 `visible_list_overflow=0`・`visible_list_peak=422444`・`draw_dropped=0`・`bvh_overflow=0`。
+  - `verify-SCN-MEGA-BINNING-PREP-6.txt`: バナナ 1 万本 overview、result=pass、EXIT=0。`-6.bananas.Game.log` の `[ERROR]` 0、`MEGA_BIN` 10 行すべて mismatch=0（例: `entries=364821 old=364821 sw_entries=361769 old_sw=361769 bins=4`）、`visible_list_overflow=0`・`visible_list_peak=367658`。`MEGA_OCCLUSION pass1=364821 pass2_tested=367654 occluded=2833` は前の反復と同じで、PNG はバナナの散布と 3 つの山が以前どおり。
+  - `-1.txt`〜`-2.txt` は行末を直す前の同じ C++ のビルドと mega-stress の撮影（どちらも pass、mismatch=0）。
+- 補助（verify の外、照合が違いを見つけることの確認）: 全体の列の 5 番目の要素だけクラスタの番号を 1 ビット変えたシェーダーで撮った（`aux-SCN-MEGA-BINNING-PREP-fault.txt`、`.harness/runs/scene-capture/SCN-MEGA-BINNING-PREP/fault`）。数は一致したまま `MEGA_BIN mismatch=2 ... hash_mismatch=2` が ERROR で出た。シェーダーは元に戻した。
+- Next: SCN-MEGA-BINNING-SWITCH。
+- Notes: 撮影のスクリプトは Game.log の ERROR では落ちない（`-RequireChecks` の ENGINE_CHECK だけを見る）ので、`MEGA_BIN` の合否はログを開いて確かめた。照合を ENGINE_CHECK に載せるには、描画スレッドから `EngineChecks`（GameThread だけが読み書きする）へ渡す口が要る（このタスクの paths の外）。`GeometryPageRequestVulkanTest`（ctest、GPU）は `cluster_cull.comp` を自前のディスクリプタセットの形（binding 0〜13・22）で作るので、`cluster_cull.comp` が binding 23・24 を使うようになった分を足す必要がある（試験は paths の外で、verify にも無い）。全体の列の容量（約 419 万）は 5000 個の mega-stress で最大 42 万。100 万本・混在の足りる・足りないは SCN-MEGA-ACCEPT-1M の `visible_list_overflow`・`visible_list_peak` で判断する。性能は測っていない。試験の追加はしていない。
