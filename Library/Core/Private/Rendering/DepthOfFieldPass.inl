@@ -1,6 +1,7 @@
 ﻿// ラスタの被写界深度（DepthOfFieldPass）の実装。Coreの登録済みのSceneView.cppから取り込む。
 #include "Rendering/DepthOfFieldPass.h"
 #include "Rendering/CameraViewConstants.h"
+#include "Rendering/FrameResourceOwner.h"
 #include "Rendering/RenderGraph/RenderGraphBuilder.h"
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
 #include "Rendering/RenderGraph/RenderGraphResources.h"
@@ -165,26 +166,19 @@ namespace NorvesLib::Core::Rendering
         m_GatherShader = context.ShaderMgr->LoadShader("DepthOfField.frag", RHI::ShaderStage::Pixel);
         m_ResampleShader =
             context.ShaderMgr->LoadShader("DepthOfFieldResample.frag", RHI::ShaderStage::Pixel);
-        RHI::BufferDesc paramsDesc(sizeof(GPUDepthOfFieldParams), RHI::ResourceUsage::ConstantBuffer,
-                                   true, "DepthOfFieldParams");
-        m_ParamsBuffer = m_VertexShader && m_GatherShader && m_ResampleShader
-                             ? m_Device->CreateBuffer(paramsDesc)
-                             : RHI::BufferPtr{};
         m_PointSampler = CreateClampSampler(*m_Device, RHI::FilterMode::Point);
         m_LinearSampler = CreateClampSampler(*m_Device, RHI::FilterMode::Linear);
-        m_GatherDescriptorSet = m_Device->CreateDescriptorSet(CreateGatherDescriptorSetDesc());
-        m_ResampleDescriptorSet = m_Device->CreateDescriptorSet(CreateResampleDescriptorSetDesc());
-        if (!m_ParamsBuffer || !m_PointSampler || !m_LinearSampler || !m_GatherDescriptorSet ||
-            !m_ResampleDescriptorSet)
+        // 記述子セットのレイアウト（同じ形のパスと共有する 1 つずつをデバイスから引く。セットと定数は Apply ごとに借りる）
+        m_GatherDescriptorSetLayout = m_Device->GetOrCreateDescriptorSetLayout(CreateGatherDescriptorSetDesc());
+        m_ResampleDescriptorSetLayout =
+            m_Device->GetOrCreateDescriptorSetLayout(CreateResampleDescriptorSetDesc());
+        if (!m_VertexShader || !m_GatherShader || !m_ResampleShader || !m_PointSampler || !m_LinearSampler ||
+            !m_GatherDescriptorSetLayout || !m_ResampleDescriptorSetLayout)
         {
-            NORVES_LOG_ERROR("DepthOfFieldPass", "Failed to create shaders, samplers or descriptor sets");
+            NORVES_LOG_ERROR("DepthOfFieldPass", "シェーダ・サンプラ・記述子セットのレイアウトのどれかを作れませんでした");
             Shutdown();
             return false;
         }
-        m_GatherDescriptorSet->BindConstantBuffer(ParamsBinding, m_ParamsBuffer, 0u,
-                                                  sizeof(GPUDepthOfFieldParams));
-        m_ResampleDescriptorSet->BindConstantBuffer(ParamsBinding, m_ParamsBuffer, 0u,
-                                                    sizeof(GPUDepthOfFieldParams));
         m_bInitialized = true;
         return true;
     }
@@ -198,11 +192,12 @@ namespace NorvesLib::Core::Rendering
         m_GatherFramebuffer.reset();
         m_GatherRenderPass.reset();
         m_GatherTexture.reset();
-        m_ResampleDescriptorSet.reset();
-        m_GatherDescriptorSet.reset();
+        m_UnownedDescriptorSets.clear();
+        m_UnownedBuffers.clear();
+        m_ResampleDescriptorSetLayout.reset();
+        m_GatherDescriptorSetLayout.reset();
         m_LinearSampler.reset();
         m_PointSampler.reset();
-        m_ParamsBuffer.reset();
         m_ResampleShader.reset();
         m_GatherShader.reset();
         m_VertexShader.reset();
@@ -327,16 +322,68 @@ namespace NorvesLib::Core::Rendering
         params.ImageSizeAndLimits[1] = static_cast<float>(sceneColor->GetHeight());
         params.ImageSizeAndLimits[2] = DepthOfFieldMaxCocRadiusPixels;
         params.ImageSizeAndLimits[3] = lens.FilmScale;
-        m_ParamsBuffer->Update(&params, sizeof(params));
 
-        m_GatherDescriptorSet->BindTexture(0u, sceneColor);
-        m_GatherDescriptorSet->BindSampler(0u, m_PointSampler);
-        m_GatherDescriptorSet->BindTexture(1u, sceneDepth);
-        m_GatherDescriptorSet->BindSampler(1u, m_PointSampler);
-        m_GatherDescriptorSet->Update();
-        m_ResampleDescriptorSet->BindTexture(0u, m_GatherTexture);
-        m_ResampleDescriptorSet->BindSampler(0u, m_LinearSampler);
-        m_ResampleDescriptorSet->Update();
+        // 定数と Gather・Resample の記述子セットはこの Apply の分をフレームの持ち主から借り、1 つの定数の切れ端を
+        // 両方に結ぶ。持ち主の無い文脈（RenderingCoordinator を通さない検査）では使い回さない定数と記述子セットを作り、
+        // 提出の完了を知る手段が無いのでパスを手放すまで持つ
+        RHI::BufferPtr paramsBuffer;
+        uint32_t paramsOffset = 0u;
+        RHI::DescriptorSetPtr gatherDescriptorSet;
+        RHI::DescriptorSetPtr resampleDescriptorSet;
+        if (FrameResourceLane* frameResources = context.FrameResources)
+        {
+            const FrameUploadAllocation paramsAllocation = frameResources->AllocateConstants(params);
+            if (paramsAllocation.IsValid())
+            {
+                paramsBuffer = paramsAllocation.Buffer;
+                paramsOffset = paramsAllocation.GetOffset32();
+            }
+            gatherDescriptorSet = frameResources->AllocateDescriptorSet(m_GatherDescriptorSetLayout).Set;
+            resampleDescriptorSet = frameResources->AllocateDescriptorSet(m_ResampleDescriptorSetLayout).Set;
+        }
+        else if (m_Device)
+        {
+            paramsBuffer = m_Device->CreateBuffer(RHI::BufferDesc(sizeof(GPUDepthOfFieldParams),
+                                                                  RHI::ResourceUsage::ConstantBuffer,
+                                                                  true,
+                                                                  "DepthOfFieldParams.Unowned"));
+            if (paramsBuffer)
+            {
+                paramsBuffer->Update(&params, sizeof(params));
+                m_UnownedBuffers.push_back(paramsBuffer);
+            }
+            gatherDescriptorSet = m_Device->CreateDescriptorSet(CreateGatherDescriptorSetDesc());
+            resampleDescriptorSet = m_Device->CreateDescriptorSet(CreateResampleDescriptorSetDesc());
+            if (gatherDescriptorSet)
+            {
+                m_UnownedDescriptorSets.push_back(gatherDescriptorSet);
+            }
+            if (resampleDescriptorSet)
+            {
+                m_UnownedDescriptorSets.push_back(resampleDescriptorSet);
+            }
+        }
+        if (!paramsBuffer || !gatherDescriptorSet || !resampleDescriptorSet)
+        {
+            NORVES_LOG_ERROR("DepthOfFieldPass",
+                             "定数か記述子セットを借りられないため、このフレームは被写界深度を掛けません");
+            context.EnqueueTextureBarrier(sceneColor, RHI::ResourceState::RenderTarget,
+                                          RHI::ResourceState::ShaderResource);
+            return false;
+        }
+
+        gatherDescriptorSet->BindConstantBuffer(ParamsBinding, paramsBuffer, paramsOffset,
+                                                sizeof(GPUDepthOfFieldParams));
+        gatherDescriptorSet->BindTexture(0u, sceneColor);
+        gatherDescriptorSet->BindSampler(0u, m_PointSampler);
+        gatherDescriptorSet->BindTexture(1u, sceneDepth);
+        gatherDescriptorSet->BindSampler(1u, m_PointSampler);
+        gatherDescriptorSet->Update();
+        resampleDescriptorSet->BindConstantBuffer(ParamsBinding, paramsBuffer, paramsOffset,
+                                                  sizeof(GPUDepthOfFieldParams));
+        resampleDescriptorSet->BindTexture(0u, m_GatherTexture);
+        resampleDescriptorSet->BindSampler(0u, m_LinearSampler);
+        resampleDescriptorSet->Update();
 
         const RHI::Viewport viewport = context.GetActiveLocalViewport();
         const RHI::ScissorRect scissor = context.GetActiveLocalScissor();
@@ -347,12 +394,12 @@ namespace NorvesLib::Core::Rendering
         context.EnqueueTextureBarrier(m_GatherTexture, RHI::ResourceState::Undefined,
                                       RHI::ResourceState::RenderTarget);
         context.EnqueueFullscreenPass(m_GatherRenderPass, m_GatherFramebuffer, viewport, scissor,
-                                      m_GatherPipeline, m_GatherDescriptorSet);
+                                      m_GatherPipeline, gatherDescriptorSet);
         // 2. SceneColorへそのまま書き戻す。
         context.EnqueueTextureBarrier(sceneColor, RHI::ResourceState::ShaderResource,
                                       RHI::ResourceState::RenderTarget);
         context.EnqueueFullscreenPass(m_ResampleRenderPass, m_ResampleFramebuffer, viewport,
-                                      scissor, m_ResamplePipeline, m_ResampleDescriptorSet);
+                                      scissor, m_ResamplePipeline, resampleDescriptorSet);
         return true;
     }
 

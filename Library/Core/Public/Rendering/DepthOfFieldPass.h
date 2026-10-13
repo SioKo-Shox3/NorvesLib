@@ -5,7 +5,9 @@
 #include "Rendering/PathTracingCamera.h"
 #include "Rendering/RenderGraph/IRenderGraphPass.h"
 #include "Rendering/SceneProxy.h"
+#include "RHI/IDescriptorSet.h"
 #include "RHI/RHITypes.h"
+#include "Container/Containers.h"
 
 #include <cmath>
 #include <cstdint>
@@ -116,11 +118,15 @@ namespace NorvesLib::Core::Rendering
         RHI::ShaderPtr m_VertexShader;
         RHI::ShaderPtr m_GatherShader;
         RHI::ShaderPtr m_ResampleShader;
-        RHI::BufferPtr m_ParamsBuffer;
         RHI::SamplerPtr m_PointSampler;
         RHI::SamplerPtr m_LinearSampler;
-        RHI::DescriptorSetPtr m_GatherDescriptorSet;
-        RHI::DescriptorSetPtr m_ResampleDescriptorSet;
+        // 共有の記述子セットのレイアウト（定数と Gather・Resample の記述子セットは Apply ごとにフレームの持ち主から借りる）
+        RHI::DescriptorSetLayoutPtr m_GatherDescriptorSetLayout;
+        RHI::DescriptorSetLayoutPtr m_ResampleDescriptorSetLayout;
+        // 持ち主の無い文脈（RenderingCoordinator を通さない検査）で作った使い回さない定数と記述子セット。
+        // 提出の完了を知る手段が無いので、パスを手放すまで持つ
+        Container::VariableArray<RHI::BufferPtr> m_UnownedBuffers;
+        Container::VariableArray<RHI::DescriptorSetPtr> m_UnownedDescriptorSets;
 
         RHI::TexturePtr m_GatherTexture;
         RHI::RenderPassPtr m_GatherRenderPass;

@@ -1,5 +1,6 @@
 ﻿#include "Rendering/FXAAPass.h"
 #include "Rendering/ViewRenderContext.h"
+#include "Rendering/FrameResourceOwner.h"
 #include "Rendering/RenderTypes.h"
 #include "Rendering/ToneMappingPass.h"
 #include "Rendering/RenderGraph/RenderGraphBuilder.h"
@@ -24,6 +25,29 @@ namespace NorvesLib::Core::Rendering
         float subpixelQuality;
         uint32_t bEnabled;
     };
+
+    namespace
+    {
+        // binding 0: 入力テクスチャ (CombinedImageSampler)
+        // binding 1: FXAAParams UBO
+        RHI::DescriptorSetDesc CreateFXAADescriptorSetDesc()
+        {
+            RHI::DescriptorSetDesc dsDesc;
+
+            RHI::DescriptorBinding inputBinding;
+            inputBinding.binding = 0;
+            inputBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+            inputBinding.stages = RHI::ShaderStage::Pixel;
+            dsDesc.bindings.push_back(inputBinding);
+
+            RHI::DescriptorBinding paramsBinding;
+            paramsBinding.binding = 1;
+            paramsBinding.type = RHI::ResourceBindType::ConstantBuffer;
+            paramsBinding.stages = RHI::ShaderStage::Pixel;
+            dsDesc.bindings.push_back(paramsBinding);
+            return dsDesc;
+        }
+    } // namespace
 
     // ========================================
     // Constructor / Destructor
@@ -98,13 +122,11 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
-        // パラメータUBO作成
-        RHI::BufferDesc paramsUboDesc(
-            FXAA_PARAMS_SIZE, RHI::ResourceUsage::ConstantBuffer, true, "FXAAParamsUBO");
-        m_ParamsBuffer = m_Device->CreateBuffer(paramsUboDesc);
-        if (!m_ParamsBuffer)
+        // 記述子セットのレイアウト（同じ形のパスと共有する 1 つをデバイスから引く。セットと定数は Execute ごとに借りる）
+        m_DescriptorSetLayout = m_Device->GetOrCreateDescriptorSetLayout(CreateFXAADescriptorSetDesc());
+        if (!m_DescriptorSetLayout)
         {
-            NORVES_LOG_ERROR("FXAAPass", "Failed to create params buffer");
+            NORVES_LOG_ERROR("FXAAPass", "記述子セットのレイアウトを作れませんでした");
             return false;
         }
 
@@ -130,8 +152,9 @@ namespace NorvesLib::Core::Rendering
         m_Pipeline.reset();
         m_VertexShader.reset();
         m_FragmentShader.reset();
-        m_ParamsBuffer.reset();
-        m_DescriptorSet.reset();
+        m_UnownedDescriptorSets.clear();
+        m_UnownedBuffers.clear();
+        m_DescriptorSetLayout.reset();
         m_LinearSampler.reset();
         m_Device = nullptr;
         m_InputToneMappedHandle = {};
@@ -187,7 +210,6 @@ namespace NorvesLib::Core::Rendering
             !m_RenderPass ||
             !m_Framebuffer ||
             !m_Pipeline ||
-            !m_DescriptorSet ||
             m_FramebufferOutputTexture != m_OutputTexture.get() ||
             m_bRenderPassUsesRenderGraphInitialState;
 
@@ -208,8 +230,7 @@ namespace NorvesLib::Core::Rendering
         if (!m_Device ||
             !outputTexture ||
             !m_VertexShader ||
-            !m_FragmentShader ||
-            !m_ParamsBuffer)
+            !m_FragmentShader)
         {
             return false;
         }
@@ -221,8 +242,7 @@ namespace NorvesLib::Core::Rendering
             bUseRenderGraphInitialState != m_bRenderPassUsesRenderGraphInitialState ||
             !m_RenderPass ||
             !m_Framebuffer ||
-            !m_Pipeline ||
-            !m_DescriptorSet;
+            !m_Pipeline;
 
         m_OutputTexture = outputTexture;
         if (!bResourcesChanged)
@@ -233,7 +253,6 @@ namespace NorvesLib::Core::Rendering
         m_RenderPass.reset();
         m_Framebuffer.reset();
         m_Pipeline.reset();
-        m_DescriptorSet.reset();
 
         // レンダーパス作成
         RHI::RenderPassDesc rpDesc;
@@ -272,32 +291,8 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
-        // ディスクリプタセット作成
-        // binding 0: 入力テクスチャ (CombinedImageSampler)
-        // binding 1: FXAAParams UBO
-        RHI::DescriptorSetDesc dsDesc;
-
-        RHI::DescriptorBinding inputBinding;
-        inputBinding.binding = 0;
-        inputBinding.type = RHI::ResourceBindType::CombinedImageSampler;
-        inputBinding.stages = RHI::ShaderStage::Pixel;
-        dsDesc.bindings.push_back(inputBinding);
-
-        RHI::DescriptorBinding paramsBinding;
-        paramsBinding.binding = 1;
-        paramsBinding.type = RHI::ResourceBindType::ConstantBuffer;
-        paramsBinding.stages = RHI::ShaderStage::Pixel;
-        dsDesc.bindings.push_back(paramsBinding);
-
-        m_DescriptorSet = m_Device->CreateDescriptorSet(dsDesc);
-        if (!m_DescriptorSet)
-        {
-            NORVES_LOG_ERROR("FXAAPass", "Failed to create descriptor set");
-            return false;
-        }
-
-        // UBOバインド
-        m_DescriptorSet->BindConstantBuffer(1, m_ParamsBuffer, 0, FXAA_PARAMS_SIZE);
+        // ディスクリプタセットの形（セットは Execute のたびに借りる）
+        const RHI::DescriptorSetDesc dsDesc = CreateFXAADescriptorSetDesc();
 
         // パイプライン作成
         RHI::GraphicsPipelineDesc pipelineDesc;
@@ -472,7 +467,7 @@ namespace NorvesLib::Core::Rendering
                                     const RHI::TexturePtr& inputTexture,
                                     bool bRegisterLegacyBridge)
     {
-        if (!m_RenderPass || !m_Framebuffer || !m_Pipeline || !m_DescriptorSet)
+        if (!m_RenderPass || !m_Framebuffer || !m_Pipeline || !m_DescriptorSetLayout)
         {
             NORVES_LOG_WARNING("FXAAPass", "Resources not ready, skipping");
             return;
@@ -490,7 +485,43 @@ namespace NorvesLib::Core::Rendering
         const bool bDebugPostProcessBypass =
             IsDebugPostProcessBypassMode(context.GetActiveDebugMode());
         params.bEnabled = bDebugPostProcessBypass ? 0u : (m_Settings.bEnabled ? 1u : 0u);
-        m_ParamsBuffer->Update(&params, sizeof(GPUFXAAParams));
+
+        // 定数と記述子セットはこの Execute の分をフレームの持ち主から借りる。持ち主の無い文脈（RenderingCoordinator を
+        // 通さない検査）では使い回さない定数と記述子セットを作り、提出の完了を知る手段が無いのでパスを手放すまで持つ
+        RHI::DescriptorSetPtr descriptorSet;
+        RHI::BufferPtr paramsBuffer;
+        uint32_t paramsOffset = 0;
+        if (FrameResourceLane* frameResources = context.FrameResources)
+        {
+            const FrameUploadAllocation paramsAllocation = frameResources->AllocateConstants(params);
+            if (paramsAllocation.IsValid())
+            {
+                paramsBuffer = paramsAllocation.Buffer;
+                paramsOffset = paramsAllocation.GetOffset32();
+            }
+            descriptorSet = frameResources->AllocateDescriptorSet(m_DescriptorSetLayout).Set;
+        }
+        else if (m_Device)
+        {
+            paramsBuffer = m_Device->CreateBuffer(RHI::BufferDesc(
+                FXAA_PARAMS_SIZE, RHI::ResourceUsage::ConstantBuffer, true, "FXAAParamsUBO.Unowned"));
+            if (paramsBuffer)
+            {
+                paramsBuffer->Update(&params, FXAA_PARAMS_SIZE);
+                m_UnownedBuffers.push_back(paramsBuffer);
+            }
+            descriptorSet = m_Device->CreateDescriptorSet(CreateFXAADescriptorSetDesc());
+            if (descriptorSet)
+            {
+                m_UnownedDescriptorSets.push_back(descriptorSet);
+            }
+        }
+        if (!paramsBuffer || !descriptorSet)
+        {
+            NORVES_LOG_ERROR("FXAAPass", "定数か記述子セットを借りられないため、このフレームは FXAA を描きません");
+            EnqueueEmptyNativePass(context);
+            return;
+        }
 
         // FXAA結果をSharedResourceRegistryに登録（ToneMappedColorを上書き）
         if (bRegisterLegacyBridge && context.SharedResources)
@@ -498,10 +529,11 @@ namespace NorvesLib::Core::Rendering
             context.SharedResources->RegisterTexturePtr("ToneMappedColor", m_OutputTexture);
         }
 
-        // テクスチャバインド
-        m_DescriptorSet->BindTexture(0, inputTexture);
-        m_DescriptorSet->BindSampler(0, m_LinearSampler);
-        m_DescriptorSet->Update();
+        // 定数とテクスチャを借りたディスクリプタセットにバインド
+        descriptorSet->BindConstantBuffer(1, paramsBuffer, paramsOffset, FXAA_PARAMS_SIZE);
+        descriptorSet->BindTexture(0, inputTexture);
+        descriptorSet->BindSampler(0, m_LinearSampler);
+        descriptorSet->Update();
 
         RHI::Viewport viewport = context.GetActiveLocalViewport();
         RHI::ScissorRect scissor = context.GetActiveLocalScissor();
@@ -511,7 +543,7 @@ namespace NorvesLib::Core::Rendering
                                       viewport,
                                       scissor,
                                       m_Pipeline,
-                                      m_DescriptorSet);
+                                      descriptorSet);
     }
 
     bool FXAAPass::EnqueueEmptyNativePass(ViewRenderContext &context) const
@@ -533,9 +565,9 @@ namespace NorvesLib::Core::Rendering
     bool FXAAPass::DeclaresAllLayoutChanges() const
     {
         // 入力をグラフから読めるフレーム（SharedResources の旧経路を読み書きしない）で、パイプラインと
-        // ディスクリプタセットが揃っているときだけ。それ以外は Serial に残す。
+        // ディスクリプタセットのレイアウトが揃っているときだけ。それ以外は Serial に残す。
         return IsInitialized() && !m_bLegacyInputFallbackActive && m_InputToneMappedHandle.IsValid() &&
-               m_OutputHandle.IsValid() && m_RenderPass && m_Framebuffer && m_Pipeline && m_DescriptorSet;
+               m_OutputHandle.IsValid() && m_RenderPass && m_Framebuffer && m_Pipeline && m_DescriptorSetLayout;
     }
 
     RGRecordPolicy FXAAPass::GetRecordPolicy() const

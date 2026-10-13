@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "Rendering/RenderGraph/IRenderGraphPass.h"
+#include "RHI/IDescriptorSet.h"
 #include "RHI/RHITypes.h"
 #include "Container/Containers.h"
 #include <cstdint>
@@ -14,6 +15,7 @@ namespace NorvesLib::RHI
 namespace NorvesLib::Core::Rendering
 {
     class ShaderManager;
+    class FrameResourceLane;
 
     /**
      * @brief 今のフレームの深度から作る HZB（階層的な深度ピラミッド）
@@ -44,9 +46,13 @@ namespace NorvesLib::Core::Rendering
         /**
          * @brief コマンドリストへ HZB の生成を記録する
          * @param depthTexture 今のフレームの深度。記録時点で ShaderResource の状態であること
+         * @param frameResources フレームの持ち主の口。あればミップ0 の記述子セット（深度を結ぶ）を毎回ここから借りる。
+         *        null（持ち主の無い文脈）なら、深度が替わったときだけ使い回さないセットを作り、手放すまで持つ
          * @return 記録できたら true。終わると全ミップが ShaderResource の状態になる
          */
-        bool Build(RHI::ICommandList* commandList, const RHI::TexturePtr& depthTexture);
+        bool Build(RHI::ICommandList* commandList,
+                   const RHI::TexturePtr& depthTexture,
+                   FrameResourceLane* frameResources = nullptr);
 
         bool IsReady() const { return m_Pyramid != nullptr && m_MipCount > 0; }
         const RHI::TexturePtr& GetTexture() const { return m_Pyramid; }
@@ -75,10 +81,16 @@ namespace NorvesLib::Core::Rendering
         RHI::TexturePtr m_Pyramid;
         // ミップごとの資源。ミップ k の内容（書き込み先と元の大きさ）は作成時に固定なので、毎フレーム書き換えない
         // （コマンドの記録中に UBO を書き換えると、実行時には最後の値だけが効く）。
+        // 記述子セットはミップ1 以降だけ持つ（添字はミップの番号。ミップ0 は深度を結ぶので Build ごとに用意する）。
         Container::VariableArray<RHI::BufferPtr> m_ParamBuffers;
         Container::VariableArray<RHI::DescriptorSetPtr> m_DescriptorSets;
-        // ミップ0 のディスクリプタが結んでいる深度。変わったときだけ結び直す。
+        // ミップ0 の記述子セットの共有のレイアウト（フレームの持ち主から借りるときに使う）
+        RHI::DescriptorSetLayoutPtr m_Mip0DescriptorSetLayout;
+        // 持ち主の無い文脈で作ったミップ0 の記述子セットと、それが結んでいる深度。深度・ピラミッドが替わったら
+        // 書き換えずに新しく作り、前のセットは提出の完了を知る手段が無いので手放すまで m_UnownedDescriptorSets に持つ
+        RHI::DescriptorSetPtr m_UnownedMip0DescriptorSet;
         RHI::TexturePtr m_BoundDepth;
+        Container::VariableArray<RHI::DescriptorSetPtr> m_UnownedDescriptorSets;
 
         uint32_t m_DepthWidth = 0;
         uint32_t m_DepthHeight = 0;

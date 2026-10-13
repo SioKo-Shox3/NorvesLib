@@ -1,5 +1,6 @@
 ﻿#include "Rendering/VignettePass.h"
 #include "Rendering/VignettePassGpuTypes.h"
+#include "Rendering/FrameResourceOwner.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Rendering/RenderTypes.h"
 #include "Rendering/ToneMappingPass.h"
@@ -17,6 +18,29 @@
 namespace NorvesLib::Core::Rendering
 {
     static constexpr uint32_t VIGNETTE_PARAMS_SIZE = sizeof(GPUVignetteParams);
+
+    namespace
+    {
+        // binding 0: 入力の色（combined image sampler）
+        // binding 1: VignetteParams UBO
+        RHI::DescriptorSetDesc CreateVignetteDescriptorSetDesc()
+        {
+            RHI::DescriptorSetDesc dsDesc;
+
+            RHI::DescriptorBinding inputBinding;
+            inputBinding.binding = 0;
+            inputBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+            inputBinding.stages = RHI::ShaderStage::Pixel;
+            dsDesc.bindings.push_back(inputBinding);
+
+            RHI::DescriptorBinding paramsBinding;
+            paramsBinding.binding = 1;
+            paramsBinding.type = RHI::ResourceBindType::ConstantBuffer;
+            paramsBinding.stages = RHI::ShaderStage::Pixel;
+            dsDesc.bindings.push_back(paramsBinding);
+            return dsDesc;
+        }
+    } // namespace
 
     VignettePass::VignettePass(const VignetteSettings& settings)
         : m_Settings(settings)
@@ -81,12 +105,11 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
-        RHI::BufferDesc paramsUboDesc(
-            VIGNETTE_PARAMS_SIZE, RHI::ResourceUsage::ConstantBuffer, true, "VignetteParamsUBO");
-        m_ParamsBuffer = m_Device->CreateBuffer(paramsUboDesc);
-        if (!m_ParamsBuffer)
+        // 記述子セットのレイアウト（同じ形のパスと共有する 1 つをデバイスから引く。セットと定数は Execute ごとに借りる）
+        m_DescriptorSetLayout = m_Device->GetOrCreateDescriptorSetLayout(CreateVignetteDescriptorSetDesc());
+        if (!m_DescriptorSetLayout)
         {
-            NORVES_LOG_ERROR("VignettePass", "Failed to create params buffer");
+            NORVES_LOG_ERROR("VignettePass", "記述子セットのレイアウトを作れませんでした");
             return false;
         }
 
@@ -108,8 +131,9 @@ namespace NorvesLib::Core::Rendering
         m_Pipeline.reset();
         m_VertexShader.reset();
         m_FragmentShader.reset();
-        m_ParamsBuffer.reset();
-        m_DescriptorSet.reset();
+        m_UnownedDescriptorSets.clear();
+        m_UnownedBuffers.clear();
+        m_DescriptorSetLayout.reset();
         m_LinearSampler.reset();
         m_Device = nullptr;
         m_InputToneMappedHandle = {};
@@ -161,7 +185,6 @@ namespace NorvesLib::Core::Rendering
             !m_RenderPass ||
             !m_Framebuffer ||
             !m_Pipeline ||
-            !m_DescriptorSet ||
             m_FramebufferOutputTexture != m_OutputTexture.get() ||
             m_bRenderPassUsesRenderGraphInitialState;
 
@@ -182,8 +205,7 @@ namespace NorvesLib::Core::Rendering
         if (!m_Device ||
             !outputTexture ||
             !m_VertexShader ||
-            !m_FragmentShader ||
-            !m_ParamsBuffer)
+            !m_FragmentShader)
         {
             return false;
         }
@@ -195,8 +217,7 @@ namespace NorvesLib::Core::Rendering
             bUseRenderGraphInitialState != m_bRenderPassUsesRenderGraphInitialState ||
             !m_RenderPass ||
             !m_Framebuffer ||
-            !m_Pipeline ||
-            !m_DescriptorSet;
+            !m_Pipeline;
 
         m_OutputTexture = outputTexture;
         if (!bResourcesChanged)
@@ -207,7 +228,6 @@ namespace NorvesLib::Core::Rendering
         m_RenderPass.reset();
         m_Framebuffer.reset();
         m_Pipeline.reset();
-        m_DescriptorSet.reset();
 
         RHI::RenderPassDesc rpDesc;
 
@@ -244,28 +264,8 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
-        RHI::DescriptorSetDesc dsDesc;
-
-        RHI::DescriptorBinding inputBinding;
-        inputBinding.binding = 0;
-        inputBinding.type = RHI::ResourceBindType::CombinedImageSampler;
-        inputBinding.stages = RHI::ShaderStage::Pixel;
-        dsDesc.bindings.push_back(inputBinding);
-
-        RHI::DescriptorBinding paramsBinding;
-        paramsBinding.binding = 1;
-        paramsBinding.type = RHI::ResourceBindType::ConstantBuffer;
-        paramsBinding.stages = RHI::ShaderStage::Pixel;
-        dsDesc.bindings.push_back(paramsBinding);
-
-        m_DescriptorSet = m_Device->CreateDescriptorSet(dsDesc);
-        if (!m_DescriptorSet)
-        {
-            NORVES_LOG_ERROR("VignettePass", "Failed to create descriptor set");
-            return false;
-        }
-
-        m_DescriptorSet->BindConstantBuffer(1, m_ParamsBuffer, 0, VIGNETTE_PARAMS_SIZE);
+        // ディスクリプタセットの形（セットは Execute のたびに借りる）
+        const RHI::DescriptorSetDesc dsDesc = CreateVignetteDescriptorSetDesc();
 
         RHI::GraphicsPipelineDesc pipelineDesc;
         pipelineDesc.vertexShader = m_VertexShader;
@@ -435,7 +435,7 @@ namespace NorvesLib::Core::Rendering
                                         const RHI::TexturePtr& inputTexture,
                                         bool bRegisterLegacyBridge)
     {
-        if (!m_RenderPass || !m_Framebuffer || !m_Pipeline || !m_DescriptorSet)
+        if (!m_RenderPass || !m_Framebuffer || !m_Pipeline || !m_DescriptorSetLayout)
         {
             NORVES_LOG_WARNING("VignettePass", "Resources not ready, skipping");
             return;
@@ -472,16 +472,53 @@ namespace NorvesLib::Core::Rendering
         {
             params.chromaticAberrationPixels = 0.0f;
         }
-        m_ParamsBuffer->Update(&params, sizeof(GPUVignetteParams));
+
+        // 定数と記述子セットはこの Execute の分をフレームの持ち主から借りる。持ち主の無い文脈（RenderingCoordinator を
+        // 通さない検査）では使い回さない定数と記述子セットを作り、提出の完了を知る手段が無いのでパスを手放すまで持つ
+        RHI::DescriptorSetPtr descriptorSet;
+        RHI::BufferPtr paramsBuffer;
+        uint32_t paramsOffset = 0;
+        if (FrameResourceLane* frameResources = context.FrameResources)
+        {
+            const FrameUploadAllocation paramsAllocation = frameResources->AllocateConstants(params);
+            if (paramsAllocation.IsValid())
+            {
+                paramsBuffer = paramsAllocation.Buffer;
+                paramsOffset = paramsAllocation.GetOffset32();
+            }
+            descriptorSet = frameResources->AllocateDescriptorSet(m_DescriptorSetLayout).Set;
+        }
+        else if (m_Device)
+        {
+            paramsBuffer = m_Device->CreateBuffer(RHI::BufferDesc(
+                VIGNETTE_PARAMS_SIZE, RHI::ResourceUsage::ConstantBuffer, true, "VignetteParamsUBO.Unowned"));
+            if (paramsBuffer)
+            {
+                paramsBuffer->Update(&params, VIGNETTE_PARAMS_SIZE);
+                m_UnownedBuffers.push_back(paramsBuffer);
+            }
+            descriptorSet = m_Device->CreateDescriptorSet(CreateVignetteDescriptorSetDesc());
+            if (descriptorSet)
+            {
+                m_UnownedDescriptorSets.push_back(descriptorSet);
+            }
+        }
+        if (!paramsBuffer || !descriptorSet)
+        {
+            NORVES_LOG_ERROR("VignettePass", "定数か記述子セットを借りられないため、このフレームはビネットを描きません");
+            EnqueueEmptyNativePass(context);
+            return;
+        }
 
         if (bRegisterLegacyBridge && context.SharedResources)
         {
             context.SharedResources->RegisterTexturePtr("ToneMappedColor", m_OutputTexture);
         }
 
-        m_DescriptorSet->BindTexture(0, inputTexture);
-        m_DescriptorSet->BindSampler(0, m_LinearSampler);
-        m_DescriptorSet->Update();
+        descriptorSet->BindConstantBuffer(1, paramsBuffer, paramsOffset, VIGNETTE_PARAMS_SIZE);
+        descriptorSet->BindTexture(0, inputTexture);
+        descriptorSet->BindSampler(0, m_LinearSampler);
+        descriptorSet->Update();
 
         RHI::Viewport viewport = context.GetActiveLocalViewport();
         RHI::ScissorRect scissor = context.GetActiveLocalScissor();
@@ -491,7 +528,7 @@ namespace NorvesLib::Core::Rendering
                                       viewport,
                                       scissor,
                                       m_Pipeline,
-                                      m_DescriptorSet);
+                                      descriptorSet);
     }
 
     bool VignettePass::EnqueueEmptyNativePass(ViewRenderContext& context) const
@@ -513,9 +550,9 @@ namespace NorvesLib::Core::Rendering
     bool VignettePass::DeclaresAllLayoutChanges() const
     {
         // 入力をグラフから読めるフレーム（SharedResources の旧経路を読み書きしない）で、パイプラインと
-        // ディスクリプタセットが揃っているときだけ。それ以外は Serial に残す。
+        // ディスクリプタセットのレイアウトが揃っているときだけ。それ以外は Serial に残す。
         return IsInitialized() && !m_bLegacyInputFallbackActive && m_InputToneMappedHandle.IsValid() &&
-               m_OutputHandle.IsValid() && m_RenderPass && m_Framebuffer && m_Pipeline && m_DescriptorSet;
+               m_OutputHandle.IsValid() && m_RenderPass && m_Framebuffer && m_Pipeline && m_DescriptorSetLayout;
     }
 
     RGRecordPolicy VignettePass::GetRecordPolicy() const

@@ -1,5 +1,6 @@
-#include "Rendering/UpscalePass.h"
+﻿#include "Rendering/UpscalePass.h"
 #include "Rendering/FXAAPass.h"
+#include "Rendering/FrameResourceOwner.h"
 #include "Rendering/RenderGraph/RenderGraphBuilder.h"
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
 #include "Rendering/RenderGraph/RenderGraphResources.h"
@@ -12,6 +13,21 @@
 
 namespace NorvesLib::Core::Rendering
 {
+    namespace
+    {
+        // binding 0: 入力の色（combined image sampler）
+        RHI::DescriptorSetDesc CreateUpscaleDescriptorSetDesc()
+        {
+            RHI::DescriptorSetDesc dsDesc;
+            RHI::DescriptorBinding inputBinding;
+            inputBinding.binding = 0;
+            inputBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+            inputBinding.stages = RHI::ShaderStage::Pixel;
+            dsDesc.bindings.push_back(inputBinding);
+            return dsDesc;
+        }
+    } // namespace
+
     UpscalePass::UpscalePass(const UpscaleSettings &settings)
         : m_Settings(settings)
     {
@@ -60,6 +76,14 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
+        // 記述子セットのレイアウト（同じ形のパスと共有する 1 つをデバイスから引く。セットは Execute ごとに借りる）
+        m_DescriptorSetLayout = m_Device->GetOrCreateDescriptorSetLayout(CreateUpscaleDescriptorSetDesc());
+        if (!m_DescriptorSetLayout)
+        {
+            NORVES_LOG_ERROR("UpscalePass", "記述子セットのレイアウトを作れませんでした");
+            return false;
+        }
+
         m_bInitialized = true;
         return true;
     }
@@ -77,7 +101,8 @@ namespace NorvesLib::Core::Rendering
         m_Pipeline.reset();
         m_VertexShader.reset();
         m_FragmentShader.reset();
-        m_DescriptorSet.reset();
+        m_UnownedDescriptorSets.clear();
+        m_DescriptorSetLayout.reset();
         m_LinearSampler.reset();
         m_Device = nullptr;
         m_CurrentWidth = 0;
@@ -125,7 +150,6 @@ namespace NorvesLib::Core::Rendering
             !m_RenderPass ||
             !m_Framebuffer ||
             !m_Pipeline ||
-            !m_DescriptorSet ||
             m_FramebufferOutputTexture != m_OutputTexture.get() ||
             m_bRenderPassUsesRenderGraphInitialState;
 
@@ -152,8 +176,7 @@ namespace NorvesLib::Core::Rendering
             bUseRenderGraphInitialState != m_bRenderPassUsesRenderGraphInitialState ||
             !m_RenderPass ||
             !m_Framebuffer ||
-            !m_Pipeline ||
-            !m_DescriptorSet;
+            !m_Pipeline;
 
         m_OutputTexture = outputTexture;
         if (!bResourcesChanged)
@@ -164,7 +187,6 @@ namespace NorvesLib::Core::Rendering
         m_RenderPass.reset();
         m_Framebuffer.reset();
         m_Pipeline.reset();
-        m_DescriptorSet.reset();
 
         RHI::RenderPassDesc rpDesc;
         RHI::AttachmentDesc colorAttach;
@@ -200,19 +222,8 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
-        RHI::DescriptorSetDesc dsDesc;
-        RHI::DescriptorBinding inputBinding;
-        inputBinding.binding = 0;
-        inputBinding.type = RHI::ResourceBindType::CombinedImageSampler;
-        inputBinding.stages = RHI::ShaderStage::Pixel;
-        dsDesc.bindings.push_back(inputBinding);
-
-        m_DescriptorSet = m_Device->CreateDescriptorSet(dsDesc);
-        if (!m_DescriptorSet)
-        {
-            NORVES_LOG_ERROR("UpscalePass", "Failed to create descriptor set");
-            return false;
-        }
+        // ディスクリプタセットの形（セットは Execute のたびに借りる）
+        const RHI::DescriptorSetDesc dsDesc = CreateUpscaleDescriptorSetDesc();
 
         RHI::GraphicsPipelineDesc pipelineDesc;
         pipelineDesc.vertexShader = m_VertexShader;
@@ -419,15 +430,37 @@ namespace NorvesLib::Core::Rendering
                                        const RHI::TexturePtr& inputTexture,
                                        bool bRegisterLegacyBridge)
     {
-        if (!m_RenderPass || !m_Framebuffer || !m_Pipeline || !m_DescriptorSet)
+        if (!m_RenderPass || !m_Framebuffer || !m_Pipeline || !m_DescriptorSetLayout)
         {
             NORVES_LOG_WARNING("UpscalePass", "Upscale resources not ready, skipping");
             return;
         }
 
-        m_DescriptorSet->BindTexture(0, inputTexture);
-        m_DescriptorSet->BindSampler(0, m_LinearSampler);
-        m_DescriptorSet->Update();
+        // 記述子セットはこの Execute の分をフレームの持ち主から借りる。持ち主の無い文脈（RenderingCoordinator を
+        // 通さない検査）では使い回さないセットを作り、提出の完了を知る手段が無いのでパスを手放すまで持つ
+        RHI::DescriptorSetPtr descriptorSet;
+        if (FrameResourceLane* frameResources = context.FrameResources)
+        {
+            descriptorSet = frameResources->AllocateDescriptorSet(m_DescriptorSetLayout).Set;
+        }
+        else if (m_Device)
+        {
+            descriptorSet = m_Device->CreateDescriptorSet(CreateUpscaleDescriptorSetDesc());
+            if (descriptorSet)
+            {
+                m_UnownedDescriptorSets.push_back(descriptorSet);
+            }
+        }
+        if (!descriptorSet)
+        {
+            NORVES_LOG_ERROR("UpscalePass", "記述子セットを借りられないため、このフレームは拡大を描きません");
+            EnqueueEmptyNativePass(context);
+            return;
+        }
+
+        descriptorSet->BindTexture(0, inputTexture);
+        descriptorSet->BindSampler(0, m_LinearSampler);
+        descriptorSet->Update();
 
         RHI::Viewport viewport;
         viewport.x = 0.0f;
@@ -448,7 +481,7 @@ namespace NorvesLib::Core::Rendering
                                       viewport,
                                       scissor,
                                       m_Pipeline,
-                                      m_DescriptorSet);
+                                      descriptorSet);
 
         if (bRegisterLegacyBridge && context.SharedResources)
         {

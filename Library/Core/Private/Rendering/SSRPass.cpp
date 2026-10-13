@@ -1,5 +1,6 @@
 ﻿#include "Rendering/SSRPass.h"
 #include "Rendering/ViewRenderContext.h"
+#include "Rendering/FrameResourceOwner.h"
 #include "Rendering/RenderTypes.h"
 #include "Rendering/GBufferPass.h"
 #include "Rendering/LightingPass.h"
@@ -13,6 +14,7 @@
 #include "RHI/IDevice.h"
 #include "RHI/ICommandList.h"
 #include "Logging/LogMacros.h"
+#include <cstring>
 
 namespace NorvesLib::Core::Rendering
 {
@@ -38,6 +40,42 @@ namespace NorvesLib::Core::Rendering
         uint32_t bEnabled;
     };
     static_assert(sizeof(GPUSSRParams) <= SSR_PARAMS_SIZE, "SSRのUBOがパラメータの大きさより小さい");
+
+    namespace
+    {
+        // binding 0〜3: 法線・材質・深度・SceneColor、4: SSRParams UBO、5: 雑音、6: 環境光の鏡面反射、7: その反射率
+        RHI::DescriptorSetDesc CreateSSRDescriptorSetDesc()
+        {
+            RHI::DescriptorSetDesc dsDesc;
+
+            for (uint32_t i = 0; i < 4; ++i)
+            {
+                RHI::DescriptorBinding binding;
+                binding.binding = i;
+                binding.type = RHI::ResourceBindType::CombinedImageSampler;
+                binding.stages = RHI::ShaderStage::Pixel;
+                dsDesc.bindings.push_back(binding);
+            }
+
+            {
+                RHI::DescriptorBinding binding;
+                binding.binding = 4;
+                binding.type = RHI::ResourceBindType::ConstantBuffer;
+                binding.stages = RHI::ShaderStage::Pixel;
+                dsDesc.bindings.push_back(binding);
+            }
+
+            for (uint32_t i = 5; i < 8; ++i)
+            {
+                RHI::DescriptorBinding binding;
+                binding.binding = i;
+                binding.type = RHI::ResourceBindType::CombinedImageSampler;
+                binding.stages = RHI::ShaderStage::Pixel;
+                dsDesc.bindings.push_back(binding);
+            }
+            return dsDesc;
+        }
+    } // namespace
 
     SSRPass::SSRPass(const SSRSettings &settings)
         : m_Settings(settings)
@@ -117,13 +155,11 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
-        // パラメータUBO
-        RHI::BufferDesc paramsUboDesc(
-            SSR_PARAMS_SIZE, RHI::ResourceUsage::ConstantBuffer, true, "SSRParamsUBO");
-        m_ParamsBuffer = m_Device->CreateBuffer(paramsUboDesc);
-        if (!m_ParamsBuffer)
+        // 記述子セットのレイアウト（同じ形のパスと共有する 1 つをデバイスから引く。セットと定数は Execute ごとに借りる）
+        m_DescriptorSetLayout = m_Device->GetOrCreateDescriptorSetLayout(CreateSSRDescriptorSetDesc());
+        if (!m_DescriptorSetLayout)
         {
-            NORVES_LOG_ERROR("SSRPass", "Failed to create params buffer");
+            NORVES_LOG_ERROR("SSRPass", "記述子セットのレイアウトを作れませんでした");
             return false;
         }
 
@@ -164,8 +200,9 @@ namespace NorvesLib::Core::Rendering
         m_Pipeline.reset();
         m_VertexShader.reset();
         m_FragmentShader.reset();
-        m_ParamsBuffer.reset();
-        m_DescriptorSet.reset();
+        m_UnownedDescriptorSets.clear();
+        m_UnownedBuffers.clear();
+        m_DescriptorSetLayout.reset();
         m_LinearSampler.reset();
         m_PointSampler.reset();
         m_ZeroTexture.reset();
@@ -214,7 +251,6 @@ namespace NorvesLib::Core::Rendering
             !m_RenderPass ||
             !m_Framebuffer ||
             !m_Pipeline ||
-            !m_DescriptorSet ||
             m_FramebufferOutputTexture != m_OutputTexture.get() ||
             m_bRenderPassUsesRenderGraphInitialState;
 
@@ -235,8 +271,7 @@ namespace NorvesLib::Core::Rendering
         if (!m_Device ||
             !outputTexture ||
             !m_VertexShader ||
-            !m_FragmentShader ||
-            !m_ParamsBuffer)
+            !m_FragmentShader)
         {
             return false;
         }
@@ -248,8 +283,7 @@ namespace NorvesLib::Core::Rendering
             bUseRenderGraphInitialState != m_bRenderPassUsesRenderGraphInitialState ||
             !m_RenderPass ||
             !m_Framebuffer ||
-            !m_Pipeline ||
-            !m_DescriptorSet;
+            !m_Pipeline;
 
         m_OutputTexture = outputTexture;
         if (!bResourcesChanged)
@@ -260,7 +294,6 @@ namespace NorvesLib::Core::Rendering
         m_RenderPass.reset();
         m_Framebuffer.reset();
         m_Pipeline.reset();
-        m_DescriptorSet.reset();
 
         RHI::RenderPassDesc rpDesc;
         RHI::AttachmentDesc colorAttach;
@@ -296,43 +329,8 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
-        RHI::DescriptorSetDesc dsDesc;
-
-        for (uint32_t i = 0; i < 4; ++i)
-        {
-            RHI::DescriptorBinding binding;
-            binding.binding = i;
-            binding.type = RHI::ResourceBindType::CombinedImageSampler;
-            binding.stages = RHI::ShaderStage::Pixel;
-            dsDesc.bindings.push_back(binding);
-        }
-
-        {
-            RHI::DescriptorBinding binding;
-            binding.binding = 4;
-            binding.type = RHI::ResourceBindType::ConstantBuffer;
-            binding.stages = RHI::ShaderStage::Pixel;
-            dsDesc.bindings.push_back(binding);
-        }
-
-        // 5 = 雑音、6 = 環境光の鏡面反射、7 = その反射率
-        for (uint32_t i = 5; i < 8; ++i)
-        {
-            RHI::DescriptorBinding binding;
-            binding.binding = i;
-            binding.type = RHI::ResourceBindType::CombinedImageSampler;
-            binding.stages = RHI::ShaderStage::Pixel;
-            dsDesc.bindings.push_back(binding);
-        }
-
-        m_DescriptorSet = m_Device->CreateDescriptorSet(dsDesc);
-        if (!m_DescriptorSet)
-        {
-            NORVES_LOG_ERROR("SSRPass", "Failed to create descriptor set");
-            return false;
-        }
-
-        m_DescriptorSet->BindConstantBuffer(4, m_ParamsBuffer, 0, SSR_PARAMS_SIZE);
+        // ディスクリプタセットの形（セットは Execute のたびに借りる）
+        const RHI::DescriptorSetDesc dsDesc = CreateSSRDescriptorSetDesc();
 
         RHI::GraphicsPipelineDesc pipelineDesc;
         pipelineDesc.vertexShader = m_VertexShader;
@@ -681,7 +679,7 @@ namespace NorvesLib::Core::Rendering
                                     const RHI::TexturePtr &specularReflectanceTex,
                                     bool bRegisterLegacyBridge)
     {
-        if (!m_RenderPass || !m_Framebuffer || !m_Pipeline || !m_DescriptorSet)
+        if (!m_RenderPass || !m_Framebuffer || !m_Pipeline || !m_DescriptorSetLayout)
         {
             NORVES_LOG_WARNING("SSRPass", "Resources not ready, skipping");
             return;
@@ -722,7 +720,46 @@ namespace NorvesLib::Core::Rendering
             cameraConstants.CopyShaderInverseView(params.invView);
         }
 
-        m_ParamsBuffer->Update(&params, sizeof(GPUSSRParams));
+        // 定数と記述子セットはこの Execute の分をフレームの持ち主から借りる。持ち主の無い文脈（RenderingCoordinator を
+        // 通さない検査）では使い回さない定数と記述子セットを作り、提出の完了を知る手段が無いのでパスを手放すまで持つ。
+        // 定数はシェーダの UBO の大きさ（SSR_PARAMS_SIZE）で借り、パラメータの後ろの詰め物は 0 で埋める
+        RHI::DescriptorSetPtr descriptorSet;
+        RHI::BufferPtr paramsBuffer;
+        uint32_t paramsOffset = 0;
+        if (FrameResourceLane* frameResources = context.FrameResources)
+        {
+            const FrameUploadAllocation paramsAllocation =
+                frameResources->AllocateUpload(SSR_PARAMS_SIZE, FrameUploadUsage::Constants);
+            if (paramsAllocation.IsValid())
+            {
+                std::memset(paramsAllocation.CPUAddress, 0, SSR_PARAMS_SIZE);
+                std::memcpy(paramsAllocation.CPUAddress, &params, sizeof(GPUSSRParams));
+                paramsBuffer = paramsAllocation.Buffer;
+                paramsOffset = paramsAllocation.GetOffset32();
+            }
+            descriptorSet = frameResources->AllocateDescriptorSet(m_DescriptorSetLayout).Set;
+        }
+        else if (m_Device)
+        {
+            paramsBuffer = m_Device->CreateBuffer(RHI::BufferDesc(
+                SSR_PARAMS_SIZE, RHI::ResourceUsage::ConstantBuffer, true, "SSRParamsUBO.Unowned"));
+            if (paramsBuffer)
+            {
+                paramsBuffer->Update(&params, sizeof(GPUSSRParams));
+                m_UnownedBuffers.push_back(paramsBuffer);
+            }
+            descriptorSet = m_Device->CreateDescriptorSet(CreateSSRDescriptorSetDesc());
+            if (descriptorSet)
+            {
+                m_UnownedDescriptorSets.push_back(descriptorSet);
+            }
+        }
+        if (!paramsBuffer || !descriptorSet)
+        {
+            NORVES_LOG_ERROR("SSRPass", "定数か記述子セットを借りられないため、このフレームは SSR を描きません");
+            EnqueueEmptyNativePass(context);
+            return;
+        }
 
         // 出力テクスチャ登録（SceneColorを上書き）
         if (bRegisterLegacyBridge && context.SharedResources)
@@ -730,31 +767,33 @@ namespace NorvesLib::Core::Rendering
             context.SharedResources->RegisterTexturePtr("SceneColor", m_OutputTexture);
         }
 
-        // テクスチャバインド
-        m_DescriptorSet->BindTexture(0, normalTex);
-        m_DescriptorSet->BindSampler(0, m_LinearSampler);
+        // 定数とテクスチャを借りたディスクリプタセットにバインド
+        descriptorSet->BindConstantBuffer(4, paramsBuffer, paramsOffset, SSR_PARAMS_SIZE);
 
-        m_DescriptorSet->BindTexture(1, materialTex);
-        m_DescriptorSet->BindSampler(1, m_LinearSampler);
+        descriptorSet->BindTexture(0, normalTex);
+        descriptorSet->BindSampler(0, m_LinearSampler);
 
-        m_DescriptorSet->BindTexture(2, depthTex);
-        m_DescriptorSet->BindSampler(2, m_PointSampler);
+        descriptorSet->BindTexture(1, materialTex);
+        descriptorSet->BindSampler(1, m_LinearSampler);
 
-        m_DescriptorSet->BindTexture(3, sceneColorTex);
-        m_DescriptorSet->BindSampler(3, m_LinearSampler);
+        descriptorSet->BindTexture(2, depthTex);
+        descriptorSet->BindSampler(2, m_PointSampler);
+
+        descriptorSet->BindTexture(3, sceneColorTex);
+        descriptorSet->BindSampler(3, m_LinearSampler);
 
         // binding 5 (noise) - sceneColorをダミーとしてバインド
-        m_DescriptorSet->BindTexture(5, sceneColorTex);
-        m_DescriptorSet->BindSampler(5, m_LinearSampler);
+        descriptorSet->BindTexture(5, sceneColorTex);
+        descriptorSet->BindSampler(5, m_LinearSampler);
 
         // 環境光の鏡面反射とその反射率。片方でも無ければ両方0にして、SSRは何も足さない。
         const bool bHasSpecularInputs = indirectSpecularTex && specularReflectanceTex;
-        m_DescriptorSet->BindTexture(6, bHasSpecularInputs ? indirectSpecularTex : m_ZeroTexture);
-        m_DescriptorSet->BindSampler(6, m_PointSampler);
-        m_DescriptorSet->BindTexture(7, bHasSpecularInputs ? specularReflectanceTex : m_ZeroTexture);
-        m_DescriptorSet->BindSampler(7, m_PointSampler);
+        descriptorSet->BindTexture(6, bHasSpecularInputs ? indirectSpecularTex : m_ZeroTexture);
+        descriptorSet->BindSampler(6, m_PointSampler);
+        descriptorSet->BindTexture(7, bHasSpecularInputs ? specularReflectanceTex : m_ZeroTexture);
+        descriptorSet->BindSampler(7, m_PointSampler);
 
-        m_DescriptorSet->Update();
+        descriptorSet->Update();
 
         RHI::Viewport viewport = context.GetActiveLocalViewport();
         RHI::ScissorRect scissor = context.GetActiveLocalScissor();
@@ -764,7 +803,7 @@ namespace NorvesLib::Core::Rendering
                                       viewport,
                                       scissor,
                                       m_Pipeline,
-                                      m_DescriptorSet);
+                                      descriptorSet);
     }
 
     bool SSRPass::EnqueueEmptyNativePass(ViewRenderContext &context) const

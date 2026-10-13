@@ -3515,3 +3515,20 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 起動画面で無効のパス: MotionBlurPass（起動画面では働かず、変更前の撮影にも組は出ていなかった）。ビルドが通ることと、コードの照合（メンバの定数・3 つのセットが無く、Apply が `BorrowDescriptorSet` と `BindFrameParams` で借りたセットを `EnqueueFullscreenPass` へ渡す）で確かめた。撮影は増やしていない。
 - Next: TASKS.md の未完の次の項目（SCN-ECS-FIF-POST-B など）。
 - Notes: 借りる口（持ち主から借り、持ち主の無い文脈では作ってパスを手放すまで持つ）を 5 パスと LightingPass がそれぞれ持っているので、共通の口（`FrameResourceLane` の隣など）にまとめるのが候補（この項目の paths の外）。持ち主の無い文脈・借りの失敗のフレームを起こす検査は書いていない（verify が名指ししていないため）。`Docs/Architecture/FrameResourceWriteGuard.md` の守られていない組の一覧に、この 5 パスが借りる形になったことは書いていない（paths の外）。編集で LF だけの行が混じっていた BloomPass・ToneMappingPass・SSAOPass（.h と .cpp）の行末が CRLF に揃ったので、変えていない行を元の行末へ戻した（`git diff --numstat` と `--ignore-cr-at-eol` が一致）。
+
+### SCN-ECS-FIF-POST-B（2026-10-13、反復 1・run 20261013-232555）
+
+- `SSRPass`・`DepthOfFieldPass`・`VolumetricsPass`・`VignettePass`・`FXAAPass`・`UpscalePass` の、毎フレーム書き換えていたメンバの定数と記述子セットを消し、Execute（DoF は Apply）ごとにフレームの持ち主から借りる形にした（SCN-ECS-FIF-POST-A と同じ形）。メンバに残るのは共有の記述子セットのレイアウト（`GetOrCreateDescriptorSetLayout` で初期化に 1 回引く）・パイプライン・render pass・framebuffer・サンプラ・SSR の 1×1 の 0 テクスチャ・DoF の中間テクスチャ。
+  - SSR: 定数はシェーダの UBO の大きさ（`SSR_PARAMS_SIZE` = 320）で `AllocateUpload` から借り、パラメータ（308 バイト）の後ろを 0 で埋めて binding 4 に結ぶ（以前も 320 で結んでいた）。
+  - DoF: 1 つの定数の切れ端を Gather と Resample の 2 つの借りたセットの binding（`ParamsBinding`）に結ぶ（以前も 1 つのバッファを共有していた）。
+  - Upscale: 定数は無く、記述子セットだけを借りる。
+- `HiZPyramid`: ミップ1 以降の記述子セットと全ミップの定数は作成時に 1 回だけ書くのでメンバのまま。深度を結ぶミップ0 のセットは作成時に作らず、`Build(commandList, depth, frameResources)` が持ち主から毎回借りる（`HiZPyramidPass` は `context.FrameResources` を渡す）。持ち主を渡さない呼び出し（`MegaGeometryPass` の HZB・HiZ の GPU 試験。引数の既定は null）では、深度かピラミッドが替わったときだけ使い回さないセットを新しく作り、前のセットは書き換えずに手放すまで持つ。
+- 借りられなかったフレームは、そのフレームだけ働かずに出力を整える（SSR・Vignette・FXAA・Upscale は空の render pass、Volumetrics は空の render pass か状態の移し替え、DoF は SceneColor を変えずに ShaderResource へ移す、HiZ は作らない）。
+- 持ち主の無い文脈（RenderingCoordinator を通さない検査）では、POST-A と同じく使い回さない定数と記述子セットを作り、パスを手放す（Shutdown）まで `m_UnownedBuffers`・`m_UnownedDescriptorSets` に持つ。
+- 検証（証拠は `.harness/runs/20261013-232555/`）:
+  - `verify-SCN-ECS-FIF-POST-B-1.txt`: RelWithDebInfo の Game のビルド EXIT=0、error 0、警告 0（最初のビルドで BOM の無かった `UpscalePass.cpp` に日本語を足して C4819 が出たので、BOM を付けて作り直した）。
+  - `verify-SCN-ECS-FIF-POST-B-2.txt`: 決定論の起動画面の撮影を SCN-MEGA-BASE-RWDI と比較、`indirect_lighting=rtgi`、mean_luminance_difference=0・psnr_db=100・mismatched_pixel_ratio=8E-06・max_channel_difference=1・within_limits=True、result=pass、EXIT=0。PNG は天球・地面・球・岩・家と影が以前どおり。
+  - `verify-SCN-ECS-FIF-POST-B-3.txt`: EXIT=0。`FRAME_RESOURCE_UNPROTECTED_SUMMARY count=0 resources=0 rewrites=0`（POST-A の 6 組〔SSRPass・VolumetricsPass・VignettePass〕が消え、起動画面の守られていない組は無くなった）。Game.log の ERROR 0、借りの失敗 0（Upload.Failures=0・Descriptor.Failures=0）、ページ・pool は最初のフレームで 1 つずつ足した後は足していない。借りは最後のフレームで切れ端 100・記述子セット 96（POST-A の 97・93 から、SSR・Volumetrics・Vignette の 1 つずつ）。
+  - 起動画面で無効のパス: `DepthOfFieldPass`（借りが増えていないので Apply まで来ない）・`FXAAPass`（初期化はされるが借りが増えていないので Execute まで来ない）・`UpscalePass`（描画と表示の解像度が同じ）・`HiZPyramidPass`（借りが増えていない。起動画面の「HZB作成」は MegaGeometryPass の HZB で、持ち主を渡さない形を通り、画は一致）。ビルドが通ることと、コードの照合（対象のメンバ `m_ParamsBuffer`・`m_DescriptorSet`・`m_GatherDescriptorSet`・`m_ResampleDescriptorSet`・`m_DescriptorSets[0]` の参照が 0、飛行中の番号・`FrameUseRing` の扱いが 0、各パスが `AllocateConstants`／`AllocateUpload`／`AllocateDescriptorSet` で借りたセットを描画へ渡す）で確かめた。撮影は増やしていない。
+- Next: TASKS.md の未完の次の項目。
+- Notes: 借りる口（持ち主から借り、持ち主の無い文脈では作ってパスを手放すまで持つ）を持つパスが 11 になったので、共通の口にまとめるのが候補（この項目の paths の外）。`MegaGeometryPass` の HZB（`m_HiZ.Build`）にはまだ持ち主を渡していない（paths の外。今は深度が替わるときだけ新しいセットを作るので書き換えは起きない）。`Docs/Architecture/FrameResourceWriteGuard.md` の守られていない組の一覧は更新していない（paths の外）。持ち主の無い文脈・借りの失敗のフレームを起こす検査は書いていない（verify が名指ししていないため）。`SSRPass`・`FXAAPass`・`UpscalePass`（.h と .cpp）は元から LF だけの行が混じっていたので、変えていない行は元の行末のまま、変えた行と足した行を CRLF にした（`git diff --numstat` と `--ignore-cr-at-eol` が一致）。

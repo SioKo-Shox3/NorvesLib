@@ -2,6 +2,7 @@
 #include "VolumetricFogScattering.h"
 
 #include "Rendering/CameraViewConstants.h"
+#include "Rendering/FrameResourceOwner.h"
 #include "Rendering/RenderGraph/RenderGraphBuilder.h"
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
 #include "Rendering/RenderGraph/RenderGraphResources.h"
@@ -228,18 +229,6 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
-        RHI::BufferDesc paramsBufferDesc(sizeof(GPUVolumetricsParams),
-                                         RHI::ResourceUsage::ConstantBuffer,
-                                         true,
-                                         "VolumetricsParams");
-        m_ParamsBuffer = m_Device->CreateBuffer(paramsBufferDesc);
-        if (!m_ParamsBuffer)
-        {
-            NORVES_LOG_ERROR("VolumetricsPass", "Failed to create parameter buffer");
-            Shutdown();
-            return false;
-        }
-
         RHI::SamplerDesc depthSamplerDesc;
         depthSamplerDesc.filterMin = RHI::FilterMode::Point;
         depthSamplerDesc.filterMag = RHI::FilterMode::Point;
@@ -258,18 +247,15 @@ namespace NorvesLib::Core::Rendering
         skyRadianceSamplerDesc.addressW = RHI::TextureAddressMode::Clamp;
         m_SkyRadianceSampler = m_Device->CreateSampler(skyRadianceSamplerDesc);
 
-        m_DescriptorSet = m_Device->CreateDescriptorSet(CreateVolumetricsDescriptorSetDesc());
-        if (!m_SceneDepthSampler || !m_SkyRadianceSampler || !m_DescriptorSet)
+        // 記述子セットのレイアウト（同じ形のパスと共有する 1 つをデバイスから引く。セットと定数は Execute ごとに借りる）
+        m_DescriptorSetLayout = m_Device->GetOrCreateDescriptorSetLayout(CreateVolumetricsDescriptorSetDesc());
+        if (!m_SceneDepthSampler || !m_SkyRadianceSampler || !m_DescriptorSetLayout)
         {
-            NORVES_LOG_ERROR("VolumetricsPass", "Failed to create sampler or descriptor set");
+            NORVES_LOG_ERROR("VolumetricsPass", "サンプラか記述子セットのレイアウトを作れませんでした");
             Shutdown();
             return false;
         }
 
-        m_DescriptorSet->BindConstantBuffer(2u,
-                                            m_ParamsBuffer,
-                                            0u,
-                                            sizeof(GPUVolumetricsParams));
         m_bInitialized = true;
         return true;
     }
@@ -279,10 +265,11 @@ namespace NorvesLib::Core::Rendering
         m_Pipeline.reset();
         m_Framebuffer.reset();
         m_RenderPass.reset();
-        m_DescriptorSet.reset();
+        m_UnownedDescriptorSets.clear();
+        m_UnownedBuffers.clear();
+        m_DescriptorSetLayout.reset();
         m_SkyRadianceSampler.reset();
         m_SceneDepthSampler.reset();
-        m_ParamsBuffer.reset();
         m_FragmentShader.reset();
         m_VertexShader.reset();
         m_Device = nullptr;
@@ -415,7 +402,7 @@ namespace NorvesLib::Core::Rendering
             EnqueueEmptyNativePass(context, sceneColorTexture);
             return;
         }
-        if (!sceneDepthTexture || !m_ParamsBuffer || !m_DescriptorSet ||
+        if (!sceneDepthTexture || !m_DescriptorSetLayout ||
             !bShadowSamplingTextureAvailable || !shadowMapSamplerForSampling)
         {
             EnqueueEmptyNativePass(context, sceneColorTexture);
@@ -492,24 +479,63 @@ namespace NorvesLib::Core::Rendering
                         physicalLighting.CascadedShadow.SplitDistances,
                         sizeof(float) * PhysicalLightingShadowSplitCount);
         }
-        m_ParamsBuffer->Update(&params, sizeof(params));
 
-        m_DescriptorSet->BindTexture(0u, sceneDepthTexture);
-        m_DescriptorSet->BindSampler(0u, m_SceneDepthSampler);
-        m_DescriptorSet->BindTexture(1u,
-                                     skyRadianceTexture ? skyRadianceTexture : sceneDepthTexture);
-        m_DescriptorSet->BindSampler(1u,
-                                     skyRadianceTexture ? m_SkyRadianceSampler : m_SceneDepthSampler);
-        m_DescriptorSet->BindTexture(3u, shadowMapTextureForSampling);
-        m_DescriptorSet->BindSampler(3u, shadowMapSamplerForSampling);
-        m_DescriptorSet->Update();
+        // 定数と記述子セットはこの Execute の分をフレームの持ち主から借りる。持ち主の無い文脈（RenderingCoordinator を
+        // 通さない検査）では使い回さない定数と記述子セットを作り、提出の完了を知る手段が無いのでパスを手放すまで持つ
+        RHI::DescriptorSetPtr descriptorSet;
+        RHI::BufferPtr paramsBuffer;
+        uint32_t paramsOffset = 0u;
+        if (FrameResourceLane* frameResources = context.FrameResources)
+        {
+            const FrameUploadAllocation paramsAllocation = frameResources->AllocateConstants(params);
+            if (paramsAllocation.IsValid())
+            {
+                paramsBuffer = paramsAllocation.Buffer;
+                paramsOffset = paramsAllocation.GetOffset32();
+            }
+            descriptorSet = frameResources->AllocateDescriptorSet(m_DescriptorSetLayout).Set;
+        }
+        else if (m_Device)
+        {
+            paramsBuffer = m_Device->CreateBuffer(RHI::BufferDesc(sizeof(GPUVolumetricsParams),
+                                                                  RHI::ResourceUsage::ConstantBuffer,
+                                                                  true,
+                                                                  "VolumetricsParams.Unowned"));
+            if (paramsBuffer)
+            {
+                paramsBuffer->Update(&params, sizeof(params));
+                m_UnownedBuffers.push_back(paramsBuffer);
+            }
+            descriptorSet = m_Device->CreateDescriptorSet(CreateVolumetricsDescriptorSetDesc());
+            if (descriptorSet)
+            {
+                m_UnownedDescriptorSets.push_back(descriptorSet);
+            }
+        }
+        if (!paramsBuffer || !descriptorSet)
+        {
+            NORVES_LOG_ERROR("VolumetricsPass", "定数か記述子セットを借りられないため、このフレームは霧を描きません");
+            EnqueueEmptyNativePass(context, sceneColorTexture);
+            return;
+        }
+
+        descriptorSet->BindConstantBuffer(2u, paramsBuffer, paramsOffset, sizeof(GPUVolumetricsParams));
+        descriptorSet->BindTexture(0u, sceneDepthTexture);
+        descriptorSet->BindSampler(0u, m_SceneDepthSampler);
+        descriptorSet->BindTexture(1u,
+                                   skyRadianceTexture ? skyRadianceTexture : sceneDepthTexture);
+        descriptorSet->BindSampler(1u,
+                                   skyRadianceTexture ? m_SkyRadianceSampler : m_SceneDepthSampler);
+        descriptorSet->BindTexture(3u, shadowMapTextureForSampling);
+        descriptorSet->BindSampler(3u, shadowMapSamplerForSampling);
+        descriptorSet->Update();
 
         context.EnqueueFullscreenPass(m_RenderPass,
                                       m_Framebuffer,
                                       context.GetActiveLocalViewport(),
                                       context.GetActiveLocalScissor(),
                                       m_Pipeline,
-                                      m_DescriptorSet);
+                                      descriptorSet);
     }
 
     void VolumetricsPass::EnqueueEmptyNativePass(

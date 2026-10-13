@@ -2,7 +2,9 @@
 
 #include "IViewPass.h"
 #include "Rendering/RenderGraph/IRenderGraphPass.h"
+#include "RHI/IDescriptorSet.h"
 #include "RHI/RHITypes.h"
+#include "Container/Containers.h"
 #include <cstdint>
 
 namespace NorvesLib::Core::Rendering
@@ -71,9 +73,13 @@ namespace NorvesLib::Core::Rendering
         RHI::PipelinePtr m_Pipeline;
         RHI::ShaderPtr m_VertexShader;
         RHI::ShaderPtr m_FragmentShader;
-        RHI::BufferPtr m_ParamsBuffer;
-        RHI::DescriptorSetPtr m_DescriptorSet;
         RHI::SamplerPtr m_LinearSampler;
+        // 共有の記述子セットのレイアウト（定数と記述子セットは Execute ごとにフレームの持ち主から借りる）
+        RHI::DescriptorSetLayoutPtr m_DescriptorSetLayout;
+        // 持ち主の無い文脈（RenderingCoordinator を通さない検査）で作った使い回さない定数と記述子セット。
+        // 提出の完了を知る手段が無いので、パスを手放すまで持つ
+        Container::VariableArray<RHI::BufferPtr> m_UnownedBuffers;
+        Container::VariableArray<RHI::DescriptorSetPtr> m_UnownedDescriptorSets;
 
         RHI::IDevice* m_Device = nullptr;
         const ToneMappingPass* m_InputPass = nullptr;

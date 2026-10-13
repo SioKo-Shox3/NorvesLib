@@ -1,4 +1,5 @@
 ﻿#include "Rendering/HiZPyramidPass.h"
+#include "Rendering/FrameResourceOwner.h"
 #include "Rendering/ShaderManager.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Rendering/RenderGraph/RenderGraphBuilder.h"
@@ -130,11 +131,20 @@ namespace NorvesLib::Core::Rendering
             Shutdown();
             return false;
         }
+        // ミップ0 の記述子セットのレイアウト（同じ形と共有する 1 つ）。引けないデバイスでは持ち主の無い形で作る
+        m_Mip0DescriptorSetLayout =
+            device->GetOrCreateDescriptorSetLayout(MakeDescriptorSetDesc(RHI::ResourceBindType::CombinedImageSampler));
         return true;
     }
 
     void HiZPyramid::ReleasePyramid()
     {
+        // ミップ0 のセットは消えるピラミッドを結んでいるので、次の Build で作り直す（前のセットは手放すまで持つ）
+        if (m_UnownedMip0DescriptorSet)
+        {
+            m_UnownedDescriptorSets.push_back(m_UnownedMip0DescriptorSet);
+            m_UnownedMip0DescriptorSet.reset();
+        }
         m_BoundDepth.reset();
         m_DescriptorSets.clear();
         m_ParamBuffers.clear();
@@ -149,6 +159,8 @@ namespace NorvesLib::Core::Rendering
     void HiZPyramid::Shutdown()
     {
         ReleasePyramid();
+        m_UnownedDescriptorSets.clear();
+        m_Mip0DescriptorSetLayout.reset();
         m_Sampler.reset();
         m_DownsamplePipeline.reset();
         m_Mip0Pipeline.reset();
@@ -207,31 +219,25 @@ namespace NorvesLib::Core::Rendering
 
             RHI::BufferPtr paramBuffer = m_Device->CreateBuffer(
                 RHI::BufferDesc(ParamsBytes, RHI::ResourceUsage::ConstantBuffer, true, "HiZPyramidParams"));
-            RHI::DescriptorSetPtr descriptorSet = m_Device->CreateDescriptorSet(MakeDescriptorSetDesc(
-                mip == 0 ? RHI::ResourceBindType::CombinedImageSampler : RHI::ResourceBindType::RWTexture));
-            if (!paramBuffer || !descriptorSet)
+            // ミップ0 のセットは深度を結ぶので Build ごとに用意する（ここでは作らない）
+            RHI::DescriptorSetPtr descriptorSet;
+            if (mip != 0)
+            {
+                descriptorSet = m_Device->CreateDescriptorSet(MakeDescriptorSetDesc(RHI::ResourceBindType::RWTexture));
+            }
+            if (!paramBuffer || (mip != 0 && !descriptorSet))
             {
                 NORVES_LOG_ERROR("HiZPyramid", "HZBのミップ%uの資源の作成に失敗", mip);
                 return false;
             }
             paramBuffer->Update(params, ParamsBytes);
-
-            if (mip == 0)
-            {
-                descriptorSet->BindSampler(0, m_Sampler);
-            }
-            else
+            if (descriptorSet)
             {
                 descriptorSet->BindStorageTexture(0, pyramid, mip - 1);
-            }
-            descriptorSet->BindStorageTexture(1, pyramid, mip);
-            descriptorSet->BindConstantBuffer(2, paramBuffer, 0, ParamsBytes);
-            if (mip != 0)
-            {
-                // ミップ0 は深度を結んでから（Build で）反映する
+                descriptorSet->BindStorageTexture(1, pyramid, mip);
+                descriptorSet->BindConstantBuffer(2, paramBuffer, 0, ParamsBytes);
                 descriptorSet->Update();
             }
-
             paramBuffers.push_back(paramBuffer);
             descriptorSets.push_back(descriptorSet);
         }
@@ -248,7 +254,9 @@ namespace NorvesLib::Core::Rendering
         return true;
     }
 
-    bool HiZPyramid::Build(RHI::ICommandList* commandList, const RHI::TexturePtr& depthTexture)
+    bool HiZPyramid::Build(RHI::ICommandList* commandList,
+                           const RHI::TexturePtr& depthTexture,
+                           FrameResourceLane* frameResources)
     {
         if (!commandList || !depthTexture)
         {
@@ -259,11 +267,48 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
-        if (m_BoundDepth.get() != depthTexture.get())
+        // ミップ0 の記述子セット（深度・ミップ0・作成時に書いた定数を結ぶ）。持ち主があれば毎回借り、
+        // 無ければ深度が替わったときだけ使い回さないセットを作る（記録済みのセットを書き換えない）
+        RHI::DescriptorSetPtr mip0DescriptorSet;
+        if (frameResources && m_Mip0DescriptorSetLayout)
         {
-            m_DescriptorSets[0]->BindTexture(0, depthTexture);
-            m_DescriptorSets[0]->Update();
-            m_BoundDepth = depthTexture;
+            mip0DescriptorSet = frameResources->AllocateDescriptorSet(m_Mip0DescriptorSetLayout).Set;
+            if (mip0DescriptorSet)
+            {
+                mip0DescriptorSet->BindTexture(0, depthTexture);
+                mip0DescriptorSet->BindSampler(0, m_Sampler);
+                mip0DescriptorSet->BindStorageTexture(1, m_Pyramid, 0);
+                mip0DescriptorSet->BindConstantBuffer(2, m_ParamBuffers[0], 0, ParamsBytes);
+                mip0DescriptorSet->Update();
+            }
+        }
+        else
+        {
+            if (!m_UnownedMip0DescriptorSet || m_BoundDepth.get() != depthTexture.get())
+            {
+                RHI::DescriptorSetPtr descriptorSet =
+                    m_Device->CreateDescriptorSet(MakeDescriptorSetDesc(RHI::ResourceBindType::CombinedImageSampler));
+                if (descriptorSet)
+                {
+                    descriptorSet->BindTexture(0, depthTexture);
+                    descriptorSet->BindSampler(0, m_Sampler);
+                    descriptorSet->BindStorageTexture(1, m_Pyramid, 0);
+                    descriptorSet->BindConstantBuffer(2, m_ParamBuffers[0], 0, ParamsBytes);
+                    descriptorSet->Update();
+                }
+                if (m_UnownedMip0DescriptorSet)
+                {
+                    m_UnownedDescriptorSets.push_back(m_UnownedMip0DescriptorSet);
+                }
+                m_UnownedMip0DescriptorSet = descriptorSet;
+                m_BoundDepth = descriptorSet ? depthTexture : RHI::TexturePtr{};
+            }
+            mip0DescriptorSet = m_UnownedMip0DescriptorSet;
+        }
+        if (!mip0DescriptorSet)
+        {
+            NORVES_LOG_ERROR("HiZPyramid", "ミップ0 の記述子セットを用意できないため、このフレームは HZB を作りません");
+            return false;
         }
 
         // 描いたばかりの深度の書き込みを、この Compute の読み取りから見えるようにする。
@@ -296,7 +341,7 @@ namespace NorvesLib::Core::Rendering
                                             mip - 1, 0, 1, 0);
                 commandList->SetPipeline(m_DownsamplePipeline);
             }
-            commandList->SetDescriptorSet(m_DescriptorSets[mip], 0);
+            commandList->SetDescriptorSet(mip == 0 ? mip0DescriptorSet : m_DescriptorSets[mip], 0);
             commandList->Dispatch((ComputeMipSize(m_Width, mip) + 7) / 8,
                                   (ComputeMipSize(m_Height, mip) + 7) / 8,
                                   1);
@@ -369,7 +414,7 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
-        m_bBuilt = m_Pyramid.Build(context.CommandList, depth);
+        m_bBuilt = m_Pyramid.Build(context.CommandList, depth, context.FrameResources);
     }
 
 } // namespace NorvesLib::Core::Rendering
