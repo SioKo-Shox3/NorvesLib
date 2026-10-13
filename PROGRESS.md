@@ -3931,3 +3931,12 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 補助（verify の外）: `--mega-binning=off` のバナナ 1 万本 overview（`aux-SCN-MEGA-BINNING-SWITCH-off.txt`、`.harness/runs/scene-capture/SCN-MEGA-BINNING-SWITCH/off`）も比較 pass（psnr 67.802 dB）、`[ERROR]` 0、旧経路の `zeroed=361769`、`MEGA_BIN` 全行 mismatch=0。
 - Next: SCN-MEGA-PREV-HIZ。
 - Notes: 撮影した 2 シーンは落ち着いた後に 2 パス目の描画が 0 で、1・2 パスの両方に描くフレームは無い（エポックの初めは 1 パス目が 0）。両パスにまたがる記録の番号の保持は、区画の並び（1 パス目が前）と、接頭和・書き出しが今のパスの区間だけを書く形で担保している。コマンドのバッファは記録用の範囲の分だけ大きくなり（2 の冪へ切り上げで バナナ 1 万本の `indirect_bytes` 168 → 336 MB、`draw_info_bytes` 67 → 134 MB）、記録の表は枠が 838 万 → 419 万に減る（約 537 → 268 MB）。性能は測っていない（SCN-MEGA-ACCEPT-1M で判断）。検証レイヤー（Debug）での撮影はしていない。試験の追加はしていない。
+
+### SCN-MEGA-BINNING-SWITCH（2026-10-14、反復 4・run 20261014-061910、評価の 1 周目の差し戻しへの対応）
+- Done: 記録の枠で頭打ちになったとき、間接描画の数が書かれていないコマンドを指す問題を直した。接頭和（`mega_bin_prefix.comp`）は区間のカウンタ（間接描画の数）へハードの区画の数をそのまま書いていたが、書き出し（`mega_bin_scatter.comp`）は P が記録の枠以上の要素を捨てる。区間のカウンタを min(区画の先頭 + ハードの数, 枠) − min(区画の先頭, 枠)（枠に入ったハードの数）にし、書き出しが書く範囲と揃えた。ハードの区画は区間の中でソフトの区画より前に並ぶので、枠に入ったハードの要素は区画の中の位置 0 から連続する。記録の区間の表の数・旧経路・`visbuffer_records*.comp` は変えていない（詰めた経路の記録は表の数を使う）。
+- 検証（`.harness/runs/20261014-061910/`）:
+  - `verify-SCN-MEGA-BINNING-SWITCH-5.txt`: RelWithDebInfo の Game のビルド EXIT=0、error 0（シェーダーは実行時にコンパイル）。`-4.txt` は Git Bash から呼んで `/m:1` がパスに変換され MSBuild が引数で落ちた版（EXIT=1、コードの失敗ではない）。
+  - `verify-SCN-MEGA-BINNING-SWITCH-6.txt`: 起動画面 default の決定的撮影の比較 result=pass（psnr 60.066 dB、輝度差 0.0021、EXIT=0）。`default.Game.log` の `[ERROR]` 0、`SW_RASTER_BIN pass1=1849 pass2=0 hw=823 overflow=0 zeroed=0`、`draw_dropped=0`・`visible_list_overflow=0`。PNG は家・球・岩・地面が以前どおり。
+  - `verify-SCN-MEGA-BINNING-SWITCH-7.txt`: バナナ 1 万本 overview の比較 result=pass（psnr 65.86 dB、輝度差 0、EXIT=0）。`overview.Game.log` の `[ERROR]` 0、`SW_RASTER_BIN` 10 行すべて `zeroed=0`（落ち着いた後 `pass1=361769 hw=3052 overflow=0`）、`MEGA_CAPACITY` 10 行すべて `draw_dropped=0 visible_list_overflow=0`。PNG はバナナの散布と 3 つの山が以前どおり。
+- Next: SCN-MEGA-PREV-HIZ。
+- Notes: 撮影した 2 シーンは記録の枠に届かないので、直した頭打ちの経路は GPU の実機では通っていない（評価者の CPU 上の再現の条件 `MaxDrawCount=2`・ハード `[5,1]` に当たる枠の不足は、詰めた経路の枠が min(全パスのコマンドの数, 列の容量) なので通常の撮影では起きない）。試験の追加はしていない。

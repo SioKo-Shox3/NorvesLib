@@ -11,7 +11,7 @@
 // あわせて、旧の経路（区間ごとのコマンド）の区間ごとの数の接頭和と、新旧の照合（mega_bin_check.comp）の
 // 間接 dispatch の引数を書く。
 // 詰めた経路（binCounters[BIN_RECORD_CAPACITY_WORD] が 0 でない）では、旧の接頭和の代わりに、このパスの区間ごとに
-//   - ハードの区画の数を区間のカウンタ（binding 3。間接描画の数）へ、
+//   - ハードの区画の数（記録の枠に入った分）を区間のカウンタ（binding 3。間接描画の数）へ、
 //   - 記録の区間の表（P の先頭・ハードとソフトの数の和。記録の枠の数で頭打ち）を区間のカウンタの後ろへ書き、
 // このパスが列へ積んだ要素の範囲と、書き出し（mega_bin_scatter.comp）の間接 dispatch の引数を書く。
 // ディスクリプタセットはカリングと同じ形（MegaGeometryPass::BuildCullDescriptorSetDesc）を使う。
@@ -83,7 +83,10 @@ void main()
             uint first = binCounters[offsetBase + slot * 2u];
             uint recordBegin = min(first, recordCapacity);
             uint recordEnd = min(first + hardware + software, recordCapacity);
-            sectionCounts[slot] = hardware;
+            // ハードの区画は区間の先頭に並ぶ。書き出しは記録の枠に入った要素だけコマンドを書くので、
+            // 間接描画の数も枠に入ったハードの数に揃える（書かれていないコマンドを描かない）
+            uint hardwareEnd = min(first + hardware, recordCapacity);
+            sectionCounts[slot] = hardwareEnd - recordBegin;
             sectionCounts[recordTable + slot * 2u] = recordBegin;
             sectionCounts[recordTable + slot * 2u + 1u] = recordEnd - recordBegin;
         }
