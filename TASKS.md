@@ -1050,7 +1050,7 @@
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-ECS-FIF-RHI-OBJECT-CACHE`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -GameArgs rg-transient-slots=2 -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-ECS-FIF-RHI-OBJECT-CACHE-slots2`
-- paths: Library/Core/Private/RHI, Library/Core/Public/RHI, Library/Core/Private/Rendering, Library/Core/Public/Rendering, Game/GameApplicationHandler.cpp, TASKS.md, PROGRESS.md
+- paths: Library/Core/Private/RHI, Library/Core/Public/RHI, Library/Core/Private/Rendering, Library/Core/Public/Rendering, Game/GameApplicationHandler.cpp, Game/GameModes/Rendering3DTest/Rendering3DTestRoutine.cpp, TASKS.md, PROGRESS.md
 - notes: 2026-10-12 親が足した（ユーザーの要望: フレームのデータが消える時期などを使う側が気にせずに、ImGui やデバッグ描画などの描画を足せる仕組みにする。パスごとに飛行中のスロットを持たせる直しをやめ、共通の仕組みから借りる形にした。Sol の批評を反映）。危険地帯（RHI/Vulkan・資源の寿命）。 2026-10-13 親: 評価の 1 周目の指摘 2（作成数を統計につなぐ）は、作成数がログで確かめられていて判断を変えないので、完了条件をログに直した。指摘 1（pipeline の鍵が非所有の render pass のアドレスに依存し、アドレスの再利用で別の形式の古い pipeline が返る）は直す（render pass の互換の条件を値として鍵に入れる、またはデバイスが元の所有の参照を保つ）。
 
 ## SCN-ECS-FIF-DDGI: DDGI の照射・距離のアトラスと履歴をビューごとの組にし、CPU が書くデータを借りる形へ移す
@@ -1079,7 +1079,7 @@
 - notes: 2026-10-12 SCN-ECS-FIF-AUDIT（反復 43）で足した。ログの出し方は `FRAME_PACING`（SCN-ECS-FIX-GT-PACING）にそろえる（ApplicationProcessor が撮影の終わりに出す。RenderWorld から読む口が要れば足す）。危険地帯（RHI/Vulkan）。 2026-10-12 親: 計測の見直し（ユーザーの指摘「節目に計測を入れても意味があるのかを考えるべき」。計測ごとに、問い・結果で変わる判断・測らずに分からないかの 3 点を書き、書けないものは置かない。Sol の批評を反映）。300 フレームの性能の撮影は外した。
 
 ## SCN-ECS-FIF-SWITCH: 2 フレームを重ねて描く
-- status: done
+- status: todo
 - done-when: SCN-ECS-FIF-AUDIT の表の全行が直った後に行う。`MAX_FRAMES_IN_FLIGHT` を 2 にする（開発ビルドは `--frames-in-flight=1` で 1 に戻せる。Release は 2）。Debug の起動画面（2）で検証レイヤーのエラーが 0、RelWithDebInfo の起動画面の比較が pass、mega-stress と バナナ と起動画面のシーンの周回が pass（シーンの出入りで資源を解放する前に、両方のスロットの完了を待つ）。効果はこの項目では測らず、節目の計測（SCN-ECS-MEASURE-FIF）で確かめる。 合わせて: 起動画面と周回で `FRAME_RESOURCE_UNPROTECTED_SUMMARY count=0` と `FRAME_RESOURCE_STALE` が 0、落ち着いた後の作成数（`RHI_CREATE` の行）が 0。起動画面だけの 0 件は通っていない機能の安全を示さないので、`--render-parallel-record=on,frame-arena-initial-kb=4`（並列の記録と、借りる領域のページを足す道）の起動画面 1 本でも 0 件で、ページを足した回数が 1 以上であることを確かめる。同じフレームの 2 回目の Execute・中止・終了時の読み戻しの吐き出しは、FRAME-OWNER・READBACK の試験の結果を PROGRESS に挙げる。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -OutDir .harness/runs/startup-capture/SCN-ECS-FIF-SWITCH-debug`
@@ -1088,8 +1088,8 @@
 - verify: `python -c "import re,sys;t=open(r'.harness/runs/startup-capture/SCN-ECS-FIF-SWITCH/default.Game.log',encoding='utf-8',errors='replace').read();m=re.findall(r'FRAME_RESOURCE_UNPROTECTED_SUMMARY count=(\d+)',t);sys.exit(0 if m and m[-1]=='0' else 1)"`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -GameArgs render-parallel-record=on,frame-arena-initial-kb=4 -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-ECS-FIF-SWITCH-stress`
 - verify: `python -c "import re,sys;t=open(r'.harness/runs/startup-capture/SCN-ECS-FIF-SWITCH-stress/default.Game.log',encoding='utf-8',errors='replace').read();m=re.findall(r'FRAME_RESOURCE_UNPROTECTED_SUMMARY count=(\d+)',t);sys.exit(0 if m and m[-1]=='0' else 1)"`
-- paths: Library/Core/Private/RHI, Library/Core/Public/RHI, Library/Core/Private/Rendering, Library/Core/Public/Rendering, Game/GameApplicationHandler.cpp, TASKS.md, PROGRESS.md
-- notes: 2026-10-12 親が足した。危険地帯（RHI/Vulkan・RenderThread・資源の寿命）。
+- paths: Library/Core/Private/RHI, Library/Core/Public/RHI, Library/Core/Private/Rendering, Library/Core/Public/Rendering, Game/GameApplicationHandler.cpp, Game/GameModes/Rendering3DTest/Rendering3DTestRoutine.cpp, TASKS.md, PROGRESS.md
+- notes: 2026-10-12 親が足した。危険地帯（RHI/Vulkan・RenderThread・資源の寿命）。 2026-10-14 親: 評価の 2 周目（`blocked/SCN-ECS-FIF-SWITCH.md`）の残りは 1 点だけ。`Rendering3DTestRoutine::Leave` が後始末の前に無条件で `WaitForRender()` を呼ばない（F11 の部品があるときだけ待つ。`Rendering3DTestRoutine.cpp` 1727・3941 行付近）。後始末の開始の前に無条件で待つ 1 行を足し、PROGRESS の「各シーンの終わりで待つ」の記述を実コードに合わせる。他の verify・証拠は評価者が確認済みなので、直したら起動画面の比較と周回だけ回せばよい。
 
 ## SCN-ECS-MEASURE-FIF: 2 フレームの重ねの後に、CPU と GPU の重なりを妨げる待ちが残っていないかを調べる（診断）
 - status: todo
