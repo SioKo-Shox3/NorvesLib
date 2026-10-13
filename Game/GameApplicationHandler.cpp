@@ -173,6 +173,9 @@ namespace Game
         // --frame-arena-initial-kb=<n>: フレームの持ち主の CPU から書ける領域の 1 ページの大きさ（KiB。開発ビルドだけ）。
         // 小さくするとページを足す道を通せる。環境変数 NORVES_FRAME_ARENA_INITIAL_KB で描画側へ渡す（最初のフレームで 1 回だけ読む）。
         constexpr const TCHAR *kFrameArenaInitialKbOption = TEXT("--frame-arena-initial-kb=");
+        // --rg-transient-slots=<n>: RenderGraph の一時の資源のスロットの数（1 から 4。開発ビルドだけ）。飛行中のフレームの数より
+        // 多くすると、描画先の texture がフレームごとに替わる形を作れる。環境変数 NORVES_RG_TRANSIENT_SLOTS で描画側へ渡す。
+        constexpr const TCHAR *kRenderGraphTransientSlotsOption = TEXT("--rg-transient-slots=");
 #endif
         // --engine-checks=<名前,...>: 開発ビルドの検査（Debug/EngineChecks.h）を名前で有効にする。結果は ENGINE_CHECK の行でログへ出る。
         // --engine-checks-selftest-fail: 配線の確認用の検査 ENGINE_CHECK_SELFTEST を fail で報告させる（落ちる出力の確認用）。
@@ -1204,6 +1207,20 @@ namespace Game
                 char kilobytesText[16] = {};
                 std::snprintf(kilobytesText, sizeof(kilobytesText), "%u", kilobytes);
                 _putenv_s("NORVES_FRAME_ARENA_INITIAL_KB", kilobytesText);
+                continue;
+            }
+            if (TryStripPrefix(args[i], kRenderGraphTransientSlotsOption, sceneValue))
+            {
+                // 描画の初期化より前に環境変数へ渡す
+                uint32_t slots = 0;
+                if (!TryParseUInt32(sceneValue, slots) || slots == 0 || slots > 4u)
+                {
+                    LOG_ERROR("--rg-transient-slots は 1 から 4 までの整数で指定してください");
+                    return false;
+                }
+                char slotsText[16] = {};
+                std::snprintf(slotsText, sizeof(slotsText), "%u", slots);
+                _putenv_s("NORVES_RG_TRANSIENT_SLOTS", slotsText);
                 continue;
             }
 #endif

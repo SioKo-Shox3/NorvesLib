@@ -134,10 +134,20 @@ namespace NorvesLib::RHI
 
         /**
          * @brief 初期化します
+         *
+         * 一時の資源はスロットごとに分け、前に同じスロットで使った物だけを使い回す。スロットの数は
+         * 飛行中のフレームの数と slotCount の大きい方。飛行中の数と同じならフレームの番号でスロットを引き、
+         * 多ければ BeginFrame の回数で順に回す（開発ビルドの --rg-transient-slots で、描画先がフレームごとに
+         * 替わる形を飛行中のフレームが 1 のままで作る）。
          * @param allocator GPUリソースアロケーター
+         * @param framesInFlight 飛行中のフレームの数
+         * @param slotCount スロットの数の下限（0 なら飛行中の数）
          * @return 初期化成功時true
          */
-        bool Initialize(IGPUResourceAllocator* allocator, uint32_t framesInFlight = 2);
+        bool Initialize(IGPUResourceAllocator* allocator, uint32_t framesInFlight = 2, uint32_t slotCount = 0);
+
+        /** @brief スロットの数 */
+        uint32_t GetSlotCount() const { return m_FramesInFlight; }
 
         /**
          * @brief 終了処理を行います
@@ -265,7 +275,10 @@ namespace NorvesLib::RHI
         };
 
         IGPUResourceAllocator* m_Allocator = nullptr;
+        // スロットの数（飛行中のフレームの数と指定の下限の大きい方）
         uint32_t m_FramesInFlight = 2;
+        // スロットを BeginFrame の回数で回すか（スロットが飛行中の数より多いとき）
+        bool m_bSlotBySerial = false;
         uint32_t m_CurrentFrameSlot = 0;
         uint64_t m_CurrentSerial = 0;
         size_t m_MaxPoolMemory = 256 * 1024 * 1024;  // 256MB

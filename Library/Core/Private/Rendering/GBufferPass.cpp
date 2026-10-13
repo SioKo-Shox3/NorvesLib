@@ -1169,12 +1169,18 @@ namespace NorvesLib::Core::Rendering
             return true;
         }
 
+        // デバイスは互換の条件（形式・load/store・layout）が同じなら同じレンダーパスを返すので、
+        // 描画先の texture だけが替わったときはパイプラインを作り直さない
+        const RHI::RenderPassPtr previousRenderPass = m_GBufferRenderPass;
+        const auto resetPipelines = [this]()
+        {
+            m_SkinnedGBufferPipeline.reset();
+            m_SkinnedGBufferWireframePipeline.reset();
+            m_GBufferPipeline.reset();
+            m_GBufferWireframePipeline.reset();
+        };
         m_GBufferRenderPass.reset();
         m_GBufferFramebuffer.reset();
-        m_SkinnedGBufferPipeline.reset();
-        m_SkinnedGBufferWireframePipeline.reset();
-        m_GBufferPipeline.reset();
-        m_GBufferWireframePipeline.reset();
         m_FramebufferAlbedoTexture = nullptr;
         m_FramebufferNormalTexture = nullptr;
         m_FramebufferMaterialTexture = nullptr;
@@ -1280,8 +1286,13 @@ namespace NorvesLib::Core::Rendering
         m_GBufferRenderPass = m_Device->CreateRenderPass(rpDesc);
         if (!m_GBufferRenderPass)
         {
+            resetPipelines();
             NORVES_LOG_ERROR("GBufferPass", "Failed to create GBuffer render pass");
             return false;
+        }
+        if (m_GBufferRenderPass != previousRenderPass)
+        {
+            resetPipelines();
         }
 
         m_bRenderPassUsesRenderGraphInitialStates =

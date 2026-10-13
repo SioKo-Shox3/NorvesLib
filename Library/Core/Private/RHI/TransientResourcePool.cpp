@@ -26,7 +26,7 @@ namespace NorvesLib::RHI
         Shutdown();
     }
 
-    bool TransientResourcePool::Initialize(IGPUResourceAllocator* allocator, uint32_t framesInFlight)
+    bool TransientResourcePool::Initialize(IGPUResourceAllocator* allocator, uint32_t framesInFlight, uint32_t slotCount)
     {
         if (m_bInitialized)
         {
@@ -39,7 +39,9 @@ namespace NorvesLib::RHI
         }
 
         m_Allocator = allocator;
-        m_FramesInFlight = framesInFlight > 0 ? framesInFlight : 1;
+        const uint32_t inFlight = framesInFlight > 0 ? framesInFlight : 1;
+        m_FramesInFlight = slotCount > inFlight ? slotCount : inFlight;
+        m_bSlotBySerial = m_FramesInFlight != inFlight;
         m_CurrentFrameSlot = 0;
         m_CurrentSerial = 0;
         m_bInitialized = true;
@@ -60,8 +62,11 @@ namespace NorvesLib::RHI
 
     void TransientResourcePool::BeginFrame(uint64_t frameIndex)
     {
-        m_CurrentFrameSlot = static_cast<uint32_t>(frameIndex % m_FramesInFlight);
         ++m_CurrentSerial;
+        // スロットが飛行中の数より多いときは回数で回す（前に同じスロットを使ったフレームは、飛行中の数より前なので完了している）
+        m_CurrentFrameSlot = m_bSlotBySerial
+            ? static_cast<uint32_t>(m_CurrentSerial % m_FramesInFlight)
+            : static_cast<uint32_t>(frameIndex % m_FramesInFlight);
     }
 
     void TransientResourcePool::EndFrame()

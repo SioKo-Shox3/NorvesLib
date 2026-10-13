@@ -602,6 +602,34 @@ namespace NorvesLib::Core::Rendering
             return pageBytes;
         }
 
+        // RenderGraph の一時の資源のスロットの数の下限。開発ビルドだけ --rg-transient-slots（Game が
+        // NORVES_RG_TRANSIENT_SLOTS へ渡す）で飛行中のフレームの数より多くでき、描画先がフレームごとに替わる形を作れる
+        uint32_t ResolveTransientResourceSlotCount()
+        {
+            uint32_t slotCount = 0;
+#if NORVES_BUILD_DEVELOPMENT
+            char* value = nullptr;
+            size_t length = 0;
+            if (_dupenv_s(&value, &length, "NORVES_RG_TRANSIENT_SLOTS") == 0 && value != nullptr)
+            {
+                char* end = nullptr;
+                const unsigned long slots = std::strtoul(value, &end, 10);
+                if (end != value && end != nullptr && *end == 0 && slots >= 1 && slots <= 4)
+                {
+                    slotCount = static_cast<uint32_t>(slots);
+                }
+                else
+                {
+                    NORVES_LOG_WARNING("RenderGraph",
+                                       "NORVES_RG_TRANSIENT_SLOTS=%s は 1 から 4 までの整数でないので飛行中のフレームの数を使います",
+                                       value);
+                }
+            }
+            std::free(value);
+#endif
+            return slotCount;
+        }
+
         template<typename CameraResolver>
         ViewportRenderPlan BuildViewportRenderPlan(const Viewport &viewport,
                                                    uint32_t viewId,
@@ -2433,12 +2461,18 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
-        if (!m_TransientPool.Initialize(m_Device->GetResourceAllocator(), swapChain->GetMaxFramesInFlight()))
+        if (!m_TransientPool.Initialize(m_Device->GetResourceAllocator(),
+                                        swapChain->GetMaxFramesInFlight(),
+                                        ResolveTransientResourceSlotCount()))
         {
             NORVES_LOG_ERROR("RenderingCoordinator", "Failed to initialize TransientResourcePool");
             ReleaseInitializedResources();
             return false;
         }
+        NORVES_LOG_INFO("RenderingCoordinator",
+                        "RG_TRANSIENT_SLOTS slots=%u frames_in_flight=%u",
+                        m_TransientPool.GetSlotCount(),
+                        swapChain->GetMaxFramesInFlight());
 
         if (!m_RenderGraph.Initialize(&m_TransientPool))
         {
@@ -3869,6 +3903,23 @@ namespace NorvesLib::Core::Rendering
             {
                 writeTracker->EmitSummary("release");
             }
+#if NORVES_BUILD_DEVELOPMENT
+            // 鍵で持ち続けたレンダーパス・フレームバッファ・パイプラインの作成数と使い回した数（累計）
+            const RHI::ObjectCacheStats objectCacheStats = m_Device->GetObjectCacheStats();
+            NORVES_LOG_INFO("RenderingCoordinator",
+                            "RHI_CREATE_SUMMARY RHI.Create.Framebuffer=%llu RHI.Create.RenderPass=%llu RHI.Create.Pipeline=%llu "
+                            "reused_framebuffer=%llu reused_render_pass=%llu reused_pipeline=%llu evicted=%llu entries=%llu",
+                            static_cast<unsigned long long>(objectCacheStats.CreatedFramebuffers),
+                            static_cast<unsigned long long>(objectCacheStats.CreatedRenderPasses),
+                            static_cast<unsigned long long>(objectCacheStats.CreatedPipelines),
+                            static_cast<unsigned long long>(objectCacheStats.ReusedFramebuffers),
+                            static_cast<unsigned long long>(objectCacheStats.ReusedRenderPasses),
+                            static_cast<unsigned long long>(objectCacheStats.ReusedPipelines),
+                            static_cast<unsigned long long>(objectCacheStats.Evicted),
+                            static_cast<unsigned long long>(objectCacheStats.Entries));
+#endif
+            // GPU を待ち終えたので、鍵で持ち続けた物を手放す（持ち手の残る物はその持ち手が手放すまで生きる）
+            m_Device->ReleaseObjectCache();
         }
         // GPU を待ち終えたので、フレームの持ち主の分を全部戻す
         m_FrameResourceOwners.Reset();
@@ -5787,6 +5838,31 @@ namespace NorvesLib::Core::Rendering
         {
             ThrowSwapChainEndFrameError(endFrameResult.Status);
         }
+
+        // 鍵で持ち続けるレンダーパス・フレームバッファ・パイプラインのフレームを進め、見えなくなった鍵を手放す
+        m_Device->AdvanceObjectCacheFrame();
+#if NORVES_BUILD_DEVELOPMENT
+        {
+            // このフレームで実際に作った数（鍵に合う物が無かった数）。作ったフレームだけ出す
+            const RHI::ObjectCacheStats objectCacheStats = m_Device->GetObjectCacheStats();
+            const uint64_t createdFramebuffers =
+                objectCacheStats.CreatedFramebuffers - m_LastLoggedObjectCacheStats.CreatedFramebuffers;
+            const uint64_t createdRenderPasses =
+                objectCacheStats.CreatedRenderPasses - m_LastLoggedObjectCacheStats.CreatedRenderPasses;
+            const uint64_t createdPipelines =
+                objectCacheStats.CreatedPipelines - m_LastLoggedObjectCacheStats.CreatedPipelines;
+            if (createdFramebuffers != 0 || createdRenderPasses != 0 || createdPipelines != 0)
+            {
+                NORVES_LOG_INFO("RenderingCoordinator",
+                                "RHI_CREATE frame=%llu RHI.Create.Framebuffer=%llu RHI.Create.RenderPass=%llu RHI.Create.Pipeline=%llu",
+                                static_cast<unsigned long long>(packet->FrameNumber),
+                                static_cast<unsigned long long>(createdFramebuffers),
+                                static_cast<unsigned long long>(createdRenderPasses),
+                                static_cast<unsigned long long>(createdPipelines));
+            }
+            m_LastLoggedObjectCacheStats = objectCacheStats;
+        }
+#endif
 
 #if NORVES_ENABLE_STATS
         if (bTraceActive)

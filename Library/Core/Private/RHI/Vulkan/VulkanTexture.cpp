@@ -406,6 +406,13 @@ namespace NorvesLib::RHI::Vulkan
 
         return requestedCount;
     }
+    uint64_t VulkanTexture::AllocateObjectCacheId()
+    {
+        // 0 は「テクスチャ無し」に使うので 1 から振る
+        static std::atomic<uint64_t> s_nextObjectCacheId{1};
+        return s_nextObjectCacheId.fetch_add(1, std::memory_order_relaxed);
+    }
+
     VulkanTexture::VulkanTexture(TSharedPtr<VulkanDevice> device, const TextureDesc &desc)
         : m_device(device), m_desc(desc), m_bOwnsImage(true)
     {

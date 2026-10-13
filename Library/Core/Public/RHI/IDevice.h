@@ -75,6 +75,9 @@ namespace NorvesLib::RHI
 
     /**
      * @brief グラフィックパイプライン作成情報
+     *
+     * デバイスはこの記述子の全部を鍵にしてパイプラインを持ち続ける（IDevice::CreateGraphicsPipeline）。
+     * フィールドを足したら、VulkanDevice の鍵（AppendGraphicsPipelineKey）にも足す。
      */
     struct GraphicsPipelineDesc
     {
@@ -111,6 +114,8 @@ namespace NorvesLib::RHI
 
     /**
      * @brief コンピュートパイプライン作成情報
+     *
+     * デバイスはこの記述子の全部を鍵にしてパイプラインを持ち続ける。フィールドを足したら VulkanDevice の鍵にも足す。
      */
     struct ComputePipelineDesc
     {
@@ -141,6 +146,9 @@ namespace NorvesLib::RHI
 
     /**
      * @brief レンダーパス作成情報
+     *
+     * デバイスはこの記述子の全部（AttachmentDesc の全フィールド）を鍵にしてレンダーパスを持ち続ける。
+     * フィールドを足したら、VulkanDevice の鍵（AppendRenderPassKey）にも足す。
      */
     struct RenderPassDesc
     {
@@ -151,6 +159,8 @@ namespace NorvesLib::RHI
 
     /**
      * @brief フレームバッファ作成情報
+     *
+     * デバイスはレンダーパスと attachment の view の組（テクスチャの ID と layer）・大きさを鍵にして持ち続ける。
      */
     struct FramebufferDesc
     {
@@ -161,6 +171,23 @@ namespace NorvesLib::RHI
         uint32_t height = 0;
         /** @brief 配列デプスアタッチメントで使用する0-based layer（キューブ配列はキューブの番号 * 6 + 面） */
         uint32_t depthStencilArrayLayer = 0;
+    };
+
+    /**
+     * @brief 鍵で持ち続けるレンダーパス・フレームバッファ・パイプラインの数（累計）
+     *
+     * Created は実際に作った数（鍵に合う物が無かった）、Reused は持っていた物を返した数。
+     */
+    struct ObjectCacheStats
+    {
+        uint64_t CreatedFramebuffers = 0;
+        uint64_t CreatedRenderPasses = 0;
+        uint64_t CreatedPipelines = 0;
+        uint64_t ReusedFramebuffers = 0;
+        uint64_t ReusedRenderPasses = 0;
+        uint64_t ReusedPipelines = 0;
+        uint64_t Evicted = 0; ///< 見えなくなって手放した数
+        uint64_t Entries = 0; ///< 今持っている数
     };
 
     /**
@@ -223,6 +250,8 @@ namespace NorvesLib::RHI
 
         /**
          * @brief レンダーパスを作成
+         *
+         * 記述子が同じ物を前に作っていればそれを返す（互換の条件で持ち続ける）。返した物は書き換えない。
          * @param desc レンダーパス記述子
          * @return 作成されたレンダーパスオブジェクト
          */
@@ -230,6 +259,9 @@ namespace NorvesLib::RHI
 
         /**
          * @brief フレームバッファを作成
+         *
+         * レンダーパス・attachment の view の組・大きさが同じ物を前に作っていればそれを返す。
+         * 一時の描画先がフレームごとに替わっても、組ごとに 1 つ作って持ち続ける。
          * @param desc フレームバッファ記述子
          * @return 作成されたフレームバッファオブジェクト
          */
@@ -237,6 +269,8 @@ namespace NorvesLib::RHI
 
         /**
          * @brief グラフィックパイプラインを作成
+         *
+         * 記述子（シェーダー・状態・レンダーパス・レイアウト）が同じ物を前に作っていればそれを返す。
          * @param desc パイプライン記述子
          * @return 作成されたパイプラインオブジェクト
          */
@@ -244,10 +278,29 @@ namespace NorvesLib::RHI
 
         /**
          * @brief コンピュートパイプラインを作成
+         *
+         * 記述子が同じ物を前に作っていればそれを返す。
          * @param desc パイプライン記述子
          * @return 作成されたパイプラインオブジェクト
          */
         virtual PipelinePtr CreateComputePipeline(const ComputePipelineDesc &desc) = 0;
+
+        /**
+         * @brief 鍵で持ち続ける物のフレームを進め、見えなくなった鍵を手放す（RenderThread がフレームの提出の後に 1 回呼ぶ）
+         *
+         * 数フレーム求められず、デバイスのほかに持ち手が無い物を手放す。破棄は提出の完了まで遅れる。
+         */
+        virtual void AdvanceObjectCacheFrame() {}
+
+        /**
+         * @brief 鍵で持ち続ける物を全部手放す（終了の前。WaitIdle の後に呼ぶ）
+         */
+        virtual void ReleaseObjectCache() {}
+
+        /**
+         * @brief 鍵で持ち続ける物の作成数・使い回した数
+         */
+        virtual ObjectCacheStats GetObjectCacheStats() const { return {}; }
 
         /**
          * @brief レイトレーシングパイプラインを作成

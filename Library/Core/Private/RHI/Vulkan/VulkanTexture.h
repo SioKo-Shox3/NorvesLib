@@ -104,6 +104,8 @@ namespace NorvesLib::RHI::Vulkan
         // Vulkan固有のメソッド (vulkan.hpp型)
         vk::Image GetVkImage() const { return m_image; }
         vk::ImageView GetVkImageView() const { return m_imageView; }
+        /** @brief 作った順に振る ID（使い回さない。デバイスがフレームバッファを view の組で持ち続ける鍵に使う） */
+        uint64_t GetObjectCacheId() const { return m_objectCacheId; }
         vk::ImageLayout GetVkImageLayout() const { return m_currentLayout; }
         void SetVkImageLayout(vk::ImageLayout layout);
 
@@ -128,6 +130,7 @@ namespace NorvesLib::RHI::Vulkan
             vk::ImageLayout newLayout);
 
     private:
+        static uint64_t AllocateObjectCacheId();
         void CreateTexture();
         void CreateSparseTexture(vk::ImageCreateInfo &imageInfo);
         void CreateImageView();
@@ -151,6 +154,7 @@ namespace NorvesLib::RHI::Vulkan
         NorvesLib::Core::Container::VariableArray<vk::ImageLayout> m_subresourceLayouts;
         vk::ImageLayout m_currentLayout = vk::ImageLayout::eUndefined;
         bool m_bOwnsImage = true;
+        const uint64_t m_objectCacheId = AllocateObjectCacheId();
         SparseTextureInfo m_sparseInfo;
         std::atomic<uint64_t> m_sparseBoundBytes{0};
         uint32_t m_sparseMemoryTypeBits = 0;

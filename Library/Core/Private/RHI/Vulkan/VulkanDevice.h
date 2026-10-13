@@ -108,6 +108,9 @@ namespace NorvesLib::RHI::Vulkan
         PipelinePtr CreateGraphicsPipeline(const GraphicsPipelineDesc &desc) override;
         PipelinePtr CreateComputePipeline(const ComputePipelineDesc &desc) override;
         PipelinePtr CreateRayTracingPipeline(const RayTracingPipelineDesc& desc) override;
+        void AdvanceObjectCacheFrame() override;
+        void ReleaseObjectCache() override;
+        ObjectCacheStats GetObjectCacheStats() const override;
         DescriptorSetPtr CreateDescriptorSet(const DescriptorSetDesc &desc) override;
         DescriptorSetLayoutPtr GetOrCreateDescriptorSetLayout(const DescriptorSetDesc &desc) override;
         FrameDescriptorAllocatorPtr CreateFrameDescriptorAllocator(const FrameDescriptorPoolCapacity &capacity) override;
@@ -413,6 +416,35 @@ namespace NorvesLib::RHI::Vulkan
         uint64_t m_deferredDestroyMaxPendingMemoryBytes = 0;
         // 定期の統計のログの間引き用
         uint64_t m_deferredDestroyCompletionCount = 0;
+
+        // 鍵で持ち続けるレンダーパス・フレームバッファ・パイプライン（CreateRenderPass などが引く）。
+        // 鍵は記述子を 64 ビットの語の列にした物。アドレスを鍵に使うシェーダー・レンダーパスは、持ち続ける物が
+        // 記述子の写しで生かすので、鍵がある間は別の物に使い回されない。テクスチャは使い回さない ID で引く。
+        enum class ObjectCacheKind : uint8_t
+        {
+            RenderPass,
+            Framebuffer,
+            Pipeline,
+            Count,
+        };
+        struct ObjectCacheEntry
+        {
+            VariableArray<uint64_t> Key;
+            TSharedPtr<void> Object;
+            // 最後に求められたフレーム（AdvanceObjectCacheFrame が進める番号）
+            uint64_t LastUsedFrame = 0;
+        };
+        mutable Thread::Mutex m_objectCacheMutex;
+        // 種類ごとに、鍵のハッシュから同じハッシュの物の列を引く
+        UnorderedMap<uint64_t, VariableArray<ObjectCacheEntry>> m_objectCache[static_cast<size_t>(ObjectCacheKind::Count)];
+        uint64_t m_objectCacheFrame = 0;
+        ObjectCacheStats m_objectCacheStats;
+
+        // 鍵に合う物を返す。無ければ create() で作って持つ（作るのはロックの外。同時に作った分は捨てて先の物を返す）
+        template <typename TObject, typename TCreate>
+        TSharedPtr<TObject> FindOrCreateCachedObject(ObjectCacheKind kind,
+                                                     const VariableArray<uint64_t> &key,
+                                                     TCreate &&create);
 
         void EnqueueDeferredDestroy(DeferredDestroyKind kind, uint64_t handle, uint64_t memoryBytes = 0) noexcept;
         void DestroyDeferredHandle(DeferredDestroyKind kind, uint64_t handle) noexcept;

@@ -22,6 +22,7 @@
 #include <atomic>
 #include <filesystem>
 #include <limits>
+#include <cstring>
 #include "Container/Containers.h"
 #include "Thread/Mutex.h"
 
@@ -826,6 +827,8 @@ namespace NorvesLib::RHI::Vulkan
     // デストラクタ
     VulkanDevice::~VulkanDevice()
     {
+        // 鍵で持ち続けた物を先に手放す（破棄は遅らせる破棄の列へ積まれ、下の待ちの後に空ける）
+        ReleaseObjectCache();
         UnregisterVulkanDeviceOwner(this);
         VkResult waitResult = VK_SUCCESS;
         if (m_device)
@@ -2413,32 +2416,405 @@ namespace NorvesLib::RHI::Vulkan
         return StaticPointerCast<ISwapChain>(swapChain);
     }
 
+    namespace
+    {
+        // 鍵で持ち続ける物を、求められなくなってからこのフレーム数が経ったら手放す
+        constexpr uint64_t ObjectCacheEvictAfterFrames = 8;
+
+        template <typename TEnum>
+        void AppendEnumKey(VariableArray<uint64_t> &key, TEnum value)
+        {
+            key.push_back(static_cast<uint64_t>(value));
+        }
+
+        void AppendFloatKey(VariableArray<uint64_t> &key, float value)
+        {
+            uint32_t bits = 0;
+            std::memcpy(&bits, &value, sizeof(bits));
+            key.push_back(bits);
+        }
+
+        void AppendPointerKey(VariableArray<uint64_t> &key, const void *pointer)
+        {
+            key.push_back(static_cast<uint64_t>(reinterpret_cast<uintptr_t>(pointer)));
+        }
+
+        void AppendAttachmentKey(VariableArray<uint64_t> &key, const AttachmentDesc &attachment)
+        {
+            AppendEnumKey(key, attachment.format);
+            key.push_back(attachment.isDepthStencil ? 1u : 0u);
+            key.push_back(attachment.clear ? 1u : 0u);
+            for (const float value : attachment.clearColor)
+            {
+                AppendFloatKey(key, value);
+            }
+            for (const uint32_t value : attachment.clearColorUint)
+            {
+                key.push_back(value);
+            }
+            AppendFloatKey(key, attachment.clearDepth);
+            key.push_back(attachment.clearStencil);
+            AppendEnumKey(key, attachment.loadOp);
+            AppendEnumKey(key, attachment.storeOp);
+            AppendEnumKey(key, attachment.initialState);
+            AppendEnumKey(key, attachment.finalState);
+        }
+
+        // レンダーパスは記述子の全部（形式・load/store・layout・クリア値）を鍵にする
+        void AppendRenderPassKey(VariableArray<uint64_t> &key, const RenderPassDesc &desc)
+        {
+            key.push_back(desc.colorAttachments.size());
+            for (const AttachmentDesc &attachment : desc.colorAttachments)
+            {
+                AppendAttachmentKey(key, attachment);
+            }
+            key.push_back(desc.hasDepthStencil ? 1u : 0u);
+            if (desc.hasDepthStencil)
+            {
+                AppendAttachmentKey(key, desc.depthStencilAttachment);
+            }
+        }
+
+        void AppendDescriptorSetLayoutsKey(VariableArray<uint64_t> &key,
+                                           const VariableArray<DescriptorSetDesc> &layouts)
+        {
+            key.push_back(layouts.size());
+            for (const DescriptorSetDesc &layout : layouts)
+            {
+                key.push_back(layout.bindings.size());
+                for (const DescriptorBinding &binding : layout.bindings)
+                {
+                    key.push_back(binding.binding);
+                    AppendEnumKey(key, binding.type);
+                    AppendEnumKey(key, binding.stages);
+                    key.push_back(binding.count);
+                }
+            }
+        }
+
+        void AppendStencilFaceKey(VariableArray<uint64_t> &key, const StencilFaceDesc &face)
+        {
+            AppendEnumKey(key, face.failOp);
+            AppendEnumKey(key, face.passOp);
+            AppendEnumKey(key, face.depthFailOp);
+            AppendEnumKey(key, face.compareOp);
+            key.push_back(face.compareMask);
+            key.push_back(face.writeMask);
+            key.push_back(face.reference);
+        }
+
+        // パイプラインは記述子の全部を鍵にする。シェーダーとレンダーパスはアドレスで引く
+        // （持ち続けるパイプラインが記述子の写しで生かすので、鍵がある間は使い回されない）
+        void AppendGraphicsPipelineKey(VariableArray<uint64_t> &key, const GraphicsPipelineDesc &desc)
+        {
+            key.push_back(0x47u); // グラフィックスとコンピュートの鍵を分ける
+            AppendPointerKey(key, desc.vertexShader.get());
+            AppendPointerKey(key, desc.pixelShader.get());
+            AppendPointerKey(key, desc.geometryShader.get());
+            AppendPointerKey(key, desc.hullShader.get());
+            AppendPointerKey(key, desc.domainShader.get());
+            key.push_back(desc.vertexBindings.size());
+            for (const VertexBindingDesc &binding : desc.vertexBindings)
+            {
+                key.push_back(binding.binding);
+                key.push_back(binding.stride);
+                AppendEnumKey(key, binding.inputRate);
+            }
+            key.push_back(desc.vertexAttributes.size());
+            for (const VertexAttributeDesc &attribute : desc.vertexAttributes)
+            {
+                key.push_back(attribute.location);
+                key.push_back(attribute.binding);
+                AppendEnumKey(key, attribute.format);
+                key.push_back(attribute.offset);
+            }
+            AppendEnumKey(key, desc.primitiveTopology);
+            key.push_back(desc.patchControlPoints);
+
+            const RasterState &raster = desc.rasterState;
+            AppendEnumKey(key, raster.polygonMode);
+            AppendEnumKey(key, raster.cullMode);
+            AppendEnumKey(key, raster.frontFace);
+            key.push_back(raster.depthClampEnable ? 1u : 0u);
+            key.push_back(raster.depthBiasEnable ? 1u : 0u);
+            AppendFloatKey(key, raster.depthBiasConstantFactor);
+            AppendFloatKey(key, raster.depthBiasClamp);
+            AppendFloatKey(key, raster.depthBiasSlopeFactor);
+            AppendFloatKey(key, raster.lineWidth);
+
+            const DepthStencilState &depthStencil = desc.depthStencilState;
+            key.push_back(depthStencil.depthTestEnable ? 1u : 0u);
+            key.push_back(depthStencil.depthWriteEnable ? 1u : 0u);
+            AppendEnumKey(key, depthStencil.depthCompareOp);
+            key.push_back(depthStencil.depthBoundsTestEnable ? 1u : 0u);
+            key.push_back(depthStencil.stencilTestEnable ? 1u : 0u);
+            AppendStencilFaceKey(key, depthStencil.frontFace);
+            AppendStencilFaceKey(key, depthStencil.backFace);
+
+            key.push_back(desc.blendState.attachments.size());
+            for (const BlendAttachmentDesc &blend : desc.blendState.attachments)
+            {
+                key.push_back(blend.blendEnable ? 1u : 0u);
+                AppendEnumKey(key, blend.srcColorBlendFactor);
+                AppendEnumKey(key, blend.dstColorBlendFactor);
+                AppendEnumKey(key, blend.colorBlendOp);
+                AppendEnumKey(key, blend.srcAlphaBlendFactor);
+                AppendEnumKey(key, blend.dstAlphaBlendFactor);
+                AppendEnumKey(key, blend.alphaBlendOp);
+                AppendEnumKey(key, blend.colorWriteMask);
+            }
+            for (const float value : desc.blendState.blendConstants)
+            {
+                AppendFloatKey(key, value);
+            }
+
+            AppendPointerKey(key, desc.renderPass.get());
+            AppendDescriptorSetLayoutsKey(key, desc.descriptorSetLayouts);
+        }
+
+        void AppendComputePipelineKey(VariableArray<uint64_t> &key, const ComputePipelineDesc &desc)
+        {
+            key.push_back(0x43u);
+            AppendPointerKey(key, desc.computeShader.get());
+            AppendDescriptorSetLayoutsKey(key, desc.descriptorSetLayouts);
+        }
+
+        // フレームバッファはレンダーパスと attachment の view の組（テクスチャの ID と layer）・大きさを鍵にする。
+        // Vulkan のテクスチャでない attachment があれば false（持ち続けずにその場で作る）
+        bool TryAppendFramebufferKey(VariableArray<uint64_t> &key, const FramebufferDesc &desc)
+        {
+            AppendPointerKey(key, desc.renderPass.get());
+            key.push_back(desc.width);
+            key.push_back(desc.height);
+            key.push_back(desc.colorTargets.size());
+            for (const TexturePtr &target : desc.colorTargets)
+            {
+                const VulkanTexture *const texture = dynamic_cast<const VulkanTexture *>(target.get());
+                if (!texture)
+                {
+                    return false;
+                }
+                key.push_back(texture->GetObjectCacheId());
+            }
+            if (desc.depthStencilTarget)
+            {
+                const VulkanTexture *const texture =
+                    dynamic_cast<const VulkanTexture *>(desc.depthStencilTarget.get());
+                if (!texture)
+                {
+                    return false;
+                }
+                key.push_back(texture->GetObjectCacheId());
+                key.push_back(desc.depthStencilArrayLayer);
+            }
+            else
+            {
+                key.push_back(0u);
+            }
+            return true;
+        }
+
+        uint64_t HashObjectCacheKey(const VariableArray<uint64_t> &key)
+        {
+            // FNV-1a（語ごと）
+            uint64_t hash = 14695981039346656037ull;
+            for (const uint64_t word : key)
+            {
+                hash = (hash ^ word) * 1099511628211ull;
+            }
+            return hash;
+        }
+    } // namespace
+
+    template <typename TObject, typename TCreate>
+    TSharedPtr<TObject> VulkanDevice::FindOrCreateCachedObject(ObjectCacheKind kind,
+                                                               const VariableArray<uint64_t> &key,
+                                                               TCreate &&create)
+    {
+        const uint64_t hash = HashObjectCacheKey(key);
+        UnorderedMap<uint64_t, VariableArray<ObjectCacheEntry>> &cache = m_objectCache[static_cast<size_t>(kind)];
+        {
+            Thread::ScopedLock lock(m_objectCacheMutex);
+            const auto it = cache.find(hash);
+            if (it != cache.end())
+            {
+                for (ObjectCacheEntry &entry : it->second)
+                {
+                    if (entry.Key == key)
+                    {
+                        entry.LastUsedFrame = m_objectCacheFrame;
+                        switch (kind)
+                        {
+                        case ObjectCacheKind::RenderPass: ++m_objectCacheStats.ReusedRenderPasses; break;
+                        case ObjectCacheKind::Framebuffer: ++m_objectCacheStats.ReusedFramebuffers; break;
+                        default: ++m_objectCacheStats.ReusedPipelines; break;
+                        }
+                        return StaticPointerCast<TObject>(entry.Object);
+                    }
+                }
+            }
+        }
+
+        // 作るのはロックの外（パイプラインの作成は重いので、ほかのスレッドの引きを止めない）
+        TSharedPtr<TObject> created = create();
+
+        Thread::ScopedLock lock(m_objectCacheMutex);
+        switch (kind)
+        {
+        case ObjectCacheKind::RenderPass: ++m_objectCacheStats.CreatedRenderPasses; break;
+        case ObjectCacheKind::Framebuffer: ++m_objectCacheStats.CreatedFramebuffers; break;
+        default: ++m_objectCacheStats.CreatedPipelines; break;
+        }
+        if (!created)
+        {
+            return created;
+        }
+        VariableArray<ObjectCacheEntry> &entries = cache[hash];
+        for (ObjectCacheEntry &entry : entries)
+        {
+            if (entry.Key == key)
+            {
+                // 同時にほかのスレッドが作って持った。作った分は捨てる（ロックを外した後に破棄される）
+                entry.LastUsedFrame = m_objectCacheFrame;
+                return StaticPointerCast<TObject>(entry.Object);
+            }
+        }
+        ObjectCacheEntry entry;
+        entry.Key = key;
+        entry.Object = created;
+        entry.LastUsedFrame = m_objectCacheFrame;
+        entries.push_back(std::move(entry));
+        ++m_objectCacheStats.Entries;
+        return created;
+    }
+
     RenderPassPtr VulkanDevice::CreateRenderPass(const RenderPassDesc &desc)
     {
-        auto renderPass = MakeShared<VulkanRenderPass>(
-            TSharedPtr<VulkanDevice>(this, [](VulkanDevice *) {}), desc);
-        return StaticPointerCast<IRenderPass>(renderPass);
+        VariableArray<uint64_t> key;
+        AppendRenderPassKey(key, desc);
+        return FindOrCreateCachedObject<IRenderPass>(
+            ObjectCacheKind::RenderPass,
+            key,
+            [this, &desc]()
+            {
+                auto renderPass = MakeShared<VulkanRenderPass>(
+                    TSharedPtr<VulkanDevice>(this, [](VulkanDevice *) {}), desc);
+                return StaticPointerCast<IRenderPass>(renderPass);
+            });
     }
 
     FramebufferPtr VulkanDevice::CreateFramebuffer(const FramebufferDesc &desc)
     {
-        auto framebuffer = MakeShared<VulkanFramebuffer>(
-            TSharedPtr<VulkanDevice>(this, [](VulkanDevice *) {}), desc);
-        return StaticPointerCast<IFramebuffer>(framebuffer);
+        const auto create = [this, &desc]()
+        {
+            auto framebuffer = MakeShared<VulkanFramebuffer>(
+                TSharedPtr<VulkanDevice>(this, [](VulkanDevice *) {}), desc);
+            return StaticPointerCast<IFramebuffer>(framebuffer);
+        };
+        VariableArray<uint64_t> key;
+        if (!TryAppendFramebufferKey(key, desc))
+        {
+            {
+                Thread::ScopedLock lock(m_objectCacheMutex);
+                ++m_objectCacheStats.CreatedFramebuffers;
+            }
+            return create();
+        }
+        return FindOrCreateCachedObject<IFramebuffer>(ObjectCacheKind::Framebuffer, key, create);
     }
 
     PipelinePtr VulkanDevice::CreateGraphicsPipeline(const GraphicsPipelineDesc &desc)
     {
-        auto pipeline = MakeShared<VulkanGraphicsPipeline>(
-            TSharedPtr<VulkanDevice>(this, [](VulkanDevice *) {}), desc);
-        return StaticPointerCast<IPipeline>(pipeline);
+        VariableArray<uint64_t> key;
+        AppendGraphicsPipelineKey(key, desc);
+        return FindOrCreateCachedObject<IPipeline>(
+            ObjectCacheKind::Pipeline,
+            key,
+            [this, &desc]()
+            {
+                auto pipeline = MakeShared<VulkanGraphicsPipeline>(
+                    TSharedPtr<VulkanDevice>(this, [](VulkanDevice *) {}), desc);
+                return StaticPointerCast<IPipeline>(pipeline);
+            });
     }
 
     PipelinePtr VulkanDevice::CreateComputePipeline(const ComputePipelineDesc &desc)
     {
-        auto pipeline = MakeShared<VulkanComputePipeline>(
-            TSharedPtr<VulkanDevice>(this, [](VulkanDevice *) {}), desc);
-        return StaticPointerCast<IPipeline>(pipeline);
+        VariableArray<uint64_t> key;
+        AppendComputePipelineKey(key, desc);
+        return FindOrCreateCachedObject<IPipeline>(
+            ObjectCacheKind::Pipeline,
+            key,
+            [this, &desc]()
+            {
+                auto pipeline = MakeShared<VulkanComputePipeline>(
+                    TSharedPtr<VulkanDevice>(this, [](VulkanDevice *) {}), desc);
+                return StaticPointerCast<IPipeline>(pipeline);
+            });
+    }
+
+    void VulkanDevice::AdvanceObjectCacheFrame()
+    {
+        // 手放す物はロックの外で破棄する（破棄は遅らせる破棄の列へ積まれ、提出の完了まで遅れる）
+        VariableArray<TSharedPtr<void>> released;
+        {
+            Thread::ScopedLock lock(m_objectCacheMutex);
+            ++m_objectCacheFrame;
+            for (UnorderedMap<uint64_t, VariableArray<ObjectCacheEntry>> &cache : m_objectCache)
+            {
+                for (auto it = cache.begin(); it != cache.end();)
+                {
+                    VariableArray<ObjectCacheEntry> &entries = it->second;
+                    for (size_t index = 0; index < entries.size();)
+                    {
+                        ObjectCacheEntry &entry = entries[index];
+                        // 数フレーム求められず、デバイスのほかに持ち手が無い物だけ手放す
+                        // （パスが持っている物は、次に求められたときに同じ物を返せるよう残す）
+                        if (m_objectCacheFrame - entry.LastUsedFrame >= ObjectCacheEvictAfterFrames &&
+                            entry.Object.use_count() == 1)
+                        {
+                            released.push_back(std::move(entry.Object));
+                            entries.erase(entries.begin() + static_cast<ptrdiff_t>(index));
+                            ++m_objectCacheStats.Evicted;
+                            --m_objectCacheStats.Entries;
+                            continue;
+                        }
+                        ++index;
+                    }
+                    it = entries.empty() ? cache.erase(it) : std::next(it);
+                }
+            }
+        }
+        released.clear();
+    }
+
+    void VulkanDevice::ReleaseObjectCache()
+    {
+        VariableArray<TSharedPtr<void>> released;
+        {
+            Thread::ScopedLock lock(m_objectCacheMutex);
+            for (UnorderedMap<uint64_t, VariableArray<ObjectCacheEntry>> &cache : m_objectCache)
+            {
+                for (auto &[hash, entries] : cache)
+                {
+                    (void)hash;
+                    for (ObjectCacheEntry &entry : entries)
+                    {
+                        released.push_back(std::move(entry.Object));
+                    }
+                }
+                cache.clear();
+            }
+            m_objectCacheStats.Evicted += m_objectCacheStats.Entries;
+            m_objectCacheStats.Entries = 0;
+        }
+        released.clear();
+    }
+
+    ObjectCacheStats VulkanDevice::GetObjectCacheStats() const
+    {
+        Thread::ScopedLock lock(m_objectCacheMutex);
+        return m_objectCacheStats;
     }
 
     PipelinePtr VulkanDevice::CreateRayTracingPipeline(const RayTracingPipelineDesc& desc)

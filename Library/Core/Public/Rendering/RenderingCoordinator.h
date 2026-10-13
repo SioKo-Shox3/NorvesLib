@@ -561,6 +561,8 @@ namespace NorvesLib::Core::Rendering
         bool m_bParallelRecordResolved = false;
         bool m_bParallelRecordEnabled = false;
         uint32_t m_LastLoggedParallelRecordListCount = 0;
+        // 前のフレームの終わりに読んだ、鍵で持ち続ける物の作成数（開発ビルドでフレームごとの作成をログへ出す）
+        RHI::ObjectCacheStats m_LastLoggedObjectCacheStats;
 
         // レンダーパス・フレームバッファ（Screen SwapChain用）
         Container::TSharedPtr<RHI::IRenderPass> m_RenderPass;
