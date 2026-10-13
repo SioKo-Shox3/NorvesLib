@@ -4224,15 +4224,12 @@ namespace NorvesLib::Core::Rendering
         }
         const bool bDDGIProbeUpdateSucceeded = m_DDGIProbePass.Execute(context);
         RHI::TexturePtr ddgiIrradianceAtlas = m_DDGIProbePass.GetIrradianceAtlas(
-            context.FrameIndex,
             context.PhysicalLighting.ViewId,
             context.PhysicalLighting.ViewportId);
         RHI::TexturePtr ddgiDistanceAtlas = m_DDGIProbePass.GetDistanceAtlas(
-            context.FrameIndex,
             context.PhysicalLighting.ViewId,
             context.PhysicalLighting.ViewportId);
         const uint32_t ddgiAtlasProbeCount = m_DDGIProbePass.GetAtlasProbeCount(
-            context.FrameIndex,
             context.PhysicalLighting.ViewId,
             context.PhysicalLighting.ViewportId);
         const DDGIVolumeParameters* ddgiVolume = context.SnapshotScene != nullptr

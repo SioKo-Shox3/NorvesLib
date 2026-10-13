@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "Container/Containers.h"
+#include "RHI/IDescriptorSet.h"
 #include "RHI/RHITypes.h"
 
 #include <cstdint>
@@ -32,6 +33,11 @@ namespace NorvesLib::Core::Rendering
 
     /**
      * @brief FramePacketのTLASに対するDDGIプローブレイ問い合わせを記録する
+     *
+     * GPU だけが読み書きする資源（レイの結果のバッファ、照射・距離のアトラスとその履歴）はビュー × ビューポートごとに
+     * 1 組持つ。アトラスは現在と履歴のピンポンで、前回 Execute したアトラスを読みながら別のアトラスへ書く。
+     * CPU が書く定数・instance の表・記述子セットは Execute ごとにフレームの持ち主（ViewRenderContext::FrameResources）
+     * から借りるので、飛行中のフレームの番号は扱わない。
      */
     class DDGIProbePass
     {
@@ -39,39 +45,55 @@ namespace NorvesLib::Core::Rendering
         bool Execute(ViewRenderContext& context);
         void Shutdown();
 
-        RHI::BufferPtr GetResultBuffer(uint32_t frameIndex,
-                                       uint32_t viewId = 0u,
-                                       uint32_t viewportId = 0u) const;
-        uint32_t GetResultCount(uint32_t frameIndex,
-                                uint32_t viewId = 0u,
-                                uint32_t viewportId = 0u) const;
-        RHI::TexturePtr GetIrradianceAtlas(uint32_t frameIndex,
-                                           uint32_t viewId = 0u,
-                                           uint32_t viewportId = 0u) const;
-        RHI::TexturePtr GetDistanceAtlas(uint32_t frameIndex,
-                                         uint32_t viewId = 0u,
-                                         uint32_t viewportId = 0u) const;
-        uint32_t GetAtlasProbeCount(uint32_t frameIndex,
-                                    uint32_t viewId = 0u,
-                                    uint32_t viewportId = 0u) const;
+        /** @brief ビュー・ビューポートの組の最後のレイの結果のバッファ（無ければ nullptr） */
+        RHI::BufferPtr GetResultBuffer(uint32_t viewId, uint32_t viewportId) const;
+        uint32_t GetResultCount(uint32_t viewId, uint32_t viewportId) const;
+        /** @brief ビュー・ビューポートの組の最後に更新できた照射のアトラス（最後の Execute が失敗していれば nullptr） */
+        RHI::TexturePtr GetIrradianceAtlas(uint32_t viewId, uint32_t viewportId) const;
+        RHI::TexturePtr GetDistanceAtlas(uint32_t viewId, uint32_t viewportId) const;
+        uint32_t GetAtlasProbeCount(uint32_t viewId, uint32_t viewportId) const;
+
+        // 以前の呼び出しの形（先頭にフレームの番号を渡す）。資源はビュー・ビューポートごとに 1 組なので frameIndex は見ない
+        RHI::BufferPtr GetResultBuffer(uint32_t frameIndex, uint32_t viewId, uint32_t viewportId) const
+        {
+            (void)frameIndex;
+            return GetResultBuffer(viewId, viewportId);
+        }
+        uint32_t GetResultCount(uint32_t frameIndex, uint32_t viewId, uint32_t viewportId) const
+        {
+            (void)frameIndex;
+            return GetResultCount(viewId, viewportId);
+        }
+        RHI::TexturePtr GetIrradianceAtlas(uint32_t frameIndex, uint32_t viewId, uint32_t viewportId) const
+        {
+            (void)frameIndex;
+            return GetIrradianceAtlas(viewId, viewportId);
+        }
+        RHI::TexturePtr GetDistanceAtlas(uint32_t frameIndex, uint32_t viewId, uint32_t viewportId) const
+        {
+            (void)frameIndex;
+            return GetDistanceAtlas(viewId, viewportId);
+        }
+        uint32_t GetAtlasProbeCount(uint32_t frameIndex, uint32_t viewId, uint32_t viewportId) const
+        {
+            (void)frameIndex;
+            return GetAtlasProbeCount(viewId, viewportId);
+        }
 
     private:
-        struct FrameResources
+        /** @brief ビュー × ビューポート 1 組分の GPU の資源と履歴の状態 */
+        struct ViewResources
         {
-            uint32_t FrameIndex = UINT32_MAX;
             uint32_t ViewId = UINT32_MAX;
             uint32_t ViewportId = UINT32_MAX;
-            uint64_t FrameNumber = UINT64_MAX;
+            /** 最後に Execute したフレームの番号（しばらく Execute されない組を消えたビューとして手放すのに使う） */
+            uint64_t LastExecuteFrameNumber = UINT64_MAX;
+            /** 最後に GPU の命令を記録したフレームの世代（提出しなかったら履歴と状態を捨てる。0 は未設定） */
+            uint32_t RecordedGenerationSlot = UINT32_MAX;
+            uint64_t RecordedGeneration = 0u;
             uint32_t ResultCount = 0u;
             uint32_t AtlasProbeCount = 0u;
             bool bAtlasValid = false;
-            RHI::DescriptorSetPtr DescriptorSet;
-            RHI::DescriptorSetPtr BounceDescriptorSet;
-            RHI::DescriptorSetPtr UpdateDescriptorSet;
-            RHI::BufferPtr ParametersBuffer;
-            RHI::BufferPtr BounceParametersBuffer;
-            RHI::BufferPtr UpdateParametersBuffer;
-            RHI::BufferPtr InstanceDataBuffer;
             RHI::BufferPtr ResultBuffer;
             RHI::TexturePtr IrradianceAtlas;
             RHI::TexturePtr DistanceAtlas;
@@ -80,7 +102,8 @@ namespace NorvesLib::Core::Rendering
             float VolumeOrigin[3] = {};
             float ProbeSpacing[3] = {};
             uint32_t ProbeCounts[3] = {};
-            // device address参照はdescriptorに保持されないため、frame slotのGPU完了まで保持する。
+            // device address の参照は記述子に保持されないので、次の Execute で差し替えるまで持つ
+            // （手放したバッファの破棄はデバイスが提出の完了まで遅らせる）
             Container::VariableArray<RHI::BufferPtr> GeometryBuffers;
             RHI::ResourceState ResultState = RHI::ResourceState::Undefined;
             RHI::ResourceState IrradianceAtlasState = RHI::ResourceState::Undefined;
@@ -90,9 +113,18 @@ namespace NorvesLib::Core::Rendering
         };
 
         bool EnsurePipeline(ViewRenderContext& context);
-        FrameResources* FindOrCreateFrameResources(ViewRenderContext& context,
-                                                   uint32_t resultCount,
-                                                   uint32_t instanceDataCount);
+        ViewResources* FindViewResources(uint32_t viewId, uint32_t viewportId);
+        const ViewResources* FindViewResources(uint32_t viewId, uint32_t viewportId) const;
+        ViewResources* FindOrCreateViewResources(ViewRenderContext& context, uint32_t resultCount);
+        void RetireStaleViewResources(uint64_t frameNumber);
+        bool UploadFrameData(ViewRenderContext& context,
+                             const void* data,
+                             uint32_t size,
+                             bool bStorage,
+                             const char* unownedDebugName,
+                             RHI::BufferPtr& outBuffer,
+                             uint32_t& outOffset);
+        RHI::DescriptorSetPtr AllocateFrameDescriptorSet(ViewRenderContext& context, bool bRayQuery);
         void DisableAfterResourceFailure(const char* reason);
 
         RHI::IDevice* m_Device = nullptr;
@@ -100,12 +132,19 @@ namespace NorvesLib::Core::Rendering
         RHI::PipelinePtr m_Pipeline;
         RHI::ShaderPtr m_IrradianceUpdateShader;
         RHI::PipelinePtr m_IrradianceUpdatePipeline;
+        /** 借りる記述子セットの共有のレイアウト（EnsurePipeline で 1 回引く） */
+        RHI::DescriptorSetLayoutPtr m_RayQueryDescriptorSetLayout;
+        RHI::DescriptorSetLayoutPtr m_IrradianceUpdateDescriptorSetLayout;
         RHI::SamplerPtr m_AtlasSampler;
         RHI::TexturePtr m_DefaultIrradianceAtlas;
         RHI::TexturePtr m_DefaultDistanceAtlas;
         RHI::ResourceState m_DefaultIrradianceAtlasState = RHI::ResourceState::Undefined;
         RHI::ResourceState m_DefaultDistanceAtlasState = RHI::ResourceState::Undefined;
-        Container::VariableArray<FrameResources> m_FrameResources;
+        Container::VariableArray<ViewResources> m_ViewResources;
+        // 持ち主の無い文脈（RenderingCoordinator を通さない検査）で作った定数・記述子セット。
+        // 提出の完了を知る手段が無いので、パスを手放す（Shutdown）まで持つ
+        Container::VariableArray<RHI::BufferPtr> m_UnownedBuffers;
+        Container::VariableArray<RHI::DescriptorSetPtr> m_UnownedDescriptorSets;
         bool m_bPipelineAttempted = false;
         bool m_bUnavailable = false;
         bool m_bFailureReported = false;

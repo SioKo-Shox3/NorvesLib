@@ -4,6 +4,7 @@
 
 #include "Rendering/DDGIVolume.h"
 #include "Rendering/FramePacket.h"
+#include "Rendering/FrameResourceOwner.h"
 #include "Rendering/LightingPassGpuTypes.h"
 #include "Rendering/SceneProxy.h"
 #include "Rendering/ShaderManager.h"
@@ -16,6 +17,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <exception>
 #include <limits>
@@ -33,6 +35,9 @@ namespace NorvesLib::Core::Rendering
         constexpr float DDGIProbeRayMaximumDistance = 10000.0f;
         constexpr float DDGIProbeShadowOriginOffset = 0.002f;
         constexpr uint32_t DDGIProbeMaximumInstanceCustomIndex = 0x00FFFFFFu;
+        // この数より多くのフレームの間 Execute されないビュー・ビューポートの組は、消えたビューとして手放す
+        // （同じ ID が後で別のビューに使い回されても、古い履歴を読ませない）
+        constexpr uint64_t DDGIViewResourceRetireFrameCount = 8u;
 
         struct DDGIProbeRayQueryParameters
         {
@@ -256,7 +261,8 @@ namespace NorvesLib::Core::Rendering
         {
             return false;
         }
-        if (m_Pipeline && m_IrradianceUpdatePipeline && m_AtlasSampler &&
+        if (m_Pipeline && m_IrradianceUpdatePipeline && m_RayQueryDescriptorSetLayout &&
+            m_IrradianceUpdateDescriptorSetLayout && m_AtlasSampler &&
             m_DefaultIrradianceAtlas && m_DefaultDistanceAtlas)
         {
             return true;
@@ -318,6 +324,17 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
+        // Execute ごとにフレームの持ち主から借りる記述子セットの共有のレイアウト
+        m_RayQueryDescriptorSetLayout = context.Device->GetOrCreateDescriptorSetLayout(
+            CreateDDGIProbeRayQueryDescriptorSetDesc());
+        m_IrradianceUpdateDescriptorSetLayout = context.Device->GetOrCreateDescriptorSetLayout(
+            CreateDDGIProbeIrradianceUpdateDescriptorSetDesc());
+        if (!m_RayQueryDescriptorSetLayout || !m_IrradianceUpdateDescriptorSetLayout)
+        {
+            DisableAfterResourceFailure("記述子セットのレイアウトを作成できません");
+            return false;
+        }
+
         RHI::SamplerDesc atlasSamplerDesc;
         atlasSamplerDesc.filterMin = RHI::FilterMode::Linear;
         atlasSamplerDesc.filterMag = RHI::FilterMode::Linear;
@@ -374,52 +391,74 @@ namespace NorvesLib::Core::Rendering
         return true;
     }
 
-    DDGIProbePass::FrameResources* DDGIProbePass::FindOrCreateFrameResources(
-        ViewRenderContext& context,
-        uint32_t resultCount,
-        uint32_t instanceDataCount)
+    DDGIProbePass::ViewResources* DDGIProbePass::FindViewResources(uint32_t viewId, uint32_t viewportId)
     {
-        // 飛行中のフレームの番号で引く枠の資源なので、守られていない上書きの見張りへ「守られている」と登録する
-        RHI::FrameResourceProtectedCreationScope protectedCreation;
+        for (ViewResources& resources : m_ViewResources)
+        {
+            if (resources.ViewId == viewId && resources.ViewportId == viewportId)
+            {
+                return &resources;
+            }
+        }
+        return nullptr;
+    }
+
+    const DDGIProbePass::ViewResources* DDGIProbePass::FindViewResources(uint32_t viewId,
+                                                                         uint32_t viewportId) const
+    {
+        for (const ViewResources& resources : m_ViewResources)
+        {
+            if (resources.ViewId == viewId && resources.ViewportId == viewportId)
+            {
+                return &resources;
+            }
+        }
+        return nullptr;
+    }
+
+    void DDGIProbePass::RetireStaleViewResources(uint64_t frameNumber)
+    {
+        // 消えたビューの組を手放す。アトラス・結果のバッファの破棄はデバイスが提出の完了まで遅らせる
+        for (size_t index = 0u; index < m_ViewResources.size();)
+        {
+            const ViewResources& resources = m_ViewResources[index];
+            if (resources.LastExecuteFrameNumber != UINT64_MAX &&
+                frameNumber > resources.LastExecuteFrameNumber &&
+                frameNumber - resources.LastExecuteFrameNumber > DDGIViewResourceRetireFrameCount)
+            {
+                m_ViewResources.erase(m_ViewResources.begin() + static_cast<std::ptrdiff_t>(index));
+                continue;
+            }
+            ++index;
+        }
+    }
+
+    DDGIProbePass::ViewResources* DDGIProbePass::FindOrCreateViewResources(
+        ViewRenderContext& context,
+        uint32_t resultCount)
+    {
         const uint32_t viewId = context.PhysicalLighting.ViewId;
         const uint32_t viewportId = context.PhysicalLighting.ViewportId;
         const uint64_t requiredResultBufferSize =
             static_cast<uint64_t>(resultCount) * sizeof(DDGIProbeRayQueryResult);
-        const uint32_t allocatedInstanceCount = instanceDataCount > 0u ? instanceDataCount : 1u;
-        const uint64_t requiredInstanceDataBufferSize =
-            static_cast<uint64_t>(allocatedInstanceCount) * sizeof(DDGIProbeRayInstanceData);
-        if (requiredInstanceDataBufferSize > std::numeric_limits<uint32_t>::max())
-        {
-            return nullptr;
-        }
 
-        FrameResources* frameResources = nullptr;
-        for (FrameResources& resources : m_FrameResources)
+        ViewResources* viewResources = FindViewResources(viewId, viewportId);
+        if (viewResources == nullptr)
         {
-            if (resources.FrameIndex == context.FrameIndex && resources.ViewId == viewId &&
-                resources.ViewportId == viewportId)
-            {
-                frameResources = &resources;
-                break;
-            }
-        }
-
-        if (frameResources == nullptr)
-        {
-            FrameResources resources;
-            resources.FrameIndex = context.FrameIndex;
+            ViewResources resources;
             resources.ViewId = viewId;
             resources.ViewportId = viewportId;
-            m_FrameResources.push_back(std::move(resources));
-            frameResources = &m_FrameResources.back();
+            resources.LastExecuteFrameNumber = context.FrameNumber;
+            m_ViewResources.push_back(std::move(resources));
+            viewResources = &m_ViewResources.back();
         }
 
-        if (frameResources->ResultBuffer == nullptr ||
-            frameResources->ResultBuffer->GetSize() < requiredResultBufferSize)
+        // 結果のバッファは GPU だけが書いて読む（CPU からは書かない）
+        if (viewResources->ResultBuffer == nullptr ||
+            viewResources->ResultBuffer->GetSize() < requiredResultBufferSize)
         {
-            frameResources->DescriptorSet.reset();
-            frameResources->ResultBuffer.reset();
-            frameResources->ResultState = RHI::ResourceState::Undefined;
+            viewResources->ResultBuffer.reset();
+            viewResources->ResultState = RHI::ResourceState::Undefined;
 
             RHI::BufferDesc resultBufferDesc;
             resultBufferDesc.Size = requiredResultBufferSize;
@@ -427,87 +466,123 @@ namespace NorvesLib::Core::Rendering
                                      RHI::ResourceUsage::TransferSrc |
                                      RHI::ResourceUsage::TransferDst;
             resultBufferDesc.DebugName = "DDGIProbeRayQuery.Results";
-            frameResources->ResultBuffer = context.Device->CreateBuffer(resultBufferDesc);
-            if (frameResources->ResultBuffer == nullptr)
+            viewResources->ResultBuffer = context.Device->CreateBuffer(resultBufferDesc);
+            if (viewResources->ResultBuffer == nullptr)
             {
                 DisableAfterResourceFailure("プローブレイ結果bufferを作成できません");
                 return nullptr;
             }
         }
+        viewResources->ResultCount = resultCount;
+        return viewResources;
+    }
 
-        if (frameResources->ParametersBuffer == nullptr)
+    bool DDGIProbePass::UploadFrameData(ViewRenderContext& context,
+                                        const void* data,
+                                        uint32_t size,
+                                        bool bStorage,
+                                        const char* unownedDebugName,
+                                        RHI::BufferPtr& outBuffer,
+                                        uint32_t& outOffset)
+    {
+        outBuffer.reset();
+        outOffset = 0u;
+        if (FrameResourceLane* frameResources = context.FrameResources)
         {
-            RHI::BufferDesc parametersBufferDesc(
-                sizeof(DDGIProbeRayQueryParameters),
-                RHI::ResourceUsage::ConstantBuffer,
-                true,
-                "DDGIProbeRayQuery.Parameters");
-            frameResources->ParametersBuffer = context.Device->CreateBuffer(parametersBufferDesc);
-            if (frameResources->ParametersBuffer == nullptr)
+            const FrameUploadAllocation allocation = frameResources->AllocateUploadData(
+                data,
+                size,
+                bStorage ? FrameUploadUsage::Storage : FrameUploadUsage::Constants);
+            if (!allocation.IsValid())
             {
-                DisableAfterResourceFailure("プローブレイparameter bufferを作成できません");
-                return nullptr;
+                return false;
             }
+            outBuffer = allocation.Buffer;
+            outOffset = allocation.GetOffset32();
+            return true;
         }
-
-        if (frameResources->InstanceDataBuffer == nullptr ||
-            frameResources->InstanceDataBuffer->GetSize() < requiredInstanceDataBufferSize)
+        if (context.Device == nullptr)
         {
-            frameResources->DescriptorSet.reset();
-            frameResources->InstanceDataBuffer.reset();
-
-            RHI::BufferDesc instanceDataBufferDesc(
-                requiredInstanceDataBufferSize,
-                RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::TransferDst,
-                true,
-                "DDGIProbeRayQuery.InstanceData");
-            frameResources->InstanceDataBuffer = context.Device->CreateBuffer(instanceDataBufferDesc);
-            if (frameResources->InstanceDataBuffer == nullptr)
-            {
-                DisableAfterResourceFailure("プローブ材質/geometry snapshot bufferを作成できません");
-                return nullptr;
-            }
+            return false;
         }
-
-        if (frameResources->DescriptorSet == nullptr)
+        // 持ち主の無い文脈では使い回さないバッファを作り、パスを手放すまで持つ
+        outBuffer = context.Device->CreateBuffer(RHI::BufferDesc(
+            size,
+            bStorage ? (RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::TransferDst)
+                     : RHI::ResourceUsage::ConstantBuffer,
+            true,
+            unownedDebugName));
+        if (!outBuffer)
         {
-            frameResources->DescriptorSet = context.Device->CreateDescriptorSet(
-                CreateDDGIProbeRayQueryDescriptorSetDesc());
-            if (frameResources->DescriptorSet == nullptr)
-            {
-                DisableAfterResourceFailure("プローブレイdescriptor setを作成できません");
-                return nullptr;
-            }
+            return false;
         }
-        frameResources->ResultCount = resultCount;
-        return frameResources;
+        outBuffer->Update(data, size);
+        m_UnownedBuffers.push_back(outBuffer);
+        return true;
+    }
+
+    RHI::DescriptorSetPtr DDGIProbePass::AllocateFrameDescriptorSet(ViewRenderContext& context,
+                                                                    bool bRayQuery)
+    {
+        if (FrameResourceLane* frameResources = context.FrameResources)
+        {
+            return frameResources->AllocateDescriptorSet(
+                bRayQuery ? m_RayQueryDescriptorSetLayout : m_IrradianceUpdateDescriptorSetLayout).Set;
+        }
+        if (context.Device == nullptr)
+        {
+            return nullptr;
+        }
+        RHI::DescriptorSetPtr descriptorSet = context.Device->CreateDescriptorSet(
+            bRayQuery ? CreateDDGIProbeRayQueryDescriptorSetDesc()
+                      : CreateDDGIProbeIrradianceUpdateDescriptorSetDesc());
+        if (descriptorSet)
+        {
+            m_UnownedDescriptorSets.push_back(descriptorSet);
+        }
+        return descriptorSet;
     }
 
     bool DDGIProbePass::Execute(ViewRenderContext& context)
     {
         // LightingPass の中から呼ばれるので、守られていない上書きの見張りへはこのパスの名前で報告する
         RHI::FrameResourceWriteScope writeScope("DDGIProbePass");
-        bool bFrameResourceWasValid = false;
+        const uint32_t viewId = context.PhysicalLighting.ViewId;
+        const uint32_t viewportId = context.PhysicalLighting.ViewportId;
+        RetireStaleViewResources(context.FrameNumber);
+
+        bool bViewHistoryWasValid = false;
         uint32_t previousAtlasProbeCount = 0u;
-        for (FrameResources& resources : m_FrameResources)
+        if (ViewResources* existing = FindViewResources(viewId, viewportId))
         {
-            if (resources.FrameIndex == context.FrameIndex &&
-                resources.ViewId == context.PhysicalLighting.ViewId &&
-                resources.ViewportId == context.PhysicalLighting.ViewportId)
+            // 前に記録したフレームを提出しなかったら、GPU はそのフレームの更新も状態の遷移も実行していない。
+            // 記録した側の状態と入れ替えは GPU の実際と合わないので、履歴を捨てて状態を未定義から始め直す
+            if (context.FrameResources != nullptr && existing->RecordedGeneration != 0u &&
+                context.FrameResources->GetSubmissionOutcome(
+                    {existing->RecordedGenerationSlot, existing->RecordedGeneration}) ==
+                    FrameSubmissionOutcome::Aborted)
             {
-                bFrameResourceWasValid = resources.bAtlasValid;
-                previousAtlasProbeCount = resources.AtlasProbeCount;
-                resources.bAtlasValid = false;
-                resources.AtlasProbeCount = 0u;
-                break;
+                existing->bAtlasValid = false;
+                existing->ResultState = RHI::ResourceState::Undefined;
+                existing->IrradianceAtlasState = RHI::ResourceState::Undefined;
+                existing->DistanceAtlasState = RHI::ResourceState::Undefined;
+                existing->HistoryIrradianceAtlasState = RHI::ResourceState::Undefined;
+                existing->HistoryDistanceAtlasState = RHI::ResourceState::Undefined;
             }
+            existing->RecordedGenerationSlot = UINT32_MAX;
+            existing->RecordedGeneration = 0u;
+            existing->LastExecuteFrameNumber = context.FrameNumber;
+            // この Execute が更新を終えるまで、getter は古いアトラスを返さない
+            bViewHistoryWasValid = existing->bAtlasValid;
+            previousAtlasProbeCount = existing->AtlasProbeCount;
+            existing->bAtlasValid = false;
+            existing->AtlasProbeCount = 0u;
         }
 
         if (context.CommandList == nullptr || context.Device == nullptr ||
             context.SnapshotScene == nullptr || context.SnapshotRayTracingScene == nullptr ||
             context.SnapshotRayTracingScene->TopLevel == nullptr ||
             !context.SnapshotRayTracingScene->HasShadowCasters() ||
-            context.FrameIndex >= FRAME_PACKET_BUFFER_COUNT ||
             !context.PhysicalLighting.bLightingPublished ||
             !context.PhysicalLighting.LightBuffer ||
             !context.PhysicalLighting.EnvironmentRadianceTexture ||
@@ -549,13 +624,13 @@ namespace NorvesLib::Core::Rendering
 
         const uint32_t resultCount = probeCount * DDGIProbeRayDirectionCount;
         const uint32_t resultBufferSize = resultCount * sizeof(DDGIProbeRayQueryResult);
-        FrameResources* frameResources = nullptr;
+        ViewResources* viewResources = nullptr;
         RHI::TexturePtr previousIrradianceAtlas;
         RHI::TexturePtr previousDistanceAtlas;
-        RHI::ResourceState* previousIrradianceAtlasState = nullptr;
-        RHI::ResourceState* previousDistanceAtlasState = nullptr;
         bool bHasPreviousAtlas = false;
-        uint32_t instanceDataBufferSize = 0u;
+        RHI::DescriptorSetPtr rayQueryDescriptorSet;
+        RHI::DescriptorSetPtr bounceDescriptorSet;
+        RHI::DescriptorSetPtr updateDescriptorSet;
         Container::VariableArray<DDGIProbeRayInstanceData> instanceData;
         Container::VariableArray<RHI::BufferPtr> geometryBuffers;
         try
@@ -571,17 +646,22 @@ namespace NorvesLib::Core::Rendering
                 return false;
             }
 
-            frameResources = FindOrCreateFrameResources(
-                context, resultCount, static_cast<uint32_t>(instanceData.size()));
-            if (frameResources == nullptr || frameResources->DescriptorSet == nullptr ||
-                frameResources->ParametersBuffer == nullptr ||
-                frameResources->InstanceDataBuffer == nullptr ||
-                frameResources->ResultBuffer == nullptr)
+            const uint64_t instanceDataByteCount =
+                static_cast<uint64_t>(instanceData.empty() ? 1u : instanceData.size()) *
+                sizeof(DDGIProbeRayInstanceData);
+            if (instanceDataByteCount > std::numeric_limits<uint32_t>::max())
+            {
+                return false;
+            }
+            const uint32_t instanceDataBufferSize = static_cast<uint32_t>(instanceDataByteCount);
+
+            viewResources = FindOrCreateViewResources(context, resultCount);
+            if (viewResources == nullptr || viewResources->ResultBuffer == nullptr)
             {
                 DisableAfterResourceFailure("プローブレイ資源が不完全です");
                 return false;
             }
-            frameResources->GeometryBuffers = std::move(geometryBuffers);
+            viewResources->GeometryBuffers = std::move(geometryBuffers);
 
             const uint32_t atlasArrayLayerCount = std::max(
                 probeCount, DDGIProbeAtlasMinimumArrayLayerCount);
@@ -589,37 +669,37 @@ namespace NorvesLib::Core::Rendering
             const uint32_t irradianceArrayLayerCount = std::max(
                 probeCount * 2u, DDGIProbeAtlasMinimumArrayLayerCount);
             const bool bAtlasResourcesMatch =
-                frameResources->IrradianceAtlas && frameResources->DistanceAtlas &&
-                frameResources->HistoryIrradianceAtlas && frameResources->HistoryDistanceAtlas &&
-                frameResources->IrradianceAtlas->GetWidth() == DDGIProbeAtlasTexelCount &&
-                frameResources->IrradianceAtlas->GetHeight() == DDGIProbeAtlasTexelCount &&
-                frameResources->IrradianceAtlas->GetArraySize() == irradianceArrayLayerCount &&
-                frameResources->IrradianceAtlas->GetFormat() == RHI::Format::R16G16B16A16_FLOAT &&
-                frameResources->DistanceAtlas->GetWidth() == DDGIProbeAtlasTexelCount &&
-                frameResources->DistanceAtlas->GetHeight() == DDGIProbeAtlasTexelCount &&
-                frameResources->DistanceAtlas->GetArraySize() == atlasArrayLayerCount &&
-                frameResources->DistanceAtlas->GetFormat() == RHI::Format::R16G16_FLOAT &&
-                frameResources->HistoryIrradianceAtlas->GetWidth() == DDGIProbeAtlasTexelCount &&
-                frameResources->HistoryIrradianceAtlas->GetHeight() == DDGIProbeAtlasTexelCount &&
-                frameResources->HistoryIrradianceAtlas->GetArraySize() ==
+                viewResources->IrradianceAtlas && viewResources->DistanceAtlas &&
+                viewResources->HistoryIrradianceAtlas && viewResources->HistoryDistanceAtlas &&
+                viewResources->IrradianceAtlas->GetWidth() == DDGIProbeAtlasTexelCount &&
+                viewResources->IrradianceAtlas->GetHeight() == DDGIProbeAtlasTexelCount &&
+                viewResources->IrradianceAtlas->GetArraySize() == irradianceArrayLayerCount &&
+                viewResources->IrradianceAtlas->GetFormat() == RHI::Format::R16G16B16A16_FLOAT &&
+                viewResources->DistanceAtlas->GetWidth() == DDGIProbeAtlasTexelCount &&
+                viewResources->DistanceAtlas->GetHeight() == DDGIProbeAtlasTexelCount &&
+                viewResources->DistanceAtlas->GetArraySize() == atlasArrayLayerCount &&
+                viewResources->DistanceAtlas->GetFormat() == RHI::Format::R16G16_FLOAT &&
+                viewResources->HistoryIrradianceAtlas->GetWidth() == DDGIProbeAtlasTexelCount &&
+                viewResources->HistoryIrradianceAtlas->GetHeight() == DDGIProbeAtlasTexelCount &&
+                viewResources->HistoryIrradianceAtlas->GetArraySize() ==
                     irradianceArrayLayerCount &&
-                frameResources->HistoryIrradianceAtlas->GetFormat() == RHI::Format::R16G16B16A16_FLOAT &&
-                frameResources->HistoryDistanceAtlas->GetWidth() == DDGIProbeAtlasTexelCount &&
-                frameResources->HistoryDistanceAtlas->GetHeight() == DDGIProbeAtlasTexelCount &&
-                frameResources->HistoryDistanceAtlas->GetArraySize() == atlasArrayLayerCount &&
-                frameResources->HistoryDistanceAtlas->GetFormat() == RHI::Format::R16G16_FLOAT;
+                viewResources->HistoryIrradianceAtlas->GetFormat() == RHI::Format::R16G16B16A16_FLOAT &&
+                viewResources->HistoryDistanceAtlas->GetWidth() == DDGIProbeAtlasTexelCount &&
+                viewResources->HistoryDistanceAtlas->GetHeight() == DDGIProbeAtlasTexelCount &&
+                viewResources->HistoryDistanceAtlas->GetArraySize() == atlasArrayLayerCount &&
+                viewResources->HistoryDistanceAtlas->GetFormat() == RHI::Format::R16G16_FLOAT;
             if (!bAtlasResourcesMatch)
             {
-                frameResources->IrradianceAtlas.reset();
-                frameResources->DistanceAtlas.reset();
-                frameResources->HistoryIrradianceAtlas.reset();
-                frameResources->HistoryDistanceAtlas.reset();
-                frameResources->IrradianceAtlasState = RHI::ResourceState::Undefined;
-                frameResources->DistanceAtlasState = RHI::ResourceState::Undefined;
-                frameResources->HistoryIrradianceAtlasState = RHI::ResourceState::Undefined;
-                frameResources->HistoryDistanceAtlasState = RHI::ResourceState::Undefined;
-                frameResources->bAtlasValid = false;
-                bFrameResourceWasValid = false;
+                viewResources->IrradianceAtlas.reset();
+                viewResources->DistanceAtlas.reset();
+                viewResources->HistoryIrradianceAtlas.reset();
+                viewResources->HistoryDistanceAtlas.reset();
+                viewResources->IrradianceAtlasState = RHI::ResourceState::Undefined;
+                viewResources->DistanceAtlasState = RHI::ResourceState::Undefined;
+                viewResources->HistoryIrradianceAtlasState = RHI::ResourceState::Undefined;
+                viewResources->HistoryDistanceAtlasState = RHI::ResourceState::Undefined;
+                viewResources->bAtlasValid = false;
+                bViewHistoryWasValid = false;
 
                 RHI::TextureDesc irradianceAtlasDesc;
                 irradianceAtlasDesc.Width = DDGIProbeAtlasTexelCount;
@@ -630,7 +710,7 @@ namespace NorvesLib::Core::Rendering
                                             RHI::ResourceUsage::ShaderWrite |
                                             RHI::ResourceUsage::TransferSrc;
                 irradianceAtlasDesc.DebugName = "DDGIProbeUpdate.IrradianceAtlas";
-                frameResources->IrradianceAtlas = context.Device->CreateTexture(irradianceAtlasDesc);
+                viewResources->IrradianceAtlas = context.Device->CreateTexture(irradianceAtlasDesc);
 
                 RHI::TextureDesc distanceAtlasDesc;
                 distanceAtlasDesc.Width = DDGIProbeAtlasTexelCount;
@@ -641,115 +721,42 @@ namespace NorvesLib::Core::Rendering
                                           RHI::ResourceUsage::ShaderWrite |
                                           RHI::ResourceUsage::TransferSrc;
                 distanceAtlasDesc.DebugName = "DDGIProbeUpdate.DistanceAtlas";
-                frameResources->DistanceAtlas = context.Device->CreateTexture(distanceAtlasDesc);
+                viewResources->DistanceAtlas = context.Device->CreateTexture(distanceAtlasDesc);
                 irradianceAtlasDesc.DebugName = "DDGIProbeUpdate.HistoryIrradianceAtlas";
-                frameResources->HistoryIrradianceAtlas = context.Device->CreateTexture(irradianceAtlasDesc);
+                viewResources->HistoryIrradianceAtlas = context.Device->CreateTexture(irradianceAtlasDesc);
                 distanceAtlasDesc.DebugName = "DDGIProbeUpdate.HistoryDistanceAtlas";
-                frameResources->HistoryDistanceAtlas = context.Device->CreateTexture(distanceAtlasDesc);
-                if (!frameResources->IrradianceAtlas || !frameResources->DistanceAtlas ||
-                    !frameResources->HistoryIrradianceAtlas || !frameResources->HistoryDistanceAtlas)
+                viewResources->HistoryDistanceAtlas = context.Device->CreateTexture(distanceAtlasDesc);
+                if (!viewResources->IrradianceAtlas || !viewResources->DistanceAtlas ||
+                    !viewResources->HistoryIrradianceAtlas || !viewResources->HistoryDistanceAtlas)
                 {
                     DisableAfterResourceFailure("irradiance/distance atlasの履歴を作成できません");
                     return false;
                 }
             }
 
-            if (frameResources->BounceDescriptorSet == nullptr)
-            {
-                frameResources->BounceDescriptorSet = context.Device->CreateDescriptorSet(
-                    CreateDDGIProbeIrradianceUpdateDescriptorSetDesc());
-            }
-            if (frameResources->UpdateDescriptorSet == nullptr)
-            {
-                frameResources->UpdateDescriptorSet = context.Device->CreateDescriptorSet(
-                    CreateDDGIProbeIrradianceUpdateDescriptorSetDesc());
-            }
-            if (frameResources->BounceDescriptorSet == nullptr ||
-                frameResources->UpdateDescriptorSet == nullptr)
-            {
-                DisableAfterResourceFailure("irradiance更新descriptor setを作成できません");
-                return false;
-            }
-
-            if (frameResources->BounceParametersBuffer == nullptr)
-            {
-                RHI::BufferDesc parametersBufferDesc(
-                    sizeof(DDGIProbeIrradianceUpdateParameters),
-                    RHI::ResourceUsage::ConstantBuffer,
-                    true,
-                    "DDGIProbeUpdate.BounceParameters");
-                frameResources->BounceParametersBuffer =
-                    context.Device->CreateBuffer(parametersBufferDesc);
-            }
-            if (frameResources->UpdateParametersBuffer == nullptr)
-            {
-                RHI::BufferDesc parametersBufferDesc(
-                    sizeof(DDGIProbeIrradianceUpdateParameters),
-                    RHI::ResourceUsage::ConstantBuffer,
-                    true,
-                    "DDGIProbeUpdate.AtlasParameters");
-                frameResources->UpdateParametersBuffer =
-                    context.Device->CreateBuffer(parametersBufferDesc);
-            }
-            if (!frameResources->BounceParametersBuffer ||
-                !frameResources->UpdateParametersBuffer)
-            {
-                DisableAfterResourceFailure("irradiance更新parameter bufferを作成できません");
-                return false;
-            }
-
-            const bool bFrameResourceHistoryMatches =
-                bFrameResourceWasValid && previousAtlasProbeCount == probeCount &&
+            // 前回この組で更新できたアトラスが今のvolumeと合えば、それを履歴として読み、もう一方へ書く
+            const bool bViewHistoryMatches =
+                bViewHistoryWasValid && previousAtlasProbeCount == probeCount &&
                 IsSameDDGIVolume(volume,
-                                 frameResources->VolumeOrigin,
-                                 frameResources->ProbeSpacing,
-                                 frameResources->ProbeCounts);
-            if (bFrameResourceHistoryMatches)
+                                 viewResources->VolumeOrigin,
+                                 viewResources->ProbeSpacing,
+                                 viewResources->ProbeCounts);
+            if (bViewHistoryMatches)
             {
-                // 1スロットのswap chainでも、前回atlasを読みながら別atlasへ書けるようにする。
-                std::swap(frameResources->IrradianceAtlas,
-                          frameResources->HistoryIrradianceAtlas);
-                std::swap(frameResources->DistanceAtlas,
-                          frameResources->HistoryDistanceAtlas);
-                std::swap(frameResources->IrradianceAtlasState,
-                          frameResources->HistoryIrradianceAtlasState);
-                std::swap(frameResources->DistanceAtlasState,
-                          frameResources->HistoryDistanceAtlasState);
-                previousIrradianceAtlas = frameResources->HistoryIrradianceAtlas;
-                previousDistanceAtlas = frameResources->HistoryDistanceAtlas;
-                previousIrradianceAtlasState = &frameResources->HistoryIrradianceAtlasState;
-                previousDistanceAtlasState = &frameResources->HistoryDistanceAtlasState;
+                // 前回のアトラスを読みながら別のアトラスへ書けるよう、現在と履歴を入れ替える
+                std::swap(viewResources->IrradianceAtlas,
+                          viewResources->HistoryIrradianceAtlas);
+                std::swap(viewResources->DistanceAtlas,
+                          viewResources->HistoryDistanceAtlas);
+                std::swap(viewResources->IrradianceAtlasState,
+                          viewResources->HistoryIrradianceAtlasState);
+                std::swap(viewResources->DistanceAtlasState,
+                          viewResources->HistoryDistanceAtlasState);
+                previousIrradianceAtlas = viewResources->HistoryIrradianceAtlas;
+                previousDistanceAtlas = viewResources->HistoryDistanceAtlas;
                 bHasPreviousAtlas = true;
             }
-
-            if (!bHasPreviousAtlas)
-            {
-                for (FrameResources& candidate : m_FrameResources)
-                {
-                    if (&candidate == frameResources || !candidate.bAtlasValid ||
-                        candidate.FrameNumber == UINT64_MAX ||
-                        candidate.FrameNumber + 1u != context.FrameNumber ||
-                        candidate.ViewId != frameResources->ViewId ||
-                        candidate.ViewportId != frameResources->ViewportId ||
-                        candidate.AtlasProbeCount != probeCount ||
-                        !IsSameDDGIVolume(volume,
-                                          candidate.VolumeOrigin,
-                                          candidate.ProbeSpacing,
-                                          candidate.ProbeCounts) ||
-                        !candidate.IrradianceAtlas || !candidate.DistanceAtlas)
-                    {
-                        continue;
-                    }
-                    previousIrradianceAtlas = candidate.IrradianceAtlas;
-                    previousDistanceAtlas = candidate.DistanceAtlas;
-                    previousIrradianceAtlasState = &candidate.IrradianceAtlasState;
-                    previousDistanceAtlasState = &candidate.DistanceAtlasState;
-                    bHasPreviousAtlas = true;
-                    break;
-                }
-            }
-
-            if (!bHasPreviousAtlas)
+            else
             {
                 previousIrradianceAtlas = m_DefaultIrradianceAtlas;
                 previousDistanceAtlas = m_DefaultDistanceAtlas;
@@ -791,10 +798,6 @@ namespace NorvesLib::Core::Rendering
                 updateParams.PassInfo[2] = resultCount;
                 updateParams.PassInfo[3] = static_cast<uint32_t>(instanceData.size());
             }
-            frameResources->BounceParametersBuffer->Update(
-                &bounceParameters, sizeof(bounceParameters));
-            frameResources->UpdateParametersBuffer->Update(
-                &updateParameters, sizeof(updateParameters));
 
             DDGIProbeRayQueryParameters parameters;
             parameters.VolumeOrigin[0] = volume.Origin.x;
@@ -825,51 +828,77 @@ namespace NorvesLib::Core::Rendering
                         physicalLighting.StaticEnvironmentMaxRadiance > 0.0f
                     ? physicalLighting.StaticEnvironmentMaxRadiance
                     : 0.0f;
-            frameResources->ParametersBuffer->Update(&parameters, sizeof(parameters));
 
+            // CPU が書く定数・instance の表・記述子セットは、この Execute の分をフレームの持ち主から借りる
             DDGIProbeRayInstanceData emptyInstanceData;
             const void* instanceDataSource = instanceData.empty()
                 ? static_cast<const void*>(&emptyInstanceData)
                 : static_cast<const void*>(instanceData.data());
-            instanceDataBufferSize = static_cast<uint32_t>(
-                (instanceData.empty() ? 1u : instanceData.size()) *
-                sizeof(DDGIProbeRayInstanceData));
-            frameResources->InstanceDataBuffer->Update(
-                instanceDataSource, instanceDataBufferSize);
+            RHI::BufferPtr parametersBuffer;
+            RHI::BufferPtr bounceParametersBuffer;
+            RHI::BufferPtr updateParametersBuffer;
+            RHI::BufferPtr instanceDataBuffer;
+            uint32_t parametersOffset = 0u;
+            uint32_t bounceParametersOffset = 0u;
+            uint32_t updateParametersOffset = 0u;
+            uint32_t instanceDataOffset = 0u;
+            rayQueryDescriptorSet = AllocateFrameDescriptorSet(context, true);
+            bounceDescriptorSet = AllocateFrameDescriptorSet(context, false);
+            updateDescriptorSet = AllocateFrameDescriptorSet(context, false);
+            if (!UploadFrameData(context, &parameters, sizeof(parameters), false,
+                                 "DDGIProbeRayQuery.Parameters.Unowned",
+                                 parametersBuffer, parametersOffset) ||
+                !UploadFrameData(context, &bounceParameters, sizeof(bounceParameters), false,
+                                 "DDGIProbeUpdate.BounceParameters.Unowned",
+                                 bounceParametersBuffer, bounceParametersOffset) ||
+                !UploadFrameData(context, &updateParameters, sizeof(updateParameters), false,
+                                 "DDGIProbeUpdate.AtlasParameters.Unowned",
+                                 updateParametersBuffer, updateParametersOffset) ||
+                !UploadFrameData(context, instanceDataSource, instanceDataBufferSize, true,
+                                 "DDGIProbeRayQuery.InstanceData.Unowned",
+                                 instanceDataBuffer, instanceDataOffset) ||
+                !rayQueryDescriptorSet || !bounceDescriptorSet || !updateDescriptorSet)
+            {
+                // 借りられなかったフレームは更新しない（次のフレームで借り直す。パスは無効にしない）
+                NORVES_LOG_ERROR("DDGIProbePass",
+                                 "定数か記述子セットを借りられないため、このフレームはDDGIを更新しません");
+                return false;
+            }
 
-            if (!frameResources->DescriptorSet->BindAccelerationStructure(
+            if (!rayQueryDescriptorSet->BindAccelerationStructure(
                 0u, context.SnapshotRayTracingScene->TopLevel))
             {
                 return false;
             }
-            frameResources->DescriptorSet->BindConstantBuffer(
+            rayQueryDescriptorSet->BindConstantBuffer(
                 1u,
-                frameResources->ParametersBuffer,
-                0u,
+                parametersBuffer,
+                parametersOffset,
                 static_cast<uint32_t>(sizeof(DDGIProbeRayQueryParameters)));
-            frameResources->DescriptorSet->BindStorageBuffer(
+            rayQueryDescriptorSet->BindStorageBuffer(
                 2u,
-                frameResources->ResultBuffer,
+                viewResources->ResultBuffer,
                 0u,
                 resultBufferSize);
-            frameResources->DescriptorSet->BindStorageBuffer(
+            rayQueryDescriptorSet->BindStorageBuffer(
                 3u,
-                frameResources->InstanceDataBuffer,
-                0u,
+                instanceDataBuffer,
+                instanceDataOffset,
                 instanceDataBufferSize);
-            frameResources->DescriptorSet->BindStorageBuffer(
+            rayQueryDescriptorSet->BindStorageBuffer(
                 4u,
                 physicalLighting.LightBuffer,
                 physicalLighting.LightBufferOffset,
                 physicalLighting.LightBufferSizeBytes);
-            frameResources->DescriptorSet->BindTexture(
+            rayQueryDescriptorSet->BindTexture(
                 5u, physicalLighting.EnvironmentRadianceTexture);
-            frameResources->DescriptorSet->BindSampler(
+            rayQueryDescriptorSet->BindSampler(
                 5u, physicalLighting.EnvironmentRadianceSampler);
-            frameResources->DescriptorSet->Update();
+            rayQueryDescriptorSet->Update();
 
             const auto bindUpdateResources = [&](const RHI::DescriptorSetPtr& descriptorSet,
-                                                 const RHI::BufferPtr& updateParametersBuffer)
+                                                 const RHI::BufferPtr& updateParametersSource,
+                                                 uint32_t updateParametersSourceOffset)
             {
                 if (!descriptorSet->BindAccelerationStructure(
                         0u, context.SnapshotRayTracingScene->TopLevel))
@@ -878,29 +907,27 @@ namespace NorvesLib::Core::Rendering
                 }
                 descriptorSet->BindConstantBuffer(
                     1u,
-                    updateParametersBuffer,
-                    0u,
+                    updateParametersSource,
+                    updateParametersSourceOffset,
                     static_cast<uint32_t>(sizeof(DDGIProbeIrradianceUpdateParameters)));
                 descriptorSet->BindStorageBuffer(
-                    2u, frameResources->ResultBuffer, 0u, resultBufferSize);
+                    2u, viewResources->ResultBuffer, 0u, resultBufferSize);
                 descriptorSet->BindStorageBuffer(
                     3u,
-                    frameResources->InstanceDataBuffer,
-                    0u,
+                    instanceDataBuffer,
+                    instanceDataOffset,
                     instanceDataBufferSize);
                 descriptorSet->BindTexture(4u, previousIrradianceAtlas);
                 descriptorSet->BindSampler(4u, m_AtlasSampler);
                 descriptorSet->BindTexture(5u, previousDistanceAtlas);
                 descriptorSet->BindSampler(5u, m_AtlasSampler);
-                descriptorSet->BindStorageTexture(6u, frameResources->IrradianceAtlas);
-                descriptorSet->BindStorageTexture(7u, frameResources->DistanceAtlas);
+                descriptorSet->BindStorageTexture(6u, viewResources->IrradianceAtlas);
+                descriptorSet->BindStorageTexture(7u, viewResources->DistanceAtlas);
                 descriptorSet->Update();
                 return true;
             };
-            if (!bindUpdateResources(frameResources->BounceDescriptorSet,
-                                     frameResources->BounceParametersBuffer) ||
-                !bindUpdateResources(frameResources->UpdateDescriptorSet,
-                                     frameResources->UpdateParametersBuffer))
+            if (!bindUpdateResources(bounceDescriptorSet, bounceParametersBuffer, bounceParametersOffset) ||
+                !bindUpdateResources(updateDescriptorSet, updateParametersBuffer, updateParametersOffset))
             {
                 return false;
             }
@@ -932,37 +959,31 @@ namespace NorvesLib::Core::Rendering
                     m_DefaultDistanceAtlasState = RHI::ResourceState::ShaderResource;
                 }
             }
-
-            if (bHasPreviousAtlas)
+            else
             {
-                if (previousIrradianceAtlasState == nullptr ||
-                    previousDistanceAtlasState == nullptr)
-                {
-                    return false;
-                }
-                if (*previousIrradianceAtlasState != RHI::ResourceState::ShaderResource)
+                if (viewResources->HistoryIrradianceAtlasState != RHI::ResourceState::ShaderResource)
                 {
                     context.CommandList->TextureBarrier(
                         previousIrradianceAtlas,
-                        *previousIrradianceAtlasState,
+                        viewResources->HistoryIrradianceAtlasState,
                         RHI::ResourceState::ShaderResource,
                         0u,
                         0u,
                         0u,
                         0u);
-                    *previousIrradianceAtlasState = RHI::ResourceState::ShaderResource;
+                    viewResources->HistoryIrradianceAtlasState = RHI::ResourceState::ShaderResource;
                 }
-                if (*previousDistanceAtlasState != RHI::ResourceState::ShaderResource)
+                if (viewResources->HistoryDistanceAtlasState != RHI::ResourceState::ShaderResource)
                 {
                     context.CommandList->TextureBarrier(
                         previousDistanceAtlas,
-                        *previousDistanceAtlasState,
+                        viewResources->HistoryDistanceAtlasState,
                         RHI::ResourceState::ShaderResource,
                         0u,
                         0u,
                         0u,
                         0u);
-                    *previousDistanceAtlasState = RHI::ResourceState::ShaderResource;
+                    viewResources->HistoryDistanceAtlasState = RHI::ResourceState::ShaderResource;
                 }
             }
         }
@@ -977,78 +998,86 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
+        // ここから GPU の命令を記録する。記録したフレームを提出しなかったら、次の Execute で履歴と状態を捨てる
+        if (context.FrameResources != nullptr)
+        {
+            const FrameResourceGeneration generation = context.FrameResources->GetGeneration();
+            viewResources->RecordedGenerationSlot = generation.SlotIndex;
+            viewResources->RecordedGeneration = generation.Generation;
+        }
+
         context.CommandList->BufferBarrier(
-            frameResources->ResultBuffer,
-            frameResources->ResultState,
+            viewResources->ResultBuffer,
+            viewResources->ResultState,
             RHI::ResourceState::CopyDest,
             0u,
             resultBufferSize);
         context.CommandList->FillBuffer(
-            frameResources->ResultBuffer,
+            viewResources->ResultBuffer,
             0u,
             resultBufferSize,
             UINT32_MAX);
         context.CommandList->BufferBarrier(
-            frameResources->ResultBuffer,
+            viewResources->ResultBuffer,
             RHI::ResourceState::CopyDest,
             RHI::ResourceState::UnorderedAccess,
             0u,
             resultBufferSize);
 
         context.CommandList->SetPipeline(m_Pipeline);
-        context.CommandList->SetDescriptorSet(frameResources->DescriptorSet);
+        context.CommandList->SetDescriptorSet(rayQueryDescriptorSet);
         const uint32_t groupCountX =
             (resultCount + DDGIProbeRayWorkgroupSize - 1u) / DDGIProbeRayWorkgroupSize;
         context.CommandList->Dispatch(groupCountX, 1u, 1u);
         context.CommandList->BufferBarrier(
-            frameResources->ResultBuffer,
+            viewResources->ResultBuffer,
             RHI::ResourceState::UnorderedAccess,
             RHI::ResourceState::ShaderResource,
             0u,
             resultBufferSize);
-        frameResources->ResultState = RHI::ResourceState::ShaderResource;
+        viewResources->ResultState = RHI::ResourceState::ShaderResource;
 
         context.CommandList->TextureBarrier(
-            frameResources->IrradianceAtlas,
-            frameResources->IrradianceAtlasState,
+            viewResources->IrradianceAtlas,
+            viewResources->IrradianceAtlasState,
             RHI::ResourceState::UnorderedAccess,
             0u,
             0u,
             0u,
             0u);
         context.CommandList->TextureBarrier(
-            frameResources->DistanceAtlas,
-            frameResources->DistanceAtlasState,
+            viewResources->DistanceAtlas,
+            viewResources->DistanceAtlasState,
             RHI::ResourceState::UnorderedAccess,
             0u,
             0u,
             0u,
             0u);
-        frameResources->IrradianceAtlasState = RHI::ResourceState::UnorderedAccess;
-        frameResources->DistanceAtlasState = RHI::ResourceState::UnorderedAccess;
+        viewResources->IrradianceAtlasState = RHI::ResourceState::UnorderedAccess;
+        viewResources->DistanceAtlasState = RHI::ResourceState::UnorderedAccess;
 
         if (bHasPreviousAtlas)
         {
             context.CommandList->BufferBarrier(
-                frameResources->ResultBuffer,
+                viewResources->ResultBuffer,
                 RHI::ResourceState::ShaderResource,
                 RHI::ResourceState::UnorderedAccess,
                 0u,
                 resultBufferSize);
             context.CommandList->SetPipeline(m_IrradianceUpdatePipeline);
-            context.CommandList->SetDescriptorSet(frameResources->BounceDescriptorSet);
+            context.CommandList->SetDescriptorSet(bounceDescriptorSet);
             context.CommandList->Dispatch(groupCountX, 1u, 1u);
             context.CommandList->BufferBarrier(
-                frameResources->ResultBuffer,
+                viewResources->ResultBuffer,
                 RHI::ResourceState::UnorderedAccess,
                 RHI::ResourceState::ShaderResource,
                 0u,
                 resultBufferSize);
-            frameResources->ResultState = RHI::ResourceState::ShaderResource;
+            viewResources->ResultState = RHI::ResourceState::ShaderResource;
         }
 
         context.CommandList->SetPipeline(m_IrradianceUpdatePipeline);
-        context.CommandList->SetDescriptorSet(frameResources->UpdateDescriptorSet);
+        context.CommandList->SetDescriptorSet(updateDescriptorSet);
         const uint32_t atlasTexelCount =
             probeCount * DDGIProbeAtlasTexelCount * DDGIProbeAtlasTexelCount;
         const uint32_t atlasGroupCountX =
@@ -1056,7 +1085,7 @@ namespace NorvesLib::Core::Rendering
             DDGIProbeRayWorkgroupSize;
         context.CommandList->Dispatch(atlasGroupCountX, 1u, 1u);
         context.CommandList->TextureBarrier(
-            frameResources->IrradianceAtlas,
+            viewResources->IrradianceAtlas,
             RHI::ResourceState::UnorderedAccess,
             RHI::ResourceState::ShaderResource,
             0u,
@@ -1064,108 +1093,57 @@ namespace NorvesLib::Core::Rendering
             0u,
             0u);
         context.CommandList->TextureBarrier(
-            frameResources->DistanceAtlas,
+            viewResources->DistanceAtlas,
             RHI::ResourceState::UnorderedAccess,
             RHI::ResourceState::ShaderResource,
             0u,
             0u,
             0u,
             0u);
-        frameResources->IrradianceAtlasState = RHI::ResourceState::ShaderResource;
-        frameResources->DistanceAtlasState = RHI::ResourceState::ShaderResource;
-        frameResources->AtlasProbeCount = probeCount;
-        frameResources->VolumeOrigin[0] = volume.Origin.x;
-        frameResources->VolumeOrigin[1] = volume.Origin.y;
-        frameResources->VolumeOrigin[2] = volume.Origin.z;
-        frameResources->ProbeSpacing[0] = volume.ProbeSpacing.x;
-        frameResources->ProbeSpacing[1] = volume.ProbeSpacing.y;
-        frameResources->ProbeSpacing[2] = volume.ProbeSpacing.z;
-        frameResources->ProbeCounts[0] = volume.ProbeCountX;
-        frameResources->ProbeCounts[1] = volume.ProbeCountY;
-        frameResources->ProbeCounts[2] = volume.ProbeCountZ;
-        frameResources->FrameNumber = context.FrameNumber;
-        frameResources->bAtlasValid = true;
+        viewResources->IrradianceAtlasState = RHI::ResourceState::ShaderResource;
+        viewResources->DistanceAtlasState = RHI::ResourceState::ShaderResource;
+        viewResources->AtlasProbeCount = probeCount;
+        viewResources->VolumeOrigin[0] = volume.Origin.x;
+        viewResources->VolumeOrigin[1] = volume.Origin.y;
+        viewResources->VolumeOrigin[2] = volume.Origin.z;
+        viewResources->ProbeSpacing[0] = volume.ProbeSpacing.x;
+        viewResources->ProbeSpacing[1] = volume.ProbeSpacing.y;
+        viewResources->ProbeSpacing[2] = volume.ProbeSpacing.z;
+        viewResources->ProbeCounts[0] = volume.ProbeCountX;
+        viewResources->ProbeCounts[1] = volume.ProbeCountY;
+        viewResources->ProbeCounts[2] = volume.ProbeCountZ;
+        viewResources->bAtlasValid = true;
         return true;
     }
 
-    RHI::BufferPtr DDGIProbePass::GetResultBuffer(
-        uint32_t frameIndex,
-        uint32_t viewId,
-        uint32_t viewportId) const
+    RHI::BufferPtr DDGIProbePass::GetResultBuffer(uint32_t viewId, uint32_t viewportId) const
     {
-        for (const FrameResources& resources : m_FrameResources)
-        {
-            if (resources.FrameIndex == frameIndex && resources.ViewId == viewId &&
-                resources.ViewportId == viewportId)
-            {
-                return resources.ResultBuffer;
-            }
-        }
-        return nullptr;
+        const ViewResources* resources = FindViewResources(viewId, viewportId);
+        return resources != nullptr ? resources->ResultBuffer : nullptr;
     }
 
-    uint32_t DDGIProbePass::GetResultCount(
-        uint32_t frameIndex,
-        uint32_t viewId,
-        uint32_t viewportId) const
+    uint32_t DDGIProbePass::GetResultCount(uint32_t viewId, uint32_t viewportId) const
     {
-        for (const FrameResources& resources : m_FrameResources)
-        {
-            if (resources.FrameIndex == frameIndex && resources.ViewId == viewId &&
-                resources.ViewportId == viewportId)
-            {
-                return resources.ResultCount;
-            }
-        }
-        return 0u;
+        const ViewResources* resources = FindViewResources(viewId, viewportId);
+        return resources != nullptr ? resources->ResultCount : 0u;
     }
 
-    RHI::TexturePtr DDGIProbePass::GetIrradianceAtlas(
-        uint32_t frameIndex,
-        uint32_t viewId,
-        uint32_t viewportId) const
+    RHI::TexturePtr DDGIProbePass::GetIrradianceAtlas(uint32_t viewId, uint32_t viewportId) const
     {
-        for (const FrameResources& resources : m_FrameResources)
-        {
-            if (resources.FrameIndex == frameIndex && resources.ViewId == viewId &&
-                resources.ViewportId == viewportId && resources.bAtlasValid)
-            {
-                return resources.IrradianceAtlas;
-            }
-        }
-        return nullptr;
+        const ViewResources* resources = FindViewResources(viewId, viewportId);
+        return resources != nullptr && resources->bAtlasValid ? resources->IrradianceAtlas : nullptr;
     }
 
-    RHI::TexturePtr DDGIProbePass::GetDistanceAtlas(
-        uint32_t frameIndex,
-        uint32_t viewId,
-        uint32_t viewportId) const
+    RHI::TexturePtr DDGIProbePass::GetDistanceAtlas(uint32_t viewId, uint32_t viewportId) const
     {
-        for (const FrameResources& resources : m_FrameResources)
-        {
-            if (resources.FrameIndex == frameIndex && resources.ViewId == viewId &&
-                resources.ViewportId == viewportId && resources.bAtlasValid)
-            {
-                return resources.DistanceAtlas;
-            }
-        }
-        return nullptr;
+        const ViewResources* resources = FindViewResources(viewId, viewportId);
+        return resources != nullptr && resources->bAtlasValid ? resources->DistanceAtlas : nullptr;
     }
 
-    uint32_t DDGIProbePass::GetAtlasProbeCount(
-        uint32_t frameIndex,
-        uint32_t viewId,
-        uint32_t viewportId) const
+    uint32_t DDGIProbePass::GetAtlasProbeCount(uint32_t viewId, uint32_t viewportId) const
     {
-        for (const FrameResources& resources : m_FrameResources)
-        {
-            if (resources.FrameIndex == frameIndex && resources.ViewId == viewId &&
-                resources.ViewportId == viewportId && resources.bAtlasValid)
-            {
-                return resources.AtlasProbeCount;
-            }
-        }
-        return 0u;
+        const ViewResources* resources = FindViewResources(viewId, viewportId);
+        return resources != nullptr && resources->bAtlasValid ? resources->AtlasProbeCount : 0u;
     }
 
     void DDGIProbePass::DisableAfterResourceFailure(const char* reason)
@@ -1182,11 +1160,15 @@ namespace NorvesLib::Core::Rendering
 
     void DDGIProbePass::Shutdown()
     {
-        m_FrameResources.clear();
+        m_ViewResources.clear();
+        m_UnownedBuffers.clear();
+        m_UnownedDescriptorSets.clear();
         m_Pipeline.reset();
         m_ComputeShader.reset();
         m_IrradianceUpdatePipeline.reset();
         m_IrradianceUpdateShader.reset();
+        m_RayQueryDescriptorSetLayout.reset();
+        m_IrradianceUpdateDescriptorSetLayout.reset();
         m_AtlasSampler.reset();
         m_DefaultIrradianceAtlas.reset();
         m_DefaultDistanceAtlas.reset();

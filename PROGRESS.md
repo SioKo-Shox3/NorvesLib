@@ -3578,3 +3578,21 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `verify-SCN-ECS-FIF-RHI-OBJECT-CACHE-3.txt`: `--rg-transient-slots=2` の起動画面の比較 pass（PSNR 100 dB）、EXIT=0。ログは `RG_TRANSIENT_SLOTS slots=2 frames_in_flight=1`、`RHI_CREATE` はフレーム 0・1（もう 1 つのスロットの framebuffer 14）・2（pipeline 2）だけで、落ち着いた後のフレームの作成は 0。`RHI_CREATE_SUMMARY` は使い回しが framebuffer 2537・render pass 1705・pipeline 1866。ERROR 0、`FRAME_RESOURCE_UNPROTECTED_SUMMARY count=0`。
 - Next: TASKS.md の未完の次の項目。
 - Notes: アドレスの再利用の再現（非所有の render pass を破棄して別形式で作り直す）は GPU 上では起こしていない（起動画面では render pass が替わらないため）。鍵が値になったことはコードで確かめた。`VulkanDevice.cpp`・`GBufferPass.cpp` は行末の混在をそのまま保った（numstat の 2 通りが一致）。
+
+### SCN-ECS-FIF-DDGI（2026-10-14、反復 2・run 20261014-003223）
+
+- `DDGIProbePass` の資源を、飛行中のフレームの番号 × ViewId × ViewportId ごとの組（`FrameResources`）から、ViewId × ViewportId ごとの組（`ViewResources`）へ変えた。組が持つのは GPU だけが読み書きする資源（レイの結果のバッファ、照射・距離のアトラスと履歴のピンポン）と状態（`*AtlasState`・`ResultState`・`bAtlasValid`・`AtlasProbeCount`・volume）だけ。
+  - 履歴: 前回この組で更新できたアトラスが今の volume・プローブ数と合えば、現在と履歴を入れ替え（`std::swap` を保つ）、前回のアトラスを読みながらもう一方へ書く。飛行中のフレームの数に関わらず毎回 1 つ前の更新を読むので、2 にしても履歴が 2 つに分かれない。別の番号の組から前のフレームの物を探す処理（`FrameNumber + 1` の候補探し）は要らなくなったので消した。
+  - CPU が書く定数 3 つ（レイの問い合わせ・bounce・アトラスの更新）・instance の表（`FrameUploadUsage::Storage`）・記述子セット 3 つは、Execute ごとに `context.FrameResources` から借りる。記述子セットのレイアウトは `GetOrCreateDescriptorSetLayout` で `EnsurePipeline` に 1 回引く。持ち主の無い文脈（`DDGIProbe*VulkanTest` が `Execute` を直接呼ぶ）では使い回さない定数・セットを作り、`Shutdown` まで `m_UnownedBuffers`・`m_UnownedDescriptorSets` に持つ。借りられなかったフレームはエラーを出して更新しない（パスは無効にしない）。
+  - 履歴の無効化: Execute の始めに `bAtlasValid` を落とし、更新を終えたら立てる（以前どおり）。加えて、組が最後に命令を記録したフレームの世代を持ち、次の Execute でそのフレームが提出されなかった（`FrameSubmissionOutcome::Aborted`）と分かれば、履歴を捨てて状態を未定義から始め直す。
+  - ビューの消滅と ID の使い回し: 8 フレームより長く Execute されない組は、次の Execute の始めに手放す（アトラス・結果のバッファの破棄はデバイスが提出の完了まで遅らせる）。同じ ID が後で別のビューに使われても古い履歴は読まない。
+  - getter はビュー・ビューポートで引く `(viewId, viewportId)` にし、LightingPass（`m_DDGIProbePass.GetIrradianceAtlas` ほか 3 か所）は `context.FrameIndex` を渡さなくなった。試験の呼び出しの形 `(frameIndex, viewId, viewportId)` は frameIndex を見ない形で残した。`DDGIProbePass.cpp` に飛行中の番号・`FrameIndex`・守られた作成の区間（`FrameResourceProtectedCreationScope`）の扱いは無い。
+  - 複数のビューポートで同じパスを Execute するとき: 組は ViewId × ViewportId で別になり、定数・セットは Execute ごとに別の切れ端・セットを借りる（コードの照合で確かめた。起動画面はビューポート 1 つ）。
+- 検証（`.harness/runs/20261014-003223/`）:
+  - `baseline-build-DDGI.txt`: 変更前の RelWithDebInfo の Game のビルド EXIT=0。
+  - `verify-SCN-ECS-FIF-DDGI-1.txt`: RelWithDebInfo の Game のビルド EXIT=0、error 0・警告 0（DDGIProbePass.cpp・LightingPass.cpp を再コンパイル）。
+  - `verify-SCN-ECS-FIF-DDGI-2.txt`: 決定論の起動画面の撮影を SCN-MEGA-BASE-RWDI と比較、`indirect_lighting=rtgi`、mean_luminance_difference=0・psnr_db=100・mismatched_pixel_ratio=7E-06・max_channel_difference=1・within_limits=True、result=pass、EXIT=0。PNG は天球・地面・球・岩・家と影が以前どおり。
+  - `verify-SCN-ECS-FIF-DDGI-3.txt`: EXIT=0。`FRAME_RESOURCE_UNPROTECTED_SUMMARY count=0 resources=0 events=0 rewrites=0`、DDGIProbePass の行 0。Game.log の ERROR 0。
+  - DDGI を有効にする構成: Game には DDGI の volume を設定する呼び出しが無く（`SetDDGIVolumeParameters` を呼ぶのは試験だけ）、起動の引数では有効にできない。試験 `DDGIProbeUpdateVulkanTest`（RelWithDebInfo、`check-SCN-ECS-FIF-DDGI-test-build.txt`・`check-SCN-ECS-FIF-DDGI-update-test.txt`）を走らせ、EXIT=0・VUID_COUNT=0。seed（フレーム番号 1）の後の bounce（フレーム番号 2）が seed のアトラスを履歴として 1 回読み、hysteresis=0.6 の混ぜ方で期待値と一致した（`single_probe_bounce`・`visibility` の各項目が通過）。履歴の更新は 1 フレーム 1 回、収束の混ぜ方は以前と同じ。撮影は増やしていない。
+- Next: TASKS.md の未完の次の項目（SCN-ECS-FIF-READBACK など）。
+- Notes: 提出しなかったフレームの後の履歴の捨て方・8 フレームでの組の手放し・2 つのビューポートの同時の Execute を起こす検査は書いていない（verify が名指ししていないため）。既定のアトラス（`m_DefaultIrradianceAtlas` の 1 回だけの遷移）は以前のまま（提出しなかったフレームで遷移した場合の扱いは変えていない）。`DDGIProbeRayQueryVulkanTest`・`DDGIProbeRadianceVulkanTest` は走らせていない（3 引数の getter を残したのでコンパイルの形は変わらない）。`DDGIProbePass.h`・`.cpp` は全行 CRLF・BOM 付きのまま、`LightingPass.cpp` は行末の混在を保った（numstat の 2 通りが一致）。
