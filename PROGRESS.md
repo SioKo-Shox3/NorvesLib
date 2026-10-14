@@ -4247,3 +4247,17 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `verify-SCN-SHADOW-DISTANCE-3.txt`: 起動画面（Rendering3DTest）の撮影 result=pass（default・near・low）、`sun_shadow_max_distance=80.0 m`・分割の奥 80 m のまま。前の項目の撮影との差（default 0.46%・near 9.0%・low 1.8%）は、前の 2 回の撮影同士の差（0.47%・14.4%・1.7%）と同じ程度の実行ごとのばらつきで、開いて見た目が変わっていないことを確かめた。
 - Notes: 500 m の値は撮影 1 回で決めた内部の値。overview は受け手がすべて遠いので段 9（texel 0.125 m）だけを使う。性能はこの項目では測っていない（SCN-WASTELAND-POLISH で影の内訳から到達距離・解像度を調整する）。太陽が視点の側（方位 -60°）から差すので、メサの大きな影は多くがメサの裏に落ち、overview から見える量は少ない。距離の API の試験は足していない。
 - Next: TASKS.md の次の未完の項目。
+
+### SCN-WASTELAND-LAYOUT 完了（2026-10-14、反復 9〜10・run 20261014-140012）
+- Done: `wasteland` に岩・崖・建物を置き、夕方の光にした。
+  - 配置（`Game/GameModes/Wasteland/WastelandLayout.h/.cpp`）: 地形と同じ `TerrainHeightField` の関数で、seed と番号だけで決まる配置を作る。前哨地は盆地の中央を北北東へ抜ける道の両側に建物 6 種（見張り塔・日干し煉瓦の廃屋 2・石積みの物置 2・給水塔・風車・門の石のアーチ）の 8 棟を置き、表を道へ向ける。メサ・稜線の足元は原点から放射状に地形をたどって最初の急な崖を探し、その根元に崖の岩（背面の開いた側をメサへ埋める）と大きな岩を添える。盆地には道と建物の周りを空けて岩を散らす。y はメッシュの足元の範囲で引いた地形の最も低い高さから種類ごとの深さだけ埋める。大きさと向きは番号のハッシュでばらす。
+  - 読み込み（`WastelandRoutine.cpp`）: Poly Haven の岩 4 種・崖 2 種と生成した建物 6 種のクック済みを読み、範囲と表の向き（スキャンは面の法線の和から開いた側を判定）を出して配置を決め、MegaMesh として置く。
+  - 光: 太陽は仰角 17°・方位 -70°。手動露出 EV100 14、トーンマップは NeutralLinear、グレーディングはコントラスト 1.1・彩度 1.25・色温度 +0.25・弱いビネット（カメラの GradingOverride。wasteland のカメラだけで、Rendering3DTest は触っていない）。
+  - 視点 `outpost`: 前哨地の道の南寄り、建物の間の目の高さ 1.7 m から北の門へ向けて見る（`SceneCatalog.h` の kWastelandViews）。
+- 検証（`.harness/runs/20261014-140012/`）:
+  - `verify-SCN-WASTELAND-LAYOUT-1.txt`: Debug の Game のビルド EXIT=0。
+  - `verify-SCN-WASTELAND-LAYOUT-2.txt`: `wasteland` の撮影 result=pass（overview・ground・ridge・cliff・outpost、白飛び 0、黒つぶれ 0、検証レイヤーのエラー 0）。ログは `WASTELAND_PROPS placed=143 planned=143 buildings=8 cliffs=44 foot_boulders=65 basin_boulders=26`。
+  - PNG を開いて確かめた: outpost は建物の足元が地面に接して浮いておらず、建物と人の影が長く伸び、影の中は空の光で持ち上がって真っ黒でない。overview は手前の砂丘の影が黒い筋でなく、メサの足元に崖の岩が並ぶ。ground は奥のメサの足元に岩が見え、近くの建物が地面に据わる。ridge はメサの崖の下に崖の岩が地形の色に馴染んで積もる。cliff は崖が夕方の暖色の順光で見え、白飛び・黒つぶれは無い。
+  - `verify-SCN-WASTELAND-LAYOUT-3.txt`: `wasteland` の cycle smoke 3 周 result=pass。
+- Notes: 建物の位置・崖を探す放射の本数・埋める深さ・大きさの幅・露出とグレーディングの値は内部の値で、撮影で決めた。overview の視点からは前哨地の建物が小さく、岩も点に見える（視点の位置は SCN-TERRAIN-GEN のまま）。cycle smoke の 3 周とも `WASTELAND_PROPS placed=143` が出て、岩・建物の読み込みと解放を毎周往復した。性能は SCN-WASTELAND-POLISH で測る。配置の CPU の試験は足していない。
+- Next: TASKS.md の次の未完の項目。
