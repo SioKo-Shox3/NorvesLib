@@ -1239,7 +1239,7 @@
 - notes: `CaptureStartupScene.ps1` の `-Night` が既存の `--night` を渡さないなら直してよい。 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
 
 ## SCN-MEGA-FIX-BVH-QUEUE-MAIN: BVH のたどりを LOD で早く打ち切り、列の長さを本数でなく見える細かさで決める（主の描画）
-- status: todo
+- status: blocked
 - done-when: 100万本の海（SCN-MEGA-LAYOUT-SEA の途中の配置）の horizon・overview で、主の描画の BVH の節の列の 1 段の最大が 12.5M になり、容量 4,194,304（`MegaGeometryPass.cpp` 140 行付近の `BvhNodeQueueCapacity`）を超えて溢れ（`MEGA_CAPACITY bvh_overflow=10151330`）、カメラから約 50 m より先のバナナが判定から落ちて描かれない（`blocked/SCN-MEGA-LAYOUT-SEA.md`）。容量を上げるのでなく、BVH をたどるとき、節の境界の画面上の誤差（投影した LOD の誤差）が閾値より小さい節で降りるのを止め、その節が持つ粗いクラスタの組を描く（Nanite と同じく、列の長さが本数でなく画面の細かさで決まる形）。節に必要な誤差の情報が無ければ BVH の構築で足す。合格: 100万本の horizon・overview の撮影のログで `bvh_overflow=0`、撮影を開いて地平線までバナナが描かれ（床の帯が無い）、近くの見た目が変わらない（1万本 overview の比較が pass）。列の容量の定数は変えない（変えるなら理由を PROGRESS に書く）。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Build -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views horizon,overview -GameArgs banana-count=1000000 -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-BVH-QUEUE-MAIN`
