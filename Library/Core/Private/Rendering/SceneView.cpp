@@ -15,6 +15,7 @@
 #include "Rendering/VirtualShadowMapPass.h"
 #include "Rendering/PathTracingPass.h"
 #include "Rendering/VolumetricsPass.h"
+#include "Rendering/CloudLayerPass.h"
 #include "Rendering/ForwardPass.h"
 #include "Rendering/BloomPass.h"
 #include "Rendering/ToneMappingPass.h"
@@ -1175,6 +1176,9 @@ namespace NorvesLib::Core::Rendering
         ssrSettings.RoughnessFadeEnd = 0.7f;
         AddPass(MakeUnique<SSRPass>(ssrSettings));
 
+        // CloudLayerPass: SSR後のシーンの色の空の画素へ雲の層を重ねる（シーンの雲の層が有効なときだけ。フォグはその上に重なる）
+        AddPass(MakeUnique<CloudLayerPass>());
+
         // VolumetricsPass: SSR後のシーンの色を解析高さフォグで合成
         AddPass(MakeUnique<VolumetricsPass>());
 
@@ -1718,3 +1722,4 @@ namespace NorvesLib::Core::Rendering
 #include "MotionBlurPass.inl"
 #include "AutoExposurePass.inl"
 #include "TemporalAAPass.inl"
+#include "CloudLayerPass.inl"

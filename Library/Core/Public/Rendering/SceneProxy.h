@@ -576,6 +576,8 @@ namespace NorvesLib::Core::Rendering
         float SunShadowMaxDistance = 0.0f;
         // 不透明物に掛ける空気遠近（遠景の霞）。空が有効なときだけ VolumetricsPass が掛ける
         AerialPerspectiveParameters AerialPerspective;
+        // 空に描く雲の層。空が有効なときだけ CloudLayerPass が描く
+        CloudLayerParameters CloudLayer;
 
         // フォグ設定
         bool bFogEnabled = false;
@@ -602,6 +604,7 @@ namespace NorvesLib::Core::Rendering
             StaticEnvironmentMaxRadiance = 0.0f;
             SunShadowMaxDistance = 0.0f;
             AerialPerspective = AerialPerspectiveParameters{};
+            CloudLayer = CloudLayerParameters{};
         }
 
         void SetDDGIVolumeParameters(const DDGIVolumeParameters& parameters)

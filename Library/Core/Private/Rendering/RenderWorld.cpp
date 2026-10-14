@@ -343,6 +343,11 @@ namespace NorvesLib::Core::Rendering
         m_RenderingCoordinator.SetAerialPerspective(parameters);
     }
 
+    void RenderWorld::SetCloudLayer(const CloudLayerParameters& parameters)
+    {
+        m_RenderingCoordinator.SetCloudLayer(parameters);
+    }
+
     void RenderWorld::SetDeterministicCapture(bool bEnabled)
     {
         m_RenderingCoordinator.SetDeterministicCapture(bEnabled);

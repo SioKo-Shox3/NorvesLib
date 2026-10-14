@@ -958,4 +958,35 @@ namespace NorvesLib::Core::Rendering
         extinction.Mie = kMieScattering + kMieAbsorption;
         return extinction;
     }
+
+    CloudLayerParameters SanitizeCloudLayerParameters(const CloudLayerParameters& parameters)
+    {
+        CloudLayerParameters sanitized = parameters;
+        const CloudLayerParameters defaults;
+        if (!std::isfinite(sanitized.BottomAltitudeMeters) || sanitized.BottomAltitudeMeters < 0.0f ||
+            !std::isfinite(sanitized.TopAltitudeMeters) ||
+            sanitized.TopAltitudeMeters <= sanitized.BottomAltitudeMeters + 1.0f)
+        {
+            sanitized.BottomAltitudeMeters = defaults.BottomAltitudeMeters;
+            sanitized.TopAltitudeMeters = defaults.TopAltitudeMeters;
+        }
+        sanitized.Coverage = std::isfinite(sanitized.Coverage)
+                                 ? std::clamp(sanitized.Coverage, 0.0f, 1.0f)
+                                 : defaults.Coverage;
+        if (!std::isfinite(sanitized.ExtinctionPerMeter) || sanitized.ExtinctionPerMeter <= 0.0f)
+        {
+            sanitized.bEnabled = false;
+            sanitized.ExtinctionPerMeter = defaults.ExtinctionPerMeter;
+        }
+        if (!std::isfinite(sanitized.ShapeScaleMeters) || sanitized.ShapeScaleMeters < 100.0f)
+        {
+            sanitized.ShapeScaleMeters = defaults.ShapeScaleMeters;
+        }
+        if (!std::isfinite(sanitized.WindVelocityX) || !std::isfinite(sanitized.WindVelocityZ))
+        {
+            sanitized.WindVelocityX = 0.0f;
+            sanitized.WindVelocityZ = 0.0f;
+        }
+        return sanitized;
+    }
 } // namespace NorvesLib::Core::Rendering

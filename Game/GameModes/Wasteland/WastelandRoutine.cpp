@@ -109,6 +109,11 @@ namespace Game::GameModes
         // 150 m より手前は掛けない（盆地の中の足元・前哨地の建物は変えない）
         constexpr float kAerialPerspectiveDistanceScale = 12.0f;
         constexpr float kAerialPerspectiveStartDistance = 150.0f;
+        // 雲の層: 高度 1.5〜4 km の積雲を空の半分弱に散らし、西寄りの風でゆっくり流す
+        constexpr float kCloudBottomAltitude = 1500.0f;
+        constexpr float kCloudTopAltitude = 4000.0f;
+        constexpr float kCloudCoverage = 0.45f;
+        constexpr float kCloudWindVelocity[2] = {8.0f, 3.0f};
         // カメラの遠方面[m]。2 km 四方の対角（約 2.8 km）の先まで描く
         constexpr float kFarPlane = 3200.0f;
         // 太陽の影の到達距離[m]。盆地の中から周りのメサ（半径 330〜680 m の輪）の手前側と、その間の起伏・岩まで影を落とす
@@ -148,7 +153,7 @@ namespace Game::GameModes
         // 1 層目・2 層目・3 層目の 3 枚ずつ
         constexpr uint32_t kTerrainTextureCount = 9;
 
-        /// 物理空・太陽・高さフォグ・空気遠近
+        /// 物理空・太陽・高さフォグ・空気遠近・雲の層
         void ApplyEnvironment(GameModeContext &ctx)
         {
             SkyAtmosphereParameters sky = MakeDefaultSkyAtmosphereParameters();
@@ -169,17 +174,27 @@ namespace Game::GameModes
             aerialPerspective.DistanceScale = kAerialPerspectiveDistanceScale;
             aerialPerspective.StartDistanceMeters = kAerialPerspectiveStartDistance;
             ctx.EngineRef.GetRenderWorld().SetAerialPerspective(aerialPerspective);
+
+            CloudLayerParameters cloudLayer;
+            cloudLayer.bEnabled = true;
+            cloudLayer.BottomAltitudeMeters = kCloudBottomAltitude;
+            cloudLayer.TopAltitudeMeters = kCloudTopAltitude;
+            cloudLayer.Coverage = kCloudCoverage;
+            cloudLayer.WindVelocityX = kCloudWindVelocity[0];
+            cloudLayer.WindVelocityZ = kCloudWindVelocity[1];
+            ctx.EngineRef.GetRenderWorld().SetCloudLayer(cloudLayer);
             ctx.EngineRef.GetRenderWorld().SetStaticEnvironmentIntensityScale(1.0f);
             ctx.EngineRef.GetRenderWorld().SetStaticEnvironmentMaxRadiance(0.0f);
             ctx.EngineRef.GetRenderWorld().SetSunShadowMaxDistance(kSunShadowMaxDistance);
         }
 
-        /// 空・霧・空気遠近の設定を、ほかのモードへ持ち越さないよう既定へ戻す
+        /// 空・霧・空気遠近・雲の層の設定を、ほかのモードへ持ち越さないよう既定へ戻す
         void ResetEnvironment(GameModeContext &ctx)
         {
             ctx.EngineRef.GetRenderWorld().SetSkyAtmosphere(MakeDefaultSkyAtmosphereParameters());
             ctx.EngineRef.GetRenderWorld().SetVolumetricFogParameters(MakeDefaultVolumetricFogParameters());
             ctx.EngineRef.GetRenderWorld().SetAerialPerspective(AerialPerspectiveParameters{});
+            ctx.EngineRef.GetRenderWorld().SetCloudLayer(CloudLayerParameters{});
             ctx.EngineRef.GetRenderWorld().SetStaticEnvironmentIntensityScale(1.0f);
             ctx.EngineRef.GetRenderWorld().SetStaticEnvironmentMaxRadiance(0.0f);
             ctx.EngineRef.GetRenderWorld().SetSunShadowMaxDistance(0.0f);

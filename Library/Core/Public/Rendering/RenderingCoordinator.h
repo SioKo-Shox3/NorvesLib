@@ -390,6 +390,13 @@ namespace NorvesLib::Core::Rendering
         void SetAerialPerspective(const AerialPerspectiveParameters& parameters);
         const AerialPerspectiveParameters& GetAerialPerspective() const { return m_AerialPerspective; }
 
+        /**
+         * @brief 空に描く雲の層を設定する（GameThread）
+         * @param parameters sanitize して保持し、次のFramePacketへ値コピーする
+         */
+        void SetCloudLayer(const CloudLayerParameters& parameters);
+        const CloudLayerParameters& GetCloudLayer() const { return m_CloudLayer; }
+
         /** @brief 決定的な撮影にする（GameThread）。FramePacket の経過時間を 1/60 秒に固定する */
         void SetDeterministicCapture(bool bEnabled) { m_bDeterministicCapture = bEnabled; }
 
@@ -619,6 +626,7 @@ namespace NorvesLib::Core::Rendering
         float m_StaticEnvironmentMaxRadiance = 0.0f;
         float m_SunShadowMaxDistance = 0.0f;
         AerialPerspectiveParameters m_AerialPerspective;
+        CloudLayerParameters m_CloudLayer;
         bool m_bRTGIEnabled = true;
         uint64_t m_SceneRevision = 1u;
         uint64_t m_LightRevision = 1u;

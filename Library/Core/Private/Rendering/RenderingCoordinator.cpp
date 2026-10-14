@@ -219,6 +219,15 @@ namespace NorvesLib::Core::Rendering
             hash = HashRevisionValue(hash, packet.Scene.AerialPerspective.bEnabled);
             hash = HashRevisionValue(hash, packet.Scene.AerialPerspective.DistanceScale);
             hash = HashRevisionValue(hash, packet.Scene.AerialPerspective.StartDistanceMeters);
+            const CloudLayerParameters& cloudLayer = packet.Scene.CloudLayer;
+            hash = HashRevisionValue(hash, cloudLayer.bEnabled);
+            hash = HashRevisionValue(hash, cloudLayer.BottomAltitudeMeters);
+            hash = HashRevisionValue(hash, cloudLayer.TopAltitudeMeters);
+            hash = HashRevisionValue(hash, cloudLayer.Coverage);
+            hash = HashRevisionValue(hash, cloudLayer.ExtinctionPerMeter);
+            hash = HashRevisionValue(hash, cloudLayer.ShapeScaleMeters);
+            hash = HashRevisionValue(hash, cloudLayer.WindVelocityX);
+            hash = HashRevisionValue(hash, cloudLayer.WindVelocityZ);
 
             const SkyAtmosphereParameters& sky = packet.Scene.SkyAtmosphere;
             hash = HashRevisionValue(hash, sky.bEnabled);
@@ -4270,6 +4279,7 @@ namespace NorvesLib::Core::Rendering
         packet.Scene.StaticEnvironmentMaxRadiance = m_StaticEnvironmentMaxRadiance;
         packet.Scene.SunShadowMaxDistance = m_SunShadowMaxDistance;
         packet.Scene.AerialPerspective = m_AerialPerspective;
+        packet.Scene.CloudLayer = m_CloudLayer;
         packet.bRTGIEnabled = m_bRTGIEnabled;
     }
 
@@ -6217,6 +6227,11 @@ namespace NorvesLib::Core::Rendering
     void RenderingCoordinator::SetAerialPerspective(const AerialPerspectiveParameters& parameters)
     {
         m_AerialPerspective = SanitizeAerialPerspectiveParameters(parameters);
+    }
+
+    void RenderingCoordinator::SetCloudLayer(const CloudLayerParameters& parameters)
+    {
+        m_CloudLayer = SanitizeCloudLayerParameters(parameters);
     }
 
     uint64_t RenderingCoordinator::RegisterCamera(const CameraProxy &camera)

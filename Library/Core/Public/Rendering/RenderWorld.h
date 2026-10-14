@@ -218,6 +218,15 @@ namespace NorvesLib::Core::Rendering
         void SetAerialPerspective(const AerialPerspectiveParameters& parameters);
 
         /**
+         * @brief 空に描く雲の層を設定する（GameThread）
+         *
+         * 空（SetSkyAtmosphere）が有効なときだけ効く。次の FramePacket へ値コピーし、
+         * RenderThread の CloudLayerPass が空の画素に雲を描く。
+         * @param parameters bEnabled が偽（既定）なら描かない
+         */
+        void SetCloudLayer(const CloudLayerParameters& parameters);
+
+        /**
          * @brief 決定的な撮影（--capture-deterministic）にする（GameThread）
          *
          * 有効な間、FramePacket の経過時間を 1/60 秒に固定する。起動の初期化で一度だけ呼ぶ。

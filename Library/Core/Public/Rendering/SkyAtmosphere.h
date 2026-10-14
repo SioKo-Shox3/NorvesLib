@@ -56,6 +56,34 @@ namespace NorvesLib::Core::Rendering
         const AerialPerspectiveParameters& parameters);
 
     /**
+     * @brief 空に描く雲の層のパラメータ
+     *
+     * 空が有効なときだけ効く。地表からの高度 BottomAltitudeMeters〜TopAltitudeMeters の球殻に、起動後に作る
+     * 3D ノイズ（Perlin-Worley と Worley）の密度を置き、CloudLayerPass が空の画素（深度が遠方面）で光線を進めて
+     * 太陽の単一散乱（前方・後方の 2 つの位相）・多重散乱の近似・空の環境光を積分してシーンの色へ重ねる。
+     * 雲は太陽を遮らない（地面に影を落とさない）。空由来の IBL にも入れない（IBL は空のパラメータが
+     * 変わったときだけ作り直す静的な表で、毎フレーム流れる雲を入れると作り直しが毎フレームになるため）。
+     */
+    struct CloudLayerParameters
+    {
+        bool bEnabled = false;
+        // 雲の層の底と頂の地表からの高度（m）
+        float BottomAltitudeMeters = 1500.0f;
+        float TopAltitudeMeters = 4000.0f;
+        // 空を覆う割合の目安（0〜1）。天気の模様をこの割合で切り抜く
+        float Coverage = 0.45f;
+        // 密度 1 の所の消散係数（1/m）
+        float ExtinctionPerMeter = 0.03f;
+        // 雲の形の大きさ（m）。基本の形のノイズ 1 周期の水平の長さ
+        float ShapeScaleMeters = 9000.0f;
+        // 風で流れる速さ（m/s、ワールドの X・Z）
+        float WindVelocityX = 8.0f;
+        float WindVelocityZ = 3.0f;
+    };
+
+    CloudLayerParameters SanitizeCloudLayerParameters(const CloudLayerParameters& parameters);
+
+    /**
      * @brief 空の媒質の高度 0 での消散係数（1/m）
      *
      * Rayleigh は RGB（散乱のみで吸収なし）、Mie は散乱と吸収の和で波長によらない。
