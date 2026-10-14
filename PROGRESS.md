@@ -4459,3 +4459,15 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - Notes: 荒野の撮影は、ページが最後まで読まれるようになって地形の細部が変わった（前の SCN-WL-REFERENCE-CAPTURE の撮影より崖と斜面の形が細かい。ridge で PSNR 25）。手本との比較画像は次の項目で撮り直す。
 - Notes: 塊が満杯のときの追い出しは荒野の 11 視点では起きなかった（1 GB の塊で常駐 471 MB まで）。この経路を確かめる試験（GeometryPageStreamerTest に NoSpace を返す偽の書き込み先）は無い。
 - Next: TASKS.md の次の未完の項目。
+
+### SCN-WL-REFERENCE-CAPTURE 撮り直し（2026-10-15、run 20261015-080913 の反復 1）
+- Done: 前回の verify（全 11 視点を 1 本で撮る）が再検証で 10 分を超えた差し戻しに対し、verify を手本の 6 視点だけを 3 視点ずつ 2 本に分けた形で撮り直した。ページが最後まで読まれるようになった後（SCN-WL-CAPTURE-FAST）の撮影で比較画像 6 枚を作り直し、`Docs/RenderingValidation/WastelandReference.md` の撮り方・値の表・差の一覧を更新した。
+- 検証（`.harness/runs/20261015-080913/`）:
+  - `verify-SCN-WL-REFERENCE-CAPTURE-1.txt`: Debug の Game のビルド EXIT=0。
+  - `verify-SCN-WL-REFERENCE-CAPTURE-2.txt`: `CaptureScene.ps1 -Views ref_far_01,ref_far_02,ref_cliff_01 -Width 1920 -Height 1080` result=pass（3 視点とも 1920×1080・白飛び 0・黒つぶれ 0）、EXIT=0。
+  - `verify-SCN-WL-REFERENCE-CAPTURE-3.txt`: `CaptureScene.ps1 -Views ref_cliff_02,ref_ground_01,ref_ground_02` result=pass（同上）、EXIT=0。2 本とも約 2〜3 分。
+  - `verify-SCN-WL-REFERENCE-CAPTURE-4.txt`: `CompareReference.py --verify` result=pass photos=6、EXIT=0。
+  - 比較画像 6 枚を開いた: far_02・cliff_02・ground_02 はビュートの配置と輪郭が対応。far_01 の主役は DEM の外、cliff_01 は対応しない（既知の限界のまま）、ground_01 は構図の型だけ。Y は前の撮影と差 0.03 以内で、差の順は変わらない。
+  - 撮り直しで見えた差: far_02 の Setting Hen Butte の壁の縞は、縦の引き伸ばしから斜めのジグザグの縞に変わった。斜面の暗い点の格子の縞は ground_02 の手前の起伏の一面に出る。
+- Notes: 試験は足していない。2 本目の撮影は同じ出力先の metrics.json を上書きするので、metrics.json には後の 3 視点だけが入る（比較は <視点>.png を読むので影響しない）。
+- Next: TASKS.md の次の未完の項目。
