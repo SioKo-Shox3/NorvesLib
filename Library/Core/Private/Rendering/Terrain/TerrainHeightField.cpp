@@ -1,7 +1,11 @@
 ﻿#include "Core/Public/Rendering/Terrain/TerrainHeightField.h"
 
+#include "Asset/AssetFileReader.h"
+#include "Text/JsonDocument.h"
+
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 
 namespace NorvesLib::Core::Rendering::Terrain
 {
@@ -275,6 +279,11 @@ namespace NorvesLib::Core::Rendering::Terrain
 
     float TerrainHeightField::SampleHeight(float x, float z) const
     {
+        if (m_Grid)
+        {
+            return SampleGridHeight(x, z);
+        }
+
         const TerrainHeightFieldParams &p = m_Params;
         const uint32_t seed = p.Seed;
         const float radius = std::sqrt(x * x + z * z);
@@ -314,6 +323,11 @@ namespace NorvesLib::Core::Rendering::Terrain
 
     TerrainNormal TerrainHeightField::SampleNormal(float x, float z, float sampleSpacing) const
     {
+        if (m_Grid)
+        {
+            return SampleGridNormal(x, z, sampleSpacing);
+        }
+
         const float e = sampleSpacing > 0.0f ? sampleSpacing : 0.5f;
         const float dx = SampleHeight(x + e, z) - SampleHeight(x - e, z);
         const float dz = SampleHeight(x, z + e) - SampleHeight(x, z - e);
@@ -321,6 +335,332 @@ namespace NorvesLib::Core::Rendering::Terrain
         normal.X = -dx;
         normal.Y = 2.0f * e;
         normal.Z = -dz;
+        const float length = std::sqrt(normal.X * normal.X + normal.Y * normal.Y + normal.Z * normal.Z);
+        normal.X /= length;
+        normal.Y /= length;
+        normal.Z /= length;
+        return normal;
+    }
+
+    /// 格子の高さ場の中身。頂点 (column, row) はエンジンの (FirstX + column × Spacing, FirstZ + row × Spacing)。
+    /// 行 0 が北端（-Z の端）で、列 0 が西端（-X の端）
+    struct TerrainHeightField::GridData
+    {
+        /// float32 の little-endian、行優先、見出しなし（Columns × Rows × 4 バイト）
+        Asset::AssetBlob Bytes;
+        uint32_t Columns = 0;
+        uint32_t Rows = 0;
+        double FirstX = 0.0;
+        double FirstZ = 0.0;
+        double Spacing = 1.0;
+
+        float At(uint32_t column, uint32_t row) const
+        {
+            float value = 0.0f;
+            std::memcpy(&value, Bytes.GetData() + (static_cast<size_t>(row) * Columns + column) * sizeof(float),
+                        sizeof(float));
+            return value;
+        }
+    };
+
+    namespace
+    {
+        /// 格子の記述の文字列が ASCII の期待の値と同じか
+        bool JsonStringEquals(const JsonValue &value, const char *expected)
+        {
+            if (!value.IsString())
+            {
+                return false;
+            }
+            const Container::String &text = value.AsString();
+            const size_t length = std::strlen(expected);
+            if (text.size() != length)
+            {
+                return false;
+            }
+            for (size_t index = 0; index < length; ++index)
+            {
+                if (static_cast<uint32_t>(text.data()[index]) != static_cast<uint32_t>(static_cast<unsigned char>(expected[index])))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        bool JsonFiniteNumber(const JsonValue &value, double &outValue)
+        {
+            if (!value.IsNumber() || !std::isfinite(value.AsNumber()))
+            {
+                return false;
+            }
+            outValue = value.AsNumber();
+            return true;
+        }
+
+        /// 格子のファイル名（記述と同じフォルダの、区切り・親への移動を含まない ASCII の名前）を取り出す
+        bool JsonGridFileName(const JsonValue &value, Container::AnsiString &outName)
+        {
+            if (!value.IsString())
+            {
+                return false;
+            }
+            const Container::String &text = value.AsString();
+            if (text.size() == 0 || text.size() > 255)
+            {
+                return false;
+            }
+            outName.clear();
+            for (size_t index = 0; index < text.size(); ++index)
+            {
+                const uint32_t ch = static_cast<uint32_t>(text.data()[index]);
+                const bool bAllowed = (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') ||
+                                      ch == '_' || ch == '-' || ch == '.';
+                if (!bAllowed)
+                {
+                    return false;
+                }
+                outName += static_cast<char>(ch);
+            }
+            return outName != "." && outName != "..";
+        }
+
+        Container::AnsiString MakeGridError(const char *reason, Container::AnsiStringView path)
+        {
+            Container::AnsiString error(reason);
+            error += "（";
+            error.append(path.data(), path.size());
+            error += "）";
+            return error;
+        }
+    } // namespace
+
+    TerrainHeightField::TerrainHeightField(GridTag, Container::TSharedPtr<const GridData> grid)
+        : m_Grid(std::move(grid))
+    {
+    }
+
+    Container::TSharedPtr<const TerrainHeightField> TerrainHeightField::LoadGrid(Container::AnsiStringView descriptorPath,
+                                                                                Container::AnsiString &outError)
+    {
+        constexpr uint64_t kMaxDescriptorBytes = 1024u * 1024u;
+        constexpr int64_t kMaxGridSide = 65536;
+
+        Asset::AssetFileReader reader;
+        Asset::AssetReadRequest descriptorRequest;
+        descriptorRequest.InputPath.append(descriptorPath.data(), descriptorPath.size());
+        descriptorRequest.bAllowAbsolutePath = false;
+        descriptorRequest.MaxReadBytes = kMaxDescriptorBytes;
+        const Asset::AssetReadResult descriptor = reader.Read(descriptorRequest);
+        if (!descriptor.Succeeded())
+        {
+            outError = MakeGridError("地形の格子の記述を読めません", descriptorPath);
+            return {};
+        }
+
+        Container::Span<const uint8_t> text(descriptor.Blob.GetData(), descriptor.Blob.GetSize());
+        if (text.size() >= 3 && text[0] == 0xefu && text[1] == 0xbbu && text[2] == 0xbfu)
+        {
+            text = {text.data() + 3, text.size() - 3};
+        }
+        JsonDocument document;
+        if (!JsonDocument::TryParseUtf8(text, document))
+        {
+            outError = MakeGridError("地形の格子の記述が JSON として読めません", descriptorPath);
+            return {};
+        }
+
+        // 補間と座標の対応が前提にしている約束（形式・行の向き・軸の向き）を確かめる
+        const JsonValue root = document.GetRoot();
+        const JsonValue axes = root.FindMember("axes");
+        if (!JsonStringEquals(root.FindMember("format"), "float32 little-endian, row-major, no header") ||
+            !JsonStringEquals(root.FindMember("row_order"), "north_to_south") || !axes.IsObject() ||
+            !JsonStringEquals(axes.FindMember("engine_x"), "east") || !JsonStringEquals(axes.FindMember("engine_y"), "up") ||
+            !JsonStringEquals(axes.FindMember("engine_z"), "south"))
+        {
+            outError = MakeGridError("地形の格子の記述の形式・行の向き・軸の向きが約束と違います", descriptorPath);
+            return {};
+        }
+
+        const JsonValue width = root.FindMember("width");
+        const JsonValue height = root.FindMember("height");
+        if (!width.IsIntegerLiteral() || !height.IsIntegerLiteral() || width.AsInt64() < 2 || height.AsInt64() < 2 ||
+            width.AsInt64() > kMaxGridSide || height.AsInt64() > kMaxGridSide)
+        {
+            outError = MakeGridError("地形の格子の大きさが不正です", descriptorPath);
+            return {};
+        }
+
+        double spacing = 0.0;
+        double firstX = 0.0;
+        double firstZ = 0.0;
+        const JsonValue firstVertex = root.FindMember("first_vertex_engine");
+        if (!JsonFiniteNumber(root.FindMember("vertex_spacing_m"), spacing) || spacing <= 0.0 || !firstVertex.IsObject() ||
+            !JsonFiniteNumber(firstVertex.FindMember("x"), firstX) || !JsonFiniteNumber(firstVertex.FindMember("z"), firstZ))
+        {
+            outError = MakeGridError("地形の格子の間隔・最初の頂点の位置が不正です", descriptorPath);
+            return {};
+        }
+
+        auto grid = Container::MakeShared<GridData>();
+        grid->Columns = static_cast<uint32_t>(width.AsInt64());
+        grid->Rows = static_cast<uint32_t>(height.AsInt64());
+        grid->FirstX = firstX;
+        grid->FirstZ = firstZ;
+        grid->Spacing = spacing;
+
+        // 範囲の記述がある場合は、最初の頂点・間隔・大きさから決まる範囲と同じか確かめる
+        const JsonValue bounds = root.FindMember("engine_bounds");
+        if (bounds.IsValid())
+        {
+            double xMin = 0.0;
+            double xMax = 0.0;
+            double zMin = 0.0;
+            double zMax = 0.0;
+            const double lastX = firstX + static_cast<double>(grid->Columns - 1) * spacing;
+            const double lastZ = firstZ + static_cast<double>(grid->Rows - 1) * spacing;
+            constexpr double kTolerance = 1.0e-3;
+            if (!bounds.IsObject() || !JsonFiniteNumber(bounds.FindMember("x_min"), xMin) ||
+                !JsonFiniteNumber(bounds.FindMember("x_max"), xMax) || !JsonFiniteNumber(bounds.FindMember("z_min"), zMin) ||
+                !JsonFiniteNumber(bounds.FindMember("z_max"), zMax) || std::fabs(xMin - firstX) > kTolerance ||
+                std::fabs(xMax - lastX) > kTolerance || std::fabs(zMin - firstZ) > kTolerance ||
+                std::fabs(zMax - lastZ) > kTolerance)
+            {
+                outError = MakeGridError("地形の格子の範囲が、最初の頂点・間隔・大きさと合いません", descriptorPath);
+                return {};
+            }
+        }
+
+        // 格子のファイルは記述と同じフォルダにある
+        Container::AnsiString fileName;
+        if (!JsonGridFileName(root.FindMember("file"), fileName))
+        {
+            outError = MakeGridError("地形の格子のファイル名が不正です", descriptorPath);
+            return {};
+        }
+        size_t folderLength = 0;
+        for (size_t index = 0; index < descriptorPath.size(); ++index)
+        {
+            if (descriptorPath.data()[index] == '/' || descriptorPath.data()[index] == '\\')
+            {
+                folderLength = index + 1;
+            }
+        }
+        Asset::AssetReadRequest gridRequest;
+        gridRequest.InputPath.append(descriptorPath.data(), folderLength);
+        gridRequest.InputPath += fileName;
+        gridRequest.bAllowAbsolutePath = false;
+        const uint64_t expectedBytes = static_cast<uint64_t>(grid->Columns) * grid->Rows * sizeof(float);
+        gridRequest.MaxReadBytes = expectedBytes;
+        Asset::AssetReadResult gridFile = reader.Read(gridRequest);
+        if (!gridFile.Succeeded() || static_cast<uint64_t>(gridFile.Blob.GetSize()) != expectedBytes)
+        {
+            outError = MakeGridError("地形の格子のファイルを読めないか、大きさが幅 × 高さ × 4 バイトと違います",
+                                     Container::AnsiStringView(gridRequest.InputPath.data(), gridRequest.InputPath.size()));
+            return {};
+        }
+        grid->Bytes = std::move(gridFile.Blob);
+
+        // NaN は範囲の外の印と区別できないので、格子の値はすべて有限でなければならない
+        for (uint32_t row = 0; row < grid->Rows; ++row)
+        {
+            for (uint32_t column = 0; column < grid->Columns; ++column)
+            {
+                if (!std::isfinite(grid->At(column, row)))
+                {
+                    outError = MakeGridError("地形の格子に有限でない高さがあります", descriptorPath);
+                    return {};
+                }
+            }
+        }
+
+        return Container::MakeShared<const TerrainHeightField>(GridTag{}, Container::TSharedPtr<const GridData>(std::move(grid)));
+    }
+
+    bool TerrainHeightField::Contains(float x, float z) const
+    {
+        if (!m_Grid)
+        {
+            return true;
+        }
+        const GridData &grid = *m_Grid;
+        const double u = (static_cast<double>(x) - grid.FirstX) / grid.Spacing;
+        const double v = (static_cast<double>(z) - grid.FirstZ) / grid.Spacing;
+        // NaN は比較がすべて偽になるので範囲の外になる
+        return u >= 0.0 && u <= static_cast<double>(grid.Columns - 1) && v >= 0.0 && v <= static_cast<double>(grid.Rows - 1);
+    }
+
+    float TerrainHeightField::SampleGridHeight(float x, float z) const
+    {
+        if (!Contains(x, z))
+        {
+            return kOutOfRangeHeight;
+        }
+
+        const GridData &grid = *m_Grid;
+        const double u = (static_cast<double>(x) - grid.FirstX) / grid.Spacing;
+        const double v = (static_cast<double>(z) - grid.FirstZ) / grid.Spacing;
+        // 外周の頂点（u = Columns - 1 など）は内側の升目の端として引く
+        const uint32_t column = std::min(static_cast<uint32_t>(u), grid.Columns - 2);
+        const uint32_t row = std::min(static_cast<uint32_t>(v), grid.Rows - 2);
+        const double fu = u - static_cast<double>(column);
+        const double fv = v - static_cast<double>(row);
+
+        const double h00 = grid.At(column, row);
+        const double h10 = grid.At(column + 1, row);
+        const double h01 = grid.At(column, row + 1);
+        const double h11 = grid.At(column + 1, row + 1);
+
+        // 焼いたメッシュと同じ 2 つの三角形のどちらかの中で、重心座標の重みで線形に補間する。頂点の上では重みが
+        // (1, 0, 0) になり、ファイルの値をそのまま返す。重みは非負で和が 1 なので、3 頂点の値の範囲を越えない
+        double value = 0.0;
+        if (UsesMainDiagonal(column, row))
+        {
+            // 対角線 (0,0)〜(1,1)。三角形 (00, 10, 11) と (00, 11, 01)
+            value = fu >= fv ? (1.0 - fu) * h00 + (fu - fv) * h10 + fv * h11
+                             : (1.0 - fv) * h00 + (fv - fu) * h01 + fu * h11;
+        }
+        else
+        {
+            // 対角線 (1,0)〜(0,1)。三角形 (00, 10, 01) と (10, 11, 01)
+            value = fu + fv <= 1.0 ? (1.0 - fu - fv) * h00 + fu * h10 + fv * h01
+                                   : (fu + fv - 1.0) * h11 + (1.0 - fv) * h10 + (1.0 - fu) * h01;
+        }
+        return static_cast<float>(value);
+    }
+
+    TerrainNormal TerrainHeightField::SampleGridNormal(float x, float z, float sampleSpacing) const
+    {
+        const float center = SampleGridHeight(x, z);
+        if (std::isnan(center))
+        {
+            return TerrainNormal{kOutOfRangeHeight, kOutOfRangeHeight, kOutOfRangeHeight};
+        }
+
+        const float e = sampleSpacing > 0.0f ? sampleSpacing : 0.5f;
+        // 片側が範囲の外なら、その側は (x,z) の高さで置き換えて片側の差分にする（端を延ばした高さは作らない）
+        auto slope = [&](float minusHeight, float plusHeight) -> float
+        {
+            float span = 2.0f * e;
+            if (std::isnan(minusHeight))
+            {
+                minusHeight = center;
+                span -= e;
+            }
+            if (std::isnan(plusHeight))
+            {
+                plusHeight = center;
+                span -= e;
+            }
+            return span > 0.0f ? (plusHeight - minusHeight) / span : 0.0f;
+        };
+        const float slopeX = slope(SampleGridHeight(x - e, z), SampleGridHeight(x + e, z));
+        const float slopeZ = slope(SampleGridHeight(x, z - e), SampleGridHeight(x, z + e));
+
+        TerrainNormal normal;
+        normal.X = -slopeX;
+        normal.Y = 1.0f;
+        normal.Z = -slopeZ;
         const float length = std::sqrt(normal.X * normal.X + normal.Y * normal.Y + normal.Z * normal.Z);
         normal.X /= length;
         normal.Y /= length;

@@ -1397,7 +1397,7 @@
 - notes: 全体のならし（平滑化）はしない。平らな所の異常だけ直す。
 
 ## SCN-WL-DEM-HEIGHTFIELD: 高さ場を DEM の格子から引けるようにする
-- status: todo
+- status: done
 - done-when: `TerrainHeightField` に、切り出した格子を読んで高さと法線を引く作り方を足す（今の手続きの作り方は残す。荒野の既定を格子に替えるのは SCN-WL-DEM-SCENE）。標本の規則は焼いたメッシュの三角形と一致させる（格子の点をそのまま頂点にし、間はメッシュと同じ対角線の分け方で線形。双三次のような元の値を越える補間は使わない）。範囲の外は端を延ばさず、範囲外と分かる値を返す。格子の読み込みは一度で、複数のスレッドから引いてよい。Game とクッカーが同じファイル・同じ規則を使う。格子の数点で、ファイルの値と `SampleHeight` が一致することを PROGRESS に書く。
 - verify: `cmake --build build --config Debug --target Game AssetCook -- /m:1`
 - paths: Library/Core/Public/Rendering/Terrain, Library/Core/Private/Rendering/Terrain, Library/Core/CMakeLists.txt, Tools/AssetCook, Game/GameModes/Wasteland, Scripts/Terrain, TASKS.md, PROGRESS.md

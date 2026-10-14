@@ -4351,3 +4351,21 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 図を開いた: 陰影図 2 枚で 4 つのビュートが地形の点の上にあり、照らす向きで明暗が逆になる（反転なし・欠けなし）。Battleship Rock の拡大は縁の崖・段々の棚・崖錐の溝が分かれ、格子状の凹凸なし。断面は崖錐・段・垂直な崖の 3 段で、崖の上端と下端が 1〜2 m で折れる。前哨地 A の拡大は西 約 57 m を直線の未舗装路が通り、北 30〜150 m に高さ 1 m ほどの起伏、南側は滑らか。
 - Notes: 前哨地の判定の傾斜は 1 m の差分だと礫や小さな起伏で 10°を越えるので 4 m 間隔で測る（内部の値）。前の手続きの荒野は +Z を北として書いているので、SCN-WL-DEM-SCENE で格子の約束（+Z が南）に合わせる。C++ は触っていないのでビルドは走らせていない。試験は足していない。
 - Next: TASKS.md の次の未完の項目（SCN-WL-DEM-HEIGHTFIELD）。
+
+### SCN-WL-DEM-HEIGHTFIELD 完了（2026-10-15、反復 8・run 20261014-222123）
+- 実装: `TerrainHeightField::LoadGrid(descriptorPath, error)` を足した（`Library/Core/Public/Rendering/Terrain/TerrainHeightField.h`）。`height.json` の形式・行の向き（north_to_south）・軸（X 東・Y 上・Z 南）・大きさ・間隔・最初の頂点・範囲の整合を確かめ、同じフォルダの `height.r32` を幅 × 高さ × 4 バイトちょうどで 1 回だけ読み、全値が有限かを確かめて `TSharedPtr<const TerrainHeightField>` を返す（読めない・約束と違うときは空と理由）。返った高さ場は読み取りだけで、共有して複数のスレッドから引いてよい。手続きの作り方（`TerrainHeightField(params)`）はそのまま。
+  - 標本の規則: 格子の点がそのまま頂点。点の間は升目を `UsesMainDiagonal(列, 行)`（全体の格子の番号で列 + 行が偶数なら (0,0)〜(1,1)、奇数なら (1,0)〜(0,1)）の対角線で 2 つの三角形に分け、重心座標の重みで線形に補間する（頂点の上はファイルの値そのもの・3 頂点の値の範囲を越えない）。クッカーの terrain-tile の三角形の分け方も同じ関数にした（区画の格子の数 500 が偶数なので今の手続きの区画の出力は変わらない）。
+  - 範囲の外（外周の頂点より外、NaN の座標）は端を延ばさず `kOutOfRangeHeight`（NaN）を返し、法線は 3 成分とも NaN。`Contains(x, z)` で前もって判定できる。外周の法線は外側を (x,z) の高さで置き換えた片側の差分。
+  - ファイル: `WastelandTerrain::kDemGridDescriptorPath`（`Terrain/ValleyOfTheGods/height.json`、アセットの根から）をクッカーと Game が使う。Game が荒野の既定をこれに替えるのは SCN-WL-DEM-SCENE、区画を焼くのは SCN-WL-DEM-COOK。
+  - 確かめる入口: `AssetCook --sample-terrain-grid <x>,<z> ...`（LoadGrid で読んで高さ・法線・範囲の内外を出す）と `Scripts/Terrain/CheckHeightField.py`（ファイルから別の求め方＝升目の三角形の 3 頂点を通る平面で求めた値と突き合わせる）。
+- 格子の点でファイルの値と `SampleHeight` が一致（`aux-SCN-WL-DEM-HEIGHTFIELD-check-1.txt` から抜粋。高さはエンジンの Y[m]）:
+  - 四隅: (列 0, 行 0) X -2600・Z -2499 = 56.125782 / (4699, 0) X 2099・Z -2499 = 38.7506599 / (0, 4599) X -2600・Z 2100 = -19.0655022 / (4699, 4599) X 2099・Z 2100 = -37.169384（どれもファイルの float32 とビット単位で一致）
+  - 前哨地 A の頂点 (3799, 2649) X 1199・Z 150 = -0.0746582001、ほか外周 4 点・固定の乱数の頂点 12 点も一致（頂点 21 点すべて）
+  - 升目の内側 74 点（対角線の向き 2 通り × 両方の三角形・対角線の上・崖の升目・外周の辺の上）は平面の値との差の最大 1.7e-6 m、どれも 3 頂点の値の範囲の内。範囲の外 7 点（西 0.001 m 外・東 0.5 m 外・北 1 m 外・南 0.01 m 外・角の外・遠く・NaN）はすべて out_of_range。法線 95 点は期待の差分との差の最大 2.5e-6。
+- 検証（`.harness/runs/20261014-222123/`）:
+  - `verify-SCN-WL-DEM-HEIGHTFIELD-1.txt`: Git Bash が `/m:1` を道に書き換えて MSBuild がスイッチの誤りで止まった（exit=1。コードの失敗ではない）。
+  - `verify-SCN-WL-DEM-HEIGHTFIELD-2.txt`: PowerShell から `cmake --build build --config Debug --target Game AssetCook -- /m:1` exit=0（行末を直す前）。
+  - `verify-SCN-WL-DEM-HEIGHTFIELD-3.txt`: 行末を元に戻した後の同じコマンド exit=0（Game.exe・AssetCook.exe とも生成、error なし）。
+  - `aux-SCN-WL-DEM-HEIGHTFIELD-check-1.txt`: `python Scripts/Terrain/CheckHeightField.py` result=pass・fail=0・exit=0。
+- Notes: verify の `/m:1` は Git Bash から渡すと道に変換されるので PowerShell から走らせる。試験は足していない（突き合わせは CheckHeightField.py を手で回す）。LoadGrid は呼ぶたびに 86 MB を読むので、Game では 1 つの持ち主が 1 回だけ呼んで共有する（SCN-WL-DEM-SCENE で据える）。
+- Next: TASKS.md の次の未完の項目（SCN-WL-DEM-COOK）。

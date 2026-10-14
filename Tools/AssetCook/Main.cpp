@@ -6,7 +6,11 @@
 #include "SkeletalRoleFileCli.h"
 #include "TextureAssetSetCook.h"
 #include "TextureCooker.h"
+#include "Rendering/Terrain/TerrainHeightField.h"
+#include <cmath>
 #include <cstdlib>
+#include <iomanip>
+#include <iostream>
 
 namespace
 {
@@ -331,12 +335,77 @@ namespace
         return ValidateCookOptions(outOptions, error);
     }
 
+    // --sample-terrain-grid <x>,<z> ...: 荒野の DEM の格子（WastelandTerrain::kDemGridDescriptorPath）を、クッカーと Game が
+    // 使うのと同じ高さ場（TerrainHeightField::LoadGrid）として読み、渡した点の高さと法線を出す。
+    // Scripts/Terrain/CheckHeightField.py がファイルの値と突き合わせる
+    bool RunTerrainGridSampleCommand(int argc, char **argv, int &outExitCode)
+    {
+        namespace Terrain = NorvesLib::Core::Rendering::Terrain;
+        if (argc < 2 || std::string_view(argv[1]) != "--sample-terrain-grid")
+        {
+            return false;
+        }
+        outExitCode = 1;
+        if (argc < 3)
+        {
+            std::cerr << "AssetCook error: --sample-terrain-grid には <x>,<z> を 1 つ以上渡してください\n";
+            return true;
+        }
+
+        NorvesLib::Core::Container::AnsiString loadError;
+        const auto field = Terrain::TerrainHeightField::LoadGrid(Terrain::WastelandTerrain::kDemGridDescriptorPath, loadError);
+        if (!field)
+        {
+            std::cerr << "AssetCook error: " << loadError.c_str() << "\n";
+            return true;
+        }
+
+        std::cout << std::setprecision(9) << "descriptor=" << Terrain::WastelandTerrain::kDemGridDescriptorPath
+                  << "\npoint_count=" << (argc - 2) << "\n";
+        for (int index = 2; index < argc; ++index)
+        {
+            const char *text = argv[index];
+            char *end = nullptr;
+            const float x = std::strtof(text, &end);
+            if (end == text || *end != ',')
+            {
+                std::cerr << "AssetCook error: 点は <x>,<z> の形で渡してください: " << text << "\n";
+                return true;
+            }
+            const char *zText = end + 1;
+            const float z = std::strtof(zText, &end);
+            if (end == zText || *end != '\0')
+            {
+                std::cerr << "AssetCook error: 点は <x>,<z> の形で渡してください: " << text << "\n";
+                return true;
+            }
+
+            const int point = index - 2;
+            const float height = field->SampleHeight(x, z);
+            const Terrain::TerrainNormal normal = field->SampleNormal(x, z, 0.5f);
+            std::cout << "point[" << point << "].x=" << x << "\npoint[" << point << "].z=" << z << "\npoint[" << point
+                      << "].contains=" << (field->Contains(x, z) ? "true" : "false") << "\npoint[" << point << "].height=";
+            if (std::isnan(height))
+            {
+                std::cout << "out_of_range\n";
+            }
+            else
+            {
+                std::cout << height << "\n";
+            }
+            std::cout << "point[" << point << "].normal=" << normal.X << "," << normal.Y << "," << normal.Z << "\n";
+        }
+        outExitCode = 0;
+        return true;
+    }
+
     void PrintUsage()
     {
         std::cerr
             << "Usage: AssetCook --inspect <model.gltf|model.glb>\n"
             << "       AssetCook --asset-set <spec.json> --runtime-root <new-or-managed-directory> [--source-root <directory>] [--manifest <file>]\n"
             << "       AssetCook --recover --runtime-root <directory>  (recover fixed pending in parent workspace, including siblings)\n"
+            << "       AssetCook --sample-terrain-grid <x>,<z> [<x>,<z> ...]\n"
             << "       AssetCook --input <file> --out <package> --manifest <manifest.json> "
             << "--logical <path> --kind raw --entry <entry> --entry-type Raw "
             << "--format raw.v0 --variant default\n"
@@ -463,6 +532,8 @@ int main(int argc, char **argv)
     if (NorvesLib::Tools::AssetCook::RunSkeletalRoleFileCommand(argc, argv, roleExitCode)) return roleExitCode;
     int assetSetExitCode=0;
     if (NorvesLib::Tools::AssetCook::RunTextureAssetSetCommand(argc,argv,assetSetExitCode)) return assetSetExitCode;
+    int terrainExitCode = 0;
+    if (RunTerrainGridSampleCommand(argc, argv, terrainExitCode)) return terrainExitCode;
     std::filesystem::path inspectPath;
     const char* inspectError=nullptr;
     const auto inspect=NorvesLib::Tools::AssetCook::ParseInspectCommandLine(argc,argv,inspectPath,inspectError);

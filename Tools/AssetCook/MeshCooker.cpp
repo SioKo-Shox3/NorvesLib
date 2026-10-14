@@ -2893,7 +2893,8 @@ namespace NorvesLib::Tools::AssetCook
             }
 
             // 升目ごとに 2 つの三角形。巻き方は ProceduralMeshGenerator::GeneratePlane と同じ（上から見て時計回り。
-            // FrontFace::Clockwise）。対角線は升目ごとに交互に向きを変え、斜面の筋が一方向に揃わないようにする
+            // FrontFace::Clockwise）。対角線は高さ場の補間と同じ規則（Terrain::UsesMainDiagonal。全体の格子の番号で
+            // 升目ごとに交互）で選ぶ
             VariableArray<uint32_t> indices;
             indices.reserve(static_cast<size_t>(cells) * cells * 6);
             for (uint32_t row = 0; row < cells; ++row)
@@ -2904,7 +2905,7 @@ namespace NorvesLib::Tools::AssetCook
                     const uint32_t i10 = i00 + 1;
                     const uint32_t i01 = i00 + side;
                     const uint32_t i11 = i01 + 1;
-                    if (((row + column) & 1u) == 0u)
+                    if (Terrain::UsesMainDiagonal(tileX * cells + column, tileZ * cells + row))
                     {
                         indices.push_back(i00);
                         indices.push_back(i10);
