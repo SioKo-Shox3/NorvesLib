@@ -1299,12 +1299,12 @@
 - notes: 条件: Cull1 と Cull2 の合計が 2 ms を超えるとき。subgroup の対応は装置の機能で確かめる。 反復の中で 1 回撮る計測: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views horizon -GpuTimingFrames 300 -GameArgs banana-count=1000000 -OutDir .harness/runs/scene-capture/SCN-MEGA-WAVE-ATOMICS`（ランナーは撮り直さず、保存した結果を検査する）。
 
 ## SCN-GEN-BUILDINGS-1: 荒野の建物を3種生成する（崩れた日干し煉瓦の家・見張り塔・石のアーチ）
-- status: doing
+- status: done
 - done-when: `GeneratedModels.json` に3種（荒野の前哨地に合う、単体で地面に立つ形の英語のプロンプト。50〜70 万面、テクスチャ 4096、実寸の高さ）を足して生成し、参照画像とプレビューを開いて、建物として形が崩れていない（壁が抜けていない・浮いた破片が少ない・底が平ら）ことを確かめる。崩れたものは seed かプロンプトを変えて作り直す。クックの一覧 `Assets/AssetSets/WastelandBuildingsModels.json` に足し、クックが通る。
 - verify: `python Scripts/GenerateSceneModels.py --verify --require-cooked --ids adobe_ruin,watchtower,stone_arch`
 - paths: Assets/AssetSets, Scripts, Tools/ComfyWorkflows, TASKS.md, PROGRESS.md
 - notes: 2026-10-10 親の調べ: `adobe_ruin` の 3D 化が 2 反復とも 2000 秒を超えて終わらなかった（`build/ComfyUI.log` で形の段の出力が 4440 万面、続く質感の段で止まる。見張り塔は 222 秒）。生成スクリプトに、定義ごとの `upsample_resolution`（既定 1536。`Trellis2UpsampleStage` の `target_resolution`）と、1体あたりの上限時間（既定 15 分。超えたら ComfyUI の `/interrupt` で止め、`upsample_resolution` を 1024 にして 1 回だけやり直す。やり直しも超えたら失敗として次の id へ進む）を足す。1 反復の壁時計（40 分）を超えないよう、ComfyUI の起動を含めて 1 反復の生成は合計 30 分以内に収め、収まらない分は manifest のあるものを飛ばして次の反復で続ける。 2026-10-10 再開（親が推奨を採った）: 3 種の資産は生成・確認・クックが済んでいる（評価者も確認）。残りは評価者の指摘どおり、生成スクリプトの締切を絶対時刻 1 つにして、参照画像・3D・GLB の取得・復旧（`/queue`）・後処理・終了処理のすべてに効かせ、終了処理の時間を先に取っておき、収まらない生成は次へ繰り越すことだけ。資産は作り直さない。
-
+ 2026-10-14 親: 締切の一本化（3bffaf84）を受け入れて閉じた。評価者の残りの指摘（後処理や HTTP のエラー本文の読み取りが長引くと締切を数秒越える）は直さない。合計 30 分の予算は 40 分の壁時計に止められないためのもので、10 分の余裕があり、数秒〜数十秒のはみ出しで変わる判断が無い。後処理を別プロセスへ移すような作り替えはしない。
 ## SCN-GEN-BUILDINGS-2: 荒野の建物を3種生成する（風車・給水塔・木造の小屋）
 - status: todo
 - done-when: SCN-GEN-BUILDINGS-1 と同じ形で、風車（`windmill`）・給水塔（`water_tower`）・木造の小屋（`wooden_shack`）を生成・確認・クックする。
