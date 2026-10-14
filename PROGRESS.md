@@ -4219,3 +4219,17 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `aux-SCN-TERRAIN-BLEND-r3d-deterministic.txt`: RelWithDebInfo の決定的撮影を、この変更の前の決定的撮影（`startup-capture/SCN-MEGA-FIX-BVH-QUEUE-VSM`）と比べて平均輝度の差 0・PSNR 100 dB・ずれた画素 0.0001%（最大 1 階調）。
 - Notes: 混ぜ方の値（角度・高さ・深さ・UV の倍率）は内部の値で、撮影 2 回で決めた。バナナの材質は Rendering3DTest の MegaGeometry の材質と同じ経路（`bEnabled` が偽）なので撮影していない。`--visibility-buffer=off` で出る RenderGraph の「layout-changing frame command」の ERROR は地形を使わない Rendering3DTest でも同じく出る（170 回、`aux-SCN-TERRAIN-BLEND-r3d-vboff.txt`）既存のもの。崖の岩肌の縦の引き伸ばし（UV がワールドの XZ）と、遠目の乾いた土の斑の繰り返し模様は SCN-TERRAIN-DETAIL の範囲。混ぜ合わせの CPU の試験は足していない。
 - Next: TASKS.md の次の未完の項目。
+
+### SCN-TERRAIN-DETAIL 完了（2026-10-14、反復 6〜7・run 20261014-140012）
+- Done: 地形の 3 層の標本をトライプラナーにし、距離で UV の倍率を変える混ぜ方と広い範囲の色・明るさの揺らぎを足し、メサの形を崩した。
+  - シェーダー（`Common/TerrainLayerBlend.glsl` の `ShadeTerrainLayers`）: 3 層ともワールドの位置から 3 方向の投影を法線の向きで重み付けて標本する（重みの 4 乗、5% 未満は標本しない）。法線は投影ごとの接平面の軸へ載せてワールドの向きで返す。カメラからの距離が 10 m の 3 倍ごとに段を上げ（最大 4 段）、隣の 2 段を混ぜる。段ごとに UV を黄金角で回してずらす。混ぜた後のアルベドに波長 80 m・300 m の値ノイズで明るさ ±22%・色味 ±5% の揺らぎを掛ける。ラスタ（`megageometry.frag`）と可視バッファの解決（`VisibilityResolve.glsl`）の両方。値は `MegaTerrainBlend` に足し、`TerrainBlendParams` は vec4 × 6（ResolveTileParams は 128 バイト）。
+  - サンプラー: 地形の混ぜ合わせの材質だけ異方性 16 のサンプラーで標本する（`MegaGeometryPass::m_TerrainSampler`・`VisibilityResolvePass::m_TerrainMaterialSampler`）。`ground` の足元の砂が横に流れない。
+  - 高さ場（`TerrainHeightField`）: メサの大きさ・縦横比・高さの幅を広げ、副の楕円 2 つで輪郭に張り出しと入り込みを付け、縁を 2 つの波長のノイズで崩し、尾根のノイズで浸食の切れ込みを入れ、頂を傾け、崖の途中に縁の一部だけの段を 2 つ付けた。メサの 6 割の脇に小さなビュートを立てる。16 区画を焼き直した。
+  - 視点 `cliff`: 南西のメサ（高さ約 63 m）の西の崖を、西の目の高さ 2 m から東向きに順光で見る。
+- 検証（`.harness/runs/20261014-140012/`）:
+  - `verify-SCN-TERRAIN-DETAIL-1.txt`: Debug の Game のビルド EXIT=0。
+  - `aux-SCN-TERRAIN-DETAIL-cook.txt`: 地形の 16 区画の焼き直し `cooked=16`。
+  - `verify-SCN-TERRAIN-DETAIL-2.txt`: `wasteland` の撮影 result=pass（default・ground・ridge・cliff、白飛び 0、黒つぶれ 0.0015 以下）。開いて確かめた: overview の砂に同じ模様の格子状の並びが見えない。cliff の崖は岩肌の割れ目の模様のまま縦に伸びた縞が無く、段と崩れた縁が見える。ridge のメサは高さ・大きさ・輪郭がばらばらで、段と張り出しがあり、型で抜いた円盤に見えない。ground の足元の砂は細部が横に流れずに見える。
+  - `verify-SCN-TERRAIN-DETAIL-3.txt`: 起動画面（Rendering3DTest）の撮影 result=pass（default・near・low）。開いて見た目が変わっていないことを確かめた。
+- Notes: 段の距離・比・上限、揺らぎの波長・振幅、トライプラナーの鋭さ、メサの形の値の幅は内部の値で、撮影で決めた。cliff を前の視点（西北西のメサ）から変えたのは、そこが逆光で崖が暗く縞の有無を見られなかったため。cliff で、遠い砂の上に乾いた土の層が台形の斑として出る所がある（粗い LOD の三角形の傾斜で層が切り替わる。SCN-TERRAIN-BLEND の混ぜ方の性質）。地形の 3 層は VT でない（`vt_used_mb=0`）ので、VT の要求はメッシュの UV のまま。VT にするときは標本した UV で要求を書く必要がある。性能は SCN-WASTELAND-POLISH の最終の配置で判断するので測っていない。試験は足していない。
+- Next: TASKS.md の次の未完の項目。
