@@ -89,6 +89,10 @@ namespace Game::GameModes
         // 晴天の日中の手動露出（絞り f/16・ISO 100 のままシャッター速度で合わせる）。手本の写真の記録（f/8・1/200 秒・ISO 100）と
         // 同じ EV 13.6 にする。晴天の f/16 の目安（EV 15）より 1.4 段明るく、写真と同じく空が白みを帯びて明るく写る
         constexpr float kExposureEV100 = 13.6f;
+        // カメラの JPEG の現像の明るさ[EV]。エンジンの露出は飽和に基づく式（2^-EV100 / 1.2 で白に届く）で、中間の灰（白の 12.8 %）は
+        // そのまま表示の 0.128 になる。カメラの JPEG は標準出力感度（ISO 12232）で同じ露出の中間の灰を sRGB 118（表示のリニアで 0.18）に
+        // 置くので、同じ記録の露出でも中間調が 0.18 / 0.128 = 1.41 倍（+0.49 段）明るく写る。露出の値は記録のまま、この現像の差だけを補う
+        constexpr float kCameraOutputCompensationEV = 0.49f;
         // 日中のグレーディング。トーンマップは暗部を縮めない NeutralLinear にし、空の光だけの影の中が黒くつぶれないようにする。
         // コントラストはカメラの JPEG の階調に寄せて、中間の灰（0.18）を軸にした S 字で立てる（空と雲は明るく、影と崖の暗部は
         // 締まる）。彩度を少し上げて空の青を残し、色温度はわずかに足すだけにする（写真の日向は白みの強い昼の色）。
@@ -123,15 +127,21 @@ namespace Game::GameModes
         constexpr float kAerialPerspectiveDistanceScale = 1.0f;
         constexpr float kAerialPerspectiveStartDistance = 300.0f;
         // 空のエアロゾル（Mie）の高さの尺度[m]。既定の 1.2 km の 1.33 倍にして柱の量を少し増やし、写真の白みの強い地平線の空に
-        // 寄せる。2 km を越えると空全体が灰色の曇りに見える
+        // 寄せる。2.4 km では青空の明るさは 1 割も変わらず、崖の視点の遠景の帯と空の比が写真の 0.46 から 0.34 へ離れた
         constexpr float kSkyMieScaleHeight = 1600.0f;
-        // 雲の層: 写真の晴天の積雲（底の平らな雲が空の半分ほど）。乾いた高原で雲底が高いので高度 2.5〜3.6 km の薄い層にし、
-        // 西寄りの風でゆっくり流す。消散係数を既定（0.01 /m）の 1/4 にして太陽の光を雲の奥まで通し、下から見ても白く明るい
-        // 雲にする（既定のままだと底が灰色の曇り空になる）。被覆は 0.5 で空が一面の曇りにつながるので、その手前にする
+        // 太陽の円盤の輝度[cd/m^2]。空の模型はこれを大気の上端の値として透過率を掛けるので、大気圏外の太陽照度（約 134 klx）を
+        // 円盤の立体角（6.87e-5 sr）で割った 1.95e9 にする。既定の 1.6e9（約 110 klx）は地表で測った値に近く、透過率を二重に
+        // 掛けて空・雲・日向がそろって 2 割ほど暗くなる
+        constexpr float kSunLuminanceNits = 1.95e9f;
+        // 雲の層: 写真の晴天の積雲（底の平らな雲が空の半分ほど）。乾いた高原で雲底が高いので高度 2.5〜3.6 km の層にし、
+        // 西寄りの風でゆっくり流す。形の大きさを既定（9 km）の半分にして、青空の隙間を挟んだ塊に分ける（既定の大きさでは薄く
+        // 広がった層が空全体に掛かり、灰色の曇り空に見える）。消散係数は既定（0.01 /m）の 6 割で、塊の縁が白く締まり、底も
+        // 灰色に沈まない。被覆は 0.4 で空の 2 割に満たず、0.5 で一面の曇りにつながるので、写真の半分ほどに合う 0.43 にする
         constexpr float kCloudBottomAltitude = 2500.0f;
         constexpr float kCloudTopAltitude = 3600.0f;
-        constexpr float kCloudCoverage = 0.45f;
-        constexpr float kCloudExtinctionPerMeter = 0.0025f;
+        constexpr float kCloudCoverage = 0.43f;
+        constexpr float kCloudExtinctionPerMeter = 0.006f;
+        constexpr float kCloudShapeScale = 4500.0f;
         constexpr float kCloudWindVelocity[2] = {8.0f, 3.0f};
         // カメラの遠方面[m]。地形（4.7 × 4.6 km）の対角（約 6.6 km）の先まで描く
         constexpr float kFarPlane = 7000.0f;
@@ -186,6 +196,7 @@ namespace Game::GameModes
             sky.SunAltitudeDegrees = kSunAltitudeDegrees;
             sky.SunAzimuthDegrees = kSunAzimuthDegrees;
             sky.MieScaleHeightMeters = kSkyMieScaleHeight;
+            sky.SunLuminanceNits = kSunLuminanceNits;
             ctx.EngineRef.GetRenderWorld().SetSkyAtmosphere(sky);
 
             VolumetricFogParameters fog = MakeDefaultVolumetricFogParameters();
@@ -207,6 +218,7 @@ namespace Game::GameModes
             cloudLayer.TopAltitudeMeters = kCloudTopAltitude;
             cloudLayer.Coverage = kCloudCoverage;
             cloudLayer.ExtinctionPerMeter = kCloudExtinctionPerMeter;
+            cloudLayer.ShapeScaleMeters = kCloudShapeScale;
             cloudLayer.WindVelocityX = kCloudWindVelocity[0];
             cloudLayer.WindVelocityZ = kCloudWindVelocity[1];
             ctx.EngineRef.GetRenderWorld().SetCloudLayer(cloudLayer);
@@ -807,7 +819,7 @@ namespace Game::GameModes
         camera->SetAperture(16.0f);
         camera->SetISO(100.0f);
         camera->SetShutterSpeed(ComputeShutterSpeedForEV100(camera->GetAperture(), camera->GetISO(), kExposureEV100));
-        camera->SetExposureCompensation(0.0f);
+        camera->SetExposureCompensation(kCameraOutputCompensationEV);
         camera->SetAntiAliasingMode(CameraAntiAliasingMode::FXAA);
         // 日中のトーンマップとグレーディング（このシーンのカメラだけ。ほかのシーンのカメラは各自のひな形を使う）
         CameraProxy &proxyTemplate = data.m_Rig.ProxyTemplate();
