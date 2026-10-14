@@ -1,0 +1,12 @@
+﻿# Scripts/Terrain の Python のパッケージ（Python 3.14、Windows x64 の wheel で確かめた版）
+# 入れ方: python -m pip install -r Scripts/Terrain/requirements.txt
+# GeoTIFF の DEM を読む
+rasterio==1.5.2
+numpy==2.4.6
+# rasterio の依存
+affine==3.0.1
+attrs==26.1.0
+certifi==2026.7.22
+click==8.4.2
+colorama==0.4.6; sys_platform == "win32"
+pyparsing==3.3.3

@@ -4321,3 +4321,20 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `contact_sheet.png` を開いて、ground_02 が沢底の写真に替わり、6 枚のラベルが日本語でセルの中に収まっていることを確かめた。
 - Notes: Commons の検索は短時間に続けると 429 を返すので、探すときは間を空ける。cliff_01 の推定の撮影位置は範囲の西の外 100〜450 m なので、SCN-WL-DEM-CROP で西の余白を 500 m 以上にすると DEM に乗る（文書に追記）。
 - Next: TASKS.md の次の未完の項目（SCN-WL-DEM-INPUT）。
+
+
+### SCN-WL-DEM-INPUT 完了（2026-10-15、反復 6・run 20261014-222123）
+- 実装: `Scripts/Terrain/DemInput.py` を足した（`--fetch` で The National Map の API から `USGS 1 Meter 12 x60y413 UT_WestEast_B22` の URL を引いて `Assets/Terrain/Source/` に落とし `manifest.json` を書く、`--verify` でファイル・manifest・パッケージ・git の無視を確かめ、タイルの中身を表示する）。ファイル名・大きさは固定（汎用の製品探索はしない）。`Scripts/Terrain/requirements.txt` に rasterio 1.5.2（Python 3.14 の Windows x64 wheel あり、GDAL 3.12.2 同梱）・numpy 2.4.6 と rasterio の依存の版を固定した。
+- DEM: 268270390 バイト、SHA-256 `7a08b18d6e8280b87352f892f0c40fe57b5ceda6bc12f396aa75ff7ef50e7e87`、URL `https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/1m/Projects/UT_WestEast_B22/TIFF/USGS_1M_12_x60y413_UT_WestEast_B22.tif`、取得日 2026-10-15（公開日 2024-10-30）。
+- タイルの中身:
+  - 座標系 EPSG:26912（NAD83 / UTM 12N）。標高の基準はファイルの CRS に無い（3DEP の仕様で NAVD88）。`AREA_OR_POINT=Area`（変換の原点は画素の外縁）。
+  - 10012 x 10012 画素、float32、LZW、512 四方のブロック。画素は 1 m 四方・回転なし。範囲（外縁）は E 599994〜610006・N 4119994〜4130006（タイルの 10 km 四方に周り 6 m の重なり）。
+  - 行の向き: 北から南（行 0 が北端、変換の y の刻みが -1）。
+  - NoData の値 -999999.0、画素数 7120245 / 100240144（7.10 %）。南東の隅の塊だけ（外接範囲 E 608663〜610006・N 4119994〜4125324）。
+  - 高さの範囲 1318.391〜1763.209 m（差 444.8 m）。
+  - 切り出し E 602500〜606500・N 4125000〜4129000 に余白（西 500 m・ほか 100 m）を付けた E 602000〜606600・N 4124900〜4129100 は 4600 x 4200 画素ですべて有効（NoData 0）、高さ 1393.358〜1651.110 m。隣のタイルは要らない。
+- 検証（`.harness/runs/20261014-222123/`）:
+  - `verify-SCN-WL-DEM-INPUT-1.txt`: git の無視の判定が `git check-ignore -q` に 2 つの道を渡して失敗（fail 1 件）。1 つずつ渡すよう直した。
+  - `verify-SCN-WL-DEM-INPUT-2.txt`: `python Scripts/Terrain/DemInput.py --verify` result=pass・exit=0（OK 32 件）。
+- Notes: パッケージはユーザーの site-packages に入っているので、DEM を読むスクリプトを `python -I` で走らせると rasterio が見つからない。TNM の API には同じタイルの古い版 `UT_StatewideSouth_2020_A20`（約 26 MB）もあるが使わない。
+- Next: TASKS.md の次の未完の項目（SCN-WL-DEM-CROP）。

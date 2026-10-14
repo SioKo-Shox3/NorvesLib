@@ -1383,7 +1383,7 @@
 - notes: 2026-10-14 親: ダウンロードはユーザーが許可済み（手本の写真 4〜6 枚、各数 MB）。調べ済み: Commons の `File:Franklin_Butte,_Valley_of_the_Gods.jpg`（CC BY-SA 3.0）は使える。`File:A287,_Valley_of_the_Gods,_Utah,_USA,_2008.JPG` は NC があるので使わない。Commons の Category:Valley of the Gods を API（https://commons.wikimedia.org/w/api.php）で引いてよい。USGS の写真はパブリックドメイン。
 
 ## SCN-WL-DEM-INPUT: 地形データと、それを読む Python の環境を用意する
-- status: todo
+- status: done
 - done-when: 3DEP の 1 m DEM `USGS_1M_12_x60y413_UT_WestEast_B22.tif`（約 268 MB。The National Map の API で URL を引く。配布元は prd-tnm.s3.amazonaws.com）を `Assets/Terrain/Source/` に落とし（git 管理外）、サイズ・SHA-256・URL・取得日を `Assets/Terrain/Source/manifest.json` に書く。GeoTIFF を読む Python のパッケージ（rasterio と numpy。Python 3.14 の wheel が無ければ tifffile と imagecodecs）を入れ、`Scripts/Terrain/requirements.txt` に版を固定して書く。タイルの座標系（EPSG）・画素の大きさ・行の向き・NoData の値と画素数・高さの範囲を読んで PROGRESS に書く。
 - verify: `python Scripts/Terrain/DemInput.py --verify`
 - paths: Scripts/Terrain, .gitignore, TASKS.md, PROGRESS.md
