@@ -4090,3 +4090,13 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `verify-SCN-MEGA-FIX-COOK-LOD-ERROR-6.txt`: 1 万本 overview を `scene-capture/SCN-MEGA-BASE-COOK` に撮り直した result=pass（bananas=10000、EXIT=0、`[ERROR]` 0）。PNG は近くのバナナの形が保たれ穴なし。
 - Next: SCN-MEGA-FIX-BVH-QUEUE-MAIN（100 万本の数はそこで見る）。
 - Notes: 試験の追加はしていない（空の出力を作る入力の試験は計画外）。
+
+### SCN-MEGA-FIX-BVH-QUEUE-MAIN（2026-10-14、反復 3・run 20261014-102529）
+- Done: クックの LOD の誤差の直し（SCN-MEGA-FIX-COOK-LOD-ERROR）の後に同じ撮影で見直し、コードの追加の変更なしで合格を確かめた。主の描画の BVH のたどりは反復 1 の形（子を列へ積む前に視錐台と LOD で判定する。485b1950）のまま。選ぶクラスタが画面の細かさに見合う数になり、節の列の 1 段の最大は horizon 12,507,738 → 935,105、overview 12,987,174 → 915,269（容量 4,194,304 の約 22%）。焼き込みの BVH を LOD の段ごとにまとめ直す処理は要らなかった。列の容量の定数は変えていない。
+- 検証（`.harness/runs/20261014-102529/`）:
+  - `verify-SCN-MEGA-FIX-BVH-QUEUE-MAIN-1.txt`: RelWithDebInfo の Game のビルド EXIT=0、error 0。
+  - `verify-SCN-MEGA-FIX-BVH-QUEUE-MAIN-2.txt`: 100 万本 horizon・overview の撮影 result=pass（bananas=1000000、EXIT=0）。両ログの `MEGA_CAPACITY` は全行 `bvh_overflow=0`・`draw_dropped=0`・`visible_list_overflow=0`（描く一覧の山 1.75M / 1.72M）、`[ERROR]` 0。PNG を開き、2 視点とも地平線までバナナが描かれ、床の帯が無いことを確かめた。
+  - `verify-SCN-MEGA-FIX-BVH-QUEUE-MAIN-3.txt`: `bvh_overflow=0` の検査 EXIT=0。
+  - `verify-SCN-MEGA-FIX-BVH-QUEUE-MAIN-4.txt`: 1 万本 overview と `SCN-MEGA-BASE-COOK` の比較 result=pass（psnr 57.8 dB、輝度差 0.0001、不一致の画素 0.08%、EXIT=0）。PNG は近くのバナナの形が保たれ穴なし。
+- Next: SCN-MEGA-FIX-BVH-QUEUE-VSM。
+- Notes: 100 万本の 2 視点で影の `VSM_MEGA_CULL overflow` が 230〜420 万あり、中ほどに影の暗い斑が出る。影の列の溢れは SCN-MEGA-FIX-BVH-QUEUE-VSM の範囲なので触っていない。性能は測っていない（SCN-MEGA-ACCEPT-1M で判断）。試験の追加はしていない。
