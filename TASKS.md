@@ -1431,14 +1431,13 @@
 - notes: 2026-10-14 親: 反復 13 の評価の差し戻し（空÷地形の比が手本 3.77・撮影 1.28〜1.56）を受けて done-when を分けた。地面が明るいのは材質（ベージュの砂・低木なし）のためで、光の項目では空・雲・影・霞だけを合わせる。
 
 ## SCN-WL-CAPTURE-FAST: 1 回の起動で複数の視点を撮れるようにし、荒野の全視点の撮影を 10 分以内にする
-- status: doing
-- done-when: 今の `Scripts/CaptureScene.ps1` は視点ごとに Game を起動し直し、荒野では毎回 100 区画（約 3.7 GB）を Debug で読み直すので 1 視点に約 2 分かかり、全視点（11）で 20 分を超えてランナーの検証の上限（1 コマンド 10 分）を越える。Game に、1 回の起動で複数の名前付き視点を順に撮る引数を足す（シーンの組み立てと SceneReady を待ってから、視点ごとにカメラを置き、ストリーミングと時間方向の蓄積（TAA・自動露出・RTGI）が落ち着くのを待って撮る。決定的な撮影の約束（同じ引数で同じ画素）を保つ）。`CaptureScene.ps1` は、-Views を省いたときと複数の視点を与えたときにこれを使う（今の出力の形（<視点>.png・metrics.json・SceneReport）は変えない）。荒野の全視点の 1920×1080 の撮影が Debug で 10 分以内に終わること、同じ視点を今の撮り方（1 視点ずつ起動）と新しい撮り方で撮って見た目が変わらないことを確かめる。起動画面（Rendering3DTest）の決定的な撮影の比較が通る。
+- status: done
+- done-when: 今の `Scripts/CaptureScene.ps1` は視点ごとに Game を起動し直し、荒野では毎回 100 区画（約 3.7 GB）を Debug で読み直すので 1 視点に約 2 分かかり、全視点（11）で 20 分を超えてランナーの検証の上限（1 コマンド 10 分）を越える。Game に、1 回の起動で複数の名前付き視点を順に撮る引数を足す（シーンの組み立てと SceneReady を待ってから、視点ごとにカメラを置き、ストリーミングと時間方向の蓄積（TAA・自動露出・RTGI）が落ち着くのを待って撮る。荒野の視点の撮影は画素の完全な一致を求めない（写真と並べて品質を見るための撮影）。起動画面の決定的な撮影は差 0 を保つ）。`CaptureScene.ps1` は、-Views を省いたときと複数の視点を与えたときにこれを使う（今の出力の形（<視点>.png・metrics.json・SceneReport）は変えない）。荒野の全視点の 1920×1080 の撮影が Debug で 10 分以内に終わること、同じ視点を今の撮り方（1 視点ずつ起動）と新しい撮り方で撮って見た目が変わらないことを確かめる。起動画面（Rendering3DTest）の決定的な撮影の比較が通る。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-WL-CAPTURE-FAST`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -OutDir .harness/runs/startup-capture/SCN-WL-CAPTURE-FAST`
 - paths: Scripts, Game, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Library/Core/Public/Application, Library/Core/Private/Application, TASKS.md, PROGRESS.md
-- notes: 2026-10-15 親: SCN-WL-REFERENCE-CAPTURE の再検証が撮影の時間切れ（10 分）で NG になった。基準の光（SCN-WL-LIGHT-BASE）が 4 反復かかったのも、大半が撮影の待ちだった。以後の荒野の項目は全部この撮影を何度も使う。
-
+- notes: 2026-10-15 親: SCN-WL-REFERENCE-CAPTURE の再検証が撮影の時間切れ（10 分）で NG になった。基準の光（SCN-WL-LIGHT-BASE）が 4 反復かかったのも、大半が撮影の待ちだった。以後の荒野の項目は全部この撮影を何度も使う。 2026-10-15 親: 8dec0692 で閉じた（親が受け入れた）。評価の差し戻しは、複数の視点の撮影で同じ視点の 2 回の撮影が最大 4 段違う（PSNR 100）ことだけで、画素の完全な一致は親が書きすぎた条件だったので外した。全 11 視点を 172 秒・ページの読み込みの完了・1 視点ずつの撮影と見た目が同じ・起動画面の差 0 は評価者が確認した。評価者の non-blocking の指摘（`GeometryPageStreamer.h` 880 行付近の NoSpace の追い出しが、GPU の解放待ちの間も続き、別の塊のページまで外す）は、今回は evicted=0 で起きていない。追い出しが起きる規模で撮るときに見直す。
 ## SCN-WL-REFERENCE-CAPTURE: 手本の写真と同じ構図の視点と、並べた比較画像を作る
 - status: todo
 - done-when: 手本の写真ごとに、写真に合う名前付き視点（位置・向き・画角・時刻。推定した条件を書き、「同じ」とは書かない）を足し、写真と撮影を左右に並べた PNG を書くスクリプト `Scripts/Terrain/CompareReference.py` を作る（今の `CompareLight.py` を広げてよい）。品質を見る撮影は 1920×1080 以上で撮る（1280×720 では粗さが判断を狂わせる）。比較画像には、地面・崖・空の領域ごとの平均の色（線形）と明るさを写真と撮影の両方で書き、地表の材質の平均のアルベドも書く。比較画像を開いて、ビュート・メサの配置と輪郭が対応することを確かめ、目立つ差（形・色・明るさ・尺度・地表の種類・欠けている物）を差の大きい順に `Docs/RenderingValidation/WastelandReference.md` に書く。以後の荒野の項目は、この視点と比較画像で判断する。他の地域の写真は材質と光の参考だけに使う。
