@@ -86,6 +86,45 @@ namespace Game::GameModes
         // 方位角は +X（東）から +Z（南）へ測るので、北から 244° は 154°
         constexpr float kSunAltitudeDegrees = 58.5f;
         constexpr float kSunAzimuthDegrees = 154.0f;
+        /// 手本の写真の構図に寄せた視点（SceneCatalog.h の ref_*）で替える画角と太陽
+        struct WastelandReferenceShot
+        {
+            /// 視点の名前（SceneCatalog.h の kWastelandViews）
+            const char *ViewName;
+            /// 縦の画角[度]。16:9 の画面の横の画角が、写真の横の画角（焦点距離と撮像素子の大きさからの推定）と同じになる値
+            float VerticalFieldOfViewDegrees;
+            /// 写真の日時と影から推定した太陽の仰角[度]と方位角[度]（方位角は上と同じく +X から +Z へ測る）
+            float SunAltitudeDegrees;
+            float SunAzimuthDegrees;
+        };
+        // 写真ごとの推定（根拠は Docs/RenderingValidation/WastelandReference.md）。どれも写真と同じ条件ではない
+        constexpr WastelandReferenceShot kReferenceShots[] = {
+            // far_01: APS-C の 55 mm（横 23°）。太陽は基準の光と同じ（5 月 18 日の南中の 2 時間後）
+            {"ref_far_01", 13.1f, kSunAltitudeDegrees, kSunAzimuthDegrees},
+            // far_02: 1/2.5 型の 6.1 mm（横 50°）。5 月 11 日 16 時ごろ（記録の 22:12 を UTC とみる）、西南西の 45°
+            {"ref_far_02", 29.5f, 45.0f, 160.0f},
+            // cliff_01: 焦点距離の記録が無く、崖の見かけの大きさから横 30°。9 月 23 日の日没の 1 時間前、西の 10°
+            {"ref_cliff_01", 17.1f, 10.0f, 172.0f},
+            // cliff_02: パノラマの切り出しで、ビュートの見かけの高さから横 11°。11 月 4 日 15:19、南西の 24°
+            {"ref_cliff_02", 6.1f, 24.0f, 132.0f},
+            // ground_01: 35 mm 換算 26 mm（横 69°）。3 月 17 日 13:27、南の 51°（写真は曇天で、雲は替えない）
+            {"ref_ground_01", 42.3f, 51.0f, 90.0f},
+            // ground_02: 35 mm 換算 110 mm（横 19°）。10 月 13 日 14:52、南南西の 38°
+            {"ref_ground_02", 10.5f, 38.0f, 125.0f},
+        };
+
+        /// 視点の名前に対応する手本の構図（無ければ nullptr）
+        const WastelandReferenceShot *FindReferenceShot(const String &viewName)
+        {
+            for (const WastelandReferenceShot &shot : kReferenceShots)
+            {
+                if (viewName == shot.ViewName)
+                {
+                    return &shot;
+                }
+            }
+            return nullptr;
+        }
         // 晴天の日中の手動露出（絞り f/16・ISO 100 のままシャッター速度で合わせる）。手本の写真の記録（f/8・1/200 秒・ISO 100）と
         // 同じ EV 13.6 にする。晴天の f/16 の目安（EV 15）より 1.4 段明るく、写真と同じく空が白みを帯びて明るく写る
         constexpr float kExposureEV100 = 13.6f;
@@ -189,12 +228,12 @@ namespace Game::GameModes
         constexpr uint32_t kTerrainTextureCount = 9;
 
         /// 物理空・太陽・高さフォグ・空気遠近・雲の層
-        void ApplyEnvironment(GameModeContext &ctx)
+        void ApplyEnvironment(GameModeContext &ctx, float sunAltitudeDegrees, float sunAzimuthDegrees)
         {
             SkyAtmosphereParameters sky = MakeDefaultSkyAtmosphereParameters();
             sky.bEnabled = true;
-            sky.SunAltitudeDegrees = kSunAltitudeDegrees;
-            sky.SunAzimuthDegrees = kSunAzimuthDegrees;
+            sky.SunAltitudeDegrees = sunAltitudeDegrees;
+            sky.SunAzimuthDegrees = sunAzimuthDegrees;
             sky.MieScaleHeightMeters = kSkyMieScaleHeight;
             sky.SunLuminanceNits = kSunLuminanceNits;
             ctx.EngineRef.GetRenderWorld().SetSkyAtmosphere(sky);
@@ -731,7 +770,10 @@ namespace Game::GameModes
                    static_cast<double>(pose.Position[2]), static_cast<double>(groundHeight),
                    static_cast<double>(pose.Position[1]));
 
-        ApplyEnvironment(ctx);
+        // 手本の写真の構図の視点では、太陽を写真の時刻の推定に替える
+        const WastelandReferenceShot *referenceShot = FindReferenceShot(data.m_ViewName);
+        ApplyEnvironment(ctx, referenceShot ? referenceShot->SunAltitudeDegrees : kSunAltitudeDegrees,
+                         referenceShot ? referenceShot->SunAzimuthDegrees : kSunAzimuthDegrees);
 
         // 地形の区画を読み、材質のテクスチャの読み込みを始める。無いときは空と太陽だけで組み立てを終える
         TSharedPtr<const Asset::AssetSystem> assetSystem;
@@ -816,6 +858,10 @@ namespace Game::GameModes
 
         Component::CameraComponent *camera = data.m_Rig.GetCamera();
         camera->SetFarPlane(kFarPlane);
+        if (referenceShot)
+        {
+            camera->SetFieldOfView(referenceShot->VerticalFieldOfViewDegrees);
+        }
         camera->SetAperture(16.0f);
         camera->SetISO(100.0f);
         camera->SetShutterSpeed(ComputeShutterSpeedForEV100(camera->GetAperture(), camera->GetISO(), kExposureEV100));

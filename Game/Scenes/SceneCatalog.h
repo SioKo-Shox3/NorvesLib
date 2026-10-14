@@ -162,6 +162,24 @@ namespace Game::Scenes
         // 前哨地の候補 A の人の目の高さから、南南西の Rooster Butte（750 m）と南の Setting Hen Butte（1.2 km）を見る視点
         // （前哨地は SCN-WL-OUTPOST で置き直す）
         {"outpost", SceneViewKind::FreePose, 10.0f, 3.0f, 0.0f, {1199.5f, 1.7f, 150.5f}},
+        // 以下は手本の写真（Assets/Reference/ValleyOfTheGods、Docs/RenderingValidation/WastelandReference.md）の構図に寄せた視点。
+        // 位置・向きは写真の GPS と写った地形の方位からの推定で、写真と同じではない。画角と太陽の時刻は荒野のモードが
+        // 視点ごとに替える（WastelandRoutine.cpp の kReferenceShots）。比べるのは Scripts/Terrain/CompareReference.py
+        // far_01: 写真の GPS（Battleship Rock の北東 700 m の谷床）から北西（方位 312°）の Castle Butte の方を見る
+        {"ref_far_01", SceneViewKind::FreePose, 132.0f, 1.4f, 0.0f, {-963.5f, 1.7f, -1548.5f}},
+        // far_02: Setting Hen Butte の南南西 680 m の谷床から北（方位 5°）の Rooster Butte と Setting Hen Butte を見る
+        // （写真の GPS の位置では 2 つのビュートの左右が写真と逆になるので、左右の並びと見かけの高さから南へ置いた）
+        {"ref_far_02", SceneViewKind::FreePose, 185.0f, 1.0f, 0.0f, {1099.5f, 1.7f, 2000.5f}},
+        // cliff_01: Battleship Rock の長い軸（方位 132°）を北西へ延ばした谷床、北西の端から 800 m の所から南東（方位 132°）の
+        // 北西の端の面を見る（Commons の説明の北西面と、写真の幅の狭い輪郭から）
+        {"ref_cliff_01", SceneViewKind::FreePose, -48.0f, 2.5f, 0.0f, {-2450.0f, 1.7f, -1820.0f}},
+        // cliff_02: 写真の元のパノラマの GPS の東北東 290 m の高まり（GPS の位置では手前の起伏が Franklin Butte を隠す）から、
+        // 南東（方位 146°）、2.6 km 先の Franklin Butte を望遠で見る
+        {"ref_cliff_02", SceneViewKind::FreePose, -34.3f, 0.0f, 0.0f, {-1966.5f, 1.7f, -2454.5f}},
+        // ground_01: 撮影位置の記録が無い。南東の平らな谷床の目の高さから西を広角で見る、構図の型だけを合わせた視点
+        {"ref_ground_01", SceneViewKind::FreePose, 90.0f, -2.0f, 0.0f, {300.0f, 1.5f, 1800.0f}},
+        // ground_02: 写真の GPS（Battleship Rock の北 940 m の沢の中）から南東（方位 148°）の Franklin Butte と Rooster Butte を見る
+        {"ref_ground_02", SceneViewKind::FreePose, -32.4f, 1.4f, 0.0f, {-1292.5f, 1.7f, -1894.5f}},
     };
 
     /// 荒野のシーンの id。地形は DEM の格子からクックで焼く（格子と区画は Scripts/Terrain と Scripts/CookAssets.ps1 で作る）
