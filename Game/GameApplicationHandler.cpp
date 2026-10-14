@@ -129,6 +129,18 @@ namespace Game
         // --scene-report=<path>: シーンの解決結果（未知の id・視点、欠けた資産）をテキストで書き出す。
         // ログを書かない構成（Release）でも撮影スクリプトが資産の欠けを検査できるよう、ログとは別に出す。
         constexpr const TCHAR *kSceneReportOption = TEXT("--scene-report=");
+        // --capture-views=<視点,...|all>: 1回の起動で、シーンの名前付き視点を順に撮る（決定的な撮影と併せて使う）。
+        // all は既定の視点（default）と残りの全視点。先頭が起動時の視点で、--scene-view とは併用しない。
+        // 保存先は --capture-png のパスのフォルダの <視点>.png（--capture-png 自身はこの撮影が書く。Debug/MultiViewCapture.h）。
+        // 2つ以上の視点は、実行中に視点を置き直せるシーン（自由飛行カメラのシーン）だけで撮れる。
+        constexpr const TCHAR *kCaptureViewsOption = TEXT("--capture-views=");
+        // --capture-views-settle-frames=<n>: --capture-views で視点を置き直してから、撮る手順（落ち着きの判定・エポック）を始めるまでに
+        // 待つ描画フレーム数（既定 MultiViewCapture::kDefaultViewSettleRenderedFrames）
+        constexpr const TCHAR *kCaptureViewsSettleFramesOption = TEXT("--capture-views-settle-frames=");
+        // --exit-after-rendered-frames=<n>: ApplicationProcessor の、落ち着いてから撮るまでの描画フレーム数（--capture-views も同じ数で撮る）
+        constexpr const TCHAR *kExitAfterRenderedFramesOption = TEXT("--exit-after-rendered-frames=");
+        // ApplicationProcessor の --capture-png が、落ち着いてから撮るまでに描く既定のフレーム数（kCapturePngDefaultSettledRenderedFrames）
+        constexpr uint64_t kCapturePngDefaultSettledRenderedFrames = 60;
         // --camera-script=<file>: 自由飛行カメラへ決まった入力を流す台本（開発ビルドだけ。書式は Input/CameraScript.h）。
         // 撮影で「この操作でここへ動く」を再現するのに使う。
         constexpr const TCHAR *kCameraScriptOption = TEXT("--camera-script=");
@@ -1964,9 +1976,79 @@ namespace Game
         // 第2段 B-i: --imgui 不変条件ゲート。値を取らない bare フラグの厳密一致を走査し、
         // NORVES_ENABLE_IMGUI ビルドで指定された場合のみ ImGui モジュールを登録する。
         // フラグ無し or OFF ビルドでは一切登録せず、overlay seam は完全 no-op を保つ。
+        // --capture-views と、その保存先・撮るまでのフレーム数を決める --capture-png・--exit-after-rendered-frames
+        String capturePngPath;
+        uint64_t captureSettledRenderedFrames = kCapturePngDefaultSettledRenderedFrames;
+        uint64_t captureViewSettleRenderedFrames = Game::Debug::MultiViewCapture::kDefaultViewSettleRenderedFrames;
+        for (size_t i = 0; i < args.size(); ++i)
+        {
+            String value;
+            if (TryStripPrefix(args[i], kCaptureViewsOption, value))
+            {
+                if (!m_CaptureViewsRequest.empty() || value.empty())
+                {
+                    LOG_ERROR("--capture-views は1回だけ、視点の名前（カンマ区切り）か all を指定する");
+                    return false;
+                }
+                m_CaptureViewsRequest = value;
+            }
+            else if (TryStripPrefix(args[i], kCapturePngOption, value))
+            {
+                capturePngPath = value;
+            }
+            else if (TryStripPrefix(args[i], kExitAfterRenderedFramesOption, value))
+            {
+                uint32_t frames = 0;
+                if (TryParseUInt32(value, frames) && frames > 0)
+                {
+                    captureSettledRenderedFrames = frames;
+                }
+            }
+            else if (TryStripPrefix(args[i], kCaptureViewsSettleFramesOption, value))
+            {
+                uint32_t frames = 0;
+                if (!TryParseUInt32(value, frames))
+                {
+                    LOG_ERROR("--capture-views-settle-frames には 0 以上の整数を指定する");
+                    return false;
+                }
+                captureViewSettleRenderedFrames = frames;
+            }
+        }
+        if (!m_CaptureViewsRequest.empty())
+        {
+            if (capturePngPath.empty())
+            {
+                LOG_ERROR("--capture-views は --capture-png と併せて指定する（保存先のフォルダは --capture-png のパスのフォルダ）");
+                return false;
+            }
+            if (!captureSequencePrefix.empty())
+            {
+                LOG_ERROR("--capture-views は --capture-sequence と併用できません");
+                return false;
+            }
+        }
         if (!ResolveStartupScene())
         {
             return false;
+        }
+        if (!m_CaptureViewNames.empty())
+        {
+            // 保存先は --capture-png のパスのフォルダ（区切りが無ければ作業ディレクトリ）
+            String captureDirectory = TEXT(".");
+            for (size_t index = capturePngPath.size(); index > 0; --index)
+            {
+                if (capturePngPath[index - 1] == TEXT('/') || capturePngPath[index - 1] == TEXT('\\'))
+                {
+                    captureDirectory = capturePngPath.substr(0, index - 1);
+                    break;
+                }
+            }
+            m_MultiViewCapture.Configure(m_CaptureViewNames, captureDirectory, captureSettledRenderedFrames,
+                                         captureViewSettleRenderedFrames, &m_SceneViewSwitch);
+            LOG_INFO_F("CAPTURE_VIEWS configured views=%zu settled_rendered_frames=%llu view_settle_frames=%llu dir=%s",
+                       m_CaptureViewNames.size(), static_cast<unsigned long long>(captureSettledRenderedFrames),
+                       static_cast<unsigned long long>(captureViewSettleRenderedFrames), captureDirectory.c_str());
         }
         if ((bHasCharacterDrive && !m_bDogMovementSmoke) || (m_bDogMovementSmoke && m_bAnimationDebugRequested))
         {
@@ -2595,6 +2677,10 @@ namespace Game
         {
             m_SequenceFrameCapture.OnPreRender(NorvesLib::Core::Engine::GEngine->GetRenderWorld());
         }
+        if (m_MultiViewCapture.IsEnabled() && NorvesLib::Core::Engine::GEngine)
+        {
+            m_MultiViewCapture.OnPreRender(NorvesLib::Core::Engine::GEngine->GetRenderWorld(), HasPendingM9WorldWork());
+        }
     }
 
     void GameApplicationHandler::OnPostRender()
@@ -2602,6 +2688,10 @@ namespace Game
         if (m_SequenceFrameCapture.IsEnabled() && NorvesLib::Core::Engine::GEngine)
         {
             m_SequenceFrameCapture.OnPostRender(NorvesLib::Core::Engine::GEngine->GetRenderWorld());
+        }
+        if (m_MultiViewCapture.IsEnabled() && NorvesLib::Core::Engine::GEngine)
+        {
+            m_MultiViewCapture.OnPostRender(NorvesLib::Core::Engine::GEngine->GetRenderWorld(), HasPendingM9WorldWork());
         }
         LogVramLedgerOnce();
     }
@@ -2752,10 +2842,16 @@ namespace Game
         // - 設定の保存
     }
 
-    bool GameApplicationHandler::HasPendingAssetConsumers() const
+    bool GameApplicationHandler::HasPendingM9WorldWork() const
     {
         return m_M9WorldAcceptance && m_M9WorldAcceptance->bRequested &&
                m_M9WorldAcceptance->Preparation.HasPendingWork();
+    }
+
+    bool GameApplicationHandler::HasPendingAssetConsumers() const
+    {
+        // --capture-views は撮り終えるまで、ApplicationProcessor の --capture-png の撮影と終了を止めておく
+        return HasPendingM9WorldWork() || m_MultiViewCapture.IsHoldingEngineCapture();
     }
 
     void GameApplicationHandler::OnShutdown()
@@ -2825,6 +2921,8 @@ namespace Game
                 sceneReport += "unknown_view=" + m_StartupSceneView + "\n";
                 m_StartupSceneView = {};
             }
+            const bool bLauncherCaptureViewsValid =
+                m_CaptureViewsRequest.empty() || ResolveCaptureViews(nullptr, sceneReport);
             if (!m_SceneReportPath.empty())
             {
                 const String reportBody = String("scene=") + Scenes::kLauncherSceneId + "\n" + sceneReport;
@@ -2834,6 +2932,10 @@ namespace Game
                     LOG_ERROR_F("SCENE_REPORT_WRITE_FAILED path=%s", m_SceneReportPath.c_str());
                     return false;
                 }
+            }
+            if (!bLauncherCaptureViewsValid)
+            {
+                return false;
             }
             LOG_INFO_F("SCENE_SELECTED id=%s view=default", Scenes::kLauncherSceneId);
             return true;
@@ -2875,6 +2977,9 @@ namespace Game
             }
             sceneReport += "views=" + viewList + "\n";
         }
+
+        // --capture-views の列を決める（先頭を起動時の視点にし、下の --scene-view と同じ確かめを通す）
+        const bool bCaptureViewsValid = m_CaptureViewsRequest.empty() || ResolveCaptureViews(scene, sceneReport);
 
         if (!m_StartupSceneView.empty())
         {
@@ -2929,9 +3034,101 @@ namespace Game
                 return false;
             }
         }
+        if (!bCaptureViewsValid)
+        {
+            return false;
+        }
 
         LOG_INFO_F("SCENE_SELECTED id=%s view=%s", scene->Id,
                    m_StartupSceneView.empty() ? scene->Views[0].Name : m_StartupSceneView.c_str());
+        return true;
+    }
+
+    bool GameApplicationHandler::ResolveCaptureViews(const Scenes::SceneDescriptor *pScene, String &sceneReport)
+    {
+        if (!m_StartupSceneView.empty())
+        {
+            LOG_ERROR("--capture-views は --scene-view と併用できません（--capture-views の先頭が起動時の視点）");
+            return false;
+        }
+
+        // 「all」は既定の視点（default）と残りの全視点。それ以外はカンマ区切りの視点の名前
+        VariableArray<String> viewNames;
+        if (m_CaptureViewsRequest == String(TEXT("all")))
+        {
+            viewNames.push_back(String(TEXT("default")));
+            for (std::size_t index = 1; pScene != nullptr && index < pScene->ViewCount; ++index)
+            {
+                viewNames.push_back(String(pScene->Views[index].Name));
+            }
+        }
+        else
+        {
+            size_t begin = 0;
+            while (begin <= m_CaptureViewsRequest.size())
+            {
+                size_t end = begin;
+                while (end < m_CaptureViewsRequest.size() && m_CaptureViewsRequest[end] != TEXT(','))
+                {
+                    ++end;
+                }
+                viewNames.push_back(m_CaptureViewsRequest.substr(begin, end - begin));
+                begin = end + 1;
+            }
+        }
+
+        bool bValid = true;
+        for (std::size_t index = 0; index < viewNames.size(); ++index)
+        {
+            const String &viewName = viewNames[index];
+            const bool bKnown = pScene != nullptr ? Scenes::FindSceneView(*pScene, viewName.c_str()) != nullptr
+                                                  : viewName == String(TEXT("default"));
+            if (viewName.empty() || !bKnown)
+            {
+                LOG_ERROR_F("SCENE_VIEW_UNKNOWN scene=%s view=\"%s\" --capture-views の視点がシーンにありません",
+                            pScene != nullptr ? pScene->Id : Scenes::kLauncherSceneId, viewName.c_str());
+                sceneReport += "unknown_view=" + viewName + "\n";
+                bValid = false;
+            }
+            for (std::size_t other = 0; other < index; ++other)
+            {
+                if (viewNames[other] == viewName)
+                {
+                    LOG_ERROR_F("--capture-views の視点 %s が重複しています", viewName.c_str());
+                    bValid = false;
+                }
+            }
+        }
+        if (!bValid)
+        {
+            return false;
+        }
+
+        // 2つ以上の視点は、実行中に視点を置き直せる（GameMode が SceneViewSwitch を受ける）シーンだけで撮れる
+        const NorvesLib::Core::GameMode::GameModeId mode = pScene != nullptr ? pScene->Mode : Game::GameModes::Launcher;
+        const bool bSwitchable = mode == Game::GameModes::Wasteland || mode == Game::GameModes::MegaBananas ||
+                                 mode == Game::GameModes::Sandbox || mode == Game::GameModes::MegaStress;
+        if (viewNames.size() > 1 && !bSwitchable)
+        {
+            LOG_ERROR_F("CAPTURE_VIEWS_UNSUPPORTED scene=%s 実行中に視点を置き直せないシーンです（視点ごとに起動して撮る）",
+                        pScene != nullptr ? pScene->Id : Scenes::kLauncherSceneId);
+            sceneReport += "capture_views=unsupported\n";
+            return false;
+        }
+
+        String viewList;
+        for (std::size_t index = 0; index < viewNames.size(); ++index)
+        {
+            if (index > 0)
+            {
+                viewList += ",";
+            }
+            viewList += viewNames[index];
+        }
+        sceneReport += "capture_views=" + viewList + "\n";
+        // 先頭が起動時の視点。default は既定の視点なので、--scene-view を省いた起動と同じにする
+        m_StartupSceneView = viewNames[0] == String(TEXT("default")) ? String() : viewNames[0];
+        m_CaptureViewNames = viewNames;
         return true;
     }
 
@@ -3045,7 +3242,7 @@ namespace Game
             MegaBananas,
             [viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath, pathTime = m_CameraPathTime,
              bPathPlay = m_bCameraPathPlay, bananaCount = m_BananaCount, bShowInfo = m_bOpenSceneInfo,
-             pauseMenu = &m_PauseMenu,
+             pauseMenu = &m_PauseMenu, viewSwitch = &m_SceneViewSwitch,
              getAssetSystem = [this]() { return GetAssetSystemSnapshot(); }](const GameModeParams&)
                 -> Container::TUniquePtr<IGameMode>
             {
@@ -3057,6 +3254,7 @@ namespace Game
                 mode->GetData().m_BananaCount = bananaCount;
                 mode->GetData().m_bShowInfoAtStart = bShowInfo;
                 mode->GetData().m_pPauseMenu = pauseMenu;
+                mode->GetData().m_pViewSwitch = viewSwitch;
                 mode->GetData().m_GetAssetSystem = getAssetSystem;
                 return mode;
             });
@@ -3064,7 +3262,7 @@ namespace Game
         stateMachine->Registry().Register(
             Wasteland,
             [viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath, pathTime = m_CameraPathTime,
-             bPathPlay = m_bCameraPathPlay, pauseMenu = &m_PauseMenu,
+             bPathPlay = m_bCameraPathPlay, pauseMenu = &m_PauseMenu, viewSwitch = &m_SceneViewSwitch,
              getAssetSystem = [this]() { return GetAssetSystemSnapshot(); }](const GameModeParams&)
                 -> Container::TUniquePtr<IGameMode>
             {
@@ -3074,6 +3272,7 @@ namespace Game
                 mode->GetData().m_CameraPathTime = pathTime;
                 mode->GetData().m_bCameraPathPlay = bPathPlay;
                 mode->GetData().m_pPauseMenu = pauseMenu;
+                mode->GetData().m_pViewSwitch = viewSwitch;
                 mode->GetData().m_GetAssetSystem = getAssetSystem;
                 return mode;
             });
@@ -3082,7 +3281,8 @@ namespace Game
         stateMachine->Registry().Register(
             Sandbox,
             [viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath, pathTime = m_CameraPathTime,
-             bPathPlay = m_bCameraPathPlay, pauseMenu = &m_PauseMenu](const GameModeParams&) -> Container::TUniquePtr<IGameMode>
+             bPathPlay = m_bCameraPathPlay, pauseMenu = &m_PauseMenu,
+             viewSwitch = &m_SceneViewSwitch](const GameModeParams&) -> Container::TUniquePtr<IGameMode>
             {
                 auto mode = MakeUnique<SandboxMode>();
                 mode->GetData().m_ViewName = viewName;
@@ -3090,6 +3290,7 @@ namespace Game
                 mode->GetData().m_CameraPathTime = pathTime;
                 mode->GetData().m_bCameraPathPlay = bPathPlay;
                 mode->GetData().m_pPauseMenu = pauseMenu;
+                mode->GetData().m_pViewSwitch = viewSwitch;
                 return mode;
             });
         // 負荷シーン mega-stress も開発ビルドだけ。Entity の数・視点・台本は起動引数から渡す。
@@ -3102,7 +3303,7 @@ namespace Game
              movingStartTime = m_StressMovingStartTime, streamCell = m_StressStreamCellMeters,
              streamPeriod = m_StressStreamPeriod, streamMaxCycles = m_SceneCycle.IsEnabled() ? Game::GameModes::kSmokeStreamCycles : 0u,
              batchCells = m_bStressBatchCells,
-             pauseMenu = &m_PauseMenu,
+             pauseMenu = &m_PauseMenu, viewSwitch = &m_SceneViewSwitch,
              getAssetSystem = [this]() { return GetAssetSystemSnapshot(); }](const GameModeParams&)
                 -> Container::TUniquePtr<IGameMode>
             {
@@ -3120,6 +3321,7 @@ namespace Game
                 mode->GetData().m_StreamMaxCycles = streamMaxCycles;
                 mode->GetData().m_bBatchCells = batchCells;
                 mode->GetData().m_pPauseMenu = pauseMenu;
+                mode->GetData().m_pViewSwitch = viewSwitch;
                 mode->GetData().m_GetAssetSystem = getAssetSystem;
                 return mode;
             });

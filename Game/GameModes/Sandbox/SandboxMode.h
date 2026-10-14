@@ -16,6 +16,7 @@
 #include "Core/Public/GameMode/TGameMode.h"
 #include "Pause/PauseMenu.h"
 #include "Scenes/FreeCameraRig.h"
+#include "Scenes/SceneViewSwitch.h"
 
 namespace Game::GameModes
 {
@@ -32,6 +33,8 @@ namespace Game::GameModes
         bool m_bCameraPathPlay = false;
         /// ポーズメニュー（非所有）。開いている間はカメラを動かさない。無いなら nullptr
         const Game::Pause::PauseMenu *m_pPauseMenu = nullptr;
+        /// 実行中の視点の切り替えの依頼（非所有。--capture-views の撮影が使う）。無いなら nullptr
+        Game::Scenes::SceneViewSwitch *m_pViewSwitch = nullptr;
 
         Game::Scenes::FreeCameraRig m_Rig;
         uint32_t m_TickCount = 0;

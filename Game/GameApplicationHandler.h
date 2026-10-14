@@ -10,10 +10,13 @@
 #include "Bridge/BridgeRuntimeState.h"
 #include "Bridge/BridgeServerHost.h"
 #include "Bridge/NorvesLibBridgeAdapter.h"
+#include "Debug/MultiViewCapture.h"
 #include "Debug/SequenceFrameCapture.h"
 #include "GameModes/Rendering3DTest/M9WorldAcceptance.h"
 #include "Pause/PauseMenu.h"
+#include "Scenes/SceneCatalog.h"
 #include "Scenes/SceneCycleSmoke.h"
+#include "Scenes/SceneViewSwitch.h"
 #include "Scripting/M6ScriptSmokeController.h"
 
 #if defined(NORVES_ENABLE_IMGUI)
@@ -124,6 +127,15 @@ namespace Game
          *         --dog-movement-smoke との併用など、解決できない指定だけ false。
          */
         bool ResolveStartupScene();
+        /**
+         * @brief --capture-views の視点の列をシーンの視点と照合して決める（ResolveStartupScene から呼ぶ）。
+         * @param pScene シーンの定義。ランチャーなら nullptr（撮れるのは既定の視点だけ）
+         * @param sceneReport シーンの報告へ足す行（未知の視点・実行中に切り替えられないシーンなど）
+         * @return 撮影を続けてよいなら true。未知の視点・重複・切り替えられないシーンでの複数の視点は false
+         */
+        bool ResolveCaptureViews(const Game::Scenes::SceneDescriptor *pScene, NorvesLib::Core::Container::String &sceneReport);
+        /// --m9-world-smoke の資産の準備が、反映を待つ仕事を残しているか
+        bool HasPendingM9WorldWork() const;
         bool HasPendingAssetConsumers() const override;
         Game::Input::GameInputSettings& GetInputSettings() { return m_InputSettings; }
         const Game::Input::GameInputSettings& GetInputSettings() const { return m_InputSettings; }
@@ -191,6 +203,14 @@ namespace Game
         Game::Scripting::M6ScriptSmokeController m_M6ScriptSmokeController;
         // --capture-sequence で、1回の起動の中の複数の描画フレームを撮る。
         Game::Debug::SequenceFrameCapture m_SequenceFrameCapture;
+        // --capture-views で、1回の起動の中でシーンの複数の名前付き視点を順に撮る。
+        Game::Debug::MultiViewCapture m_MultiViewCapture;
+        /// 撮影役がシーンの GameMode へ出す、視点の切り替えの依頼の窓口（GameMode には非所有のポインタで渡す）
+        Game::Scenes::SceneViewSwitch m_SceneViewSwitch;
+        /// --capture-views=<視点,...|all> の値。空なら使わない
+        NorvesLib::Core::Container::String m_CaptureViewsRequest;
+        /// ResolveCaptureViews が決めた、撮る順の視点の名前（先頭が起動時の視点）
+        NorvesLib::Core::Container::VariableArray<NorvesLib::Core::Container::String> m_CaptureViewNames;
         NorvesLib::Core::Container::TSharedPtr<Game::GameModes::M9WorldAcceptanceConfig> m_M9WorldAcceptance;
 
         // 起動画面の非同期の読み込みが終わった後に VRAM_LEDGER を1回だけログへ出すための状態。

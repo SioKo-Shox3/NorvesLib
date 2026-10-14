@@ -1431,6 +1431,11 @@ namespace Game::GameModes
     void MegaStressRoutine::Tick(GameModeContext &ctx, MegaStressData &data, float deltaTime)
     {
         ++data.m_TickCount;
+        // 撮影の視点の切り替えは、このフレームのカメラを渡す前に置き直す
+        if (const Game::Scenes::SceneDescriptor *scene = Game::Scenes::FindScene(Game::Scenes::kMegaStressSceneId))
+        {
+            data.m_Rig.ApplyRequestedView(data.m_pViewSwitch, *scene);
+        }
         const bool bSuspended = data.m_pPauseMenu != nullptr && data.m_pPauseMenu->IsOpen();
         data.m_Rig.Tick(ctx, deltaTime, bSuspended);
 

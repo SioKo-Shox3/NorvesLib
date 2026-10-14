@@ -9,6 +9,7 @@
 #include "Core/Public/Object/Entity.h"
 #include "Core/Public/Object/World.h"
 #include "Core/Public/Rendering/RenderWorld.h"
+#include "Scenes/SceneViewSwitch.h"
 
 
 #include <algorithm>
@@ -208,6 +209,43 @@ namespace Game::Scenes
         // 実体は GameModeScope::Cleanup が返す
         m_pCameraEntity = nullptr;
         m_pCamera = nullptr;
+    }
+
+    void FreeCameraRig::PlaceAt(const FreeCameraPose &pose)
+    {
+        if (m_bPathPlaying)
+        {
+            StopPath("view");
+        }
+        m_Controller.Initialize(Math::Vector3(pose.Position[0], pose.Position[1], pose.Position[2]), pose.Yaw,
+                                pose.Pitch);
+        m_Collector.ResetAll();
+        LogPose("view");
+    }
+
+    void FreeCameraRig::ApplyRequestedView(SceneViewSwitch *pViewSwitch, const SceneDescriptor &scene)
+    {
+        if (pViewSwitch == nullptr || !pViewSwitch->IsRequested())
+        {
+            return;
+        }
+        const SceneViewDescriptor *view = FindSceneView(scene, pViewSwitch->GetViewName().c_str());
+        if (view == nullptr || view->Kind != SceneViewKind::FreePose)
+        {
+            LOG_ERROR_F("SCENE_VIEW_UNKNOWN scene=%s view=\"%s\" 自由飛行の視点に置き直せません", scene.Id,
+                        pViewSwitch->GetViewName().c_str());
+            pViewSwitch->Complete(false);
+            return;
+        }
+        FreeCameraPose pose{};
+        pose.Position[0] = view->Position[0];
+        pose.Position[1] = view->Position[1];
+        pose.Position[2] = view->Position[2];
+        pose.Yaw = view->Yaw;
+        pose.Pitch = view->Pitch;
+        PlaceAt(pose);
+        LOG_INFO_F("SCENE_VIEW_SWITCHED scene=%s view=%s", scene.Id, pViewSwitch->GetViewName().c_str());
+        pViewSwitch->Complete(true);
     }
 
     void FreeCameraRig::NotifySceneReady()

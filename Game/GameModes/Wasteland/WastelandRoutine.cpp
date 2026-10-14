@@ -278,6 +278,66 @@ namespace Game::GameModes
             ctx.EngineRef.GetRenderWorld().SetSunShadowMaxDistance(0.0f);
         }
 
+        /// 視点の高さ（地形からの高さ）に、その (x,z) の地形の高さを足す。格子が無い・範囲の外なら地面を 0 とする
+        void LiftPoseToTerrain(const Terrain::TerrainHeightField *pHeightField, const String &viewName,
+                               Game::Scenes::FreeCameraPose &pose)
+        {
+            const char *viewLabel = viewName.empty() ? "default" : viewName.c_str();
+            float groundHeight = 0.0f;
+            if (pHeightField && pHeightField->Contains(pose.Position[0], pose.Position[2]))
+            {
+                groundHeight = pHeightField->SampleHeight(pose.Position[0], pose.Position[2]);
+            }
+            else if (pHeightField)
+            {
+                LOG_WARNING_F("WASTELAND_VIEW_OUT_OF_RANGE view=%s x=%.1f z=%.1f 視点が地形の格子の外です", viewLabel,
+                              static_cast<double>(pose.Position[0]), static_cast<double>(pose.Position[2]));
+            }
+            pose.Position[1] += groundHeight;
+            LOG_INFO_F("WASTELAND_VIEW view=%s x=%.1f z=%.1f ground=%.2f eye=%.2f", viewLabel,
+                       static_cast<double>(pose.Position[0]), static_cast<double>(pose.Position[2]),
+                       static_cast<double>(groundHeight), static_cast<double>(pose.Position[1]));
+        }
+
+        /// 撮影の視点の切り替えの依頼（Scenes/SceneViewSwitch.h）があれば、カメラ・画角・太陽をその視点へ置き直す。
+        /// 地形・材質は読み直さない（Enter と同じ視点の解釈で、置き直すものだけを替える）
+        void ApplyRequestedView(GameModeContext &ctx, WastelandData &data)
+        {
+            Game::Scenes::SceneViewSwitch *pViewSwitch = data.m_pViewSwitch;
+            if (pViewSwitch == nullptr || !pViewSwitch->IsRequested())
+            {
+                return;
+            }
+            const Game::Scenes::SceneDescriptor *scene = Game::Scenes::FindScene(Game::Scenes::kWastelandSceneId);
+            const Game::Scenes::SceneViewDescriptor *view =
+                scene != nullptr ? Game::Scenes::FindSceneView(*scene, pViewSwitch->GetViewName().c_str()) : nullptr;
+            Component::CameraComponent *camera = data.m_Rig.GetCamera();
+            if (view == nullptr || view->Kind != Game::Scenes::SceneViewKind::FreePose || camera == nullptr)
+            {
+                LOG_ERROR_F("SCENE_VIEW_UNKNOWN scene=wasteland view=\"%s\" 視点を置き直せません",
+                            pViewSwitch->GetViewName().c_str());
+                pViewSwitch->Complete(false);
+                return;
+            }
+            data.m_ViewName = pViewSwitch->GetViewName();
+            Game::Scenes::FreeCameraPose pose{};
+            pose.Position[0] = view->Position[0];
+            pose.Position[1] = view->Position[1];
+            pose.Position[2] = view->Position[2];
+            pose.Yaw = view->Yaw;
+            pose.Pitch = view->Pitch;
+            LiftPoseToTerrain(data.m_pHeightField.get(), data.m_ViewName, pose);
+            data.m_Rig.PlaceAt(pose);
+
+            // 手本の写真の構図の視点では、画角と太陽を写真の推定に替え、それ以外は基準の値へ戻す
+            const WastelandReferenceShot *referenceShot = FindReferenceShot(data.m_ViewName);
+            ApplyEnvironment(ctx, referenceShot ? referenceShot->SunAltitudeDegrees : kSunAltitudeDegrees,
+                             referenceShot ? referenceShot->SunAzimuthDegrees : kSunAzimuthDegrees);
+            camera->SetFieldOfView(referenceShot ? referenceShot->VerticalFieldOfViewDegrees : data.m_DefaultFieldOfView);
+            LOG_INFO_F("SCENE_VIEW_SWITCHED scene=wasteland view=%s", data.m_ViewName.c_str());
+            pViewSwitch->Complete(true);
+        }
+
         /// DEM の区画 (tileX, tileZ) のクック済みメッシュの論理パス
         String MakeDemTileLogicalPath(uint32_t tileX, uint32_t tileZ)
         {
@@ -752,23 +812,7 @@ namespace Game::GameModes
                           "Scripts/Terrain/CropDem.py --build で作ると描けます",
                           TerrainSpec::kDemGridDescriptorPath, gridError.c_str());
         }
-        // 視点の高さは地形からの高さ。格子が無い・範囲の外なら地面を 0 とする
-        float groundHeight = 0.0f;
-        if (data.m_pHeightField && data.m_pHeightField->Contains(pose.Position[0], pose.Position[2]))
-        {
-            groundHeight = data.m_pHeightField->SampleHeight(pose.Position[0], pose.Position[2]);
-        }
-        else if (data.m_pHeightField)
-        {
-            LOG_WARNING_F("WASTELAND_VIEW_OUT_OF_RANGE view=%s x=%.1f z=%.1f 視点が地形の格子の外です",
-                          data.m_ViewName.empty() ? "default" : data.m_ViewName.c_str(),
-                          static_cast<double>(pose.Position[0]), static_cast<double>(pose.Position[2]));
-        }
-        pose.Position[1] += groundHeight;
-        LOG_INFO_F("WASTELAND_VIEW view=%s x=%.1f z=%.1f ground=%.2f eye=%.2f",
-                   data.m_ViewName.empty() ? "default" : data.m_ViewName.c_str(), static_cast<double>(pose.Position[0]),
-                   static_cast<double>(pose.Position[2]), static_cast<double>(groundHeight),
-                   static_cast<double>(pose.Position[1]));
+        LiftPoseToTerrain(data.m_pHeightField.get(), data.m_ViewName, pose);
 
         // 手本の写真の構図の視点では、太陽を写真の時刻の推定に替える
         const WastelandReferenceShot *referenceShot = FindReferenceShot(data.m_ViewName);
@@ -858,6 +902,7 @@ namespace Game::GameModes
 
         Component::CameraComponent *camera = data.m_Rig.GetCamera();
         camera->SetFarPlane(kFarPlane);
+        data.m_DefaultFieldOfView = camera->GetFieldOfView();
         if (referenceShot)
         {
             camera->SetFieldOfView(referenceShot->VerticalFieldOfViewDegrees);
@@ -884,6 +929,8 @@ namespace Game::GameModes
     void WastelandRoutine::Tick(GameModeContext &ctx, WastelandData &data, float deltaTime)
     {
         ++data.m_TickCount;
+        // 撮影の視点の切り替えは、このフレームのカメラを渡す前に置き直す
+        ApplyRequestedView(ctx, data);
         const bool bSuspended = data.m_pPauseMenu != nullptr && data.m_pPauseMenu->IsOpen();
         data.m_Rig.Tick(ctx, deltaTime, bSuspended);
 

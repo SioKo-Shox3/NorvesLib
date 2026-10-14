@@ -5,9 +5,15 @@
 #   clipped_white_ratio … R・G・B がすべて 255 の画素の割合
 #   crushed_black_ratio … R・G・B がすべて 0 の画素の割合
 #
-# -Views を省くと、そのシーンの全視点を撮る。まず既定の視点を default.png に撮り、Game が --scene-report に書く視点の一覧
-# （views=）から残りの視点を <名前>.png に撮る（既定の視点の実際の名前は metrics.json の scene_view に入る）。
-# -Views を与えると、その視点だけを --scene-view=<名前> で1回ずつ起動して撮る（視点の名前は Game/Scenes/SceneCatalog.h のシーンの定義）。
+# -Views を省くと、そのシーンの全視点を撮る。既定の視点を default.png に、残りの視点を <名前>.png に撮る（既定の視点の実際の
+# 名前は metrics.json の scene_view に入る）。-Views を与えると、その視点だけを撮る（視点の名前は Game/Scenes/SceneCatalog.h のシーンの定義）。
+# 決定的な撮影で -Views を省いたとき・2 つ以上の視点を与えたときは、Game を 1 回だけ起動し、--capture-views でシーンの組み立てを
+# 1 回で済ませて視点を順に撮る（視点ごとにカメラを置き直し、ストリーミングが追いつくのを待ってから、決定的な撮影のエポックを
+# 始め直して撮る。Game/Debug/MultiViewCapture.h）。その起動のログ・検証レイヤーのログは views.Game.log・views.Validation.log で、
+# シーンの報告は視点ごとの <視点>.SceneReport.txt へ写す。実行中に視点を置き直せないシーン（Game が報告に capture_views=unsupported を
+# 書く）と、視点が 1 つのとき・-GpuTimingFrames の計測は、視点ごとに起動する（--scene-view=<名前>。-Views を省いたときは、既定の視点の
+# 起動の報告（views=）から残りの視点の起動を足す。ログは <視点>.Game.log・<視点>.Validation.log）。
+# どちらで撮ったかは metrics.json の capture_mode（multi_view・per_view）と、視点ごとの capture_run（起動の名前）に入る。
 # -Width と -Height は両方を与えると --window-size=<幅>x<高さ> で窓とバックバッファの大きさを替える。
 # -GameArgs は Game へ足す引数を、先頭の -- を除いてカンマ区切りで与える（例: -GameArgs night,sun-elevation=10）。
 #   値にカンマを含む引数（startup-camera=0,5,2.5）は、カンマの次が英字で始まらない限り分けない。
@@ -49,7 +55,8 @@
 # PSNR が -ComparePsnrLimit 以上なら一致（式は CaptureStartupScene.ps1 の -CompareDeterministicWith と同じ）。
 # 比べる側にも gpu_timing があれば、metrics.json の comparison に GPU・ゲームスレッド・描画スレッドの median の比も書く。
 #
-# 失敗にするもの（終了コード 1）: Game の起動失敗・終了コードが0でない・タイムアウト、PNG が無い・大きさが違う、
+# 失敗にするもの（終了コード 1）: Game の起動失敗・終了コードが0でない・タイムアウト（1 回の起動で複数の視点を撮るときは
+# -TimeoutSeconds の 2 倍）、PNG が無い（その起動より前の古い PNG を含む）・大きさが違う、視点の切り替えの失敗（CAPTURE_VIEWS failed）、
 # Game.log のシェーダーのコンパイル失敗（Slang SDK 未設定の neural_material_decode.slang だけは既知として除外）、
 # 未知のシーン・視点の指定、シーンの報告が無い、SCENE_READY が無い、Debug の検証レイヤーのエラー。
 # -Configuration Release はログが無効で Game.log を書かないため、ログの検査（シェーダーのコンパイル失敗・SCENE_READY・
@@ -159,8 +166,10 @@ if (@($viewNames | Select-Object -Unique).Count -ne $viewNames.Count)
     exit 1
 }
 $shots = New-Object System.Collections.ArrayList
-# -Views を省いたときは、既定の視点を撮った後の報告（views=）で残りの視点を足す
+# -Views を省いたときは、撮った後の報告（views=・capture_views=）で残りの視点を足す
 $expandViews = ($viewNames.Count -eq 0)
+# 決定的な撮影で、-Views を省いたとき・2 つ以上の視点を与えたときは、1 回の起動で撮る（--capture-views）
+$useMultiView = ($GpuTimingFrames -eq 0) -and ($expandViews -or $viewNames.Count -ge 2)
 if ($expandViews)
 {
     [void]$shots.Add([pscustomobject]@{ Name = 'default'; SceneView = ''; DefaultViewName = '' })
@@ -673,19 +682,60 @@ $results = @()
 $gameLogPath = Join-Path $repoRoot 'Game.log'
 # 計測の窓から外す、末尾の撮影のフレームの直前のフレーム数
 $timingTailFrames = 2
-for ($shotIndex = 0; $shotIndex -lt $shots.Count; ++$shotIndex)
+
+# Game の起動の列。1 回の起動（run）が 1 つ以上の視点（Shots）を撮る。
+#   視点ごとの起動: Label は視点の名前で、Shots は 1 つ。-Views を省いたときは、既定の視点の起動の報告（views=）で残りの起動を足す。
+#   1 回の起動で複数の視点（--capture-views）: Label は views。-Views を省いたときは Game が報告に書く capture_views= で Shots を決める。
+$runs = New-Object System.Collections.ArrayList
+function Add-PerViewRuns
 {
-    $shot = $shots[$shotIndex]
-    $pngPath = Join-Path $outRoot "$($shot.Name).png"
-    $viewLogPath = Join-Path $outRoot "$($shot.Name).Game.log"
-    $viewValidationLogPath = Join-Path $outRoot "$($shot.Name).Validation.log"
-    $viewReportPath = Join-Path $outRoot "$($shot.Name).SceneReport.txt"
+    foreach ($perViewShot in $shots)
+    {
+        [void]$runs.Add([pscustomobject]@{ Label = $perViewShot.Name; Shots = (New-Object System.Collections.ArrayList (, @($perViewShot))); CaptureViews = '' })
+    }
+}
+$captureMode = if ($useMultiView) { 'multi_view' } else { 'per_view' }
+# 視点ごとの起動で、既定の視点の報告から残りの起動を足したか
+$perViewExpanded = $false
+if ($useMultiView)
+{
+    $multiShots = New-Object System.Collections.ArrayList
+    if (-not $expandViews)
+    {
+        foreach ($multiShot in $shots) { [void]$multiShots.Add($multiShot) }
+    }
+    [void]$runs.Add([pscustomobject]@{
+        Label = 'views'
+        Shots = $multiShots
+        CaptureViews = if ($expandViews) { 'all' } else { $viewNames -join ',' }
+    })
+}
+else
+{
+    Add-PerViewRuns
+}
+
+for ($runIndex = 0; $runIndex -lt $runs.Count; ++$runIndex)
+{
+    $run = $runs[$runIndex]
+    $bMultiRun = ($run.CaptureViews -ne '')
+    $failuresBeforeRun = $failures.Count
+    # 1 回の起動で撮るときの --capture-png は先頭の視点の PNG（Game はそのフォルダへ全視点を <視点>.png で書く）
+    $firstShotName = if ($bMultiRun) { if ($expandViews) { 'default' } else { $run.Shots[0].Name } } else { $run.Shots[0].Name }
+    $pngPath = Join-Path $outRoot "$firstShotName.png"
+    $viewLogPath = Join-Path $outRoot "$($run.Label).Game.log"
+    $viewValidationLogPath = Join-Path $outRoot "$($run.Label).Validation.log"
+    $viewReportPath = Join-Path $outRoot "$($run.Label).SceneReport.txt"
     foreach ($stale in @($pngPath, $viewLogPath, $viewValidationLogPath, $viewReportPath, $gameLogPath))
     {
         Remove-Item -LiteralPath $stale -Force -ErrorAction SilentlyContinue
     }
+    foreach ($staleShot in $run.Shots)
+    {
+        Remove-Item -LiteralPath (Join-Path $outRoot "$($staleShot.Name).png") -Force -ErrorAction SilentlyContinue
+    }
 
-    $tracePath = Join-Path $outRoot "$($shot.Name).trace.csv"
+    $tracePath = Join-Path $outRoot "$($run.Label).trace.csv"
     $arguments = @("--scene=$Scene", "--capture-png=`"$pngPath`"", "--scene-report=`"$viewReportPath`"")
     # 検証の起動は窓を前面に出さない（使っている人の作業を遮らない）
     $arguments += '--window-background'
@@ -700,9 +750,13 @@ for ($shotIndex = 0; $shotIndex -lt $shots.Count; ++$shotIndex)
     {
         $arguments += '--capture-deterministic'
     }
-    if ($shot.SceneView -ne '')
+    if ($bMultiRun)
     {
-        $arguments += "--scene-view=$($shot.SceneView)"
+        $arguments += "--capture-views=$($run.CaptureViews)"
+    }
+    elseif ($run.Shots[0].SceneView -ne '')
+    {
+        $arguments += "--scene-view=$($run.Shots[0].SceneView)"
     }
     if ($Width -gt 0)
     {
@@ -710,7 +764,7 @@ for ($shotIndex = 0; $shotIndex -lt $shots.Count; ++$shotIndex)
     }
     $arguments += $extraArguments
 
-    # Vulkan の検証レイヤーのメッセージ（VUID）は Game.log に入らないので、検証レイヤー自身のログ出力を視点ごとの
+    # Vulkan の検証レイヤーのメッセージ（VUID）は Game.log に入らないので、検証レイヤー自身のログ出力を起動ごとの
     # ファイルへ向けてエラーを数える（Debug だけ。他は検証レイヤーが無効）。起動した Game だけが受け継ぐよう、起動の直後に戻す。
     $previousValidationSettings = @{}
     foreach ($validationVariable in @('VK_KHRONOS_VALIDATION_DEBUG_ACTION', 'VK_KHRONOS_VALIDATION_LOG_FILENAME', 'VK_KHRONOS_VALIDATION_REPORT_FLAGS'))
@@ -723,6 +777,11 @@ for ($shotIndex = 0; $shotIndex -lt $shots.Count; ++$shotIndex)
         $env:VK_KHRONOS_VALIDATION_LOG_FILENAME = $viewValidationLogPath
         $env:VK_KHRONOS_VALIDATION_REPORT_FLAGS = 'error,warn'
     }
+    # 1 回の起動で複数の視点を撮るときは、時間切れの上限を -TimeoutSeconds の 2 倍にする（読み込みは 1 回で、視点ごとの待ちが足される）
+    $runTimeoutSeconds = if ($bMultiRun) { $TimeoutSeconds * 2 } else { $TimeoutSeconds }
+    $runStopwatch = [Diagnostics.Stopwatch]::StartNew()
+    # この起動より前に書かれた PNG（残っていた古い撮影）を見分けるための起動の時刻（ファイルの時刻の粒度の分だけ前へ寄せる）
+    $runStartUtc = [DateTime]::UtcNow.AddSeconds(-2)
     # アセットは作業ディレクトリからの相対パスで読むため、リポジトリのルートで起動する。
     try
     {
@@ -737,7 +796,7 @@ for ($shotIndex = 0; $shotIndex -lt $shots.Count; ++$shotIndex)
     }
     [void]$process.Handle
     $exitCode = $null
-    if ($process.WaitForExit($TimeoutSeconds * 1000))
+    if ($process.WaitForExit($runTimeoutSeconds * 1000))
     {
         $process.WaitForExit()
         $exitCode = [int]$process.ExitCode
@@ -745,48 +804,102 @@ for ($shotIndex = 0; $shotIndex -lt $shots.Count; ++$shotIndex)
     else
     {
         Stop-OwnedProcessTree $process.Id
-        $failures += "$($shot.Name): timeout（$TimeoutSeconds 秒で終わらなかった）"
+        $failures += "$($run.Label): timeout（$runTimeoutSeconds 秒で終わらなかった）"
     }
+    $runStopwatch.Stop()
+    Write-Output ("CAPTURE_SCENE run label={0} mode={1} seconds={2:0.0} exit_code={3}" -f $run.Label, $(if ($bMultiRun) { 'multi_view' } else { 'per_view' }), $runStopwatch.Elapsed.TotalSeconds, $exitCode)
 
     if (Test-Path -LiteralPath $gameLogPath)
     {
         Copy-Item -LiteralPath $gameLogPath -Destination $viewLogPath -Force
     }
-    if ($null -ne $exitCode -and $exitCode -ne 0)
-    {
-        $failures += "$($shot.Name): Game の終了コードが $exitCode"
-    }
 
     # シーンの報告（--scene-report）の検査。ログとは別に Game が書くので、Release でも未知のシーン・視点と必要な資産の欠けを検査できる。
     # 報告は ResolveStartupScene が必ず書くので、Game が正常に終わったのに無いなら失敗にする。
     $missingAssets = @()
+    $reportLines = @()
     if (Test-Path -LiteralPath $viewReportPath)
     {
-        foreach ($reportLine in @(Get-Content -LiteralPath $viewReportPath -Encoding UTF8 | Where-Object { $_ -match '\S' }))
+        $reportLines = @(Get-Content -LiteralPath $viewReportPath -Encoding UTF8 | Where-Object { $_ -match '\S' })
+    }
+    # 実行中に視点を置き直せないシーン: 1 回の起動での撮影をやめ、視点ごとの起動に切り替える（この起動の失敗は数えない）
+    if ($bMultiRun -and @($reportLines | Where-Object { $_ -match '^capture_views=unsupported\s*$' }).Count -gt 0)
+    {
+        Write-Output "CAPTURE_SCENE capture_views unsupported scene=$Scene（実行中に視点を置き直せないシーン。視点ごとに起動して撮る）"
+        if ($failures.Count -gt $failuresBeforeRun)
         {
-            if ($reportLine -match '^(unknown_scene|unknown_view)=')
+            $failures = @($failures | Select-Object -First $failuresBeforeRun)
+        }
+        $captureMode = 'per_view'
+        if ($expandViews)
+        {
+            $shots.Clear()
+            [void]$shots.Add([pscustomobject]@{ Name = 'default'; SceneView = ''; DefaultViewName = '' })
+        }
+        Add-PerViewRuns
+        continue
+    }
+    foreach ($reportLine in $reportLines)
+    {
+        if ($reportLine -match '^(unknown_scene|unknown_view)=')
+        {
+            $failures += "$($run.Label): シーンの報告: $($reportLine.Trim())"
+        }
+        elseif ($reportLine -match '^missing_asset=')
+        {
+            $missingAssets += $reportLine.Trim()
+        }
+        elseif ($reportLine -match '^views=(.+)$' -and $expandViews)
+        {
+            $sceneViews = @($Matches[1].Trim() -split ',' | Where-Object { $_ -ne '' })
+            if (-not $bMultiRun -and -not $perViewExpanded)
             {
-                $failures += "$($shot.Name): シーンの報告: $($reportLine.Trim())"
-            }
-            elseif ($reportLine -match '^missing_asset=')
-            {
-                $missingAssets += $reportLine.Trim()
-            }
-            elseif ($reportLine -match '^views=(.+)$' -and $expandViews -and $shotIndex -eq 0)
-            {
-                # 先頭が既定の視点（今撮っているもの）。残りの視点を撮る列へ足す
-                $sceneViews = @($Matches[1].Trim() -split ',' | Where-Object { $_ -ne '' })
-                $shot.DefaultViewName = $sceneViews[0]
+                $perViewExpanded = $true
+                # 先頭が既定の視点（今撮っているもの）。残りの視点を撮る起動を足す
+                $run.Shots[0].DefaultViewName = $sceneViews[0]
                 foreach ($otherView in @($sceneViews | Select-Object -Skip 1))
                 {
-                    [void]$shots.Add([pscustomobject]@{ Name = $otherView; SceneView = $otherView; DefaultViewName = '' })
+                    $otherShot = [pscustomobject]@{ Name = $otherView; SceneView = $otherView; DefaultViewName = '' }
+                    [void]$shots.Add($otherShot)
+                    [void]$runs.Add([pscustomobject]@{ Label = $otherView; Shots = (New-Object System.Collections.ArrayList (, @($otherShot))); CaptureViews = '' })
                 }
+            }
+            elseif ($bMultiRun)
+            {
+                $run | Add-Member -NotePropertyName DefaultViewName -NotePropertyValue $sceneViews[0] -Force
+            }
+        }
+        elseif ($reportLine -match '^capture_views=(.+)$' -and $bMultiRun -and $expandViews -and $run.Shots.Count -eq 0)
+        {
+            # Game が決めた撮る順の視点（先頭は default）
+            foreach ($capturedView in @($Matches[1].Trim() -split ',' | Where-Object { $_ -ne '' }))
+            {
+                $sceneView = if ($capturedView -eq 'default') { '' } else { $capturedView }
+                [void]$run.Shots.Add([pscustomobject]@{ Name = $capturedView; SceneView = $sceneView; DefaultViewName = '' })
             }
         }
     }
-    elseif ($null -ne $exitCode -and $exitCode -eq 0)
+    if ($bMultiRun -and $expandViews)
     {
-        $failures += "$($shot.Name): シーンの報告（$($shot.Name).SceneReport.txt）が無い"
+        foreach ($expandedShot in $run.Shots)
+        {
+            if ($expandedShot.Name -eq 'default' -and $null -ne $run.PSObject.Properties['DefaultViewName'])
+            {
+                $expandedShot.DefaultViewName = $run.DefaultViewName
+            }
+        }
+        if ($run.Shots.Count -eq 0 -and $null -ne $exitCode -and $exitCode -eq 0)
+        {
+            $failures += "$($run.Label): シーンの報告に capture_views=（撮った視点の列）が無い"
+        }
+    }
+    if ($reportLines.Count -eq 0 -and $null -ne $exitCode -and $exitCode -eq 0)
+    {
+        $failures += "$($run.Label): シーンの報告（$($run.Label).SceneReport.txt）が無い"
+    }
+    if ($null -ne $exitCode -and $exitCode -ne 0)
+    {
+        $failures += "$($run.Label): Game の終了コードが $exitCode"
     }
 
     # Game.log の検査。Release はログが無効（NORVES_ENABLE_LOGGING=0）で Game.log を書かないため飛ばす。
@@ -825,18 +938,18 @@ for ($shotIndex = 0; $shotIndex -lt $shots.Count; ++$shotIndex)
         {
             if ($null -ne $requestedEntities -and $null -ne $placedEntities -and $placedEntities -ne $requestedEntities)
             {
-                $failures += "$($shot.Name): 置いた Entity の数 $placedEntities が指定（stress-entities=$requestedEntities）と違う"
+                $failures += "$($run.Label): 置いた Entity の数 $placedEntities が指定（stress-entities=$requestedEntities）と違う"
             }
             if ($null -ne $requestedBananas -and $null -ne $placedBananas -and $placedBananas -ne $requestedBananas)
             {
-                $failures += "$($shot.Name): 置いたバナナの本数 $placedBananas が指定（banana-count=$requestedBananas）と違う"
+                $failures += "$($run.Label): 置いたバナナの本数 $placedBananas が指定（banana-count=$requestedBananas）と違う"
             }
         }
         # 開発ビルドの検査（ENGINE_CHECK）。fail の行は、名前を指定していなくても失敗にする。
         $checkResult = Get-EngineCheckCounts $viewLogPath
         foreach ($failLine in $checkResult.FailLines)
         {
-            $failures += "$($shot.Name): 検査が fail: $failLine"
+            $failures += "$($run.Label): 検査が fail: $failLine"
         }
         foreach ($checkName in $requiredChecks)
         {
@@ -844,30 +957,30 @@ for ($shotIndex = 0; $shotIndex -lt $shots.Count; ++$shotIndex)
             $passCount = if ($null -ne $count) { $count.pass } else { 0 }
             $failCount = if ($null -ne $count) { $count.fail } else { 0 }
             $engineChecks += [pscustomobject][ordered]@{ name = $checkName; pass = $passCount; fail = $failCount }
-            Write-Output "CAPTURE_SCENE engine_check view=$($shot.Name) name=$checkName pass=$passCount fail=$failCount"
+            Write-Output "CAPTURE_SCENE engine_check view=$($run.Label) name=$checkName pass=$passCount fail=$failCount"
             if ($passCount -lt 1)
             {
-                $failures += "$($shot.Name): 検査 $checkName の pass がログに無い（ENGINE_CHECK name=$checkName result=pass が 0 件。開発ビルドか、--engine-checks が効いているかを確かめる）"
+                $failures += "$($run.Label): 検査 $checkName の pass がログに無い（ENGINE_CHECK name=$checkName result=pass が 0 件。開発ビルドか、--engine-checks が効いているかを確かめる）"
             }
         }
         $sceneReady = @(Select-String -LiteralPath $viewLogPath -Pattern "SCENE_READY scene=$Scene\s*$").Count -gt 0
         if (-not $sceneReady)
         {
-            $failures += "$($shot.Name): SCENE_READY（シーンの組み立ての完了）がログに無い"
+            $failures += "$($run.Label): SCENE_READY（シーンの組み立ての完了）がログに無い"
         }
         if ($GpuTimingFrames -gt 0 -and $null -eq $sceneReadyFrame)
         {
-            $failures += "$($shot.Name): SCENE_READY_FRAME（SceneReady のフレーム番号）がログに無く、計測の窓を決められない"
+            $failures += "$($run.Label): SCENE_READY_FRAME（SceneReady のフレーム番号）がログに無く、計測の窓を決められない"
         }
         $shaderFailures = @(Select-String -LiteralPath $viewLogPath -Pattern 'Failed to compile shader' -SimpleMatch)
         foreach ($line in $shaderFailures)
         {
-            $failures += "$($shot.Name): $($line.Line.Trim())"
+            $failures += "$($run.Label): $($line.Line.Trim())"
         }
-        $unknownLines = @(Select-String -LiteralPath $viewLogPath -Pattern 'SCENE_UNKNOWN|SCENE_VIEW_UNKNOWN|SCENE_CATALOG_INVALID|CAMERA_SCRIPT_INVALID')
+        $unknownLines = @(Select-String -LiteralPath $viewLogPath -Pattern 'SCENE_UNKNOWN|SCENE_VIEW_UNKNOWN|SCENE_CATALOG_INVALID|CAMERA_SCRIPT_INVALID|CAPTURE_VIEWS failed')
         foreach ($line in $unknownLines)
         {
-            $failures += "$($shot.Name): $($line.Line.Trim())"
+            $failures += "$($run.Label): $($line.Line.Trim())"
         }
         # シーンの定義の欠け（SCENE_ASSET_MISSING）は報告で数えたので、ログからは Rendering3DTest の読み込み失敗の印だけを拾う。
         $logMissingAssets = @(Select-String -LiteralPath $viewLogPath -Pattern $missingAssetPattern |
@@ -875,7 +988,7 @@ for ($shotIndex = 0; $shotIndex -lt $shots.Count; ++$shotIndex)
     }
     elseif ($Configuration -ne 'Release')
     {
-        $failures += "$($shot.Name): Game.log が無い"
+        $failures += "$($run.Label): Game.log が無い"
     }
 
     $missingAssets = @($missingAssets) + @($logMissingAssets)
@@ -883,11 +996,11 @@ for ($shotIndex = 0; $shotIndex -lt $shots.Count; ++$shotIndex)
     {
         if ($RequireAssets)
         {
-            $failures += "$($shot.Name): 資産の欠け: $line"
+            $failures += "$($run.Label): 資産の欠け: $line"
         }
         else
         {
-            Write-Output "CAPTURE_SCENE warning view=$($shot.Name) missing_asset=$line"
+            Write-Output "CAPTURE_SCENE warning view=$($run.Label) missing_asset=$line"
         }
     }
 
@@ -900,18 +1013,18 @@ for ($shotIndex = 0; $shotIndex -lt $shots.Count; ++$shotIndex)
         $errorLines = @($validationLines | Where-Object { $_ -match 'Validation Error:' })
         $warningLines = @($validationLines | Where-Object { $_ -match 'Validation Warning:' })
         $validationInfo = [ordered]@{
-            log = "$($shot.Name).Validation.log"
+            log = "$($run.Label).Validation.log"
             error_count = $errorLines.Count
             warning_count = $warningLines.Count
         }
         if ($errorLines.Count -gt 0)
         {
-            $failures += "$($shot.Name): 検証レイヤーのエラーが $($errorLines.Count) 件ある（$($shot.Name).Validation.log。先頭: $($errorLines[0]))"
+            $failures += "$($run.Label): 検証レイヤーのエラーが $($errorLines.Count) 件ある（$($run.Label).Validation.log。先頭: $($errorLines[0]))"
         }
     }
     elseif ($Configuration -eq 'Debug')
     {
-        $failures += "$($shot.Name): 検証レイヤーのログ（$($shot.Name).Validation.log）が無い（検証レイヤーがログの設定を読んでいない）"
+        $failures += "$($run.Label): 検証レイヤーのログ（$($run.Label).Validation.log）が無い（検証レイヤーがログの設定を読んでいない）"
     }
 
     $gpuTiming = $null
@@ -921,7 +1034,7 @@ for ($shotIndex = 0; $shotIndex -lt $shots.Count; ++$shotIndex)
     {
         if (-not (Test-Path -LiteralPath $tracePath))
         {
-            $failures += "$($shot.Name): トレースが無い（$tracePath）"
+            $failures += "$($run.Label): トレースが無い（$tracePath）"
         }
         else
         {
@@ -931,7 +1044,7 @@ for ($shotIndex = 0; $shotIndex -lt $shots.Count; ++$shotIndex)
                 $timingResult = Get-GpuTimingFromTrace $tracePath $GpuTimingFrames $GpuFrameBudgetMs $sceneReadyFrame $TimingWarmupFrames $timingTailFrames
                 if ($null -ne $timingResult.Error)
                 {
-                    $failures += "$($shot.Name): $($timingResult.Error)"
+                    $failures += "$($run.Label): $($timingResult.Error)"
                 }
                 else
                 {
@@ -947,68 +1060,80 @@ for ($shotIndex = 0; $shotIndex -lt $shots.Count; ++$shotIndex)
         }
     }
 
-    if (-not (Test-Path -LiteralPath $pngPath))
+    foreach ($shot in $run.Shots)
     {
-        $failures += "$($shot.Name): PNG が無い"
-        continue
-    }
-    $measured = [SceneCaptureMetrics]::Measure($pngPath)
-    if ($Width -gt 0 -and ([int]$measured[0] -ne $Width -or [int]$measured[1] -ne $Height))
-    {
-        $failures += "$($shot.Name): PNG の大きさが指定と違う（$([int]$measured[0])x$([int]$measured[1])、指定 ${Width}x${Height}）"
-    }
-    $result = [ordered]@{
-        view = $shot.Name
-        scene_view = if ($shot.SceneView -ne '') { $shot.SceneView } else { $shot.DefaultViewName }
-        png = "$($shot.Name).png"
-        scene_report = if (Test-Path -LiteralPath $viewReportPath) { "$($shot.Name).SceneReport.txt" } else { $null }
-        game_log = if (Test-Path -LiteralPath $viewLogPath) { "$($shot.Name).Game.log" } else { $null }
-        width = [int]$measured[0]
-        height = [int]$measured[1]
-        mean_luminance = [math]::Round($measured[2], 3)
-        clipped_white_ratio = [math]::Round($measured[3], 6)
-        crushed_black_ratio = [math]::Round($measured[4], 6)
-        scene_ready = $sceneReady
-        scene_ready_frame = $sceneReadyFrame
-        placed_count = $placedCount
-        placed_entities = $placedEntities
-        placed_bananas = $placedBananas
-        timing_start_frame = $timingStartFrame
-        engine_checks = $engineChecks
-        missing_assets = $missingAssets.Count
-        vulkan_validation = $validationInfo
-        gpu_timing = $gpuTiming
-        mega_stats = $megaStats
-    }
-    $results += [pscustomobject]$result
-    Write-Output ("CAPTURE_SCENE view={0} size={1}x{2} mean_luminance={3} clipped_white_ratio={4} crushed_black_ratio={5}" -f `
-        $result.view, $result.width, $result.height, $result.mean_luminance, $result.clipped_white_ratio, $result.crushed_black_ratio)
-    Write-Output ("CAPTURE_SCENE placed view={0} entities={1} bananas={2} requested_entities={3} requested_bananas={4}" -f `
-        $result.view, $placedEntities, $placedBananas, $requestedEntities, $requestedBananas)
-    if ($null -ne $gpuTiming)
-    {
-        Write-Output ("CAPTURE_SCENE timing_window view={0} scene_ready_frame={1} timing_start_frame={2} window={3}..{4} valid_samples={5} placed_count={6}" -f `
-            $result.view, $sceneReadyFrame, $timingStartFrame, $gpuTiming.window_first_frame, $gpuTiming.window_last_frame, $gpuTiming.valid_samples, $placedCount)
-        Write-Output ("CAPTURE_SCENE gpu_timing view={0} frames={1} median_ms={2} mean_ms={3} p95_ms={4} max_ms={5} cpu_median_ms={6} gt_median_ms={7} gt_p95_ms={8} rt_median_ms={9} rt_p95_ms={10} budget_ms={11} within_budget={12}" -f `
-            $result.view, $gpuTiming.frames, $gpuTiming.gpu_frame_ms_median, $gpuTiming.gpu_frame_ms_mean, $gpuTiming.gpu_frame_ms_p95,
-            $gpuTiming.gpu_frame_ms_max, $gpuTiming.cpu_frame_ms_median, $gpuTiming.game_thread_ms_median, $gpuTiming.game_thread_ms_p95,
-            $gpuTiming.render_thread_ms_median, $gpuTiming.render_thread_ms_p95, $gpuTiming.budget_ms, $gpuTiming.within_budget)
-        Write-Output ("CAPTURE_SCENE gpu_pass_median view={0} {1}" -f $result.view,
-            (($gpuTiming.pass_median_ms | Select-Object -First 10 | ForEach-Object { "$($_.pass)=$($_.median_ms)" }) -join ' '))
-        Write-Output ("CAPTURE_SCENE gpu_pass_p95 view={0} {1}" -f $result.view,
-            (($gpuTiming.pass_ms | Select-Object -First 10 | ForEach-Object { "$($_.pass)=$($_.p95_ms)/max=$($_.max_ms)" }) -join ' '))
-        Write-Output ("CAPTURE_SCENE cpu_scope_median view={0} scopes={1} {2}" -f $result.view, @($gpuTiming.cpu_scope_ms).Count,
-            (($gpuTiming.cpu_scope_ms | Select-Object -First 15 | ForEach-Object { "$($_.scope)=$($_.median_ms)/max=$($_.max_ms)/t=$($_.thread)" }) -join ' '))
-        Write-Output ("CAPTURE_SCENE cpu_scope_group view={0} {1}" -f $result.view,
-            (($gpuTiming.cpu_scope_group_ms | ForEach-Object { "$($_.scope)=$($_.median_ms)/p95=$($_.p95_ms)/max=$($_.max_ms)" }) -join ' '))
-    }
-    if ($null -ne $megaStats)
-    {
-        Write-Output ("CAPTURE_SCENE mega_stats view={0} clusters_drawn_last={1} clusters_drawn_max={2} draw_dropped_last={3} draw_dropped_max={4} geometry_used_mb={5} geometry_pool_capacity_mb={6} vt_used_mb_max={7} shadow_map_pool_mb={8} visibility_bytes={9} indirect_bytes={10} draw_info_bytes={11} bvh_queue_bytes={12} sw_raster_bytes={13} sw_raster_list_mb={14} visbuffer_records_mb={15} visbuffer64_mb={16} vsm_pool_mb={17}" -f `
-            $result.view, $megaStats.clusters_drawn_last, $megaStats.clusters_drawn_max, $megaStats.draw_dropped_last, $megaStats.draw_dropped_max, $megaStats.geometry_used_mb,
-            $megaStats.geometry_pool_capacity_mb, $megaStats.vt_used_mb_max, $megaStats.shadow_map_pool_mb, $megaStats.visibility_bytes, $megaStats.indirect_bytes,
-            $megaStats.draw_info_bytes, $megaStats.bvh_queue_bytes, $megaStats.sw_raster_bytes, $megaStats.sw_raster_list_mb, $megaStats.visbuffer_records_mb,
-            $megaStats.visbuffer64_mb, $megaStats.vsm_pool_mb)
+        $shotPngPath = Join-Path $outRoot "$($shot.Name).png"
+        # 視点ごとのシーンの報告: 1 回の起動で撮った視点には、その起動の報告を写す（出力の形を視点ごとの起動と揃える）
+        $shotReportPath = Join-Path $outRoot "$($shot.Name).SceneReport.txt"
+        if ($bMultiRun -and (Test-Path -LiteralPath $viewReportPath))
+        {
+            Copy-Item -LiteralPath $viewReportPath -Destination $shotReportPath -Force
+        }
+        # この起動より前の PNG（残っていた古い撮影）は撮れていないものとして扱う
+        if (-not (Test-Path -LiteralPath $shotPngPath) -or (Get-Item -LiteralPath $shotPngPath).LastWriteTimeUtc -lt $runStartUtc)
+        {
+            $failures += "$($shot.Name): PNG が無い"
+            continue
+        }
+        $measured = [SceneCaptureMetrics]::Measure($shotPngPath)
+        if ($Width -gt 0 -and ([int]$measured[0] -ne $Width -or [int]$measured[1] -ne $Height))
+        {
+            $failures += "$($shot.Name): PNG の大きさが指定と違う（$([int]$measured[0])x$([int]$measured[1])、指定 ${Width}x${Height}）"
+        }
+        $result = [ordered]@{
+            view = $shot.Name
+            scene_view = if ($shot.SceneView -ne '') { $shot.SceneView } else { $shot.DefaultViewName }
+            png = "$($shot.Name).png"
+            scene_report = if (Test-Path -LiteralPath $shotReportPath) { "$($shot.Name).SceneReport.txt" } else { $null }
+            game_log = if (Test-Path -LiteralPath $viewLogPath) { "$($run.Label).Game.log" } else { $null }
+            capture_run = $run.Label
+            width = [int]$measured[0]
+            height = [int]$measured[1]
+            mean_luminance = [math]::Round($measured[2], 3)
+            clipped_white_ratio = [math]::Round($measured[3], 6)
+            crushed_black_ratio = [math]::Round($measured[4], 6)
+            scene_ready = $sceneReady
+            scene_ready_frame = $sceneReadyFrame
+            placed_count = $placedCount
+            placed_entities = $placedEntities
+            placed_bananas = $placedBananas
+            timing_start_frame = $timingStartFrame
+            engine_checks = $engineChecks
+            missing_assets = $missingAssets.Count
+            vulkan_validation = $validationInfo
+            gpu_timing = $gpuTiming
+            mega_stats = $megaStats
+        }
+        $results += [pscustomobject]$result
+        Write-Output ("CAPTURE_SCENE view={0} size={1}x{2} mean_luminance={3} clipped_white_ratio={4} crushed_black_ratio={5}" -f `
+            $result.view, $result.width, $result.height, $result.mean_luminance, $result.clipped_white_ratio, $result.crushed_black_ratio)
+        Write-Output ("CAPTURE_SCENE placed view={0} entities={1} bananas={2} requested_entities={3} requested_bananas={4}" -f `
+            $result.view, $placedEntities, $placedBananas, $requestedEntities, $requestedBananas)
+        if ($null -ne $gpuTiming)
+        {
+            Write-Output ("CAPTURE_SCENE timing_window view={0} scene_ready_frame={1} timing_start_frame={2} window={3}..{4} valid_samples={5} placed_count={6}" -f `
+                $result.view, $sceneReadyFrame, $timingStartFrame, $gpuTiming.window_first_frame, $gpuTiming.window_last_frame, $gpuTiming.valid_samples, $placedCount)
+            Write-Output ("CAPTURE_SCENE gpu_timing view={0} frames={1} median_ms={2} mean_ms={3} p95_ms={4} max_ms={5} cpu_median_ms={6} gt_median_ms={7} gt_p95_ms={8} rt_median_ms={9} rt_p95_ms={10} budget_ms={11} within_budget={12}" -f `
+                $result.view, $gpuTiming.frames, $gpuTiming.gpu_frame_ms_median, $gpuTiming.gpu_frame_ms_mean, $gpuTiming.gpu_frame_ms_p95,
+                $gpuTiming.gpu_frame_ms_max, $gpuTiming.cpu_frame_ms_median, $gpuTiming.game_thread_ms_median, $gpuTiming.game_thread_ms_p95,
+                $gpuTiming.render_thread_ms_median, $gpuTiming.render_thread_ms_p95, $gpuTiming.budget_ms, $gpuTiming.within_budget)
+            Write-Output ("CAPTURE_SCENE gpu_pass_median view={0} {1}" -f $result.view,
+                (($gpuTiming.pass_median_ms | Select-Object -First 10 | ForEach-Object { "$($_.pass)=$($_.median_ms)" }) -join ' '))
+            Write-Output ("CAPTURE_SCENE gpu_pass_p95 view={0} {1}" -f $result.view,
+                (($gpuTiming.pass_ms | Select-Object -First 10 | ForEach-Object { "$($_.pass)=$($_.p95_ms)/max=$($_.max_ms)" }) -join ' '))
+            Write-Output ("CAPTURE_SCENE cpu_scope_median view={0} scopes={1} {2}" -f $result.view, @($gpuTiming.cpu_scope_ms).Count,
+                (($gpuTiming.cpu_scope_ms | Select-Object -First 15 | ForEach-Object { "$($_.scope)=$($_.median_ms)/max=$($_.max_ms)/t=$($_.thread)" }) -join ' '))
+            Write-Output ("CAPTURE_SCENE cpu_scope_group view={0} {1}" -f $result.view,
+                (($gpuTiming.cpu_scope_group_ms | ForEach-Object { "$($_.scope)=$($_.median_ms)/p95=$($_.p95_ms)/max=$($_.max_ms)" }) -join ' '))
+        }
+        if ($null -ne $megaStats)
+        {
+            Write-Output ("CAPTURE_SCENE mega_stats view={0} clusters_drawn_last={1} clusters_drawn_max={2} draw_dropped_last={3} draw_dropped_max={4} geometry_used_mb={5} geometry_pool_capacity_mb={6} vt_used_mb_max={7} shadow_map_pool_mb={8} visibility_bytes={9} indirect_bytes={10} draw_info_bytes={11} bvh_queue_bytes={12} sw_raster_bytes={13} sw_raster_list_mb={14} visbuffer_records_mb={15} visbuffer64_mb={16} vsm_pool_mb={17}" -f `
+                $result.view, $megaStats.clusters_drawn_last, $megaStats.clusters_drawn_max, $megaStats.draw_dropped_last, $megaStats.draw_dropped_max, $megaStats.geometry_used_mb,
+                $megaStats.geometry_pool_capacity_mb, $megaStats.vt_used_mb_max, $megaStats.shadow_map_pool_mb, $megaStats.visibility_bytes, $megaStats.indirect_bytes,
+                $megaStats.draw_info_bytes, $megaStats.bvh_queue_bytes, $megaStats.sw_raster_bytes, $megaStats.sw_raster_list_mb, $megaStats.visbuffer_records_mb,
+                $megaStats.visbuffer64_mb, $megaStats.vsm_pool_mb)
+        }
     }
 }
 
@@ -1082,6 +1207,7 @@ if ($CompareWith -ne '')
 $metrics = [ordered]@{
     scene = $Scene
     configuration = $Configuration
+    capture_mode = $captureMode
     window_size = if ($Width -gt 0) { "${Width}x${Height}" } else { $null }
     game_args = $extraArguments
     require_assets = [bool]$RequireAssets

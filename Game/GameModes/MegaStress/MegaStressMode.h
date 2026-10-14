@@ -33,6 +33,7 @@
 #include "Core/Public/Rendering/MaterialTypes.h"
 #include "Pause/PauseMenu.h"
 #include "Scenes/FreeCameraRig.h"
+#include "Scenes/SceneViewSwitch.h"
 
 namespace NorvesLib::Core::Asset
 {
@@ -102,6 +103,8 @@ namespace Game::GameModes
         bool m_bBatchCells = false;
         /// ポーズメニュー（非所有）。開いている間はカメラを動かさない。無いなら nullptr
         const Game::Pause::PauseMenu *m_pPauseMenu = nullptr;
+        /// 実行中の視点の切り替えの依頼（非所有。--capture-views の撮影が使う）。無いなら nullptr
+        Game::Scenes::SceneViewSwitch *m_pViewSwitch = nullptr;
         /// クック済みの資産を引く AssetSystem の窓口
         NorvesLib::Core::Delegate<NorvesLib::Core::Container::TSharedPtr<const NorvesLib::Core::Asset::AssetSystem>>
             m_GetAssetSystem;

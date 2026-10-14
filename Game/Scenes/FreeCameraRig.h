@@ -39,6 +39,8 @@ namespace NorvesLib::Core::Component
 namespace Game::Scenes
 {
 
+    class SceneViewSwitch;
+
     class FreeCameraRig
     {
     public:
@@ -72,6 +74,17 @@ namespace Game::Scenes
 
         /// シーンの組み立てが済んだことを伝える。ConfigurePath で再生を頼まれていれば、最初の 1 回でパスの再生を始める
         void NotifySceneReady();
+
+        /// 実行中にカメラを視点 pose へ置き直す（撮影の視点の切り替え）。パスの再生は止め、押しっぱなしの入力は捨てる
+        void PlaceAt(const FreeCameraPose &pose);
+
+        /**
+         * @brief 視点の切り替えの依頼（Scenes/SceneViewSwitch.h）があれば、シーンの名前付き視点の位置と向きへ置き直す
+         *
+         * 視点の位置をそのまま使うシーン向け（地形の高さを足す荒野は自前で置き直す）。依頼が無ければ何もしない。
+         * 自由飛行の視点でない・未知の名前なら置かずに失敗を返す。Tick の前に呼ぶ。
+         */
+        void ApplyRequestedView(Game::Scenes::SceneViewSwitch *pViewSwitch, const SceneDescriptor &scene);
 
         /// 台本を流している最中か（読み込めなかった・流し終えたときは偽）
         bool IsScriptRunning() const

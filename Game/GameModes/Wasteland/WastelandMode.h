@@ -12,6 +12,7 @@
 // 岩・崖・建物の配置（WastelandLayout.h）は手続きの地形に合わせたものなので、前哨地を置き直す（SCN-WL-OUTPOST）まで置かない。
 // 光は夕方寄りの低い西日で、カメラのトーンマップ・グレーディングを夕景に合わせる。
 // 視点は SceneCatalog.h の kWastelandViews（overview・ground・ridge・cliff・outpost）。視点の高さは、その (x,z) の地形の高さに足す。
+// 撮影の視点の切り替え（Scenes/SceneViewSwitch.h）では、地形を読み直さずにカメラ・画角・太陽だけを置き直す。
 // 地形の格子・区画のクック済みが無いときは COOKED_MODEL_MISSING を出し、空と太陽だけのシーンとして組み立てを終える。
 // ---------------------------------------------------------------------------
 
@@ -23,6 +24,7 @@
 #include "Core/Public/GameMode/TGameMode.h"
 #include "Pause/PauseMenu.h"
 #include "Scenes/FreeCameraRig.h"
+#include "Scenes/SceneViewSwitch.h"
 
 #include <cstdint>
 
@@ -54,12 +56,16 @@ namespace Game::GameModes
         bool m_bCameraPathPlay = false;
         /// ポーズメニュー（非所有）。開いている間はカメラを動かさない。無いなら nullptr
         const Game::Pause::PauseMenu *m_pPauseMenu = nullptr;
+        /// 実行中の視点の切り替えの依頼（非所有。--capture-views の撮影が使う）。無いなら nullptr
+        Game::Scenes::SceneViewSwitch *m_pViewSwitch = nullptr;
         /// クック済みの資産を引く AssetSystem の窓口
         NorvesLib::Core::Delegate<NorvesLib::Core::Container::TSharedPtr<const NorvesLib::Core::Asset::AssetSystem>>
             m_GetAssetSystem;
 
         Game::Scenes::FreeCameraRig m_Rig;
         uint32_t m_TickCount = 0;
+        /// 手本の構図の視点で替える前のカメラの縦の画角[度]（視点を置き直すときに戻す）
+        float m_DefaultFieldOfView = 0.0f;
 
         // ---- 組み立ての状態（Routine が持つ。Leave で空に戻す） ----
         NorvesLib::Core::Container::TSharedPtr<WastelandAssembly> m_pAssembly;
