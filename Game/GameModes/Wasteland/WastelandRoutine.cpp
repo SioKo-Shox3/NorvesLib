@@ -82,18 +82,19 @@ namespace Game::GameModes
     {
         // 晴天の午後の太陽。手本の遠景の写真 far_01（2012-05-18、晴れに積雲）の影から決めた: 低木の影は株の高さの半分ほどで
         // 東北東へ、崖の張り出しの影は短く下と東へ落ちる。5 月 18 日の南中の 2 時間後（仰角 58.5°・方位 北から 244°）に当たる
-        // （Docs/RenderingValidation/WastelandLight.md）。方位角は +X（東）から +Z（南）へ測るので、北から 244° は 154°
+        // （写真の時刻の記録 7:26 はこの影の短さと合わないので使わない。Docs/RenderingValidation/WastelandLight.md）。
+        // 方位角は +X（東）から +Z（南）へ測るので、北から 244° は 154°
         constexpr float kSunAltitudeDegrees = 58.5f;
         constexpr float kSunAzimuthDegrees = 154.0f;
-        // 晴天の日中の手動露出（絞り f/16・ISO 100 のままシャッター速度で合わせる）。晴天の f/16 の目安（EV 15）より 0.3 段明るくし、
-        // 日向の地面を手本の写真と同じくらいの明るさ（リニアの 75 パーセンタイルで 0.26〜0.31）にする
-        constexpr float kExposureEV100 = 14.7f;
+        // 晴天の日中の手動露出（絞り f/16・ISO 100 のままシャッター速度で合わせる）。手本の写真の記録（f/8・1/200 秒・ISO 100）と
+        // 同じ EV 13.6 にする。晴天の f/16 の目安（EV 15）より 1.4 段明るく、写真と同じく空が白みを帯びて明るく写る
+        constexpr float kExposureEV100 = 13.6f;
         // 日中のグレーディング。トーンマップは暗部を縮めない NeutralLinear にし、空の光だけの影の中が黒くつぶれないようにする。
-        // コントラストは軸 0.5 の S 字でわずかに立て、彩度を少し上げて空の青を残し、色温度はわずかに足すだけにする
-        // （写真の日向は白みの強い昼の色）。
+        // コントラストはカメラの JPEG の階調に寄せて、中間の灰（0.18）を軸にした S 字で立てる（空と雲は明るく、影と崖の暗部は
+        // 締まる）。彩度を少し上げて空の青を残し、色温度はわずかに足すだけにする（写真の日向は白みの強い昼の色）。
         // ビネットは画面の隅を少し落とす程度
-        constexpr float kGradingContrast = 1.1f;
-        constexpr float kGradingContrastPivot = 0.5f;
+        constexpr float kGradingContrast = 1.35f;
+        constexpr float kGradingContrastPivot = 0.18f;
         constexpr float kGradingSaturation = 1.2f;
         constexpr float kGradingTemperature = 0.05f;
         constexpr float kVignetteIntensity = 0.25f;
@@ -104,10 +105,11 @@ namespace Game::GameModes
         // 崖の岩（花崗岩のスキャン。アルベドの平均がリニアで 0.13 : 0.09 : 0.065）に掛ける色。メサの岩肌（rock_face、
         // 0.12 : 0.06 : 0.03）の赤みに寄せ、足元で灰色に浮かないようにする
         constexpr float kCliffTint[3] = {1.0f, 0.75f, 0.55f};
-        // 地形の材質（3 層の混ぜ合わせ）に掛ける明るさ。砂（sand_01）のアルベドの平均はリニアで 0.31 と明るく、
-        // 手本の谷床の赤い砂と土（コロラド高原の赤土のアルベド 0.2〜0.25）より日向が 1.5 倍ほど明るく出るので、色を変えずに
-        // 水準だけ 0.22 前後へ下げる。色と素材そのものは SCN-WL-MATERIAL-PALETTE で替える
-        constexpr float kTerrainAlbedoScale = 0.7f;
+        // 地形の材質（3 層の混ぜ合わせ）に掛ける明るさ。砂（sand_01）のアルベドの平均はリニアで 0.31 と白っぽく明るい。手本の谷床の
+        // 赤い砂と土は赤だけが強く緑と青が低い（写真の日向の土で sRGB 146 : 101 : 73）ので、輝度で見たアルベドは 0.1 前後になる。
+        // 色を変えずに輝度の水準だけ 0.1 へ下げ、写真と同じ露出で日向の地面が白く飛ばないようにする。
+        // 色と素材そのものは SCN-WL-MATERIAL-PALETTE で替え、この倍率もそこで決め直す
+        constexpr float kTerrainAlbedoScale = 0.32f;
         // 高さフォグ: 基準の高さでの密度[1/m]と、上へ向かって薄くなる割合[1/m]。遠景の霞は空気遠近が受け持つので、
         // 谷床に薄く溜まる砂ぼこりの層にする。谷床は北から南東へ下がり、平らな所の高さは -38〜+39 m（5〜95%）なので、
         // 基準を南東の低い谷床（-40 m）に置き、100 m で 1/e に薄くして北の高い谷床（+40 m）にも半分ほど残す。
@@ -115,19 +117,21 @@ namespace Game::GameModes
         constexpr float kFogDensity = 0.00015f;
         constexpr float kFogBaseHeight = -40.0f;
         constexpr float kFogFalloff = 0.01f;
-        // 空気遠近: 物理空の媒質（下のエアロゾルを増やした値）の距離を 1.5 倍に数え、谷床の向こうのビュート（1〜3.5 km）が
-        // 写真の遠い崖と同じくらい（崖の暗部が地平線の空の半分ほど）に霞み、形は読めるようにする。300 m より手前は掛けない
+        // 空気遠近: 物理空の媒質（下のエアロゾルを少し増やした値）の距離をそのまま数える。谷床の向こうのビュート（1〜3.5 km）が
+        // 写真の遠い崖と同じくらい（赤みを残して少し白む程度）に霞み、形は読めるようにする。300 m より手前は掛けない
         // （足元・近くの崖の色は変えない）
-        constexpr float kAerialPerspectiveDistanceScale = 1.5f;
+        constexpr float kAerialPerspectiveDistanceScale = 1.0f;
         constexpr float kAerialPerspectiveStartDistance = 300.0f;
-        // 空のエアロゾル（Mie）の高さの尺度[m]。既定の 1.2 km の 2.5 倍にして柱の量を増やし、写真の白みの強い地平線の空と、
-        // 遠い崖の明るい霞に寄せる
-        constexpr float kSkyMieScaleHeight = 3000.0f;
-        // 雲の層: 写真の晴天の積雲（底の平らな小さな雲が空の 4 割ほど）。乾いた高原で雲底が高いので高度 2.5〜3.6 km の薄い層にし、
-        // 下から見ても日の当たる側が白く残るようにする。西寄りの風でゆっくり流す
+        // 空のエアロゾル（Mie）の高さの尺度[m]。既定の 1.2 km の 1.33 倍にして柱の量を少し増やし、写真の白みの強い地平線の空に
+        // 寄せる。2 km を越えると空全体が灰色の曇りに見える
+        constexpr float kSkyMieScaleHeight = 1600.0f;
+        // 雲の層: 写真の晴天の積雲（底の平らな雲が空の半分ほど）。乾いた高原で雲底が高いので高度 2.5〜3.6 km の薄い層にし、
+        // 西寄りの風でゆっくり流す。消散係数を既定（0.01 /m）の 1/4 にして太陽の光を雲の奥まで通し、下から見ても白く明るい
+        // 雲にする（既定のままだと底が灰色の曇り空になる）。被覆は 0.5 で空が一面の曇りにつながるので、その手前にする
         constexpr float kCloudBottomAltitude = 2500.0f;
         constexpr float kCloudTopAltitude = 3600.0f;
-        constexpr float kCloudCoverage = 0.4f;
+        constexpr float kCloudCoverage = 0.45f;
+        constexpr float kCloudExtinctionPerMeter = 0.0025f;
         constexpr float kCloudWindVelocity[2] = {8.0f, 3.0f};
         // カメラの遠方面[m]。地形（4.7 × 4.6 km）の対角（約 6.6 km）の先まで描く
         constexpr float kFarPlane = 7000.0f;
@@ -202,6 +206,7 @@ namespace Game::GameModes
             cloudLayer.BottomAltitudeMeters = kCloudBottomAltitude;
             cloudLayer.TopAltitudeMeters = kCloudTopAltitude;
             cloudLayer.Coverage = kCloudCoverage;
+            cloudLayer.ExtinctionPerMeter = kCloudExtinctionPerMeter;
             cloudLayer.WindVelocityX = kCloudWindVelocity[0];
             cloudLayer.WindVelocityZ = kCloudWindVelocity[1];
             ctx.EngineRef.GetRenderWorld().SetCloudLayer(cloudLayer);

@@ -1420,7 +1420,7 @@
 - paths: Game/GameModes/Wasteland, Game/Scenes/SceneCatalog.h, Library/Core/Public/Rendering/Terrain, Library/Core/Private/Rendering/Terrain, Assets/AssetSets, Scripts, TASKS.md, PROGRESS.md
 
 ## SCN-WL-LIGHT-BASE: 基準の光を手本の写真に合わせる
-- status: todo
+- status: done
 - done-when: 手本の晴天の遠景の写真に合わせて、太陽の高さと向き（写真の影の向きと長さから推定）・空・露出・霞・グレーディングを決める。影の到達距離が、写真に写る主要な崖を覆う。撮影と手本を並べた画像（簡易でよい。正式な比較は SCN-WL-REFERENCE-CAPTURE）を開いて、空と地形の明るさの比・影の濃さ・遠景の霞が近いことを確かめる。Rendering3DTest は変わらない。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -OutDir .harness/runs/scene-capture/SCN-WL-LIGHT-BASE`

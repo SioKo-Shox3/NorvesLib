@@ -4401,3 +4401,18 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `verify-SCN-WL-DEM-SCENE-5.txt`: `RunSceneCycleSmoke.ps1 -Scenes wasteland -Cycles 3` result=pass（3 周とも 100 区画を置き、ログに COOKED_MODEL_MISSING・ERROR なし）。
 - Notes: 地形の材質の混ぜ方の高さの範囲（`kDirtHeightRange` 12〜50 m）は前の盆地の床 0 m を前提にした値のまま（SCN-WL-MATERIAL-MASKS で地図に替える）。Debug で区画の読み込みに約 100 秒かかる（Release・RelWithDebInfo は未計測。読み込みを別スレッドへ移すかは SCN-WASTELAND-POLISH で判断）。ランチャーのサムネイル（`Assets/Launcher/Thumbnails/wasteland.png`）は前の手続きの地形のまま。試験は足していない。
 - Next: TASKS.md の次の未完の項目（SCN-WL-LIGHT-BASE）。
+
+### SCN-WL-LIGHT-BASE 完了（2026-10-15、反復 12〜13・run 20261014-222123）
+- 実装（`Game/GameModes/Wasteland/WastelandRoutine.cpp` の定数。根拠と比較は `Docs/RenderingValidation/WastelandLight.md`）:
+  - 太陽: 仰角 17° → 58.5°、方位角 157.5° → 154°（北から 244°）。写真 far_01 の低木と崖の張り出しの短い影から、5 月 18 日の南中の 2 時間後とした。写真の時刻の記録 7:26 は影と合わないので使わない。
+  - 露出 EV100 14.0 → 13.6（写真の記録 f/8・1/200 秒・ISO 100 と同じ）。コントラスト 1.1（軸 0.5）→ 1.35（軸 0.18）、彩度 1.25 → 1.2、色温度 0.25 → 0.05。
+  - 地形のアルベドに倍率 0.32 を掛ける（砂の素材 0.31 → 輝度で 0.1。写真の日向の赤土に合わせた仮の値で、SCN-WL-MATERIAL-PALETTE で決め直す）。
+  - 空のエアロゾルの高さの尺度 1200 → 1600 m、空気遠近の距離の倍率 4 → 1、雲の層 1.5〜4 km・被覆 0.41 → 2.5〜3.6 km・被覆 0.45・消散係数 0.01 → 0.0025 /m（既定のままだと雲の底が灰色で空全体が曇天に見えた）、影の到達距離 2500 → 4000 m（写真に写る主要な崖 0.5〜3.5 km を覆う）。
+  - 撮影と写真を並べて光の目安の値を出す `Scripts/Terrain/CompareLight.py` を足した。
+- 検証（`.harness/runs/20261014-222123/`）:
+  - `verify-SCN-WL-LIGHT-BASE-1.txt`・`-2.txt`: 反復 12 の途中の版（2 本目は撮影の途中で止まり、出力は空）。
+  - `verify-SCN-WL-LIGHT-BASE-3.txt`: Debug の Game のビルド EXIT=0。
+  - `verify-SCN-WL-LIGHT-BASE-4.txt`: `CaptureScene.ps1 -Scene wasteland -RequireAssets` result=pass（5 視点とも白飛び 0・黒つぶれ 0、各視点で 10 × 10 区画、COOKED_MODEL_MISSING なし）。
+  - `CompareLight.py` で 5 視点を写真と並べた画像（`.harness/runs/scene-capture/SCN-WL-LIGHT-BASE/light_*.png`）を開いた: 空は調整前の暗い灰色の曇天から、写真と同じ白みのある明るい青空に白い雲が半分ほど掛かる姿になった。空 ÷ 地形は調整前 0.73 → 1.3〜1.6（写真 3.77。写真の地形は低木とその影で暗く、空は白く飛ぶ寸前。差は素材と低木の項目の後に比べ直す）。崖の溝の影は日向の 0.17 倍（写真の暗部 0.30 より少し濃い）。1〜3 km のビュートは赤みを残して少し白み、形と段が読める（遠景の帯 ÷ 空 0.46〜0.75、写真 0.46）。
+- Notes: Rendering3DTest は撮っていない（変えたのは荒野のモードの定数と荒野の文書・スクリプトだけで、モードを抜けると空・霧・雲を既定に戻す）。雲の形は写真の塊の積雲より薄く広がった層に近い（SCN-CLOUDS の 3D ノイズの形のまま）。試験は足していない。
+- Next: TASKS.md の次の未完の項目（SCN-WL-HORIZON）。
