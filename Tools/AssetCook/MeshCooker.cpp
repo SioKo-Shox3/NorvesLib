@@ -2375,7 +2375,8 @@ namespace NorvesLib::Tools::AssetCook
         // ここでは入力の変換・材質の参照・書き出し・読み込みでの自己検証を受け持つ。
         bool CookLodGraphMesh(const VariableArray<MeshVertexPnt>& vertices, const VariableArray<uint32_t>& indices,
                               const MaterialReferences& materialReferences, MeshCookResult& outResult,
-                              AnsiString& error, uint32_t fallbackMinTriangles, uint32_t dagRootMaxClusters)
+                              AnsiString& error, uint32_t fallbackMinTriangles, uint32_t dagRootMaxClusters,
+                              uint32_t dagRootMinTriangles = 0)
         {
             const auto bakeStart = std::chrono::steady_clock::now();
 
@@ -2393,7 +2394,7 @@ namespace NorvesLib::Tools::AssetCook
             CookMeshDagResult dag;
             AnsiString dagError;
             if (!BakeMeshLodDag(cookedVertices.data(), cookedVertices.size(), indices.data(), indices.size(), dag,
-                                dagError, fallbackMinTriangles, dagRootMaxClusters))
+                                dagError, fallbackMinTriangles, dagRootMaxClusters, dagRootMinTriangles))
             {
                 error = AnsiString("LOD の階層の焼き込みに失敗しました: ") + dagError;
                 return false;
@@ -2810,8 +2811,11 @@ namespace NorvesLib::Tools::AssetCook
             // 材質は Game が石畳の材質を当てるので、メッシュには材質の参照を持たせない。
             MaterialReferences materialReferences;
             MeshCookResult v1Result;
+            // 石の盛り上がりと目地(数 cm)は画面の数画素なので、形のずれ 1 画素で選ぶラスタの段がフォールバックの段
+            // (影・RT が使う)より粗くなると、両者の面のずれで自己遮蔽の黒い斑点が出る。フォールバックの三角形数で根を止め、
+            // ラスタの段がフォールバックより粗くならないようにする。
             if (!CookLodGraphMesh(vertices, sphere.Indices, materialReferences, v1Result, error, fallbackMinTriangles,
-                                    dagRootMaxClusters))
+                                    dagRootMaxClusters, fallbackMinTriangles))
             {
                 return false;
             }

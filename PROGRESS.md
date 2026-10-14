@@ -4064,3 +4064,19 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 止めた理由: 1 画素の閾値で選ばれるクラスタ自体が多い（見える 32.7 万本で 1 本あたり約 19）。バナナのクックの誤差が段ごとの足し算（`Tools/AssetCook/CookMeshDag.cpp:658`）と属性の項で大きく、最も粗い段（212 三角形）の誤差 0.173 m が半径 0.18 m とほぼ同じ。直す先（クック・シーンの閾値・容量）は paths の外か見た目の判断なので、選択肢を `blocked/SCN-MEGA-FIX-BVH-QUEUE-MAIN.md` に書いた。
 - Next: 親の判断待ち（推奨はクックの誤差の直しとクックし直し。verify の 1 万本の比べる先も配置の後の撮影へ替える必要がある）。
 - Notes: 性能は測っていない。試験の追加はしていない。焼き込みの BVH は空間だけで分けて LOD の段が混ざるので、節の列がまだ大きければ読み込み時に段ごとにまとめ直す余地がある。
+
+### SCN-MEGA-FIX-COOK-LOD-ERROR（2026-10-14、反復 1・run 20261014-102529）
+- Done: クックの LOD の誤差（`Tools/AssetCook/CookMeshDag.cpp`）を、段ごとの足し算・属性込みから、形のずれだけで測る「子の誤差の最大と簡略化の誤差の大きい方」にした。
+  - 簡略化の誤差は、元の形（段 0）の頂点から簡略化後の面までの距離の最大と、前の段からのずれ（消えた頂点 → 新しい面、新しい三角形の重心 → 前の面）の大きい方。元の頂点は位置の代表ごとに段ごとちょうど 1 つのクラスタが受け持ち、簡略化のたびに最も近い三角形を持つ新しいクラスタへ受け渡す（`HandOffOriginalVertices`）。属性の重みは簡略化の選び方にだけ使う。
+  - フォールバックの段（影・RT が使う）の切り口は、従来の誤差（属性込み・足し算）を `SelectionError` として別に持って選ぶ（DAG の形は変えていないので、フォールバックの三角形は従来と同じ）。`FallbackError` は切り口の形の誤差の最大。
+  - 起動画面の大きな球（`generate: displaced-sphere`）は、根の三角形数の下限（新しい `rootMinTriangles`。球はフォールバックの下限 131072 を渡す）で根を止め、ラスタの段がフォールバックより粗くならないようにした（根 130,882 三角形・4 段）。
+  - 17 件のモデルを `Scripts/CookAssets.ps1 -OnlyLogicalPath 'Models/*.gltf','Models/*.glb','Models/*.generated' -Force` で焼き直した（133 秒、`aux-cook-models3.txt`）。バナナの根（212 三角形）の誤差 0.173 m → 0.0183 m。
+- 検証（`.harness/runs/20261014-102529/`）:
+  - `verify-SCN-MEGA-FIX-COOK-LOD-ERROR-1.txt`: RelWithDebInfo の Game のビルド EXIT=0、error 0。
+  - 再承認（`reapprove-SCN-MEGA-BASE-RWDI.txt`）: 旧基準（`startup-capture/SCN-MEGA-BASE-RWDI-before-cook-lod-error` に退避）と比べ default 50.80・near 45.32・low 52.10 dB（3 視点とも許容内）。PNG を開き、家・球・岩の形・穴なし・遠くの岩が粗くなっていないこと、球と近くの岩に黒い斑点が無いことを確かめて `SCN-MEGA-BASE-RWDI` を撮り直した。
+  - `verify-SCN-MEGA-FIX-COOK-LOD-ERROR-2.txt`: 起動画面 default の決定的撮影の比較 result=pass（psnr 100 dB、EXIT=0）。`default.Game.log` の `[ERROR]` 0。
+  - `verify-SCN-MEGA-FIX-COOK-LOD-ERROR-3.txt`: 1 万本 overview を `scene-capture/SCN-MEGA-BASE-COOK` に撮った result=pass（EXIT=0、`[ERROR]` 0）。PNG は近くのバナナの形が保たれ穴なし。同じ配置の変更前（`SCN-MEGA-LAYOUT-SEA-10k-rerun`）と比べ、描く一覧の山 682,543 → 238,486、BVH の節の山 1,082,437 → 142,081、葉の山 521,777 → 142,121（`MEGA_CAPACITY`）。
+  - `AssetCookMeshSimplifySmoke` pass（切り口の穴・つまみ 0、`aux-simplify-smoke5.txt`）。
+- 補助（verify の外。どれも採らなかった形）: 前の段からのずれの最大だけ（task の文のまま）だと、球の石の凹凸が段を重ねて均され、陰影がにじむ（PSNR 43.9 dB で fail、`aux-first-attempt-verify-2-max.txt`）。足し算に戻すと球は戻るがバナナの根は 0.084 m（`aux-exp-sum-*`）。元の形から測っても、球のラスタがフォールバックより粗くなると low 視点で黒い斑点（`SCN-MEGA-FIX-COOK-LOD-ERROR-rejected-reapproval`）、フォールバックを形の誤差で選ぶと近くの岩の窪みに黒い点（RTGI を切ると消える。`-rtgioff`）が出た。
+- Next: SCN-MEGA-FIX-BVH-QUEUE-MAIN（100 万本の数はそこで見る）。
+- Notes: `CookAssets.ps1` は Windows PowerShell 5 の `Get-Content` の既定の文字コードで `MegaStressMeshes.json`（BOM なし・日本語）を読み損ねるので、`$PSDefaultParameterValues['Get-Content:Encoding']='UTF8'` を付けて呼んだ（スクリプトは paths の外）。`Docs/Architecture/NVMESHv1LodGraph.md` の手順 3 の「メンバの誤差の最大 + 簡略化の誤差」は古い（paths の外）。クックは 93 秒 → 133 秒（元の頂点の受け渡しの距離計算の分）。golden（Indoor/Outdoor）はクック済みのメッシュを使わないので撮り直していない。試験の追加はしていない。

@@ -41,7 +41,8 @@ namespace NorvesLib::Tools::AssetCook
         // 根のクラスタ数の上限を指定した資産で、段の進みが鈍いときにやり直すグループの目標の上限
         constexpr size_t RootLimitedMaxGroupTargetSize = 32;
         constexpr float ConeWeight = 0.25f;
-        // 簡略化の誤差に混ぜる属性の重み(外形の大きさに対する相対値)。法線と UV の食い違いも誤差として数える。
+        // 簡略化で辺を選ぶときの属性の重み(外形の大きさに対する相対値)。法線と UV の継ぎ目を崩しにくくする。
+        // LOD の誤差には入れない(誤差は形のずれだけで測る。MeasureSimplifyDeviation)。
         constexpr float AttributeWeightNormal = 0.2f;
         constexpr float AttributeWeightUv = 0.1f;
         constexpr size_t AttributeCount = 5;
@@ -87,10 +88,16 @@ namespace NorvesLib::Tools::AssetCook
             CookedMeshFloat3 Center;
             float Radius = 0.0f;
             float Error = 0.0f;
+            // フォールバックの段の選び方だけに使う誤差(簡略化の誤差に属性の項を含め、段ごとに足したもの)。
+            // 法線の変わり目(窪み・角)を残す切り口になり、影・RT の面がラスタの面から窪みで浮かない。LOD の判定には使わない。
+            float SelectionError = 0.0f;
             CookedMeshFloat3 ConeAxis;
             float ConeCutoff = -1.0f;
             // このクラスタを作ったグループ（1つ細かい段）の番号。最も細かい段は InvalidGroupId
             uint32_t SourceGroup = Format::InvalidGroupId;
+            // このクラスタが受け持つ元の形(段 0)の頂点(位置の代表の番号)。各頂点は段ごとにちょうど 1 つのクラスタが受け持つ。
+            // 簡略化の誤差を、前の段でなく元の形からのずれで測るのに使う。
+            VariableArray<uint32_t> OriginalVertices;
         };
 
         struct BuiltCluster
@@ -101,6 +108,7 @@ namespace NorvesLib::Tools::AssetCook
             CookedMeshFloat3 ParentCenter;
             float ParentRadius = 0.0f;
             float ParentError = Format::RootParentError;
+            float ParentSelectionError = Format::RootParentError;
             bool bRoot = false;
         };
 
@@ -109,6 +117,7 @@ namespace NorvesLib::Tools::AssetCook
             CookedMeshFloat3 Center;
             float Radius = 0.0f;
             float Error = 0.0f;
+            float SelectionError = 0.0f;
             // 段のクラスタ(current)の添字
             VariableArray<uint32_t> Members;
         };
@@ -199,6 +208,249 @@ namespace NorvesLib::Tools::AssetCook
                 needed = std::max(needed, DistanceBetween(outCenter, point) + radius);
             }
             outRadius = RoundUpToFloat(needed);
+        }
+
+        // 点 p から三角形 abc までの距離の二乗(Ericson の最近点の領域分け。面積が 0 の三角形は 3 辺の線分で測る)
+        double PointTriangleDistanceSquared(const float* p, const float* a, const float* b, const float* c)
+        {
+            const auto sub = [](const float* lhs, const float* rhs, double* out) {
+                out[0] = static_cast<double>(lhs[0]) - static_cast<double>(rhs[0]);
+                out[1] = static_cast<double>(lhs[1]) - static_cast<double>(rhs[1]);
+                out[2] = static_cast<double>(lhs[2]) - static_cast<double>(rhs[2]);
+            };
+            const auto dot = [](const double* lhs, const double* rhs) {
+                return lhs[0] * rhs[0] + lhs[1] * rhs[1] + lhs[2] * rhs[2];
+            };
+            // p から線分 st までの距離の二乗
+            const auto segment = [&](const float* s, const float* t) {
+                double st[3];
+                double sp[3];
+                sub(t, s, st);
+                sub(p, s, sp);
+                const double length = dot(st, st);
+                const double u = length > 0.0 ? std::clamp(dot(sp, st) / length, 0.0, 1.0) : 0.0;
+                const double d[3] = {sp[0] - st[0] * u, sp[1] - st[1] * u, sp[2] - st[2] * u};
+                return dot(d, d);
+            };
+
+            double ab[3];
+            double ac[3];
+            double ap[3];
+            sub(b, a, ab);
+            sub(c, a, ac);
+            sub(p, a, ap);
+            const double cross[3] = {ab[1] * ac[2] - ab[2] * ac[1], ab[2] * ac[0] - ab[0] * ac[2],
+                                     ab[0] * ac[1] - ab[1] * ac[0]};
+            const double scale = std::max(dot(ab, ab), dot(ac, ac));
+            if (dot(cross, cross) <= scale * scale * 1e-24)
+            {
+                return std::min({segment(a, b), segment(b, c), segment(c, a)});
+            }
+
+            const auto distanceTo = [&](const double* offsetFromA) {
+                const double d[3] = {ap[0] - offsetFromA[0], ap[1] - offsetFromA[1], ap[2] - offsetFromA[2]};
+                return dot(d, d);
+            };
+            const double d1 = dot(ab, ap);
+            const double d2 = dot(ac, ap);
+            if (d1 <= 0.0 && d2 <= 0.0)
+            {
+                return dot(ap, ap);
+            }
+            double bp[3];
+            sub(p, b, bp);
+            const double d3 = dot(ab, bp);
+            const double d4 = dot(ac, bp);
+            if (d3 >= 0.0 && d4 <= d3)
+            {
+                return dot(bp, bp);
+            }
+            const double vc = d1 * d4 - d3 * d2;
+            if (vc <= 0.0 && d1 >= 0.0 && d3 <= 0.0)
+            {
+                const double v = d1 / (d1 - d3);
+                const double offset[3] = {ab[0] * v, ab[1] * v, ab[2] * v};
+                return distanceTo(offset);
+            }
+            double cp[3];
+            sub(p, c, cp);
+            const double d5 = dot(ab, cp);
+            const double d6 = dot(ac, cp);
+            if (d6 >= 0.0 && d5 <= d6)
+            {
+                return dot(cp, cp);
+            }
+            const double vb = d5 * d2 - d1 * d6;
+            if (vb <= 0.0 && d2 >= 0.0 && d6 <= 0.0)
+            {
+                const double w = d2 / (d2 - d6);
+                const double offset[3] = {ac[0] * w, ac[1] * w, ac[2] * w};
+                return distanceTo(offset);
+            }
+            const double va = d3 * d6 - d5 * d4;
+            if (va <= 0.0 && (d4 - d3) >= 0.0 && (d5 - d6) >= 0.0)
+            {
+                const double w = (d4 - d3) / ((d4 - d3) + (d5 - d6));
+                const double offset[3] = {ab[0] + (ac[0] - ab[0]) * w, ab[1] + (ac[1] - ab[1]) * w,
+                                          ab[2] + (ac[2] - ab[2]) * w};
+                return distanceTo(offset);
+            }
+            const double denom = 1.0 / (va + vb + vc);
+            const double v = vb * denom;
+            const double w = vc * denom;
+            const double offset[3] = {ab[0] * v + ac[0] * w, ab[1] * v + ac[1] * w, ab[2] * v + ac[2] * w};
+            return distanceTo(offset);
+        }
+
+        // 点の集まりから三角形の集まりまでの距離の最大の二乗(各点は最も近い三角形までの距離)。
+        // 点ごとの探索は、今の最大を下回る三角形が見つかった時点で打ち切る(最大を押し上げないので)。
+        double MaxPointToTrianglesDistanceSquared(const float* positions, const VariableArray<float>& points,
+                                                  const VariableArray<uint32_t>& triangles)
+        {
+            double maxDistance = 0.0;
+            for (size_t p = 0; p < points.size(); p += 3)
+            {
+                double nearest = std::numeric_limits<double>::max();
+                for (size_t t = 0; t < triangles.size() && nearest > maxDistance; t += 3)
+                {
+                    nearest = std::min(nearest, PointTriangleDistanceSquared(&points[p],
+                                                                             &positions[triangles[t + 0] * 3],
+                                                                             &positions[triangles[t + 1] * 3],
+                                                                             &positions[triangles[t + 2] * 3]));
+                }
+                maxDistance = std::max(maxDistance, nearest);
+            }
+            return maxDistance;
+        }
+
+        // 簡略化による形のずれ(座標と同じ単位)。両向きの Hausdorff 距離を点で近似する: 簡略化で消えた頂点から簡略化後の面まで、
+        // 簡略化後の三角形の重心から元の面までの距離の最大。属性(法線・UV)は見ない。
+        // 簡略化は頂点を動かさない(残る頂点は元の面の上)ので、残った頂点は数えない。
+        double MeasureSimplifyDeviation(const float* positions, size_t vertexCount,
+                                        const VariableArray<uint32_t>& sourceIndices,
+                                        const VariableArray<uint32_t>& simplifiedIndices)
+        {
+            VariableArray<uint8_t> vertexState(vertexCount, 0u);
+            for (const uint32_t vertex : sourceIndices)
+            {
+                vertexState[vertex] = 1;
+            }
+            for (const uint32_t vertex : simplifiedIndices)
+            {
+                vertexState[vertex] = 2;
+            }
+            VariableArray<float> removedPoints;
+            for (size_t v = 0; v < vertexCount; ++v)
+            {
+                if (vertexState[v] == 1)
+                {
+                    removedPoints.push_back(positions[v * 3 + 0]);
+                    removedPoints.push_back(positions[v * 3 + 1]);
+                    removedPoints.push_back(positions[v * 3 + 2]);
+                }
+            }
+            VariableArray<float> centroids;
+            centroids.reserve(simplifiedIndices.size());
+            for (size_t t = 0; t < simplifiedIndices.size(); t += 3)
+            {
+                for (size_t axis = 0; axis < 3; ++axis)
+                {
+                    const double sum = static_cast<double>(positions[simplifiedIndices[t + 0] * 3 + axis]) +
+                                       static_cast<double>(positions[simplifiedIndices[t + 1] * 3 + axis]) +
+                                       static_cast<double>(positions[simplifiedIndices[t + 2] * 3 + axis]);
+                    centroids.push_back(static_cast<float>(sum / 3.0));
+                }
+            }
+            const double removedToSimplified = MaxPointToTrianglesDistanceSquared(positions, removedPoints,
+                                                                                   simplifiedIndices);
+            const double simplifiedToSource = MaxPointToTrianglesDistanceSquared(positions, centroids, sourceIndices);
+            return std::sqrt(std::max(removedToSimplified, simplifiedToSource));
+        }
+
+        // 元の形の頂点(samples)を、簡略化後のクラスタ(clusters の firstCluster 以降)のうち最も近い三角形を持つものへ受け渡し、
+        // 頂点から簡略化後の面までの距離の最大を返す。前の段からのずれの最大を段ごとに取るだけでは、段を重ねて失った形
+        // (凹凸が少しずつ均される)を数えられないので、元の形から測る。受け渡し先が無い(三角形が残らない)ときは 0。
+        double HandOffOriginalVertices(const WeldedMesh& mesh, const VariableArray<uint32_t>& samples,
+                                       VariableArray<BuildCluster>& clusters, size_t firstCluster)
+        {
+            struct TriangleBounds
+            {
+                const float* Corners[3] = {};
+                double Center[3] = {};
+                double Radius = 0.0;
+                uint32_t Cluster = 0;
+            };
+            VariableArray<TriangleBounds> triangles;
+            for (size_t c = firstCluster; c < clusters.size(); ++c)
+            {
+                const VariableArray<uint32_t>& indices = clusters[c].Indices;
+                for (size_t t = 0; t < indices.size(); t += 3)
+                {
+                    TriangleBounds bounds;
+                    bounds.Cluster = static_cast<uint32_t>(c);
+                    for (size_t corner = 0; corner < 3; ++corner)
+                    {
+                        bounds.Corners[corner] = &mesh.Positions[static_cast<size_t>(indices[t + corner]) * 3];
+                        for (size_t axis = 0; axis < 3; ++axis)
+                        {
+                            bounds.Center[axis] += static_cast<double>(bounds.Corners[corner][axis]) / 3.0;
+                        }
+                    }
+                    for (size_t corner = 0; corner < 3; ++corner)
+                    {
+                        double squared = 0.0;
+                        for (size_t axis = 0; axis < 3; ++axis)
+                        {
+                            const double d = static_cast<double>(bounds.Corners[corner][axis]) - bounds.Center[axis];
+                            squared += d * d;
+                        }
+                        bounds.Radius = std::max(bounds.Radius, std::sqrt(squared));
+                    }
+                    triangles.push_back(bounds);
+                }
+            }
+            if (triangles.empty())
+            {
+                return 0.0;
+            }
+
+            double maxDistance = 0.0;
+            size_t hint = 0;
+            for (const uint32_t vertex : samples)
+            {
+                const float* point = &mesh.Positions[static_cast<size_t>(vertex) * 3];
+                // 直前の頂点の最も近い三角形から始めると、近い頂点が続くので枝刈りが早く効く
+                double best = PointTriangleDistanceSquared(point, triangles[hint].Corners[0], triangles[hint].Corners[1],
+                                                           triangles[hint].Corners[2]);
+                size_t bestTriangle = hint;
+                for (size_t t = 0; t < triangles.size() && best > 0.0; ++t)
+                {
+                    const TriangleBounds& bounds = triangles[t];
+                    double centerSquared = 0.0;
+                    for (size_t axis = 0; axis < 3; ++axis)
+                    {
+                        const double d = static_cast<double>(point[axis]) - bounds.Center[axis];
+                        centerSquared += d * d;
+                    }
+                    // 三角形を包む球までの距離が今の最短以上なら、三角形はそれより近くない
+                    const double gap = std::sqrt(centerSquared) - bounds.Radius;
+                    if (gap > 0.0 && gap * gap >= best)
+                    {
+                        continue;
+                    }
+                    const double distance =
+                        PointTriangleDistanceSquared(point, bounds.Corners[0], bounds.Corners[1], bounds.Corners[2]);
+                    if (distance < best)
+                    {
+                        best = distance;
+                        bestTriangle = t;
+                    }
+                }
+                hint = bestTriangle;
+                maxDistance = std::max(maxDistance, best);
+                clusters[triangles[bestTriangle].Cluster].OriginalVertices.push_back(vertex);
+            }
+            return std::sqrt(maxDistance);
         }
 
         void ComputeClusterSphere(const WeldedMesh& mesh, BuildCluster& cluster)
@@ -509,12 +761,14 @@ namespace NorvesLib::Tools::AssetCook
             scratch.LocalToGlobal.clear();
             scratch.LocalIndices.clear();
             float maxMemberError = 0.0f;
+            float maxMemberSelectionError = 0.0f;
             VariableArray<float> memberCenters;
             VariableArray<float> memberRadii;
             for (const uint32_t member : group.Members)
             {
                 const BuildCluster& cluster = current[member];
                 maxMemberError = std::max(maxMemberError, cluster.Error);
+                maxMemberSelectionError = std::max(maxMemberSelectionError, cluster.SelectionError);
                 memberCenters.push_back(cluster.Center.X);
                 memberCenters.push_back(cluster.Center.Y);
                 memberCenters.push_back(cluster.Center.Z);
@@ -653,16 +907,8 @@ namespace NorvesLib::Tools::AssetCook
                 error = "簡略化の誤差が不正な値です";
                 return false;
             }
-
-            // グループの誤差 = メンバの誤差の最大 + 簡略化の誤差(親の誤差は子より小さくならない)
-            group.Error = maxMemberError + simplified.ErrorAbsolute;
-            if (!std::isfinite(group.Error) || group.Error >= Format::RootParentError)
-            {
-                error = "グループの誤差が有限の範囲を超えました";
-                return false;
-            }
-            EncloseSpheres(memberCenters.data(), memberRadii.data(), group.Members.size(), group.Center, group.Radius);
-
+            // 簡略化の誤差は形のずれだけで測る(meshoptimizer の誤差は属性の項を含むので使わない)。
+            // 簡略化しなかったグループは 0。三角形が残らなかったグループは測れないので meshoptimizer の誤差を使う。
             const size_t firstNew = output.Next.size();
             if (!simplified.Indices.empty())
             {
@@ -670,6 +916,48 @@ namespace NorvesLib::Tools::AssetCook
                                            scratch.LocalPositions.data(), localCount, scratch.LocalToGlobal.data(),
                                            output.Next);
             }
+
+            // 簡略化の誤差は形のずれだけで測る(meshoptimizer の誤差は属性の項を含むので使わない)。
+            // 元の形の頂点から簡略化後の面までの距離と、前の段からのずれ(両向き)の大きい方。
+            // 三角形が残らなかったグループは測れないので meshoptimizer の誤差を使う。
+            VariableArray<uint32_t> originalVertices;
+            for (const uint32_t member : group.Members)
+            {
+                const VariableArray<uint32_t>& memberVertices = current[member].OriginalVertices;
+                originalVertices.insert(originalVertices.end(), memberVertices.begin(), memberVertices.end());
+            }
+            float simplifyError = 0.0f;
+            if (simplified.Indices.empty())
+            {
+                simplifyError = simplified.ErrorAbsolute;
+            }
+            else
+            {
+                const double fromOriginal = HandOffOriginalVertices(mesh, originalVertices, output.Next, firstNew);
+                const double fromPrevious =
+                    bHaveCandidate ? MeasureSimplifyDeviation(scratch.LocalPositions.data(), localCount,
+                                                              scratch.LocalIndices, simplified.Indices)
+                                   : 0.0;
+                simplifyError = RoundUpToFloat(std::max(fromOriginal, fromPrevious));
+            }
+            if (!std::isfinite(simplifyError))
+            {
+                error = "簡略化の形のずれが不正な値です";
+                return false;
+            }
+
+            // グループの誤差 = メンバの誤差の最大と簡略化の誤差の大きい方(親の誤差は子より小さくならない)。
+            // 段ごとに足すと、段を重ねるほど実際の形のずれより大きく見積もり、遠くでも細かい段を選んでしまう。
+            group.Error = std::max(maxMemberError, simplifyError);
+            // フォールバックの段の選び方の誤差 = メンバの最大 + meshoptimizer の誤差(属性の項を含む)
+            group.SelectionError = maxMemberSelectionError + simplified.ErrorAbsolute;
+            if (!std::isfinite(group.Error) || group.Error >= Format::RootParentError ||
+                !std::isfinite(group.SelectionError) || group.SelectionError >= Format::RootParentError)
+            {
+                error = "グループの誤差が有限の範囲を超えました";
+                return false;
+            }
+            EncloseSpheres(memberCenters.data(), memberRadii.data(), group.Members.size(), group.Center, group.Radius);
             // この時点で output.Groups にはまだこのグループが入っていないので、段の中の通し番号は現在の件数になる
             const uint32_t localGroupId = static_cast<uint32_t>(output.Groups.size());
             for (size_t i = firstNew; i < output.Next.size(); ++i)
@@ -679,6 +967,7 @@ namespace NorvesLib::Tools::AssetCook
                 cluster.Center = group.Center;
                 cluster.Radius = group.Radius;
                 cluster.Error = group.Error;
+                cluster.SelectionError = group.SelectionError;
                 ComputeClusterCone(mesh, cluster);
                 output.NextTriangles += cluster.Indices.size() / 3;
             }
@@ -747,10 +1036,10 @@ namespace NorvesLib::Tools::AssetCook
             return true;
         }
 
-        // 切り口(誤差のしきい値)に含まれるクラスタ: 自分の誤差 <= しきい値 < 親の誤差
+        // フォールバックの段の切り口(選び方の誤差のしきい値)に含まれるクラスタ: 自分の誤差 <= しきい値 < 親の誤差
         bool IsInCut(const BuiltCluster& cluster, float threshold)
         {
-            return cluster.Cluster.Error <= threshold && threshold < cluster.ParentError;
+            return cluster.Cluster.SelectionError <= threshold && threshold < cluster.ParentSelectionError;
         }
     } // namespace
 
@@ -761,7 +1050,8 @@ namespace NorvesLib::Tools::AssetCook
                         CookMeshDagResult& outResult,
                         AnsiString& error,
                         uint32_t fallbackMinTriangles,
-                        uint32_t rootMaxClusters)
+                        uint32_t rootMaxClusters,
+                        uint32_t rootMinTriangles)
     {
         outResult = CookMeshDagResult{};
         const bool bRootLimited = rootMaxClusters > 0;
@@ -777,10 +1067,21 @@ namespace NorvesLib::Tools::AssetCook
         VariableArray<BuildCluster> current;
         BuildClustersFromTriangles(mesh.Indices.data(), mesh.Indices.size(), mesh.Positions.data(), mesh.VertexCount(),
                                    nullptr, current);
+        // 元の形の頂点(位置の代表)を、それを使う最初のクラスタに受け持たせる
+        VariableArray<uint8_t> bAssignedPosition(mesh.VertexCount(), 0u);
         for (BuildCluster& cluster : current)
         {
             ComputeClusterSphere(mesh, cluster);
             ComputeClusterCone(mesh, cluster);
+            for (const uint32_t vertex : cluster.Indices)
+            {
+                const uint32_t position = mesh.PositionRemap[vertex];
+                if (bAssignedPosition[position] == 0)
+                {
+                    bAssignedPosition[position] = 1;
+                    cluster.OriginalVertices.push_back(position);
+                }
+            }
         }
 
         SimplifyScratch scratch;
@@ -805,6 +1106,12 @@ namespace NorvesLib::Tools::AssetCook
             // 指定の数（既定は 1）以下のクラスタまで縮んだか、段の上限に達した段は根にする
             bool bMakeRoot = current.size() <= rootClusterLimit || level + 1 >= Format::MaxLODLevels;
             const char* rootReason = current.size() <= rootClusterLimit ? "single-cluster" : "max-levels";
+            // 根の三角形数の下限を指定した資産は、その数以下になった段を根にする
+            if (!bMakeRoot && rootMinTriangles > 0 && currentTriangles <= rootMinTriangles)
+            {
+                bMakeRoot = true;
+                rootReason = "min-triangles";
+            }
             LevelOutput output;
             size_t levelGroupTarget = GroupTargetSize;
             size_t acceptedGroupTarget = GroupTargetSize;
@@ -913,11 +1220,14 @@ namespace NorvesLib::Tools::AssetCook
                 {
                     BuiltCluster child;
                     child.Cluster = std::move(current[member]);
+                    // 元の形の頂点は次の段へ受け渡し済みなので、確定したクラスタには持たせない
+                    child.Cluster.OriginalVertices = VariableArray<uint32_t>{};
                     child.Level = level;
                     child.GroupId = groupId;
                     child.ParentCenter = group.Center;
                     child.ParentRadius = group.Radius;
                     child.ParentError = group.Error;
+                    child.ParentSelectionError = group.SelectionError;
                     built.push_back(std::move(child));
                 }
             }
@@ -1001,8 +1311,9 @@ namespace NorvesLib::Tools::AssetCook
             out.Clusters.push_back(record);
         }
 
-        // フォールバックの段: 誤差のしきい値で切ったクラスタの三角形の集まり。三角形数が目標以下になる最小のしきい値を探す。
-        // 切り口の三角形数 = (自分の誤差 <= T のクラスタの三角形数) - (親の誤差 <= T のクラスタの三角形数)
+        // フォールバックの段: 選び方の誤差(SelectionError)のしきい値で切ったクラスタの三角形の集まり。三角形数が目標以下になる
+        // 最小のしきい値を探す。切り口の三角形数 = (自分の誤差 <= T のクラスタの三角形数) - (親の誤差 <= T のクラスタの三角形数)。
+        // FallbackError は切り口のクラスタの形の誤差(Error)の最大。
         struct ErrorEdge
         {
             float Value = 0.0f;
@@ -1015,9 +1326,9 @@ namespace NorvesLib::Tools::AssetCook
         for (const BuiltCluster& entry : built)
         {
             const uint32_t triangles = static_cast<uint32_t>(entry.Cluster.Indices.size() / 3);
-            selfEdges.push_back({entry.Cluster.Error, triangles});
-            parentEdges.push_back({entry.ParentError, triangles});
-            candidates.push_back(entry.Cluster.Error);
+            selfEdges.push_back({entry.Cluster.SelectionError, triangles});
+            parentEdges.push_back({entry.ParentSelectionError, triangles});
+            candidates.push_back(entry.Cluster.SelectionError);
             if (entry.Level == 0)
             {
                 totalTriangles += triangles;

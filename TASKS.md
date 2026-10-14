@@ -1239,7 +1239,7 @@
 - notes: `CaptureStartupScene.ps1` の `-Night` が既存の `--night` を渡さないなら直してよい。 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
 
 ## SCN-MEGA-FIX-COOK-LOD-ERROR: クックの LOD の誤差を、足し算でなく子の最大と簡略化の誤差の大きい方にし、形の誤差だけで見積もる
-- status: todo
+- status: done
 - done-when: `Tools/AssetCook/CookMeshDag.cpp` 658 行付近は `group.Error = maxMemberError + simplified.ErrorAbsolute` と段ごとに足し算で積み、簡略化の誤差に属性（法線 0.2・UV 0.1）の項も入る。誤差が実際の形のずれより大きく見積もられ、1 画素の閾値でも遠くのバナナが細かい段を選ぶ（10 m 先の約 17 画素で 2〜3 万三角形。100万本の海で描くクラスタが 6.27M になり、BVH の列と描画の一覧が溢れる。`blocked/SCN-MEGA-FIX-BVH-QUEUE-MAIN.md`）。誤差を「子の誤差の最大と今回の簡略化の誤差の大きい方」にし（meshoptimizer の nanite の例・Nanite と同じ。親の誤差は子より小さくならない約束は保つ）、簡略化の誤差は形の誤差だけで見積もる（属性の重みは簡略化の選び方には使ってよいが、誤差には入れない）。この DAG で作るクック済みの資産（バナナ・mega-stress・起動画面のモデルなど）を作り直す（生成物はコミットしない）。起動画面: 差がこの変更だけによるなら基準（`.harness/runs/startup-capture/SCN-MEGA-BASE-RWDI` と、golden があればそれも）を撮り直して再承認する（`Docs/RenderingValidation/GoldenBaselines.md` の手順。撮影を開いて、近くの岩・球・家の形が崩れていない・穴が無い・遠くの形が目に見えて粗くなっていないことを確かめ、根拠をコミット本文に書く）。1 万本 overview の新しい基準 `scene-capture/SCN-MEGA-BASE-COOK` を撮って開いて確かめる（以後のバナナの比較の比べる先。SCN-MEGA-LAYOUT-SEA の途中の保存で 1 万本の配置が変わったので、古い `SCN-MEGA-BASE` は使えない）。100万本の数はこの項目では測らず、SCN-MEGA-FIX-BVH-QUEUE-MAIN で見る。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-MEGA-FIX-COOK-LOD-ERROR`

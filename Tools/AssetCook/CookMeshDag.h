@@ -44,12 +44,15 @@ namespace NorvesLib::Tools::AssetCook
     //   2. 128 三角形・128 頂点以下のクラスタに分ける(段 0。誤差 0)。
     //   3. 約 4 クラスタずつ隣接でグループにし、グループの境界の頂点を固定して、法線・UV を保つ簡略化で
     //      三角形を半分にし、再びクラスタに分ける。これを根まで繰り返す。
-    //      グループの誤差 = メンバの誤差の最大 + 簡略化の誤差(単調)、境界球 = メンバの境界球を包む球。
+    //      グループの誤差 = メンバの誤差の最大と簡略化の誤差の大きい方(単調)、境界球 = メンバの境界球を包む球。
+    //      簡略化の誤差は形のずれだけで測る(元の形の頂点から簡略化後の面までの距離。法線・UV は簡略化の選び方にだけ使う)。
     //   4. 誤差のしきい値で切ったクラスタの三角形の集まりを、フォールバックの段として持つ。
     //      三角形数の目標は min(全体 / 16, 32K)。小さなメッシュで根の段までの粗さが影・RT の形を崩すときは、
     //      fallbackMinTriangles（既定 0 = 指定なし）で目標の下限を上げて、より細かい段を選ばせる（128K で頭打ち）。
     //   5. rootMaxClusters（既定 0 = 指定なし）が 1 以上なら、根のクラスタ数がこの数以下になるまで簡略化を続ける
     //      （三角形が減らない段で打ち切る既定の判定を緩める）。遠景で根の段だけが選ばれる大量配置の資産のための指定。
+    //   6. rootMinTriangles（既定 0 = 指定なし）が 1 以上なら、三角形数がこの数以下になった段を根にする。
+    //      ラスタの段がフォールバックの段(影・RT が使う)より粗くならないので、両者の面のずれによる自己遮蔽が出ない。
     // 結果のクラスタ・インデックスは、クラスタごとに自分の頂点の範囲(最大 128 頂点)を持つ。
     [[nodiscard]] bool BakeMeshLodDag(const Core::Asset::CookedMeshVertex* vertices,
                                       size_t vertexCount,
@@ -58,5 +61,6 @@ namespace NorvesLib::Tools::AssetCook
                                       CookMeshDagResult& outResult,
                                       Core::Container::AnsiString& error,
                                       uint32_t fallbackMinTriangles = 0,
-                                      uint32_t rootMaxClusters = 0);
+                                      uint32_t rootMaxClusters = 0,
+                                      uint32_t rootMinTriangles = 0);
 }
