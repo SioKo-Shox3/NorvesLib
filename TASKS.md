@@ -1331,7 +1331,7 @@
 
 ## SCN-TERRAIN-DETAIL: 地形の岩肌をトライプラナーにし、タイルの繰り返しを見せない
 - status: todo
-- done-when: 岩肌の層を急斜面でトライプラナー（引き伸ばされない）にし、広い範囲の色・明るさの揺らぎ（数十〜数百 m の低周波）と、距離で UV の倍率を変える混ぜ方（近くは細かく、遠くは大きく）で、`overview` の撮影で同じ模様の格子状の繰り返しが目立たない。メサの崖を見る名前付き視点 `cliff` を足し、縦に伸びた縞が無いことを撮影を開いて確かめる。性能はこの項目では測らず、SCN-WASTELAND-POLISH の最終の配置で判断する（材質の処理が目標を超える原因になったときだけ詳しく診る）。
+- done-when: 岩肌の層を急斜面でトライプラナー（引き伸ばされない）にし、広い範囲の色・明るさの揺らぎ（数十〜数百 m の低周波）と、距離で UV の倍率を変える混ぜ方（近くは細かく、遠くは大きく）で、`overview` の撮影で同じ模様の格子状の繰り返しが目立たない。メサの崖を見る名前付き視点 `cliff` を足し、縦に伸びた縞が無いことを撮影を開いて確かめる。メサが、上の平らな円盤を型で抜いたように見えない（SCN-TERRAIN-GEN の `ridge` では縁が垂直に切り立った同じ高さの円盤が並ぶ。縁を崩す・段や張り出しを付ける・高さと大きさと輪郭をばらすなどを高さ場で行い、区画を焼き直す）。`ground` の足元の砂が横に流れてぼやけて見えない（テクスチャの選び方・異方性フィルタ・倍率を確かめる）。性能はこの項目では測らず、SCN-WASTELAND-POLISH の最終の配置で判断する（材質の処理が目標を超える原因になったときだけ詳しく診る）。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -OutDir .harness/runs/scene-capture/SCN-TERRAIN-DETAIL`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SCN-TERRAIN-DETAIL`
