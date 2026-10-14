@@ -84,10 +84,13 @@ PHOTOS = [
         "id": "cliff_01", "role": "cliff",
         "title": "File:Battleship Rock, Valley Of The Gods.jpg",
         "camera": {"lat": None, "lon": None, "source": "estimate",
-                   "note": "Battleship Rock の南〜南東の谷床、1〜1.5 km 離れた所（推定）"},
-        "heading": "北〜北西（推定）",
-        "contents": "主役の崖。上部の垂直な崖と城壁のような頭部、中段の段々の地層と棚、下部の崖錐の斜面と落ちた岩塊、手前の谷床。"
-                    "晴天で横からの日差し、崖の影の面がはっきり出る",
+                   "note": "Battleship Rock の北西の谷床、1〜1.5 km 離れた所（推定。E 約 602050〜602400・N 約 4128650〜4129000）。"
+                           "根拠は Commons の説明 \"Northwest aspect of Battleship Rock\"（北西面を写す）と、"
+                           "低い西日が手前の面を照らしていること（EXIF の時刻 01:51 を UTC とみると現地 18:51 の日没前）。"
+                           "距離は崖の見かけの大きさからの目安で、数百 m の誤差がありうる"},
+        "heading": "南東（方位 120〜150°の推定）。北西面を正面から見る",
+        "contents": "主役の崖の北西面。上部の垂直な崖と城壁のような頭部、中段の段々の地層と棚、下部の崖錐の斜面と落ちた岩塊、手前の谷床。"
+                    "晴天で低い西日が右後ろから当たり、崖の影の面がはっきり出る",
         "compare": "崖の高さと崖錐の斜面の高さの比、地層の段の数と厚さ、崖の上端の凹凸、落石の岩塊の大きさと散らばり、日向と影の明るさの比",
     },
     {
@@ -111,12 +114,15 @@ PHOTOS = [
     },
     {
         "id": "ground_02", "role": "ground",
-        "title": "File:Valley of the Gods - HCP - March 17, 2025 - 015.jpg",
-        "camera": {"lat": None, "lon": None, "source": "estimate",
-                   "note": "崖の上の縁の近く（遠くに平原が見える。同じ日の連作の 1 枚）"},
-        "heading": "不明",
-        "contents": "足元。崖から割れ落ちた砂岩の岩塊（1〜4 m）と板状に割れた岩、その間の礫と低木。曇天",
-        "compare": "岩塊の大きさの分布と丸まり方、割れた面と風化した面の色の差、岩の間の礫と砂の溜まり方",
+        "title": "File:Annular Eclipse in Valley of the Gods - 53318131401.jpg",
+        "camera": {"lat": 37.300958, "lon": -109.835461, "source": "gps",
+                   "note": "Battleship Rock の北 940 m の沢の中（範囲の内側）"},
+        "heading": "南東（方位 約 145°の推定）。右のピラミッド形のビュートは Franklin Butte（方位 154°、1.8 km。cliff_02 と同じ形）、"
+                   "左奥の小さなビュートは Rooster Butte（方位 141°、3.5 km）と見る。EXIF の焦点距離は 35 mm 換算 110 mm（水平の画角 約 19°）で、"
+                   "Franklin Butte の見かけの高さ（約 3.7°）が高さ 116 m・距離 1.8 km と合う",
+        "contents": "足元（沢底）。乾いた沢の流路（幅 5〜10 m）に砂と礫（数 cm〜50 cm の角ばった砂岩）、両岸に高さ 0.5〜1 m の"
+                    "切り立った岸（板状の砂岩の段）、岸沿いにハコヤナギ（cottonwood）と黄色い花のラビットブラシ、低木。晴天の午後",
+        "compare": "沢の幅と岸の高さ、流路の砂と礫の大きさの分布、岸の段の割れ方、沢沿いだけに木が立つ植生の帯（谷床の低木との違い）",
     },
 ]
 
@@ -239,8 +245,20 @@ def fetch():
     build_sheet(manifest)
 
 
+def label_font():
+    # 日本語の文字を描けるフォントを Windows の標準フォントから探す。無ければ既定のフォント
+    from PIL import ImageFont
+    for name in ("meiryo.ttc", "YuGothM.ttc", "msgothic.ttc"):
+        try:
+            return ImageFont.truetype(os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts", name), 14)
+        except OSError:
+            continue
+    return ImageFont.load_default()
+
+
 def build_sheet(manifest):
     from PIL import Image, ImageDraw
+    font = label_font()
     cell_w, cell_h, label_h, columns = 560, 380, 44, 3
     photos = manifest["photos"]
     rows = (len(photos) + columns - 1) // columns
@@ -254,8 +272,11 @@ def build_sheet(manifest):
             y = (index // columns) * (cell_h + label_h)
             sheet.paste(image, (x + (cell_w - image.width) // 2, y + (cell_h - image.height) // 2))
         label = "%s  %s  [%s]" % (entry["id"], entry["commons_title"][5:60], entry["license"])
-        draw.text((x + 6, y + cell_h + 4), label, fill=(255, 230, 120))
-        draw.text((x + 6, y + cell_h + 22), "by " + entry["author"][:80], fill=(200, 200, 200))
+        for line, (text, color) in enumerate(((label, (255, 230, 120)), ("作者: " + entry["author"], (200, 200, 200)))):
+            # 隣のセルへはみ出さないよう、セルの幅に収まるまで末尾を削る
+            while len(text) > 1 and draw.textlength(text, font=font) > cell_w - 12:
+                text = text[:-2] + "…"
+            draw.text((x + 6, y + cell_h + 4 + 18 * line), text, fill=color, font=font)
     sheet.save(SHEET_PATH)
     print("一覧: %s (%dx%d)" % (SHEET_PATH, sheet.width, sheet.height))
 

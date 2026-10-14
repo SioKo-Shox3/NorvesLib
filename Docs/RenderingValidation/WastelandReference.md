@@ -30,7 +30,8 @@
   Setting Hen Butte 約 114 m、Rooster Butte 約 90 m（頂部と周り 700 m の低い側 20% の差）。
 - 谷床は北から南東へ緩く下がる（範囲の中で約 1°）平らな面で、ビュートの間に 1 km 以上の開けた谷床が残る。
   手本の写真の「平らな谷床に孤立したビュートが立つ」構図を範囲の中で作れる。
-- 写真の撮影位置のうち 2 つ（far_01・far_02）が範囲の内側にあり、cliff_02 も北の外 305 m にある（下の SCN-WL-DEM-CROP への注記）。
+- 写真の撮影位置のうち 3 つ（far_01・far_02・ground_02）が範囲の内側にあり、cliff_02 は北の外 305 m、cliff_01（推定）は西の外 100〜450 m にある
+  （下の SCN-WL-DEM-CROP への注記）。ground_02 の沢は Battleship Rock の北 940 m で範囲を横切る沢で、沢底の手本と DEM の流路を同じ場所で比べられる。
 - 外した地形: Seven Sailors（E 604278・N 4122514）は Battleship Rock から南へ約 5.4 km で、両方を 4 km 四方に入れられない。
   Castle Butte（E 601557・N 4130371）と Lady in the Bathtub（E 599397・N 4126740）はタイルの外。これらと北の Cedar Mesa の縁の崖は
   遠景として SCN-WL-HORIZON の粗い地形で出す。
@@ -38,8 +39,8 @@
 
 ### SCN-WL-DEM-CROP への注記
 
-- 余白は 100 m 以上の決まりのままでよいが、北側だけは 400 m 以上にすると cliff_02 の撮影位置（N 4129305）が DEM の上に乗る
-  （タイルの北端まで 1000 m あるので取れる）。
+- 余白は 100 m 以上の決まりのままでよいが、北側を 400 m 以上にすると cliff_02 の撮影位置（N 4129305）が、西側を 500 m 以上にすると
+  cliff_01 の推定の撮影位置（E 約 602050〜602400）が DEM の上に乗る（タイルの端まで北 1000 m・西 2500 m あるので取れる）。
 - 主役の崖の断面は Battleship Rock を南北に横切る線（E 603100、N 4127500〜4128400）で見る。
 
 ## 主役の地形
@@ -67,7 +68,7 @@ A を推奨する: 前哨地から西に Battleship Rock と Franklin Butte、�
 
 ## 写真
 
-役割ごとに、遠景 2 枚・主役の崖 2 枚・足元 2 枚。すべて Wikimedia Commons の Valley of the Gods の分類から取り、ライセンスは
+役割ごとに、遠景 2 枚・主役の崖 2 枚・足元 2 枚。すべて Wikimedia Commons の、Valley of the Gods の中で撮られた写真から取り、ライセンスは
 CC BY・CC BY-SA・CC0（NC・ND・FAL・GFDL は除いた）。CC BY・CC BY-SA の写真を公開物（画面写真・資料）に載せるときは、
 `manifest.json` の作者・ライセンス・URL を表示する。撮影の位置は EXIF の GPS があればその値で、数十〜数百 m の誤差がありうる。
 
@@ -90,8 +91,11 @@ CC BY・CC BY-SA・CC0（NC・ND・FAL・GFDL は除いた）。CC BY・CC BY-SA
 ### cliff_01（主役の崖）
 
 - `File:Battleship Rock, Valley Of The Gods.jpg`、pspechtenhauser、CC BY 2.0、2008-09-24、3648×2378。
-- 撮影位置: 記録なし。Battleship Rock の南〜南東の谷床、1〜1.5 km 離れた所から北〜北西を向いたと推定する。
-- 写っている物: 上部の垂直な崖と城壁のような頭部、中段の段々の地層と棚、下部の崖錐の斜面と落ちた岩塊、手前の谷床。晴天で横からの日差し。
+- 撮影位置: 記録なし。Battleship Rock の北西の谷床、1〜1.5 km 離れた所（E 約 602050〜602400・N 約 4128650〜4129000）から
+  南東（方位 120〜150°）を向いたと推定する。根拠は 2 つ: Commons の説明が "Northwest aspect of Battleship Rock"（北西面）であることと、
+  低い西日が手前の面を右後ろから照らしていること（EXIF の時刻 01:51 を UTC とみると現地 18:51 の日没前で、太陽は西）。
+  距離は崖の見かけの大きさからの目安で、数百 m の誤差がありうる。SCN-WL-REFERENCE-CAPTURE で崖の稜線の形から位置を合わせる。
+- 写っている物: 主役の崖の北西面。上部の垂直な崖と城壁のような頭部、中段の段々の地層と棚、下部の崖錐の斜面と落ちた岩塊、手前の谷床。晴天で低い西日。
 - 比較で見る特徴: 崖の高さと崖錐の斜面の高さの比、地層の段の数と厚さ、崖の上端の凹凸、落石の岩塊の大きさと散らばり、日向と影の明るさの比。
   崖と崖錐の形は SCN-WL-CLIFF-GEOMETRY・SCN-WL-SCATTER-ROCKS、地層は SCN-WL-MATERIAL-STRATA、光は SCN-WL-LIGHT-BASE の手本にする。
 
@@ -111,16 +115,23 @@ CC BY・CC BY-SA・CC0（NC・ND・FAL・GFDL は除いた）。CC BY・CC BY-SA
 - 比較で見る特徴: 礫の大きさと被覆、低木の株の大きさと間隔、地表の赤の色味（曇天なので素材の色の比較に向く）、侵食の段の形。
   地表の素材（SCN-WL-MATERIAL-PALETTE）・草と低木の散布・沢（SCN-WL-MASKS-FLOW）の手本にする。
 
-### ground_02（足元）
+### ground_02（足元・沢底）
 
-- `File:Valley of the Gods - HCP - March 17, 2025 - 015.jpg`、Vulturesong、CC0、2025-03-17、3024×4032（縦）。
-- 撮影位置: 記録なし。崖の上の縁の近く（遠くに平原が見える。ground_01 と同じ日の連作）。
-- 写っている物: 崖から割れ落ちた砂岩の岩塊（1〜4 m）と板状に割れた岩、その間の礫と低木。曇天。
-- 比較で見る特徴: 岩塊の大きさの分布と丸まり方、割れた面と風化した面の色の差、岩の間の礫と砂の溜まり方。
-  崖錐と大岩（SCN-WL-SCATTER-ROCKS）・崖の素材（SCN-WL-CLIFF-ASSETS）の手本にする。
+- `File:Annular Eclipse in Valley of the Gods - 53318131401.jpg`、RuggyBearLA、CC BY 2.0、2023-10-13 14:52、2000×1506。
+- 撮影位置: GPS 37.300958, -109.835461（E 603208・N 4128895、範囲の内側、Battleship Rock の北 940 m の沢の中）。
+  向きは南東（方位 約 145°）。右のピラミッド形のビュートは Franklin Butte（方位 154°、1.8 km。cliff_02 と同じ形）、
+  左奥の小さなビュートは Rooster Butte（方位 141°、3.5 km）と見る。EXIF の焦点距離は 35 mm 換算 110 mm（水平の画角 約 19°）で、
+  Franklin Butte の見かけの高さ（約 3.7°）が高さ 116 m・距離 1.8 km と合う。
+- 写っている物: 乾いた沢の流路（幅 5〜10 m）に砂と礫（数 cm〜50 cm の角ばった砂岩）、両岸に高さ 0.5〜1 m の切り立った岸（板状の砂岩の段）、
+  岸沿いにハコヤナギ（cottonwood）と黄色い花のラビットブラシ、低木。晴天の午後。
+- 比較で見る特徴: 沢の幅と岸の高さ、流路の砂と礫の大きさの分布、岸の段の割れ方、沢沿いだけに木が立つ植生の帯（谷床の低木との違い）。
+  沢（SCN-WL-MASKS-FLOW）・礫の散布（SCN-WL-SCATTER-ROCKS）・草と低木と木の散布の手本にする。撮影位置が範囲の内側なので、
+  1 m の DEM で同じ沢の幅と岸の高さを確かめられる。
 
 ### 足元の写真についての注記
 
-沢底（砂の溜まった平らな流路）を正面から写した、使えるライセンスの写真は Valley of the Gods の分類に無かった。
-ground_01 の侵食の段と far_02 の手前の緩斜面で代え、沢の形は DEM の流れの解析（SCN-WL-MASKS-FLOW）で決める。
-ダウンロードの許可が写真 4〜6 枚なので、Cedar Mesa・Monument Valley 周辺の写真は取っていない。
+沢底の写真は Valley of the Gods の中で見つかったので、Cedar Mesa・Monument Valley 周辺で代えていない。
+探した範囲: Commons の Valley of the Gods の 3 つの連作（HCP 2025-03-17・Flickr 2019〜2020・Annular Eclipse 2023-10）と、
+撮影位置から 10 km 以内の写真、Comb Wash・Butler Wash・Moki Dugway の分類。Comb Wash・Butler Wash の写真は道や遺跡が主で、沢底を写した物は無かった。
+前の版で ground_02 にした崖下の岩塊の写真（`File:Valley of the Gods - HCP - March 17, 2025 - 015.jpg`、CC0）は、ダウンロードの許可（4〜6 枚）に
+収めるため外した。崖錐の岩塊は cliff_01 の下部と far_02 の裾で見る。

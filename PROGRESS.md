@@ -4311,3 +4311,13 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `contact_sheet.png` を開いて、6 枚が役割どおり（遠景 2・崖 2・足元 2）に並び、作者とライセンスの表記が付いていることを確かめた。
 - Notes: Python の既定の証明書ストアでは Wikimedia の証明書の連鎖が期限切れと判定されるので、スクリプトは certifi があればその CA の束を使う。沢底を正面から写した使えるライセンスの写真は無く、ground_01 の侵食の段で代えた（許可が 6 枚までなので Cedar Mesa などは取っていない）。SCN-WL-DEM-CROP は北側の余白を 400 m 以上にすると cliff_02 の撮影位置が DEM に乗る（文書に注記）。Pillow を使う（requirements は SCN-WL-DEM-INPUT で固定）。C++ は触っていないのでビルドは走らせていない（前の反復の `verify-SCN-CLOUDS-4.txt` で Debug の Game のビルドが通っている）。試験は足していない。
 - Next: TASKS.md の次の未完の項目（SCN-WL-DEM-INPUT）。
+
+### SCN-WL-REFERENCE-SELECT 差し戻しの対応（2026-10-15、反復 5・run 20261014-222123）
+- 沢底の写真: ground_02 を、Valley of the Gods の中の沢底の写真 `File:Annular Eclipse in Valley of the Gods - 53318131401.jpg`（RuggyBearLA、CC BY 2.0、GPS 37.300958, -109.835461 = E 603208・N 4128895、範囲の内側）に替えた。乾いた流路の砂と礫・高さ 0.5〜1 m の岸・岸沿いのハコヤナギが写る。右のビュートは cliff_02 と同じ形の Franklin Butte で、EXIF の焦点距離（35 mm 換算 110 mm）から見かけの高さが距離 1.8 km と合うので、向きを南東（約 145°）と推定した。前の ground_02（崖下の岩塊、CC0）は 6 枚の許可に収めるため外した。
+- cliff_01 の向き: Commons の説明 "Northwest aspect of Battleship Rock" と低い西日の当たり方から、撮影位置を Battleship Rock の北西 1〜1.5 km、向きを南東（120〜150°）に直した（スクリプト・manifest・文書）。
+- 一覧のラベルを日本語（「作者: 」）にし、日本語のフォントで描き、セルの幅で切ってはみ出さないようにした。
+- 検証（`.harness/runs/20261014-222123/`）:
+  - `verify-SCN-WL-REFERENCE-SELECT-2.txt`: `python Scripts/Terrain/ReferencePhotos.py --verify` result=pass・exit=0。
+  - `contact_sheet.png` を開いて、ground_02 が沢底の写真に替わり、6 枚のラベルが日本語でセルの中に収まっていることを確かめた。
+- Notes: Commons の検索は短時間に続けると 429 を返すので、探すときは間を空ける。cliff_01 の推定の撮影位置は範囲の西の外 100〜450 m なので、SCN-WL-DEM-CROP で西の余白を 500 m 以上にすると DEM に乗る（文書に追記）。
+- Next: TASKS.md の次の未完の項目（SCN-WL-DEM-INPUT）。
