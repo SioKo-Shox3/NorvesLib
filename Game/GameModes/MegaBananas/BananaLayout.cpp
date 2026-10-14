@@ -37,6 +37,8 @@ namespace Game::GameModes
         // 区画の一辺[m]と、区画の本数を見積もる積分の片側の分割数
         constexpr float kSeaTileMeters = 16.0f;
         constexpr int kSeaTileIntegrationSteps = 16;
+        // 区画の密度の上限を標本の最大から決めるときの余裕（標本の間隔 1 m で密度が変わる割合より大きく）
+        constexpr float kSeaTileDensityMargin = 1.25f;
         // 半径を本数から決める積分の分割数
         constexpr int kSeaRadialIntegrationSteps = 4096;
         // 1 本ごとに比べる位置の数（床に置ける位置が見つかればそこに決め、無ければ最も低く載る位置）と、位置を引く回数の上限
@@ -72,6 +74,31 @@ namespace Game::GameModes
         constexpr uint32_t kMaxDensePoints = 24000;
         // 床へわずかに沈める深さ（接地の隙間を隠す）。山の上段も同じ量だけ下の形へ沈める
         constexpr float kSinkMeters = 0.002f;
+        // ---- 大きな塚（100 万本級のマスクなしの配置だけ。山と同じ落とし込みで、海の中に積む） ----
+        // 塚を置く最少の本数と、塚に使う本数（全体の 1/kMoundShareDivisor、上限 kMoundMaxBananas）
+        constexpr uint32_t kMoundMinCount = 500000;
+        constexpr uint32_t kMoundShareDivisor = 10;
+        constexpr uint32_t kMoundMaxBananas = 150000;
+        constexpr int kMoundCount = 4;
+        // 塚の中心（床の x・z）。horizon の視点（(0, 1.7, -15) から +Z）の 30〜75 m 先に、画面の上で重ならないよう左右へ散らす。
+        // 番号 0 が検算用の塚
+        constexpr float kMoundCenters[kMoundCount][2] = {{-7.0f, 14.0f}, {8.0f, 22.0f}, {-6.0f, 60.0f}, {3.0f, 45.0f}};
+        // 検算用の塚の本数（1 本ずつの姿勢をログへ出すのはこの塚だけ）
+        constexpr uint32_t kCheckMoundBananas = 20000;
+        // 塚の高さの格子の升[m]（外部の検算の升と同じ。升は世界の原点にそろえる）
+        constexpr float kMoundCellMeters = 0.005f;
+        // 塚の姿勢を丸める段数（向き・大きさ）。段ごとの足跡を使い回す
+        constexpr int kMoundYawSteps = 128;
+        constexpr int kMoundScaleSteps = 8;
+        // 1 本ごとに比べる候補の数と、候補を引く落とした位置の周りの半径[m]（バナナの長さほど。局所のくぼみと尖りをならす）
+        constexpr int kMoundCandidates = 8;
+        constexpr float kMoundLocalRadius = 0.3f;
+        // 塚の落とす位置の標準偏差を、山と相似な値から広げる倍率（大きな塚は詰まりが粗く高くなるので、斜面を 40° 前後に寝かせる）
+        constexpr float kMoundSigmaScale = 1.3f;
+        // 予算を確かめる間隔（本数）
+        constexpr uint32_t kMoundTimeCheckInterval = 256;
+        // 浮いていると数える隙間[m]
+        constexpr float kFloatingGapMeters = 0.005f;
         // 向き・大きさのばらつき
         constexpr float kScaleMin = 0.92f;
         constexpr float kScaleMax = 1.08f;
@@ -235,12 +262,32 @@ namespace Game::GameModes
             return false;
         }
 
-        /// 床の x・z での海の密度[本/m²]（縁と山の周りを含む）
-        float SeaDensityAt(float x, float z, float radius)
+        /// 大きな塚 1 つ（中心・本数・落とす位置の標準偏差・落とす位置の最大半径・海を置かない半径）
+        struct MoundSite
+        {
+            float CenterX = 0.0f;
+            float CenterZ = 0.0f;
+            uint32_t Count = 0;
+            float Sigma = 0.0f;
+            float MaxRadius = 0.0f;
+            float ExcludeRadius = 0.0f;
+        };
+
+        /// 床の x・z での海の密度[本/m²]（縁と山・塚の周りを含む）
+        float SeaDensityAt(float x, float z, float radius, const VariableArray<MoundSite> &mounds)
         {
             if (IsUnderPile(x, z))
             {
                 return 0.0f;
+            }
+            for (const MoundSite &mound : mounds)
+            {
+                const float diffX = x - mound.CenterX;
+                const float diffZ = z - mound.CenterZ;
+                if (diffX * diffX + diffZ * diffZ < mound.ExcludeRadius * mound.ExcludeRadius)
+                {
+                    return 0.0f;
+                }
             }
             const float diffX = x - kSeaCenterX;
             const float diffZ = z - kSeaCenterZ;
@@ -270,6 +317,22 @@ namespace Game::GameModes
             return std::min(kPileBananas * static_cast<uint32_t>(kPileCount), count / kMaxPileShareDivisor);
         }
 
+        /// 大きな塚に使う本数（全部の塚の合計。マスクを渡した配置と、本数が少ないときは 0）
+        uint32_t MoundBudget(uint32_t count, bool bMasked)
+        {
+            if (bMasked || count < kMoundMinCount)
+            {
+                return 0;
+            }
+            return std::min(count / kMoundShareDivisor, kMoundMaxBananas);
+        }
+
+        /// 落とす位置の標準偏差。260 本で kPileSigmaMeters の山と相似な形になるよう、本数の立方根に比例させる
+        float PileSigmaFor(uint32_t count)
+        {
+            return kPileSigmaMeters * std::cbrt(static_cast<float>(count) / static_cast<float>(kPileBananas));
+        }
+
         /// 芯に沿った球の 1 つ（ワールド座標）
         struct SpineSphere
         {
@@ -288,6 +351,22 @@ namespace Game::GameModes
             uint32_t FirstSphere = 0;
         };
 
+        /// 塚の足跡の升 1 つ（原点の升からの升の差と、その升に入る頂点の最低・最高の高さ。原点からの差[m]）
+        struct FootprintCell
+        {
+            int16_t DX = 0;
+            int16_t DZ = 0;
+            float Bottom = 0.0f;
+            float Top = 0.0f;
+        };
+
+        /// 丸めた姿勢 1 つの足跡（初めて使うときに作る）
+        struct MoundFootprint
+        {
+            bool bBuilt = false;
+            VariableArray<FootprintCell> Cells;
+        };
+
     } // namespace
 
     struct BananaFieldBuilder::State
@@ -301,8 +380,9 @@ namespace Game::GameModes
             float MinZ = 0.0f;
             /// 区画に置く本数（密度の積分から決めた分）
             uint32_t Quota = 0;
-            /// 区画の中での密度の上限（位置を密度に比例して引く棄却法に使う）
+            /// 区画の中での密度の上限（位置を密度に比例して引く棄却法に使う）と、置けなかったときに使う締めた上限
             float MaxDensity = 0.0f;
+            float TightMaxDensity = 0.0f;
             /// 置いた入力の範囲
             uint32_t First = 0;
             uint32_t Count = 0;
@@ -343,6 +423,29 @@ namespace Game::GameModes
         /// 候補の向きの球（位置を含まない差分と半径）の作業用
         VariableArray<SpineSphere> CandidateSpine;
         VariableArray<SpineSphere> BestSpine;
+
+        // ---- 大きな塚（海の区画より先に、塚の順に積む） ----
+        VariableArray<MoundSite> Mounds;
+        uint32_t CurrentMound = 0;
+        bool bMoundOpen = false;
+        uint32_t MoundPlaced = 0;
+        PlacementRandom MoundRandom;
+        /// 処理中の塚の高さの格子（世界の升の番号 FieldMinX・FieldMinZ から一辺 FieldSize。床は 0）
+        int FieldMinX = 0;
+        int FieldMinZ = 0;
+        int FieldSize = 0;
+        VariableArray<float> FieldHeights;
+        /// 処理中の塚の内訳（隙間は各バナナの最小の隙間の、塚の中の最大・最小）
+        float MoundPeak = 0.0f;
+        float MoundMaxGap = 0.0f;
+        float MoundMinGap = 0.0f;
+        uint32_t MoundFloating = 0;
+        uint32_t MoundStacked = 0;
+        /// 丸めた姿勢ごとの足跡（向きの段 × 大きさの段）と、足跡の局所の箱の片側の升の数
+        VariableArray<MoundFootprint> Footprints;
+        int FootprintHalfCells = 0;
+        VariableArray<float> FootprintBottom;
+        VariableArray<float> FootprintTop;
     };
 
     namespace
@@ -532,11 +635,17 @@ namespace Game::GameModes
             float bestZ = 0.0f;
             float bestYaw = 0.0f;
             float bestScale = 1.0f;
-            for (int draw = 0; draw < kSeaMaxDraws && candidates < kSeaCandidates; ++draw)
+            // 引く回数の上限までに位置が 1 つも無ければ、締めた上限でもう一巡引く（置けた配置の乱数の並びは変えない）
+            for (int draw = 0; draw < 2 * kSeaMaxDraws && candidates < kSeaCandidates; ++draw)
             {
+                if (draw >= kSeaMaxDraws && candidates > 0)
+                {
+                    break;
+                }
+                const float maxDensity = draw < kSeaMaxDraws ? tile.MaxDensity : tile.TightMaxDensity;
                 const float x = tile.MinX + kSeaTileMeters * random.Next();
                 const float z = tile.MinZ + kSeaTileMeters * random.Next();
-                if (random.Next() * tile.MaxDensity >= SeaDensityAt(x, z, radius))
+                if (random.Next() * maxDensity >= SeaDensityAt(x, z, radius, state.Mounds))
                 {
                     continue;
                 }
@@ -637,13 +746,16 @@ namespace Game::GameModes
                         continue;
                     }
                     double integral = 0.0;
+                    float sampledMax = 0.0f;
                     for (int sz = 0; sz < kSeaTileIntegrationSteps; ++sz)
                     {
                         for (int sx = 0; sx < kSeaTileIntegrationSteps; ++sx)
                         {
                             const float x = tile.MinX + (static_cast<float>(sx) + 0.5f) * sampleStep;
                             const float z = tile.MinZ + (static_cast<float>(sz) + 0.5f) * sampleStep;
-                            integral += static_cast<double>(SeaDensityAt(x, z, radius));
+                            const float density = SeaDensityAt(x, z, radius, state.Mounds);
+                            integral += static_cast<double>(density);
+                            sampledMax = std::max(sampledMax, density);
                         }
                     }
                     if (integral <= 0.0)
@@ -651,6 +763,9 @@ namespace Game::GameModes
                         continue;
                     }
                     tile.MaxDensity = SeaProfileDensity(nearest / radius);
+                    // 縁で細った区画は上の上限では採択がまれで、引く回数の上限までに置けないことがある。そのときだけ使う、
+                    // 標本の最大に余裕を掛けた締めた上限
+                    tile.TightMaxDensity = std::min(tile.MaxDensity, sampledMax * kSeaTileDensityMargin);
                     const float centerX = tile.MinX + 0.5f * kSeaTileMeters - stats.CenterX;
                     const float centerZ = tile.MinZ + 0.5f * kSeaTileMeters - stats.CenterZ;
                     order.push_back(TileOrder{std::sqrt(centerX * centerX + centerZ * centerZ),
@@ -746,12 +861,16 @@ namespace Game::GameModes
         };
 
         /// 山を 1 つ作る。中心から正規分布で落とし、下の形に初めて触れる高さに置く
+        /// @param bLogItems 1 本ずつの姿勢をログへ出す（塚を積むときは検算用の塚だけが出すので false）
         void PlacePile(Container::VariableArray<Component::MegaScatterInstance> &instances, const BananaShape &shape,
-                       int pileIndex, float centerX, float centerZ, uint32_t count, PlacementRandom &random)
+                       int pileIndex, float centerX, float centerZ, uint32_t count, PlacementRandom &random, bool bLogItems)
         {
             PileHeightField field(centerX, centerZ);
             VariableArray<Math::Vector3> oriented;
             float peakHeight = 0.0f;
+            float maxGap = std::numeric_limits<float>::lowest();
+            float minGap = std::numeric_limits<float>::max();
+            uint32_t floating = 0;
             for (uint32_t n = 0; n < count; ++n)
             {
                 float bestRequired = std::numeric_limits<float>::max();
@@ -792,6 +911,15 @@ namespace Game::GameModes
                     bestRequired = std::max(bestRequired, field.Sample(bestX + offset.x, bestZ + offset.z) - offset.y);
                 }
                 const float y = bestRequired - kSinkMeters;
+                // 接触の隙間（自分の点と、書き込む前の下の形の高さの差の最小）
+                float gap = std::numeric_limits<float>::max();
+                for (const Math::Vector3 &offset : oriented)
+                {
+                    gap = std::min(gap, y + offset.y - field.Sample(bestX + offset.x, bestZ + offset.z));
+                }
+                maxGap = std::max(maxGap, gap);
+                minGap = std::min(minGap, gap);
+                floating += gap > kFloatingGapMeters ? 1u : 0u;
                 for (const Math::Vector3 &offset : oriented)
                 {
                     field.Raise(bestX + offset.x, bestZ + offset.z, y + offset.y);
@@ -799,14 +927,226 @@ namespace Game::GameModes
                 }
                 AddBanana(instances, bestX, y, bestZ, bestYaw, bestScale);
 #if NORVES_BUILD_DEVELOPMENT
-                // 置いた姿勢（外部の検算が頂点から接触の隙間を数えるための記録）
-                LOG_INFO_F("MEGA_BANANAS_PILE_ITEM pile=%d index=%u x=%.5f y=%.5f z=%.5f yaw=%.6f scale=%.6f", pileIndex, n,
-                           static_cast<double>(bestX), static_cast<double>(y), static_cast<double>(bestZ),
-                           static_cast<double>(bestYaw), static_cast<double>(bestScale));
+                if (bLogItems)
+                {
+                    // 置いた姿勢（外部の検算が頂点から接触の隙間を数えるための記録）
+                    LOG_INFO_F("MEGA_BANANAS_PILE_ITEM pile=%d index=%u x=%.5f y=%.5f z=%.5f yaw=%.6f scale=%.6f", pileIndex, n,
+                               static_cast<double>(bestX), static_cast<double>(y), static_cast<double>(bestZ),
+                               static_cast<double>(bestYaw), static_cast<double>(bestScale));
+                }
 #endif
             }
             LOG_INFO_F("MEGA_BANANAS_PILE_SHAPE pile=%d count=%u peak_height=%.4f", pileIndex, count,
                        static_cast<double>(peakHeight));
+            if (count > 0)
+            {
+                LOG_INFO_F("MEGA_BANANAS_MOUND_GAP pile=%d kind=pile count=%u peak_height=%.4f max_gap_mm=%.3f min_gap_mm=%.3f "
+                           "floating=%u logged=%d",
+                           pileIndex, count, static_cast<double>(peakHeight), static_cast<double>(maxGap) * 1000.0,
+                           static_cast<double>(minGap) * 1000.0, floating, bLogItems ? 1 : 0);
+            }
+        }
+
+        // ---- 大きな塚 ----
+
+        float MoundYaw(int yawStep)
+        {
+            return static_cast<float>(yawStep) * (2.0f * kPi / static_cast<float>(kMoundYawSteps));
+        }
+
+        float MoundScale(int scaleStep)
+        {
+            return kScaleMin + (kScaleMax - kScaleMin) * (static_cast<float>(scaleStep) + 0.5f) / static_cast<float>(kMoundScaleSteps);
+        }
+
+        /// 丸めた姿勢の足跡を返す（初めてなら全頂点から作る）。原点を升の中心に置いたとき、各頂点が入る升の差を数える
+        const MoundFootprint &GetFootprint(BuilderState &state, int yawStep, int scaleStep)
+        {
+            MoundFootprint &footprint = state.Footprints[static_cast<size_t>(yawStep) * kMoundScaleSteps + static_cast<size_t>(scaleStep)];
+            if (footprint.bBuilt)
+            {
+                return footprint;
+            }
+            const int half = state.FootprintHalfCells;
+            const int side = 2 * half + 1;
+            state.FootprintBottom.assign(static_cast<size_t>(side) * static_cast<size_t>(side), std::numeric_limits<float>::max());
+            state.FootprintTop.assign(static_cast<size_t>(side) * static_cast<size_t>(side), std::numeric_limits<float>::lowest());
+            const OrientBasis basis(MakeBananaRotation(MoundYaw(yawStep)), MoundScale(scaleStep));
+            for (const Math::Vector3 &point : state.pShape->FullPoints)
+            {
+                const Math::Vector3 offset = basis.Apply(point);
+                // 原点は升の中心（升の番号 + 0.5）にあるので、頂点の升は原点の升 + floor(0.5 + 差 / 升)
+                const int dx = static_cast<int>(std::floor(0.5f + offset.x / kMoundCellMeters));
+                const int dz = static_cast<int>(std::floor(0.5f + offset.z / kMoundCellMeters));
+                if (dx < -half || dx > half || dz < -half || dz > half)
+                {
+                    continue;
+                }
+                const size_t index = static_cast<size_t>(dz + half) * static_cast<size_t>(side) + static_cast<size_t>(dx + half);
+                state.FootprintBottom[index] = std::min(state.FootprintBottom[index], offset.y);
+                state.FootprintTop[index] = std::max(state.FootprintTop[index], offset.y);
+            }
+            for (int dz = -half; dz <= half; ++dz)
+            {
+                for (int dx = -half; dx <= half; ++dx)
+                {
+                    const size_t index = static_cast<size_t>(dz + half) * static_cast<size_t>(side) + static_cast<size_t>(dx + half);
+                    if (state.FootprintBottom[index] <= state.FootprintTop[index])
+                    {
+                        footprint.Cells.push_back(FootprintCell{static_cast<int16_t>(dx), static_cast<int16_t>(dz),
+                                                                state.FootprintBottom[index], state.FootprintTop[index]});
+                    }
+                }
+            }
+            footprint.bBuilt = true;
+            return footprint;
+        }
+
+        /// 処理中の塚の格子の高さ（格子の外は床の 0）
+        float MoundFieldAt(const BuilderState &state, int cellX, int cellZ)
+        {
+            const int localX = cellX - state.FieldMinX;
+            const int localZ = cellZ - state.FieldMinZ;
+            if (localX < 0 || localX >= state.FieldSize || localZ < 0 || localZ >= state.FieldSize)
+            {
+                return 0.0f;
+            }
+            return state.FieldHeights[static_cast<size_t>(localZ) * static_cast<size_t>(state.FieldSize) + static_cast<size_t>(localX)];
+        }
+
+        /// 塚の格子を用意する（落とす位置の最大半径 + 候補の半径 + バナナの包む半径を覆う）
+        void OpenMound(BuilderState &state)
+        {
+            const MoundSite &mound = state.Mounds[state.CurrentMound];
+            const float half = mound.MaxRadius + kMoundLocalRadius + static_cast<float>(state.FootprintHalfCells + 1) * kMoundCellMeters;
+            state.FieldMinX = static_cast<int>(std::floor((mound.CenterX - half) / kMoundCellMeters));
+            state.FieldMinZ = static_cast<int>(std::floor((mound.CenterZ - half) / kMoundCellMeters));
+            state.FieldSize = static_cast<int>(std::ceil(2.0f * half / kMoundCellMeters)) + 2;
+            state.FieldHeights.assign(static_cast<size_t>(state.FieldSize) * static_cast<size_t>(state.FieldSize), 0.0f);
+            state.MoundPlaced = 0;
+            state.MoundPeak = 0.0f;
+            state.MoundMaxGap = std::numeric_limits<float>::lowest();
+            state.MoundMinGap = std::numeric_limits<float>::max();
+            state.MoundFloating = 0;
+            state.MoundStacked = 0;
+            // 乱数は塚の番号で始める（山・海の乱数と独立）
+            state.MoundRandom.Counter = HashIndex(state.CurrentMound * 0x85EBCA77u + 0x27D4EB2Fu);
+        }
+
+        void CloseMound(BuilderState &state)
+        {
+            const MoundSite &mound = state.Mounds[state.CurrentMound];
+            LOG_INFO_F("MEGA_BANANAS_MOUND_GAP pile=%u kind=mound count=%u center_x=%.1f center_z=%.1f sigma=%.3f "
+                       "peak_height=%.4f stacked=%u max_gap_mm=%.3f min_gap_mm=%.3f floating=%u logged=%d",
+                       static_cast<uint32_t>(kPileCount) + state.CurrentMound, state.MoundPlaced,
+                       static_cast<double>(mound.CenterX), static_cast<double>(mound.CenterZ), static_cast<double>(mound.Sigma),
+                       static_cast<double>(state.MoundPeak), state.MoundStacked, static_cast<double>(state.MoundMaxGap) * 1000.0,
+                       static_cast<double>(state.MoundMinGap) * 1000.0, state.MoundFloating, state.CurrentMound == 0 ? 1 : 0);
+            ++state.CurrentMound;
+            state.bMoundOpen = false;
+        }
+
+        /// 塚に 1 本置く。中心から正規分布で落とす位置を 1 つ引き（最大半径の外は引き直す）、その近くの候補のうち最も低く収まる
+        /// 位置に、下の形へ初めて触れる高さで置く。候補を近くに限るので、局所のくぼみは埋まり、全体の形は落とす位置の分布
+        /// （正規分布の塚）に従う（候補を塚全体から引くと、低い所から均一に埋まって頂の平らな円柱になる）。
+        /// 位置は升の中心へ、向き・大きさは段へ丸める（足跡が全頂点の高さを升ごとにそのまま持つ）
+        void PlaceMoundBanana(BuilderState &state)
+        {
+            const MoundSite &mound = state.Mounds[state.CurrentMound];
+            PlacementRandom &random = state.MoundRandom;
+            float dropRadius = mound.MaxRadius;
+            for (int draw = 0; draw < 64; ++draw)
+            {
+                dropRadius = mound.Sigma * std::sqrt(-2.0f * std::log(std::max(random.Next(), 1.0e-6f)));
+                if (dropRadius <= mound.MaxRadius)
+                {
+                    break;
+                }
+            }
+            dropRadius = std::min(dropRadius, mound.MaxRadius);
+            const float dropAngle = 2.0f * kPi * random.Next();
+            const float dropX = mound.CenterX + std::cos(dropAngle) * dropRadius;
+            const float dropZ = mound.CenterZ + std::sin(dropAngle) * dropRadius;
+            float bestRequired = std::numeric_limits<float>::max();
+            int bestCellX = 0;
+            int bestCellZ = 0;
+            int bestYaw = 0;
+            int bestScale = 0;
+            for (int candidate = 0; candidate < kMoundCandidates; ++candidate)
+            {
+                // 最初の候補は落とした位置、残りは落とした位置の周り kMoundLocalRadius の円の中
+                const float localRadius = candidate == 0 ? 0.0f : kMoundLocalRadius * std::sqrt(random.Next());
+                const float localAngle = 2.0f * kPi * random.Next();
+                const int cellX = static_cast<int>(std::floor((dropX + std::cos(localAngle) * localRadius) / kMoundCellMeters));
+                const int cellZ = static_cast<int>(std::floor((dropZ + std::sin(localAngle) * localRadius) / kMoundCellMeters));
+                const int yawStep = std::min(static_cast<int>(random.Next() * kMoundYawSteps), kMoundYawSteps - 1);
+                const int scaleStep = std::min(static_cast<int>(random.Next() * kMoundScaleSteps), kMoundScaleSteps - 1);
+                const MoundFootprint &footprint = GetFootprint(state, yawStep, scaleStep);
+                // 自分の最下面が、下の形（と床）のどの升にも食い込まない最小の原点の高さ
+                float required = 0.0f;
+                for (const FootprintCell &cell : footprint.Cells)
+                {
+                    required = std::max(required, MoundFieldAt(state, cellX + cell.DX, cellZ + cell.DZ) - cell.Bottom);
+                }
+                if (required < bestRequired)
+                {
+                    bestRequired = required;
+                    bestCellX = cellX;
+                    bestCellZ = cellZ;
+                    bestYaw = yawStep;
+                    bestScale = scaleStep;
+                }
+            }
+
+            const MoundFootprint &footprint = GetFootprint(state, bestYaw, bestScale);
+            const float y = bestRequired - kSinkMeters;
+            float gap = std::numeric_limits<float>::max();
+            float support = 0.0f;
+            for (const FootprintCell &cell : footprint.Cells)
+            {
+                const float below = MoundFieldAt(state, bestCellX + cell.DX, bestCellZ + cell.DZ);
+                const float difference = y + cell.Bottom - below;
+                if (difference < gap)
+                {
+                    gap = difference;
+                    support = below;
+                }
+            }
+            for (const FootprintCell &cell : footprint.Cells)
+            {
+                const int localX = bestCellX + cell.DX - state.FieldMinX;
+                const int localZ = bestCellZ + cell.DZ - state.FieldMinZ;
+                if (localX < 0 || localX >= state.FieldSize || localZ < 0 || localZ >= state.FieldSize)
+                {
+                    continue;
+                }
+                float &height =
+                    state.FieldHeights[static_cast<size_t>(localZ) * static_cast<size_t>(state.FieldSize) + static_cast<size_t>(localX)];
+                height = std::max(height, y + cell.Top);
+                state.MoundPeak = std::max(state.MoundPeak, height);
+            }
+            state.MoundMaxGap = std::max(state.MoundMaxGap, gap);
+            state.MoundMinGap = std::min(state.MoundMinGap, gap);
+            state.MoundFloating += gap > kFloatingGapMeters ? 1u : 0u;
+            state.MoundStacked += support > 0.01f ? 1u : 0u;
+
+            // 原点は升の中心
+            const double x = (static_cast<double>(bestCellX) + 0.5) * static_cast<double>(kMoundCellMeters);
+            const double z = (static_cast<double>(bestCellZ) + 0.5) * static_cast<double>(kMoundCellMeters);
+            const float yaw = MoundYaw(bestYaw);
+            const float scale = MoundScale(bestScale);
+            AddBanana(state.Instances, static_cast<float>(x), y, static_cast<float>(z), yaw, scale);
+#if NORVES_BUILD_DEVELOPMENT
+            if (state.CurrentMound == 0)
+            {
+                // 検算用の塚だけ、置いた姿勢を記録する（外部の検算が頂点から接触の隙間を数える）
+                LOG_INFO_F("MEGA_BANANAS_PILE_ITEM pile=%u index=%u x=%.5f y=%.5f z=%.5f yaw=%.6f scale=%.6f",
+                           static_cast<uint32_t>(kPileCount) + state.CurrentMound, state.MoundPlaced, x,
+                           static_cast<double>(y), z, static_cast<double>(yaw), static_cast<double>(scale));
+            }
+#endif
+            ++state.MoundPlaced;
+            ++state.Stats.MoundCount;
         }
 
     } // namespace
@@ -828,10 +1168,12 @@ namespace Game::GameModes
             const size_t vertexCount = mesh.Vertices.size();
             const size_t coarseStride = std::max<size_t>(1, vertexCount / kMaxSamplePoints);
             const size_t denseStride = std::max<size_t>(1, vertexCount / kMaxDensePoints);
+            outShape.FullPoints.reserve(vertexCount);
             for (size_t index = 0; index < vertexCount; ++index)
             {
                 const Asset::CookedMeshVertex &vertex = mesh.Vertices[index];
                 const Math::Vector3 point(vertex.Position.X, vertex.Position.Y, vertex.Position.Z);
+                outShape.FullPoints.push_back(point);
                 if (index % coarseStride == 0)
                 {
                     outShape.SamplePoints.push_back(point);
@@ -905,7 +1247,7 @@ namespace Game::GameModes
 
     float ComputeSeaRadius(uint32_t count)
     {
-        const uint32_t fieldCount = count - PileBudget(count);
+        const uint32_t fieldCount = count - PileBudget(count) - MoundBudget(count, false);
         return static_cast<float>(std::sqrt(static_cast<double>(fieldCount) / SeaUnitDiskCount()));
     }
 
@@ -937,19 +1279,45 @@ namespace Game::GameModes
         const auto startTime = std::chrono::steady_clock::now();
         state.Instances.reserve(count);
 
-        // 山（乱数は番号 0 から。山の配置は海の形によらず前と同じ）
+        // 大きな塚の場所と本数（積むのは Step。海はこの周りを空ける）。番号 0 の検算用の塚は kCheckMoundBananas 本、残りを等分する
+        const uint32_t moundBudget = shape.FullPoints.empty() ? 0u : MoundBudget(count, pMask != nullptr);
+        if (moundBudget > 0)
+        {
+            const uint32_t checkCount = std::min(kCheckMoundBananas, moundBudget / kMoundCount);
+            const uint32_t restCount = moundBudget - checkCount;
+            const uint32_t others = static_cast<uint32_t>(kMoundCount - 1);
+            for (int mound = 0; mound < kMoundCount; ++mound)
+            {
+                MoundSite site;
+                site.CenterX = kMoundCenters[mound][0];
+                site.CenterZ = kMoundCenters[mound][1];
+                const uint32_t other = static_cast<uint32_t>(mound - 1);
+                site.Count = mound == 0 ? checkCount : restCount / others + (other < restCount % others ? 1u : 0u);
+                site.Sigma = PileSigmaFor(site.Count) * kMoundSigmaScale;
+                site.MaxRadius = site.Sigma * kPileMaxSigmas;
+                // 裾のバナナ（中心は最大半径 + 候補の半径まで）と海のバナナが重ならない半径
+                site.ExcludeRadius = site.MaxRadius + kMoundLocalRadius + 2.0f * shape.SpineBoundRadius * kScaleMax;
+                state.Mounds.push_back(site);
+            }
+            state.Stats.MoundSiteCount = static_cast<uint32_t>(kMoundCount);
+            state.FootprintHalfCells = static_cast<int>(std::ceil(shape.SpineBoundRadius * kScaleMax / kMoundCellMeters)) + 1;
+            state.Footprints.resize(static_cast<size_t>(kMoundYawSteps) * kMoundScaleSteps);
+        }
+
+        // 山（乱数は番号 0 から。山の配置は海の形によらず前と同じ）。塚を積むときは、1 本ずつの記録を検算用の塚だけに絞る
         PlacementRandom random;
         const uint32_t pileBudget = PileBudget(count);
         for (int pile = 0; pile < kPileCount; ++pile)
         {
             const uint32_t pileCount =
                 pileBudget / kPileCount + (static_cast<uint32_t>(pile) < pileBudget % kPileCount ? 1u : 0u);
-            PlacePile(state.Instances, shape, pile, kPileCenters[pile][0], kPileCenters[pile][1], pileCount, random);
+            PlacePile(state.Instances, shape, pile, kPileCenters[pile][0], kPileCenters[pile][1], pileCount, random,
+                      state.Mounds.empty());
         }
         state.Stats.PileCount = static_cast<uint32_t>(state.Instances.size());
 
         // 海: 本数から半径を決め（密度の形は本数によらない）、区画へ本数を配る
-        const uint32_t fieldCount = count - state.Stats.PileCount;
+        const uint32_t fieldCount = count - state.Stats.PileCount - moundBudget;
         if (fieldCount > 0)
         {
             state.Stats.Radius = static_cast<float>(std::sqrt(static_cast<double>(fieldCount) / SeaUnitDiskCount()));
@@ -958,8 +1326,8 @@ namespace Game::GameModes
             // 升の一辺: 2 本の包む半径の和の最大（隣の升の外のバナナとは重なりえない）
             state.CellMeters = 2.0f * shape.SpineBoundRadius * kScaleMax;
             BuildSeaTiles(state, fieldCount);
-            state.bDone = state.Tiles.empty();
         }
+        state.bDone = state.Tiles.empty() && state.Mounds.empty();
         state.Stats.BuildMilliseconds =
             std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - startTime).count();
         if (state.bDone)
@@ -985,6 +1353,40 @@ namespace Game::GameModes
                 std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - startTime).count();
             ++state.Stats.StepCount;
         };
+
+        // 塚を先に積む（入力では山の直後に塚の順で並ぶ）
+        while (state.CurrentMound < state.Mounds.size())
+        {
+            if (!state.bMoundOpen)
+            {
+                OpenMound(state);
+                state.bMoundOpen = true;
+            }
+            const uint32_t target = state.Mounds[state.CurrentMound].Count;
+            while (state.MoundPlaced < target)
+            {
+                PlaceMoundBanana(state);
+                if (budgetSeconds > 0.0 && state.MoundPlaced % kMoundTimeCheckInterval == 0 && elapsedSeconds() >= budgetSeconds)
+                {
+                    finishStep();
+                    return false;
+                }
+            }
+            CloseMound(state);
+            if (state.CurrentMound == state.Mounds.size())
+            {
+                // 作業用の格子と足跡を返す
+                state.FieldHeights = VariableArray<float>();
+                state.Footprints = VariableArray<MoundFootprint>();
+                state.FootprintBottom = VariableArray<float>();
+                state.FootprintTop = VariableArray<float>();
+            }
+            if (budgetSeconds > 0.0 && elapsedSeconds() >= budgetSeconds)
+            {
+                finishStep();
+                return false;
+            }
+        }
 
         while (state.CurrentTile < state.Tiles.size())
         {
@@ -1058,9 +1460,9 @@ namespace Game::GameModes
             outBatchStarts.push_back(0);
             return;
         }
-        // 山の全部を 1 つ目の単位、区画を 1 つずつの単位として、単位の境で区切る
+        // 山と塚の全部を 1 つ目の単位、区画を 1 つずつの単位として、単位の境で区切る
         uint32_t batchStart = 0;
-        uint32_t batchSize = state.Stats.PileCount;
+        uint32_t batchSize = state.Stats.PileCount + state.Stats.MoundCount;
         for (const State::Tile &tile : state.Tiles)
         {
             if (tile.Count == 0)

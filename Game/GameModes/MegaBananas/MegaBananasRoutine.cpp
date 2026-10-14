@@ -644,6 +644,7 @@ namespace Game::GameModes
                 LOG_ERROR_F("mega-bananas: バナナの散布を作れませんでした（置けた %u・配置 %zu）", placed, instances.size());
             }
             const uint32_t pileCount = placed > 0 ? stats.PileCount : 0u;
+            const uint32_t moundCount = placed > 0 ? stats.MoundCount : 0u;
 
             const uint32_t trianglesPerBanana = CountLod0Triangles(*assembly.Mesh);
             data.m_Info.BananaCount = placed;
@@ -652,9 +653,9 @@ namespace Game::GameModes
             data.m_Info.SourceTriangleTotal = static_cast<uint64_t>(trianglesPerBanana) * placed;
             data.m_Info.MeshClusterCount = static_cast<uint32_t>(assembly.Mesh->Clusters.size());
             data.m_Info.MeshLodLevelCount = assembly.Mesh->LODLevelCount;
-            LOG_INFO_F("MEGA_BANANAS_PLACED count=%u pile=%u field=%u triangles_per_banana=%u source_triangles=%llu "
-                       "clusters=%u lod_levels=%u batches=%u scatter_rows=%u scatter_ranges=%u",
-                       placed, pileCount, placed - pileCount, trianglesPerBanana,
+            LOG_INFO_F("MEGA_BANANAS_PLACED count=%u pile=%u mound=%u mound_sites=%u field=%u triangles_per_banana=%u "
+                       "source_triangles=%llu clusters=%u lod_levels=%u batches=%u scatter_rows=%u scatter_ranges=%u",
+                       placed, pileCount, moundCount, stats.MoundSiteCount, placed - pileCount - moundCount, trianglesPerBanana,
                        static_cast<unsigned long long>(data.m_Info.SourceTriangleTotal), data.m_Info.MeshClusterCount,
                        data.m_Info.MeshLodLevelCount, batches, scatterRows, scatterRanges);
 
@@ -666,12 +667,12 @@ namespace Game::GameModes
                 const auto density = [](uint32_t count, double area) { return area > 0.0 ? count / area : 0.0; };
                 const Component::CameraComponent *camera = data.m_Rig.GetCamera();
                 LOG_INFO_F("MEGA_BANANAS_LAYOUT count=%u requested=%u radius=%.1f near_radius=%.1f mid_radius=%.1f "
-                           "center_x=%.1f center_z=%.1f near=%u mid=%u far=%u pile=%u near_density=%.1f mid_density=%.1f "
+                           "center_x=%.1f center_z=%.1f near=%u mid=%u far=%u pile=%u mound=%u near_density=%.1f mid_density=%.1f "
                            "far_density=%.2f stacked=%u max_lift=%.3f tiles=%u batches=%u deficit=%u build_ms=%.1f steps=%u "
                            "far_plane=%.0f",
                            placed, stats.Requested, static_cast<double>(stats.Radius), static_cast<double>(stats.NearRadius),
                            static_cast<double>(stats.MidRadius), static_cast<double>(stats.CenterX),
-                           static_cast<double>(stats.CenterZ), stats.NearCount, stats.MidCount, stats.FarCount, pileCount,
+                           static_cast<double>(stats.CenterZ), stats.NearCount, stats.MidCount, stats.FarCount, pileCount, moundCount,
                            density(stats.NearCount, nearArea), density(stats.MidCount, midArea),
                            density(stats.FarCount, farArea), stats.StackedCount, static_cast<double>(stats.MaxLift),
                            stats.TileCount, batches, stats.Deficit, stats.BuildMilliseconds, stats.StepCount,

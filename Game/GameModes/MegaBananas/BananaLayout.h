@@ -9,7 +9,9 @@
 // 円盤を一辺 kSeaTileMeters の区画に分け、中心に近い区画から順に、区画の分の本数を密度に比例した位置へ置く。
 // 重なりは、バナナの芯に沿った球の列（BananaShape::SpineSpheres）で隣の区画の分まで調べ、重なる位置では
 // 下のバナナに初めて触れる高さへ載せる（密な所は 2 層ほどに積もる）。床全体の格子は持たず、処理中の区画の格子だけを持つ。
-// 山は物理を使わず、置いたバナナの形の上に初めて触れる高さへ載せる。配置は本数だけで決まり、実行ごとに同じ
+// 山は物理を使わず、置いたバナナの形の上に初めて触れる高さへ載せる。100 万本級（マスクなし）では、海の中に同じ落とし込みで
+// 大きな塚（合計で全体の 1/10）も積む。塚は姿勢を段へ丸め、段ごとに全頂点から作った足跡（升ごとの底と上面の高さ）を使い回す。
+// 配置は本数だけで決まり、実行ごとに同じ
 // （予算での区切り方にも依らない。マスクを渡したときは、マスクにも依る）。
 // 敷き詰めの位置は、マスク（IBananaFieldMask）が塞いだ所を飛ばし、置けなかった分は次の区画へ回す。
 // ---------------------------------------------------------------------------
@@ -43,6 +45,8 @@ namespace Game::GameModes
         NorvesLib::Core::Container::VariableArray<NorvesLib::Math::Vector3> SamplePoints;
         /// 同じ用途の、より密な点（置く高さの確定と格子への書き込み用）
         NorvesLib::Core::Container::VariableArray<NorvesLib::Math::Vector3> DensePoints;
+        /// 全頂点（塚の足跡を作る。外部の検算と同じ点で高さを数える）
+        NorvesLib::Core::Container::VariableArray<NorvesLib::Math::Vector3> FullPoints;
         /// 長手（ローカル Y）に沿って区切った頂点を包む球の列（中心と半径。倍率 1）。海のバナナどうしの重なりを調べる
         NorvesLib::Core::Container::VariableArray<NorvesLib::Math::Vector3> SpineCenters;
         NorvesLib::Core::Container::VariableArray<float> SpineRadii;
@@ -63,6 +67,9 @@ namespace Game::GameModes
         uint32_t Requested = 0;
         uint32_t Placed = 0;
         uint32_t PileCount = 0;
+        /// 大きな塚の数と、塚に置いた本数（入力では山の直後に並ぶ）
+        uint32_t MoundSiteCount = 0;
+        uint32_t MoundCount = 0;
         /// 海の円盤の中心（床の x・z）と半径[m]（縁のゆらぎの中心の値）
         float CenterX = 0.0f;
         float CenterZ = 0.0f;
@@ -88,7 +95,7 @@ namespace Game::GameModes
     /**
      * @brief バナナの配置を、予算で区切って少しずつ作る（区画 1 つの途中でも区切れる）
      *
-     * Begin で山を置き、Step を呼ぶたびに予算の時間だけ海の区画を進める。置いた入力は区画の順に連続して並ぶ。
+     * Begin で山を置き、Step を呼ぶたびに予算の時間だけ塚と海の区画を進める。置いた入力は山・塚・区画の順に連続して並ぶ。
      */
     class BananaFieldBuilder
     {
@@ -112,7 +119,7 @@ namespace Game::GameModes
 
         bool IsDone() const;
 
-        /// 置いた入力（山・区画の順）
+        /// 置いた入力（山・塚・区画の順）
         const NorvesLib::Core::Container::VariableArray<NorvesLib::Core::Component::MegaScatterInstance> &GetInstances() const;
         NorvesLib::Core::Container::VariableArray<NorvesLib::Core::Component::MegaScatterInstance> &GetInstances();
 
@@ -141,7 +148,7 @@ namespace Game::GameModes
         virtual bool IsBlocked(float x, float z) const = 0;
     };
 
-    /// count 本を置くときの海の半径[m]（形がそろっていれば BananaFieldBuilder::Begin が決める値と同じ）。配置の前に床を作るのに使う
+    /// count 本をマスクなしで置くときの海の半径[m]（形がそろっていれば BananaFieldBuilder::Begin が決める値と同じ）。配置の前に床を作るのに使う
     float ComputeSeaRadius(uint32_t count);
 
     /// 遠の密度が縁の手前まで平らに続く所の外の端（半径に対する比。これより外は縁のゆらぎと密度の落ち込みの区間）
