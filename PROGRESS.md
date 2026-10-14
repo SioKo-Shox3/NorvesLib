@@ -4100,3 +4100,14 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `verify-SCN-MEGA-FIX-BVH-QUEUE-MAIN-4.txt`: 1 万本 overview と `SCN-MEGA-BASE-COOK` の比較 result=pass（psnr 57.8 dB、輝度差 0.0001、不一致の画素 0.08%、EXIT=0）。PNG は近くのバナナの形が保たれ穴なし。
 - Next: SCN-MEGA-FIX-BVH-QUEUE-VSM。
 - Notes: 100 万本の 2 視点で影の `VSM_MEGA_CULL overflow` が 230〜420 万あり、中ほどに影の暗い斑が出る。影の列の溢れは SCN-MEGA-FIX-BVH-QUEUE-VSM の範囲なので触っていない。性能は測っていない（SCN-MEGA-ACCEPT-1M で判断）。試験の追加はしていない。
+
+### SCN-MEGA-FIX-BVH-QUEUE-VSM（2026-10-14、反復 4・run 20261014-102529）
+- Done: 影の BVH のたどり（`vsm_mega_bvh.comp`）で、節の判定（段の範囲・深度の範囲・dirty のページ・LOD）を `IsShadowNodeCulled` にまとめ、根は段 0 が、子は親が列へ積む前に子ごとに判定して通った子だけを詰めて積む（主の経路の 485b1950 と同じ形）。影の LOD の許容 `LodThresholdTexels` の既定を 1 → 4 texel にした（`VirtualShadowMapRaster.h`）。
+  - 調べ（一時の計測版。戻した）: 子の先の判定だけでは horizon の溢れ 2.85M → 1.29M。内訳は葉の列（容量 2,097,152）の溢れ約 96 万と出力の一覧（容量 1,572,864）の溢れで、節の列は溢れていない。一覧と葉の列を大きくした版で、1 texel の求めは初回 391 万 / 343 万（組 26.5 万・21.8 万）、ジオメトリのページの常駐が進んだ後は 550 万を超え、溢れの再描画の印で毎フレーム dirty が戻り続けた。全フレームの最大は 2 texel で 193 万 / 189 万（一覧を超える）、4 texel で 81 万 / 75 万。太陽は地面に置いた物を上から見るので、斜めに見る主のカメラより投影物が多くの texel を覆う。
+  - 2 texel と 4 texel の撮影は全体で PSNR 約 40 dB・平均輝度が同じで、近くの影を拡大して並べても見分けがつかなかった（`aux-SCN-MEGA-FIX-BVH-QUEUE-VSM-probe-lod{2,4}.txt`、`scene-capture/SCN-MEGA-FIX-BVH-QUEUE-VSM-probe-lod{2,4}/`）。一覧の容量（VRAM）は変えていない。
+  - `verify-SCN-MEGA-FIX-BVH-QUEUE-VSM-1.txt`: RelWithDebInfo の Game のビルド EXIT=0、error 0。シェーダーは BOM を除いた写しで `glslc` によりコンパイルを確かめた。
+  - `verify-SCN-MEGA-FIX-BVH-QUEUE-VSM-2.txt`: 100 万本 horizon・overview の撮影 result=pass（EXIT=0）。`VSM_MEGA_CULL` は horizon clusters=723,293・overview 657,472 で全行 overflow=0、以後は `VSM_CACHE` の cached だけ（静止で再描画なし）。`MEGA_CAPACITY` は全行 `bvh_overflow=0`・`draw_dropped=0`、`[ERROR]` 0。PNG を開き、地平線の手前まで遠くのバナナにも影が落ち、近くの地面の影が欠けていないことを確かめた。
+  - `verify-SCN-MEGA-FIX-BVH-QUEUE-VSM-3.txt`: `VSM_MEGA_CULL overflow=0` の検査 EXIT=0。
+  - `verify-SCN-MEGA-FIX-BVH-QUEUE-VSM-4.txt`: 起動画面 default の決定的撮影の比較 result=pass（psnr 57.68 dB、輝度差 0.0037、EXIT=0）。`VSM_MEGA_CULL` は全行 overflow=0。PNG は家・球・岩・地面・影が以前どおり。
+- Next: TASKS.md の次の未完（SCN-MEGA-LAYOUT-SEA）。
+- Notes: 影の LOD の許容 4 texel は内部の値の選択（2 は一覧を 25 万件ほど広げれば収まるが VRAM が約 135 MB 増える）。overview の中ほど（画面の中央のやや上）の暗い斑は、溢れ 0 になった今回も前の項目の撮影と同じ場所に出るので溢れ由来ではない（配置の疎密と見ている。配置は SCN-MEGA-LAYOUT-SEA で変わるので、その撮影で見直す）。性能は測っていない（SCN-MEGA-ACCEPT-1M で判断）。試験の追加はしていない。

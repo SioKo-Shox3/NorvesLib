@@ -15,6 +15,9 @@
 //   節の球（下のクラスタの球と親の球を包む）が、その段の範囲・深度の範囲に入り、dirty のページを含み、LOD の判定（下）で切れなければ、
 //   葉は葉の列へ、内部の節は子を節の列 (s + 1) & 1 へ積む。球の判定はクラスタの判定（SelectShadowCluster）と同じ関数なので、
 //   節で落ちた枝の下のクラスタはどれもクラスタの判定でも落ちる。
+//   この判定（IsShadowNodeCulled）は、根は段 0 が自分で行い、子は親が列へ積む前に子ごとに済ませて通った子だけを積む
+//   （段 1 以降は判定し直さない。判定は組の値だけで決まるので、どこで行っても同じ答えになる）。遠くて texel の上で粗い段で
+//   足りる組は、粗いクラスタの組を持つ枝だけが列に残るので、列の長さは組の数 × 子の数でなく、texel の細かさが求める節の数で決まる。
 //   LOD: 節の親の誤差の最大 ÷ texel の一辺 ≤ lodBias（texel）なら、下のどのクラスタも「親の誤差 ÷ texel > lodBias」を満たさず
 //   描かれないので枝ごと切る（丸めの余裕は主の経路と同じ）。太陽の段は texel が位置に依らない（その段の定数）ので、節の値は下の
 //   クラスタの値以上。点光源の面の texel は球の最も近い点の面の軸の距離で決まり（ShadowTexelMetersAtSphere）、節の球は下の
@@ -116,7 +119,21 @@ bool CanPruneShadowNodeByLOD(BvhNode node)
 }
 
 /**
- * @brief 節の判定の段: 1 つの（組、節）を節の球で判定し、通れば葉は葉の列へ、内部の節は子を次の段の列へ積む
+ * @brief 節の球の判定（影）: 段の範囲・深度の範囲の外か、dirty のページを含まないか、LOD で枝を切れるなら true（下のどのクラスタも選ばれない）
+ *
+ * g_*（インスタンスの変換・texel の値）はこの節の組の値であること。
+ */
+bool IsShadowNodeCulled(uint level, BvhNode node)
+{
+    const vec3 center = TransformClusterCenterToWorld(node.sphere.xyz);
+    const float radius = node.sphere.w * ComputeWorldRadiusScale();
+    return !LevelOverlapsSphere(level, center, radius) || !SphereHasDirtyPage(level, center, radius) || CanPruneShadowNodeByLOD(node);
+}
+
+/**
+ * @brief 節の判定の段: 1 つの（組、節）を受け持ち、葉は葉の列へ、内部の節は判定を通った子を次の段の列へ積む
+ *
+ * 根（段 0）はここで節の球を判定する。段 1 以降の節は、積んだ親が判定（IsShadowNodeCulled）を済ませている。
  */
 void NodeStage(uint stage)
 {
@@ -160,12 +177,13 @@ void NodeStage(uint stage)
     g_ShadowNearPlane = levelSlice.info.w;
     BvhNodeArray bvh = BvhNodeArray(uvec2(instance.bvhInfo.x, instance.bvhInfo.y));
     const BvhNode node = bvh.nodes[nodeIndex];
-    const vec3 center = TransformClusterCenterToWorld(node.sphere.xyz);
-    const float radius = node.sphere.w * ComputeWorldRadiusScale();
-    if (!LevelOverlapsSphere(level, center, radius) || !SphereHasDirtyPage(level, center, radius) || CanPruneShadowNodeByLOD(node))
+    if (stage == 0u && IsShadowNodeCulled(level, node))
     {
         return;
     }
+    // 溢れたときの再描画の印は、この節の球が覆うページへ付ける
+    const vec3 center = TransformClusterCenterToWorld(node.sphere.xyz);
+    const float radius = node.sphere.w * ComputeWorldRadiusScale();
 
     if ((node.info.w & BVH_NODE_FLAG_LEAF) != 0u)
     {
@@ -180,8 +198,21 @@ void NodeStage(uint stage)
         return;
     }
 
-    // 内部の節: 子を次の段の列へ積む。最後の段の内部の節（段の数の上限を超える BVH。読み込みが弾くので通常は無い）は溢れとして扱う
-    const uint childCount = node.info.z;
+    // 内部の節: 子ごとに判定し（子の数は GROUP_BVH_MAX_CHILDREN（8）以下。通った子をビットの印に集める）、通った子だけを
+    // 詰めて次の段の列へ積む。最後の段の内部の節（段の数の上限を超える BVH。読み込みが弾くので通常は無い）は溢れとして扱う
+    uint passedMask = 0u;
+    for (uint child = 0u; child < node.info.z; ++child)
+    {
+        if (!IsShadowNodeCulled(level, bvh.nodes[node.info.y + child]))
+        {
+            passedMask |= 1u << child;
+        }
+    }
+    const uint childCount = uint(bitCount(passedMask));
+    if (childCount == 0u)
+    {
+        return;
+    }
     const uint nextStage = stage + 1u;
     if (nextStage >= VSM_BVH_NODE_STAGES)
     {
@@ -191,9 +222,12 @@ void NodeStage(uint stage)
     const uint firstSlot = atomicAdd(bvhCounters[nextStage], childCount);
     const uint stored = firstSlot >= nodeCapacity ? 0u : min(childCount, nodeCapacity - firstSlot);
     const uint nextBase = (nextStage & 1u) * nodeCapacity;
-    for (uint child = 0u; child < stored; ++child)
+    uint remaining = passedMask;
+    for (uint written = 0u; written < stored; ++written)
     {
-        bvhQueue[nextBase + firstSlot + child] = uvec2(pair, node.info.y + child);
+        const uint child = uint(findLSB(remaining));
+        remaining &= remaining - 1u;
+        bvhQueue[nextBase + firstSlot + written] = uvec2(pair, node.info.y + child);
     }
     if (stored < childCount)
     {

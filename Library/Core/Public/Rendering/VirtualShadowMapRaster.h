@@ -305,8 +305,14 @@ namespace NorvesLib::Core::Rendering
         /** @brief インスタンスの表の要素数と、影の判定の全ワークグループ（64 クラスタ）の数 */
         uint32_t InstanceCount = 0;
         uint32_t TotalGroups = 0;
-        /** @brief LOD を選ぶ誤差の許容（texel）。段の texel の一辺 × この値以下の誤差の段まで粗くする */
-        float LodThresholdTexels = 1.0f;
+        /**
+         * @brief LOD を選ぶ誤差の許容（texel）。段の texel の一辺 × この値以下の誤差の段まで粗くする
+         *
+         * 太陽からは地面に置いた物を上から見るので、斜めに見る主のカメラより投影物が多くの texel を覆い、主と同じ 1 では
+         * バナナ 100 万本で選ぶクラスタが組あたり約 21（全部の常駐後に 550 万）になって一覧の容量を超える。4 では 81 万に
+         * 収まり、近くの影の形は 2 と見分けがつかない（影はフィルタで数 texel ぼかすので、texel の数個ぶんの形のずれは見えにくい）。
+         */
+        float LodThresholdTexels = 4.0f;
     };
 
     /**
