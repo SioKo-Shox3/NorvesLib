@@ -1431,7 +1431,7 @@
 - notes: 2026-10-14 親: 反復 13 の評価の差し戻し（空÷地形の比が手本 3.77・撮影 1.28〜1.56）を受けて done-when を分けた。地面が明るいのは材質（ベージュの砂・低木なし）のためで、光の項目では空・雲・影・霞だけを合わせる。
 
 ## SCN-WL-REFERENCE-CAPTURE: 手本の写真と同じ構図の視点と、並べた比較画像を作る
-- status: todo
+- status: done
 - done-when: 手本の写真ごとに、写真に合う名前付き視点（位置・向き・画角・時刻。推定した条件を書き、「同じ」とは書かない）を足し、写真と撮影を左右に並べた PNG を書くスクリプト `Scripts/Terrain/CompareReference.py` を作る（今の `CompareLight.py` を広げてよい）。品質を見る撮影は 1920×1080 以上で撮る（1280×720 では粗さが判断を狂わせる）。比較画像には、地面・崖・空の領域ごとの平均の色（線形）と明るさを写真と撮影の両方で書き、地表の材質の平均のアルベドも書く。比較画像を開いて、ビュート・メサの配置と輪郭が対応することを確かめ、目立つ差（形・色・明るさ・尺度・地表の種類・欠けている物）を差の大きい順に `Docs/RenderingValidation/WastelandReference.md` に書く。以後の荒野の項目は、この視点と比較画像で判断する。他の地域の写真は材質と光の参考だけに使う。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-WL-REFERENCE-CAPTURE`

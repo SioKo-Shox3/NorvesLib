@@ -4430,3 +4430,19 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 地面の近景の輝度は撮影 0.63〜0.67・写真 0.138（白っぽい砂と低木なしの材質の差）で、文書に記録し SCN-WL-MATERIAL-PALETTE・SCN-WL-GRASS へ回した。
 - Notes: 反復 1 は撮影の途中で時間切れになり（`verify-...-2.txt` は途中まで）、反復 2 で同じ定数のまま撮り直した。Rendering3DTest は撮らずコードで確かめた（空・霧・雲・影の到達距離は Leave で既定へ戻し、露出・補正・グレーディングは荒野のカメラだけ）。試験は足していない。
 - Next: TASKS.md の次の未完の項目。
+### SCN-WL-REFERENCE-CAPTURE 完了（2026-10-15、run 20261015-053924 の反復 1〜2）
+- 実装:
+  - `Game/Scenes/SceneCatalog.h` に手本の写真ごとの視点 `ref_far_01`・`ref_far_02`・`ref_cliff_01`・`ref_cliff_02`・`ref_ground_01`・`ref_ground_02` を足した。
+  - `Game/GameModes/Wasteland/WastelandRoutine.cpp` の `kReferenceShots` で、視点ごとに縦の画角と太陽の高さ・向きを替える（写真の EXIF・日時からの推定）。
+  - `Scripts/Terrain/CompareReference.py`: 写真と撮影を左右に並べ、互いの地形の輪郭を重ね、空・崖・地面の線形の平均の色と輝度、地表の材質の平均のアルベドを書く。
+  - `Docs/RenderingValidation/WastelandReference.md` に「構図を合わせた比較」の節（視点の推定の根拠、配置と輪郭の対応、差の大きい順の一覧）を足した。
+- 検証（`.harness/runs/20261015-053924/`）:
+  - `verify-SCN-WL-REFERENCE-CAPTURE-6.txt`: Debug の Game のビルド EXIT=0。
+  - `verify-SCN-WL-REFERENCE-CAPTURE-7.txt`: `CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080` result=pass（11 視点とも 1920×1080・白飛び 0・黒つぶれ 0）、EXIT=0。
+  - `verify-SCN-WL-REFERENCE-CAPTURE-8.txt`: `CompareReference.py --verify` result=pass photos=6、EXIT=0。
+  - 比較画像 6 枚を開いた: far_02・cliff_02・ground_02 はビュートの配置と輪郭が対応。far_01 の主役（Castle Butte）は DEM の範囲の外、ground_01 は構図の型だけ。
+  - 差の大きい順: 地表の種類と色（ベージュの砂・赤みなし・明るさ 4〜6 倍）、植生なし、崖の色と地層、崖の形（滑らかな斜面・縦の引き伸ばし）、空の青さ、遠景の霞、礫と沢の欠落。
+- Notes: cliff_01 の視点は Battleship Rock の壁が近すぎて輪郭が対応しない（位置の記録が無い推定の外れ）。SCN-WL-CLIFF-GEOMETRY の前に DEM の稜線と写真の輪郭を照合して決め直す。低い西日の cliff_01 は崖も谷床も影に沈む（崖 Y 0.038・写真 0.144）。
+- Notes: 材質のアルベドは砂 0.10 なのに撮影の地面の Y は 0.57〜0.67 で、材質から画面までの明るさが合っていない。SCN-WL-MATERIAL-PALETTE で確かめる。斜面に規則的な暗い点の格子の縞がある（ground_02・far_02）。
+- Notes: 反復 1 は再撮影の途中で時間切れになり、反復 2 で同じ定数のまま撮り直した（反復 1 の `verify-...-1〜5.txt` は古い視点の版と途中の版）。
+- Next: TASKS.md の次の未完の項目。
