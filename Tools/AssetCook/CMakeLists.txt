@@ -110,6 +110,8 @@ add_library(AssetCookLib STATIC
     AudioCooker.cpp
     AudioCooker.h
     MeshCooker.cpp
+    Sha256Digest.cpp
+    Sha256Digest.h
     SkeletalBvhCook.cpp
     RigClipBankCook.cpp
     RigClipBankCook.h

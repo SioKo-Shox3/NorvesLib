@@ -160,9 +160,11 @@ namespace NorvesLib::Tools::AssetCook
                                                    uint32_t fallbackMinTriangles = 0,
                                                    uint32_t dagRootMaxClusters = 0);
 
-    // --generate の値 "terrain-tile:<x>,<z>"（荒野の地形の区画の番号）を読む。形が違う・番号が範囲の外なら false。
+    // --generate の値 "terrain-tile:<x>,<z>"（荒野の手続きの地形の区画の番号）と "terrain-tile:dem:<x>,<z>"（DEM の格子の
+    // 区画の番号。outDem が真）を読む。形が違う・番号が範囲の外なら false（DEM の区画の数は格子の記述で決まるので、
+    // DEM の番号の範囲はクックのときに確かめる）。
     [[nodiscard]] bool TryParseTerrainTileGenerate(Core::Container::AnsiStringView generate, uint32_t& outTileX,
-                                                   uint32_t& outTileZ);
+                                                   uint32_t& outTileZ, bool& outDem);
 
     // 荒野の地形の区画 (tileX, tileZ) を高さ場（Rendering/Terrain/TerrainHeightField.h。Game と共有）から作り、
     // NVMESH v1 に焼く（--generate terrain-tile:<x>,<z>）。外周の頂点は階層のどの段でも動かさない。
@@ -174,6 +176,33 @@ namespace NorvesLib::Tools::AssetCook
                                                Core::Container::AnsiString& error,
                                                uint32_t fallbackMinTriangles = 0,
                                                uint32_t dagRootMaxClusters = 0);
+
+    // 荒野の DEM の格子（Rendering/Terrain/TerrainHeightField.h の WastelandTerrain::kDemGridDescriptorPath。Game と同じ
+    // ファイル）の区画 (tileX, tileZ) を NVMESH v1 に焼く（--generate terrain-tile:dem:<x>,<z>）。区画の数と格子の間隔は
+    // 格子の記述から決まり、格子のファイルの SHA-256 が記述の sha256 と違えば失敗する。inputBytes は一覧の source_path
+    // （格子の記述）の中身で、高さ場の読む記述と同じでなければならない。外周の頂点は階層のどの段でも動かさない。
+    [[nodiscard]] bool CookTerrainDemTileToNvmesh(const uint8_t* inputBytes,
+                                                  size_t inputSize,
+                                                  uint32_t tileX,
+                                                  uint32_t tileZ,
+                                                  Core::Container::AnsiStringView format,
+                                                  Core::Container::AnsiStringView logicalPath,
+                                                  MeshCookResult& outResult,
+                                                  Core::Container::AnsiString& error,
+                                                  uint32_t fallbackMinTriangles = 0,
+                                                  uint32_t dagRootMaxClusters = 0);
+
+    // DEM の隣り合う 2 区画（B は A の東か南の隣）をクックと同じ引数で LOD の階層まで焼き、境の頂点の位置・法線・UV が
+    // 両区画でビット単位で同じで、どの段・根のクラスタの集まり・フォールバックの段でも境の開いた辺が元の 1 升目の辺のまま
+    // （境の頂点が簡略化で動かない・消えない。境の 3 頂点で作る縦の折れの長い辺は 2 つの三角形が共有する）かを確かめる（AssetCook --check-terrain-dem-seam）。結果の行を outReport に
+    // 書き、合否を outPass に入れる。確かめられない（格子を読めない・区画が隣でない）ときは false
+    [[nodiscard]] bool CheckTerrainDemTileSeam(uint32_t tileAX,
+                                               uint32_t tileAZ,
+                                               uint32_t tileBX,
+                                               uint32_t tileBZ,
+                                               bool& outPass,
+                                               Core::Container::AnsiString& outReport,
+                                               Core::Container::AnsiString& error);
 
     [[nodiscard]] bool IsSupportedSkeletalCookFormat(Core::Container::AnsiStringView format) noexcept;
 

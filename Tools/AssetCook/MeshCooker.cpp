@@ -4,6 +4,7 @@
 #include "Resource/GltfNativePath.h"
 #include "ModelInspection.h"
 
+#include "Asset/AssetFileReader.h"
 #include "Asset/AssetPackageFormat.h"
 #include "Asset/CookedMeshFormat.h"
 #include "Asset/CookedSkeletalFormat.h"
@@ -28,12 +29,14 @@
 #include "Resource/SkeletalSubmeshBounds.h"
 #include "Resource/SkeletalSubmeshLayout.h"
 #include "Text/JsonDocument.h"
+#include "Sha256Digest.h"
 
 #include <algorithm>
 #include <bit>
 #include <charconv>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <limits>
@@ -2958,6 +2961,250 @@ namespace NorvesLib::Tools::AssetCook
             return true;
         }
 
+        // DEM の格子（WastelandTerrain::kDemGridDescriptorPath。Game と同じファイル）を読んだ高さ場と、区画の並び
+        struct DemTerrainSource
+        {
+            NorvesLib::Core::Container::TSharedPtr<const NorvesLib::Core::Rendering::Terrain::TerrainHeightField> Field;
+            NorvesLib::Core::Rendering::Terrain::TerrainGridLayout Layout;
+            // 格子のファイルの SHA-256（記述の sha256 と一致することを確かめた値）
+            AnsiString GridSha256;
+            // 格子の記述の中身の FNV-1a（造成の値の変更をクックの元のハッシュに入れる）
+            uint64_t DescriptorHash = 0;
+            uint32_t TilesX = 0;
+            uint32_t TilesZ = 0;
+        };
+
+        // DEM の格子を読み、記述の sha256 と格子のファイルの SHA-256 が一致するか確かめて、区画の数を格子の大きさから決める。
+        // inputBytes が空でなければ、CookAssets が渡した入力（一覧の source_path）が同じ記述であることも確かめる
+        // （一覧と高さ場が別のファイルを指して、印と中身が食い違うのを防ぐ）
+        bool LoadDemTerrainSource(const uint8_t* inputBytes, size_t inputSize, DemTerrainSource& out, AnsiString& error)
+        {
+            namespace Terrain = NorvesLib::Core::Rendering::Terrain;
+            namespace Spec = NorvesLib::Core::Rendering::Terrain::WastelandTerrain;
+
+            NorvesLib::Core::Asset::AssetFileReader reader;
+            NorvesLib::Core::Asset::AssetReadRequest request;
+            request.InputPath = Spec::kDemGridDescriptorPath;
+            request.bAllowAbsolutePath = false;
+            request.MaxReadBytes = 1024u * 1024u;
+            const NorvesLib::Core::Asset::AssetReadResult descriptor = reader.Read(request);
+            if (!descriptor.Succeeded())
+            {
+                error = AnsiString("DEM の格子の記述を読めません: ") + Spec::kDemGridDescriptorPath;
+                return false;
+            }
+            if (inputBytes != nullptr &&
+                (inputSize != descriptor.Blob.GetSize() ||
+                 std::memcmp(inputBytes, descriptor.Blob.GetData(), inputSize) != 0))
+            {
+                error = AnsiString("terrain-tile:dem の入力（一覧の source_path）が、高さ場の読む格子の記述と違います: ") +
+                        Spec::kDemGridDescriptorPath;
+                return false;
+            }
+
+            AnsiString loadError;
+            out.Field = Terrain::TerrainHeightField::LoadGrid(Spec::kDemGridDescriptorPath, loadError);
+            if (!out.Field)
+            {
+                error = loadError;
+                return false;
+            }
+            out.Layout = out.Field->GetGridLayout();
+
+            NorvesLib::Core::Container::Span<const uint8_t> text(descriptor.Blob.GetData(), descriptor.Blob.GetSize());
+            if (text.size() >= 3 && text[0] == 0xefu && text[1] == 0xbbu && text[2] == 0xbfu)
+            {
+                text = {text.data() + 3, text.size() - 3};
+            }
+            JsonDocument document;
+            if (!JsonDocument::TryParseUtf8(text, document))
+            {
+                error = "DEM の格子の記述が JSON として読めません";
+                return false;
+            }
+            const JsonValue declared = document.GetRoot().FindMember("sha256");
+            if (!declared.IsString())
+            {
+                error = "DEM の格子の記述に sha256 がありません";
+                return false;
+            }
+            const NorvesLib::Core::Container::Span<const uint8_t> gridBytes = out.Field->GetGridBytes();
+            if (!ComputeSha256Hex(gridBytes.data(), gridBytes.size(), out.GridSha256))
+            {
+                error = "DEM の格子のファイルの SHA-256 を求められません";
+                return false;
+            }
+            const String& declaredText = declared.AsString();
+            bool bSameHash = declaredText.size() == out.GridSha256.size();
+            for (size_t index = 0; bSameHash && index < declaredText.size(); ++index)
+            {
+                bSameHash = static_cast<uint32_t>(declaredText.data()[index]) ==
+                            static_cast<uint32_t>(static_cast<unsigned char>(out.GridSha256[index]));
+            }
+            if (!bSameHash)
+            {
+                error = AnsiString("DEM の格子のファイルの SHA-256 が記述の sha256 と違います（格子を書き直したら記述も書き直す）: "
+                                   "file=") +
+                        out.GridSha256;
+                return false;
+            }
+
+            out.DescriptorHash = Fnv1a64Update(Format::Fnv1a64OffsetBasis, descriptor.Blob.GetData(),
+                                               descriptor.Blob.GetSize());
+            out.TilesX = Spec::DemTileCount(out.Layout.Columns);
+            out.TilesZ = Spec::DemTileCount(out.Layout.Rows);
+            return true;
+        }
+
+        // DEM の区画 (tileX, tileZ) の頂点と三角形を格子から作る。格子の点をそのまま頂点にし（高さはファイルの値）、
+        // 法線は Game と同じ SampleNormal（間隔は格子の半分）、UV はワールドの XZ をテクスチャの 1 枚の広さで割った値。
+        // 位置・法線・UV は全体の格子の番号から求めるので、隣の区画と外周の頂点がビット単位で同じになる
+        bool BuildDemTerrainTile(const DemTerrainSource& source, uint32_t tileX, uint32_t tileZ,
+                                 VariableArray<MeshVertexPnt>& outVertices, VariableArray<uint32_t>& outIndices,
+                                 AnsiString& error)
+        {
+            namespace Terrain = NorvesLib::Core::Rendering::Terrain;
+            namespace Spec = NorvesLib::Core::Rendering::Terrain::WastelandTerrain;
+
+            const Terrain::TerrainGridLayout& layout = source.Layout;
+            uint32_t firstColumn = 0;
+            uint32_t cellsX = 0;
+            uint32_t firstRow = 0;
+            uint32_t cellsZ = 0;
+            Spec::DemTileCellRange(tileX, layout.Columns, firstColumn, cellsX);
+            Spec::DemTileCellRange(tileZ, layout.Rows, firstRow, cellsZ);
+            if (cellsX == 0 || cellsZ == 0)
+            {
+                error = AnsiString("terrain-tile:dem の区画の番号が、格子の区画の並び（") +
+                        FormatInteger(static_cast<int>(source.TilesX)) + " x " +
+                        FormatInteger(static_cast<int>(source.TilesZ)) + "）の外です";
+                return false;
+            }
+
+            const uint32_t sideX = cellsX + 1;
+            const uint32_t sideZ = cellsZ + 1;
+            const float normalSpacing = static_cast<float>(layout.Spacing * 0.5);
+            outVertices.clear();
+            outVertices.resize(static_cast<size_t>(sideX) * sideZ);
+            for (uint32_t row = 0; row < sideZ; ++row)
+            {
+                for (uint32_t column = 0; column < sideX; ++column)
+                {
+                    const uint32_t globalColumn = firstColumn + column;
+                    const uint32_t globalRow = firstRow + row;
+                    const float x = static_cast<float>(layout.FirstX + static_cast<double>(globalColumn) * layout.Spacing);
+                    const float z = static_cast<float>(layout.FirstZ + static_cast<double>(globalRow) * layout.Spacing);
+                    const float y = source.Field->GetGridVertexHeight(globalColumn, globalRow);
+                    const Terrain::TerrainNormal normal = source.Field->SampleNormal(x, z, normalSpacing);
+                    if (!std::isfinite(y) || !std::isfinite(normal.X) || !std::isfinite(normal.Y) ||
+                        !std::isfinite(normal.Z))
+                    {
+                        error = "DEM の区画の頂点の高さ・法線が有限でありません";
+                        return false;
+                    }
+                    MeshVertexPnt& vertex = outVertices[static_cast<size_t>(row) * sideX + column];
+                    vertex.Position[0] = x;
+                    vertex.Position[1] = y;
+                    vertex.Position[2] = z;
+                    vertex.Normal[0] = normal.X;
+                    vertex.Normal[1] = normal.Y;
+                    vertex.Normal[2] = normal.Z;
+                    vertex.TexCoord[0] = x / Spec::kTextureTileMeters;
+                    vertex.TexCoord[1] = z / Spec::kTextureTileMeters;
+                }
+            }
+
+            // 巻き方と対角線は手続きの区画（CookTerrainTileInternal）と同じ。対角線は高さ場の補間と同じ規則
+            // （Terrain::UsesMainDiagonal。全体の格子の番号）
+            outIndices.clear();
+            outIndices.reserve(static_cast<size_t>(cellsX) * cellsZ * 6);
+            for (uint32_t row = 0; row < cellsZ; ++row)
+            {
+                for (uint32_t column = 0; column < cellsX; ++column)
+                {
+                    const uint32_t i00 = row * sideX + column;
+                    const uint32_t i10 = i00 + 1;
+                    const uint32_t i01 = i00 + sideX;
+                    const uint32_t i11 = i01 + 1;
+                    if (Terrain::UsesMainDiagonal(firstColumn + column, firstRow + row))
+                    {
+                        outIndices.push_back(i00);
+                        outIndices.push_back(i10);
+                        outIndices.push_back(i11);
+                        outIndices.push_back(i00);
+                        outIndices.push_back(i11);
+                        outIndices.push_back(i01);
+                    }
+                    else
+                    {
+                        outIndices.push_back(i00);
+                        outIndices.push_back(i10);
+                        outIndices.push_back(i01);
+                        outIndices.push_back(i10);
+                        outIndices.push_back(i11);
+                        outIndices.push_back(i01);
+                    }
+                }
+            }
+            return true;
+        }
+
+        // DEM の格子の区画 (tileX, tileZ) を焼く（--generate terrain-tile:dem:<x>,<z>）。区画の数と格子の間隔は格子の記述
+        // から決まり、外周の頂点は階層のどの段でも動かさない。元のハッシュには格子の SHA-256・記述の中身・区画の割り方を入れる
+        bool CookTerrainDemTileInternal(const uint8_t* inputBytes, size_t inputSize, uint32_t tileX, uint32_t tileZ,
+                                        AnsiStringView format, AnsiStringView logicalPath, MeshCookResult& outResult,
+                                        AnsiString& error, uint32_t fallbackMinTriangles, uint32_t dagRootMaxClusters)
+        {
+            namespace Spec = NorvesLib::Core::Rendering::Terrain::WastelandTerrain;
+
+            if (format != SupportedMeshFormatLodGraph)
+            {
+                error = "terrain-tile は NVMESH v1 "
+                        "の形式（nvmesh.v1.mesh3d.pnt.u32.lodgraph）だけを焼けます";
+                return false;
+            }
+            if (!ValidateRelativePath(logicalPath, "model logical path", error))
+            {
+                return false;
+            }
+
+            DemTerrainSource source;
+            if (!LoadDemTerrainSource(inputBytes, inputSize, source, error))
+            {
+                return false;
+            }
+            VariableArray<MeshVertexPnt> vertices;
+            VariableArray<uint32_t> indices;
+            if (!BuildDemTerrainTile(source, tileX, tileZ, vertices, indices, error))
+            {
+                return false;
+            }
+
+            MaterialReferences materialReferences;
+            MeshCookResult v1Result;
+            if (!CookLodGraphMesh(vertices, indices, materialReferences, v1Result, error, fallbackMinTriangles,
+                                  dagRootMaxClusters, 0, true))
+            {
+                return false;
+            }
+
+            uint64_t hash = Format::Fnv1a64OffsetBasis;
+            hash = Fnv1a64Update(hash, reinterpret_cast<const uint8_t*>(source.GridSha256.data()),
+                                 source.GridSha256.size());
+            hash = Fnv1a64UpdateLe64(hash, source.DescriptorHash);
+            hash = Fnv1a64UpdateLe64(hash, static_cast<uint64_t>(tileX));
+            hash = Fnv1a64UpdateLe64(hash, static_cast<uint64_t>(tileZ));
+            hash = Fnv1a64UpdateLe64(hash, static_cast<uint64_t>(Spec::kDemTileCells));
+            hash = Fnv1a64UpdateLe64(hash, static_cast<uint64_t>(std::bit_cast<uint32_t>(Spec::kTextureTileMeters)));
+            v1Result.SourceHash = hash;
+            std::printf("TERRAIN_DEM_TILE tile=%u,%u tiles=%ux%u grid=%ux%u spacing=%.9g vertices=%zu triangles=%zu "
+                        "grid_sha256=%s\n",
+                        tileX, tileZ, source.TilesX, source.TilesZ, source.Layout.Columns, source.Layout.Rows,
+                        source.Layout.Spacing, vertices.size(), indices.size() / 3, source.GridSha256.c_str());
+            outResult = std::move(v1Result);
+            return true;
+        }
+
         struct SkeletalStringReference
         {
             uint64_t Offset = 0;
@@ -3735,7 +3982,7 @@ namespace NorvesLib::Tools::AssetCook
     }
 
     bool TryParseTerrainTileGenerate(NorvesLib::Core::Container::AnsiStringView generate, uint32_t& outTileX,
-                                     uint32_t& outTileZ)
+                                     uint32_t& outTileZ, bool& outDem)
     {
         namespace Spec = NorvesLib::Core::Rendering::Terrain::WastelandTerrain;
         const AnsiStringView prefix("terrain-tile:");
@@ -3743,7 +3990,14 @@ namespace NorvesLib::Tools::AssetCook
         {
             return false;
         }
-        const AnsiStringView rest = generate.substr(prefix.size());
+        AnsiStringView rest = generate.substr(prefix.size());
+        // "dem:" が付けば DEM の格子の区画（番号の範囲は格子の記述で決まるので、ここでは上限だけを見る）
+        const AnsiStringView demPrefix("dem:");
+        const bool bDem = rest.size() > demPrefix.size() && rest.substr(0, demPrefix.size()) == demPrefix;
+        if (bDem)
+        {
+            rest = rest.substr(demPrefix.size());
+        }
         const size_t comma = rest.find(',');
         if (comma == AnsiStringView::npos || comma == 0)
         {
@@ -3754,13 +4008,15 @@ namespace NorvesLib::Tools::AssetCook
         const char* const end = rest.data() + rest.size();
         const auto parsedX = std::from_chars(rest.data(), rest.data() + comma, x);
         const auto parsedZ = std::from_chars(rest.data() + comma + 1, end, z);
+        const uint32_t limit = bDem ? 65536u : Spec::kTilesPerSide;
         if (parsedX.ec != std::errc{} || parsedX.ptr != rest.data() + comma || parsedZ.ec != std::errc{} ||
-            parsedZ.ptr != end || x >= Spec::kTilesPerSide || z >= Spec::kTilesPerSide)
+            parsedZ.ptr != end || x >= limit || z >= limit)
         {
             return false;
         }
         outTileX = x;
         outTileZ = z;
+        outDem = bDem;
         return true;
     }
 
@@ -3776,6 +4032,320 @@ namespace NorvesLib::Tools::AssetCook
             error = internalError;
             return false;
         }
+        return true;
+    }
+
+    bool CookTerrainDemTileToNvmesh(const uint8_t* inputBytes, size_t inputSize, uint32_t tileX, uint32_t tileZ,
+                                    NorvesLib::Core::Container::AnsiStringView format,
+                                    NorvesLib::Core::Container::AnsiStringView logicalPath, MeshCookResult& outResult,
+                                    NorvesLib::Core::Container::AnsiString& error, uint32_t fallbackMinTriangles,
+                                    uint32_t dagRootMaxClusters)
+    {
+        AnsiString internalError;
+        if (!CookTerrainDemTileInternal(inputBytes, inputSize, tileX, tileZ, format, logicalPath, outResult,
+                                        internalError, fallbackMinTriangles, dagRootMaxClusters))
+        {
+            error = internalError;
+            return false;
+        }
+        return true;
+    }
+
+    bool CheckTerrainDemTileSeam(uint32_t tileAX, uint32_t tileAZ, uint32_t tileBX, uint32_t tileBZ, bool& outPass,
+                                 NorvesLib::Core::Container::AnsiString& outReport,
+                                 NorvesLib::Core::Container::AnsiString& error)
+    {
+        namespace Spec = NorvesLib::Core::Rendering::Terrain::WastelandTerrain;
+        using NorvesLib::Core::Asset::CookedMeshCluster;
+        using NorvesLib::Core::Asset::CookedMeshVertex;
+
+        outPass = false;
+        outReport.clear();
+        // B は A の東（+X）か南（+Z）の隣。境は B の最初の列（または行）の頂点の並び
+        const bool bAlongX = tileBX == tileAX + 1 && tileBZ == tileAZ;
+        const bool bAlongZ = tileBZ == tileAZ + 1 && tileBX == tileAX;
+        if (!bAlongX && !bAlongZ)
+        {
+            error = "継ぎ目を確かめる 2 区画は、B が A の東（x+1）か南（z+1）の隣でなければなりません";
+            return false;
+        }
+
+        DemTerrainSource source;
+        if (!LoadDemTerrainSource(nullptr, 0, source, error))
+        {
+            return false;
+        }
+        const auto& layout = source.Layout;
+        uint32_t firstColumnB = 0;
+        uint32_t cellsXB = 0;
+        uint32_t firstRowB = 0;
+        uint32_t cellsZB = 0;
+        Spec::DemTileCellRange(tileBX, layout.Columns, firstColumnB, cellsXB);
+        Spec::DemTileCellRange(tileBZ, layout.Rows, firstRowB, cellsZB);
+        // 境の線の座標（境に垂直な軸）と、境に沿う向きの最初の番号・升目の数
+        const uint32_t seamIndex = bAlongX ? firstColumnB : firstRowB;
+        const float seamValue = static_cast<float>((bAlongX ? layout.FirstX : layout.FirstZ) +
+                                                   static_cast<double>(seamIndex) * layout.Spacing);
+        const uint32_t alongFirst = bAlongX ? firstRowB : firstColumnB;
+        const uint32_t alongCells = bAlongX ? cellsZB : cellsXB;
+        const double alongOrigin = bAlongX ? layout.FirstZ : layout.FirstX;
+        const int perpendicular = bAlongX ? 0 : 2;
+        const int along = bAlongX ? 2 : 0;
+
+        auto appendLine = [&outReport](const char* text) {
+            outReport += text;
+            outReport += "\n";
+        };
+        char line[512] = {};
+        std::snprintf(line, sizeof(line), "seam a=%u,%u b=%u,%u axis=%s value=%.9g along_first=%u cells=%u tiles=%ux%u "
+                      "grid_sha256=%s",
+                      tileAX, tileAZ, tileBX, tileBZ, bAlongX ? "x" : "z", seamValue, alongFirst, alongCells,
+                      source.TilesX, source.TilesZ, source.GridSha256.c_str());
+        appendLine(line);
+
+        // 境の上の元の頂点（両区画の入力の頂点）。番号は境に沿う向きの 0..alongCells
+        VariableArray<MeshVertexPnt> reference[2];
+        bool bAllPass = alongCells > 0;
+        uint64_t crossMismatch = 0;
+        const uint32_t tiles[2][2] = {{tileAX, tileAZ}, {tileBX, tileBZ}};
+        auto alongIndex = [&](float value, int64_t& outIndex) -> bool {
+            const double steps = (static_cast<double>(value) - alongOrigin) / layout.Spacing - alongFirst;
+            const double rounded = std::round(steps);
+            if (std::fabs(steps - rounded) > 1.0e-3 || rounded < 0.0 || rounded > static_cast<double>(alongCells))
+            {
+                return false;
+            }
+            outIndex = static_cast<int64_t>(rounded);
+            return true;
+        };
+        auto sameBits = [](float a, float b) { return std::bit_cast<uint32_t>(a) == std::bit_cast<uint32_t>(b); };
+
+        for (int t = 0; t < 2; ++t)
+        {
+            VariableArray<MeshVertexPnt> vertices;
+            VariableArray<uint32_t> indices;
+            if (!BuildDemTerrainTile(source, tiles[t][0], tiles[t][1], vertices, indices, error))
+            {
+                return false;
+            }
+            reference[t].resize(static_cast<size_t>(alongCells) + 1);
+            VariableArray<uint8_t> found(static_cast<size_t>(alongCells) + 1, 0);
+            for (const MeshVertexPnt& vertex : vertices)
+            {
+                int64_t k = 0;
+                if (sameBits(vertex.Position[perpendicular], seamValue) && alongIndex(vertex.Position[along], k))
+                {
+                    reference[t][static_cast<size_t>(k)] = vertex;
+                    found[static_cast<size_t>(k)] = 1;
+                }
+            }
+            for (const uint8_t value : found)
+            {
+                bAllPass = bAllPass && value != 0;
+            }
+
+            VariableArray<CookedMeshVertex> cookedVertices;
+            cookedVertices.reserve(vertices.size());
+            for (const MeshVertexPnt& vertex : vertices)
+            {
+                CookedMeshVertex cooked;
+                cooked.Position = {vertex.Position[0], vertex.Position[1], vertex.Position[2]};
+                cooked.Normal = {vertex.Normal[0], vertex.Normal[1], vertex.Normal[2]};
+                cooked.TexCoord = {vertex.TexCoord[0], vertex.TexCoord[1]};
+                cookedVertices.push_back(cooked);
+            }
+            // クックと同じ引数（一覧は fallback_min_triangles・dag_root_max_clusters を持たない。外周を固定する）
+            CookMeshDagResult dag;
+            AnsiString dagError;
+            if (!BakeMeshLodDag(cookedVertices.data(), cookedVertices.size(), indices.data(), indices.size(), dag,
+                                dagError, 0, 0, 0, true))
+            {
+                error = AnsiString("LOD の階層の焼き込みに失敗しました: ") + dagError;
+                return false;
+            }
+            const auto& output = dag.Output;
+
+            // 段ごと（と、根のクラスタの集まり・フォールバックの段）に、境の上の辺と頂点を調べる。
+            // 1 升目ぶん（番号の差が 1）の辺は 2 度出ない。境の 3 頂点で作る縦の三角形（境の線の上の折れ）の長い辺は
+            // 内側の辺なので、ちょうど 2 つの三角形が共有しなければならない（1 つだけなら境の頂点が飛ばされ、割れ目になる）。
+            // 境の上の頂点は、位置・法線・UV が元の頂点とビット単位で同じでなければならない
+            struct SeamTally
+            {
+                VariableArray<uint32_t> SegmentUses;
+                // 長い辺（両端の番号を low << 32 | high に詰めた値。三角形ごとに 1 つ）
+                VariableArray<uint64_t> LongEdges;
+                uint64_t VertexMismatch = 0;
+                uint64_t Clusters = 0;
+            };
+            auto checkVertex = [&](const CookedMeshVertex& vertex, SeamTally& tally, int64_t& outIndex) -> bool {
+                const float position[3] = {vertex.Position.X, vertex.Position.Y, vertex.Position.Z};
+                if (!sameBits(position[perpendicular], seamValue))
+                {
+                    return false;
+                }
+                if (!alongIndex(position[along], outIndex))
+                {
+                    ++tally.VertexMismatch;
+                    return false;
+                }
+                const MeshVertexPnt& expected = reference[t][static_cast<size_t>(outIndex)];
+                if (!sameBits(vertex.Position.X, expected.Position[0]) || !sameBits(vertex.Position.Y, expected.Position[1]) ||
+                    !sameBits(vertex.Position.Z, expected.Position[2]) || !sameBits(vertex.Normal.X, expected.Normal[0]) ||
+                    !sameBits(vertex.Normal.Y, expected.Normal[1]) || !sameBits(vertex.Normal.Z, expected.Normal[2]) ||
+                    !sameBits(vertex.TexCoord.U, expected.TexCoord[0]) || !sameBits(vertex.TexCoord.V, expected.TexCoord[1]))
+                {
+                    ++tally.VertexMismatch;
+                }
+                return true;
+            };
+            auto addTriangle = [&](const CookedMeshVertex* const (&corner)[3], SeamTally& tally) -> bool {
+                int64_t k[3] = {};
+                bool on[3] = {};
+                bool bAny = false;
+                for (int c = 0; c < 3; ++c)
+                {
+                    on[c] = checkVertex(*corner[c], tally, k[c]);
+                    bAny = bAny || on[c];
+                }
+                for (int c = 0; c < 3; ++c)
+                {
+                    const int d = (c + 1) % 3;
+                    if (on[c] && on[d])
+                    {
+                        const int64_t low = std::min(k[c], k[d]);
+                        const int64_t high = std::max(k[c], k[d]);
+                        if (high - low != 1)
+                        {
+                            tally.LongEdges.push_back((static_cast<uint64_t>(low) << 32) | static_cast<uint64_t>(high));
+                        }
+                        else
+                        {
+                            ++tally.SegmentUses[static_cast<size_t>(low)];
+                        }
+                    }
+                }
+                return bAny;
+            };
+            auto report = [&](const char* label, SeamTally& tally) {
+                uint64_t covered = 0;
+                uint64_t duplicate = 0;
+                for (const uint32_t uses : tally.SegmentUses)
+                {
+                    covered += uses > 0 ? 1u : 0u;
+                    duplicate += uses > 1 ? 1u : 0u;
+                }
+                // 長い辺ごとの共有の数。2 でないもの（開いた長い辺）を数える
+                std::sort(tally.LongEdges.begin(), tally.LongEdges.end());
+                uint64_t longEdges = 0;
+                uint64_t openLongEdges = 0;
+                for (size_t first = 0; first < tally.LongEdges.size();)
+                {
+                    size_t last = first;
+                    while (last < tally.LongEdges.size() && tally.LongEdges[last] == tally.LongEdges[first])
+                    {
+                        ++last;
+                    }
+                    ++longEdges;
+                    openLongEdges += last - first == 2 ? 0u : 1u;
+                    first = last;
+                }
+                std::snprintf(line, sizeof(line),
+                              "tile=%s %s clusters_on_seam=%llu segments=%llu/%u duplicate_segments=%llu "
+                              "fold_edges=%llu open_fold_edges=%llu vertex_mismatch=%llu",
+                              t == 0 ? "a" : "b", label, static_cast<unsigned long long>(tally.Clusters),
+                              static_cast<unsigned long long>(covered), alongCells,
+                              static_cast<unsigned long long>(duplicate), static_cast<unsigned long long>(longEdges),
+                              static_cast<unsigned long long>(openLongEdges),
+                              static_cast<unsigned long long>(tally.VertexMismatch));
+                appendLine(line);
+                return openLongEdges == 0 && duplicate == 0 && tally.VertexMismatch == 0;
+            };
+            auto tallyClusters = [&](auto&& include, SeamTally& tally) {
+                tally.SegmentUses.assign(alongCells, 0u);
+                for (const CookedMeshCluster& cluster : output.Clusters)
+                {
+                    if (!include(cluster))
+                    {
+                        continue;
+                    }
+                    bool bOnSeam = false;
+                    for (uint32_t i = 0; i + 2 < cluster.IndexCount; i += 3)
+                    {
+                        const CookedMeshVertex* corner[3] = {};
+                        for (uint32_t c = 0; c < 3; ++c)
+                        {
+                            corner[c] = &output.Vertices[cluster.VertexOffset +
+                                                         output.ClusterIndices[cluster.IndexOffset + i + c]];
+                        }
+                        bOnSeam = addTriangle(corner, tally) || bOnSeam;
+                    }
+                    tally.Clusters += bOnSeam ? 1u : 0u;
+                }
+            };
+            auto everySegmentOnce = [](const SeamTally& tally) {
+                bool bOnce = true;
+                for (const uint32_t uses : tally.SegmentUses)
+                {
+                    bOnce = bOnce && uses == 1;
+                }
+                return bOnce;
+            };
+
+            std::snprintf(line, sizeof(line), "tile=%s index=%u,%u vertices=%zu triangles=%zu dag_levels=%u clusters=%zu",
+                          t == 0 ? "a" : "b", tiles[t][0], tiles[t][1], vertices.size(), indices.size() / 3,
+                          output.LODLevelCount, output.Clusters.size());
+            appendLine(line);
+            for (uint32_t level = 0; level < output.LODLevelCount; ++level)
+            {
+                SeamTally tally;
+                tallyClusters([level](const CookedMeshCluster& cluster) { return cluster.LODLevel == level; }, tally);
+                char label[32] = {};
+                std::snprintf(label, sizeof(label), "level=%u", level);
+                bAllPass = report(label, tally) && bAllPass;
+                // 最も細かい段は境の全部の辺を 1 度ずつ持つ
+                if (level == 0)
+                {
+                    bAllPass = everySegmentOnce(tally) && bAllPass;
+                }
+            }
+            // 根のクラスタの集まり（最も粗い切り口）と、フォールバックの段（影・RT が使う）も、境の全部の辺を 1 度ずつ持つ
+            {
+                SeamTally tally;
+                tallyClusters([](const CookedMeshCluster& cluster) { return cluster.bIsRoot; }, tally);
+                bAllPass = report("roots", tally) && everySegmentOnce(tally) && bAllPass;
+            }
+            {
+                SeamTally tally;
+                tally.SegmentUses.assign(alongCells, 0u);
+                for (size_t i = 0; i + 2 < output.FallbackIndices.size(); i += 3)
+                {
+                    const CookedMeshVertex* corner[3] = {&output.Vertices[output.FallbackIndices[i]],
+                                                         &output.Vertices[output.FallbackIndices[i + 1]],
+                                                         &output.Vertices[output.FallbackIndices[i + 2]]};
+                    addTriangle(corner, tally);
+                }
+                bAllPass = report("fallback", tally) && everySegmentOnce(tally) && bAllPass;
+            }
+        }
+
+        // 両区画の境の頂点が、位置・法線・UV ともビット単位で同じか
+        for (size_t k = 0; k < reference[0].size() && k < reference[1].size(); ++k)
+        {
+            const MeshVertexPnt& a = reference[0][k];
+            const MeshVertexPnt& b = reference[1][k];
+            bool bSame = true;
+            for (int c = 0; c < 3; ++c)
+            {
+                bSame = bSame && sameBits(a.Position[c], b.Position[c]) && sameBits(a.Normal[c], b.Normal[c]);
+            }
+            bSame = bSame && sameBits(a.TexCoord[0], b.TexCoord[0]) && sameBits(a.TexCoord[1], b.TexCoord[1]);
+            crossMismatch += bSame ? 0u : 1u;
+        }
+        std::snprintf(line, sizeof(line), "cross_tile_vertices=%zu cross_tile_mismatch=%llu", reference[0].size(),
+                      static_cast<unsigned long long>(crossMismatch));
+        appendLine(line);
+        outPass = bAllPass && crossMismatch == 0;
+        appendLine(outPass ? "result=pass" : "result=fail");
         return true;
     }
 

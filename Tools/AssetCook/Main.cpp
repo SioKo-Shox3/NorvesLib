@@ -1,5 +1,6 @@
 ﻿#include "AssetCookLegacyOptions.h"
 #include "AssetCookOutput.h"
+#include "MeshCooker.h"
 #include "RigRetargetCook.h"
 #include "RigSplitFileCook.h"
 #include "SingleAssetCook.h"
@@ -7,10 +8,12 @@
 #include "TextureAssetSetCook.h"
 #include "TextureCooker.h"
 #include "Rendering/Terrain/TerrainHeightField.h"
+#include <charconv>
 #include <cmath>
 #include <cstdlib>
 #include <iomanip>
 #include <iostream>
+#include <string_view>
 
 namespace
 {
@@ -302,7 +305,7 @@ namespace
                 // 区画の番号の形と範囲は SingleAssetCook の検査が確かめる
                 if (value != "displaced-sphere" && value.rfind("terrain-tile:", 0) != 0)
                 {
-                    error = "--generate は displaced-sphere か terrain-tile:<x>,<z> だけを指定できます";
+                    error = "--generate は displaced-sphere か terrain-tile:<x>,<z>・terrain-tile:dem:<x>,<z> だけを指定できます";
                     return false;
                 }
                 outOptions.Generate = NorvesLib::Core::Container::AnsiString(value.c_str());
@@ -399,6 +402,50 @@ namespace
         return true;
     }
 
+    // --check-terrain-dem-seam <ax>,<az> <bx>,<bz>: DEM の隣り合う 2 区画（B は A の東か南の隣）を、クックと同じ引数で
+    // LOD の階層まで焼いて、境の頂点が両区画で同じで、どの段でも境が固定されているかを確かめる。合格なら 0
+    bool RunTerrainDemSeamCommand(int argc, char **argv, int &outExitCode)
+    {
+        if (argc < 2 || std::string_view(argv[1]) != "--check-terrain-dem-seam")
+        {
+            return false;
+        }
+        outExitCode = 1;
+        uint32_t tiles[4] = {};
+        bool bParsed = argc == 4;
+        for (int index = 0; bParsed && index < 2; ++index)
+        {
+            const std::string_view text(argv[2 + index]);
+            const size_t comma = text.find(',');
+            bParsed = comma != std::string_view::npos;
+            if (bParsed)
+            {
+                const auto x = std::from_chars(text.data(), text.data() + comma, tiles[index * 2]);
+                const auto z = std::from_chars(text.data() + comma + 1, text.data() + text.size(), tiles[index * 2 + 1]);
+                bParsed = x.ec == std::errc{} && x.ptr == text.data() + comma && z.ec == std::errc{} &&
+                          z.ptr == text.data() + text.size();
+            }
+        }
+        if (!bParsed)
+        {
+            std::cerr << "AssetCook error: --check-terrain-dem-seam には区画の番号 <ax>,<az> <bx>,<bz> を渡してください\n";
+            return true;
+        }
+
+        bool bPass = false;
+        NorvesLib::Core::Container::AnsiString report;
+        NorvesLib::Core::Container::AnsiString error;
+        if (!NorvesLib::Tools::AssetCook::CheckTerrainDemTileSeam(tiles[0], tiles[1], tiles[2], tiles[3], bPass, report,
+                                                                  error))
+        {
+            std::cerr << "AssetCook error: " << error.c_str() << "\n";
+            return true;
+        }
+        std::cout << report.c_str();
+        outExitCode = bPass ? 0 : 1;
+        return true;
+    }
+
     void PrintUsage()
     {
         std::cerr
@@ -406,6 +453,7 @@ namespace
             << "       AssetCook --asset-set <spec.json> --runtime-root <new-or-managed-directory> [--source-root <directory>] [--manifest <file>]\n"
             << "       AssetCook --recover --runtime-root <directory>  (recover fixed pending in parent workspace, including siblings)\n"
             << "       AssetCook --sample-terrain-grid <x>,<z> [<x>,<z> ...]\n"
+            << "       AssetCook --check-terrain-dem-seam <ax>,<az> <bx>,<bz>\n"
             << "       AssetCook --input <file> --out <package> --manifest <manifest.json> "
             << "--logical <path> --kind raw --entry <entry> --entry-type Raw "
             << "--format raw.v0 --variant default\n"
@@ -534,6 +582,7 @@ int main(int argc, char **argv)
     if (NorvesLib::Tools::AssetCook::RunTextureAssetSetCommand(argc,argv,assetSetExitCode)) return assetSetExitCode;
     int terrainExitCode = 0;
     if (RunTerrainGridSampleCommand(argc, argv, terrainExitCode)) return terrainExitCode;
+    if (RunTerrainDemSeamCommand(argc, argv, terrainExitCode)) return terrainExitCode;
     std::filesystem::path inspectPath;
     const char* inspectError=nullptr;
     const auto inspect=NorvesLib::Tools::AssetCook::ParseInspectCommandLine(argc,argv,inspectPath,inspectError);

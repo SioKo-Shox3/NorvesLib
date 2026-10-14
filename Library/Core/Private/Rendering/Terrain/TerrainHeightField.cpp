@@ -590,6 +590,38 @@ namespace NorvesLib::Core::Rendering::Terrain
         return u >= 0.0 && u <= static_cast<double>(grid.Columns - 1) && v >= 0.0 && v <= static_cast<double>(grid.Rows - 1);
     }
 
+    TerrainGridLayout TerrainHeightField::GetGridLayout() const
+    {
+        TerrainGridLayout layout;
+        if (m_Grid)
+        {
+            layout.Columns = m_Grid->Columns;
+            layout.Rows = m_Grid->Rows;
+            layout.FirstX = m_Grid->FirstX;
+            layout.FirstZ = m_Grid->FirstZ;
+            layout.Spacing = m_Grid->Spacing;
+        }
+        return layout;
+    }
+
+    float TerrainHeightField::GetGridVertexHeight(uint32_t column, uint32_t row) const
+    {
+        if (!m_Grid || column >= m_Grid->Columns || row >= m_Grid->Rows)
+        {
+            return kOutOfRangeHeight;
+        }
+        return m_Grid->At(column, row);
+    }
+
+    Container::Span<const uint8_t> TerrainHeightField::GetGridBytes() const
+    {
+        if (!m_Grid)
+        {
+            return {};
+        }
+        return Container::Span<const uint8_t>(m_Grid->Bytes.GetData(), m_Grid->Bytes.GetSize());
+    }
+
     float TerrainHeightField::SampleGridHeight(float x, float z) const
     {
         if (!Contains(x, z))

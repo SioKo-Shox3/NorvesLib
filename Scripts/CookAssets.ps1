@@ -8,7 +8,9 @@
 # "fallback_min_triangles"（省略可。小さなメッシュで根の段までの粗さが影・RT の形を崩すときに上げる）と、
 # 根のクラスタ数の上限 "dag_root_max_clusters"（省略可。1 以上なら、根がこの数以下のクラスタになるまで簡略化を続ける）と、
 # glTF を読まずにメッシュを作らせる "generate"（省略可。displaced-sphere は source_path の高さマップで変位した
-# 起動画面の大きな球。仕様は Library/Core/Public/Rendering/MegaGeometry/StartupBigSphereSpec.h）を持つ。
+# 起動画面の大きな球。仕様は Library/Core/Public/Rendering/MegaGeometry/StartupBigSphereSpec.h。terrain-tile:<x>,<z> は
+# 荒野の手続きの地形の区画、terrain-tile:dem:<x>,<z> は DEM の格子の区画で、source_path が格子の記述（height.json）、
+# extra_sources が格子のファイルと区画の割り方のヘッダ。一覧の DEM の項目は Scripts/Terrain/WriteTerrainAssetSet.py が書く）を持つ。
 #
 # 差分クック: 元画像の内容・一覧の項目・AssetCook の実行ファイルのどれかが変わったものだけを焼き、変わらないものは
 # 前回の結果（<RuntimeRoot>/.cookstate/ に項目ごとの印とマニフェスト項目を残す）をそのまま使う。
@@ -129,19 +131,31 @@ function Get-TextSha256 {
     }
 }
 
+# 1 回の実行の中で同じファイルを何度も求めない（DEM の区画は全項目が同じ 86 MB の格子を変更の検出に含める）。
+# 大きさと更新時刻が変われば求め直す
+$FileSha256Cache = @{}
+
 function Get-FileSha256 {
     param([string]$Path)
+
+    $info = Get-Item -LiteralPath $Path
+    $cacheKey = "$($info.FullName)|$($info.Length)|$($info.LastWriteTimeUtc.Ticks)"
+    if ($script:FileSha256Cache.ContainsKey($cacheKey)) {
+        return $script:FileSha256Cache[$cacheKey]
+    }
 
     # MSBuild 経由の powershell では Get-FileHash のモジュールが読めないことがあるので .NET で求める
     $sha = [System.Security.Cryptography.SHA256]::Create()
     $stream = [System.IO.File]::OpenRead($Path)
     try {
-        return ([System.BitConverter]::ToString($sha.ComputeHash($stream))).Replace("-", "").ToLowerInvariant()
+        $hash = ([System.BitConverter]::ToString($sha.ComputeHash($stream))).Replace("-", "").ToLowerInvariant()
     }
     finally {
         $stream.Dispose()
         $sha.Dispose()
     }
+    $script:FileSha256Cache[$cacheKey] = $hash
+    return $hash
 }
 
 function Write-TextUtf8 {
@@ -500,11 +514,13 @@ foreach ($specFile in $specFiles) {
         }
         # "generate": "displaced-sphere" は、source_path の高さマップ（16 ビットのグレーの PNG）で変位した起動画面の大きな球を
         # AssetCook に作らせて焼く（glTF は読まない）。"terrain-tile:<x>,<z>" は荒野の地形の区画を高さ場の関数から作って焼く
-        # （source_path は高さ場の仕様のヘッダで、変更の検出だけに使う）。
+        # （source_path は高さ場の仕様のヘッダで、変更の検出だけに使う）。"terrain-tile:dem:<x>,<z>" は DEM の格子の区画を焼く
+        # （source_path は格子の記述で、AssetCook が高さ場の読む記述と同じか・格子のファイルの SHA-256 が記述と合うかを確かめる。
+        # 格子のファイルと区画の割り方のヘッダは extra_sources に入れ、どれが変わっても焼き直す）。
         if (Test-PropertyExists -Object $model -Name "generate") {
             $generate = Get-StringField -Object $model -Name "generate" -Context $context
-            if (($generate -ne "displaced-sphere") -and ($generate -notmatch '^terrain-tile:\d+,\d+$')) {
-                throw "$context の generate は displaced-sphere か terrain-tile:<x>,<z> だけを指定できます"
+            if (($generate -ne "displaced-sphere") -and ($generate -notmatch '^terrain-tile:(dem:)?\d+,\d+$')) {
+                throw "$context の generate は displaced-sphere か terrain-tile:<x>,<z>・terrain-tile:dem:<x>,<z> だけを指定できます"
             }
             $cookArguments += @("--generate", $generate)
         }

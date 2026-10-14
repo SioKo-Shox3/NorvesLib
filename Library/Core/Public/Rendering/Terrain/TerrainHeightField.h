@@ -14,9 +14,11 @@
 // もう 1 つの作り方は、実在の地形（DEM）を切り出した格子（Scripts/Terrain/CropDem.py が書く height.json と height.r32）
 // から引く方法（LoadGrid）。格子の点をそのまま頂点にし、点の間は焼いたメッシュと同じ対角線（UsesMainDiagonal）で
 // 升目を 2 つの三角形に分けて線形に補間する（元の値を越える補間はしない）。範囲の外は端を延ばさず kOutOfRangeHeight を返す。
+// クッカーは --generate terrain-tile:dem:<x>,<z> で、この格子を kDemTileCells 升目ごとの区画に分けて焼く。
 // ---------------------------------------------------------------------------
 
 #include "Container/PointerTypes.h"
+#include "Container/Span.h"
 #include "Container/String.h"
 #include "Container/StringView.h"
 
@@ -73,6 +75,17 @@ namespace NorvesLib::Core::Rendering::Terrain
         float Z = 0.0f;
     };
 
+    /// 格子の高さ場の頂点の並び。頂点 (column, row) の位置は (FirstX + column × Spacing, FirstZ + row × Spacing)。
+    /// 手続きの作り方では Columns・Rows が 0
+    struct TerrainGridLayout
+    {
+        uint32_t Columns = 0;
+        uint32_t Rows = 0;
+        double FirstX = 0.0;
+        double FirstZ = 0.0;
+        double Spacing = 0.0;
+    };
+
     /// 高さ場。作った後は読み取りだけで、複数のスレッドから同時に引いてよい
     class TerrainHeightField
     {
@@ -116,6 +129,15 @@ namespace NorvesLib::Core::Rendering::Terrain
 
         /// (x,z) が高さを引ける範囲か（手続きの作り方では常に true。格子では外周の頂点を含む内側）
         bool Contains(float x, float z) const;
+
+        /// 格子の頂点の並び（手続きの作り方では Columns・Rows が 0）
+        TerrainGridLayout GetGridLayout() const;
+
+        /// 格子の頂点 (column, row) の高さ（ファイルの値そのもの）。格子の作り方で、番号が並びの内側のときだけ呼ぶ
+        float GetGridVertexHeight(uint32_t column, uint32_t row) const;
+
+        /// 格子のファイルの中身（float32 の little-endian、行優先）。手続きの作り方では空
+        Container::Span<const uint8_t> GetGridBytes() const;
 
         /// 手続きの作り方の値（格子の作り方では既定の値のままで、意味を持たない）
         const TerrainHeightFieldParams &GetParams() const
@@ -191,6 +213,30 @@ namespace NorvesLib::Core::Rendering::Terrain
         /// Valley of the Gods の DEM を切り出した格子の記述（TerrainHeightField::LoadGrid に渡す。アセットの根からの道）。
         /// クッカーと Game が同じファイルを読む
         inline constexpr const char *kDemGridDescriptorPath = "Terrain/ValleyOfTheGods/height.json";
+
+        /// DEM の格子から焼く区画の一辺の升目の数（区画ごとに 1 つのメッシュに焼く）。区画は格子の最初の頂点から並べ、
+        /// 東端・南端の区画は残りの升目だけを持つ。Scripts/Terrain/WriteTerrainAssetSet.py もこの値を読む
+        inline constexpr uint32_t kDemTileCells = 500u;
+
+        /// DEM の区画 (tileX, tileZ) のクック済みメッシュの論理パスの接頭辞。後ろに "<tileX>_<tileZ>.generated" を付ける
+        inline constexpr const char *kDemCookedMeshLogicalPathPrefix = "Assets/Models/WastelandTerrain/WastelandDem_";
+
+        /// 格子の一辺の頂点の数から、その向きの DEM の区画の数を求める（升目の数を kDemTileCells で割って切り上げる）
+        inline constexpr uint32_t DemTileCount(uint32_t vertexCount)
+        {
+            return vertexCount < 2u ? 0u : (vertexCount - 2u) / kDemTileCells + 1u;
+        }
+
+        /// DEM の区画 tile の、その向きの最初の升目の番号と升目の数。区画が範囲の外なら升目の数が 0
+        inline constexpr void DemTileCellRange(uint32_t tile, uint32_t vertexCount, uint32_t &outFirstCell,
+                                               uint32_t &outCellCount)
+        {
+            outFirstCell = tile * kDemTileCells;
+            const uint32_t totalCells = vertexCount < 2u ? 0u : vertexCount - 1u;
+            outCellCount = tile < DemTileCount(vertexCount)
+                               ? (totalCells - outFirstCell < kDemTileCells ? totalCells - outFirstCell : kDemTileCells)
+                               : 0u;
+        }
 
         /// 荒野の地形の高さ場の値
         TerrainHeightFieldParams MakeParams();
