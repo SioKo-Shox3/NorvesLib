@@ -333,6 +333,11 @@ namespace NorvesLib::Core::Rendering
         m_RenderingCoordinator.SetStaticEnvironmentMaxRadiance(maxRadiance);
     }
 
+    void RenderWorld::SetSunShadowMaxDistance(float distance)
+    {
+        m_RenderingCoordinator.SetSunShadowMaxDistance(distance);
+    }
+
     void RenderWorld::SetDeterministicCapture(bool bEnabled)
     {
         m_RenderingCoordinator.SetDeterministicCapture(bEnabled);

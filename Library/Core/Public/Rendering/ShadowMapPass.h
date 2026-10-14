@@ -47,6 +47,7 @@ namespace NorvesLib::Core::Rendering
          *
          * CSMの4カスケードはカメラのnearからこの距離（カメラのfarの方が近ければfar）までを
          * 分割する。これより遠い面は影を受けず、最後のカスケードの奥の端で影を薄めて消す。
+         * シーンが RenderWorld::SetSunShadowMaxDistance で指定したフレームは、その値が優先する（VSM も同じ値）。
          */
         float MaxShadowDistance = 80.0f;
 
@@ -226,6 +227,8 @@ namespace NorvesLib::Core::Rendering
 
         // 最後に記録したCSMの分割の奥（m）。変わったときだけ分割を記録する。
         float m_LoggedCascadeSplitFar = -1.0f;
+        // 最後に記録した太陽の影の到達距離（m）。シーンが変えたときだけ記録する。
+        float m_LoggedMaxShadowDistance = -1.0f;
         // 最後に記録したカスケードごとのMegaGeometryの描画数と三角形数。変わったときだけ記録する。
         uint32_t m_LoggedCsmMegaDraws[4] = {~0u, ~0u, ~0u, ~0u};
         uint32_t m_LoggedCsmMegaTriangles[4] = {~0u, ~0u, ~0u, ~0u};

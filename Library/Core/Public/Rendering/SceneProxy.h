@@ -571,6 +571,9 @@ namespace NorvesLib::Core::Rendering
         // 静的HDR環境の鏡面（IBLの前計算の値と背景）の放射輝度の上限（倍率を掛ける前のHDRの値。0は上限なし）。
         // 最大の成分が上限を超えた色は、色相を保ったまま上限まで縮める（夜の環境光に残った太陽の除去に使う）
         float StaticEnvironmentMaxRadiance = 0.0f;
+        // 太陽の影を受ける最大のカメラからの距離（m）。CSM の分割の奥と VSM のクリップマップの印付けの範囲の両方に効く。
+        // 0 は ShadowMapPass の設定（ShadowMapPassSettings::MaxShadowDistance、既定 80 m）のまま
+        float SunShadowMaxDistance = 0.0f;
 
         // フォグ設定
         bool bFogEnabled = false;
@@ -595,6 +598,7 @@ namespace NorvesLib::Core::Rendering
             VolumetricFog = MakeDefaultVolumetricFogParameters();
             StaticEnvironmentIntensityScale = 1.0f;
             StaticEnvironmentMaxRadiance = 0.0f;
+            SunShadowMaxDistance = 0.0f;
         }
 
         void SetDDGIVolumeParameters(const DDGIVolumeParameters& parameters)

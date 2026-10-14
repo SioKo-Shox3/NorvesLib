@@ -376,6 +376,13 @@ namespace NorvesLib::Core::Rendering
         void SetStaticEnvironmentMaxRadiance(float maxRadiance);
         float GetStaticEnvironmentMaxRadiance() const { return m_StaticEnvironmentMaxRadiance; }
 
+        /**
+         * @brief 太陽の影を受ける最大のカメラからの距離（m）を設定する（GameThread）
+         * @param distance 0より大きい有限の値。0・範囲外はShadowMapPassの設定（既定80 m）へ戻す。次のFramePacketへ値コピーする
+         */
+        void SetSunShadowMaxDistance(float distance);
+        float GetSunShadowMaxDistance() const { return m_SunShadowMaxDistance; }
+
         /** @brief 決定的な撮影にする（GameThread）。FramePacket の経過時間を 1/60 秒に固定する */
         void SetDeterministicCapture(bool bEnabled) { m_bDeterministicCapture = bEnabled; }
 
@@ -603,6 +610,7 @@ namespace NorvesLib::Core::Rendering
         VolumetricFogParameters m_VolumetricFog;
         float m_StaticEnvironmentIntensityScale = 1.0f;
         float m_StaticEnvironmentMaxRadiance = 0.0f;
+        float m_SunShadowMaxDistance = 0.0f;
         bool m_bRTGIEnabled = true;
         uint64_t m_SceneRevision = 1u;
         uint64_t m_LightRevision = 1u;

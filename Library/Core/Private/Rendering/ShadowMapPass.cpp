@@ -1342,10 +1342,20 @@ namespace NorvesLib::Core::Rendering
         }
         ShadowMapFramePlan& plan = *m_FramePlan;
         context.ActiveShadowMapSettings = &m_Settings;
+        // シーンが FramePacket で影の到達距離を指定していればそれを、無ければパスの設定を使う（CSM と VSM で同じ値）
+        const float maxShadowDistance =
+            context.SnapshotScene != nullptr && context.SnapshotScene->SunShadowMaxDistance > 0.0f
+                ? context.SnapshotScene->SunShadowMaxDistance
+                : m_Settings.MaxShadowDistance;
+        if (maxShadowDistance != m_LoggedMaxShadowDistance)
+        {
+            m_LoggedMaxShadowDistance = maxShadowDistance;
+            NORVES_LOG_INFO("ShadowMapPass", "太陽の影の到達距離: sun_shadow_max_distance=%.1f m", maxShadowDistance);
+        }
         CascadedShadowMatrixSettings cascadedSettings =
             MakeDefaultCascadedShadowMatrixSettings();
         cascadedSettings.ShadowMapResolution = m_Settings.Resolution;
-        cascadedSettings.MaxShadowDistance = m_Settings.MaxShadowDistance;
+        cascadedSettings.MaxShadowDistance = maxShadowDistance;
         cascadedSettings.Directional = MakeDirectionalShadowMatrixSettings(m_Settings);
 
         const uint64_t instanceDataSize64 = context.InstanceDataBuffer
@@ -1442,7 +1452,7 @@ namespace NorvesLib::Core::Rendering
         if (m_ShadowMethod == ShadowMethod::Vsm)
         {
             VirtualShadowMapClipmapSettings clipmapSettings;
-            clipmapSettings.MaxShadowDistance = m_Settings.MaxShadowDistance;
+            clipmapSettings.MaxShadowDistance = maxShadowDistance;
             const CameraProxy* activeCamera = context.GetActiveCamera();
             const VirtualShadowMapClipmap clipmap =
                 activeCamera != nullptr

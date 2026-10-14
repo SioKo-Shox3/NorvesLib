@@ -70,6 +70,8 @@ namespace Game::GameModes
         constexpr float kFogFalloff = 0.012f;
         // カメラの遠方面[m]。2 km 四方の対角（約 2.8 km）の先まで描く
         constexpr float kFarPlane = 3200.0f;
+        // 太陽の影の到達距離[m]。盆地の中から周りのメサ（半径 330〜680 m の輪）の手前側と、その間の起伏・岩まで影を落とす
+        constexpr float kSunShadowMaxDistance = 500.0f;
         // 地形を置いてから SceneReady を出すまでの Tick の数（ページの読み込みが追いつく余裕）
         constexpr uint32_t kReadyTicksAfterTerrain = 90;
         // 地形の材質は 3 層の混ぜ合わせ。1 層目の砂は Poly Haven の sand_01（Assets/AssetSets/Rendering3DTestStartupMaterials.json が焼く）
@@ -122,6 +124,7 @@ namespace Game::GameModes
             ctx.EngineRef.GetRenderWorld().SetVolumetricFogParameters(fog);
             ctx.EngineRef.GetRenderWorld().SetStaticEnvironmentIntensityScale(1.0f);
             ctx.EngineRef.GetRenderWorld().SetStaticEnvironmentMaxRadiance(0.0f);
+            ctx.EngineRef.GetRenderWorld().SetSunShadowMaxDistance(kSunShadowMaxDistance);
         }
 
         /// 空・霧の設定を、ほかのモードへ持ち越さないよう既定へ戻す
@@ -131,6 +134,7 @@ namespace Game::GameModes
             ctx.EngineRef.GetRenderWorld().SetVolumetricFogParameters(MakeDefaultVolumetricFogParameters());
             ctx.EngineRef.GetRenderWorld().SetStaticEnvironmentIntensityScale(1.0f);
             ctx.EngineRef.GetRenderWorld().SetStaticEnvironmentMaxRadiance(0.0f);
+            ctx.EngineRef.GetRenderWorld().SetSunShadowMaxDistance(0.0f);
         }
 
         /// 区画 (tileX, tileZ) のクック済みメッシュの論理パス

@@ -200,6 +200,15 @@ namespace NorvesLib::Core::Rendering
         void SetStaticEnvironmentMaxRadiance(float maxRadiance);
 
         /**
+         * @brief シーンの太陽の影を受ける最大のカメラからの距離（m）を設定する（GameThread）
+         *
+         * CSM の分割の奥と、VSM のクリップマップの印付けの範囲（どの段まで使うか）の両方に効く。
+         * 次の FramePacket へ値コピーし、RenderThread の ShadowMapPass がそのフレームで読む。
+         * @param distance 0より大きい有限の値。0（既定）・範囲外は ShadowMapPass の設定（既定 80 m）のまま
+         */
+        void SetSunShadowMaxDistance(float distance);
+
+        /**
          * @brief 決定的な撮影（--capture-deterministic）にする（GameThread）
          *
          * 有効な間、FramePacket の経過時間を 1/60 秒に固定する。起動の初期化で一度だけ呼ぶ。

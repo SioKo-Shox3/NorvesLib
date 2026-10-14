@@ -4233,3 +4233,17 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `verify-SCN-TERRAIN-DETAIL-3.txt`: 起動画面（Rendering3DTest）の撮影 result=pass（default・near・low）。開いて見た目が変わっていないことを確かめた。
 - Notes: 段の距離・比・上限、揺らぎの波長・振幅、トライプラナーの鋭さ、メサの形の値の幅は内部の値で、撮影で決めた。cliff を前の視点（西北西のメサ）から変えたのは、そこが逆光で崖が暗く縞の有無を見られなかったため。cliff で、遠い砂の上に乾いた土の層が台形の斑として出る所がある（粗い LOD の三角形の傾斜で層が切り替わる。SCN-TERRAIN-BLEND の混ぜ方の性質）。地形の 3 層は VT でない（`vt_used_mb=0`）ので、VT の要求はメッシュの UV のまま。VT にするときは標本した UV で要求を書く必要がある。性能は SCN-WASTELAND-POLISH の最終の配置で判断するので測っていない。試験は足していない。
 - Next: TASKS.md の次の未完の項目。
+
+### SCN-SHADOW-DISTANCE 完了（2026-10-14、反復 8・run 20261014-140012）
+- Done: シーンごとに太陽の影の到達距離を設定できるようにした。
+  - API: `RenderWorld::SetSunShadowMaxDistance(float)`（GameThread）→ `RenderingCoordinator` が値を持ち、`FramePacket` の `SceneProxy::SunShadowMaxDistance` へ毎フレーム値コピー（構成の revision の hash にも入れた）。0（既定）・非有限・負は「パスの設定のまま」。
+  - RenderThread: `ShadowMapPass::PlanShadowFrame` がスナップショットの値（0 なら `ShadowMapPassSettings::MaxShadowDistance` = 80 m）を CSM の `CascadedShadowMatrixSettings::MaxShadowDistance` と VSM の `VirtualShadowMapClipmapSettings::MaxShadowDistance` の両方へ入れる。VSM は印付け・段のしきい値・奥の薄めがクリップマップの設定から読むので、使う段がこの距離で決まる。値が変わったときだけ `sun_shadow_max_distance=` を記録する。
+  - `wasteland`: 環境の設定で 500 m にし、離れるときに 0 へ戻す。他のシーンは呼ばないので 80 m のまま。
+- 検証（`.harness/runs/20261014-140012/`）:
+  - `verify-SCN-SHADOW-DISTANCE-1.txt`: Debug の Game のビルド EXIT=0（警告は触っていない `VisibilityRasterPass.cpp` の既存の C4244 だけ）。
+  - `verify-SCN-SHADOW-DISTANCE-2.txt`: `wasteland` の撮影 result=pass（default・ground・ridge・cliff、白飛び 0）。ログは `sun_shadow_max_distance=500.0 m`・`csm_splits=0.100,62.958,128.561,217.243,500.000 m`。
+  - `aux-SCN-SHADOW-DISTANCE-base80.txt`・`aux-SCN-SHADOW-DISTANCE-diff.txt`: 同じビルドで wasteland だけ 0（80 m）にした撮影（`scene-capture/SCN-SHADOW-DISTANCE-base80`、撮影後に戻して再ビルド）と比べた。変わった画素は全視点でほぼすべて暗くなった側（影が増えた）: overview 0.52%・ground 0.39%・ridge 6.4%・cliff 8.6%。80 m では overview と ridge の VSM のページが 0（カメラから 80 m 以内に受け手が無く、太陽の影が一切無かった）で、500 m では段 9 の 610〜625 ページ（あふれ 0）。
+  - PNG を開いて確かめた: overview の左のメサの崖の下の砂に影が落ち、右の段々の地形の下の段にも段の影が落ちる（拡大して 80 m の撮影と並べた）。ridge は手前の斜面に稜線の峰の影が落ちる。ground の差は 80 m より先のメサの崖の溝の影だけで、近くの地面の画素は変わらない（近くの段は 80 m と同じ段 4〜9 = `levels_used=0x3f0`）。
+  - `verify-SCN-SHADOW-DISTANCE-3.txt`: 起動画面（Rendering3DTest）の撮影 result=pass（default・near・low）、`sun_shadow_max_distance=80.0 m`・分割の奥 80 m のまま。前の項目の撮影との差（default 0.46%・near 9.0%・low 1.8%）は、前の 2 回の撮影同士の差（0.47%・14.4%・1.7%）と同じ程度の実行ごとのばらつきで、開いて見た目が変わっていないことを確かめた。
+- Notes: 500 m の値は撮影 1 回で決めた内部の値。overview は受け手がすべて遠いので段 9（texel 0.125 m）だけを使う。性能はこの項目では測っていない（SCN-WASTELAND-POLISH で影の内訳から到達距離・解像度を調整する）。太陽が視点の側（方位 -60°）から差すので、メサの大きな影は多くがメサの裏に落ち、overview から見える量は少ない。距離の API の試験は足していない。
+- Next: TASKS.md の次の未完の項目。

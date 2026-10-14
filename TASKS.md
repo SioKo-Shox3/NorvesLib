@@ -1339,7 +1339,7 @@
 - notes: 2026-10-12 親: 計測の見直し（ユーザーの指摘「節目に計測を入れても意味があるのかを考えるべき」。計測ごとに、問い・結果で変わる判断・測らずに分からないかの 3 点を書き、書けないものは置かない。Sol の批評を反映）。
 
 ## SCN-SHADOW-DISTANCE: シーンごとに太陽の影の到達距離を設定できるようにする
-- status: todo
+- status: done
 - done-when: GameThread 側（RenderWorld。RenderThread へは FramePacket 越し）に、シーンごとの太陽の影の到達距離を設定する API を足し、VSM（クリップマップの使う段）と CSM（`MaxShadowDistance`）の両方に効く。既定は今の 80 m で、Rendering3DTest の撮影は変わらない。`wasteland` で 500 m 程度にし、`overview` の撮影を開いて、80 m より先の地形の起伏・メサ・岩にも影が落ちている、近くの影の細かさが目に見えて落ちていないことを確かめる。性能はこの項目では測らず、最終の荒野（SCN-WASTELAND-POLISH）で目標を超えたときに、影の内訳から到達距離・解像度を調整する。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -OutDir .harness/runs/scene-capture/SCN-SHADOW-DISTANCE`
