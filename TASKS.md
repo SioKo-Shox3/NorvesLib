@@ -1431,7 +1431,7 @@
 - notes: 2026-10-14 親: 反復 13 の評価の差し戻し（空÷地形の比が手本 3.77・撮影 1.28〜1.56）を受けて done-when を分けた。地面が明るいのは材質（ベージュの砂・低木なし）のためで、光の項目では空・雲・影・霞だけを合わせる。
 
 ## SCN-WL-CAPTURE-FAST: 1 回の起動で複数の視点を撮れるようにし、荒野の全視点の撮影を 10 分以内にする
-- status: done
+- status: doing
 - done-when: 今の `Scripts/CaptureScene.ps1` は視点ごとに Game を起動し直し、荒野では毎回 100 区画（約 3.7 GB）を Debug で読み直すので 1 視点に約 2 分かかり、全視点（11）で 20 分を超えてランナーの検証の上限（1 コマンド 10 分）を越える。Game に、1 回の起動で複数の名前付き視点を順に撮る引数を足す（シーンの組み立てと SceneReady を待ってから、視点ごとにカメラを置き、ストリーミングと時間方向の蓄積（TAA・自動露出・RTGI）が落ち着くのを待って撮る。決定的な撮影の約束（同じ引数で同じ画素）を保つ）。`CaptureScene.ps1` は、-Views を省いたときと複数の視点を与えたときにこれを使う（今の出力の形（<視点>.png・metrics.json・SceneReport）は変えない）。荒野の全視点の 1920×1080 の撮影が Debug で 10 分以内に終わること、同じ視点を今の撮り方（1 視点ずつ起動）と新しい撮り方で撮って見た目が変わらないことを確かめる。起動画面（Rendering3DTest）の決定的な撮影の比較が通る。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-WL-CAPTURE-FAST`
