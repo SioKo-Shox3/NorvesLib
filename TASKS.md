@@ -1306,11 +1306,11 @@
 - notes: 2026-10-10 親の調べ: `adobe_ruin` の 3D 化が 2 反復とも 2000 秒を超えて終わらなかった（`build/ComfyUI.log` で形の段の出力が 4440 万面、続く質感の段で止まる。見張り塔は 222 秒）。生成スクリプトに、定義ごとの `upsample_resolution`（既定 1536。`Trellis2UpsampleStage` の `target_resolution`）と、1体あたりの上限時間（既定 15 分。超えたら ComfyUI の `/interrupt` で止め、`upsample_resolution` を 1024 にして 1 回だけやり直す。やり直しも超えたら失敗として次の id へ進む）を足す。1 反復の壁時計（40 分）を超えないよう、ComfyUI の起動を含めて 1 反復の生成は合計 30 分以内に収め、収まらない分は manifest のあるものを飛ばして次の反復で続ける。 2026-10-10 再開（親が推奨を採った）: 3 種の資産は生成・確認・クックが済んでいる（評価者も確認）。残りは評価者の指摘どおり、生成スクリプトの締切を絶対時刻 1 つにして、参照画像・3D・GLB の取得・復旧（`/queue`）・後処理・終了処理のすべてに効かせ、終了処理の時間を先に取っておき、収まらない生成は次へ繰り越すことだけ。資産は作り直さない。
  2026-10-14 親: 締切の一本化（3bffaf84）を受け入れて閉じた。評価者の残りの指摘（後処理や HTTP のエラー本文の読み取りが長引くと締切を数秒越える）は直さない。合計 30 分の予算は 40 分の壁時計に止められないためのもので、10 分の余裕があり、数秒〜数十秒のはみ出しで変わる判断が無い。後処理を別プロセスへ移すような作り替えはしない。
 ## SCN-GEN-BUILDINGS-2: 荒野の建物を3種生成する（風車・給水塔・木造の小屋）
-- status: todo
+- status: done
 - done-when: SCN-GEN-BUILDINGS-1 と同じ形で、風車（`windmill`）・給水塔（`water_tower`）・木造の小屋（`wooden_shack`）を生成・確認・クックする。
 - verify: `python Scripts/GenerateSceneModels.py --verify --require-cooked --ids windmill,water_tower,wooden_shack`
 - paths: Assets/AssetSets, Scripts, Tools/ComfyWorkflows, TASKS.md, PROGRESS.md
-- notes: SCN-GEN-BUILDINGS-1 の notes の上限時間とやり直しを使う。
+- notes: SCN-GEN-BUILDINGS-1 の notes の上限時間とやり直しを使う。 2026-10-14: `wooden_shack` は木造の小屋（板壁・丸太）の参照画像では 3D の段が 1024 でも 600 秒で終わらないため、id はそのままで石積みの小さな物置（seed 2051・高さ 2.8 m）に替えた。
 
 ## SCN-TERRAIN-GEN: 起伏のある地形の高さ場を作り、MegaGeometry に焼いて描く
 - status: todo

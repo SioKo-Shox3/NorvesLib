@@ -4179,3 +4179,12 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `verify-SCN-GEN-BUILDINGS-1-1.txt`: タスクの verify。3 種とも `VERIFY_OK ... cooked`、`VERIFY pass`、EXIT=0。
   - `verify-SCN-GEN-BUILDINGS-1-2.txt`: 仮想時計と偽の ComfyUI（`simulate_deadline.py`、同じフォルダ。書き込みは一時フォルダだけ）で 9 通りを流し、全部 1800 秒以内・締切後に始まる呼び出し 0。評価者の再現（参照 899 秒・3D 899 秒・取得 299 秒・解放 29 秒）は外部 1760 秒・自前 1743 秒で見送り、EXIT=0（前は 2126 秒）。3D が終わらない（自前・停止→再起動→1024 でやり直し）1743 秒、取得が締切に掛かる 1760 秒、3 体のうち収まらない分の見送り 1743 秒、通常の 3 体成功 1222 秒、取得が 1 回の上限を超える場合は失敗にして次の id へ（766 秒）。
 - Notes: 後処理の 60 秒・終了処理の内訳は内部の値（後処理はこれまでの実測で数秒）。後処理と taskkill はローカルの処理なので途中では切らない（taskkill は残りが尽きていても最短 1 秒で試す。GPU を占有し続けないため）。生成の時間の管理の試験は足していない（仮想時計の再現は帳簿側に置いた）。
+
+### SCN-GEN-BUILDINGS-2 完了（2026-10-14、反復 2・run 20261014-140012）
+
+- 風車（`windmill`。59.9 万面・高さ 10 m）と給水塔（`water_tower`。59.9 万面・高さ 8 m）は前の反復の生成をそのまま使った。プレビューを開いた: 風車は先細りの格子の塔・筋交い・羽根車・尾翼・四角い基礎がそろい、給水塔は樽形の槽・円錐の屋根・手すり・4 本脚・筋交い・ハシゴがそろう。どちらも底は平らで浮いた破片は無い。
+- 木造の小屋（`wooden_shack`）: 前の反復の板壁と波板の屋根の小屋は 3D の段が 1536・1024 とも約 460 秒の締切に届かず、今回の丸太小屋（seed 2041）も 1024・600 秒で終わらなかった（`verify-SCN-GEN-BUILDINGS-2-gen6.txt`。ComfyUI のログでは形の段の後の ShapeVae の段で止まる）。`upsample_resolution` は 1024 が下限（768 は ComfyUI が拒否する）なので、id は `wooden_shack` のまま、日干し煉瓦の家で通った形（厚く滑らかな壁・平屋根・ブロック状）に寄せた石積みの小さな物置（seed 2051・高さ 2.8 m）に替えた。3D 化 243 秒・59.7 万面・テクスチャ 4096（`-gen7.txt`）。参照画像とプレビューを開いた: 木の扉の開口・厚い石の壁・梁の張り出した平屋根・平らな基壇がそろい、壁の抜けや浮いた破片は無い。
+- クック: `Scripts/CookAssets.ps1 -AssetCookExe build/Tools/AssetCook/Debug/AssetCook.exe` が `cooked=157 skipped=2`・EXIT=0（`-cook2.txt`）。`-OnlyLogicalPath` で絞ると、まだ既存のマニフェストに無い項目で止まる（`-cook1.txt`）ので、新しい項目を足したときは全体をクックする。
+- 検証: `python Scripts/GenerateSceneModels.py --verify --require-cooked --ids windmill,water_tower,wooden_shack` が 3 種とも `VERIFY_OK ... cooked`・`VERIFY pass`・EXIT=0（`verify-SCN-GEN-BUILDINGS-2-1.txt`）。
+- Notes: 生成の合計は今回 2 回で約 16 分（750 秒の予算 2 本）。小さな木造の建物は、細い板や丸太の多い形だと 3D の段が止まりやすい。夜の集落の木造の小物（SCN-GEN-VILLAGE-*）でも同じことが起きたら、厚く単純な形へ寄せるのが先。
+- Next: TASKS.md の次の未完の項目。
