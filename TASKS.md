@@ -1349,7 +1349,7 @@
 
 ## SCN-WASTELAND-LAYOUT: 荒野の前哨地に岩・崖・建物を置き、夕方の光を決める
 - status: todo
-- done-when: `wasteland` に Poly Haven の岩・崖（大きさと向きをばらし、地形に少し埋めて、数十〜百数十個。遠くのメサの足元にも）と生成した建物 6 種（盆地の中央に小さな前哨地として道に沿って向きを揃え、地面に埋めて浮かせない）を高さ場の関数で置く。太陽は夕方寄り（仰角 15〜25° 程度）で長い影、露出とグレーディングを夕景に合わせる（Rendering3DTest のグレーディングは変えない）。名前付き視点 `outpost`（前哨地の建物の間）を足す。`overview`・`ground`・`outpost`・`ridge` の撮影を開いて、ゲームの風景に見える（建物が浮いていない・岩が地形に馴染む・白飛びや黒つぶれが広がっていない）ことを確かめる。`wasteland` の cycle smoke 3周が pass。
+- done-when: `wasteland` に Poly Haven の岩・崖（大きさと向きをばらし、地形に少し埋めて、数十〜百数十個。遠くのメサの足元にも）と生成した建物 6 種（盆地の中央に小さな前哨地として道に沿って向きを揃え、地面に埋めて浮かせない）を高さ場の関数で置く。太陽は夕方寄り（仰角 15〜25° 程度）で長い影、露出とグレーディングを夕景に合わせる（Rendering3DTest のグレーディングは変えない）。名前付き視点 `outpost`（前哨地の建物の間）を足す。`overview`・`ground`・`outpost`・`ridge` の撮影を開いて、ゲームの風景に見える（建物が浮いていない・岩が地形に馴染む・白飛びや黒つぶれが広がっていない・影の中が真っ黒でなく空の光で持ち上がる。SCN-TERRAIN-BLEND の `overview` では手前の砂丘の影が黒い筋に見える）ことを確かめる。`wasteland` の cycle smoke 3周が pass。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -OutDir .harness/runs/scene-capture/SCN-WASTELAND-LAYOUT`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Scenes wasteland -Cycles 3`
