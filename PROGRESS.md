@@ -4168,3 +4168,14 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 直す先: `SCN-MEGA-FIX-RT-SELECT`・`TLAS-REBUILD`・`SCENE-TABLES-STEADY`・`MIXED-DEFICIT`・`VISIBLE-LIST`・`STREAM-TABLES-DELTA`・`STRESS-GPU` を TASKS.md に足した。100万本は過程で、目的はランチャーと各シーンの整備というユーザーの指示から、これらはシーンの項目（SCN-ACCEPT）の後に置き、SCN-MEGA-ACCEPT-1M はその後で測り直す。撮影で見つけた空の階調の段は `SCN-FIX-SKY-BANDING` として SCN-ACCEPT の前に置いた。
 - Next: SCN-GEN-BUILDINGS-1（シーンの項目へ戻る）。
 
+
+### SCN-GEN-BUILDINGS-1 締切の一本化（2026-10-14、反復 1・run 20261014-135046）
+- Done: `Scripts/GenerateSceneModels.py` の時間の管理を、開始時に決める絶対時刻の締切 1 つ（`RunClock`）にした。`final_deadline` = 開始 + `--run-budget`、`work_deadline` = そこから終了処理の分（/interrupt 10 秒・解放 20 秒・停止 30 秒の計 60 秒）を先に引いた時刻。
+  - ComfyUI の API 呼び出しは全部 `_request` を通し、1 回の上限と締切の早いほうで打ち切る。urllib のタイムアウトはソケット操作ごとなので、呼び出し全体を別スレッドで走らせて締切で切る（`call_within`）。締切を過ぎていれば呼ばない（評価者の再現の「待機 0 秒で /queue を呼ぶ」は起きない）。
+  - 起動・参照画像・3D の投入と待ち・GLB の取得・復旧（/queue の待ちと再起動）は `work_deadline` まで。3D と取得は後処理（実寸合わせ・manifest）の 60 秒を残して打ち切る。/interrupt・解放・停止は先に取っておいた分で `final_deadline` までに終える。自分で起動した ComfyUI は止めれば VRAM も空くので解放を呼ばない（外部の ComfyUI だけ解放する）。
+  - 実行の締切で切れた生成は失敗でなく見送り（`deferred`、終了コード 0）にして次の実行へ回す。1 体の上限（900 秒）で切れたときは前と同じく 1024 で 1 回やり直し、それも超えたら失敗。通信の失敗（1 回の上限での打ち切り）もその id の失敗にして次の id へ進む（前は実行全体が落ちた）。
+  - 資産（3 種の GLB・参照画像・クック）は作り直していない。
+- 検証（`.harness/runs/20261014-135046/`）:
+  - `verify-SCN-GEN-BUILDINGS-1-1.txt`: タスクの verify。3 種とも `VERIFY_OK ... cooked`、`VERIFY pass`、EXIT=0。
+  - `verify-SCN-GEN-BUILDINGS-1-2.txt`: 仮想時計と偽の ComfyUI（`simulate_deadline.py`、同じフォルダ。書き込みは一時フォルダだけ）で 9 通りを流し、全部 1800 秒以内・締切後に始まる呼び出し 0。評価者の再現（参照 899 秒・3D 899 秒・取得 299 秒・解放 29 秒）は外部 1760 秒・自前 1743 秒で見送り、EXIT=0（前は 2126 秒）。3D が終わらない（自前・停止→再起動→1024 でやり直し）1743 秒、取得が締切に掛かる 1760 秒、3 体のうち収まらない分の見送り 1743 秒、通常の 3 体成功 1222 秒、取得が 1 回の上限を超える場合は失敗にして次の id へ（766 秒）。
+- Notes: 後処理の 60 秒・終了処理の内訳は内部の値（後処理はこれまでの実測で数秒）。後処理と taskkill はローカルの処理なので途中では切らない（taskkill は残りが尽きていても最短 1 秒で試す。GPU を占有し続けないため）。生成の時間の管理の試験は足していない（仮想時計の再現は帳簿側に置いた）。
