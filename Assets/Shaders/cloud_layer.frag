@@ -17,9 +17,10 @@ layout(std140, set = 0, binding = 2) uniform CloudLayerParams
     vec4 sunIlluminance;                 // rgb=太陽の地表の照度(lux)
     vec4 layerAltitudesAndCoverage;      // x=惑星の半径, y=雲の底, z=雲の頂(m), w=空を覆う割合
     vec4 extinctionAndInverseScales;     // x=消散係数(1/m), y=基本の形, z=細部, w=天気の模様の 1/周期(1/m)
-    vec4 shapeAndWeatherOffset;          // xy=基本の形の風のずれ, zw=天気の模様の風のずれ(m)
+    vec4 shapeAndWeatherOffset;          // xy=基本の形の風のずれ(m), zw=天気の模様(大きい方)のテクスチャ座標のずれ(0〜1)
     vec4 detailOffset;                   // xyz=細部の風のずれ(m)
     vec4 groundAlbedo;
+    vec4 weatherHighOffset;              // xy=天気の模様(細かい方)のテクスチャ座標のずれ(0〜1)
 } params;
 
 // 基本の形: R=Perlin-Worley, G・B・A=反転 Worley の fbm（低い周波数から）。細部: R・G・B=反転 Worley の fbm
@@ -100,11 +101,17 @@ vec2 IntersectSphere(float originY, vec3 direction, float radius)
 float SampleCloudDensity(vec3 position, float heightFraction, bool bDetail)
 {
     // 天気の模様: どこに雲があるか。基本の形のノイズを、別の大きさ・向きで水平に 2 つ引いて重ねる
+    // 風のずれは回転・倍率の後のテクスチャ座標で CPU が折り返して渡す（CloudLayerPass.inl と同じ回転・倍率・位相）
     const mat2 weatherRotation = mat2(0.7986, 0.6018, -0.6018, 0.7986);
-    vec2 weatherUV = weatherRotation * (position.xz + params.shapeAndWeatherOffset.zw) *
-                     params.extinctionAndInverseScales.w;
-    vec4 weatherLow = textureLod(shapeNoise, vec3(weatherUV.x, 0.37, weatherUV.y), 0.0);
-    vec4 weatherHigh = textureLod(shapeNoise, vec3(weatherUV.y * 2.7 + 0.31, 0.71, weatherUV.x * 2.7 + 0.53), 0.0);
+    vec2 weatherUV = weatherRotation * position.xz * params.extinctionAndInverseScales.w;
+    vec4 weatherLow = textureLod(shapeNoise,
+                                 vec3(weatherUV.x + params.shapeAndWeatherOffset.z, 0.37,
+                                      weatherUV.y + params.shapeAndWeatherOffset.w),
+                                 0.0);
+    vec4 weatherHigh = textureLod(shapeNoise,
+                                  vec3(weatherUV.y * 2.7 + params.weatherHighOffset.x, 0.71,
+                                       weatherUV.x * 2.7 + params.weatherHighOffset.y),
+                                  0.0);
     float weather = clamp(weatherLow.r * 0.55 + weatherLow.g * 0.2 + weatherHigh.r * 0.25, 0.0, 1.0);
     float coverage = params.layerAltitudesAndCoverage.w;
     float coverageMask = smoothstep(1.0 - coverage - 0.08, 1.0 - coverage + 0.22, weather);

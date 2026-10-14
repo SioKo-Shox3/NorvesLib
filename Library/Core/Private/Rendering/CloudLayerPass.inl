@@ -34,14 +34,16 @@ namespace NorvesLib::Core::Rendering
             float LayerAltitudesAndCoverage[4];
             // x=密度 1 の消散係数（1/m）、y=基本の形の 1/周期、z=細部の 1/周期、w=天気の模様の 1/周期（1/m）
             float ExtinctionAndInverseScales[4];
-            // xy=基本の形の風のずれ（X・Z、m）、zw=天気の模様の風のずれ（m）
+            // xy=基本の形の風のずれ（X・Z、m）、zw=天気の模様（大きい方）のテクスチャ座標のずれ（0〜1）
             float ShapeAndWeatherOffset[4];
             // xyz=細部の風のずれ（m）、w=未使用
             float DetailOffset[4];
             // rgb=地面のアルベド、w=未使用
             float GroundAlbedo[4];
+            // xy=天気の模様（細かい方）のテクスチャ座標のずれ（0〜1）、zw=未使用
+            float WeatherHighOffset[4];
         };
-        static_assert(sizeof(GPUCloudLayerParams) == 192u);
+        static_assert(sizeof(GPUCloudLayerParams) == 208u);
 
         // 基本の形と細部の 3D ノイズの一辺の texel の数
         constexpr uint32_t ShapeNoiseSize = 64u;
@@ -51,6 +53,12 @@ namespace NorvesLib::Core::Rendering
         constexpr float WeatherScaleRatio = 3.7f;
         // 細部は風より少し速く流し、形が崩れながら進むように見せる
         constexpr float DetailWindRatio = 1.6f;
+        // 天気の模様の向きの回転（cos, sin）と、細かい方の模様の倍率・位相。cloud_layer.frag と同じ値にする
+        constexpr double WeatherRotationCos = 0.7986;
+        constexpr double WeatherRotationSin = 0.6018;
+        constexpr double WeatherHighScale = 2.7;
+        constexpr double WeatherHighPhaseU = 0.31;
+        constexpr double WeatherHighPhaseW = 0.53;
 
         RHI::DescriptorSetDesc CreateCloudLayerDescriptorSetDesc()
         {
@@ -350,6 +358,13 @@ namespace NorvesLib::Core::Rendering
             const double offset = std::fmod(velocity * timeSeconds, period);
             return static_cast<float>(std::isfinite(offset) ? offset : 0.0);
         }
+
+        // テクスチャ座標のずれを 0〜1 に折り返す（ノイズは 1 で繰り返すので見た目は同じ）
+        float WrapUnit(double value)
+        {
+            const double wrapped = value - std::floor(value);
+            return static_cast<float>(std::isfinite(wrapped) ? wrapped : 0.0);
+        }
     } // namespace CloudLayerPassDetail
 
     CloudLayerPass::~CloudLayerPass()
@@ -631,8 +646,16 @@ namespace NorvesLib::Core::Rendering
         const double windZ = m_CloudLayer.WindVelocityZ;
         params.ShapeAndWeatherOffset[0] = WrapWindOffset(windX, timeSeconds, shapeScale);
         params.ShapeAndWeatherOffset[1] = WrapWindOffset(windZ, timeSeconds, shapeScale);
-        params.ShapeAndWeatherOffset[2] = WrapWindOffset(windX, timeSeconds, weatherScale);
-        params.ShapeAndWeatherOffset[3] = WrapWindOffset(windZ, timeSeconds, weatherScale);
+        // 天気の模様は回転と倍率を掛けた後のテクスチャ座標で折り返す。世界の軸の距離で折り返すと、
+        // 回転・倍率の後では 1 の整数倍にならず、折り返した瞬間に雲の分布が飛ぶ
+        const double weatherOffsetX = std::isfinite(windX * timeSeconds) ? windX * timeSeconds : 0.0;
+        const double weatherOffsetZ = std::isfinite(windZ * timeSeconds) ? windZ * timeSeconds : 0.0;
+        const double weatherU = (WeatherRotationCos * weatherOffsetX - WeatherRotationSin * weatherOffsetZ) / weatherScale;
+        const double weatherV = (WeatherRotationSin * weatherOffsetX + WeatherRotationCos * weatherOffsetZ) / weatherScale;
+        params.ShapeAndWeatherOffset[2] = WrapUnit(weatherU);
+        params.ShapeAndWeatherOffset[3] = WrapUnit(weatherV);
+        params.WeatherHighOffset[0] = WrapUnit(weatherV * WeatherHighScale + WeatherHighPhaseU);
+        params.WeatherHighOffset[1] = WrapUnit(weatherU * WeatherHighScale + WeatherHighPhaseW);
         params.DetailOffset[0] = WrapWindOffset(windX * DetailWindRatio, timeSeconds, detailScale);
         // 細部は上へもゆっくり動かし、湧き上がるように形を変える
         params.DetailOffset[1] = WrapWindOffset(-1.5, timeSeconds, detailScale);

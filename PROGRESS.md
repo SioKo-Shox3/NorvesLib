@@ -4290,3 +4290,13 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `verify-SCN-CLOUDS-3.txt`: 起動画面（Rendering3DTest）の撮影 result=pass（default・near・low）。default を開いて雲が無く見た目が変わっていないことを確かめた。
 - Notes: Coverage 0.41 は撮影 2 回で決めた内部の値（0.35 では雲が少なすぎた）。性能は測っていない（判定は SCN-CLOUDS-TEMPORAL）。雲の試験は足していない。
 - Next: TASKS.md の次の未完の項目。
+
+### SCN-CLOUDS 差し戻しの修正（2026-10-14、反復 3・run 20261014-222123）
+- 実装: 天気の模様の風のずれを、世界の軸の距離ではなく回転・倍率を掛けた後のテクスチャ座標で折り返すようにした（`CloudLayerPass.inl` が double で計算して 0〜1 に折り返し、大きい方は `ShapeAndWeatherOffset.zw`、細かい方（倍率 2.7・位相付き）は新しい `WeatherHighOffset.xy` で渡す）。前は約 69 分 22.5 秒ごとの折り返しで雲の分布が飛んでいた。
+- 検証（`.harness/runs/20261014-222123/`）:
+  - 折り返し前後（4162.49・4162.51 秒、10⁶ 秒）で、位置 (3000, -6000) の天気の模様の 4 つのテクスチャ座標を折り返しなしの理想値と比べ、差は 1e-14 以下（Python の数値確認）。
+  - `verify-SCN-CLOUDS-4.txt`: Debug の Game のビルド EXIT=0。
+  - `verify-SCN-CLOUDS-5.txt`: `wasteland` の撮影 result=pass（白飛び 0・黒つぶれ 0）。overview（`default.png`）と ridge を開いた: 前回と同じく積雲が散らばり地平線へ帯状に続き、タイルの繰り返しに見えない。
+  - `verify-SCN-CLOUDS-6.txt`: 起動画面の撮影 result=pass。default を開いて雲が無く見た目が変わっていないことを確かめた。
+- Notes: 基本の形・細部の風のずれは回転・倍率を掛けずにそのまま周期 1 のテクスチャ座標になるので、従来の折り返しのままで連続。
+- Next: TASKS.md の次の未完の項目。
