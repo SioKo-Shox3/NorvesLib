@@ -1249,7 +1249,8 @@ namespace NorvesLib::Core::Rendering
         GeometryPool::RegionLease lease = m_Pool->AllocateInBlock(streamed.BlockIndex, layout.RegionBytes, RegionAlignmentBytes);
         if (!lease.IsValid())
         {
-            return GeometryPageUploadStart::Blocked;
+            // ページはメッシュと同じ塊にしか置けない。塊が埋まっているので、同じ塊の常駐ページを外すまで空かない
+            return GeometryPageUploadStart::NoSpace;
         }
 
         // 区画の中身（頂点、整列して続くインデックス）

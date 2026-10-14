@@ -74,6 +74,8 @@ namespace NorvesLib::Core::Rendering
         Queued,
         /** @brief 区画・リングの空きが無い（フレームが進めば空くので、後で出し直す） */
         Blocked,
+        /** @brief メッシュの塊に区画の空きが無い（同じ塊の常駐ページを外せば空く。フレームが進むだけでは空かない） */
+        NoSpace,
         /** @brief ページが不正（未登録・範囲外・すでに常駐・大きさの食い違い）。出し直しても同じ */
         Rejected
     };
@@ -810,6 +812,7 @@ namespace NorvesLib::Core::Rendering
         {
             const Container::VariableArray<Candidate> candidates = CollectCandidatesLocked(GeometryPageState::Ready, false);
             uint64_t copyBytes = 0;
+            bool bNoSpaceCounted = false;
             for (const Candidate &candidate : candidates)
             {
                 if (result.UploadsStarted >= m_Config.MaxUploadsPerFrame)
@@ -871,9 +874,36 @@ namespace NorvesLib::Core::Rendering
                         continue;
                     }
                 }
+                GeometryPageUploadStart start = m_Backend.BeginUpload(candidate.Key.MeshId, candidate.Key.PageId, it->second.Data);
+                // メッシュの塊が埋まっているときは、このページより前にしか要求されていない常駐ページを LRU で外して出し直す。
+                // 視点が変わって使われなくなったページが塊を埋めたまま、新しい視点のページを書けなくなるのを防ぐ
+                while (start == GeometryPageUploadStart::NoSpace &&
+                       EvictOneLocked(&it->second.Desc.Parents, candidate.Key.MeshId, it->second.LastRequestedFrame, result))
+                {
+                    it = m_Records.find(candidate.Key);
+                    if (it == m_Records.end() || it->second.State != GeometryPageState::Ready)
+                    {
+                        break;
+                    }
+                    start = m_Backend.BeginUpload(candidate.Key.MeshId, candidate.Key.PageId, it->second.Data);
+                }
+                if (it == m_Records.end() || it->second.State != GeometryPageState::Ready)
+                {
+                    continue;
+                }
+                if (start == GeometryPageUploadStart::NoSpace)
+                {
+                    // 外せるページが無い（塊が今使われているページで埋まっている）。ほかの塊のメッシュのページは書けるので続ける
+                    if (!bNoSpaceCounted)
+                    {
+                        bNoSpaceCounted = true;
+                        ++m_Stats.UploadBlockedFrames;
+                    }
+                    continue;
+                }
                 Record &target = it->second;
 
-                switch (m_Backend.BeginUpload(candidate.Key.MeshId, candidate.Key.PageId, target.Data))
+                switch (start)
                 {
                 case GeometryPageUploadStart::Queued:
                     target.Data = Container::VariableArray<uint8_t>();
@@ -892,6 +922,8 @@ namespace NorvesLib::Core::Rendering
                     target.State = GeometryPageState::Failed;
                     target.bPermanentlyFailed = true;
                     ++m_Stats.PermanentFailures;
+                    break;
+                case GeometryPageUploadStart::NoSpace:
                     break;
                 }
             }

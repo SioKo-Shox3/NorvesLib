@@ -130,8 +130,10 @@ namespace NorvesLib::Core::Rendering
         // ジオメトリが共有する DeviceLocal のバッファのプール。区画の期限の来た返却は RetireQueue を通ってここへ戻るので、
         // SparsePool と同じく Shutdown では RetireQueue を片付けてから手放す。
         Container::TUniquePtr<GeometryPool> GeometryBuffers;
-        // プールの1つの塊の大きさ（Initialize の前に SetGeometryPoolBlockBytes で替えられる）
-        uint64_t GeometryPoolBlockBytes = GeometryPool::DefaultBlockBytes;
+        // プールの1つの塊の大きさ（Initialize の前に SetGeometryPoolBlockBytes で替えられる）。ページに分けたメッシュは
+        // ページを自分と同じ塊にしか置けないので、メッシュの常駐部分で塊が埋まると見えている所のページも読めなくなる。
+        // 256 MB では荒野の 100 区画の常駐部分だけで塊がほぼ埋まったため、1 視点の作業集合が収まる 1 GB にする
+        uint64_t GeometryPoolBlockBytes = 1024ull * 1024ull * 1024ull;
         // タイル・ミップテイルのデータと、ジオメトリの区画の中身を、ステージングのリング経由でテクスチャの領域・バッファへ書く経路。
         // リングのバッファは最初の書き込みまで作らない。GPU が止まってから手放す（Shutdown の WaitIdle の後）。
         Container::TUniquePtr<TileUploader> TileUpload;
@@ -1667,22 +1669,6 @@ namespace NorvesLib::Core::Rendering
         // 要求の LastRequestedFrame と同じ時計（要求のリングのフレーム）で進める。要求の新旧が取り込んだ Update に依らず保たれる
         impl.GeometryPageFrame = std::max(impl.GeometryPageFrame, impl.GeometryPageFeedback->GetFrameCounter());
         impl.GeometryPageStreaming->Update(impl.GeometryPageFrame, bHasRequests ? &requests : nullptr);
-        {
-            static uint64_t s_TmpCounter = 0;
-            if ((++s_TmpCounter % 30) == 0)
-            {
-                const GeometryPageStreamerStats tmp = impl.GeometryPageStreaming->GetStats();
-                LOG_INFO("TMP_GEOPAGES n=%llu frame=%llu has_req=%d req_count=%u resident=%u uploading=%u ready=%u reading=%u wanted=%u failed=%u pending=%d evicted=%llu budget_blocked=%llu parent_wait=%llu",
-                         static_cast<unsigned long long>(s_TmpCounter), static_cast<unsigned long long>(impl.GeometryPageFrame), bHasRequests ? 1 : 0,
-                         static_cast<unsigned>(requests.GetRequests().size()),
-                         static_cast<unsigned>(tmp.ResidentPages), static_cast<unsigned>(tmp.UploadingPages),
-                         static_cast<unsigned>(tmp.ReadyPages), static_cast<unsigned>(tmp.ReadingPages),
-                         static_cast<unsigned>(tmp.WantedPages), static_cast<unsigned>(tmp.FailedPages),
-                         impl.GeometryPageStreaming->HasPendingWork() ? 1 : 0,
-                         static_cast<unsigned long long>(tmp.EvictedPages), static_cast<unsigned long long>(tmp.BudgetBlockedFrames),
-                         static_cast<unsigned long long>(tmp.ParentWaitSkips));
-            }
-        }
 
         // 常駐するページの数が変わったときだけ、約1秒（60フレーム）に1回までログへ出す。
         // 読み込みが落ち着いたとき（待ちが無くなった）は、間隔を待たずに最終の数を出す

@@ -4446,3 +4446,16 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - Notes: 材質のアルベドは砂 0.10 なのに撮影の地面の Y は 0.57〜0.67 で、材質から画面までの明るさが合っていない。SCN-WL-MATERIAL-PALETTE で確かめる。斜面に規則的な暗い点の格子の縞がある（ground_02・far_02）。
 - Notes: 反復 1 は再撮影の途中で時間切れになり、反復 2 で同じ定数のまま撮り直した（反復 1 の `verify-...-1〜5.txt` は古い視点の版と途中の版）。
 - Next: TASKS.md の次の未完の項目。
+
+## SCN-WL-CAPTURE-FAST（2026-10-15）
+
+- Done: Game に `--capture-views=<視点,...>` を足し、シーンの組み立てと SceneReady を 1 回で済ませて、視点ごとにカメラを置き直し、ストリーミングと時間方向の蓄積が落ち着くのを待ってから決定的な撮影のエポックを始め直して撮る（`Game/Debug/MultiViewCapture.*`・`Game/Scenes/SceneViewSwitch.h`）。`Scripts/CaptureScene.ps1` は -Views を省いたときと 2 つ以上の視点のときにこれを使い、出力の形（<視点>.png・metrics.json・<視点>.SceneReport.txt）は変えない（`capture_mode` に multi_view・per_view を書く）。
+- Done: 視点を切り替えた後にジオメトリのページが読み込まれない不具合を直した。ページはメッシュと同じプールの塊にしか置けず、256 MB の塊が荒野の 100 区画の常駐部分とページで埋まり（used 255.9 MB・free 0.1 MB）、読み込み済みの 64 ページが書けないまま読み込みの枠も塞いでいた（1 視点ずつの撮影でも要求のページが残ったまま撮っていた）。塊を 1 GB にし、塊に空きが無いときは今のページより前にしか要求されていない常駐ページを LRU で外して出し直す（`GeometryPageUploadStart::NoSpace`）。
+- 検証（`.harness/runs/20261015-065314/`）:
+  - `verify-SCN-WL-CAPTURE-FAST-3.txt`: Debug の Game のビルド EXIT=0。
+  - `verify-SCN-WL-CAPTURE-FAST-4.txt`: 荒野の全 11 視点 1920×1080 を 1 回の起動で 172 秒（全体 175 秒）、result=pass。各視点の保存の前に GEOMETRY_PAGES の wanted・ready・reading・uploading が 0。
+  - 同じ視点の 1 視点ずつの撮影と比べた: ridge（2 番目）PSNR 100.3・最大差 4、ref_ground_02（最後）PSNR 80.8・差 >8 の画素 0・最大差 18。
+  - `verify-SCN-WL-CAPTURE-FAST-5.txt`: 起動画面の撮影 result=pass。`verify-SCN-WL-CAPTURE-FAST-6.txt`: 起動画面の決定的な撮影を 2 回撮って比較、差 0・PSNR 100。起動画面は変更前の撮影（SCN-CLOUDS）と PSNR 46・差 >8 の画素 0.5%（実時間の撮影の揺れの範囲）。
+- Notes: 荒野の撮影は、ページが最後まで読まれるようになって地形の細部が変わった（前の SCN-WL-REFERENCE-CAPTURE の撮影より崖と斜面の形が細かい。ridge で PSNR 25）。手本との比較画像は次の項目で撮り直す。
+- Notes: 塊が満杯のときの追い出しは荒野の 11 視点では起きなかった（1 GB の塊で常駐 471 MB まで）。この経路を確かめる試験（GeometryPageStreamerTest に NoSpace を返す偽の書き込み先）は無い。
+- Next: TASKS.md の次の未完の項目。
