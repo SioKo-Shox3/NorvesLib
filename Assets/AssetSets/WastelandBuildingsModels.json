@@ -26,6 +26,27 @@
       "fallback_min_triangles": 4096,
       "package_name": "WastelandBuildings/stone_arch.nvpkg",
       "entry_name": "Assets/Models/Generated/stone_arch/stone_arch.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/Generated/windmill/windmill.glb",
+      "source_path": "Assets/Models/Generated/windmill/windmill.glb",
+      "fallback_min_triangles": 4096,
+      "package_name": "WastelandBuildings/windmill.nvpkg",
+      "entry_name": "Assets/Models/Generated/windmill/windmill.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/Generated/water_tower/water_tower.glb",
+      "source_path": "Assets/Models/Generated/water_tower/water_tower.glb",
+      "fallback_min_triangles": 4096,
+      "package_name": "WastelandBuildings/water_tower.nvpkg",
+      "entry_name": "Assets/Models/Generated/water_tower/water_tower.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/Generated/wooden_shack/wooden_shack.glb",
+      "source_path": "Assets/Models/Generated/wooden_shack/wooden_shack.glb",
+      "fallback_min_triangles": 4096,
+      "package_name": "WastelandBuildings/wooden_shack.nvpkg",
+      "entry_name": "Assets/Models/Generated/wooden_shack/wooden_shack.nvmesh"
     }
   ]
 }

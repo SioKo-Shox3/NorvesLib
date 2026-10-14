@@ -38,6 +38,34 @@
       "texture_size": 4096,
       "height_m": 5.0,
       "usage": "wasteland-buildings"
+    },
+    {
+      "id": "windmill",
+      "prompt": "a single old farm water-pumping windmill, tall square tapering steel lattice tower with cross braces, multi-blade rusted metal fan wheel and tail vane on top, small square concrete footing at the base, whole building standing on flat ground, three-quarter view, weathered desert wasteland outpost style",
+      "seed": 2021,
+      "target_faces": 600000,
+      "texture_size": 4096,
+      "height_m": 10.0,
+      "usage": "wasteland-buildings"
+    },
+    {
+      "id": "water_tower",
+      "prompt": "a single rustic wooden water tower, large round barrel-shaped timber water tank with metal hoops and a conical roof, standing on four thick timber legs with diagonal cross braces and a ladder, whole building standing on flat ground, three-quarter view, weathered desert wasteland outpost style",
+      "seed": 2022,
+      "target_faces": 600000,
+      "texture_size": 4096,
+      "height_m": 8.0,
+      "usage": "wasteland-buildings"
+    },
+    {
+      "id": "wooden_shack",
+      "prompt": "a single small simple wooden shack with thick solid smooth flat weathered grey board walls, simple gable roof of smooth flat rusted sheet metal, one plain door and one plain window opening, compact simple boxy shape sitting directly on the ground, whole building standing on flat ground, three-quarter view, weathered desert wasteland outpost style",
+      "seed": 2033,
+      "target_faces": 600000,
+      "texture_size": 4096,
+      "height_m": 3.2,
+      "upsample_resolution": 1024,
+      "usage": "wasteland-buildings"
     }
   ]
 }
