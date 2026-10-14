@@ -46,6 +46,7 @@
 #include "GameModes/MegaBananas/MegaBananasMode.h"
 #include "GameModes/MegaStress/MegaStressMode.h"
 #include "GameModes/Sandbox/SandboxMode.h"
+#include "GameModes/Wasteland/WastelandMode.h"
 #include "Scenes/SceneCatalog.h"
 
 // モジュールシステム第1段1C-ii: --dummy-overlay ゲートで描画ダミーモジュールを登録する。
@@ -3055,6 +3056,23 @@ namespace Game
                 mode->GetData().m_bCameraPathPlay = bPathPlay;
                 mode->GetData().m_BananaCount = bananaCount;
                 mode->GetData().m_bShowInfoAtStart = bShowInfo;
+                mode->GetData().m_pPauseMenu = pauseMenu;
+                mode->GetData().m_GetAssetSystem = getAssetSystem;
+                return mode;
+            });
+        // 荒野のシーン。視点・台本は起動引数から渡す。
+        stateMachine->Registry().Register(
+            Wasteland,
+            [viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath, pathTime = m_CameraPathTime,
+             bPathPlay = m_bCameraPathPlay, pauseMenu = &m_PauseMenu,
+             getAssetSystem = [this]() { return GetAssetSystemSnapshot(); }](const GameModeParams&)
+                -> Container::TUniquePtr<IGameMode>
+            {
+                auto mode = MakeUnique<WastelandMode>();
+                mode->GetData().m_ViewName = viewName;
+                mode->GetData().m_CameraScriptPath = scriptPath;
+                mode->GetData().m_CameraPathTime = pathTime;
+                mode->GetData().m_bCameraPathPlay = bPathPlay;
                 mode->GetData().m_pPauseMenu = pauseMenu;
                 mode->GetData().m_GetAssetSystem = getAssetSystem;
                 return mode;

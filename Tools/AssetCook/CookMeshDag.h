@@ -53,6 +53,8 @@ namespace NorvesLib::Tools::AssetCook
     //      （三角形が減らない段で打ち切る既定の判定を緩める）。遠景で根の段だけが選ばれる大量配置の資産のための指定。
     //   6. rootMinTriangles（既定 0 = 指定なし）が 1 以上なら、三角形数がこの数以下になった段を根にする。
     //      ラスタの段がフォールバックの段(影・RT が使う)より粗くならないので、両者の面のずれによる自己遮蔽が出ない。
+    //   7. bLockOpenBoundary（既定 false）が真なら、メッシュの開いた外周の頂点をどの段でも動かさない。区画に分けて
+    //      別々に焼いた地形のように、隣のメッシュと外周の頂点を共有するとき、段の違う区画の間に割れ目を作らない。
     // 結果のクラスタ・インデックスは、クラスタごとに自分の頂点の範囲(最大 128 頂点)を持つ。
     [[nodiscard]] bool BakeMeshLodDag(const Core::Asset::CookedMeshVertex* vertices,
                                       size_t vertexCount,
@@ -62,5 +64,6 @@ namespace NorvesLib::Tools::AssetCook
                                       Core::Container::AnsiString& error,
                                       uint32_t fallbackMinTriangles = 0,
                                       uint32_t rootMaxClusters = 0,
-                                      uint32_t rootMinTriangles = 0);
+                                      uint32_t rootMinTriangles = 0,
+                                      bool bLockOpenBoundary = false);
 }

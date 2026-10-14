@@ -13,6 +13,7 @@
 #include "Rendering/MegaGeometry/MeshClusterizer.h"
 #include "Rendering/MegaGeometry/ProceduralMegaSphere.h"
 #include "Rendering/MegaGeometry/StartupBigSphereSpec.h"
+#include "Rendering/Terrain/TerrainHeightField.h"
 #include "Resource/GltfBufferFile.h"
 #include "Resource/GltfBufferJson.h"
 #include "Resource/GltfDocumentProfile.h"
@@ -2376,7 +2377,7 @@ namespace NorvesLib::Tools::AssetCook
         bool CookLodGraphMesh(const VariableArray<MeshVertexPnt>& vertices, const VariableArray<uint32_t>& indices,
                               const MaterialReferences& materialReferences, MeshCookResult& outResult,
                               AnsiString& error, uint32_t fallbackMinTriangles, uint32_t dagRootMaxClusters,
-                              uint32_t dagRootMinTriangles = 0)
+                              uint32_t dagRootMinTriangles = 0, bool bLockOpenBoundary = false)
         {
             const auto bakeStart = std::chrono::steady_clock::now();
 
@@ -2394,7 +2395,8 @@ namespace NorvesLib::Tools::AssetCook
             CookMeshDagResult dag;
             AnsiString dagError;
             if (!BakeMeshLodDag(cookedVertices.data(), cookedVertices.size(), indices.data(), indices.size(), dag,
-                                dagError, fallbackMinTriangles, dagRootMaxClusters, dagRootMinTriangles))
+                                dagError, fallbackMinTriangles, dagRootMaxClusters, dagRootMinTriangles,
+                                bLockOpenBoundary))
             {
                 error = AnsiString("LOD の階層の焼き込みに失敗しました: ") + dagError;
                 return false;
@@ -2831,6 +2833,125 @@ namespace NorvesLib::Tools::AssetCook
             hash = Fnv1a64UpdateLe64(hash, static_cast<uint64_t>(std::bit_cast<uint32_t>(Spec::kDisplacementDepth)));
             hash = Fnv1a64UpdateLe64(hash, static_cast<uint64_t>(std::bit_cast<uint32_t>(Spec::kTexCoordRepeatU)));
             hash = Fnv1a64UpdateLe64(hash, static_cast<uint64_t>(std::bit_cast<uint32_t>(Spec::kTexCoordRepeatV)));
+            v1Result.SourceHash = hash;
+            outResult = std::move(v1Result);
+            return true;
+        }
+
+        // 荒野の地形の区画 (tileX, tileZ) を高さ場から作って、LOD の階層を焼く。高さ場と区画の割り方は Game と共有の
+        // TerrainHeightField.h にある。格子は kGridSpacing 間隔の正方形で、法線は高さ場の勾配、UV はワールドの XZ を
+        // テクスチャの 1 枚の広さで割った値。外周の頂点は隣の区画と同じ位置・法線・UV になり、階層のどの段でも動かさない
+        // （段の違う区画の間に割れ目を作らない）。
+        bool CookTerrainTileInternal(uint32_t tileX, uint32_t tileZ, AnsiStringView format, AnsiStringView logicalPath,
+                                     MeshCookResult& outResult, AnsiString& error, uint32_t fallbackMinTriangles,
+                                     uint32_t dagRootMaxClusters)
+        {
+            namespace Terrain = NorvesLib::Core::Rendering::Terrain;
+            namespace Spec = NorvesLib::Core::Rendering::Terrain::WastelandTerrain;
+
+            if (format != SupportedMeshFormatLodGraph)
+            {
+                error = "terrain-tile は NVMESH v1 "
+                        "の形式（nvmesh.v1.mesh3d.pnt.u32.lodgraph）だけを焼けます";
+                return false;
+            }
+            if (tileX >= Spec::kTilesPerSide || tileZ >= Spec::kTilesPerSide)
+            {
+                error = "terrain-tile の区画の番号が範囲の外です";
+                return false;
+            }
+            if (!ValidateRelativePath(logicalPath, "model logical path", error))
+            {
+                return false;
+            }
+
+            const Terrain::TerrainHeightField field(Spec::MakeParams());
+            constexpr uint32_t cells = Spec::kTileCells;
+            constexpr uint32_t side = cells + 1;
+
+            VariableArray<MeshVertexPnt> vertices(static_cast<size_t>(side) * side);
+            for (uint32_t row = 0; row < side; ++row)
+            {
+                for (uint32_t column = 0; column < side; ++column)
+                {
+                    // 隣の区画と外周の頂点がビット単位で同じ値になるよう、位置は全体の格子の番号から求める
+                    const uint32_t globalColumn = tileX * cells + column;
+                    const uint32_t globalRow = tileZ * cells + row;
+                    const float x = -Spec::kHalfExtent + static_cast<float>(globalColumn) * Spec::kGridSpacing;
+                    const float z = -Spec::kHalfExtent + static_cast<float>(globalRow) * Spec::kGridSpacing;
+                    const Terrain::TerrainNormal normal = field.SampleNormal(x, z, Spec::kGridSpacing * 0.5f);
+                    MeshVertexPnt& vertex = vertices[static_cast<size_t>(row) * side + column];
+                    vertex.Position[0] = x;
+                    vertex.Position[1] = field.SampleHeight(x, z);
+                    vertex.Position[2] = z;
+                    vertex.Normal[0] = normal.X;
+                    vertex.Normal[1] = normal.Y;
+                    vertex.Normal[2] = normal.Z;
+                    vertex.TexCoord[0] = x / Spec::kTextureTileMeters;
+                    vertex.TexCoord[1] = z / Spec::kTextureTileMeters;
+                }
+            }
+
+            // 升目ごとに 2 つの三角形。巻き方は ProceduralMeshGenerator::GeneratePlane と同じ（上から見て時計回り。
+            // FrontFace::Clockwise）。対角線は升目ごとに交互に向きを変え、斜面の筋が一方向に揃わないようにする
+            VariableArray<uint32_t> indices;
+            indices.reserve(static_cast<size_t>(cells) * cells * 6);
+            for (uint32_t row = 0; row < cells; ++row)
+            {
+                for (uint32_t column = 0; column < cells; ++column)
+                {
+                    const uint32_t i00 = row * side + column;
+                    const uint32_t i10 = i00 + 1;
+                    const uint32_t i01 = i00 + side;
+                    const uint32_t i11 = i01 + 1;
+                    if (((row + column) & 1u) == 0u)
+                    {
+                        indices.push_back(i00);
+                        indices.push_back(i10);
+                        indices.push_back(i11);
+                        indices.push_back(i00);
+                        indices.push_back(i11);
+                        indices.push_back(i01);
+                    }
+                    else
+                    {
+                        indices.push_back(i00);
+                        indices.push_back(i10);
+                        indices.push_back(i01);
+                        indices.push_back(i10);
+                        indices.push_back(i11);
+                        indices.push_back(i01);
+                    }
+                }
+            }
+
+            // 材質は Game が当てるので、メッシュには材質の参照を持たせない。
+            MaterialReferences materialReferences;
+            MeshCookResult v1Result;
+            if (!CookLodGraphMesh(vertices, indices, materialReferences, v1Result, error, fallbackMinTriangles,
+                                  dagRootMaxClusters, 0, true))
+            {
+                return false;
+            }
+
+            // 元は高さ場の値と区画の割り方。値を変えたら焼き直されるよう、値もハッシュに入れる
+            // （高さ場の関数そのものの変更は、AssetCook の実行ファイルの変更として CookAssets が検出する）。
+            const Terrain::TerrainHeightFieldParams& params = field.GetParams();
+            uint64_t hash = Format::Fnv1a64OffsetBasis;
+            hash = Fnv1a64UpdateLe64(hash, static_cast<uint64_t>(params.Seed));
+            hash = Fnv1a64UpdateLe64(hash, static_cast<uint64_t>(tileX));
+            hash = Fnv1a64UpdateLe64(hash, static_cast<uint64_t>(tileZ));
+            hash = Fnv1a64UpdateLe64(hash, static_cast<uint64_t>(Spec::kTileCells));
+            hash = Fnv1a64UpdateLe64(hash, static_cast<uint64_t>(Spec::kTilesPerSide));
+            hash = Fnv1a64UpdateLe64(hash, static_cast<uint64_t>(params.MesaCount));
+            for (const float value : {Spec::kHalfExtent, Spec::kGridSpacing, Spec::kTextureTileMeters,
+                                      params.BasinRadius, params.BasinBlend, params.BowlHeight,
+                                      params.RollingAmplitude, params.DuneWavelength, params.DuneAmplitude,
+                                      params.MesaRingInner, params.MesaRingOuter, params.RidgeStart, params.RidgeCrest,
+                                      params.RidgeHeight, params.RidgeRoughness})
+            {
+                hash = Fnv1a64UpdateLe64(hash, static_cast<uint64_t>(std::bit_cast<uint32_t>(value)));
+            }
             v1Result.SourceHash = hash;
             outResult = std::move(v1Result);
             return true;
@@ -3610,6 +3731,51 @@ namespace NorvesLib::Tools::AssetCook
     {
         return CookGltfToNvmeshNativePath(sourceBytes, sourceSize, format, LegacyModelLocator(sourcePath), logicalPath,
                                           outResult, error, importOptions, fallbackMinTriangles, dagRootMaxClusters);
+    }
+
+    bool TryParseTerrainTileGenerate(NorvesLib::Core::Container::AnsiStringView generate, uint32_t& outTileX,
+                                     uint32_t& outTileZ)
+    {
+        namespace Spec = NorvesLib::Core::Rendering::Terrain::WastelandTerrain;
+        const AnsiStringView prefix("terrain-tile:");
+        if (generate.size() <= prefix.size() || generate.substr(0, prefix.size()) != prefix)
+        {
+            return false;
+        }
+        const AnsiStringView rest = generate.substr(prefix.size());
+        const size_t comma = rest.find(',');
+        if (comma == AnsiStringView::npos || comma == 0)
+        {
+            return false;
+        }
+        uint32_t x = 0;
+        uint32_t z = 0;
+        const char* const end = rest.data() + rest.size();
+        const auto parsedX = std::from_chars(rest.data(), rest.data() + comma, x);
+        const auto parsedZ = std::from_chars(rest.data() + comma + 1, end, z);
+        if (parsedX.ec != std::errc{} || parsedX.ptr != rest.data() + comma || parsedZ.ec != std::errc{} ||
+            parsedZ.ptr != end || x >= Spec::kTilesPerSide || z >= Spec::kTilesPerSide)
+        {
+            return false;
+        }
+        outTileX = x;
+        outTileZ = z;
+        return true;
+    }
+
+    bool CookTerrainTileToNvmesh(uint32_t tileX, uint32_t tileZ, NorvesLib::Core::Container::AnsiStringView format,
+                                 NorvesLib::Core::Container::AnsiStringView logicalPath, MeshCookResult& outResult,
+                                 NorvesLib::Core::Container::AnsiString& error, uint32_t fallbackMinTriangles,
+                                 uint32_t dagRootMaxClusters)
+    {
+        AnsiString internalError;
+        if (!CookTerrainTileInternal(tileX, tileZ, format, logicalPath, outResult, internalError, fallbackMinTriangles,
+                                     dagRootMaxClusters))
+        {
+            error = internalError;
+            return false;
+        }
+        return true;
     }
 
     bool CookDisplacedSphereToNvmesh(const uint8_t *heightMapBytes, size_t heightMapSize,

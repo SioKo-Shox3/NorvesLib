@@ -160,6 +160,21 @@ namespace NorvesLib::Tools::AssetCook
                                                    uint32_t fallbackMinTriangles = 0,
                                                    uint32_t dagRootMaxClusters = 0);
 
+    // --generate の値 "terrain-tile:<x>,<z>"（荒野の地形の区画の番号）を読む。形が違う・番号が範囲の外なら false。
+    [[nodiscard]] bool TryParseTerrainTileGenerate(Core::Container::AnsiStringView generate, uint32_t& outTileX,
+                                                   uint32_t& outTileZ);
+
+    // 荒野の地形の区画 (tileX, tileZ) を高さ場（Rendering/Terrain/TerrainHeightField.h。Game と共有）から作り、
+    // NVMESH v1 に焼く（--generate terrain-tile:<x>,<z>）。外周の頂点は階層のどの段でも動かさない。
+    [[nodiscard]] bool CookTerrainTileToNvmesh(uint32_t tileX,
+                                               uint32_t tileZ,
+                                               Core::Container::AnsiStringView format,
+                                               Core::Container::AnsiStringView logicalPath,
+                                               MeshCookResult& outResult,
+                                               Core::Container::AnsiString& error,
+                                               uint32_t fallbackMinTriangles = 0,
+                                               uint32_t dagRootMaxClusters = 0);
+
     [[nodiscard]] bool IsSupportedSkeletalCookFormat(Core::Container::AnsiStringView format) noexcept;
 
     [[nodiscard]] bool CookGltfToNvskel(const uint8_t* sourceBytes,

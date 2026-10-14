@@ -720,11 +720,21 @@ namespace NorvesLib::Tools::AssetCook
 
             NorvesLib::Tools::AssetCook::MeshCookResult meshResult;
             NorvesLib::Core::Container::AnsiString meshError;
+            // terrain-tile は入力のファイル（高さ場の仕様のヘッダ）を読まず、高さ場の関数から区画を作る。
+            // 入力は CookAssets の変更の検出のためだけに渡される
+            uint32_t terrainTileX = 0;
+            uint32_t terrainTileZ = 0;
+            const bool bTerrainTile =
+                TryParseTerrainTileGenerate(NorvesLib::Core::Container::AnsiStringView(options.Generate), terrainTileX,
+                                            terrainTileZ);
             const bool cooked =
                 options.Generate == "displaced-sphere"
                     ? CookDisplacedSphereToNvmesh(inputBytes.data(), inputBytes.size(), options.Format, logicalPath,
                                                   meshResult, meshError, options.FallbackMinTriangles,
                                                   options.DagRootMaxClusters)
+                : bTerrainTile
+                    ? CookTerrainTileToNvmesh(terrainTileX, terrainTileZ, options.Format, logicalPath, meshResult,
+                                              meshError, options.FallbackMinTriangles, options.DagRootMaxClusters)
                     : CookGltfToNvmeshNativePath(inputBytes.data(), inputBytes.size(), options.Format, inputPath,
                                                  logicalPath, meshResult, meshError, &options.ImportSettings,
                                                  options.FallbackMinTriangles, options.DagRootMaxClusters);
@@ -1328,8 +1338,13 @@ namespace NorvesLib::Tools::AssetCook
                 }
             }
             const bool lodGraph = outOptions.Format == "nvmesh.v1.mesh3d.pnt.u32.lodgraph";
-            if ((!outOptions.Generate.empty() &&
-                 (outOptions.Generate != "displaced-sphere" || !lodGraph || outOptions.Kind != "model")) ||
+            uint32_t terrainTileX = 0;
+            uint32_t terrainTileZ = 0;
+            const bool bKnownGenerate =
+                outOptions.Generate == "displaced-sphere" ||
+                TryParseTerrainTileGenerate(NorvesLib::Core::Container::AnsiStringView(outOptions.Generate),
+                                            terrainTileX, terrainTileZ);
+            if ((!outOptions.Generate.empty() && (!bKnownGenerate || !lodGraph || outOptions.Kind != "model")) ||
                 (outOptions.FallbackMinTriangles && !lodGraph) || outOptions.FallbackMinTriangles > 1000000 ||
                 (outOptions.DagRootMaxClusters && !lodGraph) || outOptions.DagRootMaxClusters > 1000 ||
                 (outOptions.bSkipIfUnchanged && (lodGraph || !outOptions.Generate.empty())) ||

@@ -38,6 +38,9 @@ namespace Game::GameModes
     /// 仮想化ジオメトリ（MegaGeometry）で生成したバナナを床いっぱいに敷き詰めるシーン
     inline constexpr NorvesLib::Core::GameMode::GameModeId MegaBananas = "MegaBananas"_id;
 
+    /// 荒野のシーン。高さ場から焼いた起伏のある地形（仮想化ジオメトリ）を、物理空と太陽で描く
+    inline constexpr NorvesLib::Core::GameMode::GameModeId Wasteland = "Wasteland"_id;
+
     /// 仮想化ジオメトリの負荷シーン（開発ビルドだけランチャーに出る）。多種のメッシュの個別 Entity を置く
     inline constexpr NorvesLib::Core::GameMode::GameModeId MegaStress = "MegaStress"_id;
 

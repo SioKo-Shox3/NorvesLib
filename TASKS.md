@@ -1313,7 +1313,7 @@
 - notes: SCN-GEN-BUILDINGS-1 の notes の上限時間とやり直しを使う。 2026-10-14: `wooden_shack` は木造の小屋（板壁・丸太）の参照画像では 3D の段が 1024 でも 600 秒で終わらないため、id はそのままで石積みの小さな物置（seed 2051・高さ 2.8 m）に替えた。
 
 ## SCN-TERRAIN-GEN: 起伏のある地形の高さ場を作り、MegaGeometry に焼いて描く
-- status: todo
+- status: done
 - done-when: 共有の高さ場（seed と関数で決まる。Game が同じ関数で任意の (x,z) の高さと法線を引ける）を Library に足し、AssetCook の `--generate` で約2km四方・0.5〜1m 間隔の地形メッシュ（中央に前哨地の平らな盆地 約200m、周りに砂丘とメサ、外周に稜線。UV はワールドの XZ から）を NVMESH v1（クラスタ・LOD の階層）に焼く。`wasteland` シーン（この項目では地形・物理空・太陽・高さフォグだけ。材質は Poly Haven の砂 1 種でよい）に置き、名前付き視点 `overview`（盆地を見下ろし遠くの稜線まで）・`ground`（人の目の高さ）・`ridge`（稜線から盆地）を持たせる。撮影を開いて、地平線が平らな板でなく起伏がある・遠くの地形に LOD の切り替えの穴やクラックが無いことを確かめる。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -OutDir .harness/runs/scene-capture/SCN-TERRAIN-GEN`

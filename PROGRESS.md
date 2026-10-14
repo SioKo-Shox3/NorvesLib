@@ -4188,3 +4188,17 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 検証: `python Scripts/GenerateSceneModels.py --verify --require-cooked --ids windmill,water_tower,wooden_shack` が 3 種とも `VERIFY_OK ... cooked`・`VERIFY pass`・EXIT=0（`verify-SCN-GEN-BUILDINGS-2-1.txt`）。
 - Notes: 生成の合計は今回 2 回で約 16 分（750 秒の予算 2 本）。小さな木造の建物は、細い板や丸太の多い形だと 3D の段が止まりやすい。夜の集落の木造の小物（SCN-GEN-VILLAGE-*）でも同じことが起きたら、厚く単純な形へ寄せるのが先。
 - Next: TASKS.md の次の未完の項目。
+
+### SCN-TERRAIN-GEN 完了（2026-10-14、反復 3・run 20261014-140012）
+- Done: 起伏のある地形の高さ場を Core に足し、クッカーで 16 区画の NVMESH v1 に焼いて、新しいシーン `wasteland` で描いた。
+  - 高さ場: `Library/Core/Public/Rendering/Terrain/TerrainHeightField.h`（`TerrainHeightField::SampleHeight` / `SampleNormal`。seed と値だけで決まり、複数スレッドから引ける）。中央の半径 100 m の盆地は高さ 0、周りは外へ 14 m ゆるく上がる鉢と、数百 m のなだらかな起伏、非対称の砂丘（波長 70 m・振幅 5 m）、輪（半径 330〜680 m）の上の 7 つのメサ（高さ 28〜62 m、崖の幅 7 m と崖錐）、外周の稜線（円と正方形の間の距離で 700〜920 m に立ち上がり、尾根のノイズで峰を作る。最高 約 196 m）。荒野の値は `WastelandTerrain`（2 km 四方・格子 1 m・4×4 区画・UV はワールドの XZ ÷ 4 m）。
+  - クック: `--generate terrain-tile:<x>,<z>`（`Assets/AssetSets/WastelandTerrain.json` の 16 項目。`source_path` は高さ場のヘッダで、変更の検出だけに使う）。区画ごとに 501×501 頂点・50 万三角形の格子を高さ場から作り、法線は高さ場の勾配、外周の頂点は全体の格子の番号から求めて隣と同じ値にする。区画の間で LOD の段が違っても割れないよう、`BakeMeshLodDag` に `bLockOpenBoundary`（既定 false。地形の生成器だけが真）を足し、メッシュの開いた外周の頂点をどの段でも動かさない。既存のメッシュのクックは変わらない。
+  - `wasteland`（ランチャーに載る。Release も）: 16 区画を MegaGeometry に置き（影を落とす）、材質は Poly Haven の sand_01、物理空・太陽（仰角 32°）・高さフォグ（床で 0.0003/m）、遠方面 3200 m。視点は `overview`（既定）・`ground`（目の高さ 1.7 m）・`ridge`（南の稜線の上 6 m）で、視点の y は Game が同じ高さ場で引いた地形の高さに足す。クック済みが無いときは `COOKED_MODEL_MISSING` を出す。
+- 検証（`.harness/runs/20261014-140012/`）:
+  - `verify-SCN-TERRAIN-GEN-1.txt`: Debug の Game のビルド EXIT=0。
+  - `verify-SCN-TERRAIN-GEN-2.txt`: `wasteland` の撮影 result=pass（default=overview・ground・ridge、EXIT=0、白飛び 0・黒つぶれ 0.000001 以下）。ログは `WASTELAND_TERRAIN tiles=16 placed=16 clusters=137402 vertices=11671004`。
+  - `aux-SCN-TERRAIN-GEN-cook.txt`: `CookAssets.ps1 -OnlyLogicalPath "Models/WastelandTerrain/*"` が `cooked=16`。区画ごとに 10〜11 段・約 8,600 クラスタ・約 37 MB・Debug で 31〜35 秒。
+  - `aux-SCN-TERRAIN-GEN-holes.txt`: 3 枚とも、地形の下に空の色が見える画素（穴・割れ目）が 0。
+  - PNG を開いて確かめた: どの視点も地平線は平らな板でなく、稜線の峰と鞍部の起伏が続く。遠くの稜線・メサの縁に穴・割れ目・区画の境の線は無い。ground は盆地の床から周りのメサと稜線を見上げ、ridge は稜線から盆地とメサの並びを見下ろす。
+- Next: TASKS.md の次の未完（SCN-TERRAIN-BLEND）。
+- Notes: 区画の数・格子の間隔・高さ場の形の値は内部の値（形は撮影 1 回で決めた）。メサの崖の縦の縞（UV がワールドの XZ なので崖で引き伸ばされる）と、overview の中ほどに見える砂のテクスチャの繰り返しは SCN-TERRAIN-DETAIL の範囲。組み立ては Debug で約 59 秒（区画の読み込みと解析 約 8 秒、砂のテクスチャの読み込み待ち 約 51 秒）。区画の読み込みは Enter の中で同期で行っている。`Docs/Architecture/NVMESHv1.md` の生成器の節に terrain-tile を足すのはこの項目の paths の外なので書いていない。高さ場の CPU の試験は足していない（親の指示どおり撮影で見た）。

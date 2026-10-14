@@ -143,6 +143,20 @@ namespace Game::Scenes
         "Assets/Models/Generated/banana/banana.glb",
     };
 
+    /// 荒野のシーンの視点。地形は原点が中心の 2 km 四方で、中央の半径 100 m の盆地は高さ 0（座標は +Z 向きが Yaw 0）。
+    /// 位置の y は、その (x,z) の地形の高さ（Rendering/Terrain/TerrainHeightField.h）からの高さ[m]
+    inline constexpr SceneViewDescriptor kWastelandViews[] = {
+        // 盆地の南の上空から、盆地を見下ろして北の遠くの稜線まで見渡す視点。起動時の既定
+        {"overview", SceneViewKind::FreePose, 0.0f, -12.0f, 0.0f, {0.0f, 75.0f, -260.0f}},
+        // 盆地の中の人の目の高さ（1.7 m）から、周りの砂丘とメサを見る視点
+        {"ground", SceneViewKind::FreePose, 30.0f, 1.0f, 0.0f, {-20.0f, 1.7f, -40.0f}},
+        // 南の稜線の上から、盆地を見下ろす視点
+        {"ridge", SceneViewKind::FreePose, 0.0f, -9.0f, 0.0f, {0.0f, 6.0f, -880.0f}},
+    };
+
+    /// 荒野のシーンの id。地形は高さ場の関数からクックで焼く（リポジトリの外の資産は使わない）
+    inline constexpr const char *kWastelandSceneId = "wasteland";
+
     /// 確認用の sandbox の id。シーンの一覧に載るのは開発ビルドだけ
     inline constexpr const char *kSandboxSceneId = "sandbox";
 
@@ -225,6 +239,19 @@ namespace Game::Scenes
             sizeof(kMegaBananasRequiredAssets) / sizeof(kMegaBananasRequiredAssets[0]),
             "python Scripts/GenerateSceneModels.py --ids banana",
             &kMegaBananasPath,
+        },
+        {
+            kWastelandSceneId,
+            "荒野",
+            "高さ場から焼いた約 2 km 四方の起伏のある地形（盆地・砂丘・メサ・稜線）を、仮想化ジオメトリで描くシーン。",
+            "Assets/Launcher/Thumbnails/wasteland.png",
+            Game::GameModes::Wasteland,
+            kWastelandViews,
+            sizeof(kWastelandViews) / sizeof(kWastelandViews[0]),
+            nullptr,
+            0,
+            nullptr,
+            nullptr,
         },
 #if NORVES_BUILD_DEVELOPMENT
         // 開発ビルドだけ。ランチャーの先頭のシーンにはしない（並びの最後に置く）

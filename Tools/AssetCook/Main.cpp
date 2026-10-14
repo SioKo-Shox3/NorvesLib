@@ -295,9 +295,10 @@ namespace
                 {
                     return false;
                 }
-                if (value != "displaced-sphere")
+                // 区画の番号の形と範囲は SingleAssetCook の検査が確かめる
+                if (value != "displaced-sphere" && value.rfind("terrain-tile:", 0) != 0)
                 {
-                    error = "--generate は displaced-sphere だけを指定できます";
+                    error = "--generate は displaced-sphere か terrain-tile:<x>,<z> だけを指定できます";
                     return false;
                 }
                 outOptions.Generate = NorvesLib::Core::Container::AnsiString(value.c_str());

@@ -499,11 +499,12 @@ foreach ($specFile in $specFiles) {
             $cookArguments += @("--dag-root-max-clusters", [string]$dagRootMax)
         }
         # "generate": "displaced-sphere" は、source_path の高さマップ（16 ビットのグレーの PNG）で変位した起動画面の大きな球を
-        # AssetCook に作らせて焼く（glTF は読まない）。
+        # AssetCook に作らせて焼く（glTF は読まない）。"terrain-tile:<x>,<z>" は荒野の地形の区画を高さ場の関数から作って焼く
+        # （source_path は高さ場の仕様のヘッダで、変更の検出だけに使う）。
         if (Test-PropertyExists -Object $model -Name "generate") {
             $generate = Get-StringField -Object $model -Name "generate" -Context $context
-            if ($generate -ne "displaced-sphere") {
-                throw "$context の generate は displaced-sphere だけを指定できます"
+            if (($generate -ne "displaced-sphere") -and ($generate -notmatch '^terrain-tile:\d+,\d+$')) {
+                throw "$context の generate は displaced-sphere か terrain-tile:<x>,<z> だけを指定できます"
             }
             $cookArguments += @("--generate", $generate)
         }

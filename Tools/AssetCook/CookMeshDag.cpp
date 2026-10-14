@@ -621,10 +621,12 @@ namespace NorvesLib::Tools::AssetCook
         }
 
         // 異なるグループの三角形が共有する辺の両端(位置番号)に印を付ける。位置番号は PositionRemap の値で、
-        // UV の継ぎ目で分かれた頂点も同じ位置なら同じ番号になる。
+        // UV の継ぎ目で分かれた頂点も同じ位置なら同じ番号になる。bLockOpenBoundary のときは、三角形 1 つだけが持つ辺
+        // (メッシュの開いた外周)の両端にも印を付ける。
         VariableArray<uint8_t> ComputeGroupBoundaryLocks(const WeldedMesh& mesh,
                                                          const VariableArray<BuildCluster>& clusters,
-                                                         const VariableArray<uint32_t>& groupOfCluster)
+                                                         const VariableArray<uint32_t>& groupOfCluster,
+                                                         bool bLockOpenBoundary)
         {
             struct EdgeRecord
             {
@@ -672,7 +674,7 @@ namespace NorvesLib::Tools::AssetCook
                     bCrossesGroups = bCrossesGroups || edges[j].Group != edges[i].Group;
                     ++j;
                 }
-                if (bCrossesGroups)
+                if (bCrossesGroups || (bLockOpenBoundary && j == i + 1))
                 {
                     lockByPosition[static_cast<uint32_t>(edges[i].Key >> 32)] = 1;
                     lockByPosition[static_cast<uint32_t>(edges[i].Key & 0xffffffffull)] = 1;
@@ -974,6 +976,7 @@ namespace NorvesLib::Tools::AssetCook
                           SimplifyScratch& scratch,
                           size_t groupTargetSize,
                           bool bAllowNonManifold,
+                          bool bLockOpenBoundary,
                           LevelOutput& output,
                           AnsiString& error)
         {
@@ -1005,7 +1008,8 @@ namespace NorvesLib::Tools::AssetCook
                 groups[groupOfCluster[c]].Members.push_back(static_cast<uint32_t>(c));
             }
 
-            const VariableArray<uint8_t> lockByPosition = ComputeGroupBoundaryLocks(mesh, current, groupOfCluster);
+            const VariableArray<uint8_t> lockByPosition =
+                ComputeGroupBoundaryLocks(mesh, current, groupOfCluster, bLockOpenBoundary);
             scratch.LevelInputEdges.clear();
             scratch.ClaimedEdges.clear();
             for (const BuildCluster& cluster : current)
@@ -1045,7 +1049,8 @@ namespace NorvesLib::Tools::AssetCook
                         AnsiString& error,
                         uint32_t fallbackMinTriangles,
                         uint32_t rootMaxClusters,
-                        uint32_t rootMinTriangles)
+                        uint32_t rootMinTriangles,
+                        bool bLockOpenBoundary)
     {
         outResult = CookMeshDagResult{};
         const bool bRootLimited = rootMaxClusters > 0;
@@ -1111,7 +1116,7 @@ namespace NorvesLib::Tools::AssetCook
             size_t acceptedGroupTarget = GroupTargetSize;
             if (!bMakeRoot)
             {
-                if (!ProcessLevel(mesh, current, scratch, levelGroupTarget, false, output, error))
+                if (!ProcessLevel(mesh, current, scratch, levelGroupTarget, false, bLockOpenBoundary, output, error))
                 {
                     return false;
                 }
@@ -1122,7 +1127,7 @@ namespace NorvesLib::Tools::AssetCook
                 {
                     const size_t retryGroupTarget = levelGroupTarget * 2;
                     LevelOutput retry;
-                    if (!ProcessLevel(mesh, current, scratch, retryGroupTarget, false, retry, error))
+                    if (!ProcessLevel(mesh, current, scratch, retryGroupTarget, false, bLockOpenBoundary, retry, error))
                     {
                         return false;
                     }
@@ -1137,7 +1142,8 @@ namespace NorvesLib::Tools::AssetCook
                 if (bRootLimited && output.NextTriangles * 100 > currentTriangles * (100 - MinProgressPercent))
                 {
                     LevelOutput relaxed;
-                    if (!ProcessLevel(mesh, current, scratch, RootLimitedMaxGroupTargetSize, true, relaxed, error))
+                    if (!ProcessLevel(mesh, current, scratch, RootLimitedMaxGroupTargetSize, true, bLockOpenBoundary, relaxed,
+                                      error))
                     {
                         return false;
                     }
