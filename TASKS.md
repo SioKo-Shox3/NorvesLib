@@ -1244,7 +1244,7 @@
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Build -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views horizon,overview -GameArgs banana-count=1000000 -OutDir .harness/runs/scene-capture/SCN-MEGA-LAYOUT-SEA`
 - paths: Game/GameModes/MegaBananas, Game/Scenes/SceneCatalog.h, TASKS.md, PROGRESS.md
-- notes: （ECS 計画の対応）散布の Object で置き、予算つきで作る。 2026-10-12 親: 計測の見直し（ユーザーの指摘「節目に計測を入れても意味があるのかを考えるべき」。計測ごとに、問い・結果で変わる判断・測らずに分からないかの 3 点を書き、書けないものは置かない。Sol の批評を反映）。3 s の上限は、超えたときに変える判断が無いので外した。
+- notes: （ECS 計画の対応）散布の Object で置き、予算つきで作る。 2026-10-12 親: 計測の見直し（ユーザーの指摘「節目に計測を入れても意味があるのかを考えるべき」。計測ごとに、問い・結果で変わる判断・測らずに分からないかの 3 点を書き、書けないものは置かない。Sol の批評を反映）。3 s の上限は、超えたときに変える判断が無いので外した。 2026-10-14 親: 反復 13（run 20261014-061910）は壁時計（40 分）で止まり、途中の保存（755a3a19）を残した。そのとき MegaBananasRoutine.cpp の行末が LF に変わっていたので CRLF に戻した（18b1bde6）。続きはこの保存から。編集した既存のファイルは行末（CRLF）を保ち、コミットの前に numstat を 2 通り比べる。
 
 ## SCN-MEGA-LAYOUT-MOUNDS: 落とし込みで積んだ大きな山を数個置く
 - status: todo
