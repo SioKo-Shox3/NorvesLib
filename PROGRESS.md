@@ -4120,3 +4120,12 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `-8.txt`: 起動画面 default の決定的撮影の比較 result=pass（psnr 57.68 dB、輝度差 0.0037、EXIT=0）。PNG は家・球・岩・地面・影が以前どおり。
 - Next: TASKS.md の次の未完（SCN-MEGA-LAYOUT-SEA）。
 - Notes: overview 中ほどの暗い斑は反復 4 の Notes どおり残る（溢れ由来ではない。SCN-MEGA-LAYOUT-SEA の撮影で見直す）。試験の追加はしていない。
+
+### SCN-MEGA-LAYOUT-SEA（2026-10-14、反復 6・run 20261014-102529）
+- Done: 主の描画（SCN-MEGA-FIX-BVH-QUEUE-MAIN）と影（SCN-MEGA-FIX-BVH-QUEUE-VSM）の BVH の列の直しの後に、配置のコードは変えずに同じ撮影を見直して閉じた。
+  - `verify-SCN-MEGA-LAYOUT-SEA-1.txt`: RelWithDebInfo の Game のビルド EXIT=0、error 0。
+  - `verify-SCN-MEGA-LAYOUT-SEA-2.txt`: 100 万本 horizon・overview の撮影 result=pass（bananas=1000000、EXIT=0）。撮影先は消してから撮り直した。`MEGA_BANANAS_LAYOUT radius=355.5 near_radius=32.9 mid_radius=81.8 near=141467 mid=174484 far=683269 near_density=41.6 mid_density=9.9 far_density=1.82 tiles=1640 batches=1 deficit=0 build_ms=1333.7 far_plane=1000`（far が半径を超える）。両ログとも `bvh_overflow=0`・`draw_dropped=0`・`VSM_MEGA_CULL overflow=0`、`[ERROR]` 0。
+  - PNG を開いて確かめた: 地平線までバナナが描かれ、以前の約 50 m より先の床の色の帯は無い。格子の並び・区画の境は見えない。overview 中ほどの暗い斑は手前の 3 つの山（z≈2.3〜3.5）と近い輪の重なりの影で、画面上の位置が山の位置と合う（溢れ由来・格子由来ではない）。
+  - 1 万本の小さな円盤: 半径は `sqrt(本数 / 単位円盤の本数)` で本数から決まり、内訳の比は同じ（1 万本で約 35.5 m）。verify に無いので撮っていない。
+- Next: TASKS.md の次の未完。
+- Notes: horizon の地平線のすぐ下に 2〜3 画素の淡い線が残る（行 542〜544、色 146,135,123）。海の縁（中心から約 370 m）から床の端（800 m）までの床が、目の高さ 1.7 m からは俯角 0.12〜0.25° で約 2 画素に潰れて見えるもの。消すには海を床の端まで広げる必要があり、遠の密度 2/m² で 400 万本を超えるので、100 万本の配置では既知の限界として残す。試験の追加はしていない。

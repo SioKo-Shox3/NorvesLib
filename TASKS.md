@@ -1268,7 +1268,7 @@
 - notes: 2026-10-14 親が足した（SCN-MEGA-LAYOUT-SEA の反復 1 の調べから）。危険地帯（描画・影）。
 
 ## SCN-MEGA-LAYOUT-SEA: 地平線までのバナナの海を作る
-- status: todo
+- status: done
 - done-when: 距離で密度を落とす円盤（近 50/m²・中 10/m²・遠 2/m² 程度、半径 300〜400 m、半径と内訳を `MEGA_BANANAS_LAYOUT` に出す）をバッチで置く。配置の計算は O(N)（床全体の格子は持たない）。`horizon`・`overview` の撮影を開いて、床の帯・床の端・格子の並びが見えない。カメラの far が半径を超える。1万本では同じ形の小さな円盤。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Build -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views horizon,overview -GameArgs banana-count=1000000 -OutDir .harness/runs/scene-capture/SCN-MEGA-LAYOUT-SEA`
