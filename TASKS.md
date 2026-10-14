@@ -1269,11 +1269,11 @@
 
 ## SCN-MEGA-LAYOUT-SEA: 地平線までのバナナの海を作る
 - status: doing
-- done-when: 距離で密度を落とす円盤（近 50/m²・中 10/m²・遠 2/m² 程度、半径 300〜400 m、半径と内訳を `MEGA_BANANAS_LAYOUT` に出す）をバッチで置く。配置の計算は O(N)（床全体の格子は持たない）。`horizon`・`overview` の撮影を開いて、床の帯・床の端・格子の並びが見えない。カメラの far が半径を超える。1万本では同じ形の小さな円盤。
+- done-when: 距離で密度を落とす円盤（近 50/m²・中 10/m²・遠 2/m² 程度、半径 300〜400 m、半径と内訳を `MEGA_BANANAS_LAYOUT` に出す）をバッチで置く。配置の計算は床全体の格子を持たず、本数に見合う量で済む（本数より桁の小さいタイルの並べ替えのような処理は問わない）。`horizon`・`overview` の撮影を開いて、床の帯・床の端・格子の並びが見えない。海の縁から床の端までの床が地平線の直下に見える細い線（反復 6 の horizon で y=542〜544 の 2〜3 画素、RGB 146,135,123）も床の帯に含める。本数は増やさずに消す（例: 海の外側の遠い床の色・材質を遠くの海の見た目に寄せる、床を海の縁の先で終えて霞で地平線へつなぐ）。カメラの far が半径を超える。1万本では同じ形の小さな円盤で、1万本の見た目（木の床の上のバナナ）は変えない。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Build -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views horizon,overview -GameArgs banana-count=1000000 -OutDir .harness/runs/scene-capture/SCN-MEGA-LAYOUT-SEA`
 - paths: Game/GameModes/MegaBananas, Game/Scenes/SceneCatalog.h, TASKS.md, PROGRESS.md
-- notes: （ECS 計画の対応）散布の Object で置き、予算つきで作る。 2026-10-12 親: 計測の見直し（ユーザーの指摘「節目に計測を入れても意味があるのかを考えるべき」。計測ごとに、問い・結果で変わる判断・測らずに分からないかの 3 点を書き、書けないものは置かない。Sol の批評を反映）。3 s の上限は、超えたときに変える判断が無いので外した。 2026-10-14 親: 反復 13（run 20261014-061910）は壁時計（40 分）で止まり、途中の保存（755a3a19）を残した。そのとき MegaBananasRoutine.cpp の行末が LF に変わっていたので CRLF に戻した（18b1bde6）。続きはこの保存から。編集した既存のファイルは行末（CRLF）を保ち、コミットの前に numstat を 2 通り比べる。 2026-10-14 親: 案 2。配置は done-when どおりで、遠景が描かれないのは描画の BVH の列の溢れ。直前の SCN-MEGA-FIX-BVH-QUEUE-MAIN・VSM の後に、同じ撮影を見直して閉じる（配置のコードは変えなくてよい見込み）。
+- notes: （ECS 計画の対応）散布の Object で置き、予算つきで作る。 2026-10-12 親: 計測の見直し（ユーザーの指摘「節目に計測を入れても意味があるのかを考えるべき」。計測ごとに、問い・結果で変わる判断・測らずに分からないかの 3 点を書き、書けないものは置かない。Sol の批評を反映）。3 s の上限は、超えたときに変える判断が無いので外した。 2026-10-14 親: 反復 13（run 20261014-061910）は壁時計（40 分）で止まり、途中の保存（755a3a19）を残した。そのとき MegaBananasRoutine.cpp の行末が LF に変わっていたので CRLF に戻した（18b1bde6）。続きはこの保存から。編集した既存のファイルは行末（CRLF）を保ち、コミットの前に numstat を 2 通り比べる。 2026-10-14 親: 案 2。配置は done-when どおりで、遠景が描かれないのは描画の BVH の列の溢れ。直前の SCN-MEGA-FIX-BVH-QUEUE-MAIN・VSM の後に、同じ撮影を見直して閉じる（配置のコードは変えなくてよい見込み）。 2026-10-14 親: 反復 6 の評価の差し戻し（地平線の直下の床の線・タイルの並べ替えの計算量）を受けて done-when を直した。線は既知の限界にせず消す。計算量は床全体の格子を持たないことが要点で、タイルの並べ替えは直さなくてよい。
 
 ## SCN-MEGA-LAYOUT-MOUNDS: 落とし込みで積んだ大きな山を数個置く
 - status: todo
