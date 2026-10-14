@@ -42,15 +42,6 @@ namespace Layout = Game::GameModes::WastelandLayout;
 namespace Game::GameModes
 {
 
-    /// 地形の区画 1 つの読み込み
-    struct WastelandTerrainTile
-    {
-        String LogicalPath;
-        TSharedPtr<Asset::CookedMeshData> Mesh;
-        /// ページ（NVMESH v1.1）の読み込み元。ページを 2 つ以上持つメッシュだけが持つ
-        TSharedPtr<IGeometryPageSource> PageSource;
-    };
-
     /// 岩・崖・建物の 1 種類の読み込み。材質のテクスチャがそろったら MegaMesh にする
     struct WastelandPropLoad
     {
@@ -67,7 +58,14 @@ namespace Game::GameModes
     /// 地形の区画と、材質のテクスチャの読み込み
     struct WastelandAssembly
     {
-        VariableArray<WastelandTerrainTile> Tiles;
+        /// 区画を読む AssetSystem
+        TSharedPtr<const Asset::AssetSystem> AssetSystem;
+        /// 地形の区画のクック済みメッシュの論理パス（Tick ごとに NextTile から数区画ずつ読んで置く）
+        VariableArray<String> TilePaths;
+        uint32_t NextTile = 0;
+        uint32_t PlacedTiles = 0;
+        uint64_t PlacedClusters = 0;
+        uint64_t PlacedVertices = 0;
         /// 1 層目（砂）の材質
         MaterialCreateData Material;
         /// 2 層目（乾いた土）・3 層目（岩肌）と混ぜ方
@@ -82,9 +80,10 @@ namespace Game::GameModes
 
     namespace
     {
-        // 夕方寄りの太陽。低い所（仰角 17°）から、盆地を北へ見る視点に対して横から差し、建物と岩の影が長く伸びる
+        // 夕方寄りの太陽。低い所（仰角 17°）の西南西から差し、ビュートの西面・南西面を照らして影を東北東へ長く伸ばす。
+        // 北や北西を向く谷床の視点で横から当たる。方位角は +X（東）から +Z（南）へ測るので、西南西は 157.5°
         constexpr float kSunAltitudeDegrees = 17.0f;
-        constexpr float kSunAzimuthDegrees = -70.0f;
+        constexpr float kSunAzimuthDegrees = 157.5f;
         // 夕方の手動露出（絞り f/16・ISO 100 のままシャッター速度で合わせる）
         constexpr float kExposureEV100 = 14.0f;
         // 夕景のグレーディング。トーンマップは暗部を縮めない NeutralLinear にし、空の光だけの影の中が黒くつぶれないようにする。
@@ -101,25 +100,34 @@ namespace Game::GameModes
         // 崖の岩（花崗岩のスキャン。アルベドの平均がリニアで 0.13 : 0.09 : 0.065）に掛ける色。メサの岩肌（rock_face、
         // 0.12 : 0.06 : 0.03）の赤みに寄せ、足元で灰色に浮かないようにする
         constexpr float kCliffTint[3] = {1.0f, 0.75f, 0.55f};
-        // 高さフォグ: 盆地の床（高さ 0）での密度[1/m]と、上へ向かって薄くなる割合[1/m]。
-        // 遠景の霞は空気遠近が受け持つので、盆地の床に薄く溜まる砂ぼこりの層にする
+        // 高さフォグ: 基準の高さでの密度[1/m]と、上へ向かって薄くなる割合[1/m]。遠景の霞は空気遠近が受け持つので、
+        // 谷床に薄く溜まる砂ぼこりの層にする。谷床は北から南東へ下がり、平らな所の高さは -38〜+39 m（5〜95%）なので、
+        // 基準を南東の低い谷床（-40 m）に置き、100 m で 1/e に薄くして北の高い谷床（+40 m）にも半分ほど残す。
+        // ビュートの頂（+100〜+200 m）より上ではほぼ消える
         constexpr float kFogDensity = 0.00015f;
-        constexpr float kFogFalloff = 0.02f;
-        // 空気遠近: 物理空の媒質の距離を 12 倍に数え、メサの輪（330〜680 m）が空の色へ寄り、外周の稜線が溶ける。
-        // 150 m より手前は掛けない（盆地の中の足元・前哨地の建物は変えない）
-        constexpr float kAerialPerspectiveDistanceScale = 12.0f;
-        constexpr float kAerialPerspectiveStartDistance = 150.0f;
+        constexpr float kFogBaseHeight = -40.0f;
+        constexpr float kFogFalloff = 0.01f;
+        // 空気遠近: 物理空の媒質の距離を 4 倍に数え、谷床の向こうのビュート（1〜3.5 km）が少しずつ空の色へ寄り、
+        // 範囲の端の 4〜6 km の稜線が溶ける。300 m より手前は掛けない（足元・近くの崖の色は変えない）
+        constexpr float kAerialPerspectiveDistanceScale = 4.0f;
+        constexpr float kAerialPerspectiveStartDistance = 300.0f;
         // 雲の層: 高度 1.5〜4 km の積雲を空の 4 割ほどに散らし、西寄りの風でゆっくり流す
         constexpr float kCloudBottomAltitude = 1500.0f;
         constexpr float kCloudTopAltitude = 4000.0f;
         constexpr float kCloudCoverage = 0.41f;
         constexpr float kCloudWindVelocity[2] = {8.0f, 3.0f};
-        // カメラの遠方面[m]。2 km 四方の対角（約 2.8 km）の先まで描く
-        constexpr float kFarPlane = 3200.0f;
-        // 太陽の影の到達距離[m]。盆地の中から周りのメサ（半径 330〜680 m の輪）の手前側と、その間の起伏・岩まで影を落とす
-        constexpr float kSunShadowMaxDistance = 500.0f;
+        // カメラの遠方面[m]。地形（4.7 × 4.6 km）の対角（約 6.6 km）の先まで描く
+        constexpr float kFarPlane = 7000.0f;
+        // 太陽の影の到達距離[m]。谷床の視点から主役のビュート（Battleship Rock・Franklin Butte、0.5〜2 km）と、
+        // 低い西日で東南東へ 600 m 前後伸びるその影まで落とす
+        constexpr float kSunShadowMaxDistance = 2500.0f;
         // 地形を置いてから SceneReady を出すまでの Tick の数（ページの読み込みが追いつく余裕）
         constexpr uint32_t kReadyTicksAfterTerrain = 90;
+        // 1 Tick に読んで置く地形の区画の数（区画は 1 つ 37 MB 前後。読み込みと解析のメモリを数区画ぶんに抑える）
+        constexpr uint32_t kTerrainTilesPerTick = 4;
+        // 岩・崖・建物（WastelandLayout）を置くか。配置は手続きの地形（中央の盆地とメサの輪）に合わせたものなので、
+        // DEM の地形では前哨地を置き直す（SCN-WL-OUTPOST）まで置かない
+        constexpr bool kPlaceLayoutProps = false;
         // 地形の材質は 3 層の混ぜ合わせ。1 層目の砂は Poly Haven の sand_01（Assets/AssetSets/Rendering3DTestStartupMaterials.json が焼く）
         constexpr const char *kSandAlbedoPath = "Assets/Textures/PolyHaven/sand_01/sand_01_diff_4k.jpg";
         constexpr const char *kSandNormalPath = "Assets/Textures/PolyHaven/sand_01/sand_01_nor_dx_4k.jpg";
@@ -165,7 +173,7 @@ namespace Game::GameModes
             VolumetricFogParameters fog = MakeDefaultVolumetricFogParameters();
             fog.bEnabled = true;
             fog.DensityAtBaseHeight = kFogDensity;
-            fog.BaseHeight = 0.0f;
+            fog.BaseHeight = kFogBaseHeight;
             fog.HeightFalloffPerUnit = kFogFalloff;
             ctx.EngineRef.GetRenderWorld().SetVolumetricFogParameters(fog);
 
@@ -200,51 +208,45 @@ namespace Game::GameModes
             ctx.EngineRef.GetRenderWorld().SetSunShadowMaxDistance(0.0f);
         }
 
-        /// 区画 (tileX, tileZ) のクック済みメッシュの論理パス
-        String MakeTileLogicalPath(uint32_t tileX, uint32_t tileZ)
+        /// DEM の区画 (tileX, tileZ) のクック済みメッシュの論理パス
+        String MakeDemTileLogicalPath(uint32_t tileX, uint32_t tileZ)
         {
             char suffix[32] = {};
             std::snprintf(suffix, sizeof(suffix), "%u_%u.generated", static_cast<unsigned int>(tileX),
                           static_cast<unsigned int>(tileZ));
-            return String(TerrainSpec::kCookedMeshLogicalPathPrefix) + suffix;
+            return String(TerrainSpec::kDemCookedMeshLogicalPathPrefix) + suffix;
         }
 
-        /// 地形の全区画のクック済みメッシュを解決・解析する。1 つでも無い・壊れているときは理由を出して false
-        bool LoadTerrainTiles(const TSharedPtr<const Asset::AssetSystem> &assetSystem, WastelandAssembly &assembly)
+        /// 格子の並びから DEM の全区画の論理パスを並べ、どれもクック済みがあるかを確かめる（中身はまだ読まない）。
+        /// 1 つでも無いときは理由を出して false
+        bool CollectTerrainTiles(const Asset::AssetSystem &assetSystem, const Terrain::TerrainGridLayout &layout,
+                                 WastelandAssembly &assembly)
         {
-            for (uint32_t tileZ = 0; tileZ < TerrainSpec::kTilesPerSide; ++tileZ)
+            const uint32_t tilesX = TerrainSpec::DemTileCount(layout.Columns);
+            const uint32_t tilesZ = TerrainSpec::DemTileCount(layout.Rows);
+            if (tilesX == 0 || tilesZ == 0)
             {
-                for (uint32_t tileX = 0; tileX < TerrainSpec::kTilesPerSide; ++tileX)
+                LOG_WARNING_F("COOKED_MODEL_MISSING scene=wasteland 地形の格子の大きさ（%u × %u 頂点）から区画を作れません",
+                              layout.Columns, layout.Rows);
+                return false;
+            }
+            for (uint32_t tileZ = 0; tileZ < tilesZ; ++tileZ)
+            {
+                for (uint32_t tileX = 0; tileX < tilesX; ++tileX)
                 {
-                    WastelandTerrainTile tile;
-                    tile.LogicalPath = MakeTileLogicalPath(tileX, tileZ);
-                    const Asset::AssetResolveResult resolved =
-                        assetSystem->ResolveAsset(tile.LogicalPath, Asset::AssetKind::Model);
-                    if (!resolved.UsedCooked())
+                    String path = MakeDemTileLogicalPath(tileX, tileZ);
+                    if (!assetSystem.FindCookedVariant(AnsiString(path.c_str()), Asset::AssetKind::Model).ShouldUseCooked())
                     {
                         LOG_WARNING_F("COOKED_MODEL_MISSING scene=wasteland path=%s 地形のクック済みメッシュがありません。"
                                       "Scripts/CookAssets.ps1 で焼くと描けます",
-                                      tile.LogicalPath.c_str());
+                                      path.c_str());
                         return false;
                     }
-                    Asset::CookedMeshParseResult parsed = Asset::ParseCookedMesh(resolved.Blob);
-                    if (!parsed.Succeeded() || parsed.Mesh.Clusters.empty() || parsed.Mesh.Vertices.empty())
-                    {
-                        LOG_WARNING_F("COOKED_MODEL_MISSING scene=wasteland path=%s status=%u "
-                                      "地形のクック済みメッシュを解析できません",
-                                      tile.LogicalPath.c_str(), static_cast<unsigned int>(parsed.Status));
-                        return false;
-                    }
-                    Asset::AssetCookedRange pageRange;
-                    if (parsed.Mesh.Pages.size() >= 2 && Asset::AssetSystem::TryMakeCookedRange(resolved, pageRange))
-                    {
-                        tile.PageSource = MakeCookedMeshPageSource(parsed.Mesh, assetSystem->GetCookedFileReader(),
-                                                                   pageRange.Request, pageRange.BaseOffset);
-                    }
-                    tile.Mesh = MakeShared<Asset::CookedMeshData>(std::move(parsed.Mesh));
-                    assembly.Tiles.push_back(std::move(tile));
+                    assembly.TilePaths.push_back(std::move(path));
                 }
             }
+            LOG_INFO_F("WASTELAND_TERRAIN_TILES tiles_x=%u tiles_z=%u grid=%ux%u", tilesX, tilesZ, layout.Columns,
+                       layout.Rows);
             return true;
         }
 
@@ -284,71 +286,95 @@ namespace Game::GameModes
                 });
         }
 
-        /// 材質がそろった地形の区画を MegaMesh にして置く。置けた区画の数を返す
-        uint32_t PlaceTerrain(GameModeContext &ctx, WastelandAssembly &assembly)
+        /// 地形の区画 1 つを読み、MegaMesh にして置く。解析したメッシュはこの関数の中で手放す（ページはページの読み込み元が読む）
+        void PlaceTerrainTile(GameModeContext &ctx, WastelandAssembly &assembly, const String &logicalPath)
         {
+            const Asset::AssetResolveResult resolved =
+                assembly.AssetSystem->ResolveAsset(logicalPath, Asset::AssetKind::Model);
+            if (!resolved.UsedCooked())
+            {
+                LOG_WARNING_F("COOKED_MODEL_MISSING scene=wasteland path=%s 地形のクック済みメッシュを読めません",
+                              logicalPath.c_str());
+                return;
+            }
+            Asset::CookedMeshParseResult parsed = Asset::ParseCookedMesh(resolved.Blob);
+            if (!parsed.Succeeded() || parsed.Mesh.Clusters.empty() || parsed.Mesh.Vertices.empty())
+            {
+                LOG_WARNING_F("COOKED_MODEL_MISSING scene=wasteland path=%s status=%u "
+                              "地形のクック済みメッシュを解析できません",
+                              logicalPath.c_str(), static_cast<unsigned int>(parsed.Status));
+                return;
+            }
+            const Asset::CookedMeshData &mesh = parsed.Mesh;
             auto &megaGeometry = ctx.RenderResourcesRef.MegaGeometry();
-            uint32_t placed = 0;
-            uint64_t clusters = 0;
-            uint64_t vertices = 0;
-            for (WastelandTerrainTile &tile : assembly.Tiles)
+            MegaMeshCreateInfo createInfo;
+            if (!BuildMegaMeshCreateInfoFromCookedMesh(mesh, createInfo))
             {
-                MegaMeshCreateInfo createInfo;
-                if (!BuildMegaMeshCreateInfoFromCookedMesh(*tile.Mesh, createInfo))
-                {
-                    LOG_WARNING_F("WASTELAND_TERRAIN_SKIPPED path=%s MegaMesh の入力を作れませんでした",
-                                  tile.LogicalPath.c_str());
-                    continue;
-                }
-                createInfo.PageSource = tile.PageSource;
-                createInfo.Material.AlbedoTexture = assembly.Material.AlbedoTexture;
-                createInfo.Material.NormalTexture = assembly.Material.NormalTexture;
-                createInfo.Material.ORMTexture = assembly.Material.ORMTexture;
-                createInfo.Material.bNormalTwoChannel = assembly.Material.bNormalTwoChannel;
-                createInfo.Material.TerrainBlend = assembly.TerrainBlend;
-                createInfo.DebugName = tile.LogicalPath.c_str();
-                const MegaMeshHandle megaMesh = megaGeometry.CreateMegaMesh(createInfo);
-                if (!megaMesh.IsValid())
-                {
-                    LOG_WARNING_F("WASTELAND_TERRAIN_SKIPPED path=%s MegaMesh を作れませんでした", tile.LogicalPath.c_str());
-                    continue;
-                }
-                const ModelHandle model = megaGeometry.RegisterModel(megaMesh, tile.LogicalPath.c_str(), tile.LogicalPath);
-                if (!model.IsValid())
-                {
-                    megaGeometry.ReleaseMegaMesh(megaMesh);
-                    LOG_WARNING_F("WASTELAND_TERRAIN_SKIPPED path=%s モデルとして登録できませんでした",
-                                  tile.LogicalPath.c_str());
-                    continue;
-                }
-                // モデルはシーンを出るときにスコープが返す
-                ctx.ScopeRef.TrackModel(model);
+                LOG_WARNING_F("WASTELAND_TERRAIN_SKIPPED path=%s MegaMesh の入力を作れませんでした", logicalPath.c_str());
+                return;
+            }
+            Asset::AssetCookedRange pageRange;
+            if (mesh.Pages.size() >= 2 && Asset::AssetSystem::TryMakeCookedRange(resolved, pageRange))
+            {
+                createInfo.PageSource = MakeCookedMeshPageSource(mesh, assembly.AssetSystem->GetCookedFileReader(),
+                                                                 pageRange.Request, pageRange.BaseOffset);
+            }
+            createInfo.Material.AlbedoTexture = assembly.Material.AlbedoTexture;
+            createInfo.Material.NormalTexture = assembly.Material.NormalTexture;
+            createInfo.Material.ORMTexture = assembly.Material.ORMTexture;
+            createInfo.Material.bNormalTwoChannel = assembly.Material.bNormalTwoChannel;
+            createInfo.Material.TerrainBlend = assembly.TerrainBlend;
+            createInfo.DebugName = logicalPath.c_str();
+            const MegaMeshHandle megaMesh = megaGeometry.CreateMegaMesh(createInfo);
+            if (!megaMesh.IsValid())
+            {
+                LOG_WARNING_F("WASTELAND_TERRAIN_SKIPPED path=%s MegaMesh を作れませんでした", logicalPath.c_str());
+                return;
+            }
+            const ModelHandle model = megaGeometry.RegisterModel(megaMesh, logicalPath.c_str(), logicalPath);
+            if (!model.IsValid())
+            {
+                megaGeometry.ReleaseMegaMesh(megaMesh);
+                LOG_WARNING_F("WASTELAND_TERRAIN_SKIPPED path=%s モデルとして登録できませんでした", logicalPath.c_str());
+                return;
+            }
+            // モデルはシーンを出るときにスコープが返す
+            ctx.ScopeRef.TrackModel(model);
 
-                // 区画の頂点はワールドの座標で焼いてあるので、原点に置く
-                Entity *object = ctx.ScopeRef.SpawnObject<Entity>();
-                auto *component =
-                    object != nullptr ? ctx.WorldRef.CreateComponent<Component::MegaGeometryComponent>(object) : nullptr;
-                if (component == nullptr)
-                {
-                    LOG_WARNING_F("WASTELAND_TERRAIN_SKIPPED path=%s Entity を置けませんでした", tile.LogicalPath.c_str());
-                    continue;
-                }
-                object->SetPosition(0.0f, 0.0f, 0.0f);
-                component->SetMegaMeshHandle(megaMesh);
-                component->SetCastShadow(true);
-                clusters += tile.Mesh->Clusters.size();
-                vertices += tile.Mesh->Vertices.size();
-                ++placed;
-            }
-            LOG_INFO_F("WASTELAND_TERRAIN tiles=%u placed=%u clusters=%llu vertices=%llu",
-                       static_cast<unsigned int>(assembly.Tiles.size()), placed,
-                       static_cast<unsigned long long>(clusters), static_cast<unsigned long long>(vertices));
-            // 解析したメッシュは MegaMesh へ渡したので手放す（ページはページの読み込み元が読む）
-            for (WastelandTerrainTile &tile : assembly.Tiles)
+            // 区画の頂点はワールドの座標で焼いてあるので、原点に置く
+            Entity *object = ctx.ScopeRef.SpawnObject<Entity>();
+            auto *component =
+                object != nullptr ? ctx.WorldRef.CreateComponent<Component::MegaGeometryComponent>(object) : nullptr;
+            if (component == nullptr)
             {
-                tile.Mesh.reset();
+                LOG_WARNING_F("WASTELAND_TERRAIN_SKIPPED path=%s Entity を置けませんでした", logicalPath.c_str());
+                return;
             }
-            return placed;
+            object->SetPosition(0.0f, 0.0f, 0.0f);
+            component->SetMegaMeshHandle(megaMesh);
+            component->SetCastShadow(true);
+            assembly.PlacedClusters += mesh.Clusters.size();
+            assembly.PlacedVertices += mesh.Vertices.size();
+            ++assembly.PlacedTiles;
+        }
+
+        /// 地形の区画を最大 kTerrainTilesPerTick 個読んで置く。全区画を処理し終えたら true
+        bool PlaceNextTerrainTiles(GameModeContext &ctx, WastelandAssembly &assembly)
+        {
+            const uint32_t tileCount = static_cast<uint32_t>(assembly.TilePaths.size());
+            const uint32_t end = std::min(tileCount, assembly.NextTile + kTerrainTilesPerTick);
+            for (; assembly.NextTile < end; ++assembly.NextTile)
+            {
+                PlaceTerrainTile(ctx, assembly, assembly.TilePaths[assembly.NextTile]);
+            }
+            if (assembly.NextTile < tileCount)
+            {
+                return false;
+            }
+            LOG_INFO_F("WASTELAND_TERRAIN tiles=%u placed=%u clusters=%llu vertices=%llu", tileCount, assembly.PlacedTiles,
+                       static_cast<unsigned long long>(assembly.PlacedClusters),
+                       static_cast<unsigned long long>(assembly.PlacedVertices));
+            return true;
         }
 
         /// 常駐の粗い段の三角形の、面積を掛けた法線の和から表の向きを決める。閉じた岩では和が 0 に近く、
@@ -514,7 +540,7 @@ namespace Game::GameModes
         }
 
         /// 材質がそろった種類を MegaMesh にし、高さ場から決めた配置に Entity を置く
-        void PlaceProps(GameModeContext &ctx, WastelandAssembly &assembly)
+        void PlaceProps(GameModeContext &ctx, const Terrain::TerrainHeightField &field, WastelandAssembly &assembly)
         {
             auto &megaGeometry = ctx.RenderResourcesRef.MegaGeometry();
             Layout::PropMeshShape shapes[Layout::kPropKindCount];
@@ -579,7 +605,6 @@ namespace Game::GameModes
                 shapes[kindIndex] = load.Shape;
             }
 
-            const Terrain::TerrainHeightField field(TerrainSpec::MakeParams());
             VariableArray<Layout::PropPlacement> placements;
             Layout::LayoutStats stats;
             Layout::BuildPlacements(field, shapes, placements, stats);
@@ -644,9 +669,27 @@ namespace Game::GameModes
             Game::Scenes::EndSceneAssembly(ctx.EngineRef);
             return GameModeEnterResult::Failed;
         }
-        // 視点の高さは地形からの高さ。Game もクッカーと同じ高さ場の関数で地形の高さを引く
-        const Terrain::TerrainHeightField field(TerrainSpec::MakeParams());
-        const float groundHeight = field.SampleHeight(pose.Position[0], pose.Position[2]);
+        // 地形の高さ場（DEM の格子）を 1 回だけ読み、シーンの間だけ持つ。クッカーが区画を焼いたのと同じファイル・同じ標本の規則
+        AnsiString gridError;
+        data.m_pHeightField = Terrain::TerrainHeightField::LoadGrid(TerrainSpec::kDemGridDescriptorPath, gridError);
+        if (!data.m_pHeightField)
+        {
+            LOG_WARNING_F("COOKED_MODEL_MISSING scene=wasteland path=%s 地形の格子を読めません（%s）。"
+                          "Scripts/Terrain/CropDem.py --build で作ると描けます",
+                          TerrainSpec::kDemGridDescriptorPath, gridError.c_str());
+        }
+        // 視点の高さは地形からの高さ。格子が無い・範囲の外なら地面を 0 とする
+        float groundHeight = 0.0f;
+        if (data.m_pHeightField && data.m_pHeightField->Contains(pose.Position[0], pose.Position[2]))
+        {
+            groundHeight = data.m_pHeightField->SampleHeight(pose.Position[0], pose.Position[2]);
+        }
+        else if (data.m_pHeightField)
+        {
+            LOG_WARNING_F("WASTELAND_VIEW_OUT_OF_RANGE view=%s x=%.1f z=%.1f 視点が地形の格子の外です",
+                          data.m_ViewName.empty() ? "default" : data.m_ViewName.c_str(),
+                          static_cast<double>(pose.Position[0]), static_cast<double>(pose.Position[2]));
+        }
         pose.Position[1] += groundHeight;
         LOG_INFO_F("WASTELAND_VIEW view=%s x=%.1f z=%.1f ground=%.2f eye=%.2f",
                    data.m_ViewName.empty() ? "default" : data.m_ViewName.c_str(), static_cast<double>(pose.Position[0]),
@@ -665,10 +708,11 @@ namespace Game::GameModes
         {
             LOG_WARNING("COOKED_MODEL_MISSING scene=wasteland AssetSystem が無いため地形を置きません");
         }
-        else
+        else if (data.m_pHeightField)
         {
             auto assembly = MakeShared<WastelandAssembly>();
-            if (LoadTerrainTiles(assetSystem, *assembly))
+            assembly->AssetSystem = assetSystem;
+            if (CollectTerrainTiles(*assetSystem, data.m_pHeightField->GetGridLayout(), *assembly))
             {
                 assembly->Material.DebugName = "WastelandTerrain";
                 MegaTerrainBlend &blend = assembly->TerrainBlend;
@@ -708,7 +752,14 @@ namespace Game::GameModes
                                     &blend.Rock.bNormalTwoChannel, pPending);
                 LoadMaterialTexture(textures, assembly, kRockOrmPath, &blend.Rock.ORMTexture, nullptr, pPending);
                 // 岩・崖・建物。地形の上に据えるので、地形を置けるときだけ読む
-                StartPropLoads(ctx, assetSystem, assembly);
+                if (kPlaceLayoutProps)
+                {
+                    StartPropLoads(ctx, assetSystem, assembly);
+                }
+                else
+                {
+                    assembly->bPropsPlaced = true;
+                }
                 data.m_pAssembly = assembly;
             }
         }
@@ -722,6 +773,7 @@ namespace Game::GameModes
                 data.m_pAssembly->bCancelled = true;
                 data.m_pAssembly.reset();
             }
+            data.m_pHeightField.reset();
             ResetEnvironment(ctx);
             Game::Scenes::EndSceneAssembly(ctx.EngineRef);
             return GameModeEnterResult::Failed;
@@ -766,12 +818,11 @@ namespace Game::GameModes
                 WastelandAssembly &assembly = *data.m_pAssembly;
                 if (assembly.PendingTextureCount == 0 && !assembly.bPlaced)
                 {
-                    PlaceTerrain(ctx, assembly);
-                    assembly.bPlaced = true;
+                    assembly.bPlaced = PlaceNextTerrainTiles(ctx, assembly);
                 }
-                if (ArePropTexturesLoaded(assembly) && !assembly.bPropsPlaced)
+                if (assembly.bPlaced && ArePropTexturesLoaded(assembly) && !assembly.bPropsPlaced)
                 {
-                    PlaceProps(ctx, assembly);
+                    PlaceProps(ctx, *data.m_pHeightField, assembly);
                     assembly.bPropsPlaced = true;
                 }
                 if (assembly.bPlaced && assembly.bPropsPlaced)
@@ -804,6 +855,7 @@ namespace Game::GameModes
             data.m_pAssembly->bCancelled = true;
             data.m_pAssembly.reset();
         }
+        data.m_pHeightField.reset();
         data.m_Rig.Leave(ctx);
         // 地形の Entity・モデル・カメラの実体は GameModeScope::Cleanup が返す。空と霧は RenderWorld の設定なので戻す。
         ResetEnvironment(ctx);

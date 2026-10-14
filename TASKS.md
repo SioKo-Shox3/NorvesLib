@@ -1412,7 +1412,7 @@
 - notes: 危険地帯（アセットのクック）。2 km 四方の 1 m 格子は約 800 万三角形、4 km 四方は約 3,200 万。論理パスを変えるなら verify の行も同じ項目で直す。
 
 ## SCN-WL-DEM-SCENE: 荒野を DEM の地形にし、視点を置き直す
-- status: todo
+- status: done
 - done-when: `wasteland` が DEM の区画を置き、高さ場の既定を格子に替える（手続きのメサは荒野では使わない）。遠クリップ・影の到達距離・霧の基準の高さ・空気遠近の開始距離を、新しい地形の大きさと高さに合わせる。名前付き視点 overview・ground・ridge・cliff を新しい地形に置き直す（手本の写真の構図は SCN-WL-REFERENCE-CAPTURE）。今の岩・崖・建物の配置（WastelandLayout）は、新しい地形で据え直すか、SCN-WL-OUTPOST まで外す（浮き・めり込みを残さない）。撮影を開いて、地形が写真の主役のビュート・メサの形と対応し、尺度（高さ・距離）が合い、区画の境・LOD の割れが無いことを確かめる。`wasteland` の cycle smoke 3 周が pass。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -OutDir .harness/runs/scene-capture/SCN-WL-DEM-SCENE`

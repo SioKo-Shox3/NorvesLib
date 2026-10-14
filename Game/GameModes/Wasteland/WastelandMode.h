@@ -3,14 +3,16 @@
 // ---------------------------------------------------------------------------
 // wasteland（荒野のシーン）
 //
-// 高さ場（Core/Public/Rendering/Terrain/TerrainHeightField.h）から AssetCook が焼いた地形の区画
-// （Assets/AssetSets/WastelandTerrain.json。4×4 区画で 2 km 四方、格子の間隔 1 m）を仮想化ジオメトリで描き、
-// 物理空・太陽・高さフォグを掛ける。材質は Poly Haven の砂（sand_01）・乾いた土（dry_ground_rocks）・岩肌（rock_face）の
-// 3 層を、傾斜・高さ・低周波ノイズと凹凸で混ぜる（MegaGeometry::MegaTerrainBlend）。
-// 地形の上に Poly Haven の岩・崖と、生成した建物 6 種の前哨地を、同じ高さ場の関数で据える（WastelandLayout.h）。
-// 光は夕方寄りの低い太陽で、カメラのトーンマップ・グレーディングを夕景に合わせる。
+// Valley of the Gods（ユタ州）の 1 m DEM を切り出した格子（Assets/Terrain/ValleyOfTheGods/height.json。4.7 × 4.6 km、
+// 東が +X・北が -Z）から AssetCook が焼いた地形の区画（Assets/AssetSets/WastelandTerrain.json の WastelandDem_<x>_<z>。
+// 10 × 10 区画）を仮想化ジオメトリで描き、物理空・太陽・高さフォグ・空気遠近・雲の層を掛ける。区画は 1 つ 37 MB 前後あるので、
+// 材質のテクスチャが届いてから Tick ごとに数区画ずつ読んで置き、置いたら解析したメッシュを手放す。
+// 材質は Poly Haven の砂（sand_01）・乾いた土（dry_ground_rocks）・岩肌（rock_face）の 3 層を、傾斜・高さ・低周波ノイズと凹凸で混ぜる
+// （MegaGeometry::MegaTerrainBlend）。高さ場は同じ格子を TerrainHeightField::LoadGrid で 1 回だけ読み、シーンの間だけ持つ。
+// 岩・崖・建物の配置（WastelandLayout.h）は手続きの地形に合わせたものなので、前哨地を置き直す（SCN-WL-OUTPOST）まで置かない。
+// 光は夕方寄りの低い西日で、カメラのトーンマップ・グレーディングを夕景に合わせる。
 // 視点は SceneCatalog.h の kWastelandViews（overview・ground・ridge・cliff・outpost）。視点の高さは、その (x,z) の地形の高さに足す。
-// 地形のクック済みが無いときは COOKED_MODEL_MISSING を出し、空と太陽だけのシーンとして組み立てを終える。
+// 地形の格子・区画のクック済みが無いときは COOKED_MODEL_MISSING を出し、空と太陽だけのシーンとして組み立てを終える。
 // ---------------------------------------------------------------------------
 
 #include "Core/Public/Container/PointerTypes.h"
@@ -27,6 +29,11 @@
 namespace NorvesLib::Core::Asset
 {
     class AssetSystem;
+}
+
+namespace NorvesLib::Core::Rendering::Terrain
+{
+    class TerrainHeightField;
 }
 
 namespace Game::GameModes
@@ -56,6 +63,8 @@ namespace Game::GameModes
 
         // ---- 組み立ての状態（Routine が持つ。Leave で空に戻す） ----
         NorvesLib::Core::Container::TSharedPtr<WastelandAssembly> m_pAssembly;
+        /// 地形の高さ場（DEM の格子。Enter で読み、Leave で手放す。読めないときは空で、視点の地面の高さを 0 とする）
+        NorvesLib::Core::Container::TSharedPtr<const NorvesLib::Core::Rendering::Terrain::TerrainHeightField> m_pHeightField;
         /// 地形を置き終えた（または置けないと決まった）Tick。0 ならまだ
         uint32_t m_TerrainSettledTick = 0;
     };

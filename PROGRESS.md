@@ -4384,3 +4384,20 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `aux-SCN-WL-DEM-COOK-assetset-1.txt`: `WriteTerrainAssetSet.py --verify` result=pass（格子 4700 × 4600・間隔 1 m・10 × 10 区画・100 項目）。
 - Notes: Debug の AssetCook は 500 × 500 升目の区画 1 つに 33 秒前後（単一スレッド）かかり、100 区画を 1 本で焼くと約 55 分で反復の時間を越える（反復 9 は 18 区画で止まった）。反復 10 は行ごとに一覧と出力先を分けた 9 本を並列に走らせ（7 分 20 秒）、パッケージと印を build/CookedAssets へ移してから verify を回した。印は AssetCook・一覧の項目・元の内容だけで決まるので、移した結果は通常の実行でそのまま使われる。verify の 2 本目に必須の `-AssetCookExe` が抜けていたので TASKS.md の行に足した。区画のパッケージは 1 つ 37 MB 前後（100 区画で約 3.3 GB）。試験は足していない。
 - Next: TASKS.md の次の未完の項目。
+
+### SCN-WL-DEM-SCENE 完了（2026-10-15、反復 11・run 20261014-222123）
+- 実装:
+  - `wasteland` の地形を DEM の区画（`WastelandDem_<x>_<z>`、10 × 10）に替えた。高さ場は `TerrainHeightField::LoadGrid(kDemGridDescriptorPath)` を Enter で 1 回だけ読んで `WastelandData::m_pHeightField` に持ち、Leave で手放す（視点の地面の高さと、置くときの岩・建物の配置が同じ高さ場を使う）。手続きのメサは荒野では使わない。
+  - 区画は 1 つ 37 MB 前後あるので、Enter では格子の並びから 100 区画の論理パスとクック済みの有無（`FindCookedVariant`）だけを確かめ、材質のテクスチャが届いてから Tick ごとに 4 区画ずつ読み・解析し・MegaMesh にして置き、解析したメッシュをすぐ手放す（全区画を一度に読むと 4 GB 前後を同時に持つ）。Debug では 100 区画で約 100 秒。
+  - 岩・崖・建物（WastelandLayout）は手続きの盆地とメサの輪に合わせた配置なので、SCN-WL-OUTPOST まで置かない（`kPlaceLayoutProps = false`。読み込みと配置の経路は残し、高さ場は DEM の格子を渡す）。
+  - 環境: 遠クリップ 3200 → 7000 m（地形の対角 6.6 km）、影の到達距離 500 → 2500 m（主役のビュートと低い西日の影 600 m 前後）、高さフォグの基準の高さ 0 → -40 m・薄くなる割合 0.02 → 0.01/m（谷床の平らな所の高さ -38〜+39 m）、空気遠近の距離の倍率 12 → 4・開始 150 → 300 m（ビュートが 1〜3.5 km）。
+  - 太陽の方位を、新しい座標（東 +X・北 -Z）で西南西（157.5°）にした（前の値 -70°は新しい座標で北北東になり、北西のビュートを見る視点が逆光になる）。仰角 17°はそのまま。正式な光は SCN-WL-LIGHT-BASE。
+  - 視点（`SceneCatalog.h`）: overview（南の谷床の上空 80 m から北の Franklin Butte と Battleship Rock）・ground（Franklin Butte の南南東 590 m の目の高さ）・ridge（Battleship Rock の頂から南東）・cliff（Battleship Rock の南西面を南西 500 m から）・outpost（前哨地の候補 A から Rooster Butte と Setting Hen Butte）。位置は格子から高さ・4 m 間隔の傾斜・視線の遮りを確かめて決めた。ビュートの頂は DEM の局所最大で Battleship Rock X -1420・Z -949（199 m）、Franklin Butte X -510・Z -319（128 m）、Rooster Butte X 890・Z 831（123 m）、Setting Hen Butte X 1290・Z 1381（99 m）。
+- 検証（`.harness/runs/20261014-222123/`）:
+  - `verify-SCN-WL-DEM-SCENE-1.txt`: Debug の Game のビルド EXIT=0（最初の版）。
+  - `verify-SCN-WL-DEM-SCENE-2.txt`: 撮影 result=pass。開くと overview・ground・outpost が北西を向いて逆光（太陽が西北西）で、ビュートが霞んで読めなかったので、太陽と視点を直した。
+  - `verify-SCN-WL-DEM-SCENE-3.txt`: 直した後のビルド EXIT=0。
+  - `verify-SCN-WL-DEM-SCENE-4.txt`: `CaptureScene.ps1 -Scene wasteland -RequireAssets` result=pass（5 視点とも白飛び 0・黒つぶれ 0、各視点で `WASTELAND_TERRAIN tiles=100 placed=100 clusters=741830 vertices=62895169`、COOKED_MODEL_MISSING なし）。5 枚を開いた: overview に城壁の頭の長いメサ（Battleship Rock）とピラミッドに柱の立つ Franklin Butte が写真（cliff_01・cliff_02）と同じ形で並び、ground では Franklin Butte が 590 m 先で見上げる大きさ（比高 128 m）、outpost では尖塔の頭の Rooster Butte と Setting Hen Butte（far_02 の 2 つ）が並ぶ。cliff は Battleship Rock の南西面の垂直な崖・段・崖錐の 3 段。区画の境の線・割れ・LOD の穴は 5 枚とも見えない。崖の岩肌の 3 方向の投影に菱形の繰り返しが見える（材質の項目 SCN-WL-MATERIAL-* で直す）。
+  - `verify-SCN-WL-DEM-SCENE-5.txt`: `RunSceneCycleSmoke.ps1 -Scenes wasteland -Cycles 3` result=pass（3 周とも 100 区画を置き、ログに COOKED_MODEL_MISSING・ERROR なし）。
+- Notes: 地形の材質の混ぜ方の高さの範囲（`kDirtHeightRange` 12〜50 m）は前の盆地の床 0 m を前提にした値のまま（SCN-WL-MATERIAL-MASKS で地図に替える）。Debug で区画の読み込みに約 100 秒かかる（Release・RelWithDebInfo は未計測。読み込みを別スレッドへ移すかは SCN-WASTELAND-POLISH で判断）。ランチャーのサムネイル（`Assets/Launcher/Thumbnails/wasteland.png`）は前の手続きの地形のまま。試験は足していない。
+- Next: TASKS.md の次の未完の項目（SCN-WL-LIGHT-BASE）。

@@ -143,23 +143,28 @@ namespace Game::Scenes
         "Assets/Models/Generated/banana/banana.glb",
     };
 
-    /// 荒野のシーンの視点。地形は原点が中心の 2 km 四方で、中央の半径 100 m の盆地は高さ 0（座標は +Z 向きが Yaw 0）。
-    /// 位置の y は、その (x,z) の地形の高さ（Rendering/Terrain/TerrainHeightField.h）からの高さ[m]
+    /// 荒野のシーンの視点。地形は Valley of the Gods の DEM を切り出した 4.7 × 4.6 km の格子（X -2600〜2099・Z -2499〜2100）で、
+    /// 東が +X・北が -Z（座標は +Z 向きが Yaw 0。Yaw 90 が西、-90 が東）。高さ 0 は前哨地の候補 A（X 1199.5・Z 150.5）の床。
+    /// 主役のビュートの頂は Battleship Rock（X -1420・Z -949、高さ 199 m）・Franklin Butte（X -510・Z -319、128 m）・
+    /// Rooster Butte（X 890・Z 831、123 m）・Setting Hen Butte（X 1290・Z 1381、99 m）。
+    /// 位置の y は、その (x,z) の地形の高さ（Rendering/Terrain/TerrainHeightField.h の格子）からの高さ[m]
     inline constexpr SceneViewDescriptor kWastelandViews[] = {
-        // 盆地の南の上空から、盆地を見下ろして北の遠くの稜線まで見渡す視点。起動時の既定
-        {"overview", SceneViewKind::FreePose, 0.0f, -12.0f, 0.0f, {0.0f, 75.0f, -260.0f}},
-        // 盆地の中の人の目の高さ（1.7 m）から、周りの砂丘とメサを見る視点
-        {"ground", SceneViewKind::FreePose, 30.0f, 1.0f, 0.0f, {-20.0f, 1.7f, -40.0f}},
-        // 南の稜線の上から、盆地を見下ろす視点
-        {"ridge", SceneViewKind::FreePose, 0.0f, -9.0f, 0.0f, {0.0f, 6.0f, -880.0f}},
-        // 南西のメサ（高さ約 63 m、長軸がほぼ南北）の西の崖を、その西の目の高さ（2 m）から東向きに見る視点。
-        // 太陽は西北西にあるので、崖は順光になる
-        {"cliff", SceneViewKind::FreePose, -76.0f, 12.0f, 0.0f, {-649.0f, 2.0f, -351.0f}},
-        // 前哨地の道（北北東へ抜ける）の南寄り、建物の間の人の目の高さから、道の先の門（石のアーチ）へ向けて見る視点
-        {"outpost", SceneViewKind::FreePose, -15.0f, 3.0f, 0.0f, {-5.7f, 1.7f, -23.3f}},
+        // 南の谷床の上空 80 m から、北の Franklin Butte（1.4 km）と奥の Battleship Rock（2.3 km）と、その間の谷床を見渡す視点。
+        // 太陽（西南西）は左から当たる。起動時の既定
+        {"overview", SceneViewKind::FreePose, 170.0f, -3.0f, 0.0f, {-600.0f, 80.0f, 1100.0f}},
+        // Franklin Butte の南南東 590 m の谷床の人の目の高さ（1.7 m）から、北北西の Franklin Butte と奥の Battleship Rock を見上げる視点
+        {"ground", SceneViewKind::FreePose, 153.0f, 4.0f, 0.0f, {-300.0f, 1.7f, 250.0f}},
+        // Battleship Rock の頂（高さ 199 m）から、南東の谷床と Franklin・Rooster・Setting Hen の各ビュートを見下ろす視点
+        {"ridge", SceneViewKind::FreePose, -50.0f, -7.0f, 0.0f, {-1400.0f, 2.0f, -940.0f}},
+        // Battleship Rock の南西面の崖を、南西 500 m の崖錐の裾の目の高さ（2 m）から北東向きに見上げる視点。
+        // 太陽は西南西にあるので、崖の南西面は順光になる
+        {"cliff", SceneViewKind::FreePose, -135.0f, 12.0f, 0.0f, {-1900.0f, 2.0f, -500.0f}},
+        // 前哨地の候補 A の人の目の高さから、南南西の Rooster Butte（750 m）と南の Setting Hen Butte（1.2 km）を見る視点
+        // （前哨地は SCN-WL-OUTPOST で置き直す）
+        {"outpost", SceneViewKind::FreePose, 10.0f, 3.0f, 0.0f, {1199.5f, 1.7f, 150.5f}},
     };
 
-    /// 荒野のシーンの id。地形は高さ場の関数からクックで焼く（リポジトリの外の資産は使わない）
+    /// 荒野のシーンの id。地形は DEM の格子からクックで焼く（格子と区画は Scripts/Terrain と Scripts/CookAssets.ps1 で作る）
     inline constexpr const char *kWastelandSceneId = "wasteland";
 
     /// 確認用の sandbox の id。シーンの一覧に載るのは開発ビルドだけ
