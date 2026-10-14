@@ -1238,13 +1238,33 @@
 - paths: Assets/Shaders, Library/Core/Private/Rendering/VirtualShadowMapRaster.cpp, Library/Core/Public/Rendering, Scripts/CaptureStartupScene.ps1, TASKS.md, PROGRESS.md
 - notes: `CaptureStartupScene.ps1` の `-Night` が既存の `--night` を渡さないなら直してよい。 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
 
+## SCN-MEGA-FIX-BVH-QUEUE-MAIN: BVH のたどりを LOD で早く打ち切り、列の長さを本数でなく見える細かさで決める（主の描画）
+- status: todo
+- done-when: 100万本の海（SCN-MEGA-LAYOUT-SEA の途中の配置）の horizon・overview で、主の描画の BVH の節の列の 1 段の最大が 12.5M になり、容量 4,194,304（`MegaGeometryPass.cpp` 140 行付近の `BvhNodeQueueCapacity`）を超えて溢れ（`MEGA_CAPACITY bvh_overflow=10151330`）、カメラから約 50 m より先のバナナが判定から落ちて描かれない（`blocked/SCN-MEGA-LAYOUT-SEA.md`）。容量を上げるのでなく、BVH をたどるとき、節の境界の画面上の誤差（投影した LOD の誤差）が閾値より小さい節で降りるのを止め、その節が持つ粗いクラスタの組を描く（Nanite と同じく、列の長さが本数でなく画面の細かさで決まる形）。節に必要な誤差の情報が無ければ BVH の構築で足す。合格: 100万本の horizon・overview の撮影のログで `bvh_overflow=0`、撮影を開いて地平線までバナナが描かれ（床の帯が無い）、近くの見た目が変わらない（1万本 overview の比較が pass）。列の容量の定数は変えない（変えるなら理由を PROGRESS に書く）。
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Build -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views horizon,overview -GameArgs banana-count=1000000 -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-BVH-QUEUE-MAIN`
+- verify: `python -c "import re,sys,glob;fs=glob.glob(r'.harness/runs/scene-capture/SCN-MEGA-FIX-BVH-QUEUE-MAIN/*.Game.log');vals=[x for f in fs for x in re.findall(r'bvh_overflow=(\d+)',open(f,encoding='utf-8',errors='replace').read())];sys.exit(0 if fs and vals and all(v=='0' for v in vals) else 1)"`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Build -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views overview -GameArgs banana-count=10000 -CompareWith .harness/runs/scene-capture/SCN-MEGA-BASE -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-BVH-QUEUE-MAIN-det`
+- paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Library/Core/Private/MegaGeometry, Library/Core/Public/MegaGeometry, Assets/Shaders, TASKS.md, PROGRESS.md
+- notes: 2026-10-14 親が足した（SCN-MEGA-LAYOUT-SEA の反復 1 の調べから）。危険地帯（描画）。性能はこの項目では測らず、SCN-MEGA-ACCEPT-1M で判断する。
+
+## SCN-MEGA-FIX-BVH-QUEUE-VSM: 影（VSM）の BVH のたどりも LOD で早く打ち切り、列を溢れさせない
+- status: todo
+- done-when: 100万本の海で、影の BVH の列も溢れる（`VSM_MEGA_CULL overflow=16379125`）。SCN-MEGA-FIX-BVH-QUEUE-MAIN と同じ考え方で、太陽のクリップマップの段と点光源の面ごとの投影の LOD の誤差が閾値より小さい節で降りるのを止める。合格: 100万本の horizon・overview の撮影のログで `VSM_MEGA_CULL overflow=0`、撮影を開いて遠くのバナナにも影が落ち、近くの影が欠けない（起動画面の比較が pass）。
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Build -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views horizon,overview -GameArgs banana-count=1000000 -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-BVH-QUEUE-VSM`
+- verify: `python -c "import re,sys,glob;fs=glob.glob(r'.harness/runs/scene-capture/SCN-MEGA-FIX-BVH-QUEUE-VSM/*.Game.log');vals=[x for f in fs for x in re.findall(r'VSM_MEGA_CULL.*?overflow=(\d+)',open(f,encoding='utf-8',errors='replace').read())];sys.exit(0 if fs and vals and all(v=='0' for v in vals) else 1)"`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-MEGA-FIX-BVH-QUEUE-VSM`
+- paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Library/Core/Private/MegaGeometry, Library/Core/Public/MegaGeometry, Assets/Shaders, TASKS.md, PROGRESS.md
+- notes: 2026-10-14 親が足した（SCN-MEGA-LAYOUT-SEA の反復 1 の調べから）。危険地帯（描画・影）。
+
 ## SCN-MEGA-LAYOUT-SEA: 地平線までのバナナの海を作る
 - status: todo
 - done-when: 距離で密度を落とす円盤（近 50/m²・中 10/m²・遠 2/m² 程度、半径 300〜400 m、半径と内訳を `MEGA_BANANAS_LAYOUT` に出す）をバッチで置く。配置の計算は O(N)（床全体の格子は持たない）。`horizon`・`overview` の撮影を開いて、床の帯・床の端・格子の並びが見えない。カメラの far が半径を超える。1万本では同じ形の小さな円盤。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Build -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views horizon,overview -GameArgs banana-count=1000000 -OutDir .harness/runs/scene-capture/SCN-MEGA-LAYOUT-SEA`
 - paths: Game/GameModes/MegaBananas, Game/Scenes/SceneCatalog.h, TASKS.md, PROGRESS.md
-- notes: （ECS 計画の対応）散布の Object で置き、予算つきで作る。 2026-10-12 親: 計測の見直し（ユーザーの指摘「節目に計測を入れても意味があるのかを考えるべき」。計測ごとに、問い・結果で変わる判断・測らずに分からないかの 3 点を書き、書けないものは置かない。Sol の批評を反映）。3 s の上限は、超えたときに変える判断が無いので外した。 2026-10-14 親: 反復 13（run 20261014-061910）は壁時計（40 分）で止まり、途中の保存（755a3a19）を残した。そのとき MegaBananasRoutine.cpp の行末が LF に変わっていたので CRLF に戻した（18b1bde6）。続きはこの保存から。編集した既存のファイルは行末（CRLF）を保ち、コミットの前に numstat を 2 通り比べる。
+- notes: （ECS 計画の対応）散布の Object で置き、予算つきで作る。 2026-10-12 親: 計測の見直し（ユーザーの指摘「節目に計測を入れても意味があるのかを考えるべき」。計測ごとに、問い・結果で変わる判断・測らずに分からないかの 3 点を書き、書けないものは置かない。Sol の批評を反映）。3 s の上限は、超えたときに変える判断が無いので外した。 2026-10-14 親: 反復 13（run 20261014-061910）は壁時計（40 分）で止まり、途中の保存（755a3a19）を残した。そのとき MegaBananasRoutine.cpp の行末が LF に変わっていたので CRLF に戻した（18b1bde6）。続きはこの保存から。編集した既存のファイルは行末（CRLF）を保ち、コミットの前に numstat を 2 通り比べる。 2026-10-14 親: 案 2。配置は done-when どおりで、遠景が描かれないのは描画の BVH の列の溢れ。直前の SCN-MEGA-FIX-BVH-QUEUE-MAIN・VSM の後に、同じ撮影を見直して閉じる（配置のコードは変えなくてよい見込み）。
 
 ## SCN-MEGA-LAYOUT-MOUNDS: 落とし込みで積んだ大きな山を数個置く
 - status: todo
