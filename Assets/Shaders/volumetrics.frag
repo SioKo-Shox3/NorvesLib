@@ -6,6 +6,8 @@ layout(location = 0) out vec4 outColor;
 layout(set = 0, binding = 0) uniform sampler2D sceneDepthTexture;
 layout(set = 0, binding = 1) uniform sampler2D skyAtmosphereRadiance;
 layout(set = 0, binding = 3) uniform sampler2DArray cascadedShadowMap;
+// 空の透過率 LUT（横=天頂角の余弦 0〜1、縦=高度の割合）。空気遠近が有効なときだけ読む
+layout(set = 0, binding = 4) uniform sampler2D skyTransmittanceLut;
 
 layout(std140, set = 0, binding = 2) uniform VolumetricsParams
 {
@@ -19,7 +21,13 @@ layout(std140, set = 0, binding = 2) uniform VolumetricsParams
     mat4 cascadeView[4];
     mat4 cascadeProjection[4];
     vec4 cascadeSplitDistances[2];
+    vec4 aerialPerspective; // x=有効なら 1, y=距離の倍率, z=掛け始める距離(m), w=観測点の高度の透過率 LUT の v
+    vec4 rayleighExtinctionAndScaleHeight; // rgb=高度 0 の消散係数(1/m), w=スケールハイト(m)
+    vec4 mieExtinctionAndScaleHeight; // x=高度 0 の消散係数(1/m), y=スケールハイト(m)
 } params;
+
+// 地平線より下の視線は空の放射輝度 LUT では地面を向くので、この仰角の正弦まで持ち上げた空の色を使う
+const float kAerialPerspectiveMinSkyDirectionY = 0.035;
 
 bool IsFiniteFloat(float value)
 {
@@ -243,6 +251,77 @@ vec3 IntegrateDirectionalSingleScattering(vec3 rayDirection, float rayDistance)
     return scatteringRadiance;
 }
 
+// 高度の指数密度 exp(-h/H) を、高さ originHeight から鉛直成分 directionY の向きへ
+// startDistance〜endDistance の区間で積分する（m）
+float IntegrateExponentialDensity(float originHeight,
+                                  float directionY,
+                                  float startDistance,
+                                  float endDistance,
+                                  float scaleHeight)
+{
+    float segmentLength = endDistance - startDistance;
+    if (!(segmentLength > 0.0) || !(scaleHeight > 0.0))
+    {
+        return 0.0;
+    }
+    float startHeight = originHeight + directionY * startDistance;
+    float startDensity = exp(clamp(-startHeight / scaleHeight, -80.0, 80.0));
+    float exponentChange = clamp(directionY * segmentLength / scaleHeight, -80.0, 80.0);
+    if (abs(exponentChange) < 1.0e-3)
+    {
+        return startDensity * segmentLength * (1.0 - 0.5 * exponentChange);
+    }
+    return startDensity * segmentLength * (1.0 - exp(-exponentChange)) / exponentChange;
+}
+
+// 不透明物までの視線の空気遠近。戻り値は散乱光（事前露出の前）、outTransmittance は RGB の透過率。
+// 透過率は空の媒質（Rayleigh・Mie の消散係数と高度の指数密度）を区間で積分して求める。散乱光は、同じ向きの
+// 大気の外までの散乱光（空の放射輝度 LUT）を、区間で散乱した割合 (1 - T) / (1 - T_大気の外まで)（透過率 LUT）で配る。
+vec3 ComputeAerialPerspective(vec3 rayDirection, float rayDistance, out vec3 outTransmittance)
+{
+    outTransmittance = vec3(1.0);
+    float startDistance = max(params.aerialPerspective.z, 0.0);
+    if (params.aerialPerspective.x <= 0.5 || !(rayDistance > startDistance))
+    {
+        return vec3(0.0);
+    }
+
+    float originHeight = params.cameraPositionAndPreExposure.y;
+    float rayleighDensity = IntegrateExponentialDensity(originHeight,
+                                                        rayDirection.y,
+                                                        startDistance,
+                                                        rayDistance,
+                                                        params.rayleighExtinctionAndScaleHeight.w);
+    float mieDensity = IntegrateExponentialDensity(originHeight,
+                                                   rayDirection.y,
+                                                   startDistance,
+                                                   rayDistance,
+                                                   params.mieExtinctionAndScaleHeight.y);
+    vec3 opticalDepth = params.aerialPerspective.y *
+                        (params.rayleighExtinctionAndScaleHeight.rgb * rayleighDensity +
+                         vec3(params.mieExtinctionAndScaleHeight.x * mieDensity));
+    if (!IsFiniteFloat(opticalDepth.r) || !IsFiniteFloat(opticalDepth.g) ||
+        !IsFiniteFloat(opticalDepth.b))
+    {
+        return vec3(0.0);
+    }
+    outTransmittance = exp(-clamp(opticalDepth, vec3(0.0), vec3(80.0)));
+
+    vec3 skyDirection = normalize(vec3(rayDirection.x,
+                                       max(rayDirection.y, kAerialPerspectiveMinSkyDirectionY),
+                                       rayDirection.z));
+    vec3 skyRadiance = max(texture(skyAtmosphereRadiance, EquirectangularUV(skyDirection)).rgb,
+                           vec3(0.0));
+    vec3 fullTransmittance = textureLod(skyTransmittanceLut,
+                                        vec2(skyDirection.y, params.aerialPerspective.w),
+                                        0.0).rgb;
+    vec3 scatteredFraction = clamp((vec3(1.0) - outTransmittance) /
+                                       max(vec3(1.0) - fullTransmittance, vec3(1.0e-3)),
+                                   vec3(0.0),
+                                   vec3(1.0));
+    return skyRadiance * scatteredFraction;
+}
+
 void main()
 {
     float depth = textureLod(sceneDepthTexture, fragUV, 0.0).r;
@@ -276,22 +355,35 @@ void main()
         rayDirection.y,
         rayDistance);
     float opacity = clamp(1.0 - transmittance, 0.0, 1.0);
-    if (opacity <= 0.0)
+    vec4 fogColor = vec4(0.0);
+    if (opacity > 0.0)
     {
-        outColor = vec4(0.0);
+        vec3 fogRadiance = params.fallbackFogColor.rgb;
+        if (params.fogParameters.w > 0.5)
+        {
+            fogRadiance = texture(skyAtmosphereRadiance,
+                                  EquirectangularUV(rayDirection)).rgb;
+        }
+        fogRadiance = max(fogRadiance, vec3(0.0)) * params.cameraPositionAndPreExposure.w;
+        vec3 singleScatteringRadiance = IntegrateDirectionalSingleScattering(
+            rayDirection,
+            rayDistance) * params.cameraPositionAndPreExposure.w;
+        singleScatteringRadiance = min(singleScatteringRadiance, vec3(65504.0));
+        fogColor = vec4(fogRadiance * opacity + singleScatteringRadiance, opacity);
+    }
+    if (params.aerialPerspective.x <= 0.5)
+    {
+        outColor = fogColor;
         return;
     }
 
-    vec3 fogRadiance = params.fallbackFogColor.rgb;
-    if (params.fogParameters.w > 0.5)
-    {
-        fogRadiance = texture(skyAtmosphereRadiance,
-                              EquirectangularUV(rayDirection)).rgb;
-    }
-    fogRadiance = max(fogRadiance, vec3(0.0)) * params.cameraPositionAndPreExposure.w;
-    vec3 singleScatteringRadiance = IntegrateDirectionalSingleScattering(
-        rayDirection,
-        rayDistance) * params.cameraPositionAndPreExposure.w;
-    singleScatteringRadiance = min(singleScatteringRadiance, vec3(65504.0));
-    outColor = vec4(fogRadiance * opacity + singleScatteringRadiance, opacity);
+    // 地面の近くに溜まる高さフォグを手前、空気遠近をその奥として重ねる。合成は 1 - アルファで
+    // 下の色を薄めるので、空気遠近の透過率は RGB の平均で掛ける（色は散乱光の側が持つ）。
+    vec3 aerialTransmittance;
+    vec3 aerialScattering = ComputeAerialPerspective(rayDirection, rayDistance, aerialTransmittance) *
+                            params.cameraPositionAndPreExposure.w;
+    aerialScattering = min(aerialScattering, vec3(65504.0));
+    float aerialMeanTransmittance = clamp(dot(aerialTransmittance, vec3(1.0 / 3.0)), 0.0, 1.0);
+    outColor = vec4(fogColor.rgb + aerialScattering * transmittance,
+                    clamp(1.0 - transmittance * aerialMeanTransmittance, 0.0, 1.0));
 }

@@ -932,4 +932,30 @@ namespace NorvesLib::Core::Rendering
         return std::isfinite(preExposedLuminance) &&
             preExposedLuminance <= kFp16Max * safetyFraction;
     }
+
+    AerialPerspectiveParameters SanitizeAerialPerspectiveParameters(
+        const AerialPerspectiveParameters& parameters)
+    {
+        AerialPerspectiveParameters sanitized = parameters;
+        if (!std::isfinite(sanitized.DistanceScale) || sanitized.DistanceScale <= 0.0f)
+        {
+            sanitized.bEnabled = false;
+            sanitized.DistanceScale = 1.0f;
+        }
+        if (!std::isfinite(sanitized.StartDistanceMeters) || sanitized.StartDistanceMeters < 0.0f)
+        {
+            sanitized.StartDistanceMeters = 0.0f;
+        }
+        return sanitized;
+    }
+
+    AtmosphereGroundExtinction GetAtmosphereGroundExtinction()
+    {
+        AtmosphereGroundExtinction extinction;
+        extinction.Rayleigh = Math::Vector3(kRayleighScatteringR,
+                                            kRayleighScatteringG,
+                                            kRayleighScatteringB);
+        extinction.Mie = kMieScattering + kMieAbsorption;
+        return extinction;
+    }
 } // namespace NorvesLib::Core::Rendering

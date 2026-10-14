@@ -102,9 +102,13 @@ namespace Game::GameModes
         // 0.12 : 0.06 : 0.03）の赤みに寄せ、足元で灰色に浮かないようにする
         constexpr float kCliffTint[3] = {1.0f, 0.75f, 0.55f};
         // 高さフォグ: 盆地の床（高さ 0）での密度[1/m]と、上へ向かって薄くなる割合[1/m]。
-        // 1 km 先の稜線が霞みすぎず、遠近が分かる程度（地面すれすれの水平の 1 km で透過率 約 0.74）
-        constexpr float kFogDensity = 0.0003f;
-        constexpr float kFogFalloff = 0.012f;
+        // 遠景の霞は空気遠近が受け持つので、盆地の床に薄く溜まる砂ぼこりの層にする
+        constexpr float kFogDensity = 0.00015f;
+        constexpr float kFogFalloff = 0.02f;
+        // 空気遠近: 物理空の媒質の距離を 9 倍に数え、メサの輪（330〜680 m）が空の色へ寄り、外周の稜線が溶ける。
+        // 50 m より手前は掛けない
+        constexpr float kAerialPerspectiveDistanceScale = 9.0f;
+        constexpr float kAerialPerspectiveStartDistance = 50.0f;
         // カメラの遠方面[m]。2 km 四方の対角（約 2.8 km）の先まで描く
         constexpr float kFarPlane = 3200.0f;
         // 太陽の影の到達距離[m]。盆地の中から周りのメサ（半径 330〜680 m の輪）の手前側と、その間の起伏・岩まで影を落とす
@@ -144,7 +148,7 @@ namespace Game::GameModes
         // 1 層目・2 層目・3 層目の 3 枚ずつ
         constexpr uint32_t kTerrainTextureCount = 9;
 
-        /// 物理空・太陽・高さフォグ
+        /// 物理空・太陽・高さフォグ・空気遠近
         void ApplyEnvironment(GameModeContext &ctx)
         {
             SkyAtmosphereParameters sky = MakeDefaultSkyAtmosphereParameters();
@@ -159,16 +163,23 @@ namespace Game::GameModes
             fog.BaseHeight = 0.0f;
             fog.HeightFalloffPerUnit = kFogFalloff;
             ctx.EngineRef.GetRenderWorld().SetVolumetricFogParameters(fog);
+
+            AerialPerspectiveParameters aerialPerspective;
+            aerialPerspective.bEnabled = true;
+            aerialPerspective.DistanceScale = kAerialPerspectiveDistanceScale;
+            aerialPerspective.StartDistanceMeters = kAerialPerspectiveStartDistance;
+            ctx.EngineRef.GetRenderWorld().SetAerialPerspective(aerialPerspective);
             ctx.EngineRef.GetRenderWorld().SetStaticEnvironmentIntensityScale(1.0f);
             ctx.EngineRef.GetRenderWorld().SetStaticEnvironmentMaxRadiance(0.0f);
             ctx.EngineRef.GetRenderWorld().SetSunShadowMaxDistance(kSunShadowMaxDistance);
         }
 
-        /// 空・霧の設定を、ほかのモードへ持ち越さないよう既定へ戻す
+        /// 空・霧・空気遠近の設定を、ほかのモードへ持ち越さないよう既定へ戻す
         void ResetEnvironment(GameModeContext &ctx)
         {
             ctx.EngineRef.GetRenderWorld().SetSkyAtmosphere(MakeDefaultSkyAtmosphereParameters());
             ctx.EngineRef.GetRenderWorld().SetVolumetricFogParameters(MakeDefaultVolumetricFogParameters());
+            ctx.EngineRef.GetRenderWorld().SetAerialPerspective(AerialPerspectiveParameters{});
             ctx.EngineRef.GetRenderWorld().SetStaticEnvironmentIntensityScale(1.0f);
             ctx.EngineRef.GetRenderWorld().SetStaticEnvironmentMaxRadiance(0.0f);
             ctx.EngineRef.GetRenderWorld().SetSunShadowMaxDistance(0.0f);

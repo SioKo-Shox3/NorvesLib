@@ -383,6 +383,13 @@ namespace NorvesLib::Core::Rendering
         void SetSunShadowMaxDistance(float distance);
         float GetSunShadowMaxDistance() const { return m_SunShadowMaxDistance; }
 
+        /**
+         * @brief 不透明物に掛ける空気遠近（遠景の霞）を設定する（GameThread）
+         * @param parameters sanitize して保持し、次のFramePacketへ値コピーする
+         */
+        void SetAerialPerspective(const AerialPerspectiveParameters& parameters);
+        const AerialPerspectiveParameters& GetAerialPerspective() const { return m_AerialPerspective; }
+
         /** @brief 決定的な撮影にする（GameThread）。FramePacket の経過時間を 1/60 秒に固定する */
         void SetDeterministicCapture(bool bEnabled) { m_bDeterministicCapture = bEnabled; }
 
@@ -611,6 +618,7 @@ namespace NorvesLib::Core::Rendering
         float m_StaticEnvironmentIntensityScale = 1.0f;
         float m_StaticEnvironmentMaxRadiance = 0.0f;
         float m_SunShadowMaxDistance = 0.0f;
+        AerialPerspectiveParameters m_AerialPerspective;
         bool m_bRTGIEnabled = true;
         uint64_t m_SceneRevision = 1u;
         uint64_t m_LightRevision = 1u;

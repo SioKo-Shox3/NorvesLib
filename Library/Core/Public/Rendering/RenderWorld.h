@@ -209,6 +209,15 @@ namespace NorvesLib::Core::Rendering
         void SetSunShadowMaxDistance(float distance);
 
         /**
+         * @brief 不透明物に掛ける空気遠近（遠景の霞）を設定する（GameThread）
+         *
+         * 空（SetSkyAtmosphere）が有効なときだけ効く。次の FramePacket へ値コピーし、
+         * RenderThread の VolumetricsPass が空の LUT から霞を求めて不透明物に掛ける。
+         * @param parameters bEnabled が偽（既定）なら掛けない
+         */
+        void SetAerialPerspective(const AerialPerspectiveParameters& parameters);
+
+        /**
          * @brief 決定的な撮影（--capture-deterministic）にする（GameThread）
          *
          * 有効な間、FramePacket の経過時間を 1/60 秒に固定する。起動の初期化で一度だけ呼ぶ。

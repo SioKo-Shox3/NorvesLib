@@ -574,6 +574,8 @@ namespace NorvesLib::Core::Rendering
         // 太陽の影を受ける最大のカメラからの距離（m）。CSM の分割の奥と VSM のクリップマップの印付けの範囲の両方に効く。
         // 0 は ShadowMapPass の設定（ShadowMapPassSettings::MaxShadowDistance、既定 80 m）のまま
         float SunShadowMaxDistance = 0.0f;
+        // 不透明物に掛ける空気遠近（遠景の霞）。空が有効なときだけ VolumetricsPass が掛ける
+        AerialPerspectiveParameters AerialPerspective;
 
         // フォグ設定
         bool bFogEnabled = false;
@@ -599,6 +601,7 @@ namespace NorvesLib::Core::Rendering
             StaticEnvironmentIntensityScale = 1.0f;
             StaticEnvironmentMaxRadiance = 0.0f;
             SunShadowMaxDistance = 0.0f;
+            AerialPerspective = AerialPerspectiveParameters{};
         }
 
         void SetDDGIVolumeParameters(const DDGIVolumeParameters& parameters)

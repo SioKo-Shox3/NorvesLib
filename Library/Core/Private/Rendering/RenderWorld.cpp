@@ -338,6 +338,11 @@ namespace NorvesLib::Core::Rendering
         m_RenderingCoordinator.SetSunShadowMaxDistance(distance);
     }
 
+    void RenderWorld::SetAerialPerspective(const AerialPerspectiveParameters& parameters)
+    {
+        m_RenderingCoordinator.SetAerialPerspective(parameters);
+    }
+
     void RenderWorld::SetDeterministicCapture(bool bEnabled)
     {
         m_RenderingCoordinator.SetDeterministicCapture(bEnabled);

@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "IViewPass.h"
+#include "Rendering/SkyAtmosphere.h"
 #include "Rendering/VolumetricFog.h"
 #include "Rendering/RenderGraph/IRenderGraphPass.h"
 #include "RHI/IDescriptorSet.h"
@@ -34,6 +35,8 @@ namespace NorvesLib::Core::Rendering
         RHI::ShaderPtr m_FragmentShader;
         RHI::SamplerPtr m_SceneDepthSampler;
         RHI::SamplerPtr m_SkyRadianceSampler;
+        // 空の透過率 LUT（横が天頂角の余弦）を引く線形・端で止めるサンプラー
+        RHI::SamplerPtr m_SkyTransmittanceSampler;
         // 共有の記述子セットのレイアウト（定数と記述子セットは Execute ごとにフレームの持ち主から借りる）
         RHI::DescriptorSetLayoutPtr m_DescriptorSetLayout;
         // 持ち主の無い文脈（RenderingCoordinator を通さない検査）で作った使い回さない定数と記述子セット。
@@ -47,8 +50,12 @@ namespace NorvesLib::Core::Rendering
         RGResourceHandle m_SceneColorHandle;
         RGResourceHandle m_SceneDepthHandle;
         RGResourceHandle m_SkyAtmosphereRadianceHandle;
+        RGResourceHandle m_SkyAtmosphereTransmittanceHandle;
         RGResourceHandle m_CascadedShadowMapHandle;
         VolumetricFogParameters m_FogParameters;
+        // このフレームの空気遠近（空が無効なら bEnabled を偽にしてある）と空のパラメータ
+        AerialPerspectiveParameters m_AerialPerspective;
+        SkyAtmosphereParameters m_SkyParameters;
 
         uint32_t m_CurrentWidth = 0;
         uint32_t m_CurrentHeight = 0;

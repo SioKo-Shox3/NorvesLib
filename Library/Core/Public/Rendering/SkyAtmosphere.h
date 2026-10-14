@@ -37,6 +37,39 @@ namespace NorvesLib::Core::Rendering
     };
 
     /**
+     * @brief 不透明物に掛ける空気遠近（遠景の霞）のパラメータ
+     *
+     * 空が有効なときだけ効く。カメラから不透明物までの視線について、空の媒質（Rayleigh・Mie の
+     * 消散係数と高度の指数密度）の透過率と、空の放射輝度 LUT・透過率 LUT から求めた散乱光を
+     * VolumetricsPass が掛ける。距離は StartDistanceMeters から先だけを数え、DistanceScale 倍する。
+     */
+    struct AerialPerspectiveParameters
+    {
+        bool bEnabled = false;
+        // 視線の距離に掛ける倍率（1 で物理どおり。大きいほど近くから霞む）
+        float DistanceScale = 1.0f;
+        // これより近い所には霞を掛けない（m）
+        float StartDistanceMeters = 0.0f;
+    };
+
+    AerialPerspectiveParameters SanitizeAerialPerspectiveParameters(
+        const AerialPerspectiveParameters& parameters);
+
+    /**
+     * @brief 空の媒質の高度 0 での消散係数（1/m）
+     *
+     * Rayleigh は RGB（散乱のみで吸収なし）、Mie は散乱と吸収の和で波長によらない。
+     * オゾンは地表付近で密度 0 なので含めない。
+     */
+    struct AtmosphereGroundExtinction
+    {
+        Math::Vector3 Rayleigh = Math::Vector3::Zero;
+        float Mie = 0.0f;
+    };
+
+    AtmosphereGroundExtinction GetAtmosphereGroundExtinction();
+
+    /**
      * @brief 空の評価結果
      *
      * Radianceは観測点から見た放射輝度（cd/m^2、RGB）。MeanSunTransmittanceは地表での

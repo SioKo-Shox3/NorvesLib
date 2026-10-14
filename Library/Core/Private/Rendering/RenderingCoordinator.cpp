@@ -216,6 +216,9 @@ namespace NorvesLib::Core::Rendering
             hash = HashRevisionValue(hash, packet.Scene.StaticEnvironmentIntensityScale);
             hash = HashRevisionValue(hash, packet.Scene.StaticEnvironmentMaxRadiance);
             hash = HashRevisionValue(hash, packet.Scene.SunShadowMaxDistance);
+            hash = HashRevisionValue(hash, packet.Scene.AerialPerspective.bEnabled);
+            hash = HashRevisionValue(hash, packet.Scene.AerialPerspective.DistanceScale);
+            hash = HashRevisionValue(hash, packet.Scene.AerialPerspective.StartDistanceMeters);
 
             const SkyAtmosphereParameters& sky = packet.Scene.SkyAtmosphere;
             hash = HashRevisionValue(hash, sky.bEnabled);
@@ -4266,6 +4269,7 @@ namespace NorvesLib::Core::Rendering
         packet.Scene.StaticEnvironmentIntensityScale = m_StaticEnvironmentIntensityScale;
         packet.Scene.StaticEnvironmentMaxRadiance = m_StaticEnvironmentMaxRadiance;
         packet.Scene.SunShadowMaxDistance = m_SunShadowMaxDistance;
+        packet.Scene.AerialPerspective = m_AerialPerspective;
         packet.bRTGIEnabled = m_bRTGIEnabled;
     }
 
@@ -6208,6 +6212,11 @@ namespace NorvesLib::Core::Rendering
     void RenderingCoordinator::SetSunShadowMaxDistance(float distance)
     {
         m_SunShadowMaxDistance = std::isfinite(distance) && distance > 0.0f ? distance : 0.0f;
+    }
+
+    void RenderingCoordinator::SetAerialPerspective(const AerialPerspectiveParameters& parameters)
+    {
+        m_AerialPerspective = SanitizeAerialPerspectiveParameters(parameters);
     }
 
     uint64_t RenderingCoordinator::RegisterCamera(const CameraProxy &camera)

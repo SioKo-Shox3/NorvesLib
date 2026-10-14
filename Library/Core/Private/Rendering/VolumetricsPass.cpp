@@ -31,9 +31,15 @@ namespace NorvesLib::Core::Rendering
             float CascadeView[PhysicalLightingShadowCascadeCount][16];
             float CascadeProjection[PhysicalLightingShadowCascadeCount][16];
             float CascadeSplitDistances[8];
+            // x=空気遠近が有効なら 1、y=距離の倍率、z=掛け始める距離（m）、w=観測点の高度の透過率 LUT の v
+            float AerialPerspective[4];
+            // rgb=高度 0 の Rayleigh の消散係数（1/m）、w=Rayleigh のスケールハイト（m）
+            float RayleighExtinctionAndScaleHeight[4];
+            // x=高度 0 の Mie の消散係数（1/m）、y=Mie のスケールハイト（m）
+            float MieExtinctionAndScaleHeight[4];
         };
 
-        static_assert(sizeof(GPUVolumetricsParams) == 704u);
+        static_assert(sizeof(GPUVolumetricsParams) == 752u);
 
         RHI::DescriptorSetDesc CreateVolumetricsDescriptorSetDesc()
         {
@@ -62,6 +68,12 @@ namespace NorvesLib::Core::Rendering
             shadowMapBinding.type = RHI::ResourceBindType::CombinedImageSampler;
             shadowMapBinding.stages = RHI::ShaderStage::Pixel;
             desc.bindings.push_back(shadowMapBinding);
+
+            RHI::DescriptorBinding skyTransmittanceBinding;
+            skyTransmittanceBinding.binding = 4u;
+            skyTransmittanceBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+            skyTransmittanceBinding.stages = RHI::ShaderStage::Pixel;
+            desc.bindings.push_back(skyTransmittanceBinding);
             return desc;
         }
 
@@ -247,9 +259,14 @@ namespace NorvesLib::Core::Rendering
         skyRadianceSamplerDesc.addressW = RHI::TextureAddressMode::Clamp;
         m_SkyRadianceSampler = m_Device->CreateSampler(skyRadianceSamplerDesc);
 
+        RHI::SamplerDesc skyTransmittanceSamplerDesc = skyRadianceSamplerDesc;
+        skyTransmittanceSamplerDesc.addressU = RHI::TextureAddressMode::Clamp;
+        m_SkyTransmittanceSampler = m_Device->CreateSampler(skyTransmittanceSamplerDesc);
+
         // 記述子セットのレイアウト（同じ形のパスと共有する 1 つをデバイスから引く。セットと定数は Execute ごとに借りる）
         m_DescriptorSetLayout = m_Device->GetOrCreateDescriptorSetLayout(CreateVolumetricsDescriptorSetDesc());
-        if (!m_SceneDepthSampler || !m_SkyRadianceSampler || !m_DescriptorSetLayout)
+        if (!m_SceneDepthSampler || !m_SkyRadianceSampler || !m_SkyTransmittanceSampler ||
+            !m_DescriptorSetLayout)
         {
             NORVES_LOG_ERROR("VolumetricsPass", "サンプラか記述子セットのレイアウトを作れませんでした");
             Shutdown();
@@ -268,6 +285,7 @@ namespace NorvesLib::Core::Rendering
         m_UnownedDescriptorSets.clear();
         m_UnownedBuffers.clear();
         m_DescriptorSetLayout.reset();
+        m_SkyTransmittanceSampler.reset();
         m_SkyRadianceSampler.reset();
         m_SceneDepthSampler.reset();
         m_FragmentShader.reset();
@@ -276,6 +294,7 @@ namespace NorvesLib::Core::Rendering
         m_SceneColorHandle = {};
         m_SceneDepthHandle = {};
         m_SkyAtmosphereRadianceHandle = {};
+        m_SkyAtmosphereTransmittanceHandle = {};
         m_CascadedShadowMapHandle = {};
         m_CurrentWidth = 0u;
         m_CurrentHeight = 0u;
@@ -297,14 +316,23 @@ namespace NorvesLib::Core::Rendering
         m_SceneColorHandle = {};
         m_SceneDepthHandle = {};
         m_SkyAtmosphereRadianceHandle = {};
+        m_SkyAtmosphereTransmittanceHandle = {};
         m_CascadedShadowMapHandle = {};
 
         const ViewRenderContext* context = builder.GetContext();
-        m_FogParameters = context && context->SnapshotScene
-                              ? SanitizeVolumetricFogParameters(
-                                    context->SnapshotScene->VolumetricFog)
+        const SceneProxy* snapshotScene = context ? context->SnapshotScene : nullptr;
+        m_FogParameters = snapshotScene
+                              ? SanitizeVolumetricFogParameters(snapshotScene->VolumetricFog)
                               : MakeDefaultVolumetricFogParameters();
-        if (!m_FogParameters.bEnabled)
+        m_SkyParameters = snapshotScene
+                              ? SanitizeSkyAtmosphereParameters(snapshotScene->SkyAtmosphere)
+                              : SkyAtmosphereParameters{};
+        m_AerialPerspective = snapshotScene
+                                  ? SanitizeAerialPerspectiveParameters(snapshotScene->AerialPerspective)
+                                  : AerialPerspectiveParameters{};
+        // 空気遠近は空の LUT から求めるので、空が無効なら掛けない
+        m_AerialPerspective.bEnabled = m_AerialPerspective.bEnabled && m_SkyParameters.bEnabled;
+        if (!m_FogParameters.bEnabled && !m_AerialPerspective.bEnabled)
         {
             return;
         }
@@ -324,6 +352,15 @@ namespace NorvesLib::Core::Rendering
                                    RHI::ResourceState::ShaderResource))
         {
             m_SkyAtmosphereRadianceHandle = skyRadianceHandle.ToResourceHandle();
+        }
+
+        RGTextureHandle skyTransmittanceHandle;
+        if (m_AerialPerspective.bEnabled &&
+            builder.TryReadTexture(RenderGraphResourceNames::SkyAtmosphereTransmittance,
+                                   skyTransmittanceHandle,
+                                   RHI::ResourceState::ShaderResource))
+        {
+            m_SkyAtmosphereTransmittanceHandle = skyTransmittanceHandle.ToResourceHandle();
         }
 
         RGTextureHandle cascadedShadowMapHandle;
@@ -353,6 +390,7 @@ namespace NorvesLib::Core::Rendering
         {
             m_SceneDepthHandle = {};
             m_SkyAtmosphereRadianceHandle = {};
+            m_SkyAtmosphereTransmittanceHandle = {};
             m_CascadedShadowMapHandle = {};
             return;
         }
@@ -363,7 +401,7 @@ namespace NorvesLib::Core::Rendering
     void VolumetricsPass::Execute(RenderGraphResources& resources,
                                   ViewRenderContext& context)
     {
-        if (!m_FogParameters.bEnabled ||
+        if ((!m_FogParameters.bEnabled && !m_AerialPerspective.bEnabled) ||
             !m_SceneColorHandle.IsValid() ||
             !m_SceneDepthHandle.IsValid())
         {
@@ -375,6 +413,10 @@ namespace NorvesLib::Core::Rendering
         RHI::TexturePtr skyRadianceTexture = m_SkyAtmosphereRadianceHandle.IsValid()
                                                  ? resources.GetTexture(m_SkyAtmosphereRadianceHandle)
                                                  : RHI::TexturePtr{};
+        RHI::TexturePtr skyTransmittanceTexture =
+            m_SkyAtmosphereTransmittanceHandle.IsValid()
+                ? resources.GetTexture(m_SkyAtmosphereTransmittanceHandle)
+                : RHI::TexturePtr{};
         RHI::TexturePtr cascadedShadowMapTexture = m_CascadedShadowMapHandle.IsValid()
                                                        ? resources.GetTexture(m_CascadedShadowMapHandle)
                                                        : RHI::TexturePtr{};
@@ -442,7 +484,8 @@ namespace NorvesLib::Core::Rendering
             params.CameraForwardAndScatteringEnabled[2] =
                 static_cast<float>(activeCamera->ForwardZ * inverseForwardLength);
         }
-        params.FogParameters[0] = m_FogParameters.DensityAtBaseHeight;
+        // 霧が無効で空気遠近だけ掛けるときは、霧の密度を 0 にして霧の分を消す
+        params.FogParameters[0] = m_FogParameters.bEnabled ? m_FogParameters.DensityAtBaseHeight : 0.0f;
         params.FogParameters[1] = m_FogParameters.BaseHeight;
         params.FogParameters[2] = m_FogParameters.HeightFalloffPerUnit;
         params.FogParameters[3] = skyRadianceTexture ? 1.0f : 0.0f;
@@ -452,6 +495,34 @@ namespace NorvesLib::Core::Rendering
         params.FallbackFogColor[1] = scene ? SafeFogColorChannel(scene->FogColorG) : 0.0f;
         params.FallbackFogColor[2] = scene ? SafeFogColorChannel(scene->FogColorB) : 0.0f;
         params.FallbackFogColor[3] = 1.0f;
+
+        // 空気遠近は空の放射輝度 LUT と透過率 LUT の両方があるときだけ掛ける
+        const bool bAerialPerspectiveAvailable = m_AerialPerspective.bEnabled &&
+            skyRadianceTexture && skyTransmittanceTexture &&
+            skyTransmittanceTexture->GetHeight() > 0u;
+        if (bAerialPerspectiveAvailable)
+        {
+            const uint32_t transmittanceHeight = skyTransmittanceTexture->GetHeight();
+            // 透過率 LUT の行は高度の割合 0〜1 を両端の texel の中心に置く（SkyAtmospherePass）。
+            // 空の放射輝度 LUT と同じ観測点の高度の行を引く。
+            const float observerAltitudeFraction = std::clamp(
+                SkyAtmosphereModel::ObserverAltitudeMeters / m_SkyParameters.AtmosphereHeightMeters,
+                0.0f,
+                1.0f);
+            const AtmosphereGroundExtinction extinction = GetAtmosphereGroundExtinction();
+            params.AerialPerspective[0] = 1.0f;
+            params.AerialPerspective[1] = m_AerialPerspective.DistanceScale;
+            params.AerialPerspective[2] = m_AerialPerspective.StartDistanceMeters;
+            params.AerialPerspective[3] =
+                (observerAltitudeFraction * static_cast<float>(transmittanceHeight - 1u) + 0.5f) /
+                static_cast<float>(transmittanceHeight);
+            params.RayleighExtinctionAndScaleHeight[0] = extinction.Rayleigh.x;
+            params.RayleighExtinctionAndScaleHeight[1] = extinction.Rayleigh.y;
+            params.RayleighExtinctionAndScaleHeight[2] = extinction.Rayleigh.z;
+            params.RayleighExtinctionAndScaleHeight[3] = m_SkyParameters.RayleighScaleHeightMeters;
+            params.MieExtinctionAndScaleHeight[0] = extinction.Mie;
+            params.MieExtinctionAndScaleHeight[1] = m_SkyParameters.MieScaleHeightMeters;
+        }
 
         const ViewportRenderPlan* activeViewport = context.CurrentViewport;
         const bool bPhysicalLightingMatches = activeViewport &&
@@ -528,6 +599,10 @@ namespace NorvesLib::Core::Rendering
                                    skyRadianceTexture ? m_SkyRadianceSampler : m_SceneDepthSampler);
         descriptorSet->BindTexture(3u, shadowMapTextureForSampling);
         descriptorSet->BindSampler(3u, shadowMapSamplerForSampling);
+        descriptorSet->BindTexture(4u,
+                                   bAerialPerspectiveAvailable ? skyTransmittanceTexture : sceneDepthTexture);
+        descriptorSet->BindSampler(4u,
+                                   bAerialPerspectiveAvailable ? m_SkyTransmittanceSampler : m_SceneDepthSampler);
         descriptorSet->Update();
 
         context.EnqueueFullscreenPass(m_RenderPass,
