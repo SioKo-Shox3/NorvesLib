@@ -1367,7 +1367,7 @@
 - notes: 危険地帯（描画）。`SkyAtmosphere.h` 24〜36 行付近、`RenderWorld::SetSkyAtmosphere`（`RenderWorld.cpp` 311 行付近）。高さフォグは `VolumetricFog.h` 11〜17 行付近（Rendering3DTest は密度 0.02・falloff 1.0）。
 
 ## SCN-CLOUDS: 空に雲の層を足す
-- status: todo
+- status: done
 - done-when: 空の描画に、高度帯（例 1.5〜4 km）の雲の層を 3D ノイズ（Perlin-Worley 等。起動時に生成）の密度で光線を進めて描く処理を足してシーンごとに有効にでき、`wasteland` で有効にする。太陽側の縁が明るく（前方散乱）、底面が影で暗く、空の環境光で持ち上がり、時間でゆっくり流れる。雲の影は範囲外（太陽を遮らない）。雲を空からの IBL に入れるかを決めて記録する。`overview`・`ridge` の撮影を開いて、地平線近くまで雲が自然に並ぶ（板やタイルの繰り返しに見えない）ことを確かめる。性能の判定は低解像度化・時間の蓄積を含む SCN-CLOUDS-TEMPORAL で行う。Rendering3DTest の撮影が変わらない。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -OutDir .harness/runs/scene-capture/SCN-CLOUDS`

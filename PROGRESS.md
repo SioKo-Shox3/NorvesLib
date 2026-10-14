@@ -4275,3 +4275,18 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `verify-SCN-AERIAL-PERSPECTIVE-3.txt`: 起動画面（Rendering3DTest）の撮影 result=pass（default・near・low）。SCN-SHADOW-DISTANCE の撮影との差は default 0.57%・near 16.7%・low 1.7%（差 >8）で、near の差は回る球の模様の位相だけ（球の外は 0.19%、`aux-SCN-AERIAL-PERSPECTIVE-r3d-diff.txt`）。開いて見た目が変わっていないことを確かめた。
 - Notes: 倍率 12・掛け始め 150 m は撮影 2 回で決めた内部の値（最初の 9・50 m では ridge の手前の地面まで膜が掛かった）。物理どおり（倍率 1）では 2 km 四方の盆地で霞がほとんど出ないので倍率で強めている。霞の合成はアルファ合成なので、不透明物の色は透過率の RGB の平均で薄め、色は散乱光の側が持つ（物の色自体の赤みへの寄りは無い）。霞は影を考えない（影の中の地面にも空の色が乗る）。空気遠近の試験は足していない。
 - Next: TASKS.md の次の未完の項目。
+
+### SCN-CLOUDS 完了（2026-10-14、反復 1〜2・run 20261014-222123）
+- 実装: 空の画素に雲の層を描く `CloudLayerPass`（SSR の後・フォグの前）と `cloud_layer.frag` を足した。
+  - 雲の層は惑星の球殻（地表からの高度 1.5〜4 km）で、深度が遠方面の画素だけ光線を進める（32〜96 歩・1 歩の目安 90 m・最大 45 km）。密度は最初に雲を描くフレームで作る 3D ノイズ（基本の形 64³: Perlin-Worley と Worley の fbm、細部 32³: Worley の fbm）と、それより大きな周期の天気の模様を Coverage で切り抜いて求める。
+  - 照明は太陽の単一散乱（前方 HG g=0.8 と後方の 2 つの位相の混ぜ合わせ、太陽方向へ 6 歩の光の光学的厚さ）・多重散乱の近似（3 オクターブ）・空の環境光（上の空の色を高さで持ち上げる）。太陽の照度は空の LUT から求め、事前露出を掛けて前乗算のアルファでシーンの色へ重ねる（空と太陽の円盤は透過率の分だけ残る）。遠い雲は 22 km 付近から空の色へ溶かす。
+  - 風（ワールドの X・Z、既定 8・3 m/s）で形と細部を違う速さで流す。
+  - シーンごとに `RenderWorld::SetCloudLayer`（`CloudLayerParameters`）で有効にでき、FramePacket の `Scene.CloudLayer` で描画側へ渡す。`wasteland` で有効（Coverage 0.41）にし、離れるときに無効へ戻す。無効なフレームはパスが何も宣言しない。
+  - 雲の影は範囲外（太陽を遮らない・地面に影を落とさない）。
+  - 空由来の IBL には雲を入れないと決めた（`SkyAtmosphere.h` の `CloudLayerParameters` の説明に記録）。IBL は空のパラメータが変わったときだけ作り直す静的な表で、毎フレーム流れる雲を入れると作り直しが毎フレームになるため。
+- 検証（`.harness/runs/20261014-222123/`）:
+  - `verify-SCN-CLOUDS-1.txt`: Debug の Game のビルド EXIT=0。
+  - `verify-SCN-CLOUDS-2.txt`: `wasteland` の撮影 result=pass（overview・ground・ridge・cliff・outpost、白飛び 0・黒つぶれ 0）。overview（`default.png`）と ridge を開いた: 積雲が空に散らばり、地平線へ向かって小さく詰まって薄い帯になるまで続き、板やタイルの繰り返しには見えない。底面は暗く、上の縁が明るい。ground でも雲の底が影で暗い。
+  - `verify-SCN-CLOUDS-3.txt`: 起動画面（Rendering3DTest）の撮影 result=pass（default・near・low）。default を開いて雲が無く見た目が変わっていないことを確かめた。
+- Notes: Coverage 0.41 は撮影 2 回で決めた内部の値（0.35 では雲が少なすぎた）。性能は測っていない（判定は SCN-CLOUDS-TEMPORAL）。雲の試験は足していない。
+- Next: TASKS.md の次の未完の項目。
