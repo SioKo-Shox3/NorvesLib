@@ -1517,6 +1517,71 @@
 - paths: Docs/RenderingValidation, Game, Library, Assets, Scripts, Test, TASKS.md, PROGRESS.md
 - notes: 2026-10-12 親: 計測の見直し（ユーザーの指摘「節目に計測を入れても意味があるのかを考えるべき」。計測ごとに、問い・結果で変わる判断・測らずに分からないかの 3 点を書き、書けないものは置かない。Sol の批評を反映）。
 
+## SCN-MEGA-FIX-RT-SELECT: レイトレーシングのインスタンスの選び直しを、変わったときだけ区画の単位で行う
+- status: todo
+- done-when: 問い: 100万本で RenderThread の `RT.BuildAccelerationStructures`（median: 静止 22.1 ms・カメラパス 29.9 ms・1% 移動 31.6 ms・ストリーミング 30.1 ms）を下げられるか。SCN-MEGA-ACCEPT-1M の撮影では、静止で TLAS の更新が 0 回（`RT_SCENE update_skipped=120 updated=0`）なのに、`RayTracingSceneSubsystem::AppendMegaGeometryInstancesFromMirror` が毎フレーム 100 万席すべての距離を判定し（`candidates=1000002`）、半径 120 m の内の約 44 万から近い 65,536 件を選び直して、パケットへ 65,534 件を足している。選ぶ原点が閾値以上動かず写しの版が変わらないフレームは前の選びを使い、選ぶときも区画の境界（`MegaGeometry_RangeBounds`、1M で 15,625 区画）で半径の外の区画を丸ごと飛ばす。完了の条件: 静止の 1M horizon（RelWithDebInfo・1920×1080・300 フレーム）で `RT.BuildAccelerationStructures` の median ≤ 2 ms、カメラパスの再生で median ≤ 4 ms。静止の `RT_SCENE` の `instances`・`out_of_range`・`over_limit` が今と同じ（同じ原点で同じ顔ぶれ）。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -Views horizon -Build -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -TimeoutSeconds 1800 -GameArgs banana-count=1000000 -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-RT-SELECT/static`
+- verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-FIX-RT-SELECT/static --views horizon --timing --min-frames 300 --require-scope RT.BuildAccelerationStructures --max-scope-median-ms RT.BuildAccelerationStructures=2`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -Views horizon -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -TimeoutSeconds 1800 -GameArgs banana-count=1000000,camera-path-play,camera-path-time=0 -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-RT-SELECT/path`
+- verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-FIX-RT-SELECT/path --views horizon --timing --min-frames 300 --require-scope RT.BuildAccelerationStructures --max-scope-median-ms RT.BuildAccelerationStructures=4`
+- paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, TASKS.md, PROGRESS.md
+- notes: 2026-10-14 SCN-MEGA-ACCEPT-1M の診断から（`Docs/RenderingValidation/SceneLauncherAcceptance.md` の「100万本と混在の負荷の受入れ」）。危険地帯（RenderThread）なので評価者を通す。
+
+## SCN-MEGA-FIX-TLAS-REBUILD: TLAS を、インスタンスの顔ぶれが替わったら作り直す
+- status: todo
+- done-when: 問い: カメラパスの再生で `LightingPass`（RTGI）が median 70.5 / p95 100.4 ms（静止は 1.7 ms）になるのを、TLAS の木の質で説明でき、直せるか。SCN-MEGA-ACCEPT-1M の撮影では、選ぶ件数が上限 65,536 で一定なので、カメラが動いて顔ぶれが替わっても毎フレーム Update（refit）だけで作り直しが 0 回（`RT_SCENE updated=120 built=0`。`RenderingCoordinator.cpp` 1810 行付近は件数が同じなら Update）。refit は同じ要素の小さな動きを前提とするので、席の中身が別の場所のインスタンスへ替わると箱が広がり続け、レイの判定が重くなる、と見る。直す: 同じ席に同じインスタンスが並び変換だけ変わったときだけ Update にし、顔ぶれが替わったら Build（替わった割合の閾値で決めてよい）。席の並びを選びの順（距離の順）に依らず安定させる。完了の条件: カメラパスの再生（1M horizon・300 フレーム以上）で `LightingPass` の median ≤ 3 ms・p95 ≤ 5 ms。PNG を開き、今の撮影で近くのバナナの周りに出ている粒の荒い暗い輪が消えていること。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -Views horizon -Build -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -TimeoutSeconds 1800 -GameArgs banana-count=1000000,camera-path-play,camera-path-time=0 -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-TLAS-REBUILD/path`
+- verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-FIX-TLAS-REBUILD/path --views horizon --timing --min-frames 300 --require-pass LightingPass --max-pass-median-ms LightingPass=3 --max-pass-p95-ms LightingPass=5`
+- paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Library/Core/Private/RHI, Library/Core/Public/RHI, TASKS.md, PROGRESS.md
+- notes: 2026-10-14 SCN-MEGA-ACCEPT-1M の診断から。1% 移動・ストリーミングの `LightingPass` 11.4〜11.6 ms（静止のバナナだけは 1.7 ms）も同じ refit を毎フレーム行っている（`updated=120 built=0`）ので、この項目の後に撮り直して残りを見る。危険地帯（RHI/Vulkan・RenderThread）なので評価者を通す。
+
+## SCN-MEGA-FIX-SCENE-TABLES-STEADY: 変わらないフレームで MegaGeometry の表を全部なめない
+- status: todo
+- done-when: 問い: 変わった行が 0（`MEGA_SCENE_UPLOAD rows=0`・`MEGA_TABLES delta_rows=0`）の静止で `MegaGeometryPass.UpdateResidentSceneTables` が median 7.1 ms 掛かるのを、変わった行に比例させられるか。100 万の描く順の行を毎フレームたどって席の表の上限を求める（`MegaGeometryPass.cpp` 4771 行付近）など、行の数に比例する処理を、版が変わったときと変わった行だけにする。完了の条件: 静止の 1M horizon（300 フレーム）で `MegaGeometryPass.UpdateResidentSceneTables` の median ≤ 0.5 ms・`MegaGeometryPass.PrepareSceneTables` の median ≤ 1 ms、`MEGA_TABLES mismatch=0`。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -Views horizon -Build -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -TimeoutSeconds 1800 -GameArgs banana-count=1000000 -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-SCENE-TABLES-STEADY`
+- verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-FIX-SCENE-TABLES-STEADY --views horizon --timing --min-frames 300 --require-scope MegaGeometryPass.UpdateResidentSceneTables --max-scope-median-ms MegaGeometryPass.UpdateResidentSceneTables=0.5 --max-scope-median-ms MegaGeometryPass.PrepareSceneTables=1`
+- paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, TASKS.md, PROGRESS.md
+- notes: 2026-10-14 SCN-MEGA-ACCEPT-1M の診断から。危険地帯（RenderThread）なので評価者を通す。
+
+## SCN-MEGA-FIX-MIXED-DEFICIT: 混在の負荷でバナナを指定の本数どおりに置く
+- status: todo
+- done-when: mega-stress の `banana-count=1000000,stress-entities=50000` で `MEGA_STRESS_BANANAS count=999999 requested=1000000` になり、撮影が「置いたバナナの本数 999999 が指定（banana-count=1000000）と違う」で失敗する。Entity の足元と動く範囲を空けるマスクのある敷き詰めでも、SCN-MEGA-LAYOUT-MOUNDS の「位置が 1 つも無い区画だけ上限を締めてもう一巡引く」と同じ形で不足を埋める。mega-bananas（マスクなし）の配置は変えない（1M の `MEGA_BANANAS_PLACED`・`MEGA_BANANAS_LAYOUT` の行が今と同じ）。完了の条件: 1% 移動の負荷の撮影で `placed_bananas=1000000`・`result=pass`。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -Views overview -Build -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -TimeoutSeconds 2400 -GameArgs banana-count=1000000,stress-entities=50000,stress-moving-percent=1 -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-MIXED-DEFICIT`
+- paths: Game/GameModes/MegaBananas, Game/GameModes/MegaStress, TASKS.md, PROGRESS.md
+- notes: 2026-10-14 SCN-MEGA-ACCEPT-1M の診断から。混在の 2 つの負荷の撮影が本数の違いで fail になるので、下の STREAM-TABLES-DELTA・VISIBLE-LIST・STRESS-GPU より先に閉じる。
+
+## SCN-MEGA-FIX-VISIBLE-LIST: 混在の負荷で可視クラスタの一覧を溢れさせない
+- status: todo
+- done-when: 1M + 5 万個で可視クラスタの一覧の容量（`visible_list_capacity=4194304`）を `visible_list_peak` 4,820,881〜4,821,043 が超え、1% 移動では SceneReady の前（最大 `draw_dropped=330250`）、ストリーミングでは計測の窓の中でも `draw_dropped=626568` が出る（描かれないクラスタが出る）。容量を混在の最大に余裕を足して決めるか、溢れを読み戻したら次のフレームで広げる（GPU Scene まわりの最大の確保は 3 GB 以内のまま）。完了の条件: 1% 移動とストリーミングの撮影で、ログの全行 `draw_dropped=0`・`visible_list_overflow=0`。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -Views overview -Build -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -TimeoutSeconds 2400 -GameArgs banana-count=1000000,stress-entities=50000,stress-moving-percent=1,stress-stream-cell=64,stress-batch-cells -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-VISIBLE-LIST`
+- verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-FIX-VISIBLE-LIST`
+- paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Assets/Shaders, TASKS.md, PROGRESS.md
+- notes: 2026-10-14 SCN-MEGA-ACCEPT-1M の診断から。撮影は SCN-MEGA-FIX-MIXED-DEFICIT の後。危険地帯（メモリ・RenderThread）なので評価者を通す。
+
+## SCN-MEGA-FIX-STREAM-TABLES-DELTA: 区画の出し入れで MegaGeometry の表を全部作り直さない
+- status: todo
+- done-when: 問い: ストリーミングの負荷の gt・rt の p95 147.9 ms（median 48.9 ms）の山を、区画の出し入れの表の作り直しで説明でき、直せるか。SCN-MEGA-ACCEPT-1M の撮影では、区画の散布の出し入れ（約 1 秒に 1 回）ごとに `MegaGeometryPass.BuildSceneTables` が約 105 万行を全部作り直し（`MEGA_TABLES full=6`/120 フレーム）、窓の 600 フレームのうち 29 フレームが 20 ms を超え、最大 515 ms。出し入れを区間の追加・削除の差分で表へ反映する。完了の条件: ストリーミングの負荷（1M + 5 万個・600 フレーム。区画の解放から再公開を窓に含む）で `MegaGeometryPass.PrepareSceneTables` の p95 ≤ 2 ms、`MEGA_STRESS_STREAM_CYCLE result=pass`、`MEGA_TABLES mismatch=0`。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -Views overview -Build -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 600 -TimingReadyMarginFrames 2000 -TimeoutSeconds 2400 -GameArgs banana-count=1000000,stress-entities=50000,stress-moving-percent=1,stress-stream-cell=64,stress-batch-cells -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-STREAM-TABLES-DELTA`
+- verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-FIX-STREAM-TABLES-DELTA --timing --min-frames 600 --require-scope MegaGeometryPass.PrepareSceneTables --max-scope-p95-ms MegaGeometryPass.PrepareSceneTables=2`
+- paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Library/Core/Private/Component, Library/Core/Public/Component, TASKS.md, PROGRESS.md
+- notes: 2026-10-14 SCN-MEGA-ACCEPT-1M の診断から。撮影は SCN-MEGA-FIX-MIXED-DEFICIT（本数の違いで fail）と SCN-MEGA-FIX-VISIBLE-LIST（`draw_dropped` で fail）の後。危険地帯（RenderThread・Object/Resource の寿命）なので評価者を通す。
+
+## SCN-MEGA-FIX-STRESS-GPU: 1M + mega-stress 5 万個の GPU 時間を 16.6 ms に収める
+- status: todo
+- done-when: 問い: 1% 移動の GPU 32.6 / 34.4 ms（median / p95）を、TLAS の直しの後に何が残るかで分け、予算に収められるか。SCN-MEGA-ACCEPT-1M の撮影の内訳（median）は `MegaGeometry` 16.1 ms（`VisRasterSw1` 9.1・`MegaGeometryCull1` 4.9・`MegaBvhC1Leaf` 4.1）、`LightingPass` 11.4、`VirtualShadowMapPass` 2.6（`VsmDraw` 1.5）。描いたクラスタは 264 万でバナナだけの静止（168 万）の 1.6 倍、ソフトウェアラスタの単価は 100 万クラスタあたり 3.4 ms（静止 3.0）でほぼ同じなので、量が多い側と見る。SCN-MEGA-FIX-TLAS-REBUILD の後に撮り直して `LightingPass` の残りを確かめ、残る超過を 5 万個のメッシュ（家・塔・岩）の描くクラスタの量（LOD の誤差の許容・遮蔽）で減らす。完了の条件: 1% 移動の負荷（300 フレーム）で GPU のフレームの median・p95 ≤ 16.6 ms。PNG を開いて穴と影の欠けが無いこと。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -Views overview -Build -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -TimeoutSeconds 2400 -GameArgs banana-count=1000000,stress-entities=50000,stress-moving-percent=1 -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-STRESS-GPU`
+- verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-FIX-STRESS-GPU --timing --min-frames 300 --max-gpu-median-ms 16.6 --max-gpu-p95-ms 16.6`
+- paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Assets/Shaders, Game/GameModes/MegaStress, TASKS.md, PROGRESS.md
+- notes: 2026-10-14 SCN-MEGA-ACCEPT-1M の診断から。SCN-MEGA-FIX-TLAS-REBUILD・SCN-MEGA-FIX-MIXED-DEFICIT の後に回す。
+
+## SCN-FIX-SKY-BANDING: 空の階調の段（波打つ横縞）を消す
+- status: todo
+- done-when: SCN-MEGA-ACCEPT-1M の撮影で、mega-stress の overview（1% 移動・ストリーミング）とカメラパスの再生中の mega-bananas の horizon の空に、波打つ横縞の段がはっきり見える（`.harness/runs/scene-capture/SCN-MEGA-ACCEPT-1M/{moving,streaming}/overview.png`・`path/horizon.png`）。同じ時刻の mega-bananas の静止の horizon の空は滑らか。mega-stress の空の列の値は SCN-MEGA-MIXED-LOAD（2026-10-11）の撮影と同じで、前からある欠陥。段の出所（空の LUT の解像度・精度、ディザの有無、露出）を特定して直す。完了の条件: 上の 2 つの視点を撮り直した PNG を開いて空に段が見えず、空の縦の列の隣り合う画素の差が 1 段以下で、平らな帯（同じ値が続く区間）の長さが今より短いこと。起動画面 default の決定的撮影の比較が pass（空の見た目を変えるなら基準を再承認し、根拠をコミット本文に書く）。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -Views overview -Build -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-FIX-SKY-BANDING`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -OutDir .harness/runs/startup-capture/SCN-FIX-SKY-BANDING`
+- paths: Assets/Shaders, Library/Core/Private/Rendering, Library/Core/Public/Rendering, Docs/RenderingValidation, Test/Core/Rendering, Scripts, TASKS.md, PROGRESS.md
+- notes: 2026-10-14 SCN-MEGA-ACCEPT-1M の撮影で見つけた（前からある見た目の欠陥も直す方針）。描画を変える項目なので起動画面 default の比較を入れた。
+
 ## PT-NONUNIFORM-SAMPLER: パストレーサーの材質のテクスチャの添字の一様でない印を、標本の関数の中まで届ける
 - status: backlog
 - done-when: `PathTracingClosestHit.glsl`（36〜37 行付近）が `materialTextures[nonuniformEXT(i)]` で取った sampler を関数の引数で渡し、呼ばれる側（`SparseResidencySampling.glsl` の `SampleMaterialTextureLod`・`SampleSparseResidentLod`）で標本している。GL_EXT_nonuniform_qualifier の一様でない印は関数の引数を越えて伝わらないので、標本の命令の sampled image に `NonUniform` の装飾が付かない疑いがある（NVIDIA では表に出ないが、装飾に頼る装置では1つの wave の中で別の材質のテクスチャを取り違えうる。VT に限らず PT の全材質のテクスチャ）。コンパイルした rchit を `spirv-dis` して、`OpImageSampleExplicitLod`・`OpImageSparseSampleExplicitLod` が受け取る sampled image に `NonUniform` があるかを確かめ、無ければ添字を関数へ渡して呼ばれる側で `nonuniformEXT` を付ける形にする。CPU のテスト（SPIR-V の逆アセンブルの照合）か、記録で確かめる。

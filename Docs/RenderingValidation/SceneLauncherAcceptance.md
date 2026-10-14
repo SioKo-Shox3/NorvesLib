@@ -124,3 +124,101 @@
 
 - 2 フレームでは `MegaGeometryCull1`＋`MegaGeometryCull2` が +0.7〜+1.2 ms（+4〜6%）、`LightingPass` が -0.2〜-0.3 ms。フレームの合計では揺れの中に収まる。
 - 40.0 ms の撮影のときのクロックは記録が無い。他の GPU・ドライバでは測っていない。60 fps の判定はこの節では行わない（SCN-MEGA-ACCEPT-1M）。
+
+## 100万本と混在の負荷の受入れ（60 fps の判定）
+
+判定日: 2026-10-14。ブランチ `feature/scene-launcher`。タスク SCN-MEGA-ACCEPT-1M。証拠は `.harness/runs/20261014-122019/verify-SCN-MEGA-ACCEPT-1M-*.txt`・`aux-SCN-MEGA-ACCEPT-1M-capture-*.txt` と `.harness/runs/scene-capture/SCN-MEGA-ACCEPT-1M/<負荷>/`。
+
+**判定: 不合格。** 4 つの負荷のどれも GPU・ゲームスレッド（gt）・描画スレッド（rt）の median と p95 の 16.6 ms 以下を満たさない。既定の本数（`kDefaultBananaCount` = 1 万）は変えない。直す先は下の「直す先」の 8 項目（`TASKS.md` の `SCN-MEGA-FIX-*`・`SCN-FIX-SKY-BANDING`）。
+
+### 測り方
+
+- RelWithDebInfo の Game、1920×1080、RTX 4080（ドライバ 610.88）。`Scripts/CaptureScene.ps1 -GpuTimingFrames <n>`（実時間の計測。SceneReady の後のウォームアップ 60 フレームを捨てた窓）。各負荷の撮影は 1 回。
+- 4 つの負荷の引数は SCN-MEGA-MIXED-LOAD で決めたもの。
+
+| 負荷 | シーン・視点 | `-GameArgs` | 窓のフレーム数 | 窓に入れたもの |
+|---|---|---|---|---|
+| 静止 | mega-bananas・horizon | `banana-count=1000000` | 300 | — |
+| カメラパス | mega-bananas・horizon | `banana-count=1000000,camera-path-play,camera-path-time=0` | 1,300 | パス（周期 20 秒）を約 5.6 周（窓は約 112 秒。`CAMERA_PATH_TIME` が 0〜20 秒を 5 回以上巡る） |
+| 1% 移動 | mega-stress・overview | `banana-count=1000000,stress-entities=50000,stress-moving-percent=1` | 300 | — |
+| ストリーミング | mega-stress・overview | 1% 移動 ＋ `stress-stream-cell=64,stress-batch-cells` | 600（`-TimingReadyMarginFrames 2000`） | 区画の解放から再公開（1 巡り 8 秒）を数巡（窓は約 29 秒。`MEGA_STRESS_STREAM_CYCLE result=pass`、Entity の数 50,000 が毎巡一致） |
+
+- CPU の内訳は、トレースの区間を窓のフレームごとに足し、フレームについての median・p95 を取った（同じ名前の区間は足す。親と子は別の行で、足し合わせない）。
+
+### 結果
+
+| 負荷 | GPU median / p95 | gt median / p95 | rt median / p95 | 判定 |
+|---|---|---|---|---|
+| 静止 | 15.11 / 15.63 | 36.85 / 39.96 | 36.91 / 39.96 | GPU は合格、gt・rt は不合格 |
+| カメラパス | 85.99 / 116.56 | 85.75 / 118.81 | 85.83 / 118.91 | 不合格 |
+| 1% 移動 | 32.61 / 34.43 | 51.01 / 56.83 | 51.03 / 56.94 | 不合格 |
+| ストリーミング | 31.08 / 36.15 | 48.84 / 147.89 | 48.87 / 147.93 | 不合格 |
+
+（単位は ms。証拠: `verify-SCN-MEGA-ACCEPT-1M-1.txt`〜`-4.txt` の `CHECK_CAPTURE_METRICS result=fail`。）
+
+どの負荷でも gt は描画スレッドを待つ時間（`GT.WaitRenderThread`）がほぼ全部で、ゲームスレッドの作業（`GameThread.Simulation`・ECS の系）は静止 0.4 ms・1% 移動 1.3 ms（ECS の系の合計 3.5 ms）・ストリーミング 0.7 ms。gt は rt で決まる。
+
+#### 描画スレッドの内訳（median / p95、ms）
+
+| 区間 | 静止 | カメラパス | 1% 移動 | ストリーミング |
+|---|---|---|---|---|
+| `RT.BuildAccelerationStructures` | 22.05 / 23.14 | 29.86 / 32.30 | 31.58 / 34.23 | 30.11 / 32.51 |
+| `MegaGeometryPass.UpdateResidentSceneTables` | 7.11 / 7.72 | 7.12 / 7.93 | 7.63 / 8.49 | 7.60 / 23.84 |
+| `MegaGeometryPass.PrepareSceneTables`（上を含む） | 7.15 / 7.80 | 7.16 / 8.04 | 7.79 / 8.73 | 7.67 / 105.63 |
+| `RG.ParallelRecord`（記録） | 3.72 / 4.88 | 4.27 / 5.74 | 4.26 / 6.01 | 4.15 / 5.73 |
+| `RT.ReleasePacket` | 1.60 / 1.74 | 1.60 / 1.75 | 1.61 / 1.81 | 1.62 / 1.90 |
+| `RT.WaitFrameFence`（GPU の待ち） | 0.00 / 0.01 | 38.22 / 69.81 | 0.00 / 0.01 | 0.00 / 0.01 |
+
+- `RT.BuildAccelerationStructures` は、静止で TLAS の更新が 0 回（`RT_SCENE update_skipped=120 updated=0`）なのに 22 ms 掛かる。中身は TLAS の入力の選択で、毎フレーム 100 万席すべての距離を判定し（`candidates=1000002`）、半径 120 m の内の約 44 万から近い 65,536 件を選び直し、パケットへ 65,534 件を足している（`RT_SCENE ... out_of_range=558922 over_limit=375544`）。量に比例する処理を毎フレームやり直している（単価ではなく量）。
+- `UpdateResidentSceneTables` は、変わった行が 0（`MEGA_SCENE_UPLOAD rows=0`・`MEGA_TABLES delta_rows=0`）でも 7.1 ms。100 万の描く順の行を毎フレームたどっている。
+- ストリーミングの p95 の山は、区画の散布の出し入れ（約 1 秒に 1 回）ごとに `MegaGeometryPass.BuildSceneTables` が約 105 万行を全部作り直すため（`MEGA_TABLES full=6`/120 フレーム、窓の 600 フレームのうち 29 フレームが 20 ms 超え、最大 515 ms）。
+- 開発ビルドの表の検算 `MegaGeometryPass.CheckSceneTables` は 120 フレームに 1 回 87〜99 ms 掛かる（median・p95 には入らず、最大の山として出る）。Release には入らない。
+
+#### GPU の内訳（median / p95、ms）
+
+| パス | 静止 | カメラパス | 1% 移動 | ストリーミング |
+|---|---|---|---|---|
+| `VisibilityRasterPass`（= `MegaGeometry`） | 11.84 / 12.22 | 12.22 / 14.72 | 16.07 / 16.63 | 15.99 / 17.37 |
+| └ `VisRasterSw1`（ソフトウェアラスタ） | 5.09 / 6.80 | 5.92 / 7.80 | 9.08 / 9.68 | 8.80 / 10.06 |
+| └ `MegaGeometryCull1`（BVH の判定） | 3.04 / 4.73 | 3.66 / 5.39 | 4.89 / 6.57 | 4.91 / 6.99 |
+| └ `MegaGeometryDraw1`（ハードウェアラスタ） | 1.35 / 2.53 | 1.43 / 2.65 | 0.68 / 1.29 | 0.57 / 1.06 |
+| `LightingPass`（RTGI を含む） | 1.66 / 2.96 | 70.53 / 100.39 | 11.43 / 13.29 | 11.62 / 14.29 |
+| `VirtualShadowMapPass` | 0.66 / 1.36 | 1.16 / 2.38 | 2.62 / 4.32 | 2.50 / 4.37 |
+| `AccelerationStructureBuild` | 0 | 0.93 / 1.46 | 0.84 / 1.38 | 0.80 / 1.01 |
+| 描いたクラスタ（最後の行） | 1,679,084 | 1,663,450 | 2,639,192 | 2,655,129 |
+
+- カメラパスの GPU 86 ms は `LightingPass` 70.5 ms が占める。選ぶ件数が上限 65,536 で一定なので、カメラが動いて顔ぶれが替わっても TLAS は毎フレーム Update（refit）だけで、作り直しは 0 回（`RT_SCENE updated=120 built=0`）。refit は同じ要素の小さな動きを前提とするので、席の中身が別の場所のインスタンスに替わると木の箱が広がり、RTGI のレイの判定が重くなる、と見る。静止では TLAS を読み込みのときに作ったまま使い、1.7 ms。
+- 1% 移動の GPU 32.6 ms は、`MegaGeometry` 16.1 ms と `LightingPass` 11.4 ms（ここでも `updated=120 built=0`）。描いたクラスタは 264 万でバナナだけの静止の 1.6 倍、ソフトウェアラスタの単価は 100 万クラスタあたり 3.4 ms（静止 3.0）でほぼ同じなので、ラスタは量が多い側。VSM は動く Entity のページの描き直しで 2.6 ms。
+- 静止の GPU は 15.1 / 15.6 ms で予算の内（`MegaGeometry` 11.8 ms が 78%）。
+
+#### 溢れ・メモリ・Entity の数
+
+- 溢れ: 静止・カメラパスはログの全行で `draw_dropped`・`bvh_overflow`・`visible_list_overflow`・影の `overflow`・二段目の `*_overflow` が 0。1% 移動とストリーミングは可視クラスタの一覧（容量 4,194,304）を `visible_list_peak` 4,820,881〜4,821,043 が超え、1% 移動は SceneReady の前（最大 `draw_dropped=330250`）、ストリーミングは窓の中でも `draw_dropped=626568` が出る（**不合格**）。BVH と影の列は 4 負荷とも 0。
+- メモリ（GPU Scene まわりの構造の最大の確保。`VRAM_LEDGER`・`MEGA_CAPACITY`・`MEGA_SCENE_UPLOAD` の最大値の和）: バナナだけ 2,007 MB（インスタンス・影・席の表 320、BVH の列 145、間接描画 320、描画情報 128、可視の一覧と印 80、ソフトウェアラスタ 32、ID の記録 512、影の BVH の列 240、送りの窓 229）。混在 2,722 MB（表 641、間接描画 640、描画情報 256、ソフトウェアラスタ 128 など。送りの窓 79）。表は容量を倍に広げて写すので、1M → 2M に広げる瞬間は古い表 320 MB が回収待ちで残り、足すと約 3,042 MB で上限 3 GB の境目。回収待ちはログに独立して出ないので、この値は見積もり。表の容量 2,097,152 に対し使う行は約 105 万。
+- Entity の数: 散布 1 つ（Object 1 つと軽い行）で本数によらない。ストリーミングの負荷は 1M + 5 万個で `world_objects=828`（5 万個は区画の散布 325 個にまとめる）、巡るたびに `baseline=828` と一致。
+- バナナの本数: mega-stress の混在では `MEGA_STRESS_BANANAS count=999999 requested=1000000` で 1 本足りず、1% 移動・ストリーミングの撮影は本数の違いでも fail（Entity の足元を空けるマスクのある敷き詰めで不足を埋めていない）。
+
+### 撮影の確認
+
+4 つの PNG を開いた（`scene-capture/SCN-MEGA-ACCEPT-1M/<負荷>/*.png`）。静止の horizon は地平線までバナナが描かれ、4 つの塚が出て、穴・影の欠けは無い。1% 移動・ストリーミングの overview は家・塔・岩・バナナの区画が奥まで描かれ、近くの床に影が落ち、穴は無い。カメラパスの horizon は穴は無いが、近くのバナナの周りに粒の荒い暗い輪が出る（TLAS の refit で RTGI が乱れていると見て、SCN-MEGA-FIX-TLAS-REBUILD の完了の条件に入れた）。mega-stress の overview とカメラパスの horizon の空に、波打つ横縞の段がはっきり見える（mega-stress の空の列の値は SCN-MEGA-MIXED-LOAD の撮影と同じで前からある。静止の horizon の空は滑らか）。
+
+### 直す先
+
+| 項目 | 対象 | 量か単価か |
+|---|---|---|
+| `SCN-MEGA-FIX-RT-SELECT` | CPU: `RT.BuildAccelerationStructures` 22〜32 ms（TLAS の入力の選択） | 量（毎フレーム 100 万席を判定） |
+| `SCN-MEGA-FIX-TLAS-REBUILD` | GPU: `LightingPass` 70.5 ms（カメラパス）・11.4 ms（混在） | 単価（refit で崩れた木） |
+| `SCN-MEGA-FIX-SCENE-TABLES-STEADY` | CPU: `UpdateResidentSceneTables` 7.1 ms（変わらないフレーム） | 量（毎フレーム 100 万行をたどる） |
+| `SCN-MEGA-FIX-MIXED-DEFICIT` | 混在のバナナの本数 999,999 | — |
+| `SCN-MEGA-FIX-VISIBLE-LIST` | 混在の可視クラスタの一覧の溢れ | — |
+| `SCN-MEGA-FIX-STREAM-TABLES-DELTA` | CPU: 区画の出し入れでの表の全部の作り直し（p95 106 ms・最大 515 ms） | 量（出し入れごとに 105 万行） |
+| `SCN-MEGA-FIX-STRESS-GPU` | GPU: 1% 移動の `MegaGeometry` 16.1 ms（TLAS の直しの後の残り） | 量（描くクラスタ 264 万） |
+| `SCN-FIX-SKY-BANDING` | 見た目: 空の段 | — |
+
+構造・件数・ログで規模の依存を説明できたので、30 万本の比較の負荷は足していない。
+
+### 既知の限界
+
+- 各負荷 1 回の撮影。他の GPU・ドライバでは測っていない。
+- 回収待ちの表の大きさはログに無いので、メモリの最大は見積もり。
+- `RT.BuildAccelerationStructures` の中は区間に分けていない（選択と TLAS の記録の比は、静止で TLAS の更新が 0 回であることから選択と判断した）。
