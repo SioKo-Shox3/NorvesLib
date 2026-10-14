@@ -48,7 +48,10 @@ namespace Game::GameModes
     struct WastelandAssembly
     {
         VariableArray<WastelandTerrainTile> Tiles;
+        /// 1 層目（砂）の材質
         MaterialCreateData Material;
+        /// 2 層目（乾いた土）・3 層目（岩肌）と混ぜ方
+        MegaTerrainBlend TerrainBlend;
         uint32_t PendingTextureCount = 0;
         bool bCancelled = false;
         bool bPlaced = false;
@@ -69,10 +72,30 @@ namespace Game::GameModes
         constexpr float kFarPlane = 3200.0f;
         // 地形を置いてから SceneReady を出すまでの Tick の数（ページの読み込みが追いつく余裕）
         constexpr uint32_t kReadyTicksAfterTerrain = 90;
-        // 地形の材質（Poly Haven の sand_01。Assets/AssetSets/Rendering3DTestStartupMaterials.json が焼く）
+        // 地形の材質は 3 層の混ぜ合わせ。1 層目の砂は Poly Haven の sand_01（Assets/AssetSets/Rendering3DTestStartupMaterials.json が焼く）
         constexpr const char *kSandAlbedoPath = "Assets/Textures/PolyHaven/sand_01/sand_01_diff_4k.jpg";
         constexpr const char *kSandNormalPath = "Assets/Textures/PolyHaven/sand_01/sand_01_nor_dx_4k.jpg";
         constexpr const char *kSandOrmPath = "Assets/Textures/PolyHaven/sand_01/sand_01_orm_4k";
+        // 2 層目の乾いた土は dry_ground_rocks（Assets/AssetSets/Rendering3DTestStressTextures.json が焼く）
+        constexpr const char *kDirtAlbedoPath = "Assets/Textures/PolyHaven/dry_ground_rocks/dry_ground_rocks_diff_4k.jpg";
+        constexpr const char *kDirtNormalPath = "Assets/Textures/PolyHaven/dry_ground_rocks/dry_ground_rocks_nor_dx_4k.jpg";
+        constexpr const char *kDirtOrmPath = "Assets/Textures/PolyHaven/dry_ground_rocks/dry_ground_rocks_orm_4k";
+        // 3 層目の岩肌は rock_face（Assets/AssetSets/WastelandTerrain.json が焼く）
+        constexpr const char *kRockAlbedoPath = "Assets/Textures/PolyHaven/rock_face/rock_face_diff_4k.jpg";
+        constexpr const char *kRockNormalPath = "Assets/Textures/PolyHaven/rock_face/rock_face_nor_dx_4k.jpg";
+        constexpr const char *kRockOrmPath = "Assets/Textures/PolyHaven/rock_face/rock_face_orm_4k";
+        // 材質の UV（ワールドの XZ ÷ 4 m）に掛ける倍率。岩肌は崖の大きな割れ目に合わせて 8 m で繰り返す
+        constexpr float kDirtUVScale = 1.0f;
+        constexpr float kRockUVScale = 0.5f;
+        // 混ぜ方: 砂丘の風下の面（最も急な所で 20° 台）は砂のまま、メサの裾の崖錐は乾いた土、崖と外周の急な稜線は岩肌にする
+        constexpr float kDirtSlopeDegrees[2] = {24.0f, 33.0f};
+        constexpr float kRockSlopeDegrees[2] = {37.0f, 48.0f};
+        // 盆地より高い所（崖錐・稜線の麓）ほど土へ寄せる
+        constexpr float kDirtHeightRange[2] = {12.0f, 50.0f};
+        constexpr float kDirtHeightBiasDegrees = 10.0f;
+        constexpr float kBlendDepth = 0.3f;
+        // 1 層目・2 層目・3 層目の 3 枚ずつ
+        constexpr uint32_t kTerrainTextureCount = 9;
 
         /// 物理空・太陽・高さフォグ
         void ApplyEnvironment(GameModeContext &ctx)
@@ -150,15 +173,16 @@ namespace Game::GameModes
             return true;
         }
 
-        /// 材質のテクスチャを 1 枚、非同期で読む。結果は主スレッドで member へ入れる
+        /// 材質のテクスチャを 1 枚、非同期で読む。結果は主スレッドで target（assembly の中の枠）へ入れる。
+        /// pNormalTwoChannel は法線のときだけ渡し、クック済みの法線が BC5 かを入れる
         void LoadMaterialTexture(TextureResources &textures, const TSharedPtr<WastelandAssembly> &assembly,
-                                 const char *path, TextureHandle MaterialCreateData::*member, bool bNormal)
+                                 const char *path, TextureHandle *target, bool *pNormalTwoChannel)
         {
             TextureResources *pTextures = &textures;
             const String pathText(path);
             textures.LoadTextureAsync(
                 pathText,
-                [pTextures, assembly, pathText, member, bNormal](TextureHandle handle)
+                [pTextures, assembly, pathText, target, pNormalTwoChannel](TextureHandle handle)
                 {
                     if (assembly->bCancelled)
                     {
@@ -171,13 +195,14 @@ namespace Game::GameModes
                                       "地形の材質のテクスチャを読めませんでした",
                                       pathText.c_str());
                     }
-                    assembly->Material.*member = handle;
-                    if (bNormal)
+                    // target は assembly の中の枠（ラムダが assembly を持つので、ここでは生きている）
+                    *target = handle;
+                    if (pNormalTwoChannel != nullptr)
                     {
                         // クック済みの法線が BC5（2 チャンネル）なら印を付ける。無圧縮の RGBA8 なら付けない
                         const NorvesLib::RHI::ITexture *rhiTexture =
                             handle.IsValid() ? pTextures->GetRHITexture(handle) : nullptr;
-                        assembly->Material.bNormalTwoChannel =
+                        *pNormalTwoChannel =
                             rhiTexture != nullptr && rhiTexture->GetFormat() == NorvesLib::RHI::Format::BC5_UNORM;
                     }
                     --assembly->PendingTextureCount;
@@ -205,6 +230,7 @@ namespace Game::GameModes
                 createInfo.Material.NormalTexture = assembly.Material.NormalTexture;
                 createInfo.Material.ORMTexture = assembly.Material.ORMTexture;
                 createInfo.Material.bNormalTwoChannel = assembly.Material.bNormalTwoChannel;
+                createInfo.Material.TerrainBlend = assembly.TerrainBlend;
                 createInfo.DebugName = tile.LogicalPath.c_str();
                 const MegaMeshHandle megaMesh = megaGeometry.CreateMegaMesh(createInfo);
                 if (!megaMesh.IsValid())
@@ -292,12 +318,33 @@ namespace Game::GameModes
             auto assembly = MakeShared<WastelandAssembly>();
             if (LoadTerrainTiles(assetSystem, *assembly))
             {
-                assembly->Material.DebugName = "WastelandSand";
-                assembly->PendingTextureCount = 3;
+                assembly->Material.DebugName = "WastelandTerrain";
+                MegaTerrainBlend &blend = assembly->TerrainBlend;
+                blend.bEnabled = true;
+                blend.Dirt.UVScale = kDirtUVScale;
+                blend.Rock.UVScale = kRockUVScale;
+                blend.DirtSlopeDegrees[0] = kDirtSlopeDegrees[0];
+                blend.DirtSlopeDegrees[1] = kDirtSlopeDegrees[1];
+                blend.RockSlopeDegrees[0] = kRockSlopeDegrees[0];
+                blend.RockSlopeDegrees[1] = kRockSlopeDegrees[1];
+                blend.DirtHeightRange[0] = kDirtHeightRange[0];
+                blend.DirtHeightRange[1] = kDirtHeightRange[1];
+                blend.DirtHeightBiasDegrees = kDirtHeightBiasDegrees;
+                blend.BlendDepth = kBlendDepth;
+                assembly->PendingTextureCount = kTerrainTextureCount;
                 auto &textures = ctx.RenderResourcesRef.Textures();
-                LoadMaterialTexture(textures, assembly, kSandAlbedoPath, &MaterialCreateData::AlbedoTexture, false);
-                LoadMaterialTexture(textures, assembly, kSandNormalPath, &MaterialCreateData::NormalTexture, true);
-                LoadMaterialTexture(textures, assembly, kSandOrmPath, &MaterialCreateData::ORMTexture, false);
+                MaterialCreateData &sand = assembly->Material;
+                LoadMaterialTexture(textures, assembly, kSandAlbedoPath, &sand.AlbedoTexture, nullptr);
+                LoadMaterialTexture(textures, assembly, kSandNormalPath, &sand.NormalTexture, &sand.bNormalTwoChannel);
+                LoadMaterialTexture(textures, assembly, kSandOrmPath, &sand.ORMTexture, nullptr);
+                LoadMaterialTexture(textures, assembly, kDirtAlbedoPath, &blend.Dirt.AlbedoTexture, nullptr);
+                LoadMaterialTexture(textures, assembly, kDirtNormalPath, &blend.Dirt.NormalTexture,
+                                    &blend.Dirt.bNormalTwoChannel);
+                LoadMaterialTexture(textures, assembly, kDirtOrmPath, &blend.Dirt.ORMTexture, nullptr);
+                LoadMaterialTexture(textures, assembly, kRockAlbedoPath, &blend.Rock.AlbedoTexture, nullptr);
+                LoadMaterialTexture(textures, assembly, kRockNormalPath, &blend.Rock.NormalTexture,
+                                    &blend.Rock.bNormalTwoChannel);
+                LoadMaterialTexture(textures, assembly, kRockOrmPath, &blend.Rock.ORMTexture, nullptr);
                 data.m_pAssembly = assembly;
             }
         }

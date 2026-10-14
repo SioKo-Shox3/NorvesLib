@@ -5,7 +5,8 @@
 //
 // 高さ場（Core/Public/Rendering/Terrain/TerrainHeightField.h）から AssetCook が焼いた地形の区画
 // （Assets/AssetSets/WastelandTerrain.json。4×4 区画で 2 km 四方、格子の間隔 1 m）を仮想化ジオメトリで描き、
-// 物理空・太陽・高さフォグを掛ける。材質は Poly Haven の砂（sand_01）1 種。
+// 物理空・太陽・高さフォグを掛ける。材質は Poly Haven の砂（sand_01）・乾いた土（dry_ground_rocks）・岩肌（rock_face）の
+// 3 層を、傾斜・高さ・低周波ノイズと凹凸で混ぜる（MegaGeometry::MegaTerrainBlend）。
 // 視点は SceneCatalog.h の kWastelandViews（overview・ground・ridge）。視点の高さは、その (x,z) の地形の高さに足す。
 // 地形のクック済みが無いときは COOKED_MODEL_MISSING を出し、空と太陽だけのシーンとして組み立てを終える。
 // ---------------------------------------------------------------------------

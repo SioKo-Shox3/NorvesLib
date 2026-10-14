@@ -13,7 +13,8 @@
 // （画素は自分の材質の dispatch でちょうど 1 回だけ解決される）。画面の外の画素は何もしない。
 // 材質の番号が分類の上限以上の画素はどの材質の一覧にも入らないので、この版では解決されない（直接版は解決する）。
 // 追加の束縛は、検証用の書き出しがあれば binding 12 から、無ければ binding 11 から（VIS_TILE_BINDING）。
-// 材質ごとの形は、その材質のテクスチャ（アルベド・法線・金属度・粗さ・AO・高さの 6 枠。VIS_TILE_BINDING + 3 から）も束ねて、
+// 材質ごとの形は、その材質のテクスチャ（アルベド・法線・金属度・粗さ・AO・高さの 6 枠。VIS_TILE_BINDING + 3 から）と、
+// 地形の 2・3 層目のテクスチャ（土・岩肌のアルベド・法線・ORM の 6 枠。VIS_TERRAIN_BINDING から。地形でない材質は読まない）も束ねて、
 // 材質のテクスチャで GBuffer の Albedo・Normal・Material を書く（直接 dispatch の版は、テクスチャを束ねられないので
 // 材質の定数だけで書く）。
 //
@@ -155,11 +156,14 @@ layout(std140, set = 0, binding = VIS_TILE_BINDING) uniform ResolveTileParams
     // VT のフィードバックのパラメータ（VirtualTextureFeedbackMaterial.h の ResolveVirtualTextureFeedbackParam。0 は書かない）:
     // x = アルベド、y = 法線、z = ORM（金属度の枠）、w = 高さ
     uvec4 vt;
+    // 地形の 3 層の混ぜ合わせ（Common/TerrainLayerBlend.glsl の TerrainBlendParams。VIS_TILE_FLAG_TERRAIN のときだけ読む）
+    vec4 terrain[4];
 } tileParams;
 
 // tileParams.tile.z のビット（VisibilityResolvePass.h の TILE_FLAG_* と同じ）
 const uint VIS_TILE_FLAG_ORM = 1u;     // ORM の 1 枚が metallicTexture の枠に張られている
 const uint VIS_TILE_FLAG_SPARSE = 2u;  // 張ったテクスチャに sparse（VT）が 1 枚でもある
+const uint VIS_TILE_FLAG_TERRAIN = 4u; // 地形の 3 層の混ぜ合わせを持つ材質（2・3 層目のテクスチャと tileParams.terrain を使う）
 
 // MaterialTileClassifyPass の引数（材質ごとに 8 語）と一覧（タイルの番号の並び）。MaterialTileClassifyPass.h と同じ並び
 layout(std430, set = 0, binding = VIS_TILE_BINDING + 1) readonly buffer ResolveTileArgs
@@ -184,11 +188,22 @@ layout(set = 0, binding = VIS_TILE_BINDING + 6) uniform sampler2D roughnessTextu
 layout(set = 0, binding = VIS_TILE_BINDING + 7) uniform sampler2D aoTexture;
 layout(set = 0, binding = VIS_TILE_BINDING + 8) uniform sampler2D heightTexture;
 
+// 地形の 2・3 層目（土・岩肌）のアルベド・法線・ORM（VisibilityResolvePass.cpp の TerrainTextureBindingFirst と同じ。
+// メッシュの表（22）の後ろ。地形でない材質は 1 層目のテクスチャが張られ、読まない）
+#define VIS_TERRAIN_BINDING 23
+layout(set = 0, binding = VIS_TERRAIN_BINDING + 0) uniform sampler2D terrainDirtAlbedoTexture;
+layout(set = 0, binding = VIS_TERRAIN_BINDING + 1) uniform sampler2D terrainDirtNormalTexture;
+layout(set = 0, binding = VIS_TERRAIN_BINDING + 2) uniform sampler2D terrainDirtOrmTexture;
+layout(set = 0, binding = VIS_TERRAIN_BINDING + 3) uniform sampler2D terrainRockAlbedoTexture;
+layout(set = 0, binding = VIS_TERRAIN_BINDING + 4) uniform sampler2D terrainRockNormalTexture;
+layout(set = 0, binding = VIS_TERRAIN_BINDING + 5) uniform sampler2D terrainRockOrmTexture;
+
 #include "Common/SparseResidencySampling.glsl"
 // 計算シェーダーには暗黙の勾配が無いので、VT でない標本も解析的な微分で textureGrad する
 #define NORVES_MATERIAL_SAMPLING_EXPLICIT_GRADIENT 1
 #include "Common/PbrMaterialTextureSamplingCore.glsl"
 #include "Common/ParallaxOcclusionMappingCore.glsl"
+#include "Common/TerrainLayerBlend.glsl"
 
 // VT の要求のバッファ（対応するデバイスだけ NORVES_VT_FEEDBACK が定義される）。計算シェーダーなので、フラグメント専用の宣言と
 // gl_FragCoord の関数を除き、画素の位置を引数に取る版を使う
@@ -649,9 +664,21 @@ VisMaterialSurface VisEvaluateMaterialSurface(vec3 objectColor, VisMaterialEntry
 
     const MaterialTextureFootprint footprint =
         VisMakeFootprint(resolved.duvdx, resolved.duvdy, bHasORM, bVirtualTexture || bDisplaced, bIsotropic);
-    const PbrMaterialTextureSamples samples =
+    PbrMaterialTextureSamples samples =
         SamplePbrMaterialTextures(albedoTexture, normalTexture, metallicTexture, roughnessTexture, aoTexture, texCoord,
                                   footprint, bHasORM, bNormalTwoChannel, bVirtualTexture);
+    // 地形の材質は、1 層目（上の標本）に土・岩肌の層を傾斜・高さ・ノイズで混ぜる（ラスタの megageometry.frag と同じ関数。
+    // 位置はカメラ相対からワールドへ戻し、傾斜は補間した頂点の法線で測る）
+    if ((tileParams.tile.z & VIS_TILE_FLAG_TERRAIN) != 0u)
+    {
+        const TerrainBlendParams terrain = TerrainBlendParams(tileParams.terrain[0], tileParams.terrain[1],
+                                                              tileParams.terrain[2], tileParams.terrain[3]);
+        samples = BlendTerrainLayers(terrain, samples,
+                                     terrainDirtAlbedoTexture, terrainDirtNormalTexture, terrainDirtOrmTexture,
+                                     terrainRockAlbedoTexture, terrainRockNormalTexture, terrainRockOrmTexture,
+                                     texCoord, footprint.UvDx, footprint.UvDy,
+                                     resolved.hitPosition + params.cameraPosition.xyz, resolved.normal, bVirtualTexture);
+    }
 
     // VT のフィードバック（ラスタの gbuffer.frag と同じ: アルベド・法線・ORM は POM の後の UV、高さは元の UV）
     WriteVirtualTextureFeedbackAtPixel(albedoTexture, texCoord, tileParams.vt.x,

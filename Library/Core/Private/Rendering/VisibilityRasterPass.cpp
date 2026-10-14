@@ -551,6 +551,7 @@ namespace NorvesLib::Core::Rendering
     {
         m_LastMaterialOwners.clear();
         m_LastMaterialEntries.clear();
+        m_LastMaterialTerrain.clear();
         m_SwRaster.Shutdown();
         m_Merge.Shutdown();
         m_FrameSlots.Clear();
@@ -1184,6 +1185,7 @@ namespace NorvesLib::Core::Rendering
 
         // フレームの材質の表: MegaGeometry の区間 → 手続き → スキニングの順に、実物の材質を 0 から詰めた番号にする
         m_MaterialTable.Clear();
+        m_MaterialTerrainScratch.clear();
         VariableArray<uint32_t>& sectionMaterials = m_SectionMaterialScratch;
         sectionMaterials.clear();
         if (bHasPlan && camera)
@@ -1191,7 +1193,17 @@ namespace NorvesLib::Core::Rendering
             sectionMaterials.reserve(plan->Sections.size());
             for (const MegaGeometryPass::VisibilityDrawPlan::Section& section : plan->Sections)
             {
-                sectionMaterials.push_back(m_MaterialTable.Add(VisibilityBuffer::MakeMaterialEntry(section.Material)));
+                const uint32_t materialIndex = m_MaterialTable.Add(VisibilityBuffer::MakeMaterialEntry(section.Material));
+                sectionMaterials.push_back(materialIndex);
+                // 地形の混ぜ合わせは表の件に入りきらないので、同じ添え字の並びで材質の解決へ渡す（予備の番号へ寄せた件は渡さない）
+                if (section.Material.TerrainBlend.bEnabled && materialIndex != m_MaterialTable.GetFallbackIndex())
+                {
+                    if (m_MaterialTerrainScratch.size() <= materialIndex)
+                    {
+                        m_MaterialTerrainScratch.resize(static_cast<size_t>(materialIndex) + 1u);
+                    }
+                    m_MaterialTerrainScratch[materialIndex] = section.Material.TerrainBlend;
+                }
                 for (const auto &owner : section.Material.TextureOwners)
                 {
                     m_LastMaterialOwners.push_back(owner);
@@ -1731,6 +1743,7 @@ namespace NorvesLib::Core::Rendering
         m_LastMaterialTable = slot.MaterialTable;
         m_LastMaterialTableCount = static_cast<uint32_t>(materialEntries.size());
         m_LastMaterialEntries.assign(materialEntries.begin(), materialEntries.end());
+        m_LastMaterialTerrain.assign(m_MaterialTerrainScratch.begin(), m_MaterialTerrainScratch.end());
         if (m_Work.bHasMegaDraw)
         {
             m_LastMegaInstanceBuffer = m_Work.MegaInstanceBuffer;
@@ -1792,6 +1805,7 @@ namespace NorvesLib::Core::Rendering
         m_LastMaterialTable.reset();
         m_LastMaterialTableCount = 0;
         m_LastMaterialEntries.clear();
+        m_LastMaterialTerrain.clear();
         m_LastMaterialOwners.clear();
         m_LastMegaInstanceBuffer.reset();
         m_LastMegaInstanceBytes = 0;

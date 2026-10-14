@@ -1321,7 +1321,7 @@
 - notes: 危険地帯（アセットのクック）。手本は球の手続き生成（`Library/Core/Public/Rendering/MegaGeometry/ProceduralMegaSphere.h` 34・234 行付近）と `Assets/AssetSets/Rendering3DTestStartupModels.json` の `generate=displaced-sphere`。地形は1つのメッシュでも区画に分けてもよい（クラスタ単位で外される）。カメラの遠クリップは既定 1000 m（`CameraComponent.cpp` 320 行付近）なので、シーンで延ばす。 2026-10-13 親: ユーザーの指示で、高さ場の CPU の試験の追加を外した（地形は撮影で見る）。
 
 ## SCN-TERRAIN-BLEND: 地形の材質を 3 層（砂・乾いた土・岩肌）の混ぜ合わせにする
-- status: todo
+- status: done
 - done-when: 地形用の材質（3 層のアルベド・法線・ORM と、傾斜・高さ・低周波ノイズで決める混ぜ方の値）を足し、MegaGeometry の描画経路（使っている経路すべて。ハードのラスタと可視バッファ・ソフトラスタ）で効く。平らな所は砂、少し傾いた所は乾いた土、急な斜面とメサの崖は岩肌になり、境目はノイズで揺らぎ、高さ（凹凸）で重みを付けて砂が岩のくぼみに溜まるように見える。`wasteland` の地形にこの材質を使う。他の材質（Rendering3DTest・バナナ）の見た目は変わらない。`wasteland` の撮影を開いて層の分かれ方を確かめ、Rendering3DTest の撮影が変わらない。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -OutDir .harness/runs/scene-capture/SCN-TERRAIN-BLEND`

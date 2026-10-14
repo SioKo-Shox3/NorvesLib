@@ -4202,3 +4202,20 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - PNG を開いて確かめた: どの視点も地平線は平らな板でなく、稜線の峰と鞍部の起伏が続く。遠くの稜線・メサの縁に穴・割れ目・区画の境の線は無い。ground は盆地の床から周りのメサと稜線を見上げ、ridge は稜線から盆地とメサの並びを見下ろす。
 - Next: TASKS.md の次の未完（SCN-TERRAIN-BLEND）。
 - Notes: 区画の数・格子の間隔・高さ場の形の値は内部の値（形は撮影 1 回で決めた）。メサの崖の縦の縞（UV がワールドの XZ なので崖で引き伸ばされる）と、overview の中ほどに見える砂のテクスチャの繰り返しは SCN-TERRAIN-DETAIL の範囲。組み立ては Debug で約 59 秒（区画の読み込みと解析 約 8 秒、砂のテクスチャの読み込み待ち 約 51 秒）。区画の読み込みは Enter の中で同期で行っている。`Docs/Architecture/NVMESHv1.md` の生成器の節に terrain-tile を足すのはこの項目の paths の外なので書いていない。高さ場の CPU の試験は足していない（親の指示どおり撮影で見た）。
+
+### SCN-TERRAIN-BLEND 完了（2026-10-14、反復 4〜5・run 20261014-140012）
+- Done: 地形の材質を 3 層（砂 sand_01・乾いた土 dry_ground_rocks・岩肌 rock_face）の混ぜ合わせにした。
+  - 型: `MegaGeometry::MegaTerrainLayer` / `MegaTerrainBlend`（`MegaGeometryTypes.h`）。材質の Albedo・Normal・ORM が 1 層目（砂）、`TerrainBlend` が 2・3 層目のアルベド・法線・ORM と混ぜ方（傾斜の範囲・高さで土へ寄せる範囲・2 波長の値ノイズの揺らぎ・砂の高さ・凹凸の混ぜの深さ）を持つ。`bEnabled` が偽の材質は従来どおり。
+  - シェーダー: `Common/TerrainLayerBlend.glsl`（傾斜＋ノイズ＋高さの寄せで重み → 各層の高さ（土・岩肌は AO、砂は一定）で重みを付け直し、最も高い層から深さ以内だけ残す。法線は傾きで混ぜる。標本は textureGrad）。値の詰め方は `TerrainBlendShading.h`（vec4 × 4）。
+  - 経路: ハードのラスタ（`megageometry.frag`。binding 10〜15 と区間の定数）と、可視バッファの解決（ハード・ソフトラスタとも。`VisibilityResolve.glsl` の材質ごとの形。binding 23〜28 と ResolveTileParams の terrain。材質の表は Header[3] に混ぜ方の要約を入れて別の件に分け、2・3 層目は `VisibilityRasterPass::GetMaterialTerrainBlend` が同じ添え字で渡す）。地形でない材質は読まない枠を 1 層目のテクスチャで埋める。影・レイトレーシングは 1 層目で扱う。
+  - 資産: rock_face を `Assets/AssetSets/WastelandTerrain.json` に足して焼いた（albedo BC7・normal BC5・orm BC7、4096）。dry_ground_rocks は既存のクック済みを使う。
+  - `wasteland`: 9 枚を非同期で読み、そろってから地形を置く。傾斜 24〜33° で土、37〜48° で岩肌、高さ 12〜50 m で土へ最大 10° 寄せる、混ぜの深さ 0.3、岩肌の UV は 8 m で繰り返す。
+- 検証（`.harness/runs/20261014-140012/`）:
+  - `verify-SCN-TERRAIN-BLEND-1.txt`: Debug の Game のビルド EXIT=0。
+  - `verify-SCN-TERRAIN-BLEND-2.txt`: `wasteland` の撮影 result=pass（default・ground・ridge、白飛び 0）。SCN-TERRAIN-GEN の撮影と並べて開いた: 平らな盆地と砂丘は砂のまま、メサの崖と外周の急な稜線は岩肌、メサの裾の少し傾いた所に乾いた土の斑がノイズの揺らいだ縁で出る。稜線は岩肌と砂がまだらに混ざる。
+  - `aux-SCN-TERRAIN-BLEND-close.txt`（`--camera-script` でメサの崖の足元へ寄った撮影）: 崖の下端と上端で砂が岩肌の縦の溝へぎざぎざに入り込む（凹凸の重みで砂がくぼみに溜まる）。
+  - `aux-SCN-TERRAIN-BLEND-vboff.txt`: `--visibility-buffer=off`（ハードのラスタの経路）の ridge は可視バッファの経路の撮影と画素の差 >8 が 0.002% だけで、同じ層の分かれ方。
+  - `verify-SCN-TERRAIN-BLEND-3.txt`: 起動画面（Rendering3DTest）の撮影 result=pass（default・near・low）。開いて見た目が変わっていないことを確かめた。
+  - `aux-SCN-TERRAIN-BLEND-r3d-deterministic.txt`: RelWithDebInfo の決定的撮影を、この変更の前の決定的撮影（`startup-capture/SCN-MEGA-FIX-BVH-QUEUE-VSM`）と比べて平均輝度の差 0・PSNR 100 dB・ずれた画素 0.0001%（最大 1 階調）。
+- Notes: 混ぜ方の値（角度・高さ・深さ・UV の倍率）は内部の値で、撮影 2 回で決めた。バナナの材質は Rendering3DTest の MegaGeometry の材質と同じ経路（`bEnabled` が偽）なので撮影していない。`--visibility-buffer=off` で出る RenderGraph の「layout-changing frame command」の ERROR は地形を使わない Rendering3DTest でも同じく出る（170 回、`aux-SCN-TERRAIN-BLEND-r3d-vboff.txt`）既存のもの。崖の岩肌の縦の引き伸ばし（UV がワールドの XZ）と、遠目の乾いた土の斑の繰り返し模様は SCN-TERRAIN-DETAIL の範囲。混ぜ合わせの CPU の試験は足していない。
+- Next: TASKS.md の次の未完の項目。

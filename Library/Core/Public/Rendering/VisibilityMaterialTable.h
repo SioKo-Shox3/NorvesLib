@@ -33,6 +33,13 @@ namespace NorvesLib::Core::Rendering::VisibilityBuffer
      * この印のある件には等方のサンプラー・等方の LOD の式・白の既定の粗さを使う。
      */
     constexpr uint32_t MATERIAL_FLAG_MEGA_GEOMETRY = 4u;
+    /**
+     * @brief 地形の 3 層の混ぜ合わせを持つ MegaGeometry の材質
+     *
+     * 2・3 層目のハンドルと混ぜ方は表の件に入りきらないので、Header[3] に値の要約（0 でない 32bit）を入れて
+     * 違う混ぜ合わせを別の件に分け、中身は VisibilityRasterPass::GetMaterialTerrainBlend が同じ添え字で渡す。
+     */
+    constexpr uint32_t MATERIAL_FLAG_TERRAIN_BLEND = 8u;
 
     /**
      * @brief 材質の表の 1 件（storage buffer の 1 要素。128 バイト）
@@ -52,7 +59,7 @@ namespace NorvesLib::Core::Rendering::VisibilityBuffer
         /** @brief x = 金属度のスカラー（負は未指定）、y =
          * 粗さのスカラー（負は未指定）、z = 高さの係数、w = 変位した頂点の間隔 */
         float Scalars[4] = {-1.0f, -1.0f, 0.05f, 0.0f};
-        /** @brief x = MATERIAL_FLAG_*、y = ShadingModel、z = BlendMode、w = 予約 */
+        /** @brief x = MATERIAL_FLAG_*、y = ShadingModel、z = BlendMode、w = 地形の混ぜ合わせの値の要約（無ければ 0） */
         uint32_t Header[4] = {0u, 0u, 0u, 0u};
         /** @brief アルベド・法線（xy が下位・上位、zw が法線） */
         uint32_t TexturesA[4] = {0u, 0u, 0u, 0u};

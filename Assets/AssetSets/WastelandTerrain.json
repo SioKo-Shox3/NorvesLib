@@ -4,7 +4,30 @@
   "package_root": "Cooked/WastelandTerrain",
   "default_variant": "default",
   "cook_assets": true,
-  "textures": [],
+  "textures": [
+    {
+      "logical_path": "Assets/Textures/PolyHaven/rock_face/rock_face_diff_4k.jpg",
+      "cook_usage": "albedo",
+      "source_path": "Assets/Textures/PolyHaven/rock_face/rock_face_diff_4k.jpg",
+      "package_name": "PolyHaven/rock_face/rock_face_diff.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/rock_face/rock_face_diff_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/rock_face/rock_face_nor_dx_4k.jpg",
+      "cook_usage": "normal",
+      "source_path": "Assets/Textures/PolyHaven/rock_face/rock_face_nor_dx_4k.jpg",
+      "package_name": "PolyHaven/rock_face/rock_face_nor_dx.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/rock_face/rock_face_nor_dx_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/rock_face/rock_face_orm_4k",
+      "cook_usage": "orm",
+      "orm_ao": "Assets/Textures/PolyHaven/rock_face/rock_face_ao_4k.jpg",
+      "orm_roughness": "Assets/Textures/PolyHaven/rock_face/rock_face_rough_4k.jpg",
+      "package_name": "PolyHaven/rock_face/rock_face_orm.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/rock_face/rock_face_orm_4k.nvtex"
+    }
+  ],
   "models": [
     {
       "logical_path": "Assets/Models/WastelandTerrain/WastelandTerrain_0_0.generated",

@@ -246,6 +246,19 @@ namespace NorvesLib::Core::Rendering
         }
 
         /**
+         * @brief 最後の Execute が書いた材質の表の index 番の件が、地形の 3 層の混ぜ合わせを持つならその値（無ければ null）
+         *
+         * 材質の表の件はテクスチャのハンドルを 7 枠しか持たないので、地形の 2・3 層目のハンドルと混ぜ方は、
+         * 表と同じ添え字のこの並びで材質の解決へ渡す（MegaGeometry の区間の材質だけが持つ）。
+         */
+        const MegaGeometry::MegaTerrainBlend* GetMaterialTerrainBlend(size_t index) const
+        {
+            return index < m_LastMaterialTerrain.size() && m_LastMaterialTerrain[index].bEnabled
+                       ? &m_LastMaterialTerrain[index]
+                       : nullptr;
+        }
+
+        /**
          * @brief 最後の Execute が描いた MegaGeometry
          * のインスタンスの表（書かなかった・MegaGeometry を描かなかったフレームは
          * null）
@@ -543,6 +556,9 @@ namespace NorvesLib::Core::Rendering
         RHI::BufferPtr m_LastMaterialTable;
         uint32_t m_LastMaterialTableCount = 0;
         Container::VariableArray<VisibilityBuffer::MaterialEntry> m_LastMaterialEntries;
+        // 材質の表と同じ添え字の、地形の混ぜ合わせ（MegaGeometry の区間の材質のうち地形のものだけ bEnabled）
+        Container::VariableArray<MegaGeometry::MegaTerrainBlend> m_LastMaterialTerrain;
+        Container::VariableArray<MegaGeometry::MegaTerrainBlend> m_MaterialTerrainScratch;
         Container::VariableArray<Container::TSharedPtr<const void>> m_LastMaterialOwners;
         RHI::BufferPtr m_LastMegaInstanceBuffer;
         uint64_t m_LastMegaInstanceBytes = 0;

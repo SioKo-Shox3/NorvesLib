@@ -61,6 +61,12 @@ namespace NorvesLib::Core::Rendering
          * と同じ） */
         constexpr uint32_t TILE_FLAG_ORM = 1u;
         constexpr uint32_t TILE_FLAG_SPARSE = 2u;
+        /** @brief 地形の 3 層の混ぜ合わせを持つ材質（2・3 層目のテクスチャと混ぜ方を束ねる） */
+        constexpr uint32_t TILE_FLAG_TERRAIN = 4u;
+        /** @brief 材質ごとの形が束ねる地形の 2・3 層目のテクスチャの数（土・岩肌のアルベド・法線・ORM） */
+        constexpr uint32_t TERRAIN_TEXTURE_COUNT = 6;
+        /** @brief 地形の混ぜ方の値の float の数（シェーダーの ResolveTileParams::terrain[4]） */
+        constexpr uint32_t TERRAIN_PARAM_FLOATS = 16;
         /** @brief
          * 材質ごとの形が束ねる材質のテクスチャの数（アルベド・法線・金属度・粗さ・AO・高さ）
          */
@@ -227,6 +233,15 @@ namespace NorvesLib::Core::Rendering
         uint32_t FeedbackNormal = 0;
         uint32_t FeedbackORM = 0;
         uint32_t FeedbackHeight = 0;
+        /**
+         * @brief 地形の 3 層の混ぜ合わせ（MegaGeometry の地形の材質。VisibilityRasterPass::GetMaterialTerrainBlend から作る）
+         *
+         * 2・3 層目の 6 枚（土のアルベド・法線・ORM、岩肌の同じ 3 枚）がすべて引けたときだけ bTerrainBlend。
+         * 偽のときは 1 層目だけの材質として解決する（読まない枠は 1 層目のテクスチャで埋める）。2・3 層目は VT の要求を書かない
+         */
+        bool bTerrainBlend = false;
+        RHI::TexturePtr TerrainTextures[VisibilityResolveGeometry::TERRAIN_TEXTURE_COUNT];
+        float TerrainParams[VisibilityResolveGeometry::TERRAIN_PARAM_FLOATS] = {};
     };
 
     /** @brief 1 回の解決の入力と出力 */

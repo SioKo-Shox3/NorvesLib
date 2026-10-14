@@ -28,6 +28,7 @@ layout(set = 0, binding = 0) uniform MVPData
     vec4 frameParams; // x=前のカメラがあるか（1/0）, y=発光に掛けるプリエクスポージャ, z=変位の頂点の間隔（UV。0なら変位なし）, w=fragDebugPayload がLODの段か（1/0）
     vec4 materialParams; // x=ORMの1枚が metallicTexture の枠に張られているか（1/0）, y=法線が2チャンネル（BC5）か（1/0）, z=材質のテクスチャが sparse（VT）か（1/0）, w=VT のフィードバックのパラメータ（アルベド。0 は書かない。VirtualTextureFeedback.glsl）
     vec4 vtFeedbackParams; // VT のフィードバックのパラメータ: x=法線, y=ORM（metallicTexture の枠）, z=高さ（0 は書かない）
+    vec4 terrainParams[4]; // 地形の 3 層の混ぜ合わせ（Common/TerrainLayerBlend.glsl の TerrainBlendParams。layers.x が 0 なら 1 層の材質）
 } mvp;
 
 // PBRテクスチャサンプラー
@@ -37,12 +38,20 @@ layout(set = 0, binding = 3) uniform sampler2D metallicTexture;
 layout(set = 0, binding = 4) uniform sampler2D roughnessTexture;
 layout(set = 0, binding = 5) uniform sampler2D aoTexture;
 layout(set = 0, binding = 6) uniform sampler2D heightTexture;
+// 地形の 2 層目（乾いた土）・3 層目（岩肌）のアルベド・法線・ORM（地形でない材質は 1 層目と同じテクスチャが張られ、読まない）
+layout(set = 0, binding = 10) uniform sampler2D terrainDirtAlbedoTexture;
+layout(set = 0, binding = 11) uniform sampler2D terrainDirtNormalTexture;
+layout(set = 0, binding = 12) uniform sampler2D terrainDirtOrmTexture;
+layout(set = 0, binding = 13) uniform sampler2D terrainRockAlbedoTexture;
+layout(set = 0, binding = 14) uniform sampler2D terrainRockNormalTexture;
+layout(set = 0, binding = 15) uniform sampler2D terrainRockOrmTexture;
 
 #include "Common/PbrMaterialEvaluation.glsl"
 #include "Common/SparseResidencySampling.glsl"
 #define VT_FEEDBACK_BINDING 7
 #include "Common/VirtualTextureFeedback.glsl"
 #include "Common/PbrMaterialTextureSampling.glsl"
+#include "Common/TerrainLayerBlend.glsl"
 #include "Common/ParallaxOcclusionMapping.glsl"
 #include "Common/PreExposedEmissive.glsl"
 #include "Common/MegaGeometryDebugColor.glsl"
@@ -156,6 +165,17 @@ void main()
     PbrMaterialTextureSamples textureSamples = SamplePbrMaterialTextures(
         albedoTexture, normalTexture, metallicTexture, roughnessTexture, aoTexture, texCoord, footprint,
         mvp.materialParams.x > 0.5, mvp.materialParams.y > 0.5, bVirtualTexture);
+    // 地形の材質は、1 層目（上の標本）に土・岩肌の層を傾斜・高さ・ノイズで混ぜる（勾配は POM の後の UV の画面微分）
+    TerrainBlendParams terrain = TerrainBlendParams(mvp.terrainParams[0], mvp.terrainParams[1],
+                                                    mvp.terrainParams[2], mvp.terrainParams[3]);
+    if (IsTerrainBlendEnabled(terrain))
+    {
+        textureSamples = BlendTerrainLayers(terrain, textureSamples,
+                                            terrainDirtAlbedoTexture, terrainDirtNormalTexture, terrainDirtOrmTexture,
+                                            terrainRockAlbedoTexture, terrainRockNormalTexture, terrainRockOrmTexture,
+                                            texCoord, footprint.UvDx, footprint.UvDy, fragWorldPos, fragNormal,
+                                            bVirtualTexture);
+    }
     // VT のフィードバック: POM の後の UV で欲しいタイルの要求を書く（VT のテクスチャごとに表の番号を持つ）。
     // 高さだけは POM の前の元の UV で書く。
     WriteVirtualTextureFeedback(albedoTexture, texCoord, DecodeVirtualTextureFeedbackParam(mvp.materialParams.w),

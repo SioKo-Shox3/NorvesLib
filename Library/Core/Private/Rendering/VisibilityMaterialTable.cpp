@@ -23,6 +23,38 @@ namespace NorvesLib::Core::Rendering::VisibilityBuffer
             return handle;
         }
 
+        // 地形の混ぜ合わせの値の要約（FNV-1a。0 は「混ぜ合わせなし」に取っておくので 0 にしない）
+        uint32_t HashTerrainBlend(const MegaGeometry::MegaTerrainBlend& blend)
+        {
+            uint32_t hash = 2166136261u;
+            const auto mix = [&hash](const void* data, size_t bytes)
+            {
+                const uint8_t* p = static_cast<const uint8_t*>(data);
+                for (size_t index = 0; index < bytes; ++index)
+                {
+                    hash = (hash ^ p[index]) * 16777619u;
+                }
+            };
+            for (const MegaGeometry::MegaTerrainLayer* layer : {&blend.Dirt, &blend.Rock})
+            {
+                mix(&layer->AlbedoTexture.Id, sizeof(layer->AlbedoTexture.Id));
+                mix(&layer->NormalTexture.Id, sizeof(layer->NormalTexture.Id));
+                mix(&layer->ORMTexture.Id, sizeof(layer->ORMTexture.Id));
+                const uint8_t twoChannel = layer->bNormalTwoChannel ? 1u : 0u;
+                mix(&twoChannel, sizeof(twoChannel));
+                mix(&layer->UVScale, sizeof(layer->UVScale));
+            }
+            mix(blend.DirtSlopeDegrees, sizeof(blend.DirtSlopeDegrees));
+            mix(blend.RockSlopeDegrees, sizeof(blend.RockSlopeDegrees));
+            mix(blend.DirtHeightRange, sizeof(blend.DirtHeightRange));
+            mix(&blend.DirtHeightBiasDegrees, sizeof(blend.DirtHeightBiasDegrees));
+            mix(blend.NoiseWavelengths, sizeof(blend.NoiseWavelengths));
+            mix(&blend.NoiseAmplitudeDegrees, sizeof(blend.NoiseAmplitudeDegrees));
+            mix(&blend.SandFillHeight, sizeof(blend.SandFillHeight));
+            mix(&blend.BlendDepth, sizeof(blend.BlendDepth));
+            return hash != 0u ? hash : 1u;
+        }
+
         bool SameBytes(const MaterialEntry& a, const MaterialEntry& b)
         {
             return std::memcmp(&a, &b, sizeof(MaterialEntry)) == 0;
@@ -93,6 +125,11 @@ namespace NorvesLib::Core::Rendering::VisibilityBuffer
                           (material.bHasHeightMap ? MATERIAL_FLAG_HAS_HEIGHT : 0u) | MATERIAL_FLAG_MEGA_GEOMETRY;
         entry.Header[1] = static_cast<uint32_t>(ShadingModel::DefaultLit);
         entry.Header[2] = static_cast<uint32_t>(BlendMode::Opaque);
+        if (material.TerrainBlend.bEnabled)
+        {
+            entry.Header[0] |= MATERIAL_FLAG_TERRAIN_BLEND;
+            entry.Header[3] = HashTerrainBlend(material.TerrainBlend);
+        }
         StoreHandle(&entry.TexturesA[0], material.AlbedoTexture.Id);
         StoreHandle(&entry.TexturesA[2], material.NormalTexture.Id);
         StoreHandle(&entry.TexturesB[0], material.MetallicTexture.Id);

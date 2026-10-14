@@ -301,6 +301,72 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
     // ========================================
 
     /**
+     * @brief 地形の混ぜ合わせの 1 層（アルベド・法線・ORM の 3 枚）
+     */
+    struct MegaTerrainLayer
+    {
+        TextureHandle AlbedoTexture;
+        TextureHandle NormalTexture;
+        TextureHandle ORMTexture; // R=AO・G=粗さ・B=メタリック。AO は高さ（凹凸）の混ぜの高さにも使う
+        bool bNormalTwoChannel = false;
+        float UVScale = 1.0f; // 材質の UV に掛ける倍率（大きいほど細かく繰り返す）
+
+        bool operator==(const MegaTerrainLayer &other) const
+        {
+            return AlbedoTexture == other.AlbedoTexture && NormalTexture == other.NormalTexture &&
+                   ORMTexture == other.ORMTexture && bNormalTwoChannel == other.bNormalTwoChannel &&
+                   UVScale == other.UVScale;
+        }
+    };
+
+    /**
+     * @brief 地形の 3 層（砂・乾いた土・岩肌）の混ぜ合わせ
+     *
+     * 1 層目（砂）は材質の Albedo・Normal・ORM の枠をそのまま使い、ここは 2 層目（乾いた土）・3 層目（岩肌）と混ぜ方を持つ。
+     * 混ぜ方はシェーダー（Assets/Shaders/Common/TerrainLayerBlend.glsl）が画素ごとに決める:
+     *   1. 傾斜（幾何の法線と真上のなす角）に、低周波ノイズの揺らぎと高さによる寄せを足し、土・岩肌へ移る角度の範囲で重みを作る。
+     *   2. 各層の高さ（凹凸。土・岩肌は ORM の AO、砂は SandFillHeight の一定の面）に重みを足し、最も高い層から
+     *      BlendDepth 以内の層だけを残す（岩肌のくぼみは低いので、境目では砂がくぼみに溜まる）。
+     * bEnabled が偽、または 2・3 層目のテクスチャがそろわないときは、従来どおり 1 層の材質として描く。
+     * 混ぜ合わせが効くのは MegaGeometry の描画（ハードのラスタ・可視バッファの解決）で、影・レイトレーシングは 1 層目で扱う。
+     */
+    struct MegaTerrainBlend
+    {
+        bool bEnabled = false;
+        MegaTerrainLayer Dirt; // 2 層目（乾いた土）
+        MegaTerrainLayer Rock; // 3 層目（岩肌）
+
+        float DirtSlopeDegrees[2] = {12.0f, 22.0f}; // 乾いた土へ移る傾斜（度）の始まりと終わり
+        float RockSlopeDegrees[2] = {30.0f, 42.0f}; // 岩肌へ移る傾斜（度）の始まりと終わり
+        float DirtHeightRange[2] = {10.0f, 60.0f};  // 高さ（ワールドの y、m）で土へ寄せる範囲
+        float DirtHeightBiasDegrees = 8.0f;         // 範囲の上端で土の判定の傾斜へ足す角度（度）
+        float NoiseWavelengths[2] = {48.0f, 13.0f}; // 境目を揺らす低周波ノイズの 2 つの波長（m）
+        float NoiseAmplitudeDegrees = 7.0f;         // 揺らぎの振幅（度）
+        float SandFillHeight = 0.6f;                // 砂の高さ（凹凸の混ぜ。土・岩肌の AO と同じ 0〜1 の尺度）
+        float BlendDepth = 0.2f;                    // 高さ（凹凸）の混ぜの深さ（0 に近いほど境目が鋭い）
+
+        bool operator==(const MegaTerrainBlend &other) const
+        {
+            if (bEnabled != other.bEnabled)
+            {
+                return false;
+            }
+            if (!bEnabled)
+            {
+                return true;
+            }
+            return Dirt == other.Dirt && Rock == other.Rock &&
+                   DirtSlopeDegrees[0] == other.DirtSlopeDegrees[0] && DirtSlopeDegrees[1] == other.DirtSlopeDegrees[1] &&
+                   RockSlopeDegrees[0] == other.RockSlopeDegrees[0] && RockSlopeDegrees[1] == other.RockSlopeDegrees[1] &&
+                   DirtHeightRange[0] == other.DirtHeightRange[0] && DirtHeightRange[1] == other.DirtHeightRange[1] &&
+                   DirtHeightBiasDegrees == other.DirtHeightBiasDegrees &&
+                   NoiseWavelengths[0] == other.NoiseWavelengths[0] && NoiseWavelengths[1] == other.NoiseWavelengths[1] &&
+                   NoiseAmplitudeDegrees == other.NoiseAmplitudeDegrees && SandFillHeight == other.SandFillHeight &&
+                   BlendDepth == other.BlendDepth;
+        }
+    };
+
+    /**
      * @brief MegaMeshマテリアル
      *
      * MegaMesh単位のPBRマテリアル設定。
@@ -343,6 +409,9 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
          * 変位した形の法線の上に載せる（同じ凹凸の傾きを二重に掛けない）。
          */
         float DisplacementUVSpacing = 0.0f;
+
+        // 地形の 3 層の混ぜ合わせ（bEnabled のときだけ。上の Albedo・Normal・ORM が 1 層目）
+        MegaTerrainBlend TerrainBlend;
     };
 
     // ========================================

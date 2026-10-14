@@ -32,6 +32,7 @@
 #include "Rendering/ShaderManager.h"
 #include "Rendering/SharedResourceRegistry.h"
 #include "Rendering/SparseResidencyShading.h"
+#include "Rendering/TerrainBlendShading.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Rendering/VirtualTextureFeedbackMaterial.h"
 #include "Rendering/VisibilityMerge.h"
@@ -53,6 +54,9 @@ namespace NorvesLib::Core::Rendering
     {
         // VT の要求のバッファの binding（megageometry.frag の VT_FEEDBACK_BINDING と同じ。材質のテクスチャ 1-6 の次）
         constexpr uint32_t VirtualTextureFeedbackBindingIndex = 7;
+        // 地形の 2・3 層目のテクスチャの binding（megageometry.frag の terrain*Texture。土のアルベド・法線・ORM、岩肌の同じ 3 枚）
+        constexpr uint32_t TerrainLayerTextureBindingFirst = 10;
+        constexpr uint32_t TerrainLayerTextureCount = 6;
         // メッシュの表の binding（Common/MegaInstanceTable.glsl の MEGA_MESH_BINDING。カリングと描画のセットで同じ番号）
         constexpr uint32_t MegaMeshTableBindingIndex = 22;
 
@@ -1523,7 +1527,8 @@ namespace NorvesLib::Core::Rendering
                    a.MetallicTexture == b.MetallicTexture && a.RoughnessTexture == b.RoughnessTexture &&
                    a.AOTexture == b.AOTexture && a.ORMTexture == b.ORMTexture && a.HeightTexture == b.HeightTexture &&
                    a.bNormalTwoChannel == b.bNormalTwoChannel && a.HeightScale == b.HeightScale &&
-                   a.bHasHeightMap == b.bHasHeightMap && a.DisplacementUVSpacing == b.DisplacementUVSpacing;
+                   a.bHasHeightMap == b.bHasHeightMap && a.DisplacementUVSpacing == b.DisplacementUVSpacing &&
+                   a.TerrainBlend == b.TerrainBlend;
         }
 
         // 材質の区間ごとの定数（megageometry.vert/frag の MVPData と一致。ワールド変換はインスタンスの表にある）
@@ -1540,6 +1545,7 @@ namespace NorvesLib::Core::Rendering
             float FrameParams[4]; // x=前のカメラがあるか（1/0）, y=発光に掛けるプリエクスポージャ, z=変位の頂点の間隔（UV）, w=描画の番号がLODの段か（1/0）
             float MaterialParams[4]; // x=ORMの1枚を metallic の枠に張ったか（1/0）, y=法線が2チャンネル（BC5）か（1/0）, z=材質のテクスチャが sparse（VT）か（1/0）, w=VT のフィードバックのパラメータ（アルベド。0 は書かない）
             float VtFeedbackParams[4]; // VT のフィードバックのパラメータ: x=法線, y=ORM（metallic の枠）, z=高さ（0 は書かない）, w=未使用
+            float TerrainParams[TERRAIN_BLEND_PARAM_FLOATS]; // 地形の 3 層の混ぜ合わせ（TerrainBlendShading.h の並び。layers.x が 0 なら 1 層）
         };
         static_assert(sizeof(SectionUniformData) <= 512u);
 
@@ -3030,8 +3036,45 @@ namespace NorvesLib::Core::Rendering
                 continue;
             }
 
+            // 地形の 2・3 層目。6 枚とも引けたときだけ混ぜ合わせを有効にする（引けなければ 1 層目だけの材質として描く）。
+            // 地形でない材質は、読まない枠を 1 層目のテクスチャで埋める
+            const MegaGeometry::MegaTerrainBlend &terrain = mat.TerrainBlend;
+            RHI::TexturePtr terrainTextures[TerrainLayerTextureCount] = {albedo, normal, metallic, albedo, normal, metallic};
+            bool bTerrainBlend = false;
+            if (terrain.bEnabled)
+            {
+                const TextureHandle terrainHandles[TerrainLayerTextureCount] = {
+                    terrain.Dirt.AlbedoTexture, terrain.Dirt.NormalTexture, terrain.Dirt.ORMTexture,
+                    terrain.Rock.AlbedoTexture, terrain.Rock.NormalTexture, terrain.Rock.ORMTexture};
+                bTerrainBlend = true;
+                for (uint32_t index = 0; index < TerrainLayerTextureCount; ++index)
+                {
+                    RHI::TexturePtr texture = resolveTexture(terrainHandles[index], nullptr);
+                    if (!texture)
+                    {
+                        bTerrainBlend = false;
+                        break;
+                    }
+                    terrainTextures[index] = texture;
+                }
+                if (!bTerrainBlend)
+                {
+                    terrainTextures[0] = albedo;
+                    terrainTextures[1] = normal;
+                    terrainTextures[2] = metallic;
+                    terrainTextures[3] = albedo;
+                    terrainTextures[4] = normal;
+                    terrainTextures[5] = metallic;
+                }
+            }
+            PackTerrainBlendParams(terrain, bTerrainBlend, uniform.TerrainParams);
+
             // 張るテクスチャに sparse（VT）が1枚でもあれば、シェーダーは常駐しないタイルを読まず粗いミップへ逃げる。
-            uniform.MaterialParams[2] = AnySparseTexture(albedo, normal, metallic, roughness, ao, height) ? 1.0f : 0.0f;
+            uniform.MaterialParams[2] = AnySparseTexture(albedo, normal, metallic, roughness, ao, height, terrainTextures[0],
+                                                         terrainTextures[1], terrainTextures[2], terrainTextures[3],
+                                                         terrainTextures[4], terrainTextures[5])
+                                            ? 1.0f
+                                            : 0.0f;
             // VT の要求を書く先（このフレームのバッファ。対応しないデバイスでは null で、シェーダーに binding は入らない）。
             // アルベドが VT のとき、シェーダーがこのフレームの要求を書く（24bit 以下の整数は float に正確に載る）
             const TextureResources::VirtualTextureFeedbackTarget feedbackTarget =
@@ -3066,6 +3109,11 @@ namespace NorvesLib::Core::Rendering
             descriptorSet->BindSampler(5, m_DefaultLinearSampler);
             descriptorSet->BindTexture(6, height);
             descriptorSet->BindSampler(6, m_DefaultLinearSampler);
+            for (uint32_t index = 0; index < TerrainLayerTextureCount; ++index)
+            {
+                descriptorSet->BindTexture(TerrainLayerTextureBindingFirst + index, terrainTextures[index]);
+                descriptorSet->BindSampler(TerrainLayerTextureBindingFirst + index, m_DefaultLinearSampler);
+            }
             BindVirtualTextureFeedback(*descriptorSet, VirtualTextureFeedbackBindingIndex, feedbackTarget);
 
             // 頂点シェーダーが引くインスタンスの表・メッシュの表と描画情報
@@ -4592,6 +4640,15 @@ namespace NorvesLib::Core::Rendering
         {
             RHI::DescriptorBinding texBinding;
             texBinding.binding = i;
+            texBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+            texBinding.stages = RHI::ShaderStage::Pixel;
+            desc.bindings.push_back(texBinding);
+        }
+        // 地形の 2・3 層目のテクスチャ（10-15）
+        for (uint32_t index = 0; index < TerrainLayerTextureCount; ++index)
+        {
+            RHI::DescriptorBinding texBinding;
+            texBinding.binding = TerrainLayerTextureBindingFirst + index;
             texBinding.type = RHI::ResourceBindType::CombinedImageSampler;
             texBinding.stages = RHI::ShaderStage::Pixel;
             desc.bindings.push_back(texBinding);
