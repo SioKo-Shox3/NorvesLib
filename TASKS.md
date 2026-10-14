@@ -12,6 +12,8 @@
 
 2026-10-13 試験の扱い（ユーザー指示「邪魔な試験は実行から外す。コード上の確からしさを見るだけの試験は意味が微妙」）: ctest で無効にした試験（`set_tests_properties(... DISABLED TRUE)`。今は `RenderGraphCompileTest`）は合否に使わない。無効の試験が通らなくなるという指摘は差し戻しの理由にせず、直すためだけに偽デバイスや期待値を書き換えない。新しい試験は `Docs/Testing.md` の「技術的負債」の節の 3 点が書けるときだけ足す。
 
+2026-10-14 荒野の作り直し（ユーザーの評価と決定）: ユーザーは今の荒野を「PS3 の水準で、現実の荒野と比べられる水準に無い」と評価した。地形の大きな形は実在の地形データ（USGS 3DEP の 1 m DEM、パブリックドメイン）から作り、手本は米南西部のメサと砂岩（Valley of the Gods、ユタ州）にする。ダウンロード（DEM の 1 m タイル `x60y413` 約 268 MB・Python のパッケージ・手本の写真・Poly Haven の素材）はユーザーが許可済み。それ以外のダウンロードは、ファイル名とサイズを書いて BLOCKED にする。項目は `SCN-WL-`。判定は、技術と見た目の条件（浮き・継ぎ目・繰り返し・形の対応・移動中のちらつき）を評価者が見て、実写と並べて成立するかの最終の判断はユーザーがする（SCN-WASTELAND-POLISH の後）。目標の個数（数十万個など）は置かず、手本の写真の大きさ・被覆・疎密に合わせる。
+
 2026-10-10 ECS の決定（ユーザー決定）: Entity はオブジェクト管理の器として残し、更新（Tick・変換・描画への同期・ゲームロジック）のデータと処理を ECS 型（自前のアーキタイプ型、値の実体は列に置き Object の読み書きはそこを通す、大量の物は Object を持たない軽い実体、ロジックはすべてシステムへ、ジョブで並列）に作り変え、レンダースレッドもコマンドの並列記録まで並列化する。100万本の改修に組み込む。設計の正本は `Docs/Plans/EcsUpdatePathPlan.md`（計画者の計画を GPT が 2 周批評し、親が追記した。項目の notes の「§」はこの文書の節）。`SCN-ECS-` の項目と、ECS 前提で置き換えた `SCN-MEGA-` の項目を、計画書の §2 の順に並べた。ワールドの全走査を直す旧案（WORLD-TICK-CACHE・WORLD-TRANSFORM-NOTIFY・WORLD-TRANSFORM-INTERP・WORLD-RENDER-DIRTY・INSTANCE-BATCH）は ECS の項目に置き換えて消した。戻すときは、戻す項目とそれに依存する後続の項目を新しい順に revert する（単独では戻さない）。
 
 起動画面（Rendering3DTest）の描画改善（2026-09-27、ユーザー決定）。物理空と空の太陽による昼の屋外、点光源のキューブシャドウ、自動露出・ミップチェーンのブルーム・TAA・GTAO・コンタクトシャドウ・色収差・レンズダート・グレーディングLUT・RTGIの既定化、展示物の追加、視差オクルージョンと影の不具合の修正を `SS-` の項目で進める。見た目の証拠は `Scripts/CaptureStartupScene.ps1` の撮影を開いて確かめる。起動画面の見た目を変えることはこの計画でユーザーが承認済み。検証シーン（Indoor/Outdoorのgolden、R系の受入れ）は、項目に書いた場合を除き結果を変えない。
@@ -1373,6 +1375,152 @@
 - paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Scripts, TASKS.md, PROGRESS.md
 - notes: 危険地帯（描画）。空から IBL を作る箇所は `LightingPass.cpp` 4653 行付近。雲は今は無い。 2026-10-12 親: 計測の見直し（ユーザーの指摘「節目に計測を入れても意味があるのかを考えるべき」。計測ごとに、問い・結果で変わる判断・測らずに分からないかの 3 点を書き、書けないものは置かない。Sol の批評を反映）。
 
+## SCN-WL-REFERENCE-SELECT: 比較の手本の写真を選び、切り出す範囲と主役の地形を決める
+- status: todo
+- done-when: Valley of the Gods（ユタ州、BLM）の写真を、ライセンスが パブリックドメイン・CC0・CC BY・CC BY-SA のもの（NC・ND は使わない）から選ぶ: 遠景（ビュート・メサの並びと稜線）2〜3 枚、主役の崖 1〜2 枚、足元（礫・沢底・低木）2〜3 枚。足元の写真が同じ場所で見つからなければ、同じ地質の近い地域（Cedar Mesa・Monument Valley 周辺）で代える。`Assets/Reference/ValleyOfTheGods/` に落とし（git 管理外。`.gitignore` に `/Assets/Reference/` と `/Assets/Terrain/` を足す）、`manifest.json`（URL・作者・ライセンス・撮影の位置と向きの推定・写っている物）を書く。写真から、主役にするビュート・崖、切り出す範囲（2〜4 km 四方。1 m タイル `x60y413` の内側）、前哨地を置く自然に平らな場所の候補を決め、`Docs/RenderingValidation/WastelandReference.md` に書く（範囲の座標・選んだ理由・写真ごとに比較で見る特徴）。写真を縮小して並べた一覧の PNG を開いて確かめる。
+- verify: `python Scripts/Terrain/ReferencePhotos.py --verify`
+- paths: Scripts/Terrain, .gitignore, Docs/RenderingValidation, TASKS.md, PROGRESS.md
+- notes: 2026-10-14 親: ダウンロードはユーザーが許可済み（手本の写真 4〜6 枚、各数 MB）。調べ済み: Commons の `File:Franklin_Butte,_Valley_of_the_Gods.jpg`（CC BY-SA 3.0）は使える。`File:A287,_Valley_of_the_Gods,_Utah,_USA,_2008.JPG` は NC があるので使わない。Commons の Category:Valley of the Gods を API（https://commons.wikimedia.org/w/api.php）で引いてよい。USGS の写真はパブリックドメイン。
+
+## SCN-WL-DEM-INPUT: 地形データと、それを読む Python の環境を用意する
+- status: todo
+- done-when: 3DEP の 1 m DEM `USGS_1M_12_x60y413_UT_WestEast_B22.tif`（約 268 MB。The National Map の API で URL を引く。配布元は prd-tnm.s3.amazonaws.com）を `Assets/Terrain/Source/` に落とし（git 管理外）、サイズ・SHA-256・URL・取得日を `Assets/Terrain/Source/manifest.json` に書く。GeoTIFF を読む Python のパッケージ（rasterio と numpy。Python 3.14 の wheel が無ければ tifffile と imagecodecs）を入れ、`Scripts/Terrain/requirements.txt` に版を固定して書く。タイルの座標系（EPSG）・画素の大きさ・行の向き・NoData の値と画素数・高さの範囲を読んで PROGRESS に書く。
+- verify: `python Scripts/Terrain/DemInput.py --verify`
+- paths: Scripts/Terrain, .gitignore, TASKS.md, PROGRESS.md
+- notes: 2026-10-14 親: このファイルのダウンロードとパッケージの導入はユーザーが許可済み。3DEP はパブリックドメイン（"All 3DEP products are public domain."）。汎用の製品探索は作らない（ファイルを固定する）。隣のタイル（`x60y412` 約 263 MB など）や 1/3 arc-second が要ると分かったら、ファイル名とサイズを書いて BLOCKED にする（別のダウンロードはユーザーの許可が要る）。近景に約 10 m の粗いデータを補間して使うことはしない。
+
+## SCN-WL-DEM-CROP: 余白付きで範囲を切り出し、エンジンの座標の格子にする
+- status: todo
+- done-when: SCN-WL-REFERENCE-SELECT で決めた範囲を、周りに 100 m 以上の余白（法線と解析のため）を付けて切り出し、地域の原点を引いた m の格子として、float32 の生の格子と JSON（EPSG・原点の UTM 座標・画素の大きさ・行の向き・東と北をエンジンの X と Z のどちらの向きに対応させるか・画素の中心と頂点の対応・標高の基準 NAVD88・高さのオフセット（前哨地の床が 0 付近になる値）・余白・NoData の処理・入力の SHA-256）を `Assets/Terrain/ValleyOfTheGods/` に書く。NoData は孤立した小さな穴だけ周りから埋め、大きな穴があれば範囲を変える（0 m や大きな負値として焼かない）。陰影図を 2 方向（北西と南東から照らす）で書き、主役の崖を横切る断面の図を書いて開き、形が写真の配置と対応し、向きの反転・欠け・格子状の凹凸・崖の不自然な丸まりが無いことを確かめる。
+- verify: `python Scripts/Terrain/CropDem.py --verify`
+- paths: Scripts/Terrain, Docs/RenderingValidation, TASKS.md, PROGRESS.md
+- notes: 全体のならし（平滑化）はしない。平らな所の異常だけ直す。
+
+## SCN-WL-DEM-HEIGHTFIELD: 高さ場を DEM の格子から引けるようにする
+- status: todo
+- done-when: `TerrainHeightField` に、切り出した格子を読んで高さと法線を引く作り方を足す（今の手続きの作り方は残す。荒野の既定を格子に替えるのは SCN-WL-DEM-SCENE）。標本の規則は焼いたメッシュの三角形と一致させる（格子の点をそのまま頂点にし、間はメッシュと同じ対角線の分け方で線形。双三次のような元の値を越える補間は使わない）。範囲の外は端を延ばさず、範囲外と分かる値を返す。格子の読み込みは一度で、複数のスレッドから引いてよい。Game とクッカーが同じファイル・同じ規則を使う。格子の数点で、ファイルの値と `SampleHeight` が一致することを PROGRESS に書く。
+- verify: `cmake --build build --config Debug --target Game AssetCook -- /m:1`
+- paths: Library/Core/Public/Rendering/Terrain, Library/Core/Private/Rendering/Terrain, Library/Core/CMakeLists.txt, Tools/AssetCook, Game/GameModes/Wasteland, Scripts/Terrain, TASKS.md, PROGRESS.md
+- notes: 危険地帯（アセットの読み込み）。
+
+## SCN-WL-DEM-COOK: 地形の区画を DEM の格子から焼く
+- status: todo
+- done-when: クッカーの terrain-tile が DEM の格子から区画を焼く。区画の数と格子の間隔は格子の JSON から決め、入力の SHA-256 と造成の設定をクックの依存（再クックの判定）に入れる（Game だけが新しい高さを読みメッシュが古いまま、を起こさない）。隣り合う 2 区画で、境の頂点の高さ・法線が一致し LOD の段ごとに境が固定されることを確かめてから、全体を焼く。
+- verify: `cmake --build build --config Debug --target AssetCook -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CookAssets.ps1 -OnlyLogicalPath "Models/WastelandTerrain/*"`
+- paths: Tools/AssetCook, Library/Core/Public/Rendering/Terrain, Library/Core/Private/Rendering/Terrain, Assets/AssetSets, Scripts, TASKS.md, PROGRESS.md
+- notes: 危険地帯（アセットのクック）。2 km 四方の 1 m 格子は約 800 万三角形、4 km 四方は約 3,200 万。論理パスを変えるなら verify の行も同じ項目で直す。
+
+## SCN-WL-DEM-SCENE: 荒野を DEM の地形にし、視点を置き直す
+- status: todo
+- done-when: `wasteland` が DEM の区画を置き、高さ場の既定を格子に替える（手続きのメサは荒野では使わない）。遠クリップ・影の到達距離・霧の基準の高さ・空気遠近の開始距離を、新しい地形の大きさと高さに合わせる。名前付き視点 overview・ground・ridge・cliff を新しい地形に置き直す（手本の写真の構図は SCN-WL-REFERENCE-CAPTURE）。今の岩・崖・建物の配置（WastelandLayout）は、新しい地形で据え直すか、SCN-WL-OUTPOST まで外す（浮き・めり込みを残さない）。撮影を開いて、地形が写真の主役のビュート・メサの形と対応し、尺度（高さ・距離）が合い、区画の境・LOD の割れが無いことを確かめる。`wasteland` の cycle smoke 3 周が pass。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -OutDir .harness/runs/scene-capture/SCN-WL-DEM-SCENE`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Scenes wasteland -Cycles 3`
+- paths: Game/GameModes/Wasteland, Game/Scenes/SceneCatalog.h, Library/Core/Public/Rendering/Terrain, Library/Core/Private/Rendering/Terrain, Assets/AssetSets, Scripts, TASKS.md, PROGRESS.md
+
+## SCN-WL-LIGHT-BASE: 基準の光を手本の写真に合わせる
+- status: todo
+- done-when: 手本の晴天の遠景の写真に合わせて、太陽の高さと向き（写真の影の向きと長さから推定）・空・露出・霞・グレーディングを決める。影の到達距離が、写真に写る主要な崖を覆う。撮影と手本を並べた画像（簡易でよい。正式な比較は SCN-WL-REFERENCE-CAPTURE）を開いて、空と地形の明るさの比・影の濃さ・遠景の霞が近いことを確かめる。Rendering3DTest は変わらない。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -OutDir .harness/runs/scene-capture/SCN-WL-LIGHT-BASE`
+- paths: Game/GameModes/Wasteland, Scripts/Terrain, Docs/RenderingValidation, TASKS.md, PROGRESS.md
+
+## SCN-WL-HORIZON: 遠景を粗い実地形でつなぐ
+- status: todo
+- done-when: 1 m タイルの範囲（約 10 km 四方）のうち切り出しの外側を、粗い間隔（例 8〜16 m）の遠景の地形として焼き、近景の区画の外周と隙間・段差なくつなぐ（近景の外周の高さへ寄せる帯を置く）。手本の写真に写る稜線（北の Cedar Mesa の崖など）が入る範囲にし、遠クリップを合わせる。ridge と overview の撮影を開き、外周の板・壁・継ぎ目・浮いた縁が無く、地平線に実地形の稜線が見えることを確かめる。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -OutDir .harness/runs/scene-capture/SCN-WL-HORIZON`
+- paths: Scripts/Terrain, Tools/AssetCook, Library/Core/Public/Rendering/Terrain, Library/Core/Private/Rendering/Terrain, Game/GameModes/Wasteland, Assets/AssetSets, TASKS.md, PROGRESS.md
+- notes: 地形の端の高さを外へ延ばす作り方は使わない（四角い外周から板や壁が伸びる）。1 m タイルの外が要るなら、ファイル名とサイズを書いて BLOCKED（ユーザーの許可が要る）。
+
+## SCN-WL-REFERENCE-CAPTURE: 手本の写真と同じ構図の視点と、並べた比較画像を作る
+- status: todo
+- done-when: 手本の写真ごとに、写真に合う名前付き視点（位置・向き・画角・時刻。推定した条件を書き、「同じ」とは書かない）を足し、写真と撮影を左右に並べた PNG を書くスクリプト `Scripts/Terrain/CompareReference.py` を作る。比較画像を開いて、ビュート・メサの配置と輪郭が対応することを確かめ、目立つ差（形・色・尺度・地表の種類）を `Docs/RenderingValidation/WastelandReference.md` に書く。以後の荒野の項目は、この視点と比較画像で判断する。他の地域の写真は材質と光の参考だけに使う。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -OutDir .harness/runs/scene-capture/SCN-WL-REFERENCE-CAPTURE`
+- verify: `python Scripts/Terrain/CompareReference.py --capture .harness/runs/scene-capture/SCN-WL-REFERENCE-CAPTURE --verify`
+- paths: Game/GameModes/Wasteland, Game/Scenes/SceneCatalog.h, Scripts/Terrain, Docs/RenderingValidation, TASKS.md, PROGRESS.md
+- notes: 写真の加工やホワイトバランスが分からないので、RGB の値の一致を合格の条件にしない（PSNR・SSIM も使わない）。
+
+## SCN-WL-OUTPOST: 前哨地を自然に平らな所へ置き直し、建物と道の範囲だけ均す
+- status: todo
+- done-when: SCN-WL-REFERENCE-SELECT で選んだ平らな場所へ、前哨地（建物 6 種 8 棟・門・道）を置き直し、建物の足元と道の範囲だけ高さ場を緩い平面へ寄せる（境で高さと傾斜を滑らかにつなぎ、円形の継ぎ目を作らない）。造成は高さ場の規則として持ち、クックと Game が同じ値を使う（区画を焼き直す）。outpost の視点を置き直す。outpost・ground の撮影を開き、建物が浮かず埋まりすぎず、造成の境が見えないことを確かめる。散布の除外範囲（建物・道）を決めて書く。`wasteland` の cycle smoke 3 周が pass。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -OutDir .harness/runs/scene-capture/SCN-WL-OUTPOST`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Scenes wasteland -Cycles 3`
+- paths: Game/GameModes/Wasteland, Game/Scenes/SceneCatalog.h, Library/Core/Public/Rendering/Terrain, Library/Core/Private/Rendering/Terrain, Tools/AssetCook, Assets/AssetSets, Scripts, TASKS.md, PROGRESS.md
+
+## SCN-WL-CLIFF-ASSETS: 砂岩の崖の素材を揃える
+- status: todo
+- done-when: 主役の崖（赤褐色の砂岩、水平な地層と剥がれた面）に合う岩・崖のメッシュを選んでクックする。Poly Haven（CC0）で合うものを探し、無ければ、DEM の崖の一部を高解像度のメッシュにする・ComfyUI で生成する、などから選ぶ（理由を書く）。地形の砂岩の色と馴染むように材質の色を合わせる。代表の 1〜2 個を cliff の視点の近くに置いた撮影を開いて確かめる。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -OutDir .harness/runs/scene-capture/SCN-WL-CLIFF-ASSETS`
+- paths: Assets/AssetSets, Scripts, Tools/ComfyWorkflows, Game/GameModes/Wasteland, TASKS.md, PROGRESS.md
+- notes: Poly Haven のダウンロードはユーザーが許可済み（2026-10-14）。
+
+## SCN-WL-CLIFF-GEOMETRY: DEM に無い崖の立体を補う
+- status: todo
+- done-when: 主役の崖と近景に限って、崖のメッシュで張り出し・割れ目・侵食の棚を補う（崖の面に沿って向きと大きさを合わせ、地形の面に食い込ませて継ぎ目を隠す）。cliff と手本の崖の比較画像を開き、崖の輪郭と陰影が、DEM だけの丸い斜面から立体のある崖になったことを確かめる。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -OutDir .harness/runs/scene-capture/SCN-WL-CLIFF-GEOMETRY`
+- paths: Game/GameModes/Wasteland, Scripts/Terrain, Assets/AssetSets, TASKS.md, PROGRESS.md
+- notes: DEM は 1 地点に 1 つの高さしか持たないので、垂直な面・張り出し・深い割れ目は地形のメッシュでは出ない。
+
+## SCN-WL-MASKS-GEOM: 基本の地表の分類の地図を作る
+- status: todo
+- done-when: 格子から、数 m の幅でならした傾斜・相対の高さ（周りより高いか低いか）・崖との位置関係（崖の下側か）を求め、露岩・崖錐・地表（細粒と礫）の重みの地図を焼く（1〜2 m/画素）。崖錐は崖からの距離だけで決めず、崖より低い側・斜面の向き・沢の切れ込みで扇状・舌状の塊にする。色分けの PNG を開き、崖に露岩、崖の下の裾に崖錐、平らな所に地表が出ることを確かめる。流れ（沢）は SCN-WL-MASKS-FLOW。
+- verify: `python Scripts/Terrain/TerrainMasks.py --verify`
+- paths: Scripts/Terrain, Tools/AssetCook, Assets/AssetSets, TASKS.md, PROGRESS.md
+- notes: 1 m の格子をそのまま微分すると細かい凹凸を拾うので、数 m の幅で見た値を使う。地層の高さは地図に焼かず、シェーダーで共通の基準面からの高さとして計算する（SCN-WL-MATERIAL-STRATA）。
+
+## SCN-WL-MATERIAL-MASKS: 地図を今の 3 層の描画へつなぐ
+- status: todo
+- done-when: 地形の材質（今の 3 層）の重みを、地図から取る（傾斜・高さの式は地図が無い所の予備にする）。地図の座標を地形と揃え、MegaGeometry のラスタと可視バッファの解決の両方で効く。地形の LOD が変わっても分類が大きく動かない。overview・cliff の撮影を開き、露岩・崖錐・地表の分かれ方が地図どおりで、手本の比較画像で分布が近づいたことを確かめる。Rendering3DTest の撮影が変わらない。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -OutDir .harness/runs/scene-capture/SCN-WL-MATERIAL-MASKS`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -OutDir .harness/runs/startup-capture/SCN-WL-MATERIAL-MASKS`
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game/GameModes/Wasteland, Assets/AssetSets, Scripts, TASKS.md, PROGRESS.md
+- notes: 危険地帯（描画）。層を 3 つから増やすことは、この計画の中心にしない（材質のデータ・束縛・複数の描画経路に及ぶ）。
+
+## SCN-WL-MATERIAL-PALETTE: 素材と実寸と大きな色の分布を整える
+- status: todo
+- done-when: 3 層を、赤褐色の砂岩・岩屑と礫・細粒の地面（赤い砂と乾いた土）の素材に替え（Poly Haven から合う素材を足す）、各素材の模様の大きさを実寸に合わせる（礫の粒の大きさ・砂岩の割れ目の間隔）。今の色の揺らぎを地表の分類に沿わせ、全域を覆う同じ模様の繰り返しを減らす。手本の比較画像で、色合い・素材の種類・模様の大きさが近づいたことを確かめる。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -OutDir .harness/runs/scene-capture/SCN-WL-MATERIAL-PALETTE`
+- paths: Assets/Shaders, Library/Core/Private/Rendering, Game/GameModes/Wasteland, Assets/AssetSets, Scripts, TASKS.md, PROGRESS.md
+
+## SCN-WL-MATERIAL-STRATA: 砂岩の地層と風化の筋を足す
+- status: todo
+- done-when: 崖の砂岩に、厚さの違う層・斜めの交差層理・途切れる帯・硬い層の張り出しを、共通の基準面からの高さでシェーダーが計算して入れる（等間隔の帯にしない）。砂漠ワニスの黒い筋を、崖の上端から流れ落ちる位置に局所的に置く（崖全体へ同じ縦のノイズを掛けない）。cliff と手本の崖の比較画像を開き、帯の厚さ・向き・途切れ方が写真に近く、同じ縞が崖全体に繰り返していないことを確かめる。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -OutDir .harness/runs/scene-capture/SCN-WL-MATERIAL-STRATA`
+- paths: Assets/Shaders, Library/Core/Private/Rendering, Game/GameModes/Wasteland, TASKS.md, PROGRESS.md
+- notes: Cedar Mesa 砂岩には水平の層と斜めの交差層理がある（NPS の地質の説明）。
+
+## SCN-WL-MASKS-FLOW: 沢と堆積の分布を足す
+- status: todo
+- done-when: 余白を含む広い範囲で流れの集まり（窪地の処理を含む。描画用の高さは変えない）を求め、対数にした集水面積から沢底の幅を決めて地図に足す。沢底は乾いた細粒の地面にし、砂の吹きだまりは風向（手本から推定）と写真で補う（流量だけで決めない）。overview・ground の撮影を開き、涸れ沢が地形の谷に沿った線として地表の材質に出ることを確かめる。
+- verify: `python Scripts/Terrain/TerrainMasks.py --verify`
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -OutDir .harness/runs/scene-capture/SCN-WL-MASKS-FLOW`
+- paths: Scripts/Terrain, Tools/AssetCook, Assets/AssetSets, Assets/Shaders, Game/GameModes/Wasteland, TASKS.md, PROGRESS.md
+
+## SCN-WL-SCATTER-ROCKS: 大岩と崖錐を置く
+- status: todo
+- done-when: 崖の下の崖錐に、崖の剥離片（角張った大岩・岩）を群れとして置く（大岩の周りに小片が集まり、空白も残す。全域に均等に撒かない）。数は手本の写真の被覆と疎密に合わせる（目標の個数は置かない）。散布の Object（バナナの仕組み）を使う。overview・cliff・ground の撮影と比較画像を開き、崖錐が点の集まりでなく裾の帯として見え、岩が浮いていないことを確かめる。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -OutDir .harness/runs/scene-capture/SCN-WL-SCATTER-ROCKS`
+- paths: Game/GameModes/Wasteland, Assets/AssetSets, Scripts, TASKS.md, PROGRESS.md
+- notes: RT の選別（120 m・最大 65,536 件）と大量配置の TLAS 更新の直しは、後ろの SCN-MEGA-FIX-RT-SELECT・TLAS-REBUILD にある。RT の影・GI で岩が欠けるなら、その旨を PROGRESS に書いて進める。
+
+## SCN-WL-SCATTER-GRAVEL: 近景の石と礫を足す
+- status: todo
+- done-when: 輪郭と接触の影が読める大きさ（数 cm〜数十 cm）の石・礫を、近景（数十 m まで）の礫の地面と沢底に置き、それより遠くは材質（礫の層）に引き継ぐ（消える距離で目立つ線や点滅を出さない）。画面で 1〜2 画素以下になる粒はジオメトリにしない。ground・outpost の撮影と手本の足元の写真の比較画像を開き、足元の尺度（粒の大きさ・被覆）が写真に近いことを確かめる。カメラパスか連続撮影で、移動中に石の出入りが目立たないことを確かめる。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -OutDir .harness/runs/scene-capture/SCN-WL-SCATTER-GRAVEL`
+- paths: Game/GameModes/Wasteland, Assets/AssetSets, Assets/Shaders, Library/Core/Private/Rendering, Scripts, TASKS.md, PROGRESS.md
+
 ## SCN-CLOUDS-TEMPORAL: 雲を低解像度と時間方向の蓄積で軽くする
 - status: todo
 - done-when: 雲を画面の 1/4〜1/2 の解像度で描き、前のフレームへの再投影で蓄積して、1920×1080・RelWithDebInfo の `wasteland` `overview` で、雲全体（光線の進行・時間の蓄積・拡大の合成）の GPU 時間の p95 が 1.5 ms 以下。超えたら支配する区間に合わせて解像度・ステップ数・再構築の方式を変える。見た目を保って届かないときは未達として done にせず、ユーザーへ渡す。カメラパスの再生中の連続撮影（`--capture-sequence`）の数枚を開いて、カメラを動かしても雲の縁がちらつかず残像を引かないことを確かめる。
@@ -1384,7 +1532,7 @@
 
 ## SCN-GRASS-RENDER: 枯れ草の株をインスタンスで描き、風で揺らす
 - status: todo
-- done-when: 曲がった細い葉を数〜十数枚束ねた枯れ草の株のメッシュ（手続き生成。アルファ抜きを使わない）を、インスタンスの配列（位置・向き・大きさ・色の揺らぎ）から少ない回数の描画（間接描画かインスタンス描画）で描く経路を足し、頂点シェーダーで風（時間と低周波ノイズ。根元は動かず先ほど揺れる）で揺らす。色は乾いた黄土〜灰褐色で、裏面も描く（両面）。影は受ける。`wasteland` の一角に数千株を置いた名前付き視点 `grass` を足し、撮影を開いて草に見える（板やトゲに見えない）こと、時刻を変えた2枚で揺れていることを確かめる。Rendering3DTest の撮影が変わらない。
+- done-when: 曲がった細い葉を数〜十数枚束ねた枯れ草の株のメッシュ（手続き生成。アルファ抜きを使わない）を、インスタンスの配列（位置・向き・大きさ・色の揺らぎ）から少ない回数の描画（間接描画かインスタンス描画）で描く経路を足し、頂点シェーダーで風（時間と低周波ノイズ。根元は動かず先ほど揺れる）で揺らす。色は乾いた黄土〜灰褐色で、裏面も描く（両面）。影は受ける。`wasteland` の一角に数千株を置いた名前付き視点 `grass` を足し、撮影を開いて草に見える（板やトゲに見えない）こと、時刻を変えた2枚で揺れていることを確かめる。米南西部の植生に合わせ、枯れ草の株に加えて、細い枝の低木（ブラックブラッシュ・モルモンティーのような高さ 0.3〜1 m の株）も同じ経路で描き、手本の足元の写真と並べて形と色が近いことを確かめる。Rendering3DTest の撮影が変わらない。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Views grass -OutDir .harness/runs/scene-capture/SCN-GRASS-RENDER`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SCN-GRASS-RENDER`
@@ -1393,11 +1541,27 @@
 
 ## SCN-GRASS-SCATTER: 地形に枯れ草を撒き、区画ごとに間引く
 - status: todo
-- done-when: 高さ場の傾斜・高さ・ノイズで密度を決めて `wasteland` の盆地と砂丘の麓に枯れ草を撒き（建物の足元・道・急斜面には生えない）、区画ごとに視錐台で外し、距離で密度を下げて 80〜120 m 先で消す（消え方が線にならないよう株ごとのしきい値でフェード）。`ground`・`outpost`・`overview` の撮影を開いて、近くは草むら、遠くは自然に薄くなることを確かめる。性能はこの項目では測らず、SCN-WASTELAND-POLISH で草が目標を超える原因になったときに、カリングとラスタの内訳から密度・距離・LOD を調整する。
+- done-when: 地表の分類の地図（SCN-WL-MASKS-GEOM・FLOW）と手本の写真の疎密で密度を決めて、低木と枯れ草を撒き（露岩・崖錐の岩の上・沢底の流路・建物の足元・道には生えない）、区画ごとに視錐台で外し、距離で密度を下げて 80〜120 m 先で消す（消え方が線にならないよう株ごとのしきい値でフェード）。`ground`・`outpost`・`overview` の撮影を開いて、近くは草むら、遠くは自然に薄くなることを確かめる。性能はこの項目では測らず、SCN-WASTELAND-POLISH で草が目標を超える原因になったときに、カリングとラスタの内訳から密度・距離・LOD を調整する。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -OutDir .harness/runs/scene-capture/SCN-GRASS-SCATTER`
 - paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Scripts, TASKS.md, PROGRESS.md
 - notes: 2026-10-12 親: 計測の見直し（ユーザーの指摘「節目に計測を入れても意味があるのかを考えるべき」。計測ごとに、問い・結果で変わる判断・測らずに分からないかの 3 点を書き、書けないものは置かない。Sol の批評を反映）。
+
+## SCN-WL-RTGI-COLOR: 照り返しの入力を成立させる
+- status: todo
+- done-when: 荒野での RTGI の実行状態（有効か・fallback の有無）をログで確かめ、二次の当たりの色が地形の材質を反映しないこと（`Assets/Shaders/RTGI/DiffuseIndirect.comp` 912 行付近はインスタンスの定数の色を使う）を直す。まずは地表の分類の地図と層の代表の色（素材の平均の色）で当たりの色を決める程度でよい（材質の評価の共通化まで広げない）。同じ条件の RTGI の入・切の撮影を並べて開き、崖の影の中と谷の底に砂の暖かい照り返しが入ることを確かめる。Rendering3DTest の撮影が変わらない（変わるなら、差がこの変更だけによることを確かめて基準を再承認する）。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -OutDir .harness/runs/scene-capture/SCN-WL-RTGI-COLOR`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -OutDir .harness/runs/startup-capture/SCN-WL-RTGI-COLOR`
+- paths: Assets/Shaders, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Game/GameModes/Wasteland, Docs/RenderingValidation, Scripts, TASKS.md, PROGRESS.md
+- notes: 危険地帯（描画）。RTGI は既定で有効で、荒野で切ってはいない（2026-10-14 Sol の確認）。
+
+## SCN-WL-LIGHT-FINAL: 影と間接光を整える
+- status: todo
+- done-when: 谷・崖の影・前哨地で、暖かい照り返しと空の青を手本の写真に合わせて整える（露出でまとめて帳尻を合わせない。谷の空の遮り・地面からの反射・遠い崖の影はそれぞれ原因を分けて直す）。カメラパスか連続撮影で、移動中の粒・残像・遮蔽の欠けが目立たないことを確かめる。比較画像を開いて、影の中の色と明るさが写真に近づいたことを確かめる。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -OutDir .harness/runs/scene-capture/SCN-WL-LIGHT-FINAL`
+- paths: Game/GameModes/Wasteland, Assets/Shaders, Library/Core/Private/Rendering, Scripts, Docs/RenderingValidation, TASKS.md, PROGRESS.md
 
 ## SCN-DUST: ワールド空間の砂塵を足す
 - status: todo
@@ -1410,7 +1574,7 @@
 
 ## SCN-WASTELAND-POLISH: 荒野をゲームの風景として仕上げ、カメラパスと性能を決める
 - status: todo
-- done-when: `wasteland` のカメラパス（前哨地へ近づいて建物の間を抜け、稜線へ上がる 40〜60 秒）を決め、グレーディング・露出・霧・雲・草・砂塵の量を整える。全視点とカメラパスの途中 6 時刻の撮影を開いて、デバッグ画面に見えない（格子・単色の板・浮いた物・タイルの繰り返し・LOD の穴が目立たない）ことを確かめ、気になったものを直す。問い: 最終の荒野が 1920×1080・RelWithDebInfo の `overview`・`ground`・`outpost` で 16.6 ms（GPU・gt・rt の p95）に収まるか。変わる判断: 収まらなければ、GPU のパスと CPU の区間の内訳から支配するものを特定し、下げる品質の設定（影の到達距離・草の密度と距離・雲の解像度・地形の材質など）を決めて直す。見た目を保って届かない分は未達としてユーザーへ渡す（既知の限界で済ませない）。結果を受入れ文書の荒野の節に書く。`wasteland` の cycle smoke 3周が pass。
+- done-when: `wasteland` のカメラパス（前哨地へ近づいて建物の間を抜け、稜線へ上がる 40〜60 秒）を決め、グレーディング・露出・霧・雲・草・砂塵の量を整える。全視点とカメラパスの途中 6 時刻の撮影を開いて、デバッグ画面に見えない（格子・単色の板・浮いた物・タイルの繰り返し・LOD の穴が目立たない）ことを確かめ、気になったものを直す。問い: 最終の荒野が 1920×1080・RelWithDebInfo の `overview`・`ground`・`outpost` で 16.6 ms（GPU・gt・rt の p95）に収まるか。変わる判断: 収まらなければ、GPU のパスと CPU の区間の内訳から支配するものを特定し、下げる品質の設定（影の到達距離・草の密度と距離・雲の解像度・地形の材質など）を決めて直す。見た目を保って届かない分は未達としてユーザーへ渡す（既知の限界で済ませない）。手本の写真と並べた比較画像（SCN-WL-REFERENCE-CAPTURE の視点）を全部開いて、評価者が見る条件（浮き・継ぎ目・繰り返し・形の対応・移動中のちらつき）を満たし、比較画像の一覧を `Docs/RenderingValidation/WastelandReference.md` にまとめてユーザーの判定に回す（実写と並べて成立するかの最終の判断はユーザー）。結果を受入れ文書の荒野の節に書く。`wasteland` の cycle smoke 3周が pass。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views overview,ground,outpost -GpuTimingFrames 300 -OutDir .harness/runs/scene-capture/SCN-WASTELAND-POLISH`
@@ -1439,6 +1603,7 @@
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene night-village -RequireAssets -OutDir .harness/runs/scene-capture/SCN-NIGHT-VILLAGE`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Scenes night-village -Cycles 3`
 - paths: Game, Assets/AssetSets, Scripts, Test/Game/Bridge/CMakeLists.txt, Test/Core/Rendering/CMakeLists.txt, TASKS.md, PROGRESS.md
+- notes: 2026-10-14 親: 荒野の地形は DEM（Valley of the Gods）に替わる（SCN-WL-*）。集落は同じ DEM の範囲の別の平らな所に置く。
 
 ## SCN-NIGHT-LIGHTS: 夜の集落に灯りを入れる
 - status: todo
