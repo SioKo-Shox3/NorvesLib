@@ -1376,7 +1376,7 @@
 - notes: 危険地帯（描画）。空から IBL を作る箇所は `LightingPass.cpp` 4653 行付近。雲は今は無い。 2026-10-12 親: 計測の見直し（ユーザーの指摘「節目に計測を入れても意味があるのかを考えるべき」。計測ごとに、問い・結果で変わる判断・測らずに分からないかの 3 点を書き、書けないものは置かない。Sol の批評を反映）。
 
 ## SCN-WL-REFERENCE-SELECT: 比較の手本の写真を選び、切り出す範囲と主役の地形を決める
-- status: todo
+- status: done
 - done-when: Valley of the Gods（ユタ州、BLM）の写真を、ライセンスが パブリックドメイン・CC0・CC BY・CC BY-SA のもの（NC・ND は使わない）から選ぶ: 遠景（ビュート・メサの並びと稜線）2〜3 枚、主役の崖 1〜2 枚、足元（礫・沢底・低木）2〜3 枚。足元の写真が同じ場所で見つからなければ、同じ地質の近い地域（Cedar Mesa・Monument Valley 周辺）で代える。`Assets/Reference/ValleyOfTheGods/` に落とし（git 管理外。`.gitignore` に `/Assets/Reference/` と `/Assets/Terrain/` を足す）、`manifest.json`（URL・作者・ライセンス・撮影の位置と向きの推定・写っている物）を書く。写真から、主役にするビュート・崖、切り出す範囲（2〜4 km 四方。1 m タイル `x60y413` の内側）、前哨地を置く自然に平らな場所の候補を決め、`Docs/RenderingValidation/WastelandReference.md` に書く（範囲の座標・選んだ理由・写真ごとに比較で見る特徴）。写真を縮小して並べた一覧の PNG を開いて確かめる。
 - verify: `python Scripts/Terrain/ReferencePhotos.py --verify`
 - paths: Scripts/Terrain, .gitignore, Docs/RenderingValidation, TASKS.md, PROGRESS.md

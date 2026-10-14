@@ -148,3 +148,7 @@ InputBindings.json.tmp.*
 
 # 生成した3Dモデル(Scripts/GenerateSceneModels.py が作る。定義と ComfyUI のワークフローから再生成できる)
 /Assets/Models/Generated/
+
+# Scripts/Terrain/ReferencePhotos.py が落とす手本の写真と、地形データ（DEM とその切り出し。git に入れない）
+/Assets/Reference/
+/Assets/Terrain/

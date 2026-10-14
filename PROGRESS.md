@@ -4300,3 +4300,14 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `verify-SCN-CLOUDS-6.txt`: 起動画面の撮影 result=pass。default を開いて雲が無く見た目が変わっていないことを確かめた。
 - Notes: 基本の形・細部の風のずれは回転・倍率を掛けずにそのまま周期 1 のテクスチャ座標になるので、従来の折り返しのままで連続。
 - Next: TASKS.md の次の未完の項目。
+
+### SCN-WL-REFERENCE-SELECT 完了（2026-10-15、反復 4・run 20261014-222123）
+- 実装: `Scripts/Terrain/ReferencePhotos.py` を足した（`--fetch` で Commons から手本の写真を落とし `manifest.json` と縮小一覧 `contact_sheet.png` を書く、`--verify` で確かめる）。写真は `Assets/Reference/ValleyOfTheGods/`（`.gitignore` に `/Assets/Reference/` と `/Assets/Terrain/` を足した）。選んだ理由・範囲・写真ごとの比較点は `Docs/RenderingValidation/WastelandReference.md`。
+  - 写真 6 枚（約 31 MB、Commons の SHA-1 と一致）: 遠景 far_01（panoramio (1)、CC BY 3.0、GPS 付き）・far_02（Grand Staircase 0239、CC BY 2.0、GPS 付き。Rooster Butte と Setting Hen Butte）、主役の崖 cliff_01（Battleship Rock、CC BY 2.0）・cliff_02（Franklin Butte、CC BY-SA 3.0、元のパノラマの GPS 付き。色は HDR なので形だけ見る）、足元 ground_01・ground_02（HCP 2025-03-17 の 006・015、CC0。礫と低木・落石の岩塊）。
+  - 切り出す範囲: NAD83 / UTM 12N の E 602500〜606500・N 4125000〜4129000（4 km 四方、タイル x60y413 の内側。タイルの範囲は TNM の API の boundingBox で確かめた）。主役は Battleship Rock（比高 約 186 m）、準主役 Franklin Butte、中景 Rooster Butte・Setting Hen Butte。
+  - 前哨地の候補: A（E 605700・N 4126850、傾き 1.1°）を推奨、B・C を予備。3DEP の標高サービスの 50 m 間隔の標本で選んだ。
+- 検証（`.harness/runs/20261014-222123/`）:
+  - `verify-SCN-WL-REFERENCE-SELECT-1.txt`: `python Scripts/Terrain/ReferencePhotos.py --verify` result=pass・EXIT=0（ファイルと SHA-256・ライセンス・役割ごとの枚数・範囲と余白がタイルの内側・地形と候補が範囲の内側・`.gitignore`・文書）。
+  - `contact_sheet.png` を開いて、6 枚が役割どおり（遠景 2・崖 2・足元 2）に並び、作者とライセンスの表記が付いていることを確かめた。
+- Notes: Python の既定の証明書ストアでは Wikimedia の証明書の連鎖が期限切れと判定されるので、スクリプトは certifi があればその CA の束を使う。沢底を正面から写した使えるライセンスの写真は無く、ground_01 の侵食の段で代えた（許可が 6 枚までなので Cedar Mesa などは取っていない）。SCN-WL-DEM-CROP は北側の余白を 400 m 以上にすると cliff_02 の撮影位置が DEM に乗る（文書に注記）。Pillow を使う（requirements は SCN-WL-DEM-INPUT で固定）。C++ は触っていないのでビルドは走らせていない（前の反復の `verify-SCN-CLOUDS-4.txt` で Debug の Game のビルドが通っている）。試験は足していない。
+- Next: TASKS.md の次の未完の項目（SCN-WL-DEM-INPUT）。
