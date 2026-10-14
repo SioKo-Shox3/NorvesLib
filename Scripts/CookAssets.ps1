@@ -220,7 +220,7 @@ function Invoke-CookEntry {
 
     if ((-not $script:ForceCook) -and (Test-Path -LiteralPath $statePath -PathType Leaf) -and (Test-Path -LiteralPath $packagePath -PathType Leaf)) {
         try {
-            $state = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json
+            $state = Get-Content -LiteralPath $statePath -Raw -Encoding UTF8 | ConvertFrom-Json
             if (($state.stamp -eq $stamp) -and ($null -ne $state.asset)) {
                 $script:skippedCount++
                 $previous = @($state.asset)
@@ -254,7 +254,7 @@ function Invoke-CookEntry {
         throw "AssetCook が失敗しました（exit code $LASTEXITCODE）: $LogicalPath"
     }
 
-    $cookedManifest = Get-Content -LiteralPath $script:TemporaryManifestPath -Raw | ConvertFrom-Json
+    $cookedManifest = Get-Content -LiteralPath $script:TemporaryManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
     $cookedAssets = @($cookedManifest.assets)
     if ($cookedAssets.Count -lt 1) {
         throw "AssetCook のマニフェストが空です: $LogicalPath"
@@ -307,7 +307,7 @@ if ($OnlyPatterns.Count -gt 0) {
     if (-not (Test-Path -LiteralPath $AggregateManifestPath -PathType Leaf)) {
         throw "対象を絞るには既存の manifest.json が要ります（先に全体をクックしてください）: $AggregateManifestPath"
     }
-    $PreviousAssets = @((Get-Content -LiteralPath $AggregateManifestPath -Raw | ConvertFrom-Json).assets)
+    $PreviousAssets = @((Get-Content -LiteralPath $AggregateManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json).assets)
 }
 $missingEntryCount = 0
 $aggregateAssets = @()
@@ -316,7 +316,7 @@ $seenPackages = @{}
 
 $specFiles = @(Get-ChildItem -LiteralPath $ResolvedSpecDir -Filter "*.json" -File | Sort-Object Name)
 foreach ($specFile in $specFiles) {
-    $spec = Get-Content -LiteralPath $specFile.FullName -Raw | ConvertFrom-Json
+    $spec = Get-Content -LiteralPath $specFile.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
     # 検証用の別の一覧（Silver の v0 形式など）は cook_assets を持たないので対象外
     if (-not ((Test-PropertyExists -Object $spec -Name "cook_assets") -and ($spec.cook_assets -eq $true))) {
         continue
