@@ -4052,3 +4052,15 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 葉の段で点光源の面を捨てる一時の計測版（戻した）で撮り、point_clusters が 3 行とも 0 になり画像も変わる（`aux-SCN-MEGA-VSM-BVH-POINT-probe.txt`）ことで、点光源の面の組が全部 BVH の経路を通ったことを確かめた。
 - Next: SCN-MEGA-LAYOUT-SEA。
 - Notes: 点光源の面は範囲（64 席の AABB）の判定をしない（前の項目のまま。Range で絞る）。BVH の列の容量（節 4,194,304・葉 2,097,152）は太陽の段と点光源の面で共有するので、100 万本で点光源が多い場面の溢れは SCN-MEGA-ACCEPT-1M の `VSM_MEGA_CULL overflow` で判断する。性能は測っていない（SCN-MEGA-ACCEPT-1M で判断）。試験の追加はしていない。
+
+### SCN-MEGA-FIX-BVH-QUEUE-MAIN（2026-10-14、反復 1・run 20261014-094847）— BLOCKED
+- Done（途中）: `cluster_bvh_cull.comp` で、内部の節が子を列へ積む前に子ごとに視錐台と LOD（投影した MaxParentError）を判定し（`IsBvhChildCulled`）、通った子だけを詰めて積むようにした。`TestNode` は遮蔽だけを判定する（列の節は積んだ親が判定済み。2パス目へ回した節も1パス目に同じ親が積んだもの）。選ばれるクラスタは変わらない。
+- 検証（`.harness/runs/20261014-094847/`）:
+  - `verify-SCN-MEGA-FIX-BVH-QUEUE-MAIN-1.txt`: RelWithDebInfo の Game のビルド EXIT=0。シェーダーは BOM を除いた写しで `glslc` によりコンパイルを確かめた。
+  - `verify-SCN-MEGA-FIX-BVH-QUEUE-MAIN-2.txt`: 100 万本 horizon・overview の撮影 result=pass。節の列の 1 段の最大は horizon 12,507,738 → 9,053,980、overview 12,987,174 → 7,941,959 に下がったが、葉の列は容量 4,194,304 で頭打ち、描くクラスタの求めた数 6.27M / 6.06M が描画の一覧の容量を超える（draw_dropped 1.2M / 1.3M）。PNG は地平線の手前の床の帯が残る。
+  - `verify-SCN-MEGA-FIX-BVH-QUEUE-MAIN-3.txt`: `bvh_overflow=0` の検査 EXIT=1（horizon 4,859,676・overview 3,747,655）。
+  - `verify-SCN-MEGA-FIX-BVH-QUEUE-MAIN-4.txt`: 1 万本 overview と SCN-MEGA-BASE の比較 fail（PSNR 16.7 dB）。SCN-MEGA-BASE は SCN-MEGA-LAYOUT-SEA の途中の保存で 1 万本の配置が変わる前の撮影で、変更前のビルドの撮影（`scene-capture/SCN-MEGA-LAYOUT-SEA-10k-rerun`）も平均輝度 122.08 で今回と同じ。
+- 補助: 変更前の同じ配置の 1 万本と比べて pass（PSNR 60.3 dB、`aux-SCN-MEGA-FIX-BVH-QUEUE-MAIN-10k-vs-layout.txt`）。`NORVES_MEGA_LOD_ERROR_PX=4` の 100 万本 horizon は bvh_overflow=0・節と葉の列の最大 1.98M・描くクラスタ 3.57M で、地平線までバナナが描かれる（`aux-SCN-MEGA-FIX-BVH-QUEUE-MAIN-lod4/`）。各ログの `[ERROR]` 0。
+- 止めた理由: 1 画素の閾値で選ばれるクラスタ自体が多い（見える 32.7 万本で 1 本あたり約 19）。バナナのクックの誤差が段ごとの足し算（`Tools/AssetCook/CookMeshDag.cpp:658`）と属性の項で大きく、最も粗い段（212 三角形）の誤差 0.173 m が半径 0.18 m とほぼ同じ。直す先（クック・シーンの閾値・容量）は paths の外か見た目の判断なので、選択肢を `blocked/SCN-MEGA-FIX-BVH-QUEUE-MAIN.md` に書いた。
+- Next: 親の判断待ち（推奨はクックの誤差の直しとクックし直し。verify の 1 万本の比べる先も配置の後の撮影へ替える必要がある）。
+- Notes: 性能は測っていない。試験の追加はしていない。焼き込みの BVH は空間だけで分けて LOD の段が混ざるので、節の列がまだ大きければ読み込み時に段ごとにまとめ直す余地がある。

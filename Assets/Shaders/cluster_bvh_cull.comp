@@ -21,10 +21,12 @@
 //   遮蔽（2パス目は今のフレームの HZB、1パス目は前のフレームの HZB を使えるフレームだけ）の判定をし、通った席の根の子を
 //   段1の列へ（根が葉なら葉の列へ）積む。
 // 節の判定の段（bvhStage = 段の番号。1以上）:
-//   前の段が積んだ列の各要素（インスタンス・節）を1スレッドが受け持ち、節の球で視錐台・遮蔽・LOD（節の球から投影した
-//   親の誤差の最大が許容以下）の判定をする。どれかで落ちれば、その下のクラスタは選ばれないので枝ごと切る。残った内部の節は
-//   子の節を次の段の列へ積み、葉は葉の列へ積む。遮蔽は、2パス目は今のフレームの HZB で枝を切り、1パス目は前のフレームの
-//   HZB に隠れた節を2パス目へ回す（枝の下をたどらない）。
+//   前の段が積んだ列の各要素（インスタンス・節）を1スレッドが受け持ち、節の球で遮蔽の判定をする。落ちれば、その下の
+//   クラスタは選ばれないので枝ごと切る。残った内部の節は子の節を次の段の列へ積み、葉は葉の列へ積む。遮蔽は、2パス目は
+//   今のフレームの HZB で枝を切り、1パス目は前のフレームの HZB に隠れた節を2パス目へ回す（枝の下をたどらない）。
+//   視錐台と LOD（節の球から投影した親の誤差の最大が許容以下）の判定は、親が子を列へ積む前に子ごとに済ませ、通った子だけを
+//   積む（PushPassedNode）。遠くて画面の上で粗い段で足りるインスタンスは、粗いクラスタの組を持つ枝だけが列に残るので、
+//   列の長さはインスタンスの数 × 子の数でなく、画面の細かさが求める節の数で決まる。
 // 葉のクラスタの判定（bvhStage = BVH_STAGE_CLUSTERS）:
 //   葉の列の1要素を BVH_LEAF_SLOTS 個のスレッドが1クラスタずつ受け持ち（実行時に作った BVH の葉は、節の配列の直後の
 //   並べ替えの表でクラスタの番号を引く）、cluster_cull.comp と同じ判定（ProcessCluster）にかけて描画コマンドを積む。
@@ -277,11 +279,25 @@ uint NextNodeStage()
 }
 
 /**
+ * @brief 子の節を列へ積む前の判定: 節の球が視錐台の外か、LOD で枝を切れるなら true（積まない）
+ *
+ * どちらもフレームの中で変わらない値（視錐台・lodBias・インスタンスの変換）だけで決まるので、1パス目・2パス目・全部の根の
+ * 見直しのどこで判定しても同じ答えになる。g_WorldMatrix はこの節のインスタンスの変換であること。
+ */
+bool IsBvhChildCulled(BvhNode node)
+{
+    vec3 center = TransformClusterCenterToWorld(node.sphere.xyz);
+    float radius = node.sphere.w * ComputeWorldRadiusScale();
+    return FrustumCullSphere(center, radius) || CanPruneBvhNodeByLOD(node);
+}
+
+/**
  * @brief 判定を通った節（インスタンス・節の番号）を次へ渡す: 葉は葉の列へ、内部の節は子を次の段の列へ積む
  *
+ * 内部の節は、子を積む前に子ごとに視錐台と LOD の判定（IsBvhChildCulled）をし、通った子だけを詰めて積む。
  * bPass1Reached は、2パス目が全部の根を見直すときに「1パス目もこの節の下へたどった」ことを要素へ載せる（それ以外は false）。
  */
-void PushPassedNode(uint instanceIndex, uint nodeIndex, BvhNode node, bool bPass1Reached)
+void PushPassedNode(uint instanceIndex, uint nodeIndex, BvhNode node, BvhNodeArray bvh, bool bPass1Reached)
 {
     uint reachedBit = bPass1Reached ? BVH_ENTRY_PASS1_REACHED : 0u;
     if ((node.info.w & BVH_NODE_FLAG_LEAF) != 0u)
@@ -299,13 +315,29 @@ void PushPassedNode(uint instanceIndex, uint nodeIndex, BvhNode node, bool bPass
     }
     else
     {
-        uint childCount = node.info.z;
+        // 子の数は GROUP_BVH_MAX_CHILDREN（8）以下。通った子をビットの印に集める
+        uint passedMask = 0u;
+        for (uint child = 0u; child < node.info.z; ++child)
+        {
+            if (!IsBvhChildCulled(bvh.nodes[node.info.y + child]))
+            {
+                passedMask |= 1u << child;
+            }
+        }
+        uint childCount = uint(bitCount(passedMask));
+        if (childCount == 0u)
+        {
+            return;
+        }
         uint nextStage = NextNodeStage();
         uint firstSlot = atomicAdd(bvhCounters[nextStage], childCount);
         uint stored = firstSlot >= cullData.bvhNodeCapacity ? 0u : min(childCount, cullData.bvhNodeCapacity - firstSlot);
-        for (uint child = 0u; child < stored; ++child)
+        uint remaining = passedMask;
+        for (uint written = 0u; written < stored; ++written)
         {
-            bvhQueue[cullData.bvhNextBase + firstSlot + child] = uvec2(instanceIndex, (node.info.y + child) | reachedBit);
+            uint child = uint(findLSB(remaining));
+            remaining &= remaining - 1u;
+            bvhQueue[cullData.bvhNextBase + firstSlot + written] = uvec2(instanceIndex, (node.info.y + child) | reachedBit);
         }
         if (stored < childCount)
         {
@@ -476,14 +508,16 @@ bool RangeReachedInFirstPass(uint range)
 /**
  * @brief 席の遮蔽以外の判定: 締まった球の視錐台・距離・画素の大きさと、根の節の LOD
  *
- * 通れば true で、根の節と締まった球（ワールド）を返す（g_WorldMatrix はこの席の変換になる）。両パスで同じ値になる。
+ * 通れば true で、根の節と締まった球（ワールド）と BVH の節の配列のアドレスを返す（g_WorldMatrix はこの席の変換になる）。
+ * 両パスで同じ値になる。
  */
-bool PassesSeatBasicTests(uint instanceIndex, out BvhNode root, out vec3 center, out float radius)
+bool PassesSeatBasicTests(uint instanceIndex, out BvhNode root, out vec3 center, out float radius, out uvec2 bvhAddress)
 {
     MegaInstance instance = LoadMegaInstance(instanceIndex);
 
     g_WorldMatrix = instance.world;
-    BvhNodeArray bvh = BvhNodeArray(uvec2(instance.bvhInfo.x, instance.bvhInfo.y));
+    bvhAddress = uvec2(instance.bvhInfo.x, instance.bvhInfo.y);
+    BvhNodeArray bvh = BvhNodeArray(bvhAddress);
     root = bvh.nodes[0];
 
     // 締まった球: メッシュ全体の球 × 拡大率。メッシュの球が無ければ根の節の球（下のクラスタと親の球を包むので大きい）
@@ -534,11 +568,12 @@ void SeatStageWithPrevHiZ()
 
     bool bTraverse = false;
     BvhNode root;
+    uvec2 bvhAddress = uvec2(0u);
     if (instanceIndex < cullData.bvhRootCount)
     {
         vec3 center;
         float radius;
-        if (PassesSeatBasicTests(instanceIndex, root, center, radius))
+        if (PassesSeatBasicTests(instanceIndex, root, center, radius, bvhAddress))
         {
             if (PrevOcclusionCullSphere(center, radius))
             {
@@ -561,7 +596,7 @@ void SeatStageWithPrevHiZ()
     if (bTraverse)
     {
         CountStat(STAT_TWOPASS_PASS1_SEATS);
-        PushPassedNode(instanceIndex, 0u, root, false);
+        PushPassedNode(instanceIndex, 0u, root, BvhNodeArray(bvhAddress), false);
     }
 }
 
@@ -629,7 +664,8 @@ void SeatStage()
     BvhNode root;
     vec3 center;
     float radius;
-    if (!PassesSeatBasicTests(instanceIndex, root, center, radius))
+    uvec2 bvhAddress;
+    if (!PassesSeatBasicTests(instanceIndex, root, center, radius, bvhAddress))
     {
         return;
     }
@@ -646,14 +682,15 @@ void SeatStage()
     // 全部の根を見直すときは、1パス目がこの席をたどったか（範囲も席も前の HZB に隠れなかった）を判定し直して子へ運ぶ
     bool bPass1Reached = bRescan && RangeReachedInFirstPass(instanceIndex / RANGE_SEATS) &&
                          !PrevOcclusionCullSphere(center, radius);
-    PushPassedNode(instanceIndex, 0u, root, bPass1Reached);
+    PushPassedNode(instanceIndex, 0u, root, BvhNodeArray(bvhAddress), bPass1Reached);
 }
 
 /**
  * @brief 1つの節を節の球で判定し、通れば子を次へ渡す（節の段と、2パス目へ回した節の段が使う）
  *
- * 視錐台・遮蔽・LOD の順に判定する。遮蔽は、2パス目は今のフレームの HZB で枝を切り、1パス目は（視錐台と LOD を通った節が）
- * 前のフレームの HZB に隠れていれば2パス目へ回す。bPass1Reached は全部の根を見直す2パス目だけが true にし、
+ * 列の節は、積んだ親が視錐台と LOD の判定（IsBvhChildCulled）を済ませている（2パス目へ回した節も、1パス目に同じ親が
+ * 積んだもの）ので、ここでは遮蔽だけを判定する。2パス目は今のフレームの HZB で枝を切り、1パス目は前のフレームの HZB に
+ * 隠れていれば2パス目へ回す。bPass1Reached は全部の根を見直す2パス目だけが true にし、
  * 1パス目もこの節が前の HZB に隠れずに子をたどったかを判定し直して子へ運ぶ。
  */
 void TestNode(uint instanceIndex, uint nodeIndex, bool bPass1Reached)
@@ -666,16 +703,8 @@ void TestNode(uint instanceIndex, uint nodeIndex, bool bPass1Reached)
 
     vec3 center = TransformClusterCenterToWorld(node.sphere.xyz);
     float radius = node.sphere.w * ComputeWorldRadiusScale();
-    if (FrustumCullSphere(center, radius))
-    {
-        return;
-    }
     // 節の球が完全に隠れていれば、下のクラスタも隠れている
     if (cullData.cullPass == CULL_PASS_SECOND && OcclusionCullSphere(center, radius))
-    {
-        return;
-    }
-    if (CanPruneBvhNodeByLOD(node))
     {
         return;
     }
@@ -685,7 +714,7 @@ void TestNode(uint instanceIndex, uint nodeIndex, bool bPass1Reached)
         return;
     }
     bool bChildReached = bPass1Reached && !PrevOcclusionCullSphere(center, radius);
-    PushPassedNode(instanceIndex, nodeIndex, node, bChildReached);
+    PushPassedNode(instanceIndex, nodeIndex, node, bvh, bChildReached);
 }
 
 /**
