@@ -1404,10 +1404,10 @@
 - notes: 危険地帯（アセットの読み込み）。
 
 ## SCN-WL-DEM-COOK: 地形の区画を DEM の格子から焼く
-- status: todo
+- status: done
 - done-when: クッカーの terrain-tile が DEM の格子から区画を焼く。区画の数と格子の間隔は格子の JSON から決め、入力の SHA-256 と造成の設定をクックの依存（再クックの判定）に入れる（Game だけが新しい高さを読みメッシュが古いまま、を起こさない）。隣り合う 2 区画で、境の頂点の高さ・法線が一致し LOD の段ごとに境が固定されることを確かめてから、全体を焼く。
 - verify: `cmake --build build --config Debug --target AssetCook -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CookAssets.ps1 -OnlyLogicalPath "Models/WastelandTerrain/*"`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CookAssets.ps1 -AssetCookExe build/Tools/AssetCook/Debug/AssetCook.exe -OnlyLogicalPath "Models/WastelandTerrain/*"`
 - paths: Tools/AssetCook, Library/Core/Public/Rendering/Terrain, Library/Core/Private/Rendering/Terrain, Assets/AssetSets, Scripts, TASKS.md, PROGRESS.md
 - notes: 危険地帯（アセットのクック）。2 km 四方の 1 m 格子は約 800 万三角形、4 km 四方は約 3,200 万。論理パスを変えるなら verify の行も同じ項目で直す。
 

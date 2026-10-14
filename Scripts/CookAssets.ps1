@@ -305,7 +305,8 @@ if (-not (Test-Path -LiteralPath $ResolvedSpecDir -PathType Container)) {
 }
 $ResolvedRuntimeRoot = Resolve-RepoPath $RuntimeRoot
 $StateRoot = Join-Path $ResolvedRuntimeRoot ".cookstate"
-$TemporaryManifestPath = Join-Path $ResolvedRuntimeRoot "manifest.cook.tmp.json"
+# 対象を分けた複数の実行が同時に走っても、AssetCook の 1 項目ぶんのマニフェストを取り違えないようプロセスごとに分ける
+$TemporaryManifestPath = Join-Path $ResolvedRuntimeRoot "manifest.cook.$PID.tmp.json"
 $AggregateManifestPath = Join-Path $ResolvedRuntimeRoot "manifest.json"
 
 New-Item -ItemType Directory -Path $ResolvedRuntimeRoot -Force | Out-Null

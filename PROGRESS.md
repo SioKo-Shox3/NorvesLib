@@ -4369,3 +4369,18 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `aux-SCN-WL-DEM-HEIGHTFIELD-check-1.txt`: `python Scripts/Terrain/CheckHeightField.py` result=pass・fail=0・exit=0。
 - Notes: verify の `/m:1` は Git Bash から渡すと道に変換されるので PowerShell から走らせる。試験は足していない（突き合わせは CheckHeightField.py を手で回す）。LoadGrid は呼ぶたびに 86 MB を読むので、Game では 1 つの持ち主が 1 回だけ呼んで共有する（SCN-WL-DEM-SCENE で据える）。
 - Next: TASKS.md の次の未完の項目（SCN-WL-DEM-COOK）。
+
+### SCN-WL-DEM-COOK 完了（2026-10-15、反復 9〜10・run 20261014-222123）
+- 実装（反復 9 の途中の保存 `9e08aa7e`・`cc8a9803` と反復 10）:
+  - AssetCook の `--generate terrain-tile:dem:<x>,<z>` で DEM の格子の区画を NVMESH v1 に焼く（`CookTerrainDemTileToNvmesh`）。格子は高さ場と同じ `TerrainHeightField::LoadGrid(WastelandTerrain::kDemGridDescriptorPath)` で読み、区画の数・頂点の間隔・最初の頂点は格子の記述（height.json）から決める。区画の一辺は `WastelandTerrain::kDemTileCells`（500 升目）、東端・南端の区画は残りの升目だけ。三角形の分け方は高さ場と同じ `UsesMainDiagonal`、法線は全体の格子の高さ場から引く。外周の頂点は階層のどの段でも動かさない。
+  - クックの依存: 一覧の項目の source_path が格子の記述、extra_sources が格子のファイル（height.r32）と区画の割り方・標本の規則のヘッダ（TerrainHeightField.h）で、CookAssets.ps1 がこれらの SHA-256 と項目の設定を印に入れる。AssetCook は入力の記述が高さ場の読む記述と同じか、格子のファイルの SHA-256（`Sha256Digest`）が記述の sha256 と同じかを確かめ、違えば失敗する（格子だけ書き直してメッシュが古いまま、を起こさない）。
+  - 一覧 `Assets/AssetSets/WastelandTerrain.json` の DEM の 100 項目（10 × 10、論理パス `Models/WastelandTerrain/WastelandDem_<x>_<z>.generated`）は `Scripts/Terrain/WriteTerrainAssetSet.py --write` が格子の記述とヘッダから書き、`--verify` で突き合わせる。手続きの 16 区画はそのまま残した（Game が DEM に替えるのは SCN-WL-DEM-SCENE）。
+  - 継ぎ目の確かめ: `AssetCook --check-terrain-dem-seam <ax>,<az> <bx>,<bz>` が隣り合う 2 区画をクックと同じ引数で階層まで焼き、全段・根・フォールバックで境の頂点の位置・法線・UV が両区画でビット単位で同じか、境の開いた辺が元の 1 升目の辺のままかを出す。
+  - `CookAssets.ps1` の 1 項目ぶんの一時マニフェストをプロセスごとの名前（`manifest.cook.<PID>.tmp.json`）にし、出力先を分けた複数の実行を同時に走らせられるようにした。
+- 継ぎ目（`aux-SCN-WL-DEM-COOK-seam-2.txt`、全体を焼く前）: 崖を横切る南北の組 (3,0)-(3,1)・東西の組 (1,3)-(2,3)・端の小さな区画の組 (8,9)-(9,9) で、各区画の段 0〜9・根・フォールバックのすべてで segments=500/500（端は 99/99）・vertex_mismatch=0・duplicate_segments=0・open_fold_edges=0、区画をまたぐ頂点の不一致 0（501・501・100 頂点）、result=pass。境の 3 頂点を通る縦の折れの辺（段 2 以降に 10〜54 本）は 2 つの三角形が共有し、開いた辺にならない。
+- 検証（`.harness/runs/20261014-222123/`）:
+  - `verify-SCN-WL-DEM-COOK-2.txt`: `cmake --build build --config Debug --target AssetCook -- /m:1` EXIT=0（error なし。AssetCook.exe は反復 9 のクックのときのまま）。
+  - `verify-SCN-WL-DEM-COOK-3.txt`: `CookAssets.ps1 -AssetCookExe build/Tools/AssetCook/Debug/AssetCook.exe -OnlyLogicalPath "Models/WastelandTerrain/*"` EXIT=0、`COOK_ASSETS cooked=0 skipped=116`（DEM 100 区画と手続きの 16 区画すべての印が一致）。manifest.json に DEM の 100 項目があり、パッケージはすべてある。
+  - `aux-SCN-WL-DEM-COOK-assetset-1.txt`: `WriteTerrainAssetSet.py --verify` result=pass（格子 4700 × 4600・間隔 1 m・10 × 10 区画・100 項目）。
+- Notes: Debug の AssetCook は 500 × 500 升目の区画 1 つに 33 秒前後（単一スレッド）かかり、100 区画を 1 本で焼くと約 55 分で反復の時間を越える（反復 9 は 18 区画で止まった）。反復 10 は行ごとに一覧と出力先を分けた 9 本を並列に走らせ（7 分 20 秒）、パッケージと印を build/CookedAssets へ移してから verify を回した。印は AssetCook・一覧の項目・元の内容だけで決まるので、移した結果は通常の実行でそのまま使われる。verify の 2 本目に必須の `-AssetCookExe` が抜けていたので TASKS.md の行に足した。区画のパッケージは 1 つ 37 MB 前後（100 区画で約 3.3 GB）。試験は足していない。
+- Next: TASKS.md の次の未完の項目。
