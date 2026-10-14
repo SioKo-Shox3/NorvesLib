@@ -117,8 +117,18 @@ namespace Game::GameModes
         // カメラの遠方面（1000 m）に届く広さにする
         constexpr float kFloorSize = 1600.0f;
         constexpr float kFloorTileMeters = 1.5f;
-        // 他のシーンのメッシュの ID（100〜、200〜、900）と重ならない値
+        // 他のシーンのメッシュの ID（100〜、200〜、900、920）と重ならない値
         constexpr uint32_t kFloorMeshHandleId = 910;
+        constexpr uint32_t kFarFloorMeshHandleId = 911;
+        // 海が広いときは、床を海の内側の円盤と外側の輪に分け、外側の輪を遠くの海（バナナと隙間の床が混ざった見た目）の
+        // 色に寄せる。海の縁から床の端までの床は、目の高さからの俯角が小さく地平線の直下の細い線に潰れ、木の色のままだと
+        // 海の黄色との境が線に見えるため。分ける半径は遠の密度が平らに続く所の外の端（縁のゆらぎと落ち込みより内側）。
+        // 分ける半径がこの値[m]より小さいとき（1 万本の小さな円盤）は分けず、木の床のまま
+        constexpr float kFarFloorMinSplitRadius = 150.0f;
+        // 円盤と輪の境の円の分割数（8 の倍数にして、輪の外周の頂点が床の四隅を通るようにする）
+        constexpr uint32_t kFloorCircleSegments = 256;
+        // 外側の輪の色: 木の床のアルベドに掛ける倍率（遠くの海の撮影の平均の色に合わせた値）
+        constexpr float kFarFloorTint[3] = {0.99f, 0.93f, 0.52f};
         // 床の材質（Poly Haven の brown_planks_03。Assets/AssetSets/Rendering3DTestStressTextures.json が焼く）
         constexpr const char *kFloorAlbedoPath = "Assets/Textures/PolyHaven/brown_planks_03/brown_planks_03_diff_4k.jpg";
         constexpr const char *kFloorNormalPath = "Assets/Textures/PolyHaven/brown_planks_03/brown_planks_03_nor_dx_4k.jpg";
@@ -190,7 +200,125 @@ namespace Game::GameModes
                 });
         }
 
-        /// 床: 木の床のテクスチャを貼った平面。テクスチャは非同期で読み、そろうまでは茶色の無地で描く
+        /// 床の頂点の UV: 世界の x・z を板 1 枚の実寸で割った値
+        void SetFloorTexCoord(Mesh3DVertex &vertex)
+        {
+            vertex.TexCoord[0] = vertex.Position[0] / kFloorTileMeters;
+            vertex.TexCoord[1] = vertex.Position[2] / kFloorTileMeters;
+        }
+
+        /// 床の頂点（y = 0、法線 +Y）を足す
+        void AppendFloorVertex(VariableArray<Mesh3DVertex> &vertices, float x, float z)
+        {
+            Mesh3DVertex vertex{};
+            vertex.Position[0] = x;
+            vertex.Position[2] = z;
+            vertex.Normal[1] = 1.0f;
+            SetFloorTexCoord(vertex);
+            vertices.push_back(vertex);
+        }
+
+        /// 三角形を足す。巡回の向きは GeneratePlane と同じ（上から見た外積の y が負）にそろえる
+        void AppendFloorTriangle(const VariableArray<Mesh3DVertex> &vertices, VariableArray<uint32_t> &indices, uint32_t a,
+                                 uint32_t b, uint32_t c)
+        {
+            const float *pa = vertices[a].Position;
+            const float *pb = vertices[b].Position;
+            const float *pc = vertices[c].Position;
+            const float crossY = (pb[2] - pa[2]) * (pc[0] - pa[0]) - (pb[0] - pa[0]) * (pc[2] - pa[2]);
+            indices.push_back(a);
+            indices.push_back(crossY < 0.0f ? b : c);
+            indices.push_back(crossY < 0.0f ? c : b);
+        }
+
+        /// 境の円の index 番目の点（円盤と輪で同じ式を使い、境に隙間を作らない）
+        void FloorCirclePoint(float radius, uint32_t index, float &outX, float &outZ)
+        {
+            const float angle = 2.0f * kPi * static_cast<float>(index) / static_cast<float>(kFloorCircleSegments);
+            outX = radius * std::cos(angle);
+            outZ = radius * std::sin(angle);
+        }
+
+        /// 床の内側: 原点を中心とする半径 radius の円盤（扇形の三角形）
+        void BuildFloorDisk(float radius, VariableArray<Mesh3DVertex> &vertices, VariableArray<uint32_t> &indices)
+        {
+            vertices.clear();
+            indices.clear();
+            AppendFloorVertex(vertices, 0.0f, 0.0f);
+            for (uint32_t index = 0; index < kFloorCircleSegments; ++index)
+            {
+                float x = 0.0f;
+                float z = 0.0f;
+                FloorCirclePoint(radius, index, x, z);
+                AppendFloorVertex(vertices, x, z);
+            }
+            for (uint32_t index = 0; index < kFloorCircleSegments; ++index)
+            {
+                AppendFloorTriangle(vertices, indices, 0, 1 + index, 1 + (index + 1) % kFloorCircleSegments);
+            }
+        }
+
+        /// 床の外側: 半径 radius の円から一辺 kFloorSize の正方形の縁までの輪。円の点を中心から正方形の縁へ
+        /// 放射状に延ばした点と結ぶ（分割数が 8 の倍数なので四隅も外周の頂点になる）
+        void BuildFloorRing(float radius, VariableArray<Mesh3DVertex> &vertices, VariableArray<uint32_t> &indices)
+        {
+            vertices.clear();
+            indices.clear();
+            const float half = 0.5f * kFloorSize;
+            for (uint32_t index = 0; index < kFloorCircleSegments; ++index)
+            {
+                float x = 0.0f;
+                float z = 0.0f;
+                FloorCirclePoint(radius, index, x, z);
+                AppendFloorVertex(vertices, x, z);
+                const float reach = half / std::max(std::fabs(x), std::fabs(z));
+                AppendFloorVertex(vertices, x * reach, z * reach);
+            }
+            for (uint32_t index = 0; index < kFloorCircleSegments; ++index)
+            {
+                const uint32_t inner0 = 2 * index;
+                const uint32_t outer0 = inner0 + 1;
+                const uint32_t inner1 = 2 * ((index + 1) % kFloorCircleSegments);
+                const uint32_t outer1 = inner1 + 1;
+                AppendFloorTriangle(vertices, indices, inner0, outer0, inner1);
+                AppendFloorTriangle(vertices, indices, inner1, outer0, outer1);
+            }
+        }
+
+        /// 床のメッシュを登録し、影を落とさない実体として置く。失敗したら nullptr
+        Component::MeshComponent *SpawnFloorMesh(GameModeContext &ctx, uint32_t meshId,
+                                                 const VariableArray<Mesh3DVertex> &vertices,
+                                                 const VariableArray<uint32_t> &indices, MaterialHandle material)
+        {
+            const MeshDataHandle mesh{meshId};
+            if (!ctx.RenderResourcesRef.Meshes().Register(mesh, vertices.data(),
+                                                          static_cast<uint32_t>(vertices.size() * sizeof(Mesh3DVertex)),
+                                                          indices.data(), static_cast<uint32_t>(indices.size())))
+            {
+                LOG_ERROR("mega-bananas: 床のメッシュを登録できませんでした");
+                return nullptr;
+            }
+            ctx.ScopeRef.TrackMesh(mesh);
+
+            Entity *floor = ctx.ScopeRef.SpawnObject<Entity>();
+            if (floor == nullptr)
+            {
+                return nullptr;
+            }
+            floor->SetPosition(0.0f, 0.0f, 0.0f);
+            auto *meshComponent = ctx.WorldRef.CreateComponent<Component::MeshComponent>(floor);
+            if (meshComponent == nullptr)
+            {
+                return nullptr;
+            }
+            meshComponent->SetMeshHandle(mesh);
+            meshComponent->SetMaterial(0, material);
+            meshComponent->SetCastShadow(false);
+            return meshComponent;
+        }
+
+        /// 床: 木の床のテクスチャを貼った平面（海が広いときは内側の円盤と外側の輪）。テクスチャは非同期で読み、
+        /// そろうまでは茶色の無地で描く
         bool CreateFloor(GameModeContext &ctx, MegaBananasData &data)
         {
             auto &textures = ctx.RenderResourcesRef.Textures();
@@ -213,39 +341,36 @@ namespace Game::GameModes
             ctx.ScopeRef.TrackMaterial(pending->TargetMaterial);
             data.m_pFloorMaterial = pending;
 
-            NorvesLib::Core::Container::VariableArray<Mesh3DVertex> vertices;
-            NorvesLib::Core::Container::VariableArray<uint32_t> indices;
-            ProceduralMeshGenerator::GeneratePlane(kFloorSize, kFloorSize, 1, 1, vertices, indices);
-            for (Mesh3DVertex &vertex : vertices)
+            // 海の半径は本数だけで決まるので、配置の前に分ける半径が分かる
+            const float splitRadius = ComputeSeaRadius(data.m_BananaCount) * SeaFullDensityEnd();
+            VariableArray<Mesh3DVertex> vertices;
+            VariableArray<uint32_t> indices;
+            if (splitRadius < kFarFloorMinSplitRadius)
             {
-                // 世界の x・z を板 1 枚の実寸で割った値
-                vertex.TexCoord[0] = vertex.Position[0] / kFloorTileMeters;
-                vertex.TexCoord[1] = vertex.Position[2] / kFloorTileMeters;
+                ProceduralMeshGenerator::GeneratePlane(kFloorSize, kFloorSize, 1, 1, vertices, indices);
+                for (Mesh3DVertex &vertex : vertices)
+                {
+                    SetFloorTexCoord(vertex);
+                }
+                if (SpawnFloorMesh(ctx, kFloorMeshHandleId, vertices, indices, pending->TargetMaterial) == nullptr)
+                {
+                    return false;
+                }
             }
-            const MeshDataHandle mesh{kFloorMeshHandleId};
-            if (!ctx.RenderResourcesRef.Meshes().Register(mesh, vertices.data(),
-                                                          static_cast<uint32_t>(vertices.size() * sizeof(Mesh3DVertex)),
-                                                          indices.data(), static_cast<uint32_t>(indices.size())))
+            else
             {
-                LOG_ERROR("mega-bananas: 床のメッシュを登録できませんでした");
-                return false;
+                BuildFloorDisk(splitRadius, vertices, indices);
+                if (SpawnFloorMesh(ctx, kFloorMeshHandleId, vertices, indices, pending->TargetMaterial) == nullptr)
+                {
+                    return false;
+                }
+                BuildFloorRing(splitRadius, vertices, indices);
+                data.m_pFarFloor = SpawnFloorMesh(ctx, kFarFloorMeshHandleId, vertices, indices, pending->TargetMaterial);
+                if (data.m_pFarFloor == nullptr)
+                {
+                    return false;
+                }
             }
-            ctx.ScopeRef.TrackMesh(mesh);
-
-            Entity *floor = ctx.ScopeRef.SpawnObject<Entity>();
-            if (floor == nullptr)
-            {
-                return false;
-            }
-            floor->SetPosition(0.0f, 0.0f, 0.0f);
-            auto *meshComponent = ctx.WorldRef.CreateComponent<Component::MeshComponent>(floor);
-            if (meshComponent == nullptr)
-            {
-                return false;
-            }
-            meshComponent->SetMeshHandle(mesh);
-            meshComponent->SetMaterial(0, pending->TargetMaterial);
-            meshComponent->SetCastShadow(false);
 
             // 材質のテクスチャ（色・法線・ORM）。そろったら材質を更新する。読み込みに失敗した枠は無地のまま
             pending->PendingTextureCount = 3;
@@ -451,6 +576,15 @@ namespace Game::GameModes
             // 配置を始める（山はここで置く）。海の半径が決まるので、円盤の端から端まで見えるようにカメラの遠方面を確かめる
             assembly.Layout.Begin(assembly.Shape, data.m_BananaCount, nullptr);
             assembly.bLayoutStarted = true;
+            if (data.m_pFarFloor != nullptr && assembly.Layout.GetStats().Radius > 0.0f)
+            {
+                // 海を置くので、海の外側の床を遠くの海の色に寄せる（バナナを置けないときは木の床のまま）
+                for (uint32_t channel = 0; channel < 3; ++channel)
+                {
+                    data.m_pFarFloor->SetCustomData(channel, kFarFloorTint[channel]);
+                }
+                data.m_pFarFloor->SetCustomData(3, 1.0f);
+            }
             const float requiredFar = 2.0f * assembly.Layout.GetStats().Radius * kSeaFarPlaneMargin;
             Component::CameraComponent *camera = data.m_Rig.GetCamera();
             if (camera != nullptr && camera->GetFarPlane() < requiredFar)
@@ -629,6 +763,7 @@ namespace Game::GameModes
         LOG_INFO_F("mega-bananas を開始します（本数 %u）", data.m_BananaCount);
         data.m_TickCount = 0;
         data.m_bFloorReady = false;
+        data.m_pFarFloor = nullptr;
         data.m_bBananasPlaced = false;
         data.m_bMassWorkSettled = false;
         data.m_bBananasSkipped = false;
@@ -768,6 +903,7 @@ namespace Game::GameModes
             data.m_pFloorMaterial->bCancelled = true;
             data.m_pFloorMaterial.reset();
         }
+        data.m_pFarFloor = nullptr;
         if (data.m_pAssembly)
         {
             data.m_pAssembly->Material->bCancelled = true;

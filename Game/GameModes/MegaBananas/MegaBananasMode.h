@@ -43,6 +43,7 @@ namespace NorvesLib::Core::Asset
 namespace NorvesLib::Core::Component
 {
     class MegaGeometryScatterComponent;
+    class MeshComponent;
 }
 
 namespace Game::GameModes
@@ -145,6 +146,8 @@ namespace Game::GameModes
         NorvesLib::Core::Container::TSharedPtr<BananaAssembly> m_pAssembly;
         NorvesLib::Core::Container::TSharedPtr<BananasPendingMaterial> m_pFloorMaterial;
         bool m_bFloorReady = false;
+        /// 海の外側の床（非所有。海が広いときだけ作る）。海を置き始めたら遠くの海の見た目の色に寄せる
+        NorvesLib::Core::Component::MeshComponent *m_pFarFloor = nullptr;
         bool m_bBananasPlaced = false;
         /// 置いた後に、散布の行の作成が全範囲まで進んだ（撮影の準備の条件。一度立てたら戻さない）
         bool m_bMassWorkSettled = false;

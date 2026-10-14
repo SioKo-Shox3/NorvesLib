@@ -141,6 +141,12 @@ namespace Game::GameModes
         virtual bool IsBlocked(float x, float z) const = 0;
     };
 
+    /// count 本を置くときの海の半径[m]（形がそろっていれば BananaFieldBuilder::Begin が決める値と同じ）。配置の前に床を作るのに使う
+    float ComputeSeaRadius(uint32_t count);
+
+    /// 遠の密度が縁の手前まで平らに続く所の外の端（半径に対する比。これより外は縁のゆらぎと密度の落ち込みの区間）
+    float SeaFullDensityEnd();
+
     /// メッシュの頂点から、配置に使う形を作る
     void BuildBananaShape(const NorvesLib::Core::Asset::CookedMeshData &mesh, BananaShape &outShape);
 

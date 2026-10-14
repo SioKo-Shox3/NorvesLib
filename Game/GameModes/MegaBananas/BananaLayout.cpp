@@ -264,6 +264,12 @@ namespace Game::GameModes
             return total;
         }
 
+        /// 山に使う本数（3 つの塚の合計）
+        uint32_t PileBudget(uint32_t count)
+        {
+            return std::min(kPileBananas * static_cast<uint32_t>(kPileCount), count / kMaxPileShareDivisor);
+        }
+
         /// 芯に沿った球の 1 つ（ワールド座標）
         struct SpineSphere
         {
@@ -897,6 +903,18 @@ namespace Game::GameModes
 
     BananaFieldBuilder::~BananaFieldBuilder() = default;
 
+    float ComputeSeaRadius(uint32_t count)
+    {
+        const uint32_t fieldCount = count - PileBudget(count);
+        return static_cast<float>(std::sqrt(static_cast<double>(fieldCount) / SeaUnitDiskCount()));
+    }
+
+    float SeaFullDensityEnd()
+    {
+        // 縁がいちばん内側へゆれた所から、密度を 0 へ落とし始める所まで
+        return 1.0f - kSeaEdgeWobble - kSeaEdgeTaper;
+    }
+
     void BananaFieldBuilder::Begin(const BananaShape &shape, uint32_t count, const IBananaFieldMask *pMask)
     {
         m_pState = MakeUnique<State>();
@@ -916,7 +934,7 @@ namespace Game::GameModes
 
         // 山（乱数は番号 0 から。山の配置は海の形によらず前と同じ）
         PlacementRandom random;
-        const uint32_t pileBudget = std::min(kPileBananas * static_cast<uint32_t>(kPileCount), count / kMaxPileShareDivisor);
+        const uint32_t pileBudget = PileBudget(count);
         for (int pile = 0; pile < kPileCount; ++pile)
         {
             const uint32_t pileCount =
