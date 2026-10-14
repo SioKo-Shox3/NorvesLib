@@ -1258,7 +1258,7 @@
 - notes: 2026-10-14 親が足した（SCN-MEGA-LAYOUT-SEA の反復 1 の調べから）。危険地帯（描画）。性能はこの項目では測らず、SCN-MEGA-ACCEPT-1M で判断する。 2026-10-14 親: 反復 1 の直し（子を積む前に視錐台と LOD で判定する。485b1950）は残す。溢れの根は選ぶクラスタの数で、クックの誤差の見積もりが大きすぎるため。直前の SCN-MEGA-FIX-COOK-LOD-ERROR の後に同じ撮影で `bvh_overflow=0` を見直す。節の列がまだ大きければ、焼き込みの BVH を読み込み時に LOD の段ごとにまとめ直す。1 万本の比べる先は新しい基準 `SCN-MEGA-BASE-COOK` にした。
 
 ## SCN-MEGA-FIX-BVH-QUEUE-VSM: 影（VSM）の BVH のたどりも LOD で早く打ち切り、列を溢れさせない
-- status: doing
+- status: done
 - done-when: 100万本の海で、影の BVH の列も溢れる（`VSM_MEGA_CULL overflow=16379125`）。SCN-MEGA-FIX-BVH-QUEUE-MAIN と同じ考え方で、太陽のクリップマップの段と点光源の面ごとの投影の LOD の誤差が閾値より小さい節で降りるのを止める。合格: 100万本の horizon・overview の撮影のログで `VSM_MEGA_CULL overflow=0`、撮影を開いて遠くのバナナにも影が落ち、近くの影が欠けない（起動画面の比較が pass）。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Build -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views horizon,overview -GameArgs banana-count=1000000 -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-BVH-QUEUE-VSM`

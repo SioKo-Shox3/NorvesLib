@@ -4111,3 +4111,12 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `verify-SCN-MEGA-FIX-BVH-QUEUE-VSM-4.txt`: 起動画面 default の決定的撮影の比較 result=pass（psnr 57.68 dB、輝度差 0.0037、EXIT=0）。`VSM_MEGA_CULL` は全行 overflow=0。PNG は家・球・岩・地面・影が以前どおり。
 - Next: TASKS.md の次の未完（SCN-MEGA-LAYOUT-SEA）。
 - Notes: 影の LOD の許容 4 texel は内部の値の選択（2 は一覧を 25 万件ほど広げれば収まるが VRAM が約 135 MB 増える）。overview の中ほど（画面の中央のやや上）の暗い斑は、溢れ 0 になった今回も前の項目の撮影と同じ場所に出るので溢れ由来ではない（配置の疎密と見ている。配置は SCN-MEGA-LAYOUT-SEA で変わるので、その撮影で見直す）。性能は測っていない（SCN-MEGA-ACCEPT-1M で判断）。試験の追加はしていない。
+
+### SCN-MEGA-FIX-BVH-QUEUE-VSM 再検証（2026-10-14、反復 5・run 20261014-102529）
+- Done: 評価の差し戻し（再検証の証拠の不足）に対し、コードは変えずに verify 4 本を新しく回し直して証拠を残した。反復 4 の `verify-...-1〜4.txt` は残し、今回の出力は `verify-SCN-MEGA-FIX-BVH-QUEUE-VSM-5〜8.txt`（verify の 1〜4 番に対応）。
+  - `-5.txt`: RelWithDebInfo の Game のビルド EXIT=0、error 0。
+  - `-6.txt`: 100 万本 horizon・overview の撮影 result=pass（bananas=1000000、EXIT=0）。撮影先は消してから撮り直した。`VSM_MEGA_CULL` は horizon clusters=723,293・overview 657,472 で全行 overflow=0、`[ERROR]` 0、`bvh_overflow` は全行 0。PNG を開き、近くの床にバナナの影が落ち、遠くの隙間も影で暗いことを確かめた。
+  - `-7.txt`: `VSM_MEGA_CULL overflow=0` の検査 EXIT=0。
+  - `-8.txt`: 起動画面 default の決定的撮影の比較 result=pass（psnr 57.68 dB、輝度差 0.0037、EXIT=0）。PNG は家・球・岩・地面・影が以前どおり。
+- Next: TASKS.md の次の未完（SCN-MEGA-LAYOUT-SEA）。
+- Notes: overview 中ほどの暗い斑は反復 4 の Notes どおり残る（溢れ由来ではない。SCN-MEGA-LAYOUT-SEA の撮影で見直す）。試験の追加はしていない。
