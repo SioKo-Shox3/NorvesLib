@@ -80,18 +80,22 @@ namespace Game::GameModes
 
     namespace
     {
-        // 夕方寄りの太陽。低い所（仰角 17°）の西南西から差し、ビュートの西面・南西面を照らして影を東北東へ長く伸ばす。
-        // 北や北西を向く谷床の視点で横から当たる。方位角は +X（東）から +Z（南）へ測るので、西南西は 157.5°
-        constexpr float kSunAltitudeDegrees = 17.0f;
-        constexpr float kSunAzimuthDegrees = 157.5f;
-        // 夕方の手動露出（絞り f/16・ISO 100 のままシャッター速度で合わせる）
-        constexpr float kExposureEV100 = 14.0f;
-        // 夕景のグレーディング。トーンマップは暗部を縮めない NeutralLinear にし、空の光だけの影の中が黒くつぶれないようにする。
-        // コントラストは軸 0.5 の S 字でわずかに立て、色温度を暖色へ、彩度を少し上げる。ビネットは画面の隅を少し落とす程度
+        // 晴天の午後の太陽。手本の遠景の写真 far_01（2012-05-18、晴れに積雲）の影から決めた: 低木の影は株の高さの半分ほどで
+        // 東北東へ、崖の張り出しの影は短く下と東へ落ちる。5 月 18 日の南中の 2 時間後（仰角 58.5°・方位 北から 244°）に当たる
+        // （Docs/RenderingValidation/WastelandLight.md）。方位角は +X（東）から +Z（南）へ測るので、北から 244° は 154°
+        constexpr float kSunAltitudeDegrees = 58.5f;
+        constexpr float kSunAzimuthDegrees = 154.0f;
+        // 晴天の日中の手動露出（絞り f/16・ISO 100 のままシャッター速度で合わせる）。晴天の f/16 の目安（EV 15）より 0.3 段明るくし、
+        // 日向の地面を手本の写真と同じくらいの明るさ（リニアの 75 パーセンタイルで 0.26〜0.31）にする
+        constexpr float kExposureEV100 = 14.7f;
+        // 日中のグレーディング。トーンマップは暗部を縮めない NeutralLinear にし、空の光だけの影の中が黒くつぶれないようにする。
+        // コントラストは軸 0.5 の S 字でわずかに立て、彩度を少し上げて空の青を残し、色温度はわずかに足すだけにする
+        // （写真の日向は白みの強い昼の色）。
+        // ビネットは画面の隅を少し落とす程度
         constexpr float kGradingContrast = 1.1f;
         constexpr float kGradingContrastPivot = 0.5f;
-        constexpr float kGradingSaturation = 1.25f;
-        constexpr float kGradingTemperature = 0.25f;
+        constexpr float kGradingSaturation = 1.2f;
+        constexpr float kGradingTemperature = 0.05f;
         constexpr float kVignetteIntensity = 0.25f;
         constexpr float kVignetteRadius = 0.85f;
         constexpr float kVignetteSoftness = 0.6f;
@@ -100,6 +104,10 @@ namespace Game::GameModes
         // 崖の岩（花崗岩のスキャン。アルベドの平均がリニアで 0.13 : 0.09 : 0.065）に掛ける色。メサの岩肌（rock_face、
         // 0.12 : 0.06 : 0.03）の赤みに寄せ、足元で灰色に浮かないようにする
         constexpr float kCliffTint[3] = {1.0f, 0.75f, 0.55f};
+        // 地形の材質（3 層の混ぜ合わせ）に掛ける明るさ。砂（sand_01）のアルベドの平均はリニアで 0.31 と明るく、
+        // 手本の谷床の赤い砂と土（コロラド高原の赤土のアルベド 0.2〜0.25）より日向が 1.5 倍ほど明るく出るので、色を変えずに
+        // 水準だけ 0.22 前後へ下げる。色と素材そのものは SCN-WL-MATERIAL-PALETTE で替える
+        constexpr float kTerrainAlbedoScale = 0.7f;
         // 高さフォグ: 基準の高さでの密度[1/m]と、上へ向かって薄くなる割合[1/m]。遠景の霞は空気遠近が受け持つので、
         // 谷床に薄く溜まる砂ぼこりの層にする。谷床は北から南東へ下がり、平らな所の高さは -38〜+39 m（5〜95%）なので、
         // 基準を南東の低い谷床（-40 m）に置き、100 m で 1/e に薄くして北の高い谷床（+40 m）にも半分ほど残す。
@@ -107,20 +115,25 @@ namespace Game::GameModes
         constexpr float kFogDensity = 0.00015f;
         constexpr float kFogBaseHeight = -40.0f;
         constexpr float kFogFalloff = 0.01f;
-        // 空気遠近: 物理空の媒質の距離を 4 倍に数え、谷床の向こうのビュート（1〜3.5 km）が少しずつ空の色へ寄り、
-        // 範囲の端の 4〜6 km の稜線が溶ける。300 m より手前は掛けない（足元・近くの崖の色は変えない）
-        constexpr float kAerialPerspectiveDistanceScale = 4.0f;
+        // 空気遠近: 物理空の媒質（下のエアロゾルを増やした値）の距離を 1.5 倍に数え、谷床の向こうのビュート（1〜3.5 km）が
+        // 写真の遠い崖と同じくらい（崖の暗部が地平線の空の半分ほど）に霞み、形は読めるようにする。300 m より手前は掛けない
+        // （足元・近くの崖の色は変えない）
+        constexpr float kAerialPerspectiveDistanceScale = 1.5f;
         constexpr float kAerialPerspectiveStartDistance = 300.0f;
-        // 雲の層: 高度 1.5〜4 km の積雲を空の 4 割ほどに散らし、西寄りの風でゆっくり流す
-        constexpr float kCloudBottomAltitude = 1500.0f;
-        constexpr float kCloudTopAltitude = 4000.0f;
-        constexpr float kCloudCoverage = 0.41f;
+        // 空のエアロゾル（Mie）の高さの尺度[m]。既定の 1.2 km の 2.5 倍にして柱の量を増やし、写真の白みの強い地平線の空と、
+        // 遠い崖の明るい霞に寄せる
+        constexpr float kSkyMieScaleHeight = 3000.0f;
+        // 雲の層: 写真の晴天の積雲（底の平らな小さな雲が空の 4 割ほど）。乾いた高原で雲底が高いので高度 2.5〜3.6 km の薄い層にし、
+        // 下から見ても日の当たる側が白く残るようにする。西寄りの風でゆっくり流す
+        constexpr float kCloudBottomAltitude = 2500.0f;
+        constexpr float kCloudTopAltitude = 3600.0f;
+        constexpr float kCloudCoverage = 0.4f;
         constexpr float kCloudWindVelocity[2] = {8.0f, 3.0f};
         // カメラの遠方面[m]。地形（4.7 × 4.6 km）の対角（約 6.6 km）の先まで描く
         constexpr float kFarPlane = 7000.0f;
-        // 太陽の影の到達距離[m]。谷床の視点から主役のビュート（Battleship Rock・Franklin Butte、0.5〜2 km）と、
-        // 低い西日で東南東へ 600 m 前後伸びるその影まで落とす
-        constexpr float kSunShadowMaxDistance = 2500.0f;
+        // 太陽の影の到達距離[m]。谷床の視点から、写真に写る主要な崖（主役のビュート 0.5〜2.8 km、ground_02 の Rooster Butte 3.5 km）と、
+        // その影（仰角 58.5°で比高 200 m の崖から 120 m 前後）まで落とす
+        constexpr float kSunShadowMaxDistance = 4000.0f;
         // 地形を置いてから SceneReady を出すまでの Tick の数（ページの読み込みが追いつく余裕）
         constexpr uint32_t kReadyTicksAfterTerrain = 90;
         // 1 Tick に読んで置く地形の区画の数（区画は 1 つ 37 MB 前後。読み込みと解析のメモリを数区画ぶんに抑える）
@@ -168,6 +181,7 @@ namespace Game::GameModes
             sky.bEnabled = true;
             sky.SunAltitudeDegrees = kSunAltitudeDegrees;
             sky.SunAzimuthDegrees = kSunAzimuthDegrees;
+            sky.MieScaleHeightMeters = kSkyMieScaleHeight;
             ctx.EngineRef.GetRenderWorld().SetSkyAtmosphere(sky);
 
             VolumetricFogParameters fog = MakeDefaultVolumetricFogParameters();
@@ -324,6 +338,10 @@ namespace Game::GameModes
             createInfo.Material.ORMTexture = assembly.Material.ORMTexture;
             createInfo.Material.bNormalTwoChannel = assembly.Material.bNormalTwoChannel;
             createInfo.Material.TerrainBlend = assembly.TerrainBlend;
+            for (uint32_t channel = 0; channel < 3; ++channel)
+            {
+                createInfo.Material.BaseColor[channel] = kTerrainAlbedoScale;
+            }
             createInfo.DebugName = logicalPath.c_str();
             const MegaMeshHandle megaMesh = megaGeometry.CreateMegaMesh(createInfo);
             if (!megaMesh.IsValid())
@@ -786,7 +804,7 @@ namespace Game::GameModes
         camera->SetShutterSpeed(ComputeShutterSpeedForEV100(camera->GetAperture(), camera->GetISO(), kExposureEV100));
         camera->SetExposureCompensation(0.0f);
         camera->SetAntiAliasingMode(CameraAntiAliasingMode::FXAA);
-        // 夕景のトーンマップとグレーディング（このシーンのカメラだけ。ほかのシーンのカメラは各自のひな形を使う）
+        // 日中のトーンマップとグレーディング（このシーンのカメラだけ。ほかのシーンのカメラは各自のひな形を使う）
         CameraProxy &proxyTemplate = data.m_Rig.ProxyTemplate();
         proxyTemplate.ToneMapCurve = CameraToneMapCurve::NeutralLinear;
         proxyTemplate.GradingOverride.bEnabled = true;
