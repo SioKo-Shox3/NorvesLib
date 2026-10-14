@@ -170,9 +170,9 @@ namespace Game::Scenes
         // far_02: Setting Hen Butte の南南西 680 m の谷床から北（方位 5°）の Rooster Butte と Setting Hen Butte を見る
         // （写真の GPS の位置では 2 つのビュートの左右が写真と逆になるので、左右の並びと見かけの高さから南へ置いた）
         {"ref_far_02", SceneViewKind::FreePose, 185.0f, 1.0f, 0.0f, {1099.5f, 1.7f, 2000.5f}},
-        // cliff_01: Battleship Rock の長い軸（方位 132°）を北西へ延ばした谷床、北西の端から 800 m の所から南東（方位 132°）の
-        // 北西の端の面を見る（Commons の説明の北西面と、写真の幅の狭い輪郭から）
-        {"ref_cliff_01", SceneViewKind::FreePose, -48.0f, 2.5f, 0.0f, {-2450.0f, 1.7f, -1820.0f}},
+        // cliff_01: Battleship Rock の頂の西北西 1.35 km、DEM の西の端の谷床から東南東（方位 118.5°）を見上げる。位置・向き・画角は
+        // DEM の稜線と写真の輪郭を照合して決めた（Scripts/Terrain/FitReferenceView.py。輪郭が最も合うのは DEM の 150 m 外なので、端に置いた）
+        {"ref_cliff_01", SceneViewKind::FreePose, -61.5f, 7.9f, 0.0f, {-2595.0f, 1.7f, -1550.0f}},
         // cliff_02: 写真の元のパノラマの GPS の東北東 290 m の高まり（GPS の位置では手前の起伏が Franklin Butte を隠す）から、
         // 南東（方位 146°）、2.6 km 先の Franklin Butte を望遠で見る
         {"ref_cliff_02", SceneViewKind::FreePose, -34.3f, 0.0f, 0.0f, {-1966.5f, 1.7f, -2454.5f}},

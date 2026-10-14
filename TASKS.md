@@ -1440,7 +1440,7 @@
 - notes: 2026-10-15 親: SCN-WL-REFERENCE-CAPTURE の再検証が撮影の時間切れ（10 分）で NG になった。基準の光（SCN-WL-LIGHT-BASE）が 4 反復かかったのも、大半が撮影の待ちだった。以後の荒野の項目は全部この撮影を何度も使う。 2026-10-15 親: 8dec0692 で閉じた（親が受け入れた）。評価の差し戻しは、複数の視点の撮影で同じ視点の 2 回の撮影が最大 4 段違う（PSNR 100）ことだけで、画素の完全な一致は親が書きすぎた条件だったので外した。全 11 視点を 172 秒・ページの読み込みの完了・1 視点ずつの撮影と見た目が同じ・起動画面の差 0 は評価者が確認した。評価者の non-blocking の指摘（`GeometryPageStreamer.h` 880 行付近の NoSpace の追い出しが、GPU の解放待ちの間も続き、別の塊のページまで外す）は、今回は evicted=0 で起きていない。追い出しが起きる規模で撮るときに見直す。
 
 ## SCN-WL-REFERENCE-CAPTURE: 手本の写真と同じ構図の視点と、並べた比較画像を作る
-- status: doing
+- status: done
 - done-when: 手本の写真ごとに、写真に合う名前付き視点（位置・向き・画角・時刻。推定した条件を書き、「同じ」とは書かない）を足し、写真と撮影を左右に並べた PNG を書くスクリプト `Scripts/Terrain/CompareReference.py` を作る（今の `CompareLight.py` を広げてよい）。品質を見る撮影は 1920×1080 以上で撮る（1280×720 では粗さが判断を狂わせる）。比較画像には、地面・崖・空の領域ごとの平均の色（線形）と明るさを写真と撮影の両方で書き、地表の材質の平均のアルベドも書く。比較画像を開いて、切り出した範囲の中の主役（far_02・cliff_01・cliff_02・ground_02 のビュートと崖）の配置と輪郭が対応することを確かめ（位置の記録が無い写真は、DEM の稜線と写真の輪郭を照合して位置・向き・画角を決め直す）、範囲の外が主役の far_01（Castle Butte と Cedar Mesa の縁）は SCN-WL-HORIZON で合わせ、ground_01 は地表と植生の比較用で輪郭は見ない、と文書に書いたうえで、目立つ差（形・色・明るさ・尺度・地表の種類・欠けている物）を差の大きい順に `Docs/RenderingValidation/WastelandReference.md` に書く。以後の荒野の項目は、この視点と比較画像で判断する。他の地域の写真は材質と光の参考だけに使う。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Views ref_far_01,ref_far_02,ref_cliff_01 -RequireAssets -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-WL-REFERENCE-CAPTURE`

@@ -4471,3 +4471,17 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 撮り直しで見えた差: far_02 の Setting Hen Butte の壁の縞は、縦の引き伸ばしから斜めのジグザグの縞に変わった。斜面の暗い点の格子の縞は ground_02 の手前の起伏の一面に出る。
 - Notes: 試験は足していない。2 本目の撮影は同じ出力先の metrics.json を上書きするので、metrics.json には後の 3 視点だけが入る（比較は <視点>.png を読むので影響しない）。
 - Next: TASKS.md の次の未完の項目。
+
+### SCN-WL-REFERENCE-CAPTURE 差し戻しの対応（2026-10-15、run 20261015-082405 の反復 1）
+- Done: 評価の差し戻し（cliff_01・far_01・ground_01 の輪郭が対応しない）に対し、TASKS.md の親の分け方どおりに直した。
+  - cliff_01: DEM の稜線と写真の輪郭を照合する `Scripts/Terrain/FitReferenceView.py` を足し、視点 `ref_cliff_01` を Battleship Rock の頂の西北西 1.35 km（X -2595・Z -1550、DEM の西の端）・方位 118.5°・仰俯 +7.9°・横の画角 32°（縦 18.3°）に決め直した（`SceneCatalog.h`・`kReferenceShots`）。輪郭の差は列の平均 15 px（旧視点は長い軸の延長で、壁が右へはみ出していた）。最良は DEM の外 75 m（7.9 px）で、足元の地形が欠けるので端に置いた。
+  - far_01 は範囲の外の主役を SCN-WL-HORIZON で合わせ、ground_01 は地表と植生の比較用で輪郭を見ない、と `WastelandReference.md` の表と比較画像の下の行（`CompareReference.py` の `outline`）に書いた。
+  - `CompareReference.py` の地形の輪郭に、列の上端の空の 0.6 倍より暗い画素を足し、赤みの閾値を R - B > 15 に上げた（陰の崖は灰色で拾えず、地平線の近くの霞を拾っていた）。値の表と差の一覧を撮り直した値で更新した。
+- 検証（`.harness/runs/20261015-082405/`）:
+  - `verify-SCN-WL-REFERENCE-CAPTURE-1.txt`: Debug の Game のビルド EXIT=0。
+  - `verify-SCN-WL-REFERENCE-CAPTURE-2.txt`・`-3.txt`: 手本の 6 視点を 3 視点ずつ撮影、result=pass（6 視点とも 1920×1080・白飛び 0・黒つぶれ 0）、EXIT=0。
+  - `verify-SCN-WL-REFERENCE-CAPTURE-5.txt`: `CompareReference.py --verify` result=pass photos=6、EXIT=0（`-4.txt` は輪郭の判定を直す前の版）。
+  - 比較画像 6 枚を開いた: cliff_01 は頭部の城壁の塊・2 つの頂・右の段の肩・裾の斜面が重なる。cliff_02・ground_02 は Franklin Butte、far_02 は左右の 2 つのビュートの並びと見かけの高さ（差 6 % 以内）が対応する。DEM から計算した稜線がエンジンの撮影の地形の上端と画素単位で重なることも確かめた。
+- Notes: far_02 は撮影の地平線が写真より 28 px 上で、Setting Hen Butte が 54 px 左にある。照合で探しても 2 つのビュートを同時に合わせる位置は DEM に無い（最良の位置では Rooster Butte の尖塔が消える）ので、左右の並びの合う今の視点のまま残した。
+- Notes: cliff_01 の撮影は崖の面が陰で暗い（崖 Y 0.038・写真 0.140）。写真の西日に照らされた面と光が違う。光の項目で見る。試験は足していない。
+- Next: TASKS.md の次の未完の項目。

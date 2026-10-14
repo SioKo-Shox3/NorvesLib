@@ -11,7 +11,8 @@
 # 写真の上には撮影の地形の輪郭（黄）、撮影の上には写真の地形の輪郭（水色）を重ね、配置と輪郭の対応を見る。
 #
 # 領域ごとの値（画素は sRGB を線形に戻した値。Y = 0.2126R + 0.7152G + 0.0722B）:
-#   - 空: 地平線より上の画素（地平線の求め方は CompareLight.py と同じ。赤みのある画素が 4 行続いた所から下を地形とする）
+#   - 空: 地形の輪郭より上の画素（赤み（R - B > 15）のある画素か、列の上端の空の 0.6 倍より暗い画素が 4 行続いた所から下を地形とする。
+#     陰に入った崖は灰色で赤みが無いので、明るさの判定を足してある）
 #   - 崖: PHOTOS の崖の枠の中の地形の画素（主役のビュート・メサの壁と崖錐）
 #   - 地面: PHOTOS の地面の枠の中の地形の画素（近景の谷床）
 #   それぞれ線形の RGB の平均と Y を写真と撮影の両方で書く。枠は写真の幅・高さに対する割合で、撮影には同じ視野の位置に置く。
@@ -30,22 +31,29 @@ import sys
 import numpy as np
 from PIL import Image, ImageDraw
 
-from CompareLight import find_horizon, load_font, srgb_to_linear
+from CompareLight import GROUND_RUN_ROWS, load_font, srgb_to_linear
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 PHOTO_DIR = os.path.join(REPO_ROOT, "Assets", "Reference", "ValleyOfTheGods")
 ROUTINE_PATH = os.path.join(REPO_ROOT, "Game", "GameModes", "Wasteland", "WastelandRoutine.cpp")
 CATALOG_PATH = os.path.join(REPO_ROOT, "Game", "Scenes", "SceneCatalog.h")
 
-# 写真と視点の対応と、崖・地面の枠（元の写真の幅・高さに対する割合 x0, y0, x1, y1）
+# 写真と視点の対応と、崖・地面の枠（元の写真の幅・高さに対する割合 x0, y0, x1, y1）。outline は輪郭の扱い:
+#   match = 切り出した範囲の中の主役の配置と輪郭を合わせる、horizon = 主役が範囲の外なので遠景（SCN-WL-HORIZON）で合わせる、
+#   none = 地表と植生の比較用で輪郭は見ない
 PHOTOS = [
-    {"id": "far_01", "view": "ref_far_01", "cliff": (0.30, 0.42, 0.68, 0.62), "ground": (0.0, 0.72, 1.0, 0.92)},
-    {"id": "far_02", "view": "ref_far_02", "cliff": (0.50, 0.28, 0.90, 0.55), "ground": (0.0, 0.65, 1.0, 0.87)},
-    {"id": "cliff_01", "view": "ref_cliff_01", "cliff": (0.22, 0.32, 0.82, 0.78), "ground": (0.0, 0.82, 1.0, 0.91)},
-    {"id": "cliff_02", "view": "ref_cliff_02", "cliff": (0.38, 0.32, 0.72, 0.78), "ground": (0.0, 0.82, 0.70, 0.97)},
-    {"id": "ground_01", "view": "ref_ground_01", "cliff": (0.0, 0.46, 0.70, 0.53), "ground": (0.0, 0.62, 1.0, 0.87)},
-    {"id": "ground_02", "view": "ref_ground_02", "cliff": (0.70, 0.33, 0.98, 0.58), "ground": (0.35, 0.75, 0.95, 0.92)},
+    {"id": "far_01", "view": "ref_far_01", "outline": "horizon", "cliff": (0.30, 0.42, 0.68, 0.62), "ground": (0.0, 0.72, 1.0, 0.92)},
+    {"id": "far_02", "view": "ref_far_02", "outline": "match", "cliff": (0.50, 0.28, 0.90, 0.55), "ground": (0.0, 0.65, 1.0, 0.87)},
+    {"id": "cliff_01", "view": "ref_cliff_01", "outline": "match", "cliff": (0.22, 0.32, 0.82, 0.78), "ground": (0.0, 0.82, 1.0, 0.91)},
+    {"id": "cliff_02", "view": "ref_cliff_02", "outline": "match", "cliff": (0.38, 0.32, 0.72, 0.78), "ground": (0.0, 0.82, 0.70, 0.97)},
+    {"id": "ground_01", "view": "ref_ground_01", "outline": "none", "cliff": (0.0, 0.46, 0.70, 0.53), "ground": (0.0, 0.62, 1.0, 0.87)},
+    {"id": "ground_02", "view": "ref_ground_02", "outline": "match", "cliff": (0.70, 0.33, 0.98, 0.58), "ground": (0.35, 0.75, 0.95, 0.92)},
 ]
+OUTLINE_TEXT = {
+    "match": "輪郭: 範囲の中の主役の配置と輪郭を合わせる",
+    "horizon": "輪郭: 主役は範囲の外。遠景（SCN-WL-HORIZON）で合わせる。手前〜中景の谷床だけを見る",
+    "none": "輪郭: 見ない（地表と植生の比較用）",
+}
 # 地形の 3 層のアルベドのテクスチャ（WastelandRoutine.cpp の kSandAlbedoPath・kDirtAlbedoPath・kRockAlbedoPath）
 TERRAIN_ALBEDO = {
     "砂": "Assets/Textures/PolyHaven/sand_01/sand_01_diff_4k.jpg",
@@ -56,6 +64,12 @@ TERRAIN_ALBEDO = {
 MIN_CAPTURE_SIZE = (1920, 1080)
 # 並べる絵の大きさ[px]（16:9）
 PANEL_SIZE = (1280, 720)
+# 地形の輪郭: 列の上端の何割の行の明るさの中央値を空の基準にし、その何倍より暗い画素を地形とするか。輪郭をならす列数
+SKY_REFERENCE_ROWS = 0.05
+TERRAIN_DARK_RATIO = 0.6
+# 赤みの判定の R - B（sRGB）。地平線の近くの暖かい霞の空（12 前後）を外し、霞の中の淡いビュート（20 以上）は残す
+TERRAIN_RED_MINUS_BLUE = 15
+OUTLINE_MEDIAN_COLUMNS = 9
 REGIONS = (("sky", "空"), ("cliff", "崖"), ("ground", "地面"))
 REGION_COLORS = {"cliff": (255, 140, 0), "ground": (0, 200, 80)}
 
@@ -76,6 +90,25 @@ def fit_photo(photo):
         return min(max((fraction * scaled_height - offset) / height, 0.0), 1.0)
 
     return panel, (offset < 0, -offset if offset < 0 else 0), map_y
+
+
+def find_terrain_top(rgb):
+    """列ごとの地形の始まりの行（見つからない列は画像の高さ）。CompareLight.py の find_horizon の赤みの判定（閾値は上げた）に、
+    列の上端の空より暗い画素を足す（陰に入った崖は灰色で赤みが無い）。輪郭の形を残すため、ならしの列数は小さくする"""
+    height, width, _ = rgb.shape
+    values = rgb.astype(np.int32)
+    luminance = values @ np.array([2126, 7152, 722]) // 10000
+    sky_reference = np.median(luminance[: max(1, int(height * SKY_REFERENCE_ROWS))], axis=0)
+    terrain = ((values[:, :, 0] - values[:, :, 2]) > TERRAIN_RED_MINUS_BLUE) | (luminance < sky_reference[None, :] * TERRAIN_DARK_RATIO)
+    run = np.ones_like(terrain)
+    for offset in range(GROUND_RUN_ROWS):
+        shifted = np.zeros_like(terrain)
+        shifted[: height - offset] = terrain[offset:]
+        run &= shifted
+    top = np.where(run.any(axis=0), run.argmax(axis=0), height)
+    half = OUTLINE_MEDIAN_COLUMNS // 2
+    windows = np.lib.stride_tricks.sliding_window_view(np.pad(top, half, mode="edge"), OUTLINE_MEDIAN_COLUMNS)
+    return np.median(windows, axis=1).astype(np.int32)
 
 
 def box_mask(shape, box):
@@ -102,7 +135,7 @@ def measure(panel, boxes, valid):
     """空・崖・地面の領域と、その平均の色と明るさ"""
     rgb = np.asarray(panel)
     linear = srgb_to_linear(rgb.astype(np.float64))
-    horizon = find_horizon(rgb)
+    horizon = find_terrain_top(rgb)
     rows = np.arange(rgb.shape[0])[:, None]
     sky = (rows < horizon[None, :]) & valid
     terrain = ~sky & valid
@@ -229,6 +262,7 @@ def main():
         capture_metrics, capture_horizon = measure(capture_panel, boxes, np.ones_like(valid))
         report["photos"][entry["id"]] = {
             "view": entry["view"],
+            "outline": entry["outline"],
             "capture_size": [capture_full.width, capture_full.height],
             "boxes": boxes,
             "photo": photo_metrics,
@@ -253,7 +287,8 @@ def main():
             f"撮影 {entry['view']}（水色: 写真の地形の輪郭・{capture_full.width}×{capture_full.height}）　"
             + "　".join(format_region(l, capture_metrics[n]) for n, l in REGIONS),
             albedo_text,
-            "枠: 橙 = 崖、緑 = 地面。値は線形の平均。写真の加工とホワイトバランスは分からないので、差の向きと大きさだけを見る",
+            OUTLINE_TEXT[entry["outline"]]
+            + "　枠: 橙 = 崖、緑 = 地面。値は線形の平均。写真の加工とホワイトバランスは分からないので、差の向きと大きさだけを見る",
         ]
         for index, line in enumerate(lines):
             draw.text((10, PANEL_SIZE[1] + 6 + index * 32), line, fill=(235, 235, 235), font=font)
