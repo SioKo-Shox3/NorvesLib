@@ -64,6 +64,11 @@ namespace Game::GameModes
         String LogicalPath;
         /// 配置に使う形（太さの範囲と、山の高さを調べる点）
         BananaShape Shape;
+        /// MegaMesh を作り、配置を始めた（以後は Tick が予算で配置を進め、終えたら散布を置く）
+        bool bLayoutStarted = false;
+        MegaMeshHandle BananaMesh;
+        /// 配置（Shape を指すので Shape より後ろに置き、Shape より先に壊れるようにする）
+        BananaFieldBuilder Layout;
     };
 
     bool BananasInfoToggle::OnKey(const NorvesLib::Core::Input::KeyEvent &event)
@@ -120,6 +125,13 @@ namespace Game::GameModes
         constexpr const char *kFloorOrmPath = "Assets/Textures/PolyHaven/brown_planks_03/brown_planks_03_orm_4k";
 
         constexpr float kPi = 3.14159265358979323846f;
+
+        // 配置を進める 1 Tick あたりの時間の予算[秒]（100 万本は数百 Tick に分かれる）
+        constexpr double kLayoutBudgetSeconds = 0.008;
+        // 散布 1 つ（組）に入れる本数の上限。組は区画の境で区切るので、組ごとに空間的にまとまる
+        constexpr uint32_t kBananaBatchInstances = 4194304;
+        // カメラの遠方面は、海の円盤の直径にこの倍率（縁のゆらぎの 4% と余裕）を掛けた値以上にする
+        constexpr float kSeaFarPlaneMargin = 1.1f;
 
         /// 昼の物理空と太陽
         void ApplyEnvironment(GameModeContext &ctx)
@@ -382,8 +394,8 @@ namespace Game::GameModes
         }
 #endif
 
-        /// バナナの材質がそろったら MegaMesh を作り、モデルとして登録して、バナナを置く
-        void FinishBananaLoad(GameModeContext &ctx, MegaBananasData &data)
+        /// バナナの材質がそろったら MegaMesh を作ってモデルとして登録し、配置を始める（配置は Tick が予算で進める）
+        void StartBananaLayout(GameModeContext &ctx, MegaBananasData &data)
         {
             BananaAssembly &assembly = *data.m_pAssembly;
             const MaterialCreateData &material = assembly.Material->CreateData;
@@ -434,32 +446,67 @@ namespace Game::GameModes
             }
             // 同じバナナの全インスタンスが 1 つの Model を共有する。シーンを出るときにスコープが返す
             ctx.ScopeRef.TrackModel(modelHandle);
+            assembly.BananaMesh = megaMesh;
 
-            // 全部のバナナを 1 つの散布（Object 1 つと軽い行）で置く。配置の順と値は 1 本ずつ Entity を置いていたときと同じ
-            uint32_t pileCount = 0;
-            Container::VariableArray<Component::MegaScatterInstance> instances;
-            instances.reserve(data.m_BananaCount);
-            uint32_t placed = PlaceBananas(instances, assembly.Shape, data.m_BananaCount, nullptr, pileCount);
-            uint32_t batches = 0;
-            Entity *scatterOwner = ctx.ScopeRef.SpawnObject<Entity>();
-            auto *scatter = scatterOwner != nullptr
-                                ? ctx.WorldRef.CreateComponent<Component::MegaGeometryScatterComponent>(scatterOwner)
-                                : nullptr;
-            if (scatter != nullptr)
+            // 配置を始める（山はここで置く）。海の半径が決まるので、円盤の端から端まで見えるようにカメラの遠方面を確かめる
+            assembly.Layout.Begin(assembly.Shape, data.m_BananaCount, nullptr);
+            assembly.bLayoutStarted = true;
+            const float requiredFar = 2.0f * assembly.Layout.GetStats().Radius * kSeaFarPlaneMargin;
+            Component::CameraComponent *camera = data.m_Rig.GetCamera();
+            if (camera != nullptr && camera->GetFarPlane() < requiredFar)
             {
-                scatter->SetMegaMeshHandle(megaMesh);
-                scatter->SetCastShadow(true);
-                if (scatter->SetInstances(Container::Span<const Component::MegaScatterInstance>(instances.data(), instances.size())))
+                camera->SetFarPlane(requiredFar);
+            }
+        }
+
+        /// 配置を終えたら、区画の境で分けた組ごとに散布（Object 1 つと軽い行）を置く
+        void PlaceBananaBatches(GameModeContext &ctx, MegaBananasData &data)
+        {
+            BananaAssembly &assembly = *data.m_pAssembly;
+            const BananaLayoutStats &stats = assembly.Layout.GetStats();
+            const VariableArray<Component::MegaScatterInstance> &instances = assembly.Layout.GetInstances();
+            VariableArray<uint32_t> batchStarts;
+            assembly.Layout.SplitBatches(kBananaBatchInstances, batchStarts);
+
+            uint32_t placed = 0;
+            uint32_t batches = 0;
+            uint32_t scatterRows = 0;
+            uint32_t scatterRanges = 0;
+            for (size_t batch = 0; batch + 1 < batchStarts.size(); ++batch)
+            {
+                const uint32_t first = batchStarts[batch];
+                const uint32_t end = batchStarts[batch + 1];
+                if (end <= first)
                 {
-                    batches = 1;
+                    continue;
+                }
+                Entity *scatterOwner = ctx.ScopeRef.SpawnObject<Entity>();
+                auto *scatter = scatterOwner != nullptr
+                                    ? ctx.WorldRef.CreateComponent<Component::MegaGeometryScatterComponent>(scatterOwner)
+                                    : nullptr;
+                if (scatter == nullptr)
+                {
+                    continue;
+                }
+                scatter->SetMegaMeshHandle(assembly.BananaMesh);
+                scatter->SetCastShadow(true);
+                // 行の作成の間は描かない（全範囲がそろったら Tick が見せる）
+                scatter->SetVisible(false);
+                data.m_BananaScatters.push_back(scatter);
+                if (scatter->SetInstances(
+                        Container::Span<const Component::MegaScatterInstance>(instances.data() + first, end - first)))
+                {
+                    ++batches;
+                    placed += end - first;
+                    scatterRows += scatter->GetInstanceCount();
+                    scatterRanges += scatter->GetRangeCount();
                 }
             }
-            if (batches == 0)
+            if (placed != static_cast<uint32_t>(instances.size()))
             {
-                LOG_ERROR("mega-bananas: バナナの散布を作れませんでした");
-                placed = 0;
-                pileCount = 0;
+                LOG_ERROR_F("mega-bananas: バナナの散布を作れませんでした（置けた %u・配置 %zu）", placed, instances.size());
             }
+            const uint32_t pileCount = placed > 0 ? stats.PileCount : 0u;
 
             const uint32_t trianglesPerBanana = CountLod0Triangles(*assembly.Mesh);
             data.m_Info.BananaCount = placed;
@@ -472,8 +519,27 @@ namespace Game::GameModes
                        "clusters=%u lod_levels=%u batches=%u scatter_rows=%u scatter_ranges=%u",
                        placed, pileCount, placed - pileCount, trianglesPerBanana,
                        static_cast<unsigned long long>(data.m_Info.SourceTriangleTotal), data.m_Info.MeshClusterCount,
-                       data.m_Info.MeshLodLevelCount, batches, scatter != nullptr ? scatter->GetInstanceCount() : 0u,
-                       scatter != nullptr ? scatter->GetRangeCount() : 0u);
+                       data.m_Info.MeshLodLevelCount, batches, scatterRows, scatterRanges);
+
+            // 海の形と内訳。密度は近・中・遠の輪の面積（山の周りの空きを含む）で割った値
+            {
+                const double nearArea = static_cast<double>(kPi) * stats.NearRadius * stats.NearRadius;
+                const double midArea = static_cast<double>(kPi) * stats.MidRadius * stats.MidRadius - nearArea;
+                const double farArea = static_cast<double>(kPi) * stats.Radius * stats.Radius - nearArea - midArea;
+                const auto density = [](uint32_t count, double area) { return area > 0.0 ? count / area : 0.0; };
+                const Component::CameraComponent *camera = data.m_Rig.GetCamera();
+                LOG_INFO_F("MEGA_BANANAS_LAYOUT count=%u requested=%u radius=%.1f near_radius=%.1f mid_radius=%.1f "
+                           "center_x=%.1f center_z=%.1f near=%u mid=%u far=%u pile=%u near_density=%.1f mid_density=%.1f "
+                           "far_density=%.2f stacked=%u max_lift=%.3f tiles=%u batches=%u deficit=%u build_ms=%.1f steps=%u "
+                           "far_plane=%.0f",
+                           placed, stats.Requested, static_cast<double>(stats.Radius), static_cast<double>(stats.NearRadius),
+                           static_cast<double>(stats.MidRadius), static_cast<double>(stats.CenterX),
+                           static_cast<double>(stats.CenterZ), stats.NearCount, stats.MidCount, stats.FarCount, pileCount,
+                           density(stats.NearCount, nearArea), density(stats.MidCount, midArea),
+                           density(stats.FarCount, farArea), stats.StackedCount, static_cast<double>(stats.MaxLift),
+                           stats.TileCount, batches, stats.Deficit, stats.BuildMilliseconds, stats.StepCount,
+                           camera != nullptr ? static_cast<double>(camera->GetFarPlane()) : 0.0);
+            }
 
             // 向きの検算: ローカル Y（長手）は水平、ローカル X（太さ）は縦になっているはず
             {
@@ -566,6 +632,8 @@ namespace Game::GameModes
         data.m_bBananasPlaced = false;
         data.m_bMassWorkSettled = false;
         data.m_bBananasSkipped = false;
+        data.m_BananaScatters.clear();
+        data.m_BananasShownTick = 0;
         data.m_Info = BananasInfo{};
         data.m_LastGpuLogTick = 0;
         Game::Scenes::BeginSceneAssembly(ctx.EngineRef);
@@ -652,9 +720,14 @@ namespace Game::GameModes
         }
         UpdateGpuTime(ctx, data);
 
-        if (data.m_pAssembly && data.m_pAssembly->Material->PendingTextureCount == 0)
+        if (data.m_pAssembly && !data.m_pAssembly->bLayoutStarted && data.m_pAssembly->Material->PendingTextureCount == 0)
         {
-            FinishBananaLoad(ctx, data);
+            StartBananaLayout(ctx, data);
+        }
+        // 配置は予算で区切って進め（Tick を長く止めない）、終えたら散布を置く
+        if (data.m_pAssembly && data.m_pAssembly->bLayoutStarted && data.m_pAssembly->Layout.Step(kLayoutBudgetSeconds))
+        {
+            PlaceBananaBatches(ctx, data);
         }
 
         // 散布の行は仕事の列が予算で範囲ごとに作る。全範囲の公開まで進むのを待つ（一度そろえば、その後は待たない）
@@ -662,8 +735,16 @@ namespace Game::GameModes
             !ctx.WorldRef.GetEcsWorld().GetMassWork().HasPendingWork())
         {
             data.m_bMassWorkSettled = true;
+            for (Component::MegaGeometryScatterComponent *scatter : data.m_BananaScatters)
+            {
+                scatter->SetVisible(true);
+            }
+            data.m_BananasShownTick = data.m_TickCount;
+            LOG_INFO_F("MEGA_BANANAS_SHOWN batches=%zu tick=%u", data.m_BananaScatters.size(), data.m_TickCount);
         }
-        const bool bBananasDone = (data.m_bBananasPlaced || data.m_bBananasSkipped) && data.m_bMassWorkSettled;
+        // 見せた後、描画が全部を載せた絵を作るまで数 Tick 待つ
+        const bool bBananasDone = (data.m_bBananasPlaced || data.m_bBananasSkipped) && data.m_bMassWorkSettled &&
+                                  data.m_TickCount >= data.m_BananasShownTick + kReadyTickCount;
         // 台本を流し終えるまで、決定的な撮影を待たせる（撮影は台本の後のカメラで撮る）
         const bool bReady =
             data.m_TickCount >= kReadyTickCount && bBananasDone && data.m_bFloorReady && !data.m_Rig.IsScriptRunning();
@@ -714,6 +795,8 @@ namespace Game::GameModes
         }
         data.m_InfoToggle.OnInputReset();
         data.m_bInfoVisible = false;
+        // 散布は所有者の Entity と一緒にスコープが返すので、指す先を捨てる
+        data.m_BananaScatters.clear();
         data.m_Rig.Leave(ctx);
         // 床・バナナのモデルと実体・材質・メッシュ・カメラの実体は GameModeScope::Cleanup が返す。空は RenderWorld の設定なので戻す。
         ResetEnvironment(ctx);

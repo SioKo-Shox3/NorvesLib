@@ -4,8 +4,10 @@
 // mega-bananas（仮想化ジオメトリのバナナのシーン）
 //
 // 昼の物理空と太陽の影の下、ComfyUI で生成した高ポリのバナナ（約 10 万三角形。Assets/Models/Generated/banana）を
-// MegaGeometry で床いっぱいに敷き詰める。同じバナナの全インスタンスは 1 つの Model（MegaMesh）を共有し、
-// 向きと大きさと位置をばらす（位置はポアソン円盤で、升目の並びは出ない）。手前には中央が盛り上がった塚を 3 つ積む
+// MegaGeometry で「バナナの海」に敷く。海は中心からの距離で密度を落とす円盤（近 50/m²・中 10/m²・遠 2/m²。
+// 100 万本で半径約 350 m）で、本数が少なければ同じ形の小さな円盤になる（BananaLayout.h）。
+// 同じバナナの全インスタンスは 1 つの Model（MegaMesh）を共有し、向きと大きさと位置をばらす。配置は Tick ごとの
+// 時間の予算で区切って作り、区画の境で分けた組ごとに散布を置く。手前には中央が盛り上がった塚を 3 つ積む
 // （物理は使わず、下の形の上に初めて触れる高さへ置く）。
 // 本数は --banana-count=<n>（既定 10000）。視点は SceneCatalog.h の kMegaBananasViews（overview・close・low・horizon）、
 // カメラパスは kMegaBananasPath（P キー・ゲームパッドの Y で再生・停止）。
@@ -36,6 +38,11 @@
 namespace NorvesLib::Core::Asset
 {
     class AssetSystem;
+}
+
+namespace NorvesLib::Core::Component
+{
+    class MegaGeometryScatterComponent;
 }
 
 namespace Game::GameModes
@@ -139,8 +146,14 @@ namespace Game::GameModes
         NorvesLib::Core::Container::TSharedPtr<BananasPendingMaterial> m_pFloorMaterial;
         bool m_bFloorReady = false;
         bool m_bBananasPlaced = false;
-        /// 置いた後に、散布の行の作成が全範囲の公開まで進んだ（撮影の準備の条件。一度立てたら戻さない）
+        /// 置いた後に、散布の行の作成が全範囲まで進んだ（撮影の準備の条件。一度立てたら戻さない）
         bool m_bMassWorkSettled = false;
+        /// バナナの散布（非所有。所有者の Entity と一緒に GameModeScope が返す）。行の作成の間は隠し
+        /// （作りかけの範囲を毎フレーム描き、影を描き直すと 100 万本で 1 フレームが数百 ms になり、作成が長引く）、
+        /// 全範囲の行がそろったフレームで見せる
+        NorvesLib::Core::Container::VariableArray<NorvesLib::Core::Component::MegaGeometryScatterComponent *> m_BananaScatters;
+        /// 散布を見せた Tick
+        uint32_t m_BananasShownTick = 0;
         /// 床以外（バナナ）を置けなかった（資産が無い・壊れている）。シーンの組み立ては済んだものとして続ける
         bool m_bBananasSkipped = false;
 
