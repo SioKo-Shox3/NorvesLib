@@ -72,8 +72,8 @@ namespace NorvesLib::Core::Rendering
         float TopAltitudeMeters = 4000.0f;
         // 空を覆う割合の目安（0〜1）。天気の模様をこの割合で切り抜く
         float Coverage = 0.45f;
-        // 密度 1 の所の消散係数（1/m）
-        float ExtinctionPerMeter = 0.03f;
+        // 密度 1 の所の消散係数（1/m）。視線の 1 歩（数十〜150 m）で不透明にならない程度にして、照らされた面の光を残す
+        float ExtinctionPerMeter = 0.01f;
         // 雲の形の大きさ（m）。基本の形のノイズ 1 周期の水平の長さ
         float ShapeScaleMeters = 9000.0f;
         // 風で流れる速さ（m/s、ワールドの X・Z）

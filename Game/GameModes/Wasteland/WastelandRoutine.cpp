@@ -109,10 +109,10 @@ namespace Game::GameModes
         // 150 m より手前は掛けない（盆地の中の足元・前哨地の建物は変えない）
         constexpr float kAerialPerspectiveDistanceScale = 12.0f;
         constexpr float kAerialPerspectiveStartDistance = 150.0f;
-        // 雲の層: 高度 1.5〜4 km の積雲を空の半分弱に散らし、西寄りの風でゆっくり流す
+        // 雲の層: 高度 1.5〜4 km の積雲を空の 4 割ほどに散らし、西寄りの風でゆっくり流す
         constexpr float kCloudBottomAltitude = 1500.0f;
         constexpr float kCloudTopAltitude = 4000.0f;
-        constexpr float kCloudCoverage = 0.45f;
+        constexpr float kCloudCoverage = 0.41f;
         constexpr float kCloudWindVelocity[2] = {8.0f, 3.0f};
         // カメラの遠方面[m]。2 km 四方の対角（約 2.8 km）の先まで描く
         constexpr float kFarPlane = 3200.0f;

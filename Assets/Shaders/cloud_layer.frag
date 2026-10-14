@@ -300,9 +300,10 @@ void main()
             attenuation *= 0.5;
         }
 
-        // 環境光: 上の空は頂ほど、地面の照り返しは底ほど届く（等方の散乱で平均の放射輝度を半分ずつ受ける）
-        vec3 ambient = 0.5 * skyAbove * mix(0.45, 1.0, heightFraction) +
-                       0.5 * groundRadiance * mix(1.0, 0.35, heightFraction);
+        // 環境光: 厚い雲は多重散乱で受けた空の光をほぼ返すので、上の空の平均の放射輝度を頂でそのまま、
+        // 底で 6 割受ける。地面の照り返しは底ほど届く
+        vec3 ambient = skyAbove * mix(0.6, 1.0, heightFraction) +
+                       0.5 * groundRadiance * mix(1.0, 0.3, heightFraction);
 
         float sigma = density * extinction;
         vec3 source = sigma * (sunIlluminance * sunTerm + ambient);
