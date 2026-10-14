@@ -105,10 +105,10 @@ namespace Game::GameModes
         // 遠景の霞は空気遠近が受け持つので、盆地の床に薄く溜まる砂ぼこりの層にする
         constexpr float kFogDensity = 0.00015f;
         constexpr float kFogFalloff = 0.02f;
-        // 空気遠近: 物理空の媒質の距離を 9 倍に数え、メサの輪（330〜680 m）が空の色へ寄り、外周の稜線が溶ける。
-        // 50 m より手前は掛けない
-        constexpr float kAerialPerspectiveDistanceScale = 9.0f;
-        constexpr float kAerialPerspectiveStartDistance = 50.0f;
+        // 空気遠近: 物理空の媒質の距離を 12 倍に数え、メサの輪（330〜680 m）が空の色へ寄り、外周の稜線が溶ける。
+        // 150 m より手前は掛けない（盆地の中の足元・前哨地の建物は変えない）
+        constexpr float kAerialPerspectiveDistanceScale = 12.0f;
+        constexpr float kAerialPerspectiveStartDistance = 150.0f;
         // カメラの遠方面[m]。2 km 四方の対角（約 2.8 km）の先まで描く
         constexpr float kFarPlane = 3200.0f;
         // 太陽の影の到達距離[m]。盆地の中から周りのメサ（半径 330〜680 m の輪）の手前側と、その間の起伏・岩まで影を落とす

@@ -1356,7 +1356,7 @@
 - paths: Game, Assets/AssetSets, Scripts, Test/Game/Bridge/CMakeLists.txt, Test/Core/Rendering/CMakeLists.txt, TASKS.md, PROGRESS.md
 
 ## SCN-AERIAL-PERSPECTIVE: 遠景に空気遠近の霞を掛ける
-- status: todo
+- status: done
 - done-when: 物理空の LUT（透過率と散乱）から、カメラからの距離に応じた散乱光と透過率を不透明物に掛ける処理（GBuffer の合成・可視バッファの両方の経路）を足してシーンごとに有効にでき、`wasteland` で有効にする。遠くの稜線とメサが空の色に溶け、近くは変わらない。`wasteland` の高さフォグの値も霞として馴染むように調整する（Rendering3DTest の霧は変えない）。`overview`・`ridge` の撮影を開いて遠景の霞を確かめ、Rendering3DTest の撮影が変わらない。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -OutDir .harness/runs/scene-capture/SCN-AERIAL-PERSPECTIVE`

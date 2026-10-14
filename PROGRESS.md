@@ -4261,3 +4261,17 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `verify-SCN-WASTELAND-LAYOUT-3.txt`: `wasteland` の cycle smoke 3 周 result=pass。
 - Notes: 建物の位置・崖を探す放射の本数・埋める深さ・大きさの幅・露出とグレーディングの値は内部の値で、撮影で決めた。overview の視点からは前哨地の建物が小さく、岩も点に見える（視点の位置は SCN-TERRAIN-GEN のまま）。cycle smoke の 3 周とも `WASTELAND_PROPS placed=143` が出て、岩・建物の読み込みと解放を毎周往復した。性能は SCN-WASTELAND-POLISH で測る。配置の CPU の試験は足していない。
 - Next: TASKS.md の次の未完の項目。
+
+### SCN-AERIAL-PERSPECTIVE 完了（2026-10-14、反復 11〜12・run 20261014-140012）
+- Done: 不透明物に空気遠近（遠景の霞）を掛け、シーンごとに有効にできるようにした。
+  - API: `AerialPerspectiveParameters`（`SkyAtmosphere.h`。有効・距離の倍率・掛け始める距離）を `RenderWorld::SetAerialPerspective`（GameThread）→ `RenderingCoordinator` → `FramePacket` の `SceneProxy::AerialPerspective` へ毎フレーム値コピー（構成の revision の hash にも入れた）。既定は無効。空が無効なら掛けない。
+  - RenderThread: `VolumetricsPass`（SSR の後、深度からカメラまでの距離を出してシーンの色へ合成する全画面のパス）が、空の透過率 LUT（`SkyAtmosphereTransmittance`、binding 4）と放射輝度 LUT を読む。透過率は Rayleigh・Mie の高度 0 の消散係数と高度の指数密度を掛け始める距離から先の区間で解析的に積分し、散乱光は同じ向きの空の色に「区間で散った割合 (1 - T) / (1 - 大気の外までの T)」を掛けて配る。地平線より下の視線は仰角約 2° まで持ち上げた空の色を使う。高さフォグを手前、空気遠近をその奥として重ねる。GBuffer の合成と可視バッファの解決のどちらも同じ深度とシーンの色の上で掛かる。
+  - `wasteland`: 距離の倍率 12、掛け始める距離 150 m で有効にし、離れるときに無効へ戻す。高さフォグは遠景の霞を空気遠近へ渡し、盆地の床に薄く溜まる層（密度 0.00015・falloff 0.02）にした。Rendering3DTest の霧は変えていない。
+- 検証（`.harness/runs/20261014-140012/`）:
+  - `verify-SCN-AERIAL-PERSPECTIVE-1.txt`: Debug の Game のビルド EXIT=0。
+  - `verify-SCN-AERIAL-PERSPECTIVE-2.txt`: `wasteland` の撮影 result=pass（overview・ground・ridge・cliff・outpost、白飛び 0・黒つぶれ 0、検証レイヤーのエラー 0）。SCN-WASTELAND-LAYOUT の撮影と並べて開いた: overview・ground・ridge で外周の稜線が空の色へ寄って溶け、メサの輪は薄く霞む。ground・outpost の画面の下半分（足元の地面・建物）は差の平均 0.1 階調で変わらない。空の画素は変わらない。
+  - `aux-SCN-AERIAL-PERSPECTIVE-apoff.txt`: 空気遠近だけ無効にした ridge の撮影（一時的な書き換え、戻して再ビルド済み）と比べ、ridge の手前の地面の青みは空気遠近による（手前の地面も 150 m より先）。
+  - `aux-SCN-AERIAL-PERSPECTIVE-vboff.txt`: `--visibility-buffer=off`（GBuffer の合成の経路）の ridge は可視バッファの経路と画素の差 >8 が 0.013% で、同じ霞が掛かる。
+  - `verify-SCN-AERIAL-PERSPECTIVE-3.txt`: 起動画面（Rendering3DTest）の撮影 result=pass（default・near・low）。SCN-SHADOW-DISTANCE の撮影との差は default 0.57%・near 16.7%・low 1.7%（差 >8）で、near の差は回る球の模様の位相だけ（球の外は 0.19%、`aux-SCN-AERIAL-PERSPECTIVE-r3d-diff.txt`）。開いて見た目が変わっていないことを確かめた。
+- Notes: 倍率 12・掛け始め 150 m は撮影 2 回で決めた内部の値（最初の 9・50 m では ridge の手前の地面まで膜が掛かった）。物理どおり（倍率 1）では 2 km 四方の盆地で霞がほとんど出ないので倍率で強めている。霞の合成はアルファ合成なので、不透明物の色は透過率の RGB の平均で薄め、色は散乱光の側が持つ（物の色自体の赤みへの寄りは無い）。霞は影を考えない（影の中の地面にも空の色が乗る）。空気遠近の試験は足していない。
+- Next: TASKS.md の次の未完の項目。
