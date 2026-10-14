@@ -36,9 +36,9 @@ namespace NorvesLib::Core::Rendering
         // 空の表（読まれない）の大きさ。MegaInstance（192 バイト）・InstanceData（208 バイト）より大きい
         constexpr uint64_t PlaceholderBytes = 256;
 
-        // 材質ごとの形の 1 回の dispatch の定数（シェーダーの ResolveTileParams と同じ 96 バイト。
+        // 材質ごとの形の 1 回の dispatch の定数（シェーダーの ResolveTileParams と同じ 128 バイト。
         // tile = 横のタイル数・材質の番号・フラグ・予約、vt = VT のフィードバックのパラメータ（アルベド・法線・ORM・高さ）、
-        // terrain = 地形の混ぜ方の値（vec4 × 4。TerrainBlendShading.h の並び）
+        // terrain = 地形の混ぜ方の値（vec4 × 6。TerrainBlendShading.h の並び）
         constexpr uint32_t TileParamsWords = 8u + VisibilityResolveGeometry::TERRAIN_PARAM_FLOATS;
         constexpr uint32_t TileParamsBytes = TileParamsWords * sizeof(uint32_t);
         static_assert(VisibilityResolveGeometry::TERRAIN_PARAM_FLOATS == TERRAIN_BLEND_PARAM_FLOATS,
@@ -387,6 +387,7 @@ namespace NorvesLib::Core::Rendering
         m_DefaultMidGray.reset();
         m_MaterialSampler.reset();
         m_MegaMaterialSampler.reset();
+        m_TerrainMaterialSampler.reset();
         m_ConstantGrayTextures.clear();
         m_Shader.reset();
         m_Device = nullptr;
@@ -419,7 +420,7 @@ namespace NorvesLib::Core::Rendering
     bool VisibilityResolve::EnsureMaterialDefaults()
     {
         if (m_DefaultWhite && m_DefaultFlatNormal && m_DefaultBlack && m_DefaultMidGray && m_MaterialSampler &&
-            m_MegaMaterialSampler)
+            m_MegaMaterialSampler && m_TerrainMaterialSampler)
         {
             return true;
         }
@@ -490,8 +491,21 @@ namespace NorvesLib::Core::Rendering
             samplerDesc.addressW = RHI::TextureAddressMode::Wrap;
             m_MegaMaterialSampler = m_Device->CreateSampler(samplerDesc);
         }
+        if (!m_TerrainMaterialSampler)
+        {
+            // MegaGeometryPass の地形のサンプラーと同じ作り（異方性 16。地面を浅い角度で見てもぼけない）
+            RHI::SamplerDesc samplerDesc;
+            samplerDesc.filterMin = RHI::FilterMode::Anisotropic;
+            samplerDesc.filterMag = RHI::FilterMode::Anisotropic;
+            samplerDesc.filterMip = RHI::FilterMode::Anisotropic;
+            samplerDesc.addressU = RHI::TextureAddressMode::Wrap;
+            samplerDesc.addressV = RHI::TextureAddressMode::Wrap;
+            samplerDesc.addressW = RHI::TextureAddressMode::Wrap;
+            samplerDesc.maxAnisotropy = 16;
+            m_TerrainMaterialSampler = m_Device->CreateSampler(samplerDesc);
+        }
         return m_DefaultWhite && m_DefaultFlatNormal && m_DefaultBlack && m_DefaultMidGray && m_MaterialSampler &&
-               m_MegaMaterialSampler;
+               m_MegaMaterialSampler && m_TerrainMaterialSampler;
     }
 
     RHI::TexturePtr VisibilityResolve::GetConstantGrayTexture(float value)
@@ -842,6 +856,11 @@ namespace NorvesLib::Core::Rendering
             std::memcpy(&tileParams[8], bound.TerrainParams, sizeof(bound.TerrainParams));
             use.TileUniform->Update(tileParams, TileParamsBytes);
             RHI::IDescriptorSet& set = *use.TileDescriptorSet;
+            // 地形の混ぜ合わせの材質は、3 層とも異方性のサンプラーで標本する（ラスタの MegaGeometryPass と同じ）
+            const RHI::SamplerPtr& materialSampler =
+                (bound.Flags & VisibilityResolveGeometry::TILE_FLAG_TERRAIN) != 0u
+                    ? m_TerrainMaterialSampler
+                    : (bound.bMegaGeometry ? m_MegaMaterialSampler : m_MaterialSampler);
             BindCommon(set, first.Uniform, dispatch);
             set.BindConstantBuffer(firstBinding, use.TileUniform, 0, TileParamsBytes);
             set.BindStorageBuffer(firstBinding + 1, dispatch.TileArgs, 0, ClampBindSize(dispatch.TileArgs->GetSize()));
@@ -849,12 +868,12 @@ namespace NorvesLib::Core::Rendering
             for (uint32_t index = 0; index < VisibilityResolveGeometry::MATERIAL_TEXTURE_COUNT; ++index)
             {
                 set.BindTexture(firstBinding + 3u + index, bound.Textures[index]);
-                set.BindSampler(firstBinding + 3u + index, bound.bMegaGeometry ? m_MegaMaterialSampler : m_MaterialSampler);
+                set.BindSampler(firstBinding + 3u + index, materialSampler);
             }
             for (uint32_t index = 0; index < VisibilityResolveGeometry::TERRAIN_TEXTURE_COUNT; ++index)
             {
                 set.BindTexture(TerrainTextureBindingFirst + index, bound.TerrainTextures[index]);
-                set.BindSampler(TerrainTextureBindingFirst + index, bound.bMegaGeometry ? m_MegaMaterialSampler : m_MaterialSampler);
+                set.BindSampler(TerrainTextureBindingFirst + index, materialSampler);
             }
             if (m_bFeedback)
             {

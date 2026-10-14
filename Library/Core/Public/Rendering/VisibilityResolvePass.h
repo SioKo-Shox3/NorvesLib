@@ -65,8 +65,8 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t TILE_FLAG_TERRAIN = 4u;
         /** @brief 材質ごとの形が束ねる地形の 2・3 層目のテクスチャの数（土・岩肌のアルベド・法線・ORM） */
         constexpr uint32_t TERRAIN_TEXTURE_COUNT = 6;
-        /** @brief 地形の混ぜ方の値の float の数（シェーダーの ResolveTileParams::terrain[4]） */
-        constexpr uint32_t TERRAIN_PARAM_FLOATS = 16;
+        /** @brief 地形の混ぜ方の値の float の数（シェーダーの ResolveTileParams::terrain[6]） */
+        constexpr uint32_t TERRAIN_PARAM_FLOATS = 24;
         /** @brief
          * 材質ごとの形が束ねる材質のテクスチャの数（アルベド・法線・金属度・粗さ・AO・高さ）
          */
@@ -425,13 +425,15 @@ namespace NorvesLib::Core::Rendering
         RHI::BufferPtr m_Placeholder;
         // 材質ごとの形が、テクスチャの指定が無い枠に束ねる既定のテクスチャ（GBufferPass と同じ値）とサンプラー。
         // m_MaterialSampler は手続き・スキニング用（GBufferPass と同じ異方性 4、Wrap）、m_MegaMaterialSampler は
-        // MegaGeometry 用（MegaGeometryPass と同じ等方の Linear、maxAnisotropy 指定なし、Wrap）
+        // MegaGeometry 用（MegaGeometryPass と同じ等方の Linear、maxAnisotropy 指定なし、Wrap）、m_TerrainMaterialSampler は
+        // 地形の混ぜ合わせの材質用（MegaGeometryPass の地形のサンプラーと同じ異方性 16、Wrap）
         RHI::TexturePtr m_DefaultWhite;
         RHI::TexturePtr m_DefaultFlatNormal;
         RHI::TexturePtr m_DefaultBlack;
         RHI::TexturePtr m_DefaultMidGray;
         RHI::SamplerPtr m_MaterialSampler;
         RHI::SamplerPtr m_MegaMaterialSampler;
+        RHI::SamplerPtr m_TerrainMaterialSampler;
         Container::UnorderedMap<uint32_t, RHI::TexturePtr> m_ConstantGrayTextures;
         bool m_bTextureCreationAllowed = true;
         bool m_bLoggedTextureCreationBlocked = false;

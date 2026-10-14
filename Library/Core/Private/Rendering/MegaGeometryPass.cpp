@@ -56,6 +56,8 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t VirtualTextureFeedbackBindingIndex = 7;
         // 地形の 2・3 層目のテクスチャの binding（megageometry.frag の terrain*Texture。土のアルベド・法線・ORM、岩肌の同じ 3 枚）
         constexpr uint32_t TerrainLayerTextureBindingFirst = 10;
+        // 地形の混ぜ合わせの材質のサンプラーの異方性の上限
+        constexpr uint32_t TerrainSamplerMaxAnisotropy = 16;
         constexpr uint32_t TerrainLayerTextureCount = 6;
         // メッシュの表の binding（Common/MegaInstanceTable.glsl の MEGA_MESH_BINDING。カリングと描画のセットで同じ番号）
         constexpr uint32_t MegaMeshTableBindingIndex = 22;
@@ -734,6 +736,20 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
+        // 地形の混ぜ合わせの材質のサンプラー。地面は目の高さから浅い角度で見るので、等方のフィルタでは画面の縦の縮みに
+        // 合わせて横もぼける。異方性 16（Vulkan が samplerAnisotropy の装置に保証する上限の最小値）で標本する
+        RHI::SamplerDesc terrainSampDesc = sampDesc;
+        terrainSampDesc.filterMin = RHI::FilterMode::Anisotropic;
+        terrainSampDesc.filterMag = RHI::FilterMode::Anisotropic;
+        terrainSampDesc.filterMip = RHI::FilterMode::Anisotropic;
+        terrainSampDesc.maxAnisotropy = TerrainSamplerMaxAnisotropy;
+        m_TerrainSampler = m_Device->CreateSampler(terrainSampDesc);
+        if (!m_TerrainSampler)
+        {
+            NORVES_LOG_ERROR("MegaGeometryPass", "地形のサンプラーの作成に失敗");
+            return false;
+        }
+
         m_bInitialized = true;
         NORVES_LOG_INFO("MegaGeometryPass", "初期化完了 (MaxDrawCount: %u)", m_Settings.MaxDrawCount);
         return true;
@@ -887,6 +903,7 @@ namespace NorvesLib::Core::Rendering
         m_DefaultBlackTexture.reset();
         m_ConstantMaterialTextures.reset();
         m_DefaultLinearSampler.reset();
+        m_TerrainSampler.reset();
 
         m_Instances.clear();
         m_InstanceSourceRevision = 0;
@@ -3096,13 +3113,14 @@ namespace NorvesLib::Core::Rendering
             descriptorSet->BindConstantBuffer(0, sectionDraw.Uniform, 0,
                                               static_cast<uint32_t>(sizeof(SectionUniformData)));
 
-            // PBRテクスチャバインド
+            // PBRテクスチャバインド（地形の混ぜ合わせの材質は、3 層とも異方性のサンプラーで標本する）
+            const RHI::SamplerPtr &layerSampler = bTerrainBlend ? m_TerrainSampler : m_DefaultLinearSampler;
             descriptorSet->BindTexture(1, albedo);
-            descriptorSet->BindSampler(1, m_DefaultLinearSampler);
+            descriptorSet->BindSampler(1, layerSampler);
             descriptorSet->BindTexture(2, normal);
-            descriptorSet->BindSampler(2, m_DefaultLinearSampler);
+            descriptorSet->BindSampler(2, layerSampler);
             descriptorSet->BindTexture(3, metallic);
-            descriptorSet->BindSampler(3, m_DefaultLinearSampler);
+            descriptorSet->BindSampler(3, layerSampler);
             descriptorSet->BindTexture(4, roughness);
             descriptorSet->BindSampler(4, m_DefaultLinearSampler);
             descriptorSet->BindTexture(5, ao);
@@ -3112,7 +3130,7 @@ namespace NorvesLib::Core::Rendering
             for (uint32_t index = 0; index < TerrainLayerTextureCount; ++index)
             {
                 descriptorSet->BindTexture(TerrainLayerTextureBindingFirst + index, terrainTextures[index]);
-                descriptorSet->BindSampler(TerrainLayerTextureBindingFirst + index, m_DefaultLinearSampler);
+                descriptorSet->BindSampler(TerrainLayerTextureBindingFirst + index, layerSampler);
             }
             BindVirtualTextureFeedback(*descriptorSet, VirtualTextureFeedbackBindingIndex, feedbackTarget);
 

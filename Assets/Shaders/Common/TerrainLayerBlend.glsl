@@ -1,7 +1,8 @@
 ﻿// 地形の 3 層（砂・乾いた土・岩肌）の混ぜ合わせ。ラスタの megageometry.frag と、可視バッファの解決
 // （Common/VisibilityResolve.glsl の材質ごとの形）が共有する。
-// 1 層目（砂）は材質の通常の標本（PbrMaterialTextureSamples）をそのまま受け取り、2・3 層目はここで標本する。
+// 3 層ともここでワールドの位置から標本する（1 層目の砂は材質のアルベド・法線・ORM の枠のテクスチャを使う）。
 // 標本は勾配を明示する（textureGrad）ので、分岐の後でも、画面微分の無い計算シェーダーでも呼べる。
+// 法線はワールドの向きで返す（呼び出し側は接空間の基底を掛けない）。
 // Common/PbrMaterialEvaluation.glsl・Common/SparseResidencySampling.glsl・Common/PbrMaterialTextureSamplingCore.glsl の後に取り込む。
 //
 // 混ぜ方:
@@ -9,6 +10,14 @@
 //      土・岩肌へ移る角度の範囲（smoothstep）で重みを作る。平らな所は砂、少し傾いた所は土、急な斜面は岩肌になる。
 //   2. 高さ（凹凸）で重みを付ける: 各層の高さ（土・岩肌は ORM の AO、砂は一定の高さ）に重みを足し、最も高い層から
 //      混ぜの深さ以内の層だけを残す。岩肌のくぼみ（AO が低い）は砂の面より低いので、境目では砂がくぼみに溜まる。
+//
+// 標本の仕方:
+//   - 3 層ともトライプラナー（X・Y・Z の 3 方向の投影を法線の向きで重み付け。UV = ワールドの位置 ÷ テクスチャの 1 枚の広さ）で、
+//     崖でも引き伸ばされない。平らな所は真上からの投影だけになる（小さな重みの投影は標本しない）。
+//   - 距離で UV の倍率を変える: カメラからの距離が「変え始める距離」の r 倍になるごとに 1 段上がり、段ごとに UV を 1/r にする
+//     （近くは細かく、遠くは大きく）。隣り合う 2 つの段を距離で混ぜ、段ごとに UV を回して位置をずらすので、
+//     同じ模様が格子状に並ばない。
+//   - 混ぜた後のアルベドに、数十〜数百 m の低周波ノイズで明るさと色味の揺らぎを掛ける。
 
 #ifndef NORVES_TERRAIN_LAYER_BLEND_GLSL
 #define NORVES_TERRAIN_LAYER_BLEND_GLSL
@@ -20,10 +29,56 @@ struct TerrainBlendParams
     vec4 height; // x,y = 土へ寄せる高さ（ワールドの y、m）の始まり・終わり、z = 寄せの最大（ラジアン）、w = 凹凸の混ぜの深さ
     vec4 noise;  // x,y = 揺らぎの 2 つの波長の逆数（1/m）、z = 揺らぎの振幅（ラジアン）、w = 砂の高さ（凹凸の混ぜ）
     vec4 layers; // x = 有効（1/0）、y = 土の UV の倍率、z = 岩肌の UV の倍率、w = 法線が 2 チャンネルの層のビット（1 = 土、2 = 岩肌）
+    vec4 macro;  // x,y = 明るさ・色味の揺らぎの 2 つの波長の逆数（1/m）、z = 明るさの揺らぎの振幅（割合）、w = 色味の揺らぎの振幅
+    vec4 detail; // x = UV の倍率を変え始める距離（m）、y = 1 段ごとの距離の比の log2、z = 段の上限、w = テクスチャの 1 枚の広さ（m）
 };
 
 const uint TERRAIN_BLEND_DIRT_NORMAL_TWO_CHANNEL = 1u;
 const uint TERRAIN_BLEND_ROCK_NORMAL_TWO_CHANNEL = 2u;
+
+// トライプラナーの重みの鋭さ（法線の成分の何乗で重みにするか）と、捨てる小さな重み（その投影は標本しない）
+const float TERRAIN_TRIPLANAR_SHARPNESS = 4.0;
+const float TERRAIN_TRIPLANAR_CUTOFF = 0.05;
+// 段ごとの UV の回転（黄金角。段を重ねても向きがそろわない）と、位置のずらし（UV の単位）
+const float TERRAIN_DETAIL_LEVEL_ROTATION = 2.39996323;
+const vec2 TERRAIN_DETAIL_LEVEL_OFFSET = vec2(0.3183, 0.6180);
+
+// 画素の面（ワールドの位置とその画素あたりの変化、幾何の法線、カメラからの距離）
+struct TerrainSurfaceInput
+{
+    vec3 WorldPosition;
+    vec3 WorldDx; // 画素の x が 1 増えたときのワールドの位置の変化
+    vec3 WorldDy; // 画素の y が 1 増えたときのワールドの位置の変化
+    vec3 GeometricNormal; // 補間した頂点の法線（法線マップを掛ける前。正規化していなくてよい）
+    float CameraDistance;
+};
+
+// 1 層の標本（重み付きの和）。Perturbation は法線の傾き（ワールドの向き。幾何の法線に足して正規化する）
+struct TerrainLayerSample
+{
+    vec4 Albedo;
+    vec3 Material;
+    vec3 Perturbation;
+};
+
+// 3 方向の投影の、面に沿った UV の向き（幾何の法線の接平面へ落とした軸）
+struct TerrainProjectionFrame
+{
+    vec3 TopU;   // 真上からの投影（UV = XZ）: X・Z
+    vec3 TopV;
+    vec3 SideXU; // X の向きの投影（UV = ZY）: Z・Y
+    vec3 SideXV;
+    vec3 SideZU; // Z の向きの投影（UV = XY）: X・Y
+    vec3 SideZV;
+};
+
+// 距離で選ぶ 2 つの段と、その重み
+struct TerrainDetailLevels
+{
+    vec2 Level;
+    vec2 Weight;
+    float Log2Ratio;
+};
 
 bool IsTerrainBlendEnabled(TerrainBlendParams params)
 {
@@ -53,11 +108,9 @@ float TerrainValueNoise(vec2 p)
     return mix(mix(a, b, u.x), mix(d, e, u.x), u.y);
 }
 
-// 傾斜・高さ・ノイズから、砂・土・岩肌の重み（合計 1）を求める。worldPosition はワールドの位置、
-// geometricNormal は補間した頂点の法線（法線マップを掛ける前。正規化していなくてよい）
-vec3 ComputeTerrainSlopeWeights(TerrainBlendParams params, vec3 worldPosition, vec3 geometricNormal)
+// 傾斜・高さ・ノイズから、砂・土・岩肌の重み（合計 1）を求める。n は正規化した幾何の法線
+vec3 ComputeTerrainSlopeWeights(TerrainBlendParams params, vec3 worldPosition, vec3 n)
 {
-    const vec3 n = normalize(geometricNormal);
     const float slope = acos(clamp(n.y, -1.0, 1.0));
     // 2 つの波長の値ノイズを重ね、-1〜1 の揺らぎにする（2 つ目は格子をずらして重ならないようにする）
     const float noise = TerrainValueNoise(worldPosition.xz * params.noise.x) * 0.65 +
@@ -80,7 +133,51 @@ vec3 ApplyTerrainHeightBlend(vec3 weights, vec3 layerHeights, float depth)
     return sum > 1.0e-6 ? w / sum : weights;
 }
 
-// 勾配から等方の標本ミップ（MegaGeometry の材質は等方の Linear のサンプラー）。VT の非常駐の逃げ始めのミップにだけ使う
+// 軸 axis を法線 n の接平面へ落として正規化する（退化したら軸のまま）
+vec3 TerrainTangentAxis(vec3 axis, vec3 n)
+{
+    const vec3 t = axis - n * dot(n, axis);
+    const float lengthSq = dot(t, t);
+    return lengthSq > 1.0e-8 ? t * inversesqrt(lengthSq) : axis;
+}
+
+TerrainProjectionFrame MakeTerrainProjectionFrame(vec3 n)
+{
+    TerrainProjectionFrame frame;
+    frame.TopU = TerrainTangentAxis(vec3(1.0, 0.0, 0.0), n);
+    frame.TopV = TerrainTangentAxis(vec3(0.0, 0.0, 1.0), n);
+    frame.SideXU = TerrainTangentAxis(vec3(0.0, 0.0, 1.0), n);
+    frame.SideXV = TerrainTangentAxis(vec3(0.0, 1.0, 0.0), n);
+    frame.SideZU = TerrainTangentAxis(vec3(1.0, 0.0, 0.0), n);
+    frame.SideZV = TerrainTangentAxis(vec3(0.0, 1.0, 0.0), n);
+    return frame;
+}
+
+// トライプラナーの重み（x = X の向きの投影、y = 真上、z = Z の向き。合計 1）。小さな重みは捨てて標本の数を減らす
+vec3 ComputeTerrainTriplanarWeights(vec3 n)
+{
+    vec3 w = pow(abs(n), vec3(TERRAIN_TRIPLANAR_SHARPNESS));
+    w /= max(w.x + w.y + w.z, 1.0e-6);
+    w = max(w - vec3(TERRAIN_TRIPLANAR_CUTOFF), vec3(0.0));
+    return w / max(w.x + w.y + w.z, 1.0e-6);
+}
+
+// カメラからの距離で、混ぜる 2 つの段とその重みを選ぶ
+TerrainDetailLevels ComputeTerrainDetailLevels(TerrainBlendParams params, float cameraDistance)
+{
+    TerrainDetailLevels levels;
+    levels.Log2Ratio = max(params.detail.y, 1.0e-3);
+    const float start = max(params.detail.x, 1.0e-3);
+    const float maxLevel = max(params.detail.z, 0.0);
+    const float level = clamp(log2(max(cameraDistance, start) / start) / levels.Log2Ratio, 0.0, maxLevel);
+    const float base = min(floor(level), maxLevel);
+    const float t = smoothstep(0.0, 1.0, level - base);
+    levels.Level = vec2(base, base + 1.0);
+    levels.Weight = vec2(1.0 - t, t);
+    return levels;
+}
+
+// 勾配から等方の標本ミップ。VT の非常駐の逃げ始めのミップにだけ使う
 float TerrainLayerLodFromGradient(sampler2D tex, vec2 uvDx, vec2 uvDy)
 {
     const vec2 size = vec2(textureSize(tex, 0));
@@ -88,14 +185,16 @@ float TerrainLayerLodFromGradient(sampler2D tex, vec2 uvDx, vec2 uvDy)
     return pMax > 0.0 ? clamp(log2(pMax), 0.0, float(textureQueryLevels(tex) - 1)) : 0.0;
 }
 
-// 2・3 層目の 1 層を標本して材質値へ復号する（ORM は必須）。uvScale は材質の UV に掛ける倍率
-PbrMaterialTextureSamples SampleTerrainLayer(sampler2D albedoTex, sampler2D normalTex, sampler2D ormTex,
-                                             vec2 texCoord, vec2 uvDx, vec2 uvDy, float uvScale,
-                                             bool bNormalTwoChannel, bool bVirtualTexture)
+// 1 つの投影を標本して acc へ重み付きで足す。uv・uvDx・uvDy は回す前の UV とその勾配、rotation は段の回転。
+// 接空間の法線の傾きは回した UV の向きで表されるので、回転を戻してから面の軸（axisU・axisV）へ載せる
+void AccumulateTerrainProjection(inout TerrainLayerSample acc, float weight,
+                                 sampler2D albedoTex, sampler2D normalTex, sampler2D ormTex,
+                                 bool bNormalTwoChannel, bool bVirtualTexture,
+                                 vec2 uv, vec2 uvDx, vec2 uvDy, mat2 rotation, vec2 offset, vec3 axisU, vec3 axisV)
 {
-    const vec2 uv = texCoord * uvScale;
-    const vec2 dx = uvDx * uvScale;
-    const vec2 dy = uvDy * uvScale;
+    const vec2 ruv = rotation * uv + offset;
+    const vec2 dx = rotation * uvDx;
+    const vec2 dy = rotation * uvDy;
     float albedoLod = 0.0;
     float normalLod = 0.0;
     float ormLod = 0.0;
@@ -105,34 +204,110 @@ PbrMaterialTextureSamples SampleTerrainLayer(sampler2D albedoTex, sampler2D norm
         normalLod = TerrainLayerLodFromGradient(normalTex, dx, dy);
         ormLod = TerrainLayerLodFromGradient(ormTex, dx, dy);
     }
-    const vec4 albedo = SampleMaterialTextureGrad(albedoTex, uv, dx, dy, albedoLod, bVirtualTexture);
-    const vec4 normalSample = SampleMaterialTextureGrad(normalTex, uv, dx, dy, normalLod, bVirtualTexture);
-    const vec3 material = DecodePbrOrmSample(SampleMaterialTextureGrad(ormTex, uv, dx, dy, ormLod, bVirtualTexture));
-    return DecodePbrMaterialTextureSamples(albedo, normalSample, material.x, material.y, material.z, bNormalTwoChannel);
+    const vec4 albedo = SampleMaterialTextureGrad(albedoTex, ruv, dx, dy, albedoLod, bVirtualTexture);
+    const vec3 tangentNormal =
+        DecodePbrTangentNormal(SampleMaterialTextureGrad(normalTex, ruv, dx, dy, normalLod, bVirtualTexture),
+                               bNormalTwoChannel);
+    const vec3 material = DecodePbrOrmSample(SampleMaterialTextureGrad(ormTex, ruv, dx, dy, ormLod, bVirtualTexture));
+    const vec2 slope = transpose(rotation) * (tangentNormal.xy / max(tangentNormal.z, 0.1));
+    acc.Albedo += albedo * weight;
+    acc.Material += material * weight;
+    acc.Perturbation += (axisU * slope.x + axisV * slope.y) * weight;
 }
 
-// 1 層目（砂）の標本 sand に、土・岩肌の層を混ぜる。texCoord・uvDx・uvDy は 1 層目の UV とその勾配。
-// 接空間の法線は傾き（xy / z）で混ぜる（3 層とも同じ UV の向きなので、同じ接空間の基底で表される）
-PbrMaterialTextureSamples BlendTerrainLayers(TerrainBlendParams params, PbrMaterialTextureSamples sand,
+// 1 層を、距離の 2 つの段 × 投影（projection の重みが 0 でないもの）で標本する。uvScale は層の UV の倍率
+TerrainLayerSample SampleTerrainLayer(sampler2D albedoTex, sampler2D normalTex, sampler2D ormTex,
+                                      bool bNormalTwoChannel, bool bVirtualTexture,
+                                      TerrainSurfaceInput surface, TerrainProjectionFrame frame, vec3 projection,
+                                      TerrainDetailLevels levels, float uvScale, float tileMeters)
+{
+    TerrainLayerSample acc;
+    acc.Albedo = vec4(0.0);
+    acc.Material = vec3(0.0);
+    acc.Perturbation = vec3(0.0);
+    const vec3 p = surface.WorldPosition;
+    const vec3 pdx = surface.WorldDx;
+    const vec3 pdy = surface.WorldDy;
+    for (int index = 0; index < 2; ++index)
+    {
+        const float levelWeight = levels.Weight[index];
+        if (levelWeight <= 1.0e-3)
+        {
+            continue;
+        }
+        const float level = levels.Level[index];
+        const float scale = uvScale * exp2(-level * levels.Log2Ratio) / tileMeters;
+        const float angle = level * TERRAIN_DETAIL_LEVEL_ROTATION;
+        const float c = cos(angle);
+        const float s = sin(angle);
+        const mat2 rotation = mat2(c, s, -s, c);
+        const vec2 offset = TERRAIN_DETAIL_LEVEL_OFFSET * level;
+        if (projection.y > 0.0)
+        {
+            AccumulateTerrainProjection(acc, levelWeight * projection.y, albedoTex, normalTex, ormTex,
+                                        bNormalTwoChannel, bVirtualTexture, p.xz * scale, pdx.xz * scale,
+                                        pdy.xz * scale, rotation, offset, frame.TopU, frame.TopV);
+        }
+        if (projection.x > 0.0)
+        {
+            AccumulateTerrainProjection(acc, levelWeight * projection.x, albedoTex, normalTex, ormTex,
+                                        bNormalTwoChannel, bVirtualTexture, p.zy * scale, pdx.zy * scale,
+                                        pdy.zy * scale, rotation, offset, frame.SideXU, frame.SideXV);
+        }
+        if (projection.z > 0.0)
+        {
+            AccumulateTerrainProjection(acc, levelWeight * projection.z, albedoTex, normalTex, ormTex,
+                                        bNormalTwoChannel, bVirtualTexture, p.xy * scale, pdx.xy * scale,
+                                        pdy.xy * scale, rotation, offset, frame.SideZU, frame.SideZV);
+        }
+    }
+    return acc;
+}
+
+// 数十〜数百 m の低周波ノイズで、アルベドに明るさと色味（赤み・黄み）の揺らぎを掛ける
+vec3 ApplyTerrainMacroVariation(TerrainBlendParams params, vec3 albedo, vec2 xz)
+{
+    const float a = TerrainValueNoise(xz * params.macro.x + vec2(-7.31, 3.17));
+    const float b = TerrainValueNoise(xz * params.macro.y + vec2(29.71, -13.93));
+    const float brightness = 1.0 + params.macro.z * ((a * 0.6 + b * 0.4) * 2.0 - 1.0);
+    const float c = TerrainValueNoise(xz * params.macro.x * 1.7 + vec2(61.37, 44.21));
+    const float hue = params.macro.w * (c * 2.0 - 1.0);
+    return clamp(albedo * brightness * vec3(1.0 + hue, 1.0, 1.0 - hue), vec3(0.0), vec3(1.0));
+}
+
+// 地形の 3 層を混ぜた材質値を返す（TangentNormal は使わない。法線は worldNormal にワールドの向きで返す）。
+// 1 層目（砂）は材質のアルベド・法線・ORM の枠のテクスチャ（ORM の 1 枚を前提にする）
+PbrMaterialTextureSamples ShadeTerrainLayers(TerrainBlendParams params,
+                                             sampler2D sandAlbedo, sampler2D sandNormal, sampler2D sandOrm,
+                                             bool bSandNormalTwoChannel,
                                              sampler2D dirtAlbedo, sampler2D dirtNormal, sampler2D dirtOrm,
                                              sampler2D rockAlbedo, sampler2D rockNormal, sampler2D rockOrm,
-                                             vec2 texCoord, vec2 uvDx, vec2 uvDy,
-                                             vec3 worldPosition, vec3 geometricNormal, bool bVirtualTexture)
+                                             TerrainSurfaceInput surface, bool bVirtualTexture, out vec3 worldNormal)
 {
-    const vec3 slopeWeights = ComputeTerrainSlopeWeights(params, worldPosition, geometricNormal);
+    const vec3 n = normalize(surface.GeometricNormal);
+    const vec3 slopeWeights = ComputeTerrainSlopeWeights(params, surface.WorldPosition, n);
     const uint normalBits = uint(params.layers.w + 0.5);
+    const TerrainDetailLevels levels = ComputeTerrainDetailLevels(params, surface.CameraDistance);
+    const TerrainProjectionFrame frame = MakeTerrainProjectionFrame(n);
+    const float tileMeters = max(params.detail.w, 1.0e-3);
+    const vec3 projection = ComputeTerrainTriplanarWeights(n);
 
-    PbrMaterialTextureSamples dirt = sand;
-    PbrMaterialTextureSamples rock = sand;
+    const TerrainLayerSample sand = SampleTerrainLayer(sandAlbedo, sandNormal, sandOrm, bSandNormalTwoChannel,
+                                                       bVirtualTexture, surface, frame, projection, levels, 1.0,
+                                                       tileMeters);
+    TerrainLayerSample dirt = sand;
+    TerrainLayerSample rock = sand;
     if (slopeWeights.y > 0.0)
     {
-        dirt = SampleTerrainLayer(dirtAlbedo, dirtNormal, dirtOrm, texCoord, uvDx, uvDy, params.layers.y,
-                                  (normalBits & TERRAIN_BLEND_DIRT_NORMAL_TWO_CHANNEL) != 0u, bVirtualTexture);
+        dirt = SampleTerrainLayer(dirtAlbedo, dirtNormal, dirtOrm,
+                                  (normalBits & TERRAIN_BLEND_DIRT_NORMAL_TWO_CHANNEL) != 0u, bVirtualTexture,
+                                  surface, frame, projection, levels, params.layers.y, tileMeters);
     }
     if (slopeWeights.z > 0.0)
     {
-        rock = SampleTerrainLayer(rockAlbedo, rockNormal, rockOrm, texCoord, uvDx, uvDy, params.layers.z,
-                                  (normalBits & TERRAIN_BLEND_ROCK_NORMAL_TWO_CHANNEL) != 0u, bVirtualTexture);
+        rock = SampleTerrainLayer(rockAlbedo, rockNormal, rockOrm,
+                                  (normalBits & TERRAIN_BLEND_ROCK_NORMAL_TWO_CHANNEL) != 0u, bVirtualTexture,
+                                  surface, frame, projection, levels, params.layers.z, tileMeters);
     }
 
     // 凹凸の高さ: 砂は一定の面、土・岩肌は AO（Material.z）。くぼみほど低い
@@ -141,11 +316,10 @@ PbrMaterialTextureSamples BlendTerrainLayers(TerrainBlendParams params, PbrMater
 
     PbrMaterialTextureSamples result;
     result.Albedo = sand.Albedo * w.x + dirt.Albedo * w.y + rock.Albedo * w.z;
-    const vec2 slopeSand = sand.TangentNormal.xy / max(sand.TangentNormal.z, 0.1);
-    const vec2 slopeDirt = dirt.TangentNormal.xy / max(dirt.TangentNormal.z, 0.1);
-    const vec2 slopeRock = rock.TangentNormal.xy / max(rock.TangentNormal.z, 0.1);
-    result.TangentNormal = normalize(vec3(slopeSand * w.x + slopeDirt * w.y + slopeRock * w.z, 1.0));
+    result.Albedo.rgb = ApplyTerrainMacroVariation(params, result.Albedo.rgb, surface.WorldPosition.xz);
+    result.TangentNormal = vec3(0.0, 0.0, 1.0);
     result.Material = sand.Material * w.x + dirt.Material * w.y + rock.Material * w.z;
+    worldNormal = normalize(n + sand.Perturbation * w.x + dirt.Perturbation * w.y + rock.Perturbation * w.z);
     return result;
 }
 

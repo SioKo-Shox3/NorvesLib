@@ -84,9 +84,17 @@ namespace Game::GameModes
         constexpr const char *kRockAlbedoPath = "Assets/Textures/PolyHaven/rock_face/rock_face_diff_4k.jpg";
         constexpr const char *kRockNormalPath = "Assets/Textures/PolyHaven/rock_face/rock_face_nor_dx_4k.jpg";
         constexpr const char *kRockOrmPath = "Assets/Textures/PolyHaven/rock_face/rock_face_orm_4k";
-        // 材質の UV（ワールドの XZ ÷ 4 m）に掛ける倍率。岩肌は崖の大きな割れ目に合わせて 8 m で繰り返す
+        // 材質の UV（ワールドの位置 ÷ 4 m。岩肌は 3 方向の投影）に掛ける倍率。岩肌は崖の大きな割れ目に合わせて 8 m で繰り返す
         constexpr float kDirtUVScale = 1.0f;
         constexpr float kRockUVScale = 0.5f;
+        // 広い範囲の明るさ・色味の揺らぎ（数十〜数百 m）。同じ模様の繰り返しを、砂の明るさの斑で隠す
+        constexpr float kMacroWavelengths[2] = {80.0f, 300.0f};
+        constexpr float kMacroBrightness = 0.22f;
+        constexpr float kMacroHue = 0.05f;
+        // 距離で UV の倍率を変える: 10 m から、距離が 3 倍になるごとに模様を 3 倍に大きくする（最大 4 段で 81 倍）
+        constexpr float kDetailStartDistance = 10.0f;
+        constexpr float kDetailDistanceRatio = 3.0f;
+        constexpr float kDetailMaxLevel = 4.0f;
         // 混ぜ方: 砂丘の風下の面（最も急な所で 20° 台）は砂のまま、メサの裾の崖錐は乾いた土、崖と外周の急な稜線は岩肌にする
         constexpr float kDirtSlopeDegrees[2] = {24.0f, 33.0f};
         constexpr float kRockSlopeDegrees[2] = {37.0f, 48.0f};
@@ -331,6 +339,14 @@ namespace Game::GameModes
                 blend.DirtHeightRange[1] = kDirtHeightRange[1];
                 blend.DirtHeightBiasDegrees = kDirtHeightBiasDegrees;
                 blend.BlendDepth = kBlendDepth;
+                blend.MacroWavelengths[0] = kMacroWavelengths[0];
+                blend.MacroWavelengths[1] = kMacroWavelengths[1];
+                blend.MacroBrightness = kMacroBrightness;
+                blend.MacroHue = kMacroHue;
+                blend.DetailStartDistance = kDetailStartDistance;
+                blend.DetailDistanceRatio = kDetailDistanceRatio;
+                blend.DetailMaxLevel = kDetailMaxLevel;
+                blend.TextureTileMeters = TerrainSpec::kTextureTileMeters;
                 assembly->PendingTextureCount = kTerrainTextureCount;
                 auto &textures = ctx.RenderResourcesRef.Textures();
                 MaterialCreateData &sand = assembly->Material;

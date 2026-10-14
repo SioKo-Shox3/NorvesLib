@@ -119,23 +119,77 @@ namespace NorvesLib::Core::Rendering::Terrain
         m_DuneDirX = std::cos(duneAngle);
         m_DuneDirZ = std::sin(duneAngle);
 
-        // メサは輪の上に、角度をほぼ等間隔（±25% ずらす）に並べる。半径・縦横比・高さは種で決める
-        m_MesaCount = std::min(params.MesaCount, kMaxMesas);
-        const float angleStep = m_MesaCount > 0 ? 2.0f * kPi / static_cast<float>(m_MesaCount) : 0.0f;
+        // メサは輪の上に、角度をほぼ等間隔（±25% ずらす）に並べる。大きさ・縦横比・高さ・崖の幅・頂の傾き・段は種で決め、
+        // 同じ高さの同じ形の台地が並ばないよう、値の幅を広く取る
+        const uint32_t mainCount = std::min(params.MesaCount, kMaxMesas);
+        const float angleStep = mainCount > 0 ? 2.0f * kPi / static_cast<float>(mainCount) : 0.0f;
         const float angleOffset = UnitFloat(Hash(seed ^ 0x6a09e667u)) * 2.0f * kPi;
-        for (uint32_t index = 0; index < m_MesaCount; ++index)
+        m_MesaCount = 0;
+        for (uint32_t index = 0; index < mainCount; ++index)
         {
             const uint32_t h = Hash(seed + index * 0x9e3779b9u);
-            Mesa &mesa = m_Mesas[index];
+            Mesa &mesa = m_Mesas[m_MesaCount++];
             const float angle =
                 angleOffset + angleStep * (static_cast<float>(index) + (UnitFloat(Hash(h ^ 0x1u)) - 0.5f) * 0.5f);
             const float ring = Lerp(params.MesaRingInner, params.MesaRingOuter, UnitFloat(Hash(h ^ 0x2u)));
             mesa.CenterX = std::cos(angle) * ring;
             mesa.CenterZ = std::sin(angle) * ring;
-            mesa.Radius = Lerp(45.0f, 105.0f, UnitFloat(Hash(h ^ 0x3u)));
-            mesa.Aspect = Lerp(1.0f, 2.0f, UnitFloat(Hash(h ^ 0x4u)));
+            mesa.Radius = Lerp(35.0f, 115.0f, UnitFloat(Hash(h ^ 0x3u)));
+            mesa.Aspect = Lerp(1.0f, 2.4f, UnitFloat(Hash(h ^ 0x4u)));
             mesa.Angle = UnitFloat(Hash(h ^ 0x5u)) * kPi;
-            mesa.Height = Lerp(28.0f, 62.0f, UnitFloat(Hash(h ^ 0x6u)));
+            mesa.Height = Lerp(22.0f, 78.0f, UnitFloat(Hash(h ^ 0x6u)));
+            mesa.CliffWidth = Lerp(4.0f, 11.0f, UnitFloat(Hash(h ^ 0x7u)));
+            mesa.EdgeRoughness = Lerp(0.2f, 0.38f, UnitFloat(Hash(h ^ 0x8u)));
+            mesa.TopTilt = (UnitFloat(Hash(h ^ 0x9u)) - 0.5f) * 0.12f;
+            mesa.BenchFraction[0] = Lerp(0.3f, 0.5f, UnitFloat(Hash(h ^ 0xau)));
+            mesa.BenchFraction[1] = Lerp(0.6f, 0.8f, UnitFloat(Hash(h ^ 0xbu)));
+            mesa.BenchWidth[0] = Lerp(10.0f, 30.0f, UnitFloat(Hash(h ^ 0xcu)));
+            mesa.BenchWidth[1] = Lerp(6.0f, 18.0f, UnitFloat(Hash(h ^ 0xdu)));
+            mesa.TalusFraction = Lerp(0.22f, 0.4f, UnitFloat(Hash(h ^ 0xeu)));
+            mesa.TalusWidth = Lerp(45.0f, 85.0f, UnitFloat(Hash(h ^ 0xfu)));
+            for (uint32_t lobe = 0; lobe < 2; ++lobe)
+            {
+                // 副の楕円は主の縁の近く（内側に埋もれない位置）に置く。向きの符号も種で決める
+                const uint32_t lh = Hash(h ^ (0x10u + lobe));
+                const float alongSign = (Hash(lh ^ 0x5u) & 1u) != 0u ? 1.0f : -1.0f;
+                const float acrossSign = (Hash(lh ^ 0x6u) & 1u) != 0u ? 1.0f : -1.0f;
+                mesa.LobeAlong[lobe] =
+                    alongSign * mesa.Radius * mesa.Aspect * Lerp(0.5f, 1.0f, UnitFloat(Hash(lh ^ 0x1u)));
+                mesa.LobeAcross[lobe] = acrossSign * mesa.Radius * Lerp(0.4f, 0.95f, UnitFloat(Hash(lh ^ 0x2u)));
+                mesa.LobeScale[lobe] = Lerp(0.4f, 0.75f, UnitFloat(Hash(lh ^ 0x3u)));
+                mesa.LobeAspect[lobe] = Lerp(1.0f, 1.8f, UnitFloat(Hash(lh ^ 0x4u)));
+            }
+        }
+
+        // メサの 6 割の脇に、小さなビュート（崖で囲まれた細い塔状の丘）を 1 つ立てる。親のメサの外側の縁から
+        // 25〜70 m 離し、高さは親の 4〜9 割にする
+        const uint32_t parentCount = m_MesaCount;
+        for (uint32_t index = 0; index < parentCount && m_MesaCount < kMaxMesas; ++index)
+        {
+            const uint32_t h = Hash(seed + index * 0x9e3779b9u + 0x632be5abu);
+            if (UnitFloat(Hash(h ^ 0x1u)) > 0.6f)
+            {
+                continue;
+            }
+            const Mesa &parent = m_Mesas[index];
+            Mesa &butte = m_Mesas[m_MesaCount++];
+            const float angle = UnitFloat(Hash(h ^ 0x2u)) * 2.0f * kPi;
+            const float reach = parent.Radius * parent.Aspect + Lerp(25.0f, 70.0f, UnitFloat(Hash(h ^ 0x3u)));
+            butte.CenterX = parent.CenterX + std::cos(angle) * reach;
+            butte.CenterZ = parent.CenterZ + std::sin(angle) * reach;
+            butte.Radius = Lerp(10.0f, 26.0f, UnitFloat(Hash(h ^ 0x4u)));
+            butte.Aspect = Lerp(1.0f, 1.6f, UnitFloat(Hash(h ^ 0x5u)));
+            butte.Angle = UnitFloat(Hash(h ^ 0x6u)) * kPi;
+            butte.Height = parent.Height * Lerp(0.4f, 0.9f, UnitFloat(Hash(h ^ 0x7u)));
+            butte.CliffWidth = Lerp(3.0f, 6.0f, UnitFloat(Hash(h ^ 0x8u)));
+            butte.EdgeRoughness = Lerp(0.15f, 0.3f, UnitFloat(Hash(h ^ 0x9u)));
+            butte.TopTilt = (UnitFloat(Hash(h ^ 0xau)) - 0.5f) * 0.16f;
+            butte.BenchFraction[0] = Lerp(0.35f, 0.55f, UnitFloat(Hash(h ^ 0xbu)));
+            butte.BenchFraction[1] = 0.0f;
+            butte.BenchWidth[0] = Lerp(4.0f, 10.0f, UnitFloat(Hash(h ^ 0xcu)));
+            butte.BenchWidth[1] = 0.0f;
+            butte.TalusFraction = Lerp(0.25f, 0.45f, UnitFloat(Hash(h ^ 0xdu)));
+            butte.TalusWidth = Lerp(18.0f, 35.0f, UnitFloat(Hash(h ^ 0xeu)));
         }
     }
 
@@ -151,24 +205,70 @@ namespace NorvesLib::Core::Rendering::Terrain
             // 楕円の長軸を Angle の向きに取る
             const float c = std::cos(mesa.Angle);
             const float s = std::sin(mesa.Angle);
-            const float along = (dx * c + dz * s) / mesa.Aspect;
+            const float along = dx * c + dz * s;
             const float across = -dx * s + dz * c;
-            const float distance = std::sqrt(along * along + across * across);
-            // 輪郭を揺らして、円でなく崩れた台地の縁にする
-            const float edgeNoise = Fbm(x, z, 60.0f, 3, 0.5f, seed + index) * mesa.Radius * 0.28f;
-            const float d = distance + edgeNoise;
-            if (d > mesa.Radius + 80.0f)
+            // 主の楕円と副の楕円の和: 半径で割った距離の小さい方を、主の半径の尺度へ戻す
+            const float mainAlong = along / mesa.Aspect;
+            float normalized = std::sqrt(mainAlong * mainAlong + across * across) / mesa.Radius;
+            for (uint32_t lobe = 0; lobe < 2; ++lobe)
+            {
+                if (mesa.LobeScale[lobe] <= 0.0f)
+                {
+                    continue;
+                }
+                const float la = (along - mesa.LobeAlong[lobe]) / mesa.LobeAspect[lobe];
+                const float lc = across - mesa.LobeAcross[lobe];
+                normalized = std::min(normalized, std::sqrt(la * la + lc * lc) / (mesa.Radius * mesa.LobeScale[lobe]));
+            }
+            const float distance = normalized * mesa.Radius;
+            // 輪郭の崩れ・切れ込み・段・崖錐の届く最も外（これより遠ければ、このメサは高さに効かない）
+            const float reach = mesa.Radius * (1.0f + mesa.EdgeRoughness) + 3.0f + mesa.BenchWidth[0] +
+                                mesa.BenchWidth[1] + mesa.TalusWidth;
+            if (distance > reach)
             {
                 continue;
             }
-            // 崖（幅 7 m で頂から足元へ）と、崖の下の崖錐（40〜80 m のなだらかな裾）
-            const float cliff = 1.0f - Smoothstep(mesa.Radius - 7.0f, mesa.Radius, d);
-            const float talusT = 1.0f - Smoothstep(mesa.Radius - 4.0f, mesa.Radius + 70.0f, d);
-            const float talus = 0.32f * talusT * talusT;
-            // 頂には浅い起伏を付ける
-            const float top = 1.0f + 0.04f * Fbm(x, z, 40.0f, 2, 0.5f, seed + 17u + index);
-            const float profile = std::max(cliff * top, talus);
-            result = std::max(result, profile * mesa.Height);
+            // 輪郭: 大きな崩れ（波長 60 m）で円でなくし、細かな凹凸（波長 14 m）で縁を欠けさせる
+            float edge = Fbm(x, z, 60.0f, 3, 0.5f, seed + index) * mesa.Radius * mesa.EdgeRoughness +
+                         Fbm(x, z, 14.0f, 2, 0.5f, seed + 31u + index) * 2.5f;
+            // 浸食の切れ込み: 尾根のノイズの線が縁を横切る所で縁を内側へ削る（崖に深い溝と、その間の岬ができる）
+            const float gully = RidgedFbm(x, z, 38.0f, 2, seed + 47u + index);
+            edge += gully * gully * gully * gully * std::min(14.0f, mesa.Radius * 0.3f);
+            const float d = distance + edge;
+
+            // 頂: 傾き（長軸と直交する向き）と浅い起伏。縁の手前 25 m で肩を少し落とす
+            const float cliffWidth = mesa.CliffWidth;
+            const float top = mesa.Height + mesa.TopTilt * across +
+                              0.05f * mesa.Height * Fbm(x, z, 40.0f, 2, 0.5f, seed + 17u + index) -
+                              0.04f * mesa.Height * Smoothstep(mesa.Radius - 25.0f, mesa.Radius - cliffWidth, d);
+            float height = (1.0f - Smoothstep(mesa.Radius - cliffWidth, mesa.Radius, d)) * top;
+
+            // 崖の途中の段: 上の段（高い方）から順に外へ張り出す。縁のうちノイズが正の所だけに付け、段の無い所は
+            // 1 枚の崖のまま。段の高さと張り出しは同じ重みで 0 へ近づける（段の端で崖が折れ曲がらない）
+            float outerEdge = mesa.Radius;
+            for (uint32_t bench = 2; bench-- > 0;)
+            {
+                if (mesa.BenchWidth[bench] <= 0.0f)
+                {
+                    continue;
+                }
+                const float gate =
+                    Smoothstep(0.0f, 0.3f, Fbm(x, z, 110.0f, 2, 0.5f, seed + 61u + bench * 7u + index * 13u));
+                if (gate <= 0.0f)
+                {
+                    continue;
+                }
+                outerEdge += mesa.BenchWidth[bench] * gate;
+                const float benchCliff = cliffWidth * 0.8f;
+                const float benchHeight = mesa.Height * mesa.BenchFraction[bench] * gate *
+                                          (1.0f + 0.04f * Fbm(x, z, 30.0f, 2, 0.5f, seed + 83u + bench + index));
+                height = std::max(height, (1.0f - Smoothstep(outerEdge - benchCliff, outerEdge, d)) * benchHeight);
+            }
+
+            // 崖の下の崖錐（いちばん外の崖の足元から、なだらかな裾）
+            const float talusT = 1.0f - Smoothstep(outerEdge - 4.0f, outerEdge + mesa.TalusWidth, d);
+            height = std::max(height, mesa.TalusFraction * talusT * talusT * mesa.Height);
+            result = std::max(result, height);
         }
         return result;
     }

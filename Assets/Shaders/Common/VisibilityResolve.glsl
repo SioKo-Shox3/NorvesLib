@@ -157,7 +157,7 @@ layout(std140, set = 0, binding = VIS_TILE_BINDING) uniform ResolveTileParams
     // x = アルベド、y = 法線、z = ORM（金属度の枠）、w = 高さ
     uvec4 vt;
     // 地形の 3 層の混ぜ合わせ（Common/TerrainLayerBlend.glsl の TerrainBlendParams。VIS_TILE_FLAG_TERRAIN のときだけ読む）
-    vec4 terrain[4];
+    vec4 terrain[6];
 } tileParams;
 
 // tileParams.tile.z のビット（VisibilityResolvePass.h の TILE_FLAG_* と同じ）
@@ -667,17 +667,26 @@ VisMaterialSurface VisEvaluateMaterialSurface(vec3 objectColor, VisMaterialEntry
     PbrMaterialTextureSamples samples =
         SamplePbrMaterialTextures(albedoTexture, normalTexture, metallicTexture, roughnessTexture, aoTexture, texCoord,
                                   footprint, bHasORM, bNormalTwoChannel, bVirtualTexture);
-    // 地形の材質は、1 層目（上の標本）に土・岩肌の層を傾斜・高さ・ノイズで混ぜる（ラスタの megageometry.frag と同じ関数。
-    // 位置はカメラ相対からワールドへ戻し、傾斜は補間した頂点の法線で測る）
-    if ((tileParams.tile.z & VIS_TILE_FLAG_TERRAIN) != 0u)
+    // 地形の材質は、砂・土・岩肌の 3 層をワールドの位置から標本して傾斜・高さ・ノイズで混ぜ、法線もワールドの向きで得る
+    // （ラスタの megageometry.frag と同じ関数。位置はカメラ相対からワールドへ戻し、傾斜は補間した頂点の法線で測る。
+    // 上の 1 層の標本は VT の要求にだけ使う）
+    const bool bTerrain = (tileParams.tile.z & VIS_TILE_FLAG_TERRAIN) != 0u;
+    vec3 terrainNormal = resolved.normal;
+    if (bTerrain)
     {
-        const TerrainBlendParams terrain = TerrainBlendParams(tileParams.terrain[0], tileParams.terrain[1],
-                                                              tileParams.terrain[2], tileParams.terrain[3]);
-        samples = BlendTerrainLayers(terrain, samples,
+        const TerrainBlendParams terrain =
+            TerrainBlendParams(tileParams.terrain[0], tileParams.terrain[1], tileParams.terrain[2],
+                               tileParams.terrain[3], tileParams.terrain[4], tileParams.terrain[5]);
+        TerrainSurfaceInput terrainSurface;
+        terrainSurface.WorldPosition = resolved.hitPosition + params.cameraPosition.xyz;
+        terrainSurface.WorldDx = resolved.dposdx;
+        terrainSurface.WorldDy = resolved.dposdy;
+        terrainSurface.GeometricNormal = resolved.normal;
+        terrainSurface.CameraDistance = length(resolved.hitPosition);
+        samples = ShadeTerrainLayers(terrain, albedoTexture, normalTexture, metallicTexture, bNormalTwoChannel,
                                      terrainDirtAlbedoTexture, terrainDirtNormalTexture, terrainDirtOrmTexture,
                                      terrainRockAlbedoTexture, terrainRockNormalTexture, terrainRockOrmTexture,
-                                     texCoord, footprint.UvDx, footprint.UvDy,
-                                     resolved.hitPosition + params.cameraPosition.xyz, resolved.normal, bVirtualTexture);
+                                     terrainSurface, bVirtualTexture, terrainNormal);
     }
 
     // VT のフィードバック（ラスタの gbuffer.frag と同じ: アルベド・法線・ORM は POM の後の UV、高さは元の UV）
@@ -704,7 +713,7 @@ VisMaterialSurface VisEvaluateMaterialSurface(vec3 objectColor, VisMaterialEntry
 
     VisMaterialSurface surface;
     surface.albedo = vec4(ComposePbrSurfaceAlbedo(objectColor, samples), samples.Albedo.a);
-    surface.normal = ApplyTangentSpaceNormal(resolved.tangentFrame, tangentNormal);
+    surface.normal = bTerrain ? terrainNormal : ApplyTangentSpaceNormal(resolved.tangentFrame, tangentNormal);
     surface.material = samples.Material;
     return surface;
 }

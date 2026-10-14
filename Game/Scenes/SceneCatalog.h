@@ -152,6 +152,8 @@ namespace Game::Scenes
         {"ground", SceneViewKind::FreePose, 30.0f, 1.0f, 0.0f, {-20.0f, 1.7f, -40.0f}},
         // 南の稜線の上から、盆地を見下ろす視点
         {"ridge", SceneViewKind::FreePose, 0.0f, -9.0f, 0.0f, {0.0f, 6.0f, -880.0f}},
+        // 盆地の西の外の目の高さ（2 m）から、西北西のメサ（高さ約 28 m）の順光の崖と、その前の 2 つの段（約 13 m・6 m）を見る視点
+        {"cliff", SceneViewKind::FreePose, 65.2f, 10.0f, 0.0f, {-290.0f, 2.0f, 134.3f}},
     };
 
     /// 荒野のシーンの id。地形は高さ場の関数からクックで焼く（リポジトリの外の資産は使わない）

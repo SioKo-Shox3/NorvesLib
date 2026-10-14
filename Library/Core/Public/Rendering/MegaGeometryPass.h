@@ -1280,6 +1280,7 @@ namespace NorvesLib::Core::Rendering
         RHI::TexturePtr m_DefaultFlatNormalTexture; // 1x1 フラット法線 (128,128,255) — Normalデフォルト
         RHI::TexturePtr m_DefaultBlackTexture;      // 1x1 黒 — Metallic/Heightデフォルト
         RHI::SamplerPtr m_DefaultLinearSampler;     // Linear/Wrapサンプラー
+        RHI::SamplerPtr m_TerrainSampler;           // 地形の混ぜ合わせの材質のサンプラー（異方性 16、Wrap。地面を斜めに見てもぼけない）
 
         // フレーム単位のインスタンスリスト
         Container::VariableArray<MegaMeshInstance> m_Instances;

@@ -327,6 +327,10 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
      *   1. 傾斜（幾何の法線と真上のなす角）に、低周波ノイズの揺らぎと高さによる寄せを足し、土・岩肌へ移る角度の範囲で重みを作る。
      *   2. 各層の高さ（凹凸。土・岩肌は ORM の AO、砂は SandFillHeight の一定の面）に重みを足し、最も高い層から
      *      BlendDepth 以内の層だけを残す（岩肌のくぼみは低いので、境目では砂がくぼみに溜まる）。
+     * 標本: 3 層ともトライプラナー（崖でも引き伸ばされない。平らな所は真上からの投影だけ）。カメラからの距離が DetailStartDistance の
+     * DetailDistanceRatio 倍になるごとに UV を 1/DetailDistanceRatio にした段へ移り（近くは細かく、遠くは大きく）、隣の 2 段を
+     * 混ぜる。混ぜた後のアルベドに、MacroWavelengths の低周波ノイズで明るさ・色味の揺らぎを掛ける。
+     * UV はワールドの位置 ÷ TextureTileMeters（メッシュの UV は使わない）。
      * bEnabled が偽、または 2・3 層目のテクスチャがそろわないときは、従来どおり 1 層の材質として描く。
      * 混ぜ合わせが効くのは MegaGeometry の描画（ハードのラスタ・可視バッファの解決）で、影・レイトレーシングは 1 層目で扱う。
      */
@@ -344,6 +348,13 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         float NoiseAmplitudeDegrees = 7.0f;         // 揺らぎの振幅（度）
         float SandFillHeight = 0.6f;                // 砂の高さ（凹凸の混ぜ。土・岩肌の AO と同じ 0〜1 の尺度）
         float BlendDepth = 0.2f;                    // 高さ（凹凸）の混ぜの深さ（0 に近いほど境目が鋭い）
+        float MacroWavelengths[2] = {90.0f, 320.0f}; // 明るさ・色味の揺らぎの 2 つの波長（m）
+        float MacroBrightness = 0.2f;               // 明るさの揺らぎの振幅（割合。±）
+        float MacroHue = 0.05f;                     // 色味（赤み・黄み）の揺らぎの振幅（割合。±）
+        float DetailStartDistance = 12.0f;          // UV の倍率を変え始める距離（m）
+        float DetailDistanceRatio = 3.0f;           // 1 段ごとの距離の比（段ごとに UV をこの値の逆数にする）
+        float DetailMaxLevel = 3.0f;                // 段の上限
+        float TextureTileMeters = 4.0f;             // テクスチャの 1 枚が覆う広さ（m。層の UV の倍率 1 のとき）
 
         bool operator==(const MegaTerrainBlend &other) const
         {
@@ -362,7 +373,11 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
                    DirtHeightBiasDegrees == other.DirtHeightBiasDegrees &&
                    NoiseWavelengths[0] == other.NoiseWavelengths[0] && NoiseWavelengths[1] == other.NoiseWavelengths[1] &&
                    NoiseAmplitudeDegrees == other.NoiseAmplitudeDegrees && SandFillHeight == other.SandFillHeight &&
-                   BlendDepth == other.BlendDepth;
+                   BlendDepth == other.BlendDepth && MacroWavelengths[0] == other.MacroWavelengths[0] &&
+                   MacroWavelengths[1] == other.MacroWavelengths[1] && MacroBrightness == other.MacroBrightness &&
+                   MacroHue == other.MacroHue && DetailStartDistance == other.DetailStartDistance &&
+                   DetailDistanceRatio == other.DetailDistanceRatio && DetailMaxLevel == other.DetailMaxLevel &&
+                   TextureTileMeters == other.TextureTileMeters;
         }
     };
 

@@ -1,17 +1,18 @@
 ﻿#pragma once
 
-// 地形の 3 層の混ぜ合わせ（MegaGeometry::MegaTerrainBlend）を、シェーダーの TerrainBlendParams（vec4 × 4。
+// 地形の 3 層の混ぜ合わせ（MegaGeometry::MegaTerrainBlend）を、シェーダーの TerrainBlendParams（vec4 × 6。
 // Assets/Shaders/Common/TerrainLayerBlend.glsl）へ詰める。MegaGeometryPass（ハードのラスタ）と
 // VisibilityResolvePass（可視バッファの解決）が同じ並びで使う。
 
 #include "Rendering/MegaGeometry/MegaGeometryTypes.h"
 
+#include <cmath>
 #include <cstdint>
 
 namespace NorvesLib::Core::Rendering
 {
-    /** @brief TerrainBlendParams の float の数（vec4 × 4） */
-    constexpr uint32_t TERRAIN_BLEND_PARAM_FLOATS = 16u;
+    /** @brief TerrainBlendParams の float の数（vec4 × 6） */
+    constexpr uint32_t TERRAIN_BLEND_PARAM_FLOATS = 24u;
     /** @brief layers.w のビット（法線が 2 チャンネル（BC5）の層） */
     constexpr uint32_t TERRAIN_BLEND_DIRT_NORMAL_TWO_CHANNEL = 1u;
     constexpr uint32_t TERRAIN_BLEND_ROCK_NORMAL_TWO_CHANNEL = 2u;
@@ -21,7 +22,9 @@ namespace NorvesLib::Core::Rendering
      *
      * bEnabled が偽なら layers.x を 0 にする（シェーダーは 1 層の材質として描く）。角度はラジアン、波長は逆数にする。
      * 並び: slope = 土の始まり・終わり・岩肌の始まり・終わり、height = 土へ寄せる高さの始まり・終わり・寄せの最大・混ぜの深さ、
-     * noise = 2 つの波長の逆数・振幅・砂の高さ、layers = 有効・土の UV の倍率・岩肌の UV の倍率・法線のビット。
+     * noise = 2 つの波長の逆数・振幅・砂の高さ、layers = 有効・土の UV の倍率・岩肌の UV の倍率・法線のビット、
+     * macro = 揺らぎの 2 つの波長の逆数・明るさの振幅・色味の振幅、detail = 変え始める距離・距離の比の log2・段の上限・
+     * テクスチャの 1 枚の広さ。
      */
     inline void PackTerrainBlendParams(const MegaGeometry::MegaTerrainBlend &blend, bool bEnabled,
                                        float out[TERRAIN_BLEND_PARAM_FLOATS])
@@ -48,5 +51,14 @@ namespace NorvesLib::Core::Rendering
         const uint32_t bits = (blend.Dirt.bNormalTwoChannel ? TERRAIN_BLEND_DIRT_NORMAL_TWO_CHANNEL : 0u) |
                               (blend.Rock.bNormalTwoChannel ? TERRAIN_BLEND_ROCK_NORMAL_TWO_CHANNEL : 0u);
         out[15] = static_cast<float>(bits);
+        out[16] = blend.MacroWavelengths[0] > 0.0f ? 1.0f / blend.MacroWavelengths[0] : 0.0f;
+        out[17] = blend.MacroWavelengths[1] > 0.0f ? 1.0f / blend.MacroWavelengths[1] : 0.0f;
+        out[18] = blend.MacroBrightness;
+        out[19] = blend.MacroHue;
+        out[20] = blend.DetailStartDistance > 1.0e-3f ? blend.DetailStartDistance : 1.0e-3f;
+        // 比が 1 以下だと段が上がらないので、少しだけ 1 より大きくする
+        out[21] = std::log2(blend.DetailDistanceRatio > 1.01f ? blend.DetailDistanceRatio : 1.01f);
+        out[22] = blend.DetailMaxLevel > 0.0f ? blend.DetailMaxLevel : 0.0f;
+        out[23] = blend.TextureTileMeters > 1.0e-3f ? blend.TextureTileMeters : 1.0e-3f;
     }
 } // namespace NorvesLib::Core::Rendering

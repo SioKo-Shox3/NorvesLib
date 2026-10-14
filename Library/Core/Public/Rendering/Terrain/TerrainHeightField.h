@@ -8,7 +8,8 @@
 // 焼いた地形と Game が引く高さが食い違う。
 //
 // 座標は m、+Y が上。高さ 0 が中央の盆地の床。形は中央の平らな盆地、その周りの砂丘となだらかな起伏、
-// 輪の上に並ぶメサ（平らな頂と切り立った崖の台地）、外周の稜線の 4 つを重ねて作る。
+// 輪の上に並ぶメサ（傾いた頂と切り立った崖の台地。縁は崩れ、浸食の切れ込みと途中の段を持つ）とその脇のビュート、
+// 外周の稜線の 4 つを重ねて作る。
 // ---------------------------------------------------------------------------
 
 #include <cstdint>
@@ -32,7 +33,7 @@ namespace NorvesLib::Core::Rendering::Terrain
         /// 砂丘の波長[m]と振幅[m]
         float DuneWavelength = 70.0f;
         float DuneAmplitude = 5.0f;
-        /// メサを並べる輪の内側・外側の半径[m]と、メサの数
+        /// メサを並べる輪の内側・外側の半径[m]と、メサの数（各メサの脇に、種しだいで小さなビュートが 1 つ立つ）
         float MesaRingInner = 330.0f;
         float MesaRingOuter = 680.0f;
         uint32_t MesaCount = 7u;
@@ -72,6 +73,7 @@ namespace NorvesLib::Core::Rendering::Terrain
         }
 
     private:
+        /// メサ（大きな台地）と、その脇に立つビュート（小さな孤立丘）。どちらも同じ形の式で、値の幅だけが違う
         struct Mesa
         {
             float CenterX = 0.0f;
@@ -82,6 +84,24 @@ namespace NorvesLib::Core::Rendering::Terrain
             float Angle = 0.0f;
             /// 頂の高さ[m]（周りの地面からの高さ）
             float Height = 0.0f;
+            /// 輪郭に足す 2 つの副の楕円（中心の長軸・短軸の向きの位置[m]、主の半径に対する大きさ（0 なら無い）、縦横比）。
+            /// 主の楕円との和を取り、輪郭に大きな張り出しと入り込みを作る
+            float LobeAlong[2] = {0.0f, 0.0f};
+            float LobeAcross[2] = {0.0f, 0.0f};
+            float LobeScale[2] = {0.0f, 0.0f};
+            float LobeAspect[2] = {1.0f, 1.0f};
+            /// 崖の幅[m]（頂の縁から足元まで。狭いほど切り立つ）
+            float CliffWidth = 7.0f;
+            /// 輪郭の崩れの大きさ（半径に対する割合）
+            float EdgeRoughness = 0.28f;
+            /// 頂の傾き（頂の中心から Angle と直交する向きへ 1 m 進むごとの高さの変化[m]）
+            float TopTilt = 0.0f;
+            /// 崖の途中の 2 つの段（高さの割合・崖から張り出す幅[m]）。段は縁の一部（ノイズが正の所）にだけ付く
+            float BenchFraction[2] = {0.0f, 0.0f};
+            float BenchWidth[2] = {0.0f, 0.0f};
+            /// 崖錐（崖の下のなだらかな裾）の高さの割合と、崖から裾の端までの幅[m]
+            float TalusFraction = 0.32f;
+            float TalusWidth = 70.0f;
         };
 
         float SampleMesas(float x, float z) const;
