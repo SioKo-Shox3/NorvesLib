@@ -834,7 +834,8 @@ namespace NorvesLib::Tools::AssetCook
                 }
                 CollectPositionEdges(mesh, scratch.LocalToGlobal.data(), candidate.Indices.data(),
                                      candidate.Indices.size(), outputEdges);
-                if (IsOutputEdgeSafe(inputEdges, outputEdges, scratch) &&
+                // 三角形が残らない出力は形のずれを測れないので候補にしない(簡略化せず残す処理へ回す)
+                if (!candidate.Indices.empty() && IsOutputEdgeSafe(inputEdges, outputEdges, scratch) &&
                     (!bHaveCandidate || candidate.Indices.size() < simplified.Indices.size()))
                 {
                     simplified = std::move(candidate);
@@ -907,39 +908,32 @@ namespace NorvesLib::Tools::AssetCook
                 error = "簡略化の誤差が不正な値です";
                 return false;
             }
-            // 簡略化の誤差は形のずれだけで測る(meshoptimizer の誤差は属性の項を含むので使わない)。
-            // 簡略化しなかったグループは 0。三角形が残らなかったグループは測れないので meshoptimizer の誤差を使う。
-            const size_t firstNew = output.Next.size();
-            if (!simplified.Indices.empty())
+            // 候補は三角形が残るものだけで、簡略化しないときは入力をそのまま残すので、出力は空にならない
+            if (simplified.Indices.empty())
             {
-                BuildClustersFromTriangles(simplified.Indices.data(), simplified.Indices.size(),
-                                           scratch.LocalPositions.data(), localCount, scratch.LocalToGlobal.data(),
-                                           output.Next);
+                error = "簡略化の出力に三角形が残りませんでした";
+                return false;
             }
+            const size_t firstNew = output.Next.size();
+            BuildClustersFromTriangles(simplified.Indices.data(), simplified.Indices.size(),
+                                       scratch.LocalPositions.data(), localCount, scratch.LocalToGlobal.data(),
+                                       output.Next);
 
             // 簡略化の誤差は形のずれだけで測る(meshoptimizer の誤差は属性の項を含むので使わない)。
             // 元の形の頂点から簡略化後の面までの距離と、前の段からのずれ(両向き)の大きい方。
-            // 三角形が残らなかったグループは測れないので meshoptimizer の誤差を使う。
+            // 簡略化しなかったグループは前の段からのずれが 0。
             VariableArray<uint32_t> originalVertices;
             for (const uint32_t member : group.Members)
             {
                 const VariableArray<uint32_t>& memberVertices = current[member].OriginalVertices;
                 originalVertices.insert(originalVertices.end(), memberVertices.begin(), memberVertices.end());
             }
-            float simplifyError = 0.0f;
-            if (simplified.Indices.empty())
-            {
-                simplifyError = simplified.ErrorAbsolute;
-            }
-            else
-            {
-                const double fromOriginal = HandOffOriginalVertices(mesh, originalVertices, output.Next, firstNew);
-                const double fromPrevious =
-                    bHaveCandidate ? MeasureSimplifyDeviation(scratch.LocalPositions.data(), localCount,
-                                                              scratch.LocalIndices, simplified.Indices)
-                                   : 0.0;
-                simplifyError = RoundUpToFloat(std::max(fromOriginal, fromPrevious));
-            }
+            const double fromOriginal = HandOffOriginalVertices(mesh, originalVertices, output.Next, firstNew);
+            const double fromPrevious =
+                bHaveCandidate ? MeasureSimplifyDeviation(scratch.LocalPositions.data(), localCount,
+                                                          scratch.LocalIndices, simplified.Indices)
+                               : 0.0;
+            const float simplifyError = RoundUpToFloat(std::max(fromOriginal, fromPrevious));
             if (!std::isfinite(simplifyError))
             {
                 error = "簡略化の形のずれが不正な値です";

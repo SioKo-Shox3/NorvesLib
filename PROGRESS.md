@@ -4080,3 +4080,13 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 補助（verify の外。どれも採らなかった形）: 前の段からのずれの最大だけ（task の文のまま）だと、球の石の凹凸が段を重ねて均され、陰影がにじむ（PSNR 43.9 dB で fail、`aux-first-attempt-verify-2-max.txt`）。足し算に戻すと球は戻るがバナナの根は 0.084 m（`aux-exp-sum-*`）。元の形から測っても、球のラスタがフォールバックより粗くなると low 視点で黒い斑点（`SCN-MEGA-FIX-COOK-LOD-ERROR-rejected-reapproval`）、フォールバックを形の誤差で選ぶと近くの岩の窪みに黒い点（RTGI を切ると消える。`-rtgioff`）が出た。
 - Next: SCN-MEGA-FIX-BVH-QUEUE-MAIN（100 万本の数はそこで見る）。
 - Notes: `CookAssets.ps1` は Windows PowerShell 5 の `Get-Content` の既定の文字コードで `MegaStressMeshes.json`（BOM なし・日本語）を読み損ねるので、`$PSDefaultParameterValues['Get-Content:Encoding']='UTF8'` を付けて呼んだ（スクリプトは paths の外）。`Docs/Architecture/NVMESHv1LodGraph.md` の手順 3 の「メンバの誤差の最大 + 簡略化の誤差」は古い（paths の外）。クックは 93 秒 → 133 秒（元の頂点の受け渡しの距離計算の分）。golden（Indoor/Outdoor）はクック済みのメッシュを使わないので撮り直していない。試験の追加はしていない。
+
+### SCN-MEGA-FIX-COOK-LOD-ERROR（2026-10-14、反復 2・run 20261014-102529）
+- Done: 評価者の差し戻し（三角形が残らない簡略化の結果では属性込みの `simplified.ErrorAbsolute` を誤差に使っていた）を直した。`CookMeshDag.cpp` の候補の採用で空の出力を候補から外し（簡略化せず入力を残す処理へ回る）、誤差の計算の空の分岐を消した。出力が空なら「簡略化の出力に三角形が残りませんでした」で失敗にする（来ない前提の検査）。重複していたコメントも 1 つにまとめた。
+- 検証（`.harness/runs/20261014-102529/`）:
+  - AssetCook を作り直し（`aux-assetcook-build6.txt`、EXIT=0）、17 件のモデルを焼き直した（`aux-cook-models4.txt`、cooked=17、`[ERROR]` 0）。`build/CookedAssets/Cooked` の 173 件の `.nvpkg` の sha256 は焼き直しの前後で全件一致（`aux-recook-hash-diff.txt` は空）。現行の資産では空の出力の経路を通らないことの裏付け。
+  - `verify-SCN-MEGA-FIX-COOK-LOD-ERROR-4.txt`: RelWithDebInfo の Game のビルド EXIT=0、error 0。
+  - `verify-SCN-MEGA-FIX-COOK-LOD-ERROR-5.txt`: 起動画面 default の決定的撮影の比較 result=pass（psnr 100 dB、不一致の画素 0、EXIT=0）。PNG を開き、家・球・岩の形が保たれ穴が無いことを確かめた。資産が前回とバイト一致なので基準の撮り直しはしていない。
+  - `verify-SCN-MEGA-FIX-COOK-LOD-ERROR-6.txt`: 1 万本 overview を `scene-capture/SCN-MEGA-BASE-COOK` に撮り直した result=pass（bananas=10000、EXIT=0、`[ERROR]` 0）。PNG は近くのバナナの形が保たれ穴なし。
+- Next: SCN-MEGA-FIX-BVH-QUEUE-MAIN（100 万本の数はそこで見る）。
+- Notes: 試験の追加はしていない（空の出力を作る入力の試験は計画外）。
