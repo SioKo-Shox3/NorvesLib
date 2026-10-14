@@ -147,6 +147,9 @@ namespace Game::GameModes
     /// 遠の密度が縁の手前まで平らに続く所の外の端（半径に対する比。これより外は縁のゆらぎと密度の落ち込みの区間）
     float SeaFullDensityEnd();
 
+    /// 縁がいちばん外側へゆれた所（半径に対する比。これより外にバナナは置かない）
+    float SeaOuterEdge();
+
     /// メッシュの頂点から、配置に使う形を作る
     void BuildBananaShape(const NorvesLib::Core::Asset::CookedMeshData &mesh, BananaShape &outShape);
 

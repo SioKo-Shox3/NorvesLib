@@ -120,12 +120,15 @@ namespace Game::GameModes
         // 他のシーンのメッシュの ID（100〜、200〜、900、920）と重ならない値
         constexpr uint32_t kFloorMeshHandleId = 910;
         constexpr uint32_t kFarFloorMeshHandleId = 911;
-        // 海が広いときは、床を海の内側の円盤と外側の輪に分け、外側の輪を遠くの海（バナナと隙間の床が混ざった見た目）の
-        // 色に寄せる。海の縁から床の端までの床は、目の高さからの俯角が小さく地平線の直下の細い線に潰れ、木の色のままだと
-        // 海の黄色との境が線に見えるため。分ける半径は遠の密度が平らに続く所の外の端（縁のゆらぎと落ち込みより内側）。
+        // 海が広いときは、床を海の内側の円盤と、海の縁のすぐ外で終わる輪に分け、輪を遠くの海（バナナと隙間の床が
+        // 混ざった見た目）の色に寄せる。海の縁より外に床を延ばすと、目の高さからの俯角が小さく地平線の直下の滑らかな
+        // 細い線に潰れて、バナナの濃淡との境が線に見えるため。床を縁の先で終え、その先は空（地平線の霞）につなぐ。
+        // 分ける半径は遠の密度が平らに続く所の外の端（縁のゆらぎと落ち込みより内側）。
         // 分ける半径がこの値[m]より小さいとき（1 万本の小さな円盤）は分けず、木の床のまま
         constexpr float kFarFloorMinSplitRadius = 150.0f;
-        // 円盤と輪の境の円の分割数（8 の倍数にして、輪の外周の頂点が床の四隅を通るようにする）
+        // 輪の外の端: 縁がいちばん外側へゆれた所からさらに延ばす長さ[m]（海の中心のずれと、縁のバナナの長さの分）
+        constexpr float kFarFloorEdgeMargin = 6.0f;
+        // 円盤と輪の境の円の分割数
         constexpr uint32_t kFloorCircleSegments = 256;
         // 外側の輪の色: 木の床のアルベドに掛ける倍率（遠くの海の撮影の平均の色に合わせた値）
         constexpr float kFarFloorTint[3] = {0.99f, 0.93f, 0.52f};
@@ -258,21 +261,20 @@ namespace Game::GameModes
             }
         }
 
-        /// 床の外側: 半径 radius の円から一辺 kFloorSize の正方形の縁までの輪。円の点を中心から正方形の縁へ
-        /// 放射状に延ばした点と結ぶ（分割数が 8 の倍数なので四隅も外周の頂点になる）
-        void BuildFloorRing(float radius, VariableArray<Mesh3DVertex> &vertices, VariableArray<uint32_t> &indices)
+        /// 床の外側: 半径 radius の円から半径 outerRadius の円までの輪。内外の円の同じ番号の点を結ぶ
+        void BuildFloorRing(float radius, float outerRadius, VariableArray<Mesh3DVertex> &vertices,
+                            VariableArray<uint32_t> &indices)
         {
             vertices.clear();
             indices.clear();
-            const float half = 0.5f * kFloorSize;
             for (uint32_t index = 0; index < kFloorCircleSegments; ++index)
             {
                 float x = 0.0f;
                 float z = 0.0f;
                 FloorCirclePoint(radius, index, x, z);
                 AppendFloorVertex(vertices, x, z);
-                const float reach = half / std::max(std::fabs(x), std::fabs(z));
-                AppendFloorVertex(vertices, x * reach, z * reach);
+                FloorCirclePoint(outerRadius, index, x, z);
+                AppendFloorVertex(vertices, x, z);
             }
             for (uint32_t index = 0; index < kFloorCircleSegments; ++index)
             {
@@ -317,7 +319,7 @@ namespace Game::GameModes
             return meshComponent;
         }
 
-        /// 床: 木の床のテクスチャを貼った平面（海が広いときは内側の円盤と外側の輪）。テクスチャは非同期で読み、
+        /// 床: 木の床のテクスチャを貼った平面（海が広いときは内側の円盤と、海の縁のすぐ外で終わる輪）。テクスチャは非同期で読み、
         /// そろうまでは茶色の無地で描く
         bool CreateFloor(GameModeContext &ctx, MegaBananasData &data)
         {
@@ -342,7 +344,8 @@ namespace Game::GameModes
             data.m_pFloorMaterial = pending;
 
             // 海の半径は本数だけで決まるので、配置の前に分ける半径が分かる
-            const float splitRadius = ComputeSeaRadius(data.m_BananaCount) * SeaFullDensityEnd();
+            const float seaRadius = ComputeSeaRadius(data.m_BananaCount);
+            const float splitRadius = seaRadius * SeaFullDensityEnd();
             VariableArray<Mesh3DVertex> vertices;
             VariableArray<uint32_t> indices;
             if (splitRadius < kFarFloorMinSplitRadius)
@@ -364,7 +367,7 @@ namespace Game::GameModes
                 {
                     return false;
                 }
-                BuildFloorRing(splitRadius, vertices, indices);
+                BuildFloorRing(splitRadius, seaRadius * SeaOuterEdge() + kFarFloorEdgeMargin, vertices, indices);
                 data.m_pFarFloor = SpawnFloorMesh(ctx, kFarFloorMeshHandleId, vertices, indices, pending->TargetMaterial);
                 if (data.m_pFarFloor == nullptr)
                 {

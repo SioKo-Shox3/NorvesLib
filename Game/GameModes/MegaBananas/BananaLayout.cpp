@@ -915,6 +915,11 @@ namespace Game::GameModes
         return 1.0f - kSeaEdgeWobble - kSeaEdgeTaper;
     }
 
+    float SeaOuterEdge()
+    {
+        return 1.0f + kSeaEdgeWobble;
+    }
+
     void BananaFieldBuilder::Begin(const BananaShape &shape, uint32_t count, const IBananaFieldMask *pMask)
     {
         m_pState = MakeUnique<State>();
