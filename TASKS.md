@@ -14,6 +14,8 @@
 
 2026-10-14 荒野の作り直し（ユーザーの評価と決定）: ユーザーは今の荒野を「PS3 の水準で、現実の荒野と比べられる水準に無い」と評価した。地形の大きな形は実在の地形データ（USGS 3DEP の 1 m DEM、パブリックドメイン）から作り、手本は米南西部のメサと砂岩（Valley of the Gods、ユタ州）にする。ダウンロード（DEM の 1 m タイル `x60y413` 約 268 MB・Python のパッケージ・手本の写真・Poly Haven の素材）はユーザーが許可済み。それ以外のダウンロードは、ファイル名とサイズを書いて BLOCKED にする。項目は `SCN-WL-`。判定は、技術と見た目の条件（浮き・継ぎ目・繰り返し・形の対応・移動中のちらつき）を評価者が見て、実写と並べて成立するかの最終の判断はユーザーがする（SCN-WASTELAND-POLISH の後）。目標の個数（数十万個など）は置かず、手本の写真の大きさ・被覆・疎密に合わせる。
 
+2026-10-15 荒野と室内の光の目的（ユーザー）: このプロジェクトは現代の CG の水準の描画を目指してきた。荒野（wasteland）と室内の光（interior-light）は、それを確かめる「ほぼ実写」の美しさを見るシーンで、速さ・最適化は他のシーンで見る。この 2 つでは 60 fps の条件を外す（リアルタイムで、操作できる程度＝1080p で 20〜30 fps 以上ならよい）。品質を見る撮影は 1920×1080 以上。判断は手本の実写との比較画像・実在の材質の明るさの範囲・同じ視点のパストレースの正解（光の誤りを分ける）で行い、節目（SCN-WL-REVIEW-1・REVIEW-2・SCN-WASTELAND-POLISH）でユーザーが見る。ambientCG（CC0）の素材のダウンロードも許可済み。
+
 2026-10-10 ECS の決定（ユーザー決定）: Entity はオブジェクト管理の器として残し、更新（Tick・変換・描画への同期・ゲームロジック）のデータと処理を ECS 型（自前のアーキタイプ型、値の実体は列に置き Object の読み書きはそこを通す、大量の物は Object を持たない軽い実体、ロジックはすべてシステムへ、ジョブで並列）に作り変え、レンダースレッドもコマンドの並列記録まで並列化する。100万本の改修に組み込む。設計の正本は `Docs/Plans/EcsUpdatePathPlan.md`（計画者の計画を GPT が 2 周批評し、親が追記した。項目の notes の「§」はこの文書の節）。`SCN-ECS-` の項目と、ECS 前提で置き換えた `SCN-MEGA-` の項目を、計画書の §2 の順に並べた。ワールドの全走査を直す旧案（WORLD-TICK-CACHE・WORLD-TRANSFORM-NOTIFY・WORLD-TRANSFORM-INTERP・WORLD-RENDER-DIRTY・INSTANCE-BATCH）は ECS の項目に置き換えて消した。戻すときは、戻す項目とそれに依存する後続の項目を新しい順に revert する（単独では戻さない）。
 
 起動画面（Rendering3DTest）の描画改善（2026-09-27、ユーザー決定）。物理空と空の太陽による昼の屋外、点光源のキューブシャドウ、自動露出・ミップチェーンのブルーム・TAA・GTAO・コンタクトシャドウ・色収差・レンズダート・グレーディングLUT・RTGIの既定化、展示物の追加、視差オクルージョンと影の不具合の修正を `SS-` の項目で進める。見た目の証拠は `Scripts/CaptureStartupScene.ps1` の撮影を開いて確かめる。起動画面の見た目を変えることはこの計画でユーザーが承認済み。検証シーン（Indoor/Outdoorのgolden、R系の受入れ）は、項目に書いた場合を除き結果を変えない。
@@ -238,6 +240,7 @@
 - verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-STRESS-BASELINE/stream --views default --timing --min-frames 180`
 - paths: TASKS.md, PROGRESS.md
 - notes: コードを変えない（変えると Game.exe が新しくなり、撮影が古いと判定される）。撮影は次の3本を1本ずつ順に（並行させない。1本あたり約4分）。ランナーは撮り直さず、保存した結果を検査する。static: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views default -GpuTimingFrames 240 -TimeoutSeconds 900 -GameArgs stress-entities=20000 -OutDir .harness/runs/scene-capture/SCN-MEGA-STRESS-BASELINE/static`。 moving: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views default -GpuTimingFrames 240 -TimeoutSeconds 900 -GameArgs stress-entities=20000,stress-moving-percent=1 -OutDir .harness/runs/scene-capture/SCN-MEGA-STRESS-BASELINE/moving`。 stream: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views default -GpuTimingFrames 240 -TimeoutSeconds 900 -GameArgs stress-entities=20000,stress-moving-percent=1,stress-stream-cell=64 -OutDir .harness/runs/scene-capture/SCN-MEGA-STRESS-BASELINE/stream`。 2026-10-10 親が backlog にした: ECS で作り変えが決まっている経路の基準は、比べても判断が変わらない（合否は目標の絶対値で決める）。既に撮った 2万個の値は PROGRESS に参考値として残した。
+
 ## SCN-ECS-CHECK-GATE: 開発ビルドの検査の結果と、撮る構成のビルドを撮影の門にする
 - status: done
 - done-when: `Debug/EngineChecks.h` の口が、`--engine-checks=<名前,...>`（開発ビルドだけ）で有効にした検査について `ENGINE_CHECK name=<名前> result=pass|fail count=<n>` を出す。`CaptureScene.ps1` と `CaptureStartupScene.ps1` に `-RequireChecks` を足す（各名前の pass が 1 回以上あり、fail が 0 でなければ失敗）。3 つのスクリプトに `-Build` を足す（撮る構成の Game をビルドし、失敗したら撮らずに失敗）。`CaptureStartupScene.ps1` に `-GameArgs` を足す。`RunSceneCycleSmoke.ps1` は fail の行で落ちる。`ENGINE_CHECK_SELFTEST` の pass の撮影が通る。`--engine-checks-selftest-fail` で落ちる出力は、反復の中で 1 回撮って PROGRESS に貼る。 あわせて、`CaptureScene.ps1` の計測（`-GpuTimingFrames`）は初期配置と公開の完了（SceneReady）の後に始め、ウォームアップと末尾の除外を別に取って、有効な標本を指定の数だけ得る（今は「指定 − 60」件に制限している、315 行付近）。配置した数（シーンが出す数）と計測の開始のフレームを metrics.json に記録し、`CheckCaptureMetrics.py` の `--min-frames` が有効な標本の数を見る。
@@ -296,8 +299,6 @@
 - paths: Library/Core/Public/Object/World.h, Library/Core/Private/Object/World.cpp, Library/Core/Private/Engine/ApplicationProcessor.cpp, Library/Core/Public/Ecs, Library/Core/Private/Ecs, TASKS.md, PROGRESS.md
 - notes: 親の追記（GPT 2 周目）: 更新への参加の番号は「次の収集」の番号とし、通常の Tick と単独で回る `DispatchFixedTick`（World.cpp 1703 行付近）の両方で進める。同じフレームの複数の固定ステップでは番号を共有する。
 
-
-
 ## SCN-ECS-SCOPE-METRICS: 撮影が CPU の区間と GPU のパスの値を名前ごとに出し、名前で検査できるようにする
 - status: done
 - done-when: `CaptureScene.ps1` の計測（`-GpuTimingFrames`）が、トレースの全部の区間について、名前ごとのフレームあたりの合計（全スレッド）の median・p95・max と、区間が出たスレッドの数を metrics.json の `cpu_scope_ms` に書く（今の上位 15 だけをやめる）。名前の先頭 2 つの部分ごとの合計（`Ecs.Stage.*`・`Ecs.Sys.*`・`Ecs.Sync.*`・`RG.Record.*`）も書く。GPU のパスは今の median・p95・max を `gpu_pass_ms` に全部書く。`CheckCaptureMetrics.py` に `--require-scope <名前>`・`--require-pass <名前>`（無ければ失敗）と `--max-scope-median-ms <名前>=<ms>`・`--max-scope-p95-ms`・`--max-pass-median-ms`・`--max-pass-p95-ms`（繰り返し可）を足す。2000 個の短い計測で `Ecs.Stage.*` と各段の区間が出る。
@@ -306,6 +307,7 @@
 - verify: `python -c "import subprocess,sys; r=subprocess.run([sys.executable,'Scripts/CheckCaptureMetrics.py','.harness/runs/scene-capture/SCN-ECS-SCOPE-METRICS','--views','overview','--timing','--require-scope','Ecs.Sys.NoSuchSystem']); sys.exit(0 if r.returncode==1 else 1)"`
 - paths: Scripts/CaptureScene.ps1, Scripts/CheckCaptureMetrics.py, TASKS.md, PROGRESS.md
 - notes: 2026-10-10 親が足した（ユーザー指摘: 全体の負荷だけでは効果が分からない。CPU は関数単位の内訳が要る）。区間の記録はスケジューラ（SCN-ECS-SCHEDULER）と World の段（SCN-ECS-WORLD-SCHEDULE）が入れる。この項目はスクリプトだけを変える。1 本目の verify の撮影は短い（2000 個・120 フレーム）。
+
 ## SCN-ECS-CLEANUP-LIST: 破棄の回収を、破棄予約の一覧だけにする
 - status: done
 - done-when: `MarkForDestroy`・`Object::Destroy`・Component の破棄予約を World の一覧に積み、`CleanupDestroyedObjects` は一覧だけを処理する（World.cpp:1781-1828 の全木の 2 回の走査をやめる）。検査 `WORLD_CLEANUP`（全木を走査して見つけた予約と一覧が一致）が pass する。破棄の契約のテストと周回が pass する。
@@ -368,7 +370,6 @@
 - paths: Game/Scenes/SceneCycleSmoke.cpp, Game/Scenes/SceneCycleSmoke.h, Scripts/RunSceneCycleSmoke.ps1, TASKS.md, PROGRESS.md
 - notes: 2026-10-11 親が足した。夜の間に SCN-ECS-RENDER-INVALIDATION・RENDER-SYNC-PREP・RENDER-SYNC-SWITCH・SCN-MEGA-SCENE-CONFIRM・SCENE-SLOTS の 5 つが、混在の周回の `SCENE_CYCLE_DIFF field=textures,texture_bytes`（別シーンが先に読んだテクスチャのキャッシュ。1 周目 0 → 2 周目 9 など）で止まった（各 `blocked/<項目>.md` の推奨 1）。変更前でも同じで、ECS の変更とは関係ない。5 つは実装済みで、この項目の後に status を todo に戻してあり、verify と評価だけをやり直す。
 
-
 ## SCN-ECS-FIX-DESTROY-FLAGS: 公開の Destroy() と Heap の破棄予約でも、ECS の破棄の印を立てる
 - status: done
 - done-when: `Entity::Destroy()`（`Object.cpp` 197 行付近の Object のフラグだけを変える経路）・World の予約登録（`World.cpp` 2336 行付近）・`ObjectHeap::EnqueueDestroy()` のどれから破棄を予約しても、`MarkForDestroy()` と同じ処理で ECS の破棄の印と変更ログが更新され、祖先の破棄予約で子・孫の Tick が呼ばれない（`World.cpp` 1431 行付近が古い `EffectiveActive=true` を使わない）。`EcsHierarchyTest` に、直接の `Destroy()` で子・孫が呼ばれない（count=0）回帰の検査と、Heap 経由の予約（`EnqueueDestroy`）が同じ入口で破棄の印を立てる検査を足す（Heap が持つ Entity は World の根にも子にも入らない＝`World.cpp` 4845・4879 行付近で拒否するので、Heap 経由の予約が Tick の配信に届く経路は無い）。通ったら SCN-ECS-TRANSFORM-SWITCH の status を done にし、`blocked/SCN-ECS-TRANSFORM-SWITCH.md` に解消を書き足す（残りの指摘はこの 1 点だけ）。
@@ -378,7 +379,6 @@
 - paths: Library/Core/Public/Object, Library/Core/Private/Object, Library/Core/Public/Ecs, Library/Core/Private/Ecs, Test/Core/Object, TASKS.md, PROGRESS.md
 - notes: 2026-10-11 親が足した。SCN-ECS-TRANSFORM-SWITCH の評価の 2 周目の指摘（`blocked/SCN-ECS-TRANSFORM-SWITCH.md`）。評価者の最小の修正候補は、`Entity::Destroy()` をオーバーライドして ECS の破棄の印も更新し、`MarkForDestroy()` を同じ処理へまとめること。新しいテストの実行ファイルは足さない（既存の束に入れる）。 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。 2026-10-11 親: 評価の 2 周目の残りは「Heap 経由で子・孫の count=0」だったが、Heap が持つ Entity は World に入らないので起き得ない（親の完了条件の誤り）。完了条件をその所有権の規則に合わせて直し、指摘 1（World の登録の経路）は評価者が解消を確認済みなので done にした。
 
-
 ## SCN-ECS-FIX-SCENEQUERY-HOOKS: SceneQuery が切り替えた前の World と、破棄後に残る行の削除フックを外す
 - status: done
 - done-when: SceneQuery が World を切り替えるとき（`SceneQuery.cpp` 927 行付近）に前の World の行の削除フックを外し、SceneQuery の破棄でも登録したすべての World のフックを外す（または、フックのデータを World 側が登録の間だけ持つ）。World A・B を生かしたまま `Update(A)` → `Update(B)` → `Clear()` → SceneQuery を破棄 → A の Entity を削除、の順で解放後の参照が起きないことを、既存の SceneQuery の試験の束に足した検査で確かめる（Debug で走らせる）。通ったら SCN-ECS-SCENEQUERY の status を done にし、`blocked/SCN-ECS-SCENEQUERY.md` に解消を書き足す（残りの指摘はこの 1 点だけ）。
@@ -387,7 +387,6 @@
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Views overview -Build -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GameArgs stress-entities=5000,stress-moving-percent=1,stress-stream-cell=64 -RequireChecks ECS_SCENEQUERY -OutDir .harness/runs/scene-capture/SCN-ECS-FIX-SCENEQUERY-HOOKS/check`
 - paths: Library/Core/Public/Scene/SceneQuery.h, Library/Core/Private/Scene/SceneQuery.cpp, Library/Core/Public/Ecs, Library/Core/Private/Ecs, Library/Core/Public/Object/World.h, Library/Core/Private/Object/World.cpp, Test/Core/Object, TASKS.md, PROGRESS.md
 - notes: 2026-10-11 親が足した。SCN-ECS-SCENEQUERY の評価の 2 周目の指摘（`blocked/SCN-ECS-SCENEQUERY.md`。前回の指摘 3 が未解決）。新しいテストの実行ファイルは足さない（既存の束に入れる）。 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
-
 
 ## SCN-ECS-TRANSFORM-SWITCH: 階層のシステムを正にする（切替）
 - status: done
@@ -429,7 +428,6 @@
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-MEGA-FIX-DELTA-SKIP`
 - paths: Library/Core/Public/Rendering/MegaGeometryMirror.h, Library/Core/Private/Rendering/MegaGeometryPass.cpp, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Test/Core/Rendering/WorldSyncDifferentialTest.cpp, TASKS.md, PROGRESS.md
 - notes: 2026-10-11 親が足した。SCN-MEGA-SCENE-DELTA の評価の 2 周目の指摘 2・3（`blocked/SCN-MEGA-SCENE-DELTA.md`）。前の変換を最後に描いたフレームで保つ本格の直しは SCN-MEGA-GPU-SCENE-HISTORY。この項目は今の付け替えの退行だけを直す。
-
 
 ## SCN-ECS-RENDER-INVALIDATION: 列の値の変化以外で描画が古くなる場合を通知にする
 - status: done
@@ -572,7 +570,6 @@
 - paths: Test/Core/Scripting, Library/Core/Public/Scripting, Library/Core/Private/Scripting, Library/Core/Public/Component/ScriptComponent.h, Library/Core/Private/Component/ScriptComponent.cpp, TASKS.md, PROGRESS.md
 - notes: 2026-10-11 親が足した。SCN-ECS-TICK-SCRIPT の評価の 2 周目の指摘（NEXT_FINDINGS の反復 7）。破棄予約・取得の無効化・同期点での解放はコードで確認済みで、残りは試験の強さだけ。
 
-
 ## SCN-FIX-LOGGERSINK-BUNDLE: テストの束 LoggerSinkTest を、今の API に追いつかせてビルドできるようにする
 - status: done
 - done-when: LoggerSinkTest の束の次の 5 本を今の API に合わせて直し、束が Debug でビルドできる。直すのはテスト側の追随だけで、テストが確かめる中身は変えない。(1) `Test/Core/Input/InputRebindCaptureManagerTest.cpp`・`InputDebugOverlayControllerTest.cpp`: `ECursorMode` の名前空間の移動に合わせる。(2) `Test/Core/Input/InputBindingJsonTest.cpp` 158 行付近: `assert(...)` の中の raw 文字列を変数へ出す。(3) `Test/Core/Input/ActiveDeviceKindIntegrationTest.cpp`: 入力コントローラーのインターフェースに増えた純粋仮想を偽物に実装する。(4) `Test/Core/Text/JsonWriterTest.cpp` 63 行付近: サロゲート（D83D・DC3A）を UCN で書いて C3850 になる所を、コンパイルできる書き方（バイト列など）にする。束の全体の ctest（`LoggerSinkTest`）と、SCN-ECS-TICK-GAME が使う 3 本が pass する。実行して落ちる member があれば原因を PROGRESS に書き、テスト側の追随で直らないもの（製品のコードの不具合）は別の項目として TASKS に足す。
@@ -580,7 +577,6 @@
 - verify: `ctest --test-dir build -C Debug -R "^(LoggerSinkTest|QuadrupedLocomotionModelTest|CameraCollisionSolverTest|LocomotionProfileReloadTest)$" --no-tests=error --output-on-failure --timeout 180`
 - paths: Test/Core/Input, Test/Core/Text, Test/Core/Logging, TASKS.md, PROGRESS.md
 - notes: 2026-10-11 親が足した。SCN-ECS-TICK-GAME の blocked（`blocked/SCN-ECS-TICK-GAME.md`）の推奨 A。`build/Test/Core/Logging/Debug/LoggerSinkTest.exe` は 2026-09-27 のままで、10 月 2〜4 日の変更以降この束は一度もビルドできていない。JSON のサロゲートは backlog の CORE-JSON-SURROGATE の作業と重なるので、ここではコンパイルを通すための書き方の変更だけにする。
-
 
 ## SCN-ECS-TICK-GAME: Game の FollowCamera と QuadrupedLocomotion を順序付きの系へ移す
 - status: done
@@ -645,8 +641,6 @@
 - paths: Library/Core/Private/Object/World.cpp, Library/Core/Public/Object/World.h, Library/Core/Public/Engine, Library/Core/Private/Engine, Library/Core/CMakeLists.txt, Test/Core/Rendering, TASKS.md, PROGRESS.md
 - notes: 2026-10-12 親: 利用者が残っていたので（`blocked/SCN-ECS-RETIRE-LEGACY.md`）、推奨 A のとおり SCN-ECS-RETIRE-LEGACY-FLAGS（旧の切替と再帰）と SCN-ECS-RETIRE-REGISTRY（EntityHandle を World へ移して ComponentDataRegistry を消す）の 2 つに分け、この項目は backlog にした。
 
-
-
 ## SCN-ECS-RETIRE-LEGACY-FLAGS: 旧の更新・同期の切替と再帰を消し、旧を正解にしていた照合を期待値に替える
 - status: done
 - done-when: `--ecs-legacy-transform`・`--ecs-legacy-sync`、`SetLegacyRenderSync`/`IsLegacyRenderSync`、旧の再帰（UpdateEntityTransformRecursive・SyncEntityRecursive・UpdateRenderTransformRecursive ほか）と、SceneQuery の旧への切替（`SceneQuery.cpp` 944 行付近）を消す。`--mega-scene-full-sync` は残す。旧の全走査を正解にしていた照合は次のように替える: `WorldSyncDifferentialTest`・`EcsHierarchyTest`・`SceneQueryRaycastTest` は、手で決めた期待値（追加・値の変更・親の付け替え・非アクティブ・破棄・シーンの出入りの後の proxy・板・変換・照会の結果）との照合にする。開発ビルドの検査（ECS_RENDER_SYNC・ECS_RENDER_INVALIDATION・ECS_TRANSFORM など）は、旧の再帰を使わない全量の照合（ECS の行から全量を作り直して比べる）に替えるか、照合が成り立たないものは消してその役目をテストの期待値で持つ（どちらにしたかを PROGRESS に表で書く）。3 シーンの混在の周回が pass。
@@ -655,7 +649,6 @@
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Build -Scenes rendering3dtest,mega-bananas,mega-stress -Cycles 3 -Configuration RelWithDebInfo`
 - paths: Library/Core/Private/Object/World.cpp, Library/Core/Public/Object/World.h, Library/Core/Public/Ecs, Library/Core/Private/Ecs, Library/Core/Public/Scene/SceneQuery.h, Library/Core/Private/Scene/SceneQuery.cpp, Library/Core/Public/Engine, Library/Core/Private/Engine, Library/Core/Public/Debug, Library/Core/Private/Debug, Game/GameApplicationHandler.cpp, Test/Core/Object, Test/Core/Rendering, TASKS.md, PROGRESS.md
 - notes: 2026-10-12 親が足した（SCN-ECS-RETIRE-LEGACY の推奨 A の 1）。後の項目の verify は ECS_* の検査も旧の切替も使っていない（親が確かめた）。危険地帯（描画の同期・Object の寿命）。 2026-10-12 親: 反復 23 は 40 分の上限で止まった。そのとき作業を git stash に退避して HEAD の周回と比べる途中だったので、親が退避を戻して 作業途中の保存 eaad1e4f に入れた（World.cpp の旧の再帰の削除・照合のテストの書き換え、計 12 ファイル）。続きから進める。分かっていたこと: M9 の受入れは変更の前後で同じ理由（t0_capture_failed）で落ちる（この項目と無関係）。3 シーンの周回（verify 3）がこの変更で落ちた（`.harness/runs/20261011-211043/verify-SCN-ECS-RETIRE-LEGACY-FLAGS-3.txt`）ので、まず HEAD~1 と比べて原因を切り分ける。作業を git stash に退避しない（上限で止まると失われる）。比べるときは別のディレクトリにビルドせず、コミットしてから戻す。 2026-10-12 親: verify 2 の正規表現が Reference の受入れ M9WorldAcceptanceTest にも当たり、それが変更の前から t0_capture_failed で落ちる。blocked の推奨 A を採り、verify 2 に `-LE Reference` を足して todo に戻した。M9 は SCN-FIX-M9-T0-CAPTURE で直す。 2026-10-12 親: 評価の 2 周目の残りは「ECS_SCENEQUERY の比較先の境界が `Entity::EvaluateWorldTransformNonMutating`（親をたどる）を使う」だけだった。done-when の「旧の再帰」は毎フレームの更新・同期の再帰（UpdateEntityTransformRecursive・SyncEntityRecursive・UpdateRenderTransformRecursive ほか）を指し、1 つの Entity のローカル変換を親へたどって合成し直すその場の計算は含まない（差分の結果とは独立に同じ元データから求め直すので、照合の正解として妥当）と親が判断し、done にした。ほかの指摘（照合の置き換え・照会のテストの期待値）は評価者が解消を確かめた（verify 9〜11・recheck 5-1〜3）。
-
 
 ## SCN-ECS-RETIRE-REGISTRY: EntityHandle の発行と解決を World へ移し、ComponentDataRegistry を消す
 - status: done
@@ -666,6 +659,7 @@
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Test-M8MinimalPhysics.ps1 -Configuration RelWithDebInfo`
 - paths: Library/Core/Public/Object, Library/Core/Private/Object, Library/Core/Public/Ecs, Library/Core/Private/Ecs, Library/Core/Public/Engine, Library/Core/Private/Engine, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Library/Core/CMakeLists.txt, Game/Input, Game/GameModes/Rendering3DTest/M8MinimalPhysicsSmoke.cpp, Library/Modules/Physics/Private/Physics/PhysicsModule.cpp, Scripts/Test-M8MinimalPhysics.ps1, Test/Core/Engine, Test/Core/Object, Test/Core/Rendering, TASKS.md, PROGRESS.md
 - notes: 2026-10-12 親が足した（SCN-ECS-RETIRE-LEGACY の推奨 A の 2）。危険地帯（Object の寿命・公開 API）。ComponentDataRegistry の場所は `GEngine` のメンバ（`NorvesEngine.*`）と `Test/Core/Rendering` のテスト・ベンチマーク。
+
 ## SCN-FIX-M9-T0-CAPTURE: M9 の世界の受入れが撮影の失敗（t0_capture_failed）で落ちるのを直す
 - status: done
 - done-when: `ctest -R M9WorldAcceptanceTest`（Reference の GPU の受入れ）が `M9_WORLD_SMOKE stage=failure reason=t0_capture_failed` で落ちる原因を突き止めて直す。まず撮影の結果が成功でないときの状態（MapFailed など）を `FrameCaptureReadbackHelper.cpp`・`Rendering3DTestRoutine.cpp` でログに出し、原因を PROGRESS に書く。このブランチの変更（ランチャー・`--window-background`・ECS の同期など）が原因なら、どの変更かを書いて直す。M9 の受入れが pass する。Game の起動に `--window-background` を付けていなければ足す。
@@ -674,7 +668,6 @@
 - paths: Library/Core/Private/Rendering/VignettePass.cpp, Game/GameModes/Rendering3DTest, Library/Core/Private/Rendering/FrameCaptureReadbackHelper.cpp, Library/Core/Public/Rendering, Scripts/Test-M9World.ps1, Test/M9, TASKS.md, PROGRESS.md
 - notes: 2026-10-12 親が足した（SCN-ECS-RETIRE-LEGACY-FLAGS の blocked の推奨 A）。7c7e56f7 の時点でも同じ理由で落ちる。危険地帯（描画の撮影）。 2026-10-12 親: 原因は `VignetteOutput` だけ用途に TransferSrc が無く、TAA が効いて拡大なしのときに撮影元になるため（SourceMissingTransferSrc）。blocked の推奨 A を採り、VignettePass.cpp を paths に足して todo に戻した（用途の追加だけで描画は変わらない）。
 
-
 ## SCN-ECS-SCOPE-METRICS-THREADS: 撮影の区間の集計を、その区間が出たフレームだけで数え、スレッドの名前を添える
 - status: done
 - done-when: `Scripts/CaptureScene.ps1` の `cpu_scope_ms`・`cpu_scope_group_ms` の median・p95・max を、その区間が出たフレーム（`frames_present`）だけで求める（今はゲームスレッドの窓の全フレームで数えるので、ゲームスレッドが描画 1 フレームの間に何回も回ると描画スレッドの区間の median が 0 になる。5万個の静止の撮影で `RenderGraph.Execute` が median 0・p95 49.3 ms・frames_present 302 / 窓 3832）。区間ごとに、出たスレッドの名前（GameThread・RenderThread・Worker）を `thread` に書く。mega-stress 2000 個の短い撮影で、`RenderGraph.Execute` の median が 0 より大きく、`thread` が入っている。
@@ -682,7 +675,6 @@
 - verify: `python -c "import json,sys; m=json.load(open('.harness/runs/scene-capture/SCN-ECS-SCOPE-METRICS-THREADS/metrics.json',encoding='utf-8-sig')); r=[x for v in m['views'] for x in v['gpu_timing']['cpu_scope_ms'] if x['scope']=='RenderGraph.Execute']; print(r); sys.exit(0 if r and all(x['median_ms']>0 and x.get('thread') for x in r) else 1)"`
 - paths: Scripts/CaptureScene.ps1, Scripts/CheckCaptureMetrics.py, TASKS.md, PROGRESS.md
 - notes: 2026-10-12 親が足した。MEASURE-UPLOAD（RecordFrameCommand ≤ 1 ms）・RT-PASSES（rt の上位のパスから監査）・MEASURE-RT（RG.Record.* の区間）が描画スレッドの区間の値を使うので、GPU の表の項目の前に置く。
-
 
 ## SCN-MEGA-GPU-SCENE-PREP: シェーダーのインスタンスの読み方を 1 つの関数とメッシュ表へ寄せ、表の更新を共通の前段に置く（準備・見た目は不変）
 - status: done
@@ -781,6 +773,7 @@
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -Views default -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GameArgs stress-entities=50000 -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-STRESS-NEAR-CLIP`
 - paths: Game/GameModes/MegaStress, Game/Scenes/SceneCatalog.h, TASKS.md, PROGRESS.md
 - notes: 2026-10-12 SCN-MEGA-MEASURE-UPLOAD（反復 19）の 1% 移動の連続撮影を開いて見つけた。静止・1% 移動の撮影と、前の節目（SCN-MEGA-MEASURE-CPU）の撮影にも同じ量（黒い画素 6,033〜6,086）であり、移動・この節目の改修とは関係のない前からの欠陥。拡大は f121 の (900,820)〜(1300,1080)。
+
 ## SCN-ECS-RT-PLAN: 記録の前に、確保・保留コマンド・バリアの layout を直列で決める
 - status: done
 - done-when: 設計 1.13 の記録の前の計画と、RHI の明示の old/new のバリア、最終の layout の書き戻しが入る。記録はまだ 1 本のリスト。`RenderGraphParallelPlanTest`（RenderGraphCompileTest の束）が、計画した layout が今の逐次の実行の layout と全バリアで一致することを確かめる。Execute の中で自分でバリアを張るパスの一覧を PROGRESS に書く。
@@ -823,8 +816,6 @@
 - paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Game/GameApplicationHandler.cpp, TASKS.md, PROGRESS.md
 - notes: 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。 2026-10-12 親: 評価の 2 周目の残り（VisibilityResolve の定数のテクスチャの作成の禁止が戻らない退行）は SCN-ECS-FIX-VISRESOLVE-CONST で直し、通ったら done にする。
 
-
-
 ## SCN-ECS-FIX-VISRESOLVE-CONST: 並列記録のフレームの後でも、未キャッシュの材質の定数のテクスチャを作れるようにする
 - status: done
 - done-when: `VisibilityResolvePass` の定数のテクスチャ（金属度・粗さ・AO の灰色）の作成を、直列の準備段で許可して要るものを作り、Execute（区間の記録）の間だけ禁止する（今は Parallel のフレームの Execute が `m_bTextureCreationAllowed=false` にした後、準備段が許可し直さないので、次のフレームに現れた未キャッシュの定数が `GetConstantGrayTexture` で nullptr になり、既定の黒・中間灰に置き換わる。off では作れるので on と off で描画が分かれる。`VisibilityResolvePass.cpp` 469・1006・1186 行付近）。未キャッシュの定数を持つ材質を途中のフレームで足したとき、on と off で同じ定数のテクスチャが使われることを、既存の Rendering の CPU の試験の束で確かめる（新しい実行ファイルは足さない）。起動画面の比較が on・off とも pass。通ったら SCN-ECS-RT-PASSES の status を done にし、`blocked/SCN-ECS-RT-PASSES.md` に解消を書き足す（残りの指摘はこの 1 点だけ）。
@@ -833,6 +824,7 @@
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -GameArgs render-parallel-record=off -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-ECS-FIX-VISRESOLVE-CONST-off`
 - paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
 - notes: 2026-10-12 親が足した。SCN-ECS-RT-PASSES の評価の 2 周目の指摘（NEXT_FINDINGS の反復 34）。ToneMapping の LUT の転送を準備段へ移した直しは評価者が確認済み。危険地帯（RenderThread）。 2026-10-12 親: SCN-ECS-MEASURE-RT が既定を off にしたので、1 本目の撮影は `render-parallel-record=on` を明示する。
+
 ## SCN-ECS-MEASURE-RT: 節目の計測: 並列の記録の効果と安全を測る
 - status: done
 - done-when: バナナ 1万本 overview と mega-stress 5万個で、on と off の rt の median と p95、`RenderGraph.Execute`、GPU、ワーカーの統計（JobSystem.h:133）、`RG.Record.*` の区間ごとの時間と記録したスレッドの数を PROGRESS の表に書く。合格は、on の rt の p95 が off 以下で、Debug の起動画面（on）で検証レイヤーのエラーが 0（Threading を含む）。外れたら off を既定にし、`SCN-ECS-FIX-<名前>` を足す。
@@ -1006,6 +998,7 @@
 - verify: `python -c "import re,sys;t=open(r'.harness/runs/startup-capture/SCN-ECS-FIF-DYNAMIC-UBO/default.Game.log',encoding='utf-8',errors='replace').read();ok=re.search(r'FRAME_RESOURCE_UNPROTECTED_SUMMARY count=\d+',t) and not re.search(r'FRAME_RESOURCE_UNPROTECTED resource=\S+ pass=(GBufferPass|ForwardPass|ShadowMapPass)\b',t);sys.exit(0 if ok else 1)"`
 - paths: Library/Core/Public/Rendering/DynamicUniformAllocator.h, Library/Core/Private/Rendering/DynamicUniformAllocator.cpp, Library/Core/Private/Rendering, Library/Core/Public/Rendering, TASKS.md, PROGRESS.md
 - notes: SCN-ECS-FIF-REWRITE-GUARD（反復 58）の起動画面・周回では、ShadowMapPass の `DynUBO_Slot#`（DynamicUniformAllocator の UBO）と、その記述子セット（初期化で作った分は `RenderingCoordinator.DescriptorSet`、Execute の中で Grow した分は `ShadowMapPass.DescriptorSet` の名前で出る）が `FRAME_RESOURCE_UNPROTECTED` に出た。GBufferPass・ForwardPass は起動画面・周回のシーンでは動いていない（DebugDrawPass も同じ allocator を使う。SCN-ECS-FIF-DEBUGDRAW）。SCN-ECS-FIF-AUDIT（反復 43）で足した項目を、2026-10-12 親が足した（ユーザーの要望: フレームのデータが消える時期などを使う側が気にせずに、ImGui やデバッグ描画などの描画を足せる仕組みにする。パスごとに飛行中のスロットを持たせる直しをやめ、共通の仕組みから借りる形にした。Sol の批評を反映）。危険地帯（RenderThread・資源の寿命）。 2026-10-12 親: 記述子の借りの CPU の時間の比べを外した（mega-stress はこの経路を通らず、今のシーンはこの経路の物体が少ないので、測っても守る対象が無い。借りた数・書き込み数は `FrameResource.Descriptor.*` でログに出ており、節目の SCN-ECS-MEASURE-FIF で実際のシーンの記録の時間と一緒に見る）。 2026-10-12 親: 評価の 2 周目はランナーが確定前の古い完了条件（性能の条件つき）で依頼していたため、今の完了条件で評価をやり直した（Sol は混雑で応答なし、別文脈の opus の評価者で PASS。GBufferPass・ForwardPass の未保護 0 は起動画面で描画を積んでいるか未確認で、コードの照合による）。done にした。
+
 ## SCN-ECS-FIF-LIGHTING: LightingPass のフレームごとのデータを借りる形へ移す
 - status: done
 - done-when: `LightingPass` の照明の組（`m_ExecuteResourceSets`。LightData・LightArray・VSM のサンプル／スライスのバッファと記述子）、RTGI の定数（`m_RTGIComputeParametersBuffer`）・発光の表（`m_RTGIComputeEmitterBuffer`）・RTGI と denoise の記述子を、フレームの持ち主から借りる形へ移し、パスのコードから飛行中の番号・フレームごとの組の扱いを消す。RTGI の instance の表（`m_RTGIComputeInstanceDataBuffer`。今は変わったら表全体を `Update` する。`LightingPass.cpp` 3831・4111 行付近）は、持ち続ける表を GPU だけが読む資源にし、変わったフレームに表全体を借りた領域から通常の記録先へコピーする（コピーの前の読みとの依存、コピーの後のシェーダの読みへの依存をバリアで明示し、同じフレームの 2 回目の Execute も守る。GPU だけの資源への `Update` は同期の単発提出〔`VulkanBuffer.cpp` 194 行付近〕に入るので使わない）。「アップロード済み」の版は提出の成功で確定し、中止のときは持ち越さない（例外の catch で印を落とす今の直しの役目を保つ）。行ごとの差分のコピーはこの項目ではしない。RTGI の履歴と denoise の出力は GPU だけが使うのでメンバのまま。LightingPass の `FRAME_RESOURCE_UNPROTECTED` が 0、起動画面の比較（`indirect_lighting=rtgi`）が pass。
@@ -1014,6 +1007,7 @@
 - verify: `python -c "import re,sys;t=open(r'.harness/runs/startup-capture/SCN-ECS-FIF-LIGHTING/default.Game.log',encoding='utf-8',errors='replace').read();ok=re.search(r'FRAME_RESOURCE_UNPROTECTED_SUMMARY count=\d+',t) and not re.search(r'FRAME_RESOURCE_UNPROTECTED resource=\S+ pass=(LightingPass)\b',t);sys.exit(0 if ok else 1)"`
 - paths: Library/Core/Public/Rendering/LightingPass.h, Library/Core/Private/Rendering/LightingPass.cpp, Library/Core/Private/Rendering, Library/Core/Public/Rendering, TASKS.md, PROGRESS.md
 - notes: SCN-ECS-FIF-AUDIT（反復 43）で足した項目を、2026-10-12 親が足した（ユーザーの要望: フレームのデータが消える時期などを使う側が気にせずに、ImGui やデバッグ描画などの描画を足せる仕組みにする。パスごとに飛行中のスロットを持たせる直しをやめ、共通の仕組みから借りる形にした。Sol の批評を反映）。照明の VSM の統計の読み戻しは SCN-ECS-FIF-READBACK で共通の口へ移す。Debug の `RTGIDiffuseIndirectVulkanTest` が関係するなら回す。危険地帯（RenderThread・資源の寿命）。 2026-10-12 親: 記録の時間の確かめ（`RG.Record.LightingPass` ≤ 0.5 ms）は準備の途中では測らず、節目の SCN-ECS-MEASURE-FIF へ移した。
+
 ## SCN-FIX-SKINNED-PATH-TEST: SkinnedRenderPathContractTest を直す（デバッグ描画の移し替えから落ちている）
 - status: done
 - done-when: Debug の `SkinnedRenderPathContractTest`（1849 行付近 `packet.Stats.SkinnedGBufferRecordedDraws == 1` の assert）は、SCN-ECS-FIF-DEBUGDRAW のコミット 517bdf0a から落ちている（親 517bdf0a~1 では通る。反復 66 の調べ）。517bdf0a の差分を読み、試験の期待が古いのか実装の退行なのかを分けて直す（期待が古いだけなら今の契約に合わせて期待を直し、根拠を PROGRESS に書く。退行なら実装を直す）。assert で止まって走っていなかった後ろの検査も走って pass する。Debug で pass。
@@ -1030,6 +1024,7 @@
 - verify: `python -c "import re,sys;t=open(r'.harness/runs/startup-capture/SCN-ECS-FIF-POST-A/default.Game.log',encoding='utf-8',errors='replace').read();ok=re.search(r'FRAME_RESOURCE_UNPROTECTED_SUMMARY count=\d+',t) and not re.search(r'FRAME_RESOURCE_UNPROTECTED resource=\S+ pass=(TemporalAAPass|BloomPass|ToneMappingPass|SSAOPass|MotionBlurPass)\b',t);sys.exit(0 if ok else 1)"`
 - paths: Library/Core/Public/Rendering/TemporalAAPass.h, Library/Core/Private/Rendering/TemporalAAPass.inl, Library/Core/Public/Rendering/BloomPass.h, Library/Core/Private/Rendering/BloomPass.cpp, Library/Core/Public/Rendering/ToneMappingPass.h, Library/Core/Private/Rendering/ToneMappingPass.cpp, Library/Core/Public/Rendering/SSAOPass.h, Library/Core/Private/Rendering/SSAOPass.cpp, Library/Core/Public/Rendering/MotionBlurPass.h, Library/Core/Private/Rendering/MotionBlurPass.inl, TASKS.md, PROGRESS.md
 - notes: SCN-ECS-FIF-AUDIT（反復 43）で足した項目を、2026-10-12 親が足した（ユーザーの要望: フレームのデータが消える時期などを使う側が気にせずに、ImGui やデバッグ描画などの描画を足せる仕組みにする。パスごとに飛行中のスロットを持たせる直しをやめ、共通の仕組みから借りる形にした。Sol の批評を反映）。危険地帯（資源の寿命）。 2026-10-13 親: 評価の 1 周目（run 20261013-230533 の反復 1）は、verify・再検証・起動画面の比較・対象 5 パスの未保護 0 を確かめた上で、無効にした `RenderGraphCompileTest` の ToneMapping の検査が偽デバイスの共有レイアウトの欠けで通らないことだけを理由に差し戻した。ユーザーの方針で無効の試験は合否に使わないので、親が done にした。
+
 ## SCN-ECS-FIF-POST-B: SSR・DoF・Volumetrics・Vignette・FXAA・Upscale・HiZ のフレームごとのデータを借りる形へ移す
 - status: done
 - done-when: SCN-ECS-FIF-POST-A と同じ直しを次のパスに行う: `SSRPass`（`m_ParamsBuffer`・`m_DescriptorSet`）、`DepthOfFieldPass`（`m_ParamsBuffer`・Gather／Resample の記述子）、`VolumetricsPass`（`m_ParamsBuffer`・`m_DescriptorSet`）、`VignettePass`（`m_ParamsBuffer`・`m_DescriptorSet`）、`FXAAPass`（`m_ParamsBuffer`・`m_DescriptorSet`）、`UpscalePass`（`m_DescriptorSet`）、`HiZPyramidPass`（深度が替わったフレームに書き換える `m_DescriptorSets[0]`）。 パスのコードから飛行中の番号・フレームごとの組（`FrameUseRing` を含む）の扱いを持たない。初期化で 1 回だけ書くもの（LUT・レンズの汚れ・ミップごとの作成時の定数）と GPU だけが使う資源（TAA の履歴・HiZ のピラミッド）はメンバのまま。対象のパスの `FRAME_RESOURCE_UNPROTECTED` が 0。起動画面の比較が pass。起動画面で無効のパスは、ビルドとコードの照合で確かめて PROGRESS に書く（撮影を増やさない）。
@@ -1038,6 +1033,7 @@
 - verify: `python -c "import re,sys;t=open(r'.harness/runs/startup-capture/SCN-ECS-FIF-POST-B/default.Game.log',encoding='utf-8',errors='replace').read();ok=re.search(r'FRAME_RESOURCE_UNPROTECTED_SUMMARY count=\d+',t) and not re.search(r'FRAME_RESOURCE_UNPROTECTED resource=\S+ pass=(SSRPass|DepthOfFieldPass|VolumetricsPass|VignettePass|FXAAPass|UpscalePass|HiZPyramidPass)\b',t);sys.exit(0 if ok else 1)"`
 - paths: Library/Core/Public/Rendering/SSRPass.h, Library/Core/Private/Rendering/SSRPass.cpp, Library/Core/Public/Rendering/DepthOfFieldPass.h, Library/Core/Private/Rendering/DepthOfFieldPass.inl, Library/Core/Public/Rendering/VolumetricsPass.h, Library/Core/Private/Rendering/VolumetricsPass.cpp, Library/Core/Public/Rendering/VignettePass.h, Library/Core/Private/Rendering/VignettePass.cpp, Library/Core/Public/Rendering/FXAAPass.h, Library/Core/Private/Rendering/FXAAPass.cpp, Library/Core/Public/Rendering/UpscalePass.h, Library/Core/Private/Rendering/UpscalePass.cpp, Library/Core/Public/Rendering/HiZPyramidPass.h, Library/Core/Private/Rendering/HiZPyramidPass.cpp, TASKS.md, PROGRESS.md
 - notes: SCN-ECS-FIF-AUDIT（反復 43）で足した項目を、2026-10-12 親が足した（ユーザーの要望: フレームのデータが消える時期などを使う側が気にせずに、ImGui やデバッグ描画などの描画を足せる仕組みにする。パスごとに飛行中のスロットを持たせる直しをやめ、共通の仕組みから借りる形にした。Sol の批評を反映）。危険地帯（資源の寿命）。
+
 ## SCN-ECS-FIF-PRESENT: 表示の合成・Canvas・ImGui のフレームごとのデータを借りる形へ移す
 - status: done
 - done-when: `PresentationPass`（`m_Request.BlitDescriptorSet` を毎フレーム束ね直す）、`PresentationComposer`（`request.BlitDescriptorSet`）、`CanvasView`（層の不透明度の定数 `buffer->Update` と記述子 `descriptorSet->Update` を毎フレーム書く所）の、毎フレーム書く記述子と定数を、フレームの持ち主から借りる形へ移す（作成時に 1 回だけ書く物はそのまま）。済みの ImGui（SCN-ECS-FIF-IMGUI のスロットの配列）も、頂点・インデックス・UBO・記述子を借りる形へ移し、スロットの配列を消す（Mesh2D の経路のバッファの中のオフセットに、借りた切れ端の基点を設定する）。対象の `FRAME_RESOURCE_UNPROTECTED` が 0。起動画面の比較が pass し、ランチャー（Canvas）と ImGui の画面が崩れない。
@@ -1046,6 +1042,7 @@
 - verify: `python -c "import re,sys;t=open(r'.harness/runs/startup-capture/SCN-ECS-FIF-PRESENT/default.Game.log',encoding='utf-8',errors='replace').read();ok=re.search(r'FRAME_RESOURCE_UNPROTECTED_SUMMARY count=\d+',t) and not re.search(r'FRAME_RESOURCE_UNPROTECTED resource=\S+ pass=(PresentationPass|PresentationComposer|CanvasView|CanvasBoardPass|CanvasClearPass|CanvasInlineLayerPass|CanvasOwnRTLayerPass|CanvasLayerCompositePass|ImGuiOverlayPass)\b',t);sys.exit(0 if ok else 1)"`
 - paths: Library/Core/Public/Rendering/PresentationPass.h, Library/Core/Private/Rendering/PresentationPass.cpp, Library/Core/Public/Rendering/PresentationComposer.h, Library/Core/Private/Rendering/PresentationComposer.cpp, Library/Core/Public/Rendering/CanvasView.h, Library/Core/Private/Rendering/CanvasView.cpp, Library/Modules/ImGui, TASKS.md, PROGRESS.md
 - notes: SCN-ECS-FIF-AUDIT（反復 43）で足した項目を、2026-10-12 親が足した（ユーザーの要望: フレームのデータが消える時期などを使う側が気にせずに、ImGui やデバッグ描画などの描画を足せる仕組みにする。パスごとに飛行中のスロットを持たせる直しをやめ、共通の仕組みから借りる形にした。Sol の批評を反映）。ランチャーの見た目は撮影を増やさず、起動の流れ（ランチャーからシーンへ）の周回で崩れないことを確かめる（周回は SWITCH で回す）。危険地帯（資源の寿命）。SCN-ECS-FIF-REWRITE-GUARD（反復 58）: `FRAME_RESOURCE_UNPROTECTED` の `pass=` は RenderGraph のパスのクラス名なので、CanvasView の書き込みは `CanvasBoardPass`（モードで `CanvasClearPass`・`CanvasInlineLayerPass`・`CanvasOwnRTLayerPass`）・`CanvasLayerCompositePass` の名前で出る。verify の照合にこれらを足した。表示の Blit・合成の記述子（`m_BlitDescriptorSets`・`m_CompositeAlphaOverDescriptorSets`）は FIF-FRAME-ORDER の飛行中のスロットごとの組なので「守られている」と登録した（同じフレームの中の重なりは引き続き見る）。
+
 ## SCN-ECS-FIF-RHI-OBJECT-CACHE: 一時の描画先が替わっても framebuffer・render pass・pipeline を毎フレーム作り直さない
 - status: done
 - done-when: 2 フレームを重ねると RenderGraph の一時の資源がスロットごとになり、描画先の texture がフレームごとに交互に替わる。今は各パスが texture の実体を含む署名の変化で作り直す（`ToneMappingPass.cpp` 378 行付近は pipeline まで作り直す。`CompositePass.cpp` 250 行付近は毎回 3 種類を作る）ので、毎フレーム作り直しになる（破棄は遅らせたので壊れはしないが重い）。render pass と pipeline は互換の条件（形式・サンプル数・layout など）を鍵にし、framebuffer は attachment の view の組を鍵にして持ち続ける（見えなくなった鍵は数フレーム後に手放す）。GPU だけが書く一時の資源は CPU から書く領域に混ぜない。開発ビルドのログに作成数（framebuffer・render pass・pipeline。`RHI_CREATE` の行）を出す（統計の仕組みにはつながなくてよい）。開発ビルドの `--rg-transient-slots=2` で一時の資源のスロットを 2 にして（MAX_FRAMES_IN_FLIGHT=1 のまま、描画先が交互に替わる形を作る）、起動画面の撮影の落ち着いた後のフレームの作成数が 0 であることを PROGRESS に書く。起動画面の比較が pass（スロット 2 でも pass）。
@@ -1063,6 +1060,7 @@
 - verify: `python -c "import re,sys;t=open(r'.harness/runs/startup-capture/SCN-ECS-FIF-DDGI/default.Game.log',encoding='utf-8',errors='replace').read();ok=re.search(r'FRAME_RESOURCE_UNPROTECTED_SUMMARY count=\d+',t) and not re.search(r'FRAME_RESOURCE_UNPROTECTED resource=\S+ pass=(DDGIProbePass)\b',t);sys.exit(0 if ok else 1)"`
 - paths: Library/Core/Public/Rendering/DDGIProbePass.h, Library/Core/Private/Rendering/DDGIProbePass.cpp, Library/Core/Private/Rendering/LightingPass.cpp, Library/Core/Public/Rendering, TASKS.md, PROGRESS.md
 - notes: SCN-ECS-FIF-AUDIT（反復 43）で足した項目を、2026-10-12 親が足した（ユーザーの要望: フレームのデータが消える時期などを使う側が気にせずに、ImGui やデバッグ描画などの描画を足せる仕組みにする。パスごとに飛行中のスロットを持たせる直しをやめ、共通の仕組みから借りる形にした。Sol の批評を反映）。同じパスを複数のビューポートで Execute する形も確かめる。危険地帯（資源の寿命）。 2026-10-14 親: 評価の 1 周目の指摘 2（DDGI を有効にした撮影が無い）は、使うシーンが無く判断を変えないので撮影の条件を外した。指摘 1（ビューポートを消して番号が詰まると、消した方の履歴が残った方へ引き継がれる）は直す（ビューの消滅・番号の振り直しで履歴を捨てる）。 2026-10-14 親: 反復 1（run 20261014-005646）は評価の指摘 1 を直すのに paths の外（RenderingCoordinator.cpp）が要るとして止まった。引き継がれるのは同じ volume・プローブ数の履歴だけで、プローブはワールド空間の値なので害が無く、直すには寿命の番号を描画まで通す仕組みが要る（足す価値が無い）。完了条件で受け入れとし、指摘 2（撮影）は前に外したので、1 周目の実装（verify・再検証・起動画面の比較は合格）で done にした。
+
 ## SCN-ECS-FIF-READBACK: 読み戻しの共通の口を作り、ShadowProbe・MegaGeometry・照明の VSM の統計を移す
 - status: done
 - done-when: フレームの持ち主に読み戻しの口を足す: GPU が直接書く読み戻し先の借り（`ShadowProbePass.cpp` 313 行付近の常にマップした統計先・578 行付近の HostRead へのバリア、`MegaGeometryPass.cpp` 2875 行付近の GPU で初期化する統計先の形）と、他の資源からのコピーの両方を 1 つの要求にまとめる。提出が成功したときに実際の提出の通し番号を付け、完了の後に RenderThread で受け取り手へ渡す。受け取り手が結果を受け取るまで、その読み戻し先を使い直さない。受け取り手は取り消せる持ち主と世代（とビュー・ビューポート）で持ち、シーンを出て消えたパスへの生のポインタを残さない。終了時の吐き出し・上限・満杯のときに統計を飛ばす数（`FrameResource.Readback.*`）を決める。`ShadowProbePass`（今は Execute の回数 `ExecuteIndex + 2` で読む時を決める）・`MegaGeometryPass` の統計（`StatsSlot`、`RenderFrameCount + 2 <= 現在`）・照明の VSM の統計をこの口へ移す。MAX_FRAMES_IN_FLIGHT=1 のまま起動画面の比較が pass し、mega-stress の撮影のログに MegaGeometry の統計の行が今と同じ頻度で出る。
@@ -1071,6 +1069,7 @@
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views close -GameArgs stress-entities=50000 -OutDir .harness/runs/scene-capture/SCN-ECS-FIF-READBACK-GATES`
 - paths: Library/Core/Public/Rendering/ShadowProbePass.h, Library/Core/Private/Rendering/ShadowProbePass.cpp, Library/Core/Public/Rendering/MegaGeometryPass.h, Library/Core/Private/Rendering/MegaGeometryPass.cpp, Library/Core/Private/Rendering, Library/Core/Public/Rendering, TASKS.md, PROGRESS.md
 - notes: SCN-ECS-FIF-AUDIT（反復 43）で足した READBACK-GATES を、2026-10-12 親が足した（ユーザーの要望: フレームのデータが消える時期などを使う側が気にせずに、ImGui やデバッグ描画などの描画を足せる仕組みにする。パスごとに飛行中のスロットを持たせる直しをやめ、共通の仕組みから借りる形にした。Sol の批評を反映）。危険地帯（RenderThread・読み戻し）。 2026-10-12 親: 計測の見直し（ユーザーの指摘「節目に計測を入れても意味があるのかを考えるべき」。計測ごとに、問い・結果で変わる判断・測らずに分からないかの 3 点を書き、書けないものは置かない。Sol の批評を反映）。撮影の GPU 時間は外した（問いは受け取りの時期・頻度・寿命で、ログの行数で分かる）。
+
 ## SCN-ECS-FIF-SYNC-SUBMIT-SCOPE: フレームの途中の同期の単発提出（キュー全体の待ち）を区間と数で見えるようにする
 - status: done
 - done-when: SCN-ECS-MEASURE-FIF の診断のための計装（この項目では性能を測らない）。`VulkanDevice` の単発のコマンドの提出（device-local のバッファ・テクスチャの `Update` の staging、BLAS の同期の構築〔`RenderingCoordinator` の `entry.Structure->Build`〕などが使い、提出の後に `graphicsQueue.waitIdle()` で待つ）は、2 にすると前のフレームの GPU の完了まで RenderThread を止めうる。待ちを区間 `RHI.ImmediateSubmitWait`（呼んだスレッドの区間）で囲み、提出のロックの待ちと GPU の完了の待ちを分け、呼び出しの用途（呼び出し元の名前）・スレッド・描画フレームと結び付けて、開発ビルドで撮影のログへ出す（`IMMEDIATE_SUBMIT caller=<名前> thread=<名前> count=<n> max_per_frame=<n>` を呼び出し元ごと。Release では数えない）。呼び出し側は変えない（直すかは MEASURE-FIF で阻害した呼び出しが分かってから。ただし構造上毎フレーム同期の提出をしていて、なくす直しが決まっている所はこの項目で直してよい）。MAX_FRAMES_IN_FLIGHT=1 のまま起動画面の比較が pass し、起動画面の撮影のログに `IMMEDIATE_SUBMIT` が出る。
@@ -1138,6 +1137,7 @@
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-ECS-RT-PARALLEL-WIDEN-on`
 - paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Game/GameApplicationHandler.cpp, Test/Core/Rendering, TASKS.md, PROGRESS.md
 - notes: 2026-10-12 親が SCN-ECS-FIX-RT-PARALLEL-DEFAULT（SCN-ECS-MEASURE-RT が足した。on と off の rt の p95 を揺れ込みで比べる）を置き換えた。rt の p95 の比べは揺れで決まり狙いが無いため。危険地帯（RenderThread）。 2026-10-12 親: 計測の見直し（ユーザーの指摘「節目に計測を入れても意味があるのかを考えるべき」。計測ごとに、問い・結果で変わる判断・測らずに分からないかの 3 点を書き、書けないものは置かない。Sol の批評を反映）。0.5 ms・0.2 ms の閾値は目標から来ていないので外した。
+
 ## SCN-MEGA-BVH-LEAF-SPLIT: BVH を持たないメッシュに、葉 8 クラスタ以下の階層の BVH を作る（準備）
 - status: done
 - done-when: MegaGeometryResourceStore が、v1.0・手続き・実行時に作るメッシュ（BVH が無いもの）に、葉の上限 8 クラスタ（`CookedMeshFormat.h` 71 行付近）を守る多段の BVH を作る（空間で分けて葉を作り、上の段を組む）。作った BVH の検査（全クラスタが 1 回ずつ葉にある・節の境界が子を包む）を開発ビルドで行い、`MEGA_BVH_BUILD violations=0`。まだ描画には使わない。起動画面の比較が pass。
@@ -1307,6 +1307,7 @@
 - paths: Assets/AssetSets, Scripts, Tools/ComfyWorkflows, TASKS.md, PROGRESS.md
 - notes: 2026-10-10 親の調べ: `adobe_ruin` の 3D 化が 2 反復とも 2000 秒を超えて終わらなかった（`build/ComfyUI.log` で形の段の出力が 4440 万面、続く質感の段で止まる。見張り塔は 222 秒）。生成スクリプトに、定義ごとの `upsample_resolution`（既定 1536。`Trellis2UpsampleStage` の `target_resolution`）と、1体あたりの上限時間（既定 15 分。超えたら ComfyUI の `/interrupt` で止め、`upsample_resolution` を 1024 にして 1 回だけやり直す。やり直しも超えたら失敗として次の id へ進む）を足す。1 反復の壁時計（40 分）を超えないよう、ComfyUI の起動を含めて 1 反復の生成は合計 30 分以内に収め、収まらない分は manifest のあるものを飛ばして次の反復で続ける。 2026-10-10 再開（親が推奨を採った）: 3 種の資産は生成・確認・クックが済んでいる（評価者も確認）。残りは評価者の指摘どおり、生成スクリプトの締切を絶対時刻 1 つにして、参照画像・3D・GLB の取得・復旧（`/queue`）・後処理・終了処理のすべてに効かせ、終了処理の時間を先に取っておき、収まらない生成は次へ繰り越すことだけ。資産は作り直さない。
  2026-10-14 親: 締切の一本化（3bffaf84）を受け入れて閉じた。評価者の残りの指摘（後処理や HTTP のエラー本文の読み取りが長引くと締切を数秒越える）は直さない。合計 30 分の予算は 40 分の壁時計に止められないためのもので、10 分の余裕があり、数秒〜数十秒のはみ出しで変わる判断が無い。後処理を別プロセスへ移すような作り替えはしない。
+
 ## SCN-GEN-BUILDINGS-2: 荒野の建物を3種生成する（風車・給水塔・木造の小屋）
 - status: done
 - done-when: SCN-GEN-BUILDINGS-1 と同じ形で、風車（`windmill`）・給水塔（`water_tower`）・木造の小屋（`wooden_shack`）を生成・確認・クックする。
@@ -1427,46 +1428,14 @@
 - paths: Game/GameModes/Wasteland, Scripts/Terrain, Docs/RenderingValidation, TASKS.md, PROGRESS.md
 - notes: 2026-10-14 親: 反復 13 の評価の差し戻し（空÷地形の比が手本 3.77・撮影 1.28〜1.56）を受けて done-when を分けた。地面が明るいのは材質（ベージュの砂・低木なし）のためで、光の項目では空・雲・影・霞だけを合わせる。
 
-## SCN-WL-HORIZON: 遠景を粗い実地形でつなぐ
-- status: todo
-- done-when: 1 m タイルの範囲（約 10 km 四方）のうち切り出しの外側を、粗い間隔（例 8〜16 m）の遠景の地形として焼き、近景の区画の外周と隙間・段差なくつなぐ（近景の外周の高さへ寄せる帯を置く）。手本の写真に写る稜線（北の Cedar Mesa の崖など）が入る範囲にし、遠クリップを合わせる。ridge と overview の撮影を開き、外周の板・壁・継ぎ目・浮いた縁が無く、地平線に実地形の稜線が見えることを確かめる。
-- verify: `cmake --build build --config Debug --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -OutDir .harness/runs/scene-capture/SCN-WL-HORIZON`
-- paths: Scripts/Terrain, Tools/AssetCook, Library/Core/Public/Rendering/Terrain, Library/Core/Private/Rendering/Terrain, Game/GameModes/Wasteland, Assets/AssetSets, TASKS.md, PROGRESS.md
-- notes: 地形の端の高さを外へ延ばす作り方は使わない（四角い外周から板や壁が伸びる）。1 m タイルの外が要るなら、ファイル名とサイズを書いて BLOCKED（ユーザーの許可が要る）。
-
 ## SCN-WL-REFERENCE-CAPTURE: 手本の写真と同じ構図の視点と、並べた比較画像を作る
 - status: todo
-- done-when: 手本の写真ごとに、写真に合う名前付き視点（位置・向き・画角・時刻。推定した条件を書き、「同じ」とは書かない）を足し、写真と撮影を左右に並べた PNG を書くスクリプト `Scripts/Terrain/CompareReference.py` を作る。比較画像を開いて、ビュート・メサの配置と輪郭が対応することを確かめ、目立つ差（形・色・尺度・地表の種類）を `Docs/RenderingValidation/WastelandReference.md` に書く。以後の荒野の項目は、この視点と比較画像で判断する。他の地域の写真は材質と光の参考だけに使う。
+- done-when: 手本の写真ごとに、写真に合う名前付き視点（位置・向き・画角・時刻。推定した条件を書き、「同じ」とは書かない）を足し、写真と撮影を左右に並べた PNG を書くスクリプト `Scripts/Terrain/CompareReference.py` を作る（今の `CompareLight.py` を広げてよい）。品質を見る撮影は 1920×1080 以上で撮る（1280×720 では粗さが判断を狂わせる）。比較画像には、地面・崖・空の領域ごとの平均の色（線形）と明るさを写真と撮影の両方で書き、地表の材質の平均のアルベドも書く。比較画像を開いて、ビュート・メサの配置と輪郭が対応することを確かめ、目立つ差（形・色・明るさ・尺度・地表の種類・欠けている物）を差の大きい順に `Docs/RenderingValidation/WastelandReference.md` に書く。以後の荒野の項目は、この視点と比較画像で判断する。他の地域の写真は材質と光の参考だけに使う。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -OutDir .harness/runs/scene-capture/SCN-WL-REFERENCE-CAPTURE`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-WL-REFERENCE-CAPTURE`
 - verify: `python Scripts/Terrain/CompareReference.py --capture .harness/runs/scene-capture/SCN-WL-REFERENCE-CAPTURE --verify`
 - paths: Game/GameModes/Wasteland, Game/Scenes/SceneCatalog.h, Scripts/Terrain, Docs/RenderingValidation, TASKS.md, PROGRESS.md
-- notes: 写真の加工やホワイトバランスが分からないので、RGB の値の一致を合格の条件にしない（PSNR・SSIM も使わない）。
-
-## SCN-WL-OUTPOST: 前哨地を自然に平らな所へ置き直し、建物と道の範囲だけ均す
-- status: todo
-- done-when: SCN-WL-REFERENCE-SELECT で選んだ平らな場所へ、前哨地（建物 6 種 8 棟・門・道）を置き直し、建物の足元と道の範囲だけ高さ場を緩い平面へ寄せる（境で高さと傾斜を滑らかにつなぎ、円形の継ぎ目を作らない）。造成は高さ場の規則として持ち、クックと Game が同じ値を使う（区画を焼き直す）。outpost の視点を置き直す。outpost・ground の撮影を開き、建物が浮かず埋まりすぎず、造成の境が見えないことを確かめる。散布の除外範囲（建物・道）を決めて書く。`wasteland` の cycle smoke 3 周が pass。
-- verify: `cmake --build build --config Debug --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -OutDir .harness/runs/scene-capture/SCN-WL-OUTPOST`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Scenes wasteland -Cycles 3`
-- paths: Game/GameModes/Wasteland, Game/Scenes/SceneCatalog.h, Library/Core/Public/Rendering/Terrain, Library/Core/Private/Rendering/Terrain, Tools/AssetCook, Assets/AssetSets, Scripts, TASKS.md, PROGRESS.md
-
-## SCN-WL-CLIFF-ASSETS: 砂岩の崖の素材を揃える
-- status: todo
-- done-when: 主役の崖（赤褐色の砂岩、水平な地層と剥がれた面）に合う岩・崖のメッシュを選んでクックする。Poly Haven（CC0）で合うものを探し、無ければ、DEM の崖の一部を高解像度のメッシュにする・ComfyUI で生成する、などから選ぶ（理由を書く）。地形の砂岩の色と馴染むように材質の色を合わせる。代表の 1〜2 個を cliff の視点の近くに置いた撮影を開いて確かめる。
-- verify: `cmake --build build --config Debug --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -OutDir .harness/runs/scene-capture/SCN-WL-CLIFF-ASSETS`
-- paths: Assets/AssetSets, Scripts, Tools/ComfyWorkflows, Game/GameModes/Wasteland, TASKS.md, PROGRESS.md
-- notes: Poly Haven のダウンロードはユーザーが許可済み（2026-10-14）。
-
-## SCN-WL-CLIFF-GEOMETRY: DEM に無い崖の立体を補う
-- status: todo
-- done-when: 主役の崖と近景に限って、崖のメッシュで張り出し・割れ目・侵食の棚を補う（崖の面に沿って向きと大きさを合わせ、地形の面に食い込ませて継ぎ目を隠す）。cliff と手本の崖の比較画像を開き、崖の輪郭と陰影が、DEM だけの丸い斜面から立体のある崖になったことを確かめる。
-- verify: `cmake --build build --config Debug --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -OutDir .harness/runs/scene-capture/SCN-WL-CLIFF-GEOMETRY`
-- paths: Game/GameModes/Wasteland, Scripts/Terrain, Assets/AssetSets, TASKS.md, PROGRESS.md
-- notes: DEM は 1 地点に 1 つの高さしか持たないので、垂直な面・張り出し・深い割れ目は地形のメッシュでは出ない。
+- notes: 写真の加工やホワイトバランスが分からないので、RGB の値の一致を合格の条件にしない（PSNR・SSIM も使わない）。値は差の向きと大きさを見るために使う。
 
 ## SCN-WL-MASKS-GEOM: 基本の地表の分類の地図を作る
 - status: todo
@@ -1479,63 +1448,89 @@
 - status: todo
 - done-when: 地形の材質（今の 3 層）の重みを、地図から取る（傾斜・高さの式は地図が無い所の予備にする）。地図の座標を地形と揃え、MegaGeometry のラスタと可視バッファの解決の両方で効く。地形の LOD が変わっても分類が大きく動かない。overview・cliff の撮影を開き、露岩・崖錐・地表の分かれ方が地図どおりで、手本の比較画像で分布が近づいたことを確かめる。Rendering3DTest の撮影が変わらない。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -OutDir .harness/runs/scene-capture/SCN-WL-MATERIAL-MASKS`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-WL-MATERIAL-MASKS`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -OutDir .harness/runs/startup-capture/SCN-WL-MATERIAL-MASKS`
 - paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game/GameModes/Wasteland, Assets/AssetSets, Scripts, TASKS.md, PROGRESS.md
 - notes: 危険地帯（描画）。層を 3 つから増やすことは、この計画の中心にしない（材質のデータ・束縛・複数の描画経路に及ぶ）。
 
-## SCN-WL-MATERIAL-PALETTE: 素材と実寸と大きな色の分布を整える
+## SCN-WL-MATERIAL-PALETTE: 素材と実寸と物理的な明るさを整える
 - status: todo
-- done-when: 3 層を、赤褐色の砂岩・岩屑と礫・細粒の地面（赤い砂と乾いた土）の素材に替え（Poly Haven から合う素材を足す）、各素材の模様の大きさを実寸に合わせる（礫の粒の大きさ・砂岩の割れ目の間隔）。今の色の揺らぎを地表の分類に沿わせ、全域を覆う同じ模様の繰り返しを減らす。手本の比較画像で、色合い・素材の種類・模様の大きさが近づいたことを確かめる。
+- done-when: 3 層を、赤褐色の砂岩・岩屑と礫・細粒の赤い土の写真由来の素材に替える（Poly Haven と ambientCG の CC0 から選ぶ。git 管理外に落とし、名前・出典・大きさを記録する）。各素材の平均のアルベド（線形）を実在の値の範囲に合わせる: 赤い砂漠の土 0.15〜0.25、赤褐色の砂岩 0.20〜0.35、岩屑と礫 0.15〜0.30（測った値と根拠を PROGRESS に書く。今の地面は 0.65 で雪に近い）。各素材の模様の大きさを実寸に合わせる（礫の粒・砂岩の割れ目の間隔）。今の色の揺らぎを地表の分類に沿わせ、全域を覆う同じ模様の繰り返しを減らす。手本の比較画像（1920×1080）を開き、地面の色と明るさが写真に近づいた（白っぽいベージュでない）こと、素材の種類と模様の大きさが近いことを確かめる。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -OutDir .harness/runs/scene-capture/SCN-WL-MATERIAL-PALETTE`
-- paths: Assets/Shaders, Library/Core/Private/Rendering, Game/GameModes/Wasteland, Assets/AssetSets, Scripts, TASKS.md, PROGRESS.md
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-WL-MATERIAL-PALETTE`
+- verify: `python Scripts/Terrain/CompareReference.py --capture .harness/runs/scene-capture/SCN-WL-MATERIAL-PALETTE --verify`
+- paths: Assets/Shaders, Library/Core/Private/Rendering, Game/GameModes/Wasteland, Assets/AssetSets, Scripts, .gitignore, TASKS.md, PROGRESS.md
+- notes: 2026-10-15 親: ambientCG（CC0）と Poly Haven（CC0）の素材のダウンロードはユーザーが許可済み。写真との差でいちばん大きいのは地面の明るさ（写真 0.14・撮影 0.65、SCN-WL-LIGHT-BASE の比較）。露出やグレーディングで合わせない。
 
 ## SCN-WL-MATERIAL-STRATA: 砂岩の地層と風化の筋を足す
 - status: todo
 - done-when: 崖の砂岩に、厚さの違う層・斜めの交差層理・途切れる帯・硬い層の張り出しを、共通の基準面からの高さでシェーダーが計算して入れる（等間隔の帯にしない）。砂漠ワニスの黒い筋を、崖の上端から流れ落ちる位置に局所的に置く（崖全体へ同じ縦のノイズを掛けない）。cliff と手本の崖の比較画像を開き、帯の厚さ・向き・途切れ方が写真に近く、同じ縞が崖全体に繰り返していないことを確かめる。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -OutDir .harness/runs/scene-capture/SCN-WL-MATERIAL-STRATA`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-WL-MATERIAL-STRATA`
 - paths: Assets/Shaders, Library/Core/Private/Rendering, Game/GameModes/Wasteland, TASKS.md, PROGRESS.md
 - notes: Cedar Mesa 砂岩には水平の層と斜めの交差層理がある（NPS の地質の説明）。
+
+## SCN-WL-HORIZON: 遠景を粗い実地形でつなぐ
+- status: todo
+- done-when: 1 m タイルの範囲（約 10 km 四方）のうち切り出しの外側を、粗い間隔（例 8〜16 m）の遠景の地形として焼き、近景の区画の外周と隙間・段差なくつなぐ（近景の外周の高さへ寄せる帯を置く）。手本の写真に写る稜線（北の Cedar Mesa の崖など）が入る範囲にし、遠クリップを合わせる。ridge と overview の撮影を開き、外周の板・壁・継ぎ目・浮いた縁が無く、地平線に実地形の稜線が見えることを確かめる。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-WL-HORIZON`
+- paths: Scripts/Terrain, Tools/AssetCook, Library/Core/Public/Rendering/Terrain, Library/Core/Private/Rendering/Terrain, Game/GameModes/Wasteland, Assets/AssetSets, TASKS.md, PROGRESS.md
+- notes: 地形の端の高さを外へ延ばす作り方は使わない（四角い外周から板や壁が伸びる）。1 m タイルの外が要るなら、ファイル名とサイズを書いて BLOCKED（ユーザーの許可が要る）。
+
+## SCN-WL-FAR-SHADING: 遠景の地形をちらつかない・汚れない描き方にする
+- status: todo
+- done-when: 遠くの地形の材質が、細かい模様の縮小で斑点やざらつきになる（ユーザーの指摘「遠景が汚すぎる」）のを直す。距離に応じて細かい模様と細かい法線を薄め、遠くは前もって縮小した大きな色と法線（地表の分類と DEM から作る）で描く。細かい法線の鏡面の光り（スペキュラーのエイリアス）を抑える。遠景の稜線とビュートに、写真のような地層の帯と色の差が見える。ground・overview・far の比較画像（1920×1080）を開いて、遠景が写真のように滑らかに色の差で読め、斑点・ざらつき・模様の繰り返しが無いことを確かめる。カメラパスか連続撮影の数枚で、動かしても遠景がちらつかないことを確かめる。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-WL-FAR-SHADING`
+- paths: Assets/Shaders, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Game/GameModes/Wasteland, Scripts/Terrain, Tools/AssetCook, Assets/AssetSets, TASKS.md, PROGRESS.md
+- notes: 危険地帯（描画）。
+
+## SCN-WL-CLIFF-DETAIL: 崖を、地層の段と割れ目のある立体として焼く
+- status: todo
+- done-when: 1 m の DEM では崖が丸く崩れ、垂直な面・段・割れ目が出ない（ユーザーの指摘「崖の表面が現代の CG の水準でない」）。急な斜面と崖の範囲だけを、細かい間隔（0.25 m 程度）で焼き直し、面の法線の向きに、地層に沿った凹凸（硬い層の張り出しと軟らかい層のくぼみ・縦の割れ目・崩れた縁）を足す（高さ場の上下だけでなく面に沿って押し出す）。地層の高さはシェーダーの地層（SCN-WL-MATERIAL-STRATA）と同じ基準で揃える。焼いた崖と周りの地形の継ぎ目が見えない。配置の高さ（岩・建物）は今の高さ場のままでよい。cliff と手本の崖の比較画像（1920×1080）を開き、崖の段と割れ目が影を落とす立体として見え（テクスチャの模様でなく）、網目のような繰り返しが無いことを確かめる。
+- verify: `cmake --build build --config Debug --target Game AssetCook -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CookAssets.ps1 -OnlyLogicalPath "Models/WastelandTerrain/*"`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-WL-CLIFF-DETAIL`
+- paths: Tools/AssetCook, Library/Core/Public/Rendering/Terrain, Library/Core/Private/Rendering/Terrain, Scripts/Terrain, Assets/AssetSets, Assets/Shaders, Game/GameModes/Wasteland, TASKS.md, PROGRESS.md
+- notes: 危険地帯（アセットのクック）。三角形が増えるが、仮想化ジオメトリ（MegaGeometry）で描ける量か確かめる（速さの条件は無い。操作できる程度ならよい）。1 反復で閉じなければ、主役の Battleship Rock だけで先に閉じ、残りの崖を `SCN-WL-CLIFF-DETAIL-ALL` として後ろに足す。
+
+## SCN-WL-REVIEW-1: 節目の確認 1（地面・崖・遠景）をユーザーに渡す
+- status: todo
+- done-when: 手本の全視点の比較画像（写真｜撮影、1920×1080）を撮り直し、1 枚の一覧にまとめ、写真との差の大きい順の所見を `Docs/RenderingValidation/WastelandReference.md` の「確認 1」に書く。評価者は一覧を見て、写真との大きな差（色・明るさ・構造・欠けた物）と、技術の欠陥（浮き・継ぎ目・繰り返し・ちらつき）を挙げる。最後にリポジトリ直下へ中身が `boundary` の `LOOP_STOP` を書き、ランナーをこの反復の後で止める（親がユーザーに一覧を渡し、判定を待つ）。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-WL-REVIEW-1`
+- verify: `python Scripts/Terrain/CompareReference.py --capture .harness/runs/scene-capture/SCN-WL-REVIEW-1 --verify`
+- paths: Scripts/Terrain, Docs/RenderingValidation, TASKS.md, PROGRESS.md
+- notes: 2026-10-15 ユーザー: 品質の確認は節目ごと（3 回程度）にユーザーが見る。
+
+## SCN-WL-OUTPOST: 前哨地を自然に平らな所へ置き直し、建物と道の範囲だけ均す
+- status: todo
+- done-when: SCN-WL-REFERENCE-SELECT で選んだ平らな場所へ、前哨地（建物 6 種 8 棟・門・道）を置き直し、建物の足元と道の範囲だけ高さ場を緩い平面へ寄せる（境で高さと傾斜を滑らかにつなぎ、円形の継ぎ目を作らない）。造成は高さ場の規則として持ち、クックと Game が同じ値を使う（区画を焼き直す）。outpost の視点を置き直す。outpost・ground の撮影を開き、建物が浮かず埋まりすぎず、造成の境が見えないことを確かめる。散布の除外範囲（建物・道）を決めて書く。`wasteland` の cycle smoke 3 周が pass。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-WL-OUTPOST`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Scenes wasteland -Cycles 3`
+- paths: Game/GameModes/Wasteland, Game/Scenes/SceneCatalog.h, Library/Core/Public/Rendering/Terrain, Library/Core/Private/Rendering/Terrain, Tools/AssetCook, Assets/AssetSets, Scripts, TASKS.md, PROGRESS.md
+
+## SCN-WL-CLIFF-ASSETS: 崖の足元の落石と岩塊の素材を揃える
+- status: todo
+- done-when: 崖の下に落ちた砂岩の岩塊（角張った大岩・板状に割れた岩）に合うメッシュを選んでクックする。Poly Haven・ambientCG（CC0）で合うものを探し、無ければ ComfyUI で生成する（理由を書く）。崖の砂岩の色と馴染むように材質を合わせる。代表の 1〜2 個を cliff の視点の近くに置いた撮影（1920×1080）を開き、写真の足元の岩（ground_01・ground_02）と並べて形と色が近いことを確かめる。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-WL-CLIFF-ASSETS`
+- paths: Assets/AssetSets, Scripts, Tools/ComfyWorkflows, Game/GameModes/Wasteland, .gitignore, TASKS.md, PROGRESS.md
 
 ## SCN-WL-MASKS-FLOW: 沢と堆積の分布を足す
 - status: todo
 - done-when: 余白を含む広い範囲で流れの集まり（窪地の処理を含む。描画用の高さは変えない）を求め、対数にした集水面積から沢底の幅を決めて地図に足す。沢底は乾いた細粒の地面にし、砂の吹きだまりは風向（手本から推定）と写真で補う（流量だけで決めない）。overview・ground の撮影を開き、涸れ沢が地形の谷に沿った線として地表の材質に出ることを確かめる。
 - verify: `python Scripts/Terrain/TerrainMasks.py --verify`
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -OutDir .harness/runs/scene-capture/SCN-WL-MASKS-FLOW`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-WL-MASKS-FLOW`
 - paths: Scripts/Terrain, Tools/AssetCook, Assets/AssetSets, Assets/Shaders, Game/GameModes/Wasteland, TASKS.md, PROGRESS.md
-
-## SCN-WL-SCATTER-ROCKS: 大岩と崖錐を置く
-- status: todo
-- done-when: 崖の下の崖錐に、崖の剥離片（角張った大岩・岩）を群れとして置く（大岩の周りに小片が集まり、空白も残す。全域に均等に撒かない）。数は手本の写真の被覆と疎密に合わせる（目標の個数は置かない）。散布の Object（バナナの仕組み）を使う。overview・cliff・ground の撮影と比較画像を開き、崖錐が点の集まりでなく裾の帯として見え、岩が浮いていないことを確かめる。
-- verify: `cmake --build build --config Debug --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -OutDir .harness/runs/scene-capture/SCN-WL-SCATTER-ROCKS`
-- paths: Game/GameModes/Wasteland, Assets/AssetSets, Scripts, TASKS.md, PROGRESS.md
-- notes: RT の選別（120 m・最大 65,536 件）と大量配置の TLAS 更新の直しは、後ろの SCN-MEGA-FIX-RT-SELECT・TLAS-REBUILD にある。RT の影・GI で岩が欠けるなら、その旨を PROGRESS に書いて進める。
-
-## SCN-WL-SCATTER-GRAVEL: 近景の石と礫を足す
-- status: todo
-- done-when: 輪郭と接触の影が読める大きさ（数 cm〜数十 cm）の石・礫を、近景（数十 m まで）の礫の地面と沢底に置き、それより遠くは材質（礫の層）に引き継ぐ（消える距離で目立つ線や点滅を出さない）。画面で 1〜2 画素以下になる粒はジオメトリにしない。ground・outpost の撮影と手本の足元の写真の比較画像を開き、足元の尺度（粒の大きさ・被覆）が写真に近いことを確かめる。カメラパスか連続撮影で、移動中に石の出入りが目立たないことを確かめる。
-- verify: `cmake --build build --config Debug --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -OutDir .harness/runs/scene-capture/SCN-WL-SCATTER-GRAVEL`
-- paths: Game/GameModes/Wasteland, Assets/AssetSets, Assets/Shaders, Library/Core/Private/Rendering, Scripts, TASKS.md, PROGRESS.md
-
-## SCN-CLOUDS-TEMPORAL: 雲を低解像度と時間方向の蓄積で軽くする
-- status: todo
-- done-when: 雲を画面の 1/4〜1/2 の解像度で描き、前のフレームへの再投影で蓄積して、1920×1080・RelWithDebInfo の `wasteland` `overview` で、雲全体（光線の進行・時間の蓄積・拡大の合成）の GPU 時間の p95 が 1.5 ms 以下。超えたら支配する区間に合わせて解像度・ステップ数・再構築の方式を変える。見た目を保って届かないときは未達として done にせず、ユーザーへ渡す。カメラパスの再生中の連続撮影（`--capture-sequence`）の数枚を開いて、カメラを動かしても雲の縁がちらつかず残像を引かないことを確かめる。
-- verify: `cmake --build build --config Debug --target Game -- /m:1`
-- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views overview -GpuTimingFrames 300 -OutDir .harness/runs/scene-capture/SCN-CLOUDS-TEMPORAL`
-- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Scripts, TASKS.md, PROGRESS.md
-- notes: 2026-10-12 親: 計測の見直し（ユーザーの指摘「節目に計測を入れても意味があるのかを考えるべき」。計測ごとに、問い・結果で変わる判断・測らずに分からないかの 3 点を書き、書けないものは置かない。Sol の批評を反映）。1.5 ms は雲の機能の予算として採る（解像度・ステップ数・再構築の方式を選ぶ判断になる）。
 
 ## SCN-GRASS-RENDER: 枯れ草の株をインスタンスで描き、風で揺らす
 - status: todo
 - done-when: 曲がった細い葉を数〜十数枚束ねた枯れ草の株のメッシュ（手続き生成。アルファ抜きを使わない）を、インスタンスの配列（位置・向き・大きさ・色の揺らぎ）から少ない回数の描画（間接描画かインスタンス描画）で描く経路を足し、頂点シェーダーで風（時間と低周波ノイズ。根元は動かず先ほど揺れる）で揺らす。色は乾いた黄土〜灰褐色で、裏面も描く（両面）。影は受ける。`wasteland` の一角に数千株を置いた名前付き視点 `grass` を足し、撮影を開いて草に見える（板やトゲに見えない）こと、時刻を変えた2枚で揺れていることを確かめる。米南西部の植生に合わせ、枯れ草の株に加えて、細い枝の低木（ブラックブラッシュ・モルモンティーのような高さ 0.3〜1 m の株）も同じ経路で描き、手本の足元の写真と並べて形と色が近いことを確かめる。Rendering3DTest の撮影が変わらない。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Views grass -OutDir .harness/runs/scene-capture/SCN-GRASS-RENDER`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -Views grass -OutDir .harness/runs/scene-capture/SCN-GRASS-RENDER`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SCN-GRASS-RENDER`
 - paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Library/Core/Public/Component, Library/Core/Private/Component, Library/Core/CMakeLists.txt, Assets/Shaders, Game, Scripts, TASKS.md, PROGRESS.md
 - notes: 危険地帯（描画）。今のシェーダーに discard が無く、`bTwoSided`（`RenderMaterialStore.cpp` 50 行付近）がカリングに効いているかは未確認。インスタンスを束ねる既存の仕組みは `DrawCommand::AddInstance`（`DrawCommand.h` 421 行付近）。
@@ -1544,44 +1539,75 @@
 - status: todo
 - done-when: 地表の分類の地図（SCN-WL-MASKS-GEOM・FLOW）と手本の写真の疎密で密度を決めて、低木と枯れ草を撒き（露岩・崖錐の岩の上・沢底の流路・建物の足元・道には生えない）、区画ごとに視錐台で外し、距離で密度を下げて 80〜120 m 先で消す（消え方が線にならないよう株ごとのしきい値でフェード）。`ground`・`outpost`・`overview` の撮影を開いて、近くは草むら、遠くは自然に薄くなることを確かめる。性能はこの項目では測らず、SCN-WASTELAND-POLISH で草が目標を超える原因になったときに、カリングとラスタの内訳から密度・距離・LOD を調整する。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -OutDir .harness/runs/scene-capture/SCN-GRASS-SCATTER`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-GRASS-SCATTER`
 - paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Scripts, TASKS.md, PROGRESS.md
 - notes: 2026-10-12 親: 計測の見直し（ユーザーの指摘「節目に計測を入れても意味があるのかを考えるべき」。計測ごとに、問い・結果で変わる判断・測らずに分からないかの 3 点を書き、書けないものは置かない。Sol の批評を反映）。
 
+## SCN-WL-SCATTER-ROCKS: 大岩と崖錐を置く
+- status: todo
+- done-when: 崖の下の崖錐に、崖の剥離片（角張った大岩・岩）を群れとして置く（大岩の周りに小片が集まり、空白も残す。全域に均等に撒かない）。数は手本の写真の被覆と疎密に合わせる（目標の個数は置かない）。散布の Object（バナナの仕組み）を使う。overview・cliff・ground の撮影と比較画像を開き、崖錐が点の集まりでなく裾の帯として見え、岩が浮いていないことを確かめる。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-WL-SCATTER-ROCKS`
+- paths: Game/GameModes/Wasteland, Assets/AssetSets, Scripts, TASKS.md, PROGRESS.md
+- notes: RT の選別（120 m・最大 65,536 件）と大量配置の TLAS 更新の直しは、後ろの SCN-MEGA-FIX-RT-SELECT・TLAS-REBUILD にある。RT の影・GI で岩が欠けるなら、その旨を PROGRESS に書いて進める。
+
+## SCN-WL-SCATTER-GRAVEL: 近景の石と礫を足す
+- status: todo
+- done-when: 輪郭と接触の影が読める大きさ（数 cm〜数十 cm）の石・礫を、近景（数十 m まで）の礫の地面と沢底に置き、それより遠くは材質（礫の層）に引き継ぐ（消える距離で目立つ線や点滅を出さない）。画面で 1〜2 画素以下になる粒はジオメトリにしない。ground・outpost の撮影と手本の足元の写真の比較画像を開き、足元の尺度（粒の大きさ・被覆）が写真に近いことを確かめる。カメラパスか連続撮影で、移動中に石の出入りが目立たないことを確かめる。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-WL-SCATTER-GRAVEL`
+- paths: Game/GameModes/Wasteland, Assets/AssetSets, Assets/Shaders, Library/Core/Private/Rendering, Scripts, TASKS.md, PROGRESS.md
+
+## SCN-WL-REVIEW-2: 節目の確認 2（低木・岩・礫）をユーザーに渡す
+- status: todo
+- done-when: SCN-WL-REVIEW-1 と同じ形で、手本の全視点の比較画像の一覧と所見（「確認 2」）を書き、`LOOP_STOP`（中身 `boundary`）を書いてランナーを止める。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-WL-REVIEW-2`
+- verify: `python Scripts/Terrain/CompareReference.py --capture .harness/runs/scene-capture/SCN-WL-REVIEW-2 --verify`
+- paths: Scripts/Terrain, Docs/RenderingValidation, TASKS.md, PROGRESS.md
+
 ## SCN-WL-RTGI-COLOR: 照り返しの入力を成立させる
 - status: todo
-- done-when: 荒野での RTGI の実行状態（有効か・fallback の有無）をログで確かめ、二次の当たりの色が地形の材質を反映しないこと（`Assets/Shaders/RTGI/DiffuseIndirect.comp` 912 行付近はインスタンスの定数の色を使う）を直す。まずは地表の分類の地図と層の代表の色（素材の平均の色）で当たりの色を決める程度でよい（材質の評価の共通化まで広げない）。同じ条件の RTGI の入・切の撮影を並べて開き、崖の影の中と谷の底に砂の暖かい照り返しが入ることを確かめる。Rendering3DTest の撮影が変わらない（変わるなら、差がこの変更だけによることを確かめて基準を再承認する）。
+- done-when: 荒野での RTGI の実行状態（有効か・fallback の有無）をログで確かめ、二次の当たりの色が地形の材質を反映しないこと（`Assets/Shaders/RTGI/DiffuseIndirect.comp` 912 行付近はインスタンスの定数の色を使う）を直す。まずは地表の分類の地図と層の代表の色（素材の平均の色）で当たりの色を決める程度でよい（材質の評価の共通化まで広げない）。パストレーサーの当たりの色も同じ近似にし、同じ視点のパストレースの撮影（主の描画をパストレーサーにして累積）ができるようにする。同じ条件の RTGI の入・切の撮影を並べて開き、崖の影の中と谷の底に砂の暖かい照り返しが入ることを確かめる。Rendering3DTest の撮影が変わらない（変わるなら、差がこの変更だけによることを確かめて基準を再承認する）。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -OutDir .harness/runs/scene-capture/SCN-WL-RTGI-COLOR`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-WL-RTGI-COLOR`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -OutDir .harness/runs/startup-capture/SCN-WL-RTGI-COLOR`
 - paths: Assets/Shaders, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Game/GameModes/Wasteland, Docs/RenderingValidation, Scripts, TASKS.md, PROGRESS.md
 - notes: 危険地帯（描画）。RTGI は既定で有効で、荒野で切ってはいない（2026-10-14 Sol の確認）。
 
 ## SCN-WL-LIGHT-FINAL: 影と間接光を整える
 - status: todo
-- done-when: 谷・崖の影・前哨地で、暖かい照り返しと空の青を手本の写真に合わせて整える（露出でまとめて帳尻を合わせない。谷の空の遮り・地面からの反射・遠い崖の影はそれぞれ原因を分けて直す）。カメラパスか連続撮影で、移動中の粒・残像・遮蔽の欠けが目立たないことを確かめる。比較画像を開いて、影の中の色と明るさが写真に近づいたことを確かめる。
+- done-when: 谷・崖の影・前哨地で、暖かい照り返しと空の青を手本の写真に合わせて整える（露出でまとめて帳尻を合わせない。谷の空の遮り・地面からの反射・遠い崖の影はそれぞれ原因を分けて直す）。カメラパスか連続撮影で、移動中の粒・残像・遮蔽の欠けが目立たないことを確かめる。同じ視点のパストレースの撮影を正解として並べ、RTGI の照り返し・空の遮り・影の色の誤りを見つけて直す。比較画像（写真｜撮影｜パストレース、1920×1080）を開いて、影の中の色と明るさが写真とパストレースに近づいたことを確かめる。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -OutDir .harness/runs/scene-capture/SCN-WL-LIGHT-FINAL`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-WL-LIGHT-FINAL`
 - paths: Game/GameModes/Wasteland, Assets/Shaders, Library/Core/Private/Rendering, Scripts, Docs/RenderingValidation, TASKS.md, PROGRESS.md
 
+## SCN-CLOUDS-TEMPORAL: 雲を低解像度と時間方向の蓄積で軽くする
+- status: backlog
+- done-when: 雲を画面の 1/4〜1/2 の解像度で描き、前のフレームへの再投影で蓄積して、1920×1080・RelWithDebInfo の `wasteland` `overview` で、雲全体（光線の進行・時間の蓄積・拡大の合成）の GPU 時間の p95 が 1.5 ms 以下。超えたら支配する区間に合わせて解像度・ステップ数・再構築の方式を変える。見た目を保って届かないときは未達として done にせず、ユーザーへ渡す。カメラパスの再生中の連続撮影（`--capture-sequence`）の数枚を開いて、カメラを動かしても雲の縁がちらつかず残像を引かないことを確かめる。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views overview -GpuTimingFrames 300 -OutDir .harness/runs/scene-capture/SCN-CLOUDS-TEMPORAL`
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Scripts, TASKS.md, PROGRESS.md
+- notes: 2026-10-12 親: 計測の見直し（ユーザーの指摘「節目に計測を入れても意味があるのかを考えるべき」。計測ごとに、問い・結果で変わる判断・測らずに分からないかの 3 点を書き、書けないものは置かない。Sol の批評を反映）。1.5 ms は雲の機能の予算として採る（解像度・ステップ数・再構築の方式を選ぶ判断になる）。 2026-10-15 親: 速さを問わないので外した（雲の見た目は SCN-WASTELAND-POLISH で写真に合わせる）。
+
 ## SCN-DUST: ワールド空間の砂塵を足す
-- status: todo
+- status: backlog
 - done-when: 粒子の仕組みにワールド空間のビルボード（カメラを向く板、深度で柔らかく消える、太陽と環境光で明るさが決まる、風で流れる、寿命で薄れる）を足し、`wasteland` に地面すれすれを流れる砂塵と、遠くで舞い上がる砂の柱（数本、ゆっくり）を置く。画面空間の既存の粒子（Rendering3DTest の橙の粒）は変わらない。`ground`・`overview` の撮影と時刻を変えた2枚を開いて、砂塵が地形に溶け込み（板の縁の切れ目が見えない）流れていることを確かめる。Rendering3DTest の撮影が変わらない。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -OutDir .harness/runs/scene-capture/SCN-DUST`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SCN-DUST`
 - paths: Library/Core/Public/Particle, Library/Core/Private/Particle, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Scripts, TASKS.md, PROGRESS.md
-- notes: 危険地帯（描画）。今の粒子は画面空間のボードだけ（`ParticleSystem.cpp` 166〜191 行付近）。半透明の描画順と TAA との兼ね合いに注意。
+- notes: 危険地帯（描画）。今の粒子は画面空間のボードだけ（`ParticleSystem.cpp` 166〜191 行付近）。半透明の描画順と TAA との兼ね合いに注意。 2026-10-15 親: 手本の写真（晴れた日の Valley of the Gods）に砂塵は写っていないので外した。
 
-## SCN-WASTELAND-POLISH: 荒野をゲームの風景として仕上げ、カメラパスと性能を決める
+## SCN-WASTELAND-POLISH: 荒野を実写に近い風景として仕上げる（確認 3）
 - status: todo
-- done-when: `wasteland` のカメラパス（前哨地へ近づいて建物の間を抜け、稜線へ上がる 40〜60 秒）を決め、グレーディング・露出・霧・雲・草・砂塵の量を整える。全視点とカメラパスの途中 6 時刻の撮影を開いて、デバッグ画面に見えない（格子・単色の板・浮いた物・タイルの繰り返し・LOD の穴が目立たない）ことを確かめ、気になったものを直す。問い: 最終の荒野が 1920×1080・RelWithDebInfo の `overview`・`ground`・`outpost` で 16.6 ms（GPU・gt・rt の p95）に収まるか。変わる判断: 収まらなければ、GPU のパスと CPU の区間の内訳から支配するものを特定し、下げる品質の設定（影の到達距離・草の密度と距離・雲の解像度・地形の材質など）を決めて直す。見た目を保って届かない分は未達としてユーザーへ渡す（既知の限界で済ませない）。手本の写真と並べた比較画像（SCN-WL-REFERENCE-CAPTURE の視点）を全部開いて、評価者が見る条件（浮き・継ぎ目・繰り返し・形の対応・移動中のちらつき）を満たし、比較画像の一覧を `Docs/RenderingValidation/WastelandReference.md` にまとめてユーザーの判定に回す（実写と並べて成立するかの最終の判断はユーザー）。結果を受入れ文書の荒野の節に書く。`wasteland` の cycle smoke 3周が pass。
+- done-when: `wasteland` のカメラパス（前哨地へ近づいて建物の間を抜け、ビュートを見上げる 40〜60 秒）を決め、グレーディング・露出・霞・雲・低木の量を手本の写真に合わせて整える。手本の全視点の比較画像（写真｜撮影｜同じ視点のパストレースの正解）とカメラパスの途中 6 時刻の撮影（1920×1080）を開き、評価者が見る条件（浮き・継ぎ目・繰り返し・形の対応・移動中のちらつき・光の誤り）を満たすことを確かめ、一覧を `Docs/RenderingValidation/WastelandReference.md` の「確認 3」にまとめる。1920×1080・RelWithDebInfo の GPU・gt・rt の median と p95 を記録する（荒野は美しさを見るシーンなので合否に使わない。操作できる程度＝20〜30 fps 以上を下回ったときだけ、支配する処理を書く）。`wasteland` の cycle smoke 3 周が pass。最後に `LOOP_STOP`（中身 `boundary`）を書いてランナーを止める（親がユーザーに渡す。実写と並べて成立するかの判断はユーザー）。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views overview,ground,outpost -GpuTimingFrames 300 -OutDir .harness/runs/scene-capture/SCN-WASTELAND-POLISH`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -OutDir .harness/runs/scene-capture/SCN-WASTELAND-POLISH`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Scenes wasteland -Cycles 3`
 - paths: Game, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Assets/AssetSets, Docs/RenderingValidation, Scripts, TASKS.md, PROGRESS.md
-- notes: 2026-10-12 親: 計測の見直し（ユーザーの指摘「節目に計測を入れても意味があるのかを考えるべき」。計測ごとに、問い・結果で変わる判断・測らずに分からないかの 3 点を書き、書けないものは置かない。Sol の批評を反映）。
+- notes: 2026-10-15 ユーザー: 荒野と室内の光は「ほぼ実写」の美しさを見るシーンで、速さは他のシーンで見る。60 fps の条件は外した（リアルタイムで、操作できる程度ならよい）。
 
 ## SCN-GEN-VILLAGE-PROPS-1: 夜の集落の小物を生成する（街灯・松明の柱・焚き火の囲い・井戸）
 - status: todo
@@ -1622,6 +1648,13 @@
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Scenes material-gallery -Cycles 3`
 - paths: Game, Assets/AssetSets, Scripts, Test/Game/Bridge/CMakeLists.txt, Test/Core/Rendering/CMakeLists.txt, TASKS.md, PROGRESS.md
 
+## SCN-INT-REFERENCE-SELECT: 室内の光の手本の写真を選ぶ
+- status: todo
+- done-when: 室内の光のシーンの手本にする実写の写真（パブリックドメイン・CC0・CC BY・CC BY-SA）を 4〜6 枚選ぶ: 低い夕日が大きな窓から差し込む木の床と漆喰かレンガの壁の部屋、色の強い面からの色移り、床の艶の反射、光の筋（塵の舞う空気）。`Assets/Reference/InteriorLight/` に落とし（git 管理外）、manifest（URL・作者・ライセンス・写っている物）を書き、部屋の大きさ・窓の向き・太陽の高さ・家具の並びを写真から決めて `Docs/RenderingValidation/InteriorLightReference.md` に書く。写真の一覧の PNG を開いて確かめる。
+- verify: `python Scripts/Terrain/ReferencePhotos.py --verify --set InteriorLight`
+- paths: Scripts/Terrain, Docs/RenderingValidation, .gitignore, TASKS.md, PROGRESS.md
+- notes: 2026-10-15 ユーザー: 室内の光も「ほぼ実写」の美しさを見るシーン。家具の生成（SCN-GEN-FURNITURE-*）は、この写真に合わせて選び直してよい。`ReferencePhotos.py` に手本の組を選ぶ引数を足してよい。
+
 ## SCN-GEN-FURNITURE-1: 室内の家具を生成する（机・椅子・本棚・ソファ）
 - status: todo
 - done-when: SCN-GEN-BUILDINGS-1 と同じ形で、`wooden_table`・`wooden_chair`・`bookshelf`・`sofa` を 10〜20 万面・テクスチャ 2048 で生成し、参照画像とプレビューを開いて形を確かめ、クックの一覧 `Assets/AssetSets/InteriorLightModels.json` に足してクックが通る。
@@ -1643,6 +1676,7 @@
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene interior-light -RequireAssets -OutDir .harness/runs/scene-capture/SCN-INTERIOR-ROOM`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Scenes interior-light -Cycles 3`
 - paths: Game, Assets/AssetSets, Scripts, Test/Game/Bridge/CMakeLists.txt, Test/Core/Rendering/CMakeLists.txt, TASKS.md, PROGRESS.md
+- notes: 2026-10-15 ユーザー: 室内の光は「ほぼ実写」の美しさを見るシーン。SCN-INT-REFERENCE-SELECT の写真と並べた比較画像（1920×1080）と、同じ視点のパストレースの正解で判断する。速さの条件は無い。
 
 ## SCN-INTERIOR-SHAFTS: 窓から入る光の筋を出す
 - status: todo
@@ -1651,7 +1685,7 @@
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene interior-light -RequireAssets -OutDir .harness/runs/scene-capture/SCN-INTERIOR-SHAFTS`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SCN-INTERIOR-SHAFTS`
 - paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Scripts, TASKS.md, PROGRESS.md
-- notes: 危険地帯（描画）。`Assets/Shaders/volumetrics.frag` 103〜135 行付近は CSM の影の地図（`cascadedShadowMap`）を読む。太陽の影が VSM のときに霧の影が効いているかを先に確かめる。 2026-10-12 親: 計測の見直し（ユーザーの指摘「節目に計測を入れても意味があるのかを考えるべき」。計測ごとに、問い・結果で変わる判断・測らずに分からないかの 3 点を書き、書けないものは置かない。Sol の批評を反映）。
+- notes: 危険地帯（描画）。`Assets/Shaders/volumetrics.frag` 103〜135 行付近は CSM の影の地図（`cascadedShadowMap`）を読む。太陽の影が VSM のときに霧の影が効いているかを先に確かめる。 2026-10-12 親: 計測の見直し（ユーザーの指摘「節目に計測を入れても意味があるのかを考えるべき」。計測ごとに、問い・結果で変わる判断・測らずに分からないかの 3 点を書き、書けないものは置かない。Sol の批評を反映）。 2026-10-15 ユーザー: 室内の光は「ほぼ実写」の美しさを見るシーン。SCN-INT-REFERENCE-SELECT の写真と並べた比較画像（1920×1080）と、同じ視点のパストレースの正解で判断する。速さの条件は無い。
 
 ## SCN-THUMBNAILS: ランチャーのカードに各シーンの見本画像を出す
 - status: todo
