@@ -1238,15 +1238,24 @@
 - paths: Assets/Shaders, Library/Core/Private/Rendering/VirtualShadowMapRaster.cpp, Library/Core/Public/Rendering, Scripts/CaptureStartupScene.ps1, TASKS.md, PROGRESS.md
 - notes: `CaptureStartupScene.ps1` の `-Night` が既存の `--night` を渡さないなら直してよい。 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
 
+## SCN-MEGA-FIX-COOK-LOD-ERROR: クックの LOD の誤差を、足し算でなく子の最大と簡略化の誤差の大きい方にし、形の誤差だけで見積もる
+- status: todo
+- done-when: `Tools/AssetCook/CookMeshDag.cpp` 658 行付近は `group.Error = maxMemberError + simplified.ErrorAbsolute` と段ごとに足し算で積み、簡略化の誤差に属性（法線 0.2・UV 0.1）の項も入る。誤差が実際の形のずれより大きく見積もられ、1 画素の閾値でも遠くのバナナが細かい段を選ぶ（10 m 先の約 17 画素で 2〜3 万三角形。100万本の海で描くクラスタが 6.27M になり、BVH の列と描画の一覧が溢れる。`blocked/SCN-MEGA-FIX-BVH-QUEUE-MAIN.md`）。誤差を「子の誤差の最大と今回の簡略化の誤差の大きい方」にし（meshoptimizer の nanite の例・Nanite と同じ。親の誤差は子より小さくならない約束は保つ）、簡略化の誤差は形の誤差だけで見積もる（属性の重みは簡略化の選び方には使ってよいが、誤差には入れない）。この DAG で作るクック済みの資産（バナナ・mega-stress・起動画面のモデルなど）を作り直す（生成物はコミットしない）。起動画面: 差がこの変更だけによるなら基準（`.harness/runs/startup-capture/SCN-MEGA-BASE-RWDI` と、golden があればそれも）を撮り直して再承認する（`Docs/RenderingValidation/GoldenBaselines.md` の手順。撮影を開いて、近くの岩・球・家の形が崩れていない・穴が無い・遠くの形が目に見えて粗くなっていないことを確かめ、根拠をコミット本文に書く）。1 万本 overview の新しい基準 `scene-capture/SCN-MEGA-BASE-COOK` を撮って開いて確かめる（以後のバナナの比較の比べる先。SCN-MEGA-LAYOUT-SEA の途中の保存で 1 万本の配置が変わったので、古い `SCN-MEGA-BASE` は使えない）。100万本の数はこの項目では測らず、SCN-MEGA-FIX-BVH-QUEUE-MAIN で見る。
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-MEGA-FIX-COOK-LOD-ERROR`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Build -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views overview -GameArgs banana-count=10000 -OutDir .harness/runs/scene-capture/SCN-MEGA-BASE-COOK`
+- paths: Tools/AssetCook, Assets/AssetSets, Library/Core/Private/MegaGeometry, Library/Core/Public/MegaGeometry, Docs/RenderingValidation, TASKS.md, PROGRESS.md
+- notes: 2026-10-14 親が足した（SCN-MEGA-FIX-BVH-QUEUE-MAIN の反復 1 の調べ・案 1）。起動画面と各シーンの見た目に響く（CLAUDE.md 絶対規則 7）ので撮影を開いて確かめる。誤差が正しく見積もられれば、選ぶ細かさの差は画面上で 1 画素以内に収まる見込み。
+
 ## SCN-MEGA-FIX-BVH-QUEUE-MAIN: BVH のたどりを LOD で早く打ち切り、列の長さを本数でなく見える細かさで決める（主の描画）
-- status: blocked
+- status: todo
 - done-when: 100万本の海（SCN-MEGA-LAYOUT-SEA の途中の配置）の horizon・overview で、主の描画の BVH の節の列の 1 段の最大が 12.5M になり、容量 4,194,304（`MegaGeometryPass.cpp` 140 行付近の `BvhNodeQueueCapacity`）を超えて溢れ（`MEGA_CAPACITY bvh_overflow=10151330`）、カメラから約 50 m より先のバナナが判定から落ちて描かれない（`blocked/SCN-MEGA-LAYOUT-SEA.md`）。容量を上げるのでなく、BVH をたどるとき、節の境界の画面上の誤差（投影した LOD の誤差）が閾値より小さい節で降りるのを止め、その節が持つ粗いクラスタの組を描く（Nanite と同じく、列の長さが本数でなく画面の細かさで決まる形）。節に必要な誤差の情報が無ければ BVH の構築で足す。合格: 100万本の horizon・overview の撮影のログで `bvh_overflow=0`、撮影を開いて地平線までバナナが描かれ（床の帯が無い）、近くの見た目が変わらない（1万本 overview の比較が pass）。列の容量の定数は変えない（変えるなら理由を PROGRESS に書く）。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Build -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views horizon,overview -GameArgs banana-count=1000000 -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-BVH-QUEUE-MAIN`
 - verify: `python -c "import re,sys,glob;fs=glob.glob(r'.harness/runs/scene-capture/SCN-MEGA-FIX-BVH-QUEUE-MAIN/*.Game.log');vals=[x for f in fs for x in re.findall(r'bvh_overflow=(\d+)',open(f,encoding='utf-8',errors='replace').read())];sys.exit(0 if fs and vals and all(v=='0' for v in vals) else 1)"`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Build -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views overview -GameArgs banana-count=10000 -CompareWith .harness/runs/scene-capture/SCN-MEGA-BASE -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-BVH-QUEUE-MAIN-det`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Build -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views overview -GameArgs banana-count=10000 -CompareWith .harness/runs/scene-capture/SCN-MEGA-BASE-COOK -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-BVH-QUEUE-MAIN-det`
 - paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Library/Core/Private/MegaGeometry, Library/Core/Public/MegaGeometry, Assets/Shaders, TASKS.md, PROGRESS.md
-- notes: 2026-10-14 親が足した（SCN-MEGA-LAYOUT-SEA の反復 1 の調べから）。危険地帯（描画）。性能はこの項目では測らず、SCN-MEGA-ACCEPT-1M で判断する。
+- notes: 2026-10-14 親が足した（SCN-MEGA-LAYOUT-SEA の反復 1 の調べから）。危険地帯（描画）。性能はこの項目では測らず、SCN-MEGA-ACCEPT-1M で判断する。 2026-10-14 親: 反復 1 の直し（子を積む前に視錐台と LOD で判定する。485b1950）は残す。溢れの根は選ぶクラスタの数で、クックの誤差の見積もりが大きすぎるため。直前の SCN-MEGA-FIX-COOK-LOD-ERROR の後に同じ撮影で `bvh_overflow=0` を見直す。節の列がまだ大きければ、焼き込みの BVH を読み込み時に LOD の段ごとにまとめ直す。1 万本の比べる先は新しい基準 `SCN-MEGA-BASE-COOK` にした。
 
 ## SCN-MEGA-FIX-BVH-QUEUE-VSM: 影（VSM）の BVH のたどりも LOD で早く打ち切り、列を溢れさせない
 - status: todo
