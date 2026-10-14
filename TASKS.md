@@ -16,6 +16,8 @@
 
 2026-10-15 荒野と室内の光の目的（ユーザー）: このプロジェクトは現代の CG の水準の描画を目指してきた。荒野（wasteland）と室内の光（interior-light）は、それを確かめる「ほぼ実写」の美しさを見るシーンで、速さ・最適化は他のシーンで見る。この 2 つでは 60 fps の条件を外す（リアルタイムで、操作できる程度＝1080p で 20〜30 fps 以上ならよい）。品質を見る撮影は 1920×1080 以上。判断は手本の実写との比較画像・実在の材質の明るさの範囲・同じ視点のパストレースの正解（光の誤りを分ける）で行い、節目（SCN-WL-REVIEW-1・REVIEW-2・SCN-WASTELAND-POLISH）でユーザーが見る。ambientCG（CC0）の素材のダウンロードも許可済み。
 
+2026-10-15 レイトレーシングと GI の速さ（ユーザー）: RT（RTGI・RT の影と反射・TLAS）と GI を入れた構成では 60 fps（16.6 ms）の条件を外し、値は記録するだけにする。60 fps の条件が残るのは、RT と GI を切った構成（仮想化ジオメトリの規模の判定など）だけ。RT を入れても、動かすと操作できないほど遅くなる欠陥（例: 動くと RTGI が 40 倍遅くなる）は直す。
+
 2026-10-10 ECS の決定（ユーザー決定）: Entity はオブジェクト管理の器として残し、更新（Tick・変換・描画への同期・ゲームロジック）のデータと処理を ECS 型（自前のアーキタイプ型、値の実体は列に置き Object の読み書きはそこを通す、大量の物は Object を持たない軽い実体、ロジックはすべてシステムへ、ジョブで並列）に作り変え、レンダースレッドもコマンドの並列記録まで並列化する。100万本の改修に組み込む。設計の正本は `Docs/Plans/EcsUpdatePathPlan.md`（計画者の計画を GPT が 2 周批評し、親が追記した。項目の notes の「§」はこの文書の節）。`SCN-ECS-` の項目と、ECS 前提で置き換えた `SCN-MEGA-` の項目を、計画書の §2 の順に並べた。ワールドの全走査を直す旧案（WORLD-TICK-CACHE・WORLD-TRANSFORM-NOTIFY・WORLD-TRANSFORM-INTERP・WORLD-RENDER-DIRTY・INSTANCE-BATCH）は ECS の項目に置き換えて消した。戻すときは、戻す項目とそれに依存する後続の項目を新しい順に revert する（単独では戻さない）。
 
 起動画面（Rendering3DTest）の描画改善（2026-09-27、ユーザー決定）。物理空と空の太陽による昼の屋外、点光源のキューブシャドウ、自動露出・ミップチェーンのブルーム・TAA・GTAO・コンタクトシャドウ・色収差・レンズダート・グレーディングLUT・RTGIの既定化、展示物の追加、視差オクルージョンと影の不具合の修正を `SS-` の項目で進める。見た目の証拠は `Scripts/CaptureStartupScene.ps1` の撮影を開いて確かめる。起動画面の見た目を変えることはこの計画でユーザーが承認済み。検証シーン（Indoor/Outdoorのgolden、R系の受入れ）は、項目に書いた場合を除き結果を変えない。
@@ -1705,7 +1707,7 @@
 
 ## SCN-ACCEPT: ランチャーと全シーンの受入れを記録する
 - status: todo
-- done-when: 計画書の受入れの節の全項目を確かめて `Docs/RenderingValidation/SceneLauncherAcceptance.md` に書く: Debug・RelWithDebInfo・Release で引数なしの起動がランチャー（撮影を開いて確認）、全シーンの cycle smoke（各3周）が pass、全シーンの全視点の撮影を開いた所見、各シーンの性能（1920×1080・RelWithDebInfo で 16.6 ms を超えるシーンだけ、内訳から直す設定を決めて直すか、未達としてユーザーへ渡す。最終の設定が同じなら SCN-WASTELAND-POLISH などの証拠を使い、撮り直さない。夜のシーンでは点光源の影の内訳も見る）、Rendering3DTest の撮影が main と見た目で変わらないこと、生成と Poly Haven の資産の一覧（id・出典・ライセンス・作り方）。見つけた不具合は直すか、`SCN-FIX-<名前>` の項目として TASKS.md に足す。
+- done-when: 計画書の受入れの節の全項目を確かめて `Docs/RenderingValidation/SceneLauncherAcceptance.md` に書く: Debug・RelWithDebInfo・Release で引数なしの起動がランチャー（撮影を開いて確認）、全シーンの cycle smoke（各3周）が pass、全シーンの全視点の撮影を開いた所見、各シーンの性能（1920×1080・RelWithDebInfo の値を記録する。RT と GI を入れた既定の構成と、荒野・室内の光は合否に使わない。RT と GI を切った構成で 16.6 ms を超えるシーンだけ、内訳から直す設定を決めて直すか、未達としてユーザーへ渡す。最終の設定が同じなら SCN-WASTELAND-POLISH などの証拠を使い、撮り直さない。夜のシーンでは点光源の影の内訳も見る）、Rendering3DTest の撮影が main と見た目で変わらないこと、生成と Poly Haven の資産の一覧（id・出典・ライセンス・作り方）。見つけた不具合は直すか、`SCN-FIX-<名前>` の項目として TASKS.md に足す。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `cmake --build build --config Release --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Scenes rendering3dtest,mega-bananas,wasteland,night-village,material-gallery,interior-light -Cycles 3`
@@ -1715,14 +1717,14 @@
 - notes: 2026-10-12 親: 計測の見直し（ユーザーの指摘「節目に計測を入れても意味があるのかを考えるべき」。計測ごとに、問い・結果で変わる判断・測らずに分からないかの 3 点を書き、書けないものは置かない。Sol の批評を反映）。
 
 ## SCN-MEGA-FIX-RT-SELECT: レイトレーシングのインスタンスの選び直しを、変わったときだけ区画の単位で行う
-- status: todo
+- status: backlog
 - done-when: 問い: 100万本で RenderThread の `RT.BuildAccelerationStructures`（median: 静止 22.1 ms・カメラパス 29.9 ms・1% 移動 31.6 ms・ストリーミング 30.1 ms）を下げられるか。SCN-MEGA-ACCEPT-1M の撮影では、静止で TLAS の更新が 0 回（`RT_SCENE update_skipped=120 updated=0`）なのに、`RayTracingSceneSubsystem::AppendMegaGeometryInstancesFromMirror` が毎フレーム 100 万席すべての距離を判定し（`candidates=1000002`）、半径 120 m の内の約 44 万から近い 65,536 件を選び直して、パケットへ 65,534 件を足している。選ぶ原点が閾値以上動かず写しの版が変わらないフレームは前の選びを使い、選ぶときも区画の境界（`MegaGeometry_RangeBounds`、1M で 15,625 区画）で半径の外の区画を丸ごと飛ばす。完了の条件: 静止の 1M horizon（RelWithDebInfo・1920×1080・300 フレーム）で `RT.BuildAccelerationStructures` の median ≤ 2 ms、カメラパスの再生で median ≤ 4 ms。静止の `RT_SCENE` の `instances`・`out_of_range`・`over_limit` が今と同じ（同じ原点で同じ顔ぶれ）。
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -Views horizon -Build -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -TimeoutSeconds 1800 -GameArgs banana-count=1000000 -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-RT-SELECT/static`
 - verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-FIX-RT-SELECT/static --views horizon --timing --min-frames 300 --require-scope RT.BuildAccelerationStructures --max-scope-median-ms RT.BuildAccelerationStructures=2`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -Views horizon -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -TimeoutSeconds 1800 -GameArgs banana-count=1000000,camera-path-play,camera-path-time=0 -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-RT-SELECT/path`
 - verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-FIX-RT-SELECT/path --views horizon --timing --min-frames 300 --require-scope RT.BuildAccelerationStructures --max-scope-median-ms RT.BuildAccelerationStructures=4`
 - paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, TASKS.md, PROGRESS.md
-- notes: 2026-10-14 SCN-MEGA-ACCEPT-1M の診断から（`Docs/RenderingValidation/SceneLauncherAcceptance.md` の「100万本と混在の負荷の受入れ」）。危険地帯（RenderThread）なので評価者を通す。
+- notes: 2026-10-14 SCN-MEGA-ACCEPT-1M の診断から（`Docs/RenderingValidation/SceneLauncherAcceptance.md` の「100万本と混在の負荷の受入れ」）。危険地帯（RenderThread）なので評価者を通す。 2026-10-15 親: RT を入れた構成の 60 fps を求めなくなった（ユーザー）ので外した。静止の 100万本で rt 37 ms（約 27 fps）は操作できる。RT を入れて操作できない遅さになったら戻す。
 
 ## SCN-MEGA-FIX-TLAS-REBUILD: TLAS を、インスタンスの顔ぶれが替わったら作り直す
 - status: todo
@@ -1730,7 +1732,7 @@
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -Views horizon -Build -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -TimeoutSeconds 1800 -GameArgs banana-count=1000000,camera-path-play,camera-path-time=0 -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-TLAS-REBUILD/path`
 - verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-FIX-TLAS-REBUILD/path --views horizon --timing --min-frames 300 --require-pass LightingPass --max-pass-median-ms LightingPass=3 --max-pass-p95-ms LightingPass=5`
 - paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Library/Core/Private/RHI, Library/Core/Public/RHI, TASKS.md, PROGRESS.md
-- notes: 2026-10-14 SCN-MEGA-ACCEPT-1M の診断から。1% 移動・ストリーミングの `LightingPass` 11.4〜11.6 ms（静止のバナナだけは 1.7 ms）も同じ refit を毎フレーム行っている（`updated=120 built=0`）ので、この項目の後に撮り直して残りを見る。危険地帯（RHI/Vulkan・RenderThread）なので評価者を通す。
+- notes: 2026-10-14 SCN-MEGA-ACCEPT-1M の診断から。1% 移動・ストリーミングの `LightingPass` 11.4〜11.6 ms（静止のバナナだけは 1.7 ms）も同じ refit を毎フレーム行っている（`updated=120 built=0`）ので、この項目の後に撮り直して残りを見る。危険地帯（RHI/Vulkan・RenderThread）なので評価者を通す。 2026-10-15 親: RT の 60 fps は求めなくなったが、動くと RTGI が 40 倍遅くなり（カメラパスで GPU 86 ms・約 12 fps）操作できないので、木の質の欠陥として残す。
 
 ## SCN-MEGA-FIX-SCENE-TABLES-STEADY: 変わらないフレームで MegaGeometry の表を全部なめない
 - status: todo
@@ -1765,7 +1767,7 @@
 
 ## SCN-MEGA-FIX-STRESS-GPU: 1M + mega-stress 5 万個の GPU 時間を 16.6 ms に収める
 - status: todo
-- done-when: 問い: 1% 移動の GPU 32.6 / 34.4 ms（median / p95）を、TLAS の直しの後に何が残るかで分け、予算に収められるか。SCN-MEGA-ACCEPT-1M の撮影の内訳（median）は `MegaGeometry` 16.1 ms（`VisRasterSw1` 9.1・`MegaGeometryCull1` 4.9・`MegaBvhC1Leaf` 4.1）、`LightingPass` 11.4、`VirtualShadowMapPass` 2.6（`VsmDraw` 1.5）。描いたクラスタは 264 万でバナナだけの静止（168 万）の 1.6 倍、ソフトウェアラスタの単価は 100 万クラスタあたり 3.4 ms（静止 3.0）でほぼ同じなので、量が多い側と見る。SCN-MEGA-FIX-TLAS-REBUILD の後に撮り直して `LightingPass` の残りを確かめ、残る超過を 5 万個のメッシュ（家・塔・岩）の描くクラスタの量（LOD の誤差の許容・遮蔽）で減らす。完了の条件: 1% 移動の負荷（300 フレーム）で GPU のフレームの median・p95 ≤ 16.6 ms。PNG を開いて穴と影の欠けが無いこと。
+- done-when: 問い: 1% 移動の GPU 32.6 / 34.4 ms（median / p95）を、TLAS の直しの後に何が残るかで分け、予算（RT と GI を切った構成で 16.6 ms）に収められるか。SCN-MEGA-ACCEPT-1M の撮影の内訳（median）は `MegaGeometry` 16.1 ms（`VisRasterSw1` 9.1・`MegaGeometryCull1` 4.9・`MegaBvhC1Leaf` 4.1）、`LightingPass` 11.4、`VirtualShadowMapPass` 2.6（`VsmDraw` 1.5）。描いたクラスタは 264 万でバナナだけの静止（168 万）の 1.6 倍、ソフトウェアラスタの単価は 100 万クラスタあたり 3.4 ms（静止 3.0）でほぼ同じなので、量が多い側と見る。SCN-MEGA-FIX-TLAS-REBUILD の後に撮り直して `LightingPass` の残りを確かめ、残る超過を 5 万個のメッシュ（家・塔・岩）の描くクラスタの量（LOD の誤差の許容・遮蔽）で減らす。完了の条件: 1% 移動の負荷（300 フレーム）で GPU のフレームの median・p95 ≤ 16.6 ms。PNG を開いて穴と影の欠けが無いこと。
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -Views overview -Build -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -TimeoutSeconds 2400 -GameArgs banana-count=1000000,stress-entities=50000,stress-moving-percent=1 -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-STRESS-GPU`
 - verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-FIX-STRESS-GPU --timing --min-frames 300 --max-gpu-median-ms 16.6 --max-gpu-p95-ms 16.6`
 - paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Assets/Shaders, Game/GameModes/MegaStress, TASKS.md, PROGRESS.md
@@ -1773,7 +1775,7 @@
 
 ## SCN-MEGA-ACCEPT-1M: 100万本と混在の負荷を、固定した 4 つの負荷と閾値で判定する
 - status: todo
-- done-when: 問い: 最終の配置・描画の経路の 4 つの負荷で 60 fps を満たせるか。変わる判断: 既定を 100万本にする・直す項目を足す・止めてユーザーへ渡す。- 固定した 4 つの負荷: 100万本 horizon の静止、カメラパスの再生（パス 1 周を計測の窓に含める）、100万本 + mega-stress 5万個の 1% 移動、同じく 64 m 区画のストリーミング（区画の解放から再公開までを窓に含め、ログで確かめる）。- 各負荷で 300 フレーム以上、GPU・gt・rt の median と p95 がすべて 16.6 ms 以下（RTX 4080・1920×1080・RelWithDebInfo）。- 溢れがすべて 0、メモリ ≤ 3 GB（対象は計画の GPU Scene まわりの構造。使用中だけでなく、飛行中の複数のスロット・持ち続ける容量・回収待ちを含む最大の確保量）、Entity の数が本数によらない。PNG を開いて穴と影の欠けが無いことを見る。- 不合格の負荷は、同じ撮影の内訳から直す先を決める: GPU は範囲・インスタンス・BVH の判定、binning と記録、ハード・ソフトの両方のラスタ（`VisibilityRasterPass` を含む）、2 パス目、合流・HZB、VSM（全体とページの処理・カリング・描画。親と子の区間を二重に足さない）の時間と処理の件数。処理の量が多すぎるのか単価が高いのかを分ける。CPU は待ちと作業を分け、支配する関数・系（`RT.BuildAccelerationStructures` とその入力の選択、`RG.Record.*`、ECS の系と同期点、ストリーミングの作成・公開）を特定する。既存の区間で分けられない所だけ区間を足して撮り直す。構造・件数・ログで説明できない規模の依存が残ったときだけ、同じ配置・条件で本数を 30万へ下げた負荷を 1 つ足して比べる。直す先ごとに `SCN-MEGA-FIX-<名前>` を足す。- 合格したら既定の本数を 100万にする。受入れ文書の書き方は前と同じ。どれかの負荷で GPU・gt・rt の p95 のどれかが 25 ms を超えたら、その時点の撮影と内訳を付けてループを止めてユーザーへ渡す（自動で 30万の診断を続けない）。Debug の起動画面で検証レイヤーのエラーが 0。
+- done-when: 問い: 最終の配置・描画の経路の 4 つの負荷で、RT と GI を切った構成で 60 fps を満たせるか（RT と GI を入れた既定の構成は値を記録するだけ。4 つの撮影は RT と GI を切る引数で撮り、無ければ足す）。変わる判断: 既定を 100万本にする・直す項目を足す・止めてユーザーへ渡す。- 固定した 4 つの負荷: 100万本 horizon の静止、カメラパスの再生（パス 1 周を計測の窓に含める）、100万本 + mega-stress 5万個の 1% 移動、同じく 64 m 区画のストリーミング（区画の解放から再公開までを窓に含め、ログで確かめる）。- 各負荷で 300 フレーム以上、GPU・gt・rt の median と p95 がすべて 16.6 ms 以下（RTX 4080・1920×1080・RelWithDebInfo）。- 溢れがすべて 0、メモリ ≤ 3 GB（対象は計画の GPU Scene まわりの構造。使用中だけでなく、飛行中の複数のスロット・持ち続ける容量・回収待ちを含む最大の確保量）、Entity の数が本数によらない。PNG を開いて穴と影の欠けが無いことを見る。- 不合格の負荷は、同じ撮影の内訳から直す先を決める: GPU は範囲・インスタンス・BVH の判定、binning と記録、ハード・ソフトの両方のラスタ（`VisibilityRasterPass` を含む）、2 パス目、合流・HZB、VSM（全体とページの処理・カリング・描画。親と子の区間を二重に足さない）の時間と処理の件数。処理の量が多すぎるのか単価が高いのかを分ける。CPU は待ちと作業を分け、支配する関数・系（`RT.BuildAccelerationStructures` とその入力の選択、`RG.Record.*`、ECS の系と同期点、ストリーミングの作成・公開）を特定する。既存の区間で分けられない所だけ区間を足して撮り直す。構造・件数・ログで説明できない規模の依存が残ったときだけ、同じ配置・条件で本数を 30万へ下げた負荷を 1 つ足して比べる。直す先ごとに `SCN-MEGA-FIX-<名前>` を足す。- 合格したら既定の本数を 100万にする。受入れ文書の書き方は前と同じ。どれかの負荷で GPU・gt・rt の p95 のどれかが 25 ms を超えたら、その時点の撮影と内訳を付けてループを止めてユーザーへ渡す（自動で 30万の診断を続けない）。Debug の起動画面で検証レイヤーのエラーが 0。
 - verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-ACCEPT-1M/static --views horizon --timing --min-frames 300 --max-gpu-p95-ms 16.6 --max-gt-p95-ms 16.6 --max-rt-p95-ms 16.6 --max-gpu-median-ms 16.6 --max-gt-median-ms 16.6 --max-rt-median-ms 16.6`
 - verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-ACCEPT-1M/path --views horizon --timing --min-frames 300 --max-gpu-p95-ms 16.6 --max-gt-p95-ms 16.6 --max-rt-p95-ms 16.6 --max-gpu-median-ms 16.6 --max-gt-median-ms 16.6 --max-rt-median-ms 16.6`
 - verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-ACCEPT-1M/moving --timing --min-frames 300 --max-gpu-p95-ms 16.6 --max-gt-p95-ms 16.6 --max-rt-p95-ms 16.6 --max-gpu-median-ms 16.6 --max-gt-median-ms 16.6 --max-rt-median-ms 16.6`
