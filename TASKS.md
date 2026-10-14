@@ -1441,13 +1441,21 @@
 
 ## SCN-WL-REFERENCE-CAPTURE: 手本の写真と同じ構図の視点と、並べた比較画像を作る
 - status: doing
-- done-when: 手本の写真ごとに、写真に合う名前付き視点（位置・向き・画角・時刻。推定した条件を書き、「同じ」とは書かない）を足し、写真と撮影を左右に並べた PNG を書くスクリプト `Scripts/Terrain/CompareReference.py` を作る（今の `CompareLight.py` を広げてよい）。品質を見る撮影は 1920×1080 以上で撮る（1280×720 では粗さが判断を狂わせる）。比較画像には、地面・崖・空の領域ごとの平均の色（線形）と明るさを写真と撮影の両方で書き、地表の材質の平均のアルベドも書く。比較画像を開いて、ビュート・メサの配置と輪郭が対応することを確かめ、目立つ差（形・色・明るさ・尺度・地表の種類・欠けている物）を差の大きい順に `Docs/RenderingValidation/WastelandReference.md` に書く。以後の荒野の項目は、この視点と比較画像で判断する。他の地域の写真は材質と光の参考だけに使う。
+- done-when: 手本の写真ごとに、写真に合う名前付き視点（位置・向き・画角・時刻。推定した条件を書き、「同じ」とは書かない）を足し、写真と撮影を左右に並べた PNG を書くスクリプト `Scripts/Terrain/CompareReference.py` を作る（今の `CompareLight.py` を広げてよい）。品質を見る撮影は 1920×1080 以上で撮る（1280×720 では粗さが判断を狂わせる）。比較画像には、地面・崖・空の領域ごとの平均の色（線形）と明るさを写真と撮影の両方で書き、地表の材質の平均のアルベドも書く。比較画像を開いて、切り出した範囲の中の主役（far_02・cliff_01・cliff_02・ground_02 のビュートと崖）の配置と輪郭が対応することを確かめ（位置の記録が無い写真は、DEM の稜線と写真の輪郭を照合して位置・向き・画角を決め直す）、範囲の外が主役の far_01（Castle Butte と Cedar Mesa の縁）は SCN-WL-HORIZON で合わせ、ground_01 は地表と植生の比較用で輪郭は見ない、と文書に書いたうえで、目立つ差（形・色・明るさ・尺度・地表の種類・欠けている物）を差の大きい順に `Docs/RenderingValidation/WastelandReference.md` に書く。以後の荒野の項目は、この視点と比較画像で判断する。他の地域の写真は材質と光の参考だけに使う。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Views ref_far_01,ref_far_02,ref_cliff_01 -RequireAssets -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-WL-REFERENCE-CAPTURE`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Views ref_cliff_02,ref_ground_01,ref_ground_02 -RequireAssets -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-WL-REFERENCE-CAPTURE`
 - verify: `python Scripts/Terrain/CompareReference.py --capture .harness/runs/scene-capture/SCN-WL-REFERENCE-CAPTURE --verify`
 - paths: Game/GameModes/Wasteland, Game/Scenes/SceneCatalog.h, Scripts/Terrain, Docs/RenderingValidation, TASKS.md, PROGRESS.md
-- notes: 写真の加工やホワイトバランスが分からないので、RGB の値の一致を合格の条件にしない（PSNR・SSIM も使わない）。値は差の向きと大きさを見るために使う。。撮影の verify は手本の 6 視点だけを 3 視点ずつ 2 本に分ける（Debug の 1920×1080 は 1 視点に約 107 秒かかり、全 11 視点を 1 本で撮ると 1 コマンド 10 分の上限を超えるため）。
+- notes: 写真の加工やホワイトバランスが分からないので、RGB の値の一致を合格の条件にしない（PSNR・SSIM も使わない）。値は差の向きと大きさを見るために使う。。撮影の verify は手本の 6 視点だけを 3 視点ずつ 2 本に分ける（Debug の 1920×1080 は 1 視点に約 107 秒かかり、全 11 視点を 1 本で撮ると 1 コマンド 10 分の上限を超えるため）。 2026-10-15 親: 反復 1 の評価の差し戻し（cliff_01・far_01・ground_01 の輪郭が対応しない）を受けて、範囲の外の主役と地表の比較用の写真を分けた。
+
+## SCN-WL-HORIZON: 遠景を粗い実地形でつなぐ
+- status: todo
+- done-when: 1 m タイルの範囲（約 10 km 四方）のうち切り出しの外側を、粗い間隔（例 8〜16 m）の遠景の地形として焼き、近景の区画の外周と隙間・段差なくつなぐ（近景の外周の高さへ寄せる帯を置く）。手本の写真に写る稜線（北の Cedar Mesa の崖など）が入る範囲にし、遠クリップを合わせる。far_01 の主役（Castle Butte と背後の Cedar Mesa の縁）が写るようにし、far_01 の視点を合わせ直して比較画像で輪郭が対応することを確かめる（写真の主役になる地形は粗くせず 1〜2 m で焼く）。ridge と overview の撮影を開き、外周の板・壁・継ぎ目・浮いた縁が無く、地平線に実地形の稜線が見えることを確かめる。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-WL-HORIZON`
+- paths: Scripts/Terrain, Tools/AssetCook, Library/Core/Public/Rendering/Terrain, Library/Core/Private/Rendering/Terrain, Game/GameModes/Wasteland, Assets/AssetSets, TASKS.md, PROGRESS.md
+- notes: 地形の端の高さを外へ延ばす作り方は使わない（四角い外周から板や壁が伸びる）。1 m タイルの外が要るなら、ファイル名とサイズを書いて BLOCKED（ユーザーの許可が要る）。
 
 ## SCN-WL-MASKS-GEOM: 基本の地表の分類の地図を作る
 - status: todo
@@ -1481,14 +1489,6 @@
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-WL-MATERIAL-STRATA`
 - paths: Assets/Shaders, Library/Core/Private/Rendering, Game/GameModes/Wasteland, TASKS.md, PROGRESS.md
 - notes: Cedar Mesa 砂岩には水平の層と斜めの交差層理がある（NPS の地質の説明）。
-
-## SCN-WL-HORIZON: 遠景を粗い実地形でつなぐ
-- status: todo
-- done-when: 1 m タイルの範囲（約 10 km 四方）のうち切り出しの外側を、粗い間隔（例 8〜16 m）の遠景の地形として焼き、近景の区画の外周と隙間・段差なくつなぐ（近景の外周の高さへ寄せる帯を置く）。手本の写真に写る稜線（北の Cedar Mesa の崖など）が入る範囲にし、遠クリップを合わせる。ridge と overview の撮影を開き、外周の板・壁・継ぎ目・浮いた縁が無く、地平線に実地形の稜線が見えることを確かめる。
-- verify: `cmake --build build --config Debug --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-WL-HORIZON`
-- paths: Scripts/Terrain, Tools/AssetCook, Library/Core/Public/Rendering/Terrain, Library/Core/Private/Rendering/Terrain, Game/GameModes/Wasteland, Assets/AssetSets, TASKS.md, PROGRESS.md
-- notes: 地形の端の高さを外へ延ばす作り方は使わない（四角い外周から板や壁が伸びる）。1 m タイルの外が要るなら、ファイル名とサイズを書いて BLOCKED（ユーザーの許可が要る）。
 
 ## SCN-WL-FAR-SHADING: 遠景の地形をちらつかない・汚れない描き方にする
 - status: todo
