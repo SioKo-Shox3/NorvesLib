@@ -1284,17 +1284,6 @@
 - paths: Game/GameModes/MegaBananas, Scripts/VerifyBananaPile.py, TASKS.md, PROGRESS.md
 - notes: 1 本ずつのログは検算用の山だけに絞る。 （ECS 計画の対応）散布の Object で置き、予算つきで作る。
 
-## SCN-MEGA-ACCEPT-1M: 100万本と混在の負荷を、固定した 4 つの負荷と閾値で判定する
-- status: todo
-- done-when: 問い: 最終の配置・描画の経路の 4 つの負荷で 60 fps を満たせるか。変わる判断: 既定を 100万本にする・直す項目を足す・止めてユーザーへ渡す。- 固定した 4 つの負荷: 100万本 horizon の静止、カメラパスの再生（パス 1 周を計測の窓に含める）、100万本 + mega-stress 5万個の 1% 移動、同じく 64 m 区画のストリーミング（区画の解放から再公開までを窓に含め、ログで確かめる）。- 各負荷で 300 フレーム以上、GPU・gt・rt の median と p95 がすべて 16.6 ms 以下（RTX 4080・1920×1080・RelWithDebInfo）。- 溢れがすべて 0、メモリ ≤ 3 GB（対象は計画の GPU Scene まわりの構造。使用中だけでなく、飛行中の複数のスロット・持ち続ける容量・回収待ちを含む最大の確保量）、Entity の数が本数によらない。PNG を開いて穴と影の欠けが無いことを見る。- 不合格の負荷は、同じ撮影の内訳から直す先を決める: GPU は範囲・インスタンス・BVH の判定、binning と記録、ハード・ソフトの両方のラスタ（`VisibilityRasterPass` を含む）、2 パス目、合流・HZB、VSM（全体とページの処理・カリング・描画。親と子の区間を二重に足さない）の時間と処理の件数。処理の量が多すぎるのか単価が高いのかを分ける。CPU は待ちと作業を分け、支配する関数・系（`RT.BuildAccelerationStructures` とその入力の選択、`RG.Record.*`、ECS の系と同期点、ストリーミングの作成・公開）を特定する。既存の区間で分けられない所だけ区間を足して撮り直す。構造・件数・ログで説明できない規模の依存が残ったときだけ、同じ配置・条件で本数を 30万へ下げた負荷を 1 つ足して比べる。直す先ごとに `SCN-MEGA-FIX-<名前>` を足す。- 合格したら既定の本数を 100万にする。受入れ文書の書き方は前と同じ。どれかの負荷で GPU・gt・rt の p95 のどれかが 25 ms を超えたら、その時点の撮影と内訳を付けてループを止めてユーザーへ渡す（自動で 30万の診断を続けない）。Debug の起動画面で検証レイヤーのエラーが 0。
-- verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-ACCEPT-1M/static --views horizon --timing --min-frames 300 --max-gpu-p95-ms 16.6 --max-gt-p95-ms 16.6 --max-rt-p95-ms 16.6 --max-gpu-median-ms 16.6 --max-gt-median-ms 16.6 --max-rt-median-ms 16.6`
-- verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-ACCEPT-1M/path --views horizon --timing --min-frames 300 --max-gpu-p95-ms 16.6 --max-gt-p95-ms 16.6 --max-rt-p95-ms 16.6 --max-gpu-median-ms 16.6 --max-gt-median-ms 16.6 --max-rt-median-ms 16.6`
-- verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-ACCEPT-1M/moving --timing --min-frames 300 --max-gpu-p95-ms 16.6 --max-gt-p95-ms 16.6 --max-rt-p95-ms 16.6 --max-gpu-median-ms 16.6 --max-gt-median-ms 16.6 --max-rt-median-ms 16.6`
-- verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-ACCEPT-1M/streaming --timing --min-frames 300 --max-gpu-p95-ms 16.6 --max-gt-p95-ms 16.6 --max-rt-p95-ms 16.6 --max-gpu-median-ms 16.6 --max-gt-median-ms 16.6 --max-rt-median-ms 16.6`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -OutDir .harness/runs/startup-capture/SCN-MEGA-ACCEPT-1M-debug`
-- paths: Docs/RenderingValidation/SceneLauncherAcceptance.md, Game/GameModes/MegaBananas/MegaBananasMode.h, TASKS.md, PROGRESS.md
-- notes: 4 つの撮影は反復の中で 1 回ずつ `-Build -GpuTimingFrames 300` で撮る。混在の負荷を作る引数は UNCERTAIN U12。status は前のとおり、規模の段で todo に上げる。 混在の負荷は SCN-MEGA-MIXED-LOAD の引数で作る。 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。 2026-10-12 親: 計測の見直し（ユーザーの指摘「節目に計測を入れても意味があるのかを考えるべき」。計測ごとに、問い・結果で変わる判断・測らずに分からないかの 3 点を書き、書けないものは置かない。Sol の批評を反映）。SCN-MEGA-MEASURE-CULL・MEASURE-VSM（閾値が 1M の予算から導かれていなかった）と SCN-MEGA-SCALE-300K（1M の内訳で同じことが分かる）を外し、この受入れの診断へまとめた。点光源の影は夜のシーンの受入れ（SCN-ACCEPT）で判断する。
-
 ## SCN-MEGA-FAR-SPLAT: 画素より小さいインスタンスを ID のバッファへ 1 画素で書く
 - status: backlog
 - done-when: 1M horizon で、ソフトのラスタと Cull の合計が 30% 以上減る。遠景の平均輝度の差 ≤ 0.5。
@@ -1506,6 +1495,14 @@
 - paths: Game, Scripts, Assets/Textures/Launcher, TASKS.md, PROGRESS.md
 - notes: 2026-10-10 親が見た点: 1920×1080 のランチャーでカードの説明文が右の縁からはみ出す（折り返しの幅がカードの内側の余白を引いていない）。カードが増えたときの並び（1 行に収まらないときの折り返しかスクロール）も確かめる。
 
+## SCN-FIX-SKY-BANDING: 空の階調の段（波打つ横縞）を消す
+- status: todo
+- done-when: SCN-MEGA-ACCEPT-1M の撮影で、mega-stress の overview（1% 移動・ストリーミング）とカメラパスの再生中の mega-bananas の horizon の空に、波打つ横縞の段がはっきり見える（`.harness/runs/scene-capture/SCN-MEGA-ACCEPT-1M/{moving,streaming}/overview.png`・`path/horizon.png`）。同じ時刻の mega-bananas の静止の horizon の空は滑らか。mega-stress の空の列の値は SCN-MEGA-MIXED-LOAD（2026-10-11）の撮影と同じで、前からある欠陥。段の出所（空の LUT の解像度・精度、ディザの有無、露出）を特定して直す。完了の条件: 上の 2 つの視点を撮り直した PNG を開いて空に段が見えず、空の縦の列の隣り合う画素の差が 1 段以下で、平らな帯（同じ値が続く区間）の長さが今より短いこと。起動画面 default の決定的撮影の比較が pass（空の見た目を変えるなら基準を再承認し、根拠をコミット本文に書く）。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -Views overview -Build -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-FIX-SKY-BANDING`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -OutDir .harness/runs/startup-capture/SCN-FIX-SKY-BANDING`
+- paths: Assets/Shaders, Library/Core/Private/Rendering, Library/Core/Public/Rendering, Docs/RenderingValidation, Test/Core/Rendering, Scripts, TASKS.md, PROGRESS.md
+- notes: 2026-10-14 SCN-MEGA-ACCEPT-1M の撮影で見つけた（前からある見た目の欠陥も直す方針）。描画を変える項目なので起動画面 default の比較を入れた。
+
 ## SCN-ACCEPT: ランチャーと全シーンの受入れを記録する
 - status: todo
 - done-when: 計画書の受入れの節の全項目を確かめて `Docs/RenderingValidation/SceneLauncherAcceptance.md` に書く: Debug・RelWithDebInfo・Release で引数なしの起動がランチャー（撮影を開いて確認）、全シーンの cycle smoke（各3周）が pass、全シーンの全視点の撮影を開いた所見、各シーンの性能（1920×1080・RelWithDebInfo で 16.6 ms を超えるシーンだけ、内訳から直す設定を決めて直すか、未達としてユーザーへ渡す。最終の設定が同じなら SCN-WASTELAND-POLISH などの証拠を使い、撮り直さない。夜のシーンでは点光源の影の内訳も見る）、Rendering3DTest の撮影が main と見た目で変わらないこと、生成と Poly Haven の資産の一覧（id・出典・ライセンス・作り方）。見つけた不具合は直すか、`SCN-FIX-<名前>` の項目として TASKS.md に足す。
@@ -1574,13 +1571,16 @@
 - paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Assets/Shaders, Game/GameModes/MegaStress, TASKS.md, PROGRESS.md
 - notes: 2026-10-14 SCN-MEGA-ACCEPT-1M の診断から。SCN-MEGA-FIX-TLAS-REBUILD・SCN-MEGA-FIX-MIXED-DEFICIT の後に回す。
 
-## SCN-FIX-SKY-BANDING: 空の階調の段（波打つ横縞）を消す
+## SCN-MEGA-ACCEPT-1M: 100万本と混在の負荷を、固定した 4 つの負荷と閾値で判定する
 - status: todo
-- done-when: SCN-MEGA-ACCEPT-1M の撮影で、mega-stress の overview（1% 移動・ストリーミング）とカメラパスの再生中の mega-bananas の horizon の空に、波打つ横縞の段がはっきり見える（`.harness/runs/scene-capture/SCN-MEGA-ACCEPT-1M/{moving,streaming}/overview.png`・`path/horizon.png`）。同じ時刻の mega-bananas の静止の horizon の空は滑らか。mega-stress の空の列の値は SCN-MEGA-MIXED-LOAD（2026-10-11）の撮影と同じで、前からある欠陥。段の出所（空の LUT の解像度・精度、ディザの有無、露出）を特定して直す。完了の条件: 上の 2 つの視点を撮り直した PNG を開いて空に段が見えず、空の縦の列の隣り合う画素の差が 1 段以下で、平らな帯（同じ値が続く区間）の長さが今より短いこと。起動画面 default の決定的撮影の比較が pass（空の見た目を変えるなら基準を再承認し、根拠をコミット本文に書く）。
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -Views overview -Build -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-FIX-SKY-BANDING`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -OutDir .harness/runs/startup-capture/SCN-FIX-SKY-BANDING`
-- paths: Assets/Shaders, Library/Core/Private/Rendering, Library/Core/Public/Rendering, Docs/RenderingValidation, Test/Core/Rendering, Scripts, TASKS.md, PROGRESS.md
-- notes: 2026-10-14 SCN-MEGA-ACCEPT-1M の撮影で見つけた（前からある見た目の欠陥も直す方針）。描画を変える項目なので起動画面 default の比較を入れた。
+- done-when: 問い: 最終の配置・描画の経路の 4 つの負荷で 60 fps を満たせるか。変わる判断: 既定を 100万本にする・直す項目を足す・止めてユーザーへ渡す。- 固定した 4 つの負荷: 100万本 horizon の静止、カメラパスの再生（パス 1 周を計測の窓に含める）、100万本 + mega-stress 5万個の 1% 移動、同じく 64 m 区画のストリーミング（区画の解放から再公開までを窓に含め、ログで確かめる）。- 各負荷で 300 フレーム以上、GPU・gt・rt の median と p95 がすべて 16.6 ms 以下（RTX 4080・1920×1080・RelWithDebInfo）。- 溢れがすべて 0、メモリ ≤ 3 GB（対象は計画の GPU Scene まわりの構造。使用中だけでなく、飛行中の複数のスロット・持ち続ける容量・回収待ちを含む最大の確保量）、Entity の数が本数によらない。PNG を開いて穴と影の欠けが無いことを見る。- 不合格の負荷は、同じ撮影の内訳から直す先を決める: GPU は範囲・インスタンス・BVH の判定、binning と記録、ハード・ソフトの両方のラスタ（`VisibilityRasterPass` を含む）、2 パス目、合流・HZB、VSM（全体とページの処理・カリング・描画。親と子の区間を二重に足さない）の時間と処理の件数。処理の量が多すぎるのか単価が高いのかを分ける。CPU は待ちと作業を分け、支配する関数・系（`RT.BuildAccelerationStructures` とその入力の選択、`RG.Record.*`、ECS の系と同期点、ストリーミングの作成・公開）を特定する。既存の区間で分けられない所だけ区間を足して撮り直す。構造・件数・ログで説明できない規模の依存が残ったときだけ、同じ配置・条件で本数を 30万へ下げた負荷を 1 つ足して比べる。直す先ごとに `SCN-MEGA-FIX-<名前>` を足す。- 合格したら既定の本数を 100万にする。受入れ文書の書き方は前と同じ。どれかの負荷で GPU・gt・rt の p95 のどれかが 25 ms を超えたら、その時点の撮影と内訳を付けてループを止めてユーザーへ渡す（自動で 30万の診断を続けない）。Debug の起動画面で検証レイヤーのエラーが 0。
+- verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-ACCEPT-1M/static --views horizon --timing --min-frames 300 --max-gpu-p95-ms 16.6 --max-gt-p95-ms 16.6 --max-rt-p95-ms 16.6 --max-gpu-median-ms 16.6 --max-gt-median-ms 16.6 --max-rt-median-ms 16.6`
+- verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-ACCEPT-1M/path --views horizon --timing --min-frames 300 --max-gpu-p95-ms 16.6 --max-gt-p95-ms 16.6 --max-rt-p95-ms 16.6 --max-gpu-median-ms 16.6 --max-gt-median-ms 16.6 --max-rt-median-ms 16.6`
+- verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-ACCEPT-1M/moving --timing --min-frames 300 --max-gpu-p95-ms 16.6 --max-gt-p95-ms 16.6 --max-rt-p95-ms 16.6 --max-gpu-median-ms 16.6 --max-gt-median-ms 16.6 --max-rt-median-ms 16.6`
+- verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-ACCEPT-1M/streaming --timing --min-frames 300 --max-gpu-p95-ms 16.6 --max-gt-p95-ms 16.6 --max-rt-p95-ms 16.6 --max-gpu-median-ms 16.6 --max-gt-median-ms 16.6 --max-rt-median-ms 16.6`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -OutDir .harness/runs/startup-capture/SCN-MEGA-ACCEPT-1M-debug`
+- paths: Docs/RenderingValidation/SceneLauncherAcceptance.md, Game/GameModes/MegaBananas/MegaBananasMode.h, TASKS.md, PROGRESS.md
+- notes: 4 つの撮影は反復の中で 1 回ずつ `-Build -GpuTimingFrames 300` で撮る。混在の負荷を作る引数は UNCERTAIN U12。status は前のとおり、規模の段で todo に上げる。 混在の負荷は SCN-MEGA-MIXED-LOAD の引数で作る。 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。 2026-10-12 親: 計測の見直し（ユーザーの指摘「節目に計測を入れても意味があるのかを考えるべき」。計測ごとに、問い・結果で変わる判断・測らずに分からないかの 3 点を書き、書けないものは置かない。Sol の批評を反映）。SCN-MEGA-MEASURE-CULL・MEASURE-VSM（閾値が 1M の予算から導かれていなかった）と SCN-MEGA-SCALE-300K（1M の内訳で同じことが分かる）を外し、この受入れの診断へまとめた。点光源の影は夜のシーンの受入れ（SCN-ACCEPT）で判断する。 2026-10-14 親: 1 回目の判定は不合格（`Docs/RenderingValidation/SceneLauncherAcceptance.md` の「100万本と混在の負荷の受入れ」。静止は GPU 15.1 ms で合格、rt は TLAS の入力の選び直しと MegaGeometry の表の毎フレームの走査で 37 ms）。ユーザーの指示（100万本は過程で、終わったらシーンの整備へ戻る）で、直す項目（SCN-MEGA-FIX-RT-SELECT〜STRESS-GPU）をシーンの項目の後に置き、この項目はその後で測り直す。
 
 ## PT-NONUNIFORM-SAMPLER: パストレーサーの材質のテクスチャの添字の一様でない印を、標本の関数の中まで届ける
 - status: backlog

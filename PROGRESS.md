@@ -4160,3 +4160,11 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - PNG を開いて確かめた: 地平線の手前に 4 つの丸い塚（30〜75 m 先）が重ならずに並び、裾は海へなじむ。塚の部分を 4 倍に拡大しても、輪郭から離れた個体・浮いて見える個体は無い。地平線までの海・床の帯が無いことは前のまま。
 - Next: TASKS.md の次の未完。
 - Notes: 塚の姿勢の段数・候補の数と半径・σ の倍率・区画の締めた上限の余裕 1.25 は内部の値（試し撮り 2 回で決めた）。補助の比較（`aux-SCN-MEGA-LAYOUT-MOUNDS-10k-compare.txt`）: 1 万本 overview を `SCN-MEGA-BASE-COOK` と比べると PSNR 39.2 dB（下限 45）・平均輝度の差 0.0019 で fail。配置はログで同一（山の 1 本ずつの記録のハッシュが一致し、海の near=520・mid=1933・far=6767・stacked=678・max_lift=0.124 も一致）で、差はバナナの影の輪郭に沿った細い線だけ（明暗が半々）。基準は SCN-MEGA-FIX-BVH-QUEUE-VSM（影の LOD の許容 1 → 4 texel）より前の 11:12 に撮ったもので、その後の 1 万本の比較は撮っていない。この基準で比べる項目は、基準の撮り直しが要る見込み。試験の追加はしていない。
+
+### SCN-MEGA-ACCEPT-1M（2026-10-14、反復 4・run 20261014-122019。1 回目の判定）
+- 判定: 不合格（4 つの負荷のどれも GPU・gt・rt の median と p95 の 16.6 ms 以下を満たさない）。測った値と内訳は `Docs/RenderingValidation/SceneLauncherAcceptance.md` の「100万本と混在の負荷の受入れ」。既定の本数（1 万）は変えない。
+  - 静止は GPU 15.1 / 15.6 ms で合格。rt は 36.9 / 40.0 ms で、TLAS の入力の選び直し（`RT.BuildAccelerationStructures` 22 ms。更新 0 回でも 100 万席の距離を毎フレーム判定）と、変わった行が 0 でも MegaGeometry の表を毎フレームたどる処理（7.1 ms）が大半。gt は rt を待つ時間がほぼ全部。
+  - カメラパスは GPU 86 ms（LightingPass 70 ms）、1% 移動・ストリーミングは GPU 31〜33 ms・rt 49〜51 ms。ストリーミングの p95 の山は区画の出し入れごとの表の全量の作り直し。
+- 直す先: `SCN-MEGA-FIX-RT-SELECT`・`TLAS-REBUILD`・`SCENE-TABLES-STEADY`・`MIXED-DEFICIT`・`VISIBLE-LIST`・`STREAM-TABLES-DELTA`・`STRESS-GPU` を TASKS.md に足した。100万本は過程で、目的はランチャーと各シーンの整備というユーザーの指示から、これらはシーンの項目（SCN-ACCEPT）の後に置き、SCN-MEGA-ACCEPT-1M はその後で測り直す。撮影で見つけた空の階調の段は `SCN-FIX-SKY-BANDING` として SCN-ACCEPT の前に置いた。
+- Next: SCN-GEN-BUILDINGS-1（シーンの項目へ戻る）。
+
