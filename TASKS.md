@@ -1390,7 +1390,7 @@
 - notes: 2026-10-14 親: このファイルのダウンロードとパッケージの導入はユーザーが許可済み。3DEP はパブリックドメイン（"All 3DEP products are public domain."）。汎用の製品探索は作らない（ファイルを固定する）。隣のタイル（`x60y412` 約 263 MB など）や 1/3 arc-second が要ると分かったら、ファイル名とサイズを書いて BLOCKED にする（別のダウンロードはユーザーの許可が要る）。近景に約 10 m の粗いデータを補間して使うことはしない。
 
 ## SCN-WL-DEM-CROP: 余白付きで範囲を切り出し、エンジンの座標の格子にする
-- status: todo
+- status: done
 - done-when: SCN-WL-REFERENCE-SELECT で決めた範囲を、周りに 100 m 以上の余白（法線と解析のため）を付けて切り出し、地域の原点を引いた m の格子として、float32 の生の格子と JSON（EPSG・原点の UTM 座標・画素の大きさ・行の向き・東と北をエンジンの X と Z のどちらの向きに対応させるか・画素の中心と頂点の対応・標高の基準 NAVD88・高さのオフセット（前哨地の床が 0 付近になる値）・余白・NoData の処理・入力の SHA-256）を `Assets/Terrain/ValleyOfTheGods/` に書く。NoData は孤立した小さな穴だけ周りから埋め、大きな穴があれば範囲を変える（0 m や大きな負値として焼かない）。陰影図を 2 方向（北西と南東から照らす）で書き、主役の崖を横切る断面の図を書いて開き、形が写真の配置と対応し、向きの反転・欠け・格子状の凹凸・崖の不自然な丸まりが無いことを確かめる。
 - verify: `python Scripts/Terrain/CropDem.py --verify`
 - paths: Scripts/Terrain, Docs/RenderingValidation, TASKS.md, PROGRESS.md

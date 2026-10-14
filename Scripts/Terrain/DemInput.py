@@ -35,8 +35,9 @@ DEM_PATH = os.path.join(SOURCE_DIR, DEM_FILE)
 DEM_SIZE = 268270390
 DEM_QUERY_BBOX = "-109.84,37.28,-109.82,37.29"
 
-# 切り出しの余白。手本の写真 cliff_01 の推定の撮影位置が範囲の西の外 100〜450 m なので西は 500 m 取る
-CROP_MARGIN = {"west": 500, "east": 100, "south": 100, "north": 100}
+# 切り出しの余白。手本の写真 cliff_01 の推定の撮影位置が範囲の西の外 100〜450 m なので西は 600 m、
+# cliff_02 の撮影位置が北の外 305 m なので北は 500 m 取る
+CROP_MARGIN = {"west": 600, "east": 100, "south": 100, "north": 500}
 
 
 def tnm_product(context):

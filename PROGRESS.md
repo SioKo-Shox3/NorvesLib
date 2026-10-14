@@ -4338,3 +4338,16 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `verify-SCN-WL-DEM-INPUT-2.txt`: `python Scripts/Terrain/DemInput.py --verify` result=pass・exit=0（OK 32 件）。
 - Notes: パッケージはユーザーの site-packages に入っているので、DEM を読むスクリプトを `python -I` で走らせると rasterio が見つからない。TNM の API には同じタイルの古い版 `UT_StatewideSouth_2020_A20`（約 26 MB）もあるが使わない。
 - Next: TASKS.md の次の未完の項目（SCN-WL-DEM-CROP）。
+
+### SCN-WL-DEM-CROP 完了（2026-10-15、反復 7・run 20261014-222123）
+- 実装: `Scripts/Terrain/CropDem.py` を足した（`--build` で DEM の窓を切り出して `Assets/Terrain/ValleyOfTheGods/` に `height.r32`・`height.json`・`preview/` の陰影図と断面の図を書く、`--verify` で格子を DEM から作り直してビット単位の一致・向き・高さの基準・余白・NoData・前哨地の床・崖の急さ・格子の周期の凹凸を確かめる）。格子の約束と確認の結果は `Docs/RenderingValidation/WastelandDem.md`。
+  - 格子: 4700 x 4600 頂点の float32（86.48 MB、SHA-256 `da03c1a6…dfc4d`）。範囲は E 601900〜606600・N 4124900〜4129500（余白 西 600・東 100・南 100・北 500 m。`DemInput.py` の `CROP_MARGIN` も同じ値に変えた）。頂点は DEM の画素の中心、行 0 が北端。
+  - 座標: エンジンは右手系・Y 上なので東を +X、北を -Z（+Z が南）にした。X = 東 - 604500.5、Z = -(北 - 4127000.5)、Y = NAVD88 - 1452.05。頂点はエンジンの整数の座標（X -2600〜2099・Z -2499〜2100）。
+  - 高さのオフセット 1452.05 m は前哨地 A の半径 30 m の標高の中央値（床が Y = 0.000）。1 m の格子でも A・B・C とも平らさの条件を満たし、A のまま。
+  - NoData は 0 画素。平らな所で周りから 0.5 m を越えて飛び出した 1 画素だけを直し、該当は北の余白のメサの上の 2 画素。全体のならしはしていない。
+- 検証（`.harness/runs/20261014-222123/`）:
+  - `verify-SCN-WL-DEM-CROP-1.txt`: `python Scripts/Terrain/CropDem.py --verify` result=pass・exit=0（地形・撮影位置・前哨地の候補の 12 点で DEM の値と一致、Battleship Rock が X < 0・Z < 0 で比高 183.6 m、断面の傾きの最大 84.4°・81.6°、周期の凹凸の比 1.014）。
+  - `aux-SCN-WL-DEM-CROP-deminput.txt`: 余白を変えた後の `python Scripts/Terrain/DemInput.py --verify` result=pass。
+  - 図を開いた: 陰影図 2 枚で 4 つのビュートが地形の点の上にあり、照らす向きで明暗が逆になる（反転なし・欠けなし）。Battleship Rock の拡大は縁の崖・段々の棚・崖錐の溝が分かれ、格子状の凹凸なし。断面は崖錐・段・垂直な崖の 3 段で、崖の上端と下端が 1〜2 m で折れる。前哨地 A の拡大は西 約 57 m を直線の未舗装路が通り、北 30〜150 m に高さ 1 m ほどの起伏、南側は滑らか。
+- Notes: 前哨地の判定の傾斜は 1 m の差分だと礫や小さな起伏で 10°を越えるので 4 m 間隔で測る（内部の値）。前の手続きの荒野は +Z を北として書いているので、SCN-WL-DEM-SCENE で格子の約束（+Z が南）に合わせる。C++ は触っていないのでビルドは走らせていない。試験は足していない。
+- Next: TASKS.md の次の未完の項目（SCN-WL-DEM-HEIGHTFIELD）。
