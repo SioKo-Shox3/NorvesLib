@@ -7,6 +7,8 @@
 #include "Core/Public/Engine/Engine.h"
 #include "Core/Public/GameMode/GameModeScope.h"
 #include "Core/Public/Logging/LogMacros.h"
+#include "Core/Public/Math/Quaternion.h"
+#include "Core/Public/Math/Vector3.h"
 #include "Core/Public/Object/Entity.h"
 #include "Core/Public/Object/World.h"
 #include "Core/Public/RHI/ITexture.h"
@@ -19,11 +21,15 @@
 #include "Core/Public/Rendering/Terrain/TerrainHeightField.h"
 #include "Core/Public/Rendering/VolumetricFog.h"
 #include "GameModes/Rendering3DTest/SkySunControl.h"
+#include "GameModes/Wasteland/WastelandLayout.h"
 #include "Scenes/SceneCatalog.h"
 #include "Scenes/SceneReadiness.h"
 
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <limits>
 
 using namespace NorvesLib::Core;
 using namespace NorvesLib::Core::Container;
@@ -31,6 +37,7 @@ using namespace NorvesLib::Core::GameMode;
 using namespace NorvesLib::Core::Rendering;
 using namespace NorvesLib::Core::Rendering::MegaGeometry;
 namespace TerrainSpec = NorvesLib::Core::Rendering::Terrain::WastelandTerrain;
+namespace Layout = Game::GameModes::WastelandLayout;
 
 namespace Game::GameModes
 {
@@ -44,6 +51,19 @@ namespace Game::GameModes
         TSharedPtr<IGeometryPageSource> PageSource;
     };
 
+    /// 岩・崖・建物の 1 種類の読み込み。材質のテクスチャがそろったら MegaMesh にする
+    struct WastelandPropLoad
+    {
+        bool bStarted = false;
+        TSharedPtr<Asset::CookedMeshData> Mesh;
+        TSharedPtr<IGeometryPageSource> PageSource;
+        MaterialCreateData Material;
+        uint32_t PendingTextureCount = 0;
+        /// メッシュの範囲と表の向き（bAvailable は MegaMesh を作れたときに立てる）
+        Layout::PropMeshShape Shape;
+        MegaMeshHandle MegaMesh;
+    };
+
     /// 地形の区画と、材質のテクスチャの読み込み
     struct WastelandAssembly
     {
@@ -53,17 +73,34 @@ namespace Game::GameModes
         /// 2 層目（乾いた土）・3 層目（岩肌）と混ぜ方
         MegaTerrainBlend TerrainBlend;
         uint32_t PendingTextureCount = 0;
+        /// 小物・建物（種類ごと。テクスチャの読み込みの結果が枠を指すので、固定の配列で持つ）
+        WastelandPropLoad Props[Layout::kPropKindCount];
         bool bCancelled = false;
         bool bPlaced = false;
+        bool bPropsPlaced = false;
     };
 
     namespace
     {
-        // 昼の太陽。盆地を見下ろす視点（+Z 向き）に対して横から差し、起伏の陰影が出る向き
-        constexpr float kSunAltitudeDegrees = 32.0f;
-        constexpr float kSunAzimuthDegrees = -60.0f;
-        // 晴天の昼の手動露出（絞り f/16・ISO 100 のままシャッター速度で合わせる）
-        constexpr float kExposureEV100 = 15.0f;
+        // 夕方寄りの太陽。低い所（仰角 17°）から、盆地を北へ見る視点に対して横から差し、建物と岩の影が長く伸びる
+        constexpr float kSunAltitudeDegrees = 17.0f;
+        constexpr float kSunAzimuthDegrees = -70.0f;
+        // 夕方の手動露出（絞り f/16・ISO 100 のままシャッター速度で合わせる）
+        constexpr float kExposureEV100 = 14.0f;
+        // 夕景のグレーディング。トーンマップは暗部を縮めない NeutralLinear にし、空の光だけの影の中が黒くつぶれないようにする。
+        // コントラストは軸 0.5 の S 字でわずかに立て、色温度を暖色へ、彩度を少し上げる。ビネットは画面の隅を少し落とす程度
+        constexpr float kGradingContrast = 1.1f;
+        constexpr float kGradingContrastPivot = 0.5f;
+        constexpr float kGradingSaturation = 1.25f;
+        constexpr float kGradingTemperature = 0.25f;
+        constexpr float kVignetteIntensity = 0.25f;
+        constexpr float kVignetteRadius = 0.85f;
+        constexpr float kVignetteSoftness = 0.6f;
+        // 背面の無いスキャン（崖の岩）とみなす、面の法線の和の水平成分と表面積の比
+        constexpr float kOpenSideRatioMin = 0.2f;
+        // 崖の岩（花崗岩のスキャン。アルベドの平均がリニアで 0.13 : 0.09 : 0.065）に掛ける色。メサの岩肌（rock_face、
+        // 0.12 : 0.06 : 0.03）の赤みに寄せ、足元で灰色に浮かないようにする
+        constexpr float kCliffTint[3] = {1.0f, 0.75f, 0.55f};
         // 高さフォグ: 盆地の床（高さ 0）での密度[1/m]と、上へ向かって薄くなる割合[1/m]。
         // 1 km 先の稜線が霞みすぎず、遠近が分かる程度（地面すれすれの水平の 1 km で透過率 約 0.74）
         constexpr float kFogDensity = 0.0003f;
@@ -185,16 +222,16 @@ namespace Game::GameModes
             return true;
         }
 
-        /// 材質のテクスチャを 1 枚、非同期で読む。結果は主スレッドで target（assembly の中の枠）へ入れる。
+        /// 材質のテクスチャを 1 枚、非同期で読む。結果は主スレッドで target（assembly の中の枠）へ入れ、*pPending を減らす。
         /// pNormalTwoChannel は法線のときだけ渡し、クック済みの法線が BC5 かを入れる
         void LoadMaterialTexture(TextureResources &textures, const TSharedPtr<WastelandAssembly> &assembly,
-                                 const char *path, TextureHandle *target, bool *pNormalTwoChannel)
+                                 const char *path, TextureHandle *target, bool *pNormalTwoChannel, uint32_t *pPending)
         {
             TextureResources *pTextures = &textures;
             const String pathText(path);
             textures.LoadTextureAsync(
                 pathText,
-                [pTextures, assembly, pathText, target, pNormalTwoChannel](TextureHandle handle)
+                [pTextures, assembly, pathText, target, pNormalTwoChannel, pPending](TextureHandle handle)
                 {
                     if (assembly->bCancelled)
                     {
@@ -217,7 +254,7 @@ namespace Game::GameModes
                         *pNormalTwoChannel =
                             rhiTexture != nullptr && rhiTexture->GetFormat() == NorvesLib::RHI::Format::BC5_UNORM;
                     }
-                    --assembly->PendingTextureCount;
+                    --*pPending;
                 });
         }
 
@@ -287,6 +324,283 @@ namespace Game::GameModes
             }
             return placed;
         }
+
+        /// 常駐の粗い段の三角形の、面積を掛けた法線の和から表の向きを決める。閉じた岩では和が 0 に近く、
+        /// 背面の無い崖のスキャンでは表の側を向く。比が小さいときは +Z を表とする
+        void MeasureFrontYaw(const Asset::CookedMeshData &mesh, Layout::PropMeshShape &shape, float &outRatio)
+        {
+            outRatio = 0.0f;
+            const size_t begin = mesh.FallbackIndexOffset;
+            const size_t end = begin + mesh.FallbackIndexCount;
+            if (mesh.FallbackIndexCount < 3 || end > mesh.Indices.size())
+            {
+                return;
+            }
+            double sumX = 0.0;
+            double sumZ = 0.0;
+            double totalArea = 0.0;
+            for (size_t i = begin; i + 2 < end; i += 3)
+            {
+                const uint32_t ia = mesh.Indices[i];
+                const uint32_t ib = mesh.Indices[i + 1];
+                const uint32_t ic = mesh.Indices[i + 2];
+                if (ia >= mesh.Vertices.size() || ib >= mesh.Vertices.size() || ic >= mesh.Vertices.size())
+                {
+                    continue;
+                }
+                const Asset::CookedMeshVertex &a = mesh.Vertices[ia];
+                const Asset::CookedMeshVertex &b = mesh.Vertices[ib];
+                const Asset::CookedMeshVertex &c = mesh.Vertices[ic];
+                const double e1x = b.Position.X - a.Position.X;
+                const double e1y = b.Position.Y - a.Position.Y;
+                const double e1z = b.Position.Z - a.Position.Z;
+                const double e2x = c.Position.X - a.Position.X;
+                const double e2y = c.Position.Y - a.Position.Y;
+                const double e2z = c.Position.Z - a.Position.Z;
+                const double cx = e1y * e2z - e1z * e2y;
+                const double cy = e1z * e2x - e1x * e2z;
+                const double cz = e1x * e2y - e1y * e2x;
+                const double area = std::sqrt(cx * cx + cy * cy + cz * cz);
+                // 三角形の向きは巻き方でなく頂点の法線の平均で決める（巻き方の規約によらない）
+                const double nx = static_cast<double>(a.Normal.X) + b.Normal.X + c.Normal.X;
+                const double ny = static_cast<double>(a.Normal.Y) + b.Normal.Y + c.Normal.Y;
+                const double nz = static_cast<double>(a.Normal.Z) + b.Normal.Z + c.Normal.Z;
+                const double nLength = std::sqrt(nx * nx + ny * ny + nz * nz);
+                if (!(area > 0.0) || !(nLength > 0.0))
+                {
+                    continue;
+                }
+                sumX += nx / nLength * area;
+                sumZ += nz / nLength * area;
+                totalArea += area;
+            }
+            if (!(totalArea > 0.0))
+            {
+                return;
+            }
+            outRatio = static_cast<float>(std::sqrt(sumX * sumX + sumZ * sumZ) / totalArea);
+            if (outRatio >= kOpenSideRatioMin)
+            {
+                shape.FrontYaw = static_cast<float>(std::atan2(sumX, sumZ));
+            }
+        }
+
+        /// 小物・建物の全種類のクック済みメッシュを解決・解析し、材質のテクスチャの読み込みを始める。
+        /// クック済みが無い・壊れている種類は理由を出して読み飛ばす（その種類を置かずに続ける）
+        void StartPropLoads(GameModeContext &ctx, const TSharedPtr<const Asset::AssetSystem> &assetSystem,
+                            const TSharedPtr<WastelandAssembly> &assembly)
+        {
+            auto &textures = ctx.RenderResourcesRef.Textures();
+            uint32_t started = 0;
+            for (uint32_t kindIndex = 0; kindIndex < Layout::kPropKindCount; ++kindIndex)
+            {
+                const Layout::PropKindSpec &spec = Layout::GetPropKindSpec(static_cast<Layout::PropKind>(kindIndex));
+                WastelandPropLoad &load = assembly->Props[kindIndex];
+                const Asset::AssetResolveResult resolved = assetSystem->ResolveAsset(spec.MeshPath, Asset::AssetKind::Model);
+                if (!resolved.UsedCooked())
+                {
+                    LOG_WARNING_F("COOKED_MODEL_MISSING scene=wasteland id=%s path=%s クック済みのメッシュがありません。"
+                                  "Scripts/CookAssets.ps1 で焼くと置けます",
+                                  spec.Id, spec.MeshPath);
+                    continue;
+                }
+                bool bTexturesCooked = true;
+                for (const char *path : {spec.AlbedoPath, spec.NormalPath, spec.OrmPath})
+                {
+                    if (!assetSystem->FindCookedVariant(AnsiString(path), Asset::AssetKind::Texture).ShouldUseCooked())
+                    {
+                        LOG_WARNING_F("COOKED_MODEL_TEXTURES_MISSING scene=wasteland id=%s path=%s "
+                                      "クック済みのテクスチャがありません",
+                                      spec.Id, path);
+                        bTexturesCooked = false;
+                    }
+                }
+                if (!bTexturesCooked)
+                {
+                    continue;
+                }
+                Asset::CookedMeshParseResult parsed = Asset::ParseCookedMesh(resolved.Blob);
+                if (!parsed.Succeeded() || parsed.Mesh.Clusters.empty() || parsed.Mesh.Vertices.empty())
+                {
+                    LOG_WARNING_F("COOKED_MODEL_MISSING scene=wasteland id=%s path=%s status=%u "
+                                  "クック済みのメッシュを解析できません",
+                                  spec.Id, spec.MeshPath, static_cast<unsigned int>(parsed.Status));
+                    continue;
+                }
+                Asset::AssetCookedRange pageRange;
+                if (parsed.Mesh.Pages.size() >= 2 && Asset::AssetSystem::TryMakeCookedRange(resolved, pageRange))
+                {
+                    load.PageSource = MakeCookedMeshPageSource(parsed.Mesh, assetSystem->GetCookedFileReader(),
+                                                               pageRange.Request, pageRange.BaseOffset);
+                }
+                load.Mesh = MakeShared<Asset::CookedMeshData>(std::move(parsed.Mesh));
+
+                // ローカルの範囲（拡大前）と表の向き
+                Layout::PropMeshShape &shape = load.Shape;
+                shape.MinX = shape.MinY = shape.MinZ = std::numeric_limits<float>::max();
+                shape.MaxX = shape.MaxY = shape.MaxZ = std::numeric_limits<float>::lowest();
+                for (const Asset::CookedMeshVertex &vertex : load.Mesh->Vertices)
+                {
+                    shape.MinX = std::min(shape.MinX, vertex.Position.X);
+                    shape.MaxX = std::max(shape.MaxX, vertex.Position.X);
+                    shape.MinY = std::min(shape.MinY, vertex.Position.Y);
+                    shape.MaxY = std::max(shape.MaxY, vertex.Position.Y);
+                    shape.MinZ = std::min(shape.MinZ, vertex.Position.Z);
+                    shape.MaxZ = std::max(shape.MaxZ, vertex.Position.Z);
+                }
+                float openRatio = 0.0f;
+                if (!spec.bBuilding)
+                {
+                    MeasureFrontYaw(*load.Mesh, shape, openRatio);
+                }
+                LOG_INFO_F("WASTELAND_PROP_MESH id=%s clusters=%u pages=%zu size=%.2fx%.2fx%.2f open_ratio=%.3f "
+                           "front_yaw_deg=%.1f",
+                           spec.Id, static_cast<unsigned int>(load.Mesh->Clusters.size()), load.Mesh->Pages.size(),
+                           static_cast<double>(shape.MaxX - shape.MinX), static_cast<double>(shape.MaxY - shape.MinY),
+                           static_cast<double>(shape.MaxZ - shape.MinZ), static_cast<double>(openRatio),
+                           static_cast<double>(shape.FrontYaw * 180.0f / 3.14159265f));
+
+                load.Material.DebugName = spec.Id;
+                load.PendingTextureCount = 3;
+                load.bStarted = true;
+                LoadMaterialTexture(textures, assembly, spec.AlbedoPath, &load.Material.AlbedoTexture, nullptr,
+                                    &load.PendingTextureCount);
+                LoadMaterialTexture(textures, assembly, spec.NormalPath, &load.Material.NormalTexture,
+                                    &load.Material.bNormalTwoChannel, &load.PendingTextureCount);
+                LoadMaterialTexture(textures, assembly, spec.OrmPath, &load.Material.ORMTexture, nullptr,
+                                    &load.PendingTextureCount);
+                ++started;
+            }
+            LOG_INFO_F("WASTELAND_PROP_LOADS kinds=%u started=%u", Layout::kPropKindCount, started);
+        }
+
+        /// 読み込みを始めた種類の材質のテクスチャがすべて届いたか
+        bool ArePropTexturesLoaded(const WastelandAssembly &assembly)
+        {
+            for (const WastelandPropLoad &load : assembly.Props)
+            {
+                if (load.bStarted && load.PendingTextureCount != 0)
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        /// 材質がそろった種類を MegaMesh にし、高さ場から決めた配置に Entity を置く
+        void PlaceProps(GameModeContext &ctx, WastelandAssembly &assembly)
+        {
+            auto &megaGeometry = ctx.RenderResourcesRef.MegaGeometry();
+            Layout::PropMeshShape shapes[Layout::kPropKindCount];
+            for (uint32_t kindIndex = 0; kindIndex < Layout::kPropKindCount; ++kindIndex)
+            {
+                WastelandPropLoad &load = assembly.Props[kindIndex];
+                const Layout::PropKindSpec &spec = Layout::GetPropKindSpec(static_cast<Layout::PropKind>(kindIndex));
+                if (!load.bStarted)
+                {
+                    continue;
+                }
+                const MaterialCreateData &material = load.Material;
+                if (!material.AlbedoTexture.IsValid() || !material.NormalTexture.IsValid() ||
+                    !material.ORMTexture.IsValid())
+                {
+                    LOG_WARNING_F("WASTELAND_PROP_SKIPPED id=%s 材質のテクスチャを読めないため置きません"
+                                  "（albedo=%d normal=%d orm=%d）",
+                                  spec.Id, material.AlbedoTexture.IsValid() ? 1 : 0, material.NormalTexture.IsValid() ? 1 : 0,
+                                  material.ORMTexture.IsValid() ? 1 : 0);
+                    load.Mesh.reset();
+                    continue;
+                }
+                MegaMeshCreateInfo createInfo;
+                if (!BuildMegaMeshCreateInfoFromCookedMesh(*load.Mesh, createInfo))
+                {
+                    LOG_WARNING_F("WASTELAND_PROP_SKIPPED id=%s MegaMesh の入力を作れませんでした", spec.Id);
+                    load.Mesh.reset();
+                    continue;
+                }
+                createInfo.PageSource = load.PageSource;
+                createInfo.Material.AlbedoTexture = material.AlbedoTexture;
+                createInfo.Material.NormalTexture = material.NormalTexture;
+                createInfo.Material.ORMTexture = material.ORMTexture;
+                createInfo.Material.bNormalTwoChannel = material.bNormalTwoChannel;
+                const Layout::PropKind kind = static_cast<Layout::PropKind>(kindIndex);
+                if (kind == Layout::PropKind::Cliff01 || kind == Layout::PropKind::Cliff02)
+                {
+                    for (uint32_t channel = 0; channel < 3; ++channel)
+                    {
+                        createInfo.Material.BaseColor[channel] = kCliffTint[channel];
+                    }
+                }
+                createInfo.DebugName = spec.Id;
+                const MegaMeshHandle megaMesh = megaGeometry.CreateMegaMesh(createInfo);
+                load.Mesh.reset();
+                if (!megaMesh.IsValid())
+                {
+                    LOG_WARNING_F("WASTELAND_PROP_SKIPPED id=%s MegaMesh を作れませんでした", spec.Id);
+                    continue;
+                }
+                const ModelHandle model = megaGeometry.RegisterModel(megaMesh, spec.Id, spec.MeshPath);
+                if (!model.IsValid())
+                {
+                    megaGeometry.ReleaseMegaMesh(megaMesh);
+                    LOG_WARNING_F("WASTELAND_PROP_SKIPPED id=%s モデルとして登録できませんでした", spec.Id);
+                    continue;
+                }
+                // 同じ種類の全 Entity が 1 つの Model を共有する。シーンを出るときにスコープが返す
+                ctx.ScopeRef.TrackModel(model);
+                load.MegaMesh = megaMesh;
+                load.Shape.bAvailable = true;
+                shapes[kindIndex] = load.Shape;
+            }
+
+            const Terrain::TerrainHeightField field(TerrainSpec::MakeParams());
+            VariableArray<Layout::PropPlacement> placements;
+            Layout::LayoutStats stats;
+            Layout::BuildPlacements(field, shapes, placements, stats);
+
+            uint32_t placedPerKind[Layout::kPropKindCount] = {};
+            uint32_t placed = 0;
+            for (const Layout::PropPlacement &placement : placements)
+            {
+                const uint32_t kindIndex = static_cast<uint32_t>(placement.Kind);
+                Entity *object = ctx.ScopeRef.SpawnObject<Entity>();
+                auto *component =
+                    object != nullptr ? ctx.WorldRef.CreateComponent<Component::MegaGeometryComponent>(object) : nullptr;
+                if (component == nullptr)
+                {
+                    continue;
+                }
+                object->SetPosition(placement.X, placement.Y, placement.Z);
+                object->SetScale(placement.Scale, placement.Scale, placement.Scale);
+                object->SetRotation(NorvesLib::Math::Quaternion(NorvesLib::Math::Vector3(0.0f, 1.0f, 0.0f), placement.Yaw));
+                component->SetMegaMeshHandle(assembly.Props[kindIndex].MegaMesh);
+                component->SetCastShadow(true);
+                ++placedPerKind[kindIndex];
+                ++placed;
+            }
+            LOG_INFO_F("WASTELAND_PROPS placed=%u planned=%zu buildings=%u foot_rays=%u foot_hits=%u cliffs=%u "
+                       "foot_boulders=%u basin_boulders=%u",
+                       placed, placements.size(), stats.Buildings, stats.FootRays, stats.FootHits, stats.Cliffs,
+                       stats.FootBoulders, stats.BasinBoulders);
+            for (uint32_t kindIndex = 0; kindIndex < Layout::kPropKindCount; ++kindIndex)
+            {
+                LOG_INFO_F("WASTELAND_PROP_KIND id=%s placed=%u",
+                           Layout::GetPropKindSpec(static_cast<Layout::PropKind>(kindIndex)).Id, placedPerKind[kindIndex]);
+            }
+            // 建物の最下点の高さと、その位置の地形の高さ（最下点が地面より下 = 埋まっている）を確かめられるよう出す
+            for (const Layout::PropPlacement &placement : placements)
+            {
+                if (Layout::GetPropKindSpec(placement.Kind).bBuilding)
+                {
+                    const float bottom = placement.Y + shapes[static_cast<uint32_t>(placement.Kind)].MinY * placement.Scale;
+                    LOG_INFO_F("WASTELAND_BUILDING id=%s x=%.1f z=%.1f bottom=%.2f ground=%.2f yaw_deg=%.1f",
+                               Layout::GetPropKindSpec(placement.Kind).Id, static_cast<double>(placement.X),
+                               static_cast<double>(placement.Z), static_cast<double>(bottom),
+                               static_cast<double>(field.SampleHeight(placement.X, placement.Z)),
+                               static_cast<double>(placement.Yaw * 180.0f / 3.14159265f));
+                }
+            }
+        }
     } // namespace
 
     GameModeEnterResult WastelandRoutine::Enter(GameModeContext &ctx, WastelandData &data)
@@ -354,17 +668,21 @@ namespace Game::GameModes
                 assembly->PendingTextureCount = kTerrainTextureCount;
                 auto &textures = ctx.RenderResourcesRef.Textures();
                 MaterialCreateData &sand = assembly->Material;
-                LoadMaterialTexture(textures, assembly, kSandAlbedoPath, &sand.AlbedoTexture, nullptr);
-                LoadMaterialTexture(textures, assembly, kSandNormalPath, &sand.NormalTexture, &sand.bNormalTwoChannel);
-                LoadMaterialTexture(textures, assembly, kSandOrmPath, &sand.ORMTexture, nullptr);
-                LoadMaterialTexture(textures, assembly, kDirtAlbedoPath, &blend.Dirt.AlbedoTexture, nullptr);
+                uint32_t *pPending = &assembly->PendingTextureCount;
+                LoadMaterialTexture(textures, assembly, kSandAlbedoPath, &sand.AlbedoTexture, nullptr, pPending);
+                LoadMaterialTexture(textures, assembly, kSandNormalPath, &sand.NormalTexture, &sand.bNormalTwoChannel,
+                                    pPending);
+                LoadMaterialTexture(textures, assembly, kSandOrmPath, &sand.ORMTexture, nullptr, pPending);
+                LoadMaterialTexture(textures, assembly, kDirtAlbedoPath, &blend.Dirt.AlbedoTexture, nullptr, pPending);
                 LoadMaterialTexture(textures, assembly, kDirtNormalPath, &blend.Dirt.NormalTexture,
-                                    &blend.Dirt.bNormalTwoChannel);
-                LoadMaterialTexture(textures, assembly, kDirtOrmPath, &blend.Dirt.ORMTexture, nullptr);
-                LoadMaterialTexture(textures, assembly, kRockAlbedoPath, &blend.Rock.AlbedoTexture, nullptr);
+                                    &blend.Dirt.bNormalTwoChannel, pPending);
+                LoadMaterialTexture(textures, assembly, kDirtOrmPath, &blend.Dirt.ORMTexture, nullptr, pPending);
+                LoadMaterialTexture(textures, assembly, kRockAlbedoPath, &blend.Rock.AlbedoTexture, nullptr, pPending);
                 LoadMaterialTexture(textures, assembly, kRockNormalPath, &blend.Rock.NormalTexture,
-                                    &blend.Rock.bNormalTwoChannel);
-                LoadMaterialTexture(textures, assembly, kRockOrmPath, &blend.Rock.ORMTexture, nullptr);
+                                    &blend.Rock.bNormalTwoChannel, pPending);
+                LoadMaterialTexture(textures, assembly, kRockOrmPath, &blend.Rock.ORMTexture, nullptr, pPending);
+                // 岩・崖・建物。地形の上に据えるので、地形を置けるときだけ読む
+                StartPropLoads(ctx, assetSystem, assembly);
                 data.m_pAssembly = assembly;
             }
         }
@@ -390,6 +708,17 @@ namespace Game::GameModes
         camera->SetShutterSpeed(ComputeShutterSpeedForEV100(camera->GetAperture(), camera->GetISO(), kExposureEV100));
         camera->SetExposureCompensation(0.0f);
         camera->SetAntiAliasingMode(CameraAntiAliasingMode::FXAA);
+        // 夕景のトーンマップとグレーディング（このシーンのカメラだけ。ほかのシーンのカメラは各自のひな形を使う）
+        CameraProxy &proxyTemplate = data.m_Rig.ProxyTemplate();
+        proxyTemplate.ToneMapCurve = CameraToneMapCurve::NeutralLinear;
+        proxyTemplate.GradingOverride.bEnabled = true;
+        proxyTemplate.GradingOverride.Contrast = kGradingContrast;
+        proxyTemplate.GradingOverride.ContrastPivot = kGradingContrastPivot;
+        proxyTemplate.GradingOverride.Saturation = kGradingSaturation;
+        proxyTemplate.GradingOverride.Temperature = kGradingTemperature;
+        proxyTemplate.GradingOverride.VignetteIntensity = kVignetteIntensity;
+        proxyTemplate.GradingOverride.VignetteRadius = kVignetteRadius;
+        proxyTemplate.GradingOverride.VignetteSoftness = kVignetteSoftness;
         return GameModeEnterResult::Succeeded;
     }
 
@@ -406,11 +735,23 @@ namespace Game::GameModes
                 // 地形を置けない（クック済みが無い）。空と太陽だけのシーンとして組み立てを終える
                 data.m_TerrainSettledTick = data.m_TickCount;
             }
-            else if (data.m_pAssembly->PendingTextureCount == 0 && !data.m_pAssembly->bPlaced)
+            else
             {
-                PlaceTerrain(ctx, *data.m_pAssembly);
-                data.m_pAssembly->bPlaced = true;
-                data.m_TerrainSettledTick = data.m_TickCount;
+                WastelandAssembly &assembly = *data.m_pAssembly;
+                if (assembly.PendingTextureCount == 0 && !assembly.bPlaced)
+                {
+                    PlaceTerrain(ctx, assembly);
+                    assembly.bPlaced = true;
+                }
+                if (ArePropTexturesLoaded(assembly) && !assembly.bPropsPlaced)
+                {
+                    PlaceProps(ctx, assembly);
+                    assembly.bPropsPlaced = true;
+                }
+                if (assembly.bPlaced && assembly.bPropsPlaced)
+                {
+                    data.m_TerrainSettledTick = data.m_TickCount;
+                }
             }
         }
 
