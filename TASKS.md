@@ -1472,7 +1472,7 @@
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-WL-MATERIAL-PALETTE`
 - verify: `python Scripts/Terrain/CompareReference.py --capture .harness/runs/scene-capture/SCN-WL-MATERIAL-PALETTE --verify`
 - paths: Assets/Shaders, Library/Core/Private/Rendering, Game/GameModes/Wasteland, Assets/AssetSets, Scripts, .gitignore, TASKS.md, PROGRESS.md
-- notes: 2026-10-15 親: ambientCG（CC0）と Poly Haven（CC0）の素材のダウンロードはユーザーが許可済み。写真との差でいちばん大きいのは地面の明るさ（写真 0.14・撮影 0.65、SCN-WL-LIGHT-BASE の比較）。露出やグレーディングで合わせない。
+- notes: 2026-10-15 親: ambientCG（CC0）と Poly Haven（CC0）の素材のダウンロードはユーザーが許可済み。写真との差でいちばん大きいのは地面の明るさ（写真 0.14・撮影 0.65、SCN-WL-LIGHT-BASE の比較）。露出やグレーディングで合わせない。 2026-10-15 親: SCN-WL-REFERENCE-CAPTURE の比較画像では、地表の材質の平均のアルベド（線形、×0.32 の倍率込み）が砂 0.100・乾いた土 0.065・岩肌 0.023 と低いのに、撮影の地面は Y 0.67（R 0.76・G 0.66・B 0.46）と白っぽい。テクスチャを替える前に、テクスチャの値と描かれた明るさが合わない原因（倍率が効かない経路・露出・トーンマップ・可視バッファの解決とラスタの違い）を先に突き止める。
 
 ## SCN-WL-MATERIAL-STRATA: 砂岩の地層と風化の筋を足す
 - status: todo
