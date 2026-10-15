@@ -189,10 +189,11 @@ def apply_surface_mask(edges, sand, dirt, rock):
     count_z = (classes.shape[0] - skip_z) // factor
     block = classes[skip_z:skip_z + count_z * factor, skip_x:skip_x + count_x * factor]
     block = block.reshape(count_z, factor, count_x, factor, 4).mean(axis=(1, 3))
-    total = numpy.maximum(block.sum(axis=2), 1e-6)
-    r, g, b, a = (block[:, :, index] / total for index in range(4))
+    # 4 つの重みの和が 1 に足りない分は地図の砂（沢底と吹きだまり）で、砂の枠へ入れる
+    r, g, b, a = (block[:, :, index] for index in range(4))
+    wash = numpy.clip(1.0 - block.sum(axis=2), 0.0, 1.0)
     target = (slice(first_row, first_row + count_z), slice(first_column, first_column + count_x))
-    sand[target] = b + a * (1.0 - GRAVEL_TO_DIRT)
+    sand[target] = b + a * (1.0 - GRAVEL_TO_DIRT) + wash
     dirt[target] = g + a * GRAVEL_TO_DIRT
     rock[target] = r
     return {"rows": [first_row, first_row + count_z], "columns": [first_column, first_column + count_x]}

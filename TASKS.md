@@ -1555,7 +1555,7 @@
 - notes: 2026-10-16 ユーザーの決定（確認 1 の後）: 地面 → 光と色 → 近くの崖の順に進める。見た目の作り込みは自前の式と長いクック待ちで回さず、写真由来の素材を使う。
 
 ## SCN-WL-MASKS-FLOW: 沢と堆積の分布を足す
-- status: todo
+- status: done
 - done-when: 余白を含む広い範囲で流れの集まり（窪地の処理を含む。描画用の高さは変えない）を求め、対数にした集水面積から沢底の幅を決めて地図に足す。沢底は乾いた細粒の地面にし、砂の吹きだまりは風向（手本から推定）と写真で補う（流量だけで決めない）。overview・ground の撮影を開き、涸れ沢が地形の谷に沿った線として地表の材質に出ることを確かめる。
 - verify: `python Scripts/Terrain/TerrainMasks.py --verify`
 - verify: `cmake --build build --config Debug --target Game -- /m:1`

@@ -1,10 +1,12 @@
 ﻿# 荒野の DEM の格子（CropDem.py が書く height.json と height.r32）から、地表の分類の重みの地図を焼く。
-# 分類は露岩・崖錐・地表（細粒）・地表（礫）の 4 つで、1 画素に 4 つの重み（合計 255）を RGBA8 の PNG に入れる。
+# 分類は露岩・崖錐・地表（細粒）・地表（礫）・砂（沢底と吹きだまり）の 5 つで、1 画素の RGBA8 に前の 4 つの重みを入れ、
+# 砂は 255 から 4 つの和を引いた残りにする（5 つの合計が 255）。
 #
 # 使い方:
 #   python Scripts/Terrain/TerrainMasks.py --build    地図・記述・色分けの図を Assets/Terrain/ValleyOfTheGods/ に書く
 #   python Scripts/Terrain/TerrainMasks.py --verify   地図を作り直して書いたものと一致するか、崖に露岩・崖の下の裾に崖錐・
-#                                                     平らな所に地表が出るか、崖錐が距離だけで決まっていないかを確かめる
+#                                                     平らな所に地表が出るか、崖錐が距離だけで決まっていないか、沢底が谷の底に
+#                                                     沿って手本の沢の幅になるか、吹きだまりが風下の陰に寄るかを確かめる
 # 出力は git 管理外（格子と同じ場所）。終了コード: すべて満たせば 0、どれかが欠ければ 1。
 #
 # 求め方（2 m の画素で計算する。1 m の格子をそのまま微分すると細かい凹凸を拾うので、2×2 の平均と数 m の幅でならす）:
@@ -17,7 +19,12 @@
 #     溜まりにくい）。溜まった量を数 m ぼかして重みを決めるので、
 #     崖より低い側・斜面の向き・沢の切れ込みに沿った扇状・舌状の塊になり、崖からの距離だけでは決まらない
 #   - 地表: 残り。傾いた所・周りより高い所・崖錐の先の薄く散った所は礫、周りより低い平らな所は細粒
-# 地層の高さは地図に焼かない（シェーダーで共通の基準面からの高さとして計算する）。流れ（沢）は別の項目で足す。
+#   - 沢底: 流れの集まり（集水面積）を、地図の中は 2 m の画素、地図の外 5 km までは 10 m の升目で求める（どちらも窪地を
+#     埋めて溢れ口へ流す Priority-Flood。描画用の高さは変えない）。外の升目から地図へ流れ込む面積は、流れ込む升目の中の
+#     最も低い画素に足す。対数にした集水面積から沢底の幅を決め、流路の画素から幅の半分の内側（岸の上は除く）を砂にする
+#   - 吹きだまり: 沢底の砂を風下へ運び（沢から遠い所にも薄く）、風上の高まりの陰に溜める。風向は手本の写真から推定し、
+#     重みの上限は手本の足元の写真（砂は沢底と陰の薄い斑だけ）で抑える
+# 地層の高さは地図に焼かない（シェーダーで共通の基準面からの高さとして計算する）。
 import argparse
 import hashlib
 import json
@@ -35,7 +42,7 @@ HEIGHT_JSON_PATH = os.path.join(GRID_DIR, "height.json")
 MAP_PATH = os.path.join(GRID_DIR, "surface.png")
 MAP_JSON_PATH = os.path.join(GRID_DIR, "surface.json")
 PREVIEW_DIR = os.path.join(GRID_DIR, "preview")
-PREVIEWS = ["surface_classes.png", "surface_battleship.png", "surface_franklin.png"]
+PREVIEWS = ["surface_classes.png", "surface_battleship.png", "surface_franklin.png", "surface_wash.png"]
 
 # 地図の画素の大きさ[m]（格子の 2×2 の頂点を 1 画素にまとめる）
 TEXEL_M = 2.0
@@ -79,14 +86,47 @@ DEPOSIT_BLUR_M = 5.0
 # 流れの反復の上限（2 m の画素で 1.2 km）
 FLOW_MAX_ITERATIONS = 600
 
+# 流れ（沢）: 地図の外へ広げる幅[m]と、広い範囲の升目の大きさ[m]（1 m の 4 枚を面積の平均で縮める）
+WIDE_MARGIN_M = 5000.0
+WIDE_TEXEL_M = 10.0
+# 流す面: 2×2 の平均にさらに掛けるガウスの σ[m]（細かい凹凸で流れが切れないが、幅 5〜10 m の沢の底は消さない）
+FLOW_SURFACE_SIGMA_M = 2.0
+# 沢底（砂）: 集水面積[m²]がこの範囲で現れ始めて出そろう（小さな筋の雨裂は沢底にしない）
+WASH_AREA_M2 = (5.0e4, 2.0e5)
+# 沢底の幅[m] = 始まりの幅 + 集水面積が 10 倍になるごとの幅 × log10(面積 / WASH_AREA_M2[0])。上限あり。
+# 手本の ground_02 の沢（集水面積 約 22 km²）は写真で幅 5〜10 m、1 m の DEM の流路の平らな底も 6〜8 m
+WASH_WIDTH_M = (2.0, 2.3)
+WASH_MAX_WIDTH_M = 12.0
+# 沢底の縁をぼかす幅[m]（±）と、流路の中心より高い所を沢底にしない高さ[m]（岸を登らない）
+WASH_EDGE_M = 1.0
+WASH_BANK_M = 0.8
+# 流路の傾斜[度]（この範囲で沢底が消える。崖錐や崖の雨裂は砂の流路にしない）
+WASH_SLOPE_DEG = (6.0, 14.0)
+# 砂の吹きだまり: 風の吹いてくる方位[度]。手本の far_02（西〜南西を向く）で、手前の高まりの東向きの面に滑らかな砂が溜まり、
+# 西向きの面に礫が出る形から、西〜南西の風と読む（コロラド高原の春の卓越風の南西とも合う）
+WIND_FROM_AZIMUTH_DEG = 235.0
+# 風上を見る距離[m]と、風上が見下ろす角の正接の範囲（風下の陰ほど溜まる）
+DRIFT_SHELTER_M = (4.0, 48.0)
+DRIFT_SHELTER_TANGENT = (0.03, 0.12)
+# 砂の出どころ: 沢底から風下へ運ぶ距離[m]と減り方の長さ[m]、沢から遠い細粒の地表にも薄く残る割合
+DRIFT_REACH_M = 200.0
+DRIFT_DECAY_M = 60.0
+DRIFT_BASE_SUPPLY = 0.25
+# 吹きだまりの重みの上限（手本の足元の写真では、谷床の大半は礫と土が出ていて、砂は沢底と陰の薄い斑だけ）と、
+# 傾斜[度]の範囲（急な所には溜まらない）、ぼかす σ[m]
+DRIFT_MAX = 0.6
+DRIFT_SLOPE_DEG = (15.0, 25.0)
+DRIFT_BLUR_M = 3.0
+
 # 地表の礫の割合: 傾斜[度]・半径 50 m の相対の高さ[m]の範囲
 GRAVEL_BASE = 0.25
 GRAVEL_SLOPE_DEG = (3.0, 15.0)
 GRAVEL_TPI_M = (0.5, 3.0)
 
-# 色分けの図の色（露岩・崖錐・細粒・礫）
-CLASS_NAMES = ["露岩", "崖錐", "地表（細粒）", "地表（礫）"]
-CLASS_COLORS = numpy.array([[205, 55, 45], [250, 175, 40], [150, 215, 240], [70, 165, 95]], dtype=numpy.float32)
+# 色分けの図の色（露岩・崖錐・細粒・礫・砂）
+CLASS_NAMES = ["露岩", "崖錐", "地表（細粒）", "地表（礫）", "砂（沢底と吹きだまり）"]
+CLASS_COLORS = numpy.array([[205, 55, 45], [250, 175, 40], [150, 215, 240], [70, 165, 95], [150, 80, 230]],
+                           dtype=numpy.float32)
 
 # 確かめるときの基準
 CHECK_STEEP_SLOPE_DEG = 55.0
@@ -97,7 +137,20 @@ CHECK_FLAT_GROUND_SHARE = 0.98
 CHECK_TALUS_SLOPE_DEG = (15.0, 38.0)
 CHECK_NEAR_CLIFF_M = 150.0
 CHECK_DISTANCE_ONLY_MAX = 0.6
-CHECK_COVERAGE = {"露岩": (0.005, 0.15), "崖錐": (0.01, 0.20), "地表（細粒）": (0.10, 0.90), "地表（礫）": (0.10, 0.90)}
+CHECK_COVERAGE = {"露岩": (0.005, 0.15), "崖錐": (0.01, 0.20), "地表（細粒）": (0.10, 0.90), "地表（礫）": (0.10, 0.90),
+                  "砂（沢底と吹きだまり）": (0.003, 0.10)}
+# 沢: 手本の ground_02 の撮影位置（エンジンの X, Z。GPS E 603208・N 4128895）と、その周りで探す半径[m]、写真の沢の幅[m]
+CHECK_WASH_PHOTO = (-1292.5, -1894.5)
+CHECK_WASH_PHOTO_RADIUS_M = 30.0
+CHECK_WASH_PHOTO_WIDTH_M = (5.0, 10.0)
+# 沢底（重み 0.5 以上）のうち、周りより低い（半径 10 m の相対の高さが 0 以下）画素の割合の下限と、傾斜の中央値[度]の上限
+CHECK_WASH_LOW_SHARE = 0.8
+CHECK_WASH_SLOPE_DEG = 6.0
+# 吹きだまり: 風下の陰（風上が見下ろす角の正接 0.08 以上）の平均の重みが、陰でない所（0 以下）の何倍以上か。
+# 沢の風下 10〜60 m の平均の重みが、風上 10〜60 m の何倍以上か
+CHECK_DRIFT_LEE_RATIO = 3.0
+CHECK_DRIFT_DOWNWIND_RATIO = 1.5
+CHECK_DRIFT_BAND_M = (10.0, 60.0)
 # 主役の崖の断面（エンジンの座標 X, Z。Battleship Rock の頂 X -1420・Z -949 の近くを南北に横切る E 603100 の線を、
 # 南の谷床（Z -250、Y 6 m 前後）から北の谷床（Z -1550、Y 20 m 前後）まで延ばしたもの）
 PROFILE_START = (-1400.0, -250.0)
@@ -108,6 +161,7 @@ PROFILE_MIN_RUN_M = 6.0
 ZOOMS = {
     "surface_battleship.png": ("Battleship Rock", (-1420.0, -949.0), 1400.0),
     "surface_franklin.png": ("Franklin Butte", (-510.0, -319.0), 1000.0),
+    "surface_wash.png": ("ground_02 の沢", (-1276.0, -1875.0), 800.0),
 }
 
 
@@ -202,6 +256,199 @@ def flow_weights(smooth):
     return weights, total > 0.0
 
 
+def priority_flood(heights):
+    """窪地を埋めた流れの向き（Priority-Flood。Barnes ほか 2014）。外周の画素と NaN（DEM の無い所）を出口にして、低い所から
+    順に水位を上げ、各画素を最初に見つけた隣（それより低いか、窪地の中なら溢れ口へ向かう隣）へ流す。窪地の中と平らな所は
+    先入れ先出しで広げるので、流れは溢れ口から放射状にたどる（並びの番号の順の筋にならない）。
+    戻り値は (流れ先の平らな番号（出口は -1）, 処理の順の平らな番号)。番号は行 × 列数 + 列"""
+    import heapq
+    from collections import deque
+    rows, columns = heights.shape
+    width = columns + 2
+    padded = numpy.full((rows + 2, width), numpy.inf)
+    padded[1:-1, 1:-1] = heights
+    missing = numpy.isnan(padded)
+    padded[missing] = -numpy.inf
+    levels = padded.ravel().tolist()
+    closed_grid = numpy.zeros((rows + 2, width), dtype=numpy.uint8)
+    closed_grid[0, :] = closed_grid[-1, :] = closed_grid[:, 0] = closed_grid[:, -1] = 1
+    seed_grid = numpy.zeros_like(closed_grid, dtype=bool)
+    seed_grid[1, 1:-1] = seed_grid[-2, 1:-1] = seed_grid[1:-1, 1] = seed_grid[1:-1, -2] = True
+    seed_grid |= missing
+    seeds = numpy.flatnonzero(seed_grid)
+    closed_grid.ravel()[seeds] = 1
+    closed = bytearray(closed_grid.tobytes())
+    receiver = [-1] * padded.size
+    heap = [(levels[index], index) for index in seeds.tolist()]
+    heapq.heapify(heap)
+    pit = deque()
+    order = []
+    offsets = (-width - 1, -width, -width + 1, -1, 1, width - 1, width, width + 1)
+    heappop, heappush, append, popleft = heapq.heappop, heapq.heappush, order.append, pit.popleft
+    while heap or pit:
+        level, index = popleft() if pit else heappop(heap)
+        append(index)
+        for offset in offsets:
+            neighbor = index + offset
+            if closed[neighbor]:
+                continue
+            closed[neighbor] = 1
+            receiver[neighbor] = index
+            height = levels[neighbor]
+            if height <= level:
+                pit.append((level, neighbor))
+            else:
+                heappush(heap, (height, neighbor))
+    # 枠を付けた番号から元の番号へ
+    padded_receiver = numpy.array(receiver, dtype=numpy.int64).reshape(rows + 2, width)[1:-1, 1:-1].ravel()
+    flat_receiver = numpy.where(padded_receiver >= 0,
+                                (padded_receiver // width - 1) * columns + padded_receiver % width - 1, -1)
+    padded_order = numpy.array(order, dtype=numpy.int64)
+    flat_order = (padded_order // width - 1) * columns + padded_order % width - 1
+    return flat_receiver, flat_order
+
+
+def accumulate(receiver, order, area):
+    """流れ先と処理の順（上流が後）から、各画素に集まる面積（自分を含む）"""
+    total = area.ravel().astype(numpy.float64).tolist()
+    targets = receiver.tolist()
+    for index in reversed(order.tolist()):
+        target = targets[index]
+        if target >= 0:
+            total[target] += total[index]
+    return numpy.array(total).reshape(area.shape)
+
+
+def read_wide_heights(grid):
+    """地図の外へ WIDE_MARGIN_M 広げた範囲（1 m の 4 枚の内側）の、WIDE_TEXEL_M の升目の面積の平均の高さ（ワールドの y。
+    DEM の無い所は NaN、行 0 が北）と、地図の外縁の升目の位置（列, 行）"""
+    import rasterio
+    from rasterio.enums import Resampling
+    from rasterio.merge import merge
+    from DemInput import DEM_PATH, NEIGHBOR_TILES, SOURCE_DIR
+    edges = grid["grid_bounds_utm_edges"]
+    tiles = [{"east_min": 600000, "east_max": 610000, "north_min": 4120000, "north_max": 4130000}] + NEIGHBOR_TILES
+    mosaic = (min(tile["east_min"] for tile in tiles), min(tile["north_min"] for tile in tiles),
+              max(tile["east_max"] for tile in tiles), max(tile["north_max"] for tile in tiles))
+    bounds = (max(mosaic[0], edges["east_min"] - WIDE_MARGIN_M), max(mosaic[1], edges["north_min"] - WIDE_MARGIN_M),
+              min(mosaic[2], edges["east_max"] + WIDE_MARGIN_M), min(mosaic[3], edges["north_max"] + WIDE_MARGIN_M))
+    paths = [DEM_PATH] + [os.path.join(SOURCE_DIR, tile["file"]) for tile in NEIGHBOR_TILES]
+    datasets = [rasterio.open(path) for path in paths]
+    try:
+        array, transform = merge(datasets, bounds=bounds, res=WIDE_TEXEL_M, nodata=-999999.0,
+                                 resampling=Resampling.average)
+    finally:
+        for dataset in datasets:
+            dataset.close()
+    heights = array[0].astype(numpy.float64)
+    heights[~(heights > -1000.0)] = numpy.nan
+    heights -= float(grid["height_offset_m"])
+    column0 = (edges["east_min"] - transform.c) / WIDE_TEXEL_M
+    row0 = (transform.f - edges["north_max"]) / WIDE_TEXEL_M
+    if abs(column0 - round(column0)) > 1e-6 or abs(row0 - round(row0)) > 1e-6:
+        raise RuntimeError("広い範囲の升目が地図の外縁に揃っていない（列 %r・行 %r）" % (column0, row0))
+    return heights, (int(round(column0)), int(round(row0))), bounds
+
+
+def flow_accumulation(grid, flow_surface):
+    """地図の画素ごとの集水面積[m²]。地図の中は 2 m の画素で窪地を埋めて流し、地図の外から入る流れは、広い範囲の 10 m の
+    升目で同じように求めた集水面積を、地図の外の升目から地図の中の升目へ流れ込む所（その升目の中で最も低い画素）に足す"""
+    rows, columns = flow_surface.shape
+    wide, (column0, row0), bounds = read_wide_heights(grid)
+    wide_receiver, wide_order = priority_flood(wide)
+    ratio = int(round(WIDE_TEXEL_M / TEXEL_M))
+    inside_rows = rows // ratio
+    inside_columns = columns // ratio
+    wide_rows, wide_columns = numpy.divmod(numpy.arange(wide.size), wide.shape[1])
+    inside = ((wide_rows >= row0) & (wide_rows < row0 + inside_rows) &
+              (wide_columns >= column0) & (wide_columns < column0 + inside_columns))
+    # 地図の中の升目は面積を持たず、流れも先へ渡さない（地図の外へ出てまた入る流れを二重に数えない）
+    cut_receiver = numpy.where(inside, -1, wide_receiver)
+    wide_area = accumulate(cut_receiver, wide_order,
+                           numpy.where(inside.reshape(wide.shape), 0.0, WIDE_TEXEL_M * WIDE_TEXEL_M))
+    entering = numpy.flatnonzero(~inside & (wide_receiver >= 0))
+    entering = entering[inside[wide_receiver[entering]]]
+    area = numpy.full((rows, columns), TEXEL_M * TEXEL_M)
+    injected = 0.0
+    for source in entering.tolist():
+        target = int(wide_receiver[source])
+        block_row = (target // wide.shape[1] - row0) * ratio
+        block_column = (target % wide.shape[1] - column0) * ratio
+        # 外周の画素は出口なので、その 1 つ内側から選ぶ
+        top, left = max(block_row, 1), max(block_column, 1)
+        bottom, right = min(block_row + ratio, rows - 1), min(block_column + ratio, columns - 1)
+        block = flow_surface[top:bottom, left:right]
+        lowest = numpy.unravel_index(int(numpy.argmin(block)), block.shape)
+        area[top + lowest[0], left + lowest[1]] += wide_area.ravel()[source]
+        injected += float(wide_area.ravel()[source])
+    receiver, order = priority_flood(flow_surface)
+    accumulated = accumulate(receiver, order, area)
+    info = {"wide_bounds_utm": [float(value) for value in bounds], "wide_shape": [int(wide.shape[1]), int(wide.shape[0])],
+            "entering_cells": int(entering.size), "injected_km2": injected / 1.0e6,
+            "outlets": int((receiver < 0).sum()), "drained": int(numpy.count_nonzero(receiver >= 0) + (receiver < 0).sum())}
+    return accumulated, receiver, info
+
+
+def wash_weight(accumulated, flow_surface, slope_deg, rock):
+    """沢底（砂）の重み（0〜1）と、流路の画素ごとの幅[m]。流路の画素から幅の半分の内側を沢底にし、流路の中心より
+    WASH_BANK_M 以上高い所（岸の上）へは広げない"""
+    rows, columns = accumulated.shape
+    log_area = numpy.log10(numpy.maximum(accumulated, 1.0))
+    log_start = math.log10(WASH_AREA_M2[0])
+    strength = (smoothstep(log_area, log_start, math.log10(WASH_AREA_M2[1]))
+                * (1.0 - smoothstep(slope_deg, *WASH_SLOPE_DEG)) * (1.0 - rock))
+    width = numpy.clip(WASH_WIDTH_M[0] + WASH_WIDTH_M[1] * (log_area - log_start), WASH_WIDTH_M[0], WASH_MAX_WIDTH_M)
+    half = numpy.where(strength > 0.0, 0.5 * width, -numpy.inf)
+    radius = int(math.ceil((0.5 * WASH_MAX_WIDTH_M + WASH_EDGE_M) / TEXEL_M))
+    weight = numpy.zeros_like(accumulated)
+    for dy in range(-radius, radius + 1):
+        for dx in range(-radius, radius + 1):
+            distance = TEXEL_M * math.hypot(dy, dx)
+            if distance > radius * TEXEL_M:
+                continue
+            source_rows, target_rows = slices(dy, rows)
+            source_cols, target_cols = slices(dx, columns)
+            rise = flow_surface[target_rows, target_cols] - flow_surface[source_rows, source_cols]
+            cover = (strength[source_rows, source_cols]
+                     * smoothstep(half[source_rows, source_cols] - distance, -WASH_EDGE_M, WASH_EDGE_M)
+                     * (1.0 - smoothstep(rise, 0.5 * WASH_BANK_M, WASH_BANK_M)))
+            numpy.maximum(weight[target_rows, target_cols], cover, out=weight[target_rows, target_cols])
+    return weight, numpy.where(strength > 0.0, width, 0.0)
+
+
+def wind_offset(distance):
+    """風下へ distance[m] 進む画素のずれ（行, 列）。行は南、列は東へ増える"""
+    toward = math.radians(WIND_FROM_AZIMUTH_DEG + 180.0)
+    return (int(round(-math.cos(toward) * distance / TEXEL_M)), int(round(math.sin(toward) * distance / TEXEL_M)))
+
+
+def shifted_downwind(values, distance, fill):
+    """各画素に、風上 distance[m] の画素の値を入れた配列（範囲の外は fill）"""
+    rows, columns = values.shape
+    dy, dx = wind_offset(distance)
+    result = numpy.full_like(values, fill)
+    source_rows, target_rows = slices(dy, rows)
+    source_cols, target_cols = slices(dx, columns)
+    result[target_rows, target_cols] = values[source_rows, source_cols]
+    return result
+
+
+def drift_weight(smooth, slope_deg, wash):
+    """砂の吹きだまりの重み（0〜1）と、風上が見下ろす角の正接。砂は沢底から風下へ運ばれ（沢から遠い所にも薄く）、
+    風上の高まりの陰（風上を見上げる角が大きい所）に溜まる"""
+    shelter = numpy.full_like(smooth, -numpy.inf)
+    for distance in numpy.arange(DRIFT_SHELTER_M[0], DRIFT_SHELTER_M[1] + 0.5 * TEXEL_M, 2.0 * TEXEL_M):
+        upwind = shifted_downwind(smooth, float(distance), -numpy.inf)
+        numpy.maximum(shelter, (upwind - smooth) / float(distance), out=shelter)
+    supply = numpy.full_like(smooth, DRIFT_BASE_SUPPLY)
+    for distance in numpy.arange(0.0, DRIFT_REACH_M + 0.5 * TEXEL_M, 2.0 * TEXEL_M):
+        numpy.maximum(supply, shifted_downwind(wash, float(distance), 0.0) * math.exp(-distance / DRIFT_DECAY_M),
+                      out=supply)
+    drift = (DRIFT_MAX * supply * smoothstep(shelter, *DRIFT_SHELTER_TANGENT)
+             * (1.0 - smoothstep(slope_deg, *DRIFT_SLOPE_DEG)))
+    return numpy.clip(blur(drift, DRIFT_BLUR_M / TEXEL_M), 0.0, 1.0), shelter
+
+
 def talus_deposit(smooth, slope_deg, rock, tpi_small):
     """露岩から落ちる岩屑の溜まる量と、落石の届く範囲（エネルギー線が地面より上の画素）"""
     rows, columns = smooth.shape
@@ -244,8 +491,8 @@ def talus_deposit(smooth, slope_deg, rock, tpi_small):
     return deposit, reachable, energy, iterations
 
 
-def compute(heights):
-    """格子から重み（4, 行, 列。合計 1）と、確かめに使う途中の値を求める"""
+def compute(grid, heights):
+    """格子から重み（5, 行, 列。露岩・崖錐・細粒・礫・砂。合計 1）と、確かめに使う途中の値を求める"""
     texel = int(TEXEL_M)
     base = downsample(heights)
     smooth = blur(base, SMOOTH_SIGMA_M / TEXEL_M)
@@ -271,9 +518,20 @@ def compute(heights):
     gravel_share = numpy.clip(gravel_share, 0.0, 1.0)
     weights = numpy.stack([rock, talus, ground * (1.0 - gravel_share), ground * gravel_share])
     weights /= weights.sum(axis=0, keepdims=True)
+
+    # 沢底は 4 つの分類を置き換え、吹きだまりは地表（細粒と礫）の上にだけ載る
+    flow_surface = blur(base, FLOW_SURFACE_SIGMA_M / TEXEL_M)
+    accumulated, receiver, flow_info = flow_accumulation(grid, flow_surface)
+    wash, wash_width = wash_weight(accumulated, flow_surface, slope_deg, rock)
+    drift, shelter = drift_weight(smooth, slope_deg, wash)
+    weights *= 1.0 - wash
+    drift_taken = drift * (weights[2] + weights[3])
+    weights[2:4] *= 1.0 - drift
+    weights = numpy.concatenate([weights, (wash + drift_taken)[None]])
     fields = {"smooth": smooth, "slope_deg": slope_deg, "tpi_small": tpi_small, "tpi_mid": tpi_mid, "relief": relief,
               "steep_rock": steep_rock, "deposit": deposit, "reachable": reachable, "energy": energy,
-              "iterations": iterations}
+              "iterations": iterations, "flow_surface": flow_surface, "accumulated": accumulated, "receiver": receiver,
+              "flow_info": flow_info, "wash": wash, "wash_width": wash_width, "drift": drift, "shelter": shelter}
     return weights, fields
 
 
@@ -288,7 +546,7 @@ def quantize(weights):
     return base.astype(numpy.uint8)
 
 
-def descriptor_for(grid, grid_sha, rows, columns, stats, iterations):
+def descriptor_for(grid, grid_sha, rows, columns, stats, iterations, flow_info):
     first_x = float(grid["first_vertex_engine"]["x"])
     first_z = float(grid["first_vertex_engine"]["z"])
     spacing = float(grid["vertex_spacing_m"])
@@ -298,8 +556,9 @@ def descriptor_for(grid, grid_sha, rows, columns, stats, iterations):
     return {
         "format": "PNG RGBA8, row 0 = north (engine z min), column 0 = west (engine x min)",
         "file": os.path.basename(MAP_PATH),
-        "channels": {"r": "rock", "g": "talus", "b": "ground_fine", "a": "ground_gravel"},
-        "channels_note": "画素ごとの 4 つの重みの合計は 255。r 露岩・g 崖錐・b 地表（細粒）・a 地表（礫）",
+        "channels": {"r": "rock", "g": "talus", "b": "ground_fine", "a": "ground_gravel", "255-r-g-b-a": "sand"},
+        "channels_note": "r 露岩・g 崖錐・b 地表（細粒）・a 地表（礫）。砂（沢底と吹きだまり）の重みは 255 から 4 つの和を引いた残り"
+                         "（5 つの合計が 255）",
         "width": columns,
         "height": rows,
         "texel_size_m": TEXEL_M,
@@ -318,8 +577,16 @@ def descriptor_for(grid, grid_sha, rows, columns, stats, iterations):
             "flow_sigma_m": FLOW_SIGMA_M, "deposit_blur_m": DEPOSIT_BLUR_M,
             "talus_scale": TALUS_SCALE, "fringe_scale": FRINGE_SCALE,
             "gravel_base": GRAVEL_BASE, "gravel_slope_deg": list(GRAVEL_SLOPE_DEG), "gravel_tpi_m": list(GRAVEL_TPI_M),
+            "wide_margin_m": WIDE_MARGIN_M, "wide_texel_m": WIDE_TEXEL_M, "flow_surface_sigma_m": FLOW_SURFACE_SIGMA_M,
+            "wash_area_m2": list(WASH_AREA_M2), "wash_width_m": list(WASH_WIDTH_M), "wash_max_width_m": WASH_MAX_WIDTH_M,
+            "wash_edge_m": WASH_EDGE_M, "wash_bank_m": WASH_BANK_M, "wash_slope_deg": list(WASH_SLOPE_DEG),
+            "wind_from_azimuth_deg": WIND_FROM_AZIMUTH_DEG, "drift_shelter_m": list(DRIFT_SHELTER_M),
+            "drift_shelter_tangent": list(DRIFT_SHELTER_TANGENT), "drift_reach_m": DRIFT_REACH_M,
+            "drift_decay_m": DRIFT_DECAY_M, "drift_base_supply": DRIFT_BASE_SUPPLY, "drift_max": DRIFT_MAX,
+            "drift_slope_deg": list(DRIFT_SLOPE_DEG), "drift_blur_m": DRIFT_BLUR_M,
         },
         "flow_iterations": iterations,
+        "drainage": flow_info,
         "coverage": stats,
         "generator": "Scripts/Terrain/TerrainMasks.py",
     }
@@ -389,17 +656,25 @@ def write_previews(quantized, fields, descriptor):
             draw.line(points, fill=(255, 255, 255), width=1)
             draw.text((points[0][0] + 6, points[0][1] - 22), "断面", fill=(255, 255, 255), font=font, stroke_width=2,
                       stroke_fill=(0, 0, 0))
+        if file_name == "surface_wash.png":
+            # 手本の ground_02 の撮影位置
+            px = ((CHECK_WASH_PHOTO[0] - edges["x_min"]) / TEXEL_M - left) * 2
+            pz = ((CHECK_WASH_PHOTO[1] - edges["z_min"]) / TEXEL_M - top) * 2
+            draw.ellipse([px - 8, pz - 8, px + 8, pz + 8], outline=(255, 255, 255), width=2)
+            draw.text((px + 12, pz - 10), "ground_02 の撮影位置", fill=(255, 255, 255), font=font, stroke_width=2,
+                      stroke_fill=(0, 0, 0))
         crop.save(os.path.join(PREVIEW_DIR, file_name))
 
 
 def build():
     grid, heights, grid_sha = read_grid()
-    weights, fields = compute(heights)
+    weights, fields = compute(grid, heights)
     quantized = quantize(weights)
     stats = coverage(quantized)
-    descriptor = descriptor_for(grid, grid_sha, quantized.shape[1], quantized.shape[2], stats, fields["iterations"])
+    descriptor = descriptor_for(grid, grid_sha, quantized.shape[1], quantized.shape[2], stats, fields["iterations"],
+                                fields["flow_info"])
     from PIL import Image
-    Image.fromarray(numpy.ascontiguousarray(quantized.transpose(1, 2, 0)), mode="RGBA").save(MAP_PATH)
+    Image.fromarray(numpy.ascontiguousarray(quantized[:4].transpose(1, 2, 0)), mode="RGBA").save(MAP_PATH)
     with open(MAP_JSON_PATH, "w", encoding="utf-8", newline="\n") as stream:
         json.dump(descriptor, stream, ensure_ascii=False, indent=2)
         stream.write("\n")
@@ -500,13 +775,15 @@ def verify():
         edges["x_min"], edges["x_max"], edges["z_min"], edges["z_max"], edge_error))
 
     # 作り直して一致
-    weights, fields = compute(heights)
+    weights, fields = compute(grid, heights)
     quantized = quantize(weights)
-    rebuilt = numpy.ascontiguousarray(quantized.transpose(1, 2, 0))
+    rebuilt = numpy.ascontiguousarray(quantized[:4].transpose(1, 2, 0))
     check(written.shape == rebuilt.shape and numpy.array_equal(written, rebuilt),
           "格子から作り直した地図が書いた地図とビット単位で一致する（流れの反復 %d 回）" % fields["iterations"])
     sums = written.astype(numpy.int32).sum(axis=2)
-    check(bool((sums == 255).all()), "画素ごとの重みの合計が 255（最小 %d・最大 %d）" % (sums.min(), sums.max()))
+    implicit = 255 - quantized[:4].astype(numpy.int32).sum(axis=0)
+    check(bool((sums <= 255).all()) and numpy.array_equal(implicit, quantized[4].astype(numpy.int32)),
+          "画素ごとの 4 つの重みの和が 255 以下で、残りが砂の重み（4 つの和の最小 %d・最大 %d）" % (sums.min(), sums.max()))
     check(fields["iterations"] < FLOW_MAX_ITERATIONS, "崖錐の流れが反復の上限の前に落ち着いた（%d 回 < %d）" % (
         fields["iterations"], FLOW_MAX_ITERATIONS))
 
@@ -517,6 +794,60 @@ def verify():
     for name, (low, high) in CHECK_COVERAGE.items():
         check(low <= stats[name] <= high, "%s の面積の割合 %.2f %% が %.1f〜%.0f %%" % (name, 100.0 * stats[name],
                                                                                  100.0 * low, 100.0 * high))
+
+    # 流れ（沢）: 窪地を埋めて、地図の中に行き止まりが無い（出口は外周だけ）
+    rows, columns = slope_deg.shape
+    info = fields["flow_info"]
+    receiver = fields["receiver"]
+    flow_surface = fields["flow_surface"].ravel()
+    check(info["outlets"] == 2 * (rows + columns) - 4,
+          "流れの出口は地図の外周の画素だけで、中に行き止まりの窪地が無い（出口 %d・外周 %d）" % (
+              info["outlets"], 2 * (rows + columns) - 4))
+    climbing = int(((receiver >= 0) & (flow_surface[numpy.maximum(receiver, 0)] > flow_surface)).sum())
+    print("参考: 窪地の中で溢れ口へ向かって上る画素 %d（%.2f %%）" % (climbing, 100.0 * climbing / receiver.size))
+    check(info["entering_cells"] > 0 and info["injected_km2"] > 0.0,
+          "地図の外 %.0f km まで（%d × %d の %.0f m の升目）の流れが %d 升目で地図へ入り、集水面積 %.1f km² を足した" % (
+              WIDE_MARGIN_M / 1000.0, info["wide_shape"][0], info["wide_shape"][1], WIDE_TEXEL_M,
+              info["entering_cells"], info["injected_km2"]))
+    # 手本の ground_02 の沢の幅
+    photo_column = int((CHECK_WASH_PHOTO[0] - edges["x_min"]) / TEXEL_M)
+    photo_row = int((CHECK_WASH_PHOTO[1] - edges["z_min"]) / TEXEL_M)
+    reach = int(CHECK_WASH_PHOTO_RADIUS_M / TEXEL_M)
+    window = (slice(photo_row - reach, photo_row + reach + 1), slice(photo_column - reach, photo_column + reach + 1))
+    area_window = fields["accumulated"][window]
+    peak = numpy.unravel_index(int(numpy.argmax(area_window)), area_window.shape)
+    photo_width = float(fields["wash_width"][window][peak])
+    photo_area = float(area_window[peak]) / 1.0e6
+    check(CHECK_WASH_PHOTO_WIDTH_M[0] <= photo_width <= CHECK_WASH_PHOTO_WIDTH_M[1],
+          "手本の ground_02 の撮影位置から %.0f m 以内の沢（集水面積 %.1f km²）の沢底の幅 %.1f m が写真の %.0f〜%.0f m" % (
+              CHECK_WASH_PHOTO_RADIUS_M, photo_area, photo_width, *CHECK_WASH_PHOTO_WIDTH_M))
+    # 沢底は谷の底に沿う
+    wash_mask = fields["wash"] >= 0.5
+    low_share = float((fields["tpi_small"][wash_mask] <= 0.0).mean())
+    wash_slope = float(numpy.median(slope_deg[wash_mask]))
+    check(low_share >= CHECK_WASH_LOW_SHARE, "沢底（重み 0.5 以上、%d 画素）の %.1f %% が周りより低い所（%.0f %% 以上）" % (
+        int(wash_mask.sum()), 100.0 * low_share, 100.0 * CHECK_WASH_LOW_SHARE))
+    check(wash_slope <= CHECK_WASH_SLOPE_DEG, "沢底の傾斜の中央値 %.1f°が %.0f°以下" % (wash_slope, CHECK_WASH_SLOPE_DEG))
+    # 吹きだまりは風下の陰と、沢の風下に寄る
+    drift = fields["drift"]
+    open_ground = ~wash_mask & (slope_deg < DRIFT_SLOPE_DEG[0])
+    lee = open_ground & (fields["shelter"] >= 0.08)
+    exposed = open_ground & (fields["shelter"] <= 0.0)
+    lee_ratio = float(drift[lee].mean()) / max(float(drift[exposed].mean()), 1e-6)
+    check(lee_ratio >= CHECK_DRIFT_LEE_RATIO, "吹きだまりの平均の重みが、風下の陰（%d 画素）で陰でない所（%d 画素）の %.1f 倍（%.0f 倍以上）" % (
+        int(lee.sum()), int(exposed.sum()), lee_ratio, CHECK_DRIFT_LEE_RATIO))
+    downwind = numpy.zeros_like(wash_mask)
+    upwind = numpy.zeros_like(wash_mask)
+    for distance in numpy.arange(CHECK_DRIFT_BAND_M[0], CHECK_DRIFT_BAND_M[1] + 0.5 * TEXEL_M, TEXEL_M):
+        downwind |= shifted_downwind(wash_mask, float(distance), False)
+        upwind |= shifted_downwind(wash_mask, -float(distance), False)
+    # 沢の風上の岸は沢へ下る風下の面（陰）が多いので、陰の画素どうしで比べて、砂を運ぶ向きの効きだけを見る
+    band = ~wash_mask & ~(downwind & upwind) & lee
+    downwind_ratio = float(drift[band & downwind].mean()) / max(float(drift[band & upwind].mean()), 1e-6)
+    check(downwind_ratio >= CHECK_DRIFT_DOWNWIND_RATIO,
+          "沢の風下 %.0f〜%.0f m の陰の吹きだまりの平均の重みが、風上の陰の %.1f 倍（%.1f 倍以上。風は方位 %.0f°から）" % (
+              CHECK_DRIFT_BAND_M[0], CHECK_DRIFT_BAND_M[1], downwind_ratio, CHECK_DRIFT_DOWNWIND_RATIO,
+              WIND_FROM_AZIMUTH_DEG))
 
     # 崖に露岩
     steep = (slope_deg >= CHECK_STEEP_SLOPE_DEG) & (fields["relief"] >= CHECK_STEEP_RELIEF_M)

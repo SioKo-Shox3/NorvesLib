@@ -4748,3 +4748,19 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 比較画像を開いた（reference_ground_01・ground_02・far_01、ref_ground_01 の足元の 2 倍の切り出し、ref_far_01・ref_ground_02 の中景）: 皮膜の斑は写真の多角形の割れ目とこぶ状の凹凸を持ち、縁は皮膜の盛り上がりに沿った境になった。中景に 2 枚の並びの継ぎ目の格子は見えない。
 - Notes: 全体の明るさと橙の彩度は SCN-WL-SKY-AERIAL、ground_02 の砂丘に見える起伏は SCN-WL-MASKS-FLOW のまま。皮膜の粗さ・遠くの法線の分散は土の枠の値（`kDetailSlopeVariance[1]`）を共有する。皮膜の斑の範囲（0.53〜0.60）と高さの引き値 0.30・深さ 0.06 は撮り比べで決めた。試験は足していない。
 - Next: TASKS.md の次の未完の項目（SCN-WL-MASKS-FLOW）。
+
+### SCN-WL-MASKS-FLOW 完了（2026-10-16、run 20261016-045112 の反復 3）
+
+- Done: 地表の分類の地図（`TerrainMasks.py`）に 5 つ目の分類「砂（沢底と吹きだまり）」を足した。RGBA の 4 つの重みの和が 255 に足りない分を砂の重みにする（束縛・形式は変えない）。
+  - 流れの集まり: 地図の中は 2 m の画素、地図の外 5 km までは 1 m の 4 枚を 10 m に縮めた升目で、窪地を埋めて溢れ口へ流す Priority-Flood（Barnes 2014。窪地と平らな所は先入れ先出し）で流れ先を求め、集水面積を足し上げる。外の升目から地図へ流れ込む 1022 升目の集水面積（計 85.3 km²）は、流れ込む升目の中の最も低い画素に足す。描画用の高さは変えていない。
+  - 沢底: 集水面積 0.05〜0.2 km² で現れ始め、幅は 2 m + 2.3 m × log10(面積 / 0.05 km²)（上限 12 m）。流路の中心より 0.8 m 以上高い所（岸の上）と、流路の傾斜 6〜14° より急な所には広げない。手本の ground_02 の撮影位置の沢は集水面積 22.5 km²・幅 8.1 m（写真 5〜10 m、1 m の DEM の平らな底 6〜8 m）。
+  - 吹きだまり: 風は方位 235° から（far_02 の手前の高まりの東向きの面に滑らかな砂、西向きの面に礫が出る形から推定）。沢底の砂を風下へ 60 m の減り方で運び（沢から遠い所にも 0.25）、風上 4〜48 m の高まりの陰に溜める。上限 0.6（手本の足元の写真では砂は沢底と陰の薄い斑だけ）。
+  - 材質: 砂の枠を「赤茶の土 red_mud_stones｜砂 red_sand」の横 2 枚のアトラス（`wasteland_soil_sand_*_8k`）にし、シェーダーは地図の砂を右の枠から UV の 0.5 倍（1 枚 3 m）で張り、土の窪み（AO）から埋まる高さの混ぜにする。red_sand の平均のアルベドは 0.18（写真の沢底の淡い砂は同じ光の礫の舗石の 1.05〜1.13 倍）。遠景の地図（`FarMacro.py`）と撮影の確かめ（`CheckSurfaceMaskCapture.py`）も砂を砂の枠へ数える。
+  - 確認した撮影: overview（`default.png`）で、谷の底を蛇行する淡い砂の線として沢が出る（左の蛇行と右の流路）。`ref_ground_02.png` は手前右の沢の流路が淡い細かい砂の帯になる。`ground.png` は前回と同じ見た目で、正面 234 m の沢は目より 19 m 低い流路の中にあり、手前の地形に隠れて写らない（視線の高さで確かめた）。`ridge.png` などほかの視点も崩れていない。
+- 証拠（`.harness/runs/20261016-045112/`）:
+  - `verify-SCN-WL-MASKS-FLOW-1.txt`: `TerrainMasks.py --verify` result=pass、EXIT=0（出口は外周 9296 画素だけ、外から 85.3 km² を足した、ground_02 の沢の幅 8.1 m、沢底の 99.7 % が周りより低い・傾斜の中央値 2.7°、吹きだまりは陰で 248.7 倍・沢の風下の陰で風上の陰の 2.4 倍。砂の面積 1.54 %）。
+  - `verify-SCN-WL-MASKS-FLOW-2.txt`: Debug の Game のビルド EXIT=0。
+  - `verify-SCN-WL-MASKS-FLOW-3.txt`: 荒野の全 11 視点 1920×1080、result=pass（白飛び 0・黒つぶれ 0）、EXIT=0。検証レイヤーのログは空、外したページ・VT の追い出し 0。
+  - `aux-SCN-WL-MASKS-FLOW-materials.txt`（`TerrainMaterials.py --verify` result=pass）、`-far.txt`（`FarMacro.py --build`・`--verify` result=pass）、`-cook.txt`（RelWithDebInfo の AssetCook で砂の枠のアトラス 3 枚・地図・遠景の地図の cooked=5、EXIT=0）、`-baseline.txt`（変更前の `--verify` result=pass、90 秒）。
+- Notes: `TerrainMasks.py --verify` は流れの計算で約 100 秒（変更前 90 秒）。遠景の地図は 16 m の画素なので砂の区別を持たず、遠景へ移る距離では沢は土として描かれる。砂の法線の傾きの分散（`kDetailSlopeVariance[0]`）は土の値を共有する。red_sand の模様は滑らかで、写真の沢底の礫（数 cm〜50 cm）は無い（礫と岩塊は SCN-WL-SCATTER-ROCKS）。`CookAssets.ps1` に複数の `-OnlyLogicalPath` を渡すときは `powershell -Command "& ./Scripts/CookAssets.ps1 ..."` で呼ぶ（`-File` では 1 つの文字列になり、PowerShell 7 では一覧の整数の型の確かめで落ちる）。試験は足していない。
+- Next: TASKS.md の次の未完の項目。

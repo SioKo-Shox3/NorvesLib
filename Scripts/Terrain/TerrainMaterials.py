@@ -1,5 +1,5 @@
 ﻿# 荒野の地形の素材（Poly Haven の CC0 の写真由来のテクスチャ）を落とし、アルベドを実在の値へ較正して、
-# 土の枠の「礫の舗石｜皮膜の付いた土」の横 2 枚のアトラスを書く。
+# 土の枠の「礫の舗石｜皮膜の付いた土」と、砂の枠の「赤茶の土｜沢底と吹きだまりの砂」の横 2 枚のアトラスを書く。
 #
 # 使い方:
 #   python Scripts/Terrain/TerrainMaterials.py --fetch    足りないテクスチャを Poly Haven から落とし、記録（materials.json）を書く
@@ -20,6 +20,8 @@
 #     下の側。手本の足元の写真の礫の舗石は、礫の間の土と同じ暗い赤茶で、土より明るく見えない
 #   - 皮膜の付いた土（cracked_red_ground。こぶ状に盛り上がった暗い褐色の土の皮膜）0.11: 範囲 0.08〜0.14。コロラド高原の
 #     地衣類・藍藻の土の皮膜は裸の土より 3〜5 割暗い
+#   - 沢底と吹きだまりの砂（red_sand。細かな赤い砂）0.18: 範囲 0.15〜0.30。手本の ground_02 の沢底の淡い砂は、同じ光の
+#     写真の中で礫の舗石の 1.05〜1.13 倍の明るさ（線形の輝度 0.23〜0.26 と 0.23）なので、礫の舗石の 0.16 の 1.1 倍
 #   - 赤褐色の砂岩（露岩。cliff_side）0.22: 範囲 0.20〜0.35 の下の側。Cedar Mesa 砂岩の赤褐色の崖（写真の日向の崖 Y 0.24、
 #     露出の補正の後で土の 1.5〜1.8 倍）
 #
@@ -27,6 +29,8 @@
 # アルベド（較正済み）・法線・AO・粗さを、左 = 礫の舗石・右 = 皮膜の付いた土で横に並べた 8192×4096 の画像にする
 # （シェーダーは幅が高さの 2 倍の土の枠を 2 枚の並びとして標本する。Assets/Shaders/Common/TerrainLayerBlend.glsl）。
 # 2 つは同じ UV の倍率で張るので、1 枚の実寸が同じ素材を選ぶ。
+# 砂の枠のアトラス: 同じく、地表の分類の地図の砂（沢底と吹きだまり）は砂の枠のテクスチャの右半分に置き、左 = 赤茶の土・
+# 右 = 砂で並べる。砂は 1 枚の実寸が土の 2 倍なので、シェーダーは右の枠を UV の 0.5 倍で張る。
 import argparse
 import hashlib
 import json
@@ -61,9 +65,15 @@ MATERIALS = [
      "range": (0.20, 0.35)},
     {"layer": "皮膜の付いた土", "id": "cracked_red_ground", "name": "Cracked Red Ground", "size_m": 2.0, "target": 0.11,
      "range": (0.08, 0.14)},
+    {"layer": "沢底と吹きだまりの砂", "id": "red_sand", "name": "Red Sand", "size_m": 3.0, "target": 0.18,
+     "range": (0.15, 0.30)},
 ]
 # 土の枠のアトラス（左 = left、右 = right の素材）。出力は TEXTURE_ROOT/<id>/<id>_<写像>_8k.png
 ATLAS = {"id": "wasteland_dirt_crust", "left": "red_laterite_soil_stones", "right": "cracked_red_ground"}
+# 砂の枠のアトラス（左 = 赤茶の土、右 = 沢底と吹きだまりの砂）。2 つは 1 枚の実寸が違うので、シェーダーは右の枠を
+# 左の枠の UV の right_uv_scale 倍で張る（TerrainLayerBlend.glsl の TERRAIN_SAND_UV_SCALE と同じ値）
+SAND_ATLAS = {"id": "wasteland_soil_sand", "left": "red_mud_stones", "right": "red_sand", "right_uv_scale": 0.5}
+ATLASES = [ATLAS, SAND_ATLAS]
 # アトラスに並べる写像: 較正したアルベド（RGB）・法線（RGB）・AO と粗さ（1 チャンネル）
 ATLAS_MAPS = {"diff_cal": "RGB", "nor_dx": "RGB", "ao": "L", "rough": "L"}
 # 較正で最大の成分が 1 を超え、1 に収めた画素の割合の上限（明るい礫・砂岩の縁のわずかな画素だけ）
@@ -82,8 +92,8 @@ def calibrated_path(material):
     return os.path.join(TEXTURE_ROOT, material["id"], "%s_diff_cal_%s.png" % (material["id"], RESOLUTION))
 
 
-def atlas_path(suffix):
-    return os.path.join(TEXTURE_ROOT, ATLAS["id"], "%s_%s_8k.png" % (ATLAS["id"], suffix))
+def atlas_path(atlas, suffix):
+    return os.path.join(TEXTURE_ROOT, atlas["id"], "%s_%s_8k.png" % (atlas["id"], suffix))
 
 
 def md5_of(path):
@@ -183,9 +193,9 @@ def atlas_half(material, suffix, mode, calibrated):
         return numpy.asarray(image.convert(mode))
 
 
-def compose_atlas(suffix, mode, calibrated):
-    left = atlas_half(material_by_id(ATLAS["left"]), suffix, mode, calibrated)
-    right = atlas_half(material_by_id(ATLAS["right"]), suffix, mode, calibrated)
+def compose_atlas(atlas, suffix, mode, calibrated):
+    left = atlas_half(material_by_id(atlas["left"]), suffix, mode, calibrated)
+    right = atlas_half(material_by_id(atlas["right"]), suffix, mode, calibrated)
     if left.shape != right.shape:
         raise ValueError("%s の左右の寸法が違います: %s と %s" % (suffix, left.shape, right.shape))
     return numpy.concatenate([left, right], axis=1)
@@ -200,12 +210,13 @@ def build():
         print("wrote %s 元の平均 %s（輝度 %.3f）× %.3f、1 に収めた画素 %.4f" % (
             os.path.relpath(calibrated_path(material), REPO_ROOT), numpy.round(info["source_mean"], 3),
             info["source_luminance"], info["scale"], info["clipped"]))
-    os.makedirs(os.path.join(TEXTURE_ROOT, ATLAS["id"]), exist_ok=True)
-    for suffix, mode in ATLAS_MAPS.items():
-        atlas = compose_atlas(suffix, mode, calibrated)
-        Image.fromarray(atlas, mode).save(atlas_path(suffix), optimize=False, compress_level=6)
-        print("wrote %s %dx%d（左 %s・右 %s）" % (os.path.relpath(atlas_path(suffix), REPO_ROOT), atlas.shape[1],
-                                                atlas.shape[0], ATLAS["left"], ATLAS["right"]))
+    for atlas in ATLASES:
+        os.makedirs(os.path.join(TEXTURE_ROOT, atlas["id"]), exist_ok=True)
+        for suffix, mode in ATLAS_MAPS.items():
+            image = compose_atlas(atlas, suffix, mode, calibrated)
+            Image.fromarray(image, mode).save(atlas_path(atlas, suffix), optimize=False, compress_level=6)
+            print("wrote %s %dx%d（左 %s・右 %s）" % (os.path.relpath(atlas_path(atlas, suffix), REPO_ROOT), image.shape[1],
+                                                    image.shape[0], atlas["left"], atlas["right"]))
     return 0
 
 
@@ -249,18 +260,22 @@ def verify():
                   material["id"], material["layer"], luminance, numpy.round(mean, 3), material["target"], low, high))
         check(info["clipped"] <= MAX_CLIPPED_RATIO, "%s の較正で 1 に収めた画素 %.4f が %.3f 以下" % (
             material["id"], info["clipped"], MAX_CLIPPED_RATIO))
-    left, right = material_by_id(ATLAS["left"]), material_by_id(ATLAS["right"])
-    check(left["size_m"] == right["size_m"], "アトラスの左 %s（%.1f m）と右 %s（%.1f m）の 1 枚の実寸が同じ" % (
-        left["id"], left["size_m"], right["id"], right["size_m"]))
-    if left["id"] in calibrated and right["id"] in calibrated:
+    for atlas in ATLASES:
+        left, right = material_by_id(atlas["left"]), material_by_id(atlas["right"])
+        scale = atlas.get("right_uv_scale", 1.0)
+        check(abs(left["size_m"] / right["size_m"] - scale) < 1e-6,
+              "%s の右 %s（%.1f m）を左 %s（%.1f m）の UV の %.2f 倍で張ると実寸になる" % (
+                  atlas["id"], right["id"], right["size_m"], left["id"], left["size_m"], scale))
+        if left["id"] not in calibrated or right["id"] not in calibrated:
+            continue
         for suffix, mode in ATLAS_MAPS.items():
-            path = atlas_path(suffix)
+            path = atlas_path(atlas, suffix)
             if not os.path.exists(path):
                 check(False, "%s がある" % os.path.relpath(path, REPO_ROOT))
                 continue
             with Image.open(path) as image:
                 written = numpy.asarray(image.convert(mode))
-            expected = compose_atlas(suffix, mode, calibrated)
+            expected = compose_atlas(atlas, suffix, mode, calibrated)
             check(written.shape[1] == written.shape[0] * 2 and numpy.array_equal(written, expected),
                   "%s（%dx%d）の左右が %s・%s の作り直しと一致" % (os.path.basename(path), written.shape[1],
                                                                  written.shape[0], left["id"], right["id"]))

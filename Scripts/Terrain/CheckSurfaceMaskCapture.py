@@ -87,11 +87,12 @@ class Terrain:
         fv = (py - r0)[..., None]
         m = (self.mask[r0, c0] * (1 - fu) * (1 - fv) + self.mask[r0, c0 + 1] * fu * (1 - fv)
              + self.mask[r0 + 1, c0] * (1 - fu) * fv + self.mask[r0 + 1, c0 + 1] * fu * fv)
-        total = np.maximum(m.sum(axis=-1, keepdims=True), 1.0e-6)
+        # 4 つの重みの和が 1 に足りない分は地図の砂（沢底と吹きだまり）で、砂の枠に入る
+        wash = np.clip(1.0 - m.sum(axis=-1), 0.0, 1.0)
         rock = m[..., 0]
         dirt = m[..., 1] + m[..., 3] * GRAVEL_TO_DIRT
-        sand = m[..., 2] + m[..., 3] * (1.0 - GRAVEL_TO_DIRT)
-        return np.stack([rock, dirt, sand], axis=-1) / total, inside
+        sand = m[..., 2] + m[..., 3] * (1.0 - GRAVEL_TO_DIRT) + wash
+        return np.stack([rock, dirt, sand], axis=-1), inside
 
 
 def march_distances():

@@ -214,11 +214,13 @@ namespace Game::GameModes
         constexpr bool kPlaceLayoutProps = false;
         // 地形の材質は 3 層の混ぜ合わせ。素材は Poly Haven の CC0 の写真由来のテクスチャ（Scripts/Terrain/TerrainMaterials.py が
         // 落としてアルベドを較正し、Assets/AssetSets/WastelandTerrain.json が焼く）。
-        // 1 層目（砂の枠）は谷床の赤茶の土 red_mud_stones（1 枚 1.5 m。締まった赤い土にひび割れと小石が散る）。
-        // 土の皮膜は、この層に数 m の斑で、土の枠の右半分の皮膜の層を高さで混ぜて描く（TerrainLayerBlend.glsl の TERRAIN_CRUST_*）
-        constexpr const char *kSandAlbedoPath = "Assets/Textures/PolyHaven/red_mud_stones/red_mud_stones_diff_cal_4k.png";
-        constexpr const char *kSandNormalPath = "Assets/Textures/PolyHaven/red_mud_stones/red_mud_stones_nor_dx_4k.jpg";
-        constexpr const char *kSandOrmPath = "Assets/Textures/PolyHaven/red_mud_stones/red_mud_stones_orm_4k";
+        // 1 層目（砂の枠）は横 2 枚の並び（8192×4096。Scripts/Terrain/TerrainMaterials.py --build が書く）。左は谷床の赤茶の土
+        // red_mud_stones（1 枚 1.5 m。締まった赤い土にひび割れと小石が散る）。右は地表の分類の地図の砂（沢底と吹きだまり）の
+        // red_sand（1 枚 3 m の細かな赤い砂。UV の 0.5 倍で張る。TerrainLayerBlend.glsl の TERRAIN_SAND_*）。
+        // 土の皮膜は、左の土に数 m の斑で、土の枠の右半分の皮膜の層を高さで混ぜて描く（TerrainLayerBlend.glsl の TERRAIN_CRUST_*）
+        constexpr const char *kSandAlbedoPath = "Assets/Textures/PolyHaven/wasteland_soil_sand/wasteland_soil_sand_diff_cal_8k.png";
+        constexpr const char *kSandNormalPath = "Assets/Textures/PolyHaven/wasteland_soil_sand/wasteland_soil_sand_nor_dx_8k.png";
+        constexpr const char *kSandOrmPath = "Assets/Textures/PolyHaven/wasteland_soil_sand/wasteland_soil_sand_orm_8k";
         // 2 層目（土の枠）は横 2 枚の並び（8192×4096。Scripts/Terrain/TerrainMaterials.py --build が書く）。左は崖錐と礫の地表の
         // 礫の舗石 red_laterite_soil_stones（1 枚 2 m。礫は数 mm〜数 cm）で、谷床では土と数 m〜数十 m の斑で入れ替わる
         // （TerrainLayerBlend.glsl の ComputeTerrainSurfaceMaskWeights）。右は土の皮膜 cracked_red_ground（1 枚 2 m。こぶ状に
@@ -256,7 +258,8 @@ namespace Game::GameModes
         constexpr uint32_t kTerrainTextureCount = 9;
         // 地表の分類の地図（Scripts/Terrain/TerrainMasks.py）の写し方。DEM の格子の範囲は地図の重みで、外（遠景）は上の傾斜の式で混ぜる。
         // 礫の地表は平均で半分を礫の舗石（土の枠）・半分を赤茶の土（砂の枠）にし、2 つは数 m〜数十 m の斑で入れ替わる
-        // （TerrainLayerBlend.glsl の TERRAIN_PAVEMENT_*）。崖錐は全部が礫の舗石
+        // （TerrainLayerBlend.glsl の TERRAIN_PAVEMENT_*）。崖錐は全部が礫の舗石。砂（沢底と吹きだまり。地図の 4 つの重みの残り）は
+        // 砂の枠の右の砂
         constexpr float kSurfaceMaskGravelToDirt = 0.5f;
         // 地図の外縁の内側 32 m で傾斜の式から地図へ移す（近景と遠景の継ぎ目に分類の段を作らない）
         constexpr float kSurfaceMaskEdgeFadeMeters = 32.0f;

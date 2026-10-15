@@ -89,6 +89,16 @@ const float TERRAIN_CRUST_HEIGHT_OFFSET = 0.30;
 // 皮膜と土の高さの混ぜの深さ。層の間の混ぜ（params.height.w = 0.3）では斑の縁が数十 cm のぼやけた輪になり、土の上に
 // 貼った斑に見える。浅くして、縁を皮膜の盛り上がりと割れ目（AO）に沿った境にする
 const float TERRAIN_CRUST_BLEND_DEPTH = 0.06;
+// 砂の枠が横 2 枚の並びのとき、右の枠の砂（地表の分類の地図の沢底と吹きだまり。Poly Haven の red_sand、1 枚 3 m）を張る
+// UV の倍率（左の赤茶の土の 1 枚 1.5 m に対して。Scripts/Terrain/TerrainMaterials.py の right_uv_scale と同じ値）
+const float TERRAIN_SAND_UV_SCALE = 0.5;
+// 砂と土の高さの混ぜ: 砂の高さ（AO）から引く値（砂の AO の平均 0.85 と土の 0.56 の差。4k の AO を 1/4 に縮めた画素の平均）と
+// 混ぜの深さ。砂は土の窪み（AO の低い所）から先に埋めるので、沢底の縁は土の模様に沿ったぎざぎざの境になる
+const float TERRAIN_SAND_HEIGHT_OFFSET = 0.29;
+const float TERRAIN_SAND_BLEND_DEPTH = 0.08;
+// 地図の 4 つの重みの和が 1 に足りない分が砂の重み。圧縮（BC7）の誤差で和がわずかに欠ける画素に砂を出さないよう、
+// この値までの不足は砂にしない
+const float TERRAIN_SURFACE_MASK_SAND_FLOOR = 0.02;
 // 地図を引く位置をずらすノイズの波長（m）
 const float TERRAIN_SURFACE_MASK_WARP_WAVELENGTH = 7.0;
 // 地図の重みのうち捨てる小さな値（圧縮（BC7）の誤差で平らな所に残るわずかな重みで、その層を標本しない）
@@ -236,9 +246,12 @@ vec3 ComputeTerrainSlopeWeights(TerrainBlendParams params, vec3 worldPosition, v
 }
 
 // 地表の分類の地図から、砂・土・岩肌の重み（xyz。合計 1）と、地図の効きの割合（w。0 = 傾斜の式だけ、1 = 地図だけ）を求める。
+// sandShare は 1 層目（砂の枠）の重みのうち、地図の砂（沢底と吹きだまり。4 つの重みの残り）の割合（残りは赤茶の土）。
 // 地図の外・地図なし・重みの無い画素は w = 0 を返す（地図のテクスチャを読まない）
-vec4 ComputeTerrainSurfaceMaskWeights(TerrainBlendParams params, sampler2D surfaceMask, TerrainSurfaceInput surface)
+vec4 ComputeTerrainSurfaceMaskWeights(TerrainBlendParams params, sampler2D surfaceMask, TerrainSurfaceInput surface,
+                                      out float sandShare)
 {
+    sandShare = 0.0;
     const vec2 invSize = params.mask.zw;
     if (invSize.x <= 0.0 || invSize.y <= 0.0)
     {
@@ -264,7 +277,8 @@ vec4 ComputeTerrainSurfaceMaskWeights(TerrainBlendParams params, sampler2D surfa
     }
     const vec4 classes = textureGrad(surfaceMask, uv, surface.WorldDx.xz * invSize, surface.WorldDy.xz * invSize);
     const float total = classes.r + classes.g + classes.b + classes.a;
-    if (total < 1.0e-3)
+    const float sand = max(1.0 - total - TERRAIN_SURFACE_MASK_SAND_FLOOR, 0.0);
+    if (total + sand < 1.0e-3)
     {
         return vec4(0.0);
     }
@@ -276,9 +290,10 @@ vec4 ComputeTerrainSurfaceMaskWeights(TerrainBlendParams params, sampler2D surfa
                                           TERRAIN_PAVEMENT_FINE_CENTER + TERRAIN_PAVEMENT_HALF_WIDTH, pavement);
     const float gravelPavement =
         smoothstep(gravelCenter - TERRAIN_PAVEMENT_HALF_WIDTH, gravelCenter + TERRAIN_PAVEMENT_HALF_WIDTH, pavement);
-    const vec3 weights = vec3(classes.b * (1.0 - finePavement) + classes.a * (1.0 - gravelPavement),
-                              classes.g + classes.b * finePavement + classes.a * gravelPavement, classes.r);
-    const vec3 kept = max(weights / total - vec3(TERRAIN_SURFACE_MASK_MIN_WEIGHT), vec3(0.0));
+    const float soil = classes.b * (1.0 - finePavement) + classes.a * (1.0 - gravelPavement);
+    const vec3 weights = vec3(soil + sand, classes.g + classes.b * finePavement + classes.a * gravelPavement, classes.r);
+    const vec3 kept = max(weights / (total + sand) - vec3(TERRAIN_SURFACE_MASK_MIN_WEIGHT), vec3(0.0));
+    sandShare = soil + sand > 1.0e-6 ? sand / (soil + sand) : 0.0;
     return vec4(kept / max(kept.x + kept.y + kept.z, 1.0e-6), coverage);
 }
 
@@ -537,7 +552,10 @@ PbrMaterialTextureSamples ShadeTerrainLayers(TerrainBlendParams params,
         n = normalize(mix(n, far.Normal, far.Amount));
     }
     // 地図の中は地図の重み、外は傾斜の式。外縁の帯で混ぜる（地図だけの所では傾斜の式を求めない）
-    const vec4 maskWeights = ComputeTerrainSurfaceMaskWeights(params, surfaceMask, surface);
+    float maskSandShare = 0.0;
+    const vec4 maskWeights = ComputeTerrainSurfaceMaskWeights(params, surfaceMask, surface, maskSandShare);
+    // 1 層目の重みのうちの地図の砂の量（傾斜の式と遠景の地図には砂の区別が無いので、それらへ移す分だけ減る）
+    float sandWeight = maskWeights.x * maskSandShare * maskWeights.w;
     vec3 layerWeights = maskWeights.xyz;
     if (maskWeights.w < 1.0)
     {
@@ -548,6 +566,7 @@ PbrMaterialTextureSamples ShadeTerrainLayers(TerrainBlendParams params,
     if (far.Amount > 0.0)
     {
         layerWeights = mix(layerWeights, far.Weights, far.Amount);
+        sandWeight *= 1.0 - far.Amount;
     }
     const uint normalBits = uint(params.layers.w + 0.5);
     const bool bSandDecode = (normalBits & TERRAIN_BLEND_SAND_ALBEDO_SRGB_DECODE) != 0u;
@@ -556,9 +575,14 @@ PbrMaterialTextureSamples ShadeTerrainLayers(TerrainBlendParams params,
     const float tileMeters = max(params.detail.w, 1.0e-3);
     const vec3 projection = ComputeTerrainTriplanarWeights(n);
 
+    // 砂の枠が横 2 枚の並び（幅が高さの 2 倍）なら、左の枠が赤茶の土、右の枠が地図の砂
+    const ivec2 sandSize = textureSize(sandAlbedo, 0);
+    const float sandHalf = sandSize.x == sandSize.y * 2 ? 0.0 : -1.0;
+    const float sandShare =
+        sandHalf >= 0.0 && layerWeights.x > 1.0e-4 ? clamp(sandWeight / layerWeights.x, 0.0, 1.0) : 0.0;
     TerrainLayerSample sand = SampleTerrainLayer(sandAlbedo, sandNormal, sandOrm, bSandNormalTwoChannel,
                                                  bSandDecode, bVirtualTexture, surface, frame, projection, levels, 1.0,
-                                                 tileMeters, -1.0);
+                                                 tileMeters, sandHalf);
     const bool bDirtNormalTwoChannel = (normalBits & TERRAIN_BLEND_DIRT_NORMAL_TWO_CHANNEL) != 0u;
     const bool bDirtDecode = (normalBits & TERRAIN_BLEND_DIRT_ALBEDO_SRGB_DECODE) != 0u;
     // 土の枠が横 2 枚の並び（幅が高さの 2 倍）なら、土の層は左の枠、皮膜は右の枠
@@ -566,7 +590,7 @@ PbrMaterialTextureSamples ShadeTerrainLayers(TerrainBlendParams params,
     const float dirtHalf = dirtSize.x == dirtSize.y * 2 ? 0.0 : -1.0;
     // 土の皮膜: 1 層目の土に、数 m の斑で皮膜の層を混ぜる。斑の境は 2 つの高さ（AO）で決め、皮膜の盛り上がった所が土の上に出る。
     // 斑が画素より細かくなる遠くは平均の被覆へ寄せる。皮膜は土の枠と同じ UV の倍率で張る（2 つの素材は 1 枚の実寸が同じ）
-    if (dirtHalf >= 0.0 && layerWeights.x > 0.0)
+    if (dirtHalf >= 0.0 && layerWeights.x > 0.0 && sandShare < 0.999)
     {
         const float crustNoise = TerrainMottle(surface.WorldPosition.xz, TERRAIN_CRUST_WAVELENGTHS, TERRAIN_CRUST_WEIGHTS,
                                                vec2(-63.7, 28.1), pixelMeters);
@@ -587,6 +611,20 @@ PbrMaterialTextureSamples ShadeTerrainLayers(TerrainBlendParams params,
             sand.Perturbation = sand.Perturbation * crustWeights.x + crustLayer.Perturbation * crustWeights.y;
             sand.LostDetail = sand.LostDetail * crustWeights.x + crustLayer.LostDetail * crustWeights.y;
         }
+    }
+    // 地図の砂（沢底と吹きだまり）: 土（と皮膜）の上に、右の枠の砂を高さ（AO）で混ぜる。砂は土の窪みから埋まる
+    if (sandShare > 1.0e-3)
+    {
+        const TerrainLayerSample sandFill =
+            SampleTerrainLayer(sandAlbedo, sandNormal, sandOrm, bSandNormalTwoChannel, bSandDecode, bVirtualTexture,
+                               surface, frame, projection, levels, TERRAIN_SAND_UV_SCALE, tileMeters, 1.0);
+        const vec3 fillWeights = ApplyTerrainHeightBlend(
+            vec3(1.0 - sandShare, sandShare, 0.0),
+            vec3(sand.Material.z, sandFill.Material.z - TERRAIN_SAND_HEIGHT_OFFSET, 0.0), TERRAIN_SAND_BLEND_DEPTH);
+        sand.Albedo = sand.Albedo * fillWeights.x + sandFill.Albedo * fillWeights.y;
+        sand.Material = sand.Material * fillWeights.x + sandFill.Material * fillWeights.y;
+        sand.Perturbation = sand.Perturbation * fillWeights.x + sandFill.Perturbation * fillWeights.y;
+        sand.LostDetail = sand.LostDetail * fillWeights.x + sandFill.LostDetail * fillWeights.y;
     }
     TerrainLayerSample dirt = sand;
     TerrainLayerSample rock = sand;
