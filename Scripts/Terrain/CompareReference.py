@@ -5,6 +5,8 @@
 #   python Scripts/Terrain/CompareReference.py --capture <CaptureScene.ps1 の OutDir> [--photos far_01,cliff_01] [--out <出力先>]
 #                                              [--verify]
 # 写真ごとに <出力先>/reference_<写真>.png と <出力先>/reference_metrics.json を書き、数値を 1 行ずつ出す。
+# 並べた写真をすべて縦に積んだ一覧（左に写真、右に撮影。輪郭と枠は重ねない）を <出力先>/reference_overview.png に書く
+# （節目の確認でユーザーに渡す 1 枚）。
 #
 # 並べ方: 撮影は 16:9 で、横の画角を写真の横の画角に合わせてある（WastelandRoutine.cpp の kReferenceShots）。写真は横幅を
 # 撮影にそろえ、16:9 より縦に長ければ上下の中央を切り、短ければ上下に帯を足す（どちらも同じ視野の範囲を並べる）。
@@ -69,6 +71,9 @@ TERRAIN_DARK_RATIO = 0.6
 # 赤みの判定の R - B（sRGB）。地平線の近くの暖かい霞の空（12 前後）を外し、霞の中の淡いビュート（20 以上）は残す
 TERRAIN_RED_MINUS_BLUE = 15
 OUTLINE_MEDIAN_COLUMNS = 9
+# 一覧の 1 枚の絵の大きさ[px]（16:9）と、行ごとの見出しの高さ[px]
+OVERVIEW_PANEL_SIZE = (960, 540)
+OVERVIEW_LABEL_HEIGHT = 34
 REGIONS = (("sky", "空"), ("cliff", "崖"), ("ground", "地面"))
 REGION_COLORS = {"cliff": (255, 140, 0), "ground": (0, 200, 80)}
 
@@ -205,6 +210,20 @@ def describe(label, metrics):
         stats = metrics[name]
         parts.append(f"{name}_y=" + ("nan" if stats["luminance"] is None else f"{stats['luminance']:.3f}"))
     return " ".join(parts)
+
+
+def write_overview(rows, path, font):
+    """写真｜撮影の組を縦に積んだ一覧を書く。rows は (見出し, 写真の絵, 撮影の絵) の並び"""
+    width, height = OVERVIEW_PANEL_SIZE
+    row_height = OVERVIEW_LABEL_HEIGHT + height
+    sheet = Image.new("RGB", (width * 2, row_height * len(rows)), (24, 24, 24))
+    draw = ImageDraw.Draw(sheet)
+    for index, (label, photo, capture) in enumerate(rows):
+        top = index * row_height
+        draw.text((10, top + 6), label, fill=(235, 235, 235), font=font)
+        sheet.paste(photo.resize(OVERVIEW_PANEL_SIZE, Image.LANCZOS), (0, top + OVERVIEW_LABEL_HEIGHT))
+        sheet.paste(capture.resize(OVERVIEW_PANEL_SIZE, Image.LANCZOS), (width, top + OVERVIEW_LABEL_HEIGHT))
+    sheet.save(path)
 
 
 def catalog_views():
