@@ -1508,7 +1508,7 @@
 - notes: 危険地帯（描画）。
 
 ## SCN-WL-CLIFF-DETAIL: 崖を、地層の段と割れ目のある立体として焼く
-- status: todo
+- status: blocked
 - done-when: 1 m の DEM では崖が丸く崩れ、垂直な面・段・割れ目が出ない（ユーザーの指摘「崖の表面が現代の CG の水準でない」）。急な斜面と崖の範囲だけを、細かい間隔（0.25 m 程度）で焼き直し、面の法線の向きに、地層に沿った凹凸（硬い層の張り出しと軟らかい層のくぼみ・縦の割れ目・崩れた縁）を足す（高さ場の上下だけでなく面に沿って押し出す）。地層の高さはシェーダーの地層（SCN-WL-MATERIAL-STRATA）と同じ基準で揃える。焼いた崖と周りの地形の継ぎ目が見えない。配置の高さ（岩・建物）は今の高さ場のままでよい。cliff と手本の崖の比較画像（1920×1080）を開き、崖の段と割れ目が影を落とす立体として見え（テクスチャの模様でなく）、網目のような繰り返しが無いことを確かめる。
 - verify: `cmake --build build --config Debug --target Game AssetCook -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CookAssets.ps1 -AssetCookExe build/Tools/AssetCook/Debug/AssetCook.exe -OnlyLogicalPath "Models/WastelandTerrain/*"`
