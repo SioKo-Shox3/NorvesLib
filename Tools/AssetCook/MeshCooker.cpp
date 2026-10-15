@@ -3184,6 +3184,163 @@ namespace NorvesLib::Tools::AssetCook
             return true;
         }
 
+        // 崖の細部を焼く遠景の段（castle）のメッシュの名前の接頭辞
+        constexpr const char* kHorizonCliffLevelPrefix = "castle_";
+
+        bool IsHorizonCliffLevelMesh(const AnsiString& name)
+        {
+            const size_t length = std::strlen(kHorizonCliffLevelPrefix);
+            return name.size() > length && std::memcmp(name.data(), kHorizonCliffLevelPrefix, length) == 0;
+        }
+
+        // 遠景のメッシュの頂点（行ごとに並んだ格子）から、格子 layout の中の升目の範囲を求める。頂点が格子の点に
+        // 並んでいなければ失敗する
+        bool HorizonMeshCellRange(const VariableArray<MeshVertexPnt>& vertices,
+                                  const NorvesLib::Core::Rendering::Terrain::TerrainGridLayout& layout,
+                                  uint32_t& outFirstColumn, uint32_t& outCellsX, uint32_t& outFirstRow,
+                                  uint32_t& outCellsZ, AnsiString& error)
+        {
+            if (vertices.empty() || !(layout.Spacing > 0.0))
+            {
+                error = "遠景の段のメッシュが空か、格子の間隔が正でありません";
+                return false;
+            }
+            float maxX = vertices[0].Position[0];
+            float maxZ = vertices[0].Position[2];
+            for (const MeshVertexPnt& vertex : vertices)
+            {
+                maxX = std::max(maxX, vertex.Position[0]);
+                maxZ = std::max(maxZ, vertex.Position[2]);
+            }
+            const double firstColumn = (static_cast<double>(vertices[0].Position[0]) - layout.FirstX) / layout.Spacing;
+            const double firstRow = (static_cast<double>(vertices[0].Position[2]) - layout.FirstZ) / layout.Spacing;
+            const double cellsX = (static_cast<double>(maxX) - vertices[0].Position[0]) / layout.Spacing;
+            const double cellsZ = (static_cast<double>(maxZ) - vertices[0].Position[2]) / layout.Spacing;
+            outFirstColumn = static_cast<uint32_t>(std::lround(firstColumn));
+            outFirstRow = static_cast<uint32_t>(std::lround(firstRow));
+            outCellsX = static_cast<uint32_t>(std::lround(cellsX));
+            outCellsZ = static_cast<uint32_t>(std::lround(cellsZ));
+            const uint32_t sideX = outCellsX + 1;
+            if (firstColumn < -0.5 || firstRow < -0.5 || outCellsX == 0 || outCellsZ == 0 ||
+                static_cast<size_t>(sideX) * (outCellsZ + 1) != vertices.size() ||
+                outFirstColumn + outCellsX >= layout.Columns || outFirstRow + outCellsZ >= layout.Rows)
+            {
+                error = "遠景の段のメッシュの頂点が、段の格子の区画として並んでいません";
+                return false;
+            }
+            for (size_t index = 0; index < vertices.size(); ++index)
+            {
+                const double x = layout.FirstX + static_cast<double>(outFirstColumn + index % sideX) * layout.Spacing;
+                const double z = layout.FirstZ + static_cast<double>(outFirstRow + index / sideX) * layout.Spacing;
+                if (std::abs(vertices[index].Position[0] - x) > 1.0e-3 || std::abs(vertices[index].Position[2] - z) > 1.0e-3)
+                {
+                    error = "遠景の段のメッシュの頂点が、段の格子の点に並んでいません";
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        // 遠景の段（名前が prefix で始まるメッシュをすべて並べた格子）の高さを読む。メッシュはどれも行ごとに並んだ
+        // 格子の区画で、隣の区画と境の頂点を共有する。格子の点がすべて埋まらなければ失敗する
+        bool LoadHorizonLevelGrid(NorvesLib::Core::Asset::AssetFileReader& reader,
+                                  const VariableArray<NorvesLib::Core::Rendering::Terrain::TerrainHorizonMesh>& meshes,
+                                  const char* prefix, VariableArray<float>& outHeights,
+                                  NorvesLib::Core::Rendering::Terrain::TerrainGridLayout& outLayout, AnsiString& error)
+        {
+            const size_t prefixLength = std::strlen(prefix);
+            struct LevelMesh
+            {
+                VariableArray<float> Positions;
+            };
+            VariableArray<LevelMesh> levelMeshes;
+            double minX = std::numeric_limits<double>::max();
+            double minZ = std::numeric_limits<double>::max();
+            double maxX = -std::numeric_limits<double>::max();
+            double maxZ = -std::numeric_limits<double>::max();
+            double spacing = 0.0;
+            for (const NorvesLib::Core::Rendering::Terrain::TerrainHorizonMesh& entry : meshes)
+            {
+                if (entry.Name.size() <= prefixLength || std::memcmp(entry.Name.data(), prefix, prefixLength) != 0)
+                {
+                    continue;
+                }
+                const uint64_t vertexBytes = static_cast<uint64_t>(entry.VertexCount) * 8u * sizeof(float);
+                const uint64_t expectedBytes =
+                    vertexBytes + static_cast<uint64_t>(entry.TriangleCount) * 3u * sizeof(uint32_t);
+                NorvesLib::Core::Asset::AssetReadRequest request;
+                request.InputPath = entry.FilePath;
+                request.bAllowAbsolutePath = false;
+                request.MaxReadBytes = expectedBytes;
+                const NorvesLib::Core::Asset::AssetReadResult file = reader.Read(request);
+                AnsiString sha256;
+                if (!file.Succeeded() || static_cast<uint64_t>(file.Blob.GetSize()) != expectedBytes ||
+                    !ComputeSha256Hex(file.Blob.GetData(), file.Blob.GetSize(), sha256) || sha256 != entry.Sha256)
+                {
+                    error = AnsiString("遠景の段のメッシュを読めないか、大きさ・SHA-256 が記述と違います: ") + entry.FilePath;
+                    return false;
+                }
+                LevelMesh& mesh = levelMeshes.emplace_back();
+                mesh.Positions.resize(static_cast<size_t>(entry.VertexCount) * 3u);
+                for (uint32_t index = 0; index < entry.VertexCount; ++index)
+                {
+                    float values[8];
+                    std::memcpy(values, file.Blob.GetData() + static_cast<size_t>(index) * sizeof(values), sizeof(values));
+                    for (int axis = 0; axis < 3; ++axis)
+                    {
+                        mesh.Positions[static_cast<size_t>(index) * 3u + axis] = values[axis];
+                    }
+                    minX = std::min(minX, static_cast<double>(values[0]));
+                    maxX = std::max(maxX, static_cast<double>(values[0]));
+                    minZ = std::min(minZ, static_cast<double>(values[2]));
+                    maxZ = std::max(maxZ, static_cast<double>(values[2]));
+                }
+                if (spacing == 0.0 && entry.VertexCount > 1u)
+                {
+                    spacing = static_cast<double>(mesh.Positions[3] - mesh.Positions[0]);
+                }
+            }
+            if (levelMeshes.empty() || !(spacing > 0.0))
+            {
+                error = AnsiString("遠景の記述に、崖の細部を焼く段のメッシュがありません: ") + prefix;
+                return false;
+            }
+            outLayout.FirstX = minX;
+            outLayout.FirstZ = minZ;
+            outLayout.Spacing = spacing;
+            outLayout.Columns = static_cast<uint32_t>(std::lround((maxX - minX) / spacing)) + 1u;
+            outLayout.Rows = static_cast<uint32_t>(std::lround((maxZ - minZ) / spacing)) + 1u;
+            outHeights.assign(static_cast<size_t>(outLayout.Columns) * outLayout.Rows,
+                              std::numeric_limits<float>::quiet_NaN());
+            for (const LevelMesh& mesh : levelMeshes)
+            {
+                for (size_t index = 0; index + 2 < mesh.Positions.size(); index += 3)
+                {
+                    const double column = (static_cast<double>(mesh.Positions[index]) - minX) / spacing;
+                    const double row = (static_cast<double>(mesh.Positions[index + 2]) - minZ) / spacing;
+                    const long roundedColumn = std::lround(column);
+                    const long roundedRow = std::lround(row);
+                    if (std::abs(column - static_cast<double>(roundedColumn)) > 1.0e-3 ||
+                        std::abs(row - static_cast<double>(roundedRow)) > 1.0e-3)
+                    {
+                        error = "遠景の段のメッシュの頂点が、段の格子の点に並んでいません";
+                        return false;
+                    }
+                    outHeights[static_cast<size_t>(roundedRow) * outLayout.Columns + static_cast<size_t>(roundedColumn)] =
+                        mesh.Positions[index + 1];
+                }
+            }
+            for (const float height : outHeights)
+            {
+                if (!std::isfinite(height))
+                {
+                    error = "遠景の段のメッシュを並べた格子に、高さの無い点があります";
+                    return false;
+                }
+            }
+            return true;
+        }
+
         // 遠景の地形の記述（WastelandTerrain::kHorizonDescriptorPath。Scripts/Terrain/HorizonDem.py が書く）の meshIndex 番目の
         // メッシュを焼く（一覧では source_path をこの記述にした terrain-tile:dem:<meshIndex>,0）。メッシュのファイルの SHA-256 が
         // 記述と違えば失敗する。法線が NaN の頂点（近景の格子の外周）は、近景の区画と同じ SampleNormal で埋める。
@@ -3306,6 +3463,47 @@ namespace NorvesLib::Tools::AssetCook
                 }
             }
 
+            // castle の段の区画が崖の細部を焼く範囲（TerrainCliffDetail.cpp の遠景の範囲）に掛かれば、急な升目を細分して
+            // 地層の凹凸を押し出す。区画の境の点が隣の区画と同じになるよう、格子は castle の段のメッシュをすべて並べて作る
+            bool bCliffDetail = false;
+            if (IsHorizonCliffLevelMesh(entry.Name))
+            {
+                TerrainCliffHorizonGrid grid;
+                VariableArray<float> levelHeights;
+                if (!LoadHorizonLevelGrid(reader, meshes, kHorizonCliffLevelPrefix, levelHeights, grid.Layout, error))
+                {
+                    return false;
+                }
+                grid.Heights = levelHeights.data();
+                uint32_t firstColumn = 0;
+                uint32_t cellsX = 0;
+                uint32_t firstRow = 0;
+                uint32_t cellsZ = 0;
+                if (!HorizonMeshCellRange(vertices, grid.Layout, firstColumn, cellsX, firstRow, cellsZ, error))
+                {
+                    return false;
+                }
+                if (TerrainCliffHorizonTileIntersects(grid, firstColumn, cellsX, firstRow, cellsZ))
+                {
+                    static_assert(sizeof(TerrainCliffVertex) == sizeof(MeshVertexPnt));
+                    VariableArray<TerrainCliffVertex> cliffVertices(vertices.size());
+                    std::memcpy(cliffVertices.data(), vertices.data(), vertices.size() * sizeof(MeshVertexPnt));
+                    TerrainCliffTileStats cliffStats;
+                    if (!BuildTerrainCliffHorizonTile(grid, firstColumn, cellsX, firstRow, cellsZ, Spec::kTextureTileMeters,
+                                                      cliffVertices, indices, cliffStats, error))
+                    {
+                        return false;
+                    }
+                    vertices.resize(cliffVertices.size());
+                    std::memcpy(vertices.data(), cliffVertices.data(), cliffVertices.size() * sizeof(MeshVertexPnt));
+                    bCliffDetail = true;
+                    std::printf("TERRAIN_CLIFF_DETAIL horizon=%s refined_cells=%u transition_cells=%u displaced_vertices=%u "
+                                "vertices=%zu triangles=%zu\n",
+                                entry.Name.c_str(), cliffStats.RefinedCells, cliffStats.TransitionCells,
+                                cliffStats.DisplacedVertices, vertices.size(), indices.size() / 3);
+                }
+            }
+
             MaterialReferences materialReferences;
             MeshCookResult v1Result;
             if (!CookLodGraphMesh(vertices, indices, materialReferences, v1Result, error, fallbackMinTriangles,
@@ -3318,6 +3516,10 @@ namespace NorvesLib::Tools::AssetCook
             hash = Fnv1a64Update(hash, descriptor.Blob.GetData(), descriptor.Blob.GetSize());
             hash = Fnv1a64UpdateLe64(hash, static_cast<uint64_t>(meshIndex));
             hash = Fnv1a64UpdateLe64(hash, static_cast<uint64_t>(std::bit_cast<uint32_t>(Spec::kTextureTileMeters)));
+            if (bCliffDetail)
+            {
+                hash = Fnv1a64UpdateLe64(hash, static_cast<uint64_t>(kTerrainCliffDetailVersion));
+            }
             v1Result.SourceHash = hash;
             std::printf("TERRAIN_HORIZON_MESH index=%u name=%s vertices=%zu triangles=%zu normals_from_grid=%u sha256=%s\n",
                         meshIndex, entry.Name.c_str(), vertices.size(), indices.size() / 3, normalsFromGrid,
@@ -3358,7 +3560,7 @@ namespace NorvesLib::Tools::AssetCook
             }
             VariableArray<MeshVertexPnt> vertices;
             VariableArray<uint32_t> indices;
-            // 崖の細部を焼く範囲（主役の Battleship Rock）に掛かる区画は、急な升目を細分して地層の凹凸を押し出す
+            // 崖の細部を焼く範囲（TerrainCliffDetail.cpp の近景の範囲）に掛かる区画は、急な升目を細分して地層の凹凸を押し出す
             uint32_t firstColumn = 0;
             uint32_t cellsX = 0;
             uint32_t firstRow = 0;

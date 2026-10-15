@@ -1378,6 +1378,45 @@
       "entry_name": "Assets/Models/WastelandTerrain/WastelandHorizon_castle_2_1.nvmesh"
     },
     {
+      "logical_path": "Assets/Models/WastelandTerrain/WastelandHorizon_castle_0_2.generated",
+      "source_path": "Assets/Terrain/ValleyOfTheGods/horizon.json",
+      "extra_sources": [
+        "Assets/Terrain/ValleyOfTheGods/horizon/castle_0_2.bin",
+        "Library/Core/Public/Rendering/Terrain/TerrainHeightField.h",
+        "Assets/Terrain/ValleyOfTheGods/height.json",
+        "Assets/Terrain/ValleyOfTheGods/height.r32"
+      ],
+      "generate": "terrain-tile:dem:6,0",
+      "package_name": "WastelandTerrain/WastelandHorizon_castle_0_2.nvpkg",
+      "entry_name": "Assets/Models/WastelandTerrain/WastelandHorizon_castle_0_2.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/WastelandTerrain/WastelandHorizon_castle_1_2.generated",
+      "source_path": "Assets/Terrain/ValleyOfTheGods/horizon.json",
+      "extra_sources": [
+        "Assets/Terrain/ValleyOfTheGods/horizon/castle_1_2.bin",
+        "Library/Core/Public/Rendering/Terrain/TerrainHeightField.h",
+        "Assets/Terrain/ValleyOfTheGods/height.json",
+        "Assets/Terrain/ValleyOfTheGods/height.r32"
+      ],
+      "generate": "terrain-tile:dem:7,0",
+      "package_name": "WastelandTerrain/WastelandHorizon_castle_1_2.nvpkg",
+      "entry_name": "Assets/Models/WastelandTerrain/WastelandHorizon_castle_1_2.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/WastelandTerrain/WastelandHorizon_castle_2_2.generated",
+      "source_path": "Assets/Terrain/ValleyOfTheGods/horizon.json",
+      "extra_sources": [
+        "Assets/Terrain/ValleyOfTheGods/horizon/castle_2_2.bin",
+        "Library/Core/Public/Rendering/Terrain/TerrainHeightField.h",
+        "Assets/Terrain/ValleyOfTheGods/height.json",
+        "Assets/Terrain/ValleyOfTheGods/height.r32"
+      ],
+      "generate": "terrain-tile:dem:8,0",
+      "package_name": "WastelandTerrain/WastelandHorizon_castle_2_2.nvpkg",
+      "entry_name": "Assets/Models/WastelandTerrain/WastelandHorizon_castle_2_2.nvmesh"
+    },
+    {
       "logical_path": "Assets/Models/WastelandTerrain/WastelandHorizon_mid_0_0.generated",
       "source_path": "Assets/Terrain/ValleyOfTheGods/horizon.json",
       "extra_sources": [
@@ -1386,7 +1425,7 @@
         "Assets/Terrain/ValleyOfTheGods/height.json",
         "Assets/Terrain/ValleyOfTheGods/height.r32"
       ],
-      "generate": "terrain-tile:dem:6,0",
+      "generate": "terrain-tile:dem:9,0",
       "package_name": "WastelandTerrain/WastelandHorizon_mid_0_0.nvpkg",
       "entry_name": "Assets/Models/WastelandTerrain/WastelandHorizon_mid_0_0.nvmesh"
     },
@@ -1399,7 +1438,7 @@
         "Assets/Terrain/ValleyOfTheGods/height.json",
         "Assets/Terrain/ValleyOfTheGods/height.r32"
       ],
-      "generate": "terrain-tile:dem:7,0",
+      "generate": "terrain-tile:dem:10,0",
       "package_name": "WastelandTerrain/WastelandHorizon_mid_1_0.nvpkg",
       "entry_name": "Assets/Models/WastelandTerrain/WastelandHorizon_mid_1_0.nvmesh"
     },
@@ -1412,7 +1451,7 @@
         "Assets/Terrain/ValleyOfTheGods/height.json",
         "Assets/Terrain/ValleyOfTheGods/height.r32"
       ],
-      "generate": "terrain-tile:dem:8,0",
+      "generate": "terrain-tile:dem:11,0",
       "package_name": "WastelandTerrain/WastelandHorizon_mid_2_0.nvpkg",
       "entry_name": "Assets/Models/WastelandTerrain/WastelandHorizon_mid_2_0.nvmesh"
     },
@@ -1425,7 +1464,7 @@
         "Assets/Terrain/ValleyOfTheGods/height.json",
         "Assets/Terrain/ValleyOfTheGods/height.r32"
       ],
-      "generate": "terrain-tile:dem:9,0",
+      "generate": "terrain-tile:dem:12,0",
       "package_name": "WastelandTerrain/WastelandHorizon_mid_3_0.nvpkg",
       "entry_name": "Assets/Models/WastelandTerrain/WastelandHorizon_mid_3_0.nvmesh"
     },
@@ -1438,7 +1477,7 @@
         "Assets/Terrain/ValleyOfTheGods/height.json",
         "Assets/Terrain/ValleyOfTheGods/height.r32"
       ],
-      "generate": "terrain-tile:dem:10,0",
+      "generate": "terrain-tile:dem:13,0",
       "package_name": "WastelandTerrain/WastelandHorizon_mid_0_1.nvpkg",
       "entry_name": "Assets/Models/WastelandTerrain/WastelandHorizon_mid_0_1.nvmesh"
     },
@@ -1451,7 +1490,7 @@
         "Assets/Terrain/ValleyOfTheGods/height.json",
         "Assets/Terrain/ValleyOfTheGods/height.r32"
       ],
-      "generate": "terrain-tile:dem:11,0",
+      "generate": "terrain-tile:dem:14,0",
       "package_name": "WastelandTerrain/WastelandHorizon_mid_1_1.nvpkg",
       "entry_name": "Assets/Models/WastelandTerrain/WastelandHorizon_mid_1_1.nvmesh"
     },
@@ -1464,7 +1503,7 @@
         "Assets/Terrain/ValleyOfTheGods/height.json",
         "Assets/Terrain/ValleyOfTheGods/height.r32"
       ],
-      "generate": "terrain-tile:dem:12,0",
+      "generate": "terrain-tile:dem:15,0",
       "package_name": "WastelandTerrain/WastelandHorizon_mid_2_1.nvpkg",
       "entry_name": "Assets/Models/WastelandTerrain/WastelandHorizon_mid_2_1.nvmesh"
     },
@@ -1477,7 +1516,7 @@
         "Assets/Terrain/ValleyOfTheGods/height.json",
         "Assets/Terrain/ValleyOfTheGods/height.r32"
       ],
-      "generate": "terrain-tile:dem:13,0",
+      "generate": "terrain-tile:dem:16,0",
       "package_name": "WastelandTerrain/WastelandHorizon_mid_3_1.nvpkg",
       "entry_name": "Assets/Models/WastelandTerrain/WastelandHorizon_mid_3_1.nvmesh"
     },
@@ -1490,7 +1529,7 @@
         "Assets/Terrain/ValleyOfTheGods/height.json",
         "Assets/Terrain/ValleyOfTheGods/height.r32"
       ],
-      "generate": "terrain-tile:dem:14,0",
+      "generate": "terrain-tile:dem:17,0",
       "package_name": "WastelandTerrain/WastelandHorizon_mid_0_2.nvpkg",
       "entry_name": "Assets/Models/WastelandTerrain/WastelandHorizon_mid_0_2.nvmesh"
     },
@@ -1503,7 +1542,7 @@
         "Assets/Terrain/ValleyOfTheGods/height.json",
         "Assets/Terrain/ValleyOfTheGods/height.r32"
       ],
-      "generate": "terrain-tile:dem:15,0",
+      "generate": "terrain-tile:dem:18,0",
       "package_name": "WastelandTerrain/WastelandHorizon_mid_1_2.nvpkg",
       "entry_name": "Assets/Models/WastelandTerrain/WastelandHorizon_mid_1_2.nvmesh"
     },
@@ -1516,7 +1555,7 @@
         "Assets/Terrain/ValleyOfTheGods/height.json",
         "Assets/Terrain/ValleyOfTheGods/height.r32"
       ],
-      "generate": "terrain-tile:dem:16,0",
+      "generate": "terrain-tile:dem:19,0",
       "package_name": "WastelandTerrain/WastelandHorizon_mid_2_2.nvpkg",
       "entry_name": "Assets/Models/WastelandTerrain/WastelandHorizon_mid_2_2.nvmesh"
     },
@@ -1529,7 +1568,7 @@
         "Assets/Terrain/ValleyOfTheGods/height.json",
         "Assets/Terrain/ValleyOfTheGods/height.r32"
       ],
-      "generate": "terrain-tile:dem:17,0",
+      "generate": "terrain-tile:dem:20,0",
       "package_name": "WastelandTerrain/WastelandHorizon_mid_3_2.nvpkg",
       "entry_name": "Assets/Models/WastelandTerrain/WastelandHorizon_mid_3_2.nvmesh"
     },
@@ -1542,7 +1581,7 @@
         "Assets/Terrain/ValleyOfTheGods/height.json",
         "Assets/Terrain/ValleyOfTheGods/height.r32"
       ],
-      "generate": "terrain-tile:dem:18,0",
+      "generate": "terrain-tile:dem:21,0",
       "package_name": "WastelandTerrain/WastelandHorizon_mid_0_3.nvpkg",
       "entry_name": "Assets/Models/WastelandTerrain/WastelandHorizon_mid_0_3.nvmesh"
     },
@@ -1555,7 +1594,7 @@
         "Assets/Terrain/ValleyOfTheGods/height.json",
         "Assets/Terrain/ValleyOfTheGods/height.r32"
       ],
-      "generate": "terrain-tile:dem:19,0",
+      "generate": "terrain-tile:dem:22,0",
       "package_name": "WastelandTerrain/WastelandHorizon_mid_1_3.nvpkg",
       "entry_name": "Assets/Models/WastelandTerrain/WastelandHorizon_mid_1_3.nvmesh"
     },
@@ -1568,7 +1607,7 @@
         "Assets/Terrain/ValleyOfTheGods/height.json",
         "Assets/Terrain/ValleyOfTheGods/height.r32"
       ],
-      "generate": "terrain-tile:dem:20,0",
+      "generate": "terrain-tile:dem:23,0",
       "package_name": "WastelandTerrain/WastelandHorizon_mid_2_3.nvpkg",
       "entry_name": "Assets/Models/WastelandTerrain/WastelandHorizon_mid_2_3.nvmesh"
     },
@@ -1581,7 +1620,7 @@
         "Assets/Terrain/ValleyOfTheGods/height.json",
         "Assets/Terrain/ValleyOfTheGods/height.r32"
       ],
-      "generate": "terrain-tile:dem:21,0",
+      "generate": "terrain-tile:dem:24,0",
       "package_name": "WastelandTerrain/WastelandHorizon_mid_3_3.nvpkg",
       "entry_name": "Assets/Models/WastelandTerrain/WastelandHorizon_mid_3_3.nvmesh"
     },
@@ -1594,7 +1633,7 @@
         "Assets/Terrain/ValleyOfTheGods/height.json",
         "Assets/Terrain/ValleyOfTheGods/height.r32"
       ],
-      "generate": "terrain-tile:dem:22,0",
+      "generate": "terrain-tile:dem:25,0",
       "package_name": "WastelandTerrain/WastelandHorizon_far_0_0.nvpkg",
       "entry_name": "Assets/Models/WastelandTerrain/WastelandHorizon_far_0_0.nvmesh"
     },
@@ -1607,7 +1646,7 @@
         "Assets/Terrain/ValleyOfTheGods/height.json",
         "Assets/Terrain/ValleyOfTheGods/height.r32"
       ],
-      "generate": "terrain-tile:dem:23,0",
+      "generate": "terrain-tile:dem:26,0",
       "package_name": "WastelandTerrain/WastelandHorizon_far_1_0.nvpkg",
       "entry_name": "Assets/Models/WastelandTerrain/WastelandHorizon_far_1_0.nvmesh"
     },
@@ -1620,7 +1659,7 @@
         "Assets/Terrain/ValleyOfTheGods/height.json",
         "Assets/Terrain/ValleyOfTheGods/height.r32"
       ],
-      "generate": "terrain-tile:dem:24,0",
+      "generate": "terrain-tile:dem:27,0",
       "package_name": "WastelandTerrain/WastelandHorizon_far_2_0.nvpkg",
       "entry_name": "Assets/Models/WastelandTerrain/WastelandHorizon_far_2_0.nvmesh"
     },
@@ -1633,7 +1672,7 @@
         "Assets/Terrain/ValleyOfTheGods/height.json",
         "Assets/Terrain/ValleyOfTheGods/height.r32"
       ],
-      "generate": "terrain-tile:dem:25,0",
+      "generate": "terrain-tile:dem:28,0",
       "package_name": "WastelandTerrain/WastelandHorizon_far_0_1.nvpkg",
       "entry_name": "Assets/Models/WastelandTerrain/WastelandHorizon_far_0_1.nvmesh"
     },
@@ -1646,7 +1685,7 @@
         "Assets/Terrain/ValleyOfTheGods/height.json",
         "Assets/Terrain/ValleyOfTheGods/height.r32"
       ],
-      "generate": "terrain-tile:dem:26,0",
+      "generate": "terrain-tile:dem:29,0",
       "package_name": "WastelandTerrain/WastelandHorizon_far_2_1.nvpkg",
       "entry_name": "Assets/Models/WastelandTerrain/WastelandHorizon_far_2_1.nvmesh"
     },
@@ -1659,7 +1698,7 @@
         "Assets/Terrain/ValleyOfTheGods/height.json",
         "Assets/Terrain/ValleyOfTheGods/height.r32"
       ],
-      "generate": "terrain-tile:dem:27,0",
+      "generate": "terrain-tile:dem:30,0",
       "package_name": "WastelandTerrain/WastelandHorizon_far_0_2.nvpkg",
       "entry_name": "Assets/Models/WastelandTerrain/WastelandHorizon_far_0_2.nvmesh"
     },
@@ -1672,7 +1711,7 @@
         "Assets/Terrain/ValleyOfTheGods/height.json",
         "Assets/Terrain/ValleyOfTheGods/height.r32"
       ],
-      "generate": "terrain-tile:dem:28,0",
+      "generate": "terrain-tile:dem:31,0",
       "package_name": "WastelandTerrain/WastelandHorizon_far_1_2.nvpkg",
       "entry_name": "Assets/Models/WastelandTerrain/WastelandHorizon_far_1_2.nvmesh"
     },
@@ -1685,7 +1724,7 @@
         "Assets/Terrain/ValleyOfTheGods/height.json",
         "Assets/Terrain/ValleyOfTheGods/height.r32"
       ],
-      "generate": "terrain-tile:dem:29,0",
+      "generate": "terrain-tile:dem:32,0",
       "package_name": "WastelandTerrain/WastelandHorizon_far_2_2.nvpkg",
       "entry_name": "Assets/Models/WastelandTerrain/WastelandHorizon_far_2_2.nvmesh"
     },
@@ -1698,7 +1737,7 @@
         "Assets/Terrain/ValleyOfTheGods/height.json",
         "Assets/Terrain/ValleyOfTheGods/height.r32"
       ],
-      "generate": "terrain-tile:dem:30,0",
+      "generate": "terrain-tile:dem:33,0",
       "package_name": "WastelandTerrain/WastelandHorizon_outer_0_0.nvpkg",
       "entry_name": "Assets/Models/WastelandTerrain/WastelandHorizon_outer_0_0.nvmesh"
     },
@@ -1711,7 +1750,7 @@
         "Assets/Terrain/ValleyOfTheGods/height.json",
         "Assets/Terrain/ValleyOfTheGods/height.r32"
       ],
-      "generate": "terrain-tile:dem:31,0",
+      "generate": "terrain-tile:dem:34,0",
       "package_name": "WastelandTerrain/WastelandHorizon_outer_1_0.nvpkg",
       "entry_name": "Assets/Models/WastelandTerrain/WastelandHorizon_outer_1_0.nvmesh"
     },
@@ -1724,7 +1763,7 @@
         "Assets/Terrain/ValleyOfTheGods/height.json",
         "Assets/Terrain/ValleyOfTheGods/height.r32"
       ],
-      "generate": "terrain-tile:dem:32,0",
+      "generate": "terrain-tile:dem:35,0",
       "package_name": "WastelandTerrain/WastelandHorizon_outer_2_0.nvpkg",
       "entry_name": "Assets/Models/WastelandTerrain/WastelandHorizon_outer_2_0.nvmesh"
     },
@@ -1737,7 +1776,7 @@
         "Assets/Terrain/ValleyOfTheGods/height.json",
         "Assets/Terrain/ValleyOfTheGods/height.r32"
       ],
-      "generate": "terrain-tile:dem:33,0",
+      "generate": "terrain-tile:dem:36,0",
       "package_name": "WastelandTerrain/WastelandHorizon_outer_0_1.nvpkg",
       "entry_name": "Assets/Models/WastelandTerrain/WastelandHorizon_outer_0_1.nvmesh"
     },
@@ -1750,7 +1789,7 @@
         "Assets/Terrain/ValleyOfTheGods/height.json",
         "Assets/Terrain/ValleyOfTheGods/height.r32"
       ],
-      "generate": "terrain-tile:dem:34,0",
+      "generate": "terrain-tile:dem:37,0",
       "package_name": "WastelandTerrain/WastelandHorizon_outer_1_1.nvpkg",
       "entry_name": "Assets/Models/WastelandTerrain/WastelandHorizon_outer_1_1.nvmesh"
     },
@@ -1763,7 +1802,7 @@
         "Assets/Terrain/ValleyOfTheGods/height.json",
         "Assets/Terrain/ValleyOfTheGods/height.r32"
       ],
-      "generate": "terrain-tile:dem:35,0",
+      "generate": "terrain-tile:dem:38,0",
       "package_name": "WastelandTerrain/WastelandHorizon_outer_2_1.nvpkg",
       "entry_name": "Assets/Models/WastelandTerrain/WastelandHorizon_outer_2_1.nvmesh"
     },
@@ -1776,7 +1815,7 @@
         "Assets/Terrain/ValleyOfTheGods/height.json",
         "Assets/Terrain/ValleyOfTheGods/height.r32"
       ],
-      "generate": "terrain-tile:dem:36,0",
+      "generate": "terrain-tile:dem:39,0",
       "package_name": "WastelandTerrain/WastelandHorizon_outer_0_2.nvpkg",
       "entry_name": "Assets/Models/WastelandTerrain/WastelandHorizon_outer_0_2.nvmesh"
     },
@@ -1789,7 +1828,7 @@
         "Assets/Terrain/ValleyOfTheGods/height.json",
         "Assets/Terrain/ValleyOfTheGods/height.r32"
       ],
-      "generate": "terrain-tile:dem:37,0",
+      "generate": "terrain-tile:dem:40,0",
       "package_name": "WastelandTerrain/WastelandHorizon_outer_1_2.nvpkg",
       "entry_name": "Assets/Models/WastelandTerrain/WastelandHorizon_outer_1_2.nvmesh"
     },
@@ -1802,7 +1841,7 @@
         "Assets/Terrain/ValleyOfTheGods/height.json",
         "Assets/Terrain/ValleyOfTheGods/height.r32"
       ],
-      "generate": "terrain-tile:dem:38,0",
+      "generate": "terrain-tile:dem:41,0",
       "package_name": "WastelandTerrain/WastelandHorizon_outer_2_2.nvpkg",
       "entry_name": "Assets/Models/WastelandTerrain/WastelandHorizon_outer_2_2.nvmesh"
     },
@@ -1815,7 +1854,7 @@
         "Assets/Terrain/ValleyOfTheGods/height.json",
         "Assets/Terrain/ValleyOfTheGods/height.r32"
       ],
-      "generate": "terrain-tile:dem:39,0",
+      "generate": "terrain-tile:dem:42,0",
       "package_name": "WastelandTerrain/WastelandHorizon_outer_0_3.nvpkg",
       "entry_name": "Assets/Models/WastelandTerrain/WastelandHorizon_outer_0_3.nvmesh"
     },
@@ -1828,7 +1867,7 @@
         "Assets/Terrain/ValleyOfTheGods/height.json",
         "Assets/Terrain/ValleyOfTheGods/height.r32"
       ],
-      "generate": "terrain-tile:dem:40,0",
+      "generate": "terrain-tile:dem:43,0",
       "package_name": "WastelandTerrain/WastelandHorizon_outer_1_3.nvpkg",
       "entry_name": "Assets/Models/WastelandTerrain/WastelandHorizon_outer_1_3.nvmesh"
     },
@@ -1841,7 +1880,7 @@
         "Assets/Terrain/ValleyOfTheGods/height.json",
         "Assets/Terrain/ValleyOfTheGods/height.r32"
       ],
-      "generate": "terrain-tile:dem:41,0",
+      "generate": "terrain-tile:dem:44,0",
       "package_name": "WastelandTerrain/WastelandHorizon_outer_2_3.nvpkg",
       "entry_name": "Assets/Models/WastelandTerrain/WastelandHorizon_outer_2_3.nvmesh"
     },
@@ -1854,7 +1893,7 @@
         "Assets/Terrain/ValleyOfTheGods/height.json",
         "Assets/Terrain/ValleyOfTheGods/height.r32"
       ],
-      "generate": "terrain-tile:dem:42,0",
+      "generate": "terrain-tile:dem:45,0",
       "package_name": "WastelandTerrain/WastelandHorizon_outer_0_4.nvpkg",
       "entry_name": "Assets/Models/WastelandTerrain/WastelandHorizon_outer_0_4.nvmesh"
     },
@@ -1867,7 +1906,7 @@
         "Assets/Terrain/ValleyOfTheGods/height.json",
         "Assets/Terrain/ValleyOfTheGods/height.r32"
       ],
-      "generate": "terrain-tile:dem:43,0",
+      "generate": "terrain-tile:dem:46,0",
       "package_name": "WastelandTerrain/WastelandHorizon_outer_1_4.nvpkg",
       "entry_name": "Assets/Models/WastelandTerrain/WastelandHorizon_outer_1_4.nvmesh"
     },
@@ -1880,7 +1919,7 @@
         "Assets/Terrain/ValleyOfTheGods/height.json",
         "Assets/Terrain/ValleyOfTheGods/height.r32"
       ],
-      "generate": "terrain-tile:dem:44,0",
+      "generate": "terrain-tile:dem:47,0",
       "package_name": "WastelandTerrain/WastelandHorizon_outer_2_4.nvpkg",
       "entry_name": "Assets/Models/WastelandTerrain/WastelandHorizon_outer_2_4.nvmesh"
     },
@@ -1893,7 +1932,7 @@
         "Assets/Terrain/ValleyOfTheGods/height.json",
         "Assets/Terrain/ValleyOfTheGods/height.r32"
       ],
-      "generate": "terrain-tile:dem:45,0",
+      "generate": "terrain-tile:dem:48,0",
       "package_name": "WastelandTerrain/WastelandHorizon_rim_0_0.nvpkg",
       "entry_name": "Assets/Models/WastelandTerrain/WastelandHorizon_rim_0_0.nvmesh"
     },
@@ -1906,7 +1945,7 @@
         "Assets/Terrain/ValleyOfTheGods/height.json",
         "Assets/Terrain/ValleyOfTheGods/height.r32"
       ],
-      "generate": "terrain-tile:dem:46,0",
+      "generate": "terrain-tile:dem:49,0",
       "package_name": "WastelandTerrain/WastelandHorizon_rim_1_0.nvpkg",
       "entry_name": "Assets/Models/WastelandTerrain/WastelandHorizon_rim_1_0.nvmesh"
     },
@@ -1919,7 +1958,7 @@
         "Assets/Terrain/ValleyOfTheGods/height.json",
         "Assets/Terrain/ValleyOfTheGods/height.r32"
       ],
-      "generate": "terrain-tile:dem:47,0",
+      "generate": "terrain-tile:dem:50,0",
       "package_name": "WastelandTerrain/WastelandHorizon_rim_0_1.nvpkg",
       "entry_name": "Assets/Models/WastelandTerrain/WastelandHorizon_rim_0_1.nvmesh"
     },
@@ -1932,7 +1971,7 @@
         "Assets/Terrain/ValleyOfTheGods/height.json",
         "Assets/Terrain/ValleyOfTheGods/height.r32"
       ],
-      "generate": "terrain-tile:dem:48,0",
+      "generate": "terrain-tile:dem:51,0",
       "package_name": "WastelandTerrain/WastelandHorizon_rim_1_1.nvpkg",
       "entry_name": "Assets/Models/WastelandTerrain/WastelandHorizon_rim_1_1.nvmesh"
     },
@@ -1945,7 +1984,7 @@
         "Assets/Terrain/ValleyOfTheGods/height.json",
         "Assets/Terrain/ValleyOfTheGods/height.r32"
       ],
-      "generate": "terrain-tile:dem:49,0",
+      "generate": "terrain-tile:dem:52,0",
       "package_name": "WastelandTerrain/WastelandHorizon_rim_0_2.nvpkg",
       "entry_name": "Assets/Models/WastelandTerrain/WastelandHorizon_rim_0_2.nvmesh"
     },
@@ -1958,7 +1997,7 @@
         "Assets/Terrain/ValleyOfTheGods/height.json",
         "Assets/Terrain/ValleyOfTheGods/height.r32"
       ],
-      "generate": "terrain-tile:dem:50,0",
+      "generate": "terrain-tile:dem:53,0",
       "package_name": "WastelandTerrain/WastelandHorizon_rim_1_2.nvpkg",
       "entry_name": "Assets/Models/WastelandTerrain/WastelandHorizon_rim_1_2.nvmesh"
     },
@@ -1971,7 +2010,7 @@
         "Assets/Terrain/ValleyOfTheGods/height.json",
         "Assets/Terrain/ValleyOfTheGods/height.r32"
       ],
-      "generate": "terrain-tile:dem:51,0",
+      "generate": "terrain-tile:dem:54,0",
       "package_name": "WastelandTerrain/WastelandHorizon_rim_0_3.nvpkg",
       "entry_name": "Assets/Models/WastelandTerrain/WastelandHorizon_rim_0_3.nvmesh"
     },
@@ -1984,7 +2023,7 @@
         "Assets/Terrain/ValleyOfTheGods/height.json",
         "Assets/Terrain/ValleyOfTheGods/height.r32"
       ],
-      "generate": "terrain-tile:dem:52,0",
+      "generate": "terrain-tile:dem:55,0",
       "package_name": "WastelandTerrain/WastelandHorizon_rim_1_3.nvpkg",
       "entry_name": "Assets/Models/WastelandTerrain/WastelandHorizon_rim_1_3.nvmesh"
     },
@@ -1997,7 +2036,7 @@
         "Assets/Terrain/ValleyOfTheGods/height.json",
         "Assets/Terrain/ValleyOfTheGods/height.r32"
       ],
-      "generate": "terrain-tile:dem:53,0",
+      "generate": "terrain-tile:dem:56,0",
       "package_name": "WastelandTerrain/WastelandHorizon_seam_near.nvpkg",
       "entry_name": "Assets/Models/WastelandTerrain/WastelandHorizon_seam_near.nvmesh"
     },
@@ -2010,7 +2049,7 @@
         "Assets/Terrain/ValleyOfTheGods/height.json",
         "Assets/Terrain/ValleyOfTheGods/height.r32"
       ],
-      "generate": "terrain-tile:dem:54,0",
+      "generate": "terrain-tile:dem:57,0",
       "package_name": "WastelandTerrain/WastelandHorizon_seam_castle.nvpkg",
       "entry_name": "Assets/Models/WastelandTerrain/WastelandHorizon_seam_castle.nvmesh"
     },
@@ -2023,7 +2062,7 @@
         "Assets/Terrain/ValleyOfTheGods/height.json",
         "Assets/Terrain/ValleyOfTheGods/height.r32"
       ],
-      "generate": "terrain-tile:dem:55,0",
+      "generate": "terrain-tile:dem:58,0",
       "package_name": "WastelandTerrain/WastelandHorizon_seam_mid.nvpkg",
       "entry_name": "Assets/Models/WastelandTerrain/WastelandHorizon_seam_mid.nvmesh"
     },
@@ -2036,7 +2075,7 @@
         "Assets/Terrain/ValleyOfTheGods/height.json",
         "Assets/Terrain/ValleyOfTheGods/height.r32"
       ],
-      "generate": "terrain-tile:dem:56,0",
+      "generate": "terrain-tile:dem:59,0",
       "package_name": "WastelandTerrain/WastelandHorizon_seam_far.nvpkg",
       "entry_name": "Assets/Models/WastelandTerrain/WastelandHorizon_seam_far.nvmesh"
     },
@@ -2049,7 +2088,7 @@
         "Assets/Terrain/ValleyOfTheGods/height.json",
         "Assets/Terrain/ValleyOfTheGods/height.r32"
       ],
-      "generate": "terrain-tile:dem:57,0",
+      "generate": "terrain-tile:dem:60,0",
       "package_name": "WastelandTerrain/WastelandHorizon_seam_outer.nvpkg",
       "entry_name": "Assets/Models/WastelandTerrain/WastelandHorizon_seam_outer.nvmesh"
     }

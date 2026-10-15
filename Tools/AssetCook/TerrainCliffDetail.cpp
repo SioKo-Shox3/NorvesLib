@@ -12,16 +12,39 @@ namespace NorvesLib::Tools::AssetCook
         using Core::Container::AnsiString;
         using Core::Container::VariableArray;
 
-        // 崖の細部を焼く範囲（エンジンの m）。主役の Battleship Rock と周りの崖錐（Scripts/Terrain/CropDem.py の確認で
-        // y 15 m を越える範囲が X −2120〜−721・Z −1649〜−349）。範囲の内側 kRegionFadeMeters で押し出しを 0 から上げる
-        constexpr double kRegionMinX = -2150.0;
-        constexpr double kRegionMaxX = -900.0;
-        constexpr double kRegionMinZ = -1650.0;
-        constexpr double kRegionMaxZ = -420.0;
+        // 崖の細部を焼く範囲（エンジンの m）と、面に沿った細分の間隔（m）。範囲は手本の視点に写る崖を、視点からの
+        // 距離で 1 画素が何 m になるかで間隔を決めて選んだ。範囲の内側 kRegionFadeMeters で押し出しを 0 から上げる
+        struct CliffRegion
+        {
+            double MinX;
+            double MaxX;
+            double MinZ;
+            double MaxZ;
+            double TargetSpacing;
+        };
+        // 近景（1 m の DEM の格子）の範囲
+        constexpr CliffRegion kNearRegions[] = {
+            // 主役の Battleship Rock と周りの崖錐（Scripts/Terrain/CropDem.py の確認で y 15 m を越える範囲が
+            // X −2120〜−721・Z −1649〜−349）
+            {-2150.0, -900.0, -1650.0, -420.0, 0.25},
+            // Franklin Butte の尖塔の台座（ref_cliff_02 で 2.6 km・1 画素 0.25 m、ref_ground_02 で 1.7 km・0.28 m）
+            {-760.0, -240.0, -660.0, -140.0, 0.25},
+            // Rooster Butte（ref_far_02 で 1 km・0.5 m、ref_ground_02 で 3.5 km・0.58 m）
+            {640.0, 1160.0, 560.0, 1160.0, 0.25},
+            // Setting Hen Butte と南の小さな崖（ref_far_02 で 0.2〜0.6 km・0.11〜0.3 m）
+            {960.0, 1460.0, 1140.0, 1960.0, 0.25},
+        };
+        // 遠景の castle の段（2 m の格子。Scripts/Terrain/HorizonDem.py）の範囲。段の外周（mid との縫い目の帯）から
+        // 押し出しが 0 になる位置までを 40 m 以上空ける
+        constexpr CliffRegion kCastleRegions[] = {
+            // ref_far_01 の主役のビュート（頂 X −2372・Z −4189、2.7〜3 km・1 画素 0.56〜0.63 m）と左のメサ（3.4 km・0.72 m）
+            {-3450.0, -2100.0, -4450.0, -3950.0, 0.5},
+            // ref_far_01 の奥の左右の崖（3.3〜4.4 km・0.7〜0.9 m）
+            {-3650.0, -1900.0, -5250.0, -4650.0, 0.5},
+        };
         constexpr double kRegionFadeMeters = 40.0;
 
-        // 細分の間隔（面に沿った m）と、升目の一辺あたりの細分の数の範囲
-        constexpr double kTargetSpacingMeters = 0.25;
+        // 升目の一辺あたりの細分の数の範囲
         constexpr uint32_t kMinSubdivisions = 4u;
         constexpr uint32_t kMaxSubdivisions = 16u;
         // 押し出しの向き（面の法線）を求める高さの差分の間隔（m）。1 m の格子の凹凸ではなく数 m の面の向きにする
@@ -464,13 +487,77 @@ namespace NorvesLib::Tools::AssetCook
             return std::clamp(displacement, -kMaxDisplacement, kMaxDisplacement);
         }
 
+        // 焼く格子: 近景の高さ場か、遠景の段の高さの並びと、その格子に掛ける範囲
+        struct CliffGrid
+        {
+            Terrain::TerrainGridLayout Layout;
+            const Terrain::TerrainHeightField *Field = nullptr;
+            const float *Heights = nullptr;
+            const CliffRegion *Regions = nullptr;
+            size_t RegionCount = 0;
+
+            float Height(uint32_t column, uint32_t row) const
+            {
+                return Heights != nullptr ? Heights[static_cast<size_t>(row) * Layout.Columns + column]
+                                          : Field->GetGridVertexHeight(column, row);
+            }
+        };
+
+        CliffGrid MakeNearGrid(const Terrain::TerrainHeightField &field)
+        {
+            CliffGrid grid;
+            grid.Layout = field.GetGridLayout();
+            grid.Field = &field;
+            grid.Regions = kNearRegions;
+            grid.RegionCount = sizeof(kNearRegions) / sizeof(kNearRegions[0]);
+            return grid;
+        }
+
+        CliffGrid MakeHorizonGrid(const TerrainCliffHorizonGrid &horizon)
+        {
+            CliffGrid grid;
+            grid.Layout = horizon.Layout;
+            grid.Heights = horizon.Heights;
+            grid.Regions = kCastleRegions;
+            grid.RegionCount = sizeof(kCastleRegions) / sizeof(kCastleRegions[0]);
+            return grid;
+        }
+
+        // 範囲の内側への距離（m。外は負）
+        double RegionInside(const CliffRegion &region, double x, double z)
+        {
+            return std::min(std::min(x - region.MinX, region.MaxX - x), std::min(z - region.MinZ, region.MaxZ - z));
+        }
+
+        // 格子の区画（升目の範囲）が、どれかの範囲（窓の余白を足す）に掛かるか
+        bool GridTileIntersects(const CliffGrid &grid, uint32_t firstColumn, uint32_t cellsX, uint32_t firstRow,
+                                uint32_t cellsZ, int windowMargin)
+        {
+            const Terrain::TerrainGridLayout &layout = grid.Layout;
+            const double margin = static_cast<double>(windowMargin + 1) * layout.Spacing;
+            const double minX = layout.FirstX + static_cast<double>(firstColumn) * layout.Spacing;
+            const double maxX = layout.FirstX + static_cast<double>(firstColumn + cellsX) * layout.Spacing;
+            const double minZ = layout.FirstZ + static_cast<double>(firstRow) * layout.Spacing;
+            const double maxZ = layout.FirstZ + static_cast<double>(firstRow + cellsZ) * layout.Spacing;
+            for (size_t index = 0; index < grid.RegionCount; ++index)
+            {
+                const CliffRegion &region = grid.Regions[index];
+                if (maxX >= region.MinX - margin && minX <= region.MaxX + margin && maxZ >= region.MinZ - margin &&
+                    minZ <= region.MaxZ + margin)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
         // 区画の周りの升目の印と、点の位置を求める面
         class CliffSurface
         {
         public:
-            CliffSurface(const Terrain::TerrainHeightField &field, uint32_t firstColumn, uint32_t cellsX,
-                         uint32_t firstRow, uint32_t cellsZ)
-                : m_Field(field), m_Layout(field.GetGridLayout())
+            CliffSurface(const CliffGrid &grid, uint32_t firstColumn, uint32_t cellsX, uint32_t firstRow,
+                         uint32_t cellsZ)
+                : m_Grid(grid), m_Layout(grid.Layout)
             {
                 m_CellColumns = static_cast<int>(m_Layout.Columns) - 1;
                 m_CellRows = static_cast<int>(m_Layout.Rows) - 1;
@@ -520,7 +607,7 @@ namespace NorvesLib::Tools::AssetCook
                         }
                         const size_t cell = static_cast<size_t>(row) * m_WindowColumns + column;
                         m_Refined[cell] = 1u;
-                        // 面に沿った長さを kTargetSpacingMeters で割る（升目の 2 つの辺の大きい方の傾き）
+                        // 面に沿った長さを範囲の細分の間隔で割る（升目の 2 つの辺の大きい方の傾き）
                         const double spacing = m_Layout.Spacing;
                         const double slopeX =
                             std::max(std::abs(GridHeight(globalColumn + 1, globalRow) - GridHeight(globalColumn, globalRow)),
@@ -532,8 +619,10 @@ namespace NorvesLib::Tools::AssetCook
                                      std::abs(GridHeight(globalColumn + 1, globalRow + 1) -
                                               GridHeight(globalColumn + 1, globalRow))) /
                             spacing;
-                        m_SubdivisionX[cell] = SubdivisionCount(std::sqrt(1.0 + slopeX * slopeX) * spacing);
-                        m_SubdivisionZ[cell] = SubdivisionCount(std::sqrt(1.0 + slopeZ * slopeZ) * spacing);
+                        const double target = TargetSpacing(WorldX(static_cast<double>(globalColumn) + 0.5),
+                                                            WorldZ(static_cast<double>(globalRow) + 0.5));
+                        m_SubdivisionX[cell] = SubdivisionCount(std::sqrt(1.0 + slopeX * slopeX) * spacing, target);
+                        m_SubdivisionZ[cell] = SubdivisionCount(std::sqrt(1.0 + slopeZ * slopeZ) * spacing, target);
                     }
                 }
             }
@@ -580,8 +669,7 @@ namespace NorvesLib::Tools::AssetCook
             {
                 column = std::clamp(column, 0, static_cast<int>(m_Layout.Columns) - 1);
                 row = std::clamp(row, 0, static_cast<int>(m_Layout.Rows) - 1);
-                return static_cast<double>(
-                    m_Field.GetGridVertexHeight(static_cast<uint32_t>(column), static_cast<uint32_t>(row)));
+                return static_cast<double>(m_Grid.Height(static_cast<uint32_t>(column), static_cast<uint32_t>(row)));
             }
 
             // 格子の座標 (gx, gz)（列・行の番号の実数）の、格子の高さを Catmull-Rom で補間した滑らかな面の高さ。
@@ -644,11 +732,32 @@ namespace NorvesLib::Tools::AssetCook
                 outNormal[2] = static_cast<float>(-slopeZ / length);
             }
 
-            // 範囲の内側への距離で 0〜1（外は 0）
-            static double RegionFade(double x, double z)
+            // 範囲の内側への距離で 0〜1（外は 0。範囲が重なれば大きい方）
+            double RegionFade(double x, double z) const
             {
-                const double inside = std::min(std::min(x - kRegionMinX, kRegionMaxX - x), std::min(z - kRegionMinZ, kRegionMaxZ - z));
+                double inside = -std::numeric_limits<double>::max();
+                for (size_t index = 0; index < m_Grid.RegionCount; ++index)
+                {
+                    inside = std::max(inside, RegionInside(m_Grid.Regions[index], x, z));
+                }
                 return std::clamp(inside / kRegionFadeMeters, 0.0, 1.0);
+            }
+
+            // 点の細分の間隔（最も内側にある範囲の値）
+            double TargetSpacing(double x, double z) const
+            {
+                double best = -std::numeric_limits<double>::max();
+                double spacing = m_Grid.RegionCount > 0 ? m_Grid.Regions[0].TargetSpacing : 0.25;
+                for (size_t index = 0; index < m_Grid.RegionCount; ++index)
+                {
+                    const double inside = RegionInside(m_Grid.Regions[index], x, z);
+                    if (inside > best)
+                    {
+                        best = inside;
+                        spacing = m_Grid.Regions[index].TargetSpacing;
+                    }
+                }
+                return spacing;
             }
 
             // 傾きと範囲から決まる押し出しの重み（升目の印を除く）
@@ -791,9 +900,9 @@ namespace NorvesLib::Tools::AssetCook
                 outWeights[3] = 0.5 * (-t2 + t3);
             }
 
-            static uint32_t SubdivisionCount(double surfaceLength)
+            static uint32_t SubdivisionCount(double surfaceLength, double targetSpacing)
             {
-                const double count = std::ceil(surfaceLength / kTargetSpacingMeters);
+                const double count = std::ceil(surfaceLength / targetSpacing);
                 return static_cast<uint32_t>(std::clamp(count, static_cast<double>(kMinSubdivisions),
                                                         static_cast<double>(kMaxSubdivisions)));
             }
@@ -841,7 +950,7 @@ namespace NorvesLib::Tools::AssetCook
                 return false;
             }
 
-            const Terrain::TerrainHeightField &m_Field;
+            const CliffGrid &m_Grid;
             Terrain::TerrainGridLayout m_Layout;
             int m_CellColumns = 0;
             int m_CellRows = 0;
@@ -862,16 +971,495 @@ namespace NorvesLib::Tools::AssetCook
         };
     } // namespace
 
+    namespace
+    {
+        // 格子の区画の升目を、崖の細部を足して張る。
+        // 近景（grid.Field がある）: outVertices・outIndices を空にして区画のすべての升目を張る。押し出さない格子の頂点は
+        //   高さ場から作る。
+        // 遠景の段（grid.Heights がある）: outVertices には区画の格子の頂点（(cellsX + 1) × (cellsZ + 1)、行ごと）が入っている。
+        //   押し出さない格子の頂点はその頂点をそのまま使い、細分しない升目と接しない升目は張らない（元のメッシュの三角形を使う）。
+        //   張った升目に outChangedCells で 1 を立てる
+        bool BuildCliffCells(const CliffGrid &grid, uint32_t firstColumn, uint32_t cellsX, uint32_t firstRow,
+                             uint32_t cellsZ, float textureTileMeters, VariableArray<TerrainCliffVertex> &outVertices,
+                             VariableArray<uint32_t> &outIndices, VariableArray<uint8_t> &outChangedCells,
+                             TerrainCliffTileStats &outStats, AnsiString &outError)
+        {
+            const CliffSurface surface(grid, firstColumn, cellsX, firstRow, cellsZ);
+            const Terrain::TerrainGridLayout layout = grid.Layout;
+            const bool bHorizon = grid.Field == nullptr;
+            const uint32_t sideX = cellsX + 1;
+            const uint32_t sideZ = cellsZ + 1;
+            const float normalSpacing = static_cast<float>(layout.Spacing * 0.5);
+            if (bHorizon && outVertices.size() != static_cast<size_t>(sideX) * sideZ)
+            {
+                outError = "遠景の段の区画の頂点の数が、格子の升目の数と合いません";
+                return false;
+            }
+            if (!bHorizon)
+            {
+                outVertices.clear();
+            }
+            outIndices.clear();
+            outChangedCells.assign(static_cast<size_t>(cellsX) * cellsZ, 0u);
+            outStats = TerrainCliffTileStats{};
+            // 頂点ごとの区画の中の格子の座標（三角形の向きをそろえるのに使う）
+            VariableArray<float> parameters;
+            // 法線を隣の三角形から求める頂点の、倍精度の位置（それ以外の頂点は使わない）と印
+            VariableArray<double> precisePositions;
+            VariableArray<uint8_t> accumulateNormal;
+            const double lastColumn = static_cast<double>(firstColumn + cellsX);
+            const double lastRow = static_cast<double>(firstRow + cellsZ);
+
+            // 区画の内側の頂点は位置を 1 回だけ求め、法線は三角形を張った後に隣の三角形の面の向きから作る。区画の境の頂点は
+            // 隣の区画からも同じ値になるよう、面の差分で法線を求める
+            auto addVertex = [&](double gx, double gz, uint32_t &outIndex) -> bool
+            {
+                TerrainCliffVertex vertex;
+                double position[3] = {0.0, 0.0, 0.0};
+                bool bDisplaced = false;
+                const bool bTileBorder = gx == static_cast<double>(firstColumn) || gx == lastColumn ||
+                                         gz == static_cast<double>(firstRow) || gz == lastRow;
+                const bool bValid = bTileBorder
+                                        ? surface.EvaluateVertex(gx, gz, textureTileMeters, vertex, bDisplaced)
+                                        : surface.EvaluatePosition(gx, gz, textureTileMeters, vertex, position, bDisplaced);
+                if (!bValid)
+                {
+                    outError = "崖の細部の頂点の位置・法線が有限でありません";
+                    return false;
+                }
+                if (bDisplaced)
+                {
+                    ++outStats.DisplacedVertices;
+                }
+                outIndex = static_cast<uint32_t>(outVertices.size());
+                outVertices.push_back(vertex);
+                parameters.push_back(static_cast<float>(gx - static_cast<double>(firstColumn)));
+                parameters.push_back(static_cast<float>(gz - static_cast<double>(firstRow)));
+                precisePositions.push_back(position[0]);
+                precisePositions.push_back(position[1]);
+                precisePositions.push_back(position[2]);
+                accumulateNormal.push_back(bTileBorder ? 0u : 1u);
+                return true;
+            };
+            // 高さ場から法線を引いた頂点（細分しない頂点・扇の中心）の印をそろえる
+            auto addFixedVertexState = [&]()
+            {
+                precisePositions.push_back(0.0);
+                precisePositions.push_back(0.0);
+                precisePositions.push_back(0.0);
+                accumulateNormal.push_back(0u);
+            };
+
+            // 遠景の段: 元の格子の頂点の印をそろえる
+            if (bHorizon)
+            {
+                for (uint32_t row = 0; row < sideZ; ++row)
+                {
+                    for (uint32_t column = 0; column < sideX; ++column)
+                    {
+                        parameters.push_back(static_cast<float>(column));
+                        parameters.push_back(static_cast<float>(row));
+                        addFixedVertexState();
+                    }
+                }
+            }
+
+            // 格子の頂点。押し出さない頂点は今までの区画（近景は BuildDemTerrainTile、遠景は元のメッシュ）と同じ値にする
+            VariableArray<uint32_t> gridIndex(static_cast<size_t>(sideX) * sideZ, 0u);
+            for (uint32_t row = 0; row < sideZ; ++row)
+            {
+                for (uint32_t column = 0; column < sideX; ++column)
+                {
+                    const uint32_t globalColumn = firstColumn + column;
+                    const uint32_t globalRow = firstRow + row;
+                    uint32_t index = 0;
+                    if (surface.IsInteriorPoint(static_cast<int>(globalColumn), static_cast<int>(globalRow)))
+                    {
+                        if (!addVertex(static_cast<double>(globalColumn), static_cast<double>(globalRow), index))
+                        {
+                            return false;
+                        }
+                    }
+                    else if (bHorizon)
+                    {
+                        index = row * sideX + column;
+                    }
+                    else
+                    {
+                        const Terrain::TerrainHeightField &field = *grid.Field;
+                        const float x = static_cast<float>(layout.FirstX + static_cast<double>(globalColumn) * layout.Spacing);
+                        const float z = static_cast<float>(layout.FirstZ + static_cast<double>(globalRow) * layout.Spacing);
+                        const float y = field.GetGridVertexHeight(globalColumn, globalRow);
+                        const Terrain::TerrainNormal normal = field.SampleNormal(x, z, normalSpacing);
+                        if (!std::isfinite(y) || !std::isfinite(normal.X) || !std::isfinite(normal.Y) || !std::isfinite(normal.Z))
+                        {
+                            outError = "DEM の区画の頂点の高さ・法線が有限でありません";
+                            return false;
+                        }
+                        TerrainCliffVertex vertex;
+                        vertex.Position[0] = x;
+                        vertex.Position[1] = y;
+                        vertex.Position[2] = z;
+                        vertex.Normal[0] = normal.X;
+                        vertex.Normal[1] = normal.Y;
+                        vertex.Normal[2] = normal.Z;
+                        vertex.TexCoord[0] = x / textureTileMeters;
+                        vertex.TexCoord[1] = z / textureTileMeters;
+                        index = static_cast<uint32_t>(outVertices.size());
+                        outVertices.push_back(vertex);
+                        parameters.push_back(static_cast<float>(column));
+                        parameters.push_back(static_cast<float>(row));
+                        addFixedVertexState();
+                    }
+                    gridIndex[static_cast<size_t>(row) * sideX + column] = index;
+                }
+            }
+
+            // 辺の途中の頂点（両側の升目の細分の大きい方で割る）。位置は全体の格子の番号だけで決まり、隣の区画と同じになる
+            VariableArray<uint32_t> edgeXBase(static_cast<size_t>(cellsX) * sideZ, 0u);
+            VariableArray<uint32_t> edgeZBase(static_cast<size_t>(sideX) * cellsZ, 0u);
+            for (uint32_t row = 0; row < sideZ; ++row)
+            {
+                for (uint32_t column = 0; column < cellsX; ++column)
+                {
+                    const int globalColumn = static_cast<int>(firstColumn + column);
+                    const int globalRow = static_cast<int>(firstRow + row);
+                    const uint32_t count = surface.EdgeCountX(globalColumn, globalRow);
+                    edgeXBase[static_cast<size_t>(row) * cellsX + column] = static_cast<uint32_t>(outVertices.size());
+                    for (uint32_t k = 1; k < count; ++k)
+                    {
+                        uint32_t index = 0;
+                        if (!addVertex(static_cast<double>(globalColumn) + static_cast<double>(k) / count,
+                                       static_cast<double>(globalRow), index))
+                        {
+                            return false;
+                        }
+                    }
+                }
+            }
+            for (uint32_t row = 0; row < cellsZ; ++row)
+            {
+                for (uint32_t column = 0; column < sideX; ++column)
+                {
+                    const int globalColumn = static_cast<int>(firstColumn + column);
+                    const int globalRow = static_cast<int>(firstRow + row);
+                    const uint32_t count = surface.EdgeCountZ(globalColumn, globalRow);
+                    edgeZBase[static_cast<size_t>(row) * sideX + column] = static_cast<uint32_t>(outVertices.size());
+                    for (uint32_t k = 1; k < count; ++k)
+                    {
+                        uint32_t index = 0;
+                        if (!addVertex(static_cast<double>(globalColumn),
+                                       static_cast<double>(globalRow) + static_cast<double>(k) / count, index))
+                        {
+                            return false;
+                        }
+                    }
+                }
+            }
+
+            // 三角形は区画の格子の座標で見て、今までの区画と同じ向き（外積が正）にそろえる
+            auto emit = [&](uint32_t a, uint32_t b, uint32_t c)
+            {
+                const float ax = parameters[static_cast<size_t>(a) * 2];
+                const float az = parameters[static_cast<size_t>(a) * 2 + 1];
+                const float cross = (parameters[static_cast<size_t>(b) * 2] - ax) * (parameters[static_cast<size_t>(c) * 2 + 1] - az) -
+                                    (parameters[static_cast<size_t>(b) * 2 + 1] - az) * (parameters[static_cast<size_t>(c) * 2] - ax);
+                if (cross > 0.0f)
+                {
+                    outIndices.push_back(a);
+                    outIndices.push_back(b);
+                    outIndices.push_back(c);
+                }
+                else if (cross < 0.0f)
+                {
+                    outIndices.push_back(a);
+                    outIndices.push_back(c);
+                    outIndices.push_back(b);
+                }
+            };
+
+            VariableArray<LoopVertex> outer;
+            VariableArray<LoopVertex> inner;
+            VariableArray<uint32_t> innerGrid;
+            for (uint32_t row = 0; row < cellsZ; ++row)
+            {
+                for (uint32_t column = 0; column < cellsX; ++column)
+                {
+                    const int globalColumn = static_cast<int>(firstColumn + column);
+                    const int globalRow = static_cast<int>(firstRow + row);
+                    const uint32_t i00 = gridIndex[static_cast<size_t>(row) * sideX + column];
+                    const uint32_t i10 = gridIndex[static_cast<size_t>(row) * sideX + column + 1];
+                    const uint32_t i01 = gridIndex[static_cast<size_t>(row + 1) * sideX + column];
+                    const uint32_t i11 = gridIndex[static_cast<size_t>(row + 1) * sideX + column + 1];
+                    const uint32_t bottom = surface.EdgeCountX(globalColumn, globalRow);
+                    const uint32_t top = surface.EdgeCountX(globalColumn, globalRow + 1);
+                    const uint32_t left = surface.EdgeCountZ(globalColumn, globalRow);
+                    const uint32_t right = surface.EdgeCountZ(globalColumn + 1, globalRow);
+                    const bool bRefined = surface.IsRefined(globalColumn, globalRow);
+                    if (!bRefined && bottom == 1u && top == 1u && left == 1u && right == 1u)
+                    {
+                        if (bHorizon)
+                        {
+                            // 遠景の段は元のメッシュの三角形を使う
+                            continue;
+                        }
+                        // 今までの区画と同じ 2 つの三角形（対角線は Terrain::UsesMainDiagonal）
+                        if (Terrain::UsesMainDiagonal(firstColumn + column, firstRow + row))
+                        {
+                            outIndices.push_back(i00);
+                            outIndices.push_back(i10);
+                            outIndices.push_back(i11);
+                            outIndices.push_back(i00);
+                            outIndices.push_back(i11);
+                            outIndices.push_back(i01);
+                        }
+                        else
+                        {
+                            outIndices.push_back(i00);
+                            outIndices.push_back(i10);
+                            outIndices.push_back(i01);
+                            outIndices.push_back(i10);
+                            outIndices.push_back(i11);
+                            outIndices.push_back(i01);
+                        }
+                        continue;
+                    }
+
+                    outChangedCells[static_cast<size_t>(row) * cellsX + column] = 1u;
+                    // 升目の外周（左下の隅から反時計回り: 下・右・上・左の辺）
+                    outer.clear();
+                    const uint32_t bottomBase = edgeXBase[static_cast<size_t>(row) * cellsX + column];
+                    const uint32_t topBase = edgeXBase[static_cast<size_t>(row + 1) * cellsX + column];
+                    const uint32_t leftBase = edgeZBase[static_cast<size_t>(row) * sideX + column];
+                    const uint32_t rightBase = edgeZBase[static_cast<size_t>(row) * sideX + column + 1];
+                    outer.push_back({i00, 0.0});
+                    for (uint32_t k = 1; k < bottom; ++k)
+                    {
+                        outer.push_back({bottomBase + k - 1, static_cast<double>(k) / bottom});
+                    }
+                    outer.push_back({i10, 1.0});
+                    for (uint32_t k = 1; k < right; ++k)
+                    {
+                        outer.push_back({rightBase + k - 1, 1.0 + static_cast<double>(k) / right});
+                    }
+                    outer.push_back({i11, 2.0});
+                    for (uint32_t k = top - 1; k >= 1; --k)
+                    {
+                        outer.push_back({topBase + k - 1, 3.0 - static_cast<double>(k) / top});
+                    }
+                    outer.push_back({i01, 3.0});
+                    for (uint32_t k = left - 1; k >= 1; --k)
+                    {
+                        outer.push_back({leftBase + k - 1, 4.0 - static_cast<double>(k) / left});
+                    }
+
+                    if (!bRefined)
+                    {
+                        // 細分した升目と接する升目: 中心から外周の頂点へ扇に張る。中心は今までの 2 つの三角形の対角線の中点
+                        ++outStats.TransitionCells;
+                        const bool bMain = Terrain::UsesMainDiagonal(firstColumn + column, firstRow + row);
+                        const float y = bMain ? 0.5f * (outVertices[i00].Position[1] + outVertices[i11].Position[1])
+                                              : 0.5f * (outVertices[i10].Position[1] + outVertices[i01].Position[1]);
+                        const float x = static_cast<float>(surface.WorldX(static_cast<double>(globalColumn) + 0.5));
+                        const float z = static_cast<float>(surface.WorldZ(static_cast<double>(globalRow) + 0.5));
+                        Terrain::TerrainNormal normal{};
+                        if (bHorizon)
+                        {
+                            // 遠景の段: 4 隅（どれも押し出さない元の頂点）の法線の平均
+                            float sum[3] = {0.0f, 0.0f, 0.0f};
+                            for (const uint32_t corner : {i00, i10, i01, i11})
+                            {
+                                for (int axis = 0; axis < 3; ++axis)
+                                {
+                                    sum[axis] += outVertices[corner].Normal[axis];
+                                }
+                            }
+                            const float length = std::sqrt(sum[0] * sum[0] + sum[1] * sum[1] + sum[2] * sum[2]);
+                            normal.X = sum[0] / length;
+                            normal.Y = sum[1] / length;
+                            normal.Z = sum[2] / length;
+                        }
+                        else
+                        {
+                            normal = grid.Field->SampleNormal(x, z, normalSpacing);
+                        }
+                        if (!std::isfinite(y) || !std::isfinite(normal.X) || !std::isfinite(normal.Y) || !std::isfinite(normal.Z))
+                        {
+                            outError = "崖の細部の升目の中心の高さ・法線が有限でありません";
+                            return false;
+                        }
+                        TerrainCliffVertex vertex;
+                        vertex.Position[0] = x;
+                        vertex.Position[1] = y;
+                        vertex.Position[2] = z;
+                        vertex.Normal[0] = normal.X;
+                        vertex.Normal[1] = normal.Y;
+                        vertex.Normal[2] = normal.Z;
+                        vertex.TexCoord[0] = x / textureTileMeters;
+                        vertex.TexCoord[1] = z / textureTileMeters;
+                        const uint32_t center = static_cast<uint32_t>(outVertices.size());
+                        outVertices.push_back(vertex);
+                        parameters.push_back(static_cast<float>(column) + 0.5f);
+                        parameters.push_back(static_cast<float>(row) + 0.5f);
+                        addFixedVertexState();
+                        for (size_t k = 0; k < outer.size(); ++k)
+                        {
+                            emit(center, outer[k].Index, outer[(k + 1) % outer.size()].Index);
+                        }
+                        continue;
+                    }
+
+                    // 細分した升目: 内側の格子（辺の外周を除く）を張り、外周と内側の格子の一番外の輪の間を周に沿って縫う
+                    ++outStats.RefinedCells;
+                    const uint32_t countX = std::max(bottom, top);
+                    const uint32_t countZ = std::max(left, right);
+                    const uint32_t innerX = countX - 1;
+                    const uint32_t innerZ = countZ - 1;
+                    innerGrid.assign(static_cast<size_t>(innerX) * innerZ, 0u);
+                    for (uint32_t j = 0; j < innerZ; ++j)
+                    {
+                        for (uint32_t i = 0; i < innerX; ++i)
+                        {
+                            uint32_t index = 0;
+                            if (!addVertex(static_cast<double>(globalColumn) + static_cast<double>(i + 1) / countX,
+                                           static_cast<double>(globalRow) + static_cast<double>(j + 1) / countZ, index))
+                            {
+                                return false;
+                            }
+                            innerGrid[static_cast<size_t>(j) * innerX + i] = index;
+                        }
+                    }
+                    for (uint32_t j = 0; j + 1 < innerZ; ++j)
+                    {
+                        for (uint32_t i = 0; i + 1 < innerX; ++i)
+                        {
+                            const uint32_t a = innerGrid[static_cast<size_t>(j) * innerX + i];
+                            const uint32_t b = innerGrid[static_cast<size_t>(j) * innerX + i + 1];
+                            const uint32_t c = innerGrid[static_cast<size_t>(j + 1) * innerX + i];
+                            const uint32_t d = innerGrid[static_cast<size_t>(j + 1) * innerX + i + 1];
+                            if (((i + j) & 1u) == 0u)
+                            {
+                                emit(a, b, d);
+                                emit(a, d, c);
+                            }
+                            else
+                            {
+                                emit(a, b, c);
+                                emit(b, d, c);
+                            }
+                        }
+                    }
+                    // 内側の格子の一番外の輪（周の位置は内側の格子の範囲を 0〜1 に引き延ばして測る）
+                    inner.clear();
+                    const double spanX = static_cast<double>(innerX - 1);
+                    const double spanZ = static_cast<double>(innerZ - 1);
+                    for (uint32_t i = 0; i < innerX; ++i)
+                    {
+                        inner.push_back({innerGrid[i], static_cast<double>(i) / spanX});
+                    }
+                    for (uint32_t j = 1; j < innerZ; ++j)
+                    {
+                        inner.push_back({innerGrid[static_cast<size_t>(j) * innerX + innerX - 1], 1.0 + static_cast<double>(j) / spanZ});
+                    }
+                    for (uint32_t i = innerX - 1; i-- > 0;)
+                    {
+                        inner.push_back({innerGrid[static_cast<size_t>(innerZ - 1) * innerX + i], 3.0 - static_cast<double>(i) / spanX});
+                    }
+                    for (uint32_t j = innerZ - 1; j-- > 1;)
+                    {
+                        inner.push_back({innerGrid[static_cast<size_t>(j) * innerX], 4.0 - static_cast<double>(j) / spanZ});
+                    }
+                    // 2 つの輪を周の位置の順に縫う（どちらも位置 0 の隅から始まる）
+                    const size_t outerCount = outer.size();
+                    const size_t innerCount = inner.size();
+                    size_t a = 0;
+                    size_t b = 0;
+                    while (a < outerCount || b < innerCount)
+                    {
+                        const double nextOuter = a + 1 < outerCount ? outer[a + 1].Perimeter : 4.0;
+                        const double nextInner = b + 1 < innerCount ? inner[b + 1].Perimeter : 4.0;
+                        const bool bAdvanceOuter = b >= innerCount || (a < outerCount && nextOuter <= nextInner);
+                        if (bAdvanceOuter)
+                        {
+                            emit(outer[a].Index, outer[(a + 1) % outerCount].Index, inner[b % innerCount].Index);
+                            ++a;
+                        }
+                        else
+                        {
+                            emit(outer[a % outerCount].Index, inner[b].Index, inner[(b + 1) % innerCount].Index);
+                            ++b;
+                        }
+                    }
+                }
+            }
+
+            // 区画の内側の頂点の法線: 隣の三角形の面の法線を面積の重みで足す。三角形はどれも格子の座標で同じ向きに
+            // 張ってあるので、(c − a) × (b − a) が平らな面で +Y を向く
+            VariableArray<double> normalSums(outVertices.size() * 3, 0.0);
+            for (size_t triangle = 0; triangle + 2 < outIndices.size(); triangle += 3)
+            {
+                const uint32_t corners[3] = {outIndices[triangle], outIndices[triangle + 1], outIndices[triangle + 2]};
+                if (accumulateNormal[corners[0]] == 0u && accumulateNormal[corners[1]] == 0u &&
+                    accumulateNormal[corners[2]] == 0u)
+                {
+                    continue;
+                }
+                double points[3][3];
+                for (int corner = 0; corner < 3; ++corner)
+                {
+                    const uint32_t index = corners[corner];
+                    for (int axis = 0; axis < 3; ++axis)
+                    {
+                        points[corner][axis] = accumulateNormal[index] != 0u
+                                                   ? precisePositions[static_cast<size_t>(index) * 3 + axis]
+                                                   : static_cast<double>(outVertices[index].Position[axis]);
+                    }
+                }
+                const double ab[3] = {points[1][0] - points[0][0], points[1][1] - points[0][1], points[1][2] - points[0][2]};
+                const double ac[3] = {points[2][0] - points[0][0], points[2][1] - points[0][1], points[2][2] - points[0][2]};
+                const double face[3] = {ac[1] * ab[2] - ac[2] * ab[1], ac[2] * ab[0] - ac[0] * ab[2],
+                                        ac[0] * ab[1] - ac[1] * ab[0]};
+                for (const uint32_t index : corners)
+                {
+                    if (accumulateNormal[index] != 0u)
+                    {
+                        for (int axis = 0; axis < 3; ++axis)
+                        {
+                            normalSums[static_cast<size_t>(index) * 3 + axis] += face[axis];
+                        }
+                    }
+                }
+            }
+            for (size_t vertex = 0; vertex < outVertices.size(); ++vertex)
+            {
+                if (accumulateNormal[vertex] == 0u)
+                {
+                    continue;
+                }
+                const double *sum = &normalSums[vertex * 3];
+                const double length = std::sqrt(sum[0] * sum[0] + sum[1] * sum[1] + sum[2] * sum[2]);
+                if (!(length > 0.0) || !std::isfinite(length))
+                {
+                    outError = "崖の細部の頂点の法線を隣の三角形から求められません";
+                    return false;
+                }
+                for (int axis = 0; axis < 3; ++axis)
+                {
+                    outVertices[vertex].Normal[axis] = static_cast<float>(sum[axis] / length);
+                }
+            }
+            return true;
+        }
+    } // namespace
+
     bool TerrainCliffTileIntersects(const Core::Rendering::Terrain::TerrainGridLayout &layout, uint32_t firstColumn,
                                     uint32_t cellsX, uint32_t firstRow, uint32_t cellsZ)
     {
-        const double margin = static_cast<double>(kWindowMargin + 1) * layout.Spacing;
-        const double minX = layout.FirstX + static_cast<double>(firstColumn) * layout.Spacing;
-        const double maxX = layout.FirstX + static_cast<double>(firstColumn + cellsX) * layout.Spacing;
-        const double minZ = layout.FirstZ + static_cast<double>(firstRow) * layout.Spacing;
-        const double maxZ = layout.FirstZ + static_cast<double>(firstRow + cellsZ) * layout.Spacing;
-        return maxX >= kRegionMinX - margin && minX <= kRegionMaxX + margin && maxZ >= kRegionMinZ - margin &&
-               minZ <= kRegionMaxZ + margin;
+        CliffGrid grid;
+        grid.Layout = layout;
+        grid.Regions = kNearRegions;
+        grid.RegionCount = sizeof(kNearRegions) / sizeof(kNearRegions[0]);
+        return GridTileIntersects(grid, firstColumn, cellsX, firstRow, cellsZ, kWindowMargin);
     }
 
     bool BuildTerrainCliffTile(const Core::Rendering::Terrain::TerrainHeightField &field, uint32_t firstColumn,
@@ -879,415 +1467,79 @@ namespace NorvesLib::Tools::AssetCook
                                VariableArray<TerrainCliffVertex> &outVertices, VariableArray<uint32_t> &outIndices,
                                TerrainCliffTileStats &outStats, AnsiString &outError)
     {
-        const CliffSurface surface(field, firstColumn, cellsX, firstRow, cellsZ);
-        const Terrain::TerrainGridLayout layout = field.GetGridLayout();
+        VariableArray<uint8_t> changedCells;
+        return BuildCliffCells(MakeNearGrid(field), firstColumn, cellsX, firstRow, cellsZ, textureTileMeters, outVertices,
+                               outIndices, changedCells, outStats, outError);
+    }
+
+    bool TerrainCliffHorizonTileIntersects(const TerrainCliffHorizonGrid &grid, uint32_t firstColumn, uint32_t cellsX,
+                                           uint32_t firstRow, uint32_t cellsZ)
+    {
+        return GridTileIntersects(MakeHorizonGrid(grid), firstColumn, cellsX, firstRow, cellsZ, kWindowMargin);
+    }
+
+    bool BuildTerrainCliffHorizonTile(const TerrainCliffHorizonGrid &grid, uint32_t firstColumn, uint32_t cellsX,
+                                      uint32_t firstRow, uint32_t cellsZ, float textureTileMeters,
+                                      VariableArray<TerrainCliffVertex> &inOutVertices, VariableArray<uint32_t> &inOutIndices,
+                                      TerrainCliffTileStats &outStats, AnsiString &outError)
+    {
         const uint32_t sideX = cellsX + 1;
-        const uint32_t sideZ = cellsZ + 1;
-        const float normalSpacing = static_cast<float>(layout.Spacing * 0.5);
-        outVertices.clear();
-        outIndices.clear();
-        outStats = TerrainCliffTileStats{};
-        // 頂点ごとの区画の中の格子の座標（三角形の向きをそろえるのに使う）
-        VariableArray<float> parameters;
-        // 法線を隣の三角形から求める頂点の、倍精度の位置（それ以外の頂点は使わない）と印
-        VariableArray<double> precisePositions;
-        VariableArray<uint8_t> accumulateNormal;
-        const double lastColumn = static_cast<double>(firstColumn + cellsX);
-        const double lastRow = static_cast<double>(firstRow + cellsZ);
-
-        // 区画の内側の頂点は位置を 1 回だけ求め、法線は三角形を張った後に隣の三角形の面の向きから作る。区画の境の頂点は
-        // 隣の区画からも同じ値になるよう、面の差分で法線を求める
-        auto addVertex = [&](double gx, double gz, uint32_t &outIndex) -> bool
+        const uint32_t gridVertexCount = sideX * (cellsZ + 1);
+        VariableArray<uint32_t> cellIndices;
+        VariableArray<uint8_t> changedCells;
+        if (!BuildCliffCells(MakeHorizonGrid(grid), firstColumn, cellsX, firstRow, cellsZ, textureTileMeters, inOutVertices,
+                             cellIndices, changedCells, outStats, outError))
         {
-            TerrainCliffVertex vertex;
-            double position[3] = {0.0, 0.0, 0.0};
-            bool bDisplaced = false;
-            const bool bTileBorder = gx == static_cast<double>(firstColumn) || gx == lastColumn ||
-                                     gz == static_cast<double>(firstRow) || gz == lastRow;
-            const bool bValid = bTileBorder
-                                    ? surface.EvaluateVertex(gx, gz, textureTileMeters, vertex, bDisplaced)
-                                    : surface.EvaluatePosition(gx, gz, textureTileMeters, vertex, position, bDisplaced);
-            if (!bValid)
-            {
-                outError = "崖の細部の頂点の位置・法線が有限でありません";
-                return false;
-            }
-            if (bDisplaced)
-            {
-                ++outStats.DisplacedVertices;
-            }
-            outIndex = static_cast<uint32_t>(outVertices.size());
-            outVertices.push_back(vertex);
-            parameters.push_back(static_cast<float>(gx - static_cast<double>(firstColumn)));
-            parameters.push_back(static_cast<float>(gz - static_cast<double>(firstRow)));
-            precisePositions.push_back(position[0]);
-            precisePositions.push_back(position[1]);
-            precisePositions.push_back(position[2]);
-            accumulateNormal.push_back(bTileBorder ? 0u : 1u);
-            return true;
-        };
-        // 高さ場から法線を引いた頂点（細分しない頂点・扇の中心）の印をそろえる
-        auto addFixedVertexState = [&]()
-        {
-            precisePositions.push_back(0.0);
-            precisePositions.push_back(0.0);
-            precisePositions.push_back(0.0);
-            accumulateNormal.push_back(0u);
-        };
-
-        // 格子の頂点。押し出さない頂点は今までの区画（BuildDemTerrainTile）と同じ値にする
-        VariableArray<uint32_t> gridIndex(static_cast<size_t>(sideX) * sideZ, 0u);
-        for (uint32_t row = 0; row < sideZ; ++row)
-        {
-            for (uint32_t column = 0; column < sideX; ++column)
-            {
-                const uint32_t globalColumn = firstColumn + column;
-                const uint32_t globalRow = firstRow + row;
-                uint32_t index = 0;
-                if (surface.IsInteriorPoint(static_cast<int>(globalColumn), static_cast<int>(globalRow)))
-                {
-                    if (!addVertex(static_cast<double>(globalColumn), static_cast<double>(globalRow), index))
-                    {
-                        return false;
-                    }
-                }
-                else
-                {
-                    const float x = static_cast<float>(layout.FirstX + static_cast<double>(globalColumn) * layout.Spacing);
-                    const float z = static_cast<float>(layout.FirstZ + static_cast<double>(globalRow) * layout.Spacing);
-                    const float y = field.GetGridVertexHeight(globalColumn, globalRow);
-                    const Terrain::TerrainNormal normal = field.SampleNormal(x, z, normalSpacing);
-                    if (!std::isfinite(y) || !std::isfinite(normal.X) || !std::isfinite(normal.Y) || !std::isfinite(normal.Z))
-                    {
-                        outError = "DEM の区画の頂点の高さ・法線が有限でありません";
-                        return false;
-                    }
-                    TerrainCliffVertex vertex;
-                    vertex.Position[0] = x;
-                    vertex.Position[1] = y;
-                    vertex.Position[2] = z;
-                    vertex.Normal[0] = normal.X;
-                    vertex.Normal[1] = normal.Y;
-                    vertex.Normal[2] = normal.Z;
-                    vertex.TexCoord[0] = x / textureTileMeters;
-                    vertex.TexCoord[1] = z / textureTileMeters;
-                    index = static_cast<uint32_t>(outVertices.size());
-                    outVertices.push_back(vertex);
-                    parameters.push_back(static_cast<float>(column));
-                    parameters.push_back(static_cast<float>(row));
-                    addFixedVertexState();
-                }
-                gridIndex[static_cast<size_t>(row) * sideX + column] = index;
-            }
+            return false;
         }
 
-        // 辺の途中の頂点（両側の升目の細分の大きい方で割る）。位置は全体の格子の番号だけで決まり、隣の区画と同じになる
-        VariableArray<uint32_t> edgeXBase(static_cast<size_t>(cellsX) * sideZ, 0u);
-        VariableArray<uint32_t> edgeZBase(static_cast<size_t>(sideX) * cellsZ, 0u);
-        for (uint32_t row = 0; row < sideZ; ++row)
+        // 元の三角形のうち、張り直した升目のものを除き、張り直した三角形を足す。元の三角形の升目は 3 つの頂点の格子の
+        // 番号の小さい方
+        VariableArray<uint32_t> indices;
+        indices.reserve(inOutIndices.size() + cellIndices.size());
+        for (size_t triangle = 0; triangle + 2 < inOutIndices.size(); triangle += 3)
         {
-            for (uint32_t column = 0; column < cellsX; ++column)
+            uint32_t column = std::numeric_limits<uint32_t>::max();
+            uint32_t row = std::numeric_limits<uint32_t>::max();
+            for (size_t corner = 0; corner < 3; ++corner)
             {
-                const int globalColumn = static_cast<int>(firstColumn + column);
-                const int globalRow = static_cast<int>(firstRow + row);
-                const uint32_t count = surface.EdgeCountX(globalColumn, globalRow);
-                edgeXBase[static_cast<size_t>(row) * cellsX + column] = static_cast<uint32_t>(outVertices.size());
-                for (uint32_t k = 1; k < count; ++k)
+                const uint32_t index = inOutIndices[triangle + corner];
+                if (index >= gridVertexCount)
                 {
-                    uint32_t index = 0;
-                    if (!addVertex(static_cast<double>(globalColumn) + static_cast<double>(k) / count,
-                                   static_cast<double>(globalRow), index))
-                    {
-                        return false;
-                    }
+                    outError = "遠景の段の区画の三角形が、格子の頂点の外を指しています";
+                    return false;
                 }
+                column = std::min(column, index % sideX);
+                row = std::min(row, index / sideX);
             }
-        }
-        for (uint32_t row = 0; row < cellsZ; ++row)
-        {
-            for (uint32_t column = 0; column < sideX; ++column)
-            {
-                const int globalColumn = static_cast<int>(firstColumn + column);
-                const int globalRow = static_cast<int>(firstRow + row);
-                const uint32_t count = surface.EdgeCountZ(globalColumn, globalRow);
-                edgeZBase[static_cast<size_t>(row) * sideX + column] = static_cast<uint32_t>(outVertices.size());
-                for (uint32_t k = 1; k < count; ++k)
-                {
-                    uint32_t index = 0;
-                    if (!addVertex(static_cast<double>(globalColumn),
-                                   static_cast<double>(globalRow) + static_cast<double>(k) / count, index))
-                    {
-                        return false;
-                    }
-                }
-            }
-        }
-
-        // 三角形は区画の格子の座標で見て、今までの区画と同じ向き（外積が正）にそろえる
-        auto emit = [&](uint32_t a, uint32_t b, uint32_t c)
-        {
-            const float ax = parameters[static_cast<size_t>(a) * 2];
-            const float az = parameters[static_cast<size_t>(a) * 2 + 1];
-            const float cross = (parameters[static_cast<size_t>(b) * 2] - ax) * (parameters[static_cast<size_t>(c) * 2 + 1] - az) -
-                                (parameters[static_cast<size_t>(b) * 2 + 1] - az) * (parameters[static_cast<size_t>(c) * 2] - ax);
-            if (cross > 0.0f)
-            {
-                outIndices.push_back(a);
-                outIndices.push_back(b);
-                outIndices.push_back(c);
-            }
-            else if (cross < 0.0f)
-            {
-                outIndices.push_back(a);
-                outIndices.push_back(c);
-                outIndices.push_back(b);
-            }
-        };
-
-        VariableArray<LoopVertex> outer;
-        VariableArray<LoopVertex> inner;
-        VariableArray<uint32_t> innerGrid;
-        for (uint32_t row = 0; row < cellsZ; ++row)
-        {
-            for (uint32_t column = 0; column < cellsX; ++column)
-            {
-                const int globalColumn = static_cast<int>(firstColumn + column);
-                const int globalRow = static_cast<int>(firstRow + row);
-                const uint32_t i00 = gridIndex[static_cast<size_t>(row) * sideX + column];
-                const uint32_t i10 = gridIndex[static_cast<size_t>(row) * sideX + column + 1];
-                const uint32_t i01 = gridIndex[static_cast<size_t>(row + 1) * sideX + column];
-                const uint32_t i11 = gridIndex[static_cast<size_t>(row + 1) * sideX + column + 1];
-                const uint32_t bottom = surface.EdgeCountX(globalColumn, globalRow);
-                const uint32_t top = surface.EdgeCountX(globalColumn, globalRow + 1);
-                const uint32_t left = surface.EdgeCountZ(globalColumn, globalRow);
-                const uint32_t right = surface.EdgeCountZ(globalColumn + 1, globalRow);
-                const bool bRefined = surface.IsRefined(globalColumn, globalRow);
-                if (!bRefined && bottom == 1u && top == 1u && left == 1u && right == 1u)
-                {
-                    // 今までの区画と同じ 2 つの三角形（対角線は Terrain::UsesMainDiagonal）
-                    if (Terrain::UsesMainDiagonal(firstColumn + column, firstRow + row))
-                    {
-                        outIndices.push_back(i00);
-                        outIndices.push_back(i10);
-                        outIndices.push_back(i11);
-                        outIndices.push_back(i00);
-                        outIndices.push_back(i11);
-                        outIndices.push_back(i01);
-                    }
-                    else
-                    {
-                        outIndices.push_back(i00);
-                        outIndices.push_back(i10);
-                        outIndices.push_back(i01);
-                        outIndices.push_back(i10);
-                        outIndices.push_back(i11);
-                        outIndices.push_back(i01);
-                    }
-                    continue;
-                }
-
-                // 升目の外周（左下の隅から反時計回り: 下・右・上・左の辺）
-                outer.clear();
-                const uint32_t bottomBase = edgeXBase[static_cast<size_t>(row) * cellsX + column];
-                const uint32_t topBase = edgeXBase[static_cast<size_t>(row + 1) * cellsX + column];
-                const uint32_t leftBase = edgeZBase[static_cast<size_t>(row) * sideX + column];
-                const uint32_t rightBase = edgeZBase[static_cast<size_t>(row) * sideX + column + 1];
-                outer.push_back({i00, 0.0});
-                for (uint32_t k = 1; k < bottom; ++k)
-                {
-                    outer.push_back({bottomBase + k - 1, static_cast<double>(k) / bottom});
-                }
-                outer.push_back({i10, 1.0});
-                for (uint32_t k = 1; k < right; ++k)
-                {
-                    outer.push_back({rightBase + k - 1, 1.0 + static_cast<double>(k) / right});
-                }
-                outer.push_back({i11, 2.0});
-                for (uint32_t k = top - 1; k >= 1; --k)
-                {
-                    outer.push_back({topBase + k - 1, 3.0 - static_cast<double>(k) / top});
-                }
-                outer.push_back({i01, 3.0});
-                for (uint32_t k = left - 1; k >= 1; --k)
-                {
-                    outer.push_back({leftBase + k - 1, 4.0 - static_cast<double>(k) / left});
-                }
-
-                if (!bRefined)
-                {
-                    // 細分した升目と接する升目: 中心から外周の頂点へ扇に張る。中心は今までの 2 つの三角形の対角線の中点
-                    ++outStats.TransitionCells;
-                    const bool bMain = Terrain::UsesMainDiagonal(firstColumn + column, firstRow + row);
-                    const float y = bMain ? 0.5f * (outVertices[i00].Position[1] + outVertices[i11].Position[1])
-                                          : 0.5f * (outVertices[i10].Position[1] + outVertices[i01].Position[1]);
-                    const float x = static_cast<float>(surface.WorldX(static_cast<double>(globalColumn) + 0.5));
-                    const float z = static_cast<float>(surface.WorldZ(static_cast<double>(globalRow) + 0.5));
-                    const Terrain::TerrainNormal normal = field.SampleNormal(x, z, normalSpacing);
-                    if (!std::isfinite(y) || !std::isfinite(normal.X) || !std::isfinite(normal.Y) || !std::isfinite(normal.Z))
-                    {
-                        outError = "崖の細部の升目の中心の高さ・法線が有限でありません";
-                        return false;
-                    }
-                    TerrainCliffVertex vertex;
-                    vertex.Position[0] = x;
-                    vertex.Position[1] = y;
-                    vertex.Position[2] = z;
-                    vertex.Normal[0] = normal.X;
-                    vertex.Normal[1] = normal.Y;
-                    vertex.Normal[2] = normal.Z;
-                    vertex.TexCoord[0] = x / textureTileMeters;
-                    vertex.TexCoord[1] = z / textureTileMeters;
-                    const uint32_t center = static_cast<uint32_t>(outVertices.size());
-                    outVertices.push_back(vertex);
-                    parameters.push_back(static_cast<float>(column) + 0.5f);
-                    parameters.push_back(static_cast<float>(row) + 0.5f);
-                    addFixedVertexState();
-                    for (size_t k = 0; k < outer.size(); ++k)
-                    {
-                        emit(center, outer[k].Index, outer[(k + 1) % outer.size()].Index);
-                    }
-                    continue;
-                }
-
-                // 細分した升目: 内側の格子（辺の外周を除く）を張り、外周と内側の格子の一番外の輪の間を周に沿って縫う
-                ++outStats.RefinedCells;
-                const uint32_t countX = std::max(bottom, top);
-                const uint32_t countZ = std::max(left, right);
-                const uint32_t innerX = countX - 1;
-                const uint32_t innerZ = countZ - 1;
-                innerGrid.assign(static_cast<size_t>(innerX) * innerZ, 0u);
-                for (uint32_t j = 0; j < innerZ; ++j)
-                {
-                    for (uint32_t i = 0; i < innerX; ++i)
-                    {
-                        uint32_t index = 0;
-                        if (!addVertex(static_cast<double>(globalColumn) + static_cast<double>(i + 1) / countX,
-                                       static_cast<double>(globalRow) + static_cast<double>(j + 1) / countZ, index))
-                        {
-                            return false;
-                        }
-                        innerGrid[static_cast<size_t>(j) * innerX + i] = index;
-                    }
-                }
-                for (uint32_t j = 0; j + 1 < innerZ; ++j)
-                {
-                    for (uint32_t i = 0; i + 1 < innerX; ++i)
-                    {
-                        const uint32_t a = innerGrid[static_cast<size_t>(j) * innerX + i];
-                        const uint32_t b = innerGrid[static_cast<size_t>(j) * innerX + i + 1];
-                        const uint32_t c = innerGrid[static_cast<size_t>(j + 1) * innerX + i];
-                        const uint32_t d = innerGrid[static_cast<size_t>(j + 1) * innerX + i + 1];
-                        if (((i + j) & 1u) == 0u)
-                        {
-                            emit(a, b, d);
-                            emit(a, d, c);
-                        }
-                        else
-                        {
-                            emit(a, b, c);
-                            emit(b, d, c);
-                        }
-                    }
-                }
-                // 内側の格子の一番外の輪（周の位置は内側の格子の範囲を 0〜1 に引き延ばして測る）
-                inner.clear();
-                const double spanX = static_cast<double>(innerX - 1);
-                const double spanZ = static_cast<double>(innerZ - 1);
-                for (uint32_t i = 0; i < innerX; ++i)
-                {
-                    inner.push_back({innerGrid[i], static_cast<double>(i) / spanX});
-                }
-                for (uint32_t j = 1; j < innerZ; ++j)
-                {
-                    inner.push_back({innerGrid[static_cast<size_t>(j) * innerX + innerX - 1], 1.0 + static_cast<double>(j) / spanZ});
-                }
-                for (uint32_t i = innerX - 1; i-- > 0;)
-                {
-                    inner.push_back({innerGrid[static_cast<size_t>(innerZ - 1) * innerX + i], 3.0 - static_cast<double>(i) / spanX});
-                }
-                for (uint32_t j = innerZ - 1; j-- > 1;)
-                {
-                    inner.push_back({innerGrid[static_cast<size_t>(j) * innerX], 4.0 - static_cast<double>(j) / spanZ});
-                }
-                // 2 つの輪を周の位置の順に縫う（どちらも位置 0 の隅から始まる）
-                const size_t outerCount = outer.size();
-                const size_t innerCount = inner.size();
-                size_t a = 0;
-                size_t b = 0;
-                while (a < outerCount || b < innerCount)
-                {
-                    const double nextOuter = a + 1 < outerCount ? outer[a + 1].Perimeter : 4.0;
-                    const double nextInner = b + 1 < innerCount ? inner[b + 1].Perimeter : 4.0;
-                    const bool bAdvanceOuter = b >= innerCount || (a < outerCount && nextOuter <= nextInner);
-                    if (bAdvanceOuter)
-                    {
-                        emit(outer[a].Index, outer[(a + 1) % outerCount].Index, inner[b % innerCount].Index);
-                        ++a;
-                    }
-                    else
-                    {
-                        emit(outer[a % outerCount].Index, inner[b].Index, inner[(b + 1) % innerCount].Index);
-                        ++b;
-                    }
-                }
-            }
-        }
-
-        // 区画の内側の頂点の法線: 隣の三角形の面の法線を面積の重みで足す。三角形はどれも格子の座標で同じ向きに
-        // 張ってあるので、(c − a) × (b − a) が平らな面で +Y を向く
-        VariableArray<double> normalSums(outVertices.size() * 3, 0.0);
-        for (size_t triangle = 0; triangle + 2 < outIndices.size(); triangle += 3)
-        {
-            const uint32_t corners[3] = {outIndices[triangle], outIndices[triangle + 1], outIndices[triangle + 2]};
-            if (accumulateNormal[corners[0]] == 0u && accumulateNormal[corners[1]] == 0u &&
-                accumulateNormal[corners[2]] == 0u)
+            if (column < cellsX && row < cellsZ && changedCells[static_cast<size_t>(row) * cellsX + column] != 0u)
             {
                 continue;
             }
-            double points[3][3];
-            for (int corner = 0; corner < 3; ++corner)
-            {
-                const uint32_t index = corners[corner];
-                for (int axis = 0; axis < 3; ++axis)
-                {
-                    points[corner][axis] = accumulateNormal[index] != 0u
-                                               ? precisePositions[static_cast<size_t>(index) * 3 + axis]
-                                               : static_cast<double>(outVertices[index].Position[axis]);
-                }
-            }
-            const double ab[3] = {points[1][0] - points[0][0], points[1][1] - points[0][1], points[1][2] - points[0][2]};
-            const double ac[3] = {points[2][0] - points[0][0], points[2][1] - points[0][1], points[2][2] - points[0][2]};
-            const double face[3] = {ac[1] * ab[2] - ac[2] * ab[1], ac[2] * ab[0] - ac[0] * ab[2],
-                                    ac[0] * ab[1] - ac[1] * ab[0]};
-            for (const uint32_t index : corners)
-            {
-                if (accumulateNormal[index] != 0u)
-                {
-                    for (int axis = 0; axis < 3; ++axis)
-                    {
-                        normalSums[static_cast<size_t>(index) * 3 + axis] += face[axis];
-                    }
-                }
-            }
+            indices.push_back(inOutIndices[triangle]);
+            indices.push_back(inOutIndices[triangle + 1]);
+            indices.push_back(inOutIndices[triangle + 2]);
         }
-        for (size_t vertex = 0; vertex < outVertices.size(); ++vertex)
+        for (const uint32_t index : cellIndices)
         {
-            if (accumulateNormal[vertex] == 0u)
-            {
-                continue;
-            }
-            const double *sum = &normalSums[vertex * 3];
-            const double length = std::sqrt(sum[0] * sum[0] + sum[1] * sum[1] + sum[2] * sum[2]);
-            if (!(length > 0.0) || !std::isfinite(length))
-            {
-                outError = "崖の細部の頂点の法線を隣の三角形から求められません";
-                return false;
-            }
-            for (int axis = 0; axis < 3; ++axis)
-            {
-                outVertices[vertex].Normal[axis] = static_cast<float>(sum[axis] / length);
-            }
+            indices.push_back(index);
         }
+
+        // 使われなくなった頂点（押し出した格子の点の元の頂点）を除いて詰める
+        VariableArray<uint32_t> remap(inOutVertices.size(), std::numeric_limits<uint32_t>::max());
+        VariableArray<TerrainCliffVertex> vertices;
+        vertices.reserve(inOutVertices.size());
+        for (uint32_t &index : indices)
+        {
+            if (remap[index] == std::numeric_limits<uint32_t>::max())
+            {
+                remap[index] = static_cast<uint32_t>(vertices.size());
+                vertices.push_back(inOutVertices[index]);
+            }
+            index = remap[index];
+        }
+        inOutVertices = std::move(vertices);
+        inOutIndices = std::move(indices);
         return true;
     }
 } // namespace NorvesLib::Tools::AssetCook
