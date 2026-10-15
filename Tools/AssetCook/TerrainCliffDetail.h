@@ -26,7 +26,7 @@
 namespace NorvesLib::Tools::AssetCook
 {
     /// 崖の細部の焼き直しの版。形の関数や値を変えたら上げる（クックの元のハッシュに入る）
-    inline constexpr uint32_t kTerrainCliffDetailVersion = 4u;
+    inline constexpr uint32_t kTerrainCliffDetailVersion = 5u;
 
     /// 焼いた頂点（位置・法線・UV。メッシュの頂点の記録と同じ並び）
     struct TerrainCliffVertex
