@@ -1528,7 +1528,7 @@
 - notes: 危険地帯（メモリ・RenderThread・ジオメトリのストリーミング）。2026-10-15 親が SCN-WL-CLIFF-DETAIL-ALL の blocked（反復 2）の調べから足した。荒野は美しさを先にして崖・岩・草の三角形を増やしていくので、置き場の不足で読み込みが止まらないようにする。崖の細部の範囲はこの項目では変えない。
 
 ## SCN-WL-CLIFF-DETAIL-ALL: Battleship Rock の外の崖にも、地層の段と割れ目の焼き直しを広げる
-- status: todo
+- status: done
 - done-when: SCN-WL-CLIFF-DETAIL は主役の Battleship Rock の範囲（`Tools/AssetCook/TerrainCliffDetail.cpp` の X −2150〜−900・Z −1650〜−420）だけを焼き直した。手本の視点に写るほかの崖（ref_cliff_02 の尖塔の台座・Castle Butte・左右のメサ）にも同じ焼き直しを広げ、範囲の境で焼いた崖と周りの地形の継ぎ目が見えない。三角形の数を区画ごとに見て、仮想化ジオメトリで描けることを確かめる（溢れ 0）。比較画像（1920×1080）を開き、広げた崖の段と割れ目が影を落とす立体として見えることを確かめる。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `cmake --build build --config RelWithDebInfo --target AssetCook -- /m:1`

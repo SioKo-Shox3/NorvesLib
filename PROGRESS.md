@@ -4704,3 +4704,13 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `verify-SCN-WL-GEOMETRY-PAGE-THRASH-8.txt`: 起動画面の既定の視点、result=pass、EXIT=0。ページ 205・evicted=0、塊 1 つ・1024 MB、溢れ 0、検証レイヤーのログは空。最初のメッシュから SCENE_READY まで 2.4 秒（前回 2.4〜2.7 秒）。
 - Notes: 試験は足していない。
 - Next: SCN-WL-CLIFF-DETAIL-ALL を焼きを変えずに撮影から再開する（`blocked/SCN-WL-CLIFF-DETAIL-ALL.md`）。
+### SCN-WL-CLIFF-DETAIL-ALL 完了（2026-10-16、run 20261015-230406 の反復 3）
+- 焼き: ページの置き場の直し（d79e3cd0）で AssetCook の実行ファイルが変わり、地形の 214 項目すべての印が合わなくなったので、コードを変えずに版 5 のまま 12 組の並列で焼き直した（976 秒。`aux-SCN-WL-CLIFF-DETAIL-ALL-parallel-cook.txt`）。パッケージと印は bash の mv で build/CookedAssets へ移した（214・214）。崖の細部の区画の三角形の数は版 5 と全区画で一致した（`aux-SCN-WL-CLIFF-DETAIL-ALL-tiles-rerun.txt`。dem:2,3 は 1409 万、castle_3_3 は 999 万、dem:1,2 は 893 万、castle_4_3 は 869 万、castle_4_4 は 424 万、崖の細部を掛けた 45 区画の合計 9212 万）。
+- 検証（`.harness/runs/20261015-230406/`）:
+  - `verify-SCN-WL-CLIFF-DETAIL-ALL-1.txt`: Debug の Game のビルド EXIT=0。
+  - `verify-SCN-WL-CLIFF-DETAIL-ALL-2.txt`: RelWithDebInfo の AssetCook のビルド EXIT=0。
+  - `verify-SCN-WL-CLIFF-DETAIL-ALL-3.txt`: `CookAssets.ps1`（Models/WastelandTerrain/*）cooked=0 skipped=214、EXIT=0。
+  - `verify-SCN-WL-CLIFF-DETAIL-ALL-4.txt`: 荒野の全 11 視点 1920×1080、result=pass（白飛び 0・黒つぶれ 0）、EXIT=0、363 秒（SCENE_READY の後 11 視点は約 130 秒）。`MEGA_CAPACITY` の 95 行すべて draw_dropped=0・overflow=0。`GEOMETRY_PAGES` は全行で evicted=0（最後は resident=15133・1669.87 MB）。プールは塊 3 つ・3072 MB（used 2229.5 MB、target 3066.3 MB）。検証レイヤーのログは空。
+- 開いた画像（`scene-capture/SCN-WL-CLIFF-DETAIL-ALL/`）: ref_far_01 の全体、`pair_far01_left_v5_rerun.png`（上が版 5 の撮影、下が今回）、`pair_far01_left_v4_rerun.png`（上が差し戻しの版 4）、`pair_far01_right_v5_rerun.png`、ref_cliff_02。左の奥の崖は版 4 の丸い面から、段の棚と縦の割れ目が影を落とす立体になり、版 5 と同じ（左の切り出しの輝度の差の平均 0.012）。主役のビュート・尖塔・右の崖と並べても段と割れ目の細かさがそろい、範囲の境の継ぎ目は見えない。ref_cliff_02 の尖塔の台座に地層の段と影が出ている。
+- Notes: ref_cliff_02 の地面と遠くの平地の点は、SCN-WL-CLIFF-DETAIL の前からある別の項目（TASKS.md の 2420 行の項目）の対象で、崖の焼き直しによるものではない。試験は足していない。
+- Next: TASKS.md の次の未完の項目。
