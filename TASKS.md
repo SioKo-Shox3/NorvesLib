@@ -1546,7 +1546,7 @@
 - notes: 2026-10-15 ユーザー: 品質の確認は節目ごと（3 回程度）にユーザーが見る。 2026-10-15 親: 近くの主役の崖はこの確認の後でスキャンの素材と Blender で作り直す（SCN-WL-CLIFF-SCAN-*）。所見には今の崖を書いてよいが、一覧に「近くの崖は作り直す予定」と添える。 2026-10-16 親: ユーザーが一覧を見て判断した（地面 → 光と色 → 近くの崖の順に進める）ので親が done にした。評価の差し戻し（原寸の一覧の注記が再検証の `--note` なしの実行で消える）は SCN-WL-REVIEW-2 で直す。評価で見つかった ground_02 の空の高さ約 380 px の横の明るさの境は SCN-WL-SKY-AERIAL へ回した。
 
 ## SCN-WL-GROUND-SOIL: 谷床の地面を、手本の赤茶の土と礫の地面に見えるようにする
-- status: todo
+- status: done
 - done-when: 確認 1（`Docs/RenderingValidation/WastelandReference.md`）で、地面が全視点で淡い橙の砂丘の砂の一面に見えた（細かな筋の模様、起伏が砂丘に見える。写真の赤茶の土・礫の舗石・黒い土の皮膜のまだらが無い）。地表の素材と混ぜ方を、手本の足元の写真（ground_01・ground_02・far_01 の手前）の地面に合わせる: 写真由来の素材（ambientCG・Poly Haven の CC0。取得は許可済み）から赤茶の土・礫の舗石・皮膜の付いた土を選び、地表の分類の地図と数 m〜数十 m の大きなまだらで混ぜ、近くで粒と小さな凹凸（法線・高さ）が読め、遠くで同じ模様の繰り返しが見えないようにする。アルベドは実在の範囲（赤い砂漠の土 0.15〜0.25）のまま。全体の明るさ（写真の 2〜9 倍）は SCN-WL-SKY-AERIAL で原因を分けて直すので、この項目では露出・光を変えない。比較画像（写真｜撮影、1920×1080）を開き、地面が砂丘の砂でなく赤茶の土と礫の地面に見えることを確かめる。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-WL-GROUND-SOIL`

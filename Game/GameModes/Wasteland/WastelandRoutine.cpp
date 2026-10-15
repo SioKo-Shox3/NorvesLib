@@ -214,22 +214,24 @@ namespace Game::GameModes
         constexpr bool kPlaceLayoutProps = false;
         // 地形の材質は 3 層の混ぜ合わせ。素材は Poly Haven の CC0 の写真由来のテクスチャ（Scripts/Terrain/TerrainMaterials.py が
         // 落としてアルベドを較正し、Assets/AssetSets/WastelandTerrain.json が焼く）。
-        // 1 層目（砂の枠）は谷床の細粒の赤い土 red_sand（1 枚 3 m）
-        constexpr const char *kSandAlbedoPath = "Assets/Textures/PolyHaven/red_sand/red_sand_diff_cal_4k.png";
-        constexpr const char *kSandNormalPath = "Assets/Textures/PolyHaven/red_sand/red_sand_nor_dx_4k.jpg";
-        constexpr const char *kSandOrmPath = "Assets/Textures/PolyHaven/red_sand/red_sand_orm_4k";
-        // 2 層目（土の枠）は崖錐と礫の地表の岩屑と礫 red_dirt_mud_01（1 枚 1.5 m。礫は数 mm〜数 cm）
-        constexpr const char *kDirtAlbedoPath = "Assets/Textures/PolyHaven/red_dirt_mud_01/red_dirt_mud_01_diff_cal_4k.png";
-        constexpr const char *kDirtNormalPath = "Assets/Textures/PolyHaven/red_dirt_mud_01/red_dirt_mud_01_nor_dx_4k.jpg";
-        constexpr const char *kDirtOrmPath = "Assets/Textures/PolyHaven/red_dirt_mud_01/red_dirt_mud_01_orm_4k";
+        // 1 層目（砂の枠）は谷床の赤茶の土 red_mud_stones（1 枚 1.5 m。締まった赤い土にひび割れと小石が散る）。
+        // 土の皮膜は、この層に数 m の斑で色の比を掛けて描く（TerrainLayerBlend.glsl の TERRAIN_CRUST_TINT）
+        constexpr const char *kSandAlbedoPath = "Assets/Textures/PolyHaven/red_mud_stones/red_mud_stones_diff_cal_4k.png";
+        constexpr const char *kSandNormalPath = "Assets/Textures/PolyHaven/red_mud_stones/red_mud_stones_nor_dx_4k.jpg";
+        constexpr const char *kSandOrmPath = "Assets/Textures/PolyHaven/red_mud_stones/red_mud_stones_orm_4k";
+        // 2 層目（土の枠）は崖錐と礫の地表の礫の舗石 red_laterite_soil_stones（1 枚 2 m。礫は数 mm〜数 cm）。谷床では土と数 m〜数十 m の
+        // 斑で入れ替わる（TerrainLayerBlend.glsl の ComputeTerrainSurfaceMaskWeights）
+        constexpr const char *kDirtAlbedoPath = "Assets/Textures/PolyHaven/red_laterite_soil_stones/red_laterite_soil_stones_diff_cal_4k.png";
+        constexpr const char *kDirtNormalPath = "Assets/Textures/PolyHaven/red_laterite_soil_stones/red_laterite_soil_stones_nor_dx_4k.jpg";
+        constexpr const char *kDirtOrmPath = "Assets/Textures/PolyHaven/red_laterite_soil_stones/red_laterite_soil_stones_orm_4k";
         // 3 層目（岩肌の枠）は露岩の赤褐色の砂岩 cliff_side（1 枚 1.8 m。層理と割れ目の間隔は 10〜40 cm）
         constexpr const char *kRockAlbedoPath = "Assets/Textures/PolyHaven/cliff_side/cliff_side_diff_cal_4k.png";
         constexpr const char *kRockNormalPath = "Assets/Textures/PolyHaven/cliff_side/cliff_side_nor_dx_4k.jpg";
         constexpr const char *kRockOrmPath = "Assets/Textures/PolyHaven/cliff_side/cliff_side_orm_4k";
         // 模様を実寸で張る: 1 層目の 1 枚の広さ（m）と、2・3 層目の UV の倍率（1 層目の広さ ÷ その層の 1 枚の広さ）。
         // 岩肌は 3 方向の投影なので、崖の面でも層理と割れ目が実寸の間隔になる
-        constexpr float kSandTileMeters = 3.0f;
-        constexpr float kDirtUVScale = kSandTileMeters / 1.5f;
+        constexpr float kSandTileMeters = 1.5f;
+        constexpr float kDirtUVScale = kSandTileMeters / 2.0f;
         constexpr float kRockUVScale = kSandTileMeters / 1.8f;
         // 明るさ・色味の揺らぎ（数十〜数百 m と、その 1/4 の 20 m）。層ごとに別の位相で掛けるので、揺らぎは地表の分類の境で
         // 入れ替わり、全域を 1 つの斑の模様で覆わない（TerrainLayerBlend.glsl の TerrainMacroVariation）
@@ -251,15 +253,16 @@ namespace Game::GameModes
         // 1 層目・2 層目・3 層目の 3 枚ずつ
         constexpr uint32_t kTerrainTextureCount = 9;
         // 地表の分類の地図（Scripts/Terrain/TerrainMasks.py）の写し方。DEM の格子の範囲は地図の重みで、外（遠景）は上の傾斜の式で混ぜる。
-        // 礫の地表は半分を乾いた土（岩屑）・半分を砂にし、崖錐（全部が土）と見分けられるようにする
+        // 礫の地表は平均で半分を礫の舗石（土の枠）・半分を赤茶の土（砂の枠）にし、2 つは数 m〜数十 m の斑で入れ替わる
+        // （TerrainLayerBlend.glsl の TERRAIN_PAVEMENT_*）。崖錐は全部が礫の舗石
         constexpr float kSurfaceMaskGravelToDirt = 0.5f;
         // 地図の外縁の内側 32 m で傾斜の式から地図へ移す（近景と遠景の継ぎ目に分類の段を作らない）
         constexpr float kSurfaceMaskEdgeFadeMeters = 32.0f;
         // 地図（2 m/画素）を引く位置を 2 m ずらし、画素の格子に沿った直線の境を崩す
         constexpr float kSurfaceMaskWarpMeters = 2.0f;
-        // 3 層の法線マップ（red_sand・red_dirt_mud_01・cliff_side の nor_dx_4k）の接空間の傾きの 2 乗の平均。遠くで模様の 1 枚が
+        // 3 層の法線マップ（red_mud_stones・red_laterite_soil_stones・cliff_side の nor_dx_4k）の接空間の傾きの 2 乗の平均。遠くで模様の 1 枚が
         // 縮んで細かい法線を落とした分を、粗さの α² に足して鏡面の広がりへ移す（Python で画像の 1/4 の画素から測った値）
-        constexpr float kDetailSlopeVariance[3] = {0.097f, 0.420f, 0.283f};
+        constexpr float kDetailSlopeVariance[3] = {0.393f, 0.623f, 0.283f};
 
         /// 物理空・太陽・高さフォグ・空気遠近・雲の層
         void ApplyEnvironment(GameModeContext &ctx, float sunAltitudeDegrees, float sunAzimuthDegrees)

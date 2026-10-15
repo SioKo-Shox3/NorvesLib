@@ -7,7 +7,9 @@
 //
 // 混ぜ方:
 //   1. 地表の分類の地図（R = 露岩・G = 崖錐・B = 地表（細粒）・A = 地表（礫）の重み）があり、画素が地図の範囲の中なら、
-//      地図の重みを 3 層へ写す（露岩 → 岩肌、崖錐 → 土、細粒 → 砂、礫 → 決めた割合で土・残りを砂）。地図はワールドの XZ で
+//      地図の重みを 3 層へ写す（露岩 → 岩肌、崖錐 → 土、細粒 → 砂、礫 → 平均で決めた割合を土・残りを砂）。谷床の細粒と礫は、
+//      数 m〜数十 m の斑（TerrainMottle）で砂の枠（赤茶の土）と土の枠（礫の舗石）が入れ替わる（細粒は斑の濃い所だけ礫の舗石、
+//      礫は半分ほどが礫の舗石）。地図はワールドの XZ で
 //      引くので、地形の LOD の段（幾何の法線）が変わっても分類は動かない。引く位置を数 m の低周波ノイズでずらし、
 //      地図の画素の格子の直線の境を崩す。地図の外は下の傾斜の式で決め、外縁の内側の帯で 2 つを混ぜてつなぐ。
 //      傾斜の式（地図の無い所の予備）: 傾斜（幾何の法線と真上のなす角）に、低周波ノイズ（2 つの波長の値ノイズ）の揺らぎと、
@@ -27,6 +29,7 @@
 //   - アルベドの画像は sRGB で符号化されている。UNORM の形式で張られた層（layers.w のビット）は標本ごとに線形へ戻す。
 //   - 各層のアルベドに、層ごとに別の位相の低周波ノイズ（数十〜数百 m と、模様の繰り返しを崩す十数 m）で明るさと色味の揺らぎを
 //     掛けてから混ぜる。揺らぎは分類の境で入れ替わり、全域を 1 つの斑の模様で覆わない。
+//   - 1 層目（荒野では赤茶の土）には、数 m の斑で土の皮膜（暗い褐色）の色の比 TERRAIN_CRUST_TINT を掛ける。
 //   - 岩肌の層には、ワールドの y（共通の基準面）からの高さで決まる砂岩の地層と、崖の上端から垂れる砂漠ワニスを掛ける
 //     （Common/TerrainStrata.glsl）。
 //
@@ -65,6 +68,21 @@ const uint TERRAIN_BLEND_SAND_ALBEDO_SRGB_DECODE = 4u;
 const uint TERRAIN_BLEND_DIRT_ALBEDO_SRGB_DECODE = 8u;
 const uint TERRAIN_BLEND_ROCK_ALBEDO_SRGB_DECODE = 16u;
 
+// 谷床の礫の舗石の斑: 3 つの波長（m）と重みの値ノイズの和。細粒の地表はこの値が CENTER ± WIDTH を越える所だけ礫の舗石にし、
+// 礫の地表は (1 - 礫を土へ回す割合) ± WIDTH を境にする（値ノイズの和の中央は 0.5 なので、割合 0.5 で平均が半分になる）
+const vec3 TERRAIN_PAVEMENT_WAVELENGTHS = vec3(31.0, 9.0, 2.7);
+const vec3 TERRAIN_PAVEMENT_WEIGHTS = vec3(0.5, 0.33, 0.17);
+const float TERRAIN_PAVEMENT_FINE_CENTER = 0.56;
+const float TERRAIN_PAVEMENT_HALF_WIDTH = 0.05;
+// 土の皮膜の斑の 3 つの波長（m）と重み、皮膜になる値の範囲。皮膜は 1 層目の土のアルベドに色の比を掛ける。
+// 比は Poly Haven の cracked_red_ground（暗い褐色の土の皮膜。平均の輝度 0.11 へ較正）÷ red_mud_stones（0.16 へ較正）の
+// 線形の平均（Scripts/Terrain/TerrainMaterials.py --build が出し、--verify が一致を確かめる）
+const vec3 TERRAIN_CRUST_TINT = vec3(0.547, 0.788, 0.985);
+const vec3 TERRAIN_CRUST_WAVELENGTHS = vec3(3.0, 1.0, 0.35);
+const vec3 TERRAIN_CRUST_WEIGHTS = vec3(0.45, 0.35, 0.2);
+const vec2 TERRAIN_CRUST_RANGE = vec2(0.53, 0.60);
+// 斑が画素より細かくなる遠くで、皮膜を寄せる平均の割合（上の範囲で値ノイズの和を切ったときのおよその被覆）
+const float TERRAIN_CRUST_MEAN_COVERAGE = 0.3;
 // 地図を引く位置をずらすノイズの波長（m）
 const float TERRAIN_SURFACE_MASK_WARP_WAVELENGTH = 7.0;
 // 地図の重みのうち捨てる小さな値（圧縮（BC7）の誤差で平らな所に残るわずかな重みで、その層を標本しない）
@@ -182,6 +200,19 @@ float TerrainPixelMeters(TerrainSurfaceInput surface)
 {
     return max(length(surface.WorldDx), length(surface.WorldDy));
 }
+// 3 つの波長（m）の値ノイズを重み（合計 1）で足した斑（0〜1。中央 0.5）。seed で位相を変える。
+// 画素より細かい波長は平均へ寄せる（遠くでは中央の 0.5 へ近づく）
+float TerrainMottle(vec2 xz, vec3 wavelengths, vec3 weights, vec2 seed, float pixelMeters)
+{
+    float sum = 0.0;
+    for (int index = 0; index < 3; ++index)
+    {
+        const float frequency = 1.0 / wavelengths[index];
+        sum += TerrainValueNoiseFiltered(xz * frequency + seed * float(index + 1), pixelMeters * frequency) *
+               weights[index];
+    }
+    return sum;
+}
 
 // 傾斜・高さ・ノイズから、砂・土・岩肌の重み（合計 1）を求める。n は正規化した法線、pixelMeters は 1 画素の広さ（m）
 vec3 ComputeTerrainSlopeWeights(TerrainBlendParams params, vec3 worldPosition, vec3 n, float pixelMeters)
@@ -231,8 +262,16 @@ vec4 ComputeTerrainSurfaceMaskWeights(TerrainBlendParams params, sampler2D surfa
     {
         return vec4(0.0);
     }
-    const float gravelToDirt = params.maskMix.x;
-    const vec3 weights = vec3(classes.b + classes.a * (1.0 - gravelToDirt), classes.g + classes.a * gravelToDirt, classes.r);
+    // 谷床の細粒と礫を、礫の舗石の斑で砂の枠（土）と土の枠（礫の舗石）へ分ける
+    const float pavement = TerrainMottle(surface.WorldPosition.xz, TERRAIN_PAVEMENT_WAVELENGTHS, TERRAIN_PAVEMENT_WEIGHTS,
+                                         vec2(41.3, -17.9), TerrainPixelMeters(surface));
+    const float gravelCenter = 1.0 - params.maskMix.x;
+    const float finePavement = smoothstep(TERRAIN_PAVEMENT_FINE_CENTER - TERRAIN_PAVEMENT_HALF_WIDTH,
+                                          TERRAIN_PAVEMENT_FINE_CENTER + TERRAIN_PAVEMENT_HALF_WIDTH, pavement);
+    const float gravelPavement =
+        smoothstep(gravelCenter - TERRAIN_PAVEMENT_HALF_WIDTH, gravelCenter + TERRAIN_PAVEMENT_HALF_WIDTH, pavement);
+    const vec3 weights = vec3(classes.b * (1.0 - finePavement) + classes.a * (1.0 - gravelPavement),
+                              classes.g + classes.b * finePavement + classes.a * gravelPavement, classes.r);
     const vec3 kept = max(weights / total - vec3(TERRAIN_SURFACE_MASK_MIN_WEIGHT), vec3(0.0));
     return vec4(kept / max(kept.x + kept.y + kept.z, 1.0e-6), coverage);
 }
@@ -490,9 +529,20 @@ PbrMaterialTextureSamples ShadeTerrainLayers(TerrainBlendParams params,
     const float tileMeters = max(params.detail.w, 1.0e-3);
     const vec3 projection = ComputeTerrainTriplanarWeights(n);
 
-    const TerrainLayerSample sand = SampleTerrainLayer(sandAlbedo, sandNormal, sandOrm, bSandNormalTwoChannel,
+    TerrainLayerSample sand = SampleTerrainLayer(sandAlbedo, sandNormal, sandOrm, bSandNormalTwoChannel,
                                                        bSandDecode, bVirtualTexture, surface, frame, projection, levels, 1.0,
                                                        tileMeters);
+    // 土の皮膜: 1 層目の土に、数 m の斑で皮膜の色の比を掛ける。斑が画素より細かくなる遠くは平均の被覆へ寄せる
+    if (layerWeights.x > 0.0)
+    {
+        const float crustNoise = TerrainMottle(surface.WorldPosition.xz, TERRAIN_CRUST_WAVELENGTHS, TERRAIN_CRUST_WEIGHTS,
+                                               vec2(-63.7, 28.1), pixelMeters);
+        const float crustFade = smoothstep(TERRAIN_NOISE_FILTER_RANGE.x, TERRAIN_NOISE_FILTER_RANGE.y,
+                                           pixelMeters / TERRAIN_CRUST_WAVELENGTHS.x);
+        const float crust = mix(smoothstep(TERRAIN_CRUST_RANGE.x, TERRAIN_CRUST_RANGE.y, crustNoise),
+                                TERRAIN_CRUST_MEAN_COVERAGE, crustFade);
+        sand.Albedo.rgb *= mix(vec3(1.0), TERRAIN_CRUST_TINT, crust);
+    }
     TerrainLayerSample dirt = sand;
     TerrainLayerSample rock = sand;
     if (layerWeights.y > 0.0)

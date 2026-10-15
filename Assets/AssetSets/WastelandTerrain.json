@@ -6,48 +6,48 @@
   "cook_assets": true,
   "textures": [
     {
-      "logical_path": "Assets/Textures/PolyHaven/red_sand/red_sand_diff_cal_4k.png",
+      "logical_path": "Assets/Textures/PolyHaven/red_mud_stones/red_mud_stones_diff_cal_4k.png",
       "cook_usage": "albedo",
-      "source_path": "Assets/Textures/PolyHaven/red_sand/red_sand_diff_cal_4k.png",
-      "package_name": "PolyHaven/red_sand/red_sand_diff_cal.nvpkg",
-      "entry_name": "Assets/Textures/PolyHaven/red_sand/red_sand_diff_cal_4k.nvtex"
+      "source_path": "Assets/Textures/PolyHaven/red_mud_stones/red_mud_stones_diff_cal_4k.png",
+      "package_name": "PolyHaven/red_mud_stones/red_mud_stones_diff_cal.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/red_mud_stones/red_mud_stones_diff_cal_4k.nvtex"
     },
     {
-      "logical_path": "Assets/Textures/PolyHaven/red_sand/red_sand_nor_dx_4k.jpg",
+      "logical_path": "Assets/Textures/PolyHaven/red_mud_stones/red_mud_stones_nor_dx_4k.jpg",
       "cook_usage": "normal",
-      "source_path": "Assets/Textures/PolyHaven/red_sand/red_sand_nor_dx_4k.jpg",
-      "package_name": "PolyHaven/red_sand/red_sand_nor_dx.nvpkg",
-      "entry_name": "Assets/Textures/PolyHaven/red_sand/red_sand_nor_dx_4k.nvtex"
+      "source_path": "Assets/Textures/PolyHaven/red_mud_stones/red_mud_stones_nor_dx_4k.jpg",
+      "package_name": "PolyHaven/red_mud_stones/red_mud_stones_nor_dx.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/red_mud_stones/red_mud_stones_nor_dx_4k.nvtex"
     },
     {
-      "logical_path": "Assets/Textures/PolyHaven/red_sand/red_sand_orm_4k",
+      "logical_path": "Assets/Textures/PolyHaven/red_mud_stones/red_mud_stones_orm_4k",
       "cook_usage": "orm",
-      "orm_ao": "Assets/Textures/PolyHaven/red_sand/red_sand_ao_4k.jpg",
-      "orm_roughness": "Assets/Textures/PolyHaven/red_sand/red_sand_rough_4k.jpg",
-      "package_name": "PolyHaven/red_sand/red_sand_orm.nvpkg",
-      "entry_name": "Assets/Textures/PolyHaven/red_sand/red_sand_orm_4k.nvtex"
+      "orm_ao": "Assets/Textures/PolyHaven/red_mud_stones/red_mud_stones_ao_4k.jpg",
+      "orm_roughness": "Assets/Textures/PolyHaven/red_mud_stones/red_mud_stones_rough_4k.jpg",
+      "package_name": "PolyHaven/red_mud_stones/red_mud_stones_orm.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/red_mud_stones/red_mud_stones_orm_4k.nvtex"
     },
     {
-      "logical_path": "Assets/Textures/PolyHaven/red_dirt_mud_01/red_dirt_mud_01_diff_cal_4k.png",
+      "logical_path": "Assets/Textures/PolyHaven/red_laterite_soil_stones/red_laterite_soil_stones_diff_cal_4k.png",
       "cook_usage": "albedo",
-      "source_path": "Assets/Textures/PolyHaven/red_dirt_mud_01/red_dirt_mud_01_diff_cal_4k.png",
-      "package_name": "PolyHaven/red_dirt_mud_01/red_dirt_mud_01_diff_cal.nvpkg",
-      "entry_name": "Assets/Textures/PolyHaven/red_dirt_mud_01/red_dirt_mud_01_diff_cal_4k.nvtex"
+      "source_path": "Assets/Textures/PolyHaven/red_laterite_soil_stones/red_laterite_soil_stones_diff_cal_4k.png",
+      "package_name": "PolyHaven/red_laterite_soil_stones/red_laterite_soil_stones_diff_cal.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/red_laterite_soil_stones/red_laterite_soil_stones_diff_cal_4k.nvtex"
     },
     {
-      "logical_path": "Assets/Textures/PolyHaven/red_dirt_mud_01/red_dirt_mud_01_nor_dx_4k.jpg",
+      "logical_path": "Assets/Textures/PolyHaven/red_laterite_soil_stones/red_laterite_soil_stones_nor_dx_4k.jpg",
       "cook_usage": "normal",
-      "source_path": "Assets/Textures/PolyHaven/red_dirt_mud_01/red_dirt_mud_01_nor_dx_4k.jpg",
-      "package_name": "PolyHaven/red_dirt_mud_01/red_dirt_mud_01_nor_dx.nvpkg",
-      "entry_name": "Assets/Textures/PolyHaven/red_dirt_mud_01/red_dirt_mud_01_nor_dx_4k.nvtex"
+      "source_path": "Assets/Textures/PolyHaven/red_laterite_soil_stones/red_laterite_soil_stones_nor_dx_4k.jpg",
+      "package_name": "PolyHaven/red_laterite_soil_stones/red_laterite_soil_stones_nor_dx.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/red_laterite_soil_stones/red_laterite_soil_stones_nor_dx_4k.nvtex"
     },
     {
-      "logical_path": "Assets/Textures/PolyHaven/red_dirt_mud_01/red_dirt_mud_01_orm_4k",
+      "logical_path": "Assets/Textures/PolyHaven/red_laterite_soil_stones/red_laterite_soil_stones_orm_4k",
       "cook_usage": "orm",
-      "orm_ao": "Assets/Textures/PolyHaven/red_dirt_mud_01/red_dirt_mud_01_ao_4k.jpg",
-      "orm_roughness": "Assets/Textures/PolyHaven/red_dirt_mud_01/red_dirt_mud_01_rough_4k.jpg",
-      "package_name": "PolyHaven/red_dirt_mud_01/red_dirt_mud_01_orm.nvpkg",
-      "entry_name": "Assets/Textures/PolyHaven/red_dirt_mud_01/red_dirt_mud_01_orm_4k.nvtex"
+      "orm_ao": "Assets/Textures/PolyHaven/red_laterite_soil_stones/red_laterite_soil_stones_ao_4k.jpg",
+      "orm_roughness": "Assets/Textures/PolyHaven/red_laterite_soil_stones/red_laterite_soil_stones_rough_4k.jpg",
+      "package_name": "PolyHaven/red_laterite_soil_stones/red_laterite_soil_stones_orm.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/red_laterite_soil_stones/red_laterite_soil_stones_orm_4k.nvtex"
     },
     {
       "logical_path": "Assets/Textures/PolyHaven/cliff_side/cliff_side_diff_cal_4k.png",

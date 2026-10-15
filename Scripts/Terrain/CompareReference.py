@@ -57,8 +57,8 @@ OUTLINE_TEXT = {
 }
 # 地形の 3 層の名前と、アルベドのテクスチャのパスを持つ定数（WastelandRoutine.cpp から読む）
 TERRAIN_ALBEDO = {
-    "細粒の土": "kSandAlbedoPath",
-    "岩屑と礫": "kDirtAlbedoPath",
+    "赤茶の土": "kSandAlbedoPath",
+    "礫の舗石": "kDirtAlbedoPath",
     "砂岩": "kRockAlbedoPath",
 }
 # 品質を見る撮影の最小の大きさ（1280×720 では粗さが判断を狂わせる）

@@ -4724,3 +4724,17 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 所見の要点: 差の大きい順に、地表が砂の 1 種類で植生・礫が無い、地面と崖が写真の 2〜9 倍明るく彩度の高い橙、空が白い、近くの主役の崖が縦の丸い溝の面（作り直す予定）、遠景の霞が強い。技術の欠陥は ground_02 の砂の暗い点の列と、崖の縦の溝の等間隔の繰り返し。継ぎ目・浮きは見えない。
 - Notes: リポジトリ直下に `LOOP_STOP`（中身 `boundary`）を書いた。親がユーザーに一覧を渡し、判定を待つ。試験は足していない。
 - Next: ユーザーの判定の後、SCN-WL-CLIFF-SCAN-* ほか TASKS.md の次の項目。
+### SCN-WL-GROUND-SOIL 完了（2026-10-16、run 20261016-045112 の反復 1）
+- Done: 谷床の地表を、風の筋の付いた砂（red_sand）の一面から、赤茶の土・礫の舗石・土の皮膜のまだらに替えた。
+  - 素材（Poly Haven の CC0。`TerrainMaterials.py --fetch` で落とし、`--build` で平均のアルベドを較正）: 1 層目（砂の枠）を `red_mud_stones`（1 枚 1.5 m、Y 0.16、RGB 0.329・0.121・0.048）、2 層目（土の枠。礫の地表と崖錐）を `red_laterite_soil_stones`（1 枚 2 m、Y 0.16、RGB 0.321・0.121・0.068）。前の 2 層目 `red_dirt_mud_01` は淡いピンクの細粒に写り、中景で砂に見えたので替えた。
+  - 土の皮膜: 層の枠は 3 つ（公開の `MegaTerrainBlend` は paths の外）なので、`cracked_red_ground`（暗い褐色の皮膜、Y 0.11 へ較正。アルベドだけ落とす）の較正した平均 ÷ 土の較正した平均 = (0.547, 0.788, 0.985) を `TERRAIN_CRUST_TINT` として 1 層目に斑で掛ける。`TerrainMaterials.py --verify` がシェーダーの値と比の一致を確かめる。
+  - 混ぜ方（`TerrainLayerBlend.glsl`）: `TerrainMottle`（3 つの波長の値ノイズの和、画素より細かい波長は平均へ）で、地図の細粒は 31・9・2.7 m の斑の濃い所（およそ 3 割）だけ、礫は半分を礫の舗石にする（`kSurfaceMaskGravelToDirt` 0.5 を斑の境に使う）。皮膜は 3・1・0.35 m の斑で、遠くは平均の被覆 0.3 へ寄せる。
+  - `WastelandRoutine.cpp`: 素材のパス、1 層目の 1 枚 1.5 m（2 層目の UV 倍率 0.75・岩肌 0.83）、法線マップの傾きの分散 {0.393, 0.623, 0.283}（同じ測り方で red_sand 0.097 を再現して確かめた）。`WastelandTerrain.json` の 6 項目を替え、`CompareReference.py` の層の名前を「赤茶の土」「礫の舗石」にした。`WastelandReference.md` に「地面の材質」の節を足した。
+- 検証（`.harness/runs/20261016-045112/`）:
+  - `verify-SCN-WL-GROUND-SOIL-4.txt`: Debug の Game のビルド EXIT=0（`-1.txt` は最初の版）。
+  - `verify-SCN-WL-GROUND-SOIL-5.txt`: 荒野の全 11 視点 1920×1080、result=pass（11 視点とも白飛び 0・黒つぶれ 0）、EXIT=0。MegaGeometry の溢れ・外したページ 0、検証レイヤーのログは空。
+  - `verify-SCN-WL-GROUND-SOIL-6.txt`: `CompareReference.py --verify` result=pass photos=6、EXIT=0。地面 Y は far_01 0.406・far_02 0.335・ground_01 0.387・ground_02 0.313（確認 1 は 0.533・0.462・0.501・0.383。写真 0.136・0.148・0.097・0.219）。
+  - `aux-SCN-WL-GROUND-SOIL-cook.txt`・`-cook2.txt`: RelWithDebInfo の AssetCook で新しい 2 素材を cooked=3 ずつ。`aux-...-materials.txt`: `TerrainMaterials.py --verify` result=pass。
+  - 比較画像を開いた（reference_ground_01・ground_02・far_01、足元の等倍の切り出し、ground・ref_far_02）: 足元はひび割れた赤い土に小石が散り、暗い褐色の皮膜の斑（数 m）と赤い礫の面（数十 m）が入れ替わる。風の筋の模様は消え、中景も一面の砂でなく土・礫・皮膜のまだらに見える。
+- Notes: 全体が写真より明るく彩度の高い橙なのは変わらない（SCN-WL-SKY-AERIAL）。ground_02 の起伏が砂丘に見えるのは DEM の沢のなだらかな陰で材質では消えない（SCN-WL-MASKS-FLOW）。皮膜の斑は写真のこぶ状の凹凸を持たず色だけ（法線・高さは土のまま）。遠景の地図（`FarMacro.py`）は細粒を全部土として焼いたまま（土と礫の舗石の平均のアルベドが同じなので焼き直していない）。斑の値（礫の境 0.56・皮膜の範囲 0.53〜0.60）は撮り比べで決めた。試験は足していない。
+- Next: TASKS.md の次の未完の項目（SCN-WL-MASKS-FLOW）。
