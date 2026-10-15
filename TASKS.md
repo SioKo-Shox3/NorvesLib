@@ -1474,13 +1474,22 @@
 - notes: 危険地帯（描画）。層を 3 つから増やすことは、この計画の中心にしない（材質のデータ・束縛・複数の描画経路に及ぶ）。
 
 ## SCN-WL-MATERIAL-PALETTE: 素材と実寸と物理的な明るさを整える
-- status: todo
+- status: done
 - done-when: 3 層を、赤褐色の砂岩・岩屑と礫・細粒の赤い土の写真由来の素材に替える（Poly Haven と ambientCG の CC0 から選ぶ。git 管理外に落とし、名前・出典・大きさを記録する）。各素材の平均のアルベド（線形）を実在の値の範囲に合わせる: 赤い砂漠の土 0.15〜0.25、赤褐色の砂岩 0.20〜0.35、岩屑と礫 0.15〜0.30（測った値と根拠を PROGRESS に書く。今の地面は 0.65 で雪に近い）。各素材の模様の大きさを実寸に合わせる（礫の粒・砂岩の割れ目の間隔）。今の色の揺らぎを地表の分類に沿わせ、全域を覆う同じ模様の繰り返しを減らす。手本の比較画像（1920×1080）を開き、地面の色と明るさが写真に近づいた（白っぽいベージュでない）こと、素材の種類と模様の大きさが近いことを確かめる。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-WL-MATERIAL-PALETTE`
 - verify: `python Scripts/Terrain/CompareReference.py --capture .harness/runs/scene-capture/SCN-WL-MATERIAL-PALETTE --verify`
 - paths: Assets/Shaders, Library/Core/Private/Rendering, Game/GameModes/Wasteland, Assets/AssetSets, Scripts, .gitignore, TASKS.md, PROGRESS.md
 - notes: 2026-10-15 親: ambientCG（CC0）と Poly Haven（CC0）の素材のダウンロードはユーザーが許可済み。写真との差でいちばん大きいのは地面の明るさ（写真 0.14・撮影 0.65、SCN-WL-LIGHT-BASE の比較）。露出やグレーディングで合わせない。 2026-10-15 親: SCN-WL-REFERENCE-CAPTURE の比較画像では、地表の材質の平均のアルベド（線形、×0.32 の倍率込み）が砂 0.100・乾いた土 0.065・岩肌 0.023 と低いのに、撮影の地面は Y 0.67（R 0.76・G 0.66・B 0.46）と白っぽい。テクスチャを替える前に、テクスチャの値と描かれた明るさが合わない原因（倍率が効かない経路・露出・トーンマップ・可視バッファの解決とラスタの違い）を先に突き止める。
+
+## SCN-WL-SHADOW-DOT-GRID: 荒野の日の当たる向きの境の斜面に出る暗い点の格子の縞を消す
+- status: todo
+- done-when: 太陽からわずかに背を向けた斜面（谷床の起伏の陰の側・崖錐の裾）に、斑状の暗い点の格子の縞が出る（SCN-WL-REFERENCE-CAPTURE から記録あり。SCN-WL-MATERIAL-PALETTE で地面が赤い土になって目立つ。GBuffer のアルベドには無いので光と影の側）。原因（太陽の影の深度の偏り・法線の偏り・影のページの解像度・地形の幾何と法線マップの法線の食い違い）を撮影の切り分けで突き止めて直す。ref_far_02・ref_ground_02・cliff の撮影（1920×1080）を開き、斜面の陰が滑らかにつながり、点の格子が無いことを確かめる。Rendering3DTest の撮影が変わらない。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Views ref_far_02,ref_ground_02,cliff -RequireAssets -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-WL-SHADOW-DOT-GRID`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -OutDir .harness/runs/startup-capture/SCN-WL-SHADOW-DOT-GRID`
+- paths: Assets/Shaders, Library/Core/Private/Rendering, Game/GameModes/Wasteland, Scripts, TASKS.md, PROGRESS.md
+- notes: 2026-10-15 SCN-WL-MATERIAL-PALETTE の反復 6 で見つけた（`.harness/runs/scene-capture/SCN-WL-MATERIAL-PALETTE/ref_far_02.png` の中景、`cliff.png` の谷床）。危険地帯（描画）。
 
 ## SCN-WL-MATERIAL-STRATA: 砂岩の地層と風化の筋を足す
 - status: todo

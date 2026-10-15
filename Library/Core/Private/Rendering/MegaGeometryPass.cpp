@@ -3089,7 +3089,11 @@ namespace NorvesLib::Core::Rendering
             // 地表の分類の地図は引けたときだけ使う（引けなければ傾斜の式だけで混ぜる）。読まない枠はアルベドで埋める
             RHI::TexturePtr surfaceMask =
                 bTerrainBlend ? resolveTexture(terrain.SurfaceMaskTexture, nullptr) : RHI::TexturePtr();
-            PackTerrainBlendParams(terrain, bTerrainBlend, surfaceMask != nullptr, uniform.TerrainParams);
+            // 3 層のアルベドが UNORM で張られていれば、シェーダーが sRGB から線形へ戻す
+            const uint32_t albedoDecodeBits = ResolveTerrainAlbedoDecodeBits(albedo.get(), terrainTextures[0].get(),
+                                                                             terrainTextures[3].get());
+            PackTerrainBlendParams(terrain, bTerrainBlend, surfaceMask != nullptr, albedoDecodeBits,
+                                   uniform.TerrainParams);
             if (!surfaceMask)
             {
                 surfaceMask = albedo;

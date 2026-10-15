@@ -149,11 +149,9 @@ namespace Game::GameModes
         // 崖の岩（花崗岩のスキャン。アルベドの平均がリニアで 0.13 : 0.09 : 0.065）に掛ける色。メサの岩肌（rock_face、
         // 0.12 : 0.06 : 0.03）の赤みに寄せ、足元で灰色に浮かないようにする
         constexpr float kCliffTint[3] = {1.0f, 0.75f, 0.55f};
-        // 地形の材質（3 層の混ぜ合わせ）に掛ける明るさ。砂（sand_01）のアルベドの平均はリニアで 0.31 と白っぽく明るい。手本の谷床の
-        // 赤い砂と土は赤だけが強く緑と青が低い（写真の日向の土で sRGB 146 : 101 : 73）ので、輝度で見たアルベドは 0.1 前後になる。
-        // 色を変えずに輝度の水準だけ 0.1 へ下げ、写真と同じ露出で日向の地面が白く飛ばないようにする。
-        // 色と素材そのものは SCN-WL-MATERIAL-PALETTE で替え、この倍率もそこで決め直す
-        constexpr float kTerrainAlbedoScale = 0.32f;
+        // 地形の材質（3 層の混ぜ合わせ）に掛ける明るさ。3 層のアルベドの画像は、線形の平均を実在の値へ較正してある
+        // （Scripts/Terrain/TerrainMaterials.py: 細粒の赤い土 0.16・岩屑と礫 0.17・赤褐色の砂岩 0.22）ので掛けない
+        constexpr float kTerrainAlbedoScale = 1.0f;
         // 高さフォグ: 基準の高さでの密度[1/m]と、上へ向かって薄くなる割合[1/m]。遠景の霞は空気遠近が受け持つので、
         // 谷床に薄く溜まる砂ぼこりの層にする。谷床は北から南東へ下がり、平らな所の高さは -38〜+39 m（5〜95%）なので、
         // 基準を南東の低い谷床（-40 m）に置き、100 m で 1/e に薄くして北の高い谷床（+40 m）にも半分ほど残す。
@@ -195,24 +193,29 @@ namespace Game::GameModes
         // 岩・崖・建物（WastelandLayout）を置くか。配置は手続きの地形（中央の盆地とメサの輪）に合わせたものなので、
         // DEM の地形では前哨地を置き直す（SCN-WL-OUTPOST）まで置かない
         constexpr bool kPlaceLayoutProps = false;
-        // 地形の材質は 3 層の混ぜ合わせ。1 層目の砂は Poly Haven の sand_01（Assets/AssetSets/Rendering3DTestStartupMaterials.json が焼く）
-        constexpr const char *kSandAlbedoPath = "Assets/Textures/PolyHaven/sand_01/sand_01_diff_4k.jpg";
-        constexpr const char *kSandNormalPath = "Assets/Textures/PolyHaven/sand_01/sand_01_nor_dx_4k.jpg";
-        constexpr const char *kSandOrmPath = "Assets/Textures/PolyHaven/sand_01/sand_01_orm_4k";
-        // 2 層目の乾いた土は dry_ground_rocks（Assets/AssetSets/Rendering3DTestStressTextures.json が焼く）
-        constexpr const char *kDirtAlbedoPath = "Assets/Textures/PolyHaven/dry_ground_rocks/dry_ground_rocks_diff_4k.jpg";
-        constexpr const char *kDirtNormalPath = "Assets/Textures/PolyHaven/dry_ground_rocks/dry_ground_rocks_nor_dx_4k.jpg";
-        constexpr const char *kDirtOrmPath = "Assets/Textures/PolyHaven/dry_ground_rocks/dry_ground_rocks_orm_4k";
-        // 3 層目の岩肌は rock_face（Assets/AssetSets/WastelandTerrain.json が焼く）
-        constexpr const char *kRockAlbedoPath = "Assets/Textures/PolyHaven/rock_face/rock_face_diff_4k.jpg";
-        constexpr const char *kRockNormalPath = "Assets/Textures/PolyHaven/rock_face/rock_face_nor_dx_4k.jpg";
-        constexpr const char *kRockOrmPath = "Assets/Textures/PolyHaven/rock_face/rock_face_orm_4k";
-        // 材質の UV（ワールドの位置 ÷ 4 m。岩肌は 3 方向の投影）に掛ける倍率。岩肌は崖の大きな割れ目に合わせて 8 m で繰り返す
-        constexpr float kDirtUVScale = 1.0f;
-        constexpr float kRockUVScale = 0.5f;
-        // 広い範囲の明るさ・色味の揺らぎ（数十〜数百 m）。同じ模様の繰り返しを、砂の明るさの斑で隠す
+        // 地形の材質は 3 層の混ぜ合わせ。素材は Poly Haven の CC0 の写真由来のテクスチャ（Scripts/Terrain/TerrainMaterials.py が
+        // 落としてアルベドを較正し、Assets/AssetSets/WastelandTerrain.json が焼く）。
+        // 1 層目（砂の枠）は谷床の細粒の赤い土 red_sand（1 枚 3 m）
+        constexpr const char *kSandAlbedoPath = "Assets/Textures/PolyHaven/red_sand/red_sand_diff_cal_4k.png";
+        constexpr const char *kSandNormalPath = "Assets/Textures/PolyHaven/red_sand/red_sand_nor_dx_4k.jpg";
+        constexpr const char *kSandOrmPath = "Assets/Textures/PolyHaven/red_sand/red_sand_orm_4k";
+        // 2 層目（土の枠）は崖錐と礫の地表の岩屑と礫 red_dirt_mud_01（1 枚 1.5 m。礫は数 mm〜数 cm）
+        constexpr const char *kDirtAlbedoPath = "Assets/Textures/PolyHaven/red_dirt_mud_01/red_dirt_mud_01_diff_cal_4k.png";
+        constexpr const char *kDirtNormalPath = "Assets/Textures/PolyHaven/red_dirt_mud_01/red_dirt_mud_01_nor_dx_4k.jpg";
+        constexpr const char *kDirtOrmPath = "Assets/Textures/PolyHaven/red_dirt_mud_01/red_dirt_mud_01_orm_4k";
+        // 3 層目（岩肌の枠）は露岩の赤褐色の砂岩 cliff_side（1 枚 1.8 m。層理と割れ目の間隔は 10〜40 cm）
+        constexpr const char *kRockAlbedoPath = "Assets/Textures/PolyHaven/cliff_side/cliff_side_diff_cal_4k.png";
+        constexpr const char *kRockNormalPath = "Assets/Textures/PolyHaven/cliff_side/cliff_side_nor_dx_4k.jpg";
+        constexpr const char *kRockOrmPath = "Assets/Textures/PolyHaven/cliff_side/cliff_side_orm_4k";
+        // 模様を実寸で張る: 1 層目の 1 枚の広さ（m）と、2・3 層目の UV の倍率（1 層目の広さ ÷ その層の 1 枚の広さ）。
+        // 岩肌は 3 方向の投影なので、崖の面でも層理と割れ目が実寸の間隔になる
+        constexpr float kSandTileMeters = 3.0f;
+        constexpr float kDirtUVScale = kSandTileMeters / 1.5f;
+        constexpr float kRockUVScale = kSandTileMeters / 1.8f;
+        // 明るさ・色味の揺らぎ（数十〜数百 m と、その 1/4 の 20 m）。層ごとに別の位相で掛けるので、揺らぎは地表の分類の境で
+        // 入れ替わり、全域を 1 つの斑の模様で覆わない（TerrainLayerBlend.glsl の TerrainMacroVariation）
         constexpr float kMacroWavelengths[2] = {80.0f, 300.0f};
-        constexpr float kMacroBrightness = 0.22f;
+        constexpr float kMacroBrightness = 0.2f;
         constexpr float kMacroHue = 0.05f;
         // 距離で UV の倍率を変える: 10 m から、距離が 3 倍になるごとに模様を 3 倍に大きくする（最大 4 段で 81 倍）
         constexpr float kDetailStartDistance = 10.0f;
@@ -890,7 +893,7 @@ namespace Game::GameModes
                 blend.DetailStartDistance = kDetailStartDistance;
                 blend.DetailDistanceRatio = kDetailDistanceRatio;
                 blend.DetailMaxLevel = kDetailMaxLevel;
-                blend.TextureTileMeters = TerrainSpec::kTextureTileMeters;
+                blend.TextureTileMeters = kSandTileMeters;
                 assembly->PendingTextureCount = kTerrainTextureCount;
                 auto &textures = ctx.RenderResourcesRef.Textures();
                 MaterialCreateData &sand = assembly->Material;

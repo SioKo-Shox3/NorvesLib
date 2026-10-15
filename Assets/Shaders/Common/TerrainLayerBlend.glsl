@@ -22,7 +22,9 @@
 //   - 距離で UV の倍率を変える: カメラからの距離が「変え始める距離」の r 倍になるごとに 1 段上がり、段ごとに UV を 1/r にする
 //     （近くは細かく、遠くは大きく）。隣り合う 2 つの段を距離で混ぜ、段ごとに UV を回して位置をずらすので、
 //     同じ模様が格子状に並ばない。
-//   - 混ぜた後のアルベドに、数十〜数百 m の低周波ノイズで明るさと色味の揺らぎを掛ける。
+//   - アルベドの画像は sRGB で符号化されている。UNORM の形式で張られた層（layers.w のビット）は標本ごとに線形へ戻す。
+//   - 各層のアルベドに、層ごとに別の位相の低周波ノイズ（数十〜数百 m と、模様の繰り返しを崩す十数 m）で明るさと色味の揺らぎを
+//     掛けてから混ぜる。揺らぎは分類の境で入れ替わり、全域を 1 つの斑の模様で覆わない。
 
 #ifndef NORVES_TERRAIN_LAYER_BLEND_GLSL
 #define NORVES_TERRAIN_LAYER_BLEND_GLSL
@@ -33,7 +35,8 @@ struct TerrainBlendParams
     vec4 slope;  // x,y = 乾いた土へ移る傾斜の始まり・終わり（ラジアン）、z,w = 岩肌へ移る傾斜の始まり・終わり（ラジアン）
     vec4 height; // x,y = 土へ寄せる高さ（ワールドの y、m）の始まり・終わり、z = 寄せの最大（ラジアン）、w = 凹凸の混ぜの深さ
     vec4 noise;  // x,y = 揺らぎの 2 つの波長の逆数（1/m）、z = 揺らぎの振幅（ラジアン）、w = 砂の高さ（凹凸の混ぜ）
-    vec4 layers; // x = 有効（1/0）、y = 土の UV の倍率、z = 岩肌の UV の倍率、w = 法線が 2 チャンネルの層のビット（1 = 土、2 = 岩肌）
+    vec4 layers; // x = 有効（1/0）、y = 土の UV の倍率、z = 岩肌の UV の倍率、w = ビット（法線が 2 チャンネル: 1 = 土、2 = 岩肌。
+                 // アルベドを sRGB から線形へ戻す: 4 = 砂、8 = 土、16 = 岩肌）
     vec4 macro;  // x,y = 明るさ・色味の揺らぎの 2 つの波長の逆数（1/m）、z = 明るさの揺らぎの振幅（割合）、w = 色味の揺らぎの振幅
     vec4 detail; // x = UV の倍率を変え始める距離（m）、y = 1 段ごとの距離の比の log2、z = 段の上限、w = テクスチャの 1 枚の広さ（m）
     vec4 mask;    // x,y = 地表の分類の地図の外縁のワールドの X・Z の最小、z,w = X・Z の広さの逆数（1/m。z が 0 なら地図なし）
@@ -43,6 +46,9 @@ struct TerrainBlendParams
 
 const uint TERRAIN_BLEND_DIRT_NORMAL_TWO_CHANNEL = 1u;
 const uint TERRAIN_BLEND_ROCK_NORMAL_TWO_CHANNEL = 2u;
+const uint TERRAIN_BLEND_SAND_ALBEDO_SRGB_DECODE = 4u;
+const uint TERRAIN_BLEND_DIRT_ALBEDO_SRGB_DECODE = 8u;
+const uint TERRAIN_BLEND_ROCK_ALBEDO_SRGB_DECODE = 16u;
 
 // 地図を引く位置をずらすノイズの波長（m）
 const float TERRAIN_SURFACE_MASK_WARP_WAVELENGTH = 7.0;
@@ -234,11 +240,18 @@ float TerrainLayerLodFromGradient(sampler2D tex, vec2 uvDx, vec2 uvDy)
     return pMax > 0.0 ? clamp(log2(pMax), 0.0, float(textureQueryLevels(tex) - 1)) : 0.0;
 }
 
+// sRGB の符号化した値を線形へ戻す（UNORM の形式で張られたアルベド）
+vec3 TerrainSrgbToLinear(vec3 encoded)
+{
+    const vec3 c = clamp(encoded, vec3(0.0), vec3(1.0));
+    return mix(pow((c + 0.055) / 1.055, vec3(2.4)), c / 12.92, lessThanEqual(c, vec3(0.04045)));
+}
+
 // 1 つの投影を標本して acc へ重み付きで足す。uv・uvDx・uvDy は回す前の UV とその勾配、rotation は段の回転。
 // 接空間の法線の傾きは回した UV の向きで表されるので、回転を戻してから面の軸（axisU・axisV）へ載せる
 void AccumulateTerrainProjection(inout TerrainLayerSample acc, float weight,
                                  sampler2D albedoTex, sampler2D normalTex, sampler2D ormTex,
-                                 bool bNormalTwoChannel, bool bVirtualTexture,
+                                 bool bNormalTwoChannel, bool bAlbedoSrgbDecode, bool bVirtualTexture,
                                  vec2 uv, vec2 uvDx, vec2 uvDy, mat2 rotation, vec2 offset, vec3 axisU, vec3 axisV)
 {
     const vec2 ruv = rotation * uv + offset;
@@ -253,7 +266,11 @@ void AccumulateTerrainProjection(inout TerrainLayerSample acc, float weight,
         normalLod = TerrainLayerLodFromGradient(normalTex, dx, dy);
         ormLod = TerrainLayerLodFromGradient(ormTex, dx, dy);
     }
-    const vec4 albedo = SampleMaterialTextureGrad(albedoTex, ruv, dx, dy, albedoLod, bVirtualTexture);
+    vec4 albedo = SampleMaterialTextureGrad(albedoTex, ruv, dx, dy, albedoLod, bVirtualTexture);
+    if (bAlbedoSrgbDecode)
+    {
+        albedo.rgb = TerrainSrgbToLinear(albedo.rgb);
+    }
     const vec3 tangentNormal =
         DecodePbrTangentNormal(SampleMaterialTextureGrad(normalTex, ruv, dx, dy, normalLod, bVirtualTexture),
                                bNormalTwoChannel);
@@ -266,7 +283,7 @@ void AccumulateTerrainProjection(inout TerrainLayerSample acc, float weight,
 
 // 1 層を、距離の 2 つの段 × 投影（projection の重みが 0 でないもの）で標本する。uvScale は層の UV の倍率
 TerrainLayerSample SampleTerrainLayer(sampler2D albedoTex, sampler2D normalTex, sampler2D ormTex,
-                                      bool bNormalTwoChannel, bool bVirtualTexture,
+                                      bool bNormalTwoChannel, bool bAlbedoSrgbDecode, bool bVirtualTexture,
                                       TerrainSurfaceInput surface, TerrainProjectionFrame frame, vec3 projection,
                                       TerrainDetailLevels levels, float uvScale, float tileMeters)
 {
@@ -294,34 +311,36 @@ TerrainLayerSample SampleTerrainLayer(sampler2D albedoTex, sampler2D normalTex, 
         if (projection.y > 0.0)
         {
             AccumulateTerrainProjection(acc, levelWeight * projection.y, albedoTex, normalTex, ormTex,
-                                        bNormalTwoChannel, bVirtualTexture, p.xz * scale, pdx.xz * scale,
+                                        bNormalTwoChannel, bAlbedoSrgbDecode, bVirtualTexture, p.xz * scale, pdx.xz * scale,
                                         pdy.xz * scale, rotation, offset, frame.TopU, frame.TopV);
         }
         if (projection.x > 0.0)
         {
             AccumulateTerrainProjection(acc, levelWeight * projection.x, albedoTex, normalTex, ormTex,
-                                        bNormalTwoChannel, bVirtualTexture, p.zy * scale, pdx.zy * scale,
+                                        bNormalTwoChannel, bAlbedoSrgbDecode, bVirtualTexture, p.zy * scale, pdx.zy * scale,
                                         pdy.zy * scale, rotation, offset, frame.SideXU, frame.SideXV);
         }
         if (projection.z > 0.0)
         {
             AccumulateTerrainProjection(acc, levelWeight * projection.z, albedoTex, normalTex, ormTex,
-                                        bNormalTwoChannel, bVirtualTexture, p.xy * scale, pdx.xy * scale,
+                                        bNormalTwoChannel, bAlbedoSrgbDecode, bVirtualTexture, p.xy * scale, pdx.xy * scale,
                                         pdy.xy * scale, rotation, offset, frame.SideZU, frame.SideZV);
         }
     }
     return acc;
 }
 
-// 数十〜数百 m の低周波ノイズで、アルベドに明るさと色味（赤み・黄み）の揺らぎを掛ける
-vec3 ApplyTerrainMacroVariation(TerrainBlendParams params, vec3 albedo, vec2 xz)
+// 層ごとの明るさと色味（赤み・黄み）の揺らぎの倍率。数十〜数百 m の低周波ノイズに、模様の繰り返し（数 m の 1 枚）を崩す
+// 波長 1/4 のノイズを足す。seed で層ごとに位相を変えるので、揺らぎは分類（層）の境で入れ替わる
+vec3 TerrainMacroVariation(TerrainBlendParams params, vec2 xz, vec2 seed)
 {
-    const float a = TerrainValueNoise(xz * params.macro.x + vec2(-7.31, 3.17));
-    const float b = TerrainValueNoise(xz * params.macro.y + vec2(29.71, -13.93));
-    const float brightness = 1.0 + params.macro.z * ((a * 0.6 + b * 0.4) * 2.0 - 1.0);
-    const float c = TerrainValueNoise(xz * params.macro.x * 1.7 + vec2(61.37, 44.21));
+    const float a = TerrainValueNoise(xz * params.macro.x + vec2(-7.31, 3.17) + seed);
+    const float b = TerrainValueNoise(xz * params.macro.y + vec2(29.71, -13.93) + seed);
+    const float d = TerrainValueNoise(xz * params.macro.x * 4.0 + vec2(17.03, -41.57) + seed);
+    const float brightness = 1.0 + params.macro.z * ((a * 0.45 + b * 0.3 + d * 0.25) * 2.0 - 1.0);
+    const float c = TerrainValueNoise(xz * params.macro.x * 1.7 + vec2(61.37, 44.21) + seed);
     const float hue = params.macro.w * (c * 2.0 - 1.0);
-    return clamp(albedo * brightness * vec3(1.0 + hue, 1.0, 1.0 - hue), vec3(0.0), vec3(1.0));
+    return brightness * vec3(1.0 + hue, 1.0, 1.0 - hue);
 }
 
 // 地形の 3 層を混ぜた材質値を返す（TangentNormal は使わない。法線は worldNormal にワールドの向きで返す）。
@@ -344,26 +363,29 @@ PbrMaterialTextureSamples ShadeTerrainLayers(TerrainBlendParams params,
         layerWeights = mix(ComputeTerrainSlopeWeights(params, surface.WorldPosition, n), maskWeights.xyz, maskWeights.w);
     }
     const uint normalBits = uint(params.layers.w + 0.5);
+    const bool bSandDecode = (normalBits & TERRAIN_BLEND_SAND_ALBEDO_SRGB_DECODE) != 0u;
     const TerrainDetailLevels levels = ComputeTerrainDetailLevels(params, surface.CameraDistance);
     const TerrainProjectionFrame frame = MakeTerrainProjectionFrame(n);
     const float tileMeters = max(params.detail.w, 1.0e-3);
     const vec3 projection = ComputeTerrainTriplanarWeights(n);
 
     const TerrainLayerSample sand = SampleTerrainLayer(sandAlbedo, sandNormal, sandOrm, bSandNormalTwoChannel,
-                                                       bVirtualTexture, surface, frame, projection, levels, 1.0,
+                                                       bSandDecode, bVirtualTexture, surface, frame, projection, levels, 1.0,
                                                        tileMeters);
     TerrainLayerSample dirt = sand;
     TerrainLayerSample rock = sand;
     if (layerWeights.y > 0.0)
     {
         dirt = SampleTerrainLayer(dirtAlbedo, dirtNormal, dirtOrm,
-                                  (normalBits & TERRAIN_BLEND_DIRT_NORMAL_TWO_CHANNEL) != 0u, bVirtualTexture,
+                                  (normalBits & TERRAIN_BLEND_DIRT_NORMAL_TWO_CHANNEL) != 0u,
+                                  (normalBits & TERRAIN_BLEND_DIRT_ALBEDO_SRGB_DECODE) != 0u, bVirtualTexture,
                                   surface, frame, projection, levels, params.layers.y, tileMeters);
     }
     if (layerWeights.z > 0.0)
     {
         rock = SampleTerrainLayer(rockAlbedo, rockNormal, rockOrm,
-                                  (normalBits & TERRAIN_BLEND_ROCK_NORMAL_TWO_CHANNEL) != 0u, bVirtualTexture,
+                                  (normalBits & TERRAIN_BLEND_ROCK_NORMAL_TWO_CHANNEL) != 0u,
+                                  (normalBits & TERRAIN_BLEND_ROCK_ALBEDO_SRGB_DECODE) != 0u, bVirtualTexture,
                                   surface, frame, projection, levels, params.layers.z, tileMeters);
     }
 
@@ -372,8 +394,12 @@ PbrMaterialTextureSamples ShadeTerrainLayers(TerrainBlendParams params,
     const vec3 w = ApplyTerrainHeightBlend(layerWeights, layerHeights, params.height.w);
 
     PbrMaterialTextureSamples result;
+    const vec2 xz = surface.WorldPosition.xz;
     result.Albedo = sand.Albedo * w.x + dirt.Albedo * w.y + rock.Albedo * w.z;
-    result.Albedo.rgb = ApplyTerrainMacroVariation(params, result.Albedo.rgb, surface.WorldPosition.xz);
+    result.Albedo.rgb = clamp(sand.Albedo.rgb * TerrainMacroVariation(params, xz, vec2(0.0)) * w.x +
+                                  dirt.Albedo.rgb * TerrainMacroVariation(params, xz, vec2(113.7, -71.3)) * w.y +
+                                  rock.Albedo.rgb * TerrainMacroVariation(params, xz, vec2(-257.1, 191.9)) * w.z,
+                              vec3(0.0), vec3(1.0));
     if (params.maskMix.w > 0.5)
     {
         result.Albedo.rgb = vec3(w.z, w.y, w.x) * 0.6;

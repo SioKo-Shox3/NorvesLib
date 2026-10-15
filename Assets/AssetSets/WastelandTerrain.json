@@ -6,26 +6,70 @@
   "cook_assets": true,
   "textures": [
     {
-      "logical_path": "Assets/Textures/PolyHaven/rock_face/rock_face_diff_4k.jpg",
+      "logical_path": "Assets/Textures/PolyHaven/red_sand/red_sand_diff_cal_4k.png",
       "cook_usage": "albedo",
-      "source_path": "Assets/Textures/PolyHaven/rock_face/rock_face_diff_4k.jpg",
-      "package_name": "PolyHaven/rock_face/rock_face_diff.nvpkg",
-      "entry_name": "Assets/Textures/PolyHaven/rock_face/rock_face_diff_4k.nvtex"
+      "source_path": "Assets/Textures/PolyHaven/red_sand/red_sand_diff_cal_4k.png",
+      "package_name": "PolyHaven/red_sand/red_sand_diff_cal.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/red_sand/red_sand_diff_cal_4k.nvtex"
     },
     {
-      "logical_path": "Assets/Textures/PolyHaven/rock_face/rock_face_nor_dx_4k.jpg",
+      "logical_path": "Assets/Textures/PolyHaven/red_sand/red_sand_nor_dx_4k.jpg",
       "cook_usage": "normal",
-      "source_path": "Assets/Textures/PolyHaven/rock_face/rock_face_nor_dx_4k.jpg",
-      "package_name": "PolyHaven/rock_face/rock_face_nor_dx.nvpkg",
-      "entry_name": "Assets/Textures/PolyHaven/rock_face/rock_face_nor_dx_4k.nvtex"
+      "source_path": "Assets/Textures/PolyHaven/red_sand/red_sand_nor_dx_4k.jpg",
+      "package_name": "PolyHaven/red_sand/red_sand_nor_dx.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/red_sand/red_sand_nor_dx_4k.nvtex"
     },
     {
-      "logical_path": "Assets/Textures/PolyHaven/rock_face/rock_face_orm_4k",
+      "logical_path": "Assets/Textures/PolyHaven/red_sand/red_sand_orm_4k",
       "cook_usage": "orm",
-      "orm_ao": "Assets/Textures/PolyHaven/rock_face/rock_face_ao_4k.jpg",
-      "orm_roughness": "Assets/Textures/PolyHaven/rock_face/rock_face_rough_4k.jpg",
-      "package_name": "PolyHaven/rock_face/rock_face_orm.nvpkg",
-      "entry_name": "Assets/Textures/PolyHaven/rock_face/rock_face_orm_4k.nvtex"
+      "orm_ao": "Assets/Textures/PolyHaven/red_sand/red_sand_ao_4k.jpg",
+      "orm_roughness": "Assets/Textures/PolyHaven/red_sand/red_sand_rough_4k.jpg",
+      "package_name": "PolyHaven/red_sand/red_sand_orm.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/red_sand/red_sand_orm_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/red_dirt_mud_01/red_dirt_mud_01_diff_cal_4k.png",
+      "cook_usage": "albedo",
+      "source_path": "Assets/Textures/PolyHaven/red_dirt_mud_01/red_dirt_mud_01_diff_cal_4k.png",
+      "package_name": "PolyHaven/red_dirt_mud_01/red_dirt_mud_01_diff_cal.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/red_dirt_mud_01/red_dirt_mud_01_diff_cal_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/red_dirt_mud_01/red_dirt_mud_01_nor_dx_4k.jpg",
+      "cook_usage": "normal",
+      "source_path": "Assets/Textures/PolyHaven/red_dirt_mud_01/red_dirt_mud_01_nor_dx_4k.jpg",
+      "package_name": "PolyHaven/red_dirt_mud_01/red_dirt_mud_01_nor_dx.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/red_dirt_mud_01/red_dirt_mud_01_nor_dx_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/red_dirt_mud_01/red_dirt_mud_01_orm_4k",
+      "cook_usage": "orm",
+      "orm_ao": "Assets/Textures/PolyHaven/red_dirt_mud_01/red_dirt_mud_01_ao_4k.jpg",
+      "orm_roughness": "Assets/Textures/PolyHaven/red_dirt_mud_01/red_dirt_mud_01_rough_4k.jpg",
+      "package_name": "PolyHaven/red_dirt_mud_01/red_dirt_mud_01_orm.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/red_dirt_mud_01/red_dirt_mud_01_orm_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/cliff_side/cliff_side_diff_cal_4k.png",
+      "cook_usage": "albedo",
+      "source_path": "Assets/Textures/PolyHaven/cliff_side/cliff_side_diff_cal_4k.png",
+      "package_name": "PolyHaven/cliff_side/cliff_side_diff_cal.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/cliff_side/cliff_side_diff_cal_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/cliff_side/cliff_side_nor_dx_4k.jpg",
+      "cook_usage": "normal",
+      "source_path": "Assets/Textures/PolyHaven/cliff_side/cliff_side_nor_dx_4k.jpg",
+      "package_name": "PolyHaven/cliff_side/cliff_side_nor_dx.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/cliff_side/cliff_side_nor_dx_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/cliff_side/cliff_side_orm_4k",
+      "cook_usage": "orm",
+      "orm_ao": "Assets/Textures/PolyHaven/cliff_side/cliff_side_ao_4k.jpg",
+      "orm_roughness": "Assets/Textures/PolyHaven/cliff_side/cliff_side_rough_4k.jpg",
+      "package_name": "PolyHaven/cliff_side/cliff_side_orm.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/cliff_side/cliff_side_orm_4k.nvtex"
     },
     {
       "logical_path": "Assets/Terrain/ValleyOfTheGods/surface.png",

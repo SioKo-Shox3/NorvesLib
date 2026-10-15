@@ -53,11 +53,11 @@ OUTLINE_TEXT = {
     "match": "輪郭: 主役の配置と輪郭を合わせる",
     "none": "輪郭: 見ない（地表と植生の比較用）",
 }
-# 地形の 3 層のアルベドのテクスチャ（WastelandRoutine.cpp の kSandAlbedoPath・kDirtAlbedoPath・kRockAlbedoPath）
+# 地形の 3 層の名前と、アルベドのテクスチャのパスを持つ定数（WastelandRoutine.cpp から読む）
 TERRAIN_ALBEDO = {
-    "砂": "Assets/Textures/PolyHaven/sand_01/sand_01_diff_4k.jpg",
-    "乾いた土": "Assets/Textures/PolyHaven/dry_ground_rocks/dry_ground_rocks_diff_4k.jpg",
-    "岩肌": "Assets/Textures/PolyHaven/rock_face/rock_face_diff_4k.jpg",
+    "細粒の土": "kSandAlbedoPath",
+    "岩屑と礫": "kDirtAlbedoPath",
+    "砂岩": "kRockAlbedoPath",
 }
 # 品質を見る撮影の最小の大きさ（1280×720 では粗さが判断を狂わせる）
 MIN_CAPTURE_SIZE = (1920, 1080)
@@ -155,13 +155,17 @@ def terrain_albedo_scale():
 def terrain_albedo():
     """地形の 3 層のアルベドの線形の平均（kTerrainAlbedoScale を掛けた値）"""
     scale = terrain_albedo_scale()
+    with open(ROUTINE_PATH, encoding="utf-8-sig") as file:
+        routine = file.read()
     result = {"scale": scale, "layers": {}}
-    for name, path in TERRAIN_ALBEDO.items():
-        full = os.path.join(REPO_ROOT, path)
+    for name, constant in TERRAIN_ALBEDO.items():
+        match = re.search(constant + r'\s*=\s*"([^"]+)"', routine)
+        full = os.path.join(REPO_ROOT, match.group(1)) if match else ""
         if not os.path.isfile(full):
             result["layers"][name] = None
             continue
-        image = Image.open(full).convert("RGB").resize((512, 512), Image.BOX)
+        # 符号化した値のまま平均すると線形の平均より明るく出るので、間引いた画素を線形へ戻してから平均する
+        image = Image.open(full).convert("RGB").resize((1024, 1024), Image.NEAREST)
         rgb = srgb_to_linear(np.asarray(image).astype(np.float64)).reshape(-1, 3).mean(axis=0) * scale
         result["layers"][name] = {
             "rgb": [float(v) for v in rgb],

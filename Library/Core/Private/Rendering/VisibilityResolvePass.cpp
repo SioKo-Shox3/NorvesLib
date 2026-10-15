@@ -187,7 +187,10 @@ namespace NorvesLib::Core::Rendering
             material.bTerrainBlend = true;
             RHI::TexturePtr& mask = material.TerrainTextures[VisibilityResolveGeometry::TERRAIN_SURFACE_MASK_INDEX];
             mask = ResolveMaterialTexture(textures, terrain->SurfaceMaskTexture);
-            PackTerrainBlendParams(*terrain, true, mask != nullptr, material.TerrainParams);
+            // 3 層のアルベドが UNORM で張られていれば、シェーダーが sRGB から線形へ戻す（ラスタと同じ判定）
+            const uint32_t albedoDecodeBits = ResolveTerrainAlbedoDecodeBits(
+                material.Albedo.get(), material.TerrainTextures[0].get(), material.TerrainTextures[3].get());
+            PackTerrainBlendParams(*terrain, true, mask != nullptr, albedoDecodeBits, material.TerrainParams);
         }
 
     } // namespace

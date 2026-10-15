@@ -5,6 +5,7 @@
 // VisibilityResolvePass（可視バッファの解決）が同じ並びで使う。
 
 #include "Rendering/MegaGeometry/MegaGeometryTypes.h"
+#include "RHI/ITexture.h"
 
 #include <cmath>
 #include <cstdint>
@@ -17,6 +18,44 @@ namespace NorvesLib::Core::Rendering
     /** @brief layers.w のビット（法線が 2 チャンネル（BC5）の層） */
     constexpr uint32_t TERRAIN_BLEND_DIRT_NORMAL_TWO_CHANNEL = 1u;
     constexpr uint32_t TERRAIN_BLEND_ROCK_NORMAL_TWO_CHANNEL = 2u;
+    /** @brief layers.w のビット（アルベドが sRGB の値のまま UNORM の形式で張られ、シェーダーで線形へ戻す層） */
+    constexpr uint32_t TERRAIN_BLEND_SAND_ALBEDO_SRGB_DECODE = 4u;
+    constexpr uint32_t TERRAIN_BLEND_DIRT_ALBEDO_SRGB_DECODE = 8u;
+    constexpr uint32_t TERRAIN_BLEND_ROCK_ALBEDO_SRGB_DECODE = 16u;
+
+    /**
+     * @brief アルベドのテクスチャを、標本の後にシェーダーで sRGB から線形へ戻すか
+     *
+     * アルベドの画像は sRGB で符号化されている。8 bit の UNORM の形式で張られている（Game はクック済みの sRGB を
+     * 元画像と同じ標本値にするため UNORM で上げる）と、標本は符号化した値のままで、暗い成分ほど明るく（青で 2〜3 倍）なる。
+     * sRGB の形式ならハードが戻すので何もしない。
+     */
+    inline bool IsTerrainAlbedoSrgbDecodeNeeded(const RHI::ITexture *texture)
+    {
+        if (texture == nullptr)
+        {
+            return false;
+        }
+        switch (texture->GetFormat())
+        {
+        case RHI::Format::R8G8B8A8_UNORM:
+        case RHI::Format::B8G8R8A8_UNORM:
+        case RHI::Format::BC1_UNORM:
+        case RHI::Format::BC7_UNORM:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    /** @brief 3 層のアルベドのテクスチャ（砂・土・岩肌）から、シェーダーで線形へ戻す層のビットを求める */
+    inline uint32_t ResolveTerrainAlbedoDecodeBits(const RHI::ITexture *sand, const RHI::ITexture *dirt,
+                                                   const RHI::ITexture *rock)
+    {
+        return (IsTerrainAlbedoSrgbDecodeNeeded(sand) ? TERRAIN_BLEND_SAND_ALBEDO_SRGB_DECODE : 0u) |
+               (IsTerrainAlbedoSrgbDecodeNeeded(dirt) ? TERRAIN_BLEND_DIRT_ALBEDO_SRGB_DECODE : 0u) |
+               (IsTerrainAlbedoSrgbDecodeNeeded(rock) ? TERRAIN_BLEND_ROCK_ALBEDO_SRGB_DECODE : 0u);
+    }
 
     /**
      * @brief 地形の 3 層の重みを色で描く確認用の表示を求められているか（環境変数 NORVES_TERRAIN_LAYER_COLORS が 1）
@@ -37,16 +76,17 @@ namespace NorvesLib::Core::Rendering
     /**
      * @brief 混ぜ方の値をシェーダーの並びへ詰める
      *
+     * albedoDecodeBits は ResolveTerrainAlbedoDecodeBits の値（layers.w の法線のビットに足す）。
      * bEnabled が偽なら layers.x を 0 にする（シェーダーは 1 層の材質として描く）。bSurfaceMask が偽（地図のテクスチャが
      * 引けない）なら mask を 0 にする（シェーダーは傾斜の式だけで混ぜる）。角度はラジアン、波長は逆数にする。
      * 並び: slope = 土の始まり・終わり・岩肌の始まり・終わり、height = 土へ寄せる高さの始まり・終わり・寄せの最大・混ぜの深さ、
-     * noise = 2 つの波長の逆数・振幅・砂の高さ、layers = 有効・土の UV の倍率・岩肌の UV の倍率・法線のビット、
+     * noise = 2 つの波長の逆数・振幅・砂の高さ、layers = 有効・土の UV の倍率・岩肌の UV の倍率・法線とアルベドの戻しのビット、
      * macro = 揺らぎの 2 つの波長の逆数・明るさの振幅・色味の振幅、detail = 変え始める距離・距離の比の log2・段の上限・
      * テクスチャの 1 枚の広さ、mask = 地図の外縁の X・Z の最小・X・Z の広さの逆数（z が 0 なら地図なし）、
      * maskMix = 礫を土へ回す割合・外縁の帯の幅（m）・引く位置のずらしの幅（m）・確認用の色分け（1/0）。
      */
     inline void PackTerrainBlendParams(const MegaGeometry::MegaTerrainBlend &blend, bool bEnabled, bool bSurfaceMask,
-                                       float out[TERRAIN_BLEND_PARAM_FLOATS])
+                                       uint32_t albedoDecodeBits, float out[TERRAIN_BLEND_PARAM_FLOATS])
     {
         constexpr float DegreesToRadians = 3.14159265358979f / 180.0f;
         // smoothstep の両端が同じだと未定義なので、終わりを始まりより少し先へずらす
@@ -68,7 +108,8 @@ namespace NorvesLib::Core::Rendering
         out[13] = blend.Dirt.UVScale;
         out[14] = blend.Rock.UVScale;
         const uint32_t bits = (blend.Dirt.bNormalTwoChannel ? TERRAIN_BLEND_DIRT_NORMAL_TWO_CHANNEL : 0u) |
-                              (blend.Rock.bNormalTwoChannel ? TERRAIN_BLEND_ROCK_NORMAL_TWO_CHANNEL : 0u);
+                              (blend.Rock.bNormalTwoChannel ? TERRAIN_BLEND_ROCK_NORMAL_TWO_CHANNEL : 0u) |
+                              albedoDecodeBits;
         out[15] = static_cast<float>(bits);
         out[16] = blend.MacroWavelengths[0] > 0.0f ? 1.0f / blend.MacroWavelengths[0] : 0.0f;
         out[17] = blend.MacroWavelengths[1] > 0.0f ? 1.0f / blend.MacroWavelengths[1] : 0.0f;

@@ -4530,3 +4530,30 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 手本の比較画像（`aux-...-compare.txt`、`scene-capture/SCN-WL-MATERIAL-MASKS/reference_*.png`）と、手本の 3 視点の色分けを地図なし（傾斜の式）・地図ありで撮って写真と並べた図（`scene-capture/SCN-WL-MATERIAL-MASKS-layers-ref/layers_*.png`）を開いた: 傾斜の式で低い沢の岸と平らな所に出ていた岩肌の帯と土の斑（ground_02 の中景・overview の沢）が消え、谷床は写真どおり一様な地表になった。崖の壁と岩棚の帯は露岩のまま残り、Franklin Butte・Battleship Rock の円錐は岩棚と崖錐の帯が交互になる（写真の段の並びに近い）。
 - Notes: 写真の cliff_01 は岩屑が円錐の裾まで続くが、地図では裾が礫（半分が土）で崖錐が薄い。礫を土へ回す割合（`kSurfaceMaskGravelToDirt` 0.5）と崖錐の到達の係数は素材を替える SCN-WL-MATERIAL-PALETTE で見直す。色分けの照合の撮影は、1 % 未満の重みを捨てる処理を足す前の版で撮った（重みの差は 1 % 未満）。地図なしの撮影は `-RequireAssets` が地図の警告で fail にした（画像は書かれている）。今の土の材質（dry_ground_rocks）は崖錐の上で暗い斑点が細かく、砂とも色が近い（素材は PALETTE で替える）。`TerrainHeightField.h` を触ったので、絞らずに `CookAssets.ps1` を回すと近景の区画も焼き直しになる（前の反復のメモと同じ）。試験は足していない。
 - Next: TASKS.md の次の未完の項目。
+### SCN-WL-MATERIAL-PALETTE 完了（2026-10-15、run 20261015-082405 の反復 6）
+- 原因（材質の値と描かれた明るさが合わない）: Game はクック済みの sRGB のテクスチャを UNORM の形式で GPU に上げる（`Game/GameApplicationHandler.cpp` の `SetTreatSrgbTexturesAsLinear(true)`、2026-10-04 から。元画像と同じ標本値にする互換の設定）。シェーダーは線形へ戻さないので、アルベドは sRGB の符号化した値のまま読まれていた。`NORVES_DEBUG_VIEW=GBufferAlbedo` で撮った GBuffer のアルベドは、谷床の砂で線形 (0.18, 0.165, 0.125)（ref_ground_02・ref_cliff_01 の手前）。砂のテクスチャの線形の平均 × 0.32 = (0.122, 0.098, 0.052) ではなく、符号化した値の平均 × 0.32 = (0.207, 0.187, 0.139) と同じ比（0.87〜0.90 倍。揺らぎ込み）。暗い成分ほど明るく（青で 2.4 倍）なり、赤い砂が白っぽいベージュに写っていた。露出・トーンマップ・ラスタと可視バッファの解決の違い・倍率の経路は原因でない（倍率 0.32 は両方の経路で掛かっていた）。
+- Done:
+  - 地形の 3 層のアルベドを、GPU の形式が 8 bit の UNORM（RGBA8・BGRA8・BC1・BC7）なら標本ごとにシェーダーで sRGB から線形へ戻す（`TerrainBlendShading.h` の `ResolveTerrainAlbedoDecodeBits` が layers.w のビット 4・8・16 を立て、`TerrainLayerBlend.glsl` の `TerrainSrgbToLinear`）。ラスタ（`MegaGeometryPass`）と可視バッファの解決（`VisibilityResolvePass`）で同じ判定。全シーンに効く互換の設定は変えていない（地形の混ぜ合わせを使うのは荒野だけ）。
+  - 3 層の素材を Poly Haven の CC0 の写真由来のテクスチャに替えた（`Scripts/Terrain/TerrainMaterials.py --fetch` が `Assets/Textures/PolyHaven/<id>/` に 4k の diff・nor_dx・rough・ao を落とし、出典・md5・大きさを git 管理外の `Assets/Textures/PolyHaven/wasteland_terrain_materials.json` に書く。使用許諾 CC0 1.0）:
+    - 細粒の赤い土（谷床。砂の枠）: Red Sand `red_sand`（https://polyhaven.com/a/red_sand、1 枚 3 m）。diff 9.8 MB・nor_dx 17.8 MB・rough 9.6 MB・ao 10.3 MB
+    - 岩屑と礫（崖錐と礫の地表。土の枠）: Red Dirt Mud 01 `red_dirt_mud_01`（https://polyhaven.com/a/red_dirt_mud_01、1 枚 1.5 m、礫は数 mm〜数 cm）。diff 10.0 MB・nor_dx 8.7 MB・rough 8.6 MB・ao 5.9 MB
+    - 赤褐色の砂岩（露岩。岩肌の枠）: Cliff Side `cliff_side`（https://polyhaven.com/a/cliff_side、1 枚 1.8 m、層理と割れ目の間隔 10〜40 cm）。diff 12.8 MB・nor_dx 12.9 MB・rough 7.2 MB・ao 3.7 MB
+    - 候補の rocky_trail_02（茶灰色で写真の赤みから遠い）は使わず消した。
+  - アルベドの較正（`TerrainMaterials.py --build`）: 元の画像を線形へ戻し、線形の輝度（Rec.709）の平均が目標になる同じ倍率を 3 チャンネルに掛け（色味は写真のまま。1 を超える画素は最大の成分で割って色相を保つ）、`<id>_diff_cal_4k.png` に書く。地形の材質に掛けていた 0.32 の倍率は 1 にした。
+    - 測った値（線形の平均）: red_sand 元 (0.219, 0.102, 0.061) Y 0.124 → 較正 Y 0.160（× 1.295）。red_dirt_mud_01 元 (0.228, 0.101, 0.043) Y 0.124 → 較正 Y 0.170（RGB 0.315, 0.138, 0.059、× 1.387、1 に収めた画素 1.6 %）。cliff_side 元 (0.214, 0.093, 0.034) Y 0.114 → 較正 Y 0.220（RGB 0.412, 0.178, 0.066、× 1.932、同 0.9 %）。
+    - 根拠: 範囲（赤い砂漠の土 0.15〜0.25・赤褐色の砂岩 0.20〜0.35・岩屑と礫 0.15〜0.30）の下の側を選んだ。赤い土の分光反射率は青 0.05・緑 0.12・赤 0.25 前後で、目の感度（緑が重い）で見た輝度は広帯域のアルベドより低い。手本の谷床は日向でも暗い赤土（写真の地面 Y 0.14〜0.22）。礫は明るい砂岩の欠片が散るので土より少し明るく、砂岩の崖は写真の日向で土の 1.5〜1.8 倍。
+  - 模様を実寸で張る: 1 層目の 1 枚の広さを 4 m から 3 m（red_sand の実寸）にし、土の UV の倍率 3 ÷ 1.5 = 2、岩肌 3 ÷ 1.8 ≒ 1.67（`WastelandRoutine.cpp` の `kSandTileMeters`・`kDirtUVScale`・`kRockUVScale`。前は 1 層目を 4 m・岩肌を 8 m で張っていた）。距離で模様を大きくする段（10 m から 3 倍ごと）はそのまま。
+  - 色の揺らぎを地表の分類に沿わせる: 混ぜた後に全域へ 1 つの斑を掛けていたのを、層ごとに位相の違う揺らぎ（80 m・300 m と、模様の繰り返しを崩す 20 m）を掛けてから混ぜる形にした（`TerrainMacroVariation`）。揺らぎは分類の境で入れ替わる。明るさの振幅 0.22 → 0.2。
+  - `Assets/AssetSets/WastelandTerrain.json` の rock_face の 3 項目を新しい 9 項目に替えた。`Scripts/Terrain/CompareReference.py` は 3 層のアルベドのパスを `WastelandRoutine.cpp` の定数から読み、間引いた画素を線形へ戻してから平均する。
+- 検証（`.harness/runs/20261015-082405/`）:
+  - `verify-SCN-WL-MATERIAL-PALETTE-1.txt`: Debug の Game のビルド EXIT=0。
+  - `aux-SCN-WL-MATERIAL-PALETTE-cook.txt`: 9 枚のクック cooked=9（albedo BC7・normal BC5・orm BC7、4096²）、EXIT=0。`aux-...-materials.txt`: `TerrainMaterials.py --verify` result=pass（元の 12 枚が配布元の md5 と一致、較正した画像が作り直しと一致し平均が目標と範囲に入る）。
+  - `verify-SCN-WL-MATERIAL-PALETTE-2.txt`: 荒野の全 11 視点 1920×1080、result=pass（白飛び 0・黒つぶれ 0）、EXIT=0。
+  - `verify-SCN-WL-MATERIAL-PALETTE-4.txt`: `CompareReference.py --verify` result=pass photos=6、EXIT=0（`-3.txt` は比較の材質のアルベドの欄を直す前の版）。
+  - `aux-...-gbuffer-albedo.txt`: 変更後の GBuffer のアルベド（`scene-capture/SCN-WL-MATERIAL-PALETTE-diag-albedo2/`）は手前の谷床で線形 (0.294, 0.136, 0.082) Y 0.165・(0.273, 0.127, 0.076) Y 0.154。較正した red_sand の (0.284, 0.132, 0.079)・Y 0.160 と揺らぎの範囲で一致する。
+  - 比較画像を開いた: 地面は白っぽいベージュ（変更前 R 0.67 G 0.56 B 0.36）から赤橙の土（far_02 で R 0.86 G 0.37 B 0.18、写真 0.25・0.13・0.07 と同じ赤の向き）になった。地面の Y は far_01 0.598 → 0.525、far_02 0.572 → 0.462、ground_02 0.312 → 0.306（写真 0.219）。谷床は一様な細粒の赤い土、崖は層理と割れ目のある岩肌、崖錐の裾に礫が読める。
+- Notes: 地面の Y はまだ写真の 2〜3.5 倍（far_01・far_02・ground_01）。材質は実在の範囲の下の側にしたので、残りは材質でなく光の側（写真の谷床は低木とその影が 2〜3 割を覆う・写真の露出と現像。空も写真より 1.7 倍明るく、地面 ÷ 空は写真 0.33・撮影 0.61）。露出やグレーディングでは合わせていない。植生（SCN-WL-GRASS）の後に比べ直す。
+- Notes: 崖の砂岩（cliff_side）は日向で黄みの強い橙に写り、写真の暗い赤褐色（far_02 の崖 Y 0.133）より明るく黄色い（撮影 0.379）。地層と砂漠ワニスは SCN-WL-MATERIAL-STRATA で見る。
+- Notes: 地面の中景と崖の裾に、暗い点の格子の斑が出る（前の撮影にもあり、地面が赤くなって目立つ）。GBuffer のアルベドには無く、光と影の側。`SCN-WL-SHADOW-DOT-GRID` として TASKS.md に足した。
+- Notes: 全シーンでクック済みの sRGB のアルベドが UNORM で読まれ、暗い成分が明るく出ている（地形以外の材質も同じ）。直すと全シーンの見た目が変わるので、この項目では地形だけを直した。試験は足していない。
+- Next: TASKS.md の次の未完の項目。
