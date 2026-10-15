@@ -4671,3 +4671,10 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - この反復はコードを変えない指示（STEER）なので、直しと全項目の焼き直しは次の反復で行う。
 - Next（次の反復）: 新しい 2 つの範囲の細分を粗くする（`kCastleRegions` の 3・4 番目の間隔を 1 → 2 m、細分の下限を 2 → 1。急な升目の細分はおよそ 1/4 になり、崖の細部の区画の合計は版 4 の 8262 万に近い 9 千万台の見込み）。範囲の取り方は変えない。AssetCook を変えると 214 項目すべての印が変わるので、ビルドの後すぐに dem:2,3 を単独の組にした 12 組の並列で焼き（手順の台本は反復 1 の `cook2/run.ps1` と同じ形）、`CookAssets.ps1` で cooked=0 を確かめてから撮影する。撮影の後、ref_far_01 の左（`crop_far01_left.png`、切り出しは (0,500)〜(620,720) の 2 倍）を `v4_crop_far01_left.png` と並べ、段と割れ目の影・境の継ぎ目・溢れ 0 を確かめる。撮影がまた読み込み中から抜けなければ、ジオメトリのプールが 1024 MB から増えないこと（target_mb=3066）が `paths` の外の実行時の側の限界として残る。
 - Notes: 試験は足していない。
+### SCN-WL-CLIFF-DETAIL-ALL 途中（2026-10-15、run 20261015-215220 の反復 1〜2。BLOCKED: ジオメトリのページの置き場の不足）
+- 反復 1: `kCastleRegions` の 3・4 番目を間隔 2 m・細分の下限 1 にして 214 項目を焼き、撮影は ridge で読み込みが終わらず 600 秒を超えた。範囲を ref_far_01 の左の 600 画素に写る急な点がまとまる 3 つの矩形（X −6250〜−5150・Z −8250〜−6250、X −5350〜−4250・Z −7000〜−5500、X −6875〜−6150・Z −8625〜−7875）に絞り、`kTerrainCliffDetailVersion` を 5 にした（02f5598b）。矩形の決め方は `.harness/runs/20261015-215220/aux-SCN-WL-CLIFF-DETAIL-ALL-cook/rects.py`。
+- 反復 2: 版 5 の 214 項目を 12 組の並列で焼いた（1057 秒）。検証: `verify-SCN-WL-CLIFF-DETAIL-ALL-1〜3.txt` は通った（Debug の Game・RelWithDebInfo の AssetCook のビルド EXIT=0、`CookAssets.ps1` cooked=0 skipped=214）。撮影の 4 本目は通らなかった（`verify-SCN-WL-CLIFF-DETAIL-ALL-4.txt`: 7 視点まで撮れ、ref_cliff_01 で `GEOMETRY_PAGES` の evicted が 34115 まで増え、`VRAM_LEDGER geometry_pool blocks=1 capacity_mb=1024 used_mb=1023.1` のまま 600 秒を超えた）。MegaGeometry の溢れは 0（`MEGA_CAPACITY` の 114 行すべて draw_dropped=0）。
+- 三角形（`aux-SCN-WL-CLIFF-DETAIL-ALL-tiles-v5.txt`。この反復で焼いた項目だけ）: dem:2,3 は 1409 万、castle_3_3 は 999 万、dem:1,2 は 893 万、castle_4_3 は 869 万、castle_4_4 は 424 万。範囲を絞っても castle_4_3・castle_4_4 は 2 m の全範囲の版と同じ数。
+- 開いた画像（`scene-capture/SCN-WL-CLIFF-DETAIL-ALL/pair_far01_left_v4_v5.png`。上が版 4、下が版 5）: ref_far_01 の左の奥の崖は、丸い面から、段の棚と縦の割れ目が影を落とす立体になった。焼いた範囲の境の継ぎ目は見えない。
+- Next: `SCN-WL-GEOMETRY-PAGE-THRASH`（実行時のページの置き場の不足）を先に直し、この項目は焼きを変えずに撮影から再開する（`blocked/SCN-WL-CLIFF-DETAIL-ALL.md`）。
+- Notes: 焼きの台本の移す段（`run.ps1` の Move-Item）は PowerShell の ForEach-Object で落ちるので、パッケージと印は bash の mv で移した。試験は足していない。
