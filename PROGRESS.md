@@ -4714,3 +4714,13 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 開いた画像（`scene-capture/SCN-WL-CLIFF-DETAIL-ALL/`）: ref_far_01 の全体、`pair_far01_left_v5_rerun.png`（上が版 5 の撮影、下が今回）、`pair_far01_left_v4_rerun.png`（上が差し戻しの版 4）、`pair_far01_right_v5_rerun.png`、ref_cliff_02。左の奥の崖は版 4 の丸い面から、段の棚と縦の割れ目が影を落とす立体になり、版 5 と同じ（左の切り出しの輝度の差の平均 0.012）。主役のビュート・尖塔・右の崖と並べても段と割れ目の細かさがそろい、範囲の境の継ぎ目は見えない。ref_cliff_02 の尖塔の台座に地層の段と影が出ている。
 - Notes: ref_cliff_02 の地面と遠くの平地の点は、SCN-WL-CLIFF-DETAIL の前からある別の項目（TASKS.md の 2420 行の項目）の対象で、崖の焼き直しによるものではない。試験は足していない。
 - Next: TASKS.md の次の未完の項目。
+### SCN-WL-REVIEW-1 完了（2026-10-16、run 20261015-230406 の反復 4）
+- Done: 荒野の全 11 視点を 1920×1080 で撮り直し、手本の 6 視点の写真｜撮影の一覧を 1 枚にまとめ（`.harness/runs/scene-capture/SCN-WL-REVIEW-1/reference_overview.png`、1920×3478。先頭に「近くの主役の崖は、この確認の後でスキャンの素材と Blender で作り直す予定」と添えた）、写真との差の大きい順の所見と技術の欠陥を `Docs/RenderingValidation/WastelandReference.md` の「確認 1」に書いた。
+- 実装: `Scripts/Terrain/CompareReference.py` の一覧（`write_overview`）は定義だけで呼ばれていなかったので、`reference_overview.png` を書くようにし、先頭の添え書きの `--note` を足した。
+- 検証（`.harness/runs/20261015-230406/`）:
+  - `verify-SCN-WL-REVIEW-1-1.txt`: 荒野の全 11 視点 1920×1080、result=pass（白飛び 0・黒つぶれ 0）、EXIT=0。`MEGA_CAPACITY` の 95 行すべて draw_dropped=0、`GEOMETRY_PAGES` の 32 行すべて evicted=0（最後は resident=15133）、検証レイヤーのログは空。
+  - `verify-SCN-WL-REVIEW-1-2.txt`: `CompareReference.py --verify` result=pass photos=6、EXIT=0。`aux-SCN-WL-REVIEW-1-overview.txt` は `--note` 付きで一覧を書き直した同じ結果。
+- 開いた画像: 一覧の全行、ref_cliff_01 の崖の切り出し、ref_ground_02 の下半分、ref_far_02 の Setting Hen Butte、default・ground・ridge・cliff・outpost・ref_ground_01 の並び。
+- 所見の要点: 差の大きい順に、地表が砂の 1 種類で植生・礫が無い、地面と崖が写真の 2〜9 倍明るく彩度の高い橙、空が白い、近くの主役の崖が縦の丸い溝の面（作り直す予定）、遠景の霞が強い。技術の欠陥は ground_02 の砂の暗い点の列と、崖の縦の溝の等間隔の繰り返し。継ぎ目・浮きは見えない。
+- Notes: リポジトリ直下に `LOOP_STOP`（中身 `boundary`）を書いた。親がユーザーに一覧を渡し、判定を待つ。試験は足していない。
+- Next: ユーザーの判定の後、SCN-WL-CLIFF-SCAN-* ほか TASKS.md の次の項目。

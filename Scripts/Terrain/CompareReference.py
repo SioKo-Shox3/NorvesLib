@@ -3,7 +3,7 @@
 #
 # 使い方:
 #   python Scripts/Terrain/CompareReference.py --capture <CaptureScene.ps1 の OutDir> [--photos far_01,cliff_01] [--out <出力先>]
-#                                              [--verify]
+#                                              [--verify] [--note <一覧の先頭の添え書き>]
 # 写真ごとに <出力先>/reference_<写真>.png と <出力先>/reference_metrics.json を書き、数値を 1 行ずつ出す。
 # 並べた写真をすべて縦に積んだ一覧（左に写真、右に撮影。輪郭と枠は重ねない）を <出力先>/reference_overview.png に書く
 # （節目の確認でユーザーに渡す 1 枚）。
@@ -212,14 +212,17 @@ def describe(label, metrics):
     return " ".join(parts)
 
 
-def write_overview(rows, path, font):
-    """写真｜撮影の組を縦に積んだ一覧を書く。rows は (見出し, 写真の絵, 撮影の絵) の並び"""
+def write_overview(rows, path, font, note=""):
+    """写真｜撮影の組を縦に積んだ一覧を書く。rows は (見出し, 写真の絵, 撮影の絵) の並び。note は一覧の先頭に書く添え書き"""
     width, height = OVERVIEW_PANEL_SIZE
     row_height = OVERVIEW_LABEL_HEIGHT + height
-    sheet = Image.new("RGB", (width * 2, row_height * len(rows)), (24, 24, 24))
+    note_height = OVERVIEW_LABEL_HEIGHT if note else 0
+    sheet = Image.new("RGB", (width * 2, note_height + row_height * len(rows)), (24, 24, 24))
     draw = ImageDraw.Draw(sheet)
+    if note:
+        draw.text((10, 6), note, fill=(255, 210, 120), font=font)
     for index, (label, photo, capture) in enumerate(rows):
-        top = index * row_height
+        top = note_height + index * row_height
         draw.text((10, top + 6), label, fill=(235, 235, 235), font=font)
         sheet.paste(photo.resize(OVERVIEW_PANEL_SIZE, Image.LANCZOS), (0, top + OVERVIEW_LABEL_HEIGHT))
         sheet.paste(capture.resize(OVERVIEW_PANEL_SIZE, Image.LANCZOS), (width, top + OVERVIEW_LABEL_HEIGHT))
@@ -237,6 +240,7 @@ def main():
     parser.add_argument("--photos", default="", help="比べる写真の ID（カンマ区切り。省くとすべて）")
     parser.add_argument("--out", default="", help="出力先（省くと --capture）")
     parser.add_argument("--verify", action="store_true", help="写真・撮影がそろい、撮影が 1920×1080 以上かを確かめる")
+    parser.add_argument("--note", default="", help="一覧の先頭に書く添え書き（節目の確認で渡すときの注記）")
     args = parser.parse_args()
 
     wanted = [p for p in args.photos.split(",") if p]
@@ -257,6 +261,7 @@ def main():
     ) + f" scale={albedo['scale']:.2f}")
     report = {"albedo": albedo, "photos": {}}
     font = load_font(18)
+    overview_rows = []
 
     for entry in photos:
         photo_path = os.path.join(PHOTO_DIR, entry["id"] + ".jpg")
@@ -292,6 +297,9 @@ def main():
         }
         print("COMPARE_REFERENCE " + describe(f"photo={entry['id']}", photo_metrics))
         print("COMPARE_REFERENCE " + describe(f"view={entry['view']}", capture_metrics))
+        overview_rows.append(
+            (f"左: 写真 {entry['id']}　右: 撮影 {entry['view']}（{OUTLINE_TEXT[entry['outline']]}）", photo_panel, capture_panel)
+        )
 
         left = photo_panel.copy()
         right = capture_panel.copy()
@@ -318,6 +326,10 @@ def main():
 
     with open(os.path.join(out_dir, "reference_metrics.json"), "w", encoding="utf-8") as file:
         json.dump(report, file, ensure_ascii=False, indent=2)
+    if overview_rows:
+        write_overview(overview_rows, os.path.join(out_dir, "reference_overview.png"), font, args.note)
+    else:
+        failures.append("一覧に並べる組が無い")
     if failures:
         for failure in failures:
             print(f"COMPARE_REFERENCE failure={failure}")
