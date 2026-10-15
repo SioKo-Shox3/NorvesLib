@@ -1,0 +1,503 @@
+﻿#include "Rendering/FoliagePass.h"
+#include "Rendering/CameraViewConstants.h"
+#include "Rendering/FoliageTypes.h"
+#include "Rendering/FrameResourceOwner.h"
+#include "Rendering/RenderGraph/RenderGraphBuilder.h"
+#include "Rendering/RenderGraph/RenderGraphResourceNames.h"
+#include "Rendering/RenderGraph/RenderGraphResources.h"
+#include "Rendering/ShaderManager.h"
+#include "Rendering/ViewRenderContext.h"
+#include "RHI/ICommandList.h"
+#include "RHI/IDevice.h"
+#include "RHI/IDescriptorSet.h"
+#include "RHI/ITexture.h"
+#include "Logging/LogMacros.h"
+#include <cmath>
+#include <cstddef>
+
+namespace NorvesLib::Core::Rendering
+{
+    namespace
+    {
+        /// Common/FoliageData.glsl の FoliageData と同じ並び（std140）
+        struct FoliageUniform
+        {
+            float view[16];
+            float projection[16];
+            float previousView[16];
+            float previousProjection[16];
+            float cameraPosition[4];
+            float wind[4];
+            float windParams[4];
+            float stemColor[4];
+            float tipColorA[4];
+            float tipColorB[4];
+            float frameParams[4];
+        };
+        static_assert(sizeof(FoliageUniform) == 368u, "Common/FoliageData.glsl の FoliageData と合わせる");
+
+        static_assert(offsetof(FoliageVertex, Normal) == 12);
+        static_assert(offsetof(FoliageVertex, Side) == 24);
+        static_assert(offsetof(FoliageVertex, Flex) == 36);
+        static_assert(offsetof(FoliageInstance, WidthScale) == 16);
+
+        /// 風の時計の折り返し[s]（float の精度を保つ。折り返しの瞬間だけ揺れが飛ぶ）
+        constexpr double kWindClockWrapSeconds = 4096.0;
+
+        RHI::DescriptorSetDesc CreateFoliageDescriptorSetDesc()
+        {
+            RHI::DescriptorSetDesc descriptorSetDesc;
+            RHI::DescriptorBinding uboBinding;
+            uboBinding.binding = 0;
+            uboBinding.type = RHI::ResourceBindType::ConstantBuffer;
+            uboBinding.stages = RHI::ShaderStage::Vertex | RHI::ShaderStage::Pixel;
+            descriptorSetDesc.bindings.push_back(uboBinding);
+            return descriptorSetDesc;
+        }
+
+        /// GBuffer の 5 枚の名前（gbuffer.frag の出力の順）
+        const Identity &ColorTargetName(uint32_t index)
+        {
+            static const Identity kNames[] = {
+                RenderGraphResourceNames::GBufferAlbedo,   RenderGraphResourceNames::GBufferNormal,
+                RenderGraphResourceNames::GBufferMaterial, RenderGraphResourceNames::GBufferEmissive,
+                RenderGraphResourceNames::GBufferVelocity,
+            };
+            return kNames[index];
+        }
+
+        void CopyColor(const float (&source)[3], float alpha, float (&destination)[4])
+        {
+            destination[0] = source[0];
+            destination[1] = source[1];
+            destination[2] = source[2];
+            destination[3] = alpha;
+        }
+    } // namespace
+
+    FoliagePass::~FoliagePass()
+    {
+        Shutdown();
+    }
+
+    bool FoliagePass::Initialize(ViewRenderContext &context)
+    {
+        if (m_bInitialized)
+        {
+            return true;
+        }
+        if (!context.Device || !context.ShaderMgr)
+        {
+            NORVES_LOG_ERROR("FoliagePass", "Device か ShaderManager がありません");
+            return false;
+        }
+        m_Device = context.Device;
+        m_VertexShader = context.ShaderMgr->LoadShader("foliage.vert", RHI::ShaderStage::Vertex);
+        m_FragmentShader = context.ShaderMgr->LoadShader("foliage.frag", RHI::ShaderStage::Pixel);
+        m_DescriptorSetLayout = m_Device->GetOrCreateDescriptorSetLayout(CreateFoliageDescriptorSetDesc());
+        if (!m_VertexShader || !m_FragmentShader || !m_DescriptorSetLayout)
+        {
+            NORVES_LOG_ERROR("FoliagePass", "FOLIAGE_INIT_FAILED 草・低木のシェーダーか記述子のレイアウトを作れません");
+            m_VertexShader.reset();
+            m_FragmentShader.reset();
+            m_DescriptorSetLayout.reset();
+            m_Device = nullptr;
+            return false;
+        }
+        m_bInitialized = true;
+        return true;
+    }
+
+    void FoliagePass::Shutdown()
+    {
+        if (!m_bInitialized)
+        {
+            return;
+        }
+        m_RenderPass.reset();
+        m_Framebuffer.reset();
+        m_Pipeline.reset();
+        m_VertexShader.reset();
+        m_FragmentShader.reset();
+        m_DescriptorSetLayout.reset();
+        for (RGResourceHandle &handle : m_ColorHandles)
+        {
+            handle = {};
+        }
+        m_DepthHandle = {};
+        for (const RHI::ITexture *&target : m_FramebufferTargets)
+        {
+            target = nullptr;
+        }
+        for (RHI::Format &format : m_TargetFormats)
+        {
+            format = RHI::Format::UNKNOWN;
+        }
+        m_Device = nullptr;
+        m_bInitialized = false;
+    }
+
+    void FoliagePass::Setup(ViewRenderContext &context)
+    {
+        (void)context;
+    }
+
+    void FoliagePass::Execute(ViewRenderContext &context)
+    {
+        (void)context;
+    }
+
+    void FoliagePass::Declare(RenderGraphBuilder &builder)
+    {
+        for (RGResourceHandle &handle : m_ColorHandles)
+        {
+            handle = {};
+        }
+        m_DepthHandle = {};
+
+        const ViewRenderContext *context = builder.GetContext();
+        if (!context || !context->SnapshotFoliage || context->SnapshotFoliage->IsEmpty() || !context->GetActiveCamera())
+        {
+            builder.PreserveInsertionOrder();
+            return;
+        }
+        // GBuffer の 5 枚と深度がそろう構成でだけ描く（どれかが無い構成では何も宣言しない）
+        RGTextureHandle available;
+        for (uint32_t index = 0; index < kColorTargetCount; ++index)
+        {
+            if (!builder.TryGetTexture(ColorTargetName(index), available))
+            {
+                builder.PreserveInsertionOrder();
+                return;
+            }
+        }
+        if (!builder.TryGetTexture(RenderGraphResourceNames::GBufferDepth, available))
+        {
+            builder.PreserveInsertionOrder();
+            return;
+        }
+
+        // 前のパス（解決・GBuffer の描画）の内容へ重ねる
+        for (uint32_t index = 0; index < kColorTargetCount; ++index)
+        {
+            RGTextureHandle handle;
+            if (builder.TryUseAttachment(ColorTargetName(index), handle, RGAttachmentKind::Color, RGAttachmentMutability::Write,
+                                         RHI::AttachmentLoadOp::Load, RHI::AttachmentStoreOp::Store,
+                                         RHI::ResourceState::RenderTarget, RHI::ResourceState::ShaderResource))
+            {
+                m_ColorHandles[index] = handle.ToResourceHandle();
+            }
+        }
+        RGTextureHandle depthHandle;
+        if (builder.TryUseAttachment(RenderGraphResourceNames::GBufferDepth, depthHandle, RGAttachmentKind::DepthStencil,
+                                     RGAttachmentMutability::Write, RHI::AttachmentLoadOp::Load,
+                                     RHI::AttachmentStoreOp::Store, RHI::ResourceState::DepthWrite,
+                                     RHI::ResourceState::ShaderResource))
+        {
+            m_DepthHandle = depthHandle.ToResourceHandle();
+        }
+        builder.PreserveInsertionOrder();
+    }
+
+    void FoliagePass::Execute(RenderGraphResources &resources, ViewRenderContext &context)
+    {
+        const FoliageScene *scene = context.SnapshotFoliage;
+        const CameraProxy *activeCamera = context.GetActiveCamera();
+        if (!scene || scene->IsEmpty() || !activeCamera || !context.CommandList || !context.FrameResources)
+        {
+            return;
+        }
+        if (!m_DepthHandle.IsValid())
+        {
+            return;
+        }
+        for (const RGResourceHandle &handle : m_ColorHandles)
+        {
+            if (!handle.IsValid())
+            {
+                return;
+            }
+        }
+        if (!m_bInitialized && !Initialize(context))
+        {
+            return;
+        }
+
+        RHI::TexturePtr colorTargets[kColorTargetCount];
+        for (uint32_t index = 0; index < kColorTargetCount; ++index)
+        {
+            colorTargets[index] = resources.GetTexture(m_ColorHandles[index]);
+            if (!colorTargets[index])
+            {
+                return;
+            }
+        }
+        RHI::TexturePtr depthTarget = resources.GetTexture(m_DepthHandle);
+        if (!depthTarget || !EnsureTargets(colorTargets, depthTarget))
+        {
+            return;
+        }
+
+        // カメラ（GBufferPass と同じ組み方。前のカメラが無いときは速度を 0 にする）
+        const CameraViewConstants cameraConstants =
+            CameraViewConstants::BuildForDevice(*activeCamera, context.GetActiveAspectRatio(), context.Device);
+        const CameraProxy *previousCamera = context.GetPreviousCamera();
+        const CameraViewConstants previousConstants =
+            previousCamera ? CameraViewConstants::BuildForDevice(*previousCamera, context.GetActiveAspectRatio(), context.Device)
+                           : cameraConstants;
+
+        FoliageUniform frameTemplate{};
+        cameraConstants.CopyShaderView(frameTemplate.view);
+        cameraConstants.CopyShaderProjection(frameTemplate.projection);
+        previousConstants.CopyShaderView(frameTemplate.previousView);
+        previousConstants.CopyShaderProjection(frameTemplate.previousProjection);
+        cameraConstants.CopyCameraPosition(frameTemplate.cameraPosition);
+        // 距離 1 m あたりの 1 画素の大きさ（縦の画角と描画の高さから）
+        const uint32_t renderHeight = context.GetActiveRenderHeight();
+        const float halfFovRadians = activeCamera->FieldOfView * 0.5f * 3.14159265f / 180.0f;
+        frameTemplate.cameraPosition[3] =
+            renderHeight > 0 ? 2.0f * std::tan(halfFovRadians) / static_cast<float>(renderHeight) : 0.0f;
+
+        // 風の向きと時計（決定的な撮影では 1/60 秒の固定刻みで、エポックの始めから数える）
+        const FoliageWindParameters &wind = scene->Wind;
+        const float directionLength = std::sqrt(wind.DirectionX * wind.DirectionX + wind.DirectionZ * wind.DirectionZ);
+        frameTemplate.wind[0] = directionLength > 1.0e-6f ? wind.DirectionX / directionLength : 1.0f;
+        frameTemplate.wind[1] = directionLength > 1.0e-6f ? wind.DirectionZ / directionLength : 0.0f;
+        const float windTime =
+            static_cast<float>(std::fmod(context.TotalTime, kWindClockWrapSeconds)) + wind.TimeOffsetSeconds;
+        frameTemplate.wind[2] = windTime;
+        frameTemplate.wind[3] = windTime - context.DeltaTime;
+        frameTemplate.windParams[0] = wind.GustSpeed;
+        frameTemplate.windParams[1] = wind.GustScale;
+        frameTemplate.frameParams[0] = previousCamera ? 1.0f : 0.0f;
+
+        FrameResourceLane *frameResources = context.FrameResources;
+        RHI::ICommandList *commandList = context.CommandList;
+        commandList->BeginRenderPass(m_RenderPass, m_Framebuffer);
+        commandList->SetViewport(context.GetActiveLocalViewport());
+        commandList->SetScissor(context.GetActiveLocalScissor());
+        commandList->SetPipeline(m_Pipeline);
+
+        uint32_t drawnBatches = 0;
+        uint64_t drawnInstances = 0;
+        for (const FoliageBatch &batch : scene->Batches)
+        {
+            if (!batch.Mesh || !batch.Instances || batch.Mesh->Vertices.empty() || batch.Mesh->Indices.empty() ||
+                batch.Instances->empty())
+            {
+                continue;
+            }
+            const FoliageMeshData &mesh = *batch.Mesh;
+            const auto &instances = *batch.Instances;
+            const FrameUploadAllocation vertexAllocation = frameResources->AllocateUploadData(
+                mesh.Vertices.data(), static_cast<uint64_t>(mesh.Vertices.size()) * sizeof(FoliageVertex),
+                FrameUploadUsage::Vertex);
+            const FrameUploadAllocation indexAllocation = frameResources->AllocateUploadData(
+                mesh.Indices.data(), static_cast<uint64_t>(mesh.Indices.size()) * sizeof(uint32_t), FrameUploadUsage::Index);
+            const FrameUploadAllocation instanceAllocation = frameResources->AllocateUploadData(
+                instances.data(), static_cast<uint64_t>(instances.size()) * sizeof(FoliageInstance), FrameUploadUsage::Vertex);
+
+            FoliageUniform uniform = frameTemplate;
+            uniform.windParams[2] = batch.WindStrength;
+            uniform.windParams[3] = batch.WindSwayFrequency;
+            CopyColor(batch.StemColor, batch.Roughness, uniform.stemColor);
+            CopyColor(batch.TipColorA, batch.MinPixelWidth, uniform.tipColorA);
+            CopyColor(batch.TipColorB, batch.MaxWidenRatio, uniform.tipColorB);
+            uniform.frameParams[1] = mesh.Height;
+            const FrameUploadAllocation uniformAllocation = frameResources->AllocateConstants(uniform);
+            const FrameDescriptorAllocation descriptorAllocation = frameResources->AllocateDescriptorSet(m_DescriptorSetLayout);
+            if (!vertexAllocation.IsValid() || !indexAllocation.IsValid() || !instanceAllocation.IsValid() ||
+                !uniformAllocation.IsValid() || !descriptorAllocation.IsValid())
+            {
+                continue;
+            }
+            const RHI::DescriptorSetPtr &descriptorSet = descriptorAllocation.Set;
+            descriptorSet->BindConstantBuffer(0, uniformAllocation.Buffer, uniformAllocation.GetOffset32(),
+                                              uniformAllocation.GetSize32());
+            descriptorSet->Update();
+
+            commandList->SetDescriptorSet(descriptorSet, 0);
+            commandList->SetVertexBuffer(vertexAllocation.Buffer, vertexAllocation.Offset, 0);
+            commandList->SetVertexBuffer(instanceAllocation.Buffer, instanceAllocation.Offset, 1);
+            commandList->SetIndexBuffer(indexAllocation.Buffer, indexAllocation.Offset, RHI::IndexType::Uint32);
+            commandList->DrawIndexedInstanced(static_cast<uint32_t>(mesh.Indices.size()),
+                                              static_cast<uint32_t>(instances.size()), 0, 0, 0);
+            ++drawnBatches;
+            drawnInstances += instances.size();
+        }
+        commandList->EndRenderPass();
+
+        if (drawnBatches != m_LoggedBatchCount || drawnInstances != m_LoggedInstanceCount)
+        {
+            m_LoggedBatchCount = drawnBatches;
+            m_LoggedInstanceCount = drawnInstances;
+            NORVES_LOG_INFO("FoliagePass", "FOLIAGE_DRAW batches=%u instances=%llu", drawnBatches,
+                            static_cast<unsigned long long>(drawnInstances));
+        }
+    }
+
+    bool FoliagePass::EnsureTargets(const RHI::TexturePtr (&colorTargets)[kColorTargetCount],
+                                    const RHI::TexturePtr &depthTarget)
+    {
+        // render pass とパイプラインは描き先の形式だけで決まる。framebuffer は描き先のテクスチャが替わったら作り直す
+        bool bSameFormats = m_RenderPass && m_Pipeline && m_TargetFormats[kColorTargetCount] == depthTarget->GetFormat();
+        for (uint32_t index = 0; index < kColorTargetCount && bSameFormats; ++index)
+        {
+            bSameFormats = m_TargetFormats[index] == colorTargets[index]->GetFormat();
+        }
+        bool bSameTargets = bSameFormats && m_Framebuffer && m_FramebufferTargets[kColorTargetCount] == depthTarget.get();
+        for (uint32_t index = 0; index < kColorTargetCount && bSameTargets; ++index)
+        {
+            bSameTargets = m_FramebufferTargets[index] == colorTargets[index].get();
+        }
+        if (bSameTargets)
+        {
+            return true;
+        }
+        m_Framebuffer.reset();
+        for (const RHI::ITexture *&target : m_FramebufferTargets)
+        {
+            target = nullptr;
+        }
+        if (!bSameFormats && !CreatePipeline(colorTargets, depthTarget))
+        {
+            return false;
+        }
+
+        RHI::FramebufferDesc framebufferDesc;
+        framebufferDesc.renderPass = m_RenderPass;
+        for (const RHI::TexturePtr &target : colorTargets)
+        {
+            framebufferDesc.colorTargets.push_back(target);
+        }
+        framebufferDesc.depthStencilTarget = depthTarget;
+        framebufferDesc.width = depthTarget->GetWidth();
+        framebufferDesc.height = depthTarget->GetHeight();
+        m_Framebuffer = m_Device->CreateFramebuffer(framebufferDesc);
+        if (!m_Framebuffer)
+        {
+            NORVES_LOG_ERROR("FoliagePass", "FOLIAGE_INIT_FAILED framebuffer を作れません");
+            return false;
+        }
+        for (uint32_t index = 0; index < kColorTargetCount; ++index)
+        {
+            m_FramebufferTargets[index] = colorTargets[index].get();
+        }
+        m_FramebufferTargets[kColorTargetCount] = depthTarget.get();
+        return true;
+    }
+
+    bool FoliagePass::CreatePipeline(const RHI::TexturePtr (&colorTargets)[kColorTargetCount],
+                                     const RHI::TexturePtr &depthTarget)
+    {
+        m_RenderPass.reset();
+        m_Pipeline.reset();
+        for (RHI::Format &format : m_TargetFormats)
+        {
+            format = RHI::Format::UNKNOWN;
+        }
+
+        RHI::RenderPassDesc renderPassDesc;
+        for (uint32_t index = 0; index < kColorTargetCount; ++index)
+        {
+            RHI::AttachmentDesc colorAttachment;
+            colorAttachment.format = colorTargets[index]->GetFormat();
+            colorAttachment.isDepthStencil = false;
+            colorAttachment.clear = false;
+            colorAttachment.loadOp = RHI::AttachmentLoadOp::Load;
+            colorAttachment.storeOp = RHI::AttachmentStoreOp::Store;
+            colorAttachment.initialState = RHI::ResourceState::RenderTarget;
+            colorAttachment.finalState = RHI::ResourceState::ShaderResource;
+            renderPassDesc.colorAttachments.push_back(colorAttachment);
+        }
+        renderPassDesc.hasDepthStencil = true;
+        renderPassDesc.depthStencilAttachment.format = depthTarget->GetFormat();
+        renderPassDesc.depthStencilAttachment.isDepthStencil = true;
+        renderPassDesc.depthStencilAttachment.clear = false;
+        renderPassDesc.depthStencilAttachment.loadOp = RHI::AttachmentLoadOp::Load;
+        renderPassDesc.depthStencilAttachment.storeOp = RHI::AttachmentStoreOp::Store;
+        renderPassDesc.depthStencilAttachment.initialState = RHI::ResourceState::DepthWrite;
+        renderPassDesc.depthStencilAttachment.finalState = RHI::ResourceState::ShaderResource;
+        m_RenderPass = m_Device->CreateRenderPass(renderPassDesc);
+        if (!m_RenderPass)
+        {
+            NORVES_LOG_ERROR("FoliagePass", "FOLIAGE_INIT_FAILED render pass を作れません");
+            return false;
+        }
+
+        RHI::GraphicsPipelineDesc pipelineDesc;
+        pipelineDesc.vertexShader = m_VertexShader;
+        pipelineDesc.pixelShader = m_FragmentShader;
+        pipelineDesc.primitiveTopology = RHI::PrimitiveTopology::TriangleList;
+
+        RHI::VertexBindingDesc vertexBinding;
+        vertexBinding.binding = 0;
+        vertexBinding.stride = sizeof(FoliageVertex);
+        vertexBinding.inputRate = RHI::VertexInputRate::Vertex;
+        pipelineDesc.vertexBindings.push_back(vertexBinding);
+        RHI::VertexBindingDesc instanceBinding;
+        instanceBinding.binding = 1;
+        instanceBinding.stride = sizeof(FoliageInstance);
+        instanceBinding.inputRate = RHI::VertexInputRate::Instance;
+        pipelineDesc.vertexBindings.push_back(instanceBinding);
+
+        struct AttributeLayout
+        {
+            uint32_t Location;
+            uint32_t Binding;
+            RHI::Format Format;
+            uint32_t Offset;
+        };
+        const AttributeLayout attributes[] = {
+            {0, 0, RHI::Format::R32G32B32_FLOAT, static_cast<uint32_t>(offsetof(FoliageVertex, Position))},
+            {1, 0, RHI::Format::R32G32B32_FLOAT, static_cast<uint32_t>(offsetof(FoliageVertex, Normal))},
+            {2, 0, RHI::Format::R32G32B32_FLOAT, static_cast<uint32_t>(offsetof(FoliageVertex, Side))},
+            {3, 0, RHI::Format::R32G32B32A32_FLOAT, static_cast<uint32_t>(offsetof(FoliageVertex, Flex))},
+            {4, 1, RHI::Format::R32G32B32A32_FLOAT, static_cast<uint32_t>(offsetof(FoliageInstance, Position))},
+            {5, 1, RHI::Format::R32G32B32A32_FLOAT, static_cast<uint32_t>(offsetof(FoliageInstance, WidthScale))},
+        };
+        for (const AttributeLayout &layout : attributes)
+        {
+            RHI::VertexAttributeDesc attribute;
+            attribute.location = layout.Location;
+            attribute.binding = layout.Binding;
+            attribute.format = layout.Format;
+            attribute.offset = layout.Offset;
+            pipelineDesc.vertexAttributes.push_back(attribute);
+        }
+
+        // 葉の帯は両面を描く（裏の法線はフラグメントが面で鏡に映す）
+        pipelineDesc.rasterState.polygonMode = RHI::PolygonMode::Fill;
+        pipelineDesc.rasterState.cullMode = RHI::CullMode::None;
+        pipelineDesc.rasterState.frontFace = RHI::FrontFace::CounterClockwise;
+        pipelineDesc.rasterState.lineWidth = 1.0f;
+        // ビジビリティバッファのラスタと同じ深度の比較
+        pipelineDesc.depthStencilState.depthTestEnable = true;
+        pipelineDesc.depthStencilState.depthWriteEnable = true;
+        pipelineDesc.depthStencilState.depthCompareOp = RHI::CompareOp::LessOrEqual;
+        for (uint32_t index = 0; index < kColorTargetCount; ++index)
+        {
+            RHI::BlendAttachmentDesc blendAttachment;
+            blendAttachment.blendEnable = false;
+            blendAttachment.colorWriteMask = RHI::ColorWriteMask::All;
+            pipelineDesc.blendState.attachments.push_back(blendAttachment);
+        }
+        pipelineDesc.renderPass = m_RenderPass;
+        pipelineDesc.descriptorSetLayouts.push_back(CreateFoliageDescriptorSetDesc());
+        m_Pipeline = m_Device->CreateGraphicsPipeline(pipelineDesc);
+        if (!m_Pipeline)
+        {
+            NORVES_LOG_ERROR("FoliagePass", "FOLIAGE_INIT_FAILED パイプラインを作れません");
+            m_RenderPass.reset();
+            return false;
+        }
+
+        for (uint32_t index = 0; index < kColorTargetCount; ++index)
+        {
+            m_TargetFormats[index] = colorTargets[index]->GetFormat();
+        }
+        m_TargetFormats[kColorTargetCount] = depthTarget->GetFormat();
+        return true;
+    }
+
+} // namespace NorvesLib::Core::Rendering

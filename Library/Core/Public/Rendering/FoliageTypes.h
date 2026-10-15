@@ -1,0 +1,124 @@
+﻿#pragma once
+
+/**
+ * @file FoliageTypes.h
+ * @brief 草・低木の株（葉や枝の束）をインスタンスの配列から描くためのデータ
+ *
+ * 1 つの束（FoliageBatch）は、1 つの株のメッシュと、その株を置くインスタンスの配列と、色と風の値を持つ。
+ * GameThread が RenderWorld::SetFoliageBatches で束の一覧を与え、毎フレームの FramePacket に写して RenderThread へ渡す。
+ * メッシュとインスタンスの配列は作った後に書き換えない共有の値（TSharedPtr<const ...>）で、写しは参照を数えるだけで済む。
+ * 描くのは FoliagePass（ビジビリティの解決の後に GBuffer へ直接ラスタする）で、束ごとに 1 回のインスタンス描画にする。
+ */
+
+#include "Container/Containers.h"
+#include "Container/PointerTypes.h"
+
+#include <cstdint>
+
+namespace NorvesLib::Core::Rendering
+{
+    /**
+     * @brief 株のメッシュの頂点（52 バイト。foliage.vert の頂点の入力と同じ並び）
+     *
+     * 葉・枝は幅の狭い帯か細い角柱で、Side は帯の中心線からこの頂点までの横の向きと長さ（半分の幅）。遠くで帯が画素より
+     * 細くなると、頂点シェーダーが Side の向きへ広げて 1 画素の幅を保つ（切れ切れの点にならない）。
+     */
+    struct FoliageVertex
+    {
+        /// 株の根元を原点とする位置[m]（+Y が上）
+        float Position[3] = {0.0f, 0.0f, 0.0f};
+        /// 表の側の法線
+        float Normal[3] = {0.0f, 1.0f, 0.0f};
+        /// 中心線からこの頂点への横の向きと長さ[m]（中心線の上の頂点は 0）
+        float Side[3] = {0.0f, 0.0f, 0.0f};
+        /// 風でしなる量の重み（根元 0、先 1）
+        float Flex = 0.0f;
+        /// 茎の色（0）から先の色（1）への混ぜ具合。葉・枝ごとの揺らぎを含む
+        float Tint = 0.0f;
+        /// 株の中の遮蔽（1 は遮られない。株の内側・根元ほど小さい）
+        float Occlusion = 1.0f;
+        /// 葉・枝ごとの細かな揺れの位相（0〜1。同じ葉・枝の頂点は同じ値）
+        float Phase = 0.0f;
+    };
+    static_assert(sizeof(FoliageVertex) == 52, "foliage.vert の頂点の入力と合わせる");
+
+    /// 株のメッシュ（作った後は書き換えない）
+    struct FoliageMeshData
+    {
+        Container::VariableArray<FoliageVertex> Vertices;
+        Container::VariableArray<uint32_t> Indices;
+        /// 株の高さ[m]（インスタンスの高さの倍率が 1 のとき）。風のしなりの大きさをこれに比例させる
+        float Height = 0.0f;
+    };
+
+    /**
+     * @brief 株 1 つの置き方（32 バイト。foliage.vert のインスタンスの入力と同じ並び）
+     */
+    struct FoliageInstance
+    {
+        /// 根元のワールドの位置[m]
+        float Position[3] = {0.0f, 0.0f, 0.0f};
+        /// Y 軸まわりの向き[rad]
+        float Yaw = 0.0f;
+        /// 横（X・Z）と高さ（Y）の倍率
+        float WidthScale = 1.0f;
+        float HeightScale = 1.0f;
+        /// 色の揺らぎ（0〜1。先の色 TipColorA から TipColorB への混ぜ具合）
+        float ColorVariation = 0.0f;
+        /// 風の揺れの位相（0〜1）
+        float WindPhase = 0.0f;
+    };
+    static_assert(sizeof(FoliageInstance) == 32, "foliage.vert のインスタンスの入力と合わせる");
+
+    /**
+     * @brief 1 種類の株の束（1 回のインスタンス描画で描く）
+     */
+    struct FoliageBatch
+    {
+        Container::TSharedPtr<const FoliageMeshData> Mesh;
+        Container::TSharedPtr<const Container::VariableArray<FoliageInstance>> Instances;
+        /// 茎・根元の色と、先の色の 2 つ（線形のアルベド）。インスタンスの ColorVariation で先の 2 色を混ぜる
+        float StemColor[3] = {0.2f, 0.17f, 0.12f};
+        float TipColorA[3] = {0.4f, 0.3f, 0.15f};
+        float TipColorB[3] = {0.3f, 0.25f, 0.18f};
+        /// 粗さ
+        float Roughness = 0.85f;
+        /// 風の強さ（強い突風のとき、先が株の高さの何倍ずれるか）
+        float WindStrength = 0.15f;
+        /// 揺れの周波数[Hz]（株の固有の揺れ。細い草ほど速い）
+        float WindSwayFrequency = 0.6f;
+        /// 帯を広げて保つ画面上の最小の幅[画素]（0 で広げない）と、元の幅に対する広げる上限の倍率
+        float MinPixelWidth = 0.75f;
+        float MaxWidenRatio = 3.0f;
+        /// 名前（ログ用）
+        const char *DebugName = "foliage";
+    };
+
+    /**
+     * @brief 草・低木の全部の束に共通の風
+     */
+    struct FoliageWindParameters
+    {
+        /// 風の吹いていく向き（XZ。長さ 1 にして使う）
+        float DirectionX = 1.0f;
+        float DirectionZ = 0.0f;
+        /// 突風の塊が流れる速さ[m/s]と、塊の大きさ[m]
+        float GustSpeed = 4.0f;
+        float GustScale = 14.0f;
+        /// 風の時計に足す値[s]（撮影で、同じ構図の時刻だけを変えた 2 枚を撮るのに使う）
+        float TimeOffsetSeconds = 0.0f;
+    };
+
+    /// FramePacket で渡す草・低木の一覧
+    struct FoliageScene
+    {
+        Container::VariableArray<FoliageBatch> Batches;
+        FoliageWindParameters Wind;
+
+        bool IsEmpty() const
+        {
+            return Batches.empty();
+        }
+    };
+
+} // namespace NorvesLib::Core::Rendering
