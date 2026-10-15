@@ -4678,3 +4678,18 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 開いた画像（`scene-capture/SCN-WL-CLIFF-DETAIL-ALL/pair_far01_left_v4_v5.png`。上が版 4、下が版 5）: ref_far_01 の左の奥の崖は、丸い面から、段の棚と縦の割れ目が影を落とす立体になった。焼いた範囲の境の継ぎ目は見えない。
 - Next: `SCN-WL-GEOMETRY-PAGE-THRASH`（実行時のページの置き場の不足）を先に直し、この項目は焼きを変えずに撮影から再開する（`blocked/SCN-WL-CLIFF-DETAIL-ALL.md`）。
 - Notes: 焼きの台本の移す段（`run.ps1` の Move-Item）は PowerShell の ForEach-Object で落ちるので、パッケージと印は bash の mv で移した。試験は足していない。
+### SCN-WL-GEOMETRY-PAGE-THRASH 完了（2026-10-15、run 20261015-230406 の反復 1）
+- 見立ての確認（版 5 の撮影の `views.Game.log`、`scene-capture/SCN-WL-CLIFF-DETAIL-ALL/`）: 186 個のページを流すメッシュの根の区画だけで 552 MB が 1 つの塊（1024 MB）に入り、ページの常駐が約 4100 ページ・450 MB に届くと塊が埋まる。そこから一度に 3〜4 千ページを外して 700〜1300 ページへ戻ることを繰り返していた（evicted は 3166 → 5642 → 9704 → … → 34115 と飛び飛びに増える）。ストリーマの目標は target − 根の区画（約 2.5 GB）で効いておらず（budget_blocked=0）、NoSpace の追い出しのループだけが外していた。見立てどおり。
+- Done:
+  - ストリーマ（`GeometryPageStreamer.h`）: NoSpace のとき、同じ置き場（`GeometryPageDescriptor::PlacementGroup`。本番は塊の番号）の常駐ページだけを LRU で外す。外した区画の返却待ちの量（`IGeometryPageBackend::GetReclaimPendingBytes`）が、この Update で空きを待つページの区画の合計に届いたら外すのを止めて次のフレームで出し直す。
+  - プール（`GeometryPool.h`）: 持ち主が GpuRetireQueue へ渡した区画を、空きへ戻るまで塊ごとの返却待ちとして数える（`RegionLease::MarkRetiring`・`GetRetiringBytes`）。塊を 1 つ足してその中から借りる `AllocateInNewBlock` を足した（目標があるときは持っている塊と合わせて目標を超えない大きさへ縮め、収まらなければ足さない）。
+  - ストア（`MegaGeometryResourceStore`）: メッシュの区画は、塊ごとに「メッシュの区画＋ページの置き場の見込み（流すページの区画の合計の 1/4）」を数えて収まる塊へ置き、収まらなければ目標の範囲で塊を増やし、それもできなければ今までどおり空きのある塊へ置く。`GEOMETRY_PAGES_STREAMED` に置いた塊（block=）を足した。
+  - 試験: `GeometryPageStreamerTest.cpp` に `TestNoSpaceWaitsForRetiredRegions` を 1 件足した（2 つの塊、塊 0 が埋まった状態でページを要求し、GPU の完了が止まっている 7 フレームで外すのは同じ塊の 1 ページだけ・ほかの塊のより古いページは外さない・返却後に常駐する）。`RenderResourcesDomainContractTest --test=GeometryPageStreamerTest` は成功。
+- 検証（`.harness/runs/20261015-230406/`）:
+  - `verify-SCN-WL-GEOMETRY-PAGE-THRASH-1.txt`: Debug の Game のビルド EXIT=0。
+  - `verify-SCN-WL-GEOMETRY-PAGE-THRASH-2.txt`: 荒野の全 11 視点 1920×1080（崖の細部の版 5 の焼きのまま）、result=pass（白飛び 0・黒つぶれ 0）、EXIT=0、391 秒（SCENE_READY は起動から 245 秒、11 視点は 130 秒で撮れた）。検証レイヤーのログは空。`GEOMETRY_PAGES` の最後は resident=15133・resident_mb=1669.87・evicted=0（外したページ 0）。プールは塊 3 つ・3072 MB（block=0 に 43、1 に 81、2 に 62 メッシュ）、used_mb は最大 2229。`MEGA_CAPACITY` の 95 行すべてで draw_dropped=0・visible_list_overflow=0・bvh_overflow=0。ref_cliff_01・ref_far_01 を開いた: 穴・欠けは無く、ref_far_01 の左の奥の崖まで段と割れ目が出る。
+  - `verify-SCN-WL-GEOMETRY-PAGE-THRASH-3.txt`: mega-bananas の既定（4 視点）、result=pass、EXIT=0、100 秒。塊 1 つ・1024 MB（変更前と同じ）、evicted=0、溢れ 0、検証レイヤーのログは空。最初のメッシュから SCENE_READY まで 8.3 秒で、その間はシェーダーのコンパイル待ち（ページの読み込みは SCENE_READY の後）。Debug の mega-bananas の前回の撮影は無く、比べたのは RelWithDebInfo の 5.8 秒だけ。
+  - `verify-SCN-WL-GEOMETRY-PAGE-THRASH-4.txt`: 起動画面の既定の視点、result=pass、EXIT=0、110 秒。塊 1 つ・1024 MB、ページ 205、evicted=0、溢れ 0。最初のメッシュから SCENE_READY まで 2.7 秒（前回の SCN-WL-FAR-SHADING-det・SCN-WL-SHADOW-DOT-GRID は 2.4 秒）。起動から最初のメッシュまでのシェーダーのコンパイルが今回 104 秒（前回 72〜88 秒）で、全体の差の大半はそこ。画像は前回と PSNR 44.5〜46.3（前回どうしは 45.7）・平均輝度 119.96（前回 119.89〜120.08）で、決定的でない撮影の揺れの範囲。
+- Notes: 塊は荒野の読み込みの途中で目標 3128 MB のときに 3 つ目を作り、その後の目標は 3066 MB へ下がったので、プールは目標を 6 MB 超えたまま（塊は縮めない）。ページの置き場の見込み（流すページの 1/4）は内部の値で、荒野では 3 つの塊に分かれて常駐 1.67 GB まで外さずに収まった。
+- Notes: `MegaGeometryResourcesTest` は、BVH の無いメッシュに BVH の領域が無いことの検査（1989 行）で落ちる。実行時に BVH を作る変更（e806a3c9、10/14）からの古い前提で、この項目の変更とは関係しない。この項目では直していない。
+- Next: SCN-WL-CLIFF-DETAIL-ALL を焼きを変えずに撮影から再開する（`blocked/SCN-WL-CLIFF-DETAIL-ALL.md`）。

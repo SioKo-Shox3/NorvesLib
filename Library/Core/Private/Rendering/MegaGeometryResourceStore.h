@@ -47,6 +47,8 @@ namespace NorvesLib::Core::Rendering
      * ストリーマ（GeometryPageStreamer。このストアがその窓口 IGeometryPageBackend を務める）が要求から読んで、ページごとの区画へ
      * 書く。ページの区画はメッシュの区画と同じ塊の中にあり、書き終えたページのクラスタの記録（頂点・インデックスの位置）を
      * ページの区画を指すように書き換えてから、ページの表へ公開する。外したページの区画は GpuRetireQueue へ渡す。
+     * メッシュの区画は、塊ごとにメッシュの区画とページの置き場の見込みを数えて収まる塊へ置き、収まらなければ VRAM の目標の
+     * 範囲で塊を増やす（根の区画だけで塊が埋まり、見えている所のページを書けなくなるのを防ぐ）。
      */
     class MegaGeometryResourceStore final : public IGeometryPageBackend
     {
@@ -144,6 +146,7 @@ namespace NorvesLib::Core::Rendering
         bool Publish(uint64_t meshId, uint32_t pageId) override;
         bool Evict(uint64_t meshId, uint32_t pageId) override;
         uint64_t GetCopyBytesAvailable() const override;
+        uint64_t GetReclaimPendingBytes(uint64_t meshId) const override;
 
         void Clear();
 
@@ -196,6 +199,9 @@ namespace NorvesLib::Core::Rendering
             Container::VariableArray<uint8_t> PinnedPages;
             uint64_t EnqueuedBytes = 0;
             bool bFullyEnqueued = false;
+            // 塊に数えたメッシュの区画とページの置き場の見込みの合計と、その塊（解放で塊の合計から引く）
+            uint32_t CommitBlock = 0;
+            uint64_t CommittedBytes = 0;
             // 全てのコピーが完了したと確かめた後は、問い合わせを省く
             mutable bool bGpuReady = false;
         };
@@ -211,6 +217,8 @@ namespace NorvesLib::Core::Rendering
         // 未記録のコピーを無効にして、ストアの持つ区画の参照を手放す。区画の返却は、スナップショットなどの参照も
         // 全部消えたときに GpuRetireQueue へ渡る（無ければすぐ返す）。m_Mutex を持って呼ぶ
         void RetireEntryLocked(MegaMeshEntry &entry);
+        // メッシュの区画を、ページの置き場の見込み（reservedPageBytes）も収まる塊から借りる。m_Mutex を持たずに呼ぶ
+        GeometryPool::RegionLease AllocateMeshRegion(uint64_t regionBytes, uint64_t reservedPageBytes);
         bool IsEntryGpuReadyLocked(const MegaMeshEntry &entry) const;
 
         Container::TSharedPtr<RHI::IDevice> m_Device;
@@ -220,6 +228,8 @@ namespace NorvesLib::Core::Rendering
         // ページをストリーミングするか。メッシュの区画の大きさの合計（ページの区画は含まない）
         bool m_bPageStreamingEnabled = true;
         uint64_t m_MeshRegionBytes = 0;
+        // 塊ごとの、置いたメッシュの区画とページの置き場の見込みの合計（m_Mutex で守る）
+        Container::VariableArray<uint64_t> m_BlockCommittedBytes;
         GpuRetireQueue *m_RetireQueue = nullptr;
         // 区画の持ち主が、ストアより長く生きても返却先の待ち行列を触らないようにする窓口（デストラクタで閉じる）
         Container::TSharedPtr<MegaGeometryRetireSink> m_RetireSink;

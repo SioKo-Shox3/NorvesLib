@@ -36,6 +36,9 @@ namespace NorvesLib::Core::Rendering
         constexpr uint64_t UploadChunkBytes = 4ull * 1024ull * 1024ull;
         // 区画の中の各領域の整列。storage buffer の範囲のオフセット（minStorageBufferOffsetAlignment の上限 256）を満たす
         constexpr uint64_t RegionAlignmentBytes = GeometryPool::DefaultAlignmentBytes;
+        // ページを流すメッシュの塊に残しておくページの置き場の見込みは、流すページの区画の合計のこの分の 1。
+        // 1 つの視点で常駐するのは、各メッシュのページのうち見えている所の要る段だけなので、全部は見込まない
+        constexpr uint64_t PageRoomDivisor = 4;
 
         constexpr uint64_t AlignUpBytes(uint64_t value, uint64_t alignment)
         {
@@ -76,6 +79,8 @@ namespace NorvesLib::Core::Rendering
                 Thread::ScopedLock lock(m_Sink->Mutex);
                 if (m_Sink->Queue)
                 {
+                    // 空きへ戻るまで、塊の返却待ちの量に数える（ストリーマが、返却を待たずにページを外し続けないため）
+                    Lease.MarkRetiring();
                     m_Sink->Queue->Retire(std::move(Lease));
                     return;
                 }
@@ -380,8 +385,21 @@ namespace NorvesLib::Core::Rendering
             groupBVHBytes > 0 ? AlignUpBytes(indexRegionOffset + indexBytes, RegionAlignmentBytes) : 0;
         const uint64_t regionBytes = groupBVHBytes > 0 ? groupBVHRegionOffset + groupBVHBytes : indexRegionOffset + indexBytes;
 
+        // ストリーミングするページの区画の合計と、メッシュと同じ塊に残しておくページの置き場の見込み
+        uint64_t streamedPageBytes = 0;
+        if (bStreamPages)
+        {
+            for (size_t pageId = rootExtent.PageCount; pageId < createInfo.Pages.size(); ++pageId)
+            {
+                streamedPageBytes += MegaGeometry::GeometryPageLayout::ComputePageRegionLayout(
+                                         createInfo.Pages[pageId].VertexCount, createInfo.Pages[pageId].IndexCount)
+                                         .RegionBytes;
+            }
+        }
+        const uint64_t reservedPageBytes = streamedPageBytes / PageRoomDivisor;
+
         auto stageStartTime = LoadProfileNow();
-        GeometryPool::RegionLease lease = m_Pool->Allocate(regionBytes, RegionAlignmentBytes);
+        GeometryPool::RegionLease lease = AllocateMeshRegion(regionBytes, reservedPageBytes);
         if (!lease.IsValid())
         {
             NORVES_LOG_INFO(
@@ -402,6 +420,7 @@ namespace NorvesLib::Core::Rendering
                              createInfo.DebugName.c_str());
             return MegaGeometry::MegaMeshHandle::Invalid();
         }
+        const uint32_t meshBlockIndex = lease.GetBlockIndex();
         const double allocateMs = LoadProfileElapsedMs(stageStartTime);
 
         // クラスタのデータの storage buffer を作る。
@@ -723,24 +742,25 @@ namespace NorvesLib::Core::Rendering
                 }
             }
             m_MeshRegionBytes += entry.Region->Lease.GetSizeBytes();
+            // 塊ごとの、メッシュの区画とページの置き場の見込みの合計（次のメッシュの塊を選ぶのに使う）
+            entry.CommitBlock = meshBlockIndex;
+            entry.CommittedBytes = entry.Region->Lease.GetSizeBytes() + reservedPageBytes;
+            if (m_BlockCommittedBytes.size() <= entry.CommitBlock)
+            {
+                m_BlockCommittedBytes.resize(static_cast<size_t>(entry.CommitBlock) + 1, 0);
+            }
+            m_BlockCommittedBytes[entry.CommitBlock] += entry.CommittedBytes;
             m_MegaMeshes[handle.Id] = std::move(entry);
             m_PendingUploadIds.push_back(handle.Id);
         }
         if (bStreamPages)
         {
-            uint64_t streamedPageBytes = 0;
-            for (size_t pageId = rootExtent.PageCount; pageId < createInfo.Pages.size(); ++pageId)
-            {
-                streamedPageBytes += MegaGeometry::GeometryPageLayout::ComputePageRegionLayout(
-                                         createInfo.Pages[pageId].VertexCount, createInfo.Pages[pageId].IndexCount)
-                                         .RegionBytes;
-            }
             NORVES_LOG_INFO("MegaGeometryResources",
                             "GEOMETRY_PAGES_STREAMED mesh=\"%s\" pages=%u root_pages=%u root_region_bytes=%llu "
-                            "streamed_page_bytes=%llu",
+                            "streamed_page_bytes=%llu block=%u",
                             createInfo.DebugName.c_str(), static_cast<uint32_t>(createInfo.Pages.size()),
                             rootExtent.PageCount, static_cast<unsigned long long>(regionBytes),
-                            static_cast<unsigned long long>(streamedPageBytes));
+                            static_cast<unsigned long long>(streamedPageBytes), meshBlockIndex);
         }
 
         NORVES_LOG_INFO("MegaGeometryResources",
@@ -931,6 +951,12 @@ namespace NorvesLib::Core::Rendering
         }
         const uint64_t meshRegionBytes = entry.Region->Lease.GetSizeBytes();
         m_MeshRegionBytes = m_MeshRegionBytes > meshRegionBytes ? m_MeshRegionBytes - meshRegionBytes : 0;
+        if (entry.CommittedBytes > 0 && entry.CommitBlock < m_BlockCommittedBytes.size())
+        {
+            uint64_t &committed = m_BlockCommittedBytes[entry.CommitBlock];
+            committed = committed > entry.CommittedBytes ? committed - entry.CommittedBytes : 0;
+            entry.CommittedBytes = 0;
+        }
         // まだ GPU へ出していないコピーが、解放後に使い回される区画へ書き込まないようにする
         if (m_Uploader)
         {
@@ -1095,6 +1121,40 @@ namespace NorvesLib::Core::Rendering
         return m_MeshRegionBytes;
     }
 
+    GeometryPool::RegionLease MegaGeometryResourceStore::AllocateMeshRegion(uint64_t regionBytes, uint64_t reservedPageBytes)
+    {
+        // ページを流すメッシュは、ページを自分と同じ塊にしか置けない。塊ごとにメッシュの区画とページの置き場の見込みを数え、
+        // このメッシュの分も収まる塊へ置く（根の区画だけで塊が埋まると、見えている所のページを書けなくなる）
+        Container::VariableArray<uint64_t> committed;
+        {
+            Thread::ScopedLock lock(m_Mutex);
+            committed = m_BlockCommittedBytes;
+        }
+        const uint64_t needBytes = regionBytes + reservedPageBytes;
+        const uint32_t blockCount = m_Pool->GetBlockCount();
+        for (uint32_t block = 0; block < blockCount; ++block)
+        {
+            const uint64_t blockCommitted = block < committed.size() ? committed[block] : 0;
+            if (blockCommitted + needBytes > m_Pool->GetBlockSizeBytes(block))
+            {
+                continue;
+            }
+            GeometryPool::RegionLease lease = m_Pool->AllocateInBlock(block, regionBytes, RegionAlignmentBytes);
+            if (lease.IsValid())
+            {
+                return lease;
+            }
+        }
+        // どの塊にも収まらなければ、VRAM の目標の範囲で塊を増やす
+        GeometryPool::RegionLease lease = m_Pool->AllocateInNewBlock(regionBytes, RegionAlignmentBytes);
+        if (lease.IsValid())
+        {
+            return lease;
+        }
+        // 目標まで増やしきったら、ページの置き場の見込みを諦めて空きのある塊へ置く（空きが無ければ塊を足す）
+        return m_Pool->Allocate(regionBytes, RegionAlignmentBytes);
+    }
+
     bool MegaGeometryResourceStore::ResolveRequest(uint32_t tableIndex, uint64_t tableVersion, uint64_t &outMeshId,
                                                    uint32_t &outPageId) const
     {
@@ -1128,6 +1188,7 @@ namespace NorvesLib::Core::Rendering
         out = GeometryPageDescriptor();
         out.bRoot = pageId < streamed.RootPageCount;
         out.Level = streamed.PageLevels[pageId];
+        out.PlacementGroup = streamed.BlockIndex;
         const MegaGeometry::GeometryPageLayout::PageRegionLayout layout =
             MegaGeometry::GeometryPageLayout::ComputePageRegionLayout(page.VertexCount, page.IndexCount);
         // 区画の大きさはプールの粒度へ切り上がる（目標との比較は、実際に借りる量で数える）
@@ -1362,6 +1423,21 @@ namespace NorvesLib::Core::Rendering
         return m_Uploader ? m_Uploader->GetRecordableCopyBytes() : 0;
     }
 
+    uint64_t MegaGeometryResourceStore::GetReclaimPendingBytes(uint64_t meshId) const
+    {
+        uint32_t blockIndex = 0;
+        {
+            Thread::ScopedLock lock(m_Mutex);
+            const auto it = m_MegaMeshes.find(meshId);
+            if (it == m_MegaMeshes.end() || !it->second.Streamed)
+            {
+                return 0;
+            }
+            blockIndex = it->second.Streamed->BlockIndex;
+        }
+        return m_Pool ? m_Pool->GetRetiringBytes(blockIndex) : 0;
+    }
+
     void MegaGeometryResourceStore::Clear()
     {
         Thread::ScopedLock lock(m_Mutex);
@@ -1373,6 +1449,7 @@ namespace NorvesLib::Core::Rendering
         m_MegaMeshes.clear();
         m_PendingUploadIds.clear();
         m_MeshRegionBytes = 0;
+        m_BlockCommittedBytes.clear();
     }
 
 } // namespace NorvesLib::Core::Rendering

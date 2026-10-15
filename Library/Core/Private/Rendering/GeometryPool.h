@@ -95,6 +95,8 @@ namespace NorvesLib::Core::Rendering
             GeometryPoolAllocator Allocator;
             // Allocator の塊と同じ番号のバッファ
             Container::VariableArray<RHI::BufferPtr> Blocks;
+            // 塊ごとの、持ち主が手放して GPU の完了を待っている（まだ空きへ戻っていない）区画の合計（バイト）
+            Container::VariableArray<uint64_t> RetiringBytes;
             // 最後に VRAM_LEDGER へ出したときの値（変化したときだけ出し直す）
             bool bLedgerLogged = false;
             uint32_t LoggedBlockCount = 0;
@@ -102,10 +104,24 @@ namespace NorvesLib::Core::Rendering
             uint64_t LoggedTargetBytes = 0;
             bool bLoggedTargetLimited = false;
 
-            void Release(const GeometryAllocation &allocation)
+            void Release(const GeometryAllocation &allocation, bool bRetiring)
             {
                 Thread::ScopedLock lock(Mutex);
+                if (bRetiring && allocation.BlockIndex < RetiringBytes.size())
+                {
+                    uint64_t &retiring = RetiringBytes[allocation.BlockIndex];
+                    retiring = retiring > allocation.SizeBytes ? retiring - allocation.SizeBytes : 0;
+                }
                 Allocator.Free(allocation);
+            }
+
+            void MarkRetiring(const GeometryAllocation &allocation)
+            {
+                Thread::ScopedLock lock(Mutex);
+                if (allocation.BlockIndex < RetiringBytes.size())
+                {
+                    RetiringBytes[allocation.BlockIndex] += allocation.SizeBytes;
+                }
             }
         };
 
@@ -131,9 +147,11 @@ namespace NorvesLib::Core::Rendering
             RegionLease(RegionLease &&other) noexcept
                 : m_State(std::move(other.m_State)),
                   m_Buffer(std::move(other.m_Buffer)),
-                  m_Allocation(other.m_Allocation)
+                  m_Allocation(other.m_Allocation),
+                  m_bRetiring(other.m_bRetiring)
             {
                 other.m_Allocation = GeometryAllocation();
+                other.m_bRetiring = false;
             }
 
             RegionLease &operator=(RegionLease &&other) noexcept
@@ -144,7 +162,9 @@ namespace NorvesLib::Core::Rendering
                     m_State = std::move(other.m_State);
                     m_Buffer = std::move(other.m_Buffer);
                     m_Allocation = other.m_Allocation;
+                    m_bRetiring = other.m_bRetiring;
                     other.m_Allocation = GeometryAllocation();
+                    other.m_bRetiring = false;
                 }
                 return *this;
             }
@@ -161,14 +181,29 @@ namespace NorvesLib::Core::Rendering
             /** @brief 区画の大きさ（要求を粒度へ切り上げた値） */
             uint64_t GetSizeBytes() const { return m_Allocation.SizeBytes; }
 
+            /**
+             * @brief 持ち主が手放し、GPU の完了を待って空きへ戻る区画として数える（GpuRetireQueue へ渡す直前に呼ぶ）
+             *
+             * 空きへ戻る（Reset・破棄）まで、塊の返却待ちの量（GeometryPool::GetRetiringBytes）に入る。
+             */
+            void MarkRetiring()
+            {
+                if (m_Allocation.IsValid() && m_State != nullptr && !m_bRetiring)
+                {
+                    m_State->MarkRetiring(m_Allocation);
+                    m_bRetiring = true;
+                }
+            }
+
             /** @brief 区画を空きへ返す */
             void Reset()
             {
                 if (m_Allocation.IsValid() && m_State != nullptr)
                 {
-                    m_State->Release(m_Allocation);
+                    m_State->Release(m_Allocation, m_bRetiring);
                 }
                 m_Allocation = GeometryAllocation();
+                m_bRetiring = false;
                 m_Buffer = nullptr;
                 m_State.reset();
             }
@@ -186,6 +221,7 @@ namespace NorvesLib::Core::Rendering
             Container::TSharedPtr<State> m_State;
             RHI::BufferPtr m_Buffer;
             GeometryAllocation m_Allocation;
+            bool m_bRetiring = false;
         };
 
         /**
@@ -261,6 +297,74 @@ namespace NorvesLib::Core::Rendering
                 return RegionLease();
             }
             return RegionLease(m_State, state.Blocks[allocation.BlockIndex], allocation);
+        }
+
+        /**
+         * @brief 塊を1つ増やし、その中から区画を1つ借りる
+         *
+         * 新しい塊の大きさは、既定の塊の大きさか、要求が収まる大きさの大きいほう。目標（SetBudgetTarget）があるときは、
+         * 持っている塊と合わせて目標を超えない大きさへ縮め、それでは要求が収まらなければ増やさない。上限も超えない。
+         * ページを持つメッシュが、ページの置き場を残せる塊を選ぶのに使う（既存の塊にページの置き場が残らないとき）。
+         * @return 無効な RegionLease は、要求が不正・目標か上限に達した・塊を作れなかったことを表す
+         */
+        RegionLease AllocateInNewBlock(uint64_t sizeBytes, uint64_t alignmentBytes = DefaultAlignmentBytes)
+        {
+            Thread::ScopedLock lock(m_State->Mutex);
+            State &state = *m_State;
+            const uint64_t granularity = GeometryPoolAllocator::GranularityBytes;
+            if (sizeBytes == 0 || sizeBytes > ~0ull - (granularity - 1))
+            {
+                return RegionLease();
+            }
+            const uint64_t needBytes = (sizeBytes + granularity - 1) / granularity * granularity;
+            uint64_t blockBytes = needBytes > state.BlockBytes ? needBytes : state.BlockBytes;
+            if (state.bTargetLimited)
+            {
+                const uint64_t capacityBytes = state.Allocator.GetStats().CapacityBytes;
+                const uint64_t roomBytes =
+                    state.TargetBytes > capacityBytes ? (state.TargetBytes - capacityBytes) / granularity * granularity : 0;
+                blockBytes = blockBytes < roomBytes ? blockBytes : roomBytes;
+                if (blockBytes < needBytes)
+                {
+                    return RegionLease();
+                }
+            }
+            if (!AddBlockLocked(blockBytes))
+            {
+                return RegionLease();
+            }
+            const GeometryAllocation allocation =
+                state.Allocator.Allocate(sizeBytes, alignmentBytes, static_cast<uint32_t>(state.Blocks.size() - 1));
+            if (!allocation.IsValid())
+            {
+                return RegionLease();
+            }
+            return RegionLease(m_State, state.Blocks[allocation.BlockIndex], allocation);
+        }
+
+        /** @brief 持っている塊の数 */
+        uint32_t GetBlockCount() const
+        {
+            Thread::ScopedLock lock(m_State->Mutex);
+            return m_State->Allocator.GetBlockCount();
+        }
+
+        /** @brief 塊の大きさ（バイト。範囲外は 0） */
+        uint64_t GetBlockSizeBytes(uint32_t blockIndex) const
+        {
+            Thread::ScopedLock lock(m_State->Mutex);
+            return m_State->Allocator.GetBlockSizeBytes(blockIndex);
+        }
+
+        /**
+         * @brief 塊の中で、持ち主が手放して GPU の完了を待っている区画の合計（バイト。範囲外は 0）
+         *
+         * この量は、待ち行列が完了を確かめた後で空きへ戻る（それまでは同じ塊の確保に使えない）。
+         */
+        uint64_t GetRetiringBytes(uint32_t blockIndex) const
+        {
+            Thread::ScopedLock lock(m_State->Mutex);
+            return blockIndex < m_State->RetiringBytes.size() ? m_State->RetiringBytes[blockIndex] : 0;
         }
 
         /** @brief プールが持てるバッファの上限を決める（バイト。0 は上限なし）。持っている分は減らさない */
@@ -340,7 +444,17 @@ namespace NorvesLib::Core::Rendering
             {
                 blockBytes = needBytes;
             }
+            return AddBlockLocked(blockBytes);
+        }
 
+        // 大きさ blockBytes の塊を1つ作って足す。上限を超えるなら作らない（呼び出し側がミューテックスを持っている）
+        bool AddBlockLocked(uint64_t blockBytes)
+        {
+            State &state = *m_State;
+            if (state.Factory == nullptr || blockBytes == 0)
+            {
+                return false;
+            }
             const GeometryPoolStats stats = state.Allocator.GetStats();
             if (state.LimitBytes != 0 &&
                 (blockBytes > state.LimitBytes || stats.CapacityBytes > state.LimitBytes - blockBytes))
@@ -358,6 +472,7 @@ namespace NorvesLib::Core::Rendering
                 return false;
             }
             state.Blocks.push_back(std::move(buffer));
+            state.RetiringBytes.push_back(0);
 
             LogLedgerLocked(state.Allocator.GetStats());
             return true;

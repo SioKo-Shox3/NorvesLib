@@ -13,7 +13,8 @@
 //   4) 書き込み中のページが GPU で書き終わったかを見て、終わったものだけをページの表へ公開する（書き終える前に公開しない）
 //   5) 常駐の量が目標を超えていれば、最後に要求したフレームが古いページから外す（LRU）
 //   6) 優先度の高い順に、読み込み済みのページの書き込みを始める（上限: 1 フレームのコピーの量）。
-//      目標に収まらないときは、LRU で外して空ける
+//      目標に収まらないときは、LRU で外して空ける。メッシュの置き場（プールの塊）が埋まっているときは、同じ置き場のページだけを
+//      外し、外した区画が GPU の完了を待って戻るまでは、空きを待つページの分を超えて外さない
 //   7) 優先度の高い順に、要求されたページの読み込みを始める（上限: 1 フレームの読みの量・件数・読み込み中の数）
 //
 // 優先度は「粗い段が先 → 要求されたフレームの数が多い → 最後に要求されたフレームが新しい」。
@@ -50,6 +51,8 @@ namespace NorvesLib::Core::Rendering
         uint64_t CopyBytes = 0;
         /** @brief 段（大きいほど粗い）。粗い段から先に読み込む */
         uint32_t Level = 0;
+        /** @brief 区画を借りる置き場（本番はプールの塊の番号）。置き場が埋まったとき（NoSpace）は、同じ置き場のページだけを外す */
+        uint32_t PlacementGroup = 0;
         /** @brief 根のページか（根のページは常駐のままで、要求の対象にならない） */
         bool bRoot = false;
         /** @brief 親のページ（粗い側）のうち、根でないもの。根のページは常に常駐なので含めない */
@@ -142,6 +145,18 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief 次のコマンドの記録で確実にコピーできる量の残り（バイト）。これを超えて積まない */
         virtual uint64_t GetCopyBytesAvailable() const = 0;
+
+        /**
+         * @brief メッシュの置き場で、外した（手放した）が GPU の完了を待ってまだ空きへ戻っていない区画の合計（バイト）
+         *
+         * 置き場が埋まったとき、ストリーマはこの量が空きを待つページの区画に届くまでしか外さない（戻れば空くので）。
+         * 外した区画をすぐ空きへ戻す窓口は 0 のままでよい。
+         */
+        virtual uint64_t GetReclaimPendingBytes(uint64_t meshId) const
+        {
+            (void)meshId;
+            return 0;
+        }
     };
 
     struct GeometryPageStreamerConfig
@@ -674,14 +689,20 @@ namespace NorvesLib::Core::Rendering
         // 最後に要求（使用の印を含む）されたフレームが古いページから 1 つ外す。外せたら true
         // （同じ古さなら細かい段が先。maxLastRequestedFrame 以降に使われたページは外さない:
         //  読み込みたいページが要求されたのと同じフレームに描かれたページを外すと、使っているページを外して読み直す入れ替わりが続く）
+        // onlyGroup が null でなければ、その置き場のページだけから選ぶ
         bool EvictOneLocked(const Container::VariableArray<uint32_t> *protectedPages, uint64_t meshOfProtected,
-                            uint64_t maxLastRequestedFrame, GeometryPageFrameResult &result)
+                            uint64_t maxLastRequestedFrame, GeometryPageFrameResult &result,
+                            const uint32_t *onlyGroup = nullptr)
         {
             typename RecordMap::iterator best = m_Records.end();
             for (auto it = m_Records.begin(); it != m_Records.end(); ++it)
             {
                 const Record &record = it->second;
                 if (record.State != GeometryPageState::Resident || record.LastRequestedFrame >= maxLastRequestedFrame)
+                {
+                    continue;
+                }
+                if (onlyGroup != nullptr && record.Desc.PlacementGroup != *onlyGroup)
                 {
                     continue;
                 }
@@ -813,6 +834,8 @@ namespace NorvesLib::Core::Rendering
             const Container::VariableArray<Candidate> candidates = CollectCandidatesLocked(GeometryPageState::Ready, false);
             uint64_t copyBytes = 0;
             bool bNoSpaceCounted = false;
+            // 置き場ごとの、この Update で空き（返却待ちの区画が戻るの）を待つことにしたページの区画の合計
+            Container::Map<uint32_t, uint64_t> noSpaceWaitBytes;
             for (const Candidate &candidate : candidates)
             {
                 if (result.UploadsStarted >= m_Config.MaxUploadsPerFrame)
@@ -875,17 +898,33 @@ namespace NorvesLib::Core::Rendering
                     }
                 }
                 GeometryPageUploadStart start = m_Backend.BeginUpload(candidate.Key.MeshId, candidate.Key.PageId, it->second.Data);
-                // メッシュの塊が埋まっているときは、このページより前にしか要求されていない常駐ページを LRU で外して出し直す。
-                // 視点が変わって使われなくなったページが塊を埋めたまま、新しい視点のページを書けなくなるのを防ぐ
-                while (start == GeometryPageUploadStart::NoSpace &&
-                       EvictOneLocked(&it->second.Desc.Parents, candidate.Key.MeshId, it->second.LastRequestedFrame, result))
+                // メッシュの置き場が埋まっているときは、同じ置き場の常駐ページのうち、このページより前にしか要求されていないものを
+                // LRU で外して出し直す（視点が変わって使われなくなったページが置き場を埋めたまま、新しい視点のページを書けなくなるのを防ぐ）。
+                // 外した区画は GPU の完了まで空きへ戻らないので、返却待ちの量がこの Update で空きを待つページの区画の合計に届いたら
+                // 外すのを止め、次のフレームで出し直す（戻るのを待たずに外し続けると、使っているページまで一度に外して読み直し続ける）
+                if (start == GeometryPageUploadStart::NoSpace)
                 {
-                    it = m_Records.find(candidate.Key);
-                    if (it == m_Records.end() || it->second.State != GeometryPageState::Ready)
+                    const uint32_t group = it->second.Desc.PlacementGroup;
+                    const uint64_t pageRegionBytes = it->second.Desc.RegionBytes;
+                    uint64_t &waitBytes = noSpaceWaitBytes[group];
+                    waitBytes += pageRegionBytes;
+                    while (start == GeometryPageUploadStart::NoSpace &&
+                           m_Backend.GetReclaimPendingBytes(candidate.Key.MeshId) < waitBytes &&
+                           EvictOneLocked(&it->second.Desc.Parents, candidate.Key.MeshId, it->second.LastRequestedFrame,
+                                          result, &group))
                     {
-                        break;
+                        it = m_Records.find(candidate.Key);
+                        if (it == m_Records.end() || it->second.State != GeometryPageState::Ready)
+                        {
+                            break;
+                        }
+                        start = m_Backend.BeginUpload(candidate.Key.MeshId, candidate.Key.PageId, it->second.Data);
                     }
-                    start = m_Backend.BeginUpload(candidate.Key.MeshId, candidate.Key.PageId, it->second.Data);
+                    if (start != GeometryPageUploadStart::NoSpace)
+                    {
+                        // 外した区画がすぐ空きへ戻って書けた（または別の理由で終わった）ので、待ちに数えない
+                        waitBytes -= pageRegionBytes;
+                    }
                 }
                 if (it == m_Records.end() || it->second.State != GeometryPageState::Ready)
                 {
@@ -893,7 +932,8 @@ namespace NorvesLib::Core::Rendering
                 }
                 if (start == GeometryPageUploadStart::NoSpace)
                 {
-                    // 外せるページが無い（塊が今使われているページで埋まっている）。ほかの塊のメッシュのページは書けるので続ける
+                    // 外せるページが無い（置き場が今使われているページで埋まっている）か、外した区画が戻るのを待つ。
+                    // ほかの置き場のメッシュのページは書けるので続ける
                     if (!bNoSpaceCounted)
                     {
                         bNoSpaceCounted = true;

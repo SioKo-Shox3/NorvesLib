@@ -6,6 +6,7 @@
 //   - 親のページが常駐するまで子のページを公開せず、親を先に読むこと
 //   - 目標を超えたら最後に要求されたフレームが古いページから外すこと・子から外すこと・目標以下に収まること・外せないときは見送ること
 //   - 外した区画が、使っていた提出の完了まで再利用されず、完了後に同じ場所を使い回せること（本物のプールと GpuRetireQueue）
+//   - 置き場が埋まった（NoSpace）とき、同じ置き場のページだけを、返却待ちの区画が戻るまで要る分を超えて外さないこと
 //   - 読み込みの失敗の再試行と、メッシュの解放
 //   - 配置の計算（範囲の検査・親子の関係・クラスタの記録の位置の書き換えが描画の引き方と合うこと）
 #include "Container/PointerTypes.h"
@@ -194,10 +195,11 @@ public:
         if (Pool != nullptr)
         {
             GeometryPool::RegionLease lease =
-                Pool->AllocateInBlock(0, it->second.Pages[pageId].RegionBytes, GeometryPool::DefaultAlignmentBytes);
+                Pool->AllocateInBlock(it->second.Pages[pageId].PlacementGroup, it->second.Pages[pageId].RegionBytes,
+                                      GeometryPool::DefaultAlignmentBytes);
             if (!lease.IsValid())
             {
-                return GeometryPageUploadStart::Blocked;
+                return bPoolFullIsNoSpace ? GeometryPageUploadStart::NoSpace : GeometryPageUploadStart::Blocked;
             }
             LastOffset[meshId * 1000 + pageId] = lease.GetOffsetBytes();
             Leases[meshId * 1000 + pageId] = std::move(lease);
@@ -232,6 +234,7 @@ public:
         const uint64_t key = meshId * 1000 + pageId;
         if (Queue != nullptr && Leases.find(key) != Leases.end())
         {
+            Leases[key].MarkRetiring();
             Queue->Retire(std::move(Leases[key]));
             Leases.erase(key);
         }
@@ -239,6 +242,16 @@ public:
     }
 
     uint64_t GetCopyBytesAvailable() const override { return CopyBytesAvailable; }
+
+    uint64_t GetReclaimPendingBytes(uint64_t meshId) const override
+    {
+        const auto it = Meshes.find(meshId);
+        if (Pool == nullptr || it == Meshes.end() || it->second.Pages.empty())
+        {
+            return 0;
+        }
+        return Pool->GetRetiringBytes(it->second.Pages[0].PlacementGroup);
+    }
 
     size_t Count(EventKind kind) const
     {
@@ -287,6 +300,8 @@ public:
     bool bRefuseReads = false;
     bool bHoldReads = false;
     bool bBlockUploads = false;
+    // プールの塊が埋まったとき、本番の窓口と同じく NoSpace を返す（false なら Blocked）
+    bool bPoolFullIsNoSpace = false;
     uint32_t PollsBeforeComplete = 0;
     uint64_t CopyBytesAvailable = 1ull << 40;
     GeometryPool *Pool = nullptr;
@@ -1020,6 +1035,84 @@ void TestRetiredRegionReuseOrder()
     Expect(g_liveBuffers == 0, "片付けたら塊のバッファは残らない");
 }
 
+// ---- 置き場が埋まったとき（NoSpace）は、同じ置き場のページを、返却待ちの区画で足りる分までしか外さない ----
+
+void TestNoSpaceWaitsForRetiredRegions()
+{
+    constexpr uint64_t PageBytes = 16 * 1024;
+    GpuRetireQueue queue;
+    {
+        // 塊は 3 区画分。メッシュ 1 は塊 0、メッシュ 2 は塊 1 に置き、どちらもページに使えるのは残りの 2 つ
+        GeometryPool pool(TSharedPtr<IGeometryBlockFactory>(MakeShared<FakeBlockFactory>()), 3 * PageBytes);
+        GeometryPool::RegionLease mesh1Region = pool.Allocate(PageBytes, 256);
+        GeometryPool::RegionLease mesh2Region = pool.AllocateInNewBlock(PageBytes, 256);
+        Expect(mesh1Region.GetBlockIndex() == 0 && mesh2Region.GetBlockIndex() == 1, "メッシュの区画が別々の塊に置かれる");
+
+        FakeBackend backend;
+        backend.MakeFlatPages(1, 5, PageBytes, 2);
+        backend.MakeFlatPages(2, 3, PageBytes, 2);
+        for (GeometryPageDescriptor &desc : backend.Meshes[2].Pages)
+        {
+            desc.PlacementGroup = 1;
+        }
+        backend.Pool = &pool;
+        backend.Queue = &queue;
+        backend.bPoolFullIsNoSpace = true;
+        GeometryPageStreamer streamer(backend, RoomyConfig());
+
+        uint64_t completed = 0;
+        auto runFrame = [&](uint64_t frame, const GeometryPageRequestSet *set)
+        {
+            queue.BeginFrame(completed);
+            streamer.Update(frame, set);
+            queue.CommitFrame(frame);
+        };
+
+        // メッシュ 2 のページ 1（最も古い）、メッシュ 1 のページ 1・2 を常駐させる。塊 0 はこれで埋まる
+        GeometryPageRequestSet first = Requests(2, {1}, 1);
+        runFrame(1, &first);
+        runFrame(2, nullptr);
+        runFrame(3, nullptr);
+        GeometryPageRequestSet second = Requests(1, {1, 2}, 4);
+        runFrame(4, &second);
+        runFrame(5, nullptr);
+        runFrame(6, nullptr);
+        completed = 6;
+        Expect(streamer.GetPageState(2, 1) == GeometryPageState::Resident &&
+                   streamer.GetPageState(1, 1) == GeometryPageState::Resident &&
+                   streamer.GetPageState(1, 2) == GeometryPageState::Resident,
+               "3 ページが常駐している");
+
+        // フレーム 10〜16: GPU の完了は 6 のまま、メッシュ 1 のページ 3 を要求する。塊 0 に空きが無いので 1 ページ分だけ外し、
+        // 外した区画が戻るまでは、要求が続いても次のページを外さない（ほかの塊のページも外さない）
+        for (uint64_t frame = 10; frame <= 16; ++frame)
+        {
+            GeometryPageRequestSet want = Requests(1, {3}, frame);
+            runFrame(frame, &want);
+        }
+        Expect(backend.Count(EventKind::Evict) == 1, "返却待ちの区画で足りる間は、1 ページ分を超えて外さない");
+        Expect(backend.FirstIndexOf(EventKind::Evict, 1) != SIZE_MAX && streamer.GetPageState(1, 2) == GeometryPageState::Resident,
+               "同じ置き場の最も古いページ（メッシュ 1 のページ 1）を外す");
+        Expect(streamer.GetPageState(2, 1) == GeometryPageState::Resident, "ほかの置き場のページは、より古くても外さない");
+        Expect(streamer.GetPageState(1, 3) == GeometryPageState::Ready, "区画が戻るまでは書き込まずに待つ");
+        Expect(pool.GetRetiringBytes(0) == PageBytes && pool.GetRetiringBytes(1) == 0, "返却待ちは塊 0 の 1 ページ分");
+
+        // 外したフレームの提出が完了すると区画が戻り、ページ 3 を書ける。外したページは増えない
+        completed = 16;
+        for (uint64_t frame = 17; frame <= 19; ++frame)
+        {
+            GeometryPageRequestSet want = Requests(1, {3}, frame);
+            runFrame(frame, &want);
+        }
+        Expect(streamer.GetPageState(1, 3) == GeometryPageState::Resident, "区画が戻った後にページ 3 が常駐する");
+        Expect(backend.Count(EventKind::Evict) == 1 && pool.GetRetiringBytes(0) == 0, "外したのは 1 ページだけで、返却待ちは無くなる");
+
+        backend.Leases.clear();
+        queue.Clear();
+    }
+    Expect(g_liveBuffers == 0, "片付けたら塊のバッファは残らない");
+}
+
 // ---- 失敗とメッシュの解放 ----
 
 void TestReadFailureRetry()
@@ -1310,6 +1403,7 @@ int RunTest()
     TestEvictChildrenFirst();
     TestBudgetBlockedWhenNothingEvictable();
     TestRetiredRegionReuseOrder();
+    TestNoSpaceWaitsForRetiredRegions();
     TestReadFailureRetry();
     TestMeshReleased();
     TestValidatePages();
