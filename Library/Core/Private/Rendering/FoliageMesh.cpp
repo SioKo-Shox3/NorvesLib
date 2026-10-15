@@ -260,12 +260,15 @@ namespace NorvesLib::Core::Rendering::FoliageMesh
             for (uint32_t k = 0; k <= segments; ++k)
             {
                 const float s = static_cast<float>(k) / static_cast<float>(segments);
-                const float angle = shape.Lean + shape.Bend * std::pow(s, 1.6f);
+                // 根元は立ち、先へ行くほど自重で大きく反って垂れる（傾きの増え方を先に寄せる）
+                const float angle = shape.Lean + shape.Bend * s * s;
                 tangent = Normalize(outward * std::sin(angle) + V3{0.0f, std::cos(angle), 0.0f});
                 points[k] = position;
                 // 横の向きは接線のまわりに少しずつねじる
                 sideDirs[k] = Normalize(RotateAround(baseSide, tangent, shape.Twist * s));
-                halfWidths[k] = shape.HalfWidth * (1.0f - shape.Taper * std::pow(s, 1.3f));
+                // 幅は根元の少し細い所から広がって、葉の大半で平行に保ち、先の 3 割で細くなる（三角の板にしない）
+                const float baseNarrow = 0.7f + 0.3f * Clamp01(s / 0.15f);
+                halfWidths[k] = shape.HalfWidth * baseNarrow * (1.0f - shape.Taper * std::pow(s, 3.0f));
                 flex[k] = Lerp(shape.FlexStart, 1.0f, s);
                 tint[k] = Lerp(shape.BaseTint, 1.0f, std::pow(s, 0.6f)) * shape.TintScale;
                 occlusion[k] = Lerp(shape.BaseOcclusion, 1.0f, std::pow(s, 0.8f));
@@ -356,7 +359,8 @@ namespace NorvesLib::Core::Rendering::FoliageMesh
                 const V3 normal = Normalize(face * 0.6f + outward * 0.4f);
                 const float flex = Clamp01((pathStart + pathLength * t + length) / context.MaxReach);
                 const float occlusion = CrownOcclusion(desc, middle);
-                const float tint = random.Range(0.85f, 1.0f);
+                // 葉の明るさは枝の色から先の色までばらつかせる（明るい葉だけが点在して見えない）
+                const float tint = random.Range(0.35f, 0.9f);
                 MeshBuilder &builder = *context.Builder;
                 const uint32_t i0 = builder.AddVertex(base, normal, V3{}, flex, tint, occlusion);
                 const uint32_t i1 = builder.AddVertex(middle - sideDir * halfWidth, normal, sideDir * -halfWidth, flex, tint,
@@ -437,7 +441,7 @@ namespace NorvesLib::Core::Rendering::FoliageMesh
             uint32_t childCount = 0;
             if (bRounded)
             {
-                childCount = level == 0 ? 5u + random.NextU32() % 3u : (bSpur ? 3u + random.NextU32() % 2u : 4u + random.NextU32() % 2u);
+                childCount = level == 0 ? 3u + random.NextU32() % 3u : (bSpur ? 3u + random.NextU32() % 2u : 4u + random.NextU32() % 2u);
             }
             else
             {
@@ -491,15 +495,17 @@ namespace NorvesLib::Core::Rendering::FoliageMesh
             shape.Root = {std::cos(shape.Azimuth) * desc.BaseRadius * radial, 0.0f,
                           std::sin(shape.Azimuth) * desc.BaseRadius * radial};
             shape.Azimuth += random.Range(-0.35f, 0.35f);
-            shape.Length = desc.Height * random.Range(0.7f, 1.25f);
-            // 外側の葉ほど寝て、先へ向かって反って垂れる
-            shape.Lean = random.Range(0.08f, 0.45f) + 0.35f * radial;
-            shape.Bend = random.Range(0.35f, 1.25f);
+            // 長さは株の中心の葉ほど長く、外側は短い。葉ごとのばらつきも大きくする（そろった針の放射にしない）
+            const float lengthRatio = Lerp(1.15f, 0.7f, radial) * random.Range(0.5f, 1.25f);
+            shape.Length = desc.Height * lengthRatio;
+            // 外側の葉ほど寝る。長い葉ほど自重で大きく反り、先が水平より下へ垂れる
+            shape.Lean = random.Range(0.05f, 0.3f) + 0.45f * radial;
+            shape.Bend = random.Range(0.2f, 0.7f) + 1.5f * lengthRatio * random.Range(0.45f, 1.0f);
             shape.HalfWidth = desc.BladeWidth * 0.5f * random.Range(0.75f, 1.2f);
-            shape.Twist = random.Range(-0.9f, 0.9f);
+            shape.Twist = random.Range(-0.4f, 0.4f);
             shape.Segments = desc.Segments;
             shape.TintScale = random.Range(0.8f, 1.0f);
-            shape.BaseOcclusion = Lerp(0.35f, 0.6f, radial);
+            shape.BaseOcclusion = Lerp(0.45f, 0.7f, radial);
             builder.SetPhase(random.Next01());
             AddBlade(builder, shape);
         }
@@ -563,8 +569,8 @@ namespace NorvesLib::Core::Rendering::FoliageMesh
         {
             const float azimuth =
                 2.0f * kPi * (static_cast<float>(stem) + random.Range(0.0f, 0.8f)) / static_cast<float>(stemCount);
-            // 水平からの立ち上がり: 丸い株は 30〜75°、ほうき状の株は 60〜85°
-            const float elevation = bRounded ? random.Range(0.52f, 1.3f) : random.Range(1.05f, 1.48f);
+            // 水平からの立ち上がり: 丸い株は 40〜77°（根元から壺形に開く）、ほうき状の株は 60〜85°
+            const float elevation = bRounded ? random.Range(0.7f, 1.35f) : random.Range(1.05f, 1.48f);
             const V3 direction = Normalize(
                 V3{std::cos(azimuth) * std::cos(elevation), std::sin(elevation), std::sin(azimuth) * std::cos(elevation)});
             const V3 root = {std::cos(azimuth) * 0.03f * random.Next01(), 0.0f, std::sin(azimuth) * 0.03f * random.Next01()};

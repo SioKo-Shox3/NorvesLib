@@ -1563,7 +1563,7 @@
 - paths: Scripts/Terrain, Tools/AssetCook, Assets/AssetSets, Assets/Shaders, Game/GameModes/Wasteland, TASKS.md, PROGRESS.md
 
 ## SCN-GRASS-RENDER: 枯れ草の株をインスタンスで描き、風で揺らす
-- status: doing
+- status: done
 - done-when: 曲がった細い葉を束ねた枯れ草の株のメッシュ（葉の枚数は手本の写真の株に合わせる。数十枚でよい）（手続き生成。アルファ抜きを使わない）を、インスタンスの配列（位置・向き・大きさ・色の揺らぎ）から少ない回数の描画（間接描画かインスタンス描画）で描く経路を足し、頂点シェーダーで風（時間と低周波ノイズ。根元は動かず先ほど揺れる）で揺らす。色は乾いた黄土〜灰褐色で、裏面も描く（両面）。影は受ける。`wasteland` の一角に数千株を置いた名前付き視点 `grass` を足し、撮影を開いて草に見える（板やトゲに見えない）こと、時刻を変えた2枚で揺れていることを確かめる。米南西部の植生に合わせ、枯れ草の株に加えて、細い枝の低木（ブラックブラッシュ・モルモンティーのような高さ 0.3〜1 m の株）も同じ経路で描き、手本の足元の写真と並べて形と色が近いことを確かめる。Rendering3DTest の撮影が変わらない。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -Views grass -OutDir .harness/runs/scene-capture/SCN-GRASS-RENDER`

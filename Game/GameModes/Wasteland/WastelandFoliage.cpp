@@ -107,14 +107,16 @@ namespace Game::GameModes::WastelandFoliage
             {
                 FoliageMesh::GrassClumpDesc desc;
                 desc.Seed = kind == PlantKind::GrassA ? 11u : 23u;
-                desc.BladeCount = kind == PlantKind::GrassA ? 56u : 44u;
-                desc.CulmCount = kind == PlantKind::GrassA ? 3u : 2u;
-                desc.Height = kind == PlantKind::GrassA ? 0.3f : 0.24f;
-                desc.BaseRadius = 0.06f;
-                desc.BladeWidth = 0.0055f;
+                // 葉は数十枚（写真の手前の枯れ草の株は細い葉の密な房で、外側の葉は先が垂れる）
+                desc.BladeCount = kind == PlantKind::GrassA ? 90u : 70u;
+                desc.CulmCount = kind == PlantKind::GrassA ? 6u : 4u;
+                desc.Height = kind == PlantKind::GrassA ? 0.32f : 0.26f;
+                desc.BaseRadius = 0.05f;
+                desc.BladeWidth = 0.0035f;
+                desc.Segments = 8;
                 batch.Mesh = FoliageMesh::BuildGrassClump(desc);
                 // 根元は前の年の灰褐色の枯れ葉、先は麦わら色〜灰色がかった黄土（写真の手前の草の株）
-                SetColor(batch.StemColor, 118.0f, 104.0f, 86.0f);
+                SetColor(batch.StemColor, 132.0f, 114.0f, 90.0f);
                 SetColor(batch.TipColorA, 182.0f, 152.0f, 104.0f);
                 SetColor(batch.TipColorB, 152.0f, 138.0f, 114.0f);
                 batch.Roughness = 0.85f;
@@ -133,19 +135,22 @@ namespace Game::GameModes::WastelandFoliage
                 desc.Form = FoliageMesh::ShrubForm::Rounded;
                 desc.Height = 0.6f;
                 desc.CrownRadius = kind == PlantKind::BlackbrushA ? 0.5f : 0.42f;
-                desc.StemCount = kind == PlantKind::BlackbrushA ? 13u : 11u;
+                // 写真の低木は細い針金のような枝が根元から壺形に密に立つ塊で、太い骨格は見えない。
+                // 根元の幹を細く多くし、枝先の細枝と葉で樹冠を埋める
+                desc.StemCount = kind == PlantKind::BlackbrushA ? 30u : 26u;
                 desc.BranchLevels = 4;
                 desc.SpurLength = 0.07f;
-                desc.StemRadius = 0.006f;
-                desc.TwigRadius = 0.0012f;
-                desc.LeavesPerTwig = 3;
-                desc.LeafLength = 0.014f;
+                desc.StemRadius = 0.0035f;
+                desc.TwigRadius = 0.0009f;
+                desc.LeavesPerTwig = 5;
+                desc.LeafLength = 0.016f;
                 desc.LeafWidth = 0.005f;
                 batch.Mesh = FoliageMesh::BuildShrub(desc);
-                // 枝は灰褐色、葉は小さな灰色がかった褐色（写真の丸い低木は遠目に灰褐色の塊で、上の縁が灰色がかる）
-                SetColor(batch.StemColor, 122.0f, 108.0f, 94.0f);
-                SetColor(batch.TipColorA, 160.0f, 148.0f, 128.0f);
-                SetColor(batch.TipColorB, 150.0f, 142.0f, 128.0f);
+                // 枝は暗い灰褐色、葉はそれより少し明るい褐色がかった灰色（写真の低木は地面より暗い褐色の塊。
+                // 曇天の写真で樹冠の輝度は隣の地面の 0.35〜0.5 倍）
+                SetColor(batch.StemColor, 106.0f, 88.0f, 74.0f);
+                SetColor(batch.TipColorA, 156.0f, 132.0f, 108.0f);
+                SetColor(batch.TipColorB, 146.0f, 128.0f, 110.0f);
                 batch.Roughness = 0.8f;
                 batch.WindStrength = 0.035f;
                 batch.WindSwayFrequency = 0.5f;
