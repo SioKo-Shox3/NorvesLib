@@ -397,6 +397,13 @@ namespace NorvesLib::Core::Rendering
         void SetCloudLayer(const CloudLayerParameters& parameters);
         const CloudLayerParameters& GetCloudLayer() const { return m_CloudLayer; }
 
+        /**
+         * @brief 草・低木の株の束と風を設定する（GameThread）
+         * @param foliage 次の FramePacket から値コピーする（メッシュとインスタンスの配列は共有の参照を数えるだけ）
+         */
+        void SetFoliage(const FoliageScene& foliage);
+        const FoliageScene& GetFoliage() const { return m_Foliage; }
+
         /** @brief 決定的な撮影にする（GameThread）。FramePacket の経過時間を 1/60 秒に固定する */
         void SetDeterministicCapture(bool bEnabled) { m_bDeterministicCapture = bEnabled; }
 
@@ -627,6 +634,7 @@ namespace NorvesLib::Core::Rendering
         float m_SunShadowMaxDistance = 0.0f;
         AerialPerspectiveParameters m_AerialPerspective;
         CloudLayerParameters m_CloudLayer;
+        FoliageScene m_Foliage;
         bool m_bRTGIEnabled = true;
         uint64_t m_SceneRevision = 1u;
         uint64_t m_LightRevision = 1u;

@@ -598,6 +598,9 @@ namespace NorvesLib::Core::Rendering
         /** @brief デバッグライン頂点スナップショット（FramePacket::DebugLineVerticesを指す） */
         const Container::VariableArray<DebugLineVertex> *SnapshotDebugLineVertices = nullptr;
 
+        /** @brief 草・低木の株の束と風のスナップショット（FramePacket::Scene.Foliage を指す） */
+        const FoliageScene *SnapshotFoliage = nullptr;
+
         /** @brief 不透明DrawCommandスナップショット */
         DrawCommandView SnapshotOpaqueCommands;
 

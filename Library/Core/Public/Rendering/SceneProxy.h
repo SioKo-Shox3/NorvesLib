@@ -8,6 +8,7 @@
 #include "DDGIVolume.h"
 #include "SkyAtmosphere.h"
 #include "VolumetricFog.h"
+#include "FoliageTypes.h"
 #include "AutoExposure.h"
 #include "Container/Containers.h"
 #include "Math/Matrix4x4.h"
@@ -578,6 +579,8 @@ namespace NorvesLib::Core::Rendering
         AerialPerspectiveParameters AerialPerspective;
         // 空に描く雲の層。空が有効なときだけ CloudLayerPass が描く
         CloudLayerParameters CloudLayer;
+        // 草・低木の株の束と風。FoliagePass が GBuffer へ描く
+        FoliageScene Foliage;
 
         // フォグ設定
         bool bFogEnabled = false;
@@ -605,6 +608,7 @@ namespace NorvesLib::Core::Rendering
             SunShadowMaxDistance = 0.0f;
             AerialPerspective = AerialPerspectiveParameters{};
             CloudLayer = CloudLayerParameters{};
+            Foliage = FoliageScene{};
         }
 
         void SetDDGIVolumeParameters(const DDGIVolumeParameters& parameters)

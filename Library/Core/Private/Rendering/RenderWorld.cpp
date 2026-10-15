@@ -348,6 +348,11 @@ namespace NorvesLib::Core::Rendering
         m_RenderingCoordinator.SetCloudLayer(parameters);
     }
 
+    void RenderWorld::SetFoliage(const FoliageScene& foliage)
+    {
+        m_RenderingCoordinator.SetFoliage(foliage);
+    }
+
     void RenderWorld::SetDeterministicCapture(bool bEnabled)
     {
         m_RenderingCoordinator.SetDeterministicCapture(bEnabled);

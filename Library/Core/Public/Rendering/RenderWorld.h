@@ -227,6 +227,13 @@ namespace NorvesLib::Core::Rendering
         void SetCloudLayer(const CloudLayerParameters& parameters);
 
         /**
+         * @brief 草・低木の株の束と風を設定する（GameThread）
+         *
+         * RenderThread の FoliagePass が、束ごとに 1 回のインスタンス描画で GBuffer へ描く。空の一覧で描かなくなる。
+         */
+        void SetFoliage(const FoliageScene& foliage);
+
+        /**
          * @brief 決定的な撮影（--capture-deterministic）にする（GameThread）
          *
          * 有効な間、FramePacket の経過時間を 1/60 秒に固定する。起動の初期化で一度だけ呼ぶ。

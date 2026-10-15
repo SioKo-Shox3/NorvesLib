@@ -162,6 +162,11 @@ namespace Game::Scenes
         // 前哨地の候補 A の人の目の高さから、南南西の Rooster Butte（750 m）と南の Setting Hen Butte（1.2 km）を見る視点
         // （前哨地は SCN-WL-OUTPOST で置き直す）
         {"outpost", SceneViewKind::FreePose, 10.0f, 3.0f, 0.0f, {1199.5f, 1.7f, 150.5f}},
+        // 草・低木の一角（Game/GameModes/Wasteland/WastelandFoliage.cpp。谷床の (250, 1650) の 120 m 四方）の南南東の端の目の高さから、
+        // 北北西（Franklin Butte の方）へ枯れ草とブラックブラッシュ・モルモンティーの低木の群れを見下ろす視点
+        {"grass", SceneViewKind::FreePose, 159.0f, -6.0f, 0.0f, {266.0f, 1.6f, 1692.0f}},
+        // grass と同じ構図で、草・低木の風の時計だけを 1.4 秒ずらした 2 枚目（揺れを比べる）
+        {"grass_gust", SceneViewKind::FreePose, 159.0f, -6.0f, 0.0f, {266.0f, 1.6f, 1692.0f}},
         // 以下は手本の写真（Assets/Reference/ValleyOfTheGods、Docs/RenderingValidation/WastelandReference.md）の構図に寄せた視点。
         // 位置・向きは写真の GPS と写った地形の方位からの推定で、写真と同じではない。画角と太陽の時刻は荒野のモードが
         // 視点ごとに替える（WastelandRoutine.cpp の kReferenceShots）。比べるのは Scripts/Terrain/CompareReference.py

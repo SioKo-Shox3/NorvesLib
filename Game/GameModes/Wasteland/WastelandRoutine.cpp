@@ -22,6 +22,7 @@
 #include "Core/Public/Rendering/VolumetricFog.h"
 #include "GameModes/Rendering3DTest/SkySunControl.h"
 #include "GameModes/Wasteland/WastelandLayout.h"
+#include "GameModes/Wasteland/WastelandFoliage.h"
 #include "Scenes/SceneCatalog.h"
 #include "Scenes/SceneReadiness.h"
 
@@ -320,6 +321,7 @@ namespace Game::GameModes
             ctx.EngineRef.GetRenderWorld().SetStaticEnvironmentIntensityScale(1.0f);
             ctx.EngineRef.GetRenderWorld().SetStaticEnvironmentMaxRadiance(0.0f);
             ctx.EngineRef.GetRenderWorld().SetSunShadowMaxDistance(0.0f);
+            ctx.EngineRef.GetRenderWorld().SetFoliage(FoliageScene{});
         }
 
         /// 視点の高さ（地形からの高さ）に、その (x,z) の地形の高さを足す。格子が無い・範囲の外なら地面を 0 とする
@@ -377,6 +379,12 @@ namespace Game::GameModes
             const WastelandReferenceShot *referenceShot = FindReferenceShot(data.m_ViewName);
             ApplyEnvironment(ctx, referenceShot ? referenceShot->SunAltitudeDegrees : kSunAltitudeDegrees,
                              referenceShot ? referenceShot->SunAzimuthDegrees : kSunAzimuthDegrees);
+            // 草・低木の風の時計（grass_gust は grass と同じ構図で時刻だけを変えた 2 枚目）
+            if (!data.m_Foliage.IsEmpty())
+            {
+                data.m_Foliage.Wind.TimeOffsetSeconds = Game::GameModes::WastelandFoliage::WindTimeOffsetForView(data.m_ViewName);
+                ctx.EngineRef.GetRenderWorld().SetFoliage(data.m_Foliage);
+            }
             camera->SetFieldOfView(referenceShot ? referenceShot->VerticalFieldOfViewDegrees : data.m_DefaultFieldOfView);
             LOG_INFO_F("SCENE_VIEW_SWITCHED scene=wasteland view=%s", data.m_ViewName.c_str());
             pViewSwitch->Complete(true);
@@ -885,6 +893,15 @@ namespace Game::GameModes
         }
         LiftPoseToTerrain(data.m_pHeightField.get(), data.m_ViewName, pose);
 
+        // 草・低木の一角（高さ場の上に置く）。高さ場が無ければ置かない
+        data.m_Foliage = NorvesLib::Core::Rendering::FoliageScene{};
+        if (data.m_pHeightField)
+        {
+            data.m_Foliage = Game::GameModes::WastelandFoliage::BuildFoliage(*data.m_pHeightField);
+            data.m_Foliage.Wind.TimeOffsetSeconds = Game::GameModes::WastelandFoliage::WindTimeOffsetForView(data.m_ViewName);
+            ctx.EngineRef.GetRenderWorld().SetFoliage(data.m_Foliage);
+        }
+
         // 手本の写真の構図の視点では、太陽を写真の時刻の推定に替える
         const WastelandReferenceShot *referenceShot = FindReferenceShot(data.m_ViewName);
         ApplyEnvironment(ctx, referenceShot ? referenceShot->SunAltitudeDegrees : kSunAltitudeDegrees,
@@ -1111,6 +1128,7 @@ namespace Game::GameModes
             data.m_pAssembly.reset();
         }
         data.m_pHeightField.reset();
+        data.m_Foliage = NorvesLib::Core::Rendering::FoliageScene{};
         data.m_Rig.Leave(ctx);
         // 地形の Entity・モデル・カメラの実体は GameModeScope::Cleanup が返す。空と霧は RenderWorld の設定なので戻す。
         ResetEnvironment(ctx);

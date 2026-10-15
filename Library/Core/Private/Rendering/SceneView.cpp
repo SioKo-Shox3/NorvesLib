@@ -4,6 +4,7 @@
 #include "Rendering/SceneRenderer.h"
 #include "Rendering/ShadowMapPass.h"
 #include "Rendering/GBufferPass.h"
+#include "Rendering/FoliagePass.h"
 #include "Rendering/SkyAtmospherePass.h"
 #include "Rendering/MaterialTileClassifyPass.h"
 #include "Rendering/SkinningComputePass.h"
@@ -1101,6 +1102,11 @@ namespace NorvesLib::Core::Rendering
             megaGeometryPassPtr->SetVisibilityRasterPass(visibilityRasterPassPtr);
             AddPass(std::move(visibilityResolvePass));
         }
+
+        // FoliagePass: 草・低木の株を、ビジビリティの解決（または GBuffer の描画）の後の GBuffer と深度へ直接重ねて描く。
+        // 頂点シェーダーで風に揺らすので解決の経路には載せず、SSAO・影の印付け・照明より前に置いて影を受ける。
+        // 束が無いフレームは何も宣言しない（既定の描画は変えない）
+        AddPass(MakeUnique<FoliagePass>());
 
         // SSAOPass: GBufferの深度・法線から画面空間AO（GTAO）を計算。半径は世界の長さ（m）で、
         // 球・岩の接地部や軒下（数十cm〜1 m）を拾い、部屋の大きさの壁全体は遮蔽にしない。
