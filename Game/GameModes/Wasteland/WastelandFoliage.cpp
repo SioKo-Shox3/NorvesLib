@@ -107,11 +107,11 @@ namespace Game::GameModes::WastelandFoliage
             {
                 FoliageMesh::GrassClumpDesc desc;
                 desc.Seed = kind == PlantKind::GrassA ? 11u : 23u;
-                desc.BladeCount = kind == PlantKind::GrassA ? 38u : 28u;
+                desc.BladeCount = kind == PlantKind::GrassA ? 56u : 44u;
                 desc.CulmCount = kind == PlantKind::GrassA ? 3u : 2u;
                 desc.Height = kind == PlantKind::GrassA ? 0.3f : 0.24f;
-                desc.BaseRadius = 0.05f;
-                desc.BladeWidth = 0.004f;
+                desc.BaseRadius = 0.06f;
+                desc.BladeWidth = 0.0055f;
                 batch.Mesh = FoliageMesh::BuildGrassClump(desc);
                 // 根元は前の年の灰褐色の枯れ葉、先は麦わら色〜灰色がかった黄土（写真の手前の草の株）
                 SetColor(batch.StemColor, 118.0f, 104.0f, 86.0f);
@@ -142,10 +142,10 @@ namespace Game::GameModes::WastelandFoliage
                 desc.LeafLength = 0.014f;
                 desc.LeafWidth = 0.005f;
                 batch.Mesh = FoliageMesh::BuildShrub(desc);
-                // 枝は暗い灰褐色、葉は小さな灰緑（写真の丸い低木は遠目に暗い灰褐色の塊で、上の縁が灰色がかる）
-                SetColor(batch.StemColor, 96.0f, 86.0f, 76.0f);
-                SetColor(batch.TipColorA, 130.0f, 128.0f, 106.0f);
-                SetColor(batch.TipColorB, 140.0f, 132.0f, 116.0f);
+                // 枝は灰褐色、葉は小さな灰色がかった褐色（写真の丸い低木は遠目に灰褐色の塊で、上の縁が灰色がかる）
+                SetColor(batch.StemColor, 122.0f, 108.0f, 94.0f);
+                SetColor(batch.TipColorA, 160.0f, 148.0f, 128.0f);
+                SetColor(batch.TipColorB, 150.0f, 142.0f, 128.0f);
                 batch.Roughness = 0.8f;
                 batch.WindStrength = 0.035f;
                 batch.WindSwayFrequency = 0.5f;

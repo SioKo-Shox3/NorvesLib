@@ -4764,3 +4764,24 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `aux-SCN-WL-MASKS-FLOW-materials.txt`（`TerrainMaterials.py --verify` result=pass）、`-far.txt`（`FarMacro.py --build`・`--verify` result=pass）、`-cook.txt`（RelWithDebInfo の AssetCook で砂の枠のアトラス 3 枚・地図・遠景の地図の cooked=5、EXIT=0）、`-baseline.txt`（変更前の `--verify` result=pass、90 秒）。
 - Notes: `TerrainMasks.py --verify` は流れの計算で約 100 秒（変更前 90 秒）。遠景の地図は 16 m の画素なので砂の区別を持たず、遠景へ移る距離では沢は土として描かれる。砂の法線の傾きの分散（`kDetailSlopeVariance[0]`）は土の値を共有する。red_sand の模様は滑らかで、写真の沢底の礫（数 cm〜50 cm）は無い（礫と岩塊は SCN-WL-SCATTER-ROCKS）。`CookAssets.ps1` に複数の `-OnlyLogicalPath` を渡すときは `powershell -Command "& ./Scripts/CookAssets.ps1 ..."` で呼ぶ（`-File` では 1 つの文字列になり、PowerShell 7 では一覧の整数の型の確かめで落ちる）。試験は足していない。
 - Next: TASKS.md の次の未完の項目。
+
+### SCN-GRASS-RENDER 完了（2026-10-16、run 20261016-045112 の反復 5）
+
+- Done: 草・低木の株をインスタンス描画で GBuffer へ直接描く `FoliagePass` を足した（ビジビリティの解決の後・SSAO の前。束ごとに 1 回の `DrawIndexedInstanced`、カリングなしの両面、裏を見る画素は法線を面で鏡に映す。アルファ抜きは使わない）
+  - メッシュ（`FoliageMesh`）: 枯れ草の株は先へ細くなり反って垂れる帯の葉 44〜56 枚と穂の茎、ブラックブラッシュは 4 段に分かれる枝と枝先の小さな葉の丸い樹冠、モルモンティーは立ち上がる細い茎のほうき状。種が同じなら同じ形
+  - 風（`foliage.vert`）: 低周波の値ノイズの突風の塊が風下へ流れ、株は風下へ傾きつつ固有の周波数で揺れ、葉・枝は横へ震える。ずれはしなりの重み（根元 0・先 1）の 2 乗に比例し、根元は動かない。前のフレームの風でも頂点を動かして速度を書く
+  - 色: 草は茎の灰褐色から先の麦わら色〜灰色がかった黄土、ブラックブラッシュは灰褐色、モルモンティーはくすんだオリーブ。株ごとに 2 色の間と明るさを揺らす
+  - メッシュとインスタンスの配列は書き換えない値なので、初めて描くときに一度だけ GPU のバッファへ置く（毎フレームのアップロードのページを使うと、記録済みの頂点バッファの範囲へ後のパスが書く警告が出た）
+  - `wasteland` の谷床 (250, 1650) の 120 m 四方に 2919 株（草 1447・ブラックブラッシュ 1230・モルモンティー 242）を 1.5 m の升目と密度の斑で置き、名前付き視点 `grass` と、風の時計だけを 1.4 秒ずらした `grass_gust` を足した
+- 証拠（`.harness/runs/20261016-045112/`）:
+  - `verify-SCN-GRASS-RENDER-6.txt`: Debug の Game のビルド EXIT=0（最終のコード）
+  - `verify-SCN-GRASS-RENDER-7.txt`: `grass` 1920×1080 result=pass、EXIT=0。ログに `FOLIAGE_DRAW batches=5 instances=2919`、`FRAME_RESOURCE_UNPROTECTED_SUMMARY count=0`、検証レイヤーのログは空。撮影を開いて、近くの草は帯の葉の束、低木は細い枝の詰まった丸い株に見えることを確かめた
+  - `aux-SCN-GRASS-RENDER-wind-diff.txt`: `grass` と `grass_gust`（`.harness/runs/scene-capture/SCN-GRASS-RENDER-gust/`）の差は 8 を超える画素が 151549、空（上 360 行）は 0。草・低木だけが動いている
+  - `.harness/runs/scene-capture/SCN-GRASS-RENDER/grass_vs_ground_01.png`: 手本 ground_01 の足元と並べた。低木の丸い形・灰褐色・1.5〜3 m おきの散らばりは近い
+  - `verify-SCN-GRASS-RENDER-8.txt`: 起動画面の 3 視点 result=pass。`aux-SCN-GRASS-RENDER-startup-compare.txt`: default を前の撮影と比べて平均の差 0.32・99 百分位 3（RTGI の雑音の大きさ）
+- Notes:
+  - 近くの細い葉の影が、地面に点描の縞（接触影のレイの雑音の位相で、細い遮りを当てる画素と外す画素が交互になる）として出る。株は太陽の影へ描かないので、接地の影は接触影だけが受け持つ。直すなら株を太陽の影（VSM）へ描くか、接触影で株の遮りを数画素で均す
+  - 手本の低木は少し褐色が強く樹冠が密で、輪郭が柔らかい。草の株は手本の淡い金色の塊より疎ら
+  - 完了条件の「数〜十数枚」より葉を多く（44〜56 枚）した。十数枚では帯が数本の棘に見えた
+  - 株は今は 1 つの一角にだけ置き、距離での間引き（LOD）は無い。地形全体へ撒くのは SCN-GRASS-SCATTER
+- Next: TASKS.md の次の未完の項目（SCN-GRASS-SCATTER）。

@@ -41,6 +41,29 @@ namespace NorvesLib::Core::Rendering
         static_assert(offsetof(FoliageVertex, Flex) == 36);
         static_assert(offsetof(FoliageInstance, WidthScale) == 16);
 
+        /// 一覧から外れたバッファを捨てるまでに待つ Execute の回数（飛行中のフレームとビューの数より十分に多い）
+        constexpr uint64_t kStaticBufferReleaseDelay = 64;
+
+        /// 書き換えない値を置くバッファ（作るときに一度だけ書く）
+        RHI::BufferPtr CreateStaticBuffer(RHI::IDevice *device, const void *data, uint64_t size, RHI::ResourceUsage usage,
+                                          const char *name)
+        {
+            if (!device || !data || size == 0)
+            {
+                return {};
+            }
+            RHI::BufferDesc desc(size, usage, true, name);
+            RHI::BufferPtr buffer = device->CreateBuffer(desc);
+            if (!buffer)
+            {
+                NORVES_LOG_ERROR("FoliagePass", "FOLIAGE_BUFFER_FAILED name=%s bytes=%llu", name,
+                                 static_cast<unsigned long long>(size));
+                return {};
+            }
+            buffer->Update(data, static_cast<size_t>(size));
+            return buffer;
+        }
+
         /// 風の時計の折り返し[s]（float の精度を保つ。折り返しの瞬間だけ揺れが飛ぶ）
         constexpr double kWindClockWrapSeconds = 4096.0;
 
@@ -117,6 +140,8 @@ namespace NorvesLib::Core::Rendering
         m_RenderPass.reset();
         m_Framebuffer.reset();
         m_Pipeline.reset();
+        m_StaticBuffers.clear();
+        m_ExecuteCount = 0;
         m_VertexShader.reset();
         m_FragmentShader.reset();
         m_DescriptorSetLayout.reset();
@@ -271,15 +296,21 @@ namespace NorvesLib::Core::Rendering
         frameTemplate.windParams[1] = wind.GustScale;
         frameTemplate.frameParams[0] = previousCamera ? 1.0f : 0.0f;
 
+        // メッシュとインスタンスは一度だけ置いたバッファを使い、全部の束の定数を先に書いてから記録する
+        // （記録済みのコマンドが参照するアップロードのページへ、同じフレームの後から書き込まない）
+        ++m_ExecuteCount;
+        struct PreparedBatch
+        {
+            RHI::BufferPtr Vertex;
+            RHI::BufferPtr Index;
+            RHI::BufferPtr Instance;
+            RHI::DescriptorSetPtr DescriptorSet;
+            uint32_t IndexCount = 0;
+            uint32_t InstanceCount = 0;
+        };
         FrameResourceLane *frameResources = context.FrameResources;
-        RHI::ICommandList *commandList = context.CommandList;
-        commandList->BeginRenderPass(m_RenderPass, m_Framebuffer);
-        commandList->SetViewport(context.GetActiveLocalViewport());
-        commandList->SetScissor(context.GetActiveLocalScissor());
-        commandList->SetPipeline(m_Pipeline);
-
-        uint32_t drawnBatches = 0;
-        uint64_t drawnInstances = 0;
+        Container::VariableArray<PreparedBatch> prepared;
+        prepared.reserve(scene->Batches.size());
         for (const FoliageBatch &batch : scene->Batches)
         {
             if (!batch.Mesh || !batch.Instances || batch.Mesh->Vertices.empty() || batch.Mesh->Indices.empty() ||
@@ -289,13 +320,12 @@ namespace NorvesLib::Core::Rendering
             }
             const FoliageMeshData &mesh = *batch.Mesh;
             const auto &instances = *batch.Instances;
-            const FrameUploadAllocation vertexAllocation = frameResources->AllocateUploadData(
-                mesh.Vertices.data(), static_cast<uint64_t>(mesh.Vertices.size()) * sizeof(FoliageVertex),
-                FrameUploadUsage::Vertex);
-            const FrameUploadAllocation indexAllocation = frameResources->AllocateUploadData(
-                mesh.Indices.data(), static_cast<uint64_t>(mesh.Indices.size()) * sizeof(uint32_t), FrameUploadUsage::Index);
-            const FrameUploadAllocation instanceAllocation = frameResources->AllocateUploadData(
-                instances.data(), static_cast<uint64_t>(instances.size()) * sizeof(FoliageInstance), FrameUploadUsage::Vertex);
+            PreparedBatch entry;
+            entry.Instance = AcquireInstanceBuffer(batch.Instances);
+            if (!AcquireMeshBuffers(batch.Mesh, entry.Vertex, entry.Index) || !entry.Instance)
+            {
+                continue;
+            }
 
             FoliageUniform uniform = frameTemplate;
             uniform.windParams[2] = batch.WindStrength;
@@ -306,24 +336,41 @@ namespace NorvesLib::Core::Rendering
             uniform.frameParams[1] = mesh.Height;
             const FrameUploadAllocation uniformAllocation = frameResources->AllocateConstants(uniform);
             const FrameDescriptorAllocation descriptorAllocation = frameResources->AllocateDescriptorSet(m_DescriptorSetLayout);
-            if (!vertexAllocation.IsValid() || !indexAllocation.IsValid() || !instanceAllocation.IsValid() ||
-                !uniformAllocation.IsValid() || !descriptorAllocation.IsValid())
+            if (!uniformAllocation.IsValid() || !descriptorAllocation.IsValid())
             {
                 continue;
             }
-            const RHI::DescriptorSetPtr &descriptorSet = descriptorAllocation.Set;
-            descriptorSet->BindConstantBuffer(0, uniformAllocation.Buffer, uniformAllocation.GetOffset32(),
-                                              uniformAllocation.GetSize32());
-            descriptorSet->Update();
+            entry.DescriptorSet = descriptorAllocation.Set;
+            entry.DescriptorSet->BindConstantBuffer(0, uniformAllocation.Buffer, uniformAllocation.GetOffset32(),
+                                                    uniformAllocation.GetSize32());
+            entry.DescriptorSet->Update();
+            entry.IndexCount = static_cast<uint32_t>(mesh.Indices.size());
+            entry.InstanceCount = static_cast<uint32_t>(instances.size());
+            prepared.push_back(entry);
+        }
+        ReleaseUnusedStaticBuffers();
+        if (prepared.empty())
+        {
+            return;
+        }
 
-            commandList->SetDescriptorSet(descriptorSet, 0);
-            commandList->SetVertexBuffer(vertexAllocation.Buffer, vertexAllocation.Offset, 0);
-            commandList->SetVertexBuffer(instanceAllocation.Buffer, instanceAllocation.Offset, 1);
-            commandList->SetIndexBuffer(indexAllocation.Buffer, indexAllocation.Offset, RHI::IndexType::Uint32);
-            commandList->DrawIndexedInstanced(static_cast<uint32_t>(mesh.Indices.size()),
-                                              static_cast<uint32_t>(instances.size()), 0, 0, 0);
+        RHI::ICommandList *commandList = context.CommandList;
+        commandList->BeginRenderPass(m_RenderPass, m_Framebuffer);
+        commandList->SetViewport(context.GetActiveLocalViewport());
+        commandList->SetScissor(context.GetActiveLocalScissor());
+        commandList->SetPipeline(m_Pipeline);
+
+        uint32_t drawnBatches = 0;
+        uint64_t drawnInstances = 0;
+        for (const PreparedBatch &entry : prepared)
+        {
+            commandList->SetDescriptorSet(entry.DescriptorSet, 0);
+            commandList->SetVertexBuffer(entry.Vertex, 0, 0);
+            commandList->SetVertexBuffer(entry.Instance, 0, 1);
+            commandList->SetIndexBuffer(entry.Index, 0, RHI::IndexType::Uint32);
+            commandList->DrawIndexedInstanced(entry.IndexCount, entry.InstanceCount, 0, 0, 0);
             ++drawnBatches;
-            drawnInstances += instances.size();
+            drawnInstances += entry.InstanceCount;
         }
         commandList->EndRenderPass();
 
@@ -333,6 +380,79 @@ namespace NorvesLib::Core::Rendering
             m_LoggedInstanceCount = drawnInstances;
             NORVES_LOG_INFO("FoliagePass", "FOLIAGE_DRAW batches=%u instances=%llu", drawnBatches,
                             static_cast<unsigned long long>(drawnInstances));
+        }
+    }
+
+    bool FoliagePass::AcquireMeshBuffers(const Container::TSharedPtr<const FoliageMeshData> &mesh,
+                                         RHI::BufferPtr &outVertex, RHI::BufferPtr &outIndex)
+    {
+        for (StaticBuffer &entry : m_StaticBuffers)
+        {
+            if (entry.MeshSource && entry.MeshSource.get() == mesh.get())
+            {
+                entry.LastUsedExecute = m_ExecuteCount;
+                outVertex = entry.VertexBuffer;
+                outIndex = entry.IndexBuffer;
+                return true;
+            }
+        }
+        StaticBuffer entry;
+        entry.MeshSource = mesh;
+        entry.VertexBuffer = CreateStaticBuffer(m_Device, mesh->Vertices.data(),
+                                                static_cast<uint64_t>(mesh->Vertices.size()) * sizeof(FoliageVertex),
+                                                RHI::ResourceUsage::VertexBuffer, "FoliageVB");
+        entry.IndexBuffer = CreateStaticBuffer(m_Device, mesh->Indices.data(),
+                                               static_cast<uint64_t>(mesh->Indices.size()) * sizeof(uint32_t),
+                                               RHI::ResourceUsage::IndexBuffer, "FoliageIB");
+        if (!entry.VertexBuffer || !entry.IndexBuffer)
+        {
+            return false;
+        }
+        entry.LastUsedExecute = m_ExecuteCount;
+        outVertex = entry.VertexBuffer;
+        outIndex = entry.IndexBuffer;
+        m_StaticBuffers.push_back(entry);
+        return true;
+    }
+
+    RHI::BufferPtr FoliagePass::AcquireInstanceBuffer(
+        const Container::TSharedPtr<const Container::VariableArray<FoliageInstance>> &instances)
+    {
+        for (StaticBuffer &entry : m_StaticBuffers)
+        {
+            if (entry.InstanceSource && entry.InstanceSource.get() == instances.get())
+            {
+                entry.LastUsedExecute = m_ExecuteCount;
+                return entry.InstanceBuffer;
+            }
+        }
+        StaticBuffer entry;
+        entry.InstanceSource = instances;
+        entry.InstanceBuffer = CreateStaticBuffer(m_Device, instances->data(),
+                                                  static_cast<uint64_t>(instances->size()) * sizeof(FoliageInstance),
+                                                  RHI::ResourceUsage::VertexBuffer, "FoliageInstances");
+        if (!entry.InstanceBuffer)
+        {
+            return {};
+        }
+        entry.LastUsedExecute = m_ExecuteCount;
+        m_StaticBuffers.push_back(entry);
+        return entry.InstanceBuffer;
+    }
+
+    void FoliagePass::ReleaseUnusedStaticBuffers()
+    {
+        // 一覧から外れてから kStaticBufferReleaseDelay 回の描画を待つ（飛行中のフレームの記録がまだ参照している）
+        for (auto it = m_StaticBuffers.begin(); it != m_StaticBuffers.end();)
+        {
+            if (m_ExecuteCount - it->LastUsedExecute > kStaticBufferReleaseDelay)
+            {
+                it = m_StaticBuffers.erase(it);
+            }
+            else
+            {
+                ++it;
+            }
         }
     }
 
