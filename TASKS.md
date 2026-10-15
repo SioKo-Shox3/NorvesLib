@@ -1518,7 +1518,7 @@
 - notes: 危険地帯（アセットのクック）。三角形が増えるが、仮想化ジオメトリ（MegaGeometry）で描ける量か確かめる（速さの条件は無い。操作できる程度ならよい）。1 反復で閉じなければ、主役の Battleship Rock だけで先に閉じ、残りの崖を `SCN-WL-CLIFF-DETAIL-ALL` として後ろに足す。 2026-10-15 親: 3 反復とも焼きが 40 分に収まらず遮断器で blocked になった（Debug の AssetCook で中央の区画 1 本 20 分超。頂点ごとに位置を 5 回求めて法線を差分で出していた）。焼きは RelWithDebInfo の AssetCook で行い、細分の格子の位置を 1 回だけ求めて法線を隣の点から作る形にして速くする（反復 6 の PROGRESS の案）。反復の外で走らせ続けた AssetCook は親が止めた（その出力は使わない）。焼きは反復の中で終わる形にし、反復の外へ切り離さない。
 
 ## SCN-WL-CLIFF-DETAIL-ALL: Battleship Rock の外の崖にも、地層の段と割れ目の焼き直しを広げる
-- status: doing
+- status: done
 - done-when: SCN-WL-CLIFF-DETAIL は主役の Battleship Rock の範囲（`Tools/AssetCook/TerrainCliffDetail.cpp` の X −2150〜−900・Z −1650〜−420）だけを焼き直した。手本の視点に写るほかの崖（ref_cliff_02 の尖塔の台座・Castle Butte・左右のメサ）にも同じ焼き直しを広げ、範囲の境で焼いた崖と周りの地形の継ぎ目が見えない。三角形の数を区画ごとに見て、仮想化ジオメトリで描けることを確かめる（溢れ 0）。比較画像（1920×1080）を開き、広げた崖の段と割れ目が影を落とす立体として見えることを確かめる。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `cmake --build build --config RelWithDebInfo --target AssetCook -- /m:1`
@@ -2372,3 +2372,9 @@
 - done-when: `mega-stress` を `--stress-entities=3300` 以上、環境変数 `NORVES_MEGA_MAX_DRAW_COUNT` なしで起動したとき、`MEGA_CAPACITY command_capacity=67108864`（`indirect_bytes` 1.34 GB）で描画が壊れる原因を特定する。原因が装置の上限なら、容量を超える手前で警告して分割する。コード中の判定（`MegaGeometryPass.cpp` の `0x7FFFFFFF / sizeof(DrawIndexedIndirectCommand)`）が実際の上限と合っているかを確かめる。
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1280 -Height 720 -Views overview -GameArgs stress-entities=5000 -OutDir .harness/runs/scene-capture/SCN-MEGA-COMMAND-CAPACITY`
 - notes: 2026-10-10 SCN-MEGA-STRESS-RESIDENT の撮影で見つかった。14 種類のメッシュ（1 種類が約 1〜19 千クラスタ）を 2500 個置くと `command_capacity=33554432` で描かれ、3300 個以上（5000 個で同じ）では `command_capacity=67108864` に跳ねて、空と床だけが写る（`draw_dropped=0`、検証レイヤーのエラーなし、`MEGA_OCCLUSION` は 44 万クラスタを描いたと報告する）。`NORVES_MEGA_MAX_DRAW_COUNT=1000000` で区間ごとの上限を下げると 5000 個で描かれる（`command_capacity=33554432`）。mega-stress は `--stress-entities` を指定したとき（開発ビルド）、この環境変数が無ければ 1000000 を渡して回避している（`GameApplicationHandler.cpp`）。この回避は区間ごとの容量の上限を縮めるだけで、原因ではない。
+
+## SCN-WL-FAR-SPECKLE: 荒野の遠くの斜面と平地に一面に出る細い縦の黒い点を消す
+- status: backlog
+- done-when: ref_cliff_02 の撮影（1920×1080）で、Franklin Butte の崖錐の斜面と奥の平地に、1〜2 画素幅・数画素の高さの縦の黒い点が一面に散る（`crop_cliff02_spire.png`。切り出しは X 640〜1280・Y 340〜800 を 2 倍）。原因（遠くの小石や草の置き物の縮小・影の地図の標本・法線の縮小のどれか）を突き止めて直し、同じ切り出しを開いて点が無いことを確かめる。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -Views ref_cliff_02 -OutDir .harness/runs/scene-capture/SCN-WL-FAR-SPECKLE`
+- notes: 2026-10-15 SCN-WL-CLIFF-DETAIL-ALL の撮影の確認で見つかった。崖の細部の焼き直しの前（SCN-WL-CLIFF-DETAIL の撮影）にも同じ点があり、焼き直しをしていない遠くの平地にも出るので、崖の焼き直しから生じたものではない。
