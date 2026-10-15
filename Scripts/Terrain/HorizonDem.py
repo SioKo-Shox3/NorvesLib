@@ -1,8 +1,8 @@
 ﻿# 荒野（Valley of the Gods）の遠景の地形を、1 m の DEM タイル 4 枚（E 590000〜610000・N 4120000〜4140000）と、
 # その外を覆う 1/3 秒角（約 10 m 間隔）の DEM 2 枚から焼く。
 # 近景（CropDem.py の 1 m の格子）の外側を、間隔の違う 4 つの段で覆い、段の間を縫い目の帯でつなぐ:
-#   castle: Castle Butte と、その手前の谷床（手本の写真 far_01 の主役）。2 m
-#   mid:    近景の周り 6 km（4 枚の内側）。8 m。穴は近景と castle
+#   castle: Castle Butte と、その手前の谷床（手本の写真 far_01 の主役）と、far_01 に写る奥の崖。2 m
+#   mid:    近景の周り 6 km（北は 6.6 km。4 枚の内側）。8 m。穴は近景と castle
 #   far:    20 km 四方の残り。16 m。穴は mid。4 枚の NoData（x60y413 の南東の角）は 1/3 秒角で埋める
 #   outer:  20 km 四方の外（東 25 km・南 30 km・北 27 km。西は 1/3 秒角の西の端 西経 110° まで）。32 m。穴は far。
 #           ridge・outpost から見える東・南の地平線と、北の Bears Ears を覆う
@@ -58,10 +58,16 @@ MOSAIC = {"east_min": 590000, "east_max": 610000, "north_min": 4120000, "north_m
 # （崖の細部の焼き直しを 2 m の格子に掛けるため。8 m の mid では崖の形が出ない）。右の崖は Z −6260 まで続き（視点から 3.3〜5 km）、
 # 段の境で切ると焼いた崖と焼かない崖の境が崖の面の途中に写るので、崖の北の端より北へ 140 m 余らせる
 # （mid の 8 m の格子の線に合わせて −6403。TerrainCliffDetail.cpp の範囲は −6340 まで。押し出しが 0 へ下がる 40 m が崖の端より北に入る）。
-# 南の縁は近景の北の縁から 16 m 北（間に mid の格子の線 1 本を挟む）
-CASTLE_RECT = {"x0": -4100.0, "x1": -1500.0, "z0": -6403.0, "z1": -2515.0}
-# mid の段は近景の外周から各方向にこの距離まで（4 枚の内側に、far の縫い目の帯が入る 2 升目を残して切る）
+# 南の縁は近景の北の縁から 16 m 北（間に mid の格子の線 1 本を挟む）。
+# 西と北の縁は、ref_far_01 の画面の左（視点から 5〜9 km。1 画素が 1.1〜2 m）に写る奥の崖と、主役のビュートと尖塔の間の奥
+# （7〜9 km）の崖を含める。視点から見える急な点（2 m の格子）は X −6838〜−3692・Z −8875〜−5583 にあり、北の端は mid の北の縁で
+# 切れていたので、mid の北の縁も延ばす。崖の細部の範囲（TerrainCliffDetail.cpp）の押し出しが満ちる位置が崖の端より外に入り、
+# 押し出しが 0 になる位置から段の外周まで 40 m 空ける（西 −7000・北 −9051。mid の 8 m の格子の線から 8 m 内側）
+CASTLE_RECT = {"x0": -7000.0, "x1": -1500.0, "z0": -9051.0, "z1": -2515.0}
+# mid の段は近景の外周から各方向にこの距離まで（4 枚の内側に、far の縫い目の帯が入る 2 升目を残して切る）。北だけは castle の段の
+# 北の縁の外に縫い目の帯を残すため MID_EXPAND_NORTH_M まで延ばす
 MID_EXPAND_M = 6000.0
+MID_EXPAND_NORTH_M = 6600.0
 # outer の段は 4 枚の外縁から各方向にこの距離まで[m]。東・南は ridge（南東を見る）と outpost（南を見る）の地平線、
 # 北は Bears Ears（N 約 4164800）まで。西は 1/3 秒角の西の端（西経 110°、E 588300〜589000）で切れる
 OUTER_EXPAND_M = {"west": 2000, "east": 25000, "south": 30000, "north": 27000}
@@ -152,7 +158,7 @@ def make_levels(near):
     mid = Level("mid", s,
                 max(lattice_ceil(far.x0 + keep, ax, s), lattice_ceil(near["x0"] - MID_EXPAND_M, ax, s)),
                 min(lattice_floor(far.x1 - keep, ax, s), lattice_floor(near["x1"] + MID_EXPAND_M, ax, s)),
-                max(lattice_ceil(far.z0 + keep, az, s), lattice_ceil(near["z0"] - MID_EXPAND_M, az, s)),
+                max(lattice_ceil(far.z0 + keep, az, s), lattice_ceil(near["z0"] - MID_EXPAND_NORTH_M, az, s)),
                 min(lattice_floor(far.z1 - keep, az, s), lattice_floor(near["z1"] + MID_EXPAND_M, az, s)))
     s = SPACINGS["outer"]
     # 東 = +X、北 = -Z

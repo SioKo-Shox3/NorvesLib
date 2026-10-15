@@ -12,8 +12,13 @@ namespace NorvesLib::Tools::AssetCook
         using Core::Container::AnsiString;
         using Core::Container::VariableArray;
 
-        // 崖の細部を焼く範囲（エンジンの m）と、面に沿った細分の間隔（m）。範囲は手本の視点に写る崖を、視点からの
-        // 距離で 1 画素が何 m になるかで間隔を決めて選んだ。範囲の内側 kRegionFadeMeters で押し出しを 0 から上げる
+        // 升目の一辺あたりの細分の数の範囲（下限は範囲ごとに変えられる。既定の下限）
+        constexpr uint32_t kMinSubdivisions = 4u;
+        constexpr uint32_t kMaxSubdivisions = 16u;
+
+        // 崖の細部を焼く範囲（エンジンの m）と、面に沿った細分の間隔（m）と、升目の一辺あたりの細分の数の下限。
+        // 範囲は手本の視点に写る崖を、視点からの距離で 1 画素が何 m になるかで間隔を決めて選んだ。範囲の内側
+        // kRegionFadeMeters で押し出しを 0 から上げる
         struct CliffRegion
         {
             double MinX;
@@ -21,6 +26,7 @@ namespace NorvesLib::Tools::AssetCook
             double MinZ;
             double MaxZ;
             double TargetSpacing;
+            uint32_t MinSubdivisions = kMinSubdivisions;
         };
         // 近景（1 m の DEM の格子）の範囲
         constexpr CliffRegion kNearRegions[] = {
@@ -40,14 +46,16 @@ namespace NorvesLib::Tools::AssetCook
             // ref_far_01 の主役のビュート（頂 X −2372・Z −4189、2.7〜3 km・1 画素 0.56〜0.63 m）と左のメサ（3.4 km・0.72 m）
             {-3450.0, -2100.0, -4450.0, -3950.0, 0.5},
             // ref_far_01 の奥の左右の崖（3.3〜5 km・0.7〜1 m）。右の崖は Z −6260 まで続くので、崖の北の端まで押し出しを
-            // 弱めずに届かせる（段の外周 −6403 から 63 m）
+            // 弱めずに届かせる
             {-3650.0, -1900.0, -6340.0, -4650.0, 0.5},
+            // ref_far_01 の画面の左の奥の崖（5〜9 km・1.1〜2 m）。見える急な点は X −6838〜−4242・Z −8473〜−5583。
+            // 上の範囲と重ねない（重なると上の範囲の崖の細分の間隔が変わる）。間隔 1 m で、細分は 1 m より細かくしない
+            {-6960.0, -3650.0, -9011.0, -5500.0, 1.0, 2u},
+            // 主役のビュートと尖塔の間・尖塔の右に奥に写る崖（6〜8 km・1.3〜1.8 m）。見える急な点は X −5158〜−3692・
+            // Z −8875〜−6385。左の奥の崖の範囲と重ね、上の右の崖の範囲とは重ねない
+            {-4500.0, -1540.0, -9011.0, -6340.0, 1.0, 2u},
         };
         constexpr double kRegionFadeMeters = 40.0;
-
-        // 升目の一辺あたりの細分の数の範囲
-        constexpr uint32_t kMinSubdivisions = 4u;
-        constexpr uint32_t kMaxSubdivisions = 16u;
         // 押し出しの向き（面の法線）を求める高さの差分の間隔（m）。1 m の格子の凹凸ではなく数 m の面の向きにする
         constexpr double kNormalSmoothingMeters = 1.5;
         // 押し出す斜面の傾き（面の法線の水平の長さ = 傾斜の sin）。38° から効き始め 52° で満ちる
@@ -620,10 +628,10 @@ namespace NorvesLib::Tools::AssetCook
                                      std::abs(GridHeight(globalColumn + 1, globalRow + 1) -
                                               GridHeight(globalColumn + 1, globalRow))) /
                             spacing;
-                        const double target = TargetSpacing(WorldX(static_cast<double>(globalColumn) + 0.5),
-                                                            WorldZ(static_cast<double>(globalRow) + 0.5));
-                        m_SubdivisionX[cell] = SubdivisionCount(std::sqrt(1.0 + slopeX * slopeX) * spacing, target);
-                        m_SubdivisionZ[cell] = SubdivisionCount(std::sqrt(1.0 + slopeZ * slopeZ) * spacing, target);
+                        const CliffRegion &region = InnermostRegion(WorldX(static_cast<double>(globalColumn) + 0.5),
+                                                                    WorldZ(static_cast<double>(globalRow) + 0.5));
+                        m_SubdivisionX[cell] = SubdivisionCount(std::sqrt(1.0 + slopeX * slopeX) * spacing, region);
+                        m_SubdivisionZ[cell] = SubdivisionCount(std::sqrt(1.0 + slopeZ * slopeZ) * spacing, region);
                     }
                 }
             }
@@ -744,21 +752,21 @@ namespace NorvesLib::Tools::AssetCook
                 return std::clamp(inside / kRegionFadeMeters, 0.0, 1.0);
             }
 
-            // 点の細分の間隔（最も内側にある範囲の値）
-            double TargetSpacing(double x, double z) const
+            // 点の細分の間隔と下限を決める範囲（最も内側にある範囲。格子の範囲は 1 つ以上ある）
+            const CliffRegion &InnermostRegion(double x, double z) const
             {
                 double best = -std::numeric_limits<double>::max();
-                double spacing = m_Grid.RegionCount > 0 ? m_Grid.Regions[0].TargetSpacing : 0.25;
+                size_t bestIndex = 0;
                 for (size_t index = 0; index < m_Grid.RegionCount; ++index)
                 {
                     const double inside = RegionInside(m_Grid.Regions[index], x, z);
                     if (inside > best)
                     {
                         best = inside;
-                        spacing = m_Grid.Regions[index].TargetSpacing;
+                        bestIndex = index;
                     }
                 }
-                return spacing;
+                return m_Grid.Regions[bestIndex];
             }
 
             // 傾きと範囲から決まる押し出しの重み（升目の印を除く）
@@ -901,10 +909,10 @@ namespace NorvesLib::Tools::AssetCook
                 outWeights[3] = 0.5 * (-t2 + t3);
             }
 
-            static uint32_t SubdivisionCount(double surfaceLength, double targetSpacing)
+            static uint32_t SubdivisionCount(double surfaceLength, const CliffRegion &region)
             {
-                const double count = std::ceil(surfaceLength / targetSpacing);
-                return static_cast<uint32_t>(std::clamp(count, static_cast<double>(kMinSubdivisions),
+                const double count = std::ceil(surfaceLength / region.TargetSpacing);
+                return static_cast<uint32_t>(std::clamp(count, static_cast<double>(region.MinSubdivisions),
                                                         static_cast<double>(kMaxSubdivisions)));
             }
 
