@@ -61,6 +61,8 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t TerrainLayerTextureCount = 6;
         // 地形の地表の分類の地図の binding（megageometry.frag の terrainSurfaceMaskTexture。2・3 層目の 6 枚の次）
         constexpr uint32_t TerrainSurfaceMaskBindingIndex = 16;
+        // 地形の遠景の地図の binding（megageometry.frag の terrainFarMapTexture。地表の分類の地図の次）
+        constexpr uint32_t TerrainFarMapBindingIndex = 17;
         // メッシュの表の binding（Common/MegaInstanceTable.glsl の MEGA_MESH_BINDING。カリングと描画のセットで同じ番号）
         constexpr uint32_t MegaMeshTableBindingIndex = 22;
 
@@ -1566,9 +1568,9 @@ namespace NorvesLib::Core::Rendering
             float VtFeedbackParams[4]; // VT のフィードバックのパラメータ: x=法線, y=ORM（metallic の枠）, z=高さ（0 は書かない）, w=未使用
             float TerrainParams[TERRAIN_BLEND_PARAM_FLOATS]; // 地形の 3 層の混ぜ合わせ（TerrainBlendShading.h の並び。layers.x が 0 なら 1 層）
         };
-        static_assert(sizeof(SectionUniformData) <= 512u);
+        static_assert(sizeof(SectionUniformData) <= 768u);
 
-        constexpr uint32_t SectionUniformBufferBytes = 512;
+        constexpr uint32_t SectionUniformBufferBytes = 768;
         constexpr uint32_t IndirectCommandBytes = static_cast<uint32_t>(sizeof(MegaGeometry::DrawIndexedIndirectCommand));
     } // namespace
 
@@ -3089,20 +3091,26 @@ namespace NorvesLib::Core::Rendering
             // 地表の分類の地図は引けたときだけ使う（引けなければ傾斜の式だけで混ぜる）。読まない枠はアルベドで埋める
             RHI::TexturePtr surfaceMask =
                 bTerrainBlend ? resolveTexture(terrain.SurfaceMaskTexture, nullptr) : RHI::TexturePtr();
+            // 遠景の地図も引けたときだけ使う（引けなければ遠くでも画素ごとの式で描く）
+            RHI::TexturePtr farMap = bTerrainBlend ? resolveTexture(terrain.FarMapTexture, nullptr) : RHI::TexturePtr();
             // 3 層のアルベドが UNORM で張られていれば、シェーダーが sRGB から線形へ戻す
             const uint32_t albedoDecodeBits = ResolveTerrainAlbedoDecodeBits(albedo.get(), terrainTextures[0].get(),
                                                                              terrainTextures[3].get());
-            PackTerrainBlendParams(terrain, bTerrainBlend, surfaceMask != nullptr, albedoDecodeBits,
+            PackTerrainBlendParams(terrain, bTerrainBlend, surfaceMask != nullptr, farMap != nullptr, albedoDecodeBits,
                                    uniform.TerrainParams);
             if (!surfaceMask)
             {
                 surfaceMask = albedo;
             }
+            if (!farMap)
+            {
+                farMap = albedo;
+            }
 
             // 張るテクスチャに sparse（VT）が1枚でもあれば、シェーダーは常駐しないタイルを読まず粗いミップへ逃げる。
             uniform.MaterialParams[2] = AnySparseTexture(albedo, normal, metallic, roughness, ao, height, terrainTextures[0],
                                                          terrainTextures[1], terrainTextures[2], terrainTextures[3],
-                                                         terrainTextures[4], terrainTextures[5], surfaceMask)
+                                                         terrainTextures[4], terrainTextures[5], surfaceMask, farMap)
                                             ? 1.0f
                                             : 0.0f;
             // VT の要求を書く先（このフレームのバッファ。対応しないデバイスでは null で、シェーダーに binding は入らない）。
@@ -3147,6 +3155,8 @@ namespace NorvesLib::Core::Rendering
             }
             descriptorSet->BindTexture(TerrainSurfaceMaskBindingIndex, surfaceMask);
             descriptorSet->BindSampler(TerrainSurfaceMaskBindingIndex, layerSampler);
+            descriptorSet->BindTexture(TerrainFarMapBindingIndex, farMap);
+            descriptorSet->BindSampler(TerrainFarMapBindingIndex, layerSampler);
             BindVirtualTextureFeedback(*descriptorSet, VirtualTextureFeedbackBindingIndex, feedbackTarget);
 
             // 頂点シェーダーが引くインスタンスの表・メッシュの表と描画情報
@@ -4686,10 +4696,11 @@ namespace NorvesLib::Core::Rendering
             texBinding.stages = RHI::ShaderStage::Pixel;
             desc.bindings.push_back(texBinding);
         }
-        // 地形の地表の分類の地図（16）
+        // 地形の地表の分類の地図（16）と遠景の地図（17）
+        for (const uint32_t binding : {TerrainSurfaceMaskBindingIndex, TerrainFarMapBindingIndex})
         {
             RHI::DescriptorBinding texBinding;
-            texBinding.binding = TerrainSurfaceMaskBindingIndex;
+            texBinding.binding = binding;
             texBinding.type = RHI::ResourceBindType::CombinedImageSampler;
             texBinding.stages = RHI::ShaderStage::Pixel;
             desc.bindings.push_back(texBinding);

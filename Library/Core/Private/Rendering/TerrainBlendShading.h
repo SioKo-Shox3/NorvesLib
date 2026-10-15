@@ -1,6 +1,6 @@
 ﻿#pragma once
 
-// 地形の 3 層の混ぜ合わせ（MegaGeometry::MegaTerrainBlend）を、シェーダーの TerrainBlendParams（vec4 × 8。
+// 地形の 3 層の混ぜ合わせ（MegaGeometry::MegaTerrainBlend）を、シェーダーの TerrainBlendParams（vec4 × 10。
 // Assets/Shaders/Common/TerrainLayerBlend.glsl）へ詰める。MegaGeometryPass（ハードのラスタ）と
 // VisibilityResolvePass（可視バッファの解決）が同じ並びで使う。
 
@@ -13,8 +13,8 @@
 
 namespace NorvesLib::Core::Rendering
 {
-    /** @brief TerrainBlendParams の float の数（vec4 × 8） */
-    constexpr uint32_t TERRAIN_BLEND_PARAM_FLOATS = 32u;
+    /** @brief TerrainBlendParams の float の数（vec4 × 10） */
+    constexpr uint32_t TERRAIN_BLEND_PARAM_FLOATS = 40u;
     /** @brief layers.w のビット（法線が 2 チャンネル（BC5）の層） */
     constexpr uint32_t TERRAIN_BLEND_DIRT_NORMAL_TWO_CHANNEL = 1u;
     constexpr uint32_t TERRAIN_BLEND_ROCK_NORMAL_TWO_CHANNEL = 2u;
@@ -78,15 +78,18 @@ namespace NorvesLib::Core::Rendering
      *
      * albedoDecodeBits は ResolveTerrainAlbedoDecodeBits の値（layers.w の法線のビットに足す）。
      * bEnabled が偽なら layers.x を 0 にする（シェーダーは 1 層の材質として描く）。bSurfaceMask が偽（地図のテクスチャが
-     * 引けない）なら mask を 0 にする（シェーダーは傾斜の式だけで混ぜる）。角度はラジアン、波長は逆数にする。
+     * 引けない）なら mask を 0 にする（シェーダーは傾斜の式だけで混ぜる）。bFarMap が偽（遠景の地図が引けない）なら farMap を
+     * 0 にする（遠くでも画素ごとの式で描く）。角度はラジアン、波長は逆数にする。
      * 並び: slope = 土の始まり・終わり・岩肌の始まり・終わり、height = 土へ寄せる高さの始まり・終わり・寄せの最大・混ぜの深さ、
      * noise = 2 つの波長の逆数・振幅・砂の高さ、layers = 有効・土の UV の倍率・岩肌の UV の倍率・法線とアルベドの戻しのビット、
      * macro = 揺らぎの 2 つの波長の逆数・明るさの振幅・色味の振幅、detail = 変え始める距離・距離の比の log2・段の上限・
      * テクスチャの 1 枚の広さ、mask = 地図の外縁の X・Z の最小・X・Z の広さの逆数（z が 0 なら地図なし）、
-     * maskMix = 礫を土へ回す割合・外縁の帯の幅（m）・引く位置のずらしの幅（m）・確認用の色分け（1/0）。
+     * maskMix = 礫を土へ回す割合・外縁の帯の幅（m）・引く位置のずらしの幅（m）・確認用の色分け（1/0）、
+     * farMap = 遠景の地図の外縁の X・Z の最小・X・Z の広さの逆数（z が 0 なら地図なし）、farMix = 地図の 1 画素の広さ（m）・
+     * 砂・土・岩肌の法線マップの傾きの分散。
      */
     inline void PackTerrainBlendParams(const MegaGeometry::MegaTerrainBlend &blend, bool bEnabled, bool bSurfaceMask,
-                                       uint32_t albedoDecodeBits, float out[TERRAIN_BLEND_PARAM_FLOATS])
+                                       bool bFarMap, uint32_t albedoDecodeBits, float out[TERRAIN_BLEND_PARAM_FLOATS])
     {
         constexpr float DegreesToRadians = 3.14159265358979f / 180.0f;
         // smoothstep の両端が同じだと未定義なので、終わりを始まりより少し先へずらす
@@ -132,5 +135,18 @@ namespace NorvesLib::Core::Rendering
         out[29] = blend.SurfaceMaskEdgeFadeMeters > 1.0e-3f ? blend.SurfaceMaskEdgeFadeMeters : 1.0e-3f;
         out[30] = blend.SurfaceMaskWarpMeters > 0.0f ? blend.SurfaceMaskWarpMeters : 0.0f;
         out[31] = bEnabled && IsTerrainLayerDebugColorsRequested() ? 1.0f : 0.0f;
+        const float farWidth = blend.FarMapMaxXZ[0] - blend.FarMapMinXZ[0];
+        const float farDepth = blend.FarMapMaxXZ[1] - blend.FarMapMinXZ[1];
+        const bool bFar = bEnabled && bFarMap && farWidth > 1.0e-3f && farDepth > 1.0e-3f && blend.FarMapTexelMeters > 1.0e-3f;
+        out[32] = bFar ? blend.FarMapMinXZ[0] : 0.0f;
+        out[33] = bFar ? blend.FarMapMinXZ[1] : 0.0f;
+        out[34] = bFar ? 1.0f / farWidth : 0.0f;
+        out[35] = bFar ? 1.0f / farDepth : 0.0f;
+        out[36] = bFar ? blend.FarMapTexelMeters : 0.0f;
+        for (uint32_t layer = 0; layer < 3u; ++layer)
+        {
+            const float variance = blend.DetailSlopeVariance[layer];
+            out[37 + layer] = std::isfinite(variance) && variance > 0.0f ? variance : 0.0f;
+        }
     }
 } // namespace NorvesLib::Core::Rendering

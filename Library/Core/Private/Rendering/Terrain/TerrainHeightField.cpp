@@ -800,79 +800,101 @@ namespace NorvesLib::Core::Rendering::Terrain
         return normal;
     }
 
+    namespace
+    {
+        // 地形の地図の記述（surface.json・far.json）を読む。2 つは同じ並び（format・channels・width・height・texel_size_m・
+        // engine_edges）で、チャンネルの名前 channelNames（r・g・b・a）だけが違う。errorLabel はエラー文の先頭の地図の呼び名
+        bool LoadTerrainMapLayout(Container::AnsiStringView descriptorPath, const char *const (&channelNames)[4],
+                                  const char *errorLabel, TerrainSurfaceMaskLayout &outLayout, Container::AnsiString &outError)
+        {
+            constexpr uint64_t kMaxDescriptorBytes = 1024u * 1024u;
+            constexpr int64_t kMaxPixels = 16384;
+            // Scripts/Terrain/TerrainMasks.py・FarMacro.py の記述の format と同じ文字列
+            constexpr const char *kMapFormat = "PNG RGBA8, row 0 = north (engine z min), column 0 = west (engine x min)";
+            const auto fail = [&](const char *reason)
+            {
+                Container::AnsiString message(errorLabel);
+                message += reason;
+                outError = MakeGridError(message.c_str(), descriptorPath);
+                return false;
+            };
+
+            outLayout = TerrainSurfaceMaskLayout();
+            Asset::AssetFileReader reader;
+            Asset::AssetReadRequest request;
+            request.InputPath.append(descriptorPath.data(), descriptorPath.size());
+            request.bAllowAbsolutePath = false;
+            request.MaxReadBytes = kMaxDescriptorBytes;
+            const Asset::AssetReadResult descriptor = reader.Read(request);
+            if (!descriptor.Succeeded())
+            {
+                return fail("の記述を読めません");
+            }
+            Container::Span<const uint8_t> text(descriptor.Blob.GetData(), descriptor.Blob.GetSize());
+            if (text.size() >= 3 && text[0] == 0xefu && text[1] == 0xbbu && text[2] == 0xbfu)
+            {
+                text = {text.data() + 3, text.size() - 3};
+            }
+            JsonDocument document;
+            if (!JsonDocument::TryParseUtf8(text, document))
+            {
+                return fail("の記述が JSON として読めません");
+            }
+            const JsonValue root = document.GetRoot();
+            const JsonValue channels = root.FindMember("channels");
+            if (!JsonStringEquals(root.FindMember("format"), kMapFormat) || !channels.IsObject() ||
+                !JsonStringEquals(channels.FindMember("r"), channelNames[0]) ||
+                !JsonStringEquals(channels.FindMember("g"), channelNames[1]) ||
+                !JsonStringEquals(channels.FindMember("b"), channelNames[2]) ||
+                !JsonStringEquals(channels.FindMember("a"), channelNames[3]))
+            {
+                return fail("の記述の形式・チャンネルの並びが約束と違います");
+            }
+            const JsonValue width = root.FindMember("width");
+            const JsonValue height = root.FindMember("height");
+            const JsonValue edges = root.FindMember("engine_edges");
+            double texel = 0.0;
+            double minX = 0.0;
+            double maxX = 0.0;
+            double minZ = 0.0;
+            double maxZ = 0.0;
+            if (!width.IsIntegerLiteral() || !height.IsIntegerLiteral() || width.AsInt64() < 2 || height.AsInt64() < 2 ||
+                width.AsInt64() > kMaxPixels || height.AsInt64() > kMaxPixels ||
+                !JsonFiniteNumber(root.FindMember("texel_size_m"), texel) || texel <= 0.0 || !edges.IsObject() ||
+                !JsonFiniteNumber(edges.FindMember("x_min"), minX) || !JsonFiniteNumber(edges.FindMember("x_max"), maxX) ||
+                !JsonFiniteNumber(edges.FindMember("z_min"), minZ) || !JsonFiniteNumber(edges.FindMember("z_max"), maxZ))
+            {
+                return fail("の大きさ・画素の広さ・外縁が読めません");
+            }
+            const double expectedWidth = static_cast<double>(width.AsInt64()) * texel;
+            const double expectedDepth = static_cast<double>(height.AsInt64()) * texel;
+            if (std::fabs((maxX - minX) - expectedWidth) > 1.0e-3 * texel ||
+                std::fabs((maxZ - minZ) - expectedDepth) > 1.0e-3 * texel)
+            {
+                return fail("の外縁の幅が、列・行の数 × 画素の広さと合いません");
+            }
+            outLayout.MinX = static_cast<float>(minX);
+            outLayout.MaxX = static_cast<float>(maxX);
+            outLayout.MinZ = static_cast<float>(minZ);
+            outLayout.MaxZ = static_cast<float>(maxZ);
+            outLayout.Width = static_cast<uint32_t>(width.AsInt64());
+            outLayout.Height = static_cast<uint32_t>(height.AsInt64());
+            return true;
+        }
+    } // namespace
+
     bool LoadTerrainSurfaceMaskLayout(Container::AnsiStringView descriptorPath, TerrainSurfaceMaskLayout &outLayout,
                                       Container::AnsiString &outError)
     {
-        constexpr uint64_t kMaxDescriptorBytes = 1024u * 1024u;
-        constexpr int64_t kMaxPixels = 16384;
-        // Scripts/Terrain/TerrainMasks.py の記述の format と同じ文字列
-        constexpr const char *kMaskFormat = "PNG RGBA8, row 0 = north (engine z min), column 0 = west (engine x min)";
+        static constexpr const char *kChannels[4] = {"rock", "talus", "ground_fine", "ground_gravel"};
+        return LoadTerrainMapLayout(descriptorPath, kChannels, "地表の分類の地図", outLayout, outError);
+    }
 
-        outLayout = TerrainSurfaceMaskLayout();
-        Asset::AssetFileReader reader;
-        Asset::AssetReadRequest request;
-        request.InputPath.append(descriptorPath.data(), descriptorPath.size());
-        request.bAllowAbsolutePath = false;
-        request.MaxReadBytes = kMaxDescriptorBytes;
-        const Asset::AssetReadResult descriptor = reader.Read(request);
-        if (!descriptor.Succeeded())
-        {
-            outError = MakeGridError("地表の分類の地図の記述を読めません", descriptorPath);
-            return false;
-        }
-        Container::Span<const uint8_t> text(descriptor.Blob.GetData(), descriptor.Blob.GetSize());
-        if (text.size() >= 3 && text[0] == 0xefu && text[1] == 0xbbu && text[2] == 0xbfu)
-        {
-            text = {text.data() + 3, text.size() - 3};
-        }
-        JsonDocument document;
-        if (!JsonDocument::TryParseUtf8(text, document))
-        {
-            outError = MakeGridError("地表の分類の地図の記述が JSON として読めません", descriptorPath);
-            return false;
-        }
-        const JsonValue root = document.GetRoot();
-        const JsonValue channels = root.FindMember("channels");
-        if (!JsonStringEquals(root.FindMember("format"), kMaskFormat) || !channels.IsObject() ||
-            !JsonStringEquals(channels.FindMember("r"), "rock") || !JsonStringEquals(channels.FindMember("g"), "talus") ||
-            !JsonStringEquals(channels.FindMember("b"), "ground_fine") ||
-            !JsonStringEquals(channels.FindMember("a"), "ground_gravel"))
-        {
-            outError = MakeGridError("地表の分類の地図の記述の形式・チャンネルの並びが約束と違います", descriptorPath);
-            return false;
-        }
-        const JsonValue width = root.FindMember("width");
-        const JsonValue height = root.FindMember("height");
-        const JsonValue edges = root.FindMember("engine_edges");
-        double texel = 0.0;
-        double minX = 0.0;
-        double maxX = 0.0;
-        double minZ = 0.0;
-        double maxZ = 0.0;
-        if (!width.IsIntegerLiteral() || !height.IsIntegerLiteral() || width.AsInt64() < 2 || height.AsInt64() < 2 ||
-            width.AsInt64() > kMaxPixels || height.AsInt64() > kMaxPixels ||
-            !JsonFiniteNumber(root.FindMember("texel_size_m"), texel) || texel <= 0.0 || !edges.IsObject() ||
-            !JsonFiniteNumber(edges.FindMember("x_min"), minX) || !JsonFiniteNumber(edges.FindMember("x_max"), maxX) ||
-            !JsonFiniteNumber(edges.FindMember("z_min"), minZ) || !JsonFiniteNumber(edges.FindMember("z_max"), maxZ))
-        {
-            outError = MakeGridError("地表の分類の地図の大きさ・画素の広さ・外縁が読めません", descriptorPath);
-            return false;
-        }
-        const double expectedWidth = static_cast<double>(width.AsInt64()) * texel;
-        const double expectedDepth = static_cast<double>(height.AsInt64()) * texel;
-        if (std::fabs((maxX - minX) - expectedWidth) > 1.0e-3 * texel ||
-            std::fabs((maxZ - minZ) - expectedDepth) > 1.0e-3 * texel)
-        {
-            outError = MakeGridError("地表の分類の地図の外縁の幅が、列・行の数 × 画素の広さと合いません", descriptorPath);
-            return false;
-        }
-        outLayout.MinX = static_cast<float>(minX);
-        outLayout.MaxX = static_cast<float>(maxX);
-        outLayout.MinZ = static_cast<float>(minZ);
-        outLayout.MaxZ = static_cast<float>(maxZ);
-        outLayout.Width = static_cast<uint32_t>(width.AsInt64());
-        outLayout.Height = static_cast<uint32_t>(height.AsInt64());
-        return true;
+    bool LoadTerrainFarMapLayout(Container::AnsiStringView descriptorPath, TerrainSurfaceMaskLayout &outLayout,
+                                 Container::AnsiString &outError)
+    {
+        static constexpr const char *kChannels[4] = {"normal_x", "normal_z", "rock", "dirt"};
+        return LoadTerrainMapLayout(descriptorPath, kChannels, "遠景の地図", outLayout, outError);
     }
 
     namespace WastelandTerrain

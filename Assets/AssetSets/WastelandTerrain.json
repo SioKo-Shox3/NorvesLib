@@ -77,6 +77,13 @@
       "source_path": "Assets/Terrain/ValleyOfTheGods/surface.png",
       "package_name": "WastelandTerrain/surface_mask.nvpkg",
       "entry_name": "Assets/Terrain/ValleyOfTheGods/surface.nvtex"
+    },
+    {
+      "logical_path": "Assets/Terrain/ValleyOfTheGods/far.png",
+      "cook_usage": "orm",
+      "source_path": "Assets/Terrain/ValleyOfTheGods/far.png",
+      "package_name": "WastelandTerrain/far_map.nvpkg",
+      "entry_name": "Assets/Terrain/ValleyOfTheGods/far.nvtex"
     }
   ],
   "models": [

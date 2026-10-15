@@ -232,6 +232,11 @@ namespace NorvesLib::Core::Rendering::Terrain
     bool LoadTerrainSurfaceMaskLayout(Container::AnsiStringView descriptorPath, TerrainSurfaceMaskLayout &outLayout,
                                       Container::AnsiString &outError);
 
+    /// 遠景の地図（Scripts/Terrain/FarMacro.py が書く far.png。R・G = 法線の X・Z、B = 岩肌・A = 土の重み）の記述（far.json）を読み、
+    /// 地図の外縁を outLayout に入れる。並びと検査は LoadTerrainSurfaceMaskLayout と同じで、チャンネルの名前だけが違う
+    bool LoadTerrainFarMapLayout(Container::AnsiStringView descriptorPath, TerrainSurfaceMaskLayout &outLayout,
+                                 Container::AnsiString &outError);
+
     /// 荒野のシーン（wasteland）の地形の値。クッカーと Game が同じ値を使う
     namespace WastelandTerrain
     {
@@ -291,6 +296,11 @@ namespace NorvesLib::Core::Rendering::Terrain
         inline constexpr const char *kSurfaceMaskDescriptorPath = "Terrain/ValleyOfTheGods/surface.json";
         /// 地表の分類の地図のテクスチャの論理パス（一覧 Assets/AssetSets/WastelandTerrain.json が線形の BC7 で焼く）
         inline constexpr const char *kSurfaceMaskTexturePath = "Assets/Terrain/ValleyOfTheGods/surface.png";
+
+        /// 遠景の地図の記述（LoadTerrainFarMapLayout に渡す。アセットの根からの道）
+        inline constexpr const char *kFarMapDescriptorPath = "Terrain/ValleyOfTheGods/far.json";
+        /// 遠景の地図のテクスチャの論理パス（一覧 Assets/AssetSets/WastelandTerrain.json が線形の BC7 で焼く）
+        inline constexpr const char *kFarMapTexturePath = "Assets/Terrain/ValleyOfTheGods/far.png";
 
         /// 荒野の地形の高さ場の値
         TerrainHeightFieldParams MakeParams();

@@ -946,6 +946,10 @@ namespace NorvesLib::Core::Rendering
         {
             sanitized.StartDistanceMeters = 0.0f;
         }
+        if (!std::isfinite(sanitized.OriginAltitudeMeters))
+        {
+            sanitized.OriginAltitudeMeters = 0.0f;
+        }
         return sanitized;
     }
 

@@ -36,9 +36,9 @@ namespace NorvesLib::Core::Rendering
         // 空の表（読まれない）の大きさ。MegaInstance（192 バイト）・InstanceData（208 バイト）より大きい
         constexpr uint64_t PlaceholderBytes = 256;
 
-        // 材質ごとの形の 1 回の dispatch の定数（シェーダーの ResolveTileParams と同じ 160 バイト。
+        // 材質ごとの形の 1 回の dispatch の定数（シェーダーの ResolveTileParams と同じ 192 バイト。
         // tile = 横のタイル数・材質の番号・フラグ・予約、vt = VT のフィードバックのパラメータ（アルベド・法線・ORM・高さ）、
-        // terrain = 地形の混ぜ方の値（vec4 × 8。TerrainBlendShading.h の並び）
+        // terrain = 地形の混ぜ方の値（vec4 × 10。TerrainBlendShading.h の並び）
         constexpr uint32_t TileParamsWords = 8u + VisibilityResolveGeometry::TERRAIN_PARAM_FLOATS;
         constexpr uint32_t TileParamsBytes = TileParamsWords * sizeof(uint32_t);
         static_assert(VisibilityResolveGeometry::TERRAIN_PARAM_FLOATS == TERRAIN_BLEND_PARAM_FLOATS,
@@ -49,7 +49,8 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t DumpBindingIndex = 11u;
         // MegaGeometry のメッシュの表（Common/MegaInstanceTable.glsl の MEGA_MESH_BINDING。材質ごとの形の追加の束縛より後ろ）
         constexpr uint32_t MegaMeshTableBindingIndex = 22u;
-        // 地形の 2・3 層目のテクスチャと地表の分類の地図（シェーダーの VIS_TERRAIN_BINDING から 7 枚。材質ごとの形だけ。メッシュの表より後ろ）
+        // 地形の 2・3 層目のテクスチャと地表の分類の地図と遠景の地図（シェーダーの VIS_TERRAIN_BINDING から 8 枚。材質ごとの形だけ。
+        // メッシュの表より後ろ）
         constexpr uint32_t TerrainTextureBindingFirst = 23u;
 
         // bFeedback: 材質ごとの形の最後に VT の要求のバッファ（シェーダーの VT_FEEDBACK_BINDING）を足す（bTiles のときだけ）
@@ -113,7 +114,7 @@ namespace NorvesLib::Core::Rendering
                     binding.stages = RHI::ShaderStage::Compute;
                     desc.bindings.push_back(binding);
                 }
-                // 地形の 2・3 層目のテクスチャと地表の分類の地図
+                // 地形の 2・3 層目のテクスチャと地表の分類の地図と遠景の地図
                 for (uint32_t textureBinding = 0; textureBinding < VisibilityResolveGeometry::TERRAIN_TEXTURE_COUNT;
                      ++textureBinding)
                 {
@@ -160,7 +161,7 @@ namespace NorvesLib::Core::Rendering
         }
 
         // 地形の混ぜ合わせ（材質の表と同じ添え字の値）を解決の入力へ写す。2・3 層目の 6 枚がすべて引けたときだけ有効にする。
-        // 地表の分類の地図は引けたときだけ張る（引けなければ傾斜の式だけで混ぜる）
+        // 地表の分類の地図・遠景の地図は引けたときだけ張る（引けなければ傾斜の式・画素ごとの式で混ぜる）
         void AttachTerrainBlend(const TextureResources* textures,
                                 const MegaGeometry::MegaTerrainBlend* terrain,
                                 VisibilityResolveMaterial& material)
@@ -187,10 +188,13 @@ namespace NorvesLib::Core::Rendering
             material.bTerrainBlend = true;
             RHI::TexturePtr& mask = material.TerrainTextures[VisibilityResolveGeometry::TERRAIN_SURFACE_MASK_INDEX];
             mask = ResolveMaterialTexture(textures, terrain->SurfaceMaskTexture);
+            RHI::TexturePtr& farMap = material.TerrainTextures[VisibilityResolveGeometry::TERRAIN_FAR_MAP_INDEX];
+            farMap = ResolveMaterialTexture(textures, terrain->FarMapTexture);
             // 3 層のアルベドが UNORM で張られていれば、シェーダーが sRGB から線形へ戻す（ラスタと同じ判定）
             const uint32_t albedoDecodeBits = ResolveTerrainAlbedoDecodeBits(
                 material.Albedo.get(), material.TerrainTextures[0].get(), material.TerrainTextures[3].get());
-            PackTerrainBlendParams(*terrain, true, mask != nullptr, albedoDecodeBits, material.TerrainParams);
+            PackTerrainBlendParams(*terrain, true, mask != nullptr, farMap != nullptr, albedoDecodeBits,
+                                   material.TerrainParams);
         }
 
     } // namespace
@@ -795,14 +799,14 @@ namespace NorvesLib::Core::Rendering
                     bound.Flags |= VisibilityResolveGeometry::TILE_FLAG_SPARSE;
                 }
             }
-            // 地形の 2・3 層目と地表の分類の地図。地形でない材質と、地図の無い地形の材質は、読まない枠を 1 層目の
+            // 地形の 2・3 層目と地表の分類の地図と遠景の地図。地形でない材質と、地図の無い地形の材質は、読まない枠を 1 層目の
             // アルベド・法線・金属度（ORM）の枠で埋める
+            for (const uint32_t mapIndex : {VisibilityResolveGeometry::TERRAIN_SURFACE_MASK_INDEX,
+                                            VisibilityResolveGeometry::TERRAIN_FAR_MAP_INDEX})
             {
-                const RHI::TexturePtr& mask =
-                    input.TerrainTextures[VisibilityResolveGeometry::TERRAIN_SURFACE_MASK_INDEX];
-                bound.TerrainTextures[VisibilityResolveGeometry::TERRAIN_SURFACE_MASK_INDEX] =
-                    input.bTerrainBlend && mask ? mask : bound.Textures[0];
-                if (bound.TerrainTextures[VisibilityResolveGeometry::TERRAIN_SURFACE_MASK_INDEX]->IsSparse())
+                const RHI::TexturePtr& map = input.TerrainTextures[mapIndex];
+                bound.TerrainTextures[mapIndex] = input.bTerrainBlend && map ? map : bound.Textures[0];
+                if (bound.TerrainTextures[mapIndex]->IsSparse())
                 {
                     bound.Flags |= VisibilityResolveGeometry::TILE_FLAG_SPARSE;
                 }

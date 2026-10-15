@@ -42,6 +42,8 @@ namespace NorvesLib::Core::Rendering
      * 空が有効なときだけ効く。カメラから不透明物までの視線について、空の媒質（Rayleigh・Mie の
      * 消散係数と高度の指数密度）の透過率と、空の放射輝度 LUT・透過率 LUT から求めた散乱光を
      * VolumetricsPass が掛ける。距離は StartDistanceMeters から先だけを数え、DistanceScale 倍する。
+     * 媒質の密度は、カメラのワールドの y に OriginAltitudeMeters を足した高度で数える（高地のシーンでは
+     * 地表の空気とエアロゾルが海面より薄い）。空の放射輝度 LUT の観測点の高度は変えない。
      */
     struct AerialPerspectiveParameters
     {
@@ -50,6 +52,8 @@ namespace NorvesLib::Core::Rendering
         float DistanceScale = 1.0f;
         // これより近い所には霞を掛けない（m）
         float StartDistanceMeters = 0.0f;
+        // ワールドの y = 0 の、空の媒質の地表（海面）からの高度（m）。0 で y = 0 を海面とみなす
+        float OriginAltitudeMeters = 0.0f;
     };
 
     AerialPerspectiveParameters SanitizeAerialPerspectiveParameters(

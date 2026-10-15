@@ -67,10 +67,12 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t TERRAIN_LAYER_TEXTURE_COUNT = 6;
         /** @brief 地表の分類の地図の、地形のテクスチャの並びでの添え字（2・3 層目の 6 枚の次） */
         constexpr uint32_t TERRAIN_SURFACE_MASK_INDEX = TERRAIN_LAYER_TEXTURE_COUNT;
-        /** @brief 材質ごとの形が束ねる地形のテクスチャの数（2・3 層目の 6 枚と地表の分類の地図） */
-        constexpr uint32_t TERRAIN_TEXTURE_COUNT = TERRAIN_LAYER_TEXTURE_COUNT + 1;
-        /** @brief 地形の混ぜ方の値の float の数（シェーダーの ResolveTileParams::terrain[8]） */
-        constexpr uint32_t TERRAIN_PARAM_FLOATS = 32;
+        /** @brief 遠景の地図の、地形のテクスチャの並びでの添え字（地表の分類の地図の次） */
+        constexpr uint32_t TERRAIN_FAR_MAP_INDEX = TERRAIN_SURFACE_MASK_INDEX + 1;
+        /** @brief 材質ごとの形が束ねる地形のテクスチャの数（2・3 層目の 6 枚と地表の分類の地図と遠景の地図） */
+        constexpr uint32_t TERRAIN_TEXTURE_COUNT = TERRAIN_LAYER_TEXTURE_COUNT + 2;
+        /** @brief 地形の混ぜ方の値の float の数（シェーダーの ResolveTileParams::terrain[10]） */
+        constexpr uint32_t TERRAIN_PARAM_FLOATS = 40;
         /** @brief
          * 材質ごとの形が束ねる材質のテクスチャの数（アルベド・法線・金属度・粗さ・AO・高さ）
          */
@@ -242,7 +244,8 @@ namespace NorvesLib::Core::Rendering
          *
          * 2・3 層目の 6 枚（土のアルベド・法線・ORM、岩肌の同じ 3 枚）がすべて引けたときだけ bTerrainBlend。
          * 偽のときは 1 層目だけの材質として解決する（読まない枠は 1 層目のテクスチャで埋める）。2・3 層目は VT の要求を書かない。
-         * 地表の分類の地図（TERRAIN_SURFACE_MASK_INDEX）は引けなくてもよく、そのときは空のまま（混ぜ方の値の mask も 0）
+         * 地表の分類の地図（TERRAIN_SURFACE_MASK_INDEX）と遠景の地図（TERRAIN_FAR_MAP_INDEX）は引けなくてもよく、そのときは空のまま
+         * （混ぜ方の値の mask・farMap も 0）
          */
         bool bTerrainBlend = false;
         RHI::TexturePtr TerrainTextures[VisibilityResolveGeometry::TERRAIN_TEXTURE_COUNT];

@@ -155,8 +155,10 @@ namespace Game::GameModes
         // 高さフォグ: 基準の高さでの密度[1/m]と、上へ向かって薄くなる割合[1/m]。遠景の霞は空気遠近が受け持つので、
         // 谷床に薄く溜まる砂ぼこりの層にする。谷床は北から南東へ下がり、平らな所の高さは -38〜+39 m（5〜95%）なので、
         // 基準を南東の低い谷床（-40 m）に置き、100 m で 1/e に薄くして北の高い谷床（+40 m）にも半分ほど残す。
-        // ビュートの頂（+100〜+200 m）より上ではほぼ消える
-        constexpr float kFogDensity = 0.00015f;
+        // ビュートの頂（+100〜+200 m）より上ではほぼ消える。手本の写真は乾いた澄んだ空気で、3〜5 km 先の崖も赤く濃く写るので、
+        // 谷床の高さで 3 km の光学的深さ 0.06（透過 94 %）の薄い層にとどめる（0.00015 では 0.3 で、空気遠近と合わせて崖の
+        // 半分が空の色に置き換わり白く霞んだ）
+        constexpr float kFogDensity = 0.00003f;
         constexpr float kFogBaseHeight = -40.0f;
         constexpr float kFogFalloff = 0.01f;
         // 空気遠近: 物理空の媒質（下のエアロゾルを少し増やした値）の距離をそのまま数える。谷床の向こうのビュート（1〜3.5 km）が
@@ -164,6 +166,11 @@ namespace Game::GameModes
         // （足元・近くの崖の色は変えない）
         constexpr float kAerialPerspectiveDistanceScale = 1.0f;
         constexpr float kAerialPerspectiveStartDistance = 300.0f;
+        // ワールドの y = 0 の標高[m]。DEM の高さの基準（Assets/Terrain/ValleyOfTheGods/height.json の height_offset_m。
+        // 前哨地の床の標高 NAVD88）。空気遠近の媒質の密度をこの高度で数える。海面で数えると地表のエアロゾルが 2.5 倍
+        // （尺度高さ 1.6 km）になり、3 km 先の崖の透過が 0.84 でなく 0.69 になる。高原の晴天のエアロゾルの光学的深さ
+        // （0.05〜0.1）は、この高度から上の柱の量（0.07）に合う
+        constexpr float kSiteAltitudeMeters = 1452.05f;
         // 空のエアロゾル（Mie）の高さの尺度[m]。既定の 1.2 km の 1.33 倍にして柱の量を少し増やし、写真の白みの強い地平線の空に
         // 寄せる。2.4 km では青空の明るさは 1 割も変わらず、崖の視点の遠景の帯と空の比が写真の 0.46 から 0.34 へ離れた
         constexpr float kSkyMieScaleHeight = 1600.0f;
@@ -245,6 +252,9 @@ namespace Game::GameModes
         constexpr float kSurfaceMaskEdgeFadeMeters = 32.0f;
         // 地図（2 m/画素）を引く位置を 2 m ずらし、画素の格子に沿った直線の境を崩す
         constexpr float kSurfaceMaskWarpMeters = 2.0f;
+        // 3 層の法線マップ（red_sand・red_dirt_mud_01・cliff_side の nor_dx_4k）の接空間の傾きの 2 乗の平均。遠くで模様の 1 枚が
+        // 縮んで細かい法線を落とした分を、粗さの α² に足して鏡面の広がりへ移す（Python で画像の 1/4 の画素から測った値）
+        constexpr float kDetailSlopeVariance[3] = {0.097f, 0.420f, 0.283f};
 
         /// 物理空・太陽・高さフォグ・空気遠近・雲の層
         void ApplyEnvironment(GameModeContext &ctx, float sunAltitudeDegrees, float sunAzimuthDegrees)
@@ -268,6 +278,7 @@ namespace Game::GameModes
             aerialPerspective.bEnabled = true;
             aerialPerspective.DistanceScale = kAerialPerspectiveDistanceScale;
             aerialPerspective.StartDistanceMeters = kAerialPerspectiveStartDistance;
+            aerialPerspective.OriginAltitudeMeters = kSiteAltitudeMeters;
             ctx.EngineRef.GetRenderWorld().SetAerialPerspective(aerialPerspective);
 
             CloudLayerParameters cloudLayer;
@@ -902,6 +913,9 @@ namespace Game::GameModes
                 blend.DetailDistanceRatio = kDetailDistanceRatio;
                 blend.DetailMaxLevel = kDetailMaxLevel;
                 blend.TextureTileMeters = kSandTileMeters;
+                blend.DetailSlopeVariance[0] = kDetailSlopeVariance[0];
+                blend.DetailSlopeVariance[1] = kDetailSlopeVariance[1];
+                blend.DetailSlopeVariance[2] = kDetailSlopeVariance[2];
                 assembly->PendingTextureCount = kTerrainTextureCount;
                 auto &textures = ctx.RenderResourcesRef.Textures();
                 MaterialCreateData &sand = assembly->Material;
@@ -941,6 +955,29 @@ namespace Game::GameModes
                     LOG_WARNING_F("COOKED_MODEL_TEXTURES_MISSING scene=wasteland path=%s 地表の分類の地図の記述を読めません（%s）。"
                                   "Scripts/Terrain/TerrainMasks.py --build で作り、Scripts/CookAssets.ps1 で焼くと地図で混ぜます",
                                   TerrainSpec::kSurfaceMaskDescriptorPath, maskError.c_str());
+                }
+                // 遠景の地図（分類の重みと法線を 16 m の画素へ前もって縮小した地図）。記述が無ければ遠くも画素ごとの式で描く
+                Terrain::TerrainSurfaceMaskLayout farLayout;
+                AnsiString farError;
+                if (Terrain::LoadTerrainFarMapLayout(TerrainSpec::kFarMapDescriptorPath, farLayout, farError))
+                {
+                    blend.FarMapMinXZ[0] = farLayout.MinX;
+                    blend.FarMapMinXZ[1] = farLayout.MinZ;
+                    blend.FarMapMaxXZ[0] = farLayout.MaxX;
+                    blend.FarMapMaxXZ[1] = farLayout.MaxZ;
+                    blend.FarMapTexelMeters = (farLayout.MaxX - farLayout.MinX) / static_cast<float>(farLayout.Width);
+                    ++assembly->PendingTextureCount;
+                    LoadMaterialTexture(textures, assembly, TerrainSpec::kFarMapTexturePath, &blend.FarMapTexture, nullptr,
+                                        pPending);
+                    LOG_INFO_F("WASTELAND_FAR_MAP x=[%.1f,%.1f] z=[%.1f,%.1f] size=%ux%u texel=%.1f", farLayout.MinX,
+                               farLayout.MaxX, farLayout.MinZ, farLayout.MaxZ, farLayout.Width, farLayout.Height,
+                               blend.FarMapTexelMeters);
+                }
+                else
+                {
+                    LOG_WARNING_F("COOKED_MODEL_TEXTURES_MISSING scene=wasteland path=%s 遠景の地図の記述を読めません（%s）。"
+                                  "Scripts/Terrain/FarMacro.py --build で作り、Scripts/CookAssets.ps1 で焼くと遠くを地図で描きます",
+                                  TerrainSpec::kFarMapDescriptorPath, farError.c_str());
                 }
                 // 岩・崖・建物。地形の上に据えるので、地形を置けるときだけ読む
                 if (kPlaceLayoutProps)
@@ -1003,7 +1040,12 @@ namespace Game::GameModes
         // 撮影の視点の切り替えは、このフレームのカメラを渡す前に置き直す
         ApplyRequestedView(ctx, data);
         const bool bSuspended = data.m_pPauseMenu != nullptr && data.m_pPauseMenu->IsOpen();
-        data.m_Rig.Tick(ctx, deltaTime, bSuspended);
+        // カメラの台本（--camera-script）は、地形を置いてページの読み込みの余裕を待ってから流す。読み込みの間の Tick は
+        // 描画より速く回るので、そのまま流すと台本が組み立ての間に流れ切り、動いている所を撮れない
+        const bool bHoldScript = data.m_Rig.IsScriptRunning() &&
+                                 (data.m_TerrainSettledTick == 0 ||
+                                  data.m_TickCount < data.m_TerrainSettledTick + kReadyTicksAfterTerrain);
+        data.m_Rig.Tick(ctx, deltaTime, bSuspended || bHoldScript);
 
         if (data.m_TerrainSettledTick == 0)
         {

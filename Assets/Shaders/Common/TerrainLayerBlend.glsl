@@ -29,6 +29,15 @@
 //     掛けてから混ぜる。揺らぎは分類の境で入れ替わり、全域を 1 つの斑の模様で覆わない。
 //   - 岩肌の層には、ワールドの y（共通の基準面）からの高さで決まる砂岩の地層と、崖の上端から垂れる砂漠ワニスを掛ける
 //     （Common/TerrainStrata.glsl）。
+//
+// 遠くの描き方（画素より細かいものを画素ごとに標本しない）:
+//   - 遠景の地図（R・G = 16 m の画素の平均の法線の X・Z、B = 岩肌・A = 土の重み。Scripts/Terrain/FarMacro.py が DEM と地表の分類から
+//     焼き、ミップで前もって縮小してある）の 1 画素が画面で数画素以下に縮む遠くでは、分類の重みと法線を地図の値へ移す。
+//     DEM の三角形が画面で 1〜2 画素になる遠くで、画素ごとの幾何の法線から傾斜の式で分類すると、岩肌と砂が画素ごとに
+//     飛び飛びに入れ替わって斑点になり、カメラが動くとちらつく。
+//   - 揺らぎの値ノイズは、波長が画素の数倍より短くなると平均（0.5）へ寄せる（標本が飛び飛びの値になってざらつく）。
+//   - 模様の 1 枚が縮んで法線マップの傾きを落とした分は、その層の法線の傾きの分散（params.farMix.yzw）を粗さの α² に足して
+//     鏡面の広がりへ移す（細かい凹凸が画素ごとに鋭く光るちらつきを出さず、遠くの面の光り方を細かい凹凸のある面のままにする）。
 
 #ifndef NORVES_TERRAIN_LAYER_BLEND_GLSL
 #define NORVES_TERRAIN_LAYER_BLEND_GLSL
@@ -46,6 +55,8 @@ struct TerrainBlendParams
     vec4 mask;    // x,y = 地表の分類の地図の外縁のワールドの X・Z の最小、z,w = X・Z の広さの逆数（1/m。z が 0 なら地図なし）
     vec4 maskMix; // x = 礫の重みを土へ回す割合、y = 外縁の内側で傾斜の式から地図へ移す帯の幅（m）、z = 引く位置のずらしの幅（m）、
                   // w = 確認用の色分け（1 ならアルベドを岩肌 = 赤・土 = 緑・砂 = 青の重みにする。TerrainBlendShading.h）
+    vec4 farMap;  // x,y = 遠景の地図の外縁のワールドの X・Z の最小、z,w = X・Z の広さの逆数（1/m。z が 0 なら地図なし）
+    vec4 farMix;  // x = 遠景の地図の 1 画素の広さ（m）、y,z,w = 砂・土・岩肌の法線マップの傾きの分散（細かい法線を落とした分を粗さへ）
 };
 
 const uint TERRAIN_BLEND_DIRT_NORMAL_TWO_CHANNEL = 1u;
@@ -74,6 +85,14 @@ const float TERRAIN_TILE_FADE_PIXELS_ZERO = 8.0;
 // 勾配を広げる倍率の指数。倍率 (FULL / 1 枚の画素数)^指数 は、ZERO 画素で ZERO 倍（足跡が 1 枚 = 最も粗いミップ）になる
 const float TERRAIN_TILE_FADE_GRADIENT_EXPONENT =
     log2(TERRAIN_TILE_FADE_PIXELS_ZERO) / log2(TERRAIN_TILE_FADE_PIXELS_FULL / TERRAIN_TILE_FADE_PIXELS_ZERO);
+// 遠景の地図の 1 画素の画面上の大きさ（画素）で、分類と法線を地図へ移す範囲。FULL 画素以下で地図だけ、ZERO 画素以上で画素ごとの式
+// （DEM の三角形が 1〜2 画素に縮むと幾何の法線が画素ごとに飛ぶ。地図の 1 画素が 6 画素ほどに写る所から移し始める）
+const float TERRAIN_FAR_MAP_PIXELS_FULL = 2.0;
+const float TERRAIN_FAR_MAP_PIXELS_ZERO = 6.0;
+// 地図の外縁から内側へ、画素ごとの式から地図へ移す帯の幅（地図の画素の数）
+const float TERRAIN_FAR_MAP_EDGE_TEXELS = 16.0;
+// 値ノイズを平均へ寄せる範囲（1 画素の広さが波長の何倍か）。波長の 1/4 で寄せ始め、3/4 で平均だけにする
+const vec2 TERRAIN_NOISE_FILTER_RANGE = vec2(0.25, 0.75);
 
 // 画素の面（ワールドの位置とその画素あたりの変化、幾何の法線、カメラからの距離）
 struct TerrainSurfaceInput
@@ -85,12 +104,22 @@ struct TerrainSurfaceInput
     float CameraDistance;
 };
 
-// 1 層の標本（重み付きの和）。Perturbation は法線の傾き（ワールドの向き。幾何の法線に足して正規化する）
+// 1 層の標本（重み付きの和）。Perturbation は法線の傾き（ワールドの向き。幾何の法線に足して正規化する）。
+// LostDetail は法線マップの傾きを落とした割合（傾きの分散の 1 - 残した割合^2。粗さへ移す）
 struct TerrainLayerSample
 {
     vec4 Albedo;
     vec3 Material;
     vec3 Perturbation;
+    float LostDetail;
+};
+
+// 遠景の地図の標本。Weights は砂・土・岩肌の重み（合計 1）、Normal は画素の平均の法線、Amount は地図へ移す割合（0〜1）
+struct TerrainFarSample
+{
+    vec3 Weights;
+    vec3 Normal;
+    float Amount;
 };
 
 // 3 方向の投影の、面に沿った UV の向き（幾何の法線の接平面へ落とした軸）
@@ -140,13 +169,28 @@ float TerrainValueNoise(vec2 p)
     return mix(mix(a, b, u.x), mix(d, e, u.x), u.y);
 }
 
-// 傾斜・高さ・ノイズから、砂・土・岩肌の重み（合計 1）を求める。n は正規化した幾何の法線
-vec3 ComputeTerrainSlopeWeights(TerrainBlendParams params, vec3 worldPosition, vec3 n)
+// 値ノイズを、1 画素の広さ cellsPerPixel（格子の単位）に応じて平均（0.5）へ寄せる。画素が格子の数分の 1 より広いと、
+// 画素ごとの標本は飛び飛びの値になり、ざらつきとちらつきになる
+float TerrainValueNoiseFiltered(vec2 p, float cellsPerPixel)
+{
+    const float fade = smoothstep(TERRAIN_NOISE_FILTER_RANGE.x, TERRAIN_NOISE_FILTER_RANGE.y, cellsPerPixel);
+    return fade >= 1.0 ? 0.5 : mix(TerrainValueNoise(p), 0.5, fade);
+}
+
+// 1 画素のワールドでの広さ（m。画面の x・y の向きの長い方）
+float TerrainPixelMeters(TerrainSurfaceInput surface)
+{
+    return max(length(surface.WorldDx), length(surface.WorldDy));
+}
+
+// 傾斜・高さ・ノイズから、砂・土・岩肌の重み（合計 1）を求める。n は正規化した法線、pixelMeters は 1 画素の広さ（m）
+vec3 ComputeTerrainSlopeWeights(TerrainBlendParams params, vec3 worldPosition, vec3 n, float pixelMeters)
 {
     const float slope = acos(clamp(n.y, -1.0, 1.0));
     // 2 つの波長の値ノイズを重ね、-1〜1 の揺らぎにする（2 つ目は格子をずらして重ならないようにする）
-    const float noise = TerrainValueNoise(worldPosition.xz * params.noise.x) * 0.65 +
-                        TerrainValueNoise(worldPosition.xz * params.noise.y + vec2(17.31, -41.7)) * 0.35;
+    const float noise =
+        TerrainValueNoiseFiltered(worldPosition.xz * params.noise.x, pixelMeters * params.noise.x) * 0.65 +
+        TerrainValueNoiseFiltered(worldPosition.xz * params.noise.y + vec2(17.31, -41.7), pixelMeters * params.noise.y) * 0.35;
     const float jitter = (noise * 2.0 - 1.0) * params.noise.z;
     const float heightBias = smoothstep(params.height.x, params.height.y, worldPosition.y) * params.height.z;
     const float dirt = smoothstep(params.slope.x, params.slope.y, slope + jitter + heightBias);
@@ -166,8 +210,11 @@ vec4 ComputeTerrainSurfaceMaskWeights(TerrainBlendParams params, sampler2D surfa
     vec2 xz = surface.WorldPosition.xz;
     if (params.maskMix.z > 0.0)
     {
+        // ずらしのノイズも、画素が波長に近づく遠くでは平均（ずらし 0）へ寄せる
         const vec2 p = xz * (1.0 / TERRAIN_SURFACE_MASK_WARP_WAVELENGTH);
-        const vec2 warp = vec2(TerrainValueNoise(p + vec2(-23.17, 5.71)), TerrainValueNoise(p + vec2(11.39, 37.53)));
+        const float cellsPerPixel = TerrainPixelMeters(surface) * (1.0 / TERRAIN_SURFACE_MASK_WARP_WAVELENGTH);
+        const vec2 warp = vec2(TerrainValueNoiseFiltered(p + vec2(-23.17, 5.71), cellsPerPixel),
+                               TerrainValueNoiseFiltered(p + vec2(11.39, 37.53), cellsPerPixel));
         xz += (warp * 2.0 - 1.0) * params.maskMix.z;
     }
     const vec2 uv = (xz - params.mask.xy) * invSize;
@@ -299,6 +346,7 @@ void AccumulateTerrainProjection(inout TerrainLayerSample acc, float weight,
     acc.Albedo += albedo * weight;
     acc.Material += material * weight;
     acc.Perturbation += (axisU * slope.x + axisV * slope.y) * weight;
+    acc.LostDetail += (1.0 - normalFade * normalFade) * weight;
 }
 
 // 1 層を、距離の 2 つの段 × 投影（projection の重みが 0 でないもの）で標本する。uvScale は層の UV の倍率
@@ -311,6 +359,7 @@ TerrainLayerSample SampleTerrainLayer(sampler2D albedoTex, sampler2D normalTex, 
     acc.Albedo = vec4(0.0);
     acc.Material = vec3(0.0);
     acc.Perturbation = vec3(0.0);
+    acc.LostDetail = 0.0;
     const vec3 p = surface.WorldPosition;
     const vec3 pdx = surface.WorldDx;
     const vec3 pdy = surface.WorldDy;
@@ -351,16 +400,52 @@ TerrainLayerSample SampleTerrainLayer(sampler2D albedoTex, sampler2D normalTex, 
 }
 
 // 層ごとの明るさと色味（赤み・黄み）の揺らぎの倍率。数十〜数百 m の低周波ノイズに、模様の繰り返し（数 m の 1 枚）を崩す
-// 波長 1/4 のノイズを足す。seed で層ごとに位相を変えるので、揺らぎは分類（層）の境で入れ替わる
-vec3 TerrainMacroVariation(TerrainBlendParams params, vec2 xz, vec2 seed)
+// 波長 1/4 のノイズを足す。seed で層ごとに位相を変えるので、揺らぎは分類（層）の境で入れ替わる。
+// pixelMeters は 1 画素の広さ（m）で、画素より細かい揺らぎは平均へ寄せる
+vec3 TerrainMacroVariation(TerrainBlendParams params, vec2 xz, vec2 seed, float pixelMeters)
 {
-    const float a = TerrainValueNoise(xz * params.macro.x + vec2(-7.31, 3.17) + seed);
-    const float b = TerrainValueNoise(xz * params.macro.y + vec2(29.71, -13.93) + seed);
-    const float d = TerrainValueNoise(xz * params.macro.x * 4.0 + vec2(17.03, -41.57) + seed);
+    const float a = TerrainValueNoiseFiltered(xz * params.macro.x + vec2(-7.31, 3.17) + seed, pixelMeters * params.macro.x);
+    const float b = TerrainValueNoiseFiltered(xz * params.macro.y + vec2(29.71, -13.93) + seed, pixelMeters * params.macro.y);
+    const float d = TerrainValueNoiseFiltered(xz * params.macro.x * 4.0 + vec2(17.03, -41.57) + seed,
+                                              pixelMeters * params.macro.x * 4.0);
     const float brightness = 1.0 + params.macro.z * ((a * 0.45 + b * 0.3 + d * 0.25) * 2.0 - 1.0);
-    const float c = TerrainValueNoise(xz * params.macro.x * 1.7 + vec2(61.37, 44.21) + seed);
+    const float c = TerrainValueNoiseFiltered(xz * params.macro.x * 1.7 + vec2(61.37, 44.21) + seed,
+                                              pixelMeters * params.macro.x * 1.7);
     const float hue = params.macro.w * (c * 2.0 - 1.0);
     return brightness * vec3(1.0 + hue, 1.0, 1.0 - hue);
+}
+
+// 遠景の地図から、分類の重みと法線と、地図へ移す割合を引く。地図なし・地図の外・地図の画素が画面で大きく写る近くは Amount = 0
+// （地図のテクスチャを読まない）
+TerrainFarSample SampleTerrainFarMap(TerrainBlendParams params, sampler2D farMap, TerrainSurfaceInput surface)
+{
+    TerrainFarSample result;
+    result.Weights = vec3(1.0, 0.0, 0.0);
+    result.Normal = vec3(0.0, 1.0, 0.0);
+    result.Amount = 0.0;
+    const vec2 invSize = params.farMap.zw;
+    const float texelMeters = params.farMix.x;
+    if (invSize.x <= 0.0 || invSize.y <= 0.0 || texelMeters <= 0.0)
+    {
+        return result;
+    }
+    const float texelPixels = texelMeters / max(TerrainPixelMeters(surface), 1.0e-4);
+    float amount = 1.0 - smoothstep(TERRAIN_FAR_MAP_PIXELS_FULL, TERRAIN_FAR_MAP_PIXELS_ZERO, texelPixels);
+    const vec2 uv = (surface.WorldPosition.xz - params.farMap.xy) * invSize;
+    const vec2 edgeMeters = min(uv, vec2(1.0) - uv) / invSize;
+    amount *= clamp(min(edgeMeters.x, edgeMeters.y) / (TERRAIN_FAR_MAP_EDGE_TEXELS * texelMeters), 0.0, 1.0);
+    if (amount <= 0.0)
+    {
+        return result;
+    }
+    const vec4 texel = textureGrad(farMap, uv, surface.WorldDx.xz * invSize, surface.WorldDy.xz * invSize);
+    const vec2 horizontal = texel.rg * 2.0 - 1.0;
+    result.Normal = normalize(vec3(horizontal.x, sqrt(max(1.0 - dot(horizontal, horizontal), 0.0)), horizontal.y));
+    const float rock = clamp(texel.b, 0.0, 1.0);
+    const float dirt = clamp(texel.a, 0.0, 1.0 - rock);
+    result.Weights = vec3(max(1.0 - rock - dirt, 0.0), dirt, rock);
+    result.Amount = amount;
+    return result;
 }
 
 // 岩肌の層に掛ける地層と砂漠ワニス（上のノイズと接平面の軸を使う）
@@ -368,22 +453,35 @@ vec3 TerrainMacroVariation(TerrainBlendParams params, vec2 xz, vec2 seed)
 
 // 地形の 3 層を混ぜた材質値を返す（TangentNormal は使わない。法線は worldNormal にワールドの向きで返す）。
 // 1 層目（砂）は材質のアルベド・法線・ORM の枠のテクスチャ（ORM の 1 枚を前提にする）。surfaceMask は地表の分類の地図
-// （params.mask.z が 0 なら読まないので、地図の無い材質は何を張ってもよい）
+// （params.mask.z が 0 なら読まないので、地図の無い材質は何を張ってもよい）。farMap は遠景の地図（params.farMap.z が 0 なら読まない）
 PbrMaterialTextureSamples ShadeTerrainLayers(TerrainBlendParams params,
                                              sampler2D sandAlbedo, sampler2D sandNormal, sampler2D sandOrm,
                                              bool bSandNormalTwoChannel,
                                              sampler2D dirtAlbedo, sampler2D dirtNormal, sampler2D dirtOrm,
                                              sampler2D rockAlbedo, sampler2D rockNormal, sampler2D rockOrm,
-                                             sampler2D surfaceMask,
+                                             sampler2D surfaceMask, sampler2D farMap,
                                              TerrainSurfaceInput surface, bool bVirtualTexture, out vec3 worldNormal)
 {
-    const vec3 n = normalize(surface.GeometricNormal);
+    const float pixelMeters = TerrainPixelMeters(surface);
+    // 遠くでは、幾何の法線を遠景の地図の画素の平均の法線へ移す（画素ごとに飛ぶ DEM の三角形の向きで光らない）
+    const TerrainFarSample far = SampleTerrainFarMap(params, farMap, surface);
+    vec3 n = normalize(surface.GeometricNormal);
+    if (far.Amount > 0.0)
+    {
+        n = normalize(mix(n, far.Normal, far.Amount));
+    }
     // 地図の中は地図の重み、外は傾斜の式。外縁の帯で混ぜる（地図だけの所では傾斜の式を求めない）
     const vec4 maskWeights = ComputeTerrainSurfaceMaskWeights(params, surfaceMask, surface);
     vec3 layerWeights = maskWeights.xyz;
     if (maskWeights.w < 1.0)
     {
-        layerWeights = mix(ComputeTerrainSlopeWeights(params, surface.WorldPosition, n), maskWeights.xyz, maskWeights.w);
+        layerWeights =
+            mix(ComputeTerrainSlopeWeights(params, surface.WorldPosition, n, pixelMeters), maskWeights.xyz, maskWeights.w);
+    }
+    // 遠くでは、分類も遠景の地図の画素の中の割合へ移す（画素ごとの傾斜で岩肌と砂が飛び飛びに入れ替わらない）
+    if (far.Amount > 0.0)
+    {
+        layerWeights = mix(layerWeights, far.Weights, far.Amount);
     }
     const uint normalBits = uint(params.layers.w + 0.5);
     const bool bSandDecode = (normalBits & TERRAIN_BLEND_SAND_ALBEDO_SRGB_DECODE) != 0u;
@@ -426,16 +524,24 @@ PbrMaterialTextureSamples ShadeTerrainLayers(TerrainBlendParams params,
     PbrMaterialTextureSamples result;
     const vec2 xz = surface.WorldPosition.xz;
     result.Albedo = sand.Albedo * w.x + dirt.Albedo * w.y + rock.Albedo * w.z;
-    result.Albedo.rgb = clamp(sand.Albedo.rgb * TerrainMacroVariation(params, xz, vec2(0.0)) * w.x +
-                                  dirt.Albedo.rgb * TerrainMacroVariation(params, xz, vec2(113.7, -71.3)) * w.y +
-                                  rock.Albedo.rgb * TerrainMacroVariation(params, xz, vec2(-257.1, 191.9)) * w.z,
-                              vec3(0.0), vec3(1.0));
+    result.Albedo.rgb =
+        clamp(sand.Albedo.rgb * TerrainMacroVariation(params, xz, vec2(0.0), pixelMeters) * w.x +
+                  dirt.Albedo.rgb * TerrainMacroVariation(params, xz, vec2(113.7, -71.3), pixelMeters) * w.y +
+                  rock.Albedo.rgb * TerrainMacroVariation(params, xz, vec2(-257.1, 191.9), pixelMeters) * w.z,
+              vec3(0.0), vec3(1.0));
     if (params.maskMix.w > 0.5)
     {
         result.Albedo.rgb = vec3(w.z, w.y, w.x) * 0.6;
     }
     result.TangentNormal = vec3(0.0, 0.0, 1.0);
     result.Material = sand.Material * w.x + dirt.Material * w.y + rock.Material * w.z;
+    // 落とした細かい法線の傾きの分散を粗さの α²（= 粗さ^4）に足す（Toksvig と同じ考え方で、鏡面の山を細かい凹凸の分だけ広げる）
+    const float lostVariance = dot(vec3(sand.LostDetail, dirt.LostDetail, rock.LostDetail) * params.farMix.yzw, w);
+    if (lostVariance > 0.0)
+    {
+        const float roughness = clamp(result.Material.y, 0.0, 1.0);
+        result.Material.y = sqrt(sqrt(min(roughness * roughness * roughness * roughness + lostVariance, 1.0)));
+    }
     worldNormal = normalize(n + sand.Perturbation * w.x + dirt.Perturbation * w.y + rock.Perturbation * w.z);
     return result;
 }

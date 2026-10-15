@@ -367,6 +367,16 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         float SurfaceMaskEdgeFadeMeters = 32.0f;    // 地図の外縁から内側へ、傾斜の式から地図の重みへ移す帯の幅（m）
         float SurfaceMaskWarpMeters = 2.0f;         // 地図を引く位置を低周波ノイズでずらす幅（m。画素の格子の直線の境を崩す）
 
+        // 遠景の地図（線形の RGBA。R・G = 画素の平均の法線の X・Z、B = 岩肌・A = 土の重み。無効なら遠くでも画素ごとの式で描く）。
+        // 地図の 1 画素が画面で数画素より小さく写る遠くでは、分類の重みと法線を地図（ミップで前もって縮小した値）へ移す
+        TextureHandle FarMapTexture;
+        float FarMapMinXZ[2] = {0.0f, 0.0f};        // 地図の外縁のワールドの X・Z の最小（地図の u = 0・v = 0）
+        float FarMapMaxXZ[2] = {0.0f, 0.0f};        // 地図の外縁のワールドの X・Z の最大（u = 1・v = 1）
+        float FarMapTexelMeters = 16.0f;            // 地図の 1 画素の広さ（m）
+        // 砂・土・岩肌の法線マップの傾きの分散（接空間の傾き (x/z, y/z) の 2 乗の平均）。模様の 1 枚が画面で縮んで法線マップの
+        // 傾きを落とした分を、粗さの α² に足して鏡面の広がりへ移す（0 なら粗さを変えない）
+        float DetailSlopeVariance[3] = {0.0f, 0.0f, 0.0f};
+
         bool operator==(const MegaTerrainBlend &other) const
         {
             if (bEnabled != other.bEnabled)
@@ -393,7 +403,13 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
                    SurfaceMaskMaxXZ[0] == other.SurfaceMaskMaxXZ[0] && SurfaceMaskMaxXZ[1] == other.SurfaceMaskMaxXZ[1] &&
                    SurfaceMaskGravelToDirt == other.SurfaceMaskGravelToDirt &&
                    SurfaceMaskEdgeFadeMeters == other.SurfaceMaskEdgeFadeMeters &&
-                   SurfaceMaskWarpMeters == other.SurfaceMaskWarpMeters;
+                   SurfaceMaskWarpMeters == other.SurfaceMaskWarpMeters && FarMapTexture == other.FarMapTexture &&
+                   FarMapMinXZ[0] == other.FarMapMinXZ[0] && FarMapMinXZ[1] == other.FarMapMinXZ[1] &&
+                   FarMapMaxXZ[0] == other.FarMapMaxXZ[0] && FarMapMaxXZ[1] == other.FarMapMaxXZ[1] &&
+                   FarMapTexelMeters == other.FarMapTexelMeters &&
+                   DetailSlopeVariance[0] == other.DetailSlopeVariance[0] &&
+                   DetailSlopeVariance[1] == other.DetailSlopeVariance[1] &&
+                   DetailSlopeVariance[2] == other.DetailSlopeVariance[2];
         }
     };
 

@@ -12,7 +12,10 @@
 //   - 途切れる帯: 下の単位の硬い段と、上の単位の砂丘の間の赤い薄層は、横方向のノイズで現れたり消えたりする（レンズ状に尖滅する）。
 //   - 交差層理: 上の単位の各層（セット）の中に、層ごとに向き（方位）と傾き（18〜30°）の違う斜めの葉理の束を入れる。
 //     葉理はセットの上下の面で切れる。明暗とわずかな凹凸（風化で硬い葉理が浮く）にする。
-//   - 画面で層が数画素より薄く写る遠くでは、張り出しの法線・色の差・葉理を弱めて平均へ寄せる（縞のちらつきを出さない）。
+//   - 画面で層が数画素より薄く写る遠くでは、張り出しの法線・色の差・葉理を弱めて、その単位の平均の色へ寄せる（縞のちらつきを
+//     出さず、下の単位の暗い赤褐色と上の単位の淡い砂岩の色の差は遠くでも残す）。
+//   - 大きな帯: 数十 m の層の束ごとに、淡い黄白と赤褐色の間で色味と明るさを変える。遠くの稜線とビュートでも層の帯として読める
+//     （個々の層が画素より薄くなる数 km 先でも、束は数画素の帯で写る）。
 // 砂漠ワニス: 崖の上端から流れ落ちた水の跡に沿う黒い筋。地表の分類の地図（露岩の重み）を、面の外向きと逆（崖の奥）へ
 //   たどって露岩が切れる所（崖の上端）までの水平の距離を測り、面の傾きから上端までの高さの差を見積もる。筋は上端から
 //   筋ごとの長さ（20〜80 m）だけ垂れ、下へ行くほど細く薄くなる。筋は水の落ち口（上端に沿う数十 m ごとの塊）に集まり、
@@ -48,6 +51,16 @@ const float STRATA_LAMINA_CONTRAST = 0.09;
 const float STRATA_LAMINA_RELIEF_METERS = 0.05;
 // 張り出しの法線の傾きの上限（法線に足す接平面の長さ）
 const float STRATA_MAX_TILT = 1.1;
+// 下の単位・上の単位の色と AO の平均（層ごとの色の倍率を、層の硬さと色調の擬似乱数・途切れる帯の現れ方で平均した値）。
+// 層が画面で薄く写る遠くでは、層ごとの色をこの値へ寄せる（近くで見た単位の平均の色と、遠くの色をそろえる）
+const vec3 STRATA_LOWER_MEAN_TINT = vec3(0.88, 0.804, 0.779);
+const float STRATA_LOWER_MEAN_OCCLUSION = 0.828;
+const vec3 STRATA_UPPER_MEAN_TINT = vec3(1.014, 0.999, 0.998);
+const float STRATA_UPPER_MEAN_OCCLUSION = 0.993;
+// 大きな帯（層の束）の平均の厚さ（m）と、色味（淡い黄白〜赤褐色）・明るさの振れ幅（± 割合）
+const float STRATA_PACKAGE_METERS = 22.0;
+const vec3 STRATA_PACKAGE_HUE = vec3(0.03, 0.06, 0.07);
+const float STRATA_PACKAGE_BRIGHTNESS = 0.08;
 
 // 砂漠ワニス: 地図をたどる歩幅（m）と回数、露岩が切れたとみなす重みの割合、面の傾きの正接の範囲、筋の長さ（m）の範囲、色（線形）
 const float VARNISH_MARCH_STEP_METERS = 2.0;
@@ -221,8 +234,12 @@ TerrainStrataSample ComputeTerrainStrata(TerrainBlendParams params, sampler2D su
     float occlusion = 1.0;
     float ledgeSlope = 0.0;
     float bedVisibility = 0.0;
+    vec3 unitTint = STRATA_UPPER_MEAN_TINT;
+    float unitOcclusion = STRATA_UPPER_MEAN_OCCLUSION;
     if (y < contact)
     {
+        unitTint = STRATA_LOWER_MEAN_TINT;
+        unitOcclusion = STRATA_LOWER_MEAN_OCCLUSION;
         // 下の単位: 薄い層。硬い砂岩の段（橙で明るく張り出す）と柔らかい泥岩（暗い赤褐色で引っ込む）が入れ替わる
         const TerrainStrataBed bed = FindTerrainStrataBed(y, xz, contact, STRATA_LOWER_BED_METERS, 1);
         const float thickness = bed.Top - bed.Bottom;
@@ -297,9 +314,18 @@ TerrainStrataSample ComputeTerrainStrata(TerrainBlendParams params, sampler2D su
             }
         }
     }
-    // 薄く写る層は色の差と張り出しを平均へ寄せる
-    result.Tint = mix(vec3(1.0), tint, bedVisibility);
-    result.Occlusion = mix(1.0, occlusion, bedVisibility);
+    // 薄く写る層は色の差と張り出しを、その単位の平均へ寄せる
+    result.Tint = mix(unitTint, tint, bedVisibility);
+    result.Occlusion = mix(unitOcclusion, occlusion, bedVisibility);
+    // 大きな帯: 層の束ごとの色味と明るさ（平均は 1）。束が画面で数画素より薄く写る遠くでは平均へ寄せる
+    {
+        const TerrainStrataBed package = FindTerrainStrataBed(y, xz, contact, STRATA_PACKAGE_METERS, 5);
+        const float packageVisibility = smoothstep(1.5, 4.0, (package.Top - package.Bottom) / pixelHeight);
+        const float hue = TerrainLatticeHash(ivec2(package.Index, 701)) * 2.0 - 1.0;
+        const float brightness = TerrainLatticeHash(ivec2(package.Index, 709)) * 2.0 - 1.0;
+        const vec3 packageTint = (vec3(1.0) + STRATA_PACKAGE_HUE * hue) * (1.0 + STRATA_PACKAGE_BRIGHTNESS * brightness);
+        result.Tint *= mix(vec3(1.0), packageTint, packageVisibility);
+    }
     const float tilt = clamp(ledgeSlope * upAxis.y, -STRATA_MAX_TILT, STRATA_MAX_TILT) * bedVisibility;
     result.Perturbation -= upAxis * tilt;
 

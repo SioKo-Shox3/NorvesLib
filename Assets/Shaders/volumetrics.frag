@@ -23,7 +23,7 @@ layout(std140, set = 0, binding = 2) uniform VolumetricsParams
     vec4 cascadeSplitDistances[2];
     vec4 aerialPerspective; // x=有効なら 1, y=距離の倍率, z=掛け始める距離(m), w=観測点の高度の透過率 LUT の v
     vec4 rayleighExtinctionAndScaleHeight; // rgb=高度 0 の消散係数(1/m), w=スケールハイト(m)
-    vec4 mieExtinctionAndScaleHeight; // x=高度 0 の消散係数(1/m), y=スケールハイト(m)
+    vec4 mieExtinctionAndScaleHeight; // x=高度 0 の消散係数(1/m), y=スケールハイト(m), z=ワールドの y = 0 の高度(m)
 } params;
 
 // 地平線より下の視線は空の放射輝度 LUT では地面を向くので、この仰角の正弦まで持ち上げた空の色を使う
@@ -286,7 +286,8 @@ vec3 ComputeAerialPerspective(vec3 rayDirection, float rayDistance, out vec3 out
         return vec3(0.0);
     }
 
-    float originHeight = params.cameraPositionAndPreExposure.y;
+    // 媒質の高度はカメラのワールドの y にワールドの原点の高度を足して数える（高地では地表の空気が薄い）
+    float originHeight = params.cameraPositionAndPreExposure.y + params.mieExtinctionAndScaleHeight.z;
     float rayleighDensity = IntegrateExponentialDensity(originHeight,
                                                         rayDirection.y,
                                                         startDistance,

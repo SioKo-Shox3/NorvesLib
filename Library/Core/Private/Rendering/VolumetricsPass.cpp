@@ -35,7 +35,7 @@ namespace NorvesLib::Core::Rendering
             float AerialPerspective[4];
             // rgb=高度 0 の Rayleigh の消散係数（1/m）、w=Rayleigh のスケールハイト（m）
             float RayleighExtinctionAndScaleHeight[4];
-            // x=高度 0 の Mie の消散係数（1/m）、y=Mie のスケールハイト（m）
+            // x=高度 0 の Mie の消散係数（1/m）、y=Mie のスケールハイト（m）、z=ワールドの y = 0 の高度（m）
             float MieExtinctionAndScaleHeight[4];
         };
 
@@ -522,6 +522,7 @@ namespace NorvesLib::Core::Rendering
             params.RayleighExtinctionAndScaleHeight[3] = m_SkyParameters.RayleighScaleHeightMeters;
             params.MieExtinctionAndScaleHeight[0] = extinction.Mie;
             params.MieExtinctionAndScaleHeight[1] = m_SkyParameters.MieScaleHeightMeters;
+            params.MieExtinctionAndScaleHeight[2] = m_AerialPerspective.OriginAltitudeMeters;
         }
 
         const ViewportRenderPlan* activeViewport = context.CurrentViewport;
