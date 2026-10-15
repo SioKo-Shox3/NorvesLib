@@ -4693,3 +4693,14 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - Notes: 塊は荒野の読み込みの途中で目標 3128 MB のときに 3 つ目を作り、その後の目標は 3066 MB へ下がったので、プールは目標を 6 MB 超えたまま（塊は縮めない）。ページの置き場の見込み（流すページの 1/4）は内部の値で、荒野では 3 つの塊に分かれて常駐 1.67 GB まで外さずに収まった。
 - Notes: `MegaGeometryResourcesTest` は、BVH の無いメッシュに BVH の領域が無いことの検査（1989 行）で落ちる。実行時に BVH を作る変更（e806a3c9、10/14）からの古い前提で、この項目の変更とは関係しない。この項目では直していない。
 - Next: SCN-WL-CLIFF-DETAIL-ALL を焼きを変えずに撮影から再開する（`blocked/SCN-WL-CLIFF-DETAIL-ALL.md`）。
+### SCN-WL-GEOMETRY-PAGE-THRASH 差し戻しの対応（2026-10-15、run 20261015-230406 の反復 2）
+- 差し戻し: mega-bananas の読み込みの時間を、変更前（RelWithDebInfo 5.8 秒）と変更後（Debug 8.3 秒）の違う構成で比べていた。
+- Done: 変更前後を同じ構成・同じ焼き・既定の 10000 本・同じ撮影の引数（`CaptureScene.ps1 -Scene mega-bananas -RequireAssets`）で撮り直して比べた。変更前は d79e3cd0 の 4 つのソース（`GeometryPageStreamer.h`・`GeometryPool.h`・`MegaGeometryResourceStore.h/.cpp`）だけを 27992fbf の版に一時的に戻して Debug の Game をビルドして撮り（`scene-capture/SCN-WL-GEOMETRY-PAGE-THRASH-mega-before/`、result=pass）、撮った後に HEAD の版へ戻した。コードの変更は無い。
+- 比較（`.harness/runs/20261015-230406/aux-SCN-WL-GEOMETRY-PAGE-THRASH-mega-compare.txt`。区間は両方とも Game.log の同じ印の時刻の差。台本は `aux-mega-before/compare.py`）: 変更前 → 変更後で、起動→最初のメッシュ（シェーダーのコンパイル）63.59 → 63.59 秒、最初のメッシュ→SCENE_READY 7.77 → 7.64 秒、SCENE_READY→4 視点の撮影の終わり 16.35 → 16.43 秒、最初のメッシュ→撮影の終わり 24.12 → 24.07 秒。視点ごとの切替→保存も差は 0.13 秒以内。最後の常駐はどちらも 60 ページ・6.41 MB・evicted=0、プールは塊 1 つ・1024 MB・used_mb=7.4。平均輝度は 4 視点とも差 0.001 以内。読み込みの時間は延びていない。
+- 検証（`.harness/runs/20261015-230406/`。反復 1 の出力を残すため番号は 5〜8）:
+  - `verify-SCN-WL-GEOMETRY-PAGE-THRASH-5.txt`: Debug の Game のビルド EXIT=0（HEAD の版）。
+  - `verify-SCN-WL-GEOMETRY-PAGE-THRASH-6.txt`: 荒野の全 11 視点 1920×1080（版 5 の焼き）、result=pass、EXIT=0、355 秒（SCENE_READY は起動から 227 秒、11 視点は 125 秒）。`GEOMETRY_PAGES` の最後は resident=15133・evicted=0（全行で外したページ 0）。プールは塊 3 つ・3072 MB（block=0 に 43、1 に 81、2 に 62 メッシュ）。`MEGA_CAPACITY` の 95 行すべて溢れ 0。検証レイヤーのログは空。ref_cliff_01 を開いた: 欠け・穴は無く、崖の柱と割れ目が出ている。
+  - `verify-SCN-WL-GEOMETRY-PAGE-THRASH-7.txt`: mega-bananas の既定、result=pass、EXIT=0。溢れ 0（31 行）、検証レイヤーのログは空。上の比較の変更後の側。
+  - `verify-SCN-WL-GEOMETRY-PAGE-THRASH-8.txt`: 起動画面の既定の視点、result=pass、EXIT=0。ページ 205・evicted=0、塊 1 つ・1024 MB、溢れ 0、検証レイヤーのログは空。最初のメッシュから SCENE_READY まで 2.4 秒（前回 2.4〜2.7 秒）。
+- Notes: 試験は足していない。
+- Next: SCN-WL-CLIFF-DETAIL-ALL を焼きを変えずに撮影から再開する（`blocked/SCN-WL-CLIFF-DETAIL-ALL.md`）。
