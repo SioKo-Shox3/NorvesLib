@@ -1501,7 +1501,7 @@
 
 ## SCN-WL-FAR-SHADING: 遠景の地形をちらつかない・汚れない描き方にする
 - status: todo
-- done-when: 遠くの地形の材質が、細かい模様の縮小で斑点やざらつきになる（ユーザーの指摘「遠景が汚すぎる」）のを直す。距離に応じて細かい模様と細かい法線を薄め、遠くは前もって縮小した大きな色と法線（地表の分類と DEM から作る）で描く。細かい法線の鏡面の光り（スペキュラーのエイリアス）を抑える。遠景の稜線とビュートに、写真のような地層の帯と色の差が見える。ground・overview・far の比較画像（1920×1080）を開いて、遠景が写真のように滑らかに色の差で読め、斑点・ざらつき・模様の繰り返しが無いことを確かめる。カメラパスか連続撮影の数枚で、動かしても遠景がちらつかないことを確かめる。
+- done-when: 遠くの地形の材質が、細かい模様の縮小で斑点やざらつきになる（ユーザーの指摘「遠景が汚すぎる」）のを直す。距離に応じて細かい模様と細かい法線を薄め、遠くは前もって縮小した大きな色と法線（地表の分類と DEM から作る）で描く。細かい法線の鏡面の光り（スペキュラーのエイリアス）を抑える。遠景の稜線とビュートに、写真のような地層の帯と色の差が見える。空気遠近の霞を手本の澄んだ空気に合わせる: SCN-WL-HORIZON の far_01 の比較では、3〜5 km 先の崖が写真では赤く濃い（崖 Y 0.24・R÷G 1.6）のに、撮影では白く霞む（崖 Y 0.74・R÷G 1.4）。霞の元（エアロゾルの濃さと高さ・高さフォグ・空気遠近の掛け方）を突き止め、遠くの崖の明るさと赤みが写真に近づくように直す（露出でまとめて下げない）。ground・overview・far の比較画像（1920×1080）を開いて、遠景が写真のように滑らかに色の差で読め、斑点・ざらつき・模様の繰り返しが無いことを確かめる。カメラパスか連続撮影の数枚で、動かしても遠景がちらつかないことを確かめる。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-WL-FAR-SHADING`
 - paths: Assets/Shaders, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Game/GameModes/Wasteland, Scripts/Terrain, Tools/AssetCook, Assets/AssetSets, TASKS.md, PROGRESS.md
