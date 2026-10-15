@@ -1517,15 +1517,25 @@
 - paths: Tools/AssetCook, Library/Core/Public/Rendering/Terrain, Library/Core/Private/Rendering/Terrain, Scripts/Terrain, Assets/AssetSets, Assets/Shaders, Game/GameModes/Wasteland, TASKS.md, PROGRESS.md
 - notes: 危険地帯（アセットのクック）。三角形が増えるが、仮想化ジオメトリ（MegaGeometry）で描ける量か確かめる（速さの条件は無い。操作できる程度ならよい）。1 反復で閉じなければ、主役の Battleship Rock だけで先に閉じ、残りの崖を `SCN-WL-CLIFF-DETAIL-ALL` として後ろに足す。 2026-10-15 親: 3 反復とも焼きが 40 分に収まらず遮断器で blocked になった（Debug の AssetCook で中央の区画 1 本 20 分超。頂点ごとに位置を 5 回求めて法線を差分で出していた）。焼きは RelWithDebInfo の AssetCook で行い、細分の格子の位置を 1 回だけ求めて法線を隣の点から作る形にして速くする（反復 6 の PROGRESS の案）。反復の外で走らせ続けた AssetCook は親が止めた（その出力は使わない）。焼きは反復の中で終わる形にし、反復の外へ切り離さない。
 
+## SCN-WL-GEOMETRY-PAGE-THRASH: ジオメトリのページの置き場が足りないとき、ページを外し続けて読み込みが終わらなくなるのを直す
+- status: todo
+- done-when: 崖の細部を左の奥の崖まで 1 m で焼いた版（崖の区画の合計 1 億 2610 万三角形、run 20261015-203920 の反復 2）で、荒野の撮影が読み込み中から抜けなかった（`GEOMETRY_PAGES` の evicted が数分で 2 万 7 千、`VRAM_LEDGER geometry_pool blocks=1 capacity_mb=1024`、target_mb は 3066）。原因の見立て: ページはメッシュと同じ塊にしか置けず（`MegaGeometryResourceStore::BeginUpload` の `AllocateInBlock`）、全メッシュの根が最初の 1 GB の塊に入るので、塊が埋まると NoSpace になる。そのとき `GeometryPageStreamer.h` の `StartUploadsLocked` の NoSpace のループは、要求より古い常駐ページを塊を問わず外し続け、外した領域は GPU の使用が終わるまで返らないので、空かないまま一度に数千ページを外す。まず見立てをログか試験で確かめ、違っていれば本当の原因を直す。直す形の目安: (1) NoSpace のときに外すのは同じ塊のページだけにし、返却待ちの領域があるあいだは外し続けずに次のフレームを待つ。(2) メッシュを置くとき、その塊にページの置き場が残らなければ新しい塊へ置き、プールを VRAM の目標（geometry_target_mb）まで複数の塊に広げる。確かめ方: 今の焼き（崖の細部の版 5。撮影が ref_cliff_01 で止まり、evicted=34115・`used_mb=1023.1`）がそのまま再現になる（焼き直さない）。Release に計測・デバッグの機能を足さない。この焼きで、荒野の全 11 視点の撮影が 10 分以内に終わり、外したページの数が読み込んだページの数を大きく超えないことをログで確かめる。mega-bananas（既定の本数）・起動画面の撮影が変わらないこと（溢れ 0、読み込みの時間が延びない）を確かめる。試験は既存の `Test/Core/Rendering/GeometryPageStreamerTest.cpp` の中に、NoSpace で返却待ちのあいだにページを外し続けないことの 1 件だけ足してよい（新しい試験の実行ファイルは作らない）。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-WL-GEOMETRY-PAGE-THRASH`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -OutDir .harness/runs/scene-capture/SCN-WL-GEOMETRY-PAGE-THRASH-mega`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -OutDir .harness/runs/startup-capture/SCN-WL-GEOMETRY-PAGE-THRASH`
+- paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Test/Core/Rendering, Tools/AssetCook, Scripts, Docs/RenderingValidation, Docs/Architecture, TASKS.md, PROGRESS.md
+- notes: 危険地帯（メモリ・RenderThread・ジオメトリのストリーミング）。2026-10-15 親が SCN-WL-CLIFF-DETAIL-ALL の blocked（反復 2）の調べから足した。荒野は美しさを先にして崖・岩・草の三角形を増やしていくので、置き場の不足で読み込みが止まらないようにする。崖の細部の範囲はこの項目では変えない。
+
 ## SCN-WL-CLIFF-DETAIL-ALL: Battleship Rock の外の崖にも、地層の段と割れ目の焼き直しを広げる
-- status: blocked
+- status: todo
 - done-when: SCN-WL-CLIFF-DETAIL は主役の Battleship Rock の範囲（`Tools/AssetCook/TerrainCliffDetail.cpp` の X −2150〜−900・Z −1650〜−420）だけを焼き直した。手本の視点に写るほかの崖（ref_cliff_02 の尖塔の台座・Castle Butte・左右のメサ）にも同じ焼き直しを広げ、範囲の境で焼いた崖と周りの地形の継ぎ目が見えない。三角形の数を区画ごとに見て、仮想化ジオメトリで描けることを確かめる（溢れ 0）。比較画像（1920×1080）を開き、広げた崖の段と割れ目が影を落とす立体として見えることを確かめる。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `cmake --build build --config RelWithDebInfo --target AssetCook -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CookAssets.ps1 -AssetCookExe build/Tools/AssetCook/RelWithDebInfo/AssetCook.exe -OnlyLogicalPath "Models/WastelandTerrain/*"`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-WL-CLIFF-DETAIL-ALL`
 - paths: Tools/AssetCook, Scripts/Terrain, Assets/AssetSets, TASKS.md, PROGRESS.md
-- notes: 危険地帯（アセットのクック）。SCN-WL-CLIFF-DETAIL の notes の「1 反復で閉じなければ残りの崖を後ろに足す」による。焼きは RelWithDebInfo の AssetCook で、一覧を分けた並列で反復の中で終える（中央の区画 dem:2,3 は 1408 万三角形・1 本約 14 分）。範囲を広げると三角形がさらに増えるので、細分の間隔や範囲の取り方を区画ごとの数で決める。 2026-10-15 親: 反復 4 の評価で差し戻した所（NEXT_FINDINGS の反復 4）だけが残っている。ref_far_01 の左の奥の崖（画面の左 約 600 画素、視点から 5〜9 km、mid の段の 8 m の格子）が丸い面のままで、主役のビュート・尖塔・右の崖の段と割れ目と並ぶと汚れて見える。この崖を castle の段か細かい格子の範囲へ入れて同じ焼き直しを掛ける（1 画素が 1.1〜2 m なので、細分は 0.5〜1 m でよい）。版 4 で焼いた崖と範囲は変えない。撮り直した ref_far_01 の左の切り出しを版 4 の `crop_far01_left.png` と並べて開き、段と割れ目の影が出たこと・新しい範囲の境に継ぎ目が無いこと・溢れ 0 を確かめる。 2026-10-15 親（反復 2 の blocked への判断）: 案 1 を採る。`kCastleRegions` の 3・4 番目（左の奥の崖・尖塔の奥の崖、5〜9 km）を間隔 2 m・細分の下限 1 にする（2 m の格子の点の押し出しだけ。1 画素 1.1〜2 m なので足りる）。ジオメトリのプールは広げない（実行時の側には触らない）。STEER の「コードを変えない」はこの変更には当てはまらない。手順はビルド → 印の合わない項目を 12 組で並列に焼く（dem:2,3 を最初の組に単独で）→ `CookAssets.ps1` で cooked=0 → 撮影。撮影の読み込みが 600 秒に収まらなければ、範囲を ref_far_01 に写る急な升目だけに狭める。
+- notes: 危険地帯（アセットのクック）。SCN-WL-CLIFF-DETAIL の notes の「1 反復で閉じなければ残りの崖を後ろに足す」による。焼きは RelWithDebInfo の AssetCook で、一覧を分けた並列で反復の中で終える（中央の区画 dem:2,3 は 1408 万三角形・1 本約 14 分）。範囲を広げると三角形がさらに増えるので、細分の間隔や範囲の取り方を区画ごとの数で決める。 2026-10-15 親: 反復 4 の評価で差し戻した所（NEXT_FINDINGS の反復 4）だけが残っている。ref_far_01 の左の奥の崖（画面の左 約 600 画素、視点から 5〜9 km、mid の段の 8 m の格子）が丸い面のままで、主役のビュート・尖塔・右の崖の段と割れ目と並ぶと汚れて見える。この崖を castle の段か細かい格子の範囲へ入れて同じ焼き直しを掛ける（1 画素が 1.1〜2 m なので、細分は 0.5〜1 m でよい）。版 4 で焼いた崖と範囲は変えない。撮り直した ref_far_01 の左の切り出しを版 4 の `crop_far01_left.png` と並べて開き、段と割れ目の影が出たこと・新しい範囲の境に継ぎ目が無いこと・溢れ 0 を確かめる。 2026-10-15 親（反復 2 の blocked への判断）: 案 1 を採る。`kCastleRegions` の 3・4 番目（左の奥の崖・尖塔の奥の崖、5〜9 km）を間隔 2 m・細分の下限 1 にする（2 m の格子の点の押し出しだけ。1 画素 1.1〜2 m なので足りる）。ジオメトリのプールは広げない（実行時の側には触らない）。STEER の「コードを変えない」はこの変更には当てはまらない。手順はビルド → 印の合わない項目を 12 組で並列に焼く（dem:2,3 を最初の組に単独で）→ `CookAssets.ps1` で cooked=0 → 撮影。撮影の読み込みが 600 秒に収まらなければ、範囲を ref_far_01 に写る急な升目だけに狭める。 2026-10-15 親（反復 2 の blocked への判断）: 案 1 を採る。版 5 の焼き（左の奥の崖の段と割れ目は出ている）はそのまま使い、コードと焼きは変えない。SCN-WL-GEOMETRY-PAGE-THRASH の後に、撮影（verify の 4 本目）と比較画像の確認だけをやり直して閉じる。
 
 ## SCN-WL-REVIEW-1: 節目の確認 1（地面・崖・遠景）をユーザーに渡す
 - status: todo
@@ -1534,16 +1544,6 @@
 - verify: `python Scripts/Terrain/CompareReference.py --capture .harness/runs/scene-capture/SCN-WL-REVIEW-1 --verify`
 - paths: Scripts/Terrain, Docs/RenderingValidation, TASKS.md, PROGRESS.md
 - notes: 2026-10-15 ユーザー: 品質の確認は節目ごと（3 回程度）にユーザーが見る。 2026-10-15 親: 近くの主役の崖はこの確認の後でスキャンの素材と Blender で作り直す（SCN-WL-CLIFF-SCAN-*）。所見には今の崖を書いてよいが、一覧に「近くの崖は作り直す予定」と添える。
-
-## SCN-WL-GEOMETRY-PAGE-THRASH: ジオメトリのページの置き場が足りないとき、ページを外し続けて読み込みが終わらなくなるのを直す
-- status: todo
-- done-when: 崖の細部を左の奥の崖まで 1 m で焼いた版（崖の区画の合計 1 億 2610 万三角形、run 20261015-203920 の反復 2）で、荒野の撮影が読み込み中から抜けなかった（`GEOMETRY_PAGES` の evicted が数分で 2 万 7 千、`VRAM_LEDGER geometry_pool blocks=1 capacity_mb=1024`、target_mb は 3066）。原因の見立て: ページはメッシュと同じ塊にしか置けず（`MegaGeometryResourceStore::BeginUpload` の `AllocateInBlock`）、全メッシュの根が最初の 1 GB の塊に入るので、塊が埋まると NoSpace になる。そのとき `GeometryPageStreamer.h` の `StartUploadsLocked` の NoSpace のループは、要求より古い常駐ページを塊を問わず外し続け、外した領域は GPU の使用が終わるまで返らないので、空かないまま一度に数千ページを外す。まず見立てをログか試験で確かめ、違っていれば本当の原因を直す。直す形の目安: (1) NoSpace のときに外すのは同じ塊のページだけにし、返却待ちの領域があるあいだは外し続けずに次のフレームを待つ。(2) メッシュを置くとき、その塊にページの置き場が残らなければ新しい塊へ置き、プールを VRAM の目標（geometry_target_mb）まで複数の塊に広げる。確かめ方: 置き場が足りない状態を作り（1 億 2610 万三角形の版の焼き直し、または塊の大きさを小さくする設定。Release に計測・デバッグの機能を足さない）、荒野の全 11 視点の撮影が 10 分以内に終わり、外したページの数が読み込んだページの数を大きく超えないことをログで確かめる。今の焼きの荒野・mega-bananas（既定の本数）・起動画面の撮影が変わらないこと（溢れ 0、読み込みの時間が延びない）を確かめる。試験は既存の `Test/Core/Rendering/GeometryPageStreamerTest.cpp` の中に、NoSpace で返却待ちのあいだにページを外し続けないことの 1 件だけ足してよい（新しい試験の実行ファイルは作らない）。
-- verify: `cmake --build build --config Debug --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-WL-GEOMETRY-PAGE-THRASH`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -OutDir .harness/runs/scene-capture/SCN-WL-GEOMETRY-PAGE-THRASH-mega`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -OutDir .harness/runs/startup-capture/SCN-WL-GEOMETRY-PAGE-THRASH`
-- paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Test/Core/Rendering, Tools/AssetCook, Scripts, Docs/RenderingValidation, Docs/Architecture, TASKS.md, PROGRESS.md
-- notes: 危険地帯（メモリ・RenderThread・ジオメトリのストリーミング）。2026-10-15 親が SCN-WL-CLIFF-DETAIL-ALL の blocked（反復 2）の調べから足した。荒野は美しさを先にして崖・岩・草の三角形を増やしていくので、置き場の不足で読み込みが止まらないようにする。崖の細部の範囲はこの項目では変えない。
 
 ## SCN-WL-CLIFF-SCAN-SELECT: 近くの崖に使うスキャンの素材を選ぶ
 - status: todo
