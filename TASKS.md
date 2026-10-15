@@ -1489,7 +1489,7 @@
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Views ref_far_02,ref_ground_02,cliff -RequireAssets -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-WL-SHADOW-DOT-GRID`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -OutDir .harness/runs/startup-capture/SCN-WL-SHADOW-DOT-GRID`
 - paths: Assets/Shaders, Library/Core/Private/Rendering, Game/GameModes/Wasteland, Scripts, TASKS.md, PROGRESS.md
-- notes: 2026-10-15 SCN-WL-MATERIAL-PALETTE の反復 6 で見つけた（`.harness/runs/scene-capture/SCN-WL-MATERIAL-PALETTE/ref_far_02.png` の中景、`cliff.png` の谷床）。危険地帯（描画）。
+- notes: 2026-10-15 SCN-WL-MATERIAL-PALETTE の反復 6 で見つけた（`.harness/runs/scene-capture/SCN-WL-MATERIAL-PALETTE/ref_far_02.png` の中景、`cliff.png` の谷床）。危険地帯（描画）。 2026-10-15 親: 反復 10・11（run 20261015-082405）で原因を 3 つに分けて直した: 崖とビュートの横縞と点の格子は地形の法線の勾配（反復 10 で消えた）、崖錐の斑は VSM の自己遮蔽（余裕を 3 texel にして 1 万画素あたり 15.2 → 0.3）、残りは接触影が地形の三角形の折れ目を遮りと誤る点（受け手とほぼ平行な面を除く直しで減ったが、砂丘にまばらに残る。接触影を切ると消える）。この項目は、途中の保存（3dc9555f・fe36083d）の直しを残して撮影で確かめて閉じる（縞と崖錐の斑が消え、Rendering3DTest が変わらない）。残る接触影の点は SCN-WL-CONTACT-SHADOW-TERRAIN で直す。最後の反復は接触影の判定のループを書き換えている途中で止まったので、まずビルドが通る形に戻す。
 
 ## SCN-WL-MATERIAL-STRATA: 砂岩の地層と風化の筋を足す
 - status: todo
@@ -1578,6 +1578,15 @@
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-WL-SCATTER-GRAVEL`
 - paths: Game/GameModes/Wasteland, Assets/AssetSets, Assets/Shaders, Library/Core/Private/Rendering, Scripts, TASKS.md, PROGRESS.md
+
+## SCN-WL-CONTACT-SHADOW-TERRAIN: 接触影が地形の折れ目を遮りと誤って出す点を消す
+- status: todo
+- done-when: 画面空間の接触影が、地形の三角形の折れ目や細かい凹凸を遮りと誤り、砂丘や斜面にまばらな暗い点を出す（SCN-WL-SHADOW-DOT-GRID の残り。接触影を切ると消える）のを直す。岩・礫・低木を地面に据えた接地の影（接触影の本来の役目）は残す。ground・outpost・ref_ground_02 の撮影（1920×1080）を拡大して、地形の上の点が消え、岩と低木の足元の影が残ることを確かめる。Rendering3DTest の撮影が変わらない。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-WL-CONTACT-SHADOW-TERRAIN`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -OutDir .harness/runs/startup-capture/SCN-WL-CONTACT-SHADOW-TERRAIN`
+- paths: Assets/Shaders, Library/Core/Private/Rendering, Library/Core/Public/Rendering, Game/GameModes/Wasteland, Scripts, TASKS.md, PROGRESS.md
+- notes: 2026-10-15 親: SCN-WL-SHADOW-DOT-GRID から分けた。危険地帯（描画）。岩と礫を撒いた後（SCN-WL-SCATTER-GRAVEL の後）に置き、接地の影と一緒に確かめる。
 
 ## SCN-WL-REVIEW-2: 節目の確認 2（低木・岩・礫）をユーザーに渡す
 - status: todo
