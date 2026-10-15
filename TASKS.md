@@ -1538,7 +1538,7 @@
 - notes: 危険地帯（アセットのクック）。SCN-WL-CLIFF-DETAIL の notes の「1 反復で閉じなければ残りの崖を後ろに足す」による。焼きは RelWithDebInfo の AssetCook で、一覧を分けた並列で反復の中で終える（中央の区画 dem:2,3 は 1408 万三角形・1 本約 14 分）。範囲を広げると三角形がさらに増えるので、細分の間隔や範囲の取り方を区画ごとの数で決める。 2026-10-15 親: 反復 4 の評価で差し戻した所（NEXT_FINDINGS の反復 4）だけが残っている。ref_far_01 の左の奥の崖（画面の左 約 600 画素、視点から 5〜9 km、mid の段の 8 m の格子）が丸い面のままで、主役のビュート・尖塔・右の崖の段と割れ目と並ぶと汚れて見える。この崖を castle の段か細かい格子の範囲へ入れて同じ焼き直しを掛ける（1 画素が 1.1〜2 m なので、細分は 0.5〜1 m でよい）。版 4 で焼いた崖と範囲は変えない。撮り直した ref_far_01 の左の切り出しを版 4 の `crop_far01_left.png` と並べて開き、段と割れ目の影が出たこと・新しい範囲の境に継ぎ目が無いこと・溢れ 0 を確かめる。 2026-10-15 親（反復 2 の blocked への判断）: 案 1 を採る。`kCastleRegions` の 3・4 番目（左の奥の崖・尖塔の奥の崖、5〜9 km）を間隔 2 m・細分の下限 1 にする（2 m の格子の点の押し出しだけ。1 画素 1.1〜2 m なので足りる）。ジオメトリのプールは広げない（実行時の側には触らない）。STEER の「コードを変えない」はこの変更には当てはまらない。手順はビルド → 印の合わない項目を 12 組で並列に焼く（dem:2,3 を最初の組に単独で）→ `CookAssets.ps1` で cooked=0 → 撮影。撮影の読み込みが 600 秒に収まらなければ、範囲を ref_far_01 に写る急な升目だけに狭める。 2026-10-15 親（反復 2 の blocked への判断）: 案 1 を採る。版 5 の焼き（左の奥の崖の段と割れ目は出ている）はそのまま使い、コードと焼きは変えない。SCN-WL-GEOMETRY-PAGE-THRASH の後に、撮影（verify の 4 本目）と比較画像の確認だけをやり直して閉じる。
 
 ## SCN-WL-REVIEW-1: 節目の確認 1（地面・崖・遠景）をユーザーに渡す
-- status: done
+- status: doing
 - done-when: 手本の全視点の比較画像（写真｜撮影、1920×1080）を撮り直し、1 枚の一覧にまとめ、写真との差の大きい順の所見を `Docs/RenderingValidation/WastelandReference.md` の「確認 1」に書く。評価者は一覧を見て、写真との大きな差（色・明るさ・構造・欠けた物）と、技術の欠陥（浮き・継ぎ目・繰り返し・ちらつき）を挙げる。最後にリポジトリ直下へ中身が `boundary` の `LOOP_STOP` を書き、ランナーをこの反復の後で止める（親がユーザーに一覧を渡し、判定を待つ）。
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-WL-REVIEW-1`
 - verify: `python Scripts/Terrain/CompareReference.py --capture .harness/runs/scene-capture/SCN-WL-REVIEW-1 --verify`
