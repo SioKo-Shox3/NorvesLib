@@ -1458,7 +1458,7 @@
 - notes: 地形の端の高さを外へ延ばす作り方は使わない（四角い外周から板や壁が伸びる）。1 m タイルの外が要るなら、ファイル名とサイズを書いて BLOCKED（ユーザーの許可が要る）。 2026-10-15 ユーザー: 隣の 1 m タイル 3 枚（`USGS_1M_12_x60y414_UT_WestEast_B22.tif` 約 311 MB・`x59y414` 約 305 MB・`x59y413` 約 295 MB、合計約 911 MB。配布元は同じ）のダウンロードを許可した（`blocked/SCN-WL-HORIZON.md`）。Castle Butte の周りは 1〜2 m、残りは粗い遠景で焼く。西の地平線（Lady in the Bathtub など）も実地形にする。
 
 ## SCN-WL-MASKS-GEOM: 基本の地表の分類の地図を作る
-- status: todo
+- status: done
 - done-when: 格子から、数 m の幅でならした傾斜・相対の高さ（周りより高いか低いか）・崖との位置関係（崖の下側か）を求め、露岩・崖錐・地表（細粒と礫）の重みの地図を焼く（1〜2 m/画素）。崖錐は崖からの距離だけで決めず、崖より低い側・斜面の向き・沢の切れ込みで扇状・舌状の塊にする。色分けの PNG を開き、崖に露岩、崖の下の裾に崖錐、平らな所に地表が出ることを確かめる。流れ（沢）は SCN-WL-MASKS-FLOW。
 - verify: `python Scripts/Terrain/TerrainMasks.py --verify`
 - paths: Scripts/Terrain, Tools/AssetCook, Assets/AssetSets, TASKS.md, PROGRESS.md
