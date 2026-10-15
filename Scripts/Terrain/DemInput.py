@@ -4,6 +4,8 @@
 #
 # 使い方:
 #   python Scripts/Terrain/DemInput.py --fetch    DEM を落として manifest.json（サイズ・SHA-256・URL・取得日）を書く
+#   python Scripts/Terrain/DemInput.py --fetch-neighbors   遠景に使う隣の 1 m タイル 3 枚を落として manifest の neighbors に書く
+#   python Scripts/Terrain/DemInput.py --fetch-regional    遠景の外の段に使う 1/3 秒角の 2 枚を落として manifest の regional に書く
 #   python Scripts/Terrain/DemInput.py --verify   DEM・manifest・Python のパッケージ・.gitignore を確かめ、
 #                                                 座標系・画素の大きさ・行の向き・NoData・高さの範囲を表示する
 # DEM は Assets/Terrain/Source/ に置く（git 管理外）。パッケージは Scripts/Terrain/requirements.txt。
@@ -50,6 +52,20 @@ NEIGHBOR_TILES = [
      "size": 295344808, "bbox": "-109.95,37.25,-109.93,37.26",
      "east_min": 590000, "east_max": 600000, "north_min": 4120000, "north_max": 4130000,
      "role": "西の地平線（Lady in the Bathtub など）"},
+]
+
+# 遠景の外の段（SCN-WL-HORIZON の outer）に使う 1/3 秒角（約 10 m 間隔）の 2 枚。1 m タイル 4 枚の外の東・南の地平線
+# （ridge・outpost の視点から見える 20 km 以上先）を覆う。座標系は NAD83 の経緯度（EPSG:4269）、高さは NAVD88。
+# 1 m タイルと違い TNM の API の現行の版ではなく historical の固定の版を使うので、URL と大きさをここで固定する
+REGIONAL_TILES = [
+    {"file": "USGS_13_n38w110_20260630.tif", "size": 421008125,
+     "url": "https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/13/TIFF/historical/n38w110/USGS_13_n38w110_20260630.tif",
+     "lat_min": 37.0, "lat_max": 38.0, "lon_min": -110.0, "lon_max": -109.0,
+     "role": "東の地平線（4 枚の東の外、北緯 37〜38°）"},
+    {"file": "USGS_13_n37w110_20260514.tif", "size": 403904756,
+     "url": "https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/13/TIFF/historical/n37w110/USGS_13_n37w110_20260514.tif",
+     "lat_min": 36.0, "lat_max": 37.0, "lon_min": -110.0, "lon_max": -109.0,
+     "role": "南の地平線（北緯 37° より南、Monument Valley の方角）"},
 ]
 
 # 切り出しの余白。手本の写真 cliff_01 の推定の撮影位置が範囲の西の外 100〜450 m なので西は 600 m、
@@ -119,6 +135,47 @@ def fetch_neighbors():
         json.dump(manifest, stream, ensure_ascii=False, indent=2)
         stream.write("\n")
     print("manifest: %s（neighbors %d 枚）" % (MANIFEST_PATH, len(entries)))
+
+
+def fetch_regional():
+    """遠景の外の段に使う 1/3 秒角の 2 枚を固定の URL から落とし、manifest.json の regional に書く"""
+    context = ssl_context()
+    with open(MANIFEST_PATH, encoding="utf-8") as stream:
+        manifest = json.load(stream)
+    entries = []
+    for tile in REGIONAL_TILES:
+        parsed = urllib.parse.urlparse(tile["url"])
+        if parsed.hostname != DEM_HOST or os.path.basename(parsed.path) != tile["file"]:
+            raise RuntimeError("URL が想定と違う: %s" % tile["url"])
+        request = urllib.request.Request(tile["url"], method="HEAD", headers={"User-Agent": USER_AGENT})
+        with urllib.request.urlopen(request, context=context, timeout=120) as response:
+            length = int(response.headers.get("Content-Length", "0"))
+            last_modified = response.headers.get("Last-Modified")
+        if length != tile["size"]:
+            raise RuntimeError("配布元の大きさ %d が固定値 %d と違う（版が替わった）" % (length, tile["size"]))
+        path = os.path.join(SOURCE_DIR, tile["file"])
+        if os.path.isfile(path) and os.path.getsize(path) == tile["size"]:
+            print("落とし済み: %s" % path)
+        else:
+            print("取得: %s (%.1f MB)" % (tile["url"], tile["size"] / 1e6), flush=True)
+            download(tile["url"], path, context)
+        entries.append({
+            "file": tile["file"],
+            "url": tile["url"],
+            "size": os.path.getsize(path),
+            "sha256": sha256_of(path),
+            "retrieved": datetime.date.today().isoformat(),
+            "last_modified": last_modified,
+            "bounds_nad83": {"lat_min": tile["lat_min"], "lat_max": tile["lat_max"],
+                             "lon_min": tile["lon_min"], "lon_max": tile["lon_max"]},
+            "license": "Public domain (All 3DEP products are public domain.)",
+            "role": tile["role"],
+        })
+    manifest["regional"] = entries
+    with open(MANIFEST_PATH, "w", encoding="utf-8", newline="\n") as stream:
+        json.dump(manifest, stream, ensure_ascii=False, indent=2)
+        stream.write("\n")
+    print("manifest: %s（regional %d 枚）" % (MANIFEST_PATH, len(entries)))
 
 
 def download(url, path, context):
@@ -344,6 +401,7 @@ def main():
     group.add_argument("--fetch", action="store_true", help="DEM を落として manifest.json を書く")
     group.add_argument("--verify", action="store_true", help="DEM・manifest・パッケージを確かめて中身を表示する")
     group.add_argument("--fetch-neighbors", action="store_true", help="遠景に使う隣の 1 m タイル 3 枚を落として manifest に足す")
+    group.add_argument("--fetch-regional", action="store_true", help="遠景の外の段に使う 1/3 秒角の 2 枚を落として manifest に足す")
     args = parser.parse_args()
     # 出力をファイルへ保存して読むので、端末の文字コードに依らず UTF-8 で書く
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -352,6 +410,9 @@ def main():
         return 0
     if args.fetch_neighbors:
         fetch_neighbors()
+        return 0
+    if args.fetch_regional:
+        fetch_regional()
         return 0
     return verify()
 

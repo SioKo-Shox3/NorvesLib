@@ -1,13 +1,20 @@
-﻿# 荒野（Valley of the Gods）の遠景の地形を、1 m の DEM タイル 4 枚（E 590000〜610000・N 4120000〜4140000）から焼く。
-# 近景（CropDem.py の 1 m の格子）の外側を、間隔の違う 3 つの段で覆い、段の間を縫い目の帯でつなぐ:
+﻿# 荒野（Valley of the Gods）の遠景の地形を、1 m の DEM タイル 4 枚（E 590000〜610000・N 4120000〜4140000）と、
+# その外を覆う 1/3 秒角（約 10 m 間隔）の DEM 2 枚から焼く。
+# 近景（CropDem.py の 1 m の格子）の外側を、間隔の違う 4 つの段で覆い、段の間を縫い目の帯でつなぐ:
 #   castle: Castle Butte と、その手前の谷床（手本の写真 far_01 の主役）。2 m
-#   mid:    近景の周り 6 km。8 m。穴は近景と castle
-#   far:    20 km 四方の残り。16 m。穴は mid
+#   mid:    近景の周り 6 km（4 枚の内側）。8 m。穴は近景と castle
+#   far:    20 km 四方の残り。16 m。穴は mid。4 枚の NoData（x60y413 の南東の角）は 1/3 秒角で埋める
+#   outer:  20 km 四方の外（東 25 km・南 30 km・北 27 km。西は 1/3 秒角の西の端 西経 110° まで）。32 m。穴は far。
+#           ridge・outpost から見える東・南の地平線と、北の Bears Ears を覆う
+#   rim:    1/3 秒角の 2 枚の残り（西経 109〜110°・北緯 36〜38°）。128 m。穴は outer。高い視点（ridge）から 30 km より先に
+#           見える地平線（Comb Ridge の東の台地、北の Abajo Mountains など）
 # 縫い目の帯は、内側の段の外周の頂点と、外側の段の穴の縁の頂点（内側の外周から 1 升目以上離れた格子の線）を、
 # 辺に沿った位置の順に交互に結んだ三角形の列。帯の両端の頂点は、どちらも DEM の画素の値そのもの（近景の側は近景の
 # 格子の値）なので、帯の両端で高さの段差も隙間もできない。各段の高さは、縫い目から間隔の 4 倍の距離までは DEM の
 # 画素の値そのもの（点）から、それより外は間隔ほどの箱の平均（折り返しを抑える）へ移す（近景の外周の高さへ寄せる帯）。
-# 端の高さを外へ延ばす作り方はしない。DEM の NoData（x60y413 の南東の角）と 4 枚の外は、地形を作らない。
+# 端の高さを外へ延ばす作り方はしない。1/3 秒角の 2 枚の外（西経 110° より西など）は、地形を作らない。
+# 地球の丸み: 近景より外の段の高さから、近景の外周からの水平の距離 d で d^2 / 2R × (1 - 屈折係数) を引く（近景の中の視点から
+# 見た地平線の下がり。30 km 先で約 60 m）。近景の外周で 0 なので、近景との縫い目に段差は出ない。
 #
 # 出力（git 管理外）: Assets/Terrain/ValleyOfTheGods/horizon.json（段・メッシュの一覧・SHA-256）と horizon/<名前>.bin。
 # メッシュの .bin は頂点ごとに float32 × 8（位置 xyz・法線 xyz・UV）を並べ、続けて三角形ごとに uint32 × 3 を並べる。
@@ -18,7 +25,7 @@
 #   python Scripts/Terrain/HorizonDem.py --build    遠景のメッシュ・記述・図を書く
 #   python Scripts/Terrain/HorizonDem.py --verify   作り直して一致を確かめ、近景の外周を含めた全体で、開いた辺が
 #                                                   DEM の外の縁にしか無いこと・同じ位置の頂点の高さが一致することを確かめる
-# 入力: DemInput.py が落とした 4 枚（Assets/Terrain/Source/）と、CropDem.py の近景の格子。終了コード: 満たせば 0、欠ければ 1。
+# 入力: DemInput.py が落とした 1 m の 4 枚と 1/3 秒角の 2 枚（Assets/Terrain/Source/）と、CropDem.py の近景の格子。終了コード: 満たせば 0、欠ければ 1。
 import argparse
 import datetime
 import hashlib
@@ -28,7 +35,7 @@ import os
 import subprocess
 import sys
 
-from DemInput import DEM_PATH, MANIFEST_PATH as SOURCE_MANIFEST_PATH, NEIGHBOR_TILES, SOURCE_DIR
+from DemInput import DEM_PATH, MANIFEST_PATH as SOURCE_MANIFEST_PATH, NEIGHBOR_TILES, REGIONAL_TILES, SOURCE_DIR
 from ReferencePhotos import FEATURES, REPO_ROOT, sha256_of, utm_from_latlon
 
 OUT_DIR = os.path.join(REPO_ROOT, "Assets", "Terrain", "ValleyOfTheGods")
@@ -49,14 +56,24 @@ MOSAIC = {"east_min": 590000, "east_max": 610000, "north_min": 4120000, "north_m
 # far_01 の視点（E 603537・N 4128549）から北西を見た画角（方位 300.5〜323.5°）の、近景の北の縁から 4 km までの谷床を覆う。
 # 南の縁は近景の北の縁から 16 m 北（間に mid の格子の線 1 本を挟む）
 CASTLE_RECT = {"x0": -4100.0, "x1": -1500.0, "z0": -4199.0, "z1": -2515.0}
-# mid の段は近景の外周から各方向にこの距離まで（4 枚の外は切る）
+# mid の段は近景の外周から各方向にこの距離まで（4 枚の内側に、far の縫い目の帯が入る 2 升目を残して切る）
 MID_EXPAND_M = 6000.0
+# outer の段は 4 枚の外縁から各方向にこの距離まで[m]。東・南は ridge（南東を見る）と outpost（南を見る）の地平線、
+# 北は Bears Ears（N 約 4164800）まで。西は 1/3 秒角の西の端（西経 110°、E 588300〜589000）で切れる
+OUTER_EXPAND_M = {"west": 2000, "east": 25000, "south": 30000, "north": 27000}
 # 段の間隔[m]
-SPACINGS = {"castle": 2, "mid": 8, "far": 16}
+SPACINGS = {"castle": 2, "mid": 8, "far": 16, "outer": 32, "rim": 128}
+# rim の段の範囲（1/3 秒角の 2 枚を合わせた経緯度の範囲。UTM では四隅を囲む長方形にし、外は NaN）
+RIM_LONLAT = {"lon_min": -110.0, "lon_max": -109.0, "lat_min": 36.0, "lat_max": 38.0}
+# 地球の半径[m]と、大気の屈折係数（測量の標準値。見かけの丸みを 13 % 減らす）
+EARTH_RADIUS_M = 6371000.0
+REFRACTION_COEFFICIENT = 0.13
 # 縫い目から箱の平均へ移る距離（間隔の倍数）
 BAND_SPACINGS = 4
 # メッシュに分ける区画の一辺の升目の数（近景の区画と同じ）
 TILE_CELLS = 500
+# 検証で位置を整数の鍵にするときの X・Z のずらし[m]（rim の Z は -80 km〜+142 km）
+KEY_OFFSET = 200000
 # 法線を引く近景の格子の頂点の印
 NEAR_NORMAL_FROM_GRID = float("nan")
 
@@ -123,20 +140,40 @@ def make_levels(near):
     for value, anchor in ((castle.x0, ax), (castle.x1, ax), (castle.z0, az), (castle.z1, az)):
         if (value - anchor) % castle.spacing:
             raise RuntimeError("castle の範囲が 2 m の格子に乗らない: %r" % CASTLE_RECT)
-    s = SPACINGS["mid"]
-    mid = Level("mid", s,
-                max(lattice_ceil(mx0, ax, s), lattice_ceil(near["x0"] - MID_EXPAND_M, ax, s)),
-                min(lattice_floor(mx1, ax, s), lattice_floor(near["x1"] + MID_EXPAND_M, ax, s)),
-                max(lattice_ceil(mz0, az, s), lattice_ceil(near["z0"] - MID_EXPAND_M, az, s)),
-                min(lattice_floor(mz1, az, s), lattice_floor(near["z1"] + MID_EXPAND_M, az, s)))
     s = SPACINGS["far"]
     far = Level("far", s, lattice_ceil(mx0, ax, s), lattice_floor(mx1, ax, s), lattice_ceil(mz0, az, s), lattice_floor(mz1, az, s))
+    # mid は far の格子の 2 升目（縫い目の帯）を残して far の内側に収める
+    keep = 2 * SPACINGS["far"]
+    s = SPACINGS["mid"]
+    mid = Level("mid", s,
+                max(lattice_ceil(far.x0 + keep, ax, s), lattice_ceil(near["x0"] - MID_EXPAND_M, ax, s)),
+                min(lattice_floor(far.x1 - keep, ax, s), lattice_floor(near["x1"] + MID_EXPAND_M, ax, s)),
+                max(lattice_ceil(far.z0 + keep, az, s), lattice_ceil(near["z0"] - MID_EXPAND_M, az, s)),
+                min(lattice_floor(far.z1 - keep, az, s), lattice_floor(near["z1"] + MID_EXPAND_M, az, s)))
+    s = SPACINGS["outer"]
+    # 東 = +X、北 = -Z
+    outer = Level("outer", s,
+                  lattice_ceil(mx0 - OUTER_EXPAND_M["west"], ax, s), lattice_floor(mx1 + OUTER_EXPAND_M["east"], ax, s),
+                  lattice_ceil(mz0 - OUTER_EXPAND_M["north"], az, s), lattice_floor(mz1 + OUTER_EXPAND_M["south"], az, s))
+    from rasterio.crs import CRS
+    from rasterio.warp import transform as warp_transform
+    lons = [RIM_LONLAT["lon_min"], RIM_LONLAT["lon_max"]] * 2
+    lats = [RIM_LONLAT["lat_min"]] * 2 + [RIM_LONLAT["lat_max"]] * 2
+    corner_e, corner_n = warp_transform(CRS.from_epsg(4269), CRS.from_epsg(26912), lons, lats)
+    s = SPACINGS["rim"]
+    rim = Level("rim", s,
+                lattice_ceil(min(corner_e) - origin["east"], ax, s), lattice_floor(max(corner_e) - origin["east"], ax, s),
+                lattice_ceil(origin["north"] - max(corner_n), az, s), lattice_floor(origin["north"] - min(corner_n), az, s))
     mid.children = [near_level, castle]
     far.children = [mid]
+    outer.children = [far]
+    rim.children = [outer]
     for child in mid.children:
         child.parent = mid
     mid.parent = far
-    return near_level, castle, mid, far
+    far.parent = outer
+    outer.parent = rim
+    return near_level, castle, mid, far, outer, rim
 
 
 def ring_of(parent, child):
@@ -169,8 +206,8 @@ def read_mosaic(east_min, east_max, north_min, north_max):
     return block
 
 
-def sample_level(level, near):
-    """段の頂点の高さ: 点（画素の値）と箱の平均を、縫い目からの距離で混ぜ、近景の高さのオフセットを引く"""
+def sample_mosaic(level, near):
+    """1 m の 4 枚から、段の頂点の点（画素の値）と箱の平均（有効な画素だけ）を返す"""
     import numpy
     origin = near["origin"]
     radius = level.spacing // 2
@@ -205,7 +242,78 @@ def sample_level(level, near):
     numpy.cumsum(counts, axis=0, out=vertical[1:])
     box_count = vertical[rows + radius + 1] - vertical[rows - radius]
     box = numpy.where(box_count > 0, box_sum / numpy.maximum(box_count, 1), numpy.nan)
+    return point, box
 
+
+def read_regional(lon_min, lon_max, lat_min, lat_max):
+    """1/3 秒角の 2 枚を並べ、経緯度の範囲を元の画素の格子に合わせて外へ広げて読む。(NaN 入りの高さ, transform)"""
+    import numpy
+    import rasterio
+    from rasterio.merge import merge
+    datasets = [rasterio.open(os.path.join(SOURCE_DIR, tile["file"])) for tile in REGIONAL_TILES]
+    try:
+        grid = datasets[0].transform
+        # 画素の格子に合わせる（ずらして読むと最近傍で半画素ずれる）
+        left = grid.c + math.floor((lon_min - grid.c) / grid.a) * grid.a
+        right = grid.c + math.ceil((lon_max - grid.c) / grid.a) * grid.a
+        top = grid.f + math.floor((lat_max - grid.f) / grid.e) * grid.e
+        bottom = grid.f + math.ceil((lat_min - grid.f) / grid.e) * grid.e
+        array, transform = merge(datasets, bounds=(left, bottom, right, top), res=(grid.a, -grid.e), nodata=-999999.0)
+    finally:
+        for dataset in datasets:
+            dataset.close()
+    block = array[0].astype(numpy.float32)
+    block[~(block > -1000.0)] = numpy.nan
+    return block, transform
+
+
+def sample_regional(level, near):
+    """1/3 秒角の 2 枚から、段の頂点の点（双線形）と箱の平均（間隔の四方の面積の平均）を返す。2 枚の外は NaN"""
+    import numpy
+    from rasterio.crs import CRS
+    from rasterio.enums import Resampling
+    from rasterio.transform import Affine
+    from rasterio.warp import reproject, transform as warp_transform
+    origin = near["origin"]
+    east = level.x0 + origin["east"] + numpy.arange(level.columns) * level.spacing
+    north = origin["north"] - (level.z0 + numpy.arange(level.rows) * level.spacing)
+    ee, nn = numpy.meshgrid(east, north)
+    lon, lat = warp_transform(CRS.from_epsg(26912), CRS.from_epsg(4269), ee.ravel(), nn.ravel())
+    lon = numpy.asarray(lon).reshape(ee.shape)
+    lat = numpy.asarray(lat).reshape(ee.shape)
+    del ee, nn
+    pad = 0.002
+    block, grid = read_regional(float(lon.min()) - pad, float(lon.max()) + pad, float(lat.min()) - pad, float(lat.max()) + pad)
+
+    # 点: 画素の中心の格子で双線形。4 隣のどれかが無効なら NaN
+    u = (lon - grid.c) / grid.a - 0.5
+    v = (lat - grid.f) / grid.e - 0.5
+    c0 = numpy.floor(u).astype(numpy.int64)
+    r0 = numpy.floor(v).astype(numpy.int64)
+    fu = u - c0
+    fv = v - r0
+    inside = (c0 >= 0) & (r0 >= 0) & (c0 + 1 < block.shape[1]) & (r0 + 1 < block.shape[0])
+    c0 = numpy.clip(c0, 0, block.shape[1] - 2)
+    r0 = numpy.clip(r0, 0, block.shape[0] - 2)
+    b = block
+    point = (b[r0, c0].astype(numpy.float64) * (1 - fu) * (1 - fv) + b[r0, c0 + 1].astype(numpy.float64) * fu * (1 - fv)
+             + b[r0 + 1, c0].astype(numpy.float64) * (1 - fu) * fv + b[r0 + 1, c0 + 1].astype(numpy.float64) * fu * fv)
+    point = numpy.where(inside, point, numpy.nan)
+    del b
+
+    # 箱の平均: 頂点を中心にした間隔の四方の UTM の画素へ面積の平均で写す
+    box = numpy.full((level.rows, level.columns), numpy.nan, dtype=numpy.float32)
+    half = level.spacing / 2.0
+    destination = Affine(level.spacing, 0.0, east[0] - half, 0.0, -level.spacing, north[0] + half)
+    reproject(block, box, src_transform=grid, src_crs=CRS.from_epsg(4269), src_nodata=numpy.nan,
+              dst_transform=destination, dst_crs=CRS.from_epsg(26912), dst_nodata=numpy.nan,
+              resampling=Resampling.average)
+    return point, box.astype(numpy.float64)
+
+
+def blend_level(level, point, box):
+    """点と箱の平均を、縫い目からの距離で混ぜる（縫い目では点、間隔の BAND_SPACINGS 倍より外は箱）"""
+    import numpy
     # 縫い目からの距離（自分の外周と、穴の縁）
     xs = level.x0 + numpy.arange(level.columns) * level.spacing
     zs = level.z0 + numpy.arange(level.rows) * level.spacing
@@ -222,8 +330,33 @@ def sample_level(level, near):
         distance = numpy.minimum(distance, numpy.maximum.outer(dz, dx))
     weight = numpy.clip(distance / (BAND_SPACINGS * level.spacing), 0.0, 1.0)
     mixed = numpy.where(numpy.isfinite(point), point + (numpy.nan_to_num(box) - point) * weight, numpy.nan)
-    mixed = numpy.where(numpy.isfinite(box) | (weight == 0.0), mixed, numpy.nan)
-    level.heights = (mixed - near["offset"]).astype(numpy.float32)
+    return numpy.where(numpy.isfinite(box) | (weight == 0.0), mixed, numpy.nan)
+
+
+def curvature_drop(level, near):
+    """地球の丸みで下がる高さ。近景の外周からの水平の距離 d で d^2 / 2R × (1 - 屈折係数)"""
+    import numpy
+    xs = level.x0 + numpy.arange(level.columns) * level.spacing
+    zs = level.z0 + numpy.arange(level.rows) * level.spacing
+    dx = numpy.maximum(numpy.maximum(near["x0"] - xs, xs - near["x1"]), 0.0)
+    dz = numpy.maximum(numpy.maximum(near["z0"] - zs, zs - near["z1"]), 0.0)
+    return numpy.add.outer(dz * dz, dx * dx) / (2.0 * EARTH_RADIUS_M) * (1.0 - REFRACTION_COEFFICIENT)
+
+
+def sample_level(level, near):
+    """段の頂点の高さ: 1 m の 4 枚の点と箱の平均を縫い目からの距離で混ぜ、4 枚の外と NoData は 1/3 秒角で同じように混ぜて
+    埋める。地球の丸みの下がりと、近景の高さのオフセットを引く"""
+    import numpy
+    if level.name in ("outer", "rim"):
+        mixed = blend_level(level, *sample_regional(level, near))
+        level.filled_from_regional = 0
+    else:
+        mixed = blend_level(level, *sample_mosaic(level, near))
+        missing = ~numpy.isfinite(mixed)
+        level.filled_from_regional = int(missing.sum())
+        if level.filled_from_regional:
+            mixed = numpy.where(missing, blend_level(level, *sample_regional(level, near)), mixed)
+    level.heights = (mixed - curvature_drop(level, near) - near["offset"]).astype(numpy.float32)
     level.normals = grid_normals(level.heights, float(level.spacing))
 
 
@@ -388,14 +521,14 @@ def seam_mesh(parent, child, near):
 def build_meshes():
     """段の格子を作り、メッシュの名前と (頂点, 三角形) の並びを返す"""
     near = load_near()
-    near_level, castle, mid, far = make_levels(near)
-    for level in (castle, mid, far):
+    near_level, castle, mid, far, outer, rim = make_levels(near)
+    for level in (castle, mid, far, outer, rim):
         sample_level(level, near)
-        print("段 %s: 間隔 %d m、%d x %d 頂点、X %.0f〜%.0f・Z %.0f〜%.0f、有効 %.1f %%" % (
+        print("段 %s: 間隔 %d m、%d x %d 頂点、X %.0f〜%.0f・Z %.0f〜%.0f、有効 %.1f %%、1/3 秒角で埋めた頂点 %d" % (
             level.name, level.spacing, level.columns, level.rows, level.x0, level.x1, level.z0, level.z1,
-            100.0 * float((~numpy_isnan(level.heights)).mean())), flush=True)
+            100.0 * float((~numpy_isnan(level.heights)).mean()), level.filled_from_regional), flush=True)
     meshes = []
-    for level in (castle, mid, far):
+    for level in (castle, mid, far, outer, rim):
         removed = removed_cells(level)
         tiles_x = (level.columns - 2) // TILE_CELLS + 1
         tiles_z = (level.rows - 2) // TILE_CELLS + 1
@@ -404,11 +537,11 @@ def build_meshes():
                 mesh = level_tile_mesh(level, removed, tile_x, tile_z)
                 if mesh is not None:
                     meshes.append(("%s_%d_%d" % (level.name, tile_x, tile_z), level.name, mesh))
-    for parent, child in ((mid, near_level), (mid, castle), (far, mid)):
+    for parent, child in ((mid, near_level), (mid, castle), (far, mid), (outer, far), (rim, outer)):
         mesh = seam_mesh(parent, child, near)
         if mesh is not None:
             meshes.append(("seam_%s" % child.name, "seam", mesh))
-    return near, (near_level, castle, mid, far), meshes
+    return near, (near_level, castle, mid, far, outer, rim), meshes
 
 
 def numpy_isnan(values):
@@ -422,7 +555,6 @@ def mesh_bytes(mesh):
 
 
 def make_descriptor(near, levels, meshes, source_manifest):
-    near_level, castle, mid, far = levels
     entries = []
     for name, level_name, mesh in meshes:
         records, triangles = mesh
@@ -456,6 +588,7 @@ def make_descriptor(near, levels, meshes, source_manifest):
 
     sources = [{"file": source_manifest["file"], "sha256": source_manifest["sha256"]}]
     sources += [{"file": entry["file"], "sha256": entry["sha256"]} for entry in source_manifest.get("neighbors", [])]
+    sources += [{"file": entry["file"], "sha256": entry["sha256"]} for entry in source_manifest.get("regional", [])]
     return {
         "format": FORMAT,
         "mesh_format": MESH_FORMAT,
@@ -466,6 +599,9 @@ def make_descriptor(near, levels, meshes, source_manifest):
         "height_offset_m": near["offset"],
         "axes": near["document"]["axes"],
         "mosaic_utm_edges": dict(MOSAIC),
+        "outer_expand_m": dict(OUTER_EXPAND_M),
+        "curvature_note": "近景より外の段の高さから、近景の外周からの水平の距離 d で d^2 / 2R × (1 - k) を引いた"
+                          "（R = %.0f m、屈折係数 k = %.2f）" % (EARTH_RADIUS_M, REFRACTION_COEFFICIENT),
         "levels": [level_record(level) for level in levels],
         "band_note": "各段の高さは、縫い目から間隔の %d 倍の距離までは DEM の画素の値、それより外は間隔ほどの箱の平均。"
                      "縫い目の帯の両端の頂点は DEM の画素の値（近景の側は近景の格子の値）" % BAND_SPACINGS,
@@ -492,37 +628,40 @@ def hillshade(heights, spacing):
 
 
 def draw_preview(near, levels):
-    """far の段の陰影図に、各段の範囲と縫い目の縁、名前の付いた地形を重ねる"""
+    """rim の段の陰影図に、各段の範囲と縫い目の縁、名前の付いた地形を重ねる"""
     from PIL import Image, ImageDraw
     from ReferencePhotos import label_font
-    near_level, castle, mid, far = levels
-    image = Image.fromarray(hillshade(far.heights, far.spacing), mode="L").convert("RGB")
+    near_level, castle, mid, far, outer, rim = levels
+    image = Image.fromarray(hillshade(rim.heights, rim.spacing), mode="L").convert("RGB")
     draw = ImageDraw.Draw(image)
     font = label_font()
 
     def px(x, z):
-        return (x - far.x0) / far.spacing, (z - far.z0) / far.spacing
+        return (x - rim.x0) / rim.spacing, (z - rim.z0) / rim.spacing
 
-    colors = {"near": (255, 220, 60), "castle": (255, 80, 80), "mid": (80, 200, 255)}
-    for level in (near_level, castle, mid):
+    colors = {"near": (255, 220, 60), "castle": (255, 80, 80), "mid": (80, 200, 255), "far": (120, 255, 120),
+              "outer": (255, 160, 60)}
+    for level in (near_level, castle, mid, far, outer):
         draw.rectangle([px(level.x0, level.z0), px(level.x1, level.z1)], outline=colors[level.name], width=2)
         draw.text((px(level.x0, level.z0)[0] + 4, px(level.x0, level.z0)[1] + 4),
                   "%s %d m" % (level.name, level.spacing), fill=colors[level.name], font=font, stroke_width=2,
                   stroke_fill=(0, 0, 0))
     origin = near["origin"]
-    for name in ("Castle Butte", "Lady in the Bathtub", "Battleship Rock"):
+    for name in ("Castle Butte", "Lady in the Bathtub", "Battleship Rock", "Bears Ears"):
         if name in FEATURES:
             east, north = utm_from_latlon(FEATURES[name]["lat"], FEATURES[name]["lon"])
         elif name == "Castle Butte":
             east, north = 601557.0, 4130371.0
+        elif name == "Bears Ears":
+            east, north = 600157.0, 4164815.0
         else:
             east, north = 599397.0, 4126740.0
         x, y = px(east - origin["east"], origin["north"] - north)
         draw.ellipse([x - 3, y - 3, x + 3, y + 3], fill=(240, 60, 240))
         draw.text((x + 5, y - 6), name, fill=(250, 140, 250), font=font, stroke_width=2, stroke_fill=(0, 0, 0))
     draw.rectangle([0, 0, image.width, 22], fill=(0, 0, 0))
-    draw.text((6, 3), "遠景の段（上が北・%d m/画素）  黄: 近景 1 m  赤: castle 2 m  水色: mid 8 m  外: far 16 m  黒: DEM の外" %
-              far.spacing, fill=(255, 255, 255), font=font)
+    draw.text((6, 3), "遠景の段（上が北・%d m/画素）  黄: 近景 1 m  赤: castle 2 m  水色: mid 8 m  緑: far 16 m  橙: outer 32 m  外: rim 128 m  黒: DEM の外" %
+              rim.spacing, fill=(255, 255, 255), font=font)
     os.makedirs(os.path.dirname(PREVIEW_PATH), exist_ok=True)
     image.save(PREVIEW_PATH)
 
@@ -532,6 +671,8 @@ def build():
         source_manifest = json.load(stream)
     if len(source_manifest.get("neighbors", [])) != len(NEIGHBOR_TILES):
         raise RuntimeError("manifest に隣のタイルが無い（DemInput.py --fetch-neighbors で落とす）")
+    if len(source_manifest.get("regional", [])) != len(REGIONAL_TILES):
+        raise RuntimeError("manifest に 1/3 秒角のタイルが無い（DemInput.py --fetch-regional で落とす）")
     near, levels, meshes = build_meshes()
     os.makedirs(MESH_DIR, exist_ok=True)
     for stale in os.listdir(MESH_DIR):
@@ -564,7 +705,7 @@ def watertight_report(near, meshes, check):
     key_scale = 1 << 20
 
     def keys_of(xs, zs):
-        return (numpy.round(xs).astype(numpy.int64) + 40000) * key_scale + (numpy.round(zs).astype(numpy.int64) + 40000)
+        return (numpy.round(xs).astype(numpy.int64) + KEY_OFFSET) * key_scale + (numpy.round(zs).astype(numpy.int64) + KEY_OFFSET)
 
     all_keys = []
     all_heights = []
@@ -613,6 +754,23 @@ def watertight_report(near, meshes, check):
     return open_edges, key_scale
 
 
+def near_invalid_at(level, xs, zs):
+    """位置 (xs, zs) の近く（段の格子の 2 升目以内）に、段の無効な頂点があるか。段の外は False"""
+    import numpy
+    invalid = numpy.isnan(level.heights)
+    pad = numpy.pad(invalid, 2, constant_values=False)
+    spread = numpy.zeros_like(invalid)
+    for dr in range(-2, 3):
+        for dc in range(-2, 3):
+            spread |= pad[2 + dr:2 + dr + invalid.shape[0], 2 + dc:2 + dc + invalid.shape[1]]
+    column = numpy.round((xs - level.x0) / level.spacing).astype(int)
+    row = numpy.round((zs - level.z0) / level.spacing).astype(int)
+    inside = (column >= 0) & (column < level.columns) & (row >= 0) & (row < level.rows)
+    result = numpy.zeros(xs.shape, dtype=bool)
+    result[inside] = spread[row[inside], column[inside]]
+    return result
+
+
 def verify():
     import numpy
     failures = []
@@ -640,6 +798,13 @@ def verify():
         ok = entry is not None and os.path.isfile(path) and os.path.getsize(path) == tile["size"] == entry["size"]
         ok = ok and sha256_of(path) == entry["sha256"] and bool(entry.get("url")) and bool(entry.get("retrieved"))
         check(ok, "隣のタイル %s がある（大きさ %d・SHA-256・URL・取得日が manifest と一致）" % (tile["file"], tile["size"]))
+    regional = {entry["file"]: entry for entry in source_manifest.get("regional", [])}
+    for tile in REGIONAL_TILES:
+        entry = regional.get(tile["file"])
+        path = os.path.join(SOURCE_DIR, tile["file"])
+        ok = entry is not None and os.path.isfile(path) and os.path.getsize(path) == tile["size"] == entry["size"]
+        ok = ok and sha256_of(path) == entry["sha256"] and entry.get("url") == tile["url"] and bool(entry.get("retrieved"))
+        check(ok, "1/3 秒角のタイル %s がある（大きさ %d・SHA-256・URL・取得日が manifest と一致）" % (tile["file"], tile["size"]))
     ignored = subprocess.run(["git", "check-ignore", "-q", DESCRIPTOR_PATH], cwd=REPO_ROOT).returncode == 0
     check(ignored, "horizon.json と horizon/ が git の無視対象")
 
@@ -652,14 +817,18 @@ def verify():
     check(files_ok, "horizon/*.bin が記述の SHA-256 と一致")
     check(document["grid_sha256"] == near["document"]["sha256"], "記述の近景の格子の SHA-256 が height.json と一致")
 
-    near_level, castle, mid, far = levels
-    # 段の入れ子と縫い目の帯の幅
-    for level in (castle, mid):
+    near_level, castle, mid, far, outer, rim = levels
+    # 段の入れ子と縫い目の帯の幅（outer の西の辺は 1/3 秒角の外なので縫い目を作らない）
+    for level in (castle, mid, far, outer):
         c0, c1, r0, r1 = ring_of(level.parent, level)
         widths = (level.x0 - level.parent.x_of(c0), level.parent.x_of(c1) - level.x1,
                   level.z0 - level.parent.z_of(r0), level.parent.z_of(r1) - level.z1)
-        print("縫い目 %s→%s: 帯の幅 西 %.0f・東 %.0f・北 %.0f・南 %.0f m" % (level.name, level.parent.name, *widths))
-        check(all(level.parent.spacing <= w < 2 * level.parent.spacing for w in widths), "縫い目 %s の帯の幅が外側の間隔の 1〜2 倍" % level.name)
+        # 穴の縁が外側の段の外にはみ出す辺（outer の西。1/3 秒角の外）は縫い目を作らないので見ない
+        inside = (c0 >= 0, c1 <= level.parent.columns - 1, r0 >= 0, r1 <= level.parent.rows - 1)
+        print("縫い目 %s→%s: 帯の幅 西 %.0f・東 %.0f・北 %.0f・南 %.0f m（外側の段の内にある辺 %d）" % (
+            level.name, level.parent.name, *widths, sum(inside)))
+        check(all(level.parent.spacing <= w < 2 * level.parent.spacing for w, ok in zip(widths, inside) if ok),
+              "縫い目 %s の帯の幅が外側の間隔の 1〜2 倍" % level.name)
     c0, c1, r0, r1 = ring_of(mid, near_level)
     widths = (near_level.x0 - mid.x_of(c0), mid.x_of(c1) - near_level.x1, near_level.z0 - mid.z_of(r0), mid.z_of(r1) - near_level.z1)
     print("縫い目 near→mid: 帯の幅 西 %.0f・東 %.0f・北 %.0f・南 %.0f m" % widths)
@@ -678,32 +847,30 @@ def verify():
     check(exact and int(from_grid.sum()) == perimeter, "近景の縫い目の内側の頂点 %d（外周の全頂点 %d）が近景の格子の値そのもの" % (
         int(from_grid.sum()), perimeter))
 
-    # 開いた辺は DEM の外・NoData の縁だけ
+    # 4 枚の NoData は 1/3 秒角で埋まり、far・mid・castle に無効な頂点が残らない
+    for level in (castle, mid, far):
+        check(not numpy.isnan(level.heights).any(), "段 %s に無効な頂点が無い（1/3 秒角で埋めた頂点 %d）" % (
+            level.name, level.filled_from_regional))
+
+    # 開いた辺は rim の外周と、1/3 秒角の外（西経 110° より西）の縁だけ
     open_edges, key_scale = watertight_report(near, meshes, check)
     ends = open_edges.ravel()
-    ex = ends // key_scale - 40000
-    ez = ends % key_scale - 40000
-    origin = near["origin"]
-    east, north = ex + origin["east"], origin["north"] - ez
-    margin = far.spacing
-    at_mosaic_edge = ((east < MOSAIC["east_min"] + margin) | (east > MOSAIC["east_max"] - margin) |
-                      (north < MOSAIC["north_min"] + margin) | (north > MOSAIC["north_max"] - margin))
-    # NoData の縁: far の格子で近くに無効な頂点がある
-    invalid = numpy.isnan(far.heights)
-    pad = numpy.pad(invalid, 2, constant_values=True)
-    near_invalid = numpy.zeros_like(invalid)
-    for dr in range(-2, 3):
-        for dc in range(-2, 3):
-            near_invalid |= pad[2 + dr:2 + dr + invalid.shape[0], 2 + dc:2 + dc + invalid.shape[1]]
-    fc = numpy.clip(numpy.round((ex - far.x0) / far.spacing).astype(int), 0, far.columns - 1)
-    fr = numpy.clip(numpy.round((ez - far.z0) / far.spacing).astype(int), 0, far.rows - 1)
-    at_nodata = near_invalid[fr, fc]
-    stray = int((~(at_mosaic_edge | at_nodata)).sum())
-    print("開いた辺の端点 %d: 4 枚の外の縁 %d・NoData の縁 %d・それ以外 %d" % (
-        len(ends), int(at_mosaic_edge.sum()), int((at_nodata & ~at_mosaic_edge).sum()), stray))
-    check(stray == 0, "開いた辺が DEM の外・NoData の縁にしか無い（近景・段・縫い目の間に隙間が無い）")
+    ex = ends // key_scale - KEY_OFFSET
+    ez = ends % key_scale - KEY_OFFSET
+    margin = rim.spacing / 2
+    at_outer_edge = ((ex < rim.x0 + margin) | (ex > rim.x1 - margin) |
+                     (ez < rim.z0 + margin) | (ez > rim.z1 - margin))
+    # データの外の縁: 近くに無効な頂点がある（outer と rim の格子で見る）
+    at_nodata = numpy.zeros(ex.shape, dtype=bool)
+    for level in (outer, rim):
+        at_nodata |= near_invalid_at(level, ex, ez)
+    stray = int((~(at_outer_edge | at_nodata)).sum())
+    print("開いた辺の端点 %d: rim の外周 %d・1/3 秒角の外の縁 %d・それ以外 %d" % (
+        len(ends), int(at_outer_edge.sum()), int((at_nodata & ~at_outer_edge).sum()), stray))
+    check(stray == 0, "開いた辺が rim の外周・DEM の外の縁にしか無い（近景・段・縫い目の間に隙間が無い）")
 
     # 主役の地形が細かい段に入っている
+    origin = near["origin"]
     for name, east_, north_, level in (("Castle Butte", 601557.0, 4130371.0, castle),):
         x, z = east_ - origin["east"], origin["north"] - north_
         inside = level.x0 + 300 <= x <= level.x1 - 300 and level.z0 + 300 <= z <= level.z1 - 300
