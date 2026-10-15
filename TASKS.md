@@ -1455,7 +1455,7 @@
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-WL-HORIZON`
 - paths: Scripts/Terrain, Tools/AssetCook, Library/Core/Public/Rendering/Terrain, Library/Core/Private/Rendering/Terrain, Game/GameModes/Wasteland, Assets/AssetSets, TASKS.md, PROGRESS.md
-- notes: 地形の端の高さを外へ延ばす作り方は使わない（四角い外周から板や壁が伸びる）。1 m タイルの外が要るなら、ファイル名とサイズを書いて BLOCKED（ユーザーの許可が要る）。
+- notes: 地形の端の高さを外へ延ばす作り方は使わない（四角い外周から板や壁が伸びる）。1 m タイルの外が要るなら、ファイル名とサイズを書いて BLOCKED（ユーザーの許可が要る）。 2026-10-15 ユーザー: 隣の 1 m タイル 3 枚（`USGS_1M_12_x60y414_UT_WestEast_B22.tif` 約 311 MB・`x59y414` 約 305 MB・`x59y413` 約 295 MB、合計約 911 MB。配布元は同じ）のダウンロードを許可した（`blocked/SCN-WL-HORIZON.md`）。Castle Butte の周りは 1〜2 m、残りは粗い遠景で焼く。西の地平線（Lady in the Bathtub など）も実地形にする。
 
 ## SCN-WL-MASKS-GEOM: 基本の地表の分類の地図を作る
 - status: todo
