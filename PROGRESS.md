@@ -4637,3 +4637,15 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 反復 6 の状態（17:35）: Debug の AssetCook（17:06:59 のビルド。TerrainCliffDetail.cpp を含む）で地形の 174 項目のうち 172 項目を焼き、パッケージと印を build/CookedAssets へ移した（16 本＋1 項目ずつ 30 本の並列。手順の台本と区画ごとの細分の数は `.harness/runs/20261015-135936/aux-SCN-WL-CLIFF-DETAIL-cook/`）。崖の区画の三角形: dem:2,2 は 474 万（細分 41691 升目、パッケージ 358 MB）、dem:1,3 は 231 万、dem:3,3 は 192 万、ほかは 50〜97 万。
 - 残り（次の反復）: dem:1,2 と dem:2,3 の焼きが親から外した AssetCook（`C:/Users/KINGkawamura/AppData/Local/Temp/claude/C--Users-KINGkawamura-Documents-NorvesLib/5bcdb69e-0c99-489e-9595-ba1d2fed1af6/scratchpad/cook/` の `b5/rt`・`b10/rt` へ出力）で走っている。各 rt の `.cookstate/WastelandTerrain/*.json` が出たら、`WastelandDem_1_2.nvpkg`・`WastelandDem_2_3.nvpkg` とその印を build/CookedAssets の同じ場所へ移し、b5・b10 の残りの CookAssets と AssetCook（後ろの重複の区画を焼いている）を止める。プロセスが消えていたら、その 2 項目だけを 2 本並列で焼き直す（1 本 20 分ほど）。AssetCook のコードを変えると 174 項目すべての印が変わるので、撮影で見た目を確かめるまでは変えない。その後 verify の 2 本目（cooked=0 skipped=174 でマニフェストを書き直す）と撮影へ進む。
 - 焼き直しを繰り返す場合の速さ: 頂点ごとに `Position` を 5 回（法線の差分）呼び、1 回に地層の押し出しを 2 回求めるので、中央の区画は Debug で 1 本 20 分前後かかる。細分の格子の位置を 1 回だけ求めて隣の点から法線を出せば約 5 分の 1 になる。
+### SCN-WL-CLIFF-DETAIL 完了（2026-10-15、run 20261015-182621 の反復 1）
+- Done: 崖の細部の焼き直し（`Tools/AssetCook/TerrainCliffDetail.cpp`）で、区画の内側の頂点は位置を 1 回だけ求め、法線は三角形を張った後に隣の三角形の面の法線を面積の重みで足して作る形にした（前は頂点ごとに位置を 5 回求めて差分で法線を出していた）。区画の境の頂点だけは隣の区画と同じ値になるよう面の差分の法線のまま。法線の作り方が変わるので `kTerrainCliffDetailVersion` を 2 にした。
+- 焼き: RelWithDebInfo の AssetCook で地形の 174 項目を 12 本の並列で焼き（一覧を分けた出力先から build/CookedAssets へパッケージと印を移す。SCN-WL-DEM-COOK と同じ手順）、普通の区画は 1 本 6〜20 秒、崖の区画は dem:2,2（474 万三角形）約 3 分・dem:1,2（893 万三角形、パッケージ 664 MB、DAG 395 秒）約 7 分・dem:2,3（1409 万三角形、パッケージ 1.07 GB）約 14 分。全体で約 15 分（18:29〜18:43）。dem:2,3 の一覧の残り 13 項目は別の 1 本で並べて焼いた。
+- 検証（`.harness/runs/20261015-182621/`）:
+  - `verify-SCN-WL-CLIFF-DETAIL-1.txt`: Debug の Game のビルド EXIT=0。
+  - `verify-SCN-WL-CLIFF-DETAIL-2.txt`: RelWithDebInfo の AssetCook のビルド EXIT=0。
+  - `verify-SCN-WL-CLIFF-DETAIL-3.txt`: `CookAssets.ps1`（RelWithDebInfo の AssetCook、Models/WastelandTerrain/*）cooked=0 skipped=174、EXIT=0（並列で焼いた印がそのまま使われた）。
+  - `verify-SCN-WL-CLIFF-DETAIL-4.txt`: 荒野の全 11 視点 1920×1080、result=pass（白飛び 0・黒つぶれ 0）、EXIT=0。検証レイヤーのログは空。MegaGeometry の溢れは 0（`MEGA_CAPACITY draw_dropped=0`・`visible_list_overflow=0`・`bvh_overflow=0`）。
+  - `aux-SCN-WL-CLIFF-DETAIL-compare.txt`: `CompareReference.py --verify` result=pass photos=6、EXIT=0。
+  - 撮影を開いた（`scene-capture/SCN-WL-CLIFF-DETAIL/`）: ref_cliff_01（Battleship Rock を西日で）は上の崖が段に分かれた柱と縦の割れ目の立体になり、輪郭も段と塊で欠ける。崖錐の下の単位は張り出す硬い層の段が影を落とす。cliff（`crop_cliff.png`、前回 `crop_cliff_before.png`）は前回の丸い面に描いた筋だった所が、縦の割れ目で区切られた塊と水平の棚の影になり、崖錐に段の影が並ぶ。網目のような規則的な繰り返しは無い。default の遠景で焼いた範囲の境の継ぎ目は見えない。
+- Notes: 焼き直したのは Battleship Rock の範囲だけ。ほかの崖は `SCN-WL-CLIFF-DETAIL-ALL` として TASKS.md に足した。崖錐の下の段の張り出しは、横に途切れる所の縁が丸い斑に見える所がある（cliff の崖錐）。dem:2,3 の 1409 万三角形は描けているが、パッケージが 1 GB を超える。試験は足していない。
+- Next: TASKS.md の次の未完の項目。

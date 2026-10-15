@@ -1508,7 +1508,7 @@
 - notes: 危険地帯（描画）。
 
 ## SCN-WL-CLIFF-DETAIL: 崖を、地層の段と割れ目のある立体として焼く
-- status: todo
+- status: done
 - done-when: 1 m の DEM では崖が丸く崩れ、垂直な面・段・割れ目が出ない（ユーザーの指摘「崖の表面が現代の CG の水準でない」）。急な斜面と崖の範囲だけを、細かい間隔（0.25 m 程度）で焼き直し、面の法線の向きに、地層に沿った凹凸（硬い層の張り出しと軟らかい層のくぼみ・縦の割れ目・崩れた縁）を足す（高さ場の上下だけでなく面に沿って押し出す）。地層の高さはシェーダーの地層（SCN-WL-MATERIAL-STRATA）と同じ基準で揃える。焼いた崖と周りの地形の継ぎ目が見えない。配置の高さ（岩・建物）は今の高さ場のままでよい。cliff と手本の崖の比較画像（1920×1080）を開き、崖の段と割れ目が影を落とす立体として見え（テクスチャの模様でなく）、網目のような繰り返しが無いことを確かめる。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `cmake --build build --config RelWithDebInfo --target AssetCook -- /m:1`
@@ -1516,6 +1516,16 @@
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-WL-CLIFF-DETAIL`
 - paths: Tools/AssetCook, Library/Core/Public/Rendering/Terrain, Library/Core/Private/Rendering/Terrain, Scripts/Terrain, Assets/AssetSets, Assets/Shaders, Game/GameModes/Wasteland, TASKS.md, PROGRESS.md
 - notes: 危険地帯（アセットのクック）。三角形が増えるが、仮想化ジオメトリ（MegaGeometry）で描ける量か確かめる（速さの条件は無い。操作できる程度ならよい）。1 反復で閉じなければ、主役の Battleship Rock だけで先に閉じ、残りの崖を `SCN-WL-CLIFF-DETAIL-ALL` として後ろに足す。 2026-10-15 親: 3 反復とも焼きが 40 分に収まらず遮断器で blocked になった（Debug の AssetCook で中央の区画 1 本 20 分超。頂点ごとに位置を 5 回求めて法線を差分で出していた）。焼きは RelWithDebInfo の AssetCook で行い、細分の格子の位置を 1 回だけ求めて法線を隣の点から作る形にして速くする（反復 6 の PROGRESS の案）。反復の外で走らせ続けた AssetCook は親が止めた（その出力は使わない）。焼きは反復の中で終わる形にし、反復の外へ切り離さない。
+
+## SCN-WL-CLIFF-DETAIL-ALL: Battleship Rock の外の崖にも、地層の段と割れ目の焼き直しを広げる
+- status: todo
+- done-when: SCN-WL-CLIFF-DETAIL は主役の Battleship Rock の範囲（`Tools/AssetCook/TerrainCliffDetail.cpp` の X −2150〜−900・Z −1650〜−420）だけを焼き直した。手本の視点に写るほかの崖（ref_cliff_02 の尖塔の台座・Castle Butte・左右のメサ）にも同じ焼き直しを広げ、範囲の境で焼いた崖と周りの地形の継ぎ目が見えない。三角形の数を区画ごとに見て、仮想化ジオメトリで描けることを確かめる（溢れ 0）。比較画像（1920×1080）を開き、広げた崖の段と割れ目が影を落とす立体として見えることを確かめる。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `cmake --build build --config RelWithDebInfo --target AssetCook -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CookAssets.ps1 -AssetCookExe build/Tools/AssetCook/RelWithDebInfo/AssetCook.exe -OnlyLogicalPath "Models/WastelandTerrain/*"`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-WL-CLIFF-DETAIL-ALL`
+- paths: Tools/AssetCook, Scripts/Terrain, Assets/AssetSets, TASKS.md, PROGRESS.md
+- notes: 危険地帯（アセットのクック）。SCN-WL-CLIFF-DETAIL の notes の「1 反復で閉じなければ残りの崖を後ろに足す」による。焼きは RelWithDebInfo の AssetCook で、一覧を分けた並列で反復の中で終える（中央の区画 dem:2,3 は 1408 万三角形・1 本約 14 分）。範囲を広げると三角形がさらに増えるので、細分の間隔や範囲の取り方を区画ごとの数で決める。
 
 ## SCN-WL-REVIEW-1: 節目の確認 1（地面・崖・遠景）をユーザーに渡す
 - status: todo

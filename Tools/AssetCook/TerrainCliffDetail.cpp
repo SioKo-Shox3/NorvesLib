@@ -715,7 +715,23 @@ namespace NorvesLib::Tools::AssetCook
                 outDisplaced = true;
             }
 
-            // 格子の座標 (gx, gz) の頂点（位置と、押し出した面の差分から求めた法線）
+            // 格子の座標 (gx, gz) の頂点の位置と UV（法線は 0 のまま。後で隣の三角形から求める）
+            bool EvaluatePosition(double gx, double gz, float textureTileMeters, TerrainCliffVertex &outVertex,
+                                  double outPosition[3], bool &outDisplaced) const
+            {
+                Position(gx, gz, outPosition, outDisplaced);
+                for (int axis = 0; axis < 3; ++axis)
+                {
+                    outVertex.Position[axis] = static_cast<float>(outPosition[axis]);
+                    outVertex.Normal[axis] = 0.0f;
+                }
+                outVertex.TexCoord[0] = outVertex.Position[0] / textureTileMeters;
+                outVertex.TexCoord[1] = outVertex.Position[2] / textureTileMeters;
+                return std::isfinite(outPosition[0]) && std::isfinite(outPosition[1]) && std::isfinite(outPosition[2]);
+            }
+
+            // 格子の座標 (gx, gz) の頂点（位置と、押し出した面の差分から求めた法線）。区画の境の頂点に使い、隣の区画と
+            // 同じ法線にする（位置を 5 回求めるので、区画の内側の頂点には使わない）
             bool EvaluateVertex(double gx, double gz, float textureTileMeters, TerrainCliffVertex &outVertex,
                                 bool &outDisplaced) const
             {
@@ -873,12 +889,25 @@ namespace NorvesLib::Tools::AssetCook
         outStats = TerrainCliffTileStats{};
         // 頂点ごとの区画の中の格子の座標（三角形の向きをそろえるのに使う）
         VariableArray<float> parameters;
+        // 法線を隣の三角形から求める頂点の、倍精度の位置（それ以外の頂点は使わない）と印
+        VariableArray<double> precisePositions;
+        VariableArray<uint8_t> accumulateNormal;
+        const double lastColumn = static_cast<double>(firstColumn + cellsX);
+        const double lastRow = static_cast<double>(firstRow + cellsZ);
 
+        // 区画の内側の頂点は位置を 1 回だけ求め、法線は三角形を張った後に隣の三角形の面の向きから作る。区画の境の頂点は
+        // 隣の区画からも同じ値になるよう、面の差分で法線を求める
         auto addVertex = [&](double gx, double gz, uint32_t &outIndex) -> bool
         {
             TerrainCliffVertex vertex;
+            double position[3] = {0.0, 0.0, 0.0};
             bool bDisplaced = false;
-            if (!surface.EvaluateVertex(gx, gz, textureTileMeters, vertex, bDisplaced))
+            const bool bTileBorder = gx == static_cast<double>(firstColumn) || gx == lastColumn ||
+                                     gz == static_cast<double>(firstRow) || gz == lastRow;
+            const bool bValid = bTileBorder
+                                    ? surface.EvaluateVertex(gx, gz, textureTileMeters, vertex, bDisplaced)
+                                    : surface.EvaluatePosition(gx, gz, textureTileMeters, vertex, position, bDisplaced);
+            if (!bValid)
             {
                 outError = "崖の細部の頂点の位置・法線が有限でありません";
                 return false;
@@ -891,7 +920,19 @@ namespace NorvesLib::Tools::AssetCook
             outVertices.push_back(vertex);
             parameters.push_back(static_cast<float>(gx - static_cast<double>(firstColumn)));
             parameters.push_back(static_cast<float>(gz - static_cast<double>(firstRow)));
+            precisePositions.push_back(position[0]);
+            precisePositions.push_back(position[1]);
+            precisePositions.push_back(position[2]);
+            accumulateNormal.push_back(bTileBorder ? 0u : 1u);
             return true;
+        };
+        // 高さ場から法線を引いた頂点（細分しない頂点・扇の中心）の印をそろえる
+        auto addFixedVertexState = [&]()
+        {
+            precisePositions.push_back(0.0);
+            precisePositions.push_back(0.0);
+            precisePositions.push_back(0.0);
+            accumulateNormal.push_back(0u);
         };
 
         // 格子の頂点。押し出さない頂点は今までの区画（BuildDemTerrainTile）と同じ値にする
@@ -934,6 +975,7 @@ namespace NorvesLib::Tools::AssetCook
                     outVertices.push_back(vertex);
                     parameters.push_back(static_cast<float>(column));
                     parameters.push_back(static_cast<float>(row));
+                    addFixedVertexState();
                 }
                 gridIndex[static_cast<size_t>(row) * sideX + column] = index;
             }
@@ -1099,6 +1141,7 @@ namespace NorvesLib::Tools::AssetCook
                     outVertices.push_back(vertex);
                     parameters.push_back(static_cast<float>(column) + 0.5f);
                     parameters.push_back(static_cast<float>(row) + 0.5f);
+                    addFixedVertexState();
                     for (size_t k = 0; k < outer.size(); ++k)
                     {
                         emit(center, outer[k].Index, outer[(k + 1) % outer.size()].Index);
@@ -1187,6 +1230,62 @@ namespace NorvesLib::Tools::AssetCook
                         ++b;
                     }
                 }
+            }
+        }
+
+        // 区画の内側の頂点の法線: 隣の三角形の面の法線を面積の重みで足す。三角形はどれも格子の座標で同じ向きに
+        // 張ってあるので、(c − a) × (b − a) が平らな面で +Y を向く
+        VariableArray<double> normalSums(outVertices.size() * 3, 0.0);
+        for (size_t triangle = 0; triangle + 2 < outIndices.size(); triangle += 3)
+        {
+            const uint32_t corners[3] = {outIndices[triangle], outIndices[triangle + 1], outIndices[triangle + 2]};
+            if (accumulateNormal[corners[0]] == 0u && accumulateNormal[corners[1]] == 0u &&
+                accumulateNormal[corners[2]] == 0u)
+            {
+                continue;
+            }
+            double points[3][3];
+            for (int corner = 0; corner < 3; ++corner)
+            {
+                const uint32_t index = corners[corner];
+                for (int axis = 0; axis < 3; ++axis)
+                {
+                    points[corner][axis] = accumulateNormal[index] != 0u
+                                               ? precisePositions[static_cast<size_t>(index) * 3 + axis]
+                                               : static_cast<double>(outVertices[index].Position[axis]);
+                }
+            }
+            const double ab[3] = {points[1][0] - points[0][0], points[1][1] - points[0][1], points[1][2] - points[0][2]};
+            const double ac[3] = {points[2][0] - points[0][0], points[2][1] - points[0][1], points[2][2] - points[0][2]};
+            const double face[3] = {ac[1] * ab[2] - ac[2] * ab[1], ac[2] * ab[0] - ac[0] * ab[2],
+                                    ac[0] * ab[1] - ac[1] * ab[0]};
+            for (const uint32_t index : corners)
+            {
+                if (accumulateNormal[index] != 0u)
+                {
+                    for (int axis = 0; axis < 3; ++axis)
+                    {
+                        normalSums[static_cast<size_t>(index) * 3 + axis] += face[axis];
+                    }
+                }
+            }
+        }
+        for (size_t vertex = 0; vertex < outVertices.size(); ++vertex)
+        {
+            if (accumulateNormal[vertex] == 0u)
+            {
+                continue;
+            }
+            const double *sum = &normalSums[vertex * 3];
+            const double length = std::sqrt(sum[0] * sum[0] + sum[1] * sum[1] + sum[2] * sum[2]);
+            if (!(length > 0.0) || !std::isfinite(length))
+            {
+                outError = "崖の細部の頂点の法線を隣の三角形から求められません";
+                return false;
+            }
+            for (int axis = 0; axis < 3; ++axis)
+            {
+                outVertices[vertex].Normal[axis] = static_cast<float>(sum[axis] / length);
             }
         }
         return true;
