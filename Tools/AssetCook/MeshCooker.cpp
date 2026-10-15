@@ -30,6 +30,7 @@
 #include "Resource/SkeletalSubmeshLayout.h"
 #include "Text/JsonDocument.h"
 #include "Sha256Digest.h"
+#include "TerrainCliffDetail.h"
 
 #include <algorithm>
 #include <bit>
@@ -3357,7 +3358,33 @@ namespace NorvesLib::Tools::AssetCook
             }
             VariableArray<MeshVertexPnt> vertices;
             VariableArray<uint32_t> indices;
-            if (!BuildDemTerrainTile(source, tileX, tileZ, vertices, indices, error))
+            // 崖の細部を焼く範囲（主役の Battleship Rock）に掛かる区画は、急な升目を細分して地層の凹凸を押し出す
+            uint32_t firstColumn = 0;
+            uint32_t cellsX = 0;
+            uint32_t firstRow = 0;
+            uint32_t cellsZ = 0;
+            Spec::DemTileCellRange(tileX, source.Layout.Columns, firstColumn, cellsX);
+            Spec::DemTileCellRange(tileZ, source.Layout.Rows, firstRow, cellsZ);
+            const bool bCliffDetail = cellsX != 0 && cellsZ != 0 &&
+                                      TerrainCliffTileIntersects(source.Layout, firstColumn, cellsX, firstRow, cellsZ);
+            if (bCliffDetail)
+            {
+                VariableArray<TerrainCliffVertex> cliffVertices;
+                TerrainCliffTileStats cliffStats;
+                if (!BuildTerrainCliffTile(*source.Field, firstColumn, cellsX, firstRow, cellsZ, Spec::kTextureTileMeters,
+                                           cliffVertices, indices, cliffStats, error))
+                {
+                    return false;
+                }
+                vertices.resize(cliffVertices.size());
+                static_assert(sizeof(TerrainCliffVertex) == sizeof(MeshVertexPnt));
+                std::memcpy(vertices.data(), cliffVertices.data(), cliffVertices.size() * sizeof(MeshVertexPnt));
+                std::printf("TERRAIN_CLIFF_DETAIL tile=%u,%u refined_cells=%u transition_cells=%u displaced_vertices=%u "
+                            "vertices=%zu triangles=%zu\n",
+                            tileX, tileZ, cliffStats.RefinedCells, cliffStats.TransitionCells,
+                            cliffStats.DisplacedVertices, vertices.size(), indices.size() / 3);
+            }
+            else if (!BuildDemTerrainTile(source, tileX, tileZ, vertices, indices, error))
             {
                 return false;
             }
@@ -3378,6 +3405,10 @@ namespace NorvesLib::Tools::AssetCook
             hash = Fnv1a64UpdateLe64(hash, static_cast<uint64_t>(tileZ));
             hash = Fnv1a64UpdateLe64(hash, static_cast<uint64_t>(Spec::kDemTileCells));
             hash = Fnv1a64UpdateLe64(hash, static_cast<uint64_t>(std::bit_cast<uint32_t>(Spec::kTextureTileMeters)));
+            if (bCliffDetail)
+            {
+                hash = Fnv1a64UpdateLe64(hash, static_cast<uint64_t>(kTerrainCliffDetailVersion));
+            }
             v1Result.SourceHash = hash;
             std::printf("TERRAIN_DEM_TILE tile=%u,%u tiles=%ux%u grid=%ux%u spacing=%.9g vertices=%zu triangles=%zu "
                         "grid_sha256=%s\n",
