@@ -1450,12 +1450,12 @@
 - notes: 写真の加工やホワイトバランスが分からないので、RGB の値の一致を合格の条件にしない（PSNR・SSIM も使わない）。値は差の向きと大きさを見るために使う。。撮影の verify は手本の 6 視点だけを 3 視点ずつ 2 本に分ける（Debug の 1920×1080 は 1 視点に約 107 秒かかり、全 11 視点を 1 本で撮ると 1 コマンド 10 分の上限を超えるため）。 2026-10-15 親: 反復 1 の評価の差し戻し（cliff_01・far_01・ground_01 の輪郭が対応しない）を受けて、範囲の外の主役と地表の比較用の写真を分けた。
 
 ## SCN-WL-HORIZON: 遠景を粗い実地形でつなぐ
-- status: blocked
+- status: todo
 - done-when: 1 m タイルの範囲（約 10 km 四方）のうち切り出しの外側を、粗い間隔（例 8〜16 m）の遠景の地形として焼き、近景の区画の外周と隙間・段差なくつなぐ（近景の外周の高さへ寄せる帯を置く）。手本の写真に写る稜線（北の Cedar Mesa の崖など）が入る範囲にし、遠クリップを合わせる。far_01 の主役（Castle Butte と背後の Cedar Mesa の縁）が写るようにし、far_01 の視点を合わせ直して比較画像で輪郭が対応することを確かめる（写真の主役になる地形は粗くせず 1〜2 m で焼く）。ridge と overview の撮影を開き、外周の板・壁・継ぎ目・浮いた縁が無く、地平線に実地形の稜線が見えることを確かめる。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-WL-HORIZON`
 - paths: Scripts/Terrain, Tools/AssetCook, Library/Core/Public/Rendering/Terrain, Library/Core/Private/Rendering/Terrain, Game/GameModes/Wasteland, Assets/AssetSets, TASKS.md, PROGRESS.md
-- notes: 地形の端の高さを外へ延ばす作り方は使わない（四角い外周から板や壁が伸びる）。1 m タイルの外が要るなら、ファイル名とサイズを書いて BLOCKED（ユーザーの許可が要る）。 2026-10-15 ユーザー: 隣の 1 m タイル 3 枚（`USGS_1M_12_x60y414_UT_WestEast_B22.tif` 約 311 MB・`x59y414` 約 305 MB・`x59y413` 約 295 MB、合計約 911 MB。配布元は同じ）のダウンロードを許可した（`blocked/SCN-WL-HORIZON.md`）。Castle Butte の周りは 1〜2 m、残りは粗い遠景で焼く。西の地平線（Lady in the Bathtub など）も実地形にする。
+- notes: 地形の端の高さを外へ延ばす作り方は使わない（四角い外周から板や壁が伸びる）。1 m タイルの外が要るなら、ファイル名とサイズを書いて BLOCKED（ユーザーの許可が要る）。 2026-10-15 ユーザー: 隣の 1 m タイル 3 枚（`USGS_1M_12_x60y414_UT_WestEast_B22.tif` 約 311 MB・`x59y414` 約 305 MB・`x59y413` 約 295 MB、合計約 911 MB。配布元は同じ）のダウンロードを許可した（`blocked/SCN-WL-HORIZON.md`）。Castle Butte の周りは 1〜2 m、残りは粗い遠景で焼く。西の地平線（Lady in the Bathtub など）も実地形にする。 2026-10-15 ユーザー（2 回目）: 東・南の地平線のために 1/3 秒角の 2 枚（`USGS_13_n38w110_20260630.tif` 約 421 MB・`USGS_13_n37w110_20260514.tif` 約 404 MB、配布元 `https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/13/TIFF/historical/<タイル>/<ファイル>`）のダウンロードも許可した。far の外に 32 m 前後の段を足して縫い目の帯でつなぐ。
 
 ## SCN-WL-MASKS-GEOM: 基本の地表の分類の地図を作る
 - status: done
