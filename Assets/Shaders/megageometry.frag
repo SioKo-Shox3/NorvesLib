@@ -60,7 +60,7 @@ layout(set = 0, binding = 16) uniform sampler2D terrainSurfaceMaskTexture;
 
 // GBuffer MRT出力
 layout(location = 0) out vec4 outAlbedo;    // RT0: Albedo (RGB) + alpha
-layout(location = 1) out vec4 outNormal;    // RT1: World Normal (RGB) + unused
+layout(location = 1) out vec4 outNormal;    // RT1: World Normal (RGB) + 地形の受け手なら 1（A。lighting.frag の影の余裕を変える）
 layout(location = 2) out vec4 outMaterial;  // RT2: Metallic(R) / Roughness(G) / AO(B) / unused(A)
 layout(location = 3) out vec4 outEmissive;  // RT3: プリエクスポージャ後の発光（RGB） + 未使用
 layout(location = 4) out vec2 outVelocity;  // RT4: currentUV - previousUV（gbuffer.frag と同じ）
@@ -213,7 +213,7 @@ void main()
         tangentNormal = RemoveDisplacedNormalSlope(tangentNormal, texCoord, displacementUVSpacing, footprint.NormalLod);
     }
     vec3 normal = bTerrain ? terrainNormal : ApplyTangentSpaceNormal(TBN, tangentNormal);
-    outNormal = vec4(normal, 0.0);
+    outNormal = vec4(normal, bTerrain ? 1.0 : 0.0);
 
     // PBRマテリアルパラメータ（POM補正済みUV使用）
     outMaterial = vec4(textureSamples.Material, 0.0);

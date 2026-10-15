@@ -4583,3 +4583,16 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - Notes: データの縁が空と接する 19 列（ridge の方位 94.6〜96.2° は 74 km 先の西経 109°、139.7° は 118 km 先の rim の縁、outpost の 226.8〜228.6° は 23 km 先の西経 110°）は、撮影で空との明るさの差 0.01〜0.05 と、同じ画面の霞んだ本物の稜線（0.014〜0.018）と同じ程度で見分けられないので、既知の限界として `WastelandDem.md` に書いた。0 にするには 1/3 秒角の `n38w109`・`n37w111`・`n38w111` が要る（取得は許可が要る）。
 - Notes: 遠方面の閾値（0.999999）を各シェーダーで直すのは全シーンに効くので、荒野のカメラの遠方面で避けた。ほかのシーンで遠方面を数十 km より奥にするときは同じ問題が出る。far_01 の主役は 2.7 km 先で霞に白く写る（写真より霞が強い。光と霞の項目で見る）。`Docs/RenderingValidation/WastelandDem.md` は paths の外だが、遠景の作り方と既知の限界の置き場として書いた。試験は足していない。
 - Next: TASKS.md の次の未完の項目。
+### SCN-WL-SHADOW-DOT-GRID 完了（2026-10-15、run 20261015-135936 の反復 1）
+- 原因と直し（途中の保存 3dc9555f・fe36083d の直しを引き継いだ）: 斜面の暗い点の格子と縞は 3 つの原因が重なっていた。
+  - 崖とビュートの横縞・点の格子: 模様の 1 枚が画面で数画素まで縮む遠くで、ミップの標本が 1 枚ごとの低い周波数の傾きになり、日の当たる向きの境で NdotL の符号が入れ替わる。1 枚が 32 → 8 画素へ縮む間に標本の勾配を広げて平均へ寄せ、法線マップの傾きを 0 へ落とす（`TerrainLayerBlend.glsl`）。
+  - 崖錐と谷床の斑: 影の描画は MegaGeometry の LOD を段の texel の 4 個ぶんの誤差まで粗くするので、光が浅く当たる地形の斜面で粗い面が自分の受け手を遮る（VSM の自己遮蔽）。地形の受け手だけ深度の比較の余裕の一定の分を 1.5 → 3 texel にした（`VSMS_TERRAIN_CONSTANT_BIAS_TEXELS`）。
+  - 残りの細かい点: 接触影が法線マップの法線と地形の三角形の折れ目を遮りと誤る。地形の受け手だけ、深度から作る幾何の面の向きで判定し、受け手とほぼ平行（30° 以内）な面を遮りにせず、光が浅く当たる受け手でレイを面から持ち上げる（`lighting.frag`）。
+- Done（この反復）: 途中の保存のままでは VSM の余裕と接触影の判定が全部の受け手に掛かり、Rendering3DTest の決定的な撮影が前回と変わった（画素の 14 %、最大 51 階調。家の窓の奥の縁と岩の割れ目の影が薄くなる。切り分け: 接触影だけ戻すと 12 %・最大 39、VSM の余裕も戻すと差 0）。地形の受け手を GBuffer の法線の A（未使用で 0。読む側はどれも `.xyz` だけ）に 1 として書き（`megageometry.frag`・`VisibilityResolve.glsl`）、`lighting.frag` は A が 1 の受け手だけに 3 texel の余裕と接触影の地形の判定を使う。ほかの受け手は前の式のまま（`VsmSampleSunShadow` は 1.5 texel の `VsmSampleSunShadowWithBias` を呼ぶ）。
+- 検証（`.harness/runs/20261015-135936/`）:
+  - `verify-SCN-WL-SHADOW-DOT-GRID-1.txt`: Debug の Game のビルド EXIT=0。
+  - `verify-SCN-WL-SHADOW-DOT-GRID-2.txt`: 荒野の ref_far_02・ref_ground_02・cliff を 1920×1080、result=pass（白飛び 0・黒つぶれ 0）、EXIT=0。検証レイヤーのログは空。撮影を開いた: far_02 の谷床の暗い斑とビュートの横縞・点の格子（SCN-WL-MATERIAL-PALETTE の撮影にあった）が消え、斜面の陰は滑らかにつながる。cliff の崖の面と崖錐・谷床に点の格子は無い。ground_02 の砂丘の陰は滑らか。
+  - `verify-SCN-WL-SHADOW-DOT-GRID-3.txt`: 起動画面の撮影 result=pass、EXIT=0。開いて家・球・岩・地面の見た目を確かめた。
+  - `aux-SCN-WL-SHADOW-DOT-GRID-startup-det.txt`: 決定的な撮影を前回（SCN-WL-MATERIAL-MASKS-det）と比べて平均輝度の差 0・PSNR 100、違う画素 3e-6（約 3 画素が 1 階調。関数の引数化による浮動小数の丸めの程度）。Rendering3DTest は変わらない。
+- Notes: ground_02 の砂丘の陰の側にまばらな暗い点が残る（接触影が地形の起伏を遮りと誤る残り。接触影を切ると消える）。SCN-WL-CONTACT-SHADOW-TERRAIN で直す。影の測定（`shadow_probe.comp`）と VSM のテスト（`vsm_sample_probe.comp`）は地形の判別を持たないので 1.5 texel のまま測る。試験は足していない。
+- Next: TASKS.md の次の未完の項目。

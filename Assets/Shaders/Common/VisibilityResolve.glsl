@@ -542,6 +542,7 @@ struct VisMaterialSurface
     vec4 albedo;     // rgb = インスタンスの色 × アルベド、a = アルベドのテクスチャの α
     vec3 normal;     // 法線マップを適用したワールド法線
     vec3 material;   // 金属度・粗さ・AO
+    float terrain;   // 地形の受け手なら 1（法線の A に書く。lighting.frag の影の余裕を変える）
 };
 
 // 8bit の 1x1 テクスチャの値（ラスタは材質のスカラー値を 1x1 の UNORM テクスチャにして張る）
@@ -557,6 +558,7 @@ VisMaterialSurface VisFlatMaterialSurface(vec3 objectColor, VisMaterialEntry ent
     VisMaterialSurface surface;
     surface.albedo = vec4(objectColor, 1.0);
     surface.normal = resolved.normal;
+    surface.terrain = 0.0;
     const float metallic = (bHasMaterial && entry.scalars.x >= 0.0) ? VisQuantize8(entry.scalars.x) : 0.0;
     // 粗さの既定は、手続き・スキニング（GBufferPass）が中間灰、MegaGeometry（MegaGeometryPass）が白
     const bool bMegaGeometry = bHasMaterial && (entry.header.x & VIS_MATERIAL_FLAG_MEGA_GEOMETRY) != 0u;
@@ -719,6 +721,7 @@ VisMaterialSurface VisEvaluateMaterialSurface(vec3 objectColor, VisMaterialEntry
     surface.albedo = vec4(ComposePbrSurfaceAlbedo(objectColor, samples), samples.Albedo.a);
     surface.normal = bTerrain ? terrainNormal : ApplyTangentSpaceNormal(resolved.tangentFrame, tangentNormal);
     surface.material = samples.Material;
+    surface.terrain = bTerrain ? 1.0 : 0.0;
     return surface;
 }
 #endif
@@ -790,6 +793,7 @@ void main()
         surface.albedo = vec4(debugView == RESOLVE_DEBUG_CLUSTERS ? ClusterDebugColor(payload) : LODLevelDebugColor(payload), 1.0);
         surface.normal = resolved.normal;
         surface.material = vec3(0.0, 1.0, 1.0);
+        surface.terrain = 0.0;
     }
 #ifdef NORVES_VISRESOLVE_TILES
     // 表から引ける材質の dispatch だけがテクスチャを束ねている（引けない材質の番号は定数の面）
@@ -804,7 +808,7 @@ void main()
     }
 
     imageStore(albedoImage, ivec2(pixel), surface.albedo);
-    imageStore(normalImage, ivec2(pixel), vec4(surface.normal, 0.0));
+    imageStore(normalImage, ivec2(pixel), vec4(surface.normal, surface.terrain));
     imageStore(materialImage, ivec2(pixel), vec4(surface.material, 0.0));
     imageStore(velocityImage, ivec2(pixel), vec4(velocity, 0.0, 0.0));
     // 発光: 色度 × 輝度（nits）× プリエクスポージャ（ラスタの gbuffer.frag・megageometry.frag と同じ関数）。表から引けない材質は 0

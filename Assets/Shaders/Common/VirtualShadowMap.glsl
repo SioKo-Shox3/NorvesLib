@@ -16,7 +16,8 @@
 //   VSM_COUNT_FALLBACK()     自分の段のページが無く、粗い段へ逃げた標本 1 つにつき 1 回呼ぶ（統計の数え上げ。既定は何もしない）
 //
 // 入口は VsmSampleSunShadow(worldPos, normal, texelMeters)。可視度（1 = 光が当たる、0 = 影）を返し、標本が実際に読んだ段の
-// texel の一辺（m。粗い段へ逃げた標本はその段の値。読めた標本の平均）を返す。
+// texel の一辺（m。粗い段へ逃げた標本はその段の値。読めた標本の平均）を返す。深度の比較の余裕を受け手で変える側（地形の受け手）は
+// VsmSampleSunShadowWithBias(worldPos, normal, constantBiasTexels, texelMeters) を呼ぶ。
 //
 // 影の縁は CSM（Common/SunShadowCsm.glsl の PCSSFilter）と同じ考え方で、ブロッカーの探索 → 物理の半影 → PCF の順に引く。
 // 半影の半幅（ワールドの長さ）は 受け手と遮る物の深度の差 × 太陽の角半径の tan で、接するところは鋭く、離れるほどぼける。
@@ -45,12 +46,14 @@ const uint VSMS_PAGE_ENTRY_ALLOCATED = 1u << 31;
 const uint VSMS_PAGE_INDEX_MASK = (1u << 20) - 1u;
 
 // 法線の向きへのずらしの大きさ（使う段の texel の倍数。面が光に対して斜めなほど大きく、正対すると 0）と、
-// 深度の比較の余裕のうち一定の分（使う段の texel の倍数）。影の描画は MegaGeometry の LOD を段の texel の数個ぶん
-// （VirtualShadowMapMegaCullDispatch::LodThresholdTexels、既定 4）の誤差まで粗くするので、粗い段の面は主のカメラの細かい面より
-// 上に出ることがある。余裕が 1.5 texel（CSM と同じ）では、光が浅く当たる地形の斜面で粗い面が自分の受け手を遮り、
-// 斑状の影が散る（荒野の崖錐。3 texel で消える）
+// 深度の比較の余裕のうち一定の分（使う段の texel の倍数。CSM の 1.5 texel と同じ）
 const float VSMS_NORMAL_OFFSET_TEXELS = 1.5;
-const float VSMS_CONSTANT_BIAS_TEXELS = 3.0;
+const float VSMS_CONSTANT_BIAS_TEXELS = 1.5;
+// 地形の受け手の余裕のうち一定の分（使う段の texel の倍数）。影の描画は MegaGeometry の LOD を段の texel の数個ぶん
+// （VirtualShadowMapMegaCullDispatch::LodThresholdTexels、既定 4）の誤差まで粗くするので、粗い段の面は主のカメラの細かい面より
+// 上に出ることがある。広く緩い地形の斜面に光が浅く当たると、余裕が 1.5 texel では粗い面が自分の受け手を遮り、斑状の影が散る
+// （荒野の崖錐。3 texel で消える）。地形の外の物体（段差・窓の奥の縁）は細かい接地の影を保つため 1.5 texel のまま
+const float VSMS_TERRAIN_CONSTANT_BIAS_TEXELS = 3.0;
 // 受け面の深度の傾きの下限（光と面の法線の余弦。CSM の ComputeReceiverDepthGradient と同じ）
 const float VSMS_MIN_NORMAL_COSINE = 0.05;
 
@@ -123,8 +126,8 @@ bool VsmFetchDepthWithFallback(uint level, vec2 lightXY, out float outDepthMeter
 
 // 太陽の可視度（1 = 光が当たる、0 = 影）。outTexelMeters は PCF の標本が実際に読んだ段の texel の一辺（m）の平均。
 // どの標本も読めなかった（無効・影の距離の外・不正な値・どの段にも無い）ときは、受け手の距離から選んだ段の値。
-// 無効・影の距離の外・不正な値は 1（影なし）。
-float VsmSampleSunShadow(vec3 worldPos, vec3 normal, out float outTexelMeters)
+// 無効・影の距離の外・不正な値は 1（影なし）。constantBiasTexels は深度の比較の余裕のうち一定の分（使う段の texel の倍数）。
+float VsmSampleSunShadowWithBias(vec3 worldPos, vec3 normal, float constantBiasTexels, out float outTexelMeters)
 {
     outTexelMeters = 0.0;
     if (VSM_PARAMS.control.x == 0u || VSM_PARAMS.control.y == 0u)
@@ -179,7 +182,7 @@ float VsmSampleSunShadow(vec3 worldPos, vec3 normal, out float outTexelMeters)
 
     // ブロッカーの探索（CSM の FindBlockerDepth と同じ）: 探索の半径の 16 点のうち、受け手より手前にある標本の深度の平均を求める。
     // 各標本は自分の位置のページの表を引き、無ければ粗い段へ逃げる（どの段にも無い標本は遮る物なしとして扱う）
-    const float searchSlopeBias = VSMS_CONSTANT_BIAS_TEXELS + abs(slope.x) + abs(slope.y);
+    const float searchSlopeBias = constantBiasTexels + abs(slope.x) + abs(slope.y);
     float blockerSum = 0.0;
     float blockerCount = 0.0;
     float searchEscapes = 0.0;
@@ -236,7 +239,7 @@ float VsmSampleSunShadow(vec3 worldPos, vec3 normal, out float outTexelMeters)
         bool bEscaped = false;
         if (VsmFetchDepthWithFallback(level, lightXY + offset, blockerDepth, candidateTexel, bEscaped))
         {
-            const float bias = (VSMS_CONSTANT_BIAS_TEXELS + abs(slope.x) + abs(slope.y)) * candidateTexel;
+            const float bias = (constantBiasTexels + abs(slope.x) + abs(slope.y)) * candidateTexel;
             visible = (sampleReceiver - bias > blockerDepth) ? 0.0 : 1.0;
             readTexelSum += candidateTexel;
             readCount += 1.0;
@@ -256,6 +259,12 @@ float VsmSampleSunShadow(vec3 worldPos, vec3 normal, out float outTexelMeters)
     // 影の最大の距離の手前（最後のカスケードの幅の 10%）で影を薄め、境界で急に消えないようにする（CSM と同じ）
     shadow = mix(shadow, 1.0, smoothstep(shadowFar - VSM_PARAMS.range.z, shadowFar, viewDistance));
     return shadow;
+}
+
+// 地形の外の受け手の太陽の可視度（余裕の一定の分は VSMS_CONSTANT_BIAS_TEXELS）。
+float VsmSampleSunShadow(vec3 worldPos, vec3 normal, out float outTexelMeters)
+{
+    return VsmSampleSunShadowWithBias(worldPos, normal, VSMS_CONSTANT_BIAS_TEXELS, outTexelMeters);
 }
 
 #endif // VIRTUAL_SHADOW_MAP_GLSL

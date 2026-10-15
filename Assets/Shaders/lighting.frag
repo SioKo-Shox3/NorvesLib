@@ -307,12 +307,15 @@ float CalculateRangeWindow(float distance, float range)
 #include "Common/VirtualShadowMapPoint.glsl"
 
 // 太陽の影の可視度。--shadow-method=vsm で VSM が使えるときは VSM、それ以外（R5 のハードシャドウの検証表示を含む）は CSM。
-float CalculateSunShadow(vec3 worldPos, vec3 normal)
+// 地形の受け手（GBuffer の法線の A が 1）は VSM の深度の比較の余裕を広げる（VSMS_TERRAIN_CONSTANT_BIAS_TEXELS の理由を参照）。
+float CalculateSunShadow(vec3 worldPos, vec3 normal, bool bTerrainReceiver)
 {
     if (vsmBlock.vsm.control.x != 0u && !IsR5HardShadowValidationMode())
     {
         float texelMeters = 0.0;
-        return VsmSampleSunShadow(worldPos, normal, texelMeters);
+        return VsmSampleSunShadowWithBias(worldPos, normal,
+                                          bTerrainReceiver ? VSMS_TERRAIN_CONSTANT_BIAS_TEXELS : VSMS_CONSTANT_BIAS_TEXELS,
+                                          texelMeters);
     }
     return CalculateShadow(worldPos, normal);
 }
@@ -322,13 +325,16 @@ float CalculateSunShadow(vec3 worldPos, vec3 normal)
 // ========================================
 // 受け手から光の方向へ短く（contactShadowParams.x m）レイを進め、各段の点を画面へ写して
 // GBufferの深度と比べる。点が深度の面より奥（厚さcontactShadowParams.z以内）にあり、かつ
-// その画素の面の内側にあれば遮られたとみなす。CSM・キューブシャドウの解像度では
+// その画素の法線で決まる面の内側にあれば遮られたとみなす。CSM・キューブシャドウの解像度では
 // 出ない接地部の細い影を補い、影の結果へ掛ける。
-// 起点のずらしと面の内側の判定は、深度から作る幾何の面の向きを使う。GBufferの法線（法線マップ込み）は
-// 幾何の面から傾いているので、光が浅く当たる斜面ではレイが自分の面の内側と判定され、点状の影が散る。
-// 遮る画素の幾何の面が受け手の面とほぼ平行（CONTACT_SHADOW_SELF_SURFACE_COS より向きが近い）なら、受け手と
-// 続いている同じ面のわずかな起伏とみなして遮りにしない。地形の三角形の折れ目（数度）は、光が浅く当たる斜面で
-// レイの数画素先を遮り、滑らかな法線の陰影の上に画素単位の点の影を散らす。広い起伏の陰は太陽の影が受け持つ。
+// 地形の受け手（GBuffer の法線の A が 1）だけ、次の 3 つを変える。地形は大きな三角形の高さ場に強い法線マップを
+// 張るので、光が浅く当たる斜面で画素単位の点の影が散る。地形の外の物体（段差・窓の奥の縁）の接地の影は変えない。
+// - 起点のずらしと面の内側の判定は、深度から作る幾何の面の向きを使う。GBufferの法線（法線マップ込み）は
+//   幾何の面から傾いているので、光が浅く当たる斜面ではレイが自分の面の内側と判定される。
+// - 遮る画素の幾何の面が受け手の面とほぼ平行（CONTACT_SHADOW_SELF_SURFACE_COS より向きが近い）なら、受け手と
+//   続いている同じ面のわずかな起伏とみなして遮りにしない。地形の三角形の折れ目（数度）は、光が浅く当たる斜面で
+//   レイの数画素先を遮り、滑らかな法線の陰影の上に画素単位の点の影を散らす。広い起伏の陰は太陽の影が受け持つ。
+// - 光が浅く当たる受け手では、レイを幾何の面から CONTACT_SHADOW_MIN_RISE の傾きで上る向きへ持ち上げる。
 const uint CONTACT_SHADOW_STEP_COUNT = 12u;
 const float CONTACT_SHADOW_SELF_SURFACE_COS = 0.866; // cos(30°)
 // レイが受け手の幾何の面から上る傾きの下限（光と面の法線の余弦。約 11.5°）
@@ -392,7 +398,7 @@ vec3 ReconstructGeometricNormal(ivec2 texel, ivec2 depthSize, vec3 fallback)
     return dot(normal, params.cameraPosition.xyz - center) < 0.0 ? -normal : normal;
 }
 
-float CalculateContactShadow(vec3 worldPos, float depth, vec3 normal, vec3 L, float maxLength)
+float CalculateContactShadow(vec3 worldPos, float depth, vec3 normal, vec3 L, float maxLength, bool bTerrainReceiver)
 {
     float rayLength = min(params.contactShadowParams.x, maxLength);
     float thickness = params.contactShadowParams.z;
@@ -424,16 +430,21 @@ float CalculateContactShadow(vec3 worldPos, float depth, vec3 normal, vec3 L, fl
         return 1.0;
     }
 
-    // 起点は幾何の面の向きへ0.25画素だけずらす。受け手自身の面での縞は下の面の内側の判定で防ぐ。
+    // 起点は面の向き（地形は幾何の面の向き）へ0.25画素だけずらす。受け手自身の面での縞は下の面の内側の判定で防ぐ。
     // 大きくずらすと、物体のすぐ外を通るレイが物体の端を切り、影の縁が外へ広がる。
-    ivec2 receiverTexel = clamp(ivec2(fragUV * vec2(depthSize)), ivec2(0), depthSize - ivec2(1));
-    vec3 receiverNormal = ReconstructGeometricNormal(receiverTexel, depthSize, normal);
+    vec3 receiverNormal = normal;
+    vec3 marchDirection = L;
+    if (bTerrainReceiver)
+    {
+        ivec2 receiverTexel = clamp(ivec2(fragUV * vec2(depthSize)), ivec2(0), depthSize - ivec2(1));
+        receiverNormal = ReconstructGeometricNormal(receiverTexel, depthSize, normal);
+        // 光が浅く当たる受け手（幾何の面と光の角度が CONTACT_SHADOW_MIN_RISE より浅い）では、光の向きのレイは自分の面の
+        // わずかな起伏（地形の三角形の折れ目）の中を進み、隣の画素を遮りとして拾う（陰影の境目に散る点の影）。そこでは
+        // レイを幾何の面から CONTACT_SHADOW_MIN_RISE の傾きで上る向きへ持ち上げ、緩い起伏をまたがせる。立った物体は
+        // 持ち上げたレイも遮るので接地の影は残る。光が十分な角度で当たる受け手のレイは変えない
+        marchDirection = L + receiverNormal * max(CONTACT_SHADOW_MIN_RISE - dot(receiverNormal, L), 0.0);
+    }
     vec3 origin = worldPos + receiverNormal * (pixelWorldSize * 0.25);
-    // 光が浅く当たる受け手（幾何の面と光の角度が CONTACT_SHADOW_MIN_RISE より浅い）では、光の向きのレイは自分の面の
-    // わずかな起伏（地形の三角形の折れ目）の中を進み、隣の画素を遮りとして拾う（陰影の境目に散る点の影）。そこでは
-    // レイを幾何の面から CONTACT_SHADOW_MIN_RISE の傾きで上る向きへ持ち上げ、緩い起伏をまたがせる。立った物体は
-    // 持ち上げたレイも遮るので接地の影は残る。光が十分な角度で当たる受け手のレイは変えない
-    vec3 marchDirection = L + receiverNormal * max(CONTACT_SHADOW_MIN_RISE - dot(receiverNormal, L), 0.0);
     float jitter = fract(InterleavedGradientNoise(gl_FragCoord.xy) + params.contactShadowParams.y);
     float stepLength = rayLength / float(CONTACT_SHADOW_STEP_COUNT);
     // 遮る物体の厚さ。1段の長さと1画素の幅より薄いと、面へ入った段を見落とすので下限にする。
@@ -465,8 +476,8 @@ float CalculateContactShadow(vec3 worldPos, float depth, vec3 normal, vec3 L, fl
         {
             continue;
         }
-        // 画素の面を、その画素の位置と幾何の面の向きの平面とみなし、段の点がその内側（半画素ぶんの余裕より
-        // 深い）にあるときだけ遮りとする。画素の中心の深度だけで比べると、物体の手前の面のすぐ外を
+        // 画素の面を、その画素の位置と法線（地形の受け手は幾何の面の向き）の平面とみなし、段の点がその内側
+        // （半画素ぶんの余裕より深い）にあるときだけ遮りとする。画素の中心の深度だけで比べると、物体の手前の面のすぐ外を
         // かすめる段も、画素の中の面の傾きの差で奥と判定され、影の縁が1画素ほど外へ広がる。
         // 幾何の面の向きを作れない画素（輪郭の孤立した画素など）は GBuffer の法線で判定する。
         vec3 sceneNormal = texelFetch(gbufferNormal, texel, 0).xyz;
@@ -475,9 +486,16 @@ float CalculateContactShadow(vec3 worldPos, float depth, vec3 normal, vec3 L, fl
         {
             continue;
         }
-        sceneNormal = ReconstructGeometricNormal(texel, depthSize, sceneNormal / sceneNormalLength);
-        if (dot(samplePos - scenePos, sceneNormal) >= -0.5 * pixelWorldSize ||
-            dot(sceneNormal, receiverNormal) > CONTACT_SHADOW_SELF_SURFACE_COS)
+        sceneNormal /= sceneNormalLength;
+        if (bTerrainReceiver)
+        {
+            sceneNormal = ReconstructGeometricNormal(texel, depthSize, sceneNormal);
+            if (dot(sceneNormal, receiverNormal) > CONTACT_SHADOW_SELF_SURFACE_COS)
+            {
+                continue;
+            }
+        }
+        if (dot(samplePos - scenePos, sceneNormal) >= -0.5 * pixelWorldSize)
         {
             continue;
         }
@@ -1043,6 +1061,8 @@ void main()
     // データ展開
     vec3 albedo = albedoSample.rgb;
     vec3 N = normalize(normalSample.xyz);
+    // 地形の受け手（megageometry.frag・VisibilityResolve が法線の A に 1 を書く）。影の余裕と接触影の判定を変える
+    bool bTerrainReceiver = normalSample.w > 0.5;
     float metallic = materialSample.r;
     float roughness = materialSample.g;
     float ao = materialSample.b;
@@ -1157,11 +1177,11 @@ void main()
         {
             shadow = params.shadowPadding0 != 0u
                          ? texture(rayTracingShadowVisibility, fragUV).r
-                         : CalculateSunShadow(worldPos, N);
+                         : CalculateSunShadow(worldPos, N, bTerrainReceiver);
             // RT影は接地部も正しく遮るので、接触影はCSMの結果にだけ掛ける
             if (params.shadowPadding0 == 0u && shadow > 0.0 && NdotL > 0.0)
             {
-                shadow *= CalculateContactShadow(worldPos, depthSample, N, L, 1.0e30);
+                shadow *= CalculateContactShadow(worldPos, depthSample, N, L, 1.0e30, bTerrainReceiver);
             }
         }
         // 点光源のキューブシャドウ（attenuation.w=キューブの番号+1。0の灯は影を掛けない）
@@ -1190,7 +1210,7 @@ void main()
                 // 光源の手前で止める（光源の球そのものを遮りとみなさない）
                 float distanceToLight = length(light.position.xyz - worldPos);
                 shadow *= CalculateContactShadow(worldPos, depthSample, N, L,
-                                                 max(distanceToLight * 0.5, 0.0));
+                                                 max(distanceToLight * 0.5, 0.0), bTerrainReceiver);
             }
         }
 
