@@ -27,7 +27,7 @@ VIEWS = {
     "ref_far_01": (-903.5, 1.7, -1608.5, 148.6, 3.5, 12.77),
 }
 COLUMNS = 400
-FAR_PLANE_M = 100000.0
+FAR_PLANE_M = 400000.0
 # 遠方面の外の地平線を探す距離（1/3 秒角の 2 枚の範囲を覆う）
 TRACE_M = 160000.0
 DISTANCES = np.concatenate([np.arange(5.0, 2000.0, 2.0), np.arange(2000.0, 20000.0, 8.0), np.arange(20000.0, TRACE_M, 32.0)])

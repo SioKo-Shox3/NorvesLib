@@ -4567,3 +4567,19 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 比較画像（far_02・ground_01・ground_02・cliff_01・cliff_02）を開いた: 手前の谷床は細かい砂粒が実寸で並び、中景から奥は一様な赤橙の土になって 3 m のタイルの繰り返しも、大きく引き伸ばされた斑も見えない。崖の面は細かい割れ目が遠くでは平均の色に溶け、層理は地形の段の大きさで読める。
 - Notes: 斜面と崖の面の暗い点の格子の縞は変わらず出る（SCN-WL-SHADOW-DOT-GRID で直す）。地面の明るさが写真の 2〜3.5 倍のままなのは反復 6 の Notes のとおり光の側。試験は足していない。
 - Next: TASKS.md の次の未完の項目。
+### SCN-WL-HORIZON 完了（2026-10-15、run 20261015-082405 の反復 8〜9）
+- Done（反復 8 の途中の保存 536d1402 を引き継いだ）:
+  - 許可された 1/3 秒角の 2 枚（`USGS_13_n38w110_20260630.tif`・`USGS_13_n37w110_20260514.tif`）を `DemInput.py --fetch-regional` で落とし、manifest.json の `regional` に大きさ・SHA-256・URL・取得日を書いた（`aux-SCN-WL-HORIZON-fetch-regional.txt`）。
+  - `HorizonDem.py` に far の外の段 outer（32 m、4 枚の外へ東 25 km・南 30 km・北 27 km）と rim（128 m、1/3 秒角の 2 枚の残り）を足し、縫い目の帯でつないだ。4 枚の NoData は 1/3 秒角で埋める。近景より外の高さから地球の丸み（屈折込み）を引く。メッシュ 58 個・頂点 896 万。クック cooked=58（`aux-SCN-WL-HORIZON-cook2.txt`）。
+  - 遠方面: 体積フォグ・雲・RT の影・RTGI・被写界深度のパスは深度 0.999999 以上を空とみなす。近方面 0.5 m・遠方面 100 km では 83 km より奥の地形が空と見なされ、ridge の方位 146°・93 km 先の山が霞の掛からない橙の板として地平線に浮いていた（反復 8 の撮影）。遠方面を 400 km にし（空とみなされるのは 222 km より奥。地形の最も遠い点は約 160 km）、`HorizonSkyline.py` の遠方面も合わせた。
+  - `WastelandDem.md` に遠景の節（段の表・縫い目・地球の丸み・遠方面の理由・既知の限界）を書いた。
+- 検証（`.harness/runs/20261015-082405/`）:
+  - `aux-SCN-WL-HORIZON-dem3.txt`: `HorizonDem.py --verify` result=pass（作り直しが 58 個の SHA-256 と一致、3 つ以上が共有する辺 0、同じ位置の高さの不一致 0、開いた辺は rim の外周と 1/3 秒角の外の縁だけ、Castle Butte は 2 m の段の 300 m 内側）。
+  - `verify-SCN-WL-HORIZON-4.txt`: Debug の Game のビルド EXIT=0。
+  - `verify-SCN-WL-HORIZON-5.txt`: 荒野の全 11 視点 1920×1080、result=pass（白飛び 0・黒つぶれ 0）、EXIT=0。検証レイヤーのログは空。
+  - 撮影を開いた（`scene-capture/SCN-WL-HORIZON/`）: ridge の浮いた板は消え、93 km 先の山は空の色の霞に溶けた（板の位置の画素 (255,190,124) → (240,243,250)）。overview の北の地平線は切れ目なく実地形の崖と段の稜線。ridge・outpost に外周の板・壁・継ぎ目は無い。
+  - `aux-SCN-WL-HORIZON-compare.txt`: `CompareReference.py --verify` result=pass photos=6。`reference_far_01.png` を開いた: Castle Butte・2 本の尖塔・両脇の Cedar Mesa の縁が写真の輪郭と重なる。
+  - `aux-SCN-WL-HORIZON-skyline4.txt`（遠方面 400 km）: overview・ground・cliff・ref_far_01 は 400 列すべて稜線。ridge 10 列・outpost 9 列がデータの縁（下の Notes）。
+- Notes: データの縁が空と接する 19 列（ridge の方位 94.6〜96.2° は 74 km 先の西経 109°、139.7° は 118 km 先の rim の縁、outpost の 226.8〜228.6° は 23 km 先の西経 110°）は、撮影で空との明るさの差 0.01〜0.05 と、同じ画面の霞んだ本物の稜線（0.014〜0.018）と同じ程度で見分けられないので、既知の限界として `WastelandDem.md` に書いた。0 にするには 1/3 秒角の `n38w109`・`n37w111`・`n38w111` が要る（取得は許可が要る）。
+- Notes: 遠方面の閾値（0.999999）を各シェーダーで直すのは全シーンに効くので、荒野のカメラの遠方面で避けた。ほかのシーンで遠方面を数十 km より奥にするときは同じ問題が出る。far_01 の主役は 2.7 km 先で霞に白く写る（写真より霞が強い。光と霞の項目で見る）。`Docs/RenderingValidation/WastelandDem.md` は paths の外だが、遠景の作り方と既知の限界の置き場として書いた。試験は足していない。
+- Next: TASKS.md の次の未完の項目。

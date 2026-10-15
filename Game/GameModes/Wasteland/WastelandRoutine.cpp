@@ -181,10 +181,11 @@ namespace Game::GameModes
         constexpr float kCloudExtinctionPerMeter = 0.006f;
         constexpr float kCloudShapeScale = 4500.0f;
         constexpr float kCloudWindVelocity[2] = {8.0f, 3.0f};
-        // カメラの遠方面[m]。遠景は 1/3 秒角の DEM 2 枚（西経 109〜110°・北緯 36〜38°）まで覆い、高い視点（ridge）の南東の
-        // 地平線は 70〜120 km 先の山地になる（Scripts/Terrain/HorizonSkyline.py の horizon_max_m）。100 km で地平線の稜線を
-        // 切らない列が最も多い
-        constexpr float kFarPlane = 100000.0f;
+        // カメラの遠方面[m]。遠景は 1/3 秒角の DEM 2 枚（西経 109〜110°・北緯 36〜38°）まで覆い、どの視点からも地形の最も遠い点は
+        // 約 160 km（Scripts/Terrain/HorizonSkyline.py の TRACE_M）。体積フォグ・雲・RT の影などのパスは深度 0.999999 以上を空と
+        // みなすので、地形はすべてその手前に入れる。深度は 1 - 近方面 × (1/距離 - 1/遠方面) なので、近方面 0.5 m・遠方面 400 km では
+        // 空とみなされるのは 222 km より奥（遠方面 100 km では 83 km より奥の山が霞も影も掛からずに地平線に浮いた）
+        constexpr float kFarPlane = 400000.0f;
         // カメラの近方面[m]。深度は前から奥へ 0〜1 の標準の向きで、奥の分解能は距離の 2 乗 ÷ 近方面に比例する。既定の 0.1 m では
         // 30 km 先で約 0.5 km・100 km 先で約 6 km になり遠くの稜線の前後が入れ替わるので、5 倍の 0.5 m にする（目の高さ 1.7 m の
         // 足元までは描ける）
