@@ -1533,7 +1533,7 @@
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-WL-REVIEW-1`
 - verify: `python Scripts/Terrain/CompareReference.py --capture .harness/runs/scene-capture/SCN-WL-REVIEW-1 --verify`
 - paths: Scripts/Terrain, Docs/RenderingValidation, TASKS.md, PROGRESS.md
-- notes: 2026-10-15 ユーザー: 品質の確認は節目ごと（3 回程度）にユーザーが見る。
+- notes: 2026-10-15 ユーザー: 品質の確認は節目ごと（3 回程度）にユーザーが見る。 2026-10-15 親: 近くの主役の崖はこの確認の後でスキャンの素材と Blender で作り直す（SCN-WL-CLIFF-SCAN-*）。所見には今の崖を書いてよいが、一覧に「近くの崖は作り直す予定」と添える。
 
 ## SCN-WL-GEOMETRY-PAGE-THRASH: ジオメトリのページの置き場が足りないとき、ページを外し続けて読み込みが終わらなくなるのを直す
 - status: todo
@@ -1544,6 +1544,35 @@
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -OutDir .harness/runs/startup-capture/SCN-WL-GEOMETRY-PAGE-THRASH`
 - paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Test/Core/Rendering, Tools/AssetCook, Scripts, Docs/RenderingValidation, Docs/Architecture, TASKS.md, PROGRESS.md
 - notes: 危険地帯（メモリ・RenderThread・ジオメトリのストリーミング）。2026-10-15 親が SCN-WL-CLIFF-DETAIL-ALL の blocked（反復 2）の調べから足した。荒野は美しさを先にして崖・岩・草の三角形を増やしていくので、置き場の不足で読み込みが止まらないようにする。崖の細部の範囲はこの項目では変えない。
+
+## SCN-WL-CLIFF-SCAN-SELECT: 近くの崖に使うスキャンの素材を選ぶ
+- status: todo
+- done-when: 近くの主役の崖（Battleship Rock・Franklin Butte の尖塔の台座）の表面を、式の押し出しではなく写真測量でスキャンした本物の岩の形で作るための素材を選ぶ。Poly Haven・ambientCG（CC0、取得は許可済み）のモデルと、高さの地図を持つスキャンの材質から、Cedar Mesa の砂岩の崖（水平の層の段・縦の割れ目・板状の剥離・赤い砂岩）に合う候補を API で探し、大きさと合計を記録する。候補を Blender のヘッドレス（`Y:\AI\blender\blender-5.2.2-windows-x64\blender.exe`、`Scripts/BlenderPreviewGlb.py`）で描き、手本の写真（cliff_01・cliff_02）と並べた比較図を開いて形と質感で選ぶ。既にある `namaqualand_*`（花崗岩の丸い岩）は砂岩の崖に合わない前提で比べる。CC0 に合う形が無ければ、ほかの出所（CC-BY のスキャン、Fab の Megascans 等）の候補を、ファイル名・出所・大きさ・利用条件つきで `blocked/` に書いて人の許可を待つ（許可なく落とさない）。選んだ素材と選んだ理由を `Docs/RenderingValidation/WastelandReference.md` に書く。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/FetchPolyHavenModels.ps1 -Set wasteland`
+- paths: Scripts, Assets/AssetSets, Docs/RenderingValidation, .gitignore, TASKS.md, PROGRESS.md
+- notes: 2026-10-15 ユーザーの決定: 崖の細部は、近くの崖をスキャンの岩の素材と Blender で作る（式の焼き込みは遠景だけにする）。生成の素材（ComfyUI）は足元の落石・岩塊に使ってよい。Blender は Python でヘッドレスに動かす。
+
+## SCN-WL-BLENDER-TERRAIN-VIEW: Blender に荒野の地形と手本の視点を再現する
+- status: todo
+- done-when: Blender のヘッドレスで、荒野の地形の主役の崖の周り（Battleship Rock の範囲と崖錐、`Assets/Terrain/ValleyOfTheGods/height.r32`）をメッシュとして読み込み、手本の視点（`WastelandRoutine.cpp` の `kReferenceShots` の ref_cliff_01・cliff）と同じカメラを置いて描く台本を `Scripts/Terrain/` に作る。エンジンの座標（X・Z・高さ・向き）と Blender の座標の変換を 1 か所にまとめる。Blender の描画と、同じ視点のエンジンの撮影を並べた図を開き、崖の輪郭が重なる（輪郭の差が数画素以内）ことを確かめる。崖の素材を置く次の項目は、この台本の上で配置を見ながら直す。
+- verify: `"Y:\AI\blender\blender-5.2.2-windows-x64\blender.exe" --background --factory-startup --python Scripts/Terrain/BlenderTerrainView.py -- --verify`
+- paths: Scripts/Terrain, Scripts, Docs/RenderingValidation, TASKS.md, PROGRESS.md
+- notes: 台本の名前は目安（`BlenderTerrainView.py`）。変えるなら verify も同じ反復で直す。
+
+## SCN-WL-CLIFF-SCAN-PLACE: Blender で置いたスキャンの崖をエンジンへ持ち込む経路を作る
+- status: todo
+- done-when: Blender で地形の上に置いたスキャンの崖・岩の塊の配置（素材・位置・向き・大きさ）を配置表（JSON）に書き出し、荒野のシーンがそれを読んで仮想化ジオメトリのインスタンスとして置く経路を作る。配置を変えても地形の焼き直しは要らない（配置表と素材のクックだけ）。試しに選んだ素材の塊を 2〜3 個、Battleship Rock の崖の面に置き、Blender の描画とエンジンの撮影（1920×1080）を並べて、位置・向き・大きさがそろうこと、地形から浮かず埋もれ過ぎないことを開いて確かめる。溢れ 0。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-WL-CLIFF-SCAN-PLACE`
+- paths: Scripts/Terrain, Scripts, Assets/AssetSets, Game/GameModes/Wasteland, Docs/RenderingValidation, TASKS.md, PROGRESS.md
+
+## SCN-WL-CLIFF-SCAN-NEAR: 主役の崖の表面をスキャンの崖で作り、手本の写真に合わせる
+- status: todo
+- done-when: Blender の台本で、Battleship Rock と Franklin Butte の尖塔の台座の急な面をスキャンの崖の塊で覆い、写真の崖の層の段・縦の割れ目・板状の剥離・崖錐の岩の散らばりに合わせる（塊の繰り返しが見えないよう、回転・大きさ・素材を混ぜる）。材質の色は砂岩の実測の明るさの範囲に合わせ、地形の崖の色と継ぎ目なく馴染ませる。ref_cliff_01・ref_cliff_02・cliff の比較画像（写真｜撮影、1920×1080）を開き、崖の面が丸い面の筋ではなく、影を落とす本物の岩の立体に見えることを確かめる。三角形の数と読み込みの時間を記録する（溢れ 0）。式の焼き込み（`TerrainCliffDetail.cpp`）は、覆った崖の下地として残すか外すかを撮影で決める。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-WL-CLIFF-SCAN-NEAR`
+- paths: Scripts/Terrain, Scripts, Assets/AssetSets, Game/GameModes/Wasteland, Assets/Shaders, Tools/AssetCook, Docs/RenderingValidation, TASKS.md, PROGRESS.md
+- notes: 1 反復で閉じなければ Battleship Rock だけで閉じ、尖塔の台座を後ろの項目に分ける。
 
 ## SCN-WL-OUTPOST: 前哨地を自然に平らな所へ置き直し、建物と道の範囲だけ均す
 - status: todo
@@ -1559,6 +1588,7 @@
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-WL-CLIFF-ASSETS`
 - paths: Assets/AssetSets, Scripts, Tools/ComfyWorkflows, Game/GameModes/Wasteland, .gitignore, TASKS.md, PROGRESS.md
+- notes: 2026-10-15 親: 崖の面そのものは SCN-WL-CLIFF-SCAN-* で作る。この項目は崖の足元の落石・岩塊だけ。SCN-WL-CLIFF-SCAN-SELECT で選んだ素材と色をそろえる。
 
 ## SCN-WL-MASKS-FLOW: 沢と堆積の分布を足す
 - status: todo
