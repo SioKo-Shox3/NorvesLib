@@ -4662,3 +4662,12 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - Done: SCN-WL-CLIFF-DETAIL-ALL。
 - Next: SCN-WL-REVIEW-1 ほか TASKS.md の次の項目。
 - Notes: ref_cliff_02 の斜面と遠くの平地に細い縦の黒い点が一面に出る。崖の焼き直しの前の撮影にもあり、焼き直していない平地にも出るので、この項目の外の欠陥として TASKS.md に `SCN-WL-FAR-SPECKLE`（backlog）を足した。ref_far_01 の左の奥の崖（mid の段、8 m の格子）は焼き直しておらず、丸い形のまま。試験は足していない。
+### SCN-WL-CLIFF-DETAIL-ALL 途中（2026-10-15、run 20261015-203920 の反復 1〜2）
+- 反復 1（途中の保存 7d22d7f4）: ref_far_01 の画面の左の奥の崖（5〜9 km）と、主役のビュートと尖塔の間の奥の崖（6〜8 km）を崖の細部の範囲に足した（`TerrainCliffDetail.cpp` の `kCastleRegions` に間隔 1 m・升目の一辺の細分の下限 2 の 2 か所。範囲ごとに下限を持てるようにした）。castle の段（2 m）を西 −7000・北 −9051 まで広げ、mid の段の北の縁を 6.6 km に延ばした（`HorizonDem.py`）。版 4 の範囲は変えていない。`HorizonDem.py --build`・`--verify` と `WriteTerrainAssetSet.py --write`・`--verify`（全 214 項目）を通した。焼きの途中で反復の時間が尽きた。
+- 反復 2: 反復 1 の並列の焼きのうち終わっていた 114 項目のパッケージと印を build/CookedAssets へ移し、残りの dem:2,3 と dem:1,2 を 2 本の並列で焼いた（16 分）。検証の 1〜3 本目は通った（`verify-SCN-WL-CLIFF-DETAIL-ALL-1〜3.txt`。Debug の Game・RelWithDebInfo の AssetCook のビルド EXIT=0、`CookAssets.ps1` cooked=0 skipped=214）。
+- 撮影（4 本目）は通らなかった（`verify-SCN-WL-CLIFF-DETAIL-ALL-4.txt`: views が 600 秒で終わらず、result=fail・11 視点とも PNG なし。`scene-capture/SCN-WL-CLIFF-DETAIL-ALL/` の PNG は版 4 のまま。版 4 の比較画像は `v4/` と `v4_*.png`）。
+  - 原因（`views.Game.log`）: 地形が出そろうまで 5 分（SCENE_READY は起動から 304 秒）かかった後、初めの視点（default）で、ジオメトリのページが常駐 約 2900 ページ・310 MB まで積み上がると一度に約 3500 ページを追い出して 100 ページ台へ戻ることを 3 分以上繰り返した（`GEOMETRY_PAGES` の evicted が 35920 まで増える。`VRAM_LEDGER geometry_pool` は capacity 1024 MB が 1023 MB まで埋まる。target_mb=3066 だが blocks=1 のまま増えない）。読み込み中から抜けないので、落ち着いた時点を待つ撮影が 1 枚も撮れない。MegaGeometry の溢れは 0（`MEGA_CAPACITY` の 96 行すべてで draw_dropped=0・visible_list_overflow=0・bvh_overflow=0）。
+  - 三角形の数（焼きのログ）: 崖の細部を掛けた区画の元の三角形は 8262 万（版 4）→ 1 億 2610 万。castle の段だけで 3150 万（9 区画）→ 7500 万（29 区画）。castle_3_3 は 1106 万、castle_4_3 は 869 万（左の奥の崖）。パッケージは castle の段 5.7 GB（版 4 の約 2.5 倍）、地形の全項目で 13.1 GB。新しい 2 つの範囲が、5〜9 km 先（1 画素 1.1〜2 m）に要る細かさより細かく、ページの常駐の枠を超えた。
+- この反復はコードを変えない指示（STEER）なので、直しと全項目の焼き直しは次の反復で行う。
+- Next（次の反復）: 新しい 2 つの範囲の細分を粗くする（`kCastleRegions` の 3・4 番目の間隔を 1 → 2 m、細分の下限を 2 → 1。急な升目の細分はおよそ 1/4 になり、崖の細部の区画の合計は版 4 の 8262 万に近い 9 千万台の見込み）。範囲の取り方は変えない。AssetCook を変えると 214 項目すべての印が変わるので、ビルドの後すぐに dem:2,3 を単独の組にした 12 組の並列で焼き（手順の台本は反復 1 の `cook2/run.ps1` と同じ形）、`CookAssets.ps1` で cooked=0 を確かめてから撮影する。撮影の後、ref_far_01 の左（`crop_far01_left.png`、切り出しは (0,500)〜(620,720) の 2 倍）を `v4_crop_far01_left.png` と並べ、段と割れ目の影・境の継ぎ目・溢れ 0 を確かめる。撮影がまた読み込み中から抜けなければ、ジオメトリのプールが 1024 MB から増えないこと（target_mb=3066）が `paths` の外の実行時の側の限界として残る。
+- Notes: 試験は足していない。
