@@ -1535,6 +1535,16 @@
 - paths: Scripts/Terrain, Docs/RenderingValidation, TASKS.md, PROGRESS.md
 - notes: 2026-10-15 ユーザー: 品質の確認は節目ごと（3 回程度）にユーザーが見る。
 
+## SCN-WL-GEOMETRY-PAGE-THRASH: ジオメトリのページの置き場が足りないとき、ページを外し続けて読み込みが終わらなくなるのを直す
+- status: todo
+- done-when: 崖の細部を左の奥の崖まで 1 m で焼いた版（崖の区画の合計 1 億 2610 万三角形、run 20261015-203920 の反復 2）で、荒野の撮影が読み込み中から抜けなかった（`GEOMETRY_PAGES` の evicted が数分で 2 万 7 千、`VRAM_LEDGER geometry_pool blocks=1 capacity_mb=1024`、target_mb は 3066）。原因の見立て: ページはメッシュと同じ塊にしか置けず（`MegaGeometryResourceStore::BeginUpload` の `AllocateInBlock`）、全メッシュの根が最初の 1 GB の塊に入るので、塊が埋まると NoSpace になる。そのとき `GeometryPageStreamer.h` の `StartUploadsLocked` の NoSpace のループは、要求より古い常駐ページを塊を問わず外し続け、外した領域は GPU の使用が終わるまで返らないので、空かないまま一度に数千ページを外す。まず見立てをログか試験で確かめ、違っていれば本当の原因を直す。直す形の目安: (1) NoSpace のときに外すのは同じ塊のページだけにし、返却待ちの領域があるあいだは外し続けずに次のフレームを待つ。(2) メッシュを置くとき、その塊にページの置き場が残らなければ新しい塊へ置き、プールを VRAM の目標（geometry_target_mb）まで複数の塊に広げる。確かめ方: 置き場が足りない状態を作り（1 億 2610 万三角形の版の焼き直し、または塊の大きさを小さくする設定。Release に計測・デバッグの機能を足さない）、荒野の全 11 視点の撮影が 10 分以内に終わり、外したページの数が読み込んだページの数を大きく超えないことをログで確かめる。今の焼きの荒野・mega-bananas（既定の本数）・起動画面の撮影が変わらないこと（溢れ 0、読み込みの時間が延びない）を確かめる。試験は既存の `Test/Core/Rendering/GeometryPageStreamerTest.cpp` の中に、NoSpace で返却待ちのあいだにページを外し続けないことの 1 件だけ足してよい（新しい試験の実行ファイルは作らない）。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-WL-GEOMETRY-PAGE-THRASH`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -OutDir .harness/runs/scene-capture/SCN-WL-GEOMETRY-PAGE-THRASH-mega`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -OutDir .harness/runs/startup-capture/SCN-WL-GEOMETRY-PAGE-THRASH`
+- paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Test/Core/Rendering, Tools/AssetCook, Scripts, Docs/RenderingValidation, Docs/Architecture, TASKS.md, PROGRESS.md
+- notes: 危険地帯（メモリ・RenderThread・ジオメトリのストリーミング）。2026-10-15 親が SCN-WL-CLIFF-DETAIL-ALL の blocked（反復 2）の調べから足した。荒野は美しさを先にして崖・岩・草の三角形を増やしていくので、置き場の不足で読み込みが止まらないようにする。崖の細部の範囲はこの項目では変えない。
+
 ## SCN-WL-OUTPOST: 前哨地を自然に平らな所へ置き直し、建物と道の範囲だけ均す
 - status: todo
 - done-when: SCN-WL-REFERENCE-SELECT で選んだ平らな場所へ、前哨地（建物 6 種 8 棟・門・道）を置き直し、建物の足元と道の範囲だけ高さ場を緩い平面へ寄せる（境で高さと傾斜を滑らかにつなぎ、円形の継ぎ目を作らない）。造成は高さ場の規則として持ち、クックと Game が同じ値を使う（区画を焼き直す）。outpost の視点を置き直す。outpost・ground の撮影を開き、建物が浮かず埋まりすぎず、造成の境が見えないことを確かめる。散布の除外範囲（建物・道）を決めて書く。`wasteland` の cycle smoke 3 周が pass。
