@@ -1450,7 +1450,7 @@
 - notes: 写真の加工やホワイトバランスが分からないので、RGB の値の一致を合格の条件にしない（PSNR・SSIM も使わない）。値は差の向きと大きさを見るために使う。。撮影の verify は手本の 6 視点だけを 3 視点ずつ 2 本に分ける（Debug の 1920×1080 は 1 視点に約 107 秒かかり、全 11 視点を 1 本で撮ると 1 コマンド 10 分の上限を超えるため）。 2026-10-15 親: 反復 1 の評価の差し戻し（cliff_01・far_01・ground_01 の輪郭が対応しない）を受けて、範囲の外の主役と地表の比較用の写真を分けた。
 
 ## SCN-WL-HORIZON: 遠景を粗い実地形でつなぐ
-- status: todo
+- status: blocked
 - done-when: 1 m タイルの範囲（約 10 km 四方）のうち切り出しの外側を、粗い間隔（例 8〜16 m）の遠景の地形として焼き、近景の区画の外周と隙間・段差なくつなぐ（近景の外周の高さへ寄せる帯を置く）。手本の写真に写る稜線（北の Cedar Mesa の崖など）が入る範囲にし、遠クリップを合わせる。far_01 の主役（Castle Butte と背後の Cedar Mesa の縁）が写るようにし、far_01 の視点を合わせ直して比較画像で輪郭が対応することを確かめる（写真の主役になる地形は粗くせず 1〜2 m で焼く）。ridge と overview の撮影を開き、外周の板・壁・継ぎ目・浮いた縁が無く、地平線に実地形の稜線が見えることを確かめる。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-WL-HORIZON`
@@ -1465,7 +1465,7 @@
 - notes: 1 m の格子をそのまま微分すると細かい凹凸を拾うので、数 m の幅で見た値を使う。地層の高さは地図に焼かず、シェーダーで共通の基準面からの高さとして計算する（SCN-WL-MATERIAL-STRATA）。
 
 ## SCN-WL-MATERIAL-MASKS: 地図を今の 3 層の描画へつなぐ
-- status: todo
+- status: done
 - done-when: 地形の材質（今の 3 層）の重みを、地図から取る（傾斜・高さの式は地図が無い所の予備にする）。地図の座標を地形と揃え、MegaGeometry のラスタと可視バッファの解決の両方で効く。地形の LOD が変わっても分類が大きく動かない。overview・cliff の撮影を開き、露岩・崖錐・地表の分かれ方が地図どおりで、手本の比較画像で分布が近づいたことを確かめる。Rendering3DTest の撮影が変わらない。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-WL-MATERIAL-MASKS`

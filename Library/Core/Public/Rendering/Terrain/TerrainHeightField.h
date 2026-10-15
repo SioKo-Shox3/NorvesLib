@@ -215,6 +215,23 @@ namespace NorvesLib::Core::Rendering::Terrain
     /// 遠景の地形の記述の形式の名前（記述の format）
     inline constexpr const char *kTerrainHorizonFormat = "norveslib.terrain-horizon.v1";
 
+    /// 地表の分類の地図（Scripts/Terrain/TerrainMasks.py が書く surface.png）の、ワールドでの置き場と大きさ。
+    /// 地図の u は X の最小から最大へ、v は Z の最小から最大へ（画像の 1 行目が Z の最小 = 北）
+    struct TerrainSurfaceMaskLayout
+    {
+        float MinX = 0.0f;
+        float MaxX = 0.0f;
+        float MinZ = 0.0f;
+        float MaxZ = 0.0f;
+        uint32_t Width = 0;  // 画像の列の数
+        uint32_t Height = 0; // 画像の行の数
+    };
+
+    /// 地表の分類の地図の記述（surface.json）を読み、地図の外縁を outLayout に入れる。descriptorPath はアセットの根からの道。
+    /// 読めない・形式や大きさが約束と違う（外縁の幅が列の数 × 画素の広さと合わない）ときは false を返し、outError に理由を書く
+    bool LoadTerrainSurfaceMaskLayout(Container::AnsiStringView descriptorPath, TerrainSurfaceMaskLayout &outLayout,
+                                      Container::AnsiString &outError);
+
     /// 荒野のシーン（wasteland）の地形の値。クッカーと Game が同じ値を使う
     namespace WastelandTerrain
     {
@@ -269,6 +286,11 @@ namespace NorvesLib::Core::Rendering::Terrain
 
         /// 遠景のメッシュのクック済みメッシュの論理パスの接頭辞。後ろに "<名前>.generated" を付ける
         inline constexpr const char *kHorizonCookedMeshLogicalPathPrefix = "Assets/Models/WastelandTerrain/WastelandHorizon_";
+
+        /// DEM の格子から焼いた地表の分類の地図の記述（LoadTerrainSurfaceMaskLayout に渡す。アセットの根からの道）
+        inline constexpr const char *kSurfaceMaskDescriptorPath = "Terrain/ValleyOfTheGods/surface.json";
+        /// 地表の分類の地図のテクスチャの論理パス（一覧 Assets/AssetSets/WastelandTerrain.json が線形の BC7 で焼く）
+        inline constexpr const char *kSurfaceMaskTexturePath = "Assets/Terrain/ValleyOfTheGods/surface.png";
 
         /// 荒野の地形の高さ場の値
         TerrainHeightFieldParams MakeParams();

@@ -4515,3 +4515,18 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - BLOCKED: ridge の地平線を実地形にするには 4 枚の外が要る（`blocked/SCN-WL-HORIZON.md`。推奨は 1/3 秒角の `USGS_13_n38w110_20260630.tif` 421 MB）。
 - Notes: AssetCook の実行ファイルとヘッダ（近景の区画の extra_sources）が変わったので、次に絞らずに `CookAssets.ps1` を回すと近景の 100 区画も焼き直しになる（Debug で 1 本約 55 分。遠景は `-OnlyLogicalPath "*WastelandHorizon_*"` で焼いた）。`Game/Scenes/SceneCatalog.h`・`Docs/RenderingValidation/WastelandReference.md` は paths の外だが、完了条件の「far_01 の視点を合わせ直す」の置き場なので ref_far_01 の 1 項目と far_01 の記述だけ直した。撮影の far_01 は 2.7 km 先のビュートが霞で白く、撮影側の輪郭の判定は谷床の縁を拾う（差の一覧の霞の項目）。試験は足していない。
 - Next: 許可が出たら、落としたデータを manifest に足し、far の外の段（32 m 前後）を `HorizonDem.py` に足して焼き、`HorizonSkyline.py` で ridge・outpost の端が 0 になることを確かめてから、TASKS.md の verify（全視点の撮影）を回す。`WastelandDem.md` に遠景の節を書く。
+### SCN-WL-MATERIAL-MASKS 完了（2026-10-15、run 20261015-082405 の反復 5）
+- Done: 地表の分類の地図（`surface.png`、2 m/画素）を地形の 3 層の重みにつないだ。
+  - 地図は一覧 `Assets/AssetSets/WastelandTerrain.json` の `orm` 用途で線形の BC7（ミップ 12 段）に焼く（論理パス `Assets/Terrain/ValleyOfTheGods/surface.png`）。Game は `surface.json` の外縁（`LoadTerrainSurfaceMaskLayout`、`TerrainHeightField.h`）を読み、`MegaTerrainBlend` の `SurfaceMaskTexture`・`SurfaceMaskMinXZ`/`MaxXZ` に入れる。記述が無ければ警告を出して傾斜の式だけで混ぜる。
+  - シェーダー（`TerrainLayerBlend.glsl` の `ComputeTerrainSurfaceMaskWeights`）は地図をワールドの XZ で `textureGrad` で引き、露岩 → 岩肌・崖錐 → 土・細粒 → 砂・礫 → 半分を土・半分を砂へ写す。地図の外縁から内側 32 m の帯で傾斜の式（地図の外と遠景の予備）へ移し、引く位置を 2 m の値ノイズでずらして画素の格子の直線を崩す。1 % 未満の重み（BC7 の誤差）は捨てる。混ぜ方の値は vec4 × 6 → × 8（`mask`・`maskMix`）。
+  - 地図はラスタ（`megageometry.frag` の binding 16、`MegaGeometryPass`）と可視バッファの解決（`VisibilityResolve.glsl` の `VIS_TERRAIN_BINDING + 6`、`VisibilityResolvePass` の地形のテクスチャ 7 枚目）の両方に束ね、材質の表の要約（`VisibilityMaterialTable` の `HashTerrainBlend`）にも地図と値を入れた。
+  - 確認用に、環境変数 `NORVES_TERRAIN_LAYER_COLORS=1` でアルベドを 3 層の重み（岩肌 = 赤・土 = 緑・砂 = 青）に置き換える表示を足した（`TerrainBlendShading.h`）。`Scripts/Terrain/CheckSurfaceMaskCapture.py` は、同じカメラから DEM の 1 m の格子へ光線を飛ばして地図の層を画面へ写した予測と、色分けの撮影を画素ごとに比べる。
+- 検証（`.harness/runs/20261015-082405/`）:
+  - `verify-SCN-WL-MATERIAL-MASKS-1.txt`: Debug の Game のビルド EXIT=0。
+  - `verify-SCN-WL-MATERIAL-MASKS-2.txt`: 荒野の全 11 視点 1920×1080、result=pass（白飛び 0・黒つぶれ 0）、201 秒。検証レイヤーのエラー 0。
+  - `verify-SCN-WL-MATERIAL-MASKS-3.txt`: 起動画面の撮影 result=pass。`aux-...-startup-det.txt`: 決定的な撮影を前回（SCN-WL-CAPTURE-FAST-det-a）と比べて差 0・PSNR 100（Rendering3DTest は変わらない）。
+  - `aux-...-cook.txt`: 地図のクック cooked=1（2350×2300・BC7・ミップ 12）。
+  - `aux-...-maskcheck.txt`（色分けの撮影 `scene-capture/SCN-WL-MATERIAL-MASKS-layers`）: overview は一致 1.000、cliff は 0.993（岩肌 0.998・土 0.925・砂 1.000）。距離の帯ごと（0〜150・150〜500・500〜1500 m）も 0.978 以上で、LOD の段が粗い遠くでも分類が地図から動かない。並べた図（`*_mask_check.png`）で、崖の壁・裾の岩棚・崖錐の舌・沢の礫の形が予測と重なることを開いて確かめた。
+  - 手本の比較画像（`aux-...-compare.txt`、`scene-capture/SCN-WL-MATERIAL-MASKS/reference_*.png`）と、手本の 3 視点の色分けを地図なし（傾斜の式）・地図ありで撮って写真と並べた図（`scene-capture/SCN-WL-MATERIAL-MASKS-layers-ref/layers_*.png`）を開いた: 傾斜の式で低い沢の岸と平らな所に出ていた岩肌の帯と土の斑（ground_02 の中景・overview の沢）が消え、谷床は写真どおり一様な地表になった。崖の壁と岩棚の帯は露岩のまま残り、Franklin Butte・Battleship Rock の円錐は岩棚と崖錐の帯が交互になる（写真の段の並びに近い）。
+- Notes: 写真の cliff_01 は岩屑が円錐の裾まで続くが、地図では裾が礫（半分が土）で崖錐が薄い。礫を土へ回す割合（`kSurfaceMaskGravelToDirt` 0.5）と崖錐の到達の係数は素材を替える SCN-WL-MATERIAL-PALETTE で見直す。色分けの照合の撮影は、1 % 未満の重みを捨てる処理を足す前の版で撮った（重みの差は 1 % 未満）。地図なしの撮影は `-RequireAssets` が地図の警告で fail にした（画像は書かれている）。今の土の材質（dry_ground_rocks）は崖錐の上で暗い斑点が細かく、砂とも色が近い（素材は PALETTE で替える）。`TerrainHeightField.h` を触ったので、絞らずに `CookAssets.ps1` を回すと近景の区画も焼き直しになる（前の反復のメモと同じ）。試験は足していない。
+- Next: TASKS.md の次の未完の項目。

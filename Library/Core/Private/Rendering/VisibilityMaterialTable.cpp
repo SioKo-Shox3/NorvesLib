@@ -59,6 +59,12 @@ namespace NorvesLib::Core::Rendering::VisibilityBuffer
             mix(&blend.DetailDistanceRatio, sizeof(blend.DetailDistanceRatio));
             mix(&blend.DetailMaxLevel, sizeof(blend.DetailMaxLevel));
             mix(&blend.TextureTileMeters, sizeof(blend.TextureTileMeters));
+            mix(&blend.SurfaceMaskTexture.Id, sizeof(blend.SurfaceMaskTexture.Id));
+            mix(blend.SurfaceMaskMinXZ, sizeof(blend.SurfaceMaskMinXZ));
+            mix(blend.SurfaceMaskMaxXZ, sizeof(blend.SurfaceMaskMaxXZ));
+            mix(&blend.SurfaceMaskGravelToDirt, sizeof(blend.SurfaceMaskGravelToDirt));
+            mix(&blend.SurfaceMaskEdgeFadeMeters, sizeof(blend.SurfaceMaskEdgeFadeMeters));
+            mix(&blend.SurfaceMaskWarpMeters, sizeof(blend.SurfaceMaskWarpMeters));
             return hash != 0u ? hash : 1u;
         }
 

@@ -36,9 +36,9 @@ namespace NorvesLib::Core::Rendering
         // 空の表（読まれない）の大きさ。MegaInstance（192 バイト）・InstanceData（208 バイト）より大きい
         constexpr uint64_t PlaceholderBytes = 256;
 
-        // 材質ごとの形の 1 回の dispatch の定数（シェーダーの ResolveTileParams と同じ 128 バイト。
+        // 材質ごとの形の 1 回の dispatch の定数（シェーダーの ResolveTileParams と同じ 160 バイト。
         // tile = 横のタイル数・材質の番号・フラグ・予約、vt = VT のフィードバックのパラメータ（アルベド・法線・ORM・高さ）、
-        // terrain = 地形の混ぜ方の値（vec4 × 6。TerrainBlendShading.h の並び）
+        // terrain = 地形の混ぜ方の値（vec4 × 8。TerrainBlendShading.h の並び）
         constexpr uint32_t TileParamsWords = 8u + VisibilityResolveGeometry::TERRAIN_PARAM_FLOATS;
         constexpr uint32_t TileParamsBytes = TileParamsWords * sizeof(uint32_t);
         static_assert(VisibilityResolveGeometry::TERRAIN_PARAM_FLOATS == TERRAIN_BLEND_PARAM_FLOATS,
@@ -49,7 +49,7 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t DumpBindingIndex = 11u;
         // MegaGeometry のメッシュの表（Common/MegaInstanceTable.glsl の MEGA_MESH_BINDING。材質ごとの形の追加の束縛より後ろ）
         constexpr uint32_t MegaMeshTableBindingIndex = 22u;
-        // 地形の 2・3 層目のテクスチャ（シェーダーの VIS_TERRAIN_BINDING から 6 枚。材質ごとの形だけ。メッシュの表より後ろ）
+        // 地形の 2・3 層目のテクスチャと地表の分類の地図（シェーダーの VIS_TERRAIN_BINDING から 7 枚。材質ごとの形だけ。メッシュの表より後ろ）
         constexpr uint32_t TerrainTextureBindingFirst = 23u;
 
         // bFeedback: 材質ごとの形の最後に VT の要求のバッファ（シェーダーの VT_FEEDBACK_BINDING）を足す（bTiles のときだけ）
@@ -113,7 +113,7 @@ namespace NorvesLib::Core::Rendering
                     binding.stages = RHI::ShaderStage::Compute;
                     desc.bindings.push_back(binding);
                 }
-                // 地形の 2・3 層目のテクスチャ
+                // 地形の 2・3 層目のテクスチャと地表の分類の地図
                 for (uint32_t textureBinding = 0; textureBinding < VisibilityResolveGeometry::TERRAIN_TEXTURE_COUNT;
                      ++textureBinding)
                 {
@@ -159,7 +159,8 @@ namespace NorvesLib::Core::Rendering
             return textures->GetRHITexturePtr(handle);
         }
 
-        // 地形の混ぜ合わせ（材質の表と同じ添え字の値）を解決の入力へ写す。2・3 層目の 6 枚がすべて引けたときだけ有効にする
+        // 地形の混ぜ合わせ（材質の表と同じ添え字の値）を解決の入力へ写す。2・3 層目の 6 枚がすべて引けたときだけ有効にする。
+        // 地表の分類の地図は引けたときだけ張る（引けなければ傾斜の式だけで混ぜる）
         void AttachTerrainBlend(const TextureResources* textures,
                                 const MegaGeometry::MegaTerrainBlend* terrain,
                                 VisibilityResolveMaterial& material)
@@ -168,10 +169,10 @@ namespace NorvesLib::Core::Rendering
             {
                 return;
             }
-            const TextureHandle handles[VisibilityResolveGeometry::TERRAIN_TEXTURE_COUNT] = {
+            const TextureHandle handles[VisibilityResolveGeometry::TERRAIN_LAYER_TEXTURE_COUNT] = {
                 terrain->Dirt.AlbedoTexture, terrain->Dirt.NormalTexture, terrain->Dirt.ORMTexture,
                 terrain->Rock.AlbedoTexture, terrain->Rock.NormalTexture, terrain->Rock.ORMTexture};
-            for (uint32_t index = 0; index < VisibilityResolveGeometry::TERRAIN_TEXTURE_COUNT; ++index)
+            for (uint32_t index = 0; index < VisibilityResolveGeometry::TERRAIN_LAYER_TEXTURE_COUNT; ++index)
             {
                 material.TerrainTextures[index] = ResolveMaterialTexture(textures, handles[index]);
                 if (!material.TerrainTextures[index])
@@ -184,7 +185,9 @@ namespace NorvesLib::Core::Rendering
                 }
             }
             material.bTerrainBlend = true;
-            PackTerrainBlendParams(*terrain, true, material.TerrainParams);
+            RHI::TexturePtr& mask = material.TerrainTextures[VisibilityResolveGeometry::TERRAIN_SURFACE_MASK_INDEX];
+            mask = ResolveMaterialTexture(textures, terrain->SurfaceMaskTexture);
+            PackTerrainBlendParams(*terrain, true, mask != nullptr, material.TerrainParams);
         }
 
     } // namespace
@@ -789,7 +792,18 @@ namespace NorvesLib::Core::Rendering
                     bound.Flags |= VisibilityResolveGeometry::TILE_FLAG_SPARSE;
                 }
             }
-            // 地形の 2・3 層目。地形でない材質は、読まない枠を 1 層目のアルベド・法線・金属度（ORM）の枠で埋める
+            // 地形の 2・3 層目と地表の分類の地図。地形でない材質と、地図の無い地形の材質は、読まない枠を 1 層目の
+            // アルベド・法線・金属度（ORM）の枠で埋める
+            {
+                const RHI::TexturePtr& mask =
+                    input.TerrainTextures[VisibilityResolveGeometry::TERRAIN_SURFACE_MASK_INDEX];
+                bound.TerrainTextures[VisibilityResolveGeometry::TERRAIN_SURFACE_MASK_INDEX] =
+                    input.bTerrainBlend && mask ? mask : bound.Textures[0];
+                if (bound.TerrainTextures[VisibilityResolveGeometry::TERRAIN_SURFACE_MASK_INDEX]->IsSparse())
+                {
+                    bound.Flags |= VisibilityResolveGeometry::TILE_FLAG_SPARSE;
+                }
+            }
             for (uint32_t layer = 0; layer < 2u; ++layer)
             {
                 for (uint32_t slot = 0; slot < 3u; ++slot)

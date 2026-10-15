@@ -324,7 +324,10 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
      *
      * 1 層目（砂）は材質の Albedo・Normal・ORM の枠をそのまま使い、ここは 2 層目（乾いた土）・3 層目（岩肌）と混ぜ方を持つ。
      * 混ぜ方はシェーダー（Assets/Shaders/Common/TerrainLayerBlend.glsl）が画素ごとに決める:
-     *   1. 傾斜（幾何の法線と真上のなす角）に、低周波ノイズの揺らぎと高さによる寄せを足し、土・岩肌へ移る角度の範囲で重みを作る。
+     *   1. 地表の分類の地図（SurfaceMaskTexture）があり、画素が地図の範囲の中なら、地図の重みを 3 層へ写す（露岩 → 岩肌、
+     *      崖錐 → 土、地表（細粒）→ 砂、地表（礫）→ SurfaceMaskGravelToDirt の割合で土・残りを砂）。地図はワールドの XZ で引くので、
+     *      地形の LOD の段で分類が変わらない。地図の外と、外縁から SurfaceMaskEdgeFadeMeters の帯では下の傾斜の式へ移す。
+     *      傾斜の式（予備）: 傾斜（幾何の法線と真上のなす角）に、低周波ノイズの揺らぎと高さによる寄せを足し、土・岩肌へ移る角度の範囲で重みを作る。
      *   2. 各層の高さ（凹凸。土・岩肌は ORM の AO、砂は SandFillHeight の一定の面）に重みを足し、最も高い層から
      *      BlendDepth 以内の層だけを残す（岩肌のくぼみは低いので、境目では砂がくぼみに溜まる）。
      * 標本: 3 層ともトライプラナー（崖でも引き伸ばされない。平らな所は真上からの投影だけ）。カメラからの距離が DetailStartDistance の
@@ -356,6 +359,14 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         float DetailMaxLevel = 3.0f;                // 段の上限
         float TextureTileMeters = 4.0f;             // テクスチャの 1 枚が覆う広さ（m。層の UV の倍率 1 のとき）
 
+        // 地表の分類の地図（線形の RGBA。R = 露岩・G = 崖錐・B = 地表（細粒）・A = 地表（礫）の重み。無効なら傾斜の式だけで混ぜる）
+        TextureHandle SurfaceMaskTexture;
+        float SurfaceMaskMinXZ[2] = {0.0f, 0.0f};   // 地図の外縁のワールドの X・Z の最小（地図の u = 0・v = 0）
+        float SurfaceMaskMaxXZ[2] = {0.0f, 0.0f};   // 地図の外縁のワールドの X・Z の最大（u = 1・v = 1）
+        float SurfaceMaskGravelToDirt = 0.5f;       // 地表（礫）の重みのうち土へ回す割合（残りは砂）
+        float SurfaceMaskEdgeFadeMeters = 32.0f;    // 地図の外縁から内側へ、傾斜の式から地図の重みへ移す帯の幅（m）
+        float SurfaceMaskWarpMeters = 2.0f;         // 地図を引く位置を低周波ノイズでずらす幅（m。画素の格子の直線の境を崩す）
+
         bool operator==(const MegaTerrainBlend &other) const
         {
             if (bEnabled != other.bEnabled)
@@ -377,7 +388,12 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
                    MacroWavelengths[1] == other.MacroWavelengths[1] && MacroBrightness == other.MacroBrightness &&
                    MacroHue == other.MacroHue && DetailStartDistance == other.DetailStartDistance &&
                    DetailDistanceRatio == other.DetailDistanceRatio && DetailMaxLevel == other.DetailMaxLevel &&
-                   TextureTileMeters == other.TextureTileMeters;
+                   TextureTileMeters == other.TextureTileMeters && SurfaceMaskTexture == other.SurfaceMaskTexture &&
+                   SurfaceMaskMinXZ[0] == other.SurfaceMaskMinXZ[0] && SurfaceMaskMinXZ[1] == other.SurfaceMaskMinXZ[1] &&
+                   SurfaceMaskMaxXZ[0] == other.SurfaceMaskMaxXZ[0] && SurfaceMaskMaxXZ[1] == other.SurfaceMaskMaxXZ[1] &&
+                   SurfaceMaskGravelToDirt == other.SurfaceMaskGravelToDirt &&
+                   SurfaceMaskEdgeFadeMeters == other.SurfaceMaskEdgeFadeMeters &&
+                   SurfaceMaskWarpMeters == other.SurfaceMaskWarpMeters;
         }
     };
 

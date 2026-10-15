@@ -800,6 +800,81 @@ namespace NorvesLib::Core::Rendering::Terrain
         return normal;
     }
 
+    bool LoadTerrainSurfaceMaskLayout(Container::AnsiStringView descriptorPath, TerrainSurfaceMaskLayout &outLayout,
+                                      Container::AnsiString &outError)
+    {
+        constexpr uint64_t kMaxDescriptorBytes = 1024u * 1024u;
+        constexpr int64_t kMaxPixels = 16384;
+        // Scripts/Terrain/TerrainMasks.py の記述の format と同じ文字列
+        constexpr const char *kMaskFormat = "PNG RGBA8, row 0 = north (engine z min), column 0 = west (engine x min)";
+
+        outLayout = TerrainSurfaceMaskLayout();
+        Asset::AssetFileReader reader;
+        Asset::AssetReadRequest request;
+        request.InputPath.append(descriptorPath.data(), descriptorPath.size());
+        request.bAllowAbsolutePath = false;
+        request.MaxReadBytes = kMaxDescriptorBytes;
+        const Asset::AssetReadResult descriptor = reader.Read(request);
+        if (!descriptor.Succeeded())
+        {
+            outError = MakeGridError("地表の分類の地図の記述を読めません", descriptorPath);
+            return false;
+        }
+        Container::Span<const uint8_t> text(descriptor.Blob.GetData(), descriptor.Blob.GetSize());
+        if (text.size() >= 3 && text[0] == 0xefu && text[1] == 0xbbu && text[2] == 0xbfu)
+        {
+            text = {text.data() + 3, text.size() - 3};
+        }
+        JsonDocument document;
+        if (!JsonDocument::TryParseUtf8(text, document))
+        {
+            outError = MakeGridError("地表の分類の地図の記述が JSON として読めません", descriptorPath);
+            return false;
+        }
+        const JsonValue root = document.GetRoot();
+        const JsonValue channels = root.FindMember("channels");
+        if (!JsonStringEquals(root.FindMember("format"), kMaskFormat) || !channels.IsObject() ||
+            !JsonStringEquals(channels.FindMember("r"), "rock") || !JsonStringEquals(channels.FindMember("g"), "talus") ||
+            !JsonStringEquals(channels.FindMember("b"), "ground_fine") ||
+            !JsonStringEquals(channels.FindMember("a"), "ground_gravel"))
+        {
+            outError = MakeGridError("地表の分類の地図の記述の形式・チャンネルの並びが約束と違います", descriptorPath);
+            return false;
+        }
+        const JsonValue width = root.FindMember("width");
+        const JsonValue height = root.FindMember("height");
+        const JsonValue edges = root.FindMember("engine_edges");
+        double texel = 0.0;
+        double minX = 0.0;
+        double maxX = 0.0;
+        double minZ = 0.0;
+        double maxZ = 0.0;
+        if (!width.IsIntegerLiteral() || !height.IsIntegerLiteral() || width.AsInt64() < 2 || height.AsInt64() < 2 ||
+            width.AsInt64() > kMaxPixels || height.AsInt64() > kMaxPixels ||
+            !JsonFiniteNumber(root.FindMember("texel_size_m"), texel) || texel <= 0.0 || !edges.IsObject() ||
+            !JsonFiniteNumber(edges.FindMember("x_min"), minX) || !JsonFiniteNumber(edges.FindMember("x_max"), maxX) ||
+            !JsonFiniteNumber(edges.FindMember("z_min"), minZ) || !JsonFiniteNumber(edges.FindMember("z_max"), maxZ))
+        {
+            outError = MakeGridError("地表の分類の地図の大きさ・画素の広さ・外縁が読めません", descriptorPath);
+            return false;
+        }
+        const double expectedWidth = static_cast<double>(width.AsInt64()) * texel;
+        const double expectedDepth = static_cast<double>(height.AsInt64()) * texel;
+        if (std::fabs((maxX - minX) - expectedWidth) > 1.0e-3 * texel ||
+            std::fabs((maxZ - minZ) - expectedDepth) > 1.0e-3 * texel)
+        {
+            outError = MakeGridError("地表の分類の地図の外縁の幅が、列・行の数 × 画素の広さと合いません", descriptorPath);
+            return false;
+        }
+        outLayout.MinX = static_cast<float>(minX);
+        outLayout.MaxX = static_cast<float>(maxX);
+        outLayout.MinZ = static_cast<float>(minZ);
+        outLayout.MaxZ = static_cast<float>(maxZ);
+        outLayout.Width = static_cast<uint32_t>(width.AsInt64());
+        outLayout.Height = static_cast<uint32_t>(height.AsInt64());
+        return true;
+    }
+
     namespace WastelandTerrain
     {
         TerrainHeightFieldParams MakeParams()

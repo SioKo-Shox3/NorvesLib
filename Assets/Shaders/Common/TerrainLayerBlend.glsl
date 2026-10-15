@@ -6,8 +6,13 @@
 // Common/PbrMaterialEvaluation.glsl・Common/SparseResidencySampling.glsl・Common/PbrMaterialTextureSamplingCore.glsl の後に取り込む。
 //
 // 混ぜ方:
-//   1. 傾斜（幾何の法線と真上のなす角）に、低周波ノイズ（2 つの波長の値ノイズ）の揺らぎと、高さによる土への寄せを足し、
-//      土・岩肌へ移る角度の範囲（smoothstep）で重みを作る。平らな所は砂、少し傾いた所は土、急な斜面は岩肌になる。
+//   1. 地表の分類の地図（R = 露岩・G = 崖錐・B = 地表（細粒）・A = 地表（礫）の重み）があり、画素が地図の範囲の中なら、
+//      地図の重みを 3 層へ写す（露岩 → 岩肌、崖錐 → 土、細粒 → 砂、礫 → 決めた割合で土・残りを砂）。地図はワールドの XZ で
+//      引くので、地形の LOD の段（幾何の法線）が変わっても分類は動かない。引く位置を数 m の低周波ノイズでずらし、
+//      地図の画素の格子の直線の境を崩す。地図の外は下の傾斜の式で決め、外縁の内側の帯で 2 つを混ぜてつなぐ。
+//      傾斜の式（地図の無い所の予備）: 傾斜（幾何の法線と真上のなす角）に、低周波ノイズ（2 つの波長の値ノイズ）の揺らぎと、
+//      高さによる土への寄せを足し、土・岩肌へ移る角度の範囲（smoothstep）で重みを作る。平らな所は砂、少し傾いた所は土、
+//      急な斜面は岩肌になる。
 //   2. 高さ（凹凸）で重みを付ける: 各層の高さ（土・岩肌は ORM の AO、砂は一定の高さ）に重みを足し、最も高い層から
 //      混ぜの深さ以内の層だけを残す。岩肌のくぼみ（AO が低い）は砂の面より低いので、境目では砂がくぼみに溜まる。
 //
@@ -31,10 +36,18 @@ struct TerrainBlendParams
     vec4 layers; // x = 有効（1/0）、y = 土の UV の倍率、z = 岩肌の UV の倍率、w = 法線が 2 チャンネルの層のビット（1 = 土、2 = 岩肌）
     vec4 macro;  // x,y = 明るさ・色味の揺らぎの 2 つの波長の逆数（1/m）、z = 明るさの揺らぎの振幅（割合）、w = 色味の揺らぎの振幅
     vec4 detail; // x = UV の倍率を変え始める距離（m）、y = 1 段ごとの距離の比の log2、z = 段の上限、w = テクスチャの 1 枚の広さ（m）
+    vec4 mask;    // x,y = 地表の分類の地図の外縁のワールドの X・Z の最小、z,w = X・Z の広さの逆数（1/m。z が 0 なら地図なし）
+    vec4 maskMix; // x = 礫の重みを土へ回す割合、y = 外縁の内側で傾斜の式から地図へ移す帯の幅（m）、z = 引く位置のずらしの幅（m）、
+                  // w = 確認用の色分け（1 ならアルベドを岩肌 = 赤・土 = 緑・砂 = 青の重みにする。TerrainBlendShading.h）
 };
 
 const uint TERRAIN_BLEND_DIRT_NORMAL_TWO_CHANNEL = 1u;
 const uint TERRAIN_BLEND_ROCK_NORMAL_TWO_CHANNEL = 2u;
+
+// 地図を引く位置をずらすノイズの波長（m）
+const float TERRAIN_SURFACE_MASK_WARP_WAVELENGTH = 7.0;
+// 地図の重みのうち捨てる小さな値（圧縮（BC7）の誤差で平らな所に残るわずかな重みで、その層を標本しない）
+const float TERRAIN_SURFACE_MASK_MIN_WEIGHT = 0.01;
 
 // トライプラナーの重みの鋭さ（法線の成分の何乗で重みにするか）と、捨てる小さな重み（その投影は標本しない）
 const float TERRAIN_TRIPLANAR_SHARPNESS = 4.0;
@@ -120,6 +133,42 @@ vec3 ComputeTerrainSlopeWeights(TerrainBlendParams params, vec3 worldPosition, v
     const float dirt = smoothstep(params.slope.x, params.slope.y, slope + jitter + heightBias);
     const float rock = smoothstep(params.slope.z, params.slope.w, slope + jitter);
     return vec3((1.0 - dirt) * (1.0 - rock), dirt * (1.0 - rock), rock);
+}
+
+// 地表の分類の地図から、砂・土・岩肌の重み（xyz。合計 1）と、地図の効きの割合（w。0 = 傾斜の式だけ、1 = 地図だけ）を求める。
+// 地図の外・地図なし・重みの無い画素は w = 0 を返す（地図のテクスチャを読まない）
+vec4 ComputeTerrainSurfaceMaskWeights(TerrainBlendParams params, sampler2D surfaceMask, TerrainSurfaceInput surface)
+{
+    const vec2 invSize = params.mask.zw;
+    if (invSize.x <= 0.0 || invSize.y <= 0.0)
+    {
+        return vec4(0.0);
+    }
+    vec2 xz = surface.WorldPosition.xz;
+    if (params.maskMix.z > 0.0)
+    {
+        const vec2 p = xz * (1.0 / TERRAIN_SURFACE_MASK_WARP_WAVELENGTH);
+        const vec2 warp = vec2(TerrainValueNoise(p + vec2(-23.17, 5.71)), TerrainValueNoise(p + vec2(11.39, 37.53)));
+        xz += (warp * 2.0 - 1.0) * params.maskMix.z;
+    }
+    const vec2 uv = (xz - params.mask.xy) * invSize;
+    // 外縁からの距離（m。外は負）で、傾斜の式から地図へ移す
+    const vec2 edgeMeters = min(uv, vec2(1.0) - uv) / invSize;
+    const float coverage = clamp(min(edgeMeters.x, edgeMeters.y) / max(params.maskMix.y, 1.0e-3), 0.0, 1.0);
+    if (coverage <= 0.0)
+    {
+        return vec4(0.0);
+    }
+    const vec4 classes = textureGrad(surfaceMask, uv, surface.WorldDx.xz * invSize, surface.WorldDy.xz * invSize);
+    const float total = classes.r + classes.g + classes.b + classes.a;
+    if (total < 1.0e-3)
+    {
+        return vec4(0.0);
+    }
+    const float gravelToDirt = params.maskMix.x;
+    const vec3 weights = vec3(classes.b + classes.a * (1.0 - gravelToDirt), classes.g + classes.a * gravelToDirt, classes.r);
+    const vec3 kept = max(weights / total - vec3(TERRAIN_SURFACE_MASK_MIN_WEIGHT), vec3(0.0));
+    return vec4(kept / max(kept.x + kept.y + kept.z, 1.0e-6), coverage);
 }
 
 // 高さ（凹凸）で重みを付け直す。layerHeights は各層の高さ（0〜1）。重みが 0 の層は高さを足さない
@@ -276,16 +325,24 @@ vec3 ApplyTerrainMacroVariation(TerrainBlendParams params, vec3 albedo, vec2 xz)
 }
 
 // 地形の 3 層を混ぜた材質値を返す（TangentNormal は使わない。法線は worldNormal にワールドの向きで返す）。
-// 1 層目（砂）は材質のアルベド・法線・ORM の枠のテクスチャ（ORM の 1 枚を前提にする）
+// 1 層目（砂）は材質のアルベド・法線・ORM の枠のテクスチャ（ORM の 1 枚を前提にする）。surfaceMask は地表の分類の地図
+// （params.mask.z が 0 なら読まないので、地図の無い材質は何を張ってもよい）
 PbrMaterialTextureSamples ShadeTerrainLayers(TerrainBlendParams params,
                                              sampler2D sandAlbedo, sampler2D sandNormal, sampler2D sandOrm,
                                              bool bSandNormalTwoChannel,
                                              sampler2D dirtAlbedo, sampler2D dirtNormal, sampler2D dirtOrm,
                                              sampler2D rockAlbedo, sampler2D rockNormal, sampler2D rockOrm,
+                                             sampler2D surfaceMask,
                                              TerrainSurfaceInput surface, bool bVirtualTexture, out vec3 worldNormal)
 {
     const vec3 n = normalize(surface.GeometricNormal);
-    const vec3 slopeWeights = ComputeTerrainSlopeWeights(params, surface.WorldPosition, n);
+    // 地図の中は地図の重み、外は傾斜の式。外縁の帯で混ぜる（地図だけの所では傾斜の式を求めない）
+    const vec4 maskWeights = ComputeTerrainSurfaceMaskWeights(params, surfaceMask, surface);
+    vec3 layerWeights = maskWeights.xyz;
+    if (maskWeights.w < 1.0)
+    {
+        layerWeights = mix(ComputeTerrainSlopeWeights(params, surface.WorldPosition, n), maskWeights.xyz, maskWeights.w);
+    }
     const uint normalBits = uint(params.layers.w + 0.5);
     const TerrainDetailLevels levels = ComputeTerrainDetailLevels(params, surface.CameraDistance);
     const TerrainProjectionFrame frame = MakeTerrainProjectionFrame(n);
@@ -297,13 +354,13 @@ PbrMaterialTextureSamples ShadeTerrainLayers(TerrainBlendParams params,
                                                        tileMeters);
     TerrainLayerSample dirt = sand;
     TerrainLayerSample rock = sand;
-    if (slopeWeights.y > 0.0)
+    if (layerWeights.y > 0.0)
     {
         dirt = SampleTerrainLayer(dirtAlbedo, dirtNormal, dirtOrm,
                                   (normalBits & TERRAIN_BLEND_DIRT_NORMAL_TWO_CHANNEL) != 0u, bVirtualTexture,
                                   surface, frame, projection, levels, params.layers.y, tileMeters);
     }
-    if (slopeWeights.z > 0.0)
+    if (layerWeights.z > 0.0)
     {
         rock = SampleTerrainLayer(rockAlbedo, rockNormal, rockOrm,
                                   (normalBits & TERRAIN_BLEND_ROCK_NORMAL_TWO_CHANNEL) != 0u, bVirtualTexture,
@@ -312,11 +369,15 @@ PbrMaterialTextureSamples ShadeTerrainLayers(TerrainBlendParams params,
 
     // 凹凸の高さ: 砂は一定の面、土・岩肌は AO（Material.z）。くぼみほど低い
     const vec3 layerHeights = vec3(params.noise.w, dirt.Material.z, rock.Material.z);
-    const vec3 w = ApplyTerrainHeightBlend(slopeWeights, layerHeights, params.height.w);
+    const vec3 w = ApplyTerrainHeightBlend(layerWeights, layerHeights, params.height.w);
 
     PbrMaterialTextureSamples result;
     result.Albedo = sand.Albedo * w.x + dirt.Albedo * w.y + rock.Albedo * w.z;
     result.Albedo.rgb = ApplyTerrainMacroVariation(params, result.Albedo.rgb, surface.WorldPosition.xz);
+    if (params.maskMix.w > 0.5)
+    {
+        result.Albedo.rgb = vec3(w.z, w.y, w.x) * 0.6;
+    }
     result.TangentNormal = vec3(0.0, 0.0, 1.0);
     result.Material = sand.Material * w.x + dirt.Material * w.y + rock.Material * w.z;
     worldNormal = normalize(n + sand.Perturbation * w.x + dirt.Perturbation * w.y + rock.Perturbation * w.z);

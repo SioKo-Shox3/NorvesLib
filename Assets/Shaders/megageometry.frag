@@ -28,7 +28,7 @@ layout(set = 0, binding = 0) uniform MVPData
     vec4 frameParams; // x=前のカメラがあるか（1/0）, y=発光に掛けるプリエクスポージャ, z=変位の頂点の間隔（UV。0なら変位なし）, w=fragDebugPayload がLODの段か（1/0）
     vec4 materialParams; // x=ORMの1枚が metallicTexture の枠に張られているか（1/0）, y=法線が2チャンネル（BC5）か（1/0）, z=材質のテクスチャが sparse（VT）か（1/0）, w=VT のフィードバックのパラメータ（アルベド。0 は書かない。VirtualTextureFeedback.glsl）
     vec4 vtFeedbackParams; // VT のフィードバックのパラメータ: x=法線, y=ORM（metallicTexture の枠）, z=高さ（0 は書かない）
-    vec4 terrainParams[6]; // 地形の 3 層の混ぜ合わせ（Common/TerrainLayerBlend.glsl の TerrainBlendParams。layers.x が 0 なら 1 層の材質）
+    vec4 terrainParams[8]; // 地形の 3 層の混ぜ合わせ（Common/TerrainLayerBlend.glsl の TerrainBlendParams。layers.x が 0 なら 1 層の材質）
 } mvp;
 
 // PBRテクスチャサンプラー
@@ -45,6 +45,8 @@ layout(set = 0, binding = 12) uniform sampler2D terrainDirtOrmTexture;
 layout(set = 0, binding = 13) uniform sampler2D terrainRockAlbedoTexture;
 layout(set = 0, binding = 14) uniform sampler2D terrainRockNormalTexture;
 layout(set = 0, binding = 15) uniform sampler2D terrainRockOrmTexture;
+// 地形の地表の分類の地図（R = 露岩・G = 崖錐・B = 地表（細粒）・A = 地表（礫）。地図の無い材質はアルベドが張られ、読まない）
+layout(set = 0, binding = 16) uniform sampler2D terrainSurfaceMaskTexture;
 
 #include "Common/PbrMaterialEvaluation.glsl"
 #include "Common/SparseResidencySampling.glsl"
@@ -171,7 +173,8 @@ void main()
     // 地形の材質は、砂・土・岩肌の 3 層をワールドの位置から標本して傾斜・高さ・ノイズで混ぜ、法線もワールドの向きで得る
     // （上の 1 層の標本は VT の要求にだけ使う）
     TerrainBlendParams terrain = TerrainBlendParams(mvp.terrainParams[0], mvp.terrainParams[1], mvp.terrainParams[2],
-                                                    mvp.terrainParams[3], mvp.terrainParams[4], mvp.terrainParams[5]);
+                                                    mvp.terrainParams[3], mvp.terrainParams[4], mvp.terrainParams[5],
+                                                    mvp.terrainParams[6], mvp.terrainParams[7]);
     bool bTerrain = IsTerrainBlendEnabled(terrain);
     vec3 terrainNormal = vec3(0.0, 1.0, 0.0);
     if (bTerrain)
@@ -186,7 +189,7 @@ void main()
                                             mvp.materialParams.y > 0.5,
                                             terrainDirtAlbedoTexture, terrainDirtNormalTexture, terrainDirtOrmTexture,
                                             terrainRockAlbedoTexture, terrainRockNormalTexture, terrainRockOrmTexture,
-                                            surface, bVirtualTexture, terrainNormal);
+                                            terrainSurfaceMaskTexture, surface, bVirtualTexture, terrainNormal);
     }
     // VT のフィードバック: POM の後の UV で欲しいタイルの要求を書く（VT のテクスチャごとに表の番号を持つ）。
     // 高さだけは POM の前の元の UV で書く。

@@ -59,6 +59,8 @@ namespace NorvesLib::Core::Rendering
         // 地形の混ぜ合わせの材質のサンプラーの異方性の上限
         constexpr uint32_t TerrainSamplerMaxAnisotropy = 16;
         constexpr uint32_t TerrainLayerTextureCount = 6;
+        // 地形の地表の分類の地図の binding（megageometry.frag の terrainSurfaceMaskTexture。2・3 層目の 6 枚の次）
+        constexpr uint32_t TerrainSurfaceMaskBindingIndex = 16;
         // メッシュの表の binding（Common/MegaInstanceTable.glsl の MEGA_MESH_BINDING。カリングと描画のセットで同じ番号）
         constexpr uint32_t MegaMeshTableBindingIndex = 22;
 
@@ -3084,12 +3086,19 @@ namespace NorvesLib::Core::Rendering
                     terrainTextures[5] = metallic;
                 }
             }
-            PackTerrainBlendParams(terrain, bTerrainBlend, uniform.TerrainParams);
+            // 地表の分類の地図は引けたときだけ使う（引けなければ傾斜の式だけで混ぜる）。読まない枠はアルベドで埋める
+            RHI::TexturePtr surfaceMask =
+                bTerrainBlend ? resolveTexture(terrain.SurfaceMaskTexture, nullptr) : RHI::TexturePtr();
+            PackTerrainBlendParams(terrain, bTerrainBlend, surfaceMask != nullptr, uniform.TerrainParams);
+            if (!surfaceMask)
+            {
+                surfaceMask = albedo;
+            }
 
             // 張るテクスチャに sparse（VT）が1枚でもあれば、シェーダーは常駐しないタイルを読まず粗いミップへ逃げる。
             uniform.MaterialParams[2] = AnySparseTexture(albedo, normal, metallic, roughness, ao, height, terrainTextures[0],
                                                          terrainTextures[1], terrainTextures[2], terrainTextures[3],
-                                                         terrainTextures[4], terrainTextures[5])
+                                                         terrainTextures[4], terrainTextures[5], surfaceMask)
                                             ? 1.0f
                                             : 0.0f;
             // VT の要求を書く先（このフレームのバッファ。対応しないデバイスでは null で、シェーダーに binding は入らない）。
@@ -3132,6 +3141,8 @@ namespace NorvesLib::Core::Rendering
                 descriptorSet->BindTexture(TerrainLayerTextureBindingFirst + index, terrainTextures[index]);
                 descriptorSet->BindSampler(TerrainLayerTextureBindingFirst + index, layerSampler);
             }
+            descriptorSet->BindTexture(TerrainSurfaceMaskBindingIndex, surfaceMask);
+            descriptorSet->BindSampler(TerrainSurfaceMaskBindingIndex, layerSampler);
             BindVirtualTextureFeedback(*descriptorSet, VirtualTextureFeedbackBindingIndex, feedbackTarget);
 
             // 頂点シェーダーが引くインスタンスの表・メッシュの表と描画情報
@@ -4667,6 +4678,14 @@ namespace NorvesLib::Core::Rendering
         {
             RHI::DescriptorBinding texBinding;
             texBinding.binding = TerrainLayerTextureBindingFirst + index;
+            texBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+            texBinding.stages = RHI::ShaderStage::Pixel;
+            desc.bindings.push_back(texBinding);
+        }
+        // 地形の地表の分類の地図（16）
+        {
+            RHI::DescriptorBinding texBinding;
+            texBinding.binding = TerrainSurfaceMaskBindingIndex;
             texBinding.type = RHI::ResourceBindType::CombinedImageSampler;
             texBinding.stages = RHI::ShaderStage::Pixel;
             desc.bindings.push_back(texBinding);

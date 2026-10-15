@@ -14,7 +14,8 @@
 // 材質の番号が分類の上限以上の画素はどの材質の一覧にも入らないので、この版では解決されない（直接版は解決する）。
 // 追加の束縛は、検証用の書き出しがあれば binding 12 から、無ければ binding 11 から（VIS_TILE_BINDING）。
 // 材質ごとの形は、その材質のテクスチャ（アルベド・法線・金属度・粗さ・AO・高さの 6 枠。VIS_TILE_BINDING + 3 から）と、
-// 地形の 2・3 層目のテクスチャ（土・岩肌のアルベド・法線・ORM の 6 枠。VIS_TERRAIN_BINDING から。地形でない材質は読まない）も束ねて、
+// 地形の 2・3 層目のテクスチャ（土・岩肌のアルベド・法線・ORM の 6 枠）と地表の分類の地図（VIS_TERRAIN_BINDING から 7 枠。
+// 地形でない材質は読まない）も束ねて、
 // 材質のテクスチャで GBuffer の Albedo・Normal・Material を書く（直接 dispatch の版は、テクスチャを束ねられないので
 // 材質の定数だけで書く）。
 //
@@ -157,7 +158,7 @@ layout(std140, set = 0, binding = VIS_TILE_BINDING) uniform ResolveTileParams
     // x = アルベド、y = 法線、z = ORM（金属度の枠）、w = 高さ
     uvec4 vt;
     // 地形の 3 層の混ぜ合わせ（Common/TerrainLayerBlend.glsl の TerrainBlendParams。VIS_TILE_FLAG_TERRAIN のときだけ読む）
-    vec4 terrain[6];
+    vec4 terrain[8];
 } tileParams;
 
 // tileParams.tile.z のビット（VisibilityResolvePass.h の TILE_FLAG_* と同じ）
@@ -197,6 +198,8 @@ layout(set = 0, binding = VIS_TERRAIN_BINDING + 2) uniform sampler2D terrainDirt
 layout(set = 0, binding = VIS_TERRAIN_BINDING + 3) uniform sampler2D terrainRockAlbedoTexture;
 layout(set = 0, binding = VIS_TERRAIN_BINDING + 4) uniform sampler2D terrainRockNormalTexture;
 layout(set = 0, binding = VIS_TERRAIN_BINDING + 5) uniform sampler2D terrainRockOrmTexture;
+// 地形の地表の分類の地図（地図の無い材質はアルベドが張られ、読まない）
+layout(set = 0, binding = VIS_TERRAIN_BINDING + 6) uniform sampler2D terrainSurfaceMaskTexture;
 
 #include "Common/SparseResidencySampling.glsl"
 // 計算シェーダーには暗黙の勾配が無いので、VT でない標本も解析的な微分で textureGrad する
@@ -676,7 +679,8 @@ VisMaterialSurface VisEvaluateMaterialSurface(vec3 objectColor, VisMaterialEntry
     {
         const TerrainBlendParams terrain =
             TerrainBlendParams(tileParams.terrain[0], tileParams.terrain[1], tileParams.terrain[2],
-                               tileParams.terrain[3], tileParams.terrain[4], tileParams.terrain[5]);
+                               tileParams.terrain[3], tileParams.terrain[4], tileParams.terrain[5],
+                               tileParams.terrain[6], tileParams.terrain[7]);
         TerrainSurfaceInput terrainSurface;
         terrainSurface.WorldPosition = resolved.hitPosition + params.cameraPosition.xyz;
         terrainSurface.WorldDx = resolved.dposdx;
@@ -686,7 +690,7 @@ VisMaterialSurface VisEvaluateMaterialSurface(vec3 objectColor, VisMaterialEntry
         samples = ShadeTerrainLayers(terrain, albedoTexture, normalTexture, metallicTexture, bNormalTwoChannel,
                                      terrainDirtAlbedoTexture, terrainDirtNormalTexture, terrainDirtOrmTexture,
                                      terrainRockAlbedoTexture, terrainRockNormalTexture, terrainRockOrmTexture,
-                                     terrainSurface, bVirtualTexture, terrainNormal);
+                                     terrainSurfaceMaskTexture, terrainSurface, bVirtualTexture, terrainNormal);
     }
 
     // VT のフィードバック（ラスタの gbuffer.frag と同じ: アルベド・法線・ORM は POM の後の UV、高さは元の UV）

@@ -26,6 +26,13 @@
       "orm_roughness": "Assets/Textures/PolyHaven/rock_face/rock_face_rough_4k.jpg",
       "package_name": "PolyHaven/rock_face/rock_face_orm.nvpkg",
       "entry_name": "Assets/Textures/PolyHaven/rock_face/rock_face_orm_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Terrain/ValleyOfTheGods/surface.png",
+      "cook_usage": "orm",
+      "source_path": "Assets/Terrain/ValleyOfTheGods/surface.png",
+      "package_name": "WastelandTerrain/surface_mask.nvpkg",
+      "entry_name": "Assets/Terrain/ValleyOfTheGods/surface.nvtex"
     }
   ],
   "models": [

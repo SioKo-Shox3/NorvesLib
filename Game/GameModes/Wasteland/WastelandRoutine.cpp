@@ -227,6 +227,13 @@ namespace Game::GameModes
         constexpr float kBlendDepth = 0.3f;
         // 1 層目・2 層目・3 層目の 3 枚ずつ
         constexpr uint32_t kTerrainTextureCount = 9;
+        // 地表の分類の地図（Scripts/Terrain/TerrainMasks.py）の写し方。DEM の格子の範囲は地図の重みで、外（遠景）は上の傾斜の式で混ぜる。
+        // 礫の地表は半分を乾いた土（岩屑）・半分を砂にし、崖錐（全部が土）と見分けられるようにする
+        constexpr float kSurfaceMaskGravelToDirt = 0.5f;
+        // 地図の外縁の内側 32 m で傾斜の式から地図へ移す（近景と遠景の継ぎ目に分類の段を作らない）
+        constexpr float kSurfaceMaskEdgeFadeMeters = 32.0f;
+        // 地図（2 m/画素）を引く位置を 2 m ずらし、画素の格子に沿った直線の境を崩す
+        constexpr float kSurfaceMaskWarpMeters = 2.0f;
 
         /// 物理空・太陽・高さフォグ・空気遠近・雲の層
         void ApplyEnvironment(GameModeContext &ctx, float sunAltitudeDegrees, float sunAzimuthDegrees)
@@ -900,6 +907,30 @@ namespace Game::GameModes
                 LoadMaterialTexture(textures, assembly, kRockNormalPath, &blend.Rock.NormalTexture,
                                     &blend.Rock.bNormalTwoChannel, pPending);
                 LoadMaterialTexture(textures, assembly, kRockOrmPath, &blend.Rock.ORMTexture, nullptr, pPending);
+                // 地表の分類の地図。記述が無ければ傾斜の式だけで混ぜる
+                Terrain::TerrainSurfaceMaskLayout maskLayout;
+                AnsiString maskError;
+                if (Terrain::LoadTerrainSurfaceMaskLayout(TerrainSpec::kSurfaceMaskDescriptorPath, maskLayout, maskError))
+                {
+                    blend.SurfaceMaskMinXZ[0] = maskLayout.MinX;
+                    blend.SurfaceMaskMinXZ[1] = maskLayout.MinZ;
+                    blend.SurfaceMaskMaxXZ[0] = maskLayout.MaxX;
+                    blend.SurfaceMaskMaxXZ[1] = maskLayout.MaxZ;
+                    blend.SurfaceMaskGravelToDirt = kSurfaceMaskGravelToDirt;
+                    blend.SurfaceMaskEdgeFadeMeters = kSurfaceMaskEdgeFadeMeters;
+                    blend.SurfaceMaskWarpMeters = kSurfaceMaskWarpMeters;
+                    ++assembly->PendingTextureCount;
+                    LoadMaterialTexture(textures, assembly, TerrainSpec::kSurfaceMaskTexturePath,
+                                        &blend.SurfaceMaskTexture, nullptr, pPending);
+                    LOG_INFO_F("WASTELAND_SURFACE_MASK x=[%.1f,%.1f] z=[%.1f,%.1f] size=%ux%u", maskLayout.MinX,
+                               maskLayout.MaxX, maskLayout.MinZ, maskLayout.MaxZ, maskLayout.Width, maskLayout.Height);
+                }
+                else
+                {
+                    LOG_WARNING_F("COOKED_MODEL_TEXTURES_MISSING scene=wasteland path=%s 地表の分類の地図の記述を読めません（%s）。"
+                                  "Scripts/Terrain/TerrainMasks.py --build で作り、Scripts/CookAssets.ps1 で焼くと地図で混ぜます",
+                                  TerrainSpec::kSurfaceMaskDescriptorPath, maskError.c_str());
+                }
                 // 岩・崖・建物。地形の上に据えるので、地形を置けるときだけ読む
                 if (kPlaceLayoutProps)
                 {
