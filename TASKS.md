@@ -1492,7 +1492,7 @@
 - notes: 2026-10-15 SCN-WL-MATERIAL-PALETTE の反復 6 で見つけた（`.harness/runs/scene-capture/SCN-WL-MATERIAL-PALETTE/ref_far_02.png` の中景、`cliff.png` の谷床）。危険地帯（描画）。 2026-10-15 親: 反復 10・11（run 20261015-082405）で原因を 3 つに分けて直した: 崖とビュートの横縞と点の格子は地形の法線の勾配（反復 10 で消えた）、崖錐の斑は VSM の自己遮蔽（余裕を 3 texel にして 1 万画素あたり 15.2 → 0.3）、残りは接触影が地形の三角形の折れ目を遮りと誤る点（受け手とほぼ平行な面を除く直しで減ったが、砂丘にまばらに残る。接触影を切ると消える）。この項目は、途中の保存（3dc9555f・fe36083d）の直しを残して撮影で確かめて閉じる（縞と崖錐の斑が消え、Rendering3DTest が変わらない）。残る接触影の点は SCN-WL-CONTACT-SHADOW-TERRAIN で直す。最後の反復は接触影の判定のループを書き換えている途中で止まったので、まずビルドが通る形に戻す。
 
 ## SCN-WL-MATERIAL-STRATA: 砂岩の地層と風化の筋を足す
-- status: todo
+- status: done
 - done-when: 崖の砂岩に、厚さの違う層・斜めの交差層理・途切れる帯・硬い層の張り出しを、共通の基準面からの高さでシェーダーが計算して入れる（等間隔の帯にしない）。砂漠ワニスの黒い筋を、崖の上端から流れ落ちる位置に局所的に置く（崖全体へ同じ縦のノイズを掛けない）。cliff と手本の崖の比較画像を開き、帯の厚さ・向き・途切れ方が写真に近く、同じ縞が崖全体に繰り返していないことを確かめる。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-WL-MATERIAL-STRATA`

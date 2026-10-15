@@ -27,6 +27,8 @@
 //   - アルベドの画像は sRGB で符号化されている。UNORM の形式で張られた層（layers.w のビット）は標本ごとに線形へ戻す。
 //   - 各層のアルベドに、層ごとに別の位相の低周波ノイズ（数十〜数百 m と、模様の繰り返しを崩す十数 m）で明るさと色味の揺らぎを
 //     掛けてから混ぜる。揺らぎは分類の境で入れ替わり、全域を 1 つの斑の模様で覆わない。
+//   - 岩肌の層には、ワールドの y（共通の基準面）からの高さで決まる砂岩の地層と、崖の上端から垂れる砂漠ワニスを掛ける
+//     （Common/TerrainStrata.glsl）。
 
 #ifndef NORVES_TERRAIN_LAYER_BLEND_GLSL
 #define NORVES_TERRAIN_LAYER_BLEND_GLSL
@@ -361,6 +363,9 @@ vec3 TerrainMacroVariation(TerrainBlendParams params, vec2 xz, vec2 seed)
     return brightness * vec3(1.0 + hue, 1.0, 1.0 - hue);
 }
 
+// 岩肌の層に掛ける地層と砂漠ワニス（上のノイズと接平面の軸を使う）
+#include "Common/TerrainStrata.glsl"
+
 // 地形の 3 層を混ぜた材質値を返す（TangentNormal は使わない。法線は worldNormal にワールドの向きで返す）。
 // 1 層目（砂）は材質のアルベド・法線・ORM の枠のテクスチャ（ORM の 1 枚を前提にする）。surfaceMask は地表の分類の地図
 // （params.mask.z が 0 なら読まないので、地図の無い材質は何を張ってもよい）
@@ -405,6 +410,13 @@ PbrMaterialTextureSamples ShadeTerrainLayers(TerrainBlendParams params,
                                   (normalBits & TERRAIN_BLEND_ROCK_NORMAL_TWO_CHANNEL) != 0u,
                                   (normalBits & TERRAIN_BLEND_ROCK_ALBEDO_SRGB_DECODE) != 0u, bVirtualTexture,
                                   surface, frame, projection, levels, params.layers.z, tileMeters);
+        // 砂岩の地層（基準面からの高さで決まる層の色・張り出し・交差層理）と、崖の上端から垂れる砂漠ワニス
+        const TerrainStrataSample strata =
+            ComputeTerrainStrata(params, surfaceMask, surface.WorldPosition, surface.WorldDx, surface.WorldDy, n);
+        rock.Albedo.rgb = mix(rock.Albedo.rgb * strata.Tint, VARNISH_ALBEDO, strata.Varnish);
+        rock.Material.y *= mix(1.0, 0.85, strata.Varnish);
+        rock.Material.z *= strata.Occlusion;
+        rock.Perturbation += strata.Perturbation;
     }
 
     // 凹凸の高さ: 砂は一定の面、土・岩肌は AO（Material.z）。くぼみほど低い
