@@ -4557,3 +4557,13 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - Notes: 地面の中景と崖の裾に、暗い点の格子の斑が出る（前の撮影にもあり、地面が赤くなって目立つ）。GBuffer のアルベドには無く、光と影の側。`SCN-WL-SHADOW-DOT-GRID` として TASKS.md に足した。
 - Notes: 全シーンでクック済みの sRGB のアルベドが UNORM で読まれ、暗い成分が明るく出ている（地形以外の材質も同じ）。直すと全シーンの見た目が変わるので、この項目では地形だけを直した。試験は足していない。
 - Next: TASKS.md の次の未完の項目。
+### SCN-WL-MATERIAL-PALETTE 差し戻しの修正（2026-10-15、run 20261015-082405 の反復 7）
+- 指摘: 距離で模様を大きくする段（10 m から 3 倍ごと、最大 4 段）がアルベド・法線・ORM に掛かり、810 m 先で模様が 81 倍（礫の 1 枚 1.5 → 121.5 m、砂岩の割れ目 10〜40 cm → 8.1〜32.4 m）になっていた。実寸は 10 m 以内でしか保たれていなかった。
+- Done: 荒野の `kDetailMaxLevel` を 4 → 0 にした（`WastelandRoutine.cpp`）。`ComputeTerrainDetailLevels` は段 0 だけを重み 1 で引くので、どの距離でも礫と割れ目は実寸で張られ、遠くはミップで平均の色になる。標本も 2 段から 1 段に減る。繰り返しは層ごとの色の揺らぎ（20・80・300 m）で崩すまま。
+- 検証（`.harness/runs/20261015-082405/`）:
+  - `verify-SCN-WL-MATERIAL-PALETTE-5.txt`: Debug の Game のビルド EXIT=0。
+  - `verify-SCN-WL-MATERIAL-PALETTE-6.txt`: 荒野の全 11 視点 1920×1080、result=pass（白飛び 0・黒つぶれ 0）、EXIT=0。
+  - `verify-SCN-WL-MATERIAL-PALETTE-7.txt`: `CompareReference.py --verify` result=pass photos=6、EXIT=0。地面の Y は far_01 0.530・far_02 0.462・ground_01 0.501・ground_02 0.317（反復 6 とほぼ同じ。平均の色は段に依らない）。
+  - 比較画像（far_02・ground_01・ground_02・cliff_01・cliff_02）を開いた: 手前の谷床は細かい砂粒が実寸で並び、中景から奥は一様な赤橙の土になって 3 m のタイルの繰り返しも、大きく引き伸ばされた斑も見えない。崖の面は細かい割れ目が遠くでは平均の色に溶け、層理は地形の段の大きさで読める。
+- Notes: 斜面と崖の面の暗い点の格子の縞は変わらず出る（SCN-WL-SHADOW-DOT-GRID で直す）。地面の明るさが写真の 2〜3.5 倍のままなのは反復 6 の Notes のとおり光の側。試験は足していない。
+- Next: TASKS.md の次の未完の項目。

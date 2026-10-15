@@ -217,10 +217,11 @@ namespace Game::GameModes
         constexpr float kMacroWavelengths[2] = {80.0f, 300.0f};
         constexpr float kMacroBrightness = 0.2f;
         constexpr float kMacroHue = 0.05f;
-        // 距離で UV の倍率を変える: 10 m から、距離が 3 倍になるごとに模様を 3 倍に大きくする（最大 4 段で 81 倍）
+        // 距離で模様を大きくする段は使わない（最大 0 段）。どの距離でも礫の粒と砂岩の割れ目を実寸で張り、遠くはミップで平均の色にする。
+        // 模様の繰り返しは層ごとの色の揺らぎ（20 m・80 m・300 m）で崩す
         constexpr float kDetailStartDistance = 10.0f;
         constexpr float kDetailDistanceRatio = 3.0f;
-        constexpr float kDetailMaxLevel = 4.0f;
+        constexpr float kDetailMaxLevel = 0.0f;
         // 混ぜ方: 砂丘の風下の面（最も急な所で 20° 台）は砂のまま、メサの裾の崖錐は乾いた土、崖と外周の急な稜線は岩肌にする
         constexpr float kDirtSlopeDegrees[2] = {24.0f, 33.0f};
         constexpr float kRockSlopeDegrees[2] = {37.0f, 48.0f};
