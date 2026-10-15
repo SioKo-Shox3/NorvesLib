@@ -3149,8 +3149,185 @@ namespace NorvesLib::Tools::AssetCook
             return true;
         }
 
+        // 入力（一覧の source_path の中身）が遠景の地形の記述（format が kTerrainHorizonFormat の JSON）か
+        bool IsTerrainHorizonDescriptor(const uint8_t* inputBytes, size_t inputSize)
+        {
+            if (inputBytes == nullptr || inputSize == 0)
+            {
+                return false;
+            }
+            NorvesLib::Core::Container::Span<const uint8_t> text(inputBytes, inputSize);
+            if (text.size() >= 3 && text[0] == 0xefu && text[1] == 0xbbu && text[2] == 0xbfu)
+            {
+                text = {text.data() + 3, text.size() - 3};
+            }
+            JsonDocument document;
+            if (!JsonDocument::TryParseUtf8(text, document))
+            {
+                return false;
+            }
+            const JsonValue format = document.GetRoot().FindMember("format");
+            const AnsiStringView expected(NorvesLib::Core::Rendering::Terrain::kTerrainHorizonFormat);
+            if (!format.IsString() || format.AsString().size() != expected.size())
+            {
+                return false;
+            }
+            for (size_t index = 0; index < expected.size(); ++index)
+            {
+                if (static_cast<uint32_t>(format.AsString().data()[index]) !=
+                    static_cast<uint32_t>(static_cast<unsigned char>(expected[index])))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        // 遠景の地形の記述（WastelandTerrain::kHorizonDescriptorPath。Scripts/Terrain/HorizonDem.py が書く）の meshIndex 番目の
+        // メッシュを焼く（一覧では source_path をこの記述にした terrain-tile:dem:<meshIndex>,0）。メッシュのファイルの SHA-256 が
+        // 記述と違えば失敗する。法線が NaN の頂点（近景の格子の外周）は、近景の区画と同じ SampleNormal で埋める。
+        // 開いた外周（区画の境・縫い目の帯の両端・DEM の外の縁）の頂点は階層のどの段でも動かさない
+        bool CookTerrainHorizonMeshInternal(const uint8_t* inputBytes, size_t inputSize, uint32_t meshIndex,
+                                            uint32_t tileZ, MeshCookResult& outResult, AnsiString& error,
+                                            uint32_t fallbackMinTriangles, uint32_t dagRootMaxClusters)
+        {
+            namespace Terrain = NorvesLib::Core::Rendering::Terrain;
+            namespace Spec = NorvesLib::Core::Rendering::Terrain::WastelandTerrain;
+
+            NorvesLib::Core::Asset::AssetFileReader reader;
+            NorvesLib::Core::Asset::AssetReadRequest descriptorRequest;
+            descriptorRequest.InputPath = Spec::kHorizonDescriptorPath;
+            descriptorRequest.bAllowAbsolutePath = false;
+            descriptorRequest.MaxReadBytes = 4u * 1024u * 1024u;
+            const NorvesLib::Core::Asset::AssetReadResult descriptor = reader.Read(descriptorRequest);
+            if (!descriptor.Succeeded() || inputSize != descriptor.Blob.GetSize() ||
+                std::memcmp(inputBytes, descriptor.Blob.GetData(), inputSize) != 0)
+            {
+                error = AnsiString("遠景の入力（一覧の source_path）が、遠景の地形の記述と違うか読めません: ") +
+                        Spec::kHorizonDescriptorPath;
+                return false;
+            }
+            VariableArray<Terrain::TerrainHorizonMesh> meshes;
+            if (!Terrain::LoadTerrainHorizonMeshes(Spec::kHorizonDescriptorPath, meshes, error))
+            {
+                return false;
+            }
+            if (tileZ != 0 || meshIndex >= meshes.size())
+            {
+                error = AnsiString("遠景のメッシュの番号が記述の並び（") + FormatInteger(static_cast<int>(meshes.size())) +
+                        " 個）の外です（terrain-tile:dem:<番号>,0）";
+                return false;
+            }
+            const Terrain::TerrainHorizonMesh& entry = meshes[meshIndex];
+            const uint64_t vertexBytes = static_cast<uint64_t>(entry.VertexCount) * 8u * sizeof(float);
+            const uint64_t expectedBytes = vertexBytes + static_cast<uint64_t>(entry.TriangleCount) * 3u * sizeof(uint32_t);
+            NorvesLib::Core::Asset::AssetReadRequest meshRequest;
+            meshRequest.InputPath = entry.FilePath;
+            meshRequest.bAllowAbsolutePath = false;
+            meshRequest.MaxReadBytes = expectedBytes;
+            const NorvesLib::Core::Asset::AssetReadResult file = reader.Read(meshRequest);
+            if (!file.Succeeded() || static_cast<uint64_t>(file.Blob.GetSize()) != expectedBytes)
+            {
+                error = AnsiString("遠景のメッシュのファイルを読めないか、大きさが頂点 × 32 + 三角形 × 12 バイトと違います: ") +
+                        entry.FilePath;
+                return false;
+            }
+            AnsiString fileSha256;
+            if (!ComputeSha256Hex(file.Blob.GetData(), file.Blob.GetSize(), fileSha256) || fileSha256 != entry.Sha256)
+            {
+                error = AnsiString("遠景のメッシュのファイルの SHA-256 が記述と違います（メッシュを書き直したら記述も書き直す）: ") +
+                        entry.FilePath;
+                return false;
+            }
+
+            // 近景の格子の外周の頂点の法線は、近景の区画（BuildDemTerrainTile）と同じ式で埋める
+            NorvesLib::Core::Container::TSharedPtr<const Terrain::TerrainHeightField> nearField;
+            float nearNormalSpacing = 0.0f;
+            uint32_t normalsFromGrid = 0;
+            VariableArray<MeshVertexPnt> vertices;
+            vertices.resize(entry.VertexCount);
+            const uint8_t* source = file.Blob.GetData();
+            for (uint32_t index = 0; index < entry.VertexCount; ++index)
+            {
+                float values[8];
+                std::memcpy(values, source + static_cast<size_t>(index) * sizeof(values), sizeof(values));
+                MeshVertexPnt& vertex = vertices[index];
+                for (uint32_t axis = 0; axis < 3; ++axis)
+                {
+                    vertex.Position[axis] = values[axis];
+                    vertex.Normal[axis] = values[3 + axis];
+                }
+                vertex.TexCoord[0] = values[6];
+                vertex.TexCoord[1] = values[7];
+                if (std::isnan(vertex.Normal[0]))
+                {
+                    if (!nearField)
+                    {
+                        AnsiString loadError;
+                        nearField = Terrain::TerrainHeightField::LoadGrid(Spec::kDemGridDescriptorPath, loadError);
+                        if (!nearField)
+                        {
+                            error = loadError;
+                            return false;
+                        }
+                        nearNormalSpacing = static_cast<float>(nearField->GetGridLayout().Spacing * 0.5);
+                    }
+                    if (!nearField->Contains(vertex.Position[0], vertex.Position[2]))
+                    {
+                        error = "遠景のメッシュの、法線を近景の格子から引く頂点が近景の格子の外にあります";
+                        return false;
+                    }
+                    const Terrain::TerrainNormal normal =
+                        nearField->SampleNormal(vertex.Position[0], vertex.Position[2], nearNormalSpacing);
+                    vertex.Normal[0] = normal.X;
+                    vertex.Normal[1] = normal.Y;
+                    vertex.Normal[2] = normal.Z;
+                    ++normalsFromGrid;
+                }
+                const bool bFinite = std::isfinite(values[0]) && std::isfinite(values[1]) && std::isfinite(values[2]) &&
+                                     std::isfinite(values[6]) && std::isfinite(values[7]);
+                if (!bFinite || !std::isfinite(vertex.Normal[0]) || !std::isfinite(vertex.Normal[1]) ||
+                    !std::isfinite(vertex.Normal[2]))
+                {
+                    error = "遠景のメッシュの頂点の位置・法線・UV が有限でありません";
+                    return false;
+                }
+            }
+            VariableArray<uint32_t> indices;
+            indices.resize(static_cast<size_t>(entry.TriangleCount) * 3u);
+            std::memcpy(indices.data(), source + vertexBytes, indices.size() * sizeof(uint32_t));
+            for (const uint32_t index : indices)
+            {
+                if (index >= entry.VertexCount)
+                {
+                    error = "遠景のメッシュの三角形が頂点の並びの外を指しています";
+                    return false;
+                }
+            }
+
+            MaterialReferences materialReferences;
+            MeshCookResult v1Result;
+            if (!CookLodGraphMesh(vertices, indices, materialReferences, v1Result, error, fallbackMinTriangles,
+                                  dagRootMaxClusters, 0, true))
+            {
+                return false;
+            }
+            uint64_t hash = Format::Fnv1a64OffsetBasis;
+            hash = Fnv1a64Update(hash, reinterpret_cast<const uint8_t*>(fileSha256.data()), fileSha256.size());
+            hash = Fnv1a64Update(hash, descriptor.Blob.GetData(), descriptor.Blob.GetSize());
+            hash = Fnv1a64UpdateLe64(hash, static_cast<uint64_t>(meshIndex));
+            hash = Fnv1a64UpdateLe64(hash, static_cast<uint64_t>(std::bit_cast<uint32_t>(Spec::kTextureTileMeters)));
+            v1Result.SourceHash = hash;
+            std::printf("TERRAIN_HORIZON_MESH index=%u name=%s vertices=%zu triangles=%zu normals_from_grid=%u sha256=%s\n",
+                        meshIndex, entry.Name.c_str(), vertices.size(), indices.size() / 3, normalsFromGrid,
+                        fileSha256.c_str());
+            outResult = std::move(v1Result);
+            return true;
+        }
+
         // DEM の格子の区画 (tileX, tileZ) を焼く（--generate terrain-tile:dem:<x>,<z>）。区画の数と格子の間隔は格子の記述
-        // から決まり、外周の頂点は階層のどの段でも動かさない。元のハッシュには格子の SHA-256・記述の中身・区画の割り方を入れる
+        // から決まり、外周の頂点は階層のどの段でも動かさない。元のハッシュには格子の SHA-256・記述の中身・区画の割り方を入れる。
+        // 入力が遠景の地形の記述なら、(x, 0) は遠景の x 番目のメッシュ（CookTerrainHorizonMeshInternal）
         bool CookTerrainDemTileInternal(const uint8_t* inputBytes, size_t inputSize, uint32_t tileX, uint32_t tileZ,
                                         AnsiStringView format, AnsiStringView logicalPath, MeshCookResult& outResult,
                                         AnsiString& error, uint32_t fallbackMinTriangles, uint32_t dagRootMaxClusters)
@@ -3166,6 +3343,11 @@ namespace NorvesLib::Tools::AssetCook
             if (!ValidateRelativePath(logicalPath, "model logical path", error))
             {
                 return false;
+            }
+            if (IsTerrainHorizonDescriptor(inputBytes, inputSize))
+            {
+                return CookTerrainHorizonMeshInternal(inputBytes, inputSize, tileX, tileZ, outResult, error,
+                                                      fallbackMinTriangles, dagRootMaxClusters);
             }
 
             DemTerrainSource source;

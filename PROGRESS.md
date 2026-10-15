@@ -4498,3 +4498,20 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - Notes: 地図の置き場は格子と同じ `Assets/Terrain/ValleyOfTheGods/`（git 管理外の生成物。タスクの paths の外だが、追跡されるファイルは触っていない）。クックの一覧への登録とエンジンへの読み込みは SCN-WL-MATERIAL-MASKS で行う。
 - Notes: 崖錐の形の係数（流れの指数・溜まる割合・窪みの倍率・ぼかし）は Battleship Rock と Franklin Butte の切り出しで図を見比べて決めた（流れの指数 2 では細い放射状の筋、飽和の尺度 0.12 では崖を一定幅で囲む帯になった）。Franklin Butte の円錐の斜面は崖錐より礫が多い（柱が低く岩屑の量が少ない）。広い沢の段（起伏 10 m 前後）の一部が露岩と小さな崖錐になる。試験は足していない（verify が名指しした確かめだけ）。
 - Next: TASKS.md の次の未完の項目。
+
+### SCN-WL-HORIZON 途中（2026-10-15、run 20261015-082405 の反復 4。BLOCKED: 4 枚の外のデータの許可待ち）
+- Done:
+  - 許可された隣の 1 m タイル 3 枚（x60y414・x59y414・x59y413）を `DemInput.py --fetch-neighbors` で落とし、manifest.json の `neighbors` にサイズ・SHA-256・URL・取得日を書いた（`aux-SCN-WL-HORIZON-fetch.txt`）。
+  - `Scripts/Terrain/HorizonDem.py` を足した。4 枚（E 590000〜610000・N 4120000〜4140000）から、近景の外側を castle（Castle Butte と far_01 の手前の谷床、2 m）・mid（近景の周り 6 km、8 m）・far（残り、16 m）の 3 段で焼き、内側の段の外周の頂点と外側の段の穴の縁の頂点を交互に結んだ縫い目の帯でつなぐ（端を外へ延ばさない。帯の両端の高さは DEM の画素の値、近景の側は近景の格子の値）。高さは縫い目から間隔の 4 倍までは画素の値、その外は箱の平均。メッシュ 30 個・頂点 475 万を `Assets/Terrain/ValleyOfTheGods/horizon/` と `horizon.json` に書く（git 管理外）。
+  - AssetCook: 一覧の source_path が遠景の記述（format `norveslib.terrain-horizon.v1`）の `terrain-tile:dem:<n>,0` は記述の n 番目のメッシュを焼く（`CookAssets.ps1` の generate の形のまま）。近景の外周の頂点の法線は近景の区画と同じ SampleNormal で埋め、開いた外周は全段で固定。`TerrainHeightField.h` に `LoadTerrainHorizonMeshes`・`kHorizonDescriptorPath`・`kHorizonCookedMeshLogicalPathPrefix`。
+  - Game: 近景の 100 区画の後に遠景の 30 個を同じ手順で置く（記述・クック済みが無ければ近景だけ）。遠方面 7000 → 21000 m。
+  - `WriteTerrainAssetSet.py` が遠景の 30 項目を一覧に書く。`FitReferenceView.py` が遠景の段の高さの格子（horizon/*.r32）も引き、視線を 16 km まで延ばした。
+  - far_01: 遠景の稜線と写真の輪郭の照合で、視点を X -903.5・Z -1608.5・方位 328.6°・仰俯 +3.5°・横 22.5°（縦 12.77°）にした（`SceneCatalog.h`・`kReferenceShots`。列の平均の差 9.1 px）。比較画像で Castle Butte・2 本の尖塔・両脇の Cedar Mesa の縁が写真の輪郭と重なる。`CompareReference.py` の far_01 を輪郭を合わせる扱いにし、`WastelandReference.md` の far_01 の記述を直した。
+- 検証（`.harness/runs/20261015-082405/`）:
+  - `aux-SCN-WL-HORIZON-dem.txt`: `HorizonDem.py --verify` result=pass。作り直しがメッシュ 30 個の SHA-256 と一致。近景の外周の辺を含めた全体で 3 つ以上が共有する辺 0、同じ位置の頂点の高さの不一致 0、開いた辺の端点 13698 はすべて 4 枚の外の縁（12036）か NoData の縁（1662）。近景の縫い目の内側の頂点 18596 が近景の格子の値そのもの。
+  - `aux-SCN-WL-HORIZON-cook.txt`: `CookAssets.ps1 -OnlyLogicalPath "*WastelandHorizon_*"` cooked=30、EXIT=0（パッケージ 666 MB）。
+  - 撮影（`.harness/runs/scene-capture/SCN-WL-HORIZON-try1/`、overview・ridge・ref_far_01、result=pass、2 分 18 秒）を開いた: overview の北の地平線は切れ目なく実地形の崖と段の稜線。ref_far_01 は上のとおり。ridge の南東は霞に溶ける平らな地形の縁。
+  - `aux-SCN-WL-HORIZON-skyline.txt`（`Scripts/Terrain/HorizonSkyline.py`、空と接する点が稜線か地形のデータの端かを列ごとに数える）: overview・ground・cliff・ref_far_01 は 400 列すべて稜線。**ridge は 297 列（方位 84〜169°）、outpost は 82 列（方位 154〜236°）が 4 枚の東・南の縁と南東の NoData の端**。
+- BLOCKED: ridge の地平線を実地形にするには 4 枚の外が要る（`blocked/SCN-WL-HORIZON.md`。推奨は 1/3 秒角の `USGS_13_n38w110_20260630.tif` 421 MB）。
+- Notes: AssetCook の実行ファイルとヘッダ（近景の区画の extra_sources）が変わったので、次に絞らずに `CookAssets.ps1` を回すと近景の 100 区画も焼き直しになる（Debug で 1 本約 55 分。遠景は `-OnlyLogicalPath "*WastelandHorizon_*"` で焼いた）。`Game/Scenes/SceneCatalog.h`・`Docs/RenderingValidation/WastelandReference.md` は paths の外だが、完了条件の「far_01 の視点を合わせ直す」の置き場なので ref_far_01 の 1 項目と far_01 の記述だけ直した。撮影の far_01 は 2.7 km 先のビュートが霞で白く、撮影側の輪郭の判定は谷床の縁を拾う（差の一覧の霞の項目）。試験は足していない。
+- Next: 許可が出たら、落としたデータを manifest に足し、far の外の段（32 m 前後）を `HorizonDem.py` に足して焼き、`HorizonSkyline.py` で ridge・outpost の端が 0 になることを確かめてから、TASKS.md の verify（全視点の撮影）を回す。`WastelandDem.md` に遠景の節を書く。

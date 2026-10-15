@@ -577,6 +577,106 @@ namespace NorvesLib::Core::Rendering::Terrain
         return Container::MakeShared<const TerrainHeightField>(GridTag{}, Container::TSharedPtr<const GridData>(std::move(grid)));
     }
 
+    bool LoadTerrainHorizonMeshes(Container::AnsiStringView descriptorPath,
+                                  Container::VariableArray<TerrainHorizonMesh> &outMeshes, Container::AnsiString &outError)
+    {
+        constexpr uint64_t kMaxDescriptorBytes = 4u * 1024u * 1024u;
+        constexpr size_t kMaxMeshes = 4096u;
+        constexpr int64_t kMaxVertices = int64_t{1} << 26;
+        // Scripts/Terrain/HorizonDem.py の MESH_FORMAT と同じ文字列
+        constexpr const char *kMeshFormat =
+            "float32 x8 per vertex (position xyz, normal xyz, uv), then uint32 x3 per triangle, little-endian, no header";
+
+        outMeshes.clear();
+        Asset::AssetFileReader reader;
+        Asset::AssetReadRequest request;
+        request.InputPath.append(descriptorPath.data(), descriptorPath.size());
+        request.bAllowAbsolutePath = false;
+        request.MaxReadBytes = kMaxDescriptorBytes;
+        const Asset::AssetReadResult descriptor = reader.Read(request);
+        if (!descriptor.Succeeded())
+        {
+            outError = MakeGridError("遠景の地形の記述を読めません", descriptorPath);
+            return false;
+        }
+        Container::Span<const uint8_t> text(descriptor.Blob.GetData(), descriptor.Blob.GetSize());
+        if (text.size() >= 3 && text[0] == 0xefu && text[1] == 0xbbu && text[2] == 0xbfu)
+        {
+            text = {text.data() + 3, text.size() - 3};
+        }
+        JsonDocument document;
+        if (!JsonDocument::TryParseUtf8(text, document))
+        {
+            outError = MakeGridError("遠景の地形の記述が JSON として読めません", descriptorPath);
+            return false;
+        }
+        const JsonValue root = document.GetRoot();
+        Container::AnsiString meshFolder;
+        if (!JsonStringEquals(root.FindMember("format"), kTerrainHorizonFormat) ||
+            !JsonStringEquals(root.FindMember("mesh_format"), kMeshFormat) ||
+            !JsonGridFileName(root.FindMember("mesh_folder"), meshFolder))
+        {
+            outError = MakeGridError("遠景の地形の記述の形式・メッシュの形式・フォルダが約束と違います", descriptorPath);
+            return false;
+        }
+        const JsonValue meshes = root.FindMember("meshes");
+        if (!meshes.IsArray() || meshes.GetArraySize() == 0 || meshes.GetArraySize() > kMaxMeshes)
+        {
+            outError = MakeGridError("遠景の地形の記述にメッシュの並びがありません", descriptorPath);
+            return false;
+        }
+
+        // メッシュのファイルは記述と同じフォルダの mesh_folder の中にある
+        size_t folderLength = 0;
+        for (size_t index = 0; index < descriptorPath.size(); ++index)
+        {
+            if (descriptorPath.data()[index] == '/' || descriptorPath.data()[index] == '\\')
+            {
+                folderLength = index + 1;
+            }
+        }
+        for (size_t index = 0; index < meshes.GetArraySize(); ++index)
+        {
+            const JsonValue entry = meshes.GetArrayElement(index);
+            TerrainHorizonMesh mesh;
+            Container::AnsiString fileName;
+            const JsonValue vertices = entry.FindMember("vertices");
+            const JsonValue triangles = entry.FindMember("triangles");
+            const JsonValue sha256 = entry.FindMember("sha256");
+            bool bValid = entry.IsObject() && JsonGridFileName(entry.FindMember("name"), mesh.Name) &&
+                          JsonGridFileName(entry.FindMember("file"), fileName) && vertices.IsIntegerLiteral() &&
+                          triangles.IsIntegerLiteral() && vertices.AsInt64() >= 3 && vertices.AsInt64() <= kMaxVertices &&
+                          triangles.AsInt64() >= 1 && triangles.AsInt64() <= 2 * kMaxVertices && sha256.IsString() &&
+                          sha256.AsString().size() == 64;
+            for (size_t c = 0; bValid && c < mesh.Name.size(); ++c)
+            {
+                const char ch = mesh.Name[c];
+                bValid = (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_';
+            }
+            for (size_t c = 0; bValid && c < 64; ++c)
+            {
+                const uint32_t ch = static_cast<uint32_t>(sha256.AsString().data()[c]);
+                bValid = (ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f');
+                mesh.Sha256 += static_cast<char>(ch);
+            }
+            if (!bValid)
+            {
+                outMeshes.clear();
+                outError = MakeGridError("遠景の地形の記述のメッシュの項目（名前・ファイル・頂点と三角形の数・SHA-256）が不正です",
+                                         descriptorPath);
+                return false;
+            }
+            mesh.FilePath.append(descriptorPath.data(), folderLength);
+            mesh.FilePath += meshFolder;
+            mesh.FilePath += "/";
+            mesh.FilePath += fileName;
+            mesh.VertexCount = static_cast<uint32_t>(vertices.AsInt64());
+            mesh.TriangleCount = static_cast<uint32_t>(triangles.AsInt64());
+            outMeshes.push_back(std::move(mesh));
+        }
+        return true;
+    }
+
     bool TerrainHeightField::Contains(float x, float z) const
     {
         if (!m_Grid)

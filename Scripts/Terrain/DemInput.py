@@ -35,15 +35,32 @@ DEM_PATH = os.path.join(SOURCE_DIR, DEM_FILE)
 DEM_SIZE = 268270390
 DEM_QUERY_BBOX = "-109.84,37.28,-109.82,37.29"
 
+# 遠景（SCN-WL-HORIZON）に使う隣の 1 m タイル。同じ作成計画・同じ公開日の 3 枚で、手元のタイルと合わせて
+# E 590000〜610000・N 4120000〜4140000 の 20 km 四方になる。大きさは API が返した値（2024-10-30 公開の版）
+NEIGHBOR_TILES = [
+    {"title": "USGS 1 Meter 12 x60y414 UT_WestEast_B22", "file": "USGS_1M_12_x60y414_UT_WestEast_B22.tif",
+     "size": 310736898, "bbox": "-109.84,37.32,-109.82,37.33",
+     "east_min": 600000, "east_max": 610000, "north_min": 4130000, "north_max": 4140000,
+     "role": "Castle Butte・北の Cedar Mesa の縁"},
+    {"title": "USGS 1 Meter 12 x59y414 UT_WestEast_B22", "file": "USGS_1M_12_x59y414_UT_WestEast_B22.tif",
+     "size": 305207474, "bbox": "-109.95,37.32,-109.93,37.33",
+     "east_min": 590000, "east_max": 600000, "north_min": 4130000, "north_max": 4140000,
+     "role": "北西の Cedar Mesa の縁"},
+    {"title": "USGS 1 Meter 12 x59y413 UT_WestEast_B22", "file": "USGS_1M_12_x59y413_UT_WestEast_B22.tif",
+     "size": 295344808, "bbox": "-109.95,37.25,-109.93,37.26",
+     "east_min": 590000, "east_max": 600000, "north_min": 4120000, "north_max": 4130000,
+     "role": "西の地平線（Lady in the Bathtub など）"},
+]
+
 # 切り出しの余白。手本の写真 cliff_01 の推定の撮影位置が範囲の西の外 100〜450 m なので西は 600 m、
 # cliff_02 の撮影位置が北の外 305 m なので北は 500 m 取る
 CROP_MARGIN = {"west": 600, "east": 100, "south": 100, "north": 500}
 
 
-def tnm_product(context):
+def tnm_product(context, title=DEM_TITLE, bbox=DEM_QUERY_BBOX):
     query = urllib.parse.urlencode({
         "datasets": "Digital Elevation Model (DEM) 1 meter",
-        "bbox": DEM_QUERY_BBOX,
+        "bbox": bbox,
         "prodFormats": "GeoTIFF",
         "max": "50",
         "outputFormat": "JSON",
@@ -52,9 +69,56 @@ def tnm_product(context):
     with urllib.request.urlopen(request, context=context, timeout=120) as response:
         items = json.load(response).get("items", [])
     for item in items:
-        if item.get("title") == DEM_TITLE:
+        if item.get("title") == title:
             return item
-    raise RuntimeError("TNM の API に %s が無い（%d 件）" % (DEM_TITLE, len(items)))
+    raise RuntimeError("TNM の API に %s が無い（%d 件）" % (title, len(items)))
+
+
+def fetch_tile(context, title, file_name, size, bbox):
+    """TNM の API で URL を引き、大きさが固定値と合うことを確かめてから落とし、manifest の 1 項目を返す"""
+    item = tnm_product(context, title, bbox)
+    url = item["downloadURL"]
+    parsed = urllib.parse.urlparse(url)
+    if parsed.hostname != DEM_HOST or os.path.basename(parsed.path) != file_name:
+        raise RuntimeError("API の URL が想定と違う: %s" % url)
+    if int(item["sizeInBytes"]) != size:
+        raise RuntimeError("API の大きさ %s が固定値 %d と違う（版が替わった）" % (item["sizeInBytes"], size))
+    path = os.path.join(SOURCE_DIR, file_name)
+    if os.path.isfile(path) and os.path.getsize(path) == size:
+        print("落とし済み: %s" % path)
+    else:
+        print("取得: %s (%.1f MB)" % (url, size / 1e6), flush=True)
+        download(url, path, context)
+    return {
+        "file": file_name,
+        "title": item["title"],
+        "url": url,
+        "size": os.path.getsize(path),
+        "sha256": sha256_of(path),
+        "retrieved": datetime.date.today().isoformat(),
+        "publication_date": item.get("publicationDate"),
+        "last_updated": item.get("lastUpdated"),
+        "bounding_box_wgs84": item.get("boundingBox"),
+        "license": "Public domain (All 3DEP products are public domain.)",
+        "source": TNM_API,
+    }
+
+
+def fetch_neighbors():
+    """遠景に使う隣の 3 枚を落とし、manifest.json の neighbors に書く（手元のタイルの項目はそのまま）"""
+    context = ssl_context()
+    with open(MANIFEST_PATH, encoding="utf-8") as stream:
+        manifest = json.load(stream)
+    entries = []
+    for tile in NEIGHBOR_TILES:
+        entry = fetch_tile(context, tile["title"], tile["file"], tile["size"], tile["bbox"])
+        entry["role"] = tile["role"]
+        entries.append(entry)
+    manifest["neighbors"] = entries
+    with open(MANIFEST_PATH, "w", encoding="utf-8", newline="\n") as stream:
+        json.dump(manifest, stream, ensure_ascii=False, indent=2)
+        stream.write("\n")
+    print("manifest: %s（neighbors %d 枚）" % (MANIFEST_PATH, len(entries)))
 
 
 def download(url, path, context):
@@ -279,11 +343,15 @@ def main():
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--fetch", action="store_true", help="DEM を落として manifest.json を書く")
     group.add_argument("--verify", action="store_true", help="DEM・manifest・パッケージを確かめて中身を表示する")
+    group.add_argument("--fetch-neighbors", action="store_true", help="遠景に使う隣の 1 m タイル 3 枚を落として manifest に足す")
     args = parser.parse_args()
     # 出力をファイルへ保存して読むので、端末の文字コードに依らず UTF-8 で書く
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     if args.fetch:
         fetch()
+        return 0
+    if args.fetch_neighbors:
+        fetch_neighbors()
         return 0
     return verify()
 

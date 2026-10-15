@@ -21,6 +21,7 @@
 #include "Container/Span.h"
 #include "Container/String.h"
 #include "Container/StringView.h"
+#include "Container/VariableArray.h"
 
 #include <cstdint>
 #include <limits>
@@ -191,6 +192,29 @@ namespace NorvesLib::Core::Rendering::Terrain
         float m_DuneDirZ = 0.0f;
     };
 
+    /// 遠景の地形の記述（Scripts/Terrain/HorizonDem.py が書く horizon.json）の 1 つのメッシュ。
+    /// メッシュのファイルは頂点ごとに float32 × 8（位置・法線・UV）、続けて三角形ごとに uint32 × 3（little-endian、見出しなし）。
+    /// 法線が NaN の頂点は近景の格子の外周の頂点で、焼くときに近景の格子の SampleNormal で埋める
+    struct TerrainHorizonMesh
+    {
+        /// メッシュの名前（英数字と _ だけ。クック済みメッシュの論理パスに使う）
+        Container::AnsiString Name;
+        /// メッシュのファイルのアセットの根からの道
+        Container::AnsiString FilePath;
+        /// ファイルの SHA-256（16 進の小文字）
+        Container::AnsiString Sha256;
+        uint32_t VertexCount = 0;
+        uint32_t TriangleCount = 0;
+    };
+
+    /// 遠景の地形の記述を読み、メッシュの並びを outMeshes に入れる。descriptorPath はアセットの根からの道。
+    /// 読めない・形式が約束と違うときは false を返し、outError に理由を書く
+    bool LoadTerrainHorizonMeshes(Container::AnsiStringView descriptorPath,
+                                  Container::VariableArray<TerrainHorizonMesh> &outMeshes, Container::AnsiString &outError);
+
+    /// 遠景の地形の記述の形式の名前（記述の format）
+    inline constexpr const char *kTerrainHorizonFormat = "norveslib.terrain-horizon.v1";
+
     /// 荒野のシーン（wasteland）の地形の値。クッカーと Game が同じ値を使う
     namespace WastelandTerrain
     {
@@ -237,6 +261,14 @@ namespace NorvesLib::Core::Rendering::Terrain
                                ? (totalCells - outFirstCell < kDemTileCells ? totalCells - outFirstCell : kDemTileCells)
                                : 0u;
         }
+
+        /// DEM の格子の外側を覆う遠景の地形の記述（LoadTerrainHorizonMeshes に渡す。アセットの根からの道）。
+        /// 一覧（Assets/AssetSets/WastelandTerrain.json）では source_path をこの記述にした terrain-tile:dem:<n>,0 が
+        /// 記述の n 番目のメッシュを表す（Scripts/Terrain/WriteTerrainAssetSet.py が書く）
+        inline constexpr const char *kHorizonDescriptorPath = "Terrain/ValleyOfTheGods/horizon.json";
+
+        /// 遠景のメッシュのクック済みメッシュの論理パスの接頭辞。後ろに "<名前>.generated" を付ける
+        inline constexpr const char *kHorizonCookedMeshLogicalPathPrefix = "Assets/Models/WastelandTerrain/WastelandHorizon_";
 
         /// 荒野の地形の高さ場の値
         TerrainHeightFieldParams MakeParams();

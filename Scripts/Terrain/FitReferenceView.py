@@ -1,4 +1,5 @@
 ﻿# 手本の写真の地形の輪郭（空との境）と、DEM の格子（height.json・height.r32）から計算した稜線を照合し、
+# （遠景の記述 horizon.json があれば、近景の格子の外は遠景の段 castle・mid・far の高さの格子を引く）
 # 写真に合うカメラの位置・向き・画角を探す。位置の記録が無い写真の視点（SceneCatalog.h の ref_*）を決めるのに使う。
 #
 # 使い方:
@@ -32,7 +33,8 @@ PHOTO_RED_MINUS_BLUE = 10
 PHOTO_RUN_ROWS = 4
 PHOTO_MEDIAN_COLUMNS = 9
 # 視線に沿って高さを引く距離[m]（近くは細かく）
-DISTANCES = np.concatenate([np.arange(3, 200, 1.0), np.arange(200, 1000, 3.0), np.arange(1000, 6500, 8.0)])
+DISTANCES = np.concatenate([np.arange(3, 200, 1.0), np.arange(200, 1000, 3.0), np.arange(1000, 6500, 8.0),
+                            np.arange(6500, 16000, 16.0)])
 # 向きを探す幅[°]と刻み、横の画角[°]・仰俯[°]の範囲
 AZIMUTH_WINDOW_DEG = 35.0
 AZIMUTH_STEP_DEG = 0.1
@@ -50,9 +52,43 @@ class HeightGrid:
         self.first_x = float(descriptor["first_vertex_engine"]["x"])
         self.first_z = float(descriptor["first_vertex_engine"]["z"])
         self.values = np.fromfile(os.path.join(GRID_DIR, descriptor["file"]), dtype="<f4").reshape(self.rows, self.columns)
+        # 遠景の段（細かい順）。(最初の X, 最初の Z, 間隔, 高さ) の並び
+        self.horizon = []
+        horizon_path = os.path.join(GRID_DIR, "horizon.json")
+        if os.path.isfile(horizon_path):
+            with open(horizon_path, encoding="utf-8-sig") as file:
+                horizon = json.load(file)
+            for level in horizon["levels"]:
+                if "file" not in level:
+                    continue
+                values = np.fromfile(os.path.join(GRID_DIR, horizon["mesh_folder"], level["file"]), dtype="<f4")
+                self.horizon.append((level["x_min"], level["z_min"], float(level["spacing_m"]),
+                                     values.reshape(level["rows"], level["columns"])))
 
     def sample(self, x, z):
-        """双線形の高さ（格子の外は NaN）"""
+        """双線形の高さ（近景の格子の外は遠景の段、どれの外も NaN）"""
+        h = self.sample_near(x, z)
+        for first_x, first_z, spacing, values in self.horizon:
+            missing = np.isnan(h)
+            if not missing.any():
+                break
+            rows, columns = values.shape
+            u = (x - first_x) / spacing
+            v = (z - first_z) / spacing
+            inside = (u >= 0) & (u <= columns - 1) & (v >= 0) & (v <= rows - 1)
+            uc = np.clip(u, 0, columns - 1.001)
+            vc = np.clip(v, 0, rows - 1.001)
+            c0 = np.floor(uc).astype(int)
+            r0 = np.floor(vc).astype(int)
+            fu = uc - c0
+            fv = vc - r0
+            level_h = (values[r0, c0] * (1 - fu) * (1 - fv) + values[r0, c0 + 1] * fu * (1 - fv)
+                       + values[r0 + 1, c0] * (1 - fu) * fv + values[r0 + 1, c0 + 1] * fu * fv)
+            h = np.where(missing & inside, level_h, h)
+        return h
+
+    def sample_near(self, x, z):
+        """近景の格子の双線形の高さ（格子の外は NaN）"""
         u = np.clip(x - self.first_x, 0, self.columns - 1.001)
         v = np.clip(z - self.first_z, 0, self.rows - 1.001)
         c0 = np.floor(u).astype(int)

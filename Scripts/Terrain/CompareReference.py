@@ -42,7 +42,7 @@ CATALOG_PATH = os.path.join(REPO_ROOT, "Game", "Scenes", "SceneCatalog.h")
 #   match = 切り出した範囲の中の主役の配置と輪郭を合わせる、horizon = 主役が範囲の外なので遠景（SCN-WL-HORIZON）で合わせる、
 #   none = 地表と植生の比較用で輪郭は見ない
 PHOTOS = [
-    {"id": "far_01", "view": "ref_far_01", "outline": "horizon", "cliff": (0.30, 0.42, 0.68, 0.62), "ground": (0.0, 0.72, 1.0, 0.92)},
+    {"id": "far_01", "view": "ref_far_01", "outline": "match", "cliff": (0.30, 0.42, 0.68, 0.62), "ground": (0.0, 0.72, 1.0, 0.92)},
     {"id": "far_02", "view": "ref_far_02", "outline": "match", "cliff": (0.50, 0.28, 0.90, 0.55), "ground": (0.0, 0.65, 1.0, 0.87)},
     {"id": "cliff_01", "view": "ref_cliff_01", "outline": "match", "cliff": (0.22, 0.32, 0.82, 0.78), "ground": (0.0, 0.82, 1.0, 0.91)},
     {"id": "cliff_02", "view": "ref_cliff_02", "outline": "match", "cliff": (0.38, 0.32, 0.72, 0.78), "ground": (0.0, 0.82, 0.70, 0.97)},
@@ -50,8 +50,7 @@ PHOTOS = [
     {"id": "ground_02", "view": "ref_ground_02", "outline": "match", "cliff": (0.70, 0.33, 0.98, 0.58), "ground": (0.35, 0.75, 0.95, 0.92)},
 ]
 OUTLINE_TEXT = {
-    "match": "輪郭: 範囲の中の主役の配置と輪郭を合わせる",
-    "horizon": "輪郭: 主役は範囲の外。遠景（SCN-WL-HORIZON）で合わせる。手前〜中景の谷床だけを見る",
+    "match": "輪郭: 主役の配置と輪郭を合わせる",
     "none": "輪郭: 見ない（地表と植生の比較用）",
 }
 # 地形の 3 層のアルベドのテクスチャ（WastelandRoutine.cpp の kSandAlbedoPath・kDirtAlbedoPath・kRockAlbedoPath）

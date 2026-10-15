@@ -99,8 +99,9 @@ namespace Game::GameModes
         };
         // 写真ごとの推定（根拠は Docs/RenderingValidation/WastelandReference.md）。どれも写真と同じ条件ではない
         constexpr WastelandReferenceShot kReferenceShots[] = {
-            // far_01: APS-C の 55 mm（横 23°）。太陽は基準の光と同じ（5 月 18 日の南中の 2 時間後）
-            {"ref_far_01", 13.1f, kSunAltitudeDegrees, kSunAzimuthDegrees},
+            // far_01: APS-C の 55 mm（横 23°）。遠景の稜線と写真の輪郭の照合で横 22.5°。太陽は基準の光と同じ
+            // （5 月 18 日の南中の 2 時間後）
+            {"ref_far_01", 12.77f, kSunAltitudeDegrees, kSunAzimuthDegrees},
             // far_02: 1/2.5 型の 6.1 mm（横 50°）。5 月 11 日 16 時ごろ（記録の 22:12 を UTC とみる）、西南西の 45°
             {"ref_far_02", 29.5f, 45.0f, 160.0f},
             // cliff_01: 焦点距離の記録が無く、DEM の稜線と写真の輪郭の照合から横 32°。9 月 23 日の日没の 1 時間前、西の 10°
@@ -182,8 +183,8 @@ namespace Game::GameModes
         constexpr float kCloudExtinctionPerMeter = 0.006f;
         constexpr float kCloudShapeScale = 4500.0f;
         constexpr float kCloudWindVelocity[2] = {8.0f, 3.0f};
-        // カメラの遠方面[m]。地形（4.7 × 4.6 km）の対角（約 6.6 km）の先まで描く
-        constexpr float kFarPlane = 7000.0f;
+        // カメラの遠方面[m]。遠景（1 m の DEM 4 枚の 20 km 四方）の、近景から最も遠い北西の角（約 20 km）まで描く
+        constexpr float kFarPlane = 21000.0f;
         // 太陽の影の到達距離[m]。谷床の視点から、写真に写る主要な崖（主役のビュート 0.5〜2.8 km、ground_02 の Rooster Butte 3.5 km）と、
         // その影（仰角 58.5°で比高 200 m の崖から 120 m 前後）まで落とす
         constexpr float kSunShadowMaxDistance = 4000.0f;
@@ -377,6 +378,33 @@ namespace Game::GameModes
             }
             LOG_INFO_F("WASTELAND_TERRAIN_TILES tiles_x=%u tiles_z=%u grid=%ux%u", tilesX, tilesZ, layout.Columns,
                        layout.Rows);
+
+            // 遠景（DEM の格子の外側を、近景の外周と縫い合わせた粗い段で覆う）。記述やクック済みが無ければ近景だけで描く
+            VariableArray<Terrain::TerrainHorizonMesh> horizonMeshes;
+            AnsiString horizonError;
+            if (!Terrain::LoadTerrainHorizonMeshes(TerrainSpec::kHorizonDescriptorPath, horizonMeshes, horizonError))
+            {
+                LOG_WARNING_F("COOKED_MODEL_MISSING scene=wasteland path=%s 遠景の地形の記述を読めません（%s）。"
+                              "Scripts/Terrain/HorizonDem.py --build で作り、Scripts/CookAssets.ps1 で焼くと描けます",
+                              TerrainSpec::kHorizonDescriptorPath, horizonError.c_str());
+                return true;
+            }
+            const size_t nearTileCount = assembly.TilePaths.size();
+            for (const Terrain::TerrainHorizonMesh &mesh : horizonMeshes)
+            {
+                String path = String(TerrainSpec::kHorizonCookedMeshLogicalPathPrefix) + String(mesh.Name.c_str()) +
+                              ".generated";
+                if (!assetSystem.FindCookedVariant(AnsiString(path.c_str()), Asset::AssetKind::Model).ShouldUseCooked())
+                {
+                    LOG_WARNING_F("COOKED_MODEL_MISSING scene=wasteland path=%s 遠景のクック済みメッシュがありません。"
+                                  "Scripts/CookAssets.ps1 で焼くと描けます（遠景は置きません）",
+                                  path.c_str());
+                    assembly.TilePaths.resize(nearTileCount);
+                    return true;
+                }
+                assembly.TilePaths.push_back(std::move(path));
+            }
+            LOG_INFO_F("WASTELAND_HORIZON_MESHES count=%zu", horizonMeshes.size());
             return true;
         }
 

@@ -165,8 +165,10 @@ namespace Game::Scenes
         // 以下は手本の写真（Assets/Reference/ValleyOfTheGods、Docs/RenderingValidation/WastelandReference.md）の構図に寄せた視点。
         // 位置・向きは写真の GPS と写った地形の方位からの推定で、写真と同じではない。画角と太陽の時刻は荒野のモードが
         // 視点ごとに替える（WastelandRoutine.cpp の kReferenceShots）。比べるのは Scripts/Terrain/CompareReference.py
-        // far_01: 写真の GPS（Battleship Rock の北東 700 m の谷床）から北西（方位 312°）の Castle Butte の方を見る
-        {"ref_far_01", SceneViewKind::FreePose, 132.0f, 1.4f, 0.0f, {-963.5f, 1.7f, -1548.5f}},
+        // far_01: 写真の GPS（Battleship Rock の北東 700 m の谷床）の南東 85 m から、北北西（方位 328.6°）2.7 km 先の Castle Butte と
+        // 背後の Cedar Mesa の縁を見る。位置・向き・画角は遠景の地形（DEM 4 枚）の稜線と写真の輪郭を照合して決めた
+        // （Scripts/Terrain/FitReferenceView.py。城の頂・2 本の尖塔・両脇の崖の段が重なる）
+        {"ref_far_01", SceneViewKind::FreePose, 148.6f, 3.5f, 0.0f, {-903.5f, 1.7f, -1608.5f}},
         // far_02: Setting Hen Butte の南南西 680 m の谷床から北（方位 5°）の Rooster Butte と Setting Hen Butte を見る
         // （写真の GPS の位置では 2 つのビュートの左右が写真と逆になるので、左右の並びと見かけの高さから南へ置いた）
         {"ref_far_02", SceneViewKind::FreePose, 185.0f, 1.0f, 0.0f, {1099.5f, 1.7f, 2000.5f}},
