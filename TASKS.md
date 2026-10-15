@@ -1518,14 +1518,14 @@
 - notes: 危険地帯（アセットのクック）。三角形が増えるが、仮想化ジオメトリ（MegaGeometry）で描ける量か確かめる（速さの条件は無い。操作できる程度ならよい）。1 反復で閉じなければ、主役の Battleship Rock だけで先に閉じ、残りの崖を `SCN-WL-CLIFF-DETAIL-ALL` として後ろに足す。 2026-10-15 親: 3 反復とも焼きが 40 分に収まらず遮断器で blocked になった（Debug の AssetCook で中央の区画 1 本 20 分超。頂点ごとに位置を 5 回求めて法線を差分で出していた）。焼きは RelWithDebInfo の AssetCook で行い、細分の格子の位置を 1 回だけ求めて法線を隣の点から作る形にして速くする（反復 6 の PROGRESS の案）。反復の外で走らせ続けた AssetCook は親が止めた（その出力は使わない）。焼きは反復の中で終わる形にし、反復の外へ切り離さない。
 
 ## SCN-WL-CLIFF-DETAIL-ALL: Battleship Rock の外の崖にも、地層の段と割れ目の焼き直しを広げる
-- status: blocked
+- status: todo
 - done-when: SCN-WL-CLIFF-DETAIL は主役の Battleship Rock の範囲（`Tools/AssetCook/TerrainCliffDetail.cpp` の X −2150〜−900・Z −1650〜−420）だけを焼き直した。手本の視点に写るほかの崖（ref_cliff_02 の尖塔の台座・Castle Butte・左右のメサ）にも同じ焼き直しを広げ、範囲の境で焼いた崖と周りの地形の継ぎ目が見えない。三角形の数を区画ごとに見て、仮想化ジオメトリで描けることを確かめる（溢れ 0）。比較画像（1920×1080）を開き、広げた崖の段と割れ目が影を落とす立体として見えることを確かめる。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `cmake --build build --config RelWithDebInfo --target AssetCook -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CookAssets.ps1 -AssetCookExe build/Tools/AssetCook/RelWithDebInfo/AssetCook.exe -OnlyLogicalPath "Models/WastelandTerrain/*"`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-WL-CLIFF-DETAIL-ALL`
 - paths: Tools/AssetCook, Scripts/Terrain, Assets/AssetSets, TASKS.md, PROGRESS.md
-- notes: 危険地帯（アセットのクック）。SCN-WL-CLIFF-DETAIL の notes の「1 反復で閉じなければ残りの崖を後ろに足す」による。焼きは RelWithDebInfo の AssetCook で、一覧を分けた並列で反復の中で終える（中央の区画 dem:2,3 は 1408 万三角形・1 本約 14 分）。範囲を広げると三角形がさらに増えるので、細分の間隔や範囲の取り方を区画ごとの数で決める。 2026-10-15 親: 反復 4 の評価で差し戻した所（NEXT_FINDINGS の反復 4）だけが残っている。ref_far_01 の左の奥の崖（画面の左 約 600 画素、視点から 5〜9 km、mid の段の 8 m の格子）が丸い面のままで、主役のビュート・尖塔・右の崖の段と割れ目と並ぶと汚れて見える。この崖を castle の段か細かい格子の範囲へ入れて同じ焼き直しを掛ける（1 画素が 1.1〜2 m なので、細分は 0.5〜1 m でよい）。版 4 で焼いた崖と範囲は変えない。撮り直した ref_far_01 の左の切り出しを版 4 の `crop_far01_left.png` と並べて開き、段と割れ目の影が出たこと・新しい範囲の境に継ぎ目が無いこと・溢れ 0 を確かめる。
+- notes: 危険地帯（アセットのクック）。SCN-WL-CLIFF-DETAIL の notes の「1 反復で閉じなければ残りの崖を後ろに足す」による。焼きは RelWithDebInfo の AssetCook で、一覧を分けた並列で反復の中で終える（中央の区画 dem:2,3 は 1408 万三角形・1 本約 14 分）。範囲を広げると三角形がさらに増えるので、細分の間隔や範囲の取り方を区画ごとの数で決める。 2026-10-15 親: 反復 4 の評価で差し戻した所（NEXT_FINDINGS の反復 4）だけが残っている。ref_far_01 の左の奥の崖（画面の左 約 600 画素、視点から 5〜9 km、mid の段の 8 m の格子）が丸い面のままで、主役のビュート・尖塔・右の崖の段と割れ目と並ぶと汚れて見える。この崖を castle の段か細かい格子の範囲へ入れて同じ焼き直しを掛ける（1 画素が 1.1〜2 m なので、細分は 0.5〜1 m でよい）。版 4 で焼いた崖と範囲は変えない。撮り直した ref_far_01 の左の切り出しを版 4 の `crop_far01_left.png` と並べて開き、段と割れ目の影が出たこと・新しい範囲の境に継ぎ目が無いこと・溢れ 0 を確かめる。 2026-10-15 親（反復 2 の blocked への判断）: 案 1 を採る。`kCastleRegions` の 3・4 番目（左の奥の崖・尖塔の奥の崖、5〜9 km）を間隔 2 m・細分の下限 1 にする（2 m の格子の点の押し出しだけ。1 画素 1.1〜2 m なので足りる）。ジオメトリのプールは広げない（実行時の側には触らない）。STEER の「コードを変えない」はこの変更には当てはまらない。手順はビルド → 印の合わない項目を 12 組で並列に焼く（dem:2,3 を最初の組に単独で）→ `CookAssets.ps1` で cooked=0 → 撮影。撮影の読み込みが 600 秒に収まらなければ、範囲を ref_far_01 に写る急な升目だけに狭める。
 
 ## SCN-WL-REVIEW-1: 節目の確認 1（地面・崖・遠景）をユーザーに渡す
 - status: todo
