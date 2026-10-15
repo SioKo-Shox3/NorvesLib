@@ -1,9 +1,11 @@
-﻿# 荒野の地形の 3 層の素材（Poly Haven の CC0 の写真由来のテクスチャ）と土の皮膜の色の素材を落とし、アルベドを実在の値へ較正する。
+﻿# 荒野の地形の素材（Poly Haven の CC0 の写真由来のテクスチャ）を落とし、アルベドを実在の値へ較正して、
+# 土の枠の「礫の舗石｜皮膜の付いた土」の横 2 枚のアトラスを書く。
 #
 # 使い方:
 #   python Scripts/Terrain/TerrainMaterials.py --fetch    足りないテクスチャを Poly Haven から落とし、記録（materials.json）を書く
-#   python Scripts/Terrain/TerrainMaterials.py --build    アルベドを較正した PNG（<id>_diff_cal_4k.png）を書く
-#   python Scripts/Terrain/TerrainMaterials.py --verify   元の画像が記録と一致し、較正した画像の平均のアルベドが目標と範囲に入るかを確かめる
+#   python Scripts/Terrain/TerrainMaterials.py --build    アルベドを較正した PNG（<id>_diff_cal_4k.png）と、土の枠のアトラスを書く
+#   python Scripts/Terrain/TerrainMaterials.py --verify   元の画像が記録と一致し、較正した画像の平均のアルベドが目標と範囲に入り、
+#                                                         アトラスの左右が作り直しと一致するかを確かめる
 # テクスチャと記録は git 管理外（Assets/Textures/PolyHaven/）。終了コード: すべて満たせば 0、どれかが欠ければ 1。
 #
 # 較正: 元のアルベドの画像（sRGB）を線形へ戻し、線形の輝度（Rec.709）の平均が層の目標になる倍率を 3 チャンネルに同じだけ
@@ -17,11 +19,14 @@
 #   - 礫の舗石（崖錐と礫の地表。red_laterite_soil_stones。赤い土の面を数 mm〜数 cm の礫が詰まって覆う）0.16: 範囲 0.15〜0.30 の
 #     下の側。手本の足元の写真の礫の舗石は、礫の間の土と同じ暗い赤茶で、土より明るく見えない
 #   - 皮膜の付いた土（cracked_red_ground。こぶ状に盛り上がった暗い褐色の土の皮膜）0.11: 範囲 0.08〜0.14。コロラド高原の
-#     地衣類・藍藻の土の皮膜は裸の土より 3〜5 割暗い。層の枠は 3 つしか無いので、皮膜は 1 層目の土の上に色の比
-#     （皮膜の較正した平均 ÷ 土の較正した平均）を掛けて描く。比はシェーダーの TERRAIN_CRUST_TINT
-#     （Assets/Shaders/Common/TerrainLayerBlend.glsl）に写し、--verify が一致を確かめる。アルベドの画像だけを落とす
+#     地衣類・藍藻の土の皮膜は裸の土より 3〜5 割暗い
 #   - 赤褐色の砂岩（露岩。cliff_side）0.22: 範囲 0.20〜0.35 の下の側。Cedar Mesa 砂岩の赤褐色の崖（写真の日向の崖 Y 0.24、
 #     露出の補正の後で土の 1.5〜1.8 倍）
+#
+# 土の枠のアトラス: 地形の材質の枠は 3 層（砂・土・岩肌）なので、皮膜の付いた土は土の枠のテクスチャの右半分に置く。
+# アルベド（較正済み）・法線・AO・粗さを、左 = 礫の舗石・右 = 皮膜の付いた土で横に並べた 8192×4096 の画像にする
+# （シェーダーは幅が高さの 2 倍の土の枠を 2 枚の並びとして標本する。Assets/Shaders/Common/TerrainLayerBlend.glsl）。
+# 2 つは同じ UV の倍率で張るので、1 枚の実寸が同じ素材を選ぶ。
 import argparse
 import hashlib
 import json
@@ -44,8 +49,6 @@ LICENSE = "CC0 1.0（Poly Haven）"
 RESOLUTION = "4k"
 # 落とす写像（Poly Haven の files の API のキー → ファイル名の接尾辞）
 MAPS = {"Diffuse": "diff", "nor_dx": "nor_dx", "Rough": "rough", "AO": "ao"}
-# 色の比だけに使う素材（皮膜）が落とす写像
-TINT_MAPS = {"Diffuse": "diff"}
 LUMINANCE = numpy.array([0.2126, 0.7152, 0.0722])
 
 # 層ごとの素材。size_m はテクスチャ 1 枚が覆う実寸（Poly Haven の記載の幅）、target は較正の目標、range は実在の値の範囲
@@ -56,13 +59,19 @@ MATERIALS = [
      "range": (0.15, 0.30)},
     {"layer": "赤褐色の砂岩", "id": "cliff_side", "name": "Cliff Side", "size_m": 1.8, "target": 0.22,
      "range": (0.20, 0.35)},
+    {"layer": "皮膜の付いた土", "id": "cracked_red_ground", "name": "Cracked Red Ground", "size_m": 2.0, "target": 0.11,
+     "range": (0.08, 0.14)},
 ]
-# 皮膜の付いた土（色の比だけ。base の層の土に掛ける）。比は TERRAIN_CRUST_TINT と一致させる
-CRUST = {"layer": "皮膜の付いた土", "id": "cracked_red_ground", "name": "Cracked Red Ground", "size_m": 2.0, "target": 0.11,
-         "range": (0.08, 0.14), "base": "red_mud_stones"}
-SHADER_PATH = os.path.join(REPO_ROOT, "Assets", "Shaders", "Common", "TerrainLayerBlend.glsl")
+# 土の枠のアトラス（左 = left、右 = right の素材）。出力は TEXTURE_ROOT/<id>/<id>_<写像>_8k.png
+ATLAS = {"id": "wasteland_dirt_crust", "left": "red_laterite_soil_stones", "right": "cracked_red_ground"}
+# アトラスに並べる写像: 較正したアルベド（RGB）・法線（RGB）・AO と粗さ（1 チャンネル）
+ATLAS_MAPS = {"diff_cal": "RGB", "nor_dx": "RGB", "ao": "L", "rough": "L"}
 # 較正で最大の成分が 1 を超え、1 に収めた画素の割合の上限（明るい礫・砂岩の縁のわずかな画素だけ）
 MAX_CLIPPED_RATIO = 0.02
+
+
+def material_by_id(material_id):
+    return next(material for material in MATERIALS if material["id"] == material_id)
 
 
 def source_path(material, suffix):
@@ -71,6 +80,10 @@ def source_path(material, suffix):
 
 def calibrated_path(material):
     return os.path.join(TEXTURE_ROOT, material["id"], "%s_diff_cal_%s.png" % (material["id"], RESOLUTION))
+
+
+def atlas_path(suffix):
+    return os.path.join(TEXTURE_ROOT, ATLAS["id"], "%s_%s_8k.png" % (ATLAS["id"], suffix))
 
 
 def md5_of(path):
@@ -117,12 +130,12 @@ def mean_albedo(linear):
 def fetch():
     context = ssl_context()
     record = {"license": LICENSE, "source": "https://polyhaven.com/a/", "materials": []}
-    for material in MATERIALS + [CRUST]:
+    for material in MATERIALS:
         os.makedirs(os.path.join(TEXTURE_ROOT, material["id"]), exist_ok=True)
         files = http_json(FILES_API + material["id"], context)
         entry = {"layer": material["layer"], "id": material["id"], "name": material["name"],
                  "page": "https://polyhaven.com/a/" + material["id"], "size_m": material["size_m"], "files": []}
-        for key, suffix in (TINT_MAPS if material is CRUST else MAPS).items():
+        for key, suffix in MAPS.items():
             info = files[key][RESOLUTION]["jpg"]
             path = source_path(material, suffix)
             if not os.path.exists(path) or md5_of(path) != info["md5"]:
@@ -162,37 +175,37 @@ def calibrate(material):
     return encoded, {"source_mean": mean, "source_luminance": luminance, "scale": scale, "clipped": limited}
 
 
-def calibrated_mean(material):
-    # 較正した後の線形の平均（RGB）。画像を書かずに求める
-    encoded, _ = calibrate(material)
-    return mean_albedo(srgb_to_linear(encoded.astype(numpy.float32) / 255.0))
+def atlas_half(material, suffix, mode, calibrated):
+    # アトラスの片側の画像（uint8）。較正したアルベドは calibrated（作り直した値）、ほかは元の JPEG を復号した値
+    if suffix == "diff_cal":
+        return calibrated[material["id"]]
+    with Image.open(source_path(material, suffix)) as image:
+        return numpy.asarray(image.convert(mode))
 
 
-def crust_tint():
-    # 皮膜の色の比（皮膜の較正した平均 ÷ 土の較正した平均）と、皮膜の較正した平均・輝度
-    base = next(material for material in MATERIALS if material["id"] == CRUST["base"])
-    crust_mean, crust_luminance = calibrated_mean(CRUST)
-    base_mean, _ = calibrated_mean(base)
-    return crust_mean / base_mean, crust_mean, crust_luminance
-
-
-def shader_crust_tint():
-    import re
-    with open(SHADER_PATH, encoding="utf-8-sig") as stream:
-        match = re.search(r"const vec3 TERRAIN_CRUST_TINT = vec3\(([^)]*)\);", stream.read())
-    return numpy.array([float(value) for value in match.group(1).split(",")]) if match else None
+def compose_atlas(suffix, mode, calibrated):
+    left = atlas_half(material_by_id(ATLAS["left"]), suffix, mode, calibrated)
+    right = atlas_half(material_by_id(ATLAS["right"]), suffix, mode, calibrated)
+    if left.shape != right.shape:
+        raise ValueError("%s の左右の寸法が違います: %s と %s" % (suffix, left.shape, right.shape))
+    return numpy.concatenate([left, right], axis=1)
 
 
 def build():
-    tint, crust_mean, crust_luminance = crust_tint()
-    print("皮膜 %s の較正した平均 %s（輝度 %.3f）、土 %s に掛ける比 TERRAIN_CRUST_TINT = vec3(%.3f, %.3f, %.3f)" % (
-        CRUST["id"], numpy.round(crust_mean, 3), crust_luminance, CRUST["base"], tint[0], tint[1], tint[2]))
+    calibrated = {}
     for material in MATERIALS:
         encoded, info = calibrate(material)
+        calibrated[material["id"]] = encoded
         Image.fromarray(encoded, "RGB").save(calibrated_path(material), optimize=False, compress_level=6)
         print("wrote %s 元の平均 %s（輝度 %.3f）× %.3f、1 に収めた画素 %.4f" % (
             os.path.relpath(calibrated_path(material), REPO_ROOT), numpy.round(info["source_mean"], 3),
             info["source_luminance"], info["scale"], info["clipped"]))
+    os.makedirs(os.path.join(TEXTURE_ROOT, ATLAS["id"]), exist_ok=True)
+    for suffix, mode in ATLAS_MAPS.items():
+        atlas = compose_atlas(suffix, mode, calibrated)
+        Image.fromarray(atlas, mode).save(atlas_path(suffix), optimize=False, compress_level=6)
+        print("wrote %s %dx%d（左 %s・右 %s）" % (os.path.relpath(atlas_path(suffix), REPO_ROOT), atlas.shape[1],
+                                                atlas.shape[0], ATLAS["left"], ATLAS["right"]))
     return 0
 
 
@@ -210,11 +223,14 @@ def verify():
             record = json.load(stream)
     check(record.get("license") == LICENSE, "記録の使用許諾が %s" % LICENSE)
     recorded = {entry["id"]: entry for entry in record.get("materials", [])}
+    calibrated = {}
     for material in MATERIALS:
         entry = recorded.get(material["id"])
         check(entry is not None and entry["size_m"] == material["size_m"],
               "%s の記録がある（名前・出典・実寸 %.1f m）" % (material["id"], material["size_m"]))
-        for file in (entry or {}).get("files", []):
+        files = (entry or {}).get("files", [])
+        check(len(files) == len(MAPS), "%s の写像が %d 枚（アルベド・法線・粗さ・AO）" % (material["id"], len(MAPS)))
+        for file in files:
             path = os.path.join(TEXTURE_ROOT, material["id"], file["name"])
             check(os.path.exists(path) and md5_of(path) == file["md5"], "%s が配布元の md5 と一致" % file["name"])
         path = calibrated_path(material)
@@ -222,6 +238,7 @@ def verify():
             check(False, "%s がある" % os.path.relpath(path, REPO_ROOT))
             continue
         encoded, info = calibrate(material)
+        calibrated[material["id"]] = encoded
         with Image.open(path) as image:
             written = numpy.asarray(image.convert("RGB"))
         check(numpy.array_equal(written, encoded), "%s が作り直しと一致" % os.path.basename(path))
@@ -232,23 +249,21 @@ def verify():
                   material["id"], material["layer"], luminance, numpy.round(mean, 3), material["target"], low, high))
         check(info["clipped"] <= MAX_CLIPPED_RATIO, "%s の較正で 1 に収めた画素 %.4f が %.3f 以下" % (
             material["id"], info["clipped"], MAX_CLIPPED_RATIO))
-    entry = recorded.get(CRUST["id"])
-    check(entry is not None and entry["size_m"] == CRUST["size_m"], "%s の記録がある（皮膜の色の比）" % CRUST["id"])
-    for file in (entry or {}).get("files", []):
-        path = os.path.join(TEXTURE_ROOT, CRUST["id"], file["name"])
-        check(os.path.exists(path) and md5_of(path) == file["md5"], "%s が配布元の md5 と一致" % file["name"])
-    if os.path.exists(source_path(CRUST, "diff")):
-        tint, crust_mean, crust_luminance = crust_tint()
-        low, high = CRUST["range"]
-        check(abs(crust_luminance - CRUST["target"]) < 0.005 and low <= crust_luminance <= high,
-              "%s（%s）の較正した平均のアルベド %.3f（RGB %s）が目標 %.2f・範囲 %.2f〜%.2f" % (
-                  CRUST["id"], CRUST["layer"], crust_luminance, numpy.round(crust_mean, 3), CRUST["target"], low, high))
-        written = shader_crust_tint()
-        check(written is not None and numpy.max(numpy.abs(written - tint)) < 0.005,
-              "シェーダーの TERRAIN_CRUST_TINT %s が皮膜 ÷ 土の比 %s と一致" % (
-                  None if written is None else numpy.round(written, 3), numpy.round(tint, 3)))
-    else:
-        check(False, "%s がある" % os.path.relpath(source_path(CRUST, "diff"), REPO_ROOT))
+    left, right = material_by_id(ATLAS["left"]), material_by_id(ATLAS["right"])
+    check(left["size_m"] == right["size_m"], "アトラスの左 %s（%.1f m）と右 %s（%.1f m）の 1 枚の実寸が同じ" % (
+        left["id"], left["size_m"], right["id"], right["size_m"]))
+    if left["id"] in calibrated and right["id"] in calibrated:
+        for suffix, mode in ATLAS_MAPS.items():
+            path = atlas_path(suffix)
+            if not os.path.exists(path):
+                check(False, "%s がある" % os.path.relpath(path, REPO_ROOT))
+                continue
+            with Image.open(path) as image:
+                written = numpy.asarray(image.convert(mode))
+            expected = compose_atlas(suffix, mode, calibrated)
+            check(written.shape[1] == written.shape[0] * 2 and numpy.array_equal(written, expected),
+                  "%s（%dx%d）の左右が %s・%s の作り直しと一致" % (os.path.basename(path), written.shape[1],
+                                                                 written.shape[0], left["id"], right["id"]))
     print("fail=%d" % len(failures))
     print("result=" + ("pass" if not failures else "fail"))
     return 0 if not failures else 1
@@ -256,7 +271,7 @@ def verify():
 
 def main():
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    parser = argparse.ArgumentParser(description="荒野の地形の 3 層の素材を落とし、アルベドを較正する")
+    parser = argparse.ArgumentParser(description="荒野の地形の素材を落とし、アルベドを較正して土の枠のアトラスを書く")
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--fetch", action="store_true")
     mode.add_argument("--build", action="store_true")

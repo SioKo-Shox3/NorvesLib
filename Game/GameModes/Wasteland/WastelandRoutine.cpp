@@ -215,15 +215,17 @@ namespace Game::GameModes
         // 地形の材質は 3 層の混ぜ合わせ。素材は Poly Haven の CC0 の写真由来のテクスチャ（Scripts/Terrain/TerrainMaterials.py が
         // 落としてアルベドを較正し、Assets/AssetSets/WastelandTerrain.json が焼く）。
         // 1 層目（砂の枠）は谷床の赤茶の土 red_mud_stones（1 枚 1.5 m。締まった赤い土にひび割れと小石が散る）。
-        // 土の皮膜は、この層に数 m の斑で色の比を掛けて描く（TerrainLayerBlend.glsl の TERRAIN_CRUST_TINT）
+        // 土の皮膜は、この層に数 m の斑で、土の枠の右半分の皮膜の層を高さで混ぜて描く（TerrainLayerBlend.glsl の TERRAIN_CRUST_*）
         constexpr const char *kSandAlbedoPath = "Assets/Textures/PolyHaven/red_mud_stones/red_mud_stones_diff_cal_4k.png";
         constexpr const char *kSandNormalPath = "Assets/Textures/PolyHaven/red_mud_stones/red_mud_stones_nor_dx_4k.jpg";
         constexpr const char *kSandOrmPath = "Assets/Textures/PolyHaven/red_mud_stones/red_mud_stones_orm_4k";
-        // 2 層目（土の枠）は崖錐と礫の地表の礫の舗石 red_laterite_soil_stones（1 枚 2 m。礫は数 mm〜数 cm）。谷床では土と数 m〜数十 m の
-        // 斑で入れ替わる（TerrainLayerBlend.glsl の ComputeTerrainSurfaceMaskWeights）
-        constexpr const char *kDirtAlbedoPath = "Assets/Textures/PolyHaven/red_laterite_soil_stones/red_laterite_soil_stones_diff_cal_4k.png";
-        constexpr const char *kDirtNormalPath = "Assets/Textures/PolyHaven/red_laterite_soil_stones/red_laterite_soil_stones_nor_dx_4k.jpg";
-        constexpr const char *kDirtOrmPath = "Assets/Textures/PolyHaven/red_laterite_soil_stones/red_laterite_soil_stones_orm_4k";
+        // 2 層目（土の枠）は横 2 枚の並び（8192×4096。Scripts/Terrain/TerrainMaterials.py --build が書く）。左は崖錐と礫の地表の
+        // 礫の舗石 red_laterite_soil_stones（1 枚 2 m。礫は数 mm〜数 cm）で、谷床では土と数 m〜数十 m の斑で入れ替わる
+        // （TerrainLayerBlend.glsl の ComputeTerrainSurfaceMaskWeights）。右は土の皮膜 cracked_red_ground（1 枚 2 m。こぶ状に
+        // 盛り上がった暗い褐色の皮膜とその割れ目）
+        constexpr const char *kDirtAlbedoPath = "Assets/Textures/PolyHaven/wasteland_dirt_crust/wasteland_dirt_crust_diff_cal_8k.png";
+        constexpr const char *kDirtNormalPath = "Assets/Textures/PolyHaven/wasteland_dirt_crust/wasteland_dirt_crust_nor_dx_8k.png";
+        constexpr const char *kDirtOrmPath = "Assets/Textures/PolyHaven/wasteland_dirt_crust/wasteland_dirt_crust_orm_8k";
         // 3 層目（岩肌の枠）は露岩の赤褐色の砂岩 cliff_side（1 枚 1.8 m。層理と割れ目の間隔は 10〜40 cm）
         constexpr const char *kRockAlbedoPath = "Assets/Textures/PolyHaven/cliff_side/cliff_side_diff_cal_4k.png";
         constexpr const char *kRockNormalPath = "Assets/Textures/PolyHaven/cliff_side/cliff_side_nor_dx_4k.jpg";

@@ -4738,3 +4738,13 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 比較画像を開いた（reference_ground_01・ground_02・far_01、足元の等倍の切り出し、ground・ref_far_02）: 足元はひび割れた赤い土に小石が散り、暗い褐色の皮膜の斑（数 m）と赤い礫の面（数十 m）が入れ替わる。風の筋の模様は消え、中景も一面の砂でなく土・礫・皮膜のまだらに見える。
 - Notes: 全体が写真より明るく彩度の高い橙なのは変わらない（SCN-WL-SKY-AERIAL）。ground_02 の起伏が砂丘に見えるのは DEM の沢のなだらかな陰で材質では消えない（SCN-WL-MASKS-FLOW）。皮膜の斑は写真のこぶ状の凹凸を持たず色だけ（法線・高さは土のまま）。遠景の地図（`FarMacro.py`）は細粒を全部土として焼いたまま（土と礫の舗石の平均のアルベドが同じなので焼き直していない）。斑の値（礫の境 0.56・皮膜の範囲 0.53〜0.60）は撮り比べで決めた。試験は足していない。
 - Next: TASKS.md の次の未完の項目（SCN-WL-MASKS-FLOW）。
+
+### SCN-WL-GROUND-SOIL 差し戻しの直し（2026-10-16、run 20261016-045112 の反復 2）
+- Done: 評価の差し戻し（皮膜が平均の色の比だけで、写真の皮膜の模様・法線・高さを描いていない）を直した。
+  - 素材: `cracked_red_ground` の法線・粗さ・AO も落とし（`TerrainMaterials.py --fetch`）、`--build` が土の枠の横 2 枚の並び `wasteland_dirt_crust`（8192×4096。左 = 礫の舗石 `red_laterite_soil_stones`・右 = 皮膜。アルベドは較正済み、法線・AO・粗さは元の画像）を書く。2 つは 1 枚 2 m で同じ UV の倍率。`--verify` は左右が作り直しと一致し、2 つの実寸が同じことを確かめる。色の比 `TERRAIN_CRUST_TINT` は消した。
+  - シェーダー（`TerrainLayerBlend.glsl`）: 土の枠が幅 = 高さの 2 倍なら 2 枚の並びとして扱い、1 枚ずつ fract で畳んで標本する（u を足跡の分だけ枠の内側へ収め、足跡を 1 枚までに抑えて隣の枠を拾わない）。1 層目の土に、数 m の斑で右半分の皮膜の層（アルベド・法線・ORM）を、2 つの AO の高さの浅い混ぜ（深さ 0.06。皮膜の AO の平均の差 0.30 を引く）で重ねる。最初の撮影は層の間の深さ 0.3 で混ぜ、斑の縁が数十 cm のぼやけた輪になったので浅くした。
+  - Wasteland の土の枠のパスと `WastelandTerrain.json` の 3 項目をアトラスへ替えた。`CompareReference.py` の材質の注記は並びの左右を分けて読む（礫の舗石 0.160・皮膜 0.110）。
+  - 証拠: `verify-SCN-WL-GROUND-SOIL-10.txt`（Debug の Game のビルド EXIT=0）、`-11.txt`（荒野の全 11 視点 1920×1080、result=pass、11 視点とも白飛び 0・黒つぶれ 0、EXIT=0）、`-12.txt`（`CompareReference.py --verify` result=pass photos=6、EXIT=0。地面 Y は far_01 0.433・far_02 0.357・ground_01 0.399・ground_02 0.320）。`-7〜9.txt` は混ぜの深さを浅くする前の同じ 3 本（いずれも EXIT=0）。`aux-SCN-WL-GROUND-SOIL-cook3.txt`: RelWithDebInfo の AssetCook でアトラス 3 枚 cooked=3（8192×4096、BC7・BC5・BC7）。`aux-...-materials2.txt`: `TerrainMaterials.py --verify` result=pass。
+  - 比較画像を開いた（reference_ground_01・ground_02・far_01、ref_ground_01 の足元の 2 倍の切り出し、ref_far_01・ref_ground_02 の中景）: 皮膜の斑は写真の多角形の割れ目とこぶ状の凹凸を持ち、縁は皮膜の盛り上がりに沿った境になった。中景に 2 枚の並びの継ぎ目の格子は見えない。
+- Notes: 全体の明るさと橙の彩度は SCN-WL-SKY-AERIAL、ground_02 の砂丘に見える起伏は SCN-WL-MASKS-FLOW のまま。皮膜の粗さ・遠くの法線の分散は土の枠の値（`kDetailSlopeVariance[1]`）を共有する。皮膜の斑の範囲（0.53〜0.60）と高さの引き値 0.30・深さ 0.06 は撮り比べで決めた。試験は足していない。
+- Next: TASKS.md の次の未完の項目（SCN-WL-MASKS-FLOW）。

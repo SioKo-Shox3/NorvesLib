@@ -29,7 +29,9 @@
 //   - アルベドの画像は sRGB で符号化されている。UNORM の形式で張られた層（layers.w のビット）は標本ごとに線形へ戻す。
 //   - 各層のアルベドに、層ごとに別の位相の低周波ノイズ（数十〜数百 m と、模様の繰り返しを崩す十数 m）で明るさと色味の揺らぎを
 //     掛けてから混ぜる。揺らぎは分類の境で入れ替わり、全域を 1 つの斑の模様で覆わない。
-//   - 1 層目（荒野では赤茶の土）には、数 m の斑で土の皮膜（暗い褐色）の色の比 TERRAIN_CRUST_TINT を掛ける。
+//   - 土の枠のテクスチャが横 2 枚の並び（幅が高さの 2 倍。左 = 土の層・右 = 皮膜の付いた土。Scripts/Terrain/TerrainMaterials.py が
+//     書く）なら、1 層目（荒野では赤茶の土）の上に、数 m の斑で右半分の皮膜の層（アルベド・法線・ORM）を高さで混ぜる。
+//     2 枚の並びは 1 枚ずつ fract で畳んで標本し、u を標本の足跡の分だけ枠の内側へ収めて隣の枠を拾わない。
 //   - 岩肌の層には、ワールドの y（共通の基準面）からの高さで決まる砂岩の地層と、崖の上端から垂れる砂漠ワニスを掛ける
 //     （Common/TerrainStrata.glsl）。
 //
@@ -74,15 +76,19 @@ const vec3 TERRAIN_PAVEMENT_WAVELENGTHS = vec3(31.0, 9.0, 2.7);
 const vec3 TERRAIN_PAVEMENT_WEIGHTS = vec3(0.5, 0.33, 0.17);
 const float TERRAIN_PAVEMENT_FINE_CENTER = 0.56;
 const float TERRAIN_PAVEMENT_HALF_WIDTH = 0.05;
-// 土の皮膜の斑の 3 つの波長（m）と重み、皮膜になる値の範囲。皮膜は 1 層目の土のアルベドに色の比を掛ける。
-// 比は Poly Haven の cracked_red_ground（暗い褐色の土の皮膜。平均の輝度 0.11 へ較正）÷ red_mud_stones（0.16 へ較正）の
-// 線形の平均（Scripts/Terrain/TerrainMaterials.py --build が出し、--verify が一致を確かめる）
-const vec3 TERRAIN_CRUST_TINT = vec3(0.547, 0.788, 0.985);
+// 土の皮膜の斑の 3 つの波長（m）と重み、皮膜になる値の範囲。皮膜は土の枠の 2 枚の並びの右半分（Poly Haven の
+// cracked_red_ground。暗い褐色の土の皮膜。平均の輝度 0.11 へ較正）を、1 層目の土と高さ（ORM の AO）で混ぜる
 const vec3 TERRAIN_CRUST_WAVELENGTHS = vec3(3.0, 1.0, 0.35);
 const vec3 TERRAIN_CRUST_WEIGHTS = vec3(0.45, 0.35, 0.2);
 const vec2 TERRAIN_CRUST_RANGE = vec2(0.53, 0.60);
 // 斑が画素より細かくなる遠くで、皮膜を寄せる平均の割合（上の範囲で値ノイズの和を切ったときのおよその被覆）
 const float TERRAIN_CRUST_MEAN_COVERAGE = 0.3;
+// 皮膜の高さ（AO）から引く値。皮膜の AO の平均（0.86）は土（red_mud_stones の 0.56）より高く、そのままでは皮膜が斑より広く
+// 土を覆うので、平均の差を引いて 2 つの高さの中央をそろえる（4k の AO を 1/4 に縮めた画素の平均）
+const float TERRAIN_CRUST_HEIGHT_OFFSET = 0.30;
+// 皮膜と土の高さの混ぜの深さ。層の間の混ぜ（params.height.w = 0.3）では斑の縁が数十 cm のぼやけた輪になり、土の上に
+// 貼った斑に見える。浅くして、縁を皮膜の盛り上がりと割れ目（AO）に沿った境にする
+const float TERRAIN_CRUST_BLEND_DEPTH = 0.06;
 // 地図を引く位置をずらすノイズの波長（m）
 const float TERRAIN_SURFACE_MASK_WARP_WAVELENGTH = 7.0;
 // 地図の重みのうち捨てる小さな値（圧縮（BC7）の誤差で平らな所に残るわずかな重みで、その層を標本しない）
@@ -347,13 +353,15 @@ vec3 TerrainSrgbToLinear(vec3 encoded)
 }
 
 // 1 つの投影を標本して acc へ重み付きで足す。uv・uvDx・uvDy は回す前の UV とその勾配、rotation は段の回転。
-// 接空間の法線の傾きは回した UV の向きで表されるので、回転を戻してから面の軸（axisU・axisV）へ載せる
+// 接空間の法線の傾きは回した UV の向きで表されるので、回転を戻してから面の軸（axisU・axisV）へ載せる。
+// atlasHalf が 0 以上なら、テクスチャは横 2 枚の並びで、その枠（0 = 左・1 = 右）だけを 1 枚として標本する
 void AccumulateTerrainProjection(inout TerrainLayerSample acc, float weight,
                                  sampler2D albedoTex, sampler2D normalTex, sampler2D ormTex,
                                  bool bNormalTwoChannel, bool bAlbedoSrgbDecode, bool bVirtualTexture,
-                                 vec2 uv, vec2 uvDx, vec2 uvDy, mat2 rotation, vec2 offset, vec3 axisU, vec3 axisV)
+                                 vec2 uv, vec2 uvDx, vec2 uvDy, mat2 rotation, vec2 offset, vec3 axisU, vec3 axisV,
+                                 float atlasHalf)
 {
-    const vec2 ruv = rotation * uv + offset;
+    vec2 ruv = rotation * uv + offset;
     // 1 画素あたりの UV の変化は 1 枚の何分の 1 か（UV の 1 が模様の 1 枚）。その逆数が 1 枚の画面上の画素数。
     // 1 枚が小さく写るほど勾配を広げ（向きと縦横の比は保つ）、法線の傾きを弱める
     const float uvPerPixel = max(length(uvDx), length(uvDy));
@@ -361,8 +369,26 @@ void AccumulateTerrainProjection(inout TerrainLayerSample acc, float weight,
     const float gradientScale =
         pow(max(TERRAIN_TILE_FADE_PIXELS_FULL / max(tilePixels, 1.0e-3), 1.0), TERRAIN_TILE_FADE_GRADIENT_EXPONENT);
     const float normalFade = smoothstep(TERRAIN_TILE_FADE_PIXELS_ZERO, TERRAIN_TILE_FADE_PIXELS_FULL, tilePixels);
-    const vec2 dx = rotation * uvDx * gradientScale;
-    const vec2 dy = rotation * uvDy * gradientScale;
+    vec2 dx = rotation * uvDx * gradientScale;
+    vec2 dy = rotation * uvDy * gradientScale;
+    if (atlasHalf >= 0.0)
+    {
+        // 足跡を 1 枚までに抑える（2 枚の並びの最も粗いミップの手前 = 1 枚が 1 画素の段で止め、2 枚の平均を拾わない）
+        const float footprint = max(length(dx), length(dy));
+        if (footprint > 1.0)
+        {
+            dx /= footprint;
+            dy /= footprint;
+        }
+        // 1 枚の u を 0〜1 に畳み、足跡（平行四辺形の u の半幅と、選ばれるミップの画素の幅の上限）と 4k の 1 画素の分だけ
+        // 枠の内側へ収めてから、u を半分にして枠へ寄せる。v は 1 枚が高さ全体なので繰り返しのまま。勾配は u を半分にする
+        const float margin = min(0.5 * (abs(dx.x) + abs(dy.x)) + max(length(dx), length(dy)) +
+                                     1.0 / float(textureSize(albedoTex, 0).y),
+                                 0.5);
+        ruv.x = (clamp(fract(ruv.x), margin, 1.0 - margin) + atlasHalf) * 0.5;
+        dx.x *= 0.5;
+        dy.x *= 0.5;
+    }
     float albedoLod = 0.0;
     float normalLod = 0.0;
     float ormLod = 0.0;
@@ -388,11 +414,12 @@ void AccumulateTerrainProjection(inout TerrainLayerSample acc, float weight,
     acc.LostDetail += (1.0 - normalFade * normalFade) * weight;
 }
 
-// 1 層を、距離の 2 つの段 × 投影（projection の重みが 0 でないもの）で標本する。uvScale は層の UV の倍率
+// 1 層を、距離の 2 つの段 × 投影（projection の重みが 0 でないもの）で標本する。uvScale は層の UV の倍率。
+// atlasHalf は横 2 枚の並びの枠（0 = 左・1 = 右。負なら並びでない 1 枚のテクスチャ）
 TerrainLayerSample SampleTerrainLayer(sampler2D albedoTex, sampler2D normalTex, sampler2D ormTex,
                                       bool bNormalTwoChannel, bool bAlbedoSrgbDecode, bool bVirtualTexture,
                                       TerrainSurfaceInput surface, TerrainProjectionFrame frame, vec3 projection,
-                                      TerrainDetailLevels levels, float uvScale, float tileMeters)
+                                      TerrainDetailLevels levels, float uvScale, float tileMeters, float atlasHalf)
 {
     TerrainLayerSample acc;
     acc.Albedo = vec4(0.0);
@@ -420,19 +447,19 @@ TerrainLayerSample SampleTerrainLayer(sampler2D albedoTex, sampler2D normalTex, 
         {
             AccumulateTerrainProjection(acc, levelWeight * projection.y, albedoTex, normalTex, ormTex,
                                         bNormalTwoChannel, bAlbedoSrgbDecode, bVirtualTexture, p.xz * scale, pdx.xz * scale,
-                                        pdy.xz * scale, rotation, offset, frame.TopU, frame.TopV);
+                                        pdy.xz * scale, rotation, offset, frame.TopU, frame.TopV, atlasHalf);
         }
         if (projection.x > 0.0)
         {
             AccumulateTerrainProjection(acc, levelWeight * projection.x, albedoTex, normalTex, ormTex,
                                         bNormalTwoChannel, bAlbedoSrgbDecode, bVirtualTexture, p.zy * scale, pdx.zy * scale,
-                                        pdy.zy * scale, rotation, offset, frame.SideXU, frame.SideXV);
+                                        pdy.zy * scale, rotation, offset, frame.SideXU, frame.SideXV, atlasHalf);
         }
         if (projection.z > 0.0)
         {
             AccumulateTerrainProjection(acc, levelWeight * projection.z, albedoTex, normalTex, ormTex,
                                         bNormalTwoChannel, bAlbedoSrgbDecode, bVirtualTexture, p.xy * scale, pdx.xy * scale,
-                                        pdy.xy * scale, rotation, offset, frame.SideZU, frame.SideZV);
+                                        pdy.xy * scale, rotation, offset, frame.SideZU, frame.SideZV, atlasHalf);
         }
     }
     return acc;
@@ -530,10 +557,16 @@ PbrMaterialTextureSamples ShadeTerrainLayers(TerrainBlendParams params,
     const vec3 projection = ComputeTerrainTriplanarWeights(n);
 
     TerrainLayerSample sand = SampleTerrainLayer(sandAlbedo, sandNormal, sandOrm, bSandNormalTwoChannel,
-                                                       bSandDecode, bVirtualTexture, surface, frame, projection, levels, 1.0,
-                                                       tileMeters);
-    // 土の皮膜: 1 層目の土に、数 m の斑で皮膜の色の比を掛ける。斑が画素より細かくなる遠くは平均の被覆へ寄せる
-    if (layerWeights.x > 0.0)
+                                                 bSandDecode, bVirtualTexture, surface, frame, projection, levels, 1.0,
+                                                 tileMeters, -1.0);
+    const bool bDirtNormalTwoChannel = (normalBits & TERRAIN_BLEND_DIRT_NORMAL_TWO_CHANNEL) != 0u;
+    const bool bDirtDecode = (normalBits & TERRAIN_BLEND_DIRT_ALBEDO_SRGB_DECODE) != 0u;
+    // 土の枠が横 2 枚の並び（幅が高さの 2 倍）なら、土の層は左の枠、皮膜は右の枠
+    const ivec2 dirtSize = textureSize(dirtAlbedo, 0);
+    const float dirtHalf = dirtSize.x == dirtSize.y * 2 ? 0.0 : -1.0;
+    // 土の皮膜: 1 層目の土に、数 m の斑で皮膜の層を混ぜる。斑の境は 2 つの高さ（AO）で決め、皮膜の盛り上がった所が土の上に出る。
+    // 斑が画素より細かくなる遠くは平均の被覆へ寄せる。皮膜は土の枠と同じ UV の倍率で張る（2 つの素材は 1 枚の実寸が同じ）
+    if (dirtHalf >= 0.0 && layerWeights.x > 0.0)
     {
         const float crustNoise = TerrainMottle(surface.WorldPosition.xz, TERRAIN_CRUST_WAVELENGTHS, TERRAIN_CRUST_WEIGHTS,
                                                vec2(-63.7, 28.1), pixelMeters);
@@ -541,23 +574,33 @@ PbrMaterialTextureSamples ShadeTerrainLayers(TerrainBlendParams params,
                                            pixelMeters / TERRAIN_CRUST_WAVELENGTHS.x);
         const float crust = mix(smoothstep(TERRAIN_CRUST_RANGE.x, TERRAIN_CRUST_RANGE.y, crustNoise),
                                 TERRAIN_CRUST_MEAN_COVERAGE, crustFade);
-        sand.Albedo.rgb *= mix(vec3(1.0), TERRAIN_CRUST_TINT, crust);
+        if (crust > 1.0e-3)
+        {
+            const TerrainLayerSample crustLayer =
+                SampleTerrainLayer(dirtAlbedo, dirtNormal, dirtOrm, bDirtNormalTwoChannel, bDirtDecode, bVirtualTexture,
+                                   surface, frame, projection, levels, params.layers.y, tileMeters, 1.0);
+            const vec3 crustWeights = ApplyTerrainHeightBlend(
+                vec3(1.0 - crust, crust, 0.0),
+                vec3(sand.Material.z, crustLayer.Material.z - TERRAIN_CRUST_HEIGHT_OFFSET, 0.0), TERRAIN_CRUST_BLEND_DEPTH);
+            sand.Albedo = sand.Albedo * crustWeights.x + crustLayer.Albedo * crustWeights.y;
+            sand.Material = sand.Material * crustWeights.x + crustLayer.Material * crustWeights.y;
+            sand.Perturbation = sand.Perturbation * crustWeights.x + crustLayer.Perturbation * crustWeights.y;
+            sand.LostDetail = sand.LostDetail * crustWeights.x + crustLayer.LostDetail * crustWeights.y;
+        }
     }
     TerrainLayerSample dirt = sand;
     TerrainLayerSample rock = sand;
     if (layerWeights.y > 0.0)
     {
-        dirt = SampleTerrainLayer(dirtAlbedo, dirtNormal, dirtOrm,
-                                  (normalBits & TERRAIN_BLEND_DIRT_NORMAL_TWO_CHANNEL) != 0u,
-                                  (normalBits & TERRAIN_BLEND_DIRT_ALBEDO_SRGB_DECODE) != 0u, bVirtualTexture,
-                                  surface, frame, projection, levels, params.layers.y, tileMeters);
+        dirt = SampleTerrainLayer(dirtAlbedo, dirtNormal, dirtOrm, bDirtNormalTwoChannel, bDirtDecode, bVirtualTexture,
+                                  surface, frame, projection, levels, params.layers.y, tileMeters, dirtHalf);
     }
     if (layerWeights.z > 0.0)
     {
         rock = SampleTerrainLayer(rockAlbedo, rockNormal, rockOrm,
                                   (normalBits & TERRAIN_BLEND_ROCK_NORMAL_TWO_CHANNEL) != 0u,
                                   (normalBits & TERRAIN_BLEND_ROCK_ALBEDO_SRGB_DECODE) != 0u, bVirtualTexture,
-                                  surface, frame, projection, levels, params.layers.z, tileMeters);
+                                  surface, frame, projection, levels, params.layers.z, tileMeters, -1.0);
         // 砂岩の地層（基準面からの高さで決まる層の色・張り出し・交差層理）と、崖の上端から垂れる砂漠ワニス
         const TerrainStrataSample strata =
             ComputeTerrainStrata(params, surfaceMask, surface.WorldPosition, surface.WorldDx, surface.WorldDy, n);

@@ -55,11 +55,13 @@ OUTLINE_TEXT = {
     "match": "輪郭: 主役の配置と輪郭を合わせる",
     "none": "輪郭: 見ない（地表と植生の比較用）",
 }
-# 地形の 3 層の名前と、アルベドのテクスチャのパスを持つ定数（WastelandRoutine.cpp から読む）
+# 地形の素材の名前と、アルベドのテクスチャのパスを持つ定数（WastelandRoutine.cpp から読む）と、横 2 枚の並びの枠
+# （0 = 左・1 = 右。None は 1 枚のテクスチャ。土の枠は左が礫の舗石・右が皮膜の付いた土の並び）
 TERRAIN_ALBEDO = {
-    "赤茶の土": "kSandAlbedoPath",
-    "礫の舗石": "kDirtAlbedoPath",
-    "砂岩": "kRockAlbedoPath",
+    "赤茶の土": ("kSandAlbedoPath", None),
+    "礫の舗石": ("kDirtAlbedoPath", 0),
+    "皮膜": ("kDirtAlbedoPath", 1),
+    "砂岩": ("kRockAlbedoPath", None),
 }
 # 品質を見る撮影の最小の大きさ（1280×720 では粗さが判断を狂わせる）
 MIN_CAPTURE_SIZE = (1920, 1080)
@@ -158,19 +160,26 @@ def terrain_albedo_scale():
 
 
 def terrain_albedo():
-    """地形の 3 層のアルベドの線形の平均（kTerrainAlbedoScale を掛けた値）"""
+    """地形の素材（TERRAIN_ALBEDO）のアルベドの線形の平均（kTerrainAlbedoScale を掛けた値）"""
     scale = terrain_albedo_scale()
     with open(ROUTINE_PATH, encoding="utf-8-sig") as file:
         routine = file.read()
     result = {"scale": scale, "layers": {}}
-    for name, constant in TERRAIN_ALBEDO.items():
+    for name, (constant, half) in TERRAIN_ALBEDO.items():
         match = re.search(constant + r'\s*=\s*"([^"]+)"', routine)
         full = os.path.join(REPO_ROOT, match.group(1)) if match else ""
         if not os.path.isfile(full):
             result["layers"][name] = None
             continue
         # 符号化した値のまま平均すると線形の平均より明るく出るので、間引いた画素を線形へ戻してから平均する
-        image = Image.open(full).convert("RGB").resize((1024, 1024), Image.NEAREST)
+        image = Image.open(full).convert("RGB")
+        if half is not None:
+            # 横 2 枚の並びなら枠の側だけ（並びでなければ素材が無いものとして扱う）
+            if image.width != image.height * 2:
+                result["layers"][name] = None
+                continue
+            image = image.crop((half * image.height, 0, (half + 1) * image.height, image.height))
+        image = image.resize((1024, 1024), Image.NEAREST)
         rgb = srgb_to_linear(np.asarray(image).astype(np.float64)).reshape(-1, 3).mean(axis=0) * scale
         result["layers"][name] = {
             "rgb": [float(v) for v in rgb],

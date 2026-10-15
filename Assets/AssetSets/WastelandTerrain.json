@@ -28,26 +28,26 @@
       "entry_name": "Assets/Textures/PolyHaven/red_mud_stones/red_mud_stones_orm_4k.nvtex"
     },
     {
-      "logical_path": "Assets/Textures/PolyHaven/red_laterite_soil_stones/red_laterite_soil_stones_diff_cal_4k.png",
+      "logical_path": "Assets/Textures/PolyHaven/wasteland_dirt_crust/wasteland_dirt_crust_diff_cal_8k.png",
       "cook_usage": "albedo",
-      "source_path": "Assets/Textures/PolyHaven/red_laterite_soil_stones/red_laterite_soil_stones_diff_cal_4k.png",
-      "package_name": "PolyHaven/red_laterite_soil_stones/red_laterite_soil_stones_diff_cal.nvpkg",
-      "entry_name": "Assets/Textures/PolyHaven/red_laterite_soil_stones/red_laterite_soil_stones_diff_cal_4k.nvtex"
+      "source_path": "Assets/Textures/PolyHaven/wasteland_dirt_crust/wasteland_dirt_crust_diff_cal_8k.png",
+      "package_name": "PolyHaven/wasteland_dirt_crust/wasteland_dirt_crust_diff_cal.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/wasteland_dirt_crust/wasteland_dirt_crust_diff_cal_8k.nvtex"
     },
     {
-      "logical_path": "Assets/Textures/PolyHaven/red_laterite_soil_stones/red_laterite_soil_stones_nor_dx_4k.jpg",
+      "logical_path": "Assets/Textures/PolyHaven/wasteland_dirt_crust/wasteland_dirt_crust_nor_dx_8k.png",
       "cook_usage": "normal",
-      "source_path": "Assets/Textures/PolyHaven/red_laterite_soil_stones/red_laterite_soil_stones_nor_dx_4k.jpg",
-      "package_name": "PolyHaven/red_laterite_soil_stones/red_laterite_soil_stones_nor_dx.nvpkg",
-      "entry_name": "Assets/Textures/PolyHaven/red_laterite_soil_stones/red_laterite_soil_stones_nor_dx_4k.nvtex"
+      "source_path": "Assets/Textures/PolyHaven/wasteland_dirt_crust/wasteland_dirt_crust_nor_dx_8k.png",
+      "package_name": "PolyHaven/wasteland_dirt_crust/wasteland_dirt_crust_nor_dx.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/wasteland_dirt_crust/wasteland_dirt_crust_nor_dx_8k.nvtex"
     },
     {
-      "logical_path": "Assets/Textures/PolyHaven/red_laterite_soil_stones/red_laterite_soil_stones_orm_4k",
+      "logical_path": "Assets/Textures/PolyHaven/wasteland_dirt_crust/wasteland_dirt_crust_orm_8k",
       "cook_usage": "orm",
-      "orm_ao": "Assets/Textures/PolyHaven/red_laterite_soil_stones/red_laterite_soil_stones_ao_4k.jpg",
-      "orm_roughness": "Assets/Textures/PolyHaven/red_laterite_soil_stones/red_laterite_soil_stones_rough_4k.jpg",
-      "package_name": "PolyHaven/red_laterite_soil_stones/red_laterite_soil_stones_orm.nvpkg",
-      "entry_name": "Assets/Textures/PolyHaven/red_laterite_soil_stones/red_laterite_soil_stones_orm_4k.nvtex"
+      "orm_ao": "Assets/Textures/PolyHaven/wasteland_dirt_crust/wasteland_dirt_crust_ao_8k.png",
+      "orm_roughness": "Assets/Textures/PolyHaven/wasteland_dirt_crust/wasteland_dirt_crust_rough_8k.png",
+      "package_name": "PolyHaven/wasteland_dirt_crust/wasteland_dirt_crust_orm.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/wasteland_dirt_crust/wasteland_dirt_crust_orm_8k.nvtex"
     },
     {
       "logical_path": "Assets/Textures/PolyHaven/cliff_side/cliff_side_diff_cal_4k.png",
