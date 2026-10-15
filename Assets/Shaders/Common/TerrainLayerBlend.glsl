@@ -22,6 +22,8 @@
 //   - 距離で UV の倍率を変える: カメラからの距離が「変え始める距離」の r 倍になるごとに 1 段上がり、段ごとに UV を 1/r にする
 //     （近くは細かく、遠くは大きく）。隣り合う 2 つの段を距離で混ぜ、段ごとに UV を回して位置をずらすので、
 //     同じ模様が格子状に並ばない。
+//   - 模様の 1 枚が画面で数画素まで縮む遠くでは、標本の勾配を広げて 1 枚の平均の色へ寄せ、法線マップの傾きを 0 へ落とす
+//     （繰り返しの周期の縞と点の格子を出さない）。
 //   - アルベドの画像は sRGB で符号化されている。UNORM の形式で張られた層（layers.w のビット）は標本ごとに線形へ戻す。
 //   - 各層のアルベドに、層ごとに別の位相の低周波ノイズ（数十〜数百 m と、模様の繰り返しを崩す十数 m）で明るさと色味の揺らぎを
 //     掛けてから混ぜる。揺らぎは分類の境で入れ替わり、全域を 1 つの斑の模様で覆わない。
@@ -61,6 +63,15 @@ const float TERRAIN_TRIPLANAR_CUTOFF = 0.05;
 // 段ごとの UV の回転（黄金角。段を重ねても向きがそろわない）と、位置のずらし（UV の単位）
 const float TERRAIN_DETAIL_LEVEL_ROTATION = 2.39996323;
 const vec2 TERRAIN_DETAIL_LEVEL_OFFSET = vec2(0.3183, 0.6180);
+// 模様の 1 枚の画面上の大きさ（画素）で、1 枚の中の模様を残す範囲。1 枚が数画素まで縮むと、ミップの標本は 1 枚ごとの低い周波数の
+// 明暗と傾き（写真の層理・割れ目の偏り）になり、繰り返しの周期で並ぶ縞と点の格子として出る（日の当たる向きの境の斜面では
+// 法線の傾きで NdotL の符号が入れ替わり、暗い点になる）。1 枚が FULL 画素から ZERO 画素へ縮む間に、標本の勾配を広げて
+// アルベド・法線・ORM を 1 枚の平均（最も粗いミップ）へ寄せ、法線の傾きも 0 へ落とす。ZERO 画素で広げた足跡が 1 枚を覆う
+const float TERRAIN_TILE_FADE_PIXELS_FULL = 32.0;
+const float TERRAIN_TILE_FADE_PIXELS_ZERO = 8.0;
+// 勾配を広げる倍率の指数。倍率 (FULL / 1 枚の画素数)^指数 は、ZERO 画素で ZERO 倍（足跡が 1 枚 = 最も粗いミップ）になる
+const float TERRAIN_TILE_FADE_GRADIENT_EXPONENT =
+    log2(TERRAIN_TILE_FADE_PIXELS_ZERO) / log2(TERRAIN_TILE_FADE_PIXELS_FULL / TERRAIN_TILE_FADE_PIXELS_ZERO);
 
 // 画素の面（ワールドの位置とその画素あたりの変化、幾何の法線、カメラからの距離）
 struct TerrainSurfaceInput
@@ -255,8 +266,15 @@ void AccumulateTerrainProjection(inout TerrainLayerSample acc, float weight,
                                  vec2 uv, vec2 uvDx, vec2 uvDy, mat2 rotation, vec2 offset, vec3 axisU, vec3 axisV)
 {
     const vec2 ruv = rotation * uv + offset;
-    const vec2 dx = rotation * uvDx;
-    const vec2 dy = rotation * uvDy;
+    // 1 画素あたりの UV の変化は 1 枚の何分の 1 か（UV の 1 が模様の 1 枚）。その逆数が 1 枚の画面上の画素数。
+    // 1 枚が小さく写るほど勾配を広げ（向きと縦横の比は保つ）、法線の傾きを弱める
+    const float uvPerPixel = max(length(uvDx), length(uvDy));
+    const float tilePixels = uvPerPixel > 0.0 ? 1.0 / uvPerPixel : TERRAIN_TILE_FADE_PIXELS_FULL;
+    const float gradientScale =
+        pow(max(TERRAIN_TILE_FADE_PIXELS_FULL / max(tilePixels, 1.0e-3), 1.0), TERRAIN_TILE_FADE_GRADIENT_EXPONENT);
+    const float normalFade = smoothstep(TERRAIN_TILE_FADE_PIXELS_ZERO, TERRAIN_TILE_FADE_PIXELS_FULL, tilePixels);
+    const vec2 dx = rotation * uvDx * gradientScale;
+    const vec2 dy = rotation * uvDy * gradientScale;
     float albedoLod = 0.0;
     float normalLod = 0.0;
     float ormLod = 0.0;
@@ -275,7 +293,7 @@ void AccumulateTerrainProjection(inout TerrainLayerSample acc, float weight,
         DecodePbrTangentNormal(SampleMaterialTextureGrad(normalTex, ruv, dx, dy, normalLod, bVirtualTexture),
                                bNormalTwoChannel);
     const vec3 material = DecodePbrOrmSample(SampleMaterialTextureGrad(ormTex, ruv, dx, dy, ormLod, bVirtualTexture));
-    const vec2 slope = transpose(rotation) * (tangentNormal.xy / max(tangentNormal.z, 0.1));
+    const vec2 slope = transpose(rotation) * (tangentNormal.xy / max(tangentNormal.z, 0.1)) * normalFade;
     acc.Albedo += albedo * weight;
     acc.Material += material * weight;
     acc.Perturbation += (axisU * slope.x + axisV * slope.y) * weight;

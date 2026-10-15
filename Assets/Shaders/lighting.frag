@@ -322,8 +322,10 @@ float CalculateSunShadow(vec3 worldPos, vec3 normal)
 // ========================================
 // 受け手から光の方向へ短く（contactShadowParams.x m）レイを進め、各段の点を画面へ写して
 // GBufferの深度と比べる。点が深度の面より奥（厚さcontactShadowParams.z以内）にあり、かつ
-// その画素の法線で決まる面の内側にあれば遮られたとみなす。CSM・キューブシャドウの解像度では
+// その画素の面の内側にあれば遮られたとみなす。CSM・キューブシャドウの解像度では
 // 出ない接地部の細い影を補い、影の結果へ掛ける。
+// 起点のずらしと面の内側の判定は、深度から作る幾何の面の向きを使う。GBufferの法線（法線マップ込み）は
+// 幾何の面から傾いているので、光が浅く当たる斜面ではレイが自分の面の内側と判定され、点状の影が散る。
 const uint CONTACT_SHADOW_STEP_COUNT = 12u;
 
 // 画素の位置で決まる雑音（Jimenez 2014のinterleaved gradient noise）。段の位置をずらし、
@@ -331,6 +333,57 @@ const uint CONTACT_SHADOW_STEP_COUNT = 12u;
 float InterleavedGradientNoise(vec2 pixel)
 {
     return fract(52.9829189 * fract(dot(pixel, vec2(0.06711056, 0.00583715))));
+}
+
+// 深度の画素 texel の幾何の法線（法線マップを掛ける前の面の向き。カメラの側へ向ける）。横・縦それぞれ、
+// 両隣のうち深度の差が小さいほうとの辺を取り（物体の輪郭をまたがない）、2 本の辺の外積で作る。
+// 画素が空、またはどちらかの向きの両隣が空・範囲の外なら fallback を返す
+vec3 ReconstructGeometricNormal(ivec2 texel, ivec2 depthSize, vec3 fallback)
+{
+    float centerDepth = texelFetch(gbufferDepth, texel, 0).r;
+    if (centerDepth >= 1.0)
+    {
+        return fallback;
+    }
+    vec3 center = ReconstructWorldPosition((vec2(texel) + 0.5) / vec2(depthSize), centerDepth);
+    vec3 edges[2];
+    for (int axis = 0; axis < 2; ++axis)
+    {
+        ivec2 stepDirection = axis == 0 ? ivec2(1, 0) : ivec2(0, 1);
+        float bestDelta = -1.0;
+        for (int side = -1; side <= 1; side += 2)
+        {
+            ivec2 neighbor = texel + stepDirection * side;
+            if (any(lessThan(neighbor, ivec2(0))) || any(greaterThanEqual(neighbor, depthSize)))
+            {
+                continue;
+            }
+            float neighborDepth = texelFetch(gbufferDepth, neighbor, 0).r;
+            if (neighborDepth >= 1.0)
+            {
+                continue;
+            }
+            float delta = abs(neighborDepth - centerDepth);
+            if (bestDelta < 0.0 || delta < bestDelta)
+            {
+                bestDelta = delta;
+                vec3 neighborPos = ReconstructWorldPosition((vec2(neighbor) + 0.5) / vec2(depthSize), neighborDepth);
+                edges[axis] = (neighborPos - center) * float(side);
+            }
+        }
+        if (bestDelta < 0.0)
+        {
+            return fallback;
+        }
+    }
+    vec3 normal = cross(edges[0], edges[1]);
+    float normalLength = length(normal);
+    if (!IsFiniteShadowValue(normalLength) || normalLength <= 0.0)
+    {
+        return fallback;
+    }
+    normal /= normalLength;
+    return dot(normal, params.cameraPosition.xyz - center) < 0.0 ? -normal : normal;
 }
 
 float CalculateContactShadow(vec3 worldPos, float depth, vec3 normal, vec3 L, float maxLength)
@@ -365,9 +418,11 @@ float CalculateContactShadow(vec3 worldPos, float depth, vec3 normal, vec3 L, fl
         return 1.0;
     }
 
-    // 起点は法線の方向へ0.25画素だけずらす。受け手自身の面での縞は下の面の内側の判定で防ぐ。
+    // 起点は幾何の面の向きへ0.25画素だけずらす。受け手自身の面での縞は下の面の内側の判定で防ぐ。
     // 大きくずらすと、物体のすぐ外を通るレイが物体の端を切り、影の縁が外へ広がる。
-    vec3 origin = worldPos + normal * (pixelWorldSize * 0.25);
+    ivec2 receiverTexel = clamp(ivec2(fragUV * vec2(depthSize)), ivec2(0), depthSize - ivec2(1));
+    vec3 receiverNormal = ReconstructGeometricNormal(receiverTexel, depthSize, normal);
+    vec3 origin = worldPos + receiverNormal * (pixelWorldSize * 0.25);
     float jitter = fract(InterleavedGradientNoise(gl_FragCoord.xy) + params.contactShadowParams.y);
     float stepLength = rayLength / float(CONTACT_SHADOW_STEP_COUNT);
     // 遮る物体の厚さ。1段の長さと1画素の幅より薄いと、面へ入った段を見落とすので下限にする。
@@ -399,13 +454,18 @@ float CalculateContactShadow(vec3 worldPos, float depth, vec3 normal, vec3 L, fl
         {
             continue;
         }
-        // 画素の面を、その画素の位置と法線の平面とみなし、段の点がその内側（半画素ぶんの余裕より
+        // 画素の面を、その画素の位置と幾何の面の向きの平面とみなし、段の点がその内側（半画素ぶんの余裕より
         // 深い）にあるときだけ遮りとする。画素の中心の深度だけで比べると、物体の手前の面のすぐ外を
         // かすめる段も、画素の中の面の傾きの差で奥と判定され、影の縁が1画素ほど外へ広がる。
+        // 幾何の面の向きを作れない画素（輪郭の孤立した画素など）は GBuffer の法線で判定する。
         vec3 sceneNormal = texelFetch(gbufferNormal, texel, 0).xyz;
         float sceneNormalLength = length(sceneNormal);
-        if (!(sceneNormalLength > 0.0) ||
-            dot(samplePos - scenePos, sceneNormal / sceneNormalLength) >= -0.5 * pixelWorldSize)
+        if (!(sceneNormalLength > 0.0))
+        {
+            continue;
+        }
+        sceneNormal = ReconstructGeometricNormal(texel, depthSize, sceneNormal / sceneNormalLength);
+        if (dot(samplePos - scenePos, sceneNormal) >= -0.5 * pixelWorldSize)
         {
             continue;
         }
