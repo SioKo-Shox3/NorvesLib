@@ -54,6 +54,9 @@ namespace NorvesLib::Core::Rendering
         float StartDistanceMeters = 0.0f;
         // ワールドの y = 0 の、空の媒質の地表（海面）からの高度（m）。0 で y = 0 を海面とみなす
         float OriginAltitudeMeters = 0.0f;
+        // 空気遠近で数える Mie（エアロゾル）の密度の倍率。空の模型の 1 つの指数分布は、空の柱の量に合わせると地表の濃さが
+        // 澄んだ乾燥地の実測（視程）より濃くなるので、地表の視線の霞だけを薄める。空の放射輝度 LUT は変えない（1 で空と同じ）
+        float MieDensityScale = 1.0f;
     };
 
     AerialPerspectiveParameters SanitizeAerialPerspectiveParameters(

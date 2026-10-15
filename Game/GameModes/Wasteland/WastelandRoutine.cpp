@@ -161,8 +161,8 @@ namespace Game::GameModes
         constexpr float kFogDensity = 0.00003f;
         constexpr float kFogBaseHeight = -40.0f;
         constexpr float kFogFalloff = 0.01f;
-        // 空気遠近: 物理空の媒質（下のエアロゾルを少し増やした値）の距離をそのまま数える。谷床の向こうのビュート（1〜3.5 km）が
-        // 写真の遠い崖と同じくらい（赤みを残して少し白む程度）に霞み、形は読めるようにする。300 m より手前は掛けない
+        // 空気遠近: 物理空の媒質の距離をそのまま数える（エアロゾルは下の倍率で地表の澄んだ空気の濃さにする）。谷床の向こうの
+        // ビュート（1〜3.5 km）が写真の遠い崖と同じく赤みを残して少し霞み、形は読めるようにする。300 m より手前は掛けない
         // （足元・近くの崖の色は変えない）
         constexpr float kAerialPerspectiveDistanceScale = 1.0f;
         constexpr float kAerialPerspectiveStartDistance = 300.0f;
@@ -171,6 +171,11 @@ namespace Game::GameModes
         // （尺度高さ 1.6 km）になり、3 km 先の崖の透過が 0.84 でなく 0.69 になる。高原の晴天のエアロゾルの光学的深さ
         // （0.05〜0.1）は、この高度から上の柱の量（0.07）に合う
         constexpr float kSiteAltitudeMeters = 1452.05f;
+        // 空気遠近で数えるエアロゾルの密度の倍率。空の模型（海面で Mie 1.11e-4 /m・尺度高さ 1.6 km）はこの標高で 4.5e-5 /m
+        // （Rayleigh と合わせた視程 約 70 km）になり、3〜5 km 先の崖の赤みが空の色の霞で白く薄まった。コロラド高原の澄んだ空気は
+        // 標準視程 約 180 km（IMPROVE の国立公園の観測）で、Rayleigh（約 1.1e-5 /m）を除くエアロゾルは約 1e-5 /m なので、
+        // 1e-5 ÷ 4.5e-5 ≒ 0.22 倍にする。空（放射輝度 LUT）の柱の量は変えない
+        constexpr float kAerialPerspectiveMieDensityScale = 0.22f;
         // 空のエアロゾル（Mie）の高さの尺度[m]。既定の 1.2 km の 1.33 倍にして柱の量を少し増やし、写真の白みの強い地平線の空に
         // 寄せる。2.4 km では青空の明るさは 1 割も変わらず、崖の視点の遠景の帯と空の比が写真の 0.46 から 0.34 へ離れた
         constexpr float kSkyMieScaleHeight = 1600.0f;
@@ -279,6 +284,7 @@ namespace Game::GameModes
             aerialPerspective.DistanceScale = kAerialPerspectiveDistanceScale;
             aerialPerspective.StartDistanceMeters = kAerialPerspectiveStartDistance;
             aerialPerspective.OriginAltitudeMeters = kSiteAltitudeMeters;
+            aerialPerspective.MieDensityScale = kAerialPerspectiveMieDensityScale;
             ctx.EngineRef.GetRenderWorld().SetAerialPerspective(aerialPerspective);
 
             CloudLayerParameters cloudLayer;

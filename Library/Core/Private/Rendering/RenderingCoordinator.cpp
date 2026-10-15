@@ -220,6 +220,7 @@ namespace NorvesLib::Core::Rendering
             hash = HashRevisionValue(hash, packet.Scene.AerialPerspective.DistanceScale);
             hash = HashRevisionValue(hash, packet.Scene.AerialPerspective.StartDistanceMeters);
             hash = HashRevisionValue(hash, packet.Scene.AerialPerspective.OriginAltitudeMeters);
+            hash = HashRevisionValue(hash, packet.Scene.AerialPerspective.MieDensityScale);
             const CloudLayerParameters& cloudLayer = packet.Scene.CloudLayer;
             hash = HashRevisionValue(hash, cloudLayer.bEnabled);
             hash = HashRevisionValue(hash, cloudLayer.BottomAltitudeMeters);

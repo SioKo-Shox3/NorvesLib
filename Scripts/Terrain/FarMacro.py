@@ -59,9 +59,10 @@ DIRT_HEIGHT_BIAS_DEG = 10.0
 # 地表の分類の地図の礫を土へ回す割合（WastelandRoutine.cpp の kSurfaceMaskGravelToDirt）
 GRAVEL_TO_DIRT = 0.5
 
-# 確かめる所（エンジンの座標 x・z、半径[m]）。崖は岩肌が、谷床は砂が多いはず
+# 確かめる所（エンジンの座標 x・z、半径[m]）。崖は岩肌が、谷床は砂が多いはず。Castle Butte の塔は約 400 × 150 m と細いので、
+# 半径 100 m（250 m では周りの平らな谷床が大半になり、塔の岩肌が平均で薄まる）
 CHECK_CLIFFS = {
-    "Castle Butte": (-2943.5, -3370.5, 250.0),
+    "Castle Butte": (-2943.5, -3370.5, 100.0),
     "Battleship Rock": (-1420.0, -949.0, 150.0),
 }
 CHECK_FLOORS = {

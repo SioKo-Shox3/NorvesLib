@@ -950,6 +950,10 @@ namespace NorvesLib::Core::Rendering
         {
             sanitized.OriginAltitudeMeters = 0.0f;
         }
+        if (!std::isfinite(sanitized.MieDensityScale) || sanitized.MieDensityScale < 0.0f)
+        {
+            sanitized.MieDensityScale = 1.0f;
+        }
         return sanitized;
     }
 

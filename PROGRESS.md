@@ -4610,3 +4610,24 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 比較画像を開いた（`scene-capture/SCN-WL-MATERIAL-STRATA/`）: reference_cliff_01 は写真と同じく下の斜面に赤と橙の段が重なり、段は横で途切れる。上の崖は厚いセットの水平の帯と、近くで斜めの葉理（`crop_ref01` は試し撮りの try3）。reference_cliff_02 は写真の台座の薄い水平の段の重なりと同じ向き・厚さの帯が出る。cliff（`crop_cliff.png`）は帯の間隔がそろわず、帯が途中で尖滅し、黒いワニスの筋は崖の上端の数か所からだけ長さを変えて垂れる。崖全体に同じ縞の繰り返しは無い。
 - Notes: 崖の色の明るさ（写真より明るく黄色い・ref_cliff_02 の霞）は光と霞の側で、この項目では変えていない。上の崖の張り出しの下の陰は 1 km 先で 1〜2 画素の細い線になる。ワニスの上端の見積もりは地図の 2 m の画素と面の傾きから求めるので、高さの差は数 m〜十数 m の誤差を持つ（筋の始まりがその分ずれる）。試験は足していない。
 - Next: TASKS.md の次の未完の項目。
+### SCN-WL-FAR-SHADING 完了（2026-10-15、run 20261015-135936 の反復 3〜4）
+- Done（反復 3 の途中の保存 7d8c796c・0d70a7fa を引き継いだ）:
+  - 遠景の地図: `Scripts/Terrain/FarMacro.py` が DEM（1 m の 4 枚と 1/3 秒角の 2 枚）と地表の分類の地図から、16 m の画素に平均の法線（R・G）と岩肌・土の重み（B・A）を焼く（`Assets/Terrain/ValleyOfTheGods/far.png`・`far.json`、git 管理外。2936×4810、outer の段の範囲）。クックは BC7・ミップ 13 段（`Assets/AssetSets/WastelandTerrain.json`）。`TerrainHeightField` の `LoadTerrainFarMapLayout` が記述を読み、ラスタと可視バッファの解決の両方で地図を束縛する。
+  - 地形のシェーダー（`TerrainLayerBlend.glsl`）: 地図の 1 画素が画面で 6 → 2 画素へ縮む間に、幾何の法線と分類の重みを地図の値へ移す（DEM の三角形が 1〜2 画素になる遠くで、画素ごとの傾斜の分類が岩肌と砂で飛び飛びになる斑点とちらつきを止める）。揺らぎ・分類のずらしの値ノイズは、1 画素が波長の 1/4〜3/4 の間で平均へ寄せる。
+  - 鏡面のエイリアス: 模様が縮んで法線マップの傾きを落とした分を、層ごとの法線の傾きの分散（砂 0.097・土 0.420・岩肌 0.283。法線マップから測った値）として粗さの α² に足す（Toksvig と同じ考え方）。
+  - 地層（`TerrainStrata.glsl`）: 層が画面で薄く写る遠くでは単位ごとの平均の色と AO へ寄せ、下の単位の暗い赤褐色と上の単位の淡い砂岩の差を遠くでも残す。平均 22 m の層の束ごとに色味と明るさ（±8 %）を変える大きな帯を足し、数 km 先の稜線とビュートでも帯として読めるようにした。
+  - 霞（反復 3）: 空気遠近の媒質の密度を、ワールドの y に現地の標高（1452.05 m）を足した高度で数える（`AerialPerspectiveParameters::OriginAltitudeMeters`）。谷床の高さフォグを 0.00015 → 0.00003 /m にした（3 km の光学的深さ 0.3 → 0.06）。
+  - 霞（この反復）: 霞の残りの元は、空の模型のエアロゾル（海面で Mie 1.11e-4 /m・尺度高さ 1.6 km）を地表の視線にもそのまま使っていたこと。現地の標高で 4.5e-5 /m（Rayleigh と合わせた視程 約 70 km）になる。コロラド高原の澄んだ空気（標準視程 約 180 km、Rayleigh を除くエアロゾル 約 1e-5 /m）に合わせ、空気遠近で数える Mie の密度だけを 0.22 倍にした（`AerialPerspectiveParameters::MieDensityScale`。既定 1 でほかのシーンは変わらない。空の放射輝度 LUT は変えない）。
+  - 連続撮影の確認のため、カメラの台本（`--camera-script`）を地形を置いて読み込みの余裕を待ってから流す（`WastelandRoutine.cpp`。前は読み込みの間に台本が流れ切り、動いている所が撮れなかった）。
+- 検証（`.harness/runs/20261015-135936/`）:
+  - `verify-SCN-WL-FAR-SHADING-1.txt`: Debug の Game のビルド EXIT=0。
+  - `verify-SCN-WL-FAR-SHADING-2.txt`: 荒野の全 11 視点 1920×1080、result=pass（白飛び 0・黒つぶれ 0）、EXIT=0。検証レイヤーのログは空。
+  - `aux-SCN-WL-FAR-SHADING-compare.txt`: `CompareReference.py --verify` result=pass photos=6、EXIT=0。
+  - `aux-SCN-WL-FAR-SHADING-farmacro.txt`: `FarMacro.py --verify` result=pass（作り直しが地図と一致、重み・法線の範囲、Castle Butte・Battleship Rock に岩肌、前哨地の谷床は砂）。
+  - 霞の切り分け（far_01、線形の Y・R÷G）: 主役の崖の枠は HORIZON の時点 0.74 → 反復 3 0.611（R÷G 1.69）→ 0.563（1.87）。写真 0.240（1.61）。霞を切った撮影（`scene-capture/SCN-WL-FAR-SHADING-diag-nohaze`）は 0.510 で、霞の上乗せは +0.10 → +0.05。3〜5 km 先の左右の崖（写真 0.347・1.40 / 0.488・1.49）は 0.638・1.34 / 0.654・1.57 → 0.564・1.52 / 0.616・1.69（霞なし 0.483・1.84 / 0.574・1.85）。
+  - 比較画像と視点を開いた（`scene-capture/SCN-WL-FAR-SHADING/`）: overview（default）・ground・ridge・ref_far_01・ref_far_02 の遠景は滑らかにつながり、拡大しても斑点・ざらつき・模様の繰り返しは無い。主役のビュートと far_02 の尖塔の台座に明暗の地層の帯、左の遠いメサの面に色の差が出る。ridge の 10〜30 km 先の平原は淡い赤に霞みつつ起伏が読める。
+  - ちらつき（`flicker/`。右へ 4 m/s の横移動で 8 フレームおきに 7 枚、overview）: 5〜10 km 先の左右の稜線の隣り合う 2 枚の差は平均 0.26〜0.29・p99 3〜4 階調、8 階調を超える画素 0.3 %。主役のビュート（約 2 km）の差は 48 フレームで約 2.7 画素ずれる視差で、拡大した 2 枚は陰の筋がそろってずれるだけで画素ごとに光る所は無い。カメラを止めた 7 枚は差 0.007（p99 0.33）。
+  - `aux-SCN-WL-FAR-SHADING-startup-det.txt`: 起動画面の決定的な撮影の既定の視点は、前回（SCN-WL-SHADOW-DOT-GRID-det）と平均輝度の差 0・PSNR 100・違う画素 3e-6 で一致（near・low は前回の撮影に無く比べられないので result=fail の行が出る）。Rendering3DTest は変わらない。
+- Notes: 遠くの崖が写真より明るいのは、霞を切っても崖の面が写真の 1.4〜2.1 倍あるため（谷床の地面も 3〜4 倍。SCN-WL-MATERIAL-PALETTE の Notes の光の側）。露出では合わせていない。
+- Notes: `FarMacro.py` の Castle Butte の検査の半径を 250 → 100 m にした（塔は約 400 × 150 m で、250 m では周りの平らな谷床で平均が 0.038 に薄まる。100 m で 0.173）。試験は足していない。
+- Next: TASKS.md の次の未完の項目。
