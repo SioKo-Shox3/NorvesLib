@@ -45,9 +45,12 @@ const uint VSMS_PAGE_ENTRY_ALLOCATED = 1u << 31;
 const uint VSMS_PAGE_INDEX_MASK = (1u << 20) - 1u;
 
 // 法線の向きへのずらしの大きさ（使う段の texel の倍数。面が光に対して斜めなほど大きく、正対すると 0）と、
-// 深度の比較の余裕のうち一定の分（使う段の texel の倍数。CSM の 1.5 texel と同じ）
+// 深度の比較の余裕のうち一定の分（使う段の texel の倍数）。影の描画は MegaGeometry の LOD を段の texel の数個ぶん
+// （VirtualShadowMapMegaCullDispatch::LodThresholdTexels、既定 4）の誤差まで粗くするので、粗い段の面は主のカメラの細かい面より
+// 上に出ることがある。余裕が 1.5 texel（CSM と同じ）では、光が浅く当たる地形の斜面で粗い面が自分の受け手を遮り、
+// 斑状の影が散る（荒野の崖錐。3 texel で消える）
 const float VSMS_NORMAL_OFFSET_TEXELS = 1.5;
-const float VSMS_CONSTANT_BIAS_TEXELS = 1.5;
+const float VSMS_CONSTANT_BIAS_TEXELS = 3.0;
 // 受け面の深度の傾きの下限（光と面の法線の余弦。CSM の ComputeReceiverDepthGradient と同じ）
 const float VSMS_MIN_NORMAL_COSINE = 0.05;
 

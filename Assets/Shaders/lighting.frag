@@ -326,7 +326,13 @@ float CalculateSunShadow(vec3 worldPos, vec3 normal)
 // 出ない接地部の細い影を補い、影の結果へ掛ける。
 // 起点のずらしと面の内側の判定は、深度から作る幾何の面の向きを使う。GBufferの法線（法線マップ込み）は
 // 幾何の面から傾いているので、光が浅く当たる斜面ではレイが自分の面の内側と判定され、点状の影が散る。
+// 遮る画素の幾何の面が受け手の面とほぼ平行（CONTACT_SHADOW_SELF_SURFACE_COS より向きが近い）なら、受け手と
+// 続いている同じ面のわずかな起伏とみなして遮りにしない。地形の三角形の折れ目（数度）は、光が浅く当たる斜面で
+// レイの数画素先を遮り、滑らかな法線の陰影の上に画素単位の点の影を散らす。広い起伏の陰は太陽の影が受け持つ。
 const uint CONTACT_SHADOW_STEP_COUNT = 12u;
+const float CONTACT_SHADOW_SELF_SURFACE_COS = 0.866; // cos(30°)
+// レイが受け手の幾何の面から上る傾きの下限（光と面の法線の余弦。約 11.5°）
+const float CONTACT_SHADOW_MIN_RISE = 0.2;
 
 // 画素の位置で決まる雑音（Jimenez 2014のinterleaved gradient noise）。段の位置をずらし、
 // 段の間隔の階段状の境目をTAAで均せる細かな雑音にする。
@@ -423,6 +429,11 @@ float CalculateContactShadow(vec3 worldPos, float depth, vec3 normal, vec3 L, fl
     ivec2 receiverTexel = clamp(ivec2(fragUV * vec2(depthSize)), ivec2(0), depthSize - ivec2(1));
     vec3 receiverNormal = ReconstructGeometricNormal(receiverTexel, depthSize, normal);
     vec3 origin = worldPos + receiverNormal * (pixelWorldSize * 0.25);
+    // 光が浅く当たる受け手（幾何の面と光の角度が CONTACT_SHADOW_MIN_RISE より浅い）では、光の向きのレイは自分の面の
+    // わずかな起伏（地形の三角形の折れ目）の中を進み、隣の画素を遮りとして拾う（陰影の境目に散る点の影）。そこでは
+    // レイを幾何の面から CONTACT_SHADOW_MIN_RISE の傾きで上る向きへ持ち上げ、緩い起伏をまたがせる。立った物体は
+    // 持ち上げたレイも遮るので接地の影は残る。光が十分な角度で当たる受け手のレイは変えない
+    vec3 marchDirection = L + receiverNormal * max(CONTACT_SHADOW_MIN_RISE - dot(receiverNormal, L), 0.0);
     float jitter = fract(InterleavedGradientNoise(gl_FragCoord.xy) + params.contactShadowParams.y);
     float stepLength = rayLength / float(CONTACT_SHADOW_STEP_COUNT);
     // 遮る物体の厚さ。1段の長さと1画素の幅より薄いと、面へ入った段を見落とすので下限にする。
@@ -431,7 +442,7 @@ float CalculateContactShadow(vec3 worldPos, float depth, vec3 normal, vec3 L, fl
     for (uint stepIndex = 0u; stepIndex < CONTACT_SHADOW_STEP_COUNT; ++stepIndex)
     {
         float t = (float(stepIndex) + jitter) * stepLength;
-        vec3 samplePos = origin + L * t;
+        vec3 samplePos = origin + marchDirection * t;
         vec4 sampleClip = params.viewProjection * vec4(samplePos, 1.0);
         if (!(sampleClip.w > 0.0))
         {
@@ -465,7 +476,8 @@ float CalculateContactShadow(vec3 worldPos, float depth, vec3 normal, vec3 L, fl
             continue;
         }
         sceneNormal = ReconstructGeometricNormal(texel, depthSize, sceneNormal / sceneNormalLength);
-        if (dot(samplePos - scenePos, sceneNormal) >= -0.5 * pixelWorldSize)
+        if (dot(samplePos - scenePos, sceneNormal) >= -0.5 * pixelWorldSize ||
+            dot(sceneNormal, receiverNormal) > CONTACT_SHADOW_SELF_SURFACE_COS)
         {
             continue;
         }
