@@ -25,8 +25,11 @@ namespace NorvesLib::Core::Rendering
         m_ActiveRequest = FrameCaptureRequestSnapshot{};
         m_PendingReadback = PendingReadback{};
         m_CompletedFrame = CapturedFrame{};
+        m_PendingSceneColor = PendingSceneColorReadback{};
         m_ReadbackSlots.clear();
         m_ReadbackSlots.resize(frameSlotCount);
+        m_SceneColorReadbackSlots.clear();
+        m_SceneColorReadbackSlots.resize(frameSlotCount);
         return true;
     }
 
@@ -40,7 +43,9 @@ namespace NorvesLib::Core::Rendering
         m_ActiveRequest = FrameCaptureRequestSnapshot{};
         m_PendingReadback = PendingReadback{};
         m_CompletedFrame = CapturedFrame{};
+        m_PendingSceneColor = PendingSceneColorReadback{};
         m_ReadbackSlots.clear();
+        m_SceneColorReadbackSlots.clear();
     }
 
     FrameCaptureRequestResult FrameCaptureReadbackHelper::RequestFrameCapture()
@@ -66,6 +71,9 @@ namespace NorvesLib::Core::Rendering
         m_ActiveRequest.RequestId = m_NextRequestId++;
         m_ActiveRequest.SourceKind = request.SourceKind;
         m_ActiveRequest.MinimumPathTracingSamples = request.MinimumPathTracingSamples;
+        // シーンの色そのものを撮る要求では、同じ画を二重に読まない
+        m_ActiveRequest.bIncludeSceneColor =
+            request.bIncludeSceneColor && request.SourceKind != FrameCaptureSourceKind::SceneColor;
         m_State = State::Requested;
         return {FrameCaptureRequestStatus::Accepted, m_ActiveRequest.RequestId};
     }
@@ -204,31 +212,70 @@ namespace NorvesLib::Core::Rendering
             return FrameCaptureRecordStatus::PublishedFailure;
         }
 
-        ReadbackSlot& slot = m_ReadbackSlots[frameSlotIndex];
-        if (!slot.Buffer || slot.SizeBytes < byteCount)
+        // シーンの色も要求されていれば、写す前にすべてを確かめる（片方だけ写した結果を出さない）
+        PendingSceneColorReadback sceneColorReadback;
+        if (m_ActiveRequest.bIncludeSceneColor)
         {
-            RHI::BufferDesc desc(byteCount, RHI::ResourceUsage::TransferDst, true, "FrameCaptureReadback");
-            try
+            const FrameCaptureSource& sceneColor = sources.SceneColor;
+            if (!sceneColor.Texture || !(sources.SceneColorPreExposure > 0.0f))
             {
-                slot.Buffer = m_Device->CreateBuffer(desc);
+                PublishFailure(FrameCaptureResultStatus::SourceUnavailable, source->FrameNumber);
+                return FrameCaptureRecordStatus::PublishedFailure;
             }
-            catch (...)
+            sceneColorReadback.Width = sceneColor.Texture->GetWidth();
+            sceneColorReadback.Height = sceneColor.Texture->GetHeight();
+            sceneColorReadback.Format = sceneColor.Texture->GetFormat();
+            sceneColorReadback.PreExposure = sources.SceneColorPreExposure;
+            sceneColorReadback.Display = sources.SceneColorDisplay;
+            if (!TryGetBytesPerPixel(sceneColorReadback.Format, sceneColorReadback.BytesPerPixel))
             {
-                slot.Buffer.reset();
+                PublishFailure(FrameCaptureResultStatus::UnsupportedFormat, source->FrameNumber);
+                return FrameCaptureRecordStatus::PublishedFailure;
             }
-
-            if (!slot.Buffer)
+            if (!TryCalculateLayout(sceneColorReadback.Width,
+                                    sceneColorReadback.Height,
+                                    sceneColorReadback.BytesPerPixel,
+                                    sceneColorReadback.RowPitchBytes,
+                                    sceneColorReadback.ByteCount))
             {
-                slot.SizeBytes = 0;
+                PublishFailure(FrameCaptureResultStatus::InvalidDimensions, source->FrameNumber);
+                return FrameCaptureRecordStatus::PublishedFailure;
+            }
+            if ((sceneColor.Texture->GetUsage() & RHI::ResourceUsage::TransferSrc) == RHI::ResourceUsage::None)
+            {
+                PublishFailure(FrameCaptureResultStatus::SourceMissingTransferSrc, source->FrameNumber);
+                return FrameCaptureRecordStatus::PublishedFailure;
+            }
+            if (!EnsureReadbackSlot(m_SceneColorReadbackSlots[frameSlotIndex], sceneColorReadback.ByteCount))
+            {
                 PublishFailure(FrameCaptureResultStatus::ReadbackBufferCreateFailed, source->FrameNumber);
                 return FrameCaptureRecordStatus::PublishedFailure;
             }
-            slot.SizeBytes = byteCount;
+            sceneColorReadback.bRecorded = true;
+        }
+
+        ReadbackSlot& slot = m_ReadbackSlots[frameSlotIndex];
+        if (!EnsureReadbackSlot(slot, byteCount))
+        {
+            PublishFailure(FrameCaptureResultStatus::ReadbackBufferCreateFailed, source->FrameNumber);
+            return FrameCaptureRecordStatus::PublishedFailure;
         }
 
         commandList->TextureBarrier(source->Texture, source->CurrentState, RHI::ResourceState::CopySource);
         commandList->CopyTextureToBuffer(source->Texture, slot.Buffer, width, height, 0);
         commandList->TextureBarrier(source->Texture, RHI::ResourceState::CopySource, source->RestoreState);
+        if (sceneColorReadback.bRecorded)
+        {
+            const FrameCaptureSource& sceneColor = sources.SceneColor;
+            commandList->TextureBarrier(sceneColor.Texture, sceneColor.CurrentState, RHI::ResourceState::CopySource);
+            commandList->CopyTextureToBuffer(sceneColor.Texture,
+                                             m_SceneColorReadbackSlots[frameSlotIndex].Buffer,
+                                             sceneColorReadback.Width,
+                                             sceneColorReadback.Height,
+                                             0);
+            commandList->TextureBarrier(sceneColor.Texture, RHI::ResourceState::CopySource, sceneColor.RestoreState);
+        }
+        m_PendingSceneColor = sceneColorReadback;
 
         m_PendingReadback.RequestId = m_ActiveRequest.RequestId;
         m_PendingReadback.FrameNumber = source->FrameNumber;
@@ -303,8 +350,46 @@ namespace NorvesLib::Core::Rendering
         }
         slot.Buffer->Unmap();
 
+        if (m_PendingSceneColor.bRecorded)
+        {
+            ReadbackSlot& sceneColorSlot = m_SceneColorReadbackSlots[frameSlotIndex];
+            void* mappedSceneColor = nullptr;
+            if (sceneColorSlot.Buffer)
+            {
+                try
+                {
+                    mappedSceneColor = sceneColorSlot.Buffer->Map(0, m_PendingSceneColor.ByteCount);
+                }
+                catch (...)
+                {
+                    mappedSceneColor = nullptr;
+                }
+            }
+            if (!mappedSceneColor)
+            {
+                PublishFailure(FrameCaptureResultStatus::MapFailed, m_PendingReadback.FrameNumber);
+                return;
+            }
+            CapturedSceneColor& sceneColor = frame.SceneColor;
+            sceneColor.bValid = true;
+            sceneColor.Width = m_PendingSceneColor.Width;
+            sceneColor.Height = m_PendingSceneColor.Height;
+            sceneColor.Format = m_PendingSceneColor.Format;
+            sceneColor.BytesPerPixel = m_PendingSceneColor.BytesPerPixel;
+            sceneColor.RowPitchBytes = m_PendingSceneColor.RowPitchBytes;
+            sceneColor.PreExposure = m_PendingSceneColor.PreExposure;
+            sceneColor.Display = m_PendingSceneColor.Display;
+            sceneColor.Pixels.resize(static_cast<size_t>(m_PendingSceneColor.ByteCount));
+            if (!sceneColor.Pixels.empty())
+            {
+                std::memcpy(sceneColor.Pixels.data(), mappedSceneColor, sceneColor.Pixels.size());
+            }
+            sceneColorSlot.Buffer->Unmap();
+        }
+
         m_CompletedFrame = frame;
         m_PendingReadback = PendingReadback{};
+        m_PendingSceneColor = PendingSceneColorReadback{};
         m_State = State::CompletedUnconsumed;
     }
 
@@ -321,6 +406,7 @@ namespace NorvesLib::Core::Rendering
         outFrame = m_CompletedFrame;
         m_CompletedFrame = CapturedFrame{};
         m_PendingReadback = PendingReadback{};
+        m_PendingSceneColor = PendingSceneColorReadback{};
         m_ActiveRequest = FrameCaptureRequestSnapshot{};
         m_State = State::Idle;
         return true;
@@ -352,6 +438,30 @@ namespace NorvesLib::Core::Rendering
             outBytesPerPixel = 0;
             return false;
         }
+    }
+
+    bool FrameCaptureReadbackHelper::EnsureReadbackSlot(ReadbackSlot& slot, uint64_t byteCount)
+    {
+        if (slot.Buffer && slot.SizeBytes >= byteCount)
+        {
+            return true;
+        }
+        RHI::BufferDesc desc(byteCount, RHI::ResourceUsage::TransferDst, true, "FrameCaptureReadback");
+        try
+        {
+            slot.Buffer = m_Device->CreateBuffer(desc);
+        }
+        catch (...)
+        {
+            slot.Buffer.reset();
+        }
+        if (!slot.Buffer)
+        {
+            slot.SizeBytes = 0;
+            return false;
+        }
+        slot.SizeBytes = byteCount;
+        return true;
     }
 
     bool FrameCaptureReadbackHelper::TryCalculateLayout(
@@ -404,6 +514,7 @@ namespace NorvesLib::Core::Rendering
 
         m_CompletedFrame = frame;
         m_PendingReadback = PendingReadback{};
+        m_PendingSceneColor = PendingSceneColorReadback{};
         m_State = State::CompletedUnconsumed;
     }
 

@@ -10,6 +10,7 @@
 #include "Application/IApplication.h"
 #include "Application/IWindow.h"
 #include "Platform/PlatformApplicationFactory.h"
+#include "Rendering/FrameCaptureHdrWriter.h"
 #include "Rendering/RenderWorld.h"
 #include "Rendering/RenderingCoordinator.h"
 #include "Rendering/SceneView.h"
@@ -711,6 +712,12 @@ namespace
         return argument == String(TEXT("--capture-deterministic"));
     }
 
+    // --capture-hdr: --capture-png と同じフレームのブルーム前のシーンの色を、PNG の横へ HDR として書く（値を取らない）。
+    [[maybe_unused]] bool IsCaptureHdrOption(const String& argument)
+    {
+        return argument == String(TEXT("--capture-hdr"));
+    }
+
     // --window-background: ウィンドウを前面に出さず、フォーカスを奪わずに表示する（自動の検証の起動用。値を取らない）。
     bool IsWindowBackgroundOption(const String& argument)
     {
@@ -1169,6 +1176,7 @@ namespace NorvesLib::Core::Engine
         m_CapturePngPath = {};
         m_CaptureRequestedRenderedFrame = 0;
         m_bCaptureRequested = false;
+        m_bCaptureHdr = false;
         Detail::ExitFrameOptionsAccumulator exitFrameOptions{};
         bool bEnableMultiThreadedRendering = config.bEnableMultiThreadedRendering;
         bool bCaptureDeterministic = false;
@@ -1478,6 +1486,14 @@ namespace NorvesLib::Core::Engine
                 bCaptureDeterministic = true;
             }
 
+#if NORVES_BUILD_DEVELOPMENT
+            // 撮影の HDR は測光の照合のための開発ビルドの機能（Release では読まない）
+            if (IsCaptureHdrOption(args[i]))
+            {
+                m_bCaptureHdr = true;
+            }
+#endif
+
             if (IsWindowBackgroundOption(args[i]))
             {
                 bWindowBackground = true;
@@ -1534,6 +1550,15 @@ namespace NorvesLib::Core::Engine
             }
             LOG_INFO("ApplicationProcessor capture_png settled_rendered_frames=%llu",
                      static_cast<unsigned long long>(exitFrameOptions.RenderedTarget));
+            if (m_bCaptureHdr)
+            {
+                LOG_INFO("ApplicationProcessor runtime option capture_hdr=1");
+            }
+        }
+        else if (m_bCaptureHdr)
+        {
+            LOG_WARNING("ApplicationProcessor runtime option --capture-hdr は --capture-png が無いので無視する");
+            m_bCaptureHdr = false;
         }
 
         const Detail::ExitFrameSelection exitFrameSelection = Detail::SelectExitFrameSelection(exitFrameOptions);
@@ -2271,6 +2296,7 @@ namespace NorvesLib::Core::Engine
                     {
                         Rendering::FrameCaptureRequest captureRequest;
                         captureRequest.SourceKind = Rendering::FrameCaptureSourceKind::BackBuffer;
+                        captureRequest.bIncludeSceneColor = m_bCaptureHdr;
                         if (renderWorld.RequestFrameCapture(captureRequest).IsAccepted())
                         {
                             m_bCaptureRequested = true;
@@ -2289,7 +2315,28 @@ namespace NorvesLib::Core::Engine
                         Rendering::CapturedFrame capturedFrame;
                         if (renderWorld.TryConsumeCapturedFrame(capturedFrame))
                         {
-                            if (SaveCapturedFramePng(capturedFrame, m_CapturePngPath))
+                            const bool bPngSaved = SaveCapturedFramePng(capturedFrame, m_CapturePngPath);
+                            const bool bHdrSaved =
+                                !m_bCaptureHdr || Rendering::SaveCapturedSceneColorHdr(capturedFrame, m_CapturePngPath);
+                            if (m_bCaptureHdr)
+                            {
+                                if (bHdrSaved)
+                                {
+                                    LOG_INFO("ApplicationProcessor capture_hdr saved frame=%llu width=%u height=%u pre_exposure=%g",
+                                             static_cast<unsigned long long>(capturedFrame.FrameNumber),
+                                             capturedFrame.SceneColor.Width,
+                                             capturedFrame.SceneColor.Height,
+                                             static_cast<double>(capturedFrame.SceneColor.PreExposure));
+                                }
+                                else
+                                {
+                                    LOG_ERROR("ApplicationProcessor capture_hdr failed: status=%s scene_color=%d format=%u",
+                                              Rendering::GetFrameCaptureResultStatusName(capturedFrame.Status),
+                                              capturedFrame.SceneColor.bValid ? 1 : 0,
+                                              static_cast<unsigned int>(capturedFrame.SceneColor.Format));
+                                }
+                            }
+                            if (bPngSaved && bHdrSaved)
                             {
                                 LOG_INFO("ApplicationProcessor capture_png saved frame=%llu width=%u height=%u",
                                          static_cast<unsigned long long>(capturedFrame.FrameNumber),

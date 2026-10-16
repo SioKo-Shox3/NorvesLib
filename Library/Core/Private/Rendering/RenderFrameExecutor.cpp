@@ -58,6 +58,8 @@ namespace NorvesLib::Core::Rendering
                 result.CaptureSources.SceneColor,
                 primarySceneView->GetFrameSceneColorTexture(),
                 request.Packet->FrameNumber);
+            result.CaptureSources.SceneColorPreExposure = primarySceneView->GetFrameSceneColorPreExposure();
+            result.CaptureSources.SceneColorDisplay = primarySceneView->GetFrameSceneColorDisplay();
             if (auto* pathTracingPass = dynamic_cast<PathTracingPass*>(
                     primarySceneView->FindPass("PathTracingPass")))
             {

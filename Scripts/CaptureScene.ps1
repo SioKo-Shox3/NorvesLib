@@ -50,6 +50,12 @@
 # Game.log の ENGINE_CHECK の行で各名前の pass が 1 回以上あり fail が 0 であることを見る（満たさなければ失敗）。
 # 名前を与えていなくても、ENGINE_CHECK の fail の行が 1 件でもあれば失敗にする。Release はログが無いので併用できない。
 # -Build を付けると、撮る構成（-Configuration）の Game を先にビルドし、失敗したら撮らずに失敗にする（古い exe で撮らないため）。
+# -Hdr を付けると、Game を --capture-hdr 付きで起動し、視点ごとに PNG と同じフレームのブルームの前のシーンの色を
+# 放射輝度の HDR として <視点>.hdr.pfm（線形の Rec.709・D65、cd/m²。エンジンのプリエクスポージャを外した RGB の 32 bit 浮動小数）と
+# <視点>.hdr.json（大きさ・プリエクスポージャ・表示変換の差し替え）に書く（Core の Rendering/FrameCaptureHdrWriter.h）。
+# 撮り終えたら Scripts/Terrain/ReferenceCheck.py --record-inputs で、撮影の入力（描画のコード・シェーダー・荒野の組み立て・
+# git のコミット）のハッシュを inputs.json へ書く（ReferenceCheck.py --hdr --verify が今のファイルと照らして古い撮影を拒否する）。
+# 開発ビルドの機能なので Release と、決定的でない -GpuTimingFrames とは併用できない。HDR が無い・大きさが PNG と違えば失敗にする。
 #
 # -CompareWith <dir> を与えると、その撮影（同じ視点名の PNG）と視点ごとに比べる。平均輝度の差が -CompareMeanLuminanceLimit 以下、
 # PSNR が -ComparePsnrLimit 以上なら一致（式は CaptureStartupScene.ps1 の -CompareDeterministicWith と同じ）。
@@ -81,6 +87,8 @@ param(
     [string[]]$RequireChecks = @(),
     # 撮る前に、-Configuration の Game をビルドする（失敗したら撮らずに失敗）。
     [switch]$Build,
+    # 視点ごとに、ブルームの前の HDR（<視点>.hdr.pfm・<視点>.hdr.json）も PNG と同じフレームから書く（開発ビルドだけ）。
+    [switch]$Hdr,
     # 1 回の起動の時間切れ[秒]。荒野は Debug で地形の区画と崖錐の岩を置き終えて SceneReady になるまで約 300 秒かかるので、
     # 1 視点の撮影でも収まるよう既定を 600 秒にする
     [ValidateRange(10, 3600)]
@@ -133,6 +141,17 @@ if ($GpuTimingFrames -gt 0 -and $GpuTimingFrames -lt 100)
 if ($GpuTimingFrames -gt 0 -and $Configuration -eq 'Release')
 {
     Write-Output 'CAPTURE_SCENE result=fail reason=gpu_timing_without_stats（Release は統計が無効で GPU のタイムスタンプを取れない。-Configuration RelWithDebInfo で測る）'
+    exit 1
+}
+
+if ($Hdr -and $Configuration -eq 'Release')
+{
+    Write-Output 'CAPTURE_SCENE result=fail reason=hdr_in_release（-Hdr は開発ビルドの機能で、Release の Game は HDR を書かない。RelWithDebInfo か Debug で撮る）'
+    exit 1
+}
+if ($Hdr -and $GpuTimingFrames -gt 0)
+{
+    Write-Output 'CAPTURE_SCENE result=fail reason=hdr_with_gpu_timing（-Hdr は決定的な撮影と併せて使う）'
     exit 1
 }
 
@@ -734,7 +753,10 @@ for ($runIndex = 0; $runIndex -lt $runs.Count; ++$runIndex)
     }
     foreach ($staleShot in $run.Shots)
     {
-        Remove-Item -LiteralPath (Join-Path $outRoot "$($staleShot.Name).png") -Force -ErrorAction SilentlyContinue
+        foreach ($staleSuffix in @('.png', '.hdr.pfm', '.hdr.json'))
+        {
+            Remove-Item -LiteralPath (Join-Path $outRoot "$($staleShot.Name)$staleSuffix") -Force -ErrorAction SilentlyContinue
+        }
     }
 
     $tracePath = Join-Path $outRoot "$($run.Label).trace.csv"
@@ -751,6 +773,10 @@ for ($runIndex = 0; $runIndex -lt $runs.Count; ++$runIndex)
     else
     {
         $arguments += '--capture-deterministic'
+    }
+    if ($Hdr)
+    {
+        $arguments += '--capture-hdr'
     }
     if ($bMultiRun)
     {
@@ -1082,6 +1108,40 @@ for ($runIndex = 0; $runIndex -lt $runs.Count; ++$runIndex)
         {
             $failures += "$($shot.Name): PNG の大きさが指定と違う（$([int]$measured[0])x$([int]$measured[1])、指定 ${Width}x${Height}）"
         }
+        # HDR: PNG と同じ起動で書かれ、大きさが PNG と同じこと（値の検査は ReferenceCheck.py --hdr）
+        $hdrInfo = $null
+        if ($Hdr)
+        {
+            $hdrPfmPath = Join-Path $outRoot "$($shot.Name).hdr.pfm"
+            $hdrJsonPath = Join-Path $outRoot "$($shot.Name).hdr.json"
+            $bHdrFresh = $true
+            foreach ($hdrPath in @($hdrPfmPath, $hdrJsonPath))
+            {
+                if (-not (Test-Path -LiteralPath $hdrPath) -or (Get-Item -LiteralPath $hdrPath).LastWriteTimeUtc -lt $runStartUtc)
+                {
+                    $failures += "$($shot.Name): HDR が無い（$([IO.Path]::GetFileName($hdrPath))）"
+                    $bHdrFresh = $false
+                }
+            }
+            if ($bHdrFresh)
+            {
+                $hdrMeta = Get-Content -LiteralPath $hdrJsonPath -Raw -Encoding UTF8 | ConvertFrom-Json
+                if ([int]$hdrMeta.width -ne [int]$measured[0] -or [int]$hdrMeta.height -ne [int]$measured[1])
+                {
+                    $failures += "$($shot.Name): HDR の大きさ $($hdrMeta.width)x$($hdrMeta.height) が PNG $([int]$measured[0])x$([int]$measured[1]) と違う"
+                }
+                $hdrInfo = [ordered]@{
+                    file = "$($shot.Name).hdr.pfm"
+                    meta = "$($shot.Name).hdr.json"
+                    width = [int]$hdrMeta.width
+                    height = [int]$hdrMeta.height
+                    pre_exposure = [double]$hdrMeta.pre_exposure
+                    frame_number = [long]$hdrMeta.frame_number
+                }
+                Write-Output ("CAPTURE_SCENE hdr view={0} size={1}x{2} pre_exposure={3} frame={4}" -f `
+                    $shot.Name, $hdrInfo.width, $hdrInfo.height, $hdrInfo.pre_exposure, $hdrInfo.frame_number)
+            }
+        }
         $result = [ordered]@{
             view = $shot.Name
             scene_view = if ($shot.SceneView -ne '') { $shot.SceneView } else { $shot.DefaultViewName }
@@ -1105,6 +1165,7 @@ for ($runIndex = 0; $runIndex -lt $runs.Count; ++$runIndex)
             vulkan_validation = $validationInfo
             gpu_timing = $gpuTiming
             mega_stats = $megaStats
+            hdr = $hdrInfo
         }
         $results += [pscustomobject]$result
         Write-Output ("CAPTURE_SCENE view={0} size={1}x{2} mean_luminance={3} clipped_white_ratio={4} crushed_black_ratio={5}" -f `
@@ -1206,6 +1267,23 @@ if ($CompareWith -ne '')
     }
 }
 
+# HDR の撮影は、入力のハッシュ（inputs.json）を横に書く。撮影が失敗したときは古い入力を残さない
+if ($Hdr)
+{
+    $inputsPath = Join-Path $outRoot 'inputs.json'
+    Remove-Item -LiteralPath $inputsPath -Force -ErrorAction SilentlyContinue
+    if ($failures.Count -eq 0)
+    {
+        $recordOutput = & python (Join-Path $repoRoot 'Scripts\Terrain\ReferenceCheck.py') --record-inputs --kind engine --capture $outRoot 2>&1
+        $recordExitCode = $LASTEXITCODE
+        foreach ($line in @($recordOutput)) { Write-Output "$line" }
+        if ($recordExitCode -ne 0 -or -not (Test-Path -LiteralPath $inputsPath))
+        {
+            $failures += "入力のハッシュ（inputs.json）を書けなかった（ReferenceCheck.py --record-inputs の終了コード $recordExitCode）"
+        }
+    }
+}
+
 $metrics = [ordered]@{
     scene = $Scene
     configuration = $Configuration
@@ -1214,6 +1292,7 @@ $metrics = [ordered]@{
     game_args = $extraArguments
     require_assets = [bool]$RequireAssets
     gpu_timing_frames = $GpuTimingFrames
+    hdr = [bool]$Hdr
     timing_warmup_frames = $TimingWarmupFrames
     timing_ready_margin_frames = $TimingReadyMarginFrames
     require_checks = $requiredChecks
@@ -1227,6 +1306,7 @@ $metrics = [ordered]@{
 $metricsPath = Join-Path $outRoot 'metrics.json'
 $metricsJson = $metrics | ConvertTo-Json -Depth 8
 [IO.File]::WriteAllText($metricsPath, $metricsJson, (New-Object System.Text.UTF8Encoding($false)))
+
 
 if ($failures.Count -gt 0)
 {

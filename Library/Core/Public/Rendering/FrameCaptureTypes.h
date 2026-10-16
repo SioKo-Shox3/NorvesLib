@@ -25,6 +25,12 @@ namespace NorvesLib::Core::Rendering
          * 条件を満たさないフレームでは要求を保留したまま次のフレームへ回す。
          */
         uint32_t MinimumPathTracingSamples = 0;
+        /**
+         * @brief 同じフレームのメインSceneViewのシーンの色（ブルーム前の HDR。プリエクスポージャ後の値）も読み出す
+         *
+         * 結果は CapturedFrame::SceneColor に入る（撮影の HDR の書き出し用。SourceKind が SceneColor のときは使わない）。
+         */
+        bool bIncludeSceneColor = false;
     };
 
     struct FrameCaptureRequestSnapshot
@@ -32,6 +38,7 @@ namespace NorvesLib::Core::Rendering
         uint64_t RequestId = 0;
         FrameCaptureSourceKind SourceKind = FrameCaptureSourceKind::PresentationColor;
         uint32_t MinimumPathTracingSamples = 0;
+        bool bIncludeSceneColor = false;
 
         bool IsValid() const
         {
@@ -103,6 +110,33 @@ namespace NorvesLib::Core::Rendering
         bool bShaderSrgbEncode = false;
     };
 
+    /**
+     * @brief シーンの色を描いたカメラの表示変換の差し替え（撮影の HDR から表示の値を見積もる手掛かり）
+     *
+     * カメラの CameraToneMapCurve・CameraGradingOverride を写したもの。差し替えが無いカメラは View の既定の
+     * トーンマップ・グレーディングで描かれ、ここには入らない（bGradingOverride が false）。
+     */
+    struct FrameCaptureDisplayInfo
+    {
+        /** @brief トーンマップの曲線がカメラの差し替えの NeutralLinear か */
+        bool bNeutralLinear = false;
+        /** @brief カメラのグレーディングの差し替えが有効か（false ならほかの値は使わない） */
+        bool bGradingOverride = false;
+        float Contrast = 1.0f;
+        float ContrastPivot = 0.18f;
+        float Saturation = 1.0f;
+        float Temperature = 0.0f;
+        float VignetteIntensity = 0.0f;
+        float VignetteRadius = 0.8f;
+        float VignetteSoftness = 0.5f;
+        /** @brief 見た目の 3D LUT が掛かるか（グレーディングの後。ここには LUT の中身を写さない） */
+        bool bLookLut = false;
+        /** @brief 色収差の画素数（0 で掛けない） */
+        float ChromaticAberrationPixels = 0.0f;
+        /** @brief レンズダートの強さ（0 ならカメラの指定なし） */
+        float LensDirtIntensity = 0.0f;
+    };
+
     struct FrameCaptureSourceSet
     {
         FrameCaptureSource PresentationColor;
@@ -113,6 +147,10 @@ namespace NorvesLib::Core::Rendering
         FrameCaptureSource RTGIHistoryAge;
         /** @brief このフレームにメインSceneViewのパストレーサーが累積した試料数（ラスタなら0） */
         uint32_t PathTracingSampleCount = 0;
+        /** @brief SceneColor に掛かっているプリエクスポージャ（割ると放射輝度 cd/m²。0 は不明） */
+        float SceneColorPreExposure = 0.0f;
+        /** @brief SceneColor を描いたカメラの表示変換の差し替え */
+        FrameCaptureDisplayInfo SceneColorDisplay;
 
         const FrameCaptureSource* Find(FrameCaptureSourceKind kind) const
         {
@@ -144,7 +182,26 @@ namespace NorvesLib::Core::Rendering
             RTGIDiffuseIndirect = FrameCaptureSource{};
             RTGIHistoryAge = FrameCaptureSource{};
             PathTracingSampleCount = 0;
+            SceneColorPreExposure = 0.0f;
+            SceneColorDisplay = FrameCaptureDisplayInfo{};
         }
+    };
+
+    /** @brief FrameCaptureRequest::bIncludeSceneColor で同じフレームから読み出したシーンの色 */
+    struct CapturedSceneColor
+    {
+        /** @brief 読み出せたか（要求していない・失敗したときは false で、ほかの値は空） */
+        bool bValid = false;
+        uint32_t Width = 0;
+        uint32_t Height = 0;
+        RHI::Format Format = RHI::Format::UNKNOWN;
+        uint32_t BytesPerPixel = 0;
+        uint32_t RowPitchBytes = 0;
+        /** @brief 画素に掛かっているプリエクスポージャ（割ると放射輝度 cd/m²） */
+        float PreExposure = 0.0f;
+        /** @brief 画素を描いたカメラの表示変換の差し替え */
+        FrameCaptureDisplayInfo Display;
+        Container::VariableArray<uint8_t> Pixels;
     };
 
     struct CapturedFrame
@@ -164,6 +221,8 @@ namespace NorvesLib::Core::Rendering
         /** @brief 取得したフレームでパストレーサーが累積していた試料数（ラスタなら0） */
         uint32_t PathTracingSampleCount = 0;
         Container::VariableArray<uint8_t> Pixels;
+        /** @brief 要求したときだけ入る、同じフレームのシーンの色（ブルーム前の HDR） */
+        CapturedSceneColor SceneColor;
 
         bool IsSuccess() const
         {

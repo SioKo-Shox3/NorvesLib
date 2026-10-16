@@ -5,6 +5,7 @@
 #include "Container/PointerTypes.h"
 #include "Math/Matrix4x4.h"
 #include "RHI/RHITypes.h"
+#include "Rendering/FrameCaptureTypes.h"
 #include <cstdint>
 
 // 前方宣言
@@ -247,6 +248,12 @@ namespace NorvesLib::Core::Rendering
         /** @brief RenderThread-only executor seam for the exported SceneColor texture. */
         const RHI::TexturePtr& GetFrameSceneColorTexture() const;
 
+        /** @brief GetFrameSceneColorTexture の画素に掛かっているプリエクスポージャ（シーンの色が無いフレームは 0） */
+        float GetFrameSceneColorPreExposure() const { return m_FrameSceneColorPreExposure; }
+
+        /** @brief GetFrameSceneColorTexture を描いたカメラの表示変換の差し替え */
+        const FrameCaptureDisplayInfo& GetFrameSceneColorDisplay() const { return m_FrameSceneColorDisplay; }
+
         // ========================================
         // 設定
         // ========================================
@@ -294,6 +301,8 @@ namespace NorvesLib::Core::Rendering
         Container::TSharedPtr<RHI::ITexture2D> m_OutputTexture;
         RHI::TexturePtr m_FrameOutputTexture;
         RHI::TexturePtr m_FrameSceneColorTexture;
+        float m_FrameSceneColorPreExposure = 0.0f;
+        FrameCaptureDisplayInfo m_FrameSceneColorDisplay;
 
         // 設定
         ViewType m_ViewType = ViewType::Scene;

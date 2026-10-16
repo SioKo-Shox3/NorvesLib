@@ -330,6 +330,27 @@ namespace NorvesLib::Core::Rendering
             lastResult.TryGetTexture(RenderGraphResourceNames::SceneColor, sceneColorTexture))
         {
             m_FrameSceneColorTexture = sceneColorTexture;
+            // 撮影の HDR の書き出しが放射輝度へ戻すため、このフレームのシーンの色に掛けたプリエクスポージャを残す
+            const CameraProxy* activeCamera = context.GetActiveCamera();
+            m_FrameSceneColorPreExposure = ResolveSceneColorPreExposure(activeCamera);
+            m_FrameSceneColorDisplay = FrameCaptureDisplayInfo{};
+            if (activeCamera)
+            {
+                m_FrameSceneColorDisplay.bNeutralLinear = activeCamera->ToneMapCurve == CameraToneMapCurve::NeutralLinear;
+                const CameraGradingOverride& grading = activeCamera->GradingOverride;
+                m_FrameSceneColorDisplay.bGradingOverride = grading.bEnabled;
+                m_FrameSceneColorDisplay.Contrast = grading.Contrast;
+                m_FrameSceneColorDisplay.ContrastPivot = grading.ContrastPivot;
+                m_FrameSceneColorDisplay.Saturation = grading.Saturation;
+                m_FrameSceneColorDisplay.Temperature = grading.Temperature;
+                m_FrameSceneColorDisplay.VignetteIntensity = grading.VignetteIntensity;
+                m_FrameSceneColorDisplay.VignetteRadius = grading.VignetteRadius;
+                m_FrameSceneColorDisplay.VignetteSoftness = grading.VignetteSoftness;
+                m_FrameSceneColorDisplay.bLookLut =
+                    activeCamera->LookLut.AssetPath != nullptr && activeCamera->LookLut.Intensity > 0.0f;
+                m_FrameSceneColorDisplay.ChromaticAberrationPixels = activeCamera->LensEffects.ChromaticAberrationPixels;
+                m_FrameSceneColorDisplay.LensDirtIntensity = activeCamera->LensEffects.LensDirtIntensity;
+            }
         }
 
         RHI::TexturePtr outputTexture;
@@ -348,6 +369,8 @@ namespace NorvesLib::Core::Rendering
     {
         m_FrameOutputTexture.reset();
         m_FrameSceneColorTexture.reset();
+        m_FrameSceneColorPreExposure = 0.0f;
+        m_FrameSceneColorDisplay = FrameCaptureDisplayInfo{};
     }
 
     void View::SetFrameOutputTexture(RHI::TexturePtr texture)

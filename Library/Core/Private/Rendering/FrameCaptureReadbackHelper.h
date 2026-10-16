@@ -78,7 +78,23 @@ namespace NorvesLib::Core::Rendering
             uint64_t ByteCount = 0;
         };
 
+        /** @brief bIncludeSceneColor の要求で、同じフレームのシーンの色を写した読み出し */
+        struct PendingSceneColorReadback
+        {
+            bool bRecorded = false;
+            uint32_t Width = 0;
+            uint32_t Height = 0;
+            RHI::Format Format = RHI::Format::UNKNOWN;
+            uint32_t BytesPerPixel = 0;
+            uint32_t RowPitchBytes = 0;
+            uint64_t ByteCount = 0;
+            float PreExposure = 0.0f;
+            FrameCaptureDisplayInfo Display;
+        };
+
         static bool TryGetBytesPerPixel(RHI::Format format, uint32_t& outBytesPerPixel);
+        /** @brief 読み出し先のバッファを byteCount 以上にそろえる（作れなければ false） */
+        bool EnsureReadbackSlot(ReadbackSlot& slot, uint64_t byteCount);
         static bool TryCalculateLayout(
             uint32_t width,
             uint32_t height,
@@ -95,8 +111,10 @@ namespace NorvesLib::Core::Rendering
         uint64_t m_NextRequestId = 1;
         FrameCaptureRequestSnapshot m_ActiveRequest;
         PendingReadback m_PendingReadback;
+        PendingSceneColorReadback m_PendingSceneColor;
         CapturedFrame m_CompletedFrame;
         Container::VariableArray<ReadbackSlot> m_ReadbackSlots;
+        Container::VariableArray<ReadbackSlot> m_SceneColorReadbackSlots;
     };
 
 } // namespace NorvesLib::Core::Rendering

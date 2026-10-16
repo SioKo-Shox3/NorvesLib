@@ -137,6 +137,9 @@ namespace Game
         // --capture-views-settle-frames=<n>: --capture-views で視点を置き直してから、撮る手順（落ち着きの判定・エポック）を始めるまでに
         // 待つ描画フレーム数（既定 MultiViewCapture::kDefaultViewSettleRenderedFrames）
         constexpr const TCHAR *kCaptureViewsSettleFramesOption = TEXT("--capture-views-settle-frames=");
+        // --capture-hdr: --capture-views の視点ごとに、同じフレームのブルーム前のシーンの色を HDR として PNG の横へ書く
+        // （開発ビルドだけ。1 視点の --capture-png は ApplicationProcessor が同じ引数で書く）
+        constexpr const TCHAR *kCaptureHdrOption = TEXT("--capture-hdr");
         // --exit-after-rendered-frames=<n>: ApplicationProcessor の、落ち着いてから撮るまでの描画フレーム数（--capture-views も同じ数で撮る）
         constexpr const TCHAR *kExitAfterRenderedFramesOption = TEXT("--exit-after-rendered-frames=");
         // ApplicationProcessor の --capture-png が、落ち着いてから撮るまでに描く既定のフレーム数（kCapturePngDefaultSettledRenderedFrames）
@@ -1980,10 +1983,15 @@ namespace Game
         String capturePngPath;
         uint64_t captureSettledRenderedFrames = kCapturePngDefaultSettledRenderedFrames;
         uint64_t captureViewSettleRenderedFrames = Game::Debug::MultiViewCapture::kDefaultViewSettleRenderedFrames;
+        bool bCaptureHdr = false;
         for (size_t i = 0; i < args.size(); ++i)
         {
             String value;
-            if (TryStripPrefix(args[i], kCaptureViewsOption, value))
+            if (ToStdString(args[i]) == std::basic_string<TCHAR>(kCaptureHdrOption))
+            {
+                bCaptureHdr = true;
+            }
+            else if (TryStripPrefix(args[i], kCaptureViewsOption, value))
             {
                 if (!m_CaptureViewsRequest.empty() || value.empty())
                 {
@@ -2046,6 +2054,11 @@ namespace Game
             }
             m_MultiViewCapture.Configure(m_CaptureViewNames, captureDirectory, captureSettledRenderedFrames,
                                          captureViewSettleRenderedFrames, &m_SceneViewSwitch);
+#if NORVES_BUILD_DEVELOPMENT
+            m_MultiViewCapture.SetCaptureHdr(bCaptureHdr);
+#else
+            (void)bCaptureHdr;
+#endif
             LOG_INFO_F("CAPTURE_VIEWS configured views=%zu settled_rendered_frames=%llu view_settle_frames=%llu dir=%s",
                        m_CaptureViewNames.size(), static_cast<unsigned long long>(captureSettledRenderedFrames),
                        static_cast<unsigned long long>(captureViewSettleRenderedFrames), captureDirectory.c_str());

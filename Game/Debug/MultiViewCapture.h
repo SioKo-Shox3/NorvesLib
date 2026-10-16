@@ -54,6 +54,13 @@ namespace Game::Debug
 
         bool IsEnabled() const { return !m_ViewNames.empty(); }
 
+        /**
+         * @brief 視点ごとの PNG の横へ、同じフレームのブルーム前のシーンの色を HDR として書くか（--capture-hdr）
+         *
+         * 書き出しの形式は Core の SaveCapturedSceneColorHdr（<視点>.hdr.pfm と <視点>.hdr.json）。書けなければ撮影の失敗にする。
+         */
+        void SetCaptureHdr(bool bCaptureHdr) { m_bCaptureHdr = bCaptureHdr; }
+
         /// ApplicationProcessor の --capture-png の撮影と終了を止めておくか（有効な間は撮り終えた後も止める）
         bool IsHoldingEngineCapture() const { return IsEnabled(); }
 
@@ -88,6 +95,7 @@ namespace Game::Debug
         uint64_t m_SettledRenderedFrames = 0;
         uint64_t m_ViewSettleRenderedFrames = kDefaultViewSettleRenderedFrames;
         Game::Scenes::SceneViewSwitch* m_pViewSwitch = nullptr;
+        bool m_bCaptureHdr = false;
 
         Phase m_Phase = Phase::Settling;
         size_t m_ViewIndex = 0;

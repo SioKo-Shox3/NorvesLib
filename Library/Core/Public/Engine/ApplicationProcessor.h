@@ -213,6 +213,8 @@ namespace NorvesLib::Core::Engine
         Container::String m_CapturePngPath;
         uint64_t m_CaptureRequestedRenderedFrame = 0;
         bool m_bCaptureRequested = false;
+        // --capture-hdr: 同じフレームのブルーム前のシーンの色を、PNG の横へ放射輝度の HDR として書く（開発ビルドだけ）。
+        bool m_bCaptureHdr = false;
     };
 
 } // namespace NorvesLib::Core::Engine

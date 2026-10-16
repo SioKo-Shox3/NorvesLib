@@ -7,6 +7,7 @@
 #include "Core/Public/Engine/NorvesEngine.h"
 #include "Core/Public/Engine/SkeletalAssetSession.h"
 #include "Core/Public/Logging/LogMacros.h"
+#include "Core/Public/Rendering/FrameCaptureHdrWriter.h"
 #include "Core/Public/Rendering/FrameCaptureTypes.h"
 #include "Core/Public/Rendering/RenderWorld.h"
 
@@ -164,6 +165,7 @@ namespace Game::Debug
 
             NorvesLib::Core::Rendering::FrameCaptureRequest request;
             request.SourceKind = NorvesLib::Core::Rendering::FrameCaptureSourceKind::BackBuffer;
+            request.bIncludeSceneColor = m_bCaptureHdr;
             if (!renderWorld.RequestFrameCapture(request).IsAccepted())
             {
                 Fail("capture_request_rejected");
@@ -198,6 +200,20 @@ namespace Game::Debug
         LOG_INFO_F("CAPTURE_VIEWS view=%s saved frame=%llu width=%u height=%u path=%s", viewName.c_str(),
                    static_cast<unsigned long long>(capturedFrame.FrameNumber), capturedFrame.Width,
                    capturedFrame.Height, path.c_str());
+        if (m_bCaptureHdr)
+        {
+            if (!NorvesLib::Core::Rendering::SaveCapturedSceneColorHdr(capturedFrame, path))
+            {
+                LOG_ERROR_F("CAPTURE_VIEWS view=%s hdr save failed scene_color=%d format=%u", viewName.c_str(),
+                            capturedFrame.SceneColor.bValid ? 1 : 0,
+                            static_cast<unsigned int>(capturedFrame.SceneColor.Format));
+                Fail("hdr_save_failed");
+                return;
+            }
+            LOG_INFO_F("CAPTURE_VIEWS view=%s hdr saved width=%u height=%u pre_exposure=%g", viewName.c_str(),
+                       capturedFrame.SceneColor.Width, capturedFrame.SceneColor.Height,
+                       static_cast<double>(capturedFrame.SceneColor.PreExposure));
+        }
 
         ++m_ViewIndex;
         if (m_ViewIndex >= m_ViewNames.size())

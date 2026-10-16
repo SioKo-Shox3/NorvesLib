@@ -215,6 +215,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/RenderingCoordinatorDiagnostics.cpp
     Private/Rendering/FrameCaptureReadbackHelper.h
     Private/Rendering/FrameCaptureReadbackHelper.cpp
+    Private/Rendering/FrameCaptureHdrWriter.cpp
     Private/Rendering/FrameCaptureThumbnailEncoder.cpp
     Private/Rendering/RenderGraph/RenderGraph.cpp
     Private/Rendering/RenderGraph/RenderGraphBuilder.cpp
@@ -577,6 +578,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/VolumetricsPass.h
     Public/Rendering/FramePacket.h
     Public/Rendering/FrameCaptureTypes.h
+    Public/Rendering/FrameCaptureHdrWriter.h
     Public/Rendering/FrameCaptureThumbnailEncoder.h
     Public/Rendering/RenderResourcesFwd.h
     Public/Rendering/RenderResourceContexts.h
