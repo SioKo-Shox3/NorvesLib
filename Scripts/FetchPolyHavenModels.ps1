@@ -48,7 +48,10 @@ $wastelandAssetIds = @(
     # 堆積岩の崖の面 2 種と、崖錐の角張った岩塊 1 種。選んだ理由は Docs/RenderingValidation/WastelandReference.md
     'rock_face_01',
     'rock_face_02',
-    'boulder_01'
+    'boulder_01',
+    # 崖の足元の落石（SCN-WL-CLIFF-ASSETS）。平らな面で割れた角張った岩塊と、薄い板状の岩
+    'rock_07',
+    'rock_09'
 )
 $assetIds = if ($Set -eq 'wasteland') { $wastelandAssetIds } else { $startupAssetIds }
 $resolution = '4k'

@@ -158,6 +158,72 @@
       "source_path": "Assets/Models/PolyHaven/dead_quiver_trunk/textures/dead_quiver_trunk_arm_4k.jpg",
       "package_name": "Wasteland/dead_quiver_trunk_arm.nvpkg",
       "entry_name": "Assets/Models/PolyHaven/dead_quiver_trunk/textures/dead_quiver_trunk_arm_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Models/PolyHaven/boulder_01/cooked/boulder_01_albedo",
+      "cook_usage": "orm",
+      "source_path": "Assets/Models/PolyHaven/boulder_01/textures/boulder_01_diff_lin_4k.png",
+      "package_name": "Wasteland/boulder_01_diff.nvpkg",
+      "entry_name": "Assets/Models/PolyHaven/boulder_01/textures/boulder_01_diff_lin_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Models/PolyHaven/boulder_01/cooked/boulder_01_normal",
+      "cook_usage": "normal",
+      "flip_normal_y": true,
+      "source_path": "Assets/Models/PolyHaven/boulder_01/textures/boulder_01_nor_gl_4k.jpg",
+      "package_name": "Wasteland/boulder_01_nor.nvpkg",
+      "entry_name": "Assets/Models/PolyHaven/boulder_01/textures/boulder_01_nor_gl_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Models/PolyHaven/boulder_01/cooked/boulder_01_orm",
+      "cook_usage": "orm",
+      "source_path": "Assets/Models/PolyHaven/boulder_01/textures/boulder_01_arm_cal_4k.png",
+      "package_name": "Wasteland/boulder_01_arm.nvpkg",
+      "entry_name": "Assets/Models/PolyHaven/boulder_01/textures/boulder_01_arm_cal_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Models/PolyHaven/rock_07/cooked/rock_07_albedo",
+      "cook_usage": "orm",
+      "source_path": "Assets/Models/PolyHaven/rock_07/textures/rock_07_diff_lin_4k.png",
+      "package_name": "Wasteland/rock_07_diff.nvpkg",
+      "entry_name": "Assets/Models/PolyHaven/rock_07/textures/rock_07_diff_lin_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Models/PolyHaven/rock_07/cooked/rock_07_normal",
+      "cook_usage": "normal",
+      "flip_normal_y": true,
+      "source_path": "Assets/Models/PolyHaven/rock_07/textures/rock_07_nor_gl_4k.jpg",
+      "package_name": "Wasteland/rock_07_nor.nvpkg",
+      "entry_name": "Assets/Models/PolyHaven/rock_07/textures/rock_07_nor_gl_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Models/PolyHaven/rock_07/cooked/rock_07_orm",
+      "cook_usage": "orm",
+      "source_path": "Assets/Models/PolyHaven/rock_07/textures/rock_07_arm_cal_4k.png",
+      "package_name": "Wasteland/rock_07_arm.nvpkg",
+      "entry_name": "Assets/Models/PolyHaven/rock_07/textures/rock_07_arm_cal_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Models/PolyHaven/rock_09/cooked/rock_09_albedo",
+      "cook_usage": "orm",
+      "source_path": "Assets/Models/PolyHaven/rock_09/textures/rock_09_diff_lin_4k.png",
+      "package_name": "Wasteland/rock_09_diff.nvpkg",
+      "entry_name": "Assets/Models/PolyHaven/rock_09/textures/rock_09_diff_lin_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Models/PolyHaven/rock_09/cooked/rock_09_normal",
+      "cook_usage": "normal",
+      "flip_normal_y": true,
+      "source_path": "Assets/Models/PolyHaven/rock_09/textures/rock_09_nor_gl_4k.jpg",
+      "package_name": "Wasteland/rock_09_nor.nvpkg",
+      "entry_name": "Assets/Models/PolyHaven/rock_09/textures/rock_09_nor_gl_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Models/PolyHaven/rock_09/cooked/rock_09_orm",
+      "cook_usage": "orm",
+      "source_path": "Assets/Models/PolyHaven/rock_09/textures/rock_09_arm_cal_4k.png",
+      "package_name": "Wasteland/rock_09_arm.nvpkg",
+      "entry_name": "Assets/Models/PolyHaven/rock_09/textures/rock_09_arm_cal_4k.nvtex"
     }
   ],
   "models": [
@@ -223,6 +289,33 @@
       ],
       "package_name": "Wasteland/dead_quiver_trunk.nvpkg",
       "entry_name": "Assets/Models/PolyHaven/dead_quiver_trunk/dead_quiver_trunk_4k.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/PolyHaven/boulder_01/boulder_01_4k.gltf",
+      "source_path": "Assets/Models/PolyHaven/boulder_01/boulder_01_4k.gltf",
+      "extra_sources": [
+        "Assets/Models/PolyHaven/boulder_01/boulder_01.bin"
+      ],
+      "package_name": "Wasteland/boulder_01.nvpkg",
+      "entry_name": "Assets/Models/PolyHaven/boulder_01/boulder_01_4k.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/PolyHaven/rock_07/rock_07_4k.gltf",
+      "source_path": "Assets/Models/PolyHaven/rock_07/rock_07_4k.gltf",
+      "extra_sources": [
+        "Assets/Models/PolyHaven/rock_07/rock_07.bin"
+      ],
+      "package_name": "Wasteland/rock_07.nvpkg",
+      "entry_name": "Assets/Models/PolyHaven/rock_07/rock_07_4k.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/PolyHaven/rock_09/rock_09_4k.gltf",
+      "source_path": "Assets/Models/PolyHaven/rock_09/rock_09_4k.gltf",
+      "extra_sources": [
+        "Assets/Models/PolyHaven/rock_09/rock_09.bin"
+      ],
+      "package_name": "Wasteland/rock_09.nvpkg",
+      "entry_name": "Assets/Models/PolyHaven/rock_09/rock_09_4k.nvmesh"
     }
   ]
 }

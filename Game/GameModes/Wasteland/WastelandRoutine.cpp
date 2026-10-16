@@ -214,7 +214,8 @@ namespace Game::GameModes
         // 1 Tick に読んで置く地形の区画の数（区画は 1 つ 37 MB 前後。読み込みと解析のメモリを数区画ぶんに抑える）
         constexpr uint32_t kTerrainTilesPerTick = 4;
         // 岩・崖・建物（WastelandLayout）を置くか。配置は手続きの地形（中央の盆地とメサの輪）に合わせたものなので、
-        // DEM の地形では前哨地を置き直す（SCN-WL-OUTPOST）まで置かない
+        // DEM の地形では前哨地を置き直す（SCN-WL-OUTPOST）まで置かない。偽のときも崖の足元の落石（Layout::IsTalusKind）は
+        // 読んで、崖の視点の手前に見本を置く
         constexpr bool kPlaceLayoutProps = false;
         // 名前付き視点の足元で草・低木を撒かない半径[m]（目の前を株がふさがない）
         constexpr float kViewFoliageClearRadius = 2.5f;
@@ -694,8 +695,8 @@ namespace Game::GameModes
             }
         }
 
-        /// 小物・建物の全種類のクック済みメッシュを解決・解析し、材質のテクスチャの読み込みを始める。
-        /// クック済みが無い・壊れている種類は理由を出して読み飛ばす（その種類を置かずに続ける）
+        /// 小物・建物の置く種類（kPlaceLayoutProps が偽なら崖の足元の落石だけ）のクック済みメッシュを解決・解析し、
+        /// 材質のテクスチャの読み込みを始める。クック済みが無い・壊れている種類は理由を出して読み飛ばす（その種類を置かずに続ける）
         void StartPropLoads(GameModeContext &ctx, const TSharedPtr<const Asset::AssetSystem> &assetSystem,
                             const TSharedPtr<WastelandAssembly> &assembly)
         {
@@ -703,6 +704,10 @@ namespace Game::GameModes
             uint32_t started = 0;
             for (uint32_t kindIndex = 0; kindIndex < Layout::kPropKindCount; ++kindIndex)
             {
+                if (!kPlaceLayoutProps && !Layout::IsTalusKind(static_cast<Layout::PropKind>(kindIndex)))
+                {
+                    continue;
+                }
                 const Layout::PropKindSpec &spec = Layout::GetPropKindSpec(static_cast<Layout::PropKind>(kindIndex));
                 WastelandPropLoad &load = assembly->Props[kindIndex];
                 const Asset::AssetResolveResult resolved = assetSystem->ResolveAsset(spec.MeshPath, Asset::AssetKind::Model);
@@ -864,7 +869,7 @@ namespace Game::GameModes
 
             VariableArray<Layout::PropPlacement> placements;
             Layout::LayoutStats stats;
-            Layout::BuildPlacements(field, shapes, placements, stats);
+            Layout::BuildPlacements(field, shapes, kPlaceLayoutProps, placements, stats);
 
             uint32_t placedPerKind[Layout::kPropKindCount] = {};
             uint32_t placed = 0;
@@ -887,9 +892,9 @@ namespace Game::GameModes
                 ++placed;
             }
             LOG_INFO_F("WASTELAND_PROPS placed=%u planned=%zu buildings=%u foot_rays=%u foot_hits=%u cliffs=%u "
-                       "foot_boulders=%u basin_boulders=%u",
+                       "foot_boulders=%u basin_boulders=%u cliff_view_samples=%u",
                        placed, placements.size(), stats.Buildings, stats.FootRays, stats.FootHits, stats.Cliffs,
-                       stats.FootBoulders, stats.BasinBoulders);
+                       stats.FootBoulders, stats.BasinBoulders, stats.CliffViewSamples);
             for (uint32_t kindIndex = 0; kindIndex < Layout::kPropKindCount; ++kindIndex)
             {
                 LOG_INFO_F("WASTELAND_PROP_KIND id=%s placed=%u",
@@ -1088,14 +1093,7 @@ namespace Game::GameModes
                                   TerrainSpec::kFarMapDescriptorPath, farError.c_str());
                 }
                 // 岩・崖・建物。地形の上に据えるので、地形を置けるときだけ読む
-                if (kPlaceLayoutProps)
-                {
-                    StartPropLoads(ctx, assetSystem, assembly);
-                }
-                else
-                {
-                    assembly->bPropsPlaced = true;
-                }
+                StartPropLoads(ctx, assetSystem, assembly);
                 data.m_pAssembly = assembly;
             }
         }

@@ -38,6 +38,10 @@ namespace Game::GameModes::WastelandLayout
             WASTELAND_GENERATED("water_tower"),
             // 木造の小屋の id のまま、石積みの小さな物置として生成した
             WASTELAND_GENERATED("wooden_shack"),
+            // 崖の足元の落石。アルベドは崖の砂岩の色へ寄せた画像（Scripts/CalibrateScanRockAlbedo.py）を焼く
+            WASTELAND_POLYHAVEN("boulder_01"),
+            WASTELAND_POLYHAVEN("rock_07"),
+            WASTELAND_POLYHAVEN("rock_09"),
         };
 #undef WASTELAND_POLYHAVEN
 #undef WASTELAND_GENERATED
@@ -113,6 +117,31 @@ namespace Game::GameModes::WastelandLayout
         constexpr float kGroundViewX = -20.0f;
         constexpr float kGroundViewZ = -40.0f;
         constexpr float kGroundViewClearRadius = 25.0f;
+
+        // ---- 崖の視点の手前の見本の落石 ----
+        // cliff の視点（Game/Scenes/SceneCatalog.h の kWastelandViews。(-1900, -500) から北東を見上げる）の前方の谷床に、
+        // 落石の素材を 1 つずつ置く。北東の向きはワールドの (+X, -Z) の方向
+        constexpr float kCliffViewX = -1900.0f;
+        constexpr float kCliffViewZ = -500.0f;
+        constexpr float kCliffViewForwardX = 0.70710678f;
+        constexpr float kCliffViewForwardZ = -0.70710678f;
+        /// 見本 1 つ。視点から前方 Ahead[m]・右へ Right[m]（負は左）、拡大率と向き[度]
+        struct CliffViewSample
+        {
+            PropKind Kind;
+            float Ahead;
+            float Right;
+            float Scale;
+            float YawDegrees;
+        };
+        // 薄い板状の岩（rock_09 は 0.07 × 0.03 × 0.15 m）は 8 倍で長さ 1.2 m・厚さ 0.26 m、角張った岩塊（rock_07 は
+        // 0.17 × 0.14 × 0.32 m）は 8 倍で高さ 1.1 m・長さ 2.6 m、ごつごつした岩塊（boulder_01 は 1.3 × 1.0 × 1.8 m）は 1.4 倍で
+        // 高さ 1.4 m。手本の ground_02 の沢の板状の砂岩（0.3〜1 m）と、cliff_01 の崖錐の落ちた岩塊（数 m）の大きさ
+        constexpr CliffViewSample kCliffViewSamples[] = {
+            {PropKind::TalusSlab, 8.0f, -1.5f, 8.0f, 35.0f},
+            {PropKind::TalusBlock, 12.0f, -5.5f, 8.0f, 200.0f},
+            {PropKind::TalusCrag, 14.0f, 4.5f, 1.4f, 110.0f},
+        };
 
         // 岩を埋める深さ（拡大後の高さに対する割合）と、足元の範囲のうち地形を引く割合（丸い底の縁は地面から浮くので内側で引く）
         constexpr float kRockSinkFraction = 0.2f;
@@ -434,6 +463,27 @@ namespace Game::GameModes::WastelandLayout
                 ++stats.BasinBoulders;
             }
         }
+
+        void PlaceCliffViewSamples(const TerrainHeightField &field, const PropMeshShape (&shapes)[kPropKindCount],
+                                   VariableArray<PropPlacement> &out, LayoutStats &stats)
+        {
+            // 右の向きは前方を時計回りに 90° 回した (−forwardZ, forwardX)
+            const float rightX = -kCliffViewForwardZ;
+            const float rightZ = kCliffViewForwardX;
+            for (const CliffViewSample &sample : kCliffViewSamples)
+            {
+                const PropMeshShape &shape = shapes[static_cast<uint32_t>(sample.Kind)];
+                if (!shape.bAvailable)
+                {
+                    continue;
+                }
+                const float x = kCliffViewX + sample.Ahead * kCliffViewForwardX + sample.Right * rightX;
+                const float z = kCliffViewZ + sample.Ahead * kCliffViewForwardZ + sample.Right * rightZ;
+                out.push_back(MakeRock(field, shape, sample.Kind, x, z, sample.YawDegrees * kDegToRad, sample.Scale,
+                                       kRockFootprintFraction, kRockSinkFraction));
+                ++stats.CliffViewSamples;
+            }
+        }
     } // namespace
 
     const PropKindSpec &GetPropKindSpec(PropKind kind)
@@ -452,17 +502,28 @@ namespace Game::GameModes::WastelandLayout
         return area;
     }
 
+    bool IsTalusKind(PropKind kind)
+    {
+        return kind == PropKind::TalusCrag || kind == PropKind::TalusBlock || kind == PropKind::TalusSlab;
+    }
+
     void BuildPlacements(const TerrainHeightField &field, const PropMeshShape (&shapes)[kPropKindCount],
-                         VariableArray<PropPlacement> &outPlacements, LayoutStats &outStats)
+                         bool bProceduralLayout, VariableArray<PropPlacement> &outPlacements, LayoutStats &outStats)
     {
         outPlacements.clear();
         outStats = LayoutStats{};
+        if (!bProceduralLayout)
+        {
+            PlaceCliffViewSamples(field, shapes, outPlacements, outStats);
+            return;
+        }
         const RoadFrame road = MakeRoadFrame();
         PlaceBuildings(field, shapes, road, outPlacements, outStats);
         // 建物の周りを空けるため、ここまでの配置（建物）を写しておく
         const VariableArray<PropPlacement> buildings = outPlacements;
         PlaceFootRocks(field, shapes, outPlacements, outStats);
         PlaceBasinScatter(field, shapes, road, buildings, outPlacements, outStats);
+        PlaceCliffViewSamples(field, shapes, outPlacements, outStats);
     }
 
 } // namespace Game::GameModes::WastelandLayout
