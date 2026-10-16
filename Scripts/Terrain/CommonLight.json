@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "description": "荒野の比較用の共通の照明（SCN-WLR-*）。大気・霞・雲を切り、全方向で同じ放射輝度の空と、大気の透過率を掛けない太陽だけで照らす。エンジンは起動引数 --wasteland-common-light で、Blender Cycles の正解の絵も同じ値で照らし、Scripts/Terrain/ReferenceCheck.py --plate が灰色の板の期待の値をここから求める。値は線形の Rec.709 の原色・白色点 D65。",
+  "sky_radiance_rgb": [4000.0, 5000.0, 6500.0],
+  "sky_radiance_unit": "cd/m^2",
+  "sun_illuminance_normal_lux": 100000.0,
+  "sun_illuminance_note": "太陽に垂直な面の照度。水平の面の照度は sun_illuminance_normal_lux × sin(altitude_degrees)",
+  "azimuth_convention": "方位角は +X（東）から +Z（南）へ測る（Game/GameModes/Wasteland/WastelandRoutine.cpp の kReferenceShots と同じ）",
+  "default_sun": {"altitude_degrees": 58.5, "azimuth_degrees": 154.0},
+  "views": [
+    {"name": "ref_far_01", "altitude_degrees": 58.5, "azimuth_degrees": 154.0},
+    {"name": "ref_far_02", "altitude_degrees": 45.0, "azimuth_degrees": 160.0},
+    {"name": "ref_cliff_01", "altitude_degrees": 10.0, "azimuth_degrees": 172.0},
+    {"name": "ref_cliff_02", "altitude_degrees": 24.0, "azimuth_degrees": 132.0},
+    {"name": "ref_ground_01", "altitude_degrees": 51.0, "azimuth_degrees": 90.0},
+    {"name": "ref_ground_02", "altitude_degrees": 38.0, "azimuth_degrees": 125.0}
+  ],
+  "gray_plate": {
+    "albedo": 0.18,
+    "roughness": 1.0,
+    "specular": "none",
+    "size_m": 3.0,
+    "height_above_ground_m": 1.5,
+    "forward_m": 5.2,
+    "camera_height_above_plate_m": 3.0,
+    "note": "鏡面の無い純ランバートの水平の板（エンジンは MaterialCreateData::bDiffuseOnly。Cycles は鏡面 0 の拡散だけ）。視点の水平の位置から視線の向きへ forward_m 先に置き、カメラを板の面から camera_height_above_plate_m の高さに上げて板の中心を見下ろす"
+  }
+}
