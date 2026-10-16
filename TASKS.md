@@ -1649,7 +1649,7 @@
 - notes: 2026-10-16 親: 撮影の待ちが反復の大半を占め、時間切れと遮断器が続いた（SCATTER-ROCKS・GRAVEL・CLIFF-ASSETS）。見た目を詰める項目の前に、確かめの 1 回を短くする。verify の 2 本目は、この項目で構成を替えたら同じ反復で書き換えてよい。 荒野の周回スモーク（`RunSceneCycleSmoke.ps1 -Scenes wasteland`）も Debug で 1 周約 300 秒かかる（SCN-WL-OUTPOST）。同じ読み込みの段が原因なら一緒に速くなることを確かめる。
 
 ## SCN-WLR-HDR-CAPTURE: 撮影でブルーム前の HDR を書き、今の見た目を基準として残す
-- status: todo
+- status: done
 - after: SCN-WL-CAPTURE-SPEED
 - done-when: 撮影（`Scripts/CaptureScene.ps1`）に `-Hdr` を足し、ブルームの前の線形の HDR（プリエクスポージャを外した放射輝度 cd/m²、RGB の 32 bit 浮動小数。OpenEXR か、ヘッダ付きの生データ）を PNG と並べて書く（撮影の起動引数のときだけ。Release に計測・デバッグの機能を足さない）。`Scripts/Terrain/ReferenceCheck.py --hdr` を作り、HDR の大きさ・値の範囲（負・NaN・Inf が無い）と、同じ視点の PNG の暗い画素がブルームの影響の小さい所で HDR から作った値と合うこと（表示変換の厳密な照合は SCN-WLR-DISPLAY-TRANSFORM）を検査する。今の荒野（変更前の見た目）の手本の 6 視点と outpost・ground の HDR と PNG を、後の比較の基準として `.harness/runs/scene-capture/SCN-WLR-BASELINE/` に残す（見た目を変えない）。比較の約束（全 SCN-WLR-* 共通）: 値は線形の Rec.709 の原色・白色点 D65、輝度 Y = 0.2126R + 0.7152G + 0.0722B、放射輝度は cd/m²（エンジンのプリエクスポージャを外した値）。測光用の HDR はブルームの前で読む。重い描画（エンジンの撮影の組・Cycles）は反復の中で行って結果を保存し、verify は `Scripts/Terrain/ReferenceCheck.py` で保存した結果を検査する（結果の横に入力のハッシュ〔台本・メッシュ・`Scripts/Terrain/CommonLight.json`・git のコミット〕を書き、今のファイルと違えば古い結果として拒否する）。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`

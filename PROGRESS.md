@@ -5015,3 +5015,24 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - ページの待ちを正しくしたので、RelWithDebInfo の視点ごとの待ちは 5 秒から 14 秒に延びた
   - 入れ替わりの判定の直し（常駐の量が増える間は数え直す）を確かめる試験は足していない（既存の `TestChurnIsNotPendingWork` が頭打ちの入れ替わりを守る）
 - Next: TASKS.md の次の未完の項目。
+
+### SCN-WLR-HDR-CAPTURE 完了（2026-10-16、run 20261016-193030 の反復 2〜3）
+
+- Done: 撮影にブルーム前の HDR の書き出しと、保存した結果の検査を足した
+  - `Scripts/CaptureScene.ps1 -Hdr` が Game へ `--capture-hdr` を渡し、PNG と同じフレームのシーンの色（ブルーム前）を `<視点>.hdr.pfm`（RGB の 32 bit 浮動小数の PFM）と `<視点>.hdr.json`（大きさ・単位 cd/m²・プリエクスポージャ・フレーム番号・表示変換の差し替え）に書く。画素はプリエクスポージャで割った放射輝度。`--capture-hdr` は開発ビルドだけで読み、Release では書き出しの関数も何もしない（`FrameCaptureHdrWriter.cpp`）
+  - 読み出しは `FrameCaptureRequest::bIncludeSceneColor` で、PNG の読み出しと同じコマンドリストでシーンの色も写す（片方だけ写した結果は出さない。`FrameCaptureReadbackHelper.cpp`）。プリエクスポージャとカメラの表示変換の差し替えは `View` がフレームごとに残し、`RenderFrameExecutor` が撮影の元へ渡す
+  - `Scripts/Terrain/ReferenceCheck.py --hdr`: HDR の大きさ（PNG と同じ）・負・NaN・Inf が無いこと、PNG の暗い画素のうちブルームの見積もりが小さい所で、HDR から作った表示の値と ±2 段に 95 % 以上が入り差の中央値が 1 段以下であることを検査する。`--verify` は撮影の横の `inputs.json`（描画のコード・シェーダー・荒野の台本と資産の組・`CommonLight.json`・`CaptureScene.ps1` のハッシュと git のコミット）を今のファイルと照らし、違えば古い結果として落とす
+  - 基準 `.harness/runs/scene-capture/SCN-WLR-BASELINE/`（手本の 6 視点と outpost・ground、1920×1080、RelWithDebInfo）を今のコードで撮り直した
+- 証拠（`.harness/runs/20261016-193030/`）:
+  - `verify-SCN-WLR-HDR-CAPTURE-8.txt`: Debug の Game のビルド EXIT=0
+  - `verify-SCN-WLR-HDR-CAPTURE-9.txt`: ref_cliff_01 を `-Hdr` で撮影、result=pass、pre_exposure=9.43e-5、97 秒、EXIT=0
+  - `verify-SCN-WLR-HDR-CAPTURE-10.txt`: その検査 result=pass（bad_values=0、±2 段 0.99982、中央値 0.249 段、inputs_current=1）
+  - `verify-SCN-WLR-HDR-CAPTURE-11.txt`: 基準 8 視点の検査 result=pass（どれも bad_values=0、±2 段 0.99984 以上、中央値 0.26〜0.35 段、inputs_current=1）
+  - `aux-SCN-WLR-HDR-CAPTURE-baseline-capture-iter3.txt`: 基準の撮影 result=pass、432 秒。手本の 6 視点の PNG の平均輝度は反復 2 の撮影と同じ（ref_ground_01 だけ 177.515 → 177.506）、outpost・ground は 0.6〜0.9 の差（動くものの位置）。前の反復の比較（`aux-...-compare-and-stale.txt`）で SCN-WL-CAPTURE-SPEED の撮影と PSNR 45〜63 dB、見た目は変えていない。ref_cliff_01 の PNG を開いて確かめた
+  - `aux-SCN-WLR-HDR-CAPTURE-compare-and-stale.txt`: `CaptureScene.ps1` を 1 行変えると `--verify` が「入力が撮影の後に変わった」で落ち、戻すと通る
+  - `aux-SCN-WLR-HDR-CAPTURE-debug-validation-iter3.txt`: Debug の起動画面（rendering3dtest）を `-Hdr` で撮影、result=pass、`default.Validation.log` は 0 バイト（読み出しの遷移に検証レイヤーの指摘なし）
+- Notes:
+  - `paths:` の外を 3 か所触った: `Library/Core/CMakeLists.txt`（新しいソースの登録）、`Library/Core/Private/Engine/ApplicationProcessor.cpp`・`Public/Engine/ApplicationProcessor.h`（1 視点の撮影は `--capture-png` の経路で、そこにも `--capture-hdr` が要る。verify の ref_cliff_01 は per_view で撮る）
+  - 起動画面（rendering3dtest）は PNG との照合が通らない（±2 段 0.09〜0.42。反復 2 の `aux-...-debug-validation.txt`）。`ReferenceCheck.py` の簡易の表示変換が荒野のカメラの構成しか見積もらないためと見ている（原因は確かめていない）。表示変換の厳密な照合は SCN-WLR-DISPLAY-TRANSFORM
+  - HDR の書き出しの単体の試験は足していない（verify の撮影と検査が書き出しと値を確かめる）
+- Next: SCN-WLR-DISPLAY-TRANSFORM。
