@@ -52,7 +52,9 @@ $wastelandAssetIds = @(
     'dry_ground_01',
     'rock_face',
     'rock_tile_floor',
-    'stone_floor'
+    'stone_floor',
+    # 近くの主役の崖のスキャンの面の色と高さ（水平の地層の段を持つ赤茶の堆積岩の崖。SCN-WL-CLIFF-SCAN-SELECT）
+    'cliff_side'
 )
 $assetIds = if ($Set -eq 'wasteland') { $wastelandAssetIds } else { $startupAssetIds }
 # 負荷モード用の材質（-StressSet のときだけ落とす）

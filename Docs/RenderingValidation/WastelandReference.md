@@ -319,3 +319,57 @@ far_01・far_02・cliff_02 のビュートの壁に地層の縞と張り出し�
   地面 Y（写真 → 撮影）は far_01 0.136 → 0.433、far_02 0.148 → 0.357、ground_01 0.097 → 0.399、ground_02 0.219 → 0.320（確認 1 は 0.533・0.462・0.501・0.383）。
 - 残り: 全体の明るさと橙の彩度（SCN-WL-SKY-AERIAL）、低木と礫の物体（確認 2）。ground_02 の起伏は DEM の沢の地形のなだらかな陰で、
   沢の流路と岸は SCN-WL-MASKS-FLOW で足す。遠景の地図（`FarMacro.py`）は細粒を全部土として焼いたまま（礫の舗石と土の平均のアルベドは同じ 0.16 なので、移り目で色は変わらない）。
+
+## 近くの崖のスキャンの素材（SCN-WL-CLIFF-SCAN-SELECT、2026-10-16）
+
+近くの主役の崖（cliff_01 の Battleship Rock、cliff_02 の Franklin Butte の尖塔の台座）の表面を、式の押し出しでなく写真測量のスキャンの岩で作るための素材を選んだ。
+Blender で崖の面に置く項目（SCN-WL-CLIFF-SCAN-PLACE・NEAR）と、足元の落石・岩塊（SCN-WL-CLIFF-ASSETS・SCATTER-ROCKS）が使う。
+
+### 探した範囲
+
+- Poly Haven（CC0）のモデル: API（`https://api.polyhaven.com/assets?t=models`）の名前・カテゴリ・タグに rock・cliff・boulder・stone・sandstone・ledge・canyon・desert を含む 58 件から、
+  岩と崖の 12 件を見た（`namaqualand_*`・`coastal_cliff_01/02/04`・`coast_land_rocks_02/04`・`rock_face_01/02`・`mountainside`・`boulder_01`）。
+- Poly Haven（CC0）の高さの地図を持つ材質: 同じ API の `t=textures` から cliff・rock face・sandstone・strata・canyon の 81 件のうち、自然の崖の 10 件。
+- ambientCG（CC0）: API（`https://ambientcg.com/api/v2/full_json`）で 3D モデルを rock・cliff で探すと、岩の 3D モデルは無い（返るのは材質・HDRI・Substance・ブラシだけ）。
+  材質は rock・cliff・sandstone の 76 件のうち、赤・茶・橙・ベージュの崖の 8 件（Rock009・029・039・049・052・055・056・061）を見た。
+
+### 比べ方
+
+- 縮小画像の一覧で一次選別し、モデル 7 件（1k 版）を `Scripts/BlenderPreviewGlb.py` で正面・側面・上面から、材質 3 件（2k 版）を
+  `Scripts/BlenderPreviewHeightMaterial.py`（高さの地図で変位させた 2×2 枚の縦の壁に、横の低い太陽を当てる）で描いた。
+  `"Y:\AI\blender\blender-5.2.2-windows-x64\blender.exe" --background --factory-startup --python Scripts/BlenderPreviewHeightMaterial.py -- <色> <高さ> <法線GL> <1枚の m> <変位の m> <出力.png>`
+- 比較図（上の行が手本の写真 cliff_01・cliff_02）: `.harness/runs/scene-capture/SCN-WL-CLIFF-SCAN-SELECT/compare_models.png`（モデルの 3 方向と Poly Haven の縮小画像）・
+  `compare_materials.png`（変位させた材質 3 件とスキャンの面 4 件）。
+- 写真の崖で合わせる物: 水平の地層の段と張り出した棚（cliff_01 の中段・cliff_02 の台座の赤と白の縞）、縦の割れ目（cliff_01 の頭部の城壁の塊）、
+  板状の剥離（棚の下の欠けた面）、赤い砂岩の色（写真の崖の R ÷ G 1.9〜3.0）。
+
+### 選んだ素材
+
+| 素材 | 種類 | 大きさ | 取得の大きさ（4K） | 使い道と理由 |
+|---|---|---|---|---|
+| `rock_face_01` | Poly Haven のモデル、CC0 | 5.0 × 3.8 × 3.6 m、2.0 万面 | 37 MB | 崖の面の主。水平の地層の板が重なり、上端に 0.5 m ほど張り出した棚と、その下の板状に剥がれた面がある（cliff_01 の中段の段と棚の形）。片面の殻なので崖の面に貼る塊として使う |
+| `rock_face_02` | Poly Haven のモデル、CC0 | 2.7 × 2.1 × 2.5 m、3.0 万面 | 36 MB | 崖の面の変化。水平の層に縦の段差（割れ目で落ちた角）が入る。01 と混ぜて繰り返しを崩す |
+| `boulder_01` | Poly Haven のモデル、CC0 | 1.3 × 1.8 × 1.0 m、12.4 万面 | 42 MB | 崖錐の剥離片。縦横の節理で割れた角張った塊で、丸くない（SCN-WL-CLIFF-ASSETS の候補） |
+| `cliff_side` | Poly Haven の材質（色・法線・粗さ・AO・高さ）、CC0 | 1 枚 1.83 m | 67 MB（地形の岩肌の層で使用中。高さの地図 1.8 MB を足した） | 崖の面の色と細かな凹凸。水平の地層の帯・段・角ばった岩片が並ぶ赤茶の堆積岩の崖で、平均の色が R ÷ G 2.33（写真の崖 1.9〜3.0）。地形の岩肌の層（`TerrainMaterials.py`、較正 0.22）と同じ素材なので、スキャンの塊と地形の崖の色が継ぎ目なくそろう |
+
+合計: 新しく落としたのは 112 MB（モデル 3 件の 4K の glTF・.bin・色・法線・ARM）と 1.8 MB（cliff_side の高さ）。取得は
+`Scripts/FetchPolyHavenModels.ps1 -Set wasteland`・`Scripts/FetchPolyHavenTextures.ps1 -Set wasteland`（どちらも git 管理外の `Assets/Models/PolyHaven/`・`Assets/Textures/PolyHaven/` へ、MD5 で照合）。
+クックの一覧（`WastelandModels.json`）へは、置く項目で塊の使い方が決まってから足す。
+
+色の扱い: スキャンのモデルの色は灰色寄り（平均の線形の色で rock_face_01 Y 0.133・R ÷ G 1.31、rock_face_02 0.146・1.34、boulder_01 0.125・1.51）で、
+地衣の緑と青灰の斑がある。形（メッシュと法線）だけをスキャンから取り、色は `cliff_side` の較正した色を塊へ投影して地形の崖とそろえる（SCN-WL-CLIFF-SCAN-NEAR）。
+
+### 外した候補と理由
+
+- `namaqualand_cliff_01/02`・`namaqualand_boulder_*`: 前提どおり、丸く風化した花崗岩の塊が積み重なる形で、水平の層も平らな棚も無い（`compare_models.png` の最下段）。
+- `mountainside`: 層が 40° ほど傾いた片岩状の剥離で、水平の地層にならない。色も暗い灰褐色。
+- `coastal_cliff_01/02/04`・`coast_land_rocks_02/04`: 海岸の灰色の石灰岩の長い帯（41〜92 m × 10 m）で、上面に草と苔が乗る。`coastal_cliff_02` の縦の節理は
+  cliff_01 の頭部の割れ目に近いが、色が灰色で、1 件 29〜47 MB（1k でも .bin が 27〜44 MB、87 万〜288 万面）と重い。
+- ambientCG の `Rock029`（色は赤い砂漠の崖に近いが、凹凸が斜めの鱗状で水平の層が無い）・`Rock056`（黄色の縦の筋）・ほかの 6 件（灰・ベージュで層が無い、または苔）。
+- Poly Haven の `rock_06`・`rock_boulder_cracked`・`dark_rock_02`・`marble_cliff_03` ほか: 黄・灰・黒、または亀甲状の割れ目で、赤い砂岩の水平の層にならない。
+
+### 残る差
+
+- CC0 には、cliff_01 の頭部のような数十 m の垂直な砂岩の壁（Cedar Mesa 砂岩の塊状の層と縦の節理）を 1 つで写したスキャンが無い。
+  頭部の壁は `rock_face_02` の縦の段差と `cliff_side` の高さの変位で作り、足りなければ CC0 以外（Fab の Megascans の砂岩の崖など）を
+  ファイル名・出所・利用条件つきで判断を仰ぐ（許可なく落とさない）。

@@ -8,7 +8,8 @@
 # kStartupScanProps と Assets/AssetSets/Rendering3DTestStartupScanProps.json と同じにする。
 #
 # -Set wasteland を付けると、荒野のシーン（wasteland・night-village）が置く乾燥地の岩・崖・枯れ木
-# （Poly Haven の Namaqualand コレクション、CC0）を落とす。-Set を省くと起動画面の組（既定）を落とす。
+# （Poly Haven の Namaqualand コレクション、CC0）と、近くの主役の崖の面に使う堆積岩の崖のスキャンと崖錐の岩塊（CC0）を
+# 落とす。-Set を省くと起動画面の組（既定）を落とす。
 # 荒野の組のクックの一覧は Assets/AssetSets/WastelandModels.json。
 #
 # 終了コード: すべてそろえば0、どれかを落とせない・MD5が合わなければ1。
@@ -42,7 +43,12 @@ $wastelandAssetIds = @(
     'namaqualand_boulder_04',
     'namaqualand_cliff_01',
     'namaqualand_cliff_02',
-    'dead_quiver_trunk'
+    'dead_quiver_trunk',
+    # 近くの主役の崖の面に使うスキャン（SCN-WL-CLIFF-SCAN-SELECT）。水平の地層の段・張り出した棚・板状の剥離を持つ
+    # 堆積岩の崖の面 2 種と、崖錐の角張った岩塊 1 種。選んだ理由は Docs/RenderingValidation/WastelandReference.md
+    'rock_face_01',
+    'rock_face_02',
+    'boulder_01'
 )
 $assetIds = if ($Set -eq 'wasteland') { $wastelandAssetIds } else { $startupAssetIds }
 $resolution = '4k'

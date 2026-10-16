@@ -1580,7 +1580,7 @@
 - notes: 2026-10-12 親: 計測の見直し（ユーザーの指摘「節目に計測を入れても意味があるのかを考えるべき」。計測ごとに、問い・結果で変わる判断・測らずに分からないかの 3 点を書き、書けないものは置かない。Sol の批評を反映）。
 
 ## SCN-WL-CLIFF-SCAN-SELECT: 近くの崖に使うスキャンの素材を選ぶ
-- status: todo
+- status: done
 - done-when: 近くの主役の崖（Battleship Rock・Franklin Butte の尖塔の台座）の表面を、式の押し出しではなく写真測量でスキャンした本物の岩の形で作るための素材を選ぶ。Poly Haven・ambientCG（CC0、取得は許可済み）のモデルと、高さの地図を持つスキャンの材質から、Cedar Mesa の砂岩の崖（水平の層の段・縦の割れ目・板状の剥離・赤い砂岩）に合う候補を API で探し、大きさと合計を記録する。候補を Blender のヘッドレス（`Y:\AI\blender\blender-5.2.2-windows-x64\blender.exe`、`Scripts/BlenderPreviewGlb.py`）で描き、手本の写真（cliff_01・cliff_02）と並べた比較図を開いて形と質感で選ぶ。既にある `namaqualand_*`（花崗岩の丸い岩）は砂岩の崖に合わない前提で比べる。CC0 に合う形が無ければ、ほかの出所（CC-BY のスキャン、Fab の Megascans 等）の候補を、ファイル名・出所・大きさ・利用条件つきで `blocked/` に書いて人の許可を待つ（許可なく落とさない）。選んだ素材と選んだ理由を `Docs/RenderingValidation/WastelandReference.md` に書く。
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/FetchPolyHavenModels.ps1 -Set wasteland`
 - paths: Scripts, Assets/AssetSets, Docs/RenderingValidation, .gitignore, TASKS.md, PROGRESS.md

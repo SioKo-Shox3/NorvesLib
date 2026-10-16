@@ -4834,3 +4834,19 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `verify-SCN-GRASS-SCATTER-4.txt`: 荒野の全 13 視点 1920×1080、result=pass（白飛び 0・黒つぶれ 0）、EXIT=0。検証レイヤーのログは空
   - 撮影を開いた: ground・outpost は近くに低木と草の株が並び、遠くで株ごとに疎らになって消える。default（overview）は前回と同じく 120 m の内側の株が画面の外で、草は写らない
 - Next: TASKS.md の次の未完の項目。
+
+### SCN-WL-CLIFF-SCAN-SELECT 完了（2026-10-16、run 20261016-083019 の反復 4）
+
+- Done: 近くの主役の崖の面に使うスキャンの素材を選び、取得の組に足した（理由は `Docs/RenderingValidation/WastelandReference.md` の「近くの崖のスキャンの素材」）
+  - 選んだ素材（すべて Poly Haven の CC0）: 崖の面の塊 `rock_face_01`（5.0 × 3.8 × 3.6 m、水平の地層の板と張り出した棚・板状の剥離）・`rock_face_02`（2.7 × 2.1 × 2.5 m、層に縦の段差）、崖錐の岩塊 `boulder_01`（1.3 × 1.8 × 1.0 m、節理で割れた角張った塊）、面の色と高さ `cliff_side`（水平の地層の帯の赤茶の堆積岩、R ÷ G 2.33。地形の岩肌の層と同じ素材）
+  - `Scripts/FetchPolyHavenModels.ps1 -Set wasteland` に 3 モデル（4K、112 MB）、`Scripts/FetchPolyHavenTextures.ps1 -Set wasteland` に `cliff_side`（高さの地図 1.8 MB を新しく取得）を足した
+  - 比べ方: API で Poly Haven のモデル 58 件・材質 81 件、ambientCG の材質 76 件を絞り（ambientCG には岩の 3D モデルが無い）、モデル 7 件を `BlenderPreviewGlb.py`、材質 3 件を新しい `Scripts/BlenderPreviewHeightMaterial.py`（高さで変位させた縦の壁を横の低い太陽で描く）で Blender のヘッドレスで描き、手本の写真 cliff_01・cliff_02 と並べた
+- 証拠:
+  - `.harness/runs/20261016-083019/verify-SCN-WL-CLIFF-SCAN-SELECT-1.txt`: result=pass downloaded=15 skipped=35 downloaded_mb=112.2、EXIT=0
+  - `.harness/runs/20261016-083019/aux-SCN-WL-CLIFF-SCAN-SELECT-textures.txt`: テクスチャの荒野の組 result=pass、EXIT=0
+  - 比較図を開いた: `.harness/runs/scene-capture/SCN-WL-CLIFF-SCAN-SELECT/compare_models.png`（namaqualand_cliff_01 は丸い花崗岩の塊、mountainside は傾いた層、coastal_cliff は灰色の石灰岩の帯で、水平の層と棚が合うのは rock_face_01・02）・`compare_materials.png`（cliff_side は水平の帯と段、Rock029 は斜めの鱗状、Rock056 は黄色の縦の筋）
+- Notes:
+  - スキャンのモデルの色は灰色寄り（R ÷ G 1.3〜1.5、地衣の緑と青灰の斑）なので、形だけを使い、色は cliff_side の較正した色を投影する（SCN-WL-CLIFF-SCAN-NEAR で行う）
+  - CC0 に cliff_01 の頭部のような数十 m の垂直な砂岩の壁のスキャンは無い。rock_face_02 の段差と cliff_side の変位で作り、足りなければ CC0 以外を blocked で判断を仰ぐ
+  - クックの一覧（`WastelandModels.json`）へは置く項目で足す。試験は足していない
+- Next: TASKS.md の次の未完の項目。
