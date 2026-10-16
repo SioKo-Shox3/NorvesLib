@@ -1587,7 +1587,7 @@
 - notes: 2026-10-15 ユーザーの決定: 崖の細部は、近くの崖をスキャンの岩の素材と Blender で作る（式の焼き込みは遠景だけにする）。生成の素材（ComfyUI）は足元の落石・岩塊に使ってよい。Blender は Python でヘッドレスに動かす。 2026-10-16 親: 足元の岩（SCN-WL-CLIFF-ASSETS・SCATTER-ROCKS）と素材をそろえるため、選ぶだけを地面の項目の中へ先に移した。Blender で置く項目（BLENDER-TERRAIN-VIEW・CLIFF-SCAN-PLACE・NEAR）は光と色の後。
 
 ## SCN-WL-CLIFF-ASSETS: 崖の足元の落石と岩塊の素材を揃える
-- status: todo
+- status: done
 - done-when: 崖の下に落ちた砂岩の岩塊（角張った大岩・板状に割れた岩）に合うメッシュを選んでクックする。Poly Haven・ambientCG（CC0）で合うものを探し、無ければ ComfyUI で生成する（理由を書く）。崖の砂岩の色と馴染むように材質を合わせる。代表の 1〜2 個を cliff の視点の近くに置いた撮影（1920×1080）を開き、写真の足元の岩（ground_01・ground_02）と並べて形と色が近いことを確かめる。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-WL-CLIFF-ASSETS`

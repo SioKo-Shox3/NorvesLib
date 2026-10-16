@@ -4850,3 +4850,19 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - CC0 に cliff_01 の頭部のような数十 m の垂直な砂岩の壁のスキャンは無い。rock_face_02 の段差と cliff_side の変位で作り、足りなければ CC0 以外を blocked で判断を仰ぐ
   - クックの一覧（`WastelandModels.json`）へは置く項目で足す。試験は足していない
 - Next: TASKS.md の次の未完の項目。
+
+### SCN-WL-CLIFF-ASSETS 完了（2026-10-16、run 20261016-083019 の反復 5〜7）
+
+- Done: 崖の足元の落石の素材を 2 つ揃え、cliff の視点の手前に 1 つずつ置いた
+  - 素材（Poly Haven の CC0。生成は使っていない。CC0 のスキャンに角張った岩塊と板状の岩が揃っているため）: 節理で割れた角張った岩塊 `boulder_01`（SCN-WL-CLIFF-SCAN-SELECT で選んだもの。1.4 倍で高さ 1.4 m）、薄い板状の岩 `rock_09`（8 倍で長さ 1.2 m・厚さ 0.26 m）。`Scripts/FetchPolyHavenModels.ps1 -Set wasteland` に `rock_09` を足し、`Assets/AssetSets/WastelandModels.json` に 2 つのメッシュと材質を足した
+  - 色（新しい `Scripts/CalibrateScanRockAlbedo.py`）: スキャンの灰褐色と地衣の斑を、手本 ground_02 の日向の赤い砂岩の落石の色（線形の輝度 0.17・R ÷ G 2.1・G ÷ B 1.5）へ寄せる。明暗は 0.5 乗で縮めて暗い斑を消し、粗さは cliff_side の 0.86 にそろえる。アルベドは線形の値の PNG を書き、線形の用途で焼く（MegaGeometry の材質のシェーダーは標本を線形へ戻さないため）
+  - 配置（`WastelandLayout`）: `TalusCrag`・`TalusSlab` の種類を足し、手続きの地形の配置（`kPlaceLayoutProps`）が偽でも落石の 2 種類だけを読んで、cliff の視点の前方 8 m・14 m に置く
+- 証拠（`.harness/runs/20261016-083019/`）:
+  - `verify-SCN-WL-CLIFF-ASSETS-14.txt`: Debug の Game のビルド EXIT=0
+  - `verify-SCN-WL-CLIFF-ASSETS-15.txt`: 荒野の全 13 視点 1920×1080、result=pass（白飛び 0・黒つぶれ 0）、EXIT=0。ログに `WASTELAND_PROPS placed=2 ... cliff_view_samples=2`、`MEGA_CAPACITY` はすべて draw_dropped=0、検証レイヤーのログは空
+  - `CalibrateScanRockAlbedo.py --verify` result=pass（2 つとも Y 0.170・R/G 2.10〜2.11・G/B 1.50〜1.52、5 百分位 ÷ 平均 0.52・0.59、粗さ 0.86）
+  - 撮影を開いた（`.harness/runs/scene-capture/SCN-WL-CLIFF-ASSETS/cliff.png`・`compare_foot_rocks.png`。上が撮影の切り出し、下が手本 ground_01・ground_02）: 岩塊は節理の面で割れた角張った塊、板は平たい割れた岩で、写真の沢の落石の形に近い。岩塊の画素の平均は R/G 1.49・G/B 1.41 で、隣の地面（1.54・1.55）より暗く、えんじ寄りの赤褐色。写真の落石が淡い灰桃色〜赤褐色なのと近い
+- Notes:
+  - 全体の明るさと橙の彩度が写真より強いのは SCN-WL-SKY-AERIAL の範囲のまま。地面に撒くのは SCN-WL-SCATTER-ROCKS
+  - 色の目標（Y 0.17・明暗の指数 0.5・色味の指数 0.35）は撮り比べで決めた。rock_07 は試して使わなかった（較正の画像は git 管理外の置き場に残る）。試験は足していない
+- Next: TASKS.md の次の未完の項目。
