@@ -512,7 +512,7 @@ namespace Game::GameModes::WastelandLayout
         outStats = LayoutStats{};
         if (!bProceduralLayout)
         {
-            PlaceCliffViewSamples(field, shapes, outPlacements, outStats);
+            // DEM の地形の落石は崖錐の散布（WastelandTalus.h）が置くので、見本は置かない
             return;
         }
         const RoadFrame road = MakeRoadFrame();

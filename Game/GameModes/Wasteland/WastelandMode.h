@@ -10,6 +10,7 @@
 // 材質は Poly Haven の砂（sand_01）・乾いた土（dry_ground_rocks）・岩肌（rock_face）の 3 層を、傾斜・高さ・低周波ノイズと凹凸で混ぜる
 // （MegaGeometry::MegaTerrainBlend）。高さ場は同じ格子を TerrainHeightField::LoadGrid で 1 回だけ読み、シーンの間だけ持つ。
 // 岩・崖・建物の配置（WastelandLayout.h）は手続きの地形に合わせたものなので、前哨地を置き直す（SCN-WL-OUTPOST）まで置かない。
+// 崖の下の崖錐には、剥がれ落ちた岩の群れを散布の Object 1 つで置く（WastelandTalus.h）。
 // 光は夕方寄りの低い西日で、カメラのトーンマップ・グレーディングを夕景に合わせる。
 // 視点は SceneCatalog.h の kWastelandViews（overview・ground・ridge・cliff・outpost）。視点の高さは、その (x,z) の地形の高さに足す。
 // 撮影の視点の切り替え（Scenes/SceneViewSwitch.h）では、地形を読み直さずにカメラ・画角・太陽だけを置き直す。
@@ -38,6 +39,7 @@ namespace NorvesLib::Core::Asset
 namespace NorvesLib::Core::Rendering::Terrain
 {
     class TerrainHeightField;
+    class TerrainSurfaceMask;
 }
 
 namespace Game::GameModes
@@ -73,6 +75,8 @@ namespace Game::GameModes
         NorvesLib::Core::Container::TSharedPtr<WastelandAssembly> m_pAssembly;
         /// 地形の高さ場（DEM の格子。Enter で読み、Leave で手放す。読めないときは空で、視点の地面の高さを 0 とする）
         NorvesLib::Core::Container::TSharedPtr<const NorvesLib::Core::Rendering::Terrain::TerrainHeightField> m_pHeightField;
+        /// 地表の分類の地図（草・低木と崖錐の岩を撒く所を決める。Enter で読み、Leave で手放す。読めないときは空）
+        NorvesLib::Core::Container::TSharedPtr<const NorvesLib::Core::Rendering::Terrain::TerrainSurfaceMask> m_pSurfaceMask;
         /// 地形を置き終えた（または置けないと決まった）Tick。0 ならまだ
         uint32_t m_TerrainSettledTick = 0;
         /// 草・低木の束と風（カメラの周りの区画が変わるたびに m_FoliageScatter が作り直し、RenderWorld へ渡す）

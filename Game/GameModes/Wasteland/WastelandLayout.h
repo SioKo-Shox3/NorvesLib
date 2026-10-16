@@ -9,7 +9,7 @@
 //   - メサ・稜線の足元: 原点から放射状に地形をたどって最初の急な崖を探し、その根元に崖の岩を表を盆地へ向けて据え、
 //     脇に大きな岩を添える。崖の岩の背面（スキャンの開いた側）はメサの側へ埋まる。
 //   - 盆地: 道と建物の周りを空けて、岩を散らす。
-//   - 崖の視点の手前: 崖の足元の落石の素材（角張った岩塊・板状の岩）を、見比べるために 1 つずつ置く。
+//   - 崖の視点の手前: 崖の足元の落石の素材（角張った岩塊・板状の岩）を、見比べるために 1 つずつ置く（手続きの地形のときだけ）。
 // 位置の y は、メッシュの足元の範囲で引いた地形の最も低い高さから、種類ごとの深さだけ埋めた高さ。
 // ---------------------------------------------------------------------------
 
@@ -108,11 +108,11 @@ namespace Game::GameModes::WastelandLayout
 
     RoadClearArea GetRoadClearArea();
 
-    /// 崖の足元の落石の種類か（手続きの地形の配置を外しても、DEM の地形の上に置く）
+    /// 崖の足元の落石の種類か（手続きの地形の配置を外しても読み、DEM の地形の崖錐へ散布で置く。WastelandTalus.h）
     bool IsTalusKind(PropKind kind);
 
     /// 読めた種類（shapes[kind].bAvailable）だけを使って配置を決める。bProceduralLayout が偽なら、手続きの地形
-    /// （中央の盆地とメサの輪）に合わせた前哨地・足元・盆地の配置を外し、崖の視点の手前の見本の落石だけを置く
+    /// （中央の盆地とメサの輪）に合わせた前哨地・足元・盆地の配置と崖の視点の手前の見本の落石を外し、何も置かない
     void BuildPlacements(const NorvesLib::Core::Rendering::Terrain::TerrainHeightField &field,
                          const PropMeshShape (&shapes)[kPropKindCount], bool bProceduralLayout,
                          NorvesLib::Core::Container::VariableArray<PropPlacement> &outPlacements, LayoutStats &outStats);

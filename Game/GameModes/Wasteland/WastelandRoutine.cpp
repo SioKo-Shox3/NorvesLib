@@ -23,6 +23,7 @@
 #include "GameModes/Rendering3DTest/SkySunControl.h"
 #include "GameModes/Wasteland/WastelandLayout.h"
 #include "GameModes/Wasteland/WastelandFoliage.h"
+#include "GameModes/Wasteland/WastelandTalus.h"
 #include "Scenes/SceneCatalog.h"
 #include "Scenes/SceneReadiness.h"
 
@@ -74,6 +75,8 @@ namespace Game::GameModes
         uint32_t PendingTextureCount = 0;
         /// 小物・建物（種類ごと。テクスチャの読み込みの結果が枠を指すので、固定の配列で持つ）
         WastelandPropLoad Props[Layout::kPropKindCount];
+        /// 崖錐の岩の散布に使うメッシュの形（落石の種類の読み込みで書き、MegaMesh を作れたら bAvailable を立てる）
+        WastelandTalus::TalusMeshShape TalusShapes[WastelandTalus::kTalusMeshCount];
         /// 置いた建物の足元と道（草・低木を撒かない範囲。PlaceProps が書く）
         VariableArray<WastelandFoliage::ExclusionCircle> FoliageBuildingCircles;
         VariableArray<WastelandFoliage::ExclusionRect> FoliageRoadRects;
@@ -215,12 +218,16 @@ namespace Game::GameModes
         constexpr uint32_t kTerrainTilesPerTick = 4;
         // 岩・崖・建物（WastelandLayout）を置くか。配置は手続きの地形（中央の盆地とメサの輪）に合わせたものなので、
         // DEM の地形では前哨地を置き直す（SCN-WL-OUTPOST）まで置かない。偽のときも崖の足元の落石（Layout::IsTalusKind）は
-        // 読んで、崖の視点の手前に見本を置く
+        // 読んで、崖錐の岩の散布（PlaceTalusRocks）に使う
         constexpr bool kPlaceLayoutProps = false;
         // 名前付き視点の足元で草・低木を撒かない半径[m]（目の前を株がふさがない）
         constexpr float kViewFoliageClearRadius = 2.5f;
         // 建物の足元で草・低木を撒かない範囲の、メッシュの範囲の外への広げ[m]
         constexpr float kBuildingFoliageClearMargin = 1.5f;
+        // 名前付き視点の足元で崖錐の岩を置かない半径[m]（目の前を岩がふさがない）
+        constexpr float kViewTalusClearRadius = 6.0f;
+        // 崖錐の岩の底の高さを引く頂点の標本の数の上限（メッシュの頂点を等間隔に間引く）
+        constexpr size_t kTalusPointSamples = 2048;
         // 地形の材質は 3 層の混ぜ合わせ。素材は Poly Haven の CC0 の写真由来のテクスチャ（Scripts/Terrain/TerrainMaterials.py が
         // 落としてアルベドを較正し、Assets/AssetSets/WastelandTerrain.json が焼く）。
         // 1 層目（砂の枠）は横 2 枚の並び（8192×4096。Scripts/Terrain/TerrainMaterials.py --build が書く）。左は谷床の赤茶の土
@@ -767,6 +774,25 @@ namespace Game::GameModes
                 {
                     MeasureFrontYaw(*load.Mesh, shape, openRatio);
                 }
+                // 崖錐の岩の散布が底の高さを引く頂点の標本（メッシュは MegaMesh を作ると手放すので、ここで写す）
+                const Layout::PropKind kind = static_cast<Layout::PropKind>(kindIndex);
+                if (Layout::IsTalusKind(kind))
+                {
+                    WastelandTalus::TalusMeshShape &talus =
+                        assembly->TalusShapes[static_cast<uint32_t>(kind == Layout::PropKind::TalusCrag
+                                                                        ? WastelandTalus::TalusMesh::Crag
+                                                                        : WastelandTalus::TalusMesh::Slab)];
+                    talus.Min = NorvesLib::Math::Vector3(shape.MinX, shape.MinY, shape.MinZ);
+                    talus.Max = NorvesLib::Math::Vector3(shape.MaxX, shape.MaxY, shape.MaxZ);
+                    const size_t vertexCount = load.Mesh->Vertices.size();
+                    const size_t stride = std::max<size_t>(1, (vertexCount + kTalusPointSamples - 1) / kTalusPointSamples);
+                    talus.Points.clear();
+                    for (size_t index = 0; index < vertexCount; index += stride)
+                    {
+                        const Asset::CookedMeshVertex &vertex = load.Mesh->Vertices[index];
+                        talus.Points.push_back(NorvesLib::Math::Vector3(vertex.Position.X, vertex.Position.Y, vertex.Position.Z));
+                    }
+                }
                 LOG_INFO_F("WASTELAND_PROP_MESH id=%s clusters=%u pages=%zu size=%.2fx%.2fx%.2f open_ratio=%.3f "
                            "front_yaw_deg=%.1f",
                            spec.Id, static_cast<unsigned int>(load.Mesh->Clusters.size()), load.Mesh->Pages.size(),
@@ -801,8 +827,94 @@ namespace Game::GameModes
             return true;
         }
 
-        /// 材質がそろった種類を MegaMesh にし、高さ場から決めた配置に Entity を置く
-        void PlaceProps(GameModeContext &ctx, const Terrain::TerrainHeightField &field, WastelandAssembly &assembly)
+        /// 崖の下の崖錐に、剥がれ落ちた岩の群れを散布の Object（Entity 1 つと軽い行）で置く。影を落とす大岩と、影を落とさない
+        /// 小片の 2 つに分ける。名前付き視点の足元と、置いた建物の足元は空ける
+        void PlaceTalusRocks(GameModeContext &ctx, const Terrain::TerrainHeightField &field,
+                             const Terrain::TerrainSurfaceMask *pMask, const WastelandAssembly &assembly)
+        {
+            const WastelandTalus::TalusMeshShape &crag =
+                assembly.TalusShapes[static_cast<uint32_t>(WastelandTalus::TalusMesh::Crag)];
+            if (pMask == nullptr || !crag.bAvailable)
+            {
+                LOG_WARNING_F("WASTELAND_TALUS_SKIPPED mask=%d crag=%d 地表の分類の地図か岩塊のメッシュが無いため、"
+                              "崖錐の岩を置きません",
+                              pMask != nullptr ? 1 : 0, crag.bAvailable ? 1 : 0);
+                return;
+            }
+            VariableArray<WastelandTalus::TalusExclusion> exclusions;
+            const Game::Scenes::SceneDescriptor *scene = Game::Scenes::FindScene(Game::Scenes::kWastelandSceneId);
+            if (scene != nullptr)
+            {
+                for (std::size_t index = 0; index < scene->ViewCount; ++index)
+                {
+                    const Game::Scenes::SceneViewDescriptor &view = scene->Views[index];
+                    if (view.Kind == Game::Scenes::SceneViewKind::FreePose)
+                    {
+                        exclusions.push_back({view.Position[0], view.Position[2], kViewTalusClearRadius});
+                    }
+                }
+            }
+            for (const WastelandFoliage::ExclusionCircle &circle : assembly.FoliageBuildingCircles)
+            {
+                exclusions.push_back({circle.X, circle.Z, circle.Radius});
+            }
+
+            VariableArray<Component::MegaScatterInstance> casters;
+            VariableArray<Component::MegaScatterInstance> fragments;
+            WastelandTalus::TalusStats stats;
+            WastelandTalus::BuildTalusRocks(field, *pMask, assembly.TalusShapes, exclusions, casters, fragments, stats);
+
+            const MegaMeshHandle meshes[WastelandTalus::kTalusMeshCount] = {
+                assembly.Props[static_cast<uint32_t>(Layout::PropKind::TalusCrag)].MegaMesh,
+                assembly.Props[static_cast<uint32_t>(Layout::PropKind::TalusSlab)].MegaMesh,
+            };
+            // 散布 1 つ（Entity 1 つと軽い行）を置き、置いた行の数を返す（置けなければ 0）
+            const auto spawnScatter = [&](const VariableArray<Component::MegaScatterInstance> &instances, bool bCastShadow,
+                                          uint32_t &outRanges) -> uint32_t
+            {
+                outRanges = 0;
+                if (instances.empty())
+                {
+                    return 0;
+                }
+                Entity *owner = ctx.ScopeRef.SpawnObject<Entity>();
+                auto *scatter =
+                    owner != nullptr ? ctx.WorldRef.CreateComponent<Component::MegaGeometryScatterComponent>(owner) : nullptr;
+                uint32_t placed = 0;
+                if (scatter != nullptr)
+                {
+                    scatter->SetMegaMeshHandles(Span<const MegaMeshHandle>(meshes, WastelandTalus::kTalusMeshCount));
+                    scatter->SetCastShadow(bCastShadow);
+                    if (scatter->SetInstances(Span<const Component::MegaScatterInstance>(instances.data(), instances.size())))
+                    {
+                        placed = scatter->GetInstanceCount();
+                        outRanges = scatter->GetRangeCount();
+                    }
+                }
+                if (placed == 0 && owner != nullptr)
+                {
+                    LOG_WARNING_F("WASTELAND_TALUS_SKIPPED cast_shadow=%d 崖錐の岩の散布を作れませんでした", bCastShadow ? 1 : 0);
+                    ctx.ScopeRef.Untrack(owner);
+                    ctx.WorldRef.RemoveObject(owner);
+                }
+                return placed;
+            };
+            uint32_t casterRanges = 0;
+            uint32_t fragmentRanges = 0;
+            const uint32_t placedCasters = spawnScatter(casters, true, casterRanges);
+            const uint32_t placedFragments = spawnScatter(fragments, false, fragmentRanges);
+            LOG_INFO_F("WASTELAND_TALUS casters=%u fragments_placed=%u planned=%zu+%zu ranges=%u+%u cells=%u clusters=%u "
+                       "main=%u fragments=%u toe=%u rejected=%u crag=%u slab=%u max_boulder_m=%.2f",
+                       placedCasters, placedFragments, casters.size(), fragments.size(), casterRanges, fragmentRanges,
+                       stats.CellsVisited, stats.Clusters, stats.MainBoulders, stats.Fragments, stats.ToeRocks, stats.Rejected,
+                       stats.PerMesh[static_cast<uint32_t>(WastelandTalus::TalusMesh::Crag)],
+                       stats.PerMesh[static_cast<uint32_t>(WastelandTalus::TalusMesh::Slab)],
+                       static_cast<double>(stats.MaxBoulderHeight));
+        }
+
+        /// 材質がそろった種類を MegaMesh にし、高さ場から決めた配置に Entity を置き、崖錐の岩を散布で置く
+        void PlaceProps(GameModeContext &ctx, const Terrain::TerrainHeightField &field,
+                        const Terrain::TerrainSurfaceMask *pMask, WastelandAssembly &assembly)
         {
             auto &megaGeometry = ctx.RenderResourcesRef.MegaGeometry();
             Layout::PropMeshShape shapes[Layout::kPropKindCount];
@@ -865,6 +977,13 @@ namespace Game::GameModes
                 load.MegaMesh = megaMesh;
                 load.Shape.bAvailable = true;
                 shapes[kindIndex] = load.Shape;
+                if (Layout::IsTalusKind(kind))
+                {
+                    assembly
+                        .TalusShapes[static_cast<uint32_t>(kind == Layout::PropKind::TalusCrag ? WastelandTalus::TalusMesh::Crag
+                                                                                               : WastelandTalus::TalusMesh::Slab)]
+                        .bAvailable = true;
+                }
             }
 
             VariableArray<Layout::PropPlacement> placements;
@@ -935,6 +1054,7 @@ namespace Game::GameModes
                                static_cast<double>(placement.Yaw * 180.0f / 3.14159265f));
                 }
             }
+            PlaceTalusRocks(ctx, field, pMask, assembly);
         }
     } // namespace
 
@@ -978,6 +1098,7 @@ namespace Game::GameModes
                               "草・低木は傾斜と密度の斑だけで撒きます",
                               TerrainSpec::kSurfaceMaskDescriptorPath, maskError.c_str());
             }
+            data.m_pSurfaceMask = surfaceMask;
             data.m_FoliageScatter.Initialize(data.m_pHeightField, std::move(surfaceMask));
             ApplyFoliageExclusions(data, nullptr);
             data.m_Foliage.Wind = WastelandFoliage::MakeWind();
@@ -1174,7 +1295,7 @@ namespace Game::GameModes
                 }
                 if (assembly.bPlaced && ArePropTexturesLoaded(assembly) && !assembly.bPropsPlaced)
                 {
-                    PlaceProps(ctx, *data.m_pHeightField, assembly);
+                    PlaceProps(ctx, *data.m_pHeightField, data.m_pSurfaceMask.get(), assembly);
                     assembly.bPropsPlaced = true;
                     // 置いた建物の足元と道から草・低木を外す（区画を作り直す）
                     if (!assembly.FoliageBuildingCircles.empty() || !assembly.FoliageRoadRects.empty())
@@ -1215,6 +1336,7 @@ namespace Game::GameModes
             data.m_pAssembly.reset();
         }
         data.m_pHeightField.reset();
+        data.m_pSurfaceMask.reset();
         data.m_Foliage = NorvesLib::Core::Rendering::FoliageScene{};
         data.m_FoliageScatter.Reset();
         data.m_Rig.Leave(ctx);
