@@ -4924,3 +4924,19 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 連続撮影は 4 フレームより詰めると、読み出しが終わる前の撮影の要求が断られる（`SEQUENCE_CAPTURE failed: capture request rejected`）
   - 試験は足していない
 - Next: TASKS.md の次の未完の項目。
+
+### SCN-WL-CONTACT-SHADOW-TERRAIN 完了（2026-10-16、run 20261016-132852 の反復 5）
+
+- Done: 画面空間の接触影で、地形の受け手（GBuffer の法線の A が 1）を地形の画素が遮らないようにした（`lighting.frag` の `CalculateContactShadow`）
+  - 地形どうしの陰は太陽の影（VSM）が受け持ち、接触影は地形に据えた岩・礫・低木（A が 0）の接地の影だけを足す
+  - 前の反復で入れた、受け手とほぼ平行（30° 以内）な面を遮りにしない判定と、光が浅く当たる受け手でレイを持ち上げる処理は外した（地形の画素を遮りにしないので不要になり、残すと地面に平らに伏せた板や礫の接地の影まで消す）。起点のずらしと面の内側の判定に深度から作る幾何の面の向きを使うのはそのまま
+  - 地形でない受け手（家・球・岩など）の式は変えていない
+- 証拠（`.harness/runs/20261016-132852/`）:
+  - `verify-SCN-WL-CONTACT-SHADOW-TERRAIN-1.txt`: Debug の Game のビルド EXIT=0
+  - `verify-SCN-WL-CONTACT-SHADOW-TERRAIN-2.txt`: 荒野の ground・outpost・ref_ground_02 を 1920×1080、result=pass（白飛び 0・黒つぶれ 0）、337 秒、EXIT=0。検証レイヤーのログは空
+  - 変更前のシェーダーで同じ 3 視点を撮り（`.harness/runs/scene-capture/SCN-WL-CONTACT-SHADOW-TERRAIN-before/`）、上段に変更前・下段に変更後を 2 倍で並べた切り出しを開いた（`.harness/runs/scene-capture/SCN-WL-CONTACT-SHADOW-TERRAIN/crop_*.png`）: ref_ground_02 の右の砂丘の陰の側と、左の斜面に散っていた暗い点が消え、陰は滑らかにつながる。低木の足元の影と斜面の低木の影の筋は残る。ground の近景の低木の下の影と礫・石の足元の影、outpost の岩の原の石の影は変更前と見分けがつかない
+  - `verify-SCN-WL-CONTACT-SHADOW-TERRAIN-3.txt`: 起動画面の撮影 result=pass、EXIT=0。開いて家・球・岩・地面の見た目を確かめた。検証レイヤーのログは空
+  - `aux-SCN-WL-CONTACT-SHADOW-TERRAIN-startup-det.txt`: 起動画面の決定的な撮影を前回（SCN-WL-FAR-SHADING-det）と比べて平均輝度の差 0・PSNR 100・違う画素 0。Rendering3DTest は変わらない
+- Notes:
+  - 影の測定（`shadow_probe.comp`）と VSM のテスト（`vsm_sample_probe.comp`）は接触影を含まないので変えていない。試験は足していない
+- Next: TASKS.md の次の未完の項目。

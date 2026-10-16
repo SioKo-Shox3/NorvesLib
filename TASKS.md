@@ -1613,7 +1613,7 @@
 - notes: 2026-10-16 親（遮断器の blocked への判断）: 反復 4 で、石を赤褐色の角張った破片にする直し（親の STEER）と歩く連続撮影（WALK exit=0）までは済み、最後の 4 視点の撮影の途中で 40 分が尽きた（ランナーの PowerShell が Game を起動せずに 19 分止まったため）。残りは、作業途中の保存（fa2bbfb9）のコードのまま、歩く連続撮影でカメラが動いたことを数値で確かめ、verify の撮影と PROGRESS の更新をして閉じるだけ。コードは変えない。撮影が起動しないときは 5 分で見切り、止めて起動し直す。
 
 ## SCN-WL-CONTACT-SHADOW-TERRAIN: 接触影が地形の折れ目を遮りと誤って出す点を消す
-- status: todo
+- status: done
 - done-when: 画面空間の接触影が、地形の三角形の折れ目や細かい凹凸を遮りと誤り、砂丘や斜面にまばらな暗い点を出す（SCN-WL-SHADOW-DOT-GRID の残り。接触影を切ると消える）のを直す。岩・礫・低木を地面に据えた接地の影（接触影の本来の役目）は残す。ground・outpost・ref_ground_02 の撮影（1920×1080）を拡大して、地形の上の点が消え、岩と低木の足元の影が残ることを確かめる。Rendering3DTest の撮影が変わらない。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -Views ground,outpost,ref_ground_02 -OutDir .harness/runs/scene-capture/SCN-WL-CONTACT-SHADOW-TERRAIN`
