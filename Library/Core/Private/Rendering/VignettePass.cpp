@@ -332,6 +332,7 @@ namespace NorvesLib::Core::Rendering
 
     void VignettePass::Declare(RenderGraphBuilder& builder)
     {
+        m_LastCaptureRecord = {};
         m_bLegacyInputFallbackActive = false;
         const ViewRenderContext* context = builder.GetContext();
         const uint32_t width = context ? context->GetActiveRenderWidth() : 1u;
@@ -472,6 +473,13 @@ namespace NorvesLib::Core::Rendering
         {
             params.chromaticAberrationPixels = 0.0f;
         }
+        // 撮影の HDR の表示変換の記録（vignette.frag へ渡す値そのもの）
+        m_LastCaptureRecord.bRecorded = true;
+        m_LastCaptureRecord.bEnabled = params.bEnabled != 0u;
+        m_LastCaptureRecord.Intensity = params.intensity;
+        m_LastCaptureRecord.Radius = params.radius;
+        m_LastCaptureRecord.Softness = params.softness;
+        m_LastCaptureRecord.ChromaticAberrationPixels = params.chromaticAberrationPixels;
 
         // 定数と記述子セットはこの Execute の分をフレームの持ち主から借りる。持ち主の無い文脈（RenderingCoordinator を
         // 通さない検査）では使い回さない定数と記述子セットを作り、提出の完了を知る手段が無いのでパスを手放すまで持つ

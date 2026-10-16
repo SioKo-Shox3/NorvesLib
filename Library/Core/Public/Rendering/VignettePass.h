@@ -5,6 +5,7 @@
 #include "RHI/IDescriptorSet.h"
 #include "RHI/RHITypes.h"
 #include "Container/Containers.h"
+#include "Rendering/FrameCaptureTypes.h"
 #include <cstdint>
 
 namespace NorvesLib::Core::Rendering
@@ -51,6 +52,9 @@ namespace NorvesLib::Core::Rendering
         void SetSoftness(float softness) { m_Settings.Softness = softness; }
         const VignetteSettings& GetSettings() const { return m_Settings; }
 
+        // 直近の記録で使った値（撮影の HDR の表示変換の記録。Declare ごとに消す）。RenderGraph の実行が終わった後に読む
+        const FrameCaptureDisplayInfo::VignetteRecord& GetLastCaptureRecord() const { return m_LastCaptureRecord; }
+
     private:
         bool PrepareResources(uint32_t width,
                               uint32_t height,
@@ -62,6 +66,7 @@ namespace NorvesLib::Core::Rendering
         bool EnqueueEmptyNativePass(ViewRenderContext& context) const;
 
         VignetteSettings m_Settings;
+        FrameCaptureDisplayInfo::VignetteRecord m_LastCaptureRecord;
 
         RHI::TexturePtr m_OutputTexture;
         RGResourceHandle m_InputToneMappedHandle;

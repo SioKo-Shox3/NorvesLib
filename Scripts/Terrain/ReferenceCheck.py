@@ -23,10 +23,9 @@
 # --hdr の検査（視点ごと）:
 #   1. 大きさ: PFM の見出し・hdr.json・PNG の幅と高さが一致する。
 #   2. 値の範囲: R・G・B に負・NaN・Inf が無い。輝度の最大が正（真っ黒でない）。輝度の分位（1・50・99 %）を書く。
-#   3. PNG との照合: HDR にプリエクスポージャを掛けて、エンジンの表示変換（荒野のカメラの差し替え: NeutralLinear のトーンマップ、
-#      知覚的なコントラスト・彩度・輝度を保つ色温度、ビネット、sRGB の符号化。Assets/Shaders/tonemapping.frag・vignette.frag と同じ式）
-#      を近似で通した 8 bit の値を、同じ視点の PNG と比べる（見た目の 3D LUT・色収差・レンズダートが掛かるカメラは
-#      見積もれないので失敗にする）。比べる画素は次をすべて満たすものだけ:
+#   3. PNG との照合: HDR にプリエクスポージャを掛けて、エンジンの表示変換（DisplayTransform.py。撮影が記録したポストのパスの値、
+#      記録の無い古い撮影は荒野のカメラの差し替えの値）を通した 8 bit の値を、同じ視点の PNG と比べる（DisplayTransform.py が
+#      再現していない処理と、ブルームに乗るレンズダートが掛かる撮影は見積もれないので失敗にする）。比べる画素は次をすべて満たすものだけ:
 #        - 暗い画素: 露出後の最大の成分が DARK_PEAK 未満（NeutralLinear が明部を圧縮し始める 0.8 の手前で、
 #          トーンマップが値をそのまま返す範囲。荒野の日なたの地面は露出後 0.5〜0.75 で、0.4 未満の画素は影の中の
 #          縁と細かな模様にほぼ限られ、ブルームと FXAA を除くと数が足りない。0.4 未満だけの一致も記録する）
@@ -36,6 +35,18 @@
 #      合否: 比べる画素が MIN_SAMPLE_RATIO 以上あり、3 成分とも ±WITHIN_LEVELS 段に入る画素が WITHIN_RATIO 以上、
 #      差の絶対値の中央値が MEDIAN_LEVELS 段以下。表示変換の厳密な照合（1 段以内）は SCN-WLR-DISPLAY-TRANSFORM で行う。
 #      ブルームの前であることの確かめとして、ブルームの影響が大きい暗い画素の PNG − 見積もりの平均（正なら PNG にだけブルームが乗る）も書く。
+#
+#   python Scripts/Terrain/ReferenceCheck.py --display --capture <出力先> [--verify]
+#       表示変換の再現（DisplayTransform.py）を、Game の --display-check（ブルームと FXAA を外す）で撮った 3 組と照らし、
+#       結果を <出力先>/display_check.json に書く。--verify は組ごとの inputs.json を今のファイルと照らす。
+#       <出力先>/ramp-neutral: 荒野（カメラの差し替えの NeutralLinear とグレーディングの式 1）を --display-check=ramp で撮った 1 視点
+#       <出力先>/ramp-aces: 差し替えの無いカメラのシーンを --tone-map=aces20-lut --display-check=ramp で撮った 1 視点
+#           どちらもトーンマップの入力が色の階段（DisplayTransform.display_ramp。明るさ 12 段 × R・G・B・C・M・Y・灰）になる。
+#           区画の縁から RAMP_BORDER 画素より内側のすべての画素で、PNG と再現の差が 3 成分とも RAMP_WITHIN_LEVELS 段以内なら合格。
+#       <出力先>/scene: 荒野の SCN-WLR-BASELINE と同じ 8 視点を --display-check=scene -Hdr で撮ったもの。
+#           視点ごとに、HDR に表示変換を掛けた 8 bit の値と PNG の差が 3 成分とも SCENE_WITHIN_LEVELS 段以内の画素が
+#           SCENE_WITHIN_RATIO 以上なら合格。
+#       どの組も、撮影の記録（hdr.json の post）でブルームと FXAA が外れ、色の階段の有無と演算子が組の約束どおりであることも見る。
 #
 # 終了コード: すべて合格なら 0、どれかが不合格なら 1。
 import argparse
@@ -47,6 +58,9 @@ import sys
 
 import numpy as np
 from PIL import Image
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import DisplayTransform as DT  # noqa: E402
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
@@ -94,6 +108,20 @@ MIN_SAMPLE_RATIO = 0.005
 WITHIN_LEVELS = 2
 WITHIN_RATIO = 0.95
 MEDIAN_LEVELS = 1.0
+
+# --display の基準（上の説明を参照）
+RAMP_BORDER = 2
+RAMP_WITHIN_LEVELS = 1
+SCENE_WITHIN_LEVELS = 1
+SCENE_WITHIN_RATIO = 0.99
+# 組ごとの約束: (組の名前, 色の階段か, 演算子)。scene は荒野の基準の 8 視点を全部要る
+DISPLAY_SETS = (
+    ("ramp-neutral", True, DT.OPERATOR_NEUTRAL_LINEAR),
+    ("ramp-aces", True, DT.OPERATOR_ACES20_LUT),
+    ("scene", False, DT.OPERATOR_NEUTRAL_LINEAR),
+)
+DISPLAY_SCENE_VIEWS = ("ref_far_01", "ref_far_02", "ref_cliff_01", "ref_cliff_02", "ref_ground_01", "ref_ground_02",
+                       "outpost", "ground")
 
 
 def git_output(args):
@@ -232,34 +260,6 @@ def check_inputs(capture_dir):
     return False, [f"入力が撮影の後に変わった（古い結果）: {', '.join(changed) or '一覧'}"], record
 
 
-def read_pfm(path):
-    with open(path, "rb") as f:
-        data = f.read()
-    # 見出しは 3 つの空白区切りの語（"PF"、幅 高さ、スケール）の後に 1 つの区切り文字
-    tokens = []
-    pos = 0
-    while len(tokens) < 4:
-        while pos < len(data) and data[pos:pos + 1].isspace():
-            pos += 1
-        start = pos
-        while pos < len(data) and not data[pos:pos + 1].isspace():
-            pos += 1
-        if start == pos:
-            raise ValueError("PFM の見出しが短い")
-        tokens.append(data[start:pos].decode("ascii"))
-    pos += 1
-    if tokens[0] != "PF":
-        raise ValueError(f"RGB の PFM でない（{tokens[0]}）")
-    width, height, scale = int(tokens[1]), int(tokens[2]), float(tokens[3])
-    dtype = "<f4" if scale < 0 else ">f4"
-    count = width * height * 3
-    pixels = np.frombuffer(data, dtype=dtype, count=count, offset=pos)
-    if len(data) - pos != count * 4:
-        raise ValueError(f"PFM の画素の量が見出しと合わない（{len(data) - pos} バイト、見出しから {count * 4} バイト）")
-    # PFM は下の行から並ぶので、上下を返して画像の上を 0 行目にする
-    return pixels.reshape(height, width, 3)[::-1].astype(np.float64)
-
-
 def box_blur(image, radius):
     """縦横の箱の平均（端は端の値を延ばす）"""
     if radius <= 0:
@@ -286,68 +286,6 @@ def gaussian_blur(image, sigma):
     return out
 
 
-def neutral_linear(color):
-    # tonemapping.frag の TonemapNeutralLinear と同じ式
-    color = np.maximum(color, 0.0)
-    peak = color.max(axis=-1, keepdims=True)
-    start, desat = 0.8, 0.15
-    d = 1.0 - start
-    safe_peak = np.maximum(peak, 1e-12)
-    new_peak = 1.0 - d * d / (peak + d - start)
-    compressed = color * (new_peak / safe_peak)
-    g = 1.0 - 1.0 / (desat * (peak - new_peak) + 1.0)
-    compressed = compressed + (new_peak - compressed) * g
-    return np.where(peak < start, color, compressed)
-
-
-def contrast_perceptual(color, contrast, pivot_linear):
-    pivot = np.clip(np.clip(pivot_linear, 0.0, 1.0) ** (1.0 / 2.2), 0.01, 0.99)
-    x = np.clip(color, 0.0, 1.0) ** (1.0 / 2.2)
-    lower = pivot * (x / pivot) ** contrast
-    upper = 1.0 - (1.0 - pivot) * (np.maximum(1.0 - x, 0.0) / (1.0 - pivot)) ** contrast
-    y = np.where(x >= pivot, upper, lower)
-    return np.clip(y, 0.0, 1.0) ** 2.2
-
-
-def saturation(color, amount):
-    luma = (color * LUMA).sum(axis=-1, keepdims=True)
-    return np.clip(luma + (color - luma) * amount, 0.0, 1.0)
-
-
-def white_balance(color, temp):
-    gain = np.array([1.0 + temp * 0.1, 1.0, 1.0 - temp * 0.1])
-    gain = gain / (gain * LUMA).sum()
-    return np.clip(color * gain, 0.0, 1.0)
-
-
-def vignette(height, width, intensity, radius, softness):
-    # 画素の中心の UV（vignette.frag の ComputeVignette と同じ式）
-    v = (np.arange(height) + 0.5) / height - 0.5
-    u = (np.arange(width) + 0.5) / width - 0.5
-    dist = np.sqrt(u[None, :] ** 2 + v[:, None] ** 2)
-    edge0, edge1 = radius - softness, radius
-    t = np.clip((dist - edge0) / max(edge1 - edge0, 1e-9), 0.0, 1.0)
-    s = t * t * (3.0 - 2.0 * t)
-    return (1.0 + ((1.0 - s) - 1.0) * intensity)[..., None]
-
-
-def encode_srgb(linear):
-    linear = np.clip(linear, 0.0, 1.0)
-    return np.where(linear <= 0.0031308, linear * 12.92, 1.055 * np.power(linear, 1.0 / 2.4) - 0.055)
-
-
-def predict_display(exposed, display):
-    """露出後の HDR から、荒野のカメラの差し替えの表示変換を近似で通した 8 bit の値（0〜255 の実数）"""
-    mapped = neutral_linear(exposed)
-    graded = contrast_perceptual(mapped, display["contrast"], display["contrast_pivot"])
-    graded = saturation(graded, display["saturation"])
-    graded = white_balance(graded, display["temperature"])
-    height, width = exposed.shape[:2]
-    graded = graded * vignette(height, width, display["vignette_intensity"], display["vignette_radius"],
-                               display["vignette_softness"])
-    return encode_srgb(graded) * 255.0
-
-
 def local_range(luma):
     """3×3 の窓の最大 − 最小"""
     padded = np.pad(luma, 1, mode="edge")
@@ -371,7 +309,7 @@ def check_hdr_view(capture_dir, view):
     with open(meta_path, encoding="utf-8") as f:
         meta = json.load(f)
     try:
-        hdr = read_pfm(pfm_path)
+        hdr = DT.read_pfm(pfm_path).astype(np.float64)
     except ValueError as error:
         fails.append(f"PFM を読めない: {error}")
         return result
@@ -415,23 +353,21 @@ def check_hdr_view(capture_dir, view):
     if fails:
         return result
 
-    # 3. PNG との照合
+    # 3. PNG との照合（表示変換は DisplayTransform.py）
+    try:
+        params = DT.params_from_capture(meta)
+    except DT.UnsupportedDisplay as error:
+        fails.append(f"表示変換を再現できず PNG を見積もれない: {error}")
+        return result
+    # レンズダートはブルームに乗るので、ブルームの影響の小さい画素の見積もりにも入らない
     display = meta.get("display", {})
-    if not (display.get("neutral_linear") and display.get("grading_override")):
-        fails.append("カメラの表示変換の差し替え（NeutralLinear とグレーディング）が無く、PNG を見積もれない"
-                     "（View の既定の表示変換の再現は SCN-WLR-DISPLAY-TRANSFORM）")
+    bloom_on = (meta.get("post") or {}).get("bloom", True)
+    if bloom_on and display.get("lens_dirt_intensity", 0.0) > 0.0:
+        fails.append("レンズダートが掛かり、PNG を見積もれない")
         return result
-    # 見た目の 3D LUT・色収差・レンズダートはこの見積もりに入れていない（起動画面のカメラなど。再現は SCN-WLR-DISPLAY-TRANSFORM）
-    extras = [name for name, active in (
-        ("見た目の 3D LUT", display.get("look_lut", False)),
-        ("色収差", display.get("chromatic_aberration_pixels", 0.0) > 0.0),
-        ("レンズダート", display.get("lens_dirt_intensity", 0.0) > 0.0)) if active]
-    if extras:
-        fails.append(f"表示変換に見積もりの外の処理（{'・'.join(extras)}）が掛かり、PNG を見積もれない"
-                     "（再現は SCN-WLR-DISPLAY-TRANSFORM）")
-        return result
-    exposed = finite * pre_exposure
-    predicted = predict_display(exposed, display)
+    exposed = DT.expose(finite, pre_exposure).astype(np.float64)
+    _, predicted = DT.display_transform(exposed.astype(np.float32), params)
+    predicted = predicted.astype(np.float64)
     peak = exposed.max(axis=-1)
     dark = peak < DARK_PEAK
     bloom_estimate = np.zeros(peak.shape)
@@ -552,6 +488,224 @@ def run_hdr(capture_dir, views, verify):
     return 0 if not failures else 1
 
 
+def capture_files(set_dir, view):
+    """撮影の視点の PNG と hdr.json の場所（既定の視点は default.png に撮られる）"""
+    base = os.path.join(set_dir, view)
+    if not os.path.isfile(base + ".png") and os.path.isfile(os.path.join(set_dir, "default.png")):
+        base = os.path.join(set_dir, "default")
+    return base + ".png", base + ".hdr.pfm", base + ".hdr.json"
+
+
+def check_display_record(meta, expect_ramp, expect_operator):
+    """撮影の記録が組の約束どおりか。失敗の理由の一覧"""
+    post = meta.get("post")
+    if not post or not post.get("tone_map_recorded"):
+        return ["hdr.json にポストのパスの記録（post）が無い"]
+    fails = []
+    if post.get("bloom") or post.get("fxaa"):
+        fails.append(f"ブルームか FXAA が外れていない（bloom={post.get('bloom')} fxaa={post.get('fxaa')}。--display-check で撮る）")
+    if bool(post.get("display_ramp")) != expect_ramp:
+        fails.append(f"色の階段の入力が約束と違う（display_ramp={post.get('display_ramp')}、約束 {expect_ramp}）")
+    if int(post.get("tone_map_operator", -1)) != expect_operator:
+        fails.append(f"トーンマップの演算子が約束と違う（{post.get('tone_map_operator')}、約束 {expect_operator}）")
+    if not (post.get("hardware_srgb_encode") or post.get("shader_srgb_encode")):
+        fails.append("提示の sRGB の符号化の記録が無い")
+    return fails
+
+
+def check_ramp_view(set_dir, view, expect_operator, lut):
+    result = {"view": view, "pass": False, "failures": []}
+    fails = result["failures"]
+    png_path, _, meta_path = capture_files(set_dir, view)
+    for path in (png_path, meta_path):
+        if not os.path.isfile(path):
+            fails.append(f"{os.path.basename(path)} が無い")
+    if fails:
+        return result
+    with open(meta_path, encoding="utf-8") as f:
+        meta = json.load(f)
+    fails.extend(check_display_record(meta, True, expect_operator))
+    try:
+        params = DT.params_from_capture(meta)
+    except DT.UnsupportedDisplay as error:
+        fails.append(str(error))
+    if fails:
+        return result
+    png = np.asarray(Image.open(png_path).convert("RGB"), dtype=np.int32)
+    height, width = png.shape[:2]
+    ramp, column_map, row_map = DT.display_ramp(width, height)
+    predicted, encoded = DT.display_transform(ramp, params, lut)
+    # 区画の縁から RAMP_BORDER 画素より内側
+    x = np.arange(width)
+    y = np.arange(height)
+    column_edges = (np.arange(DT.RAMP_COLUMNS + 1) * width + DT.RAMP_COLUMNS - 1) // DT.RAMP_COLUMNS
+    row_edges = (np.arange(DT.RAMP_ROWS + 1) * height + DT.RAMP_ROWS - 1) // DT.RAMP_ROWS
+    inside_x = np.min(np.abs(x[:, None] - column_edges[None, :]), axis=1) >= RAMP_BORDER
+    inside_y = np.min(np.abs(y[:, None] - row_edges[None, :]), axis=1) >= RAMP_BORDER
+    inside = inside_y[:, None] & inside_x[None, :]
+    difference = png - predicted.astype(np.int32)
+    worst = np.abs(difference).max(axis=-1)
+    selected = worst[inside]
+    within = float((selected <= RAMP_WITHIN_LEVELS).mean())
+    result.update({
+        "size": f"{width}x{height}",
+        "operator": params["operator"],
+        "grading_mode": params["grading_mode"],
+        "compared_pixels": int(inside.sum()),
+        "within_levels": RAMP_WITHIN_LEVELS,
+        "within_ratio": within,
+        "exact_ratio": float((selected == 0).mean()),
+        "max_abs_levels": int(selected.max()),
+        "mean_signed_levels_rgb": [float(v) for v in difference[inside].mean(axis=0)],
+    })
+    # 区画ごと（行 × 列）の中央の画素の PNG・再現の値と、区画の中の最大の差
+    patches = []
+    for row in range(DT.RAMP_ROWS):
+        for column in range(DT.RAMP_COLUMNS):
+            mask = inside & (row_map == row) & (column_map == column)
+            ys, xs = np.nonzero(mask)
+            if len(ys) == 0:
+                continue
+            cy, cx = ys[len(ys) // 2], xs[len(xs) // 2]
+            patches.append({
+                "row": DT.RAMP_ROW_NAMES[row],
+                "exposed": float(2.0 ** (column - DT.RAMP_EXPONENT_OFFSET)),
+                "png_center": [int(v) for v in png[cy, cx]],
+                "predicted_center": [int(v) for v in predicted[cy, cx]],
+                "max_abs_levels": int(worst[mask].max()),
+            })
+    result["patches"] = patches
+    if within < 1.0:
+        bad = [p for p in patches if p["max_abs_levels"] > RAMP_WITHIN_LEVELS]
+        fails.append(f"±{RAMP_WITHIN_LEVELS} 段を外れる画素がある（{within:.6f}、最大 {result['max_abs_levels']} 段、区画 "
+                     + ", ".join(f"{p['row']}@{p['exposed']:g}:{p['max_abs_levels']}" for p in bad[:12]) + "）")
+    result["pass"] = not fails
+    return result
+
+
+def check_scene_view(set_dir, view, expect_operator, lut):
+    result = {"view": view, "pass": False, "failures": []}
+    fails = result["failures"]
+    png_path, pfm_path, meta_path = capture_files(set_dir, view)
+    for path in (png_path, pfm_path, meta_path):
+        if not os.path.isfile(path):
+            fails.append(f"{os.path.basename(path)} が無い")
+    if fails:
+        return result
+    with open(meta_path, encoding="utf-8") as f:
+        meta = json.load(f)
+    fails.extend(check_display_record(meta, False, expect_operator))
+    try:
+        params = DT.params_from_capture(meta)
+    except DT.UnsupportedDisplay as error:
+        fails.append(str(error))
+    try:
+        hdr = DT.read_pfm(pfm_path)
+    except ValueError as error:
+        fails.append(f"PFM を読めない: {error}")
+        hdr = None
+    pre_exposure = float(meta.get("pre_exposure", 0.0))
+    if not pre_exposure > 0.0:
+        fails.append(f"プリエクスポージャが正でない（{pre_exposure}）")
+    if fails:
+        return result
+    if not np.isfinite(hdr).all() or (hdr < 0.0).any():
+        fails.append("HDR に負・NaN・Inf がある")
+        return result
+    png = np.asarray(Image.open(png_path).convert("RGB"), dtype=np.int32)
+    if png.shape[:2] != hdr.shape[:2]:
+        fails.append(f"PNG の大きさ {png.shape[1]}x{png.shape[0]} が HDR {hdr.shape[1]}x{hdr.shape[0]} と違う")
+        return result
+    predicted, _ = DT.display_transform(DT.expose(hdr, pre_exposure), params, lut)
+    difference = png - predicted.astype(np.int32)
+    worst = np.abs(difference).max(axis=-1)
+    within = float((worst <= SCENE_WITHIN_LEVELS).mean())
+    result.update({
+        "size": f"{png.shape[1]}x{png.shape[0]}",
+        "pre_exposure": pre_exposure,
+        "operator": params["operator"],
+        "grading_mode": params["grading_mode"],
+        "within_levels": SCENE_WITHIN_LEVELS,
+        "within_ratio": within,
+        "exact_ratio": float((worst == 0).mean()),
+        "over_2_levels_ratio": float((worst > 2).mean()),
+        "p999_abs_levels": float(np.percentile(worst, 99.9)),
+        "max_abs_levels": int(worst.max()),
+        "mean_signed_levels_rgb": [float(v) for v in difference.reshape(-1, 3).mean(axis=0)],
+    })
+    if within < SCENE_WITHIN_RATIO:
+        fails.append(f"±{SCENE_WITHIN_LEVELS} 段に入る画素が {within:.5f}（下限 {SCENE_WITHIN_RATIO}）")
+    result["pass"] = not fails
+    return result
+
+
+def run_display(capture_dir, verify):
+    failures = []
+    lut = DT.load_aces_lut()
+    sets = []
+    for name, expect_ramp, expect_operator in DISPLAY_SETS:
+        set_dir = os.path.join(capture_dir, name)
+        entry = {"set": name, "display_ramp": expect_ramp, "operator": expect_operator, "views": []}
+        sets.append(entry)
+        if not os.path.isdir(set_dir):
+            failures.append(f"{name}: 撮影の組が無い（{set_dir}）")
+            continue
+        inputs_ok, input_failures, record = check_inputs(set_dir)
+        entry["inputs_current"] = inputs_ok
+        entry["inputs_commit"] = (record or {}).get("git_commit")
+        if verify and not inputs_ok:
+            failures.extend(f"{name}: {failure}" for failure in input_failures)
+        metric_views = views_from_metrics(set_dir)
+        if metric_views is None:
+            failures.append(f"{name}: metrics.json が無い（CaptureScene.ps1 -Hdr の出力先でない）")
+            continue
+        if expect_ramp:
+            targets = metric_views[:1]
+        else:
+            targets = list(DISPLAY_SCENE_VIEWS)
+            missing = [v for v in targets if v not in metric_views]
+            if missing:
+                failures.append(f"{name}: 基準の視点が撮られていない（{', '.join(missing)}）")
+                targets = [v for v in targets if v in metric_views]
+        if not targets:
+            failures.append(f"{name}: 検査する視点が無い")
+        for view in targets:
+            if expect_ramp:
+                result = check_ramp_view(set_dir, view, expect_operator, lut)
+                print(f"REFERENCE_CHECK display set={name} view={view} pass={int(result['pass'])} "
+                      f"operator={result.get('operator')} compared={result.get('compared_pixels')} "
+                      f"within{RAMP_WITHIN_LEVELS}={result.get('within_ratio')} exact={result.get('exact_ratio')} "
+                      f"max_abs={result.get('max_abs_levels')} bias_rgb={result.get('mean_signed_levels_rgb')}")
+            else:
+                result = check_scene_view(set_dir, view, expect_operator, lut)
+                print(f"REFERENCE_CHECK display set={name} view={view} pass={int(result['pass'])} "
+                      f"pre_exposure={result.get('pre_exposure')} within{SCENE_WITHIN_LEVELS}={result.get('within_ratio')} "
+                      f"exact={result.get('exact_ratio')} over2={result.get('over_2_levels_ratio')} "
+                      f"p99.9={result.get('p999_abs_levels')} max_abs={result.get('max_abs_levels')} "
+                      f"bias_rgb={result.get('mean_signed_levels_rgb')}")
+            entry["views"].append(result)
+            failures.extend(f"{name}/{view}: {failure}" for failure in result["failures"])
+    report = {
+        "mode": "display",
+        "verify": bool(verify),
+        "criteria": {
+            "ramp_border": RAMP_BORDER, "ramp_within_levels": RAMP_WITHIN_LEVELS,
+            "scene_within_levels": SCENE_WITHIN_LEVELS, "scene_within_ratio": SCENE_WITHIN_RATIO,
+            "lut_weight_steps": DT.LUT_WEIGHT_STEPS,
+        },
+        "sets": sets,
+        "failures": failures,
+    }
+    report_path = os.path.join(capture_dir, "display_check.json")
+    with open(report_path, "w", encoding="utf-8") as f:
+        json.dump(report, f, indent=2, ensure_ascii=False)
+    for failure in failures:
+        print(f"REFERENCE_CHECK failure: {failure}")
+    status = "pass" if not failures else "fail"
+    print(f"REFERENCE_CHECK result={status} mode=display sets={len(DISPLAY_SETS)} report={report_path}")
+    return 0 if not failures else 1
+
+
 def main():
     # 結果の行を保存して読むので、端末の符号に関わらず UTF-8 で書く
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -560,6 +714,7 @@ def main():
     parser.add_argument("--record-inputs", action="store_true", help="入力のハッシュを inputs.json に書く")
     parser.add_argument("--kind", default="engine", choices=sorted(INPUT_SETS), help="--record-inputs の入力の種類")
     parser.add_argument("--hdr", action="store_true", help="ブルーム前の HDR の撮影を検査する")
+    parser.add_argument("--display", action="store_true", help="表示変換の再現（DisplayTransform.py）を照合の撮影と照らす")
     parser.add_argument("--views", default="", help="検査する視点（カンマ区切り。省くと metrics.json の全視点）")
     parser.add_argument("--verify", action="store_true", help="入力のハッシュを今のファイルと照らし、古い結果を拒否する")
     args = parser.parse_args()
@@ -573,7 +728,9 @@ def main():
     if args.hdr:
         views = [v.strip() for v in args.views.split(",") if v.strip()]
         return run_hdr(capture_dir, views, args.verify)
-    print("REFERENCE_CHECK result=fail reason=no_mode（--record-inputs か --hdr を指定する）")
+    if args.display:
+        return run_display(capture_dir, args.verify)
+    print("REFERENCE_CHECK result=fail reason=no_mode（--record-inputs か --hdr か --display を指定する）")
     return 1
 
 

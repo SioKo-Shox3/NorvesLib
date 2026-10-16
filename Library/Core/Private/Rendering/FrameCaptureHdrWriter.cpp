@@ -190,7 +190,7 @@ namespace NorvesLib::Core::Rendering
         const VariableArray<char> pngName = ToAsciiFileName(pngPath);
         const VariableArray<char> pfmName = ToAsciiFileName(pfmPath);
         const FrameCaptureDisplayInfo& display = sceneColor.Display;
-        char json[2048] = {};
+        char json[4096] = {};
         const int jsonLength = std::snprintf(
             json,
             sizeof(json),
@@ -219,8 +219,7 @@ namespace NorvesLib::Core::Rendering
             "    \"look_lut\": %s,\n"
             "    \"chromatic_aberration_pixels\": %.9g,\n"
             "    \"lens_dirt_intensity\": %.9g\n"
-            "  }\n"
-            "}\n",
+            "  },\n",
             pfmName.data(),
             pngName.data(),
             sceneColor.Width,
@@ -244,7 +243,72 @@ namespace NorvesLib::Core::Rendering
         {
             return false;
         }
-        return WriteBytes(jsonPath, json, static_cast<size_t>(jsonLength));
+
+        // ポストのパスがこのフレームで実際に使った値（Scripts/Terrain/DisplayTransform.py が表示変換を再現する）
+        const FrameCaptureDisplayInfo::ToneMapRecord& toneMap = display.ToneMap;
+        const FrameCaptureDisplayInfo::VignetteRecord& vignette = display.Vignette;
+        const int postLength = std::snprintf(
+            json + jsonLength,
+            sizeof(json) - static_cast<size_t>(jsonLength),
+            "  \"post\": {\n"
+            "    \"tone_map_recorded\": %s,\n"
+            "    \"tone_map_operator\": %u,\n"
+            "    \"tone_map_bypass\": %s,\n"
+            "    \"grading_mode\": %u,\n"
+            "    \"color_filter\": [%.9g, %.9g, %.9g, %.9g],\n"
+            "    \"contrast\": %.9g,\n"
+            "    \"contrast_pivot\": %.9g,\n"
+            "    \"saturation\": %.9g,\n"
+            "    \"brightness\": %.9g,\n"
+            "    \"temperature\": %.9g,\n"
+            "    \"look_lut_intensity\": %.9g,\n"
+            "    \"tone_map_vignette\": [%.9g, %.9g, %.9g],\n"
+            "    \"film_grain_strength\": %.9g,\n"
+            "    \"display_ramp\": %s,\n"
+            "    \"vignette_recorded\": %s,\n"
+            "    \"vignette_enabled\": %s,\n"
+            "    \"vignette\": [%.9g, %.9g, %.9g],\n"
+            "    \"chromatic_aberration_pixels\": %.9g,\n"
+            "    \"bloom\": %s,\n"
+            "    \"fxaa\": %s,\n"
+            "    \"hardware_srgb_encode\": %s,\n"
+            "    \"shader_srgb_encode\": %s\n"
+            "  }\n"
+            "}\n",
+            toneMap.bRecorded ? "true" : "false",
+            toneMap.OperatorType,
+            toneMap.bBypass ? "true" : "false",
+            toneMap.GradingMode,
+            static_cast<double>(toneMap.ColorFilter[0]),
+            static_cast<double>(toneMap.ColorFilter[1]),
+            static_cast<double>(toneMap.ColorFilter[2]),
+            static_cast<double>(toneMap.ColorFilter[3]),
+            static_cast<double>(toneMap.Contrast),
+            static_cast<double>(toneMap.ContrastPivot),
+            static_cast<double>(toneMap.Saturation),
+            static_cast<double>(toneMap.Brightness),
+            static_cast<double>(toneMap.Temperature),
+            static_cast<double>(toneMap.LookLutIntensity),
+            static_cast<double>(toneMap.Vignette[0]),
+            static_cast<double>(toneMap.Vignette[1]),
+            static_cast<double>(toneMap.Vignette[2]),
+            static_cast<double>(toneMap.FilmGrainStrength),
+            toneMap.bDisplayRamp ? "true" : "false",
+            vignette.bRecorded ? "true" : "false",
+            vignette.bEnabled ? "true" : "false",
+            static_cast<double>(vignette.Intensity),
+            static_cast<double>(vignette.Radius),
+            static_cast<double>(vignette.Softness),
+            static_cast<double>(vignette.ChromaticAberrationPixels),
+            display.bBloom ? "true" : "false",
+            display.bFxaa ? "true" : "false",
+            frame.bHardwareSrgbEncode ? "true" : "false",
+            frame.bShaderSrgbEncode ? "true" : "false");
+        if (postLength <= 0 || jsonLength + postLength >= static_cast<int>(sizeof(json)))
+        {
+            return false;
+        }
+        return WriteBytes(jsonPath, json, static_cast<size_t>(jsonLength + postLength));
     }
 #else
     bool SaveCapturedSceneColorHdr(const CapturedFrame&, const Container::String&)

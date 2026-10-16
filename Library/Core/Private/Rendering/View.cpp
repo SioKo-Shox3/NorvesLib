@@ -8,7 +8,9 @@
 #include "Rendering/RenderGraph/RenderGraph.h"
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
 #include "Rendering/SceneRenderer.h"
+#include "Rendering/ToneMappingPass.h"
 #include "Rendering/ViewRenderContext.h"
+#include "Rendering/VignettePass.h"
 #include "Debug/Stats.h"
 #include "Logging/LogMacros.h"
 #include <cstring>
@@ -350,6 +352,27 @@ namespace NorvesLib::Core::Rendering
                     activeCamera->LookLut.AssetPath != nullptr && activeCamera->LookLut.Intensity > 0.0f;
                 m_FrameSceneColorDisplay.ChromaticAberrationPixels = activeCamera->LensEffects.ChromaticAberrationPixels;
                 m_FrameSceneColorDisplay.LensDirtIntensity = activeCamera->LensEffects.LensDirtIntensity;
+            }
+            // ポストのパスがこのフレームで実際に使った表示変換の値（RenderGraph の実行は終わっている）
+            if (m_PostProcessStack)
+            {
+                auto findEnabledPass = [this](const char* name) -> IViewPass*
+                {
+                    IViewPass* pass = m_PostProcessStack->GetPass(name);
+                    return pass && pass->IsEnabled() ? pass : nullptr;
+                };
+                // GetName() がその名前を返すのはそのクラスだけ
+                if (IViewPass* toneMapping = findEnabledPass("ToneMappingPass"))
+                {
+                    m_FrameSceneColorDisplay.ToneMap =
+                        static_cast<ToneMappingPass*>(toneMapping)->GetLastCaptureRecord();
+                }
+                if (IViewPass* vignette = findEnabledPass("VignettePass"))
+                {
+                    m_FrameSceneColorDisplay.Vignette = static_cast<VignettePass*>(vignette)->GetLastCaptureRecord();
+                }
+                m_FrameSceneColorDisplay.bBloom = findEnabledPass("BloomPass") != nullptr;
+                m_FrameSceneColorDisplay.bFxaa = findEnabledPass("FXAAPass") != nullptr;
             }
         }
 

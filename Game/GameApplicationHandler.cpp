@@ -15,8 +15,10 @@
 #include "Core/Public/Logging/LogMacros.h"
 #include "Core/Public/Object/Entity.h"
 #include "Core/Public/Object/World.h"
+#include "Core/Public/Rendering/PostProcessStack.h"
 #include "Core/Public/Rendering/RenderResources.h"
 #include "Core/Public/Rendering/RenderWorld.h"
+#include "Core/Public/Rendering/ToneMappingPass.h"
 #include "Core/Public/Resource/SkinnedMeshResource.h"
 #include "GameModes/DogMovementSmoke/DogMovementSmokeMode.h"
 #include "Gameplay/Camera/FollowCameraComponent.h"
@@ -206,6 +208,17 @@ namespace Game
         // 変わった行だけの同期（既定）との見比べと切り戻しに使う。値を取らない。
         constexpr const TCHAR *kMegaSceneFullSyncOption = TEXT("--mega-scene-full-sync");
         bool s_bMegaSceneFullSync = false;
+        // --display-check=scene|ramp: 表示変換の照合の撮影（開発ビルドだけ。Scripts/Terrain/ReferenceCheck.py --display）。
+        // どちらもブルーム（レンズダートを含む）と FXAA のパスを外し、撮影の PNG を、HDR に表示変換を掛けただけの値にする。
+        // ramp はさらにトーンマップの入力を色の階段にする（ToneMappingPass::SetDisplayRampInput）。
+        constexpr const TCHAR *kDisplayCheckOption = TEXT("--display-check=");
+        enum class DisplayCheckMode
+        {
+            None,
+            Scene,
+            Ramp,
+        };
+        DisplayCheckMode s_DisplayCheckMode = DisplayCheckMode::None;
         // --open-scene-info: mega-bananas を起動時から情報表示（H キーの表示）を出した状態にする（開発ビルドだけ。値を取らない）。
         // 撮影の起動は ImGui を使わないが、この指定があれば撮影でも使い、表示を撮れる。
         constexpr const TCHAR *kOpenSceneInfoOption = TEXT("--open-scene-info");
@@ -619,6 +632,7 @@ namespace Game
         s_bEngineChecksSelfTestFail = false;
         s_bEngineChecksSelfTestReported = false;
         s_bMegaSceneFullSync = false;
+        s_DisplayCheckMode = DisplayCheckMode::None;
         m_StressStreamCellMeters = 0.0f;
         m_bStressStreamCellSet = false;
         m_StressStreamPeriod = Game::GameModes::kDefaultStressStreamPeriod;
@@ -1279,6 +1293,27 @@ namespace Game
             if (args[i] == kMegaSceneFullSyncOption)
             {
                 s_bMegaSceneFullSync = true;
+                continue;
+            }
+            if (TryStripPrefix(args[i], kDisplayCheckOption, sceneValue))
+            {
+#if NORVES_BUILD_DEVELOPMENT
+                if (sceneValue == TEXT("scene"))
+                {
+                    s_DisplayCheckMode = DisplayCheckMode::Scene;
+                }
+                else if (sceneValue == TEXT("ramp"))
+                {
+                    s_DisplayCheckMode = DisplayCheckMode::Ramp;
+                }
+                else
+                {
+                    LOG_ERROR("--display-check は scene か ramp で指定してください");
+                    return false;
+                }
+#else
+                LOG_WARNING("--display-check は開発ビルドだけで使えます。無視します");
+#endif
                 continue;
             }
             if (args[i] == kStressBatchCellsOption)
@@ -2276,6 +2311,29 @@ namespace Game
                 {
                     LOG_ERROR("--mega-scene-full-sync: メインの SceneView が無いため、全量の同期にできません");
                 }
+            }
+
+            // --display-check: ブルームと FXAA を外し、ramp ならトーンマップの入力を色の階段にする（最初のフレームの前）
+            if (s_DisplayCheckMode != DisplayCheckMode::None)
+            {
+                auto mainSceneView = NorvesLib::Core::Engine::GEngine->GetRenderWorld().GetRenderingCoordinator().GetMainSceneView();
+                NorvesLib::Core::Rendering::PostProcessStack *postProcessStack =
+                    mainSceneView ? mainSceneView->GetPostProcessStack() : nullptr;
+                NorvesLib::Core::Rendering::IViewPass *toneMappingPass =
+                    postProcessStack ? postProcessStack->GetPass("ToneMappingPass") : nullptr;
+                if (!toneMappingPass)
+                {
+                    LOG_ERROR("--display-check: メインの SceneView にトーンマップのパスが無いため、照合の撮影にできません");
+                    NorvesLib::Core::Engine::GEngine->RequestExit(1);
+                    return;
+                }
+                postProcessStack->SetPassEnabled("BloomPass", false);
+                postProcessStack->SetPassEnabled("FXAAPass", false);
+                // GetName() が "ToneMappingPass" を返すのは ToneMappingPass だけ
+                static_cast<NorvesLib::Core::Rendering::ToneMappingPass *>(toneMappingPass)
+                    ->SetDisplayRampInput(s_DisplayCheckMode == DisplayCheckMode::Ramp);
+                LOG_INFO_F("DISPLAY_CHECK mode=%s bloom=off fxaa=off",
+                           s_DisplayCheckMode == DisplayCheckMode::Ramp ? "ramp" : "scene");
             }
         }
 

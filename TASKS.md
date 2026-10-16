@@ -1660,7 +1660,7 @@
 - notes: 危険地帯（描画の読み出し）。2026-10-16 ユーザーの決定「正解の絵から」（Docs/Plans/WastelandRebuild.md。Sol の批評 2 回を反映）。撮影の構成（Debug か RelWithDebInfo か）は SCN-WL-CAPTURE-SPEED の決定に揃えてよい（verify も同じ反復で直す）。
 
 ## SCN-WLR-DISPLAY-TRANSFORM: エンジンの表示変換を Python で再現し、HDR から PNG を作れることを照合する
-- status: todo
+- status: done
 - after: SCN-WLR-HDR-CAPTURE
 - done-when: エンジンの露出・トーンマップ（荒野の NeutralLinear と ACES 2.0 の LUT の両方）・グレーディング（コントラスト・彩度・色温度・ビネット）・sRGB の出力を `Scripts/Terrain/DisplayTransform.py` に再現する（`Assets/Shaders/tonemapping.frag`・`Scripts/BakeAcesOutputLut.py` と同じ値・同じ補間）。合成の色の階段（明るさ 12 段 × 原色・補色・灰）をエンジンの表示変換の経路に通した結果と 8 bit で 1 段以内に合うこと、SCN-WLR-BASELINE の HDR にブルームを外した撮影で同じ式を掛けた PNG がエンジンの PNG と画素の 99 % で 1 段以内に合うことを確かめる。
 - verify: `python Scripts/Terrain/ReferenceCheck.py --display --capture .harness/runs/scene-capture/SCN-WLR-DISPLAY-TRANSFORM --verify`

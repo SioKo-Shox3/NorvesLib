@@ -5051,3 +5051,27 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `aux-SCN-WLR-HDR-CAPTURE-mesh-stale-iter4.txt`: `namaqualand_cliff_01.bin` の読み取り内容をメモリ上で 1 バイト変えると `check_inputs()` が「入力が撮影の後に変わった（古い結果）: asset_sources」で落ち、戻すと通る
 - Notes: Cooked の出力（`Cooked/`）はハッシュに入れていない（資産の実体と資産の組の定義から焼くので、元の側の変化で古い結果を拒める）。入力のハッシュは 650 ファイル・約 1.4 GB で約 5 秒
 - Next: SCN-WLR-DISPLAY-TRANSFORM。
+
+### SCN-WLR-DISPLAY-TRANSFORM 完了（2026-10-16、run 20261016-193030 の反復 5）
+
+- Done: エンジンの表示変換を `Scripts/Terrain/DisplayTransform.py` に再現し、エンジンの撮影と照らした（記録は `Docs/RenderingValidation/DisplayTransformCheck.md`）
+  - 再現: 露出（放射輝度 × プリエクスポージャ、RGBA16F へ丸め）、`tonemapping.frag` の 6 つの演算子（NeutralLinear と ACES 2.0 SDR LUT を含む。LUT は同じ log2 の shaper・半テクセル内側の座標の三線形補間、重みは副テクセルの精度 1/256）、カラーフィルター・明度・グレーディングの式 0 と式 1、トーンマップの中のビネットと `VignettePass`、RGBA16F の中間の丸め、sRGB の符号化と 8 bit への丸め
+  - 撮影の `<視点>.hdr.json` に `post`（ToneMappingPass・VignettePass がそのフレームで実際に使った値、ブルームと FXAA の有無、色の階段の入力か、sRGB の符号化の経路）を足した（`FrameCaptureDisplayInfo::ToneMap`・`Vignette`。パスが記録し、`View` が RenderGraph の実行の後に拾う）
+  - 開発ビルドの Game の `--display-check=scene|ramp`: ブルームと FXAA を外し、`ramp` はトーンマップの入力を色の階段（12 段 × R・G・B・C・M・Y・灰、半精度で正確な 2^(i−8)）にする（`ToneMappingPass::SetDisplayRampInput`。Release では何もしない）
+  - `ReferenceCheck.py --hdr` の見積もりも `DisplayTransform.py` を使うようにした（式の二重持ちをやめた）。`--display` を足した
+  - 描画のコードが変わり基準 `SCN-WLR-BASELINE` の入力のハッシュが古くなったので、基準の 8 視点を撮り直した（前の基準は `SCN-WLR-BASELINE-before-display/`）
+- 証拠（`.harness/runs/20261016-193030/`）:
+  - `verify-SCN-WLR-DISPLAY-TRANSFORM-2.txt`: `ReferenceCheck.py --display --verify` result=pass。ramp-neutral（荒野、NeutralLinear・式 1）と ramp-aces（sandbox、`--tone-map=aces20-lut`）は区画の縁 2 画素の内側の 199.5 万画素すべてが 1 段以内（完全一致 91.8 %・91.0 %）。scene（荒野の基準の 8 視点をブルーム・FXAA なしで）は 8 視点とも全画素が 1 段以内（最大 1 段、完全一致 82.8〜86.4 %）。3 組とも入力のハッシュは今のファイルと一致
+  - `aux-SCN-WLR-DISPLAY-TRANSFORM-build-rwdi.txt`: RelWithDebInfo の Game のビルド EXIT=0
+  - `aux-...-capture-ramp-aces.txt`・`-capture-ramp-neutral.txt`・`-capture-scene.txt`: 撮影 result=pass（scene は 253 秒）。色の階段 2 枚と ref_cliff_01 の PNG を開いて確かめた
+  - `aux-...-negative.txt`: 値を一つずらすと照合が落ちる（コントラスト 1.35→1.30 で 1 段以内 38 %、彩度 1.2→1.15 で 61 %、ビネットなしで 39 %、露出 +1/12 段で 0.03 %、ACES Filmic で 0 %）
+  - `aux-...-baseline-recapture.txt`: 基準の撮り直し。前の基準と 7 視点は PSNR 45.6〜92.5 dB・平均輝度の差 0.006 以下。ref_ground_01 だけ PSNR 36.6 dB（下記）
+  - `aux-...-ground01-repeat.txt`: 今のコードで ref_ground_01 を 1 視点で撮ると前の基準と PSNR 58.8 dB
+  - `aux-...-baseline-hdr-verify.txt`: 撮り直した基準の `--hdr --verify` result=pass（8 視点、inputs_current=1）
+- Notes:
+  - ref_ground_01 は撮影ごとに小石・草の細かな点の置かれ方が揺らぐ（差は 0.4 % の画素に散らばり平均輝度の差 0.005。前の反復でも 177.515 と 177.506 を行き来した）。撮り直した基準はその別の状態で撮れた。今回の変更は記録の追加だけで描画の値を変えない
+  - 撮り直しは比較の閾値で `CaptureScene.ps1` が失敗を返し入力の記録を書かなかったので、`--record-inputs` を手で走らせた
+  - 荒野の色温度 0.05 は 8 bit で 1 段未満の差しか生まず、1 段の照合では見分けられない（0 にすると完全一致が 86.4 % から 51.0 % に落ちるので、値は効いている）
+  - 見た目の 3D LUT・フィルムグレイン・色収差は再現していない（掛かる撮影は `UnsupportedDisplay` で拒む。起動画面 rendering3dtest は look LUT が掛かるので照合できない）
+  - `Game/GameApplicationHandler.cpp`（`--display-check` の実装）は入力のハッシュに入れていない
+- Next: TASKS.md の次の未完の項目。

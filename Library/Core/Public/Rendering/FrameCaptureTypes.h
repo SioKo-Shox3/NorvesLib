@@ -113,8 +113,9 @@ namespace NorvesLib::Core::Rendering
     /**
      * @brief シーンの色を描いたカメラの表示変換の差し替え（撮影の HDR から表示の値を見積もる手掛かり）
      *
-     * カメラの CameraToneMapCurve・CameraGradingOverride を写したもの。差し替えが無いカメラは View の既定の
-     * トーンマップ・グレーディングで描かれ、ここには入らない（bGradingOverride が false）。
+     * 前半はカメラの CameraToneMapCurve・CameraGradingOverride を写したもの。差し替えが無いカメラは View の既定の
+     * トーンマップ・グレーディングで描かれ、前半には入らない（bGradingOverride が false）。
+     * 後半（ToneMap・Vignette・bBloom・bFxaa）は、ポストのパスがそのフレームで実際に使った値。
      */
     struct FrameCaptureDisplayInfo
     {
@@ -135,6 +136,50 @@ namespace NorvesLib::Core::Rendering
         float ChromaticAberrationPixels = 0.0f;
         /** @brief レンズダートの強さ（0 ならカメラの指定なし） */
         float LensDirtIntensity = 0.0f;
+
+        /**
+         * @brief そのフレームでトーンマップのパスが実際に使った値（tonemapping.frag の定数と同じ意味）
+         *
+         * カメラの差し替えと View の既定を解いた後の値。bRecorded が false ならパスが走っていない。
+         */
+        struct ToneMapRecord
+        {
+            bool bRecorded = false;
+            /** @brief tonemapping.frag の operatorType（4: ACES 2.0 SDR LUT、5: NeutralLinear など） */
+            uint32_t OperatorType = 0;
+            bool bBypass = false;
+            /** @brief 0: View の設定の式、1: カメラの差し替えの式 */
+            uint32_t GradingMode = 0;
+            float ColorFilter[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+            float Contrast = 1.0f;
+            float ContrastPivot = 0.18f;
+            float Saturation = 1.0f;
+            float Brightness = 0.0f;
+            float Temperature = 0.0f;
+            float LookLutIntensity = 0.0f;
+            /** @brief トーンマップの中のビネット（強さ・半径・幅） */
+            float Vignette[3] = {0.0f, 0.8f, 0.5f};
+            float FilmGrainStrength = 0.0f;
+            /** @brief 入力をシーンの色でなく表示変換の照合の色の階段にしたか */
+            bool bDisplayRamp = false;
+        };
+        ToneMapRecord ToneMap;
+
+        /** @brief そのフレームで VignettePass が実際に使った値（vignette.frag の定数と同じ意味） */
+        struct VignetteRecord
+        {
+            bool bRecorded = false;
+            bool bEnabled = false;
+            float Intensity = 0.0f;
+            float Radius = 0.8f;
+            float Softness = 0.5f;
+            float ChromaticAberrationPixels = 0.0f;
+        };
+        VignetteRecord Vignette;
+
+        /** @brief ブルーム（レンズダートを含む）と FXAA のパスが有効だったか */
+        bool bBloom = false;
+        bool bFxaa = false;
     };
 
     struct FrameCaptureSourceSet

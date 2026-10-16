@@ -334,6 +334,9 @@ namespace NorvesLib::Core::Rendering
         m_LookLutTexture.reset();
         m_LookLutPath.clear();
         m_bLookLutLoadFailed = false;
+        m_DisplayRampTexture.reset();
+        m_DisplayRampWidth = 0;
+        m_DisplayRampHeight = 0;
         m_Device = nullptr;
         m_OutputHandle = {};
         m_bRenderPassUsesRenderGraphInitialState = false;
@@ -588,6 +591,7 @@ namespace NorvesLib::Core::Rendering
 
     void ToneMappingPass::Declare(RenderGraphBuilder &builder)
     {
+        m_LastCaptureRecord = {};
         m_bLegacyInputFallbackActive = false;
         const ViewRenderContext *context = builder.GetContext();
         const uint32_t width = context ? context->GetActiveRenderWidth() : 1u;
@@ -728,6 +732,7 @@ namespace NorvesLib::Core::Rendering
         {
             m_PreparedLookLut = PrepareLookLut(activeCamera);
         }
+        PrepareDisplayRamp();
         m_bLutsPreparedForRecord = true;
     }
 
@@ -823,6 +828,35 @@ namespace NorvesLib::Core::Rendering
         }
         params.lookLutIntensity = lookLutIntensity;
 
+        // 表示変換の照合の色の階段を、シーンの色の代わりに結ぶ（準備段の無いフレームはここで用意する）
+        if (!bLutsPrepared)
+        {
+            PrepareDisplayRamp();
+        }
+        const bool bDisplayRamp = m_bDisplayRampInput && m_DisplayRampTexture != nullptr;
+        const RHI::TexturePtr& inputTexture = bDisplayRamp ? m_DisplayRampTexture : sceneColorPtr;
+
+        // 撮影の HDR の表示変換の記録（tonemapping.frag へ渡す値そのもの）
+        m_LastCaptureRecord.bRecorded = true;
+        m_LastCaptureRecord.OperatorType = params.operatorType;
+        m_LastCaptureRecord.bBypass = params.bBypass != 0u;
+        m_LastCaptureRecord.GradingMode = params.gradingMode;
+        for (uint32_t i = 0; i < 4u; ++i)
+        {
+            m_LastCaptureRecord.ColorFilter[i] = params.colorFilter[i];
+        }
+        m_LastCaptureRecord.Contrast = params.contrast;
+        m_LastCaptureRecord.ContrastPivot = params.contrastPivot;
+        m_LastCaptureRecord.Saturation = params.saturation;
+        m_LastCaptureRecord.Brightness = params.brightness;
+        m_LastCaptureRecord.Temperature = params.temperature;
+        m_LastCaptureRecord.LookLutIntensity = params.lookLutIntensity;
+        m_LastCaptureRecord.Vignette[0] = params.vignetteIntensity;
+        m_LastCaptureRecord.Vignette[1] = params.vignetteRadius;
+        m_LastCaptureRecord.Vignette[2] = params.vignetteSoftness;
+        m_LastCaptureRecord.FilmGrainStrength = params.filmGrainStrength;
+        m_LastCaptureRecord.bDisplayRamp = bDisplayRamp;
+
         // 定数と記述子セットはこの Execute の分をフレームの持ち主から借りる。持ち主の無い文脈（RenderingCoordinator を
         // 通さない検査）では使い回さない定数と記述子セットを作り、提出の完了を知る手段が無いのでパスを手放すまで持つ
         RHI::DescriptorSetPtr descriptorSet;
@@ -868,7 +902,7 @@ namespace NorvesLib::Core::Rendering
 
         // 定数と、SceneColor・LUT のテクスチャを借りたディスクリプタセットにバインド
         descriptorSet->BindConstantBuffer(1, paramsBuffer, paramsOffset, TONEMAPPING_PARAMS_SIZE);
-        descriptorSet->BindTexture(0, sceneColorPtr);
+        descriptorSet->BindTexture(0, inputTexture);
         descriptorSet->BindSampler(0, m_SceneColorSampler);
         descriptorSet->BindTexture(2, colorLut);
         descriptorSet->BindSampler(2, m_ColorLutSampler);
@@ -885,6 +919,92 @@ namespace NorvesLib::Core::Rendering
                                       scissor,
                                       m_ToneMappingPipeline,
                                       descriptorSet);
+    }
+
+    void ToneMappingPass::SetDisplayRampInput(bool bEnabled)
+    {
+#if NORVES_BUILD_DEVELOPMENT
+        m_bDisplayRampInput = bEnabled;
+#else
+        (void)bEnabled;
+#endif
+    }
+
+    void ToneMappingPass::PrepareDisplayRamp()
+    {
+#if NORVES_BUILD_DEVELOPMENT
+        if (!m_bDisplayRampInput || !m_Device || m_CurrentWidth == 0 || m_CurrentHeight == 0)
+        {
+            return;
+        }
+        if (m_DisplayRampTexture && m_DisplayRampWidth == m_CurrentWidth && m_DisplayRampHeight == m_CurrentHeight)
+        {
+            return;
+        }
+
+        // 列 i の明るさ 2^(i − 8) の半精度のビット（指数の偏り 15、仮数 0）。行の成分は 0 か明るさ
+        constexpr uint16_t HalfOne = 0x3C00u;
+        constexpr uint32_t RampExponentOffset = 8u;
+        constexpr uint8_t RowMasks[kDisplayRampRows] = {
+            0b001u, // R
+            0b010u, // G
+            0b100u, // B
+            0b110u, // C
+            0b101u, // M
+            0b011u, // Y
+            0b111u, // 灰
+        };
+        const uint32_t width = m_CurrentWidth;
+        const uint32_t height = m_CurrentHeight;
+        Container::VariableArray<uint16_t> texels(static_cast<size_t>(width) * height * 4u, 0u);
+        for (uint32_t y = 0; y < height; ++y)
+        {
+            const uint32_t row = static_cast<uint32_t>(static_cast<uint64_t>(y) * kDisplayRampRows / height);
+            for (uint32_t x = 0; x < width; ++x)
+            {
+                const uint32_t column = static_cast<uint32_t>(static_cast<uint64_t>(x) * kDisplayRampColumns / width);
+                const uint16_t value = static_cast<uint16_t>(((15u + column - RampExponentOffset) & 0x1Fu) << 10u);
+                uint16_t* texel = texels.data() + (static_cast<size_t>(y) * width + x) * 4u;
+                for (uint32_t channel = 0; channel < 3u; ++channel)
+                {
+                    texel[channel] = (RowMasks[row] >> channel) & 1u ? value : 0u;
+                }
+                texel[3] = HalfOne;
+            }
+        }
+
+        RHI::TextureDesc rampDesc;
+        rampDesc.Width = width;
+        rampDesc.Height = height;
+        rampDesc.Depth = 1u;
+        rampDesc.TextureFormat = RHI::Format::R16G16B16A16_FLOAT;
+        rampDesc.Usage = RHI::ResourceUsage::ShaderRead | RHI::ResourceUsage::TransferDst;
+        rampDesc.DebugName = "ToneMappingDisplayRamp";
+        try
+        {
+            m_DisplayRampTexture = m_Device->CreateTexture(rampDesc);
+            if (m_DisplayRampTexture)
+            {
+                const uint32_t rowPitch = width * 8u;
+                m_DisplayRampTexture->Update(texels.data(), rowPitch, rowPitch * height);
+            }
+        }
+        catch (const std::exception& exception)
+        {
+            NORVES_LOG_ERROR("ToneMappingPass", "表示変換の照合の色の階段を作れません: %s", exception.what());
+            m_DisplayRampTexture.reset();
+        }
+        if (!m_DisplayRampTexture)
+        {
+            // 作れないときはシーンの色のまま描き、記録の bDisplayRamp が false になる
+            m_bDisplayRampInput = false;
+            return;
+        }
+        m_DisplayRampWidth = width;
+        m_DisplayRampHeight = height;
+        NORVES_LOG_INFO("ToneMappingPass", "DISPLAY_RAMP_INPUT width=%u height=%u columns=%u rows=%u",
+                        width, height, kDisplayRampColumns, kDisplayRampRows);
+#endif
     }
 
     uint32_t ToneMappingPass::PrepareColorLut()

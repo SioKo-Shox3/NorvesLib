@@ -6,6 +6,7 @@
 #include "RHI/RHITypes.h"
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
+#include "Rendering/FrameCaptureTypes.h"
 #include <cstdint>
 
 using namespace NorvesLib::Core::Container;
@@ -200,6 +201,26 @@ namespace NorvesLib::Core::Rendering
          */
         const ToneMappingSettings& GetSettings() const { return m_Settings; }
 
+        /**
+         * @brief 入力をシーンの色の代わりに表示変換の照合の色の階段にする（開発ビルドの撮影の検査だけ）
+         *
+         * 出力を横 kDisplayRampColumns × 縦 kDisplayRampRows の区画に分け、列 i の明るさを 2^(i − 8)、行を
+         * R・G・B・C・M・Y・灰（各成分は 0 か明るさ）にした RGBA16F の画像を出力の大きさで作って結ぶ
+         * （値は半精度で正確に表せる。Scripts/Terrain/DisplayTransform.py の display_ramp と同じ並び）。
+         * トーンマップ以降（グレーディング・ビネット・sRGB の出力）はシーンの色のときと同じ経路を通る。
+         * Release では何もしない。最初の FramePacket が RenderThread へ渡る前にだけ呼ぶ。
+         */
+        void SetDisplayRampInput(bool bEnabled);
+        static constexpr uint32_t kDisplayRampColumns = 12;
+        static constexpr uint32_t kDisplayRampRows = 7;
+
+        /**
+         * @brief 直近の記録で使った値（撮影の HDR の表示変換の記録。Declare ごとに消す）
+         *
+         * RenderGraph の実行が終わった後に、同じスレッドから読む。
+         */
+        const FrameCaptureDisplayInfo::ToneMapRecord& GetLastCaptureRecord() const { return m_LastCaptureRecord; }
+
     private:
         struct AttachmentSignature
         {
@@ -261,6 +282,8 @@ namespace NorvesLib::Core::Rendering
          */
         RHI::TexturePtr PrepareLookLut(const CameraProxy* camera);
         RHI::TexturePtr LoadLookLut(const char* assetPath) const;
+        // 色の階段の入力（SetDisplayRampInput）を出力の大きさで用意する。作成・転送は直列の段でだけ呼ぶ
+        void PrepareDisplayRamp();
 
         // 設定
         ToneMappingSettings m_Settings;
@@ -299,6 +322,15 @@ namespace NorvesLib::Core::Rendering
         uint32_t m_PreparedViewOperatorType = 0;
         RHI::TexturePtr m_PreparedLookLut;
         bool m_bLutsPreparedForRecord = false;
+
+        // 表示変換の照合の色の階段（SetDisplayRampInput）。出力の大きさが変わったら作り直す
+        bool m_bDisplayRampInput = false;
+        RHI::TexturePtr m_DisplayRampTexture;
+        uint32_t m_DisplayRampWidth = 0;
+        uint32_t m_DisplayRampHeight = 0;
+
+        // 直近の記録で使った値（撮影の HDR の表示変換の記録）
+        FrameCaptureDisplayInfo::ToneMapRecord m_LastCaptureRecord;
 
         // デバイス参照
         RHI::IDevice *m_Device = nullptr;
