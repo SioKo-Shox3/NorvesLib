@@ -4994,3 +4994,24 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - Notes:
   - 親が替えた `-Cycles 1` は通らない（スクリプトの `ValidateRange(2, 1000)` と Game の `requiredCycles = 基準の周回 + 2` が、基準の周回と比べるために 2 周以上を要求する）。Debug の 3 周は 928 秒で 10 分の上限を超えるので、verify を RelWithDebInfo の 3 周に替えた（done-when の 3 周をそのまま満たす。Debug の検証レイヤー込みの 3 周は反復 9 の `verify-SCN-WL-OUTPOST-6.txt`）
 - Next: TASKS.md の次の未完の項目。
+
+### SCN-WL-CAPTURE-SPEED 完了（2026-10-16、run 20261016-193030 の反復 1）
+
+- Done: 荒野の撮影の時間を段ごとに測り、Debug の最適化の無い CPU の処理が主因と確かめて、荒野の撮影と周回スモークの verify を RelWithDebInfo の Game（`-Configuration RelWithDebInfo -Build`）に替えた。記録は `Docs/RenderingValidation/WastelandCaptureSpeed.md`
+  - 段ごと（手本の 6 視点、Debug → RelWithDebInfo）: シェーダーのコンパイル（77 本）86.5 → 12.8 秒、地形の区画と置き物のメッシュ 206 個の解析と MegaMesh の作成 168.9 → 60.2 秒、崖錐の岩の生成から SceneReady まで 74.3 → 5.0 秒、SceneReady 330.2 → 78.3 秒、6 視点を撮り終わるまで 500.4 → 161.7 秒。草・低木・礫の生成は数十 ms で重くない
+  - RelWithDebInfo で初めに撮ると ref_cliff_01 だけ Debug と違った（PSNR 34.5 dB）。撮影の瞬間にジオメトリのページが読み込みの途中（`wanted=599`）だった。`GeometryPageStreamer::HasPendingWork` の入れ替わりの判定が、視点を切り替えた直後の「前の視点のページを置き場から外しながら新しいページを積む」間と、置き場の埋まったメッシュの 1 ページのゆっくりした追い出しを、追い出しが 300 更新続いた入れ替わりと数えて待たなかった（Debug はフレームが遅く、その間に読み終わっていた）。追い出しが続いていても常駐の量がその間の最大を超えて増えたら、入れ替わりの長さを数え直すようにした（`GeometryPageStreamer.h`）
+  - この項目と残りの荒野の項目（todo・backlog）の verify の撮影 19 本と周回スモーク 1 本を `-Configuration RelWithDebInfo -Build` に揃えた。構成を既に指定している GPU 時間の撮影（SCN-CLOUDS-TEMPORAL・SCN-WASTELAND-POLISH の 1 本目）と、全シーンの受入れ（SCN-ACCEPT）は替えていない
+- 証拠（`.harness/runs/20261016-193030/`）:
+  - `verify-SCN-WL-CAPTURE-SPEED-3.txt`: 直した後の Debug の Game のビルド EXIT=0（`-1.txt` は直す前）
+  - `verify-SCN-WL-CAPTURE-SPEED-4.txt`: 直した後の RelWithDebInfo の 6 視点、result=pass（白飛び 0・黒つぶれ 0）、ビルドの確認込み 176 秒、EXIT=0
+  - 直す前: `aux-SCN-WL-CAPTURE-SPEED-before-debug.txt`（Debug・同じ 6 視点・1920×1080、result=pass、503 秒）。176 ÷ 503 = 0.35 倍で半分以下
+  - 比較（`aux-SCN-WL-CAPTURE-SPEED-compare.txt`）: 6 視点とも Debug と平均輝度の差 0.01 以内、PSNR 53.0〜62.5 dB、差が 8 を超える画素 0.02 % 以下。比較画像 `.harness/runs/scene-capture/SCN-WL-CAPTURE-SPEED/compare_debug_before_left_rwdi_after_right.png`（左が Debug、右が RelWithDebInfo）を開き、見分けがつかないことを確かめた。直す前の RelWithDebInfo（`verify-...-2.txt`・`SCN-WL-CAPTURE-SPEED-rwdi/`）の ref_cliff_01 は近くの地面の陰影が粗かった（`SCN-WL-CAPTURE-SPEED-rwdi/diff_ref_cliff_01.png`）
+  - `aux-SCN-WL-CAPTURE-SPEED-streamer-test.txt`: `GeometryPageStreamerTest`（入れ替わりを待ちに数えない既存の試験を含む）が Debug で pass
+  - `aux-SCN-WL-CAPTURE-SPEED-cycle-smoke.txt`: `RunSceneCycleSmoke.ps1 -Build -Scenes wasteland -Cycles 3 -Configuration RelWithDebInfo` が result=pass、3 周とも settled=1・texture_bytes=1703784520、ビルドの確認込み 256 秒（Debug の 3 周は 928 秒）
+  - `aux-SCN-WL-CAPTURE-SPEED-startup-det.txt`: 起動画面の決定的な撮影（Debug）を前回（SCN-WL-CONTACT-SHADOW-TERRAIN-det）と比べて平均輝度の差 0・PSNR 100・違う画素 5e-6、検証レイヤーのログは空。Rendering3DTest は変わらない
+- Notes:
+  - RelWithDebInfo は検証レイヤーを有効にしない。描画の経路やリソースの扱いを変える項目は、Debug の起動画面の撮影などで検証レイヤーを別に確かめる
+  - RelWithDebInfo で残るいちばん重い段は地形の区画の読み込み（1 区画約 0.22 秒、ゲームスレッドで順にクック済みメッシュを解析して MegaMesh を作る。`WastelandRoutine.cpp` の `PlaceTerrainTile`）。解析をワーカーへ出せばさらに縮む
+  - ページの待ちを正しくしたので、RelWithDebInfo の視点ごとの待ちは 5 秒から 14 秒に延びた
+  - 入れ替わりの判定の直し（常駐の量が増える間は数え直す）を確かめる試験は足していない（既存の `TestChurnIsNotPendingWork` が頭打ちの入れ替わりを守る）
+- Next: TASKS.md の次の未完の項目。

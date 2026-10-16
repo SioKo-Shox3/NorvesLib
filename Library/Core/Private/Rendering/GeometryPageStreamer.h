@@ -335,6 +335,7 @@ namespace NorvesLib::Core::Rendering
          * 待ち続けているときは数えない（待ち続けても落ち着かないので）。失敗は数えない。
          * 作業集合が目標を超えて、追い出しと読み直しが ChurnRunFrames 以上続いている間も数えない
          * （待つと永遠に落ち着かず、撮影の設定待ちが巻き戻り続けるため。追い出しが ChurnGapFrames 止まれば数え直す）。
+         * 追い出しが続いていても、常駐の量がその間の最大を超えて増えている間は、読み込みが進んでいるので数える。
          * 撮影が、ページが落ち着くのを待つのに使う。
          */
         bool HasPendingWork() const
@@ -427,9 +428,18 @@ namespace NorvesLib::Core::Rendering
                 if (!m_bEvictionRun || m_UpdateCount - m_LastEvictionUpdate > ChurnGapFrames)
                 {
                     m_EvictionRunStartUpdate = m_UpdateCount;
+                    m_EvictionRunPeakBytes = m_ResidentBytes;
                     m_bEvictionRun = true;
                 }
                 m_LastEvictionUpdate = m_UpdateCount;
+            }
+            // 追い出しが続いていても、常駐の量（書き込み中を含む）がその間の最大を超えて増えたなら、作業集合が目標に
+            // 頭打ちになって入れ替わっているのではなく、新しいページの読み込みが進んでいる（視点を変えた直後に、
+            // 前の視点のページを置き場から外しながら新しい視点のページを積む間など）。入れ替わりの長さを数え直す
+            if (m_bEvictionRun && m_ResidentBytes > m_EvictionRunPeakBytes)
+            {
+                m_EvictionRunPeakBytes = m_ResidentBytes;
+                m_EvictionRunStartUpdate = m_LastEvictionUpdate;
             }
             return result;
         }
@@ -1057,5 +1067,7 @@ namespace NorvesLib::Core::Rendering
         bool m_bEvictionRun = false;
         uint64_t m_EvictionRunStartUpdate = 0;
         uint64_t m_LastEvictionUpdate = 0;
+        // 追い出しが続いている間の常駐の量の最大（これを超えて増えたら、読み込みが進んでいるとして長さを数え直す）
+        uint64_t m_EvictionRunPeakBytes = 0;
     };
 } // namespace NorvesLib::Core::Rendering
