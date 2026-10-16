@@ -24,8 +24,9 @@ param(
     [ValidateSet('Debug', 'Release', 'RelWithDebInfo')]
     [string]$Configuration = 'Debug',
     [string]$OutDir = '',
+    # プロセス全体の待ち[秒]。Debug の荒野は 1 周（入ってから地形・崖錐の岩・礫を置いてランチャーへ戻るまで）に約 300 秒かかる
     [ValidateRange(10, 7200)]
-    [int]$TimeoutSeconds = 900,
+    [int]$TimeoutSeconds = 1800,
     [string[]]$GameArgs = @(),
     # 周回の前に、-Configuration の Game をビルドする（失敗したら周回せずに失敗）。
     [switch]$Build

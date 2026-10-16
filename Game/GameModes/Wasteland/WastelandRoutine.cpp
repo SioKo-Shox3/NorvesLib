@@ -221,10 +221,9 @@ namespace Game::GameModes
         constexpr uint32_t kReadyTicksAfterTerrain = 90;
         // 1 Tick に読んで置く地形の区画の数（区画は 1 つ 37 MB 前後。読み込みと解析のメモリを数区画ぶんに抑える）
         constexpr uint32_t kTerrainTilesPerTick = 4;
-        // 岩・崖・建物（WastelandLayout）を置くか。配置は手続きの地形（中央の盆地とメサの輪）に合わせたものなので、
-        // DEM の地形では前哨地を置き直す（SCN-WL-OUTPOST）まで置かない。偽のときも崖の足元の落石（Layout::IsTalusKind）は
-        // 読んで、崖錐の岩の散布（PlaceTalusRocks）に使う
-        constexpr bool kPlaceLayoutProps = false;
+        // 岩・崖・建物（WastelandLayout）の手続きの地形（中央の盆地とメサの輪）に合わせた配置は使わない。DEM の地形では
+        // 前哨地の建物（造成した足元に置く）と、崖錐の岩の散布（PlaceTalusRocks）に使う崖の足元の落石だけを読む（Layout::IsUsedOnDem）
+        constexpr bool kProceduralLayout = false;
         // 名前付き視点の足元で草・低木を撒かない半径[m]（目の前を株がふさがない）
         constexpr float kViewFoliageClearRadius = 2.5f;
         // 名前付き視点の足元で大きな石（14〜40 cm）を置かない半径[m]（小礫と石は足元にも置く。手本の足元の写真も礫が手前まで続く）
@@ -725,7 +724,7 @@ namespace Game::GameModes
             }
         }
 
-        /// 小物・建物の置く種類（kPlaceLayoutProps が偽なら崖の足元の落石だけ）のクック済みメッシュを解決・解析し、
+        /// 小物・建物の置く種類（前哨地の建物と崖の足元の落石）のクック済みメッシュを解決・解析し、
         /// 材質のテクスチャの読み込みを始める。クック済みが無い・壊れている種類は理由を出して読み飛ばす（その種類を置かずに続ける）
         void StartPropLoads(GameModeContext &ctx, const TSharedPtr<const Asset::AssetSystem> &assetSystem,
                             const TSharedPtr<WastelandAssembly> &assembly)
@@ -734,7 +733,7 @@ namespace Game::GameModes
             uint32_t started = 0;
             for (uint32_t kindIndex = 0; kindIndex < Layout::kPropKindCount; ++kindIndex)
             {
-                if (!kPlaceLayoutProps && !Layout::IsTalusKind(static_cast<Layout::PropKind>(kindIndex)))
+                if (!kProceduralLayout && !Layout::IsUsedOnDem(static_cast<Layout::PropKind>(kindIndex)))
                 {
                     continue;
                 }
@@ -1033,7 +1032,7 @@ namespace Game::GameModes
 
             VariableArray<Layout::PropPlacement> placements;
             Layout::LayoutStats stats;
-            Layout::BuildPlacements(field, shapes, kPlaceLayoutProps, placements, stats);
+            Layout::BuildPlacements(field, shapes, kProceduralLayout, placements, stats);
 
             uint32_t placedPerKind[Layout::kPropKindCount] = {};
             uint32_t placed = 0;
@@ -1118,9 +1117,10 @@ namespace Game::GameModes
             Game::Scenes::EndSceneAssembly(ctx.EngineRef);
             return GameModeEnterResult::Failed;
         }
-        // 地形の高さ場（DEM の格子）を 1 回だけ読み、シーンの間だけ持つ。クッカーが区画を焼いたのと同じファイル・同じ標本の規則
+        // 地形の高さ場（DEM の格子に前哨地の造成を掛けたもの）を 1 回だけ読み、シーンの間だけ持つ。クッカーが区画を焼いたのと
+        // 同じファイル・同じ造成・同じ標本の規則
         AnsiString gridError;
-        data.m_pHeightField = Terrain::TerrainHeightField::LoadGrid(TerrainSpec::kDemGridDescriptorPath, gridError);
+        data.m_pHeightField = TerrainSpec::LoadDemGrid(gridError);
         if (!data.m_pHeightField)
         {
             LOG_WARNING_F("COOKED_MODEL_MISSING scene=wasteland path=%s 地形の格子を読めません（%s）。"

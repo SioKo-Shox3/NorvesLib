@@ -11,6 +11,8 @@
 //   - 盆地: 道と建物の周りを空けて、岩を散らす。
 //   - 崖の視点の手前: 崖の足元の落石の素材（角張った岩塊・板状の岩）を、見比べるために 1 つずつ置く（手続きの地形のときだけ）。
 // 位置の y は、メッシュの足元の範囲で引いた地形の最も低い高さから、種類ごとの深さだけ埋めた高さ。
+// 以上は手続きの地形の配置。DEM の地形（荒野の既定）では、前哨地の建物だけを造成の範囲（WastelandTerrain::kOutpostPads）の
+// 中心に置く（高さ場は造成の後の高さを返すので、建物は均した平らな足元に据わる）。
 // ---------------------------------------------------------------------------
 
 #include "Core/Public/Container/VariableArray.h"
@@ -95,7 +97,7 @@ namespace Game::GameModes::WastelandLayout
         uint32_t CliffViewSamples = 0;
     };
 
-    /// 前哨地の道の、岩・草を置かない範囲（中心・道の向き（XZ の単位ベクトル）・長さと幅の半分[m]）
+    /// 前哨地の道の、岩・草・石を置かない範囲（中心・道の向き（XZ の単位ベクトル）・長さと幅の半分[m]）
     struct RoadClearArea
     {
         float CenterX = 0.0f;
@@ -106,13 +108,18 @@ namespace Game::GameModes::WastelandLayout
         float HalfWidth = 0.0f;
     };
 
+    /// DEM の地形の前哨地の道の、置かない範囲（造成の道の箱と同じ長さ、幅は轍の外の縁まで）
     RoadClearArea GetRoadClearArea();
 
     /// 崖の足元の落石の種類か（手続きの地形の配置を外しても読み、DEM の地形の崖錐へ散布で置く。WastelandTalus.h）
     bool IsTalusKind(PropKind kind);
 
+    /// DEM の地形で読む種類か（崖の足元の落石と前哨地の建物）
+    bool IsUsedOnDem(PropKind kind);
+
     /// 読めた種類（shapes[kind].bAvailable）だけを使って配置を決める。bProceduralLayout が偽なら、手続きの地形
-    /// （中央の盆地とメサの輪）に合わせた前哨地・足元・盆地の配置と崖の視点の手前の見本の落石を外し、何も置かない
+    /// （中央の盆地とメサの輪）に合わせた前哨地・足元・盆地の配置と崖の視点の手前の見本の落石を外し、DEM の地形の前哨地の
+    /// 建物だけを置く
     void BuildPlacements(const NorvesLib::Core::Rendering::Terrain::TerrainHeightField &field,
                          const PropMeshShape (&shapes)[kPropKindCount], bool bProceduralLayout,
                          NorvesLib::Core::Container::VariableArray<PropPlacement> &outPlacements, LayoutStats &outStats);

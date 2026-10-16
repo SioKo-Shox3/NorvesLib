@@ -159,9 +159,10 @@ namespace Game::Scenes
         // Battleship Rock の南西面の崖を、南西 500 m の崖錐の裾の目の高さ（2 m）から北東向きに見上げる視点。
         // 太陽は西南西にあるので、崖の南西面は順光になる
         {"cliff", SceneViewKind::FreePose, -135.0f, 12.0f, 0.0f, {-1900.0f, 2.0f, -500.0f}},
-        // 前哨地の候補 A の人の目の高さから、南南西の Rooster Butte（750 m）と南の Setting Hen Butte（1.2 km）を見る視点
-        // （前哨地は SCN-WL-OUTPOST で置き直す）
-        {"outpost", SceneViewKind::FreePose, 10.0f, 3.0f, 0.0f, {1199.5f, 1.7f, 150.5f}},
+        // 前哨地（中心 X 1199.5・Z 150.5。Rendering/Terrain/TerrainHeightField.h の WastelandTerrain::kOutpost*）の北の入り口の
+        // 道の西の縁の人の目の高さから、南へ延びる道の両側の建物と南の端の門、その奥の Rooster Butte（南南西 790 m）と
+        // Setting Hen Butte（南 1.3 km）を見る視点
+        {"outpost", SceneViewKind::FreePose, 8.0f, 2.0f, 0.0f, {1197.0f, 1.7f, 100.5f}},
         // 草・低木の一角（Game/GameModes/Wasteland/WastelandFoliage.cpp。谷床の (250, 1650) の 120 m 四方）の南南東の端の目の高さから、
         // 北北西（Franklin Butte の方）へ枯れ草とブラックブラッシュ・モルモンティーの低木の群れを見下ろす視点
         {"grass", SceneViewKind::FreePose, 159.0f, -6.0f, 0.0f, {266.0f, 1.6f, 1692.0f}},

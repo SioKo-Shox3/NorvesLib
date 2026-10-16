@@ -15,6 +15,8 @@
 // から引く方法（LoadGrid）。格子の点をそのまま頂点にし、点の間は焼いたメッシュと同じ対角線（UsesMainDiagonal）で
 // 升目を 2 つの三角形に分けて線形に補間する（元の値を越える補間はしない）。範囲の外は端を延ばさず kOutOfRangeHeight を返す。
 // クッカーは --generate terrain-tile:dem:<x>,<z> で、この格子を kDemTileCells 升目ごとの区画に分けて焼く。
+// 格子には造成（TerrainGrading。建物の足元と道だけを緩い平面へ寄せる）を掛けられる。造成は頂点の高さを置き換える規則なので、
+// 焼いたメッシュと Game が引く高さは造成の後も一致する（荒野は WastelandTerrain::LoadDemGrid で前哨地の造成を掛けて読む）。
 // ---------------------------------------------------------------------------
 
 #include "Container/PointerTypes.h"
@@ -87,6 +89,30 @@ namespace NorvesLib::Core::Rendering::Terrain
         double Spacing = 0.0;
     };
 
+    /// 造成の範囲 1 つ（ワールドの X・Z に沿った箱）。箱の内側は造成の平面の高さにし、外側は箱からの距離 Blend[m] の間で
+    /// 元の高さへ smoothstep で戻す（境で高さと傾きがつながる）。角の外は箱からの距離で測るので、境の形は箱の角を丸めた形になる
+    struct TerrainGradePad
+    {
+        float CenterX = 0.0f;
+        float CenterZ = 0.0f;
+        float HalfX = 0.0f;
+        float HalfZ = 0.0f;
+        float Blend = 1.0f;
+    };
+
+    /// 格子の高さ場の造成（建物の足元と道だけを緩い平面へ寄せる）。平面は (OriginX, OriginZ) で高さ Height、
+    /// X へ 1 m 進むごとに SlopeX、Z へ 1 m 進むごとに SlopeZ だけ変わる。範囲ごとの寄せる重み w（内側で 1）を
+    /// 1 − Π(1 − w) でまとめ、高さを元の値から平面の値へその重みで寄せる（範囲が重なっても滑らかにつながる）
+    struct TerrainGrading
+    {
+        float OriginX = 0.0f;
+        float OriginZ = 0.0f;
+        float Height = 0.0f;
+        float SlopeX = 0.0f;
+        float SlopeZ = 0.0f;
+        Container::Span<const TerrainGradePad> Pads;
+    };
+
     /// 高さ場。作った後は読み取りだけで、複数のスレッドから同時に引いてよい
     class TerrainHeightField
     {
@@ -111,9 +137,12 @@ namespace NorvesLib::Core::Rendering::Terrain
         /// 切り出した格子（Scripts/Terrain/CropDem.py が書く height.json と、その中の file が指す float32 の格子）を読んで
         /// 高さ場を作る。descriptorPath はアセットの根（Assets/）からの道。格子のファイルは呼ぶたびに丸ごと読むので、
         /// 1 回だけ呼んで返った高さ場を共有する（共有した高さ場は複数のスレッドから同時に引いてよい）。
-        /// 読めない・中身が約束と違うときは空を返し、outError に理由を書く
+        /// 読めない・中身が約束と違うときは空を返し、outError に理由を書く。
+        /// grading を渡すと、その範囲の頂点の高さを造成の後の値に置き換える（GetGridVertexHeight・SampleHeight・SampleNormal は
+        /// 造成の後の高さを返し、GetGridBytes はファイルの中身のまま）
         static Container::TSharedPtr<const TerrainHeightField> LoadGrid(Container::AnsiStringView descriptorPath,
-                                                                        Container::AnsiString &outError);
+                                                                        Container::AnsiString &outError,
+                                                                        const TerrainGrading *grading = nullptr);
 
         /// (x,z) の高さ[m]。格子の作り方で範囲の外なら kOutOfRangeHeight
         float SampleHeight(float x, float z) const;
@@ -134,7 +163,8 @@ namespace NorvesLib::Core::Rendering::Terrain
         /// 格子の頂点の並び（手続きの作り方では Columns・Rows が 0）
         TerrainGridLayout GetGridLayout() const;
 
-        /// 格子の頂点 (column, row) の高さ（ファイルの値そのもの）。格子の作り方で、番号が並びの内側のときだけ呼ぶ
+        /// 格子の頂点 (column, row) の高さ（ファイルの値。造成を渡して読んだときは、造成の範囲だけ造成の後の値）。
+        /// 格子の作り方で、番号が並びの内側のときだけ呼ぶ
         float GetGridVertexHeight(uint32_t column, uint32_t row) const;
 
         /// 格子のファイルの中身（float32 の little-endian、行優先）。手続きの作り方では空
@@ -178,6 +208,8 @@ namespace NorvesLib::Core::Rendering::Terrain
             float TalusWidth = 70.0f;
         };
 
+        /// 造成の後の頂点の高さを grid に書く（LoadGrid だけが呼ぶ）。値が不正なら false
+        static bool ApplyGrading(const TerrainGrading &grading, GridData &grid);
         float SampleMesas(float x, float z) const;
         float SampleGridHeight(float x, float z) const;
         TerrainNormal SampleGridNormal(float x, float z, float sampleSpacing) const;
@@ -301,6 +333,39 @@ namespace NorvesLib::Core::Rendering::Terrain
         /// Valley of the Gods の DEM を切り出した格子の記述（TerrainHeightField::LoadGrid に渡す。アセットの根からの道）。
         /// クッカーと Game が同じファイルを読む
         inline constexpr const char *kDemGridDescriptorPath = "Terrain/ValleyOfTheGods/height.json";
+
+        /// 前哨地の中心（Docs/RenderingValidation/WastelandReference.md の候補 A。高さ 0 の基準の点）。道はここを通って
+        /// +Z（南。Rooster Butte と Setting Hen Butte の方）へ延び、建物は道の両側に並ぶ
+        inline constexpr float kOutpostX = 1199.5f;
+        inline constexpr float kOutpostZ = 150.5f;
+
+        /// 前哨地の造成の範囲。0 番が道（幅 6 m、Z −62〜+46）、1 番以降が建物の足元（建物のメッシュの範囲 + 1.5 m の正方形。
+        /// Game/GameModes/Wasteland/WastelandLayout.cpp の建物が番号で中心を引く）。範囲を変えたら kOutpostGrade* の平面も当て直す
+        inline constexpr uint32_t kOutpostRoadPad = 0u;
+        inline constexpr TerrainGradePad kOutpostPads[] = {
+            {kOutpostX + 0.0f, kOutpostZ - 8.0f, 3.0f, 54.0f, 6.0f},   // 道
+            {kOutpostX + 9.0f, kOutpostZ - 30.0f, 3.3f, 3.3f, 5.0f},   // 見張り塔（北の入り口）
+            {kOutpostX - 9.5f, kOutpostZ - 14.0f, 4.2f, 4.2f, 5.0f},   // 日干し煉瓦の廃屋
+            {kOutpostX + 8.5f, kOutpostZ - 11.0f, 3.3f, 3.3f, 5.0f},   // 石積みの物置
+            {kOutpostX + 10.0f, kOutpostZ + 3.0f, 4.2f, 4.2f, 5.0f},   // 日干し煉瓦の廃屋
+            {kOutpostX - 8.5f, kOutpostZ + 6.0f, 3.3f, 3.3f, 5.0f},    // 石積みの物置
+            {kOutpostX - 14.0f, kOutpostZ + 17.0f, 3.7f, 3.7f, 5.0f},  // 給水塔
+            {kOutpostX + 16.0f, kOutpostZ + 24.0f, 3.7f, 3.7f, 5.0f},  // 風車
+            {kOutpostX + 0.0f, kOutpostZ + 34.0f, 4.0f, 2.5f, 5.0f},   // 南の端の門（石のアーチが道をまたぐ）
+        };
+        inline constexpr uint32_t kOutpostPadCount = sizeof(kOutpostPads) / sizeof(kOutpostPads[0]);
+
+        /// 造成の平面（前哨地の中心での高さ[m]と、X・Z へ 1 m あたりの傾き）。造成の範囲の内側の DEM の頂点に最小二乗で
+        /// 当てた値（傾き 1.44°。内側の頂点の平面からのずれは RMS 0.17 m・最大 0.57 m）
+        inline constexpr float kOutpostGradeHeight = 0.0422f;
+        inline constexpr float kOutpostGradeSlopeX = 0.020678f;
+        inline constexpr float kOutpostGradeSlopeZ = -0.014282f;
+
+        /// 前哨地の造成（クッカーが区画を焼くときと Game が高さを引くときが同じ値を使う）
+        TerrainGrading MakeOutpostGrading();
+
+        /// 荒野の DEM の格子（kDemGridDescriptorPath）を、前哨地の造成を掛けて読む。クッカーと Game はこれを通す
+        Container::TSharedPtr<const TerrainHeightField> LoadDemGrid(Container::AnsiString &outError);
 
         /// DEM の格子から焼く区画の一辺の升目の数（区画ごとに 1 つのメッシュに焼く）。区画は格子の最初の頂点から並べ、
         /// 東端・南端の区画は残りの升目だけを持つ。Scripts/Terrain/WriteTerrainAssetSet.py もこの値を読む

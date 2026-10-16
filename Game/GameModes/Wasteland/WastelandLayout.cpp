@@ -82,6 +82,37 @@ namespace Game::GameModes::WastelandLayout
             {PropKind::StoneArch, 34.0f, 0.0f, kRoadAzimuthDegrees + 180.0f, 0.0f},
         };
 
+        // ---- DEM の地形の前哨地 ----
+        // 建物は造成の範囲（WastelandTerrain::kOutpostPads）の中心に建てる。道は前哨地の中心を通って +Z（南）へ延び、
+        // 北の端の見張り塔から南の端の門まで、両側に建物の表を道へ向けて並べる
+        namespace TerrainSpec = NorvesLib::Core::Rendering::Terrain::WastelandTerrain;
+        /// 前哨地の建物 1 つ。造成の範囲の番号・表を向けるワールドの向き（道へ向けるときは NaN）・向きのばらつき[度]
+        struct OutpostSlot
+        {
+            PropKind Kind;
+            uint32_t Pad;
+            float FacingAzimuthDegrees;
+            float YawJitterDegrees;
+        };
+        constexpr OutpostSlot kOutpostSlots[] = {
+            {PropKind::Watchtower, 1u, kFaceRoad, 3.0f},
+            {PropKind::AdobeRuin, 2u, kFaceRoad, 4.0f},
+            {PropKind::StoneShed, 3u, kFaceRoad, -5.0f},
+            {PropKind::AdobeRuin, 4u, kFaceRoad, -6.0f},
+            {PropKind::StoneShed, 5u, kFaceRoad, 7.0f},
+            {PropKind::WaterTower, 6u, kFaceRoad, 0.0f},
+            // 風車は羽根を北北西（道の北の入り口と outpost の視点）へ向ける
+            {PropKind::Windmill, 7u, 195.0f, 0.0f},
+            // 南の端の門。表を北（前哨地の内側）へ向け、アーチが道をまたぐ
+            {PropKind::StoneArch, 8u, 180.0f, 0.0f},
+        };
+        static_assert(TerrainSpec::kOutpostPadCount == 1u + sizeof(kOutpostSlots) / sizeof(kOutpostSlots[0]),
+                      "造成の範囲は道と建物ごとに 1 つ");
+        // 造成した平らな足元に据えるので、埋める深さは手続きの盆地（kBuildingSink）より浅い[m]
+        constexpr float kOutpostBuildingSink = 0.15f;
+        // 草・石を置かない道の幅の半分[m]（造成の箱の幅 3 m に、轍の外の踏み固めた縁を足す）
+        constexpr float kOutpostRoadClearHalfWidth = 3.5f;
+
         // ---- メサ・稜線の足元 ----
         // 原点から放射状にたどる本数と範囲[m]・刻み[m]
         constexpr uint32_t kFootRayCount = 56;
@@ -340,6 +371,40 @@ namespace Game::GameModes::WastelandLayout
             }
         }
 
+        void PlaceOutpostBuildings(const TerrainHeightField &field, const PropMeshShape (&shapes)[kPropKindCount],
+                                   VariableArray<PropPlacement> &out, LayoutStats &stats)
+        {
+            for (const OutpostSlot &slot : kOutpostSlots)
+            {
+                const PropMeshShape &shape = shapes[static_cast<uint32_t>(slot.Kind)];
+                if (!shape.bAvailable)
+                {
+                    continue;
+                }
+                const NorvesLib::Core::Rendering::Terrain::TerrainGradePad &pad = TerrainSpec::kOutpostPads[slot.Pad];
+                float azimuth = 0.0f;
+                if (std::isnan(slot.FacingAzimuthDegrees))
+                {
+                    // 道（X = kOutpostX）の東の建物は西（−90°）へ、西の建物は東（+90°）へ向ける
+                    azimuth = (pad.CenterX >= TerrainSpec::kOutpostX ? -90.0f : 90.0f) * kDegToRad;
+                }
+                else
+                {
+                    azimuth = slot.FacingAzimuthDegrees * kDegToRad;
+                }
+                azimuth += slot.YawJitterDegrees * kDegToRad;
+                PropPlacement placement;
+                placement.Kind = slot.Kind;
+                placement.Yaw = FacingYaw(shape.FrontYaw, azimuth);
+                placement.Scale = 1.0f;
+                CenterAt(shape, pad.CenterX, pad.CenterZ, placement.Yaw, 1.0f, placement.X, placement.Z);
+                placement.Y =
+                    GroundedY(field, shape, placement.X, placement.Z, placement.Yaw, 1.0f, 1.0f, kOutpostBuildingSink);
+                out.push_back(placement);
+                ++stats.Buildings;
+            }
+        }
+
         void PlaceFootRocks(const TerrainHeightField &field, const PropMeshShape (&shapes)[kPropKindCount],
                             VariableArray<PropPlacement> &out, LayoutStats &stats)
         {
@@ -491,18 +556,25 @@ namespace Game::GameModes::WastelandLayout
 
     RoadClearArea GetRoadClearArea()
     {
-        const RoadFrame road = MakeRoadFrame();
+        const NorvesLib::Core::Rendering::Terrain::TerrainGradePad &road = TerrainSpec::kOutpostPads[TerrainSpec::kOutpostRoadPad];
         RoadClearArea area;
-        area.AlongX = road.AlongX;
-        area.AlongZ = road.AlongZ;
-        area.HalfLength = kRoadClearHalfLength;
-        area.HalfWidth = kRoadClearHalfWidth;
+        area.CenterX = road.CenterX;
+        area.CenterZ = road.CenterZ;
+        area.AlongX = 0.0f;
+        area.AlongZ = 1.0f;
+        area.HalfLength = road.HalfZ;
+        area.HalfWidth = kOutpostRoadClearHalfWidth;
         return area;
     }
 
     bool IsTalusKind(PropKind kind)
     {
         return kind == PropKind::TalusCrag || kind == PropKind::TalusSlab;
+    }
+
+    bool IsUsedOnDem(PropKind kind)
+    {
+        return IsTalusKind(kind) || GetPropKindSpec(kind).bBuilding;
     }
 
     void BuildPlacements(const TerrainHeightField &field, const PropMeshShape (&shapes)[kPropKindCount],
@@ -512,7 +584,8 @@ namespace Game::GameModes::WastelandLayout
         outStats = LayoutStats{};
         if (!bProceduralLayout)
         {
-            // DEM の地形の落石は崖錐の散布（WastelandTalus.h）が置くので、見本は置かない
+            // DEM の地形では前哨地の建物だけを置く。岩は崖錐の散布（WastelandTalus.h）が置くので、見本は置かない
+            PlaceOutpostBuildings(field, shapes, outPlacements, outStats);
             return;
         }
         const RoadFrame road = MakeRoadFrame();

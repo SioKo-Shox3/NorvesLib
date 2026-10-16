@@ -340,7 +340,8 @@ namespace
 
     // --sample-terrain-grid <x>,<z> ...: 荒野の DEM の格子（WastelandTerrain::kDemGridDescriptorPath）を、クッカーと Game が
     // 使うのと同じ高さ場（TerrainHeightField::LoadGrid）として読み、渡した点の高さと法線を出す。
-    // Scripts/Terrain/CheckHeightField.py がファイルの値と突き合わせる
+    // Scripts/Terrain/CheckHeightField.py がファイルの値と突き合わせる。標本の規則を確かめるため、前哨地の造成
+    // （WastelandTerrain::LoadDemGrid が掛ける）は掛けずに読む
     bool RunTerrainGridSampleCommand(int argc, char **argv, int &outExitCode)
     {
         namespace Terrain = NorvesLib::Core::Rendering::Terrain;

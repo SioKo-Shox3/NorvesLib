@@ -3004,7 +3004,7 @@ namespace NorvesLib::Tools::AssetCook
             }
 
             AnsiString loadError;
-            out.Field = Terrain::TerrainHeightField::LoadGrid(Spec::kDemGridDescriptorPath, loadError);
+            out.Field = Spec::LoadDemGrid(loadError);
             if (!out.Field)
             {
                 error = loadError;
@@ -3055,6 +3055,47 @@ namespace NorvesLib::Tools::AssetCook
             out.TilesX = Spec::DemTileCount(out.Layout.Columns);
             out.TilesZ = Spec::DemTileCount(out.Layout.Rows);
             return true;
+        }
+
+        // 前哨地の造成（WastelandTerrain::MakeOutpostGrading）が区画の頂点に届くなら、造成の値をハッシュに足す
+        // （造成の値を変えると、届く区画の元のハッシュが変わる）。届くかは、範囲の箱をぼかしの幅だけ広げた矩形と区画の矩形の重なりで見る
+        uint64_t HashOutpostGradingIfTouched(uint64_t hash, const NorvesLib::Core::Rendering::Terrain::TerrainGridLayout& layout,
+                                             uint32_t firstColumn, uint32_t cellsX, uint32_t firstRow, uint32_t cellsZ)
+        {
+            namespace Terrain = NorvesLib::Core::Rendering::Terrain;
+            const Terrain::TerrainGrading grading = Terrain::WastelandTerrain::MakeOutpostGrading();
+            const double tileMinX = layout.FirstX + static_cast<double>(firstColumn) * layout.Spacing;
+            const double tileMaxX = layout.FirstX + static_cast<double>(firstColumn + cellsX) * layout.Spacing;
+            const double tileMinZ = layout.FirstZ + static_cast<double>(firstRow) * layout.Spacing;
+            const double tileMaxZ = layout.FirstZ + static_cast<double>(firstRow + cellsZ) * layout.Spacing;
+            bool bTouched = false;
+            for (const Terrain::TerrainGradePad& pad : grading.Pads)
+            {
+                const double reachX = static_cast<double>(pad.HalfX) + pad.Blend;
+                const double reachZ = static_cast<double>(pad.HalfZ) + pad.Blend;
+                bTouched = bTouched || (pad.CenterX + reachX >= tileMinX && pad.CenterX - reachX <= tileMaxX &&
+                                        pad.CenterZ + reachZ >= tileMinZ && pad.CenterZ - reachZ <= tileMaxZ);
+            }
+            if (!bTouched)
+            {
+                return hash;
+            }
+            const auto add = [&hash](float value)
+            { hash = Fnv1a64UpdateLe64(hash, static_cast<uint64_t>(std::bit_cast<uint32_t>(value))); };
+            add(grading.OriginX);
+            add(grading.OriginZ);
+            add(grading.Height);
+            add(grading.SlopeX);
+            add(grading.SlopeZ);
+            for (const Terrain::TerrainGradePad& pad : grading.Pads)
+            {
+                add(pad.CenterX);
+                add(pad.CenterZ);
+                add(pad.HalfX);
+                add(pad.HalfZ);
+                add(pad.Blend);
+            }
+            return hash;
         }
 
         // DEM の区画 (tileX, tileZ) の頂点と三角形を格子から作る。格子の点をそのまま頂点にし（高さはファイルの値）、
@@ -3422,7 +3463,7 @@ namespace NorvesLib::Tools::AssetCook
                     if (!nearField)
                     {
                         AnsiString loadError;
-                        nearField = Terrain::TerrainHeightField::LoadGrid(Spec::kDemGridDescriptorPath, loadError);
+                        nearField = Spec::LoadDemGrid(loadError);
                         if (!nearField)
                         {
                             error = loadError;
@@ -3603,6 +3644,7 @@ namespace NorvesLib::Tools::AssetCook
             hash = Fnv1a64Update(hash, reinterpret_cast<const uint8_t*>(source.GridSha256.data()),
                                  source.GridSha256.size());
             hash = Fnv1a64UpdateLe64(hash, source.DescriptorHash);
+            hash = HashOutpostGradingIfTouched(hash, source.Layout, firstColumn, cellsX, firstRow, cellsZ);
             hash = Fnv1a64UpdateLe64(hash, static_cast<uint64_t>(tileX));
             hash = Fnv1a64UpdateLe64(hash, static_cast<uint64_t>(tileZ));
             hash = Fnv1a64UpdateLe64(hash, static_cast<uint64_t>(Spec::kDemTileCells));

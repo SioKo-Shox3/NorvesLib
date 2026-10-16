@@ -357,9 +357,32 @@ namespace NorvesLib::Core::Rendering::Terrain
         double FirstX = 0.0;
         double FirstZ = 0.0;
         double Spacing = 1.0;
+        /// 造成の後の頂点の高さ（造成の範囲を囲む頂点の矩形だけ。行優先）。造成が無ければ空
+        Container::VariableArray<float> GradedHeights;
+        uint32_t GradedFirstColumn = 0;
+        uint32_t GradedFirstRow = 0;
+        uint32_t GradedColumns = 0;
+        uint32_t GradedRows = 0;
 
+        /// ファイルの値
+        float FileAt(uint32_t column, uint32_t row) const
+        {
+            float value = 0.0f;
+            std::memcpy(&value, Bytes.GetData() + (static_cast<size_t>(row) * Columns + column) * sizeof(float),
+                        sizeof(float));
+            return value;
+        }
+
+        /// 頂点の高さ（造成の範囲は造成の後の値）
         float At(uint32_t column, uint32_t row) const
         {
+            // 符号なしの引き算なので、矩形の左・上の外は大きな値になって外と判定される
+            const uint32_t localColumn = column - GradedFirstColumn;
+            const uint32_t localRow = row - GradedFirstRow;
+            if (localColumn < GradedColumns && localRow < GradedRows)
+            {
+                return GradedHeights[static_cast<size_t>(localRow) * GradedColumns + localColumn];
+            }
             float value = 0.0f;
             std::memcpy(&value, Bytes.GetData() + (static_cast<size_t>(row) * Columns + column) * sizeof(float),
                         sizeof(float));
@@ -439,13 +462,99 @@ namespace NorvesLib::Core::Rendering::Terrain
         }
     } // namespace
 
+    namespace
+    {
+        /// (x,z) を造成の平面へ寄せる重み（0〜1）。範囲ごとに、箱の内側で 1、箱からの距離が Blend に達すると 0 になる
+        /// smoothstep を求め、1 − Π(1 − w) でまとめる
+        double GradingWeight(const TerrainGrading &grading, double x, double z)
+        {
+            double keep = 1.0;
+            for (const TerrainGradePad &pad : grading.Pads)
+            {
+                const double dx = std::max(std::fabs(x - pad.CenterX) - pad.HalfX, 0.0);
+                const double dz = std::max(std::fabs(z - pad.CenterZ) - pad.HalfZ, 0.0);
+                const double t = std::min(std::sqrt(dx * dx + dz * dz) / pad.Blend, 1.0);
+                const double weight = 1.0 - t * t * (3.0 - 2.0 * t);
+                keep *= 1.0 - weight;
+            }
+            return 1.0 - keep;
+        }
+    } // namespace
+
+    bool TerrainHeightField::ApplyGrading(const TerrainGrading &grading, GridData &grid)
+    {
+        if (!std::isfinite(grading.OriginX) || !std::isfinite(grading.OriginZ) || !std::isfinite(grading.Height) ||
+            !std::isfinite(grading.SlopeX) || !std::isfinite(grading.SlopeZ))
+        {
+            return false;
+        }
+        if (grading.Pads.size() == 0)
+        {
+            return true;
+        }
+        // 造成が届く範囲（箱 + ぼかしの幅）を囲む頂点の矩形
+        double minX = std::numeric_limits<double>::max();
+        double maxX = -std::numeric_limits<double>::max();
+        double minZ = std::numeric_limits<double>::max();
+        double maxZ = -std::numeric_limits<double>::max();
+        for (const TerrainGradePad &pad : grading.Pads)
+        {
+            if (!std::isfinite(pad.CenterX) || !std::isfinite(pad.CenterZ) || !std::isfinite(pad.HalfX) ||
+                !std::isfinite(pad.HalfZ) || !std::isfinite(pad.Blend) || pad.HalfX < 0.0f || pad.HalfZ < 0.0f ||
+                pad.Blend <= 0.0f)
+            {
+                return false;
+            }
+            minX = std::min(minX, static_cast<double>(pad.CenterX) - pad.HalfX - pad.Blend);
+            maxX = std::max(maxX, static_cast<double>(pad.CenterX) + pad.HalfX + pad.Blend);
+            minZ = std::min(minZ, static_cast<double>(pad.CenterZ) - pad.HalfZ - pad.Blend);
+            maxZ = std::max(maxZ, static_cast<double>(pad.CenterZ) + pad.HalfZ + pad.Blend);
+        }
+        const double lastColumn = static_cast<double>(grid.Columns - 1);
+        const double lastRow = static_cast<double>(grid.Rows - 1);
+        const double firstColumn = std::clamp(std::floor((minX - grid.FirstX) / grid.Spacing), 0.0, lastColumn);
+        const double endColumn = std::clamp(std::ceil((maxX - grid.FirstX) / grid.Spacing), 0.0, lastColumn);
+        const double firstRow = std::clamp(std::floor((minZ - grid.FirstZ) / grid.Spacing), 0.0, lastRow);
+        const double endRow = std::clamp(std::ceil((maxZ - grid.FirstZ) / grid.Spacing), 0.0, lastRow);
+        if (endColumn < firstColumn || endRow < firstRow)
+        {
+            return true;
+        }
+
+        const uint32_t columns = static_cast<uint32_t>(endColumn - firstColumn) + 1u;
+        const uint32_t rows = static_cast<uint32_t>(endRow - firstRow) + 1u;
+        grid.GradedHeights.resize(static_cast<size_t>(columns) * rows);
+        for (uint32_t row = 0; row < rows; ++row)
+        {
+            for (uint32_t column = 0; column < columns; ++column)
+            {
+                const uint32_t globalColumn = static_cast<uint32_t>(firstColumn) + column;
+                const uint32_t globalRow = static_cast<uint32_t>(firstRow) + row;
+                const double x = grid.FirstX + static_cast<double>(globalColumn) * grid.Spacing;
+                const double z = grid.FirstZ + static_cast<double>(globalRow) * grid.Spacing;
+                const double height = grid.FileAt(globalColumn, globalRow);
+                const double plane = grading.Height + grading.SlopeX * (x - grading.OriginX) +
+                                     grading.SlopeZ * (z - grading.OriginZ);
+                const double weight = GradingWeight(grading, x, z);
+                grid.GradedHeights[static_cast<size_t>(row) * columns + column] =
+                    static_cast<float>(height + weight * (plane - height));
+            }
+        }
+        grid.GradedFirstColumn = static_cast<uint32_t>(firstColumn);
+        grid.GradedFirstRow = static_cast<uint32_t>(firstRow);
+        grid.GradedColumns = columns;
+        grid.GradedRows = rows;
+        return true;
+    }
+
     TerrainHeightField::TerrainHeightField(GridTag, Container::TSharedPtr<const GridData> grid)
         : m_Grid(std::move(grid))
     {
     }
 
     Container::TSharedPtr<const TerrainHeightField> TerrainHeightField::LoadGrid(Container::AnsiStringView descriptorPath,
-                                                                                Container::AnsiString &outError)
+                                                                                Container::AnsiString &outError,
+                                                                                const TerrainGrading *grading)
     {
         constexpr uint64_t kMaxDescriptorBytes = 1024u * 1024u;
         constexpr int64_t kMaxGridSide = 65536;
@@ -576,6 +685,12 @@ namespace NorvesLib::Core::Rendering::Terrain
                     return {};
                 }
             }
+        }
+
+        if (grading != nullptr && !ApplyGrading(*grading, *grid))
+        {
+            outError = MakeGridError("地形の造成の値が不正です（有限でない値・負の大きさ・0 以下のぼかしの幅）", descriptorPath);
+            return {};
         }
 
         return Container::MakeShared<const TerrainHeightField>(GridTag{}, Container::TSharedPtr<const GridData>(std::move(grid)));
@@ -1008,6 +1123,24 @@ namespace NorvesLib::Core::Rendering::Terrain
             TerrainHeightFieldParams params;
             params.Seed = kSeed;
             return params;
+        }
+
+        TerrainGrading MakeOutpostGrading()
+        {
+            TerrainGrading grading;
+            grading.OriginX = kOutpostX;
+            grading.OriginZ = kOutpostZ;
+            grading.Height = kOutpostGradeHeight;
+            grading.SlopeX = kOutpostGradeSlopeX;
+            grading.SlopeZ = kOutpostGradeSlopeZ;
+            grading.Pads = Container::Span<const TerrainGradePad>(kOutpostPads, kOutpostPadCount);
+            return grading;
+        }
+
+        Container::TSharedPtr<const TerrainHeightField> LoadDemGrid(Container::AnsiString &outError)
+        {
+            const TerrainGrading grading = MakeOutpostGrading();
+            return TerrainHeightField::LoadGrid(kDemGridDescriptorPath, outError, &grading);
         }
     } // namespace WastelandTerrain
 
