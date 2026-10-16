@@ -18,6 +18,8 @@
 
 2026-10-16 荒野の撮影の範囲（親）: 荒野の全 13 視点の撮影は Debug で 515 秒かかり、ランナーの再検証の上限（10 分）に近い。各項目の撮影はその項目に関係する視点だけにし（`-Views`）、手本との比較（CompareReference）を使う項目は手本の 6 視点を撮る。全視点の撮影は SCN-WASTELAND-POLISH だけにする。途中の確かめも同じ視点に絞り、全視点を何度も撮り直さない。
 
+2026-10-16 荒野の作り直し（ユーザー）: 遠景のぼけ・フォグ・空・雲・建物の浮き・植物の質が現代 CG の水準に届かず、項目を積み上げるやり方では無理があると評価された。決定「正解の絵から」: Blender Cycles で同じ地形・素材・照明の正解の絵を作り、描画の欠陥と中身の欠陥を切り分けてから直す（計画は Docs/Plans/WastelandRebuild.md、Sol の批評を反映）。SCN-WLR-* はその段で、SCN-WLR-GAP-LIST の節目でユーザーに渡し、後ろの SCN-WL-* を組み直す。
+
 2026-10-15 レイトレーシングと GI の速さ（ユーザー）: RT（RTGI・RT の影と反射・TLAS）と GI を入れた構成では 60 fps（16.6 ms）の条件を外し、値は記録するだけにする。60 fps の条件が残るのは、RT と GI を切った構成（仮想化ジオメトリの規模の判定など）だけ。RT と GI を入れた構成の目安は 30 fps（33.3 ms。PS5 のレイトレーシングの作品の水準）だが、今は美しさを先に盛り、削るのは後にする（今の段階では fps を合否に使わない）。最適化は頭に入れ、同じ計算の繰り返しのような明らかな無駄は作らない。RT を入れても、動かすと操作できないほど遅くなる欠陥（例: 動くと RTGI が 40 倍遅くなる）は直す。
 
 2026-10-10 ECS の決定（ユーザー決定）: Entity はオブジェクト管理の器として残し、更新（Tick・変換・描画への同期・ゲームロジック）のデータと処理を ECS 型（自前のアーキタイプ型、値の実体は列に置き Object の読み書きはそこを通す、大量の物は Object を持たない軽い実体、ロジックはすべてシステムへ、ジョブで並列）に作り変え、レンダースレッドもコマンドの並列記録まで並列化する。100万本の改修に組み込む。設計の正本は `Docs/Plans/EcsUpdatePathPlan.md`（計画者の計画を GPT が 2 周批評し、親が追記した。項目の notes の「§」はこの文書の節）。`SCN-ECS-` の項目と、ECS 前提で置き換えた `SCN-MEGA-` の項目を、計画書の §2 の順に並べた。ワールドの全走査を直す旧案（WORLD-TICK-CACHE・WORLD-TRANSFORM-NOTIFY・WORLD-TRANSFORM-INTERP・WORLD-RENDER-DIRTY・INSTANCE-BATCH）は ECS の項目に置き換えて消した。戻すときは、戻す項目とそれに依存する後続の項目を新しい順に revert する（単独では戻さない）。
@@ -1646,6 +1648,87 @@
 - paths: Game, Library/Core/Private/Rendering, Library/Core/Public/Rendering, Scripts, Docs/RenderingValidation, TASKS.md, PROGRESS.md
 - notes: 2026-10-16 親: 撮影の待ちが反復の大半を占め、時間切れと遮断器が続いた（SCATTER-ROCKS・GRAVEL・CLIFF-ASSETS）。見た目を詰める項目の前に、確かめの 1 回を短くする。verify の 2 本目は、この項目で構成を替えたら同じ反復で書き換えてよい。 荒野の周回スモーク（`RunSceneCycleSmoke.ps1 -Scenes wasteland`）も Debug で 1 周約 300 秒かかる（SCN-WL-OUTPOST）。同じ読み込みの段が原因なら一緒に速くなることを確かめる。
 
+## SCN-WLR-HDR-CAPTURE: 撮影でトーンマップ前の HDR を書き、灰色の板で明るさの尺度を確かめる
+- status: todo
+- done-when: 撮影（`Scripts/CaptureScene.ps1`）に、トーンマップ前の線形の HDR（プリエクスポージャを外した放射輝度 cd/m²。OpenEXR か 32 bit 浮動小数の生データ）を PNG と並べて書く口を足す（撮影の起動引数のときだけ。Release に計測・デバッグの機能を足さない）。比較用の起動引数で視点の前に既知の灰色の板（アルベド 0.18・ランバート・影の無い向き）を置き、エンジンが使う太陽の地表の照度と向き・空の光をログに出し、期待の放射輝度（0.18 × E⊥ cosθ / π に空の光の分を足す）と HDR の板の画素の値が 5 % 以内で合うことを確かめる。今の荒野（変更前の見た目）の手本の 6 視点と outpost・ground の HDR と PNG を、後の比較の基準として `.harness/runs/scene-capture/SCN-WLR-BASELINE/` に残す（見た目を変えない）。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -Views ref_cliff_01 -OutDir .harness/runs/scene-capture/SCN-WLR-HDR-CAPTURE`
+- paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Game, Scripts, Docs/RenderingValidation, TASKS.md, PROGRESS.md
+- notes: 危険地帯（描画の読み出し）。2026-10-16 ユーザーの決定「正解の絵から」（Docs/Plans/WastelandRebuild.md）。比較は露出前の HDR で行い、PNG（トーンマップ後）から戻さない。撮影の構成（Debug か RelWithDebInfo か）は SCN-WL-CAPTURE-SPEED の決定に揃えてよい（verify も同じ反復で直す）。
+
+## SCN-WLR-BARE-AOV: 荒野を地形だけで撮り、照明の無い材質の値を書き出す
+- status: todo
+- done-when: 比較用の起動引数で、荒野から雲・植物・岩・礫・建物・空気遠近・高さフォグを 1 つずつ外せるようにする（既定の見た目は変えない）。同じ視点で、照明の無い材質の値（アルベド・法線・粗さ・深度。GBuffer の値、`GBufferDebugPass` があれば使う）を HDR の撮影と同じ大きさの浮動小数の画像に書き出す。地形だけで ref_cliff_01 を撮り、HDR・アルベド・法線・粗さ・深度のファイルが揃うことと、画に雲・物・霞が無いことを開いて確かめる。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -Views ref_cliff_01 -OutDir .harness/runs/scene-capture/SCN-WLR-BARE-AOV`
+- paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Game, Scripts, TASKS.md, PROGRESS.md
+- notes: 危険地帯（描画）。起動引数は撮影と比較のためのシーンの設定で、Release でも害が無い形にする。撮影の構成（Debug か RelWithDebInfo か）は SCN-WL-CAPTURE-SPEED の決定に揃えてよい（verify も同じ反復で直す）。
+
+## SCN-WLR-COMMON-LIGHT: 大気を切った共通の照明（HDR の環境の地図と太陽）で荒野を照らせるようにする
+- status: todo
+- done-when: 比較用の起動引数で、空の光と背景を HDR の環境の地図（緯度経度の EXR。Blender の比較と同じファイル）にし、太陽を照度（lux）と向きで与え、空の大気の散乱・空気遠近・高さフォグ・雲を切った共通の照明で荒野を描けるようにする（`EnvironmentMapSource` の経路を使えるなら使う。既定の見た目は変えない）。環境の地図は空の大気のモデルに依らない物（Poly Haven の CC0 の晴天の HDRI、取得は許可済み。または一様な空の色）を 1 つ選び、出所を記録する。灰色の板（SCN-WLR-HDR-CAPTURE）で、太陽の照度と環境の光の分が期待の値に 5 % 以内で合うことを確かめる。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -Views ref_cliff_01 -OutDir .harness/runs/scene-capture/SCN-WLR-COMMON-LIGHT`
+- paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Game, Scripts, Assets/AssetSets, .gitignore, TASKS.md, PROGRESS.md
+- notes: 危険地帯（描画）。大気（空・霞）の検証は SCN-WLR-ATMOSPHERE で別に行う（Hillaire と Blender の Nishita は別のモデルなので、空を背景にした比較で表面の描画を判定しない）。撮影の構成（Debug か RelWithDebInfo か）は SCN-WL-CAPTURE-SPEED の決定に揃えてよい（verify も同じ反復で直す）。
+
+## SCN-WLR-BLENDER-TERRAIN: エンジンが描く地形のメッシュを Blender へ持ち込み、1 視点の投影を合わせる
+- status: todo
+- done-when: エンジンが描く地形のメッシュ（焼いた区画。近景の DEM の区画と遠景の段、崖の細部を含む、エンジンが近くで描く最細の段）を Blender が読める形（PLY か GLB）に書き出す道具を足し、Blender のヘッドレスの台本（`Scripts/Terrain/BlenderReference.py`）で読み込む。座標の変換（m・軸・標高の基準・原点）を 1 か所にまとめる。ref_cliff_01 のカメラ（位置・姿勢・縦の画角・縦横比）を同じに置き、Blender の深度とエンジンの深度（SCN-WLR-BARE-AOV の書き出し）を並べ、崖の輪郭と稜線が 2 画素以内で重なることを開いて確かめる。見えない区画は読まない（区画の一覧は視錐台から決める）。
+- verify: `"Y:\AI\blender\blender-5.2.2-windows-x64\blender.exe" --background --factory-startup --python Scripts/Terrain/BlenderReference.py -- --verify-projection ref_cliff_01`
+- paths: Scripts/Terrain, Scripts, Tools/AssetCook, Docs/RenderingValidation, TASKS.md, PROGRESS.md
+- notes: Blender は Python でヘッドレスに動かす（`Y:\AI\blender\blender-5.2.2-windows-x64\blender.exe`）。SCN-WL-BLENDER-TERRAIN-VIEW をこの項目に含めた。DEM を間引いたメッシュでは法線・自己遮蔽・影が変わるので使わない。
+
+## SCN-WLR-CYCLES-GRAY: 共通の照明で灰色の地形をエンジンと Cycles で描き、影・空の遮蔽・照り返しを比べる
+- status: todo
+- done-when: 共通の照明（SCN-WLR-COMMON-LIGHT と同じ環境の地図と太陽）で、アルベド一定（0.3 の灰色・粗さ 1）の地形を、エンジン（比較用の起動引数で材質を灰色にする）と Cycles（同じメッシュ・同じカメラ・EXR）で ref_cliff_01・ref_far_01 を描き、露出前の HDR で並べる。Cycles はデノイズを掛けない版でサンプル数を倍にしても領域の平均が 1 % 以内しか変わらない所まで上げる（デノイズの軟化をエンジンの差に数えない）。領域（日なたの地面・影の中の地面・日なたの崖・影の崖・遠景）ごとの線形の平均の比を表にし、差の大きい所の原因の見立て（影・空の遮蔽・照り返し・GI の当たりの色）を書く。
+- verify: `"Y:\AI\blender\blender-5.2.2-windows-x64\blender.exe" --background --factory-startup --python Scripts/Terrain/BlenderReference.py -- --render-gray ref_cliff_01,ref_far_01 --verify`
+- paths: Scripts/Terrain, Scripts, Game, Library/Core/Private/Rendering, Docs/RenderingValidation, TASKS.md, PROGRESS.md
+- notes: 比べるだけで、エンジンの照明を直さない（直すのは SCN-WLR-GAP-LIST の後）。RTGI の二次の当たりはインスタンスの定数の色（`Assets/Shaders/RTGI/DiffuseIndirect.comp` 912 行付近）で、灰色の地形ならこの差は出ない。
+
+## SCN-WLR-MATERIAL-AOV: 地表の材質を Blender で再現し、照明の無い値をエンジンと照合する
+- status: todo
+- done-when: エンジンの地表の材質（三方向の投影・地表の分類の地図・傾斜と高さの混ぜ・地層の筋・法線・粗さ・ミップ）を Blender のノードで再現する（値の表は `WastelandRoutine.cpp` の定数から書き出す JSON を両方が使う）。照明の無い値（アルベド・法線・粗さ）を ref_cliff_01・ref_ground_01 でエンジン（SCN-WLR-BARE-AOV）と Blender で並べ、領域ごとのアルベドの平均の差が 5 % 以内、模様の大きさと向きが合うことを開いて確かめる。再現できない処理はその旨と影響を書く。
+- verify: `"Y:\AI\blender\blender-5.2.2-windows-x64\blender.exe" --background --factory-startup --python Scripts/Terrain/BlenderReference.py -- --verify-aov ref_cliff_01,ref_ground_01`
+- paths: Scripts/Terrain, Scripts, Game/GameModes/Wasteland, Docs/RenderingValidation, TASKS.md, PROGRESS.md
+- notes: 1 反復で閉じなければ、アルベドだけで先に閉じ、法線・粗さを後ろの項目に分ける。
+
+## SCN-WLR-CYCLES-LIT: 実材質の地形を共通の照明で 6 視点描き、写真・エンジン・Cycles を並べる
+- status: todo
+- done-when: 実材質（SCN-WLR-MATERIAL-AOV）・共通の照明で、手本の 6 視点を Cycles で描き（SCN-WLR-CYCLES-GRAY と同じ収束の基準）、エンジン（地形だけ・共通の照明）と露出前の HDR で並べる。同じ表示変換（エンジンの今の露出とトーンマップを Python で再現した 1 本。Blender の AgX・Filmic は使わない）を両方に掛け、写真｜エンジン｜Cycles の比較画像を作る。領域ごとの線形の値の表を付ける。写真とは照明・天気・現像が違うので、写真との差は「条件の違い」を分けて書く。
+- verify: `"Y:\AI\blender\blender-5.2.2-windows-x64\blender.exe" --background --factory-startup --python Scripts/Terrain/BlenderReference.py -- --render-lit all --verify`
+- paths: Scripts/Terrain, Scripts, Docs/RenderingValidation, TASKS.md, PROGRESS.md
+- notes: 6 視点の Cycles の描画が 1 反復に収まらなければ、3 視点ずつ 2 つの反復に分ける（描いた EXR は残して使い回す）。
+
+## SCN-WLR-ATMOSPHERE: 空と霞を、同じ大気のモデルの数値の正解と比べる
+- status: todo
+- done-when: 大気を表面の描画と別に検証する。エンジンと同じ Hillaire 系のモデル・係数を Python で数値積分した正解（空の方向別の輝度・距離別の透過率と散乱光・地表の太陽と空の照度）を作り、エンジンの LUT（放射輝度 256×128・sky-view 80×40）・空気遠近・高さフォグの値と、角度・距離ごとの表で比べる。高さフォグと空気遠近が同じ霞を二重に掛けていないかを調べる。写真の空（ground_02 の晴天）と並べ、差を「モデルの違い」「設定の違い（荒野の Mie の尺度高さ・MieDensityScale など）」「条件の違い（天気・時刻・カメラ）」に分ける。この項目では値を変えない。
+- verify: `python Scripts/Terrain/AtmosphereReference.py --verify`
+- paths: Scripts/Terrain, Scripts, Docs/RenderingValidation, TASKS.md, PROGRESS.md
+- notes: 危険地帯ではない（調べるだけ）。直すのは SCN-WLR-GAP-LIST の後。
+
+## SCN-WLR-FAR-BLUR-DIAG: 遠景のぼけの原因を 1 つずつ切り分ける
+- status: todo
+- done-when: ref_far_01・ref_cliff_02 の遠景を、AA（FXAA・TAA・なし）、霞（空気遠近・高さフォグの入・切）、内部解像度、地形の LOD、仮想テクスチャの常駐とミップ・異方性フィルタ、TAA の履歴による細部の消失を、それぞれ 1 つずつ変えて静止と移動で撮り、遠くの崖の縁と模様の細かさ（崖の領域の高周波の量など、測り方を先に決める）を数値と画で比べる。原因の順位と直す案を書く。この項目では既定を変えない（TAA は候補として比べるだけ）。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -Views ref_far_01,ref_cliff_02 -OutDir .harness/runs/scene-capture/SCN-WLR-FAR-BLUR-DIAG`
+- paths: Scripts, Game, Library/Core/Private/Rendering, Docs/RenderingValidation, TASKS.md, PROGRESS.md
+- notes: 比較用の切り替えは撮影の起動引数で行い、既定の見た目を変えない。撮影の構成（Debug か RelWithDebInfo か）は SCN-WL-CAPTURE-SPEED の決定に揃えてよい（verify も同じ反復で直す）。
+
+## SCN-WLR-TONEMAP-EVAL: 表示変換の候補を、同じ HDR に掛けて比べる
+- status: todo
+- done-when: 表示変換の候補（今の NeutralLinear＋強いグレーディング〔コントラスト 1.35・彩度 1.2〕、ACES 2.0 の LUT＋中立のグレーディング、ほか）を、SCN-WLR-BASELINE のエンジンの HDR と SCN-WLR-CYCLES-LIT の Cycles の HDR に Python で同じ式を掛けて並べ、写真と比べる（写真の現像の差は「条件の違い」として残す）。採る候補と理由を書く。この項目ではエンジンの既定を変えない（採るのは一覧の後）。
+- verify: `python Scripts/Terrain/CompareTonemap.py --verify`
+- paths: Scripts/Terrain, Scripts, Docs/RenderingValidation, TASKS.md, PROGRESS.md
+- notes: エンジンのトーンマップの式（`Assets/Shaders/tonemapping.frag`）と ACES 2.0 の LUT（`Scripts/BakeAcesOutputLut.py`）を Python で同じ値に再現し、1 画素で照合してから使う。
+
+## SCN-WLR-GAP-LIST: 節目: 描画の欠陥と中身の欠陥を分けた一覧をユーザーに渡す
+- status: todo
+- done-when: SCN-WLR-CYCLES-GRAY・MATERIAL-AOV・CYCLES-LIT・ATMOSPHERE・FAR-BLUR-DIAG・TONEMAP-EVAL の結果から、差を「描画の欠陥（入力が一致してエンジン ≠ Cycles）」「中身の欠陥（条件が一致して Cycles ≠ 写真）」「条件不一致・未判定」に分けた一覧を、差の大きい順に `Docs/RenderingValidation/WastelandGapList.md` に書く。ユーザーの 6 点（遠景のぼけ・フォグ・空・雲・建物の浮き・植物）それぞれに、原因と直す項目の案を対応させる（雲・建物・植物はこの段の比較に入っていないので、同じ建物 1 棟・植物 1 株・雲の密度場を足して比べる段の案も書く）。写真｜エンジン｜Cycles の一覧の画像を 1 枚にまとめる。最後にリポジトリ直下へ中身が `boundary` の `LOOP_STOP` を書く（親がユーザーに渡し、後ろの項目を組み直す）。
+- verify: `python Scripts/Terrain/CompareReference.py --gap-list --verify`
+- paths: Scripts/Terrain, Docs/RenderingValidation, TASKS.md, PROGRESS.md
+- notes: この後ろの SCN-WL-* の項目（RTGI-COLOR・SKY-AERIAL・LIGHT-FINAL・REVIEW-2・CLIFF-SCAN-*・POLISH ほか）は、この一覧を見て組み直す。
+
 ## SCN-WL-RTGI-COLOR: 照り返しの入力を成立させる
 - status: todo
 - done-when: 荒野での RTGI の実行状態（有効か・fallback の有無）をログで確かめ、二次の当たりの色が地形の材質を反映しないこと（`Assets/Shaders/RTGI/DiffuseIndirect.comp` 912 行付近はインスタンスの定数の色を使う）を直す。まずは地表の分類の地図と層の代表の色（素材の平均の色）で当たりの色を決める程度でよい（材質の評価の共通化まで広げない）。パストレーサーの当たりの色も同じ近似にし、同じ視点のパストレースの撮影（主の描画をパストレーサーにして累積）ができるようにする。同じ条件の RTGI の入・切の撮影を並べて開き、崖の影の中と谷の底に砂の暖かい照り返しが入ることを確かめる。Rendering3DTest の撮影が変わらない（変わるなら、差がこの変更だけによることを確かめて基準を再承認する）。
@@ -1653,7 +1736,7 @@
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -Views cliff,ground,ref_far_01,ref_cliff_01,ref_ground_02 -OutDir .harness/runs/scene-capture/SCN-WL-RTGI-COLOR`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -OutDir .harness/runs/startup-capture/SCN-WL-RTGI-COLOR`
 - paths: Assets/Shaders, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Game/GameModes/Wasteland, Docs/RenderingValidation, Scripts, TASKS.md, PROGRESS.md
-- notes: 危険地帯（描画）。RTGI は既定で有効で、荒野で切ってはいない（2026-10-14 Sol の確認）。
+- notes: 危険地帯（描画）。RTGI は既定で有効で、荒野で切ってはいない（2026-10-14 Sol の確認）。 2026-10-16 親: 内蔵のパストレーサーは仮想化ジオメトリの地形を描けないので、正解は Blender Cycles（SCN-WLR-*）にする。この項目は SCN-WLR-GAP-LIST の後に組み直す。
 
 ## SCN-WL-SKY-AERIAL: 空の青・遠景の霞・全体の明るさと彩度を手本に合わせる
 - status: todo
@@ -1680,11 +1763,11 @@
 - paths: Scripts/Terrain, Docs/RenderingValidation, TASKS.md, PROGRESS.md
 
 ## SCN-WL-BLENDER-TERRAIN-VIEW: Blender に荒野の地形と手本の視点を再現する
-- status: todo
+- status: backlog
 - done-when: Blender のヘッドレスで、荒野の地形の主役の崖の周り（Battleship Rock の範囲と崖錐、`Assets/Terrain/ValleyOfTheGods/height.r32`）をメッシュとして読み込み、手本の視点（`WastelandRoutine.cpp` の `kReferenceShots` の ref_cliff_01・cliff）と同じカメラを置いて描く台本を `Scripts/Terrain/` に作る。エンジンの座標（X・Z・高さ・向き）と Blender の座標の変換を 1 か所にまとめる。Blender の描画と、同じ視点のエンジンの撮影を並べた図を開き、崖の輪郭が重なる（輪郭の差が数画素以内）ことを確かめる。崖の素材を置く次の項目は、この台本の上で配置を見ながら直す。
 - verify: `"Y:\AI\blender\blender-5.2.2-windows-x64\blender.exe" --background --factory-startup --python Scripts/Terrain/BlenderTerrainView.py -- --verify`
 - paths: Scripts/Terrain, Scripts, Docs/RenderingValidation, TASKS.md, PROGRESS.md
-- notes: 台本の名前は目安（`BlenderTerrainView.py`）。変えるなら verify も同じ反復で直す。
+- notes: 台本の名前は目安（`BlenderTerrainView.py`）。変えるなら verify も同じ反復で直す。 2026-10-16 親: SCN-WLR-BLENDER-TERRAIN に含めた（エンジンが描く地形のメッシュをそのまま持ち込む形に替えた）。
 
 ## SCN-WL-CLIFF-SCAN-PLACE: Blender で置いたスキャンの崖をエンジンへ持ち込む経路を作る
 - status: todo
