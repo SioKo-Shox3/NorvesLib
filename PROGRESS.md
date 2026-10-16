@@ -4942,3 +4942,19 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - Notes:
   - 影の測定（`shadow_probe.comp`）と VSM のテスト（`vsm_sample_probe.comp`）は接触影を含まないので変えていない。試験は足していない
 - Next: TASKS.md の次の未完の項目。
+
+### SCN-WL-FAR-SPECKLE 完了（2026-10-16、run 20261016-132852 の反復 7）
+
+- Done: ref_cliff_02 の縦の黒い点の原因を、画面空間の接触影が地形の受け手を地形の画素で遮っていたことと突き止めた。直しは SCN-WL-CONTACT-SHADOW-TERRAIN（a9a7d22b。地形の受け手を地形の画素が遮らない）で入っており、この視点でも点が消えたことを撮り比べで確かめた
+  - 仕組み: 深度は標準の向きの D32F・近方面 0.5 m なので、2.6 km 先の Franklin Butte では深度から戻した位置が約 0.8 m 刻みに量子化され、奥の平地と遠くの山ではさらに粗い。接触影のレイの段がその刻みの段差と地形の三角形の折れ目を「面の奥」と判定し、レイに沿った数画素が暗くなって縦の短い線になっていた
+  - 切り分け: lighting.frag に一時的な診断の出力（太陽の影・接触影・GTAO の値、影と AO を切った描画）を入れて撮り、今のシェーダーでは点が無く、太陽の影（VSM）・GTAO・法線の縮小・置き物（地形でない画素）のどれも点に対応しないことを確かめた。診断の出力は戻した（コミットに含まない）
+  - 原因の確定: a9a7d22b の前の lighting.frag に差し替えて同じ視点を撮ると、斜面・奥の平地・遠くの山に課題の切り出しと同じ縦の点が一面に出た（`.harness/runs/scene-capture/SCN-WL-FAR-SPECKLE-old-contact/crop_cliff02_spire.png`）
+  - `Scripts/CaptureScene.ps1` の `-TimeoutSeconds` の既定を 300 → 600 秒にした。荒野は Debug で SceneReady まで約 300 秒（地形の区画 198 個と崖錐の岩 275096 個）かかり、1 視点の撮影が時間切れで PNG を出さずに落ちた（`SCN-WL-FAR-SPECKLE-before`、300.7 秒で打切り）
+- 証拠（`.harness/runs/20261016-132852/`）:
+  - `verify-SCN-WL-FAR-SPECKLE-1.txt`: Debug の Game のビルド EXIT=0
+  - `verify-SCN-WL-FAR-SPECKLE-2.txt`: 荒野の ref_cliff_02 を 1920×1080、result=pass（白飛び 0・黒つぶれ 0）、320.5 秒、EXIT=0。検証レイヤーのログは空
+  - 切り出し（X 640〜1280・Y 340〜800 を 2 倍）`.harness/runs/scene-capture/SCN-WL-FAR-SPECKLE/crop_cliff02_spire.png` を開いた: 崖錐の斜面・奥の平地・遠くの山に縦の黒い点は無い。斜面の暗い所は崖錐の岩の群れと地形の陰で、点の列ではない。上段に古い接触影・下段に今を並べた `compare_old_contact_vs_now.png` も開いた
+  - 同じ切り出しの画素の比較（古い接触影 → 今）: 輝度が 8 以上暗い画素は 8503（切り出しの 2.9%）→ 248
+- Notes:
+  - 撮影の待ちで、1 視点でも Debug の荒野は SceneReady まで約 5 分かかる。試験は足していない
+- Next: TASKS.md の次の未完の項目。

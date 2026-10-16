@@ -1622,7 +1622,7 @@
 - notes: 2026-10-15 親: SCN-WL-SHADOW-DOT-GRID から分けた。危険地帯（描画）。岩と礫を撒いた後（SCN-WL-SCATTER-GRAVEL の後）に置き、接地の影と一緒に確かめる。
 
 ## SCN-WL-FAR-SPECKLE: 荒野の遠くの斜面と平地に一面に出る細い縦の黒い点を消す
-- status: todo
+- status: done
 - done-when: ref_cliff_02 の撮影（1920×1080）で、Franklin Butte の崖錐の斜面と奥の平地に、1〜2 画素幅・数画素の高さの縦の黒い点が一面に散る（`crop_cliff02_spire.png`。切り出しは X 640〜1280・Y 340〜800 を 2 倍）。原因（遠くの小石や草の置き物の縮小・影の地図の標本・法線の縮小のどれか）を突き止めて直し、同じ切り出しを開いて点が無いことを確かめる。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -Views ref_cliff_02 -OutDir .harness/runs/scene-capture/SCN-WL-FAR-SPECKLE`

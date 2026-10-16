@@ -81,8 +81,10 @@ param(
     [string[]]$RequireChecks = @(),
     # 撮る前に、-Configuration の Game をビルドする（失敗したら撮らずに失敗）。
     [switch]$Build,
+    # 1 回の起動の時間切れ[秒]。荒野は Debug で地形の区画と崖錐の岩を置き終えて SceneReady になるまで約 300 秒かかるので、
+    # 1 視点の撮影でも収まるよう既定を 600 秒にする
     [ValidateRange(10, 3600)]
-    [int]$TimeoutSeconds = 300,
+    [int]$TimeoutSeconds = 600,
     # GPU のフレーム時間を測るときの、落ち着いてから撮るまでの描画フレーム数（0 で測らず、決定的な撮影にする）。
     [ValidateRange(0, 100000)]
     [int]$GpuTimingFrames = 0,
