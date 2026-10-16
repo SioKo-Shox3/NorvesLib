@@ -1644,7 +1644,7 @@
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -Views ref_far_01,ref_far_02,ref_cliff_01,ref_cliff_02,ref_ground_01,ref_ground_02 -OutDir .harness/runs/scene-capture/SCN-WL-CAPTURE-SPEED`
 - paths: Game, Library/Core/Private/Rendering, Library/Core/Public/Rendering, Scripts, Docs/RenderingValidation, TASKS.md, PROGRESS.md
-- notes: 2026-10-16 親: 撮影の待ちが反復の大半を占め、時間切れと遮断器が続いた（SCATTER-ROCKS・GRAVEL・CLIFF-ASSETS）。見た目を詰める項目の前に、確かめの 1 回を短くする。verify の 2 本目は、この項目で構成を替えたら同じ反復で書き換えてよい。
+- notes: 2026-10-16 親: 撮影の待ちが反復の大半を占め、時間切れと遮断器が続いた（SCATTER-ROCKS・GRAVEL・CLIFF-ASSETS）。見た目を詰める項目の前に、確かめの 1 回を短くする。verify の 2 本目は、この項目で構成を替えたら同じ反復で書き換えてよい。 荒野の周回スモーク（`RunSceneCycleSmoke.ps1 -Scenes wasteland`）も Debug で 1 周約 300 秒かかる（SCN-WL-OUTPOST）。同じ読み込みの段が原因なら一緒に速くなることを確かめる。
 
 ## SCN-WL-RTGI-COLOR: 照り返しの入力を成立させる
 - status: todo
