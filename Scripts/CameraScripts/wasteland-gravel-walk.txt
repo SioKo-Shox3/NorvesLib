@@ -1,0 +1,10 @@
+﻿# 荒野の ground の視点から、足元の石と礫を見ながら前へ歩く（--scene=wasteland --scene-view=ground --camera-script=Scripts/CameraScripts/wasteland-gravel-walk.txt）。
+# 書式は Game/Input/CameraScript.h。1 フレームは 1/60 秒、移動の速さは初期値の 4 m/s。
+# 連続撮影（--capture-sequence）で、歩く間に石が手前から縮んで消えるか・新しい区画の石が急に現れないかを見る。
+
+# 動かさずに 10 フレーム待つ
+10
+# W で前へ 6 秒（視線の向き＝4° 上向きに約 24 m。高さは 1.7 m 上がる。小礫の区画 4.2 m・石の区画 8 m を何度も跨ぐ）
+360 keys=W
+# 動かさずに 30 フレーム待つ
+30
