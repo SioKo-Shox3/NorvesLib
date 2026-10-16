@@ -4976,7 +4976,8 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `verify-SCN-WL-OUTPOST-1.txt`: Debug の Game のビルド EXIT=0。RelWithDebInfo の AssetCook のビルドも EXIT=0（`aux-SCN-WL-OUTPOST-build.txt`）、焼き直しは `aux-SCN-WL-OUTPOST-cook.txt`（`TERRAIN_DEM_TILE tile=7,5`、COOK_ASSETS cooked=1、EXIT=0）
   - `verify-SCN-WL-OUTPOST-2.txt`: 荒野の overview・outpost・ground を 1920×1080、result=pass（白飛び 0・黒つぶれ 0）、406 秒、EXIT=0。検証レイヤーのログ（`views.Validation.log`）は空。ログの `WASTELAND_PROPS placed=8 buildings=8`、`WASTELAND_BUILDING` の各棟の中心の地面の高さは造成の平面の値と一致（例: 見張り塔 ground=0.66、平面 0.656）し、最下点は中心の地面より 0.20〜0.25 m 下（埋める深さ 0.15 m と足元の傾きの分）
   - 撮影を開いた（`.harness/runs/scene-capture/SCN-WL-OUTPOST/`）: outpost は見張り塔・物置と廃屋・門・風車・給水塔が南へ延びる道の両側に並び、奥に Rooster Butte と Setting Hen Butte。足元の拡大（`crop_bases.png`）で、見張り塔の脚・物置と廃屋の壁・門の柱の根元が地面に接して影を落とし、浮きも深い埋まりも無い。手前の地面（`crop_ground_near.png`）に造成の境の線・円・段は見えない（地面の斑は土の材質の皮膜と砂の混ぜ方）。道には草・低木・石が無く、轍の通る裸地に見える。overview・ground（`grid_overview_ground.png`）は前哨地が画面の外で、変わった所は無い
-  - `verify-SCN-WL-OUTPOST-3.txt`: `RunSceneCycleSmoke.ps1 -Scenes wasteland -Cycles 3` の結果は下の追記
+  - `verify-SCN-WL-OUTPOST-3.txt`: `RunSceneCycleSmoke.ps1 -Scenes wasteland -Cycles 3` は 900 秒の待ちで時間切れ（2 周目まで settled=1、1 周に約 300 秒）。`RunSceneCycleSmoke.ps1` の待ちの既定を 1800 秒へ延ばした
+  - 反復 9 で検証をやり直した: `verify-SCN-WL-OUTPOST-5.txt` は Debug の Game のビルド EXIT=0（撮影の後にソースの変更は無い）。`verify-SCN-WL-OUTPOST-6.txt` は `RunSceneCycleSmoke.ps1 -Scenes wasteland -Cycles 3` が result=pass、SCENE_CYCLE_SAMPLE 3 件（どれも settled=1・texture_bytes=1703784520 で周回で増えない）、928 秒、EXIT=0
 - Notes:
   - 建物は白っぽく写る。GLB のアルベドは線形で 0.2〜0.57（日干し煉瓦 0.48・0.35・0.20、門 0.57・0.38・0.24）と、日干し煉瓦としては明るく、今の露出と太陽の下で白に近づく。テクスチャは読めている（`SuccessCooked`）。建物込みで合わせる光と色の項目（SCN-WL-LIGHT-FINAL）で、建物のアルベドの倍率と露出を見る
   - 道の除外の縁は直線なので、礫の多い所では礫の帯の縁が真っ直ぐに見える（outpost の右下）。轍の縁としては不自然でない
