@@ -219,6 +219,12 @@ namespace Game
             Ramp,
         };
         DisplayCheckMode s_DisplayCheckMode = DisplayCheckMode::None;
+        // --wasteland-common-light・--common-light-case=sun|sky・--wasteland-gray-plate: 荒野の大気を切った共通の照明と灰色の板
+        // （開発ビルドだけ。Game/GameModes/Wasteland/WastelandCommonLight.h、Scripts/Terrain/ReferenceCheck.py --plate）
+        constexpr const TCHAR *kWastelandCommonLightOption = TEXT("--wasteland-common-light");
+        constexpr const TCHAR *kCommonLightCaseOption = TEXT("--common-light-case=");
+        constexpr const TCHAR *kWastelandGrayPlateOption = TEXT("--wasteland-gray-plate");
+        Game::GameModes::WastelandCommonLight::Options s_WastelandCommonLight;
         // --open-scene-info: mega-bananas を起動時から情報表示（H キーの表示）を出した状態にする（開発ビルドだけ。値を取らない）。
         // 撮影の起動は ImGui を使わないが、この指定があれば撮影でも使い、表示を撮れる。
         constexpr const TCHAR *kOpenSceneInfoOption = TEXT("--open-scene-info");
@@ -633,6 +639,7 @@ namespace Game
         s_bEngineChecksSelfTestReported = false;
         s_bMegaSceneFullSync = false;
         s_DisplayCheckMode = DisplayCheckMode::None;
+        s_WastelandCommonLight = Game::GameModes::WastelandCommonLight::Options{};
         m_StressStreamCellMeters = 0.0f;
         m_bStressStreamCellSet = false;
         m_StressStreamPeriod = Game::GameModes::kDefaultStressStreamPeriod;
@@ -1313,6 +1320,43 @@ namespace Game
                 }
 #else
                 LOG_WARNING("--display-check は開発ビルドだけで使えます。無視します");
+#endif
+                continue;
+            }
+            if (args[i] == kWastelandCommonLightOption || args[i] == kWastelandGrayPlateOption)
+            {
+#if NORVES_BUILD_DEVELOPMENT
+                if (args[i] == kWastelandCommonLightOption)
+                {
+                    s_WastelandCommonLight.bEnabled = true;
+                }
+                else
+                {
+                    s_WastelandCommonLight.bGrayPlate = true;
+                }
+#else
+                LOG_WARNING("--wasteland-common-light・--wasteland-gray-plate は開発ビルドだけで使えます。無視します");
+#endif
+                continue;
+            }
+            if (TryStripPrefix(args[i], kCommonLightCaseOption, sceneValue))
+            {
+#if NORVES_BUILD_DEVELOPMENT
+                if (sceneValue == TEXT("sun"))
+                {
+                    s_WastelandCommonLight.Case = Game::GameModes::WastelandCommonLight::LightCase::SunOnly;
+                }
+                else if (sceneValue == TEXT("sky"))
+                {
+                    s_WastelandCommonLight.Case = Game::GameModes::WastelandCommonLight::LightCase::SkyOnly;
+                }
+                else
+                {
+                    LOG_ERROR("--common-light-case は sun か sky で指定してください");
+                    return false;
+                }
+#else
+                LOG_WARNING("--common-light-case は開発ビルドだけで使えます。無視します");
 #endif
                 continue;
             }
@@ -3345,6 +3389,12 @@ namespace Game
                 mode->GetData().m_pPauseMenu = pauseMenu;
                 mode->GetData().m_pViewSwitch = viewSwitch;
                 mode->GetData().m_GetAssetSystem = getAssetSystem;
+                // 共通の照明と灰色の板（起動引数。--common-light-case だけでは点けない）
+                mode->GetData().m_CommonLight.Opts = s_WastelandCommonLight;
+                if (!s_WastelandCommonLight.bEnabled && s_WastelandCommonLight.bGrayPlate)
+                {
+                    LOG_WARNING("--wasteland-gray-plate は --wasteland-common-light と一緒に使います（板は置き、照明は既定のまま）");
+                }
                 return mode;
             });
 #if NORVES_BUILD_DEVELOPMENT

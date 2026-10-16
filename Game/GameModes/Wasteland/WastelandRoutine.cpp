@@ -344,8 +344,24 @@ namespace Game::GameModes
             ctx.EngineRef.GetRenderWorld().SetCloudLayer(CloudLayerParameters{});
             ctx.EngineRef.GetRenderWorld().SetStaticEnvironmentIntensityScale(1.0f);
             ctx.EngineRef.GetRenderWorld().SetStaticEnvironmentMaxRadiance(0.0f);
+            ctx.EngineRef.GetRenderWorld().SetStaticEnvironmentUniformRadiance(false, NorvesLib::Math::Vector3::Zero);
             ctx.EngineRef.GetRenderWorld().SetSunShadowMaxDistance(0.0f);
             ctx.EngineRef.GetRenderWorld().SetFoliage(FoliageScene{});
+        }
+
+        /// 視点の空・太陽・霧を置く: 共通の照明（--wasteland-common-light）ならその一様な空と太陽、それ以外は物理空と
+        /// 手本の写真の時刻の太陽（手本の構図の視点だけ。ほかは基準の太陽）
+        void ApplyViewEnvironment(GameModeContext &ctx, WastelandData &data)
+        {
+            if (data.m_CommonLight.Opts.bEnabled)
+            {
+                WastelandCommonLight::ApplyEnvironment(ctx, data.m_CommonLight, data.m_ViewName);
+                ctx.EngineRef.GetRenderWorld().SetSunShadowMaxDistance(kSunShadowMaxDistance);
+                return;
+            }
+            const WastelandReferenceShot *referenceShot = FindReferenceShot(data.m_ViewName);
+            ApplyEnvironment(ctx, referenceShot ? referenceShot->SunAltitudeDegrees : kSunAltitudeDegrees,
+                             referenceShot ? referenceShot->SunAzimuthDegrees : kSunAzimuthDegrees);
         }
 
         /// 草・低木を撒かない範囲を散布へ渡す: 名前付き視点の足元（目の前を株がふさがない）と、置いた建物の足元・道
@@ -451,12 +467,13 @@ namespace Game::GameModes
             pose.Yaw = view->Yaw;
             pose.Pitch = view->Pitch;
             LiftPoseToTerrain(data.m_pHeightField.get(), data.m_ViewName, pose);
+            // 灰色の板（--wasteland-gray-plate）: 視点の前に板を置き直し、カメラを板へ向ける
+            WastelandCommonLight::PlacePlate(ctx, data.m_CommonLight, data.m_pHeightField.get(), pose);
             data.m_Rig.PlaceAt(pose);
 
             // 手本の写真の構図の視点では、画角と太陽を写真の推定に替え、それ以外は基準の値へ戻す
             const WastelandReferenceShot *referenceShot = FindReferenceShot(data.m_ViewName);
-            ApplyEnvironment(ctx, referenceShot ? referenceShot->SunAltitudeDegrees : kSunAltitudeDegrees,
-                             referenceShot ? referenceShot->SunAzimuthDegrees : kSunAzimuthDegrees);
+            ApplyViewEnvironment(ctx, data);
             // 草・低木: 新しい視点の周りの区画をそろえ、風の時計を替える（grass_gust は grass と同じ構図で時刻だけを変えた 2 枚目）
             UpdateFoliage(ctx, data, pose.Position[0], pose.Position[2], true);
             camera->SetFieldOfView(referenceShot ? referenceShot->VerticalFieldOfViewDegrees : data.m_DefaultFieldOfView);
@@ -1129,6 +1146,16 @@ namespace Game::GameModes
         }
         LiftPoseToTerrain(data.m_pHeightField.get(), data.m_ViewName, pose);
 
+        // 共通の照明と灰色の板（起動引数で選んだときだけ）。定義が読めなければモードを失敗にする（黙って既定の照明で撮らない）
+        if (!WastelandCommonLight::Enter(ctx, data.m_CommonLight))
+        {
+            WastelandCommonLight::Leave(ctx, data.m_CommonLight);
+            data.m_pHeightField.reset();
+            Game::Scenes::EndSceneAssembly(ctx.EngineRef);
+            return GameModeEnterResult::Failed;
+        }
+        WastelandCommonLight::PlacePlate(ctx, data.m_CommonLight, data.m_pHeightField.get(), pose);
+
         // 草・低木（高さ場の上に、地表の分類の地図で撒く）。高さ場が無ければ置かない。地図が読めなければ傾斜と密度の斑だけで撒く
         data.m_Foliage = NorvesLib::Core::Rendering::FoliageScene{};
         data.m_FoliageScatter.Reset();
@@ -1154,10 +1181,9 @@ namespace Game::GameModes
             UpdateFoliage(ctx, data, pose.Position[0], pose.Position[2], true);
         }
 
-        // 手本の写真の構図の視点では、太陽を写真の時刻の推定に替える
+        // 手本の写真の構図の視点では、太陽を写真の時刻の推定に替える（共通の照明なら、その定義の視点ごとの向き）
         const WastelandReferenceShot *referenceShot = FindReferenceShot(data.m_ViewName);
-        ApplyEnvironment(ctx, referenceShot ? referenceShot->SunAltitudeDegrees : kSunAltitudeDegrees,
-                         referenceShot ? referenceShot->SunAzimuthDegrees : kSunAzimuthDegrees);
+        ApplyViewEnvironment(ctx, data);
 
         // 地形の区画を読み、材質のテクスチャの読み込みを始める。無いときは空と太陽だけで組み立てを終える
         TSharedPtr<const Asset::AssetSystem> assetSystem;
@@ -1278,6 +1304,7 @@ namespace Game::GameModes
                 data.m_pAssembly.reset();
             }
             data.m_pHeightField.reset();
+            WastelandCommonLight::Leave(ctx, data.m_CommonLight);
             ResetEnvironment(ctx);
             Game::Scenes::EndSceneAssembly(ctx.EngineRef);
             return GameModeEnterResult::Failed;
@@ -1396,6 +1423,7 @@ namespace Game::GameModes
         data.m_GravelScatter.Reset();
         data.m_Rig.Leave(ctx);
         // 地形の Entity・モデル・カメラの実体は GameModeScope::Cleanup が返す。空と霧は RenderWorld の設定なので戻す。
+        WastelandCommonLight::Leave(ctx, data.m_CommonLight);
         ResetEnvironment(ctx);
         LOG_INFO("wasteland を終了します");
     }

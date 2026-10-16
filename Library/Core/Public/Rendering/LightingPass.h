@@ -373,6 +373,13 @@ namespace NorvesLib::Core::Rendering
         bool EnsureSkyAtmosphereIbl(const SkyAtmosphereParameters& parameters,
                                     uint32_t radianceWidth,
                                     uint32_t radianceHeight);
+        /**
+         * @brief シーンの指定に合わせて、静的HDR環境と一様な環境を入れ替える
+         *
+         * 空が無効で SceneProxy::bStaticEnvironmentUniform のフレームは、一様な放射輝度の環境（背景・拡散・鏡面の 3 枚）を
+         * 静的HDRの位置に置く。指定が外れたら読み込んだ静的HDRへ戻す。放射輝度が変わったときだけ作り直す。
+         */
+        void UpdateUniformStaticEnvironment(const ViewRenderContext& context);
 
         /**
          * @brief BRDF LUTをCPUで生成（split-sum近似）
@@ -567,6 +574,14 @@ namespace NorvesLib::Core::Rendering
         uint32_t m_SkyAtmosphereIblRadianceHeight = 0;
         bool m_bSkyAtmosphereIblCacheValid = false;
         bool m_bSkyAtmosphereIblAvailable = false;
+        // 静的HDR環境の一様な差し替え（SceneProxy::bStaticEnvironmentUniform）。差し替えている間は、読み込んだ静的HDRの
+        // 3 枚を退避し、一様な放射輝度から作った 3 枚を m_EnvironmentTexture などの位置に置く（選ぶ側の式は変えない）
+        RHI::TexturePtr m_LoadedEnvironmentTexture;
+        RHI::TexturePtr m_LoadedDiffuseIrradianceTexture;
+        RHI::TexturePtr m_LoadedPrefilteredSpecularTexture;
+        bool m_bLoadedIBLAvailable = false;
+        bool m_bUniformEnvironmentActive = false;
+        Math::Vector3 m_UniformEnvironmentRadiance = Math::Vector3::Zero;
 
         // Neural BRDF リソース
         NeuralBRDFData m_NeuralBRDFData;         ///< 学習済みBRDFデータ

@@ -215,6 +215,10 @@ namespace NorvesLib::Core::Rendering
             hash = HashRevisionValue(hash, packet.Scene.AmbientIntensity);
             hash = HashRevisionValue(hash, packet.Scene.StaticEnvironmentIntensityScale);
             hash = HashRevisionValue(hash, packet.Scene.StaticEnvironmentMaxRadiance);
+            hash = HashRevisionValue(hash, packet.Scene.bStaticEnvironmentUniform);
+            hash = HashRevisionValue(hash, packet.Scene.StaticEnvironmentUniformRadiance.x);
+            hash = HashRevisionValue(hash, packet.Scene.StaticEnvironmentUniformRadiance.y);
+            hash = HashRevisionValue(hash, packet.Scene.StaticEnvironmentUniformRadiance.z);
             hash = HashRevisionValue(hash, packet.Scene.SunShadowMaxDistance);
             hash = HashRevisionValue(hash, packet.Scene.AerialPerspective.bEnabled);
             hash = HashRevisionValue(hash, packet.Scene.AerialPerspective.DistanceScale);
@@ -4279,6 +4283,8 @@ namespace NorvesLib::Core::Rendering
         packet.Scene.SetVolumetricFogParameters(m_VolumetricFog);
         packet.Scene.StaticEnvironmentIntensityScale = m_StaticEnvironmentIntensityScale;
         packet.Scene.StaticEnvironmentMaxRadiance = m_StaticEnvironmentMaxRadiance;
+        packet.Scene.bStaticEnvironmentUniform = m_bStaticEnvironmentUniform;
+        packet.Scene.StaticEnvironmentUniformRadiance = m_StaticEnvironmentUniformRadiance;
         packet.Scene.SunShadowMaxDistance = m_SunShadowMaxDistance;
         packet.Scene.AerialPerspective = m_AerialPerspective;
         packet.Scene.CloudLayer = m_CloudLayer;
@@ -6221,6 +6227,16 @@ namespace NorvesLib::Core::Rendering
     {
         m_StaticEnvironmentMaxRadiance =
             std::isfinite(maxRadiance) && maxRadiance >= 0.0f ? maxRadiance : 0.0f;
+    }
+
+    void RenderingCoordinator::SetStaticEnvironmentUniformRadiance(bool bEnabled, const Math::Vector3& radiance)
+    {
+        const bool bFinite = std::isfinite(radiance.x) && std::isfinite(radiance.y) && std::isfinite(radiance.z);
+        m_bStaticEnvironmentUniform = bEnabled;
+        m_StaticEnvironmentUniformRadiance =
+            bEnabled && bFinite ? Math::Vector3(std::max(radiance.x, 0.0f), std::max(radiance.y, 0.0f),
+                                                std::max(radiance.z, 0.0f))
+                                : Math::Vector3::Zero;
     }
 
     void RenderingCoordinator::SetSunShadowMaxDistance(float distance)

@@ -2086,6 +2086,11 @@ namespace NorvesLib::Core::Rendering
         m_bRTGIDenoiserUnavailable = false;
 
         // IBL resources
+        m_LoadedEnvironmentTexture.reset();
+        m_LoadedDiffuseIrradianceTexture.reset();
+        m_LoadedPrefilteredSpecularTexture.reset();
+        m_bLoadedIBLAvailable = false;
+        m_bUniformEnvironmentActive = false;
         m_EnvironmentTexture.reset();
         m_DiffuseIrradianceTexture.reset();
         m_PrefilteredSpecularTexture.reset();
@@ -4646,6 +4651,80 @@ namespace NorvesLib::Core::Rendering
         return true;
     }
 
+    void LightingPass::UpdateUniformStaticEnvironment(const ViewRenderContext& context)
+    {
+        const SceneProxy* scene = context.SnapshotScene;
+        const bool bWanted = m_Device != nullptr && scene != nullptr && scene->bStaticEnvironmentUniform &&
+                             !context.SkyAtmosphere.bSnapshotEnabled;
+        if (!bWanted)
+        {
+            if (m_bUniformEnvironmentActive)
+            {
+                m_EnvironmentTexture = m_LoadedEnvironmentTexture;
+                m_DiffuseIrradianceTexture = m_LoadedDiffuseIrradianceTexture;
+                m_PrefilteredSpecularTexture = m_LoadedPrefilteredSpecularTexture;
+                m_bIBLAvailable = m_bLoadedIBLAvailable;
+                m_LoadedEnvironmentTexture.reset();
+                m_LoadedDiffuseIrradianceTexture.reset();
+                m_LoadedPrefilteredSpecularTexture.reset();
+                m_bUniformEnvironmentActive = false;
+            }
+            return;
+        }
+
+        const Math::Vector3& radiance = scene->StaticEnvironmentUniformRadiance;
+        if (m_bUniformEnvironmentActive && radiance.x == m_UniformEnvironmentRadiance.x &&
+            radiance.y == m_UniformEnvironmentRadiance.y && radiance.z == m_UniformEnvironmentRadiance.z)
+        {
+            return;
+        }
+
+        // 一定の値の正距円筒。CreateIblResources は一定の入力を見分け、拡散を π×放射輝度・鏡面を放射輝度のまま作って照合する
+        constexpr uint32_t kUniformWidth = 64u;
+        constexpr uint32_t kUniformHeight = 32u;
+        Container::VariableArray<float> sourceData(static_cast<size_t>(kUniformWidth) * kUniformHeight * 4u);
+        for (size_t pixel = 0u; pixel < static_cast<size_t>(kUniformWidth) * kUniformHeight; ++pixel)
+        {
+            sourceData[pixel * 4u + 0u] = radiance.x;
+            sourceData[pixel * 4u + 1u] = radiance.y;
+            sourceData[pixel * 4u + 2u] = radiance.z;
+            sourceData[pixel * 4u + 3u] = 1.0f;
+        }
+        RHI::TexturePtr environment;
+        RHI::TexturePtr diffuse;
+        RHI::TexturePtr prefilter;
+        if (!CreateIblResources(m_Device,
+                                sourceData,
+                                kUniformWidth,
+                                kUniformHeight,
+                                "UniformEnvironment",
+                                "UniformEnvironment.DiffuseIrradiance",
+                                "UniformEnvironment.PrefilteredSpecular",
+                                environment,
+                                diffuse,
+                                prefilter))
+        {
+            NORVES_LOG_WARNING("LightingPass", "Uniform environment IBL generation failed; keeping static environment");
+            return;
+        }
+        if (!m_bUniformEnvironmentActive)
+        {
+            m_LoadedEnvironmentTexture = m_EnvironmentTexture;
+            m_LoadedDiffuseIrradianceTexture = m_DiffuseIrradianceTexture;
+            m_LoadedPrefilteredSpecularTexture = m_PrefilteredSpecularTexture;
+            m_bLoadedIBLAvailable = m_bIBLAvailable;
+        }
+        m_EnvironmentTexture = environment;
+        m_DiffuseIrradianceTexture = diffuse;
+        m_PrefilteredSpecularTexture = prefilter;
+        m_bIBLAvailable = true;
+        m_bUniformEnvironmentActive = true;
+        m_UniformEnvironmentRadiance = radiance;
+        NORVES_LOG_INFO("LightingPass", "Uniform environment radiance=(%g, %g, %g)",
+                        static_cast<double>(radiance.x), static_cast<double>(radiance.y),
+                        static_cast<double>(radiance.z));
+    }
+
     bool LightingPass::EnsureSkyAtmosphereIbl(const SkyAtmosphereParameters& parameters,
                                               uint32_t radianceWidth,
                                               uint32_t radianceHeight)
@@ -4726,6 +4805,8 @@ namespace NorvesLib::Core::Rendering
                                          ExecuteUpload& outLightArray)
     {
         outLightArray = ExecuteUpload{};
+        // 静的HDR環境の一様な差し替えを、このフレームの環境を選ぶ前に済ませる（記述子の束縛もこの後に行う）
+        UpdateUniformStaticEnvironment(context);
         // ライティングパラメータを構築
         GPULightingParams params = {};
         InitializeSafeCascadedShadowParams(params);

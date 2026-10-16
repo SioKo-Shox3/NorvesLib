@@ -49,6 +49,7 @@ namespace NorvesLib::Core::Rendering
             data.Shading = createInfo.Shading;
             data.bTwoSided = createInfo.bTwoSided;
             data.bCastShadows = createInfo.bCastShadows;
+            data.bDiffuseOnly = createInfo.bDiffuseOnly;
             data.RefCount = 1;
             data.DebugName = createInfo.DebugName;
             outData = std::move(data);

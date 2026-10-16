@@ -320,6 +320,9 @@ namespace NorvesLib::Core::Rendering
         ShadingModel Shading = ShadingModel::DefaultLit;
         bool bTwoSided = false;
         bool bCastShadows = true;
+        /// 鏡面反射を持たない純ランバートの面にする（照明の尺度の検証用の灰色の板など）。直接光・環境光とも
+        /// アルベド/π の拡散だけを数え、誘電体の F0（0.04）の鏡面と、その分の拡散の減りを掛けない。GBuffer の経路だけが読む
+        bool bDiffuseOnly = false;
 
         Container::String DebugName;
         float BaseColor[4] = {1.0f, 1.0f, 1.0f, 1.0f}; ///< リニア空間のベースカラーRGBA
@@ -352,6 +355,7 @@ namespace NorvesLib::Core::Rendering
         ShadingModel Shading = ShadingModel::DefaultLit;
         bool bTwoSided = false;
         bool bCastShadows = true;
+        bool bDiffuseOnly = false; ///< 鏡面の無い純ランバート（MaterialCreateData::bDiffuseOnly）
 
         uint32_t RefCount = 0;
         Container::String DebugName;

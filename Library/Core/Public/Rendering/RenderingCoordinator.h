@@ -377,6 +377,13 @@ namespace NorvesLib::Core::Rendering
         float GetStaticEnvironmentMaxRadiance() const { return m_StaticEnvironmentMaxRadiance; }
 
         /**
+         * @brief 静的HDR環境を一様な放射輝度の環境に差し替える（GameThread。照明の尺度の検証用）
+         * @param bEnabled true で差し替える。false で読み込んだ静的HDRへ戻す
+         * @param radiance 全方向で同じ放射輝度（cd/m²、RGB）。負・非有限は0へ丸める。次のFramePacketへ値コピーする
+         */
+        void SetStaticEnvironmentUniformRadiance(bool bEnabled, const Math::Vector3& radiance);
+
+        /**
          * @brief 太陽の影を受ける最大のカメラからの距離（m）を設定する（GameThread）
          * @param distance 0より大きい有限の値。0・範囲外はShadowMapPassの設定（既定80 m）へ戻す。次のFramePacketへ値コピーする
          */
@@ -631,6 +638,8 @@ namespace NorvesLib::Core::Rendering
         VolumetricFogParameters m_VolumetricFog;
         float m_StaticEnvironmentIntensityScale = 1.0f;
         float m_StaticEnvironmentMaxRadiance = 0.0f;
+        bool m_bStaticEnvironmentUniform = false;
+        Math::Vector3 m_StaticEnvironmentUniformRadiance = Math::Vector3::Zero;
         float m_SunShadowMaxDistance = 0.0f;
         AerialPerspectiveParameters m_AerialPerspective;
         CloudLayerParameters m_CloudLayer;

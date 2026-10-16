@@ -23,7 +23,7 @@ layout(set = 0, binding = 0) uniform MVPData
     vec4 emissiveChromaticityAndLuminanceNits;
     vec4 pomParams;  // x=heightScale, y=hasHeightMap, z=ORMの1枚が metallicTexture の枠に張られているか（1/0）, w=法線が2チャンネル（BC5）か（1/0）
     vec4 frameParams; // x=前フレームカメラ履歴の有効フラグ, y=発光に掛けるプリエクスポージャ, z=材質のテクスチャが sparse（VT）か（1/0）, w=VT のフィードバックのパラメータ（アルベド。0 は書かない。VirtualTextureFeedback.glsl）
-    vec4 vtFeedbackParams; // VT のフィードバックのパラメータ: x=法線, y=ORM（metallicTexture の枠）, z=高さ（0 は書かない）
+    vec4 vtFeedbackParams; // VT のフィードバックのパラメータ: x=法線, y=ORM（metallicTexture の枠）, z=高さ（0 は書かない）, w=鏡面の無い材質か（1/0）
 } mvp;
 
 // PBRテクスチャサンプラー
@@ -45,7 +45,7 @@ layout(set = 0, binding = 6) uniform sampler2D heightTexture;
 // GBuffer MRT出力
 layout(location = 0) out vec4 outAlbedo;    // RT0: Albedo (RGB) + alpha
 layout(location = 1) out vec4 outNormal;    // RT1: World Normal (RGB) + unused
-layout(location = 2) out vec4 outMaterial;  // RT2: Metallic(R) / Roughness(G) / AO(B) / unused(A)
+layout(location = 2) out vec4 outMaterial;  // RT2: Metallic(R) / Roughness(G) / AO(B) / 鏡面の無い材質の印(A。1 で純ランバート)
 layout(location = 3) out vec4 outEmissive;  // RT3: プリエクスポージャ後の発光（RGB） + 未使用
 layout(location = 4) out vec2 outVelocity;  // RT4: currentUV - previousUV
 
@@ -103,7 +103,7 @@ void main()
     outNormal = vec4(normal, 0.0);
 
     // PBRマテリアルパラメータ（POM補正済みUV使用）
-    outMaterial = vec4(textureSamples.Material, 0.0);
+    outMaterial = vec4(textureSamples.Material, mvp.vtFeedbackParams.w);
 
     // 発光: Y=1 の色度 × 輝度（nits）にプリエクスポージャを掛けて書く（Lighting は露出を掛けずに足す）
     outEmissive = vec4(ComputePreExposedEmissive(fragEmissiveChromaticityAndLuminanceNits.rgb,

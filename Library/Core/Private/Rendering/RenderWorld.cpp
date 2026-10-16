@@ -333,6 +333,11 @@ namespace NorvesLib::Core::Rendering
         m_RenderingCoordinator.SetStaticEnvironmentMaxRadiance(maxRadiance);
     }
 
+    void RenderWorld::SetStaticEnvironmentUniformRadiance(bool bEnabled, const Math::Vector3& radiance)
+    {
+        m_RenderingCoordinator.SetStaticEnvironmentUniformRadiance(bEnabled, radiance);
+    }
+
     void RenderWorld::SetSunShadowMaxDistance(float distance)
     {
         m_RenderingCoordinator.SetSunShadowMaxDistance(distance);

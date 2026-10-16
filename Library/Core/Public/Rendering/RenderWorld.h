@@ -200,6 +200,14 @@ namespace NorvesLib::Core::Rendering
         void SetStaticEnvironmentMaxRadiance(float maxRadiance);
 
         /**
+         * @brief 静的HDR環境を、全方向で同じ放射輝度（cd/m²、RGB）の一様な環境に差し替える（GameThread）
+         *
+         * 照明の尺度の検証用。空が無効なフレームだけ効き、背景・IBL・RTGI と DDGI の不交差がこの値になる。
+         * 静的HDRの倍率と上限はそのまま掛かる。false で読み込んだ静的HDRへ戻す。
+         */
+        void SetStaticEnvironmentUniformRadiance(bool bEnabled, const Math::Vector3& radiance);
+
+        /**
          * @brief シーンの太陽の影を受ける最大のカメラからの距離（m）を設定する（GameThread）
          *
          * CSM の分割の奥と、VSM のクリップマップの印付けの範囲（どの段まで使うか）の両方に効く。

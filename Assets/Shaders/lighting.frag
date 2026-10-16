@@ -1059,6 +1059,8 @@ void main()
     float metallic = materialSample.r;
     float roughness = materialSample.g;
     float ao = materialSample.b;
+    // 鏡面の無い材質（GBuffer の材質の A。MaterialCreateData::bDiffuseOnly）。直接光・環境光とも純ランバートで数える
+    bool bDiffuseOnlyMaterial = materialSample.a > 0.5;
     // 拡散の環境光に掛ける遮蔽（多重反射の近似で色ごとに弱める）
     vec3 diffuseAO = vec3(ao);
 
@@ -1218,6 +1220,11 @@ void main()
             // Validation 253: pure direct Lambert. No shadow, ambient, emissive or specular term.
             Lo_diffuse += EvaluateLambertDiffuseBRDF(albedo) * radiance;
         }
+        else if (bDiffuseOnlyMaterial)
+        {
+            // 鏡面の無い材質: アルベド/π の拡散だけ（F0 の鏡面と、その分の (1 - F) の減りを掛けない）
+            Lo_diffuse += EvaluateLambertDiffuseBRDF(albedo) * EvaluateDiffuseMaterialWeight(metallic) * radiance;
+        }
         else if (bValidationPBR || params.bNeuralBRDFEnabled == 0u)
         {
             vec2 dfgCoordinate = clamp(vec2(validationNdotV, roughness),
@@ -1346,6 +1353,17 @@ void main()
                 EvaluateSpecularReflectance(iblAlbedo, metallic, brdf) * specularAO;
             indirectSpecular = SamplePrefilteredSpecular(reflect(-V, N), iblRoughness) *
                                indirectSpecularReflectance * iblIntensity;
+            if (bDiffuseOnlyMaterial && !bRTGIAvailable)
+            {
+                // 鏡面の無い材質: 放射照度 × アルベド/π だけ（(1 - Ed) の減りと鏡面の項を掛けない。SSR も足さない）
+                vec3 irradiance = bDDGIAvailable
+                    ? ddgiIrradiance
+                    : textureLod(diffuseIrradiance, EquirectangularUV(N), 0.0).rgb;
+                vec3 diffuseOnly = irradiance * (albedo / PI) * EvaluateDiffuseMaterialWeight(metallic) * iblDiffuseAO;
+                ambient = bDDGIAvailable ? diffuseOnly : diffuseOnly * iblIntensity;
+                indirectSpecularReflectance = vec3(0.0);
+                indirectSpecular = vec3(0.0);
+            }
         }
         else
         {

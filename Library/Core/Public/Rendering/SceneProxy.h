@@ -572,6 +572,10 @@ namespace NorvesLib::Core::Rendering
         // 静的HDR環境の鏡面（IBLの前計算の値と背景）の放射輝度の上限（倍率を掛ける前のHDRの値。0は上限なし）。
         // 最大の成分が上限を超えた色は、色相を保ったまま上限まで縮める（夜の環境光に残った太陽の除去に使う）
         float StaticEnvironmentMaxRadiance = 0.0f;
+        // 静的HDR環境を、全方向で同じ放射輝度（cd/m²、RGB）の一様な環境に差し替えるか（照明の尺度の検証用。空が無効なときだけ効き、
+        // 背景・IBL・RTGI と DDGI の不交差がこの値になる。倍率と上限はそのまま掛かる）
+        bool bStaticEnvironmentUniform = false;
+        Math::Vector3 StaticEnvironmentUniformRadiance = Math::Vector3::Zero;
         // 太陽の影を受ける最大のカメラからの距離（m）。CSM の分割の奥と VSM のクリップマップの印付けの範囲の両方に効く。
         // 0 は ShadowMapPass の設定（ShadowMapPassSettings::MaxShadowDistance、既定 80 m）のまま
         float SunShadowMaxDistance = 0.0f;
@@ -605,6 +609,8 @@ namespace NorvesLib::Core::Rendering
             VolumetricFog = MakeDefaultVolumetricFogParameters();
             StaticEnvironmentIntensityScale = 1.0f;
             StaticEnvironmentMaxRadiance = 0.0f;
+            bStaticEnvironmentUniform = false;
+            StaticEnvironmentUniformRadiance = Math::Vector3::Zero;
             SunShadowMaxDistance = 0.0f;
             AerialPerspective = AerialPerspectiveParameters{};
             CloudLayer = CloudLayerParameters{};

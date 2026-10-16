@@ -667,7 +667,7 @@ namespace NorvesLib::Core::Rendering
             float emissiveChromaticityAndLuminanceNits[4];
             float pomParams[4];     // x=heightScale, y=hasHeightMap(0 or 1), z=ORMの1枚を metallic の枠に張ったか(0 or 1), w=法線が2チャンネルか(0 or 1)
             float frameParams[4]; // x=前フレームカメラ履歴の有効フラグ, y=発光に掛けるプリエクスポージャ, z=材質のテクスチャが sparse（VT）か（1/0）, w=VT のフィードバックのパラメータ（アルベド。0 は書かない）
-            float vtFeedbackParams[4]; // VT のフィードバックのパラメータ: x=法線, y=ORM（metallic の枠）, z=高さ（0 は書かない）, w=未使用
+            float vtFeedbackParams[4]; // VT のフィードバックのパラメータ: x=法線, y=ORM（metallic の枠）, z=高さ（0 は書かない）, w=鏡面の無い材質か（1/0。GBuffer の材質の A へ書く）
         };
         static_assert(sizeof(PerObjectUBO) == 336u, "UBO_SIZE（Initialize のアロケータの大きさ）と合わせる");
 
@@ -739,6 +739,7 @@ namespace NorvesLib::Core::Rendering
             float matEmissiveChromaticityG = 0.0f;
             float matEmissiveChromaticityB = 0.0f;
             float matEmissiveLuminanceNits = 0.0f;
+            bool bMatDiffuseOnly = false;
 
             MaterialHandle materialHandle;
             materialHandle.Id = materialKey;
@@ -762,6 +763,7 @@ namespace NorvesLib::Core::Rendering
                     matEmissiveChromaticityG = matData->EmissiveColor[1];
                     matEmissiveChromaticityB = matData->EmissiveColor[2];
                     matEmissiveLuminanceNits = matData->EmissiveLuminanceNits;
+                    bMatDiffuseOnly = matData->bDiffuseOnly;
                 }
             }
 
@@ -822,6 +824,7 @@ namespace NorvesLib::Core::Rendering
                 ResolveVirtualTextureFeedbackParam(textures, matORM, ormTex.get(), feedbackTarget));
             uboData.vtFeedbackParams[2] = static_cast<float>(
                 ResolveVirtualTextureFeedbackParam(textures, matHeight, heightTex.get(), feedbackTarget));
+            uboData.vtFeedbackParams[3] = bMatDiffuseOnly ? 1.0f : 0.0f;
             allocation.Write(&uboData, sizeof(PerObjectUBO));
 
             allocation.DescriptorSet->BindTexture(1, albedoTex);

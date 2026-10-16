@@ -25,6 +25,7 @@
 #include "Core/Public/GameMode/IGameMode.h"
 #include "Core/Public/GameMode/TGameMode.h"
 #include "Core/Public/Rendering/FoliageTypes.h"
+#include "GameModes/Wasteland/WastelandCommonLight.h"
 #include "GameModes/Wasteland/WastelandFoliage.h"
 #include "GameModes/Wasteland/WastelandGravel.h"
 #include "Pause/PauseMenu.h"
@@ -89,6 +90,9 @@ namespace Game::GameModes
         NorvesLib::Core::Container::VariableArray<NorvesLib::Core::Rendering::FoliageBatch> m_GravelBatches;
         /// 石と礫を置く区画の持ち主（Enter で高さ場と地表の分類の地図を渡し、Leave で手放す）
         Game::GameModes::WastelandGravel::GravelScatter m_GravelScatter;
+        /// 共通の照明と灰色の板（--wasteland-common-light・--common-light-case・--wasteland-gray-plate。開発ビルドだけ）。
+        /// Opts は起動引数から入り、残りは Enter が作って Leave で戻す
+        Game::GameModes::WastelandCommonLight::State m_CommonLight;
     };
 
     class WastelandRoutine

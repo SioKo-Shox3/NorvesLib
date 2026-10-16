@@ -48,6 +48,19 @@
 #           SCENE_WITHIN_RATIO 以上なら合格。
 #       どの組も、撮影の記録（hdr.json の post）でブルームと FXAA が外れ、色の階段の有無と演算子が組の約束どおりであることも見る。
 #
+#   python Scripts/Terrain/ReferenceCheck.py --plate --capture <出力先> [--verify]
+#       共通の照明（Scripts/Terrain/CommonLight.json）の灰色の板の明るさを、入力だけから求めた期待の値と照らし、
+#       結果を <出力先>/plate_check.json に書く。--verify は組ごとの inputs.json を今のファイルと照らす。
+#       <出力先>/sun・<出力先>/sky: Game の --wasteland-common-light --wasteland-gray-plate --common-light-case=sun|sky を
+#           CaptureScene.ps1 -Hdr で撮ったもの（metrics.json の game_args と、Game のログの WASTELAND_COMMON_LIGHT・
+#           WASTELAND_GRAY_PLATE の行で、その指定で撮れたことを確かめる）。
+#       期待の値（エンジンが計算した照度は使わない）: 板はアルベド ρ の鏡面の無い水平の面なので、
+#           sun: ρ × E⊥ × cos(天頂角) / π（E⊥ は太陽に垂直な面の照度、cos(天頂角) = sin(視点の太陽の仰角)）
+#           sky: ρ × 空の放射輝度（一様な空の下の水平のランバート面の放射輝度）
+#       合否: 視点ごとに、画面の中心の PLATE_WINDOW（幅・高さに対する割合）の窓の HDR の輝度の平均が期待に PLATE_TOLERANCE 以内、
+#           かつ窓の中の輝度の変動係数（標準偏差 / 平均）が PLATE_UNIFORMITY 以下（窓が板の中に収まり、影・ほかの物が入らない）。
+#           R・G・B ごとの比も書く（sky は空の色の比が保たれるか）。
+#
 # 終了コード: すべて合格なら 0、どれかが不合格なら 1。
 import argparse
 import hashlib
@@ -122,6 +135,14 @@ DISPLAY_SETS = (
 )
 DISPLAY_SCENE_VIEWS = ("ref_far_01", "ref_far_02", "ref_cliff_01", "ref_cliff_02", "ref_ground_01", "ref_ground_02",
                        "outpost", "ground")
+
+# --plate の基準（上の説明を参照）
+COMMON_LIGHT_PATH = "Scripts/Terrain/CommonLight.json"
+PLATE_CASES = ("sun", "sky")
+PLATE_WINDOW = 0.2
+PLATE_TOLERANCE = 0.03
+PLATE_UNIFORMITY = 0.01
+PLATE_GAME_ARGS = ("--wasteland-common-light", "--wasteland-gray-plate")
 
 
 def git_output(args):
@@ -706,6 +727,163 @@ def run_display(capture_dir, verify):
     return 0 if not failures else 1
 
 
+def load_common_light():
+    with open(os.path.join(REPO_ROOT, COMMON_LIGHT_PATH), encoding="utf-8-sig") as f:
+        return json.load(f)
+
+
+def plate_sun_altitude(light, view):
+    for item in light.get("views", []):
+        if item.get("name") == view:
+            return float(item["altitude_degrees"])
+    return float(light["default_sun"]["altitude_degrees"])
+
+
+def plate_expected_rgb(light, case, view):
+    """入力（CommonLight.json）だけから求めた板の放射輝度の期待（cd/m²、RGB）と、その元の値"""
+    albedo = float(light["gray_plate"]["albedo"])
+    if case == "sun":
+        altitude = plate_sun_altitude(light, view)
+        irradiance = float(light["sun_illuminance_normal_lux"]) * np.sin(np.radians(altitude))
+        return np.full(3, albedo * irradiance / np.pi), {"sun_altitude_degrees": altitude,
+                                                          "horizontal_illuminance_lux": float(irradiance)}
+    sky = np.asarray(light["sky_radiance_rgb"], dtype=np.float64)
+    return albedo * sky, {"sky_radiance_rgb": sky.tolist()}
+
+
+def plate_capture_args(case_dir):
+    path = os.path.join(case_dir, "metrics.json")
+    if not os.path.isfile(path):
+        return None
+    with open(path, encoding="utf-8-sig") as f:
+        metrics = json.load(f)
+    args = metrics.get("game_args") or []
+    return [args] if isinstance(args, str) else list(args)
+
+
+def check_plate_view(case_dir, case, view, light):
+    result = {"view": view, "pass": False, "failures": []}
+    fails = result["failures"]
+    pfm_path = os.path.join(case_dir, f"{view}.hdr.pfm")
+    meta_path = os.path.join(case_dir, f"{view}.hdr.json")
+    log_path = os.path.join(case_dir, f"{view}.Game.log")
+    for path in (pfm_path, meta_path):
+        if not os.path.isfile(path):
+            fails.append(f"{os.path.basename(path)} が無い")
+    if fails:
+        return result
+    with open(meta_path, encoding="utf-8") as f:
+        meta = json.load(f)
+    if meta.get("units") != "cd/m2" or meta.get("source") != "scene_color_before_bloom":
+        fails.append(f"hdr.json の単位・読み出し元が約束と違う（units={meta.get('units')} source={meta.get('source')}）")
+    # Game がこの視点で共通の照明と板を実際に置いたこと（開発ビルドでない Game は起動引数を無視する）
+    if os.path.isfile(log_path):
+        with open(log_path, encoding="utf-8", errors="replace") as f:
+            log_text = f.read()
+        light_line = f"WASTELAND_COMMON_LIGHT view={view} case={case}"
+        if light_line not in log_text:
+            fails.append(f"Game のログに「{light_line}」が無い（共通の照明が掛かっていない）")
+        if "WASTELAND_GRAY_PLATE " not in log_text:
+            fails.append("Game のログに WASTELAND_GRAY_PLATE が無い（板が置かれていない）")
+    else:
+        fails.append(f"{os.path.basename(log_path)} が無い（共通の照明が掛かったかを確かめられない）")
+    try:
+        hdr = DT.read_pfm(pfm_path).astype(np.float64)
+    except ValueError as error:
+        fails.append(f"PFM を読めない: {error}")
+        return result
+    height, width = hdr.shape[:2]
+    half_w = max(1, int(round(width * PLATE_WINDOW / 2.0)))
+    half_h = max(1, int(round(height * PLATE_WINDOW / 2.0)))
+    cy, cx = height // 2, width // 2
+    window = hdr[cy - half_h:cy + half_h, cx - half_w:cx + half_w]
+    if not np.isfinite(window).all() or (window < 0.0).any():
+        fails.append("窓の中に負・NaN・Inf の値がある")
+        return result
+    luminance = (window * LUMA).sum(axis=-1)
+    mean_rgb = window.reshape(-1, 3).mean(axis=0)
+    mean_y = float(luminance.mean())
+    cv = float(luminance.std() / mean_y) if mean_y > 0.0 else float("inf")
+    expected_rgb, inputs = plate_expected_rgb(light, case, view)
+    expected_y = float((expected_rgb * LUMA).sum())
+    ratio = mean_y / expected_y if expected_y > 0.0 else float("inf")
+    result.update({
+        "window_pixels": f"{2 * half_w}x{2 * half_h}",
+        "inputs": inputs,
+        "albedo": float(light["gray_plate"]["albedo"]),
+        "expected_luminance_cd_m2": expected_y,
+        "measured_luminance_cd_m2": mean_y,
+        "ratio": ratio,
+        "expected_rgb_cd_m2": expected_rgb.tolist(),
+        "measured_rgb_cd_m2": mean_rgb.tolist(),
+        "ratio_rgb": (mean_rgb / np.maximum(expected_rgb, 1e-30)).tolist(),
+        "luminance_cv": cv,
+        "luminance_min_max": [float(luminance.min()), float(luminance.max())],
+        "pre_exposure": float(meta.get("pre_exposure", 0.0)),
+    })
+    if not abs(ratio - 1.0) <= PLATE_TOLERANCE:
+        fails.append(f"板の輝度 {mean_y:.3f} cd/m² が期待 {expected_y:.3f} cd/m² と {100.0 * (ratio - 1.0):+.2f} % 違う"
+                     f"（許容 ±{100.0 * PLATE_TOLERANCE:.0f} %）")
+    if not cv <= PLATE_UNIFORMITY:
+        fails.append(f"窓の中の輝度の変動係数 {cv:.4f} が {PLATE_UNIFORMITY} を超える（窓が板からはみ出すか、影・模様がある）")
+    result["pass"] = not fails
+    return result
+
+
+def run_plate(capture_dir, verify):
+    failures = []
+    light = load_common_light()
+    cases = []
+    for case in PLATE_CASES:
+        case_dir = os.path.join(capture_dir, case)
+        entry = {"case": case, "views": []}
+        cases.append(entry)
+        if not os.path.isdir(case_dir):
+            failures.append(f"{case}: 撮影の組が無い（{case_dir}）")
+            continue
+        inputs_ok, input_failures, record = check_inputs(case_dir)
+        entry["inputs_current"] = inputs_ok
+        entry["inputs_commit"] = (record or {}).get("git_commit")
+        if verify and not inputs_ok:
+            failures.extend(f"{case}: {failure}" for failure in input_failures)
+        game_args = plate_capture_args(case_dir)
+        entry["game_args"] = game_args
+        if game_args is None:
+            failures.append(f"{case}: metrics.json が無い（CaptureScene.ps1 -Hdr の出力先でない）")
+            continue
+        wanted = list(PLATE_GAME_ARGS) + [f"--common-light-case={case}"]
+        missing = [a for a in wanted if a not in game_args]
+        if missing:
+            failures.append(f"{case}: 撮影の起動引数に {', '.join(missing)} が無い（game_args={game_args}）")
+        views = views_from_metrics(case_dir) or []
+        if not views:
+            failures.append(f"{case}: 検査する視点が無い")
+        for view in views:
+            result = check_plate_view(case_dir, case, view, light)
+            print(f"REFERENCE_CHECK plate case={case} view={view} pass={int(result['pass'])} "
+                  f"expected={result.get('expected_luminance_cd_m2')} measured={result.get('measured_luminance_cd_m2')} "
+                  f"ratio={result.get('ratio')} ratio_rgb={result.get('ratio_rgb')} cv={result.get('luminance_cv')} "
+                  f"window={result.get('window_pixels')} inputs_current={int(bool(inputs_ok))}")
+            entry["views"].append(result)
+            failures.extend(f"{case}/{view}: {failure}" for failure in result["failures"])
+    report = {
+        "mode": "plate",
+        "verify": bool(verify),
+        "common_light": COMMON_LIGHT_PATH,
+        "criteria": {"window": PLATE_WINDOW, "tolerance": PLATE_TOLERANCE, "uniformity_cv": PLATE_UNIFORMITY},
+        "cases": cases,
+        "failures": failures,
+    }
+    report_path = os.path.join(capture_dir, "plate_check.json")
+    with open(report_path, "w", encoding="utf-8") as f:
+        json.dump(report, f, indent=2, ensure_ascii=False)
+    for failure in failures:
+        print(f"REFERENCE_CHECK failure: {failure}")
+    status = "pass" if not failures else "fail"
+    print(f"REFERENCE_CHECK result={status} mode=plate cases={len(PLATE_CASES)} report={report_path}")
+    return 0 if not failures else 1
+
+
 def main():
     # 結果の行を保存して読むので、端末の符号に関わらず UTF-8 で書く
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -715,6 +893,7 @@ def main():
     parser.add_argument("--kind", default="engine", choices=sorted(INPUT_SETS), help="--record-inputs の入力の種類")
     parser.add_argument("--hdr", action="store_true", help="ブルーム前の HDR の撮影を検査する")
     parser.add_argument("--display", action="store_true", help="表示変換の再現（DisplayTransform.py）を照合の撮影と照らす")
+    parser.add_argument("--plate", action="store_true", help="共通の照明の灰色の板の明るさを、入力から求めた期待と照らす")
     parser.add_argument("--views", default="", help="検査する視点（カンマ区切り。省くと metrics.json の全視点）")
     parser.add_argument("--verify", action="store_true", help="入力のハッシュを今のファイルと照らし、古い結果を拒否する")
     args = parser.parse_args()
@@ -730,7 +909,9 @@ def main():
         return run_hdr(capture_dir, views, args.verify)
     if args.display:
         return run_display(capture_dir, args.verify)
-    print("REFERENCE_CHECK result=fail reason=no_mode（--record-inputs か --hdr か --display を指定する）")
+    if args.plate:
+        return run_plate(capture_dir, args.verify)
+    print("REFERENCE_CHECK result=fail reason=no_mode（--record-inputs か --hdr か --display か --plate を指定する）")
     return 1
 
 
