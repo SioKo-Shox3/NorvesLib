@@ -5036,3 +5036,18 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 起動画面（rendering3dtest）は PNG との照合が通らない（±2 段 0.09〜0.42。反復 2 の `aux-...-debug-validation.txt`）。`ReferenceCheck.py` の簡易の表示変換が荒野のカメラの構成しか見積もらないためと見ている（原因は確かめていない）。表示変換の厳密な照合は SCN-WLR-DISPLAY-TRANSFORM
   - HDR の書き出しの単体の試験は足していない（verify の撮影と検査が書き出しと値を確かめる）
 - Next: SCN-WLR-DISPLAY-TRANSFORM。
+
+### SCN-WLR-HDR-CAPTURE 差し戻しの対応（2026-10-16、run 20261016-193030 の反復 4）
+
+- Done: 入力のハッシュに、資産の組が参照するメッシュ・テクスチャの実体を加えた（評価者の指摘: 資産の組の JSON だけを見て、メッシュ本体が入っていなかった）
+  - `ReferenceCheck.py` の `ASSET_SET_INPUTS` が荒野の資産の組 3 つを読み、メッシュの `source_path`・`extra_sources`、glTF の `buffers`・`images`、テクスチャの `source_path`・`orm_*` を、git が無視していても中身でハッシュする（171 ファイル、うち `Assets/Models/` が 55。無いファイルは無いことを記録）。`inputs.json` の `paths.asset_sources` にまとめのハッシュを書く
+  - 基準 `.harness/runs/scene-capture/SCN-WLR-BASELINE/` と verify の ref_cliff_01 を、新しい入力の記録で撮り直した（8 視点の PNG の平均輝度は反復 3 と同じ）
+- 検証（`.harness/runs/20261016-193030/`）:
+  - `verify-SCN-WLR-HDR-CAPTURE-12.txt`: Debug の Game のビルド EXIT=0
+  - `verify-SCN-WLR-HDR-CAPTURE-13.txt`: ref_cliff_01 を `-Hdr` で撮影、result=pass、record_inputs files=650 asset_sources=171 asset_missing=0、EXIT=0
+  - `verify-SCN-WLR-HDR-CAPTURE-14.txt`: その検査 result=pass（bad_values=0、±2 段 0.99982、中央値 0.249 段、inputs_current=1）
+  - `verify-SCN-WLR-HDR-CAPTURE-15.txt`: 基準 8 視点の検査 result=pass（どれも bad_values=0、±2 段 0.99983 以上、中央値 0.25〜0.35 段、inputs_current=1）
+  - `aux-SCN-WLR-HDR-CAPTURE-baseline-capture-iter4.txt`: 基準の撮影 result=pass、192 秒
+  - `aux-SCN-WLR-HDR-CAPTURE-mesh-stale-iter4.txt`: `namaqualand_cliff_01.bin` の読み取り内容をメモリ上で 1 バイト変えると `check_inputs()` が「入力が撮影の後に変わった（古い結果）: asset_sources」で落ち、戻すと通る
+- Notes: Cooked の出力（`Cooked/`）はハッシュに入れていない（資産の実体と資産の組の定義から焼くので、元の側の変化で古い結果を拒める）。入力のハッシュは 650 ファイル・約 1.4 GB で約 5 秒
+- Next: SCN-WLR-DISPLAY-TRANSFORM。

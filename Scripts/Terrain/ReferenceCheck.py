@@ -15,7 +15,9 @@
 #
 # 入力のハッシュ（inputs.json）: 種類ごとに決めたパス（INPUT_SETS）の、git が追跡するか無視されていないファイルの中身の SHA-256 を
 # パスの順に並べたものの SHA-256。荒野の撮影では描画のコード・シェーダー・荒野の組み立て・視点の定義・資産の組の定義・撮影の台本・
-# 共通の照明（Scripts/Terrain/CommonLight.json。無ければ無いことを記録）。git のコミットと、入力に未コミットの変更があったかも書く
+# 共通の照明（Scripts/Terrain/CommonLight.json。無ければ無いことを記録）。資産の組（ASSET_SET_INPUTS）が参照するメッシュ・テクスチャの
+# 実体（glTF の .bin・画像を含む）は git が無視していても中身をハッシュに入れる（無ければ無いことを記録）。
+# git のコミットと、入力に未コミットの変更があったかも書く
 # （記録のためで、照合には中身のハッシュを使う。撮影の後にコミットしても古い結果にはならない）。
 #
 # --hdr の検査（視点ごと）:
@@ -64,6 +66,18 @@ INPUT_SETS = {
     ],
 }
 
+# 種類ごとの資産の組の定義。参照する資産の実体（メッシュの source_path・extra_sources、glTF の buffers・images、
+# テクスチャの source_path・orm_*）を、git が無視するファイルも含めて入力に加える
+ASSET_SET_INPUTS = {
+    "engine": [
+        "Assets/AssetSets/WastelandTerrain.json",
+        "Assets/AssetSets/WastelandModels.json",
+        "Assets/AssetSets/WastelandBuildingsModels.json",
+    ],
+}
+# 入力の一覧で、資産の組から辿ったファイルをまとめる名前
+ASSET_SOURCES_KEY = "asset_sources"
+
 # Rec.709 の輝度の重み
 LUMA = np.array([0.2126, 0.7152, 0.0722], dtype=np.float64)
 
@@ -98,28 +112,86 @@ def list_input_files(paths):
     return files
 
 
+def normalize_rel(path):
+    return os.path.normpath(path).replace("\\", "/")
+
+
+def gltf_references(rel):
+    """glTF が外のファイルとして参照する buffers・images（リポジトリのルートからのパス）"""
+    with open(os.path.join(REPO_ROOT, rel), encoding="utf-8-sig") as f:
+        document = json.load(f)
+    base = os.path.dirname(rel)
+    refs = []
+    for entry in (document.get("buffers") or []) + (document.get("images") or []):
+        uri = entry.get("uri") if isinstance(entry, dict) else None
+        if isinstance(uri, str) and uri and not uri.startswith("data:"):
+            refs.append(normalize_rel(os.path.join(base, uri.replace("%20", " "))))
+    return refs
+
+
+def list_asset_sources(asset_sets):
+    """資産の組が参照する資産の実体（git の無視に関わらず）。(あるファイルの一覧, 無いファイルの一覧)"""
+    referenced = set()
+    for asset_set in asset_sets:
+        path = os.path.join(REPO_ROOT, asset_set)
+        if not os.path.isfile(path):
+            continue
+        with open(path, encoding="utf-8-sig") as f:
+            definition = json.load(f)
+        for model in definition.get("models") or []:
+            for source in [model.get("source_path")] + list(model.get("extra_sources") or []):
+                if isinstance(source, str) and source:
+                    referenced.add(normalize_rel(source))
+        for texture in definition.get("textures") or []:
+            for key, value in texture.items():
+                if isinstance(value, str) and value and (key == "source_path" or key.startswith("orm_")):
+                    referenced.add(normalize_rel(value))
+    for rel in sorted(referenced):
+        if rel.lower().endswith(".gltf") and os.path.isfile(os.path.join(REPO_ROOT, rel)):
+            referenced.update(gltf_references(rel))
+    present = sorted(r for r in referenced if os.path.isfile(os.path.join(REPO_ROOT, r)))
+    missing = sorted(referenced - set(present))
+    return present, missing
+
+
 def hash_inputs(kind):
     paths = INPUT_SETS[kind]
-    files = list_input_files(paths)
+    tracked = list_input_files(paths)
+    asset_files, asset_missing = list_asset_sources(ASSET_SET_INPUTS.get(kind, []))
+    files = sorted(set(tracked) | set(asset_files))
+    asset_set = set(asset_files)
     total = hashlib.sha256()
     per_path = {}
     for path in paths:
         per_path[path] = hashlib.sha256()
+    asset_hash = hashlib.sha256()
     absent = [p for p in paths if not os.path.exists(os.path.join(REPO_ROOT, p))]
     for rel in files:
+        digest = hashlib.sha256()
         with open(os.path.join(REPO_ROOT, rel), "rb") as f:
-            digest = hashlib.sha256(f.read()).hexdigest()
-        line = f"{rel}\0{digest}\n".encode("utf-8")
+            for block in iter(lambda: f.read(1 << 24), b""):
+                digest.update(block)
+        line = f"{rel}\0{digest.hexdigest()}\n".encode("utf-8")
         total.update(line)
         for path in paths:
             if rel == path or rel.startswith(path.rstrip("/") + "/"):
                 per_path[path].update(line)
+        if rel in asset_set:
+            asset_hash.update(line)
     for path in absent:
         total.update(f"{path}\0absent\n".encode("utf-8"))
+    for rel in asset_missing:
+        line = f"{rel}\0absent\n".encode("utf-8")
+        total.update(line)
+        asset_hash.update(line)
+    path_hashes = {p: ("absent" if p in absent else per_path[p].hexdigest()) for p in paths}
+    path_hashes[ASSET_SOURCES_KEY] = asset_hash.hexdigest()
     return {
         "files_sha256": total.hexdigest(),
         "file_count": len(files),
-        "paths": {p: ("absent" if p in absent else per_path[p].hexdigest()) for p in paths},
+        "asset_source_count": len(asset_files),
+        "asset_sources_missing": asset_missing,
+        "paths": path_hashes,
     }
 
 
@@ -136,7 +208,9 @@ def record_inputs(capture_dir, kind):
     path = os.path.join(capture_dir, "inputs.json")
     with open(path, "w", encoding="utf-8") as f:
         json.dump(record, f, indent=2, ensure_ascii=False)
-    print(f"REFERENCE_CHECK record_inputs kind={kind} files={hashed['file_count']} sha256={hashed['files_sha256']} "
+    print(f"REFERENCE_CHECK record_inputs kind={kind} files={hashed['file_count']} "
+          f"asset_sources={hashed['asset_source_count']} asset_missing={len(hashed['asset_sources_missing'])} "
+          f"sha256={hashed['files_sha256']} "
           f"commit={commit[:12]} dirty={int(record['inputs_dirty_at_capture'])}")
     return 0
 
