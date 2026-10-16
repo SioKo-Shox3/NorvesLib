@@ -4905,21 +4905,23 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 試験は足していない
 - Next: TASKS.md の次の未完の項目（SCN-WL-SCATTER-GRAVEL）。
 
-### SCN-WL-SCATTER-GRAVEL 完了（2026-10-16、run 20261016-132852 の反復 2〜3）
+### SCN-WL-SCATTER-GRAVEL 完了（2026-10-16、run 20261016-132852 の反復 2〜6）
 
 - Done: 近景の礫の地面と沢底に、カメラの周りだけ石と礫を置いた（新しい `Game/GameModes/Wasteland/WastelandGravel.h/.cpp`。荒野のシーンへのつなぎ込みは `WastelandMode.h`・`WastelandRoutine.cpp`）
   - 大きさの段: 小礫 2〜6 cm（升目 5.5 cm・区画 4.2 m・5〜12 m で消える）、石 5〜14 cm（升目 18 cm・区画 7.9 m・10〜30 m で消える）、大きな石 14〜40 cm（升目 75 cm・区画 15.75 m・22〜60 m で消える）。小さい石ほど手前で消え、消える所でも 2〜6 画素ある。その先は地形の材質の礫の層が引き継ぐ
   - 消え方: 草・低木と同じ FoliagePass で描き、頂点シェーダが石ごとに滑らかに縮めて消す（しきい値は 75% を大きさ、25% を乱数で決める）。区画を作るのは消える距離の外だけなので、作った区画の石が見える所に急に現れることはない
   - 置く所: 地表の分類の地図（`surface.png`）の礫・崖錐・細粒・沢底の流路（砂の重み 0.45〜0.7 の smoothstep）の重みと、7 m・1.8 m の群れの斑で密度を決める。38° より急な斜面と、建物の足元・道には置かない。視点の足元 1.5 m には大きな石だけを置かない
-  - 形と色: 角張った赤い砂岩の破片（9 枚の平面で切った多面体・面ごとの法線）と、淡い灰桃色の丸い礫（歪んだ楕円体）。小礫は細分 0 の正二十面体（20 面）。底は高さの 22〜30% と斜面の分だけ埋める
+  - 形と色: 赤褐色〜褐色の角張った砂岩の破片（平面で切った多面体・面ごとの法線。形と色の違う 3 つの変種）と、淡い桃褐色の丸い礫（歪んだ楕円体）の 4 種類を段ごとに置く。底は高さの 22〜30% と斜面の分だけ埋める
   - 数（ground の視点）: 小礫 186030・石 78214・大きな石 907（ログの `WASTELAND_GRAVEL`）
 - 証拠（`.harness/runs/20261016-132852/`）:
-  - `verify-SCN-WL-SCATTER-GRAVEL-5.txt`: Debug の Game のビルド EXIT=0
-  - `verify-SCN-WL-SCATTER-GRAVEL-6.txt`: 荒野の ground・outpost・ref_ground_01・ref_ground_02 を 1920×1080、result=pass（白飛び 0・黒つぶれ 0）、358.8 秒、EXIT=0。検証レイヤーのログは空
-  - 比較画像を開いた（`.harness/runs/scene-capture/SCN-WL-SCATTER-GRAVEL/compare_foot.png`。上段: 手本 ground_01 の足元と ground_02 の沢底、中段・下段: 4 視点の下 4 割）: ground・outpost・ref_ground_01 は足元を 2〜6 cm の礫が密に覆い、10〜30 cm の石が混じる。手本 ground_01 の足元と粒の大きさ・被覆の尺度が近い。礫は距離とともに少しずつ疎らになり、消える所に線は見えない
-  - 歩きながらの連続撮影（`walk/seq3/`。ground の視点から台本 `Scripts/CameraScripts/wasteland-gravel-walk.txt` で前へ歩き、176〜216 フレームを 4 フレームおきに 11 枚）: 近景と消える帯を等倍で並べた `strip_near_176_188.png`・`strip_fade_176_192.png` では、同じ石が滑らかに動くだけで、急に現れる石や消える石は見えない
+  - `verify-SCN-WL-SCATTER-GRAVEL-9.txt`: Debug の Game のビルド EXIT=0
+  - `verify-SCN-WL-SCATTER-GRAVEL-10.txt`: 荒野の ground・outpost・ref_ground_01・ref_ground_02 を 1920×1080、result=pass（白飛び 0・黒つぶれ 0）、354.8 秒、EXIT=0。検証レイヤーのログ（`views.Validation.log`）は空
+  - 比較画像を開いた（`.harness/runs/scene-capture/SCN-WL-SCATTER-GRAVEL/compare_foot.png`。上段: 手本 ground_01・ground_02、中段・下段: 4 視点の下 4 割。`ground_near_1x.png` は上から手本 ground_01 の足元・ground・outpost の等倍）: ground・outpost は数 cm の礫に 10〜30 cm の赤褐色の角張った石が混じり、粒の大きさの尺度は手本 ground_01 の足元に近い。被覆は手本の礫の段より疎らで、粒の間に地面が見える。礫は距離とともに疎らになり、消える所に線は見えない
+  - 歩きながらの連続撮影（`walk/seq5/`。最終のコードで、ground の視点から台本 `Scripts/CameraScripts/wasteland-gravel-walk.txt` で前後へ歩き、360〜600 フレームを 6 フレームおきに 41 枚。起動は `walk/RunWalk4.ps1`、Game は正常終了）:
+    - カメラが動いたことの数値（`walk/seq5/analyze.txt`・`camera_track.txt`）: 画面の下の帯（700〜1080 行）の隣り合う撮影の縦のずれは 6 フレームごとに 7〜15 画素で、f366〜f444 は上へ（前進）、f450〜f594 は下へ（後退）と向きが変わる。画素差の平均は 33.7〜40.2/255。礫の区画の更新のログ（`WASTELAND_GRAVEL camera=`）のカメラ位置は (-300.0,250.0)〜(-303.9,242.4) の 8.5 m を往復し、撮影の間に区画が作られ捨てられた（created・dropped が 0 でない更新がある）
+    - 近景と消える帯を等倍で並べた `strip_near.png`・`strip_fade.png`（f360〜f390）を開いた: 同じ石と低木が少しずつずれて続き、急に現れる石や消える石、消える距離の線や点滅は見えない
 - Notes:
-  - 礫の色は手本の赤褐色より淡い灰桃色に写る（崖錐の岩と同じ。SCN-WL-LIGHT-FINAL・SCN-WL-SKY-AERIAL の範囲）
+  - 石は赤褐色の破片になったが、地面と石の全体の明るさは手本より明るく橙に寄って写る（SCN-WL-LIGHT-FINAL・SCN-WL-SKY-AERIAL の範囲）。足元の被覆は手本 ground_01 の礫の段より疎ら
   - ref_ground_02 の視点は砂の沢底を数十 m 先に見下ろすので、近景の礫の範囲に入らず、手本 ground_02 の石の多い沢底とは違って見える。沢底の大きな石は流路の重みで増やしたが、視点の置き場は SceneCatalog（この項目の範囲の外）
   - 連続撮影は 4 フレームより詰めると、読み出しが終わる前の撮影の要求が断られる（`SEQUENCE_CAPTURE failed: capture request rejected`）
   - 試験は足していない
