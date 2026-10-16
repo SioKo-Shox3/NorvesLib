@@ -16,6 +16,8 @@
 
 2026-10-15 荒野と室内の光の目的（ユーザー）: このプロジェクトは現代の CG の水準の描画を目指してきた。荒野（wasteland）と室内の光（interior-light）は、それを確かめる「ほぼ実写」の美しさを見るシーンで、速さ・最適化は他のシーンで見る。この 2 つでは 60 fps の条件を外す（リアルタイムで、操作できる程度＝1080p で 20〜30 fps 以上ならよい）。品質を見る撮影は 1920×1080 以上。判断は手本の実写との比較画像・実在の材質の明るさの範囲・同じ視点のパストレースの正解（光の誤りを分ける）で行い、節目（SCN-WL-REVIEW-1・REVIEW-2・SCN-WASTELAND-POLISH）でユーザーが見る。ambientCG（CC0）の素材のダウンロードも許可済み。
 
+2026-10-16 荒野の撮影の範囲（親）: 荒野の全 13 視点の撮影は Debug で 515 秒かかり、ランナーの再検証の上限（10 分）に近い。各項目の撮影はその項目に関係する視点だけにし（`-Views`）、手本との比較（CompareReference）を使う項目は手本の 6 視点を撮る。全視点の撮影は SCN-WASTELAND-POLISH だけにする。途中の確かめも同じ視点に絞り、全視点を何度も撮り直さない。
+
 2026-10-15 レイトレーシングと GI の速さ（ユーザー）: RT（RTGI・RT の影と反射・TLAS）と GI を入れた構成では 60 fps（16.6 ms）の条件を外し、値は記録するだけにする。60 fps の条件が残るのは、RT と GI を切った構成（仮想化ジオメトリの規模の判定など）だけ。RT と GI を入れた構成の目安は 30 fps（33.3 ms。PS5 のレイトレーシングの作品の水準）だが、今は美しさを先に盛り、削るのは後にする（今の段階では fps を合否に使わない）。最適化は頭に入れ、同じ計算の繰り返しのような明らかな無駄は作らない。RT を入れても、動かすと操作できないほど遅くなる欠陥（例: 動くと RTGI が 40 倍遅くなる）は直す。
 
 2026-10-10 ECS の決定（ユーザー決定）: Entity はオブジェクト管理の器として残し、更新（Tick・変換・描画への同期・ゲームロジック）のデータと処理を ECS 型（自前のアーキタイプ型、値の実体は列に置き Object の読み書きはそこを通す、大量の物は Object を持たない軽い実体、ロジックはすべてシステムへ、ジョブで並列）に作り変え、レンダースレッドもコマンドの並列記録まで並列化する。100万本の改修に組み込む。設計の正本は `Docs/Plans/EcsUpdatePathPlan.md`（計画者の計画を GPT が 2 周批評し、親が追記した。項目の notes の「§」はこの文書の節）。`SCN-ECS-` の項目と、ECS 前提で置き換えた `SCN-MEGA-` の項目を、計画書の §2 の順に並べた。ワールドの全走査を直す旧案（WORLD-TICK-CACHE・WORLD-TRANSFORM-NOTIFY・WORLD-TRANSFORM-INTERP・WORLD-RENDER-DIRTY・INSTANCE-BATCH）は ECS の項目に置き換えて消した。戻すときは、戻す項目とそれに依存する後続の項目を新しい順に revert する（単独では戻さない）。
@@ -1598,7 +1600,7 @@
 - status: doing
 - done-when: 崖の下の崖錐に、崖の剥離片（角張った大岩・岩）を群れとして置く（大岩の周りに小片が集まり、空白も残す。全域に均等に撒かない）。数は手本の写真の被覆と疎密に合わせる（目標の個数は置かない）。散布の Object（バナナの仕組み）を使う。overview・cliff・ground の撮影と比較画像を開き、崖錐が点の集まりでなく裾の帯として見え、岩が浮いていないことを確かめる。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-WL-SCATTER-ROCKS`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -Views overview,ground,cliff,ref_cliff_01,ref_cliff_02 -OutDir .harness/runs/scene-capture/SCN-WL-SCATTER-ROCKS`
 - paths: Game/GameModes/Wasteland, Assets/AssetSets, Scripts, TASKS.md, PROGRESS.md
 - notes: RT の選別（120 m・最大 65,536 件）と大量配置の TLAS 更新の直しは、後ろの SCN-MEGA-FIX-RT-SELECT・TLAS-REBUILD にある。RT の影・GI で岩が欠けるなら、その旨を PROGRESS に書いて進める。
 
@@ -1606,14 +1608,14 @@
 - status: todo
 - done-when: 輪郭と接触の影が読める大きさ（数 cm〜数十 cm）の石・礫を、近景（数十 m まで）の礫の地面と沢底に置き、それより遠くは材質（礫の層）に引き継ぐ（消える距離で目立つ線や点滅を出さない）。画面で 1〜2 画素以下になる粒はジオメトリにしない。ground・outpost の撮影と手本の足元の写真の比較画像を開き、足元の尺度（粒の大きさ・被覆）が写真に近いことを確かめる。カメラパスか連続撮影で、移動中に石の出入りが目立たないことを確かめる。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-WL-SCATTER-GRAVEL`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -Views ground,outpost,ref_ground_01,ref_ground_02 -OutDir .harness/runs/scene-capture/SCN-WL-SCATTER-GRAVEL`
 - paths: Game/GameModes/Wasteland, Assets/AssetSets, Assets/Shaders, Library/Core/Private/Rendering, Scripts, TASKS.md, PROGRESS.md
 
 ## SCN-WL-CONTACT-SHADOW-TERRAIN: 接触影が地形の折れ目を遮りと誤って出す点を消す
 - status: todo
 - done-when: 画面空間の接触影が、地形の三角形の折れ目や細かい凹凸を遮りと誤り、砂丘や斜面にまばらな暗い点を出す（SCN-WL-SHADOW-DOT-GRID の残り。接触影を切ると消える）のを直す。岩・礫・低木を地面に据えた接地の影（接触影の本来の役目）は残す。ground・outpost・ref_ground_02 の撮影（1920×1080）を拡大して、地形の上の点が消え、岩と低木の足元の影が残ることを確かめる。Rendering3DTest の撮影が変わらない。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-WL-CONTACT-SHADOW-TERRAIN`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -Views ground,outpost,ref_ground_02 -OutDir .harness/runs/scene-capture/SCN-WL-CONTACT-SHADOW-TERRAIN`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -OutDir .harness/runs/startup-capture/SCN-WL-CONTACT-SHADOW-TERRAIN`
 - paths: Assets/Shaders, Library/Core/Private/Rendering, Library/Core/Public/Rendering, Game/GameModes/Wasteland, Scripts, TASKS.md, PROGRESS.md
 - notes: 2026-10-15 親: SCN-WL-SHADOW-DOT-GRID から分けた。危険地帯（描画）。岩と礫を撒いた後（SCN-WL-SCATTER-GRAVEL の後）に置き、接地の影と一緒に確かめる。
@@ -1630,7 +1632,7 @@
 - status: todo
 - done-when: SCN-WL-REFERENCE-SELECT で選んだ平らな場所へ、前哨地（建物 6 種 8 棟・門・道）を置き直し、建物の足元と道の範囲だけ高さ場を緩い平面へ寄せる（境で高さと傾斜を滑らかにつなぎ、円形の継ぎ目を作らない）。造成は高さ場の規則として持ち、クックと Game が同じ値を使う（区画を焼き直す）。outpost の視点を置き直す。outpost・ground の撮影を開き、建物が浮かず埋まりすぎず、造成の境が見えないことを確かめる。散布の除外範囲（建物・道）を決めて書く。`wasteland` の cycle smoke 3 周が pass。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-WL-OUTPOST`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -Views overview,outpost,ground -OutDir .harness/runs/scene-capture/SCN-WL-OUTPOST`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Scenes wasteland -Cycles 3`
 - paths: Game/GameModes/Wasteland, Game/Scenes/SceneCatalog.h, Library/Core/Public/Rendering/Terrain, Library/Core/Private/Rendering/Terrain, Tools/AssetCook, Assets/AssetSets, Scripts, TASKS.md, PROGRESS.md
 - notes: 2026-10-16 ユーザーの決定: 建物は地面の項目の後・光と色の前に戻す（確認 2 で建物の入った荒野を見る。光と色も建物込みで合わせる）。先に撒いた低木・草・岩・礫（SCN-GRASS-SCATTER・SCATTER-ROCKS・SCATTER-GRAVEL）は、建物の足元・道・門の範囲から外す（散布の側に除外の範囲を渡す）。
@@ -1639,7 +1641,7 @@
 - status: todo
 - done-when: 荒野での RTGI の実行状態（有効か・fallback の有無）をログで確かめ、二次の当たりの色が地形の材質を反映しないこと（`Assets/Shaders/RTGI/DiffuseIndirect.comp` 912 行付近はインスタンスの定数の色を使う）を直す。まずは地表の分類の地図と層の代表の色（素材の平均の色）で当たりの色を決める程度でよい（材質の評価の共通化まで広げない）。パストレーサーの当たりの色も同じ近似にし、同じ視点のパストレースの撮影（主の描画をパストレーサーにして累積）ができるようにする。同じ条件の RTGI の入・切の撮影を並べて開き、崖の影の中と谷の底に砂の暖かい照り返しが入ることを確かめる。Rendering3DTest の撮影が変わらない（変わるなら、差がこの変更だけによることを確かめて基準を再承認する）。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-WL-RTGI-COLOR`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -Views cliff,ground,ref_far_01,ref_cliff_01,ref_ground_02 -OutDir .harness/runs/scene-capture/SCN-WL-RTGI-COLOR`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -OutDir .harness/runs/startup-capture/SCN-WL-RTGI-COLOR`
 - paths: Assets/Shaders, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Game/GameModes/Wasteland, Docs/RenderingValidation, Scripts, TASKS.md, PROGRESS.md
 - notes: 危険地帯（描画）。RTGI は既定で有効で、荒野で切ってはいない（2026-10-14 Sol の確認）。
@@ -1648,7 +1650,7 @@
 - status: todo
 - done-when: 確認 1 の差: 晴天の空が白い（ground_02 の B ÷ R が写真 3.46・撮影 1.10、cliff_01 は 2.31・1.42）、数 km 先のメサが淡い桃色の霞に溶ける、地面と崖が写真の 2〜9 倍明るく彩度の高い橙。原因を分けて直す: 空のモデル（大気の散乱の係数・濁り・オゾン）、空気遠近（霞の濃さと色）、太陽と空の明るさの比、露出とトーンマップ（彩度）。同じ視点のパストレースの撮影（SCN-WL-RTGI-COLOR で撮れるようにする）を正解として並べ、空・霞・地面の明るさの比が写真とパストレースに近づくことを確かめる。露出でまとめて帳尻を合わせない。既定の露出・トーンマップ・空のモデルを変えるなら、全シーンへ値を移し、影響するシーンを `--scene` の撮影で確かめる（荒野だけの設定なら荒野の中で閉じる）。確認 1 の評価で見つかった ground_02 の空の高さ約 380 px の横の明るさの境が SCN-FIX-SKY-BANDING と同じ原因なら、ここで一緒に直す。比較画像（写真｜撮影｜パストレース、1920×1080）を開いて確かめる。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-WL-SKY-AERIAL`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -Views ref_far_01,ref_far_02,ref_cliff_01,ref_cliff_02,ref_ground_01,ref_ground_02 -OutDir .harness/runs/scene-capture/SCN-WL-SKY-AERIAL`
 - verify: `python Scripts/Terrain/CompareReference.py --capture .harness/runs/scene-capture/SCN-WL-SKY-AERIAL --verify`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -OutDir .harness/runs/startup-capture/SCN-WL-SKY-AERIAL`
 - paths: Assets/Shaders, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Game/GameModes, Scripts, Docs/RenderingValidation, TASKS.md, PROGRESS.md
@@ -1658,13 +1660,13 @@
 - status: todo
 - done-when: 谷・崖の影・前哨地で、暖かい照り返しと空の青を手本の写真に合わせて整える（露出でまとめて帳尻を合わせない。谷の空の遮り・地面からの反射・遠い崖の影はそれぞれ原因を分けて直す）。カメラパスか連続撮影で、移動中の粒・残像・遮蔽の欠けが目立たないことを確かめる。同じ視点のパストレースの撮影を正解として並べ、RTGI の照り返し・空の遮り・影の色の誤りを見つけて直す。比較画像（写真｜撮影｜パストレース、1920×1080）を開いて、影の中の色と明るさが写真とパストレースに近づいたことを確かめる。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-WL-LIGHT-FINAL`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -Views overview,outpost,ref_far_01,ref_far_02,ref_cliff_01,ref_cliff_02,ref_ground_01,ref_ground_02 -OutDir .harness/runs/scene-capture/SCN-WL-LIGHT-FINAL`
 - paths: Game/GameModes/Wasteland, Assets/Shaders, Library/Core/Private/Rendering, Scripts, Docs/RenderingValidation, TASKS.md, PROGRESS.md
 
 ## SCN-WL-REVIEW-2: 節目の確認 2（地面・植生・岩・光と色）をユーザーに渡す
 - status: todo
 - done-when: SCN-WL-REVIEW-1 と同じ形で、手本の全視点の比較画像の一覧と所見（「確認 2」）を書き、`LOOP_STOP`（中身 `boundary`）を書いてランナーを止める。一覧の先頭の注記（`--note`）が `--verify` の再実行で消えないようにする（確認 1 の評価の差し戻し。注記を保存して再検証でも同じ一覧を出す）。
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-WL-REVIEW-2`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -Views ref_far_01,ref_far_02,ref_cliff_01,ref_cliff_02,ref_ground_01,ref_ground_02 -OutDir .harness/runs/scene-capture/SCN-WL-REVIEW-2`
 - verify: `python Scripts/Terrain/CompareReference.py --capture .harness/runs/scene-capture/SCN-WL-REVIEW-2 --verify`
 - paths: Scripts/Terrain, Docs/RenderingValidation, TASKS.md, PROGRESS.md
 
@@ -1679,14 +1681,14 @@
 - status: todo
 - done-when: Blender で地形の上に置いたスキャンの崖・岩の塊の配置（素材・位置・向き・大きさ）を配置表（JSON）に書き出し、荒野のシーンがそれを読んで仮想化ジオメトリのインスタンスとして置く経路を作る。配置を変えても地形の焼き直しは要らない（配置表と素材のクックだけ）。試しに選んだ素材の塊を 2〜3 個、Battleship Rock の崖の面に置き、Blender の描画とエンジンの撮影（1920×1080）を並べて、位置・向き・大きさがそろうこと、地形から浮かず埋もれ過ぎないことを開いて確かめる。溢れ 0。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-WL-CLIFF-SCAN-PLACE`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -Views cliff,ref_cliff_01 -OutDir .harness/runs/scene-capture/SCN-WL-CLIFF-SCAN-PLACE`
 - paths: Scripts/Terrain, Scripts, Assets/AssetSets, Game/GameModes/Wasteland, Docs/RenderingValidation, TASKS.md, PROGRESS.md
 
 ## SCN-WL-CLIFF-SCAN-NEAR: 主役の崖の表面をスキャンの崖で作り、手本の写真に合わせる
 - status: todo
 - done-when: Blender の台本で、Battleship Rock と Franklin Butte の尖塔の台座の急な面をスキャンの崖の塊で覆い、写真の崖の層の段・縦の割れ目・板状の剥離・崖錐の岩の散らばりに合わせる（塊の繰り返しが見えないよう、回転・大きさ・素材を混ぜる）。材質の色は砂岩の実測の明るさの範囲に合わせ、地形の崖の色と継ぎ目なく馴染ませる。ref_cliff_01・ref_cliff_02・cliff の比較画像（写真｜撮影、1920×1080）を開き、崖の面が丸い面の筋ではなく、影を落とす本物の岩の立体に見えることを確かめる。三角形の数と読み込みの時間を記録する（溢れ 0）。式の焼き込み（`TerrainCliffDetail.cpp`）は、覆った崖の下地として残すか外すかを撮影で決める。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-WL-CLIFF-SCAN-NEAR`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -Views cliff,ref_cliff_01,ref_cliff_02 -OutDir .harness/runs/scene-capture/SCN-WL-CLIFF-SCAN-NEAR`
 - paths: Scripts/Terrain, Scripts, Assets/AssetSets, Game/GameModes/Wasteland, Assets/Shaders, Tools/AssetCook, Docs/RenderingValidation, TASKS.md, PROGRESS.md
 - notes: 1 反復で閉じなければ Battleship Rock だけで閉じ、尖塔の台座を後ろの項目に分ける。
 
