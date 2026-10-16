@@ -1,10 +1,35 @@
-﻿# 荒野の ground の視点から、足元の石と礫を見ながら前へ歩く（--scene=wasteland --scene-view=ground --camera-script=Scripts/CameraScripts/wasteland-gravel-walk.txt）。
+﻿# 荒野の ground の視点から、足元の石と礫を見ながら前後へ歩く（--scene=wasteland --scene-view=ground --camera-script=Scripts/CameraScripts/wasteland-gravel-walk.txt）。
 # 書式は Game/Input/CameraScript.h。1 フレームは 1/60 秒、移動の速さは初期値の 4 m/s。
 # 連続撮影（--capture-sequence）で、歩く間に石が手前から縮んで消えるか・新しい区画の石が急に現れないかを見る。
+# 台本は地形を置いてから流れ始め（WastelandRoutine の kReadyTicksAfterTerrain）、描画フレームの番号との対応は実行ごとに
+# 少し揺れるので、10 m 前へ・10 m 後ろへの往復を繰り返し、撮影の窓がどこに来ても歩いている所を撮れるようにする。
+# 10 m は小礫の区画（4.2 m）と石の区画（7.9 m）を跨ぎ、手前の小礫の消える帯（5〜12 m）を石が通り抜ける距離。
 
 # 動かさずに 10 フレーム待つ
 10
-# W で前へ 6 秒（視線の向き＝4° 上向きに約 24 m。高さは 1.7 m 上がる。小礫の区画 4.2 m・石の区画 8 m を何度も跨ぐ）
-360 keys=W
+# 前へ 2.5 秒（約 10 m）・後ろへ 2.5 秒
+150 keys=W
+150 keys=S
+# 往復 2 回目
+150 keys=W
+150 keys=S
+# 往復 3 回目
+150 keys=W
+150 keys=S
+# 往復 4 回目
+150 keys=W
+150 keys=S
+# 往復 5 回目
+150 keys=W
+150 keys=S
+# 往復 6 回目
+150 keys=W
+150 keys=S
+# 往復 7 回目
+150 keys=W
+150 keys=S
+# 往復 8 回目
+150 keys=W
+150 keys=S
 # 動かさずに 30 フレーム待つ
 30

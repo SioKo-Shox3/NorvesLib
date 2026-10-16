@@ -41,16 +41,16 @@ namespace Game::GameModes::WastelandGravel
             uint32_t RoundedSubdivisions;
         };
 
-        // 小礫は 2〜6 cm（手本の ground_01 の手前の礫の地面を覆う粒）、石は 5〜14 cm、大きな石は 14〜40 cm（ground_02 の沢底の石）。
+        // 小礫は 2〜7 cm（手本の ground_01 の手前の礫の地面を覆う粒）、石は 5〜18 cm、大きな石は 14〜45 cm（ground_02 の沢底の石）。
         // 画面の縦 1080 画素・縦の画角 60° で 1 画素は距離 d[m] で約 0.00107 × d[m]。小さい石から先に消すので、どの段も消える所で
         // 石は 2〜6 画素ある（小礫 2 cm は 5 m 先で 4 画素、6 cm は 12 m 先で 5 画素。石 5 cm は 10 m 先、14 cm は 30 m 先で 4 画素。
         // 大きな石 14 cm は 24 m 先、40 cm は 60 m 先で 6 画素）。
         // 小礫は手本の足元の被覆（礫が地面の 3〜4 割を覆う）に寄せて密に置き、数 cm の粒は面の数を抑えた正二十面体で作る。
         // 大きな石は沢底の流路に寄せる（ground_02 の沢底は大きな石が連なり、礫の地面には時折しか無い）
         constexpr TierDesc kTiers[kTierCount] = {
-            {"pebble", 0.055f, 76, {0.02f, 0.06f}, 5.0f, 12.0f, 1.0f, 0.8f, 0.85f, 0.6f, 0.2f, 0, 0},
-            {"stone", 0.18f, 44, {0.05f, 0.14f}, 10.0f, 30.0f, 1.0f, 0.9f, 0.5f, 0.8f, 0.2f, 1, 1},
-            {"cobble", 0.75f, 21, {0.14f, 0.4f}, 22.0f, 60.0f, 0.07f, 0.3f, 0.02f, 0.9f, 0.03f, 2, 2},
+            {"pebble", 0.055f, 76, {0.02f, 0.07f}, 5.0f, 12.0f, 1.0f, 0.8f, 0.85f, 0.6f, 0.2f, 0, 0},
+            {"stone", 0.18f, 44, {0.05f, 0.18f}, 10.0f, 30.0f, 1.0f, 0.9f, 0.5f, 0.8f, 0.2f, 1, 1},
+            {"cobble", 0.75f, 21, {0.14f, 0.45f}, 22.0f, 60.0f, 0.07f, 0.3f, 0.02f, 0.9f, 0.03f, 2, 2},
         };
 
         // 置かない傾斜[度]（崖と急な崖錐の面）
@@ -59,9 +59,12 @@ namespace Game::GameModes::WastelandGravel
         constexpr float kCellBoundsSideMargin = 0.3f;
         constexpr float kCellBoundsTopMargin = 0.4f;
         constexpr float kCellBoundsBottomMargin = 0.2f;
-        // 石の高さに対する埋める割合（角張った破片は半ば埋まり、丸い石は浅く載る）
-        constexpr float kAngularSink = 0.3f;
-        constexpr float kRoundedSink = 0.22f;
+        // 石の高さに対する埋める割合の範囲（石ごとに乱数で選ぶ。角張った破片は浅く載るものから半分ほど埋まるものまで、
+        // 丸い石は浅く載る）
+        constexpr float kAngularSink[2] = {0.2f, 0.55f};
+        constexpr float kRoundedSink[2] = {0.15f, 0.35f};
+        // 角張った破片の変種の数（種類 0〜2。種類 3 が淡い丸い石）
+        constexpr uint32_t kAngularVariants = kKindsPerTier - 1;
         // 消えるしきい値を大きさに寄せる割合（残りは乱数。大きさがそろった石が同じ距離で一斉に消えない）
         constexpr float kFadeBySize = 0.75f;
 
@@ -192,9 +195,9 @@ namespace Game::GameModes::WastelandGravel
             BuildIcosphere(subdivisions, positions, indices);
 
             auto random = [&](uint32_t salt) { return Hash2(static_cast<int32_t>(seed), static_cast<int32_t>(salt), 977u); };
-            // 楕円体の軸（横 1・奥 0.6〜0.9・高さ 0.4〜0.65。礫は平たく寝る）
-            const float axisZ = (bAngular ? 0.6f : 0.7f) + 0.25f * random(1);
-            const float axisY = (bAngular ? 0.4f : 0.45f) + 0.22f * random(2);
+            // 楕円体の軸（横 1・奥 0.55〜0.9・高さ 0.3〜0.67。破片は板や楔のように平たく寝る）
+            const float axisZ = (bAngular ? 0.55f : 0.7f) + 0.3f * random(1);
+            const float axisY = (bAngular ? 0.3f : 0.45f) + 0.22f * random(2);
             // 切る平面（角張った石だけ）と、丸い石の凹凸の向き
             constexpr uint32_t kPlaneCount = 9;
             Float3 planeNormals[kPlaneCount];
@@ -206,7 +209,8 @@ namespace Game::GameModes::WastelandGravel
                 const float y = 1.0f - 2.0f * u;
                 const float ring = std::sqrt(std::max(0.0f, 1.0f - y * y));
                 planeNormals[plane] = {ring * std::cos(2.0f * kPi * v), y, ring * std::sin(2.0f * kPi * v)};
-                planeOffsets[plane] = 0.55f + 0.3f * random(12 + plane * 3);
+                // 深く切るほど割れ面が広く、輪郭が角張る（浅いと丸い玉に見える）
+                planeOffsets[plane] = 0.45f + 0.3f * random(12 + plane * 3);
             }
             for (Float3 &position : positions)
             {
@@ -334,28 +338,46 @@ namespace Game::GameModes::WastelandGravel
             return mesh;
         }
 
-        /// 段 tier・種類 kind（0: 赤い角張った石、1: 淡い丸い石）の束のひな形
+        /// 段 tier・種類 kind（0〜2: 赤褐色の角張った破片の変種、3: 淡い丸い石）の束のひな形
         FoliageBatch MakeBatch(uint32_t tier, uint32_t kind)
         {
             const TierDesc &desc = kTiers[tier];
-            const bool bAngular = kind == 0;
+            const bool bAngular = kind < kAngularVariants;
             FoliageBatch batch;
             batch.Mesh = BuildStoneMesh(bAngular, bAngular ? desc.AngularSubdivisions : desc.RoundedSubdivisions,
                                         31u + tier * 7u + kind * 3u);
-            if (bAngular)
+            // 色の較正（線形）: 手本 ground_01 の足元の下 3 割で、日向の石の面（輝度の上 1 割）は R/G 2.08・G/B 1.48、
+            // 土（輝度の中央）は R/G 2.96・G/B 1.64 で、石は土より赤みが 0.7 倍・黄みが 0.9 倍の褐色に寄る。
+            // 撮影の土は R/G 2.6・G/B 2.3 に写るので、石は土と同じ比で R/G 1.8・G/B 2.0 前後に写るよう G/B を上げる
+            // （G/B 1.4 前後では空の光の当たる面が灰白色に写る。日向の面は光と階調で赤みが薄れ、アルベドの R/G 2.2〜2.35 は
+            // R/G 1.6 に写ったので、アルベドは R/G 2.1〜2.55・G/B 1.8〜2.05 に置く）。輝度は崖錐の落石の較正（0.17）を割れ口の上限にする。
+            // 割れ口（Tint 1）は明るい赤褐色、風化した面（Tint 0）は暗い褐色
+            switch (kind)
             {
-                // 赤い砂岩の破片（手本 ground_01 の礫と、崖錐の落石の較正 Y 0.17・R/G 2.1・G/B 1.5 に合わせる）。
-                // 割れ口（Tint 1）は明るい赤、風化した面（Tint 0）は暗い赤褐色
-                SetLinearColor(batch.StemColor, 0.085f, 1.9f, 1.45f);
-                SetLinearColor(batch.TipColorA, 0.17f, 2.1f, 1.5f);
-                SetLinearColor(batch.TipColorB, 0.14f, 1.75f, 1.4f);
-            }
-            else
-            {
-                // 淡い灰桃色の丸い石（手本 ground_02 の沢底の石）
-                SetLinearColor(batch.StemColor, 0.11f, 1.35f, 1.15f);
-                SetLinearColor(batch.TipColorA, 0.2f, 1.3f, 1.12f);
-                SetLinearColor(batch.TipColorB, 0.16f, 1.55f, 1.25f);
+            case 0:
+                // 赤褐色
+                SetLinearColor(batch.StemColor, 0.07f, 2.4f, 1.9f);
+                SetLinearColor(batch.TipColorA, 0.15f, 2.55f, 2.0f);
+                SetLinearColor(batch.TipColorB, 0.12f, 2.25f, 1.9f);
+                break;
+            case 1:
+                // 暗い褐色（鉄の皮膜の付いた面）
+                SetLinearColor(batch.StemColor, 0.055f, 2.2f, 1.8f);
+                SetLinearColor(batch.TipColorA, 0.11f, 2.35f, 1.9f);
+                SetLinearColor(batch.TipColorB, 0.09f, 2.1f, 1.8f);
+                break;
+            case 2:
+                // 明るい錆色（割れて間もない面）
+                SetLinearColor(batch.StemColor, 0.08f, 2.3f, 1.95f);
+                SetLinearColor(batch.TipColorA, 0.17f, 2.45f, 2.05f);
+                SetLinearColor(batch.TipColorB, 0.14f, 2.15f, 1.95f);
+                break;
+            default:
+                // 淡い桃褐色の丸い石（手本 ground_02 の沢底の淡い石。灰白色に浮かないよう黄みを残す）
+                SetLinearColor(batch.StemColor, 0.1f, 1.75f, 1.55f);
+                SetLinearColor(batch.TipColorA, 0.18f, 1.7f, 1.55f);
+                SetLinearColor(batch.TipColorB, 0.15f, 1.9f, 1.6f);
+                break;
             }
             batch.Roughness = bAngular ? 0.86f : 0.78f;
             batch.WindStrength = 0.0f;
@@ -365,9 +387,9 @@ namespace Game::GameModes::WastelandGravel
             batch.FadeStartDistance = desc.FadeStart;
             batch.FadeEndDistance = desc.FadeEnd;
             static const char *const kNames[kTierCount][kKindsPerTier] = {
-                {"gravel_pebble_red", "gravel_pebble_pale"},
-                {"gravel_stone_red", "gravel_stone_pale"},
-                {"gravel_cobble_red", "gravel_cobble_pale"},
+                {"gravel_pebble_red", "gravel_pebble_brown", "gravel_pebble_rust", "gravel_pebble_pale"},
+                {"gravel_stone_red", "gravel_stone_brown", "gravel_stone_rust", "gravel_stone_pale"},
+                {"gravel_cobble_red", "gravel_cobble_brown", "gravel_cobble_rust", "gravel_cobble_pale"},
             };
             batch.DebugName = kNames[tier][kind];
             return batch;
@@ -529,20 +551,28 @@ namespace Game::GameModes::WastelandGravel
                 {
                     continue;
                 }
-                // 種類: 沢底は淡い丸い石が半分、ほかは赤い角張った石が多い
-                const float paleShare = 0.1f + 0.4f * channel;
-                const uint32_t kind = Hash2(gx, gz, tierSalt + 6u) < paleShare ? 1u : 0u;
+                // 種類: 角張った破片が主で、淡い丸い石は沢底の流路に寄せる（礫の地面にはほとんど無い）
+                const float paleShare = 0.02f + 0.33f * channel;
+                const float kindU = Hash2(gx, gz, tierSalt + 6u);
+                const bool bAngular = kindU >= paleShare;
+                const uint32_t kind =
+                    bAngular ? std::min(static_cast<uint32_t>((kindU - paleShare) / (1.0f - paleShare) *
+                                                              static_cast<float>(kAngularVariants)),
+                                        kAngularVariants - 1u)
+                             : kAngularVariants;
                 const FoliageBatch &batch = m_Templates[tier][kind];
 
-                // 大きさ: 小さい石を多く（u^2）。横と高さの倍率を少しずつ変える
+                // 大きさ: 小さい石を多く（u^2.5）。高さの倍率は平たい板から厚い塊まで振る
                 const float sizeU = Hash2(gx, gz, tierSalt + 7u);
-                const float sizeT = sizeU * sizeU;
+                const float sizeT = sizeU * sizeU * std::sqrt(sizeU);
                 const float size = desc.SizeRange[0] + (desc.SizeRange[1] - desc.SizeRange[0]) * sizeT;
-                const float heightScale = size * (0.75f + 0.5f * Hash2(gx, gz, tierSalt + 8u));
+                const float heightScale = size * (0.6f + 0.7f * Hash2(gx, gz, tierSalt + 8u));
                 const float stoneHeight = batch.Mesh->Height * heightScale;
-                // 埋める深さ: 高さの割合と、斜面で下り側が浮かない分（半径 × 傾きの正接）
+                // 埋める深さ: 石ごとの高さの割合と、斜面で下り側が浮かない分（半径 × 傾きの正接）
                 const float slopeTangent = std::sqrt(std::max(0.0f, 1.0f - normal.Y * normal.Y)) / std::max(normal.Y, 0.2f);
-                const float sink = stoneHeight * (kind == 0 ? kAngularSink : kRoundedSink) + 0.5f * size * slopeTangent;
+                const float (&sinkRange)[2] = bAngular ? kAngularSink : kRoundedSink;
+                const float sinkShare = sinkRange[0] + (sinkRange[1] - sinkRange[0]) * Hash2(gx, gz, tierSalt + 13u);
+                const float sink = stoneHeight * sinkShare + 0.5f * size * slopeTangent;
 
                 FoliageInstance instance;
                 instance.Position[0] = x;
