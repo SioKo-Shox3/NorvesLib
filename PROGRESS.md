@@ -4887,3 +4887,20 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 影を落とす岩を増やすには、CSM が散布の投影物をまとめて描く直し（描画側）が要る
   - 試験は足していない
 - Next: TASKS.md の次の未完の項目（SCN-WL-SCATTER-GRAVEL）。
+
+### SCN-WL-SCATTER-ROCKS 差し戻しの直し（2026-10-16、run 20261016-132852 の反復 1）
+
+- Done: 崖錐の被覆を手本 cliff_01 の帯へ寄せた（`WastelandTalus.cpp` の係数）
+  - 群れの升目 5 → 3.5 m、崖錐の重みから出やすさへの範囲 0.12〜0.6 → 0.08〜0.45、群れを置く確率 0.85 → 0.95
+  - 崖の根元（露岩に接する崖錐）では斑の値の下限を 0.75 × 根元の重みにして、剥離片が連なる帯にした。崖錐の中ほどと先の斑の空白はそのまま残す
+  - 群れの小片を増やし（基本 3 → 5、大岩の拡大率あたり 4 → 5、大岩の無い群れ 4〜10 → 6〜12）、大岩（1.0〜3.2 → 1.2〜3.6）・小片の岩（高さ 0.3〜1.1 → 0.35〜1.4 m）・板（4〜10 → 4〜12 倍）を大きくした
+  - 数: 群れ 24306・大岩 21834・小片 251997・転がり出た岩 1265、計 275096 個（変更前 70158）。影を落とすのは大きい順に 96 個（7.5 m 以上）のまま
+- 証拠（`.harness/runs/20261016-132852/`）:
+  - `verify-SCN-WL-SCATTER-ROCKS-1.txt`: Debug の Game のビルド EXIT=0
+  - `verify-SCN-WL-SCATTER-ROCKS-2.txt`: 荒野の overview・ground・cliff・ref_cliff_01・ref_cliff_02 を 1920×1080、result=pass（白飛び 0・黒つぶれ 0）、413 秒、EXIT=0。`MASS_WORK_SETTLED frames=147 rows=275096` の後に `SCENE_READY`、`draw_dropped` は 0 以外なし、検証レイヤーのログは空
+  - 比較画像を開いた（`.harness/runs/scene-capture/SCN-WL-SCATTER-ROCKS/compare_talus.png`。上段: 手本 cliff_01 と ref_cliff_01、中段: 裾の切り出し、下段: cliff の崖の下。`grid_views.png` は overview・ground・ref_cliff_02・cliff）: ref_cliff_01 は崖の根元に岩が連なった帯ができ、その下の斜面は大岩と小片の群れが空白の裸地を挟んで並ぶ（前回は孤立した群れと広い裸地）。cliff は崖の下の斜面が、斑の空白を挟んで続く岩の帯になる。ref_cliff_02 は尖塔の裾と右の稜に群れが帯状に載る。overview・ground では崖錐はメサの裾の帯として遠くに見える。岩は斜面に据わり、浮いていない
+- Notes:
+  - 岩の色は斜面より淡い灰桃色に写る（手本は斜面と同じ赤）。色と遠くの岩の影は SCN-WL-LIGHT-FINAL・SCN-WL-SKY-AERIAL の範囲（前回の Notes と同じ）。RT の影・GI は 120 m の外の岩を含まない
+  - 岩の行が 4 倍になり、Debug で散布の行が揃うまで 147 フレーム（予算 16 ms/フレーム）。撮影 5 視点は 413 秒
+  - 試験は足していない
+- Next: TASKS.md の次の未完の項目（SCN-WL-SCATTER-GRAVEL）。

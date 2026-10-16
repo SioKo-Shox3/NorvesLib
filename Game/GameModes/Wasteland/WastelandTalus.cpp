@@ -25,9 +25,9 @@ namespace Game::GameModes::WastelandTalus
 
         // ---- 群れの中心 ----
         // 群れの中心を探す升目の一辺[m]。升目ごとに 1 点をずらして引き、出やすさの確率で群れを置く
-        constexpr float kClusterCellMeters = 5.0f;
+        constexpr float kClusterCellMeters = 3.5f;
         // 崖錐の重みから出やすさへ移す範囲（重みがこの間で 0 → 1）
-        constexpr float kTalusWeightRange[2] = {0.12f, 0.6f};
+        constexpr float kTalusWeightRange[2] = {0.08f, 0.45f};
         // 崖の根元（露岩に接する崖錐）: 露岩と崖錐の重みがともにある所は剥離片が多い
         constexpr float kBaseRockRange[2] = {0.04f, 0.3f};
         constexpr float kBaseTalusRange[2] = {0.08f, 0.35f};
@@ -35,8 +35,10 @@ namespace Game::GameModes::WastelandTalus
         // 斑（空白の帯）: 2 つの波長の値ノイズの和を、この範囲で 0 → 1 にする
         constexpr float kPatchWavelengths[2] = {70.0f, 23.0f};
         constexpr float kPatchRange[2] = {0.36f, 0.66f};
-        // 出やすさ 1 の升目（25 m^2）に群れを置く確率
-        constexpr float kClusterChance = 0.85f;
+        // 崖の根元では斑の空白を浅くし、剥離片が連なる帯にする（斑の値の下限 = 係数 × 根元の重み）
+        constexpr float kBaseBeltFloor = 0.75f;
+        // 出やすさ 1 の升目に群れを置く確率
+        constexpr float kClusterChance = 0.95f;
         // 崖錐の先（重みが薄い縁）に転がり出た岩を 1 つ置く確率（升目あたり）
         constexpr float kToeTalusInner[2] = {0.02f, 0.1f};
         constexpr float kToeTalusOuter[2] = {0.14f, 0.32f};
@@ -49,23 +51,23 @@ namespace Game::GameModes::WastelandTalus
         constexpr float kNoMainChance = 0.1f;
         // 大岩の拡大率（boulder_01 は 1.27 × 1.00 × 1.83 m なので、拡大率がおよそ高さ[m]）。u^2 で引き、小さめを多くする。
         // 崖の根元では大きくする
-        constexpr float kMainScale[2] = {1.0f, 3.2f};
+        constexpr float kMainScale[2] = {1.2f, 3.6f};
         constexpr float kMainScaleBaseBoost = 0.6f;
         constexpr float kMainScaleMax = 4.5f;
         // 小片の数: 基本 + 乱数 × (幅 + 大岩の拡大率 × 係数)
-        constexpr uint32_t kFragmentBase = 3;
+        constexpr uint32_t kFragmentBase = 5;
         constexpr float kFragmentSpread = 4.0f;
-        constexpr float kFragmentPerMainScale = 4.0f;
-        constexpr uint32_t kFragmentsWithoutMain[2] = {4, 10};
+        constexpr float kFragmentPerMainScale = 5.0f;
+        constexpr uint32_t kFragmentsWithoutMain[2] = {6, 12};
         // 小片が散らばる半径[m] = 基本 + 大岩の拡大率 × 係数。斜面の下へ半径 × kDownslopeShift まで寄る
         constexpr float kFragmentRadiusBase = 1.0f;
         constexpr float kFragmentRadiusPerMainScale = 1.8f;
         constexpr float kFragmentRadiusWithoutMain = 3.0f;
         constexpr float kDownslopeShift = 0.8f;
-        // 小片のうち板の割合と、拡大率（rock_09 は長さ 0.14 m なので 4〜10 倍で 0.6〜1.4 m）・角張った岩の拡大率（高さ 0.3〜1.1 m）
+        // 小片のうち板の割合と、拡大率（rock_09 は長さ 0.14 m なので 4〜12 倍で 0.6〜1.7 m）・角張った岩の拡大率（高さ 0.35〜1.4 m）
         constexpr float kSlabFraction = 0.4f;
-        constexpr float kSlabScale[2] = {4.0f, 10.0f};
-        constexpr float kFragmentCragScale[2] = {0.3f, 1.1f};
+        constexpr float kSlabScale[2] = {4.0f, 12.0f};
+        constexpr float kFragmentCragScale[2] = {0.35f, 1.4f};
         // 崖錐の先に転がり出た岩の拡大率（高さ 0.5〜1.8 m）
         constexpr float kToeScale[2] = {0.5f, 1.8f};
 
@@ -472,7 +474,8 @@ namespace Game::GameModes::WastelandTalus
                     continue;
                 }
                 const float pick = Random(cx, cz, 2);
-                const float clusterChance = density * Patch(x, z) * kClusterChance;
+                const float patch = std::max(Patch(x, z), kBaseBeltFloor * baseWeight);
+                const float clusterChance = density * patch * kClusterChance;
                 if (pick < clusterChance)
                 {
                     TerrainNormal normal;
