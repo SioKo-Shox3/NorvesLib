@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 
 using namespace NorvesLib::Core;
 using namespace NorvesLib::Core::Container;
@@ -23,7 +24,8 @@ namespace Game::GameModes::WastelandFoliage
         // 区画の一辺の升目の数と、区画の一辺[m]（区画ごとに描画が視錐台で外し、距離で株を間引く）
         constexpr int32_t kCandidatesPerCell = 16;
         constexpr float kCellSize = kCandidateSpacing * static_cast<float>(kCandidatesPerCell);
-        // 区画を作る範囲（カメラから区画までの水平の最短の距離[m]）。最も遠くまで残る低木の消える距離 120 m の外まで作り、
+        // 区画を作る範囲（カメラのいる区画の四角から区画までの水平の最短の距離[m]）。作り直すのはカメラが区画を跨いだときだけなので、
+        // カメラの点でなく区画の四角から測り、区画の中のどこへ動いても最も遠くまで残る低木の消える距離 120 m の内側を作り終えている。
         // 1 区画ぶん離れるまで捨てない（区画の境を行き来しても作り直さない）
         constexpr float kGenerateRadius = 128.0f;
         constexpr float kKeepRadius = kGenerateRadius + kCellSize;
@@ -219,13 +221,11 @@ namespace Game::GameModes::WastelandFoliage
             return batch;
         }
 
-        /// 点 (x,z) から区画 (cellX, cellZ) の四角までの水平の最短の距離[m]
-        float DistanceToCell(float x, float z, int32_t cellX, int32_t cellZ)
+        /// 区画 (ax, az) の四角と区画 (bx, bz) の四角の間の水平の最短の距離[m]（隣り合う区画は 0）
+        float DistanceBetweenCells(int32_t ax, int32_t az, int32_t bx, int32_t bz)
         {
-            const float minX = static_cast<float>(cellX) * kCellSize;
-            const float minZ = static_cast<float>(cellZ) * kCellSize;
-            const float dx = std::max({minX - x, 0.0f, x - (minX + kCellSize)});
-            const float dz = std::max({minZ - z, 0.0f, z - (minZ + kCellSize)});
+            const float dx = static_cast<float>(std::max(std::abs(ax - bx) - 1, 0)) * kCellSize;
+            const float dz = static_cast<float>(std::max(std::abs(az - bz) - 1, 0)) * kCellSize;
             return std::sqrt(dx * dx + dz * dz);
         }
     } // namespace
@@ -419,16 +419,16 @@ namespace Game::GameModes::WastelandFoliage
         const size_t before = m_Cells.size();
         m_Cells.erase(std::remove_if(m_Cells.begin(), m_Cells.end(),
                                      [&](const Cell &cell)
-                                     { return DistanceToCell(cameraX, cameraZ, cell.X, cell.Z) > kKeepRadius; }),
+                                     { return DistanceBetweenCells(centerX, centerZ, cell.X, cell.Z) > kKeepRadius; }),
                       m_Cells.end());
         const size_t dropped = before - m_Cells.size();
-        const int32_t reach = static_cast<int32_t>(std::ceil(kGenerateRadius / kCellSize));
+        const int32_t reach = static_cast<int32_t>(std::ceil(kGenerateRadius / kCellSize)) + 1;
         uint32_t created = 0;
         for (int32_t cellZ = centerZ - reach; cellZ <= centerZ + reach; ++cellZ)
         {
             for (int32_t cellX = centerX - reach; cellX <= centerX + reach; ++cellX)
             {
-                if (DistanceToCell(cameraX, cameraZ, cellX, cellZ) > kGenerateRadius)
+                if (DistanceBetweenCells(centerX, centerZ, cellX, cellZ) > kGenerateRadius)
                 {
                     continue;
                 }
