@@ -12,8 +12,8 @@
 //   - 向き: 岩塊は 6 面のどれかを下にし、斜面の傾きへ寄せて寝かせる。板は平たいまま斜面に沿わせる。
 //   - 高さ: 回したメッシュの底の頂点ごとに地形の高さを引き、どの底の頂点も地面より下になる高さから、大きさに応じて埋める。
 // 配置は世界の升目の番号と種だけで決まり、どの実行でも同じになる。置く仕組みは散布の Object（MegaGeometryScatterComponent）で、
-// 岩の 1 つ 1 つは Object を持たない軽い行になる。影を落とすのは大岩と転がり出た岩だけで、小片は影を落とさない別の散布にする
-// （高さフォグが有効な間は CSM が投影物を 1 つずつ描くので、影を落とす数を大岩の数に抑える）。
+// 岩の 1 つ 1 つは Object を持たない軽い行になる。影を落とすのは大岩と転がり出た岩のうち大きい順に上限までで、小片と残りは
+// 影を落とさない別の散布にする（高さフォグが有効な間は CSM が投影物を 1 つずつ描くので、影を落とす数を上限で抑える）。
 // ---------------------------------------------------------------------------
 
 #include "Core/Public/Component/MegaGeometryScatterComponent.h"
@@ -67,14 +67,19 @@ namespace Game::GameModes::WastelandTalus
         uint32_t Rejected = 0;
         uint32_t PerMesh[kTalusMeshCount] = {};
         float MaxBoulderHeight = 0.0f;
+        /// 影を落とす候補（大岩・転がり出た岩）の数と、影を落とす岩のうち最も小さい高さ[m]
+        uint32_t CasterCandidates = 0;
+        float MinCasterHeight = 0.0f;
+        /// メッシュごとの底の高さを引く頂点の数
+        uint32_t SupportPoints[kTalusMeshCount] = {};
     };
 
     /**
      * @brief 地表の分類の地図の範囲（DEM の格子の中）の崖錐に岩を置き、散布の入力を作る
      * @param shapes 読めたメッシュの形（bAvailable が偽の種類は使わない。岩塊が無ければ何も置かない）
      * @param exclusions 岩を置かない円
-     * @param outCasters 影を落とす岩（大岩と、崖錐の先へ転がり出た岩）
-     * @param outFragments 影を落とさない小片（大岩の周りの角張った岩と板）
+     * @param outCasters 影を落とす岩（大岩と、崖錐の先へ転がり出た岩のうち、大きい順に上限まで）
+     * @param outFragments 影を落とさない岩（大岩の周りの角張った岩と板、影の上限から溢れた大岩）
      */
     void BuildTalusRocks(const NorvesLib::Core::Rendering::Terrain::TerrainHeightField &field,
                          const NorvesLib::Core::Rendering::Terrain::TerrainSurfaceMask &mask,

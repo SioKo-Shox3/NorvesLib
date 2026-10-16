@@ -4,6 +4,8 @@
 #include "Core/Public/Asset/CookedMeshFormat.h"
 #include "Core/Public/Component/CameraComponent.h"
 #include "Core/Public/Component/MegaGeometryComponent.h"
+#include "Core/Public/Ecs/EcsMassWork.h"
+#include "Core/Public/Ecs/EcsWorld.h"
 #include "Core/Public/Engine/Engine.h"
 #include "Core/Public/GameMode/GameModeScope.h"
 #include "Core/Public/Logging/LogMacros.h"
@@ -83,6 +85,9 @@ namespace Game::GameModes
         bool bCancelled = false;
         bool bPlaced = false;
         bool bPropsPlaced = false;
+        /// 崖錐の岩の行を作る間だけ散布の仕事の列の予算を上げている（作り終えたら SavedMassBudget へ戻す）
+        bool bMassBudgetRaised = false;
+        NorvesLib::Core::Ecs::EcsMassBudget SavedMassBudget;
     };
 
     namespace
@@ -226,8 +231,11 @@ namespace Game::GameModes
         constexpr float kBuildingFoliageClearMargin = 1.5f;
         // 名前付き視点の足元で崖錐の岩を置かない半径[m]（目の前を岩がふさがない）
         constexpr float kViewTalusClearRadius = 6.0f;
-        // 崖錐の岩の底の高さを引く頂点の標本の数の上限（メッシュの頂点を等間隔に間引く）
+        // 崖錐の岩の底の高さを引く頂点を選ぶ元の標本の数の上限（メッシュの頂点を等間隔に間引く。WastelandTalus が凸包の頂点へ絞る）
         constexpr size_t kTalusPointSamples = 2048;
+        // 崖錐の岩の行（数万）を作る間だけ使う、散布の仕事の列の 1 フレームの時間[ms]。既定の 1 ms では Debug で
+        // 数百フレームかかり、行が揃う前に撮影が始まる。シーンの準備ができる前の読み込みの間だけ上げ、作り終えたら戻す
+        constexpr float kTalusMassMillisecondsPerFrame = 16.0f;
         // 地形の材質は 3 層の混ぜ合わせ。素材は Poly Haven の CC0 の写真由来のテクスチャ（Scripts/Terrain/TerrainMaterials.py が
         // 落としてアルベドを較正し、Assets/AssetSets/WastelandTerrain.json が焼く）。
         // 1 層目（砂の枠）は横 2 枚の並び（8192×4096。Scripts/Terrain/TerrainMaterials.py --build が書く）。左は谷床の赤茶の土
@@ -827,10 +835,20 @@ namespace Game::GameModes
             return true;
         }
 
+        /// 崖錐の岩の行を作る間だけ上げた、散布の仕事の列の予算を戻す
+        void RestoreMassBudget(GameModeContext &ctx, WastelandAssembly &assembly)
+        {
+            if (assembly.bMassBudgetRaised)
+            {
+                ctx.WorldRef.GetEcsWorld().GetMassWork().SetBudget(assembly.SavedMassBudget);
+                assembly.bMassBudgetRaised = false;
+            }
+        }
+
         /// 崖の下の崖錐に、剥がれ落ちた岩の群れを散布の Object（Entity 1 つと軽い行）で置く。影を落とす大岩と、影を落とさない
         /// 小片の 2 つに分ける。名前付き視点の足元と、置いた建物の足元は空ける
         void PlaceTalusRocks(GameModeContext &ctx, const Terrain::TerrainHeightField &field,
-                             const Terrain::TerrainSurfaceMask *pMask, const WastelandAssembly &assembly)
+                             const Terrain::TerrainSurfaceMask *pMask, WastelandAssembly &assembly)
         {
             const WastelandTalus::TalusMeshShape &crag =
                 assembly.TalusShapes[static_cast<uint32_t>(WastelandTalus::TalusMesh::Crag)];
@@ -903,13 +921,25 @@ namespace Game::GameModes
             uint32_t fragmentRanges = 0;
             const uint32_t placedCasters = spawnScatter(casters, true, casterRanges);
             const uint32_t placedFragments = spawnScatter(fragments, false, fragmentRanges);
+            // 行を作り終えるまで（シーンの準備ができる前）だけ、仕事の列の予算を上げる
+            if (placedCasters + placedFragments != 0 && !assembly.bMassBudgetRaised)
+            {
+                Ecs::EcsMassWorkQueue &massWork = ctx.WorldRef.GetEcsWorld().GetMassWork();
+                assembly.SavedMassBudget = massWork.GetBudget();
+                Ecs::EcsMassBudget budget = assembly.SavedMassBudget;
+                budget.MillisecondsPerFrame = std::max(budget.MillisecondsPerFrame, kTalusMassMillisecondsPerFrame);
+                massWork.SetBudget(budget);
+                assembly.bMassBudgetRaised = true;
+            }
             LOG_INFO_F("WASTELAND_TALUS casters=%u fragments_placed=%u planned=%zu+%zu ranges=%u+%u cells=%u clusters=%u "
-                       "main=%u fragments=%u toe=%u rejected=%u crag=%u slab=%u max_boulder_m=%.2f",
+                       "main=%u fragments=%u toe=%u rejected=%u crag=%u slab=%u max_boulder_m=%.2f caster_candidates=%u "
+                       "min_caster_m=%.2f support=%u+%u",
                        placedCasters, placedFragments, casters.size(), fragments.size(), casterRanges, fragmentRanges,
                        stats.CellsVisited, stats.Clusters, stats.MainBoulders, stats.Fragments, stats.ToeRocks, stats.Rejected,
                        stats.PerMesh[static_cast<uint32_t>(WastelandTalus::TalusMesh::Crag)],
                        stats.PerMesh[static_cast<uint32_t>(WastelandTalus::TalusMesh::Slab)],
-                       static_cast<double>(stats.MaxBoulderHeight));
+                       static_cast<double>(stats.MaxBoulderHeight), stats.CasterCandidates,
+                       static_cast<double>(stats.MinCasterHeight), stats.SupportPoints[0], stats.SupportPoints[1]);
         }
 
         /// 材質がそろった種類を MegaMesh にし、高さ場から決めた配置に Entity を置き、崖錐の岩を散布で置く
@@ -1305,8 +1335,11 @@ namespace Game::GameModes
                         UpdateFoliage(ctx, data, cameraPosition.x, cameraPosition.z, false);
                     }
                 }
-                if (assembly.bPlaced && assembly.bPropsPlaced)
+                // 崖錐の岩の行を作り終えるまで待つ（行が揃う前に撮影を始めない）
+                if (assembly.bPlaced && assembly.bPropsPlaced &&
+                    !ctx.WorldRef.GetEcsWorld().GetMassWork().HasPendingWork())
                 {
+                    RestoreMassBudget(ctx, assembly);
                     data.m_TerrainSettledTick = data.m_TickCount;
                 }
             }
@@ -1332,6 +1365,7 @@ namespace Game::GameModes
         // 届いていない読み込みの結果は捨てる
         if (data.m_pAssembly)
         {
+            RestoreMassBudget(ctx, *data.m_pAssembly);
             data.m_pAssembly->bCancelled = true;
             data.m_pAssembly.reset();
         }

@@ -1595,7 +1595,7 @@
 - notes: 2026-10-15 親: 崖の面そのものは SCN-WL-CLIFF-SCAN-* で作る。この項目は崖の足元の落石・岩塊だけ。SCN-WL-CLIFF-SCAN-SELECT で選んだ素材と色をそろえる。 2026-10-16 親: 地面の項目へ移した（SCN-WL-SCATTER-ROCKS が使う岩の素材を先に揃える）。素材は SCN-WL-CLIFF-SCAN-SELECT で選んだものと色をそろえる。
 
 ## SCN-WL-SCATTER-ROCKS: 大岩と崖錐を置く
-- status: todo
+- status: done
 - done-when: 崖の下の崖錐に、崖の剥離片（角張った大岩・岩）を群れとして置く（大岩の周りに小片が集まり、空白も残す。全域に均等に撒かない）。数は手本の写真の被覆と疎密に合わせる（目標の個数は置かない）。散布の Object（バナナの仕組み）を使う。overview・cliff・ground の撮影と比較画像を開き、崖錐が点の集まりでなく裾の帯として見え、岩が浮いていないことを確かめる。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-WL-SCATTER-ROCKS`

@@ -25,7 +25,7 @@ namespace Game::GameModes::WastelandTalus
 
         // ---- 群れの中心 ----
         // 群れの中心を探す升目の一辺[m]。升目ごとに 1 点をずらして引き、出やすさの確率で群れを置く
-        constexpr float kClusterCellMeters = 10.0f;
+        constexpr float kClusterCellMeters = 5.0f;
         // 崖錐の重みから出やすさへ移す範囲（重みがこの間で 0 → 1）
         constexpr float kTalusWeightRange[2] = {0.12f, 0.6f};
         // 崖の根元（露岩に接する崖錐）: 露岩と崖錐の重みがともにある所は剥離片が多い
@@ -35,8 +35,8 @@ namespace Game::GameModes::WastelandTalus
         // 斑（空白の帯）: 2 つの波長の値ノイズの和を、この範囲で 0 → 1 にする
         constexpr float kPatchWavelengths[2] = {70.0f, 23.0f};
         constexpr float kPatchRange[2] = {0.36f, 0.66f};
-        // 出やすさ 1 の升目（100 m^2）に群れを置く確率
-        constexpr float kClusterChance = 0.7f;
+        // 出やすさ 1 の升目（25 m^2）に群れを置く確率
+        constexpr float kClusterChance = 0.85f;
         // 崖錐の先（重みが薄い縁）に転がり出た岩を 1 つ置く確率（升目あたり）
         constexpr float kToeTalusInner[2] = {0.02f, 0.1f};
         constexpr float kToeTalusOuter[2] = {0.14f, 0.32f};
@@ -62,10 +62,10 @@ namespace Game::GameModes::WastelandTalus
         constexpr float kFragmentRadiusPerMainScale = 1.8f;
         constexpr float kFragmentRadiusWithoutMain = 3.0f;
         constexpr float kDownslopeShift = 0.8f;
-        // 小片のうち板の割合と、拡大率（rock_09 は長さ 0.14 m なので 4〜10 倍で 0.6〜1.4 m）・角張った岩の拡大率（高さ 0.25〜0.9 m）
+        // 小片のうち板の割合と、拡大率（rock_09 は長さ 0.14 m なので 4〜10 倍で 0.6〜1.4 m）・角張った岩の拡大率（高さ 0.3〜1.1 m）
         constexpr float kSlabFraction = 0.4f;
         constexpr float kSlabScale[2] = {4.0f, 10.0f};
-        constexpr float kFragmentCragScale[2] = {0.25f, 0.9f};
+        constexpr float kFragmentCragScale[2] = {0.3f, 1.1f};
         // 崖錐の先に転がり出た岩の拡大率（高さ 0.5〜1.8 m）
         constexpr float kToeScale[2] = {0.5f, 1.8f};
 
@@ -81,6 +81,14 @@ namespace Game::GameModes::WastelandTalus
         constexpr float kCragSinkFraction = 0.12f;
         constexpr float kCragSinkMeters = 0.03f;
         constexpr float kSlabSinkFraction = 0.25f;
+        // 底の高さを引く頂点: メッシュの標本から、この数の向きそれぞれで最も遠い頂点（凸包の頂点の近似）だけを残す。
+        // 地面に触れるのは凸包の頂点なので、岩の数が多くても 1 つあたりの高さの標本を数十に抑えられる
+        constexpr uint32_t kSupportDirections = 162;
+
+        // ---- 影 ----
+        // 影を落とす岩の上限（大きい順）。高さフォグが有効な間は CSM が投影物を 1 つずつ（カスケードの数だけ）描き、
+        // 1 つあたり Debug の記録で約 0.5 ms かかるので、影が遠くから見える大岩だけに絞る。残りは影を落とさない散布へ回す
+        constexpr uint32_t kCasterBudget = 96;
 
         uint32_t Hash(uint32_t value)
         {
@@ -187,18 +195,64 @@ namespace Game::GameModes::WastelandTalus
             }
         }
 
+        /// 頂点の標本から、kSupportDirections の向き（球面の黄金角の螺旋）それぞれで最も遠い頂点を重複なく選ぶ
+        void SelectSupportPoints(const VariableArray<Vector3> &points, VariableArray<Vector3> &outSupport)
+        {
+            outSupport.clear();
+            if (points.empty())
+            {
+                return;
+            }
+            VariableArray<uint8_t> chosen(points.size(), 0);
+            const float goldenAngle = kPi * (3.0f - std::sqrt(5.0f));
+            for (uint32_t direction = 0; direction < kSupportDirections; ++direction)
+            {
+                const float y = 1.0f - 2.0f * (static_cast<float>(direction) + 0.5f) / static_cast<float>(kSupportDirections);
+                const float ring = std::sqrt(std::max(0.0f, 1.0f - y * y));
+                const float angle = goldenAngle * static_cast<float>(direction);
+                const Vector3 axis(ring * std::cos(angle), y, ring * std::sin(angle));
+                size_t best = 0;
+                float bestDot = std::numeric_limits<float>::lowest();
+                for (size_t index = 0; index < points.size(); ++index)
+                {
+                    const Vector3 &point = points[index];
+                    const float dot = point.x * axis.x + point.y * axis.y + point.z * axis.z;
+                    if (dot > bestDot)
+                    {
+                        bestDot = dot;
+                        best = index;
+                    }
+                }
+                if (chosen[best] == 0)
+                {
+                    chosen[best] = 1;
+                    outSupport.push_back(points[best]);
+                }
+            }
+        }
+
+        /// 影を落とす候補（大岩・転がり出た岩）。大きい順に kCasterBudget までを影を落とす散布へ回す
+        struct CasterCandidate
+        {
+            MegaScatterInstance Instance;
+            float Height = 0.0f;
+        };
+
         struct Builder
         {
             const TerrainHeightField &Field;
             const TerrainSurfaceMask &Mask;
             const TalusMeshShape (&Shapes)[kTalusMeshCount];
             const VariableArray<TalusExclusion> &Exclusions;
-            /// 影を落とす岩（大岩・転がり出た岩）と、影を落とさない小片
-            VariableArray<MegaScatterInstance> &Casters;
+            /// 影を落とさない岩（小片と、影の上限から溢れた候補）
             VariableArray<MegaScatterInstance> &Fragments;
             TalusStats &Stats;
             float MinSlopeCosine = std::cos(kMaxSlopeDegrees * kDegToRad);
-            /// 回した標本の y（GroundRock の作業用）
+            /// 影を落とす候補
+            VariableArray<CasterCandidate> Candidates;
+            /// メッシュごとの底の高さを引く頂点（SelectSupportPoints が選んだもの）
+            VariableArray<Vector3> Support[kTalusMeshCount];
+            /// 回した標本の y（AddRock の作業用）
             VariableArray<float> RotatedY;
 
             bool IsExcluded(float x, float z) const
@@ -231,18 +285,19 @@ namespace Game::GameModes::WastelandTalus
             float AddRock(TalusMesh mesh, const Quaternion &worldRotation, float scale, float x, float z, bool bCaster)
             {
                 const TalusMeshShape &shape = Shapes[static_cast<uint32_t>(mesh)];
+                const VariableArray<Vector3> &points = Support[static_cast<uint32_t>(mesh)];
                 const Vector3 center((shape.Min.x + shape.Max.x) * 0.5f, (shape.Min.y + shape.Max.y) * 0.5f,
                                      (shape.Min.z + shape.Max.z) * 0.5f);
                 const Vector3 centerOffset = worldRotation * Vector3(center.x * scale, center.y * scale, center.z * scale);
                 const float originX = x - centerOffset.x;
                 const float originZ = z - centerOffset.z;
 
-                RotatedY.resize(shape.Points.size());
+                RotatedY.resize(points.size());
                 float minY = std::numeric_limits<float>::max();
                 float maxY = std::numeric_limits<float>::lowest();
-                for (size_t index = 0; index < shape.Points.size(); ++index)
+                for (size_t index = 0; index < points.size(); ++index)
                 {
-                    const Vector3 &point = shape.Points[index];
+                    const Vector3 &point = points[index];
                     const float y = (worldRotation * Vector3(point.x * scale, point.y * scale, point.z * scale)).y;
                     RotatedY[index] = y;
                     minY = std::min(minY, y);
@@ -251,13 +306,13 @@ namespace Game::GameModes::WastelandTalus
                 const float height = maxY - minY;
                 const float bottomLimit = minY + height * kBottomBand;
                 float lowest = std::numeric_limits<float>::max();
-                for (size_t index = 0; index < shape.Points.size(); ++index)
+                for (size_t index = 0; index < points.size(); ++index)
                 {
                     if (RotatedY[index] > bottomLimit)
                     {
                         continue;
                     }
-                    const Vector3 &point = shape.Points[index];
+                    const Vector3 &point = points[index];
                     const Vector3 offset = worldRotation * Vector3(point.x * scale, point.y * scale, point.z * scale);
                     lowest = std::min(lowest, Field.SampleHeight(originX + offset.x, originZ + offset.z) - offset.y);
                 }
@@ -271,7 +326,14 @@ namespace Game::GameModes::WastelandTalus
                 instance.Rotation = Conjugate(worldRotation);
                 instance.Scale = Vector3(scale, scale, scale);
                 instance.MeshIndex = static_cast<uint32_t>(mesh);
-                (bCaster ? Casters : Fragments).push_back(instance);
+                if (bCaster)
+                {
+                    Candidates.push_back({instance, height});
+                }
+                else
+                {
+                    Fragments.push_back(instance);
+                }
                 ++Stats.PerMesh[static_cast<uint32_t>(mesh)];
                 return height;
             }
@@ -377,7 +439,11 @@ namespace Game::GameModes::WastelandTalus
         {
             return;
         }
-        Builder builder{field, mask, shapes, exclusions, outCasters, outFragments, outStats};
+        Builder builder{field, mask, shapes, exclusions, outFragments, outStats};
+        for (uint32_t meshIndex = 0; meshIndex < kTalusMeshCount; ++meshIndex)
+        {
+            SelectSupportPoints(shapes[meshIndex].Points, builder.Support[meshIndex]);
+        }
         const auto &layout = mask.GetLayout();
         const int32_t cellsX = static_cast<int32_t>(std::floor((layout.MaxX - layout.MinX) / kClusterCellMeters));
         const int32_t cellsZ = static_cast<int32_t>(std::floor((layout.MaxZ - layout.MinZ) / kClusterCellMeters));
@@ -427,6 +493,26 @@ namespace Game::GameModes::WastelandTalus
                 }
             }
         }
+
+        // 影を落とす候補を大きい順に並べ、上限までを影を落とす散布へ、残りを影を落とさない散布へ回す
+        VariableArray<CasterCandidate> &candidates = builder.Candidates;
+        std::sort(candidates.begin(), candidates.end(),
+                  [](const CasterCandidate &a, const CasterCandidate &b) { return a.Height > b.Height; });
+        outStats.CasterCandidates = static_cast<uint32_t>(candidates.size());
+        for (size_t index = 0; index < candidates.size(); ++index)
+        {
+            if (index < kCasterBudget)
+            {
+                outCasters.push_back(candidates[index].Instance);
+                outStats.MinCasterHeight = candidates[index].Height;
+            }
+            else
+            {
+                outFragments.push_back(candidates[index].Instance);
+            }
+        }
+        outStats.SupportPoints[0] = static_cast<uint32_t>(builder.Support[0].size());
+        outStats.SupportPoints[1] = static_cast<uint32_t>(builder.Support[1].size());
     }
 
 } // namespace Game::GameModes::WastelandTalus
