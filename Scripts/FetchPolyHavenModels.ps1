@@ -49,8 +49,7 @@ $wastelandAssetIds = @(
     'rock_face_01',
     'rock_face_02',
     'boulder_01',
-    # 崖の足元の落石（SCN-WL-CLIFF-ASSETS）。平らな面で割れた角張った岩塊と、薄い板状の岩
-    'rock_07',
+    # 崖の足元の落石（SCN-WL-CLIFF-ASSETS）の薄い板状の岩。角張った岩塊は上の boulder_01 を使う
     'rock_09'
 )
 $assetIds = if ($Set -eq 'wasteland') { $wastelandAssetIds } else { $startupAssetIds }

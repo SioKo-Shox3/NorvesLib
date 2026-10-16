@@ -1,4 +1,4 @@
-﻿# 荒野の足元の落石に使う Poly Haven の岩のスキャン（boulder_01・rock_07・rock_09）のアルベドを崖の赤褐色の砂岩の色へ寄せた
+﻿# 荒野の足元の落石に使う Poly Haven の岩のスキャン（boulder_01・rock_09）のアルベドを崖の赤褐色の砂岩の色へ寄せた
 # PNG（<id>_diff_lin_4k.png）と、粗さを乾いた砂岩の値へ寄せた ARM の PNG（<id>_arm_cal_4k.png）を書く。
 # Assets/AssetSets/WastelandModels.json がこの 2 枚をアルベドと ORM として焼く。
 #
@@ -15,8 +15,11 @@
 # 終了コード: すべての岩が目標に入れば 0、元の画像が無い・目標を外れたら 1。
 #
 # 較正: スキャンの色は灰褐色（線形の平均で R ÷ G 1.5、Y 0.13）で、地衣の緑と青灰の斑がある。画素ごとに線形の輝度の
-# 明暗（平均に対する比）は残し、色味は目標の色へ寄せる（元の色味の偏りは CHROMA_KEEP の指数だけ残す）。最後に 3 チャンネルに
-# 同じ倍率を掛けて、平均の輝度を目標にする。
+# 明暗（平均に対する比）は LUMINANCE_CONTRAST の指数で縮めて残し、色味は目標の色へ寄せる（元の色味の偏りは CHROMA_KEEP の
+# 指数だけ残す）。最後に 3 チャンネルに同じ倍率を掛けて、平均の輝度を目標にする。
+# 明暗を縮めるのは、スキャンの暗い地衣の斑と汚れ（輝度の 5 百分位が平均の 0.31〜0.36 倍）がそのままだと砂岩の面に黒い斑として写るため。
+# 手本の写真の落石の面は斑の無いほぼ一様な赤褐色で、明暗は形の陰影が受け持つ。--verify は 5 百分位が DARK_PERCENTILE_MIN
+# 以上かも確かめる。
 #
 # 目標の色（線形）: 輝度 0.17・R ÷ G 2.1・G ÷ B 1.5。
 #   - 色味: 手本の写真 ground_02 の日向の赤い砂岩の落石は R ÷ G 2.0〜2.1・G ÷ B 1.2〜1.5 のえんじ寄りの赤褐色
@@ -25,7 +28,7 @@
 #   - 輝度: 同じ写真の日向の赤い落石は砂の路面の 0.57 倍・土の 1.2 倍の明るさ。地形の較正（砂 0.18・土 0.16）に当てはめると
 #     0.10〜0.19 で、落石の面は割れ目と節理の影を自分で持つので上の側に置く。cliff_side の較正 0.22 より暗い
 #
-# 粗さ: rock_07 の ARM の粗さ（G）は平均 0.30 で、濡れて磨かれた石の値。乾いた砂岩の崖（cliff_side の粗さ 0.86）に
+# 粗さ: rock_09 の ARM の粗さ（G）は平均 0.51 で、磨かれた石の値。乾いた砂岩の崖（cliff_side の粗さ 0.86）に
 # そろえ、明暗の模様は半分の振れ幅で残して平均を 0.86 にする（AO の R・金属の B はそのまま）。
 import argparse
 import os
@@ -46,6 +49,10 @@ TARGET_RED_OVER_GREEN = 2.1
 TARGET_GREEN_OVER_BLUE = 1.5
 # 元の色味の偏り（画素の色度 ÷ 平均の色度）を残す指数。0 なら目標の色一色、1 なら元の色味の偏りをそのまま残す
 CHROMA_KEEP = 0.35
+# 元の輝度の明暗（画素の輝度 ÷ 平均の輝度）を残す指数。1 なら元の明暗のまま
+LUMINANCE_CONTRAST = 0.5
+# 較正後の輝度の 5 百分位の、平均に対する下限（暗い斑が残っていないか）
+DARK_PERCENTILE_MIN = 0.45
 # 確かめるときの許容（平均の輝度の相対誤差・色の比の相対誤差）
 LUMINANCE_TOLERANCE = 0.03
 RATIO_TOLERANCE = 0.05
@@ -55,7 +62,7 @@ ROUGHNESS_CONTRAST = 0.5
 ROUGHNESS_MIN = 0.6
 ROUGHNESS_TOLERANCE = 0.02
 
-ROCK_IDS = ["boulder_01", "rock_07", "rock_09"]
+ROCK_IDS = ["boulder_01", "rock_09"]
 
 
 def srgb_to_linear(encoded):
@@ -140,9 +147,10 @@ def calibrate(linear):
     target = target_color()
     target_chroma = target / TARGET_LUMINANCE
     chroma = target_chroma * numpy.power(deviation, CHROMA_KEEP)
-    # 偏りを掛けた色度の輝度を 1 に戻し、画素の輝度の明暗はそのまま残す
+    # 偏りを掛けた色度の輝度を 1 に戻し、画素の輝度の明暗は LUMINANCE_CONTRAST の指数で縮めて残す
     chroma /= numpy.maximum(chroma @ LUMINANCE.astype(numpy.float32), 1.0e-5)[..., None]
-    shaped = chroma * pixel_luminance
+    mean_luminance = float(mean @ LUMINANCE)
+    shaped = chroma * (mean_luminance * numpy.power(pixel_luminance / mean_luminance, LUMINANCE_CONTRAST))
     # 1 に収めた分だけ平均が下がるので、収めた後の平均が目標になるまで倍率を詰める
     _, shaped_luminance = mean_color(shaped)
     scale = TARGET_LUMINANCE / shaped_luminance
@@ -170,6 +178,11 @@ def check(rock_id, linear):
     if not ok:
         print("FAIL %s 較正した平均の色が目標（Y %.2f・R/G %.2f・G/B %.2f）を外れています" %
               (rock_id, TARGET_LUMINANCE, TARGET_RED_OVER_GREEN, TARGET_GREEN_OVER_BLUE))
+    dark = float(numpy.percentile(linear @ LUMINANCE.astype(numpy.float32), 5.0)) / luminance
+    print("%s calibrated dark_p5_over_mean=%.2f" % (rock_id, dark))
+    if dark < DARK_PERCENTILE_MIN:
+        print("FAIL %s 較正した輝度の 5 百分位が平均の %.2f 倍を下回り、暗い斑が残っています" % (rock_id, DARK_PERCENTILE_MIN))
+        ok = False
     return ok
 
 

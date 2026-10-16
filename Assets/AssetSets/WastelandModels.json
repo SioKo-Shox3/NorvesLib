@@ -182,28 +182,6 @@
       "entry_name": "Assets/Models/PolyHaven/boulder_01/textures/boulder_01_arm_cal_4k.nvtex"
     },
     {
-      "logical_path": "Assets/Models/PolyHaven/rock_07/cooked/rock_07_albedo",
-      "cook_usage": "orm",
-      "source_path": "Assets/Models/PolyHaven/rock_07/textures/rock_07_diff_lin_4k.png",
-      "package_name": "Wasteland/rock_07_diff.nvpkg",
-      "entry_name": "Assets/Models/PolyHaven/rock_07/textures/rock_07_diff_lin_4k.nvtex"
-    },
-    {
-      "logical_path": "Assets/Models/PolyHaven/rock_07/cooked/rock_07_normal",
-      "cook_usage": "normal",
-      "flip_normal_y": true,
-      "source_path": "Assets/Models/PolyHaven/rock_07/textures/rock_07_nor_gl_4k.jpg",
-      "package_name": "Wasteland/rock_07_nor.nvpkg",
-      "entry_name": "Assets/Models/PolyHaven/rock_07/textures/rock_07_nor_gl_4k.nvtex"
-    },
-    {
-      "logical_path": "Assets/Models/PolyHaven/rock_07/cooked/rock_07_orm",
-      "cook_usage": "orm",
-      "source_path": "Assets/Models/PolyHaven/rock_07/textures/rock_07_arm_cal_4k.png",
-      "package_name": "Wasteland/rock_07_arm.nvpkg",
-      "entry_name": "Assets/Models/PolyHaven/rock_07/textures/rock_07_arm_cal_4k.nvtex"
-    },
-    {
       "logical_path": "Assets/Models/PolyHaven/rock_09/cooked/rock_09_albedo",
       "cook_usage": "orm",
       "source_path": "Assets/Models/PolyHaven/rock_09/textures/rock_09_diff_lin_4k.png",
@@ -296,17 +274,9 @@
       "extra_sources": [
         "Assets/Models/PolyHaven/boulder_01/boulder_01.bin"
       ],
+      "fallback_min_triangles": 32768,
       "package_name": "Wasteland/boulder_01.nvpkg",
       "entry_name": "Assets/Models/PolyHaven/boulder_01/boulder_01_4k.nvmesh"
-    },
-    {
-      "logical_path": "Assets/Models/PolyHaven/rock_07/rock_07_4k.gltf",
-      "source_path": "Assets/Models/PolyHaven/rock_07/rock_07_4k.gltf",
-      "extra_sources": [
-        "Assets/Models/PolyHaven/rock_07/rock_07.bin"
-      ],
-      "package_name": "Wasteland/rock_07.nvpkg",
-      "entry_name": "Assets/Models/PolyHaven/rock_07/rock_07_4k.nvmesh"
     },
     {
       "logical_path": "Assets/Models/PolyHaven/rock_09/rock_09_4k.gltf",
@@ -314,6 +284,7 @@
       "extra_sources": [
         "Assets/Models/PolyHaven/rock_09/rock_09.bin"
       ],
+      "fallback_min_triangles": 32768,
       "package_name": "Wasteland/rock_09.nvpkg",
       "entry_name": "Assets/Models/PolyHaven/rock_09/rock_09_4k.nvmesh"
     }

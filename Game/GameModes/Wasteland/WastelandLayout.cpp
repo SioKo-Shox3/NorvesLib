@@ -40,7 +40,6 @@ namespace Game::GameModes::WastelandLayout
             WASTELAND_GENERATED("wooden_shack"),
             // 崖の足元の落石。アルベドは崖の砂岩の色へ寄せた画像（Scripts/CalibrateScanRockAlbedo.py）を焼く
             WASTELAND_POLYHAVEN("boulder_01"),
-            WASTELAND_POLYHAVEN("rock_07"),
             WASTELAND_POLYHAVEN("rock_09"),
         };
 #undef WASTELAND_POLYHAVEN
@@ -134,12 +133,11 @@ namespace Game::GameModes::WastelandLayout
             float Scale;
             float YawDegrees;
         };
-        // 薄い板状の岩（rock_09 は 0.07 × 0.03 × 0.15 m）は 8 倍で長さ 1.2 m・厚さ 0.26 m、角張った岩塊（rock_07 は
-        // 0.17 × 0.14 × 0.32 m）は 8 倍で高さ 1.1 m・長さ 2.6 m、ごつごつした岩塊（boulder_01 は 1.3 × 1.0 × 1.8 m）は 1.4 倍で
-        // 高さ 1.4 m。手本の ground_02 の沢の板状の砂岩（0.3〜1 m）と、cliff_01 の崖錐の落ちた岩塊（数 m）の大きさ
+        // 薄い板状の岩（rock_09 は 0.07 × 0.03 × 0.15 m）は 8 倍で長さ 1.2 m・厚さ 0.26 m、節理で割れた角張った岩塊（boulder_01 は
+        // 1.3 × 1.0 × 1.8 m）は 1.4 倍で高さ 1.4 m。手本の ground_02 の沢の板状の砂岩（0.3〜1 m）と、cliff_01 の崖錐の落ちた岩塊
+        // （数 m）の大きさ
         constexpr CliffViewSample kCliffViewSamples[] = {
             {PropKind::TalusSlab, 8.0f, -1.5f, 8.0f, 35.0f},
-            {PropKind::TalusBlock, 12.0f, -5.5f, 8.0f, 200.0f},
             {PropKind::TalusCrag, 14.0f, 4.5f, 1.4f, 110.0f},
         };
 
@@ -504,7 +502,7 @@ namespace Game::GameModes::WastelandLayout
 
     bool IsTalusKind(PropKind kind)
     {
-        return kind == PropKind::TalusCrag || kind == PropKind::TalusBlock || kind == PropKind::TalusSlab;
+        return kind == PropKind::TalusCrag || kind == PropKind::TalusSlab;
     }
 
     void BuildPlacements(const TerrainHeightField &field, const PropMeshShape (&shapes)[kPropKindCount],
