@@ -4983,3 +4983,14 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 道の除外の縁は直線なので、礫の多い所では礫の帯の縁が真っ直ぐに見える（outpost の右下）。轍の縁としては不自然でない
   - 試験は足していない
 - Next: TASKS.md の次の未完の項目。
+
+### SCN-WL-OUTPOST 再検証で閉じる（2026-10-16、run 20261016-184945 の反復 1）
+
+- Done:
+  - コードは変えていない。verify を回し直した（証拠は `.harness/runs/20261016-184945/`）
+  - `verify-SCN-WL-OUTPOST-1.txt`: Debug の Game のビルド EXIT=0
+  - `verify-SCN-WL-OUTPOST-2.txt`: 荒野の overview・outpost・ground を 1920×1080、result=pass（白飛び 0・黒つぶれ 0）、345 秒、EXIT=0。outpost・ground の PNG を開き、建物が平らな所に建って浮き・深い埋まりが無く、造成の境の線・円が見えないことを確かめた
+  - `verify-SCN-WL-OUTPOST-3.txt`: `RunSceneCycleSmoke.ps1 -Build -Scenes wasteland -Cycles 3 -Configuration RelWithDebInfo` が result=pass、SCENE_CYCLE_SAMPLE 3 件（どれも settled=1・texture_bytes=1703784520 で周回で増えない）、ビルドの確認込みで 350 秒、EXIT=0
+- Notes:
+  - 親が替えた `-Cycles 1` は通らない（スクリプトの `ValidateRange(2, 1000)` と Game の `requiredCycles = 基準の周回 + 2` が、基準の周回と比べるために 2 周以上を要求する）。Debug の 3 周は 928 秒で 10 分の上限を超えるので、verify を RelWithDebInfo の 3 周に替えた（done-when の 3 周をそのまま満たす。Debug の検証レイヤー込みの 3 周は反復 9 の `verify-SCN-WL-OUTPOST-6.txt`）
+- Next: TASKS.md の次の未完の項目。

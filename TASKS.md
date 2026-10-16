@@ -1630,13 +1630,13 @@
 - notes: 2026-10-15 SCN-WL-CLIFF-DETAIL-ALL の撮影の確認で見つかった。崖の細部の焼き直しの前（SCN-WL-CLIFF-DETAIL の撮影）にも同じ点があり、焼き直しをしていない遠くの平地にも出るので、崖の焼き直しから生じたものではない。 2026-10-16 親: 確認 1 の技術の欠陥（ground_02 の手前の暗い点の列）と合わせて地面の項目の終わりに置いた。SCN-WL-CONTACT-SHADOW-TERRAIN の後でも残る点を、この項目で原因から直す。
 
 ## SCN-WL-OUTPOST: 前哨地を自然に平らな所へ置き直し、建物と道の範囲だけ均す
-- status: doing
+- status: done
 - done-when: SCN-WL-REFERENCE-SELECT で選んだ平らな場所へ、前哨地（建物 6 種 8 棟・門・道）を置き直し、建物の足元と道の範囲だけ高さ場を緩い平面へ寄せる（境で高さと傾斜を滑らかにつなぎ、円形の継ぎ目を作らない）。造成は高さ場の規則として持ち、クックと Game が同じ値を使う（区画を焼き直す）。outpost の視点を置き直す。outpost・ground の撮影を開き、建物が浮かず埋まりすぎず、造成の境が見えないことを確かめる。散布の除外範囲（建物・道）を決めて書く。`wasteland` の cycle smoke 3 周が pass。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -Views overview,outpost,ground -OutDir .harness/runs/scene-capture/SCN-WL-OUTPOST`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Scenes wasteland -Cycles 1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Build -Scenes wasteland -Cycles 3 -Configuration RelWithDebInfo`
 - paths: Game/GameModes/Wasteland, Game/Scenes/SceneCatalog.h, Library/Core/Public/Rendering/Terrain, Library/Core/Private/Rendering/Terrain, Tools/AssetCook, Assets/AssetSets, Scripts, TASKS.md, PROGRESS.md
-- notes: 2026-10-16 ユーザーの決定: 建物は地面の項目の後・光と色の前に戻す（確認 2 で建物の入った荒野を見る。光と色も建物込みで合わせる）。先に撒いた低木・草・岩・礫（SCN-GRASS-SCATTER・SCATTER-ROCKS・SCATTER-GRAVEL）は、建物の足元・道・門の範囲から外す（散布の側に除外の範囲を渡す）。 2026-10-16 親: 実装と 3 周のスモークの合格（928 秒、`verify-SCN-WL-OUTPOST-6.txt`）は反復 9 で済んだが、Debug の荒野は 1 周約 300 秒で、ランナーの再検証（1 コマンド 10 分）で時間切れになった。verify のスモークを 1 周にした（3 周の合格は反復 9 の証拠で足りる）。次の反復はコードを変えず、verify を回し直して閉じる。
+- notes: 2026-10-16 ユーザーの決定: 建物は地面の項目の後・光と色の前に戻す（確認 2 で建物の入った荒野を見る。光と色も建物込みで合わせる）。先に撒いた低木・草・岩・礫（SCN-GRASS-SCATTER・SCATTER-ROCKS・SCATTER-GRAVEL）は、建物の足元・道・門の範囲から外す（散布の側に除外の範囲を渡す）。 2026-10-16 親: 実装と 3 周のスモークの合格（928 秒、`verify-SCN-WL-OUTPOST-6.txt`）は反復 9 で済んだが、Debug の荒野は 1 周約 300 秒で、ランナーの再検証（1 コマンド 10 分）で時間切れになった。verify のスモークを 1 周にした（3 周の合格は反復 9 の証拠で足りる）。次の反復はコードを変えず、verify を回し直して閉じる。 2026-10-16 run 20261016-184945 反復 1: `RunSceneCycleSmoke.ps1` と Game は単一シーンでも 2 周以上を要求する（基準の周回と比べるため）ので 1 周の verify は通らない。スモークを RelWithDebInfo の 3 周（`-Build` 付き）に替えた。ビルドの確認込みで 350 秒・result=pass（`verify-SCN-WL-OUTPOST-3.txt`）。Debug の検証レイヤー込みの 3 周は反復 9 の証拠（`verify-SCN-WL-OUTPOST-6.txt`）。
 
 ## SCN-WL-CAPTURE-SPEED: 荒野の撮影の読み込みを速くし、光と色の試行錯誤を回せるようにする
 - status: todo
