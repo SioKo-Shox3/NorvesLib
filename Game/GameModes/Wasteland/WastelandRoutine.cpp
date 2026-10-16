@@ -74,6 +74,9 @@ namespace Game::GameModes
         uint32_t PendingTextureCount = 0;
         /// 小物・建物（種類ごと。テクスチャの読み込みの結果が枠を指すので、固定の配列で持つ）
         WastelandPropLoad Props[Layout::kPropKindCount];
+        /// 置いた建物の足元と道（草・低木を撒かない範囲。PlaceProps が書く）
+        VariableArray<WastelandFoliage::ExclusionCircle> FoliageBuildingCircles;
+        VariableArray<WastelandFoliage::ExclusionRect> FoliageRoadRects;
         bool bCancelled = false;
         bool bPlaced = false;
         bool bPropsPlaced = false;
@@ -213,6 +216,10 @@ namespace Game::GameModes
         // 岩・崖・建物（WastelandLayout）を置くか。配置は手続きの地形（中央の盆地とメサの輪）に合わせたものなので、
         // DEM の地形では前哨地を置き直す（SCN-WL-OUTPOST）まで置かない
         constexpr bool kPlaceLayoutProps = false;
+        // 名前付き視点の足元で草・低木を撒かない半径[m]（目の前を株がふさがない）
+        constexpr float kViewFoliageClearRadius = 2.5f;
+        // 建物の足元で草・低木を撒かない範囲の、メッシュの範囲の外への広げ[m]
+        constexpr float kBuildingFoliageClearMargin = 1.5f;
         // 地形の材質は 3 層の混ぜ合わせ。素材は Poly Haven の CC0 の写真由来のテクスチャ（Scripts/Terrain/TerrainMaterials.py が
         // 落としてアルベドを較正し、Assets/AssetSets/WastelandTerrain.json が焼く）。
         // 1 層目（砂の枠）は横 2 枚の並び（8192×4096。Scripts/Terrain/TerrainMaterials.py --build が書く）。左は谷床の赤茶の土
@@ -324,6 +331,47 @@ namespace Game::GameModes
             ctx.EngineRef.GetRenderWorld().SetFoliage(FoliageScene{});
         }
 
+        /// 草・低木を撒かない範囲を散布へ渡す: 名前付き視点の足元（目の前を株がふさがない）と、置いた建物の足元・道
+        void ApplyFoliageExclusions(WastelandData &data, const WastelandAssembly *pAssembly)
+        {
+            VariableArray<WastelandFoliage::ExclusionCircle> circles;
+            VariableArray<WastelandFoliage::ExclusionRect> rects;
+            const Game::Scenes::SceneDescriptor *scene = Game::Scenes::FindScene(Game::Scenes::kWastelandSceneId);
+            if (scene != nullptr)
+            {
+                for (std::size_t index = 0; index < scene->ViewCount; ++index)
+                {
+                    const Game::Scenes::SceneViewDescriptor &view = scene->Views[index];
+                    if (view.Kind == Game::Scenes::SceneViewKind::FreePose)
+                    {
+                        circles.push_back({view.Position[0], view.Position[2], kViewFoliageClearRadius});
+                    }
+                }
+            }
+            if (pAssembly != nullptr)
+            {
+                circles.insert(circles.end(), pAssembly->FoliageBuildingCircles.begin(),
+                               pAssembly->FoliageBuildingCircles.end());
+                rects.insert(rects.end(), pAssembly->FoliageRoadRects.begin(), pAssembly->FoliageRoadRects.end());
+            }
+            data.m_FoliageScatter.SetExclusions(std::move(circles), std::move(rects));
+        }
+
+        /// カメラの (x,z) の周りの草・低木の区画をそろえ、区画が変わったか bForcePublish なら RenderWorld へ渡す
+        void UpdateFoliage(GameModeContext &ctx, WastelandData &data, float cameraX, float cameraZ, bool bForcePublish)
+        {
+            if (!data.m_FoliageScatter.IsInitialized())
+            {
+                return;
+            }
+            const bool bChanged = data.m_FoliageScatter.Update(cameraX, cameraZ, data.m_Foliage);
+            if (bChanged || bForcePublish)
+            {
+                data.m_Foliage.Wind.TimeOffsetSeconds = WastelandFoliage::WindTimeOffsetForView(data.m_ViewName);
+                ctx.EngineRef.GetRenderWorld().SetFoliage(data.m_Foliage);
+            }
+        }
+
         /// 視点の高さ（地形からの高さ）に、その (x,z) の地形の高さを足す。格子が無い・範囲の外なら地面を 0 とする
         void LiftPoseToTerrain(const Terrain::TerrainHeightField *pHeightField, const String &viewName,
                                Game::Scenes::FreeCameraPose &pose)
@@ -379,12 +427,8 @@ namespace Game::GameModes
             const WastelandReferenceShot *referenceShot = FindReferenceShot(data.m_ViewName);
             ApplyEnvironment(ctx, referenceShot ? referenceShot->SunAltitudeDegrees : kSunAltitudeDegrees,
                              referenceShot ? referenceShot->SunAzimuthDegrees : kSunAzimuthDegrees);
-            // 草・低木の風の時計（grass_gust は grass と同じ構図で時刻だけを変えた 2 枚目）
-            if (!data.m_Foliage.IsEmpty())
-            {
-                data.m_Foliage.Wind.TimeOffsetSeconds = Game::GameModes::WastelandFoliage::WindTimeOffsetForView(data.m_ViewName);
-                ctx.EngineRef.GetRenderWorld().SetFoliage(data.m_Foliage);
-            }
+            // 草・低木: 新しい視点の周りの区画をそろえ、風の時計を替える（grass_gust は grass と同じ構図で時刻だけを変えた 2 枚目）
+            UpdateFoliage(ctx, data, pose.Position[0], pose.Position[2], true);
             camera->SetFieldOfView(referenceShot ? referenceShot->VerticalFieldOfViewDegrees : data.m_DefaultFieldOfView);
             LOG_INFO_F("SCENE_VIEW_SWITCHED scene=wasteland view=%s", data.m_ViewName.c_str());
             pViewSwitch->Complete(true);
@@ -851,6 +895,28 @@ namespace Game::GameModes
                 LOG_INFO_F("WASTELAND_PROP_KIND id=%s placed=%u",
                            Layout::GetPropKindSpec(static_cast<Layout::PropKind>(kindIndex)).Id, placedPerKind[kindIndex]);
             }
+            // 建物の足元と道を、草・低木を撒かない範囲として残す（建物の原点を中心に、メッシュの範囲を囲む円）
+            assembly.FoliageBuildingCircles.clear();
+            assembly.FoliageRoadRects.clear();
+            for (const Layout::PropPlacement &placement : placements)
+            {
+                if (!Layout::GetPropKindSpec(placement.Kind).bBuilding)
+                {
+                    continue;
+                }
+                const Layout::PropMeshShape &shape = shapes[static_cast<uint32_t>(placement.Kind)];
+                const float extentX = std::max(std::fabs(shape.MinX), std::fabs(shape.MaxX));
+                const float extentZ = std::max(std::fabs(shape.MinZ), std::fabs(shape.MaxZ));
+                assembly.FoliageBuildingCircles.push_back(
+                    {placement.X, placement.Z,
+                     std::sqrt(extentX * extentX + extentZ * extentZ) * placement.Scale + kBuildingFoliageClearMargin});
+            }
+            if (stats.Buildings > 0)
+            {
+                const Layout::RoadClearArea road = Layout::GetRoadClearArea();
+                assembly.FoliageRoadRects.push_back(
+                    {road.CenterX, road.CenterZ, road.AlongX, road.AlongZ, road.HalfLength, road.HalfWidth});
+            }
             // 建物の最下点の高さと、その位置の地形の高さ（最下点が地面より下 = 埋まっている）を確かめられるよう出す
             for (const Layout::PropPlacement &placement : placements)
             {
@@ -893,13 +959,24 @@ namespace Game::GameModes
         }
         LiftPoseToTerrain(data.m_pHeightField.get(), data.m_ViewName, pose);
 
-        // 草・低木の一角（高さ場の上に置く）。高さ場が無ければ置かない
+        // 草・低木（高さ場の上に、地表の分類の地図で撒く）。高さ場が無ければ置かない。地図が読めなければ傾斜と密度の斑だけで撒く
         data.m_Foliage = NorvesLib::Core::Rendering::FoliageScene{};
+        data.m_FoliageScatter.Reset();
         if (data.m_pHeightField)
         {
-            data.m_Foliage = Game::GameModes::WastelandFoliage::BuildFoliage(*data.m_pHeightField);
-            data.m_Foliage.Wind.TimeOffsetSeconds = Game::GameModes::WastelandFoliage::WindTimeOffsetForView(data.m_ViewName);
-            ctx.EngineRef.GetRenderWorld().SetFoliage(data.m_Foliage);
+            AnsiString maskError;
+            TSharedPtr<const Terrain::TerrainSurfaceMask> surfaceMask =
+                Terrain::TerrainSurfaceMask::Load(TerrainSpec::kSurfaceMaskDescriptorPath, maskError);
+            if (!surfaceMask)
+            {
+                LOG_WARNING_F("WASTELAND_FOLIAGE_MASK_MISSING path=%s 地表の分類の地図を読めません（%s）。"
+                              "草・低木は傾斜と密度の斑だけで撒きます",
+                              TerrainSpec::kSurfaceMaskDescriptorPath, maskError.c_str());
+            }
+            data.m_FoliageScatter.Initialize(data.m_pHeightField, std::move(surfaceMask));
+            ApplyFoliageExclusions(data, nullptr);
+            data.m_Foliage.Wind = WastelandFoliage::MakeWind();
+            UpdateFoliage(ctx, data, pose.Position[0], pose.Position[2], true);
         }
 
         // 手本の写真の構図の視点では、太陽を写真の時刻の推定に替える
@@ -1077,6 +1154,11 @@ namespace Game::GameModes
                                  (data.m_TerrainSettledTick == 0 ||
                                   data.m_TickCount < data.m_TerrainSettledTick + kReadyTicksAfterTerrain);
         data.m_Rig.Tick(ctx, deltaTime, bSuspended || bHoldScript);
+        // 草・低木: カメラが区画を跨いだら、近づいた区画を作り、離れた区画を捨てる
+        {
+            const NorvesLib::Math::Vector3 cameraPosition = data.m_Rig.GetController().GetPosition();
+            UpdateFoliage(ctx, data, cameraPosition.x, cameraPosition.z, false);
+        }
 
         if (data.m_TerrainSettledTick == 0)
         {
@@ -1096,6 +1178,13 @@ namespace Game::GameModes
                 {
                     PlaceProps(ctx, *data.m_pHeightField, assembly);
                     assembly.bPropsPlaced = true;
+                    // 置いた建物の足元と道から草・低木を外す（区画を作り直す）
+                    if (!assembly.FoliageBuildingCircles.empty() || !assembly.FoliageRoadRects.empty())
+                    {
+                        ApplyFoliageExclusions(data, &assembly);
+                        const NorvesLib::Math::Vector3 cameraPosition = data.m_Rig.GetController().GetPosition();
+                        UpdateFoliage(ctx, data, cameraPosition.x, cameraPosition.z, false);
+                    }
                 }
                 if (assembly.bPlaced && assembly.bPropsPlaced)
                 {
@@ -1129,6 +1218,7 @@ namespace Game::GameModes
         }
         data.m_pHeightField.reset();
         data.m_Foliage = NorvesLib::Core::Rendering::FoliageScene{};
+        data.m_FoliageScatter.Reset();
         data.m_Rig.Leave(ctx);
         // 地形の Entity・モデル・カメラの実体は GameModeScope::Cleanup が返す。空と霧は RenderWorld の設定なので戻す。
         ResetEnvironment(ctx);

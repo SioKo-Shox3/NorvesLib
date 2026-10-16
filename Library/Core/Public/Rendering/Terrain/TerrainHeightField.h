@@ -232,6 +232,48 @@ namespace NorvesLib::Core::Rendering::Terrain
     bool LoadTerrainSurfaceMaskLayout(Container::AnsiStringView descriptorPath, TerrainSurfaceMaskLayout &outLayout,
                                       Container::AnsiString &outError);
 
+    /// 地表の分類の地図のある点の 5 つの分類の重み（0〜1。和は 1）
+    struct TerrainSurfaceWeights
+    {
+        /// 露岩
+        float Rock = 0.0f;
+        /// 崖錐
+        float Talus = 0.0f;
+        /// 地表（細粒）
+        float Fine = 0.0f;
+        /// 地表（礫）
+        float Gravel = 0.0f;
+        /// 砂（沢底と吹きだまり。4 つの和の残り）
+        float Sand = 0.0f;
+    };
+
+    /// 地表の分類の地図の中身を CPU で引く（草・低木を撒く所を決めるのに使う）。作った後は読み取りだけで、
+    /// 複数のスレッドから同時に引いてよい
+    class TerrainSurfaceMask
+    {
+    public:
+        /// 地図の記述（surface.json）と、その file が指す PNG を読む。descriptorPath はアセットの根からの道。
+        /// 読めない・中身が約束と違う（PNG の大きさが記述と違う）ときは空を返し、outError に理由を書く
+        static Container::TSharedPtr<const TerrainSurfaceMask> Load(Container::AnsiStringView descriptorPath,
+                                                                    Container::AnsiString &outError);
+
+        /// (x,z) の重みを、画素の中心の間で線形に補間して outWeights に入れる。地図の外なら false（outWeights は変えない）
+        bool Sample(float x, float z, TerrainSurfaceWeights &outWeights) const;
+
+        const TerrainSurfaceMaskLayout &GetLayout() const
+        {
+            return m_Layout;
+        }
+
+        /// Load だけが使う
+        TerrainSurfaceMask(const TerrainSurfaceMaskLayout &layout, Container::VariableArray<uint8_t> &&pixels);
+
+    private:
+        TerrainSurfaceMaskLayout m_Layout;
+        /// RGBA8、1 行目が Z の最小（北）
+        Container::VariableArray<uint8_t> m_Pixels;
+    };
+
     /// 遠景の地図（Scripts/Terrain/FarMacro.py が書く far.png。R・G = 法線の X・Z、B = 岩肌・A = 土の重み）の記述（far.json）を読み、
     /// 地図の外縁を outLayout に入れる。並びと検査は LoadTerrainSurfaceMaskLayout と同じで、チャンネルの名前だけが違う
     bool LoadTerrainFarMapLayout(Container::AnsiStringView descriptorPath, TerrainSurfaceMaskLayout &outLayout,

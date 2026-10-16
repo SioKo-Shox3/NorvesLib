@@ -23,6 +23,7 @@
 #include "Core/Public/GameMode/IGameMode.h"
 #include "Core/Public/GameMode/TGameMode.h"
 #include "Core/Public/Rendering/FoliageTypes.h"
+#include "GameModes/Wasteland/WastelandFoliage.h"
 #include "Pause/PauseMenu.h"
 #include "Scenes/FreeCameraRig.h"
 #include "Scenes/SceneViewSwitch.h"
@@ -74,8 +75,10 @@ namespace Game::GameModes
         NorvesLib::Core::Container::TSharedPtr<const NorvesLib::Core::Rendering::Terrain::TerrainHeightField> m_pHeightField;
         /// 地形を置き終えた（または置けないと決まった）Tick。0 ならまだ
         uint32_t m_TerrainSettledTick = 0;
-        /// 草・低木の一角の束と風（Enter で作って RenderWorld へ渡し、視点を置き直すときに風の時計のずらしだけを替える）
+        /// 草・低木の束と風（カメラの周りの区画が変わるたびに m_FoliageScatter が作り直し、RenderWorld へ渡す）
         NorvesLib::Core::Rendering::FoliageScene m_Foliage;
+        /// 草・低木を地形へ撒く区画の持ち主（Enter で高さ場と地表の分類の地図を渡し、Leave で手放す）
+        Game::GameModes::WastelandFoliage::FoliageScatter m_FoliageScatter;
     };
 
     class WastelandRoutine

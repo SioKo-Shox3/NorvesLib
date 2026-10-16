@@ -90,6 +90,19 @@ namespace Game::GameModes::WastelandLayout
         uint32_t BasinBoulders = 0;
     };
 
+    /// 前哨地の道の、岩・草を置かない範囲（中心・道の向き（XZ の単位ベクトル）・長さと幅の半分[m]）
+    struct RoadClearArea
+    {
+        float CenterX = 0.0f;
+        float CenterZ = 0.0f;
+        float AlongX = 0.0f;
+        float AlongZ = 1.0f;
+        float HalfLength = 0.0f;
+        float HalfWidth = 0.0f;
+    };
+
+    RoadClearArea GetRoadClearArea();
+
     /// 読めた種類（shapes[kind].bAvailable）だけを使って配置を決める
     void BuildPlacements(const NorvesLib::Core::Rendering::Terrain::TerrainHeightField &field,
                          const PropMeshShape (&shapes)[kPropKindCount],

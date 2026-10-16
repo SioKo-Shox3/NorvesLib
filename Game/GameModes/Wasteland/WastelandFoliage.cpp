@@ -17,22 +17,24 @@ namespace Game::GameModes::WastelandFoliage
     {
         constexpr float kPi = 3.14159265358979f;
 
-        // 一角の範囲: 谷床の (250, 1650) を中心とする 120 m 四方（傾斜の中央値 3.8°。DEM から測った）。
-        // 視点 grass（Game/Scenes/SceneCatalog.h）はこの南南東の端から北北西を見る
-        constexpr float kPatchCenterX = 250.0f;
-        constexpr float kPatchCenterZ = 1650.0f;
-        constexpr float kPatchHalfSize = 60.0f;
-        // 視点の足元は空ける（目の前を株がふさがない）
-        constexpr float kViewX = 266.0f;
-        constexpr float kViewZ = 1692.0f;
-        constexpr float kViewClearRadius = 2.5f;
-        // 株を置く升目[m]。升目ごとに 1 株の候補を升目の中のでたらめな位置に置き、密度の斑で間引く。
+        // 株を置く升目[m]。世界の升目ごとに 1 株の候補を升目の中のでたらめな位置に置き、地図と密度の斑で間引く。
         // 手本の写真（ground_01）の低木と草は 1.5〜3 m おきで、裸地の斑を挟む
-        constexpr float kCellSize = 1.5f;
+        constexpr float kCandidateSpacing = 1.5f;
+        // 区画の一辺の升目の数と、区画の一辺[m]（区画ごとに描画が視錐台で外し、距離で株を間引く）
+        constexpr int32_t kCandidatesPerCell = 16;
+        constexpr float kCellSize = kCandidateSpacing * static_cast<float>(kCandidatesPerCell);
+        // 区画を作る範囲（カメラから区画までの水平の最短の距離[m]）。最も遠くまで残る低木の消える距離 120 m の外まで作り、
+        // 1 区画ぶん離れるまで捨てない（区画の境を行き来しても作り直さない）
+        constexpr float kGenerateRadius = 128.0f;
+        constexpr float kKeepRadius = kGenerateRadius + kCellSize;
         // 置かない傾斜[度]（崩れた沢の岸・急な斜面）
         constexpr float kMaxSlopeDegrees = 28.0f;
         // 根元を地面へ埋める深さ[m]（地形の三角形の折れ目で浮かない）
         constexpr float kRootSink = 0.03f;
+        // 区画の箱を株の根元の範囲から広げる量[m]（横は樹冠の半径と風のずれ、上は最も高い株の高さ）
+        constexpr float kCellBoundsSideMargin = 1.5f;
+        constexpr float kCellBoundsTopMargin = 1.6f;
+        constexpr float kCellBoundsBottomMargin = 0.2f;
         // 風は方位 235°（南西）から北東へ吹く（地表の分類の地図の吹きだまりと同じ推定。Scripts/Terrain/TerrainMasks.py）。
         // エンジンの X は東・Z は南なので、吹いていく向きは (sin 55°, -cos 55°)
         constexpr float kWindDirectionX = 0.819f;
@@ -70,6 +72,24 @@ namespace Game::GameModes::WastelandFoliage
             return (a + (b - a) * ux) + ((c + (d - c) * ux) - (a + (b - a) * ux)) * uz;
         }
 
+        float SmoothStep(float edge0, float edge1, float value)
+        {
+            const float t = std::clamp((value - edge0) / (edge1 - edge0), 0.0f, 1.0f);
+            return t * t * (3.0f - 2.0f * t);
+        }
+
+        /// 地表の分類から決まる株の生えやすさ（0〜1。密度の斑の上限に掛ける）
+        float VegetationSuitability(const Terrain::TerrainSurfaceWeights &weights)
+        {
+            // 地表（細粒）は 1、礫の舗石は 0.75（手本の ground_01 の礫の地面にも低木が並ぶ）、吹きだまりの砂は 0.5
+            float suitability = weights.Fine + 0.75f * weights.Gravel + 0.5f * weights.Sand;
+            // 沢底の流路（砂の重みが吹きだまりの上限 0.6 を超えて 1 へ近づく所）には生えない
+            suitability *= 1.0f - SmoothStep(0.45f, 0.7f, weights.Sand);
+            // 露岩・崖錐が混ざる所は早めに減らす（岩の上には生えない）
+            suitability *= 1.0f - SmoothStep(0.15f, 0.45f, weights.Rock + weights.Talus);
+            return suitability;
+        }
+
         /// 株の種類（束の並び）
         enum class PlantKind : uint32_t
         {
@@ -80,7 +100,7 @@ namespace Game::GameModes::WastelandFoliage
             MormonTea,
             Count
         };
-        constexpr uint32_t kPlantKindCount = static_cast<uint32_t>(PlantKind::Count);
+        static_assert(static_cast<uint32_t>(PlantKind::Count) == kPlantKindCount, "WastelandFoliage.h の種類の数と合わせる");
 
         /// sRGB（0〜255）を線形のアルベドへ
         float SrgbToLinear(float value)
@@ -96,7 +116,7 @@ namespace Game::GameModes::WastelandFoliage
             destination[2] = SrgbToLinear(b);
         }
 
-        /// 種類ごとのメッシュと色・風
+        /// 種類ごとのメッシュと色・風・間引きの距離
         FoliageBatch MakeBatch(PlantKind kind)
         {
             FoliageBatch batch;
@@ -124,6 +144,9 @@ namespace Game::GameModes::WastelandFoliage
                 batch.WindSwayFrequency = 0.9f;
                 batch.MinPixelWidth = 0.7f;
                 batch.MaxWidenRatio = 3.0f;
+                // 高さ 0.2〜0.4 m の小さな株は、30 m から間引き始めて 80 m で消す（その先は 1 株が数画素で、地面の材質の斑に任せる）
+                batch.FadeStartDistance = 30.0f;
+                batch.FadeEndDistance = 80.0f;
                 batch.DebugName = kind == PlantKind::GrassA ? "grass_a" : "grass_b";
                 break;
             }
@@ -156,6 +179,10 @@ namespace Game::GameModes::WastelandFoliage
                 batch.WindSwayFrequency = 0.5f;
                 batch.MinPixelWidth = 0.7f;
                 batch.MaxWidenRatio = 2.5f;
+                // 高さ 0.4〜0.9 m の丸い株は遠くまで点として読める（写真では中景の低木の点が地平まで続く）。
+                // 45 m から間引き始めて 120 m で消す
+                batch.FadeStartDistance = 45.0f;
+                batch.FadeEndDistance = 120.0f;
                 batch.DebugName = kind == PlantKind::BlackbrushA ? "blackbrush_a" : "blackbrush_b";
                 break;
             }
@@ -182,105 +209,313 @@ namespace Game::GameModes::WastelandFoliage
                 batch.WindSwayFrequency = 0.6f;
                 batch.MinPixelWidth = 0.7f;
                 batch.MaxWidenRatio = 2.5f;
+                // 細い茎のほうき状の株は、ブラックブラッシュより少し手前で消す
+                batch.FadeStartDistance = 40.0f;
+                batch.FadeEndDistance = 100.0f;
                 batch.DebugName = "mormon_tea";
                 break;
             }
             }
             return batch;
         }
+
+        /// 点 (x,z) から区画 (cellX, cellZ) の四角までの水平の最短の距離[m]
+        float DistanceToCell(float x, float z, int32_t cellX, int32_t cellZ)
+        {
+            const float minX = static_cast<float>(cellX) * kCellSize;
+            const float minZ = static_cast<float>(cellZ) * kCellSize;
+            const float dx = std::max({minX - x, 0.0f, x - (minX + kCellSize)});
+            const float dz = std::max({minZ - z, 0.0f, z - (minZ + kCellSize)});
+            return std::sqrt(dx * dx + dz * dz);
+        }
     } // namespace
 
-    FoliageScene BuildFoliage(const Terrain::TerrainHeightField &field)
+    void FoliageScatter::Initialize(TSharedPtr<const Terrain::TerrainHeightField> field,
+                                    TSharedPtr<const Terrain::TerrainSurfaceMask> mask)
     {
-        VariableArray<FoliageInstance> instances[kPlantKindCount];
-        const int32_t cells = static_cast<int32_t>(2.0f * kPatchHalfSize / kCellSize);
-        const float minSlopeCos = std::cos(kMaxSlopeDegrees * kPi / 180.0f);
-        uint32_t rejectedSlope = 0;
-        for (int32_t cz = 0; cz < cells; ++cz)
-        {
-            for (int32_t cx = 0; cx < cells; ++cx)
-            {
-                const float x = kPatchCenterX - kPatchHalfSize + (static_cast<float>(cx) + Hash2(cx, cz, 1u)) * kCellSize;
-                const float z = kPatchCenterZ - kPatchHalfSize + (static_cast<float>(cz) + Hash2(cx, cz, 2u)) * kCellSize;
-                const float dx = x - kViewX;
-                const float dz = z - kViewZ;
-                if (dx * dx + dz * dz < kViewClearRadius * kViewClearRadius || !field.Contains(x, z))
-                {
-                    continue;
-                }
-                // 密度の斑: 数十 m の濃淡と数 m の群れ。裸地の斑を残す（全域に均等に撒かない）
-                const float density = 0.55f * ValueNoise(x, z, 22.0f, 3u) + 0.45f * ValueNoise(x, z, 6.0f, 4u);
-                if (Hash2(cx, cz, 5u) > std::clamp((density - 0.22f) * 1.6f, 0.0f, 0.92f))
-                {
-                    continue;
-                }
-                const Terrain::TerrainNormal normal = field.SampleNormal(x, z, 0.5f);
-                if (!(normal.Y >= minSlopeCos))
-                {
-                    ++rejectedSlope;
-                    continue;
-                }
-                // 種類: 草の株がおよそ半分、低木は群れの濃い所に多い。モルモンティーは 1 割ほど
-                const float pick = Hash2(cx, cz, 6u);
-                const float shrubShare = 0.3f + 0.25f * ValueNoise(x, z, 9.0f, 7u);
-                PlantKind kind;
-                if (pick < 0.08f)
-                {
-                    kind = PlantKind::MormonTea;
-                }
-                else if (pick < 0.08f + shrubShare)
-                {
-                    kind = Hash2(cx, cz, 8u) < 0.5f ? PlantKind::BlackbrushA : PlantKind::BlackbrushB;
-                }
-                else
-                {
-                    kind = Hash2(cx, cz, 9u) < 0.55f ? PlantKind::GrassA : PlantKind::GrassB;
-                }
-                const bool bShrub = kind == PlantKind::BlackbrushA || kind == PlantKind::BlackbrushB ||
-                                    kind == PlantKind::MormonTea;
-
-                FoliageInstance instance;
-                instance.Position[0] = x;
-                instance.Position[1] = field.SampleHeight(x, z) - kRootSink;
-                instance.Position[2] = z;
-                instance.Yaw = Hash2(cx, cz, 10u) * 2.0f * kPi;
-                // 大きさ: 低木は高さ 0.35〜0.95 m（メッシュの 0.6〜0.7 m の倍率）、草は 0.7〜1.3 倍
-                const float size = Hash2(cx, cz, 11u);
-                const float heightScale = bShrub ? 0.6f + 0.75f * size * size + 0.15f * density : 0.7f + 0.6f * size;
-                instance.HeightScale = heightScale;
-                instance.WidthScale = heightScale * (0.85f + 0.35f * Hash2(cx, cz, 12u));
-                instance.ColorVariation = Hash2(cx, cz, 13u);
-                instance.WindPhase = Hash2(cx, cz, 14u);
-                instances[static_cast<uint32_t>(kind)].push_back(instance);
-            }
-        }
-
-        FoliageScene scene;
-        scene.Wind.DirectionX = kWindDirectionX;
-        scene.Wind.DirectionZ = kWindDirectionZ;
-        scene.Wind.GustSpeed = kGustSpeed;
-        scene.Wind.GustScale = kGustScale;
-        uint32_t total = 0;
+        Reset();
+        m_pField = std::move(field);
+        m_pMask = std::move(mask);
         for (uint32_t kindIndex = 0; kindIndex < kPlantKindCount; ++kindIndex)
         {
-            FoliageBatch batch = MakeBatch(static_cast<PlantKind>(kindIndex));
-            const uint32_t count = static_cast<uint32_t>(instances[kindIndex].size());
-            LOG_INFO_F("WASTELAND_FOLIAGE_KIND id=%s instances=%u vertices=%zu triangles=%zu height=%.2f", batch.DebugName,
-                       count, batch.Mesh ? batch.Mesh->Vertices.size() : 0u,
+            m_Templates[kindIndex] = MakeBatch(static_cast<PlantKind>(kindIndex));
+            const FoliageBatch &batch = m_Templates[kindIndex];
+            LOG_INFO_F("WASTELAND_FOLIAGE_KIND id=%s vertices=%zu triangles=%zu height=%.2f fade=[%.0f,%.0f]",
+                       batch.DebugName, batch.Mesh ? batch.Mesh->Vertices.size() : 0u,
                        batch.Mesh ? batch.Mesh->Indices.size() / 3u : 0u,
-                       batch.Mesh ? static_cast<double>(batch.Mesh->Height) : 0.0);
-            if (count == 0 || !batch.Mesh)
+                       batch.Mesh ? static_cast<double>(batch.Mesh->Height) : 0.0,
+                       static_cast<double>(batch.FadeStartDistance), static_cast<double>(batch.FadeEndDistance));
+        }
+        LOG_INFO_F("WASTELAND_FOLIAGE_SCATTER mask=%d cell=%.1f candidate=%.1f generate_radius=%.0f",
+                   m_pMask ? 1 : 0, static_cast<double>(kCellSize), static_cast<double>(kCandidateSpacing),
+                   static_cast<double>(kGenerateRadius));
+    }
+
+    void FoliageScatter::Reset()
+    {
+        m_pField.reset();
+        m_pMask.reset();
+        for (FoliageBatch &batch : m_Templates)
+        {
+            batch = FoliageBatch{};
+        }
+        m_Cells.clear();
+        m_ExclusionCircles.clear();
+        m_ExclusionRects.clear();
+        m_bHasCenter = false;
+    }
+
+    void FoliageScatter::SetExclusions(VariableArray<ExclusionCircle> circles, VariableArray<ExclusionRect> rects)
+    {
+        m_ExclusionCircles = std::move(circles);
+        m_ExclusionRects = std::move(rects);
+        m_Cells.clear();
+        m_bHasCenter = false;
+    }
+
+    bool FoliageScatter::IsExcluded(float x, float z) const
+    {
+        for (const ExclusionCircle &circle : m_ExclusionCircles)
+        {
+            const float dx = x - circle.X;
+            const float dz = z - circle.Z;
+            if (dx * dx + dz * dz < circle.Radius * circle.Radius)
+            {
+                return true;
+            }
+        }
+        for (const ExclusionRect &rect : m_ExclusionRects)
+        {
+            const float dx = x - rect.CenterX;
+            const float dz = z - rect.CenterZ;
+            const float along = dx * rect.AlongX + dz * rect.AlongZ;
+            const float lateral = dx * rect.AlongZ - dz * rect.AlongX;
+            if (std::fabs(along) < rect.HalfLength && std::fabs(lateral) < rect.HalfWidth)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    void FoliageScatter::BuildCell(Cell &cell)
+    {
+        const Terrain::TerrainHeightField &field = *m_pField;
+        const float minSlopeCos = std::cos(kMaxSlopeDegrees * kPi / 180.0f);
+        cell.MinRootY = 0.0f;
+        cell.MaxRootY = 0.0f;
+        bool bHasRoot = false;
+        for (int32_t j = 0; j < kCandidatesPerCell; ++j)
+        {
+            for (int32_t i = 0; i < kCandidatesPerCell; ++i)
+            {
+                // 世界の升目の番号（区画の作り方やカメラの動きに関わらず、同じ升目は同じ株になる）
+                const int32_t gx = cell.X * kCandidatesPerCell + i;
+                const int32_t gz = cell.Z * kCandidatesPerCell + j;
+                // 升目ごとに 2 つの候補: 1 つ目は低木か草の株、2 つ目は低木の間に生える草の株だけ
+                // （手本の写真の中景に淡い草の株が低木と同じくらい多い）。乱数の塩は候補ごとに替える
+                for (uint32_t slot = 0; slot < 2u; ++slot)
+                {
+                    const uint32_t salt = slot * 32u;
+                    const float x = (static_cast<float>(gx) + Hash2(gx, gz, salt + 1u)) * kCandidateSpacing;
+                    const float z = (static_cast<float>(gz) + Hash2(gx, gz, salt + 2u)) * kCandidateSpacing;
+                    if (!field.Contains(x, z) || IsExcluded(x, z))
+                    {
+                        continue;
+                    }
+                    float suitability = 1.0f;
+                    Terrain::TerrainSurfaceWeights weights;
+                    if (m_pMask && m_pMask->Sample(x, z, weights))
+                    {
+                        suitability = VegetationSuitability(weights);
+                    }
+                    // 露岩・崖錐・沢底の流路（生えやすさがほぼ 0）は数えて外す
+                    if (suitability < 0.02f)
+                    {
+                        ++m_MaskRejectedCandidates;
+                        continue;
+                    }
+                    // 密度の斑: 数十 m の濃淡と数 m の群れ。裸地の斑を残す（全域に均等に撒かない）。
+                    // 草だけの候補は、低木と別の 12 m・4 m の斑で草の濃い所と薄い所を作る
+                    const float density = slot == 0u
+                                              ? 0.55f * ValueNoise(x, z, 22.0f, 3u) + 0.45f * ValueNoise(x, z, 6.0f, 4u)
+                                              : 0.6f * ValueNoise(x, z, 12.0f, 31u) + 0.4f * ValueNoise(x, z, 4.0f, 32u);
+                    const float acceptance = slot == 0u ? std::clamp((density - 0.22f) * 1.6f, 0.0f, 0.92f)
+                                                        : std::clamp((density - 0.3f) * 1.5f, 0.0f, 0.7f);
+                    if (Hash2(gx, gz, salt + 5u) >= acceptance * suitability)
+                    {
+                        continue;
+                    }
+                    const Terrain::TerrainNormal normal = field.SampleNormal(x, z, 0.5f);
+                    if (!(normal.Y >= minSlopeCos))
+                    {
+                        continue;
+                    }
+                    // 種類: 1 つ目の候補は草の株がおよそ半分、低木は群れの濃い所に多い。モルモンティーは 1 割ほど
+                    const float pick = slot == 0u ? Hash2(gx, gz, 6u) : 1.0f;
+                    const float shrubShare = 0.3f + 0.25f * ValueNoise(x, z, 9.0f, 7u);
+                    PlantKind kind;
+                    if (pick < 0.08f)
+                    {
+                        kind = PlantKind::MormonTea;
+                    }
+                    else if (pick < 0.08f + shrubShare)
+                    {
+                        kind = Hash2(gx, gz, 8u) < 0.5f ? PlantKind::BlackbrushA : PlantKind::BlackbrushB;
+                    }
+                    else
+                    {
+                        kind = Hash2(gx, gz, salt + 9u) < 0.55f ? PlantKind::GrassA : PlantKind::GrassB;
+                    }
+                    const bool bShrub = kind == PlantKind::BlackbrushA || kind == PlantKind::BlackbrushB ||
+                                        kind == PlantKind::MormonTea;
+
+                    FoliageInstance instance;
+                    instance.Position[0] = x;
+                    instance.Position[1] = field.SampleHeight(x, z) - kRootSink;
+                    instance.Position[2] = z;
+                    instance.Yaw = Hash2(gx, gz, salt + 10u) * 2.0f * kPi;
+                    // 大きさ: 低木は高さ 0.35〜0.95 m（メッシュの 0.6〜0.7 m の倍率）、草は 0.7〜1.3 倍
+                    const float size = Hash2(gx, gz, salt + 11u);
+                    const float heightScale = bShrub ? 0.6f + 0.75f * size * size + 0.15f * density : 0.7f + 0.6f * size;
+                    instance.HeightScale = heightScale;
+                    instance.WidthScale = heightScale * (0.85f + 0.35f * Hash2(gx, gz, salt + 12u));
+                    instance.ColorVariation = Hash2(gx, gz, salt + 13u);
+                    instance.WindPhase = Hash2(gx, gz, salt + 14u);
+                    instance.FadeThreshold = Hash2(gx, gz, salt + 15u);
+                    cell.Instances[static_cast<uint32_t>(kind)].push_back(instance);
+                    cell.MinRootY = bHasRoot ? std::min(cell.MinRootY, instance.Position[1]) : instance.Position[1];
+                    cell.MaxRootY = bHasRoot ? std::max(cell.MaxRootY, instance.Position[1]) : instance.Position[1];
+                    bHasRoot = true;
+                }
+            }
+        }
+        // 描画は区画の先頭から、しきい値が残す割合を下回る個数だけを描くので、しきい値の小さい順に並べる
+        for (VariableArray<FoliageInstance> &instances : cell.Instances)
+        {
+            std::sort(instances.begin(), instances.end(),
+                      [](const FoliageInstance &a, const FoliageInstance &b) { return a.FadeThreshold < b.FadeThreshold; });
+        }
+    }
+
+    bool FoliageScatter::Update(float cameraX, float cameraZ, FoliageScene &inOutScene)
+    {
+        if (!m_pField || !std::isfinite(cameraX) || !std::isfinite(cameraZ))
+        {
+            return false;
+        }
+        const int32_t centerX = static_cast<int32_t>(std::floor(cameraX / kCellSize));
+        const int32_t centerZ = static_cast<int32_t>(std::floor(cameraZ / kCellSize));
+        if (m_bHasCenter && centerX == m_CenterCellX && centerZ == m_CenterCellZ)
+        {
+            return false;
+        }
+        m_bHasCenter = true;
+        m_CenterCellX = centerX;
+        m_CenterCellZ = centerZ;
+
+        // 離れた区画を捨て、近づいた区画を作る
+        m_MaskRejectedCandidates = 0;
+        const size_t before = m_Cells.size();
+        m_Cells.erase(std::remove_if(m_Cells.begin(), m_Cells.end(),
+                                     [&](const Cell &cell)
+                                     { return DistanceToCell(cameraX, cameraZ, cell.X, cell.Z) > kKeepRadius; }),
+                      m_Cells.end());
+        const size_t dropped = before - m_Cells.size();
+        const int32_t reach = static_cast<int32_t>(std::ceil(kGenerateRadius / kCellSize));
+        uint32_t created = 0;
+        for (int32_t cellZ = centerZ - reach; cellZ <= centerZ + reach; ++cellZ)
+        {
+            for (int32_t cellX = centerX - reach; cellX <= centerX + reach; ++cellX)
+            {
+                if (DistanceToCell(cameraX, cameraZ, cellX, cellZ) > kGenerateRadius)
+                {
+                    continue;
+                }
+                const bool bExists = std::any_of(m_Cells.begin(), m_Cells.end(), [&](const Cell &cell)
+                                                 { return cell.X == cellX && cell.Z == cellZ; });
+                if (bExists)
+                {
+                    continue;
+                }
+                Cell cell;
+                cell.X = cellX;
+                cell.Z = cellZ;
+                BuildCell(cell);
+                m_Cells.push_back(std::move(cell));
+                ++created;
+            }
+        }
+        RebuildScene(inOutScene);
+
+        size_t instances = 0;
+        for (const FoliageBatch &batch : inOutScene.Batches)
+        {
+            instances += batch.Instances ? batch.Instances->size() : 0u;
+        }
+        LOG_INFO_F("WASTELAND_FOLIAGE center_cell=(%d,%d) cells=%zu created=%u dropped=%zu batches=%zu instances=%zu "
+                   "mask_rejected=%u",
+                   centerX, centerZ, m_Cells.size(), created, dropped, inOutScene.Batches.size(), instances,
+                   m_MaskRejectedCandidates);
+        return true;
+    }
+
+    void FoliageScatter::RebuildScene(FoliageScene &inOutScene) const
+    {
+        inOutScene.Batches.clear();
+        for (uint32_t kindIndex = 0; kindIndex < kPlantKindCount; ++kindIndex)
+        {
+            const FoliageBatch &batchTemplate = m_Templates[kindIndex];
+            if (!batchTemplate.Mesh)
             {
                 continue;
             }
-            batch.Instances = MakeShared<const VariableArray<FoliageInstance>>(std::move(instances[kindIndex]));
-            scene.Batches.push_back(std::move(batch));
-            total += count;
+            auto instances = MakeShared<VariableArray<FoliageInstance>>();
+            auto cells = MakeShared<VariableArray<FoliageCell>>();
+            size_t total = 0;
+            for (const Cell &cell : m_Cells)
+            {
+                total += cell.Instances[kindIndex].size();
+            }
+            instances->reserve(total);
+            for (const Cell &cell : m_Cells)
+            {
+                const VariableArray<FoliageInstance> &source = cell.Instances[kindIndex];
+                if (source.empty())
+                {
+                    continue;
+                }
+                FoliageCell range;
+                range.BoundsMin[0] = static_cast<float>(cell.X) * kCellSize - kCellBoundsSideMargin;
+                range.BoundsMin[1] = cell.MinRootY - kCellBoundsBottomMargin;
+                range.BoundsMin[2] = static_cast<float>(cell.Z) * kCellSize - kCellBoundsSideMargin;
+                range.BoundsMax[0] = static_cast<float>(cell.X + 1) * kCellSize + kCellBoundsSideMargin;
+                range.BoundsMax[1] = cell.MaxRootY + kCellBoundsTopMargin;
+                range.BoundsMax[2] = static_cast<float>(cell.Z + 1) * kCellSize + kCellBoundsSideMargin;
+                range.FirstInstance = static_cast<uint32_t>(instances->size());
+                range.InstanceCount = static_cast<uint32_t>(source.size());
+                instances->insert(instances->end(), source.begin(), source.end());
+                cells->push_back(range);
+            }
+            if (instances->empty())
+            {
+                continue;
+            }
+            FoliageBatch batch = batchTemplate;
+            batch.Instances = TSharedPtr<const VariableArray<FoliageInstance>>(std::move(instances));
+            batch.Cells = TSharedPtr<const VariableArray<FoliageCell>>(std::move(cells));
+            inOutScene.Batches.push_back(std::move(batch));
         }
-        LOG_INFO_F("WASTELAND_FOLIAGE batches=%zu instances=%u rejected_slope=%u center=(%.1f,%.1f) half=%.1f",
-                   scene.Batches.size(), total, rejectedSlope, static_cast<double>(kPatchCenterX),
-                   static_cast<double>(kPatchCenterZ), static_cast<double>(kPatchHalfSize));
-        return scene;
+    }
+
+    FoliageWindParameters MakeWind()
+    {
+        FoliageWindParameters wind;
+        wind.DirectionX = kWindDirectionX;
+        wind.DirectionZ = kWindDirectionZ;
+        wind.GustSpeed = kGustSpeed;
+        wind.GustScale = kGustScale;
+        return wind;
     }
 
     float WindTimeOffsetForView(const String &viewName)

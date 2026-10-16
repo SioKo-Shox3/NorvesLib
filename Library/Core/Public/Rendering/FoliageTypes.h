@@ -8,6 +8,8 @@
  * GameThread が RenderWorld::SetFoliageBatches で束の一覧を与え、毎フレームの FramePacket に写して RenderThread へ渡す。
  * メッシュとインスタンスの配列は作った後に書き換えない共有の値（TSharedPtr<const ...>）で、写しは参照を数えるだけで済む。
  * 描くのは FoliagePass（ビジビリティの解決の後に GBuffer へ直接ラスタする）で、束ごとに 1 回のインスタンス描画にする。
+ * 地形全体へ撒く束は、インスタンスを区画（FoliageCell）ごとにまとめ、区画ごとに視錐台で外し、距離で株を間引く
+ * （区画ごとに 1 回のインスタンス描画）。
  */
 
 #include "Container/Containers.h"
@@ -52,7 +54,7 @@ namespace NorvesLib::Core::Rendering
     };
 
     /**
-     * @brief 株 1 つの置き方（32 バイト。foliage.vert のインスタンスの入力と同じ並び）
+     * @brief 株 1 つの置き方（36 バイト。foliage.vert のインスタンスの入力と同じ並び）
      */
     struct FoliageInstance
     {
@@ -67,8 +69,27 @@ namespace NorvesLib::Core::Rendering
         float ColorVariation = 0.0f;
         /// 風の揺れの位相（0〜1）
         float WindPhase = 0.0f;
+        /// 距離で間引くときのしきい値（0〜1 の一様な乱数）。距離で決まる残す割合がこれを下回ると、株は縮んで消える。
+        /// 株ごとに違うので、消える距離が株ごとにばらつき、消え方が線にならない
+        float FadeThreshold = 0.0f;
     };
-    static_assert(sizeof(FoliageInstance) == 32, "foliage.vert のインスタンスの入力と合わせる");
+    static_assert(sizeof(FoliageInstance) == 36, "foliage.vert のインスタンスの入力と合わせる");
+
+    /**
+     * @brief 束の中の 1 つの区画（インスタンスの配列の連続した範囲と、その範囲を囲む箱）
+     *
+     * FoliagePass は区画ごとに、箱が視錐台の外なら描かず、カメラから箱までの最短の距離で残す割合を求め、しきい値がそれを
+     * 下回る株だけを描く。区画の中のインスタンスは FadeThreshold の小さい順に並べる（先頭からの個数で切れる）。
+     */
+    struct FoliageCell
+    {
+        /// 区画の株を囲むワールドの箱[m]（風で揺れる分を含める）
+        float BoundsMin[3] = {0.0f, 0.0f, 0.0f};
+        float BoundsMax[3] = {0.0f, 0.0f, 0.0f};
+        /// 束のインスタンスの配列の中の範囲
+        uint32_t FirstInstance = 0;
+        uint32_t InstanceCount = 0;
+    };
 
     /**
      * @brief 1 種類の株の束（1 回のインスタンス描画で描く）
@@ -77,6 +98,12 @@ namespace NorvesLib::Core::Rendering
     {
         Container::TSharedPtr<const FoliageMeshData> Mesh;
         Container::TSharedPtr<const Container::VariableArray<FoliageInstance>> Instances;
+        /// 区画の一覧（Instances の範囲。作った後は書き換えない）。空なら全部のインスタンスを 1 回で描き、区画のカリングをしない
+        Container::TSharedPtr<const Container::VariableArray<FoliageCell>> Cells;
+        /// 距離で間引く範囲[m]。FadeStartDistance までは全部の株を描き、そこから FadeEndDistance へ向けて残す割合を 1 から 0 へ
+        /// 下げる（株は FadeThreshold が残す割合を下回ると縮んで消える）。FadeEndDistance が FadeStartDistance 以下なら間引かない
+        float FadeStartDistance = 0.0f;
+        float FadeEndDistance = 0.0f;
         /// 茎・根元の色と、先の色の 2 つ（線形のアルベド）。インスタンスの ColorVariation で先の 2 色を混ぜる
         float StemColor[3] = {0.2f, 0.17f, 0.12f};
         float TipColorA[3] = {0.4f, 0.3f, 0.15f};

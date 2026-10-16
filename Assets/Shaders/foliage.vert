@@ -15,6 +15,8 @@ layout(location = 3) in vec4 inAttributes;
 layout(location = 4) in vec4 inInstancePlacement;
 // x = 横の倍率, y = 高さの倍率, z = 色の揺らぎ, w = 揺れの位相
 layout(location = 5) in vec4 inInstanceParams;
+// 距離で間引くときのしきい値（0〜1）
+layout(location = 6) in float inInstanceFadeThreshold;
 
 layout(location = 0) out vec3 fragWorldPos;
 layout(location = 1) out vec3 fragNormal;
@@ -24,6 +26,22 @@ layout(location = 4) out vec4 fragCurrentClip;
 layout(location = 5) out vec4 fragPreviousClip;
 
 const float kTwoPi = 6.2831853;
+// 株が縮み始めてから消えるまでの、残す割合の幅（間引く範囲が 80 m なら、株は 6 m ほどかけて縮む）
+const float kFadeShrinkBand = 0.08;
+
+// 根元までの距離で決まる株の大きさの倍率（1 = そのまま、0 = 消える）。残す割合は間引く範囲で 1 から 0 へ下がり、
+// しきい値の近くで株を縮める（FoliagePass が区画ごとに切る個数と同じ規則）
+float FoliageFadeScale(vec3 root, float threshold)
+{
+    float fadeStart = foliage.frameParams.z;
+    float fadeEnd = foliage.frameParams.w;
+    if (fadeEnd <= fadeStart)
+    {
+        return 1.0;
+    }
+    float keep = 1.0 - clamp((length(root - foliage.cameraPosition.xyz) - fadeStart) / (fadeEnd - fadeStart), 0.0, 1.0);
+    return clamp((keep - threshold) / kFadeShrinkBand, 0.0, 1.0);
+}
 
 float FoliageHash(vec2 p)
 {
@@ -81,8 +99,10 @@ void main()
 {
     vec3 root = inInstancePlacement.xyz;
     float yaw = inInstancePlacement.w;
-    float widthScale = inInstanceParams.x;
-    float heightScale = inInstanceParams.y;
+    // 遠くの株は、株ごとのしきい値で縮めて消す（全部の頂点が根元へ寄ると三角形が潰れて描かれない）
+    float fadeScale = FoliageFadeScale(root, inInstanceFadeThreshold);
+    float widthScale = inInstanceParams.x * fadeScale;
+    float heightScale = inInstanceParams.y * fadeScale;
     float colorVariation = inInstanceParams.z;
     float plantPhase = inInstanceParams.w;
 

@@ -1572,7 +1572,7 @@
 - notes: 危険地帯（描画）。今のシェーダーに discard が無く、`bTwoSided`（`RenderMaterialStore.cpp` 50 行付近）がカリングに効いているかは未確認。インスタンスを束ねる既存の仕組みは `DrawCommand::AddInstance`（`DrawCommand.h` 421 行付近）。 2026-10-16 親: 反復 5 の評価の指摘 1（葉の枚数が「数〜十数枚」を超える）は、親が書いた枚数の条件の方を外した（実在の枯れ草の株は数十枚の葉を持つ。美しさを先にする）。指摘 2（草が硬い針の放射・三角板に見える、低木の太い骨格が透ける）は直す: 草は葉先の垂れと長さの不均一、低木は細枝の密度と葉の明暗を写真の株に合わせ、同じ比較画像（grass_vs_ground_01）で確かめる。低木の形が手続きの生成で写真に近づかなければ、Poly Haven（CC0、取得は許可済み）のスキャンの低木か ComfyUI の生成のモデルに替えてよい（同じインスタンスの描画の経路で描く。替えた理由を PROGRESS に書く）。
 
 ## SCN-GRASS-SCATTER: 地形に枯れ草を撒き、区画ごとに間引く
-- status: todo
+- status: done
 - done-when: 地表の分類の地図（SCN-WL-MASKS-GEOM・FLOW）と手本の写真の疎密で密度を決めて、低木と枯れ草を撒き（露岩・崖錐の岩の上・沢底の流路・建物の足元・道には生えない）、区画ごとに視錐台で外し、距離で密度を下げて 80〜120 m 先で消す（消え方が線にならないよう株ごとのしきい値でフェード）。`ground`・`outpost`・`overview` の撮影を開いて、近くは草むら、遠くは自然に薄くなることを確かめる。性能はこの項目では測らず、SCN-WASTELAND-POLISH で草が目標を超える原因になったときに、カリングとラスタの内訳から密度・距離・LOD を調整する。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-GRASS-SCATTER`

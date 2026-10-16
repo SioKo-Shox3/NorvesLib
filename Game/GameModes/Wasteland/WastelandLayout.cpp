@@ -441,6 +441,17 @@ namespace Game::GameModes::WastelandLayout
         return kPropKindSpecs[std::min(static_cast<uint32_t>(kind), kPropKindCount - 1)];
     }
 
+    RoadClearArea GetRoadClearArea()
+    {
+        const RoadFrame road = MakeRoadFrame();
+        RoadClearArea area;
+        area.AlongX = road.AlongX;
+        area.AlongZ = road.AlongZ;
+        area.HalfLength = kRoadClearHalfLength;
+        area.HalfWidth = kRoadClearHalfWidth;
+        return area;
+    }
+
     void BuildPlacements(const TerrainHeightField &field, const PropMeshShape (&shapes)[kPropKindCount],
                          VariableArray<PropPlacement> &outPlacements, LayoutStats &outStats)
     {

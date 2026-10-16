@@ -20,7 +20,8 @@ layout(set = 0, binding = 0) uniform FoliageData
     vec4 tipColorA;
     // rgb = 先の色 B, a = 元の幅に対する広げる上限の倍率
     vec4 tipColorB;
-    // x = 前のフレームのカメラが有効か（1/0）, y = 株の高さ[m]（インスタンスの高さの倍率が 1 のとき）
+    // x = 前のフレームのカメラが有効か（1/0）, y = 株の高さ[m]（インスタンスの高さの倍率が 1 のとき）,
+    // z・w = 距離で間引く範囲の始まりと終わり[m]（w <= z なら間引かない）
     vec4 frameParams;
 } foliage;
 

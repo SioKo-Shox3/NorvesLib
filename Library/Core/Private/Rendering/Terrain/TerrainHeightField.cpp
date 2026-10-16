@@ -3,8 +3,12 @@
 #include "Asset/AssetFileReader.h"
 #include "Text/JsonDocument.h"
 
+#include "stb_image.h"
+
 #include <algorithm>
+#include <climits>
 #include <cmath>
+#include <cstdint>
 #include <cstring>
 
 namespace NorvesLib::Core::Rendering::Terrain
@@ -804,8 +808,10 @@ namespace NorvesLib::Core::Rendering::Terrain
     {
         // 地形の地図の記述（surface.json・far.json）を読む。2 つは同じ並び（format・channels・width・height・texel_size_m・
         // engine_edges）で、チャンネルの名前 channelNames（r・g・b・a）だけが違う。errorLabel はエラー文の先頭の地図の呼び名
+        // outFileName が空でなければ、記述の file（記述と同じフォルダの画像の名前）も入れる
         bool LoadTerrainMapLayout(Container::AnsiStringView descriptorPath, const char *const (&channelNames)[4],
-                                  const char *errorLabel, TerrainSurfaceMaskLayout &outLayout, Container::AnsiString &outError)
+                                  const char *errorLabel, TerrainSurfaceMaskLayout &outLayout, Container::AnsiString &outError,
+                                  Container::AnsiString *outFileName = nullptr)
         {
             constexpr uint64_t kMaxDescriptorBytes = 1024u * 1024u;
             constexpr int64_t kMaxPixels = 16384;
@@ -873,6 +879,10 @@ namespace NorvesLib::Core::Rendering::Terrain
             {
                 return fail("の外縁の幅が、列・行の数 × 画素の広さと合いません");
             }
+            if (outFileName != nullptr && !JsonGridFileName(root.FindMember("file"), *outFileName))
+            {
+                return fail("の画像のファイル名が不正です");
+            }
             outLayout.MinX = static_cast<float>(minX);
             outLayout.MaxX = static_cast<float>(maxX);
             outLayout.MinZ = static_cast<float>(minZ);
@@ -895,6 +905,100 @@ namespace NorvesLib::Core::Rendering::Terrain
     {
         static constexpr const char *kChannels[4] = {"normal_x", "normal_z", "rock", "dirt"};
         return LoadTerrainMapLayout(descriptorPath, kChannels, "遠景の地図", outLayout, outError);
+    }
+
+    TerrainSurfaceMask::TerrainSurfaceMask(const TerrainSurfaceMaskLayout &layout, Container::VariableArray<uint8_t> &&pixels)
+        : m_Layout(layout), m_Pixels(std::move(pixels))
+    {
+    }
+
+    Container::TSharedPtr<const TerrainSurfaceMask> TerrainSurfaceMask::Load(Container::AnsiStringView descriptorPath,
+                                                                            Container::AnsiString &outError)
+    {
+        constexpr uint64_t kMaxImageBytes = 256u * 1024u * 1024u;
+        static constexpr const char *kChannels[4] = {"rock", "talus", "ground_fine", "ground_gravel"};
+        TerrainSurfaceMaskLayout layout;
+        Container::AnsiString fileName;
+        if (!LoadTerrainMapLayout(descriptorPath, kChannels, "地表の分類の地図", layout, outError, &fileName))
+        {
+            return {};
+        }
+
+        // 画像は記述と同じフォルダにある
+        size_t folderLength = 0;
+        for (size_t index = 0; index < descriptorPath.size(); ++index)
+        {
+            if (descriptorPath.data()[index] == '/' || descriptorPath.data()[index] == '\\')
+            {
+                folderLength = index + 1;
+            }
+        }
+        Asset::AssetFileReader reader;
+        Asset::AssetReadRequest imageRequest;
+        imageRequest.InputPath.append(descriptorPath.data(), folderLength);
+        imageRequest.InputPath += fileName;
+        imageRequest.bAllowAbsolutePath = false;
+        imageRequest.MaxReadBytes = kMaxImageBytes;
+        const Asset::AssetReadResult image = reader.Read(imageRequest);
+        const Container::AnsiStringView imagePath(imageRequest.InputPath.data(), imageRequest.InputPath.size());
+        if (!image.Succeeded() || image.Blob.GetSize() == 0 || image.Blob.GetSize() > static_cast<size_t>(INT32_MAX))
+        {
+            outError = MakeGridError("地表の分類の地図の画像を読めません", imagePath);
+            return {};
+        }
+        int width = 0;
+        int height = 0;
+        int channels = 0;
+        unsigned char *decoded = stbi_load_from_memory(image.Blob.GetData(), static_cast<int>(image.Blob.GetSize()), &width,
+                                                       &height, &channels, 4);
+        if (decoded == nullptr)
+        {
+            outError = MakeGridError("地表の分類の地図の画像を PNG として読めません", imagePath);
+            return {};
+        }
+        if (static_cast<uint32_t>(width) != layout.Width || static_cast<uint32_t>(height) != layout.Height || channels != 4)
+        {
+            stbi_image_free(decoded);
+            outError = MakeGridError("地表の分類の地図の画像の大きさ・チャンネルの数が記述と違います", imagePath);
+            return {};
+        }
+        Container::VariableArray<uint8_t> pixels(static_cast<size_t>(width) * static_cast<size_t>(height) * 4u);
+        std::memcpy(pixels.data(), decoded, pixels.size());
+        stbi_image_free(decoded);
+        return Container::MakeShared<const TerrainSurfaceMask>(layout, std::move(pixels));
+    }
+
+    bool TerrainSurfaceMask::Sample(float x, float z, TerrainSurfaceWeights &outWeights) const
+    {
+        if (m_Layout.Width < 2 || m_Layout.Height < 2 || !(x >= m_Layout.MinX && x <= m_Layout.MaxX) ||
+            !(z >= m_Layout.MinZ && z <= m_Layout.MaxZ))
+        {
+            return false;
+        }
+        // 画素の中心が (i + 0.5) × 画素の広さにある。外縁の半画素は端の画素の値
+        const float texelX = (m_Layout.MaxX - m_Layout.MinX) / static_cast<float>(m_Layout.Width);
+        const float texelZ = (m_Layout.MaxZ - m_Layout.MinZ) / static_cast<float>(m_Layout.Height);
+        const float fx = std::clamp((x - m_Layout.MinX) / texelX - 0.5f, 0.0f, static_cast<float>(m_Layout.Width - 1));
+        const float fz = std::clamp((z - m_Layout.MinZ) / texelZ - 0.5f, 0.0f, static_cast<float>(m_Layout.Height - 1));
+        const uint32_t column = std::min(static_cast<uint32_t>(fx), m_Layout.Width - 2);
+        const uint32_t row = std::min(static_cast<uint32_t>(fz), m_Layout.Height - 2);
+        const float tx = fx - static_cast<float>(column);
+        const float tz = fz - static_cast<float>(row);
+        float channels[4] = {};
+        for (uint32_t channel = 0; channel < 4; ++channel)
+        {
+            const auto at = [&](uint32_t c, uint32_t r)
+            { return static_cast<float>(m_Pixels[(static_cast<size_t>(r) * m_Layout.Width + c) * 4u + channel]); };
+            const float north = at(column, row) + (at(column + 1, row) - at(column, row)) * tx;
+            const float south = at(column, row + 1) + (at(column + 1, row + 1) - at(column, row + 1)) * tx;
+            channels[channel] = (north + (south - north) * tz) * (1.0f / 255.0f);
+        }
+        outWeights.Rock = channels[0];
+        outWeights.Talus = channels[1];
+        outWeights.Fine = channels[2];
+        outWeights.Gravel = channels[3];
+        outWeights.Sand = std::max(0.0f, 1.0f - channels[0] - channels[1] - channels[2] - channels[3]);
+        return true;
     }
 
     namespace WastelandTerrain

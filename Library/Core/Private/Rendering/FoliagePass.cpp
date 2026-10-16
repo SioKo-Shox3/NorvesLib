@@ -12,6 +12,8 @@
 #include "RHI/IDescriptorSet.h"
 #include "RHI/ITexture.h"
 #include "Logging/LogMacros.h"
+#include "Math/MatrixUtils.h"
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 
@@ -40,6 +42,76 @@ namespace NorvesLib::Core::Rendering
         static_assert(offsetof(FoliageVertex, Side) == 24);
         static_assert(offsetof(FoliageVertex, Flex) == 36);
         static_assert(offsetof(FoliageInstance, WidthScale) == 16);
+        static_assert(offsetof(FoliageInstance, FadeThreshold) == 32);
+
+        /// foliage.vert の kFadeShrinkBand と同じ値（しきい値が残す割合をこの幅だけ下回るまでは、縮みながら描く）
+        constexpr float kFadeShrinkBand = 0.08f;
+
+        /// カメラから距離 distance[m] の所で残す割合（foliage.vert の FoliageFadeScale と同じ規則）
+        float FadeKeepFraction(const FoliageBatch &batch, float distance)
+        {
+            if (batch.FadeEndDistance <= batch.FadeStartDistance)
+            {
+                return 1.0f;
+            }
+            const float t = (distance - batch.FadeStartDistance) / (batch.FadeEndDistance - batch.FadeStartDistance);
+            return 1.0f - std::clamp(t, 0.0f, 1.0f);
+        }
+
+        /// 箱が視錐台の外か（どれかの面の外側に箱の全部があれば外。面は内側が正）
+        bool IsBoxOutsideFrustum(const Math::ClipSpaceFrustumPlanes &planes, const float (&boundsMin)[3],
+                                 const float (&boundsMax)[3])
+        {
+            for (const Math::Vector4 &plane : planes.Planes)
+            {
+                // 面の法線の向きに最も進んだ箱の角
+                const float x = plane.x >= 0.0f ? boundsMax[0] : boundsMin[0];
+                const float y = plane.y >= 0.0f ? boundsMax[1] : boundsMin[1];
+                const float z = plane.z >= 0.0f ? boundsMax[2] : boundsMin[2];
+                if (plane.x * x + plane.y * y + plane.z * z + plane.w < 0.0f)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /// 点 (x,y,z) から箱までの最短の距離[m]（箱の中なら 0）
+        float DistanceToBox(const float (&point)[3], const float (&boundsMin)[3], const float (&boundsMax)[3])
+        {
+            float squared = 0.0f;
+            for (uint32_t axis = 0; axis < 3; ++axis)
+            {
+                const float outside = std::max({boundsMin[axis] - point[axis], 0.0f, point[axis] - boundsMax[axis]});
+                squared += outside * outside;
+            }
+            return std::sqrt(squared);
+        }
+
+        /// 区画の中で描く株の数（FadeThreshold の小さい順に並んだ範囲のうち、しきい値が残す割合 keep を下回る株の数）
+        uint32_t CountKeptInstances(const Container::VariableArray<FoliageInstance> &instances, const FoliageCell &cell,
+                                    float keep)
+        {
+            if (keep >= 1.0f)
+            {
+                return cell.InstanceCount;
+            }
+            uint32_t low = 0;
+            uint32_t high = cell.InstanceCount;
+            while (low < high)
+            {
+                const uint32_t middle = low + (high - low) / 2u;
+                if (instances[cell.FirstInstance + middle].FadeThreshold < keep)
+                {
+                    low = middle + 1u;
+                }
+                else
+                {
+                    high = middle;
+                }
+            }
+            return low;
+        }
 
         /// 一覧から外れたバッファを捨てるまでに待つ Execute の回数（飛行中のフレームとビューの数より十分に多い）
         constexpr uint64_t kStaticBufferReleaseDelay = 64;
@@ -296,9 +368,21 @@ namespace NorvesLib::Core::Rendering
         frameTemplate.windParams[1] = wind.GustScale;
         frameTemplate.frameParams[0] = previousCamera ? 1.0f : 0.0f;
 
+        // 区画のカリング: 視錐台の面（GBufferPass と同じビュー・投影）とカメラの位置
+        const Math::ClipSpaceFrustumPlanes frustumPlanes = Math::MatrixUtils::ExtractClipSpaceFrustumPlanes(
+            cameraConstants.ViewProjectionMatrix, Math::ClipSpaceDepthRange::ZeroToOne);
+        const float cameraPosition[3] = {frameTemplate.cameraPosition[0], frameTemplate.cameraPosition[1],
+                                         frameTemplate.cameraPosition[2]};
+
         // メッシュとインスタンスは一度だけ置いたバッファを使い、全部の束の定数を先に書いてから記録する
         // （記録済みのコマンドが参照するアップロードのページへ、同じフレームの後から書き込まない）
         ++m_ExecuteCount;
+        /// 1 回のインスタンス描画（束の中の連続したインスタンスの範囲）
+        struct DrawRange
+        {
+            uint32_t FirstInstance = 0;
+            uint32_t InstanceCount = 0;
+        };
         struct PreparedBatch
         {
             RHI::BufferPtr Vertex;
@@ -306,11 +390,16 @@ namespace NorvesLib::Core::Rendering
             RHI::BufferPtr Instance;
             RHI::DescriptorSetPtr DescriptorSet;
             uint32_t IndexCount = 0;
-            uint32_t InstanceCount = 0;
+            // drawRanges の中のこの束の範囲
+            uint32_t FirstRange = 0;
+            uint32_t RangeCount = 0;
         };
         FrameResourceLane *frameResources = context.FrameResources;
         Container::VariableArray<PreparedBatch> prepared;
+        Container::VariableArray<DrawRange> drawRanges;
         prepared.reserve(scene->Batches.size());
+        uint32_t totalCells = 0;
+        uint32_t frustumCulledCells = 0;
         for (const FoliageBatch &batch : scene->Batches)
         {
             if (!batch.Mesh || !batch.Instances || batch.Mesh->Vertices.empty() || batch.Mesh->Indices.empty() ||
@@ -320,10 +409,47 @@ namespace NorvesLib::Core::Rendering
             }
             const FoliageMeshData &mesh = *batch.Mesh;
             const auto &instances = *batch.Instances;
+
+            // 区画ごとに、視錐台の外を外し、残す割合で切った株の数を描く（区画が無ければ全部を 1 回で描く）
             PreparedBatch entry;
+            entry.FirstRange = static_cast<uint32_t>(drawRanges.size());
+            if (!batch.Cells || batch.Cells->empty())
+            {
+                drawRanges.push_back(DrawRange{0u, static_cast<uint32_t>(instances.size())});
+            }
+            else
+            {
+                for (const FoliageCell &cell : *batch.Cells)
+                {
+                    if (cell.InstanceCount == 0 ||
+                        static_cast<uint64_t>(cell.FirstInstance) + cell.InstanceCount > instances.size())
+                    {
+                        continue;
+                    }
+                    ++totalCells;
+                    if (IsBoxOutsideFrustum(frustumPlanes, cell.BoundsMin, cell.BoundsMax))
+                    {
+                        ++frustumCulledCells;
+                        continue;
+                    }
+                    const float keep = FadeKeepFraction(batch, DistanceToBox(cameraPosition, cell.BoundsMin, cell.BoundsMax));
+                    const uint32_t kept = CountKeptInstances(instances, cell, keep);
+                    if (kept > 0)
+                    {
+                        drawRanges.push_back(DrawRange{cell.FirstInstance, kept});
+                    }
+                }
+            }
+            entry.RangeCount = static_cast<uint32_t>(drawRanges.size()) - entry.FirstRange;
+            if (entry.RangeCount == 0)
+            {
+                continue;
+            }
+
             entry.Instance = AcquireInstanceBuffer(batch.Instances);
             if (!AcquireMeshBuffers(batch.Mesh, entry.Vertex, entry.Index) || !entry.Instance)
             {
+                drawRanges.resize(entry.FirstRange);
                 continue;
             }
 
@@ -334,10 +460,13 @@ namespace NorvesLib::Core::Rendering
             CopyColor(batch.TipColorA, batch.MinPixelWidth, uniform.tipColorA);
             CopyColor(batch.TipColorB, batch.MaxWidenRatio, uniform.tipColorB);
             uniform.frameParams[1] = mesh.Height;
+            uniform.frameParams[2] = batch.FadeStartDistance;
+            uniform.frameParams[3] = batch.FadeEndDistance;
             const FrameUploadAllocation uniformAllocation = frameResources->AllocateConstants(uniform);
             const FrameDescriptorAllocation descriptorAllocation = frameResources->AllocateDescriptorSet(m_DescriptorSetLayout);
             if (!uniformAllocation.IsValid() || !descriptorAllocation.IsValid())
             {
+                drawRanges.resize(entry.FirstRange);
                 continue;
             }
             entry.DescriptorSet = descriptorAllocation.Set;
@@ -345,7 +474,6 @@ namespace NorvesLib::Core::Rendering
                                                     uniformAllocation.GetSize32());
             entry.DescriptorSet->Update();
             entry.IndexCount = static_cast<uint32_t>(mesh.Indices.size());
-            entry.InstanceCount = static_cast<uint32_t>(instances.size());
             prepared.push_back(entry);
         }
         ReleaseUnusedStaticBuffers();
@@ -361,6 +489,7 @@ namespace NorvesLib::Core::Rendering
         commandList->SetPipeline(m_Pipeline);
 
         uint32_t drawnBatches = 0;
+        uint32_t drawCalls = 0;
         uint64_t drawnInstances = 0;
         for (const PreparedBatch &entry : prepared)
         {
@@ -368,18 +497,25 @@ namespace NorvesLib::Core::Rendering
             commandList->SetVertexBuffer(entry.Vertex, 0, 0);
             commandList->SetVertexBuffer(entry.Instance, 0, 1);
             commandList->SetIndexBuffer(entry.Index, 0, RHI::IndexType::Uint32);
-            commandList->DrawIndexedInstanced(entry.IndexCount, entry.InstanceCount, 0, 0, 0);
+            for (uint32_t rangeIndex = entry.FirstRange; rangeIndex < entry.FirstRange + entry.RangeCount; ++rangeIndex)
+            {
+                const DrawRange &range = drawRanges[rangeIndex];
+                commandList->DrawIndexedInstanced(entry.IndexCount, range.InstanceCount, 0, 0, range.FirstInstance);
+                ++drawCalls;
+                drawnInstances += range.InstanceCount;
+            }
             ++drawnBatches;
-            drawnInstances += entry.InstanceCount;
         }
         commandList->EndRenderPass();
 
+        // 描いた数が変わったときだけ 1 行出す（カメラが動くと区画の数・切った株の数が変わる）
         if (drawnBatches != m_LoggedBatchCount || drawnInstances != m_LoggedInstanceCount)
         {
             m_LoggedBatchCount = drawnBatches;
             m_LoggedInstanceCount = drawnInstances;
-            NORVES_LOG_INFO("FoliagePass", "FOLIAGE_DRAW batches=%u instances=%llu", drawnBatches,
-                            static_cast<unsigned long long>(drawnInstances));
+            NORVES_LOG_INFO("FoliagePass", "FOLIAGE_DRAW batches=%u draws=%u instances=%llu cells=%u frustum_culled=%u",
+                            drawnBatches, drawCalls, static_cast<unsigned long long>(drawnInstances), totalCells,
+                            frustumCulledCells);
         }
     }
 
@@ -575,6 +711,7 @@ namespace NorvesLib::Core::Rendering
             {3, 0, RHI::Format::R32G32B32A32_FLOAT, static_cast<uint32_t>(offsetof(FoliageVertex, Flex))},
             {4, 1, RHI::Format::R32G32B32A32_FLOAT, static_cast<uint32_t>(offsetof(FoliageInstance, Position))},
             {5, 1, RHI::Format::R32G32B32A32_FLOAT, static_cast<uint32_t>(offsetof(FoliageInstance, WidthScale))},
+            {6, 1, RHI::Format::R32_FLOAT, static_cast<uint32_t>(offsetof(FoliageInstance, FadeThreshold))},
         };
         for (const AttributeLayout &layout : attributes)
         {
