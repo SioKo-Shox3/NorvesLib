@@ -11,6 +11,7 @@
 // （MegaGeometry::MegaTerrainBlend）。高さ場は同じ格子を TerrainHeightField::LoadGrid で 1 回だけ読み、シーンの間だけ持つ。
 // 岩・崖・建物の配置（WastelandLayout.h）は手続きの地形に合わせたものなので、前哨地を置き直す（SCN-WL-OUTPOST）まで置かない。
 // 崖の下の崖錐には、剥がれ落ちた岩の群れを散布の Object 1 つで置く（WastelandTalus.h）。
+// 近景の礫の地面と沢底には、カメラの周りだけ石と礫を置き、遠くは地形の材質の礫の層に任せる（WastelandGravel.h）。
 // 光は夕方寄りの低い西日で、カメラのトーンマップ・グレーディングを夕景に合わせる。
 // 視点は SceneCatalog.h の kWastelandViews（overview・ground・ridge・cliff・outpost）。視点の高さは、その (x,z) の地形の高さに足す。
 // 撮影の視点の切り替え（Scenes/SceneViewSwitch.h）では、地形を読み直さずにカメラ・画角・太陽だけを置き直す。
@@ -25,6 +26,7 @@
 #include "Core/Public/GameMode/TGameMode.h"
 #include "Core/Public/Rendering/FoliageTypes.h"
 #include "GameModes/Wasteland/WastelandFoliage.h"
+#include "GameModes/Wasteland/WastelandGravel.h"
 #include "Pause/PauseMenu.h"
 #include "Scenes/FreeCameraRig.h"
 #include "Scenes/SceneViewSwitch.h"
@@ -83,6 +85,10 @@ namespace Game::GameModes
         NorvesLib::Core::Rendering::FoliageScene m_Foliage;
         /// 草・低木を地形へ撒く区画の持ち主（Enter で高さ場と地表の分類の地図を渡し、Leave で手放す）
         Game::GameModes::WastelandFoliage::FoliageScatter m_FoliageScatter;
+        /// 近景の石と礫の束（カメラの周りの区画が変わるたびに m_GravelScatter が作り直し、草・低木の束と並べて渡す）
+        NorvesLib::Core::Container::VariableArray<NorvesLib::Core::Rendering::FoliageBatch> m_GravelBatches;
+        /// 石と礫を置く区画の持ち主（Enter で高さ場と地表の分類の地図を渡し、Leave で手放す）
+        Game::GameModes::WastelandGravel::GravelScatter m_GravelScatter;
     };
 
     class WastelandRoutine

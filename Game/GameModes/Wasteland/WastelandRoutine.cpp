@@ -227,6 +227,8 @@ namespace Game::GameModes
         constexpr bool kPlaceLayoutProps = false;
         // 名前付き視点の足元で草・低木を撒かない半径[m]（目の前を株がふさがない）
         constexpr float kViewFoliageClearRadius = 2.5f;
+        // 名前付き視点の足元で大きな石（14〜40 cm）を置かない半径[m]（小礫と石は足元にも置く。手本の足元の写真も礫が手前まで続く）
+        constexpr float kViewGravelClearRadius = 1.5f;
         // 建物の足元で草・低木を撒かない範囲の、メッシュの範囲の外への広げ[m]
         constexpr float kBuildingFoliageClearMargin = 1.5f;
         // 名前付き視点の足元で崖錐の岩を置かない半径[m]（目の前を岩がふさがない）
@@ -352,6 +354,7 @@ namespace Game::GameModes
         {
             VariableArray<WastelandFoliage::ExclusionCircle> circles;
             VariableArray<WastelandFoliage::ExclusionRect> rects;
+            VariableArray<WastelandFoliage::ExclusionCircle> viewGravelClearings;
             const Game::Scenes::SceneDescriptor *scene = Game::Scenes::FindScene(Game::Scenes::kWastelandSceneId);
             if (scene != nullptr)
             {
@@ -361,6 +364,7 @@ namespace Game::GameModes
                     if (view.Kind == Game::Scenes::SceneViewKind::FreePose)
                     {
                         circles.push_back({view.Position[0], view.Position[2], kViewFoliageClearRadius});
+                        viewGravelClearings.push_back({view.Position[0], view.Position[2], kViewGravelClearRadius});
                     }
                 }
             }
@@ -370,21 +374,32 @@ namespace Game::GameModes
                                pAssembly->FoliageBuildingCircles.end());
                 rects.insert(rects.end(), pAssembly->FoliageRoadRects.begin(), pAssembly->FoliageRoadRects.end());
             }
+            // 石と礫は、建物の足元・道から外し、視点の足元では大きな石だけを外す
+            VariableArray<WastelandFoliage::ExclusionCircle> gravelCircles;
+            if (pAssembly != nullptr)
+            {
+                gravelCircles = pAssembly->FoliageBuildingCircles;
+            }
+            data.m_GravelScatter.SetExclusions(std::move(gravelCircles), rects, std::move(viewGravelClearings));
             data.m_FoliageScatter.SetExclusions(std::move(circles), std::move(rects));
         }
 
-        /// カメラの (x,z) の周りの草・低木の区画をそろえ、区画が変わったか bForcePublish なら RenderWorld へ渡す
+        /// カメラの (x,z) の周りの草・低木と石・礫の区画をそろえ、区画が変わったか bForcePublish なら、草・低木の束の後ろに
+        /// 石・礫の束を並べて RenderWorld へ渡す
         void UpdateFoliage(GameModeContext &ctx, WastelandData &data, float cameraX, float cameraZ, bool bForcePublish)
         {
             if (!data.m_FoliageScatter.IsInitialized())
             {
                 return;
             }
-            const bool bChanged = data.m_FoliageScatter.Update(cameraX, cameraZ, data.m_Foliage);
-            if (bChanged || bForcePublish)
+            const bool bFoliageChanged = data.m_FoliageScatter.Update(cameraX, cameraZ, data.m_Foliage);
+            const bool bGravelChanged = data.m_GravelScatter.Update(cameraX, cameraZ, data.m_GravelBatches);
+            if (bFoliageChanged || bGravelChanged || bForcePublish)
             {
                 data.m_Foliage.Wind.TimeOffsetSeconds = WastelandFoliage::WindTimeOffsetForView(data.m_ViewName);
-                ctx.EngineRef.GetRenderWorld().SetFoliage(data.m_Foliage);
+                FoliageScene published = data.m_Foliage;
+                published.Batches.insert(published.Batches.end(), data.m_GravelBatches.begin(), data.m_GravelBatches.end());
+                ctx.EngineRef.GetRenderWorld().SetFoliage(published);
             }
         }
 
@@ -1117,6 +1132,8 @@ namespace Game::GameModes
         // 草・低木（高さ場の上に、地表の分類の地図で撒く）。高さ場が無ければ置かない。地図が読めなければ傾斜と密度の斑だけで撒く
         data.m_Foliage = NorvesLib::Core::Rendering::FoliageScene{};
         data.m_FoliageScatter.Reset();
+        data.m_GravelBatches.clear();
+        data.m_GravelScatter.Reset();
         if (data.m_pHeightField)
         {
             AnsiString maskError;
@@ -1129,6 +1146,8 @@ namespace Game::GameModes
                               TerrainSpec::kSurfaceMaskDescriptorPath, maskError.c_str());
             }
             data.m_pSurfaceMask = surfaceMask;
+            // 石と礫は地図の礫・崖錐・沢底の重みで置くので、地図が無ければ置かない
+            data.m_GravelScatter.Initialize(data.m_pHeightField, surfaceMask);
             data.m_FoliageScatter.Initialize(data.m_pHeightField, std::move(surfaceMask));
             ApplyFoliageExclusions(data, nullptr);
             data.m_Foliage.Wind = WastelandFoliage::MakeWind();
@@ -1373,6 +1392,8 @@ namespace Game::GameModes
         data.m_pSurfaceMask.reset();
         data.m_Foliage = NorvesLib::Core::Rendering::FoliageScene{};
         data.m_FoliageScatter.Reset();
+        data.m_GravelBatches.clear();
+        data.m_GravelScatter.Reset();
         data.m_Rig.Leave(ctx);
         // 地形の Entity・モデル・カメラの実体は GameModeScope::Cleanup が返す。空と霧は RenderWorld の設定なので戻す。
         ResetEnvironment(ctx);
