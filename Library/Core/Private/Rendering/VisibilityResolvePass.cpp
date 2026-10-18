@@ -19,6 +19,7 @@
 #include "Rendering/ShaderManager.h"
 #include "Rendering/SkinningComputePass.h"
 #include "Rendering/TerrainBlendShading.h"
+#include "Rendering/TerrainSamplerOverride.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Rendering/VirtualTextureFeedbackMaterial.h"
 #include "Rendering/VisibilityBuffer.h"
@@ -512,6 +513,7 @@ namespace NorvesLib::Core::Rendering
             samplerDesc.addressV = RHI::TextureAddressMode::Wrap;
             samplerDesc.addressW = RHI::TextureAddressMode::Wrap;
             samplerDesc.maxAnisotropy = 16;
+            ApplyTerrainSamplerOverride(samplerDesc, "VisibilityResolve");
             m_TerrainMaterialSampler = m_Device->CreateSampler(samplerDesc);
         }
         return m_DefaultWhite && m_DefaultFlatNormal && m_DefaultBlack && m_DefaultMidGray && m_MaterialSampler &&

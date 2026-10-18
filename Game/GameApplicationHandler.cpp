@@ -248,6 +248,21 @@ namespace Game
         constexpr const TCHAR *kWastelandExportTerrainOption = TEXT("--wasteland-export-terrain=");
         bool s_bWastelandFinestLod = false;
         String s_WastelandExportTerrainDir;
+        // --wasteland-aa=fxaa|taa|none・--wasteland-render-scale=<0.5〜1>: 遠景のぼけの切り分けの撮影で、荒野のアンチエイリアシングと
+        // 内部解像度を替える（開発ビルドだけ。Scripts/Terrain/ReferenceCheck.py --blur-static）。none は最初のフレームの前に
+        // メインの SceneView のポストの FXAA のパスを止める（シーンを出ても戻さない）
+        // --terrain-mip-bias=<-4〜4>・--terrain-anisotropy=<1〜16>: 地形の材質のサンプラーのミップの偏りと異方性の上限（開発ビルドだけ。
+        // 環境変数 NORVES_TERRAIN_MIP_BIAS・NORVES_TERRAIN_MAX_ANISOTROPY で描画側へ渡す。Rendering/TerrainSamplerOverride.h）
+        constexpr const TCHAR *kWastelandAntiAliasingOption = TEXT("--wasteland-aa=");
+        constexpr const TCHAR *kWastelandRenderScaleOption = TEXT("--wasteland-render-scale=");
+        constexpr const TCHAR *kTerrainMipBiasOption = TEXT("--terrain-mip-bias=");
+        constexpr const TCHAR *kTerrainAnisotropyOption = TEXT("--terrain-anisotropy=");
+        // --vram-geometry-share=<1〜65535>: VRAM の予算のジオメトリの取り分（VT は 3。既定 1。開発ビルドだけ）。2 倍の解像度の撮影は
+        // 描画先が大きく取り分の目標が縮み、ページの塊を足せずに要求が残るので広げる（何を描くかは変えない）。
+        // 環境変数 NORVES_VRAM_GEOMETRY_SHARE で描画側へ渡す（--wasteland-finest-lod と一緒なら後に書いた方が効く）
+        constexpr const TCHAR *kVramGeometryShareOption = TEXT("--vram-geometry-share=");
+        Game::GameModes::WastelandAntiAliasing s_WastelandAntiAliasing = Game::GameModes::WastelandAntiAliasing::Default;
+        float s_WastelandRenderScale = 1.0f;
         // --open-scene-info: mega-bananas を起動時から情報表示（H キーの表示）を出した状態にする（開発ビルドだけ。値を取らない）。
         // 撮影の起動は ImGui を使わないが、この指定があれば撮影でも使い、表示を撮れる。
         constexpr const TCHAR *kOpenSceneInfoOption = TEXT("--open-scene-info");
@@ -665,6 +680,8 @@ namespace Game
         s_WastelandCommonLight = Game::GameModes::WastelandCommonLight::Options{};
         s_bWastelandFinestLod = false;
         s_WastelandExportTerrainDir.clear();
+        s_WastelandAntiAliasing = Game::GameModes::WastelandAntiAliasing::Default;
+        s_WastelandRenderScale = 1.0f;
         m_StressStreamCellMeters = 0.0f;
         m_bStressStreamCellSet = false;
         m_StressStreamPeriod = Game::GameModes::kDefaultStressStreamPeriod;
@@ -1402,6 +1419,96 @@ namespace Game
                 s_WastelandExportTerrainDir = sceneValue;
 #else
                 LOG_WARNING("--wasteland-export-terrain は開発ビルドだけで使えます。無視します");
+#endif
+                continue;
+            }
+            if (TryStripPrefix(args[i], kWastelandAntiAliasingOption, sceneValue))
+            {
+#if NORVES_BUILD_DEVELOPMENT
+                if (sceneValue == TEXT("fxaa"))
+                {
+                    s_WastelandAntiAliasing = Game::GameModes::WastelandAntiAliasing::Fxaa;
+                }
+                else if (sceneValue == TEXT("taa"))
+                {
+                    s_WastelandAntiAliasing = Game::GameModes::WastelandAntiAliasing::TemporalAA;
+                }
+                else if (sceneValue == TEXT("none"))
+                {
+                    s_WastelandAntiAliasing = Game::GameModes::WastelandAntiAliasing::None;
+                }
+                else
+                {
+                    LOG_ERROR("--wasteland-aa は fxaa か taa か none で指定してください");
+                    return false;
+                }
+#else
+                LOG_WARNING("--wasteland-aa は開発ビルドだけで使えます。無視します");
+#endif
+                continue;
+            }
+            if (TryStripPrefix(args[i], kWastelandRenderScaleOption, sceneValue))
+            {
+#if NORVES_BUILD_DEVELOPMENT
+                if (!TryParseBoundedFloat(sceneValue, 0.5f, 1.0f, s_WastelandRenderScale))
+                {
+                    LOG_ERROR("--wasteland-render-scale は 0.5〜1 で指定してください");
+                    return false;
+                }
+#else
+                LOG_WARNING("--wasteland-render-scale は開発ビルドだけで使えます。無視します");
+#endif
+                continue;
+            }
+            if (TryStripPrefix(args[i], kTerrainMipBiasOption, sceneValue))
+            {
+#if NORVES_BUILD_DEVELOPMENT
+                // 地形のサンプラーが最初に作られる前に環境変数へ渡す
+                float bias = 0.0f;
+                if (!TryParseBoundedFloat(sceneValue, -4.0f, 4.0f, bias))
+                {
+                    LOG_ERROR("--terrain-mip-bias は -4〜4 で指定してください");
+                    return false;
+                }
+                char biasText[32] = {};
+                std::snprintf(biasText, sizeof(biasText), "%.9g", static_cast<double>(bias));
+                _putenv_s("NORVES_TERRAIN_MIP_BIAS", biasText);
+#else
+                LOG_WARNING("--terrain-mip-bias は開発ビルドだけで使えます。無視します");
+#endif
+                continue;
+            }
+            if (TryStripPrefix(args[i], kTerrainAnisotropyOption, sceneValue))
+            {
+#if NORVES_BUILD_DEVELOPMENT
+                uint32_t anisotropy = 0;
+                if (!TryParseUInt32(sceneValue, anisotropy) || anisotropy < 1u || anisotropy > 16u)
+                {
+                    LOG_ERROR("--terrain-anisotropy は 1〜16 の整数で指定してください");
+                    return false;
+                }
+                char anisotropyText[16] = {};
+                std::snprintf(anisotropyText, sizeof(anisotropyText), "%u", anisotropy);
+                _putenv_s("NORVES_TERRAIN_MAX_ANISOTROPY", anisotropyText);
+#else
+                LOG_WARNING("--terrain-anisotropy は開発ビルドだけで使えます。無視します");
+#endif
+                continue;
+            }
+            if (TryStripPrefix(args[i], kVramGeometryShareOption, sceneValue))
+            {
+#if NORVES_BUILD_DEVELOPMENT
+                uint32_t share = 0;
+                if (!TryParseUInt32(sceneValue, share) || share < 1u || share > 65535u)
+                {
+                    LOG_ERROR("--vram-geometry-share は 1〜65535 の整数で指定してください");
+                    return false;
+                }
+                char shareText[16] = {};
+                std::snprintf(shareText, sizeof(shareText), "%u", share);
+                _putenv_s("NORVES_VRAM_GEOMETRY_SHARE", shareText);
+#else
+                LOG_WARNING("--vram-geometry-share は開発ビルドだけで使えます。無視します");
 #endif
                 continue;
             }
@@ -2475,6 +2582,22 @@ namespace Game
                 LOG_INFO_F("DISPLAY_CHECK mode=%s bloom=off fxaa=off",
                            s_DisplayCheckMode == DisplayCheckMode::Ramp ? "ramp" : "scene");
             }
+
+            // --wasteland-aa=none: 荒野の撮影の FXAA のパスを外す（最初のフレームの前。カメラは FXAA の指定のままなのでジッタも無い）
+            if (s_WastelandAntiAliasing == Game::GameModes::WastelandAntiAliasing::None)
+            {
+                auto mainSceneView = NorvesLib::Core::Engine::GEngine->GetRenderWorld().GetRenderingCoordinator().GetMainSceneView();
+                NorvesLib::Core::Rendering::PostProcessStack *postProcessStack =
+                    mainSceneView ? mainSceneView->GetPostProcessStack() : nullptr;
+                if (!postProcessStack || !postProcessStack->GetPass("FXAAPass"))
+                {
+                    LOG_ERROR("--wasteland-aa=none: メインの SceneView に FXAA のパスが無いため、外せません");
+                    NorvesLib::Core::Engine::GEngine->RequestExit(1);
+                    return;
+                }
+                postProcessStack->SetPassEnabled("FXAAPass", false);
+                LOG_INFO("WASTELAND_AA_PASS fxaa=off");
+            }
         }
 
         if (m_bHasTextureAssetRuntimeConfig && !ReloadConfiguredAssetManifest())
@@ -3490,6 +3613,8 @@ namespace Game
                 mode->GetData().m_HideMask = s_WastelandHideMask;
                 mode->GetData().m_bFinestLod = s_bWastelandFinestLod;
                 mode->GetData().m_TerrainExportDir = s_WastelandExportTerrainDir;
+                mode->GetData().m_AntiAliasing = s_WastelandAntiAliasing;
+                mode->GetData().m_RenderScale = s_WastelandRenderScale;
                 if (!s_WastelandCommonLight.bEnabled && s_WastelandCommonLight.bGrayPlate)
                 {
                     LOG_WARNING("--wasteland-gray-plate は --wasteland-common-light と一緒に使います（板は置き、照明は既定のまま）");

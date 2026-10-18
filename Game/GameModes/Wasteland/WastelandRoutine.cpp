@@ -1417,7 +1417,20 @@ namespace Game::GameModes
         camera->SetISO(100.0f);
         camera->SetShutterSpeed(ComputeShutterSpeedForEV100(camera->GetAperture(), camera->GetISO(), kExposureEV100));
         camera->SetExposureCompensation(kCameraOutputCompensationEV);
-        camera->SetAntiAliasingMode(CameraAntiAliasingMode::FXAA);
+        camera->SetAntiAliasingMode(data.m_AntiAliasing == WastelandAntiAliasing::TemporalAA ? CameraAntiAliasingMode::TemporalAA
+                                                                                            : CameraAntiAliasingMode::FXAA);
+        // 遠景のぼけの切り分けの撮影の内部解像度（--wasteland-render-scale）
+        if (data.m_RenderScale < 1.0f)
+        {
+            ctx.EngineRef.GetRenderWorld().SetRenderScale(data.m_RenderScale);
+        }
+        if (data.m_AntiAliasing != WastelandAntiAliasing::Default || data.m_RenderScale < 1.0f)
+        {
+            static constexpr const char *kAntiAliasingNames[] = {"default", "fxaa", "taa", "none"};
+            LOG_INFO_F("WASTELAND_BLUR_CASE aa=%s render_scale=%.3f",
+                       kAntiAliasingNames[static_cast<uint32_t>(data.m_AntiAliasing)],
+                       static_cast<double>(data.m_RenderScale));
+        }
         // 日中のトーンマップとグレーディング（このシーンのカメラだけ。ほかのシーンのカメラは各自のひな形を使う）
         CameraProxy &proxyTemplate = data.m_Rig.ProxyTemplate();
         proxyTemplate.ToneMapCurve = CameraToneMapCurve::NeutralLinear;
@@ -1520,6 +1533,10 @@ namespace Game::GameModes
         // 地形の Entity・モデル・カメラの実体は GameModeScope::Cleanup が返す。空と霧は RenderWorld の設定なので戻す。
         WastelandCommonLight::Leave(ctx, data.m_CommonLight);
         ResetEnvironment(ctx);
+        if (data.m_RenderScale < 1.0f)
+        {
+            ctx.EngineRef.GetRenderWorld().SetRenderScale(1.0f);
+        }
         LOG_INFO("wasteland を終了します");
     }
 

@@ -133,11 +133,27 @@
 #       （地表の太陽の透過率、同じ媒質の高さフォグと空気遠近の透過率）が正解と ATMOS_REF_SAME_MODEL_TOLERANCE で合う。
 #       散乱光と空の輝度の差は記録するだけ（値は変えない）。
 #
+#   python Scripts/Terrain/ReferenceCheck.py --blur-static --capture <出力先> [--verify]
+#       遠景のぼけを、条件を 1 つずつ変えた静止の撮影（ref_far_01・ref_cliff_02）で切り分け、<出力先>/blur_static_check.json と、
+#       視点ごとの切り出しの並び <出力先>/blur_<視点>.png を書く。組は <出力先> の下のフォルダ（BLUR_REFERENCE・BLUR_CASES）。
+#       正解: 同じ視点を 2 倍の解像度・AA なし（-Aov 付き）で撮り、線形の光で 2×2 を平均して縮めた画（超標本化）。
+#       範囲: 正解の深度が BLUR_FAR_MIN_M より奥の地表（遠景）と、そのうち法線の |y| が BLUR_CLIFF_NORMAL_Y 未満の面（崖）。
+#       測り方: 表示の値（PNG の符号化のまま）の輝度を、隣り合うガウスの差の帯域（BLUR_SIGMAS）に分け、帯域ごとに
+#         細部の残り = <条件, 正解> / <正解, 正解>（条件の帯域を正解の帯域へ射影した利得。1 − 残り = 細部の欠け）
+#         エイリアス = |条件 − 残り × 正解|² / |正解|²（正解に無い成分。鮮明さには数えない）
+#       を範囲の画素で求める。細かい帯域（BLUR_FINE_BANDS）は正解の量で重みを付けてまとめる。霞は正解との比ではなく、
+#       霞あり ÷ 霞なしの帯域の量（コントラストの低下）で記録する。条件ごとの効きは、既定（base）との差の 2 視点の平均。
+#       合否: 全部の組があり（--verify は入力のハッシュが今のファイルと合い、組どうしで揃う）、起動引数とログの印が組の約束どおり、
+#       仮想テクスチャを使っていない（使っていれば常駐の確かめが要るので失敗）、撮った時点でジオメトリのページの要求が 0、
+#       範囲が BLUR_MIN_REGION_PX 画素以上、較正（正解をぼかした画が細部の欠けに、雑音を足した画がエイリアスに数えられる）が通る。
+#       欠けとエイリアスの大きさは記録するだけ（既定は変えない）。
+#
 # 終了コード: すべて合格なら 0、どれかが不合格なら 1。
 import argparse
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -323,6 +339,60 @@ ATMOS_REF_PHOTO_TIME = (37.300958, -109.835461, 20.0 + 52.0 / 60.0, 286)
 # ref_ground_02 の yaw・pitch（SceneCatalog.h）と縦の画角（WastelandRoutine.cpp）
 ATMOS_REF_VIEW_POSE = (-32.4, 1.4, 10.5)
 ATMOS_REF_PHOTO_BANDS = 4
+# --blur-static: 遠景のぼけの静止の切り分け（SCN-WLR-FAR-BLUR-STATIC）
+BLUR_VIEWS = ("ref_far_01", "ref_cliff_02")
+BLUR_SIZE = (1920, 1080)
+# 正解: 同じ視点を 2 倍の解像度・AA なしで撮った組（線形の光で 2×2 を平均して縮める）
+BLUR_REFERENCE = "ref2x"
+BLUR_REFERENCE_SCALE = 2
+# 4K は描画先が大きく VRAM のジオメトリの取り分の目標が縮み、ページの塊を足せずに要求が残る。取り分だけ広げる（描くものは変えない）
+BLUR_REFERENCE_ARGS = ("--wasteland-aa=none", "--vram-geometry-share=9")
+BLUR_REFERENCE_LOGS = ("WASTELAND_AA_PASS fxaa=off", "WASTELAND_BLUR_CASE aa=none ", "VRAM_POOL_SHARE geometry=9 ")
+# 条件ごとの組（撮影の出力先の下のフォルダ）。args は起動引数に要るもの、logs は Game のログに要る行の一部
+BLUR_CASES = (
+    {"name": "base", "factor": "既定（FXAA・霞あり・内部解像度 1・LOD 既定・ミップの偏り 0・異方性 16）", "args": (), "logs": ()},
+    {"name": "aa-taa", "factor": "AA を TAA に", "args": ("--wasteland-aa=taa",),
+     "logs": ("WASTELAND_BLUR_CASE aa=taa ",)},
+    {"name": "aa-none", "factor": "AA なし（FXAA のパスを外す）", "args": ("--wasteland-aa=none",),
+     "logs": ("WASTELAND_BLUR_CASE aa=none ", "WASTELAND_AA_PASS fxaa=off")},
+    {"name": "haze-off", "factor": "霞（空気遠近と高さフォグ）を切る", "args": ("--wasteland-hide=aerial+fog",),
+     "logs": ("WASTELAND_HIDE mask=96 ",)},
+    {"name": "scale-075", "factor": "内部解像度 0.75", "args": ("--wasteland-render-scale=0.75",),
+     "logs": ("WASTELAND_BLUR_CASE aa=default render_scale=0.750",)},
+    {"name": "finest-lod", "factor": "地形の LOD を最細に固定", "args": ("--wasteland-finest-lod",),
+     "logs": ("WASTELAND_FINEST_LOD ", "VRAM_POOL_SHARE geometry=255 ")},
+    {"name": "mip-bias-m1", "factor": "地形のミップの偏り −1", "args": ("--terrain-mip-bias=-1",),
+     "logs": ("TERRAIN_SAMPLER pass=MegaGeometry mip_bias=-1.000 max_anisotropy=16",
+              "TERRAIN_SAMPLER pass=VisibilityResolve mip_bias=-1.000 max_anisotropy=16")},
+    {"name": "aniso-1", "factor": "地形の異方性フィルタを切る（等方）", "args": ("--terrain-anisotropy=1",),
+     "logs": ("TERRAIN_SAMPLER pass=MegaGeometry mip_bias=0.000 max_anisotropy=1",
+              "TERRAIN_SAMPLER pass=VisibilityResolve mip_bias=0.000 max_anisotropy=1")},
+)
+# 条件を替える起動引数の頭（組の約束にないものが混ざっていないかを見る）
+BLUR_CONTROLLED_PREFIXES = ("--wasteland-aa=", "--wasteland-hide=", "--wasteland-render-scale=", "--wasteland-finest-lod",
+                            "--terrain-mip-bias=", "--terrain-anisotropy=", "--mega-lod-error-px=",
+                            "--vram-geometry-share=")
+# 既定の組（base）に出てはいけないログの行（差し替えが効いていない）
+BLUR_BASE_FORBIDDEN_LOGS = ("WASTELAND_BLUR_CASE ", "WASTELAND_AA_PASS ", "TERRAIN_SAMPLER ", "WASTELAND_FINEST_LOD ",
+                            "WASTELAND_HIDE ", "VRAM_POOL_SHARE ")
+# 範囲: 正解の深度が BLUR_FAR_MIN_M より奥の地表（2×2 のすべてが奥）。崖はそのうち法線の |y| が BLUR_CLIFF_NORMAL_Y 未満
+BLUR_FAR_MIN_M = 1000.0
+BLUR_CLIFF_NORMAL_Y = 0.8
+BLUR_MIN_REGION_PX = 20000
+# 帯域: 隣り合うガウス（σ 画素）の差。帯域 k は G(σk) − G(σk+1)（σ0 = 0 は画像そのもの）。範囲の外（空・近景）から
+# 2σk+1 画素以内の画素は数えない（空との輪郭の強い縁が帯域に漏れるため）
+BLUR_SIGMAS = (0.0, 1.0, 2.0, 4.0, 8.0)
+BLUR_FINE_BANDS = (0, 1)
+# 測り方の較正: 正解を σ BLUR_CALIB_BLUR_SIGMA でぼかした画は細部の欠けに、正解に白色雑音（帯域 0 の正解の RMS と同じ強さ）を
+# 足した画はエイリアスに数えられる（エイリアスを鮮明さに数えない）ことを確かめる
+BLUR_CALIB_BLUR_SIGMA = 0.8
+BLUR_CALIB_BLUR_MIN_LOSS = 0.3
+BLUR_CALIB_BLUR_MAX_ALIAS = 0.05
+BLUR_CALIB_NOISE_GAIN = 0.05
+BLUR_CALIB_NOISE_MIN_ALIAS = 0.3
+BLUR_CALIB_SEED = 20261019
+# 荒野は仮想テクスチャを使わない（VRAM_POOLS の vt_used_mb がどの行も 0）。使っていれば常駐の確かめが要るので失敗にする
+BLUR_VT_LOG_KEY = "VRAM_POOLS "
 
 
 def git_output(args):
@@ -2589,6 +2659,333 @@ def run_atmos_ref(capture_dir, views, verify):
     return 0 if not failures else 1
 
 
+def blur_decode_srgb(encoded):
+    return np.where(encoded <= 0.04045, encoded / 12.92, np.power((encoded + 0.055) / 1.055, 2.4))
+
+
+def blur_encode_srgb(linear):
+    linear = np.clip(linear, 0.0, 1.0)
+    return np.where(linear <= 0.0031308, linear * 12.92, 1.055 * np.power(linear, 1.0 / 2.4) - 0.055)
+
+
+def blur_load_display(png_path, scale):
+    """PNG の表示の値（0〜1、(高さ, 幅, 3)）。scale が 2 以上なら線形の光で scale×scale を平均して符号化し直す（超標本化の縮小）"""
+    encoded = np.asarray(Image.open(png_path).convert("RGB"), dtype=np.float64) / 255.0
+    if scale > 1:
+        h, w = encoded.shape[0] // scale, encoded.shape[1] // scale
+        linear = blur_decode_srgb(encoded[:h * scale, :w * scale]).reshape(h, scale, w, scale, 3).mean(axis=(1, 3))
+        encoded = blur_encode_srgb(linear)
+    return encoded
+
+
+def blur_gaussian(image, sigma):
+    """正確なガウス（半径 3σ、端は鏡映）。σ = 0 はそのまま返す"""
+    if sigma <= 0.0:
+        return image
+    radius = int(np.ceil(3.0 * sigma))
+    taps = np.arange(-radius, radius + 1, dtype=np.float64)
+    kernel = np.exp(-0.5 * (taps / sigma) ** 2)
+    kernel /= kernel.sum()
+    out = image
+    for axis in (0, 1):
+        pad = [(0, 0)] * out.ndim
+        pad[axis] = (radius, radius)
+        padded = np.pad(out, pad, mode="reflect")
+        n = out.shape[axis]
+        acc = np.zeros_like(out)
+        for i, weight in enumerate(kernel):
+            acc += weight * (padded[i:i + n] if axis == 0 else padded[:, i:i + n])
+        out = acc
+    return out
+
+
+def blur_bands(luma):
+    """隣り合うガウスの差の帯域（細かい順）"""
+    blurred = [blur_gaussian(luma, sigma) for sigma in BLUR_SIGMAS]
+    return [blurred[k] - blurred[k + 1] for k in range(len(BLUR_SIGMAS) - 1)]
+
+
+def blur_regions(reference_dir, view):
+    """正解の深度と法線から、帯域ごとに数える画素の印（遠景・崖）と記録"""
+    depth = read_pfm_any(os.path.join(reference_dir, f"{view}.aov.depth.pfm"))[..., 0].astype(np.float64)
+    normal = read_pfm_any(os.path.join(reference_dir, f"{view}.aov.normal.pfm")).astype(np.float64)
+    s = BLUR_REFERENCE_SCALE
+    h, w = depth.shape[0] // s, depth.shape[1] // s
+    blocks = depth[:h * s, :w * s].reshape(h, s, w, s)
+    finite = np.isfinite(blocks).all(axis=(1, 3))
+    nearest = np.where(np.isfinite(blocks), blocks, np.inf).min(axis=(1, 3))
+    far = finite & (nearest >= BLUR_FAR_MIN_M)
+    # 2×2 のすべてが急な面なら崖
+    normal_y = np.abs(normal[:h * s, :w * s, 1]).reshape(h, s, w, s).max(axis=(1, 3))
+    steep = normal_y < BLUR_CLIFF_NORMAL_Y
+    outside = (~far).astype(np.float64)
+    far_masks, cliff_masks = [], []
+    for k in range(len(BLUR_SIGMAS) - 1):
+        margin = int(np.ceil(2.0 * BLUR_SIGMAS[k + 1]))
+        keep = far & ~(box_blur(outside, margin) > 1e-9)
+        far_masks.append(keep)
+        cliff_masks.append(keep & steep)
+    record = {"far_px": int(far.sum()), "cliff_px": int((far & steep).sum()), "sky_ratio": float(1.0 - finite.mean()),
+              "far_px_per_band": [int(m.sum()) for m in far_masks],
+              "cliff_px_per_band": [int(m.sum()) for m in cliff_masks]}
+    return far_masks, cliff_masks, record
+
+
+def blur_compare(reference_bands, case_bands, masks):
+    """帯域ごとに、条件の帯域を正解の帯域へ射影した利得（細部の残り）と、正解に無い成分の量（正解の量に対する比。エイリアス）"""
+    rows = []
+    for k, (reference, case, mask) in enumerate(zip(reference_bands, case_bands, masks)):
+        r = reference[mask]
+        c = case[mask]
+        reference_energy = float(np.mean(r * r)) if r.size else 0.0
+        if reference_energy <= 0.0:
+            return None
+        gain = float(np.mean(c * r)) / reference_energy
+        residual = float(np.mean((c - gain * r) ** 2))
+        rows.append({"band": k, "sigma": [BLUR_SIGMAS[k], BLUR_SIGMAS[k + 1]], "pixels": int(r.size),
+                     "reference_rms": float(np.sqrt(reference_energy)), "case_rms": float(np.sqrt(np.mean(c * c))),
+                     "detail_kept": gain, "detail_loss": 1.0 - gain, "alias": residual / reference_energy})
+    fine = [rows[k] for k in BLUR_FINE_BANDS]
+    weights = [row["reference_rms"] ** 2 for row in fine]
+    kept = sum(row["detail_kept"] * weight for row, weight in zip(fine, weights)) / sum(weights)
+    alias = sum(row["alias"] * weight for row, weight in zip(fine, weights)) / sum(weights)
+    return {"bands": rows, "fine_detail_loss": 1.0 - kept, "fine_alias": alias}
+
+
+def blur_forbidden_logs(expected_logs):
+    return tuple(f for f in BLUR_BASE_FORBIDDEN_LOGS if not any(e.startswith(f) for e in expected_logs))
+
+
+def blur_case_check(case_dir, expected_args, expected_logs, size):
+    """組の起動引数・ログの印・仮想テクスチャの使用・PNG の大きさを確かめる。(失敗の一覧, 記録)"""
+    failures = []
+    args = plate_capture_args(case_dir)
+    if args is None:
+        return ["metrics.json が無い"], {}
+    controlled = sorted(a for a in args if a.startswith(BLUR_CONTROLLED_PREFIXES))
+    if controlled != sorted(expected_args):
+        failures.append(f"条件を替える起動引数が約束と違う: {controlled}（約束 {list(expected_args)}）")
+    forbidden = blur_forbidden_logs(expected_logs)
+    seen = set()
+    vt_lines = 0
+    vt_used_max = 0.0
+    # 視点ごとの、撮った（CAPTURE_VIEWS ... saved）時点で最後に出たジオメトリのページの要求の数
+    wanted_at_capture = {}
+    last_wanted = None
+    for log_name in sorted({view_game_log(case_dir, view) or "" for view in BLUR_VIEWS}):
+        path = os.path.join(case_dir, log_name) if log_name else ""
+        if not log_name or not os.path.isfile(path):
+            failures.append(f"Game のログが無い: {log_name or '（metrics.json に game_log が無い）'}")
+            continue
+        with open(path, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                for needle in expected_logs + forbidden:
+                    if needle in line:
+                        seen.add(needle)
+                if BLUR_VT_LOG_KEY in line:
+                    found = re.search(r"vt_used_mb=(\d+(?:\.\d+)?)", line)
+                    if found:
+                        vt_lines += 1
+                        vt_used_max = max(vt_used_max, float(found.group(1)))
+                found = re.search(r"GEOMETRY_PAGES resident=\d+ .*?wanted=(\d+)", line)
+                if found:
+                    last_wanted = int(found.group(1))
+                found = re.search(r"CAPTURE_VIEWS view=(\S+) saved ", line)
+                if found:
+                    wanted_at_capture[found.group(1)] = last_wanted
+    missing = [n for n in expected_logs if n not in seen]
+    if missing:
+        failures.append(f"Game のログに条件の印が無い: {missing}")
+    unexpected = [n for n in forbidden if n in seen]
+    if unexpected:
+        failures.append(f"Game のログに約束にない差し替えの印がある: {unexpected}")
+    if vt_lines == 0:
+        failures.append("VRAM_POOLS の行が無い（仮想テクスチャの使用を確かめられない）")
+    elif vt_used_max > 0.0:
+        failures.append(f"仮想テクスチャが使われている（vt_used_mb の最大 {vt_used_max:g}）。撮る前に要求が満ちたことの確かめが要る")
+    for view in BLUR_VIEWS:
+        # 落ち着き待ちは、ページの塊を足せずに置けない要求を待たない（2 倍の解像度で起きた）。撮った時点で要求が残っていれば拒む
+        if view not in wanted_at_capture:
+            failures.append(f"{view}: Game のログに撮影の保存の行が無い")
+        elif wanted_at_capture[view] is None or wanted_at_capture[view] > 0:
+            failures.append(f"{view}: 撮った時点でジオメトリのページの要求が残っている（wanted={wanted_at_capture[view]}）")
+        png = os.path.join(case_dir, f"{view}.png")
+        if not os.path.isfile(png):
+            failures.append(f"{view}.png が無い")
+        elif Image.open(png).size != size:
+            failures.append(f"{view}.png の大きさ {Image.open(png).size} が {size} でない")
+    return failures, {"game_args": args, "vt_pool_lines": vt_lines, "vt_used_mb_max": vt_used_max,
+                      "geometry_wanted_at_capture": wanted_at_capture}
+
+
+def blur_write_crops(path, tiles, center):
+    """範囲の中心の周りを切り出し、2 倍に広げて 3 列に並べる（名前を左上に書く）"""
+    from PIL import ImageDraw
+    crop_w, crop_h = 384, 216
+    cy, cx = center
+    top = int(np.clip(cy - crop_h // 2, 0, BLUR_SIZE[1] - crop_h))
+    left = int(np.clip(cx - crop_w // 2, 0, BLUR_SIZE[0] - crop_w))
+    columns = 3
+    rows = (len(tiles) + columns - 1) // columns
+    sheet = Image.new("RGB", (crop_w * 2 * columns, crop_h * 2 * rows), (0, 0, 0))
+    for index, (name, display) in enumerate(tiles):
+        crop = (np.clip(display[top:top + crop_h, left:left + crop_w], 0.0, 1.0) * 255.0 + 0.5).astype(np.uint8)
+        tile = Image.fromarray(crop).resize((crop_w * 2, crop_h * 2), Image.NEAREST)
+        ImageDraw.Draw(tile).text((6, 6), name, fill=(255, 255, 0))
+        sheet.paste(tile, ((index % columns) * crop_w * 2, (index // columns) * crop_h * 2))
+    sheet.save(path)
+    return {"top": top, "left": left, "width": crop_w, "height": crop_h}
+
+
+def run_blur_static(capture_dir, verify):
+    started = time.time()
+    failures = []
+    reference_dir = os.path.join(capture_dir, BLUR_REFERENCE)
+    groups = [(BLUR_REFERENCE, BLUR_REFERENCE_ARGS, BLUR_REFERENCE_LOGS,
+               (BLUR_SIZE[0] * BLUR_REFERENCE_SCALE, BLUR_SIZE[1] * BLUR_REFERENCE_SCALE))]
+    groups += [(case["name"], case["args"], case["logs"], BLUR_SIZE) for case in BLUR_CASES]
+    group_records = {}
+    input_hashes = set()
+    inputs_all_current = True
+    for name, expected_args, expected_logs, size in groups:
+        group_dir = os.path.join(capture_dir, name)
+        if not os.path.isdir(group_dir):
+            failures.append(f"{name}: 撮影の組が無い（{group_dir}）")
+            inputs_all_current = False
+            continue
+        inputs_ok, input_failures, record = check_inputs(group_dir)
+        inputs_all_current = inputs_all_current and inputs_ok
+        if verify and not inputs_ok:
+            failures.extend(f"{name}: {failure}" for failure in input_failures)
+        if record is not None:
+            input_hashes.add(record.get("files_sha256"))
+        group_failures, info = blur_case_check(group_dir, tuple(expected_args), tuple(expected_logs), size)
+        failures.extend(f"{name}: {failure}" for failure in group_failures)
+        group_records[name] = {"inputs_current": inputs_ok, **info}
+    if len(input_hashes) > 1:
+        failures.append(f"組ごとの入力のハッシュが揃っていない（{len(input_hashes)} 通り。同じコードで撮った組だけを比べる）")
+    views = []
+    for view in BLUR_VIEWS:
+        entry = {"view": view}
+        views.append(entry)
+        needed = [os.path.join(reference_dir, f"{view}.{suffix}") for suffix in ("png", "aov.depth.pfm", "aov.normal.pfm")]
+        if not all(os.path.isfile(p) for p in needed) or any(f.startswith(BLUR_REFERENCE + ":") for f in failures):
+            failures.append(f"{view}: 正解の撮影（PNG・深度・法線）が揃っていないので比べない")
+            continue
+        far_masks, cliff_masks, region = blur_regions(reference_dir, view)
+        entry["region"] = region
+        if min(region["far_px_per_band"]) < BLUR_MIN_REGION_PX:
+            failures.append(f"{view}: 遠景の範囲の画素が {min(region['far_px_per_band'])} で {BLUR_MIN_REGION_PX} に足りない")
+            continue
+        reference_display = blur_load_display(os.path.join(reference_dir, f"{view}.png"), BLUR_REFERENCE_SCALE)
+        reference_luma = reference_display @ LUMA
+        reference_bands = blur_bands(reference_luma)
+        # 測り方の較正（ぼかした正解と、雑音を足した正解）
+        blurred_bands = blur_bands(blur_gaussian(reference_luma, BLUR_CALIB_BLUR_SIGMA))
+        noise_rms = float(np.sqrt(np.mean(reference_bands[0][far_masks[0]] ** 2)))
+        rng = np.random.default_rng(BLUR_CALIB_SEED)
+        noisy_bands = blur_bands(reference_luma + rng.normal(0.0, noise_rms, reference_luma.shape))
+        calibration = {"blur": blur_compare(reference_bands, blurred_bands, far_masks),
+                       "noise": blur_compare(reference_bands, noisy_bands, far_masks), "noise_rms": noise_rms}
+        entry["calibration"] = calibration
+        blur_row = calibration["blur"]
+        noise_row = calibration["noise"]
+        if blur_row is None or noise_row is None:
+            failures.append(f"{view}: 較正を求められない（正解の帯域が空）")
+        else:
+            if blur_row["bands"][0]["detail_loss"] < BLUR_CALIB_BLUR_MIN_LOSS or \
+                    blur_row["fine_alias"] > BLUR_CALIB_BLUR_MAX_ALIAS:
+                failures.append(f"{view}: 較正（ぼかし）が細部の欠けに数えられない（帯域 0 の欠け "
+                                f"{blur_row['bands'][0]['detail_loss']:.3f}・エイリアス {blur_row['fine_alias']:.3f}）")
+            if abs(noise_row["bands"][0]["detail_kept"] - 1.0) > BLUR_CALIB_NOISE_GAIN or \
+                    noise_row["bands"][0]["alias"] < BLUR_CALIB_NOISE_MIN_ALIAS:
+                failures.append(f"{view}: 較正（雑音）がエイリアスに数えられない（帯域 0 の残り "
+                                f"{noise_row['bands'][0]['detail_kept']:.3f}・エイリアス {noise_row['bands'][0]['alias']:.3f}）")
+        cases = {}
+        displays = {"ref2x": reference_display}
+        case_bands_by_name = {}
+        for case in BLUR_CASES:
+            png = os.path.join(capture_dir, case["name"], f"{view}.png")
+            if not os.path.isfile(png) or Image.open(png).size != BLUR_SIZE:
+                continue
+            display = blur_load_display(png, 1)
+            displays[case["name"]] = display
+            bands = blur_bands(display @ LUMA)
+            case_bands_by_name[case["name"]] = bands
+            far_result = blur_compare(reference_bands, bands, far_masks)
+            cliff_result = blur_compare(reference_bands, bands, cliff_masks) \
+                if min(region["cliff_px_per_band"]) > 0 else None
+            if far_result is None:
+                failures.append(f"{view}: {case['name']} を比べられない")
+                continue
+            values = [far_result["fine_detail_loss"], far_result["fine_alias"]]
+            if cliff_result is not None:
+                values += [cliff_result["fine_detail_loss"], cliff_result["fine_alias"]]
+            if not all(np.isfinite(values)):
+                failures.append(f"{view}: {case['name']} の値に NaN・Inf がある")
+            cases[case["name"]] = {"factor": case["factor"], "far": far_result, "cliff": cliff_result}
+        entry["cases"] = cases
+        # 霞が細部の見えを下げる量: 霞ありの帯域の量 ÷ 霞なしの帯域の量（同じ範囲。正解との比ではない）
+        if "base" in case_bands_by_name and "haze-off" in case_bands_by_name:
+            entry["haze_contrast"] = [
+                float(np.sqrt(np.mean(case_bands_by_name["base"][k][far_masks[k]] ** 2) /
+                              np.mean(case_bands_by_name["haze-off"][k][far_masks[k]] ** 2)))
+                for k in range(len(BLUR_SIGMAS) - 1)]
+        cy, cx = np.argwhere(cliff_masks[0] if region["cliff_px_per_band"][0] > 0 else far_masks[0]).mean(axis=0)
+        crops_path = os.path.join(capture_dir, f"blur_{view}.png")
+        order = ["ref2x", "base", "aa-none", "aa-taa", "finest-lod", "mip-bias-m1", "aniso-1", "scale-075", "haze-off"]
+        entry["crops"] = blur_write_crops(crops_path, [(n, displays[n]) for n in order if n in displays], (cy, cx))
+        entry["crops_png"] = crops_path
+        missing_cases = [case["name"] for case in BLUR_CASES if case["name"] not in cases]
+        if missing_cases:
+            failures.append(f"{view}: 比べられなかった条件がある: {missing_cases}")
+        for name, result in cases.items():
+            cliff = result["cliff"]
+            print(f"REFERENCE_CHECK blur_static view={view} case={name} "
+                  f"far_loss={result['far']['fine_detail_loss']:.3f} far_alias={result['far']['fine_alias']:.3f} "
+                  + (f"cliff_loss={cliff['fine_detail_loss']:.3f} cliff_alias={cliff['fine_alias']:.3f} "
+                     if cliff else "")
+                  + "kept_by_band=" + ",".join(f"{row['detail_kept']:.2f}" for row in result["far"]["bands"]))
+        if blur_row is not None and noise_row is not None:
+            print(f"REFERENCE_CHECK blur_static view={view} calibration blur_loss0={blur_row['bands'][0]['detail_loss']:.3f} "
+                  f"blur_alias={blur_row['fine_alias']:.3f} noise_kept0={noise_row['bands'][0]['detail_kept']:.3f} "
+                  f"noise_alias0={noise_row['bands'][0]['alias']:.3f} far_px={region['far_px']} cliff_px={region['cliff_px']}")
+    # 条件ごとの効き（2 視点の平均。既定との差）
+    effects = []
+    for case in BLUR_CASES:
+        if case["name"] == "base":
+            continue
+        deltas = []
+        for entry in views:
+            cases = entry.get("cases") or {}
+            if case["name"] in cases and "base" in cases:
+                key = "cliff" if cases["base"]["cliff"] is not None and cases[case["name"]]["cliff"] is not None else "far"
+                deltas.append((cases[case["name"]][key]["fine_detail_loss"] - cases["base"][key]["fine_detail_loss"],
+                               cases[case["name"]][key]["fine_alias"] - cases["base"][key]["fine_alias"]))
+        if deltas:
+            effects.append({"case": case["name"], "factor": case["factor"],
+                            "detail_loss_delta": float(np.mean([d[0] for d in deltas])),
+                            "alias_delta": float(np.mean([d[1] for d in deltas]))})
+    report = {"mode": "blur_static", "verify": bool(verify), "inputs_current": inputs_all_current,
+              "criteria": {"far_min_m": BLUR_FAR_MIN_M, "cliff_normal_y": BLUR_CLIFF_NORMAL_Y, "sigmas": list(BLUR_SIGMAS),
+                           "fine_bands": list(BLUR_FINE_BANDS), "reference": BLUR_REFERENCE,
+                           "reference_scale": BLUR_REFERENCE_SCALE},
+              "groups": group_records, "views": views, "effects": effects, "failures": failures,
+              "seconds": time.time() - started}
+    report_path = os.path.join(capture_dir, "blur_static_check.json")
+    with open(report_path, "w", encoding="utf-8") as f:
+        json.dump(report, f, indent=2, ensure_ascii=False)
+    for effect in effects:
+        print(f"REFERENCE_CHECK blur_static effect case={effect['case']} "
+              f"detail_loss_delta={effect['detail_loss_delta']:+.3f} alias_delta={effect['alias_delta']:+.3f}")
+    for failure in failures:
+        print(f"REFERENCE_CHECK failure: {failure}")
+    status = "pass" if not failures else "fail"
+    print(f"REFERENCE_CHECK result={status} mode=blur_static views={len(BLUR_VIEWS)} cases={len(BLUR_CASES)} "
+          f"inputs_current={int(inputs_all_current)} report={report_path}")
+    return 0 if not failures else 1
+
+
 def main():
     # 結果の行を保存して読むので、端末の符号に関わらず UTF-8 で書く
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -2606,6 +3003,8 @@ def main():
                         help="空と霞の値の書き出し（--atmosphere-dump）が揃い、描画に使われた値と合うことを検査する")
     parser.add_argument("--atmos-ref", action="store_true",
                         help="空と霞の書き出しを、AtmosphereReference.py の独立な正解と比べた表を作る")
+    parser.add_argument("--blur-static", action="store_true",
+                        help="遠景のぼけを、2 倍の解像度の正解と条件ごとの撮影の帯域ごとの差で切り分けた表を作る")
     parser.add_argument("--views", default="", help="検査する視点（カンマ区切り。省くと metrics.json の全視点）")
     parser.add_argument("--verify", action="store_true", help="入力のハッシュを今のファイルと照らし、古い結果を拒否する")
     args = parser.parse_args()
@@ -2635,8 +3034,10 @@ def main():
     if args.atmos_ref:
         views = [v.strip() for v in args.views.split(",") if v.strip()]
         return run_atmos_ref(capture_dir, views, args.verify)
+    if args.blur_static:
+        return run_blur_static(capture_dir, args.verify)
     print("REFERENCE_CHECK result=fail reason=no_mode（--record-inputs か --hdr か --display か --plate か --aov か "
-          "--projection か --atmos-dump か --atmos-ref を指定する）")
+          "--projection か --atmos-dump か --atmos-ref か --blur-static を指定する）")
     return 1
 
 

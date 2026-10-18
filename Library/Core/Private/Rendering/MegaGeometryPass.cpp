@@ -33,6 +33,7 @@
 #include "Rendering/SharedResourceRegistry.h"
 #include "Rendering/SparseResidencyShading.h"
 #include "Rendering/TerrainBlendShading.h"
+#include "Rendering/TerrainSamplerOverride.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Rendering/VirtualTextureFeedbackMaterial.h"
 #include "Rendering/VisibilityMerge.h"
@@ -747,6 +748,7 @@ namespace NorvesLib::Core::Rendering
         terrainSampDesc.filterMag = RHI::FilterMode::Anisotropic;
         terrainSampDesc.filterMip = RHI::FilterMode::Anisotropic;
         terrainSampDesc.maxAnisotropy = TerrainSamplerMaxAnisotropy;
+        ApplyTerrainSamplerOverride(terrainSampDesc, "MegaGeometry");
         m_TerrainSampler = m_Device->CreateSampler(terrainSampDesc);
         if (!m_TerrainSampler)
         {

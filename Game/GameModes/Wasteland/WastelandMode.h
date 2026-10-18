@@ -74,6 +74,17 @@ namespace Game::GameModes
                    NorvesLib::Core::Container::String &outError);
     } // namespace WastelandHide
 
+    /// 遠景のぼけの切り分けの撮影で替えるアンチエイリアシング（--wasteland-aa。開発ビルドだけ）
+    enum class WastelandAntiAliasing : uint8_t
+    {
+        /// 既定（FXAA）
+        Default,
+        Fxaa,
+        TemporalAA,
+        /// FXAA のパスを外す（起動引数の解析がポストのパスを止め、カメラは FXAA の指定のまま）
+        None,
+    };
+
     /// 地形の区画の読み込みと材質のテクスチャ（WastelandRoutine.cpp が中身を持つ）
     struct WastelandAssembly;
 
@@ -126,6 +137,10 @@ namespace Game::GameModes
         /// 地形の区画の LOD 0 を PLY で書き出すフォルダ（--wasteland-export-terrain。開発ビルドだけ。空なら書かない。
         /// WastelandTerrainExport.h）
         NorvesLib::Core::Container::String m_TerrainExportDir;
+        /// 遠景のぼけの切り分けの撮影（開発ビルドだけ）: アンチエイリアシング（--wasteland-aa）と内部解像度の倍率
+        /// （--wasteland-render-scale。0.5〜1、1 なら替えない。Leave で 1 に戻す）
+        WastelandAntiAliasing m_AntiAliasing = WastelandAntiAliasing::Default;
+        float m_RenderScale = 1.0f;
     };
 
     class WastelandRoutine
