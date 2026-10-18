@@ -818,12 +818,14 @@ function Stop-OwnedProcessTree([int]$ProcessId)
     & taskkill.exe /PID $ProcessId /T /F 2>&1 | Out-Null
 }
 
-# 外から止められた（ランナーの再検証の時間切れ・taskkill）powershell が Game を残さないよう、起動した Game を
-# Job Object（JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE）へ入れる。ハンドルは継承させずこのプロセスだけが持つので、
-# powershell が終わるとカーネルがハンドルを閉じ、中の Game も終わる。自前の時間切れは Stop-OwnedProcessTree のまま。
+# 外から止められた（ランナーの再検証の時間切れ・taskkill）powershell が Game を残さないよう、Game を起動する前に
+# この powershell を Job Object（JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE）へ入れる。子は生成の時点から同じ Job に入るので、
+# 起動から登録までの隙間が無い。ハンドルは継承させずこのプロセスだけが持つので、powershell が終わるとカーネルが
+# ハンドルを閉じ、中の Game も終わる。自前の時間切れは Stop-OwnedProcessTree のまま。
 Add-Type -TypeDefinition @'
 using System;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 
 public static class CaptureProcessJob
@@ -876,24 +878,34 @@ public static class CaptureProcessJob
     [DllImport("kernel32.dll", SetLastError = true)]
     static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
 
-    // 最初の起動で作り、powershell が終わるまで閉じない（閉じた時点で中のプロセスが終わるため）
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool IsProcessInJob(IntPtr process, IntPtr job, out bool result);
+
+    // この powershell を入れた後は、powershell が終わるまで閉じない（閉じた時点で中のプロセスが終わるため）
     static IntPtr job = IntPtr.Zero;
 
-    public static void Assign(IntPtr processHandle)
+    // この powershell を Job へ入れる（2 回目以降は何もしない）。入れられなければ例外を投げる
+    public static void EnterCurrentProcess()
     {
-        if (job == IntPtr.Zero)
+        if (job != IntPtr.Zero) { return; }
+        IntPtr created = CreateJobObject(IntPtr.Zero, null);
+        if (created == IntPtr.Zero) { throw new Win32Exception(); }
+        var info = new JOBOBJECT_EXTENDED_LIMIT_INFORMATION();
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        if (!SetInformationJobObject(created, JobObjectExtendedLimitInformation, ref info, (uint)Marshal.SizeOf(typeof(JOBOBJECT_EXTENDED_LIMIT_INFORMATION))))
         {
-            IntPtr created = CreateJobObject(IntPtr.Zero, null);
-            if (created == IntPtr.Zero) { throw new Win32Exception(); }
-            var info = new JOBOBJECT_EXTENDED_LIMIT_INFORMATION();
-            info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-            if (!SetInformationJobObject(created, JobObjectExtendedLimitInformation, ref info, (uint)Marshal.SizeOf(typeof(JOBOBJECT_EXTENDED_LIMIT_INFORMATION))))
-            {
-                throw new Win32Exception();
-            }
-            job = created;
+            throw new Win32Exception();
         }
-        if (!AssignProcessToJobObject(job, processHandle)) { throw new Win32Exception(); }
+        if (!AssignProcessToJobObject(created, Process.GetCurrentProcess().Handle)) { throw new Win32Exception(); }
+        job = created;
+    }
+
+    // 起動した子がこの Job に入っているか（確かめられないときも false）
+    public static bool Contains(IntPtr processHandle)
+    {
+        bool inJob;
+        if (job == IntPtr.Zero || !IsProcessInJob(processHandle, job, out inJob)) { return false; }
+        return inJob;
     }
 }
 '@
@@ -972,6 +984,19 @@ $temporalNoise = @()
 $gpuTiming = @()
 $shadowProbeResults = @()
 $shadowProbePointResults = @()
+if (@($shots).Count -gt 0)
+{
+    # Game を起動する前にこの powershell を Job Object へ入れる（入れられなければ Game を起動せずに失敗にする）
+    try
+    {
+        [CaptureProcessJob]::EnterCurrentProcess()
+    }
+    catch
+    {
+        Write-Output "CAPTURE_STARTUP_SCENE result=fail reason=job_object_failed detail=$($_.Exception.Message)"
+        exit 1
+    }
+}
 $gameLogPath = Join-Path $repoRoot 'Game.log'
 foreach ($view in $shots)
 {
@@ -1200,13 +1225,12 @@ foreach ($view in $shots)
         }
     }
     [void]$process.Handle
-    try
+    if (-not [CaptureProcessJob]::Contains($process.Handle))
     {
-        [CaptureProcessJob]::Assign($process.Handle)
-    }
-    catch
-    {
-        Write-Warning "Game を Job Object に入れられなかった（powershell が外から止められると Game が残る）: $($_.Exception.Message)"
+        # Job の外の Game は powershell が外から止められると残るので、撮影に使わず止めて失敗にする
+        Stop-OwnedProcessTree $process.Id
+        Write-Output "CAPTURE_STARTUP_SCENE result=fail reason=job_object_failed detail=起動した Game が Job Object に入っていない"
+        exit 1
     }
     $exitCode = $null
     if ($process.WaitForExit($TimeoutSeconds * 1000))

@@ -5177,3 +5177,15 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - Job の強制終了での Game の終了コードは 0 に見える（呼び出し側は powershell ごと止まっているので撮影の判定には影響しない）
   - 前の反復（SCN-WLR-ATMOS-DUMP）の新しいファイル `Assets/Shaders/Common/VolumetricsCommon.glsl`・`Assets/Shaders/volumetrics_probe.frag`・`Docs/RenderingValidation/WastelandAtmosphereDump.md` がコミットに入っておらず未追跡のまま（`volumetrics.frag` は前者を include する）。このタスクの paths の外なので触っていない
 - Next: TASKS.md の次の未完の項目。
+
+### SCN-WLR-CAPTURE-ORPHAN 差し戻しの対応（2026-10-18、run 20261018-205227 の反復 4）
+- Done: 評価者の指摘 2 件を直した。Game を起動した後に Game を Job へ入れる形をやめ、Game を起動する前に撮影の powershell 自身を Job Object（`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`）へ入れるようにした（`CaptureProcessJob.EnterCurrentProcess`）。子は生成の時点から同じ Job に入るので、起動から登録までの隙間が無い。両スクリプトで同じ形
+  - Job に入れられなかったときは警告で続けず、Game を起動せずに `result=fail reason=job_object_failed` で終わる。起動した Game が Job に入っていない（`IsProcessInJob` で確かめる）ときは `Stop-OwnedProcessTree` で止めて同じく失敗にする。自前の時間切れの経路（`taskkill /T /F`）は変えていない
+  - powershell を Job へ入れるのはビルドの後・最初の Game の起動の直前（ビルドの道具は Job の外のまま）。CaptureStartupScene は撮る視点があるときだけ（`-CompareOnly` では入れない）
+  - `verify-SCN-WLR-CAPTURE-ORPHAN-2.txt`: ref_cliff_01 を RelWithDebInfo・`-Build -RequireAssets` で撮影 result=pass（build pass、Game 90.8 秒・exit_code=0、exit=0）
+  - 試しの手順（`aux-SCN-WLR-CAPTURE-ORPHAN-trial3.ps1` と結果の `.txt`）: 撮影の powershell を別プロセスで起動し、親がその powershell を親に持つ Game.exe を見つけたら、5 秒待つ（taskkill /PID /F。/T なし）か、見つけた直後（Stop-Process -Force）に powershell だけを止め、Game の終了を `WaitForExit` で最長 30 秒待ち、終わった後に Game の PID がプロセスの一覧に無いことも確かめる
+  - 結果: CaptureScene は 0.18 秒・0.05 秒、CaptureStartupScene は 0.12 秒・0.05 秒で Game が終わり、4 回とも一覧から消えた。最後に残った Game.exe は 0 件
+- Notes:
+  - 反復 3 の最初の試しで 10 秒後に Game が残って見えた件は、今回の 4 回では再現していない（当時の版は Game の起動の後に Job へ入れていたので、その間の時間の影響か測り方かは確かめていない）
+  - Job の中の powershell が普通に終わったときも、Job に残ったプロセスはカーネルが止める。撮影の後に起動を残す使い方はスクリプトに無い
+- Next: TASKS.md の次の未完の項目。
