@@ -16,10 +16,16 @@
 //   lstick=x,y       左スティック（-1〜1。Y は上が正）
 //   rstick=x,y       右スティック
 //   lt=v rt=v        左右のトリガー（0〜1）
+// 撮影の段取りの項目（入力ではなく、その行の決まったフレームで 1 回だけ働く。Debug/CameraScriptCapture.h）:
+//   home             行の最初のフレームの入力の前に、カメラを基準の視点（起動時か、撮影が置き直した視点）へ戻す
+//   epoch            行の最初のフレームを 0 番として、決定的な撮影のエポック（時間・TAA の履歴・RTGI・自動露出）を始め直す
+//   capture=<名前>   行の最後のフレームを撮る（<視点>.<名前>.png。名前は英数字と - _ で 32 文字まで）
+//   wait-ready       行を流し終えたあと、ストリーミングが落ち着くまで動かさずに待つ
 // 例:
 //   30 keys=W              # 30 フレーム前進
 //   20 rmb mouse=5,0       # 右ボタンを押して右へ 5px ずつ 20 フレーム
 //   10                     # 10 フレーム何もしない
+//   1 epoch capture=a      # 次のフレームをエポックの 0 番にして撮る
 // ---------------------------------------------------------------------------
 
 #include "Core/Public/Container/String.h"
@@ -45,6 +51,25 @@ namespace Game::Input
         float RightStick[2] = {0.0f, 0.0f};
         float LeftTrigger = 0.0f;
         float RightTrigger = 0.0f;
+        /// 撮影の段取り（ヘッダ冒頭の home・epoch・capture・wait-ready）
+        bool bHome = false;
+        bool bEpoch = false;
+        bool bWaitReady = false;
+        /// 空なら撮らない
+        NorvesLib::Core::Container::String CaptureTag;
+    };
+
+    /// 1フレーム分の撮影の段取り（CameraScript::NextFrame が書く）
+    struct CameraScriptFrameEvents
+    {
+        /// このフレームの入力の前に、カメラを基準の視点へ戻す
+        bool bHome = false;
+        /// このフレームをエポックの 0 番にする
+        bool bEpoch = false;
+        /// このフレームのあと、ストリーミングが落ち着くまで待つ
+        bool bWaitReadyAfter = false;
+        /// このフレームを撮る名前（撮らないなら nullptr。台本が持つ文字列を指す）
+        const NorvesLib::Core::Container::String *pCaptureTag = nullptr;
     };
 
     class CameraScript
@@ -87,6 +112,12 @@ namespace Game::Input
 
         /// 次の1フレーム分の入力を out へ書いて進める。流し終えていれば false（out は触らない）
         bool NextFrame(NorvesLib::Core::Input::InputState &out);
+
+        /// NextFrame と同じく進め、そのフレームの撮影の段取りを outEvents へ書く
+        bool NextFrame(NorvesLib::Core::Input::InputState &out, CameraScriptFrameEvents &outEvents);
+
+        /// 撮影の段取りの項目（home・epoch・capture・wait-ready）を含む行があるか
+        bool HasCaptureDirectives() const;
 
     private:
         NorvesLib::Core::Container::VariableArray<CameraScriptStep> m_Steps;

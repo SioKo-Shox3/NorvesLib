@@ -1786,7 +1786,7 @@
 - notes: SCN-WLR-BLENDER-TERRAIN では 6 視点の最細の固定が約 15 分で撮れた。入力のハッシュが変わったら、ほかの組も同じコードで撮り直す（撮り方は記録の「条件」の節）。
 
 ## SCN-WLR-FAR-BLUR-MOTION: 遠景のぼけを、動かしたときの履歴の消失で切り分ける
-- status: todo
+- status: done
 - after: SCN-WLR-FAR-BLUR-STATIC
 - done-when: 固定のカメラの経路（`Scripts/CameraScripts/` に足す。遠景を横切る一定の速さ）で連番を撮り、TAA の履歴の消去の直後と、決めたフレーム数の後で、SCN-WLR-FAR-BLUR-STATIC と同じ測り方（細部の欠け・エイリアス）を比べる。FXAA・TAA の両方で、静止との差を表にし、履歴による細部の消失の大きさと直す案を書く。既定は変えない。
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -Build -RequireAssets -Width 1920 -Height 1080 -Hdr -Views ref_far_01 -GameArgs camera-script=Scripts/CameraScripts/wasteland-far-pan.txt -OutDir .harness/runs/scene-capture/SCN-WLR-FAR-BLUR-MOTION`

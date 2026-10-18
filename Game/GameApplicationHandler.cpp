@@ -2333,6 +2333,8 @@ namespace Game
             }
             m_MultiViewCapture.Configure(m_CaptureViewNames, captureDirectory, captureSettledRenderedFrames,
                                          captureViewSettleRenderedFrames, &m_SceneViewSwitch);
+            // カメラの台本の撮影（capture=<名前>）は、同じフォルダの <先頭の視点>.<名前>.png へ書く
+            m_CameraScriptCapture.Configure(captureDirectory, m_CaptureViewNames[0]);
 #if NORVES_BUILD_DEVELOPMENT
             m_MultiViewCapture.SetCaptureHdr(bCaptureHdr);
             m_MultiViewCapture.SetCaptureAov(bCaptureAov);
@@ -3028,6 +3030,10 @@ namespace Game
         {
             m_SequenceFrameCapture.OnPreRender(NorvesLib::Core::Engine::GEngine->GetRenderWorld());
         }
+        if (m_CameraScriptCapture.IsConfigured() && NorvesLib::Core::Engine::GEngine)
+        {
+            m_CameraScriptCapture.OnPreRender(NorvesLib::Core::Engine::GEngine->GetRenderWorld());
+        }
         if (m_MultiViewCapture.IsEnabled() && NorvesLib::Core::Engine::GEngine)
         {
             m_MultiViewCapture.OnPreRender(NorvesLib::Core::Engine::GEngine->GetRenderWorld(), HasPendingM9WorldWork());
@@ -3039,6 +3045,11 @@ namespace Game
         if (m_SequenceFrameCapture.IsEnabled() && NorvesLib::Core::Engine::GEngine)
         {
             m_SequenceFrameCapture.OnPostRender(NorvesLib::Core::Engine::GEngine->GetRenderWorld());
+        }
+        // 台本の撮影の結果は、MultiViewCapture より先に受け取る（台本の間は MultiViewCapture は撮らない）
+        if (m_CameraScriptCapture.IsConfigured() && NorvesLib::Core::Engine::GEngine)
+        {
+            m_CameraScriptCapture.OnPostRender(NorvesLib::Core::Engine::GEngine->GetRenderWorld());
         }
         if (m_MultiViewCapture.IsEnabled() && NorvesLib::Core::Engine::GEngine)
         {
@@ -3614,10 +3625,12 @@ namespace Game
             Wasteland,
             [viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath, pathTime = m_CameraPathTime,
              bPathPlay = m_bCameraPathPlay, pauseMenu = &m_PauseMenu, viewSwitch = &m_SceneViewSwitch,
+             scriptCapture = &m_CameraScriptCapture,
              getAssetSystem = [this]() { return GetAssetSystemSnapshot(); }](const GameModeParams&)
                 -> Container::TUniquePtr<IGameMode>
             {
                 auto mode = MakeUnique<WastelandMode>();
+                mode->GetData().m_pScriptCapture = scriptCapture;
                 mode->GetData().m_ViewName = viewName;
                 mode->GetData().m_CameraScriptPath = scriptPath;
                 mode->GetData().m_CameraPathTime = pathTime;

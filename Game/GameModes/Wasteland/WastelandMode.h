@@ -25,6 +25,7 @@
 #include "Core/Public/GameMode/IGameMode.h"
 #include "Core/Public/GameMode/TGameMode.h"
 #include "Core/Public/Rendering/FoliageTypes.h"
+#include "Debug/CameraScriptCapture.h"
 #include "GameModes/Wasteland/WastelandCommonLight.h"
 #include "GameModes/Wasteland/WastelandFoliage.h"
 #include "GameModes/Wasteland/WastelandGravel.h"
@@ -102,6 +103,8 @@ namespace Game::GameModes
         const Game::Pause::PauseMenu *m_pPauseMenu = nullptr;
         /// 実行中の視点の切り替えの依頼（非所有。--capture-views の撮影が使う）。無いなら nullptr
         Game::Scenes::SceneViewSwitch *m_pViewSwitch = nullptr;
+        /// カメラの台本の撮影の段取りの窓口（非所有。--capture-views の撮影が使う）。無いなら nullptr
+        Game::Debug::CameraScriptCapture *m_pScriptCapture = nullptr;
         /// クック済みの資産を引く AssetSystem の窓口
         NorvesLib::Core::Delegate<NorvesLib::Core::Container::TSharedPtr<const NorvesLib::Core::Asset::AssetSystem>>
             m_GetAssetSystem;

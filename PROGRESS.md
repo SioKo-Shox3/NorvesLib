@@ -5267,3 +5267,21 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 入力のハッシュは `CaptureScene.ps1` を直したので 65795e00… に変わった（撮影時は未コミットで dirty=1。中身はこのコミットと同じ）
   - 新しい試験は足していない（verify の撮影と検査が確かめる）
 - Next: TASKS.md の次の未完の項目。
+
+### SCN-WLR-FAR-BLUR-MOTION 完了（2026-10-19、run 20261018-205227 の反復 14）
+- Done: 遠景のぼけを、カメラを一定の速さで振りながら撮った画と同じ向きで止めて撮った画で、TAA の履歴による細部の消失に切り分けた。記録は `Docs/RenderingValidation/WastelandFarBlurMotion.md`
+  - カメラの台本に撮影の段取りの項目を足した（`Game/Input/CameraScript.h` の `home`・`epoch`・`capture=<名前>`・`wait-ready`。受け手は新しい `Game/Debug/CameraScriptCapture.h/.cpp`、`FreeCameraRig` が台本の Tick から頼み、荒野のシーンへつないだ）。Tick は描画の受け渡しの前なので、エポックと撮影はカメラを置いたフレームのパケットに効く
+  - 台本 `Scripts/CameraScripts/wasteland-far-pan.txt`: ref_far_01 から毎フレーム 0.03°（画面の中心で 2.53 画素）右へ振り、エポック（履歴の消去）から 0・8・30 フレーム後を振りの途中と止めで同じ向きで撮る。`CaptureScene.ps1` は段取りのある台本なら視点が 1 つでも `--capture-views` で撮り、段取りの失敗の印を失敗にする
+  - `ReferenceCheck.py --blur-motion`: 正解（2 倍の解像度・AA なし・同じ台本）・fxaa・taa（取り分 9）と base（verify の撮影）を、--blur-static と同じ測り方で比べる。エポックからのフレーム数・撮れたパケットの番号・向き・画のずれ（位相相関）・常駐を検査する
+  - 結果: FXAA は振りと止めの差が 0.002 以内（既定では動きはぼけを足さない）。TAA は振ると細部の欠けが +0.098（遠景）・+0.107（崖）増え、エイリアスは −0.065。σ 0〜1 の細部の残りは 0.55 → 0.42。8 フレームで差の 9 割に達する。直す案は動きに応じた履歴の鋭さの補いと現在の色の割合、出力より細かい履歴
+- 証拠（`.harness/runs/20261018-205227/`）:
+  - `verify-SCN-WLR-FAR-BLUR-MOTION-1.txt`: base（既定）を RelWithDebInfo・`-Build -Hdr` で台本つきで撮影 result=pass、EXIT=0、ビルドの前後で Game.exe のハッシュが同じ（fa17d5c0…）
+  - `verify-SCN-WLR-FAR-BLUR-MOTION-2.txt`: `--blur-motion --verify` result=pass、groups=4、inputs_current=1、失敗 0。motion-30-pre → motion-30 のずれ 20.21〜20.27 画素（期待 20.18）、振りと止めのずれ 0.02 画素以下、撮れたパケット = 要求のフレーム
+  - `aux-SCN-WLR-FAR-BLUR-MOTION-capture-<組>.txt`・`aux-SCN-WLR-FAR-BLUR-MOTION-captures.txt`: ref2x・fxaa・taa の撮影（全組 exit=0、Game.exe のハッシュが始めと終わりで一致）。台本は `aux-SCN-WLR-FAR-BLUR-MOTION-capture.ps1`
+  - 切り出しの並び `.harness/runs/scene-capture/SCN-WLR-FAR-BLUR-MOTION/blur_motion_ref_far_01.png` を開いた: fxaa の振りと止めは見分けられず、taa の motion-30 は崖の縦の筋が止めより薄い
+- Notes:
+  - 新しいソースは GLOB で拾うが、ビルドの前に `cmake -S . -B build` で構成し直さないと vcxproj に入らず、リンクに失敗した
+  - `WastelandFarBlurStatic.md` の直す案に「Catmull-Rom・分散の箱・ジッタ 8 以上へ」とあったが、今の TAA は既にそうなっているので、見直す所を箱の幅・混ぜる割合・シャープ化に直した
+  - 振りの速さは 1 通り（端数 0.53 画素）だけ。速さの依存は直す案の確かめで見る
+  - 新しい試験は足していない（verify の撮影と検査が確かめる）
+- Next: TASKS.md の次の未完の項目。

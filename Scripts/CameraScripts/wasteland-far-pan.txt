@@ -1,0 +1,60 @@
+﻿# 荒野の ref_far_01 の視点から、遠景を横切る一定の速さで右へ振り、TAA の履歴を消した直後と決めたフレーム数の後を撮る
+# （--scene=wasteland --capture-views=ref_far_01 --camera-script=Scripts/CameraScripts/wasteland-far-pan.txt。
+# 撮影は Scripts/CaptureScene.ps1 -Views ref_far_01 -GameArgs camera-script=...、検査は ReferenceCheck.py --blur-motion）。
+# 書式は Game/Input/CameraScript.h。1 フレームは 1/60 秒。マウスの 1px は 0.15° なので、mouse=0.2 は毎フレーム 0.03°
+# （ref_far_01 の横の画角 22.5° を 1920 画素に写すと、画面の中心で約 2.5 画素/フレーム）右へ回る。
+# どの振りも基準の視点（ref_far_01）から 1.8° 左（mouse=-12 の 1 フレーム）へ置いて 60 フレーム振り、基準の向きへ戻った所を撮る。
+# 振りと静止は同じ足し算の列で同じ向きになる。履歴の消去はエポック（epoch。時間・TAA の履歴とジッタの列・自動露出を数え直す）で、
+# 振りと静止を同じフレーム数の後で比べる。
+# 撮る名前（<視点>.<名前>.png）:
+#   motion-<k>     振りの途中で、エポックから k フレーム後（k = 0・8・30）
+#   motion-30-pre  motion-30 の 8 フレーム前（カメラが動いたことを数える）
+#   static-<k>     同じ向きで止め、落ち着いてからエポックを始め、k フレーム後
+# 台本が終わると基準の視点へ戻り、--capture-views が ref_far_01.png（止めてエポックから 60 フレーム後）を撮る。
+# 撮影の要求は同時に 1 つだけなので、撮る行の間は 8 フレーム以上空ける。
+
+# 1. 地形を置いた後の落ち着きを待ち、同じ振りを 1 回流して振りの範囲のページを読み込み、基準の視点で落ち着きを待つ
+120 wait-ready
+1 home rmb mouse=-12,0
+70 rmb mouse=0.2,0
+1 home
+120 wait-ready
+
+# 2. 振りの途中でエポック、その同じフレームを撮る（k = 0）
+1 home rmb mouse=-12,0
+59 rmb mouse=0.2,0
+1 rmb mouse=0.2,0 epoch capture=motion-0
+10 rmb mouse=0.2,0
+
+# 3. 基準の向きの 8 フレーム前でエポック（k = 8）
+1 home rmb mouse=-12,0
+51 rmb mouse=0.2,0
+1 rmb mouse=0.2,0 epoch
+7 rmb mouse=0.2,0
+1 rmb mouse=0.2,0 capture=motion-8
+10 rmb mouse=0.2,0
+
+# 4. 基準の向きの 30 フレーム前でエポック（k = 30）。8 フレーム前も撮る
+1 home rmb mouse=-12,0
+29 rmb mouse=0.2,0
+1 rmb mouse=0.2,0 epoch
+21 rmb mouse=0.2,0
+1 rmb mouse=0.2,0 capture=motion-30-pre
+7 rmb mouse=0.2,0
+1 rmb mouse=0.2,0 capture=motion-30
+10 rmb mouse=0.2,0
+
+# 5. 同じ振りで基準の向きまで来て止め、落ち着いてからエポック（k = 0・8・30）
+1 home rmb mouse=-12,0
+60 rmb mouse=0.2,0
+120 wait-ready
+1 epoch capture=static-0
+7
+1 capture=static-8
+21
+1 capture=static-30
+10
+
+# 6. 基準の視点へ戻す（この後の ref_far_01.png は --capture-views が撮る）
+1 home
+10

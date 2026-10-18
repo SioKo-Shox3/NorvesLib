@@ -73,7 +73,8 @@
 # 失敗にするもの（終了コード 1）: Game の起動失敗・終了コードが0でない・タイムアウト（1 回の起動で複数の視点を撮るときは
 # -TimeoutSeconds の 2 倍）、PNG が無い（その起動より前の古い PNG を含む）・大きさが違う、視点の切り替えの失敗（CAPTURE_VIEWS failed）、
 # Game.log のシェーダーのコンパイル失敗（Slang SDK 未設定の neural_material_decode.slang だけは既知として除外）、
-# 未知のシーン・視点の指定、シーンの報告が無い、SCENE_READY が無い、Debug の検証レイヤーのエラー。
+# 未知のシーン・視点の指定、カメラの台本の読み込み・撮影の段取りの失敗（CAMERA_SCRIPT_INVALID・CAMERA_SCRIPT_CAPTURE failed・
+# unavailable）、シーンの報告が無い、SCENE_READY が無い、Debug の検証レイヤーのエラー。
 # -Configuration Release はログが無効で Game.log を書かないため、ログの検査（シェーダーのコンパイル失敗・SCENE_READY・
 # Rendering3DTest の読み込み失敗の印）を飛ばす。未知のシーン・視点と必要な資産の欠けは報告から検査するので Release でも効く。
 # 成功すると CAPTURE_SCENE result=pass を出す。
@@ -257,6 +258,21 @@ if ($atmosphereDump -and $GpuTimingFrames -gt 0)
 if ($atmosphereDump)
 {
     $useMultiView = $true
+}
+# カメラの台本の撮影の段取り（home・epoch・capture・wait-ready。Game/Input/CameraScript.h）も、Game の --capture-views の撮影だけが
+# 受けるので、視点が 1 つでも 1 回の起動で撮る形にする
+foreach ($argument in $extraArguments)
+{
+    if ($argument -match '^--camera-script=(.+)$')
+    {
+        $scriptPath = $Matches[1].Trim('"')
+        if (-not [System.IO.Path]::IsPathRooted($scriptPath)) { $scriptPath = Join-Path (Split-Path -Parent $PSScriptRoot) $scriptPath }
+        if ((Test-Path -LiteralPath $scriptPath) -and
+            (Select-String -LiteralPath $scriptPath -Pattern '^\s*\d+\s[^#]*\b(capture=|epoch\b|wait-ready\b|home\b)' -Quiet))
+        {
+            $useMultiView = $true
+        }
+    }
 }
 
 # 置く数の指定（-RequireAssets のとき、置いた数と突き合わせる）。指定が無ければ $null
@@ -1164,7 +1180,7 @@ for ($runIndex = 0; $runIndex -lt $runs.Count; ++$runIndex)
         {
             $failures += "$($run.Label): $($line.Line.Trim())"
         }
-        $unknownLines = @(Select-String -LiteralPath $viewLogPath -Pattern 'SCENE_UNKNOWN|SCENE_VIEW_UNKNOWN|SCENE_CATALOG_INVALID|CAMERA_SCRIPT_INVALID|CAPTURE_VIEWS failed')
+        $unknownLines = @(Select-String -LiteralPath $viewLogPath -Pattern 'SCENE_UNKNOWN|SCENE_VIEW_UNKNOWN|SCENE_CATALOG_INVALID|CAMERA_SCRIPT_INVALID|CAMERA_SCRIPT_CAPTURE (failed|unavailable)|CAPTURE_VIEWS failed')
         foreach ($line in $unknownLines)
         {
             $failures += "$($run.Label): $($line.Line.Trim())"

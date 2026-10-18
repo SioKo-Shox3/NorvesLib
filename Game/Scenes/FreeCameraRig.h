@@ -16,6 +16,8 @@
 // パスを再生したままにする（計測用）。再生中は約 1 秒ごとにパスの時刻をログ（CAMERA_PATH_TIME）へ出す。
 // 開発ビルドだけ、--camera-script=<file> の台本（Input/CameraScript.h）を自由飛行カメラへ流せる。台本を流している間は
 // 実際の入力を無視し、1フレームを固定刻み（1/60 秒）で進める。台本が終わるまで IsScriptRunning() が真になる。
+// 台本の撮影の段取り（home・epoch・capture・wait-ready）は SetScriptCapture で渡した窓口（Debug/CameraScriptCapture.h）へ頼む。
+// home で戻る基準の視点は、Enter の視点か、最後に PlaceAt で置き直した視点。
 // ---------------------------------------------------------------------------
 
 #include "Core/Public/Debug/DebugConfig.h"
@@ -36,6 +38,11 @@ namespace NorvesLib::Core::Component
     class CameraComponent;
 }
 
+namespace Game::Debug
+{
+    class CameraScriptCapture;
+}
+
 namespace Game::Scenes
 {
 
@@ -54,6 +61,12 @@ namespace Game::Scenes
          * @param bPlayWhenReady 真なら、NotifySceneReady でパスの再生を始める（開始の時刻は startTimeSeconds。負なら 0）
          */
         void ConfigurePath(const Game::Scenes::ScenePathDescriptor *pPath, float startTimeSeconds, bool bPlayWhenReady = false);
+
+        /// 台本の撮影の段取りを頼む窓口（非所有。無ければ nullptr で、段取りのある台本は失敗の印をログに出す）。Enter の前に呼ぶ
+        void SetScriptCapture(Game::Debug::CameraScriptCapture *pScriptCapture)
+        {
+            m_pScriptCapture = pScriptCapture;
+        }
 
         /**
          * @brief カメラを作って入力を登録する
@@ -122,6 +135,8 @@ namespace Game::Scenes
         void PlaceOnPath(float time);
         void StartPath();
         void StopPath(const char *reason);
+        /// 台本の 1 フレームを流す（段取りの wait-ready の待ちを含む）
+        void TickScript();
 
         NorvesLib::Core::Input::FreeFlyCameraController m_Controller;
         Game::Input::CameraInputCollector m_Collector;
@@ -133,6 +148,12 @@ namespace Game::Scenes
         Game::Input::CameraScript m_Script;
         bool m_bScriptActive = false;
         uint32_t m_ScriptFramesPlayed = 0;
+        Game::Debug::CameraScriptCapture *m_pScriptCapture = nullptr;
+        /// 台本の home で戻る視点（Enter か PlaceAt の視点）
+        FreeCameraPose m_HomePose{};
+        /// 台本の wait-ready で、ストリーミングが落ち着くのを待っている
+        bool m_bScriptWaitingReady = false;
+        uint32_t m_ScriptWaitedFrames = 0;
 
         NorvesLib::Core::Input::CameraPath m_Path;
         /// Enter でパスの途中へ置く時刻[秒]。負なら置かない

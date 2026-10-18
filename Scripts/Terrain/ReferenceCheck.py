@@ -152,6 +152,19 @@
 #       範囲が BLUR_MIN_REGION_PX 画素以上、較正（正解をぼかした画が細部の欠けに、雑音を足した画がエイリアスに数えられる）が通る。
 #       欠けとエイリアスの大きさは記録するだけ（既定は変えない）。
 #
+#   python Scripts/Terrain/ReferenceCheck.py --blur-motion --capture <出力先> [--verify]
+#       遠景のぼけを、カメラを一定の速さで振りながら撮った画と、同じ向きで止めて撮った画で切り分け、<出力先>/blur_motion_check.json と
+#       切り出しの並び <出力先>/blur_motion_<視点>.png を書く。撮影は MOTION_VIEW を台本 MOTION_SCRIPT_ARG で振る 1 回の起動で、
+#       台本が TAA の履歴を消し（エポック）、k フレーム後（MOTION_OFFSETS）を振りの途中（motion-k）と止めて（static-k）撮り、
+#       --capture-views が止めて 60 フレーム後（static-60。--blur-static と同じ撮り方）を撮る。組は MOTION_GROUPS（正解・FXAA・TAA は
+#       <出力先> の下のフォルダ、base は <出力先> そのもの。base は記録だけ）。測り方は --blur-static と同じで、正解は同じ名前の
+#       2 倍の解像度・AA なしの撮影。静止との差は同じ k どうしの（振り − 止め）、履歴による細部の消失は TAA と FXAA の差の差。
+#       合否: 全部の組があり（--verify は入力のハッシュが今のファイルと合い、組どうしで揃う）、起動引数とログの印が約束どおり、
+#       台本の撮影がすべて約束のエポックからのフレーム数で撮れ、撮れたパケットの番号との差が一定（フレームが飛んでいない）、
+#       振りと止めの同じ k が同じ向きで基準の視点に MOTION_YAW_TOLERANCE 以内、motion-30-pre が約束の速さだけ手前、画のずれ
+#       （位相相関）が振りと止めの間で MOTION_ALIGN_MAX_PX 未満、motion-30-pre → motion-30 が振りの角の画素数と合う、
+#       base 以外は撮影の間のページの進行中・追い出し・描画の溢れが無い、較正が通る。差の大きさは記録するだけ（既定は変えない）。
+#
 # 終了コード: すべて合格なら 0、どれかが不合格なら 1。
 import argparse
 import hashlib
@@ -420,6 +433,50 @@ BLUR_CALIB_NOISE_MIN_ALIAS = 0.3
 BLUR_CALIB_SEED = 20261019
 # 荒野は仮想テクスチャを使わない（VRAM_POOLS の vt_used_mb がどの行も 0）。使っていれば常駐の確かめが要るので失敗にする
 BLUR_VT_LOG_KEY = "VRAM_POOLS "
+
+# --blur-motion: 遠景のぼけの動きの切り分け（SCN-WLR-FAR-BLUR-MOTION）
+# 撮影は 1 視点（MOTION_VIEW）を、カメラの台本 MOTION_SCRIPT で一定の速さで振りながら撮る（Scripts/CameraScripts/wasteland-far-pan.txt）。
+# 台本の撮る名前と、エポック（TAA の履歴の消去）から撮るまでのフレーム数
+MOTION_VIEW = "ref_far_01"
+MOTION_SCRIPT_ARG = "--camera-script=Scripts/CameraScripts/wasteland-far-pan.txt"
+MOTION_OFFSETS = (0, 8, 30)
+MOTION_PRE_TAG = "motion-30-pre"
+MOTION_TAG_OFFSETS = {**{f"motion-{k}": k for k in MOTION_OFFSETS}, **{f"static-{k}": k for k in MOTION_OFFSETS},
+                      MOTION_PRE_TAG: 22}
+# --capture-views が台本の後に撮る、止めてエポックから 60 フレーム後の画（SCN-WLR-FAR-BLUR-STATIC と同じ撮り方）
+MOTION_FINAL = "static-60"
+# 台本の振り: 毎フレーム 0.03°（mouse=0.2 × 0.15°/px）。motion-30-pre は motion-30 の 8 フレーム前
+MOTION_YAW_PER_FRAME = 0.03
+MOTION_PRE_FRAMES = 8
+# 撮った向きが基準の視点の向き（FREE_CAMERA_POSE phase=start、小数 3 桁）と合う幅[度]と、motion-30-pre との差の幅[度]
+MOTION_YAW_TOLERANCE = 0.002
+MOTION_PRE_YAW_TOLERANCE = 0.0005
+# ref_far_01 の縦の画角[度]（Game/GameModes/Wasteland/WastelandRoutine.cpp の kReferenceShots）。画面の中心の 1° あたりの画素を決める
+MOTION_VERTICAL_FOV_DEG = 12.77
+# 画のずれ（位相相関）の合否: 振りと静止の同じ名前どうしは MOTION_ALIGN_MAX_PX 未満（1 フレームずれると約 2.5 画素）、
+# motion-30-pre → motion-30 は振りの角から求めた画素数と MOTION_SHIFT_TOLERANCE_PX 以内
+MOTION_ALIGN_MAX_PX = 0.25
+MOTION_SHIFT_TOLERANCE_PX = 0.5
+MOTION_ALIGN_CROP = (432, 768)
+# 組: 正解（2 倍の解像度・AA なし）と、FXAA・TAA を正解と同じ取り分で撮った組。base は verify の撮影（<出力先> そのもの。
+# 既定の取り分・FXAA）で、記録だけ
+MOTION_REFERENCE = "ref2x"
+MOTION_GROUPS = (
+    {"name": MOTION_REFERENCE, "dir": MOTION_REFERENCE, "args": BLUR_REFERENCE_ARGS, "logs": BLUR_REFERENCE_LOGS,
+     "size": (BLUR_SIZE[0] * BLUR_REFERENCE_SCALE, BLUR_SIZE[1] * BLUR_REFERENCE_SCALE), "resident": True},
+    {"name": "fxaa", "dir": "fxaa", "args": (BLUR_SHARE_ARG,), "logs": (BLUR_SHARE_LOG,), "size": BLUR_SIZE,
+     "resident": True},
+    {"name": "taa", "dir": "taa", "args": ("--wasteland-aa=taa", BLUR_SHARE_ARG),
+     "logs": ("WASTELAND_BLUR_CASE aa=taa ", BLUR_SHARE_LOG), "size": BLUR_SIZE, "resident": True},
+    {"name": "base", "dir": ".", "args": (), "logs": (), "size": BLUR_SIZE, "resident": False},
+)
+MOTION_AA_GROUPS = ("fxaa", "taa", "base")
+MOTION_EPOCH_RE = re.compile(r"CAMERA_SCRIPT_EPOCH engine_frame=(\d+)")
+MOTION_REQUEST_RE = re.compile(r"CAMERA_SCRIPT_CAPTURE requested tag=(\S+) engine_frame=(\d+) position=\(([^)]*)\) "
+                               r"yaw=(-?\d+(?:\.\d+)?) pitch=(-?\d+(?:\.\d+)?)")
+MOTION_SAVED_RE = re.compile(r"CAMERA_SCRIPT_CAPTURE saved tag=(\S+) frame=(\d+) requested_engine_frame=(\d+) ")
+MOTION_WAIT_RE = re.compile(r"CAMERA_SCRIPT_WAIT_READY (ready|timeout) waited=(\d+)")
+MOTION_START_YAW_RE = re.compile(r"FREE_CAMERA_POSE phase=start .* yaw=(-?\d+(?:\.\d+)?) pitch=(-?\d+(?:\.\d+)?)")
 
 
 def git_output(args):
@@ -2798,7 +2855,7 @@ def blur_forbidden_logs(expected_logs):
     return tuple(f for f in BLUR_BASE_FORBIDDEN_LOGS if not any(e.startswith(f) for e in expected_logs))
 
 
-def blur_case_check(case_dir, expected_args, expected_logs, size, require_resident):
+def blur_case_check(case_dir, expected_args, expected_logs, size, require_resident, views=BLUR_VIEWS):
     """組の起動引数・ログの印・仮想テクスチャの使用・撮った時点の常駐と描画の溢れ・PNG の大きさを確かめる。(失敗の一覧, 記録)"""
     failures = []
     args = plate_capture_args(case_dir)
@@ -2818,7 +2875,7 @@ def blur_case_check(case_dir, expected_args, expected_logs, size, require_reside
     dropped_at_capture = {}
     last_capacity = None
     window_evicted = set()
-    for log_name in sorted({view_game_log(case_dir, view) or "" for view in BLUR_VIEWS}):
+    for log_name in sorted({view_game_log(case_dir, view) or "" for view in views}):
         path = os.path.join(case_dir, log_name) if log_name else ""
         if not log_name or not os.path.isfile(path):
             failures.append(f"Game のログが無い: {log_name or '（metrics.json に game_log が無い）'}")
@@ -2860,7 +2917,7 @@ def blur_case_check(case_dir, expected_args, expected_logs, size, require_reside
         failures.append("VRAM_POOLS の行が無い（仮想テクスチャの使用を確かめられない）")
     elif vt_used_max > 0.0:
         failures.append(f"仮想テクスチャが使われている（vt_used_mb の最大 {vt_used_max:g}）。撮る前に要求が満ちたことの確かめが要る")
-    for view in BLUR_VIEWS:
+    for view in views:
         # 落ち着き待ちは、目標に収まらない要求や追い出しの続く作業集合を待たない。撮った時点で進行中のページが残るか、
         # 落ち着きの基準から保存までに追い出しがあれば拒む（base は既定の取り分のまま撮るので記録だけ）
         pages = pages_at_capture.get(view)
@@ -3067,6 +3124,369 @@ def run_blur_static(capture_dir, verify):
           f"inputs_current={int(inputs_all_current)} report={report_path}")
     return 0 if not failures else 1
 
+def motion_png(group_dir, tag):
+    """撮る名前の PNG（static-60 は --capture-views が撮った <視点>.png）"""
+    name = f"{MOTION_VIEW}.png" if tag == MOTION_FINAL else f"{MOTION_VIEW}.{tag}.png"
+    return os.path.join(group_dir, name)
+
+
+def motion_phase_shift(a, b):
+    """b を a に重ねるずれ（画素、(行, 列)）。中央の切り出しの輝度の位相相関の山を放物線で詰める"""
+    crop_h, crop_w = MOTION_ALIGN_CROP
+    h, w = a.shape
+    top, left = (h - crop_h) // 2, (w - crop_w) // 2
+    window = np.outer(np.hanning(crop_h), np.hanning(crop_w))
+    pa = a[top:top + crop_h, left:left + crop_w]
+    pb = b[top:top + crop_h, left:left + crop_w]
+    fa = np.fft.fft2((pa - pa.mean()) * window)
+    fb = np.fft.fft2((pb - pb.mean()) * window)
+    cross = fb * np.conj(fa)
+    cross /= np.maximum(np.abs(cross), 1e-12)
+    corr = np.real(np.fft.ifft2(cross))
+    py, px = np.unravel_index(int(np.argmax(corr)), corr.shape)
+
+    def refine(c_minus, c_zero, c_plus):
+        denom = c_minus - 2.0 * c_zero + c_plus
+        return 0.0 if abs(denom) < 1e-12 else 0.5 * (c_minus - c_plus) / denom
+
+    dy = py + refine(corr[(py - 1) % crop_h, px], corr[py, px], corr[(py + 1) % crop_h, px])
+    dx = px + refine(corr[py, (px - 1) % crop_w], corr[py, px], corr[py, (px + 1) % crop_w])
+    if dy > crop_h / 2:
+        dy -= crop_h
+    if dx > crop_w / 2:
+        dx -= crop_w
+    return float(dy), float(dx)
+
+
+def motion_script_check(group_dir, size, require_resident):
+    """台本の撮影のログ（段取りの順・エポックからのフレーム数・向き・撮った時点の常駐）と PNG を確かめる。(失敗の一覧, 記録)"""
+    failures = []
+    log_name = view_game_log(group_dir, MOTION_VIEW)
+    path = os.path.join(group_dir, log_name) if log_name else ""
+    if not log_name or not os.path.isfile(path):
+        return [f"Game のログが無い: {log_name or '（metrics.json に game_log が無い）'}"], {}
+    home = None
+    loaded = done = False
+    script_failures = []
+    last_epoch = None
+    last_pages = None
+    capacity_window = []
+    requests, saved, waits = {}, {}, []
+    final_pages = None
+    in_window = False
+    with open(path, encoding="utf-8", errors="replace") as f:
+        for line in f:
+            found = MOTION_START_YAW_RE.search(line)
+            if found and home is None:
+                home = (float(found.group(1)), float(found.group(2)))
+            if "CAMERA_SCRIPT_LOADED " in line:
+                loaded = True
+            if "CAMERA_SCRIPT_DONE " in line:
+                done = True
+            if re.search(r"CAMERA_SCRIPT_(?:CAPTURE (?:failed|unavailable)|INVALID)", line):
+                script_failures.append(line.strip()[-200:])
+            found = MOTION_WAIT_RE.search(line)
+            if found:
+                waits.append({"state": found.group(1), "waited": int(found.group(2))})
+            found = BLUR_PAGES_RE.search(line)
+            if found:
+                values = [int(v) for v in found.groups()]
+                last_pages = {"resident": values[0], "uploading": values[1], "ready": values[2], "reading": values[3],
+                              "wanted": values[4], "evicted": values[5]}
+            found = BLUR_CAPACITY_RE.search(line)
+            if found and in_window:
+                capacity_window.append((int(found.group(1)), int(found.group(2))))
+            found = MOTION_EPOCH_RE.search(line)
+            if found:
+                last_epoch = int(found.group(1))
+            found = MOTION_REQUEST_RE.search(line)
+            if found:
+                in_window = True
+                tag, frame = found.group(1), int(found.group(2))
+                if tag in requests:
+                    failures.append(f"{tag}: 撮影の要求が 2 回ある")
+                requests[tag] = {"engine_frame": frame, "epoch_offset": None if last_epoch is None else frame - last_epoch,
+                                 "position": found.group(3), "yaw": float(found.group(4)),
+                                 "pitch": float(found.group(5))}
+            found = MOTION_SAVED_RE.search(line)
+            if found:
+                saved[found.group(1)] = {"frame": int(found.group(2)), "requested_engine_frame": int(found.group(3)),
+                                         "pages": dict(last_pages or {})}
+            if re.search(rf"CAPTURE_VIEWS view={re.escape(MOTION_VIEW)} saved ", line):
+                final_pages = dict(last_pages or {})
+                in_window = False
+    if not loaded:
+        failures.append("台本を読み込んだ印（CAMERA_SCRIPT_LOADED）が無い")
+    if not done:
+        failures.append("台本を流し終えた印（CAMERA_SCRIPT_DONE）が無い")
+    if script_failures:
+        failures.append(f"台本の段取りの失敗の印がある: {script_failures}")
+    if home is None:
+        failures.append("基準の視点の向き（FREE_CAMERA_POSE phase=start）が無い")
+    # エポックから撮るまでのフレーム数と、撮れたパケットの番号の対応（要求のフレームとの差が全部の撮影で同じ）
+    frame_lags = set()
+    for tag, offset in MOTION_TAG_OFFSETS.items():
+        request = requests.get(tag)
+        if request is None:
+            failures.append(f"{tag}: 撮影の要求の行が無い")
+            continue
+        if request["epoch_offset"] != offset:
+            failures.append(f"{tag}: エポックから {request['epoch_offset']} フレーム後に撮った（約束 {offset}）")
+        if tag not in saved:
+            failures.append(f"{tag}: 撮影の保存の行が無い")
+        else:
+            if saved[tag]["requested_engine_frame"] != request["engine_frame"]:
+                failures.append(f"{tag}: 保存の行の要求のフレームが要求の行と違う")
+            frame_lags.add(saved[tag]["frame"] - request["engine_frame"])
+        png = motion_png(group_dir, tag)
+        if not os.path.isfile(png):
+            failures.append(f"{os.path.basename(png)} が無い")
+        elif Image.open(png).size != size:
+            failures.append(f"{os.path.basename(png)} の大きさ {Image.open(png).size} が {size} でない")
+    if len(frame_lags) > 1:
+        failures.append(f"撮れたパケットの番号と要求のフレームの差が撮影ごとに違う（{sorted(frame_lags)}。フレームが飛んだ）")
+    # 向き: 振りと静止の同じフレーム数の撮影は同じ向き（同じ足し算の列）で、基準の向きに MOTION_YAW_TOLERANCE 以内。
+    # motion-30-pre は motion-30 より MOTION_PRE_FRAMES フレーム分だけ手前の向き
+    if home is not None:
+        for k in MOTION_OFFSETS:
+            motion, still = requests.get(f"motion-{k}"), requests.get(f"static-{k}")
+            if motion is None or still is None:
+                continue
+            if motion["yaw"] != still["yaw"] or motion["pitch"] != still["pitch"]:
+                failures.append(f"motion-{k} と static-{k} の向きが違う（{motion['yaw']} / {still['yaw']}）")
+            if abs(motion["yaw"] - home[0]) > MOTION_YAW_TOLERANCE or abs(motion["pitch"] - home[1]) > MOTION_YAW_TOLERANCE:
+                failures.append(f"motion-{k} の向き {motion['yaw']} が基準の視点 {home[0]} から外れている")
+        pre, last = requests.get(MOTION_PRE_TAG), requests.get("motion-30")
+        if pre is not None and last is not None:
+            expected = -MOTION_PRE_FRAMES * MOTION_YAW_PER_FRAME
+            if abs((pre["yaw"] - last["yaw"]) - expected) > MOTION_PRE_YAW_TOLERANCE:
+                failures.append(f"{MOTION_PRE_TAG} と motion-30 の向きの差 {pre['yaw'] - last['yaw']:.6f}° が "
+                                f"{expected:.3f}° でない（カメラが約束の速さで動いていない）")
+    # 撮った時点の常駐: 進行中のページが 0 で、最初の撮影から --capture-views の撮影まで追い出しが無い。描画の溢れが無い
+    evicted_values = set()
+    for tag, record in saved.items():
+        pages = record["pages"]
+        in_flight = {k: pages.get(k) for k in ("wanted", "reading", "ready", "uploading")}
+        record["resident_complete"] = bool(pages) and not any(in_flight.values())
+        evicted_values.add(pages.get("evicted"))
+        if require_resident and not record["resident_complete"]:
+            failures.append(f"{tag}: 撮った時点でジオメトリのページが常駐しきっていない（{in_flight}）")
+    if final_pages is not None:
+        evicted_values.add(final_pages.get("evicted"))
+    if require_resident and len(evicted_values) != 1:
+        failures.append(f"最初の撮影から --capture-views の撮影までに追い出しがある（追い出しの数 {sorted(evicted_values, key=str)}）")
+    if require_resident and any(w["state"] != "ready" for w in waits):
+        failures.append(f"台本の wait-ready が落ち着かずに進んだ（{waits}）")
+    if not capacity_window:
+        failures.append("最初の撮影から --capture-views の撮影までに MEGA_CAPACITY の行が無い（描画の溢れを確かめられない）")
+    elif any(any(values) for values in capacity_window):
+        failures.append(f"撮影の間に描かれないクラスタがある（{[v for v in capacity_window if any(v)][:4]}）")
+    return failures, {"home_yaw_pitch": home, "requests": requests, "saved": saved, "wait_ready": waits,
+                      "frame_lags": sorted(frame_lags), "evicted_values": sorted(evicted_values, key=str),
+                      "final_pages": final_pages, "capacity_lines": len(capacity_window)}
+
+
+def run_blur_motion(capture_dir, verify):
+    started = time.time()
+    failures = []
+    group_records = {}
+    input_hashes = set()
+    exe_hashes = set()
+    inputs_all_current = True
+    for group in MOTION_GROUPS:
+        name = group["name"]
+        group_dir = os.path.normpath(os.path.join(capture_dir, group["dir"]))
+        if not os.path.isdir(group_dir) or not os.path.isfile(os.path.join(group_dir, "metrics.json")):
+            failures.append(f"{name}: 撮影の組が無い（{group_dir}）")
+            inputs_all_current = False
+            continue
+        inputs_ok, input_failures, record = check_inputs(group_dir)
+        inputs_all_current = inputs_all_current and inputs_ok
+        if verify and not inputs_ok:
+            failures.extend(f"{name}: {failure}" for failure in input_failures)
+        if record is not None:
+            input_hashes.add(record.get("files_sha256"))
+            if record.get("game_exe_sha256"):
+                exe_hashes.add(record["game_exe_sha256"])
+            else:
+                failures.append(f"{name}: inputs.json に撮影に使った Game.exe のハッシュが無い（--record-inputs --game-exe）")
+        group_failures, info = blur_case_check(group_dir, tuple(group["args"]), tuple(group["logs"]), group["size"],
+                                               group["resident"], views=(MOTION_VIEW,))
+        args = plate_capture_args(group_dir) or []
+        if MOTION_SCRIPT_ARG not in args:
+            group_failures.append(f"カメラの台本の起動引数（{MOTION_SCRIPT_ARG}）が無い")
+        script_failures, script_info = motion_script_check(group_dir, group["size"], group["resident"])
+        failures.extend(f"{name}: {failure}" for failure in group_failures + script_failures)
+        group_records[name] = {"inputs_current": inputs_ok, "game_exe_sha256": (record or {}).get("game_exe_sha256"),
+                               **info, "script": script_info}
+    if len(input_hashes) > 1:
+        failures.append(f"組ごとの入力のハッシュが揃っていない（{len(input_hashes)} 通り。同じコードで撮った組だけを比べる）")
+    if len(exe_hashes) > 1:
+        failures.append(f"組ごとの Game.exe のハッシュが揃っていない（{len(exe_hashes)} 通り。同じビルドで撮った組だけを比べる）")
+
+    reference_dir = os.path.join(capture_dir, MOTION_REFERENCE)
+    tags = [f"static-{k}" for k in MOTION_OFFSETS] + [MOTION_FINAL] + [f"motion-{k}" for k in MOTION_OFFSETS]
+    entry = {"view": MOTION_VIEW}
+    results = {}
+    alignment = {}
+    effects = []
+    needed = [os.path.join(reference_dir, f"{MOTION_VIEW}.{suffix}") for suffix in ("png", "aov.depth.pfm", "aov.normal.pfm")]
+    if not all(os.path.isfile(p) for p in needed) or any(f.startswith(MOTION_REFERENCE + ":") for f in failures):
+        failures.append(f"{MOTION_VIEW}: 正解の撮影（PNG・深度・法線・台本の撮影）が揃っていないので比べない")
+    else:
+        far_masks, cliff_masks, region = blur_regions(reference_dir, MOTION_VIEW)
+        entry["region"] = region
+        if min(region["far_px_per_band"]) < BLUR_MIN_REGION_PX:
+            failures.append(f"{MOTION_VIEW}: 遠景の範囲の画素が {min(region['far_px_per_band'])} で {BLUR_MIN_REGION_PX} に足りない")
+        use_cliff = min(region["cliff_px_per_band"]) > 0
+        reference_displays = {tag: blur_load_display(motion_png(reference_dir, tag), BLUR_REFERENCE_SCALE) for tag in tags}
+        reference_bands = {tag: blur_bands(display @ LUMA) for tag, display in reference_displays.items()}
+        # 測り方の較正（SCN-WLR-FAR-BLUR-STATIC と同じ。止めて 60 フレーム後の正解で）
+        final_luma = reference_displays[MOTION_FINAL] @ LUMA
+        blurred_bands = blur_bands(blur_gaussian(final_luma, BLUR_CALIB_BLUR_SIGMA))
+        noise_rms = float(np.sqrt(np.mean(reference_bands[MOTION_FINAL][0][far_masks[0]] ** 2)))
+        rng = np.random.default_rng(BLUR_CALIB_SEED)
+        noisy_bands = blur_bands(final_luma + rng.normal(0.0, noise_rms, final_luma.shape))
+        blur_row = blur_compare(reference_bands[MOTION_FINAL], blurred_bands, far_masks)
+        noise_row = blur_compare(reference_bands[MOTION_FINAL], noisy_bands, far_masks)
+        entry["calibration"] = {"blur": blur_row, "noise": noise_row, "noise_rms": noise_rms}
+        if blur_row is None or noise_row is None:
+            failures.append(f"{MOTION_VIEW}: 較正を求められない（正解の帯域が空）")
+        else:
+            if blur_row["bands"][0]["detail_loss"] < BLUR_CALIB_BLUR_MIN_LOSS or \
+                    blur_row["fine_alias"] > BLUR_CALIB_BLUR_MAX_ALIAS:
+                failures.append(f"{MOTION_VIEW}: 較正（ぼかし）が細部の欠けに数えられない")
+            if abs(noise_row["bands"][0]["detail_kept"] - 1.0) > BLUR_CALIB_NOISE_GAIN or \
+                    noise_row["bands"][0]["alias"] < BLUR_CALIB_NOISE_MIN_ALIAS:
+                failures.append(f"{MOTION_VIEW}: 較正（雑音）がエイリアスに数えられない")
+        displays = {f"ref2x {MOTION_FINAL}": reference_displays[MOTION_FINAL]}
+        # 撮った画のずれ（振りと静止の同じ名前どうし・motion-30-pre → motion-30）。正解は 2×2 を縮めた画で比べる
+        half_fov = np.radians(MOTION_VERTICAL_FOV_DEG) / 2.0
+        focal_px = (BLUR_SIZE[1] / 2.0) / np.tan(half_fov)
+        home_pitch = ((group_records.get("fxaa") or {}).get("script") or {}).get("home_yaw_pitch") or (0.0, 0.0)
+        expected_shift = focal_px * np.tan(np.radians(MOTION_PRE_FRAMES * MOTION_YAW_PER_FRAME)) * \
+            np.cos(np.radians(home_pitch[1]))
+        for group in MOTION_GROUPS:
+            name = group["name"]
+            group_dir = os.path.normpath(os.path.join(capture_dir, group["dir"]))
+            scale = BLUR_REFERENCE_SCALE if name == MOTION_REFERENCE else 1
+            lumas = {}
+            for tag in tags + [MOTION_PRE_TAG]:
+                png = motion_png(group_dir, tag)
+                if os.path.isfile(png):
+                    lumas[tag] = blur_load_display(png, scale) @ LUMA
+            shifts = {}
+            for k in MOTION_OFFSETS:
+                a, b = lumas.get(f"static-{k}"), lumas.get(f"motion-{k}")
+                if a is None or b is None:
+                    continue
+                dy, dx = motion_phase_shift(a, b)
+                shifts[f"motion-{k}"] = [dy, dx]
+                if np.hypot(dy, dx) >= MOTION_ALIGN_MAX_PX:
+                    failures.append(f"{name}: motion-{k} が static-{k} から ({dy:.2f}, {dx:.2f}) 画素ずれている"
+                                    f"（同じ向きで撮れていない）")
+            if MOTION_PRE_TAG in lumas and "motion-30" in lumas:
+                dy, dx = motion_phase_shift(lumas[MOTION_PRE_TAG], lumas["motion-30"])
+                shifts[MOTION_PRE_TAG] = [dy, dx]
+                if abs(abs(dx) - expected_shift) > MOTION_SHIFT_TOLERANCE_PX or abs(dy) > MOTION_SHIFT_TOLERANCE_PX:
+                    failures.append(f"{name}: {MOTION_PRE_TAG} → motion-30 の画のずれ ({dy:.2f}, {dx:.2f}) が、"
+                                    f"振りの角から求めた横 {expected_shift:.2f} 画素と合わない")
+            alignment[name] = shifts
+            if name not in MOTION_AA_GROUPS:
+                continue
+            group_results = {}
+            for tag in tags:
+                png = motion_png(group_dir, tag)
+                if not os.path.isfile(png) or Image.open(png).size != BLUR_SIZE:
+                    continue
+                display = blur_load_display(png, 1)
+                if tag in ("static-30", "motion-30", MOTION_FINAL, "motion-8", "motion-0"):
+                    displays[f"{name} {tag}"] = display
+                bands = blur_bands(display @ LUMA)
+                far_result = blur_compare(reference_bands[tag], bands, far_masks)
+                cliff_result = blur_compare(reference_bands[tag], bands, cliff_masks) if use_cliff else None
+                if far_result is None:
+                    failures.append(f"{name}: {tag} を比べられない")
+                    continue
+                values = [far_result["fine_detail_loss"], far_result["fine_alias"]]
+                if cliff_result is not None:
+                    values += [cliff_result["fine_detail_loss"], cliff_result["fine_alias"]]
+                if not all(np.isfinite(values)):
+                    failures.append(f"{name}: {tag} の値に NaN・Inf がある")
+                group_results[tag] = {"far": far_result, "cliff": cliff_result}
+                print(f"REFERENCE_CHECK blur_motion group={name} tag={tag} "
+                      f"far_loss={far_result['fine_detail_loss']:.3f} far_alias={far_result['fine_alias']:.3f} "
+                      + (f"cliff_loss={cliff_result['fine_detail_loss']:.3f} "
+                         f"cliff_alias={cliff_result['fine_alias']:.3f} " if cliff_result else "")
+                      + "kept_by_band=" + ",".join(f"{row['detail_kept']:.2f}" for row in far_result["bands"]))
+            missing = [tag for tag in tags if tag not in group_results]
+            if missing:
+                failures.append(f"{name}: 比べられなかった撮影がある: {missing}")
+            results[name] = group_results
+            # 静止との差（同じエポックからのフレーム数どうし。motion-30 は止めて貯まりきった static-60 とも比べる）
+            for key in ("far", "cliff"):
+                pairs = [(f"motion-{k}", f"static-{k}") for k in MOTION_OFFSETS] + [("motion-30", MOTION_FINAL)]
+                for motion_tag, static_tag in pairs:
+                    m, s = group_results.get(motion_tag), group_results.get(static_tag)
+                    if m is None or s is None or m[key] is None or s[key] is None:
+                        continue
+                    effects.append({"group": name, "region": key, "motion": motion_tag, "static": static_tag,
+                                    "detail_loss_delta": m[key]["fine_detail_loss"] - s[key]["fine_detail_loss"],
+                                    "alias_delta": m[key]["fine_alias"] - s[key]["fine_alias"]})
+        cy, cx = np.argwhere(cliff_masks[0] if use_cliff else far_masks[0]).mean(axis=0)
+        crops_path = os.path.join(capture_dir, f"blur_motion_{MOTION_VIEW}.png")
+        order = [f"ref2x {MOTION_FINAL}", f"fxaa {MOTION_FINAL}", "fxaa motion-30", f"taa {MOTION_FINAL}",
+                 "taa static-30", "taa motion-30", "taa motion-0", "taa motion-8", "base motion-30"]
+        entry["crops"] = blur_write_crops(crops_path, [(n, displays[n]) for n in order if n in displays], (cy, cx))
+        entry["crops_png"] = crops_path
+        if blur_row is not None and noise_row is not None:
+            print(f"REFERENCE_CHECK blur_motion calibration blur_loss0={blur_row['bands'][0]['detail_loss']:.3f} "
+                  f"blur_alias={blur_row['fine_alias']:.3f} noise_kept0={noise_row['bands'][0]['detail_kept']:.3f} "
+                  f"noise_alias0={noise_row['bands'][0]['alias']:.3f} far_px={region['far_px']} cliff_px={region['cliff_px']}")
+        entry["expected_pre_shift_px"] = float(expected_shift)
+    # 履歴による細部の消失: TAA の（振り − 静止）から、履歴を持たない FXAA の（振り − 静止）を引いた差
+    history = []
+    for key in ("far", "cliff"):
+        for k in MOTION_OFFSETS:
+            def find(group):
+                for effect in effects:
+                    if effect["group"] == group and effect["region"] == key and effect["motion"] == f"motion-{k}" \
+                            and effect["static"] == f"static-{k}":
+                        return effect
+                return None
+            taa, fxaa = find("taa"), find("fxaa")
+            if taa and fxaa:
+                history.append({"region": key, "offset": k,
+                                "detail_loss": taa["detail_loss_delta"] - fxaa["detail_loss_delta"],
+                                "alias": taa["alias_delta"] - fxaa["alias_delta"]})
+    report = {"mode": "blur_motion", "verify": bool(verify), "inputs_current": inputs_all_current,
+              "criteria": {"view": MOTION_VIEW, "script": MOTION_SCRIPT_ARG, "tag_offsets": MOTION_TAG_OFFSETS,
+                           "yaw_per_frame": MOTION_YAW_PER_FRAME, "far_min_m": BLUR_FAR_MIN_M,
+                           "cliff_normal_y": BLUR_CLIFF_NORMAL_Y, "sigmas": list(BLUR_SIGMAS),
+                           "fine_bands": list(BLUR_FINE_BANDS), "align_max_px": MOTION_ALIGN_MAX_PX,
+                           "shift_tolerance_px": MOTION_SHIFT_TOLERANCE_PX},
+              "groups": group_records, "view": entry, "results": results, "alignment": alignment,
+              "effects": effects, "history_effect": history, "failures": failures, "seconds": time.time() - started}
+    report_path = os.path.join(capture_dir, "blur_motion_check.json")
+    with open(report_path, "w", encoding="utf-8") as f:
+        json.dump(report, f, indent=2, ensure_ascii=False)
+    for name, shifts in alignment.items():
+        print(f"REFERENCE_CHECK blur_motion align group={name} "
+              + " ".join(f"{tag}=({v[0]:+.2f},{v[1]:+.2f})" for tag, v in shifts.items()))
+    for effect in effects:
+        print(f"REFERENCE_CHECK blur_motion effect group={effect['group']} region={effect['region']} "
+              f"{effect['motion']}-{effect['static']} detail_loss_delta={effect['detail_loss_delta']:+.3f} "
+              f"alias_delta={effect['alias_delta']:+.3f}")
+    for row in history:
+        print(f"REFERENCE_CHECK blur_motion history region={row['region']} offset={row['offset']} "
+              f"detail_loss={row['detail_loss']:+.3f} alias={row['alias']:+.3f}")
+    for failure in failures:
+        print(f"REFERENCE_CHECK failure: {failure}")
+    status = "pass" if not failures else "fail"
+    print(f"REFERENCE_CHECK result={status} mode=blur_motion view={MOTION_VIEW} groups={len(MOTION_GROUPS)} "
+          f"inputs_current={int(inputs_all_current)} report={report_path}")
+    return 0 if not failures else 1
+
 
 def main():
     # 結果の行を保存して読むので、端末の符号に関わらず UTF-8 で書く
@@ -3088,6 +3508,8 @@ def main():
                         help="空と霞の書き出しを、AtmosphereReference.py の独立な正解と比べた表を作る")
     parser.add_argument("--blur-static", action="store_true",
                         help="遠景のぼけを、2 倍の解像度の正解と条件ごとの撮影の帯域ごとの差で切り分けた表を作る")
+    parser.add_argument("--blur-motion", action="store_true",
+                        help="遠景のぼけを、カメラを振りながら撮った画と止めて撮った画で、TAA の履歴による細部の消失に切り分けた表を作る")
     parser.add_argument("--views", default="", help="検査する視点（カンマ区切り。省くと metrics.json の全視点）")
     parser.add_argument("--verify", action="store_true", help="入力のハッシュを今のファイルと照らし、古い結果を拒否する")
     args = parser.parse_args()
@@ -3122,8 +3544,10 @@ def main():
         return run_atmos_ref(capture_dir, views, args.verify)
     if args.blur_static:
         return run_blur_static(capture_dir, args.verify)
+    if args.blur_motion:
+        return run_blur_motion(capture_dir, args.verify)
     print("REFERENCE_CHECK result=fail reason=no_mode（--record-inputs か --hdr か --display か --plate か --aov か "
-          "--projection か --atmos-dump か --atmos-ref か --blur-static を指定する）")
+          "--projection か --atmos-dump か --atmos-ref か --blur-static か --blur-motion を指定する）")
     return 1
 
 

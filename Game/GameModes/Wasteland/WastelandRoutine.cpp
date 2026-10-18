@@ -1390,6 +1390,7 @@ namespace Game::GameModes
         }
 
         data.m_Rig.ConfigurePath(scene->CameraPath, data.m_CameraPathTime, data.m_bCameraPathPlay);
+        data.m_Rig.SetScriptCapture(data.m_pScriptCapture);
         if (!data.m_Rig.Enter(ctx, pose, data.m_CameraScriptPath.c_str()))
         {
             LOG_ERROR("wasteland: カメラを作れませんでした");

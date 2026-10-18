@@ -179,6 +179,24 @@ namespace Game::Input
             return true;
         }
 
+        /// 撮影の名前（英数字と - _ の 1〜32 文字。ファイル名の一部になる）
+        bool IsCaptureTag(const Token &value)
+        {
+            if (value.Length == 0 || value.Length > 32)
+            {
+                return false;
+            }
+            for (std::size_t index = 0; index < value.Length; ++index)
+            {
+                const char c = value.Begin[index];
+                if (!std::isalnum(static_cast<unsigned char>(c)) && c != '-' && c != '_')
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
         /// 1行を読む。コメントだけ・空の行は bHasStep を false にして成功とする
         bool ParseLine(const char *begin, const char *limit, CameraScriptStep &outStep, bool &bHasStep, String &outReason)
         {
@@ -291,6 +309,26 @@ namespace Game::Input
                     bOk = ParseFloats(value, numbers, 1) && numbers[0] >= 0.0f && numbers[0] <= 1.0f;
                     outStep.RightTrigger = numbers[0];
                 }
+                else if (TokenEquals(token, "home"))
+                {
+                    outStep.bHome = true;
+                }
+                else if (TokenEquals(token, "epoch"))
+                {
+                    outStep.bEpoch = true;
+                }
+                else if (TokenEquals(token, "wait-ready"))
+                {
+                    outStep.bWaitReady = true;
+                }
+                else if (TokenHasPrefix(token, "capture", value))
+                {
+                    bOk = IsCaptureTag(value);
+                    if (bOk)
+                    {
+                        outStep.CaptureTag = TokenToString(value);
+                    }
+                }
                 else
                 {
                     outReason = String("知らない項目です: ") + TokenToString(token);
@@ -390,14 +428,41 @@ namespace Game::Input
         return total;
     }
 
+    bool CameraScript::HasCaptureDirectives() const
+    {
+        for (std::size_t index = 0; index < m_Steps.size(); ++index)
+        {
+            const CameraScriptStep &step = m_Steps[index];
+            if (step.bHome || step.bEpoch || step.bWaitReady || !step.CaptureTag.empty())
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
     bool CameraScript::NextFrame(NorvesLib::Core::Input::InputState &out)
     {
+        CameraScriptFrameEvents events;
+        return NextFrame(out, events);
+    }
+
+    bool CameraScript::NextFrame(NorvesLib::Core::Input::InputState &out, CameraScriptFrameEvents &outEvents)
+    {
         using namespace NorvesLib::Core::Input;
+        outEvents = CameraScriptFrameEvents{};
         if (IsFinished())
         {
             return false;
         }
         const CameraScriptStep &step = m_Steps[m_StepIndex];
+        // 段取りは行の最初のフレーム（home・epoch）と最後のフレーム（capture・wait-ready）で 1 回だけ働く
+        const bool bFirstFrame = m_FrameInStep == 0;
+        const bool bLastFrame = m_FrameInStep + 1 >= step.Frames;
+        outEvents.bHome = bFirstFrame && step.bHome;
+        outEvents.bEpoch = bFirstFrame && step.bEpoch;
+        outEvents.bWaitReadyAfter = bLastFrame && step.bWaitReady;
+        outEvents.pCaptureTag = bLastFrame && !step.CaptureTag.empty() ? &step.CaptureTag : nullptr;
 
         out.SetKeyState(KeyCode::W, (step.KeyMask & kKeyW) != 0);
         out.SetKeyState(KeyCode::A, (step.KeyMask & kKeyA) != 0);

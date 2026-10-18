@@ -10,6 +10,7 @@
 #include "Bridge/BridgeRuntimeState.h"
 #include "Bridge/BridgeServerHost.h"
 #include "Bridge/NorvesLibBridgeAdapter.h"
+#include "Debug/CameraScriptCapture.h"
 #include "Debug/MultiViewCapture.h"
 #include "Debug/SequenceFrameCapture.h"
 #include "GameModes/Rendering3DTest/M9WorldAcceptance.h"
@@ -207,6 +208,8 @@ namespace Game
         Game::Debug::MultiViewCapture m_MultiViewCapture;
         /// 撮影役がシーンの GameMode へ出す、視点の切り替えの依頼の窓口（GameMode には非所有のポインタで渡す）
         Game::Scenes::SceneViewSwitch m_SceneViewSwitch;
+        /// カメラの台本の撮影の段取り（epoch・capture・wait-ready）の窓口（GameMode には非所有のポインタで渡す）
+        Game::Debug::CameraScriptCapture m_CameraScriptCapture;
         /// --capture-views=<視点,...|all> の値。空なら使わない
         NorvesLib::Core::Container::String m_CaptureViewsRequest;
         /// ResolveCaptureViews が決めた、撮る順の視点の名前（先頭が起動時の視点）

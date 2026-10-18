@@ -9,6 +9,7 @@
 #include "Core/Public/Object/Entity.h"
 #include "Core/Public/Object/World.h"
 #include "Core/Public/Rendering/RenderWorld.h"
+#include "Debug/CameraScriptCapture.h"
 #include "Scenes/SceneViewSwitch.h"
 
 
@@ -26,6 +27,8 @@ namespace Game::Scenes
     {
         // 再生中のパスの時刻をログへ出す間隔（Tick の数。60 fps で約 1 秒）
         constexpr uint32_t kPathTimeLogFrames = 60;
+        // 台本の wait-ready で、落ち着かなくても先へ進むまでの Tick の数（落ち着かなかった印をログに残す）
+        constexpr uint32_t kScriptWaitReadyTimeoutFrames = 3600;
     } // namespace
 
     void FreeCameraRig::ConfigurePath(const ScenePathDescriptor *pPath, float startTimeSeconds, bool bPlayWhenReady)
@@ -68,6 +71,9 @@ namespace Game::Scenes
         m_Collector.ResetAll();
         m_bScriptActive = false;
         m_ScriptFramesPlayed = 0;
+        m_HomePose = pose;
+        m_bScriptWaitingReady = false;
+        m_ScriptWaitedFrames = 0;
         m_bPathPlaying = false;
         m_PathTime = 0.0f;
         if (m_PathStartTime >= 0.0f)
@@ -101,6 +107,14 @@ namespace Game::Scenes
                 m_bScriptActive = true;
                 LOG_INFO_F("CAMERA_SCRIPT_LOADED path=%s steps=%zu frames=%u", scriptPath, m_Script.GetStepCount(),
                            m_Script.GetTotalFrames());
+                if (m_Script.HasCaptureDirectives() &&
+                    (m_pScriptCapture == nullptr || !m_pScriptCapture->IsConfigured()))
+                {
+                    // 段取りは無視して入力だけを流す（撮影スクリプトはこの印で失敗にする）
+                    LOG_ERROR_F("CAMERA_SCRIPT_CAPTURE unavailable path=%s 撮影の段取り（home・epoch・capture・wait-ready）は "
+                                "--capture-views で撮るシーンだけで使えます",
+                                scriptPath);
+                }
             }
             else
             {
@@ -129,18 +143,7 @@ namespace Game::Scenes
         }
         else if (m_bScriptActive)
         {
-            NorvesLib::Core::Input::InputState scripted;
-            if (m_Script.NextFrame(scripted))
-            {
-                m_Controller.Update(scripted, kScriptFrameSeconds);
-                ++m_ScriptFramesPlayed;
-            }
-            if (m_Script.IsFinished())
-            {
-                m_bScriptActive = false;
-                LogPose("end");
-                LOG_INFO_F("CAMERA_SCRIPT_DONE frames=%u", m_ScriptFramesPlayed);
-            }
+            TickScript();
             // 台本の間は実際の入力を使わない
             m_Collector.ConsumePathToggleRequest();
             m_Collector.ResetFrame();
@@ -204,6 +207,7 @@ namespace Game::Scenes
         }
         m_Collector.ResetAll();
         m_bScriptActive = false;
+        m_bScriptWaitingReady = false;
         m_bPathPlaying = false;
         m_bPlayWhenReady = false;
         // 実体は GameModeScope::Cleanup が返す
@@ -219,8 +223,65 @@ namespace Game::Scenes
         }
         m_Controller.Initialize(Math::Vector3(pose.Position[0], pose.Position[1], pose.Position[2]), pose.Yaw,
                                 pose.Pitch);
+        m_HomePose = pose;
         m_Collector.ResetAll();
         LogPose("view");
+    }
+
+    void FreeCameraRig::TickScript()
+    {
+        const bool bCaptureAvailable = m_pScriptCapture != nullptr && m_pScriptCapture->IsConfigured();
+        if (m_bScriptWaitingReady)
+        {
+            // wait-ready: 動かさずに、ストリーミングが落ち着くまで台本を止める（待ちが終わった Tick も動かさない）
+            ++m_ScriptWaitedFrames;
+            const bool bReady = bCaptureAvailable && m_pScriptCapture->IsReady();
+            if (!bReady && bCaptureAvailable && m_ScriptWaitedFrames < kScriptWaitReadyTimeoutFrames)
+            {
+                return;
+            }
+            m_bScriptWaitingReady = false;
+            LOG_INFO_F("CAMERA_SCRIPT_WAIT_READY %s waited=%u", bReady ? "ready" : "timeout", m_ScriptWaitedFrames);
+        }
+        else
+        {
+            NorvesLib::Core::Input::InputState scripted;
+            Game::Input::CameraScriptFrameEvents events;
+            if (m_Script.NextFrame(scripted, events))
+            {
+                if (events.bHome)
+                {
+                    m_Controller.SetPose(
+                        Math::Vector3(m_HomePose.Position[0], m_HomePose.Position[1], m_HomePose.Position[2]),
+                        m_HomePose.Yaw, m_HomePose.Pitch);
+                }
+                m_Controller.Update(scripted, kScriptFrameSeconds);
+                ++m_ScriptFramesPlayed;
+                // エポックと撮影は、このフレームのカメラを渡す Publish の前に頼む（どちらもこのフレームのパケットに効く）
+                if (events.bEpoch && bCaptureAvailable)
+                {
+                    m_pScriptCapture->BeginEpoch();
+                }
+                if (events.pCaptureTag != nullptr && bCaptureAvailable)
+                {
+                    const Math::Vector3 position = m_Controller.GetPosition();
+                    const float positionValues[3] = {position.x, position.y, position.z};
+                    m_pScriptCapture->RequestCapture(*events.pCaptureTag, positionValues, m_Controller.GetYaw(),
+                                                     m_Controller.GetPitch());
+                }
+                if (events.bWaitReadyAfter)
+                {
+                    m_bScriptWaitingReady = true;
+                    m_ScriptWaitedFrames = 0;
+                }
+            }
+        }
+        if (m_Script.IsFinished() && !m_bScriptWaitingReady)
+        {
+            m_bScriptActive = false;
+            LogPose("end");
+            LOG_INFO_F("CAMERA_SCRIPT_DONE frames=%u", m_ScriptFramesPlayed);
+        }
     }
 
     void FreeCameraRig::ApplyRequestedView(SceneViewSwitch *pViewSwitch, const SceneDescriptor &scene)
