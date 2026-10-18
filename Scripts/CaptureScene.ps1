@@ -669,7 +669,11 @@ function Invoke-GameBuild([string]$RepoRoot, [string]$Config, [string]$LogPath)
     $errorLogPath = "$LogPath.err"
     Remove-Item -LiteralPath $LogPath, $errorLogPath -Force -ErrorAction SilentlyContinue
     $buildProcess = Start-Process -FilePath 'cmake.exe' -ArgumentList @('--build', "`"$buildDirectory`"", '--config', $Config, '--target', 'Game', '--', '/m:1') `
-        -WorkingDirectory $RepoRoot -NoNewWindow -Wait -PassThru -RedirectStandardOutput $LogPath -RedirectStandardError $errorLogPath
+        -WorkingDirectory $RepoRoot -NoNewWindow -PassThru -RedirectStandardOutput $LogPath -RedirectStandardError $errorLogPath
+    # -Wait は子孫まで待ち、ビルド後に残る vctip.exe で止まるので cmake 本体の終了だけを待つ。
+    # Handle を先に取らないと終了後に ExitCode が空になる。
+    $null = $buildProcess.Handle
+    $buildProcess.WaitForExit()
     if ($buildProcess.ExitCode -ne 0)
     {
         $tail = @(Get-Content -LiteralPath $LogPath -Tail 8 -ErrorAction SilentlyContinue) -join ' | '
