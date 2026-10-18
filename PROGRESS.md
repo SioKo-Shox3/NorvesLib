@@ -5189,3 +5189,18 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 反復 3 の最初の試しで 10 秒後に Game が残って見えた件は、今回の 4 回では再現していない（当時の版は Game の起動の後に Job へ入れていたので、その間の時間の影響か測り方かは確かめていない）
   - Job の中の powershell が普通に終わったときも、Job に残ったプロセスはカーネルが止める。撮影の後に起動を残す使い方はスクリプトに無い
 - Next: TASKS.md の次の未完の項目。
+
+### SCN-WLR-ATMOS-REF 完了（2026-10-18、run 20261018-205227 の反復 6）
+- Done: エンジンのコードを写さず Hillaire 2020 の定義から空と霞の正解を数値積分する `Scripts/Terrain/AtmosphereReference.py` と、SCN-WLR-ATMOS-DUMP の書き出しと比べる `ReferenceCheck.py --atmos-ref` を足した。記録は `Docs/RenderingValidation/WastelandAtmosphereReference.md`
+  - 多重散乱は論文の近似（A）と散乱の回数で足す版（B。1 回目は本当の位相関数、g = 0.8 の前方の山は方位の区画の中で位相関数を 16 に分けて平均）の両方。段 2（歩数・方向・表をすべて倍）と段 1 の差が論文の設定・荒野の設定とも 0.25 % 以内
+  - 比べたもの: 空の 45 方向の輝度（設定を 1 つずつ論文へ戻した正解も）、地表の太陽と空の照度、距離 0.3〜30 km の透過率と散乱光（同じ媒質の正解と空の大気そのままの正解）、高さフォグと空気遠近の光学的深さと散乱光の内訳、多重散乱の表、写真 ground_02 の空の色度。差を「モデル」「設定」「条件」に分けた
+- 証拠（`.harness/runs/20261018-205227/`）:
+  - `verify-SCN-WLR-ATMOS-REF-1.txt`: `AtmosphereReference.py --verify` result=pass。段 1 と段 2 の差の最大 論文 0.14 %（Ψ B）・荒野 0.25 %（空の輝度 B）、鉛直の光学的深さの解析解との差 1.2e-4・3.1e-4、B の回数の和と直接解いた値の差 2.5e-7 以下、EXIT=0
+  - `verify-SCN-WLR-ATMOS-REF-2.txt`: `--atmos-ref --verify` result=pass。inputs_current=1、地表の太陽の透過率（同じ式）3.0e-4、同じ媒質の高さフォグの透過率 7.7e-7・空気遠近の透過率 6.4e-3、EXIT=0
+  - 主な差（値は変えていない）: 空はエンジン ÷ A 0.98〜1.00・÷ B 0.82〜1.00（論文の近似の分）。霞の透過率は空の大気の Mie の 0.27〜0.59 倍しか持たず、光学的深さの二重は無い。霧の「空の LUT の色 × 不透明度」が太陽の側で正解の多重散乱の 2.2 倍（太陽の前方の散乱を二重に数える）。空気遠近の散乱光は正解の 0.56〜0.90 倍。写真の空は荒野の設定より青く、論文の設定（Mie の係数 1/25）の側へ寄る
+- Notes:
+  - エンジンは空の観測点 100 m・地表の太陽の透過率 0 m・空気遠近の起点 1474 m と高度を 3 つ使っている（記録の表に影響の大きさ）
+  - 段 2 の正解は 1 組 3 分ほど。`--atmos-ref` は段 1（段 2 と 0.25 % 以内）で 30 秒
+  - 前の反復の未追跡のファイルのうち `Docs/RenderingValidation/WastelandAtmosphereDump.md` は paths の内側なのでこのコミットに入れた。`Assets/Shaders/Common/VolumetricsCommon.glsl`・`Assets/Shaders/volumetrics_probe.frag` は paths の外なので未追跡のまま（`volumetrics.frag` は前者を include する）
+  - 新しい試験は足していない（verify の 2 つが確かめる）
+- Next: TASKS.md の次の未完の項目。

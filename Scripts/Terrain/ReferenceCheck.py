@@ -124,6 +124,15 @@
 #             地表の透過率が透過率の表を引いた値に ATMOS_SUN_TABLE_TOLERANCE で合う、空の照度が正。
 #       撮影の起動引数に --atmosphere-dump があり、Game のログに書き出しのパス（ATMOSPHERE_DUMP）と保存の行がある。
 #
+#   python Scripts/Terrain/ReferenceCheck.py --atmos-ref --capture <出力先> [--views a,b,...] [--verify]
+#       --atmos-dump の書き出し（省くと ref_ground_02）を、AtmosphereReference.py の独立な正解（Hillaire 2020 の定義から数値積分。
+#       多重散乱は論文の近似 A と回数で足す B）と比べ、<出力先>/atmos_ref_check.json に書く。比べるもの: 空の方向別の輝度（設定を
+#       1 つずつ論文へ戻した正解も）、地表の太陽と空の照度、地表への視線と水平の視線の距離別の透過率と散乱光（エンジンと同じ媒質の
+#       正解と、空の大気そのままの正解）、高さフォグと空気遠近の光学的深さと散乱光の内訳、多重散乱の表、写真 ground_02 の空の色度。
+#       合否: 入力のハッシュが今のファイルと合う（--verify）、AtmosphereReference.py --verify の結果が合格で同じ設定、同じ式で求まる値
+#       （地表の太陽の透過率、同じ媒質の高さフォグと空気遠近の透過率）が正解と ATMOS_REF_SAME_MODEL_TOLERANCE で合う。
+#       散乱光と空の輝度の差は記録するだけ（値は変えない）。
+#
 # 終了コード: すべて合格なら 0、どれかが不合格なら 1。
 import argparse
 import hashlib
@@ -131,11 +140,13 @@ import json
 import os
 import subprocess
 import sys
+import time
 
 import numpy as np
 from PIL import Image
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import AtmosphereReference as AR  # noqa: E402
 import DisplayTransform as DT  # noqa: E402
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -291,6 +302,27 @@ ATMOS_COMPOSITE_TOLERANCE = 1e-4
 ATMOS_SUN_TABLE_TOLERANCE = 0.01
 # SkyAtmospherePass の FloatToHalfRne が LUT の値を頭打ちにする上限（半精度の最大 65504 の 0.9 倍）
 ATMOS_LUT_CLAMP = 65504.0 * 0.9
+# --atmos-ref: 独立な正解との比較（SCN-WLR-ATMOS-REF）
+ATMOS_REF_DEFAULT_VIEW = "ref_ground_02"
+# 正解の段（AtmosphereReference.py の段 1。--verify で段 2 と 0.5 % 以内）
+ATMOS_REF_LEVEL = 1
+ATMOS_REF_ELEVATIONS = (0.0, 2.0, 5.0, 10.0, 20.0, 30.0, 45.0, 60.0, 90.0)
+ATMOS_REF_OFFSETS = (0.0, 45.0, 90.0, 135.0, 180.0)
+# 霞の表に使う方向の視線の仰角（地表への視線はすべて使う）
+ATMOS_REF_HAZE_ELEVATIONS = (0.0, 2.0)
+ATMOS_REF_SEGMENT_STEPS = 512
+# 同じ媒質・同じ式の値（地表の太陽の透過率・霧と空気遠近の透過率）が正解と合う幅。空気遠近と霧のエンジンの式は平らな地面
+# なので、30 km 先で球の丸み（高さ 70 m）の分だけずれる
+ATMOS_REF_SAME_MODEL_TOLERANCE = 0.02
+# Ψ_ms を比べる範囲（荒野の空と霞の視線が通る高さと、太陽が地平線より上）
+ATMOS_REF_PSI_MAX_ALTITUDE = 10000.0
+ATMOS_REF_PSI_MIN_COSINE = 0.0
+# 写真: ReferencePhotos.py の ground_02（GPS 37.300958, -109.835461、2023-10-13 14:52 MDT = 20:52 UTC、通日 286）
+ATMOS_REF_PHOTO = os.path.join(REPO_ROOT, "Assets", "Reference", "ValleyOfTheGods", "ground_02.jpg")
+ATMOS_REF_PHOTO_TIME = (37.300958, -109.835461, 20.0 + 52.0 / 60.0, 286)
+# ref_ground_02 の yaw・pitch（SceneCatalog.h）と縦の画角（WastelandRoutine.cpp）
+ATMOS_REF_VIEW_POSE = (-32.4, 1.4, 10.5)
+ATMOS_REF_PHOTO_BANDS = 4
 
 
 def git_output(args):
@@ -2189,6 +2221,374 @@ def run_atmos_dump(capture_dir, views, verify):
     return 0 if not failures else 1
 
 
+def atmos_sky_view_lookup(sky_view, sky_view_meta, direction):
+    """sky-view の表（頭打ちの前の CPU の値）を、CPU と同じ引き方で向き direction（+Y が上）について引く"""
+    horizon = sky_view_meta["horizon_elevation_radians"]
+    elevation = np.arcsin(np.clip(direction[1], -1.0, 1.0))
+    if elevation >= horizon:
+        u = np.sqrt((elevation - horizon) / (0.5 * np.pi - horizon))
+    else:
+        u = -np.sqrt((horizon - elevation) / (0.5 * np.pi + horizon))
+    difference = abs(np.remainder(np.arctan2(direction[2], direction[0]) - sky_view_meta["sun_azimuth_radians"] + np.pi,
+                                  2.0 * np.pi) - np.pi)
+    w = np.sqrt(np.clip(difference / np.pi, 0.0, 1.0))
+    row_position = np.clip(u * 0.5 + 0.5, 0.0, 1.0) * (sky_view.shape[0] - 1)
+    return atmos_table_bilinear(sky_view, row_position, w * (sky_view.shape[1] - 1))
+
+
+def atmos_luminance(rgb):
+    return float(np.asarray(rgb, dtype=np.float64) @ AR.LUMINANCE_WEIGHTS)
+
+
+def atmos_ratio(a, b):
+    a = atmos_luminance(a) if np.ndim(a) else float(a)
+    b = atmos_luminance(b) if np.ndim(b) else float(b)
+    return a / b if abs(b) > 1e-30 else float("nan")
+
+
+def atmos_fog_settings(meta):
+    fog = meta["height_fog"]
+    return {"density_at_base_per_m": fog["density_at_base_per_m"], "base_height_m": fog["base_height_m"],
+            "height_falloff_per_m": fog["height_falloff_per_m"], "phase_anisotropy": fog["phase_anisotropy"]}
+
+
+def atmos_sun_position(latitude, longitude, utc_hours, day_of_year):
+    """写真の撮影の太陽の高度と方位（北から時計回り、度）。NOAA の簡略式（誤差 0.5° 程度）"""
+    gamma = 2.0 * np.pi / 365.0 * (day_of_year - 1 + (utc_hours - 12.0) / 24.0)
+    equation = 229.18 * (0.000075 + 0.001868 * np.cos(gamma) - 0.032077 * np.sin(gamma) -
+                         0.014615 * np.cos(2 * gamma) - 0.040849 * np.sin(2 * gamma))
+    declination = (0.006918 - 0.399912 * np.cos(gamma) + 0.070257 * np.sin(gamma) - 0.006758 * np.cos(2 * gamma) +
+                   0.000907 * np.sin(2 * gamma) - 0.002697 * np.cos(3 * gamma) + 0.00148 * np.sin(3 * gamma))
+    solar_minutes = utc_hours * 60.0 + equation + 4.0 * longitude
+    hour_angle = np.radians(solar_minutes / 4.0 - 180.0)
+    lat = np.radians(latitude)
+    sin_altitude = np.sin(lat) * np.sin(declination) + np.cos(lat) * np.cos(declination) * np.cos(hour_angle)
+    altitude = np.arcsin(sin_altitude)
+    cos_azimuth = (np.sin(declination) - np.sin(altitude) * np.sin(lat)) / (np.cos(altitude) * np.cos(lat))
+    azimuth = np.degrees(np.arccos(np.clip(cos_azimuth, -1.0, 1.0)))
+    if hour_angle > 0.0:
+        azimuth = 360.0 - azimuth
+    return float(np.degrees(altitude)), float(azimuth)
+
+
+def atmos_view_directions(width, height, rows):
+    """ref_ground_02 の視点（SceneCatalog.h の yaw・pitch、WastelandRoutine.cpp の縦の画角）の、指定した行の画素の中心の向き [rows, width, 3]"""
+    yaw, pitch, vfov = ATMOS_REF_VIEW_POSE
+    azimuth = np.radians(yaw + 180.0)
+    p = np.radians(pitch)
+    forward = np.array([np.sin(azimuth) * np.cos(p), np.sin(p), -np.cos(azimuth) * np.cos(p)])
+    right = np.array([np.cos(azimuth), 0.0, np.sin(azimuth)])
+    up = np.cross(right, forward)
+    f = (height / 2) / np.tan(np.radians(vfov) / 2)
+    us = (np.arange(width) + 0.5 - width / 2) / f
+    vs = (height / 2 - (np.asarray(rows) + 0.5)) / f
+    directions = forward[None, None, :] + us[None, :, None] * right[None, None, :] + vs[:, None, None] * up[None, None, :]
+    return directions / np.linalg.norm(directions, axis=-1, keepdims=True)
+
+
+def atmos_photo_sky(capture_dir, view, meta, sky_view, reference, variants, sun, sun_lux):
+    """写真の空と、エンジンの撮影の空と、正解の空を、同じ視点の空の画素の帯（地形の上端より上）で並べる。
+    写真と撮影の PNG は表示の値なので、比べるのは色度（r・b の割合）と、帯の明るさの上下の比だけ"""
+    import CompareReference as CR
+    from CompareLight import srgb_to_linear
+    photo = Image.open(ATMOS_REF_PHOTO).convert("RGB")
+    photo_panel, _, _ = CR.fit_photo(photo)
+    capture = Image.open(os.path.join(capture_dir, f"{view}.png")).convert("RGB").resize(CR.PANEL_SIZE, Image.LANCZOS)
+    width, height = CR.PANEL_SIZE
+    result = {"bands": []}
+    panels = {"photo": np.asarray(photo_panel), "engine_png": np.asarray(capture)}
+    tops = {name: CR.find_terrain_top(rgb) for name, rgb in panels.items()}
+    # 両方で空の行（写真と撮影の両方で地形より上の列が半分以上ある行）
+    common_top = int(min(np.median(tops["photo"]), np.median(tops["engine_png"])))
+    band_edges = np.linspace(0, max(common_top - 4, 8), ATMOS_REF_PHOTO_BANDS + 1).astype(int)
+    for b0, b1 in zip(band_edges[:-1], band_edges[1:]):
+        rows = np.arange(b0, b1)
+        directions = atmos_view_directions(width, height, rows)
+        mask = np.ones((len(rows), width), dtype=bool)
+        for name in panels:
+            mask &= rows[:, None] < tops[name][None, :] - 4
+        if mask.sum() < 50:
+            continue
+        sample = directions[mask][:: max(1, int(mask.sum()) // 400)]
+        elevation = float(np.degrees(np.arcsin(np.mean(directions[mask][:, 1]))))
+        band = {"rows": [int(b0), int(b1)], "elevation_deg": elevation, "pixels": int(mask.sum())}
+        for name, rgb in panels.items():
+            linear = srgb_to_linear(rgb[b0:b1].astype(np.float64))[mask]
+            band[name] = linear.mean(axis=0).tolist()
+        band["engine_radiance"] = np.mean([atmos_sky_view_lookup(sky_view, meta["sky_view"], d) for d in sample],
+                                          axis=0).tolist()
+        for version in ("A", "B"):
+            band[f"reference_{version}"] = (np.mean(reference.sky_radiance(meta["sky"]["observer_altitude_m"], sample, sun,
+                                                                           version), axis=0) * sun_lux).tolist()
+        # 設定を論文へ戻した正解（Mie の係数が論文の 1/25 の澄んだ空）
+        band["reference_paper"] = (np.mean(variants["paper"].sky_radiance(100.0, sample, sun, "B"), axis=0) * sun_lux).tolist()
+        for key in ("photo", "engine_png", "engine_radiance", "reference_A", "reference_B", "reference_paper"):
+            rgb = np.array(band[key])
+            band[f"{key}_chroma_rb"] = (rgb[[0, 2]] / max(float(rgb.sum()), 1e-30)).tolist()
+        result["bands"].append(band)
+    if len(result["bands"]) >= 2:
+        top, bottom = result["bands"][0], result["bands"][-1]
+        result["top_over_bottom"] = {key: atmos_ratio(top[key], bottom[key])
+                                     for key in ("photo", "engine_png", "engine_radiance", "reference_A", "reference_B",
+                                                 "reference_paper")}
+    result["photo_sun"] = dict(zip(("altitude_deg", "azimuth_deg"), atmos_sun_position(*ATMOS_REF_PHOTO_TIME)))
+    result["view_pose"] = {"yaw_deg": ATMOS_REF_VIEW_POSE[0], "pitch_deg": ATMOS_REF_VIEW_POSE[1],
+                           "vfov_deg": ATMOS_REF_VIEW_POSE[2]}
+    return result
+
+
+def atmos_ref_view(capture_dir, view):
+    failures = []
+    meta_path = os.path.join(capture_dir, f"{view}.atmos.json")
+    if not os.path.isfile(meta_path):
+        return {"view": view, "pass": False, "failures": [f"{view}.atmos.json が無い"]}
+    with open(meta_path, encoding="utf-8") as f:
+        meta = json.load(f)
+    arrays = {}
+    for key in ("probe", "sky_view", "multiple_scattering"):
+        values, reason = atmos_read_floats(capture_dir, meta[key])
+        if reason:
+            return {"view": view, "pass": False, "failures": [reason]}
+        arrays[key] = values
+    probe = arrays["probe"]
+    sky_view = arrays["sky_view"]
+    sky = meta["sky"]
+    aerial = meta["aerial_perspective"]
+    camera_y = meta["camera_position"][1]
+    sun_lux = float(meta["ground_illuminance"]["sun_top_of_atmosphere_normal_lux"])
+    sun = AR.sun_direction_from_angles(sky["sun_altitude_degrees"], sky["sun_azimuth_degrees"])
+    observer = float(sky["observer_altitude_m"])
+    haze_origin = camera_y + float(aerial["origin_altitude_m"])
+    fog = atmos_fog_settings(meta)
+    settings = AR.settings_from_dump(meta)
+    started = time.time()
+    reference = AR.Atmosphere(settings, ATMOS_REF_LEVEL)
+    # 設定の違いを分けるための、1 つずつ論文の値へ戻した正解
+    variants = {
+        "mie_scale_height_1200": AR.with_changes(settings, "mie_scale_height_1200",
+                                                 mie_scale_height_m=AR.PAPER_SETTINGS["mie_scale_height_m"]),
+        "atmosphere_100km": AR.with_changes(settings, "atmosphere_100km",
+                                            atmosphere_height_m=AR.PAPER_SETTINGS["atmosphere_height_m"]),
+        "albedo_0": AR.with_changes(settings, "albedo_0", ground_albedo=[0.0, 0.0, 0.0]),
+        "paper": dict(AR.PAPER_SETTINGS),
+    }
+    variant_atmospheres = {name: AR.Atmosphere(s, 1) for name, s in variants.items()}
+    result = {"view": view, "reference_level": ATMOS_REF_LEVEL, "settings": settings, "sun_direction": sun.tolist(),
+              "sun_top_of_atmosphere_lux": sun_lux, "observer_altitude_m": observer, "haze_origin_altitude_m": haze_origin}
+
+    # 1. 空の方向別の輝度（cd/m²）: エンジンの sky-view の表（頭打ちの前）と正解（A・B）、設定を 1 つずつ戻した正解（B）
+    sky_rows = []
+    worst_sky_b = 0.0
+    for elevation in ATMOS_REF_ELEVATIONS:
+        for offset in ATMOS_REF_OFFSETS:
+            direction = AR.direction_from_sun_offset(sun, np.array([elevation]), np.array([offset]))
+            engine = atmos_sky_view_lookup(sky_view, meta["sky_view"], direction[0])
+            row = {"elevation_deg": elevation, "azimuth_offset_deg": offset, "engine": engine.tolist()}
+            for version in ("A", "B"):
+                row[f"reference_{version}"] = (reference.sky_radiance(observer, direction, sun, version)[0] * sun_lux).tolist()
+            for name, atmosphere in variant_atmospheres.items():
+                altitude = 100.0 if name == "paper" else observer
+                row[f"variant_{name}"] = (atmosphere.sky_radiance(altitude, direction, sun, "B")[0] * sun_lux).tolist()
+            row["engine_over_B"] = atmos_ratio(row["engine"], row["reference_B"])
+            row["engine_over_A"] = atmos_ratio(row["engine"], row["reference_A"])
+            row["A_over_B"] = atmos_ratio(row["reference_A"], row["reference_B"])
+            row["engine_chroma_rb"] = (np.array(row["engine"])[[0, 2]] / sum(row["engine"])).tolist()
+            row["reference_chroma_rb"] = (np.array(row["reference_B"])[[0, 2]] / sum(row["reference_B"])).tolist()
+            worst_sky_b = max(worst_sky_b, abs(np.log(row["engine_over_B"])))
+            sky_rows.append(row)
+    result["sky"] = sky_rows
+
+    # 2. 地表の太陽と空の照度（lux）
+    # エンジンの地表の太陽の透過率は高度 0 の値（空の観測点の高度 observer とは別）
+    sun_t = reference.sun_transmittance(0.0, sun)
+    sin_altitude = sun[1]
+    illuminance = {"engine_sun_horizontal": meta["ground_illuminance"]["sun_horizontal_lux"],
+                   "engine_sky_horizontal": meta["ground_illuminance"]["sky_horizontal_lux"],
+                   "engine_sun_ground_transmittance": meta["ground_illuminance"]["sun_ground_transmittance"],
+                   "reference_sun_ground_transmittance": sun_t.tolist(),
+                   "reference_sun_transmittance_at_observer": reference.sun_transmittance(observer, sun).tolist(),
+                   "reference_sun_transmittance_at_haze_origin": reference.sun_transmittance(haze_origin, sun).tolist(),
+                   "reference_sun_horizontal": (sun_t * sin_altitude * sun_lux).tolist()}
+    for version in ("A", "B"):
+        illuminance[f"reference_sky_horizontal_{version}"] = (
+            reference.sky_horizontal_irradiance(observer, sun, version) * sun_lux).tolist()
+    illuminance["reference_sky_horizontal_B_at_ground"] = (
+        reference.sky_horizontal_irradiance(0.0, sun, "B") * sun_lux).tolist()
+    illuminance["reference_sky_horizontal_B_at_haze_origin"] = (
+        reference.sky_horizontal_irradiance(haze_origin, sun, "B") * sun_lux).tolist()
+    illuminance["engine_sun_over_sky"] = atmos_ratio(illuminance["engine_sun_horizontal"],
+                                                     illuminance["engine_sky_horizontal"])
+    for version in ("A", "B"):
+        illuminance[f"reference_sun_over_sky_{version}"] = atmos_ratio(illuminance["reference_sun_horizontal"],
+                                                                       illuminance[f"reference_sky_horizontal_{version}"])
+    sun_t_error = atmos_relative_error(illuminance["engine_sun_ground_transmittance"], sun_t, 1e-3)
+    illuminance["sun_transmittance_max_rel"] = sun_t_error
+    result["illuminance"] = illuminance
+    if sun_t_error > ATMOS_REF_SAME_MODEL_TOLERANCE:
+        failures.append(f"地表の太陽の透過率（同じ式）が正解と {sun_t_error:.3g} 違う（設定の読み違い）")
+
+    # 3. 距離別の透過率と散乱光: 地表への視線（目の 1.7 m 下の水平面）と水平・仰角 2° の視線。
+    #    エンジン（行 0・3・4・6）と、同じ媒質を正しく積んだ正解（Mie の密度 × 0.22・300 m から先・高さフォグを足す）と、
+    #    空の大気そのまま（密度 × 1・0 m から・霧なし）の正解
+    rays = meta["probe"]["rays"]
+    distance_rows = []
+    worst_fog_t = 0.0
+    worst_aerial_t = 0.0
+    for index, ray in enumerate(rays):
+        is_ground = ray["kind"] == "ground"
+        if not is_ground and ray["elevation_degrees"] not in ATMOS_REF_HAZE_ELEVATIONS:
+            continue
+        direction = np.array(ray["direction"], dtype=np.float64)
+        direction /= np.linalg.norm(direction)
+        distance = float(ray["distance_m"])
+        same, same_t = reference.march(haze_origin, direction[None, :], sun, "B", start=0.0, end=distance,
+                                       steps=ATMOS_REF_SEGMENT_STEPS, mie_scale=float(aerial["mie_density_scale"]),
+                                       fog=fog, origin_world_y=camera_y, air_start=float(aerial["start_distance_m"]))
+        # 霧だけ・空気遠近だけの透過率（同じ媒質）
+        _, fog_only_t = reference.march(haze_origin, direction[None, :], sun, "B", start=0.0, end=distance,
+                                        steps=ATMOS_REF_SEGMENT_STEPS, mie_scale=0.0, fog=fog, origin_world_y=camera_y,
+                                        air_start=distance + 1.0)
+        _, air_only_t = reference.march(haze_origin, direction[None, :], sun, "B", start=0.0, end=distance,
+                                        steps=ATMOS_REF_SEGMENT_STEPS, mie_scale=float(aerial["mie_density_scale"]),
+                                        air_start=float(aerial["start_distance_m"]))
+        physical, physical_t = reference.march(haze_origin, direction[None, :], sun, "B", start=0.0, end=distance,
+                                               steps=ATMOS_REF_SEGMENT_STEPS)
+        physical_a, _ = reference.march(haze_origin, direction[None, :], sun, "A", start=0.0, end=distance,
+                                        steps=ATMOS_REF_SEGMENT_STEPS)
+        # 光学的深さの内訳（Rayleigh・Mie・オゾン、空の大気そのまま）
+        t = (np.arange(ATMOS_REF_SEGMENT_STEPS) + 0.5) / ATMOS_REF_SEGMENT_STEPS * distance
+        dt = distance / ATMOS_REF_SEGMENT_STEPS
+        radius = reference.medium.bottom + haze_origin
+        r = np.sqrt((t * direction[0]) ** 2 + (radius + t * direction[1]) ** 2 + (t * direction[2]) ** 2)
+        rayleigh_density, mie_density, ozone_density = reference.medium.densities(r - reference.medium.bottom)
+        physical_mie_depth = float(np.sum(mie_density) * dt * reference.medium.mie_extinction)
+        physical_rayleigh_depth = (np.sum(rayleigh_density) * dt * reference.medium.rayleigh).tolist()
+        physical_ozone_depth = (np.sum(ozone_density) * dt * reference.medium.ozone).tolist()
+        start = max(float(aerial["start_distance_m"]), 0.0)
+        engine_origin = camera_y + float(aerial["origin_altitude_m"])
+        engine_mie_depth = float(aerial["distance_scale"] * aerial["shader_mie_extinction_per_m"] *
+                                 atmos_density_integral(engine_origin, direction[1], start, distance, sky["mie_scale_height_m"]))
+        engine_fog_t = float(probe[0, index, 0])
+        engine_fog_depth = -np.log(max(engine_fog_t, 1e-30))
+        engine_aerial_t = probe[3, index, :3]
+        opacity = float(probe[0, index, 1])
+        row = {
+            "kind": ray["kind"], "azimuth_offset_deg": ray["azimuth_offset_degrees"],
+            "elevation_deg": ray["elevation_degrees"], "distance_m": distance,
+            "engine": {"fog_transmittance": engine_fog_t, "aerial_transmittance": engine_aerial_t.tolist(),
+                       "total_transmittance": (engine_aerial_t * engine_fog_t).tolist(),
+                       "fog_sky_color_times_opacity": (probe[1, index, :3] * opacity).tolist(),
+                       "fog_sun_single": probe[2, index, :3].tolist(),
+                       "aerial_scattering_times_fog_t": (probe[4, index, :3] * engine_fog_t).tolist(),
+                       "total_scattering": probe[6, index, :3].tolist()},
+            "same_media": {"fog_transmittance": fog_only_t[0].tolist(), "aerial_transmittance": air_only_t[0].tolist(),
+                           "total_transmittance": same_t[0].tolist(),
+                           "fog_sun": (same["fog_sun"][0] * sun_lux).tolist(),
+                           "fog_multiple": (same["fog_multiple"][0] * sun_lux).tolist(),
+                           "air_sun": (same["air_sun"][0] * sun_lux).tolist(),
+                           "air_multiple": (same["air_multiple"][0] * sun_lux).tolist(),
+                           "total_scattering": (same["total"][0] * sun_lux).tolist()},
+            "physical": {"transmittance": physical_t[0].tolist(),
+                         "total_scattering": (physical["total"][0] * sun_lux).tolist(),
+                         "total_scattering_A": (physical_a["total"][0] * sun_lux).tolist()},
+            "optical_depth": {"engine_fog": engine_fog_depth, "engine_aerial_mie": engine_mie_depth,
+                              "engine_aerial": (-np.log(np.maximum(engine_aerial_t, 1e-30))).tolist(),
+                              "physical_mie": physical_mie_depth, "physical_rayleigh": physical_rayleigh_depth,
+                              "physical_ozone": physical_ozone_depth},
+        }
+        row["engine_over_same_media_scattering"] = atmos_ratio(row["engine"]["total_scattering"],
+                                                               row["same_media"]["total_scattering"])
+        row["engine_over_physical_scattering"] = atmos_ratio(row["engine"]["total_scattering"],
+                                                             row["physical"]["total_scattering"])
+        row["fog_plus_aerial_mie_over_physical_mie"] = (engine_fog_depth + engine_mie_depth) / max(physical_mie_depth, 1e-30)
+        worst_fog_t = max(worst_fog_t, abs(engine_fog_t - float(np.mean(fog_only_t[0]))))
+        worst_aerial_t = max(worst_aerial_t, atmos_relative_error(engine_aerial_t, air_only_t[0], 1e-3))
+        distance_rows.append(row)
+    result["distances"] = distance_rows
+    # 同じ媒質の透過率がエンジンと合う（平らな地面の解析式と球の上の数値積分の差だけ）ことで、媒質の読み違いが無いことを確かめる
+    result["same_media_fog_transmittance_max_abs"] = worst_fog_t
+    result["same_media_aerial_transmittance_max_rel"] = worst_aerial_t
+    if worst_fog_t > ATMOS_REF_SAME_MODEL_TOLERANCE:
+        failures.append(f"高さフォグの透過率（同じ媒質）が正解と {worst_fog_t:.3g} 違う")
+    if worst_aerial_t > ATMOS_REF_SAME_MODEL_TOLERANCE:
+        failures.append(f"空気遠近の透過率（同じ媒質）が正解と {worst_aerial_t:.3g} 違う")
+
+    # 4. 多重散乱の表 Ψ_ms（エンジンの表の格子の点で、正解 A・B と比べる）
+    ms_meta = meta["multiple_scattering"]
+    psi_rows = []
+    for i, altitude in enumerate(ms_meta["altitude_m"]):
+        if altitude > ATMOS_REF_PSI_MAX_ALTITUDE:
+            continue
+        for j, cosine in enumerate(ms_meta["sun_cos_zenith"]):
+            if cosine < ATMOS_REF_PSI_MIN_COSINE:
+                continue
+            psi_rows.append({"altitude_m": altitude, "sun_cosine": cosine, "engine": arrays["multiple_scattering"][i, j].tolist()})
+    psi_a, psi_b = reference.field.evaluate([r["altitude_m"] for r in psi_rows], [r["sun_cosine"] for r in psi_rows])
+    for row, a, b in zip(psi_rows, psi_a, psi_b):
+        row["reference_A"] = a.tolist()
+        row["reference_B"] = b.tolist()
+        row["engine_over_A"] = atmos_ratio(row["engine"], a)
+        row["engine_over_B"] = atmos_ratio(row["engine"], b)
+    result["psi"] = psi_rows
+
+    # 5. 写真の空との並べ
+    result["photo"] = atmos_photo_sky(capture_dir, view, meta, sky_view, reference, variant_atmospheres, sun, sun_lux)
+    result["seconds"] = time.time() - started
+    result["sky_engine_over_B_max_log"] = worst_sky_b
+    values = [worst_sky_b, worst_fog_t, worst_aerial_t]
+    if not all(np.isfinite(v) for v in values):
+        failures.append("比べた値に NaN がある")
+    result["pass"] = not failures
+    result["failures"] = failures
+    return result
+
+
+def run_atmos_ref(capture_dir, views, verify):
+    failures = []
+    inputs_ok, input_failures, record = check_inputs(capture_dir)
+    if verify and not inputs_ok:
+        failures.extend(input_failures)
+    # 正解の収束（AtmosphereReference.py --verify の結果）が合格で、同じ設定のものであること
+    convergence_path = os.path.join(AR.DEFAULT_OUT, "atmosphere_reference_verify.json")
+    convergence = None
+    if os.path.isfile(convergence_path):
+        with open(convergence_path, encoding="utf-8") as f:
+            convergence = json.load(f)
+    if convergence is None or convergence.get("failures"):
+        failures.append(f"正解の収束の確かめ（AtmosphereReference.py --verify）が合格していない: {convergence_path}")
+    targets = views if views else [ATMOS_REF_DEFAULT_VIEW]
+    results = []
+    for view in targets:
+        result = atmos_ref_view(capture_dir, view)
+        if convergence is not None and result.get("settings") is not None:
+            engine_set = convergence.get("sets", {}).get("engine", {})
+            if engine_set.get("settings") != json.loads(json.dumps(result["settings"])):
+                failures.append(f"{view}: 収束を確かめた正解の設定が、この書き出しの設定と違う")
+        results.append(result)
+        failures.extend(f"{view}: {failure}" for failure in result.get("failures", []))
+        if "sky" in result:
+            ill = result["illuminance"]
+            print(f"REFERENCE_CHECK atmos_ref view={view} level={result['reference_level']} "
+                  f"sky_engine_over_B_max_log={result['sky_engine_over_B_max_log']:.3f} "
+                  f"sun_over_sky engine={ill['engine_sun_over_sky']:.3f} A={ill['reference_sun_over_sky_A']:.3f} "
+                  f"B={ill['reference_sun_over_sky_B']:.3f} sun_t_max_rel={ill['sun_transmittance_max_rel']:.2e} "
+                  f"fog_t_max_abs={result['same_media_fog_transmittance_max_abs']:.2e} "
+                  f"aerial_t_max_rel={result['same_media_aerial_transmittance_max_rel']:.2e} "
+                  f"seconds={result['seconds']:.0f}")
+    report = {"mode": "atmos_ref", "verify": bool(verify), "inputs_current": inputs_ok, "inputs_record": record,
+              "criteria": {"same_model_tolerance": ATMOS_REF_SAME_MODEL_TOLERANCE, "reference_level": ATMOS_REF_LEVEL},
+              "convergence_report": convergence_path, "views": results, "failures": failures}
+    report_path = os.path.join(capture_dir, "atmos_ref_check.json")
+    with open(report_path, "w", encoding="utf-8") as f:
+        json.dump(report, f, indent=2, ensure_ascii=False)
+    for failure in failures:
+        print(f"REFERENCE_CHECK failure: {failure}")
+    status = "pass" if not failures else "fail"
+    print(f"REFERENCE_CHECK result={status} mode=atmos_ref views={len(targets)} inputs_current={int(inputs_ok)} "
+          f"report={report_path}")
+    return 0 if not failures else 1
+
+
 def main():
     # 結果の行を保存して読むので、端末の符号に関わらず UTF-8 で書く
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -2204,6 +2604,8 @@ def main():
                         help="Blender の深度（BlenderReference.py）とエンジンの深度の投影を照らす")
     parser.add_argument("--atmos-dump", action="store_true",
                         help="空と霞の値の書き出し（--atmosphere-dump）が揃い、描画に使われた値と合うことを検査する")
+    parser.add_argument("--atmos-ref", action="store_true",
+                        help="空と霞の書き出しを、AtmosphereReference.py の独立な正解と比べた表を作る")
     parser.add_argument("--views", default="", help="検査する視点（カンマ区切り。省くと metrics.json の全視点）")
     parser.add_argument("--verify", action="store_true", help="入力のハッシュを今のファイルと照らし、古い結果を拒否する")
     args = parser.parse_args()
@@ -2230,8 +2632,11 @@ def main():
     if args.atmos_dump:
         views = [v.strip() for v in args.views.split(",") if v.strip()]
         return run_atmos_dump(capture_dir, views, args.verify)
+    if args.atmos_ref:
+        views = [v.strip() for v in args.views.split(",") if v.strip()]
+        return run_atmos_ref(capture_dir, views, args.verify)
     print("REFERENCE_CHECK result=fail reason=no_mode（--record-inputs か --hdr か --display か --plate か --aov か "
-          "--projection か --atmos-dump を指定する）")
+          "--projection か --atmos-dump か --atmos-ref を指定する）")
     return 1
 
 
