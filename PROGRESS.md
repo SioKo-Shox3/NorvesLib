@@ -5135,3 +5135,15 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 試しの撮影 trial2 の ref_ground_01 で通した: Blender（49 区画・1610 万三角形）は 17.9 秒。照合は輪郭の画素の 2 画素以内が両方向とも 100 %（p99 1 画素）・稜線の最大差 1 画素・空の分かれ方の食い違い 0.005 %・深度の相対差の中央値 0.18 %・95 % 0.97 %。重なりの画像で輪郭がほぼ白（一致）であることを見た
   - 見込みを広げた撮影（反復 7、verify と同じ起動）: ref_far_01 で追い出し 0・wanted 0・常駐 22300 ページ（2.5 GB）まで読み込みきったが、その後も数秒ごとに 1〜5 ページずつ新しく常駐し（描画は毎秒約 6 フレーム）、そのたびに `MultiViewCapture` の落ち着きの基準が数え直しになって、起動から 12 分たっても 1 枚目を撮れていない（`RenderWorld::HasPendingAsyncAssets` がページの読み込みを待ちに数える）。足されるページの出どころは主のカメラ: VSM は 857 ページすべてキャッシュ済みで描き直し 0、影の判定はページを要求しない（`PageRequestCapacity = 0`）。2 パスの遮蔽も撮影のエポックで止まっている（`MEGA_TWOPASS reason=epoch pass2_tested=0`）。撮影の落ち着きは 60 フレーム続けて読み込みなしが要る。残る候補は、撮影の投影のジッタで画面の縁・画素より小さいクラスタの選び方が揺れて、まだ読んでいない段 0 のページを時々要求すること（未確認）
 - 残り: 細い流れのページの出どころを確かめて落ち着かせる（finest-lod のときだけ影の段も段 0 に固定する、など）、6 視点を撮りきる、Blender で 6 視点の深度を描く、`--projection --verify` を通す、`Docs/RenderingValidation/WastelandBlenderTerrain.md` に測った値を書く
+
+### SCN-WLR-BLENDER-TERRAIN 完了（2026-10-18、run 20261018-172748 の反復 7）
+- Done: LOD を固定した荒野の 6 視点を撮り、エンジンが描く地形の LOD 0 のメッシュを Blender で同じカメラから描いて、崖の輪郭と稜線が 2 画素以内で重なることを確かめた。記録は `Docs/RenderingValidation/WastelandBlenderTerrain.md`
+  - `verify-SCN-WLR-BLENDER-TERRAIN-1.txt`: 6 視点を `-Hdr -Aov`・`wasteland-common-light,wasteland-hide=all,wasteland-finest-lod` で撮影 result=pass。各視点を撮った時点で `GEOMETRY_PAGES` の wanted・reading・uploading が 0（常駐 2.5〜6.3 GB）
+  - Blender（`aux-SCN-WLR-BLENDER-TERRAIN-blender.txt`）: 6 視点、視錐台の 48〜76 区画・1610 万〜6530 万三角形、1 視点 14〜133 秒、計 5 分
+  - `verify-SCN-WLR-BLENDER-TERRAIN-2.txt`: 稜線を列ごとの行の差で測る版は ref_cliff_01・02 で fail（2 画素以内の列 0.990・0.983、最大 19・27 画素）。食い違う列は稜線がほぼ縦に走る崖の側面で、横 1 画素のずれが行の大きな差になっていた（その画素の深度の差は 0.1 % 以内）
+  - `verify-SCN-WLR-BLENDER-TERRAIN-3.txt`: 稜線を画像の上の距離（稜線の画素から相手の空との境まで、両方向）で測るよう直して result=pass。6 視点とも輪郭の 2 画素以内が両方向 100 %、稜線の距離の最大 1 画素、空の分かれ方の食い違い 0.03 % 以下、深度の相対差の中央値 0.04 % 以下・95 % 0.19 % 以下、inputs_current=1・blender_inputs_current=1
+  - `aux-SCN-WLR-BLENDER-TERRAIN-negative.txt`: Blender の深度を 3 画素下へずらすと稜線の 2 画素以内が 0.37〜0.70 に落ちる。重なりの画像（ref_cliff_02）を開き、輪郭がほぼ全部重なることを見た
+- Notes:
+  - 反復 7 の途中に「落ち着き待ちが巻き戻って撮れない」と記録したのは、ref_far_01 の読み込みの途中を見た判断で、撮影はその後に落ち着いて 6 視点とも撮れた（撮影全体で約 15 分）
+  - 地形の書き出し（`--wasteland-export-terrain`）は verify の撮影とは別の起動で行い、`.harness/runs/scene-capture/SCN-WLR-BLENDER-TERRAIN-mesh` に置いた。Blender は今の照合に要る視錐台の区画だけを読む（`--range shadow|all` で影の届く 4 km や全区画も読める）
+- Next: TASKS.md の次の未完の項目。

@@ -1689,7 +1689,7 @@
 - notes: 危険地帯（描画）。起動引数は比較のためのシーンの設定で、Release でも害が無い形にする。撮影の構成（Debug か RelWithDebInfo か）は SCN-WL-CAPTURE-SPEED の決定に揃えてよい（verify も同じ反復で直す）。
 
 ## SCN-WLR-BLENDER-TERRAIN: エンジンが描く地形のメッシュを Blender へ持ち込み、6 視点の投影を合わせる
-- status: todo
+- status: done
 - after: SCN-WLR-BARE-AOV
 - done-when: 比較用に地形の LOD を最細に固定する起動引数（`wasteland-finest-lod`。仮想化ジオメトリで固定できなければ、その視点で描かれた LOD を書き出して同じものを渡す）と、エンジンが描く地形のメッシュ（近景の DEM の区画と遠景の段、崖の細部を含む）を Blender が読める形（PLY か GLB）に書き出す道具を足す。書き出す範囲は視錐台だけでなく、影・空の遮蔽・照り返しに効く範囲（各視点から影の届く 4 km と遮蔽の届く範囲）を含める。Blender のヘッドレスの台本 `Scripts/Terrain/BlenderReference.py` で読み込み、座標の変換（m・軸・標高の基準・原点）を 1 か所にまとめ、手本の 6 視点のカメラ（位置・姿勢・縦の画角・縦横比）を置く。Blender の深度（1 サンプル）とエンジンの深度（SCN-WLR-BARE-AOV と同じ起動引数で 6 視点）を並べ、崖の輪郭と稜線が 2 画素以内で重なることを `ReferenceCheck.py --projection` で 6 視点すべて検査する（Blender の深度の画像は反復の中で描いて保存する）。
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -Build -RequireAssets -Width 1920 -Height 1080 -Hdr -Aov -Views ref_far_01,ref_far_02,ref_cliff_01,ref_cliff_02,ref_ground_01,ref_ground_02 -GameArgs wasteland-common-light,wasteland-hide=all,wasteland-finest-lod -OutDir .harness/runs/scene-capture/SCN-WLR-BLENDER-TERRAIN`

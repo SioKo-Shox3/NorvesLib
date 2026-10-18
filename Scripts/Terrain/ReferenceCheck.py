@@ -93,7 +93,8 @@
 #       2. 崖の輪郭と稜線: 深度の輪郭（空と表面の境の表面の側と、隣の画素との深度の比が 1 + PROJECTION_JUMP_STRONG を超えて跳ぶ
 #          組の手前の側）の画素から、相手の画像の輪郭（閾値の際での取りこぼしを避けて 1 + PROJECTION_JUMP_WEAK）の画素までの
 #          距離が PROJECTION_RADIUS_PX 画素以内のものが、両方向とも PROJECTION_EDGE_RATIO 以上。
-#          列ごとのいちばん上の表面の行（空との稜線）の差が PROJECTION_RADIUS_PX 画素以内の列が PROJECTION_SKYLINE_RATIO 以上。
+#          列ごとのいちばん上の表面の画素（空との稜線）から相手の空との境の画素までの距離が PROJECTION_RADIUS_PX 画素以内のものが、
+#          両方向とも PROJECTION_SKYLINE_RATIO 以上（行の差で測ると、ほぼ縦に走る崖の側面の稜線で横 1 画素のずれが何十画素にもなる）。
 #          空と表面の分かれ方が食い違う画素が PROJECTION_SKY_MISMATCH 以下。
 #       3. 深度の値: 輪郭から PROJECTION_DEPTH_EDGE_MARGIN 画素より離れた共通の表面で、相対差の中央値が PROJECTION_DEPTH_MEDIAN、
 #          95 % が PROJECTION_DEPTH_P95 以下（単位・軸・原点の取り違えと、エンジンが粗い段で描いた所を見つける）。
@@ -1459,6 +1460,23 @@ def skyline_rows(depth):
     return rows
 
 
+def skyline_points(rows, columns, shape):
+    """列ごとのいちばん上の表面の画素の印（columns の列で、表面のある列だけ）"""
+    points = np.zeros(shape, dtype=bool)
+    cols = np.where(columns & (rows < shape[0]))[0]
+    points[rows[cols], cols] = True
+    return points
+
+
+def sky_boundary(depth):
+    """空と接する（上下左右に空の画素がある）表面の画素"""
+    surface = np.isfinite(depth)
+    sky = np.pad(~surface, 1, constant_values=False)
+    h, w = surface.shape
+    touches = sky[0:h, 1:w + 1] | sky[2:h + 2, 1:w + 1] | sky[1:h + 1, 0:w] | sky[1:h + 1, 2:w + 2]
+    return surface & touches
+
+
 def cameras_match(a, b):
     """2 つのカメラの記録（aov.json の camera の形）の差。(一致か, 差の値)"""
     diff = {
@@ -1561,18 +1579,28 @@ def check_projection_view(capture_dir, blender_dir, view, blender_record, game_a
             failures.append(f"{label}: 輪郭の画素のうち相手の輪郭が {PROJECTION_RADIUS_PX} 画素以内にあるものが "
                             f"{summary['within_ratio']:.4f}（{PROJECTION_EDGE_RATIO} 未満。p99 {summary['p99_px']} 画素）")
 
-    # 稜線（列ごとのいちばん上の表面の行）
+    # 稜線（列ごとのいちばん上の表面の画素）から、相手の空との境の画素までの距離。稜線がほぼ縦に走る所（崖の側面）は
+    # 横に 1 画素ずれるだけで列ごとの行が何十画素も変わるので、行の差ではなく画像の上の距離で測る
     engine_rows = skyline_rows(engine)
     blender_rows = skyline_rows(blender)
     columns = (engine_rows > 0) | (blender_rows > 0)
-    row_diff = np.abs(engine_rows - blender_rows)[columns]
     skyline = {"columns": int(columns.sum())}
-    if row_diff.size:
-        skyline.update({"within_ratio": float(np.mean(row_diff <= PROJECTION_RADIUS_PX)),
-                        "max_px": int(row_diff.max()), "p99_px": float(np.percentile(row_diff, 99))})
-        if skyline["within_ratio"] < PROJECTION_SKYLINE_RATIO:
-            failures.append(f"稜線の行の差が {PROJECTION_RADIUS_PX} 画素以内の列が {skyline['within_ratio']:.4f}"
-                            f"（{PROJECTION_SKYLINE_RATIO} 未満。最大 {skyline['max_px']} 画素）")
+    if columns.any():
+        engine_points = skyline_points(engine_rows, columns, engine.shape)
+        blender_points = skyline_points(blender_rows, columns, blender.shape)
+        to_blender_sky = edge_distances(engine_points, sky_boundary(blender), PROJECTION_MAX_DISTANCE_PX)
+        to_engine_sky = edge_distances(blender_points, sky_boundary(engine), PROJECTION_MAX_DISTANCE_PX)
+        distances = np.concatenate([to_blender_sky, to_engine_sky])
+        if distances.size:
+            skyline.update({
+                "within_ratio": float(min(np.mean(to_blender_sky <= PROJECTION_RADIUS_PX) if to_blender_sky.size else 1.0,
+                                          np.mean(to_engine_sky <= PROJECTION_RADIUS_PX) if to_engine_sky.size else 1.0)),
+                "max_px": int(distances.max()), "p99_px": float(np.percentile(distances, 99)),
+                "max_row_diff_px": int(np.abs(engine_rows - blender_rows)[columns].max()),
+            })
+            if skyline["within_ratio"] < PROJECTION_SKYLINE_RATIO:
+                failures.append(f"稜線の画素のうち相手の空との境が {PROJECTION_RADIUS_PX} 画素以内にあるものが "
+                                f"{skyline['within_ratio']:.4f}（{PROJECTION_SKYLINE_RATIO} 未満。最大 {skyline['max_px']} 画素）")
     result["skyline"] = skyline
 
     # 輪郭から離れた表面の深度の一致（単位・原点・軸の確かめ）
