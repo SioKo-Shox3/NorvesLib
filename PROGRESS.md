@@ -5124,3 +5124,13 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - Notes:
   - 既定の画と基準の PSNR 44.2 dB（下限 45）は前の反復の Notes のまま。このタスクの経路では見た目が変わらないので追っていない
 - Next: TASKS.md の次の未完の項目。
+
+### SCN-WLR-BLENDER-TERRAIN 途中（2026-10-18、run 20261018-172748 の反復 6〜7）
+- In progress（済んだ段）:
+  - 地形の書き出し: Game の `--wasteland-export-terrain=<フォルダ>`（開発ビルドだけ。`Game/GameModes/Wasteland/WastelandTerrainExport.*`）が、置いた区画ごとにクック済みメッシュの LOD 0 のクラスタをエンジンのワールド座標のまま PLY に書き、`manifest.json` に一覧を書く。試しの書き出し（`.harness/runs/scene-capture/SCN-WLR-BLENDER-TERRAIN-mesh`、3.9 GB）: 198 区画（DEM 100・遠景の段 98）、失敗 0、9415 万頂点・1.46 億三角形
+  - LOD の固定: `--wasteland-finest-lod`（開発ビルドだけ）が LOD の誤差の閾値を 1e-6 画素にし、VRAM のジオメトリの取り分（`NORVES_VRAM_GEOMETRY_SHARE`）とページの置き場の見込み（`NORVES_GEOMETRY_PAGE_ROOM_DIVISOR=1`）を広げる。環境変数の上書きは `NORVES_BUILD_DEVELOPMENT` の中だけ
+  - 見込みを広げる前の試しの撮影（trial2）: ref_far_01 は読み込みきって撮れた（wanted=0）。ほかの 5 視点は wanted 1920〜6169 のページを残したまま撮れた（ページはメッシュと同じ 1 GB の塊にしか置けず、塊ごとの置き場が足りずに追い出しと読み直しが続く）
+  - Blender の台本 `Scripts/Terrain/BlenderReference.py --depth`: 座標の変換を 1 か所にまとめ、撮影の `<視点>.aov.json` のカメラを置き、Cycles の View Z Depth の放射を 1 サンプルで描く。小さな場面で、平面距離（中央も四隅も 10 m）になることを確かめた。PLY は numpy で読む（180 万頂点で 0.1 秒）
+  - 照合 `ReferenceCheck.py --projection`: 輪郭（空との境と深度の跳び）の画素どうしの距離 2 画素以内の割合・稜線の行の差・空の分かれ方・輪郭から離れた表面の深度の相対差・カメラの一致・起動引数とログの印を見る
+  - 試しの撮影 trial2 の ref_ground_01 で通した: Blender（49 区画・1610 万三角形）は 17.9 秒。照合は輪郭の画素の 2 画素以内が両方向とも 100 %（p99 1 画素）・稜線の最大差 1 画素・空の分かれ方の食い違い 0.005 %・深度の相対差の中央値 0.18 %・95 % 0.97 %。重なりの画像で輪郭がほぼ白（一致）であることを見た
+- 残り: 見込みを広げた撮影で 6 視点のページが読み込みきるか確かめる、Blender で 6 視点の深度を描く、`--projection --verify` を通す、`Docs/RenderingValidation/WastelandBlenderTerrain.md` に測った値を書く
