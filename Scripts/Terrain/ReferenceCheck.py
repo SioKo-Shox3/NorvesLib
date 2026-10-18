@@ -6,8 +6,10 @@
 #   （エンジンのプリエクスポージャを外した値）。測光用の HDR はブルームの前で読む。
 #
 # 使い方:
-#   python Scripts/Terrain/ReferenceCheck.py --record-inputs --kind engine --capture <出力先>
+#   python Scripts/Terrain/ReferenceCheck.py --record-inputs --kind engine --capture <出力先> [--game-exe <Game.exe>]
 #       撮影の入力のハッシュを <出力先>/inputs.json に書く（CaptureScene.ps1 -Hdr が撮り終えたときに呼ぶ）。
+#       --game-exe を与えると、撮影に使った実行ファイルの中身の SHA-256 も書く（ソースのハッシュは撮影の後のファイルから
+#       作るので、実際に走ったコードが同じかはこちらで照らす）。
 #   python Scripts/Terrain/ReferenceCheck.py --hdr --capture <出力先> [--views a,b,...] [--verify]
 #       CaptureScene.ps1 -Hdr の撮影（<視点>.png・<視点>.hdr.pfm・<視点>.hdr.json・metrics.json）を視点ごとに検査し、
 #       結果を <出力先>/hdr_check.json に書く。--views を省くと metrics.json の全視点を見る。
@@ -519,7 +521,15 @@ def hash_inputs(kind):
     }
 
 
-def record_inputs(capture_dir, kind):
+def file_sha256(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(1 << 24), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def record_inputs(capture_dir, kind, game_exe=None):
     hashed = hash_inputs(kind)
     commit = (git_output(["rev-parse", "HEAD"]) or "").strip()
     status = git_output(["status", "--porcelain", "--"] + INPUT_SETS[kind]) or ""
@@ -529,13 +539,20 @@ def record_inputs(capture_dir, kind):
         "inputs_dirty_at_capture": bool(status.strip()),
         **hashed,
     }
+    if game_exe:
+        if not os.path.isfile(game_exe):
+            print(f"REFERENCE_CHECK result=fail reason=game_exe_missing path={game_exe}")
+            return 1
+        record["game_exe_sha256"] = file_sha256(game_exe)
+        record["game_exe_mtime"] = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(os.path.getmtime(game_exe)))
     path = os.path.join(capture_dir, "inputs.json")
     with open(path, "w", encoding="utf-8") as f:
         json.dump(record, f, indent=2, ensure_ascii=False)
     print(f"REFERENCE_CHECK record_inputs kind={kind} files={hashed['file_count']} "
           f"asset_sources={hashed['asset_source_count']} asset_missing={len(hashed['asset_sources_missing'])} "
           f"sha256={hashed['files_sha256']} "
-          f"commit={commit[:12]} dirty={int(record['inputs_dirty_at_capture'])}")
+          f"commit={commit[:12]} dirty={int(record['inputs_dirty_at_capture'])} "
+          f"game_exe_sha256={record.get('game_exe_sha256', 'none')}")
     return 0
 
 
@@ -2899,6 +2916,7 @@ def run_blur_static(capture_dir, verify):
     groups += [(case["name"], case["args"], case["logs"], BLUR_SIZE, case["resident"]) for case in BLUR_CASES]
     group_records = {}
     input_hashes = set()
+    exe_hashes = set()
     inputs_all_current = True
     for name, expected_args, expected_logs, size, require_resident in groups:
         group_dir = os.path.join(capture_dir, name)
@@ -2912,12 +2930,20 @@ def run_blur_static(capture_dir, verify):
             failures.extend(f"{name}: {failure}" for failure in input_failures)
         if record is not None:
             input_hashes.add(record.get("files_sha256"))
+            # ソースのハッシュは撮影の後のファイルから作るので、走った Game.exe の一致はその中身のハッシュで照らす
+            if record.get("game_exe_sha256"):
+                exe_hashes.add(record["game_exe_sha256"])
+            else:
+                failures.append(f"{name}: inputs.json に撮影に使った Game.exe のハッシュが無い（--record-inputs --game-exe）")
         group_failures, info = blur_case_check(group_dir, tuple(expected_args), tuple(expected_logs), size,
                                                require_resident)
         failures.extend(f"{name}: {failure}" for failure in group_failures)
-        group_records[name] = {"inputs_current": inputs_ok, **info}
+        group_records[name] = {"inputs_current": inputs_ok,
+                               "game_exe_sha256": (record or {}).get("game_exe_sha256"), **info}
     if len(input_hashes) > 1:
         failures.append(f"組ごとの入力のハッシュが揃っていない（{len(input_hashes)} 通り。同じコードで撮った組だけを比べる）")
+    if len(exe_hashes) > 1:
+        failures.append(f"組ごとの Game.exe のハッシュが揃っていない（{len(exe_hashes)} 通り。同じビルドで撮った組だけを比べる）")
     views = []
     for view in BLUR_VIEWS:
         entry = {"view": view}
@@ -3049,6 +3075,7 @@ def main():
     parser.add_argument("--capture", required=True, help="撮影の出力先（CaptureScene.ps1 の -OutDir）")
     parser.add_argument("--record-inputs", action="store_true", help="入力のハッシュを inputs.json に書く")
     parser.add_argument("--kind", default="engine", choices=sorted(INPUT_SETS), help="--record-inputs の入力の種類")
+    parser.add_argument("--game-exe", default="", help="--record-inputs で中身のハッシュを書く、撮影に使った Game.exe")
     parser.add_argument("--hdr", action="store_true", help="ブルーム前の HDR の撮影を検査する")
     parser.add_argument("--display", action="store_true", help="表示変換の再現（DisplayTransform.py）を照合の撮影と照らす")
     parser.add_argument("--plate", action="store_true", help="共通の照明の灰色の板の明るさを、入力から求めた期待と照らす")
@@ -3070,7 +3097,10 @@ def main():
         print(f"REFERENCE_CHECK result=fail reason=capture_dir_missing path={capture_dir}")
         return 1
     if args.record_inputs:
-        return record_inputs(capture_dir, args.kind)
+        game_exe = args.game_exe
+        if game_exe and not os.path.isabs(game_exe):
+            game_exe = os.path.join(REPO_ROOT, game_exe)
+        return record_inputs(capture_dir, args.kind, game_exe or None)
     if args.hdr:
         views = [v.strip() for v in args.views.split(",") if v.strip()]
         return run_hdr(capture_dir, views, args.verify)

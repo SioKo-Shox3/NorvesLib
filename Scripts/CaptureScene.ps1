@@ -54,7 +54,8 @@
 # 放射輝度の HDR として <視点>.hdr.pfm（線形の Rec.709・D65、cd/m²。エンジンのプリエクスポージャを外した RGB の 32 bit 浮動小数）と
 # <視点>.hdr.json（大きさ・プリエクスポージャ・表示変換の差し替え）に書く（Core の Rendering/FrameCaptureHdrWriter.h）。
 # 撮り終えたら Scripts/Terrain/ReferenceCheck.py --record-inputs で、撮影の入力（描画のコード・シェーダー・荒野の組み立て・
-# git のコミット）のハッシュを inputs.json へ書く（ReferenceCheck.py --hdr --verify が今のファイルと照らして古い撮影を拒否する）。
+# git のコミット）と撮影に使った Game.exe の中身のハッシュを inputs.json へ書く（ReferenceCheck.py --hdr --verify が今のファイルと
+# 照らして古い撮影を拒否する。--blur-static は組ごとの Game.exe のハッシュが揃うことも求める）。
 # 開発ビルドの機能なので Release と、決定的でない -GpuTimingFrames とは併用できない。HDR が無い・大きさが PNG と違えば失敗にする。
 # -Aov を付けると、Game を --capture-aov 付きで起動し、視点ごとに PNG と同じフレームの GBuffer の生の値を浮動小数の画像に書く
 # （<視点>.aov.albedo.pfm〔線形のアルベド〕・.aov.normal.pfm〔ワールドの法線、+Y が上〕・.aov.roughness.pfm・.aov.depth.pfm
@@ -1491,7 +1492,7 @@ if ($Hdr -or $Aov -or $atmosphereDump)
     Remove-Item -LiteralPath $inputsPath -Force -ErrorAction SilentlyContinue
     if ($failures.Count -eq 0)
     {
-        $recordOutput = & python (Join-Path $repoRoot 'Scripts\Terrain\ReferenceCheck.py') --record-inputs --kind engine --capture $outRoot 2>&1
+        $recordOutput = & python (Join-Path $repoRoot 'Scripts\Terrain\ReferenceCheck.py') --record-inputs --kind engine --capture $outRoot --game-exe $gamePath 2>&1
         $recordExitCode = $LASTEXITCODE
         foreach ($line in @($recordOutput)) { Write-Output "$line" }
         if ($recordExitCode -ne 0 -or -not (Test-Path -LiteralPath $inputsPath))

@@ -5253,3 +5253,17 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - finest-lod は 1 視点あたり約 2.5 分（ビルド込みで 345 秒）
   - 新しい試験は足していない（verify の撮影と検査が確かめる）
 - Next: TASKS.md の次の未完の項目。
+
+### SCN-WLR-FAR-BLUR-LOD 差し戻しの対応（2026-10-19、run 20261018-205227 の反復 13）
+- Done: ほかの 9 組が変更前の Game.exe で撮られていた（入力のハッシュは撮影の後のソースから作るので、走ったコードの一致を示さない）差し戻しを直した
+  - `ReferenceCheck.py --record-inputs` に `--game-exe` を足し、撮影に使った Game.exe の中身の SHA-256 を `inputs.json` に書く。`CaptureScene.ps1` は自分が起動した Game.exe を渡す
+  - `--blur-static` は全組の `inputs.json` に Game.exe のハッシュがあり、1 通りに揃うことを求める
+  - finest-lod を `-Build` で撮った直後に、ビルドせず同じ Game.exe でほかの 9 組を撮り直した（台本 `aux-SCN-WLR-FAR-BLUR-LOD-recapture.ps1`。始めと終わりの Game.exe のハッシュが一致）。表と原因の順位を新しい値に直した（前の版との差は 0.01 未満。LOD の効きは −0.078 / +0.264）
+- 証拠（`.harness/runs/20261018-205227/`）:
+  - `verify-SCN-WLR-FAR-BLUR-LOD-1.txt`: finest-lod を RelWithDebInfo・`-Build -Hdr` で撮影 result=pass、EXIT=0、`game_exe_sha256=ee82ae62…`
+  - `aux-SCN-WLR-FAR-BLUR-LOD-captures.txt`: 9 組すべて exit=0、Game.exe のハッシュ ee82ae62… が始めと終わりで一致（same=1）
+  - `verify-SCN-WLR-FAR-BLUR-LOD-2.txt`: `--blur-static --verify` result=pass、cases=9、inputs_current=1、失敗 0。`blur_static_check.json` の全 10 組の Game.exe のハッシュが ee82ae62…
+- Notes:
+  - 入力のハッシュは `CaptureScene.ps1` を直したので 65795e00… に変わった（撮影時は未コミットで dirty=1。中身はこのコミットと同じ）
+  - 新しい試験は足していない（verify の撮影と検査が確かめる）
+- Next: TASKS.md の次の未完の項目。
