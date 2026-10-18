@@ -1,0 +1,695 @@
+﻿// 地形の地表の材質のアルベド（照明の無い値）を Cycles で描く OSL のシェーダー（Scripts/Terrain/BlenderReference.py --albedo が
+// Blender の材質のスクリプトノードに掛ける）。エンジンの Assets/Shaders/Common/TerrainLayerBlend.glsl の ShadeTerrainLayers と
+// Common/TerrainStrata.glsl の ComputeTerrainStrata のうち、アルベドに効く所（と、高さの混ぜに効く AO）を同じ式・同じ順で写す。
+//   - 三方向の投影、地表の分類の地図（ずらし・外縁の帯・礫の舗石の斑・砂の割合）、傾斜と高さとノイズの式、遠景の地図、
+//     土の皮膜と地図の砂の高さの混ぜ、層の高さの混ぜ、層ごとの明るさと色味の揺らぎ、岩肌の地層の色と AO・砂漠ワニス
+//   - 標本: 勾配を明示した GPU の異方性の標本（textureGrad、異方性 16、ミップの間は線形）を、クックと同じ作り方の
+//     ミップの段の画像から自前で再現する（tex_aniso）。UNORM で張られたアルベドは標本の後に sRGB から線形へ戻す
+//   - 画素あたりの位置の変化（エンジンの WorldDx・WorldDy）は、エンジンの可視バッファの解決と同じく、隣の画素の中心を通る
+//     視線と三角形の面の交点との差で求める（Cycles の光線の微分は向きを持たないので使わない）
+// 法線（法線マップ・地層の張り出し・葉理の凹凸）と粗さは SCN-WLR-MATERIAL-NORMAL で足す。
+// 値（混ぜ方の値・GLSL の定数・テクスチャの段のパス）は、台本が生成する terrain_albedo_generated.h が与える
+// （混ぜ方の値はエンジンのログの WASTELAND_TERRAIN_MATERIAL、定数は GLSL のファイルから読む）。
+// 座標はエンジンのワールド（m、+X 東・+Y 上・+Z 南）で計算する。Blender の座標（x = X、y = −Z、z = Y）からは to_engine で移す。
+
+#include "terrain_albedo_generated.h"
+
+vector to_engine(vector v)
+{
+    return vector(v[0], v[2], -v[1]);
+}
+
+float smoothstep_f(float edge0, float edge1, float x)
+{
+    float t = clamp((x - edge0) / (edge1 - edge0), 0.0, 1.0);
+    return t * t * (3.0 - 2.0 * t);
+}
+
+float fract_f(float x)
+{
+    return x - floor(x);
+}
+
+// TerrainLatticeHash（uint の積の桁あふれは、32 bit の int の積と同じ下位の桁になる。右の桁送りは符号を消して論理の送りにする）
+float lattice_hash(int cx, int cy)
+{
+    int qx = cx * 1597334673;
+    int qy = cy * (-482951495); // 3812015801u
+    int n = (qx ^ qy) * 1597334673;
+    n = n ^ ((n >> 15) & 131071);
+    return float((n >> 8) & 16777215) * (1.0 / 16777216.0);
+}
+
+float value_noise(float px, float py)
+{
+    float ox = floor(px);
+    float oy = floor(py);
+    float fx = px - ox;
+    float fy = py - oy;
+    float ux = fx * fx * (3.0 - 2.0 * fx);
+    float uy = fy * fy * (3.0 - 2.0 * fy);
+    int cx = int(ox);
+    int cy = int(oy);
+    float a = lattice_hash(cx, cy);
+    float b = lattice_hash(cx + 1, cy);
+    float d = lattice_hash(cx, cy + 1);
+    float e = lattice_hash(cx + 1, cy + 1);
+    return mix(mix(a, b, ux), mix(d, e, ux), uy);
+}
+
+float value_noise_filtered(float px, float py, float cellsPerPixel)
+{
+    float fade = smoothstep_f(TERRAIN_NOISE_FILTER_RANGE_X, TERRAIN_NOISE_FILTER_RANGE_Y, cellsPerPixel);
+    if (fade >= 1.0)
+        return 0.5;
+    return mix(value_noise(px, py), 0.5, fade);
+}
+
+float mottle(float x, float z, vector wavelengths, vector weights, float seedX, float seedZ, float pixelMeters)
+{
+    float sum = 0.0;
+    for (int index = 0; index < 3; ++index)
+    {
+        float frequency = 1.0 / wavelengths[index];
+        sum += value_noise_filtered(x * frequency + seedX * float(index + 1), z * frequency + seedZ * float(index + 1),
+                                    pixelMeters * frequency) * weights[index];
+    }
+    return sum;
+}
+
+// ---- 標本（GPU の textureGrad の異方性の標本の再現） ----
+
+// 段 level の大きさ（クックのミップは 1 段ごとに 2 で割って切り捨て、1 で止まる）
+int tex_level_width(int id, int level)
+{
+    return max(1, tex_width(id) >> level);
+}
+
+int tex_level_height(int id, int level)
+{
+    return max(1, tex_height(id) >> level);
+}
+
+// 段 level の双線形の標本。端は繰り返し（GPU の Wrap）。Cycles の texture() は端の外を黒にするので、(s, t) を 0〜1 へ畳み、
+// 4 つの画素が端をまたぐ所だけ、最近傍の 4 点を繰り返しの番号で引いて双線形に混ぜる
+color tex_fetch(int id, int level, float s, float t)
+{
+    float w = float(tex_level_width(id, level));
+    float h = float(tex_level_height(id, level));
+    float u = s - floor(s);
+    float v = t - floor(t);
+    float x = u * w - 0.5;
+    float y = v * h - 0.5;
+    if (x >= 0.0 && x <= w - 1.0 && y >= 0.0 && y <= h - 1.0)
+        return tex_lookup(id, level, u, v, "linear");
+    float x0 = floor(x);
+    float y0 = floor(y);
+    float fx = x - x0;
+    float fy = y - y0;
+    float xa = x0 < 0.0 ? x0 + w : x0;
+    float xb = x0 + 1.0 >= w ? x0 + 1.0 - w : x0 + 1.0;
+    float ya = y0 < 0.0 ? y0 + h : y0;
+    float yb = y0 + 1.0 >= h ? y0 + 1.0 - h : y0 + 1.0;
+    color c00 = tex_lookup(id, level, (xa + 0.5) / w, (ya + 0.5) / h, "closest");
+    color c10 = tex_lookup(id, level, (xb + 0.5) / w, (ya + 0.5) / h, "closest");
+    color c01 = tex_lookup(id, level, (xa + 0.5) / w, (yb + 0.5) / h, "closest");
+    color c11 = tex_lookup(id, level, (xb + 0.5) / w, (yb + 0.5) / h, "closest");
+    return mix(mix(c00, c10, fx), mix(c01, c11, fx), fy);
+}
+
+// 1 段の双線形の標本と、その上下の段の線形の混ぜ（λ はミップの段。0 より小さければ拡大の線形）
+color tex_trilinear(int id, float lambda, float s, float t)
+{
+    float lod = clamp(lambda, 0.0, float(tex_levels(id) - 1));
+    int base = int(floor(lod));
+    float frac = lod - float(base);
+    color c = tex_fetch(id, base, s, t);
+    if (frac > 0.0 && base + 1 < tex_levels(id))
+        c = mix(c, tex_fetch(id, base + 1, s, t), frac);
+    return c;
+}
+
+// Vulkan の仕様の異方性の標本: 足跡の長い軸に沿って N（≤ 異方性の上限）の標本を、短い軸に合わせた段で取って平均する。
+// (s, t) は UV、(dsx, dtx)・(dsy, dty) は画素の x・y が 1 増えたときの UV の変化
+color tex_aniso(int id, float s, float t, float dsx, float dtx, float dsy, float dty)
+{
+    float w = float(tex_width(id));
+    float h = float(tex_height(id));
+    float px = hypot(dsx * w, dtx * h);
+    float py = hypot(dsy * w, dty * h);
+    float pmax = max(px, py);
+    float pmin = min(px, py);
+    if (pmax <= 0.0)
+        return tex_fetch(id, 0, s, t);
+    float count = pmin > 0.0 ? min(ceil(pmax / pmin), TEX_MAX_ANISOTROPY) : TEX_MAX_ANISOTROPY;
+    float lambda = log2(pmax / count);
+    float ms = px >= py ? dsx : dsy;
+    float mt = px >= py ? dtx : dty;
+    int n = int(count);
+    if (n <= 1)
+        return tex_trilinear(id, lambda, s, t);
+    color sum = 0;
+    for (int i = 1; i <= n; ++i)
+    {
+        float k = float(i) / float(n + 1) - 0.5;
+        sum += tex_trilinear(id, lambda, s + ms * k, t + mt * k);
+    }
+    return sum / float(n);
+}
+
+// TerrainSrgbToLinear
+color srgb_to_linear(color encoded)
+{
+    color result;
+    for (int i = 0; i < 3; ++i)
+    {
+        float c = clamp(encoded[i], 0.0, 1.0);
+        result[i] = c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4);
+    }
+    return result;
+}
+
+// ---- 画素の面 ----
+
+// 画素の中心を通る視線（エンジンのカメラの右・上・前と縦の画角の正接）
+vector pixel_ray(float pixelX, float pixelY, vector camForward, vector camRight, vector camUp, float tanHalfV, float aspect,
+                 float width, float height)
+{
+    return camForward + camRight * ((2.0 * pixelX / width - 1.0) * tanHalfV * aspect) +
+           camUp * ((1.0 - 2.0 * pixelY / height) * tanHalfV);
+}
+
+// ---- 混ぜ方 ----
+
+// ComputeTerrainSlopeWeights
+vector slope_weights(vector wp, vector n, float pixelMeters)
+{
+    float slope = acos(clamp(n[1], -1.0, 1.0));
+    float noise = value_noise_filtered(wp[0] * P_NOISE_X, wp[2] * P_NOISE_X, pixelMeters * P_NOISE_X) * 0.65 +
+                  value_noise_filtered(wp[0] * P_NOISE_Y + 17.31, wp[2] * P_NOISE_Y - 41.7, pixelMeters * P_NOISE_Y) * 0.35;
+    float jitter = (noise * 2.0 - 1.0) * P_NOISE_Z;
+    float heightBias = smoothstep_f(P_HEIGHT_X, P_HEIGHT_Y, wp[1]) * P_HEIGHT_Z;
+    float dirt = smoothstep_f(P_SLOPE_X, P_SLOPE_Y, slope + jitter + heightBias);
+    float rock = smoothstep_f(P_SLOPE_Z, P_SLOPE_W, slope + jitter);
+    return vector((1.0 - dirt) * (1.0 - rock), dirt * (1.0 - rock), rock);
+}
+
+// ComputeTerrainSurfaceMaskWeights。戻り値は砂・土・岩肌の重み、coverage は地図の効きの割合（0 なら地図を読まない）
+vector surface_mask_weights(vector wp, vector wdx, vector wdy, float pixelMeters, output float coverage, output float sandShare)
+{
+    sandShare = 0.0;
+    coverage = 0.0;
+    if (P_MASK_Z <= 0.0 || P_MASK_W <= 0.0)
+        return vector(0);
+    float x = wp[0];
+    float z = wp[2];
+    if (P_MASKMIX_Z > 0.0)
+    {
+        float px = wp[0] * (1.0 / TERRAIN_SURFACE_MASK_WARP_WAVELENGTH);
+        float pz = wp[2] * (1.0 / TERRAIN_SURFACE_MASK_WARP_WAVELENGTH);
+        float cellsPerPixel = pixelMeters * (1.0 / TERRAIN_SURFACE_MASK_WARP_WAVELENGTH);
+        float warpX = value_noise_filtered(px - 23.17, pz + 5.71, cellsPerPixel);
+        float warpZ = value_noise_filtered(px + 11.39, pz + 37.53, cellsPerPixel);
+        x += (warpX * 2.0 - 1.0) * P_MASKMIX_Z;
+        z += (warpZ * 2.0 - 1.0) * P_MASKMIX_Z;
+    }
+    float u = (x - P_MASK_X) * P_MASK_Z;
+    float v = (z - P_MASK_Y) * P_MASK_W;
+    float edgeX = min(u, 1.0 - u) / P_MASK_Z;
+    float edgeZ = min(v, 1.0 - v) / P_MASK_W;
+    float cover = clamp(min(edgeX, edgeZ) / max(P_MASKMIX_Y, 1.0e-3), 0.0, 1.0);
+    if (cover <= 0.0)
+        return vector(0);
+    color rgb = tex_aniso(TEX_MASK_RGB, u, v, wdx[0] * P_MASK_Z, wdx[2] * P_MASK_W, wdy[0] * P_MASK_Z, wdy[2] * P_MASK_W);
+    color maskA = tex_aniso(TEX_MASK_A, u, v, wdx[0] * P_MASK_Z, wdx[2] * P_MASK_W, wdy[0] * P_MASK_Z, wdy[2] * P_MASK_W);
+    float a = maskA[0];
+    float total = rgb[0] + rgb[1] + rgb[2] + a;
+    float sand = max(1.0 - total - TERRAIN_SURFACE_MASK_SAND_FLOOR, 0.0);
+    if (total + sand < 1.0e-3)
+        return vector(0);
+    float pavement = mottle(wp[0], wp[2], TERRAIN_PAVEMENT_WAVELENGTHS, TERRAIN_PAVEMENT_WEIGHTS, 41.3, -17.9, pixelMeters);
+    float gravelCenter = 1.0 - P_MASKMIX_X;
+    float finePavement = smoothstep_f(TERRAIN_PAVEMENT_FINE_CENTER - TERRAIN_PAVEMENT_HALF_WIDTH,
+                                      TERRAIN_PAVEMENT_FINE_CENTER + TERRAIN_PAVEMENT_HALF_WIDTH, pavement);
+    float gravelPavement = smoothstep_f(gravelCenter - TERRAIN_PAVEMENT_HALF_WIDTH, gravelCenter + TERRAIN_PAVEMENT_HALF_WIDTH,
+                                        pavement);
+    float soil = rgb[2] * (1.0 - finePavement) + a * (1.0 - gravelPavement);
+    vector weights = vector(soil + sand, rgb[1] + rgb[2] * finePavement + a * gravelPavement, rgb[0]);
+    vector kept = max(weights / (total + sand) - vector(TERRAIN_SURFACE_MASK_MIN_WEIGHT), vector(0));
+    sandShare = soil + sand > 1.0e-6 ? sand / (soil + sand) : 0.0;
+    coverage = cover;
+    return kept / max(kept[0] + kept[1] + kept[2], 1.0e-6);
+}
+
+// ApplyTerrainHeightBlend
+vector height_blend(vector weights, vector layerHeights, float depth)
+{
+    vector h;
+    for (int i = 0; i < 3; ++i)
+        h[i] = weights[i] + layerHeights[i] * clamp(weights[i] * 4.0, 0.0, 1.0);
+    float top = max(max(h[0], h[1]), h[2]) - depth;
+    vector w;
+    for (int i = 0; i < 3; ++i)
+        w[i] = max(h[i] - top, 0.0) * (weights[i] >= 1.0e-4 ? 1.0 : 0.0);
+    float sum = w[0] + w[1] + w[2];
+    return sum > 1.0e-6 ? w / sum : weights;
+}
+
+// ComputeTerrainTriplanarWeights（x = X の向きの投影、y = 真上、z = Z の向き）
+vector triplanar_weights(vector n)
+{
+    vector w = vector(pow(abs(n[0]), TERRAIN_TRIPLANAR_SHARPNESS), pow(abs(n[1]), TERRAIN_TRIPLANAR_SHARPNESS),
+                      pow(abs(n[2]), TERRAIN_TRIPLANAR_SHARPNESS));
+    w /= max(w[0] + w[1] + w[2], 1.0e-6);
+    w = max(w - vector(TERRAIN_TRIPLANAR_CUTOFF), vector(0));
+    return w / max(w[0] + w[1] + w[2], 1.0e-6);
+}
+
+// AccumulateTerrainProjection のアルベドと AO（ORM の R）。(u, v) と勾配は回す前の UV
+void accumulate_projection(output color albedo, output float ao, float weight, int albedoId, int aoId, int bDecode, float u,
+                           float v, float dux, float dvx, float duy, float dvy, float angle, float offsetU, float offsetV,
+                           float atlasHalf)
+{
+    float c = cos(angle);
+    float s = sin(angle);
+    // mat2(c, s, -s, c) * (u, v)（GLSL の列優先: 1 列目 (c, s)、2 列目 (−s, c)）
+    float ru = c * u - s * v + offsetU;
+    float rv = s * u + c * v + offsetV;
+    float uvPerPixel = max(hypot(dux, dvx), hypot(duy, dvy));
+    float tilePixels = uvPerPixel > 0.0 ? 1.0 / uvPerPixel : TERRAIN_TILE_FADE_PIXELS_FULL;
+    float gradientScale = pow(max(TERRAIN_TILE_FADE_PIXELS_FULL / max(tilePixels, 1.0e-3), 1.0),
+                              TERRAIN_TILE_FADE_GRADIENT_EXPONENT);
+    float dxu = (c * dux - s * dvx) * gradientScale;
+    float dxv = (s * dux + c * dvx) * gradientScale;
+    float dyu = (c * duy - s * dvy) * gradientScale;
+    float dyv = (s * duy + c * dvy) * gradientScale;
+    if (atlasHalf >= 0.0)
+    {
+        float footprint = max(hypot(dxu, dxv), hypot(dyu, dyv));
+        if (footprint > 1.0)
+        {
+            dxu /= footprint;
+            dxv /= footprint;
+            dyu /= footprint;
+            dyv /= footprint;
+        }
+        float margin = min(0.5 * (abs(dxu) + abs(dyu)) + max(hypot(dxu, dxv), hypot(dyu, dyv)) +
+                               1.0 / float(tex_height(albedoId)),
+                           0.5);
+        ru = (clamp(fract_f(ru), margin, 1.0 - margin) + atlasHalf) * 0.5;
+        dxu *= 0.5;
+        dyu *= 0.5;
+    }
+    color sampled = tex_aniso(albedoId, ru, rv, dxu, dxv, dyu, dyv);
+    if (bDecode)
+        sampled = srgb_to_linear(sampled);
+    albedo += sampled * weight;
+    color occlusion = tex_aniso(aoId, ru, rv, dxu, dxv, dyu, dyv);
+    ao += occlusion[0] * weight;
+}
+
+// SampleTerrainLayer（アルベドと AO）。levelBase・levelWeight は距離の 2 つの段
+void sample_layer(output color albedo, output float ao, int albedoId, int aoId, int bDecode, vector wp, vector wdx,
+                  vector wdy, vector projection, float levelBase, float levelT, float log2Ratio, float uvScale,
+                  float tileMeters, float atlasHalf)
+{
+    albedo = color(0);
+    ao = 0.0;
+    for (int index = 0; index < 2; ++index)
+    {
+        float levelWeight = index == 0 ? 1.0 - levelT : levelT;
+        if (levelWeight <= 1.0e-3)
+            continue;
+        float level = levelBase + float(index);
+        float scale = uvScale * exp2(-level * log2Ratio) / tileMeters;
+        float angle = level * TERRAIN_DETAIL_LEVEL_ROTATION;
+        float offsetU = TERRAIN_DETAIL_LEVEL_OFFSET_X * level;
+        float offsetV = TERRAIN_DETAIL_LEVEL_OFFSET_Y * level;
+        if (projection[1] > 0.0)
+            accumulate_projection(albedo, ao, levelWeight * projection[1], albedoId, aoId, bDecode, wp[0] * scale,
+                                  wp[2] * scale, wdx[0] * scale, wdx[2] * scale, wdy[0] * scale, wdy[2] * scale, angle,
+                                  offsetU, offsetV, atlasHalf);
+        if (projection[0] > 0.0)
+            accumulate_projection(albedo, ao, levelWeight * projection[0], albedoId, aoId, bDecode, wp[2] * scale,
+                                  wp[1] * scale, wdx[2] * scale, wdx[1] * scale, wdy[2] * scale, wdy[1] * scale, angle,
+                                  offsetU, offsetV, atlasHalf);
+        if (projection[2] > 0.0)
+            accumulate_projection(albedo, ao, levelWeight * projection[2], albedoId, aoId, bDecode, wp[0] * scale,
+                                  wp[1] * scale, wdx[0] * scale, wdx[1] * scale, wdy[0] * scale, wdy[1] * scale, angle,
+                                  offsetU, offsetV, atlasHalf);
+    }
+}
+
+// TerrainMacroVariation
+color macro_variation(float x, float z, float seedX, float seedZ, float pixelMeters)
+{
+    float a = value_noise_filtered(x * P_MACRO_X - 7.31 + seedX, z * P_MACRO_X + 3.17 + seedZ, pixelMeters * P_MACRO_X);
+    float b = value_noise_filtered(x * P_MACRO_Y + 29.71 + seedX, z * P_MACRO_Y - 13.93 + seedZ, pixelMeters * P_MACRO_Y);
+    float d = value_noise_filtered(x * P_MACRO_X * 4.0 + 17.03 + seedX, z * P_MACRO_X * 4.0 - 41.57 + seedZ,
+                                   pixelMeters * P_MACRO_X * 4.0);
+    float brightness = 1.0 + P_MACRO_Z * ((a * 0.45 + b * 0.3 + d * 0.25) * 2.0 - 1.0);
+    float c = value_noise_filtered(x * P_MACRO_X * 1.7 + 61.37 + seedX, z * P_MACRO_X * 1.7 + 44.21 + seedZ,
+                                   pixelMeters * P_MACRO_X * 1.7);
+    float hue = P_MACRO_W * (c * 2.0 - 1.0);
+    return brightness * color(1.0 + hue, 1.0, 1.0 - hue);
+}
+
+// SampleTerrainFarMap。戻り値は地図へ移す割合（0 なら地図を読まない）
+float far_map(vector wp, vector wdx, vector wdy, float pixelMeters, output vector weights, output vector farNormal)
+{
+    weights = vector(1, 0, 0);
+    farNormal = vector(0, 1, 0);
+    float texelMeters = P_FARMIX_X;
+    if (P_FARMAP_Z <= 0.0 || P_FARMAP_W <= 0.0 || texelMeters <= 0.0)
+        return 0.0;
+    float texelPixels = texelMeters / max(pixelMeters, 1.0e-4);
+    float amount = 1.0 - smoothstep_f(TERRAIN_FAR_MAP_PIXELS_FULL, TERRAIN_FAR_MAP_PIXELS_ZERO, texelPixels);
+    float u = (wp[0] - P_FARMAP_X) * P_FARMAP_Z;
+    float v = (wp[2] - P_FARMAP_Y) * P_FARMAP_W;
+    float edgeX = min(u, 1.0 - u) / P_FARMAP_Z;
+    float edgeZ = min(v, 1.0 - v) / P_FARMAP_W;
+    amount *= clamp(min(edgeX, edgeZ) / (TERRAIN_FAR_MAP_EDGE_TEXELS * texelMeters), 0.0, 1.0);
+    if (amount <= 0.0)
+        return 0.0;
+    color rg = tex_aniso(TEX_FAR_RGB, u, v, wdx[0] * P_FARMAP_Z, wdx[2] * P_FARMAP_W, wdy[0] * P_FARMAP_Z,
+                         wdy[2] * P_FARMAP_W);
+    color farA = tex_aniso(TEX_FAR_A, u, v, wdx[0] * P_FARMAP_Z, wdx[2] * P_FARMAP_W, wdy[0] * P_FARMAP_Z,
+                           wdy[2] * P_FARMAP_W);
+    float alpha = farA[0];
+    float hx = rg[0] * 2.0 - 1.0;
+    float hz = rg[1] * 2.0 - 1.0;
+    farNormal = normalize(vector(hx, sqrt(max(1.0 - hx * hx - hz * hz, 0.0)), hz));
+    float rock = clamp(rg[2], 0.0, 1.0);
+    float dirt = clamp(alpha, 0.0, 1.0 - rock);
+    weights = vector(max(1.0 - rock - dirt, 0.0), dirt, rock);
+    return amount;
+}
+
+// ---- 地層とワニス（Common/TerrainStrata.glsl。アルベドの倍率・AO の倍率・ワニスだけ） ----
+
+float strata_boundary(int index, float x, float z, int seed)
+{
+    float jitter = (lattice_hash(index, seed) - 0.5) * STRATA_BOUNDARY_JITTER;
+    float px = x * (1.0 / STRATA_LATERAL_WAVELENGTH) + float(index) * 7.131;
+    float pz = z * (1.0 / STRATA_LATERAL_WAVELENGTH) + float(seed) * 3.173;
+    float lateral = (value_noise(px, pz) - 0.5) * STRATA_BOUNDARY_LATERAL;
+    return float(index) + jitter + lateral;
+}
+
+// FindTerrainStrataBed。bottom・top は高さ（m）
+int strata_bed(float height, float x, float z, float origin, float thickness, int seed, output float bottom,
+               output float top)
+{
+    float u = (height - origin) / thickness;
+    int i = int(floor(u + 0.5));
+    float b = strata_boundary(i, x, z, seed);
+    int index;
+    if (u >= b)
+    {
+        index = i;
+        bottom = b;
+        top = strata_boundary(i + 1, x, z, seed);
+    }
+    else
+    {
+        index = i - 1;
+        bottom = strata_boundary(i - 1, x, z, seed);
+        top = b;
+    }
+    bottom = origin + bottom * thickness;
+    top = origin + top * thickness;
+    return index;
+}
+
+float strata_presence(int index, float x, float z, int seed)
+{
+    float px = x * (1.0 / STRATA_PINCH_WAVELENGTH) + float(index) * 3.917;
+    float pz = z * (1.0 / STRATA_PINCH_WAVELENGTH) + float(seed) * 11.37;
+    return smoothstep_f(0.32, 0.55, value_noise(px, pz));
+}
+
+// EstimateTerrainRimDrop（地図を最も細かい段の双線形で引く）
+float rim_drop(vector wp, vector n)
+{
+    float horizontal = hypot(n[0], n[2]);
+    if (P_MASK_Z <= 0.0 || P_MASK_W <= 0.0 || horizontal < 1.0e-3)
+        return -1.0;
+    float inX = -n[0] / horizontal;
+    float inZ = -n[2] / horizontal;
+    float previousDistance = 0.0;
+    float previousRock = 1.0;
+    for (int index = 1; index <= VARNISH_MARCH_STEPS; ++index)
+    {
+        float marched = float(index) * VARNISH_MARCH_STEP_METERS;
+        float u = (wp[0] + inX * marched - P_MASK_X) * P_MASK_Z;
+        float v = (wp[2] + inZ * marched - P_MASK_Y) * P_MASK_W;
+        if (u < 0.0 || v < 0.0 || u > 1.0 || v > 1.0)
+            return -1.0;
+        color rgb = tex_fetch(TEX_MASK_RGB, 0, u, v);
+        color maskA = tex_fetch(TEX_MASK_A, 0, u, v);
+        float a = maskA[0];
+        float rock = rgb[0] / max(rgb[0] + rgb[1] + rgb[2] + a, 1.0e-3);
+        if (rock < VARNISH_RIM_ROCK_FRACTION)
+        {
+            float t = clamp((previousRock - VARNISH_RIM_ROCK_FRACTION) / max(previousRock - rock, 1.0e-3), 0.0, 1.0);
+            float rimDistance = mix(previousDistance, marched, t);
+            float slopeTangent = clamp(horizontal / max(n[1], 1.0e-3), VARNISH_SLOPE_TANGENT_X, VARNISH_SLOPE_TANGENT_Y);
+            return rimDistance * slopeTangent;
+        }
+        previousDistance = marched;
+        previousRock = rock;
+    }
+    return -1.0;
+}
+
+// ComputeTerrainVarnish
+float varnish_cover(float x, float z, float drop, float steepness)
+{
+    if (drop < 0.0)
+        return 0.0;
+    float fine = value_noise(x * (1.0 / 2.5) + 41.3, z * (1.0 / 2.5) - 17.9);
+    float broad = value_noise(x * (1.0 / 9.0) - 5.7, z * (1.0 / 9.0) + 63.1);
+    float streak = fine * 0.55 + broad * 0.45;
+    float outlet = smoothstep_f(0.42, 0.68, value_noise(x * (1.0 / 45.0) + 13.7, z * (1.0 / 45.0) + 29.3));
+    float lengthMeters = mix(VARNISH_LENGTH_METERS_X, VARNISH_LENGTH_METERS_Y,
+                             value_noise(x * (1.0 / 18.0) - 33.1, z * (1.0 / 18.0) + 7.9));
+    float down = drop / lengthMeters;
+    float threshold = 0.46 + 0.18 * down;
+    float line = smoothstep_f(threshold, threshold + 0.12, streak);
+    float fade = 1.0 - smoothstep_f(0.55, 1.0, down);
+    return line * outlet * fade * smoothstep_f(0.85, 0.95, steepness) * VARNISH_MAX_COVER;
+}
+
+// ComputeTerrainStrata のアルベドの倍率（tint）・AO の倍率（occlusion）・ワニス（varnish）
+void strata(vector wp, vector wdx, vector wdy, vector n, output color tintOut, output float occlusionOut,
+            output float varnishOut)
+{
+    float x = wp[0];
+    float z = wp[2];
+    float warp = (value_noise(x * (1.0 / STRATA_WARP_WAVELENGTH) + 3.71, z * (1.0 / STRATA_WARP_WAVELENGTH) - 8.13) * 2.0 -
+                  1.0) * STRATA_WARP_AMPLITUDE;
+    float y = wp[1] + warp;
+    float contact = STRATA_CONTACT_HEIGHT +
+                    (value_noise(x * (1.0 / 160.0) - 19.3, z * (1.0 / 160.0) + 27.1) * 2.0 - 1.0) * STRATA_CONTACT_UNDULATION;
+    float pixelHeight = max(max(abs(wdx[1]), abs(wdy[1])), 1.0e-4);
+    float steepness = hypot(n[0], n[2]);
+
+    color tint = color(1);
+    float occlusion = 1.0;
+    float bedVisibility = 0.0;
+    color unitTint = STRATA_UPPER_MEAN_TINT;
+    float unitOcclusion = STRATA_UPPER_MEAN_OCCLUSION;
+    float bottom = 0.0;
+    float top = 0.0;
+    if (y < contact)
+    {
+        unitTint = STRATA_LOWER_MEAN_TINT;
+        unitOcclusion = STRATA_LOWER_MEAN_OCCLUSION;
+        int index = strata_bed(y, x, z, contact, STRATA_LOWER_BED_METERS, 1, bottom, top);
+        float thickness = top - bottom;
+        bedVisibility = smoothstep_f(2.0, 6.0, thickness / pixelHeight);
+        float hardHash = lattice_hash(index, 101);
+        float hardness = smoothstep_f(0.45, 0.75, hardHash) * strata_presence(index, x, z, 1);
+        float toneHash = lattice_hash(index, 211);
+        color soft = color(1.04, 0.9, 0.86) * mix(0.72, 0.86, toneHash);
+        color hard = color(1.0, 1.04, 1.04) * mix(1.02, 1.16, toneHash);
+        tint = mix(soft, hard, hardness);
+        occlusion = mix(0.78, 1.0, hardness);
+    }
+    else
+    {
+        int index = strata_bed(y, x, z, contact, STRATA_UPPER_SET_METERS, 2, bottom, top);
+        float partingHash = lattice_hash(index, 307);
+        float partingPresence = strata_presence(index, x, z, 2) * (partingHash >= 0.5 ? 1.0 : 0.0);
+        float parting = mix(STRATA_PARTING_METERS_X, STRATA_PARTING_METERS_Y, lattice_hash(index, 311)) * partingPresence;
+        float sandBottom = bottom + parting;
+        float toneHash = lattice_hash(index, 401);
+        if (y < sandBottom)
+        {
+            bedVisibility = smoothstep_f(2.0, 6.0, parting / pixelHeight);
+            tint = color(1.06, 0.9, 0.85) * mix(0.74, 0.86, toneHash);
+            occlusion = 0.8;
+        }
+        else
+        {
+            float thickness = top - sandBottom;
+            bedVisibility = smoothstep_f(2.0, 6.0, thickness / pixelHeight);
+            float paleness = lattice_hash(index, 409);
+            tint = mix(color(1.03, 0.98, 0.95), color(0.99, 1.02, 1.05), paleness) * mix(0.92, 1.1, toneHash);
+            // 交差層理の葉理の明暗
+            float azimuth = lattice_hash(index, 601) * 6.2831853;
+            float dirX = cos(azimuth);
+            float dirZ = sin(azimuth);
+            float dipTangent =
+                tan(radians(mix(STRATA_LAMINA_DIP_DEGREES_X, STRATA_LAMINA_DIP_DEGREES_Y, lattice_hash(index, 607))));
+            float spacing = mix(STRATA_LAMINA_SPACING_METERS_X, STRATA_LAMINA_SPACING_METERS_Y, lattice_hash(index, 613));
+            float lamina = (y - sandBottom) - dipTangent * (x * dirX + z * dirZ);
+            vector laminaGradient = vector(-dipTangent * dirX, 1.0, -dipTangent * dirZ);
+            float pixelLamina = max(max(abs(dot(laminaGradient, wdx)), abs(dot(laminaGradient, wdy))), 1.0e-4);
+            float laminaVisibility = smoothstep_f(1.5, 4.0, spacing / pixelLamina);
+            if (laminaVisibility > 0.0)
+            {
+                float row = float(index) * 5.31;
+                float coordinate = lamina / spacing;
+                float value = smoothstep_f(0.3, 0.7, value_noise(coordinate, row));
+                tint *= 1.0 + STRATA_LAMINA_CONTRAST * (value * 2.0 - 1.0) * laminaVisibility;
+            }
+        }
+    }
+    tintOut = mix(unitTint, tint, bedVisibility);
+    occlusionOut = mix(unitOcclusion, occlusion, bedVisibility);
+    {
+        float packageBottom = 0.0;
+        float packageTop = 0.0;
+        int package = strata_bed(y, x, z, contact, STRATA_PACKAGE_METERS, 5, packageBottom, packageTop);
+        float packageVisibility = smoothstep_f(1.5, 4.0, (packageTop - packageBottom) / pixelHeight);
+        float hue = lattice_hash(package, 701) * 2.0 - 1.0;
+        float brightness = lattice_hash(package, 709) * 2.0 - 1.0;
+        color packageTint = (color(1) + STRATA_PACKAGE_HUE * hue) * (1.0 + STRATA_PACKAGE_BRIGHTNESS * brightness);
+        tintOut *= mix(color(1), packageTint, packageVisibility);
+    }
+    varnishOut = 0.0;
+    float upperUnit = smoothstep_f(contact - 8.0, contact, y);
+    if (upperUnit > 0.0)
+        varnishOut = varnish_cover(x, z, rim_drop(wp, n), steepness) * upperUnit;
+}
+
+shader TerrainAlbedo(vector CameraPosition = vector(0),
+                     vector CameraForward = vector(0, 0, 1),
+                     vector CameraRight = vector(1, 0, 0),
+                     vector CameraUp = vector(0, 1, 0),
+                     float TanHalfVertical = 0.5,
+                     float Aspect = 1.0,
+                     float Width = 1920.0,
+                     float Height = 1080.0,
+                     output color Albedo = 0,
+                     output color Weights = 0)
+{
+    // 画素の面（エンジンの座標、カメラ相対で微分を求める）
+    vector wp = to_engine(P);
+    vector d = wp - CameraPosition;
+    vector ng = normalize(to_engine(Ng));
+    float depth = dot(d, CameraForward);
+    float pixelX = (dot(d, CameraRight) / (depth * TanHalfVertical * Aspect) * 0.5 + 0.5) * Width;
+    float pixelY = (0.5 - dot(d, CameraUp) / (depth * TanHalfVertical) * 0.5) * Height;
+    vector rayX = pixel_ray(pixelX + 1.0, pixelY, CameraForward, CameraRight, CameraUp, TanHalfVertical, Aspect, Width, Height);
+    vector rayY = pixel_ray(pixelX, pixelY + 1.0, CameraForward, CameraRight, CameraUp, TanHalfVertical, Aspect, Width, Height);
+    float planeDistance = dot(d, ng);
+    vector wdx = rayX * (planeDistance / dot(rayX, ng)) - d;
+    vector wdy = rayY * (planeDistance / dot(rayY, ng)) - d;
+    float cameraDistance = length(d);
+    float pixelMeters = max(length(wdx), length(wdy));
+
+    // ShadeTerrainLayers
+    vector farWeights;
+    vector farNormal;
+    float farAmount = far_map(wp, wdx, wdy, pixelMeters, farWeights, farNormal);
+    vector n = normalize(to_engine(N));
+    if (farAmount > 0.0)
+        n = normalize(mix(n, farNormal, farAmount));
+    float maskCoverage = 0.0;
+    float maskSandShare = 0.0;
+    vector maskWeights = surface_mask_weights(wp, wdx, wdy, pixelMeters, maskCoverage, maskSandShare);
+    float sandWeight = maskWeights[0] * maskSandShare * maskCoverage;
+    vector layerWeights = maskWeights;
+    if (maskCoverage < 1.0)
+        layerWeights = mix(slope_weights(wp, n, pixelMeters), maskWeights, maskCoverage);
+    if (farAmount > 0.0)
+    {
+        layerWeights = mix(layerWeights, farWeights, farAmount);
+        sandWeight *= 1.0 - farAmount;
+    }
+    // 距離の段（ComputeTerrainDetailLevels）
+    float log2Ratio = max(P_DETAIL_Y, 1.0e-3);
+    float start = max(P_DETAIL_X, 1.0e-3);
+    float maxLevel = max(P_DETAIL_Z, 0.0);
+    float level = clamp(log2(max(cameraDistance, start) / start) / log2Ratio, 0.0, maxLevel);
+    float levelBase = min(floor(level), maxLevel);
+    float levelT = smoothstep_f(0.0, 1.0, level - levelBase);
+    float tileMeters = max(P_DETAIL_W, 1.0e-3);
+    vector projection = triplanar_weights(n);
+
+    float sandHalf = TEX_SAND_ALBEDO_WIDTH == TEX_SAND_ALBEDO_HEIGHT * 2 ? 0.0 : -1.0;
+    float sandShare = sandHalf >= 0.0 && layerWeights[0] > 1.0e-4 ? clamp(sandWeight / layerWeights[0], 0.0, 1.0) : 0.0;
+    color sandAlbedo;
+    float sandAo;
+    sample_layer(sandAlbedo, sandAo, TEX_SAND_ALBEDO, TEX_SAND_AO, SAND_ALBEDO_SRGB_DECODE, wp, wdx, wdy, projection,
+                 levelBase, levelT, log2Ratio, 1.0, tileMeters, sandHalf);
+    float dirtHalf = TEX_DIRT_ALBEDO_WIDTH == TEX_DIRT_ALBEDO_HEIGHT * 2 ? 0.0 : -1.0;
+    if (dirtHalf >= 0.0 && layerWeights[0] > 0.0 && sandShare < 0.999)
+    {
+        float crustNoise = mottle(wp[0], wp[2], TERRAIN_CRUST_WAVELENGTHS, TERRAIN_CRUST_WEIGHTS, -63.7, 28.1, pixelMeters);
+        float crustFade = smoothstep_f(TERRAIN_NOISE_FILTER_RANGE_X, TERRAIN_NOISE_FILTER_RANGE_Y,
+                                       pixelMeters / TERRAIN_CRUST_WAVELENGTHS_X);
+        float crust = mix(smoothstep_f(TERRAIN_CRUST_RANGE_X, TERRAIN_CRUST_RANGE_Y, crustNoise),
+                          TERRAIN_CRUST_MEAN_COVERAGE, crustFade);
+        if (crust > 1.0e-3)
+        {
+            color crustAlbedo;
+            float crustAo;
+            sample_layer(crustAlbedo, crustAo, TEX_DIRT_ALBEDO, TEX_DIRT_AO, DIRT_ALBEDO_SRGB_DECODE, wp, wdx, wdy,
+                         projection, levelBase, levelT, log2Ratio, P_LAYERS_Y, tileMeters, 1.0);
+            vector crustWeights = height_blend(vector(1.0 - crust, crust, 0.0),
+                                               vector(sandAo, crustAo - TERRAIN_CRUST_HEIGHT_OFFSET, 0.0),
+                                               TERRAIN_CRUST_BLEND_DEPTH);
+            sandAlbedo = sandAlbedo * crustWeights[0] + crustAlbedo * crustWeights[1];
+            sandAo = sandAo * crustWeights[0] + crustAo * crustWeights[1];
+        }
+    }
+    if (sandShare > 1.0e-3)
+    {
+        color fillAlbedo;
+        float fillAo;
+        sample_layer(fillAlbedo, fillAo, TEX_SAND_ALBEDO, TEX_SAND_AO, SAND_ALBEDO_SRGB_DECODE, wp, wdx, wdy, projection,
+                     levelBase, levelT, log2Ratio, TERRAIN_SAND_UV_SCALE, tileMeters, 1.0);
+        vector fillWeights = height_blend(vector(1.0 - sandShare, sandShare, 0.0),
+                                          vector(sandAo, fillAo - TERRAIN_SAND_HEIGHT_OFFSET, 0.0),
+                                          TERRAIN_SAND_BLEND_DEPTH);
+        sandAlbedo = sandAlbedo * fillWeights[0] + fillAlbedo * fillWeights[1];
+        sandAo = sandAo * fillWeights[0] + fillAo * fillWeights[1];
+    }
+    color dirtAlbedo = sandAlbedo;
+    float dirtAo = sandAo;
+    color rockAlbedo = sandAlbedo;
+    float rockAo = sandAo;
+    if (layerWeights[1] > 0.0)
+        sample_layer(dirtAlbedo, dirtAo, TEX_DIRT_ALBEDO, TEX_DIRT_AO, DIRT_ALBEDO_SRGB_DECODE, wp, wdx, wdy, projection,
+                     levelBase, levelT, log2Ratio, P_LAYERS_Y, tileMeters, dirtHalf);
+    if (layerWeights[2] > 0.0)
+    {
+        sample_layer(rockAlbedo, rockAo, TEX_ROCK_ALBEDO, TEX_ROCK_AO, ROCK_ALBEDO_SRGB_DECODE, wp, wdx, wdy, projection,
+                     levelBase, levelT, log2Ratio, P_LAYERS_Z, tileMeters, -1.0);
+        color strataTint;
+        float strataOcclusion;
+        float varnish;
+        strata(wp, wdx, wdy, n, strataTint, strataOcclusion, varnish);
+        rockAlbedo = mix(rockAlbedo * strataTint, VARNISH_ALBEDO, varnish);
+        rockAo *= strataOcclusion;
+    }
+    vector w = height_blend(layerWeights, vector(P_NOISE_W, dirtAo, rockAo), P_HEIGHT_W);
+    color result = sandAlbedo * macro_variation(wp[0], wp[2], 0.0, 0.0, pixelMeters) * w[0] +
+                   dirtAlbedo * macro_variation(wp[0], wp[2], 113.7, -71.3, pixelMeters) * w[1] +
+                   rockAlbedo * macro_variation(wp[0], wp[2], -257.1, 191.9, pixelMeters) * w[2];
+    Albedo = clamp(result, color(0), color(1));
+    Weights = color(w[2], w[1], w[0]);
+}
