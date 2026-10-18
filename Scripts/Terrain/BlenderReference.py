@@ -125,6 +125,11 @@ MATERIAL_COLUMN_TRIANGLES = 20000000
 MATERIAL_COLUMNS = 4
 # 列の視錐台と描く範囲を列の外へ広げる画素の数
 MATERIAL_COLUMN_PAD_PX = 4
+# 標本の位置の揃え: エンジンの深度と Blender の深度から求めた画素の小数のずれ（ReferenceCheck.depth_subpixel_shift）が
+# これを超える視点は、そのずれだけカメラをずらして描き直し、エンジンの画素の中心と同じ点を描く。ずれは比べる値（アルベド・
+# 法線・粗さ）を使わず深度だけから求める。ref_cliff_01 では撮影のカメラの記録のままだと横に約 0.24 画素ずれ、崖の細部
+# （頂点の法線が隣の画素で十数度変わる所）で法線の差を作る
+MATERIAL_SUBPIXEL_TOLERANCE_PX = 0.05
 MATERIAL_SCRIPT = "Scripts/Terrain/TerrainMaterialReference.py"
 # 三角形を視錐台で間引くときの画角の余裕（区画を選ぶ FRUSTUM_MARGIN と同じ）
 ALBEDO_TRIANGLE_MARGIN = FRUSTUM_MARGIN
@@ -536,7 +541,7 @@ def run_material(args, mode):
             "exr": f"{prefix}.{mode}.exr",
             "prefix": prefix,
         }
-        parts = [p[1] for p in MATERIAL_PASSES[mode]] + ["normal", "alpha"]
+        parts = [p[1] for p in MATERIAL_PASSES[mode]] + ["normal", "alpha", "depth"]
         final_outputs = [f"{prefix}.{mode}.json"] + [f"{prefix}.{part}.pfm" for part in parts]
         for stale in final_outputs:
             if os.path.exists(stale):
@@ -546,25 +551,45 @@ def run_material(args, mode):
         edges = [round(width * i / column_count) for i in range(column_count + 1)]
         print(f"BLENDER_REFERENCE {mode} view={view} tiles={len(tiles)} triangles={triangles} columns={column_count}",
               flush=True)
-        column_prefixes = []
-        for index in range(column_count):
-            column_job = dict(job)
-            name = view if column_count == 1 else f"{view}.col{index}"
-            column_job["prefix"] = os.path.join(out_dir, name)
-            column_job["exr"] = f"{column_job['prefix']}.{mode}.exr"
+        with open(os.path.join(capture_dir, f"{view}.aov.json"), encoding="utf-8") as f:
+            engine_depth_file = json.load(f)["depth"]["file"]
+        engine_depth = RC.read_pfm_any(os.path.join(capture_dir, engine_depth_file))[..., 0].astype(np.float64)
+        # 撮影のカメラのまま描き、深度から求めた小数のずれが許容を超えたら、そのずれだけカメラをずらして描き直す
+        shift = [0.0, 0.0]
+        fits = []
+        for attempt in range(2):
+            column_prefixes = []
+            for index in range(column_count):
+                column_job = dict(job)
+                column_job["camera_shift_px"] = shift
+                name = view if column_count == 1 else f"{view}.col{index}"
+                column_job["prefix"] = os.path.join(out_dir, name)
+                column_job["exr"] = f"{column_job['prefix']}.{mode}.exr"
+                if column_count > 1:
+                    column_job["columns"] = [edges[index], edges[index + 1]]
+                column_job["required_outputs"] = [f"{column_job['prefix']}.{mode}.json"] + \
+                    [f"{column_job['prefix']}.{part}.pfm" for part in parts]
+                if not run_blender_job(args, out_dir, name, column_job, label=mode):
+                    print(f"BLENDER_REFERENCE error view={view} Blender が失敗した（{result_dir}/{name}.blender.log）")
+                    return 1
+                column_prefixes.append(column_job["prefix"])
             if column_count > 1:
-                column_job["columns"] = [edges[index], edges[index + 1]]
-            column_job["required_outputs"] = [f"{column_job['prefix']}.{mode}.json"] + \
-                [f"{column_job['prefix']}.{part}.pfm" for part in parts]
-            if not run_blender_job(args, out_dir, name, column_job, label=mode):
-                print(f"BLENDER_REFERENCE error view={view} Blender が失敗した（{result_dir}/{name}.blender.log）")
-                return 1
-            column_prefixes.append(column_job["prefix"])
-        if column_count > 1:
-            join_material_columns(prefix, column_prefixes, edges, mode, parts)
+                join_material_columns(prefix, column_prefixes, edges, mode, parts)
+            blender_depth = RC.read_pfm_any(f"{prefix}.depth.pfm")[..., 0].astype(np.float64)
+            fit = RC.depth_subpixel_shift(engine_depth, blender_depth)
+            fit["camera_shift_px"] = list(shift)
+            fits.append(fit)
+            print(f"BLENDER_REFERENCE {mode} view={view} subpixel camera_shift=({shift[0]:+.3f},{shift[1]:+.3f}) "
+                  f"right_px={fit['right_px']:+.3f} down_px={fit['down_px']:+.3f} depth_bias={fit['depth_bias']:+.2e} "
+                  f"pixels={fit['pixels']}", flush=True)
+            if attempt > 0 or math.hypot(fit["right_px"], fit["down_px"]) <= MATERIAL_SUBPIXEL_TOLERANCE_PX:
+                break
+            # エンジンの画素 (x, y) は Blender の画の (x + right, y + down) を見ている。カメラのずらしは右・上が正
+            shift = [shift[0] + fit["right_px"], shift[1] - fit["down_px"]]
         used_tiles.update(t["file"] for t in tiles)
         view_records[view] = {"camera": camera, "width": width, "height": height,
-                              "tiles": sorted(t["file"] for t in tiles), "triangles": triangles}
+                              "tiles": sorted(t["file"] for t in tiles), "triangles": triangles,
+                              "camera_shift_px": shift, "subpixel_fits": fits}
 
     # 入力の記録（ReferenceCheck.py --albedo・--normal の --verify が今のファイルと照らす）
     with open(os.path.join(capture_dir, "inputs.json"), encoding="utf-8") as f:
@@ -977,6 +1002,10 @@ def render_albedo_job(job):
     scene.collection.objects.link(camera_object)
     camera_object.matrix_world = mathutils.Matrix(matrix)
     scene.camera = camera_object
+    # 画素の小数のずらし（右・上が正の画素）。縦で合わせるカメラのずらしの単位は画の高さ
+    shift_px = job.get("camera_shift_px") or [0.0, 0.0]
+    camera.shift_x = float(shift_px[0]) / float(job["height"])
+    camera.shift_y = float(shift_px[1]) / float(job["height"])
 
     render = scene.render
     render.engine = "CYCLES"
@@ -997,6 +1026,7 @@ def render_albedo_job(job):
     scene.view_settings.look = "None"
     view_layer = scene.view_layers[0]
     view_layer.use_pass_normal = True
+    view_layer.use_pass_z = True
     if job.get("border"):
         # 切り分けの試しで画面の一部（左・下・右・上の割合）だけを描く
         render.use_border = True
@@ -1036,6 +1066,9 @@ def render_albedo_job(job):
             normal = np.where(surface[..., None], normal, 0.0).astype(np.float32)
             write_pfm_rgb(f"{prefix}.normal.pfm", normal)
             write_pfm(f"{prefix}.alpha.pfm", alpha.astype(np.float32))
+            # 深度（カメラの前方向への距離 m。空は inf）。標本の位置の揃え（エンジンの深度との小数のずれ）に使う
+            depth = np.where(surface, channels["ViewLayer.Depth.Z"], np.inf).astype(np.float32)
+            write_pfm(f"{prefix}.depth.pfm", depth)
         value = pass_rgb(channels, "Combined").astype(np.float64)
         if decode == "encoded_normal":
             value = value * 2.0 - 1.0
@@ -1054,6 +1087,8 @@ def render_albedo_job(job):
             "normal": {"file": f"{job['view']}.normal.pfm", "meaning": "interpolated_vertex_normal_engine_world",
                        "sky_value": 0},
             "alpha": {"file": f"{job['view']}.alpha.pfm", "meaning": "surface_coverage"},
+            "depth": {"file": f"{job['view']}.depth.pfm", "meaning": "view_axis_distance", "units": "m", "sky_value": "inf"},
+            "camera_shift_px": [float(v) for v in (job.get("camera_shift_px") or [0.0, 0.0])],
             "renderer": f"Blender {bpy.app.version_string} Cycles CPU OSL",
             "samples": 1,
             "pixel_filter": {"type": "BOX", "width_px": PIXEL_FILTER_WIDTH},

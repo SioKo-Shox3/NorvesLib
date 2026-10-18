@@ -5356,3 +5356,20 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - BC5・BC7 の圧縮は再現していない。異方性の段の偏りはアルベドで決めた +1 をそのまま使った
   - 新しい試験は足していない（verify の照合が確かめる）
 - Next: TASKS.md の次の未完の項目。
+
+### SCN-WLR-MATERIAL-NORMAL 差し戻しの直し（2026-10-19、run 20261018-205227 の反復 21）
+- Done: 判定の対象を最初の定義（3 km 未満の画素すべて）へ戻し、隣の頂点の法線の差 4° の条件は判定の内訳の記録だけにした。崖の差の元は標本の位置で、エンジンの ref_cliff_01 の画は撮影のカメラの記録から横に +0.243・縦 −0.027 画素ずれていた（エンジンの深度と Blender の深度から最小二乗で求めた。深度 295〜613 m・画面の 4 列で同じ）。Blender の描画に深度のパスとカメラのずらしを足し、深度から求めたずれが 0.05 画素を超えた視点はそのずれだけずらして描き直すようにした（比べる値は使わない）。照合は残りのずれが 0.1 画素以下であることも検査する
+  - 基準は変えていない: 法線のなす角の中央値 ≤ 2°・95 百分位 ≤ 8°（3 km 未満の画素）、粗さの領域の平均の差 ≤ 0.02
+  - 結果: 崖は 206016 画素すべてで中央値 0.18°・95 百分位 1.44°（対照 23.15°。揃える前は 2.04°・14.06° で不合格）。残りのずれは 0.010 画素。他の 7 領域も合格、粗さの差は最大 −0.0016
+- 証拠（`.harness/runs/20261018-205227/`）:
+  - `verify-SCN-WLR-MATERIAL-NORMAL-2.txt`: 判定の対象を戻し、撮影のカメラのままの描画で照合 result=fail（崖 2.04°/14.06°。台本を変えた後なので blender_inputs_current=0）
+  - `aux-SCN-WLR-MATERIAL-NORMAL-shift-try.txt`・`aux-SCN-WLR-MATERIAL-NORMAL-shift-compare.txt`: カメラを 0.244 画素ずらした崖の試しの描画と、ずらし有無の比較（崖 0.29°/2.53°）
+  - `aux-SCN-WLR-MATERIAL-NORMAL-blender-2.txt`: 法線の 2 視点を深度で揃えて描き直し EXIT=0（ref_cliff_01 はずらし (+0.243, +0.027) で残り (+0.010, −0.003)、ref_ground_01 は 0.019 画素で許容内）
+  - `verify-SCN-WLR-MATERIAL-NORMAL-4.txt`: `--normal --verify` result=pass、inputs_current=1・blender_inputs_current=1、EXIT=0（`-3` は文書を直す前の同じ結果）
+  - `aux-SCN-WLR-MATERIAL-NORMAL-albedo-recheck-2.txt`・`aux-SCN-WLR-MATERIAL-NORMAL-albedo-verify-2.txt`: 台本を共有しているのでアルベドも同じ手順で描き直し、`--albedo --verify` result=pass（崖の SSIM 0.992 → 0.996。別の起動の撮影でも同じ +0.243 画素のずれ）
+  - 見比べの画像 `normal_ref_cliff_01.png` を開き、崖を含めて角の図がほぼ黒で、8° 超の赤が崖の細部のまばらな点だけであることを見た
+- Notes:
+  - Cycles は前から 1 サンプル・幅 0.01 画素の箱の絞り（画素の中心）で描いていたので、標本の数の差は元ではなかった
+  - ref_cliff_01 のエンジンの画のずれ（約 0.004° の向きの差に当たる）の原因は分かっていない。荒野は FXAA で投影のジッタは無い。照合は Blender 側で揃えており、エンジン側は直していない
+  - 新しい試験は足していない（verify の照合が確かめる）
+- Next: TASKS.md の次の未完の項目。

@@ -385,12 +385,15 @@ ROUGHNESS_MEAN_TOLERANCE = 0.02
 # 書き出しの LOD 0 と食い違い（ref_ground_01 の Blender の深度との相対差の 95 百分位が 1〜3 km の 2.3e-4 から 3〜8 km で
 # 1.6e-3 へ増える）、幾何の法線の差（対照と同じ大きさ）が材質の差を覆う。粗さは幾何に依らないので全画素で判定する
 NORMAL_MAX_DEPTH_M = 3000.0
-# 法線の角度は、幾何が画素で分解できている画素（Blender の頂点の法線と上下左右の隣の画素の頂点の法線のなす角の最大が
-# NORMAL_GEOMETRY_RESOLVED_DEG 未満）で判定する（外した画素は記録だけ）。崖の細部の三角形が画素より小さい所では頂点の法線が
-# 隣の画素で十数度変わり、画素の中のどの三角形を拾うかで幾何の法線が変わる（ref_cliff_01 の崖で外れた画素の頂点の法線の
-# 隣との差の中央値 17°、エンジンと頂点の法線の差 14°、Blender の材質の傾き 1.3°）。4° なら半画素のずれで変わる幾何の法線は
-# 約 2°（中央値の上限）以下。どちらの除き方も、比べる値は使わず深度と Blender の幾何だけで決める
+# 判定の内訳（判定には使わない）: 判定する画素を、幾何が画素で分解できている画素（Blender の頂点の法線と上下左右の隣の画素の
+# 頂点の法線のなす角の最大が NORMAL_GEOMETRY_RESOLVED_DEG 未満）とそれ以外に分けて記録する。崖の細部の三角形が画素より
+# 小さい所では頂点の法線が隣の画素で十数度変わり、標本の位置の小さな差で幾何の法線が変わるので、差の元の切り分けに使う
 NORMAL_GEOMETRY_RESOLVED_DEG = 4.0
+# 標本の位置: Blender の深度（BlenderReference.py が描いた depth）とエンジンの深度から求めた画素の小数のずれの残りがこれを
+# 超えたら不合格（同じ点を比べていない）。BlenderReference.py は 0.05 画素を超えるずれをカメラのずらしで揃えて描き直す
+NORMAL_SUBPIXEL_MAX_PX = 0.1
+# 小数のずれを求めるのに使う画素: 深度の勾配が 1 画素あたり深度のこの割合未満（1 次の近似が効く所）
+SUBPIXEL_FIT_MAX_RELATIVE_GRADIENT = 0.01
 # --atmos-dump: 空と霞の値の書き出し（SCN-WLR-ATMOS-DUMP）
 ATMOS_GAME_ARG = "--atmosphere-dump"
 ATMOS_LOG_LINES = ("ATMOSPHERE_DUMP ",)
@@ -4322,6 +4325,32 @@ def normal_angle_deg(a, b):
     return np.degrees(np.arccos(np.clip(np.sum(a * b, axis=-1), -1.0, 1.0)))
 
 
+def depth_subpixel_shift(engine_depth, blender_depth):
+    """エンジンの深度と Blender の深度（どちらも上の行が 0 行目、空は inf）から、エンジンの画素 (x, y) が Blender の画の
+    (x + right, y + down) を見ているときの小数のずれ（右・下が正の画素）と深度の相対の偏りを求める。
+    (エンジン − Blender) / Blender ≈ 偏り + right · ∂x Blender / Blender + down · ∂y Blender / Blender を、輪郭から離れ
+    勾配の小さい画素で最小二乗で解く。比べる値（アルベド・法線・粗さ）は使わない"""
+    ok = np.isfinite(engine_depth) & np.isfinite(blender_depth) & (engine_depth > 0) & (blender_depth > 0)
+    ok &= ~dilate(dilate(depth_edges(np.where(ok, engine_depth, np.inf), PROJECTION_JUMP_WEAK)))
+    safe = np.where(ok, blender_depth, 1.0)
+    grad_y, grad_x = np.gradient(safe)
+    ax = grad_x / safe
+    ay = grad_y / safe
+    use = ok & (np.abs(ax) < SUBPIXEL_FIT_MAX_RELATIVE_GRADIENT) & (np.abs(ay) < SUBPIXEL_FIT_MAX_RELATIVE_GRADIENT)
+    # 勾配は上下左右の隣も表面の画素で測る
+    use[1:-1, 1:-1] &= ok[:-2, 1:-1] & ok[2:, 1:-1] & ok[1:-1, :-2] & ok[1:-1, 2:]
+    use[0] = use[-1] = False
+    use[:, 0] = use[:, -1] = False
+    count = int(use.sum())
+    if count < 3:
+        return {"right_px": 0.0, "down_px": 0.0, "depth_bias": 0.0, "pixels": count}
+    relative = (engine_depth[use] - blender_depth[use]) / blender_depth[use]
+    design = np.stack([np.ones(count), ax[use], ay[use]], axis=1)
+    solution, *_ = np.linalg.lstsq(design, relative, rcond=None)
+    return {"right_px": float(solution[1]), "down_px": float(solution[2]), "depth_bias": float(solution[0]),
+            "pixels": count}
+
+
 def write_normal_preview(path, engine_normal, blender_normal, angle, roughness_diff, valid):
     """左上: エンジンの法線、右上: Blender の法線（どちらも 0.5 + 0.5 n）、左下: なす角（0〜NORMAL_P95_MAX_DEG 度を黒〜白、
     超えた所は赤）、右下: 粗さの差 Blender − エンジン（±0.05 で飽和。赤が Blender の方が粗い）"""
@@ -4384,6 +4413,16 @@ def check_normal_view(capture_dir, blender_dir, view):
     for _ in range(ALBEDO_EDGE_MARGIN_PX):
         near_edge = dilate(near_edge)
     valid = engine_surface & blender_surface & ~near_edge
+    if "depth" in blender_meta:
+        blender_depth = read_pfm_any(os.path.join(blender_dir, blender_meta["depth"]["file"]))[..., 0].astype(np.float64)
+        subpixel = depth_subpixel_shift(depth, blender_depth)
+        subpixel["camera_shift_px"] = blender_meta.get("camera_shift_px")
+        result["subpixel"] = subpixel
+        if np.hypot(subpixel["right_px"], subpixel["down_px"]) > NORMAL_SUBPIXEL_MAX_PX:
+            failures.append(f"エンジンと Blender の画素の小数のずれの残りが ({subpixel['right_px']:+.3f}, "
+                            f"{subpixel['down_px']:+.3f}) 画素（{NORMAL_SUBPIXEL_MAX_PX} 超）")
+    else:
+        failures.append("Blender の深度が無い（標本の位置を確かめられない）")
     masks = albedo_regions(depth, vertex_normal, valid)
     neighbour_change = np.zeros(depth.shape)
     horizontal = normal_angle_deg(vertex_normal[:, 1:], vertex_normal[:, :-1])
@@ -4408,14 +4447,15 @@ def check_normal_view(capture_dir, blender_dir, view):
             entry["status"] = "not_judged"
             entry["reason"] = f"画素が {ALBEDO_MIN_REGION_PX} 未満"
             continue
-        near = mask & (depth < NORMAL_MAX_DEPTH_M) & resolved
+        near = mask & (depth < NORMAL_MAX_DEPTH_M)
         far = mask & (depth >= NORMAL_MAX_DEPTH_M)
-        unresolved = mask & (depth < NORMAL_MAX_DEPTH_M) & ~resolved
+        unresolved = near & ~resolved
         entry.update({
             "status": "judged",
             "median_depth_m": float(np.median(depth[mask])),
             "normal_pixels": int(near.sum()),
             "beyond_depth_pixels": int(far.sum()),
+            "resolved_geometry_pixels": int((near & resolved).sum()),
             "unresolved_geometry_pixels": int(unresolved.sum()),
             "engine_roughness_mean": float(engine_rough[mask].mean()),
             "blender_roughness_mean": float(rough[..., 0][mask].mean()),
@@ -4428,6 +4468,9 @@ def check_normal_view(capture_dir, blender_dir, view):
             entry["beyond_depth_angle_median_deg"] = float(np.median(angle[far]))
             entry["beyond_depth_angle_p95_deg"] = float(np.percentile(angle[far], 95))
             entry["beyond_depth_control_angle_p95_deg"] = float(np.percentile(control_angle[far], 95))
+        if (near & resolved).any():
+            entry["resolved_angle_median_deg"] = float(np.median(angle[near & resolved]))
+            entry["resolved_angle_p95_deg"] = float(np.percentile(angle[near & resolved], 95))
         if unresolved.any():
             entry["unresolved_angle_median_deg"] = float(np.median(angle[unresolved]))
             entry["unresolved_angle_p95_deg"] = float(np.percentile(angle[unresolved], 95))
@@ -4439,8 +4482,7 @@ def check_normal_view(capture_dir, blender_dir, view):
         rough_discriminating += int(entry["roughness_discriminating"])
         if entry["normal_pixels"] < ALBEDO_MIN_REGION_PX:
             entry["normal_status"] = "not_judged"
-            entry["normal_reason"] = (f"{NORMAL_MAX_DEPTH_M:.0f} m 未満で幾何が分解できている画素が "
-                                      f"{ALBEDO_MIN_REGION_PX} 未満")
+            entry["normal_reason"] = f"{NORMAL_MAX_DEPTH_M:.0f} m 未満の画素が {ALBEDO_MIN_REGION_PX} 未満"
             continue
         a = angle[near]
         c = control_angle[near]
@@ -4484,7 +4526,8 @@ def run_normal(capture_dir, views, verify):
         "normal_angle_median_max_deg": NORMAL_MEDIAN_MAX_DEG,
         "normal_angle_p95_max_deg": NORMAL_P95_MAX_DEG,
         "normal_max_depth_m": NORMAL_MAX_DEPTH_M,
-        "normal_geometry_resolved_deg": NORMAL_GEOMETRY_RESOLVED_DEG,
+        "normal_geometry_resolved_deg_breakdown_only": NORMAL_GEOMETRY_RESOLVED_DEG,
+        "subpixel_residual_max_px": NORMAL_SUBPIXEL_MAX_PX,
         "roughness_mean_tolerance": ROUGHNESS_MEAN_TOLERANCE,
         "controls": {"normal": "base_normal_without_perturbation", "roughness": "roughness_without_lost_variance"},
     }}
@@ -4504,8 +4547,11 @@ def run_normal(capture_dir, views, verify):
         result = check_normal_view(capture_dir, blender_dir, view)
         report["view_results"].append(result)
         failures.extend(f"{view}: {f}" for f in result["failures"])
+        subpixel = result.get("subpixel") or {}
         print(f"REFERENCE_CHECK normal view={view} pass={int(result['pass'])} sky_mismatch={result.get('sky_mismatch')} "
-              f"valid_pixels={result.get('valid_pixels')}")
+              f"valid_pixels={result.get('valid_pixels')} camera_shift_px={subpixel.get('camera_shift_px')} "
+              f"subpixel_residual_right={subpixel.get('right_px', float('nan')):+.3f} "
+              f"subpixel_residual_down={subpixel.get('down_px', float('nan')):+.3f}")
         for name, entry in (result.get("regions") or {}).items():
             if entry.get("status") != "judged":
                 print(f"REFERENCE_CHECK normal view={view} region={name} status={entry.get('status')} "
@@ -4520,11 +4566,14 @@ def run_normal(capture_dir, views, verify):
             else:
                 normal_text = f"normal_pixels={entry['normal_pixels']} normal_status=not_judged"
             beyond = entry.get("beyond_depth_angle_p95_deg")
+            resolved_p95 = entry.get("resolved_angle_p95_deg")
             unresolved_p95 = entry.get("unresolved_angle_p95_deg")
             print(f"REFERENCE_CHECK normal view={view} region={name} status=judged pixels={entry['pixels']} "
                   f"depth_m={entry['median_depth_m']:.0f} {normal_text} "
                   f"beyond_{NORMAL_MAX_DEPTH_M:.0f}m_pixels={entry['beyond_depth_pixels']} "
                   f"beyond_angle_p95={beyond if beyond is None else round(beyond, 2)} "
+                  f"resolved_pixels={entry['resolved_geometry_pixels']} "
+                  f"resolved_angle_p95={resolved_p95 if resolved_p95 is None else round(resolved_p95, 2)} "
                   f"unresolved_pixels={entry['unresolved_geometry_pixels']} "
                   f"unresolved_angle_p95={unresolved_p95 if unresolved_p95 is None else round(unresolved_p95, 2)} "
                   f"rough_engine={entry['engine_roughness_mean']:.4f} rough_blender={entry['blender_roughness_mean']:.4f} "
