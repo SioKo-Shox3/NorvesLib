@@ -5075,3 +5075,23 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 見た目の 3D LUT・フィルムグレイン・色収差は再現していない（掛かる撮影は `UnsupportedDisplay` で拒む。起動画面 rendering3dtest は look LUT が掛かるので照合できない）
   - `Game/GameApplicationHandler.cpp`（`--display-check` の実装）は入力のハッシュに入れていない
 - Next: TASKS.md の次の未完の項目。
+
+### SCN-WLR-COMMON-LIGHT 完了（2026-10-18、run 20261018-172748 の反復 1〜2）
+
+- Done: 大気を切った共通の照明と灰色の板を足し、板の HDR の輝度が入力から求めた期待と合うことを確かめた
+  - `Scripts/Terrain/CommonLight.json`: 一様な空の放射輝度（RGB cd/m²）・太陽に垂直な面の照度（lux）・既定と手本の 6 視点の太陽の高度と方位・灰色の板（アルベド 0.18・粗さ 1・鏡面なし・一辺 3 m）
+  - 起動引数（開発ビルドだけ）: `--wasteland-common-light` は空の大気・霧（高さフォグ）・空気遠近・雲を切り、静的環境を一様な放射輝度に差し替え（`RenderWorld::SetStaticEnvironmentUniformRadiance`。背景・拡散・鏡面の IBL を一様な値から作る）、太陽を照度と向きを決めた方向光にする。`--common-light-case=sun|sky` で片方だけにする。`--wasteland-gray-plate` は視点の前に板を置き、カメラを板へ向け、RTGI を切る（`Game/GameModes/Wasteland/WastelandCommonLight.*`）。既定の起動では何も変わらない
+  - 鏡面の無い材質 `MaterialCreateData::bDiffuseOnly`: GBuffer の材質の A に印を書き、`lighting.frag` が直接光・環境光ともアルベド/π の拡散だけで数える。ラスタ（`gbuffer.frag`）と可視バッファの解決（`VisibilityResolve.glsl`。材質の表の `MATERIAL_FLAG_DIFFUSE_ONLY`）の両方が書く
+  - `ReferenceCheck.py --plate`: 画面の中央 20 % の窓の HDR の平均輝度を、期待（太陽だけ 0.18 × E⊥ × sin(高度) / π、空だけ 0.18 × 空の放射輝度）と ±3 % で照らし、窓の中の変動係数 1 % 以下・ログの印・起動引数・入力のハッシュも見る
+- 証拠（`.harness/runs/20261018-172748/`）:
+  - `verify-SCN-WLR-COMMON-LIGHT-7.txt`: Debug の Game のビルド EXIT=0
+  - `verify-SCN-WLR-COMMON-LIGHT-4.txt`: sun の撮影 result=pass（ref_cliff_01、RelWithDebInfo、-Hdr）
+  - `verify-SCN-WLR-COMMON-LIGHT-5.txt`: sky の撮影 result=pass
+  - `verify-SCN-WLR-COMMON-LIGHT-6.txt`: `--plate --verify` result=pass。sun: 期待 994.93・測定 977.78 cd/m²（−1.72 %）、sky: 期待 881.23・測定 879.91 cd/m²（−0.15 %、RGB とも −0.14〜−0.21 %）。窓の変動係数はどちらも 1e-4 未満、inputs_current=1。2 枚の PNG を開き、板が一様な灰色（sun）・青灰色（sky）で写ることを確かめた
+- Notes:
+  - 反復 1 の撮影は sun が期待の 5.36 倍だった。原因は 2 つ: GBuffer のアルベドは物体の色（CustomData）× アルベドのテクスチャで材質の BaseColor を読まない（板の CustomData にアルベドを入れた）、荒野では板が可視バッファの解決で描かれ、鏡面の無い印が GBuffer に届かず通常の PBR（(1−F) の拡散 + GGX の鏡面）で数えられていた（印付けを可視バッファにも足した。直す前は +7.5 %）
+  - sun の残りの −1.7 % は原因を確かめていない（アルベドの 8 bit の丸めは +0.2 %。高度 10° の低い太陽なので、向きの 0.2° の差でも同じ大きさになる）
+  - 撮影の `-Build` で cmake の後に残る `vctip.exe`（VC++ のテレメトリ）が `CaptureScene.ps1` の `Start-Process -Wait` を 10 分以上止めた。終了させると進んだ
+  - Git Bash から `cmake --build ... -- /m:1` を叩くと `/m:1` がパスに変換され MSB1008 で落ちる。verify の Debug ビルドは PowerShell で回した
+  - 板の値の単体の試験は足していない（verify の撮影と検査が値を確かめる）
+- Next: SCN-WLR-BARE-AOV。

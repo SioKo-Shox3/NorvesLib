@@ -107,7 +107,8 @@ namespace NorvesLib::Core::Rendering::VisibilityBuffer
         entry.Scalars[2] = data->HeightScale;
         entry.Scalars[3] = 0.0f;
         entry.Header[0] = (data->bNormalTwoChannel ? MATERIAL_FLAG_NORMAL_TWO_CHANNEL : 0u) |
-                          (data->HeightTexture.IsValid() ? MATERIAL_FLAG_HAS_HEIGHT : 0u);
+                          (data->HeightTexture.IsValid() ? MATERIAL_FLAG_HAS_HEIGHT : 0u) |
+                          (data->bDiffuseOnly ? MATERIAL_FLAG_DIFFUSE_ONLY : 0u);
         entry.Header[1] = static_cast<uint32_t>(data->Shading);
         entry.Header[2] = static_cast<uint32_t>(data->Blend);
         StoreHandle(&entry.TexturesA[0], data->AlbedoTexture.Id);

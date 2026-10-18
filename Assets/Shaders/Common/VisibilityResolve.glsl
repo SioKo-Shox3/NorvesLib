@@ -231,6 +231,8 @@ const uint VIS_MATERIAL_FLAG_NORMAL_TWO_CHANNEL = 1u;
 const uint VIS_MATERIAL_FLAG_HAS_HEIGHT = 2u;
 // MegaGeometry の区間の材質。ラスタの MegaGeometryPass は等方の Linear のサンプラーで標本し、粗さが無いときは白（1）を張る
 const uint VIS_MATERIAL_FLAG_MEGA_GEOMETRY = 4u;
+// 鏡面の無い純ランバートの材質。GBuffer の材質の A に 1 を書く（gbuffer.frag と同じ印）
+const uint VIS_MATERIAL_FLAG_DIFFUSE_ONLY = 16u;
 
 // ========================================
 // 頂点の読み出し（デバイスアドレスから。頂点・インデックスの読み出しは Common/VisibilityTriangleFetch.glsl と共有）
@@ -813,7 +815,8 @@ void main()
 
     imageStore(albedoImage, ivec2(pixel), surface.albedo);
     imageStore(normalImage, ivec2(pixel), vec4(surface.normal, surface.terrain));
-    imageStore(materialImage, ivec2(pixel), vec4(surface.material, 0.0));
+    const bool bDiffuseOnly = bHasMaterial && !bDebugView && (materialEntry.header.x & VIS_MATERIAL_FLAG_DIFFUSE_ONLY) != 0u;
+    imageStore(materialImage, ivec2(pixel), vec4(surface.material, bDiffuseOnly ? 1.0 : 0.0));
     imageStore(velocityImage, ivec2(pixel), vec4(velocity, 0.0, 0.0));
     // 発光: 色度 × 輝度（nits）× プリエクスポージャ（ラスタの gbuffer.frag・megageometry.frag と同じ関数）。表から引けない材質は 0
     const vec3 emissive = (bHasMaterial && !bDebugView)

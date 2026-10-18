@@ -40,6 +40,12 @@ namespace NorvesLib::Core::Rendering::VisibilityBuffer
      * 違う混ぜ合わせを別の件に分け、中身は VisibilityRasterPass::GetMaterialTerrainBlend が同じ添え字で渡す。
      */
     constexpr uint32_t MATERIAL_FLAG_TERRAIN_BLEND = 8u;
+    /**
+     * @brief 鏡面の無い純ランバートの材質（MaterialResourceData::bDiffuseOnly）
+     *
+     * 材質の解決は GBuffer の材質の A に 1 を書く（ラスタの gbuffer.frag と同じ印。lighting.frag が拡散だけで数える）。
+     */
+    constexpr uint32_t MATERIAL_FLAG_DIFFUSE_ONLY = 16u;
 
     /**
      * @brief 材質の表の 1 件（storage buffer の 1 要素。128 バイト）

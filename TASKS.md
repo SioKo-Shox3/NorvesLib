@@ -1668,7 +1668,7 @@
 - notes: この再現を、後の比較（Cycles の EXR を含む）の表示変換の唯一の経路にする。Blender の AgX・Filmic は使わない。撮影の構成（Debug か RelWithDebInfo か）は SCN-WL-CAPTURE-SPEED の決定に揃えてよい（verify も同じ反復で直す）。
 
 ## SCN-WLR-COMMON-LIGHT: 大気を切った共通の照明と灰色の板で、明るさの尺度をエンジンで確かめる
-- status: todo
+- status: done
 - after: SCN-WLR-HDR-CAPTURE
 - done-when: 共通の照明の定義 `Scripts/Terrain/CommonLight.json`（一様な空の放射輝度 RGB cd/m²・太陽の照度 lux（太陽に垂直な面）・太陽の向き。視点ごとに手本の太陽の高度・方位）を作り、起動引数 `wasteland-common-light` で空の光と背景をその一様な空に、太陽をその照度と向きにし、空の大気の散乱・空気遠近・高さフォグ・雲を切る（既定の見た目は変えない）。起動引数 `wasteland-gray-plate` で視点の前に灰色の板（アルベド 0.18・粗さ 1・空へ向けた水平の面）を置き、`common-light-case=sun`（空の光 0）と `common-light-case=sky`（太陽 0）で撮る。期待の値は入力から求める（太陽だけ: 0.18 × E⊥ × cos(天頂角) / π、空だけ: 0.18 × 空の放射輝度）。エンジン自身が計算した照度を期待値に使わない。HDR の板の輝度が期待に 3 % 以内で合うことを `ReferenceCheck.py --plate` で検査する。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
