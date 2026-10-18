@@ -5301,3 +5301,22 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 撮影の Game が外から止められたときに残る件（Job Object に入れる案）は手を付けていない。今の verify は 1 視点の撮影を別の出力先へ出すので、保存結果は上書きされない
   - 新しい試験は足していない（verify の撮影と検査が確かめる）
 - Next: TASKS.md の次の未完の項目。
+
+### SCN-WLR-CYCLES-GRAY 完了（2026-10-19、run 20261018-205227 の反復 16）
+- Done: 灰色の材質の地形を共通の照明でエンジンと Cycles で描き、領域ごとの線形の平均の比と原因の見立てを `Docs/RenderingValidation/WastelandCyclesGray.md` に書いた（エンジンの照明は直していない）
+  - 起動引数 `--wasteland-gray-material`（開発ビルドだけ）: 地形の区画の材質をテクスチャと混ぜ合わせの無い灰色（`CommonLight.json` の `gray_material`: アルベド 0.3・粗さ 1・F0 0.04）にする。材質の BaseColor が GBuffer と RTGI・DDGI の当たりの反射率の両方に流れる。ログに `WASTELAND_GRAY_MATERIAL`
+  - `BlenderReference.py --gray`: 板の較正（sun・sky）と、視点ごとの灰色の地形（Principled BSDF、World 一様・Sun 0.536°、OptiX、デノイズなし）。太陽の見え方と法線、光の組（太陽・空）と直接・間接のパスを書き、種を変えた 2 本を領域ごとに収束まで重ねる（1 本 512〜2048 サンプル、2400 秒）。領域と収束の定義は新しい `Scripts/Terrain/GrayRegions.py`
+  - `ReferenceCheck.py --gray`: 3 組のエンジンの撮影（両方・太陽だけ・空だけ）の起動引数・ログ・常駐・AOV の灰色、Cycles の入力のハッシュ・出力のハッシュ・カメラ・空の分かれ方・光の分け方の和、板の ±3 %、収束の測り直しと表、見比べの画像 `gray_<視点>.png`
+- 証拠（`.harness/runs/20261018-205227/`）:
+  - `verify-SCN-WLR-CYCLES-GRAY-1.txt`: 2 視点を RelWithDebInfo・`-Build -Hdr -Aov` で撮影 result=pass、EXIT=0（145 秒）
+  - `aux-SCN-WLR-CYCLES-GRAY-engine-diag.txt`: `common-light-case=sun`・`sky` の撮影 result=pass（同じ Game.exe）
+  - `aux-SCN-WLR-CYCLES-GRAY-cycles.txt`: Cycles の板 2 通りと 2 視点（1.21 億・1.31 億三角形、512 サンプルで全領域が収束、描画 21 秒）
+  - `verify-SCN-WLR-CYCLES-GRAY-2.txt`: `--gray --verify` result=pass、EXIT=0。板 sun −0.01 %・sky 0.00 %。比（エンジン ÷ Cycles）: ref_cliff_01 日なたの地面 0.953・影の中の地面 1.452・日なたの崖 0.976・影の崖 1.574、ref_far_01 日なたの地面 0.975・遠景 0.953。未判定は ref_cliff_01 の遠景・ref_far_01 の影の 2 領域（画素なし）と日なたの崖（507 画素）
+  - `gray_ref_cliff_01.png`・`gray_ref_far_01.png` を開き、投影が揃い、影の崖が明るく（赤）遠景の日なたの崖が暗い（青）ことを見た
+- Notes:
+  - 主な見立て: 撮影時の RT のシーンが空（`RT_SCENE instances=0 out_of_range=198 radius_m=120`。地形の区画の境界の球が使えず原点・半径 0 で測られている疑い、未確認）で、RTGI は遮蔽も照り返しも無い空を返し、GTAO も重ねない。立った面の空が 1.56〜1.70 倍、背を向けた面の照り返しが欠け（太陽 24 vs 320）、落ちた影に太陽が漏れ（625 vs 202）、遠くのかすめる日差しが暗い（n·l 0.1〜0.3 で 0.61）
+  - 書き出しの PLY の三角形の巻きは頂点の法線と逆向き（全三角形）。Cycles は裏から当たった面の法線を反転するので、`--gray` は巻きを法線へ揃えて渡す（`--depth` は陰影を使わないので影響なし）
+  - Blender 5.2 の多層 EXR は多パートで、Combined 以外のパスは別のサブ画像に入る（前の記録の「Z のパスが書かれない」はこの読み違い。台本のコメントを直した）
+  - `CommonLight.json` を変えたので、前の項目（COMMON-LIGHT・BARE-AOV・BLENDER-TERRAIN ほか）の保存結果は入力のハッシュが古くなる（エンジンのコードの変更でも同じ）
+  - 新しい試験は足していない（verify の撮影と検査が確かめる）
+- Next: TASKS.md の次の未完の項目。

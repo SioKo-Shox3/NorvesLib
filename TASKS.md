@@ -1698,7 +1698,7 @@
 - notes: Blender は Python でヘッドレスに動かす（`Y:\AI\blender\blender-5.2.2-windows-x64\blender.exe`）。SCN-WL-BLENDER-TERRAIN-VIEW をこの項目に含めた。DEM を間引いたメッシュは使わない（法線・自己遮蔽・影が変わる）。撮影の構成（Debug か RelWithDebInfo か）は SCN-WL-CAPTURE-SPEED の決定に揃えてよい（verify も同じ反復で直す）。最細の LOD の撮影は 1 視点あたり約 150 秒（6 視点で 903 秒）かかる。全視点の撮影は反復の中で 1 回走らせて保存し、verify は 1 視点の撮影（ビルドと起動の経路の確認。別の出力先）と、保存した結果の検査（入力のハッシュで古い結果を拒否）に分ける（ランナーの再検証は 1 コマンド 10 分）。2026-10-19: 6 視点の撮り直しが落ち着かなかったのは、ほかのアプリの VRAM（約 4.3 GB。DesktopMate 約 2 GB・dwm 約 1 GB。ゲームではない）で上限が 12100 MB に下がったため（blocked/SCN-WLR-BLENDER-TERRAIN.md）。ユーザーが DesktopMate を閉じる。撮る前に `nvidia-smi` と `Get-Counter '\GPU Process Memory(*)\Dedicated Usage'` でほかのアプリの使用量を確かめ、落ち着かなければ撮影の記録に cap_mb とほかのアプリの使用量を残す。
 
 ## SCN-WLR-CYCLES-GRAY: 共通の照明で灰色の地形をエンジンと Cycles で描き、影・空の遮蔽・照り返しを比べる
-- status: todo
+- status: done
 - after: SCN-WLR-BLENDER-TERRAIN
 - done-when: 灰色の材質（アルベド 0.3・粗さ 1・誘電体 F0 0.04。Cycles は Principled BSDF の同じ値）を、エンジンでは起動引数 `wasteland-gray-material` で GBuffer と RTGI・DDGI の当たりの材質の両方に掛ける（当たりの色が定数のままだと照り返しが比べられない）。まず同じ灰色の板（SCN-WLR-COMMON-LIGHT）を Cycles でも sun・sky の 2 通りで描き、期待の値に 3 % 以内で合うことを確かめる（Cycles 側の尺度の較正）。次に ref_cliff_01・ref_far_01 を両方で描き、露出前の HDR で並べる。Cycles の収束: 乱数の種を変えた 2 本の描画の領域の平均の差が 1 % 以内、画素の差の RMS が決めた値以下になるまでサンプルを増やす（上限のサンプル数と時間を決め、届かなければその領域は未判定と書く。デノイズは掛けない）。領域（日なたの地面・影の中の地面・日なたの崖・影の崖・遠景）ごとの線形の平均の比を表にし、差の大きい所の原因の見立て（影・空の遮蔽・照り返し・GI）を書く。
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -Build -RequireAssets -Width 1920 -Height 1080 -Hdr -Aov -Views ref_cliff_01,ref_far_01 -GameArgs wasteland-common-light,wasteland-hide=all,wasteland-finest-lod,wasteland-gray-material -OutDir .harness/runs/scene-capture/SCN-WLR-CYCLES-GRAY`

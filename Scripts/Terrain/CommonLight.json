@@ -24,5 +24,11 @@
     "forward_m": 5.2,
     "camera_height_above_plate_m": 3.0,
     "note": "鏡面の無い純ランバートの水平の板（エンジンは MaterialCreateData::bDiffuseOnly。Cycles は鏡面 0 の拡散だけ）。視点の水平の位置から視線の向きへ forward_m 先に置き、カメラを板の面から camera_height_above_plate_m の高さに上げて板の中心を見下ろす"
+  },
+  "gray_material": {
+    "albedo": 0.3,
+    "roughness": 1.0,
+    "f0": 0.04,
+    "note": "灰色の地形の材質（SCN-WLR-CYCLES-GRAY）。誘電体（金属度 0）でテクスチャ・法線マップ無し、法線は頂点の補間した法線。エンジンは起動引数 --wasteland-gray-material で地形の区画の材質（GBuffer と RTGI・DDGI の当たりの反射率）に掛け、Cycles は Principled BSDF の Base Color・Roughness・IOR 1.5（F0 0.04）の同じ値"
   }
 }

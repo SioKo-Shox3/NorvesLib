@@ -259,6 +259,17 @@ namespace Game::GameModes::WastelandCommonLight
                               "camera_height_above_plate_m が揃っていません";
             return false;
         }
+        // 灰色の地形の材質。エンジンの誘電体の F0 は 0.04 の固定なので、定義の f0 がそれと違えば読まない
+        const JsonValue grayMaterial = root.FindMember("gray_material");
+        float grayF0 = 0.0f;
+        if (!grayMaterial.IsObject() || !ReadNonNegative(grayMaterial, "albedo", definition.GrayMaterialAlbedo) ||
+            !ReadNonNegative(grayMaterial, "roughness", definition.GrayMaterialRoughness) ||
+            !ReadNonNegative(grayMaterial, "f0", grayF0) || definition.GrayMaterialAlbedo > 1.0f ||
+            definition.GrayMaterialRoughness > 1.0f || std::fabs(grayF0 - 0.04f) > 1.0e-6f)
+        {
+            outError = path + ": gray_material の albedo・roughness（0〜1）・f0（0.04）が揃っていません";
+            return false;
+        }
         outDefinition = std::move(definition);
         return true;
     }
@@ -287,7 +298,7 @@ namespace Game::GameModes::WastelandCommonLight
         state.PlateMaterial = MaterialHandle{};
         state.bPlateMeshRegistered = false;
         state.bRTGIOverridden = false;
-        if (!state.Opts.bEnabled && !state.Opts.bGrayPlate)
+        if (!state.Opts.bEnabled && !state.Opts.bGrayPlate && !state.Opts.bGrayMaterial)
         {
             return true;
         }
@@ -316,6 +327,12 @@ namespace Game::GameModes::WastelandCommonLight
                    static_cast<double>(state.Def.SkyRadiance.x), static_cast<double>(state.Def.SkyRadiance.y),
                    static_cast<double>(state.Def.SkyRadiance.z), static_cast<double>(state.Def.SunIlluminanceNormalLux),
                    static_cast<double>(state.Def.PlateAlbedo), static_cast<double>(state.Def.PlateRoughness));
+        if (state.Opts.bGrayMaterial)
+        {
+            LOG_INFO_F("WASTELAND_GRAY_MATERIAL albedo=%.4f roughness=%.4f metallic=0 f0=0.04 地形の材質を灰色にします",
+                       static_cast<double>(state.Def.GrayMaterialAlbedo),
+                       static_cast<double>(state.Def.GrayMaterialRoughness));
+        }
         return true;
     }
 

@@ -22,7 +22,24 @@
 # 深度の描き方: 地形の全区画に、Cycles の Camera Data の View Z Depth（カメラの前方向への距離）をそのまま放射する材質を掛け、
 #   放射だけを 1 サンプルで描く（跳ね返り 0・デノイズなし）。画素の中の標本の位置は箱のフィルタの幅 PIXEL_FILTER_WIDTH 画素で
 #   画素の中心に寄せる（エンジンの GBuffer は画素の中心の値）。空（何にも当たらない画素）は透明の背景で見分ける。
-#   Blender 5.2 の多層 EXR には Z のパスが書かれないので、パスは使わない。
+#   Blender 5.2 の多層 EXR は多パートで、Combined 以外のパスは別のサブ画像に入る（深度ではパスを使わない）。
+#
+#   python Scripts/Terrain/BlenderReference.py --gray --mesh <書き出しのフォルダ> --capture <エンジンの撮影>
+#          [--views a,b,...] [--range shadow] [--max-spp N] [--max-seconds S] [--chunk-spp N] [--skip-plate|--plate-only]
+#       灰色の材質（CommonLight.json の gray_material: Principled BSDF の Base Color・Roughness・IOR 1.5）の地形を、共通の照明
+#       （一様な空の放射輝度の World と、照度 E⊥ の Sun。角の直径はエンジンの太陽の円盤と同じ SUN_ANGLE_DEGREES）で Cycles に描き、
+#       <撮影>/cycles/ に書く。値はエンジンの HDR と同じ尺度（Sun の Strength に lux、World に cd/m² の数をそのまま入れ、線形の出力を
+#       そのまま読む。光の単位の換算は掛けない）。デノイズは掛けない。
+#       1. 尺度の較正（--skip-plate で省く）: 灰色の板（gray_plate のアルベド、鏡面なしの Diffuse BSDF）だけの場面を sun・sky の
+#          2 通りで描き、plate_<case>.exr / .pfm と plate_<case>.json を書く（ReferenceCheck.py --gray が期待の値と ±3 % で照らす）。
+#       2. 視点ごとに（--plate-only で省く）: 太陽の見え方（白いランバート面・太陽だけ・直接光だけ、VISIBILITY_SPP サンプル）と
+#          法線を描いて <視点>.aux.exr と PFM（visibility・n_dot_l・normal・alpha）を書き、続けて本描画を CHUNK_SPP サンプルずつ
+#          種を変えて重ね、偶数番目を A・奇数番目を B に足す。組ごとに GrayRegions.convergence で領域ごとの収束を測り、
+#          1 本あたり MIN_SPP_PER_SEED 以上で全領域が収束するか、--max-spp か --max-seconds に達したら止める。<視点>.cycles.exr（2 本の平均。
+#          合成・太陽の光の組・空の光の組・直接光・間接光）と、照合の読む PFM（<視点>.cycles.{hdr,seed_a,seed_b,sun,sky,
+#          direct,indirect}.pfm）・<視点>.cycles.json（設定と収束の経過）を書く。
+#       最後に入力の記録 <撮影>/cycles/inputs.json（台本・GrayRegions.py・CommonLight.json・メッシュの一覧と PLY・地形のメッシュの元の
+#       入力のハッシュ、カメラと深度を借りたエンジンの撮影の入力のハッシュ files_sha256）を書く。
 import argparse
 import hashlib
 import json
@@ -52,6 +69,33 @@ PIXEL_FILTER_WIDTH = 0.01
 # Blender のカメラの遠い面[m]（エンジンの撮影の far 400 km より遠く）
 CLIP_END_M = 1.0e6
 RESULT_DIR = "blender"
+
+# --gray（灰色の地形の Cycles の描画）
+GRAY_RESULT_DIR = "cycles"
+COMMON_LIGHT = "Scripts/Terrain/CommonLight.json"
+GRAY_REGIONS = "Scripts/Terrain/GrayRegions.py"
+GRAY_VIEWS = ("ref_cliff_01", "ref_far_01")
+# 太陽の円盤の角の直径[度]: エンジンの SolarDiskSolidAngleSteradians（6.87e-5 sr）の円の 2 倍の角半径
+SUN_ANGLE_DEGREES = math.degrees(2.0 * math.sqrt(6.87e-5 / math.pi))
+# 跳ね返りの上限（アルベド 0.3 では 16 回目の寄与は 0.3^16 ≈ 4e-9 で無視できる）
+GRAY_MAX_BOUNCES = 16
+# 画素のフィルタ（箱、1 画素。エンジンの画素は TAA のジッタで画素の面を平均する）
+GRAY_PIXEL_FILTER_WIDTH = 1.0
+# 太陽の見え方の描画のサンプル数
+VISIBILITY_SPP = 16
+# 本描画: 1 回の描画のサンプル数・1 本（A か B）あたりの上限・1 視点あたりの時間の上限[秒]
+CHUNK_SPP = 64
+# 収束の判定を始める 1 本あたりのサンプル数（少ない標本で、まれな経路を取りこぼしたまま 2 本が偶然揃うのを避ける）
+MIN_SPP_PER_SEED = 512
+MAX_SPP_PER_SEED = 2048
+MAX_SECONDS_PER_VIEW = 2400.0
+# 板の較正（エンジンの板の撮影 SCN-WLR-COMMON-LIGHT と同じ視点の太陽）
+PLATE_VIEW = "ref_cliff_01"
+PLATE_CASES = ("sun", "sky")
+PLATE_WIDTH = 384
+PLATE_HEIGHT = 216
+PLATE_VERTICAL_FOV_DEGREES = 40.0
+PLATE_SPP = {"sun": 64, "sky": 1024}
 
 
 # ---- 座標の変換（この台本でここだけ） ----
@@ -248,6 +292,176 @@ def normalize_rel(path):
     return rel.replace("\\", "/")
 
 
+def load_common_light():
+    with open(os.path.join(REPO_ROOT, COMMON_LIGHT), encoding="utf-8-sig") as f:
+        return json.load(f)
+
+
+def common_light_sun(light, view):
+    """視点の太陽の (仰角, 方位角)[度]（views に無ければ default_sun）"""
+    for item in light.get("views", []):
+        if item.get("name") == view:
+            return float(item["altitude_degrees"]), float(item["azimuth_degrees"])
+    return float(light["default_sun"]["altitude_degrees"]), float(light["default_sun"]["azimuth_degrees"])
+
+
+def engine_sun_direction(altitude_degrees, azimuth_degrees):
+    """太陽へ向かう向き（エンジンの座標。SkyAtmosphere.cpp の MakeSunDirection と同じ: 方位角は +X から +Z へ）"""
+    altitude = math.radians(altitude_degrees)
+    azimuth = math.radians(azimuth_degrees)
+    return (math.cos(altitude) * math.cos(azimuth), math.sin(altitude), math.cos(altitude) * math.sin(azimuth))
+
+
+def run_blender_job(args, out_dir, name, job):
+    """job を書いて Blender をヘッドレスで 1 回起動する。成否"""
+    job_path = os.path.join(out_dir, f"{name}.job.json")
+    with open(job_path, "w", encoding="utf-8") as f:
+        json.dump(job, f, indent=2, ensure_ascii=False)
+    started = time.time()
+    command = [args.blender, "-b", "--factory-startup", "--python-exit-code", "1",
+               "--python", os.path.abspath(__file__), "--", "--render-job", job_path]
+    completed = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    with open(os.path.join(out_dir, f"{name}.blender.log"), "w", encoding="utf-8") as f:
+        f.write(completed.stdout)
+        f.write(completed.stderr)
+    for line in completed.stdout.splitlines():
+        if line.startswith("BLENDER_GRAY"):
+            print(line, flush=True)
+    ok = completed.returncode == 0 and all(os.path.isfile(p) for p in job["required_outputs"])
+    print(f"BLENDER_REFERENCE gray job={name} ok={int(ok)} exit={completed.returncode} "
+          f"seconds={time.time() - started:.1f}", flush=True)
+    if ok:
+        os.remove(job_path)
+    return ok
+
+
+def run_gray(args):
+    mesh_dir = os.path.abspath(args.mesh)
+    capture_dir = os.path.abspath(args.capture)
+    out_dir = os.path.join(capture_dir, GRAY_RESULT_DIR)
+    os.makedirs(out_dir, exist_ok=True)
+    light = load_common_light()
+    gray = light["gray_material"]
+    plate = light["gray_plate"]
+    lighting = {
+        "sky_radiance_rgb": [float(v) for v in light["sky_radiance_rgb"]],
+        "sun_illuminance_normal_lux": float(light["sun_illuminance_normal_lux"]),
+        "sun_angle_degrees": SUN_ANGLE_DEGREES,
+    }
+    views = [v for v in args.views.split(",") if v]
+
+    plate_records = {}
+    if not args.skip_plate:
+        altitude, azimuth = common_light_sun(light, PLATE_VIEW)
+        for case in PLATE_CASES:
+            name = f"plate_{case}"
+            job = {
+                "kind": "plate",
+                "case": case,
+                "lighting": lighting,
+                "sun_altitude_degrees": altitude,
+                "sun_azimuth_degrees": azimuth,
+                "to_sun_engine": engine_sun_direction(altitude, azimuth),
+                "plate": plate,
+                "width": PLATE_WIDTH,
+                "height": PLATE_HEIGHT,
+                "vertical_fov_degrees": PLATE_VERTICAL_FOV_DEGREES,
+                "samples": PLATE_SPP[case],
+                "out_exr": os.path.join(out_dir, f"{name}.exr"),
+                "out_pfm": os.path.join(out_dir, f"{name}.pfm"),
+                "out_json": os.path.join(out_dir, f"{name}.json"),
+            }
+            job["required_outputs"] = [job["out_exr"], job["out_pfm"], job["out_json"]]
+            if not run_blender_job(args, out_dir, name, job):
+                print(f"BLENDER_REFERENCE error 板の較正 {case} が失敗した（{GRAY_RESULT_DIR}/{name}.blender.log）")
+                return 1
+            plate_records[case] = {"view": PLATE_VIEW, "samples": PLATE_SPP[case]}
+
+    manifest = load_manifest(mesh_dir) if not args.plate_only else None
+    used_tiles = set()
+    view_records = {}
+    for view in ([] if args.plate_only else views):
+        camera, width, height = read_engine_camera(capture_dir, view)
+        tiles = [t for t in manifest["tiles"] if tile_in_range(t, camera, args.range)[0]]
+        altitude, azimuth = common_light_sun(light, view)
+        prefix = os.path.join(out_dir, f"{view}")
+        job = {
+            "kind": "gray",
+            "view": view,
+            "camera": camera,
+            "width": width,
+            "height": height,
+            "tiles": [os.path.join(mesh_dir, t["file"]) for t in tiles],
+            "engine_depth_pfm": os.path.join(capture_dir, f"{view}.aov.depth.pfm"),
+            "lighting": lighting,
+            "sun_altitude_degrees": altitude,
+            "sun_azimuth_degrees": azimuth,
+            "to_sun_engine": engine_sun_direction(altitude, azimuth),
+            "gray_material": gray,
+            "chunk_spp": args.chunk_spp,
+            "max_spp_per_seed": args.max_spp,
+            "max_seconds": args.max_seconds,
+            "prefix": prefix,
+        }
+        job["required_outputs"] = [f"{prefix}.cycles.exr", f"{prefix}.aux.exr", f"{prefix}.cycles.json"] + \
+            [f"{prefix}.cycles.{part}.pfm" for part in ("hdr", "seed_a", "seed_b", "sun", "sky", "direct", "indirect")] + \
+            [f"{prefix}.aux.{part}.pfm" for part in ("visibility", "n_dot_l", "normal", "alpha")]
+        for stale in job["required_outputs"]:
+            if os.path.exists(stale):
+                os.remove(stale)
+        triangles = sum(int(t["triangles"]) for t in tiles)
+        print(f"BLENDER_REFERENCE gray view={view} tiles={len(tiles)} triangles={triangles} range={args.range}",
+              flush=True)
+        if not run_blender_job(args, out_dir, view, job):
+            print(f"BLENDER_REFERENCE error view={view} Blender が失敗した（{GRAY_RESULT_DIR}/{view}.blender.log）")
+            return 1
+        used_tiles.update(t["file"] for t in tiles)
+        view_records[view] = {"camera": camera, "width": width, "height": height,
+                              "tiles": sorted(t["file"] for t in tiles), "triangles": triangles,
+                              "sun_altitude_degrees": altitude, "sun_azimuth_degrees": azimuth}
+
+    # 入力の記録（ReferenceCheck.py --gray --verify が今のファイルと照らす）。視点や板を描き直さなかった分は前の記録を残す
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import ReferenceCheck as RC  # noqa: E402  ふつうの Python の側だけで使う
+    record_path = os.path.join(out_dir, "inputs.json")
+    record = {}
+    if os.path.isfile(record_path):
+        with open(record_path, encoding="utf-8") as f:
+            record = json.load(f)
+    previous_ply = record.get("ply_sha256", {})
+    # エンジンの撮影はカメラと深度を借りるだけなので、撮影の入力のハッシュ（撮り直しても同じコードなら同じ）で結び付ける
+    with open(os.path.join(capture_dir, "inputs.json"), encoding="utf-8") as f:
+        engine_inputs = json.load(f)
+    record.update({
+        "kind": "cycles_gray",
+        "script": normalize_rel(os.path.abspath(__file__)),
+        "script_sha256": sha256_file(os.path.abspath(__file__)),
+        "gray_regions_sha256": sha256_file(os.path.join(REPO_ROOT, GRAY_REGIONS)),
+        "common_light_sha256": sha256_file(os.path.join(REPO_ROOT, COMMON_LIGHT)),
+        "engine_capture_files_sha256": engine_inputs.get("files_sha256"),
+        "git_commit": (RC.git_output(["rev-parse", "HEAD"]) or "").strip(),
+        "sun_angle_degrees": SUN_ANGLE_DEGREES,
+    })
+    if plate_records:
+        record.setdefault("plates", {}).update(plate_records)
+    if view_records:
+        previous_ply.update({name: sha256_file(os.path.join(mesh_dir, name)) for name in sorted(used_tiles)})
+        record.update({
+            "mesh_dir": normalize_rel(mesh_dir),
+            "manifest_sha256": sha256_file(os.path.join(mesh_dir, "manifest.json")),
+            "ply_sha256": previous_ply,
+            "terrain_mesh_inputs": RC.hash_inputs("terrain_mesh"),
+            "range": args.range,
+            "shadow_range_m": SHADOW_RANGE_M,
+            "coordinates": coordinate_record(),
+        })
+        record.setdefault("views", {}).update(view_records)
+    with open(record_path, "w", encoding="utf-8") as f:
+        json.dump(record, f, indent=2, ensure_ascii=False)
+    print(f"BLENDER_REFERENCE gray record plates={len(record.get('plates', {}))} views={len(record.get('views', {}))}")
+    return 0
+
+
 # ---- Blender の中の側（1 視点を描く） ----
 
 def write_pfm(path, image):
@@ -263,9 +477,10 @@ PLY_VERTEX_PROPERTIES = ["property float x", "property float y", "property float
 PLY_FACE_PROPERTY = "property list uchar int vertex_indices"
 
 
-def read_terrain_ply(path):
+def read_terrain_ply(path, with_normals=False):
     """Game の WastelandTerrainExport が書いた PLY（binary_little_endian、頂点は位置と法線の float 6 つ、面は 3 角の int）を読む。
-    (位置 (頂点数, 3) float32, 三角形の頂点の番号 (三角形数, 3) int32)。並びが違えば例外"""
+    (位置 (頂点数, 3) float32, 三角形の頂点の番号 (三角形数, 3) int32)。with_normals なら頂点の法線 (頂点数, 3) も後ろに足す。
+    並びが違えば例外"""
     with open(path, "rb") as f:
         data = f.read()
     marker = b"end_header\n"
@@ -292,11 +507,28 @@ def read_terrain_ply(path):
     indices = np.ascontiguousarray(faces["i"], dtype=np.int32)
     if indices.size and (indices.min() < 0 or indices.max() >= vertex_count):
         raise ValueError(f"面の頂点の番号が範囲の外: {path}")
+    if with_normals:
+        return (np.ascontiguousarray(vertices[:, :3], dtype=np.float32), indices,
+                np.ascontiguousarray(vertices[:, 3:6], dtype=np.float32))
     return np.ascontiguousarray(vertices[:, :3], dtype=np.float32), indices
 
 
-def build_mesh(name, positions, triangles):
-    """位置と三角形から Blender のメッシュを作る（法線・UV は持たない）"""
+def orient_triangles(positions, triangles, normals):
+    """三角形の巻き（p0→p1→p2 の外積の向き）を頂点の法線の向きへ揃える。Cycles は裏から当たった面の法線を光線の側へ反転する
+    ので、巻きが頂点の法線と逆だと陰影が裏返る。(揃えた三角形, 入れ替えた三角形の数)"""
+    p0 = positions[triangles[:, 0]]
+    face = np.cross(positions[triangles[:, 1]] - p0, positions[triangles[:, 2]] - p0)
+    vertex = normals[triangles[:, 0]] + normals[triangles[:, 1]] + normals[triangles[:, 2]]
+    flip = np.einsum("ij,ij->i", face, vertex) < 0.0
+    if flip.any():
+        triangles = triangles.copy()
+        triangles[flip, 1], triangles[flip, 2] = triangles[flip, 2], triangles[flip, 1].copy()
+    return triangles, int(flip.sum())
+
+
+def build_mesh(name, positions, triangles, normals=None):
+    """位置と三角形から Blender のメッシュを作る（UV は持たない）。normals（頂点の法線、メッシュの座標）を与えると、
+    点の領域の custom_normal の属性に入れて、Cycles が頂点の法線を補間して陰影を付けるようにする（エンジンの GBuffer と同じ）"""
     import bpy
     mesh = bpy.data.meshes.new(name)
     mesh.vertices.add(len(positions))
@@ -306,16 +538,32 @@ def build_mesh(name, positions, triangles):
     mesh.polygons.add(len(triangles))
     mesh.polygons.foreach_set("loop_start", np.arange(0, triangles.size, 3, dtype=np.int32))
     mesh.update(calc_edges=True)
+    if normals is not None:
+        attribute = mesh.attributes.new("custom_normal", "FLOAT_VECTOR", "POINT")
+        attribute.data.foreach_set("vector", normals.ravel())
+        mesh.update()
+        if mesh.normals_domain != "POINT":
+            raise RuntimeError(f"頂点の法線が点の領域にならない（{mesh.normals_domain}）: {name}")
     return mesh
 
 
 def render_job(job_path):
+    with open(job_path, encoding="utf-8") as f:
+        job = json.load(f)
+    kind = job.get("kind", "depth")
+    if kind == "plate":
+        render_plate_job(job)
+    elif kind == "gray":
+        render_gray_job(job)
+    else:
+        render_depth_job(job)
+
+
+def render_depth_job(job):
     import bpy
     import mathutils
     import OpenImageIO as oiio
 
-    with open(job_path, encoding="utf-8") as f:
-        job = json.load(f)
     bpy.ops.wm.read_factory_settings(use_empty=True)
     scene = bpy.context.scene
 
@@ -431,6 +679,508 @@ def render_job(job_path):
           f"load={load_seconds:.1f}s render={render_seconds:.1f}s")
 
 
+def setup_cycles_device(scene):
+    """OptiX の GPU があれば使い、無ければ CPU。使った装置の記述を返す"""
+    import bpy
+    preferences = bpy.context.preferences.addons["cycles"].preferences
+    used = []
+    try:
+        preferences.compute_device_type = "OPTIX"
+        preferences.get_devices()
+        for device in preferences.devices:
+            device.use = device.type == "OPTIX"
+            if device.use:
+                used.append(device.name)
+    except (TypeError, ValueError):
+        used = []
+    scene.cycles.device = "GPU" if used else "CPU"
+    return f"OPTIX {', '.join(used)}" if used else "CPU"
+
+
+def configure_gray_cycles(scene, width, height, exr_path):
+    """灰色の比較の描画の設定（デノイズ・適応サンプリング・明るさの上限なし、箱の 1 画素のフィルタ、線形の多層 EXR）"""
+    render = scene.render
+    render.engine = "CYCLES"
+    render.resolution_x = int(width)
+    render.resolution_y = int(height)
+    render.resolution_percentage = 100
+    render.pixel_aspect_x = 1.0
+    render.pixel_aspect_y = 1.0
+    render.film_transparent = True
+    render.use_persistent_data = True
+    cycles = scene.cycles
+    cycles.use_adaptive_sampling = False
+    cycles.use_denoising = False
+    cycles.pixel_filter_type = "BOX"
+    cycles.filter_width = GRAY_PIXEL_FILTER_WIDTH
+    cycles.sample_clamp_direct = 0.0
+    cycles.sample_clamp_indirect = 0.0
+    cycles.blur_glossy = 0.0
+    cycles.use_animated_seed = False
+    set_gray_bounces(scene, GRAY_MAX_BOUNCES)
+    scene.view_settings.view_transform = "Standard"
+    scene.view_settings.look = "None"
+    render.image_settings.media_type = "MULTI_LAYER_IMAGE"
+    render.image_settings.file_format = "OPEN_EXR_MULTILAYER"
+    render.image_settings.color_depth = "32"
+    render.filepath = exr_path
+
+
+def set_gray_bounces(scene, bounces):
+    cycles = scene.cycles
+    cycles.max_bounces = bounces
+    cycles.diffuse_bounces = bounces
+    cycles.glossy_bounces = bounces
+    cycles.transmission_bounces = 0
+    cycles.volume_bounces = 0
+    cycles.transparent_max_bounces = 8
+
+
+def make_uniform_world(scene, rgb):
+    """一様な空（全方向で同じ放射輝度の Background）。(world, Background の節)"""
+    import bpy
+    world = bpy.data.worlds.new("CommonLightSky")
+    if world.node_tree is None:
+        world.use_nodes = True
+    nodes = world.node_tree.nodes
+    background = next((n for n in nodes if n.type == "BACKGROUND"), None)
+    output = next((n for n in nodes if n.type == "OUTPUT_WORLD"), None)
+    if background is None:
+        background = nodes.new("ShaderNodeBackground")
+    if output is None:
+        output = nodes.new("ShaderNodeOutputWorld")
+    world.node_tree.links.new(background.outputs["Background"], output.inputs["Surface"])
+    background.inputs["Color"].default_value = (float(rgb[0]), float(rgb[1]), float(rgb[2]), 1.0)
+    background.inputs["Strength"].default_value = 1.0
+    scene.world = world
+    return world, background
+
+
+def make_sun_lamp(scene, lux, to_sun_engine, angle_degrees):
+    """照度 lux（太陽に垂直な面）の Sun を、エンジンの太陽へ向かう向き to_sun_engine から差す向きに置く"""
+    import bpy
+    import mathutils
+    light = bpy.data.lights.new("CommonLightSun", "SUN")
+    light.energy = float(lux)
+    light.angle = math.radians(angle_degrees)
+    light.color = (1.0, 1.0, 1.0)
+    obj = bpy.data.objects.new("CommonLightSun", light)
+    scene.collection.objects.link(obj)
+    # Sun は自分の −Z の向きへ光を出すので、+Z を太陽へ向ける
+    z = mathutils.Vector(engine_to_blender(to_sun_engine)).normalized()
+    helper = mathutils.Vector((0.0, 0.0, 1.0)) if abs(z.z) < 0.99 else mathutils.Vector((1.0, 0.0, 0.0))
+    x = helper.cross(z).normalized()
+    y = z.cross(x)
+    obj.matrix_world = mathutils.Matrix(((x.x, y.x, z.x, 0.0), (x.y, y.y, z.y, 0.0), (x.z, y.z, z.z, 0.0),
+                                         (0.0, 0.0, 0.0, 1.0)))
+    return obj
+
+
+def make_diffuse_material(name, albedo):
+    import bpy
+    material = bpy.data.materials.new(name)
+    material.use_nodes = True
+    nodes = material.node_tree.nodes
+    nodes.clear()
+    diffuse = nodes.new("ShaderNodeBsdfDiffuse")
+    output = nodes.new("ShaderNodeOutputMaterial")
+    diffuse.inputs["Color"].default_value = (albedo, albedo, albedo, 1.0)
+    diffuse.inputs["Roughness"].default_value = 0.0
+    material.node_tree.links.new(diffuse.outputs["BSDF"], output.inputs["Surface"])
+    return material
+
+
+def make_gray_material(gray):
+    """Principled BSDF の灰色（Base Color・Roughness・Metallic 0・IOR 1.5 で F0 0.04）"""
+    import bpy
+    albedo = float(gray["albedo"])
+    f0 = float(gray["f0"])
+    ior = (1.0 + math.sqrt(f0)) / (1.0 - math.sqrt(f0))
+    material = bpy.data.materials.new("GrayTerrain")
+    material.use_nodes = True
+    nodes = material.node_tree.nodes
+    nodes.clear()
+    principled = nodes.new("ShaderNodeBsdfPrincipled")
+    output = nodes.new("ShaderNodeOutputMaterial")
+    principled.inputs["Base Color"].default_value = (albedo, albedo, albedo, 1.0)
+    principled.inputs["Metallic"].default_value = 0.0
+    principled.inputs["Roughness"].default_value = float(gray["roughness"])
+    principled.inputs["IOR"].default_value = ior
+    principled.inputs["Specular IOR Level"].default_value = 0.5
+    material.node_tree.links.new(principled.outputs["BSDF"], output.inputs["Surface"])
+    return material, ior
+
+
+def look_at_matrix(position, target):
+    """position から target を見る Blender のカメラの姿勢（−Z が視線、+Y が上に近い向き）"""
+    import mathutils
+    eye = mathutils.Vector(position)
+    back = (eye - mathutils.Vector(target)).normalized()
+    right = mathutils.Vector((0.0, 0.0, 1.0)).cross(back).normalized()
+    up = back.cross(right)
+    return mathutils.Matrix(((right.x, up.x, back.x, eye.x), (right.y, up.y, back.y, eye.y),
+                             (right.z, up.z, back.z, eye.z), (0.0, 0.0, 0.0, 1.0)))
+
+
+def render_and_read(scene, exr_path):
+    """描いて多層 EXR を読み、チャンネルの名前 → (高さ, 幅) の float32 の辞書を返す（上の行が 0 行目）"""
+    import bpy
+    import OpenImageIO as oiio
+    scene.render.filepath = exr_path
+    bpy.ops.render.render(write_still=True)
+    image = oiio.ImageInput.open(exr_path)
+    if image is None:
+        raise RuntimeError(f"EXR を開けない: {exr_path}")
+    # Blender 5.2 の多層 EXR は多パートで、パスごとに別のサブ画像に入る
+    channels = {}
+    subimage = 0
+    while image.seek_subimage(subimage, 0):
+        spec = image.spec()
+        names = list(spec.channelnames)
+        pixels = np.asarray(image.read_image(subimage, 0, 0, spec.nchannels, "float")).reshape(
+            spec.height, spec.width, spec.nchannels)
+        for index, name in enumerate(names):
+            channels[name] = pixels[:, :, index].astype(np.float32)
+        subimage += 1
+    image.close()
+    os.remove(exr_path)
+    return channels
+
+
+def pass_rgb(channels, pass_name, components=("R", "G", "B")):
+    """多層 EXR の 1 つのパスの成分を (高さ, 幅, 成分) で取り出す"""
+    keys = [f"ViewLayer.{pass_name}.{c}" for c in components]
+    missing = [k for k in keys if k not in channels]
+    if missing:
+        raise RuntimeError(f"EXR にパス {pass_name} が無い（{missing}。あるもの: {sorted(channels)}）")
+    return np.stack([channels[k] for k in keys], axis=-1)
+
+
+def write_exr(path, image, names):
+    """(高さ, 幅, チャンネル) の float32 を名前つきのチャンネルの EXR（zip）で書く（上の行が 0 行目）"""
+    import OpenImageIO as oiio
+    image = np.ascontiguousarray(image, dtype=np.float32)
+    height, width, count = image.shape
+    output = oiio.ImageOutput.create(path)
+    if output is None:
+        raise RuntimeError(f"EXR を書けない: {path}")
+    spec = oiio.ImageSpec(width, height, count, "float")
+    spec.channelnames = tuple(names)
+    spec.attribute("compression", "zip")
+    output.open(path, spec)
+    output.write_image(image)
+    output.close()
+
+
+def load_gray_regions():
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import GrayRegions  # noqa: E402  Blender の中でも numpy だけで動く
+    return GrayRegions
+
+
+def render_plate_job(job):
+    """灰色の板だけの場面を sun か sky で描く（Cycles 側の尺度の較正）"""
+    import bpy
+    import mathutils
+
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    scene = bpy.context.scene
+    device = setup_cycles_device(scene)
+    GR = load_gray_regions()
+    plate = job["plate"]
+    half = 0.5 * float(plate["size_m"])
+    positions = np.array([[-half, -half, 0.0], [half, -half, 0.0], [half, half, 0.0], [-half, half, 0.0]],
+                         dtype=np.float32)
+    triangles = np.array([[0, 1, 2], [0, 2, 3]], dtype=np.int32)
+    mesh = build_mesh("GrayPlate", positions, triangles)
+    mesh.materials.append(make_diffuse_material("GrayPlateDiffuse", float(plate["albedo"])))
+    obj = bpy.data.objects.new("GrayPlate", mesh)
+    scene.collection.objects.link(obj)
+
+    camera = bpy.data.cameras.new("PlateCamera")
+    camera.type = "PERSP"
+    camera.sensor_fit = "VERTICAL"
+    camera.angle_y = math.radians(float(job["vertical_fov_degrees"]))
+    camera_object = bpy.data.objects.new("PlateCamera", camera)
+    scene.collection.objects.link(camera_object)
+    camera_object.matrix_world = look_at_matrix(
+        (0.0, -float(plate["forward_m"]), float(plate["camera_height_above_plate_m"])), (0.0, 0.0, 0.0))
+    scene.camera = camera_object
+
+    lighting = job["lighting"]
+    case = job["case"]
+    world, background = make_uniform_world(scene, lighting["sky_radiance_rgb"])
+    if case == "sun":
+        background.inputs["Strength"].default_value = 0.0
+        make_sun_lamp(scene, lighting["sun_illuminance_normal_lux"], job["to_sun_engine"],
+                      lighting["sun_angle_degrees"])
+    exr_tmp = job["out_exr"] + ".render.exr"
+    configure_gray_cycles(scene, job["width"], job["height"], exr_tmp)
+    scene.render.film_transparent = False
+    scene.cycles.samples = int(job["samples"])
+    scene.cycles.seed = 0
+    started = time.time()
+    channels = render_and_read(scene, exr_tmp)
+    seconds = time.time() - started
+    rgb = pass_rgb(channels, "Combined")
+    write_exr(job["out_exr"], rgb, ("R", "G", "B"))
+    GR.write_pfm(job["out_pfm"], rgb)
+    with open(job["out_json"], "w", encoding="utf-8") as f:
+        json.dump({
+            "case": case,
+            "renderer": f"Blender {bpy.app.version_string} Cycles",
+            "device": device,
+            "samples": int(job["samples"]),
+            "width": int(job["width"]),
+            "height": int(job["height"]),
+            "plate": plate,
+            "material": "Diffuse BSDF (roughness 0)",
+            "sun_altitude_degrees": job["sun_altitude_degrees"],
+            "sun_azimuth_degrees": job["sun_azimuth_degrees"],
+            "lighting": lighting,
+            "render_seconds": seconds,
+            "exr_sha256": sha256_file(job["out_exr"]),
+            "pfm_sha256": sha256_file(job["out_pfm"]),
+        }, f, indent=2, ensure_ascii=False)
+    print(f"BLENDER_GRAY plate case={case} samples={job['samples']} device={device} seconds={seconds:.1f} "
+          f"center={rgb[rgb.shape[0] // 2, rgb.shape[1] // 2].tolist()}")
+
+
+def render_gray_job(job):
+    """灰色の地形を 1 視点描く: 太陽の見え方と法線、続けて種を変えた本描画を収束まで重ねる"""
+    import bpy
+    import mathutils
+
+    GR = load_gray_regions()
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    scene = bpy.context.scene
+    device = setup_cycles_device(scene)
+    material, ior = make_gray_material(job["gray_material"])
+
+    started = time.time()
+    to_blender = mathutils.Matrix(engine_to_blender_matrix4())
+    vertex_count = 0
+    triangle_count = 0
+    flipped_count = 0
+    for path in job["tiles"]:
+        name = os.path.splitext(os.path.basename(path))[0]
+        positions, triangles, normals = read_terrain_ply(path, with_normals=True)
+        triangles, flipped = orient_triangles(positions, triangles, normals)
+        flipped_count += flipped
+        mesh = build_mesh(name, positions, triangles, normals)
+        mesh.materials.append(material)
+        obj = bpy.data.objects.new(name, mesh)
+        scene.collection.objects.link(obj)
+        obj.matrix_world = to_blender
+        vertex_count += len(positions)
+        triangle_count += len(triangles)
+        del positions, triangles, normals
+    load_seconds = time.time() - started
+
+    matrix, vertical_fov = camera_to_blender(job["camera"])
+    camera = bpy.data.cameras.new("EngineCamera")
+    camera.type = "PERSP"
+    camera.sensor_fit = "VERTICAL"
+    camera.angle_y = vertical_fov
+    camera.clip_start = float(job["camera"].get("near", 0.1))
+    camera.clip_end = CLIP_END_M
+    camera_object = bpy.data.objects.new("EngineCamera", camera)
+    scene.collection.objects.link(camera_object)
+    camera_object.matrix_world = mathutils.Matrix(matrix)
+    scene.camera = camera_object
+
+    lighting = job["lighting"]
+    world, background = make_uniform_world(scene, lighting["sky_radiance_rgb"])
+    sun = make_sun_lamp(scene, lighting["sun_illuminance_normal_lux"], job["to_sun_engine"],
+                        lighting["sun_angle_degrees"])
+    # 太陽の光と空の光を別々のパスにも書く（光の組）
+    view_layer = scene.view_layers[0]
+    view_layer.lightgroups.add(name="sun")
+    view_layer.lightgroups.add(name="sky")
+    sun.lightgroup = "sun"
+    world.lightgroup = "sky"
+    view_layer.use_pass_normal = True
+    for kind in ("diffuse", "glossy"):
+        for part in ("direct", "indirect", "color"):
+            setattr(view_layer, f"use_pass_{kind}_{part}", True)
+
+    prefix = job["prefix"]
+    exr_tmp = prefix + ".render.exr"
+    width, height = int(job["width"]), int(job["height"])
+    configure_gray_cycles(scene, width, height, exr_tmp)
+
+    # 1. 太陽の見え方: 白いランバート面・太陽だけ・直接光だけ。輝度 / (E⊥ × max(n·l, 0) / π) が見え方（影は 0、半影は間）
+    white = make_diffuse_material("VisibilityWhite", 1.0)
+    view_layer.material_override = white
+    background.inputs["Strength"].default_value = 0.0
+    set_gray_bounces(scene, 0)
+    scene.cycles.samples = VISIBILITY_SPP
+    scene.cycles.seed = 0
+    vis_started = time.time()
+    channels = render_and_read(scene, exr_tmp)
+    visibility_seconds = time.time() - vis_started
+    white_rgb = pass_rgb(channels, "Combined")
+    alpha = channels["ViewLayer.Combined.A"]
+    normal_blender = pass_rgb(channels, "Normal", ("X", "Y", "Z"))
+    normal = np.stack([normal_blender[..., 0], normal_blender[..., 2], -normal_blender[..., 1]], axis=-1)
+    length = np.linalg.norm(normal, axis=-1, keepdims=True)
+    normal = np.where(length > 1e-6, normal / np.maximum(length, 1e-6), 0.0).astype(np.float32)
+    to_sun = np.asarray(job["to_sun_engine"], dtype=np.float32)
+    n_dot_l = (normal @ to_sun).astype(np.float32)
+    expected = float(lighting["sun_illuminance_normal_lux"]) * np.maximum(n_dot_l, 0.0) / math.pi
+    white_y = GR.luminance(white_rgb)
+    visibility = np.where(n_dot_l > 1e-3, white_y / np.maximum(expected, 1e-6), 0.0).astype(np.float32)
+    if not (alpha > 0.5).any() or not (white_y > 0.0).any():
+        raise RuntimeError("太陽の見え方の描画が空（表面か光が無い。装置のメモリ不足を疑う）")
+    view_layer.material_override = None
+    background.inputs["Strength"].default_value = 1.0
+    set_gray_bounces(scene, GRAY_MAX_BOUNCES)
+    aux = np.concatenate([visibility[..., None], n_dot_l[..., None], normal, alpha[..., None]], axis=-1)
+    write_exr(prefix + ".aux.exr", aux, ("visibility", "n_dot_l", "normal.X", "normal.Y", "normal.Z", "A"))
+    GR.write_pfm(prefix + ".aux.visibility.pfm", visibility)
+    GR.write_pfm(prefix + ".aux.n_dot_l.pfm", n_dot_l)
+    GR.write_pfm(prefix + ".aux.normal.pfm", normal)
+    GR.write_pfm(prefix + ".aux.alpha.pfm", alpha)
+
+    # 2. 領域（エンジンの深度と Cycles の法線・見え方から）
+    depth = GR.read_pfm(job["engine_depth_pfm"])[..., 0]
+    if depth.shape != (height, width):
+        raise RuntimeError(f"エンジンの深度の大きさ {depth.shape} が描画 {height}x{width} と違う")
+    masks = GR.region_masks(depth, normal[..., 1], n_dot_l, visibility, alpha > 0.5)
+    print(f"BLENDER_GRAY view={job['view']} regions=" +
+          json.dumps({name: int(masks[name].sum()) for name in GR.REGIONS}), flush=True)
+
+    # 3. 本描画を CHUNK_SPP ずつ種を変えて重ね、偶数番目を A・奇数番目を B に足す
+    groups = ("combined", "sun", "sky", "direct", "indirect")
+    sums = {seed: {g: np.zeros((height, width, 3), dtype=np.float64) for g in groups} for seed in ("a", "b")}
+    chunk_spp = int(job["chunk_spp"])
+    max_spp = int(job["max_spp_per_seed"])
+    max_seconds = float(job["max_seconds"])
+    scene.cycles.samples = chunk_spp
+    history = []
+    loop_started = time.time()
+    chunk = 0
+    pair_seconds = 0.0
+    stats = {}
+    all_converged = False
+    stop_reason = ""
+    while True:
+        pair_started = time.time()
+        for seed in ("a", "b"):
+            scene.cycles.seed = 1 + chunk
+            channels = render_and_read(scene, exr_tmp)
+            parts = {name: pass_rgb(channels, name) for name in
+                     ("Combined", "Combined_sun", "Combined_sky", "Diffuse Direct", "Diffuse Indirect",
+                      "Diffuse Color", "Glossy Direct", "Glossy Indirect", "Glossy Color")}
+            values = {
+                "combined": parts["Combined"],
+                "sun": parts["Combined_sun"],
+                "sky": parts["Combined_sky"],
+                "direct": parts["Diffuse Direct"] * parts["Diffuse Color"] +
+                          parts["Glossy Direct"] * parts["Glossy Color"],
+                "indirect": parts["Diffuse Indirect"] * parts["Diffuse Color"] +
+                            parts["Glossy Indirect"] * parts["Glossy Color"],
+            }
+            for group in groups:
+                sums[seed][group] += values[group]
+            chunk += 1
+        pair_seconds = time.time() - pair_started
+        per_seed = chunk // 2
+        spp = per_seed * chunk_spp
+        y_a = GR.luminance(sums["a"]["combined"] / per_seed)
+        y_b = GR.luminance(sums["b"]["combined"] / per_seed)
+        stats, all_converged = GR.convergence(y_a, y_b, masks)
+        elapsed = time.time() - loop_started
+        history.append({"spp_per_seed": spp, "elapsed_seconds": elapsed, "regions": stats})
+        print(f"BLENDER_GRAY view={job['view']} spp_per_seed={spp} elapsed={elapsed:.0f}s all_converged={int(all_converged)} " +
+              " ".join(f"{name}={stats[name].get('mean_diff', float('nan')):.4f}/{stats[name].get('pixel_rms', float('nan')):.3f}"
+                       for name in GR.REGIONS), flush=True)
+        if all_converged and spp >= MIN_SPP_PER_SEED:
+            stop_reason = "converged"
+            break
+        if spp + chunk_spp > max_spp:
+            stop_reason = "max_spp"
+            break
+        if elapsed + pair_seconds > max_seconds:
+            stop_reason = "max_seconds"
+            break
+    render_seconds = time.time() - loop_started
+
+    # 4. 書き出し: 2 本の平均（各組）と、A・B の合成
+    per_seed = chunk // 2
+    final = {g: ((sums["a"][g] + sums["b"][g]) / (2.0 * per_seed)).astype(np.float32) for g in groups}
+    seed_a = (sums["a"]["combined"] / per_seed).astype(np.float32)
+    seed_b = (sums["b"]["combined"] / per_seed).astype(np.float32)
+    surface = alpha > 0.5
+    combined_y = GR.luminance(final["combined"])[surface]
+    split_y = GR.luminance(final["direct"] + final["indirect"])[surface]
+    groups_y = GR.luminance(final["sun"] + final["sky"])[surface]
+    consistency = {
+        "direct_plus_indirect_over_combined": float(split_y.sum() / max(combined_y.sum(), 1e-30)),
+        "sun_plus_sky_over_combined": float(groups_y.sum() / max(combined_y.sum(), 1e-30)),
+    }
+    names = []
+    planes = []
+    for group in groups:
+        for index, component in enumerate(("R", "G", "B")):
+            names.append(component if group == "combined" else f"{group}.{component}")
+            planes.append(final[group][..., index])
+    write_exr(prefix + ".cycles.exr", np.stack(planes, axis=-1), names)
+    write_exr(prefix + ".cycles.seed_a.exr", seed_a, ("R", "G", "B"))
+    write_exr(prefix + ".cycles.seed_b.exr", seed_b, ("R", "G", "B"))
+    GR.write_pfm(prefix + ".cycles.hdr.pfm", final["combined"])
+    GR.write_pfm(prefix + ".cycles.seed_a.pfm", seed_a)
+    GR.write_pfm(prefix + ".cycles.seed_b.pfm", seed_b)
+    for group in ("sun", "sky", "direct", "indirect"):
+        GR.write_pfm(prefix + f".cycles.{group}.pfm", final[group])
+    outputs = {}
+    for suffix in (".cycles.exr", ".cycles.seed_a.exr", ".cycles.seed_b.exr", ".aux.exr", ".cycles.hdr.pfm",
+                   ".cycles.seed_a.pfm", ".cycles.seed_b.pfm", ".cycles.sun.pfm", ".cycles.sky.pfm",
+                   ".cycles.direct.pfm", ".cycles.indirect.pfm", ".aux.visibility.pfm", ".aux.n_dot_l.pfm",
+                   ".aux.normal.pfm", ".aux.alpha.pfm"):
+        outputs[os.path.basename(prefix) + suffix] = sha256_file(prefix + suffix)
+    with open(prefix + ".cycles.json", "w", encoding="utf-8") as f:
+        json.dump({
+            "view": job["view"],
+            "renderer": f"Blender {bpy.app.version_string} Cycles",
+            "device": device,
+            "width": width,
+            "height": height,
+            "camera_engine": job["camera"],
+            "camera_blender_matrix_world": matrix,
+            "camera_vertical_fov_degrees": math.degrees(vertical_fov),
+            "tiles": len(job["tiles"]),
+            "vertices": vertex_count,
+            "triangles": triangle_count,
+            "normals": "PLY の頂点の法線（custom_normal、点の領域）",
+            "triangles_rewound": flipped_count,
+            "material": {"type": "Principled BSDF", "base_color": float(job["gray_material"]["albedo"]),
+                         "roughness": float(job["gray_material"]["roughness"]), "metallic": 0.0, "ior": ior,
+                         "specular_ior_level": 0.5, "f0": float(job["gray_material"]["f0"])},
+            "lighting": lighting,
+            "sun_altitude_degrees": job["sun_altitude_degrees"],
+            "sun_azimuth_degrees": job["sun_azimuth_degrees"],
+            "settings": {"max_bounces": GRAY_MAX_BOUNCES, "pixel_filter": {"type": "BOX", "width_px": GRAY_PIXEL_FILTER_WIDTH},
+                         "clamp": 0.0, "denoise": False, "adaptive": False, "chunk_spp": chunk_spp,
+                         "min_spp_per_seed": MIN_SPP_PER_SEED, "max_spp_per_seed": max_spp, "max_seconds": max_seconds,
+                         "visibility_spp": VISIBILITY_SPP},
+            "seeds": {"a": list(range(1, chunk + 1, 2)), "b": list(range(2, chunk + 1, 2))},
+            "spp_per_seed": per_seed * chunk_spp,
+            "stop_reason": stop_reason,
+            "all_converged": bool(all_converged),
+            "regions": stats,
+            "region_criteria": GR.criteria(),
+            "history": history,
+            "consistency": consistency,
+            "load_seconds": load_seconds,
+            "visibility_seconds": visibility_seconds,
+            "render_seconds": render_seconds,
+            "outputs_sha256": outputs,
+        }, f, indent=2, ensure_ascii=False)
+    print(f"BLENDER_GRAY view={job['view']} done spp_per_seed={per_seed * chunk_spp} stop={stop_reason} "
+          f"load={load_seconds:.1f}s render={render_seconds:.1f}s consistency={json.dumps(consistency)}", flush=True)
+
+
 def main():
     if IN_BLENDER:
         argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
@@ -441,14 +1191,27 @@ def main():
         return 0
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--depth", action="store_true", help="地形の深度を描く")
+    parser.add_argument("--gray", action="store_true", help="灰色の地形を共通の照明で描く（板の較正と視点）")
     parser.add_argument("--mesh", required=True, help="Game の --wasteland-export-terrain が書いたフォルダ")
     parser.add_argument("--capture", required=True, help="エンジンの撮影（CaptureScene.ps1 -Aov の -OutDir）")
-    parser.add_argument("--views", default="", help="描く視点（カンマ区切り。省くと metrics.json の全視点）")
-    parser.add_argument("--range", default="frustum", choices=("frustum", "shadow", "all"), help="読む区画の範囲")
+    parser.add_argument("--views", default="", help="描く視点（カンマ区切り。--depth で省くと metrics.json の全視点、"
+                                                    "--gray で省くと " + ",".join(GRAY_VIEWS) + "）")
+    parser.add_argument("--range", default=None, choices=("frustum", "shadow", "all"),
+                        help="読む区画の範囲（既定は --depth が frustum、--gray が shadow）")
     parser.add_argument("--blender", default=DEFAULT_BLENDER, help="blender.exe")
+    parser.add_argument("--chunk-spp", type=int, default=CHUNK_SPP, help="--gray: 1 回の描画のサンプル数")
+    parser.add_argument("--max-spp", type=int, default=MAX_SPP_PER_SEED, help="--gray: 1 本あたりのサンプル数の上限")
+    parser.add_argument("--max-seconds", type=float, default=MAX_SECONDS_PER_VIEW, help="--gray: 1 視点の本描画の時間の上限")
+    parser.add_argument("--skip-plate", action="store_true", help="--gray: 板の較正を描かない")
+    parser.add_argument("--plate-only", action="store_true", help="--gray: 板の較正だけを描く")
     args = parser.parse_args()
-    if not args.depth:
-        parser.error("--depth を指定してください")
+    if args.depth == args.gray:
+        parser.error("--depth か --gray のどちらか 1 つを指定してください")
+    if args.gray:
+        args.range = args.range or "shadow"
+        args.views = args.views or ",".join(GRAY_VIEWS)
+        return run_gray(args)
+    args.range = args.range or "frustum"
     return run_depth(args)
 
 

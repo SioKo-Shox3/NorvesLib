@@ -6,6 +6,9 @@
 // --common-light-case=sun|sky: 太陽だけ（空の放射輝度 0）か、空だけ（太陽 0）にする。指定が無ければ両方。
 // --wasteland-gray-plate: 視点の前に灰色の板（鏡面の無いアルベドの水平の面）を置き、カメラを板へ向ける。間接光（RTGI）は切る
 //   （周りの地形の照り返し・遮蔽を板の値に入れない）。照合は Scripts/Terrain/ReferenceCheck.py --plate。
+// --wasteland-gray-material: 地形の区画の材質を、テクスチャと 3 層の混ぜ合わせの無い灰色（CommonLight.json の gray_material）に
+//   替える。材質の BaseColor は GBuffer のアルベドと、RTGI・DDGI の光線の当たりの反射率の両方に使われるので、両方が同じ灰色になる。
+//   照合は Scripts/Terrain/ReferenceCheck.py --gray（Blender Cycles の同じ材質の絵と比べる）。
 
 #include "Core/Public/Container/Containers.h"
 #include "Core/Public/Math/Vector3.h"
@@ -54,6 +57,7 @@ namespace Game::GameModes::WastelandCommonLight
         bool bEnabled = false;
         LightCase Case = LightCase::Both;
         bool bGrayPlate = false;
+        bool bGrayMaterial = false;
     };
 
     /// 視点ごとの太陽の向き（CommonLight.json の views）
@@ -84,6 +88,9 @@ namespace Game::GameModes::WastelandCommonLight
         /// 板を撮るカメラ: 視点の位置から視線の水平の向きへ板の中心までの距離（m）と、板の面からの目の高さ（m）
         float PlateForwardMeters = 5.2f;
         float CameraHeightAbovePlateMeters = 3.0f;
+        /// 灰色の地形の材質のアルベド（線形）と粗さ。誘電体（金属度 0、エンジンの F0 は 0.04 の固定）
+        float GrayMaterialAlbedo = 0.3f;
+        float GrayMaterialRoughness = 1.0f;
     };
 
     /// 共通の照明の状態（荒野のモードの間だけ持つ）
@@ -110,7 +117,8 @@ namespace Game::GameModes::WastelandCommonLight
     void FindSun(const Definition &definition, const NorvesLib::Core::Container::String &viewName,
                  float &outAltitudeDegrees, float &outAzimuthDegrees);
 
-    /// 起動時に 1 回: 定義を読み、板の材質・メッシュを用意する。定義が読めなければ false（呼び出し側はモードを失敗にする）
+    /// 起動時に 1 回: 定義を読み、板の材質・メッシュを用意する。定義が読めなければ false（呼び出し側はモードを失敗にする）。
+    /// 灰色の地形の材質（Opts.bGrayMaterial）の値も、ここで読んだ Def から地形を置く側が引く
     bool Enter(NorvesLib::Core::GameMode::GameModeContext &ctx, State &state);
 
     /// 視点ごとに: 空・霧・空気遠近・雲を切り、一様な空と太陽をその視点の向きで置く

@@ -165,6 +165,23 @@
 #       （位相相関）が振りと止めの間で MOTION_ALIGN_MAX_PX 未満、motion-30-pre → motion-30 が振りの角の画素数と合う、
 #       base 以外は撮影の間のページの進行中・追い出し・描画の溢れが無い、較正が通る。差の大きさは記録するだけ（既定は変えない）。
 #
+#   python Scripts/Terrain/ReferenceCheck.py --gray --capture <出力先> [--views a,b,...] [--verify]
+#       灰色の材質（CommonLight.json の gray_material）の地形を、エンジン（<出力先> の撮影。共通の照明・地形だけ・最細の LOD・
+#       --wasteland-gray-material）と Cycles（BlenderReference.py --gray が <出力先>/cycles/ に書いたもの）で比べ、
+#       <出力先>/gray_check.json と見比べの画像 <出力先>/gray_<視点>.png を書く。--views を省くと GRAY_VIEWS。
+#       原因の見立て用に、同じ起動引数に --common-light-case=sun|sky を足した撮影を <出力先>/engine-sun・engine-sky に置く。
+#       領域と収束の定義は GrayRegions.py（日なたの地面・影の中の地面・日なたの崖・影の崖・遠景）。
+#       1. エンジンの撮影（3 組とも）: 起動引数とログの印、撮った時点のジオメトリのページの進行中 0・追い出しなし、描くクラスタが
+#          溢れていない。太陽と空の両方の撮影の AOV のアルベドが灰色の ±GRAY_ALBEDO_TOLERANCE（8 bit の丸めを許す）、粗さが一致。
+#       2. Cycles 側の尺度の較正: 灰色の板の sun・sky が、入力だけから求めた期待（--plate と同じ式・窓）に ±3 % で合う。
+#       3. 視点ごと: Cycles の出力が記録のハッシュと合い、カメラがエンジンの aov.json と一致、空と表面の分かれ方の食い違いが
+#          GRAY_SKY_MISMATCH 以下、Cycles の直接光 + 間接光・太陽の組 + 空の組が合成の ±GRAY_SPLIT_TOLERANCE。
+#          乱数の種を変えた 2 本（A・B）から領域ごとの収束を測り直し、収束した領域を「判定」、しない領域を「未判定」と書く。
+#          領域ごとに、エンジンと Cycles の線形の平均（輝度・RGB）と比、Cycles の内訳（太陽・空・直接・間接）、
+#          エンジンの太陽だけ・空だけの撮影と Cycles の太陽の組・空の組の比を書く（比の大きさは記録するだけ）。
+#       --verify は 3 組の撮影の inputs.json と、cycles/inputs.json（台本・GrayRegions.py・CommonLight.json・PLY・地形のメッシュの
+#       元の入力・エンジンの撮影の入力のハッシュ）を今のファイルと照らす。
+#
 # 終了コード: すべて合格なら 0、どれかが不合格なら 1。
 import argparse
 import hashlib
@@ -181,6 +198,7 @@ from PIL import Image
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import AtmosphereReference as AR  # noqa: E402
 import DisplayTransform as DT  # noqa: E402
+import GrayRegions as GR  # noqa: E402
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
@@ -307,6 +325,21 @@ PROJECTION_MAX_DISTANCE_PX = 16
 PROJECTION_CAMERA_POSITION_M = 1e-3
 PROJECTION_CAMERA_DIRECTION = 1e-5
 PROJECTION_CAMERA_FOV_DEG = 1e-4
+
+# --gray（灰色の地形のエンジンと Cycles の比較）
+GRAY_VIEWS = ("ref_cliff_01", "ref_far_01")
+GRAY_GAME_ARGS = ("--wasteland-common-light", "--wasteland-finest-lod", "--wasteland-gray-material")
+GRAY_LOG_LINES = ("WASTELAND_FINEST_LOD ", "WASTELAND_HIDE mask=127 ", "WASTELAND_GRAY_MATERIAL ")
+GRAY_ENGINE_CASES = ("sun", "sky")
+GRAY_CYCLES_DIR = "cycles"
+GRAY_REGIONS_PATH = "Scripts/Terrain/GrayRegions.py"
+GRAY_PLATE_VIEW = "ref_cliff_01"
+# GBuffer のアルベドは 8 bit（0.3 は 76/255 = 0.298、−0.65 %）なので ±1 % で見る
+GRAY_ALBEDO_TOLERANCE = 0.01
+GRAY_ALBEDO_RATIO = 0.999
+GRAY_ROUGHNESS_TOLERANCE = 0.01
+GRAY_SKY_MISMATCH = 0.005
+GRAY_SPLIT_TOLERANCE = 0.01
 # --atmos-dump: 空と霞の値の書き出し（SCN-WLR-ATMOS-DUMP）
 ATMOS_GAME_ARG = "--atmosphere-dump"
 ATMOS_LOG_LINES = ("ATMOSPHERE_DUMP ",)
@@ -3525,6 +3558,390 @@ def run_blur_motion(capture_dir, verify):
     return 0 if not failures else 1
 
 
+# ---- --gray（灰色の地形のエンジンと Cycles の比較）----
+
+def gray_capture_args(case_dir):
+    return plate_capture_args(case_dir)
+
+
+def gray_camera_match(engine_camera, cycles_camera):
+    """エンジンの aov.json のカメラと、Cycles が置いたカメラの記録の食い違いの理由の一覧"""
+    reasons = []
+    position = np.asarray(engine_camera["position"], dtype=np.float64) - np.asarray(cycles_camera["position"],
+                                                                                     dtype=np.float64)
+    if np.linalg.norm(position) > PROJECTION_CAMERA_POSITION_M:
+        reasons.append(f"カメラの位置が {np.linalg.norm(position):.4g} m 違う")
+    for key in ("forward", "up", "right"):
+        delta = np.asarray(engine_camera[key], dtype=np.float64) - np.asarray(cycles_camera[key], dtype=np.float64)
+        if np.linalg.norm(delta) > PROJECTION_CAMERA_DIRECTION:
+            reasons.append(f"カメラの {key} が {np.linalg.norm(delta):.3g} 違う")
+    if abs(float(engine_camera["vertical_fov_degrees"]) - float(cycles_camera["vertical_fov_degrees"])) > \
+            PROJECTION_CAMERA_FOV_DEG:
+        reasons.append("縦の画角が違う")
+    return reasons
+
+
+def gray_engine_capture(case_dir, case, views, verify):
+    """エンジンの撮影の組（共通の照明・地形だけ・最細の LOD・灰色の材質）を検査する。(結果, 視点 → HDR, 失敗の一覧)"""
+    entry = {"dir": os.path.relpath(case_dir, REPO_ROOT).replace("\\", "/"), "case": case}
+    failures = []
+    hdrs = {}
+    if not os.path.isdir(case_dir):
+        return entry, hdrs, [f"エンジンの撮影の組が無い（{case_dir}）"]
+    inputs_ok, input_failures, record = check_inputs(case_dir)
+    entry["inputs_current"] = inputs_ok
+    entry["files_sha256"] = (record or {}).get("files_sha256")
+    entry["game_exe_sha256"] = (record or {}).get("game_exe_sha256")
+    if verify and not inputs_ok:
+        failures.extend(input_failures)
+    game_args = gray_capture_args(case_dir)
+    entry["game_args"] = game_args
+    if game_args is None:
+        return entry, hdrs, failures + ["metrics.json が無い"]
+    wanted = list(GRAY_GAME_ARGS) + ([f"--common-light-case={case}"] if case != "both" else [])
+    missing = [a for a in wanted if a not in game_args]
+    if missing:
+        failures.append(f"撮影の起動引数に {', '.join(missing)} が無い")
+    if case == "both" and any(a.startswith("--common-light-case=") for a in game_args):
+        failures.append("太陽と空の両方の撮影に --common-light-case がある")
+    hide = aov_hide_names(game_args)
+    if set(AOV_HIDE_NAMES) - hide:
+        failures.append("撮影が --wasteland-hide=all でない")
+    entry["views"] = {}
+    for view in views:
+        view_entry = {}
+        entry["views"][view] = view_entry
+        pfm = os.path.join(case_dir, f"{view}.hdr.pfm")
+        meta_path = os.path.join(case_dir, f"{view}.hdr.json")
+        if not os.path.isfile(pfm) or not os.path.isfile(meta_path):
+            failures.append(f"{view}: HDR が無い")
+            continue
+        with open(meta_path, encoding="utf-8") as f:
+            meta = json.load(f)
+        if meta.get("units") != "cd/m2" or meta.get("source") != "scene_color_before_bloom":
+            failures.append(f"{view}: hdr.json の単位・読み出し元が約束と違う")
+        hdr = DT.read_pfm(pfm).astype(np.float64)
+        if not np.isfinite(hdr).all() or (hdr < 0.0).any():
+            failures.append(f"{view}: HDR に負・NaN・Inf がある")
+        hdrs[view] = hdr
+        log_name = view_game_log(case_dir, view)
+        log_path = os.path.join(case_dir, log_name) if log_name else None
+        if not log_path or not os.path.isfile(log_path):
+            failures.append(f"{view}: Game のログが無い")
+            continue
+        with open(log_path, encoding="utf-8", errors="replace") as f:
+            text = f.read()
+        for line in GRAY_LOG_LINES + (f"WASTELAND_COMMON_LIGHT view={view} case={case} ",):
+            if line not in text:
+                failures.append(f"{view}: Game のログに {line.strip()} が無い")
+        found = re.search(r"WASTELAND_GRAY_MATERIAL albedo=([0-9.]+) roughness=([0-9.]+)", text)
+        view_entry["gray_material_log"] = found.group(0) if found else None
+        single_view = view if log_name == f"{view}.Game.log" else None
+        pages = geometry_pages_at_capture(text.splitlines(), single_view).get(view)
+        view_entry["geometry_pages_at_capture"] = pages
+        if pages is None:
+            failures.append(f"{view}: Game のログに撮影の保存の行か、その前の GEOMETRY_PAGES の行が無い")
+        else:
+            in_flight = {k: pages.get(k) for k in ("wanted", "reading", "ready", "uploading")}
+            if any(in_flight.values()) or len(pages["settle_evicted"]) != 1:
+                failures.append(f"{view}: 撮った時点でジオメトリのページが常駐しきっていない（進行中 {in_flight}、"
+                                f"追い出しの数 {pages['settle_evicted']}）")
+        dropped = [int(v) for v in re.findall(r"MEGA_CAPACITY draw_dropped=(\d+)", text)]
+        view_entry["mega_draw_dropped_max"] = max(dropped) if dropped else None
+        if dropped and max(dropped) > 0:
+            failures.append(f"{view}: 描くクラスタが溢れた（draw_dropped 最大 {max(dropped)}）")
+    return entry, hdrs, [f"{case}: {f}" for f in failures]
+
+
+def gray_check_aov(capture_dir, view, light):
+    """灰色の材質が GBuffer に掛かったこと（AOV のアルベド・粗さ）。(記録, 失敗の一覧)"""
+    failures = []
+    depth = read_pfm_any(os.path.join(capture_dir, f"{view}.aov.depth.pfm"))[..., 0]
+    albedo = read_pfm_any(os.path.join(capture_dir, f"{view}.aov.albedo.pfm"))
+    roughness = read_pfm_any(os.path.join(capture_dir, f"{view}.aov.roughness.pfm"))[..., 0]
+    surface = np.isfinite(depth)
+    target = float(light["gray_material"]["albedo"])
+    albedo_ok = np.all(np.abs(albedo[surface] - target) <= GRAY_ALBEDO_TOLERANCE * target, axis=-1)
+    rough_ok = np.abs(roughness[surface] - float(light["gray_material"]["roughness"])) <= GRAY_ROUGHNESS_TOLERANCE
+    record = {
+        "surface_pixels": int(surface.sum()),
+        "albedo_median": float(np.median(albedo[surface][:, 1])),
+        "albedo_within_ratio": float(albedo_ok.mean()) if surface.any() else 0.0,
+        "roughness_within_ratio": float(rough_ok.mean()) if surface.any() else 0.0,
+    }
+    if record["albedo_within_ratio"] < GRAY_ALBEDO_RATIO:
+        failures.append(f"{view}: GBuffer のアルベドが灰色 {target} の ±{GRAY_ALBEDO_TOLERANCE:.0%} に入る画素が "
+                        f"{record['albedo_within_ratio']:.4f}（{GRAY_ALBEDO_RATIO} 未満。材質が掛かっていない）")
+    if record["roughness_within_ratio"] < GRAY_ALBEDO_RATIO:
+        failures.append(f"{view}: GBuffer の粗さが {light['gray_material']['roughness']} の画素が "
+                        f"{record['roughness_within_ratio']:.4f}")
+    return record, depth, failures
+
+
+def check_cycles_gray_inputs(cycles_dir, engine_files_sha256):
+    """Cycles の結果の入力の記録を今のファイルと照らす。(合格か, 理由の一覧, 記録)"""
+    ok, reasons, record = check_blender_inputs(cycles_dir)
+    if record is None:
+        return False, [f"{GRAY_CYCLES_DIR}/inputs.json が無い（BlenderReference.py --gray を回していない）"], None
+    for key, rel in (("gray_regions_sha256", GRAY_REGIONS_PATH), ("common_light_sha256", COMMON_LIGHT_PATH)):
+        if sha256_file(os.path.join(REPO_ROOT, rel)) != record.get(key):
+            reasons.append(f"{rel} が描いた後に変わった（古い結果）")
+    if record.get("engine_capture_files_sha256") != engine_files_sha256:
+        reasons.append("カメラと深度を借りたエンジンの撮影の入力が、今の撮影と違う")
+    if record.get("kind") != "cycles_gray":
+        reasons.append(f"記録の種類が cycles_gray でない（{record.get('kind')}）")
+    return not reasons, reasons, record
+
+
+def gray_check_plate(cycles_dir, case, light):
+    result = {"case": case, "pass": False, "failures": []}
+    pfm = os.path.join(cycles_dir, f"plate_{case}.pfm")
+    meta_path = os.path.join(cycles_dir, f"plate_{case}.json")
+    if not os.path.isfile(pfm) or not os.path.isfile(meta_path):
+        result["failures"].append(f"plate_{case} が無い")
+        return result
+    with open(meta_path, encoding="utf-8") as f:
+        meta = json.load(f)
+    if sha256_file(pfm) != meta.get("pfm_sha256"):
+        result["failures"].append(f"plate_{case}.pfm が記録のハッシュと違う")
+    image = read_pfm_any(pfm).astype(np.float64)
+    height, width = image.shape[:2]
+    half_w = max(1, int(round(width * PLATE_WINDOW / 2.0)))
+    half_h = max(1, int(round(height * PLATE_WINDOW / 2.0)))
+    window = image[height // 2 - half_h:height // 2 + half_h, width // 2 - half_w:width // 2 + half_w]
+    luminance = window @ LUMA
+    mean_rgb = window.reshape(-1, 3).mean(axis=0)
+    mean_y = float(luminance.mean())
+    expected_rgb, inputs = plate_expected_rgb(light, case, GRAY_PLATE_VIEW)
+    expected_y = float(expected_rgb @ LUMA)
+    ratio = mean_y / expected_y
+    cv = float(luminance.std() / mean_y) if mean_y > 0.0 else float("inf")
+    result.update({"samples": meta.get("samples"), "device": meta.get("device"), "inputs": inputs,
+                   "expected_luminance_cd_m2": expected_y, "measured_luminance_cd_m2": mean_y, "ratio": ratio,
+                   "ratio_rgb": (mean_rgb / expected_rgb).tolist(), "luminance_cv": cv})
+    if not abs(ratio - 1.0) <= PLATE_TOLERANCE:
+        result["failures"].append(f"Cycles の板 {case} の輝度 {mean_y:.3f} が期待 {expected_y:.3f} と "
+                                  f"{100.0 * (ratio - 1.0):+.2f} % 違う（±{100.0 * PLATE_TOLERANCE:.0f} %）")
+    if not cv <= PLATE_UNIFORMITY:
+        result["failures"].append(f"Cycles の板 {case} の窓の変動係数 {cv:.4f} が {PLATE_UNIFORMITY} を超える")
+    result["pass"] = not result["failures"]
+    return result
+
+
+def gray_display(image, scale):
+    """線形の値に scale を掛け、sRGB の 8 bit へ（見比べの画像だけに使う）"""
+    x = np.clip(image * scale, 0.0, 1.0)
+    srgb = np.where(x <= 0.0031308, 12.92 * x, 1.055 * np.power(x, 1.0 / 2.4) - 0.055)
+    return (srgb * 255.0 + 0.5).astype(np.uint8)
+
+
+def write_gray_preview(path, engine, cycles, masks, valid, scale):
+    """左上: エンジン、右上: Cycles（同じ露出）、左下: log2(エンジン ÷ Cycles)（青が暗い・赤が明るい、±1 段で飽和）、右下: 領域"""
+    def half(image):
+        return np.asarray(Image.fromarray(image).resize((image.shape[1] // 2, image.shape[0] // 2), Image.BOX))
+    ratio = np.log2(np.maximum(engine @ LUMA, 1e-6) / np.maximum(cycles @ LUMA, 1e-6))
+    t = np.clip(ratio, -1.0, 1.0)
+    heat = np.zeros(engine.shape, dtype=np.float64)
+    heat[..., 0] = np.where(t > 0, 1.0, 1.0 + t)
+    heat[..., 1] = 1.0 - np.abs(t)
+    heat[..., 2] = np.where(t < 0, 1.0, 1.0 - t)
+    heat = np.where(valid[..., None], heat, 0.15)
+    colors = {"sunlit_ground": (230, 200, 60), "shadow_ground": (60, 90, 200), "sunlit_cliff": (230, 110, 40),
+              "shadow_cliff": (120, 50, 160), "far": (80, 170, 90)}
+    regions = np.full(engine.shape, 30, dtype=np.uint8)
+    for name, color in colors.items():
+        regions[masks[name]] = color
+    top = np.concatenate([half(gray_display(engine, scale)), half(gray_display(cycles, scale))], axis=1)
+    bottom = np.concatenate([half((heat * 255.0).astype(np.uint8)), half(regions)], axis=1)
+    Image.fromarray(np.concatenate([top, bottom], axis=0)).save(path)
+
+
+def gray_region_means(image, mask):
+    if not mask.any():
+        return None
+    return image[mask].reshape(-1, 3).mean(axis=0)
+
+
+def check_gray_view(capture_dir, cycles_dir, view, engine_hdr, engine_depth, diag_hdrs, light):
+    failures = []
+    result = {"view": view}
+    meta_path = os.path.join(cycles_dir, f"{view}.cycles.json")
+    if not os.path.isfile(meta_path):
+        return dict(result, failures=[f"{GRAY_CYCLES_DIR}/{view}.cycles.json が無い"], **{"pass": False})
+    with open(meta_path, encoding="utf-8") as f:
+        meta = json.load(f)
+    for name, digest in (meta.get("outputs_sha256") or {}).items():
+        path = os.path.join(cycles_dir, name)
+        if not os.path.isfile(path) or sha256_file(path) != digest:
+            failures.append(f"{GRAY_CYCLES_DIR}/{name} が無いか、記録のハッシュと違う")
+    if failures:
+        return dict(result, failures=failures, **{"pass": False})
+    prefix = os.path.join(cycles_dir, view)
+    cycles = read_pfm_any(prefix + ".cycles.hdr.pfm").astype(np.float64)
+    seed_a = read_pfm_any(prefix + ".cycles.seed_a.pfm").astype(np.float64)
+    seed_b = read_pfm_any(prefix + ".cycles.seed_b.pfm").astype(np.float64)
+    parts = {g: read_pfm_any(prefix + f".cycles.{g}.pfm").astype(np.float64) for g in ("sun", "sky", "direct",
+                                                                                        "indirect")}
+    visibility = read_pfm_any(prefix + ".aux.visibility.pfm")[..., 0]
+    n_dot_l = read_pfm_any(prefix + ".aux.n_dot_l.pfm")[..., 0]
+    normal = read_pfm_any(prefix + ".aux.normal.pfm")
+    alpha = read_pfm_any(prefix + ".aux.alpha.pfm")[..., 0]
+    if cycles.shape != engine_hdr.shape:
+        failures.append(f"Cycles の大きさ {cycles.shape} がエンジン {engine_hdr.shape} と違う")
+        return dict(result, failures=failures, **{"pass": False})
+    for name, image in (("合成", cycles), ("A", seed_a), ("B", seed_b)):
+        if not np.isfinite(image).all() or (image < 0.0).any():
+            failures.append(f"Cycles の{name}に負・NaN・Inf がある")
+
+    with open(os.path.join(capture_dir, f"{view}.aov.json"), encoding="utf-8-sig") as f:
+        engine_camera = json.load(f)["camera"]
+    failures.extend(gray_camera_match(engine_camera, meta["camera_engine"]))
+
+    # 空の分かれ方（投影がずれていないこと）
+    engine_sky = ~np.isfinite(engine_depth)
+    cycles_sky = alpha < 0.5
+    sky_mismatch = float(np.mean(engine_sky != cycles_sky))
+    result["sky_mismatch"] = sky_mismatch
+    if sky_mismatch > GRAY_SKY_MISMATCH:
+        failures.append(f"空と表面の分かれ方の食い違い {sky_mismatch:.4f} が {GRAY_SKY_MISMATCH} を超える")
+
+    # Cycles の光の分け方の整合（直接 + 間接、太陽の組 + 空の組 が合成に合う）
+    surface = (alpha > 0.5) & np.isfinite(engine_depth)
+    combined_sum = float((cycles[surface] @ LUMA).sum())
+    consistency = {
+        "direct_plus_indirect": float(((parts["direct"] + parts["indirect"])[surface] @ LUMA).sum() / combined_sum),
+        "sun_plus_sky": float(((parts["sun"] + parts["sky"])[surface] @ LUMA).sum() / combined_sum),
+    }
+    result["cycles_split_consistency"] = consistency
+    for key, value in consistency.items():
+        if abs(value - 1.0) > GRAY_SPLIT_TOLERANCE:
+            failures.append(f"Cycles の {key} の和が合成の {value:.4f} 倍（±{GRAY_SPLIT_TOLERANCE}）")
+
+    masks = GR.region_masks(engine_depth, normal[..., 1], n_dot_l, visibility, alpha > 0.5)
+    stats, all_converged = GR.convergence(seed_a @ LUMA, seed_b @ LUMA, masks)
+    result.update({"cycles": {k: meta.get(k) for k in ("renderer", "device", "tiles", "triangles", "spp_per_seed",
+                                                       "stop_reason", "load_seconds", "render_seconds")},
+                   "cycles_settings": meta.get("settings"), "all_converged": all_converged})
+    engine_y = engine_hdr @ LUMA
+    cycles_y = cycles @ LUMA
+    regions = {}
+    for name in GR.REGIONS:
+        mask = masks[name]
+        entry = {"label": GR.REGION_LABELS[name], "pixels": int(mask.sum()), "convergence": stats[name]}
+        if stats[name]["converged"]:
+            entry["status"] = "判定"
+        elif stats[name]["pixels"] < GR.MIN_REGION_PX:
+            entry["status"] = "未判定（画素が足りない）"
+        else:
+            entry["status"] = "未判定（収束しない）"
+        if mask.any():
+            e_rgb = gray_region_means(engine_hdr, mask)
+            c_rgb = gray_region_means(cycles, mask)
+            e_y = float(engine_y[mask].mean())
+            c_y = float(cycles_y[mask].mean())
+            entry.update({
+                "engine_y": e_y, "cycles_y": c_y, "ratio": e_y / c_y if c_y > 0 else None,
+                "engine_rgb": e_rgb.tolist(), "cycles_rgb": c_rgb.tolist(),
+                "ratio_rgb": (e_rgb / np.maximum(c_rgb, 1e-30)).tolist(),
+                "pixel_ratio_p10_p50_p90": np.percentile(engine_y[mask] / np.maximum(cycles_y[mask], 1e-6),
+                                                         [10, 50, 90]).tolist(),
+                "visibility_mean": float(visibility[mask].mean()),
+                "cycles_share": {g: float((parts[g][mask] @ LUMA).mean() / c_y) for g in parts},
+            })
+            for case, hdr in diag_hdrs.items():
+                if view in hdr:
+                    e_case = float((hdr[view][mask] @ LUMA).mean())
+                    c_case = float((parts[case][mask] @ LUMA).mean())
+                    entry[f"engine_{case}_y"] = e_case
+                    entry[f"cycles_{case}_y"] = c_case
+                    entry[f"{case}_ratio"] = e_case / c_case if c_case > 0 else None
+        regions[name] = entry
+    result["regions"] = regions
+    valid = np.zeros(engine_depth.shape, dtype=bool)
+    for name in GR.REGIONS:
+        valid |= masks[name]
+    reference = cycles_y[valid]
+    scale = 0.5 / float(np.percentile(reference, 90)) if reference.size else 1.0
+    write_gray_preview(os.path.join(capture_dir, f"gray_{view}.png"), engine_hdr, cycles, masks, valid, scale)
+    result.update({"pass": not failures, "failures": failures})
+    return result
+
+
+def run_gray(capture_dir, views, verify):
+    failures = []
+    light = load_common_light()
+    views = views or list(GRAY_VIEWS)
+    report = {"mode": "gray", "verify": bool(verify), "views": views, "region_criteria": GR.criteria()}
+
+    # エンジンの撮影: 太陽と空の両方（verify の撮影）と、原因の見立て用の太陽だけ・空だけ
+    main_entry, engine_hdrs, main_failures = gray_engine_capture(capture_dir, "both", views, verify)
+    failures.extend(main_failures)
+    report["engine"] = main_entry
+    diag_hdrs = {}
+    report["engine_diagnostic"] = {}
+    for case in GRAY_ENGINE_CASES:
+        entry, hdrs, case_failures = gray_engine_capture(os.path.join(capture_dir, f"engine-{case}"), case, views, verify)
+        failures.extend(case_failures)
+        report["engine_diagnostic"][case] = entry
+        diag_hdrs[case] = hdrs
+        if entry.get("files_sha256") and entry.get("files_sha256") != main_entry.get("files_sha256"):
+            failures.append(f"engine-{case} の撮影の入力が太陽と空の両方の撮影と違う")
+
+    # Cycles の結果の入力
+    cycles_dir = os.path.join(capture_dir, GRAY_CYCLES_DIR)
+    cycles_ok, cycles_failures, cycles_record = check_cycles_gray_inputs(cycles_dir, main_entry.get("files_sha256"))
+    report["cycles_inputs_current"] = cycles_ok
+    if verify and not cycles_ok:
+        failures.extend(cycles_failures)
+    if cycles_record is None:
+        failures.extend(cycles_failures)
+
+    # Cycles 側の尺度の較正（灰色の板）
+    report["plates"] = []
+    for case in PLATE_CASES:
+        plate = gray_check_plate(cycles_dir, case, light)
+        report["plates"].append(plate)
+        failures.extend(plate["failures"])
+        print(f"REFERENCE_CHECK gray plate case={case} pass={int(plate['pass'])} "
+              f"expected={plate.get('expected_luminance_cd_m2')} measured={plate.get('measured_luminance_cd_m2')} "
+              f"ratio={plate.get('ratio')} ratio_rgb={plate.get('ratio_rgb')}")
+
+    report["view_results"] = []
+    for view in views:
+        if view not in engine_hdrs:
+            failures.append(f"{view}: エンジンの HDR が無い")
+            continue
+        aov, depth, aov_failures = gray_check_aov(capture_dir, view, light)
+        failures.extend(aov_failures)
+        result = check_gray_view(capture_dir, cycles_dir, view, engine_hdrs[view], depth, diag_hdrs, light)
+        result["engine_aov"] = aov
+        report["view_results"].append(result)
+        failures.extend(f"{view}: {f}" for f in result["failures"])
+        cycles = result.get("cycles", {})
+        print(f"REFERENCE_CHECK gray view={view} pass={int(result['pass'])} spp_per_seed={cycles.get('spp_per_seed')} "
+              f"stop={cycles.get('stop_reason')} sky_mismatch={result.get('sky_mismatch')} "
+              f"split={result.get('cycles_split_consistency')}")
+        for name, entry in (result.get("regions") or {}).items():
+            conv = entry["convergence"]
+            print(f"REFERENCE_CHECK gray view={view} region={name} status={entry['status']} pixels={entry['pixels']} "
+                  f"engine_y={entry.get('engine_y', float('nan')):.1f} cycles_y={entry.get('cycles_y', float('nan')):.1f} "
+                  f"ratio={entry.get('ratio') or float('nan'):.3f} "
+                  f"sun_ratio={entry.get('sun_ratio') or float('nan'):.3f} sky_ratio={entry.get('sky_ratio') or float('nan'):.3f} "
+                  f"mean_diff={conv.get('mean_diff', float('nan')):.4f} pixel_rms={conv.get('pixel_rms', float('nan')):.3f}")
+
+    report["failures"] = failures
+    report_path = os.path.join(capture_dir, "gray_check.json")
+    with open(report_path, "w", encoding="utf-8") as f:
+        json.dump(report, f, indent=2, ensure_ascii=False)
+    for failure in failures:
+        print(f"REFERENCE_CHECK failure: {failure}")
+    status = "pass" if not failures else "fail"
+    print(f"REFERENCE_CHECK result={status} mode=gray views={len(views)} "
+          f"inputs_current={int(bool(main_entry.get('inputs_current')))} cycles_inputs_current={int(cycles_ok)} "
+          f"report={report_path}")
+    return 0 if not failures else 1
+
+
 def main():
     # 結果の行を保存して読むので、端末の符号に関わらず UTF-8 で書く
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -3547,6 +3964,8 @@ def main():
                         help="遠景のぼけを、2 倍の解像度の正解と条件ごとの撮影の帯域ごとの差で切り分けた表を作る")
     parser.add_argument("--blur-motion", action="store_true",
                         help="遠景のぼけを、カメラを振りながら撮った画と止めて撮った画で、TAA の履歴による細部の消失に切り分けた表を作る")
+    parser.add_argument("--gray", action="store_true",
+                        help="灰色の地形のエンジンと Cycles の描画を、領域ごとの線形の平均の比で比べた表を作る")
     parser.add_argument("--views", default="", help="検査する視点（カンマ区切り。省くと metrics.json の全視点）")
     parser.add_argument("--verify", action="store_true", help="入力のハッシュを今のファイルと照らし、古い結果を拒否する")
     args = parser.parse_args()
@@ -3583,8 +4002,11 @@ def main():
         return run_blur_static(capture_dir, args.verify)
     if args.blur_motion:
         return run_blur_motion(capture_dir, args.verify)
+    if args.gray:
+        views = [v.strip() for v in args.views.split(",") if v.strip()]
+        return run_gray(capture_dir, views, args.verify)
     print("REFERENCE_CHECK result=fail reason=no_mode（--record-inputs か --hdr か --display か --plate か --aov か "
-          "--projection か --atmos-dump か --atmos-ref か --blur-static か --blur-motion を指定する）")
+          "--projection か --atmos-dump か --atmos-ref か --blur-static か --blur-motion か --gray を指定する）")
     return 1
 
 

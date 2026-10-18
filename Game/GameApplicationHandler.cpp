@@ -231,6 +231,8 @@ namespace Game
         constexpr const TCHAR *kWastelandCommonLightOption = TEXT("--wasteland-common-light");
         constexpr const TCHAR *kCommonLightCaseOption = TEXT("--common-light-case=");
         constexpr const TCHAR *kWastelandGrayPlateOption = TEXT("--wasteland-gray-plate");
+        // --wasteland-gray-material: 地形の材質を CommonLight.json の灰色に替える（Scripts/Terrain/ReferenceCheck.py --gray）
+        constexpr const TCHAR *kWastelandGrayMaterialOption = TEXT("--wasteland-gray-material");
         Game::GameModes::WastelandCommonLight::Options s_WastelandCommonLight;
         // --wasteland-hide=<clouds+foliage+rocks+gravel+buildings+aerial+fog の組み合わせ、または all>: 荒野から比べるために
         // 外すもの（Game/GameModes/Wasteland/WastelandMode.h の WastelandHide）。シーンの設定なので Release でも効く
@@ -1376,19 +1378,25 @@ namespace Game
 #endif
                 continue;
             }
-            if (args[i] == kWastelandCommonLightOption || args[i] == kWastelandGrayPlateOption)
+            if (args[i] == kWastelandCommonLightOption || args[i] == kWastelandGrayPlateOption ||
+                args[i] == kWastelandGrayMaterialOption)
             {
 #if NORVES_BUILD_DEVELOPMENT
                 if (args[i] == kWastelandCommonLightOption)
                 {
                     s_WastelandCommonLight.bEnabled = true;
                 }
-                else
+                else if (args[i] == kWastelandGrayPlateOption)
                 {
                     s_WastelandCommonLight.bGrayPlate = true;
                 }
+                else
+                {
+                    s_WastelandCommonLight.bGrayMaterial = true;
+                }
 #else
-                LOG_WARNING("--wasteland-common-light・--wasteland-gray-plate は開発ビルドだけで使えます。無視します");
+                LOG_WARNING("--wasteland-common-light・--wasteland-gray-plate・--wasteland-gray-material は開発ビルドだけで"
+                            "使えます。無視します");
 #endif
                 continue;
             }

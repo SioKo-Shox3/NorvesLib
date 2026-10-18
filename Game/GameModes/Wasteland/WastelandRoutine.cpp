@@ -77,6 +77,11 @@ namespace Game::GameModes
         MaterialCreateData Material;
         /// 2 層目（乾いた土）・3 層目（岩肌）と混ぜ方
         MegaTerrainBlend TerrainBlend;
+        /// 灰色の地形の材質（--wasteland-gray-material）。立っていれば区画にテクスチャと混ぜ合わせを張らず、BaseColor を
+        /// GrayAlbedo・粗さを GrayRoughness・金属度を 0 にする
+        bool bGrayMaterial = false;
+        float GrayAlbedo = 0.0f;
+        float GrayRoughness = 1.0f;
         uint32_t PendingTextureCount = 0;
         /// 小物・建物（種類ごと。テクスチャの読み込みの結果が枠を指すので、固定の配列で持つ）
         WastelandPropLoad Props[Layout::kPropKindCount];
@@ -638,14 +643,28 @@ namespace Game::GameModes
                 createInfo.PageSource = MakeCookedMeshPageSource(mesh, assembly.AssetSystem->GetCookedFileReader(),
                                                                  pageRange.Request, pageRange.BaseOffset);
             }
-            createInfo.Material.AlbedoTexture = assembly.Material.AlbedoTexture;
-            createInfo.Material.NormalTexture = assembly.Material.NormalTexture;
-            createInfo.Material.ORMTexture = assembly.Material.ORMTexture;
-            createInfo.Material.bNormalTwoChannel = assembly.Material.bNormalTwoChannel;
-            createInfo.Material.TerrainBlend = assembly.TerrainBlend;
-            for (uint32_t channel = 0; channel < 3; ++channel)
+            if (assembly.bGrayMaterial)
             {
-                createInfo.Material.BaseColor[channel] = kTerrainAlbedoScale;
+                // 灰色の材質: 既定の白のアルベド・平らな法線のテクスチャに、BaseColor（GBuffer のアルベドと RTGI・DDGI の
+                // 当たりの反射率の両方に使われる）と粗さ・金属度の定数を掛ける。法線は頂点の補間した法線のまま
+                for (uint32_t channel = 0; channel < 3; ++channel)
+                {
+                    createInfo.Material.BaseColor[channel] = assembly.GrayAlbedo;
+                }
+                createInfo.Material.Roughness = assembly.GrayRoughness;
+                createInfo.Material.Metallic = 0.0f;
+            }
+            else
+            {
+                createInfo.Material.AlbedoTexture = assembly.Material.AlbedoTexture;
+                createInfo.Material.NormalTexture = assembly.Material.NormalTexture;
+                createInfo.Material.ORMTexture = assembly.Material.ORMTexture;
+                createInfo.Material.bNormalTwoChannel = assembly.Material.bNormalTwoChannel;
+                createInfo.Material.TerrainBlend = assembly.TerrainBlend;
+                for (uint32_t channel = 0; channel < 3; ++channel)
+                {
+                    createInfo.Material.BaseColor[channel] = kTerrainAlbedoScale;
+                }
             }
             createInfo.DebugName = logicalPath.c_str();
             const MegaMeshHandle megaMesh = megaGeometry.CreateMegaMesh(createInfo);
@@ -1294,6 +1313,13 @@ namespace Game::GameModes
             auto assembly = MakeShared<WastelandAssembly>();
             assembly->AssetSystem = assetSystem;
             assembly->TerrainExport.Directory = data.m_TerrainExportDir;
+            // 灰色の材質の値は、共通の照明の Enter が読んだ CommonLight.json の gray_material から引く
+            if (data.m_CommonLight.Opts.bGrayMaterial && data.m_CommonLight.bLoaded)
+            {
+                assembly->bGrayMaterial = true;
+                assembly->GrayAlbedo = data.m_CommonLight.Def.GrayMaterialAlbedo;
+                assembly->GrayRoughness = data.m_CommonLight.Def.GrayMaterialRoughness;
+            }
             if (CollectTerrainTiles(*assetSystem, data.m_pHeightField->GetGridLayout(), *assembly))
             {
                 assembly->Material.DebugName = "WastelandTerrain";
