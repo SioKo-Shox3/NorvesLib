@@ -5114,3 +5114,13 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - Debug の rendering3dtest の撮影は、2 つ目の視点（near）の途中で反復が切れたので default の視点だけの記録
   - 1 つずつ外す指定ごとの撮影はしていない（verify は all の 1 本。個々の指定はコードの分岐で効く）
 - Next: TASKS.md の次の未完の項目。
+
+### SCN-WLR-BARE-AOV 差し戻しの修正（2026-10-18、run 20261018-172748 の反復 5）
+- Done: `ReferenceCheck.py --aov` の地形だけの検査が Game のログを `<視点>.Game.log` に固定していたのを、`metrics.json` の視点の `game_log` から引くよう直した（複数視点・視点省略の撮影は `views.Game.log` を全視点で共有する）
+  - 保存済みの撮影を複数視点の配置（ログ名を `views.Game.log`・`game_log` を書き換え）に写した検査: 旧版は「ref_cliff_01.Game.log が無い」で fail、新版は pass
+  - `verify-SCN-WLR-BARE-AOV-8.txt`: Debug の Game のビルド exit=0
+  - `verify-SCN-WLR-BARE-AOV-9.txt`: ref_cliff_01 を `-Hdr -Aov`・`wasteland-common-light,wasteland-hide=all` で撮影 result=pass
+  - `verify-SCN-WLR-BARE-AOV-10.txt`: `--aov --verify` result=pass（法線の長さ 1 ± 0.01 が 100 %、深度 190〜77670 m、空の一致 100 %、inputs_current=1）。プレビューを開き、地形と一様な空だけが写ることを確かめた
+- Notes:
+  - 既定の画と基準の PSNR 44.2 dB（下限 45）は前の反復の Notes のまま。このタスクの経路では見た目が変わらないので追っていない
+- Next: TASKS.md の次の未完の項目。

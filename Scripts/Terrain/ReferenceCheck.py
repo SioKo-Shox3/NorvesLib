@@ -960,6 +960,22 @@ def read_pfm_any(path):
     return pixels.reshape(height, width, channels)[::-1].astype(np.float32)
 
 
+def view_game_log(capture_dir, view):
+    """metrics.json の視点の game_log（Game のログのファイル名。複数視点の撮影は全視点で 1 つを共有する。無ければ None）"""
+    path = os.path.join(capture_dir, "metrics.json")
+    if not os.path.isfile(path):
+        return None
+    with open(path, encoding="utf-8-sig") as f:
+        metrics = json.load(f)
+    views = metrics.get("views") or []
+    if isinstance(views, dict):
+        views = [views]
+    for entry in views:
+        if isinstance(entry, dict) and entry.get("view") == view:
+            return entry.get("game_log")
+    return None
+
+
 def aov_capture_args(capture_dir):
     """metrics.json の Game の起動引数（無ければ None）"""
     return plate_capture_args(capture_dir)
@@ -1169,9 +1185,12 @@ def check_aov_view(capture_dir, view, game_args, light):
         if floating_ratio > AOV_BARE_MAX_SURFACE_ABOVE_SKY:
             fails.append(f"地形だけの撮影で、空より上にある表面の画素 {floating_ratio:.2e} が "
                          f"{AOV_BARE_MAX_SURFACE_ABOVE_SKY:.0e} を超える（宙に浮く物が残る）")
-        log_path = os.path.join(capture_dir, f"{view}.Game.log")
-        if not os.path.isfile(log_path):
-            fails.append(f"{os.path.basename(log_path)} が無い（外したものを確かめられない）")
+        log_name = view_game_log(capture_dir, view)
+        log_path = os.path.join(capture_dir, log_name) if log_name else None
+        if log_path is None:
+            fails.append("metrics.json の視点に game_log が無い（外したものを確かめられない）")
+        elif not os.path.isfile(log_path):
+            fails.append(f"{log_name} が無い（外したものを確かめられない）")
         else:
             with open(log_path, encoding="utf-8", errors="replace") as f:
                 log_text = f.read()
