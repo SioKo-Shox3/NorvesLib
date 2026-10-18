@@ -1434,13 +1434,75 @@ namespace NorvesLib::Core::Rendering
                     *m_Impl->SparsePool, *m_Impl->VtGpu, &m_Impl->RetireQueue);
             }
         }
+#if NORVES_BUILD_DEVELOPMENT
+        // 比較の撮影（Game の --wasteland-finest-lod）は見える地形を全部最も細かい段で描き、1 つのメッシュのページだけで
+        // 1 GB の塊を超える。ページはメッシュと同じ塊にしか置けないので、環境変数 NORVES_GEOMETRY_POOL_BLOCK_MB（64〜4095）で
+        // 塊を大きくし、全部のメッシュのページが 1 つの塊の置き場を分け合えるようにする（開発ビルドだけ。
+        // storage buffer の 1 つの束縛の上限 maxStorageBufferRange を超えない大きさに抑える）
+        {
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4996)
+#endif
+            const char *blockText = std::getenv("NORVES_GEOMETRY_POOL_BLOCK_MB");
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
+            if (blockText != nullptr && blockText[0] != '\0')
+            {
+                char *end = nullptr;
+                const unsigned long blockMb = std::strtoul(blockText, &end, 10);
+                if (end != blockText && *end == '\0' && blockMb >= 64ul && blockMb <= 4095ul)
+                {
+                    constexpr uint64_t BytesPerMb = 1024ull * 1024ull;
+                    uint64_t blockBytes = static_cast<uint64_t>(blockMb) * BytesPerMb;
+                    const uint64_t maxRange = m_Impl->Device ? m_Impl->Device->GetCapabilities().MaxStorageBufferRange : 0;
+                    if (maxRange != 0 && blockBytes > maxRange)
+                    {
+                        blockBytes = maxRange / BytesPerMb * BytesPerMb;
+                    }
+                    m_Impl->GeometryPoolBlockBytes = blockBytes;
+                    LOG_INFO_F("GEOMETRY_POOL_BLOCK block_mb=%llu requested_mb=%lu max_storage_buffer_range=%llu source=env",
+                               static_cast<unsigned long long>(blockBytes / BytesPerMb), blockMb,
+                               static_cast<unsigned long long>(maxRange));
+                }
+            }
+        }
+#endif
         m_Impl->GeometryBuffers = Container::MakeUnique<GeometryPool>(m_Impl->Device, m_Impl->GeometryPoolBlockBytes);
         m_Impl->SkinnedMeshes = Container::MakeUnique<SkinnedMeshGpuStore>(m_Impl->Device);
         m_Impl->MegaGeometryResources = Container::MakeUnique<MegaGeometryResourceStore>(
             m_Impl->Device, m_Impl->NextHandleId, m_Impl->GeometryBuffers.get(), m_Impl->TileUpload.get(),
             &m_Impl->RetireQueue);
         // ページの要求のバッファ。バッファは、ページを2つ以上持つメッシュを作るまで確保しない（CreateMegaMesh が有効にする）
-        m_Impl->GeometryPageFeedback = Container::MakeUnique<GeometryPageRequestRing>(m_Impl->Device);
+        GeometryPageRequestRing::Config pageRequestConfig;
+#if NORVES_BUILD_DEVELOPMENT
+        // 比較の撮影（Game の --wasteland-finest-lod）は見える地形を全部最も細かい段で描き、1 フレームに使うページが
+        // 既定の容量を超える。溢れた使用の印は LRU に届かず、描いているページが古く見えて追い出されるので、
+        // 環境変数 NORVES_GEOMETRY_PAGE_REQUEST_CAPACITY（既定の容量〜1048576）で 1 枚の要求の件数を広げる（開発ビルドだけ）
+        {
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4996)
+#endif
+            const char *capacityText = std::getenv("NORVES_GEOMETRY_PAGE_REQUEST_CAPACITY");
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
+            if (capacityText != nullptr && capacityText[0] != '\0')
+            {
+                char *end = nullptr;
+                const unsigned long capacity = std::strtoul(capacityText, &end, 10);
+                if (end != capacityText && *end == '\0' &&
+                    capacity >= MegaGeometry::GeometryPageRequestBuffer::DefaultCapacity && capacity <= 1048576ul)
+                {
+                    pageRequestConfig.Capacity = static_cast<uint32_t>(capacity);
+                    LOG_INFO_F("GEOMETRY_PAGE_REQUEST_CAPACITY capacity=%lu source=env", capacity);
+                }
+            }
+        }
+#endif
+        m_Impl->GeometryPageFeedback = Container::MakeUnique<GeometryPageRequestRing>(m_Impl->Device, pageRequestConfig);
         // ページを持つメッシュの、読み込み・書き込み・追い出し。窓口はストア（ストアより先に手放す）
         m_Impl->GeometryPageStreaming = Container::MakeUnique<GeometryPageStreamer>(*m_Impl->MegaGeometryResources);
         // 予算の取り分: ジオメトリは VT に比べて小さい（根のページと、要求されたページだけ）ので、VT : ジオメトリ = 3 : 1 にする。
@@ -1711,17 +1773,22 @@ namespace NorvesLib::Core::Rendering
                 stats.EvictedPages != logged.EvictedPages)
             {
                 constexpr double BytesPerMb = 1024.0 * 1024.0;
+                // 要求の列の溢れ（容量を超えて捨てた要求と使用の印の延べ件数）。溢れた使用の印は LRU に届かない
+                const GeometryPageRequestRing::Stats requestStats = impl.GeometryPageFeedback->GetStats();
                 LOG_INFO("GEOMETRY_PAGES resident=%u uploading=%u ready=%u "
                          "reading=%u wanted=%u failed=%u "
                          "resident_mb=%.2f evicted=%llu budget_blocked=%llu "
-                         "parent_wait=%llu",
+                         "parent_wait=%llu upload_blocked=%llu request_overflow=%llu request_capacity=%u",
                          static_cast<unsigned>(stats.ResidentPages), static_cast<unsigned>(stats.UploadingPages),
                          static_cast<unsigned>(stats.ReadyPages), static_cast<unsigned>(stats.ReadingPages),
                          static_cast<unsigned>(stats.WantedPages), static_cast<unsigned>(stats.FailedPages),
                          static_cast<double>(stats.ResidentBytes) / BytesPerMb,
                          static_cast<unsigned long long>(stats.EvictedPages),
                          static_cast<unsigned long long>(stats.BudgetBlockedFrames),
-                         static_cast<unsigned long long>(stats.ParentWaitSkips));
+                         static_cast<unsigned long long>(stats.ParentWaitSkips),
+                         static_cast<unsigned long long>(stats.UploadBlockedFrames),
+                         static_cast<unsigned long long>(requestStats.OverflowTotal),
+                         static_cast<unsigned>(requestStats.Capacity));
                 impl.GeometryPageLoggedStats = stats;
                 impl.bGeometryPageLogged = true;
             }

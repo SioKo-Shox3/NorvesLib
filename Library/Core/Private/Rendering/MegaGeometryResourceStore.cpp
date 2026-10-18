@@ -41,9 +41,9 @@ namespace NorvesLib::Core::Rendering
         // 1 つの視点で常駐するのは、各メッシュのページのうち見えている所の要る段だけなので、全部は見込まない
         constexpr uint64_t PageRoomDivisor = 4;
 
-        // 置き場の見込みの分母。比較の撮影（Game の --wasteland-finest-lod）は見える地形を全部最も細かい段で描き、
-        // 段 0 のページとその親を全部常駐させるので、環境変数 NORVES_GEOMETRY_PAGE_ROOM_DIVISOR（1〜64）で見込みを広げる
-        // （開発ビルドだけ。最初に呼ばれたときに 1 回だけ読む）
+        // 置き場の見込みの分母。撮り比べのため、環境変数 NORVES_GEOMETRY_PAGE_ROOM_DIVISOR（1〜64）で替えられる
+        // （開発ビルドだけ。最初に呼ばれたときに 1 回だけ読む）。見込みの合計がジオメトリの目標を超えると、
+        // 収まらないメッシュは見込みを諦めて詰め込まれる（Game の --wasteland-finest-lod は分母を替えず、塊を大きくして分け置く）
         uint64_t ResolvePageRoomDivisor()
         {
 #if NORVES_BUILD_DEVELOPMENT
@@ -71,6 +71,40 @@ namespace NorvesLib::Core::Rendering
             return divisor;
 #else
             return PageRoomDivisor;
+#endif
+        }
+
+        // ページを流すメッシュを分け置く塊の数。既定の 1 は、見込みの収まる最初の塊へ置く。2 以上（環境変数
+        // NORVES_GEOMETRY_POOL_SPREAD、2〜8。開発ビルドだけ。最初に呼ばれたときに 1 回だけ読む）は、塊がその数に満たない間は
+        // 塊を足し、そろったら見込みの合計が最も少ない塊へ置く。読み込みの順に隣り合う区画が別々の塊に入り、1 つの視点の
+        // ページの需要が塊どうしで分かれる（比較の撮影 Game の --wasteland-finest-lod が、見える地形を全部最も細かい段で描くため）
+        uint32_t ResolvePoolSpread()
+        {
+#if NORVES_BUILD_DEVELOPMENT
+            static const uint32_t spread = []()
+            {
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4996)
+#endif
+                const char *text = std::getenv("NORVES_GEOMETRY_POOL_SPREAD");
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
+                if (text != nullptr && text[0] != '\0')
+                {
+                    char *end = nullptr;
+                    const unsigned long value = std::strtoul(text, &end, 10);
+                    if (end != text && *end == '\0' && value >= 2ul && value <= 8ul)
+                    {
+                        return static_cast<uint32_t>(value);
+                    }
+                }
+                return 1u;
+            }();
+            return spread;
+#else
+            return 1u;
 #endif
         }
 
@@ -1166,6 +1200,40 @@ namespace NorvesLib::Core::Rendering
         }
         const uint64_t needBytes = regionBytes + reservedPageBytes;
         const uint32_t blockCount = m_Pool->GetBlockCount();
+        // 分け置き（ResolvePoolSpread）: 塊が分け置く数に満たなければ塊を足し、そろったら見込みの最も少ない塊へ置く。
+        // 置けなければ既定の選び方へ戻る
+        const uint32_t spread = ResolvePoolSpread();
+        if (spread > 1 && reservedPageBytes > 0)
+        {
+            if (blockCount < spread)
+            {
+                GeometryPool::RegionLease lease = m_Pool->AllocateInNewBlock(regionBytes, RegionAlignmentBytes);
+                if (lease.IsValid())
+                {
+                    return lease;
+                }
+            }
+            uint32_t leastBlock = blockCount;
+            uint64_t leastCommitted = 0;
+            for (uint32_t block = 0; block < blockCount; ++block)
+            {
+                const uint64_t blockCommitted = block < committed.size() ? committed[block] : 0;
+                if (blockCommitted + needBytes <= m_Pool->GetBlockSizeBytes(block) &&
+                    (leastBlock == blockCount || blockCommitted < leastCommitted))
+                {
+                    leastBlock = block;
+                    leastCommitted = blockCommitted;
+                }
+            }
+            if (leastBlock < blockCount)
+            {
+                GeometryPool::RegionLease lease = m_Pool->AllocateInBlock(leastBlock, regionBytes, RegionAlignmentBytes);
+                if (lease.IsValid())
+                {
+                    return lease;
+                }
+            }
+        }
         for (uint32_t block = 0; block < blockCount; ++block)
         {
             const uint64_t blockCommitted = block < committed.size() ? committed[block] : 0;

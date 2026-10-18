@@ -377,20 +377,23 @@ BLUR_CASES = (
     {"name": "aniso-1", "factor": "地形の異方性フィルタを切る（等方）", "args": ("--terrain-anisotropy=1", BLUR_SHARE_ARG),
      "logs": ("TERRAIN_SAMPLER pass=MegaGeometry mip_bias=0.000 max_anisotropy=1",
               "TERRAIN_SAMPLER pass=VisibilityResolve mip_bias=0.000 max_anisotropy=1", BLUR_SHARE_LOG), "resident": True},
+    # 地形の LOD を最細に固定する。起動引数がジオメトリの取り分を 255 に、要求の列の容量を 131072 に上げる（描くものは段のほかは変えない）
+    {"name": "finest-lod", "factor": "地形の LOD を最も細かい段に固定", "args": ("--wasteland-finest-lod",),
+     "logs": ("WASTELAND_FINEST_LOD lod=0", "VRAM_POOL_SHARE geometry=255 ",
+              "GEOMETRY_PAGE_REQUEST_CAPACITY capacity=131072 "), "resident": True},
 )
 # 撮った時点の常駐の確かめ: GEOMETRY_PAGES は常駐・進行中の各段・追い出しのどれかが変わると、落ち着き待ちの間は毎フレーム出る。
 # 保存の前の最後の行の進行中（wanted・reading・ready・uploading）がすべて 0 で、最後の落ち着きの基準から保存までの行の
 # 追い出しの数が変わっていないこと
 BLUR_PAGES_RE = re.compile(r"GEOMETRY_PAGES resident=(\d+) uploading=(\d+) ready=(\d+) reading=(\d+) wanted=(\d+) "
                            r"failed=\d+ resident_mb=\S+ evicted=(\d+)")
-# 地形の LOD を最細に固定する組（--wasteland-finest-lod）は 2 視点の読み込みが 10 分で落ち着かず、SCN-WLR-FAR-BLUR-LOD で撮る
 # 条件を替える起動引数の頭（組の約束にないものが混ざっていないかを見る）
 BLUR_CONTROLLED_PREFIXES = ("--wasteland-aa=", "--wasteland-hide=", "--wasteland-render-scale=", "--wasteland-finest-lod",
                             "--terrain-mip-bias=", "--terrain-anisotropy=", "--mega-lod-error-px=",
                             "--vram-geometry-share=")
 # 既定の組（base）に出てはいけないログの行（差し替えが効いていない）
 BLUR_BASE_FORBIDDEN_LOGS = ("WASTELAND_BLUR_CASE ", "WASTELAND_AA_PASS ", "TERRAIN_SAMPLER ", "WASTELAND_FINEST_LOD ",
-                            "WASTELAND_HIDE ", "VRAM_POOL_SHARE ")
+                            "WASTELAND_HIDE ", "VRAM_POOL_SHARE ", "GEOMETRY_PAGE_REQUEST_CAPACITY ")
 # 範囲: 正解の深度が BLUR_FAR_MIN_M より奥の地表（2×2 のすべてが奥）。崖はそのうち法線の |y| が BLUR_CLIFF_NORMAL_Y 未満
 BLUR_FAR_MIN_M = 1000.0
 BLUR_CLIFF_NORMAL_Y = 0.8
@@ -2964,7 +2967,8 @@ def run_blur_static(capture_dir, verify):
                 for k in range(len(BLUR_SIGMAS) - 1)]
         cy, cx = np.argwhere(cliff_masks[0] if region["cliff_px_per_band"][0] > 0 else far_masks[0]).mean(axis=0)
         crops_path = os.path.join(capture_dir, f"blur_{view}.png")
-        order = ["ref2x", "base", BLUR_BASELINE, "aa-none", "aa-taa", "mip-bias-m1", "aniso-1", "scale-075", "haze-off"]
+        order = ["ref2x", "base", BLUR_BASELINE, "finest-lod", "aa-none", "aa-taa", "mip-bias-m1", "aniso-1", "scale-075",
+                 "haze-off"]
         entry["crops"] = blur_write_crops(crops_path, [(n, displays[n]) for n in order if n in displays], (cy, cx))
         entry["crops_png"] = crops_path
         missing_cases = [case["name"] for case in BLUR_CASES if case["name"] not in cases]

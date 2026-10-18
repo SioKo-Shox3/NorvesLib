@@ -239,12 +239,20 @@ namespace Game
         // --wasteland-finest-lod: 正解の絵との比較のため、仮想化ジオメトリの LOD を最も細かい段に固定する（開発ビルドだけ）。
         // LOD を選ぶ誤差の閾値を受け付ける最小（kFinestLodErrorPx 画素）にし、誤差 0 の段 0 以外を描かせない。
         // 見える範囲の段 0 のページが常駐しきるよう、VRAM の予算のジオメトリの取り分を kFinestLodGeometryShare（VT は 3）に上げ、
-        // ジオメトリの塊に各メッシュの全部のページの置き場を見込む（NORVES_GEOMETRY_PAGE_ROOM_DIVISOR=1）。
+        // ページはメッシュと同じ塊にしか置けず、最も細かい段では 1 つのメッシュのページが 1 GB の塊を超えるので、塊を
+        // kFinestLodGeometryBlockMb にし、メッシュを kFinestLodGeometryPoolSpread 個の塊へ見込みの少ない順に分け置いて、
+        // 塊ごとのページの置き場を分け合わせる（塊ごとの置き場の見込みは既定のまま）。
         // 環境変数 NORVES_MEGA_LOD_ERROR_PX で描画側へ渡すので、--mega-lod-error-px と一緒に使わない（後に書いた方が効く）。
         // --wasteland-export-terrain=<フォルダ>: 地形の区画の LOD 0 を PLY で書き出す（開発ビルドだけ。WastelandTerrainExport.h）
         constexpr const TCHAR *kWastelandFinestLodOption = TEXT("--wasteland-finest-lod");
         constexpr const char *kFinestLodErrorPx = "1e-06";
         constexpr const char *kFinestLodGeometryShare = "255";
+        // 最も細かい段の地形は 1 視点で 3 万ページ近くを使うので、要求の列の容量（NORVES_GEOMETRY_PAGE_REQUEST_CAPACITY）を広げる
+        constexpr const char *kFinestLodPageRequestCapacity = "131072";
+        // ジオメトリのプールの塊の大きさ（MB。NORVES_GEOMETRY_POOL_BLOCK_MB。描画側が maxStorageBufferRange に抑える）
+        constexpr const char *kFinestLodGeometryBlockMb = "4095";
+        // 区画を分け置く塊の数（NORVES_GEOMETRY_POOL_SPREAD）。1 つの塊の置き場（約 3.5 GB）に収まらない視点の需要を 2 つの塊へ分ける
+        constexpr const char *kFinestLodGeometryPoolSpread = "2";
         constexpr const TCHAR *kWastelandExportTerrainOption = TEXT("--wasteland-export-terrain=");
         bool s_bWastelandFinestLod = false;
         String s_WastelandExportTerrainDir;
@@ -1401,8 +1409,11 @@ namespace Game
                 _putenv_s("NORVES_MEGA_LOD_ERROR_PX", kFinestLodErrorPx);
                 // 見える地形を全部最も細かい段で持てるよう、VRAM の予算のジオメトリの取り分を大きくする（荒野は VT を使わない）
                 _putenv_s("NORVES_VRAM_GEOMETRY_SHARE", kFinestLodGeometryShare);
-                // ページはメッシュと同じ塊にしか置けないので、塊に各メッシュの全部のページの置き場を見込む
-                _putenv_s("NORVES_GEOMETRY_PAGE_ROOM_DIVISOR", "1");
+                // ページはメッシュと同じ塊にしか置けないので、塊を大きくして全部のメッシュのページに置き場を分け合わせる
+                _putenv_s("NORVES_GEOMETRY_POOL_BLOCK_MB", kFinestLodGeometryBlockMb);
+                _putenv_s("NORVES_GEOMETRY_POOL_SPREAD", kFinestLodGeometryPoolSpread);
+                // 1 フレームに使うページが要求の列の既定の容量を超えても、使用の印が LRU に届くよう容量を広げる
+                _putenv_s("NORVES_GEOMETRY_PAGE_REQUEST_CAPACITY", kFinestLodPageRequestCapacity);
 #else
                 LOG_WARNING("--wasteland-finest-lod は開発ビルドだけで使えます。無視します");
 #endif
