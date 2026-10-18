@@ -369,6 +369,28 @@ ALBEDO_SSIM_RANGE = 0.3
 ALBEDO_SSIM_MIN = 0.7
 ALBEDO_CONTROL_MARGIN = 0.1
 ALBEDO_MIN_WINDOWS = 20
+# --normal（地表の材質の照明の無い法線と粗さの再現）。撮影・領域・輪郭の除き方は --albedo と同じ
+NORMAL_RESULT_DIR = "normal"
+# 法線: 画素ごとのエンジンの GBuffer の法線と Blender の再現の法線のなす角（度）の、領域ごとの中央値と 95 百分位の上限。
+# 差の元は GPU の異方性の標本の実装（アルベドの照合で近景の細部の比 0.98〜1.03 に合わせた段の偏りの残り）と BC5 の圧縮で、
+# 画素ごとの傾きの差の標準偏差を 1〜3° と見積もり（2 次元の大きさの中央値は約 1.2 倍、95 百分位は約 2.4 倍）、上限を決めた
+NORMAL_MEDIAN_MAX_DEG = 2.0
+NORMAL_P95_MAX_DEG = 8.0
+# 粗さ: 領域の平均の差（Blender − エンジン）の絶対値の上限。エンジンは 8 bit（1/255）で書き、ORM は BC7 で張る
+ROUGHNESS_MEAN_TOLERANCE = 0.02
+# 対照: 法線は傾きを足す前の法線（Blender の BaseNormal）、粗さは遠くで落とした傾きの分を足す前の粗さで同じ値を測り、
+# 法線の 95 百分位が NORMAL_P95_MAX_DEG を超える領域・粗さの平均の差が ROUGHNESS_MEAN_TOLERANCE を超える領域を
+# 「比べ方が見分けられる領域」とする。視点ごとに、法線と粗さのそれぞれで 1 つ以上要る
+# 法線の角度はカメラから NORMAL_MAX_DEPTH_M 未満の画素で判定する（それより先は記録だけ）。3 km より先はエンジンの描く地形の形が
+# 書き出しの LOD 0 と食い違い（ref_ground_01 の Blender の深度との相対差の 95 百分位が 1〜3 km の 2.3e-4 から 3〜8 km で
+# 1.6e-3 へ増える）、幾何の法線の差（対照と同じ大きさ）が材質の差を覆う。粗さは幾何に依らないので全画素で判定する
+NORMAL_MAX_DEPTH_M = 3000.0
+# 法線の角度は、幾何が画素で分解できている画素（Blender の頂点の法線と上下左右の隣の画素の頂点の法線のなす角の最大が
+# NORMAL_GEOMETRY_RESOLVED_DEG 未満）で判定する（外した画素は記録だけ）。崖の細部の三角形が画素より小さい所では頂点の法線が
+# 隣の画素で十数度変わり、画素の中のどの三角形を拾うかで幾何の法線が変わる（ref_cliff_01 の崖で外れた画素の頂点の法線の
+# 隣との差の中央値 17°、エンジンと頂点の法線の差 14°、Blender の材質の傾き 1.3°）。4° なら半画素のずれで変わる幾何の法線は
+# 約 2°（中央値の上限）以下。どちらの除き方も、比べる値は使わず深度と Blender の幾何だけで決める
+NORMAL_GEOMETRY_RESOLVED_DEG = 4.0
 # --atmos-dump: 空と霞の値の書き出し（SCN-WLR-ATMOS-DUMP）
 ATMOS_GAME_ARG = "--atmosphere-dump"
 ATMOS_LOG_LINES = ("ATMOSPHERE_DUMP ",)
@@ -4026,14 +4048,14 @@ def albedo_engine_capture(capture_dir, views, verify):
     return entry, failures
 
 
-def check_albedo_inputs(capture_dir, blender_dir, views, engine_files_sha256):
-    """Blender の結果の入力の記録を今のファイルと撮影のログに照らす。(合格か, 理由の一覧, 記録)"""
+def check_albedo_inputs(capture_dir, blender_dir, views, engine_files_sha256, mode="albedo"):
+    """Blender の結果（--albedo・--normal）の入力の記録を今のファイルと撮影のログに照らす。(合格か, 理由の一覧, 記録)"""
     import TerrainMaterialReference as TM
     ok, reasons, record = check_blender_inputs(blender_dir)
     if record is None:
-        return False, [f"{ALBEDO_RESULT_DIR}/inputs.json が無い（BlenderReference.py --albedo を回していない）"], None
-    if record.get("kind") != "blender_albedo":
-        reasons.append(f"記録の種類が blender_albedo でない（{record.get('kind')}）")
+        return False, [f"{os.path.basename(blender_dir)}/inputs.json が無い（BlenderReference.py --{mode} を回していない）"], None
+    if record.get("kind") != f"blender_{mode}":
+        reasons.append(f"記録の種類が blender_{mode} でない（{record.get('kind')}）")
     if sha256_file(os.path.join(REPO_ROOT, TM_SCRIPT)) != record.get("material_script_sha256"):
         reasons.append(f"{TM_SCRIPT} が描いた後に変わった（古い結果）")
     if record.get("engine_capture_files_sha256") != engine_files_sha256:
@@ -4291,6 +4313,237 @@ def run_albedo(capture_dir, views, verify):
     return 0 if not failures else 1
 
 
+# ---- --normal（地表の材質の照明の無い法線と粗さ）----
+
+def normal_angle_deg(a, b):
+    """2 つの法線の画のなす角（度）。どちらも正規化して測る"""
+    a = a / np.maximum(np.linalg.norm(a, axis=-1, keepdims=True), 1e-12)
+    b = b / np.maximum(np.linalg.norm(b, axis=-1, keepdims=True), 1e-12)
+    return np.degrees(np.arccos(np.clip(np.sum(a * b, axis=-1), -1.0, 1.0)))
+
+
+def write_normal_preview(path, engine_normal, blender_normal, angle, roughness_diff, valid):
+    """左上: エンジンの法線、右上: Blender の法線（どちらも 0.5 + 0.5 n）、左下: なす角（0〜NORMAL_P95_MAX_DEG 度を黒〜白、
+    超えた所は赤）、右下: 粗さの差 Blender − エンジン（±0.05 で飽和。赤が Blender の方が粗い）"""
+    def half(image):
+        return np.asarray(Image.fromarray(image).resize((image.shape[1] // 2, image.shape[0] // 2), Image.BOX))
+
+    def encode(normal):
+        return (np.clip(np.where(valid[..., None], normal * 0.5 + 0.5, 0.15), 0.0, 1.0) * 255.0).astype(np.uint8)
+
+    t = np.clip(angle / NORMAL_P95_MAX_DEG, 0.0, 1.0)
+    heat = np.stack([t, t, t], axis=-1)
+    heat[angle > NORMAL_P95_MAX_DEG] = (1.0, 0.1, 0.1)
+    heat = np.where(valid[..., None], heat, 0.15)
+    d = np.clip(roughness_diff / 0.05, -1.0, 1.0)
+    rough = np.zeros(heat.shape, dtype=np.float64)
+    rough[..., 0] = np.where(d > 0, 1.0, 1.0 + d)
+    rough[..., 1] = 1.0 - np.abs(d)
+    rough[..., 2] = np.where(d < 0, 1.0, 1.0 - d)
+    rough = np.where(valid[..., None], rough, 0.15)
+    top = np.concatenate([half(encode(engine_normal)), half(encode(blender_normal))], axis=1)
+    bottom = np.concatenate([half((heat * 255.0).astype(np.uint8)), half((rough * 255.0).astype(np.uint8))], axis=1)
+    Image.fromarray(np.concatenate([top, bottom], axis=0)).save(path)
+
+
+def check_normal_view(capture_dir, blender_dir, view):
+    failures = []
+    result = {"view": view, "failures": failures}
+    with open(os.path.join(capture_dir, f"{view}.aov.json"), encoding="utf-8") as f:
+        aov_meta = json.load(f)
+    meta_path = os.path.join(blender_dir, f"{view}.normal.json")
+    if not os.path.isfile(meta_path):
+        failures.append("Blender の法線と粗さが無い")
+        result["pass"] = False
+        return result
+    with open(meta_path, encoding="utf-8") as f:
+        blender_meta = json.load(f)
+    camera_failures = gray_camera_match(aov_meta["camera"], blender_meta["camera_engine"])
+    if int(blender_meta["width"]) != int(aov_meta["width"]) or int(blender_meta["height"]) != int(aov_meta["height"]):
+        camera_failures.append("画素数が違う")
+    failures.extend(camera_failures)
+    for key, meaning in (("normal", "world_normal_y_up"), ("roughness", "perceptual_roughness")):
+        if aov_meta.get(key, {}).get("meaning") != meaning:
+            failures.append(f"エンジンの AOV の {key} の意味が {meaning} でない（{aov_meta.get(key, {}).get('meaning')}）")
+    engine_normal = read_pfm_any(os.path.join(capture_dir, aov_meta["normal"]["file"])).astype(np.float64)
+    engine_rough = read_pfm_any(os.path.join(capture_dir, aov_meta["roughness"]["file"]))[..., 0].astype(np.float64)
+    depth = read_pfm_any(os.path.join(capture_dir, aov_meta["depth"]["file"]))[..., 0].astype(np.float64)
+    shaded = read_pfm_any(os.path.join(blender_dir, blender_meta["shaded_normal"]["file"])).astype(np.float64)
+    base = read_pfm_any(os.path.join(blender_dir, blender_meta["base_normal"]["file"])).astype(np.float64)
+    rough = read_pfm_any(os.path.join(blender_dir, blender_meta["roughness"]["file"])).astype(np.float64)
+    vertex_normal = read_pfm_any(os.path.join(blender_dir, blender_meta["normal"]["file"])).astype(np.float64)
+    alpha = read_pfm_any(os.path.join(blender_dir, blender_meta["alpha"]["file"]))[..., 0]
+    engine_surface = np.isfinite(depth)
+    blender_surface = alpha > 0.5
+    result["sky_mismatch"] = float(np.mean(engine_surface != blender_surface))
+    if result["sky_mismatch"] > GRAY_SKY_MISMATCH:
+        failures.append(f"空と表面の分かれ方の食い違いが {result['sky_mismatch']:.4f}（{GRAY_SKY_MISMATCH} 超）")
+    edges = depth_edges(np.where(engine_surface, depth, np.inf), PROJECTION_JUMP_WEAK) | \
+        (engine_surface != blender_surface)
+    near_edge = edges.copy()
+    for _ in range(ALBEDO_EDGE_MARGIN_PX):
+        near_edge = dilate(near_edge)
+    valid = engine_surface & blender_surface & ~near_edge
+    masks = albedo_regions(depth, vertex_normal, valid)
+    neighbour_change = np.zeros(depth.shape)
+    horizontal = normal_angle_deg(vertex_normal[:, 1:], vertex_normal[:, :-1])
+    vertical = normal_angle_deg(vertex_normal[1:], vertex_normal[:-1])
+    neighbour_change[:, 1:] = np.maximum(neighbour_change[:, 1:], horizontal)
+    neighbour_change[:, :-1] = np.maximum(neighbour_change[:, :-1], horizontal)
+    neighbour_change[1:] = np.maximum(neighbour_change[1:], vertical)
+    neighbour_change[:-1] = np.maximum(neighbour_change[:-1], vertical)
+    resolved = neighbour_change < NORMAL_GEOMETRY_RESOLVED_DEG
+    angle = normal_angle_deg(engine_normal, shaded)
+    control_angle = normal_angle_deg(engine_normal, base)
+    rough_diff = rough[..., 0] - engine_rough
+    control_rough_diff = rough[..., 1] - engine_rough
+    regions = {}
+    normal_discriminating = 0
+    rough_discriminating = 0
+    for name in ALBEDO_REGIONS:
+        mask = masks[name]
+        entry = {"pixels": int(mask.sum())}
+        regions[name] = entry
+        if entry["pixels"] < ALBEDO_MIN_REGION_PX:
+            entry["status"] = "not_judged"
+            entry["reason"] = f"画素が {ALBEDO_MIN_REGION_PX} 未満"
+            continue
+        near = mask & (depth < NORMAL_MAX_DEPTH_M) & resolved
+        far = mask & (depth >= NORMAL_MAX_DEPTH_M)
+        unresolved = mask & (depth < NORMAL_MAX_DEPTH_M) & ~resolved
+        entry.update({
+            "status": "judged",
+            "median_depth_m": float(np.median(depth[mask])),
+            "normal_pixels": int(near.sum()),
+            "beyond_depth_pixels": int(far.sum()),
+            "unresolved_geometry_pixels": int(unresolved.sum()),
+            "engine_roughness_mean": float(engine_rough[mask].mean()),
+            "blender_roughness_mean": float(rough[..., 0][mask].mean()),
+            "roughness_mean_diff": float(rough_diff[mask].mean()),
+            "roughness_abs_diff_p95": float(np.percentile(np.abs(rough_diff[mask]), 95)),
+            "control_roughness_mean_diff": float(control_rough_diff[mask].mean()),
+            "lost_variance_mean": float(rough[..., 2][mask].mean()),
+        })
+        if far.any():
+            entry["beyond_depth_angle_median_deg"] = float(np.median(angle[far]))
+            entry["beyond_depth_angle_p95_deg"] = float(np.percentile(angle[far], 95))
+            entry["beyond_depth_control_angle_p95_deg"] = float(np.percentile(control_angle[far], 95))
+        if unresolved.any():
+            entry["unresolved_angle_median_deg"] = float(np.median(angle[unresolved]))
+            entry["unresolved_angle_p95_deg"] = float(np.percentile(angle[unresolved], 95))
+            entry["unresolved_control_angle_p95_deg"] = float(np.percentile(control_angle[unresolved], 95))
+        entry["roughness_pass"] = bool(abs(entry["roughness_mean_diff"]) <= ROUGHNESS_MEAN_TOLERANCE)
+        if not entry["roughness_pass"]:
+            failures.append(f"{name}: 粗さの平均の差 {entry['roughness_mean_diff']:+.4f} が ±{ROUGHNESS_MEAN_TOLERANCE} の外")
+        entry["roughness_discriminating"] = bool(abs(entry["control_roughness_mean_diff"]) > ROUGHNESS_MEAN_TOLERANCE)
+        rough_discriminating += int(entry["roughness_discriminating"])
+        if entry["normal_pixels"] < ALBEDO_MIN_REGION_PX:
+            entry["normal_status"] = "not_judged"
+            entry["normal_reason"] = (f"{NORMAL_MAX_DEPTH_M:.0f} m 未満で幾何が分解できている画素が "
+                                      f"{ALBEDO_MIN_REGION_PX} 未満")
+            continue
+        a = angle[near]
+        c = control_angle[near]
+        entry.update({
+            "normal_status": "judged",
+            "angle_median_deg": float(np.median(a)),
+            "angle_p95_deg": float(np.percentile(a, 95)),
+            "angle_mean_deg": float(a.mean()),
+            "control_angle_median_deg": float(np.median(c)),
+            "control_angle_p95_deg": float(np.percentile(c, 95)),
+        })
+        entry["normal_pass"] = bool(entry["angle_median_deg"] <= NORMAL_MEDIAN_MAX_DEG and
+                                    entry["angle_p95_deg"] <= NORMAL_P95_MAX_DEG)
+        if not entry["normal_pass"]:
+            failures.append(f"{name}: 法線のなす角の中央値 {entry['angle_median_deg']:.2f}°・95 百分位 "
+                            f"{entry['angle_p95_deg']:.2f}° が上限（{NORMAL_MEDIAN_MAX_DEG}°・{NORMAL_P95_MAX_DEG}°）を超える")
+        entry["normal_discriminating"] = bool(entry["control_angle_p95_deg"] > NORMAL_P95_MAX_DEG)
+        normal_discriminating += int(entry["normal_discriminating"])
+    if normal_discriminating == 0:
+        failures.append("法線の比べ方が見分けられる領域（傾きを足さない対照の 95 百分位が上限を超える領域）が無い")
+    if rough_discriminating == 0:
+        failures.append("粗さの比べ方が見分けられる領域（遠くの分を足さない対照の平均の差が許容を超える領域）が無い")
+    result["regions"] = regions
+    result["valid_pixels"] = int(valid.sum())
+    result["blender"] = {k: blender_meta.get(k) for k in ("renderer", "samples", "pixel_filter", "triangles",
+                                                         "render_seconds", "pass_render_seconds", "surface_pixels")}
+    preview = os.path.join(capture_dir, f"normal_{view}.png")
+    write_normal_preview(preview, engine_normal, shaded, angle, rough_diff, valid)
+    result["preview"] = os.path.relpath(preview, REPO_ROOT).replace("\\", "/")
+    result["pass"] = not failures
+    return result
+
+
+def run_normal(capture_dir, views, verify):
+    failures = []
+    views = views or list(ALBEDO_VIEWS)
+    report = {"mode": "normal", "verify": bool(verify), "views": views, "criteria": {
+        "regions": {"flat_normal_y": ALBEDO_FLAT_NORMAL_Y, "cliff_normal_y": ALBEDO_CLIFF_NORMAL_Y,
+                    "near_m": ALBEDO_NEAR_M, "far_m": ALBEDO_FAR_M, "edge_margin_px": ALBEDO_EDGE_MARGIN_PX,
+                    "min_pixels": ALBEDO_MIN_REGION_PX},
+        "normal_angle_median_max_deg": NORMAL_MEDIAN_MAX_DEG,
+        "normal_angle_p95_max_deg": NORMAL_P95_MAX_DEG,
+        "normal_max_depth_m": NORMAL_MAX_DEPTH_M,
+        "normal_geometry_resolved_deg": NORMAL_GEOMETRY_RESOLVED_DEG,
+        "roughness_mean_tolerance": ROUGHNESS_MEAN_TOLERANCE,
+        "controls": {"normal": "base_normal_without_perturbation", "roughness": "roughness_without_lost_variance"},
+    }}
+    engine_entry, engine_failures = albedo_engine_capture(capture_dir, views, verify)
+    failures.extend(engine_failures)
+    report["engine"] = engine_entry
+    blender_dir = os.path.join(capture_dir, NORMAL_RESULT_DIR)
+    inputs_ok, input_failures, record = check_albedo_inputs(capture_dir, blender_dir, views,
+                                                            engine_entry.get("files_sha256"), mode="normal")
+    report["blender_inputs_current"] = inputs_ok
+    if verify and not inputs_ok:
+        failures.extend(input_failures)
+    if record is None:
+        failures.extend(input_failures)
+    report["view_results"] = []
+    for view in views:
+        result = check_normal_view(capture_dir, blender_dir, view)
+        report["view_results"].append(result)
+        failures.extend(f"{view}: {f}" for f in result["failures"])
+        print(f"REFERENCE_CHECK normal view={view} pass={int(result['pass'])} sky_mismatch={result.get('sky_mismatch')} "
+              f"valid_pixels={result.get('valid_pixels')}")
+        for name, entry in (result.get("regions") or {}).items():
+            if entry.get("status") != "judged":
+                print(f"REFERENCE_CHECK normal view={view} region={name} status={entry.get('status')} "
+                      f"pixels={entry['pixels']}")
+                continue
+            if entry.get("normal_status") == "judged":
+                normal_text = (f"normal_pixels={entry['normal_pixels']} "
+                               f"angle_median={entry['angle_median_deg']:.2f} angle_p95={entry['angle_p95_deg']:.2f} "
+                               f"control_median={entry['control_angle_median_deg']:.2f} "
+                               f"control_p95={entry['control_angle_p95_deg']:.2f} "
+                               f"discriminating_normal={int(entry['normal_discriminating'])}")
+            else:
+                normal_text = f"normal_pixels={entry['normal_pixels']} normal_status=not_judged"
+            beyond = entry.get("beyond_depth_angle_p95_deg")
+            unresolved_p95 = entry.get("unresolved_angle_p95_deg")
+            print(f"REFERENCE_CHECK normal view={view} region={name} status=judged pixels={entry['pixels']} "
+                  f"depth_m={entry['median_depth_m']:.0f} {normal_text} "
+                  f"beyond_{NORMAL_MAX_DEPTH_M:.0f}m_pixels={entry['beyond_depth_pixels']} "
+                  f"beyond_angle_p95={beyond if beyond is None else round(beyond, 2)} "
+                  f"unresolved_pixels={entry['unresolved_geometry_pixels']} "
+                  f"unresolved_angle_p95={unresolved_p95 if unresolved_p95 is None else round(unresolved_p95, 2)} "
+                  f"rough_engine={entry['engine_roughness_mean']:.4f} rough_blender={entry['blender_roughness_mean']:.4f} "
+                  f"rough_diff={entry['roughness_mean_diff']:+.4f} control_rough_diff={entry['control_roughness_mean_diff']:+.4f} "
+                  f"lost_variance={entry['lost_variance_mean']:.3f} "
+                  f"discriminating_rough={int(entry['roughness_discriminating'])}")
+    report["failures"] = failures
+    report_path = os.path.join(capture_dir, "normal_check.json")
+    with open(report_path, "w", encoding="utf-8") as f:
+        json.dump(report, f, indent=2, ensure_ascii=False)
+    for failure in failures:
+        print(f"REFERENCE_CHECK failure: {failure}")
+    status = "pass" if not failures else "fail"
+    print(f"REFERENCE_CHECK result={status} mode=normal views={len(views)} "
+          f"inputs_current={int(bool(engine_entry.get('inputs_current')))} blender_inputs_current={int(inputs_ok)} "
+          f"report={report_path}")
+    return 0 if not failures else 1
+
+
 def main():
     # 結果の行を保存して読むので、端末の符号に関わらず UTF-8 で書く
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -4317,6 +4570,8 @@ def main():
                         help="灰色の地形のエンジンと Cycles の描画を、領域ごとの線形の平均の比で比べた表を作る")
     parser.add_argument("--albedo", action="store_true",
                         help="地表の材質の照明の無いアルベドを、エンジンの AOV と Blender の再現で照らす")
+    parser.add_argument("--normal", action="store_true",
+                        help="地表の材質の照明の無い法線と粗さを、エンジンの AOV と Blender の再現で照らす")
     parser.add_argument("--views", default="", help="検査する視点（カンマ区切り。省くと metrics.json の全視点）")
     parser.add_argument("--verify", action="store_true", help="入力のハッシュを今のファイルと照らし、古い結果を拒否する")
     args = parser.parse_args()
@@ -4359,8 +4614,11 @@ def main():
     if args.albedo:
         views = [v.strip() for v in args.views.split(",") if v.strip()]
         return run_albedo(capture_dir, views, args.verify)
+    if args.normal:
+        views = [v.strip() for v in args.views.split(",") if v.strip()]
+        return run_normal(capture_dir, views, args.verify)
     print("REFERENCE_CHECK result=fail reason=no_mode（--record-inputs か --hdr か --display か --plate か --aov か "
-          "--projection か --atmos-dump か --atmos-ref か --blur-static か --blur-motion か --gray を指定する）")
+          "--projection か --atmos-dump か --atmos-ref か --blur-static か --blur-motion か --gray か --albedo か --normal を指定する）")
     return 1
 
 

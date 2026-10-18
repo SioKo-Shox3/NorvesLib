@@ -8,12 +8,15 @@
 #   - packed: それをシェーダーの TerrainBlendParams（vec4 × 10）へ詰めた値（Library/Core/Private/Rendering/TerrainBlendShading.h の
 #     PackTerrainBlendParams と同じ式を float32 で）
 #   - shader_constants: Assets/Shaders/Common/TerrainLayerBlend.glsl・TerrainStrata.glsl の const（式のまま）
-#   - textures: 標本する画像（アルベド・AO・地表の分類の地図・遠景の地図）の元のファイル・大きさ・段の数・ミップの段の画像
+#   - textures: 標本する画像（アルベド・法線・AO・粗さ・地表の分類の地図・遠景の地図）の元のファイル・大きさ・段の数・ミップの段の画像
 # ミップの段: アセットのクック（Tools/AssetCook/TextureCooker.cpp の BuildMipChain）と同じ作り方で、元の画像から全段を作る
 #   （2 で割った大きさの各画素が覆う元の画素の箱の平均。アルベド（sRGB）は線形へ戻して平均し 8 bit の sRGB へ丸め、
-#   AO・地図は 8 bit の値の平均を四捨五入）。段 0 も PNG に書き直す（JPEG の復号の差を段ごとに持ち込まない）。
-#   ORM のうち使うのは AO（R）だけ。地表の分類の地図と遠景の地図の RGBA は、OIIO が透明度を掛けた値に変えないよう RGB と A の
-#   2 枚に分ける。エンジンはこれを BC7 で圧縮して張るが、圧縮は再現しない（ReferenceCheck.py --albedo の記録に書く）。
+#   AO・粗さ・地図は 8 bit の値の平均を四捨五入）。段 0 も PNG に書き直す（JPEG の復号の差を段ごとに持ち込まない）。
+#   法線は BuildNormalMips と同じく、8 bit を −1〜1 へ戻したベクトルを正規化せずに箱で足し、1 回だけ正規化して 8 bit へ丸める
+#   （段 0 は元の 8 bit のまま）。エンジンは BC5（R・G だけ）で張り、シェーダーが Z を単位長から戻す。
+#   ORM のうち使うのは AO（R）と粗さ（G）。元の 2 枚から別々に作る（ORM の 1 枚に詰めても、ミップは成分ごとの平均で同じ）。
+#   地表の分類の地図と遠景の地図の RGBA は、OIIO が透明度を掛けた値に変えないよう RGB と A の 2 枚に分ける。
+#   エンジンはこれを BC7・BC5 で圧縮して張るが、圧縮は再現しない（ReferenceCheck.py --albedo・--normal の記録に書く）。
 # OSL のシェーダー: Scripts/Terrain/TerrainAlbedo.osl の前に、値の表から生成した定数とテクスチャの段を引く関数を置いた
 #   1 つのファイル terrain_albedo.osl を書く。
 import hashlib
@@ -42,6 +45,9 @@ ANISO_LOD_OFFSET = 1.0
 # Game はクック済みの sRGB のアルベドを UNORM の形式で張り、シェーダーが標本の後に線形へ戻す（TerrainBlendShading.h の
 # IsTerrainAlbedoSrgbDecodeNeeded）。3 層とも戻す
 ALBEDO_SRGB_DECODE = {"sand": 1, "dirt": 1, "rock": 1}
+# クック済みの法線が BC5 なら、Game は 2 チャンネルの印を付ける（WastelandRoutine.cpp の LoadMaterialTexture。
+# TextureCooker.cpp は用途 normal を常に BC5 にする）。3 層とも用途 normal でクックしている
+NORMAL_TWO_CHANNEL = {"sand": 1, "dirt": 1, "rock": 1}
 MIP_FORMAT_VERSION = 1
 
 Image.MAX_IMAGE_PIXELS = None
@@ -234,10 +240,28 @@ def next_mip(image, srgb):
     return ((sums + counts[:, :, None] // 2) // counts[:, :, None]).astype(np.uint8)
 
 
+def normal_mip_chain(image):
+    """BuildNormalMips と同じ法線の全段（8 bit の (高さ, 幅, 3)）。段 0 は元の 8 bit のまま"""
+    levels = [image]
+    vectors = image.astype(np.float32) / np.float32(255.0) * np.float32(2.0) - np.float32(1.0)
+    while vectors.shape[0] > 1 or vectors.shape[1] > 1:
+        h, w = vectors.shape[:2]
+        sums, _ = box_sums(vectors.astype(np.float64), w // 2 if w > 1 else 1, h // 2 if h > 1 else 1)
+        sums = sums.astype(np.float32)
+        length_sq = np.sum(sums * sums, axis=-1, keepdims=True)
+        flat = length_sq < np.float32(1.0e-12)
+        vectors = np.where(flat, np.array([0.0, 0.0, 1.0], dtype=np.float32),
+                           sums / np.sqrt(np.maximum(length_sq, np.float32(1.0e-30))))
+        # SignedToByte（lround は 0 以上で floor(x + 0.5)）
+        scaled = np.clip(vectors * np.float32(0.5) + np.float32(0.5), 0.0, 1.0) * np.float32(255.0)
+        levels.append(np.floor(scaled.astype(np.float64) + 0.5).astype(np.uint8))
+    return levels
+
+
 def load_channels(path, mode):
-    """画像を 8 bit で読む。mode: rgb（3 成分）・r（1 成分。灰色の画像はその値）・rgba"""
+    """画像を 8 bit で読む。mode: rgb（3 成分）・normal（rgb と同じ）・r（1 成分。灰色の画像はその値）・rgba"""
     with Image.open(path) as im:
-        if mode == "rgb":
+        if mode in ("rgb", "normal"):
             return np.asarray(im.convert("RGB"), dtype=np.uint8)
         if mode == "r":
             # クックは 4 成分で読んで R を使う（灰色の画像は灰色の値）
@@ -253,15 +277,17 @@ def texture_sets(material):
     sets = {}
     for layer in ("sand", "dirt", "rock"):
         sets[f"{layer}_albedo"] = (textures[layer]["albedo"], "rgb", True, None)
-    # ORM の AO（R）は元の AO の画像（Assets/AssetSets/WastelandTerrain.json の orm_ao）
+        sets[f"{layer}_normal"] = (textures[layer]["normal"], "normal", False, None)
+    # ORM の AO（R）と粗さ（G）は元の画像（Assets/AssetSets/WastelandTerrain.json の orm_ao・orm_roughness）
     with open(repo_path("Assets/AssetSets/WastelandTerrain.json"), encoding="utf-8-sig") as f:
         asset_set = json.load(f)
-    orm_ao = {t["logical_path"]: t.get("orm_ao") for t in asset_set["textures"] if t.get("cook_usage") == "orm"}
+    orm = {t["logical_path"]: t for t in asset_set["textures"] if t.get("cook_usage") == "orm"}
     for layer in ("sand", "dirt", "rock"):
-        ao = orm_ao.get(textures[layer]["orm"])
-        if not ao:
-            raise RuntimeError(f"{textures[layer]['orm']} の AO の元の画像が資産の組に無い")
-        sets[f"{layer}_ao"] = (ao, "r", False, None)
+        entry = orm.get(textures[layer]["orm"]) or {}
+        for key, name in (("orm_ao", "ao"), ("orm_roughness", "rough")):
+            if not entry.get(key):
+                raise RuntimeError(f"{textures[layer]['orm']} の {key} の元の画像が資産の組に無い")
+            sets[f"{layer}_{name}"] = (entry[key], "r", False, None)
     sets["mask_rgb"] = (material["surface_mask"]["texture"], "rgba", False, (0, 3))
     sets["mask_a"] = (material["surface_mask"]["texture"], "rgba", False, (3, 4))
     sets["far_rgb"] = (material["far_map"]["texture"], "rgba", False, (0, 3))
@@ -293,17 +319,22 @@ def build_mips(material, mips_dir, log=print):
         image = decoded[key]
         if split is not None:
             image = np.ascontiguousarray(image[:, :, split[0]:split[1]])
+        chain = normal_mip_chain(image) if mode == "normal" else None
         levels = []
         level = 0
         while True:
+            if chain is not None:
+                image = chain[level]
             file_name = f"{name}_{level}.png"
             pixels = image[:, :, 0] if image.shape[2] == 1 else image
             Image.fromarray(pixels).save(os.path.join(mips_dir, file_name), compress_level=1)
             levels.append({"file": file_name, "width": int(image.shape[1]), "height": int(image.shape[0])})
             if image.shape[0] == 1 and image.shape[1] == 1:
                 break
-            image = next_mip(image, srgb)
+            if chain is None:
+                image = next_mip(image, srgb)
             level += 1
+        del chain
         manifest["textures"][name] = {"source": source, "source_sha256": source_sha, "mode": mode, "srgb": srgb,
                                       "channels": list(split) if split else None, "levels": levels}
         log(f"TERRAIN_MATERIAL mips name={name} levels={len(levels)} size={levels[0]['width']}x{levels[0]['height']}")
@@ -315,7 +346,7 @@ def build_mips(material, mips_dir, log=print):
 
 
 TEXTURE_IDS = ("sand_albedo", "sand_ao", "dirt_albedo", "dirt_ao", "rock_albedo", "rock_ao", "mask_rgb", "mask_a",
-               "far_rgb", "far_a")
+               "far_rgb", "far_a", "sand_normal", "sand_rough", "dirt_normal", "dirt_rough", "rock_normal", "rock_rough")
 
 
 def osl_texture_lines(manifest, mips_dir):
@@ -327,6 +358,8 @@ def osl_texture_lines(manifest, mips_dir):
         lines.append(f"#define TEX_{name.upper()}_HEIGHT {level0['height']}")
     for layer, decode in ALBEDO_SRGB_DECODE.items():
         lines.append(f"#define {layer.upper()}_ALBEDO_SRGB_DECODE {int(decode)}")
+    for layer, two_channel in NORMAL_TWO_CHANNEL.items():
+        lines.append(f"#define {layer.upper()}_NORMAL_TWO_CHANNEL {int(two_channel)}")
     for function, key in (("tex_levels", None), ("tex_width", "width"), ("tex_height", "height")):
         lines.append(f"int {function}(int id)")
         lines.append("{")
@@ -336,6 +369,8 @@ def osl_texture_lines(manifest, mips_dir):
             lines.append(f"    if (id == {index}) return {value};")
         lines.append("    return 1;")
         lines.append("}")
+    # 段ごとに texture() を分岐で並べる（Cycles の OSL は画像のパスがコンパイル時の定数でないと引けない）。呼び出し元の id は
+    # 定数で渡し、OSL の最適化で他の画像の分岐を畳ませる（畳めないと関数が大きくなりすぎ、LLVM の JIT が失敗する）
     lines.append("// 段 level の画像を (s, t) で引く（interp は linear か closest。s・t は 0〜1 の中で渡す）。")
     lines.append("// t は画像の上が 0（GPU と同じ）。Cycles の OSL の texture() は下が 0 なので裏返して渡す")
     lines.append("color tex_lookup(int id, int level, float s, float t, string interp)")
@@ -383,6 +418,7 @@ def write_material_table(out_dir, json_text, material, mips_dir, log=print):
         "material": material,
         "packed": packed,
         "albedo_srgb_decode": ALBEDO_SRGB_DECODE,
+        "normal_two_channel": NORMAL_TWO_CHANNEL,
         "max_anisotropy": MAX_ANISOTROPY,
         "aniso_lod_offset": ANISO_LOD_OFFSET,
         "shader_constants": constants,
