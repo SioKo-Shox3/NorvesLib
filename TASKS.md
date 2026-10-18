@@ -1689,13 +1689,13 @@
 - notes: 危険地帯（描画）。起動引数は比較のためのシーンの設定で、Release でも害が無い形にする。撮影の構成（Debug か RelWithDebInfo か）は SCN-WL-CAPTURE-SPEED の決定に揃えてよい（verify も同じ反復で直す）。
 
 ## SCN-WLR-BLENDER-TERRAIN: エンジンが描く地形のメッシュを Blender へ持ち込み、6 視点の投影を合わせる
-- status: blocked
+- status: todo
 - after: SCN-WLR-BARE-AOV
 - done-when: 比較用に地形の LOD を最細に固定する起動引数（`wasteland-finest-lod`。仮想化ジオメトリで固定できなければ、その視点で描かれた LOD を書き出して同じものを渡す）と、エンジンが描く地形のメッシュ（近景の DEM の区画と遠景の段、崖の細部を含む）を Blender が読める形（PLY か GLB）に書き出す道具を足す。書き出す範囲は視錐台だけでなく、影・空の遮蔽・照り返しに効く範囲（各視点から影の届く 4 km と遮蔽の届く範囲）を含める。Blender のヘッドレスの台本 `Scripts/Terrain/BlenderReference.py` で読み込み、座標の変換（m・軸・標高の基準・原点）を 1 か所にまとめ、手本の 6 視点のカメラ（位置・姿勢・縦の画角・縦横比）を置く。Blender の深度（1 サンプル）とエンジンの深度（SCN-WLR-BARE-AOV と同じ起動引数で 6 視点）を並べ、崖の輪郭と稜線が 2 画素以内で重なることを `ReferenceCheck.py --projection` で 6 視点すべて検査する（Blender の深度の画像は反復の中で描いて保存する）。
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -Build -RequireAssets -Width 1920 -Height 1080 -Hdr -Aov -Views ref_cliff_01 -GameArgs wasteland-common-light,wasteland-hide=all,wasteland-finest-lod -OutDir .harness/runs/scene-capture/SCN-WLR-BLENDER-TERRAIN-recheck`
 - verify: `python Scripts/Terrain/ReferenceCheck.py --projection --capture .harness/runs/scene-capture/SCN-WLR-BLENDER-TERRAIN --verify`
 - paths: Scripts/Terrain, Scripts, Tools/AssetCook, Docs/RenderingValidation, TASKS.md, PROGRESS.md, Game, Library/Core/Private/Rendering
-- notes: Blender は Python でヘッドレスに動かす（`Y:\AI\blender\blender-5.2.2-windows-x64\blender.exe`）。SCN-WL-BLENDER-TERRAIN-VIEW をこの項目に含めた。DEM を間引いたメッシュは使わない（法線・自己遮蔽・影が変わる）。撮影の構成（Debug か RelWithDebInfo か）は SCN-WL-CAPTURE-SPEED の決定に揃えてよい（verify も同じ反復で直す）。最細の LOD の撮影は 1 視点あたり約 150 秒（6 視点で 903 秒）かかる。全視点の撮影は反復の中で 1 回走らせて保存し、verify は 1 視点の撮影（ビルドと起動の経路の確認。別の出力先）と、保存した結果の検査（入力のハッシュで古い結果を拒否）に分ける（ランナーの再検証は 1 コマンド 10 分）。
+- notes: Blender は Python でヘッドレスに動かす（`Y:\AI\blender\blender-5.2.2-windows-x64\blender.exe`）。SCN-WL-BLENDER-TERRAIN-VIEW をこの項目に含めた。DEM を間引いたメッシュは使わない（法線・自己遮蔽・影が変わる）。撮影の構成（Debug か RelWithDebInfo か）は SCN-WL-CAPTURE-SPEED の決定に揃えてよい（verify も同じ反復で直す）。最細の LOD の撮影は 1 視点あたり約 150 秒（6 視点で 903 秒）かかる。全視点の撮影は反復の中で 1 回走らせて保存し、verify は 1 視点の撮影（ビルドと起動の経路の確認。別の出力先）と、保存した結果の検査（入力のハッシュで古い結果を拒否）に分ける（ランナーの再検証は 1 コマンド 10 分）。2026-10-19: 6 視点の撮り直しが落ち着かなかったのは、ほかのアプリの VRAM（約 4.3 GB。DesktopMate 約 2 GB・dwm 約 1 GB。ゲームではない）で上限が 12100 MB に下がったため（blocked/SCN-WLR-BLENDER-TERRAIN.md）。ユーザーが DesktopMate を閉じる。撮る前に `nvidia-smi` と `Get-Counter '\GPU Process Memory(*)\Dedicated Usage'` でほかのアプリの使用量を確かめ、落ち着かなければ撮影の記録に cap_mb とほかのアプリの使用量を残す。
 
 ## SCN-WLR-CYCLES-GRAY: 共通の照明で灰色の地形をエンジンと Cycles で描き、影・空の遮蔽・照り返しを比べる
 - status: todo
