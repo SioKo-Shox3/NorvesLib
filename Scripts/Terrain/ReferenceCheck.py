@@ -126,7 +126,7 @@
 #
 #   python Scripts/Terrain/ReferenceCheck.py --atmos-ref --capture <出力先> [--views a,b,...] [--verify]
 #       --atmos-dump の書き出し（省くと ref_ground_02）を、AtmosphereReference.py の独立な正解（Hillaire 2020 の定義から数値積分。
-#       多重散乱は論文の近似 A と回数で足す B）と比べ、<出力先>/atmos_ref_check.json に書く。比べるもの: 空の方向別の輝度（設定を
+#       多重散乱は論文の近似 A と、各回で位相関数を使い方向別の放射輝度を回数で足す B）と比べ、<出力先>/atmos_ref_check.json に書く。比べるもの: 空の方向別の輝度（設定を
 #       1 つずつ論文へ戻した正解も）、地表の太陽と空の照度、地表への視線と水平の視線の距離別の透過率と散乱光（エンジンと同じ媒質の
 #       正解と、空の大気そのままの正解）、高さフォグと空気遠近の光学的深さと散乱光の内訳、多重散乱の表、写真 ground_02 の空の色度。
 #       合否: 入力のハッシュが今のファイルと合う（--verify）、AtmosphereReference.py --verify の結果が合格で同じ設定、同じ式で求まる値
@@ -2523,7 +2523,7 @@ def atmos_ref_view(capture_dir, view):
             if cosine < ATMOS_REF_PSI_MIN_COSINE:
                 continue
             psi_rows.append({"altitude_m": altitude, "sun_cosine": cosine, "engine": arrays["multiple_scattering"][i, j].tolist()})
-    psi_a, psi_b = reference.field.evaluate([r["altitude_m"] for r in psi_rows], [r["sun_cosine"] for r in psi_rows])
+    psi_a, psi_b = reference.evaluate_psi([r["altitude_m"] for r in psi_rows], [r["sun_cosine"] for r in psi_rows])
     for row, a, b in zip(psi_rows, psi_a, psi_b):
         row["reference_A"] = a.tolist()
         row["reference_B"] = b.tolist()
