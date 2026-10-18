@@ -1760,6 +1760,31 @@ def write_projection_preview(path, engine, blender, engine_edges, blender_edges)
     Image.fromarray(rgb).save(path)
 
 
+def geometry_pages_at_capture(lines, single_view=None):
+    """Game のログの行から、視点ごとに保存の前の最後の GEOMETRY_PAGES と、落ち着きの基準から保存までの追い出しの数の組。
+    視点ごとの起動（--capture-png）のログは single_view の名前で返す"""
+    pages_at_capture = {}
+    last_pages = None
+    window_evicted = set()
+    for line in lines:
+        found = BLUR_PAGES_RE.search(line)
+        if found:
+            values = [int(v) for v in found.groups()]
+            last_pages = {"resident": values[0], "uploading": values[1], "ready": values[2], "reading": values[3],
+                          "wanted": values[4], "evicted": values[5]}
+            window_evicted.add(values[5])
+        if re.search(r"CAPTURE_VIEWS view=\S+ (?:switched|settle baseline) |ApplicationProcessor asset settle baseline ",
+                     line):
+            window_evicted = {last_pages["evicted"]} if last_pages else set()
+        found = re.search(r"CAPTURE_VIEWS view=(\S+) saved ", line)
+        saved_view = found.group(1) if found else None
+        if saved_view is None and single_view and "ApplicationProcessor capture_png saved " in line:
+            saved_view = single_view
+        if saved_view and last_pages is not None:
+            pages_at_capture[saved_view] = dict(last_pages, settle_evicted=sorted(window_evicted))
+    return pages_at_capture
+
+
 def check_projection_view(capture_dir, blender_dir, view, blender_record, game_args):
     failures = []
     result = {"view": view}
@@ -1892,6 +1917,18 @@ def check_projection_view(capture_dir, blender_dir, view, blender_record, game_a
         for line in PROJECTION_LOG_LINES:
             if line not in text:
                 failures.append(f"Game のログに {line.strip()} が無い")
+        # 落ち着き待ちは、追い出しと読み直しが続く作業集合（ページの流しの空回り）を待たずに撮る。
+        # 最も細かい段を描ききっていない撮影を拒むため、--blur-static と同じく撮った時点の進行中と追い出しを見る
+        single_view = view if log_name == f"{view}.Game.log" else None
+        pages = geometry_pages_at_capture(text.splitlines(), single_view).get(view)
+        result["geometry_pages_at_capture"] = pages
+        if pages is None:
+            failures.append("Game のログに撮影の保存の行か、その前の GEOMETRY_PAGES の行が無い")
+        else:
+            in_flight = {k: pages.get(k) for k in ("wanted", "reading", "ready", "uploading")}
+            if any(in_flight.values()) or len(pages["settle_evicted"]) != 1:
+                failures.append(f"撮った時点でジオメトリのページが常駐しきっていない（進行中 {in_flight}、"
+                                f"落ち着きの基準から保存までの追い出しの数 {pages['settle_evicted']}）")
 
     write_projection_preview(os.path.join(capture_dir, f"projection_{view}.png"), engine, blender,
                              engine_strong, blender_strong)

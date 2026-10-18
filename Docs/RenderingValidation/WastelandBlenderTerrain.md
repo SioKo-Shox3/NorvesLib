@@ -1,7 +1,7 @@
 ﻿# 荒野の地形を Blender へ持ち込み、投影を合わせる
 
 荒野の正解の絵（SCN-WLR-*）で、エンジンが描く地形と同じメッシュを Blender の Cycles で描き、6 視点の投影がエンジンと
-重なることを確かめた記録。判定日: 2026-10-18。ブランチ `feature/scene-launcher`。タスク SCN-WLR-BLENDER-TERRAIN。
+重なることを確かめた記録。判定日: 2026-10-18（6 視点の撮り直し 2026-10-19）。ブランチ `feature/scene-launcher`。タスク SCN-WLR-BLENDER-TERRAIN。
 
 ## 道具
 
@@ -24,13 +24,19 @@
 
 ## LOD の固定
 
-`--wasteland-finest-lod` の撮影（6 視点、RelWithDebInfo）で、各視点を撮った時点のページは読み込みきっていた
-（`GEOMETRY_PAGES` の wanted 0・reading 0・uploading 0。常駐は 2.5〜6.3 GB）。置き場の見込みを広げる前は、ページがメッシュと同じ
-1 GB の塊にしか置けないため、5 視点で数千ページを読み残したまま撮れていた。
+`--wasteland-finest-lod` の撮影（6 視点、RelWithDebInfo）は、`CaptureScene.ps1 -LaunchPerView` で視点ごとに Game を起動して撮る。
+各視点を撮った時点のページは読み込みきっていた（`GEOMETRY_PAGES` の wanted・reading・ready・uploading が 0、落ち着きの基準から
+保存までの追い出し 0。常駐は 0.8〜4.1 GB、1 視点 80〜106 秒）。`ReferenceCheck.py --projection` はこれを視点ごとに確かめ、
+満たさない撮影を拒む。
+
+1 回の起動で 6 視点を続けて撮ると、前の視点のページが常駐に残り、3 視点目で常駐が置き場の上限（約 7.6 GB。ページはメッシュと同じ
+1 GB の塊にしか置けない）に当たる。以後の視点では追い出しと読み直しが続き、ページの流しはそれを空回りとみなして落ち着き待ちを
+止めないので（`GeometryPageStreamer::HasPendingWork`）、ref_ground_01 は 1700 ページ余りを読み残したまま撮れた（2026-10-19、
+ほかのアプリの VRAM 約 2.4 GB）。置き場の見込みを広げる前は、5 視点で数千ページを読み残したまま撮れていた。
 
 ## 投影の照合（6 視点）
 
-撮影: `CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -Hdr -Aov -GameArgs wasteland-common-light,wasteland-hide=all,wasteland-finest-lod`。
+撮影: `CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -Hdr -Aov -LaunchPerView -GameArgs wasteland-common-light,wasteland-hide=all,wasteland-finest-lod`。
 Blender は視錐台に掛かる区画（48〜76 区画、1610 万〜6530 万三角形）を読み、CPU の Cycles で 1 視点 14〜133 秒。
 
 | 視点 | 輪郭の画素の 2 画素以内（エンジン→Blender / 逆） | 稜線の距離の最大 | 空の分かれ方の食い違い | 深度の相対差 中央値 / 95 % |

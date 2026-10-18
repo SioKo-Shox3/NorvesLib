@@ -5285,3 +5285,19 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 振りの速さは 1 通り（端数 0.53 画素）だけ。速さの依存は直す案の確かめで見る
   - 新しい試験は足していない（verify の撮影と検査が確かめる）
 - Next: TASKS.md の次の未完の項目。
+
+### SCN-WLR-BLENDER-TERRAIN 撮り直し（2026-10-19、run 20261018-205227 の反復 15）
+- Done: 最細の LOD の 6 視点を撮り直し、保存した結果の投影の照合を通した。撮った時点の常駐の検査を照合に足した
+  - 1 回の起動で 6 視点を続けて撮る形（`aux-SCN-WLR-BLENDER-TERRAIN-capture6-iter15.txt`、239 秒、cap_mb 約 14000、ほかのアプリの VRAM 約 2.4 GB）は照合こそ通ったが、前の視点のページが常駐に残って 3 視点目で置き場の上限（約 7.6 GB）に当たり、ref_ground_01 は wanted 1732 を残したまま撮れていた（ページの流しが空回りとみなすと落ち着き待ちが待たない。`GeometryPageStreamer::HasPendingWork`）。ref_cliff_02・ref_ground_02 も落ち着き待ちの間に追い出しが続いた
+  - `ReferenceCheck.py --projection` に、撮った時点の `GEOMETRY_PAGES` の進行中（wanted・reading・ready・uploading）が 0 で、落ち着きの基準から保存までに追い出しが無いことの検査を足した（`--blur-static` と同じ基準。視点ごとの起動のログの `capture_png saved` も読む）。上の撮影は 3 視点で fail になる
+  - `CaptureScene.ps1 -LaunchPerView`: 2 つ以上の視点でも視点ごとに Game を起動して撮る
+- 証拠（`.harness/runs/20261018-205227/`）:
+  - `aux-SCN-WLR-BLENDER-TERRAIN-capture6-perview.txt`: 6 視点を `-LaunchPerView` で撮影 result=pass（1 視点 80〜106 秒、全起動 exit_code=0）。Game.exe は verify の 1 本目のビルドと同じ fa17d5c0…
+  - `verify-SCN-WLR-BLENDER-TERRAIN-3.txt`: ref_cliff_01 を RelWithDebInfo・`-Build` で別の出力先へ撮影 result=pass、EXIT=0（116 秒）
+  - `verify-SCN-WLR-BLENDER-TERRAIN-4.txt`: `--projection --verify` result=pass、6 視点とも輪郭の 2 画素以内が両方向 100 %、稜線の距離の最大 1 画素、inputs_current=1・blender_inputs_current=1。全視点で撮った時点の進行中 0・追い出し 0（常駐 7400〜36892 ページ）
+  - 重なりの画像 `projection_ref_ground_01.png` を開き、輪郭がほぼ全部白（一致）であることを見た
+- Notes:
+  - Blender の深度（反復 7 で描いたもの）は台本・メッシュ・PLY のハッシュが今のものと一致したので描き直していない（blender_inputs_current=1）
+  - 撮影の Game が外から止められたときに残る件（Job Object に入れる案）は手を付けていない。今の verify は 1 視点の撮影を別の出力先へ出すので、保存結果は上書きされない
+  - 新しい試験は足していない（verify の撮影と検査が確かめる）
+- Next: TASKS.md の次の未完の項目。

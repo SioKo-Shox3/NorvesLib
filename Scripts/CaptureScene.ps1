@@ -13,6 +13,8 @@
 # シーンの報告は視点ごとの <視点>.SceneReport.txt へ写す。実行中に視点を置き直せないシーン（Game が報告に capture_views=unsupported を
 # 書く）と、視点が 1 つのとき・-GpuTimingFrames の計測は、視点ごとに起動する（--scene-view=<名前>。-Views を省いたときは、既定の視点の
 # 起動の報告（views=）から残りの視点の起動を足す。ログは <視点>.Game.log・<視点>.Validation.log）。
+# -LaunchPerView を付けると、2 つ以上の視点でも視点ごとに起動する（前の視点のジオメトリのページの常駐を持ち越さない。
+# 荒野の --wasteland-finest-lod のように、視点を続けて撮ると常駐が置き場の上限に当たって追い出しと読み直しが続く撮影に使う）。
 # どちらで撮ったかは metrics.json の capture_mode（multi_view・per_view）と、視点ごとの capture_run（起動の名前）に入る。
 # -Width と -Height は両方を与えると --window-size=<幅>x<高さ> で窓とバックバッファの大きさを替える。
 # -GameArgs は Game へ足す引数を、先頭の -- を除いてカンマ区切りで与える（例: -GameArgs night,sun-elevation=10）。
@@ -101,6 +103,8 @@ param(
     [switch]$Hdr,
     # 視点ごとに、GBuffer の生の値（<視点>.aov.*.pfm・<視点>.aov.json）も PNG と同じフレームから書く（開発ビルドだけ）。
     [switch]$Aov,
+    # 2 つ以上の視点でも、視点ごとに Game を起動して撮る（1 回の起動にまとめない）。
+    [switch]$LaunchPerView,
     # 1 回の起動の時間切れ[秒]。荒野は Debug で地形の区画と崖錐の岩を置き終えて SceneReady になるまで約 300 秒かかるので、
     # 1 視点の撮影でも収まるよう既定を 600 秒にする
     [ValidateRange(10, 3600)]
@@ -217,7 +221,7 @@ $shots = New-Object System.Collections.ArrayList
 # -Views を省いたときは、撮った後の報告（views=・capture_views=）で残りの視点を足す
 $expandViews = ($viewNames.Count -eq 0)
 # 決定的な撮影で、-Views を省いたとき・2 つ以上の視点を与えたときは、1 回の起動で撮る（--capture-views）
-$useMultiView = ($GpuTimingFrames -eq 0) -and ($expandViews -or $viewNames.Count -ge 2)
+$useMultiView = ($GpuTimingFrames -eq 0) -and ($expandViews -or $viewNames.Count -ge 2) -and -not $LaunchPerView
 if ($expandViews)
 {
     [void]$shots.Add([pscustomobject]@{ Name = 'default'; SceneView = ''; DefaultViewName = '' })
