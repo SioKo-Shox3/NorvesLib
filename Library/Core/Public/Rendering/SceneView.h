@@ -315,6 +315,9 @@ namespace NorvesLib::Core::Rendering
         /** @brief 影の標本が太陽ではなく点光源だけを測る（--shadow-probe=point）。SetupDeferredPipeline の前に決める */
         void SetShadowProbePointOnly(bool bPointOnly) { m_bShadowProbePointOnly = bPointOnly; }
         bool IsShadowProbePointOnly() const { return m_bShadowProbePointOnly; }
+        /** @brief 撮影の AOV のパス（--capture-aov）を足すか。SetupDeferredPipeline の前に決める。統計が無効な構成（Release）では何も足さない */
+        void SetCaptureAovEnabled(bool bEnabled) { m_bCaptureAovEnabled = bEnabled; }
+        bool IsCaptureAovEnabled() const { return m_bCaptureAovEnabled; }
 
         /** @brief 太陽の影の方式（--shadow-method）。SetupDeferredPipeline の前に決め、ShadowMapPass へ渡す。既定は CSM */
         void SetShadowMethod(ShadowMethod method) { m_ShadowMethod = method; }
@@ -603,6 +606,7 @@ namespace NorvesLib::Core::Rendering
                                             Container::VariableArray<uint32_t> &outIndices);
         bool m_bShadowProbeEnabled = false;
         bool m_bShadowProbePointOnly = false;
+        bool m_bCaptureAovEnabled = false;
         ShadowMethod m_ShadowMethod = ShadowMethod::Csm;
         PointShadowMethod m_PointShadowMethod = PointShadowMethod::Cube;
         uint32_t m_VsmPoolPages = 0;

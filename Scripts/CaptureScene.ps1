@@ -56,6 +56,10 @@
 # 撮り終えたら Scripts/Terrain/ReferenceCheck.py --record-inputs で、撮影の入力（描画のコード・シェーダー・荒野の組み立て・
 # git のコミット）のハッシュを inputs.json へ書く（ReferenceCheck.py --hdr --verify が今のファイルと照らして古い撮影を拒否する）。
 # 開発ビルドの機能なので Release と、決定的でない -GpuTimingFrames とは併用できない。HDR が無い・大きさが PNG と違えば失敗にする。
+# -Aov を付けると、Game を --capture-aov 付きで起動し、視点ごとに PNG と同じフレームの GBuffer の生の値を浮動小数の画像に書く
+# （<視点>.aov.albedo.pfm〔線形のアルベド〕・.aov.normal.pfm〔ワールドの法線、+Y が上〕・.aov.roughness.pfm・.aov.depth.pfm
+# 〔カメラの前方向への距離 m、空は +∞〕と、カメラを書いた <視点>.aov.json。Core の Rendering/FrameCaptureHdrWriter.h）。
+# 値の検査は ReferenceCheck.py --aov。-Hdr と同じく開発ビルドの機能で、撮り終えたら入力のハッシュ（inputs.json）を書く。
 #
 # -CompareWith <dir> を与えると、その撮影（同じ視点名の PNG）と視点ごとに比べる。平均輝度の差が -CompareMeanLuminanceLimit 以下、
 # PSNR が -ComparePsnrLimit 以上なら一致（式は CaptureStartupScene.ps1 の -CompareDeterministicWith と同じ）。
@@ -89,6 +93,8 @@ param(
     [switch]$Build,
     # 視点ごとに、ブルームの前の HDR（<視点>.hdr.pfm・<視点>.hdr.json）も PNG と同じフレームから書く（開発ビルドだけ）。
     [switch]$Hdr,
+    # 視点ごとに、GBuffer の生の値（<視点>.aov.*.pfm・<視点>.aov.json）も PNG と同じフレームから書く（開発ビルドだけ）。
+    [switch]$Aov,
     # 1 回の起動の時間切れ[秒]。荒野は Debug で地形の区画と崖錐の岩を置き終えて SceneReady になるまで約 300 秒かかるので、
     # 1 視点の撮影でも収まるよう既定を 600 秒にする
     [ValidateRange(10, 3600)]
@@ -154,6 +160,18 @@ if ($Hdr -and $GpuTimingFrames -gt 0)
     Write-Output 'CAPTURE_SCENE result=fail reason=hdr_with_gpu_timing（-Hdr は決定的な撮影と併せて使う）'
     exit 1
 }
+if ($Aov -and $Configuration -eq 'Release')
+{
+    Write-Output 'CAPTURE_SCENE result=fail reason=aov_in_release（-Aov は開発ビルドの機能で、Release の Game は AOV を書かない。RelWithDebInfo か Debug で撮る）'
+    exit 1
+}
+if ($Aov -and $GpuTimingFrames -gt 0)
+{
+    Write-Output 'CAPTURE_SCENE result=fail reason=aov_with_gpu_timing（-Aov は決定的な撮影と併せて使う）'
+    exit 1
+}
+# AOV の画像の名前（<視点> の後ろ）
+$aovSuffixes = @('.aov.albedo.pfm', '.aov.normal.pfm', '.aov.roughness.pfm', '.aov.depth.pfm', '.aov.json')
 
 # 検査の名前: 「A,B」の1文字列でも配列でも受ける。
 $requiredChecks = @($RequireChecks | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' } | Select-Object -Unique)
@@ -757,7 +775,7 @@ for ($runIndex = 0; $runIndex -lt $runs.Count; ++$runIndex)
     }
     foreach ($staleShot in $run.Shots)
     {
-        foreach ($staleSuffix in @('.png', '.hdr.pfm', '.hdr.json'))
+        foreach ($staleSuffix in (@('.png', '.hdr.pfm', '.hdr.json') + $aovSuffixes))
         {
             Remove-Item -LiteralPath (Join-Path $outRoot "$($staleShot.Name)$staleSuffix") -Force -ErrorAction SilentlyContinue
         }
@@ -781,6 +799,10 @@ for ($runIndex = 0; $runIndex -lt $runs.Count; ++$runIndex)
     if ($Hdr)
     {
         $arguments += '--capture-hdr'
+    }
+    if ($Aov)
+    {
+        $arguments += '--capture-aov'
     }
     if ($bMultiRun)
     {
@@ -1146,6 +1168,37 @@ for ($runIndex = 0; $runIndex -lt $runs.Count; ++$runIndex)
                     $shot.Name, $hdrInfo.width, $hdrInfo.height, $hdrInfo.pre_exposure, $hdrInfo.frame_number)
             }
         }
+        # AOV: PNG と同じ起動で書かれ、大きさが PNG と同じこと（値の検査は ReferenceCheck.py --aov）
+        $aovInfo = $null
+        if ($Aov)
+        {
+            $bAovFresh = $true
+            foreach ($aovSuffix in $aovSuffixes)
+            {
+                $aovPath = Join-Path $outRoot "$($shot.Name)$aovSuffix"
+                if (-not (Test-Path -LiteralPath $aovPath) -or (Get-Item -LiteralPath $aovPath).LastWriteTimeUtc -lt $runStartUtc)
+                {
+                    $failures += "$($shot.Name): AOV が無い（$([IO.Path]::GetFileName($aovPath))）"
+                    $bAovFresh = $false
+                }
+            }
+            if ($bAovFresh)
+            {
+                $aovMeta = Get-Content -LiteralPath (Join-Path $outRoot "$($shot.Name).aov.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+                if ([int]$aovMeta.width -ne [int]$measured[0] -or [int]$aovMeta.height -ne [int]$measured[1])
+                {
+                    $failures += "$($shot.Name): AOV の大きさ $($aovMeta.width)x$($aovMeta.height) が PNG $([int]$measured[0])x$([int]$measured[1]) と違う"
+                }
+                $aovInfo = [ordered]@{
+                    meta = "$($shot.Name).aov.json"
+                    width = [int]$aovMeta.width
+                    height = [int]$aovMeta.height
+                    frame_number = [long]$aovMeta.frame_number
+                }
+                Write-Output ("CAPTURE_SCENE aov view={0} size={1}x{2} frame={3}" -f `
+                    $shot.Name, $aovInfo.width, $aovInfo.height, $aovInfo.frame_number)
+            }
+        }
         $result = [ordered]@{
             view = $shot.Name
             scene_view = if ($shot.SceneView -ne '') { $shot.SceneView } else { $shot.DefaultViewName }
@@ -1170,6 +1223,7 @@ for ($runIndex = 0; $runIndex -lt $runs.Count; ++$runIndex)
             gpu_timing = $gpuTiming
             mega_stats = $megaStats
             hdr = $hdrInfo
+            aov = $aovInfo
         }
         $results += [pscustomobject]$result
         Write-Output ("CAPTURE_SCENE view={0} size={1}x{2} mean_luminance={3} clipped_white_ratio={4} crushed_black_ratio={5}" -f `
@@ -1271,8 +1325,8 @@ if ($CompareWith -ne '')
     }
 }
 
-# HDR の撮影は、入力のハッシュ（inputs.json）を横に書く。撮影が失敗したときは古い入力を残さない
-if ($Hdr)
+# HDR・AOV の撮影は、入力のハッシュ（inputs.json）を横に書く。撮影が失敗したときは古い入力を残さない
+if ($Hdr -or $Aov)
 {
     $inputsPath = Join-Path $outRoot 'inputs.json'
     Remove-Item -LiteralPath $inputsPath -Force -ErrorAction SilentlyContinue
@@ -1297,6 +1351,7 @@ $metrics = [ordered]@{
     require_assets = [bool]$RequireAssets
     gpu_timing_frames = $GpuTimingFrames
     hdr = [bool]$Hdr
+    aov = [bool]$Aov
     timing_warmup_frames = $TimingWarmupFrames
     timing_ready_margin_frames = $TimingReadyMarginFrames
     require_checks = $requiredChecks

@@ -3,6 +3,7 @@
 #if NORVES_ENABLE_STATS
 
 #include "Logging/LogMacros.h"
+#include "Rendering/CameraViewConstants.h"
 #include "Rendering/RenderGraph/RenderGraphBuilder.h"
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
 #include "Rendering/RenderGraph/RenderGraphResources.h"
@@ -17,6 +18,7 @@
 #include "RHI/ISampler.h"
 #include "RHI/ITexture.h"
 
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 
@@ -51,6 +53,22 @@ namespace NorvesLib::Core::Rendering
 
         // 速度の表示の倍率。1 フレームの UV の動き（数千分の 1）を、灰色 0.5 からの差として見える大きさにする
         constexpr float GBufferDebugVelocityScale = 400.0f;
+
+        // gbuffer_aov.frag の AovParams（mat4 の逆ビュー投影・カメラの位置・前方向）
+        constexpr uint32_t AovParamsBytes = 64 + 16 + 16;
+        constexpr RHI::Format AovFormat = RHI::Format::R32G32B32A32_FLOAT;
+
+        // gbuffer_aov.frag の binding 0〜4（アルベド・法線・材質・深度・パラメータ）
+        RHI::DescriptorSetDesc MakeGBufferAovDescriptorSetDesc()
+        {
+            RHI::DescriptorSetDesc desc;
+            for (uint32_t binding = 0; binding < 4u; ++binding)
+            {
+                AddBinding(desc, binding, RHI::ResourceBindType::CombinedImageSampler, RHI::ShaderStage::Pixel);
+            }
+            AddBinding(desc, 4, RHI::ResourceBindType::ConstantBuffer, RHI::ShaderStage::Pixel);
+            return desc;
+        }
     } // namespace
 
     GBufferDebugPass::GBufferDebugPass(GBufferDebugView view)
@@ -341,6 +359,305 @@ namespace NorvesLib::Core::Rendering
             commandList->Draw(3, 0);
         }
         commandList->EndRenderPass();
+    }
+
+    GBufferAovPass::~GBufferAovPass()
+    {
+        Shutdown();
+    }
+
+    bool GBufferAovPass::Initialize(ViewRenderContext& context)
+    {
+        m_Device = context.Device;
+        m_bInitialized = true;
+        if (!m_Device || !context.ShaderMgr)
+        {
+            return true;
+        }
+
+        m_VertexShader = context.ShaderMgr->LoadShader("fullscreen.vert", RHI::ShaderStage::Vertex);
+        m_FragmentShader = context.ShaderMgr->LoadShader("gbuffer_aov.frag", RHI::ShaderStage::Pixel);
+        if (!m_VertexShader || !m_FragmentShader)
+        {
+            NORVES_LOG_WARNING("GBufferAovPass", "AOV のシェーダーの読み込みに失敗。このパスは何もしません");
+            return true;
+        }
+
+        RHI::SamplerDesc samplerDesc;
+        samplerDesc.filterMin = RHI::FilterMode::Point;
+        samplerDesc.filterMag = RHI::FilterMode::Point;
+        samplerDesc.filterMip = RHI::FilterMode::Point;
+        samplerDesc.addressU = RHI::TextureAddressMode::Clamp;
+        samplerDesc.addressV = RHI::TextureAddressMode::Clamp;
+        samplerDesc.addressW = RHI::TextureAddressMode::Clamp;
+        m_Sampler = m_Device->CreateSampler(samplerDesc);
+
+        RHI::RenderPassDesc renderPassDesc;
+        for (uint32_t target = 0; target < 2u; ++target)
+        {
+            RHI::AttachmentDesc colorAttachment;
+            colorAttachment.format = AovFormat;
+            colorAttachment.isDepthStencil = false;
+            colorAttachment.clear = false;
+            colorAttachment.loadOp = RHI::AttachmentLoadOp::DontCare;
+            colorAttachment.storeOp = RHI::AttachmentStoreOp::Store;
+            colorAttachment.initialState = RHI::ResourceState::RenderTarget;
+            colorAttachment.finalState = RHI::ResourceState::ShaderResource;
+            renderPassDesc.colorAttachments.push_back(colorAttachment);
+        }
+        m_RenderPass = m_Device->CreateRenderPass(renderPassDesc);
+        if (m_RenderPass && m_Sampler)
+        {
+            RHI::GraphicsPipelineDesc pipelineDesc;
+            pipelineDesc.vertexShader = m_VertexShader;
+            pipelineDesc.pixelShader = m_FragmentShader;
+            pipelineDesc.primitiveTopology = RHI::PrimitiveTopology::TriangleList;
+            pipelineDesc.rasterState.polygonMode = RHI::PolygonMode::Fill;
+            pipelineDesc.rasterState.cullMode = RHI::CullMode::None;
+            pipelineDesc.rasterState.frontFace = RHI::FrontFace::Clockwise;
+            pipelineDesc.rasterState.lineWidth = 1.0f;
+            pipelineDesc.depthStencilState.depthTestEnable = false;
+            pipelineDesc.depthStencilState.depthWriteEnable = false;
+            for (uint32_t target = 0; target < 2u; ++target)
+            {
+                RHI::BlendAttachmentDesc blendAttachment;
+                blendAttachment.blendEnable = false;
+                blendAttachment.colorWriteMask = RHI::ColorWriteMask::All;
+                pipelineDesc.blendState.attachments.push_back(blendAttachment);
+            }
+            pipelineDesc.renderPass = m_RenderPass;
+            pipelineDesc.descriptorSetLayouts.push_back(MakeGBufferAovDescriptorSetDesc());
+            m_Pipeline = m_Device->CreateGraphicsPipeline(pipelineDesc);
+        }
+        if (!m_Pipeline)
+        {
+            NORVES_LOG_WARNING("GBufferAovPass", "AOV のパイプラインの作成に失敗。このパスは何もしません");
+        }
+        return true;
+    }
+
+    void GBufferAovPass::Shutdown()
+    {
+        m_Pipeline.reset();
+        m_RenderPass.reset();
+        m_Framebuffer.reset();
+        m_FramebufferTargets[0] = nullptr;
+        m_FramebufferTargets[1] = nullptr;
+        m_Sampler.reset();
+        m_Uses.Clear();
+        m_VertexShader.reset();
+        m_FragmentShader.reset();
+        m_SurfaceHandle = {};
+        m_GeometryHandle = {};
+        m_AlbedoHandle = {};
+        m_NormalHandle = {};
+        m_MaterialHandle = {};
+        m_DepthHandle = {};
+        m_LastCamera = FrameCaptureAovCamera{};
+        m_Device = nullptr;
+        m_bInitialized = false;
+    }
+
+    void GBufferAovPass::Setup(ViewRenderContext& /*context*/)
+    {
+    }
+
+    void GBufferAovPass::Execute(ViewRenderContext& /*context*/)
+    {
+        // RenderGraph 経由（Execute(resources, context)）でだけ動く。
+    }
+
+    void GBufferAovPass::Declare(RenderGraphBuilder& builder)
+    {
+        m_SurfaceHandle = {};
+        m_GeometryHandle = {};
+        m_AlbedoHandle = {};
+        m_NormalHandle = {};
+        m_MaterialHandle = {};
+        m_DepthHandle = {};
+
+        // 初期化を済ませたのにパイプラインが無いときは何も宣言しない
+        if (m_bInitialized && !m_Pipeline)
+        {
+            return;
+        }
+        // GBuffer の 4 枚がそろわない構成では何も宣言しない（一部だけ読む宣言を残さない）
+        RGTextureHandle albedo;
+        RGTextureHandle normal;
+        RGTextureHandle material;
+        RGTextureHandle depth;
+        if (!builder.TryGetTexture(RenderGraphResourceNames::GBufferAlbedo, albedo) ||
+            !builder.TryGetTexture(RenderGraphResourceNames::GBufferNormal, normal) ||
+            !builder.TryGetTexture(RenderGraphResourceNames::GBufferMaterial, material) ||
+            !builder.TryGetTexture(RenderGraphResourceNames::GBufferDepth, depth))
+        {
+            return;
+        }
+        if (!builder.TryReadTexture(RenderGraphResourceNames::GBufferAlbedo, albedo, RHI::ResourceState::ShaderResource) ||
+            !builder.TryReadTexture(RenderGraphResourceNames::GBufferNormal, normal, RHI::ResourceState::ShaderResource) ||
+            !builder.TryReadTexture(RenderGraphResourceNames::GBufferMaterial, material, RHI::ResourceState::ShaderResource) ||
+            !builder.TryReadTexture(RenderGraphResourceNames::GBufferDepth, depth, RHI::ResourceState::ShaderResource))
+        {
+            return;
+        }
+
+        const ViewRenderContext* context = builder.GetContext();
+        const uint32_t width = context ? context->GetActiveRenderWidth() : 0;
+        const uint32_t height = context ? context->GetActiveRenderHeight() : 0;
+        if (width == 0 || height == 0)
+        {
+            return;
+        }
+        const Identity targetNames[2] = {RenderGraphResourceNames::CaptureAovSurface,
+                                         RenderGraphResourceNames::CaptureAovGeometry};
+        const char* targetDebugNames[2] = {"Capture_AovSurface", "Capture_AovGeometry"};
+        RGResourceHandle targets[2];
+        for (uint32_t target = 0; target < 2u; ++target)
+        {
+            RGTextureDesc desc = RGTextureDesc::RenderTarget(width, height, AovFormat, targetDebugNames[target]);
+            desc.Usage = desc.Usage | RHI::ResourceUsage::TransferSrc;
+            const RGTextureHandle handle = builder.WriteTextureAttachment(targetNames[target],
+                                                                          desc,
+                                                                          RGAttachmentKind::Color,
+                                                                          RHI::AttachmentLoadOp::DontCare,
+                                                                          RHI::AttachmentStoreOp::Store,
+                                                                          RHI::ResourceState::RenderTarget,
+                                                                          RHI::ResourceState::ShaderResource);
+            if (!handle.IsValid())
+            {
+                return;
+            }
+            // 撮影の読み出しはグラフの実行の後なので、外へ出して寿命を延ばす
+            builder.ExportTexture(targetNames[target], handle);
+            targets[target] = handle.ToResourceHandle();
+        }
+
+        m_SurfaceHandle = targets[0];
+        m_GeometryHandle = targets[1];
+        m_AlbedoHandle = albedo;
+        m_NormalHandle = normal;
+        m_MaterialHandle = material;
+        m_DepthHandle = depth;
+        builder.PreserveInsertionOrder();
+    }
+
+    void GBufferAovPass::Execute(RenderGraphResources& resources, ViewRenderContext& context)
+    {
+        m_LastCamera = FrameCaptureAovCamera{};
+        if (!m_bInitialized && !Initialize(context))
+        {
+            return;
+        }
+        const CameraProxy* camera = context.GetActiveCamera();
+        if (!context.CommandList || !m_Device || !m_Pipeline || !camera || !m_SurfaceHandle.IsValid() ||
+            !m_GeometryHandle.IsValid() || !m_AlbedoHandle.IsValid() || !m_NormalHandle.IsValid() ||
+            !m_MaterialHandle.IsValid() || !m_DepthHandle.IsValid())
+        {
+            return;
+        }
+
+        const RHI::TexturePtr targets[2] = {resources.GetTexture(m_SurfaceHandle), resources.GetTexture(m_GeometryHandle)};
+        const RHI::TexturePtr albedoTexture = resources.GetTexture(m_AlbedoHandle);
+        const RHI::TexturePtr normalTexture = resources.GetTexture(m_NormalHandle);
+        const RHI::TexturePtr materialTexture = resources.GetTexture(m_MaterialHandle);
+        const RHI::TexturePtr depthTexture = resources.GetTexture(m_DepthHandle);
+        if (!targets[0] || !targets[1] || !albedoTexture || !normalTexture || !materialTexture || !depthTexture)
+        {
+            return;
+        }
+
+        if (!m_Framebuffer || m_FramebufferTargets[0] != targets[0].get() || m_FramebufferTargets[1] != targets[1].get())
+        {
+            RHI::FramebufferDesc framebufferDesc;
+            framebufferDesc.renderPass = m_RenderPass;
+            framebufferDesc.colorTargets.push_back(targets[0]);
+            framebufferDesc.colorTargets.push_back(targets[1]);
+            framebufferDesc.width = targets[0]->GetWidth();
+            framebufferDesc.height = targets[0]->GetHeight();
+            m_Framebuffer = m_Device->CreateFramebuffer(framebufferDesc);
+            m_FramebufferTargets[0] = m_Framebuffer ? targets[0].get() : nullptr;
+            m_FramebufferTargets[1] = m_Framebuffer ? targets[1].get() : nullptr;
+        }
+        if (!m_Framebuffer)
+        {
+            return;
+        }
+
+        m_Uses.BeginFrame(context.FrameIndex, context.ResolveRenderFrameSerial());
+        Use& use = m_Uses.Acquire();
+        if (!use.ParamsUniform)
+        {
+            RHI::FrameResourceProtectedCreationScope protectedCreation;
+            use.ParamsUniform = m_Device->CreateBuffer(
+                RHI::BufferDesc(AovParamsBytes, RHI::ResourceUsage::ConstantBuffer, true, "GBuffer_AovParams"));
+        }
+        if (!use.DescriptorSet)
+        {
+            RHI::FrameResourceProtectedCreationScope protectedCreation;
+            use.DescriptorSet = m_Device->CreateDescriptorSet(MakeGBufferAovDescriptorSetDesc());
+        }
+        if (!use.ParamsUniform || !use.DescriptorSet)
+        {
+            NORVES_LOG_WARNING("GBufferAovPass", "AOV の資源の作成に失敗。この描画は何もしません");
+            return;
+        }
+
+        // 照明の深度からの位置の復元（lighting.frag の ReconstructWorldPosition）と同じ行列
+        const float aspectRatio = context.GetActiveAspectRatio();
+        const CameraViewConstants cameraConstants = CameraViewConstants::BuildForDevice(*camera, aspectRatio, context.Device);
+        float params[AovParamsBytes / sizeof(float)] = {};
+        cameraConstants.CopyShaderInverseViewProjection(params);
+        cameraConstants.CopyCameraPosition(params + 16);
+        float forward[3] = {camera->ForwardX, camera->ForwardY, camera->ForwardZ};
+        const float forwardLength = std::sqrt(forward[0] * forward[0] + forward[1] * forward[1] + forward[2] * forward[2]);
+        if (!(forwardLength > 1.0e-6f) || !std::isfinite(forwardLength))
+        {
+            return;
+        }
+        for (uint32_t axis = 0; axis < 3u; ++axis)
+        {
+            forward[axis] /= forwardLength;
+            params[20 + axis] = forward[axis];
+        }
+        use.ParamsUniform->Update(params, sizeof(params));
+        RHI::DescriptorSetPtr& descriptorSet = use.DescriptorSet;
+        const RHI::TexturePtr sources[4] = {albedoTexture, normalTexture, materialTexture, depthTexture};
+        for (uint32_t binding = 0; binding < 4u; ++binding)
+        {
+            descriptorSet->BindTexture(binding, sources[binding]);
+            descriptorSet->BindSampler(binding, m_Sampler);
+        }
+        descriptorSet->BindConstantBuffer(4, use.ParamsUniform, 0, AovParamsBytes);
+        descriptorSet->Update();
+
+        RHI::ICommandList* commandList = context.CommandList;
+        commandList->BeginRenderPass(m_RenderPass, m_Framebuffer);
+        commandList->SetViewport(context.GetActiveLocalViewport());
+        commandList->SetScissor(context.GetActiveLocalScissor());
+        commandList->SetPipeline(m_Pipeline);
+        commandList->SetDescriptorSet(use.DescriptorSet, 0);
+        commandList->Draw(3, 0);
+        commandList->EndRenderPass();
+
+        m_LastCamera.bValid = true;
+        m_LastCamera.Position[0] = camera->PositionX;
+        m_LastCamera.Position[1] = camera->PositionY;
+        m_LastCamera.Position[2] = camera->PositionZ;
+        for (uint32_t axis = 0; axis < 3u; ++axis)
+        {
+            m_LastCamera.Forward[axis] = forward[axis];
+        }
+        m_LastCamera.Up[0] = camera->UpX;
+        m_LastCamera.Up[1] = camera->UpY;
+        m_LastCamera.Up[2] = camera->UpZ;
+        m_LastCamera.Right[0] = camera->RightX;
+        m_LastCamera.Right[1] = camera->RightY;
+        m_LastCamera.Right[2] = camera->RightZ;
+        m_LastCamera.VerticalFieldOfViewDegrees = camera->FieldOfView;
+        m_LastCamera.AspectRatio = aspectRatio;
+        m_LastCamera.NearPlane = camera->NearPlane;
+        m_LastCamera.FarPlane = camera->FarPlane;
+        m_LastCamera.bOrthographic = camera->Projection != ProjectionType::Perspective;
     }
 
 } // namespace NorvesLib::Core::Rendering

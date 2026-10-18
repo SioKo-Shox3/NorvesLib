@@ -254,6 +254,14 @@ namespace NorvesLib::Core::Rendering
         /** @brief GetFrameSceneColorTexture を描いたカメラの表示変換の差し替え */
         const FrameCaptureDisplayInfo& GetFrameSceneColorDisplay() const { return m_FrameSceneColorDisplay; }
 
+        /**
+         * @brief このフレームに GBufferAovPass（--capture-aov）が書いた AOV の 2 枚（0 = 表面、1 = 幾何）。書いていなければ空
+         */
+        const RHI::TexturePtr& GetFrameAovTexture(uint32_t index) const { return m_FrameAovTextures[index < 2u ? index : 0u]; }
+
+        /** @brief GetFrameAovTexture を描いたカメラ（AOV が無いフレームは bValid が false） */
+        const FrameCaptureAovCamera& GetFrameAovCamera() const { return m_FrameAovCamera; }
+
         // ========================================
         // 設定
         // ========================================
@@ -302,6 +310,8 @@ namespace NorvesLib::Core::Rendering
         RHI::TexturePtr m_FrameOutputTexture;
         RHI::TexturePtr m_FrameSceneColorTexture;
         float m_FrameSceneColorPreExposure = 0.0f;
+        RHI::TexturePtr m_FrameAovTextures[2];
+        FrameCaptureAovCamera m_FrameAovCamera;
         FrameCaptureDisplayInfo m_FrameSceneColorDisplay;
 
         // 設定

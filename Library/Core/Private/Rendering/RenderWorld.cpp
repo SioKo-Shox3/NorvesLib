@@ -89,6 +89,7 @@ namespace NorvesLib::Core::Rendering
         coordSettings.SwRasterMaxPixels = settings.SwRasterMaxPixels;
         coordSettings.bShadowProbe = settings.bShadowProbe;
         coordSettings.bShadowProbePointOnly = settings.bShadowProbePointOnly;
+        coordSettings.bCaptureAov = settings.bCaptureAov;
         coordSettings.SunShadowMethod = settings.SunShadowMethod;
         coordSettings.PointLightShadowMethod = settings.PointLightShadowMethod;
         coordSettings.VsmPoolPages = settings.VsmPoolPages;

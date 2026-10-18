@@ -294,8 +294,8 @@ namespace Game::GameModes
         // 縮んで細かい法線を落とした分を、粗さの α² に足して鏡面の広がりへ移す（Python で画像の 1/4 の画素から測った値）
         constexpr float kDetailSlopeVariance[3] = {0.393f, 0.623f, 0.283f};
 
-        /// 物理空・太陽・高さフォグ・空気遠近・雲の層
-        void ApplyEnvironment(GameModeContext &ctx, float sunAltitudeDegrees, float sunAzimuthDegrees)
+        /// 物理空・太陽・高さフォグ・空気遠近・雲の層（hideMask で外したものは点けない）
+        void ApplyEnvironment(GameModeContext &ctx, float sunAltitudeDegrees, float sunAzimuthDegrees, uint32_t hideMask)
         {
             SkyAtmosphereParameters sky = MakeDefaultSkyAtmosphereParameters();
             sky.bEnabled = true;
@@ -306,14 +306,14 @@ namespace Game::GameModes
             ctx.EngineRef.GetRenderWorld().SetSkyAtmosphere(sky);
 
             VolumetricFogParameters fog = MakeDefaultVolumetricFogParameters();
-            fog.bEnabled = true;
+            fog.bEnabled = (hideMask & WastelandHide::Fog) == 0;
             fog.DensityAtBaseHeight = kFogDensity;
             fog.BaseHeight = kFogBaseHeight;
             fog.HeightFalloffPerUnit = kFogFalloff;
             ctx.EngineRef.GetRenderWorld().SetVolumetricFogParameters(fog);
 
             AerialPerspectiveParameters aerialPerspective;
-            aerialPerspective.bEnabled = true;
+            aerialPerspective.bEnabled = (hideMask & WastelandHide::Aerial) == 0;
             aerialPerspective.DistanceScale = kAerialPerspectiveDistanceScale;
             aerialPerspective.StartDistanceMeters = kAerialPerspectiveStartDistance;
             aerialPerspective.OriginAltitudeMeters = kSiteAltitudeMeters;
@@ -321,7 +321,7 @@ namespace Game::GameModes
             ctx.EngineRef.GetRenderWorld().SetAerialPerspective(aerialPerspective);
 
             CloudLayerParameters cloudLayer;
-            cloudLayer.bEnabled = true;
+            cloudLayer.bEnabled = (hideMask & WastelandHide::Clouds) == 0;
             cloudLayer.BottomAltitudeMeters = kCloudBottomAltitude;
             cloudLayer.TopAltitudeMeters = kCloudTopAltitude;
             cloudLayer.Coverage = kCloudCoverage;
@@ -361,7 +361,7 @@ namespace Game::GameModes
             }
             const WastelandReferenceShot *referenceShot = FindReferenceShot(data.m_ViewName);
             ApplyEnvironment(ctx, referenceShot ? referenceShot->SunAltitudeDegrees : kSunAltitudeDegrees,
-                             referenceShot ? referenceShot->SunAzimuthDegrees : kSunAzimuthDegrees);
+                             referenceShot ? referenceShot->SunAzimuthDegrees : kSunAzimuthDegrees, data.m_HideMask);
         }
 
         /// 草・低木を撒かない範囲を散布へ渡す: 名前付き視点の足元（目の前を株がふさがない）と、置いた建物の足元・道
@@ -400,7 +400,7 @@ namespace Game::GameModes
         }
 
         /// カメラの (x,z) の周りの草・低木と石・礫の区画をそろえ、区画が変わったか bForcePublish なら、草・低木の束の後ろに
-        /// 石・礫の束を並べて RenderWorld へ渡す
+        /// 石・礫の束を並べて RenderWorld へ渡す（--wasteland-hide で外したものは渡さない）
         void UpdateFoliage(GameModeContext &ctx, WastelandData &data, float cameraX, float cameraZ, bool bForcePublish)
         {
             if (!data.m_FoliageScatter.IsInitialized())
@@ -413,7 +413,19 @@ namespace Game::GameModes
             {
                 data.m_Foliage.Wind.TimeOffsetSeconds = WastelandFoliage::WindTimeOffsetForView(data.m_ViewName);
                 FoliageScene published = data.m_Foliage;
-                published.Batches.insert(published.Batches.end(), data.m_GravelBatches.begin(), data.m_GravelBatches.end());
+                if ((data.m_HideMask & WastelandHide::Foliage) != 0)
+                {
+                    published.Batches.clear();
+                }
+                if ((data.m_HideMask & WastelandHide::Gravel) == 0)
+                {
+                    published.Batches.insert(published.Batches.end(), data.m_GravelBatches.begin(),
+                                             data.m_GravelBatches.end());
+                }
+                // 撮影の照合（ReferenceCheck.py --aov）が、外した草・石を渡していないことを確かめる
+                LOG_INFO_F("WASTELAND_FOLIAGE_PUBLISHED batches=%zu foliage_hidden=%d gravel_hidden=%d", published.Batches.size(),
+                           (data.m_HideMask & WastelandHide::Foliage) != 0 ? 1 : 0,
+                           (data.m_HideMask & WastelandHide::Gravel) != 0 ? 1 : 0);
                 ctx.EngineRef.GetRenderWorld().SetFoliage(published);
             }
         }
@@ -973,9 +985,10 @@ namespace Game::GameModes
                        static_cast<double>(stats.MinCasterHeight), stats.SupportPoints[0], stats.SupportPoints[1]);
         }
 
-        /// 材質がそろった種類を MegaMesh にし、高さ場から決めた配置に Entity を置き、崖錐の岩を散布で置く
+        /// 材質がそろった種類を MegaMesh にし、高さ場から決めた配置に Entity を置き、崖錐の岩を散布で置く。
+        /// hideMask で外した建物・崖錐の岩は置かない（草・低木を撒かない範囲は外さないときと同じに残す）
         void PlaceProps(GameModeContext &ctx, const Terrain::TerrainHeightField &field,
-                        const Terrain::TerrainSurfaceMask *pMask, WastelandAssembly &assembly)
+                        const Terrain::TerrainSurfaceMask *pMask, WastelandAssembly &assembly, uint32_t hideMask)
         {
             auto &megaGeometry = ctx.RenderResourcesRef.MegaGeometry();
             Layout::PropMeshShape shapes[Layout::kPropKindCount];
@@ -1056,6 +1069,10 @@ namespace Game::GameModes
             for (const Layout::PropPlacement &placement : placements)
             {
                 const uint32_t kindIndex = static_cast<uint32_t>(placement.Kind);
+                if ((hideMask & WastelandHide::Buildings) != 0 && Layout::GetPropKindSpec(placement.Kind).bBuilding)
+                {
+                    continue;
+                }
                 Entity *object = ctx.ScopeRef.SpawnObject<Entity>();
                 auto *component =
                     object != nullptr ? ctx.WorldRef.CreateComponent<Component::MegaGeometryComponent>(object) : nullptr;
@@ -1102,10 +1119,10 @@ namespace Game::GameModes
                 assembly.FoliageRoadRects.push_back(
                     {road.CenterX, road.CenterZ, road.AlongX, road.AlongZ, road.HalfLength, road.HalfWidth});
             }
-            // 建物の最下点の高さと、その位置の地形の高さ（最下点が地面より下 = 埋まっている）を確かめられるよう出す
+            // 建物の最下点の高さと、その位置の地形の高さ（最下点が地面より下 = 埋まっている）を確かめられるよう出す（置いた建物だけ）
             for (const Layout::PropPlacement &placement : placements)
             {
-                if (Layout::GetPropKindSpec(placement.Kind).bBuilding)
+                if (Layout::GetPropKindSpec(placement.Kind).bBuilding && (hideMask & WastelandHide::Buildings) == 0)
                 {
                     const float bottom = placement.Y + shapes[static_cast<uint32_t>(placement.Kind)].MinY * placement.Scale;
                     LOG_INFO_F("WASTELAND_BUILDING id=%s x=%.1f z=%.1f bottom=%.2f ground=%.2f yaw_deg=%.1f",
@@ -1115,9 +1132,54 @@ namespace Game::GameModes
                                static_cast<double>(placement.Yaw * 180.0f / 3.14159265f));
                 }
             }
-            PlaceTalusRocks(ctx, field, pMask, assembly);
+            if ((hideMask & WastelandHide::Rocks) == 0)
+            {
+                PlaceTalusRocks(ctx, field, pMask, assembly);
+            }
         }
     } // namespace
+
+    bool WastelandHide::Parse(const String &value, uint32_t &outMask, String &outError)
+    {
+        struct Name
+        {
+            const TCHAR *Text;
+            uint32_t Flag;
+        };
+        static constexpr Name kNames[] = {
+            {TEXT("clouds"), Clouds}, {TEXT("foliage"), Foliage},     {TEXT("rocks"), Rocks},
+            {TEXT("gravel"), Gravel}, {TEXT("buildings"), Buildings}, {TEXT("aerial"), Aerial},
+            {TEXT("fog"), Fog},       {TEXT("all"), All},
+        };
+        outMask = 0;
+        outError.clear();
+        size_t start = 0;
+        while (true)
+        {
+            const size_t end = value.find(TEXT('+'), start);
+            const String token = value.substr(start, end == String::npos ? String::npos : end - start);
+            uint32_t flag = 0;
+            for (const Name &name : kNames)
+            {
+                if (token == name.Text)
+                {
+                    flag = name.Flag;
+                    break;
+                }
+            }
+            if (flag == 0)
+            {
+                outError = token;
+                return false;
+            }
+            outMask |= flag;
+            if (end == String::npos)
+            {
+                return true;
+            }
+            start = end + 1;
+        }
+    }
 
     GameModeEnterResult WastelandRoutine::Enter(GameModeContext &ctx, WastelandData &data)
     {
@@ -1126,6 +1188,18 @@ namespace Game::GameModes
         data.m_TerrainSettledTick = 0;
         Game::Scenes::BeginSceneAssembly(ctx.EngineRef);
 
+        // 外すもの（--wasteland-hide）を、撮影の照合が読めるようにログへ残す
+        if (data.m_HideMask != 0)
+        {
+            LOG_INFO_F("WASTELAND_HIDE mask=%u clouds=%d foliage=%d rocks=%d gravel=%d buildings=%d aerial=%d fog=%d",
+                       data.m_HideMask, (data.m_HideMask & WastelandHide::Clouds) != 0 ? 1 : 0,
+                       (data.m_HideMask & WastelandHide::Foliage) != 0 ? 1 : 0,
+                       (data.m_HideMask & WastelandHide::Rocks) != 0 ? 1 : 0,
+                       (data.m_HideMask & WastelandHide::Gravel) != 0 ? 1 : 0,
+                       (data.m_HideMask & WastelandHide::Buildings) != 0 ? 1 : 0,
+                       (data.m_HideMask & WastelandHide::Aerial) != 0 ? 1 : 0,
+                       (data.m_HideMask & WastelandHide::Fog) != 0 ? 1 : 0);
+        }
         const Game::Scenes::SceneDescriptor *scene = Game::Scenes::FindScene(Game::Scenes::kWastelandSceneId);
         Game::Scenes::FreeCameraPose pose{};
         if (scene == nullptr || !Game::Scenes::ResolveFreeCameraPose(*scene, data.m_ViewName.c_str(), pose))
@@ -1371,7 +1445,7 @@ namespace Game::GameModes
                 }
                 if (assembly.bPlaced && ArePropTexturesLoaded(assembly) && !assembly.bPropsPlaced)
                 {
-                    PlaceProps(ctx, *data.m_pHeightField, data.m_pSurfaceMask.get(), assembly);
+                    PlaceProps(ctx, *data.m_pHeightField, data.m_pSurfaceMask.get(), assembly, data.m_HideMask);
                     assembly.bPropsPlaced = true;
                     // 置いた建物の足元と道から草・低木を外す（区画を作り直す）
                     if (!assembly.FoliageBuildingCircles.empty() || !assembly.FoliageRoadRects.empty())

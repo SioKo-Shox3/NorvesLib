@@ -166,6 +166,7 @@ namespace Game::Debug
             NorvesLib::Core::Rendering::FrameCaptureRequest request;
             request.SourceKind = NorvesLib::Core::Rendering::FrameCaptureSourceKind::BackBuffer;
             request.bIncludeSceneColor = m_bCaptureHdr;
+            request.bIncludeAov = m_bCaptureAov;
             if (!renderWorld.RequestFrameCapture(request).IsAccepted())
             {
                 Fail("capture_request_rejected");
@@ -213,6 +214,18 @@ namespace Game::Debug
             LOG_INFO_F("CAPTURE_VIEWS view=%s hdr saved width=%u height=%u pre_exposure=%g", viewName.c_str(),
                        capturedFrame.SceneColor.Width, capturedFrame.SceneColor.Height,
                        static_cast<double>(capturedFrame.SceneColor.PreExposure));
+        }
+        if (m_bCaptureAov)
+        {
+            if (!NorvesLib::Core::Rendering::SaveCapturedAov(capturedFrame, path))
+            {
+                LOG_ERROR_F("CAPTURE_VIEWS view=%s aov save failed aov=%d", viewName.c_str(),
+                            capturedFrame.Aov.bValid ? 1 : 0);
+                Fail("aov_save_failed");
+                return;
+            }
+            LOG_INFO_F("CAPTURE_VIEWS view=%s aov saved width=%u height=%u", viewName.c_str(),
+                       capturedFrame.Aov.Surface.Width, capturedFrame.Aov.Surface.Height);
         }
 
         ++m_ViewIndex;

@@ -142,6 +142,9 @@ namespace Game
         // --capture-hdr: --capture-views の視点ごとに、同じフレームのブルーム前のシーンの色を HDR として PNG の横へ書く
         // （開発ビルドだけ。1 視点の --capture-png は ApplicationProcessor が同じ引数で書く）
         constexpr const TCHAR *kCaptureHdrOption = TEXT("--capture-hdr");
+        // --capture-aov: --capture-views の視点ごとに、同じフレームの GBuffer の生の値を浮動小数の画像として PNG の横へ書く
+        // （開発ビルドだけ。1 視点の --capture-png は ApplicationProcessor が同じ引数で書く）
+        constexpr const TCHAR *kCaptureAovOption = TEXT("--capture-aov");
         // --exit-after-rendered-frames=<n>: ApplicationProcessor の、落ち着いてから撮るまでの描画フレーム数（--capture-views も同じ数で撮る）
         constexpr const TCHAR *kExitAfterRenderedFramesOption = TEXT("--exit-after-rendered-frames=");
         // ApplicationProcessor の --capture-png が、落ち着いてから撮るまでに描く既定のフレーム数（kCapturePngDefaultSettledRenderedFrames）
@@ -225,6 +228,10 @@ namespace Game
         constexpr const TCHAR *kCommonLightCaseOption = TEXT("--common-light-case=");
         constexpr const TCHAR *kWastelandGrayPlateOption = TEXT("--wasteland-gray-plate");
         Game::GameModes::WastelandCommonLight::Options s_WastelandCommonLight;
+        // --wasteland-hide=<clouds+foliage+rocks+gravel+buildings+aerial+fog の組み合わせ、または all>: 荒野から比べるために
+        // 外すもの（Game/GameModes/Wasteland/WastelandMode.h の WastelandHide）。シーンの設定なので Release でも効く
+        constexpr const TCHAR *kWastelandHideOption = TEXT("--wasteland-hide=");
+        uint32_t s_WastelandHideMask = 0;
         // --open-scene-info: mega-bananas を起動時から情報表示（H キーの表示）を出した状態にする（開発ビルドだけ。値を取らない）。
         // 撮影の起動は ImGui を使わないが、この指定があれば撮影でも使い、表示を撮れる。
         constexpr const TCHAR *kOpenSceneInfoOption = TEXT("--open-scene-info");
@@ -1339,6 +1346,18 @@ namespace Game
 #endif
                 continue;
             }
+            if (TryStripPrefix(args[i], kWastelandHideOption, sceneValue))
+            {
+                String unknownName;
+                if (!Game::GameModes::WastelandHide::Parse(sceneValue, s_WastelandHideMask, unknownName))
+                {
+                    LOG_ERROR_F("--wasteland-hide の名前「%s」は使えません（clouds・foliage・rocks・gravel・buildings・aerial・fog を + で"
+                                "つなぐか all）",
+                                unknownName.c_str());
+                    return false;
+                }
+                continue;
+            }
             if (TryStripPrefix(args[i], kCommonLightCaseOption, sceneValue))
             {
 #if NORVES_BUILD_DEVELOPMENT
@@ -2063,12 +2082,17 @@ namespace Game
         uint64_t captureSettledRenderedFrames = kCapturePngDefaultSettledRenderedFrames;
         uint64_t captureViewSettleRenderedFrames = Game::Debug::MultiViewCapture::kDefaultViewSettleRenderedFrames;
         bool bCaptureHdr = false;
+        bool bCaptureAov = false;
         for (size_t i = 0; i < args.size(); ++i)
         {
             String value;
             if (ToStdString(args[i]) == std::basic_string<TCHAR>(kCaptureHdrOption))
             {
                 bCaptureHdr = true;
+            }
+            else if (ToStdString(args[i]) == std::basic_string<TCHAR>(kCaptureAovOption))
+            {
+                bCaptureAov = true;
             }
             else if (TryStripPrefix(args[i], kCaptureViewsOption, value))
             {
@@ -2135,8 +2159,10 @@ namespace Game
                                          captureViewSettleRenderedFrames, &m_SceneViewSwitch);
 #if NORVES_BUILD_DEVELOPMENT
             m_MultiViewCapture.SetCaptureHdr(bCaptureHdr);
+            m_MultiViewCapture.SetCaptureAov(bCaptureAov);
 #else
             (void)bCaptureHdr;
+            (void)bCaptureAov;
 #endif
             LOG_INFO_F("CAPTURE_VIEWS configured views=%zu settled_rendered_frames=%llu view_settle_frames=%llu dir=%s",
                        m_CaptureViewNames.size(), static_cast<unsigned long long>(captureSettledRenderedFrames),
@@ -3391,6 +3417,7 @@ namespace Game
                 mode->GetData().m_GetAssetSystem = getAssetSystem;
                 // 共通の照明と灰色の板（起動引数。--common-light-case だけでは点けない）
                 mode->GetData().m_CommonLight.Opts = s_WastelandCommonLight;
+                mode->GetData().m_HideMask = s_WastelandHideMask;
                 if (!s_WastelandCommonLight.bEnabled && s_WastelandCommonLight.bGrayPlate)
                 {
                     LOG_WARNING("--wasteland-gray-plate は --wasteland-common-light と一緒に使います（板は置き、照明は既定のまま）");

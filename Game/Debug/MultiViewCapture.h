@@ -61,6 +61,13 @@ namespace Game::Debug
          */
         void SetCaptureHdr(bool bCaptureHdr) { m_bCaptureHdr = bCaptureHdr; }
 
+        /**
+         * @brief 視点ごとの PNG の横へ、同じフレームの GBuffer の生の値（アルベド・法線・粗さ・深度）を書くか（--capture-aov）
+         *
+         * 書き出しの形式は Core の SaveCapturedAov（<視点>.aov.*.pfm と <視点>.aov.json）。書けなければ撮影の失敗にする。
+         */
+        void SetCaptureAov(bool bCaptureAov) { m_bCaptureAov = bCaptureAov; }
+
         /// ApplicationProcessor の --capture-png の撮影と終了を止めておくか（有効な間は撮り終えた後も止める）
         bool IsHoldingEngineCapture() const { return IsEnabled(); }
 
@@ -96,6 +103,7 @@ namespace Game::Debug
         uint64_t m_ViewSettleRenderedFrames = kDefaultViewSettleRenderedFrames;
         Game::Scenes::SceneViewSwitch* m_pViewSwitch = nullptr;
         bool m_bCaptureHdr = false;
+        bool m_bCaptureAov = false;
 
         Phase m_Phase = Phase::Settling;
         size_t m_ViewIndex = 0;

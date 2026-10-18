@@ -118,6 +118,8 @@ namespace NorvesLib::Core::Rendering
         bool bShadowProbe = false;
         /** @brief 影の標本が太陽ではなく点光源だけを測る（--shadow-probe=point。bShadowProbe が false なら効かない） */
         bool bShadowProbePointOnly = false;
+        /** @brief 撮影の AOV（GBuffer の生の値）を書くパスを足す（--capture-aov。統計が有効な構成だけで働く） */
+        bool bCaptureAov = false;
         /** @brief 太陽の影の方式（--shadow-method。構造体の既定は CSM。Game の起動引数の既定は VSM） */
         ShadowMethod SunShadowMethod = ShadowMethod::Csm;
         /** @brief 点光源の影の方式（--point-shadow-method。既定は cube） */

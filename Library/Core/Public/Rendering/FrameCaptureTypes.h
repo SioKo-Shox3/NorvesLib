@@ -31,6 +31,12 @@ namespace NorvesLib::Core::Rendering
          * 結果は CapturedFrame::SceneColor に入る（撮影の HDR の書き出し用。SourceKind が SceneColor のときは使わない）。
          */
         bool bIncludeSceneColor = false;
+        /**
+         * @brief 同じフレームのメインSceneViewの GBuffer の生の値（アルベド・法線・粗さ・深度）も読み出す
+         *
+         * GBufferAovPass（--capture-aov で足す。統計が有効な構成だけ）が書いた 2 枚を写し、結果は CapturedFrame::Aov に入る。
+         */
+        bool bIncludeAov = false;
     };
 
     struct FrameCaptureRequestSnapshot
@@ -39,6 +45,7 @@ namespace NorvesLib::Core::Rendering
         FrameCaptureSourceKind SourceKind = FrameCaptureSourceKind::PresentationColor;
         uint32_t MinimumPathTracingSamples = 0;
         bool bIncludeSceneColor = false;
+        bool bIncludeAov = false;
 
         bool IsValid() const
         {
@@ -182,6 +189,26 @@ namespace NorvesLib::Core::Rendering
         bool bFxaa = false;
     };
 
+    /**
+     * @brief GBuffer の生の値（AOV）を描いたカメラ（撮影の AOV の書き出しが、深度の意味と投影を残すための値）
+     *
+     * 座標はワールド（m、+Y が上）。向きは単位ベクトル。
+     */
+    struct FrameCaptureAovCamera
+    {
+        bool bValid = false;
+        float Position[3] = {0.0f, 0.0f, 0.0f};
+        float Forward[3] = {0.0f, 0.0f, -1.0f};
+        float Up[3] = {0.0f, 1.0f, 0.0f};
+        float Right[3] = {1.0f, 0.0f, 0.0f};
+        /** @brief 縦の画角[度]と縦横比（幅 / 高さ） */
+        float VerticalFieldOfViewDegrees = 60.0f;
+        float AspectRatio = 16.0f / 9.0f;
+        float NearPlane = 0.1f;
+        float FarPlane = 1000.0f;
+        bool bOrthographic = false;
+    };
+
     struct FrameCaptureSourceSet
     {
         FrameCaptureSource PresentationColor;
@@ -190,6 +217,14 @@ namespace NorvesLib::Core::Rendering
         FrameCaptureSource GBufferVelocity;
         FrameCaptureSource RTGIDiffuseIndirect;
         FrameCaptureSource RTGIHistoryAge;
+        /**
+         * @brief GBufferAovPass の出力（RGBA32F）。表面 = アルベド（線形 RGB）+ 粗さ、幾何 = ワールドの法線 + 視線方向の深度 m
+         *
+         * --capture-aov でパスを足した構成で、そのフレームにパスが書いたときだけ入る。
+         */
+        FrameCaptureSource AovSurface;
+        FrameCaptureSource AovGeometry;
+        FrameCaptureAovCamera AovCamera;
         /** @brief このフレームにメインSceneViewのパストレーサーが累積した試料数（ラスタなら0） */
         uint32_t PathTracingSampleCount = 0;
         /** @brief SceneColor に掛かっているプリエクスポージャ（割ると放射輝度 cd/m²。0 は不明） */
@@ -226,6 +261,9 @@ namespace NorvesLib::Core::Rendering
             GBufferVelocity = FrameCaptureSource{};
             RTGIDiffuseIndirect = FrameCaptureSource{};
             RTGIHistoryAge = FrameCaptureSource{};
+            AovSurface = FrameCaptureSource{};
+            AovGeometry = FrameCaptureSource{};
+            AovCamera = FrameCaptureAovCamera{};
             PathTracingSampleCount = 0;
             SceneColorPreExposure = 0.0f;
             SceneColorDisplay = FrameCaptureDisplayInfo{};
@@ -249,6 +287,29 @@ namespace NorvesLib::Core::Rendering
         Container::VariableArray<uint8_t> Pixels;
     };
 
+    /** @brief 読み出した 1 枚の画素（行は上から、RowPitchBytes ごと） */
+    struct CapturedImage
+    {
+        uint32_t Width = 0;
+        uint32_t Height = 0;
+        RHI::Format Format = RHI::Format::UNKNOWN;
+        uint32_t BytesPerPixel = 0;
+        uint32_t RowPitchBytes = 0;
+        Container::VariableArray<uint8_t> Pixels;
+    };
+
+    /** @brief FrameCaptureRequest::bIncludeAov で同じフレームから読み出した GBuffer の生の値 */
+    struct CapturedAov
+    {
+        /** @brief 読み出せたか（要求していない・失敗したときは false で、ほかの値は空） */
+        bool bValid = false;
+        /** @brief RGBA32F。rgb = アルベド（線形）、a = 粗さ。空の画素は rgb = 0・a = 0 */
+        CapturedImage Surface;
+        /** @brief RGBA32F。xyz = ワールドの法線（GBuffer の値のまま）、w = 視線方向の深度 m。空の画素は xyz = 0・w = +∞ */
+        CapturedImage Geometry;
+        FrameCaptureAovCamera Camera;
+    };
+
     struct CapturedFrame
     {
         FrameCaptureResultStatus Status = FrameCaptureResultStatus::SourceUnavailable;
@@ -268,6 +329,8 @@ namespace NorvesLib::Core::Rendering
         Container::VariableArray<uint8_t> Pixels;
         /** @brief 要求したときだけ入る、同じフレームのシーンの色（ブルーム前の HDR） */
         CapturedSceneColor SceneColor;
+        /** @brief 要求したときだけ入る、同じフレームの GBuffer の生の値 */
+        CapturedAov Aov;
 
         bool IsSuccess() const
         {

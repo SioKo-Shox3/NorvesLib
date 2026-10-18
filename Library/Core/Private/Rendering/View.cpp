@@ -1,5 +1,6 @@
 ﻿#include "Rendering/View.h"
 #include "Rendering/Viewport.h"
+#include "GBufferDebugPass.h"
 #include "Rendering/IViewPass.h"
 #include "Rendering/PresentationPass.h"
 #include "Rendering/PostProcessStack.h"
@@ -376,6 +377,27 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
+#if NORVES_ENABLE_STATS
+        // 撮影の AOV（--capture-aov）: GBufferAovPass がこのフレームに書いた 2 枚と、そのカメラ
+        m_FrameAovTextures[0].reset();
+        m_FrameAovTextures[1].reset();
+        m_FrameAovCamera = FrameCaptureAovCamera{};
+        if (IViewPass* aovPass = FindPass("GBufferAovPass"))
+        {
+            // GetName() がその名前を返すのはそのクラスだけ
+            const FrameCaptureAovCamera& camera = static_cast<GBufferAovPass*>(aovPass)->GetLastCamera();
+            RHI::TexturePtr aovSurface;
+            RHI::TexturePtr aovGeometry;
+            if (camera.bValid && lastResult.TryGetTexture(RenderGraphResourceNames::CaptureAovSurface, aovSurface) &&
+                lastResult.TryGetTexture(RenderGraphResourceNames::CaptureAovGeometry, aovGeometry))
+            {
+                m_FrameAovTextures[0] = aovSurface;
+                m_FrameAovTextures[1] = aovGeometry;
+                m_FrameAovCamera = camera;
+            }
+        }
+#endif
+
         RHI::TexturePtr outputTexture;
         if (lastResult.TryGetTexture(RenderGraphResourceNames::PresentationColor, outputTexture) ||
             lastResult.TryGetTexture(RenderGraphResourceNames::ToneMappedColor, outputTexture) ||
@@ -394,6 +416,9 @@ namespace NorvesLib::Core::Rendering
         m_FrameSceneColorTexture.reset();
         m_FrameSceneColorPreExposure = 0.0f;
         m_FrameSceneColorDisplay = FrameCaptureDisplayInfo{};
+        m_FrameAovTextures[0].reset();
+        m_FrameAovTextures[1].reset();
+        m_FrameAovCamera = FrameCaptureAovCamera{};
     }
 
     void View::SetFrameOutputTexture(RHI::TexturePtr texture)

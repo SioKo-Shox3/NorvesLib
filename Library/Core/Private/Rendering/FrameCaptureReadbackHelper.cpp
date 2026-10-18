@@ -30,6 +30,12 @@ namespace NorvesLib::Core::Rendering
         m_ReadbackSlots.resize(frameSlotCount);
         m_SceneColorReadbackSlots.clear();
         m_SceneColorReadbackSlots.resize(frameSlotCount);
+        m_PendingAov = PendingAovReadback{};
+        for (Container::VariableArray<ReadbackSlot>& slots : m_AovReadbackSlots)
+        {
+            slots.clear();
+            slots.resize(frameSlotCount);
+        }
         return true;
     }
 
@@ -46,6 +52,11 @@ namespace NorvesLib::Core::Rendering
         m_PendingSceneColor = PendingSceneColorReadback{};
         m_ReadbackSlots.clear();
         m_SceneColorReadbackSlots.clear();
+        m_PendingAov = PendingAovReadback{};
+        for (Container::VariableArray<ReadbackSlot>& slots : m_AovReadbackSlots)
+        {
+            slots.clear();
+        }
     }
 
     FrameCaptureRequestResult FrameCaptureReadbackHelper::RequestFrameCapture()
@@ -74,6 +85,7 @@ namespace NorvesLib::Core::Rendering
         // シーンの色そのものを撮る要求では、同じ画を二重に読まない
         m_ActiveRequest.bIncludeSceneColor =
             request.bIncludeSceneColor && request.SourceKind != FrameCaptureSourceKind::SceneColor;
+        m_ActiveRequest.bIncludeAov = request.bIncludeAov;
         m_State = State::Requested;
         return {FrameCaptureRequestStatus::Accepted, m_ActiveRequest.RequestId};
     }
@@ -254,6 +266,28 @@ namespace NorvesLib::Core::Rendering
             sceneColorReadback.bRecorded = true;
         }
 
+        // GBuffer の生の値も要求されていれば、表面・幾何の 2 枚とも同じフレームから写せることを先に確かめる
+        PendingAovReadback aovReadback;
+        if (m_ActiveRequest.bIncludeAov)
+        {
+            const FrameCaptureSource* aovSources[2] = {&sources.AovSurface, &sources.AovGeometry};
+            for (uint32_t imageIndex = 0; imageIndex < 2u; ++imageIndex)
+            {
+                FrameCaptureResultStatus aovStatus = FrameCaptureResultStatus::SourceUnavailable;
+                if (aovSources[imageIndex]->FrameNumber != source->FrameNumber ||
+                    !TryPrepareImageReadback(*aovSources[imageIndex],
+                                             m_AovReadbackSlots[imageIndex][frameSlotIndex],
+                                             aovReadback.Images[imageIndex],
+                                             aovStatus))
+                {
+                    PublishFailure(aovStatus, source->FrameNumber);
+                    return FrameCaptureRecordStatus::PublishedFailure;
+                }
+            }
+            aovReadback.Camera = sources.AovCamera;
+            aovReadback.bRecorded = true;
+        }
+
         ReadbackSlot& slot = m_ReadbackSlots[frameSlotIndex];
         if (!EnsureReadbackSlot(slot, byteCount))
         {
@@ -276,6 +310,22 @@ namespace NorvesLib::Core::Rendering
             commandList->TextureBarrier(sceneColor.Texture, RHI::ResourceState::CopySource, sceneColor.RestoreState);
         }
         m_PendingSceneColor = sceneColorReadback;
+        if (aovReadback.bRecorded)
+        {
+            const FrameCaptureSource* aovSources[2] = {&sources.AovSurface, &sources.AovGeometry};
+            for (uint32_t imageIndex = 0; imageIndex < 2u; ++imageIndex)
+            {
+                const FrameCaptureSource& aovSource = *aovSources[imageIndex];
+                commandList->TextureBarrier(aovSource.Texture, aovSource.CurrentState, RHI::ResourceState::CopySource);
+                commandList->CopyTextureToBuffer(aovSource.Texture,
+                                                 m_AovReadbackSlots[imageIndex][frameSlotIndex].Buffer,
+                                                 aovReadback.Images[imageIndex].Width,
+                                                 aovReadback.Images[imageIndex].Height,
+                                                 0);
+                commandList->TextureBarrier(aovSource.Texture, RHI::ResourceState::CopySource, aovSource.RestoreState);
+            }
+        }
+        m_PendingAov = aovReadback;
 
         m_PendingReadback.RequestId = m_ActiveRequest.RequestId;
         m_PendingReadback.FrameNumber = source->FrameNumber;
@@ -387,9 +437,27 @@ namespace NorvesLib::Core::Rendering
             sceneColorSlot.Buffer->Unmap();
         }
 
+        if (m_PendingAov.bRecorded)
+        {
+            CapturedImage* aovImages[2] = {&frame.Aov.Surface, &frame.Aov.Geometry};
+            for (uint32_t imageIndex = 0; imageIndex < 2u; ++imageIndex)
+            {
+                if (!TryCopyImageReadback(m_AovReadbackSlots[imageIndex][frameSlotIndex],
+                                          m_PendingAov.Images[imageIndex],
+                                          *aovImages[imageIndex]))
+                {
+                    PublishFailure(FrameCaptureResultStatus::MapFailed, m_PendingReadback.FrameNumber);
+                    return;
+                }
+            }
+            frame.Aov.Camera = m_PendingAov.Camera;
+            frame.Aov.bValid = true;
+        }
+
         m_CompletedFrame = frame;
         m_PendingReadback = PendingReadback{};
         m_PendingSceneColor = PendingSceneColorReadback{};
+        m_PendingAov = PendingAovReadback{};
         m_State = State::CompletedUnconsumed;
     }
 
@@ -407,6 +475,7 @@ namespace NorvesLib::Core::Rendering
         m_CompletedFrame = CapturedFrame{};
         m_PendingReadback = PendingReadback{};
         m_PendingSceneColor = PendingSceneColorReadback{};
+        m_PendingAov = PendingAovReadback{};
         m_ActiveRequest = FrameCaptureRequestSnapshot{};
         m_State = State::Idle;
         return true;
@@ -464,6 +533,80 @@ namespace NorvesLib::Core::Rendering
         return true;
     }
 
+    bool FrameCaptureReadbackHelper::TryPrepareImageReadback(const FrameCaptureSource& source,
+                                                             ReadbackSlot& slot,
+                                                             PendingImageReadback& outImage,
+                                                             FrameCaptureResultStatus& outStatus)
+    {
+        outImage = PendingImageReadback{};
+        outStatus = FrameCaptureResultStatus::SourceUnavailable;
+        if (!source.Texture)
+        {
+            return false;
+        }
+        outImage.Width = source.Texture->GetWidth();
+        outImage.Height = source.Texture->GetHeight();
+        outImage.Format = source.Texture->GetFormat();
+        if (!TryGetBytesPerPixel(outImage.Format, outImage.BytesPerPixel))
+        {
+            outStatus = FrameCaptureResultStatus::UnsupportedFormat;
+            return false;
+        }
+        if (!TryCalculateLayout(outImage.Width, outImage.Height, outImage.BytesPerPixel, outImage.RowPitchBytes,
+                                outImage.ByteCount))
+        {
+            outStatus = FrameCaptureResultStatus::InvalidDimensions;
+            return false;
+        }
+        if ((source.Texture->GetUsage() & RHI::ResourceUsage::TransferSrc) == RHI::ResourceUsage::None)
+        {
+            outStatus = FrameCaptureResultStatus::SourceMissingTransferSrc;
+            return false;
+        }
+        if (!EnsureReadbackSlot(slot, outImage.ByteCount))
+        {
+            outStatus = FrameCaptureResultStatus::ReadbackBufferCreateFailed;
+            return false;
+        }
+        outStatus = FrameCaptureResultStatus::Success;
+        return true;
+    }
+
+    bool FrameCaptureReadbackHelper::TryCopyImageReadback(ReadbackSlot& slot,
+                                                          const PendingImageReadback& image,
+                                                          CapturedImage& outImage)
+    {
+        if (!slot.Buffer)
+        {
+            return false;
+        }
+        void* mappedData = nullptr;
+        try
+        {
+            mappedData = slot.Buffer->Map(0, image.ByteCount);
+        }
+        catch (...)
+        {
+            mappedData = nullptr;
+        }
+        if (!mappedData)
+        {
+            return false;
+        }
+        outImage.Width = image.Width;
+        outImage.Height = image.Height;
+        outImage.Format = image.Format;
+        outImage.BytesPerPixel = image.BytesPerPixel;
+        outImage.RowPitchBytes = image.RowPitchBytes;
+        outImage.Pixels.resize(static_cast<size_t>(image.ByteCount));
+        if (!outImage.Pixels.empty())
+        {
+            std::memcpy(outImage.Pixels.data(), mappedData, outImage.Pixels.size());
+        }
+        slot.Buffer->Unmap();
+        return true;
+    }
+
     bool FrameCaptureReadbackHelper::TryCalculateLayout(
         uint32_t width,
         uint32_t height,
@@ -515,6 +658,7 @@ namespace NorvesLib::Core::Rendering
         m_CompletedFrame = frame;
         m_PendingReadback = PendingReadback{};
         m_PendingSceneColor = PendingSceneColorReadback{};
+        m_PendingAov = PendingAovReadback{};
         m_State = State::CompletedUnconsumed;
     }
 

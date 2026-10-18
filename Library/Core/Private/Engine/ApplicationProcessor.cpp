@@ -718,6 +718,12 @@ namespace
         return argument == String(TEXT("--capture-hdr"));
     }
 
+    // --capture-aov: --capture-png と同じフレームの GBuffer の生の値を、PNG の横へ浮動小数の画像として書く（値を取らない）。
+    [[maybe_unused]] bool IsCaptureAovOption(const String& argument)
+    {
+        return argument == String(TEXT("--capture-aov"));
+    }
+
     // --window-background: ウィンドウを前面に出さず、フォーカスを奪わずに表示する（自動の検証の起動用。値を取らない）。
     bool IsWindowBackgroundOption(const String& argument)
     {
@@ -1177,6 +1183,9 @@ namespace NorvesLib::Core::Engine
         m_CaptureRequestedRenderedFrame = 0;
         m_bCaptureRequested = false;
         m_bCaptureHdr = false;
+        m_bCaptureAov = false;
+        // --capture-aov のパスは、1 視点の撮影（--capture-png）でも Game の複数視点の撮影でも足す
+        bool bCaptureAovPass = false;
         Detail::ExitFrameOptionsAccumulator exitFrameOptions{};
         bool bEnableMultiThreadedRendering = config.bEnableMultiThreadedRendering;
         bool bCaptureDeterministic = false;
@@ -1492,6 +1501,12 @@ namespace NorvesLib::Core::Engine
             {
                 m_bCaptureHdr = true;
             }
+            // 撮影の AOV も照合のための開発ビルドの機能（パスは統計が有効な構成だけにある）
+            if (IsCaptureAovOption(args[i]))
+            {
+                m_bCaptureAov = true;
+                bCaptureAovPass = true;
+            }
 #endif
 
             if (IsWindowBackgroundOption(args[i]))
@@ -1554,11 +1569,19 @@ namespace NorvesLib::Core::Engine
             {
                 LOG_INFO("ApplicationProcessor runtime option capture_hdr=1");
             }
+            if (m_bCaptureAov)
+            {
+                LOG_INFO("ApplicationProcessor runtime option capture_aov=1");
+            }
         }
-        else if (m_bCaptureHdr)
+        else
         {
-            LOG_WARNING("ApplicationProcessor runtime option --capture-hdr は --capture-png が無いので無視する");
-            m_bCaptureHdr = false;
+            if (m_bCaptureHdr)
+            {
+                LOG_WARNING("ApplicationProcessor runtime option --capture-hdr は --capture-png が無いので無視する");
+                m_bCaptureHdr = false;
+            }
+            m_bCaptureAov = false;
         }
 
         const Detail::ExitFrameSelection exitFrameSelection = Detail::SelectExitFrameSelection(exitFrameOptions);
@@ -1646,6 +1669,7 @@ namespace NorvesLib::Core::Engine
             renderSettings.SwRasterMaxPixels = swRasterMaxPixels;
             renderSettings.bShadowProbe = bShadowProbe;
             renderSettings.bShadowProbePointOnly = bShadowProbePointOnly;
+            renderSettings.bCaptureAov = bCaptureAovPass;
             renderSettings.SunShadowMethod = shadowMethod;
             renderSettings.PointLightShadowMethod = pointShadowMethod;
             renderSettings.VsmPoolPages = vsmPoolPages;
@@ -2297,6 +2321,7 @@ namespace NorvesLib::Core::Engine
                         Rendering::FrameCaptureRequest captureRequest;
                         captureRequest.SourceKind = Rendering::FrameCaptureSourceKind::BackBuffer;
                         captureRequest.bIncludeSceneColor = m_bCaptureHdr;
+                        captureRequest.bIncludeAov = m_bCaptureAov;
                         if (renderWorld.RequestFrameCapture(captureRequest).IsAccepted())
                         {
                             m_bCaptureRequested = true;
@@ -2318,6 +2343,24 @@ namespace NorvesLib::Core::Engine
                             const bool bPngSaved = SaveCapturedFramePng(capturedFrame, m_CapturePngPath);
                             const bool bHdrSaved =
                                 !m_bCaptureHdr || Rendering::SaveCapturedSceneColorHdr(capturedFrame, m_CapturePngPath);
+                            const bool bAovSaved =
+                                !m_bCaptureAov || Rendering::SaveCapturedAov(capturedFrame, m_CapturePngPath);
+                            if (m_bCaptureAov)
+                            {
+                                if (bAovSaved)
+                                {
+                                    LOG_INFO("ApplicationProcessor capture_aov saved frame=%llu width=%u height=%u",
+                                             static_cast<unsigned long long>(capturedFrame.FrameNumber),
+                                             capturedFrame.Aov.Surface.Width,
+                                             capturedFrame.Aov.Surface.Height);
+                                }
+                                else
+                                {
+                                    LOG_ERROR("ApplicationProcessor capture_aov failed: status=%s aov=%d",
+                                              Rendering::GetFrameCaptureResultStatusName(capturedFrame.Status),
+                                              capturedFrame.Aov.bValid ? 1 : 0);
+                                }
+                            }
                             if (m_bCaptureHdr)
                             {
                                 if (bHdrSaved)
@@ -2336,7 +2379,7 @@ namespace NorvesLib::Core::Engine
                                               static_cast<unsigned int>(capturedFrame.SceneColor.Format));
                                 }
                             }
-                            if (bPngSaved && bHdrSaved)
+                            if (bPngSaved && bHdrSaved && bAovSaved)
                             {
                                 LOG_INFO("ApplicationProcessor capture_png saved frame=%llu width=%u height=%u",
                                          static_cast<unsigned long long>(capturedFrame.FrameNumber),

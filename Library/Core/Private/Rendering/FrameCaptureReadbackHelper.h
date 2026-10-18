@@ -92,9 +92,37 @@ namespace NorvesLib::Core::Rendering
             FrameCaptureDisplayInfo Display;
         };
 
+        /** @brief bIncludeAov の要求で写した 1 枚の配置 */
+        struct PendingImageReadback
+        {
+            uint32_t Width = 0;
+            uint32_t Height = 0;
+            RHI::Format Format = RHI::Format::UNKNOWN;
+            uint32_t BytesPerPixel = 0;
+            uint32_t RowPitchBytes = 0;
+            uint64_t ByteCount = 0;
+        };
+
+        /** @brief bIncludeAov の要求で、同じフレームの GBuffer の生の値（表面・幾何の 2 枚）を写した読み出し */
+        struct PendingAovReadback
+        {
+            bool bRecorded = false;
+            PendingImageReadback Images[2];
+            FrameCaptureAovCamera Camera;
+        };
+
         static bool TryGetBytesPerPixel(RHI::Format format, uint32_t& outBytesPerPixel);
         /** @brief 読み出し先のバッファを byteCount 以上にそろえる（作れなければ false） */
         bool EnsureReadbackSlot(ReadbackSlot& slot, uint64_t byteCount);
+        /** @brief 写す 1 枚の形式・配置を確かめ、読み出し先をそろえる（失敗の理由を outStatus に入れて false） */
+        bool TryPrepareImageReadback(const FrameCaptureSource& source,
+                                     ReadbackSlot& slot,
+                                     PendingImageReadback& outImage,
+                                     FrameCaptureResultStatus& outStatus);
+        /** @brief 写した 1 枚を読み出し先から outImage へ移す（写せなければ false） */
+        static bool TryCopyImageReadback(ReadbackSlot& slot,
+                                         const PendingImageReadback& image,
+                                         CapturedImage& outImage);
         static bool TryCalculateLayout(
             uint32_t width,
             uint32_t height,
@@ -112,9 +140,12 @@ namespace NorvesLib::Core::Rendering
         FrameCaptureRequestSnapshot m_ActiveRequest;
         PendingReadback m_PendingReadback;
         PendingSceneColorReadback m_PendingSceneColor;
+        PendingAovReadback m_PendingAov;
         CapturedFrame m_CompletedFrame;
         Container::VariableArray<ReadbackSlot> m_ReadbackSlots;
         Container::VariableArray<ReadbackSlot> m_SceneColorReadbackSlots;
+        /** @brief AOV の表面・幾何の読み出し先（フレームの枠ごと） */
+        Container::VariableArray<ReadbackSlot> m_AovReadbackSlots[2];
     };
 
 } // namespace NorvesLib::Core::Rendering

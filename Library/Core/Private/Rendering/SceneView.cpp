@@ -1214,6 +1214,12 @@ namespace NorvesLib::Core::Rendering
                 AddPass(MakeUnique<GBufferDebugPass>(gbufferDebugView));
             }
         }
+        // GBufferAovPass: 撮影の AOV（GBuffer の生の値を浮動小数の 2 枚へ。--capture-aov）。シーンの色へは書かない
+        if (m_bCaptureAovEnabled)
+        {
+            NORVES_LOG_INFO("SceneView", "CAPTURE_AOV --capture-aov により GBuffer の生の値を書くパスを追加する");
+            AddPass(MakeUnique<GBufferAovPass>());
+        }
 #endif
 
         // PostProcessStack: TemporalAA -> AutoExposure -> Bloom -> ToneMapping -> Vignette -> FXAA -> Upscale -> DebugDraw

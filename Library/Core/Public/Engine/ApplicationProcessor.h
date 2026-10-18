@@ -215,6 +215,8 @@ namespace NorvesLib::Core::Engine
         bool m_bCaptureRequested = false;
         // --capture-hdr: 同じフレームのブルーム前のシーンの色を、PNG の横へ放射輝度の HDR として書く（開発ビルドだけ）。
         bool m_bCaptureHdr = false;
+        // --capture-aov: 同じフレームの GBuffer の生の値（アルベド・法線・粗さ・深度）を、PNG の横へ浮動小数の画像として書く（開発ビルドだけ）。
+        bool m_bCaptureAov = false;
     };
 
 } // namespace NorvesLib::Core::Engine

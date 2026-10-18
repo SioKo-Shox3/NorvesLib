@@ -60,6 +60,19 @@ namespace NorvesLib::Core::Rendering
                 request.Packet->FrameNumber);
             result.CaptureSources.SceneColorPreExposure = primarySceneView->GetFrameSceneColorPreExposure();
             result.CaptureSources.SceneColorDisplay = primarySceneView->GetFrameSceneColorDisplay();
+            // 撮影の AOV（--capture-aov）。GBufferAovPass がこのフレームに書いたときだけ入る
+            if (primarySceneView->GetFrameAovCamera().bValid)
+            {
+                SetFrameCaptureSource(
+                    result.CaptureSources.AovSurface,
+                    primarySceneView->GetFrameAovTexture(0),
+                    request.Packet->FrameNumber);
+                SetFrameCaptureSource(
+                    result.CaptureSources.AovGeometry,
+                    primarySceneView->GetFrameAovTexture(1),
+                    request.Packet->FrameNumber);
+                result.CaptureSources.AovCamera = primarySceneView->GetFrameAovCamera();
+            }
             if (auto* pathTracingPass = dynamic_cast<PathTracingPass*>(
                     primarySceneView->FindPass("PathTracingPass")))
             {

@@ -4,6 +4,7 @@
 
 #if NORVES_ENABLE_STATS
 
+#include "Rendering/FrameCaptureTypes.h"
 #include "Rendering/FrameUseRing.h"
 #include "Rendering/IViewPass.h"
 #include "Rendering/RenderGraph/IRenderGraphPass.h"
@@ -84,6 +85,61 @@ namespace NorvesLib::Core::Rendering
         RGResourceHandle m_ColorHandle;
         RGTextureHandle m_NormalHandle;
         RGTextureHandle m_VelocityHandle;
+        RGTextureHandle m_DepthHandle;
+    };
+
+    /**
+     * @brief 撮影の AOV: GBuffer の生の値を浮動小数の 2 枚へ書き、撮影の読み出しに渡す（--capture-aov）
+     *
+     * 表面（RGBA32F）: rgb = GBuffer.Albedo（照明が読むのと同じ線形のアルベド）、a = GBuffer.Material の粗さ。
+     * 幾何（RGBA32F）: xyz = GBuffer.Normal（ワールドの法線。+Y が上。正規化し直さない）、
+     *   w = 深度から戻したワールドの位置のカメラの前方向への距離（視線方向の深度 m）。
+     * 空の画素（照明と同じ判定: アルベドの a < 0.01）は表面 0・法線 0・深度 +∞。
+     * GBufferDebugPass の可視化と違い後処理を通さず、出力は "Capture.AovSurface"・"Capture.AovGeometry" として
+     * グラフの外へ出す（View が拾い、撮影の元にする）。統計が有効な構成（Debug・RelWithDebInfo）だけに存在する。
+     */
+    class GBufferAovPass final : public IViewPass, public IRenderGraphPass
+    {
+    public:
+        GBufferAovPass() = default;
+        ~GBufferAovPass() override;
+
+        const char* GetName() const override { return "GBufferAovPass"; }
+
+        bool Initialize(ViewRenderContext& context) override;
+        void Shutdown() override;
+        void Setup(ViewRenderContext& context) override;
+        void Execute(ViewRenderContext& context) override;
+
+        void Declare(RenderGraphBuilder& builder) override;
+        void Execute(RenderGraphResources& resources, ViewRenderContext& context) override;
+
+        /** @brief 最後に書いたフレームのカメラ（書いていなければ bValid が false） */
+        const FrameCaptureAovCamera& GetLastCamera() const { return m_LastCamera; }
+
+    private:
+        struct Use
+        {
+            RHI::DescriptorSetPtr DescriptorSet;
+            RHI::BufferPtr ParamsUniform;
+        };
+
+        RHI::IDevice* m_Device = nullptr;
+        RHI::ShaderPtr m_VertexShader;
+        RHI::ShaderPtr m_FragmentShader;
+        RHI::PipelinePtr m_Pipeline;
+        RHI::RenderPassPtr m_RenderPass;
+        RHI::SamplerPtr m_Sampler;
+        RHI::FramebufferPtr m_Framebuffer;
+        RHI::ITexture* m_FramebufferTargets[2] = {nullptr, nullptr};
+        FrameUseRing<Use> m_Uses;
+        FrameCaptureAovCamera m_LastCamera;
+
+        RGResourceHandle m_SurfaceHandle;
+        RGResourceHandle m_GeometryHandle;
+        RGTextureHandle m_AlbedoHandle;
+        RGTextureHandle m_NormalHandle;
+        RGTextureHandle m_MaterialHandle;
         RGTextureHandle m_DepthHandle;
     };
 

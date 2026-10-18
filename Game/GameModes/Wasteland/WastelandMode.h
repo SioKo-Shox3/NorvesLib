@@ -47,6 +47,32 @@ namespace NorvesLib::Core::Rendering::Terrain
 
 namespace Game::GameModes
 {
+    /// 比較のために荒野から外すもの（--wasteland-hide=<名前を + でつないだもの、または all>）。地形だけの撮影などに使う
+    namespace WastelandHide
+    {
+        enum Flag : uint32_t
+        {
+            /// 雲の層
+            Clouds = 1u << 0u,
+            /// 草・低木
+            Foliage = 1u << 1u,
+            /// 崖錐の岩
+            Rocks = 1u << 2u,
+            /// 近景の石と礫
+            Gravel = 1u << 3u,
+            /// 前哨地の建物
+            Buildings = 1u << 4u,
+            /// 空気遠近
+            Aerial = 1u << 5u,
+            /// 高さフォグ
+            Fog = 1u << 6u,
+            All = (1u << 7u) - 1u,
+        };
+
+        /// "clouds+foliage" のような名前の並びか "all" を読む。知らない名前・空の名前があれば outError に入れて false
+        bool Parse(const NorvesLib::Core::Container::String &value, uint32_t &outMask,
+                   NorvesLib::Core::Container::String &outError);
+    } // namespace WastelandHide
 
     /// 地形の区画の読み込みと材質のテクスチャ（WastelandRoutine.cpp が中身を持つ）
     struct WastelandAssembly;
@@ -93,6 +119,8 @@ namespace Game::GameModes
         /// 共通の照明と灰色の板（--wasteland-common-light・--common-light-case・--wasteland-gray-plate。開発ビルドだけ）。
         /// Opts は起動引数から入り、残りは Enter が作って Leave で戻す
         Game::GameModes::WastelandCommonLight::State m_CommonLight;
+        /// 外すもの（WastelandHide::Flag の組み合わせ。--wasteland-hide。0 なら既定の見た目）
+        uint32_t m_HideMask = 0;
     };
 
     class WastelandRoutine

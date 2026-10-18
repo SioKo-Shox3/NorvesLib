@@ -61,6 +61,26 @@
 #           かつ窓の中の輝度の変動係数（標準偏差 / 平均）が PLATE_UNIFORMITY 以下（窓が板の中に収まり、影・ほかの物が入らない）。
 #           R・G・B ごとの比も書く（sky は空の色の比が保たれるか）。
 #
+#   python Scripts/Terrain/ReferenceCheck.py --aov --capture <出力先> [--views a,b,...] [--verify]
+#       CaptureScene.ps1 -Aov の撮影（<視点>.aov.json と、そこに書かれたアルベド・法線・粗さ・深度の PFM）を視点ごとに検査し、
+#       結果を <出力先>/aov_check.json に書く。--verify は入力のハッシュ（inputs.json）を今のファイルと照らす。
+#       値の約束: アルベドは GBuffer の線形の値、法線はワールド空間（+Y が上）の GBuffer の値のまま、深度はカメラの前方向への
+#       距離 m（視線方向の深度）、空の画素は深度が +∞ で、ほかの値は 0。
+#       1. 法線: 長さが 1 ± AOV_NORMAL_LENGTH_TOLERANCE の画素が AOV_NORMAL_LENGTH_RATIO 以上、カメラに向く（視線と逆向きの成分が正）
+#          画素が AOV_NORMAL_FACING_RATIO 以上、y の平均が AOV_NORMAL_MEAN_Y より大きい（+Y が上）。
+#       2. 深度: 表面は有限でカメラの近い面より奥、空は +∞。aov.json のカメラで位置に戻し、縦に隣り合う表面の画素の組で、
+#          上の画素の水平の距離が下より縮む組（許容 AOV_MONOTONIC_RELATIVE × 距離 + AOV_MONOTONIC_ABSOLUTE）が
+#          AOV_MONOTONIC_MAX_INVERSIONS 以下（高さ場の地形は、同じ縦の面の中で上の光線ほど遠くに当たる。前に立つ物・宙の物で崩れる）。
+#          列ごとのいちばん下の空より上にある表面が AOV_MAX_SURFACE_ABOVE_SKY 以下。
+#          深度から作った面の向き（隣の画素の位置の差の外積）と GBuffer の法線の角度の中央値が AOV_DEPTH_NORMAL_MEDIAN_DEG 以下
+#          （深度の単位・軸とカメラの記録の確かめ。法線マップの細部の分だけずれる）。
+#       3. アルベドと粗さ: 0〜1 に入り、アルベドの輝度の 1〜99 % が AOV_ALBEDO_Y_RANGE（自然の地面の範囲）に収まる。
+#       4. 起動引数が --wasteland-hide=all（7 つすべて）のとき: 2 の縮む組・空より上の表面が AOV_BARE_MAX_INVERSIONS・
+#          AOV_BARE_MAX_SURFACE_ABOVE_SKY 以下（高さ場だけなら稜線の縁の数画素しか崩れない）。Game のログに WASTELAND_HIDE mask=127 があり、草・石を
+#          渡した行（WASTELAND_FOLIAGE_PUBLISHED）がどれも batches=0、建物（WASTELAND_BUILDING）・崖錐の岩（WASTELAND_TALUS）の
+#          行が無い。共通の照明（--wasteland-common-light）なら、空の画素の HDR が CommonLight.json の一様な空の放射輝度に
+#          ±AOV_SKY_TOLERANCE で合う画素が AOV_SKY_RATIO 以上（雲・霧・霞が空に乗らない）。
+#
 # 終了コード: すべて合格なら 0、どれかが不合格なら 1。
 import argparse
 import hashlib
@@ -143,6 +163,32 @@ PLATE_WINDOW = 0.2
 PLATE_TOLERANCE = 0.03
 PLATE_UNIFORMITY = 0.01
 PLATE_GAME_ARGS = ("--wasteland-common-light", "--wasteland-gray-plate")
+
+# --aov の基準（上の説明を参照）
+AOV_HIDE_PREFIX = "--wasteland-hide="
+AOV_HIDE_NAMES = ("clouds", "foliage", "rocks", "gravel", "buildings", "aerial", "fog")
+AOV_NORMAL_LENGTH_TOLERANCE = 0.01
+AOV_NORMAL_LENGTH_RATIO = 0.999
+AOV_NORMAL_FACING_RATIO = 0.98
+AOV_NORMAL_MEAN_Y = 0.3
+AOV_MONOTONIC_RELATIVE = 0.02
+AOV_MONOTONIC_ABSOLUTE = 0.05
+AOV_MONOTONIC_MAX_INVERSIONS = 0.01
+AOV_MAX_SURFACE_ABOVE_SKY = 0.001
+# 地形だけの撮影（--wasteland-hide=all）の厳しい上限。高さ場だけなら崩れるのは稜線の縁の数画素で、草・岩・建物が立つと
+# 何十倍にも増える（ref_cliff_01 で地形だけ 3.7e-6・1.2e-6、既定の荒野 9.1e-5・3.4e-5）
+AOV_BARE_MAX_INVERSIONS = 5e-5
+AOV_BARE_MAX_SURFACE_ABOVE_SKY = 1e-5
+AOV_DEPTH_NORMAL_MEDIAN_DEG = 20.0
+AOV_ALBEDO_Y_RANGE = (0.02, 0.9)
+AOV_SKY_TOLERANCE = 0.01
+AOV_SKY_RATIO = 0.999
+# 地形だけの撮影で Game のログに要る行・あってはならない行
+AOV_BARE_LOG_LINES = ("WASTELAND_HIDE mask=127 ",)
+AOV_BARE_ABSENT_LOG_LINES = ("WASTELAND_BUILDING id=", "WASTELAND_TALUS casters=")
+# 草・石を RenderWorld へ渡した行と、その束の数の語
+AOV_FOLIAGE_PUBLISHED_LINE = "WASTELAND_FOLIAGE_PUBLISHED "
+AOV_FOLIAGE_PUBLISHED_KEY = "batches="
 
 
 def git_output(args):
@@ -884,6 +930,365 @@ def run_plate(capture_dir, verify):
     return 0 if not failures else 1
 
 
+# ---- --aov（GBuffer の生の値）----
+
+def read_pfm_any(path):
+    """RGB（"PF"）か 1 チャンネル（"Pf"）の PFM を (高さ, 幅, チャンネル数) の float32 で読む（画像の上を 0 行目にする）"""
+    with open(path, "rb") as f:
+        data = f.read()
+    tokens = []
+    pos = 0
+    while len(tokens) < 4:
+        while pos < len(data) and data[pos:pos + 1].isspace():
+            pos += 1
+        start = pos
+        while pos < len(data) and not data[pos:pos + 1].isspace():
+            pos += 1
+        if start == pos:
+            raise ValueError("PFM の見出しが短い")
+        tokens.append(data[start:pos].decode("ascii"))
+    pos += 1
+    if tokens[0] not in ("PF", "Pf"):
+        raise ValueError(f"PFM でない（{tokens[0]}）")
+    channels = 3 if tokens[0] == "PF" else 1
+    width, height, scale = int(tokens[1]), int(tokens[2]), float(tokens[3])
+    dtype = "<f4" if scale < 0 else ">f4"
+    count = width * height * channels
+    if len(data) - pos != count * 4:
+        raise ValueError(f"PFM の画素の量が見出しと合わない（{len(data) - pos} バイト、見出しから {count * 4} バイト）")
+    pixels = np.frombuffer(data, dtype=dtype, count=count, offset=pos)
+    return pixels.reshape(height, width, channels)[::-1].astype(np.float32)
+
+
+def aov_capture_args(capture_dir):
+    """metrics.json の Game の起動引数（無ければ None）"""
+    return plate_capture_args(capture_dir)
+
+
+def aov_hide_names(game_args):
+    """起動引数の --wasteland-hide= から外したものの名前の集合（all は全部に開く）"""
+    names = set()
+    for arg in game_args or []:
+        if arg.startswith(AOV_HIDE_PREFIX):
+            for token in arg[len(AOV_HIDE_PREFIX):].split("+"):
+                names.update(AOV_HIDE_NAMES if token == "all" else {token})
+    return names
+
+
+def aov_pixel_rays(camera, width, height):
+    """画素の中心を通る、カメラの前方向の成分が 1 の向き（ワールド。(高さ, 幅, 3)）。深度（前方向への距離）を掛けると位置になる"""
+    forward = np.asarray(camera["forward"], dtype=np.float64)
+    up = np.asarray(camera["up"], dtype=np.float64)
+    right = np.asarray(camera["right"], dtype=np.float64)
+    tan_half = np.tan(np.radians(float(camera["vertical_fov_degrees"])) / 2.0)
+    aspect = float(camera["aspect_ratio"])
+    xs = ((np.arange(width) + 0.5) / width * 2.0 - 1.0) * tan_half * aspect
+    ys = (1.0 - (np.arange(height) + 0.5) / height * 2.0) * tan_half
+    return (forward[None, None, :] + xs[None, :, None] * right[None, None, :] + ys[:, None, None] * up[None, None, :])
+
+
+def check_aov_view(capture_dir, view, game_args, light):
+    result = {"view": view, "pass": False, "failures": []}
+    fails = result["failures"]
+    meta_path = os.path.join(capture_dir, f"{view}.aov.json")
+    png_path = os.path.join(capture_dir, f"{view}.png")
+    if not os.path.isfile(meta_path):
+        fails.append(f"{os.path.basename(meta_path)} が無い")
+        return result
+    with open(meta_path, encoding="utf-8") as f:
+        meta = json.load(f)
+    expected_meaning = {"albedo": "linear_albedo", "normal": "world_normal_y_up", "roughness": "perceptual_roughness",
+                        "depth": "view_axis_distance"}
+    images = {}
+    for key, channels in (("albedo", 3), ("normal", 3), ("roughness", 1), ("depth", 1)):
+        entry = meta.get(key) or {}
+        if entry.get("meaning") != expected_meaning[key] or int(entry.get("channels", 0)) != channels:
+            fails.append(f"aov.json の {key} の意味・チャンネル数が約束と違う（{entry}）")
+        path = os.path.join(capture_dir, str(entry.get("file", "")))
+        if not os.path.isfile(path):
+            fails.append(f"{key} の画像 {entry.get('file')} が無い")
+            continue
+        try:
+            image = read_pfm_any(path).astype(np.float64)
+        except ValueError as error:
+            fails.append(f"{key} の PFM を読めない: {error}")
+            continue
+        if image.shape[2] != channels:
+            fails.append(f"{key} の PFM のチャンネル数 {image.shape[2]} が {channels} でない")
+            continue
+        images[key] = image
+    if fails:
+        return result
+    width, height = int(meta.get("width", 0)), int(meta.get("height", 0))
+    result["size"] = f"{width}x{height}"
+    for key, image in images.items():
+        if image.shape[:2] != (height, width):
+            fails.append(f"{key} の大きさ {image.shape[1]}x{image.shape[0]} が aov.json {width}x{height} と違う")
+    if os.path.isfile(png_path):
+        png_size = Image.open(png_path).size
+        if png_size != (width, height):
+            fails.append(f"PNG の大きさ {png_size[0]}x{png_size[1]} が AOV {width}x{height} と違う")
+    else:
+        fails.append(f"{view}.png が無い")
+    if fails:
+        return result
+
+    albedo = images["albedo"]
+    normal = images["normal"]
+    roughness = images["roughness"][..., 0]
+    depth = images["depth"][..., 0]
+    camera = meta.get("camera") or {}
+
+    # 空の画素: 深度が +∞（AOV の約束では空は表面の値がすべて 0）
+    sky = np.isposinf(depth)
+    surface = ~sky
+    surface_count = int(surface.sum())
+    result["sky_ratio"] = float(sky.mean())
+    if surface_count == 0:
+        fails.append("表面の画素が無い（全部が空）")
+        return result
+    for key, image in (("albedo", albedo), ("normal", normal), ("roughness", roughness[..., None])):
+        if np.isnan(image).any() or np.isinf(image).any():
+            fails.append(f"{key} に NaN・Inf がある")
+        if sky.any() and np.abs(image[sky]).max() != 0.0:
+            fails.append(f"空の画素の {key} が 0 でない（空の判定と AOV の書き方が食い違う）")
+    if np.isnan(depth).any() or np.isneginf(depth).any():
+        fails.append("深度に NaN・−∞ がある")
+
+    # 1. 法線: 長さ 1（GBuffer の値のまま）、カメラに向く、+Y が上
+    length = np.linalg.norm(normal[surface], axis=-1)
+    length_error = np.abs(length - 1.0)
+    within = float((length_error <= AOV_NORMAL_LENGTH_TOLERANCE).mean())
+    rays = aov_pixel_rays(camera, width, height)
+    unit_rays = rays / np.linalg.norm(rays, axis=-1, keepdims=True)
+    facing = float((np.einsum("ij,ij->i", normal[surface], -unit_rays[surface]) > 0.0).mean())
+    result["normal"] = {
+        "length_within_ratio": within,
+        "length_error_p99": float(np.percentile(length_error, 99.0)),
+        "length_error_max": float(length_error.max()),
+        "facing_camera_ratio": facing,
+        "mean_y": float(normal[surface][:, 1].mean()),
+    }
+    if within < AOV_NORMAL_LENGTH_RATIO:
+        fails.append(f"法線の長さが 1 ± {AOV_NORMAL_LENGTH_TOLERANCE} に入る画素 {within:.5f} が {AOV_NORMAL_LENGTH_RATIO} 未満")
+    if facing < AOV_NORMAL_FACING_RATIO:
+        fails.append(f"カメラに向く法線の割合 {facing:.4f} が {AOV_NORMAL_FACING_RATIO} 未満（法線がワールド空間でない・向きが逆）")
+    if not result["normal"]["mean_y"] > AOV_NORMAL_MEAN_Y:
+        fails.append(f"法線の y の平均 {result['normal']['mean_y']:.3f} が {AOV_NORMAL_MEAN_Y} 以下（+Y が上でない）")
+
+    # 2. 深度: 表面は有限で正、空は +∞。位置に戻した点の水平の距離が、画面の上へ行くほど縮まない（地形だけの高さ場では
+    #    同じ縦の面の中で上の光線ほど遠くに当たる）。深度から作った面の向きが GBuffer の法線と合う（深度の単位と軸の確かめ）
+    surface_depth = depth[surface]
+    near = float(camera.get("near", 0.0))
+    result["depth"] = {
+        "min_m": float(surface_depth.min()),
+        "p50_m": float(np.percentile(surface_depth, 50.0)),
+        "max_m": float(surface_depth.max()),
+    }
+    if not surface_depth.min() >= near * 0.99:
+        fails.append(f"表面の深度の最小 {surface_depth.min():.4g} m がカメラの近い面 {near} m より手前")
+    position = np.asarray(camera["position"], dtype=np.float64)
+    world = position[None, None, :] + rays * np.where(surface, depth, 0.0)[..., None]
+    horizontal = np.hypot(world[..., 0] - position[0], world[..., 2] - position[2])
+    # 縦に隣り合う表面の画素の組（上と下）で、上の水平の距離が下より許容を超えて短いもの
+    upper, lower = horizontal[:-1, :], horizontal[1:, :]
+    pair = surface[:-1, :] & surface[1:, :]
+    tolerance = AOV_MONOTONIC_RELATIVE * lower + AOV_MONOTONIC_ABSOLUTE
+    inversions = pair & (upper < lower - tolerance)
+    inversion_ratio = float(inversions.sum() / max(1, pair.sum()))
+    # 空の上に表面が浮く画素（列ごとに、いちばん下の空の画素より上にある表面）
+    any_sky = sky.any(axis=0)
+    lowest_sky = np.where(any_sky, height - 1 - np.argmax(sky[::-1, :], axis=0), -1)
+    rows = np.arange(height)[:, None]
+    floating = surface & (rows < lowest_sky[None, :])
+    floating_ratio = float(floating.sum() / surface_count)
+    # 深度から作った面の向き（右と下の隣との差の外積）と GBuffer の法線の角度
+    dx = world[1:-1, 2:] - world[1:-1, :-2]
+    dy = world[2:, 1:-1] - world[:-2, 1:-1]
+    geometric = np.cross(dy, dx)
+    geometric_length = np.linalg.norm(geometric, axis=-1)
+    interior = surface[1:-1, 1:-1] & surface[1:-1, 2:] & surface[1:-1, :-2] & surface[2:, 1:-1] & surface[:-2, 1:-1]
+    interior &= geometric_length > 0.0
+    geometric = geometric / np.maximum(geometric_length, 1e-30)[..., None]
+    # 外積の向きをカメラへ向ける（右・下の取り方の符号に依らない）
+    flip = np.einsum("...j,...j->...", geometric, -unit_rays[1:-1, 1:-1]) < 0.0
+    geometric[flip] *= -1.0
+    shading = normal[1:-1, 1:-1] / np.maximum(np.linalg.norm(normal[1:-1, 1:-1], axis=-1), 1e-30)[..., None]
+    cosine = np.clip(np.einsum("...j,...j->...", geometric, shading), -1.0, 1.0)
+    angles = np.degrees(np.arccos(cosine[interior]))
+    result["depth"].update({
+        "upward_pairs": int(pair.sum()),
+        "horizontal_inversion_ratio": inversion_ratio,
+        "surface_above_sky_ratio": floating_ratio,
+        "depth_normal_angle_p50_deg": float(np.percentile(angles, 50.0)) if angles.size else None,
+        "depth_normal_angle_p90_deg": float(np.percentile(angles, 90.0)) if angles.size else None,
+    })
+    if inversion_ratio > AOV_MONOTONIC_MAX_INVERSIONS:
+        fails.append(f"上へ行くほど水平の距離が縮む縦の組 {inversion_ratio:.5f} が {AOV_MONOTONIC_MAX_INVERSIONS} を超える"
+                     "（深度が単調でない・地形の前に物がある）")
+    if floating_ratio > AOV_MAX_SURFACE_ABOVE_SKY:
+        fails.append(f"空より上にある表面の画素 {floating_ratio:.5f} が {AOV_MAX_SURFACE_ABOVE_SKY} を超える（宙に浮く物がある）")
+    if not angles.size or np.percentile(angles, 50.0) > AOV_DEPTH_NORMAL_MEDIAN_DEG:
+        fails.append(f"深度から作った面の向きと法線の角度の中央値 {result['depth']['depth_normal_angle_p50_deg']} 度が "
+                     f"{AOV_DEPTH_NORMAL_MEDIAN_DEG} 度を超える（深度の単位・軸かカメラの記録が違う）")
+
+    # 3. アルベドと粗さ: 0〜1 に入り、自然の地面の範囲にある
+    surface_albedo = albedo[surface]
+    albedo_y = surface_albedo @ LUMA
+    result["albedo"] = {
+        "min": float(surface_albedo.min()),
+        "max": float(surface_albedo.max()),
+        "y_p01": float(np.percentile(albedo_y, 1.0)),
+        "y_p50": float(np.percentile(albedo_y, 50.0)),
+        "y_p99": float(np.percentile(albedo_y, 99.0)),
+        "mean_rgb": surface_albedo.mean(axis=0).tolist(),
+    }
+    surface_roughness = roughness[surface]
+    result["roughness"] = {
+        "min": float(surface_roughness.min()),
+        "p50": float(np.percentile(surface_roughness, 50.0)),
+        "max": float(surface_roughness.max()),
+    }
+    if surface_albedo.min() < 0.0 or surface_albedo.max() > 1.0:
+        fails.append(f"アルベドが 0〜1 の外にある（最小 {surface_albedo.min():.4g}・最大 {surface_albedo.max():.4g}）")
+    if not (AOV_ALBEDO_Y_RANGE[0] <= result["albedo"]["y_p01"] and result["albedo"]["y_p99"] <= AOV_ALBEDO_Y_RANGE[1]):
+        fails.append(f"アルベドの輝度の 1〜99 % の幅 {result['albedo']['y_p01']:.3f}〜{result['albedo']['y_p99']:.3f} が "
+                     f"自然の地面の範囲 {AOV_ALBEDO_Y_RANGE[0]}〜{AOV_ALBEDO_Y_RANGE[1]} を外れる（線形でない・照明が混ざる）")
+    if surface_roughness.min() < 0.0 or surface_roughness.max() > 1.0:
+        fails.append(f"粗さが 0〜1 の外にある（最小 {surface_roughness.min():.4g}・最大 {surface_roughness.max():.4g}）")
+
+    # 4. 地形だけの撮影（--wasteland-hide=all）: 雲・物・霞が無い
+    hidden = aov_hide_names(game_args)
+    bare = hidden >= set(AOV_HIDE_NAMES)
+    result["bare"] = {"hidden": sorted(hidden), "checked": bare}
+    if bare:
+        # 高さ場の地形だけなので、前に立つ物・宙の物で崩れる組が稜線の縁の分しか無い
+        if inversion_ratio > AOV_BARE_MAX_INVERSIONS:
+            fails.append(f"地形だけの撮影で、上へ行くほど水平の距離が縮む縦の組 {inversion_ratio:.2e} が "
+                         f"{AOV_BARE_MAX_INVERSIONS:.0e} を超える（地形の前に物が残る）")
+        if floating_ratio > AOV_BARE_MAX_SURFACE_ABOVE_SKY:
+            fails.append(f"地形だけの撮影で、空より上にある表面の画素 {floating_ratio:.2e} が "
+                         f"{AOV_BARE_MAX_SURFACE_ABOVE_SKY:.0e} を超える（宙に浮く物が残る）")
+        log_path = os.path.join(capture_dir, f"{view}.Game.log")
+        if not os.path.isfile(log_path):
+            fails.append(f"{os.path.basename(log_path)} が無い（外したものを確かめられない）")
+        else:
+            with open(log_path, encoding="utf-8", errors="replace") as f:
+                log_text = f.read()
+            for line in AOV_BARE_LOG_LINES:
+                if line not in log_text:
+                    fails.append(f"Game のログに「{line}」が無い（外す指定が掛かっていない）")
+            for line in AOV_BARE_ABSENT_LOG_LINES:
+                if line in log_text:
+                    fails.append(f"Game のログに「{line}」がある（外したはずの物が置かれた）")
+            # 草・石を RenderWorld へ渡した行がどれも 0 束（外した草・石を渡していない）
+            published = [int(token.split("=", 1)[1]) for line in log_text.splitlines()
+                         if AOV_FOLIAGE_PUBLISHED_LINE in line
+                         for token in line.split(AOV_FOLIAGE_PUBLISHED_LINE, 1)[1].split()
+                         if token.startswith(AOV_FOLIAGE_PUBLISHED_KEY)]
+            result["bare"]["foliage_published_batches"] = published
+            if not published:
+                fails.append("Game のログに WASTELAND_FOLIAGE_PUBLISHED が無い（草・石を渡したかを確かめられない）")
+            elif max(published) != 0:
+                fails.append(f"草・石を {max(published)} 束渡している（外したはずの草・石が描かれる）")
+        # 空の画素の色が一様な空と一致する（雲・霧・霞が空に乗らない）。共通の照明でない撮影は空が一様でないので見ない
+        if "--wasteland-common-light" in (game_args or []):
+            hdr_path = os.path.join(capture_dir, f"{view}.hdr.pfm")
+            if not os.path.isfile(hdr_path):
+                fails.append(f"{view}.hdr.pfm が無い（空の色を確かめられない。-Hdr と一緒に撮る）")
+            elif not sky.any():
+                fails.append("空の画素が無い（空の色を確かめられない）")
+            else:
+                hdr = DT.read_pfm(hdr_path).astype(np.float64)
+                if hdr.shape[:2] != (height, width):
+                    fails.append("HDR の大きさが AOV と違う")
+                else:
+                    expected_sky = np.asarray(light["sky_radiance_rgb"], dtype=np.float64)
+                    case = next((a.split("=", 1)[1] for a in game_args if a.startswith("--common-light-case=")), "both")
+                    if case == "sun":
+                        expected_sky = np.zeros(3)
+                    sky_pixels = hdr[sky]
+                    deviation = np.abs(sky_pixels - expected_sky[None, :]) / np.maximum(expected_sky.max(), 1e-30)
+                    sky_within = float((deviation.max(axis=-1) <= AOV_SKY_TOLERANCE).mean())
+                    result["bare"].update({
+                        "sky_pixels": int(sky.sum()),
+                        "sky_expected_rgb": expected_sky.tolist(),
+                        "sky_mean_rgb": sky_pixels.mean(axis=0).tolist(),
+                        "sky_within_ratio": sky_within,
+                        "sky_max_relative_deviation": float(deviation.max()),
+                    })
+                    if sky_within < AOV_SKY_RATIO:
+                        fails.append(f"空の画素のうち一様な空の色に ±{100.0 * AOV_SKY_TOLERANCE:.1f} % で合うもの {sky_within:.5f} が "
+                                     f"{AOV_SKY_RATIO} 未満（雲・霧・霞が乗る）")
+        else:
+            result["bare"]["sky_note"] = "共通の照明でないので空の色は見ない"
+    result["pass"] = not fails
+    return result
+
+
+def run_aov(capture_dir, views, verify):
+    failures = []
+    inputs_ok, input_failures, record = check_inputs(capture_dir)
+    if verify and not inputs_ok:
+        failures.extend(input_failures)
+    metric_views = views_from_metrics(capture_dir)
+    game_args = aov_capture_args(capture_dir)
+    if metric_views is None or game_args is None:
+        failures.append("metrics.json が無い（CaptureScene.ps1 -Aov の出力先でない）")
+        metric_views = []
+    targets = views if views else metric_views
+    if not targets:
+        failures.append("検査する視点が無い")
+    light = load_common_light()
+    results = []
+    for view in targets:
+        if view not in metric_views:
+            failures.append(f"{view}: metrics.json に無い視点")
+            continue
+        result = check_aov_view(capture_dir, view, game_args, light)
+        results.append(result)
+        normal = result.get("normal", {})
+        depth = result.get("depth", {})
+        albedo = result.get("albedo", {})
+        bare = result.get("bare", {})
+        print(f"REFERENCE_CHECK aov view={view} pass={int(result['pass'])} size={result.get('size')} "
+              f"sky_ratio={result.get('sky_ratio')} normal_len_within={normal.get('length_within_ratio')} "
+              f"normal_len_err_max={normal.get('length_error_max')} facing={normal.get('facing_camera_ratio')} "
+              f"normal_mean_y={normal.get('mean_y')} depth_m={depth.get('min_m')}..{depth.get('max_m')} "
+              f"inversions={depth.get('horizontal_inversion_ratio')} above_sky={depth.get('surface_above_sky_ratio')} "
+              f"depth_normal_p50={depth.get('depth_normal_angle_p50_deg')} albedo_y={albedo.get('y_p01')}..{albedo.get('y_p99')} "
+              f"albedo_range={albedo.get('min')}..{albedo.get('max')} bare={int(bool(bare.get('checked')))} "
+              f"sky_within={bare.get('sky_within_ratio')} inputs_current={int(bool(inputs_ok))}")
+        failures.extend(f"{view}: {failure}" for failure in result["failures"])
+    report = {
+        "mode": "aov",
+        "verify": bool(verify),
+        "inputs_current": inputs_ok,
+        "inputs_record": record,
+        "game_args": game_args,
+        "criteria": {
+            "normal_length_tolerance": AOV_NORMAL_LENGTH_TOLERANCE, "normal_length_ratio": AOV_NORMAL_LENGTH_RATIO,
+            "normal_facing_ratio": AOV_NORMAL_FACING_RATIO, "normal_mean_y": AOV_NORMAL_MEAN_Y,
+            "monotonic_relative": AOV_MONOTONIC_RELATIVE, "monotonic_absolute_m": AOV_MONOTONIC_ABSOLUTE,
+            "monotonic_max_inversions": AOV_MONOTONIC_MAX_INVERSIONS, "max_surface_above_sky": AOV_MAX_SURFACE_ABOVE_SKY,
+            "bare_max_inversions": AOV_BARE_MAX_INVERSIONS, "bare_max_surface_above_sky": AOV_BARE_MAX_SURFACE_ABOVE_SKY,
+            "depth_normal_median_deg": AOV_DEPTH_NORMAL_MEDIAN_DEG, "albedo_y_range": list(AOV_ALBEDO_Y_RANGE),
+            "sky_tolerance": AOV_SKY_TOLERANCE, "sky_ratio": AOV_SKY_RATIO,
+        },
+        "views": results,
+        "failures": failures,
+    }
+    report_path = os.path.join(capture_dir, "aov_check.json")
+    with open(report_path, "w", encoding="utf-8") as f:
+        json.dump(report, f, indent=2, ensure_ascii=False)
+    for failure in failures:
+        print(f"REFERENCE_CHECK failure: {failure}")
+    status = "pass" if not failures else "fail"
+    print(f"REFERENCE_CHECK result={status} mode=aov views={len(targets)} inputs_current={int(inputs_ok)} "
+          f"report={report_path}")
+    return 0 if not failures else 1
+
+
 def main():
     # 結果の行を保存して読むので、端末の符号に関わらず UTF-8 で書く
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -894,6 +1299,7 @@ def main():
     parser.add_argument("--hdr", action="store_true", help="ブルーム前の HDR の撮影を検査する")
     parser.add_argument("--display", action="store_true", help="表示変換の再現（DisplayTransform.py）を照合の撮影と照らす")
     parser.add_argument("--plate", action="store_true", help="共通の照明の灰色の板の明るさを、入力から求めた期待と照らす")
+    parser.add_argument("--aov", action="store_true", help="GBuffer の生の値（AOV）の撮影を検査する")
     parser.add_argument("--views", default="", help="検査する視点（カンマ区切り。省くと metrics.json の全視点）")
     parser.add_argument("--verify", action="store_true", help="入力のハッシュを今のファイルと照らし、古い結果を拒否する")
     args = parser.parse_args()
@@ -911,7 +1317,10 @@ def main():
         return run_display(capture_dir, args.verify)
     if args.plate:
         return run_plate(capture_dir, args.verify)
-    print("REFERENCE_CHECK result=fail reason=no_mode（--record-inputs か --hdr か --display か --plate を指定する）")
+    if args.aov:
+        views = [v.strip() for v in args.views.split(",") if v.strip()]
+        return run_aov(capture_dir, views, args.verify)
+    print("REFERENCE_CHECK result=fail reason=no_mode（--record-inputs か --hdr か --display か --plate か --aov を指定する）")
     return 1
 
 

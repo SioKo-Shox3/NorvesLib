@@ -116,6 +116,51 @@ namespace NorvesLib::Core::Rendering
             }
             return path.substr(0, lastDot);
         }
+
+        // RGBA32F の 1 枚から、選んだチャンネルを PFM（channelCount が 3 なら "PF"、1 なら "Pf"）にする
+        bool BuildFloatPfm(const CapturedImage& image,
+                           const uint32_t* pChannels,
+                           uint32_t channelCount,
+                           VariableArray<uint8_t>& outPfm)
+        {
+            if (image.Format != RHI::Format::R32G32B32A32_FLOAT || image.BytesPerPixel != 16 || image.Width == 0 ||
+                image.Height == 0 || (channelCount != 1u && channelCount != 3u))
+            {
+                return false;
+            }
+            const uint64_t tightRowPitch = static_cast<uint64_t>(image.Width) * image.BytesPerPixel;
+            if (image.RowPitchBytes < tightRowPitch ||
+                image.Pixels.size() < static_cast<size_t>(image.RowPitchBytes) * image.Height)
+            {
+                return false;
+            }
+            char header[64] = {};
+            const int headerLength = std::snprintf(header, sizeof(header), "%s\n%u %u\n-1.0\n",
+                                                   channelCount == 3u ? "PF" : "Pf", image.Width, image.Height);
+            if (headerLength <= 0 || headerLength >= static_cast<int>(sizeof(header)))
+            {
+                return false;
+            }
+            const size_t pixelCount = static_cast<size_t>(image.Width) * image.Height;
+            outPfm.resize(static_cast<size_t>(headerLength) + pixelCount * channelCount * sizeof(float));
+            std::memcpy(outPfm.data(), header, static_cast<size_t>(headerLength));
+            float* pDest = reinterpret_cast<float*>(outPfm.data() + headerLength);
+            for (uint32_t row = 0; row < image.Height; ++row)
+            {
+                // 画像の上の行（読み出しの 0 行目）を PFM の最後の行にする
+                const uint8_t* pSourceRow =
+                    image.Pixels.data() + static_cast<size_t>(image.RowPitchBytes) * (image.Height - 1u - row);
+                for (uint32_t x = 0; x < image.Width; ++x)
+                {
+                    for (uint32_t channel = 0; channel < channelCount; ++channel)
+                    {
+                        std::memcpy(pDest++, pSourceRow + static_cast<size_t>(x) * 16u + pChannels[channel] * 4u,
+                                    sizeof(float));
+                    }
+                }
+            }
+            return true;
+        }
     } // namespace
 
     bool SaveCapturedSceneColorHdr(const CapturedFrame& frame, const Container::String& pngPath)
@@ -310,8 +355,114 @@ namespace NorvesLib::Core::Rendering
         }
         return WriteBytes(jsonPath, json, static_cast<size_t>(jsonLength + postLength));
     }
+
+    bool SaveCapturedAov(const CapturedFrame& frame, const Container::String& pngPath)
+    {
+        const CapturedAov& aov = frame.Aov;
+        if (!frame.IsSuccess() || !aov.bValid || !aov.Camera.bValid || aov.Surface.Width != aov.Geometry.Width ||
+            aov.Surface.Height != aov.Geometry.Height)
+        {
+            return false;
+        }
+        // 表面 = アルベド（rgb）+ 粗さ（a）、幾何 = 法線（xyz）+ 視線方向の深度（w）
+        struct AovImage
+        {
+            const CapturedImage* Source;
+            uint32_t Channels[3];
+            uint32_t ChannelCount;
+            const TCHAR* Suffix;
+        };
+        const AovImage images[] = {
+            {&aov.Surface, {0u, 1u, 2u}, 3u, TEXT(".aov.albedo.pfm")},
+            {&aov.Geometry, {0u, 1u, 2u}, 3u, TEXT(".aov.normal.pfm")},
+            {&aov.Surface, {3u, 0u, 0u}, 1u, TEXT(".aov.roughness.pfm")},
+            {&aov.Geometry, {3u, 0u, 0u}, 1u, TEXT(".aov.depth.pfm")},
+        };
+        const String basePath = RemoveExtension(pngPath);
+        VariableArray<char> fileNames[4];
+        for (uint32_t index = 0; index < 4u; ++index)
+        {
+            VariableArray<uint8_t> pfm;
+            if (!BuildFloatPfm(*images[index].Source, images[index].Channels, images[index].ChannelCount, pfm))
+            {
+                return false;
+            }
+            const String path = basePath + String(images[index].Suffix);
+            if (!WriteBytes(path, pfm.data(), pfm.size()))
+            {
+                return false;
+            }
+            fileNames[index] = ToAsciiFileName(path);
+        }
+
+        const VariableArray<char> pngName = ToAsciiFileName(pngPath);
+        const FrameCaptureAovCamera& camera = aov.Camera;
+        char json[4096] = {};
+        const int jsonLength = std::snprintf(
+            json,
+            sizeof(json),
+            "{\n"
+            "  \"format\": \"pfm_f32_le_bottom_up\",\n"
+            "  \"png\": \"%s\",\n"
+            "  \"width\": %u,\n"
+            "  \"height\": %u,\n"
+            "  \"frame_number\": %llu,\n"
+            "  \"source\": \"gbuffer_raw\",\n"
+            "  \"sky\": \"albedo_alpha_below_0.01\",\n"
+            "  \"albedo\": {\"file\": \"%s\", \"channels\": 3, \"meaning\": \"linear_albedo\", \"sky_value\": 0},\n"
+            "  \"normal\": {\"file\": \"%s\", \"channels\": 3, \"meaning\": \"world_normal_y_up\", \"sky_value\": 0},\n"
+            "  \"roughness\": {\"file\": \"%s\", \"channels\": 1, \"meaning\": \"perceptual_roughness\", \"sky_value\": 0},\n"
+            "  \"depth\": {\"file\": \"%s\", \"channels\": 1, \"meaning\": \"view_axis_distance\", \"units\": \"m\", \"sky_value\": \"inf\"},\n"
+            "  \"camera\": {\n"
+            "    \"position\": [%.9g, %.9g, %.9g],\n"
+            "    \"forward\": [%.9g, %.9g, %.9g],\n"
+            "    \"up\": [%.9g, %.9g, %.9g],\n"
+            "    \"right\": [%.9g, %.9g, %.9g],\n"
+            "    \"vertical_fov_degrees\": %.9g,\n"
+            "    \"aspect_ratio\": %.9g,\n"
+            "    \"near\": %.9g,\n"
+            "    \"far\": %.9g,\n"
+            "    \"orthographic\": %s\n"
+            "  }\n"
+            "}\n",
+            pngName.data(),
+            aov.Surface.Width,
+            aov.Surface.Height,
+            static_cast<unsigned long long>(frame.FrameNumber),
+            fileNames[0].data(),
+            fileNames[1].data(),
+            fileNames[2].data(),
+            fileNames[3].data(),
+            static_cast<double>(camera.Position[0]),
+            static_cast<double>(camera.Position[1]),
+            static_cast<double>(camera.Position[2]),
+            static_cast<double>(camera.Forward[0]),
+            static_cast<double>(camera.Forward[1]),
+            static_cast<double>(camera.Forward[2]),
+            static_cast<double>(camera.Up[0]),
+            static_cast<double>(camera.Up[1]),
+            static_cast<double>(camera.Up[2]),
+            static_cast<double>(camera.Right[0]),
+            static_cast<double>(camera.Right[1]),
+            static_cast<double>(camera.Right[2]),
+            static_cast<double>(camera.VerticalFieldOfViewDegrees),
+            static_cast<double>(camera.AspectRatio),
+            static_cast<double>(camera.NearPlane),
+            static_cast<double>(camera.FarPlane),
+            camera.bOrthographic ? "true" : "false");
+        if (jsonLength <= 0 || jsonLength >= static_cast<int>(sizeof(json)))
+        {
+            return false;
+        }
+        return WriteBytes(basePath + String(TEXT(".aov.json")), json, static_cast<size_t>(jsonLength));
+    }
 #else
     bool SaveCapturedSceneColorHdr(const CapturedFrame&, const Container::String&)
+    {
+        return false;
+    }
+
+    bool SaveCapturedAov(const CapturedFrame&, const Container::String&)
     {
         return false;
     }

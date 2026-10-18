@@ -2548,6 +2548,7 @@ namespace NorvesLib::Core::Rendering
         {
             m_MainSceneView->SetShadowProbeEnabled(settings.bShadowProbe);
             m_MainSceneView->SetShadowProbePointOnly(settings.bShadowProbePointOnly);
+            m_MainSceneView->SetCaptureAovEnabled(settings.bCaptureAov);
             m_MainSceneView->SetShadowMethod(settings.SunShadowMethod);
             m_MainSceneView->SetPointShadowMethod(settings.PointLightShadowMethod);
             m_MainSceneView->SetVsmPoolPages(settings.VsmPoolPages);

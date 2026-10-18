@@ -10,6 +10,11 @@ namespace NorvesLib::Core::Rendering::RenderGraphResourceNames
     inline constexpr Identity GBufferEmissive = Identity::Literal("GBuffer.Emissive", sizeof("GBuffer.Emissive") - 1);
     inline constexpr Identity GBufferVelocity = Identity::Literal("GBuffer.Velocity", sizeof("GBuffer.Velocity") - 1);
     inline constexpr Identity GBufferDepth = Identity::Literal("GBuffer.Depth", sizeof("GBuffer.Depth") - 1);
+    // 撮影の AOV（GBufferAovPass。--capture-aov）: GBuffer の生の値を浮動小数で写した 2 枚（グラフの外へ出す）
+    inline constexpr Identity CaptureAovSurface =
+        Identity::Literal("Capture.AovSurface", sizeof("Capture.AovSurface") - 1);
+    inline constexpr Identity CaptureAovGeometry =
+        Identity::Literal("Capture.AovGeometry", sizeof("Capture.AovGeometry") - 1);
     // 計算シェーダーでスキニングした今・前のフレームの頂点（ワールド空間。1 頂点 32 バイト）
     inline constexpr Identity SkinningCurrentVertices =
         Identity::Literal("Skinning.CurrentVertices", sizeof("Skinning.CurrentVertices") - 1);
