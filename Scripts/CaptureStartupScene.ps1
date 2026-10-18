@@ -818,6 +818,86 @@ function Stop-OwnedProcessTree([int]$ProcessId)
     & taskkill.exe /PID $ProcessId /T /F 2>&1 | Out-Null
 }
 
+# 外から止められた（ランナーの再検証の時間切れ・taskkill）powershell が Game を残さないよう、起動した Game を
+# Job Object（JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE）へ入れる。ハンドルは継承させずこのプロセスだけが持つので、
+# powershell が終わるとカーネルがハンドルを閉じ、中の Game も終わる。自前の時間切れは Stop-OwnedProcessTree のまま。
+Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+
+public static class CaptureProcessJob
+{
+    [StructLayout(LayoutKind.Sequential)]
+    struct JOBOBJECT_BASIC_LIMIT_INFORMATION
+    {
+        public long PerProcessUserTimeLimit;
+        public long PerJobUserTimeLimit;
+        public uint LimitFlags;
+        public UIntPtr MinimumWorkingSetSize;
+        public UIntPtr MaximumWorkingSetSize;
+        public uint ActiveProcessLimit;
+        public UIntPtr Affinity;
+        public uint PriorityClass;
+        public uint SchedulingClass;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct IO_COUNTERS
+    {
+        public ulong ReadOperationCount;
+        public ulong WriteOperationCount;
+        public ulong OtherOperationCount;
+        public ulong ReadTransferCount;
+        public ulong WriteTransferCount;
+        public ulong OtherTransferCount;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct JOBOBJECT_EXTENDED_LIMIT_INFORMATION
+    {
+        public JOBOBJECT_BASIC_LIMIT_INFORMATION BasicLimitInformation;
+        public IO_COUNTERS IoInfo;
+        public UIntPtr ProcessMemoryLimit;
+        public UIntPtr JobMemoryLimit;
+        public UIntPtr PeakProcessMemoryUsed;
+        public UIntPtr PeakJobMemoryUsed;
+    }
+
+    const int JobObjectExtendedLimitInformation = 9;
+    const uint JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000;
+
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    static extern IntPtr CreateJobObject(IntPtr attributes, string name);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool SetInformationJobObject(IntPtr job, int infoClass, ref JOBOBJECT_EXTENDED_LIMIT_INFORMATION info, uint length);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
+
+    // 最初の起動で作り、powershell が終わるまで閉じない（閉じた時点で中のプロセスが終わるため）
+    static IntPtr job = IntPtr.Zero;
+
+    public static void Assign(IntPtr processHandle)
+    {
+        if (job == IntPtr.Zero)
+        {
+            IntPtr created = CreateJobObject(IntPtr.Zero, null);
+            if (created == IntPtr.Zero) { throw new Win32Exception(); }
+            var info = new JOBOBJECT_EXTENDED_LIMIT_INFORMATION();
+            info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            if (!SetInformationJobObject(created, JobObjectExtendedLimitInformation, ref info, (uint)Marshal.SizeOf(typeof(JOBOBJECT_EXTENDED_LIMIT_INFORMATION))))
+            {
+                throw new Win32Exception();
+            }
+            job = created;
+        }
+        if (!AssignProcessToJobObject(job, processHandle)) { throw new Win32Exception(); }
+    }
+}
+'@
+
 # Game.log の ENGINE_CHECK の行を名前ごとに数える。pass/fail の数と、fail の行の本文を返す。
 function Get-EngineCheckCounts([string]$LogPath)
 {
@@ -1120,6 +1200,14 @@ foreach ($view in $shots)
         }
     }
     [void]$process.Handle
+    try
+    {
+        [CaptureProcessJob]::Assign($process.Handle)
+    }
+    catch
+    {
+        Write-Warning "Game を Job Object に入れられなかった（powershell が外から止められると Game が残る）: $($_.Exception.Message)"
+    }
     $exitCode = $null
     if ($process.WaitForExit($TimeoutSeconds * 1000))
     {

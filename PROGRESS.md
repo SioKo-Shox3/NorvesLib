@@ -5166,3 +5166,14 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 高さフォグの太陽の単一散乱は影の地図を引くので、検査は値の範囲と合成だけを見る（式の再計算はしない）
   - 新しい試験は足していない（verify の撮影と検査が確かめる）
 - Next: TASKS.md の次の未完の項目。
+
+### SCN-WLR-CAPTURE-ORPHAN 完了（2026-10-18、run 20261018-205227 の反復 3）
+- Done: `Scripts/CaptureScene.ps1` と `Scripts/CaptureStartupScene.ps1` が、起動した Game.exe を Job Object（`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`）へ入れるようにした。Job のハンドルは継承させず powershell だけが持つので、powershell が外から止められる（ランナーの時間切れ・taskkill）とカーネルがハンドルを閉じて Game も終わる。自前の時間切れの経路（`Stop-OwnedProcessTree` の `taskkill /T /F`）は変えていない。入れられなかったときは警告を出して撮影は続ける
+  - `verify-SCN-WLR-CAPTURE-ORPHAN-1.txt`: ref_cliff_01 を RelWithDebInfo・`-Build -RequireAssets` で撮影 result=pass（build pass、Game 88.0 秒・exit_code=0、Job Object の警告なし）
+  - 試しの手順（`aux-SCN-WLR-CAPTURE-ORPHAN-trial2.txt`）: 撮影の powershell を別プロセスで起動し、親がその powershell の Game.exe を見つけたら 5 秒待ち（動いていることを確かめ）、`Stop-Process -Id <powershell> -Force` で powershell だけを止め、Game の終了を `WaitForExit` で最長 30 秒待つ
+  - 結果: 新しい版の CaptureScene は 2 回とも 0.20・0.21 秒で Game が終わり、CaptureStartupScene は 0.13 秒。変更前（HEAD の版を写した対照）の CaptureScene は 33 秒たっても Game が残り（65 スレッド・CPU 時間が進む）、後片付けの taskkill で止めた。変更前の CaptureStartupScene は撮影自体が 9 秒で終わったので対照にならなかった
+- Notes:
+  - 最初の試し（`aux-SCN-WLR-CAPTURE-ORPHAN-trial.txt`、生存を `Get-Process` で 10 秒見る版）では新しい版でも 10 秒後に Game が残って見えた。その後の同じ形の試し 7 回と測り方を直した版 3 回はすべて 0.3 秒以内に終わり、再現していない。そのときの撮影の警告は保存しておらず、原因は確かめていない
+  - Job の強制終了での Game の終了コードは 0 に見える（呼び出し側は powershell ごと止まっているので撮影の判定には影響しない）
+  - 前の反復（SCN-WLR-ATMOS-DUMP）の新しいファイル `Assets/Shaders/Common/VolumetricsCommon.glsl`・`Assets/Shaders/volumetrics_probe.frag`・`Docs/RenderingValidation/WastelandAtmosphereDump.md` がコミットに入っておらず未追跡のまま（`volumetrics.frag` は前者を include する）。このタスクの paths の外なので触っていない
+- Next: TASKS.md の次の未完の項目。

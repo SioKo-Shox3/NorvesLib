@@ -1741,7 +1741,7 @@
 - notes: 最細の LOD の撮影は 1 視点あたり約 150 秒（6 視点で 903 秒）かかる。全視点の撮影は反復の中で 1 回走らせて保存し、verify は 1 視点の撮影（ビルドと起動の経路の確認。別の出力先）と、保存した結果の検査（入力のハッシュで古い結果を拒否）に分ける（ランナーの再検証は 1 コマンド 10 分）。
 
 ## SCN-WLR-CAPTURE-ORPHAN: 撮影が外から止められても Game を残さない
-- status: todo
+- status: done
 - done-when: `Scripts/CaptureScene.ps1`（と同じ起動の形の `CaptureStartupScene.ps1`）が起動した Game.exe を Job Object（JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE）に入れ、powershell が外から止められた（ランナーの再検証の 10 分の時間切れ・taskkill）ときも Game が一緒に終わる。既存の自前の時間切れの経路（taskkill /T）は変えない。試し: 撮影を起動して Game の起動を確かめた後に powershell のプロセスだけを止め、数秒以内に Game.exe が消えることを確かめ、手順と結果を PROGRESS.md に残す。
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -Build -RequireAssets -Width 1920 -Height 1080 -Views ref_cliff_01 -OutDir .harness/runs/scene-capture/SCN-WLR-CAPTURE-ORPHAN`
 - paths: Scripts, TASKS.md, PROGRESS.md
