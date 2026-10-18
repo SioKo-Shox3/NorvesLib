@@ -162,6 +162,12 @@ namespace Game::GameModes::WastelandCommonLight
             meshComponent->SetMeshHandle(mesh);
             meshComponent->SetMaterial(0, state.PlateMaterial);
             meshComponent->SetCastShadow(false);
+            // GBuffer のアルベドは物体の色（CustomData の 0〜2。0 は 1 として扱う）× アルベドのテクスチャで、材質の BaseColor は
+            // 読まない。テクスチャの無い板は既定の白なので、物体の色にアルベドを入れる
+            for (uint32_t channel = 0; channel < 3u; ++channel)
+            {
+                meshComponent->SetCustomData(channel, state.Def.PlateAlbedo);
+            }
             return true;
         }
     } // namespace
