@@ -121,6 +121,11 @@ namespace Game::GameModes
         Game::GameModes::WastelandCommonLight::State m_CommonLight;
         /// 外すもの（WastelandHide::Flag の組み合わせ。--wasteland-hide。0 なら既定の見た目）
         uint32_t m_HideMask = 0;
+        /// 地形を最も細かい段で描く（--wasteland-finest-lod。開発ビルドだけ。閾値は起動引数の解析が描画側へ渡し、ここはログの印だけ）
+        bool m_bFinestLod = false;
+        /// 地形の区画の LOD 0 を PLY で書き出すフォルダ（--wasteland-export-terrain。開発ビルドだけ。空なら書かない。
+        /// WastelandTerrainExport.h）
+        NorvesLib::Core::Container::String m_TerrainExportDir;
     };
 
     class WastelandRoutine

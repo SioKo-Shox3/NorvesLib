@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <utility>
 
@@ -39,6 +40,39 @@ namespace NorvesLib::Core::Rendering
         // ページを流すメッシュの塊に残しておくページの置き場の見込みは、流すページの区画の合計のこの分の 1。
         // 1 つの視点で常駐するのは、各メッシュのページのうち見えている所の要る段だけなので、全部は見込まない
         constexpr uint64_t PageRoomDivisor = 4;
+
+        // 置き場の見込みの分母。比較の撮影（Game の --wasteland-finest-lod）は見える地形を全部最も細かい段で描き、
+        // 段 0 のページとその親を全部常駐させるので、環境変数 NORVES_GEOMETRY_PAGE_ROOM_DIVISOR（1〜64）で見込みを広げる
+        // （開発ビルドだけ。最初に呼ばれたときに 1 回だけ読む）
+        uint64_t ResolvePageRoomDivisor()
+        {
+#if NORVES_BUILD_DEVELOPMENT
+            static const uint64_t divisor = []()
+            {
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4996)
+#endif
+                const char *text = std::getenv("NORVES_GEOMETRY_PAGE_ROOM_DIVISOR");
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
+                if (text != nullptr && text[0] != '\0')
+                {
+                    char *end = nullptr;
+                    const unsigned long value = std::strtoul(text, &end, 10);
+                    if (end != text && *end == '\0' && value >= 1ul && value <= 64ul)
+                    {
+                        return static_cast<uint64_t>(value);
+                    }
+                }
+                return PageRoomDivisor;
+            }();
+            return divisor;
+#else
+            return PageRoomDivisor;
+#endif
+        }
 
         constexpr uint64_t AlignUpBytes(uint64_t value, uint64_t alignment)
         {
@@ -396,7 +430,7 @@ namespace NorvesLib::Core::Rendering
                                          .RegionBytes;
             }
         }
-        const uint64_t reservedPageBytes = streamedPageBytes / PageRoomDivisor;
+        const uint64_t reservedPageBytes = streamedPageBytes / ResolvePageRoomDivisor();
 
         auto stageStartTime = LoadProfileNow();
         GeometryPool::RegionLease lease = AllocateMeshRegion(regionBytes, reservedPageBytes);

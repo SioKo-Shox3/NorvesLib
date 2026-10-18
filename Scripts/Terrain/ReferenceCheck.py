@@ -81,6 +81,24 @@
 #          行が無い。共通の照明（--wasteland-common-light）なら、空の画素の HDR が CommonLight.json の一様な空の放射輝度に
 #          ±AOV_SKY_TOLERANCE で合う画素が AOV_SKY_RATIO 以上（雲・霧・霞が空に乗らない）。
 #
+#   python Scripts/Terrain/ReferenceCheck.py --projection --capture <出力先> [--views a,b,...] [--verify]
+#       エンジンの深度（CaptureScene.ps1 -Aov を --wasteland-common-light・--wasteland-hide=all・--wasteland-finest-lod で撮った
+#       <視点>.aov.depth.pfm）と、同じカメラで Blender の Cycles が 1 サンプルで描いた深度（BlenderReference.py --depth が
+#       <出力先>/blender/ に書いたもの）を並べ、結果を <出力先>/projection_check.json に、輪郭の重なりの画像を
+#       <出力先>/projection_<視点>.png（エンジンの輪郭が赤、Blender が青緑、重なりが白）に書く。--views を省くと手本の 6 視点。
+#       --verify は撮影の inputs.json と、Blender の結果の blender/inputs.json（台本・書き出しの一覧と読んだ PLY の中身・
+#       地形のメッシュの元の入力 terrain_mesh のハッシュ）を今のファイルと照らす。
+#       1. カメラ: エンジンの aov.json のカメラと、Blender が置いたカメラの記録が一致する（位置 PROJECTION_CAMERA_POSITION_M、
+#          向き PROJECTION_CAMERA_DIRECTION、縦の画角 PROJECTION_CAMERA_FOV_DEG 以内、縦横比と画素数が同じ、透視）。
+#       2. 崖の輪郭と稜線: 深度の輪郭（空と表面の境の表面の側と、隣の画素との深度の比が 1 + PROJECTION_JUMP_STRONG を超えて跳ぶ
+#          組の手前の側）の画素から、相手の画像の輪郭（閾値の際での取りこぼしを避けて 1 + PROJECTION_JUMP_WEAK）の画素までの
+#          距離が PROJECTION_RADIUS_PX 画素以内のものが、両方向とも PROJECTION_EDGE_RATIO 以上。
+#          列ごとのいちばん上の表面の行（空との稜線）の差が PROJECTION_RADIUS_PX 画素以内の列が PROJECTION_SKYLINE_RATIO 以上。
+#          空と表面の分かれ方が食い違う画素が PROJECTION_SKY_MISMATCH 以下。
+#       3. 深度の値: 輪郭から PROJECTION_DEPTH_EDGE_MARGIN 画素より離れた共通の表面で、相対差の中央値が PROJECTION_DEPTH_MEDIAN、
+#          95 % が PROJECTION_DEPTH_P95 以下（単位・軸・原点の取り違えと、エンジンが粗い段で描いた所を見つける）。
+#       4. 撮影の起動引数と Game のログに、共通の照明・地形だけ（WASTELAND_HIDE mask=127）・最も細かい段（WASTELAND_FINEST_LOD）がある。
+#
 # 終了コード: すべて合格なら 0、どれかが不合格なら 1。
 import argparse
 import hashlib
@@ -111,6 +129,16 @@ INPUT_SETS = {
         "Scripts/CaptureScene.ps1",
         "Scripts/Terrain/CommonLight.json",
     ],
+    # 地形のメッシュの書き出し（Game の --wasteland-export-terrain）の元: DEM と遠景の記述、区画を焼くクッカー、書き出しのコード
+    "terrain_mesh": [
+        "Assets/AssetSets/WastelandTerrain.json",
+        "Assets/Terrain/ValleyOfTheGods",
+        "Tools/AssetCook/MeshCooker.cpp",
+        "Tools/AssetCook/TerrainCliffDetail.cpp",
+        "Tools/AssetCook/TerrainCliffDetail.h",
+        "Game/GameModes/Wasteland/WastelandTerrainExport.cpp",
+        "Game/GameModes/Wasteland/WastelandTerrainExport.h",
+    ],
 }
 
 # 種類ごとの資産の組の定義。参照する資産の実体（メッシュの source_path・extra_sources、glTF の buffers・images、
@@ -120,6 +148,9 @@ ASSET_SET_INPUTS = {
         "Assets/AssetSets/WastelandTerrain.json",
         "Assets/AssetSets/WastelandModels.json",
         "Assets/AssetSets/WastelandBuildingsModels.json",
+    ],
+    "terrain_mesh": [
+        "Assets/AssetSets/WastelandTerrain.json",
     ],
 }
 # 入力の一覧で、資産の組から辿ったファイルをまとめる名前
@@ -189,6 +220,24 @@ AOV_BARE_ABSENT_LOG_LINES = ("WASTELAND_BUILDING id=", "WASTELAND_TALUS casters=
 # 草・石を RenderWorld へ渡した行と、その束の数の語
 AOV_FOLIAGE_PUBLISHED_LINE = "WASTELAND_FOLIAGE_PUBLISHED "
 AOV_FOLIAGE_PUBLISHED_KEY = "batches="
+
+# --projection（Blender の深度とエンジンの深度の投影の照合）
+PROJECTION_VIEWS = ("ref_far_01", "ref_far_02", "ref_cliff_01", "ref_cliff_02", "ref_ground_01", "ref_ground_02")
+PROJECTION_GAME_ARGS = ("--wasteland-common-light", "--wasteland-finest-lod")
+PROJECTION_LOG_LINES = ("WASTELAND_FINEST_LOD ", "WASTELAND_HIDE mask=127 ")
+PROJECTION_JUMP_STRONG = 0.08
+PROJECTION_JUMP_WEAK = 0.04
+PROJECTION_RADIUS_PX = 2
+PROJECTION_EDGE_RATIO = 0.99
+PROJECTION_SKYLINE_RATIO = 0.99
+PROJECTION_SKY_MISMATCH = 0.005
+PROJECTION_DEPTH_EDGE_MARGIN = 3
+PROJECTION_DEPTH_MEDIAN = 0.005
+PROJECTION_DEPTH_P95 = 0.02
+PROJECTION_MAX_DISTANCE_PX = 16
+PROJECTION_CAMERA_POSITION_M = 1e-3
+PROJECTION_CAMERA_DIRECTION = 1e-5
+PROJECTION_CAMERA_FOV_DEG = 1e-4
 
 
 def git_output(args):
@@ -1308,6 +1357,331 @@ def run_aov(capture_dir, views, verify):
     return 0 if not failures else 1
 
 
+def sha256_file(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(1 << 24), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def check_blender_inputs(blender_dir):
+    """Blender の結果の入力の記録（BlenderReference.py が書く inputs.json）を今のファイルと照らす。(合格か, 理由の一覧, 記録)"""
+    path = os.path.join(blender_dir, "inputs.json")
+    if not os.path.isfile(path):
+        return False, ["blender/inputs.json が無い（BlenderReference.py --depth を回していない）"], None
+    with open(path, encoding="utf-8") as f:
+        record = json.load(f)
+    reasons = []
+    script = os.path.join(REPO_ROOT, record.get("script", ""))
+    if not os.path.isfile(script) or sha256_file(script) != record.get("script_sha256"):
+        reasons.append(f"Blender の台本 {record.get('script')} が描いた後に変わった（古い結果）")
+    current = hash_inputs("terrain_mesh")
+    if current["files_sha256"] != (record.get("terrain_mesh_inputs") or {}).get("files_sha256"):
+        old_paths = (record.get("terrain_mesh_inputs") or {}).get("paths", {})
+        changed = [p for p, h in current["paths"].items() if old_paths.get(p) != h]
+        reasons.append(f"地形のメッシュの元の入力が描いた後に変わった（古い結果）: {', '.join(changed) or '一覧'}")
+    mesh_dir = os.path.join(REPO_ROOT, record.get("mesh_dir", ""))
+    manifest = os.path.join(mesh_dir, "manifest.json")
+    if not os.path.isfile(manifest) or sha256_file(manifest) != record.get("manifest_sha256"):
+        reasons.append(f"書き出しの一覧 {record.get('mesh_dir')}/manifest.json が無いか、描いた後に変わった")
+    changed_ply = []
+    for name, digest in (record.get("ply_sha256") or {}).items():
+        ply = os.path.join(mesh_dir, name)
+        if not os.path.isfile(ply) or sha256_file(ply) != digest:
+            changed_ply.append(name)
+    if changed_ply:
+        reasons.append(f"読んだ PLY が無いか、描いた後に変わった: {', '.join(changed_ply[:5])}"
+                       f"{' ほか' if len(changed_ply) > 5 else ''}（{len(changed_ply)} 個）")
+    if not record.get("ply_sha256"):
+        reasons.append("読んだ PLY の記録が無い")
+    return not reasons, reasons, record
+
+
+def dilate(mask):
+    """3×3 の膨張（Chebyshev の距離で 1 画素広げる）"""
+    padded = np.pad(mask, 1)
+    out = np.zeros_like(mask)
+    h, w = mask.shape
+    for dy in (0, 1, 2):
+        for dx in (0, 1, 2):
+            out |= padded[dy:dy + h, dx:dx + w]
+    return out
+
+
+def depth_edges(depth, jump):
+    """深度の輪郭の画素。空と表面の境では表面の側、表面どうしでは深度の比が 1 + jump を超えて跳ぶ組の手前の側"""
+    surface = np.isfinite(depth)
+    edges = np.zeros(depth.shape, dtype=bool)
+    for a_sl, b_sl in (((slice(None, -1), slice(None)), (slice(1, None), slice(None))),
+                       ((slice(None), slice(None, -1)), (slice(None), slice(1, None)))):
+        a = depth[a_sl]
+        b = depth[b_sl]
+        sa = surface[a_sl]
+        sb = surface[b_sl]
+        both = sa & sb
+        with np.errstate(invalid="ignore", over="ignore"):
+            jump_pair = both & (np.maximum(a, b) > np.minimum(a, b) * (1.0 + jump))
+        sky_pair = sa ^ sb
+        edges[a_sl] |= (jump_pair & (a <= b)) | (sky_pair & sa)
+        edges[b_sl] |= (jump_pair & (b < a)) | (sky_pair & sb)
+    return edges
+
+
+def edge_distances(edges_from, edges_to, max_distance):
+    """edges_from の各画素から edges_to の最も近い画素までの Chebyshev の距離（max_distance を超えるものは max_distance + 1）"""
+    distance = np.full(edges_from.shape, max_distance + 1, dtype=np.int32)
+    reach = edges_to.copy()
+    for radius in range(max_distance + 1):
+        distance[reach & (distance > radius)] = radius
+        reach = dilate(reach)
+    return distance[edges_from]
+
+
+def distance_summary(distances, radius):
+    if distances.size == 0:
+        return {"count": 0}
+    return {
+        "count": int(distances.size),
+        "within_ratio": float(np.mean(distances <= radius)),
+        "p50_px": float(np.percentile(distances, 50)),
+        "p95_px": float(np.percentile(distances, 95)),
+        "p99_px": float(np.percentile(distances, 99)),
+        "over_max_ratio": float(np.mean(distances > PROJECTION_MAX_DISTANCE_PX)),
+    }
+
+
+def skyline_rows(depth):
+    """列ごとのいちばん上の表面の行（上が 0。表面の無い列は高さ）"""
+    surface = np.isfinite(depth)
+    rows = np.argmax(surface, axis=0)
+    rows[~surface.any(axis=0)] = depth.shape[0]
+    return rows
+
+
+def cameras_match(a, b):
+    """2 つのカメラの記録（aov.json の camera の形）の差。(一致か, 差の値)"""
+    diff = {
+        "position_m": float(np.max(np.abs(np.asarray(a["position"], float) - np.asarray(b["position"], float)))),
+        "direction": float(max(np.max(np.abs(np.asarray(a[k], float) - np.asarray(b[k], float)))
+                               for k in ("forward", "up", "right"))),
+        "vertical_fov_deg": abs(float(a["vertical_fov_degrees"]) - float(b["vertical_fov_degrees"])),
+        "aspect": abs(float(a["aspect_ratio"]) - float(b["aspect_ratio"])),
+    }
+    ok = (diff["position_m"] <= PROJECTION_CAMERA_POSITION_M and diff["direction"] <= PROJECTION_CAMERA_DIRECTION and
+          diff["vertical_fov_deg"] <= PROJECTION_CAMERA_FOV_DEG and diff["aspect"] <= 1e-6 and
+          not bool(a.get("orthographic")) and not bool(b.get("orthographic")))
+    return ok, diff
+
+
+def write_projection_preview(path, engine, blender, engine_edges, blender_edges):
+    """深度の対数の灰色に、エンジンの輪郭を赤、Blender の輪郭を青緑、重なりを白で描いた PNG"""
+    finite = np.isfinite(engine)
+    gray = np.zeros(engine.shape, dtype=np.float64)
+    if finite.any():
+        logd = np.log(np.where(finite, engine, 1.0))
+        lo, hi = np.percentile(logd[finite], [1, 99])
+        gray = np.where(finite, 0.15 + 0.45 * np.clip((hi - logd) / max(hi - lo, 1e-6), 0.0, 1.0), 0.0)
+    rgb = np.repeat((gray * 255.0)[:, :, None], 3, axis=2).astype(np.uint8)
+    rgb[engine_edges & ~blender_edges] = (255, 40, 40)
+    rgb[blender_edges & ~engine_edges] = (40, 220, 255)
+    rgb[engine_edges & blender_edges] = (255, 255, 255)
+    Image.fromarray(rgb).save(path)
+
+
+def check_projection_view(capture_dir, blender_dir, view, blender_record, game_args):
+    failures = []
+    result = {"view": view}
+    aov_path = os.path.join(capture_dir, f"{view}.aov.json")
+    blender_json_path = os.path.join(blender_dir, f"{view}.json")
+    blender_pfm_path = os.path.join(blender_dir, f"{view}.depth.pfm")
+    for required in (aov_path, blender_json_path, blender_pfm_path):
+        if not os.path.isfile(required):
+            failures.append(f"{os.path.relpath(required, capture_dir)} が無い")
+    if failures:
+        result.update({"pass": False, "failures": failures})
+        return result
+    with open(aov_path, encoding="utf-8-sig") as f:
+        aov = json.load(f)
+    with open(blender_json_path, encoding="utf-8") as f:
+        blender_meta = json.load(f)
+
+    # カメラ: エンジンの撮影の記録と、Blender が置いたカメラ（描いたときに読んだ記録）が同じ
+    recorded = (blender_record.get("views") or {}).get(view) or {}
+    for label, other in (("inputs.json", recorded.get("camera")), (f"{view}.json", blender_meta.get("camera_engine"))):
+        if not other:
+            failures.append(f"Blender の {label} にカメラの記録が無い")
+            continue
+        ok, diff = cameras_match(aov["camera"], other)
+        result[f"camera_diff_{label}"] = diff
+        if not ok:
+            failures.append(f"エンジンのカメラと Blender のカメラ（{label}）が違う: {json.dumps(diff)}")
+    if (int(aov["width"]), int(aov["height"])) != (int(blender_meta["width"]), int(blender_meta["height"])):
+        failures.append(f"画素数が違う（エンジン {aov['width']}×{aov['height']}、Blender {blender_meta['width']}×{blender_meta['height']}）")
+        result.update({"pass": False, "failures": failures})
+        return result
+    if int(blender_meta.get("samples", 0)) != 1:
+        failures.append(f"Blender の深度が 1 サンプルでない（{blender_meta.get('samples')}）")
+
+    engine = read_pfm_any(os.path.join(capture_dir, aov["depth"]["file"]))[:, :, 0].astype(np.float64)
+    blender = read_pfm_any(blender_pfm_path)[:, :, 0].astype(np.float64)
+    engine = np.where(np.isfinite(engine) & (engine > 0.0), engine, np.inf)
+    blender = np.where(np.isfinite(blender) & (blender > 0.0), blender, np.inf)
+    height, width = engine.shape
+    result["size"] = [width, height]
+
+    # 空と表面の分かれ方
+    engine_surface = np.isfinite(engine)
+    blender_surface = np.isfinite(blender)
+    sky_mismatch = float(np.mean(engine_surface != blender_surface))
+    result["surface_ratio"] = {"engine": float(np.mean(engine_surface)), "blender": float(np.mean(blender_surface))}
+    result["sky_mismatch_ratio"] = sky_mismatch
+    if sky_mismatch > PROJECTION_SKY_MISMATCH:
+        failures.append(f"空と表面の分かれ方の食い違い {sky_mismatch:.4%} が {PROJECTION_SKY_MISMATCH:.2%} を超える")
+    if not engine_surface.any() or not blender_surface.any():
+        failures.append("どちらかの深度に表面が無い")
+        result.update({"pass": False, "failures": failures})
+        return result
+
+    # 崖の輪郭と稜線: 強い輪郭の画素から、相手の弱い輪郭までの距離
+    engine_strong = depth_edges(engine, PROJECTION_JUMP_STRONG)
+    blender_strong = depth_edges(blender, PROJECTION_JUMP_STRONG)
+    engine_weak = depth_edges(engine, PROJECTION_JUMP_WEAK)
+    blender_weak = depth_edges(blender, PROJECTION_JUMP_WEAK)
+    to_blender = distance_summary(edge_distances(engine_strong, blender_weak, PROJECTION_MAX_DISTANCE_PX),
+                                  PROJECTION_RADIUS_PX)
+    to_engine = distance_summary(edge_distances(blender_strong, engine_weak, PROJECTION_MAX_DISTANCE_PX),
+                                 PROJECTION_RADIUS_PX)
+    result["edges_engine_to_blender"] = to_blender
+    result["edges_blender_to_engine"] = to_engine
+    for label, summary in (("エンジン→Blender", to_blender), ("Blender→エンジン", to_engine)):
+        if summary.get("count", 0) == 0:
+            failures.append(f"{label}: 輪郭の画素が無い")
+        elif summary["within_ratio"] < PROJECTION_EDGE_RATIO:
+            failures.append(f"{label}: 輪郭の画素のうち相手の輪郭が {PROJECTION_RADIUS_PX} 画素以内にあるものが "
+                            f"{summary['within_ratio']:.4f}（{PROJECTION_EDGE_RATIO} 未満。p99 {summary['p99_px']} 画素）")
+
+    # 稜線（列ごとのいちばん上の表面の行）
+    engine_rows = skyline_rows(engine)
+    blender_rows = skyline_rows(blender)
+    columns = (engine_rows > 0) | (blender_rows > 0)
+    row_diff = np.abs(engine_rows - blender_rows)[columns]
+    skyline = {"columns": int(columns.sum())}
+    if row_diff.size:
+        skyline.update({"within_ratio": float(np.mean(row_diff <= PROJECTION_RADIUS_PX)),
+                        "max_px": int(row_diff.max()), "p99_px": float(np.percentile(row_diff, 99))})
+        if skyline["within_ratio"] < PROJECTION_SKYLINE_RATIO:
+            failures.append(f"稜線の行の差が {PROJECTION_RADIUS_PX} 画素以内の列が {skyline['within_ratio']:.4f}"
+                            f"（{PROJECTION_SKYLINE_RATIO} 未満。最大 {skyline['max_px']} 画素）")
+    result["skyline"] = skyline
+
+    # 輪郭から離れた表面の深度の一致（単位・原点・軸の確かめ）
+    near_edge = engine_strong | blender_strong
+    for _ in range(PROJECTION_DEPTH_EDGE_MARGIN):
+        near_edge = dilate(near_edge)
+    common = engine_surface & blender_surface & ~near_edge
+    if common.any():
+        rel = np.abs(engine[common] - blender[common]) / blender[common]
+        signed = (engine[common] - blender[common]) / blender[common]
+        depth = {"pixels": int(common.sum()), "rel_p50": float(np.percentile(rel, 50)),
+                 "rel_p95": float(np.percentile(rel, 95)), "rel_p99": float(np.percentile(rel, 99)),
+                 "signed_mean": float(np.mean(signed)),
+                 "engine_m": [float(engine[common].min()), float(engine[common].max())]}
+        result["depth"] = depth
+        if depth["rel_p50"] > PROJECTION_DEPTH_MEDIAN or depth["rel_p95"] > PROJECTION_DEPTH_P95:
+            failures.append(f"輪郭から離れた表面の深度の相対差 中央値 {depth['rel_p50']:.5f}・95 % {depth['rel_p95']:.5f} が "
+                            f"{PROJECTION_DEPTH_MEDIAN}・{PROJECTION_DEPTH_P95} を超える")
+    else:
+        failures.append("輪郭から離れた共通の表面が無い")
+
+    # 撮影の指定と Game のログ: 共通の照明・地形だけ・最も細かい段で撮れた
+    hide = aov_hide_names(game_args)
+    if set(AOV_HIDE_NAMES) - hide:
+        failures.append(f"撮影が --wasteland-hide=all でない（外していない: {', '.join(sorted(set(AOV_HIDE_NAMES) - hide))}）")
+    for arg in PROJECTION_GAME_ARGS:
+        if arg not in (game_args or []):
+            failures.append(f"撮影の起動引数に {arg} が無い")
+    log_name = view_game_log(capture_dir, view)
+    log_path = os.path.join(capture_dir, log_name) if log_name else None
+    if not log_path or not os.path.isfile(log_path):
+        failures.append("Game のログが無い")
+    else:
+        with open(log_path, encoding="utf-8", errors="replace") as f:
+            text = f.read()
+        for line in PROJECTION_LOG_LINES:
+            if line not in text:
+                failures.append(f"Game のログに {line.strip()} が無い")
+
+    write_projection_preview(os.path.join(capture_dir, f"projection_{view}.png"), engine, blender,
+                             engine_strong, blender_strong)
+    result["blender"] = {k: blender_meta.get(k) for k in ("renderer", "tiles", "triangles", "load_seconds",
+                                                          "render_seconds", "depth_source")}
+    result.update({"pass": not failures, "failures": failures})
+    return result
+
+
+def run_projection(capture_dir, views, verify):
+    failures = []
+    inputs_ok, input_failures, record = check_inputs(capture_dir)
+    blender_dir = os.path.join(capture_dir, "blender")
+    blender_ok, blender_failures, blender_record = check_blender_inputs(blender_dir)
+    if verify:
+        failures.extend(input_failures)
+        failures.extend(blender_failures)
+    metric_views = views_from_metrics(capture_dir)
+    game_args = aov_capture_args(capture_dir)
+    if metric_views is None or game_args is None:
+        failures.append("metrics.json が無い（CaptureScene.ps1 -Aov の出力先でない）")
+        metric_views = []
+    targets = views if views else PROJECTION_VIEWS
+    results = []
+    for view in targets:
+        if view not in metric_views:
+            failures.append(f"{view}: metrics.json に無い視点")
+            continue
+        result = check_projection_view(capture_dir, blender_dir, view, blender_record or {}, game_args)
+        results.append(result)
+        e2b = result.get("edges_engine_to_blender", {})
+        b2e = result.get("edges_blender_to_engine", {})
+        sky = result.get("skyline", {})
+        depth = result.get("depth", {})
+        print(f"REFERENCE_CHECK projection view={view} pass={int(result['pass'])} "
+              f"edges_e2b={e2b.get('within_ratio')} (n={e2b.get('count')} p99={e2b.get('p99_px')}) "
+              f"edges_b2e={b2e.get('within_ratio')} (n={b2e.get('count')} p99={b2e.get('p99_px')}) "
+              f"skyline_within={sky.get('within_ratio')} skyline_max={sky.get('max_px')} "
+              f"sky_mismatch={result.get('sky_mismatch_ratio')} depth_rel_p50={depth.get('rel_p50')} "
+              f"depth_rel_p95={depth.get('rel_p95')} triangles={(result.get('blender') or {}).get('triangles')}")
+        failures.extend(f"{view}: {failure}" for failure in result["failures"])
+    report = {
+        "mode": "projection",
+        "verify": bool(verify),
+        "inputs_current": inputs_ok,
+        "blender_inputs_current": blender_ok,
+        "inputs_record": record,
+        "blender_inputs_record": blender_record,
+        "game_args": game_args,
+        "criteria": {
+            "jump_strong": PROJECTION_JUMP_STRONG, "jump_weak": PROJECTION_JUMP_WEAK,
+            "radius_px": PROJECTION_RADIUS_PX, "edge_ratio": PROJECTION_EDGE_RATIO,
+            "skyline_ratio": PROJECTION_SKYLINE_RATIO, "sky_mismatch": PROJECTION_SKY_MISMATCH,
+            "depth_edge_margin_px": PROJECTION_DEPTH_EDGE_MARGIN, "depth_rel_median": PROJECTION_DEPTH_MEDIAN,
+            "depth_rel_p95": PROJECTION_DEPTH_P95, "camera_position_m": PROJECTION_CAMERA_POSITION_M,
+            "camera_direction": PROJECTION_CAMERA_DIRECTION, "camera_fov_deg": PROJECTION_CAMERA_FOV_DEG,
+        },
+        "views": results,
+        "failures": failures,
+    }
+    report_path = os.path.join(capture_dir, "projection_check.json")
+    with open(report_path, "w", encoding="utf-8") as f:
+        json.dump(report, f, indent=2, ensure_ascii=False)
+    for failure in failures:
+        print(f"REFERENCE_CHECK failure: {failure}")
+    status = "pass" if not failures else "fail"
+    print(f"REFERENCE_CHECK result={status} mode=projection views={len(targets)} inputs_current={int(inputs_ok)} "
+          f"blender_inputs_current={int(blender_ok)} report={report_path}")
+    return 0 if not failures else 1
+
+
 def main():
     # 結果の行を保存して読むので、端末の符号に関わらず UTF-8 で書く
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -1319,6 +1693,8 @@ def main():
     parser.add_argument("--display", action="store_true", help="表示変換の再現（DisplayTransform.py）を照合の撮影と照らす")
     parser.add_argument("--plate", action="store_true", help="共通の照明の灰色の板の明るさを、入力から求めた期待と照らす")
     parser.add_argument("--aov", action="store_true", help="GBuffer の生の値（AOV）の撮影を検査する")
+    parser.add_argument("--projection", action="store_true",
+                        help="Blender の深度（BlenderReference.py）とエンジンの深度の投影を照らす")
     parser.add_argument("--views", default="", help="検査する視点（カンマ区切り。省くと metrics.json の全視点）")
     parser.add_argument("--verify", action="store_true", help="入力のハッシュを今のファイルと照らし、古い結果を拒否する")
     args = parser.parse_args()
@@ -1339,7 +1715,11 @@ def main():
     if args.aov:
         views = [v.strip() for v in args.views.split(",") if v.strip()]
         return run_aov(capture_dir, views, args.verify)
-    print("REFERENCE_CHECK result=fail reason=no_mode（--record-inputs か --hdr か --display か --plate か --aov を指定する）")
+    if args.projection:
+        views = [v.strip() for v in args.views.split(",") if v.strip()]
+        return run_projection(capture_dir, views, args.verify)
+    print("REFERENCE_CHECK result=fail reason=no_mode（--record-inputs か --hdr か --display か --plate か --aov か "
+          "--projection を指定する）")
     return 1
 
 

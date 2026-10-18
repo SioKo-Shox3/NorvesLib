@@ -26,6 +26,7 @@
 #include "GameModes/Wasteland/WastelandLayout.h"
 #include "GameModes/Wasteland/WastelandFoliage.h"
 #include "GameModes/Wasteland/WastelandTalus.h"
+#include "GameModes/Wasteland/WastelandTerrainExport.h"
 #include "Scenes/SceneCatalog.h"
 #include "Scenes/SceneReadiness.h"
 
@@ -70,6 +71,8 @@ namespace Game::GameModes
         uint32_t PlacedTiles = 0;
         uint64_t PlacedClusters = 0;
         uint64_t PlacedVertices = 0;
+        /// 区画の LOD 0 の書き出し（--wasteland-export-terrain のときだけ。Directory が空なら何もしない）
+        WastelandTerrainExport::State TerrainExport;
         /// 1 層目（砂）の材質
         MaterialCreateData Material;
         /// 2 層目（乾いた土）・3 層目（岩肌）と混ぜ方
@@ -618,6 +621,10 @@ namespace Game::GameModes
                 return;
             }
             const Asset::CookedMeshData &mesh = parsed.Mesh;
+            if (assembly.TerrainExport.IsEnabled())
+            {
+                WastelandTerrainExport::ExportTile(assembly.TerrainExport, logicalPath, mesh);
+            }
             auto &megaGeometry = ctx.RenderResourcesRef.MegaGeometry();
             MegaMeshCreateInfo createInfo;
             if (!BuildMegaMeshCreateInfoFromCookedMesh(mesh, createInfo))
@@ -690,6 +697,10 @@ namespace Game::GameModes
             LOG_INFO_F("WASTELAND_TERRAIN tiles=%u placed=%u clusters=%llu vertices=%llu", tileCount, assembly.PlacedTiles,
                        static_cast<unsigned long long>(assembly.PlacedClusters),
                        static_cast<unsigned long long>(assembly.PlacedVertices));
+            if (assembly.TerrainExport.IsEnabled())
+            {
+                WastelandTerrainExport::WriteManifest(assembly.TerrainExport);
+            }
             return true;
         }
 
@@ -1200,6 +1211,15 @@ namespace Game::GameModes
                        (data.m_HideMask & WastelandHide::Aerial) != 0 ? 1 : 0,
                        (data.m_HideMask & WastelandHide::Fog) != 0 ? 1 : 0);
         }
+        // 地形を最も細かい段で描く指定（--wasteland-finest-lod）と、地形の書き出し先（--wasteland-export-terrain）
+        if (data.m_bFinestLod)
+        {
+            LOG_INFO("WASTELAND_FINEST_LOD lod=0 地形を最も細かい段で描きます");
+        }
+        if (!data.m_TerrainExportDir.empty())
+        {
+            LOG_INFO_F("WASTELAND_TERRAIN_EXPORT_BEGIN dir=%s", data.m_TerrainExportDir.c_str());
+        }
         const Game::Scenes::SceneDescriptor *scene = Game::Scenes::FindScene(Game::Scenes::kWastelandSceneId);
         Game::Scenes::FreeCameraPose pose{};
         if (scene == nullptr || !Game::Scenes::ResolveFreeCameraPose(*scene, data.m_ViewName.c_str(), pose))
@@ -1273,6 +1293,7 @@ namespace Game::GameModes
         {
             auto assembly = MakeShared<WastelandAssembly>();
             assembly->AssetSystem = assetSystem;
+            assembly->TerrainExport.Directory = data.m_TerrainExportDir;
             if (CollectTerrainTiles(*assetSystem, data.m_pHeightField->GetGridLayout(), *assembly))
             {
                 assembly->Material.DebugName = "WastelandTerrain";

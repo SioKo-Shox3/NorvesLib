@@ -30,6 +30,7 @@
 #include "Thread/Atomic.h"
 
 #include <chrono>
+#include <cstdlib>
 #include <utility>
 
 namespace NorvesLib::Core::Rendering
@@ -1444,6 +1445,30 @@ namespace NorvesLib::Core::Rendering
         // 上限が無いときは目標を持たない（外さない）
         m_Impl->VideoMemoryBudget.SetPoolShare(VideoMemoryPool::VirtualTexture, 3);
         m_Impl->VideoMemoryBudget.SetPoolShare(VideoMemoryPool::Geometry, 1);
+#if NORVES_BUILD_DEVELOPMENT
+        // 比較の撮影（Game の --wasteland-finest-lod）は見える地形を全部最も細かい段で描くので、ジオメトリの取り分を
+        // 環境変数 NORVES_VRAM_GEOMETRY_SHARE（1〜65535。VT は 3 のまま）で大きくする（開発ビルドだけ）
+        {
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4996)
+#endif
+            const char *shareText = std::getenv("NORVES_VRAM_GEOMETRY_SHARE");
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
+            if (shareText != nullptr && shareText[0] != '\0')
+            {
+                char *end = nullptr;
+                const unsigned long share = std::strtoul(shareText, &end, 10);
+                if (end != shareText && *end == '\0' && share >= 1ul && share <= VideoMemoryBudgetManager::MaxShareWeight)
+                {
+                    m_Impl->VideoMemoryBudget.SetPoolShare(VideoMemoryPool::Geometry, static_cast<uint32_t>(share));
+                    LOG_INFO_F("VRAM_POOL_SHARE geometry=%lu virtual_texture=3 source=env", share);
+                }
+            }
+        }
+#endif
         m_Impl->ProceduralMeshes = Container::MakeUnique<ProceduralMeshGpuStore>(m_Impl->Device);
         if (m_Impl->TextureAssets)
         {

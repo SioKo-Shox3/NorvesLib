@@ -232,6 +232,18 @@ namespace Game
         // 外すもの（Game/GameModes/Wasteland/WastelandMode.h の WastelandHide）。シーンの設定なので Release でも効く
         constexpr const TCHAR *kWastelandHideOption = TEXT("--wasteland-hide=");
         uint32_t s_WastelandHideMask = 0;
+        // --wasteland-finest-lod: 正解の絵との比較のため、仮想化ジオメトリの LOD を最も細かい段に固定する（開発ビルドだけ）。
+        // LOD を選ぶ誤差の閾値を受け付ける最小（kFinestLodErrorPx 画素）にし、誤差 0 の段 0 以外を描かせない。
+        // 見える範囲の段 0 のページが常駐しきるよう、VRAM の予算のジオメトリの取り分を kFinestLodGeometryShare（VT は 3）に上げ、
+        // ジオメトリの塊に各メッシュの全部のページの置き場を見込む（NORVES_GEOMETRY_PAGE_ROOM_DIVISOR=1）。
+        // 環境変数 NORVES_MEGA_LOD_ERROR_PX で描画側へ渡すので、--mega-lod-error-px と一緒に使わない（後に書いた方が効く）。
+        // --wasteland-export-terrain=<フォルダ>: 地形の区画の LOD 0 を PLY で書き出す（開発ビルドだけ。WastelandTerrainExport.h）
+        constexpr const TCHAR *kWastelandFinestLodOption = TEXT("--wasteland-finest-lod");
+        constexpr const char *kFinestLodErrorPx = "1e-06";
+        constexpr const char *kFinestLodGeometryShare = "255";
+        constexpr const TCHAR *kWastelandExportTerrainOption = TEXT("--wasteland-export-terrain=");
+        bool s_bWastelandFinestLod = false;
+        String s_WastelandExportTerrainDir;
         // --open-scene-info: mega-bananas を起動時から情報表示（H キーの表示）を出した状態にする（開発ビルドだけ。値を取らない）。
         // 撮影の起動は ImGui を使わないが、この指定があれば撮影でも使い、表示を撮れる。
         constexpr const TCHAR *kOpenSceneInfoOption = TEXT("--open-scene-info");
@@ -647,6 +659,8 @@ namespace Game
         s_bMegaSceneFullSync = false;
         s_DisplayCheckMode = DisplayCheckMode::None;
         s_WastelandCommonLight = Game::GameModes::WastelandCommonLight::Options{};
+        s_bWastelandFinestLod = false;
+        s_WastelandExportTerrainDir.clear();
         m_StressStreamCellMeters = 0.0f;
         m_bStressStreamCellSet = false;
         m_StressStreamPeriod = Game::GameModes::kDefaultStressStreamPeriod;
@@ -1356,6 +1370,35 @@ namespace Game
                                 unknownName.c_str());
                     return false;
                 }
+                continue;
+            }
+            if (args[i] == kWastelandFinestLodOption)
+            {
+#if NORVES_BUILD_DEVELOPMENT
+                // MegaGeometryPass が最初に作られる前に環境変数へ渡す（--mega-lod-error-px と同じ道）
+                s_bWastelandFinestLod = true;
+                _putenv_s("NORVES_MEGA_LOD_ERROR_PX", kFinestLodErrorPx);
+                // 見える地形を全部最も細かい段で持てるよう、VRAM の予算のジオメトリの取り分を大きくする（荒野は VT を使わない）
+                _putenv_s("NORVES_VRAM_GEOMETRY_SHARE", kFinestLodGeometryShare);
+                // ページはメッシュと同じ塊にしか置けないので、塊に各メッシュの全部のページの置き場を見込む
+                _putenv_s("NORVES_GEOMETRY_PAGE_ROOM_DIVISOR", "1");
+#else
+                LOG_WARNING("--wasteland-finest-lod は開発ビルドだけで使えます。無視します");
+#endif
+                continue;
+            }
+            if (TryStripPrefix(args[i], kWastelandExportTerrainOption, sceneValue))
+            {
+#if NORVES_BUILD_DEVELOPMENT
+                if (sceneValue.empty())
+                {
+                    LOG_ERROR("--wasteland-export-terrain には書き出すフォルダを指定してください");
+                    return false;
+                }
+                s_WastelandExportTerrainDir = sceneValue;
+#else
+                LOG_WARNING("--wasteland-export-terrain は開発ビルドだけで使えます。無視します");
+#endif
                 continue;
             }
             if (TryStripPrefix(args[i], kCommonLightCaseOption, sceneValue))
@@ -3418,6 +3461,8 @@ namespace Game
                 // 共通の照明と灰色の板（起動引数。--common-light-case だけでは点けない）
                 mode->GetData().m_CommonLight.Opts = s_WastelandCommonLight;
                 mode->GetData().m_HideMask = s_WastelandHideMask;
+                mode->GetData().m_bFinestLod = s_bWastelandFinestLod;
+                mode->GetData().m_TerrainExportDir = s_WastelandExportTerrainDir;
                 if (!s_WastelandCommonLight.bEnabled && s_WastelandCommonLight.bGrayPlate)
                 {
                     LOG_WARNING("--wasteland-gray-plate は --wasteland-common-light と一緒に使います（板は置き、照明は既定のまま）");
