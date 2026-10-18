@@ -5320,3 +5320,23 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `CommonLight.json` を変えたので、前の項目（COMMON-LIGHT・BARE-AOV・BLENDER-TERRAIN ほか）の保存結果は入力のハッシュが古くなる（エンジンのコードの変更でも同じ）
   - 新しい試験は足していない（verify の撮影と検査が確かめる）
 - Next: TASKS.md の次の未完の項目。
+
+### SCN-WLR-MATERIAL-ALBEDO 完了（2026-10-19、run 20261018-205227 の反復 18）
+- Done: 地表の材質のアルベドの経路を Blender の Cycles の OSL で写し、ref_cliff_01・ref_ground_01 の照明の無いアルベドをエンジンの GBuffer の生の値と照合した。記録は `Docs/RenderingValidation/WastelandMaterialAlbedo.md`
+  - 値の表: エンジンが材質を組み立てるときに `WASTELAND_TERRAIN_MATERIAL`（`WastelandRoutine.cpp` の定数の JSON）をログへ書き、`TerrainMaterialReference.py` がそこから `terrain_material.json`（詰めた値・GLSL の const・ミップの段）と OSL の定数を作る。照合は表が今のログ・詰め方の式・GLSL と一致することを確かめる
+  - OSL の本体 `Scripts/Terrain/TerrainAlbedo.osl`（三方向の投影・分類の地図・傾斜と高さとノイズ・遠景の地図・皮膜と砂の高さの混ぜ・マクロの揺らぎ・地層とワニス・Vulkan の仕様の異方性の標本）。`BlenderReference.py --albedo` が描き、`ReferenceCheck.py --albedo` が領域ごとの平均（R・G・B の比が 1 ± 0.05）と模様（σ 1 画素でぼかした輝度の 16 画素角の窓の SSIM の平均 ≥ 0.7、窓 1 つずらした対照で見分けられる領域が視点ごとに 1 つ以上）を検査する
+  - 仕様の式のままでは ref_ground_01 の中景の青が 0.949 で外れた。エンジンを `--terrain-anisotropy=1` で撮ると Blender の等方の版と平均 0.6 % 以内・細部の比 1.025 で一致し、差は GPU の異方性の標本の実装（仕様より約 1 段粗い段を読む）だけと分かった。段の偏り +1 を近景の細部の比で決めて入れた（`ANISO_LOD_OFFSET`）
+  - 結果: 全 8 領域で平均の差 2.2 % 以内（最大は ref_cliff_01 の中景の赤 +2.2 %）、模様の SSIM 0.940〜0.995。決めるのに使っていない ref_cliff_01 の崖の SSIM は偏りを入れて 0.865 → 0.992
+- 証拠（`.harness/runs/20261018-205227/`）:
+  - `aux-SCN-WLR-MATERIAL-ALBEDO-capture.txt`: 2 視点を RelWithDebInfo・`-Build -Hdr -Aov` で撮影 result=pass（反復 17）
+  - `aux-SCN-WLR-MATERIAL-ALBEDO-capture-iso.txt`: ref_ground_01 を `--terrain-anisotropy=1` で撮影 result=pass（`TERRAIN_SAMPLER ... max_anisotropy=1` をログで確認）
+  - `aux-SCN-WLR-MATERIAL-ALBEDO-aniso.txt`: 異方性の切り分けの表（等方どうし・偏り 0/0.5/1・異方性 1）
+  - `aux-SCN-WLR-MATERIAL-ALBEDO-blender.txt`: Blender の 2 視点の描画（ref_cliff_01 5551 万三角形 78 秒、ref_ground_01 1004 万三角形 47 秒）EXIT=0
+  - `verify-SCN-WLR-MATERIAL-ALBEDO-1.txt`: `--albedo --verify` result=pass、inputs_current=1・blender_inputs_current=1、EXIT=0
+  - 見比べの画像 `albedo_ref_cliff_01.png`・`albedo_ref_ground_01.png` を開き、地層の筋・分類の斑が同じ位置に出て、差の図が淡い斑だけであることを見た
+- Notes:
+  - Blender の層の重みの AOV は OSL の出力から値が入らず 0 だったので除いた（照合は使っていない。切り分けで要るときは job の `emit: weights` で放射させて描ける）
+  - BC7 の圧縮は再現していない。等方の撮影との一致の大きさ（0.6 % 以内）に含まれる
+  - `CaptureScene.ps1` を `powershell -File` で呼ぶと `-GameArgs` の配列が 1 つの文字列になる。配列は `-Command "& ./Scripts/CaptureScene.ps1 ... -GameArgs @(...)"` で渡す
+  - 新しい試験は足していない（verify の照合が確かめる）
+- Next: TASKS.md の次の未完の項目（SCN-WLR-MATERIAL-NORMAL）。

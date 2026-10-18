@@ -1707,7 +1707,7 @@
 - notes: 比べるだけで、エンジンの照明を直さない（直すのは SCN-WLR-GAP-LIST の後）。Cycles の描画は反復の中で行い、EXR と入力のハッシュを保存する。
 
 ## SCN-WLR-MATERIAL-ALBEDO: 地表の材質の色の張り方を Blender で再現し、照明の無いアルベドを照合する
-- status: todo
+- status: done
 - after: SCN-WLR-BLENDER-TERRAIN
 - done-when: エンジンの地表の材質のアルベドの経路（三方向の投影・地表の分類の地図・傾斜と高さの混ぜ・地層の筋・マクロの揺らぎ・ミップ）を Blender のノードで再現する（値の表は `WastelandRoutine.cpp` の定数から書き出す JSON を両方が使う）。ref_cliff_01・ref_ground_01 の照明の無いアルベド（エンジンは SCN-WLR-BARE-AOV の書き出し）を並べ、領域ごとの平均の差が 5 % 以内、局所の模様（16 px の窓の構造の類似度など、測り方を先に決める）の一致が決めた値以上であることを `ReferenceCheck.py --albedo` で検査する。再現できない処理はその旨と影響を書く。
 - verify: `python Scripts/Terrain/ReferenceCheck.py --albedo --capture .harness/runs/scene-capture/SCN-WLR-MATERIAL-ALBEDO --verify`
