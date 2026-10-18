@@ -5340,3 +5340,19 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `CaptureScene.ps1` を `powershell -File` で呼ぶと `-GameArgs` の配列が 1 つの文字列になる。配列は `-Command "& ./Scripts/CaptureScene.ps1 ... -GameArgs @(...)"` で渡す
   - 新しい試験は足していない（verify の照合が確かめる）
 - Next: TASKS.md の次の未完の項目（SCN-WLR-MATERIAL-NORMAL）。
+
+### SCN-WLR-MATERIAL-NORMAL 完了（2026-10-19、run 20261018-205227 の反復 20）
+- Done: 地表の材質の法線（接空間・BC5 の Z の戻し・DirectX の向きのまま・投影の軸への載せ方・三方向の投影の混ぜ・遠くで 0 へ落とす強さ・地層の傾き）と粗さ（ORM の G・ワニス・落とした傾きの分散を α² へ足す処理）をアルベドの OSL へ足し、ref_cliff_01・ref_ground_01 で照明の無い法線と粗さをエンジンの GBuffer と照合した。記録は `Docs/RenderingValidation/WastelandMaterialNormal.md`
+  - 基準: 法線のなす角の中央値 ≤ 2°・95 百分位 ≤ 8°（3 km 未満かつ幾何が画素で分解できている画素）、粗さの領域の平均の差 ≤ 0.02。対照（傾きを足さない法線・分散を足さない粗さ）で見分けられる領域が視点ごとに 1 つ以上
+  - 結果: 法線は全 8 領域で中央値 0.01〜1.60°・95 百分位 0.08〜5.37°（近景の地面 1.60°/5.37°、対照 4.02°/14.00°。崖 0.65°/2.73°、対照 26.51°）。粗さの差は最大 −0.0016（対照の差 −0.07〜−0.20）
+- 証拠（`.harness/runs/20261018-205227/`）:
+  - `aux-SCN-WLR-MATERIAL-NORMAL-capture.txt`: 2 視点を RelWithDebInfo・`-Build -Hdr -Aov` で撮影 result=pass（反復 19）
+  - `aux-SCN-WLR-MATERIAL-NORMAL-blender.txt`: Blender の 2 視点（ref_cliff_01 は 4 列で 5634 万三角形、ref_ground_01 1004 万三角形）EXIT=0
+  - `verify-SCN-WLR-MATERIAL-NORMAL-1.txt`: `--normal --verify` result=pass、inputs_current=1・blender_inputs_current=1、EXIT=0
+  - `aux-SCN-WLR-MATERIAL-NORMAL-albedo-recheck.txt`・`aux-SCN-WLR-MATERIAL-NORMAL-albedo-verify.txt`: OSL を共有したのでアルベドを描き直し、`--albedo --verify` result=pass（値は前の記録と同じ）
+  - 見比べの画像 `normal_ref_cliff_01.png`・`normal_ref_ground_01.png` を開き、法線の模様が同じ位置に出て、8° 超の赤が崖の細部（判定から外した画素）に集まることを見た
+- Notes:
+  - ref_cliff_01 の崖は 83 % の画素が幾何の分解できていない画素として判定から外れる（外した画素の角の 95 百分位 15.7°、対照 29.7°）。中景より遠くは傾きが 0 へ落ちるので法線の対照が見分けられない（既知の限界として記録）
+  - BC5・BC7 の圧縮は再現していない。異方性の段の偏りはアルベドで決めた +1 をそのまま使った
+  - 新しい試験は足していない（verify の照合が確かめる）
+- Next: TASKS.md の次の未完の項目。

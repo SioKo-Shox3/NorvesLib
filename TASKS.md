@@ -1715,7 +1715,7 @@
 - notes: 法線・粗さは SCN-WLR-MATERIAL-NORMAL。
 
 ## SCN-WLR-MATERIAL-NORMAL: 地表の材質の法線と粗さを Blender で再現し、照合する
-- status: todo
+- status: done
 - after: SCN-WLR-MATERIAL-ALBEDO
 - done-when: SCN-WLR-MATERIAL-ALBEDO と同じ再現に、法線（法線マップの空間・向き・強さ・三方向の投影の混ぜ）と粗さ（遠くで縮んだ法線の分を粗さへ足す処理を含む）を足し、ref_cliff_01・ref_ground_01 で照明の無い法線と粗さを照合する（法線の角度の差の中央値と 95 百分位、粗さの領域の平均の差。基準を先に決める）。
 - verify: `python Scripts/Terrain/ReferenceCheck.py --normal --capture .harness/runs/scene-capture/SCN-WLR-MATERIAL-NORMAL --verify`
