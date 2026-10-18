@@ -100,6 +100,30 @@
 #          95 % が PROJECTION_DEPTH_P95 以下（単位・軸・原点の取り違えと、エンジンが粗い段で描いた所を見つける）。
 #       4. 撮影の起動引数と Game のログに、共通の照明・地形だけ（WASTELAND_HIDE mask=127）・最も細かい段（WASTELAND_FINEST_LOD）がある。
 #
+#   python Scripts/Terrain/ReferenceCheck.py --atmos-dump --capture <出力先> [--views a,b,...] [--verify]
+#       CaptureScene.ps1 -GameArgs atmosphere-dump の撮影（<視点>.atmos.json と、そこに書かれた 32 bit 浮動小数の生のファイル）を
+#       視点ごとに検査し、結果を <出力先>/atmos_dump_check.json に書く。--verify は入力のハッシュ（inputs.json）を今のファイルと照らす。
+#       書き出しの中身: 空の透過率 LUT・空の放射輝度 LUT（GPU へ上げた半精度の値）、透過率の表（光学的深さ）・多重散乱の表・
+#       sky-view の表（CPU の前計算）、決めた視線（太陽からの方位差 4 つ × 仰角 × 距離、地表への視線 × 距離）の高さフォグと
+#       空気遠近（GPU が volumetrics.frag と同じ式で評価した、事前露出の前の値）、地表の太陽と空の照度（lux）。
+#       1. 揃い: 6 つのファイルが JSON の形どおりにあり、NaN・Inf・負（視線の値を除く）が無く、単位の記述が約束どおり。
+#       2. 視線: 方位 4 つ、仰角 ATMOS_ELEVATION_RANGE、距離 ATMOS_DISTANCE_RANGE を覆う格子と、地表（カメラの下
+#          ground_eye_height_m の水平面）への視線が同じ距離を覆う。
+#       3. 値の範囲: 透過率は 0〜1、散乱光は 0 以上。同じ向きで距離が伸びると、透過率は増えず空気遠近の散乱光は減らない。
+#       4. エンジンの値どうしが揃う（書き出しが描画に使われた値そのものであることの確かめ）:
+#          a. 透過率 LUT が透過率の表を CPU と同じ引き方（高さは √、余弦は x|x| の並び）で引いた値に ATMOS_HALF_TOLERANCE で合う。
+#          b. 空の放射輝度 LUT が sky-view の表を CPU と同じ引き方で引いた値（半精度へ上げるときの上限 ATMOS_LUT_CLAMP で
+#             頭打ちにした値）に ATMOS_HALF_TOLERANCE で合う。頭打ちになった texel の数と、頭打ちの前の最大を記録する。
+#          c. GPU が視線の向きで引いた空の放射輝度（視線の値の行 5）が、書き出した LUT を GPU の線形の標本で引いた値に
+#             ATMOS_SAMPLE_TOLERANCE で合う（書き出した LUT が GPU の LUT と同じ）。
+#          d. 高さフォグの透過率が、書き出した定数で volumetrics.frag の式を求めた値に ATMOS_FOG_T_TOLERANCE で合う。
+#          e. 空気遠近の透過率と散乱光が、書き出した定数と LUT で volumetrics.frag の式を求めた値に
+#             ATMOS_AERIAL_T_TOLERANCE・ATMOS_SAMPLE_TOLERANCE で合う。
+#          f. 合成の値（行 6）が、高さフォグの色 × 不透明度 + 太陽の単一散乱 + 空気遠近の散乱光 × 高さフォグの透過率に合う。
+#          g. 地表の太陽の照度 = 大気の外の照度 × 地表の透過率（水平面は × sin(高度)）、エンジンの太陽の方向光の照度と同じ、
+#             地表の透過率が透過率の表を引いた値に ATMOS_SUN_TABLE_TOLERANCE で合う、空の照度が正。
+#       撮影の起動引数に --atmosphere-dump があり、Game のログに書き出しのパス（ATMOSPHERE_DUMP）と保存の行がある。
+#
 # 終了コード: すべて合格なら 0、どれかが不合格なら 1。
 import argparse
 import hashlib
@@ -239,6 +263,34 @@ PROJECTION_MAX_DISTANCE_PX = 16
 PROJECTION_CAMERA_POSITION_M = 1e-3
 PROJECTION_CAMERA_DIRECTION = 1e-5
 PROJECTION_CAMERA_FOV_DEG = 1e-4
+# --atmos-dump: 空と霞の値の書き出し（SCN-WLR-ATMOS-DUMP）
+ATMOS_GAME_ARG = "--atmosphere-dump"
+ATMOS_LOG_LINES = ("ATMOSPHERE_DUMP ",)
+ATMOS_TABLE_KEYS = ("probe", "transmittance_lut", "radiance_lut", "transmittance_table", "multiple_scattering", "sky_view")
+ATMOS_REQUIRED_UNITS = {
+    "transmittance_lut": "transmittance",
+    "radiance_lut": "cd/m2",
+    "transmittance_table": "optical_depth (transmittance = exp(-value))",
+    "multiple_scattering": "cd/m2 per lux of sun illuminance (psi_ms)",
+    "sky_view": "cd/m2",
+}
+ATMOS_PROBE_ROWS = 7
+ATMOS_ELEVATION_RANGE = (-5.0, 90.0)
+ATMOS_DISTANCE_RANGE = (300.0, 30000.0)
+# volumetrics.frag の kAerialPerspectiveMinSkyDirectionY
+ATMOS_AERIAL_MIN_SKY_Y = 0.035
+# 半精度で上げた LUT と、単精度の表から引いた値の相対差（半精度の丸めは 4.9e-4）
+ATMOS_HALF_TOLERANCE = 2e-3
+# GPU の線形の標本と numpy の線形の標本の相対差（GPU の重みの精度の分）
+ATMOS_SAMPLE_TOLERANCE = 0.01
+# 放射輝度の相対差の分母の下限（cd/m²）
+ATMOS_RADIANCE_FLOOR = 1.0
+ATMOS_FOG_T_TOLERANCE = 1e-4
+ATMOS_AERIAL_T_TOLERANCE = 1e-3
+ATMOS_COMPOSITE_TOLERANCE = 1e-4
+ATMOS_SUN_TABLE_TOLERANCE = 0.01
+# SkyAtmospherePass の FloatToHalfRne が LUT の値を頭打ちにする上限（半精度の最大 65504 の 0.9 倍）
+ATMOS_LUT_CLAMP = 65504.0 * 0.9
 
 
 def git_output(args):
@@ -1710,6 +1762,433 @@ def run_projection(capture_dir, views, verify):
     return 0 if not failures else 1
 
 
+def atmos_read_floats(capture_dir, entry):
+    """書き出しの JSON の 1 つのファイルの記述（file・dtype・shape）から float32 の配列を読む。(配列, 失敗の理由)"""
+    path = os.path.join(capture_dir, entry.get("file", ""))
+    if entry.get("dtype") != "float32_le" or entry.get("layout") != "row_major_first_row_first":
+        return None, f"{entry.get('file')}: 形式が約束と違う（{entry.get('dtype')}・{entry.get('layout')}）"
+    if not os.path.isfile(path):
+        return None, f"{entry.get('file')} が無い"
+    shape = tuple(int(n) for n in entry.get("shape", []))
+    data = np.fromfile(path, dtype="<f4")
+    if len(shape) != 3 or data.size != int(np.prod(shape)):
+        return None, f"{entry.get('file')}: 値の数 {data.size} が形 {shape} と合わない"
+    return data.reshape(shape).astype(np.float64), None
+
+
+def atmos_bilinear(texture, u, v, wrap_u):
+    """GPU の線形の標本（texel の中心が (i + 0.5) / 大きさ。横は wrap_u なら繰り返し、縦と wrap_u でない横は端で止める）"""
+    height, width = texture.shape[:2]
+    x = u * width - 0.5
+    y = v * height - 0.5
+    x0 = int(np.floor(x))
+    y0 = int(np.floor(y))
+    fx = x - x0
+    fy = y - y0
+
+    def column(i):
+        return i % width if wrap_u else min(max(i, 0), width - 1)
+
+    def row(j):
+        return min(max(j, 0), height - 1)
+
+    return ((1 - fx) * (1 - fy) * texture[row(y0), column(x0)] + fx * (1 - fy) * texture[row(y0), column(x0 + 1)] +
+            (1 - fx) * fy * texture[row(y0 + 1), column(x0)] + fx * fy * texture[row(y0 + 1), column(x0 + 1)])
+
+
+def atmos_equirect_uv(direction):
+    """volumetrics.frag の EquirectangularUV"""
+    u = np.arctan2(direction[2], direction[0]) / (2.0 * np.pi) + 0.5
+    v = np.arcsin(np.clip(-direction[1], -1.0, 1.0)) / np.pi + 0.5
+    return u, v
+
+
+def atmos_fog_transmittance(fog, origin_height, direction_y, distance):
+    """volumetrics.frag の ComputeAnalyticTransmittance（霧が無効なら密度 0）"""
+    density = max(fog["density_at_base_per_m"], 0.0) if fog["enabled"] else 0.0
+    falloff = max(fog["height_falloff_per_m"], 0.0)
+    if density <= 0.0 or distance <= 0.0:
+        return 1.0
+    origin_exponent = -falloff * (origin_height - fog["base_height_m"])
+    rate = falloff * float(np.clip(direction_y, -1.0, 1.0))
+    change = rate * distance
+    if abs(rate) < 1e-8 or abs(change) < 1e-4:
+        log_integral = np.log(distance)
+    else:
+        if change > 80.0:
+            log_numerator = 0.0
+        elif change > 0.0:
+            log_numerator = np.log(max(1.0 - np.exp(-change), 1e-35))
+        elif change < -80.0:
+            log_numerator = -change
+        else:
+            log_numerator = np.log(max(np.exp(-change) - 1.0, 1e-35))
+        log_integral = log_numerator - np.log(abs(rate))
+    log_depth = np.log(density) + origin_exponent + log_integral
+    if log_depth >= np.log(80.0):
+        return float(np.exp(-80.0))
+    return float(np.exp(-min(np.exp(log_depth), 80.0)))
+
+
+def atmos_density_integral(origin_height, direction_y, start, end, scale_height):
+    """volumetrics.frag の IntegrateExponentialDensity"""
+    length = end - start
+    if not (length > 0.0) or not (scale_height > 0.0):
+        return 0.0
+    start_height = origin_height + direction_y * start
+    start_density = np.exp(np.clip(-start_height / scale_height, -80.0, 80.0))
+    change = float(np.clip(direction_y * length / scale_height, -80.0, 80.0))
+    if abs(change) < 1e-3:
+        return start_density * length * (1.0 - 0.5 * change)
+    return start_density * length * (1.0 - np.exp(-change)) / change
+
+
+def atmos_aerial(meta, camera_y, direction, distance, radiance_lut, transmittance_lut):
+    """volumetrics.frag の ComputeAerialPerspective を、書き出した定数と LUT で求める。(透過率, 散乱光)"""
+    aerial = meta["aerial_perspective"]
+    sky = meta["sky"]
+    start = max(aerial["start_distance_m"], 0.0)
+    if not aerial["available"] or not (distance > start):
+        return np.ones(3), np.zeros(3)
+    origin = camera_y + aerial["origin_altitude_m"]
+    rayleigh = atmos_density_integral(origin, direction[1], start, distance, sky["rayleigh_scale_height_m"])
+    mie = atmos_density_integral(origin, direction[1], start, distance, sky["mie_scale_height_m"])
+    depth = aerial["distance_scale"] * (np.array(aerial["shader_rayleigh_extinction_per_m"]) * rayleigh +
+                                        aerial["shader_mie_extinction_per_m"] * mie)
+    transmittance = np.exp(-np.clip(depth, 0.0, 80.0))
+    sky_direction = np.array([direction[0], max(direction[1], ATMOS_AERIAL_MIN_SKY_Y), direction[2]])
+    sky_direction /= np.linalg.norm(sky_direction)
+    u, v = atmos_equirect_uv(sky_direction)
+    sky_radiance = np.maximum(atmos_bilinear(radiance_lut[..., :3], u, v, True), 0.0)
+    full = atmos_bilinear(transmittance_lut[..., :3], sky_direction[1], aerial["transmittance_lut_observer_v"], False)
+    fraction = np.clip((1.0 - transmittance) / np.maximum(1.0 - full, 1e-3), 0.0, 1.0)
+    return transmittance, sky_radiance * fraction
+
+
+def atmos_relative_error(actual, expected, floor):
+    actual = np.asarray(actual, dtype=np.float64)
+    expected = np.asarray(expected, dtype=np.float64)
+    return float(np.max(np.abs(actual - expected) / np.maximum(np.abs(expected), floor)))
+
+
+def atmos_cosine_to_coordinate(cosine):
+    """SkyAtmosphere.cpp の CosineToTableCoordinate"""
+    c = np.clip(cosine, -1.0, 1.0)
+    return np.sign(c) * np.sqrt(np.abs(c)) * 0.5 + 0.5
+
+
+def atmos_table_bilinear(table, row_position, column_position):
+    rows, columns = table.shape[:2]
+    row = min(int(row_position), rows - 2)
+    column = min(int(column_position), columns - 2)
+    fr = np.float32(row_position - row)
+    fc = np.float32(column_position - column)
+    return ((1 - fr) * (1 - fc) * table[row, column] + (1 - fr) * fc * table[row, column + 1] +
+            fr * (1 - fc) * table[row + 1, column] + fr * fc * table[row + 1, column + 1])
+
+
+def check_atmos_view(capture_dir, view, game_args):
+    failures = []
+    result = {"view": view}
+    meta_path = os.path.join(capture_dir, f"{view}.atmos.json")
+    if not os.path.isfile(meta_path):
+        return {"view": view, "pass": False, "failures": [f"{view}.atmos.json が無い"]}
+    with open(meta_path, encoding="utf-8") as f:
+        meta = json.load(f)
+    if meta.get("format") != "norves_atmosphere_dump_v1":
+        failures.append(f"形式が違う（{meta.get('format')}）")
+    if ATMOS_GAME_ARG not in (game_args or []):
+        failures.append(f"撮影の起動引数に {ATMOS_GAME_ARG} が無い")
+    log_name = view_game_log(capture_dir, view)
+    log_text = ""
+    if log_name and os.path.isfile(os.path.join(capture_dir, log_name)):
+        with open(os.path.join(capture_dir, log_name), encoding="utf-8", errors="replace") as f:
+            log_text = f.read()
+    saved_line = f"CAPTURE_VIEWS view={view} atmosphere saved "
+    for line in ATMOS_LOG_LINES + (saved_line,):
+        if line not in log_text:
+            failures.append(f"Game のログに「{line.strip()}」が無い")
+
+    # 1. ファイルが揃い、形・値の範囲が約束どおり
+    arrays = {}
+    for key in ATMOS_TABLE_KEYS:
+        entry = meta.get(key)
+        if not isinstance(entry, dict):
+            failures.append(f"{key} の記述が無い")
+            continue
+        values, reason = atmos_read_floats(capture_dir, entry)
+        if reason:
+            failures.append(reason)
+            continue
+        if not np.all(np.isfinite(values)):
+            failures.append(f"{key}: NaN か Inf がある")
+        if key != "probe" and np.any(values < 0.0):
+            failures.append(f"{key}: 負の値がある（最小 {float(values.min()):.4g}）")
+        arrays[key] = values
+    result["shapes"] = {key: list(values.shape) for key, values in arrays.items()}
+    for key, units in ATMOS_REQUIRED_UNITS.items():
+        if key in meta and meta[key].get("units") != units:
+            failures.append(f"{key}: 単位の記述が {meta[key].get('units')}（約束は {units}）")
+    if len(arrays) != len(ATMOS_TABLE_KEYS):
+        result.update({"pass": False, "failures": failures})
+        return result
+    probe = arrays["probe"]
+    transmittance_lut = arrays["transmittance_lut"]
+    radiance_lut = arrays["radiance_lut"]
+    if np.any(transmittance_lut[..., :3] > 1.0 + 1e-3):
+        failures.append("透過率 LUT に 1 を超える値がある")
+    for key in ("transmittance_table", "multiple_scattering", "sky_view"):
+        if float(arrays[key].max()) <= 0.0:
+            failures.append(f"{key}: 値がすべて 0")
+
+    # 2. 視線: 方位 4 つ × 仰角 −5〜90° × 距離 0.3〜30 km と、距離 0.3〜30 km の地表への視線
+    rays = meta["probe"]["rays"]
+    if probe.shape[0] != ATMOS_PROBE_ROWS or probe.shape[1] != len(rays):
+        failures.append(f"視線の値の形 {list(probe.shape)} が行 {ATMOS_PROBE_ROWS}・視線 {len(rays)} と合わない")
+        result.update({"pass": False, "failures": failures})
+        return result
+    directions = [r for r in rays if r["kind"] == "direction"]
+    grounds = [r for r in rays if r["kind"] == "ground"]
+    offsets = sorted({r["azimuth_offset_degrees"] for r in directions})
+    elevations = sorted({r["elevation_degrees"] for r in directions})
+    distances = sorted({r["nominal_distance_m"] for r in directions})
+    ground_distances = sorted({r["nominal_distance_m"] for r in grounds})
+    ground_offsets = sorted({r["azimuth_offset_degrees"] for r in grounds})
+    result["rays"] = {"direction": len(directions), "ground": len(grounds), "azimuth_offsets_deg": offsets,
+                      "elevations_deg": elevations, "distances_m": distances, "ground_distances_m": ground_distances}
+    if len(offsets) < 4 or len(ground_offsets) < 4:
+        failures.append(f"方位が 4 つ無い（{offsets}・地表 {ground_offsets}）")
+    if not elevations or elevations[0] > ATMOS_ELEVATION_RANGE[0] or elevations[-1] < ATMOS_ELEVATION_RANGE[1]:
+        failures.append(f"仰角が {ATMOS_ELEVATION_RANGE[0]}〜{ATMOS_ELEVATION_RANGE[1]}° を覆わない（{elevations}）")
+    for name, values in (("視線", distances), ("地表への視線", ground_distances)):
+        if not values or values[0] > ATMOS_DISTANCE_RANGE[0] or values[-1] < ATMOS_DISTANCE_RANGE[1]:
+            failures.append(f"{name}の距離が {ATMOS_DISTANCE_RANGE[0]}〜{ATMOS_DISTANCE_RANGE[1]} m を覆わない（{values}）")
+    if len(directions) != len(offsets) * len(elevations) * len(distances):
+        failures.append("方位 × 仰角 × 距離の格子に欠けがある")
+    for ray in grounds:
+        expected = -np.degrees(np.arctan2(meta["probe"]["ground_eye_height_m"], ray["nominal_distance_m"]))
+        if abs(ray["elevation_degrees"] - expected) > 1e-3 or ray["direction"][1] >= 0.0:
+            failures.append(f"地表への視線（{ray['nominal_distance_m']} m）の向きが地表を向かない")
+            break
+
+    # 3. 値の範囲: 透過率は 0〜1、散乱光は 0 以上、距離が伸びると透過率は減り散乱光は増える
+    fog_t = probe[0, :, 0]
+    aerial_t = probe[3, :, :3]
+    if np.any(fog_t < 0.0) or np.any(fog_t > 1.0 + 1e-6) or np.any(aerial_t < 0.0) or np.any(aerial_t > 1.0 + 1e-6):
+        failures.append("透過率が 0〜1 を外れる")
+    for row in (1, 2, 4, 5, 6):
+        if np.any(probe[row, :, :3] < 0.0):
+            failures.append(f"視線の値の行 {row} に負の値がある")
+    inversions = 0
+    for offset in offsets:
+        for elevation in elevations:
+            indices = [i for i, r in enumerate(rays) if r["kind"] == "direction" and
+                       r["azimuth_offset_degrees"] == offset and r["elevation_degrees"] == elevation]
+            indices.sort(key=lambda i: rays[i]["distance_m"])
+            for a, b in zip(indices, indices[1:]):
+                if fog_t[b] > fog_t[a] + 1e-6 or np.any(aerial_t[b] > aerial_t[a] + 1e-6) or \
+                        np.any(probe[4, b, :3] < probe[4, a, :3] - 1e-4 * np.maximum(probe[4, a, :3], 1.0)):
+                    inversions += 1
+    result["distance_inversions"] = inversions
+    if inversions:
+        failures.append(f"距離が伸びても透過率が減らない・散乱光が増えない組が {inversions} ある")
+
+    # 4. エンジンの値どうしが揃う
+    # 4a. 透過率 LUT（GPU へ上げた値）= 透過率の表（光学的深さ）を CPU と同じ引き方で引いた値
+    table = arrays["transmittance_table"]
+    atmosphere_height = meta["sky"]["atmosphere_height_m"]
+    lut_height, lut_width = transmittance_lut.shape[:2]
+    worst_lut = 0.0
+    for y in range(lut_height):
+        altitude = y / (lut_height - 1)
+        row_position = np.sqrt(altitude) * (table.shape[0] - 1)
+        for x in range(lut_width):
+            cosine = (x + 0.5) / lut_width
+            column_position = atmos_cosine_to_coordinate(cosine) * (table.shape[1] - 1)
+            expected = np.exp(-atmos_table_bilinear(table, row_position, column_position))
+            worst_lut = max(worst_lut, atmos_relative_error(transmittance_lut[y, x, :3], expected, 1e-2))
+    result["transmittance_lut_vs_table_max_rel"] = worst_lut
+    if worst_lut > ATMOS_HALF_TOLERANCE:
+        failures.append(f"透過率 LUT が透過率の表と合わない（相対差の最大 {worst_lut:.3g}）")
+
+    # 4b. 空の放射輝度 LUT（GPU へ上げた値）= sky-view の表を CPU と同じ引き方で引いた値
+    sky_view = arrays["sky_view"]
+    sky_view_meta = meta["sky_view"]
+    horizon = sky_view_meta["horizon_elevation_radians"]
+    sun_azimuth = sky_view_meta["sun_azimuth_radians"]
+    rad_height, rad_width = radiance_lut.shape[:2]
+    worst_radiance = 0.0
+    clamped_texels = 0
+    peak_unclamped = 0.0
+    for y in range(rad_height):
+        latitude = ((y + 0.5) / rad_height - 0.5) * np.pi
+        for x in range(0, rad_width, 2):
+            longitude = ((x + 0.5) / rad_width - 0.5) * 2.0 * np.pi
+            direction = (np.cos(latitude) * np.cos(longitude), -np.sin(latitude), np.cos(latitude) * np.sin(longitude))
+            elevation = np.arcsin(np.clip(direction[1], -1.0, 1.0))
+            if elevation >= horizon:
+                u = np.sqrt((elevation - horizon) / (0.5 * np.pi - horizon))
+            else:
+                u = -np.sqrt((horizon - elevation) / (0.5 * np.pi + horizon))
+            difference = abs(np.remainder(np.arctan2(direction[2], direction[0]) - sun_azimuth + np.pi, 2.0 * np.pi) - np.pi)
+            w = np.sqrt(np.clip(difference / np.pi, 0.0, 1.0))
+            row_position = np.clip(u * 0.5 + 0.5, 0.0, 1.0) * (sky_view.shape[0] - 1)
+            column_position = w * (sky_view.shape[1] - 1)
+            expected = atmos_table_bilinear(sky_view, row_position, column_position)
+            peak_unclamped = max(peak_unclamped, float(np.max(expected)))
+            if np.any(expected > ATMOS_LUT_CLAMP):
+                clamped_texels += 1
+            expected = np.minimum(expected, ATMOS_LUT_CLAMP)
+            worst_radiance = max(worst_radiance,
+                                 atmos_relative_error(radiance_lut[y, x, :3], expected, ATMOS_RADIANCE_FLOOR))
+    result["radiance_lut_vs_sky_view_max_rel"] = worst_radiance
+    # 照らした texel（横は 1 つおき）のうち、頭打ちになったものの数と、頭打ちの前の sky-view の最大（cd/m²）
+    result["radiance_lut_clamped_texels_checked"] = clamped_texels
+    result["radiance_lut_peak_before_clamp_cd_m2"] = peak_unclamped
+    if worst_radiance > ATMOS_HALF_TOLERANCE:
+        failures.append(f"空の放射輝度 LUT が sky-view の表と合わない（相対差の最大 {worst_radiance:.3g}）")
+
+    # 4c. GPU が引いた空の放射輝度 LUT の値（行 5）= 書き出した LUT を同じ向きで引いた値（書き出しが GPU の LUT と同じ）
+    camera_y = meta["camera_position"][1]
+    worst_sample = 0.0
+    worst_fog_t = 0.0
+    worst_aerial_t = 0.0
+    worst_aerial_s = 0.0
+    worst_composite = 0.0
+    fog = meta["height_fog"]
+    for index, ray in enumerate(rays):
+        direction = np.array(ray["direction"], dtype=np.float64)
+        direction /= np.linalg.norm(direction)
+        distance = ray["distance_m"]
+        u, v = atmos_equirect_uv(direction)
+        sampled = np.maximum(atmos_bilinear(radiance_lut[..., :3], u, v, True), 0.0)
+        if fog["color_from_sky_radiance_lut"]:
+            worst_sample = max(worst_sample, atmos_relative_error(probe[5, index, :3], sampled, ATMOS_RADIANCE_FLOOR))
+        # 4d. 高さフォグの透過率（行 0）= 書き出した定数で ComputeAnalyticTransmittance を求めた値
+        expected_fog_t = atmos_fog_transmittance(fog, camera_y, direction[1], distance)
+        worst_fog_t = max(worst_fog_t, abs(probe[0, index, 0] - expected_fog_t))
+        # 4e. 空気遠近（行 3・4）= 書き出した定数と LUT で ComputeAerialPerspective を求めた値
+        expected_t, expected_s = atmos_aerial(meta, camera_y, direction, distance, radiance_lut, transmittance_lut)
+        worst_aerial_t = max(worst_aerial_t, atmos_relative_error(probe[3, index, :3], expected_t, 1e-3))
+        worst_aerial_s = max(worst_aerial_s, atmos_relative_error(probe[4, index, :3], expected_s, ATMOS_RADIANCE_FLOOR))
+        # 4f. 合成（行 6）= 高さフォグの色 × 不透明度 + 太陽の単一散乱 + 空気遠近 × 高さフォグの透過率
+        opacity = probe[0, index, 1]
+        composite = probe[1, index, :3] * opacity + probe[2, index, :3] if opacity > 0.0 else np.zeros(3)
+        if meta["aerial_perspective"]["available"]:
+            composite = composite + probe[4, index, :3] * probe[0, index, 0]
+        worst_composite = max(worst_composite, atmos_relative_error(probe[6, index, :3], composite, ATMOS_RADIANCE_FLOOR))
+    result.update({"probe_sky_sample_max_rel": worst_sample, "fog_transmittance_max_abs": worst_fog_t,
+                   "aerial_transmittance_max_rel": worst_aerial_t, "aerial_scattering_max_rel": worst_aerial_s,
+                   "composite_max_rel": worst_composite})
+    if worst_sample > ATMOS_SAMPLE_TOLERANCE:
+        failures.append(f"GPU が引いた空の放射輝度が書き出した LUT と合わない（相対差の最大 {worst_sample:.3g}）")
+    if worst_fog_t > ATMOS_FOG_T_TOLERANCE:
+        failures.append(f"高さフォグの透過率が書き出した定数の式と合わない（差の最大 {worst_fog_t:.3g}）")
+    if worst_aerial_t > ATMOS_AERIAL_T_TOLERANCE:
+        failures.append(f"空気遠近の透過率が書き出した定数の式と合わない（相対差の最大 {worst_aerial_t:.3g}）")
+    if worst_aerial_s > ATMOS_SAMPLE_TOLERANCE:
+        failures.append(f"空気遠近の散乱光が書き出した定数と LUT の式と合わない（相対差の最大 {worst_aerial_s:.3g}）")
+    if worst_composite > ATMOS_COMPOSITE_TOLERANCE:
+        failures.append(f"合成の値が高さフォグと空気遠近の値から作った値と合わない（相対差の最大 {worst_composite:.3g}）")
+    if not meta["aerial_perspective"]["available"] or not fog["enabled"]:
+        failures.append("空気遠近か高さフォグが撮影のフレームで効いていない（荒野は両方を掛ける）")
+
+    # 4g. 地表の照度: 太陽は大気の外の照度 × 地表の透過率、水平面は × sin(高度)。エンジンの太陽の方向光と同じ値
+    ground = meta["ground_illuminance"]
+    altitude = np.radians(meta["sky"]["sun_altitude_degrees"])
+    sun_normal = np.array(ground["sun_normal_lux"])
+    sun_expected = ground["sun_top_of_atmosphere_normal_lux"] * np.array(ground["sun_ground_transmittance"])
+    sun_error = atmos_relative_error(sun_normal, sun_expected, 1.0)
+    horizontal_error = atmos_relative_error(ground["sun_horizontal_lux"], sun_normal * np.sin(altitude), 1.0)
+    light_error = atmos_relative_error(fog["sun_light_illuminance_lux"], sun_normal, 1.0) \
+        if fog["sun_single_scattering"] else None
+    # 地表の太陽の透過率（直接の積分）= 透過率の表を地表・太陽の天頂角で引いた値（表の補間の分だけずれる）
+    table_sun = np.exp(-atmos_table_bilinear(table, 0.0, atmos_cosine_to_coordinate(np.sin(altitude)) * (table.shape[1] - 1)))
+    sun_table_error = atmos_relative_error(ground["sun_ground_transmittance"], table_sun, 1e-3)
+    sky_lux = np.array(ground["sky_horizontal_lux"])
+    result["ground_illuminance"] = {
+        "sun_normal_lux": sun_normal.tolist(), "sun_horizontal_lux": ground["sun_horizontal_lux"],
+        "sky_horizontal_lux": sky_lux.tolist(), "sun_formula_max_rel": sun_error,
+        "sun_horizontal_max_rel": horizontal_error, "sun_light_max_rel": light_error,
+        "sun_transmittance_vs_table_max_rel": sun_table_error,
+    }
+    if sun_error > 1e-4 or horizontal_error > 1e-4:
+        failures.append(f"地表の太陽の照度が大気の外の照度と透過率から合わない（{sun_error:.3g}・{horizontal_error:.3g}）")
+    if light_error is None:
+        failures.append("撮影のフレームで太陽の方向光（高さフォグの単一散乱）が使えていない")
+    elif light_error > 1e-4:
+        failures.append(f"エンジンの太陽の方向光の照度が地表の太陽の照度と合わない（相対差 {light_error:.3g}）")
+    if sun_table_error > ATMOS_SUN_TABLE_TOLERANCE:
+        failures.append(f"地表の太陽の透過率が透過率の表と合わない（相対差 {sun_table_error:.3g}）")
+    if not (float(sky_lux.min()) > 0.0):
+        failures.append("地表の空の照度が 0 以下")
+
+    result["pass"] = not failures
+    result["failures"] = failures
+    return result
+
+
+def run_atmos_dump(capture_dir, views, verify):
+    failures = []
+    inputs_ok, input_failures, record = check_inputs(capture_dir)
+    if verify and not inputs_ok:
+        failures.extend(input_failures)
+    metric_views = views_from_metrics(capture_dir)
+    game_args = plate_capture_args(capture_dir)
+    if metric_views is None or game_args is None:
+        failures.append("metrics.json が無い（CaptureScene.ps1 の出力先でない）")
+        metric_views = []
+    targets = views if views else metric_views
+    if not targets:
+        failures.append("検査する視点が無い")
+    results = []
+    for view in targets:
+        if view not in metric_views:
+            failures.append(f"{view}: metrics.json に無い視点")
+            continue
+        result = check_atmos_view(capture_dir, view, game_args)
+        results.append(result)
+        ground = result.get("ground_illuminance", {})
+        print(f"REFERENCE_CHECK atmos_dump view={view} pass={int(result['pass'])} rays={result.get('rays')} "
+              f"transmittance_lut_vs_table={result.get('transmittance_lut_vs_table_max_rel')} "
+              f"radiance_lut_vs_sky_view={result.get('radiance_lut_vs_sky_view_max_rel')} "
+              f"radiance_lut_clamped={result.get('radiance_lut_clamped_texels_checked')} "
+              f"radiance_peak_before_clamp={result.get('radiance_lut_peak_before_clamp_cd_m2')} "
+              f"probe_sky_sample={result.get('probe_sky_sample_max_rel')} fog_t={result.get('fog_transmittance_max_abs')} "
+              f"aerial_t={result.get('aerial_transmittance_max_rel')} aerial_s={result.get('aerial_scattering_max_rel')} "
+              f"composite={result.get('composite_max_rel')} inversions={result.get('distance_inversions')} "
+              f"sun_normal_lux={ground.get('sun_normal_lux')} sky_horizontal_lux={ground.get('sky_horizontal_lux')} "
+              f"sun_light={ground.get('sun_light_max_rel')} sun_t_vs_table={ground.get('sun_transmittance_vs_table_max_rel')} "
+              f"inputs_current={int(bool(inputs_ok))}")
+        failures.extend(f"{view}: {failure}" for failure in result["failures"])
+    report = {
+        "mode": "atmos_dump",
+        "verify": bool(verify),
+        "inputs_current": inputs_ok,
+        "inputs_record": record,
+        "game_args": game_args,
+        "criteria": {
+            "half_tolerance": ATMOS_HALF_TOLERANCE, "sample_tolerance": ATMOS_SAMPLE_TOLERANCE,
+            "radiance_floor_cd_m2": ATMOS_RADIANCE_FLOOR, "fog_transmittance_tolerance": ATMOS_FOG_T_TOLERANCE,
+            "aerial_transmittance_tolerance": ATMOS_AERIAL_T_TOLERANCE, "composite_tolerance": ATMOS_COMPOSITE_TOLERANCE,
+            "sun_table_tolerance": ATMOS_SUN_TABLE_TOLERANCE, "lut_clamp_cd_m2": ATMOS_LUT_CLAMP,
+            "elevation_range_deg": list(ATMOS_ELEVATION_RANGE),
+            "distance_range_m": list(ATMOS_DISTANCE_RANGE),
+        },
+        "views": results,
+        "failures": failures,
+    }
+    report_path = os.path.join(capture_dir, "atmos_dump_check.json")
+    with open(report_path, "w", encoding="utf-8") as f:
+        json.dump(report, f, indent=2, ensure_ascii=False)
+    for failure in failures:
+        print(f"REFERENCE_CHECK failure: {failure}")
+    status = "pass" if not failures else "fail"
+    print(f"REFERENCE_CHECK result={status} mode=atmos_dump views={len(targets)} inputs_current={int(inputs_ok)} "
+          f"report={report_path}")
+    return 0 if not failures else 1
+
+
 def main():
     # 結果の行を保存して読むので、端末の符号に関わらず UTF-8 で書く
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -1723,6 +2202,8 @@ def main():
     parser.add_argument("--aov", action="store_true", help="GBuffer の生の値（AOV）の撮影を検査する")
     parser.add_argument("--projection", action="store_true",
                         help="Blender の深度（BlenderReference.py）とエンジンの深度の投影を照らす")
+    parser.add_argument("--atmos-dump", action="store_true",
+                        help="空と霞の値の書き出し（--atmosphere-dump）が揃い、描画に使われた値と合うことを検査する")
     parser.add_argument("--views", default="", help="検査する視点（カンマ区切り。省くと metrics.json の全視点）")
     parser.add_argument("--verify", action="store_true", help="入力のハッシュを今のファイルと照らし、古い結果を拒否する")
     args = parser.parse_args()
@@ -1746,8 +2227,11 @@ def main():
     if args.projection:
         views = [v.strip() for v in args.views.split(",") if v.strip()]
         return run_projection(capture_dir, views, args.verify)
+    if args.atmos_dump:
+        views = [v.strip() for v in args.views.split(",") if v.strip()]
+        return run_atmos_dump(capture_dir, views, args.verify)
     print("REFERENCE_CHECK result=fail reason=no_mode（--record-inputs か --hdr か --display か --plate か --aov か "
-          "--projection を指定する）")
+          "--projection か --atmos-dump を指定する）")
     return 1
 
 

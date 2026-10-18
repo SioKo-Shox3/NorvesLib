@@ -693,6 +693,78 @@ namespace NorvesLib::Core::Rendering
         return Math::Vector3(transmittance.r, transmittance.g, transmittance.b);
     }
 
+    SkyAtmosphereModel::TableView SkyAtmosphereModel::GetTransmittanceTable() const
+    {
+        TableView view;
+        if (!m_TransmittanceTable.empty())
+        {
+            view.Data = m_TransmittanceTable.data();
+            view.Rows = kTransmittanceTableAltitudeCount;
+            view.Columns = kTransmittanceTableCosineCount;
+        }
+        return view;
+    }
+
+    double SkyAtmosphereModel::GetTransmittanceTableAltitudeMeters(uint32_t row) const
+    {
+        // BuildTransmittanceTable と同じ v^2 の並び
+        const double v = static_cast<double>(row) / (kTransmittanceTableAltitudeCount - 1u);
+        return m_Parameters.AtmosphereHeightMeters * v * v;
+    }
+
+    double SkyAtmosphereModel::GetTransmittanceTableCosine(uint32_t column)
+    {
+        return TableCoordinateToCosine(column, kTransmittanceTableCosineCount);
+    }
+
+    SkyAtmosphereModel::TableView SkyAtmosphereModel::GetMultipleScatteringTable() const
+    {
+        TableView view;
+        if (!m_MultipleScatteringTable.empty())
+        {
+            view.Data = m_MultipleScatteringTable.data();
+            view.Rows = kMultipleScatteringAltitudeCount;
+            view.Columns = kMultipleScatteringCosineCount;
+        }
+        return view;
+    }
+
+    double SkyAtmosphereModel::GetMultipleScatteringTableAltitudeMeters(uint32_t row) const
+    {
+        // BuildMultipleScatteringTable と同じ v^3 の並び
+        const double v = static_cast<double>(row) / (kMultipleScatteringAltitudeCount - 1u);
+        return m_Parameters.AtmosphereHeightMeters * v * v * v;
+    }
+
+    double SkyAtmosphereModel::GetMultipleScatteringTableSunCosine(uint32_t column)
+    {
+        return TableCoordinateToCosine(column, kMultipleScatteringCosineCount);
+    }
+
+    SkyAtmosphereModel::TableView SkyAtmosphereModel::GetSkyViewTable() const
+    {
+        TableView view;
+        if (!m_SkyViewTable.empty())
+        {
+            view.Data = m_SkyViewTable.data();
+            view.Rows = kSkyViewElevationCount;
+            view.Columns = kSkyViewAzimuthCount;
+        }
+        return view;
+    }
+
+    double SkyAtmosphereModel::GetSkyViewTableElevationRadians(uint32_t row) const
+    {
+        return SkyViewRowToElevation(row);
+    }
+
+    double SkyAtmosphereModel::GetSkyViewTableAzimuthDifferenceRadians(uint32_t column)
+    {
+        // BuildSkyViewTable と同じ w^2 の並び
+        const double w = static_cast<double>(column) / (kSkyViewAzimuthCount - 1u);
+        return kPi * w * w;
+    }
+
     Math::Vector3 SkyAtmosphereModel::GetGroundSkyIlluminance() const
     {
         return Math::Vector3(m_GroundSkyIrradiance.r * m_SunDiskIrradiance,

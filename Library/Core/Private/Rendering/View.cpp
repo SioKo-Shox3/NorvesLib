@@ -12,6 +12,7 @@
 #include "Rendering/ToneMappingPass.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Rendering/VignettePass.h"
+#include "Rendering/VolumetricsPass.h"
 #include "Debug/Stats.h"
 #include "Logging/LogMacros.h"
 #include <cstring>
@@ -396,6 +397,20 @@ namespace NorvesLib::Core::Rendering
                 m_FrameAovCamera = camera;
             }
         }
+        // 撮影の大気の書き出し（--atmosphere-dump）: AtmosphereProbePass がこのフレームに書いた 1 枚と、その評価に使った値
+        m_FrameAtmosphereProbeTexture.reset();
+        m_FrameAtmosphereInfo.bValid = false;
+        if (IViewPass* atmospherePass = FindPass("AtmosphereProbePass"))
+        {
+            // GetName() がその名前を返すのはそのクラスだけ
+            const FrameCaptureAtmosphereInfo& info = static_cast<AtmosphereProbePass*>(atmospherePass)->GetLastInfo();
+            RHI::TexturePtr probeTexture;
+            if (info.bValid && lastResult.TryGetTexture(RenderGraphResourceNames::CaptureAtmosphereProbe, probeTexture))
+            {
+                m_FrameAtmosphereProbeTexture = probeTexture;
+                m_FrameAtmosphereInfo = info;
+            }
+        }
 #endif
 
         RHI::TexturePtr outputTexture;
@@ -419,6 +434,8 @@ namespace NorvesLib::Core::Rendering
         m_FrameAovTextures[0].reset();
         m_FrameAovTextures[1].reset();
         m_FrameAovCamera = FrameCaptureAovCamera{};
+        m_FrameAtmosphereProbeTexture.reset();
+        m_FrameAtmosphereInfo.bValid = false;
     }
 
     void View::SetFrameOutputTexture(RHI::TexturePtr texture)

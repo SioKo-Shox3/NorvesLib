@@ -145,6 +145,10 @@ namespace Game
         // --capture-aov: --capture-views の視点ごとに、同じフレームの GBuffer の生の値を浮動小数の画像として PNG の横へ書く
         // （開発ビルドだけ。1 視点の --capture-png は ApplicationProcessor が同じ引数で書く）
         constexpr const TCHAR *kCaptureAovOption = TEXT("--capture-aov");
+        // --atmosphere-dump: --capture-views の視点ごとに、同じフレームの空と霞の値（空の LUT・表・決めた視線の空気遠近と
+        // 高さフォグ・地表の照度）を浮動小数のファイルとして PNG の横へ書く（開発ビルドだけ。--capture-views と併せて使う）。
+        // 書き出しのパスは描画の初期化の前に環境変数 NORVES_ATMOSPHERE_DUMP=1 で頼む（Core の AtmosphereProbePass）
+        constexpr const TCHAR *kAtmosphereDumpOption = TEXT("--atmosphere-dump");
         // --exit-after-rendered-frames=<n>: ApplicationProcessor の、落ち着いてから撮るまでの描画フレーム数（--capture-views も同じ数で撮る）
         constexpr const TCHAR *kExitAfterRenderedFramesOption = TEXT("--exit-after-rendered-frames=");
         // ApplicationProcessor の --capture-png が、落ち着いてから撮るまでに描く既定のフレーム数（kCapturePngDefaultSettledRenderedFrames）
@@ -2126,12 +2130,17 @@ namespace Game
         uint64_t captureViewSettleRenderedFrames = Game::Debug::MultiViewCapture::kDefaultViewSettleRenderedFrames;
         bool bCaptureHdr = false;
         bool bCaptureAov = false;
+        bool bAtmosphereDump = false;
         for (size_t i = 0; i < args.size(); ++i)
         {
             String value;
             if (ToStdString(args[i]) == std::basic_string<TCHAR>(kCaptureHdrOption))
             {
                 bCaptureHdr = true;
+            }
+            else if (ToStdString(args[i]) == std::basic_string<TCHAR>(kAtmosphereDumpOption))
+            {
+                bAtmosphereDump = true;
             }
             else if (ToStdString(args[i]) == std::basic_string<TCHAR>(kCaptureAovOption))
             {
@@ -2203,6 +2212,12 @@ namespace Game
 #if NORVES_BUILD_DEVELOPMENT
             m_MultiViewCapture.SetCaptureHdr(bCaptureHdr);
             m_MultiViewCapture.SetCaptureAov(bCaptureAov);
+            m_MultiViewCapture.SetCaptureAtmosphere(bAtmosphereDump);
+            if (bAtmosphereDump)
+            {
+                // 描画の初期化（OnPreInitialize の後）で SceneView が AtmosphereProbePass を足す
+                _putenv_s("NORVES_ATMOSPHERE_DUMP", "1");
+            }
 #else
             (void)bCaptureHdr;
             (void)bCaptureAov;
@@ -2211,6 +2226,18 @@ namespace Game
                        m_CaptureViewNames.size(), static_cast<unsigned long long>(captureSettledRenderedFrames),
                        static_cast<unsigned long long>(captureViewSettleRenderedFrames), captureDirectory.c_str());
         }
+#if NORVES_BUILD_DEVELOPMENT
+        if (bAtmosphereDump && m_CaptureViewNames.empty())
+        {
+            LOG_ERROR("--atmosphere-dump は --capture-views と併せて指定する（視点ごとの撮影の横へ書く）");
+            return false;
+        }
+#else
+        if (bAtmosphereDump)
+        {
+            LOG_WARNING("--atmosphere-dump は開発ビルドだけで使えます。無視します");
+        }
+#endif
         if ((bHasCharacterDrive && !m_bDogMovementSmoke) || (m_bDogMovementSmoke && m_bAnimationDebugRequested))
         {
             LOG_ERROR("犬比較用引数は --dog-movement-smoke と組み合わせ、--animation-debug と併用しないでください");

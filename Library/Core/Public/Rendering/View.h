@@ -262,6 +262,12 @@ namespace NorvesLib::Core::Rendering
         /** @brief GetFrameAovTexture を描いたカメラ（AOV が無いフレームは bValid が false） */
         const FrameCaptureAovCamera& GetFrameAovCamera() const { return m_FrameAovCamera; }
 
+        /** @brief このフレームに AtmosphereProbePass（--atmosphere-dump）が書いた大気の書き出しの 1 枚。書いていなければ空 */
+        const RHI::TexturePtr& GetFrameAtmosphereProbeTexture() const { return m_FrameAtmosphereProbeTexture; }
+
+        /** @brief GetFrameAtmosphereProbeTexture の評価に使った値（書いていないフレームは bValid が false） */
+        const FrameCaptureAtmosphereInfo& GetFrameAtmosphereInfo() const { return m_FrameAtmosphereInfo; }
+
         // ========================================
         // 設定
         // ========================================
@@ -312,6 +318,8 @@ namespace NorvesLib::Core::Rendering
         float m_FrameSceneColorPreExposure = 0.0f;
         RHI::TexturePtr m_FrameAovTextures[2];
         FrameCaptureAovCamera m_FrameAovCamera;
+        RHI::TexturePtr m_FrameAtmosphereProbeTexture;
+        FrameCaptureAtmosphereInfo m_FrameAtmosphereInfo;
         FrameCaptureDisplayInfo m_FrameSceneColorDisplay;
 
         // 設定

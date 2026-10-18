@@ -73,6 +73,15 @@ namespace NorvesLib::Core::Rendering
                     request.Packet->FrameNumber);
                 result.CaptureSources.AovCamera = primarySceneView->GetFrameAovCamera();
             }
+            // 撮影の大気の書き出し（--atmosphere-dump）。AtmosphereProbePass がこのフレームに書いたときだけ入る
+            if (primarySceneView->GetFrameAtmosphereInfo().bValid)
+            {
+                SetFrameCaptureSource(
+                    result.CaptureSources.AtmosphereProbe,
+                    primarySceneView->GetFrameAtmosphereProbeTexture(),
+                    request.Packet->FrameNumber);
+                result.CaptureSources.AtmosphereInfo = primarySceneView->GetFrameAtmosphereInfo();
+            }
             if (auto* pathTracingPass = dynamic_cast<PathTracingPass*>(
                     primarySceneView->FindPass("PathTracingPass")))
             {

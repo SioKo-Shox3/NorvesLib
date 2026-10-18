@@ -200,6 +200,40 @@ namespace NorvesLib::Core::Rendering
         /** 空の放射輝度を評価する観測点の地表からの高さ（m） */
         static constexpr float ObserverAltitudeMeters = 100.0f;
 
+        /**
+         * @brief 前計算の表の 1 つ（撮影の大気の書き出しが、表の値をそのまま書くための読み出し口）
+         *
+         * Data は Rows × Columns のセルが行の順に並び、1 セルは RGB の 3 つ。表が無ければ Data は nullptr。
+         */
+        struct TableView
+        {
+            const float* Data = nullptr;
+            uint32_t Rows = 0;
+            uint32_t Columns = 0;
+        };
+
+        /** 透過率の表。セルは光学的深さ（無次元。透過率は exp(-値)）。行 = 高度（GetTransmittanceTableAltitudeMeters）、列 = 天頂角の余弦 */
+        TableView GetTransmittanceTable() const;
+        double GetTransmittanceTableAltitudeMeters(uint32_t row) const;
+        static double GetTransmittanceTableCosine(uint32_t column);
+
+        /** 多重散乱の表 Ψ_ms（太陽の照度 1 lux あたりの放射輝度、cd/m² / lux = 1/sr）。行 = 高度、列 = 太陽の天頂角の余弦 */
+        TableView GetMultipleScatteringTable() const;
+        double GetMultipleScatteringTableAltitudeMeters(uint32_t row) const;
+        static double GetMultipleScatteringTableSunCosine(uint32_t column);
+
+        /** sky-view の表（BuildSkyViewTable の後だけ。放射輝度 cd/m²）。行 = 仰角、列 = 太陽からの方位差（どちらもラジアン） */
+        TableView GetSkyViewTable() const;
+        double GetSkyViewTableElevationRadians(uint32_t row) const;
+        static double GetSkyViewTableAzimuthDifferenceRadians(uint32_t column);
+
+        /** 太陽の方位角（atan2(z, x)、ラジアン）と、観測点から見た地平線の仰角（ラジアン、負） */
+        double GetSunAzimuthRadians() const { return m_SunAzimuth; }
+        double GetHorizonElevationRadians() const { return m_HorizonElevation; }
+
+        /** 大気の外での太陽円盤の照度（lux。太陽に垂直な面） */
+        float GetSunDiskIrradiance() const { return m_SunDiskIrradiance; }
+
     private:
         struct Rgb
         {

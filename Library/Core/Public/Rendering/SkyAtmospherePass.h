@@ -15,6 +15,29 @@ namespace NorvesLib::Core::Rendering
 {
     class FrameResourceLane;
 
+    /**
+     * @brief 空の透過率 LUT の texel（RGBA の半精度。SkyAtmospherePass が GPU へ上げる値そのもの）を作る
+     *
+     * 横 x は天頂角の余弦 (x + 0.5) / width（0〜1、上の半球だけ）、縦 y は高度の割合 y / (height - 1)（0 が地表、1 が大気の上端）。
+     * rgb は model.GetTransmittance の透過率、a は 1。行は y = 0 から。
+     */
+    void BuildSkyTransmittanceLutTexels(const SkyAtmosphereModel& model,
+                                        uint32_t width,
+                                        uint32_t height,
+                                        Container::VariableArray<uint16_t>& outTexels);
+
+    /**
+     * @brief 空の放射輝度 LUT の texel（RGBA の半精度。SkyAtmospherePass が GPU へ上げる値そのもの）を作る
+     *
+     * 正距円筒: texel の中心 u = (x + 0.5) / width、v = (y + 0.5) / height の向きは
+     * (cos(φ)cos(λ), -sin(φ), cos(φ)sin(λ))、λ = (u - 0.5) 2π、φ = (v - 0.5) π（v = 0 が天頂）。
+     * rgb は model.SampleSkyView の放射輝度（cd/m²）、a は太陽円盤（SolarDiskSolidAngleSteradians）の中なら 1。
+     */
+    void BuildSkyRadianceLutTexels(const SkyAtmosphereModel& model,
+                                   uint32_t width,
+                                   uint32_t height,
+                                   Container::VariableArray<uint16_t>& outTexels);
+
     struct SkyAtmospherePassSettings
     {
         uint32_t TransmittanceWidth = 128;

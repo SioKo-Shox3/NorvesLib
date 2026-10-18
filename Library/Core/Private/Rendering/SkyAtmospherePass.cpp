@@ -302,17 +302,13 @@ namespace NorvesLib::Core::Rendering
         return bCreated && m_SunDiskStagingBuffer != nullptr;
     }
 
-    bool SkyAtmospherePass::GenerateTransmittanceLut(const SkyAtmosphereModel& model)
+    void BuildSkyTransmittanceLutTexels(const SkyAtmosphereModel& model,
+                                        uint32_t width,
+                                        uint32_t height,
+                                        Container::VariableArray<uint16_t>& outTexels)
     {
-        if (!m_TransmittanceTexture)
-        {
-            return false;
-        }
-
-        const uint32_t width = m_Settings.TransmittanceWidth;
-        const uint32_t height = m_Settings.TransmittanceHeight;
-        Container::VariableArray<uint16_t> data;
-        data.resize(static_cast<size_t>(width) * height * 4u);
+        outTexels.clear();
+        outTexels.resize(static_cast<size_t>(width) * height * 4u);
 
         for (uint32_t y = 0u; y < height; ++y)
         {
@@ -328,12 +324,61 @@ namespace NorvesLib::Core::Rendering
                 const size_t offset = (static_cast<size_t>(y) * width + x) * 4u;
                 // 地表の太陽の照度（ComputeSunGroundIlluminance）と同じ密度の積分の表から引く。
                 const Math::Vector3 transmittance = model.GetTransmittance(altitude, cosine);
-                data[offset + 0u] = FloatToHalfRne(transmittance.x);
-                data[offset + 1u] = FloatToHalfRne(transmittance.y);
-                data[offset + 2u] = FloatToHalfRne(transmittance.z);
-                data[offset + 3u] = FloatToHalfRne(1.0f);
+                outTexels[offset + 0u] = FloatToHalfRne(transmittance.x);
+                outTexels[offset + 1u] = FloatToHalfRne(transmittance.y);
+                outTexels[offset + 2u] = FloatToHalfRne(transmittance.z);
+                outTexels[offset + 3u] = FloatToHalfRne(1.0f);
             }
         }
+    }
+
+    void BuildSkyRadianceLutTexels(const SkyAtmosphereModel& model,
+                                   uint32_t width,
+                                   uint32_t height,
+                                   Container::VariableArray<uint16_t>& outTexels)
+    {
+        const SkyAtmosphereParameters& parameters = model.GetParameters();
+        const Math::Vector3 sunDirection =
+            MakeSunDirectionFromAltitudeAzimuth(parameters.SunAltitudeDegrees,
+                                                parameters.SunAzimuthDegrees);
+        const float solarDiskRadius =
+            std::sqrt(SolarDiskSolidAngleSteradians / kPi);
+        outTexels.clear();
+        outTexels.resize(static_cast<size_t>(width) * height * 4u);
+
+        for (uint32_t y = 0u; y < height; ++y)
+        {
+            for (uint32_t x = 0u; x < width; ++x)
+            {
+                const Math::Vector3 direction =
+                    DirectionFromEquirectangular(x, y, width, height);
+                // 観測点から見た空（視線の透過率と地平線より下の地面を含む）。
+                const SkyRadianceSample sample = model.SampleSkyView(direction);
+                const float cosineToSun = std::clamp(Dot(direction, sunDirection), -1.0f, 1.0f);
+                const bool bInSunDisk = std::acos(cosineToSun) <= solarDiskRadius;
+                const size_t offset = (static_cast<size_t>(y) * width + x) * 4u;
+                outTexels[offset + 0u] = FloatToHalfRne(
+                    sample.bValid && IsFiniteRadiance(sample.Radiance) ? sample.Radiance.x : 0.0f);
+                outTexels[offset + 1u] = FloatToHalfRne(
+                    sample.bValid && IsFiniteRadiance(sample.Radiance) ? sample.Radiance.y : 0.0f);
+                outTexels[offset + 2u] = FloatToHalfRne(
+                    sample.bValid && IsFiniteRadiance(sample.Radiance) ? sample.Radiance.z : 0.0f);
+                outTexels[offset + 3u] = FloatToHalfRne(bInSunDisk ? 1.0f : 0.0f);
+            }
+        }
+    }
+
+    bool SkyAtmospherePass::GenerateTransmittanceLut(const SkyAtmosphereModel& model)
+    {
+        if (!m_TransmittanceTexture)
+        {
+            return false;
+        }
+
+        const uint32_t width = m_Settings.TransmittanceWidth;
+        const uint32_t height = m_Settings.TransmittanceHeight;
+        Container::VariableArray<uint16_t> data;
+        BuildSkyTransmittanceLutTexels(model, width, height, data);
 
         const uint32_t rowPitch = width * 4u * sizeof(uint16_t);
         m_TransmittanceTexture->Update(data.data(), rowPitch, rowPitch * height);
@@ -349,35 +394,8 @@ namespace NorvesLib::Core::Rendering
 
         const uint32_t width = m_Settings.RadianceWidth;
         const uint32_t height = m_Settings.RadianceHeight;
-        const SkyAtmosphereParameters& parameters = model.GetParameters();
-        const Math::Vector3 sunDirection =
-            MakeSunDirectionFromAltitudeAzimuth(parameters.SunAltitudeDegrees,
-                                                parameters.SunAzimuthDegrees);
-        const float solarDiskRadius =
-            std::sqrt(SolarDiskSolidAngleSteradians / kPi);
         Container::VariableArray<uint16_t> data;
-        data.resize(static_cast<size_t>(width) * height * 4u);
-
-        for (uint32_t y = 0u; y < height; ++y)
-        {
-            for (uint32_t x = 0u; x < width; ++x)
-            {
-                const Math::Vector3 direction =
-                    DirectionFromEquirectangular(x, y, width, height);
-                // 観測点から見た空（視線の透過率と地平線より下の地面を含む）。
-                const SkyRadianceSample sample = model.SampleSkyView(direction);
-                const float cosineToSun = std::clamp(Dot(direction, sunDirection), -1.0f, 1.0f);
-                const bool bInSunDisk = std::acos(cosineToSun) <= solarDiskRadius;
-                const size_t offset = (static_cast<size_t>(y) * width + x) * 4u;
-                data[offset + 0u] = FloatToHalfRne(
-                    sample.bValid && IsFiniteRadiance(sample.Radiance) ? sample.Radiance.x : 0.0f);
-                data[offset + 1u] = FloatToHalfRne(
-                    sample.bValid && IsFiniteRadiance(sample.Radiance) ? sample.Radiance.y : 0.0f);
-                data[offset + 2u] = FloatToHalfRne(
-                    sample.bValid && IsFiniteRadiance(sample.Radiance) ? sample.Radiance.z : 0.0f);
-                data[offset + 3u] = FloatToHalfRne(bInSunDisk ? 1.0f : 0.0f);
-            }
-        }
+        BuildSkyRadianceLutTexels(model, width, height, data);
 
         const uint32_t rowPitch = width * 4u * sizeof(uint16_t);
         m_RadianceTexture->Update(data.data(), rowPitch, rowPitch * height);

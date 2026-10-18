@@ -5147,3 +5147,22 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 反復 7 の途中に「落ち着き待ちが巻き戻って撮れない」と記録したのは、ref_far_01 の読み込みの途中を見た判断で、撮影はその後に落ち着いて 6 視点とも撮れた（撮影全体で約 15 分）
   - 地形の書き出し（`--wasteland-export-terrain`）は verify の撮影とは別の起動で行い、`.harness/runs/scene-capture/SCN-WLR-BLENDER-TERRAIN-mesh` に置いた。Blender は今の照合に要る視錐台の区画だけを読む（`--range shadow|all` で影の届く 4 km や全区画も読める）
 - Next: TASKS.md の次の未完の項目。
+
+### SCN-WLR-ATMOS-DUMP 完了（2026-10-18、run 20261018-205227 の反復 2）
+- Done: エンジンの空と霞の値を、描画に使った値そのままの浮動小数のファイルに書き出す撮影の起動引数 `atmosphere-dump` と、その検査を足した。記録は `Docs/RenderingValidation/WastelandAtmosphereDump.md`
+  - `volumetrics.frag` の束縛・定数・関数を `Assets/Shaders/Common/VolumetricsCommon.glsl` へ移し、1 本の視線の評価 `EvaluateVolumetricsRay` を共有にした（合成の式と順序は前と同じ）。`volumetrics_probe.frag` が同じ関数で決めた視線（太陽からの方位差 4 × 仰角 −5〜90° 11 × 距離 0.3〜30 km 5、と地表への視線 4 × 5 = 240 本）を評価する
+  - `AtmosphereProbePass`（`VolumetricsPass.h/.cpp`、統計が有効な構成だけ）: 定数は VolumetricsPass と同じ関数 `BuildVolumetricsParams` で詰め、RGBA32F の 1 枚を撮影の読み出し（`FrameCaptureReadbackHelper`）が同じフレームから写す。`SaveCapturedAtmosphere` が `<視点>.atmos.json` と 6 つの `.f32`（probe・透過率 LUT・放射輝度 LUT・透過率の表・多重散乱の表・sky-view の表）を書く。LUT は SkyAtmospherePass から切り出した `BuildSkyTransmittanceLutTexels`・`BuildSkyRadianceLutTexels` で作り直す。地表の太陽（大気の外・垂直・水平面）と空（水平面）の照度も JSON に書く
+  - Game の `--atmosphere-dump`（開発ビルドだけ、`--capture-views` と併せて）が環境変数 `NORVES_ATMOSPHERE_DUMP=1` でパスを足させ、`MultiViewCapture` が保存する。`CaptureScene.ps1` は atmosphere-dump のとき視点 1 つでも `--capture-views` で撮り、書き出しの揃いを確かめて inputs.json を書く
+  - `ReferenceCheck.py --atmos-dump`: 揃い・視線の範囲・値の範囲・距離に対する単調さと、透過率 LUT↔表、放射輝度 LUT↔sky-view、GPU の LUT の標本↔書き出した LUT、高さフォグと空気遠近↔書き出した定数の式、合成、太陽の方向光↔地表の照度を照らす
+- 証拠（`.harness/runs/20261018-205227/`）:
+  - `verify-SCN-WLR-ATMOS-DUMP-1.txt`: Debug の Game のビルド EXIT=0
+  - `verify-SCN-WLR-ATMOS-DUMP-2.txt`: ref_ground_02 を RelWithDebInfo・`-GameArgs atmosphere-dump` で撮影 result=pass（rays=240、81.7 秒）
+  - `verify-SCN-WLR-ATMOS-DUMP-3.txt`: `--atmos-dump --verify` result=pass。透過率 LUT↔表 4.6e-4、放射輝度 LUT↔sky-view 4.9e-4、GPU の標本↔LUT 4.6e-4、高さフォグの透過率 7.2e-7、空気遠近の透過率 1.9e-5・散乱光 1.2e-3、合成 1.0e-7、太陽の方向光↔地表の照度 0、inputs_current=1
+  - `aux-SCN-WLR-ATMOS-DUMP-negative.txt`: 書き出しの複製で Mie の消散係数と霧の密度を 1.1 倍にすると、高さフォグ（0.0315）と空気遠近（0.076・0.063）の照合が落ちる
+  - `aux-SCN-WLR-ATMOS-DUMP-baseline-compare.txt`: SCN-WLR-BASELINE の ref_ground_02 と画素の 99.96 % が同じ・PSNR 59.65 dB・平均輝度の差 0.0001（共通化で見た目は変わらない）。PNG を開いて霞・空・ビュートがいつもどおりであることを見た
+- Notes:
+  - 空の放射輝度 LUT は半精度へ上げるとき 58944 cd/m²（0.9 × 65504）で頭打ちになる。ref_ground_02 では太陽の周りの texel が頭打ちで、頭打ちの前は最大 83894 cd/m²。検査は同じ上限を掛けて照らし、数を記録する（値は変えていない。ATMOS-REF で扱う）
+  - 起動引数の受け口は `ApplicationProcessor.cpp`（paths の外）を触らず、Game の `--capture-views` の撮影だけにした（`--capture-png` 単独の撮影では書き出さず、Game が起動を失敗にする）
+  - 高さフォグの太陽の単一散乱は影の地図を引くので、検査は値の範囲と合成だけを見る（式の再計算はしない）
+  - 新しい試験は足していない（verify の撮影と検査が確かめる）
+- Next: TASKS.md の次の未完の項目。

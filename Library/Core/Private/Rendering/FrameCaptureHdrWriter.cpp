@@ -4,7 +4,11 @@
 #include "Debug/DebugConfig.h"
 #include "FileStream/FileStream.h"
 #include "Rendering/FrameCaptureTypes.h"
+#include "Rendering/SkyAtmosphere.h"
+#include "Rendering/SkyAtmospherePass.h"
+#include <algorithm>
 #include <cmath>
+#include <cstdarg>
 #include <cstdio>
 #include <cstring>
 
@@ -456,6 +460,349 @@ namespace NorvesLib::Core::Rendering
         }
         return WriteBytes(basePath + String(TEXT(".aov.json")), json, static_cast<size_t>(jsonLength));
     }
+
+    namespace
+    {
+        // printf の書式で JSON の文字列を後ろへ足す
+        void AppendFormat(VariableArray<char>& out, const char* format, ...)
+        {
+            char buffer[1024];
+            va_list arguments;
+            va_start(arguments, format);
+            const int length = std::vsnprintf(buffer, sizeof(buffer), format, arguments);
+            va_end(arguments);
+            if (length <= 0)
+            {
+                return;
+            }
+            const size_t count = std::min(static_cast<size_t>(length), sizeof(buffer) - 1u);
+            out.insert(out.end(), buffer, buffer + count);
+        }
+
+        // JSON の数（有限でなければ null）
+        void AppendNumber(VariableArray<char>& out, double value)
+        {
+            if (std::isfinite(value))
+            {
+                AppendFormat(out, "%.9g", value);
+            }
+            else
+            {
+                AppendFormat(out, "null");
+            }
+        }
+
+        void AppendVector3(VariableArray<char>& out, const float* pValues)
+        {
+            AppendFormat(out, "[");
+            for (uint32_t index = 0; index < 3u; ++index)
+            {
+                AppendNumber(out, pValues[index]);
+                AppendFormat(out, index + 1u < 3u ? ", " : "]");
+            }
+        }
+
+        void AppendVector3(VariableArray<char>& out, const Math::Vector3& value)
+        {
+            const float values[3] = {value.x, value.y, value.z};
+            AppendVector3(out, values);
+        }
+
+        // 32 bit 浮動小数の並びをリトルエンディアンの生のファイルにする
+        bool WriteFloats(const String& path, const VariableArray<float>& values)
+        {
+            return WriteBytes(path, values.data(), values.size() * sizeof(float));
+        }
+
+        // 半精度の texel の並びを単精度へ広げる（GPU へ上げた値そのもの）
+        VariableArray<float> HalfTexelsToFloats(const VariableArray<uint16_t>& texels)
+        {
+            VariableArray<float> values;
+            values.resize(texels.size());
+            for (size_t index = 0; index < texels.size(); ++index)
+            {
+                values[index] = HalfToFloat(texels[index]);
+            }
+            return values;
+        }
+
+        // 前計算の表（RGB のセル）を単精度の並びに写す
+        VariableArray<float> TableToFloats(const SkyAtmosphereModel::TableView& table)
+        {
+            VariableArray<float> values;
+            if (table.Data != nullptr)
+            {
+                values.assign(table.Data, table.Data + static_cast<size_t>(table.Rows) * table.Columns * 3u);
+            }
+            return values;
+        }
+
+        // 1 つのファイルの記述（"file"・"dtype"・"shape"・"layout"）を書く
+        void AppendFileEntry(VariableArray<char>& out, const VariableArray<char>& fileName, uint32_t dim0, uint32_t dim1,
+                             uint32_t dim2)
+        {
+            AppendFormat(out, "\"file\": \"%s\", \"dtype\": \"float32_le\", \"shape\": [%u, %u, %u], "
+                              "\"layout\": \"row_major_first_row_first\"",
+                         fileName.data(), dim0, dim1, dim2);
+        }
+    } // namespace
+
+    bool SaveCapturedAtmosphere(const CapturedFrame& frame, const Container::String& pngPath)
+    {
+        const CapturedAtmosphere& atmosphere = frame.Atmosphere;
+        const FrameCaptureAtmosphereInfo& info = atmosphere.Info;
+        const CapturedImage& probe = atmosphere.Probe;
+        if (!frame.IsSuccess() || !atmosphere.bValid || !info.bValid || info.RayCount == 0u ||
+            info.RayCount > FrameCaptureAtmosphereMaxRays || probe.Format != RHI::Format::R32G32B32A32_FLOAT ||
+            probe.BytesPerPixel != 16u || probe.Width != info.RayCount ||
+            probe.Height != FrameCaptureAtmosphereProbeRows ||
+            probe.RowPitchBytes < static_cast<uint64_t>(probe.Width) * probe.BytesPerPixel ||
+            probe.Pixels.size() < static_cast<size_t>(probe.RowPitchBytes) * probe.Height)
+        {
+            return false;
+        }
+        const String basePath = RemoveExtension(pngPath);
+
+        // 決めた視線の値（GPU が volumetrics.frag と同じ式で評価したもの）: [行, 視線, RGBA]
+        VariableArray<float> probeValues;
+        probeValues.resize(static_cast<size_t>(probe.Height) * probe.Width * 4u);
+        for (uint32_t row = 0; row < probe.Height; ++row)
+        {
+            std::memcpy(probeValues.data() + static_cast<size_t>(row) * probe.Width * 4u,
+                        probe.Pixels.data() + static_cast<size_t>(row) * probe.RowPitchBytes,
+                        static_cast<size_t>(probe.Width) * 16u);
+        }
+
+        // 空の LUT と前計算の表（SkyAtmospherePass が同じパラメータで作る値。CPU で決まるので作り直して同じ値になる）
+        SkyAtmosphereModel model(info.Sky);
+        model.BuildSkyViewTable();
+        const SkyAtmospherePassSettings lutSettings;
+        VariableArray<uint16_t> transmittanceTexels;
+        VariableArray<uint16_t> radianceTexels;
+        BuildSkyTransmittanceLutTexels(model, lutSettings.TransmittanceWidth, lutSettings.TransmittanceHeight,
+                                       transmittanceTexels);
+        BuildSkyRadianceLutTexels(model, lutSettings.RadianceWidth, lutSettings.RadianceHeight, radianceTexels);
+        const SkyAtmosphereModel::TableView transmittanceTable = model.GetTransmittanceTable();
+        const SkyAtmosphereModel::TableView multipleScatteringTable = model.GetMultipleScatteringTable();
+        const SkyAtmosphereModel::TableView skyViewTable = model.GetSkyViewTable();
+        if (transmittanceTable.Data == nullptr || multipleScatteringTable.Data == nullptr || skyViewTable.Data == nullptr)
+        {
+            return false;
+        }
+
+        struct FloatFile
+        {
+            const TCHAR* Suffix;
+            VariableArray<float> Values;
+            VariableArray<char> Name;
+        };
+        FloatFile files[] = {
+            {TEXT(".atmos.probe.f32"), probeValues, {}},
+            {TEXT(".atmos.transmittance_lut.f32"), HalfTexelsToFloats(transmittanceTexels), {}},
+            {TEXT(".atmos.radiance_lut.f32"), HalfTexelsToFloats(radianceTexels), {}},
+            {TEXT(".atmos.transmittance_table.f32"), TableToFloats(transmittanceTable), {}},
+            {TEXT(".atmos.multiple_scattering.f32"), TableToFloats(multipleScatteringTable), {}},
+            {TEXT(".atmos.sky_view.f32"), TableToFloats(skyViewTable), {}},
+        };
+        for (FloatFile& file : files)
+        {
+            const String path = basePath + String(file.Suffix);
+            if (file.Values.empty() || !WriteFloats(path, file.Values))
+            {
+                return false;
+            }
+            file.Name = ToAsciiFileName(path);
+        }
+
+        const SkyAtmosphereParameters& sky = info.Sky;
+        const Math::Vector3 sunNormal = ComputeSunGroundIlluminance(sky);
+        const float sunSine = std::sin(sky.SunAltitudeDegrees * (3.14159265358979323846f / 180.0f));
+        const Math::Vector3 sunHorizontal(sunNormal.x * sunSine, sunNormal.y * sunSine, sunNormal.z * sunSine);
+        const Math::Vector3 skyHorizontal = model.GetGroundSkyIlluminance();
+        const Math::Vector3& sunTransmittance = model.GetSunGroundTransmittance();
+        const AtmosphereGroundExtinction groundExtinction = GetAtmosphereGroundExtinction();
+
+        VariableArray<char> json;
+        const VariableArray<char> pngName = ToAsciiFileName(pngPath);
+        AppendFormat(json, "{\n  \"format\": \"norves_atmosphere_dump_v1\",\n  \"png\": \"%s\",\n  \"frame_number\": %llu,\n",
+                     pngName.data(), static_cast<unsigned long long>(frame.FrameNumber));
+        AppendFormat(json, "  \"conventions\": {\"color\": \"linear_rec709_d65\", \"radiance_units\": \"cd/m2\", "
+                           "\"illuminance_units\": \"lux\", \"world\": \"y_up_meters\", \"pre_exposure\": \"removed\", "
+                           "\"direction_from_elevation_azimuth\": \"(cos(el)cos(az), sin(el), cos(el)sin(az))\"},\n");
+
+        // 評価の条件
+        AppendFormat(json, "  \"camera_position\": ");
+        AppendVector3(json, info.CameraPosition);
+        AppendFormat(json, ",\n  \"pre_exposure_of_frame\": ");
+        AppendNumber(json, info.PreExposure);
+        AppendFormat(json, ",\n  \"sky\": {\"enabled\": %s, \"sun_altitude_degrees\": ", sky.bEnabled ? "true" : "false");
+        AppendNumber(json, sky.SunAltitudeDegrees);
+        AppendFormat(json, ", \"sun_azimuth_degrees\": ");
+        AppendNumber(json, sky.SunAzimuthDegrees);
+        AppendFormat(json, ", \"sun_luminance_cd_m2\": ");
+        AppendNumber(json, sky.SunLuminanceNits);
+        AppendFormat(json, ", \"planet_radius_m\": ");
+        AppendNumber(json, sky.PlanetRadiusMeters);
+        AppendFormat(json, ", \"atmosphere_height_m\": ");
+        AppendNumber(json, sky.AtmosphereHeightMeters);
+        AppendFormat(json, ", \"rayleigh_scale_height_m\": ");
+        AppendNumber(json, sky.RayleighScaleHeightMeters);
+        AppendFormat(json, ", \"mie_scale_height_m\": ");
+        AppendNumber(json, sky.MieScaleHeightMeters);
+        AppendFormat(json, ", \"mie_anisotropy\": ");
+        AppendNumber(json, sky.MieAnisotropy);
+        AppendFormat(json, ", \"ground_albedo\": ");
+        AppendVector3(json, sky.GroundAlbedo);
+        AppendFormat(json, ", \"observer_altitude_m\": ");
+        AppendNumber(json, SkyAtmosphereModel::ObserverAltitudeMeters);
+        AppendFormat(json, ", \"sun_disk_solid_angle_sr\": ");
+        AppendNumber(json, SolarDiskSolidAngleSteradians);
+        AppendFormat(json, ", \"ground_extinction_rayleigh_per_m\": ");
+        AppendVector3(json, groundExtinction.Rayleigh);
+        AppendFormat(json, ", \"ground_extinction_mie_per_m\": ");
+        AppendNumber(json, groundExtinction.Mie);
+        AppendFormat(json, "},\n");
+
+        const AerialPerspectiveParameters& aerial = info.Aerial;
+        AppendFormat(json, "  \"aerial_perspective\": {\"enabled\": %s, \"available\": %s, \"distance_scale\": ",
+                     aerial.bEnabled ? "true" : "false", info.bAerialAvailable ? "true" : "false");
+        AppendNumber(json, aerial.DistanceScale);
+        AppendFormat(json, ", \"start_distance_m\": ");
+        AppendNumber(json, aerial.StartDistanceMeters);
+        AppendFormat(json, ", \"origin_altitude_m\": ");
+        AppendNumber(json, aerial.OriginAltitudeMeters);
+        AppendFormat(json, ", \"mie_density_scale\": ");
+        AppendNumber(json, aerial.MieDensityScale);
+        AppendFormat(json, ", \"shader_rayleigh_extinction_per_m\": ");
+        AppendVector3(json, info.RayleighExtinction);
+        AppendFormat(json, ", \"shader_mie_extinction_per_m\": ");
+        AppendNumber(json, info.MieExtinction);
+        AppendFormat(json, ", \"transmittance_lut_observer_v\": ");
+        AppendNumber(json, info.TransmittanceLutObserverV);
+        AppendFormat(json, "},\n");
+
+        const VolumetricFogParameters& fog = info.Fog;
+        AppendFormat(json, "  \"height_fog\": {\"enabled\": %s, \"density_at_base_per_m\": ", fog.bEnabled ? "true" : "false");
+        AppendNumber(json, fog.DensityAtBaseHeight);
+        AppendFormat(json, ", \"base_height_m\": ");
+        AppendNumber(json, fog.BaseHeight);
+        AppendFormat(json, ", \"height_falloff_per_m\": ");
+        AppendNumber(json, fog.HeightFalloffPerUnit);
+        AppendFormat(json, ", \"color_from_sky_radiance_lut\": %s, \"fallback_color\": ",
+                     info.bSkyRadianceAvailable ? "true" : "false");
+        AppendVector3(json, info.FallbackFogColor);
+        AppendFormat(json, ", \"sun_single_scattering\": %s, \"sun_light_direction_of_travel\": ",
+                     info.bDirectionalAvailable ? "true" : "false");
+        AppendVector3(json, info.DirectionalDirection);
+        AppendFormat(json, ", \"sun_light_illuminance_lux\": ");
+        AppendVector3(json, info.DirectionalRadiance);
+        AppendFormat(json, ", \"phase_anisotropy\": ");
+        AppendNumber(json, info.DirectionalAnisotropy);
+        AppendFormat(json, "},\n");
+
+        // 地表の太陽と空の照度
+        AppendFormat(json, "  \"ground_illuminance\": {\"sun_top_of_atmosphere_normal_lux\": ");
+        AppendNumber(json, model.GetSunDiskIrradiance());
+        AppendFormat(json, ", \"sun_ground_transmittance\": ");
+        AppendVector3(json, sunTransmittance);
+        AppendFormat(json, ", \"sun_normal_lux\": ");
+        AppendVector3(json, sunNormal);
+        AppendFormat(json, ", \"sun_horizontal_lux\": ");
+        AppendVector3(json, sunHorizontal);
+        AppendFormat(json, ", \"sky_horizontal_lux\": ");
+        AppendVector3(json, skyHorizontal);
+        AppendFormat(json, "},\n");
+
+        // GPU の LUT（半精度の値を単精度で）
+        AppendFormat(json, "  \"transmittance_lut\": {");
+        AppendFileEntry(json, files[1].Name, lutSettings.TransmittanceHeight, lutSettings.TransmittanceWidth, 4u);
+        AppendFormat(json, ", \"gpu_format\": \"rgba16f\", \"units\": \"transmittance\", "
+                           "\"x\": \"cos_zenith = (x + 0.5) / width\", \"y\": \"altitude_fraction = y / (height - 1)\", "
+                           "\"alpha\": \"1\"},\n");
+        AppendFormat(json, "  \"radiance_lut\": {");
+        AppendFileEntry(json, files[2].Name, lutSettings.RadianceHeight, lutSettings.RadianceWidth, 4u);
+        AppendFormat(json, ", \"gpu_format\": \"rgba16f\", \"units\": \"cd/m2\", \"mapping\": \"equirectangular\", "
+                           "\"x\": \"longitude = ((x + 0.5) / width - 0.5) * 2pi = atan2(z, x)\", "
+                           "\"y\": \"latitude = ((y + 0.5) / height - 0.5) * pi, direction_y = -sin(latitude)\", "
+                           "\"alpha\": \"1 inside sun disk\"},\n");
+
+        // CPU の前計算の表（軸の値も書く）
+        AppendFormat(json, "  \"transmittance_table\": {");
+        AppendFileEntry(json, files[3].Name, transmittanceTable.Rows, transmittanceTable.Columns, 3u);
+        AppendFormat(json, ", \"units\": \"optical_depth (transmittance = exp(-value))\", \"altitude_m\": [");
+        for (uint32_t row = 0; row < transmittanceTable.Rows; ++row)
+        {
+            AppendNumber(json, model.GetTransmittanceTableAltitudeMeters(row));
+            AppendFormat(json, row + 1u < transmittanceTable.Rows ? ", " : "], \"cos_zenith\": [");
+        }
+        for (uint32_t column = 0; column < transmittanceTable.Columns; ++column)
+        {
+            AppendNumber(json, SkyAtmosphereModel::GetTransmittanceTableCosine(column));
+            AppendFormat(json, column + 1u < transmittanceTable.Columns ? ", " : "]},\n");
+        }
+        AppendFormat(json, "  \"multiple_scattering\": {");
+        AppendFileEntry(json, files[4].Name, multipleScatteringTable.Rows, multipleScatteringTable.Columns, 3u);
+        AppendFormat(json, ", \"units\": \"cd/m2 per lux of sun illuminance (psi_ms)\", \"altitude_m\": [");
+        for (uint32_t row = 0; row < multipleScatteringTable.Rows; ++row)
+        {
+            AppendNumber(json, model.GetMultipleScatteringTableAltitudeMeters(row));
+            AppendFormat(json, row + 1u < multipleScatteringTable.Rows ? ", " : "], \"sun_cos_zenith\": [");
+        }
+        for (uint32_t column = 0; column < multipleScatteringTable.Columns; ++column)
+        {
+            AppendNumber(json, SkyAtmosphereModel::GetMultipleScatteringTableSunCosine(column));
+            AppendFormat(json, column + 1u < multipleScatteringTable.Columns ? ", " : "]},\n");
+        }
+        AppendFormat(json, "  \"sky_view\": {");
+        AppendFileEntry(json, files[5].Name, skyViewTable.Rows, skyViewTable.Columns, 3u);
+        AppendFormat(json, ", \"units\": \"cd/m2\", \"sun_azimuth_radians\": ");
+        AppendNumber(json, model.GetSunAzimuthRadians());
+        AppendFormat(json, ", \"horizon_elevation_radians\": ");
+        AppendNumber(json, model.GetHorizonElevationRadians());
+        AppendFormat(json, ", \"elevation_radians\": [");
+        for (uint32_t row = 0; row < skyViewTable.Rows; ++row)
+        {
+            AppendNumber(json, model.GetSkyViewTableElevationRadians(row));
+            AppendFormat(json, row + 1u < skyViewTable.Rows ? ", " : "], \"azimuth_difference_radians\": [");
+        }
+        for (uint32_t column = 0; column < skyViewTable.Columns; ++column)
+        {
+            AppendNumber(json, SkyAtmosphereModel::GetSkyViewTableAzimuthDifferenceRadians(column));
+            AppendFormat(json, column + 1u < skyViewTable.Columns ? ", " : "]},\n");
+        }
+
+        // 決めた視線の値（行の意味は AtmosphereProbePass の説明と同じ）
+        AppendFormat(json, "  \"probe\": {");
+        AppendFileEntry(json, files[0].Name, probe.Height, probe.Width, 4u);
+        AppendFormat(json, ", \"ground_eye_height_m\": ");
+        AppendNumber(json, info.GroundEyeHeightMeters);
+        AppendFormat(json, ",\n    \"rows\": ["
+                           "\"fog_transmittance|fog_opacity|aerial_mean_transmittance|composite_alpha\", "
+                           "\"fog_color_rgb_cd_m2|sky_lut_used\", "
+                           "\"fog_sun_single_scattering_rgb_cd_m2|enabled\", "
+                           "\"aerial_transmittance_rgb|enabled\", "
+                           "\"aerial_scattering_rgb_cd_m2|0\", "
+                           "\"sky_radiance_lut_rgb_cd_m2|0\", "
+                           "\"composite_added_light_rgb_cd_m2|composite_alpha\"],\n    \"rays\": [\n");
+        for (uint32_t rayIndex = 0; rayIndex < info.RayCount; ++rayIndex)
+        {
+            const FrameCaptureAtmosphereRay& ray = info.Rays[rayIndex];
+            AppendFormat(json, "      {\"kind\": \"%s\", \"azimuth_offset_degrees\": ",
+                         ray.Kind == FrameCaptureAtmosphereRayKind::Ground ? "ground" : "direction");
+            AppendNumber(json, ray.AzimuthOffsetDegrees);
+            AppendFormat(json, ", \"elevation_degrees\": ");
+            AppendNumber(json, ray.ElevationDegrees);
+            AppendFormat(json, ", \"nominal_distance_m\": ");
+            AppendNumber(json, ray.NominalDistanceMeters);
+            AppendFormat(json, ", \"distance_m\": ");
+            AppendNumber(json, ray.DistanceMeters);
+            AppendFormat(json, ", \"direction\": ");
+            AppendVector3(json, ray.Direction);
+            AppendFormat(json, rayIndex + 1u < info.RayCount ? "},\n" : "}\n");
+        }
+        AppendFormat(json, "    ]\n  }\n}\n");
+        return WriteBytes(basePath + String(TEXT(".atmos.json")), json.data(), json.size());
+    }
 #else
     bool SaveCapturedSceneColorHdr(const CapturedFrame&, const Container::String&)
     {
@@ -463,6 +810,11 @@ namespace NorvesLib::Core::Rendering
     }
 
     bool SaveCapturedAov(const CapturedFrame&, const Container::String&)
+    {
+        return false;
+    }
+
+    bool SaveCapturedAtmosphere(const CapturedFrame&, const Container::String&)
     {
         return false;
     }

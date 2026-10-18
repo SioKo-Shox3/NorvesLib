@@ -1220,6 +1220,13 @@ namespace NorvesLib::Core::Rendering
             NORVES_LOG_INFO("SceneView", "CAPTURE_AOV --capture-aov により GBuffer の生の値を書くパスを追加する");
             AddPass(MakeUnique<GBufferAovPass>());
         }
+        // AtmosphereProbePass: 撮影の大気の書き出し（決めた視線の高さフォグと空気遠近。Game の --atmosphere-dump が
+        // 環境変数 NORVES_ATMOSPHERE_DUMP で渡す）。シーンの色へは書かない
+        if (AtmosphereProbePass::IsRequestedByEnvironment())
+        {
+            NORVES_LOG_INFO("SceneView", "ATMOSPHERE_DUMP --atmosphere-dump により大気の書き出しのパスを追加する");
+            AddPass(MakeUnique<AtmosphereProbePass>());
+        }
 #endif
 
         // PostProcessStack: TemporalAA -> AutoExposure -> Bloom -> ToneMapping -> Vignette -> FXAA -> Upscale -> DebugDraw

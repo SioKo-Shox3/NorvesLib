@@ -110,6 +110,13 @@ namespace NorvesLib::Core::Rendering
             PendingImageReadback Images[2];
             FrameCaptureAovCamera Camera;
         };
+        /** @brief bIncludeAtmosphere の要求で、同じフレームの大気の書き出し（1 枚）を写した読み出し */
+        struct PendingAtmosphereReadback
+        {
+            bool bRecorded = false;
+            PendingImageReadback Image;
+            FrameCaptureAtmosphereInfo Info;
+        };
 
         static bool TryGetBytesPerPixel(RHI::Format format, uint32_t& outBytesPerPixel);
         /** @brief 読み出し先のバッファを byteCount 以上にそろえる（作れなければ false） */
@@ -141,11 +148,14 @@ namespace NorvesLib::Core::Rendering
         PendingReadback m_PendingReadback;
         PendingSceneColorReadback m_PendingSceneColor;
         PendingAovReadback m_PendingAov;
+        PendingAtmosphereReadback m_PendingAtmosphere;
         CapturedFrame m_CompletedFrame;
         Container::VariableArray<ReadbackSlot> m_ReadbackSlots;
         Container::VariableArray<ReadbackSlot> m_SceneColorReadbackSlots;
         /** @brief AOV の表面・幾何の読み出し先（フレームの枠ごと） */
         Container::VariableArray<ReadbackSlot> m_AovReadbackSlots[2];
+        /** @brief 大気の書き出しの読み出し先（フレームの枠ごと） */
+        Container::VariableArray<ReadbackSlot> m_AtmosphereReadbackSlots;
     };
 
 } // namespace NorvesLib::Core::Rendering

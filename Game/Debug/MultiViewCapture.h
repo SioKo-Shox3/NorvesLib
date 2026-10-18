@@ -68,6 +68,13 @@ namespace Game::Debug
          */
         void SetCaptureAov(bool bCaptureAov) { m_bCaptureAov = bCaptureAov; }
 
+        /**
+         * @brief 視点ごとの PNG の横へ、同じフレームの空と霞の値を書くか（--atmosphere-dump）
+         *
+         * 書き出しの形式は Core の SaveCapturedAtmosphere（<視点>.atmos.json と <視点>.atmos.*.f32）。書けなければ撮影の失敗にする。
+         */
+        void SetCaptureAtmosphere(bool bCaptureAtmosphere) { m_bCaptureAtmosphere = bCaptureAtmosphere; }
+
         /// ApplicationProcessor の --capture-png の撮影と終了を止めておくか（有効な間は撮り終えた後も止める）
         bool IsHoldingEngineCapture() const { return IsEnabled(); }
 
@@ -104,6 +111,7 @@ namespace Game::Debug
         Game::Scenes::SceneViewSwitch* m_pViewSwitch = nullptr;
         bool m_bCaptureHdr = false;
         bool m_bCaptureAov = false;
+        bool m_bCaptureAtmosphere = false;
 
         Phase m_Phase = Phase::Settling;
         size_t m_ViewIndex = 0;
