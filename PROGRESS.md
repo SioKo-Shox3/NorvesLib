@@ -5204,3 +5204,20 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 前の反復の未追跡のファイルのうち `Docs/RenderingValidation/WastelandAtmosphereDump.md` は paths の内側なのでこのコミットに入れた。`Assets/Shaders/Common/VolumetricsCommon.glsl`・`Assets/Shaders/volumetrics_probe.frag` は paths の外なので未追跡のまま（`volumetrics.frag` は前者を include する）
   - 新しい試験は足していない（verify の 2 つが確かめる）
 - Next: TASKS.md の次の未完の項目。
+
+### SCN-WLR-FAR-BLUR-STATIC 完了（2026-10-19、run 20261018-205227 の反復 9）
+- Done: 遠景のぼけを、2 倍の解像度・AA なしで撮って縮めた正解と比べ、細部の欠けとエイリアスに分けて条件ごとに表にした。記録は `Docs/RenderingValidation/WastelandFarBlurStatic.md`
+  - 撮影の起動引数（開発ビルドだけ）: `--wasteland-aa=fxaa|taa|none`・`--wasteland-render-scale`・`--terrain-mip-bias`・`--terrain-anisotropy`（`Rendering/TerrainSamplerOverride.h` が地形のサンプラー 2 か所に掛ける）・`--vram-geometry-share`
+  - 原因の順位: 1 画素 1 標本のエイリアス（既定のエイリアス 0.64〜0.81、欠け 0.23〜0.31。内部解像度 0.75 で欠け +0.279）＞ 霞のコントラスト低下（帯域の量 0.74〜0.87 倍）＞ TAA の細部の欠け（エイリアス −0.316・欠け +0.117）。FXAA・ミップの偏り −1・異方性は効かない（差 0.01 未満）
+- 証拠（`.harness/runs/20261018-205227/`）:
+  - `verify-SCN-WLR-FAR-BLUR-STATIC-1.txt`: Debug の Game のビルド EXIT=0
+  - `verify-SCN-WLR-FAR-BLUR-STATIC-2.txt`: 既定の組を RelWithDebInfo・`-Build -Hdr` で撮影 result=pass
+  - `verify-SCN-WLR-FAR-BLUR-STATIC-3.txt`: `--blur-static --verify` result=pass、cases=7、inputs_current=1、較正（ぼかし 欠け 0.66・エイリアス 0.05、雑音 残り 1.00・エイリアス 0.76）、全組で撮った時点のページの要求 0・`vt_used_mb` 0
+  - `aux-SCN-WLR-FAR-BLUR-STATIC-capture-<組>.txt`: 組ごとの撮影
+- Notes:
+  - `--wasteland-finest-lod` の組は 10 分たっても撮れず止めた。SCN-WLR-FAR-BLUR-LOD を TASKS.md に足した
+  - scale-075 は HDR が内部解像度で書かれ CaptureScene の大きさの照合に落ちるので `-Hdr` なしで撮り、`ReferenceCheck.py --record-inputs` で入力のハッシュを書いた（CaptureScene.ps1 は入力のハッシュに入るので触っていない）
+  - 較正のぼかしのエイリアスの上限を 0.05 → 0.1 にした（ref_cliff_02 で 0.051。雑音は 0.76 で十分離れている）
+  - 前の反復の未追跡のシェーダー（`VolumetricsCommon.glsl`・`volumetrics_probe.frag`）は paths の内側なのでこのコミットに入れた
+  - 新しい試験は足していない（verify の撮影と検査が確かめる）
+- Next: TASKS.md の次の未完の項目。

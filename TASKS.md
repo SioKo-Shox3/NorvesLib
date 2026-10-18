@@ -1767,7 +1767,7 @@
 - notes: -
 
 ## SCN-WLR-FAR-BLUR-STATIC: 遠景のぼけの原因を、静止の撮影で 1 つずつ切り分ける
-- status: todo
+- status: done
 - after: SCN-WLR-HDR-CAPTURE
 - done-when: 測り方を先に決める: 遠景の正解は、同じ視点を 2 倍の解像度で撮って縮めた画（超標本化）とし、遠くの崖の領域の細かさを、正解との帯域ごとの差（細部の欠け）と、正解に無い高周波（エイリアス）に分けて数える（エイリアスを鮮明さに数えない）。ref_far_01・ref_cliff_02 で、AA（FXAA・TAA・なし）、霞（空気遠近・高さフォグの入・切）、内部解像度、地形の LOD（最細の固定の入・切）、仮想テクスチャの常駐（撮る前に要求が満ちたことをログで確かめる）・ミップの偏り・異方性フィルタを、1 つずつ変えた条件の表で撮り、細部の欠けとエイリアスを表にする。原因の順位と直す案を書く。既定は変えない。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
@@ -1775,6 +1775,15 @@
 - verify: `python Scripts/Terrain/ReferenceCheck.py --blur-static --capture .harness/runs/scene-capture/SCN-WLR-FAR-BLUR-STATIC --verify`
 - paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Game, Assets/Shaders, Scripts, Docs/RenderingValidation, TASKS.md, PROGRESS.md
 - notes: 条件の切り替えは撮影の起動引数で行い、既定の見た目を変えない。1 反復で全条件が撮れなければ、撮れた条件で表を作り、残りの条件を後ろの項目に足す。撮影の構成（Debug か RelWithDebInfo か）は SCN-WL-CAPTURE-SPEED の決定に揃えてよい（verify も同じ反復で直す）。
+
+## SCN-WLR-FAR-BLUR-LOD: 遠景のぼけの切り分けに、地形の LOD の最細の固定の組を足す
+- status: todo
+- after: SCN-WLR-FAR-BLUR-STATIC
+- done-when: SCN-WLR-FAR-BLUR-STATIC の撮影で 10 分たっても落ち着かなかった `--wasteland-finest-lod` の組を、ref_far_01・ref_cliff_02 で撮りきる（撮った時点のジオメトリのページの要求 0）。`ReferenceCheck.py --blur-static` の組に戻し、同じ入力のハッシュで既定の組と並べて、細部の欠けとエイリアスの差を `Docs/RenderingValidation/WastelandFarBlurStatic.md` の表と原因の順位に足す。既定は変えない。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -Build -RequireAssets -Width 1920 -Height 1080 -Hdr -Views ref_far_01,ref_cliff_02 -GameArgs wasteland-finest-lod -OutDir .harness/runs/scene-capture/SCN-WLR-FAR-BLUR-STATIC/finest-lod`
+- verify: `python Scripts/Terrain/ReferenceCheck.py --blur-static --capture .harness/runs/scene-capture/SCN-WLR-FAR-BLUR-STATIC --verify`
+- paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Game, Assets/Shaders, Scripts, Docs/RenderingValidation, TASKS.md, PROGRESS.md
+- notes: SCN-WLR-BLENDER-TERRAIN では 6 視点の最細の固定が約 15 分で撮れた。入力のハッシュが変わったら、ほかの組も同じコードで撮り直す（撮り方は記録の「条件」の節）。
 
 ## SCN-WLR-FAR-BLUR-MOTION: 遠景のぼけを、動かしたときの履歴の消失で切り分ける
 - status: todo

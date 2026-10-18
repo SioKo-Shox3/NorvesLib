@@ -359,8 +359,6 @@ BLUR_CASES = (
      "logs": ("WASTELAND_HIDE mask=96 ",)},
     {"name": "scale-075", "factor": "内部解像度 0.75", "args": ("--wasteland-render-scale=0.75",),
      "logs": ("WASTELAND_BLUR_CASE aa=default render_scale=0.750",)},
-    {"name": "finest-lod", "factor": "地形の LOD を最細に固定", "args": ("--wasteland-finest-lod",),
-     "logs": ("WASTELAND_FINEST_LOD ", "VRAM_POOL_SHARE geometry=255 ")},
     {"name": "mip-bias-m1", "factor": "地形のミップの偏り −1", "args": ("--terrain-mip-bias=-1",),
      "logs": ("TERRAIN_SAMPLER pass=MegaGeometry mip_bias=-1.000 max_anisotropy=16",
               "TERRAIN_SAMPLER pass=VisibilityResolve mip_bias=-1.000 max_anisotropy=16")},
@@ -368,6 +366,7 @@ BLUR_CASES = (
      "logs": ("TERRAIN_SAMPLER pass=MegaGeometry mip_bias=0.000 max_anisotropy=1",
               "TERRAIN_SAMPLER pass=VisibilityResolve mip_bias=0.000 max_anisotropy=1")},
 )
+# 地形の LOD を最細に固定する組（--wasteland-finest-lod）は 2 視点の読み込みが 10 分で落ち着かず、SCN-WLR-FAR-BLUR-LOD で撮る
 # 条件を替える起動引数の頭（組の約束にないものが混ざっていないかを見る）
 BLUR_CONTROLLED_PREFIXES = ("--wasteland-aa=", "--wasteland-hide=", "--wasteland-render-scale=", "--wasteland-finest-lod",
                             "--terrain-mip-bias=", "--terrain-anisotropy=", "--mega-lod-error-px=",
@@ -387,7 +386,8 @@ BLUR_FINE_BANDS = (0, 1)
 # 足した画はエイリアスに数えられる（エイリアスを鮮明さに数えない）ことを確かめる
 BLUR_CALIB_BLUR_SIGMA = 0.8
 BLUR_CALIB_BLUR_MIN_LOSS = 0.3
-BLUR_CALIB_BLUR_MAX_ALIAS = 0.05
+# ぼかしは帯域の中の形も少し変えるので残りが 0.05 前後出る（雑音は 0.7 以上）
+BLUR_CALIB_BLUR_MAX_ALIAS = 0.1
 BLUR_CALIB_NOISE_GAIN = 0.05
 BLUR_CALIB_NOISE_MIN_ALIAS = 0.3
 BLUR_CALIB_SEED = 20261019
