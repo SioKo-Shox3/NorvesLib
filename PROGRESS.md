@@ -5238,3 +5238,18 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - Git Bash から `cmake --build ... -- /m:1` を呼ぶと `/m:1` がパスに変換されて MSBuild が失敗する。verify の 1 は PowerShell で走らせた
   - 新しい試験は足していない（verify の撮影と検査が確かめる）
 - Next: TASKS.md の次の未完の項目。
+
+### SCN-WLR-FAR-BLUR-LOD 完了（2026-10-19、run 20261018-205227 の反復 12）
+- Done: 地形の LOD を最細に固定する組（finest-lod）を ref_far_01・ref_cliff_02 で撮りきり、`ReferenceCheck.py --blur-static` の組に戻した。記録は `Docs/RenderingValidation/WastelandFarBlurStatic.md`
+  - 落ち着かなかった原因は 2 つ: 1 つのメッシュの段 0 のページが 1 GB の塊の置き場を超える（塊 4095 MB を 2 つに分け置く開発用の口 `NORVES_GEOMETRY_POOL_BLOCK_MB`・`NORVES_GEOMETRY_POOL_SPREAD`、要求の列の容量 `NORVES_GEOMETRY_PAGE_REQUEST_CAPACITY`）と、ref_cliff_02 の可視クラスタ約 663 万が列の容量 419 万を溢れて地形が抜ける（`NORVES_MEGA_VISIBLE_LIST_CAPACITY` を足し、`NORVES_MEGA_MAX_DRAW_COUNT` と一緒に 8388608 へ）。どれも `--wasteland-finest-lod` だけが替え、既定は変えていない
+  - 検査に、撮った時点の `MEGA_CAPACITY` の `draw_dropped`・`visible_list_overflow` が 0 であることを全組で足した
+  - 効き（resident との差、崖の平均）: 細部の欠け −0.077・エイリアス +0.266。原因の順位の 4 位に足した（既定の LOD は欠けを作るがエイリアスを抑えている）
+- 証拠（`.harness/runs/20261018-205227/`）:
+  - `verify-SCN-WLR-FAR-BLUR-LOD-1.txt`: finest-lod を RelWithDebInfo・`-Build -Hdr` で撮影 result=pass、EXIT=0
+  - `verify-SCN-WLR-FAR-BLUR-LOD-2.txt`: `--blur-static --verify` result=pass、cases=9、inputs_current=1。finest-lod は撮った時点で常駐 25254・39029、進行中 0・追い出し 0、描かれないクラスタ 0
+  - `aux-SCN-WLR-FAR-BLUR-LOD-capture-<組>.txt`・`aux-SCN-WLR-FAR-BLUR-LOD-captures.txt`: ほかの 9 組の撮り直し（全組 exit=0）
+- Notes:
+  - ほかの 9 組の撮り直しは `-Build` を付けずに走らせたので、可視クラスタの列の口を足す前の Game.exe（反復 11 のビルド）で撮った。足した口は環境変数が無ければ既定の容量のままで、これらの組の描画は変わらない。入力のハッシュは撮った時点のソースで全組一致
+  - finest-lod は 1 視点あたり約 2.5 分（ビルド込みで 345 秒）
+  - 新しい試験は足していない（verify の撮影と検査が確かめる）
+- Next: TASKS.md の次の未完の項目。

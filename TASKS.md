@@ -1777,7 +1777,7 @@
 - notes: 条件の切り替えは撮影の起動引数で行い、既定の見た目を変えない。1 反復で全条件が撮れなければ、撮れた条件で表を作り、残りの条件を後ろの項目に足す。撮影の構成（Debug か RelWithDebInfo か）は SCN-WL-CAPTURE-SPEED の決定に揃えてよい（verify も同じ反復で直す）。
 
 ## SCN-WLR-FAR-BLUR-LOD: 遠景のぼけの切り分けに、地形の LOD の最細の固定の組を足す
-- status: todo
+- status: done
 - after: SCN-WLR-FAR-BLUR-STATIC
 - done-when: SCN-WLR-FAR-BLUR-STATIC の撮影で 10 分たっても落ち着かなかった `--wasteland-finest-lod` の組を、ref_far_01・ref_cliff_02 で撮りきる（撮った時点のジオメトリのページの要求 0）。`ReferenceCheck.py --blur-static` の組に戻し、同じ入力のハッシュで既定の組と並べて、細部の欠けとエイリアスの差を `Docs/RenderingValidation/WastelandFarBlurStatic.md` の表と原因の順位に足す。既定は変えない。
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -Build -RequireAssets -Width 1920 -Height 1080 -Hdr -Views ref_far_01,ref_cliff_02 -GameArgs wasteland-finest-lod -OutDir .harness/runs/scene-capture/SCN-WLR-FAR-BLUR-STATIC/finest-lod`

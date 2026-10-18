@@ -253,6 +253,9 @@ namespace Game
         constexpr const char *kFinestLodGeometryBlockMb = "4095";
         // 区画を分け置く塊の数（NORVES_GEOMETRY_POOL_SPREAD）。1 つの塊の置き場（約 3.5 GB）に収まらない視点の需要を 2 つの塊へ分ける
         constexpr const char *kFinestLodGeometryPoolSpread = "2";
+        // 可視クラスタの列の容量と区間の描画コマンドの上限（NORVES_MEGA_VISIBLE_LIST_CAPACITY・NORVES_MEGA_MAX_DRAW_COUNT）。
+        // 既定はどちらも 1 << 22 で、ref_cliff_02 は最も細かい段で約 663 万クラスタを描く
+        constexpr const char *kFinestLodClusterCapacity = "8388608";
         constexpr const TCHAR *kWastelandExportTerrainOption = TEXT("--wasteland-export-terrain=");
         bool s_bWastelandFinestLod = false;
         String s_WastelandExportTerrainDir;
@@ -1414,6 +1417,9 @@ namespace Game
                 _putenv_s("NORVES_GEOMETRY_POOL_SPREAD", kFinestLodGeometryPoolSpread);
                 // 1 フレームに使うページが要求の列の既定の容量を超えても、使用の印が LRU に届くよう容量を広げる
                 _putenv_s("NORVES_GEOMETRY_PAGE_REQUEST_CAPACITY", kFinestLodPageRequestCapacity);
+                // 崖の視点は 1 フレームに 600 万クラスタを超えて描くので、可視クラスタの列と区間の描画コマンドの上限を広げる
+                _putenv_s("NORVES_MEGA_VISIBLE_LIST_CAPACITY", kFinestLodClusterCapacity);
+                _putenv_s("NORVES_MEGA_MAX_DRAW_COUNT", kFinestLodClusterCapacity);
 #else
                 LOG_WARNING("--wasteland-finest-lod は開発ビルドだけで使えます。無視します");
 #endif

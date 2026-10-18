@@ -377,14 +377,18 @@ BLUR_CASES = (
     {"name": "aniso-1", "factor": "地形の異方性フィルタを切る（等方）", "args": ("--terrain-anisotropy=1", BLUR_SHARE_ARG),
      "logs": ("TERRAIN_SAMPLER pass=MegaGeometry mip_bias=0.000 max_anisotropy=1",
               "TERRAIN_SAMPLER pass=VisibilityResolve mip_bias=0.000 max_anisotropy=1", BLUR_SHARE_LOG), "resident": True},
-    # 地形の LOD を最細に固定する。起動引数がジオメトリの取り分を 255 に、要求の列の容量を 131072 に上げる（描くものは段のほかは変えない）
+    # 地形の LOD を最細に固定する。起動引数がジオメトリの取り分を 255 に、要求の列の容量を 131072 に、可視クラスタの列と
+    # 区間の描画コマンドの上限を 8388608 に上げる（描くものは段のほかは変えない）
     {"name": "finest-lod", "factor": "地形の LOD を最も細かい段に固定", "args": ("--wasteland-finest-lod",),
      "logs": ("WASTELAND_FINEST_LOD lod=0", "VRAM_POOL_SHARE geometry=255 ",
-              "GEOMETRY_PAGE_REQUEST_CAPACITY capacity=131072 "), "resident": True},
+              "GEOMETRY_PAGE_REQUEST_CAPACITY capacity=131072 ", "MEGA_VISIBLE_LIST_CAPACITY capacity=8388608 "),
+     "resident": True},
 )
 # 撮った時点の常駐の確かめ: GEOMETRY_PAGES は常駐・進行中の各段・追い出しのどれかが変わると、落ち着き待ちの間は毎フレーム出る。
 # 保存の前の最後の行の進行中（wanted・reading・ready・uploading）がすべて 0 で、最後の落ち着きの基準から保存までの行の
 # 追い出しの数が変わっていないこと
+# 撮った時点の描画の溢れ: 保存の前の最後の MEGA_CAPACITY の行の draw_dropped と visible_list_overflow が 0（描かれないクラスタが無い）
+BLUR_CAPACITY_RE = re.compile(r"MEGA_CAPACITY draw_dropped=(\d+) .*visible_list_overflow=(\d+) ")
 BLUR_PAGES_RE = re.compile(r"GEOMETRY_PAGES resident=(\d+) uploading=(\d+) ready=(\d+) reading=(\d+) wanted=(\d+) "
                            r"failed=\d+ resident_mb=\S+ evicted=(\d+)")
 # 条件を替える起動引数の頭（組の約束にないものが混ざっていないかを見る）
@@ -393,7 +397,8 @@ BLUR_CONTROLLED_PREFIXES = ("--wasteland-aa=", "--wasteland-hide=", "--wasteland
                             "--vram-geometry-share=")
 # 既定の組（base）に出てはいけないログの行（差し替えが効いていない）
 BLUR_BASE_FORBIDDEN_LOGS = ("WASTELAND_BLUR_CASE ", "WASTELAND_AA_PASS ", "TERRAIN_SAMPLER ", "WASTELAND_FINEST_LOD ",
-                            "WASTELAND_HIDE ", "VRAM_POOL_SHARE ", "GEOMETRY_PAGE_REQUEST_CAPACITY ")
+                            "WASTELAND_HIDE ", "VRAM_POOL_SHARE ", "GEOMETRY_PAGE_REQUEST_CAPACITY ",
+                            "MEGA_VISIBLE_LIST_CAPACITY ")
 # 範囲: 正解の深度が BLUR_FAR_MIN_M より奥の地表（2×2 のすべてが奥）。崖はそのうち法線の |y| が BLUR_CLIFF_NORMAL_Y 未満
 BLUR_FAR_MIN_M = 1000.0
 BLUR_CLIFF_NORMAL_Y = 0.8
@@ -2777,7 +2782,7 @@ def blur_forbidden_logs(expected_logs):
 
 
 def blur_case_check(case_dir, expected_args, expected_logs, size, require_resident):
-    """組の起動引数・ログの印・仮想テクスチャの使用・撮った時点の常駐・PNG の大きさを確かめる。(失敗の一覧, 記録)"""
+    """組の起動引数・ログの印・仮想テクスチャの使用・撮った時点の常駐と描画の溢れ・PNG の大きさを確かめる。(失敗の一覧, 記録)"""
     failures = []
     args = plate_capture_args(case_dir)
     if args is None:
@@ -2792,6 +2797,9 @@ def blur_case_check(case_dir, expected_args, expected_logs, size, require_reside
     # 視点ごとの、撮った（CAPTURE_VIEWS ... saved）時点のジオメトリのページの状態
     pages_at_capture = {}
     last_pages = None
+    # 視点ごとの、撮った時点の描画の溢れ（描かれなかったクラスタ・可視クラスタの列の溢れ）
+    dropped_at_capture = {}
+    last_capacity = None
     window_evicted = set()
     for log_name in sorted({view_game_log(case_dir, view) or "" for view in BLUR_VIEWS}):
         path = os.path.join(case_dir, log_name) if log_name else ""
@@ -2814,11 +2822,17 @@ def blur_case_check(case_dir, expected_args, expected_logs, size, require_reside
                     last_pages = {"resident": values[0], "uploading": values[1], "ready": values[2], "reading": values[3],
                                   "wanted": values[4], "evicted": values[5]}
                     window_evicted.add(values[5])
+                found = BLUR_CAPACITY_RE.search(line)
+                if found:
+                    last_capacity = {"draw_dropped": int(found.group(1)), "visible_list_overflow": int(found.group(2))}
+                if re.search(r"CAPTURE_VIEWS view=\S+ switched ", line):
+                    last_capacity = None
                 if re.search(r"CAPTURE_VIEWS view=\S+ (?:switched|settle baseline) ", line):
                     window_evicted = {last_pages["evicted"]} if last_pages else set()
                 found = re.search(r"CAPTURE_VIEWS view=(\S+) saved ", line)
                 if found:
                     pages_at_capture[found.group(1)] = dict(last_pages or {}, settle_evicted=sorted(window_evicted))
+                    dropped_at_capture[found.group(1)] = last_capacity
     missing = [n for n in expected_logs if n not in seen]
     if missing:
         failures.append(f"Game のログに条件の印が無い: {missing}")
@@ -2842,13 +2856,19 @@ def blur_case_check(case_dir, expected_args, expected_logs, size, require_reside
             if require_resident and not pages["resident_complete"]:
                 failures.append(f"{view}: 撮った時点でジオメトリのページが常駐しきっていない（進行中 {in_flight}、"
                                 f"落ち着きの基準から保存までの追い出しの数 {pages['settle_evicted']}）")
+        dropped = dropped_at_capture.get(view)
+        if pages is not None and dropped is None:
+            failures.append(f"{view}: 視点を替えてから保存までに MEGA_CAPACITY の行が無い（描画の溢れを確かめられない）")
+        elif dropped is not None and any(dropped.values()):
+            failures.append(f"{view}: 撮った時点で描かれないクラスタがある（{dropped}）")
         png = os.path.join(case_dir, f"{view}.png")
         if not os.path.isfile(png):
             failures.append(f"{view}.png が無い")
         elif Image.open(png).size != size:
             failures.append(f"{view}.png の大きさ {Image.open(png).size} が {size} でない")
     return failures, {"game_args": args, "vt_pool_lines": vt_lines, "vt_used_mb_max": vt_used_max,
-                      "residency_required": bool(require_resident), "geometry_pages_at_capture": pages_at_capture}
+                      "residency_required": bool(require_resident), "geometry_pages_at_capture": pages_at_capture,
+                      "draw_overflow_at_capture": dropped_at_capture}
 
 
 def blur_write_crops(path, tiles, center):

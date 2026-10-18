@@ -206,8 +206,44 @@ namespace NorvesLib::Core::Rendering
         // 全パス通しの固定容量（本数・区間の数によらない）。超えた要素は積まずに数える（MEGA_CAPACITY の visible_list_overflow）。
         // 大きさの目安: バナナ 1 万本 overview の 1 パス目で約 36 万クラスタ
         constexpr uint32_t VisibleListBinding = 23;
-        constexpr uint32_t VisibleListCapacity = 1u << 22;
-        constexpr uint64_t VisibleListBytes = static_cast<uint64_t>(VisibleListCapacity) * 4u * sizeof(uint32_t);
+        constexpr uint32_t DefaultVisibleListCapacity = 1u << 22;
+        // 列の容量。比較の撮影（Game の --wasteland-finest-lod）は見える地形を全部最も細かい段で描き、1 視点で 600 万クラスタを
+        // 超えるので、環境変数 NORVES_MEGA_VISIBLE_LIST_CAPACITY（既定の容量〜1 << 25）で広げる（開発ビルドだけ。
+        // 最初に呼ばれたときに 1 回だけ読む。シェーダーは結んだバッファの長さで溢れを判定する）
+        uint32_t ResolveVisibleListCapacity()
+        {
+#if NORVES_BUILD_DEVELOPMENT
+            static const uint32_t capacity = []()
+            {
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4996)
+#endif
+                const char *text = std::getenv("NORVES_MEGA_VISIBLE_LIST_CAPACITY");
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
+                if (text != nullptr && text[0] != '\0')
+                {
+                    char *end = nullptr;
+                    const unsigned long value = std::strtoul(text, &end, 10);
+                    if (end != text && *end == '\0' && value >= DefaultVisibleListCapacity && value <= (1ul << 25))
+                    {
+                        NORVES_LOG_INFO("MegaGeometryPass", "MEGA_VISIBLE_LIST_CAPACITY capacity=%lu source=env", value);
+                        return static_cast<uint32_t>(value);
+                    }
+                }
+                return DefaultVisibleListCapacity;
+            }();
+            return capacity;
+#else
+            return DefaultVisibleListCapacity;
+#endif
+        }
+        uint64_t VisibleListBytesOf(uint32_t capacity)
+        {
+            return static_cast<uint64_t>(capacity) * 4u * sizeof(uint32_t);
+        }
         // binning の数え（binding 24）。頭の語の位置は Common/MegaGeometryCull.glsl の BIN_* と一致（[0] = 列へ積もうとした数、
         // [BinCheckArgsWord..+2] = 照合の間接 dispatch の引数、[BinCountWord] = 区画の数、[BinSlotWord] = 区間の表の要素の数、
         // [BinSwCapacityWord] = ソフトの一覧の容量、[BinCheckStampWord] = 照合の印、[BinScatterArgsWord..+2] = 詰めた経路の書き出しの
@@ -2880,7 +2916,7 @@ namespace NorvesLib::Core::Rendering
         uint32_t recordSlots = 0;
         if (m_Settings.bUseBinning && m_BinPrefixPipeline && m_BinScatterPipeline && m_VisibleListBuffer)
         {
-            recordSlots = static_cast<uint32_t>(std::min<uint64_t>(commandsTotal, VisibleListCapacity));
+            recordSlots = static_cast<uint32_t>(std::min<uint64_t>(commandsTotal, ResolveVisibleListCapacity()));
             if (commandsTotal + recordSlots > 0x7FFFFFFFull / IndirectCommandBytes)
             {
                 recordSlots = 0;
@@ -3300,7 +3336,7 @@ namespace NorvesLib::Core::Rendering
         {
             statsSlot->bBinCheck = bBinCheck;
             statsSlot->BinCount = binCount;
-            statsSlot->VisibleListCapacity = m_VisibleListBuffer ? VisibleListCapacity : 0u;
+            statsSlot->VisibleListCapacity = m_VisibleListBuffer ? ResolveVisibleListCapacity() : 0u;
         }
         // 数えを 0 にし、頭の語（区画の数・区間の表の要素の数・ソフトの一覧の容量・照合の印・区間の数・記録の枠の数・
         // 記録用のコマンドの先頭・記録の区間の表の先頭）を書く。転送どうしの書き込みが重ならないよう、頭の語の前後を分けて 0 で埋める
@@ -3728,7 +3764,7 @@ namespace NorvesLib::Core::Rendering
                     if (!cmdList->DispatchIndirect(m_BinCounterBuffer, static_cast<uint64_t>(BinScatterArgsWord) * sizeof(uint32_t)))
                     {
                         // 間接 dispatch を断るコマンドリスト: 列の容量の分のスレッドで直接 dispatch する（余りはシェーダーが範囲で捨てる）
-                        dispatchThreads(VisibleListCapacity);
+                        dispatchThreads(ResolveVisibleListCapacity());
                     }
                     cmdList->BufferBarrier(m_BinCounterBuffer, RHI::ResourceState::IndirectArgument, RHI::ResourceState::UnorderedAccess);
                 }
@@ -4495,13 +4531,15 @@ namespace NorvesLib::Core::Rendering
         if (!m_VisibleListBuffer && !m_bVisibleListAllocFailedLogged)
         {
             const bool bWantMarks = m_BinCheckPipeline != nullptr;
-            const uint64_t markBytes = static_cast<uint64_t>(VisibleListCapacity) * sizeof(uint32_t);
+            const uint32_t visibleListCapacity = ResolveVisibleListCapacity();
+            const uint64_t visibleListBytes = VisibleListBytesOf(visibleListCapacity);
+            const uint64_t markBytes = static_cast<uint64_t>(visibleListCapacity) * sizeof(uint32_t);
             RHI::BufferPtr listBuffer;
             RHI::BufferPtr markBuffer;
             const char *failure = nullptr;
             try
             {
-                RHI::BufferDesc listDesc(VisibleListBytes, RHI::ResourceUsage::StorageBuffer, false, "MegaGeometry_VisibleList");
+                RHI::BufferDesc listDesc(visibleListBytes, RHI::ResourceUsage::StorageBuffer, false, "MegaGeometry_VisibleList");
                 listBuffer = m_Device->CreateBuffer(listDesc);
                 if (bWantMarks)
                 {
@@ -4520,7 +4558,7 @@ namespace NorvesLib::Core::Rendering
             {
                 NORVES_LOG_ERROR("MegaGeometryPass",
                                  "MEGA_VISIBLE_LIST_ALLOC_FAILED list_bytes=%llu reason=%s。全体の列を使わずに描きます",
-                                 static_cast<unsigned long long>(VisibleListBytes),
+                                 static_cast<unsigned long long>(visibleListBytes),
                                  exception.what());
                 m_bVisibleListAllocFailedLogged = true;
                 return true;
@@ -4529,7 +4567,7 @@ namespace NorvesLib::Core::Rendering
             {
                 NORVES_LOG_ERROR("MegaGeometryPass",
                                  "MEGA_VISIBLE_LIST_ALLOC_FAILED list_bytes=%llu reason=%s。全体の列を使わずに描きます",
-                                 static_cast<unsigned long long>(VisibleListBytes),
+                                 static_cast<unsigned long long>(visibleListBytes),
                                  failure);
                 m_bVisibleListAllocFailedLogged = true;
                 return true;
@@ -4539,8 +4577,8 @@ namespace NorvesLib::Core::Rendering
             m_bBinCheckMarksCleared = false;
             NORVES_LOG_INFO("MegaGeometryPass",
                             "VRAM_LEDGER visible_list mb=%.2f capacity=%u check_marks_mb=%.2f",
-                            static_cast<double>(VisibleListBytes) / (1024.0 * 1024.0),
-                            VisibleListCapacity,
+                            static_cast<double>(visibleListBytes) / (1024.0 * 1024.0),
+                            visibleListCapacity,
                             markBuffer ? static_cast<double>(markBytes) / (1024.0 * 1024.0) : 0.0);
         }
         return true;
