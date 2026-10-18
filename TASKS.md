@@ -1679,7 +1679,7 @@
 - notes: 危険地帯（描画）。HDRI は使わない（`EnvironmentMapSource.cpp` の読み込みは EXR を読めず、HDRI の中の太陽と別の太陽の二重計上の落とし穴があるため、一様な空と太陽に限る）。大気（空・霞）の検証は SCN-WLR-ATMOS-* で別に行う。撮影の構成（Debug か RelWithDebInfo か）は SCN-WL-CAPTURE-SPEED の決定に揃えてよい（verify も同じ反復で直す）。
 
 ## SCN-WLR-BARE-AOV: 荒野を地形だけで撮り、照明の無い材質の値を生の数値で書き出す
-- status: todo
+- status: done
 - after: SCN-WLR-COMMON-LIGHT
 - done-when: 起動引数 `wasteland-hide=<clouds+foliage+rocks+gravel+buildings+aerial+fog の組み合わせ、または all>` で、荒野から雲・植物・岩・礫・建物・空気遠近・高さフォグを 1 つずつ外せるようにする（既定の見た目は変えない）。撮影に `-Aov` を足し、GBuffer の生の値を浮動小数の画像に書く: アルベド（線形）・法線（ワールド空間、+Y が上、長さ 1）・粗さ・深度（カメラからの視線方向の距離 m）。`GBufferDebugPass` の可視化画像は使わない。`ReferenceCheck.py --aov` で、法線の長さ・深度の単調さ（空は無限）・アルベドの範囲と、`wasteland-hide=all` の画に雲・物・霞が無いこと（空の画素の色が一様な空と一致など）を検査する。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`

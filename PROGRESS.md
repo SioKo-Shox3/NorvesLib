@@ -5095,3 +5095,22 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - Git Bash から `cmake --build ... -- /m:1` を叩くと `/m:1` がパスに変換され MSB1008 で落ちる。verify の Debug ビルドは PowerShell で回した
   - 板の値の単体の試験は足していない（verify の撮影と検査が値を確かめる）
 - Next: SCN-WLR-BARE-AOV。
+
+### SCN-WLR-BARE-AOV 完了（2026-10-18、run 20261018-172748 の反復 3〜4）
+
+- Done: 荒野から比べるために物を外す起動引数と、GBuffer の生の値の書き出し（AOV）、その検査を足した
+  - 起動引数 `--wasteland-hide=<clouds+foliage+rocks+gravel+buildings+aerial+fog を + でつないだもの、または all>`（`Game/GameModes/Wasteland/WastelandMode.h` の `WastelandHide`）。雲の層・高さフォグ・空気遠近を点けない、草・低木と石・礫の束を渡さない、前哨地の建物と崖錐の岩を置かない。シーンの設定なので Release でも効き、指定が無ければ（マスク 0）前と同じ経路を通る。知らない名前は起動を失敗にする。ログに `WASTELAND_HIDE mask=`・`WASTELAND_FOLIAGE_PUBLISHED` を出す
+  - 撮影 `CaptureScene.ps1 -Aov`（Game の `--capture-aov`、開発ビルドだけ）: `GBufferAovPass`（`gbuffer_aov.frag`）が GBuffer をそのまま読み、RGBA32F の 2 枚（表面: 線形アルベド + 粗さ、幾何: ワールドの法線 + カメラの前方向への距離 m）へ書く。後処理を通さず、空の画素（照明と同じ判定、アルベドの a < 0.01）は 0 と深度 +∞。`<視点>.aov.{albedo,normal,roughness,depth}.pfm` と、カメラと意味を書いた `<視点>.aov.json` を PNG の横へ出す。`GBufferDebugPass` の可視化画像は使わない
+  - `ReferenceCheck.py --aov`: 法線の長さ（1 ± 0.01 が 99.9 % 以上）とカメラへの向き・+Y が上、深度の縦の単調さ（空は無限）と深度から作った面の向きと法線の一致、アルベドと粗さの範囲、`wasteland-hide=all` のときは縮む組・宙の表面が稜線の縁だけ・ログの印・草石の束 0・空の画素が共通の照明の一様な空の色に ±1 % で合うこと、入力のハッシュ
+- 証拠（`.harness/runs/20261018-172748/`）:
+  - `verify-SCN-WLR-BARE-AOV-5.txt`: Debug の Game のビルド EXIT=0
+  - `verify-SCN-WLR-BARE-AOV-6.txt`: ref_cliff_01 を `-Hdr -Aov`・`wasteland-common-light,wasteland-hide=all` で撮影 result=pass（commit f52db23a、dirty=0）
+  - `verify-SCN-WLR-BARE-AOV-7.txt`: `--aov --verify` result=pass。法線の長さ 1 ± 0.01 が 100 %（最大の誤差 8.3e-4）、カメラに向く 99.7 %、深度 190〜77670 m、縮む組 3.7e-6、宙の表面 1.2e-6、深度から作った面と法線の角度の中央値 6.9°、アルベドの輝度 0.109〜0.246、空の画素 60.3 % がすべて一様な空と一致、inputs_current=1。PNG と `aov_preview.png` を開き、地形と一様な空だけが写る（雲・岩・草・霞なし）ことを確かめた
+  - `aux-SCN-WLR-BARE-AOV-negative.txt`: 既定の起動（外さない）の撮影を `wasteland-hide=all` として検査すると、縮む組 9.1e-5・宙の表面 3.4e-5・ログの印なし・建物と崖錐の岩の印あり・草石 17 束・空の一致 0 % で落ちる
+  - `aux-SCN-WLR-BARE-AOV-noaov-compare.txt`: 既定の起動で `-Aov` の有無を比べると PSNR 59.2 dB・平均輝度の差 0.0002（AOV は見た目を変えない）
+  - `aux-SCN-WLR-BARE-AOV-debug-validation.txt`: Debug の rendering3dtest を `-Hdr -Aov` で撮影し、AOV を書いた default の視点の `default.Validation.log` は 0 バイト（検証レイヤーの指摘なし）
+- Notes:
+  - 既定の起動の ref_cliff_01 は、基準 `SCN-WLR-BASELINE`（2026-10-16）と PSNR 44.2 dB（下限 45）・平均輝度の差 0.04 で、差は崖錐の岩の陰の細かな点（0.26 % の画素、暗い側）に集まる。岩の形と置き方は同じ。外す指定が無いときの経路はコードの上で前と同じ（マスク 0 では分岐をすべて素通り）で、今のコードの 2 回の撮影どうしは 59.2 dB で一致するので、差はこのタスクより前の変更か基準の撮影の状態による。原因は確かめていない
+  - Debug の rendering3dtest の撮影は、2 つ目の視点（near）の途中で反復が切れたので default の視点だけの記録
+  - 1 つずつ外す指定ごとの撮影はしていない（verify は all の 1 本。個々の指定はコードの分岐で効く）
+- Next: TASKS.md の次の未完の項目。
