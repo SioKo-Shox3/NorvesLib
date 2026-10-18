@@ -33,6 +33,12 @@ OSL_SOURCE = "Scripts/Terrain/TerrainAlbedo.osl"
 # 地形のテクスチャのサンプラーの異方性の上限（Library/Core/Private/Rendering/VisibilityResolvePass.cpp の
 # m_TerrainMaterialSampler・MegaGeometryPass.cpp の TerrainSamplerMaxAnisotropy）
 MAX_ANISOTROPY = 16
+# GPU（NVIDIA）の異方性の標本が読むミップの段の、Vulkan の仕様の式（λ = log2(ρmax / N)）からの偏り。
+# 撮影の地形のサンプラーを等方の線形（--terrain-anisotropy=1）にすると、仕様の式の等方の再現と ref_ground_01 の近景・中景で
+# 平均が 0.6 % 以内・細部（σ 3 画素の高域の標準偏差）の比が 1.025 で一致する。異方性 16 では仕様の式の再現の細部が
+# 近景で 1.153 倍（偏り 0.5 で 1.079、1 で 0.984）なので、近景の細部が揃う 1 段を取る（平均は照合で別に確かめる）。
+# 記録: Docs/RenderingValidation/WastelandMaterialAlbedo.md
+ANISO_LOD_OFFSET = 1.0
 # Game はクック済みの sRGB のアルベドを UNORM の形式で張り、シェーダーが標本の後に線形へ戻す（TerrainBlendShading.h の
 # IsTerrainAlbedoSrgbDecodeNeeded）。3 層とも戻す
 ALBEDO_SRGB_DECODE = {"sand": 1, "dirt": 1, "rock": 1}
@@ -313,7 +319,7 @@ TEXTURE_IDS = ("sand_albedo", "sand_ao", "dirt_albedo", "dirt_ao", "rock_albedo"
 
 
 def osl_texture_lines(manifest, mips_dir):
-    lines = [f"#define TEX_MAX_ANISOTROPY {float(MAX_ANISOTROPY)}"]
+    lines = [f"#define TEX_MAX_ANISOTROPY {float(MAX_ANISOTROPY)}", f"#define TEX_ANISO_LOD_OFFSET {float(ANISO_LOD_OFFSET)}"]
     for index, name in enumerate(TEXTURE_IDS):
         level0 = manifest["textures"][name]["levels"][0]
         lines.append(f"#define TEX_{name.upper()} {index}")
@@ -378,6 +384,7 @@ def write_material_table(out_dir, json_text, material, mips_dir, log=print):
         "packed": packed,
         "albedo_srgb_decode": ALBEDO_SRGB_DECODE,
         "max_anisotropy": MAX_ANISOTROPY,
+        "aniso_lod_offset": ANISO_LOD_OFFSET,
         "shader_constants": constants,
         "shader_sha256": {rel: sha256_file(repo_path(rel)) for rel in SHADER_FILES + (PACKING_SOURCE,)},
         "textures": manifest["textures"],

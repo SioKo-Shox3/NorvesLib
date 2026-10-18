@@ -507,7 +507,7 @@ def run_albedo(args):
             "prefix": prefix,
         }
         job["required_outputs"] = [f"{prefix}.albedo.json"] + \
-            [f"{prefix}.{part}.pfm" for part in ("albedo", "normal", "weights", "alpha")]
+            [f"{prefix}.{part}.pfm" for part in ("albedo", "normal", "alpha")]
         for stale in job["required_outputs"]:
             if os.path.exists(stale):
                 os.remove(stale)
@@ -795,7 +795,7 @@ def render_depth_job(job):
 
 def render_albedo_job(job):
     """照明の無いアルベド: 地形に OSL のシェーダー（terrain_albedo.osl。TerrainAlbedo.osl に値の表を足したもの）のアルベドを
-    放射させ、放射だけを CPU（OSL）の 1 サンプルで画素の中心に寄せて描く。頂点の法線（Normal のパス）と層の重み（AOV）も書く"""
+    放射させ、放射だけを CPU（OSL）の 1 サンプルで画素の中心に寄せて描く。頂点の法線（Normal のパス）も書く"""
     import bpy
     import mathutils
 
@@ -836,9 +836,6 @@ def render_albedo_job(job):
     # 切り分けの試しでは、層の重み（emit = weights）を放射させて描ける
     links.new(script.outputs["Weights" if job.get("emit") == "weights" else "Albedo"], emission.inputs["Color"])
     links.new(emission.outputs["Emission"], output.inputs["Surface"])
-    aov = nodes.new("ShaderNodeOutputAOV")
-    aov.aov_name = "weights"
-    links.new(script.outputs["Weights"], aov.inputs["Color"])
 
     # 区画を読み、視錐台の外の三角形を除いて、巻きを頂点の法線へ揃える
     started = time.time()
@@ -899,9 +896,6 @@ def render_albedo_job(job):
     scene.view_settings.look = "None"
     view_layer = scene.view_layers[0]
     view_layer.use_pass_normal = True
-    layer_aov = view_layer.aovs.add()
-    layer_aov.name = "weights"
-    layer_aov.type = "COLOR"
     if job.get("border"):
         # 切り分けの試しで画面の一部（左・下・右・上の割合）だけを描く
         render.use_border = True
@@ -920,11 +914,9 @@ def render_albedo_job(job):
     normal_blender = pass_rgb(channels, "Normal", ("X", "Y", "Z"))
     normal = np.stack([normal_blender[..., 0], normal_blender[..., 2], -normal_blender[..., 1]], axis=-1)
     normal = np.where(surface[..., None], normal, 0.0).astype(np.float32)
-    weights = np.where(surface[..., None], pass_rgb(channels, "weights"), 0.0).astype(np.float32)
     prefix = job["prefix"]
     write_pfm_rgb(f"{prefix}.albedo.pfm", albedo)
     write_pfm_rgb(f"{prefix}.normal.pfm", normal)
-    write_pfm_rgb(f"{prefix}.weights.pfm", weights)
     write_pfm(f"{prefix}.alpha.pfm", alpha.astype(np.float32))
     with open(f"{prefix}.albedo.json", "w", encoding="utf-8") as f:
         json.dump({
@@ -933,7 +925,6 @@ def render_albedo_job(job):
             "albedo": {"file": f"{job['view']}.albedo.pfm", "meaning": "linear_albedo", "sky_value": 0},
             "normal": {"file": f"{job['view']}.normal.pfm", "meaning": "interpolated_vertex_normal_engine_world",
                        "sky_value": 0},
-            "weights": {"file": f"{job['view']}.weights.pfm", "meaning": "layer_weights_rock_dirt_sand", "sky_value": 0},
             "alpha": {"file": f"{job['view']}.alpha.pfm", "meaning": "surface_coverage"},
             "renderer": f"Blender {bpy.app.version_string} Cycles CPU OSL",
             "samples": 1,

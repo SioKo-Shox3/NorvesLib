@@ -4,7 +4,8 @@
 //   - 三方向の投影、地表の分類の地図（ずらし・外縁の帯・礫の舗石の斑・砂の割合）、傾斜と高さとノイズの式、遠景の地図、
 //     土の皮膜と地図の砂の高さの混ぜ、層の高さの混ぜ、層ごとの明るさと色味の揺らぎ、岩肌の地層の色と AO・砂漠ワニス
 //   - 標本: 勾配を明示した GPU の異方性の標本（textureGrad、異方性 16、ミップの間は線形）を、クックと同じ作り方の
-//     ミップの段の画像から自前で再現する（tex_aniso）。UNORM で張られたアルベドは標本の後に sRGB から線形へ戻す
+//     ミップの段の画像から自前で再現する（tex_aniso）。UNORM で張られたアルベドは標本の後に sRGB から線形へ戻す。
+//     GPU の異方性の実装が読む段は仕様の式から測って決めた偏り（TEX_ANISO_LOD_OFFSET）で合わせる
 //   - 画素あたりの位置の変化（エンジンの WorldDx・WorldDy）は、エンジンの可視バッファの解決と同じく、隣の画素の中心を通る
 //     視線と三角形の面の交点との差で求める（Cycles の光線の微分は向きを持たないので使わない）
 // 法線（法線マップ・地層の張り出し・葉理の凹凸）と粗さは SCN-WLR-MATERIAL-NORMAL で足す。
@@ -142,7 +143,8 @@ color tex_aniso(int id, float s, float t, float dsx, float dtx, float dsy, float
     if (pmax <= 0.0)
         return tex_fetch(id, 0, s, t);
     float count = pmin > 0.0 ? min(ceil(pmax / pmin), TEX_MAX_ANISOTROPY) : TEX_MAX_ANISOTROPY;
-    float lambda = log2(pmax / count);
+    // GPU の異方性の標本は仕様の式より粗い段を読む（等方の線形では一致する）。その差を段の偏りで近似する
+    float lambda = log2(pmax / count) + TEX_ANISO_LOD_OFFSET;
     float ms = px >= py ? dsx : dsy;
     float mt = px >= py ? dtx : dty;
     int n = int(count);
