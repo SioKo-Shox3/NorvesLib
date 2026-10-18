@@ -142,9 +142,11 @@
 #         細部の残り = <条件, 正解> / <正解, 正解>（条件の帯域を正解の帯域へ射影した利得。1 − 残り = 細部の欠け）
 #         エイリアス = |条件 − 残り × 正解|² / |正解|²（正解に無い成分。鮮明さには数えない）
 #       を範囲の画素で求める。細かい帯域（BLUR_FINE_BANDS）は正解の量で重みを付けてまとめる。霞は正解との比ではなく、
-#       霞あり ÷ 霞なしの帯域の量（コントラストの低下）で記録する。条件ごとの効きは、既定（base）との差の 2 視点の平均。
+#       霞あり ÷ 霞なしの帯域の量（コントラストの低下）で記録する。比べる組は正解と同じジオメトリの取り分（BLUR_SHARE_ARG）で撮り、
+#       条件ごとの効きは、取り分だけを広げた組（BLUR_BASELINE）との差の 2 視点の平均（base との差は既定の取り分の効き）。
 #       合否: 全部の組があり（--verify は入力のハッシュが今のファイルと合い、組どうしで揃う）、起動引数とログの印が組の約束どおり、
-#       仮想テクスチャを使っていない（使っていれば常駐の確かめが要るので失敗）、撮った時点でジオメトリのページの要求が 0、
+#       仮想テクスチャを使っていない（使っていれば常駐の確かめが要るので失敗）、base 以外は撮った時点でジオメトリのページの
+#       進行中（要求・読み込み・書き込み待ち・書き込み）が 0 で、落ち着きの基準から保存まで追い出しが無い（base は記録だけ）、
 #       範囲が BLUR_MIN_REGION_PX 画素以上、較正（正解をぼかした画が細部の欠けに、雑音を足した画がエイリアスに数えられる）が通る。
 #       欠けとエイリアスの大きさは記録するだけ（既定は変えない）。
 #
@@ -348,24 +350,39 @@ BLUR_REFERENCE_SCALE = 2
 # 4K は描画先が大きく VRAM のジオメトリの取り分の目標が縮み、ページの塊を足せずに要求が残る。取り分だけ広げる（描くものは変えない）
 BLUR_REFERENCE_ARGS = ("--wasteland-aa=none", "--vram-geometry-share=9")
 BLUR_REFERENCE_LOGS = ("WASTELAND_AA_PASS fxaa=off", "WASTELAND_BLUR_CASE aa=none ", "VRAM_POOL_SHARE geometry=9 ")
-# 条件ごとの組（撮影の出力先の下のフォルダ）。args は起動引数に要るもの、logs は Game のログに要る行の一部
+# 比べる組は、正解と同じジオメトリの取り分（9）で撮り、撮った時点でページが常駐しきって追い出しも止まっていることを確かめる
+# （既定の取り分 1 は 1920×1080 の 2 視点の作業集合が目標に収まらず、追い出しと読み直しが続いたまま撮れてしまう）。
+# 条件の効きは、取り分だけを広げた組（BLUR_BASELINE）との差で数える。既定の取り分そのものの効きは base との差で数える
+BLUR_SHARE_ARG = "--vram-geometry-share=9"
+BLUR_SHARE_LOG = "VRAM_POOL_SHARE geometry=9 "
+BLUR_BASELINE = "resident"
+# 条件ごとの組（撮影の出力先の下のフォルダ）。args は起動引数に要るもの、logs は Game のログに要る行の一部、
+# resident は撮った時点の常駐を求めるか（base は既定の取り分のまま撮るので求めない。状態は記録する）
 BLUR_CASES = (
-    {"name": "base", "factor": "既定（FXAA・霞あり・内部解像度 1・LOD 既定・ミップの偏り 0・異方性 16）", "args": (), "logs": ()},
-    {"name": "aa-taa", "factor": "AA を TAA に", "args": ("--wasteland-aa=taa",),
-     "logs": ("WASTELAND_BLUR_CASE aa=taa ",)},
-    {"name": "aa-none", "factor": "AA なし（FXAA のパスを外す）", "args": ("--wasteland-aa=none",),
-     "logs": ("WASTELAND_BLUR_CASE aa=none ", "WASTELAND_AA_PASS fxaa=off")},
-    {"name": "haze-off", "factor": "霞（空気遠近と高さフォグ）を切る", "args": ("--wasteland-hide=aerial+fog",),
-     "logs": ("WASTELAND_HIDE mask=96 ",)},
-    {"name": "scale-075", "factor": "内部解像度 0.75", "args": ("--wasteland-render-scale=0.75",),
-     "logs": ("WASTELAND_BLUR_CASE aa=default render_scale=0.750",)},
-    {"name": "mip-bias-m1", "factor": "地形のミップの偏り −1", "args": ("--terrain-mip-bias=-1",),
+    {"name": "base", "factor": "既定（取り分 1・FXAA・霞あり・内部解像度 1・LOD 既定・ミップの偏り 0・異方性 16）",
+     "args": (), "logs": (), "resident": False},
+    {"name": BLUR_BASELINE, "factor": "ジオメトリの取り分 9（ページが常駐しきる。ほかは既定）", "args": (BLUR_SHARE_ARG,),
+     "logs": (BLUR_SHARE_LOG,), "resident": True},
+    {"name": "aa-taa", "factor": "AA を TAA に", "args": ("--wasteland-aa=taa", BLUR_SHARE_ARG),
+     "logs": ("WASTELAND_BLUR_CASE aa=taa ", BLUR_SHARE_LOG), "resident": True},
+    {"name": "aa-none", "factor": "AA なし（FXAA のパスを外す）", "args": ("--wasteland-aa=none", BLUR_SHARE_ARG),
+     "logs": ("WASTELAND_BLUR_CASE aa=none ", "WASTELAND_AA_PASS fxaa=off", BLUR_SHARE_LOG), "resident": True},
+    {"name": "haze-off", "factor": "霞（空気遠近と高さフォグ）を切る", "args": ("--wasteland-hide=aerial+fog", BLUR_SHARE_ARG),
+     "logs": ("WASTELAND_HIDE mask=96 ", BLUR_SHARE_LOG), "resident": True},
+    {"name": "scale-075", "factor": "内部解像度 0.75", "args": ("--wasteland-render-scale=0.75", BLUR_SHARE_ARG),
+     "logs": ("WASTELAND_BLUR_CASE aa=default render_scale=0.750", BLUR_SHARE_LOG), "resident": True},
+    {"name": "mip-bias-m1", "factor": "地形のミップの偏り −1", "args": ("--terrain-mip-bias=-1", BLUR_SHARE_ARG),
      "logs": ("TERRAIN_SAMPLER pass=MegaGeometry mip_bias=-1.000 max_anisotropy=16",
-              "TERRAIN_SAMPLER pass=VisibilityResolve mip_bias=-1.000 max_anisotropy=16")},
-    {"name": "aniso-1", "factor": "地形の異方性フィルタを切る（等方）", "args": ("--terrain-anisotropy=1",),
+              "TERRAIN_SAMPLER pass=VisibilityResolve mip_bias=-1.000 max_anisotropy=16", BLUR_SHARE_LOG), "resident": True},
+    {"name": "aniso-1", "factor": "地形の異方性フィルタを切る（等方）", "args": ("--terrain-anisotropy=1", BLUR_SHARE_ARG),
      "logs": ("TERRAIN_SAMPLER pass=MegaGeometry mip_bias=0.000 max_anisotropy=1",
-              "TERRAIN_SAMPLER pass=VisibilityResolve mip_bias=0.000 max_anisotropy=1")},
+              "TERRAIN_SAMPLER pass=VisibilityResolve mip_bias=0.000 max_anisotropy=1", BLUR_SHARE_LOG), "resident": True},
 )
+# 撮った時点の常駐の確かめ: GEOMETRY_PAGES は常駐・進行中の各段・追い出しのどれかが変わると、落ち着き待ちの間は毎フレーム出る。
+# 保存の前の最後の行の進行中（wanted・reading・ready・uploading）がすべて 0 で、最後の落ち着きの基準から保存までの行の
+# 追い出しの数が変わっていないこと
+BLUR_PAGES_RE = re.compile(r"GEOMETRY_PAGES resident=(\d+) uploading=(\d+) ready=(\d+) reading=(\d+) wanted=(\d+) "
+                           r"failed=\d+ resident_mb=\S+ evicted=(\d+)")
 # 地形の LOD を最細に固定する組（--wasteland-finest-lod）は 2 視点の読み込みが 10 分で落ち着かず、SCN-WLR-FAR-BLUR-LOD で撮る
 # 条件を替える起動引数の頭（組の約束にないものが混ざっていないかを見る）
 BLUR_CONTROLLED_PREFIXES = ("--wasteland-aa=", "--wasteland-hide=", "--wasteland-render-scale=", "--wasteland-finest-lod",
@@ -2756,8 +2773,8 @@ def blur_forbidden_logs(expected_logs):
     return tuple(f for f in BLUR_BASE_FORBIDDEN_LOGS if not any(e.startswith(f) for e in expected_logs))
 
 
-def blur_case_check(case_dir, expected_args, expected_logs, size):
-    """組の起動引数・ログの印・仮想テクスチャの使用・PNG の大きさを確かめる。(失敗の一覧, 記録)"""
+def blur_case_check(case_dir, expected_args, expected_logs, size, require_resident):
+    """組の起動引数・ログの印・仮想テクスチャの使用・撮った時点の常駐・PNG の大きさを確かめる。(失敗の一覧, 記録)"""
     failures = []
     args = plate_capture_args(case_dir)
     if args is None:
@@ -2769,9 +2786,10 @@ def blur_case_check(case_dir, expected_args, expected_logs, size):
     seen = set()
     vt_lines = 0
     vt_used_max = 0.0
-    # 視点ごとの、撮った（CAPTURE_VIEWS ... saved）時点で最後に出たジオメトリのページの要求の数
-    wanted_at_capture = {}
-    last_wanted = None
+    # 視点ごとの、撮った（CAPTURE_VIEWS ... saved）時点のジオメトリのページの状態
+    pages_at_capture = {}
+    last_pages = None
+    window_evicted = set()
     for log_name in sorted({view_game_log(case_dir, view) or "" for view in BLUR_VIEWS}):
         path = os.path.join(case_dir, log_name) if log_name else ""
         if not log_name or not os.path.isfile(path):
@@ -2787,12 +2805,17 @@ def blur_case_check(case_dir, expected_args, expected_logs, size):
                     if found:
                         vt_lines += 1
                         vt_used_max = max(vt_used_max, float(found.group(1)))
-                found = re.search(r"GEOMETRY_PAGES resident=\d+ .*?wanted=(\d+)", line)
+                found = BLUR_PAGES_RE.search(line)
                 if found:
-                    last_wanted = int(found.group(1))
+                    values = [int(v) for v in found.groups()]
+                    last_pages = {"resident": values[0], "uploading": values[1], "ready": values[2], "reading": values[3],
+                                  "wanted": values[4], "evicted": values[5]}
+                    window_evicted.add(values[5])
+                if re.search(r"CAPTURE_VIEWS view=\S+ (?:switched|settle baseline) ", line):
+                    window_evicted = {last_pages["evicted"]} if last_pages else set()
                 found = re.search(r"CAPTURE_VIEWS view=(\S+) saved ", line)
                 if found:
-                    wanted_at_capture[found.group(1)] = last_wanted
+                    pages_at_capture[found.group(1)] = dict(last_pages or {}, settle_evicted=sorted(window_evicted))
     missing = [n for n in expected_logs if n not in seen]
     if missing:
         failures.append(f"Game のログに条件の印が無い: {missing}")
@@ -2804,18 +2827,25 @@ def blur_case_check(case_dir, expected_args, expected_logs, size):
     elif vt_used_max > 0.0:
         failures.append(f"仮想テクスチャが使われている（vt_used_mb の最大 {vt_used_max:g}）。撮る前に要求が満ちたことの確かめが要る")
     for view in BLUR_VIEWS:
-        # 落ち着き待ちは、ページの塊を足せずに置けない要求を待たない（2 倍の解像度で起きた）。撮った時点で要求が残っていれば拒む
-        if view not in wanted_at_capture:
+        # 落ち着き待ちは、目標に収まらない要求や追い出しの続く作業集合を待たない。撮った時点で進行中のページが残るか、
+        # 落ち着きの基準から保存までに追い出しがあれば拒む（base は既定の取り分のまま撮るので記録だけ）
+        pages = pages_at_capture.get(view)
+        if pages is None:
             failures.append(f"{view}: Game のログに撮影の保存の行が無い")
-        elif wanted_at_capture[view] is None or wanted_at_capture[view] > 0:
-            failures.append(f"{view}: 撮った時点でジオメトリのページの要求が残っている（wanted={wanted_at_capture[view]}）")
+        else:
+            in_flight = {k: pages.get(k) for k in ("wanted", "reading", "ready", "uploading")}
+            pages["resident_complete"] = bool(pages.get("resident") is not None and not any(in_flight.values())
+                                              and len(pages["settle_evicted"]) == 1)
+            if require_resident and not pages["resident_complete"]:
+                failures.append(f"{view}: 撮った時点でジオメトリのページが常駐しきっていない（進行中 {in_flight}、"
+                                f"落ち着きの基準から保存までの追い出しの数 {pages['settle_evicted']}）")
         png = os.path.join(case_dir, f"{view}.png")
         if not os.path.isfile(png):
             failures.append(f"{view}.png が無い")
         elif Image.open(png).size != size:
             failures.append(f"{view}.png の大きさ {Image.open(png).size} が {size} でない")
     return failures, {"game_args": args, "vt_pool_lines": vt_lines, "vt_used_mb_max": vt_used_max,
-                      "geometry_wanted_at_capture": wanted_at_capture}
+                      "residency_required": bool(require_resident), "geometry_pages_at_capture": pages_at_capture}
 
 
 def blur_write_crops(path, tiles, center):
@@ -2842,12 +2872,12 @@ def run_blur_static(capture_dir, verify):
     failures = []
     reference_dir = os.path.join(capture_dir, BLUR_REFERENCE)
     groups = [(BLUR_REFERENCE, BLUR_REFERENCE_ARGS, BLUR_REFERENCE_LOGS,
-               (BLUR_SIZE[0] * BLUR_REFERENCE_SCALE, BLUR_SIZE[1] * BLUR_REFERENCE_SCALE))]
-    groups += [(case["name"], case["args"], case["logs"], BLUR_SIZE) for case in BLUR_CASES]
+               (BLUR_SIZE[0] * BLUR_REFERENCE_SCALE, BLUR_SIZE[1] * BLUR_REFERENCE_SCALE), True)]
+    groups += [(case["name"], case["args"], case["logs"], BLUR_SIZE, case["resident"]) for case in BLUR_CASES]
     group_records = {}
     input_hashes = set()
     inputs_all_current = True
-    for name, expected_args, expected_logs, size in groups:
+    for name, expected_args, expected_logs, size, require_resident in groups:
         group_dir = os.path.join(capture_dir, name)
         if not os.path.isdir(group_dir):
             failures.append(f"{name}: 撮影の組が無い（{group_dir}）")
@@ -2859,7 +2889,8 @@ def run_blur_static(capture_dir, verify):
             failures.extend(f"{name}: {failure}" for failure in input_failures)
         if record is not None:
             input_hashes.add(record.get("files_sha256"))
-        group_failures, info = blur_case_check(group_dir, tuple(expected_args), tuple(expected_logs), size)
+        group_failures, info = blur_case_check(group_dir, tuple(expected_args), tuple(expected_logs), size,
+                                               require_resident)
         failures.extend(f"{name}: {failure}" for failure in group_failures)
         group_records[name] = {"inputs_current": inputs_ok, **info}
     if len(input_hashes) > 1:
@@ -2925,15 +2956,15 @@ def run_blur_static(capture_dir, verify):
                 failures.append(f"{view}: {case['name']} の値に NaN・Inf がある")
             cases[case["name"]] = {"factor": case["factor"], "far": far_result, "cliff": cliff_result}
         entry["cases"] = cases
-        # 霞が細部の見えを下げる量: 霞ありの帯域の量 ÷ 霞なしの帯域の量（同じ範囲。正解との比ではない）
-        if "base" in case_bands_by_name and "haze-off" in case_bands_by_name:
+        # 霞が細部の見えを下げる量: 霞ありの帯域の量 ÷ 霞なしの帯域の量（同じ範囲・同じ取り分。正解との比ではない）
+        if BLUR_BASELINE in case_bands_by_name and "haze-off" in case_bands_by_name:
             entry["haze_contrast"] = [
-                float(np.sqrt(np.mean(case_bands_by_name["base"][k][far_masks[k]] ** 2) /
+                float(np.sqrt(np.mean(case_bands_by_name[BLUR_BASELINE][k][far_masks[k]] ** 2) /
                               np.mean(case_bands_by_name["haze-off"][k][far_masks[k]] ** 2)))
                 for k in range(len(BLUR_SIGMAS) - 1)]
         cy, cx = np.argwhere(cliff_masks[0] if region["cliff_px_per_band"][0] > 0 else far_masks[0]).mean(axis=0)
         crops_path = os.path.join(capture_dir, f"blur_{view}.png")
-        order = ["ref2x", "base", "aa-none", "aa-taa", "finest-lod", "mip-bias-m1", "aniso-1", "scale-075", "haze-off"]
+        order = ["ref2x", "base", BLUR_BASELINE, "aa-none", "aa-taa", "mip-bias-m1", "aniso-1", "scale-075", "haze-off"]
         entry["crops"] = blur_write_crops(crops_path, [(n, displays[n]) for n in order if n in displays], (cy, cx))
         entry["crops_png"] = crops_path
         missing_cases = [case["name"] for case in BLUR_CASES if case["name"] not in cases]
@@ -2950,25 +2981,26 @@ def run_blur_static(capture_dir, verify):
             print(f"REFERENCE_CHECK blur_static view={view} calibration blur_loss0={blur_row['bands'][0]['detail_loss']:.3f} "
                   f"blur_alias={blur_row['fine_alias']:.3f} noise_kept0={noise_row['bands'][0]['detail_kept']:.3f} "
                   f"noise_alias0={noise_row['bands'][0]['alias']:.3f} far_px={region['far_px']} cliff_px={region['cliff_px']}")
-    # 条件ごとの効き（2 視点の平均。既定との差）
+    # 条件ごとの効き（2 視点の平均。取り分だけを広げた組との差。base の差は既定の取り分の効き）
     effects = []
     for case in BLUR_CASES:
-        if case["name"] == "base":
+        if case["name"] == BLUR_BASELINE:
             continue
         deltas = []
         for entry in views:
             cases = entry.get("cases") or {}
-            if case["name"] in cases and "base" in cases:
-                key = "cliff" if cases["base"]["cliff"] is not None and cases[case["name"]]["cliff"] is not None else "far"
-                deltas.append((cases[case["name"]][key]["fine_detail_loss"] - cases["base"][key]["fine_detail_loss"],
-                               cases[case["name"]][key]["fine_alias"] - cases["base"][key]["fine_alias"]))
+            if case["name"] in cases and BLUR_BASELINE in cases:
+                baseline = cases[BLUR_BASELINE]
+                key = "cliff" if baseline["cliff"] is not None and cases[case["name"]]["cliff"] is not None else "far"
+                deltas.append((cases[case["name"]][key]["fine_detail_loss"] - baseline[key]["fine_detail_loss"],
+                               cases[case["name"]][key]["fine_alias"] - baseline[key]["fine_alias"]))
         if deltas:
             effects.append({"case": case["name"], "factor": case["factor"],
                             "detail_loss_delta": float(np.mean([d[0] for d in deltas])),
                             "alias_delta": float(np.mean([d[1] for d in deltas]))})
     report = {"mode": "blur_static", "verify": bool(verify), "inputs_current": inputs_all_current,
               "criteria": {"far_min_m": BLUR_FAR_MIN_M, "cliff_normal_y": BLUR_CLIFF_NORMAL_Y, "sigmas": list(BLUR_SIGMAS),
-                           "fine_bands": list(BLUR_FINE_BANDS), "reference": BLUR_REFERENCE,
+                           "fine_bands": list(BLUR_FINE_BANDS), "reference": BLUR_REFERENCE, "baseline": BLUR_BASELINE,
                            "reference_scale": BLUR_REFERENCE_SCALE},
               "groups": group_records, "views": views, "effects": effects, "failures": failures,
               "seconds": time.time() - started}

@@ -5221,3 +5221,20 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 前の反復の未追跡のシェーダー（`VolumetricsCommon.glsl`・`volumetrics_probe.frag`）は paths の内側なのでこのコミットに入れた
   - 新しい試験は足していない（verify の撮影と検査が確かめる）
 - Next: TASKS.md の次の未完の項目。
+
+### SCN-WLR-FAR-BLUR-STATIC 差し戻しの対応（2026-10-19、run 20261018-205227 の反復 10）
+- Done: 撮影時にジオメトリのページが常駐しきっていなかった（base 以外の組も既定の取り分で撮り、追い出しと読み直しが続いていた）差し戻しを直した
+  - `GEOMETRY_PAGES` のログを、常駐・進行中の各段・追い出しのどれかが変わったら出すようにした（`RenderResources.cpp`。前は常駐の数だけ）
+  - `ReferenceCheck.py --blur-static`: 比べる組を正解と同じ取り分 9 で撮る約束にし、取り分だけを広げた組 resident を基準に足した。base 以外は保存の前の最後の行の進行中（wanted・reading・ready・uploading）が 0、落ち着きの基準から保存まで追い出しの数が変わらないことを求める（base は記録だけ）
+  - 全 9 組を撮り直して表と原因の順位を更新した（`Docs/RenderingValidation/WastelandFarBlurStatic.md`）。resident と条件の組は撮影時に進行中 0・追い出し 0。base は作業集合の 78〜86 % しか常駐せず、ref_cliff_02 の遠景で欠け +0.042・エイリアス +0.068（原因の 3 位に足した）。ほかの条件の効きは前の版とほぼ同じ（TAA +0.116 / −0.317、内部解像度 0.75 欠け +0.277）
+  - non-blocking の 2 件: 記録の較正の上限を実装の 0.1 に揃えた。`VolumetricsCommon.glsl` の `fogParameters` のコメントを日本語にした
+- 証拠（`.harness/runs/20261018-205227/`）:
+  - `verify-SCN-WLR-FAR-BLUR-STATIC-1.txt`: Debug の Game のビルド EXIT=0
+  - `verify-SCN-WLR-FAR-BLUR-STATIC-2.txt`: 既定の組を RelWithDebInfo・`-Build -Hdr` で撮影 result=pass
+  - `verify-SCN-WLR-FAR-BLUR-STATIC-3.txt`: `--blur-static --verify` result=pass、cases=8、inputs_current=1
+  - `aux-SCN-WLR-FAR-BLUR-STATIC-capture-<組>.txt`・`aux-SCN-WLR-FAR-BLUR-STATIC-captures.txt`: 組ごとの撮影（全組 exit=0）
+- Notes:
+  - 既定の取り分では荒野の 1920×1080 の作業集合が収まらず（常駐約 700 MB で頭打ち、ref_cliff_02 は 897 MB 要る）、撮影の落ち着き待ちは追い出しが続く間は待たないので撮れてしまう。目標の見直しは直す案に書いた（既定は変えていない）
+  - Git Bash から `cmake --build ... -- /m:1` を呼ぶと `/m:1` がパスに変換されて MSBuild が失敗する。verify の 1 は PowerShell で走らせた
+  - 新しい試験は足していない（verify の撮影と検査が確かめる）
+- Next: TASKS.md の次の未完の項目。

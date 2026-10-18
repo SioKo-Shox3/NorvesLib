@@ -147,7 +147,9 @@ namespace NorvesLib::Core::Rendering
         // ストリーマに渡すフレームの番号と、GEOMETRY_PAGES ログの間引き（RenderThread だけが進める）
         uint64_t GeometryPageFrame = 0;
         uint64_t GeometryPageLoggedFrame = 0;
-        uint64_t GeometryPageLoggedResident = 0;
+        // 最後に GEOMETRY_PAGES に出した数（常駐・進行中の各段・追い出しのどれかが変わったら出し直す）
+        GeometryPageStreamerStats GeometryPageLoggedStats;
+        bool bGeometryPageLogged = false;
         // VRAM_POOLS に最後に出したジオメトリのページの追い出し数（変わったときにも出し直す）
         uint64_t GeometryLoggedEvictedPages = 0;
         // VT のストリーマと、その結び付け・コピーの窓口。ページのプール・リング・RetireQueue より先に手放す。
@@ -1695,14 +1697,18 @@ namespace NorvesLib::Core::Rendering
         impl.GeometryPageFrame = std::max(impl.GeometryPageFrame, impl.GeometryPageFeedback->GetFrameCounter());
         impl.GeometryPageStreaming->Update(impl.GeometryPageFrame, bHasRequests ? &requests : nullptr);
 
-        // 常駐するページの数が変わったときだけ、約1秒（60フレーム）に1回までログへ出す。
-        // 読み込みが落ち着いたとき（待ちが無くなった）は、間隔を待たずに最終の数を出す
+        // 常駐・進行中の各段・追い出しの数のどれかが変わったときだけ、約1秒（60フレーム）に1回までログへ出す。
+        // 読み込みが落ち着いたとき（待ちが無くなった）は、間隔を待たずに出す（撮影の検査が、撮った時点の数を最後の行で読む）
         constexpr uint64_t LogIntervalFrames = 60;
         const bool bLogDue = impl.GeometryPageFrame - impl.GeometryPageLoggedFrame >= LogIntervalFrames;
         if (bLogDue || !impl.GeometryPageStreaming->HasPendingWork())
         {
             const GeometryPageStreamerStats stats = impl.GeometryPageStreaming->GetStats();
-            if (stats.ResidentPages != impl.GeometryPageLoggedResident)
+            const GeometryPageStreamerStats &logged = impl.GeometryPageLoggedStats;
+            if (!impl.bGeometryPageLogged || stats.ResidentPages != logged.ResidentPages ||
+                stats.UploadingPages != logged.UploadingPages || stats.ReadyPages != logged.ReadyPages ||
+                stats.ReadingPages != logged.ReadingPages || stats.WantedPages != logged.WantedPages ||
+                stats.EvictedPages != logged.EvictedPages)
             {
                 constexpr double BytesPerMb = 1024.0 * 1024.0;
                 LOG_INFO("GEOMETRY_PAGES resident=%u uploading=%u ready=%u "
@@ -1716,7 +1722,8 @@ namespace NorvesLib::Core::Rendering
                          static_cast<unsigned long long>(stats.EvictedPages),
                          static_cast<unsigned long long>(stats.BudgetBlockedFrames),
                          static_cast<unsigned long long>(stats.ParentWaitSkips));
-                impl.GeometryPageLoggedResident = stats.ResidentPages;
+                impl.GeometryPageLoggedStats = stats;
+                impl.bGeometryPageLogged = true;
             }
             impl.GeometryPageLoggedFrame = impl.GeometryPageFrame;
         }

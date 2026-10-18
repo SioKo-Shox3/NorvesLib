@@ -15,7 +15,7 @@ layout(std140, set = 0, binding = 2) uniform VolumetricsParams
     mat4 inverseViewProjection;
     vec4 cameraPositionAndPreExposure;
     vec4 cameraForwardAndScatteringEnabled;
-    vec4 fogParameters; // x=density, y=base height, z=height falloff, w=sky radiance available
+    vec4 fogParameters; // x=密度, y=基準の高さ, z=高さの減衰, w=空の放射輝度が使えれば 1
     vec4 fallbackFogColor;
     vec4 directionalLightDirectionAndAnisotropy;
     vec4 directionalLightRadianceAndEnabled;
