@@ -340,6 +340,35 @@ GRAY_ALBEDO_RATIO = 0.999
 GRAY_ROUGHNESS_TOLERANCE = 0.01
 GRAY_SKY_MISMATCH = 0.005
 GRAY_SPLIT_TOLERANCE = 0.01
+# --albedo（地表の材質の照明の無いアルベドの再現）
+ALBEDO_VIEWS = ("ref_cliff_01", "ref_ground_01")
+ALBEDO_GAME_ARGS = ("--wasteland-common-light", "--wasteland-finest-lod")
+ALBEDO_LOG_LINES = ("WASTELAND_FINEST_LOD ", "WASTELAND_HIDE mask=127 ", "WASTELAND_TERRAIN_MATERIAL ")
+ALBEDO_RESULT_DIR = "albedo"
+TM_SCRIPT = "Scripts/Terrain/TerrainMaterialReference.py"
+# 領域: Blender の頂点の法線の y と、エンジンの深度（m）で分ける
+ALBEDO_FLAT_NORMAL_Y = 0.8
+ALBEDO_CLIFF_NORMAL_Y = 0.5
+ALBEDO_NEAR_M = 30.0
+ALBEDO_FAR_M = 300.0
+ALBEDO_REGIONS = ("ground_near", "ground_mid", "ground_far", "slope", "cliff")
+# 輪郭（空との境・深度の跳び）から離す画素の数（投影の照合で輪郭は 1〜2 画素以内で重なる）
+ALBEDO_EDGE_MARGIN_PX = 3
+ALBEDO_MIN_REGION_PX = 5000
+# 平均: R・G・B の線形の平均の比（Blender ÷ エンジン）が 1 ± これ以内
+ALBEDO_MEAN_TOLERANCE = 0.05
+# 局所の模様: 輝度を σ ALBEDO_PATTERN_BLUR_PX でぼかし（標本の位置の 1 画素未満のずれと、GPU の異方性の実装の差で
+# 画素の細かさの成分が入れ替わるのを除く）、ALBEDO_WINDOW_PX 角の窓（ALBEDO_WINDOW_STEP_PX おき、窓の全画素が領域の中）の
+# SSIM（定数はアルベドの幅 ALBEDO_SSIM_RANGE で C1 = (0.01 L)²・C2 = (0.03 L)²）の平均が ALBEDO_SSIM_MIN 以上。
+# 対照として、Blender の画を窓 1 つ分（ALBEDO_WINDOW_PX）横へずらした SSIM も測り、ALBEDO_SSIM_MIN − ALBEDO_CONTROL_MARGIN
+# 未満なら見分けられる（模様の比べ方が効く）領域とする。視点ごとに見分けられる領域が 1 つ以上要る
+ALBEDO_PATTERN_BLUR_PX = 1.0
+ALBEDO_WINDOW_PX = 16
+ALBEDO_WINDOW_STEP_PX = 8
+ALBEDO_SSIM_RANGE = 0.3
+ALBEDO_SSIM_MIN = 0.7
+ALBEDO_CONTROL_MARGIN = 0.1
+ALBEDO_MIN_WINDOWS = 20
 # --atmos-dump: 空と霞の値の書き出し（SCN-WLR-ATMOS-DUMP）
 ATMOS_GAME_ARG = "--atmosphere-dump"
 ATMOS_LOG_LINES = ("ATMOSPHERE_DUMP ",)
@@ -3942,6 +3971,326 @@ def run_gray(capture_dir, views, verify):
     return 0 if not failures else 1
 
 
+# ---- --albedo（地表の材質の照明の無いアルベド）----
+
+def albedo_engine_capture(capture_dir, views, verify):
+    """エンジンの撮影（共通の照明・地形だけ・最細の LOD）の起動引数・ログの印・撮った時点の常駐。(記録, 失敗の一覧)"""
+    entry = {}
+    failures = []
+    inputs_ok, input_failures, record = check_inputs(capture_dir)
+    entry["inputs_current"] = inputs_ok
+    entry["files_sha256"] = (record or {}).get("files_sha256")
+    entry["game_exe_sha256"] = (record or {}).get("game_exe_sha256")
+    if verify and not inputs_ok:
+        failures.extend(input_failures)
+    game_args = plate_capture_args(capture_dir)
+    entry["game_args"] = game_args
+    if game_args is None:
+        return entry, failures + ["metrics.json が無い"]
+    missing = [a for a in ALBEDO_GAME_ARGS if a not in game_args]
+    if missing:
+        failures.append(f"撮影の起動引数に {', '.join(missing)} が無い")
+    if set(AOV_HIDE_NAMES) - aov_hide_names(game_args):
+        failures.append("撮影が --wasteland-hide=all でない")
+    if any(a.startswith("--wasteland-gray") for a in game_args):
+        failures.append("撮影が灰色の材質・板で撮られている")
+    entry["views"] = {}
+    for view in views:
+        view_entry = {}
+        entry["views"][view] = view_entry
+        log_name = view_game_log(capture_dir, view)
+        log_path = os.path.join(capture_dir, log_name) if log_name else None
+        if not log_path or not os.path.isfile(log_path):
+            failures.append(f"{view}: Game のログが無い")
+            continue
+        view_entry["game_log"] = log_name
+        with open(log_path, encoding="utf-8", errors="replace") as f:
+            text = f.read()
+        for line in ALBEDO_LOG_LINES:
+            if line not in text:
+                failures.append(f"{view}: Game のログに {line.strip()} が無い")
+        single_view = view if log_name == f"{view}.Game.log" else None
+        pages = geometry_pages_at_capture(text.splitlines(), single_view).get(view)
+        view_entry["geometry_pages_at_capture"] = pages
+        if pages is None:
+            failures.append(f"{view}: Game のログに撮影の保存の行か、その前の GEOMETRY_PAGES の行が無い")
+        else:
+            in_flight = {k: pages.get(k) for k in ("wanted", "reading", "ready", "uploading")}
+            if any(in_flight.values()) or len(pages["settle_evicted"]) != 1:
+                failures.append(f"{view}: 撮った時点でジオメトリのページが常駐しきっていない（進行中 {in_flight}、"
+                                f"追い出しの数 {pages['settle_evicted']}）")
+        dropped = [int(v) for v in re.findall(r"MEGA_CAPACITY draw_dropped=(\d+)", text)]
+        view_entry["mega_draw_dropped_max"] = max(dropped) if dropped else None
+        if dropped and max(dropped) > 0:
+            failures.append(f"{view}: 描くクラスタが溢れた（draw_dropped 最大 {max(dropped)}）")
+    return entry, failures
+
+
+def check_albedo_inputs(capture_dir, blender_dir, views, engine_files_sha256):
+    """Blender の結果の入力の記録を今のファイルと撮影のログに照らす。(合格か, 理由の一覧, 記録)"""
+    import TerrainMaterialReference as TM
+    ok, reasons, record = check_blender_inputs(blender_dir)
+    if record is None:
+        return False, [f"{ALBEDO_RESULT_DIR}/inputs.json が無い（BlenderReference.py --albedo を回していない）"], None
+    if record.get("kind") != "blender_albedo":
+        reasons.append(f"記録の種類が blender_albedo でない（{record.get('kind')}）")
+    if sha256_file(os.path.join(REPO_ROOT, TM_SCRIPT)) != record.get("material_script_sha256"):
+        reasons.append(f"{TM_SCRIPT} が描いた後に変わった（古い結果）")
+    if record.get("engine_capture_files_sha256") != engine_files_sha256:
+        reasons.append("値の表とカメラを借りたエンジンの撮影の入力が、今の撮影と違う")
+    material = record.get("material") or {}
+    if sha256_file(os.path.join(REPO_ROOT, TM.OSL_SOURCE)) != material.get("osl_source_sha256"):
+        reasons.append(f"{TM.OSL_SOURCE} が描いた後に変わった（古い結果）")
+    osl_path = os.path.join(REPO_ROOT, material.get("osl", ""))
+    if not os.path.isfile(osl_path) or sha256_file(osl_path) != material.get("osl_sha256"):
+        reasons.append("描いた OSL（terrain_albedo.osl）が無いか、描いた後に変わった")
+    table_path = os.path.join(REPO_ROOT, material.get("table", ""))
+    if not os.path.isfile(table_path) or sha256_file(table_path) != material.get("table_sha256"):
+        reasons.append("値の表（terrain_material.json）が無いか、描いた後に変わった")
+        return not reasons, reasons, record
+    with open(table_path, encoding="utf-8") as f:
+        table = json.load(f)
+    # 値の表が、今の撮影のログの材質の値・今の GLSL・詰め方の式と同じか
+    logs = [os.path.join(capture_dir, view_game_log(capture_dir, v) or f"{v}.Game.log") for v in views]
+    json_text, material_now, log_failures = TM.material_from_logs(logs)
+    reasons.extend(log_failures)
+    if json_text is not None and TM.sha256_text(json_text) != table.get("material_log_sha256"):
+        reasons.append("値の表の材質の値が、今の撮影のログの WASTELAND_TERRAIN_MATERIAL と違う")
+    if material_now is not None and TM.pack_params(material_now) != table.get("packed"):
+        reasons.append("値の表の詰めた値が、今の詰め方の式と違う")
+    if TM.shader_constants() != table.get("shader_constants"):
+        reasons.append("値の表の GLSL の定数が、今のシェーダーと違う")
+    for rel, digest in (table.get("shader_sha256") or {}).items():
+        if sha256_file(os.path.join(REPO_ROOT, rel)) != digest:
+            reasons.append(f"{rel} が描いた後に変わった（古い結果）")
+    mips_dir = os.path.join(REPO_ROOT, record.get("mips_dir", ""))
+    mips_manifest = os.path.join(mips_dir, "mips.json")
+    if not os.path.isfile(mips_manifest) or sha256_file(mips_manifest) != material.get("mips_manifest_sha256"):
+        reasons.append("ミップの段の一覧（mips.json）が無いか、描いた後に変わった")
+    else:
+        with open(mips_manifest, encoding="utf-8") as f:
+            mips = json.load(f)
+        for name, entry in mips.get("textures", {}).items():
+            if sha256_file(os.path.join(REPO_ROOT, entry["source"])) != entry.get("source_sha256"):
+                reasons.append(f"ミップの段の元の画像 {entry['source']} が作った後に変わった")
+    return not reasons, reasons, record
+
+
+def albedo_luma(image):
+    return image.astype(np.float64) @ LUMA
+
+
+def albedo_ssim_map(a, b):
+    """窓（ALBEDO_WINDOW_PX 角）ごとの SSIM。(SSIM の画, 窓の左上の行と列)。窓は ALBEDO_WINDOW_STEP_PX おき"""
+    size = ALBEDO_WINDOW_PX
+    c1 = (0.01 * ALBEDO_SSIM_RANGE) ** 2
+    c2 = (0.03 * ALBEDO_SSIM_RANGE) ** 2
+
+    def window_mean(x):
+        integral = np.pad(np.cumsum(np.cumsum(x, axis=0), axis=1), ((1, 0), (1, 0)))
+        total = integral[size:, size:] - integral[:-size, size:] - integral[size:, :-size] + integral[:-size, :-size]
+        return total / float(size * size)
+
+    mu_a = window_mean(a)
+    mu_b = window_mean(b)
+    var_a = np.maximum(window_mean(a * a) - mu_a * mu_a, 0.0)
+    var_b = np.maximum(window_mean(b * b) - mu_b * mu_b, 0.0)
+    cov = window_mean(a * b) - mu_a * mu_b
+    ssim = ((2.0 * mu_a * mu_b + c1) * (2.0 * cov + c2)) / ((mu_a ** 2 + mu_b ** 2 + c1) * (var_a + var_b + c2))
+    return ssim
+
+
+def albedo_window_valid(mask):
+    """窓の全画素が mask の中か（albedo_ssim_map と同じ並び）"""
+    size = ALBEDO_WINDOW_PX
+    integral = np.pad(np.cumsum(np.cumsum(mask.astype(np.int64), axis=0), axis=1), ((1, 0), (1, 0)))
+    count = integral[size:, size:] - integral[:-size, size:] - integral[size:, :-size] + integral[:-size, :-size]
+    return count == size * size
+
+
+def albedo_regions(engine_depth, blender_normal, valid):
+    ny = blender_normal[..., 1]
+    flat = ny >= ALBEDO_FLAT_NORMAL_Y
+    return {
+        "ground_near": valid & flat & (engine_depth < ALBEDO_NEAR_M),
+        "ground_mid": valid & flat & (engine_depth >= ALBEDO_NEAR_M) & (engine_depth < ALBEDO_FAR_M),
+        "ground_far": valid & flat & (engine_depth >= ALBEDO_FAR_M),
+        "slope": valid & (ny >= ALBEDO_CLIFF_NORMAL_Y) & ~flat,
+        "cliff": valid & (ny < ALBEDO_CLIFF_NORMAL_Y),
+    }
+
+
+def write_albedo_preview(path, engine, blender, masks, valid):
+    """左上: エンジン、右上: Blender（同じ倍率）、左下: log2(Blender ÷ エンジン) の輝度（±0.25 段で飽和。赤が明るい）、右下: 領域"""
+    def half(image):
+        return np.asarray(Image.fromarray(image).resize((image.shape[1] // 2, image.shape[0] // 2), Image.BOX))
+    ratio = np.log2(np.maximum(albedo_luma(blender), 1e-6) / np.maximum(albedo_luma(engine), 1e-6))
+    t = np.clip(ratio / 0.25, -1.0, 1.0)
+    heat = np.zeros(engine.shape, dtype=np.float64)
+    heat[..., 0] = np.where(t > 0, 1.0, 1.0 + t)
+    heat[..., 1] = 1.0 - np.abs(t)
+    heat[..., 2] = np.where(t < 0, 1.0, 1.0 - t)
+    heat = np.where(valid[..., None], heat, 0.15)
+    colors = {"ground_near": (230, 200, 60), "ground_mid": (80, 170, 90), "ground_far": (60, 90, 200),
+              "slope": (200, 120, 200), "cliff": (230, 110, 40)}
+    regions = np.full(engine.shape, 30, dtype=np.uint8)
+    for name, color in colors.items():
+        regions[masks[name]] = color
+    top = np.concatenate([half(gray_display(engine, 2.0)), half(gray_display(blender, 2.0))], axis=1)
+    bottom = np.concatenate([half((heat * 255.0).astype(np.uint8)), half(regions)], axis=1)
+    Image.fromarray(np.concatenate([top, bottom], axis=0)).save(path)
+
+
+def check_albedo_view(capture_dir, blender_dir, view):
+    failures = []
+    result = {"view": view, "failures": failures}
+    with open(os.path.join(capture_dir, f"{view}.aov.json"), encoding="utf-8") as f:
+        aov_meta = json.load(f)
+    meta_path = os.path.join(blender_dir, f"{view}.albedo.json")
+    if not os.path.isfile(meta_path):
+        failures.append("Blender のアルベドが無い")
+        result["pass"] = False
+        return result
+    with open(meta_path, encoding="utf-8") as f:
+        blender_meta = json.load(f)
+    camera_failures = gray_camera_match(aov_meta["camera"], blender_meta["camera_engine"])
+    if int(blender_meta["width"]) != int(aov_meta["width"]) or int(blender_meta["height"]) != int(aov_meta["height"]):
+        camera_failures.append("画素数が違う")
+    failures.extend(camera_failures)
+    engine = read_pfm_any(os.path.join(capture_dir, aov_meta["albedo"]["file"])).astype(np.float64)
+    depth = read_pfm_any(os.path.join(capture_dir, aov_meta["depth"]["file"]))[..., 0].astype(np.float64)
+    blender = read_pfm_any(os.path.join(blender_dir, blender_meta["albedo"]["file"])).astype(np.float64)
+    normal = read_pfm_any(os.path.join(blender_dir, blender_meta["normal"]["file"])).astype(np.float64)
+    alpha = read_pfm_any(os.path.join(blender_dir, blender_meta["alpha"]["file"]))[..., 0]
+    engine_surface = np.isfinite(depth)
+    blender_surface = alpha > 0.5
+    result["sky_mismatch"] = float(np.mean(engine_surface != blender_surface))
+    if result["sky_mismatch"] > GRAY_SKY_MISMATCH:
+        failures.append(f"空と表面の分かれ方の食い違いが {result['sky_mismatch']:.4f}（{GRAY_SKY_MISMATCH} 超）")
+    # 輪郭（空との境と深度の跳び）から離れた共通の表面
+    edges = depth_edges(np.where(engine_surface, depth, np.inf), PROJECTION_JUMP_WEAK) | \
+        (engine_surface != blender_surface)
+    near_edge = edges.copy()
+    for _ in range(ALBEDO_EDGE_MARGIN_PX):
+        near_edge = dilate(near_edge)
+    valid = engine_surface & blender_surface & ~near_edge
+    masks = albedo_regions(depth, normal, valid)
+    engine_luma = gaussian_blur(albedo_luma(engine), ALBEDO_PATTERN_BLUR_PX)
+    blender_luma = gaussian_blur(albedo_luma(blender), ALBEDO_PATTERN_BLUR_PX)
+    ssim = albedo_ssim_map(engine_luma, blender_luma)
+    shift = ALBEDO_WINDOW_PX
+    control = albedo_ssim_map(engine_luma[:, :-shift], blender_luma[:, shift:])
+    step = ALBEDO_WINDOW_STEP_PX
+    regions = {}
+    discriminating = 0
+    for name in ALBEDO_REGIONS:
+        mask = masks[name]
+        entry = {"pixels": int(mask.sum())}
+        regions[name] = entry
+        if entry["pixels"] < ALBEDO_MIN_REGION_PX:
+            entry["status"] = "not_judged"
+            entry["reason"] = f"画素が {ALBEDO_MIN_REGION_PX} 未満"
+            continue
+        engine_mean = engine[mask].mean(axis=0)
+        blender_mean = blender[mask].mean(axis=0)
+        ratio = blender_mean / np.maximum(engine_mean, 1e-9)
+        entry.update({
+            "engine_mean_rgb": engine_mean.tolist(),
+            "blender_mean_rgb": blender_mean.tolist(),
+            "ratio_rgb": ratio.tolist(),
+            "engine_y": float(engine_mean @ LUMA),
+            "blender_y": float(blender_mean @ LUMA),
+            "median_depth_m": float(np.median(depth[mask])),
+        })
+        mean_ok = bool(np.all(np.abs(ratio - 1.0) <= ALBEDO_MEAN_TOLERANCE))
+        entry["mean_pass"] = mean_ok
+        if not mean_ok:
+            failures.append(f"{name}: 平均の比 {np.round(ratio, 4).tolist()} が 1 ± {ALBEDO_MEAN_TOLERANCE} の外")
+        windows = albedo_window_valid(mask)[::step, ::step]
+        values = ssim[::step, ::step][windows]
+        control_windows = (albedo_window_valid(mask[:, :-shift]) & albedo_window_valid(mask[:, shift:]))[::step, ::step]
+        control_values = control[::step, ::step][control_windows]
+        entry["windows"] = int(values.size)
+        entry["control_windows"] = int(control_values.size)
+        if values.size < ALBEDO_MIN_WINDOWS:
+            entry["pattern_status"] = "not_judged"
+            entry["status"] = "judged_mean_only"
+            continue
+        entry["ssim_mean"] = float(values.mean())
+        entry["ssim_p10"] = float(np.percentile(values, 10))
+        entry["control_ssim_mean"] = float(control_values.mean()) if control_values.size else None
+        entry["discriminating"] = bool(control_values.size and
+                                       entry["control_ssim_mean"] < ALBEDO_SSIM_MIN - ALBEDO_CONTROL_MARGIN)
+        discriminating += int(entry["discriminating"])
+        pattern_ok = entry["ssim_mean"] >= ALBEDO_SSIM_MIN
+        entry["pattern_pass"] = pattern_ok
+        entry["pattern_status"] = "judged"
+        entry["status"] = "judged"
+        if not pattern_ok:
+            failures.append(f"{name}: 模様の SSIM の平均 {entry['ssim_mean']:.3f} が {ALBEDO_SSIM_MIN} 未満")
+    if discriminating == 0:
+        failures.append("模様の比べ方が見分けられる領域（ずらした対照の SSIM が低い領域）が無い")
+    result["regions"] = regions
+    result["valid_pixels"] = int(valid.sum())
+    result["blender"] = {k: blender_meta.get(k) for k in ("renderer", "samples", "pixel_filter", "triangles",
+                                                         "render_seconds", "surface_pixels")}
+    preview = os.path.join(capture_dir, f"albedo_{view}.png")
+    write_albedo_preview(preview, engine, blender, masks, valid)
+    result["preview"] = os.path.relpath(preview, REPO_ROOT).replace("\\", "/")
+    result["pass"] = not failures
+    return result
+
+
+def run_albedo(capture_dir, views, verify):
+    failures = []
+    views = views or list(ALBEDO_VIEWS)
+    report = {"mode": "albedo", "verify": bool(verify), "views": views, "criteria": {
+        "regions": {"flat_normal_y": ALBEDO_FLAT_NORMAL_Y, "cliff_normal_y": ALBEDO_CLIFF_NORMAL_Y,
+                    "near_m": ALBEDO_NEAR_M, "far_m": ALBEDO_FAR_M, "edge_margin_px": ALBEDO_EDGE_MARGIN_PX,
+                    "min_pixels": ALBEDO_MIN_REGION_PX},
+        "mean_tolerance": ALBEDO_MEAN_TOLERANCE,
+        "pattern": {"blur_px": ALBEDO_PATTERN_BLUR_PX, "window_px": ALBEDO_WINDOW_PX, "step_px": ALBEDO_WINDOW_STEP_PX,
+                    "ssim_range": ALBEDO_SSIM_RANGE, "ssim_min": ALBEDO_SSIM_MIN,
+                    "control_shift_px": ALBEDO_WINDOW_PX, "control_margin": ALBEDO_CONTROL_MARGIN,
+                    "min_windows": ALBEDO_MIN_WINDOWS},
+    }}
+    engine_entry, engine_failures = albedo_engine_capture(capture_dir, views, verify)
+    failures.extend(engine_failures)
+    report["engine"] = engine_entry
+    blender_dir = os.path.join(capture_dir, ALBEDO_RESULT_DIR)
+    inputs_ok, input_failures, record = check_albedo_inputs(capture_dir, blender_dir, views,
+                                                            engine_entry.get("files_sha256"))
+    report["blender_inputs_current"] = inputs_ok
+    if verify and not inputs_ok:
+        failures.extend(input_failures)
+    if record is None:
+        failures.extend(input_failures)
+    report["view_results"] = []
+    for view in views:
+        result = check_albedo_view(capture_dir, blender_dir, view)
+        report["view_results"].append(result)
+        failures.extend(f"{view}: {f}" for f in result["failures"])
+        print(f"REFERENCE_CHECK albedo view={view} pass={int(result['pass'])} sky_mismatch={result.get('sky_mismatch')} "
+              f"valid_pixels={result.get('valid_pixels')}")
+        for name, entry in (result.get("regions") or {}).items():
+            ratio = entry.get("ratio_rgb")
+            print(f"REFERENCE_CHECK albedo view={view} region={name} status={entry.get('status')} pixels={entry['pixels']} "
+                  f"ratio_rgb={np.round(ratio, 4).tolist() if ratio else None} "
+                  f"ssim={entry.get('ssim_mean', float('nan')):.3f} control={entry.get('control_ssim_mean') or float('nan'):.3f} "
+                  f"windows={entry.get('windows')} discriminating={int(bool(entry.get('discriminating')))}")
+    report["failures"] = failures
+    report_path = os.path.join(capture_dir, "albedo_check.json")
+    with open(report_path, "w", encoding="utf-8") as f:
+        json.dump(report, f, indent=2, ensure_ascii=False)
+    for failure in failures:
+        print(f"REFERENCE_CHECK failure: {failure}")
+    status = "pass" if not failures else "fail"
+    print(f"REFERENCE_CHECK result={status} mode=albedo views={len(views)} "
+          f"inputs_current={int(bool(engine_entry.get('inputs_current')))} blender_inputs_current={int(inputs_ok)} "
+          f"report={report_path}")
+    return 0 if not failures else 1
+
+
 def main():
     # 結果の行を保存して読むので、端末の符号に関わらず UTF-8 で書く
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -3966,6 +4315,8 @@ def main():
                         help="遠景のぼけを、カメラを振りながら撮った画と止めて撮った画で、TAA の履歴による細部の消失に切り分けた表を作る")
     parser.add_argument("--gray", action="store_true",
                         help="灰色の地形のエンジンと Cycles の描画を、領域ごとの線形の平均の比で比べた表を作る")
+    parser.add_argument("--albedo", action="store_true",
+                        help="地表の材質の照明の無いアルベドを、エンジンの AOV と Blender の再現で照らす")
     parser.add_argument("--views", default="", help="検査する視点（カンマ区切り。省くと metrics.json の全視点）")
     parser.add_argument("--verify", action="store_true", help="入力のハッシュを今のファイルと照らし、古い結果を拒否する")
     args = parser.parse_args()
@@ -4005,6 +4356,9 @@ def main():
     if args.gray:
         views = [v.strip() for v in args.views.split(",") if v.strip()]
         return run_gray(capture_dir, views, args.verify)
+    if args.albedo:
+        views = [v.strip() for v in args.views.split(",") if v.strip()]
+        return run_albedo(capture_dir, views, args.verify)
     print("REFERENCE_CHECK result=fail reason=no_mode（--record-inputs か --hdr か --display か --plate か --aov か "
           "--projection か --atmos-dump か --atmos-ref か --blur-static か --blur-motion か --gray を指定する）")
     return 1

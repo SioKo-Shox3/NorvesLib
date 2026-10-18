@@ -96,6 +96,12 @@ PLATE_WIDTH = 384
 PLATE_HEIGHT = 216
 PLATE_VERTICAL_FOV_DEGREES = 40.0
 PLATE_SPP = {"sun": 64, "sky": 1024}
+# --albedo: 照明の無いアルベドの再現（SCN-WLR-MATERIAL-ALBEDO）
+ALBEDO_RESULT_DIR = "albedo"
+ALBEDO_VIEWS = ("ref_cliff_01", "ref_ground_01")
+MATERIAL_SCRIPT = "Scripts/Terrain/TerrainMaterialReference.py"
+# 三角形を視錐台で間引くときの画角の余裕（区画を選ぶ FRUSTUM_MARGIN と同じ）
+ALBEDO_TRIANGLE_MARGIN = FRUSTUM_MARGIN
 
 
 # ---- 座標の変換（この台本でここだけ） ----
@@ -312,7 +318,7 @@ def engine_sun_direction(altitude_degrees, azimuth_degrees):
     return (math.cos(altitude) * math.cos(azimuth), math.sin(altitude), math.cos(altitude) * math.sin(azimuth))
 
 
-def run_blender_job(args, out_dir, name, job):
+def run_blender_job(args, out_dir, name, job, label="gray"):
     """job を書いて Blender をヘッドレスで 1 回起動する。成否"""
     job_path = os.path.join(out_dir, f"{name}.job.json")
     with open(job_path, "w", encoding="utf-8") as f:
@@ -325,10 +331,10 @@ def run_blender_job(args, out_dir, name, job):
         f.write(completed.stdout)
         f.write(completed.stderr)
     for line in completed.stdout.splitlines():
-        if line.startswith("BLENDER_GRAY"):
+        if line.startswith("BLENDER_GRAY") or line.startswith("BLENDER_ALBEDO"):
             print(line, flush=True)
     ok = completed.returncode == 0 and all(os.path.isfile(p) for p in job["required_outputs"])
-    print(f"BLENDER_REFERENCE gray job={name} ok={int(ok)} exit={completed.returncode} "
+    print(f"BLENDER_REFERENCE {label} job={name} ok={int(ok)} exit={completed.returncode} "
           f"seconds={time.time() - started:.1f}", flush=True)
     if ok:
         os.remove(job_path)
@@ -462,6 +468,87 @@ def run_gray(args):
     return 0
 
 
+def run_albedo(args):
+    mesh_dir = os.path.abspath(args.mesh)
+    capture_dir = os.path.abspath(args.capture)
+    out_dir = os.path.join(capture_dir, ALBEDO_RESULT_DIR)
+    mips_dir = os.path.abspath(args.mips) if args.mips else os.path.join(out_dir, "mips")
+    os.makedirs(out_dir, exist_ok=True)
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import ReferenceCheck as RC  # noqa: E402  ふつうの Python の側だけで使う
+    import TerrainMaterialReference as TM  # noqa: E402
+    views = [v for v in args.views.split(",") if v]
+
+    # 値の表（エンジンの撮影のログの WASTELAND_TERRAIN_MATERIAL）・ミップの段・OSL
+    logs = [os.path.join(capture_dir, RC.view_game_log(capture_dir, view) or f"{view}.Game.log") for view in views]
+    json_text, material, failures = TM.material_from_logs(logs)
+    if failures:
+        print(f"BLENDER_REFERENCE error 材質の値を撮影のログから読めない（{'; '.join(failures)}）")
+        return 1
+    material_record = TM.write_material_table(out_dir, json_text, material, mips_dir,
+                                              log=lambda line: print(line, flush=True))
+
+    manifest = load_manifest(mesh_dir)
+    used_tiles = set()
+    view_records = {}
+    for view in views:
+        camera, width, height = read_engine_camera(capture_dir, view)
+        tiles = [t for t in manifest["tiles"] if tile_in_range(t, camera, "frustum")[0]]
+        prefix = os.path.join(out_dir, view)
+        job = {
+            "kind": "albedo",
+            "view": view,
+            "camera": camera,
+            "width": width,
+            "height": height,
+            "tiles": [os.path.join(mesh_dir, t["file"]) for t in tiles],
+            "osl": material_record["osl"],
+            "exr": f"{prefix}.albedo.exr",
+            "prefix": prefix,
+        }
+        job["required_outputs"] = [f"{prefix}.albedo.json"] + \
+            [f"{prefix}.{part}.pfm" for part in ("albedo", "normal", "weights", "alpha")]
+        for stale in job["required_outputs"]:
+            if os.path.exists(stale):
+                os.remove(stale)
+        triangles = sum(int(t["triangles"]) for t in tiles)
+        print(f"BLENDER_REFERENCE albedo view={view} tiles={len(tiles)} triangles={triangles}", flush=True)
+        if not run_blender_job(args, out_dir, view, job, label="albedo"):
+            print(f"BLENDER_REFERENCE error view={view} Blender が失敗した（{ALBEDO_RESULT_DIR}/{view}.blender.log）")
+            return 1
+        used_tiles.update(t["file"] for t in tiles)
+        view_records[view] = {"camera": camera, "width": width, "height": height,
+                              "tiles": sorted(t["file"] for t in tiles), "triangles": triangles}
+
+    # 入力の記録（ReferenceCheck.py --albedo --verify が今のファイルと照らす）
+    with open(os.path.join(capture_dir, "inputs.json"), encoding="utf-8") as f:
+        engine_inputs = json.load(f)
+    record = {
+        "kind": "blender_albedo",
+        "script": normalize_rel(os.path.abspath(__file__)),
+        "script_sha256": sha256_file(os.path.abspath(__file__)),
+        "material_script_sha256": sha256_file(os.path.join(REPO_ROOT, MATERIAL_SCRIPT)),
+        "engine_capture_files_sha256": engine_inputs.get("files_sha256"),
+        "engine_game_exe_sha256": engine_inputs.get("game_exe_sha256"),
+        "material": {key: (normalize_rel(value) if key in ("table", "osl") else value)
+                     for key, value in material_record.items()},
+        "mips_dir": normalize_rel(mips_dir),
+        "git_commit": (RC.git_output(["rev-parse", "HEAD"]) or "").strip(),
+        "mesh_dir": normalize_rel(mesh_dir),
+        "manifest_sha256": sha256_file(os.path.join(mesh_dir, "manifest.json")),
+        "ply_sha256": {name: sha256_file(os.path.join(mesh_dir, name)) for name in sorted(used_tiles)},
+        "terrain_mesh_inputs": RC.hash_inputs("terrain_mesh"),
+        "range": "frustum",
+        "coordinates": coordinate_record(),
+        "views": view_records,
+    }
+    with open(os.path.join(out_dir, "inputs.json"), "w", encoding="utf-8") as f:
+        json.dump(record, f, indent=2, ensure_ascii=False)
+    print(f"BLENDER_REFERENCE albedo record views={len(view_records)} ply={len(used_tiles)} "
+          f"osl_sha256={material_record['osl_sha256'][:12]}")
+    return 0
+
+
 # ---- Blender の中の側（1 視点を描く） ----
 
 def write_pfm(path, image):
@@ -470,6 +557,31 @@ def write_pfm(path, image):
     with open(path, "wb") as f:
         f.write(f"Pf\n{width} {height}\n-1.0\n".encode("ascii"))
         f.write(np.ascontiguousarray(image[::-1], dtype="<f4").tobytes())
+
+
+def write_pfm_rgb(path, image):
+    """3 チャンネルの float32 を PFM（"PF"、下の行から並ぶ、little endian）で書く。image は (高さ, 幅, 3) で上の行が 0 行目"""
+    height, width, _ = image.shape
+    with open(path, "wb") as f:
+        f.write(f"PF\n{width} {height}\n-1.0\n".encode("ascii"))
+        f.write(np.ascontiguousarray(image[::-1], dtype="<f4").tobytes())
+
+
+def frustum_triangles(positions, triangles, camera, margin):
+    """3 つの頂点がそろって同じ視錐台の面（近い面・左右・上下。画角に margin の余裕）の外にある三角形を除いた三角形"""
+    eye = np.asarray(camera["position"], dtype=np.float64)
+    forward = np.asarray(camera["forward"], dtype=np.float64)
+    up = np.asarray(camera["up"], dtype=np.float64)
+    right = np.asarray(camera["right"], dtype=np.float64)
+    tan_v = math.tan(math.radians(float(camera["vertical_fov_degrees"])) / 2.0) * margin
+    tan_h = tan_v * float(camera["aspect_ratio"])
+    planes = np.array([forward, forward * tan_h - right, forward * tan_h + right, forward * tan_v - up,
+                       forward * tan_v + up], dtype=np.float64)
+    near = float(camera.get("near", 0.1))
+    offsets = np.array([near, 0.0, 0.0, 0.0, 0.0])
+    inside = (positions.astype(np.float64) - eye) @ planes.T - offsets >= 0.0
+    outside_all = ~inside[triangles[:, 0]] & ~inside[triangles[:, 1]] & ~inside[triangles[:, 2]]
+    return triangles[~np.any(outside_all, axis=1)]
 
 
 PLY_VERTEX_PROPERTIES = ["property float x", "property float y", "property float z",
@@ -555,6 +667,8 @@ def render_job(job_path):
         render_plate_job(job)
     elif kind == "gray":
         render_gray_job(job)
+    elif kind == "albedo":
+        render_albedo_job(job)
     else:
         render_depth_job(job)
 
@@ -677,6 +791,169 @@ def render_depth_job(job):
         }, f, indent=2, ensure_ascii=False)
     print(f"BLENDER_REFERENCE_JOB view={job['view']} tiles={len(job['tiles'])} triangles={triangle_count} "
           f"load={load_seconds:.1f}s render={render_seconds:.1f}s")
+
+
+def render_albedo_job(job):
+    """照明の無いアルベド: 地形に OSL のシェーダー（terrain_albedo.osl。TerrainAlbedo.osl に値の表を足したもの）のアルベドを
+    放射させ、放射だけを CPU（OSL）の 1 サンプルで画素の中心に寄せて描く。頂点の法線（Normal のパス）と層の重み（AOV）も書く"""
+    import bpy
+    import mathutils
+
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    scene = bpy.context.scene
+    camera_record = job["camera"]
+    # スクリプトノードは描画エンジンが Cycles の OSL のときに台本を読んで出入り口を作るので、材質より先に決める
+    scene.render.engine = "CYCLES"
+    scene.cycles.device = "CPU"
+    scene.cycles.shading_system = True
+
+    material = bpy.data.materials.new("TerrainAlbedo")
+    material.use_nodes = True
+    nodes = material.node_tree.nodes
+    links = material.node_tree.links
+    nodes.clear()
+    script = nodes.new("ShaderNodeScript")
+    script.mode = "EXTERNAL"
+    script.filepath = job["osl"]
+    if "Albedo" not in script.outputs:
+        raise RuntimeError(f"OSL の台本を読めない（出力が無い）: {job['osl']}")
+    tan_half = math.tan(math.radians(float(camera_record["vertical_fov_degrees"])) / 2.0)
+    inputs = {
+        "CameraPosition": camera_record["position"],
+        "CameraForward": camera_record["forward"],
+        "CameraRight": camera_record["right"],
+        "CameraUp": camera_record["up"],
+        "TanHalfVertical": tan_half,
+        "Aspect": float(camera_record["aspect_ratio"]),
+        "Width": float(job["width"]),
+        "Height": float(job["height"]),
+    }
+    for name, value in inputs.items():
+        script.inputs[name].default_value = value
+    emission = nodes.new("ShaderNodeEmission")
+    emission.inputs["Strength"].default_value = 1.0
+    output = nodes.new("ShaderNodeOutputMaterial")
+    # 切り分けの試しでは、層の重み（emit = weights）を放射させて描ける
+    links.new(script.outputs["Weights" if job.get("emit") == "weights" else "Albedo"], emission.inputs["Color"])
+    links.new(emission.outputs["Emission"], output.inputs["Surface"])
+    aov = nodes.new("ShaderNodeOutputAOV")
+    aov.aov_name = "weights"
+    links.new(script.outputs["Weights"], aov.inputs["Color"])
+
+    # 区画を読み、視錐台の外の三角形を除いて、巻きを頂点の法線へ揃える
+    started = time.time()
+    to_blender = mathutils.Matrix(engine_to_blender_matrix4())
+    vertex_count = 0
+    triangle_count = 0
+    flipped = 0
+    for path in job["tiles"]:
+        name = os.path.splitext(os.path.basename(path))[0]
+        positions, triangles, normals = read_terrain_ply(path, with_normals=True)
+        triangles = frustum_triangles(positions, triangles, camera_record, ALBEDO_TRIANGLE_MARGIN)
+        if len(triangles) == 0:
+            continue
+        used, remap = np.unique(triangles, return_inverse=True)
+        positions = np.ascontiguousarray(positions[used])
+        normals = np.ascontiguousarray(normals[used])
+        triangles = remap.reshape(-1, 3).astype(np.int32)
+        triangles, count = orient_triangles(positions, triangles, normals)
+        flipped += count
+        mesh = build_mesh(name, positions, triangles, normals)
+        mesh.materials.append(material)
+        obj = bpy.data.objects.new(name, mesh)
+        scene.collection.objects.link(obj)
+        obj.matrix_world = to_blender
+        vertex_count += len(positions)
+        triangle_count += len(triangles)
+        del positions, triangles, normals
+    load_seconds = time.time() - started
+
+    matrix, vertical_fov = camera_to_blender(camera_record)
+    camera = bpy.data.cameras.new("EngineCamera")
+    camera.type = "PERSP"
+    camera.sensor_fit = "VERTICAL"
+    camera.angle_y = vertical_fov
+    camera.clip_start = float(camera_record.get("near", 0.1))
+    camera.clip_end = CLIP_END_M
+    camera_object = bpy.data.objects.new("EngineCamera", camera)
+    scene.collection.objects.link(camera_object)
+    camera_object.matrix_world = mathutils.Matrix(matrix)
+    scene.camera = camera_object
+
+    render = scene.render
+    render.engine = "CYCLES"
+    render.resolution_x = int(job["width"])
+    render.resolution_y = int(job["height"])
+    render.resolution_percentage = 100
+    render.film_transparent = True
+    cycles = scene.cycles
+    cycles.device = "CPU"
+    cycles.shading_system = True
+    cycles.samples = 1
+    cycles.use_adaptive_sampling = False
+    cycles.use_denoising = False
+    cycles.pixel_filter_type = "BOX"
+    cycles.filter_width = PIXEL_FILTER_WIDTH
+    cycles.max_bounces = 0
+    scene.view_settings.view_transform = "Standard"
+    scene.view_settings.look = "None"
+    view_layer = scene.view_layers[0]
+    view_layer.use_pass_normal = True
+    layer_aov = view_layer.aovs.add()
+    layer_aov.name = "weights"
+    layer_aov.type = "COLOR"
+    if job.get("border"):
+        # 切り分けの試しで画面の一部（左・下・右・上の割合）だけを描く
+        render.use_border = True
+        render.use_crop_to_border = False
+        render.border_min_x, render.border_min_y, render.border_max_x, render.border_max_y = job["border"]
+    render.image_settings.media_type = "MULTI_LAYER_IMAGE"
+    render.image_settings.file_format = "OPEN_EXR_MULTILAYER"
+    render.image_settings.color_depth = "32"
+    started = time.time()
+    channels = render_and_read(scene, job["exr"])
+    render_seconds = time.time() - started
+
+    alpha = channels["ViewLayer.Combined.A"]
+    surface = alpha > 0.5
+    albedo = np.where(surface[..., None], pass_rgb(channels, "Combined"), 0.0).astype(np.float32)
+    normal_blender = pass_rgb(channels, "Normal", ("X", "Y", "Z"))
+    normal = np.stack([normal_blender[..., 0], normal_blender[..., 2], -normal_blender[..., 1]], axis=-1)
+    normal = np.where(surface[..., None], normal, 0.0).astype(np.float32)
+    weights = np.where(surface[..., None], pass_rgb(channels, "weights"), 0.0).astype(np.float32)
+    prefix = job["prefix"]
+    write_pfm_rgb(f"{prefix}.albedo.pfm", albedo)
+    write_pfm_rgb(f"{prefix}.normal.pfm", normal)
+    write_pfm_rgb(f"{prefix}.weights.pfm", weights)
+    write_pfm(f"{prefix}.alpha.pfm", alpha.astype(np.float32))
+    with open(f"{prefix}.albedo.json", "w", encoding="utf-8") as f:
+        json.dump({
+            "view": job["view"],
+            "format": "pfm_f32_le_bottom_up",
+            "albedo": {"file": f"{job['view']}.albedo.pfm", "meaning": "linear_albedo", "sky_value": 0},
+            "normal": {"file": f"{job['view']}.normal.pfm", "meaning": "interpolated_vertex_normal_engine_world",
+                       "sky_value": 0},
+            "weights": {"file": f"{job['view']}.weights.pfm", "meaning": "layer_weights_rock_dirt_sand", "sky_value": 0},
+            "alpha": {"file": f"{job['view']}.alpha.pfm", "meaning": "surface_coverage"},
+            "renderer": f"Blender {bpy.app.version_string} Cycles CPU OSL",
+            "samples": 1,
+            "pixel_filter": {"type": "BOX", "width_px": PIXEL_FILTER_WIDTH},
+            "osl": os.path.basename(job["osl"]),
+            "width": int(job["width"]),
+            "height": int(job["height"]),
+            "camera_engine": camera_record,
+            "camera_blender_matrix_world": matrix,
+            "camera_vertical_fov_degrees": math.degrees(vertical_fov),
+            "tiles": len(job["tiles"]),
+            "vertices": vertex_count,
+            "triangles": triangle_count,
+            "flipped_triangles": flipped,
+            "surface_pixels": int(np.count_nonzero(surface)),
+            "load_seconds": load_seconds,
+            "render_seconds": render_seconds,
+        }, f, indent=2, ensure_ascii=False)
+    print(f"BLENDER_ALBEDO view={job['view']} triangles={triangle_count} load={load_seconds:.1f}s "
+          f"render={render_seconds:.1f}s")
 
 
 def setup_cycles_device(scene):
@@ -1204,9 +1481,14 @@ def main():
     parser.add_argument("--max-seconds", type=float, default=MAX_SECONDS_PER_VIEW, help="--gray: 1 視点の本描画の時間の上限")
     parser.add_argument("--skip-plate", action="store_true", help="--gray: 板の較正を描かない")
     parser.add_argument("--plate-only", action="store_true", help="--gray: 板の較正だけを描く")
+    parser.add_argument("--albedo", action="store_true", help="地表の材質の照明の無いアルベドを描く")
+    parser.add_argument("--mips", default="", help="--albedo: ミップの段の画像を置くフォルダ（省くと <撮影>/albedo/mips）")
     args = parser.parse_args()
-    if args.depth == args.gray:
-        parser.error("--depth か --gray のどちらか 1 つを指定してください")
+    if int(args.depth) + int(args.gray) + int(args.albedo) != 1:
+        parser.error("--depth・--gray・--albedo のどれか 1 つを指定してください")
+    if args.albedo:
+        args.views = args.views or ",".join(ALBEDO_VIEWS)
+        return run_albedo(args)
     if args.gray:
         args.range = args.range or "shadow"
         args.views = args.views or ",".join(GRAY_VIEWS)

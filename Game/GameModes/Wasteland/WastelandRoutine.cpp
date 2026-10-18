@@ -34,6 +34,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <limits>
 
 using namespace NorvesLib::Core;
@@ -301,6 +302,56 @@ namespace Game::GameModes
         // 3 層の法線マップ（red_mud_stones・red_laterite_soil_stones・cliff_side の nor_dx_4k）の接空間の傾きの 2 乗の平均。遠くで模様の 1 枚が
         // 縮んで細かい法線を落とした分を、粗さの α² に足して鏡面の広がりへ移す（Python で画像の 1/4 の画素から測った値）
         constexpr float kDetailSlopeVariance[3] = {0.393f, 0.623f, 0.283f};
+
+        /// 地表の材質の値（3 層の混ぜ合わせとテクスチャのパス、地表の分類の地図と遠景の地図の範囲）を 1 行の JSON でログへ書く
+        /// （WASTELAND_TERRAIN_MATERIAL）。正解の絵の比較で Blender の再現（Scripts/Terrain/BlenderReference.py --albedo）が
+        /// 同じ値を使うためのもので、値は描画へ渡す MegaTerrainBlend そのもの
+        void LogTerrainMaterial(const MegaTerrainBlend &blend, bool bSurfaceMask, bool bFarMap)
+        {
+            VariableArray<char> json;
+            char text[1024];
+            const auto append = [&json](const char *pText) { json.insert(json.end(), pText, pText + std::strlen(pText)); };
+            std::snprintf(text, sizeof(text),
+                          "{\"source\":\"Game/GameModes/Wasteland/WastelandRoutine.cpp\",\"tile_meters\":%.9g,"
+                          "\"dirt_uv_scale\":%.9g,\"rock_uv_scale\":%.9g,\"dirt_slope_degrees\":[%.9g,%.9g],"
+                          "\"rock_slope_degrees\":[%.9g,%.9g],\"dirt_height_range\":[%.9g,%.9g],"
+                          "\"dirt_height_bias_degrees\":%.9g,\"noise_wavelengths\":[%.9g,%.9g],"
+                          "\"noise_amplitude_degrees\":%.9g,\"sand_fill_height\":%.9g,\"blend_depth\":%.9g,",
+                          blend.TextureTileMeters, blend.Dirt.UVScale, blend.Rock.UVScale, blend.DirtSlopeDegrees[0],
+                          blend.DirtSlopeDegrees[1], blend.RockSlopeDegrees[0], blend.RockSlopeDegrees[1],
+                          blend.DirtHeightRange[0], blend.DirtHeightRange[1], blend.DirtHeightBiasDegrees,
+                          blend.NoiseWavelengths[0], blend.NoiseWavelengths[1], blend.NoiseAmplitudeDegrees,
+                          blend.SandFillHeight, blend.BlendDepth);
+            append(text);
+            std::snprintf(text, sizeof(text),
+                          "\"macro_wavelengths\":[%.9g,%.9g],\"macro_brightness\":%.9g,\"macro_hue\":%.9g,"
+                          "\"detail_start_distance\":%.9g,\"detail_distance_ratio\":%.9g,\"detail_max_level\":%.9g,"
+                          "\"detail_slope_variance\":[%.9g,%.9g,%.9g],\"surface_mask_gravel_to_dirt\":%.9g,"
+                          "\"surface_mask_edge_fade_meters\":%.9g,\"surface_mask_warp_meters\":%.9g,",
+                          blend.MacroWavelengths[0], blend.MacroWavelengths[1], blend.MacroBrightness, blend.MacroHue,
+                          blend.DetailStartDistance, blend.DetailDistanceRatio, blend.DetailMaxLevel,
+                          blend.DetailSlopeVariance[0], blend.DetailSlopeVariance[1], blend.DetailSlopeVariance[2],
+                          blend.SurfaceMaskGravelToDirt, blend.SurfaceMaskEdgeFadeMeters, blend.SurfaceMaskWarpMeters);
+            append(text);
+            std::snprintf(text, sizeof(text),
+                          "\"surface_mask\":{\"enabled\":%s,\"texture\":\"%s\",\"min_xz\":[%.9g,%.9g],\"max_xz\":[%.9g,%.9g]},"
+                          "\"far_map\":{\"enabled\":%s,\"texture\":\"%s\",\"min_xz\":[%.9g,%.9g],\"max_xz\":[%.9g,%.9g],"
+                          "\"texel_meters\":%.9g},",
+                          bSurfaceMask ? "true" : "false", TerrainSpec::kSurfaceMaskTexturePath, blend.SurfaceMaskMinXZ[0],
+                          blend.SurfaceMaskMinXZ[1], blend.SurfaceMaskMaxXZ[0], blend.SurfaceMaskMaxXZ[1],
+                          bFarMap ? "true" : "false", TerrainSpec::kFarMapTexturePath, blend.FarMapMinXZ[0],
+                          blend.FarMapMinXZ[1], blend.FarMapMaxXZ[0], blend.FarMapMaxXZ[1], blend.FarMapTexelMeters);
+            append(text);
+            std::snprintf(text, sizeof(text),
+                          "\"textures\":{\"sand\":{\"albedo\":\"%s\",\"normal\":\"%s\",\"orm\":\"%s\"},"
+                          "\"dirt\":{\"albedo\":\"%s\",\"normal\":\"%s\",\"orm\":\"%s\"},"
+                          "\"rock\":{\"albedo\":\"%s\",\"normal\":\"%s\",\"orm\":\"%s\"}}}",
+                          kSandAlbedoPath, kSandNormalPath, kSandOrmPath, kDirtAlbedoPath, kDirtNormalPath, kDirtOrmPath,
+                          kRockAlbedoPath, kRockNormalPath, kRockOrmPath);
+            append(text);
+            json.push_back('\0');
+            LOG_INFO_F("WASTELAND_TERRAIN_MATERIAL %s", json.data());
+        }
 
         /// 物理空・太陽・高さフォグ・空気遠近・雲の層（hideMask で外したものは点けない）
         void ApplyEnvironment(GameModeContext &ctx, float sunAltitudeDegrees, float sunAzimuthDegrees, uint32_t hideMask)
@@ -1365,7 +1416,9 @@ namespace Game::GameModes
                 // 地表の分類の地図。記述が無ければ傾斜の式だけで混ぜる
                 Terrain::TerrainSurfaceMaskLayout maskLayout;
                 AnsiString maskError;
-                if (Terrain::LoadTerrainSurfaceMaskLayout(TerrainSpec::kSurfaceMaskDescriptorPath, maskLayout, maskError))
+                const bool bSurfaceMask =
+                    Terrain::LoadTerrainSurfaceMaskLayout(TerrainSpec::kSurfaceMaskDescriptorPath, maskLayout, maskError);
+                if (bSurfaceMask)
                 {
                     blend.SurfaceMaskMinXZ[0] = maskLayout.MinX;
                     blend.SurfaceMaskMinXZ[1] = maskLayout.MinZ;
@@ -1389,7 +1442,8 @@ namespace Game::GameModes
                 // 遠景の地図（分類の重みと法線を 16 m の画素へ前もって縮小した地図）。記述が無ければ遠くも画素ごとの式で描く
                 Terrain::TerrainSurfaceMaskLayout farLayout;
                 AnsiString farError;
-                if (Terrain::LoadTerrainFarMapLayout(TerrainSpec::kFarMapDescriptorPath, farLayout, farError))
+                const bool bFarMap = Terrain::LoadTerrainFarMapLayout(TerrainSpec::kFarMapDescriptorPath, farLayout, farError);
+                if (bFarMap)
                 {
                     blend.FarMapMinXZ[0] = farLayout.MinX;
                     blend.FarMapMinXZ[1] = farLayout.MinZ;
@@ -1409,6 +1463,7 @@ namespace Game::GameModes
                                   "Scripts/Terrain/FarMacro.py --build で作り、Scripts/CookAssets.ps1 で焼くと遠くを地図で描きます",
                                   TerrainSpec::kFarMapDescriptorPath, farError.c_str());
                 }
+                LogTerrainMaterial(blend, bSurfaceMask, bFarMap);
                 // 岩・崖・建物。地形の上に据えるので、地形を置けるときだけ読む
                 StartPropLoads(ctx, assetSystem, assembly);
                 data.m_pAssembly = assembly;
