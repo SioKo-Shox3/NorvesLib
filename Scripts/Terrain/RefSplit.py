@@ -1,8 +1,8 @@
 ﻿# 荒野の正解の絵の比較（SCN-WLR-*）の記録を、2 つの署名に分ける（SCN-WLR-REF-SPLIT。ReferenceCheck.py から呼ぶ。単独では動かさない）。
 #
 # 参照の入力（Cycles の参照の署名。<参照>/cycles/reference.json）:
-#   地形のメッシュ（書き出しの元の入力のハッシュ・書き出しの一覧・読んだ PLY）、材質の値の表（Cycles が使う値だけ。材質の AO は
-#   Cycles が使わないので入れない。灰色では CommonLight.json の gray_material）、共通の照明（CommonLight.json・GrayRegions.py）、
+#   地形のメッシュ（書き出しの元の入力のハッシュ〔AO の画像 orm_ao は除く〕・書き出しの一覧・読んだ PLY）、材質の値の表（Cycles が
+#   使う値だけ。材質の AO〔AO の段・AO の定数〕は Cycles が使わないので入れない。灰色では CommonLight.json の gray_material）、共通の照明（CommonLight.json・GrayRegions.py）、
 #   カメラと Blender のカメラのずらし量、Blender の台本と出力の画像のハッシュ。
 #   描画のコードや Game.exe は入れないので、参照の入力が同じなら、エンジンの実装が変わっても Cycles の参照をそのまま使える。
 # エンジンの実装（Game の撮影の署名。撮影の inputs.json の engine_impl）:
@@ -42,6 +42,10 @@ LIT_SCREEN_KEYS = ("albedo", "shaded_normal", "roughness")
 # 値の表のうち値でないもの（実装のファイルのハッシュ）と、AO の段
 TABLE_IMPLEMENTATION_KEYS = ("shader_sha256", "material_log_sha256")
 AO_TEXTURE_SUFFIX = "_ao"
+# シェーダーの定数のうち材質の AO だけに効くもの（名前にこれを含む。STRATA_*_MEAN_OCCLUSION など）
+AO_CONSTANT_MARK = "OCCLUSION"
+# 地形の資産の組のテクスチャのうち AO の画像を指す鍵（地形のメッシュの入力に入れない）
+AO_ASSET_KEYS = ("orm_ao",)
 # 出力の画像（視点の名前に続くもの）
 OUTPUT_RE = r"^{view}(\.[A-Za-z0-9_-]+)*\.(png|pfm)$"
 SELFTEST_DIR = os.path.join(".harness", "runs", "scene-capture", "SCN-WLR-REF-SPLIT")
@@ -133,6 +137,8 @@ def write_engine_record(rc, capture_dir, game_exe, require_same_exe):
     with open(path, encoding="utf-8") as f:
         record = json.load(f)
     impl = engine_impl_record(rc, capture_dir, game_exe)
+    if not impl["outputs_sha256"]:
+        return False, "metrics.json の視点から出力の画像を辿れない（空の署名は書かない）"
     if require_same_exe and record.get("game_exe_sha256") != impl["game_exe_sha256"]:
         return False, "撮影に使った Game.exe と今の Game.exe が違う（撮り直す）"
     record["engine_impl"] = impl
@@ -181,9 +187,15 @@ def check_engine(rc, capture_dir, root=None):
 
 # ---- 参照の入力 ----
 
+def cycles_constants(constants):
+    """シェーダーの定数のうち Cycles が使うもの（材質の AO の定数を除く）"""
+    return {name: item for name, item in (constants or {}).items() if AO_CONSTANT_MARK not in name}
+
+
 def material_values(table):
-    """値の表のうち Cycles が使う値（実装のファイルのハッシュと AO の段を除く）"""
+    """値の表のうち Cycles が使う値（実装のファイルのハッシュと、AO の段・AO の定数を除く）"""
     values = {k: v for k, v in table.items() if k not in TABLE_IMPLEMENTATION_KEYS}
+    values["shader_constants"] = cycles_constants(table.get("shader_constants"))
     values["textures"] = {name: entry for name, entry in (table.get("textures") or {}).items()
                           if not name.endswith(AO_TEXTURE_SUFFIX)}
     return values
@@ -211,7 +223,7 @@ def reference_record(rc, reference_root, mode, root=None):
     record = {
         "kind": f"reference_{mode}",
         "terrain_mesh": {
-            "inputs_sha256": rc.hash_inputs("terrain_mesh")["files_sha256"],
+            "inputs_sha256": rc.hash_inputs("terrain_mesh", AO_ASSET_KEYS)["files_sha256"],
             "mesh_dir": blender.get("mesh_dir"),
             "manifest_sha256": sha_at(data, os.path.join(blender.get("mesh_dir", ""), "manifest.json")),
             "ply_sha256": {n: sha_at(data, os.path.join(blender.get("mesh_dir", ""), n))
@@ -369,7 +381,7 @@ def compare_table(TM, table, material_now):
         reasons.append("撮影のログの材質の値（WASTELAND_TERRAIN_MATERIAL）が参照の値の表と違う（参照を描き直す）")
     elif TM.pack_params(material_now) != table.get("packed"):
         reasons.append("今の詰め方の式で詰めた値が参照の値の表と違う（参照を描き直す）")
-    if TM.shader_constants() != table.get("shader_constants"):
+    if cycles_constants(TM.shader_constants()) != cycles_constants(table.get("shader_constants")):
         reasons.append("今のシェーダーの定数（Cycles が再現する値）が参照の値の表と違う（参照を描き直す）")
     return reasons
 

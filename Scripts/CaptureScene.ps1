@@ -1505,23 +1505,6 @@ if ($CompareWith -ne '')
     }
 }
 
-# HDR・AOV・大気の書き出しの撮影は、入力のハッシュ（inputs.json）を横に書く。撮影が失敗したときは古い入力を残さない
-if ($Hdr -or $Aov -or $atmosphereDump)
-{
-    $inputsPath = Join-Path $outRoot 'inputs.json'
-    Remove-Item -LiteralPath $inputsPath -Force -ErrorAction SilentlyContinue
-    if ($failures.Count -eq 0)
-    {
-        $recordOutput = & python (Join-Path $repoRoot 'Scripts\Terrain\ReferenceCheck.py') --record-inputs --kind engine --capture $outRoot --game-exe $gamePath 2>&1
-        $recordExitCode = $LASTEXITCODE
-        foreach ($line in @($recordOutput)) { Write-Output "$line" }
-        if ($recordExitCode -ne 0 -or -not (Test-Path -LiteralPath $inputsPath))
-        {
-            $failures += "入力のハッシュ（inputs.json）を書けなかった（ReferenceCheck.py --record-inputs の終了コード $recordExitCode）"
-        }
-    }
-}
-
 $metrics = [ordered]@{
     scene = $Scene
     configuration = $Configuration
@@ -1547,6 +1530,27 @@ $metricsPath = Join-Path $outRoot 'metrics.json'
 $metricsJson = $metrics | ConvertTo-Json -Depth 8
 [IO.File]::WriteAllText($metricsPath, $metricsJson, (New-Object System.Text.UTF8Encoding($false)))
 
+# HDR・AOV・大気の書き出しの撮影は、入力のハッシュ（inputs.json）を横に書く。撮影が失敗したときは古い入力を残さない。
+# 署名は metrics.json の視点・起動引数から出力の画像とカメラ台本を辿るので、metrics.json を書いた後に記録する
+if ($Hdr -or $Aov -or $atmosphereDump)
+{
+    $inputsPath = Join-Path $outRoot 'inputs.json'
+    Remove-Item -LiteralPath $inputsPath -Force -ErrorAction SilentlyContinue
+    if ($failures.Count -eq 0)
+    {
+        $recordOutput = & python (Join-Path $repoRoot 'Scripts\Terrain\ReferenceCheck.py') --record-inputs --kind engine --capture $outRoot --game-exe $gamePath 2>&1
+        $recordExitCode = $LASTEXITCODE
+        foreach ($line in @($recordOutput)) { Write-Output "$line" }
+        if ($recordExitCode -ne 0 -or -not (Test-Path -LiteralPath $inputsPath))
+        {
+            $failures += "入力のハッシュ（inputs.json）を書けなかった（ReferenceCheck.py --record-inputs の終了コード $recordExitCode）"
+            # 入力の記録の失敗を metrics.json の failures にも入れる
+            $metrics.failures = $failures
+            $metricsJson = $metrics | ConvertTo-Json -Depth 8
+            [IO.File]::WriteAllText($metricsPath, $metricsJson, (New-Object System.Text.UTF8Encoding($false)))
+        }
+    }
+}
 
 if ($failures.Count -gt 0)
 {

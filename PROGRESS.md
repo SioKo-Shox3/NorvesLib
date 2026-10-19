@@ -5599,3 +5599,17 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - Notes:
   - コードは変えていない。新しい試験は足していない
 - Next: TASKS.md の次の未完の項目。
+### SCN-WLR-REF-SPLIT 差し戻しの直し（2026-10-19、run 20261019-192352 の反復 7）
+- Done:
+  - 材質の AO を参照の入力から外した: `RefSplit.material_values` が値の表のシェーダーの定数から AO の定数（名前に `OCCLUSION` を含む `STRATA_*_MEAN_OCCLUSION`）を除き、`compare_table` も AO の定数を除いて比べる。地形のメッシュの入力は `hash_inputs("terrain_mesh", ("orm_ao",))` で、AO の画像と資産の組の `orm_ao` の鍵を入れない（`ReferenceCheck.hash_inputs` に `skip_texture_keys`、`list_asset_sources` に `skip_keys`、資産の組の定義は鍵を除いた JSON でハッシュ）
+  - `Scripts/CaptureScene.ps1`: 入力の記録（`--record-inputs --kind engine`）を metrics.json を書いた後へ移した（署名は metrics.json の視点・起動引数から出力の画像とカメラ台本を辿る）。記録が失敗したら metrics.json の failures を書き直す
+  - `--record-inputs --kind engine` と `--record-engine` は、出力の画像を辿れない空の署名を書かずに失敗する
+  - 灰色・実材質の Cycles の参照を新しい署名で記録し直した（59894897…・20a53ca4…）
+- 証拠（`.harness/runs/20261019-192352/`）:
+  - `verify-SCN-WLR-REF-SPLIT-3.txt`: `--ref-split-selftest --verify` result=pass・cases=12・exit=0
+  - `aux-SCN-WLR-REF-SPLIT-record-gray-r7.txt`・`-record-lit-r7.txt`: 記録し直し（exit=0）。`aux-SCN-WLR-REF-SPLIT-reference-current-r7.txt`: 灰色・実材質とも参照の入力が今と一致（ok=1）
+  - `aux-SCN-WLR-REF-SPLIT-ao-check-r7.txt`: AO の定数を変えても材質の署名は同じ・`compare_table` は拒否しない、AO でない定数（STRATA_LOWER_MEAN_TINT）を変えると署名が変わり拒否する、地形の入力から AO の画像 3 枚が外れ `orm_ao` の鍵の書き換えでハッシュが変わらない
+  - `aux-SCN-WLR-REF-SPLIT-empty-signature-r7.txt`: metrics.json の無い撮影先では `--record-inputs` が engine_outputs_empty で失敗し inputs.json を書かない、metrics.json があれば出力の画像を記録する
+- Notes:
+  - selftest は撮影後の記録を使うので、撮影の順序の不具合（metrics.json の前に記録）は検出できない。空の署名を書かない検査で代える（新しい試験は足していない）
+- Next: TASKS.md の次の未完の項目。

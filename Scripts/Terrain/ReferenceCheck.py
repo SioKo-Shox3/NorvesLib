@@ -719,8 +719,8 @@ def gltf_references(rel):
     return refs
 
 
-def list_asset_sources(asset_sets):
-    """資産の組が参照する資産の実体（git の無視に関わらず）。(あるファイルの一覧, 無いファイルの一覧)"""
+def list_asset_sources(asset_sets, skip_keys=()):
+    """資産の組が参照する資産の実体（git の無視に関わらず。テクスチャの skip_keys の鍵は辿らない）。(あるファイルの一覧, 無いファイルの一覧)"""
     referenced = set()
     for asset_set in asset_sets:
         path = os.path.join(REPO_ROOT, asset_set)
@@ -734,7 +734,8 @@ def list_asset_sources(asset_sets):
                     referenced.add(normalize_rel(source))
         for texture in definition.get("textures") or []:
             for key, value in texture.items():
-                if isinstance(value, str) and value and (key == "source_path" or key.startswith("orm_")):
+                if (isinstance(value, str) and value and key not in skip_keys
+                        and (key == "source_path" or key.startswith("orm_"))):
                     referenced.add(normalize_rel(value))
     for rel in sorted(referenced):
         if rel.lower().endswith(".gltf") and os.path.isfile(os.path.join(REPO_ROOT, rel)):
@@ -744,10 +745,22 @@ def list_asset_sources(asset_sets):
     return present, missing
 
 
-def hash_inputs(kind):
+def asset_set_digest(rel, skip_keys):
+    """資産の組の定義のハッシュ。テクスチャの skip_keys の鍵を除いた中身（並べた JSON）で取る"""
+    with open(os.path.join(REPO_ROOT, rel), encoding="utf-8-sig") as f:
+        definition = json.load(f)
+    for texture in definition.get("textures") or []:
+        for key in skip_keys:
+            texture.pop(key, None)
+    return hashlib.sha256(json.dumps(definition, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
+
+
+def hash_inputs(kind, skip_texture_keys=()):
+    """種類ごとの入力のハッシュ。skip_texture_keys を与えると、資産の組のテクスチャのその鍵（とそれが指す画像）を入れない"""
     paths = INPUT_SETS[kind]
     tracked = list_input_files(paths)
-    asset_files, asset_missing = list_asset_sources(ASSET_SET_INPUTS.get(kind, []))
+    asset_sets = ASSET_SET_INPUTS.get(kind, [])
+    asset_files, asset_missing = list_asset_sources(asset_sets, skip_texture_keys)
     files = sorted(set(tracked) | set(asset_files))
     asset_set = set(asset_files)
     total = hashlib.sha256()
@@ -757,11 +770,14 @@ def hash_inputs(kind):
     asset_hash = hashlib.sha256()
     absent = [p for p in paths if not os.path.exists(os.path.join(REPO_ROOT, p))]
     for rel in files:
-        digest = hashlib.sha256()
-        with open(os.path.join(REPO_ROOT, rel), "rb") as f:
-            for block in iter(lambda: f.read(1 << 24), b""):
-                digest.update(block)
-        line = f"{rel}\0{digest.hexdigest()}\n".encode("utf-8")
+        if skip_texture_keys and rel in asset_sets:
+            line = f"{rel}\0{asset_set_digest(rel, skip_texture_keys)}\n".encode("utf-8")
+        else:
+            digest = hashlib.sha256()
+            with open(os.path.join(REPO_ROOT, rel), "rb") as f:
+                for block in iter(lambda: f.read(1 << 24), b""):
+                    digest.update(block)
+            line = f"{rel}\0{digest.hexdigest()}\n".encode("utf-8")
         total.update(line)
         for path in paths:
             if rel == path or rel.startswith(path.rstrip("/") + "/"):
@@ -813,6 +829,11 @@ def record_inputs(capture_dir, kind, game_exe=None):
         # エンジンの実装の署名（RefSplit.py。Cycles の参照の入力とは分けて照らす）
         import RefSplit
         record["engine_impl"] = RefSplit.engine_impl_record(sys.modules[__name__], capture_dir, game_exe)
+        # 出力の画像は metrics.json の視点から辿る。metrics.json を書く前に呼ぶと空になるので、空の署名は書かない
+        if not record["engine_impl"]["outputs_sha256"]:
+            print("REFERENCE_CHECK result=fail reason=engine_outputs_empty "
+                  "（metrics.json の視点から出力の画像を辿れない。metrics.json を書いた後に記録する）")
+            return 1
     path = os.path.join(capture_dir, "inputs.json")
     with open(path, "w", encoding="utf-8") as f:
         json.dump(record, f, indent=2, ensure_ascii=False)
