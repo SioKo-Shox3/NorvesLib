@@ -589,11 +589,16 @@ MOTION_WAIT_RE = re.compile(r"CAMERA_SCRIPT_WAIT_READY (ready|timeout) waited=(\
 MOTION_START_YAW_RE = re.compile(r"FREE_CAMERA_POSE phase=start .* yaw=(-?\d+(?:\.\d+)?) pitch=(-?\d+(?:\.\d+)?)")
 
 
-def git_output(args):
-    try:
-        return subprocess.run(["git"] + args, cwd=REPO_ROOT, capture_output=True, text=True, check=True).stdout
-    except (OSError, subprocess.CalledProcessError):
-        return None
+def git_output(args, attempts=5):
+    # 同時に走るコミットが索引を書き換えている間は失敗することがあるので、少し待って試し直す
+    # （長い描画の後の入力の記録が、この一時的な失敗で捨てられないように）
+    for attempt in range(attempts):
+        try:
+            return subprocess.run(["git"] + args, cwd=REPO_ROOT, capture_output=True, text=True, check=True).stdout
+        except (OSError, subprocess.CalledProcessError):
+            if attempt + 1 < attempts:
+                time.sleep(2.0)
+    return None
 
 
 def list_input_files(paths):

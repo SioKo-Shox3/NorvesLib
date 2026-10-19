@@ -5407,5 +5407,6 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `ReferenceCheck.py --lit` に写真｜エンジン｜Cycles の比較画像 `lit_photo_<視点>.png`・一覧 `lit_photo_overview.png` と、写真の崖・地面の枠（`CompareReference.py` の PHOTOS）の表示の値・崖 ÷ 地面の輝度の比・色の比（R/G・B/G）の記録を足した。写真とは照明・天気・現像が違うので合否には使わない。LIT-A の 3 視点で動くことを確かめた（`aux-SCN-WLR-CYCLES-LIT-B-old3.txt`、result=pass。崖 ÷ 地面: ref_cliff_01 写真 1.03・エンジン 1.71・Cycles 1.30）
   - ref_ground_02: 材質（59 区画・4 列、ずらし (+0.239, −0.024) 画素で残り 0.014 画素）と Cycles（146 区画・1.21 億三角形、512 サンプルで全領域が収束、描画 498 秒）が済んだ（`aux-SCN-WLR-CYCLES-LIT-B-ref_ground_02.txt`、EXIT=0）
   - ref_ground_02 の照合（1 視点、`aux-SCN-WLR-CYCLES-LIT-B-ground-check.txt`、result=pass）: エンジン ÷ Cycles は日なたの地面 0.812・日なたの崖 0.829・影の崖 0.931（25359 画素、判定）・遠景 0.807、AO の見込みとの比 0.91〜0.96。影の崖は ref_cliff_01 の 1.77 と違いほぼ揃う（赤 0.77・青 1.11 で色だけ分かれる）。写真は崖が逆光の影の面で、植生と沢の流路は撮影で隠している（崖 ÷ 地面 写真 0.25・エンジン 0.59・Cycles 0.60）
-  - ref_far_02: 材質（76 区画・4 列、ずらしなしで残り 0.009 画素）が済み、Cycles（130 区画・0.81 億三角形）を描いている
+  - ref_far_02: 材質（76 区画・4 列、ずらしなしで残り 0.009 画素）が済んだ。Cycles（130 区画・0.81 億三角形）は 512 サンプルで全領域が収束した（描画 493 秒）が、最後の入力の記録で `git ls-files` が失敗して EXIT=1（同じ時刻に進捗のコミットをしていた）。記録が無いので `--skip-material` で描き直す
+  - `ReferenceCheck.git_output` に再試行（2 秒おきに 5 回）を足した。長い描画の後の入力の記録が、同時に走るコミットとの一時的な失敗で捨てられないように
 - 残り: ref_far_02 の Cycles、ref_cliff_02 の材質と Cycles（前の反復の連続実行の台本がこのまま続けて描く）、`--lit --verify` の 6 視点、記録の文書（6 視点の表・写真との比較と条件の違い）
