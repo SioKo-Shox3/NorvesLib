@@ -5547,3 +5547,20 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `verify-SCN-NIGHT-VILLAGE-6.txt`: 周回の試験 2 周 result=pass・EXIT=0（両周とも settled=1・textures=53・texture_bytes 1972219952 で同じ）
   - 撮り直した 3 枚を開いた: 深い青の夜空、月明かりで浮かぶ建物の壁と地面の影、道の両側の家並みと街灯、広場の焚き火と井戸が見え、暗すぎず明るすぎず夜に見える
 - Next: TASKS.md の次の未完の項目。
+
+### SCN-WLR-REF-SPLIT 途中・判断待ち（2026-10-19、run 20261019-192352 の反復 3）
+- Done（この反復）:
+  - `Scripts/Terrain/RefSplit.py`: 記録を 2 つの署名に分けた。参照の入力（地形のメッシュ・Cycles が使う材質の値〔AO の段と実装のファイルのハッシュを除く〕・CommonLight.json と GrayRegions.py・カメラとずらし量・Blender の台本と出力のハッシュ。`<参照>/cycles/reference.json`）と、エンジンの実装（描画のコード・`Game/GameApplicationHandler.cpp`・`Scripts/CaptureScene.ps1`・カメラ台本・Game.exe・出力の画像のハッシュ。撮影の `inputs.json` の `engine_impl`。`--record-inputs --kind engine` が書く）
+  - `ReferenceCheck.py`: `--gray`・`--lit`・`--blur-static`・`--blur-motion` を新しい署名で照らすようにし、`--engine <撮影先>`（複数回）・`--reference <参照の場所>` を足した。`--record-reference gray|lit`・`--record-engine`・`--ref-split-selftest`・`--regression` を足した（ほかのモードは前の照らし方のまま）
+  - `Scripts/Terrain/Regression.py`・`Scripts/Terrain/CaptureRegression.ps1`（rendering3dtest・mega-bananas・sandbox・night-village の overview を Debug で撮る）・`Scripts/CameraScripts/rendering3dtest-pan.txt`
+  - 灰色・実材質の Cycles の参照を新しい形で記録した（`--record-reference`。描いたときの入力が今と同じことを確かめてから書く。署名 70d5aef2…・71e81059…）
+- 証拠（`.harness/runs/20261019-192352/`）:
+  - `aux-SCN-WLR-REF-SPLIT-gray-verify.txt`・`-lit-verify.txt`: cycles_inputs_current=1（参照は今と一致）、エンジンの撮影は `engine_impl` の無い古い形で落ちる（result=fail、想定どおり）
+  - `aux-SCN-WLR-REF-SPLIT-blur-static-verify.txt`・`-blur-motion-verify.txt`: 全組が古い形で落ちる（想定どおり）
+  - `--ref-split-selftest --verify` は 12 件すべて期待どおり（`.harness/runs/scene-capture/SCN-WLR-REF-SPLIT/ref_split_selftest.json`）: エンジンの実装の 1 ファイル・Game.exe・カメラ台本・出力の画像の書き換えで撮影が落ち、エンジンの実装（`GameApplicationHandler.cpp`・シェーダー）を書き換えても参照は古くならず、照明と Cycles の出力の書き換えで参照が落ちる
+  - `aux-SCN-WLR-REF-SPLIT-regression-before.txt`: `-Phase before`（`.harness/runs/regression/SCN-WLR-REF-SPLIT/before/`）
+- Blocked: `-Motion` の rendering3dtest はカメラ台本を受け取らない（台本は自由飛行カメラのシーンだけ）。通すには `Game/` の変更が要り paths の外なので、判断を `blocked/SCN-WLR-REF-SPLIT.md` に書いた（推奨: Rendering3DTest に台本を通す）
+- Next（再開したとき）: エンジンの撮影の撮り直し（夜の集落の追加で `Game/GameModes/Wasteland`・`GameApplicationHandler.cpp`・Game.exe が変わったので全組が古い）。台本 `.harness/runs/20261019-192352/aux-SCN-WLR-REF-SPLIT-recapture.ps1` を `-Only gray,lit`（約 25 分）・`-Only static`（約 30 分）・`-Only motion`（約 11 分）に分けて回す。Cycles は描き直さない。そのあと 4 モードの `--verify` と `CaptureRegression.ps1 -Phase after`
+- Notes:
+  - 検証レイヤーが入るのは Debug だけ（`BootConfig.h`。起動引数での切り替えは無い）なので、回帰の撮影は Debug で撮る。ただし Debug では rendering3dtest 227 秒（ビルド込み）・mega-bananas 190 秒で、4 シーンでは done-when の 9 分に収まらない見込み（RelWithDebInfo なら 4 シーン 256 秒だが検証レイヤーが入らない）。判断待ちの文書に足した
+  - 新しい試験は `--ref-split-selftest`（done-when が名指し）だけ

@@ -213,6 +213,23 @@
 #       合否: 撮影が既定の荒野の表示（起動引数に TONEMAP_FORBIDDEN_ARG_PREFIXES が無い）で、各視点の HDR が PNG と合い（--hdr と
 #       同じ検査）、撮影の表示変換の記録が候補 current と同じ値であること、Cycles の描画とその入力（--lit と同じ記録）と写真が
 #       揃い、測った値がすべて有限であること。--verify は撮影と --lit-capture の撮影・Cycles の入力の記録を今のファイルと照らす。
+#   参照の入力とエンジンの実装の分け方（SCN-WLR-REF-SPLIT。本体は Scripts/Terrain/RefSplit.py）:
+#       --gray・--lit・--blur-static・--blur-motion は、Game の撮影をエンジンの実装（描画のコード・Game/GameApplicationHandler.cpp・
+#       カメラ台本・撮影に使った Game.exe・出力の画像のハッシュ。撮影の inputs.json の engine_impl）で、Cycles の参照を参照の入力
+#       （地形のメッシュ・材質の値の表・共通の照明・カメラとずらし量・Blender の台本と出力。<参照>/cycles/reference.json）で照らす。
+#       Cycles の参照は参照の入力が同じなら、エンジンの実装が変わっても使い続けられる。Game の撮影（ref2x・resident・FXAA などの
+#       対照の組を含む）はエンジンの実装が今と一致しないと古いとして落とす。
+#       --engine <撮影先>（複数回指定でき、視点・組ごとに最初に見つかる撮影先を読む）と --reference <参照の場所> で読み先を分けられる。
+#   python Scripts/Terrain/ReferenceCheck.py --record-reference gray|lit --capture <参照の場所>
+#       描いたときの入力が今のファイルと同じことを確かめてから、参照の入力の記録 <参照の場所>/cycles/reference.json を書く。
+#   python Scripts/Terrain/ReferenceCheck.py --record-engine --capture <撮影先> --game-exe <Game.exe>
+#       保存した撮影の inputs.json にエンジンの実装の記録を書き足す（撮影に使った Game.exe と同じ中身のときだけ）。
+#   python Scripts/Terrain/ReferenceCheck.py --ref-split-selftest [--verify]
+#       保存の写しを一時の場所に作り、エンジンの実装の 1 ファイル・Game.exe・カメラ台本・出力の画像を書き換えると Game の撮影が
+#       落ち、エンジンの実装を書き換えても参照は古くならず、参照の入力（照明・Cycles の出力）を書き換えると参照が落ちることを確かめる。
+#   python Scripts/Terrain/ReferenceCheck.py --regression --capture <after> --reference <before> [--verify]
+#       回帰の撮影（Scripts/Terrain/CaptureRegression.ps1）の after を before と並べる（本体は Scripts/Terrain/Regression.py）。
+#
 #   python Scripts/Terrain/ReferenceCheck.py --gap-list [--capture <出力先>] [--require-atmos] [--verify]
 #       節目の差の一覧（GapList.py）。灰色・アルベド・法線・実材質・大気の正解・遠景のぼけの静止と動き・表示変換の比較の報告が揃い、
 #       --verify で合格した記録で、撮影・描画の入力が今のファイルと一致することを検査し、差を「描画の欠陥」「中身の欠陥」
@@ -784,6 +801,10 @@ def record_inputs(capture_dir, kind, game_exe=None):
             return 1
         record["game_exe_sha256"] = file_sha256(game_exe)
         record["game_exe_mtime"] = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(os.path.getmtime(game_exe)))
+    if kind == "engine":
+        # エンジンの実装の署名（RefSplit.py。Cycles の参照の入力とは分けて照らす）
+        import RefSplit
+        record["engine_impl"] = RefSplit.engine_impl_record(sys.modules[__name__], capture_dir, game_exe)
     path = os.path.join(capture_dir, "inputs.json")
     with open(path, "w", encoding="utf-8") as f:
         json.dump(record, f, indent=2, ensure_ascii=False)
@@ -3183,10 +3204,15 @@ def blur_write_crops(path, tiles, center):
     return {"top": top, "left": left, "width": crop_w, "height": crop_h}
 
 
-def run_blur_static(capture_dir, verify):
+def run_blur_static(capture_dir, verify, engine_dirs=None, reference_dir=None):
+    """遠景のぼけの静止の比較。組の撮影は engine_dirs（組ごとに <撮影先>/<組>/metrics.json を持つ最初の撮影先。省くと
+    capture_dir）、正解の ref2x は reference_dir（省くと組と同じ探し方）から読み、結果は capture_dir に書く。
+    どの組（ref2x を含む）もエンジンの実装（RefSplit.py）が今と一致しないと古いとして落とし、組どうしで揃っていることも見る"""
+    import RefSplit
     started = time.time()
     failures = []
-    reference_dir = os.path.join(capture_dir, BLUR_REFERENCE)
+    engine_dirs = engine_dirs or [capture_dir]
+    reference_dir = reference_dir or RefSplit.resolve_group_dir(engine_dirs, BLUR_REFERENCE)
     groups = [(BLUR_REFERENCE, BLUR_REFERENCE_ARGS, BLUR_REFERENCE_LOGS,
                (BLUR_SIZE[0] * BLUR_REFERENCE_SCALE, BLUR_SIZE[1] * BLUR_REFERENCE_SCALE), True)]
     groups += [(case["name"], case["args"], case["logs"], BLUR_SIZE, case["resident"]) for case in BLUR_CASES]
@@ -3195,17 +3221,17 @@ def run_blur_static(capture_dir, verify):
     exe_hashes = set()
     inputs_all_current = True
     for name, expected_args, expected_logs, size, require_resident in groups:
-        group_dir = os.path.join(capture_dir, name)
+        group_dir = reference_dir if name == BLUR_REFERENCE else RefSplit.resolve_group_dir(engine_dirs, name)
         if not os.path.isdir(group_dir):
             failures.append(f"{name}: 撮影の組が無い（{group_dir}）")
             inputs_all_current = False
             continue
-        inputs_ok, input_failures, record = check_inputs(group_dir)
+        inputs_ok, input_failures, record = split_engine_check(group_dir)
         inputs_all_current = inputs_all_current and inputs_ok
         if verify and not inputs_ok:
             failures.extend(f"{name}: {failure}" for failure in input_failures)
         if record is not None:
-            input_hashes.add(record.get("files_sha256"))
+            input_hashes.add(record.get("identity"))
             # ソースのハッシュは撮影の後のファイルから作るので、走った Game.exe の一致はその中身のハッシュで照らす
             if record.get("game_exe_sha256"):
                 exe_hashes.add(record["game_exe_sha256"])
@@ -3214,10 +3240,10 @@ def run_blur_static(capture_dir, verify):
         group_failures, info = blur_case_check(group_dir, tuple(expected_args), tuple(expected_logs), size,
                                                require_resident)
         failures.extend(f"{name}: {failure}" for failure in group_failures)
-        group_records[name] = {"inputs_current": inputs_ok,
+        group_records[name] = {"inputs_current": inputs_ok, "dir": rel_dir(group_dir),
                                "game_exe_sha256": (record or {}).get("game_exe_sha256"), **info}
     if len(input_hashes) > 1:
-        failures.append(f"組ごとの入力のハッシュが揃っていない（{len(input_hashes)} 通り。同じコードで撮った組だけを比べる）")
+        failures.append(f"組ごとのエンジンの実装が揃っていない（{len(input_hashes)} 通り。同じ実装で撮った組だけを比べる）")
     if len(exe_hashes) > 1:
         failures.append(f"組ごとの Game.exe のハッシュが揃っていない（{len(exe_hashes)} 通り。同じビルドで撮った組だけを比べる）")
     views = []
@@ -3505,26 +3531,30 @@ def motion_script_check(group_dir, size, require_resident):
                       "final_pages": final_pages, "capacity_lines": len(capacity_window)}
 
 
-def run_blur_motion(capture_dir, verify):
+def run_blur_motion(capture_dir, verify, engine_dirs=None, reference_dir=None):
+    """遠景のぼけの動きの比較。撮影先・正解の場所・入力の照らし方は run_blur_static と同じ（カメラ台本もエンジンの実装に入る）"""
+    import RefSplit
     started = time.time()
     failures = []
     group_records = {}
     input_hashes = set()
     exe_hashes = set()
     inputs_all_current = True
+    engine_dirs = engine_dirs or [capture_dir]
+    reference_dir = reference_dir or RefSplit.resolve_group_dir(engine_dirs, MOTION_REFERENCE)
     for group in MOTION_GROUPS:
         name = group["name"]
-        group_dir = os.path.normpath(os.path.join(capture_dir, group["dir"]))
+        group_dir = reference_dir if name == MOTION_REFERENCE else RefSplit.resolve_group_dir(engine_dirs, group["dir"])
         if not os.path.isdir(group_dir) or not os.path.isfile(os.path.join(group_dir, "metrics.json")):
             failures.append(f"{name}: 撮影の組が無い（{group_dir}）")
             inputs_all_current = False
             continue
-        inputs_ok, input_failures, record = check_inputs(group_dir)
+        inputs_ok, input_failures, record = split_engine_check(group_dir)
         inputs_all_current = inputs_all_current and inputs_ok
         if verify and not inputs_ok:
             failures.extend(f"{name}: {failure}" for failure in input_failures)
         if record is not None:
-            input_hashes.add(record.get("files_sha256"))
+            input_hashes.add(record.get("identity"))
             if record.get("game_exe_sha256"):
                 exe_hashes.add(record["game_exe_sha256"])
             else:
@@ -3536,14 +3566,13 @@ def run_blur_motion(capture_dir, verify):
             group_failures.append(f"カメラの台本の起動引数（{MOTION_SCRIPT_ARG}）が無い")
         script_failures, script_info = motion_script_check(group_dir, group["size"], group["resident"])
         failures.extend(f"{name}: {failure}" for failure in group_failures + script_failures)
-        group_records[name] = {"inputs_current": inputs_ok, "game_exe_sha256": (record or {}).get("game_exe_sha256"),
-                               **info, "script": script_info}
+        group_records[name] = {"inputs_current": inputs_ok, "dir": rel_dir(group_dir),
+                               "game_exe_sha256": (record or {}).get("game_exe_sha256"), **info, "script": script_info}
     if len(input_hashes) > 1:
-        failures.append(f"組ごとの入力のハッシュが揃っていない（{len(input_hashes)} 通り。同じコードで撮った組だけを比べる）")
+        failures.append(f"組ごとのエンジンの実装が揃っていない（{len(input_hashes)} 通り。同じ実装で撮った組だけを比べる）")
     if len(exe_hashes) > 1:
         failures.append(f"組ごとの Game.exe のハッシュが揃っていない（{len(exe_hashes)} 通り。同じビルドで撮った組だけを比べる）")
 
-    reference_dir = os.path.join(capture_dir, MOTION_REFERENCE)
     tags = [f"static-{k}" for k in MOTION_OFFSETS] + [MOTION_FINAL] + [f"motion-{k}" for k in MOTION_OFFSETS]
     entry = {"view": MOTION_VIEW}
     results = {}
@@ -3730,16 +3759,18 @@ def gray_camera_match(engine_camera, cycles_camera):
     return reasons
 
 
-def gray_engine_capture(case_dir, case, views, verify):
-    """エンジンの撮影の組（共通の照明・地形だけ・最細の LOD・灰色の材質）を検査する。(結果, 視点 → HDR, 失敗の一覧)"""
+def gray_engine_capture(case_dir, case, views, verify, engine_check=None):
+    """エンジンの撮影の組（共通の照明・地形だけ・最細の LOD・灰色の材質）を検査する。(結果, 視点 → HDR, 失敗の一覧)
+    engine_check を与えると入力の照らし方をそれに替える（RefSplit.check_engine。記録の identity を files_sha256 に入れる）"""
     entry = {"dir": os.path.relpath(case_dir, REPO_ROOT).replace("\\", "/"), "case": case}
     failures = []
     hdrs = {}
     if not os.path.isdir(case_dir):
         return entry, hdrs, [f"エンジンの撮影の組が無い（{case_dir}）"]
-    inputs_ok, input_failures, record = check_inputs(case_dir)
+    inputs_ok, input_failures, record = (engine_check or check_inputs)(case_dir)
     entry["inputs_current"] = inputs_ok
-    entry["files_sha256"] = (record or {}).get("files_sha256")
+    entry["files_sha256"] = (record or {}).get("identity" if engine_check else "files_sha256")
+    entry["engine_impl"] = record if engine_check else None
     entry["game_exe_sha256"] = (record or {}).get("game_exe_sha256")
     if verify and not inputs_ok:
         failures.extend(input_failures)
@@ -3912,7 +3943,7 @@ def gray_region_means(image, mask):
 
 
 def check_gray_view(capture_dir, cycles_dir, view, engine_hdr, engine_depth, diag_hdrs, light, preview_prefix="gray",
-                    out=None):
+                    out=None, engine_dir=None):
     """視点ごとの Cycles とエンジンの比較（--gray・--lit）。out に辞書を渡すと、領域の画素（masks）・Cycles の合成（cycles）・
     被覆（alpha）を入れて返す"""
     failures = []
@@ -3947,7 +3978,7 @@ def check_gray_view(capture_dir, cycles_dir, view, engine_hdr, engine_depth, dia
         if not np.isfinite(image).all() or (image < 0.0).any():
             failures.append(f"Cycles の{name}に負・NaN・Inf がある")
 
-    with open(os.path.join(capture_dir, f"{view}.aov.json"), encoding="utf-8-sig") as f:
+    with open(os.path.join(engine_dir or capture_dir, f"{view}.aov.json"), encoding="utf-8-sig") as f:
         engine_camera = json.load(f)["camera"]
     failures.extend(gray_camera_match(engine_camera, meta["camera_engine"]))
 
@@ -4023,34 +4054,84 @@ def check_gray_view(capture_dir, cycles_dir, view, engine_hdr, engine_depth, dia
     return result
 
 
-def run_gray(capture_dir, views, verify):
+def split_engine_check(capture_dir):
+    import RefSplit
+    return RefSplit.check_engine(sys.modules[__name__], capture_dir)
+
+
+def split_view_dirs(engine_dirs, views):
+    """視点ごとのエンジンの撮影先（RefSplit.resolve_view_dirs）。(視点 → 撮影先, 失敗の一覧)"""
+    import RefSplit
+    view_dirs = RefSplit.resolve_view_dirs(engine_dirs, views, ".hdr.pfm")
+    return view_dirs, [f"{view}: どの撮影先（--engine）にもエンジンの HDR が無い" for view in views if view not in view_dirs]
+
+
+def split_reference(reference_root, mode, verify):
+    """参照の入力の照合（RefSplit.check_reference）。(合格か, 失敗の一覧, 記録)"""
+    import RefSplit
+    ok, reasons, record = RefSplit.check_reference(sys.modules[__name__], reference_root, mode)
+    return ok, (reasons if (verify or record is None) else []), record
+
+
+def rel_dir(path):
+    return os.path.relpath(path, REPO_ROOT).replace("\\", "/")
+
+
+def run_gray(capture_dir, views, verify, engine_dirs=None, reference_root=None):
+    """灰色の地形の比較。エンジンの撮影は engine_dirs（視点ごとに最初に見つかる撮影先。省くと capture_dir）、Cycles の参照は
+    reference_root/cycles（省くと capture_dir）から読み、結果は capture_dir に書く。
+    入力の照らし方は RefSplit.py: エンジンの撮影はエンジンの実装、Cycles は参照の入力で照らす"""
+    import RefSplit
     failures = []
     light = load_common_light()
     views = views or list(GRAY_VIEWS)
-    report = {"mode": "gray", "verify": bool(verify), "views": views, "region_criteria": GR.criteria()}
+    engine_dirs = engine_dirs or [capture_dir]
+    reference_root = reference_root or capture_dir
+    report = {"mode": "gray", "verify": bool(verify), "views": views, "region_criteria": GR.criteria(),
+              "engine_dirs": [rel_dir(d) for d in engine_dirs], "reference": rel_dir(reference_root)}
+    view_dirs, missing = split_view_dirs(engine_dirs, views)
+    failures.extend(missing)
 
-    # エンジンの撮影: 太陽と空の両方（verify の撮影）と、原因の見立て用の太陽だけ・空だけ
-    main_entry, engine_hdrs, main_failures = gray_engine_capture(capture_dir, "both", views, verify)
-    failures.extend(main_failures)
-    report["engine"] = main_entry
-    diag_hdrs = {}
+    # エンジンの撮影: 撮影先ごとに、太陽と空の両方（verify の撮影）と、原因の見立て用の太陽だけ・空だけ
+    engine_hdrs = {}
+    diag_hdrs = {case: {} for case in GRAY_ENGINE_CASES}
+    report["engine"] = {}
     report["engine_diagnostic"] = {}
-    for case in GRAY_ENGINE_CASES:
-        entry, hdrs, case_failures = gray_engine_capture(os.path.join(capture_dir, f"engine-{case}"), case, views, verify)
-        failures.extend(case_failures)
-        report["engine_diagnostic"][case] = entry
-        diag_hdrs[case] = hdrs
-        if entry.get("files_sha256") and entry.get("files_sha256") != main_entry.get("files_sha256"):
-            failures.append(f"engine-{case} の撮影の入力が太陽と空の両方の撮影と違う")
+    engine_records = {}
+    identities = set()
+    engine_current = bool(view_dirs)
+    for engine_dir in sorted(set(view_dirs.values())):
+        dir_views = [v for v in views if view_dirs.get(v) == engine_dir]
+        key = rel_dir(engine_dir)
+        main_entry, hdrs, main_failures = gray_engine_capture(engine_dir, "both", dir_views, verify, split_engine_check)
+        failures.extend(main_failures)
+        engine_hdrs.update(hdrs)
+        report["engine"][key] = main_entry
+        engine_records[key] = main_entry.get("engine_impl")
+        identities.add(main_entry.get("files_sha256"))
+        engine_current = engine_current and bool(main_entry.get("inputs_current"))
+        for case in GRAY_ENGINE_CASES:
+            entry, case_hdrs, case_failures = gray_engine_capture(os.path.join(engine_dir, f"engine-{case}"), case,
+                                                                  dir_views, verify, split_engine_check)
+            failures.extend(case_failures)
+            report["engine_diagnostic"][f"{key}/engine-{case}"] = entry
+            engine_records[f"{key}/engine-{case}"] = entry.get("engine_impl")
+            diag_hdrs[case].update(case_hdrs)
+            engine_current = engine_current and bool(entry.get("inputs_current"))
+            if entry.get("files_sha256") and entry.get("files_sha256") != main_entry.get("files_sha256"):
+                failures.append(f"{key}/engine-{case} のエンジンの実装が太陽と空の両方の撮影と違う")
+    if len(identities) > 1:
+        failures.append(f"撮影先ごとのエンジンの実装が揃っていない（{len(identities)} 通り）")
 
-    # Cycles の結果の入力
-    cycles_dir = os.path.join(capture_dir, GRAY_CYCLES_DIR)
-    cycles_ok, cycles_failures, cycles_record = check_cycles_gray_inputs(cycles_dir, main_entry.get("files_sha256"))
+    # Cycles の参照の入力（エンジンの実装には依らない）と、参照とエンジンの撮影の条件の揃い
+    cycles_dir = os.path.join(reference_root, GRAY_CYCLES_DIR)
+    cycles_ok, cycles_failures, reference = split_reference(reference_root, "gray", verify)
     report["cycles_inputs_current"] = cycles_ok
-    if verify and not cycles_ok:
-        failures.extend(cycles_failures)
-    if cycles_record is None:
-        failures.extend(cycles_failures)
+    report["reference_signature"] = (reference or {}).get("signature_sha256")
+    failures.extend(cycles_failures)
+    match_failures = RefSplit.check_reference_engine(reference, engine_records, [])
+    report["reference_engine_match"] = not match_failures
+    failures.extend(match_failures)
 
     # Cycles 側の尺度の較正（灰色の板）
     report["plates"] = []
@@ -4067,10 +4148,13 @@ def run_gray(capture_dir, views, verify):
         if view not in engine_hdrs:
             failures.append(f"{view}: エンジンの HDR が無い")
             continue
-        aov, depth, aov_failures = gray_check_aov(capture_dir, view, light)
+        engine_dir = view_dirs[view]
+        aov, depth, aov_failures = gray_check_aov(engine_dir, view, light)
         failures.extend(aov_failures)
-        result = check_gray_view(capture_dir, cycles_dir, view, engine_hdrs[view], depth, diag_hdrs, light)
+        result = check_gray_view(capture_dir, cycles_dir, view, engine_hdrs[view], depth, diag_hdrs, light,
+                                 engine_dir=engine_dir)
         result["engine_aov"] = aov
+        result["engine_dir"] = rel_dir(engine_dir)
         report["view_results"].append(result)
         failures.extend(f"{view}: {f}" for f in result["failures"])
         cycles = result.get("cycles", {})
@@ -4093,20 +4177,22 @@ def run_gray(capture_dir, views, verify):
         print(f"REFERENCE_CHECK failure: {failure}")
     status = "pass" if not failures else "fail"
     print(f"REFERENCE_CHECK result={status} mode=gray views={len(views)} "
-          f"inputs_current={int(bool(main_entry.get('inputs_current')))} cycles_inputs_current={int(cycles_ok)} "
-          f"report={report_path}")
+          f"inputs_current={int(engine_current)} cycles_inputs_current={int(cycles_ok)} "
+          f"reference={report['reference_signature']} report={report_path}")
     return 0 if not failures else 1
 
 
 # ---- --albedo（地表の材質の照明の無いアルベド）----
 
-def albedo_engine_capture(capture_dir, views, verify):
-    """エンジンの撮影（共通の照明・地形だけ・最細の LOD）の起動引数・ログの印・撮った時点の常駐。(記録, 失敗の一覧)"""
+def albedo_engine_capture(capture_dir, views, verify, engine_check=None):
+    """エンジンの撮影（共通の照明・地形だけ・最細の LOD）の起動引数・ログの印・撮った時点の常駐。(記録, 失敗の一覧)
+    engine_check は gray_engine_capture と同じ"""
     entry = {}
     failures = []
-    inputs_ok, input_failures, record = check_inputs(capture_dir)
+    inputs_ok, input_failures, record = (engine_check or check_inputs)(capture_dir)
     entry["inputs_current"] = inputs_ok
-    entry["files_sha256"] = (record or {}).get("files_sha256")
+    entry["files_sha256"] = (record or {}).get("identity" if engine_check else "files_sha256")
+    entry["engine_impl"] = record if engine_check else None
     entry["game_exe_sha256"] = (record or {}).get("game_exe_sha256")
     if verify and not inputs_ok:
         failures.extend(input_failures)
@@ -4842,49 +4928,74 @@ def write_lit_photo_overview(path, rows, font):
     sheet.save(path)
 
 
-def run_lit(capture_dir, views, verify):
+def run_lit(capture_dir, views, verify, engine_dirs=None, reference_root=None):
+    """実材質の地形の比較。撮影先・参照の場所・入力の照らし方は run_gray と同じ（参照は <参照>/cycles と <参照>/material）"""
+    import RefSplit
     failures = []
     light = load_common_light()
     views = views or list(LIT_VIEWS)
-    report = {"mode": "lit", "verify": bool(verify), "views": views, "region_criteria": GR.criteria()}
+    engine_dirs = engine_dirs or [capture_dir]
+    reference_root = reference_root or capture_dir
+    report = {"mode": "lit", "verify": bool(verify), "views": views, "region_criteria": GR.criteria(),
+              "engine_dirs": [rel_dir(d) for d in engine_dirs], "reference": rel_dir(reference_root)}
     from CompareLight import load_font
     font = load_font(18)
     photo_rows = []
+    view_dirs, missing = split_view_dirs(engine_dirs, views)
+    failures.extend(missing)
 
-    # エンジンの撮影（共通の照明・地形だけ・最細の LOD・実材質）
-    engine_entry, engine_failures = albedo_engine_capture(capture_dir, views, verify)
-    failures.extend(engine_failures)
-    report["engine"] = engine_entry
+    # エンジンの撮影（共通の照明・地形だけ・最細の LOD・実材質）。撮影先ごとにエンジンの実装で照らす
+    report["engine"] = {}
+    engine_records = {}
+    identities = set()
+    engine_current = bool(view_dirs)
+    for engine_dir in sorted(set(view_dirs.values())):
+        dir_views = [v for v in views if view_dirs.get(v) == engine_dir]
+        engine_entry, engine_failures = albedo_engine_capture(engine_dir, dir_views, verify, split_engine_check)
+        failures.extend(engine_failures)
+        report["engine"][rel_dir(engine_dir)] = engine_entry
+        engine_records[rel_dir(engine_dir)] = engine_entry.get("engine_impl")
+        identities.add(engine_entry.get("files_sha256"))
+        engine_current = engine_current and bool(engine_entry.get("inputs_current"))
+    if len(identities) > 1:
+        failures.append(f"撮影先ごとのエンジンの実装が揃っていない（{len(identities)} 通り）")
 
-    # 画素ごとの材質（--albedo と同じ値の表・OSL・ミップの段の検査）
-    material_dir = os.path.join(capture_dir, LIT_MATERIAL_DIR)
-    material_ok, material_failures, material_record = check_albedo_inputs(
-        capture_dir, material_dir, views, engine_entry.get("files_sha256"), mode="lit")
-    report["material_inputs_current"] = material_ok
-    if (verify and not material_ok) or material_record is None:
-        failures.extend(material_failures)
-
-    # Cycles の結果の入力
-    cycles_dir = os.path.join(capture_dir, GRAY_CYCLES_DIR)
-    cycles_ok, cycles_failures, cycles_record = check_cycles_lit_inputs(capture_dir, cycles_dir,
-                                                                        engine_entry.get("files_sha256"), views)
+    # 参照の入力（地形のメッシュ・材質の値の表・照明・カメラ・Blender の台本と出力。エンジンの実装には依らない）と、
+    # 参照とエンジンの撮影の条件の揃い（照明・撮影のログの材質の値・今のシェーダーの定数）
+    material_dir = os.path.join(reference_root, LIT_MATERIAL_DIR)
+    cycles_dir = os.path.join(reference_root, GRAY_CYCLES_DIR)
+    cycles_ok, cycles_failures, reference = split_reference(reference_root, "lit", verify)
     report["cycles_inputs_current"] = cycles_ok
-    if (verify and not cycles_ok) or cycles_record is None:
-        failures.extend(cycles_failures)
+    report["reference_signature"] = (reference or {}).get("signature_sha256")
+    failures.extend(cycles_failures)
+    engine_logs = [os.path.join(view_dirs[v], view_game_log(view_dirs[v], v) or f"{v}.Game.log") for v in views
+                   if v in view_dirs]
+    match_failures = RefSplit.check_reference_engine(reference, engine_records, engine_logs,
+                                                     RefSplit.load_reference_table(sys.modules[__name__], reference_root))
+    report["reference_engine_match"] = not match_failures
+    failures.extend(match_failures)
+    material_path = os.path.join(material_dir, "inputs.json")
+    material_record = None
+    if os.path.isfile(material_path):
+        with open(material_path, encoding="utf-8") as f:
+            material_record = json.load(f)
 
     report["view_results"] = []
     for view in views:
-        engine_hdr, meta, hdr_failures = lit_engine_hdr(capture_dir, view)
+        if view not in view_dirs:
+            continue
+        engine_dir = view_dirs[view]
+        engine_hdr, meta, hdr_failures = lit_engine_hdr(engine_dir, view)
         failures.extend(hdr_failures)
         if engine_hdr is None:
             continue
-        log_name = view_game_log(capture_dir, view)
+        log_name = view_game_log(engine_dir, view)
         if log_name:
-            with open(os.path.join(capture_dir, log_name), encoding="utf-8", errors="replace") as f:
+            with open(os.path.join(engine_dir, log_name), encoding="utf-8", errors="replace") as f:
                 if f"WASTELAND_COMMON_LIGHT view={view} case=both " not in f.read():
                     failures.append(f"{view}: Game のログに WASTELAND_COMMON_LIGHT view={view} case=both が無い")
-        engine_depth = read_pfm_any(os.path.join(capture_dir, f"{view}.aov.depth.pfm"))[..., 0]
-        engine_albedo = read_pfm_any(os.path.join(capture_dir, f"{view}.aov.albedo.pfm")).astype(np.float64)
+        engine_depth = read_pfm_any(os.path.join(engine_dir, f"{view}.aov.depth.pfm"))[..., 0]
+        engine_albedo = read_pfm_any(os.path.join(engine_dir, f"{view}.aov.albedo.pfm")).astype(np.float64)
 
         # 画素ごとの材質の標本の位置が、エンジンの画素の中心に揃っていること（--normal と同じ許容）
         material_view = (material_record or {}).get("views", {}).get(view, {})
@@ -4903,7 +5014,7 @@ def run_lit(capture_dir, views, verify):
 
         out = {}
         result = check_gray_view(capture_dir, cycles_dir, view, engine_hdr, engine_depth, {}, light,
-                                 preview_prefix="lit_regions", out=out)
+                                 preview_prefix="lit_regions", out=out, engine_dir=engine_dir)
         result["material_subpixel"] = subpixel
         if int((result.get("cycles") or {}).get("spp_per_seed") or 0) < LIT_MIN_SPP_PER_SEED:
             for entry in (result.get("regions") or {}).values():
@@ -4981,8 +5092,8 @@ def run_lit(capture_dir, views, verify):
         print(f"REFERENCE_CHECK failure: {failure}")
     status = "pass" if not failures else "fail"
     print(f"REFERENCE_CHECK result={status} mode=lit views={len(views)} "
-          f"inputs_current={int(bool(engine_entry.get('inputs_current')))} material_inputs_current={int(material_ok)} "
-          f"cycles_inputs_current={int(cycles_ok)} report={report_path}")
+          f"inputs_current={int(engine_current)} cycles_inputs_current={int(cycles_ok)} "
+          f"reference={report['reference_signature']} report={report_path}")
     return 0 if not failures else 1
 
 
@@ -5394,9 +5505,26 @@ def main():
                         help="--gap-list で、大気の正解の比較（SCN-WLR-ATMOS-REF）の古さと B の直し待ちの項目を許さない")
     parser.add_argument("--lit-capture", default=TONEMAP_LIT_DIR,
                         help="--tonemap で Cycles の HDR を借りる SCN-WLR-CYCLES-LIT の出力先")
+    parser.add_argument("--engine", action="append", default=[],
+                        help="--gray・--lit・--blur-static・--blur-motion のエンジンの撮影先（複数回指定でき、視点・組ごとに最初に"
+                             "見つかる撮影先を読む。省くと --capture）")
+    parser.add_argument("--reference", default="",
+                        help="保存した参照の場所（--gray・--lit は cycles/・material/ を持つ所、--blur-* は正解の ref2x の組。"
+                             "省くと --capture・--engine から探す）")
+    parser.add_argument("--record-reference", choices=("gray", "lit"),
+                        help="--reference（省くと --capture）の Cycles の参照の入力の記録 cycles/reference.json を書く")
+    parser.add_argument("--record-engine", action="store_true",
+                        help="保存した撮影の inputs.json にエンジンの実装の記録を書き足す（--game-exe が撮影に使った exe と同じ中身のときだけ）")
+    parser.add_argument("--ref-split-selftest", action="store_true",
+                        help="保存の写しで、参照の入力とエンジンの実装の署名の正と負を確かめる")
+    parser.add_argument("--regression", action="store_true",
+                        help="回帰の撮影の after（--capture）を before（--reference）と並べる（CaptureRegression.ps1 が呼ぶ）")
     parser.add_argument("--views", default="", help="検査する視点（カンマ区切り。省くと metrics.json の全視点）")
     parser.add_argument("--verify", action="store_true", help="入力のハッシュを今のファイルと照らし、古い結果を拒否する")
     args = parser.parse_args()
+    if args.ref_split_selftest:
+        import RefSplit
+        return RefSplit.run_selftest(sys.modules[__name__], args.verify)
     if args.gap_list:
         import GapList
         capture = args.capture or GAP_LIST_DIR
@@ -5410,6 +5538,26 @@ def main():
     if not os.path.isdir(capture_dir):
         print(f"REFERENCE_CHECK result=fail reason=capture_dir_missing path={capture_dir}")
         return 1
+    engine_dirs = [os.path.normpath(d if os.path.isabs(d) else os.path.join(REPO_ROOT, d)) for d in args.engine]
+    reference = os.path.normpath(args.reference if os.path.isabs(args.reference) else os.path.join(REPO_ROOT, args.reference)) \
+        if args.reference else None
+    if args.regression:
+        import Regression
+        return Regression.run(sys.modules[__name__], capture_dir, reference, args.verify)
+    if args.record_reference:
+        import RefSplit
+        ok, detail = RefSplit.write_reference(sys.modules[__name__], reference or capture_dir, args.record_reference)
+        for line in ([] if ok else detail):
+            print(f"REFERENCE_CHECK failure: {line}")
+        print(f"REFERENCE_CHECK record_reference mode={args.record_reference} result={'pass' if ok else 'fail'} "
+              f"signature={detail[0] if ok else 'none'}")
+        return 0 if ok else 1
+    if args.record_engine:
+        import RefSplit
+        game_exe = args.game_exe if os.path.isabs(args.game_exe) else os.path.join(REPO_ROOT, args.game_exe)
+        ok, detail = RefSplit.write_engine_record(sys.modules[__name__], capture_dir, game_exe, True)
+        print(f"REFERENCE_CHECK record_engine result={'pass' if ok else 'fail'} detail={detail}")
+        return 0 if ok else 1
     if args.record_inputs:
         game_exe = args.game_exe
         if game_exe and not os.path.isabs(game_exe):
@@ -5435,12 +5583,12 @@ def main():
         views = [v.strip() for v in args.views.split(",") if v.strip()]
         return run_atmos_ref(capture_dir, views, args.verify)
     if args.blur_static:
-        return run_blur_static(capture_dir, args.verify)
+        return run_blur_static(capture_dir, args.verify, engine_dirs or None, reference)
     if args.blur_motion:
-        return run_blur_motion(capture_dir, args.verify)
+        return run_blur_motion(capture_dir, args.verify, engine_dirs or None, reference)
     if args.gray:
         views = [v.strip() for v in args.views.split(",") if v.strip()]
-        return run_gray(capture_dir, views, args.verify)
+        return run_gray(capture_dir, views, args.verify, engine_dirs or None, reference)
     if args.albedo:
         views = [v.strip() for v in args.views.split(",") if v.strip()]
         return run_albedo(capture_dir, views, args.verify)
@@ -5449,7 +5597,7 @@ def main():
         return run_normal(capture_dir, views, args.verify)
     if args.lit:
         views = [v.strip() for v in args.views.split(",") if v.strip()]
-        return run_lit(capture_dir, views, args.verify)
+        return run_lit(capture_dir, views, args.verify, engine_dirs or None, reference)
     if args.tonemap:
         views = [v.strip() for v in args.views.split(",") if v.strip()]
         lit_dir = args.lit_capture if os.path.isabs(args.lit_capture) else os.path.join(REPO_ROOT, args.lit_capture)
