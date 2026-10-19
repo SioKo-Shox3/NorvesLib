@@ -5490,3 +5490,16 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - Next（次の反復）: 両方のログに `END ... EXIT=0` があるか見る（無ければ python の `AtmosphereReference.py --solve` が走っているか確かめ、走っていれば重ねて起動せず待つ）。そろったら `python Scripts/Terrain/AtmosphereReference.py --verify` を保存して開き、収束 0.5 % を確かめて done。台本を直すとハッシュが変わり両方の段を解き直しになるので、解の走行中と verify の前に台本を触らない
 - Notes: 段 1 を細かくしたので、`ReferenceCheck.py --atmos-ref`（段 1 を使う）の 1 組の解が数十秒から数分〜十数分になる。比べる表の更新は SCN-WLR-ATMOS-REF で行う
 - 追記（同じ反復 15:29）: 段 1 の `--solve` が終わった（`aux-SCN-WLR-ATMOS-REF-B-solve-level1.txt`、result=pass・EXIT=0、inputs_sha256=43dc1931…）。論文 290 秒・荒野 396 秒（段 2 と並べて）、2 回目の散乱の源と角度の積分の差 0.79 %・0.76 %、1 回目の A と B の差 2.6e-15・5.0e-15。段 2 は検査の段と前の段 2 の時間の比（約 65 倍）から 1 組 3〜5 時間、2 組で 6〜10 時間の見込み（論文の組が先、荒野の組が後）
+
+### SCN-GEN-VILLAGE-PROPS-2 完了（2026-10-19、run 20261018-205227 の反復 35）
+- Done: `GeneratedModels.json` に `barrel`（0.9 m、seed 3021）・`crate`（0.6 m、seed 3022）・`cart`（1.2 m、seed 3023・`upsample_resolution` 1024）を足した（15 万面・テクスチャ 2048・用途 `night-village-props`）。クックの一覧 `NightVillageModels.json` に 3 種を足した。
+  - 参照画像（`verify-SCN-GEN-VILLAGE-PROPS-2-gen1.txt`）を開いた: 樽は板の胴・鉄の輪 3 本・閉じた蓋、木箱は横板・角の当て木・板の蓋、荷車は箱の荷台・車輪 2 輪・柄 2 本。荷車はプロンプトの「スポーク無し」が効かずスポークの車輪になったが、太さが十分なのでそのまま使った。
+  - 3D（`-gen2.txt`）: 樽 496 秒・146,709 面（1536）、木箱 595 秒・149,832 面（1536）、荷車 271 秒・149,188 面（1024）。実行全体 1374 秒、失敗・見送りなし。
+  - プレビュー（`-preview.txt`、正面・横・上）を開いた: 樽は輪と蓋、木箱は当て木と平らな蓋、荷車は荷台・スポークの車輪・柄がそろい、浮いた破片や欠けは無い。
+  - クック（`-cook.txt`）: RelWithDebInfo の AssetCook で `-OnlyLogicalPath` に 3 種だけを指定して `cooked=3`・EXIT=0。
+  - verify（`verify-SCN-GEN-VILLAGE-PROPS-2-1.txt`）: 3 種とも `VERIFY_OK ... cooked`、`VERIFY pass`、EXIT=0。
+- Notes:
+  - `CookAssets.ps1 -OnlyLogicalPath` は `pwsh -File` で呼ぶとカンマ区切りが 1 つの文字列になり絞れない（対象外扱いで「既存のマニフェストにありません」と落ちる）。`pwsh -Command "& ./Scripts/CookAssets.ps1 ... -OnlyLogicalPath @('a','b')"` で配列として渡す。
+  - 木箱の上面の質感は板目でなく 3×3 の升目に見える（形は平らな蓋で崩れていない）。近くで見せるなら seed を変えて作り直す。
+  - 新しい試験は足していない（verify の検査が確かめる）。
+- Next: TASKS.md の次の未完の項目。

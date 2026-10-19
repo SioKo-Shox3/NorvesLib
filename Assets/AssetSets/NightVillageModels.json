@@ -33,6 +33,27 @@
       "fallback_min_triangles": 4096,
       "package_name": "NightVillage/well.nvpkg",
       "entry_name": "Assets/Models/Generated/well/well.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/Generated/barrel/barrel.glb",
+      "source_path": "Assets/Models/Generated/barrel/barrel.glb",
+      "fallback_min_triangles": 4096,
+      "package_name": "NightVillage/barrel.nvpkg",
+      "entry_name": "Assets/Models/Generated/barrel/barrel.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/Generated/crate/crate.glb",
+      "source_path": "Assets/Models/Generated/crate/crate.glb",
+      "fallback_min_triangles": 4096,
+      "package_name": "NightVillage/crate.nvpkg",
+      "entry_name": "Assets/Models/Generated/crate/crate.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/Generated/cart/cart.glb",
+      "source_path": "Assets/Models/Generated/cart/cart.glb",
+      "fallback_min_triangles": 4096,
+      "package_name": "NightVillage/cart.nvpkg",
+      "entry_name": "Assets/Models/Generated/cart/cart.nvmesh"
     }
   ]
 }

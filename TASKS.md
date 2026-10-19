@@ -1924,7 +1924,7 @@
 - notes: SCN-GEN-BUILDINGS-1 の notes の上限時間とやり直しを使う。
 
 ## SCN-GEN-VILLAGE-PROPS-2: 夜の集落の小物を生成する（樽・木箱・荷車）
-- status: todo
+- status: done
 - done-when: SCN-GEN-BUILDINGS-1 と同じ形で、`barrel`・`crate`・`cart` を 10〜20 万面・テクスチャ 2048 で生成し、参照画像とプレビューを開いて形を確かめ、クックの一覧 `Assets/AssetSets/NightVillageModels.json` に足してクックが通る。
 - verify: `python Scripts/GenerateSceneModels.py --verify --require-cooked --ids barrel,crate,cart`
 - paths: Assets/AssetSets, Scripts, Tools/ComfyWorkflows, TASKS.md, PROGRESS.md

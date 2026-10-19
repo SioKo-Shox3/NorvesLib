@@ -103,6 +103,34 @@
       "height_m": 2.6,
       "upsample_resolution": 1024,
       "usage": "night-village-props"
+    },
+    {
+      "id": "barrel",
+      "prompt": "a single old wooden barrel, thick curved oak staves held by three dark iron hoops, a flat closed wooden lid on top, slightly bulging round body, simple sturdy shape, whole object standing upright on flat ground, three-quarter view, rustic old village style",
+      "seed": 3021,
+      "target_faces": 150000,
+      "texture_size": 2048,
+      "height_m": 0.9,
+      "usage": "night-village-props"
+    },
+    {
+      "id": "crate",
+      "prompt": "a single old closed wooden crate, a solid cube box of thick weathered pine planks with thick wooden corner battens and a few dark iron nails, closed flat lid, simple sturdy shape, whole object resting on flat ground, three-quarter view, rustic old village style",
+      "seed": 3022,
+      "target_faces": 150000,
+      "texture_size": 2048,
+      "height_m": 0.6,
+      "usage": "night-village-props"
+    },
+    {
+      "id": "cart",
+      "prompt": "a single old wooden hand cart, one open rectangular box bed of thick weathered planks on one axle with two large solid wooden disc wheels with iron rims, two thick straight wooden handles resting on the ground at the front, no spokes, no rope, compact simple sturdy shape, whole object standing on flat ground, three-quarter view, rustic old village style",
+      "seed": 3023,
+      "target_faces": 150000,
+      "texture_size": 2048,
+      "height_m": 1.2,
+      "upsample_resolution": 1024,
+      "usage": "night-village-props"
     }
   ]
 }
