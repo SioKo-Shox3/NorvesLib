@@ -308,12 +308,13 @@ namespace Game::GameModes
         // 太陽は地平線の下で、空の太陽の方向光は出さない。物理空の模型は太陽の仰角を 0〜90° に限るので、夜は空を切り、
         // 夜空と空の光を静的環境の一様な放射輝度で置く。
         // 夜空の放射輝度[cd/m^2]: 満月の夜の澄んだ空（天頂付近で 18〜19 等級/平方秒角 ≒ 2〜5e-3 cd/m^2、月に近い空はその数倍）の
-        // 目安から、青みのある輝度 8.4e-3 cd/m^2 にする。上半球の一様な空の水平面の照度は π × 輝度 ≒ 0.026 lx（月明かりの 2 割弱）
-        constexpr float kNightSkyRadiance[3] = {0.006f, 0.0085f, 0.0145f};
+        // 目安から、青みのある輝度 6.8e-3 cd/m^2 にする。上半球の一様な空の水平面の照度は π × 輝度 ≒ 0.021 lx（月明かりの 1.5 割）。
+        // 8.4e-3 の灰色がかった青では、撮影の空が曇りの夕暮れに見えた
+        constexpr float kNightSkyRadiance[3] = {0.0042f, 0.0068f, 0.015f};
         // 月明かり: 満月に垂直な面の照度[lx]（大気の透過を含む地表の値の目安 0.2〜0.3 lx）
         constexpr float kMoonIlluminanceNormalLux = 0.25f;
         // 月の色（リニアの sRGB）。月の光そのものは太陽よりわずかに赤いが、暗い所の見え（桿体の感度が青へ寄る）に合わせて青白くする
-        constexpr float kMoonColor[3] = {0.62f, 0.78f, 1.0f};
+        constexpr float kMoonColor[3] = {0.55f, 0.72f, 1.0f};
         // 月の高さと向き（方位角は太陽と同じく +X から +Z へ測る。60° は南南東）。道の北側の建物の表（南向き）を照らし、
         // 南側の建物の表は影になる
         constexpr float kMoonAltitudeDegrees = 35.0f;
@@ -321,17 +322,18 @@ namespace Game::GameModes
         // 月明かりの影の到達距離[m]（集落と周りの谷床。遠景のビュートは影を落とさず照らすだけ）
         constexpr float kMoonShadowMaxDistance = 600.0f;
         // 自動露出の補正の曲線（Rendering3DTest の --night の扱いと同じく、測光が暗いほど暗く保つ）。月明かりだけの谷床の
-        // 測光は EV100 で約 -4 なので、その点で -1.7 EV（画面の平均を中間調の 2^-1.7 倍にする）、昼の 14 EV で 0 にする
+        // 測光は EV100 で約 -4 なので、その点で -2.8 EV（画面の平均を中間調の 2^-2.8 倍にする）、昼の 14 EV で 0 にする。
+        // -1.7 EV では画面の平均が符号化値で約 45 になり、夜でなく曇りの夕暮れに見えた
         constexpr float kNightDarkSceneEV100 = -4.0f;
-        constexpr float kNightDarkSceneCompensationEV = -1.7f;
+        constexpr float kNightDarkSceneCompensationEV = -2.8f;
         constexpr float kNightBrightSceneEV100 = 14.0f;
         // 夜のグレーディング: 暗部を縮めない NeutralLinear のまま、コントラストを少しだけ立て、彩度を大きく落とす（暗い所の見えは
-        // 色が薄い。0.85 では谷床の赤い土が夕方の色に見えた）。白の釣り合いを青へ少し寄せる（GradingOverride の色温度は ±1 で
+        // 色が薄い。0.85・0.55 では谷床の赤い土が夕方の色に見えた）。白の釣り合いを青へ寄せる（GradingOverride の色温度は ±1 で
         // 赤と青の利得を ±10 % 動かす）
         constexpr float kNightGradingContrast = 1.1f;
         constexpr float kNightGradingContrastPivot = 0.18f;
-        constexpr float kNightGradingSaturation = 0.55f;
-        constexpr float kNightGradingTemperature = -0.6f;
+        constexpr float kNightGradingSaturation = 0.42f;
+        constexpr float kNightGradingTemperature = -1.0f;
 
         /// モードが組むシーンの id（SceneCatalog.h。視点の定義とシーンの準備の報告に使う）
         const char *SceneIdOf(const WastelandData &data)
