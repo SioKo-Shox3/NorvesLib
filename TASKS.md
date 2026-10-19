@@ -1871,7 +1871,7 @@
 - notes: 2026-10-19 SCN-WLR-REF-SPLIT から分けた。
 
 ## SCN-WLR-RECAPTURE-BLUR-MOTION: 遠景のぼけの動きの組を新しい記録の形で撮り直す
-- status: todo
+- status: done
 - after: SCN-WLR-RECAPTURE-BLUR-STATIC
 - done-when: SCN-WLR-FAR-BLUR-MOTION の動きの 4 組を、SCN-WLR-RECAPTURE-BLUR-STATIC と同じ Game.exe で新しい記録の形で撮り直し（`aux-SCN-WLR-REF-SPLIT-recapture.ps1 -Only motion`、約 11 分。Game.exe が変わっていたら静止の組も撮り直す）、`--blur-motion --verify` が通ることと、値が前から変わった所を記録する。
 - verify: `python Scripts/Terrain/ReferenceCheck.py --blur-motion --capture .harness/runs/scene-capture/SCN-WLR-FAR-BLUR-MOTION --verify`

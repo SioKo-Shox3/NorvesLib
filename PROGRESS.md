@@ -5673,3 +5673,17 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 撮影の間、大気の正解の段 1・段 2 の `--solve` が裏で走っていた（CPU）。撮影は 30 分で終わり、影響は見ていない
   - コードは変えていない。新しい試験は足していない
 - Next: TASKS.md の次の未完の項目（SCN-WLR-RECAPTURE-BLUR-MOTION など）。
+
+### SCN-WLR-RECAPTURE-BLUR-MOTION 完了（2026-10-20、run 20261019-192352 の反復 13）
+- Done: SCN-WLR-FAR-BLUR-MOTION の動きの 4 組（ref2x・fxaa・taa・base）を、SCN-WLR-RECAPTURE-BLUR-STATIC と同じ RelWithDebInfo の Game.exe（SHA-256 e2e2e3d9…、始めと終わりで同じ。静止の組の撮り直しは不要）でエンジンの実装の署名つきで撮り直した（`aux-SCN-WLR-REF-SPLIT-recapture.ps1 -Only motion`、約 11 分）。値の変化を `Docs/RenderingValidation/WastelandFarBlurMotion.md` の表と「撮り直し」の節に書いた
+- 証拠（`.harness/runs/20261019-192352/`）:
+  - `aux-SCN-WLR-REF-SPLIT-recapture.txt`: motion-ref2x・fxaa・taa・base とも exit=0、same=1・all_ok=1（`aux-SCN-WLR-RECAPTURE-BLUR-MOTION-run.txt` は EXIT=0）
+  - `verify-SCN-WLR-RECAPTURE-BLUR-MOTION-1.txt`: `--blur-motion --verify` result=pass・groups=4・inputs_current=1・EXIT=0
+  - `aux-SCN-WLR-RECAPTURE-BLUR-MOTION-before.txt`: 撮り直す前の `--verify`（engine_impl が無く落ちる、EXIT=1）。`-before-noverify.txt`: 前の撮影の値
+  - `aux-SCN-WLR-RECAPTURE-BLUR-MOTION-value-diff.txt`: 前後の差。欠けは全組 0.003〜0.008 減、エイリアスは履歴の無い画で 0.004〜0.012 増・履歴の貯まった taa で ±0.002 以内。振りと止めの差・履歴の消失は 0.003 以下しか動かない
+  - `aux-SCN-WLR-RECAPTURE-BLUR-MOTION-pages.txt`: 常駐のページ・追い出し・wait-ready は前と同じ（ref2x 7513・fxaa/taa 4240 で進行中 0・追い出し 0、base 3681 で追い出し 478 → 711）、全組 Game.exe が同じ・vt_used_mb 0
+  - 切り出しの並び `blur_motion_ref_far_01.png` を開き、fxaa の振りと止めが見分けられず、taa の motion-30 が止めより柔らかいことを確かめた
+- Notes:
+  - 値の差の主な原因は静止の組と同じく、前の撮影の後に荒野の昼のグレーディングを中立にしたこと（3de2a835）
+  - コードは変えていない。新しい試験は足していない
+- Next: TASKS.md の次の未完の項目。
