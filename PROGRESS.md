@@ -5538,3 +5538,12 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 焚き火・街灯・松明は光を出していない（発光させる部分の位置は計画書の夜の集落の小物の節）。灯りは SCN-NIGHT-LIGHTS で足す
   - 新しい試験は足していない（verify の撮影と周回の試験が確かめる）
 - Next: TASKS.md の次の未完の項目。
+
+### SCN-NIGHT-VILLAGE 差し戻しの対応（2026-10-19、run 20261019-192352 の反復 2）
+- Done: 評価者の差し戻し（done-when の「cycle smoke 3 周」と verify の `-Cycles 2` の食い違い）は、親が done-when を verify と同じ 2 周に揃えて解消した（2b0fc63e）。実装と撮影は前の反復のまま有効なので作り直さず、verify を回し直して閉じた
+- 証拠（`.harness/runs/20261019-192352/`）:
+  - `verify-SCN-NIGHT-VILLAGE-4.txt`: Debug の Game のビルド EXIT=0
+  - `verify-SCN-NIGHT-VILLAGE-5.txt`: RelWithDebInfo の撮影 result=pass・EXIT=0。画面の平均の輝度 default 27.7・street 27.0・square 27.2、白飛び・黒つぶれの割合はすべて 0
+  - `verify-SCN-NIGHT-VILLAGE-6.txt`: 周回の試験 2 周 result=pass・EXIT=0（両周とも settled=1・textures=53・texture_bytes 1972219952 で同じ）
+  - 撮り直した 3 枚を開いた: 深い青の夜空、月明かりで浮かぶ建物の壁と地面の影、道の両側の家並みと街灯、広場の焚き火と井戸が見え、暗すぎず明るすぎず夜に見える
+- Next: TASKS.md の次の未完の項目。
