@@ -5578,3 +5578,16 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - まだ写真と違う所は照明・中身の差: 地面が橙で明るい、空の青みが薄い、ref_ground_02 の空に水平の継ぎ目の帯がある（中立化の前からの欠陥の見込み。SCN-WL-SKY-AERIAL 側）。`--tonemap`・`--gap-list` の検査は荒野の入力が変わったので、撮り直すまで古い扱いになる
   - 新しい試験は足していない（`--grading` は done-when が名指し）
 - Next: TASKS.md の次の未完の項目。
+
+### SCN-WL-GRADE-NEUTRAL 差し戻しの対応（2026-10-19、run 20261019-192352 の反復 5）
+- Done: 評価者の差し戻し（合否が全画面の ±1 段 99 % でなく、ブルームを避けた暗部の ±2 段だった）を直した。`Scripts/Terrain/PostEffects.py` を足し、ブルーム（6 段の 13 タップの縮小〔最初の段は Karis の重み〕・テントの拡大・しきい値なしで 4 % 混ぜる）と FXAA（`fxaa.frag` の探索の向きの決め方もそのまま）を、RGBA16F の丸めと双線形の副テクセル 8 bit まで写して再現した。`--grading` は撮影の記録（`hdr.json` の `post`）どおりにブルーム・表示変換・FXAA を掛けた画と撮影の PNG を画面全体で比べ、±1 段の画素が 99 % 未満なら落とす（検査の条件・撮影は変えていない）。「前」の画も同じ経路で作る
+- 証拠（`.harness/runs/20261019-192352/`）:
+  - `verify-SCN-WL-GRADE-NEUTRAL-4.txt`: Debug の Game のビルド EXIT=0
+  - `verify-SCN-WL-GRADE-NEUTRAL-5.txt`: RelWithDebInfo の 2 視点の撮影 result=pass・EXIT=0
+  - `verify-SCN-WL-GRADE-NEUTRAL-6.txt`: `--grading --verify` result=pass・EXIT=0、inputs_current=1。画面全体の ±1 段の画素 ref_cliff_01 0.99962・ref_ground_02 0.99933（両視点とも bloom=1・fxaa=1）
+  - `aux-SCN-WL-GRADE-NEUTRAL-sheet-2.txt`: 6 視点の撮影先も同じ検査で全部 pass（画面全体の ±1 段の画素 0.9962〜0.9999）。比較画像 `grading_sheet.png` を作り直して開いた
+- Notes:
+  - ブルームと FXAA の設定値は撮影の記録に無いので、`PostEffects.py` が SceneView の既定（ブルーム 0.04・半径 1・6 段、FXAA 0.0312・0.0625・0.75）を固定で持つ。レンズダートが掛かった撮影は再現しないとして落とす
+  - 画面全体の白飛びの「前」はブルームと FXAA を入れて測り直し、少しだけ下がった（例 ref_ground_01 0.1059 → 0.1029）。文書の表を直した
+  - 新しい試験は足していない
+- Next: TASKS.md の次の未完の項目。

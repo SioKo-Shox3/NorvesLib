@@ -2,8 +2,8 @@
 #
 # 1. 既定の荒野の撮影（--engine）の各視点で、撮影の表示変換の記録が候補 neutral_plain（NeutralLinear・コントラスト 1・
 #    彩度 1・色温度 0）と同じ値であることと、HDR に neutral_plain を掛けた画が撮影の PNG と 8 bit で 1 段以内に合うこと
-#    （--display の scene の組と同じ基準: SCENE_WITHIN_LEVELS・SCENE_WITHIN_RATIO）を検査する。既定の撮影の PNG にはブルームと
-#    FXAA が乗るので、画素はブルームの影響が小さく平らな暗い所（--hdr の png_match）に絞る。全画面の一致率は参考値として記録する。
+#    （--display の scene の組と同じ基準: 画面全体で SCENE_WITHIN_LEVELS 段以内の画素が SCENE_WITHIN_RATIO 以上）を検査する。
+#    既定の撮影の PNG にはブルームと FXAA が乗るので、撮影の記録（hdr.json の post）どおりに PostEffects.py で再現して掛ける。
 # 2. 同じ HDR に変更前の表示変換（候補 current）を掛けた画を「前」、neutral_plain の画を「後」として、地面の R/G・白飛びの
 #    割合（写真の崖・地面の枠の地形の画素と、画面全体）を記録する。写真の値も並べるが、写真の現像は分からないので合否に使わない。
 # 3. --capture に別の撮影先（6 視点を -Hdr で撮ったもの）を渡すと、その各視点も 1. と同じに検査し、写真｜前（HDR に current）｜
@@ -14,6 +14,8 @@ import os
 
 import numpy as np
 from PIL import Image
+
+import PostEffects as PE
 
 GRADING_VIEWS = ("ref_cliff_01", "ref_ground_02")
 GRADING_CANDIDATE = "neutral_plain"
@@ -100,11 +102,16 @@ def check_view(rc, capture_dir, view, lut):
         fails.append(f"PNG の大きさ {png.shape[1]}x{png.shape[0]} が HDR {hdr.shape[1]}x{hdr.shape[0]} と違う")
         return result, None, None
 
-    # 1. HDR に neutral_plain を掛けた画と撮影の PNG（画面全体）
+    # 1. HDR に neutral_plain を掛けた画（撮影の記録どおりにブルームと FXAA も再現する）と撮影の PNG（画面全体）
     height, width = hdr.shape[:2]
-    full_vignette = rc.DT.vignette_factor(height, width, *capture_params["vignette"])
     hdr32 = hdr.astype(np.float32)
-    predicted = rc.tonemap_render(hdr32, pre_exposure, rc.tonemap_candidate_params(after, capture_params), full_vignette, lut)
+    try:
+        scene = PE.scene_with_bloom(hdr32, meta)
+    except rc.DT.UnsupportedDisplay as error:
+        fails.append(str(error))
+        return result, None, None
+    result["post"] = {key: bool((meta.get("post") or {}).get(key)) for key in ("bloom", "fxaa")}
+    predicted = PE.display_with_post(scene, meta, rc.tonemap_candidate_params(after, capture_params), lut)
     difference = png - predicted.astype(np.int32)
     worst = np.abs(difference).max(axis=-1)
     within = float((worst <= rc.SCENE_WITHIN_LEVELS).mean())
@@ -114,17 +121,11 @@ def check_view(rc, capture_dir, view, lut):
         "max_abs_levels": int(worst.max()),
         "mean_signed_levels_rgb": [float(v) for v in difference.reshape(-1, 3).mean(axis=0)],
     })
-    # 既定の撮影の PNG にはブルームと FXAA が乗っていて HDR（ブルーム前）から全画素は再現できないので、合否は --hdr と同じ
-    # ブルームの影響が小さく平らな暗い画素での照合（check_hdr_view の png_match）で決める。全画面の一致率は参考値
-    match = result["hdr_png_match"]
-    if match.get("within_ratio") is None:
-        fails.append("ブルームを避けた画素での PNG との照合が出ていない")
-    elif match["within_ratio"] < rc.SCENE_WITHIN_RATIO:
-        fails.append(f"ブルームを避けた画素で ±{match.get('within_levels')} 段に入る画素が {match['within_ratio']:.5f}"
-                     f"（下限 {rc.SCENE_WITHIN_RATIO}）")
+    if within < rc.SCENE_WITHIN_RATIO:
+        fails.append(f"±{rc.SCENE_WITHIN_LEVELS} 段に入る画素が {within:.5f}（下限 {rc.SCENE_WITHIN_RATIO}）")
 
     # 2. 前後（同じ HDR に current と neutral_plain）の地面の R/G と白飛びの割合
-    before_full = rc.tonemap_render(hdr32, pre_exposure, rc.tonemap_candidate_params(before, capture_params), full_vignette, lut)
+    before_full = PE.display_with_post(scene, meta, rc.tonemap_candidate_params(before, capture_params), lut)
     result["clip_full"] = {"before": full_frame_clip(rc, before_full), "after": full_frame_clip(rc, png.astype(np.uint8))}
     size = CR.PANEL_SIZE
     photo = photo_regions(rc, view, size)
@@ -230,7 +231,7 @@ def run(rc, engine_dirs, sheet_dir, views, verify):
                                       (text(GRADING_CANDIDATE, "後（中立）"), after_image)]))
         if sheet_rows:
             rc.write_tonemap_sheet(os.path.join(sheet_dir, GRADING_SHEET), sheet_rows, None, load_font(15), size,
-                                   note="前 = 同じ HDR に変更前の表示変換、後 = 撮影の PNG。地面R/G・白飛びは写真の崖・地面の枠の地形の画素")
+                                   note="前 = 同じ HDR に変更前の表示変換（ブルーム・FXAA も再現）、後 = 撮影の PNG。地面R/G・白飛びは写真の崖・地面の枠の地形の画素")
             report["sheet"] = GRADING_SHEET
         else:
             failures.append("6 視点の比較画像を作れる視点が無い")

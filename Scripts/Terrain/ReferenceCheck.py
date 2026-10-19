@@ -241,7 +241,7 @@
 #   python Scripts/Terrain/ReferenceCheck.py --grading --engine <撮影先> [--capture <6 視点の撮影先>] [--views a,b,...] [--verify]
 #       荒野のグレーディングを中立にした変更の検査（GradeNeutral.py）。<撮影先> の既定の荒野の撮影（既定の視点は GRADING_VIEWS の 2 つ）で、
 #       撮影の表示変換の記録が候補 neutral_plain と同じ値で、HDR に neutral_plain を掛けた画が撮影の PNG と 8 bit で 1 段以内に合う
-#       （--display の scene の組と同じ基準。既定の撮影の PNG はブルームと FXAA が乗るので、--hdr と同じブルームを避けた画素で照合する）ことを検査し、同じ HDR に変更前の表示変換（候補 current）を掛けた画との間で、地面の R/G と
+#       （--display の scene の組と同じ基準を画面全体で。既定の撮影の PNG はブルームと FXAA が乗るので、撮影の記録どおりに PostEffects.py で再現して掛ける）ことを検査し、同じ HDR に変更前の表示変換（候補 current）を掛けた画との間で、地面の R/G と
 #       白飛びの割合（写真の崖・地面の枠の地形の画素と画面全体）の前後を記録する。--capture に 6 視点を -Hdr で撮った別の撮影先を渡すと、
 #       その各視点も検査して、写真｜前｜後の比較画像 <6 視点の撮影先>/grading_sheet.png を書く。報告は <撮影先>/grading_check.json。
 #       --verify は撮影の入力の記録を今のファイルと照らす。
