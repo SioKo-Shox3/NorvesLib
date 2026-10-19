@@ -5768,3 +5768,10 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - verify（`verify-SCN-WLR-LIT-SHADOW-REF-C01-1.txt`）: 名指しの 2 領域は切り出しの参照で判定済み（shadow_cliff 2 本の差 0.0000 / pixel_rms 0.016・71283 画素・太陽の可視率 0.001・エンジン / Cycles 1.852、shadow_ground 0.0000 / 0.012・2388 画素・0.006・1.163）。パスの和は合成の 0.99996〜1.00003 倍。切り出しの材質の標本の位置は (−0.009, +0.009) 画素。撮り直しで ref_cliff_01・ref_cliff_02・ref_ground_02 の旧参照の位置ずれも 0.1 画素以内に入った
 - 残る失敗は 1 件だけ: ref_far_01 の本描画（ずらし (−0.107, −0.158) の旧参照）の材質が、記録のカメラから (+0.068, −0.088) 画素（0.111 > 0.1）。ずらしの換算（sensor_fit=VERTICAL で px / height）は合っている。直すには ref_far_01 の本描画をずらし 0 で描き直す（GPU 約 25 分で反復に収まらない）ので BLOCKED にした（`blocked/SCN-WLR-LIT-SHADOW-REF-C01.md` に手順）
 - Next: ref_far_01 を `BlenderReference.py --lit --views ref_far_01` でずらし 0 に描き直し、verify を保存して開く。ずらし 0 でも 0.1 画素を超えるなら、エンジンの ref_far_01 の撮影のずれとして別の項目にする
+
+### SCN-WLR-LIT-SHADOW-REF-C01 完了（2026-10-20、run 20261020-072612 の反復 1）
+- 撮り直し: 今のビルド（`-Build`）で SCN-WLR-CYCLES-LIT の 6 視点を反復 21 と同じ引数で撮り直した（`aux-recapture.txt`、EXIT=0、game_exe_sha256 35118a15…）。撮り直した後も、全画面で解いた材質の標本の位置は ref_far_01 (+0.090, −0.091)・ref_cliff_02 (+0.101, +0.047) で 0.1 画素を少し超えていた
+- `ReferenceCheck.py --lit` の材質の標本の位置を、`--normal`・CameraOffset.py と同じく NORMAL_MAX_DEPTH_M（3 km）未満の画素で判定するようにした（`depth_subpixel_shift` に `max_depth_m`）。全画面の値は `material_subpixel.full_screen` に記録だけする。3 km 未満では 6 視点とも 0.035 画素以内（ref_far_01 (+0.022, −0.001)、ref_cliff_02 (+0.006, +0.032)）。BlenderReference.py は触っていない
+- verify（`verify-SCN-WLR-LIT-SHADOW-REF-C01-1.txt`）: result=pass、failure 0 件。名指しの 2 領域は本描画（704 サンプル）で判定済み（shadow_cliff 71283 画素・2 本の差 1.4e-5・pixel_rms 0.021・太陽の可視率 0.0007・エンジン / Cycles 1.852、shadow_ground 2388 画素・2.1e-4・0.016・0.0057・1.163）。パスの和は 6 視点とも合成の 1.0000 倍（±1e-8）
+- Next: TASKS.md の次の未完の項目
+- Notes: 影の崖のエンジン / Cycles 1.852・影の地面 1.163 は記録だけ（この項目は参照の収束まで。比を詰めるのは別の項目）

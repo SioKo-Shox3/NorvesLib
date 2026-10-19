@@ -191,7 +191,8 @@
 #       写真の崖・地面の枠（CompareReference.py の PHOTOS）の表示の値と、露出に依らない崖 ÷ 地面の輝度の比・色の比を記録する
 #       （写真とは照明・天気・現像が違うので合否に使わない。写真が無い視点は不合格）。
 #       合否: エンジンの撮影の起動引数とログの印・撮った時点のページの常駐（--albedo と同じ）、画素ごとの材質の入力（--albedo と
-#       同じ値の表・OSL・ミップの段）と標本の位置のずれが NORMAL_SUBPIXEL_MAX_PX 以下、Cycles の出力のハッシュ・カメラ（ずらしは
+#       同じ値の表・OSL・ミップの段）と標本の位置のずれ（NORMAL_MAX_DEPTH_M 未満の画素で解く。全画面の値は記録だけ）が
+#       NORMAL_SUBPIXEL_MAX_PX 以下、Cycles の出力のハッシュ・カメラ（ずらしは
 #       材質と同じ）・空の分かれ方・光の内訳の和（--gray と同じ）。領域と収束は --gray と同じ定義（1 本あたり
 #       LIT_MIN_SPP_PER_SEED サンプルに届かない描画の領域は未判定）で、比の大きさは記録するだけ。
 #       領域ごとに、エンジンと Cycles の露出前の線形の平均（輝度・RGB）と比、Cycles の内訳、GBuffer と再現のアルベド、
@@ -4630,13 +4631,16 @@ def normal_angle_deg(a, b):
     return np.degrees(np.arccos(np.clip(np.sum(a * b, axis=-1), -1.0, 1.0)))
 
 
-def depth_subpixel_shift(engine_depth, blender_depth):
+def depth_subpixel_shift(engine_depth, blender_depth, max_depth_m=None):
     """エンジンの深度と Blender の深度（どちらも上の行が 0 行目、空は inf）から、エンジンの画素 (x, y) が Blender の画の
     (x + right, y + down) を見ているときの小数のずれ（右・下が正の画素）と深度の相対の偏りを求める。
     (エンジン − Blender) / Blender ≈ 偏り + right · ∂x Blender / Blender + down · ∂y Blender / Blender を、輪郭から離れ
-    勾配の小さい画素で最小二乗で解く。比べる値（アルベド・法線・粗さ）は使わない"""
+    勾配の小さい画素で最小二乗で解く。比べる値（アルベド・法線・粗さ）は使わない。max_depth_m を渡すと、エンジンの深度が
+    それ未満の画素だけで解く"""
     ok = np.isfinite(engine_depth) & np.isfinite(blender_depth) & (engine_depth > 0) & (blender_depth > 0)
     ok &= ~dilate(dilate(depth_edges(np.where(ok, engine_depth, np.inf), PROJECTION_JUMP_WEAK)))
+    if max_depth_m is not None:
+        ok &= engine_depth < max_depth_m
     safe = np.where(ok, blender_depth, 1.0)
     grad_y, grad_x = np.gradient(safe)
     ax = grad_x / safe
@@ -5267,21 +5271,29 @@ def run_lit(capture_dir, views, verify, engine_dirs=None, reference_root=None, e
 
         # 画素ごとの材質の標本の位置が、エンジンの画素の中心に揃っていること（--normal と同じ許容）。ずらしありの旧参照
         # （SHIFTED_REFERENCE_SCOPE）は、記録のカメラ（ずらし 0）からの残りで照らす: Blender のカメラを (右, 上) へずらすと、
-        # エンジンの画素 (x, y) は Blender の画の (x − 右, y + 上) を見る
+        # エンジンの画素 (x, y) は Blender の画の (x − 右, y + 上) を見る。--normal・CameraOffset.py と同じく
+        # NORMAL_MAX_DEPTH_M 未満の画素で判定し、全画面の値は記録だけにする（3 km より先はエンジンの地形の形の違いが混ざり、
+        # ref_far_01・ref_cliff_02 の全画面の値を 0.1 画素の上へ押し上げる）
         material_view = (material_record or {}).get("views", {}).get(view, {})
         prefix = os.path.join(material_dir, view)
         subpixel = None
         if os.path.isfile(prefix + ".depth.pfm"):
-            subpixel = depth_subpixel_shift(engine_depth.astype(np.float64),
-                                            read_pfm_any(prefix + ".depth.pfm")[..., 0].astype(np.float64))
+            material_depth = read_pfm_any(prefix + ".depth.pfm")[..., 0].astype(np.float64)
+            subpixel = depth_subpixel_shift(engine_depth.astype(np.float64), material_depth,
+                                            max_depth_m=NORMAL_MAX_DEPTH_M)
+            subpixel["max_depth_m"] = NORMAL_MAX_DEPTH_M
+            subpixel["full_screen"] = depth_subpixel_shift(engine_depth.astype(np.float64), material_depth)
             shift = reference_shift_px(material_view)
             subpixel["camera_shift_px"] = material_view.get("camera_shift_px")
             subpixel["record_camera_right_px"] = subpixel["right_px"] + shift[0]
             subpixel["record_camera_down_px"] = subpixel["down_px"] - shift[1]
+            subpixel["full_screen"]["record_camera_right_px"] = subpixel["full_screen"]["right_px"] + shift[0]
+            subpixel["full_screen"]["record_camera_down_px"] = subpixel["full_screen"]["down_px"] - shift[1]
             if any(v != 0.0 for v in shift):
                 subpixel["reference_scope"] = SHIFTED_REFERENCE_SCOPE
             if math.hypot(subpixel["record_camera_right_px"], subpixel["record_camera_down_px"]) > NORMAL_SUBPIXEL_MAX_PX:
                 failures.append(f"{view}: 画素ごとの材質の標本の位置が、記録のカメラから見てエンジンの画素から "
+                                f"（{NORMAL_MAX_DEPTH_M:.0f} m 未満の画素で）"
                                 f"({subpixel['record_camera_right_px']:+.3f}, {subpixel['record_camera_down_px']:+.3f}) "
                                 f"画素ずれている（{NORMAL_SUBPIXEL_MAX_PX} 画素以下。材質のずらし {shift}）")
         else:
@@ -5345,7 +5357,9 @@ def run_lit(capture_dir, views, verify, engine_dirs=None, reference_root=None, e
               f"stop={cycles.get('stop_reason')} sky_mismatch={result.get('sky_mismatch')} "
               f"split={result.get('cycles_split_consistency')} "
               f"material_subpixel=({(subpixel or {}).get('right_px', float('nan')):+.3f},"
-              f"{(subpixel or {}).get('down_px', float('nan')):+.3f})")
+              f"{(subpixel or {}).get('down_px', float('nan')):+.3f}) "
+              f"material_subpixel_full_screen=({((subpixel or {}).get('full_screen') or {}).get('right_px', float('nan')):+.3f},"
+              f"{((subpixel or {}).get('full_screen') or {}).get('down_px', float('nan')):+.3f})")
         for name, entry in result["regions"].items():
             conv = entry["convergence"]
             print(f"REFERENCE_CHECK lit view={view} region={name} status={entry['status']} pixels={entry['pixels']} "
