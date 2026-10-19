@@ -5729,3 +5729,10 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `BLENDER_SCRIPT_EQUIVALENT_SHA256` は台本のハッシュを手で書く。Blender の中で走る描画の関数を変えずに台本を直すときだけ足す（描画を変えたら足さず、参照は古くなる）
   - `--ref-split-selftest` は変更後も 12 件 pass
 - Next: TASKS.md の次の未完の項目（SCN-WLR-RECAPTURE-GRAY-LIT など）。
+
+### SCN-WLR-LIT-SHADOW-REF-C01 途中（2026-10-20、run 20261019-192352 の反復 17〜18）
+- 反復 17: `BlenderReference.py --lit --crop-regions` と `ReferenceCheck.py --lit --require-judged` を足し、ref_cliff_01 の画素ごとの材質（ずらし 0、4 列）を `.harness/runs/scene-capture/SCN-WLR-CYCLES-LIT/shadow/material/` に描いた（`aux-SCN-WLR-LIT-SHADOW-REF-C01-render.txt`。深度からの小数のずれ (+0.243, −0.027) は記録だけ）。続く切り出しの Cycles の描画は反復の壁時計（40 分）で止められ、描画のプロセスも消えた
+- 反復 18（親の指示）: 切り出しの描画を種 1 本ずつ別の起動にした。A は 1 本 20 分（読み込みを含む）まで描いて途中の和（`cycles.part_a.npz`・`.json`）を書き、B は A と同じサンプル数まで描いて A と合わせ、収束（名指しの 2 領域）とパスの和を測って `--lit` と同じ形の出力を書く。台本のハッシュが変わったので `BLENDER_SCRIPT_EQUIVALENT_SHA256` に足した（crop の無い描画と材質の描画は変えていない。既存の `--lit --verify` は Cycles の入力が合格のまま、`aux-SCN-WLR-LIT-SHADOW-REF-C01-lit-after-edit.txt`）
+- 切り出しの枠は名指しの 2 領域を囲む (77, 281)〜(1769, 1086)（余白 8 画素つき）で画面の約 66 %（影の中の地面 2385 画素が画面の左右に散るため狭められない）。収束しない原因は反復 17 の見立てで、ライトツリーが太陽を選びにくい点で BSDF の標本が太陽に入る 1 標本の重みの大きさ。切り出しではライトツリーを切る
+- 描画は反復の外で切り離して走らせる（`.harness/runs/20261019-192352/shadow-ref-c01-render.ps1`。ログ `aux-SCN-WLR-LIT-SHADOW-REF-C01-crop-render.txt` の最初に START、最後に `END ... EXIT=<code>`）。見込みは種 2 本で約 40 分
+- Next（再開の反復）: ログの END と `shadow/cycles/ref_cliff_01.cycles.json` の `all_converged`・`regions`・`consistency` を開く。エンジンの撮影（カメラのずれを直した後の Game.exe）を撮り直し、`--lit --require-judged` の verify を保存する。届かなければ届かない量を記録して BLOCKED。本描画の旧材質（ずらしあり）の標本の位置の検査が撮り直した撮影で落ちる見込み（`SHIFTED_REFERENCE_SCOPE`）なので、そこも確かめる

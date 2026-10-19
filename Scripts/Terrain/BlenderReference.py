@@ -69,8 +69,9 @@
 #       太陽の放射輝度）だけで決まっていた。ライトツリーは当たりの点の法線で太陽の選ばれやすさを見積もり、それが 0 に近い点では
 #       BSDF の標本の重みがほぼ 1 になるので、切り出しではライトツリーを切る（光の選び方だけの違いで、期待値は変わらない）。
 #       種ごとに、同じ枠を跳ね返り 0（直接光だけ）でも描き、太陽の組・空の組を太陽の直接光（sun_direct）・空の直接光
-#       （sky_direct）として書く（間接光 indirect は本描画の Diffuse/Glossy Indirect）。描画は 1 本 CROP_MAX_TOTAL_SECONDS
-#       （読み込みを含む）で止める。
+#       （sky_direct）として書く（間接光 indirect は本描画の Diffuse/Glossy Indirect）。種は 1 本ずつ別の起動で描き、
+#       1 本 CROP_MAX_TOTAL_SECONDS（読み込みを含む）で止める: A は時間の上限まで描いて途中の和（cycles.part_a.*）を書き、
+#       B は A と同じサンプル数まで描いて A と合わせ、収束を測って --lit と同じ出力を書く。
 import argparse
 import hashlib
 import json
@@ -538,16 +539,27 @@ def run_gray(args, lit=False):
             job["max_seconds"] = CROP_MAX_TOTAL_SECONDS
         parts = ("hdr", "seed_a", "seed_b", "sun", "sky", "direct", "indirect") + \
             (("sun_direct", "sky_direct") if crop_regions else ())
-        job["required_outputs"] = [f"{prefix}.cycles.exr", f"{prefix}.aux.exr", f"{prefix}.cycles.json"] + \
-            [f"{prefix}.cycles.{part}.pfm" for part in parts] + \
+        aux_outputs = [f"{prefix}.aux.exr"] + \
             [f"{prefix}.aux.{part}.pfm" for part in ("visibility", "n_dot_l", "normal", "alpha")]
-        for stale in job["required_outputs"]:
+        job["required_outputs"] = [f"{prefix}.cycles.exr", f"{prefix}.cycles.json"] + \
+            [f"{prefix}.cycles.{part}.pfm" for part in parts] + aux_outputs
+        part_a = [f"{prefix}.cycles.part_a.npz", f"{prefix}.cycles.part_a.json"]
+        for stale in job["required_outputs"] + (part_a if crop_regions else []):
             if os.path.exists(stale):
                 os.remove(stale)
         triangles = sum(int(t["triangles"]) for t in tiles)
         label = "lit" if lit else "gray"
         print(f"BLENDER_REFERENCE {label} view={view} tiles={len(tiles)} triangles={triangles} range={args.range}",
               flush=True)
+        if crop_regions:
+            # 切り出しは種を 1 本ずつ別の起動で描く（1 本 CROP_MAX_TOTAL_SECONDS）: A を時間の上限まで、B を A と同じサンプル数まで
+            job_a = dict(job, crop=dict(job["crop"], seed="a"), required_outputs=aux_outputs + part_a)
+            if not run_blender_job(args, out_dir, f"{view}.seed_a", job_a, label=label):
+                print(f"BLENDER_REFERENCE error view={view} 種 A の Blender が失敗した（{GRAY_RESULT_DIR}/{view}.seed_a.blender.log）")
+                return 1
+            with open(part_a[1], encoding="utf-8") as f:
+                spp_a = int(json.load(f)["spp"])
+            job = dict(job, crop=dict(job["crop"], seed="b", target_spp=spp_a, merge_from=part_a[1]), max_spp_per_seed=spp_a)
         if not run_blender_job(args, out_dir, view, job, label=label):
             print(f"BLENDER_REFERENCE error view={view} Blender が失敗した（{GRAY_RESULT_DIR}/{view}.blender.log）")
             return 1
@@ -1750,9 +1762,14 @@ def render_gray_job(job):
         print(f"BLENDER_GRAY view={job['view']} crop border=({x0},{y0})-({x1},{y1}) pixels={int(inside.sum())} "
               f"target_pixels={int(target.sum())}", flush=True)
 
-    # 3. 本描画を CHUNK_SPP ずつ種を変えて重ね、偶数番目を A・奇数番目を B に足す（切り出しでは種ごとに直接光だけの描画も足す）
+    # 3. 本描画を CHUNK_SPP ずつ種を変えて重ね、偶数番目を A・奇数番目を B に足す（切り出しでは種ごとに直接光だけの描画も足す）。
+    # 切り出しは 1 回の起動で 1 本（crop の seed）だけを描く: A は時間の上限まで描いて途中の和を書き、B は A と同じサンプル数まで
+    # 描いて A の和と合わせる（収束は合わせた後に測る）
     groups = ("combined", "sun", "sky", "direct", "indirect") + (("sun_direct", "sky_direct") if crop else ())
     sums = {seed: {g: np.zeros((height, width, 3), dtype=np.float64) for g in groups} for seed in ("a", "b")}
+    renders = {"a": 0, "b": 0}
+    seed_order = (crop["seed"],) if crop else ("a", "b")
+    target_spp = int(crop.get("target_spp") or 0) if crop else 0
     chunk_spp = int(job["chunk_spp"])
     max_spp = int(job["max_spp_per_seed"])
     max_seconds = float(job["max_seconds"])
@@ -1766,8 +1783,10 @@ def render_gray_job(job):
     stop_reason = ""
     while True:
         pair_started = time.time()
-        for seed in ("a", "b"):
-            scene.cycles.seed = 1 + chunk
+        for seed in seed_order:
+            # 種の番号は A が 1, 3, 5…・B が 2, 4, 6…（1 本ずつ描く切り出しでも同じ番号になる）
+            seed_index = 2 * renders[seed] + (0 if seed == "a" else 1) if crop else chunk
+            scene.cycles.seed = 1 + seed_index
             channels = render_and_read(scene, exr_tmp)
             parts = {name: pass_rgb(channels, name) for name in
                      ("Combined", "Combined_sun", "Combined_sky", "Diffuse Direct", "Diffuse Indirect",
@@ -1783,27 +1802,40 @@ def render_gray_job(job):
             }
             if crop:
                 # 枠が名指しの領域を覆うこと（描いた画素の被覆）
-                if chunk == 0 and seed == "a" and (channels["ViewLayer.Combined.A"][target] < 0.5).any():
+                if chunk == 0 and (channels["ViewLayer.Combined.A"][target] < 0.5).any():
                     raise RuntimeError("切り出しの枠が名指しの領域の画素を覆っていない")
                 # 直接光だけ（跳ね返り 0）を別の種で描き、太陽の組・空の組を太陽の直接光・空の直接光にする
                 set_gray_bounces(scene, 0)
-                scene.cycles.seed = int(crop["direct_seed_offset"]) + chunk
+                scene.cycles.seed = int(crop["direct_seed_offset"]) + seed_index
                 direct_channels = render_and_read(scene, exr_tmp)
                 set_gray_bounces(scene, GRAY_MAX_BOUNCES)
                 values["sun_direct"] = pass_rgb(direct_channels, "Combined_sun")
                 values["sky_direct"] = pass_rgb(direct_channels, "Combined_sky")
             for group in groups:
                 sums[seed][group] += values[group]
+            renders[seed] += 1
             chunk += 1
         pair_seconds = time.time() - pair_started
+        if crop:
+            spp = renders[crop["seed"]] * chunk_spp
+            elapsed = time.time() - loop_started
+            history.append({"seed": crop["seed"], "spp_per_seed": spp, "elapsed_seconds": elapsed})
+            print(f"BLENDER_GRAY view={job['view']} seed={crop['seed']} spp={spp} elapsed={elapsed:.0f}s", flush=True)
+            if target_spp and spp >= target_spp:
+                stop_reason = "target_spp"
+                break
+            if spp + chunk_spp > max_spp:
+                stop_reason = "max_spp"
+                break
+            if time.time() - started + pair_seconds > crop_record["max_total_seconds"]:
+                stop_reason = "max_seconds"
+                break
+            continue
         per_seed = chunk // 2
         spp = per_seed * chunk_spp
         y_a = GR.luminance(sums["a"]["combined"] / per_seed)
         y_b = GR.luminance(sums["b"]["combined"] / per_seed)
         stats, all_converged = GR.convergence(y_a, y_b, masks)
-        if crop:
-            # 名指しの領域がすべて収束したときだけ止める（画素が下限に足りない領域は収束しない）
-            all_converged = all(stats[name]["converged"] for name in crop_record["regions"])
         elapsed = time.time() - loop_started
         history.append({"spp_per_seed": spp, "elapsed_seconds": elapsed, "regions": stats})
         print(f"BLENDER_GRAY view={job['view']} spp_per_seed={spp} elapsed={elapsed:.0f}s all_converged={int(all_converged)} " +
@@ -1818,16 +1850,56 @@ def render_gray_job(job):
         if elapsed + pair_seconds > max_seconds:
             stop_reason = "max_seconds"
             break
-        if crop and time.time() - started + pair_seconds > crop_record["max_total_seconds"]:
-            stop_reason = "max_seconds"
-            break
     render_seconds = time.time() - loop_started
 
-    # 4. 書き出し: 2 本の平均（各組）と、A・B の合成
-    per_seed = chunk // 2
-    final = {g: ((sums["a"][g] + sums["b"][g]) / (2.0 * per_seed)).astype(np.float32) for g in groups}
-    seed_a = (sums["a"]["combined"] / per_seed).astype(np.float32)
-    seed_b = (sums["b"]["combined"] / per_seed).astype(np.float32)
+    seed_runs = None
+    if crop:
+        run_record = {"seed": crop["seed"], "renders": renders[crop["seed"]], "chunk_spp": chunk_spp,
+                      "spp": renders[crop["seed"]] * chunk_spp, "stop_reason": stop_reason, "load_seconds": load_seconds,
+                      "visibility_seconds": visibility_seconds, "render_seconds": render_seconds,
+                      "total_seconds": time.time() - started, "history": history}
+        if crop["seed"] == "a":
+            # A: 途中の和（各組の平均）と記録を書いて終える。合わせるのは B の起動
+            np.savez(prefix + ".cycles.part_a.npz", **{g: (sums["a"][g] / max(renders["a"], 1)).astype(np.float32)
+                                                       for g in groups})
+            with open(prefix + ".cycles.part_a.json", "w", encoding="utf-8") as f:
+                json.dump(dict(run_record, crop=crop_record,
+                               part_sha256=sha256_file(prefix + ".cycles.part_a.npz")), f, indent=2, ensure_ascii=False)
+            print(f"BLENDER_GRAY view={job['view']} part seed=a spp={run_record['spp']} stop={stop_reason} "
+                  f"load={load_seconds:.1f}s render={render_seconds:.1f}s", flush=True)
+            return
+        # B: A の途中の和を読み、枠・描画の条件が同じことを確かめて合わせる
+        with open(crop["merge_from"], encoding="utf-8") as f:
+            part_a = json.load(f)
+        npz_path = os.path.splitext(crop["merge_from"])[0] + ".npz"
+        if sha256_file(npz_path) != part_a["part_sha256"] or part_a["crop"]["border_px"] != crop_record["border_px"] or \
+                int(part_a["chunk_spp"]) != chunk_spp:
+            raise RuntimeError("種 A の途中の和が記録と違うか、枠・1 回のサンプル数が B と違う")
+        with np.load(npz_path) as data:
+            for g in groups:
+                sums["a"][g] = data[g].astype(np.float64) * int(part_a["renders"])
+        renders["a"] = int(part_a["renders"])
+        seed_runs = {"a": {k: v for k, v in part_a.items() if k not in ("crop",)}, "b": run_record}
+        load_seconds = {"a": part_a["load_seconds"], "b": load_seconds}
+        visibility_seconds = {"a": part_a["visibility_seconds"], "b": visibility_seconds}
+        render_seconds = {"a": part_a["render_seconds"], "b": render_seconds}
+        stop_reason = f"a={part_a['stop_reason']},b={stop_reason}"
+        history = part_a["history"] + history
+
+    # 4. 書き出し: 2 本の平均（各組）と、A・B の合成（切り出しでは 2 本のサンプル数が違うことがあるので数で重みを付ける）
+    per_seed = min(renders["a"], renders["b"])
+    final = {g: ((sums["a"][g] + sums["b"][g]) / float(renders["a"] + renders["b"])).astype(np.float32) for g in groups}
+    seed_a = (sums["a"]["combined"] / renders["a"]).astype(np.float32)
+    seed_b = (sums["b"]["combined"] / renders["b"]).astype(np.float32)
+    if crop:
+        # 名指しの領域がすべて収束したか（画素が下限に足りない領域は収束しない）
+        stats, _ = GR.convergence(GR.luminance(seed_a), GR.luminance(seed_b), masks)
+        all_converged = all(stats[name]["converged"] for name in crop_record["regions"])
+        print(f"BLENDER_GRAY view={job['view']} merged spp_per_seed={per_seed * chunk_spp} "
+              f"all_converged={int(all_converged)} " +
+              " ".join(f"{name}={stats[name].get('mean_diff', float('nan')):.4f}/"
+                       f"{stats[name].get('pixel_rms', float('nan')):.3f}" for name in crop_record["regions"]),
+              flush=True)
     surface = alpha > 0.5
     combined_y = GR.luminance(final["combined"])[surface]
     split_y = GR.luminance(final["direct"] + final["indirect"])[surface]
@@ -1888,7 +1960,7 @@ def render_gray_job(job):
                      "clamp": 0.0, "denoise": False, "adaptive": False, "chunk_spp": chunk_spp,
                      "min_spp_per_seed": MIN_SPP_PER_SEED, "max_spp_per_seed": max_spp, "max_seconds": max_seconds,
                      "visibility_spp": VISIBILITY_SPP},
-        "seeds": {"a": list(range(1, chunk + 1, 2)), "b": list(range(2, chunk + 1, 2))},
+        "seeds": {"a": [1 + 2 * k for k in range(renders["a"])], "b": [2 + 2 * k for k in range(renders["b"])]},
         "spp_per_seed": per_seed * chunk_spp,
         "stop_reason": stop_reason,
         "all_converged": bool(all_converged),
@@ -1904,8 +1976,14 @@ def render_gray_job(job):
     if crop:
         meta["crop"] = crop_record
         meta["settings"]["light_tree"] = False
+        meta["seed_runs"] = seed_runs
     with open(prefix + ".cycles.json", "w", encoding="utf-8") as f:
         json.dump(meta, f, indent=2, ensure_ascii=False)
+    if crop:
+        print(f"BLENDER_GRAY view={job['view']} done spp_per_seed={per_seed * chunk_spp} stop={stop_reason} "
+              f"load={json.dumps(load_seconds)} render={json.dumps(render_seconds)} consistency={json.dumps(consistency)}",
+              flush=True)
+        return
     print(f"BLENDER_GRAY view={job['view']} done spp_per_seed={per_seed * chunk_spp} stop={stop_reason} "
           f"load={load_seconds:.1f}s render={render_seconds:.1f}s consistency={json.dumps(consistency)}", flush=True)
 

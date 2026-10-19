@@ -538,12 +538,17 @@ SHIFTED_REFERENCE_SCOPE = "region_means_only"
 # SCN-WL-CAMERA-OFFSET: ずらし 0 でない描画を起動の前に断り、自動補正と --camera-shift-hint を除いた（ふつうの Python の側だけ。
 # Blender の中で走る描画の関数は変えていない）。ずらしありの旧参照を --gray・--lit で使い続けるため
 # SCN-WLR-LIT-SHADOW-REF-C01: 切り出しの描画（--crop-regions。job の crop があるときだけ動く枝）と、材質の書き出し先の引数を
-# 足した。crop の無い job の描画（--depth・--gray・--albedo・--normal・--lit）は変えていない
+# 足した。crop の無い job の描画（--depth・--gray・--albedo・--normal・--lit）は変えていない。続けて切り出しの種を 1 本ずつ
+# 別の起動で描く形にした（crop の枝と起動の段取りだけ。画素ごとの材質の描画は変えていない）
 BLENDER_SCRIPT_EQUIVALENT_SHA256 = {
     "ab3aff4ec3c7776b27ad766059506d9e2f83b0e64904e76f76f54bbb508881e0":
         ("ad3cea721bf57a593caa9e7ab97228a6367fa94acd67bc00115e01886598be49",),
     "74c6ee7e3fce1a91d42929fd5700ac225c8db2b9ba8f924ee1330036da50a5a4":
         ("ab3aff4ec3c7776b27ad766059506d9e2f83b0e64904e76f76f54bbb508881e0",
+         "ad3cea721bf57a593caa9e7ab97228a6367fa94acd67bc00115e01886598be49"),
+    "e4145a910c54272e5990a7e26ceafd537e6e7f1299253867292e4fe6dcc8dfd0":
+        ("74c6ee7e3fce1a91d42929fd5700ac225c8db2b9ba8f924ee1330036da50a5a4",
+         "ab3aff4ec3c7776b27ad766059506d9e2f83b0e64904e76f76f54bbb508881e0",
          "ad3cea721bf57a593caa9e7ab97228a6367fa94acd67bc00115e01886598be49"),
 }
 # 小数のずれを求めるのに使う画素: 深度の勾配が 1 画素あたり深度のこの割合未満（1 次の近似が効く所）
