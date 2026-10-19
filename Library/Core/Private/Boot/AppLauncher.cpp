@@ -83,6 +83,22 @@ namespace
         return false;
     }
 
+#if NORVES_BUILD_DEVELOPMENT
+    // --validation-layer: Vulkan の検証レイヤーを入れる（値を取らない）。Debug は既定で入るので、RelWithDebInfo で
+    // 検証レイヤーを使う回帰の撮影のための引数。開発ビルド（Debug・RelWithDebInfo）だけで効き、Release では受け付けない。
+    bool HasValidationLayerArgument(const NorvesLib::Core::Boot::BootConfig& config)
+    {
+        for (size_t i = 0; i < config.Arguments.size(); ++i)
+        {
+            if (config.Arguments[i] == TEXT("--validation-layer"))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+#endif
+
     /**
      * @brief プラットフォーム初期化（内部ヘルパ）
      *
@@ -140,10 +156,20 @@ namespace NorvesLib::Core::Boot
             return -1;
         }
 
+        // 起動引数で変わる設定を写しへ入れる（--validation-layer は開発ビルドだけ）
+        BootConfig effectiveConfig = config;
+#if NORVES_BUILD_DEVELOPMENT
+        if (HasValidationLayerArgument(config))
+        {
+            effectiveConfig.bEnableRHIValidation = true;
+            LOG_INFO("VALIDATION_LAYER requested source=argument");
+        }
+#endif
+
         // ApplicationProcessor を使用
         auto& processor = Engine::ApplicationProcessor::GetInstance();
 
-        if (!processor.Initialize(config))
+        if (!processor.Initialize(effectiveConfig))
         {
             Engine::ApplicationProcessor::DestroyInstance();
             ShutdownPlatform(config);

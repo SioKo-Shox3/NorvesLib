@@ -1835,7 +1835,7 @@
 - notes: 2026-10-19 GAP-LIST の後の組み直し（Sol の批評 1・2・4・21）。`-Phase before` は反復の中で 1 回撮って保存する。 2026-10-19 親: 反復 3 の判断待ち（blocked/SCN-WLR-REF-SPLIT.md）を推奨案で解き、残りを SCN-WLR-REGRESSION-VALIDATION（推奨 a）・REGRESSION-MOTION（推奨 1）・RECAPTURE-GRAY-LIT・RECAPTURE-BLUR-STATIC・RECAPTURE-BLUR-MOTION に分けた（1 項目 40 分に収める）。この項目は済んだ範囲（コミット d4b2742a）で verify を回して閉じる。
 
 ## SCN-WLR-REGRESSION-VALIDATION: RelWithDebInfo でも検証レイヤーを入れて回帰の撮影を 9 分に収める
-- status: todo
+- status: done
 - after: SCN-WLR-REF-SPLIT
 - done-when: 開発ビルド（Debug・RelWithDebInfo）だけで効く起動引数 `--validation-layer` を足し、RelWithDebInfo でも Vulkan の検証レイヤーを入れられるようにする（今は `Library/Core/Public/Boot/BootConfig.h` で Debug だけ。Release では引数を受け付けない）。入ったことをログ（`VALIDATION_LAYER enabled`）で示す。`CaptureRegression.ps1` を RelWithDebInfo ＋ `--validation-layer` で撮る形にし、4 シーン（rendering3dtest・mega-bananas・sandbox・night-village）の撮影が 9 分以内に終わり、各シーンの検証レイヤーの指摘が `--regression` の検査に入ることを確かめる。反復の中で `-Phase before` を撮り、verify は `after`。Release のビルドで引数が効かないことを記録する。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`

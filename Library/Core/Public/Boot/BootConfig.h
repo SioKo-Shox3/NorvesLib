@@ -110,6 +110,8 @@ namespace NorvesLib::Core::Boot
         /**
          * @brief RHI バリデーションレイヤーを有効にするか
          * デフォルトは Debug ビルドで true、Release ビルドで false（NORVES_BUILD_DEBUG 連動）。
+         * 開発ビルド（Debug・RelWithDebInfo）では起動引数 --validation-layer で true にできる（AppLauncher が読む。
+         * Release では引数を受け付けない）。
          */
 #if NORVES_BUILD_DEBUG
         bool bEnableRHIValidation = true;

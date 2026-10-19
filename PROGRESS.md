@@ -5613,3 +5613,17 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - Notes:
   - selftest は撮影後の記録を使うので、撮影の順序の不具合（metrics.json の前に記録）は検出できない。空の署名を書かない検査で代える（新しい試験は足していない）
 - Next: TASKS.md の次の未完の項目。
+
+### SCN-WLR-REGRESSION-VALIDATION 完了（2026-10-19、run 20261019-192352 の反復 8）
+- Done: 起動引数 `--validation-layer` を足した（開発ビルドだけ。`Library/Core/Private/Boot/AppLauncher.cpp` が `bEnableRHIValidation` を立て、Release ではコンパイルされない）。`VulkanDevice` がインスタンスの作成後に `VALIDATION_LAYER enabled`／`disabled` を書く。`CaptureScene.ps1` は `-GameArgs validation-layer` の撮影でも検証レイヤーのログを数え、ログが無い・`VALIDATION_LAYER enabled` が無ければ失敗、Release での指定は撮らずに失敗。`CaptureRegression.ps1` を RelWithDebInfo ＋ `--validation-layer` にした。記録は `Docs/RenderingValidation/RegressionValidationLayer.md`
+- 証拠（`.harness/runs/20261019-192352/`）:
+  - `verify-SCN-WLR-REGRESSION-VALIDATION-1.txt`: Debug の Game のビルド EXIT=0
+  - `verify-SCN-WLR-REGRESSION-VALIDATION-2.txt`: `-Phase after` result=pass・sec=186（上限 540）・EXIT=0。`--regression` result=pass、4 シーンとも RelWithDebInfo・`--validation-layer`・`layer_enabled_logged`=true・検証レイヤーのエラー 0
+  - `aux-SCN-WLR-REGRESSION-VALIDATION-before.txt`: `-Phase before` sec=216（ビルド込み）
+  - `aux-SCN-WLR-REGRESSION-VALIDATION-bestpractices.txt`: best practices を足した RelWithDebInfo の sandbox で警告 23 件が metrics.json に届く
+  - `aux-SCN-WLR-REGRESSION-VALIDATION-inject.txt`: 写しで error_count=1・記録の欠けを作ると `--regression` が落ちる
+  - `aux-SCN-WLR-REGRESSION-VALIDATION-release.txt`・`-release-build.txt`: Release の Game は `--validation-layer` でも検証レイヤーのログができない（RelWithDebInfo はできる）。CaptureScene は Release の指定を validation_layer_in_release で断る
+- Notes:
+  - 新しい試験は足していない
+  - Release の Game.exe を今のコードでビルドし直した（build/ の生成物）
+- Next: TASKS.md の次の未完の項目。

@@ -1111,9 +1111,15 @@ namespace NorvesLib::RHI::Vulkan
 
         CreateInstance();
 
+        // 検証レイヤーが入ったかを撮影の検査が照らせるよう、インスタンスを作った後に 1 行出す
         if (m_bValidationEnabled)
         {
+            NORVES_LOG_INFO("VulkanDevice", "VALIDATION_LAYER enabled layer=VK_LAYER_KHRONOS_validation");
             SetupDebugMessenger();
+        }
+        else
+        {
+            NORVES_LOG_INFO("VulkanDevice", "VALIDATION_LAYER disabled");
         }
         PickPhysicalDevice();
         CreateLogicalDevice();

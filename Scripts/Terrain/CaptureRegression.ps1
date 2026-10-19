@@ -1,7 +1,8 @@
 ﻿# 回帰の撮影: ランチャーに載ったシーンの既定の視点を撮り、変更の前（before）と後（after）を並べる。
 #   powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Terrain/CaptureRegression.ps1 -Item <ID> -Phase before|after [-Motion]
 # 撮るシーン: rendering3dtest・mega-bananas・sandbox と、ランチャーに載っていれば night-village（Game/Scenes/SceneCatalog.h に
-# シーンの名前があるか見る）。どれも既定の視点 overview を Debug で撮る（検証レイヤーが入るのは Debug だけ。Core の BootConfig.h）。
+# シーンの名前があるか見る）。どれも既定の視点 overview を RelWithDebInfo に起動引数 --validation-layer を付けて撮る（開発ビルドだけで
+# 効く引数で、Vulkan の検証レイヤーを入れる。Core の Boot/AppLauncher.cpp。Debug より速く、検証レイヤーの指摘も検査に入る）。
 # 最初のシーンだけ -Build し、以後は同じ Game.exe で撮る。
 # -Motion を付けると、rendering3dtest をカメラ台本 Scripts/CameraScripts/rendering3dtest-pan.txt で撮る組も足す。
 # 出力は .harness/runs/regression/<ID>/<before|after>/<シーン>/（CaptureScene.ps1 の出力）。after は撮り終えてから
@@ -38,9 +39,9 @@ foreach ($shot in $shots)
 {
     $outDir = "$phaseDir/$($shot.name)"
     $capture = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'Scripts/CaptureScene.ps1', '-Scene', $shot.scene,
-        '-Configuration', 'Debug', '-RequireAssets', '-Views', 'overview', '-OutDir', $outDir)
+        '-Configuration', 'RelWithDebInfo', '-RequireAssets', '-Views', 'overview', '-OutDir', $outDir)
     if ($first) { $capture += '-Build' }
-    if ($shot.args.Count -gt 0) { $capture += '-GameArgs'; $capture += ($shot.args -join ',') }
+    $capture += '-GameArgs'; $capture += ((@('validation-layer') + $shot.args) -join ',')
     $stepWatch = [Diagnostics.Stopwatch]::StartNew()
     # CaptureScene の標準エラーで止めない（終わりの値で判定する）
     $ErrorActionPreference = 'Continue'

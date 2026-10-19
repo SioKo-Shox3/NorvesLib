@@ -8,8 +8,9 @@
 - 荒野の撮影（`Scripts/CaptureScene.ps1 -Scene wasteland`）と周回スモーク（`Scripts/RunSceneCycleSmoke.ps1 -Scenes wasteland`）は
   **RelWithDebInfo の Game** で回す（`-Configuration RelWithDebInfo -Build`）。`-Build` で撮る前にその構成の Game をビルドし、古い exe で撮らない。
 - Debug の Game のビルド（`cmake --build build --config Debug --target Game -- /m:1`）は各項目の verify に残す。
-- RelWithDebInfo は Vulkan の検証レイヤーを有効にしない（`CaptureScene.ps1` は Debug のときだけ検証レイヤーのログを数える）。
-  描画の経路やリソースの扱いを変える項目は、検証レイヤーの確かめを Debug の起動画面の撮影（`CaptureStartupScene.ps1`）などで別に行う。
+- RelWithDebInfo は既定では Vulkan の検証レイヤーを有効にしない。起動引数 `--validation-layer`（開発ビルドだけ。`-GameArgs validation-layer`）を
+  付けると入り、`CaptureScene.ps1` が検証レイヤーのログを数える。回帰の撮影（`Scripts/Terrain/CaptureRegression.ps1`）はこの形で撮る
+  （`RegressionValidationLayer.md`）。
 - Release には計測・デバッグの機能を足さない（ログが無いので撮影の検査にも使わない）。
 
 ## 段ごとの時間（手本の 6 視点、1920×1080、1 回の起動で順に撮る）

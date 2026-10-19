@@ -3,7 +3,7 @@
 # before・after の下にシーンごとの撮影（CaptureScene.ps1 の出力。metrics.json と PNG）が並ぶ。シーンごと・PNG ごとに:
 #   落ちる: after にシーンか PNG が無い（撮影の欠け）、after の CaptureScene が失敗を書いた、真っ黒（輝度の平均が BLACK_MEAN 未満か
 #           最大が BLACK_MAX 以下）、検証レイヤーのエラーが 1 件以上か記録が無い（metrics.json の vulkan_validation.error_count。
-#           検証レイヤーが入るのは Debug だけ）
+#           回帰の撮影は RelWithDebInfo に --validation-layer を付けて検証レイヤーを入れる）
 #   記録する: before との差（輝度の PSNR〔dB〕と平均の差〔0〜255〕）。差は合否に使わない（変更の意図した差か見るため）
 # 結果は <after>/regression_check.json に書く。
 import json
@@ -65,7 +65,7 @@ def run(rc, after_dir, before_dir, verify):
         errors = validation_errors(metrics)
         entry["validation_errors"] = errors
         if errors is None:
-            failures.append(f"{scene}: 検証レイヤーの記録が無い（Debug で撮っていない）")
+            failures.append(f"{scene}: 検証レイヤーの記録が無い（検証レイヤーを入れて撮っていない）")
         elif errors:
             failures.append(f"{scene}: 検証レイヤーのエラーが {errors} 件ある")
         before_pngs = sorted(n for n in os.listdir(before_scene) if n.endswith(".png")) if os.path.isdir(before_scene) else []
