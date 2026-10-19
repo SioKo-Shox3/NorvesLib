@@ -5400,3 +5400,11 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 材質の AO の値（平らな砂地で 0.6 台）と直接光へ掛けることの是非は確かめていない。SCN-WLR-GAP-LIST の候補
   - 新しい試験は足していない（verify の撮影と検査が確かめる）
 - Next: TASKS.md の次の未完の項目（SCN-WLR-CYCLES-LIT-B）。
+
+### SCN-WLR-CYCLES-LIT-B 途中（2026-10-19、run 20261018-205227 の反復 25〜26）
+- In progress: 残りの 3 視点（ref_far_02・ref_cliff_02・ref_ground_02）を LIT-A と同じ条件で描き、6 視点の写真｜エンジン｜Cycles を並べる
+  - エンジンの撮影 6 視点（共通の照明・地形だけ・最細の LOD）を `.harness/runs/scene-capture/SCN-WLR-CYCLES-LIT/` に撮り直した（`aux-SCN-WLR-CYCLES-LIT-B-capture.txt`、result=pass、510 秒、入力のハッシュ sha256=9941e342… は LIT-A と同じ）
+  - `ReferenceCheck.py --lit` に写真｜エンジン｜Cycles の比較画像 `lit_photo_<視点>.png`・一覧 `lit_photo_overview.png` と、写真の崖・地面の枠（`CompareReference.py` の PHOTOS）の表示の値・崖 ÷ 地面の輝度の比・色の比（R/G・B/G）の記録を足した。写真とは照明・天気・現像が違うので合否には使わない。LIT-A の 3 視点で動くことを確かめた（`aux-SCN-WLR-CYCLES-LIT-B-old3.txt`、result=pass。崖 ÷ 地面: ref_cliff_01 写真 1.03・エンジン 1.71・Cycles 1.30）
+  - ref_ground_02: 材質（59 区画・4 列、ずらし (+0.239, −0.024) 画素で残り 0.014 画素）と Cycles（146 区画・1.21 億三角形、512 サンプルで全領域が収束、描画 498 秒）が済んだ（`aux-SCN-WLR-CYCLES-LIT-B-ref_ground_02.txt`、EXIT=0）
+  - ref_far_02: 材質（76 区画・4 列、ずらしなしで残り 0.009 画素）が済み、Cycles（130 区画・0.81 億三角形）を描いている
+- 残り: ref_far_02 の Cycles、ref_cliff_02 の材質と Cycles（前の反復の連続実行の台本がこのまま続けて描く）、`--lit --verify` の 6 視点、記録の文書（6 視点の表・写真との比較と条件の違い）
