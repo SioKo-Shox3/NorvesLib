@@ -3,12 +3,15 @@
 # 空の放射輝度・透過率・多重散乱・地表の照度を numpy で数値積分する。
 #
 # 使い方:
-#   python Scripts/Terrain/AtmosphereReference.py --verify [--dump <視点>.atmos.json] [--out <出力先>]
-#       論文の設定と、荒野の書き出し（--dump。省くと SCN-WLR-ATMOS-DUMP の ref_ground_02）の設定の 2 組で、
-#       正解を段 1 と、歩数・方向の数・表の細かさをすべて倍にした段 2 で求め、比べる量がすべて CONVERGENCE_TOLERANCE 以内で
-#       一致することを確かめる。ほかに、鉛直の光学的深さの解析解との一致・多重散乱の級数が収束すること・B の 2 回目の散乱の
-#       源が位相関数の角度の積分と合うこと・1 回目だけの値が A と B で一致することを見る。
-#       結果を <出力先>/atmosphere_reference_verify.json に書く。
+#   python Scripts/Terrain/AtmosphereReference.py --solve [--dump <視点>.atmos.json] [--out <出力先>]
+#       論文の設定と、荒野の書き出し（--dump。省くと SCN-WLR-ATMOS-DUMP の ref_ground_02）の設定の 2 組で、歩数・方向の数・
+#       表の細かさをすべて倍にした段 2 の正解（1 組数分）と下の検査を求め、この台本と書き出しの中身のハッシュつきで
+#       <出力先>/atmosphere_reference_level2.json に保存する。
+#   python Scripts/Terrain/AtmosphereReference.py --verify [--dump ...] [--out ...]
+#       同じ 2 組で段 1 をその場で解き、保存した段 2 と比べる量がすべて CONVERGENCE_TOLERANCE 以内で一致することを確かめる
+#       （保存した段 2 のハッシュが今の入力と同じことも見る）。ほかに、鉛直の光学的深さの解析解との一致・多重散乱の級数が
+#       収束すること・B の 2 回目の散乱の源が位相関数の角度の積分と合うこと・1 回目だけの値が A と B で一致することを、
+#       段 1 はその場で、段 2 は保存した値で見る。結果を <出力先>/atmosphere_reference_verify.json に書く。
 #   ほかのスクリプト（ReferenceCheck.py --atmos-ref）は import して使う。
 #
 # 媒質（高度 h の m、1/m）:
@@ -29,6 +32,7 @@
 #      ＋ 地表に当たれば T × albedo / π × E_n（E_n は地表の n 回目の光の照度）。視線の源は σ_R G_R + σ_M G_M（全回の和）。
 #      1 回目の光は L_1(p, w) = p_R(s·w) F_R(p, w) + p_M(s·w) F_M(p, w) + 地表で返る太陽 で、F = ∫ T σ T_sun dt は
 #      向きでなめらかなので、Mie の前方の山どうしの積は球の上の畳み込み（ルジャンドル展開の係数の積）で解析的に積む。
+#      散乱の源の表は、その解析的な部分 Σ_Y F_Y(p, s) (p_X ⊛ p_Y)(u·s) を引いた残りを持ち、引くときに足し戻す。
 #
 # 数値の積分: 視線は中点則（空への視線は観測点の近くを細かく取る 2 乗の並び、地表や区間の視線は等間隔）。
 # 太陽の透過率は Bruneton 2017 の (r, μ) の並び（地平線の近くを細かく取る）の表を線形に引く。
@@ -39,6 +43,7 @@
 # 太陽の向きの σ_R G_R + σ_M G_M が等方とした源の何倍かも記録する。1 回目だけの値（A の視線の 1 回目の項と、B が次の回へ
 # 渡す 1 回目の光）は FIRST_ORDER_TOLERANCE で一致を見る。
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -51,6 +56,8 @@ import numpy as np
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 DEFAULT_DUMP = os.path.join(REPO_ROOT, ".harness", "runs", "scene-capture", "SCN-WLR-ATMOS-DUMP", "ref_ground_02.atmos.json")
 DEFAULT_OUT = os.path.join(REPO_ROOT, ".harness", "runs", "scene-capture", "SCN-WLR-ATMOS-REF")
+# --solve が段 2 の正解と検査を保存する先（--out の下）
+SOLVE_FILE = "atmosphere_reference_level2.json"
 
 # 段 2 と段 1 の相対差の上限（0.5 %）と、相対差の分母の下限（太陽 1 lux あたりの cd/m²・透過率）
 CONVERGENCE_TOLERANCE = 0.005
@@ -654,6 +661,44 @@ class DirectionalField:
             result = result + weight[..., None] * tables[base + offset]
         return result
 
+    def interpolate_point(self, values, altitude, sun_up):
+        """点の格子（高度 × 太陽の余弦）の値 [A, C, 3] を双線形に引く"""
+        sizes = self.shape[:2]
+        u = np.sqrt(np.clip(altitude / self.height, 0.0, 1.0)) * (sizes[0] - 1)
+        m = (np.clip(sun_up, -1.0, 1.0) + 1.0) * 0.5 * (sizes[1] - 1)
+        i0 = np.minimum(np.floor(u).astype(np.int64), sizes[0] - 2)
+        j0 = np.minimum(np.floor(m).astype(np.int64), sizes[1] - 2)
+        a = (u - i0)[..., None]
+        b = (m - j0)[..., None]
+        return ((1 - a) * (1 - b) * values[i0, j0] + (1 - a) * b * values[i0, j0 + 1] +
+                a * (1 - b) * values[i0 + 1, j0] + a * b * values[i0 + 1, j0 + 1])
+
+    def analytic_sources(self, spec, altitude, sun_up, between):
+        """1 回目の光のうち太陽の向きの値 F_Y(s) で置いた部分の散乱の源 Σ_Y F_Y(s) (p_X ⊛ p_Y)(u·s)。表はこれを引いた残りを
+        持ち、引くときに足し戻す（Mie の前方の山どうしの積の鋭い形を u の格子の線形補間に任せない）。between は u·s"""
+        result = 0.0
+        for spec_y, key in ((RAYLEIGH, "Fs_R"), (self.mie, "Fs_M")):
+            result = result + self.interpolate_point(self.first[key], altitude, sun_up) * \
+                phase_convolution(spec, spec_y, between)[..., None]
+        return result
+
+    def node_analytic(self, spec):
+        """analytic_sources を表の格子の点で求めた値 [A, C, T, 3]"""
+        between = sun_vectors(self.cosines) @ self.targets.T
+        result = 0.0
+        for spec_y, key in ((RAYLEIGH, "Fs_R"), (self.mie, "Fs_M")):
+            result = result + self.first[key][:, :, None, :] * phase_convolution(spec, spec_y, between)[None, ..., None]
+        return result
+
+    def source_lookup(self, tables, specs, altitude, sun_up, view_up, azimuth, between, analytic):
+        """散乱の源の表を引き、analytic なら 1 回目の光の解析的な部分を足し戻す（列は specs の順に 3 つずつ）"""
+        value = self.lookup(tables, altitude, sun_up, view_up, azimuth)
+        if analytic:
+            altitude, sun_up, between = np.broadcast_arrays(altitude, sun_up, between)
+            value = value + np.concatenate([self.analytic_sources(spec, altitude, sun_up, between) for spec in specs],
+                                           axis=-1)
+        return value
+
     def interpolate_ground(self, values, cosine):
         count = len(self.cosines)
         m = (np.clip(cosine, -1.0, 1.0) + 1.0) * 0.5 * (count - 1)
@@ -661,8 +706,9 @@ class DirectionalField:
         b = (m - j0)[..., None]
         return values[j0] * (1.0 - b) + values[j0 + 1] * b
 
-    def scattered_at(self, quadrature, sun_cosines, tables, ground):
-        """散乱の源の表 tables と地表の照度 ground（太陽の余弦の格子 [S,3]）から、点の w の向きに入ってくる次の回の光 [J,N,3]"""
+    def scattered_at(self, quadrature, sun_cosines, tables, ground, analytic):
+        """散乱の源の表 tables と地表の照度 ground（太陽の余弦の格子 [S,3]）から、点の w の向きに入ってくる次の回の光 [J,N,3]。
+        analytic なら tables は 1 回目の光の解析的な部分を引いた残り"""
         medium = self.medium
         if "ray" not in quadrature["cache"]:
             quadrature["cache"]["ray"] = trace_rays(medium, quadrature["radius"], quadrature["directions"], self.steps)
@@ -671,8 +717,10 @@ class DirectionalField:
         directions = quadrature["directions"]
         sun_up = np.einsum("jc,nkc->jnk", sun, ray["position"]) / ray["r"][None]
         view_up = np.einsum("nc,nkc->nk", directions, ray["position"]) / ray["r"]
-        azimuth = relative_azimuth((sun @ directions.T)[..., None], view_up[None], sun_up)
-        sources = self.lookup(tables, (ray["r"] - medium.bottom)[None], sun_up, view_up[None], azimuth)
+        between = (sun @ directions.T)[..., None]
+        azimuth = relative_azimuth(between, view_up[None], sun_up)
+        sources = self.source_lookup(tables, (RAYLEIGH, self.mie), (ray["r"] - medium.bottom)[None], sun_up,
+                                     view_up[None], azimuth, between, analytic)
         emitted = ray["rayleigh"][None] * sources[..., :3] + ray["mie"][None, ..., None] * sources[..., 3:]
         result = np.sum(ray["weight"][None] * emitted, axis=2)
         diffuse = self.interpolate_ground(ground, sun @ ray["ground"].T)
@@ -716,6 +764,8 @@ class DirectionalField:
         all_cosines = np.arange(cosine_count)
         ground = self.ground_irradiance(self.quadratures[0], first_slice(0, all_cosines),
                                         np.zeros((cosine_count, directions_count, 3)))
+        # 1 回目の光の解析的な部分（表の格子の点の値）。表はこれを引いた残りを持つ
+        node_analytic = np.concatenate([self.node_analytic(spec) for spec in specs], axis=-1)
         total_tables = tables.copy()
         total_ground = ground.copy()
         higher = np.zeros((altitude_count, cosine_count, directions_count, 3))
@@ -723,10 +773,12 @@ class DirectionalField:
         orders = 1
         fraction = 1.0
         while orders < ORDER_LIMIT:
-            flat = tables.reshape(-1, 6)
+            analytic = orders == 1
+            flat = (tables - node_analytic if analytic else tables).reshape(-1, 6)
             radiance = np.zeros_like(higher)
             for (i, js), values in zip(tasks, parallel_map(
-                    lambda task: self.scattered_at(self.quadratures[task[0]], self.cosines[task[1]], flat, ground), tasks)):
+                    lambda task: self.scattered_at(self.quadratures[task[0]], self.cosines[task[1]], flat, ground,
+                                                   analytic), tasks)):
                 radiance[i, js] = values
             higher += radiance
             following = np.zeros_like(tables)
@@ -746,7 +798,7 @@ class DirectionalField:
         self.orders = orders
         self.order_ratios = ratios
         self.last_order_fraction = fraction
-        self.tables = total_tables.reshape(-1, 6)
+        self.tables = (total_tables - node_analytic).reshape(-1, 6)
         self.ground = total_ground
         self.higher = higher
 
@@ -757,7 +809,8 @@ class DirectionalField:
         return self.interpolate_ground(self.ground, sun_cosine)
 
     def table_for(self, spec):
-        """位相関数 spec の散乱の源の表（全回の和、[..., 3]）。高さフォグの HG のように表に無い位相関数のときに作る"""
+        """位相関数 spec の散乱の源の表（全回の和から 1 回目の光の解析的な部分を引いた残り、[..., 3]）。高さフォグの HG の
+        ように表に無い位相関数のときに作る"""
         if spec == RAYLEIGH:
             return self.tables[:, :3]
         if spec == self.mie:
@@ -773,7 +826,7 @@ class DirectionalField:
 
             for i, value in enumerate(parallel_map(task_sources, range(altitude_count))):
                 values[i] = value
-            self.extra_tables[spec] = values.reshape(-1, 3)
+            self.extra_tables[spec] = (values - self.node_analytic(spec)).reshape(-1, 3)
         return self.extra_tables[spec]
 
     def evaluate(self, altitude, sun_cosine, spec=ISOTROPIC, targets=None):
@@ -787,7 +840,7 @@ class DirectionalField:
         def point(index):
             quadrature = self.quadrature(self.medium.bottom + altitude[index])
             first = self.first_order_at(quadrature, sun_cosine[index:index + 1])
-            higher = self.scattered_at(quadrature, sun_cosine[index:index + 1], self.tables, self.ground)
+            higher = self.scattered_at(quadrature, sun_cosine[index:index + 1], self.tables, self.ground, True)
             return self.sources_at(quadrature, first, higher, spec, targets)[0]
 
         values = np.array(parallel_map(point, range(len(altitude))))
@@ -880,7 +933,9 @@ class Atmosphere:
             view_up = (px * directions[:, 0, None] + py * directions[:, 1, None] + pz * directions[:, 2, None]) / r
             azimuth = relative_azimuth(view_cosine[:, None], view_up, sun_cosine)
             field = self.directional
-            sources = field.lookup(field.tables, altitude, sun_cosine, view_up, azimuth)
+            between = view_cosine[:, None]
+            sources = field.source_lookup(field.tables, (RAYLEIGH, field.mie), altitude, sun_cosine, view_up, azimuth,
+                                          between, True)
             air_multiple = rayleigh_s * sources[..., :3] + mie_s[..., None] * sources[..., 3:]
         weight = view_t * dt[..., None]
         result = {
@@ -893,8 +948,9 @@ class Atmosphere:
             if version == "A":
                 fog_sources = psi
             else:
-                fog_sources = field.lookup(field.table_for(henyey_greenstein(fog["phase_anisotropy"])), altitude,
-                                           sun_cosine, view_up, azimuth)
+                fog_spec = henyey_greenstein(fog["phase_anisotropy"])
+                fog_sources = field.source_lookup(field.table_for(fog_spec), (fog_spec,), altitude, sun_cosine, view_up,
+                                                  azimuth, between, True)
             result["fog_multiple"] = np.sum(weight * fog_s[..., None] * fog_sources, axis=1)
         transmittance = np.exp(-np.sum(step_depth, axis=1))
         ground = np.zeros((len(directions), 3))
@@ -1084,12 +1140,12 @@ def compare_levels(coarse, fine):
     return worst
 
 
-def verify(dump_path, out_dir):
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+def reference_sets(dump_path):
+    """比べる組（名前・設定・太陽の高度・観測点の高度）と、最小再現の高度（空気遠近の起点の高度 + カメラの y。書き出しが
+    無いときは評価者の値）と、見つかった問題"""
     failures = []
-    # 最小再現の高度（空気遠近の起点の高度 + カメラの y）。書き出しが無いときは評価者の値
     repro_altitude = REPRO_ALTITUDE_M
-    sets = []
+    sets = [("paper", PAPER_SETTINGS, 38.0, 100.0)]
     if os.path.isfile(dump_path):
         with open(dump_path, encoding="utf-8") as f:
             meta = json.load(f)
@@ -1098,67 +1154,146 @@ def verify(dump_path, out_dir):
         sets.append(("engine", settings_from_dump(meta), float(sky["sun_altitude_degrees"]), float(sky["observer_altitude_m"])))
     else:
         failures.append(f"書き出しの JSON が無い: {dump_path}")
-    sets.insert(0, ("paper", PAPER_SETTINGS, 38.0, 100.0))
+    return sets, repro_altitude, failures
+
+
+def inputs_sha256(dump_path):
+    """段 2 の保存した結果が今の入力のものかを見るハッシュ（この台本と書き出しの JSON の中身）"""
+    digest = hashlib.sha256()
+    for path in (os.path.abspath(__file__), dump_path):
+        digest.update(os.path.basename(path).encode("utf-8"))
+        if os.path.isfile(path):
+            with open(path, "rb") as f:
+                digest.update(f.read())
+    return digest.hexdigest()
+
+
+def correctness_checks(atmosphere, settings, sun_altitude, observer, repro_altitude):
+    """収束以外の検査: 鉛直の光学的深さの解析解、f_ms < 1、B の回数の打ち切り、(1) 2 回目の散乱の源と位相関数の角度の積分
+    （最小再現の高度と観測点）、(3) 1 回目だけの値の A と B の一致（観測点と最小再現の高度）"""
+    analytic = vertical_optical_depth(settings)
+    table_vertical = atmosphere.table.optical_depth(np.array(atmosphere.medium.bottom), np.array(1.0))
+    second_order = [second_order_check(atmosphere, altitude, sun_altitude) for altitude in (repro_altitude, observer)]
+    first_order = [first_order_check(atmosphere, altitude, sun_altitude) for altitude in (observer, repro_altitude)]
+    directional = atmosphere.directional
+    return {
+        "level": atmosphere.level,
+        "seconds": atmosphere.seconds,
+        "seconds_directional": directional.seconds,
+        "vertical_optical_depth": {"table": table_vertical.tolist(), "analytic": analytic.tolist(),
+                                   "max_relative_error": float(np.max(np.abs(table_vertical - analytic) / analytic))},
+        "f_ms_max": float(np.max(atmosphere.field.f_ms)),
+        "orders": directional.orders,
+        "order_ratios_first10": directional.order_ratios[:10],
+        "last_order_fraction": directional.last_order_fraction,
+        "second_order_check": second_order,
+        "second_order_max_relative": max(check["max_relative"] for check in second_order),
+        "first_order_check": first_order,
+        "first_order_max_relative": max(check["max_relative"] for check in first_order),
+    }
+
+
+def check_failures(name, checks):
+    failures = []
+    level = checks["level"]
+    # 解析解との一致は段 2 の透過率の表で見る（段 1 の表は荒野の設定で 1.2e-3）
+    if level >= 2 and checks["vertical_optical_depth"]["max_relative_error"] > ANALYTIC_TOLERANCE:
+        failures.append(f"{name} 段 {level}: 鉛直の光学的深さが解析解と "
+                        f"{checks['vertical_optical_depth']['max_relative_error']:.2e} 違う")
+    if not checks["f_ms_max"] < 1.0:
+        failures.append(f"{name} 段 {level}: f_ms の最大 {checks['f_ms_max']} が 1 以上（論文の級数が収束しない）")
+    if checks["last_order_fraction"] > ORDER_STOP_FRACTION:
+        failures.append(f"{name} 段 {level}: 散乱の回数で足す版が {ORDER_LIMIT} 回で収束しない")
+    if checks["second_order_max_relative"] > SECOND_ORDER_TOLERANCE:
+        failures.append(f"{name} 段 {level}: B の 2 回目の散乱の源が、細かい求積で直接積んだ値と "
+                        f"{checks['second_order_max_relative']:.2e} 違う")
+    if checks["first_order_max_relative"] > FIRST_ORDER_TOLERANCE:
+        failures.append(f"{name} 段 {level}: 1 回目だけの値が A と B で {checks['first_order_max_relative']:.2e} 違う")
+    return failures
+
+
+def solve(dump_path, out_dir):
+    """段 2（重い。1 組数分）の収束を見る量と検査を求め、入力のハッシュつきで保存する。--verify はこれと段 1 を比べる"""
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sets, repro_altitude, failures = reference_sets(dump_path)
+    result = {"inputs_sha256": inputs_sha256(dump_path), "dump": dump_path, "repro_altitude_m": repro_altitude,
+              "level": 2, "sets": {}}
+    for name, settings, sun_altitude, observer in sets:
+        fine = Atmosphere(settings, 2)
+        quantities = standard_quantities(fine, sun_altitude, observer)
+        checks = correctness_checks(fine, settings, sun_altitude, observer, repro_altitude)
+        failures += check_failures(name, checks)
+        result["sets"][name] = {"parameters": fine.parameters, "sun_altitude_degrees": sun_altitude,
+                                "observer_altitude_m": observer, "checks": checks,
+                                "quantities": {key: np.asarray(value).tolist() for key, value in quantities.items()}}
+        print(f"ATMOSPHERE_REFERENCE_SOLVE set={name} level=2 seconds={fine.seconds:.1f} orders={checks['orders']} "
+              f"second_order_max_rel={checks['second_order_max_relative']:.2e} "
+              f"first_order_A_vs_B={checks['first_order_max_relative']:.1e}", flush=True)
+    result["failures"] = failures
+    os.makedirs(out_dir, exist_ok=True)
+    path = os.path.join(out_dir, SOLVE_FILE)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(result, f, indent=1, ensure_ascii=False)
+    for failure in failures:
+        print(f"ATMOSPHERE_REFERENCE_SOLVE failure: {failure}")
+    print(f"ATMOSPHERE_REFERENCE_SOLVE result={'pass' if not failures else 'fail'} inputs_sha256={result['inputs_sha256']} "
+          f"report={path}")
+    return 0 if not failures else 1
+
+
+def verify(dump_path, out_dir):
+    """段 1 をその場で解き、--solve が保存した段 2 と比べる（入力のハッシュが今と同じことも見る）。収束以外の検査は段 1 を
+    その場で、段 2 は保存した値で見る"""
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sets, repro_altitude, failures = reference_sets(dump_path)
+    saved_path = os.path.join(out_dir, SOLVE_FILE)
+    saved = None
+    if os.path.isfile(saved_path):
+        with open(saved_path, encoding="utf-8") as f:
+            saved = json.load(f)
+    else:
+        failures.append(f"段 2 の保存した結果が無い（--solve で作る）: {saved_path}")
+    current_hash = inputs_sha256(dump_path)
+    inputs_current = saved is not None and saved.get("inputs_sha256") == current_hash
+    if saved is not None and not inputs_current:
+        failures.append("段 2 の保存した結果の入力のハッシュが今の台本・書き出しと違う（--solve をやり直す）")
     report = {"criteria": {"convergence_tolerance": CONVERGENCE_TOLERANCE, "radiance_floor": CONVERGENCE_RADIANCE_FLOOR,
-                           "analytic_tolerance": ANALYTIC_TOLERANCE, "level1": LEVEL1},
-              "sets": {}}
+                           "analytic_tolerance": ANALYTIC_TOLERANCE, "second_order_tolerance": SECOND_ORDER_TOLERANCE,
+                           "first_order_tolerance": FIRST_ORDER_TOLERANCE, "level1": LEVEL1},
+              "inputs_sha256": current_hash, "inputs_current": inputs_current, "solve_report": saved_path, "sets": {}}
     for name, settings, sun_altitude, observer in sets:
         coarse = Atmosphere(settings, 1)
-        fine = Atmosphere(settings, 2)
         q_coarse = standard_quantities(coarse, sun_altitude, observer)
-        q_fine = standard_quantities(fine, sun_altitude, observer)
-        worst = compare_levels(q_coarse, q_fine)
-        converged = max(worst.values()) <= CONVERGENCE_TOLERANCE
-        if not converged:
+        checks = {"level1": correctness_checks(coarse, settings, sun_altitude, observer, repro_altitude)}
+        failures += check_failures(name, checks["level1"])
+        fine_record = (saved or {}).get("sets", {}).get(name)
+        worst = {}
+        if fine_record is None:
+            failures.append(f"{name}: 段 2 の保存した結果に組が無い")
+        else:
+            checks["level2"] = fine_record["checks"]
+            failures += check_failures(name, fine_record["checks"])
+            worst = compare_levels(q_coarse, fine_record["quantities"])
+        converged = bool(worst) and max(worst.values()) <= CONVERGENCE_TOLERANCE
+        if worst and not converged:
             failures.append(f"{name}: 段 1 と段 2 の差が {CONVERGENCE_TOLERANCE} を超える: " +
                             ", ".join(f"{k}={v:.4f}" for k, v in worst.items() if v > CONVERGENCE_TOLERANCE))
-        analytic = vertical_optical_depth(settings)
-        table_vertical = fine.table.optical_depth(np.array(fine.medium.bottom), np.array(1.0))
-        analytic_error = float(np.max(np.abs(table_vertical - analytic) / analytic))
-        if analytic_error > ANALYTIC_TOLERANCE:
-            failures.append(f"{name}: 鉛直の光学的深さが解析解と {analytic_error:.2e} 違う")
-        f_max = float(np.max(fine.field.f_ms))
-        if not f_max < 1.0:
-            failures.append(f"{name}: f_ms の最大 {f_max} が 1 以上（論文の級数が収束しない）")
-        directional = fine.directional
-        if directional.last_order_fraction > ORDER_STOP_FRACTION:
-            failures.append(f"{name}: 散乱の回数で足す版が {ORDER_LIMIT} 回で収束しない")
-        # (1) 2 回目の散乱の源を、細かい向きの求積で位相関数を角度で積んだ値と照らす（最小再現の高度と観測点）
-        second_order = [second_order_check(fine, altitude, sun_altitude) for altitude in (repro_altitude, observer)]
-        second_order_error = max(check["max_relative"] for check in second_order)
-        if second_order_error > SECOND_ORDER_TOLERANCE:
-            failures.append(f"{name}: B の 2 回目の散乱の源が、細かい求積で直接積んだ値と {second_order_error:.2e} 違う")
-        repro = second_order[0]
+        q_fine = {key: np.asarray(value) for key, value in fine_record["quantities"].items()} if fine_record else q_coarse
+        repro = checks["level1"]["second_order_check"][0]
         repro_ratio = np.array(repro["combined_toward_sun_over_isotropic"])
-        # (3) 1 回目だけの値が A と B で一致する（観測点と最小再現の高度、段 1 と段 2）
-        first_order = [first_order_check(atmosphere, altitude, sun_altitude)
-                       for atmosphere in (coarse, fine) for altitude in (observer, repro_altitude)]
-        first_order_error = max(check["max_relative"] for check in first_order)
-        if first_order_error > FIRST_ORDER_TOLERANCE:
-            failures.append(f"{name}: 1 回目だけの値が A と B で {first_order_error:.2e} 違う")
-        sun = sun_direction_from_angles(sun_altitude, 0.0)
         # 地表・太陽の余弦 0.6 の点（荒野の太陽の高度 38° に近い）
         ground_index = PSI_PROBE_COSINES.index(0.6)
         ratio_a = q_fine["psi_A"][ground_index] / np.maximum(q_fine["psi_B"][ground_index], 1e-30)
+        sun = sun_direction_from_angles(sun_altitude, 0.0)
         record = {
             "settings": settings, "sun_altitude_degrees": sun_altitude, "observer_altitude_m": observer,
-            "seconds": {"level1": coarse.seconds, "level2": fine.seconds},
-            "level2_parameters": fine.parameters,
             "max_relative_difference_level1_vs_level2": worst,
             "converged": converged,
-            "vertical_optical_depth": {"table": table_vertical.tolist(), "analytic": analytic.tolist(),
-                                       "max_relative_error": analytic_error},
-            "f_ms_max": f_max,
-            "orders": directional.orders,
-            "order_ratios_first10": directional.order_ratios[:10],
-            "last_order_fraction": directional.last_order_fraction,
-            "seconds_directional": {"level1": coarse.directional.seconds, "level2": directional.seconds},
-            "second_order_check": second_order,
+            "checks": checks,
             "repro": {"altitude_m": repro_altitude, "sun_altitude_degrees": sun_altitude,
                       "toward_sun_relative": repro["combined"]["toward_sun_relative"],
                       "combined_toward_sun_over_isotropic": repro_ratio.tolist(),
                       "evaluator_ratio": list(EVALUATOR_SUN_RATIO)},
-            "first_order_check": first_order,
             "sun_transmittance_ground": q_fine["sun_transmittance"].tolist(),
             "sky_horizontal_irradiance_per_lux": {"A": q_fine["sky_irradiance_A"].tolist(),
                                                   "B": q_fine["sky_irradiance_B"].tolist()},
@@ -1166,21 +1301,24 @@ def verify(dump_path, out_dir):
             "sun_direction": sun.tolist(),
         }
         report["sets"][name] = record
+        level2 = checks.get("level2", {})
         print(f"ATMOSPHERE_REFERENCE set={name} converged={int(converged)} "
-              f"max_level_diff={max(worst.values()):.5f} worst={max(worst, key=worst.get)} "
-              f"analytic_vertical={analytic_error:.2e} f_ms_max={f_max:.4f} orders={directional.orders} "
-              f"order_ratio_2={directional.order_ratios[0]:.4f} "
-              f"last_order_fraction={directional.last_order_fraction:.1e} "
-              f"second_order_max_rel={second_order_error:.2e} "
+              f"max_level_diff={max(worst.values(), default=float('nan')):.5f} "
+              f"worst={max(worst, key=worst.get) if worst else '-'} "
+              f"analytic_vertical={checks['level1']['vertical_optical_depth']['max_relative_error']:.2e} "
+              f"f_ms_max={checks['level1']['f_ms_max']:.4f} orders={checks['level1']['orders']}/{level2.get('orders')} "
+              f"order_ratio_2={checks['level1']['order_ratios_first10'][0]:.4f} "
+              f"second_order_max_rel={checks['level1']['second_order_max_relative']:.2e}/"
+              f"{level2.get('second_order_max_relative', float('nan')):.2e} "
               f"repro_altitude={repro_altitude:.6f} "
               f"repro_toward_sun_rel={np.round(repro['combined']['toward_sun_relative'], 5).tolist()} "
               f"repro_sun_over_isotropic={np.round(repro_ratio, 4).tolist()} "
-              f"first_order_A_vs_B={first_order_error:.1e} "
-              f"mie_toward_sun_over_isotropic={np.round(second_order[-1]['mie_toward_sun_over_isotropic'], 3).tolist()} "
+              f"first_order_A_vs_B={checks['level1']['first_order_max_relative']:.1e}/"
+              f"{level2.get('first_order_max_relative', float('nan')):.1e} "
               f"sun_T={np.round(q_fine['sun_transmittance'], 4).tolist()} "
               f"sky_E_A={np.round(q_fine['sky_irradiance_A'], 4).tolist()} "
               f"sky_E_B={np.round(q_fine['sky_irradiance_B'], 4).tolist()} "
-              f"seconds={coarse.seconds:.1f}+{fine.seconds:.1f}")
+              f"seconds={coarse.seconds:.1f}+{level2.get('seconds', float('nan')):.1f}(saved)")
         for key, value in worst.items():
             print(f"ATMOSPHERE_REFERENCE set={name} quantity={key} level1_vs_level2={value:.5f}")
     report["failures"] = failures
@@ -1191,16 +1329,21 @@ def verify(dump_path, out_dir):
     for failure in failures:
         print(f"ATMOSPHERE_REFERENCE failure: {failure}")
     status = "pass" if not failures else "fail"
-    print(f"ATMOSPHERE_REFERENCE result={status} sets={len(sets)} report={path}")
+    print(f"ATMOSPHERE_REFERENCE result={status} sets={len(sets)} inputs_current={int(inputs_current)} report={path}")
     return 0 if not failures else 1
 
 
 def main():
     parser = argparse.ArgumentParser(description="空と霞の数値の正解（Hillaire 2020 の定義から独立に積分する）")
-    parser.add_argument("--verify", action="store_true", help="収束と解析解との一致を確かめる")
+    parser.add_argument("--solve", action="store_true", help="段 2 の正解と検査を求めて保存する（重い）")
+    parser.add_argument("--verify", action="store_true", help="段 1 を解き、保存した段 2 との収束と解析解との一致を確かめる")
     parser.add_argument("--dump", default=DEFAULT_DUMP, help="エンジンの書き出しの JSON（<視点>.atmos.json）")
     parser.add_argument("--out", default=DEFAULT_OUT, help="結果の JSON の出力先")
     args = parser.parse_args()
+    if args.solve:
+        status = solve(args.dump, args.out)
+        if status or not args.verify:
+            return status
     if args.verify:
         return verify(args.dump, args.out)
     parser.print_help()
