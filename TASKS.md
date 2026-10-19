@@ -1888,7 +1888,7 @@
 - notes: 2026-10-19（Sol の批評 5・15）。
 
 ## SCN-WL-CAMERA-OFFSET: 撮影の画と記録のカメラのずれを直す
-- status: todo
+- status: done
 - after: SCN-WLR-REF-SPLIT, SCN-WLR-REGRESSION-VALIDATION
 - done-when: 撮影の画が、撮影の記録のカメラから視点ごとに違う量ずれる原因（ref_cliff_01 は横 +0.243・縦 −0.027 画素、ref_cliff_02 は +0.779 画素。深度から測った値。起動し直しても同じ量。視点ごとに違うので、撮ったフレームのジッタの残りを最初に疑う）を確かめて直す。`ReferenceCheck.py --camera-offset`（この項目で作る）: Blender の深度を補正なし（`--camera-shift-hint` も深度からの自動補正も使わない。ずらし量 0 を記録に書く）で描き、ずらし量が 0 であることと、エンジンの深度との残りのずれが 0.05 画素以内であることを ref_cliff_01・ref_cliff_02 で検査する。旧参照の移行: 参照の署名のずらし量で、ずらしありの旧参照（SCN-WLR-CYCLES-GRAY・LIT）は領域の平均の比較（`--gray`・`--lit`）に限って有効、画素ごとの比較（`--albedo`・`--normal`・`--projection`）はずらし 0 で描き直すまで古いとして落ちる、と `ReferenceCheck.py` と記録に書く。以後の新しい Cycles の描画はずらし 0 で描く。反復の最初に回帰の撮影の `before` を撮る。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`

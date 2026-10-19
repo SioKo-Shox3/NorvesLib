@@ -233,6 +233,12 @@
 #   python Scripts/Terrain/ReferenceCheck.py --expect-selftest [--verify]
 #       保存した灰色・実材質・遠景のぼけの静止と動きの撮影で、今の値で通る仕様（ExpectSpecs/selftest-pass*.json）が通り、
 #       外れる行（selftest-fail*.json）・許さない未判定・仕様の誤りで落ちることを確かめる。
+#   python Scripts/Terrain/ReferenceCheck.py --camera-offset --engine <撮影先> [--views a,b,...] [--verify]
+#       撮影の画と記録のカメラのずれ（本体は Scripts/Terrain/CameraOffset.py）。記録のカメラのまま補正なし（ずらし 0）で描いた
+#       Blender の深度（無いか古ければその場で描いて <撮影先>/blender に保存する）とエンジンの深度のずれが 0.05 画素以内であることを、
+#       既定では ref_cliff_01・ref_cliff_02 で検査する。報告は <撮影先>/camera_offset_check.json。
+#   旧参照の移行（SHIFTED_REFERENCE_SCOPE）: ずらしありで描いた旧参照は --gray・--lit の領域の平均の比較だけに使い、
+#       --albedo・--normal・--projection はずらし 0 で描き直すまで古いとして落とす。
 #   python Scripts/Terrain/ReferenceCheck.py --regression --capture <after> --reference <before> [--verify]
 #       回帰の撮影（Scripts/Terrain/CaptureRegression.ps1）の after を before と並べる（本体は Scripts/Terrain/Regression.py）。
 #
@@ -508,8 +514,15 @@ NORMAL_MAX_DEPTH_M = 3000.0
 # 小さい所では頂点の法線が隣の画素で十数度変わり、標本の位置の小さな差で幾何の法線が変わるので、差の元の切り分けに使う
 NORMAL_GEOMETRY_RESOLVED_DEG = 4.0
 # 標本の位置: Blender の深度（BlenderReference.py が描いた depth）とエンジンの深度から求めた画素の小数のずれの残りがこれを
-# 超えたら不合格（同じ点を比べていない）。BlenderReference.py は 0.05 画素を超えるずれをカメラのずらしで揃えて描き直す
+# 超えたら不合格（同じ点を比べていない）
 NORMAL_SUBPIXEL_MAX_PX = 0.1
+# 旧参照の移行（SCN-WL-CAMERA-OFFSET）: エンジンの視線行列の float の丸めで、撮影の画が記録のカメラから視点ごとに最大 0.8 画素
+# ずれていた（直した）。その間に描いた参照は Blender のカメラをずらして揃えてあり、ずらし量は描画の記録（camera_shift_px）と
+# 参照の署名（cycles/reference.json の cameras）に残る。ずらしありの旧参照（SCN-WLR-CYCLES-GRAY・LIT）は領域の平均の比較
+# （--gray・--lit）に限って使い続け、--lit の標本の位置は記録のカメラ（ずらし 0）からの残りで照らす。画素ごとの比較
+# （--albedo・--normal・--projection）はずらし 0 で描き直すまで古いとして落とす。以後の新しい描画はずらし 0 で描く
+# （RefSplit.write_reference もずらしありの参照の記録を書かない）
+SHIFTED_REFERENCE_SCOPE = "region_means_only"
 # 小数のずれを求めるのに使う画素: 深度の勾配が 1 画素あたり深度のこの割合未満（1 次の近似が効く所）
 SUBPIXEL_FIT_MAX_RELATIVE_GRADIENT = 0.01
 # --atmos-dump: 空と霞の値の書き出し（SCN-WLR-ATMOS-DUMP）
@@ -2056,6 +2069,9 @@ def check_projection_view(capture_dir, blender_dir, view, blender_record, game_a
         return result
     if int(blender_meta.get("samples", 0)) != 1:
         failures.append(f"Blender の深度が 1 サンプルでない（{blender_meta.get('samples')}）")
+    shifted = shifted_reference_failure(blender_meta)
+    if shifted:
+        failures.append(shifted)
 
     engine = read_pfm_any(os.path.join(capture_dir, aov["depth"]["file"]))[:, :, 0].astype(np.float64)
     blender = read_pfm_any(blender_pfm_path)[:, :, 0].astype(np.float64)
@@ -4414,6 +4430,9 @@ def check_albedo_view(capture_dir, blender_dir, view):
     camera_failures = gray_camera_match(aov_meta["camera"], blender_meta["camera_engine"])
     if int(blender_meta["width"]) != int(aov_meta["width"]) or int(blender_meta["height"]) != int(aov_meta["height"]):
         camera_failures.append("画素数が違う")
+    shifted = shifted_reference_failure(blender_meta)
+    if shifted:
+        camera_failures.append(shifted)
     failures.extend(camera_failures)
     engine = read_pfm_any(os.path.join(capture_dir, aov_meta["albedo"]["file"])).astype(np.float64)
     depth = read_pfm_any(os.path.join(capture_dir, aov_meta["depth"]["file"]))[..., 0].astype(np.float64)
@@ -4584,6 +4603,20 @@ def depth_subpixel_shift(engine_depth, blender_depth):
             "pixels": count}
 
 
+def reference_shift_px(meta):
+    """Blender の描画の記録のカメラのずらし量（右・上が正の画素。記録に無ければ 0。深度の描画はずらしを持たない）"""
+    return [float(v) for v in ((meta or {}).get("camera_shift_px") or [0.0, 0.0])]
+
+
+def shifted_reference_failure(meta):
+    """画素ごとの比較の参照がずらしありで描いた旧参照なら、その失敗の文（SHIFTED_REFERENCE_SCOPE の移行）。ずらし 0 なら None"""
+    shift = reference_shift_px(meta)
+    if any(v != 0.0 for v in shift):
+        return (f"カメラを ({shift[0]:+.3f}, {shift[1]:+.3f}) 画素ずらして描いた旧参照（撮影のカメラのずれを補っていた）。"
+                "画素ごとの比較はずらし 0 で描き直すまで古い")
+    return None
+
+
 def write_normal_preview(path, engine_normal, blender_normal, angle, roughness_diff, valid):
     """左上: エンジンの法線、右上: Blender の法線（どちらも 0.5 + 0.5 n）、左下: なす角（0〜NORMAL_P95_MAX_DEG 度を黒〜白、
     超えた所は赤）、右下: 粗さの差 Blender − エンジン（±0.05 で飽和。赤が Blender の方が粗い）"""
@@ -4623,6 +4656,9 @@ def check_normal_view(capture_dir, blender_dir, view):
     camera_failures = gray_camera_match(aov_meta["camera"], blender_meta["camera_engine"])
     if int(blender_meta["width"]) != int(aov_meta["width"]) or int(blender_meta["height"]) != int(aov_meta["height"]):
         camera_failures.append("画素数が違う")
+    shifted = shifted_reference_failure(blender_meta)
+    if shifted:
+        camera_failures.append(shifted)
     failures.extend(camera_failures)
     for key, meaning in (("normal", "world_normal_y_up"), ("roughness", "perceptual_roughness")):
         if aov_meta.get(key, {}).get("meaning") != meaning:
@@ -5042,18 +5078,25 @@ def run_lit(capture_dir, views, verify, engine_dirs=None, reference_root=None, e
         engine_depth = read_pfm_any(os.path.join(engine_dir, f"{view}.aov.depth.pfm"))[..., 0]
         engine_albedo = read_pfm_any(os.path.join(engine_dir, f"{view}.aov.albedo.pfm")).astype(np.float64)
 
-        # 画素ごとの材質の標本の位置が、エンジンの画素の中心に揃っていること（--normal と同じ許容）
+        # 画素ごとの材質の標本の位置が、エンジンの画素の中心に揃っていること（--normal と同じ許容）。ずらしありの旧参照
+        # （SHIFTED_REFERENCE_SCOPE）は、記録のカメラ（ずらし 0）からの残りで照らす: Blender のカメラを (右, 上) へずらすと、
+        # エンジンの画素 (x, y) は Blender の画の (x − 右, y + 上) を見る
         material_view = (material_record or {}).get("views", {}).get(view, {})
         prefix = os.path.join(material_dir, view)
         subpixel = None
         if os.path.isfile(prefix + ".depth.pfm"):
             subpixel = depth_subpixel_shift(engine_depth.astype(np.float64),
                                             read_pfm_any(prefix + ".depth.pfm")[..., 0].astype(np.float64))
+            shift = reference_shift_px(material_view)
             subpixel["camera_shift_px"] = material_view.get("camera_shift_px")
-            if math.hypot(subpixel["right_px"], subpixel["down_px"]) > NORMAL_SUBPIXEL_MAX_PX:
-                failures.append(f"{view}: 画素ごとの材質の標本の位置がエンジンの画素から "
-                                f"({subpixel['right_px']:+.3f}, {subpixel['down_px']:+.3f}) 画素ずれている"
-                                f"（{NORMAL_SUBPIXEL_MAX_PX} 画素以下）")
+            subpixel["record_camera_right_px"] = subpixel["right_px"] + shift[0]
+            subpixel["record_camera_down_px"] = subpixel["down_px"] - shift[1]
+            if any(v != 0.0 for v in shift):
+                subpixel["reference_scope"] = SHIFTED_REFERENCE_SCOPE
+            if math.hypot(subpixel["record_camera_right_px"], subpixel["record_camera_down_px"]) > NORMAL_SUBPIXEL_MAX_PX:
+                failures.append(f"{view}: 画素ごとの材質の標本の位置が、記録のカメラから見てエンジンの画素から "
+                                f"({subpixel['record_camera_right_px']:+.3f}, {subpixel['record_camera_down_px']:+.3f}) "
+                                f"画素ずれている（{NORMAL_SUBPIXEL_MAX_PX} 画素以下。材質のずらし {shift}）")
         else:
             failures.append(f"{view}: 画素ごとの材質の深度 {LIT_MATERIAL_DIR}/{view}.depth.pfm が無い")
 
@@ -5525,6 +5568,8 @@ def main():
     parser.add_argument("--display", action="store_true", help="表示変換の再現（DisplayTransform.py）を照合の撮影と照らす")
     parser.add_argument("--plate", action="store_true", help="共通の照明の灰色の板の明るさを、入力から求めた期待と照らす")
     parser.add_argument("--aov", action="store_true", help="GBuffer の生の値（AOV）の撮影を検査する")
+    parser.add_argument("--camera-offset", action="store_true",
+                        help="撮影の画と記録のカメラのずれを、補正なしで描いた Blender の深度で検査する（CameraOffset.py）")
     parser.add_argument("--projection", action="store_true",
                         help="Blender の深度（BlenderReference.py）とエンジンの深度の投影を照らす")
     parser.add_argument("--atmos-dump", action="store_true",
@@ -5596,6 +5641,15 @@ def main():
         views = [v.strip() for v in args.views.split(",") if v.strip()]
         return GradeNeutral.run(sys.modules[__name__], [absolute(d) for d in args.engine],
                                 absolute(args.capture) if args.capture else "", views, args.verify)
+    if args.camera_offset:
+        import CameraOffset
+        capture = args.capture or (args.engine[0] if args.engine else "")
+        capture_dir = os.path.normpath(capture if os.path.isabs(capture) else os.path.join(REPO_ROOT, capture))
+        if not capture or not os.path.isdir(capture_dir):
+            print(f"REFERENCE_CHECK result=fail reason=capture_dir_missing（--engine に撮影先を指定する） path={capture}")
+            return 1
+        views = [v.strip() for v in args.views.split(",") if v.strip()]
+        return CameraOffset.run(sys.modules[__name__], capture_dir, views, args.verify)
     if not args.capture:
         print("REFERENCE_CHECK result=fail reason=capture_missing（--capture を指定する）")
         return 1

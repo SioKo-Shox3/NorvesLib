@@ -317,6 +317,12 @@ def write_reference(rc, reference_root, mode):
     reasons = check_drawn_inputs(rc, reference_root, mode)
     record, failures = reference_record(rc, reference_root, mode)
     reasons.extend(failures)
+    # 新しい参照はずらし 0 で描く（ずらしありの旧参照は書いてある記録のまま使う。ReferenceCheck.SHIFTED_REFERENCE_SCOPE）
+    for view, camera in sorted(((record or {}).get("cameras") or {}).items()):
+        shift = rc.reference_shift_px(camera)
+        if any(v != 0.0 for v in shift):
+            reasons.append(f"{view}: Blender のカメラが ({shift[0]:+.3f}, {shift[1]:+.3f}) 画素ずらしてある"
+                           "（新しい参照はずらし 0 で描く）")
     if reasons:
         return False, reasons
     record["signature_sha256"] = canonical_sha(record)

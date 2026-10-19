@@ -5699,3 +5699,19 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 仕様の行のモードが走らせたモードと違えば仕様の誤りとして落とす（別のモードの行を黙って飛ばさない）
   - 新しい試験は `--expect-selftest`（done-when が名指し）だけ
 - Next: TASKS.md の次の未完の項目。
+
+### SCN-WL-CAMERA-OFFSET 完了（2026-10-20、run 20261019-192352 の反復 15）
+- Done: 撮影の画が記録のカメラから視点ごとにずれる原因を確かめて直した。原因はジッタではなく、`CameraViewConstants::BuildViewMatrix` の `CreateLookAt(位置, 位置 + 前, 上)`。2 km 前後の座標で `位置 + 前` の float の丸め（1.2e-4〜2.4e-4）が前の向きを傾け、縦の画角 6.1° の望遠で 1 画素近くになっていた（丸めから計算した量は ref_cliff_01 +0.261・ref_cliff_02 +0.834・ref_ground_02 +0.238 画素で、参照を描いたときのずらしと合う）。視線は `CreateLookAt(原点, 前, 上) × 平行移動(−位置)` で作るようにした。`ReferenceCheck.py --camera-offset`（本体 `Scripts/Terrain/CameraOffset.py`）を足し、ずらし 0 で描いた Blender の深度とのずれを 3 km 未満の画素で検査する。旧参照の移行（`SHIFTED_REFERENCE_SCOPE`）: ずらしありの参照は `--albedo`・`--normal`・`--projection` で古いとして落とし、`--lit` の標本の位置は記録のカメラからの残りで照らし、`--record-reference` はずらしありの参照の記録を書かない。記録は `Docs/RenderingValidation/WastelandCameraOffset.md`（`WastelandCyclesLit.md` にも注記）
+- 証拠（`.harness/runs/20261019-192352/`）:
+  - `regression-before-SCN-WL-CAMERA-OFFSET.txt`: 反復の最初に直す前の Game.exe で before を撮った（4 シーン exit=0）
+  - `verify-SCN-WL-CAMERA-OFFSET-1.txt`: Debug の Game のビルド EXIT=0
+  - `verify-SCN-WL-CAMERA-OFFSET-2.txt`: ref_cliff_01・02 の撮影 result=pass・EXIT=0
+  - `verify-SCN-WL-CAMERA-OFFSET-3.txt`: `--camera-offset --verify` result=pass・EXIT=0。ずらし [0, 0]、残り ref_cliff_01 (−0.009, +0.009) 長さ 0.013・ref_cliff_02 (+0.006, +0.032) 長さ 0.032 画素、4 列とも揃う。Blender の深度は反復の中で描いて保存した（`.harness/runs/scene-capture/SCN-WL-CAMERA-OFFSET/blender/`）
+  - `verify-SCN-WL-CAMERA-OFFSET-4.txt`: 回帰の after result=pass・EXIT=0（検証レイヤーのエラー 0）。PSNR rendering3dtest 61.9・sandbox 69.2・mega-bananas 46.1・night-village 42.4 dB。差の画像を開き、night-village は画面全体で揃った約 0.02 画素のずれ（同じ丸めが直った分）、mega-bananas は全体のずれ 0 で細い輪郭の点だけと確かめた
+- Notes:
+  - 直す前の撮影を同じ Blender の深度で 3 km 未満で測ると ref_cliff_02 は +0.837 画素（丸めの計算 +0.834）。参照を描いたときの +0.779 は全画面で測っていて、3 km より遠い所の地形の形の違い（列ごとにばらつく）が混ざっていた。`--camera-offset` は法線・アルベドの判定と同じ 3 km 未満で測り、全画面の値は記録だけ
+  - ref_far_01 の前のずらし (−0.107, −0.158) は丸めでは説明できない（計算は 0.01 画素以下）。全画面で測った遠景の偏りと見ているが、直した後の ref_far_01 は測っていない
+  - `BlenderReference.py` は変えていない（参照の署名に台本のハッシュが入るので、変えると灰色・実材質の旧参照が `--gray`・`--lit` でも古くなる）。ずらし 0 は ReferenceCheck.py の検査と `--record-reference` の拒否で守る。自動補正と `--camera-shift-hint` は台本に残るが、直した撮影では残りが 0.05 画素以下で自動補正は動かない
+  - 直した描画のコードで SCN-WLR-CYCLES-GRAY・LIT などのエンジンの撮影は古くなった（エンジンの実装の署名）。撮り直しは SCN-WLR-RECAPTURE-GRAY-LIT。撮り直した `--lit` は旧参照のずらしの分（最大約 0.84 画素）が記録のカメラからの残りとして測られるので、そこで標本の位置の検査が通るか見る
+  - 新しい試験は `--camera-offset`（done-when が名指し）だけ。`--ref-split-selftest` は変更後も 12 件 pass
+- Next: TASKS.md の次の未完の項目（SCN-WLR-RECAPTURE-GRAY-LIT など）。
