@@ -41,6 +41,9 @@ namespace Game::GameModes
     /// 荒野のシーン。高さ場から焼いた起伏のある地形（仮想化ジオメトリ）を、物理空と太陽で描く
     inline constexpr NorvesLib::Core::GameMode::GameModeId Wasteland = "Wasteland"_id;
 
+    /// 夜の集落のシーン。荒野と同じ地形の一角に生成した建物と小物で道沿いの集落を組み、月明かりと夜空で描く（荒野のモードの型を使う）
+    inline constexpr NorvesLib::Core::GameMode::GameModeId NightVillage = "NightVillage"_id;
+
     /// 仮想化ジオメトリの負荷シーン（開発ビルドだけランチャーに出る）。多種のメッシュの個別 Entity を置く
     inline constexpr NorvesLib::Core::GameMode::GameModeId MegaStress = "MegaStress"_id;
 

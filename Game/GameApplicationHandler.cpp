@@ -3476,8 +3476,9 @@ namespace Game
 
         // 2つ以上の視点は、実行中に視点を置き直せる（GameMode が SceneViewSwitch を受ける）シーンだけで撮れる
         const NorvesLib::Core::GameMode::GameModeId mode = pScene != nullptr ? pScene->Mode : Game::GameModes::Launcher;
-        const bool bSwitchable = mode == Game::GameModes::Wasteland || mode == Game::GameModes::MegaBananas ||
-                                 mode == Game::GameModes::Sandbox || mode == Game::GameModes::MegaStress;
+        const bool bSwitchable = mode == Game::GameModes::Wasteland || mode == Game::GameModes::NightVillage ||
+                                 mode == Game::GameModes::MegaBananas || mode == Game::GameModes::Sandbox ||
+                                 mode == Game::GameModes::MegaStress;
         if (viewNames.size() > 1 && !bSwitchable)
         {
             LOG_ERROR_F("CAPTURE_VIEWS_UNSUPPORTED scene=%s 実行中に視点を置き直せないシーンです（視点ごとに起動して撮る）",
@@ -3657,6 +3658,27 @@ namespace Game
                 {
                     LOG_WARNING("--wasteland-gray-plate は --wasteland-common-light と一緒に使います（板は置き、照明は既定のまま）");
                 }
+                return mode;
+            });
+        // 夜の集落のシーン。荒野のモードの型で、夜の集落として組む。視点・台本は起動引数から渡す（荒野の比較用の引数は渡さない）
+        stateMachine->Registry().Register(
+            NightVillage,
+            [viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath, pathTime = m_CameraPathTime,
+             bPathPlay = m_bCameraPathPlay, pauseMenu = &m_PauseMenu, viewSwitch = &m_SceneViewSwitch,
+             scriptCapture = &m_CameraScriptCapture,
+             getAssetSystem = [this]() { return GetAssetSystemSnapshot(); }](const GameModeParams&)
+                -> Container::TUniquePtr<IGameMode>
+            {
+                auto mode = MakeUnique<WastelandMode>();
+                mode->GetData().m_bNightVillage = true;
+                mode->GetData().m_pScriptCapture = scriptCapture;
+                mode->GetData().m_ViewName = viewName;
+                mode->GetData().m_CameraScriptPath = scriptPath;
+                mode->GetData().m_CameraPathTime = pathTime;
+                mode->GetData().m_bCameraPathPlay = bPathPlay;
+                mode->GetData().m_pPauseMenu = pauseMenu;
+                mode->GetData().m_pViewSwitch = viewSwitch;
+                mode->GetData().m_GetAssetSystem = getAssetSystem;
                 return mode;
             });
 #if NORVES_BUILD_DEVELOPMENT

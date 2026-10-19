@@ -193,6 +193,27 @@ namespace Game::Scenes
     /// 荒野のシーンの id。地形は DEM の格子からクックで焼く（格子と区画は Scripts/Terrain と Scripts/CookAssets.ps1 で作る）
     inline constexpr const char *kWastelandSceneId = "wasteland";
 
+    /// 夜の集落のシーンの視点。座標は荒野と同じ DEM の格子（東が +X・北が -Z。Yaw 90 が西、-90 が東）。集落は前哨地の候補 B
+    /// （X 1049.5・Z -449.5。Game/GameModes/Wasteland/WastelandLayout.h の kNightVillageCenter*）の東西の道沿いで、西 1.6 km に
+    /// Franklin Butte、西北西 2.5 km に Battleship Rock がある。月は南南東の 35°。位置の y は、その (x,z) の地形の高さからの高さ[m]
+    inline constexpr SceneViewDescriptor kNightVillageViews[] = {
+        // 集落の東南東の上空 16 m から、西北西へ道と両側の建物、その奥の Franklin Butte と Battleship Rock の影を見渡す視点。起動時の既定
+        {"overview", SceneViewKind::FreePose, 110.0f, -11.0f, 0.0f, {1104.5f, 16.0f, -427.5f}},
+        // 道の東の端寄りの道の上の目の高さ（1.7 m）から、西へ道沿いの建物と街灯、中ほどの広場を見る視点
+        {"street", SceneViewKind::FreePose, 90.0f, 1.5f, 0.0f, {1087.5f, 1.7f, -448.5f}},
+        // 焚き火の広場の南西の縁の目の高さから、北東へ焚き火と井戸と松明の柱、その奥の建物を見る視点
+        {"square", SceneViewKind::FreePose, -132.0f, -6.0f, 0.0f, {1039.5f, 1.7f, -439.5f}},
+    };
+
+    /// 夜の集落のシーンの id と、読み込めないとシーンが成り立たない資産（生成した建物と小物の GLB。ComfyUI で作る）
+    inline constexpr const char *kNightVillageSceneId = "night-village";
+    inline constexpr const char *kNightVillageRequiredAssets[] = {
+        "Assets/Models/Generated/adobe_ruin/adobe_ruin.glb",
+        "Assets/Models/Generated/wooden_shack/wooden_shack.glb",
+        "Assets/Models/Generated/street_lamp/street_lamp.glb",
+        "Assets/Models/Generated/campfire_ring/campfire_ring.glb",
+    };
+
     /// 確認用の sandbox の id。シーンの一覧に載るのは開発ビルドだけ
     inline constexpr const char *kSandboxSceneId = "sandbox";
 
@@ -287,6 +308,20 @@ namespace Game::Scenes
             nullptr,
             0,
             nullptr,
+            nullptr,
+        },
+        {
+            kNightVillageSceneId,
+            "夜の集落",
+            "荒野の谷床の一角に、生成した建物と小物で組んだ道沿いの集落。月明かりと夜空の下を、自動露出で夜の明るさに合わせて描く。",
+            "Assets/Launcher/Thumbnails/night-village.png",
+            Game::GameModes::NightVillage,
+            kNightVillageViews,
+            sizeof(kNightVillageViews) / sizeof(kNightVillageViews[0]),
+            kNightVillageRequiredAssets,
+            sizeof(kNightVillageRequiredAssets) / sizeof(kNightVillageRequiredAssets[0]),
+            "python Scripts/GenerateSceneModels.py --ids adobe_ruin,wooden_shack,watchtower,water_tower,stone_arch,"
+            "street_lamp,torch_post,campfire_ring,well,barrel,crate,cart",
             nullptr,
         },
 #if NORVES_BUILD_DEVELOPMENT

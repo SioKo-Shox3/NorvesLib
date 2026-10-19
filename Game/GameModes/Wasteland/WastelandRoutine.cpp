@@ -3,6 +3,7 @@
 #include "Core/Public/Asset/AssetSystem.h"
 #include "Core/Public/Asset/CookedMeshFormat.h"
 #include "Core/Public/Component/CameraComponent.h"
+#include "Core/Public/Component/DirectionalLightComponent.h"
 #include "Core/Public/Component/MegaGeometryComponent.h"
 #include "Core/Public/Ecs/EcsMassWork.h"
 #include "Core/Public/Ecs/EcsWorld.h"
@@ -303,6 +304,87 @@ namespace Game::GameModes
         // 縮んで細かい法線を落とした分を、粗さの α² に足して鏡面の広がりへ移す（Python で画像の 1/4 の画素から測った値）
         constexpr float kDetailSlopeVariance[3] = {0.393f, 0.623f, 0.283f};
 
+        // ---- 夜の集落（night-village） ----
+        // 太陽は地平線の下で、空の太陽の方向光は出さない。物理空の模型は太陽の仰角を 0〜90° に限るので、夜は空を切り、
+        // 夜空と空の光を静的環境の一様な放射輝度で置く。
+        // 夜空の放射輝度[cd/m^2]: 満月の夜の澄んだ空（天頂付近で 18〜19 等級/平方秒角 ≒ 2〜5e-3 cd/m^2、月に近い空はその数倍）の
+        // 目安から、青みのある輝度 8.4e-3 cd/m^2 にする。上半球の一様な空の水平面の照度は π × 輝度 ≒ 0.026 lx（月明かりの 2 割弱）
+        constexpr float kNightSkyRadiance[3] = {0.006f, 0.0085f, 0.0145f};
+        // 月明かり: 満月に垂直な面の照度[lx]（大気の透過を含む地表の値の目安 0.2〜0.3 lx）
+        constexpr float kMoonIlluminanceNormalLux = 0.25f;
+        // 月の色（リニアの sRGB）。月の光そのものは太陽よりわずかに赤いが、暗い所の見え（桿体の感度が青へ寄る）に合わせて青白くする
+        constexpr float kMoonColor[3] = {0.62f, 0.78f, 1.0f};
+        // 月の高さと向き（方位角は太陽と同じく +X から +Z へ測る。60° は南南東）。道の北側の建物の表（南向き）を照らし、
+        // 南側の建物の表は影になる
+        constexpr float kMoonAltitudeDegrees = 35.0f;
+        constexpr float kMoonAzimuthDegrees = 60.0f;
+        // 月明かりの影の到達距離[m]（集落と周りの谷床。遠景のビュートは影を落とさず照らすだけ）
+        constexpr float kMoonShadowMaxDistance = 600.0f;
+        // 自動露出の補正の曲線（Rendering3DTest の --night の扱いと同じく、測光が暗いほど暗く保つ）。月明かりだけの谷床の
+        // 測光は EV100 で約 -4 なので、その点で -1.7 EV（画面の平均を中間調の 2^-1.7 倍にする）、昼の 14 EV で 0 にする
+        constexpr float kNightDarkSceneEV100 = -4.0f;
+        constexpr float kNightDarkSceneCompensationEV = -1.7f;
+        constexpr float kNightBrightSceneEV100 = 14.0f;
+        // 夜のグレーディング: 暗部を縮めない NeutralLinear のまま、コントラストを少しだけ立て、彩度を大きく落とす（暗い所の見えは
+        // 色が薄い。0.85 では谷床の赤い土が夕方の色に見えた）。白の釣り合いを青へ少し寄せる（GradingOverride の色温度は ±1 で
+        // 赤と青の利得を ±10 % 動かす）
+        constexpr float kNightGradingContrast = 1.1f;
+        constexpr float kNightGradingContrastPivot = 0.18f;
+        constexpr float kNightGradingSaturation = 0.55f;
+        constexpr float kNightGradingTemperature = -0.6f;
+
+        /// モードが組むシーンの id（SceneCatalog.h。視点の定義とシーンの準備の報告に使う）
+        const char *SceneIdOf(const WastelandData &data)
+        {
+            return data.m_bNightVillage ? Game::Scenes::kNightVillageSceneId : Game::Scenes::kWastelandSceneId;
+        }
+
+        /// 夜の集落の空・月明かり: 物理空・霧・空気遠近・雲を切り、一様な夜空と、青白い影付きの方向光（月）を置く
+        void ApplyNightEnvironment(GameModeContext &ctx, WastelandData &data)
+        {
+            RenderWorld &renderWorld = ctx.EngineRef.GetRenderWorld();
+            SkyAtmosphereParameters sky = MakeDefaultSkyAtmosphereParameters();
+            sky.bEnabled = false;
+            renderWorld.SetSkyAtmosphere(sky);
+            VolumetricFogParameters fog = MakeDefaultVolumetricFogParameters();
+            fog.bEnabled = false;
+            renderWorld.SetVolumetricFogParameters(fog);
+            renderWorld.SetAerialPerspective(AerialPerspectiveParameters{});
+            renderWorld.SetCloudLayer(CloudLayerParameters{});
+            renderWorld.SetStaticEnvironmentIntensityScale(1.0f);
+            renderWorld.SetStaticEnvironmentMaxRadiance(0.0f);
+            renderWorld.SetStaticEnvironmentUniformRadiance(
+                true, NorvesLib::Math::Vector3(kNightSkyRadiance[0], kNightSkyRadiance[1], kNightSkyRadiance[2]));
+            if (data.m_pMoon == nullptr)
+            {
+                Entity *owner = ctx.ScopeRef.SpawnObject<Entity>();
+                data.m_pMoon = owner != nullptr ? ctx.WorldRef.CreateComponent<Component::DirectionalLightComponent>(owner)
+                                                : nullptr;
+                if (data.m_pMoon == nullptr)
+                {
+                    LOG_ERROR("night-village: 月明かりの方向光を作れませんでした");
+                }
+            }
+            if (data.m_pMoon != nullptr)
+            {
+                const NorvesLib::Math::Vector3 toMoon =
+                    MakeSunDirectionFromAltitudeAzimuth(kMoonAltitudeDegrees, kMoonAzimuthDegrees);
+                data.m_pMoon->SetIntensityUnit(Component::LightIntensityUnit::Lux);
+                data.m_pMoon->SetIntensity(kMoonIlluminanceNormalLux);
+                data.m_pMoon->SetLightColor(kMoonColor[0], kMoonColor[1], kMoonColor[2]);
+                data.m_pMoon->SetLightDirection(-toMoon.x, -toMoon.y, -toMoon.z);
+                data.m_pMoon->SetCastShadows(true);
+                data.m_pMoon->SetLightVisible(true);
+            }
+            renderWorld.SetSunShadowMaxDistance(kMoonShadowMaxDistance);
+            LOG_INFO_F("NIGHT_VILLAGE_LIGHT view=%s sun=below_horizon moon_lux=%.3f moon_altitude=%.1f moon_azimuth=%.1f "
+                       "sky=(%.4f,%.4f,%.4f)",
+                       data.m_ViewName.empty() ? "default" : data.m_ViewName.c_str(),
+                       static_cast<double>(kMoonIlluminanceNormalLux), static_cast<double>(kMoonAltitudeDegrees),
+                       static_cast<double>(kMoonAzimuthDegrees), static_cast<double>(kNightSkyRadiance[0]),
+                       static_cast<double>(kNightSkyRadiance[1]), static_cast<double>(kNightSkyRadiance[2]));
+        }
+
         /// 地表の材質の値（3 層の混ぜ合わせとテクスチャのパス、地表の分類の地図と遠景の地図の範囲）を 1 行の JSON でログへ書く
         /// （WASTELAND_TERRAIN_MATERIAL）。正解の絵の比較で Blender の再現（Scripts/Terrain/BlenderReference.py --albedo）が
         /// 同じ値を使うためのもので、値は描画へ渡す MegaTerrainBlend そのもの
@@ -412,6 +494,11 @@ namespace Game::GameModes
         /// 手本の写真の時刻の太陽（手本の構図の視点だけ。ほかは基準の太陽）
         void ApplyViewEnvironment(GameModeContext &ctx, WastelandData &data)
         {
+            if (data.m_bNightVillage)
+            {
+                ApplyNightEnvironment(ctx, data);
+                return;
+            }
             if (data.m_CommonLight.Opts.bEnabled)
             {
                 WastelandCommonLight::ApplyEnvironment(ctx, data.m_CommonLight, data.m_ViewName);
@@ -429,7 +516,7 @@ namespace Game::GameModes
             VariableArray<WastelandFoliage::ExclusionCircle> circles;
             VariableArray<WastelandFoliage::ExclusionRect> rects;
             VariableArray<WastelandFoliage::ExclusionCircle> viewGravelClearings;
-            const Game::Scenes::SceneDescriptor *scene = Game::Scenes::FindScene(Game::Scenes::kWastelandSceneId);
+            const Game::Scenes::SceneDescriptor *scene = Game::Scenes::FindScene(SceneIdOf(data));
             if (scene != nullptr)
             {
                 for (std::size_t index = 0; index < scene->ViewCount; ++index)
@@ -519,13 +606,13 @@ namespace Game::GameModes
             {
                 return;
             }
-            const Game::Scenes::SceneDescriptor *scene = Game::Scenes::FindScene(Game::Scenes::kWastelandSceneId);
+            const Game::Scenes::SceneDescriptor *scene = Game::Scenes::FindScene(SceneIdOf(data));
             const Game::Scenes::SceneViewDescriptor *view =
                 scene != nullptr ? Game::Scenes::FindSceneView(*scene, pViewSwitch->GetViewName().c_str()) : nullptr;
             Component::CameraComponent *camera = data.m_Rig.GetCamera();
             if (view == nullptr || view->Kind != Game::Scenes::SceneViewKind::FreePose || camera == nullptr)
             {
-                LOG_ERROR_F("SCENE_VIEW_UNKNOWN scene=wasteland view=\"%s\" 視点を置き直せません",
+                LOG_ERROR_F("SCENE_VIEW_UNKNOWN scene=%s view=\"%s\" 視点を置き直せません", SceneIdOf(data),
                             pViewSwitch->GetViewName().c_str());
                 pViewSwitch->Complete(false);
                 return;
@@ -548,7 +635,7 @@ namespace Game::GameModes
             // 草・低木: 新しい視点の周りの区画をそろえ、風の時計を替える（grass_gust は grass と同じ構図で時刻だけを変えた 2 枚目）
             UpdateFoliage(ctx, data, pose.Position[0], pose.Position[2], true);
             camera->SetFieldOfView(referenceShot ? referenceShot->VerticalFieldOfViewDegrees : data.m_DefaultFieldOfView);
-            LOG_INFO_F("SCENE_VIEW_SWITCHED scene=wasteland view=%s", data.m_ViewName.c_str());
+            LOG_INFO_F("SCENE_VIEW_SWITCHED scene=%s view=%s", SceneIdOf(data), data.m_ViewName.c_str());
             pViewSwitch->Complete(true);
         }
 
@@ -834,16 +921,20 @@ namespace Game::GameModes
             }
         }
 
-        /// 小物・建物の置く種類（前哨地の建物と崖の足元の落石）のクック済みメッシュを解決・解析し、
-        /// 材質のテクスチャの読み込みを始める。クック済みが無い・壊れている種類は理由を出して読み飛ばす（その種類を置かずに続ける）
+        /// 小物・建物の置く種類（前哨地の建物と崖の足元の落石。夜の集落では集落の建物・小物と崖の足元の落石）のクック済みメッシュを
+        /// 解決・解析し、材質のテクスチャの読み込みを始める。クック済みが無い・壊れている種類は理由を出して読み飛ばす（その種類を置かずに続ける）
         void StartPropLoads(GameModeContext &ctx, const TSharedPtr<const Asset::AssetSystem> &assetSystem,
-                            const TSharedPtr<WastelandAssembly> &assembly)
+                            const TSharedPtr<WastelandAssembly> &assembly, bool bNightVillage)
         {
             auto &textures = ctx.RenderResourcesRef.Textures();
             uint32_t started = 0;
             for (uint32_t kindIndex = 0; kindIndex < Layout::kPropKindCount; ++kindIndex)
             {
-                if (!kProceduralLayout && !Layout::IsUsedOnDem(static_cast<Layout::PropKind>(kindIndex)))
+                const Layout::PropKind usedKind = static_cast<Layout::PropKind>(kindIndex);
+                const bool bUsed = bNightVillage ? Layout::IsUsedInNightVillage(usedKind)
+                                                 : (kProceduralLayout && !Layout::IsNightVillagePropKind(usedKind)) ||
+                                                       Layout::IsUsedOnDem(usedKind);
+                if (!bUsed)
                 {
                     continue;
                 }
@@ -972,7 +1063,7 @@ namespace Game::GameModes
         /// 崖の下の崖錐に、剥がれ落ちた岩の群れを散布の Object（Entity 1 つと軽い行）で置く。影を落とす大岩と、影を落とさない
         /// 小片の 2 つに分ける。名前付き視点の足元と、置いた建物の足元は空ける
         void PlaceTalusRocks(GameModeContext &ctx, const Terrain::TerrainHeightField &field,
-                             const Terrain::TerrainSurfaceMask *pMask, WastelandAssembly &assembly)
+                             const Terrain::TerrainSurfaceMask *pMask, WastelandAssembly &assembly, const char *sceneId)
         {
             const WastelandTalus::TalusMeshShape &crag =
                 assembly.TalusShapes[static_cast<uint32_t>(WastelandTalus::TalusMesh::Crag)];
@@ -984,7 +1075,7 @@ namespace Game::GameModes
                 return;
             }
             VariableArray<WastelandTalus::TalusExclusion> exclusions;
-            const Game::Scenes::SceneDescriptor *scene = Game::Scenes::FindScene(Game::Scenes::kWastelandSceneId);
+            const Game::Scenes::SceneDescriptor *scene = Game::Scenes::FindScene(sceneId);
             if (scene != nullptr)
             {
                 for (std::size_t index = 0; index < scene->ViewCount; ++index)
@@ -1067,9 +1158,11 @@ namespace Game::GameModes
         }
 
         /// 材質がそろった種類を MegaMesh にし、高さ場から決めた配置に Entity を置き、崖錐の岩を散布で置く。
-        /// hideMask で外した建物・崖錐の岩は置かない（草・低木を撒かない範囲は外さないときと同じに残す）
+        /// hideMask で外した建物・崖錐の岩は置かない（草・低木を撒かない範囲は外さないときと同じに残す）。
+        /// bNightVillage なら前哨地の代わりに夜の集落の建物と小物を置く
         void PlaceProps(GameModeContext &ctx, const Terrain::TerrainHeightField &field,
-                        const Terrain::TerrainSurfaceMask *pMask, WastelandAssembly &assembly, uint32_t hideMask)
+                        const Terrain::TerrainSurfaceMask *pMask, WastelandAssembly &assembly, uint32_t hideMask,
+                        bool bNightVillage)
         {
             auto &megaGeometry = ctx.RenderResourcesRef.MegaGeometry();
             Layout::PropMeshShape shapes[Layout::kPropKindCount];
@@ -1143,7 +1236,14 @@ namespace Game::GameModes
 
             VariableArray<Layout::PropPlacement> placements;
             Layout::LayoutStats stats;
-            Layout::BuildPlacements(field, shapes, kProceduralLayout, placements, stats);
+            if (bNightVillage)
+            {
+                Layout::BuildNightVillagePlacements(field, shapes, placements, stats);
+            }
+            else
+            {
+                Layout::BuildPlacements(field, shapes, kProceduralLayout, placements, stats);
+            }
 
             uint32_t placedPerKind[Layout::kPropKindCount] = {};
             uint32_t placed = 0;
@@ -1170,9 +1270,9 @@ namespace Game::GameModes
                 ++placed;
             }
             LOG_INFO_F("WASTELAND_PROPS placed=%u planned=%zu buildings=%u foot_rays=%u foot_hits=%u cliffs=%u "
-                       "foot_boulders=%u basin_boulders=%u cliff_view_samples=%u",
+                       "foot_boulders=%u basin_boulders=%u cliff_view_samples=%u village_props=%u",
                        placed, placements.size(), stats.Buildings, stats.FootRays, stats.FootHits, stats.Cliffs,
-                       stats.FootBoulders, stats.BasinBoulders, stats.CliffViewSamples);
+                       stats.FootBoulders, stats.BasinBoulders, stats.CliffViewSamples, stats.VillageProps);
             for (uint32_t kindIndex = 0; kindIndex < Layout::kPropKindCount; ++kindIndex)
             {
                 LOG_INFO_F("WASTELAND_PROP_KIND id=%s placed=%u",
@@ -1194,7 +1294,17 @@ namespace Game::GameModes
                     {placement.X, placement.Z,
                      std::sqrt(extentX * extentX + extentZ * extentZ) * placement.Scale + kBuildingFoliageClearMargin});
             }
-            if (stats.Buildings > 0)
+            if (stats.Buildings > 0 && bNightVillage)
+            {
+                Layout::RoadClearArea areas[Layout::kNightVillageClearAreaCount];
+                Layout::GetNightVillageClearAreas(areas);
+                for (const Layout::RoadClearArea &area : areas)
+                {
+                    assembly.FoliageRoadRects.push_back(
+                        {area.CenterX, area.CenterZ, area.AlongX, area.AlongZ, area.HalfLength, area.HalfWidth});
+                }
+            }
+            else if (stats.Buildings > 0)
             {
                 const Layout::RoadClearArea road = Layout::GetRoadClearArea();
                 assembly.FoliageRoadRects.push_back(
@@ -1215,7 +1325,8 @@ namespace Game::GameModes
             }
             if ((hideMask & WastelandHide::Rocks) == 0)
             {
-                PlaceTalusRocks(ctx, field, pMask, assembly);
+                PlaceTalusRocks(ctx, field, pMask, assembly,
+                                bNightVillage ? Game::Scenes::kNightVillageSceneId : Game::Scenes::kWastelandSceneId);
             }
         }
     } // namespace
@@ -1264,7 +1375,9 @@ namespace Game::GameModes
 
     GameModeEnterResult WastelandRoutine::Enter(GameModeContext &ctx, WastelandData &data)
     {
-        LOG_INFO("wasteland を開始します");
+        const char *sceneId = SceneIdOf(data);
+        LOG_INFO_F("%s を開始します", sceneId);
+        data.m_pMoon = nullptr;
         data.m_TickCount = 0;
         data.m_TerrainSettledTick = 0;
         Game::Scenes::BeginSceneAssembly(ctx.EngineRef);
@@ -1290,11 +1403,11 @@ namespace Game::GameModes
         {
             LOG_INFO_F("WASTELAND_TERRAIN_EXPORT_BEGIN dir=%s", data.m_TerrainExportDir.c_str());
         }
-        const Game::Scenes::SceneDescriptor *scene = Game::Scenes::FindScene(Game::Scenes::kWastelandSceneId);
+        const Game::Scenes::SceneDescriptor *scene = Game::Scenes::FindScene(sceneId);
         Game::Scenes::FreeCameraPose pose{};
         if (scene == nullptr || !Game::Scenes::ResolveFreeCameraPose(*scene, data.m_ViewName.c_str(), pose))
         {
-            LOG_ERROR("wasteland: シーンの一覧に視点の定義がありません");
+            LOG_ERROR_F("%s: シーンの一覧に視点の定義がありません", sceneId);
             Game::Scenes::EndSceneAssembly(ctx.EngineRef);
             return GameModeEnterResult::Failed;
         }
@@ -1465,7 +1578,7 @@ namespace Game::GameModes
                 }
                 LogTerrainMaterial(blend, bSurfaceMask, bFarMap);
                 // 岩・崖・建物。地形の上に据えるので、地形を置けるときだけ読む
-                StartPropLoads(ctx, assetSystem, assembly);
+                StartPropLoads(ctx, assetSystem, assembly, data.m_bNightVillage);
                 data.m_pAssembly = assembly;
             }
         }
@@ -1498,7 +1611,16 @@ namespace Game::GameModes
         camera->SetAperture(16.0f);
         camera->SetISO(100.0f);
         camera->SetShutterSpeed(ComputeShutterSpeedForEV100(camera->GetAperture(), camera->GetISO(), kExposureEV100));
-        camera->SetExposureCompensation(kCameraOutputCompensationEV);
+        if (data.m_bNightVillage)
+        {
+            // 夜は自動露出（補正の曲線はひな形の AutoExposureCurve）
+            camera->SetExposureMode(CameraExposureMode::Auto);
+            camera->SetExposureCompensation(0.0f);
+        }
+        else
+        {
+            camera->SetExposureCompensation(kCameraOutputCompensationEV);
+        }
         camera->SetAntiAliasingMode(data.m_AntiAliasing == WastelandAntiAliasing::TemporalAA ? CameraAntiAliasingMode::TemporalAA
                                                                                             : CameraAntiAliasingMode::FXAA);
         // 遠景のぼけの切り分けの撮影の内部解像度（--wasteland-render-scale）
@@ -1517,10 +1639,26 @@ namespace Game::GameModes
         CameraProxy &proxyTemplate = data.m_Rig.ProxyTemplate();
         proxyTemplate.ToneMapCurve = CameraToneMapCurve::NeutralLinear;
         proxyTemplate.GradingOverride.bEnabled = true;
-        proxyTemplate.GradingOverride.Contrast = kGradingContrast;
-        proxyTemplate.GradingOverride.ContrastPivot = kGradingContrastPivot;
-        proxyTemplate.GradingOverride.Saturation = kGradingSaturation;
-        proxyTemplate.GradingOverride.Temperature = kGradingTemperature;
+        if (data.m_bNightVillage)
+        {
+            // 夜: 測光が暗いほど暗く保つ自動露出の補正と、彩度を落とした夜のグレーディング
+            proxyTemplate.AutoExposureCurve.bEnabled = true;
+            proxyTemplate.AutoExposureCurve.DarkEV100 = kNightDarkSceneEV100;
+            proxyTemplate.AutoExposureCurve.DarkCompensation = kNightDarkSceneCompensationEV;
+            proxyTemplate.AutoExposureCurve.BrightEV100 = kNightBrightSceneEV100;
+            proxyTemplate.AutoExposureCurve.BrightCompensation = 0.0f;
+            proxyTemplate.GradingOverride.Contrast = kNightGradingContrast;
+            proxyTemplate.GradingOverride.ContrastPivot = kNightGradingContrastPivot;
+            proxyTemplate.GradingOverride.Saturation = kNightGradingSaturation;
+            proxyTemplate.GradingOverride.Temperature = kNightGradingTemperature;
+        }
+        else
+        {
+            proxyTemplate.GradingOverride.Contrast = kGradingContrast;
+            proxyTemplate.GradingOverride.ContrastPivot = kGradingContrastPivot;
+            proxyTemplate.GradingOverride.Saturation = kGradingSaturation;
+            proxyTemplate.GradingOverride.Temperature = kGradingTemperature;
+        }
         proxyTemplate.GradingOverride.VignetteIntensity = kVignetteIntensity;
         proxyTemplate.GradingOverride.VignetteRadius = kVignetteRadius;
         proxyTemplate.GradingOverride.VignetteSoftness = kVignetteSoftness;
@@ -1561,7 +1699,8 @@ namespace Game::GameModes
                 }
                 if (assembly.bPlaced && ArePropTexturesLoaded(assembly) && !assembly.bPropsPlaced)
                 {
-                    PlaceProps(ctx, *data.m_pHeightField, data.m_pSurfaceMask.get(), assembly, data.m_HideMask);
+                    PlaceProps(ctx, *data.m_pHeightField, data.m_pSurfaceMask.get(), assembly, data.m_HideMask,
+                               data.m_bNightVillage);
                     assembly.bPropsPlaced = true;
                     // 置いた建物の足元と道から草・低木を外す（区画を作り直す）
                     if (!assembly.FoliageBuildingCircles.empty() || !assembly.FoliageRoadRects.empty())
@@ -1589,7 +1728,7 @@ namespace Game::GameModes
         {
             data.m_Rig.NotifySceneReady();
         }
-        Game::Scenes::UpdateSceneAssembly(ctx.EngineRef, Game::Scenes::kWastelandSceneId, bReady);
+        Game::Scenes::UpdateSceneAssembly(ctx.EngineRef, SceneIdOf(data), bReady);
     }
 
     void WastelandRoutine::Leave(GameModeContext &ctx, WastelandData &data, GameModeExitReason)
@@ -1614,12 +1753,14 @@ namespace Game::GameModes
         data.m_Rig.Leave(ctx);
         // 地形の Entity・モデル・カメラの実体は GameModeScope::Cleanup が返す。空と霧は RenderWorld の設定なので戻す。
         WastelandCommonLight::Leave(ctx, data.m_CommonLight);
+        // 月明かりの実体はスコープが返す
+        data.m_pMoon = nullptr;
         ResetEnvironment(ctx);
         if (data.m_RenderScale < 1.0f)
         {
             ctx.EngineRef.GetRenderWorld().SetRenderScale(1.0f);
         }
-        LOG_INFO("wasteland を終了します");
+        LOG_INFO_F("%s を終了します", SceneIdOf(data));
     }
 
 } // namespace Game::GameModes

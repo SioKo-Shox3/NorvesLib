@@ -16,6 +16,11 @@
 // 視点は SceneCatalog.h の kWastelandViews（overview・ground・ridge・cliff・outpost）。視点の高さは、その (x,z) の地形の高さに足す。
 // 撮影の視点の切り替え（Scenes/SceneViewSwitch.h）では、地形を読み直さずにカメラ・画角・太陽だけを置き直す。
 // 地形の格子・区画のクック済みが無いときは COOKED_MODEL_MISSING を出し、空と太陽だけのシーンとして組み立てを終える。
+//
+// night-village（夜の集落）も同じモードの型で組む（WastelandData::m_bNightVillage）。同じ地形・材質・草・礫・崖錐の岩の上に、
+// 前哨地の建物の代わりに道沿いの集落（WastelandLayout.h の BuildNightVillagePlacements）を置く。光は太陽を地平線の下に沈めた夜で、
+// 物理空・霧・空気遠近・雲を切り、一様な暗い青の夜空（静的環境の一様な放射輝度）と、青白い弱い月明かり（影付きの方向光）にする。
+// 露出は自動露出で、測光した明るさが暗いほど暗く保つ補正の曲線で夜に見える明るさへ合わせる。視点は kNightVillageViews。
 // ---------------------------------------------------------------------------
 
 #include "Core/Public/Container/PointerTypes.h"
@@ -38,6 +43,11 @@
 namespace NorvesLib::Core::Asset
 {
     class AssetSystem;
+}
+
+namespace NorvesLib::Core::Component
+{
+    class DirectionalLightComponent;
 }
 
 namespace NorvesLib::Core::Rendering::Terrain
@@ -91,6 +101,10 @@ namespace Game::GameModes
 
     struct WastelandData
     {
+        /// 夜の集落（night-village）として組む。偽なら荒野（wasteland）
+        bool m_bNightVillage = false;
+        /// 夜の集落の月明かり（非所有。実体はスコープが返す。Enter で作り、Leave で空に戻す）
+        NorvesLib::Core::Component::DirectionalLightComponent *m_pMoon = nullptr;
         /// 起動時の視点の名前（--scene-view。空ならシーンの既定の視点）
         NorvesLib::Core::Container::String m_ViewName;
         /// 入力の台本のパス（--camera-script。空なら流さない）

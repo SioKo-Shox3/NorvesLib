@@ -41,6 +41,14 @@ namespace Game::GameModes::WastelandLayout
             // 崖の足元の落石。アルベドは崖の砂岩の色へ寄せた画像（Scripts/CalibrateScanRockAlbedo.py）を焼く
             WASTELAND_POLYHAVEN("boulder_01"),
             WASTELAND_POLYHAVEN("rock_09"),
+            // 夜の集落の小物（Assets/AssetSets/NightVillageModels.json が焼く。テクスチャの並びは建物と同じ）
+            WASTELAND_GENERATED("street_lamp"),
+            WASTELAND_GENERATED("torch_post"),
+            WASTELAND_GENERATED("campfire_ring"),
+            WASTELAND_GENERATED("well"),
+            WASTELAND_GENERATED("barrel"),
+            WASTELAND_GENERATED("crate"),
+            WASTELAND_GENERATED("cart"),
         };
 #undef WASTELAND_POLYHAVEN
 #undef WASTELAND_GENERATED
@@ -112,6 +120,68 @@ namespace Game::GameModes::WastelandLayout
         constexpr float kOutpostBuildingSink = 0.15f;
         // 草・石を置かない道の幅の半分[m]（造成の箱の幅 3 m に、轍の外の踏み固めた縁を足す）
         constexpr float kOutpostRoadClearHalfWidth = 3.5f;
+
+        // ---- 夜の集落（DEM の前哨地の候補 B。造成しない自然の谷床） ----
+        // 谷床は南へ 1.8 % 下がり、東西にはほぼ平ら（中心の ±60 m の起伏 0.2 m）なので、道を等高線に沿って東西へ通す。
+        // 道の中ほどに焚き火の広場（約 24 m 四方）を空け、その両側に建物の表を道へ向けて並べる。同じ建物は向きと
+        // 大きさを変えて使い回す。道の西の端には石のアーチを門として渡す
+        /// 集落の 1 つ。中心からの東西の距離・南北の距離（南が正）[m]、表を向けるワールドの向き[度]（+Z から +X へ測る。
+        /// 0 が南、180 が北、90 が東）、拡大率、足元の範囲の最も低い所から埋める深さ[m]
+        struct VillageSlot
+        {
+            PropKind Kind;
+            float OffsetX;
+            float OffsetZ;
+            float FacingAzimuthDegrees;
+            float Scale;
+            float Sink;
+        };
+        // 小物を埋める深さ[m]（底の縁が谷床のわずかな起伏で浮かない程度）
+        constexpr float kVillagePropSink = 0.04f;
+        constexpr VillageSlot kVillageSlots[] = {
+            // 道の北側の建物（表を南の道へ向ける）
+            {PropKind::AdobeRuin, -40.0f, -11.5f, 4.0f, 1.15f, kBuildingSink},
+            {PropKind::StoneShed, -29.0f, -10.0f, -6.0f, 1.3f, kBuildingSink},
+            {PropKind::AdobeRuin, -19.0f, -12.0f, 3.0f, 1.0f, kBuildingSink},
+            {PropKind::Watchtower, 17.0f, -13.0f, -8.0f, 1.0f, kBuildingSink},
+            {PropKind::AdobeRuin, 29.0f, -11.5f, -3.0f, 1.25f, kBuildingSink},
+            {PropKind::StoneShed, 41.0f, -10.0f, 5.0f, 1.2f, kBuildingSink},
+            // 道の南側の建物（表を北の道へ向ける）。給水塔は列の一つ奥に立てる
+            {PropKind::StoneShed, -41.0f, 10.5f, 176.0f, 1.1f, kBuildingSink},
+            {PropKind::AdobeRuin, -30.0f, 11.5f, 184.0f, 1.3f, kBuildingSink},
+            {PropKind::WaterTower, -18.0f, 15.0f, 180.0f, 0.9f, kBuildingSink},
+            {PropKind::AdobeRuin, 20.0f, 11.5f, 177.0f, 1.1f, kBuildingSink},
+            {PropKind::StoneShed, 31.0f, 10.5f, 186.0f, 1.35f, kBuildingSink},
+            // 西の端の門。開口（ローカルの Z）を道の向き（東西）に合わせ、アーチが道をまたぐ
+            {PropKind::StoneArch, -52.0f, 0.0f, 90.0f, 1.2f, kBuildingSink},
+            // 道の縁の街灯（北と南の縁へ互い違いに）
+            {PropKind::StreetLamp, -44.0f, -4.2f, 0.0f, 1.0f, kVillagePropSink},
+            {PropKind::StreetLamp, -24.0f, 4.2f, 0.0f, 1.0f, kVillagePropSink},
+            {PropKind::StreetLamp, 24.0f, -4.2f, 0.0f, 1.0f, kVillagePropSink},
+            {PropKind::StreetLamp, 44.0f, 4.2f, 0.0f, 1.0f, kVillagePropSink},
+            // 広場: 中央の焚き火、北西の井戸、周りの松明の柱
+            {PropKind::CampfireRing, 0.0f, 1.0f, 0.0f, 1.0f, kVillagePropSink},
+            {PropKind::Well, -7.0f, -6.5f, 30.0f, 1.0f, kVillagePropSink},
+            {PropKind::TorchPost, 8.0f, -7.0f, 0.0f, 1.0f, kVillagePropSink},
+            {PropKind::TorchPost, -10.0f, 4.0f, 0.0f, 1.0f, kVillagePropSink},
+            {PropKind::TorchPost, 8.5f, 7.5f, 0.0f, 1.0f, kVillagePropSink},
+            // 軒先の樽と木箱、道の脇の荷車（長い向きのローカルの Z を道に沿わせる）
+            {PropKind::Barrel, -26.5f, -6.8f, 0.0f, 1.0f, kVillagePropSink},
+            {PropKind::Barrel, -25.6f, -6.0f, 40.0f, 0.95f, kVillagePropSink},
+            {PropKind::Crate, -27.8f, -6.4f, 15.0f, 1.0f, kVillagePropSink},
+            {PropKind::Barrel, 23.4f, 6.4f, 0.0f, 1.0f, kVillagePropSink},
+            {PropKind::Crate, 24.6f, 6.0f, -20.0f, 1.0f, kVillagePropSink},
+            {PropKind::Barrel, -37.8f, 6.9f, 20.0f, 1.05f, kVillagePropSink},
+            {PropKind::Crate, -36.6f, 6.3f, 50.0f, 1.1f, kVillagePropSink},
+            {PropKind::Crate, 32.0f, -7.0f, 10.0f, 1.0f, kVillagePropSink},
+            {PropKind::Cart, -33.0f, 5.4f, 95.0f, 1.0f, kVillagePropSink},
+        };
+        // 草・石を置かない範囲: 道（東西に長さ 116 m・幅 9 m）と、焚き火の広場
+        constexpr float kVillageRoadClearHalfLength = 58.0f;
+        constexpr float kVillageRoadClearHalfWidth = 4.5f;
+        constexpr float kVillageSquareCenterOffsetZ = 1.0f;
+        constexpr float kVillageSquareClearHalfLength = 12.0f;
+        constexpr float kVillageSquareClearHalfWidth = 11.0f;
 
         // ---- メサ・稜線の足元 ----
         // 原点から放射状にたどる本数と範囲[m]・刻み[m]
@@ -405,6 +475,36 @@ namespace Game::GameModes::WastelandLayout
             }
         }
 
+        void PlaceNightVillage(const TerrainHeightField &field, const PropMeshShape (&shapes)[kPropKindCount],
+                               VariableArray<PropPlacement> &out, LayoutStats &stats)
+        {
+            for (const VillageSlot &slot : kVillageSlots)
+            {
+                const PropMeshShape &shape = shapes[static_cast<uint32_t>(slot.Kind)];
+                if (!shape.bAvailable)
+                {
+                    continue;
+                }
+                PropPlacement placement;
+                placement.Kind = slot.Kind;
+                placement.Yaw = FacingYaw(shape.FrontYaw, slot.FacingAzimuthDegrees * kDegToRad);
+                placement.Scale = slot.Scale;
+                CenterAt(shape, kNightVillageCenterX + slot.OffsetX, kNightVillageCenterZ + slot.OffsetZ, placement.Yaw,
+                         slot.Scale, placement.X, placement.Z);
+                placement.Y =
+                    GroundedY(field, shape, placement.X, placement.Z, placement.Yaw, slot.Scale, 1.0f, slot.Sink);
+                out.push_back(placement);
+                if (IsNightVillagePropKind(slot.Kind))
+                {
+                    ++stats.VillageProps;
+                }
+                else
+                {
+                    ++stats.Buildings;
+                }
+            }
+        }
+
         void PlaceFootRocks(const TerrainHeightField &field, const PropMeshShape (&shapes)[kPropKindCount],
                             VariableArray<PropPlacement> &out, LayoutStats &stats)
         {
@@ -572,9 +672,47 @@ namespace Game::GameModes::WastelandLayout
         return kind == PropKind::TalusCrag || kind == PropKind::TalusSlab;
     }
 
+    bool IsNightVillagePropKind(PropKind kind)
+    {
+        return static_cast<uint32_t>(kind) >= static_cast<uint32_t>(PropKind::StreetLamp) &&
+               static_cast<uint32_t>(kind) <= static_cast<uint32_t>(PropKind::Cart);
+    }
+
     bool IsUsedOnDem(PropKind kind)
     {
-        return IsTalusKind(kind) || GetPropKindSpec(kind).bBuilding;
+        return !IsNightVillagePropKind(kind) && (IsTalusKind(kind) || GetPropKindSpec(kind).bBuilding);
+    }
+
+    bool IsUsedInNightVillage(PropKind kind)
+    {
+        if (IsTalusKind(kind))
+        {
+            return true;
+        }
+        for (const VillageSlot &slot : kVillageSlots)
+        {
+            if (slot.Kind == kind)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    void GetNightVillageClearAreas(RoadClearArea (&outAreas)[kNightVillageClearAreaCount])
+    {
+        outAreas[0] = RoadClearArea{kNightVillageCenterX, kNightVillageCenterZ, 1.0f, 0.0f, kVillageRoadClearHalfLength,
+                                    kVillageRoadClearHalfWidth};
+        outAreas[1] = RoadClearArea{kNightVillageCenterX, kNightVillageCenterZ + kVillageSquareCenterOffsetZ, 1.0f, 0.0f,
+                                    kVillageSquareClearHalfLength, kVillageSquareClearHalfWidth};
+    }
+
+    void BuildNightVillagePlacements(const TerrainHeightField &field, const PropMeshShape (&shapes)[kPropKindCount],
+                                     VariableArray<PropPlacement> &outPlacements, LayoutStats &outStats)
+    {
+        outPlacements.clear();
+        outStats = LayoutStats{};
+        PlaceNightVillage(field, shapes, outPlacements, outStats);
     }
 
     void BuildPlacements(const TerrainHeightField &field, const PropMeshShape (&shapes)[kPropKindCount],
