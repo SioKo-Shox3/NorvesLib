@@ -5482,3 +5482,10 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - Done（反復 33 の途中保存 0805161a を引き継ぐ）: B の散乱の源の表の引きを 4 次元の 3 次補間（Catmull-Rom。方位差の軸は 0・π で折り返し、ほかの軸は端の 2 点からの直線の外挿）にし、点の格子・地表の照度の引きも 3 次補間にした
 - 測定（論文の設定、`aux-SCN-WLR-ATMOS-REF-B-cubic-paper.txt`）: 段 1 と段 2 の差 sky_B 0.346 %・psi_B 0.664 %（線形補間では 0.82 %）、ほかは 0.1 % 未満。段 2 は 1 組 2035 秒（荒野の段 2 と同時に走らせたとき）。縮んだが基準 0.5 % に届かない
 - Next: 注記の 2 を採る（視線・点の格子と歩数を倍にした組を新しい段 1 にし、段 2 を反復の外で切り離して解く）
+- 測定（荒野の設定、`aux-SCN-WLR-ATMOS-REF-B-cubic-engine.txt`。反復 33 が反復の外で起動した段 2 が 15:15 に終わった）: 段 1 と段 2 の差 psi_B 0.859 %・sky_B 0.476 %・segment_scattering 0.473 %、ほかは 0.21 % 以下。段 2 は 2486 秒。3 次補間だけでは Ψ B が届かない
+- Done（反復 34）: 注記の 2 を採った。`LEVEL1` の B の点の格子（高度 32・太陽の余弦 32）・u の格子（視線の余弦 32・方位差 24）・歩数（128）を倍にして段 1 にし、段 2 はそのすべて倍。`--solve --level 1|2` が段ごとに `atmosphere_reference_level<段>.json`（入力のハッシュつき）へ保存し、`--verify` は保存した段 1 と段 2 を比べる（両方のハッシュを見る）。(1) 2 回目の散乱の源・(3) 1 回目の A と B の一致・f_ms・回数の打ち切りは、B の格子を前の段 1 の細かさにした検査の段（`CHECK_PARAMETERS`）を verify の中で解いて見て、段 1・段 2 は保存した値でも見る。鉛直の光学的深さの解析解は段 2 の保存した値で見る
+  - 検査の段を実際の 2 組で解いた: 論文 31 秒・荒野 44 秒、2 回目の散乱の源と角度の積分の差 0.77 %・0.84 %、1 回目の A と B の差 2.6e-15・5.0e-15、最小再現の比（荒野）3.3685・2.9385・2.3538、検査の失敗なし
+  - 小さい細かさで `--solve --level 1`・`--level 2`・`--verify` の流れを通した（値の合否は見ない）
+- 段 1・段 2 の `--solve` を反復の外で切り離して起動した（2026-10-19 15:17、台本はコミット d467eb5b・sha256 aef8cd99…）: `.harness/runs/20261018-205227/atmos-ref-b-solve.ps1` を段ごとに 1 プロセス（段 1 の python pid 61640、段 2 の python pid 16808）。ログは `.harness/runs/20261018-205227/aux-SCN-WLR-ATMOS-REF-B-solve-level1.txt`・`-level2.txt`（START に台本の sha256 とコミット、終わると `END ... EXIT=<code>`）。結果は `.harness/runs/scene-capture/SCN-WLR-ATMOS-REF/atmosphere_reference_level1.json`・`level2.json`。段 2 は前の段 2 の約 8 倍の計算で、1 組数時間（目安 2 組で 4〜8 時間）
+- Next（次の反復）: 両方のログに `END ... EXIT=0` があるか見る（無ければ python の `AtmosphereReference.py --solve` が走っているか確かめ、走っていれば重ねて起動せず待つ）。そろったら `python Scripts/Terrain/AtmosphereReference.py --verify` を保存して開き、収束 0.5 % を確かめて done。台本を直すとハッシュが変わり両方の段を解き直しになるので、解の走行中と verify の前に台本を触らない
+- Notes: 段 1 を細かくしたので、`ReferenceCheck.py --atmos-ref`（段 1 を使う）の 1 組の解が数十秒から数分〜十数分になる。比べる表の更新は SCN-WLR-ATMOS-REF で行う
