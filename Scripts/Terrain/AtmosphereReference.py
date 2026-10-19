@@ -431,6 +431,37 @@ def sun_vectors(sun_cosines):
     return np.stack([np.sqrt(np.maximum(1.0 - sun_cosines ** 2, 0.0)), sun_cosines, np.zeros_like(sun_cosines)], -1)
 
 
+def cubic_taps(coordinate, size):
+    """格子の座標 coordinate（0〜size − 1）の Catmull-Rom の 4 点の起点と重み [..., 4]。起点は pad_for_cubic で両端に 1 つずつ
+    足した格子の添字で、4 点は起点から連続する"""
+    index = np.clip(np.floor(coordinate).astype(np.int64), 0, size - 2)
+    t = coordinate - index
+    t2 = t * t
+    t3 = t2 * t
+    weights = np.stack([0.5 * (-t3 + 2.0 * t2 - t), 0.5 * (3.0 * t3 - 5.0 * t2 + 2.0),
+                        0.5 * (-3.0 * t3 + 4.0 * t2 + t), 0.5 * (t3 - t2)], -1)
+    return index, weights
+
+
+def pad_for_cubic(values, axis, mirror=False):
+    """Catmull-Rom の端の外の点を 1 つずつ足す。mirror なら端で折り返し（方位差の 0・π のように偶関数の軸）、
+    そうでなければ端の 2 点からの直線の外挿"""
+    first, second = np.take(values, [0], axis), np.take(values, [1], axis)
+    last, before = np.take(values, [-1], axis), np.take(values, [-2], axis)
+    if mirror:
+        low, high = second, before
+    else:
+        low, high = 2.0 * first - second, 2.0 * last - before
+    return np.concatenate([low, values, high], axis)
+
+
+def cubic_1d(values, coordinate):
+    """値の並び values [S, C] を、座標 coordinate [...] で Catmull-Rom で引く [..., C]"""
+    padded = pad_for_cubic(values, 0)
+    index, weights = cubic_taps(coordinate, len(values))
+    return sum(weights[..., k, None] * padded[index + k] for k in range(4))
+
+
 def trace_rays(medium, radius, directions, steps):
     """点 (0, radius, 0) から directions [N,3] へ、地表か大気の上端までの視線の歩（中点則）。
     weight は観測点からの透過率 × 歩の長さ [N,K,3]、ground は当たった点（か上端の点）の向き [N,3]"""
@@ -472,8 +503,8 @@ class DirectionalField:
     点の格子（高度 × 太陽の天頂角の余弦）ごとに、入ってくる光 L(p, w) を w の求積（地平線で分けたガウス・ルジャンドル ×
     方位の半周。太陽を含む面について対称）の向きで持つ。散乱の源 G_X(p, u) = ∫ p_X(u·w) L(p, w) dw は、位相関数を w の区画の
     中で平均した重み（区画と、面に映した区画の和。行の和を 1 にそろえる）で積み、u の格子（天頂角の余弦 × 太陽からの方位差）の
-    表 [高度, 太陽の余弦, u, Rayleigh 3 + Mie 3] にする。次の回の L は視線の上で σ_R G_R + σ_M G_M を表から 4 次元の線形補間で
-    引いて積む（σ はその点の高度の値）。1 回目の光の Mie の前方の山は phase_convolution で解析的に積む（sources_at）"""
+    表 [高度, 太陽の余弦, u, Rayleigh 3 + Mie 3] にする。次の回の L は視線の上で σ_R G_R + σ_M G_M を表から 4 次元の 3 次補間
+    （Catmull-Rom。prepare の形）で引いて積む（σ はその点の高度の値）。1 回目の光の Mie の前方の山は phase_convolution で解析的に積む（sources_at）"""
 
     def __init__(self, medium, table, altitude_count, cosine_count, polar_count, azimuth_count,
                  view_cosine_count, view_azimuth_count, steps, subdivisions):
@@ -633,45 +664,52 @@ class DirectionalField:
 
     # --- 次の回の光 ---
 
-    def lookup(self, tables, altitude, sun_up, view_up, azimuth):
-        """散乱の源の表（[高度 × 太陽の余弦 × 視線の余弦 × 方位差, C]）を 4 次元の線形補間で引く"""
+    def prepare(self, values):
+        """散乱の源の表（[高度 × 太陽の余弦 × u, C] か [高度, 太陽の余弦, u, C]）を lookup が引く形にする: 4 つの軸の両端に
+        Catmull-Rom の外の点を足し（方位差は 0・π で折り返し、ほかは直線の外挿）、視線の余弦 × 方位差の 4 × 4 の窓を並べた
+        [高度 + 2, 太陽の余弦 + 2, 視線の余弦 − 1, 方位差 − 1, C, 4, 4] の見方"""
+        values = np.asarray(values, dtype=np.float64).reshape(self.shape + (-1,))
+        for axis in range(4):
+            values = pad_for_cubic(values, axis, mirror=axis == 3)
+        return np.lib.stride_tricks.sliding_window_view(values, (4, 4), axis=(2, 3))
+
+    def lookup(self, prepared, altitude, sun_up, view_up, azimuth):
+        """散乱の源の表（prepare の形）を 4 次元の Catmull-Rom で引く"""
         altitude, sun_up, view_up, azimuth = np.broadcast_arrays(altitude, sun_up, view_up, azimuth)
+        shape = altitude.shape
         sizes = self.shape
-        strides = (sizes[1] * sizes[2] * sizes[3], sizes[2] * sizes[3], sizes[3], 1)
-        coordinates = (np.sqrt(np.clip(altitude / self.height, 0.0, 1.0)) * (sizes[0] - 1),
-                       (np.clip(sun_up, -1.0, 1.0) + 1.0) * 0.5 * (sizes[1] - 1),
-                       (np.clip(view_up, -1.0, 1.0) + 1.0) * 0.5 * (sizes[2] - 1),
-                       np.clip(azimuth, 0.0, math.pi) / math.pi * (sizes[3] - 1))
-        base = 0
-        fractions = []
-        for value, size, stride in zip(coordinates, sizes, strides):
-            index = np.minimum(np.floor(value).astype(np.int64), size - 2)
-            base = base + index * stride
-            fractions.append(value - index)
-        result = 0.0
-        for corner in range(16):
-            offset = 0
-            weight = 1.0
-            for axis in range(4):
-                if (corner >> axis) & 1:
-                    offset += strides[axis]
-                    weight = weight * fractions[axis]
-                else:
-                    weight = weight * (1.0 - fractions[axis])
-            result = result + weight[..., None] * tables[base + offset]
-        return result
+        coordinates = (np.sqrt(np.clip(altitude / self.height, 0.0, 1.0)).ravel() * (sizes[0] - 1),
+                       (np.clip(sun_up, -1.0, 1.0).ravel() + 1.0) * 0.5 * (sizes[1] - 1),
+                       (np.clip(view_up, -1.0, 1.0).ravel() + 1.0) * 0.5 * (sizes[2] - 1),
+                       np.clip(azimuth, 0.0, math.pi).ravel() / math.pi * (sizes[3] - 1))
+        result = np.empty((coordinates[0].size, prepared.shape[4]))
+        chunk = 16384
+        for start in range(0, len(result), chunk):
+            part = slice(start, start + chunk)
+            (ia, wa), (ic, wc), (iv, wv), (iz, wz) = [cubic_taps(value[part], size)
+                                                      for value, size in zip(coordinates, sizes)]
+            corner = wv[:, :, None] * wz[:, None, :]
+            value = 0.0
+            for da in range(4):
+                for dc in range(4):
+                    block = prepared[ia + da, ic + dc, iv, iz]
+                    value = value + (wa[:, da] * wc[:, dc])[:, None] * np.einsum("mcvz,mvz->mc", block, corner)
+            result[part] = value
+        return result.reshape(shape + (prepared.shape[4],))
 
     def interpolate_point(self, values, altitude, sun_up):
-        """点の格子（高度 × 太陽の余弦）の値 [A, C, 3] を双線形に引く"""
+        """点の格子（高度 × 太陽の余弦）の値 [A, C, 3] を 2 次元の Catmull-Rom で引く（0 より下は 0 にする）"""
         sizes = self.shape[:2]
         u = np.sqrt(np.clip(altitude / self.height, 0.0, 1.0)) * (sizes[0] - 1)
         m = (np.clip(sun_up, -1.0, 1.0) + 1.0) * 0.5 * (sizes[1] - 1)
-        i0 = np.minimum(np.floor(u).astype(np.int64), sizes[0] - 2)
-        j0 = np.minimum(np.floor(m).astype(np.int64), sizes[1] - 2)
-        a = (u - i0)[..., None]
-        b = (m - j0)[..., None]
-        return ((1 - a) * (1 - b) * values[i0, j0] + (1 - a) * b * values[i0, j0 + 1] +
-                a * (1 - b) * values[i0 + 1, j0] + a * b * values[i0 + 1, j0 + 1])
+        padded = pad_for_cubic(pad_for_cubic(values, 0), 1)
+        ia, wa = cubic_taps(u, sizes[0])
+        ic, wc = cubic_taps(m, sizes[1])
+        result = 0.0
+        for da in range(4):
+            for dc in range(4):
+                result = result + (wa[..., da] * wc[..., dc])[..., None] * padded[ia + da, ic + dc]
+        return np.maximum(result, 0.0)
 
     def analytic_sources(self, spec, altitude, sun_up, between):
         """1 回目の光のうち太陽の向きの値 F_Y(s) で置いた部分の散乱の源 Σ_Y F_Y(s) (p_X ⊛ p_Y)(u·s)。表はこれを引いた残りを
@@ -700,15 +738,13 @@ class DirectionalField:
         return value
 
     def interpolate_ground(self, values, cosine):
-        count = len(self.cosines)
-        m = (np.clip(cosine, -1.0, 1.0) + 1.0) * 0.5 * (count - 1)
-        j0 = np.minimum(np.floor(m).astype(np.int64), count - 2)
-        b = (m - j0)[..., None]
-        return values[j0] * (1.0 - b) + values[j0 + 1] * b
+        """太陽の余弦の格子の地表の照度 [S, 3] を Catmull-Rom で引く（0 より下は 0 にする）"""
+        m = (np.clip(cosine, -1.0, 1.0) + 1.0) * 0.5 * (len(self.cosines) - 1)
+        return np.maximum(cubic_1d(values, m), 0.0)
 
     def scattered_at(self, quadrature, sun_cosines, tables, ground, analytic):
-        """散乱の源の表 tables と地表の照度 ground（太陽の余弦の格子 [S,3]）から、点の w の向きに入ってくる次の回の光 [J,N,3]。
-        analytic なら tables は 1 回目の光の解析的な部分を引いた残り"""
+        """散乱の源の表 tables（prepare の形）と地表の照度 ground（太陽の余弦の格子 [S,3]）から、点の w の向きに入ってくる次の回の
+        光 [J,N,3]。analytic なら tables は 1 回目の光の解析的な部分を引いた残り"""
         medium = self.medium
         if "ray" not in quadrature["cache"]:
             quadrature["cache"]["ray"] = trace_rays(medium, quadrature["radius"], quadrature["directions"], self.steps)
@@ -774,10 +810,10 @@ class DirectionalField:
         fraction = 1.0
         while orders < ORDER_LIMIT:
             analytic = orders == 1
-            flat = (tables - node_analytic if analytic else tables).reshape(-1, 6)
+            prepared = self.prepare(tables - node_analytic if analytic else tables)
             radiance = np.zeros_like(higher)
             for (i, js), values in zip(tasks, parallel_map(
-                    lambda task: self.scattered_at(self.quadratures[task[0]], self.cosines[task[1]], flat, ground,
+                    lambda task: self.scattered_at(self.quadratures[task[0]], self.cosines[task[1]], prepared, ground,
                                                    analytic), tasks)):
                 radiance[i, js] = values
             higher += radiance
@@ -798,7 +834,7 @@ class DirectionalField:
         self.orders = orders
         self.order_ratios = ratios
         self.last_order_fraction = fraction
-        self.tables = (total_tables - node_analytic).reshape(-1, 6)
+        self.tables = self.prepare(total_tables - node_analytic)
         self.ground = total_ground
         self.higher = higher
 
@@ -809,12 +845,12 @@ class DirectionalField:
         return self.interpolate_ground(self.ground, sun_cosine)
 
     def table_for(self, spec):
-        """位相関数 spec の散乱の源の表（全回の和から 1 回目の光の解析的な部分を引いた残り、[..., 3]）。高さフォグの HG の
-        ように表に無い位相関数のときに作る"""
+        """位相関数 spec の散乱の源の表（全回の和から 1 回目の光の解析的な部分を引いた残り、prepare の形で 3 列）。高さフォグの
+        HG のように表に無い位相関数のときに作る"""
         if spec == RAYLEIGH:
-            return self.tables[:, :3]
+            return self.tables[:, :, :, :, :3]
         if spec == self.mie:
-            return self.tables[:, 3:]
+            return self.tables[:, :, :, :, 3:]
         if spec not in self.extra_tables:
             altitude_count, cosine_count = self.shape[:2]
             values = np.zeros((altitude_count, cosine_count, len(self.targets), 3))
@@ -826,7 +862,7 @@ class DirectionalField:
 
             for i, value in enumerate(parallel_map(task_sources, range(altitude_count))):
                 values[i] = value
-            self.extra_tables[spec] = (values - self.node_analytic(spec)).reshape(-1, 3)
+            self.extra_tables[spec] = self.prepare(values - self.node_analytic(spec))
         return self.extra_tables[spec]
 
     def evaluate(self, altitude, sun_cosine, spec=ISOTROPIC, targets=None):
