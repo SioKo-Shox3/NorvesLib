@@ -5465,3 +5465,15 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 段 2 は 1 組 600〜720 秒（2 組を並べて走らせたとき）。verify は段 1 だけを解くので 1 組 約 50 秒
 - Next: 最悪の所（地平線の近く・太陽の低い点）の原因を分ける。候補は表の視線の余弦の軸を地平線の近くで細かくする（今は −1〜1 の等間隔）、`orders_view_*` だけを倍にした段 1 で差の効きを見る。届いたら `--solve` → `--verify` を保存して done。届かなければ届かない量と理由を書いて BLOCKED
 - 追記（同じ反復）: 1 つだけ倍にした段 1 と段 2 の差（荒野、空 B・Ψ B・区間）: 視線の格子 0.59・0.94・0.40 %、点の格子 0.61・0.80・0.98 %、歩数 0.99・0.81・0.61 %、方向・区画の分け数はほぼ変わらない。段 1 を細かくすると段 2 が 1 組 1 時間を超えるので BLOCKED（`blocked/SCN-WLR-ATMOS-REF-B.md`。推奨は表の 4 次元の 3 次補間を試すこと）
+
+### SCN-GEN-VILLAGE-PROPS-1 完了（2026-10-19、run 20261018-205227 の反復 32）
+- Done: 井戸を反復 29 で作り直した参照画像（`--reuse-reference`、seed 3014・`upsample_resolution` 1024）から生成した。3D 574 秒・実行全体 584 秒・146,623 面・高さ 2.6 m（`verify-SCN-GEN-VILLAGE-PROPS-1-gen4.txt`。反復 30 の `-gen3.txt` は 421 秒の時点で反復ごと切れていた）。
+  - プレビュー（`-preview.txt`、正面・横・上）を開いた: 石積みの丸い囲いと平らな縁、太い丸太の柱 2 本と梁、板葺きの切妻屋根、縁の上の桶がそろい、浮いた破片や欠けは無い。井戸に発光させる部分は無い。
+  - クック: `Scripts/CookAssets.ps1` が pwsh 7.6 で `fallback_min_triangles は 0 以上の整数` と落ちた（7.6 の `ConvertFrom-Json` が整数を Int64 で返し、`-isnot [int]` の検査に掛かる）。`fallback_min_triangles`・`dag_root_max_clusters` の検査を Int64 も受けるよう直した。
+  - RelWithDebInfo の AssetCook で全体を焼くと、実行ファイルの違いで全項目の印が変わり荒野の地形（`WastelandDem_*` は 1 区画 約 5 分）まで焼き直しになり、10 分の時点で止められた。一覧の順で先に焼けた夜の集落の 4 種は印とマニフェストに残り、`-OnlyLogicalPath` で 4 種だけを指定した再実行は `cooked=0 skipped=4`・EXIT=0（`-cook.txt`。全体の実行の記録はこの再実行で上書き）。
+  - verify（`verify-SCN-GEN-VILLAGE-PROPS-1-1.txt`）: 4 種とも `VERIFY_OK ... cooked`、`VERIFY pass`、EXIT=0。
+  - 発光させたい部分の位置は反復 29 で計画書（`Docs/Plans/SceneLauncherPlan.md` の夜の集落の小物）へ書いたまま。
+- Notes:
+  - 地形の区画の一部（`WastelandDem_*` の数区画）は RelWithDebInfo の AssetCook の印で焼き直された状態。残りの地形は前の実行ファイルの印のままなので、次に全体を焼くと残りの区画の焼き直しで数時間かかる。全体の焼き直しは重い処理の許可のあるときに回す。
+  - 新しい試験は足していない（verify の検査が確かめる）。
+- Next: TASKS.md の次の未完の項目。

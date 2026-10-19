@@ -501,14 +501,15 @@ foreach ($specFile in $specFiles) {
         )
         if (Test-PropertyExists -Object $model -Name "fallback_min_triangles") {
             $fallbackMin = $model.fallback_min_triangles
-            if (($fallbackMin -isnot [int]) -or ($fallbackMin -lt 0)) {
+            # pwsh 7.6 の ConvertFrom-Json は整数を Int64 で返す
+            if ((($fallbackMin -isnot [int]) -and ($fallbackMin -isnot [long])) -or ($fallbackMin -lt 0)) {
                 throw "$context の fallback_min_triangles は 0 以上の整数にしてください"
             }
             $cookArguments += @("--fallback-min-triangles", [string]$fallbackMin)
         }
         if (Test-PropertyExists -Object $model -Name "dag_root_max_clusters") {
             $dagRootMax = $model.dag_root_max_clusters
-            if (($dagRootMax -isnot [int]) -or ($dagRootMax -lt 0) -or ($dagRootMax -gt 1000)) {
+            if ((($dagRootMax -isnot [int]) -and ($dagRootMax -isnot [long])) -or ($dagRootMax -lt 0) -or ($dagRootMax -gt 1000)) {
                 throw "$context の dag_root_max_clusters は 0〜1000 の整数にしてください"
             }
             $cookArguments += @("--dag-root-max-clusters", [string]$dagRootMax)

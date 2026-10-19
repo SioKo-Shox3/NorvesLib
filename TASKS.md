@@ -1909,7 +1909,7 @@
 - notes: 2026-10-15 ユーザー: 荒野と室内の光は「ほぼ実写」の美しさを見るシーンで、速さは他のシーンで見る。60 fps の条件は外した（リアルタイムで、操作できる程度ならよい）。
 
 ## SCN-GEN-VILLAGE-PROPS-1: 夜の集落の小物を生成する（街灯・松明の柱・焚き火の囲い・井戸）
-- status: todo
+- status: done
 - done-when: SCN-GEN-BUILDINGS-1 と同じ形で、`street_lamp`・`torch_post`・`campfire_ring`・`well` を 10〜20 万面・テクスチャ 2048 で生成し、参照画像とプレビューを開いて形を確かめ、クックの一覧 `Assets/AssetSets/NightVillageModels.json` に足してクックが通る。 灯りの部分（ランタンのガラス・火）は発光させたい部分としてプレビューで位置を確かめ、計画書に書く。
 - verify: `python Scripts/GenerateSceneModels.py --verify --require-cooked --ids street_lamp,torch_post,campfire_ring,well`
 - paths: Assets/AssetSets, Scripts, Tools/ComfyWorkflows, TASKS.md, PROGRESS.md
