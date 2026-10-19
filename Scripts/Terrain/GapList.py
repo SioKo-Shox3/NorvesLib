@@ -1,0 +1,727 @@
+﻿# 荒野の正解の絵の比較（SCN-WLR-*）の節目: 比較の結果を集めて、差を「描画の欠陥」「中身の欠陥」「条件不一致・未判定」に分けた
+# 一覧を作る（ReferenceCheck.py --gap-list から呼ぶ。単独では動かさない）。
+#
+# 1. 揃いと鮮度: 比較ごと（GAP_COMPONENTS）に、保存した報告（<出力先>/<mode>_check.json）があり、--verify で合格した記録
+#    （verify が真・failures が空）で、報告の後に撮影・描画の入力の記録（inputs.json）が書き換わっていないこと、撮影・Cycles・
+#    Blender の入力の記録が今のファイルと一致すること（ReferenceCheck.py の各モードと同じ照らし方）を検査する。
+#    大気の正解（SCN-WLR-ATMOS-REF）だけは、入力が今と違う（古い）ことを未判定の印として許す（--require-atmos では許さない）。
+# 2. 一覧: 差の項目（GAP_ITEMS）ごとに、報告の値から差の大きさを求め、分類ごとに大きい順に並べた表を、
+#    Docs/RenderingValidation/WastelandGapList.md の印（GAP_TABLE_BEGIN・GAP_TABLE_END）の間に書く。--verify では書かずに、
+#    文書の表が今の報告から作った表と同じことを検査する。差の大きさは、比 r なら max(r, 1/r) − 1、遠景のぼけは正解の細部の量に
+#    対する比、色度は相対の差。
+# 3. 一覧の画像: 手本の 6 視点の 写真｜エンジン（既定の荒野）｜エンジン（地形だけ・共通の照明）｜Cycles（同じ条件）を 1 枚に
+#    並べて <出力先>/gap_overview.png に書く。
+import json
+import math
+import os
+
+import numpy as np
+from PIL import Image, ImageDraw
+
+GAP_DOC = os.path.join("Docs", "RenderingValidation", "WastelandGapList.md")
+GAP_TABLE_BEGIN = "<!-- gap-table:begin（ReferenceCheck.py --gap-list が書く。手で直さない） -->"
+GAP_TABLE_END = "<!-- gap-table:end -->"
+GAP_OVERVIEW = "gap_overview.png"
+GAP_OVERVIEW_PANEL = (480, 270)
+GAP_OVERVIEW_LABEL_HEIGHT = 30
+
+# 比較ごとの出力先（.harness/runs/scene-capture/ の下）と報告
+GAP_DIRS = {
+    "gray": "SCN-WLR-CYCLES-GRAY",
+    "albedo": "SCN-WLR-MATERIAL-ALBEDO",
+    "normal": "SCN-WLR-MATERIAL-NORMAL",
+    "lit": "SCN-WLR-CYCLES-LIT",
+    "atmos_ref": "SCN-WLR-ATMOS-DUMP",
+    "blur_static": "SCN-WLR-FAR-BLUR-STATIC",
+    "blur_motion": "SCN-WLR-FAR-BLUR-MOTION",
+    "tonemap": "SCN-WLR-TONEMAP-EVAL",
+}
+GAP_TASKS = {
+    "gray": "SCN-WLR-CYCLES-GRAY", "albedo": "SCN-WLR-MATERIAL-ALBEDO", "normal": "SCN-WLR-MATERIAL-NORMAL",
+    "lit": "SCN-WLR-CYCLES-LIT", "atmos_ref": "SCN-WLR-ATMOS-REF", "blur_static": "SCN-WLR-FAR-BLUR-STATIC",
+    "blur_motion": "SCN-WLR-FAR-BLUR-MOTION", "tonemap": "SCN-WLR-TONEMAP-EVAL",
+}
+
+GAP_CATEGORIES = (
+    ("render", "描画の欠陥（入力が一致して、エンジン ≠ Cycles・数値の正解）"),
+    ("content", "中身の欠陥（描画は入力どおりで、入力の値・設定が実際と食い違う）"),
+    ("open", "条件不一致・未判定"),
+)
+GAP_POINTS = {
+    "far_blur": "遠景のぼけ", "fog": "フォグ", "sky": "空", "clouds": "雲", "buildings": "建物の浮き", "plants": "植物",
+    "other": "その他",
+}
+# B（大気の高次の散乱）の直しを待つ印
+GAP_PENDING_ATMOS = "未判定（B の直し待ち。SCN-WLR-GAP-LIST-ATMOS で埋める）"
+
+
+def _scene_dir(rc, key):
+    return os.path.join(rc.REPO_ROOT, ".harness", "runs", "scene-capture", GAP_DIRS[key])
+
+
+def _mtime(path):
+    return os.path.getmtime(path) if os.path.isfile(path) else None
+
+
+# ---- 比較ごとの今の入力の照らし方（ReferenceCheck.py の各モードと同じ関数を使う）。(理由の一覧, 入力の記録のファイル, 報告) ----
+
+def _inputs_gray(rc, root):
+    reasons, records = [], []
+    main_ok, main_reasons, main_record = rc.check_inputs(root)
+    reasons += main_reasons
+    records.append(os.path.join(root, "inputs.json"))
+    for case in rc.GRAY_ENGINE_CASES:
+        case_dir = os.path.join(root, f"engine-{case}")
+        _, case_reasons, _ = rc.check_inputs(case_dir)
+        reasons += [f"engine-{case}: {r}" for r in case_reasons]
+        records.append(os.path.join(case_dir, "inputs.json"))
+    cycles_dir = os.path.join(root, rc.GRAY_CYCLES_DIR)
+    _, cycles_reasons, _ = rc.check_cycles_gray_inputs(cycles_dir, (main_record or {}).get("files_sha256"))
+    reasons += [f"Cycles: {r}" for r in cycles_reasons]
+    records.append(os.path.join(cycles_dir, "inputs.json"))
+    return reasons, records, "gray_check.json"
+
+
+def _inputs_material(rc, root, mode, views, sub_dir):
+    reasons, records = [], []
+    _, main_reasons, main_record = rc.check_inputs(root)
+    reasons += main_reasons
+    records.append(os.path.join(root, "inputs.json"))
+    blender_dir = os.path.join(root, sub_dir)
+    _, blender_reasons, _ = rc.check_albedo_inputs(root, blender_dir, list(views),
+                                                   (main_record or {}).get("files_sha256"), mode=mode)
+    reasons += [f"Blender: {r}" for r in blender_reasons]
+    records.append(os.path.join(blender_dir, "inputs.json"))
+    return reasons, records, main_record
+
+
+def _inputs_albedo(rc, root):
+    reasons, records, _ = _inputs_material(rc, root, "albedo", rc.ALBEDO_VIEWS, rc.ALBEDO_RESULT_DIR)
+    return reasons, records, "albedo_check.json"
+
+
+def _inputs_normal(rc, root):
+    reasons, records, _ = _inputs_material(rc, root, "normal", rc.ALBEDO_VIEWS, rc.NORMAL_RESULT_DIR)
+    return reasons, records, "normal_check.json"
+
+
+def _inputs_lit_dir(rc, root):
+    reasons, records, main_record = _inputs_material(rc, root, "lit", rc.LIT_VIEWS, rc.LIT_MATERIAL_DIR)
+    cycles_dir = os.path.join(root, rc.GRAY_CYCLES_DIR)
+    _, cycles_reasons, _ = rc.check_cycles_lit_inputs(root, cycles_dir, (main_record or {}).get("files_sha256"),
+                                                      list(rc.LIT_VIEWS))
+    reasons += [f"Cycles: {r}" for r in cycles_reasons]
+    records.append(os.path.join(cycles_dir, "inputs.json"))
+    return reasons, records
+
+
+def _inputs_lit(rc, root):
+    reasons, records = _inputs_lit_dir(rc, root)
+    return reasons, records, "lit_check.json"
+
+
+def _inputs_atmos_ref(rc, root):
+    reasons = []
+    _, main_reasons, _ = rc.check_inputs(root)
+    reasons += main_reasons
+    convergence_path = os.path.join(rc.AR.DEFAULT_OUT, "atmosphere_reference_verify.json")
+    records = [os.path.join(root, "inputs.json"), convergence_path]
+    if not os.path.isfile(convergence_path):
+        reasons.append(f"正解の収束の記録が無い（{convergence_path}）")
+    else:
+        with open(convergence_path, encoding="utf-8") as f:
+            if json.load(f).get("failures"):
+                reasons.append("正解の収束の確かめ（AtmosphereReference.py --verify）が合格していない")
+    report = os.path.join(root, "atmos_ref_check.json")
+    script = os.path.join(rc.REPO_ROOT, "Scripts", "Terrain", "AtmosphereReference.py")
+    if _mtime(report) is not None and _mtime(script) > _mtime(report):
+        reasons.append("AtmosphereReference.py が比較の後に変わった（古い結果）")
+    return reasons, records, "atmos_ref_check.json"
+
+
+def _inputs_blur_static(rc, root):
+    reasons, records = [], []
+    for name in [rc.BLUR_REFERENCE] + [case["name"] for case in rc.BLUR_CASES]:
+        group_dir = os.path.join(root, name)
+        _, group_reasons, _ = rc.check_inputs(group_dir)
+        reasons += [f"{name}: {r}" for r in group_reasons]
+        records.append(os.path.join(group_dir, "inputs.json"))
+    return reasons, records, "blur_static_check.json"
+
+
+def _inputs_blur_motion(rc, root):
+    reasons, records = [], []
+    for group in rc.MOTION_GROUPS:
+        group_dir = os.path.normpath(os.path.join(root, group["dir"]))
+        _, group_reasons, _ = rc.check_inputs(group_dir)
+        reasons += [f"{group['name']}: {r}" for r in group_reasons]
+        records.append(os.path.join(group_dir, "inputs.json"))
+    return reasons, records, "blur_motion_check.json"
+
+
+def _inputs_tonemap(rc, root):
+    reasons = []
+    _, main_reasons, _ = rc.check_inputs(root)
+    reasons += main_reasons
+    lit_reasons, lit_records = _inputs_lit_dir(rc, _scene_dir(rc, "lit"))
+    reasons += [f"Cycles の撮影: {r}" for r in lit_reasons]
+    return reasons, [os.path.join(root, "inputs.json")] + lit_records, "tonemap_check.json"
+
+
+GAP_COMPONENTS = (
+    ("gray", "gray", _inputs_gray),
+    ("albedo", "albedo", _inputs_albedo),
+    ("normal", "normal", _inputs_normal),
+    ("lit", "lit", _inputs_lit),
+    ("atmos_ref", "atmos_ref", _inputs_atmos_ref),
+    ("blur_static", "blur_static", _inputs_blur_static),
+    ("blur_motion", "blur_motion", _inputs_blur_motion),
+    ("tonemap", "tonemap", _inputs_tonemap),
+)
+
+
+def check_component(rc, key, mode, inputs_fn):
+    """比較 1 つの揃いと鮮度。(記録, 報告の中身)"""
+    root = _scene_dir(rc, key)
+    entry = {"task": GAP_TASKS[key], "dir": os.path.relpath(root, rc.REPO_ROOT).replace("\\", "/")}
+    if not os.path.isdir(root):
+        entry.update(state="missing", reasons=[f"出力先が無い（{root}）"])
+        return entry, None
+    stale, records, report_name = inputs_fn(rc, root)
+    report_path = os.path.join(root, report_name)
+    entry["report"] = report_name
+    problems = []
+    report = None
+    if not os.path.isfile(report_path):
+        problems.append(f"報告 {report_name} が無い")
+    else:
+        with open(report_path, encoding="utf-8") as f:
+            report = json.load(f)
+        if report.get("mode") != mode:
+            problems.append(f"報告の mode が {mode} でない（{report.get('mode')}）")
+        if not report.get("verify"):
+            problems.append("報告が --verify で作られていない")
+        newer = [os.path.relpath(p, root).replace("\\", "/") for p in records
+                 if _mtime(p) is not None and _mtime(p) > _mtime(report_path)]
+        if newer:
+            stale.append(f"報告の後に入力の記録が書き換わった: {', '.join(newer)}")
+        report_failures = report.get("failures") or []
+        if report_failures and not stale:
+            problems.append(f"報告に不合格が {len(report_failures)} 件ある（先頭: {report_failures[0]}）")
+    entry["stale_reasons"] = stale
+    entry["problems"] = problems
+    entry["state"] = "fail" if problems else ("stale" if stale else "current")
+    return entry, report
+
+
+# ---- 差の大きさの求め方 ----
+
+def _luma(rgb):
+    return float(np.dot(np.asarray(rgb, dtype=np.float64), [0.2126, 0.7152, 0.0722]))
+
+
+def _rel(ratio):
+    """比の差の大きさ max(r, 1/r) − 1"""
+    if ratio is None or not ratio > 0.0 or not math.isfinite(ratio):
+        return None
+    return max(ratio, 1.0 / ratio) - 1.0
+
+
+def _region(reports, key, view, name):
+    for result in (reports.get(key) or {}).get("view_results") or []:
+        if result.get("view") == view:
+            return (result.get("regions") or {}).get(name)
+    return None
+
+
+def _decided(entry):
+    return entry is not None and str(entry.get("status", "")).startswith("判定")
+
+
+def _decided_regions(reports, key, name):
+    out = []
+    for result in (reports.get(key) or {}).get("view_results") or []:
+        entry = (result.get("regions") or {}).get(name)
+        if _decided(entry):
+            out.append((result["view"], entry))
+    return out
+
+
+def m_shadow_missing(reports):
+    lit = _region(reports, "lit", "ref_cliff_02", "shadow_ground")
+    gray = _region(reports, "gray", "ref_cliff_01", "shadow_ground")
+    if not _decided(lit) or not _decided(gray):
+        return None, "影の中の地面の領域が判定されていない"
+    return _rel(lit["ratio"]), (f"実材質 ref_cliff_02 の影の中の地面 エンジン ÷ Cycles {lit['ratio']:.2f}、"
+                                f"灰色 ref_cliff_01 の影の中の地面の太陽の分 {gray['sun_ratio']:.2f} 倍")
+
+
+def m_sky_occlusion(reports):
+    cliff = _region(reports, "gray", "ref_cliff_01", "shadow_cliff")
+    far = _region(reports, "gray", "ref_far_01", "far")
+    if not _decided(cliff) or not _decided(far):
+        return None, "灰色の影の崖・遠景が判定されていない"
+    return _rel(cliff["ratio"]), (f"灰色 ref_cliff_01 の影の崖 {cliff['ratio']:.2f}（空の分 {cliff['sky_ratio']:.2f}）、"
+                                  f"ref_far_01 の遠景の空の分 {far['sky_ratio']:.2f}")
+
+
+def m_material_ao(reports):
+    rows = _decided_regions(reports, "lit", "sunlit_ground")
+    if not rows:
+        return None, "日なたの地面が判定されていない"
+    ratios = [e["ratio"] for _, e in rows]
+    corrected = [e["ratio_to_cycles_with_engine_ao"] for _, e in rows]
+    return _rel(min(ratios)), (f"実材質の日なたの地面 {min(ratios):.2f}〜{max(ratios):.2f}（{len(rows)} 視点）、"
+                               f"材質の AO を Cycles に掛けた見込みとの比 {min(corrected):.2f}〜{max(corrected):.2f}")
+
+
+def _blur_cases(reports, case, region):
+    out = []
+    for view in (reports.get("blur_static") or {}).get("views") or []:
+        entry = ((view.get("cases") or {}).get(case) or {}).get(region)
+        if entry:
+            out.append((view["view"], entry))
+    return out
+
+
+def m_far_aliasing(reports):
+    rows = _blur_cases(reports, "resident", "far") + _blur_cases(reports, "resident", "cliff")
+    if not rows:
+        return None, "遠景のぼけの resident の組が無い"
+    alias = [e["fine_alias"] for _, e in rows]
+    loss = [e["fine_detail_loss"] for _, e in rows]
+    return max(alias), (f"常駐しきった既定（resident）の遠景・崖のエイリアス {min(alias):.2f}〜{max(alias):.2f}、"
+                        f"細部の欠け {min(loss):.2f}〜{max(loss):.2f}（2 倍の解像度の正解の量に対する比）")
+
+
+def _tonemap_metric(reports, source, exposure, candidate, metric):
+    values = []
+    for view in (reports.get("tonemap") or {}).get("views") or []:
+        value = (((view.get(source) or {}).get(exposure) or {}).get(candidate) or {}).get("metrics", {}).get(metric)
+        if value is not None:
+            values.append(float(value))
+    return values
+
+
+def m_grading(reports):
+    current = _tonemap_metric(reports, "engine", "as_is", "current", "ground_r_over_g")
+    plain = _tonemap_metric(reports, "engine", "as_is", "neutral_plain", "ground_r_over_g")
+    clip = _tonemap_metric(reports, "cycles", "as_is", "current", "clip")
+    if not current or len(current) != len(plain):
+        return None, "表示変換の候補の値が無い"
+    ratio = float(np.mean(current)) / float(np.mean(plain))
+    return ratio - 1.0, (f"同じ HDR で、今のグレーディングの地面の R/G {np.mean(current):.2f}（中立 {np.mean(plain):.2f}）、"
+                         f"Cycles の HDR に掛けた白飛び {100.0 * np.mean(clip):.1f} %")
+
+
+def m_grazing_sun(reports):
+    far = _region(reports, "gray", "ref_far_01", "far")
+    if not _decided(far):
+        return None, "灰色の ref_far_01 の遠景が判定されていない"
+    return _rel(far["sun_ratio"]), f"灰色 ref_far_01 の遠景の太陽の分 エンジン ÷ Cycles {far['sun_ratio']:.2f}"
+
+
+def m_bounce(reports):
+    cliff = _region(reports, "gray", "ref_cliff_01", "sunlit_cliff")
+    if not _decided(cliff):
+        return None, "灰色の日なたの崖が判定されていない"
+    indirect = cliff["cycles_share"]["indirect"]
+    return _rel(cliff["sun_ratio"]), (f"灰色 ref_cliff_01 の日なたの崖の太陽の分 {cliff['sun_ratio']:.2f}"
+                                      f"（Cycles の間接光 {100.0 * indirect:.0f} %）")
+
+
+def m_psi_grid(reports):
+    psi = ((reports.get("atmos_ref") or {}).get("views") or [{}])[0].get("psi") or []
+    ratios = [p["engine_over_A"] for p in psi if p.get("engine_over_A")]
+    if not ratios:
+        return None, "Ψ の表の比較が無い"
+    return max(_rel(r) for r in ratios), f"多重散乱の表 Ψ エンジン ÷ 正解 A {min(ratios):.3f}〜{max(ratios):.3f}"
+
+
+def m_taa_motion(reports):
+    for row in (reports.get("blur_motion") or {}).get("history_effect") or []:
+        if row.get("region") == "cliff" and row.get("offset") == max(r["offset"] for r in
+                                                                       reports["blur_motion"]["history_effect"]):
+            return row["detail_loss"], (f"TAA で振ったときの崖の細部の欠けの増え +{row['detail_loss']:.3f}"
+                                        f"（{row['offset']} フレーム後。既定の FXAA では 0.002 以内）")
+    return None, "動きの切り分けが無い"
+
+
+def m_lod(reports):
+    resident = dict(_blur_cases(reports, "resident", "cliff"))
+    finest = dict(_blur_cases(reports, "finest-lod", "cliff"))
+    views = sorted(set(resident) & set(finest))
+    if not views:
+        return None, "最細の LOD の組が無い"
+    loss = float(np.mean([resident[v]["fine_detail_loss"] - finest[v]["fine_detail_loss"] for v in views]))
+    alias = float(np.mean([finest[v]["fine_alias"] - resident[v]["fine_alias"] for v in views]))
+    return loss, f"最細の段に固定すると崖の細部の欠け −{loss:.3f}、エイリアス +{alias:.3f}"
+
+
+def m_residency(reports):
+    base = dict(_blur_cases(reports, "base", "far")).get("ref_cliff_02")
+    resident = dict(_blur_cases(reports, "resident", "far")).get("ref_cliff_02")
+    if not base or not resident:
+        return None, "既定の取り分の組が無い"
+    loss = base["fine_detail_loss"] - resident["fine_detail_loss"]
+    alias = base["fine_alias"] - resident["fine_alias"]
+    return max(loss, alias), f"ref_cliff_02 の遠景で既定の取り分 1 の欠け +{loss:.3f}・エイリアス +{alias:.3f}"
+
+
+def _atmos_view(reports):
+    return ((reports.get("atmos_ref") or {}).get("views") or [{}])[0]
+
+
+def m_sky_illuminance_a(reports):
+    illum = _atmos_view(reports).get("illuminance") or {}
+    if not illum.get("reference_sky_horizontal_A"):
+        return None, "地表の照度の比較が無い"
+    ratio = _luma(illum["engine_sky_horizontal"]) / _luma(illum["reference_sky_horizontal_A"])
+    return _rel(ratio), f"水平面の空の照度 エンジン ÷ 正解 A {ratio:.3f}"
+
+
+def m_sky_model_a(reports):
+    sky = _atmos_view(reports).get("sky") or []
+    ratios = [_luma(s["engine"]) / _luma(s["reference_A"]) for s in sky if s.get("reference_A")]
+    if not ratios:
+        return None, "空の輝度の比較が無い"
+    return max(_rel(r) for r in ratios), f"空の方向別の輝度 エンジン ÷ 正解 A {min(ratios):.3f}〜{max(ratios):.3f}（{len(ratios)} 方向）"
+
+
+def m_altitude(reports):
+    illum = _atmos_view(reports).get("illuminance") or {}
+    if not illum.get("reference_sun_transmittance_at_haze_origin"):
+        return None, "太陽の透過率の比較が無い"
+    ratio = _luma(illum["reference_sun_transmittance_at_haze_origin"]) / _luma(illum["engine_sun_ground_transmittance"])
+    return ratio - 1.0, (f"谷床の高度（約 1474 m）の太陽の透過率 ÷ エンジンの地表（0 m）の透過率 {ratio:.3f}")
+
+
+def _atmos_distances(reports, kind, azimuth, elevation=None, minimum_m=1000.0):
+    rows = []
+    for row in _atmos_view(reports).get("distances") or []:
+        if row.get("kind") != kind or row.get("azimuth_offset_deg") != azimuth or row["distance_m"] < minimum_m:
+            continue
+        if elevation is not None and row.get("elevation_deg") != elevation:
+            continue
+        rows.append(row)
+    return rows
+
+
+def m_haze_mie(reports):
+    rows = [r for az in (0, 90, 180) for r in _atmos_distances(reports, "ground", az)]
+    ratios = [r["fog_plus_aerial_mie_over_physical_mie"] for r in rows if r.get("fog_plus_aerial_mie_over_physical_mie")]
+    if not ratios:
+        return None, "霞の光学的深さの内訳が無い"
+    return _rel(min(ratios)), (f"地表への視線の (霧 ＋ 空気遠近の Mie) ÷ 空の大気の Mie の光学的深さ "
+                               f"{min(ratios):.2f}〜{max(ratios):.2f}")
+
+
+def m_sky_ms_b(reports):
+    sky = _atmos_view(reports).get("sky") or []
+    ratios = [_luma(s["engine"]) / _luma(s["reference_B"]) for s in sky if s.get("reference_B")]
+    if not ratios:
+        return None, "空の輝度の比較が無い"
+    return max(_rel(r) for r in ratios), f"空の輝度 エンジン ÷ 正解 B {min(ratios):.2f}〜{max(ratios):.2f}（直す前の B）"
+
+
+def m_fog_double(reports):
+    rows = [r for r in _atmos_distances(reports, "direction", 0, 0) if r["distance_m"] == 10000.0]
+    if not rows:
+        return None, "霧の散乱光の内訳が無い"
+    row = rows[0]
+    ratio = _luma(row["engine"]["fog_sky_color_times_opacity"]) / _luma(row["same_media"]["fog_multiple"])
+    return _rel(ratio), f"太陽の側 10 km の霧の空の色 × 不透明度 ÷ 正解の霧の多重散乱 {ratio:.2f}（直す前の B）"
+
+
+def m_aerial_direction(reports):
+    rows = [r for r in _atmos_distances(reports, "direction", 180, 0) if r["distance_m"] == 10000.0]
+    if not rows:
+        return None, "空気遠近の散乱光の内訳が無い"
+    row = rows[0]
+    reference = _luma(row["same_media"]["air_sun"]) + _luma(row["same_media"]["air_multiple"])
+    ratio = _luma(row["engine"]["aerial_scattering_times_fog_t"]) / reference
+    return _rel(ratio), f"太陽と反対の側 10 km の空気遠近の散乱光 ÷ 正解 {ratio:.2f}（直す前の B）"
+
+
+def m_sky_blue_photo(reports):
+    bands = (_atmos_view(reports).get("photo") or {}).get("bands") or []
+    if not bands:
+        return None, "写真の空の比較が無い"
+    top = bands[0]
+    photo_r = top["photo_chroma_rb"][0]
+    engine_r = top["engine_radiance_chroma_rb"][0]
+    paper_r = top["reference_paper_chroma_rb"][0]
+    return engine_r / photo_r - 1.0, (f"仰角 {top['elevation_deg']:.1f}° の色度 r 写真 {photo_r:.2f}・エンジン {engine_r:.2f}・"
+                                      f"論文の設定の正解 {paper_r:.2f}（論文の設定の正解は直す前の B）")
+
+
+def m_photo_range(reports):
+    photo = []
+    for view in (reports.get("tonemap") or {}).get("views") or []:
+        value = ((view.get("photo") or {}).get("metrics") or {}).get("spread")
+        if value is not None:
+            photo.append(float(value))
+    cycles = _tonemap_metric(reports, "cycles", "matched", "neutral_plain", "spread")
+    if not photo or not cycles:
+        return None, "明るさの幅の値が無い"
+    return _rel(float(np.mean(cycles)) / float(np.mean(photo))), (
+        f"露出を合わせた明るさの幅 写真 {np.mean(photo):.2f}・Cycles {np.mean(cycles):.2f}（中立の表示変換）")
+
+
+def m_photo_cliff_ground(reports):
+    scores = ((reports.get("tonemap") or {}).get("scores") or {}).get("cycles_matched") or {}
+    value = (scores.get("mean_abs_diff") or {}).get("neutral_plain", {}).get("log_cliff_over_ground")
+    if value is None:
+        return None, "崖 ÷ 地面の差の値が無い"
+    return math.exp(value) - 1.0, f"崖 ÷ 地面の比の写真との差 対数の平均 {value:.2f}（Cycles・中立の表示変換）"
+
+
+def m_cliff_blue_photo(reports):
+    ratios = []
+    for result in (reports.get("lit") or {}).get("view_results") or []:
+        values = ((result.get("photo_comparison") or {}).get("values")) or {}
+        photo = (values.get("photo") or {}).get("cliff", {}).get("b_over_g")
+        cycles = (values.get("cycles") or {}).get("cliff", {}).get("b_over_g")
+        if photo and cycles:
+            ratios.append(photo / cycles)
+    if not ratios:
+        return None, "写真との色の比が無い"
+    return _rel(float(np.mean(ratios))), f"崖の B/G 写真 ÷ Cycles {min(ratios):.2f}〜{max(ratios):.2f}（{len(ratios)} 視点）"
+
+
+def m_unresolved(reports):
+    count, total = 0, 0
+    for key in ("gray", "lit"):
+        for result in (reports.get(key) or {}).get("view_results") or []:
+            for entry in (result.get("regions") or {}).values():
+                total += 1
+                count += 0 if _decided(entry) else 1
+    return None, f"灰色・実材質の比較の領域 {total} のうち {count} が未判定（画素が足りない・収束しない）"
+
+
+def m_not_compared(_):
+    return None, "この段の比較に入っていない（地形だけ・wasteland-hide=all で比べた）"
+
+
+# 差の項目。category は GAP_CATEGORIES、points は GAP_POINTS、needs_atmos_b は B の直しに依る判断
+GAP_ITEMS = (
+    {"id": "shadow_missing", "category": "render", "points": ("buildings",), "source": ("lit", "gray"),
+     "label": "落ちた影が欠ける・影に太陽が漏れる", "measure": m_shadow_missing},
+    {"id": "sky_occlusion_missing", "category": "render", "points": ("buildings", "far_blur", "plants"),
+     "source": ("gray",), "label": "空の遮蔽が無い（レイトレーシングのシーンに地形が入らない）", "measure": m_sky_occlusion},
+    {"id": "material_ao_on_light", "category": "render", "points": ("other",), "source": ("lit",),
+     "label": "材質の AO を直接光と空の光に掛ける", "measure": m_material_ao},
+    {"id": "far_aliasing", "category": "render", "points": ("far_blur",), "source": ("blur_static",),
+     "label": "遠景の画素あたりの標本の不足（エイリアス）", "measure": m_far_aliasing},
+    {"id": "grading_current", "category": "render", "points": ("sky", "other"), "source": ("tonemap",),
+     "label": "今のグレーディング（コントラスト 1.35・彩度 1.2・色温度 0.05）", "measure": m_grading},
+    {"id": "grazing_sun_dark", "category": "render", "points": ("far_blur",), "source": ("gray",),
+     "label": "遠くのかすめる日差しが暗い（遠景の自己影の疑い）", "measure": m_grazing_sun},
+    {"id": "psi_grid", "category": "render", "points": ("sky", "fog"), "source": ("atmos_ref",),
+     "label": "多重散乱の表の格子の粗さ（8 × 32）", "measure": m_psi_grid},
+    {"id": "bounce_missing", "category": "render", "points": ("buildings", "plants"), "source": ("gray",),
+     "label": "照り返しが無い", "measure": m_bounce},
+    {"id": "taa_motion", "category": "render", "points": ("far_blur",), "source": ("blur_motion",),
+     "label": "TAA で動くと履歴の読み直しで細部が消える（既定の FXAA では出ない）", "measure": m_taa_motion},
+    {"id": "lod_detail", "category": "render", "points": ("far_blur",), "source": ("blur_static",),
+     "label": "既定の LOD の選び方で細部が欠ける", "measure": m_lod},
+    {"id": "geometry_residency", "category": "render", "points": ("far_blur",), "source": ("blur_static",),
+     "label": "既定のジオメトリの取り分で遠景のページが常駐しきらない", "measure": m_residency},
+    {"id": "sky_illuminance_model", "category": "render", "points": ("sky",), "source": ("atmos_ref",),
+     "label": "地表の空の照度の求め方", "measure": m_sky_illuminance_a},
+    {"id": "sky_model_a", "category": "render", "points": ("sky",), "source": ("atmos_ref",),
+     "label": "空の輝度（論文の近似 A との差）", "measure": m_sky_model_a},
+    {"id": "haze_mie_thin", "category": "content", "points": ("fog",), "source": ("atmos_ref",),
+     "label": "霞の Mie が空の大気の半分ほど（空と霞で同じ大気が別の濃さ）", "measure": m_haze_mie},
+    {"id": "altitude_mismatch", "category": "content", "points": ("sky", "fog"), "source": ("atmos_ref",),
+     "label": "太陽と地表の照度を海抜 0 m で求める（谷床は約 1450 m）", "measure": m_altitude},
+    {"id": "sky_multiple_scattering", "category": "open", "points": ("sky",), "source": ("atmos_ref",),
+     "label": "空の高次の散乱が足りない（論文の近似の限界）", "measure": m_sky_ms_b, "needs_atmos_b": True},
+    {"id": "fog_sky_color_double", "category": "open", "points": ("fog",), "source": ("atmos_ref",),
+     "label": "霧の周りの光に視線の向きの空の輝度を使う（太陽の側の二重の数え）", "measure": m_fog_double,
+     "needs_atmos_b": True},
+    {"id": "aerial_scatter_direction", "category": "open", "points": ("fog",), "source": ("atmos_ref",),
+     "label": "空気遠近の散乱光の向きの差が足りない", "measure": m_aerial_direction, "needs_atmos_b": True},
+    {"id": "sky_blue_photo", "category": "open", "points": ("sky",), "source": ("atmos_ref",),
+     "label": "写真の空がはるかに青い（設定と写真の処理の分け方）", "measure": m_sky_blue_photo, "needs_atmos_b": True},
+    {"id": "photo_range", "category": "open", "points": ("other",), "source": ("tonemap",),
+     "label": "明るさの幅が写真より狭い", "measure": m_photo_range},
+    {"id": "photo_cliff_ground", "category": "open", "points": ("other",), "source": ("tonemap",),
+     "label": "崖 ÷ 地面の明るさの比が写真と違う", "measure": m_photo_cliff_ground},
+    {"id": "photo_cliff_blue", "category": "open", "points": ("fog", "sky"), "source": ("lit",),
+     "label": "写真の崖が青い（空の光・霞・天気）", "measure": m_cliff_blue_photo},
+    {"id": "unresolved_regions", "category": "open", "points": ("other",), "source": ("gray", "lit"),
+     "label": "未判定の領域", "measure": m_unresolved},
+    {"id": "clouds_not_compared", "category": "open", "points": ("clouds",), "source": (),
+     "label": "雲", "measure": m_not_compared},
+    {"id": "buildings_not_compared", "category": "open", "points": ("buildings",), "source": (),
+     "label": "建物", "measure": m_not_compared},
+    {"id": "plants_not_compared", "category": "open", "points": ("plants",), "source": (),
+     "label": "植物", "measure": m_not_compared},
+)
+
+
+def evaluate_items(reports, atmos_current):
+    rows = []
+    for item in GAP_ITEMS:
+        magnitude, text = item["measure"](reports)
+        pending = bool(item.get("needs_atmos_b"))
+        rows.append({"id": item["id"], "category": item["category"], "label": item["label"],
+                     "points": [GAP_POINTS[p] for p in item["points"]],
+                     "source": [GAP_TASKS[s] for s in item["source"]], "magnitude": magnitude, "value": text,
+                     "pending_atmos": pending,
+                     "note": GAP_PENDING_ATMOS if pending else ("" if atmos_current or "atmos_ref" not in item["source"]
+                                                                else "大気の正解の記録は古いが、A（論文の近似）と光学的深さだけで決まる")})
+    return rows
+
+
+def table_markdown(rows):
+    lines = []
+    for category, title in GAP_CATEGORIES:
+        selected = [r for r in rows if r["category"] == category]
+        selected.sort(key=lambda r: (r["magnitude"] is None, -(r["magnitude"] or 0.0)))
+        lines.append(f"### {title}")
+        lines.append("")
+        lines.append("| 順 | 差 | 大きさ | 測った値 | ユーザーの点 | 出典 | 記号 |")
+        lines.append("|---|---|---|---|---|---|---|")
+        for index, row in enumerate(selected, start=1):
+            magnitude = "－" if row["magnitude"] is None else f"{row['magnitude']:.2f}"
+            value = row["value"] + (f"。{row['note']}" if row["note"] else "")
+            lines.append(f"| {index} | {row['label']} | {magnitude} | {value} | {'・'.join(row['points'])} | "
+                         f"{'・'.join(row['source']) or '－'} | `{row['id']}` |")
+        lines.append("")
+    return "\n".join(lines).rstrip("\n")
+
+
+def doc_table_section(doc_text):
+    begin = doc_text.find(GAP_TABLE_BEGIN)
+    end = doc_text.find(GAP_TABLE_END)
+    if begin < 0 or end < begin:
+        return None, None
+    return begin + len(GAP_TABLE_BEGIN), end
+
+
+def write_overview(rc, out_path):
+    """写真｜エンジン（既定の荒野）｜エンジン（地形だけ・共通の照明）｜Cycles（同じ条件）を視点ごとに並べた 1 枚"""
+    import CompareReference as CR
+    from CompareLight import load_font
+    font = load_font(16)
+    width, height = GAP_OVERVIEW_PANEL
+    views = list(rc.LIT_VIEWS)
+    row_height = GAP_OVERVIEW_LABEL_HEIGHT + height
+    header = 40
+    sheet = Image.new("RGB", (width * 4, header + row_height * len(views)), (24, 24, 24))
+    draw = ImageDraw.Draw(sheet)
+    columns = ("写真", "エンジン（既定の荒野）", "エンジン（地形だけ・共通の照明）", "Cycles（地形だけ・共通の照明）")
+    for index, label in enumerate(columns):
+        draw.text((index * width + 10, 10), label, fill=(255, 210, 120), font=font)
+    failures = []
+    for row, view in enumerate(views):
+        top = header + row * row_height
+        entry = next((p for p in CR.PHOTOS if p["view"] == view), None)
+        photo_path = os.path.join(CR.PHOTO_DIR, entry["id"] + ".jpg") if entry else None
+        default_png = os.path.join(_scene_dir(rc, "tonemap"), f"{view}.png")
+        lit_png = os.path.join(_scene_dir(rc, "lit"), f"lit_{view}.png")
+        missing = [p for p in (photo_path, default_png, lit_png) if not p or not os.path.isfile(p)]
+        if missing:
+            failures.append(f"{view}: 一覧の画像の元が無い（{', '.join(str(m) for m in missing)}）")
+            continue
+        photo_panel, _, _ = CR.fit_photo(Image.open(photo_path).convert("RGB"))
+        lit = Image.open(lit_png).convert("RGB")
+        half = lit.width // 2
+        panels = (photo_panel, Image.open(default_png).convert("RGB"), lit.crop((0, 0, half, lit.height)),
+                  lit.crop((half, 0, lit.width, lit.height)))
+        draw.text((10, top + 6), f"{view}（写真 {entry['id']}）", fill=(235, 235, 235), font=font)
+        for column, panel in enumerate(panels):
+            sheet.paste(panel.resize(GAP_OVERVIEW_PANEL, Image.LANCZOS), (column * width, top + GAP_OVERVIEW_LABEL_HEIGHT))
+    sheet.save(out_path)
+    return failures
+
+
+def run(rc, capture_dir, verify, require_atmos):
+    failures = []
+    # 1 回の検査の中では入力のハッシュを種類ごとに 1 回だけ求める（どの比較も同じ今のファイルと照らす）
+    original_hash = rc.hash_inputs
+    cache = {}
+
+    def cached_hash(kind):
+        if kind not in cache:
+            cache[kind] = original_hash(kind)
+        return json.loads(json.dumps(cache[kind]))
+
+    rc.hash_inputs = cached_hash
+    try:
+        components = {}
+        reports = {}
+        for key, mode, inputs_fn in GAP_COMPONENTS:
+            entry, report = check_component(rc, key, mode, inputs_fn)
+            components[key] = entry
+            reports[key] = report
+    finally:
+        rc.hash_inputs = original_hash
+
+    atmos_current = components["atmos_ref"]["state"] == "current"
+    for key, entry in components.items():
+        state = entry["state"]
+        allowed_stale = key == "atmos_ref" and not require_atmos
+        if state == "fail" or state == "missing" or (state == "stale" and not allowed_stale):
+            reasons = entry.get("problems") or []
+            reasons = reasons + (entry.get("stale_reasons") or []) + (entry.get("reasons") or [])
+            failures.extend(f"{entry['task']}: {r}" for r in reasons)
+        print(f"REFERENCE_CHECK gap_list component={entry['task']} state={state}"
+              f"{' allowed=pending_atmos' if state == 'stale' and allowed_stale else ''} "
+              f"stale_reasons={len(entry.get('stale_reasons') or [])} problems={len(entry.get('problems') or [])}")
+
+    rows = evaluate_items(reports, atmos_current)
+    for row in rows:
+        if row["category"] != "open" and row["magnitude"] is None:
+            failures.append(f"{row['id']}: 差の大きさを報告から求められない（{row['value']}）")
+        magnitude = "none" if row["magnitude"] is None else f"{row['magnitude']:.3f}"
+        print(f"REFERENCE_CHECK gap_list item={row['id']} category={row['category']} magnitude={magnitude} "
+              f"pending_atmos={int(row['pending_atmos'])}")
+    if require_atmos:
+        pending = [r["id"] for r in rows if r["pending_atmos"]]
+        if pending:
+            failures.append(f"B の直し待ちの項目が残っている: {', '.join(pending)}")
+
+    # 文書の表
+    table = table_markdown(rows)
+    doc_path = os.path.join(rc.REPO_ROOT, GAP_DOC)
+    doc_state = "missing"
+    if not os.path.isfile(doc_path):
+        failures.append(f"{GAP_DOC} が無い")
+    else:
+        with open(doc_path, encoding="utf-8-sig", newline="") as f:
+            doc_text = f.read()
+        start, end = doc_table_section(doc_text)
+        newline = "\r\n" if "\r\n" in doc_text else "\n"
+        wanted = newline + table.replace("\n", newline) + newline
+        if start is None:
+            failures.append(f"{GAP_DOC} に表の印（{GAP_TABLE_BEGIN} と {GAP_TABLE_END}）が無い")
+        elif doc_text[start:end] == wanted:
+            doc_state = "same"
+        elif verify:
+            doc_state = "differs"
+            failures.append(f"{GAP_DOC} の表が今の報告から作った表と違う（--verify を付けずに回して書き直す）")
+        else:
+            with open(doc_path, "w", encoding="utf-8-sig", newline="") as f:
+                f.write(doc_text[:start] + wanted + doc_text[end:])
+            doc_state = "written"
+        if require_atmos and GAP_PENDING_ATMOS.split("。")[0] in doc_text.replace(wanted, ""):
+            failures.append(f"{GAP_DOC} に「{GAP_PENDING_ATMOS.split('。')[0]}」が残っている")
+
+    os.makedirs(capture_dir, exist_ok=True)
+    failures.extend(write_overview(rc, os.path.join(capture_dir, GAP_OVERVIEW)))
+
+    report = {"mode": "gap_list", "verify": bool(verify), "require_atmos": bool(require_atmos),
+              "components": components, "atmos_current": atmos_current, "items": rows, "doc": GAP_DOC,
+              "doc_table": doc_state, "overview": GAP_OVERVIEW, "failures": failures}
+    report_path = os.path.join(capture_dir, "gap_list_check.json")
+    with open(report_path, "w", encoding="utf-8") as f:
+        json.dump(report, f, indent=2, ensure_ascii=False)
+    for failure in failures:
+        print(f"REFERENCE_CHECK failure: {failure}")
+    status = "pass" if not failures else "fail"
+    print(f"REFERENCE_CHECK result={status} mode=gap_list components={len(components)} "
+          f"atmos_current={int(atmos_current)} items={len(rows)} doc_table={doc_state} report={report_path}")
+    return 0 if not failures else 1
