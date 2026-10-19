@@ -5639,3 +5639,15 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 新しい試験は足していない
   - Git Bash から `cmake --build ... -- /m:1` を呼ぶと `/m:1` がパスに書き換わる。PowerShell から呼ぶ
 - Next: TASKS.md の次の未完の項目。
+
+### SCN-WLR-RECAPTURE-GRAY-LIT 完了（2026-10-19、run 20261019-192352 の反復 10）
+- Done: 灰色の 3 組（両方・太陽・空、ref_cliff_01・ref_far_01）と実材質の 6 視点を、同じ RelWithDebInfo の Game.exe（SHA-256 e2e2e3d9…、始めと終わりで同じ）でエンジンの実装の署名つきで撮り直した（`aux-SCN-WLR-REF-SPLIT-recapture.ps1 -Only gray,lit`、約 26 分。Cycles・材質は描き直していない）。比の変化を `Docs/RenderingValidation/WastelandCyclesGray.md`・`WastelandCyclesLit.md` に書いた
+- 証拠（`.harness/runs/20261019-192352/`）:
+  - `aux-SCN-WLR-REF-SPLIT-recapture.txt`: gray-engine・gray-engine-sun・gray-engine-sky・lit-engine とも exit=0、same=1・all_ok=1
+  - `verify-SCN-WLR-RECAPTURE-GRAY-LIT-1.txt`: `--gray --verify` result=pass・inputs_current=1・cycles_inputs_current=1・EXIT=0
+  - `verify-SCN-WLR-RECAPTURE-GRAY-LIT-2.txt`: `--lit --verify` result=pass（6 視点）・inputs_current=1・cycles_inputs_current=1・EXIT=0
+  - `aux-SCN-WLR-RECAPTURE-GRAY-LIT-ratio-diff.txt`: 撮り直す前（`-gray-before.txt`・`-lit-before.txt`。engine_impl が無く落ちる）との比の差。灰色は全領域で小数 3 桁まで同じ。実材質は影の崖の 2 か所だけ ±0.001（ref_far_02 1.007 → 1.006、ref_ground_02 0.931 → 0.932）
+- Notes:
+  - 台本を `powershell -File ... -Only gray,lit` で呼ぶと配列が 1 つの文字列 `gray,lit` になり、何も撮らずに exit=0 で終わる。`pwsh -Command "& '<台本>' -Only gray,lit"` で呼ぶ
+  - コードは変えていない。新しい試験は足していない
+- Next: TASKS.md の次の未完の項目（この項目を前提にした SCN-WLR-EXPECT-MATCH・SCN-WLR-LIT-SHADOW-REF-C01 など）。

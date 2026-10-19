@@ -87,6 +87,10 @@ RGB の比は日なたで 3 成分がほぼ同じ（例: ref_cliff_01 の日な�
 ref_cliff_01 の視点は崖の手前 2 km 以内に収まり遠景の画素が無い。ref_far_01 は太陽が高く（58.5°）崖の多くが日なたと影の間
 （傾斜 30〜50° か半影）に入り、崖の領域が小さい。崖は ref_cliff_01 の値で見る。
 
+2026-10-19 に夜の集落の追加でエンジンの実装（`Game/GameModes/Wasteland`・`Game/GameApplicationHandler.cpp`・Game.exe）が変わったので、
+3 組（両方・太陽・空）を同じ Game.exe（SHA-256 `e2e2e3d9…`）でエンジンの実装の署名つきで撮り直した（Cycles は描き直していない）。
+表の比・太陽の比・空の比は小数 3 桁ですべて同じで、エンジンの輝度の差は最大 0.6（ref_far_01 の遠景 6621.0 → 6620.4）。
+
 ## 差の大きい所の原因の見立て
 
 ログの `RT_SCENE instances=0 excluded=198 ... out_of_range=198 radius_m=120` が示すとおり、この撮影ではレイトレーシングの

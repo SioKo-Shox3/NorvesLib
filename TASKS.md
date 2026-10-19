@@ -1854,7 +1854,7 @@
 - notes: 2026-10-19 SCN-WLR-REF-SPLIT の判断待ちの推奨 1。台本の経路は開発ビルドだけ。
 
 ## SCN-WLR-RECAPTURE-GRAY-LIT: 灰色と実材質のエンジンの撮影を新しい記録の形で撮り直す
-- status: todo
+- status: done
 - after: SCN-WLR-REF-SPLIT
 - done-when: 夜の集落の追加でエンジンの実装（`Game/GameModes/Wasteland`・`Game/GameApplicationHandler.cpp`・Game.exe）が撮影の後に変わったので、SCN-WLR-CYCLES-GRAY の灰色の 3 組（両方・太陽・空、2 視点）と SCN-WLR-CYCLES-LIT の実材質の 6 視点を、同じ Game.exe で新しい記録の形（エンジンの実装の署名つき）で撮り直す（`.harness/runs/20261019-192352/aux-SCN-WLR-REF-SPLIT-recapture.ps1 -Only gray,lit`、約 25 分。Cycles は描き直さない）。`--gray --verify`・`--lit --verify` が通り、比が前の値から変わった所を記録する。
 - verify: `python Scripts/Terrain/ReferenceCheck.py --gray --capture .harness/runs/scene-capture/SCN-WLR-CYCLES-GRAY --verify`
