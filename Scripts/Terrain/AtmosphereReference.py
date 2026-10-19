@@ -3,16 +3,20 @@
 # 空の放射輝度・透過率・多重散乱・地表の照度を numpy で数値積分する。
 #
 # 使い方:
-#   python Scripts/Terrain/AtmosphereReference.py --solve [--level 1|2] [--dump <視点>.atmos.json] [--out <出力先>]
-#       論文の設定と、荒野の書き出し（--dump。省くと SCN-WLR-ATMOS-DUMP の ref_ground_02）の設定の 2 組で、段 1 か、歩数・方向の
-#       数・表の細かさをすべて倍にした段 2（既定）の正解と下の検査を求め、この台本と書き出しの中身のハッシュつきで
-#       <出力先>/atmosphere_reference_level<段>.json に保存する（重い。段 1 は 1 組数十分、段 2 は 1 組数時間）。
+#   python Scripts/Terrain/AtmosphereReference.py --solve [--level 1|2] [--sets a,b,...] [--dump <視点>.atmos.json] [--out <出力先>]
+#       論文の設定（paper）と、荒野の書き出し（--dump。省くと SCN-WLR-ATMOS-DUMP の ref_ground_02）の設定（engine）の組で、段 1 か、
+#       歩数・方向の数・表の細かさをすべて倍にした段 2（既定）の正解と下の検査を求め、組ごとに設定の署名（この台本・設定・太陽の
+#       高度・観測点の高度・最小再現の高度・段の細かさのハッシュ）つきで <出力先>/atmosphere_reference_level<段>_<組>.json に
+#       保存する（重い。段 1 は 1 組数分、段 2 は 1 組数時間。組ごとに別のプロセスで並べてよい）。段 1 では、比べる表
+#       （ReferenceCheck.py --atmos-ref）が読む解そのものも <出力先>/atmosphere_solution_level1_<設定の名前>.pkl に保存する。
+#       --sets には、書き出しの設定を 1 つずつ論文の値へ戻した組（comparison_variants。段 1 だけ、解の保存だけ）も指定できる。
+#       省くと段 1 はすべての組、段 2 は paper と engine。書き出しを撮り直しても設定が同じなら署名は変わらない。
 #   python Scripts/Terrain/AtmosphereReference.py --verify [--dump ...] [--out ...]
-#       保存した段 1 と段 2 の比べる量がすべて CONVERGENCE_TOLERANCE 以内で一致することを確かめる（どちらもハッシュが今の
+#       保存した段 1 と段 2 の比べる量がすべて CONVERGENCE_TOLERANCE 以内で一致することを確かめる（どちらも署名が今の
 #       入力と同じことも見る）。ほかに、鉛直の光学的深さの解析解との一致・多重散乱の級数が収束すること・B の 2 回目の散乱の源が
 #       位相関数の角度の積分と合うこと・1 回目だけの値が A と B で一致することを、B の格子を粗くした検査の段（CHECK_PARAMETERS）
 #       をその場で解いて見て、段 1・段 2 は保存した値で見る。結果を <出力先>/atmosphere_reference_verify.json に書く。
-#   ほかのスクリプト（ReferenceCheck.py --atmos-ref）は import して使う。
+#   ほかのスクリプト（ReferenceCheck.py --atmos-ref）は import して、保存した段 1 の解を load_solution で読む（解き直さない）。
 #
 # 媒質（高度 h の m、1/m）:
 #   Rayleigh: 散乱 β_R × exp(-h / H_R)（吸収なし）。Mie: 散乱 β_M・吸収 α_M × exp(-h / H_M)。
@@ -48,6 +52,7 @@ import hashlib
 import json
 import math
 import os
+import pickle
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -57,8 +62,11 @@ import numpy as np
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 DEFAULT_DUMP = os.path.join(REPO_ROOT, ".harness", "runs", "scene-capture", "SCN-WLR-ATMOS-DUMP", "ref_ground_02.atmos.json")
 DEFAULT_OUT = os.path.join(REPO_ROOT, ".harness", "runs", "scene-capture", "SCN-WLR-ATMOS-REF")
-# --solve が段ごとの正解と検査を保存する先（--out の下。{level} は段）
-SOLVE_FILE = "atmosphere_reference_level{level}.json"
+# --solve が段・組ごとの正解と検査を保存する先（--out の下。{level} は段、{name} は組）
+SOLVE_FILE = "atmosphere_reference_level{level}_{name}.json"
+# 段 1 の解そのもの（比べる表が読む。{name} は設定の名前）
+SOLUTION_FILE = "atmosphere_solution_level{level}_{name}.pkl"
+SOLUTION_LEVEL = 1
 
 # 段 2 と段 1 の相対差の上限（0.5 %）と、相対差の分母の下限（太陽 1 lux あたりの cd/m²・透過率）
 CONVERGENCE_TOLERANCE = 0.005
@@ -161,6 +169,61 @@ def with_changes(settings, name, **changes):
     result.update(changes)
     result["name"] = name
     return result
+
+
+def comparison_variants(settings):
+    """設定の違いを分けるための、書き出しの設定 settings を 1 つずつ論文の値へ戻した設定（名前 → 設定）。論文の設定そのもの
+    （paper の組）は含めない"""
+    return {
+        "mie_scale_height_1200": with_changes(settings, "mie_scale_height_1200",
+                                              mie_scale_height_m=PAPER_SETTINGS["mie_scale_height_m"]),
+        "atmosphere_100km": with_changes(settings, "atmosphere_100km",
+                                         atmosphere_height_m=PAPER_SETTINGS["atmosphere_height_m"]),
+        "albedo_0": with_changes(settings, "albedo_0", ground_albedo=[0.0, 0.0, 0.0]),
+    }
+
+
+def script_bytes():
+    with open(os.path.abspath(__file__), "rb") as f:
+        return f.read()
+
+
+def signature(**values):
+    """設定の署名: この台本の中身と values（設定・太陽の高度・段の細かさなど）の JSON のハッシュ。書き出しの JSON のうち
+    設定に入らない値（撮影のフレーム番号など）は含めないので、撮り直しても設定が同じなら変わらない"""
+    digest = hashlib.sha256(script_bytes())
+    digest.update(json.dumps(values, sort_keys=True, ensure_ascii=False).encode("utf-8"))
+    return digest.hexdigest()
+
+
+def solution_path(out_dir, settings, level=SOLUTION_LEVEL):
+    return os.path.join(out_dir, SOLUTION_FILE.format(level=level, name=settings["name"]))
+
+
+def save_solution(atmosphere, out_dir):
+    """解いた大気（Atmosphere）を設定の署名つきで保存する"""
+    os.makedirs(out_dir, exist_ok=True)
+    path = solution_path(out_dir, atmosphere.settings, atmosphere.level)
+    record = {"signature": signature(settings=atmosphere.settings, parameters=atmosphere.parameters),
+              "settings": atmosphere.settings, "level": atmosphere.level, "atmosphere": atmosphere}
+    with open(path + ".tmp", "wb") as f:
+        pickle.dump(record, f, protocol=pickle.HIGHEST_PROTOCOL)
+    os.replace(path + ".tmp", path)
+    return path
+
+
+def load_solution(settings, out_dir=None, level=SOLUTION_LEVEL):
+    """save_solution が保存した解を読む。(Atmosphere か None, 無いときや署名が今の台本・設定と違うときの理由)。
+    読むのは --solve がこの台本で書いたファイルだけ（pickle は信頼できる出所のものしか読まない）"""
+    path = solution_path(out_dir or DEFAULT_OUT, settings, level)
+    if not os.path.isfile(path):
+        return None, f"保存した解が無い（AtmosphereReference.py --solve --level {level} --sets <組> で作る）: {path}"
+    with open(path, "rb") as f:
+        record = pickle.load(f)
+    expected = signature(settings=settings, parameters=level_parameters(level))
+    if record.get("signature") != expected:
+        return None, f"保存した解の署名が今の台本・設定と違う（--solve --level {level} をやり直す）: {path}"
+    return record["atmosphere"], None
 
 
 class Medium:
@@ -844,9 +907,23 @@ class DirectionalField:
         self.orders = orders
         self.order_ratios = ratios
         self.last_order_fraction = fraction
-        self.tables = self.prepare(total_tables - node_analytic)
+        self.raw_tables = total_tables - node_analytic
+        self.tables = self.prepare(self.raw_tables)
         self.ground = total_ground
         self.higher = higher
+
+    def __getstate__(self):
+        """保存（pickle）の形: 引く形の表（prepare の窓の見方）は書き出すと元の 16 倍になるので元の値だけを持ち、読むときに
+        prepare し直す。求積の作業用のキャッシュと、ほかの位相関数の表（table_for）は捨てる（使うときに作り直す）"""
+        state = dict(self.__dict__)
+        state["tables"] = None
+        state["extra_tables"] = {}
+        state["quadratures"] = [dict(quadrature, cache={}) for quadrature in self.quadratures]
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        self.tables = self.prepare(self.raw_tables)
 
     # --- 引く ---
 
@@ -1205,15 +1282,10 @@ def reference_sets(dump_path):
     return sets, repro_altitude, failures
 
 
-def inputs_sha256(dump_path):
-    """段 2 の保存した結果が今の入力のものかを見るハッシュ（この台本と書き出しの JSON の中身）"""
-    digest = hashlib.sha256()
-    for path in (os.path.abspath(__file__), dump_path):
-        digest.update(os.path.basename(path).encode("utf-8"))
-        if os.path.isfile(path):
-            with open(path, "rb") as f:
-                digest.update(f.read())
-    return digest.hexdigest()
+def set_signature(name, settings, sun_altitude, observer, repro_altitude, level):
+    """組の保存した結果が今の入力のものかを見る署名（この台本・設定・太陽の高度・観測点の高度・最小再現の高度・段の細かさ）"""
+    return signature(name=name, settings=settings, sun_altitude_degrees=sun_altitude, observer_altitude_m=observer,
+                     repro_altitude_m=repro_altitude, parameters=level_parameters(level))
 
 
 def correctness_checks(atmosphere, settings, sun_altitude, observer, repro_altitude):
@@ -1260,75 +1332,100 @@ def check_failures(name, checks):
     return failures
 
 
-def solve(dump_path, out_dir, level=2):
-    """段 level（重い。段 1 は 1 組数十分、段 2 は 1 組数時間）の収束を見る量と検査を求め、入力のハッシュつきで保存する。
-    --verify は保存した段 1 と段 2 を比べる"""
+def solve(dump_path, out_dir, level=2, names=None):
+    """段 level（重い。段 1 は 1 組数分、段 2 は 1 組数時間）の収束を見る量と検査を組ごとに求め、設定の署名つきで保存する。
+    段 1 では解そのものも保存する（save_solution）。names は解く組（paper・engine と comparison_variants の名前。省くと段 1 は
+    すべて、段 2 は paper と engine）。--verify は保存した段 1 と段 2 を比べる"""
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sets, repro_altitude, failures = reference_sets(dump_path)
-    result = {"inputs_sha256": inputs_sha256(dump_path), "dump": dump_path, "repro_altitude_m": repro_altitude,
-              "level": level, "sets": {}}
-    for name, settings, sun_altitude, observer in sets:
+    engine = [settings for name, settings, _, _ in sets if name == "engine"]
+    variants = comparison_variants(engine[0]) if engine else {}
+    known = [name for name, _, _, _ in sets] + list(variants)
+    if names is None:
+        names = known if level == SOLUTION_LEVEL else [name for name, _, _, _ in sets]
+    for name in names:
+        if name not in known:
+            failures.append(f"知らない組: {name}（{', '.join(known)}）")
+        elif name in variants and level != SOLUTION_LEVEL:
+            failures.append(f"組 {name} は段 {SOLUTION_LEVEL} の解の保存だけ（段 {level} は解かない）")
+    if failures:
+        for failure in failures:
+            print(f"ATMOSPHERE_REFERENCE_SOLVE failure: {failure}")
+        return 1
+    os.makedirs(out_dir, exist_ok=True)
+    for name in names:
+        if name in variants:
+            atmosphere = Atmosphere(variants[name], level)
+            saved = save_solution(atmosphere, out_dir)
+            print(f"ATMOSPHERE_REFERENCE_SOLVE set={name} level={level} seconds={atmosphere.seconds:.1f} "
+                  f"orders={atmosphere.directional.orders} solution={saved}", flush=True)
+            continue
+        _, settings, sun_altitude, observer = next(entry for entry in sets if entry[0] == name)
         atmosphere = Atmosphere(settings, level)
+        saved = save_solution(atmosphere, out_dir) if level == SOLUTION_LEVEL else None
         quantities = standard_quantities(atmosphere, sun_altitude, observer)
         checks = correctness_checks(atmosphere, settings, sun_altitude, observer, repro_altitude)
-        failures += check_failures(name, checks)
-        result["sets"][name] = {"parameters": atmosphere.parameters, "sun_altitude_degrees": sun_altitude,
-                                "observer_altitude_m": observer, "checks": checks,
-                                "quantities": {key: np.asarray(value).tolist() for key, value in quantities.items()}}
+        set_failures = check_failures(name, checks)
+        failures += set_failures
+        result = {"signature": set_signature(name, settings, sun_altitude, observer, repro_altitude, level),
+                  "dump": dump_path, "repro_altitude_m": repro_altitude, "level": level, "name": name,
+                  "settings": settings, "parameters": atmosphere.parameters, "sun_altitude_degrees": sun_altitude,
+                  "observer_altitude_m": observer, "checks": checks, "solution": saved,
+                  "quantities": {key: np.asarray(value).tolist() for key, value in quantities.items()},
+                  "failures": set_failures}
+        path = os.path.join(out_dir, SOLVE_FILE.format(level=level, name=name))
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(result, f, indent=1, ensure_ascii=False)
         print(f"ATMOSPHERE_REFERENCE_SOLVE set={name} level={level} seconds={atmosphere.seconds:.1f} "
               f"orders={checks['orders']} second_order_max_rel={checks['second_order_max_relative']:.2e} "
-              f"first_order_A_vs_B={checks['first_order_max_relative']:.1e}", flush=True)
-    result["failures"] = failures
-    os.makedirs(out_dir, exist_ok=True)
-    path = os.path.join(out_dir, SOLVE_FILE.format(level=level))
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(result, f, indent=1, ensure_ascii=False)
+              f"first_order_A_vs_B={checks['first_order_max_relative']:.1e} signature={result['signature']} "
+              f"report={path}", flush=True)
     for failure in failures:
         print(f"ATMOSPHERE_REFERENCE_SOLVE failure: {failure}")
-    print(f"ATMOSPHERE_REFERENCE_SOLVE result={'pass' if not failures else 'fail'} level={level} "
-          f"inputs_sha256={result['inputs_sha256']} report={path}")
+    print(f"ATMOSPHERE_REFERENCE_SOLVE result={'pass' if not failures else 'fail'} level={level} sets={','.join(names)}")
     return 0 if not failures else 1
 
 
-def load_solved(out_dir, level, current_hash, failures):
-    """--solve が保存した段 level の結果と、入力のハッシュが今と同じか（無いか違えば failures に足す。無ければ None）"""
-    path = os.path.join(out_dir, SOLVE_FILE.format(level=level))
+def load_solved(out_dir, level, name, current_signature, failures):
+    """--solve が保存した段 level・組 name の結果と、署名が今と同じか（無いか違えば failures に足す。無ければ None）"""
+    path = os.path.join(out_dir, SOLVE_FILE.format(level=level, name=name))
     if not os.path.isfile(path):
-        failures.append(f"段 {level} の保存した結果が無い（--solve --level {level} で作る）: {path}")
+        failures.append(f"{name}: 段 {level} の保存した結果が無い（--solve --level {level} --sets {name} で作る）: {path}")
         return None, False
     with open(path, encoding="utf-8") as f:
         saved = json.load(f)
-    current = saved.get("inputs_sha256") == current_hash
+    current = saved.get("signature") == current_signature
     if not current:
-        failures.append(f"段 {level} の保存した結果の入力のハッシュが今の台本・書き出しと違う（--solve --level {level} をやり直す）")
+        failures.append(f"{name}: 段 {level} の保存した結果の署名が今の台本・設定と違う（--solve --level {level} --sets {name} を"
+                        "やり直す）")
     return saved, current
 
 
 def verify(dump_path, out_dir):
-    """--solve が保存した段 1 と段 2 を比べる（入力のハッシュが今と同じことも見る）。収束以外の検査は検査の段
+    """--solve が保存した段 1 と段 2 を比べる（設定の署名が今と同じことも見る）。収束以外の検査は検査の段
     （CHECK_PARAMETERS）をその場で解いて見て、段 1・段 2 は保存した値で見る"""
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sets, repro_altitude, failures = reference_sets(dump_path)
-    current_hash = inputs_sha256(dump_path)
-    saved1, current1 = load_solved(out_dir, 1, current_hash, failures)
-    saved2, current2 = load_solved(out_dir, 2, current_hash, failures)
-    inputs_current = current1 and current2
+    inputs_current = True
     report = {"criteria": {"convergence_tolerance": CONVERGENCE_TOLERANCE, "radiance_floor": CONVERGENCE_RADIANCE_FLOOR,
                            "analytic_tolerance": ANALYTIC_TOLERANCE, "second_order_tolerance": SECOND_ORDER_TOLERANCE,
                            "first_order_tolerance": FIRST_ORDER_TOLERANCE, "level1": LEVEL1,
                            "check_parameters": CHECK_PARAMETERS},
-              "inputs_sha256": current_hash, "inputs_current": inputs_current,
-              "solve_reports": [os.path.join(out_dir, SOLVE_FILE.format(level=level)) for level in (1, 2)], "sets": {}}
+              "dump": dump_path, "solve_reports": [], "sets": {}}
     for name, settings, sun_altitude, observer in sets:
         light = Atmosphere(settings, "check", CHECK_PARAMETERS)
         checks = {"check": correctness_checks(light, settings, sun_altitude, observer, repro_altitude)}
         failures += check_failures(name, checks["check"])
-        coarse_record = (saved1 or {}).get("sets", {}).get(name)
-        fine_record = (saved2 or {}).get("sets", {}).get(name)
+        records = {}
+        for level in (1, 2):
+            current_signature = set_signature(name, settings, sun_altitude, observer, repro_altitude, level)
+            records[level], current = load_solved(out_dir, level, name, current_signature, failures)
+            inputs_current = inputs_current and current
+            report["solve_reports"].append(os.path.join(out_dir, SOLVE_FILE.format(level=level, name=name)))
+        coarse_record = records[1]
+        fine_record = records[2]
         for level, record in ((1, coarse_record), (2, fine_record)):
-            if record is None:
-                failures.append(f"{name}: 段 {level} の保存した結果に組が無い")
-            else:
+            if record is not None:
                 checks[f"level{level}"] = record["checks"]
                 failures += check_failures(name, record["checks"])
         worst = {}
@@ -1388,6 +1485,7 @@ def verify(dump_path, out_dir):
               f"+{level2.get('seconds', float('nan')):.1f}(saved)")
         for key, value in worst.items():
             print(f"ATMOSPHERE_REFERENCE set={name} quantity={key} level1_vs_level2={value:.5f}")
+    report["inputs_current"] = inputs_current
     report["failures"] = failures
     os.makedirs(out_dir, exist_ok=True)
     path = os.path.join(out_dir, "atmosphere_reference_verify.json")
@@ -1404,12 +1502,14 @@ def main():
     parser = argparse.ArgumentParser(description="空と霞の数値の正解（Hillaire 2020 の定義から独立に積分する）")
     parser.add_argument("--solve", action="store_true", help="段の正解と検査を求めて保存する（重い）")
     parser.add_argument("--level", type=int, choices=(1, 2), default=2, help="--solve で解く段")
+    parser.add_argument("--sets", default=None, help="--solve で解く組（カンマ区切り。省くと段 1 はすべて、段 2 は paper と engine）")
     parser.add_argument("--verify", action="store_true", help="保存した段 1 と段 2 の収束と、検査の段の解析解との一致などを確かめる")
     parser.add_argument("--dump", default=DEFAULT_DUMP, help="エンジンの書き出しの JSON（<視点>.atmos.json）")
     parser.add_argument("--out", default=DEFAULT_OUT, help="結果の JSON の出力先")
     args = parser.parse_args()
     if args.solve:
-        status = solve(args.dump, args.out, args.level)
+        names = [name for name in args.sets.split(",") if name] if args.sets else None
+        status = solve(args.dump, args.out, args.level, names)
         if status or not args.verify:
             return status
     if args.verify:
@@ -1419,4 +1519,6 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    # 解を pickle で保存するとき、クラスを __main__ でなくこのモジュールの名前で記録する（ReferenceCheck.py が import して読む）
+    import AtmosphereReference
+    sys.exit(AtmosphereReference.main())

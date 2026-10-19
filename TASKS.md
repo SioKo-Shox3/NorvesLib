@@ -1772,7 +1772,7 @@
 - verify: `python Scripts/Terrain/AtmosphereReference.py --verify`
 - verify: `python Scripts/Terrain/ReferenceCheck.py --atmos-ref --capture .harness/runs/scene-capture/SCN-WLR-ATMOS-DUMP --verify`
 - paths: Scripts/Terrain, Scripts, Docs/RenderingValidation, TASKS.md, PROGRESS.md
-- notes: 2026-10-19: 遮断器で blocked（評価の差し戻しの直しが 40 分に収まらず 2 回止まった）。B の直しを SCN-WLR-ATMOS-REF-B へ分けた。この項目は B の直しの後で、比較の表・霞の二重の判断（霧の空の LUT × 不透明度が太陽の側で正解の 2.2 倍、など）・写真との分け方を新しい B で更新し、A と B の両方で結論が変わるかを書く。 2026-10-19: `--atmos-ref` は保存した数値の参照（設定の署名つきの段の解）を読む形にし、verify で解き直さない（1 コマンド 10 分。今は B の生成だけで約 685 秒。Sol の批評 18）。
+- notes: 2026-10-19: 遮断器で blocked（評価の差し戻しの直しが 40 分に収まらず 2 回止まった）。B の直しを SCN-WLR-ATMOS-REF-B へ分けた。この項目は B の直しの後で、比較の表・霞の二重の判断（霧の空の LUT × 不透明度が太陽の側で正解の 2.2 倍、など）・写真との分け方を新しい B で更新し、A と B の両方で結論が変わるかを書く。 2026-10-19: `--atmos-ref` は保存した数値の参照（設定の署名つきの段の解）を読む形にし、verify で解き直さない（1 コマンド 10 分。今は B の生成だけで約 685 秒。Sol の批評 18）。 2026-10-20 反復 3: 書き出しの入力が撮影の後に変わっていたので撮り直した（空と霞の値は frame_number 以外同じ）。正解の保存の署名を書き出しのバイト列から設定（台本・設定・太陽・観測点・段の細かさ）へ移し、段 1 の解そのもの（比べる 5 組）を保存して `--atmos-ref` が読む形にした。段 1（5 組）と段 2（paper・engine を別のプロセス）の `--solve` を反復の外で起動した（`.harness/runs/20261020-072612/atmos-ref-solve.ps1`、ログ `aux-SCN-WLR-ATMOS-REF-solve-*.txt`）。解き終わったら、`--atmos-ref`（`--verify` なし）で表を作り、文書の表と判断を更新して verify の 2 つを回す。
 
 ## SCN-WLR-FAR-BLUR-STATIC: 遠景のぼけの原因を、静止の撮影で 1 つずつ切り分ける
 - status: done

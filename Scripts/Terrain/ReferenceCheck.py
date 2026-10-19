@@ -131,6 +131,8 @@
 #       多重散乱は論文の近似 A と、各回で位相関数を使い方向別の放射輝度を回数で足す B）と比べ、<出力先>/atmos_ref_check.json に書く。比べるもの: 空の方向別の輝度（設定を
 #       1 つずつ論文へ戻した正解も）、地表の太陽と空の照度、地表への視線と水平の視線の距離別の透過率と散乱光（エンジンと同じ媒質の
 #       正解と、空の大気そのままの正解）、高さフォグと空気遠近の光学的深さと散乱光の内訳、多重散乱の表、写真 ground_02 の空の色度。
+#       正解は AtmosphereReference.py --solve --level 1 が設定の署名つきで保存した解（書き出しの設定と、1 つずつ論文へ戻した設定）を
+#       読み、ここでは解き直さない（無いか署名が今の台本・設定と違えば失敗）。
 #       合否: 入力のハッシュが今のファイルと合う（--verify）、AtmosphereReference.py --verify の結果が合格で同じ設定、同じ式で求まる値
 #       （地表の太陽の透過率、同じ媒質の高さフォグと空気遠近の透過率）が正解と ATMOS_REF_SAME_MODEL_TOLERANCE で合う。
 #       散乱光と空の輝度の差は記録するだけ（値は変えない）。
@@ -2868,19 +2870,22 @@ def atmos_ref_view(capture_dir, view):
     fog = atmos_fog_settings(meta)
     settings = AR.settings_from_dump(meta)
     started = time.time()
-    reference = AR.Atmosphere(settings, ATMOS_REF_LEVEL)
-    # 設定の違いを分けるための、1 つずつ論文の値へ戻した正解
-    variants = {
-        "mie_scale_height_1200": AR.with_changes(settings, "mie_scale_height_1200",
-                                                 mie_scale_height_m=AR.PAPER_SETTINGS["mie_scale_height_m"]),
-        "atmosphere_100km": AR.with_changes(settings, "atmosphere_100km",
-                                            atmosphere_height_m=AR.PAPER_SETTINGS["atmosphere_height_m"]),
-        "albedo_0": AR.with_changes(settings, "albedo_0", ground_albedo=[0.0, 0.0, 0.0]),
-        "paper": dict(AR.PAPER_SETTINGS),
-    }
-    variant_atmospheres = {name: AR.Atmosphere(s, 1) for name, s in variants.items()}
+    # 正解は AtmosphereReference.py --solve --level 1 が設定の署名つきで保存した解を読む（ここでは解き直さない）。
+    # 設定の違いを分けるための、1 つずつ論文の値へ戻した正解も同じ
+    variants = dict(AR.comparison_variants(settings), paper=dict(AR.PAPER_SETTINGS))
+    solutions = {}
+    for name, variant_settings in [("engine", settings)] + list(variants.items()):
+        solutions[name], reason = AR.load_solution(variant_settings, level=ATMOS_REF_LEVEL)
+        if reason:
+            failures.append(f"{name}: {reason}")
+    if failures:
+        return {"view": view, "pass": False, "failures": failures, "settings": settings}
+    reference = solutions["engine"]
+    variant_atmospheres = {name: solutions[name] for name in variants}
     result = {"view": view, "reference_level": ATMOS_REF_LEVEL, "settings": settings, "sun_direction": sun.tolist(),
-              "sun_top_of_atmosphere_lux": sun_lux, "observer_altitude_m": observer, "haze_origin_altitude_m": haze_origin}
+              "sun_top_of_atmosphere_lux": sun_lux, "observer_altitude_m": observer, "haze_origin_altitude_m": haze_origin,
+              "solutions": {name: AR.solution_path(AR.DEFAULT_OUT, s, ATMOS_REF_LEVEL)
+                            for name, s in [("engine", settings)] + list(variants.items())}}
 
     # 1. 空の方向別の輝度（cd/m²）: エンジンの sky-view の表（頭打ちの前）と正解（A・B）、設定を 1 つずつ戻した正解（B）
     sky_rows = []

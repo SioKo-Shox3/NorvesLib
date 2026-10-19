@@ -5786,3 +5786,13 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - コードは変えていない（解は前の反復のコミット 05fc3466 の台本）。新しい試験は足していない
   - 段 2 の解の時間は論文 12303 秒・荒野 17591 秒（2 組で約 8.4 時間）
 - Next: SCN-WLR-ATMOS-REF（直した B で比べる表と霞の二重の判断を更新する）
+
+### SCN-WLR-ATMOS-REF 途中（2026-10-20、run 20261020-072612 の反復 3）
+- 撮り直し: 書き出し（SCN-WLR-ATMOS-DUMP）の入力が撮影の後に変わっていた（Assets/Shaders・Rendering・Wasteland・CaptureScene.ps1・CommonLight.json）ので、同じ verify のコマンドで撮り直した（`aux-SCN-WLR-ATMOS-REF-recapture.txt`、EXIT=0、game_exe_sha256 35118a15…、commit affafa8a）。`ref_ground_02.atmos.json` は frame_number（567 → 380）以外まったく同じ（空と霞の設定・照度・視線の決め方は変わらない）
+- Done（コード）:
+  - `AtmosphereReference.py`: 保存した結果の署名を「台本 ＋ 書き出しの JSON のバイト列」から、組ごとの設定の署名（台本・設定・太陽の高度・観測点の高度・最小再現の高度・段の細かさ）へ移した（撮り直しでフレーム番号が変わるだけで解き直しになっていた）。`--solve` は組ごと（`--sets`）に `atmosphere_reference_level<段>_<組>.json` へ書き、段 1 では解そのもの（`atmosphere_solution_level1_<設定の名前>.pkl`。表は元の値で持ち読むときに引く形にする）も保存する。設定を 1 つずつ論文へ戻した 3 組（`comparison_variants`）は段 1 の解の保存だけ
+  - `ReferenceCheck.py --atmos-ref`: 正解を解き直さず、保存した段 1 の解（書き出しの設定・論文の設定・戻した 3 組）を署名つきで読む。無いか署名が違えば失敗
+  - 小さな検査の段の細かさで、解いて保存 → 読んで比べる一巡と、設定を変えると読まないことを仮の出力先で確かめた
+- 段 1（5 組を 1 プロセス）と段 2（paper・engine をそれぞれ 1 プロセス）の `--solve` を、このコミットの後に反復の外で切り離して起動する: `.harness/runs/20261020-072612/atmos-ref-solve.ps1 -Level <段> [-Sets <組>]`。ログは `.harness/runs/20261020-072612/aux-SCN-WLR-ATMOS-REF-solve-level1.txt`・`-level2-paper.txt`・`-level2-engine.txt`（START に台本の sha256 とコミット、終わると `END ... EXIT=<code>`）。段 2 は前回 2 組を続けて約 8.4 時間（論文 12303 秒・荒野 17591 秒）なので、並べて 5〜6 時間の見込み
+- Next（次の反復）: 3 つのログに `END ... EXIT=0` があるか見る（無ければ python の `AtmosphereReference.py --solve` が走っているか確かめ、走っていれば重ねて起動せず待つ）。そろったら `python Scripts/Terrain/ReferenceCheck.py --atmos-ref --capture .harness/runs/scene-capture/SCN-WLR-ATMOS-DUMP`（`--verify` なし）で表を作り、`Docs/RenderingValidation/WastelandAtmosphereReference.md` の表・霞の二重の判断・写真との分け方を新しい B で書き直し、A と B で結論が変わるかを書く。最後に verify の 2 つを保存して開く。解の走行中と verify の前に `AtmosphereReference.py` を触らない（署名が変わる）
+- Notes: 新しい試験は足していない（verify の 2 つが確かめる）
