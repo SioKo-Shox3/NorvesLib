@@ -1,0 +1,69 @@
+{
+  "description": "--expect-selftest で使う、実材質の地形の今の保存の値で通る仕様。値は今の値の前後で、物理的な正しさの基準ではない。",
+  "rows": [
+    {
+      "mode": "lit",
+      "view": "ref_far_01",
+      "region": "sunlit_ground",
+      "component": "total",
+      "quantity": "ratio",
+      "min": 0.79,
+      "max": 0.85
+    },
+    {
+      "mode": "lit",
+      "view": "ref_far_01",
+      "region": "far",
+      "component": "total",
+      "quantity": "ratio",
+      "min": 0.89,
+      "max": 0.95
+    },
+    {
+      "mode": "lit",
+      "view": "ref_cliff_02",
+      "region": "sunlit_ground",
+      "component": "total",
+      "quantity": "ratio",
+      "min": 0.67,
+      "max": 0.74
+    },
+    {
+      "mode": "lit",
+      "view": "ref_cliff_02",
+      "region": "shadow_ground",
+      "component": "total",
+      "quantity": "ratio",
+      "min": 2.15,
+      "max": 2.3
+    },
+    {
+      "mode": "lit",
+      "view": "ref_ground_02",
+      "region": "shadow_cliff",
+      "component": "total",
+      "quantity": "ratio",
+      "min": 0.9,
+      "max": 0.96
+    },
+    {
+      "mode": "lit",
+      "view": "ref_ground_01",
+      "region": "sunlit_ground",
+      "component": "chroma",
+      "quantity": "chroma_diff",
+      "max": 0.03
+    },
+    {
+      "mode": "lit",
+      "view": "ref_cliff_01",
+      "region": "shadow_cliff",
+      "component": "total",
+      "quantity": "ratio",
+      "min": 0.9,
+      "max": 1.1,
+      "allow_undetermined": true,
+      "note": "2048 サンプルでも収束しない（SCN-WLR-LIT-SHADOW-REF-C01 まで未判定を許す）"
+    }
+  ]
+}

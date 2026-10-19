@@ -1,0 +1,24 @@
+{
+  "description": "--expect-selftest で落ちることを確かめる仕様（灰色）。影の崖の比 1 ± 0.1 は今の値 1.57 で外れる。",
+  "rows": [
+    {
+      "mode": "gray",
+      "view": "ref_cliff_01",
+      "region": "sunlit_ground",
+      "component": "total",
+      "quantity": "ratio",
+      "min": 0.92,
+      "max": 0.99
+    },
+    {
+      "mode": "gray",
+      "view": "ref_cliff_01",
+      "region": "shadow_cliff",
+      "component": "total",
+      "quantity": "ratio",
+      "min": 0.9,
+      "max": 1.1,
+      "note": "影の崖の比 1 ± 0.1"
+    }
+  ]
+}

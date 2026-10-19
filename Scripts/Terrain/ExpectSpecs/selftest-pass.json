@@ -1,0 +1,135 @@
+{
+  "description": "--expect-selftest と SCN-WLR-EXPECT-MATCH の verify で使う、灰色の地形の今の保存（2026-10-19 の撮り直し）の値で通る仕様。値は今の値の前後で、物理的な正しさの基準ではない。",
+  "rows": [
+    {
+      "mode": "gray",
+      "view": "ref_cliff_01",
+      "region": "sunlit_ground",
+      "component": "total",
+      "quantity": "ratio",
+      "min": 0.92,
+      "max": 0.99
+    },
+    {
+      "mode": "gray",
+      "view": "ref_cliff_01",
+      "region": "sunlit_ground",
+      "component": "sun",
+      "quantity": "ratio",
+      "min": 0.9,
+      "max": 0.96
+    },
+    {
+      "mode": "gray",
+      "view": "ref_cliff_01",
+      "region": "sunlit_ground",
+      "component": "sky",
+      "quantity": "ratio",
+      "min": 0.97,
+      "max": 1.04
+    },
+    {
+      "mode": "gray",
+      "view": "ref_cliff_01",
+      "region": "sunlit_ground",
+      "component": "chroma",
+      "quantity": "chroma_diff",
+      "max": 0.01
+    },
+    {
+      "mode": "gray",
+      "view": "ref_cliff_01",
+      "region": "sunlit_cliff",
+      "component": "total",
+      "quantity": "ratio",
+      "min": 0.94,
+      "max": 1.01
+    },
+    {
+      "mode": "gray",
+      "view": "ref_cliff_01",
+      "region": "sunlit_cliff",
+      "component": "sky",
+      "quantity": "ratio",
+      "min": 1.38,
+      "max": 1.46
+    },
+    {
+      "mode": "gray",
+      "view": "ref_cliff_01",
+      "region": "shadow_cliff",
+      "component": "total",
+      "quantity": "ratio",
+      "min": 1.53,
+      "max": 1.62,
+      "note": "今の影の崖は Cycles より明るい（一覧の欠陥。直ったらこの行は外れる）"
+    },
+    {
+      "mode": "gray",
+      "view": "ref_cliff_01",
+      "region": "shadow_ground",
+      "component": "sun",
+      "quantity": "ratio",
+      "min": 5.6,
+      "max": 6.2,
+      "note": "今の影の中の地面への太陽の漏れ（SCN-WL-SHADOW-LEAK）"
+    },
+    {
+      "mode": "gray",
+      "view": "ref_far_01",
+      "region": "far",
+      "component": "total",
+      "quantity": "ratio",
+      "min": 0.92,
+      "max": 0.99
+    },
+    {
+      "mode": "gray",
+      "view": "ref_far_01",
+      "region": "far",
+      "component": "sun",
+      "quantity": "ratio",
+      "min": 0.84,
+      "max": 0.91
+    },
+    {
+      "mode": "gray",
+      "view": "ref_far_01",
+      "region": "far",
+      "component": "sky",
+      "quantity": "ratio",
+      "min": 1.31,
+      "max": 1.39
+    },
+    {
+      "mode": "gray",
+      "view": "ref_far_01",
+      "region": "far",
+      "component": "chroma",
+      "quantity": "chroma_diff",
+      "max": 0.01
+    },
+    {
+      "mode": "gray",
+      "view": "ref_far_01",
+      "region": "shadow_ground",
+      "component": "total",
+      "quantity": "ratio",
+      "min": 0.9,
+      "max": 1.1,
+      "allow_undetermined": true,
+      "note": "ref_far_01 に影の中の地面の画素は無い（未判定を許す）"
+    },
+    {
+      "mode": "gray",
+      "view": "ref_cliff_01",
+      "region": "far",
+      "component": "total",
+      "quantity": "ratio",
+      "min": 0.9,
+      "max": 1.1,
+      "allow_undetermined": true,
+      "note": "ref_cliff_01 に遠景の画素は無い（未判定を許す）"
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "description": "--expect-selftest で落ちることを確かめる仕様（遠景のぼけの動き）。TAA の振りと止めの欠けの差 0.01 以内は今の +0.097 で外れる。",
+  "rows": [
+    {
+      "mode": "blur_motion",
+      "view": "ref_far_01",
+      "region": "far",
+      "case": "fxaa",
+      "tag": "motion-30",
+      "quantity": "motion_static_detail_loss",
+      "min": -0.01,
+      "max": 0.01
+    },
+    {
+      "mode": "blur_motion",
+      "view": "ref_far_01",
+      "region": "far",
+      "case": "taa",
+      "tag": "motion-30",
+      "quantity": "motion_static_detail_loss",
+      "min": -0.01,
+      "max": 0.01,
+      "note": "TAA の振りと止めの欠けの差 0.01 以内"
+    }
+  ]
+}

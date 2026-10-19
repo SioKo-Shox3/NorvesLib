@@ -1,0 +1,68 @@
+{
+  "description": "--expect-selftest で使う、遠景のぼけの動きの今の保存の値で通る仕様。値は今の値の前後で、物理的な正しさの基準ではない。",
+  "rows": [
+    {
+      "mode": "blur_motion",
+      "view": "ref_far_01",
+      "region": "far",
+      "case": "taa",
+      "tag": "motion-30",
+      "quantity": "motion_static_detail_loss",
+      "min": 0.07,
+      "max": 0.13,
+      "note": "TAA は振ると細部が欠ける（振り − 止め）"
+    },
+    {
+      "mode": "blur_motion",
+      "view": "ref_far_01",
+      "region": "far",
+      "case": "taa",
+      "tag": "motion-30",
+      "quantity": "motion_static_detail_loss",
+      "min": 0.07,
+      "max": 0.13,
+      "static": "static-60"
+    },
+    {
+      "mode": "blur_motion",
+      "view": "ref_far_01",
+      "region": "far",
+      "case": "taa",
+      "tag": "motion-30",
+      "quantity": "motion_static_alias",
+      "min": -0.09,
+      "max": -0.04
+    },
+    {
+      "mode": "blur_motion",
+      "view": "ref_far_01",
+      "region": "far",
+      "case": "fxaa",
+      "tag": "motion-30",
+      "quantity": "motion_static_detail_loss",
+      "min": -0.01,
+      "max": 0.01,
+      "note": "履歴の無い FXAA は振りと止めが同じ"
+    },
+    {
+      "mode": "blur_motion",
+      "view": "ref_far_01",
+      "region": "far",
+      "case": "taa",
+      "tag": "static-60",
+      "quantity": "alias",
+      "min": 0.32,
+      "max": 0.37
+    },
+    {
+      "mode": "blur_motion",
+      "view": "ref_far_01",
+      "region": "cliff",
+      "case": "base",
+      "tag": "motion-30",
+      "quantity": "detail_loss",
+      "min": 0.2,
+      "max": 0.25
+    }
+  ]
+}

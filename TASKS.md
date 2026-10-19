@@ -1879,7 +1879,7 @@
 - notes: 2026-10-19 SCN-WLR-REF-SPLIT から分けた。
 
 ## SCN-WLR-EXPECT-MATCH: 比較の検査に、領域・成分ごとの合否の閾値を足す
-- status: todo
+- status: done
 - after: SCN-WLR-REF-SPLIT, SCN-WLR-RECAPTURE-GRAY-LIT
 - done-when: `ReferenceCheck.py` に `--expect <仕様の JSON>` を足す。仕様は {モード・視点・領域・成分（total・sun・sky・indirect・visibility・RGB の色度）・量（エンジン ÷ Cycles の比・色度の差・可視率の食い違いの割合・細部の欠け・エイリアス・振りと止めの差・base と resident の差）・下限・上限・未判定を許すか（既定は許さない）} の並び。`--gray`・`--lit`・`--blur-static`・`--blur-motion` が仕様の各行を判定し、1 行でも外れるか、許さない行の領域が未判定なら落ちる。仕様の置き場は `Scripts/Terrain/ExpectSpecs/`。今の保存に対して今の値で通る仕様と落ちる仕様（例: 影の崖の比 1 ± 0.1）を作り、`--expect-selftest`（この項目で作る）で通る・落ちるを確かめる。
 - verify: `python Scripts/Terrain/ReferenceCheck.py --gray --capture .harness/runs/scene-capture/SCN-WLR-CYCLES-GRAY --expect Scripts/Terrain/ExpectSpecs/selftest-pass.json --verify`

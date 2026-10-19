@@ -1,0 +1,24 @@
+{
+  "description": "--expect-selftest で落ちることを確かめる仕様（実材質）。日なたの地面の比 1 ± 0.08 は今の ref_cliff_02 の 0.70 で外れる。",
+  "rows": [
+    {
+      "mode": "lit",
+      "view": "ref_ground_01",
+      "region": "sunlit_ground",
+      "component": "total",
+      "quantity": "ratio",
+      "min": 0.77,
+      "max": 0.85
+    },
+    {
+      "mode": "lit",
+      "view": "ref_cliff_02",
+      "region": "sunlit_ground",
+      "component": "total",
+      "quantity": "ratio",
+      "min": 0.92,
+      "max": 1.08,
+      "note": "日なたの地面の比 1 ± 0.08"
+    }
+  ]
+}

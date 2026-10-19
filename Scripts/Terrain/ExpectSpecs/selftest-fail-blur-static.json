@@ -1,0 +1,24 @@
+{
+  "description": "--expect-selftest で落ちることを確かめる仕様（遠景のぼけの静止）。base と resident の差 0.01 以内は今の ref_cliff_02 の遠景（欠け +0.046）で外れる。",
+  "rows": [
+    {
+      "mode": "blur_static",
+      "view": "ref_far_01",
+      "region": "far",
+      "case": "base",
+      "quantity": "detail_loss_vs_resident",
+      "min": -0.01,
+      "max": 0.01
+    },
+    {
+      "mode": "blur_static",
+      "view": "ref_cliff_02",
+      "region": "far",
+      "case": "base",
+      "quantity": "detail_loss_vs_resident",
+      "min": -0.01,
+      "max": 0.01,
+      "note": "base と resident の差 0.01 以内"
+    }
+  ]
+}

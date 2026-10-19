@@ -227,6 +227,12 @@
 #   python Scripts/Terrain/ReferenceCheck.py --ref-split-selftest [--verify]
 #       保存の写しを一時の場所に作り、エンジンの実装の 1 ファイル・Game.exe・カメラ台本・出力の画像を書き換えると Game の撮影が
 #       落ち、エンジンの実装を書き換えても参照は古くならず、参照の入力（照明・Cycles の出力）を書き換えると参照が落ちることを確かめる。
+#   python Scripts/Terrain/ReferenceCheck.py --gray|--lit|--blur-static|--blur-motion ... --expect <仕様の JSON> [--verify]
+#       比較の検査に、領域・成分ごとの合否の閾値の仕様（Scripts/Terrain/ExpectSpecs/。形は ExpectSpec.py）の各行の判定を足す。
+#       1 行でも範囲の外か、未判定を許さない行が未判定なら落とす。判定は報告の expect に書く。
+#   python Scripts/Terrain/ReferenceCheck.py --expect-selftest [--verify]
+#       保存した灰色・実材質・遠景のぼけの静止と動きの撮影で、今の値で通る仕様（ExpectSpecs/selftest-pass*.json）が通り、
+#       外れる行（selftest-fail*.json）・許さない未判定・仕様の誤りで落ちることを確かめる。
 #   python Scripts/Terrain/ReferenceCheck.py --regression --capture <after> --reference <before> [--verify]
 #       回帰の撮影（Scripts/Terrain/CaptureRegression.ps1）の after を before と並べる（本体は Scripts/Terrain/Regression.py）。
 #
@@ -3233,7 +3239,7 @@ def blur_write_crops(path, tiles, center):
     return {"top": top, "left": left, "width": crop_w, "height": crop_h}
 
 
-def run_blur_static(capture_dir, verify, engine_dirs=None, reference_dir=None):
+def run_blur_static(capture_dir, verify, engine_dirs=None, reference_dir=None, expect=None):
     """遠景のぼけの静止の比較。組の撮影は engine_dirs（組ごとに <撮影先>/<組>/metrics.json を持つ最初の撮影先。省くと
     capture_dir）、正解の ref2x は reference_dir（省くと組と同じ探し方）から読み、結果は capture_dir に書く。
     どの組（ref2x を含む）もエンジンの実装（RefSplit.py）が今と一致しないと古いとして落とし、組どうしで揃っていることも見る"""
@@ -3385,6 +3391,7 @@ def run_blur_static(capture_dir, verify, engine_dirs=None, reference_dir=None):
                            "reference_scale": BLUR_REFERENCE_SCALE},
               "groups": group_records, "views": views, "effects": effects, "failures": failures,
               "seconds": time.time() - started}
+    apply_expect(report, expect, "blur_static", failures)
     report_path = os.path.join(capture_dir, "blur_static_check.json")
     with open(report_path, "w", encoding="utf-8") as f:
         json.dump(report, f, indent=2, ensure_ascii=False)
@@ -3560,7 +3567,7 @@ def motion_script_check(group_dir, size, require_resident):
                       "final_pages": final_pages, "capacity_lines": len(capacity_window)}
 
 
-def run_blur_motion(capture_dir, verify, engine_dirs=None, reference_dir=None):
+def run_blur_motion(capture_dir, verify, engine_dirs=None, reference_dir=None, expect=None):
     """遠景のぼけの動きの比較。撮影先・正解の場所・入力の照らし方は run_blur_static と同じ（カメラ台本もエンジンの実装に入る）"""
     import RefSplit
     started = time.time()
@@ -3744,6 +3751,7 @@ def run_blur_motion(capture_dir, verify, engine_dirs=None, reference_dir=None):
                            "shift_tolerance_px": MOTION_SHIFT_TOLERANCE_PX},
               "groups": group_records, "view": entry, "results": results, "alignment": alignment,
               "effects": effects, "history_effect": history, "failures": failures, "seconds": time.time() - started}
+    apply_expect(report, expect, "blur_motion", failures)
     report_path = os.path.join(capture_dir, "blur_motion_check.json")
     with open(report_path, "w", encoding="utf-8") as f:
         json.dump(report, f, indent=2, ensure_ascii=False)
@@ -4083,6 +4091,13 @@ def check_gray_view(capture_dir, cycles_dir, view, engine_hdr, engine_depth, dia
     return result
 
 
+def apply_expect(report, expect, mode, failures):
+    """--expect の仕様の各行を報告の値で判定し、report["expect"] に入れて、外れた行と許さない未判定を failures に足す（ExpectSpec.py）"""
+    if expect:
+        import ExpectSpec
+        ExpectSpec.apply(sys.modules[__name__], report, expect, mode, failures)
+
+
 def split_engine_check(capture_dir):
     import RefSplit
     return RefSplit.check_engine(sys.modules[__name__], capture_dir)
@@ -4106,7 +4121,7 @@ def rel_dir(path):
     return os.path.relpath(path, REPO_ROOT).replace("\\", "/")
 
 
-def run_gray(capture_dir, views, verify, engine_dirs=None, reference_root=None):
+def run_gray(capture_dir, views, verify, engine_dirs=None, reference_root=None, expect=None):
     """灰色の地形の比較。エンジンの撮影は engine_dirs（視点ごとに最初に見つかる撮影先。省くと capture_dir）、Cycles の参照は
     reference_root/cycles（省くと capture_dir）から読み、結果は capture_dir に書く。
     入力の照らし方は RefSplit.py: エンジンの撮影はエンジンの実装、Cycles は参照の入力で照らす"""
@@ -4198,6 +4213,7 @@ def run_gray(capture_dir, views, verify, engine_dirs=None, reference_root=None):
                   f"sun_ratio={entry.get('sun_ratio') or float('nan'):.3f} sky_ratio={entry.get('sky_ratio') or float('nan'):.3f} "
                   f"mean_diff={conv.get('mean_diff', float('nan')):.4f} pixel_rms={conv.get('pixel_rms', float('nan')):.3f}")
 
+    apply_expect(report, expect, "gray", failures)
     report["failures"] = failures
     report_path = os.path.join(capture_dir, "gray_check.json")
     with open(report_path, "w", encoding="utf-8") as f:
@@ -4957,7 +4973,7 @@ def write_lit_photo_overview(path, rows, font):
     sheet.save(path)
 
 
-def run_lit(capture_dir, views, verify, engine_dirs=None, reference_root=None):
+def run_lit(capture_dir, views, verify, engine_dirs=None, reference_root=None, expect=None):
     """実材質の地形の比較。撮影先・参照の場所・入力の照らし方は run_gray と同じ（参照は <参照>/cycles と <参照>/material）"""
     import RefSplit
     failures = []
@@ -5113,6 +5129,7 @@ def run_lit(capture_dir, views, verify, engine_dirs=None, reference_root=None):
     if photo_rows:
         write_lit_photo_overview(os.path.join(capture_dir, "lit_photo_overview.png"), photo_rows, font)
         report["photo_overview"] = "lit_photo_overview.png"
+    apply_expect(report, expect, "lit", failures)
     report["failures"] = failures
     report_path = os.path.join(capture_dir, "lit_check.json")
     with open(report_path, "w", encoding="utf-8") as f:
@@ -5550,9 +5567,21 @@ def main():
                         help="保存の写しで、参照の入力とエンジンの実装の署名の正と負を確かめる")
     parser.add_argument("--regression", action="store_true",
                         help="回帰の撮影の after（--capture）を before（--reference）と並べる（CaptureRegression.ps1 が呼ぶ）")
+    parser.add_argument("--expect", default="",
+                        help="--gray・--lit・--blur-static・--blur-motion で、領域・成分ごとの合否の閾値の仕様（Scripts/Terrain/ExpectSpecs/ の JSON）"
+                             "の各行も判定する")
+    parser.add_argument("--expect-selftest", action="store_true",
+                        help="保存した撮影で、今の値で通る仕様が通り、外れる行・許さない未判定・仕様の誤りで落ちることを確かめる")
     parser.add_argument("--views", default="", help="検査する視点（カンマ区切り。省くと metrics.json の全視点）")
     parser.add_argument("--verify", action="store_true", help="入力のハッシュを今のファイルと照らし、古い結果を拒否する")
     args = parser.parse_args()
+    if args.expect_selftest:
+        import ExpectSpec
+        return ExpectSpec.run_selftest(sys.modules[__name__], args.verify)
+    expect = os.path.normpath(args.expect if os.path.isabs(args.expect) else os.path.join(REPO_ROOT, args.expect))         if args.expect else None
+    if expect and not (args.gray or args.lit or args.blur_static or args.blur_motion):
+        print("REFERENCE_CHECK result=fail reason=expect_unsupported（--expect は --gray・--lit・--blur-static・--blur-motion と使う）")
+        return 1
     if args.ref_split_selftest:
         import RefSplit
         return RefSplit.run_selftest(sys.modules[__name__], args.verify)
@@ -5620,12 +5649,12 @@ def main():
         views = [v.strip() for v in args.views.split(",") if v.strip()]
         return run_atmos_ref(capture_dir, views, args.verify)
     if args.blur_static:
-        return run_blur_static(capture_dir, args.verify, engine_dirs or None, reference)
+        return run_blur_static(capture_dir, args.verify, engine_dirs or None, reference, expect)
     if args.blur_motion:
-        return run_blur_motion(capture_dir, args.verify, engine_dirs or None, reference)
+        return run_blur_motion(capture_dir, args.verify, engine_dirs or None, reference, expect)
     if args.gray:
         views = [v.strip() for v in args.views.split(",") if v.strip()]
-        return run_gray(capture_dir, views, args.verify, engine_dirs or None, reference)
+        return run_gray(capture_dir, views, args.verify, engine_dirs or None, reference, expect)
     if args.albedo:
         views = [v.strip() for v in args.views.split(",") if v.strip()]
         return run_albedo(capture_dir, views, args.verify)
@@ -5634,7 +5663,7 @@ def main():
         return run_normal(capture_dir, views, args.verify)
     if args.lit:
         views = [v.strip() for v in args.views.split(",") if v.strip()]
-        return run_lit(capture_dir, views, args.verify, engine_dirs or None, reference)
+        return run_lit(capture_dir, views, args.verify, engine_dirs or None, reference, expect)
     if args.tonemap:
         views = [v.strip() for v in args.views.split(",") if v.strip()]
         lit_dir = args.lit_capture if os.path.isabs(args.lit_capture) else os.path.join(REPO_ROOT, args.lit_capture)

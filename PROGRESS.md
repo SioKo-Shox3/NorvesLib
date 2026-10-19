@@ -5687,3 +5687,15 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 値の差の主な原因は静止の組と同じく、前の撮影の後に荒野の昼のグレーディングを中立にしたこと（3de2a835）
   - コードは変えていない。新しい試験は足していない
 - Next: TASKS.md の次の未完の項目。
+
+### SCN-WLR-EXPECT-MATCH 完了（2026-10-20、run 20261019-192352 の反復 14）
+- Done: `ReferenceCheck.py` に `--expect <仕様の JSON>`（`--gray`・`--lit`・`--blur-static`・`--blur-motion`）と `--expect-selftest` を足した（本体 `Scripts/Terrain/ExpectSpec.py`）。仕様は {mode・view・region・component・case・tag・static・quantity・min・max・allow_undetermined・note} の行の並びで、1 行でも範囲の外か、許さない行が未判定なら落ちる。判定は報告の `expect` に書く。仕様の置き場 `Scripts/Terrain/ExpectSpecs/` に、今の値で通る仕様（selftest-pass*.json、4 モード）と落ちる仕様（selftest-fail*.json）を置いた。記録は `Docs/RenderingValidation/WastelandExpectSpecs.md`
+- 証拠（`.harness/runs/20261019-192352/`）:
+  - `verify-SCN-WLR-EXPECT-MATCH-1.txt`: `--gray ... --expect selftest-pass.json --verify` result=pass・EXIT=0。14 行（判定 12・未判定を許した 2）すべて合格、inputs_current=1・cycles_inputs_current=1
+  - `verify-SCN-WLR-EXPECT-MATCH-2.txt`: `--expect-selftest --verify` result=pass・cases=21・EXIT=0。4 モードが通る仕様で通り、影の崖の比 1 ± 0.1（今 1.57）の灰色の走行はもとの検査が通ったまま期待の行だけで落ち、実材質・遠景のぼけの静止と動きの落ちる仕様・未判定を許さない行・エンジンの可視率の行・仕様の誤り 5 種で落ちる
+- Notes:
+  - 成分 indirect（エンジンの間接光）と visibility（エンジンの太陽の可視率）は、今の撮影にエンジン側の値が無いので常に未判定になる（領域に `indirect_ratio`・`visibility_mismatch` が入った撮影でだけ求まる。可視率は SCN-WL-SHADOW-PAGES）。`--lit` には太陽だけ・空だけの撮影が無いので sun・sky も未判定
+  - 色度の差は (r, g) = (R, G) / (R + G + B) の差の絶対値の大きい方にした（RTGI の項目の「色度（r・g）の差」に合わせた）
+  - 仕様の行のモードが走らせたモードと違えば仕様の誤りとして落とす（別のモードの行を黙って飛ばさない）
+  - 新しい試験は `--expect-selftest`（done-when が名指し）だけ
+- Next: TASKS.md の次の未完の項目。

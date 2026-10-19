@@ -1,0 +1,60 @@
+{
+  "description": "--expect-selftest で使う、遠景のぼけの静止の今の保存の値で通る仕様。値は今の値の前後で、物理的な正しさの基準ではない。",
+  "rows": [
+    {
+      "mode": "blur_static",
+      "view": "ref_cliff_02",
+      "region": "far",
+      "case": "base",
+      "quantity": "detail_loss_vs_resident",
+      "min": 0.03,
+      "max": 0.06,
+      "note": "既定の取り分の base と resident の差（欠け）"
+    },
+    {
+      "mode": "blur_static",
+      "view": "ref_cliff_02",
+      "region": "far",
+      "case": "base",
+      "quantity": "alias_vs_resident",
+      "min": 0.05,
+      "max": 0.09
+    },
+    {
+      "mode": "blur_static",
+      "view": "ref_far_01",
+      "region": "far",
+      "case": "resident",
+      "quantity": "detail_loss",
+      "min": 0.21,
+      "max": 0.26
+    },
+    {
+      "mode": "blur_static",
+      "view": "ref_far_01",
+      "region": "far",
+      "case": "aa-taa",
+      "quantity": "alias",
+      "min": 0.32,
+      "max": 0.37
+    },
+    {
+      "mode": "blur_static",
+      "view": "ref_cliff_02",
+      "region": "far",
+      "case": "aa-taa",
+      "quantity": "alias",
+      "min": 0.3,
+      "max": 0.34
+    },
+    {
+      "mode": "blur_static",
+      "view": "ref_far_01",
+      "region": "cliff",
+      "case": "finest-lod",
+      "quantity": "detail_loss",
+      "min": 0.11,
+      "max": 0.15
+    }
+  ]
+}
