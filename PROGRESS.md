@@ -5796,3 +5796,9 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 段 1（5 組を 1 プロセス）と段 2（paper・engine をそれぞれ 1 プロセス）の `--solve` を、このコミットの後に反復の外で切り離して起動する: `.harness/runs/20261020-072612/atmos-ref-solve.ps1 -Level <段> [-Sets <組>]`。ログは `.harness/runs/20261020-072612/aux-SCN-WLR-ATMOS-REF-solve-level1.txt`・`-level2-paper.txt`・`-level2-engine.txt`（START に台本の sha256 とコミット、終わると `END ... EXIT=<code>`）。段 2 は前回 2 組を続けて約 8.4 時間（論文 12303 秒・荒野 17591 秒）なので、並べて 5〜6 時間の見込み
 - Next（次の反復）: 3 つのログに `END ... EXIT=0` があるか見る（無ければ python の `AtmosphereReference.py --solve` が走っているか確かめ、走っていれば重ねて起動せず待つ）。そろったら `python Scripts/Terrain/ReferenceCheck.py --atmos-ref --capture .harness/runs/scene-capture/SCN-WLR-ATMOS-DUMP`（`--verify` なし）で表を作り、`Docs/RenderingValidation/WastelandAtmosphereReference.md` の表・霞の二重の判断・写真との分け方を新しい B で書き直し、A と B で結論が変わるかを書く。最後に verify の 2 つを保存して開く。解の走行中と verify の前に `AtmosphereReference.py` を触らない（署名が変わる）
 - Notes: 新しい試験は足していない（verify の 2 つが確かめる）
+
+### SCN-WLR-LIT-SHADOW-REF-C02 完了（2026-10-20、run 20261020-072612 の反復 4）
+- Done: ref_cliff_02 の影の中の地面は、10-20 07:25 にずらし 0 で描き直した本描画（512 サンプル・stop=converged）だけで判定済みになっていた（143518 画素・2 本の差 0.0000・pixel_rms 0.017）。`--require-judged` は本描画で判定済みの領域に切り出しを使わないので、切り出しの描画（`--crop-regions`）は回していない。コードは変えていない
+- verify（`verify-SCN-WLR-LIT-SHADOW-REF-C02-1.txt`）: result=pass、failures 0 件、inputs_current=1・cycles_inputs_current=1。require_judged は 3 組とも judged=1 source=本描画。ref_cliff_02 のパスの和は合成の 1.0000 倍（直接 + 間接 1.0000000031、太陽 + 空 1.00000000005）、6 視点とも ±1e-8。材質の標本の位置は 3 km 未満で (+0.006, +0.032) 画素
+- Notes: ref_cliff_02 の影の中の地面のエンジン / Cycles は 2.227（AO を掛けると 3.557）で、影の中の地面がエンジンで 2 倍以上明るい。この項目は参照の収束までなので記録だけ（比を詰めるのは別の項目。GapList.py が同じ領域を読む）
+- Next: TASKS.md の次の未完の項目

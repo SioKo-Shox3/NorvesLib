@@ -1766,7 +1766,7 @@
 - notes: 2026-10-19 に SCN-WLR-ATMOS-REF から分けた（NEXT_FINDINGS.md の「反復 6 — SCN-WLR-ATMOS-REF」）。verify は 1 コマンド 10 分以内に収める（重い積分は反復の中で保存し、verify は保存した結果と小さな条件の検査に分けてよい）。2026-10-19 反復 31 で blocked（収束 0.76〜1.07 %。blocked/resolved/SCN-WLR-ATMOS-REF-B.md）→ 推奨の 1 を採る: 表の 4 次元の引きを 3 次補間（Catmull-Rom）にして収束を測り直す。基準 0.5 % は変えない。それでも届かなければ 2 を採る: 視線・点の格子と歩数を倍にした組を新しい段 1 にし、段 2 の `--solve`（1 組 1〜2 時間）は反復の外で切り離したプロセスとして起動し、出力と入力のハッシュを保存する（重い処理は許可済み）。次の反復がその保存を検査して閉じる。走行中の段 2 を重ねて起動しない。
 
 ## SCN-WLR-ATMOS-REF: 空と霞を、独立に書いた大気の数値の正解と比べる
-- status: todo
+- status: blocked
 - after: SCN-WLR-ATMOS-REF-B
 - done-when: エンジンのコードを写さず、Hillaire 2020 の論文の定義（同じ係数・惑星の大きさ・オゾン）から `Scripts/Terrain/AtmosphereReference.py` で正解を数値積分する（多重散乱は論文の近似と、高次の散乱を回数で足す版の両方。歩数を倍にして 0.5 % 以内まで収束させる）。SCN-WLR-ATMOS-DUMP の値と、空の方向別の輝度・距離別の透過率と散乱光・地表の太陽と空の照度の比を、角度・距離ごとの表で比べる。高さフォグと空気遠近が同じ霞を二重に掛けていないかを、両方の光学的深さの内訳で調べる。写真の空（ground_02 の晴天）と並べ、差を「モデルの違い」「設定の違い（荒野の Mie の尺度高さ 1600 m・MieDensityScale 0.22 など）」「条件の違い（天気・時刻・カメラ）」に分ける。値は変えない。
 - verify: `python Scripts/Terrain/AtmosphereReference.py --verify`
@@ -1907,7 +1907,7 @@
 - notes: 2026-10-19（Sol の批評 12 と 2 周目）。描画は反復の中で保存し、verify は保存の検査だけ。 2026-10-20 03:30（親）: 切り出しの描画は END EXIT=0 で終わったが、種 B は最初の 64 サンプルに 993 秒かかり（種 A は 512 秒）、上限の秒数で止まって spp_per_seed=64 で合わせている（種 A は 1216 まで描いた）。shadow_cliff の差が 0.0000 なので、2 本の種が本当に違うかも確かめる。512 サンプルに届かないなら、種 B だけを反復の外で描き直す（読み込みと最初のサンプルの時間を上限から外すか上限を延ばす。描画中は GPU・CPU を使う撮影やビルドを重ねない）。 2026-10-20 05:20（親）: ref_far_01 の本描画をずらし 0 で描き直した（`BlenderReference.py --lit --views ref_far_01`、05:07 EXIT=0、spp_per_seed=512・収束）。ただし台本のハッシュが旧参照と違うため、材質の記録（SCN-WLR-CYCLES-LIT/material/inputs.json）から残りの 5 視点が落ちた（`load_previous_record` が違う台本の視点を捨てる）。親が残りの 5 視点を同じ台本でまとめて描き直している（ログ `.harness/runs/20261019-192352/aux-SCN-WLR-LIT-SHADOW-REF-C01-lit5-rerender.txt`、終わったら `--record-reference lit` まで回し、親が todo に戻す）。再開の反復: 反復 23 で Game.exe が変わったので、今の Game.exe で 6 視点の実材質の撮影を撮り直し（反復 21 の `shadow-ref-c01-render-b.ps1` の撮影と同じ引数）、verify を保存して開く。視点を絞って `--lit` を回すと、台本が変わっていればほかの視点の記録が落ちる。描き直すときは古い視点をまとめて 1 回で描く。 2026-10-20 07:25（親）: 5 視点の描き直しは END EXIT=0（材質の記録は 6 視点ともずらし [0, 0]、Cycles は 6 視点とも収束、`--record-reference lit` 済み）。ref_cliff_01 の本描画も 704 サンプルで収束し、verify の require_judged は 2 領域とも「本描画」で判定済みになった。親が保存の検査を回した残りの失敗は 3 つ: (1) 撮影の Game.exe が今のビルドと違う（撮り直す）、(2) ref_far_01 の材質の標本の位置 (+0.090, −0.091)、(3) ref_cliff_02 (+0.101, +0.047)（どちらも 0.1 画素を少し超える）。(2)(3) は `--lit` の `depth_subpixel_shift` が画面全体で測っているため（SCN-WL-CAMERA-OFFSET の `--camera-offset` と `--normal` は 3 km 未満で判定し、3 km より先はエンジンの地形の形の違いが混ざると記録している）。撮り直した後も超えるなら、`--lit` の材質の標本の位置も NORMAL_MAX_DEPTH_M（3 km）未満の画素で判定し、全画面の値は記録だけにする（Cycles の参照の台本 BlenderReference.py は触らない）。
 
 ## SCN-WLR-LIT-SHADOW-REF-C02: ref_cliff_02 の影の中の地面の Cycles の参照を収束させる
-- status: todo
+- status: done
 - after: SCN-WLR-LIT-SHADOW-REF-C01
 - done-when: SCN-WLR-LIT-SHADOW-REF-C01 と同じ形で、ref_cliff_02 の影の中の地面（台地の長い影の落ちる所）を描いて保存し、`--lit --require-judged` で判定済みになりパスの和が全体と 1 % 以内で合うことを検査する。
 - verify: `python Scripts/Terrain/ReferenceCheck.py --lit --capture .harness/runs/scene-capture/SCN-WLR-CYCLES-LIT --require-judged ref_cliff_01:shadow_cliff,ref_cliff_01:shadow_ground,ref_cliff_02:shadow_ground --verify`
