@@ -187,6 +187,9 @@
 #       <出力先>/material/ に画素ごとの材質、<出力先>/cycles/ に照明つきの描画を書いたもの）で比べ、<出力先>/lit_check.json と
 #       表示変換を掛けた比較画像 <出力先>/lit_<視点>.png（エンジン｜Cycles。エンジンの撮影の hdr.json の表示変換を両方に掛け、
 #       Cycles の空は一様な空で埋める）と、領域と比の画像 <出力先>/lit_regions_<視点>.png を書く。--views を省くと LIT_VIEWS。
+#       手本の写真とも並べ、写真｜エンジン｜Cycles の <出力先>/lit_photo_<視点>.png と全視点の一覧 lit_photo_overview.png を書き、
+#       写真の崖・地面の枠（CompareReference.py の PHOTOS）の表示の値と、露出に依らない崖 ÷ 地面の輝度の比・色の比を記録する
+#       （写真とは照明・天気・現像が違うので合否に使わない。写真が無い視点は不合格）。
 #       合否: エンジンの撮影の起動引数とログの印・撮った時点のページの常駐（--albedo と同じ）、画素ごとの材質の入力（--albedo と
 #       同じ値の表・OSL・ミップの段）と標本の位置のずれが NORMAL_SUBPIXEL_MAX_PX 以下、Cycles の出力のハッシュ・カメラ（ずらしは
 #       材質と同じ）・空の分かれ方・光の内訳の和（--gray と同じ）。領域と収束は --gray と同じ定義（1 本あたり
@@ -356,7 +359,7 @@ GRAY_SKY_MISMATCH = 0.005
 GRAY_SPLIT_TOLERANCE = 0.01
 # --albedo（地表の材質の照明の無いアルベドの再現）
 # --lit（実材質の地形のエンジンと Cycles の比較）
-LIT_VIEWS = ("ref_cliff_01", "ref_far_01", "ref_ground_01")
+LIT_VIEWS = ("ref_far_01", "ref_far_02", "ref_cliff_01", "ref_cliff_02", "ref_ground_01", "ref_ground_02")
 LIT_MATERIAL_DIR = "material"
 # 収束を判定する 1 本あたりのサンプル数の下限（BlenderReference.py の MIN_SPP_PER_SEED と同じ。届かない描画の領域は未判定）
 LIT_MIN_SPP_PER_SEED = 512
@@ -4682,7 +4685,89 @@ def write_lit_comparison(path, engine_hdr, cycles, alpha, meta, light):
         panels.append(display)
     Image.fromarray(np.concatenate(panels, axis=1), "RGB").save(path)
     return {"operator": params["operator"], "grading_mode": params["grading_mode"], "pre_exposure": pre_exposure,
-            "cycles_sky_fill_rgb": sky.tolist()}
+            "cycles_sky_fill_rgb": sky.tolist()}, panels
+
+
+def lit_photo_region_values(stats):
+    """CompareReference.measure の領域の値に、露出に依らない量（崖 ÷ 地面の輝度・R/G・B/G）を足す"""
+    out = {}
+    for name in ("cliff", "ground"):
+        entry = dict(stats[name])
+        if entry["rgb"] is not None and entry["rgb"][1] > 0.0:
+            entry["r_over_g"] = entry["rgb"][0] / entry["rgb"][1]
+            entry["b_over_g"] = entry["rgb"][2] / entry["rgb"][1]
+        out[name] = entry
+    cliff, ground = stats["cliff"]["luminance"], stats["ground"]["luminance"]
+    out["cliff_over_ground"] = cliff / ground if cliff is not None and ground else None
+    return out
+
+
+def lit_photo_comparison(capture_dir, view, panels, font):
+    """写真｜エンジン｜Cycles を並べた比較画像 lit_photo_<視点>.png と、写真の崖・地面の枠（CompareReference.py の PHOTOS）の
+    表示の値（sRGB を線形に戻した平均）。写真の現像（露出・ホワイトバランス・トーンカーブ）は分からないので、値の一致は見ず、
+    露出に依らない崖 ÷ 地面の輝度の比と色の比（R/G・B/G）を並べる。(記録, 一覧の行, 失敗の一覧)"""
+    import CompareReference as CR
+    from PIL import ImageDraw
+    entry = next((p for p in CR.PHOTOS if p["view"] == view), None)
+    if entry is None:
+        return None, None, [f"{view}: 対応する写真が CompareReference.py の PHOTOS に無い"]
+    photo_path = os.path.join(CR.PHOTO_DIR, entry["id"] + ".jpg")
+    if not os.path.isfile(photo_path):
+        return None, None, [f"{view}: 写真が無い（{photo_path}）"]
+    photo_panel, (letterbox, band), map_y = CR.fit_photo(Image.open(photo_path).convert("RGB"))
+    boxes = {name: (box[0], map_y(box[1]), box[2], map_y(box[3])) for name, box in entry.items()
+             if name in CR.REGION_COLORS}
+    valid = np.ones((CR.PANEL_SIZE[1], CR.PANEL_SIZE[0]), dtype=bool)
+    if letterbox:
+        valid[:band] = False
+        valid[CR.PANEL_SIZE[1] - band:] = False
+    images = {"photo": photo_panel}
+    for name, display in zip(("engine", "cycles"), panels):
+        images[name] = Image.fromarray(display, "RGB").resize(CR.PANEL_SIZE, Image.LANCZOS)
+    record = {"photo": entry["id"], "boxes": boxes, "values": {}}
+    for name, image in images.items():
+        stats, _ = CR.measure(image, boxes, valid if name == "photo" else np.ones_like(valid))
+        record["values"][name] = lit_photo_region_values(stats)
+
+    labels = {"photo": f"写真 {entry['id']}", "engine": "エンジン", "cycles": "Cycles"}
+    text_height = 96
+    width, height = CR.PANEL_SIZE
+    sheet = Image.new("RGB", (width * 3, height + text_height), (24, 24, 24))
+    draw = ImageDraw.Draw(sheet)
+    for index, (name, image) in enumerate(images.items()):
+        panel = image.copy()
+        CR.draw_boxes(panel, boxes)
+        sheet.paste(panel, (index * width, 0))
+        values = record["values"][name]
+        ratio = values["cliff_over_ground"]
+        line = (f"{labels[name]}　" + "　".join(CR.format_region(label, values[key])
+                                                for key, label in (("cliff", "崖"), ("ground", "地面"))))
+        draw.text((index * width + 8, height + 6), line[:80], fill=(235, 235, 235), font=font)
+        draw.text((index * width + 8, height + 34),
+                  f"崖 ÷ 地面 {ratio:.2f}" if ratio is not None else "崖 ÷ 地面 －", fill=(235, 235, 235), font=font)
+    draw.text((8, height + 62), "表示の値（sRGB を線形に戻した平均）。枠: 橙 = 崖、緑 = 地面。写真は照明・天気・現像が違うので、"
+              "差の向きと露出に依らない比だけを見る", fill=(255, 210, 120), font=font)
+    file_name = f"lit_photo_{view}.png"
+    sheet.save(os.path.join(capture_dir, file_name))
+    record["file"] = file_name
+    return record, (f"{view}（左: 写真 {entry['id']}　中: エンジン　右: Cycles）", images), []
+
+
+def write_lit_photo_overview(path, rows, font):
+    """写真｜エンジン｜Cycles の組を縦に積んだ一覧"""
+    import CompareReference as CR
+    from PIL import ImageDraw
+    width, height = CR.OVERVIEW_PANEL_SIZE
+    row_height = CR.OVERVIEW_LABEL_HEIGHT + height
+    sheet = Image.new("RGB", (width * 3, row_height * len(rows)), (24, 24, 24))
+    draw = ImageDraw.Draw(sheet)
+    for index, (label, images) in enumerate(rows):
+        top = index * row_height
+        draw.text((10, top + 6), label, fill=(235, 235, 235), font=font)
+        for column, image in enumerate(images.values()):
+            sheet.paste(image.resize(CR.OVERVIEW_PANEL_SIZE, Image.LANCZOS),
+                        (column * width, top + CR.OVERVIEW_LABEL_HEIGHT))
+    sheet.save(path)
 
 
 def run_lit(capture_dir, views, verify):
@@ -4690,6 +4775,9 @@ def run_lit(capture_dir, views, verify):
     light = load_common_light()
     views = views or list(LIT_VIEWS)
     report = {"mode": "lit", "verify": bool(verify), "views": views, "region_criteria": GR.criteria()}
+    from CompareLight import load_font
+    font = load_font(18)
+    photo_rows = []
 
     # エンジンの撮影（共通の照明・地形だけ・最細の LOD・実材質）
     engine_entry, engine_failures = albedo_engine_capture(capture_dir, views, verify)
@@ -4776,10 +4864,23 @@ def run_lit(capture_dir, views, verify):
             entry["ratio_to_cycles_with_engine_ao"] = float(engine_y[mask].mean() / max(ao_model[mask].mean(), 1e-30))
 
         # 表示変換を掛けた比較画像（エンジン｜Cycles）
-        result["comparison"] = write_lit_comparison(os.path.join(capture_dir, f"lit_{view}.png"), engine_hdr,
-                                                    out["cycles"], out["alpha"], meta, light)
+        result["comparison"], panels = write_lit_comparison(os.path.join(capture_dir, f"lit_{view}.png"), engine_hdr,
+                                                            out["cycles"], out["alpha"], meta, light)
         result["comparison"]["file"] = f"lit_{view}.png"
         result["comparison"]["regions_file"] = f"lit_regions_{view}.png"
+
+        # 写真｜エンジン｜Cycles（表示の値。写真とは照明・天気・現像が違う）
+        photo_record, photo_row, photo_failures = lit_photo_comparison(capture_dir, view, panels, font)
+        failures.extend(photo_failures)
+        result["photo_comparison"] = photo_record
+        if photo_row is not None:
+            photo_rows.append(photo_row)
+            values = photo_record["values"]
+            print(f"REFERENCE_CHECK lit_photo view={view} photo={photo_record['photo']} " + " ".join(
+                f"{name}_cliff_over_ground={values[name]['cliff_over_ground'] or float('nan'):.3f} "
+                f"{name}_ground_y={values[name]['ground']['luminance'] or float('nan'):.4f} "
+                f"{name}_cliff_y={values[name]['cliff']['luminance'] or float('nan'):.4f}"
+                for name in ("photo", "engine", "cycles")))
 
         cycles = result.get("cycles", {})
         print(f"REFERENCE_CHECK lit view={view} pass={int(result['pass'])} spp_per_seed={cycles.get('spp_per_seed')} "
@@ -4797,6 +4898,9 @@ def run_lit(capture_dir, views, verify):
                   f"ratio_with_engine_ao={entry.get('ratio_to_cycles_with_engine_ao', float('nan')):.3f} "
                   f"mean_diff={conv.get('mean_diff', float('nan')):.4f} pixel_rms={conv.get('pixel_rms', float('nan')):.3f}")
 
+    if photo_rows:
+        write_lit_photo_overview(os.path.join(capture_dir, "lit_photo_overview.png"), photo_rows, font)
+        report["photo_overview"] = "lit_photo_overview.png"
     report["failures"] = failures
     report_path = os.path.join(capture_dir, "lit_check.json")
     with open(report_path, "w", encoding="utf-8") as f:
