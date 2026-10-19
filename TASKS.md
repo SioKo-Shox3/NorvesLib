@@ -2218,9 +2218,9 @@
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -OutDir .harness/runs/scene-capture/SCN-WASTELAND-POLISH`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Build -Scenes wasteland -Cycles 3 -Configuration RelWithDebInfo`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Build -Scenes wasteland -Cycles 2 -Configuration RelWithDebInfo`
 - paths: Game, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Assets/AssetSets, Docs/RenderingValidation, Scripts, TASKS.md, PROGRESS.md
-- notes: 2026-10-15 ユーザー: 荒野と室内の光は「ほぼ実写」の美しさを見るシーンで、速さは他のシーンで見る。60 fps の条件は外した（リアルタイムで、操作できる程度ならよい）。
+- notes: 2026-10-15 ユーザー: 荒野と室内の光は「ほぼ実写」の美しさを見るシーンで、速さは他のシーンで見る。60 fps の条件は外した（リアルタイムで、操作できる程度ならよい）。 2026-10-19 親: verify を RelWithDebInfo に揃え、周回の試験を 1 コマンド 10 分に収まる形にした（Debug の撮影は約 11 分、3 周は 928 秒の実測）。
 
 ## SCN-GEN-VILLAGE-PROPS-1: 夜の集落の小物を生成する（街灯・松明の柱・焚き火の囲い・井戸）
 - status: done
@@ -2240,27 +2240,27 @@
 - status: doing
 - done-when: `night-village` シーン: 荒野の高さ場の一角に、生成した建物と小物で道沿いの集落（建物 8〜12 棟。同じ建物は向きと大きさを変えて使い回す）を組む。太陽は地平線の下、月明かり（青白い弱い平行光と影）、夜の空、露出は自動露出で夜に合わせる（Rendering3DTest の `--night` の値の扱いを参考にする）。名前付き視点 `overview`・`street`（道の上の目の高さ）・`square`（焚き火の広場）。撮影を開いて、暗すぎず明るすぎず夜に見えることを確かめる。`night-village` の cycle smoke 3周が pass。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene night-village -RequireAssets -OutDir .harness/runs/scene-capture/SCN-NIGHT-VILLAGE`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Scenes night-village -Cycles 3`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene night-village -Configuration RelWithDebInfo -Build -RequireAssets -OutDir .harness/runs/scene-capture/SCN-NIGHT-VILLAGE`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Scenes night-village -Cycles 2 -Configuration RelWithDebInfo`
 - paths: Game, Assets/AssetSets, Scripts, Test/Game/Bridge/CMakeLists.txt, Test/Core/Rendering/CMakeLists.txt, TASKS.md, PROGRESS.md
-- notes: 2026-10-14 親: 荒野の地形は DEM（Valley of the Gods）に替わる（SCN-WL-*）。集落は同じ DEM の範囲の別の平らな所に置く。
+- notes: 2026-10-14 親: 荒野の地形は DEM（Valley of the Gods）に替わる（SCN-WL-*）。集落は同じ DEM の範囲の別の平らな所に置く。 2026-10-19 親: verify を RelWithDebInfo に揃え、周回の試験を 1 コマンド 10 分に収まる形にした（Debug の撮影は約 11 分、3 周は 928 秒の実測）。
 
 ## SCN-NIGHT-LIGHTS: 夜の集落に灯りを入れる
 - status: todo
 - done-when: 街灯・松明・焚き火の点光源（暖色。影付きは VSM の点光源の上限の 4 灯までを手前の主役に、残りは影無し）、灯りのガラスと窓の発光（ブルーム）、焚き火の明るさの揺らぎ（時間で揺れる）、RTGI による壁や地面への照り返しを入れる。`street`・`square` の撮影を開いて、灯りの周りが照らされ影が落ちる・窓が光る・白飛びが広がりすぎないことを確かめる。性能はこの項目では測らず、SCN-ACCEPT の夜の最終配置で、影と間接光の内訳から影付きの灯数・影の解像度・更新の設定を判断する。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene night-village -RequireAssets -OutDir .harness/runs/scene-capture/SCN-NIGHT-LIGHTS`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene night-village -Configuration RelWithDebInfo -Build -RequireAssets -OutDir .harness/runs/scene-capture/SCN-NIGHT-LIGHTS`
 - paths: Game, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Docs/RenderingValidation, Scripts, TASKS.md, PROGRESS.md
-- notes: 点光源の影は 4 灯まで（`PointShadowSnapshot.h` 19 行付近）。 2026-10-12 親: 計測の見直し（ユーザーの指摘「節目に計測を入れても意味があるのかを考えるべき」。計測ごとに、問い・結果で変わる判断・測らずに分からないかの 3 点を書き、書けないものは置かない。Sol の批評を反映）。
+- notes: 点光源の影は 4 灯まで（`PointShadowSnapshot.h` 19 行付近）。 2026-10-12 親: 計測の見直し（ユーザーの指摘「節目に計測を入れても意味があるのかを考えるべき」。計測ごとに、問い・結果で変わる判断・測らずに分からないかの 3 点を書き、書けないものは置かない。Sol の批評を反映）。 2026-10-19 親: verify を RelWithDebInfo に揃え、周回の試験を 1 コマンド 10 分に収まる形にした（Debug の撮影は約 11 分、3 周は 928 秒の実測）。
 
 ## SCN-MATERIAL-GALLERY: 材質ギャラリーを作る
 - status: todo
 - done-when: `material-gallery` シーン: 石の床（Poly Haven）の展示場（屋外か、壁の無い屋根付きの回廊）に台座の列を並べ、手元の Poly Haven の地面・壁のテクスチャ（約30種と SCN-PH-WASTELAND の分）を台座の上の傾けた板（視差オクルージョン付き）と球で見せ、別の一角に金属度 0〜1 × 粗さ 0〜1 の格子（6×6 程度）の球を並べる。各台座に名札（テクスチャの id）を付ける（ワールド空間の文字か、画面に投影した ImGui の文字）。光は物理空の昼。名前付き視点 `overview`・`textures`・`spheres`・`close`（板の視差）。撮影を開いて、テクスチャが正しく貼られ（色・法線の向き・ORM の並び）、名札が読めることを確かめる。`material-gallery` の cycle smoke 3周が pass。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene material-gallery -RequireAssets -OutDir .harness/runs/scene-capture/SCN-MATERIAL-GALLERY`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Scenes material-gallery -Cycles 3`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene material-gallery -Configuration RelWithDebInfo -Build -RequireAssets -OutDir .harness/runs/scene-capture/SCN-MATERIAL-GALLERY`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Scenes material-gallery -Cycles 2 -Configuration RelWithDebInfo`
 - paths: Game, Assets/AssetSets, Scripts, Test/Game/Bridge/CMakeLists.txt, Test/Core/Rendering/CMakeLists.txt, TASKS.md, PROGRESS.md
-
+- notes: 2026-10-19 親: verify を RelWithDebInfo に揃え、周回の試験を 1 コマンド 10 分に収まる形にした（Debug の撮影は約 11 分、3 周は 928 秒の実測）。
 ## SCN-INT-REFERENCE-SELECT: 室内の光の手本の写真を選ぶ
 - status: todo
 - done-when: 室内の光のシーンの手本にする実写の写真（パブリックドメイン・CC0・CC BY・CC BY-SA）を 4〜6 枚選ぶ: 低い夕日が大きな窓から差し込む木の床と漆喰かレンガの壁の部屋、色の強い面からの色移り、床の艶の反射、光の筋（塵の舞う空気）。`Assets/Reference/InteriorLight/` に落とし（git 管理外）、manifest（URL・作者・ライセンス・写っている物）を書き、部屋の大きさ・窓の向き・太陽の高さ・家具の並びを写真から決めて `Docs/RenderingValidation/InteriorLightReference.md` に書く。写真の一覧の PNG を開いて確かめる。
@@ -2286,27 +2286,27 @@
 - status: todo
 - done-when: `interior-light` シーン: 約 12×8×5 m の部屋（床は木の板、壁は漆喰かレンガ、天井の梁。手続きの箱と Poly Haven のテクスチャ）の一面に大きな窓（開口）を開け、低い夕日が差し込む。生成した家具を置き、赤いラグか色の強い壁で色移り（RTGI）が分かる配置にする。床は少し艶があり反射（SSR）が見える。窓の外に地面と空が見える。名前付き視点 `overview`・`window`（窓へ向かう逆光）・`corner`（奥の隅）。撮影を開いて、窓から入る光と影の形、奥の隅の照り返し、白飛び・黒つぶれを確かめる。`interior-light` の cycle smoke 3周が pass。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene interior-light -RequireAssets -OutDir .harness/runs/scene-capture/SCN-INTERIOR-ROOM`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Scenes interior-light -Cycles 3`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene interior-light -Configuration RelWithDebInfo -Build -RequireAssets -OutDir .harness/runs/scene-capture/SCN-INTERIOR-ROOM`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Scenes interior-light -Cycles 2 -Configuration RelWithDebInfo`
 - paths: Game, Assets/AssetSets, Scripts, Test/Game/Bridge/CMakeLists.txt, Test/Core/Rendering/CMakeLists.txt, TASKS.md, PROGRESS.md
-- notes: 2026-10-15 ユーザー: 室内の光は「ほぼ実写」の美しさを見るシーン。SCN-INT-REFERENCE-SELECT の写真と並べた比較画像（1920×1080）と、同じ視点のパストレースの正解で判断する。速さの条件は無い。
+- notes: 2026-10-15 ユーザー: 室内の光は「ほぼ実写」の美しさを見るシーン。SCN-INT-REFERENCE-SELECT の写真と並べた比較画像（1920×1080）と、同じ視点のパストレースの正解で判断する。速さの条件は無い。 2026-10-19 親: verify を RelWithDebInfo に揃え、周回の試験を 1 コマンド 10 分に収まる形にした（Debug の撮影は約 11 分、3 周は 928 秒の実測）。
 
 ## SCN-INTERIOR-SHAFTS: 窓から入る光の筋を出す
 - status: todo
 - done-when: ボリュメトリックフォグの散乱が太陽の影（既定の VSM）で遮られ、窓から入る光の筋が見える。シーンごとにフォグの密度・範囲を設定でき、`interior-light` で室内に薄い霧を入れる（Rendering3DTest の霧は変えない）。`overview`・`window` の撮影を開いて光の筋を確かめ、Rendering3DTest の撮影が変わらない。性能はこの項目では測らず、SCN-ACCEPT で目標を超えたときに、霧の内訳から解像度・範囲・更新の方式を調整する。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene interior-light -RequireAssets -OutDir .harness/runs/scene-capture/SCN-INTERIOR-SHAFTS`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene interior-light -Configuration RelWithDebInfo -Build -RequireAssets -OutDir .harness/runs/scene-capture/SCN-INTERIOR-SHAFTS`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SCN-INTERIOR-SHAFTS`
 - paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Scripts, TASKS.md, PROGRESS.md
-- notes: 危険地帯（描画）。`Assets/Shaders/volumetrics.frag` 103〜135 行付近は CSM の影の地図（`cascadedShadowMap`）を読む。太陽の影が VSM のときに霧の影が効いているかを先に確かめる。 2026-10-12 親: 計測の見直し（ユーザーの指摘「節目に計測を入れても意味があるのかを考えるべき」。計測ごとに、問い・結果で変わる判断・測らずに分からないかの 3 点を書き、書けないものは置かない。Sol の批評を反映）。 2026-10-15 ユーザー: 室内の光は「ほぼ実写」の美しさを見るシーン。SCN-INT-REFERENCE-SELECT の写真と並べた比較画像（1920×1080）と、同じ視点のパストレースの正解で判断する。速さの条件は無い。
+- notes: 危険地帯（描画）。`Assets/Shaders/volumetrics.frag` 103〜135 行付近は CSM の影の地図（`cascadedShadowMap`）を読む。太陽の影が VSM のときに霧の影が効いているかを先に確かめる。 2026-10-12 親: 計測の見直し（ユーザーの指摘「節目に計測を入れても意味があるのかを考えるべき」。計測ごとに、問い・結果で変わる判断・測らずに分からないかの 3 点を書き、書けないものは置かない。Sol の批評を反映）。 2026-10-15 ユーザー: 室内の光は「ほぼ実写」の美しさを見るシーン。SCN-INT-REFERENCE-SELECT の写真と並べた比較画像（1920×1080）と、同じ視点のパストレースの正解で判断する。速さの条件は無い。 2026-10-19 親: verify を RelWithDebInfo に揃え、周回の試験を 1 コマンド 10 分に収まる形にした（Debug の撮影は約 11 分、3 周は 928 秒の実測）。
 
 ## SCN-THUMBNAILS: ランチャーのカードに各シーンの見本画像を出す
 - status: todo
 - done-when: `Scripts/CaptureLauncherThumbnails.ps1` が各シーンの見本用の視点（シーンの一覧に書く。既定は `overview`）を撮って 640×360 程度に縮め、`Assets/Textures/Launcher/<id>.png` に書く（追跡する）。ランチャーが読み込んでカードに出す。ランチャーの撮影を開いて、見本画像が正しいカードに出て、選択の強調が分かることを確かめる。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene launcher -OutDir .harness/runs/scene-capture/SCN-THUMBNAILS`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene launcher -Configuration RelWithDebInfo -Build -OutDir .harness/runs/scene-capture/SCN-THUMBNAILS`
 - paths: Game, Scripts, Assets/Textures/Launcher, TASKS.md, PROGRESS.md
-- notes: 2026-10-10 親が見た点: 1920×1080 のランチャーでカードの説明文が右の縁からはみ出す（折り返しの幅がカードの内側の余白を引いていない）。カードが増えたときの並び（1 行に収まらないときの折り返しかスクロール）も確かめる。
+- notes: 2026-10-10 親が見た点: 1920×1080 のランチャーでカードの説明文が右の縁からはみ出す（折り返しの幅がカードの内側の余白を引いていない）。カードが増えたときの並び（1 行に収まらないときの折り返しかスクロール）も確かめる。 2026-10-19 親: verify を RelWithDebInfo に揃え、周回の試験を 1 コマンド 10 分に収まる形にした（Debug の撮影は約 11 分、3 周は 928 秒の実測）。
 
 ## SCN-FIX-SKY-BANDING: 空の階調の段（波打つ横縞）を消す
 - status: todo
@@ -2321,11 +2321,13 @@
 - done-when: 計画書の受入れの節の全項目を確かめて `Docs/RenderingValidation/SceneLauncherAcceptance.md` に書く: Debug・RelWithDebInfo・Release で引数なしの起動がランチャー（撮影を開いて確認）、全シーンの cycle smoke（各3周）が pass、全シーンの全視点の撮影を開いた所見、各シーンの性能（1920×1080・RelWithDebInfo の値を記録する。RT と GI を入れた既定の構成と、荒野・室内の光は合否に使わない。RT と GI を切った構成で 16.6 ms を超えるシーンだけ、内訳から直す設定を決めて直すか、未達としてユーザーへ渡す。最終の設定が同じなら SCN-WASTELAND-POLISH などの証拠を使い、撮り直さない。夜のシーンでは点光源の影の内訳も見る）、Rendering3DTest の撮影が main と見た目で変わらないこと、生成と Poly Haven の資産の一覧（id・出典・ライセンス・作り方）。見つけた不具合は直すか、`SCN-FIX-<名前>` の項目として TASKS.md に足す。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `cmake --build build --config Release --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Scenes rendering3dtest,mega-bananas,wasteland,night-village,material-gallery,interior-light -Cycles 3`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Scenes rendering3dtest,mega-bananas -Cycles 3 -Configuration RelWithDebInfo`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Scenes wasteland,night-village -Cycles 3 -Configuration RelWithDebInfo`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Scenes material-gallery,interior-light -Cycles 3 -Configuration RelWithDebInfo`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene launcher -Configuration Release -OutDir .harness/runs/scene-capture/SCN-ACCEPT-release`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SCN-ACCEPT`
 - paths: Docs/RenderingValidation, Game, Library, Assets, Scripts, Test, TASKS.md, PROGRESS.md
-- notes: 2026-10-12 親: 計測の見直し（ユーザーの指摘「節目に計測を入れても意味があるのかを考えるべき」。計測ごとに、問い・結果で変わる判断・測らずに分からないかの 3 点を書き、書けないものは置かない。Sol の批評を反映）。
+- notes: 2026-10-12 親: 計測の見直し（ユーザーの指摘「節目に計測を入れても意味があるのかを考えるべき」。計測ごとに、問い・結果で変わる判断・測らずに分からないかの 3 点を書き、書けないものは置かない。Sol の批評を反映）。 2026-10-19 親: verify を RelWithDebInfo に揃え、周回の試験を 1 コマンド 10 分に収まる形にした（Debug の撮影は約 11 分、3 周は 928 秒の実測）。
 
 ## SCN-MEGA-FIX-RT-SELECT: レイトレーシングのインスタンスの選び直しを、変わったときだけ区画の単位で行う
 - status: backlog
