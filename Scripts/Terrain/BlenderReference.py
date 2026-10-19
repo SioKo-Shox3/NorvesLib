@@ -209,6 +209,17 @@ def sha256_file(path):
     return digest.hexdigest()
 
 
+def load_previous_record(path, record, keys):
+    """前の入力の記録を読み、keys の値がすべて今の記録と同じときだけ返す（視点を分けて描いたときに前の視点を残すため）"""
+    if not os.path.isfile(path):
+        return None
+    with open(path, encoding="utf-8") as f:
+        previous = json.load(f)
+    if any(previous.get(key) != record.get(key) for key in keys):
+        return None
+    return previous
+
+
 def load_manifest(mesh_dir):
     path = os.path.join(mesh_dir, "manifest.json")
     with open(path, encoding="utf-8-sig") as f:
@@ -515,15 +526,10 @@ def run_gray(args, lit=False):
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     import ReferenceCheck as RC  # noqa: E402  ふつうの Python の側だけで使う
     record_path = os.path.join(out_dir, "inputs.json")
-    record = {}
-    if os.path.isfile(record_path):
-        with open(record_path, encoding="utf-8") as f:
-            record = json.load(f)
-    previous_ply = record.get("ply_sha256", {})
     # エンジンの撮影はカメラと深度を借りるだけなので、撮影の入力のハッシュ（撮り直しても同じコードなら同じ）で結び付ける
     with open(os.path.join(capture_dir, "inputs.json"), encoding="utf-8") as f:
         engine_inputs = json.load(f)
-    record.update({
+    current = {
         "kind": "cycles_lit" if lit else "cycles_gray",
         "script": normalize_rel(os.path.abspath(__file__)),
         "script_sha256": sha256_file(os.path.abspath(__file__)),
@@ -532,13 +538,18 @@ def run_gray(args, lit=False):
         "engine_capture_files_sha256": engine_inputs.get("files_sha256"),
         "git_commit": (RC.git_output(["rev-parse", "HEAD"]) or "").strip(),
         "sun_angle_degrees": SUN_ANGLE_DEGREES,
-    })
+    }
     if lit:
-        # 画素ごとの材質の記録（ReferenceCheck.py --lit が材質の照合と同じ検査で今のファイルと照らす）
-        record["material_inputs_sha256"] = sha256_file(os.path.join(capture_dir, LIT_MATERIAL_DIR, "inputs.json"))
-        record["material_osl"] = lit_material["material"]["osl"]
-        record["material_osl_sha256"] = lit_material["material"]["osl_sha256"]
-        record["bounce_pass"] = PASS_BOUNCE
+        # 当たりの材質の OSL（カメラの光線の当たりの材質は視点ごとの screen_material_sha256 で結び付ける）
+        current["material_osl"] = lit_material["material"]["osl"]
+        current["material_osl_sha256"] = lit_material["material"]["osl_sha256"]
+        current["bounce_pass"] = PASS_BOUNCE
+    # 台本・領域・照明・撮影・OSL が前の記録と同じときだけ、描き直さなかった視点と板の記録を残す
+    record = load_previous_record(record_path, current, ("kind", "script_sha256", "gray_regions_sha256",
+                                                        "common_light_sha256", "engine_capture_files_sha256",
+                                                        "material_osl_sha256")) or {}
+    previous_ply = record.get("ply_sha256", {})
+    record.update(current)
     if plate_records:
         record.setdefault("plates", {}).update(plate_records)
     if view_records:
@@ -614,8 +625,9 @@ def run_material(args, mode):
         with open(os.path.join(capture_dir, f"{view}.aov.json"), encoding="utf-8") as f:
             engine_depth_file = json.load(f)["depth"]["file"]
         engine_depth = RC.read_pfm_any(os.path.join(capture_dir, engine_depth_file))[..., 0].astype(np.float64)
-        # 撮影のカメラのまま描き、深度から求めた小数のずれが許容を超えたら、そのずれだけカメラをずらして描き直す
-        shift = [0.0, 0.0]
+        # 撮影のカメラのまま（--camera-shift-hint があればそのずらしで）描き、深度から求めた小数のずれが許容を超えたら、
+        # そのずれだけカメラをずらして描き直す
+        shift = [float(v) for v in args.camera_shift_hint.split(",")] if getattr(args, "camera_shift_hint", "") else [0.0, 0.0]
         fits = []
         for attempt in range(2):
             column_prefixes = []
@@ -674,7 +686,15 @@ def run_material(args, mode):
         "coordinates": coordinate_record(),
         "views": view_records,
     }
-    with open(os.path.join(out_dir, "inputs.json"), "w", encoding="utf-8") as f:
+    # 視点を分けて描いたときは、同じ台本・同じ値の表・同じ撮影で描いた前の視点の記録を残す（違えば捨てる）
+    record_path = os.path.join(out_dir, "inputs.json")
+    previous = load_previous_record(record_path, record, ("kind", "script_sha256", "material_script_sha256",
+                                                          "engine_capture_files_sha256", "manifest_sha256",
+                                                          "mips_dir", "material"))
+    if previous:
+        record["ply_sha256"] = {**previous.get("ply_sha256", {}), **record["ply_sha256"]}
+        record["views"] = {**previous.get("views", {}), **view_records}
+    with open(record_path, "w", encoding="utf-8") as f:
         json.dump(record, f, indent=2, ensure_ascii=False)
     print(f"BLENDER_REFERENCE {mode} record views={len(view_records)} ply={len(used_tiles)} "
           f"osl_sha256={material_record['osl_sha256'][:12]}")
@@ -1826,9 +1846,14 @@ def main():
     parser.add_argument("--lit", action="store_true", help="実材質の地形を共通の照明で描く（画素ごとの材質と Cycles）")
     parser.add_argument("--skip-material", action="store_true", help="--lit: 画素ごとの材質を描き直さない")
     parser.add_argument("--material-only", action="store_true", help="--lit: 画素ごとの材質だけを描く（Cycles で描かない）")
+    parser.add_argument("--camera-shift-hint", default="",
+                        help="--albedo・--normal・--lit: 1 視点のとき、最初の描画のカメラのずらし[画素]「右,上」"
+                             "（前に深度から求めた値。残りのずれは同じ許容で測り、超えたら描き直す）")
     args = parser.parse_args()
     if int(args.depth) + int(args.gray) + int(args.albedo) + int(args.normal) + int(args.lit) != 1:
         parser.error("--depth・--gray・--albedo・--normal・--lit のどれか 1 つを指定してください")
+    if args.camera_shift_hint and "," in args.views.strip(","):
+        parser.error("--camera-shift-hint は 1 視点（--views に 1 つ）のときだけ使えます")
     if args.albedo or args.normal:
         args.views = args.views or ",".join(ALBEDO_VIEWS)
         return run_material(args, "albedo" if args.albedo else "normal")

@@ -4634,9 +4634,6 @@ def check_cycles_lit_inputs(capture_dir, cycles_dir, engine_files_sha256, views)
             reasons.append(f"{rel} が描いた後に変わった（古い結果）")
     if record.get("engine_capture_files_sha256") != engine_files_sha256:
         reasons.append("カメラと深度を借りたエンジンの撮影の入力が、今の撮影と違う")
-    material_record = os.path.join(capture_dir, LIT_MATERIAL_DIR, "inputs.json")
-    if not os.path.isfile(material_record) or sha256_file(material_record) != record.get("material_inputs_sha256"):
-        reasons.append(f"画素ごとの材質（{LIT_MATERIAL_DIR}/inputs.json）が Cycles で描いた後に描き直された")
     osl_path = os.path.join(REPO_ROOT, record.get("material_osl", ""))
     if not os.path.isfile(osl_path) or sha256_file(osl_path) != record.get("material_osl_sha256"):
         reasons.append("当たりの材質の OSL が無いか、描いた後に変わった")

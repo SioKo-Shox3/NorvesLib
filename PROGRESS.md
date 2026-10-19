@@ -5373,3 +5373,11 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - ref_cliff_01 のエンジンの画のずれ（約 0.004° の向きの差に当たる）の原因は分かっていない。荒野は FXAA で投影のジッタは無い。照合は Blender 側で揃えており、エンジン側は直していない
   - 新しい試験は足していない（verify の照合が確かめる）
 - Next: TASKS.md の次の未完の項目。
+
+### SCN-WLR-CYCLES-LIT-A 途中（2026-10-19、run 20261018-205227 の反復 22〜23）
+- In progress: 視点ごとに材質（`material/`）と Cycles（`cycles/`）を描いて保存し、最後に `ReferenceCheck.py --lit` で 3 視点の表と比較画像を作る
+  - エンジンの撮影（3 視点・共通の照明・地形だけ・最細の LOD）は `.harness/runs/scene-capture/SCN-WLR-CYCLES-LIT/` に保存済み（`aux-SCN-WLR-CYCLES-LIT-A-capture.txt`、result=pass）
+  - Cycles の OSL の描画は 1 視点あたり読み込みと OSL の準備に約 380 秒かかり、64 サンプル足すごとに約 9 秒（ref_ground_01 の試し: 64→385 秒、192→403 秒。`aux-SCN-WLR-CYCLES-LIT-A-trial-speed.txt`）。収束の基準は SCN-WLR-CYCLES-GRAY と同じ（1 本 512 サンプル以上）
+  - 反復 23: 材質と Cycles の入力の記録を、同じ台本・値の表・撮影なら前の視点を残して足す形にした（視点を分けて描くため）。ref_cliff_01 は前に深度から求めたずらし (+0.243, +0.027) を `--camera-shift-hint` で最初から使う
+  - 台本を変えたので、反復 22 の ref_ground_01 の描画（192 サンプル）は描き直す
+- 残り: ref_cliff_01・ref_ground_01・ref_far_01 の材質と Cycles、`--lit --verify`、記録の文書
