@@ -1829,17 +1829,58 @@
 ## SCN-WLR-REF-SPLIT: 比較の記録を「参照の入力」と「エンジンの実装」に分け、撮影先を項目ごとに分け、回帰の撮影をまとめる
 - status: todo
 - after: SCN-WLR-GAP-LIST
-- done-when: (1) `Scripts/Terrain/ReferenceCheck.py` の入力の記録を 2 つの署名に分ける: 参照の入力（地形のメッシュ・材質の値の表〔Cycles が使う値だけ。材質の AO は Cycles が使わないので入れない〕・共通の照明・カメラと Blender のカメラのずらし量・Blender の台本と出力の画像のハッシュ）と、エンジンの実装（描画のコード・起動引数を解く `Game/GameApplicationHandler.cpp`・カメラ台本・撮影に使った Game.exe のハッシュ・出力の画像のハッシュ）。Cycles の参照は参照の入力が同じなら、エンジンの実装が変わっても再利用できる。Game の撮影（エンジンの画、遠景のぼけの ref2x・resident・FXAA の対照の組を含む）はエンジンの実装が今と一致しないと古いとして落とす。(2) `--gray`・`--lit`・`--blur-static`・`--blur-motion` に `--engine <撮影先>`（複数回指定でき、視点ごとの撮影先の記録をまとめて読む）と `--reference <保存した参照の場所>` を足す。(3) 回帰の撮影の台本 `Scripts/Terrain/CaptureRegression.ps1 -Item <ID> -Phase before|after [-Motion]` を作る: ランチャーに載ったシーン（rendering3dtest・mega-bananas・sandbox、載っていれば night-village）の既定の視点を撮り、`-Motion` は rendering3dtest をカメラ台本（`Scripts/CameraScripts/rendering3dtest-pan.txt`、この項目で作る）で撮る。`after` は `ReferenceCheck.py --regression` で `before` と並べ、撮影の欠け・真っ黒・検証レイヤーの指摘があれば落ち、差（PSNR・平均の差）は記録する。台本は 9 分以内に終わる。(4) 今の保存（SCN-WLR-CYCLES-GRAY・LIT・FAR-BLUR-*）を新しい形で記録し直し、全モードが通ることと、負の確認を `--ref-split-selftest`（この項目で作る。保存の写しを一時の場所に作り、エンジンの実装の 1 ファイル・カメラ台本・出力の画像を書き換えると落ち、参照の入力が同じならエンジンの実装の変更で参照が古くならない）で記録する。
+- done-when: (1) `Scripts/Terrain/ReferenceCheck.py` の入力の記録を 2 つの署名に分ける: 参照の入力（地形のメッシュ・材質の値の表〔Cycles が使う値だけ。材質の AO は入れない〕・共通の照明・カメラと Blender のカメラのずらし量・Blender の台本と出力の画像のハッシュ）と、エンジンの実装（描画のコード・`Game/GameApplicationHandler.cpp`・カメラ台本・撮影に使った Game.exe のハッシュ・出力の画像のハッシュ）。Cycles の参照は参照の入力が同じならエンジンの実装が変わっても再利用でき、Game の撮影はエンジンの実装が今と一致しないと古いとして落とす。(2) `--gray`・`--lit`・`--blur-static`・`--blur-motion` に `--engine`（複数回）と `--reference` を足す。(3) 回帰の撮影の台本 `Scripts/Terrain/CaptureRegression.ps1` と `ReferenceCheck.py --regression` を作る（RelWithDebInfo での検証レイヤーは SCN-WLR-REGRESSION-VALIDATION、`-Motion` の Rendering3DTest は SCN-WLR-REGRESSION-MOTION）。(4) 灰色・実材質の Cycles の参照を新しい形で記録し、参照の入力が今と一致すること、負の確認 `--ref-split-selftest`（12 件）が期待どおりであることを確かめる。エンジンの撮影の撮り直しは SCN-WLR-RECAPTURE-* で行う。
+- verify: `python Scripts/Terrain/ReferenceCheck.py --ref-split-selftest --verify`
+- paths: Scripts/Terrain, Scripts, Docs/RenderingValidation, TASKS.md, PROGRESS.md
+- notes: 2026-10-19 GAP-LIST の後の組み直し（Sol の批評 1・2・4・21）。`-Phase before` は反復の中で 1 回撮って保存する。 2026-10-19 親: 反復 3 の判断待ち（blocked/SCN-WLR-REF-SPLIT.md）を推奨案で解き、残りを SCN-WLR-REGRESSION-VALIDATION（推奨 a）・REGRESSION-MOTION（推奨 1）・RECAPTURE-GRAY-LIT・RECAPTURE-BLUR-STATIC・RECAPTURE-BLUR-MOTION に分けた（1 項目 40 分に収める）。この項目は済んだ範囲（コミット d4b2742a）で verify を回して閉じる。
+
+## SCN-WLR-REGRESSION-VALIDATION: RelWithDebInfo でも検証レイヤーを入れて回帰の撮影を 9 分に収める
+- status: todo
+- after: SCN-WLR-REF-SPLIT
+- done-when: 開発ビルド（Debug・RelWithDebInfo）だけで効く起動引数 `--validation-layer` を足し、RelWithDebInfo でも Vulkan の検証レイヤーを入れられるようにする（今は `Library/Core/Public/Boot/BootConfig.h` で Debug だけ。Release では引数を受け付けない）。入ったことをログ（`VALIDATION_LAYER enabled`）で示す。`CaptureRegression.ps1` を RelWithDebInfo ＋ `--validation-layer` で撮る形にし、4 シーン（rendering3dtest・mega-bananas・sandbox・night-village）の撮影が 9 分以内に終わり、各シーンの検証レイヤーの指摘が `--regression` の検査に入ることを確かめる。反復の中で `-Phase before` を撮り、verify は `after`。Release のビルドで引数が効かないことを記録する。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Terrain/CaptureRegression.ps1 -Item SCN-WLR-REGRESSION-VALIDATION -Phase after`
+- paths: Library/Core/Public/Boot, Library/Core/Private/Boot, Library/Core/Private/RHI, Library/Core/Public/RHI, Game/GameApplicationHandler.cpp, Scripts, Docs/RenderingValidation, TASKS.md, PROGRESS.md
+- notes: 危険地帯（RHI・起動）。2026-10-19 SCN-WLR-REF-SPLIT の判断待ちの推奨 (a)。Release に検証用の仕組みを入れない。
+
+## SCN-WLR-REGRESSION-MOTION: Rendering3DTest でカメラ台本を受け取り、回帰の動きの撮影を撮れるようにする
+- status: todo
+- after: SCN-WLR-REGRESSION-VALIDATION
+- done-when: Rendering3DTest の軌道カメラ（SpringArm）が開発ビルドの起動引数 `--camera-script=` を受け取り、台本の入力（回す・寄る）で動くようにする（今は自由飛行カメラの 4 シーンだけ）。`Scripts/CameraScripts/rendering3dtest-pan.txt` で振り、`CaptureRegression.ps1 -Motion` が Rendering3DTest の動きの連番を撮れることを確かめる。台本を渡さないときの Rendering3DTest の見た目と操作は変えない（起動画面を撮って開く）。反復の中で `-Phase before -Motion` を撮る。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Terrain/CaptureRegression.ps1 -Item SCN-WLR-REGRESSION-MOTION -Phase after -Motion`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -OutDir .harness/runs/startup-capture/SCN-WLR-REGRESSION-MOTION`
+- paths: Game/GameModes/Rendering3DTest, Game/GameApplicationHandler.cpp, Game/Scenes, Scripts, Docs/RenderingValidation, TASKS.md, PROGRESS.md
+- notes: 2026-10-19 SCN-WLR-REF-SPLIT の判断待ちの推奨 1。台本の経路は開発ビルドだけ。
+
+## SCN-WLR-RECAPTURE-GRAY-LIT: 灰色と実材質のエンジンの撮影を新しい記録の形で撮り直す
+- status: todo
+- after: SCN-WLR-REF-SPLIT
+- done-when: 夜の集落の追加でエンジンの実装（`Game/GameModes/Wasteland`・`Game/GameApplicationHandler.cpp`・Game.exe）が撮影の後に変わったので、SCN-WLR-CYCLES-GRAY の灰色の 3 組（両方・太陽・空、2 視点）と SCN-WLR-CYCLES-LIT の実材質の 6 視点を、同じ Game.exe で新しい記録の形（エンジンの実装の署名つき）で撮り直す（`.harness/runs/20261019-192352/aux-SCN-WLR-REF-SPLIT-recapture.ps1 -Only gray,lit`、約 25 分。Cycles は描き直さない）。`--gray --verify`・`--lit --verify` が通り、比が前の値から変わった所を記録する。
 - verify: `python Scripts/Terrain/ReferenceCheck.py --gray --capture .harness/runs/scene-capture/SCN-WLR-CYCLES-GRAY --verify`
 - verify: `python Scripts/Terrain/ReferenceCheck.py --lit --capture .harness/runs/scene-capture/SCN-WLR-CYCLES-LIT --verify`
-- verify: `python Scripts/Terrain/ReferenceCheck.py --ref-split-selftest --verify`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Terrain/CaptureRegression.ps1 -Item SCN-WLR-REF-SPLIT -Phase after`
-- paths: Scripts/Terrain, Scripts, Docs/RenderingValidation, TASKS.md, PROGRESS.md
-- notes: 2026-10-19 GAP-LIST の後の組み直し（Sol の批評 1・2・4・21）。`-Phase before` は反復の中で 1 回撮って保存する。
+- paths: Scripts/Terrain, Docs/RenderingValidation, TASKS.md, PROGRESS.md
+- notes: 2026-10-19 SCN-WLR-REF-SPLIT から分けた。撮影は反復の中で保存し、verify は保存の検査だけ。
+
+## SCN-WLR-RECAPTURE-BLUR-STATIC: 遠景のぼけの静止の組を新しい記録の形で撮り直す
+- status: todo
+- after: SCN-WLR-REF-SPLIT
+- done-when: SCN-WLR-FAR-BLUR-STATIC の静止の 10 組（ref2x を含む）を、同じ Game.exe で新しい記録の形で撮り直し（`aux-SCN-WLR-REF-SPLIT-recapture.ps1 -Only static`、約 30 分）、`--blur-static --verify` が通ることと、値が前から変わった所を記録する。
+- verify: `python Scripts/Terrain/ReferenceCheck.py --blur-static --capture .harness/runs/scene-capture/SCN-WLR-FAR-BLUR-STATIC --verify`
+- paths: Scripts/Terrain, Docs/RenderingValidation, TASKS.md, PROGRESS.md
+- notes: 2026-10-19 SCN-WLR-REF-SPLIT から分けた。
+
+## SCN-WLR-RECAPTURE-BLUR-MOTION: 遠景のぼけの動きの組を新しい記録の形で撮り直す
+- status: todo
+- after: SCN-WLR-RECAPTURE-BLUR-STATIC
+- done-when: SCN-WLR-FAR-BLUR-MOTION の動きの 4 組を、SCN-WLR-RECAPTURE-BLUR-STATIC と同じ Game.exe で新しい記録の形で撮り直し（`aux-SCN-WLR-REF-SPLIT-recapture.ps1 -Only motion`、約 11 分。Game.exe が変わっていたら静止の組も撮り直す）、`--blur-motion --verify` が通ることと、値が前から変わった所を記録する。
+- verify: `python Scripts/Terrain/ReferenceCheck.py --blur-motion --capture .harness/runs/scene-capture/SCN-WLR-FAR-BLUR-MOTION --verify`
+- paths: Scripts/Terrain, Docs/RenderingValidation, TASKS.md, PROGRESS.md
+- notes: 2026-10-19 SCN-WLR-REF-SPLIT から分けた。
 
 ## SCN-WLR-EXPECT-MATCH: 比較の検査に、領域・成分ごとの合否の閾値を足す
 - status: todo
-- after: SCN-WLR-REF-SPLIT
+- after: SCN-WLR-REF-SPLIT, SCN-WLR-RECAPTURE-GRAY-LIT
 - done-when: `ReferenceCheck.py` に `--expect <仕様の JSON>` を足す。仕様は {モード・視点・領域・成分（total・sun・sky・indirect・visibility・RGB の色度）・量（エンジン ÷ Cycles の比・色度の差・可視率の食い違いの割合・細部の欠け・エイリアス・振りと止めの差・base と resident の差）・下限・上限・未判定を許すか（既定は許さない）} の並び。`--gray`・`--lit`・`--blur-static`・`--blur-motion` が仕様の各行を判定し、1 行でも外れるか、許さない行の領域が未判定なら落ちる。仕様の置き場は `Scripts/Terrain/ExpectSpecs/`。今の保存に対して今の値で通る仕様と落ちる仕様（例: 影の崖の比 1 ± 0.1）を作り、`--expect-selftest`（この項目で作る）で通る・落ちるを確かめる。
 - verify: `python Scripts/Terrain/ReferenceCheck.py --gray --capture .harness/runs/scene-capture/SCN-WLR-CYCLES-GRAY --expect Scripts/Terrain/ExpectSpecs/selftest-pass.json --verify`
 - verify: `python Scripts/Terrain/ReferenceCheck.py --expect-selftest --verify`
@@ -1848,7 +1889,7 @@
 
 ## SCN-WL-CAMERA-OFFSET: 撮影の画と記録のカメラのずれを直す
 - status: todo
-- after: SCN-WLR-REF-SPLIT
+- after: SCN-WLR-REF-SPLIT, SCN-WLR-REGRESSION-VALIDATION
 - done-when: 撮影の画が、撮影の記録のカメラから視点ごとに違う量ずれる原因（ref_cliff_01 は横 +0.243・縦 −0.027 画素、ref_cliff_02 は +0.779 画素。深度から測った値。起動し直しても同じ量。視点ごとに違うので、撮ったフレームのジッタの残りを最初に疑う）を確かめて直す。`ReferenceCheck.py --camera-offset`（この項目で作る）: Blender の深度を補正なし（`--camera-shift-hint` も深度からの自動補正も使わない。ずらし量 0 を記録に書く）で描き、ずらし量が 0 であることと、エンジンの深度との残りのずれが 0.05 画素以内であることを ref_cliff_01・ref_cliff_02 で検査する。旧参照の移行: 参照の署名のずらし量で、ずらしありの旧参照（SCN-WLR-CYCLES-GRAY・LIT）は領域の平均の比較（`--gray`・`--lit`）に限って有効、画素ごとの比較（`--albedo`・`--normal`・`--projection`）はずらし 0 で描き直すまで古いとして落ちる、と `ReferenceCheck.py` と記録に書く。以後の新しい Cycles の描画はずらし 0 で描く。反復の最初に回帰の撮影の `before` を撮る。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -Build -RequireAssets -Width 1920 -Height 1080 -Hdr -Aov -Views ref_cliff_01,ref_cliff_02 -GameArgs wasteland-common-light,wasteland-hide=all,wasteland-finest-lod -LaunchPerView -OutDir .harness/runs/scene-capture/SCN-WL-CAMERA-OFFSET`
@@ -1859,7 +1900,7 @@
 
 ## SCN-WLR-LIT-SHADOW-REF-C01: ref_cliff_01 の影の領域の Cycles の参照を収束させる
 - status: todo
-- after: SCN-WL-CAMERA-OFFSET
+- after: SCN-WL-CAMERA-OFFSET, SCN-WLR-RECAPTURE-GRAY-LIT
 - done-when: SCN-WLR-CYCLES-LIT で 2048 サンプルでも未判定だった ref_cliff_01 の影の崖・影の中の地面を、その領域を切り出した描画（Cycles の border。ずらし 0 のカメラ）で、種を変えた 2 本の差が SCN-WLR-CYCLES-GRAY と同じ基準に入るまで描き、直接光（太陽）・間接光（照り返し）・空の光のパスと太陽の可視率を分けて保存する。描画は 1 本 20 分を上限にし、超えるなら切り出しを狭めるか、届かない量を記録して BLOCKED にする。`--lit --require-judged`（この項目で作る）で 2 領域が判定済みになり、パスの和が全体と 1 % 以内で合うことを検査する。
 - verify: `python Scripts/Terrain/ReferenceCheck.py --lit --capture .harness/runs/scene-capture/SCN-WLR-CYCLES-LIT --require-judged ref_cliff_01:shadow_cliff,ref_cliff_01:shadow_ground --verify`
 - paths: Scripts/Terrain, Docs/RenderingValidation, TASKS.md, PROGRESS.md
@@ -1875,7 +1916,7 @@
 
 ## SCN-WL-RT-TLAS-TERRAIN: 地形の区画をレイトレーシングのシーンに登録し、光線が当たることを確かめる
 - status: todo
-- after: SCN-WLR-REF-SPLIT
+- after: SCN-WLR-REF-SPLIT, SCN-WLR-REGRESSION-VALIDATION
 - done-when: 荒野の撮影のログ `RT_SCENE instances=0 out_of_range=198 radius_m=120`（SCN-WLR-CYCLES-GRAY）の原因（`MakeRayTracingSelectBounds` が地形の区画の境界の球を使えず、変換の原点・半径 0 で測って範囲の外にしている疑い）を確かめて直し、選ぶ範囲（カメラの周り 120 m）の中の地形の区画が RT のシーンに入る（instances > 0）ことと、光線が地形に当たる（開発ビルドの RT の当たりの統計で地形の当たり > 0）ことを `ReferenceCheck.py --rt-scene`（この項目で作る。ログを読む）で検査する。合否はこの 2 つで、灰色の比（影の崖 1.57・遠景の空の分 1.35）は撮り直して記録だけする（遠くの遮蔽は SCN-WL-RT-TLAS-RANGE）。RT のシーンに入る区画の数・TLAS の構築の時間・荒野のフレームの GPU 時間（RelWithDebInfo）を前後で記録する。反復の最初に回帰の撮影の `before` を撮る。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -Build -RequireAssets -Width 1920 -Height 1080 -Hdr -Aov -Views ref_cliff_01 -GameArgs wasteland-common-light,wasteland-hide=all,wasteland-finest-lod,wasteland-gray-material -LaunchPerView -OutDir .harness/runs/scene-capture/SCN-WL-RT-TLAS-TERRAIN`
@@ -1886,7 +1927,7 @@
 
 ## SCN-WL-RT-TLAS-RANGE: 空の遮蔽と照り返しに要る範囲の地形を、レイトレーシングのシーンに入れる
 - status: todo
-- after: SCN-WL-RT-TLAS-TERRAIN, SCN-WLR-EXPECT-MATCH
+- after: SCN-WL-RT-TLAS-TERRAIN, SCN-WLR-EXPECT-MATCH, SCN-WLR-REGRESSION-VALIDATION
 - done-when: RTGI の光線（最大 10 km）が空の遮蔽と照り返しに使う範囲の地形を RT のシーンに入れる（例: カメラの周りは細かい区画、遠くは粗い段の代わりの形。範囲と段は測って決める）。灰色の地形の 3 条件（両方・太陽だけ・空だけ）を撮り、`--gray` の空の成分（エンジンの `engine-sky` ÷ Cycles の空のパス）が ref_cliff_01 の影の崖と ref_far_01 の遠景で 1 ± 0.1 に入ることを、`--expect`（`Scripts/Terrain/ExpectSpecs/rt-tlas-range.json`）で検査する。RT のシーンの大きさ・TLAS の構築の時間・フレームの GPU 時間を前後で記録する。反復の最初に回帰の撮影の `before` を撮る。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -Build -RequireAssets -Width 1920 -Height 1080 -Hdr -Aov -Views ref_cliff_01,ref_far_01 -GameArgs wasteland-common-light,wasteland-hide=all,wasteland-finest-lod,wasteland-gray-material -LaunchPerView -OutDir .harness/runs/scene-capture/SCN-WL-RT-TLAS-RANGE`
@@ -1899,7 +1940,7 @@
 
 ## SCN-WL-SHADOW-PAGES: 仮想の影の地図が手前と遠くの地面を覆わない所を直す
 - status: todo
-- after: SCN-WL-RT-TLAS-RANGE, SCN-WLR-LIT-SHADOW-REF-C02
+- after: SCN-WL-RT-TLAS-RANGE, SCN-WLR-LIT-SHADOW-REF-C02, SCN-WLR-REGRESSION-VALIDATION
 - done-when: 一覧の描画の欠陥 1（`shadow_missing`）のうち影の地図の覆いの欠けと、6（`grazing_sun_dark`。灰色 ref_far_01 の遠景の太陽の分 0.88）を直す。ref_cliff_02 で手前の台地の長い影（太陽の高さ 24°）が落ちない原因（この視点だけ `VSM_PAGES requested=38 levels_used=0x200`、影の地図に当たらない標本が 1 回の描画あたり約 1210 万）を確かめて直す。判定は太陽の可視率で行う（照り返しと材質の AO の差が混ざる全体の明るさでは決めない）: エンジンの撮影の AOV に太陽の可視率を足し（この項目で作る）、Cycles の可視率（SCN-WLR-LIT-SHADOW-REF-C02 と SCN-WLR-CYCLES-LIT の aux）と、ref_cliff_02 の影の中の地面と ref_far_01 の遠景で比べ、食い違う画素の割合が 5 % 以下であることを `--expect`（`shadow-pages.json`）で検査する。視点ごとに撮影先を分ける。VSM のページ数と影の GPU 時間を前後で記録する。既定の荒野の ref_cliff_02 を撮って開き、台地の影が地面に落ちることを見る。反復の最初に回帰の撮影の `before` を撮る。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -Build -RequireAssets -Width 1920 -Height 1080 -Hdr -Aov -Views ref_cliff_02 -GameArgs wasteland-common-light,wasteland-hide=all,wasteland-finest-lod -LaunchPerView -OutDir .harness/runs/scene-capture/SCN-WL-SHADOW-PAGES/ref_cliff_02`
@@ -1911,7 +1952,7 @@
 
 ## SCN-WL-SHADOW-LEAK: 影の中への太陽の漏れを直す
 - status: todo
-- after: SCN-WL-SHADOW-PAGES
+- after: SCN-WL-SHADOW-PAGES, SCN-WLR-REGRESSION-VALIDATION
 - done-when: 灰色の ref_cliff_01 で、影の中の地面に太陽が漏れる（エンジンの `engine-sun` ÷ Cycles の太陽のパスが 5.88）原因を確かめて直す（SCN-WL-RT-TLAS-*・SHADOW-PAGES で直っていれば、その確認と記録で閉じる）。灰色の 3 条件を ref_cliff_01 で撮り、`--gray --views ref_cliff_01` の太陽の成分が影の中の地面で 1 ± 0.15 に入ることを `--expect`（`shadow-leak.json`）で検査する。反復の最初に回帰の撮影の `before` を撮る（コードを変えないときは前の項目の `after` を使ってよい）。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -Build -RequireAssets -Width 1920 -Height 1080 -Hdr -Aov -Views ref_cliff_01 -GameArgs wasteland-common-light,wasteland-hide=all,wasteland-finest-lod,wasteland-gray-material -LaunchPerView -OutDir .harness/runs/scene-capture/SCN-WL-SHADOW-LEAK`
@@ -1935,7 +1976,7 @@
 
 ## SCN-WL-RTGI-COLOR: 照り返しの色を地形の材質から取る
 - status: todo
-- after: SCN-WL-RT-TLAS-RANGE, SCN-WLR-LIT-SHADOW-REF-C01
+- after: SCN-WL-RT-TLAS-RANGE, SCN-WLR-LIT-SHADOW-REF-C01, SCN-WLR-REGRESSION-VALIDATION
 - done-when: RTGI の二次の当たりの色が地形の材質を反映しない（`Assets/Shaders/RTGI/DiffuseIndirect.comp` 912 行付近はインスタンスの定数の色）のを直す。地表の分類の地図と層の代表の色（素材の平均の色）で当たりの色を決める程度でよい（材質の評価の共通化まで広げない）。判定の対照: RTGI は空から直接届く光も担い、切ると IBL・DDGI へ切り替わる（`lighting.frag` 1329 行付近）ので、RTGI の入・切ではなく、照り返しだけを切る開発ビルドの起動引数 `rtgi-bounce=off`（当たりの色を 0 にし、空から直接届く光は残す。この項目で作る）を対照にする。実材質の ref_cliff_01 で照り返しの入・切を撮り、その差（エンジンの照り返し）と SCN-WLR-LIT-SHADOW-REF-C01 の Cycles の間接光のパスを、影の崖・影の中の地面で比べ、色度（r・g）の差 0.02 以内・明るさの比 1 ± 0.15 を `ReferenceCheck.py --bounce --expect`（`--bounce` はこの項目で作る。`rtgi-color.json`）で検査する。灰色の材質のときは代表の色も灰色になる（色度の差 0.005 以内）ことを反復の中で同じ形で確かめて記録する。入・切の画を並べて開き、崖の影の中と谷の底に砂の暖かい照り返しが入ることを見る。反復の最初に回帰の撮影の `before` を撮る。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -Build -RequireAssets -Width 1920 -Height 1080 -Hdr -Aov -Views ref_cliff_01 -GameArgs wasteland-common-light,wasteland-hide=all,wasteland-finest-lod -LaunchPerView -OutDir .harness/runs/scene-capture/SCN-WL-RTGI-COLOR/bounce-on`
@@ -1947,7 +1988,7 @@
 
 ## SCN-WL-MATERIAL-AO-SHADING: 材質の AO の掛け方を、光線の遮蔽と二重にならない形にする
 - status: todo
-- after: SCN-WL-RTGI-COLOR, SCN-WL-SHADOW-LEAK
+- after: SCN-WL-RTGI-COLOR, SCN-WL-SHADOW-LEAK, SCN-WLR-REGRESSION-VALIDATION
 - done-when: `lighting.frag` は材質の AO を直接光に ×(0.7 + 0.3·AO)、空の光に ×AO で掛ける。光線の遮蔽（RTGI・空の遮蔽）が働くようになった後で、材質の AO を直接光から外し空の光だけに掛ける（または重みを変える）案を比べ、実材質の日なたの地面のエンジン ÷ Cycles（今 0.70〜0.82。一番暗いのは ref_cliff_02）が ref_ground_01 と ref_cliff_02 の両方で 1 ± 0.08 に入る掛け方を採り、`--expect`（`material-ao.json`）で検査する。AO の値の焼き方は変えない（SCN-WL-MATERIAL-AO-BAKE）。視点ごとに撮影先を分ける。反復の最初に回帰の撮影の `before` を撮る。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -Build -RequireAssets -Width 1920 -Height 1080 -Hdr -Aov -Views ref_ground_01 -GameArgs wasteland-common-light,wasteland-hide=all,wasteland-finest-lod -LaunchPerView -OutDir .harness/runs/scene-capture/SCN-WL-MATERIAL-AO-SHADING/ref_ground_01`
@@ -1967,7 +2008,7 @@
 
 ## SCN-WL-FAR-AA: 遠景のエイリアスを、TAA の静止の収束で減らす
 - status: todo
-- after: SCN-WLR-EXPECT-MATCH
+- after: SCN-WLR-EXPECT-MATCH, SCN-WLR-REGRESSION-MOTION, SCN-WLR-RECAPTURE-BLUR-MOTION
 - done-when: TAA の静止の収束を 2 倍の解像度の正解に近づける（分散の箱の幅・現在の色の割合・書き戻しのシャープ化を 1 つずつ変えて測る）。比べる組（ref2x・resident・FXAA の対照。いずれも Game の撮影なので、エンジンの実装が変わると古くなる）は、変更後の同じ Game.exe でこの項目の撮影先 `SCN-WL-FAR-AA/` へ撮り直す（SCN-WLR-FAR-BLUR-STATIC の記録の組と同じ起動引数。aa-taa は `wasteland-aa=taa,vram-geometry-share=9`）。`--blur-static --expect`（`far-aa-static.json`）で、TAA の静止の細部の欠けが resident（FXAA）以下・エイリアスが今の TAA（0.345 / 0.336）以下であることを検査する。荒野の既定の AA はこの項目では変えない。足りなければ、出力より細かい履歴（TAAU・DLAA 相当）の見込みを記録する（入れるかは次の項目で決める）。反復の最初に回帰の撮影の `before`（`-Motion` つき）を撮る。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -Build -RequireAssets -Width 1920 -Height 1080 -Hdr -Views ref_far_01,ref_cliff_02 -GameArgs wasteland-aa=taa,vram-geometry-share=9 -OutDir .harness/runs/scene-capture/SCN-WL-FAR-AA/aa-taa`
@@ -1978,7 +2019,7 @@
 
 ## SCN-WL-FAR-AA-MOTION: 動いたときの TAA の細部の消失を減らし、荒野の既定を TAA にする
 - status: todo
-- after: SCN-WL-FAR-AA
+- after: SCN-WL-FAR-AA, SCN-WLR-REGRESSION-MOTION, SCN-WLR-RECAPTURE-BLUR-MOTION
 - done-when: 動きに応じた履歴の鋭さの補い（再投影の補間の質・速さに応じた近傍の色の押さえ込みの幅）を足し、SCN-WLR-FAR-BLUR-MOTION と同じ組（taa は `camera-script=Scripts/CameraScripts/wasteland-far-pan.txt,wasteland-aa=taa,vram-geometry-share=9`）で、TAA で振ったときと止めたときの崖の細部の欠けの差（今 +0.107）を +0.03 以下にする。静止をぼかして差を縮めていないこと（静止の細部の欠けとエイリアスが SCN-WL-FAR-AA の仕様を満たし続ける）を、静止の組 `static/` でも検査する。比べる組（ref2x・FXAA の対照）は変更後の同じ Game.exe でこの項目の撮影先 `SCN-WL-FAR-AA-MOTION/` へ撮り直す。満たしたら荒野の既定の AA を TAA にし、検査の「base は FXAA」という前提を直す（FXAA の対照の組を残す）。6 視点と固定の経路の連番を撮って開く。反復の最初に回帰の撮影の `before`（`-Motion` つき）を撮る。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -Build -RequireAssets -Width 1920 -Height 1080 -Hdr -Views ref_far_01 -GameArgs camera-script=Scripts/CameraScripts/wasteland-far-pan.txt,wasteland-aa=taa,vram-geometry-share=9 -OutDir .harness/runs/scene-capture/SCN-WL-FAR-AA-MOTION/taa`
@@ -1990,7 +2031,7 @@
 
 ## SCN-WL-GEOM-BUDGET: 荒野の遠景のジオメトリが既定の取り分で常駐しきるようにする
 - status: todo
-- after: SCN-WLR-EXPECT-MATCH
+- after: SCN-WLR-EXPECT-MATCH, SCN-WLR-REGRESSION-VALIDATION, SCN-WLR-RECAPTURE-BLUR-STATIC
 - done-when: 既定のジオメトリのページの目標を、荒野の 1920 × 1080 の作業集合（ref_cliff_02 で 8120 ページ・897 MB）が常駐しきる大きさにし（目標を作業集合から決める）、既定の取り分の base と取り分を広げた resident（どちらも変更後の同じ Game.exe でこの項目の撮影先 `SCN-WL-GEOM-BUDGET/` へ撮り直す）の差（ref_cliff_02 の遠景で欠け +0.042・エイリアス +0.069）が 0.01 以内であることを `--blur-static --expect`（`geom-budget.json`）で検査する。VRAM の予算の内訳とフレームの GPU 時間を前後で記録する。反復の最初に回帰の撮影の `before` を撮る。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -Build -RequireAssets -Width 1920 -Height 1080 -Hdr -Views ref_far_01,ref_cliff_02 -OutDir .harness/runs/scene-capture/SCN-WL-GEOM-BUDGET/base`
@@ -2011,7 +2052,7 @@
 
 ## SCN-WL-LOD-DETAIL: AA の後で、地形の LOD の選び方を見直す
 - status: todo
-- after: SCN-WL-FAR-AA-MOTION, SCN-WL-GEOM-BUDGET
+- after: SCN-WL-FAR-AA-MOTION, SCN-WL-GEOM-BUDGET, SCN-WLR-RECAPTURE-BLUR-STATIC
 - done-when: 一覧の描画の欠陥 10（`lod_detail`。最細に固定すると細部の欠け −0.076、エイリアス +0.263）を、TAA が既定になった後で測り直し、LOD の閾値を細かくしてもエイリアスが増えない範囲で細部の欠けを減らす。比べる組は変更後の同じ Game.exe でこの項目の撮影先 `SCN-WL-LOD-DETAIL/` へ撮り直し、`--blur-static --expect`（`lod-detail.json`）で、細部の欠けが今の既定より小さく、エイリアスが SCN-WL-FAR-AA-MOTION の後の既定以下であることを検査する。ページの量と GPU 時間を記録する。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -Build -RequireAssets -Width 1920 -Height 1080 -Hdr -Views ref_far_01,ref_cliff_02 -OutDir .harness/runs/scene-capture/SCN-WL-LOD-DETAIL/base`
@@ -2042,7 +2083,7 @@
 
 ## SCN-WL-PSI-GRID: 多重散乱の表の格子を細かくする
 - status: todo
-- after: SCN-WLR-ATMOS-REF
+- after: SCN-WLR-ATMOS-REF, SCN-WLR-REGRESSION-VALIDATION
 - done-when: 一覧の描画の欠陥 7（`psi_grid`。多重散乱の表 Ψ のエンジン ÷ 正解 A が 0.877〜1.065、表は 8 × 32）を直し、2 % 以内にする（A は保存した数値の参照。格子の大きさ・作る時間・メモリを記録する）。空の表は全シーン共通なので、反復の最初に回帰の撮影の `before` を撮る。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -Build -RequireAssets -Width 1920 -Height 1080 -Views ref_ground_02 -GameArgs atmosphere-dump -OutDir .harness/runs/scene-capture/SCN-WL-PSI-GRID`
@@ -2061,7 +2102,7 @@
 
 ## SCN-WL-SKY-SCATTER: 霧と空気遠近の散乱光と空の設定を、直した大気の正解の結論で直す
 - status: todo
-- after: SCN-WLR-ATMOS-REF-NEWSET, SCN-WL-GRADE-NEUTRAL
+- after: SCN-WLR-ATMOS-REF-NEWSET, SCN-WL-GRADE-NEUTRAL, SCN-WLR-REGRESSION-VALIDATION
 - done-when: SCN-WLR-GAP-LIST-ATMOS で埋めた結論と SCN-WLR-ATMOS-REF-NEWSET で決めた設定に従い、霧の周りの光の式（視線の向きの空の輝度を使い太陽の側で二重に数える `fog_sky_color_double`）、空気遠近の散乱光の向き（`aerial_scatter_direction`）、空の Mie の設定を直す。合否は `--atmos-ref --expect`（`sky-scatter.json`。新しい設定の保存した数値の参照を読む）で、結論の各量が正解と 5 % 以内。確認 1 で見つかった ref_ground_02 の空の高さ約 380 px の水平な明度の境（REVIEW-1 の評価）の原因も確かめて直す。既定の空のモデルの値を変えるなら全シーンへ値を移す（荒野だけの設定なら荒野の中で閉じる）。既定の荒野の 6 視点を別の撮影先に撮って写真と並べて開く。反復の最初に回帰の撮影の `before` を撮る。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -Build -RequireAssets -Width 1920 -Height 1080 -Views ref_ground_02 -GameArgs atmosphere-dump -OutDir .harness/runs/scene-capture/SCN-WL-SKY-SCATTER`
