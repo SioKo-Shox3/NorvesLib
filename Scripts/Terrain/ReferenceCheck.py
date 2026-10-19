@@ -238,6 +238,14 @@
 #       結果を <出力先>/gap_list_check.json に書く。<出力先> の既定は GAP_LIST_DIR。大気の正解の比較が古いことは
 #       未判定の印として許し、--require-atmos では許さない（B の直し待ちの項目が残っていても失敗にする）。
 #
+#   python Scripts/Terrain/ReferenceCheck.py --grading --engine <撮影先> [--capture <6 視点の撮影先>] [--views a,b,...] [--verify]
+#       荒野のグレーディングを中立にした変更の検査（GradeNeutral.py）。<撮影先> の既定の荒野の撮影（既定の視点は GRADING_VIEWS の 2 つ）で、
+#       撮影の表示変換の記録が候補 neutral_plain と同じ値で、HDR に neutral_plain を掛けた画が撮影の PNG と 8 bit で 1 段以内に合う
+#       （--display の scene の組と同じ基準。既定の撮影の PNG はブルームと FXAA が乗るので、--hdr と同じブルームを避けた画素で照合する）ことを検査し、同じ HDR に変更前の表示変換（候補 current）を掛けた画との間で、地面の R/G と
+#       白飛びの割合（写真の崖・地面の枠の地形の画素と画面全体）の前後を記録する。--capture に 6 視点を -Hdr で撮った別の撮影先を渡すと、
+#       その各視点も検査して、写真｜前｜後の比較画像 <6 視点の撮影先>/grading_sheet.png を書く。報告は <撮影先>/grading_check.json。
+#       --verify は撮影の入力の記録を今のファイルと照らす。
+#
 # 終了コード: すべて合格なら 0、どれかが不合格なら 1。
 import argparse
 import hashlib
@@ -5499,6 +5507,8 @@ def main():
                         help="実材質の地形のエンジンと Cycles の描画を、領域ごとの線形の平均の表と表示変換を掛けた比較画像で比べる")
     parser.add_argument("--tonemap", action="store_true",
                         help="表示変換の候補を、エンジンと Cycles の同じ HDR に掛けて並べ、手本の写真と比べる")
+    parser.add_argument("--grading", action="store_true",
+                        help="荒野のグレーディングが中立で、HDR に neutral_plain を掛けた画が撮影の PNG と合うことを検査し、地面の R/G と白飛びの前後を記録する")
     parser.add_argument("--gap-list", action="store_true",
                         help="比較の結果が揃い今の入力と合うことを検査し、差を分類した一覧（WastelandGapList.md の表）と一覧の画像を作る")
     parser.add_argument("--require-atmos", action="store_true",
@@ -5530,6 +5540,12 @@ def main():
         capture = args.capture or GAP_LIST_DIR
         capture_dir = os.path.normpath(capture if os.path.isabs(capture) else os.path.join(REPO_ROOT, capture))
         return GapList.run(sys.modules[__name__], capture_dir, args.verify, args.require_atmos)
+    if args.grading:
+        import GradeNeutral
+        absolute = lambda d: os.path.normpath(d if os.path.isabs(d) else os.path.join(REPO_ROOT, d))
+        views = [v.strip() for v in args.views.split(",") if v.strip()]
+        return GradeNeutral.run(sys.modules[__name__], [absolute(d) for d in args.engine],
+                                absolute(args.capture) if args.capture else "", views, args.verify)
     if not args.capture:
         print("REFERENCE_CHECK result=fail reason=capture_missing（--capture を指定する）")
         return 1
@@ -5604,7 +5620,7 @@ def main():
         return run_tonemap(capture_dir, os.path.normpath(lit_dir), views, args.verify)
     print("REFERENCE_CHECK result=fail reason=no_mode（--record-inputs か --hdr か --display か --plate か --aov か "
           "--projection か --atmos-dump か --atmos-ref か --blur-static か --blur-motion か --gray か --albedo か --normal か "
-          "--lit か --tonemap を指定する）")
+          "--lit か --tonemap か --grading を指定する）")
     return 1
 
 

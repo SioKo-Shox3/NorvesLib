@@ -5564,3 +5564,17 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - Notes:
   - 検証レイヤーが入るのは Debug だけ（`BootConfig.h`。起動引数での切り替えは無い）なので、回帰の撮影は Debug で撮る。ただし Debug では rendering3dtest 227 秒（ビルド込み）・mega-bananas 190 秒で、4 シーンでは done-when の 9 分に収まらない見込み（RelWithDebInfo なら 4 シーン 256 秒だが検証レイヤーが入らない）。判断待ちの文書に足した
   - 新しい試験は `--ref-split-selftest`（done-when が名指し）だけ
+
+### SCN-WL-GRADE-NEUTRAL 完了（2026-10-19、run 20261019-192352 の反復 4）
+- Done: 荒野の昼のグレーディングを中立（コントラスト 1・彩度 1・色温度 0）にした（`Game/GameModes/Wasteland/WastelandRoutine.cpp` の荒野のカメラの定数だけ。トーンマップ・露出・ビネット・夜の集落・ほかのシーンは不変）。`ReferenceCheck.py --grading`（本体 `Scripts/Terrain/GradeNeutral.py`）を足し、前後の記録と文書 `Docs/RenderingValidation/WastelandGradeNeutral.md` を書いた
+- 証拠（`.harness/runs/20261019-192352/`）:
+  - `verify-SCN-WL-GRADE-NEUTRAL-1.txt`: Debug の Game のビルド EXIT=0
+  - `verify-SCN-WL-GRADE-NEUTRAL-2.txt`: RelWithDebInfo の 2 視点の撮影 result=pass・EXIT=0
+  - `verify-SCN-WL-GRADE-NEUTRAL-3.txt`: `--grading --verify` result=pass・EXIT=0（inputs_current=1。2 視点とも表示変換の記録が neutral_plain と一致し、ブルームを避けた画素の PNG が HDR に neutral_plain を掛けた画と 1 段以内）
+  - `aux-SCN-WL-GRADE-NEUTRAL-6views.txt`・`aux-SCN-WL-GRADE-NEUTRAL-sheet.txt`: 6 視点を別の撮影先（`.harness/runs/scene-capture/SCN-WL-GRADE-NEUTRAL-6views`）に撮り、6 視点とも pass。比較画像 `grading_sheet.png`（写真｜前｜後）を開いた
+  - 前後: 地面の R/G は 6 視点すべてで写真に近づいた（ref_cliff_01 5.91 → 3.04、写真 2.56）。白飛びは枠で最大 12.9 % → 0、画面全体で最大 10.6 % → 0
+- Notes:
+  - 既定の撮影の PNG はブルームと FXAA が乗るので、「PNG が 1 段以内」は `--hdr` と同じブルームを避けた画素で判定する（全画面の一致率 0.93〜0.96 は参考値）
+  - まだ写真と違う所は照明・中身の差: 地面が橙で明るい、空の青みが薄い、ref_ground_02 の空に水平の継ぎ目の帯がある（中立化の前からの欠陥の見込み。SCN-WL-SKY-AERIAL 側）。`--tonemap`・`--gap-list` の検査は荒野の入力が変わったので、撮り直すまで古い扱いになる
+  - 新しい試験は足していない（`--grading` は done-when が名指し）
+- Next: TASKS.md の次の未完の項目。

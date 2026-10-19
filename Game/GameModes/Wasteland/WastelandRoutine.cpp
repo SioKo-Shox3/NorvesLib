@@ -156,13 +156,13 @@ namespace Game::GameModes
         // 置くので、同じ記録の露出でも中間調が 0.18 / 0.128 = 1.41 倍（+0.49 段）明るく写る。露出の値は記録のまま、この現像の差だけを補う
         constexpr float kCameraOutputCompensationEV = 0.49f;
         // 日中のグレーディング。トーンマップは暗部を縮めない NeutralLinear にし、空の光だけの影の中が黒くつぶれないようにする。
-        // コントラストはカメラの JPEG の階調に寄せて、中間の灰（0.18）を軸にした S 字で立てる（空と雲は明るく、影と崖の暗部は
-        // 締まる）。彩度を少し上げて空の青を残し、色温度はわずかに足すだけにする（写真の日向は白みの強い昼の色）。
-        // ビネットは画面の隅を少し落とす程度
-        constexpr float kGradingContrast = 1.35f;
+        // グレーディングは中立（コントラスト 1・彩度 1・色温度 0）にする。コントラスト 1.35・彩度 1.2 の S 字は、同じ HDR を写真の
+        // 崖と地面に合わせて比べたとき、地面の R/G と白飛びを写真より離す側に働いた（Docs/RenderingValidation/WastelandToneMapEval.md）。
+        // 色と明るさの差は照明と中身で詰め、表示側の色づけで隠さない。ビネットは画面の隅を少し落とす程度
+        constexpr float kGradingContrast = 1.0f;
         constexpr float kGradingContrastPivot = 0.18f;
-        constexpr float kGradingSaturation = 1.2f;
-        constexpr float kGradingTemperature = 0.05f;
+        constexpr float kGradingSaturation = 1.0f;
+        constexpr float kGradingTemperature = 0.0f;
         constexpr float kVignetteIntensity = 0.25f;
         constexpr float kVignetteRadius = 0.85f;
         constexpr float kVignetteSoftness = 0.6f;

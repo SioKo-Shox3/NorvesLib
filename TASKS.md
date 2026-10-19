@@ -1964,7 +1964,7 @@
 - notes: 危険地帯（影）。2026-10-19（Sol の批評 9・10 と 2 周目）。
 
 ## SCN-WL-GRADE-NEUTRAL: 荒野のグレーディングを中立にする
-- status: todo
+- status: done
 - after: SCN-WLR-GAP-LIST
 - model: sonnet
 - done-when: 荒野のグレーディングを中立（コントラスト 1・彩度 1・色温度 0）にする。トーンマップ（NeutralLinear）と露出（EV100 13.6 + 0.49）は変えない（SCN-WLR-TONEMAP-EVAL の採る候補 `neutral_plain`）。荒野だけの設定なので、ほかのシーンの値は動かさない。`ReferenceCheck.py --grading`（この項目で作る）: 既定の荒野の撮影の HDR に `DisplayTransform.py` の `neutral_plain` を掛けた画と、撮影の PNG が 8 bit で 1 段以内に合うこと（SCN-WLR-DISPLAY-TRANSFORM と同じ基準）を 2 視点で検査し、地面の R/G と白飛びの割合を前後で記録する。6 視点を別の撮影先に撮って開き、写真と並べる。
