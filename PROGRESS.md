@@ -5432,3 +5432,19 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `verify-SCN-WLR-CYCLES-LIT-B-3.txt`: ref_far_02 の 1 視点の撮影 result=pass、EXIT=0（入力のハッシュ sha256=9941e342… は保存した撮影と同じ。ログに `WASTELAND_COMMON_LIGHT`・`WASTELAND_FINEST_LOD`・`WASTELAND_HIDE mask=127`）
   - `verify-SCN-WLR-CYCLES-LIT-B-4.txt`: `--lit --verify` 6 視点 result=pass、inputs_current=1・material_inputs_current=1・cycles_inputs_current=1、EXIT=0
 - Next: TASKS.md の次の未完の項目。
+
+### SCN-WLR-TONEMAP-EVAL 完了（2026-10-19、run 20261018-205227 の反復 28）
+- Done: `ReferenceCheck.py --tonemap` を足し、表示変換の 5 候補（current = 今の NeutralLinear＋コントラスト 1.35・彩度 1.2・色温度 0.05、neutral_mild、neutral_plain = NeutralLinear＋中立、aces20_lut、aces_filmic）を `DisplayTransform.py` の再現でエンジンの HDR と SCN-WLR-CYCLES-LIT の Cycles の HDR に掛け、写真の崖・地面の枠で明るさの分布・彩度・白飛び・崖 ÷ 地面・R/G・B/G を測った（撮影の露出のままと、写真の中央値に露出を合わせた 2 通り）。記録は `Docs/RenderingValidation/WastelandToneMapEval.md`
+  - 結果: current は 4 組すべてで最も写真から遠い（点数 1.36〜1.96。地面の R/G 3.30〔写真 2.18〕、彩度 0.63〔写真 0.47〕、白飛びエンジン 5.9 %・Cycles 14.1 %）。neutral_plain と aces20_lut が 1・2 位を分け合う（0.56〜0.90）。aces20_lut は同じ露出で約 0.8 段暗い
+  - 採る候補: neutral_plain（NeutralLinear のまま、グレーディングを中立に）。曲線と露出が今と同じでほかのシーンへの移し替えが要らない。ACES 2.0 は露出を作り直すときの次点。明るさの幅（写真 0.47、候補 0.23〜0.39）と崖 ÷ 地面の比はどの候補でも埋まらず、照明・中身の差として GAP-LIST へ回す
+  - エンジンの既定・荒野の値は変えていない
+- 証拠（`.harness/runs/20261018-205227/`）:
+  - `aux-SCN-WLR-TONEMAP-EVAL-baseline-hdr.txt`: SCN-WLR-BASELINE（2026-10-16）は入力のハッシュが古く `--hdr --verify` が fail
+  - `aux-SCN-WLR-TONEMAP-EVAL-capture.txt`: 既定の荒野の 6 視点を SCN-WLR-BASELINE と同じ条件で `.harness/runs/scene-capture/SCN-WLR-TONEMAP-EVAL/` に撮影 result=pass、EXIT=0（166 秒、入力のハッシュ sha256=9941e342…）
+  - `verify-SCN-WLR-TONEMAP-EVAL-1.txt`: `--tonemap --verify` result=pass、6 視点、inputs_current=1・lit_inputs_current=1・cycles_inputs_current=1、EXIT=0（224 秒）
+  - `tonemap_ref_cliff_01.png`・`tonemap_overview.png` を開き、current だけ地面が橙に飽和すること、aces20_lut が同じ露出で暗く空がくすむことを見た
+- Notes:
+  - SCN-WLR-BASELINE は上書きせず、評価用の出力先に撮り直した（基準の撮り直しは GAP-LIST の入力の検査の要否で決める）
+  - 点数は量ごとに候補の間の平均で割った相対の値で、写真の現像の差を含む（合否に使わない）
+  - 新しい試験は足していない（verify の検査が確かめる）
+- Next: TASKS.md の次の未完の項目。

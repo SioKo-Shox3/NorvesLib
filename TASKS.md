@@ -1795,7 +1795,7 @@
 - notes: 連番の撮り方は SCN-WL-SCATTER-GRAVEL の歩く連続撮影（`Scripts/CameraScripts/wasteland-gravel-walk.txt`）にならう。カメラが実際に動いたことを数値で確かめる。撮影の構成（Debug か RelWithDebInfo か）は SCN-WL-CAPTURE-SPEED の決定に揃えてよい（verify も同じ反復で直す）。
 
 ## SCN-WLR-TONEMAP-EVAL: 表示変換の候補を、同じ HDR に掛けて比べる
-- status: todo
+- status: done
 - after: SCN-WLR-CYCLES-LIT-B, SCN-WLR-DISPLAY-TRANSFORM
 - done-when: 表示変換の候補（今の NeutralLinear＋グレーディング〔コントラスト 1.35・彩度 1.2・色温度 0.05〕、ACES 2.0 の LUT＋中立のグレーディング、ほか）を、SCN-WLR-DISPLAY-TRANSFORM の再現で SCN-WLR-BASELINE のエンジンの HDR と SCN-WLR-CYCLES-LIT の Cycles の HDR に掛けて並べ、写真と比べる（写真の現像の差は「条件の違い」として残す）。採る候補と理由を書く。エンジンの既定は変えない。
 - verify: `python Scripts/Terrain/ReferenceCheck.py --tonemap --capture .harness/runs/scene-capture/SCN-WLR-TONEMAP-EVAL --verify`

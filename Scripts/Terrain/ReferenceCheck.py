@@ -198,6 +198,22 @@
 #       再現した材質の AO の平均と、エンジンだけが掛ける材質の AO を Cycles の太陽の組・空の組に掛けた見込みとの比を書く。
 #       --verify は撮影・材質・Cycles の入力の記録を今のファイルと照らす。
 #
+#   python Scripts/Terrain/ReferenceCheck.py --tonemap --capture <出力先> [--lit-capture <SCN-WLR-CYCLES-LIT の出力先>]
+#                                            [--views a,b,...] [--verify]
+#       表示変換の候補（TONEMAP_CANDIDATES）を、DisplayTransform.py の再現で同じ HDR に掛けて並べ、手本の写真と比べる。
+#       HDR は 2 つ: <出力先> のエンジンの撮影（既定の荒野を SCN-WLR-BASELINE と同じ条件で CaptureScene.ps1 -Hdr で撮ったもの）と、
+#       --lit-capture の Cycles の描画（cycles/<視点>.cycles.hdr.pfm。空は共通の照明の一様な空で埋め、露出はその撮影の値）。
+#       どちらも 1280×720 へ面積の平均で縮めてから、撮影の露出のままと、写真の枠の中の明るさの中央値に露出を合わせた 2 通りで
+#       表示の値を作り、写真の崖・地面の枠（CompareReference.py の PHOTOS）の地形の画素で、明るさの分布（符号化した輝度の
+#       p05・p50・p95）・彩度（HSV の S の平均）・白飛びと黒つぶれの割合・崖 ÷ 地面の輝度の比・R/G・B/G を測る。
+#       写真の現像（露出・ホワイトバランス・トーンカーブ）は分からないので、写真との差は合否に使わず、候補ごとの差の平均を量ごとに
+#       候補の間の平均で割って足した点数（小さいほど写真に近い）として記録する。<出力先>/tonemap_check.json、視点ごとの比較画像
+#       <出力先>/tonemap_<視点>.png（行: エンジン・Cycles × 撮影の露出・合わせた露出、列: 写真と候補）、一覧
+#       <出力先>/tonemap_overview.png を書く。
+#       合否: 撮影が既定の荒野の表示（起動引数に TONEMAP_FORBIDDEN_ARG_PREFIXES が無い）で、各視点の HDR が PNG と合い（--hdr と
+#       同じ検査）、撮影の表示変換の記録が候補 current と同じ値であること、Cycles の描画とその入力（--lit と同じ記録）と写真が
+#       揃い、測った値がすべて有限であること。--verify は撮影と --lit-capture の撮影・Cycles の入力の記録を今のファイルと照らす。
+#
 # 終了コード: すべて合格なら 0、どれかが不合格なら 1。
 import argparse
 import hashlib
@@ -363,6 +379,47 @@ LIT_VIEWS = ("ref_far_01", "ref_far_02", "ref_cliff_01", "ref_cliff_02", "ref_gr
 LIT_MATERIAL_DIR = "material"
 # 収束を判定する 1 本あたりのサンプル数の下限（BlenderReference.py の MIN_SPP_PER_SEED と同じ。届かない描画の領域は未判定）
 LIT_MIN_SPP_PER_SEED = 512
+# --tonemap（表示変換の候補を同じ HDR に掛けて比べる）
+TONEMAP_VIEWS = LIT_VIEWS
+# Cycles の HDR（と、その露出を決めたエンジンの撮影）を借りる SCN-WLR-CYCLES-LIT の出力先
+TONEMAP_LIT_DIR = os.path.join(".harness", "runs", "scene-capture", "SCN-WLR-CYCLES-LIT")
+# 既定の荒野の表示で撮った撮影であることの確かめ: 起動引数に置いてはいけないもの（照明・表示・中身を差し替える指定）
+TONEMAP_FORBIDDEN_ARG_PREFIXES = ("--wasteland-common-light", "--wasteland-hide=", "--wasteland-gray", "--wasteland-finest-lod",
+                                  "--display-check", "--tone-map", "--common-light-case")
+# 候補（名前, 説明, 演算子, グレーディングの式, コントラスト, 彩度, 色温度）。露出（プリエクスポージャ）と VignettePass は撮影の値の
+# まま、トーンマップの中のビネットは無し（撮影の既定と同じ）。ACES 2.0 の LUT は表示変換そのものでグレーディングを掛けない
+TONEMAP_CANDIDATES = (
+    ("current", "今の NeutralLinear＋グレーディング（コントラスト 1.35・彩度 1.2・色温度 0.05）",
+     DT.OPERATOR_NEUTRAL_LINEAR, 1, 1.35, 1.2, 0.05),
+    ("neutral_mild", "NeutralLinear＋弱いグレーディング（コントラスト 1.15・彩度 1.1・色温度 0.05）",
+     DT.OPERATOR_NEUTRAL_LINEAR, 1, 1.15, 1.1, 0.05),
+    ("neutral_plain", "NeutralLinear＋中立のグレーディング", DT.OPERATOR_NEUTRAL_LINEAR, 1, 1.0, 1.0, 0.0),
+    ("aces20_lut", "ACES 2.0 SDR の LUT（中立のグレーディング）", DT.OPERATOR_ACES20_LUT, 1, 1.0, 1.0, 0.0),
+    ("aces_filmic", "ACES Filmic の近似の曲線＋中立のグレーディング", DT.OPERATOR_ACES_FILMIC, 0, 1.0, 1.0, 0.0),
+)
+# 候補 current の値が撮影の記録（hdr.json の post）と合うことの許容
+TONEMAP_PARAM_TOLERANCE = 1e-4
+# 露出を写真に合わせる探索: プリエクスポージャに掛ける 2^s の s の範囲[段]と二分の回数
+TONEMAP_MATCH_RANGE_EV = (-8.0, 8.0)
+TONEMAP_MATCH_STEPS = 16
+# 彩度（HSV の S）を数える画素の明るさの下限（符号化値の最大成分）、白飛び・黒つぶれの 8 bit の値
+TONEMAP_SATURATION_MIN_VALUE = 0.02
+TONEMAP_CLIP_LEVEL = 254
+TONEMAP_CRUSH_LEVEL = 3
+# 写真との差の点数に使う量（名前, 説明）。p50 は撮影の露出のままの比較だけで使う（合わせた露出では一致させてある）
+TONEMAP_SCORE_METRICS = (
+    ("p50", "明るさの中央値（符号化した輝度）"),
+    ("spread", "明るさの幅 p95 − p05（符号化した輝度）"),
+    ("saturation", "彩度の平均（HSV の S）"),
+    ("log_cliff_over_ground", "崖 ÷ 地面の輝度の比の対数"),
+    ("ground_r_over_g", "地面の R/G"),
+    ("ground_b_over_g", "地面の B/G"),
+    ("clip", "白飛びの割合"),
+)
+# 比較画像の 1 枚の大きさ[px]と見出しの高さ[px]
+TONEMAP_SHEET_PANEL = (480, 270)
+TONEMAP_OVERVIEW_PANEL = (320, 180)
+TONEMAP_LABEL_HEIGHT = 30
 
 ALBEDO_VIEWS = ("ref_cliff_01", "ref_ground_01")
 ALBEDO_GAME_ARGS = ("--wasteland-common-light", "--wasteland-finest-lod")
@@ -4919,6 +4976,375 @@ def run_lit(capture_dir, views, verify):
     return 0 if not failures else 1
 
 
+# ---- --tonemap（表示変換の候補を同じ HDR に掛けて比べる）----
+
+def tonemap_candidate_params(candidate, capture_params):
+    """候補の表示変換の値。トーンマップとグレーディングだけを差し替え、コントラストの支点と VignettePass は撮影の値のまま"""
+    _name, _label, operator, mode, contrast, saturation, temperature = candidate
+    params = dict(capture_params)
+    params.update({"operator": operator, "bypass": False, "grading_mode": mode, "color_filter": [1.0, 1.0, 1.0, 1.0],
+                   "contrast": contrast, "saturation": saturation, "temperature": temperature, "brightness": 0.0,
+                   "look_lut_intensity": 0.0, "tone_map_vignette": [0.0, 0.8, 0.5]})
+    return params
+
+
+def tonemap_current_mismatch(capture_params):
+    """撮影の表示変換の記録と候補 current の値の食い違い（無ければ空）"""
+    expected = tonemap_candidate_params(TONEMAP_CANDIDATES[0], capture_params)
+    mismatch = []
+    for key in ("operator", "grading_mode", "bypass"):
+        if capture_params[key] != expected[key]:
+            mismatch.append(f"{key}={capture_params[key]}")
+    for key in ("contrast", "saturation", "temperature", "brightness"):
+        if abs(capture_params[key] - expected[key]) > TONEMAP_PARAM_TOLERANCE:
+            mismatch.append(f"{key}={capture_params[key]}")
+    if any(abs(v - 1.0) > TONEMAP_PARAM_TOLERANCE for v in capture_params["color_filter"]):
+        mismatch.append(f"color_filter={capture_params['color_filter']}")
+    if capture_params["tone_map_vignette"][0] > TONEMAP_PARAM_TOLERANCE:
+        mismatch.append(f"tone_map_vignette={capture_params['tone_map_vignette']}")
+    return mismatch
+
+
+def tonemap_downsample(image, size):
+    """(高さ, 幅, チャンネル数) の線形の値を、面積の平均で size（幅, 高さ）へ縮める"""
+    channels = [np.asarray(Image.fromarray(np.ascontiguousarray(image[..., c], dtype=np.float32), "F")
+                           .resize(size, Image.BOX)) for c in range(image.shape[2])]
+    return np.stack(channels, axis=-1).astype(np.float32)
+
+
+def tonemap_render(hdr, pre_exposure, params, vignette, lut):
+    """放射輝度（(H, W, 3) か (N, 1, 3)）に表示変換を掛けた 8 bit の値（DisplayTransform.display_transform と同じ順。
+    VignettePass の係数 vignette は hdr と同じ形の先頭 2 軸で渡す）"""
+    toned = DT.tone_mapping_pass(DT.expose(hdr, pre_exposure), params, lut)
+    if params["vignette_pass"] and params["vignette_enabled"]:
+        toned = DT.to_half(toned * vignette)
+    encoded = DT.encode_srgb(toned) * np.float32(255.0)
+    return np.clip(np.rint(encoded), 0, 255).astype(np.uint8)
+
+
+def tonemap_luma(image):
+    """8 bit の sRGB の画素の輝度を、sRGB の符号化値（0〜1）で返す"""
+    from CompareLight import srgb_to_linear
+    linear_y = srgb_to_linear(image.astype(np.float64)) @ LUMA
+    return DT.encode_srgb(linear_y.astype(np.float32)).astype(np.float64)
+
+
+def tonemap_masks(terrain, boxes):
+    """地形の画素と写真の崖・地面の枠から、崖・地面の領域"""
+    import CompareReference as CR
+    return {name: terrain & CR.box_mask(terrain.shape, boxes[name]) for name in ("cliff", "ground")}
+
+
+def tonemap_measure(image, masks):
+    """崖・地面の枠の地形の画素の表示の値: 符号化した輝度の分布、彩度、白飛び・黒つぶれ、崖 ÷ 地面の輝度の比、色の比"""
+    from CompareLight import srgb_to_linear
+    union = masks["cliff"] | masks["ground"]
+    out = {"pixels": int(union.sum())}
+    if not union.any():
+        return out
+    linear = srgb_to_linear(image.astype(np.float64))
+    luma = tonemap_luma(image)
+    p05, p50, p95 = (float(v) for v in np.percentile(luma[union], [5, 50, 95]))
+    encoded = image.astype(np.float64) / 255.0
+    peak, low = encoded.max(axis=-1), encoded.min(axis=-1)
+    lit = union & (peak > TONEMAP_SATURATION_MIN_VALUE)
+    out.update({
+        "p05": p05, "p50": p50, "p95": p95, "spread": p95 - p05,
+        "saturation": float(((peak - low) / np.maximum(peak, 1e-6))[lit].mean()) if lit.any() else None,
+        "clip": float((image >= TONEMAP_CLIP_LEVEL).any(axis=-1)[union].mean()),
+        "crush": float((image <= TONEMAP_CRUSH_LEVEL).all(axis=-1)[union].mean()),
+    })
+    for name in ("cliff", "ground"):
+        mask = masks[name]
+        if not mask.any():
+            continue
+        rgb = linear[mask].mean(axis=0)
+        out[f"{name}_y"] = float(rgb @ LUMA)
+        out[f"{name}_rgb"] = [float(v) for v in rgb]
+        if rgb[1] > 0.0:
+            out[f"{name}_r_over_g"] = float(rgb[0] / rgb[1])
+            out[f"{name}_b_over_g"] = float(rgb[2] / rgb[1])
+    if out.get("cliff_y") and out.get("ground_y"):
+        out["cliff_over_ground"] = out["cliff_y"] / out["ground_y"]
+        out["log_cliff_over_ground"] = math.log(out["cliff_over_ground"])
+    return out
+
+
+def tonemap_match_exposure(hdr, pre_exposure, params, vignette, mask, target_p50, lut):
+    """枠の中の明るさの中央値（符号化した輝度）を写真に合わせる露出の段 s（プリエクスポージャ × 2^s）を二分で探す。
+    範囲の端に張り付いたら端の値を返す"""
+    pixels = hdr[mask][:, None, :]
+    factors = vignette[mask][:, None, :]
+    low, high = TONEMAP_MATCH_RANGE_EV
+    for _ in range(TONEMAP_MATCH_STEPS):
+        middle = 0.5 * (low + high)
+        image = tonemap_render(pixels, pre_exposure * 2.0 ** middle, params, factors, lut)
+        if float(np.median(tonemap_luma(image))) < target_p50:
+            low = middle
+        else:
+            high = middle
+    return 0.5 * (low + high)
+
+
+def tonemap_missing_metrics(metrics):
+    """点数と表に使う量のうち、無いか有限でないもの"""
+    keys = [m for m, _ in TONEMAP_SCORE_METRICS] + ["p05", "p95", "crush"]
+    return [k for k in keys if metrics.get(k) is None or not math.isfinite(metrics[k])]
+
+
+def tonemap_scores(view_results, source, exposure):
+    """候補ごとの写真との差の点数。量ごとに視点の平均の差の絶対値を求め、候補の間の平均で割って量の数で平均する
+    （1 が候補の平均、小さいほど写真に近い）"""
+    metrics = [m for m, _ in TONEMAP_SCORE_METRICS if not (exposure == "matched" and m == "p50")]
+    names = [c[0] for c in TONEMAP_CANDIDATES]
+    diffs = {name: {} for name in names}
+    for name in names:
+        for metric in metrics:
+            values = []
+            for result in view_results:
+                photo = result["photo"]["metrics"].get(metric)
+                value = result.get(source, {}).get(exposure, {}).get(name, {}).get("metrics", {}).get(metric)
+                if photo is not None and value is not None:
+                    values.append(abs(value - photo))
+            diffs[name][metric] = float(np.mean(values)) if values else None
+    score = {name: [] for name in names}
+    for metric in metrics:
+        present = [diffs[name][metric] for name in names if diffs[name][metric] is not None]
+        scale = float(np.mean(present)) if present else 0.0
+        if scale <= 0.0:
+            continue
+        for name in names:
+            if diffs[name][metric] is not None:
+                score[name].append(diffs[name][metric] / scale)
+    score = {name: float(np.mean(values)) if values else None for name, values in score.items()}
+    rank = sorted((name for name in names if score[name] is not None), key=lambda name: score[name])
+    return {"metrics": metrics, "mean_abs_diff": diffs, "score": score, "rank": rank}
+
+
+def tonemap_cell_text(name, metrics, exposure_ev=None):
+    text = (f"{name}　中央 {metrics.get('p50', float('nan')):.2f}　幅 {metrics.get('spread', float('nan')):.2f}　"
+            f"彩 {metrics.get('saturation') or float('nan'):.2f}　崖/地 {metrics.get('cliff_over_ground') or float('nan'):.2f}")
+    if exposure_ev is not None:
+        text += f"　{exposure_ev:+.2f} 段"
+    return text
+
+
+def write_tonemap_sheet(path, rows, boxes, font, panel_size, note=None):
+    """比較画像。rows は (行の見出し, [(列の見出し, 8 bit の画像), ...]) の並び"""
+    import CompareReference as CR
+    from PIL import ImageDraw
+    width, height = panel_size
+    columns = max(len(cells) for _, cells in rows)
+    row_height = TONEMAP_LABEL_HEIGHT * 2 + height
+    footer = TONEMAP_LABEL_HEIGHT if note else 0
+    sheet = Image.new("RGB", (width * columns, row_height * len(rows) + footer), (24, 24, 24))
+    draw = ImageDraw.Draw(sheet)
+    for index, (title, cells) in enumerate(rows):
+        top = index * row_height
+        draw.text((8, top + 6), title, fill=(255, 210, 120), font=font)
+        for column, (label, image) in enumerate(cells):
+            panel = Image.fromarray(image, "RGB").resize(panel_size, Image.LANCZOS)
+            if boxes is not None:
+                CR.draw_boxes(panel, boxes)
+            sheet.paste(panel, (column * width, top + TONEMAP_LABEL_HEIGHT * 2))
+            draw.text((column * width + 6, top + TONEMAP_LABEL_HEIGHT + 6), label[:60], fill=(235, 235, 235), font=font)
+    if note:
+        draw.text((8, row_height * len(rows) + 6), note, fill=(255, 210, 120), font=font)
+    sheet.save(path)
+
+
+def run_tonemap(capture_dir, lit_dir, views, verify):
+    import CompareReference as CR
+    from CompareLight import load_font
+    failures = []
+    views = views or list(TONEMAP_VIEWS)
+    light = load_common_light()
+    lut = DT.load_aces_lut()
+    font = load_font(15)
+    size = CR.PANEL_SIZE
+    names = [c[0] for c in TONEMAP_CANDIDATES]
+    report = {"mode": "tonemap", "verify": bool(verify), "views_requested": views, "lit_capture": lit_dir,
+              "candidates": [{"name": c[0], "label": c[1], "operator": c[2], "grading_mode": c[3], "contrast": c[4],
+                              "saturation": c[5], "temperature": c[6]} for c in TONEMAP_CANDIDATES],
+              "panel_size": list(size), "views": []}
+
+    # エンジンの撮影（既定の荒野の表示）
+    inputs_ok, input_failures, record = check_inputs(capture_dir)
+    report["inputs_current"] = inputs_ok
+    report["inputs_record"] = record
+    if verify and not inputs_ok:
+        failures.extend(input_failures)
+    game_args = plate_capture_args(capture_dir)
+    report["game_args"] = game_args
+    if game_args is None:
+        failures.append("metrics.json が無い（CaptureScene.ps1 -Hdr の出力先でない）")
+    else:
+        forbidden = [a for a in game_args if a.startswith(TONEMAP_FORBIDDEN_ARG_PREFIXES)]
+        if forbidden:
+            failures.append(f"撮影が既定の荒野の表示でない（起動引数 {', '.join(forbidden)}）")
+
+    # Cycles の描画と、その露出を決めたエンジンの撮影（SCN-WLR-CYCLES-LIT）
+    lit_ok, lit_failures, lit_record = check_inputs(lit_dir)
+    cycles_dir = os.path.join(lit_dir, GRAY_CYCLES_DIR)
+    cycles_ok, cycles_failures, cycles_record = check_cycles_lit_inputs(lit_dir, cycles_dir,
+                                                                        (lit_record or {}).get("files_sha256"), views)
+    report["lit_inputs_current"] = lit_ok
+    report["cycles_inputs_current"] = cycles_ok
+    if verify and not lit_ok:
+        failures.extend(f"Cycles の撮影: {f}" for f in lit_failures)
+    if (verify and not cycles_ok) or cycles_record is None:
+        failures.extend(f"Cycles: {f}" for f in cycles_failures)
+
+    overview_rows = []
+    for view in views:
+        entry = {"view": view}
+        report["views"].append(entry)
+        hdr_result = check_hdr_view(capture_dir, view)
+        entry["hdr_png_match"] = dict(hdr_result.get("png_match", {}), **{"pass": hdr_result["pass"]})
+        failures.extend(f"{view}: {f}" for f in hdr_result["failures"])
+        engine_hdr, meta, hdr_failures = lit_engine_hdr(capture_dir, view)
+        failures.extend(hdr_failures)
+        lit_hdr, lit_meta, lit_hdr_failures = lit_engine_hdr(lit_dir, view)
+        failures.extend(f"Cycles の撮影: {f}" for f in lit_hdr_failures)
+        if engine_hdr is None or lit_meta is None:
+            continue
+        try:
+            capture_params = DT.params_from_capture(meta)
+        except DT.UnsupportedDisplay as error:
+            failures.append(f"{view}: {error}")
+            continue
+        mismatch = tonemap_current_mismatch(capture_params)
+        entry["capture_display"] = {k: capture_params[k] for k in ("operator", "grading_mode", "contrast", "contrast_pivot",
+                                                                    "saturation", "temperature", "vignette")}
+        if mismatch:
+            failures.append(f"{view}: 撮影の表示変換が候補 current と違う（{', '.join(mismatch)}）")
+
+        prefix = os.path.join(cycles_dir, view)
+        if not (os.path.isfile(prefix + ".cycles.hdr.pfm") and os.path.isfile(prefix + ".aux.alpha.pfm")):
+            failures.append(f"{view}: Cycles の描画 {GRAY_CYCLES_DIR}/{view}.cycles.hdr.pfm か被覆が無い")
+            continue
+        cycles = read_pfm_any(prefix + ".cycles.hdr.pfm").astype(np.float32)
+        alpha = read_pfm_any(prefix + ".aux.alpha.pfm")[..., :1].astype(np.float32)
+        if cycles.shape != engine_hdr.shape or not np.isfinite(cycles).all():
+            failures.append(f"{view}: Cycles の描画の大きさがエンジンと違うか、有限でない値がある")
+            continue
+        coverage = np.clip(alpha, 0.0, 1.0)
+        cycles_sky = cycles + (1.0 - coverage) * np.asarray(light["sky_radiance_rgb"], dtype=np.float32)
+
+        # 写真（崖・地面の枠と地形の画素）
+        photo_entry = next((p for p in CR.PHOTOS if p["view"] == view), None)
+        photo_path = os.path.join(CR.PHOTO_DIR, photo_entry["id"] + ".jpg") if photo_entry else ""
+        if not os.path.isfile(photo_path):
+            failures.append(f"{view}: 対応する写真が無い")
+            continue
+        photo_panel, (letterbox, band), map_y = CR.fit_photo(Image.open(photo_path).convert("RGB"))
+        boxes = {name: (box[0], map_y(box[1]), box[2], map_y(box[3])) for name, box in photo_entry.items()
+                 if name in CR.REGION_COLORS}
+        valid = np.ones((size[1], size[0]), dtype=bool)
+        if letterbox:
+            valid[:band] = False
+            valid[size[1] - band:] = False
+        photo = np.asarray(photo_panel)
+        rows_index = np.arange(size[1])[:, None]
+        photo_metrics = tonemap_measure(photo, tonemap_masks((rows_index >= CR.find_terrain_top(photo)[None, :]) & valid,
+                                                             boxes))
+        entry["photo"] = {"id": photo_entry["id"], "boxes": boxes, "metrics": photo_metrics}
+        missing = tonemap_missing_metrics(photo_metrics)
+        if missing:
+            failures.append(f"{view}: 写真の枠の値が測れない（{', '.join(missing)}）")
+            continue
+
+        vignette = DT.vignette_factor(size[1], size[0], *capture_params["vignette"])
+        sources = {
+            "engine": ("エンジン", tonemap_downsample(engine_hdr, size), float(meta["pre_exposure"]), None),
+            "cycles": ("Cycles", tonemap_downsample(cycles_sky, size), float(lit_meta["pre_exposure"]),
+                       tonemap_downsample(coverage, size)[..., 0] > 0.5),
+        }
+        sheet_rows = []
+        overview_cells = {}
+        for source, (source_label, hdr, pre_exposure, terrain) in sources.items():
+            if terrain is None:
+                # エンジンの地形の画素は、候補 current を撮影の露出で掛けた絵の輪郭から 1 度だけ決める（候補の間で同じ画素を比べる）
+                current = tonemap_render(hdr, pre_exposure, tonemap_candidate_params(TONEMAP_CANDIDATES[0], capture_params),
+                                         vignette, lut)
+                terrain = rows_index >= CR.find_terrain_top(current)[None, :]
+            masks = tonemap_masks(terrain, boxes)
+            union = masks["cliff"] | masks["ground"]
+            source_entry = {"pre_exposure": pre_exposure, "as_is": {}, "matched": {}}
+            entry[source] = source_entry
+            cells = {"as_is": [(f"写真 {photo_entry['id']}", photo)], "matched": [(f"写真 {photo_entry['id']}", photo)]}
+            for candidate in TONEMAP_CANDIDATES:
+                name = candidate[0]
+                params = tonemap_candidate_params(candidate, capture_params)
+                image = tonemap_render(hdr, pre_exposure, params, vignette, lut)
+                metrics = tonemap_measure(image, masks)
+                source_entry["as_is"][name] = {"metrics": metrics}
+                cells["as_is"].append((tonemap_cell_text(name, metrics), image))
+                if union.any():
+                    ev = tonemap_match_exposure(hdr, pre_exposure, params, vignette, union, photo_metrics["p50"], lut)
+                    matched = tonemap_render(hdr, pre_exposure * 2.0 ** ev, params, vignette, lut)
+                    matched_metrics = tonemap_measure(matched, masks)
+                    source_entry["matched"][name] = {"exposure_ev": ev, "metrics": matched_metrics}
+                    cells["matched"].append((tonemap_cell_text(name, matched_metrics, ev), matched))
+                for exposure in ("as_is", "matched"):
+                    result = source_entry[exposure].get(name)
+                    missing = tonemap_missing_metrics(result["metrics"]) if result else ["枠の中に地形の画素が無い"]
+                    if missing:
+                        failures.append(f"{view}: {source_label}・{name}・{exposure} の値が測れない（{', '.join(missing)}）")
+                        continue
+                    m = result["metrics"]
+                    print(f"REFERENCE_CHECK tonemap view={view} source={source} exposure={exposure} candidate={name} "
+                          f"ev={result.get('exposure_ev', 0.0):+.3f} p05={m['p05']:.3f} p50={m['p50']:.3f} p95={m['p95']:.3f} "
+                          f"spread={m['spread']:.3f} saturation={m['saturation']:.3f} clip={m['clip']:.4f} "
+                          f"crush={m['crush']:.4f} cliff_over_ground={m['cliff_over_ground']:.3f} "
+                          f"ground_rg={m['ground_r_over_g']:.3f} ground_bg={m['ground_b_over_g']:.3f}")
+            sheet_rows.append((f"{source_label}・撮影の露出（{pre_exposure:.3g}）", cells["as_is"]))
+            sheet_rows.append((f"{source_label}・写真の枠の明るさの中央値に露出を合わせた", cells["matched"]))
+            # 一覧の枠は小さいので、見出しは候補の名前と中央値・彩度だけにする
+            short = [cells["as_is"][0]] + [
+                (f"{name} 中 {source_entry['as_is'][name]['metrics'].get('p50', float('nan')):.2f} "
+                 f"彩 {source_entry['as_is'][name]['metrics'].get('saturation') or float('nan'):.2f}", image)
+                for name, (_, image) in zip(names, cells["as_is"][1:])]
+            overview_cells[source] = (f"{view}　{source_label}・撮影の露出", short)
+        m = photo_metrics
+        print(f"REFERENCE_CHECK tonemap view={view} source=photo id={photo_entry['id']} p05={m['p05']:.3f} p50={m['p50']:.3f} "
+              f"p95={m['p95']:.3f} spread={m['spread']:.3f} saturation={m['saturation']:.3f} clip={m['clip']:.4f} "
+              f"crush={m['crush']:.4f} cliff_over_ground={m['cliff_over_ground']:.3f} "
+              f"ground_rg={m['ground_r_over_g']:.3f} ground_bg={m['ground_b_over_g']:.3f}")
+        file_name = f"tonemap_{view}.png"
+        write_tonemap_sheet(os.path.join(capture_dir, file_name), sheet_rows, boxes, font, TONEMAP_SHEET_PANEL,
+                            note="中央 = 枠の中の明るさの中央値、幅 = p95 − p05（符号化した輝度）、彩 = HSV の S の平均、"
+                                 "崖/地 = 崖 ÷ 地面の輝度。写真は照明・天気・現像が違う")
+        entry["sheet"] = file_name
+        overview_rows.extend(overview_cells[s] for s in ("engine", "cycles") if s in overview_cells)
+
+    # 写真との差の点数（エンジン・Cycles × 撮影の露出・合わせた露出）
+    measured = [e for e in report["views"] if "engine" in e and "cycles" in e]
+    report["scores"] = {f"{source}_{exposure}": tonemap_scores(measured, source, exposure)
+                        for source in ("engine", "cycles") for exposure in ("as_is", "matched")}
+    for key, score in report["scores"].items():
+        print(f"REFERENCE_CHECK tonemap_score set={key} views={len(measured)} " +
+              " ".join(f"{name}={score['score'][name]:.3f}" if score["score"][name] is not None else f"{name}=nan"
+                       for name in names) + f" rank={','.join(score['rank'])}")
+    if len(measured) != len(views):
+        failures.append(f"比べられた視点が {len(measured)}/{len(views)}")
+    if overview_rows:
+        write_tonemap_sheet(os.path.join(capture_dir, "tonemap_overview.png"), overview_rows, None, font,
+                            TONEMAP_OVERVIEW_PANEL, note="列: 写真、" + "、".join(names) + "（撮影の露出のまま）")
+        report["overview"] = "tonemap_overview.png"
+
+    report["failures"] = failures
+    report_path = os.path.join(capture_dir, "tonemap_check.json")
+    with open(report_path, "w", encoding="utf-8") as f:
+        json.dump(report, f, indent=2, ensure_ascii=False)
+    for failure in failures:
+        print(f"REFERENCE_CHECK failure: {failure}")
+    status = "pass" if not failures else "fail"
+    print(f"REFERENCE_CHECK result={status} mode=tonemap views={len(measured)} inputs_current={int(inputs_ok)} "
+          f"lit_inputs_current={int(lit_ok)} cycles_inputs_current={int(cycles_ok)} report={report_path}")
+    return 0 if not failures else 1
+
+
 def main():
     # 結果の行を保存して読むので、端末の符号に関わらず UTF-8 で書く
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -4949,6 +5375,10 @@ def main():
                         help="地表の材質の照明の無い法線と粗さを、エンジンの AOV と Blender の再現で照らす")
     parser.add_argument("--lit", action="store_true",
                         help="実材質の地形のエンジンと Cycles の描画を、領域ごとの線形の平均の表と表示変換を掛けた比較画像で比べる")
+    parser.add_argument("--tonemap", action="store_true",
+                        help="表示変換の候補を、エンジンと Cycles の同じ HDR に掛けて並べ、手本の写真と比べる")
+    parser.add_argument("--lit-capture", default=TONEMAP_LIT_DIR,
+                        help="--tonemap で Cycles の HDR を借りる SCN-WLR-CYCLES-LIT の出力先")
     parser.add_argument("--views", default="", help="検査する視点（カンマ区切り。省くと metrics.json の全視点）")
     parser.add_argument("--verify", action="store_true", help="入力のハッシュを今のファイルと照らし、古い結果を拒否する")
     args = parser.parse_args()
@@ -4997,9 +5427,13 @@ def main():
     if args.lit:
         views = [v.strip() for v in args.views.split(",") if v.strip()]
         return run_lit(capture_dir, views, args.verify)
+    if args.tonemap:
+        views = [v.strip() for v in args.views.split(",") if v.strip()]
+        lit_dir = args.lit_capture if os.path.isabs(args.lit_capture) else os.path.join(REPO_ROOT, args.lit_capture)
+        return run_tonemap(capture_dir, os.path.normpath(lit_dir), views, args.verify)
     print("REFERENCE_CHECK result=fail reason=no_mode（--record-inputs か --hdr か --display か --plate か --aov か "
           "--projection か --atmos-dump か --atmos-ref か --blur-static か --blur-motion か --gray か --albedo か --normal か "
-          "--lit を指定する）")
+          "--lit か --tonemap を指定する）")
     return 1
 
 
