@@ -1844,7 +1844,7 @@
 - notes: 危険地帯（RHI・起動）。2026-10-19 SCN-WLR-REF-SPLIT の判断待ちの推奨 (a)。Release に検証用の仕組みを入れない。
 
 ## SCN-WLR-REGRESSION-MOTION: Rendering3DTest でカメラ台本を受け取り、回帰の動きの撮影を撮れるようにする
-- status: todo
+- status: done
 - after: SCN-WLR-REGRESSION-VALIDATION
 - done-when: Rendering3DTest の軌道カメラ（SpringArm）が開発ビルドの起動引数 `--camera-script=` を受け取り、台本の入力（回す・寄る）で動くようにする（今は自由飛行カメラの 4 シーンだけ）。`Scripts/CameraScripts/rendering3dtest-pan.txt` で振り、`CaptureRegression.ps1 -Motion` が Rendering3DTest の動きの連番を撮れることを確かめる。台本を渡さないときの Rendering3DTest の見た目と操作は変えない（起動画面を撮って開く）。反復の中で `-Phase before -Motion` を撮る。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`

@@ -5627,3 +5627,15 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 新しい試験は足していない
   - Release の Game.exe を今のコードでビルドし直した（build/ の生成物）
 - Next: TASKS.md の次の未完の項目。
+
+### SCN-WLR-REGRESSION-MOTION 完了（2026-10-19、run 20261019-192352 の反復 9）
+- Done: Rendering3DTest の軌道カメラ（SpringArm）が開発ビルドの `--camera-script=` を受け取るようにした（`Game/GameModes/Rendering3DTest/Rendering3DTestCameraScript.h/.cpp`。右ボタン＋マウスの移動を Alt + 左ドラッグの回す入力、ホイールを寄る入力として `MayaCameraController::BuildIntent` へ流す。組み立ての後に流し、流し終えるまで SCENE_READY を出さない。段取りは `CameraScriptCapture`）。`GameApplicationHandler` が台本のパスと撮影の窓口を渡す。`rendering3dtest-pan.txt` の説明を軌道カメラに直し、最後に基準の視点へ戻す行を足した。`CaptureRegression.ps1 -Motion` は台本の `capture=` ごとの PNG が揃わなければ失敗にする。記録は `Docs/RenderingValidation/RegressionValidationLayer.md` の動きの撮影の節
+- 証拠（`.harness/runs/20261019-192352/`）:
+  - `aux-SCN-WLR-REGRESSION-MOTION-before.txt`: 変更前の Game で `-Phase before -Motion`（sec=228）。rendering3dtest-motion に動きの PNG は無く、CAMERA_SCRIPT のログも無い
+  - `verify-SCN-WLR-REGRESSION-MOTION-1.txt`: Debug の Game のビルド EXIT=0（1 回目は新しい .cpp の再構成の直後でリンクに失敗し、2 回目で通った）
+  - `verify-SCN-WLR-REGRESSION-MOTION-2.txt`: `-Phase after -Motion` result=pass・sec=295・motion frames=4 captured=4。Game.log の yaw は 356.7°→354.3°→347.7°、台本の終わりで yaw 0°・pitch 20°・腕 10 へ戻る。台本なしの rendering3dtest の overview は before と PSNR inf
+  - `verify-SCN-WLR-REGRESSION-MOTION-3.txt`: 起動画面の撮影 result=pass（`.harness/runs/startup-capture/SCN-WLR-REGRESSION-MOTION/default.png` を開いて天球・地面・球・岩が従来どおりなのを確かめた）
+- Notes:
+  - 新しい試験は足していない
+  - Git Bash から `cmake --build ... -- /m:1` を呼ぶと `/m:1` がパスに書き換わる。PowerShell から呼ぶ
+- Next: TASKS.md の次の未完の項目。

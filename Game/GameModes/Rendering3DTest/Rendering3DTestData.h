@@ -12,6 +12,7 @@
 #include "Input/PickingController.h"
 #include "Core/Public/Object/Entity.h"
 #include "GameModes/Rendering3DTest/Rendering3DTestDebugInput.h"
+#include "GameModes/Rendering3DTest/Rendering3DTestCameraScript.h"
 #include "Core/Public/Rendering/MaterialTypes.h"
 #include "Core/Public/Rendering/SkyAtmosphere.h"
 #include "Core/Public/Rendering/MegaGeometry/MegaGeometryTypes.h"
@@ -282,6 +283,11 @@ namespace Game::GameModes
         // 決定的な撮影の旋回は、最初に回した時点のヨー（度）に、エポックからの時間に比例した角度を足して決める。
         float m_OrbitBaseYaw = 0.0f;
         bool m_bOrbitBaseYawLatched = false;
+        // --camera-script=<file> の台本（開発ビルドだけ）。組み立てが終わってから軌道カメラへ流す（Rendering3DTestCameraScript.h）
+        NorvesLib::Core::Container::String m_CameraScriptPath;
+        /// 台本の撮影の段取りの窓口（非所有。持ち主は GameApplicationHandler）
+        Game::Debug::CameraScriptCapture *m_pScriptCapture = nullptr;
+        Rendering3DTestCameraScript m_CameraScript;
         // --render-scale で指定した内部解像度の倍率（0.5〜1、既定は1で画面解像度のまま描く）。
         float m_StartupRenderScale = 1.0f;
         // --debug-draw-test-lines の指定で true にする。大きな球を囲む箱をデバッグの線で毎フレーム描く。

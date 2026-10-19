@@ -153,7 +153,8 @@ namespace Game
         constexpr const TCHAR *kExitAfterRenderedFramesOption = TEXT("--exit-after-rendered-frames=");
         // ApplicationProcessor の --capture-png が、落ち着いてから撮るまでに描く既定のフレーム数（kCapturePngDefaultSettledRenderedFrames）
         constexpr uint64_t kCapturePngDefaultSettledRenderedFrames = 60;
-        // --camera-script=<file>: 自由飛行カメラへ決まった入力を流す台本（開発ビルドだけ。書式は Input/CameraScript.h）。
+        // --camera-script=<file>: 自由飛行カメラか Rendering3DTest の軌道カメラへ決まった入力を流す台本（開発ビルドだけ。
+        // 書式は Input/CameraScript.h。軌道カメラへの写し方は GameModes/Rendering3DTest/Rendering3DTestCameraScript.h）。
         // 撮影で「この操作でここへ動く」を再現するのに使う。
         constexpr const TCHAR *kCameraScriptOption = TEXT("--camera-script=");
         // --camera-path-time=<秒>: カメラパスを持つシーンで、起動時の視点をパスのこの時刻の位置と向きにする（停止した状態。撮影用）。
@@ -3531,6 +3532,9 @@ namespace Game
             {
                 auto mode = MakeUnique<Rendering3DTestMode>();
                 mode->GetData().m_LateCameraSlot = lateCameraSlot;
+                // カメラの台本（--camera-script。開発ビルドだけ）は軌道カメラへ流す
+                mode->GetData().m_CameraScriptPath = m_CameraScriptPath;
+                mode->GetData().m_pScriptCapture = &m_CameraScriptCapture;
                 mode->GetData().m_ModelPath = params.ModelPath;
                 mode->GetData().m_bUseCookedModel = bUseCookedModel;
                 mode->GetData().m_BoardSmokeCount = s_Rendering3DTestBoardSmokeCount;

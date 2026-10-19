@@ -1973,6 +1973,8 @@ namespace Game::GameModes
             LOG_ERROR("Rendering3DTest camera path initialization failed");
             return GameModeEnterResult::Failed;
         }
+        // 台本の home は、ここで決まった起動時の SpringArm の視点へ戻す
+        data.m_CameraScript.Load(data.m_CameraScriptPath.c_str(), data.m_pScriptCapture, *data.m_pSpringArmComponent);
 
         if (!data.m_M9WorldAcceptance || !data.m_M9WorldAcceptance->bRequested)
         {
@@ -3449,11 +3451,23 @@ namespace Game::GameModes
         {
             const NorvesLib::Core::Input::InputState cameraInput =
                 data.m_CameraInputCollector.BuildFrameInputState();
-            const Component::SpringArmIntent intent = data.m_CameraController.BuildIntent(
-                cameraInput,
-                deltaTime,
-                data.m_pSpringArmComponent->GetArmLength());
-            data.m_pSpringArmComponent->ApplyIntent(intent);
+            if (data.m_CameraScript.IsRunning())
+            {
+                // --camera-script の台本を流している間は実際の入力を使わない。組み立てが終わるまでは動かさずに待つ
+                // （読み込みの間の Tick は描画より速く回るので、そのまま流すと台本が組み立ての間に流れ切る）
+                if (IsStartupSceneAssembled(data))
+                {
+                    data.m_CameraScript.Tick(data.m_CameraController, *data.m_pSpringArmComponent);
+                }
+            }
+            else
+            {
+                const Component::SpringArmIntent intent = data.m_CameraController.BuildIntent(
+                    cameraInput,
+                    deltaTime,
+                    data.m_pSpringArmComponent->GetArmLength());
+                data.m_pSpringArmComponent->ApplyIntent(intent);
+            }
             // --orbit-degrees-per-second の指定があれば、経過時間に比例してカメラを軸の周りに回す。
             if (data.m_OrbitDegreesPerSecond != 0.0f)
             {
@@ -3935,7 +3949,9 @@ namespace Game::GameModes
         // 決定的な撮影は、組み立てが終わった時点（この Tick の大きな球の生成まで含む）から数え直す。
         // 実時間の計測（SceneReady の後だけを数える）にも同じ印が要るので、撮影でないときも状態と印は持つ。
         UpdateVirtualTextureSettle(ctx, data);
-        Game::Scenes::UpdateSceneAssembly(ctx.EngineRef, "rendering3dtest", IsStartupSceneAssembled(data));
+        // 台本（--camera-script）を流し終えるまでは、決定的な撮影の視点の撮影を待たせる
+        Game::Scenes::UpdateSceneAssembly(ctx.EngineRef, "rendering3dtest",
+                                          IsStartupSceneAssembled(data) && !data.m_CameraScript.IsRunning());
     }
 
     void Rendering3DTestRoutine::Leave(GameModeContext &ctx, Rendering3DTestData &data, GameModeExitReason reason)
@@ -3945,6 +3961,7 @@ namespace Game::GameModes
         data.m_AnimationDebug.reset();
         (void)reason;
         data.m_LateCameraState.reset();
+        data.m_CameraScript.Stop();
 
         if (data.m_bPhysicsSmoke)
         {

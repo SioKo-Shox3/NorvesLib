@@ -1,16 +1,17 @@
-﻿# Rendering3DTest の既定の視点 overview から、一定の速さで右へ振り、エポックの直後と決めたフレーム数の後を撮る
+﻿# Rendering3DTest の既定の視点 overview から、一定の速さで注視点の周りに回し、エポックの直後と決めたフレーム数の後を撮る
 # （回帰の撮影 Scripts/Terrain/CaptureRegression.ps1 -Motion。--scene=rendering3dtest --camera-script=Scripts/CameraScripts/rendering3dtest-pan.txt）。
-# 書式は Game/Input/CameraScript.h。1 フレームは 1/60 秒。マウスの 1px は 0.15° なので、mouse=1 は毎フレーム 0.15° 右へ回る。
-# 台本を流すのは自由飛行カメラ（FreeCameraRig）のシーンだけで、Rendering3DTest の軌道カメラはまだ台本を受け取らない
-# （受け取るまでは -Motion の撮影に motion-* の PNG が出ず、回帰の比較が撮影の欠けとして落とす）。
+# 書式は Game/Input/CameraScript.h。1 フレームは 1/60 秒。Rendering3DTest の軌道カメラ（SpringArm）は、右ボタン＋マウスの移動を
+# 回す入力（Alt + 左ドラッグ）として受け、1px あたり 0.3° 回す（mouse=1 は毎フレーム 0.3°。写し方は
+# Game/GameModes/Rendering3DTest/Rendering3DTestCameraScript.h）。
 # 撮る名前（<視点>.<名前>.png）:
-#   motion-<k>  振りの途中で、エポックから k フレーム後（k = 0・8・30）
-#   static-30   振り終えて止め、落ち着いてからエポックを始め、30 フレーム後
+#   motion-<k>  回している途中で、エポックから k フレーム後（k = 0・8・30）
+#   static-30   回し終えて止め、落ち着いてからエポックを始め、30 フレーム後
+# 台本が終わると基準の視点へ戻し、--capture-views が overview.png（既定の視点）を撮る。
 
 # 1. 落ち着きを待つ
 120 wait-ready
 
-# 2. 振りの途中でエポック、その同じフレームを撮る（k = 0）。続けて 8・30 フレーム後を撮る
+# 2. 回している途中でエポック、その同じフレームを撮る（k = 0）。続けて 8・30 フレーム後を撮る
 1 home rmb mouse=-20,0
 30 rmb mouse=1,0
 1 rmb mouse=1,0 epoch capture=motion-0
@@ -22,4 +23,8 @@
 120 wait-ready
 1 epoch
 30 capture=static-30
+10
+
+# 4. 基準の視点へ戻す（この後の overview.png は --capture-views が撮る）
+1 home
 10

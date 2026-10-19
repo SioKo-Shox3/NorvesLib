@@ -4,7 +4,8 @@
 # シーンの名前があるか見る）。どれも既定の視点 overview を RelWithDebInfo に起動引数 --validation-layer を付けて撮る（開発ビルドだけで
 # 効く引数で、Vulkan の検証レイヤーを入れる。Core の Boot/AppLauncher.cpp。Debug より速く、検証レイヤーの指摘も検査に入る）。
 # 最初のシーンだけ -Build し、以後は同じ Game.exe で撮る。
-# -Motion を付けると、rendering3dtest をカメラ台本 Scripts/CameraScripts/rendering3dtest-pan.txt で撮る組も足す。
+# -Motion を付けると、rendering3dtest をカメラ台本 Scripts/CameraScripts/rendering3dtest-pan.txt で撮る組も足す（軌道カメラへ
+# 台本を流し、capture=<名前> ごとの overview.<名前>.png が揃わなければ失敗にする）。
 # 出力は .harness/runs/regression/<ID>/<before|after>/<シーン>/（CaptureScene.ps1 の出力）。after は撮り終えてから
 # ReferenceCheck.py --regression で before と並べ、撮影の欠け・真っ黒・検証レイヤーのエラーがあれば失敗にする
 # （差の PSNR・平均の差は <after>/regression_check.json に記録する）。全体で 9 分を超えたら失敗にする。
@@ -51,6 +52,16 @@ foreach ($shot in $shots)
     "$($shot.name) exit=$code sec=$([int]$stepWatch.Elapsed.TotalSeconds)" | Add-Content $log -Encoding utf8
     Write-Output "CAPTURE_REGRESSION shot=$($shot.name) exit=$code sec=$([int]$stepWatch.Elapsed.TotalSeconds)"
     if ($code -ne 0) { $allOk = $false }
+    if ($shot.name -eq 'rendering3dtest-motion')
+    {
+        # 動きの連番: 台本の capture=<名前> ごとに <視点>.<名前>.png が撮れているか（軌道カメラが台本を受けないと出ない）
+        $tags = @(Select-String -LiteralPath $motionScript -Pattern '^\s*\d+\s[^#]*\bcapture=([A-Za-z0-9_-]+)' |
+            ForEach-Object { $_.Matches[0].Groups[1].Value })
+        $missing = @($tags | Where-Object { -not (Test-Path -LiteralPath "$outDir/overview.$_.png") })
+        "$($shot.name) motion_frames=$($tags.Count) missing=$($missing -join ',')" | Add-Content $log -Encoding utf8
+        Write-Output "CAPTURE_REGRESSION motion frames=$($tags.Count) captured=$($tags.Count - $missing.Count) missing=$($missing -join ',')"
+        if ($tags.Count -eq 0 -or $missing.Count -gt 0) { $allOk = $false }
+    }
     $first = $false
 }
 

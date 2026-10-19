@@ -54,4 +54,19 @@ Release はログを書かないので Game.log では確かめられない。�
 ## 既知の限界
 
 - 検証レイヤーを入れた RelWithDebInfo は、入れない RelWithDebInfo より遅い。回帰の撮影だけで使い、性能の計測（`-GpuTimingFrames`）には付けない。
-- `-Motion` の組（rendering3dtest のカメラ台本）は Rendering3DTest が台本を受け取らないので、まだ撮れない（SCN-WLR-REGRESSION-MOTION）。
+- `-Motion` の動きの連番は、エポックの直後（motion-0）は TAA の履歴が無いので粒が出る。回帰の撮影は before との差を記録するだけで、
+  粒の大きさは合否に使わない。
+
+## 動きの撮影（`-Motion`。タスク SCN-WLR-REGRESSION-MOTION、2026-10-19）
+
+- Rendering3DTest の軌道カメラ（SpringArm）が開発ビルドの起動引数 `--camera-script=` を受け取るようにした
+  （`Game/GameModes/Rendering3DTest/Rendering3DTestCameraScript.h`）。台本の書式は自由飛行カメラと同じで、右ボタン＋マウスの移動を
+  回す入力（Alt + 左ドラッグ。1px あたり 0.3°）、ホイールを寄る入力として流す。台本は組み立てが終わってから流し、流し終えるまで
+  SCENE_READY を出さない（`--capture-views` の overview は台本の後に撮る）。台本の段取り（home・epoch・capture・wait-ready）は
+  自由飛行カメラと同じ窓口（`Game/Debug/CameraScriptCapture.h`）へ頼む。
+- `Scripts/CameraScripts/rendering3dtest-pan.txt` は overview から注視点の周りに回し、motion-0・motion-8・motion-30（回している途中、
+  エポックから 0・8・30 フレーム後）と static-30（止めて落ち着いてから 30 フレーム後）を撮り、最後に基準の視点へ戻す。
+- `CaptureRegression.ps1 -Motion` は台本の `capture=<名前>` ごとに `overview.<名前>.png` が撮れているかを数え、欠けたら失敗にする。
+- 確かめたこと（`-Phase after -Motion`、全体 295 秒）: 4 枚とも撮れ、Game.log の yaw が 356.7°（motion-0）→ 354.3°（motion-8）→
+  347.7°（motion-30）と台本どおり回り、台本の終わりで起動時の視点（yaw 0°・pitch 20°・腕 10）へ戻った。台本を渡さない
+  rendering3dtest の overview は before（変更前の Game）と同じ画像（PSNR inf）。変更前の Game では台本を渡しても動きの PNG は出なかった。
