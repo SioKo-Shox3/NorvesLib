@@ -544,8 +544,14 @@ SHIFTED_REFERENCE_SCOPE = "region_means_only"
 # Blender の中で走る描画の関数は変えていない）。ずらしありの旧参照を --gray・--lit で使い続けるため
 # SCN-WLR-LIT-SHADOW-REF-C01: 切り出しの描画（--crop-regions。job の crop があるときだけ動く枝）と、材質の書き出し先の引数を
 # 足した。crop の無い job の描画（--depth・--gray・--albedo・--normal・--lit）は変えていない。続けて切り出しの種を 1 本ずつ
-# 別の起動で描く形にした（crop の枝と起動の段取りだけ。画素ごとの材質の描画は変えていない）
+# 別の起動で描く形にした（crop の枝と起動の段取りだけ。画素ごとの材質の描画は変えていない）。さらに切り出しの時間の上限を
+# 最初の 1 回の描画の後から数え、種 A の途中の和を使い直す --crop-reuse-a を足した（止める時刻と段取りだけで、1 回の描画は同じ）
 BLENDER_SCRIPT_EQUIVALENT_SHA256 = {
+    "5570cce8bfb04ee9a69a87ec961f6c0f9b600acc2585eea64ff370c610b97afa":
+        ("e4145a910c54272e5990a7e26ceafd537e6e7f1299253867292e4fe6dcc8dfd0",
+         "74c6ee7e3fce1a91d42929fd5700ac225c8db2b9ba8f924ee1330036da50a5a4",
+         "ab3aff4ec3c7776b27ad766059506d9e2f83b0e64904e76f76f54bbb508881e0",
+         "ad3cea721bf57a593caa9e7ab97228a6367fa94acd67bc00115e01886598be49"),
     "ab3aff4ec3c7776b27ad766059506d9e2f83b0e64904e76f76f54bbb508881e0":
         ("ad3cea721bf57a593caa9e7ab97228a6367fa94acd67bc00115e01886598be49",),
     "74c6ee7e3fce1a91d42929fd5700ac225c8db2b9ba8f924ee1330036da50a5a4":

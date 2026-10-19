@@ -70,8 +70,10 @@
 #       BSDF の標本の重みがほぼ 1 になるので、切り出しではライトツリーを切る（光の選び方だけの違いで、期待値は変わらない）。
 #       種ごとに、同じ枠を跳ね返り 0（直接光だけ）でも描き、太陽の組・空の組を太陽の直接光（sun_direct）・空の直接光
 #       （sky_direct）として書く（間接光 indirect は本描画の Diffuse/Glossy Indirect）。種は 1 本ずつ別の起動で描き、
-#       1 本 CROP_MAX_TOTAL_SECONDS（読み込みを含む）で止める: A は時間の上限まで描いて途中の和（cycles.part_a.*）を書き、
-#       B は A と同じサンプル数まで描いて A と合わせ、収束を測って --lit と同じ出力を書く。
+#       1 本 CROP_MAX_TOTAL_SECONDS（読み込みと最初の 1 回の描画を除く）で止める: A は時間の上限まで描いて途中の和
+#       （cycles.part_a.*）を書き、B は A と同じサンプル数まで描いて A と合わせ、収束を測って --lit と同じ出力を書く。
+#       最初の 1 回の描画は BVH の構築を含み、同じ枠でも 500〜1000 秒と揺れるので、上限はその後のサンプルの時間に掛ける。
+#       --crop-reuse-a は記録と中身の合う A の途中の和を残し、B だけを描く。
 import argparse
 import hashlib
 import json
@@ -121,7 +123,8 @@ CHUNK_SPP = 64
 MIN_SPP_PER_SEED = 512
 MAX_SPP_PER_SEED = 2048
 MAX_SECONDS_PER_VIEW = 2400.0
-# 切り出しの描画（--crop-regions）: 結果の置き場、枠の余白、1 本の時間の上限（読み込みを含む）、1 本あたりのサンプル数の上限、
+# 切り出しの描画（--crop-regions）: 結果の置き場、枠の余白、1 本の時間の上限（読み込みと最初の 1 回の描画を除く）、
+# 1 本あたりのサンプル数の上限、
 # 直接光だけの描画の種（本描画の種と重ならない）
 LIT_CROP_DIR = "shadow"
 CROP_PAD_PX = 8
@@ -397,6 +400,20 @@ def engine_sun_direction(altitude_degrees, azimuth_degrees):
     return (math.cos(altitude) * math.cos(azimuth), math.sin(altitude), math.cos(altitude) * math.sin(azimuth))
 
 
+def reusable_part_a(part_a):
+    """切り出しの種 A の途中の和（[npz, json]）が揃い、中身が記録のハッシュと合うか（--crop-reuse-a）"""
+    npz_path, json_path = part_a
+    if not (os.path.isfile(npz_path) and os.path.isfile(json_path)):
+        print("BLENDER_REFERENCE 種 A の途中の和が無いので A から描く", flush=True)
+        return False
+    with open(json_path, encoding="utf-8") as f:
+        record = json.load(f)
+    if record.get("seed") != "a" or sha256_file(npz_path) != record.get("part_sha256"):
+        print("BLENDER_REFERENCE 種 A の途中の和が記録と合わないので A から描く", flush=True)
+        return False
+    return True
+
+
 def run_blender_job(args, out_dir, name, job, label="gray"):
     """job を書いて Blender をヘッドレスで 1 回起動する。成否"""
     # 新しい描画はカメラをずらさない（ずらしが 0 でない job は起動する前に断る）
@@ -544,7 +561,8 @@ def run_gray(args, lit=False):
         job["required_outputs"] = [f"{prefix}.cycles.exr", f"{prefix}.cycles.json"] + \
             [f"{prefix}.cycles.{part}.pfm" for part in parts] + aux_outputs
         part_a = [f"{prefix}.cycles.part_a.npz", f"{prefix}.cycles.part_a.json"]
-        for stale in job["required_outputs"] + (part_a if crop_regions else []):
+        reuse_a = bool(crop_regions and args.crop_reuse_a and reusable_part_a(part_a))
+        for stale in job["required_outputs"] + (part_a if crop_regions and not reuse_a else []):
             if os.path.exists(stale):
                 os.remove(stale)
         triangles = sum(int(t["triangles"]) for t in tiles)
@@ -554,7 +572,10 @@ def run_gray(args, lit=False):
         if crop_regions:
             # 切り出しは種を 1 本ずつ別の起動で描く（1 本 CROP_MAX_TOTAL_SECONDS）: A を時間の上限まで、B を A と同じサンプル数まで
             job_a = dict(job, crop=dict(job["crop"], seed="a"), required_outputs=aux_outputs + part_a)
-            if not run_blender_job(args, out_dir, f"{view}.seed_a", job_a, label=label):
+            if reuse_a:
+                print(f"BLENDER_REFERENCE {label} view={view} 種 A の途中の和を使い直す（{os.path.basename(part_a[1])}）",
+                      flush=True)
+            elif not run_blender_job(args, out_dir, f"{view}.seed_a", job_a, label=label):
                 print(f"BLENDER_REFERENCE error view={view} 種 A の Blender が失敗した（{GRAY_RESULT_DIR}/{view}.seed_a.blender.log）")
                 return 1
             with open(part_a[1], encoding="utf-8") as f:
@@ -1781,6 +1802,9 @@ def render_gray_job(job):
     stats = {}
     all_converged = False
     stop_reason = ""
+    # 切り出しの時間の上限は最初の 1 回の描画（BVH の構築を含む）の後から数える
+    first_render_seconds = None
+    sampling_started = None
     while True:
         pair_started = time.time()
         for seed in seed_order:
@@ -1819,6 +1843,9 @@ def render_gray_job(job):
         if crop:
             spp = renders[crop["seed"]] * chunk_spp
             elapsed = time.time() - loop_started
+            if sampling_started is None:
+                first_render_seconds = pair_seconds
+                sampling_started = time.time()
             history.append({"seed": crop["seed"], "spp_per_seed": spp, "elapsed_seconds": elapsed})
             print(f"BLENDER_GRAY view={job['view']} seed={crop['seed']} spp={spp} elapsed={elapsed:.0f}s", flush=True)
             if target_spp and spp >= target_spp:
@@ -1827,7 +1854,7 @@ def render_gray_job(job):
             if spp + chunk_spp > max_spp:
                 stop_reason = "max_spp"
                 break
-            if time.time() - started + pair_seconds > crop_record["max_total_seconds"]:
+            if time.time() - sampling_started + pair_seconds > crop_record["max_total_seconds"]:
                 stop_reason = "max_seconds"
                 break
             continue
@@ -1857,6 +1884,8 @@ def render_gray_job(job):
         run_record = {"seed": crop["seed"], "renders": renders[crop["seed"]], "chunk_spp": chunk_spp,
                       "spp": renders[crop["seed"]] * chunk_spp, "stop_reason": stop_reason, "load_seconds": load_seconds,
                       "visibility_seconds": visibility_seconds, "render_seconds": render_seconds,
+                      "first_render_seconds": first_render_seconds,
+                      "sampling_seconds": time.time() - sampling_started if sampling_started else 0.0,
                       "total_seconds": time.time() - started, "history": history}
         if crop["seed"] == "a":
             # A: 途中の和（各組の平均）と記録を書いて終える。合わせるのは B の起動
@@ -2023,9 +2052,13 @@ def main():
     parser.add_argument("--crop-regions", default="",
                         help="--lit: 名指しの領域（カンマ区切り。GrayRegions.REGIONS）だけを切り出して <撮影>/" + LIT_CROP_DIR +
                              "/ に描く（1 視点）")
+    parser.add_argument("--crop-reuse-a", action="store_true",
+                        help="--crop-regions: 記録と中身の合う種 A の途中の和を残し、種 B だけを描く")
     args = parser.parse_args()
     if int(args.depth) + int(args.gray) + int(args.albedo) + int(args.normal) + int(args.lit) != 1:
         parser.error("--depth・--gray・--albedo・--normal・--lit のどれか 1 つを指定してください")
+    if args.crop_reuse_a and not (args.crop_regions and args.skip_material):
+        parser.error("--crop-reuse-a は --crop-regions と --skip-material と使う（材質を描き直すと A の途中の和は古い）")
     if args.crop_regions:
         GR = load_gray_regions()
         unknown = [r for r in args.crop_regions.split(",") if r not in GR.REGIONS]

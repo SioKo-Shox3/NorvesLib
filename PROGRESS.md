@@ -5751,3 +5751,13 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - Notes:
   - 選ぶ範囲の境界がメッシュ全体の境界になるので、ほかのシーンでも MegaGeometry の TLAS の候補の距離が変わる（proxy の既定の 1.73 m の球より大きい物は 120 m の境目で入りやすくなる）。回帰の撮影で確かめる
   - `RTGI_HITS` は起動からの合計で、地形を置く前（TLAS が空）の dispatch は RTGI が動かないので入らない
+
+### SCN-WLR-LIT-SHADOW-REF-C01 途中（2026-10-20、run 20261019-192352 の反復 21）
+- 反復 18〜20 の切り出しの描画（END EXIT=0）を開いた: 種 A は最初の 64 サンプルに 512 秒（BVH の構築を含む）、以後 64 サンプルあたり約 33 秒で 1216 まで。種 B は最初の 64 サンプルに 993 秒かかり（その間に RelWithDebInfo の Game のビルドが重なっていた。Game.exe の時刻 03:14）、上限（読み込みを含む 1200 秒）で止まって spp_per_seed=64 で合わせた。2 本の差は shadow_cliff 0.0000（mean_diff 2.1e-5）・pixel_rms 0.050、shadow_ground 0.0007・0.038 で、`LIT_MIN_SPP_PER_SEED`（512）に届かないので未判定のまま
+- 2 本の種が違うかを確かめた: 枠の中の地形の画素（alpha > 0.5）で A と B が同じ値の画素は 0 %（4 領域とも）。一致は空の画素（99.7 % が同じ一様な空）だけで、mean_diff が小さいのは本当に収束しているから
+- 変更: `BlenderReference.py` の切り出しの時間の上限（1200 秒）を、読み込みと最初の 1 回の描画（BVH の構築）の後から数える（記録に `first_render_seconds`・`sampling_seconds`）。`--crop-reuse-a`（`--skip-material` と使う）で、記録のハッシュと合う種 A の途中の和を残して B だけを描く。1 回の描画は変えていないので `BLENDER_SCRIPT_EQUIVALENT_SHA256` に新しいハッシュ 5570cce8… を足した
+- 描画と撮り直し: `.harness/runs/20261019-192352/shadow-ref-c01-render-b.ps1` を pwsh で反復の外に切り離して走らせている（ログ `aux-SCN-WLR-LIT-SHADOW-REF-C01-crop-render-b.txt`。START 03:57）。段は (1) 種 B を A と同じ 1216 サンプルまで、(2) 終わったら続けて SCN-WLR-CYCLES-LIT の 6 視点を今の Game.exe で撮り直す（`-Build -Hdr -Aov -LaunchPerView`、ログ `aux-SCN-WLR-LIT-SHADOW-REF-C01-lit-recapture.txt`）、(3) `--record-reference lit --capture <撮影>/shadow`。段ごとに `STEP <段> ... EXIT=`、最後に `END ... EXIT=`
+- 撮り直しが要る理由: 今の verify は、エンジンの実装が撮影（10-19 22:55）の後に変わった・Game.exe が違う、本描画の 4 視点の材質の標本の位置が記録のカメラから 0.25〜0.76 画素（撮影がカメラのずれを直す前）、切り出しの `cycles/reference.json` が無い、の 3 つでも落ちていた（`.harness/runs/scene-capture/SCN-WLR-CYCLES-LIT/lit_check.json`）。カメラのずれを直した Game.exe で撮り直せば、ずらし 0 の切り出しの材質（深度からの残り +0.243 画素は撮影の側のずれ）と本描画の旧材質（記録のカメラからの残りで照らす）のどちらも 0.1 画素以内に入る見込み
+- Notes:
+  - 最初の起動は Windows PowerShell 5.1 で台本（BOM なしの UTF-8）を読み違え、描画の行を飛ばして撮影の段（-Build の後の ref_far_01 の起動）に入ったので止めた。ref_far_01 の撮影の出力が消えた（どのみち撮り直す）。ほかの視点・切り出しの材質・種 A の途中の和は触れていない。台本は pwsh で起動する
+- Next（再開の反復）: ログの END を見る。`shadow/cycles/ref_cliff_01.cycles.json` の `seed_runs.b.spp`（1216 の見込み）・`regions`・`consistency` と、撮り直しの `lit-recapture` ログを開く。verify を `verify-SCN-WLR-LIT-SHADOW-REF-C01-<n>.txt` に保存し、名指しの 2 領域の判定・パスの和（±1 %）・材質の標本の位置を確かめる。END が EXIT≠0 なら落ちた段から台本の段だけを回し直す
