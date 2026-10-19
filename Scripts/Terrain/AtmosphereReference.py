@@ -6,7 +6,8 @@
 #   python Scripts/Terrain/AtmosphereReference.py --verify [--dump <視点>.atmos.json] [--out <出力先>]
 #       論文の設定と、荒野の書き出し（--dump。省くと SCN-WLR-ATMOS-DUMP の ref_ground_02）の設定の 2 組で、
 #       正解を段 1 と、歩数・方向の数・表の細かさをすべて倍にした段 2 で求め、比べる量がすべて CONVERGENCE_TOLERANCE 以内で
-#       一致することを確かめる。ほかに、鉛直の光学的深さの解析解との一致・多重散乱の級数が収束することを見る。
+#       一致することを確かめる。ほかに、鉛直の光学的深さの解析解との一致・多重散乱の級数が収束すること・B の 2 回目の散乱の
+#       源が位相関数の角度の積分と合うこと・1 回目だけの値が A と B で一致することを見る。
 #       結果を <出力先>/atmosphere_reference_verify.json に書く。
 #   ほかのスクリプト（ReferenceCheck.py --atmos-ref）は import して使う。
 #
@@ -32,7 +33,11 @@
 # 数値の積分: 視線は中点則（空への視線は観測点の近くを細かく取る 2 乗の並び、地表や区間の視線は等間隔）。
 # 太陽の透過率は Bruneton 2017 の (r, μ) の並び（地平線の近くを細かく取る）の表を線形に引く。
 # 段 2 は段 1 の歩数・方向の数・表の細かさをすべて倍にしたもので、比べる量の差が CONVERGENCE_TOLERANCE 以内なら収束とする。
+# 段 2 では B の区画の中の位相関数の標本の分け数も倍にする。
 # B の 2 回目の散乱の源は、点の周りの細かい向きの求積で 1 回目の光を直接積んだ値とも比べる（SECOND_ORDER_TOLERANCE）。
+# 比べる点は評価者の最小再現（書き出しの係数・空気遠近の起点の高度 + カメラの y・書き出しの太陽の高度）と観測点で、
+# 太陽の向きの σ_R G_R + σ_M G_M が等方とした源の何倍かも記録する。1 回目だけの値（A の視線の 1 回目の項と、B が次の回へ
+# 渡す 1 回目の光）は FIRST_ORDER_TOLERANCE で一致を見る。
 import argparse
 import json
 import math
@@ -55,10 +60,14 @@ ANALYTIC_TOLERANCE = 1e-3
 # 散乱の回数で足す版を打ち切る、その回の散乱の源の和（全回）に対する割合と、回数の上限
 ORDER_STOP_FRACTION = 1e-5
 ORDER_LIMIT = 100
-# B で、求積の 1 つの区画の中の位相関数を平均する分け数（天頂角の余弦と方位のそれぞれ）
-PHASE_CELL_SUBDIVISIONS = 4
 # B の 2 回目の散乱の源と、細かい向きの求積で直接積んだ値の相対差の上限
 SECOND_ORDER_TOLERANCE = 0.01
+# 1 回目だけの値（A の視線の 1 回目の項と、B が次の回へ渡す 1 回目の光）の相対差の上限
+FIRST_ORDER_TOLERANCE = 1e-6
+# 評価者の最小再現（書き出しの係数・空気遠近の起点の高度＋カメラの y = 1474.223367 m・太陽の高度 38°）で、太陽の向きの
+# 2 回目の散乱の源 σ_R G_R + σ_M G_M が、2 回目以降を等方とした源 (σ_R + σ_M) × 入ってくる光の球の平均の何倍か（RGB）
+EVALUATOR_SUN_RATIO = (3.3694, 2.9392, 2.3542)
+REPRO_ALTITUDE_M = 1474.223367
 # 直接積む求積の細かさ（太陽の向きを軸にした天頂角 0〜SECOND_ORDER_SPLIT rad・その先・方位）と視線の歩数
 SECOND_ORDER_SPLIT = 0.35
 SECOND_ORDER_COUNTS = (96, 192, 360)
@@ -92,9 +101,10 @@ LEVEL1 = {
     "table_radius": 64, "table_cosine": 128, "table_steps": 256,
     "field_altitude": 24, "field_cosine": 24, "field_polar": 16, "field_azimuth": 4, "field_steps": 96,
     "view_steps": 256, "hemisphere_elevation": 24, "hemisphere_azimuth": 48,
-    # B（DirectionalField）: 点の高度・太陽の余弦、w の求積（地平線の上下それぞれの天頂角・半周の方位）、u の格子、視線の歩数
+    # B（DirectionalField）: 点の高度・太陽の余弦、w の求積（地平線の上下それぞれの天頂角・半周の方位）、u の格子、視線の歩数、
+    # 求積の 1 つの区画の中の位相関数を平均する標本の分け数（天頂角の余弦と方位のそれぞれ）
     "orders_altitude": 16, "orders_cosine": 16, "orders_polar": 8, "orders_azimuth": 8,
-    "orders_view_cosine": 16, "orders_view_azimuth": 12, "orders_steps": 64,
+    "orders_view_cosine": 16, "orders_view_azimuth": 12, "orders_steps": 64, "orders_phase_subdivisions": 4,
 }
 LUMINANCE_WEIGHTS = np.array([0.2126, 0.7152, 0.0722])
 # Ψ の値を比べる点（高度 m・太陽の天頂角の余弦）。荒野の視点の空と霞の視線が通る 10 km より下と、太陽の高度 38° の前後
@@ -459,9 +469,10 @@ class DirectionalField:
     引いて積む（σ はその点の高度の値）。1 回目の光の Mie の前方の山は phase_convolution で解析的に積む（sources_at）"""
 
     def __init__(self, medium, table, altitude_count, cosine_count, polar_count, azimuth_count,
-                 view_cosine_count, view_azimuth_count, steps):
+                 view_cosine_count, view_azimuth_count, steps, subdivisions):
         self.medium = medium
         self.table = table
+        self.subdivisions = subdivisions
         self.polar_count = polar_count
         self.azimuth_count = azimuth_count
         self.steps = steps
@@ -485,48 +496,55 @@ class DirectionalField:
     # --- 求積と位相関数の区画の平均 ---
 
     def quadrature(self, radius):
-        """半径 radius の点の w の求積: 向き [N,3]、球の平均の重み [N]、区画を PHASE_CELL_SUBDIVISIONS² に分けた向きと
-        面に映した向き [N, 2Q², 3]、区画と映した区画の立体角の和 [N]"""
+        """半径 radius の点の w の求積: 向き [N,3]、球の平均の重み [N]、区画を subdivisions² に分けた向きと面に映した向き
+        [N, 2Q², 3]（cell_mean が使う）と、cell_integral が使う補間の基底（天頂角の余弦は地平線の上下の区間ごとの GL の点の
+        ラグランジュ補間、方位は半周の点の余弦級数の補間）を、細かい標本（区間ごとの GL・全周の等間隔）で引いた値"""
         bottom = self.medium.bottom
-        polar, azimuth = self.polar_count, self.azimuth_count
+        polar, azimuth, split = self.polar_count, self.azimuth_count, self.subdivisions
         directions, weight = horizon_split_directions(np.array([radius]), bottom, polar, azimuth)
         _, gauss = np.polynomial.legendre.leggauss(polar)
         horizon = -math.sqrt(max(1.0 - (bottom / radius) ** 2, 0.0))
+        segments = ((-1.0, horizon), (horizon, 1.0))
         edges = []
-        for low, high in ((-1.0, horizon), (horizon, 1.0)):
+        for low, high in segments:
             cumulative = low + 0.5 * (high - low) * np.concatenate([[0.0], np.cumsum(gauss)])
             edges.append(np.stack([cumulative[:-1], cumulative[1:]], -1))
         mu_cells = np.repeat(np.concatenate(edges), azimuth, axis=0)
         k = np.arange(azimuth)
         phi_cells = np.tile(np.stack([k * math.pi / azimuth, (k + 1) * math.pi / azimuth], -1), (2 * polar, 1))
-        fractions = (np.arange(PHASE_CELL_SUBDIVISIONS) + 0.5) / PHASE_CELL_SUBDIVISIONS
+        fractions = (np.arange(split) + 0.5) / split
         mu = mu_cells[:, :1] + (mu_cells[:, 1:] - mu_cells[:, :1]) * fractions
         phi = phi_cells[:, :1] + (phi_cells[:, 1:] - phi_cells[:, :1]) * fractions
-        mu = np.repeat(mu, PHASE_CELL_SUBDIVISIONS, axis=1)
-        phi = np.tile(phi, (1, PHASE_CELL_SUBDIVISIONS))
+        mu = np.repeat(mu, split, axis=1)
+        phi = np.tile(phi, (1, split))
         ring = np.sqrt(np.maximum(1.0 - mu * mu, 0.0))
         samples = np.stack([ring * np.cos(phi), mu, ring * np.sin(phi)], -1)
-        # 分けた向きごとの、求積の向きの光の双線形の重み（地平線の上下それぞれの中で天頂角の余弦の隣の 2 つ × 方位の隣の 2 つ。
-        # 端の向きより外は端の値）。面に映した向きの重みは同じ
-        segment_nodes = directions[0, ::azimuth, 1].reshape(2, polar)
-        segment = np.repeat(np.arange(2 * polar) // polar, azimuth)[:, None]
-        nodes = segment_nodes[segment[:, 0]]
-        k = np.clip(np.sum(nodes[:, None, :] <= mu[..., None], axis=-1) - 1, 0, polar - 2)
-        low_node = np.take_along_axis(nodes, k, axis=1)
-        high_node = np.take_along_axis(nodes, k + 1, axis=1)
-        mu_fraction = np.clip((mu - low_node) / (high_node - low_node), 0.0, 1.0)
-        step = math.pi / azimuth
-        a = np.clip(np.floor(phi / step - 0.5).astype(np.int64), 0, azimuth - 2)
-        phi_fraction = np.clip((phi - (a + 0.5) * step) / step, 0.0, 1.0)
-        mu_index = segment * polar + k
-        hat_index = np.stack([mu_index * azimuth + a, mu_index * azimuth + a + 1,
-                              (mu_index + 1) * azimuth + a, (mu_index + 1) * azimuth + a + 1], -1).reshape(-1, 4)
-        hat_weight = np.stack([(1 - mu_fraction) * (1 - phi_fraction), (1 - mu_fraction) * phi_fraction,
-                               mu_fraction * (1 - phi_fraction), mu_fraction * phi_fraction], -1).reshape(-1, 4)
         samples = np.concatenate([samples, samples * np.array([1.0, 1.0, -1.0])], axis=1)
-        solid_angle = 2.0 * (mu_cells[:, 1] - mu_cells[:, 0]) * (math.pi / azimuth)
+        # 天頂角の余弦: 区間ごとに polar × split 点の GL の標本と、その区間の GL の点のラグランジュ基底（区間の外は 0）
+        fine_nodes, fine_weights = np.polynomial.legendre.leggauss(polar * split)
+        segment_nodes = directions[0, ::azimuth, 1].reshape(2, polar)
+        mu_samples = []
+        mu_weights = []
+        lagrange = np.zeros((2 * polar * split, 2 * polar))
+        for index, (low, high) in enumerate(segments):
+            values = 0.5 * (high - low) * fine_nodes + 0.5 * (high + low)
+            mu_samples.append(values)
+            mu_weights.append(0.5 * (high - low) * fine_weights)
+            nodes = segment_nodes[index]
+            rows = slice(index * polar * split, (index + 1) * polar * split)
+            for m in range(polar):
+                others = np.delete(nodes, m)
+                lagrange[rows, index * polar + m] = np.prod(
+                    (values[:, None] - others[None, :]) / (nodes[m] - others[None, :]), axis=1)
+        # 方位: 全周の等間隔の標本と、半周の点 (a + 0.5)π/A の余弦級数の基底（偶関数として補間する）
+        phi_samples = (np.arange(2 * azimuth * split) + 0.5) * math.pi / (azimuth * split)
+        nodes_phi = (np.arange(azimuth) + 0.5) * math.pi / azimuth
+        orders = np.arange(1, azimuth)
+        cardinal = (1.0 + 2.0 * np.sum(np.cos(orders[None, None, :] * nodes_phi[None, :, None]) *
+                                       np.cos(orders[None, None, :] * phi_samples[:, None, None]), axis=-1)) / azimuth
         return {"radius": float(radius), "directions": directions[0], "weight": weight[0], "samples": samples,
-                "solid_angle": solid_angle, "hat_index": hat_index, "hat_weight": hat_weight, "cache": {}}
+                "mu_samples": np.concatenate(mu_samples), "mu_weights": np.concatenate(mu_weights), "lagrange": lagrange,
+                "phi_samples": phi_samples, "phi_weight": math.pi / (azimuth * split), "cardinal": cardinal, "cache": {}}
 
     def cell_mean(self, quadrature, spec, targets):
         """向き targets [T,3] から見た位相関数 p(target·w) の、w の区画（と映した区画）の中の平均 [T,N]"""
@@ -538,21 +556,24 @@ class DirectionalField:
         return result
 
     def cell_integral(self, quadrature, spec, targets):
-        """求積の向きの光の重み ∫ p(target·w) b_m(w) dw [T,N]。b_m は求積の向きの間の双線形の補間の重み（quadrature の
-        hat_*）で、積分は区画を分けた向き（と映した向き）で取る。行の和を位相関数の球の積分 1 にそろえる"""
-        samples = quadrature["samples"]
-        half = samples.shape[1] // 2
-        count = len(quadrature["directions"])
-        hat = np.zeros((count * half, count))
-        rows = np.repeat(np.arange(count * half), 4)
-        np.add.at(hat, (rows, quadrature["hat_index"].ravel()), quadrature["hat_weight"].ravel())
-        area = (quadrature["solid_angle"] / samples.shape[1])[None, :, None]
-        result = np.empty((len(targets), count))
-        chunk = 64
+        """求積の向きの光の重み ∫ p(target·w) b_m(w) dw [T,N]。b_m は求積の向きの間の補間の基底（天頂角の余弦のラグランジュ
+        補間 × 方位の余弦級数の補間）で、位相関数が定数なら重みは GL の求積の重みに一致する。積分は細かい標本で取り、行の和を
+        位相関数の球の積分 1 にそろえる"""
+        mu = quadrature["mu_samples"]
+        ring = np.sqrt(np.maximum(1.0 - mu * mu, 0.0))
+        phi = quadrature["phi_samples"]
+        scale = quadrature["mu_weights"][:, None] * quadrature["phi_weight"]
+        lagrange = quadrature["lagrange"]
+        cardinal = quadrature["cardinal"]
+        result = np.empty((len(targets), len(quadrature["directions"])))
+        chunk = 32
         for start in range(0, len(targets), chunk):
-            value = phase_value(spec, np.einsum("tc,nsc->tns", targets[start:start + chunk], samples)) * area
-            value = value[..., :half] + value[..., half:]
-            result[start:start + chunk] = value.reshape(len(value), -1) @ hat
+            part = targets[start:start + chunk]
+            across = part[:, 0, None] * np.cos(phi)[None, :] + part[:, 2, None] * np.sin(phi)[None, :]
+            cosine = part[:, 1, None, None] * mu[None, :, None] + ring[None, :, None] * across[:, None, :]
+            value = phase_value(spec, cosine) * scale[None]
+            value = np.einsum("tij,ja->tia", value, cardinal)
+            result[start:start + chunk] = np.einsum("tia,im->tma", value, lagrange).reshape(len(part), -1)
         return result / np.sum(result, axis=1, keepdims=True)
 
     def grid_integral(self, quadrature, spec):
@@ -788,7 +809,8 @@ class Atmosphere:
                                      p["field_polar"], p["field_azimuth"], p["field_steps"])
         self.directional = DirectionalField(self.medium, self.table, p["orders_altitude"], p["orders_cosine"],
                                             p["orders_polar"], p["orders_azimuth"], p["orders_view_cosine"],
-                                            p["orders_view_azimuth"], p["orders_steps"])
+                                            p["orders_view_azimuth"], p["orders_steps"],
+                                            p["orders_phase_subdivisions"])
         self.seconds = time.time() - started
 
     def evaluate_psi(self, altitude, sun_cosine):
@@ -1014,8 +1036,43 @@ def second_order_check(atmosphere, altitude, sun_altitude_degrees):
     # 太陽の向きの Mie の源 ÷ 等方の源（入ってくる光の球の平均。2 回目以降を等方とする近似が使う値）
     result["mie_toward_sun_over_isotropic"] = (np.array(result["mie"]["direct"][0]) /
                                               np.array(result["isotropic"]["direct"][0])).tolist()
-    result["max_relative"] = worst
+    # 視線の上の 2 回目の散乱の源 σ_R G_R + σ_M G_M（その高度の係数）と、等方とした源 (σ_R + σ_M) × 球の平均
+    rayleigh_s, mie_s, _ = medium.coefficients(np.array(altitude))
+    combined = {}
+    for key in ("direct", "field"):
+        combined[key] = (rayleigh_s * np.array(result["rayleigh"][key]) + mie_s * np.array(result["mie"][key]))
+    isotropic = (rayleigh_s + mie_s) * np.array(result["isotropic"]["direct"])
+    combined_error = np.abs(combined["field"] - combined["direct"]) / np.maximum(np.abs(combined["direct"]), 1e-30)
+    result["combined"] = {"direct": combined["direct"].tolist(), "field": combined["field"].tolist(),
+                          "isotropic": isotropic.tolist(), "max_relative": float(np.max(combined_error)),
+                          "toward_sun_relative": combined_error[0].tolist()}
+    result["combined_toward_sun_over_isotropic"] = (combined["direct"][0] / isotropic[0]).tolist()
+    result["max_relative"] = max(worst, float(np.max(combined_error)))
     return result
+
+
+def first_order_check(atmosphere, altitude, sun_altitude_degrees):
+    """1 回目だけの値を A と B で比べる。A は視線の上で太陽の光を位相関数で散乱させて積む march の 1 回目の項（air_sun）と、
+    地表で返る太陽（A の地表は直射だけ）。B は DirectionalField が 2 回目の散乱の源に渡す 1 回目の光
+    L_1(p, w) = p_R(s·w) F_R(w) + p_M(s·w) F_M(w) + 地表で返る太陽（first_order_rays）。同じ歩数で、地表へ下りる向きも含める"""
+    medium = atmosphere.medium
+    field = atmosphere.directional
+    sun = sun_direction_from_angles(sun_altitude_degrees, 0.0)
+    elevations = np.array([-30.0, -10.0, -2.0, 0.0, 2.0, 5.0, 10.0, 20.0, 45.0, 90.0])
+    offsets = np.array([0.0, 45.0, 90.0, 135.0, 180.0])
+    el, az = np.meshgrid(elevations, offsets, indexing="ij")
+    directions = direction_from_sun_offset(sun, el.ravel(), az.ravel())
+    steps = atmosphere.parameters["view_steps"]
+    components, _ = atmosphere.march(altitude, directions, sun, "A", steps=steps)
+    value_a = components["air_sun"] + components["ground"]
+    rayleigh, mie, ground = first_order_rays(medium, atmosphere.table, medium.bottom + altitude, directions, sun[None],
+                                             steps)
+    cosine = directions @ sun
+    value_b = (rayleigh[0] * phase_value(RAYLEIGH, cosine)[:, None] + mie[0] * phase_value(field.mie, cosine)[:, None] +
+               ground[0])
+    error = float(np.max(np.abs(value_b - value_a) / np.maximum(np.abs(value_a), 1e-30)))
+    return {"altitude_m": altitude, "sun_altitude_degrees": sun_altitude_degrees, "directions": len(directions),
+            "max_relative": error, "ground_directions": int(np.sum(np.any(components["ground"] > 0.0, axis=1)))}
 
 
 def compare_levels(coarse, fine):
@@ -1030,14 +1087,18 @@ def compare_levels(coarse, fine):
 def verify(dump_path, out_dir):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     failures = []
-    sets = [("paper", PAPER_SETTINGS, 38.0, 100.0)]
+    # 最小再現の高度（空気遠近の起点の高度 + カメラの y）。書き出しが無いときは評価者の値
+    repro_altitude = REPRO_ALTITUDE_M
+    sets = []
     if os.path.isfile(dump_path):
         with open(dump_path, encoding="utf-8") as f:
             meta = json.load(f)
         sky = meta["sky"]
+        repro_altitude = float(meta["aerial_perspective"]["origin_altitude_m"]) + float(meta["camera_position"][1])
         sets.append(("engine", settings_from_dump(meta), float(sky["sun_altitude_degrees"]), float(sky["observer_altitude_m"])))
     else:
         failures.append(f"書き出しの JSON が無い: {dump_path}")
+    sets.insert(0, ("paper", PAPER_SETTINGS, 38.0, 100.0))
     report = {"criteria": {"convergence_tolerance": CONVERGENCE_TOLERANCE, "radiance_floor": CONVERGENCE_RADIANCE_FLOOR,
                            "analytic_tolerance": ANALYTIC_TOLERANCE, "level1": LEVEL1},
               "sets": {}}
@@ -1062,10 +1123,19 @@ def verify(dump_path, out_dir):
         directional = fine.directional
         if directional.last_order_fraction > ORDER_STOP_FRACTION:
             failures.append(f"{name}: 散乱の回数で足す版が {ORDER_LIMIT} 回で収束しない")
-        second_order = [second_order_check(fine, altitude, sun_altitude) for altitude in (observer, 1500.0)]
+        # (1) 2 回目の散乱の源を、細かい向きの求積で位相関数を角度で積んだ値と照らす（最小再現の高度と観測点）
+        second_order = [second_order_check(fine, altitude, sun_altitude) for altitude in (repro_altitude, observer)]
         second_order_error = max(check["max_relative"] for check in second_order)
         if second_order_error > SECOND_ORDER_TOLERANCE:
             failures.append(f"{name}: B の 2 回目の散乱の源が、細かい求積で直接積んだ値と {second_order_error:.2e} 違う")
+        repro = second_order[0]
+        repro_ratio = np.array(repro["combined_toward_sun_over_isotropic"])
+        # (3) 1 回目だけの値が A と B で一致する（観測点と最小再現の高度、段 1 と段 2）
+        first_order = [first_order_check(atmosphere, altitude, sun_altitude)
+                       for atmosphere in (coarse, fine) for altitude in (observer, repro_altitude)]
+        first_order_error = max(check["max_relative"] for check in first_order)
+        if first_order_error > FIRST_ORDER_TOLERANCE:
+            failures.append(f"{name}: 1 回目だけの値が A と B で {first_order_error:.2e} 違う")
         sun = sun_direction_from_angles(sun_altitude, 0.0)
         # 地表・太陽の余弦 0.6 の点（荒野の太陽の高度 38° に近い）
         ground_index = PSI_PROBE_COSINES.index(0.6)
@@ -1084,6 +1154,11 @@ def verify(dump_path, out_dir):
             "last_order_fraction": directional.last_order_fraction,
             "seconds_directional": {"level1": coarse.directional.seconds, "level2": directional.seconds},
             "second_order_check": second_order,
+            "repro": {"altitude_m": repro_altitude, "sun_altitude_degrees": sun_altitude,
+                      "toward_sun_relative": repro["combined"]["toward_sun_relative"],
+                      "combined_toward_sun_over_isotropic": repro_ratio.tolist(),
+                      "evaluator_ratio": list(EVALUATOR_SUN_RATIO)},
+            "first_order_check": first_order,
             "sun_transmittance_ground": q_fine["sun_transmittance"].tolist(),
             "sky_horizontal_irradiance_per_lux": {"A": q_fine["sky_irradiance_A"].tolist(),
                                                   "B": q_fine["sky_irradiance_B"].tolist()},
@@ -1097,6 +1172,10 @@ def verify(dump_path, out_dir):
               f"order_ratio_2={directional.order_ratios[0]:.4f} "
               f"last_order_fraction={directional.last_order_fraction:.1e} "
               f"second_order_max_rel={second_order_error:.2e} "
+              f"repro_altitude={repro_altitude:.6f} "
+              f"repro_toward_sun_rel={np.round(repro['combined']['toward_sun_relative'], 5).tolist()} "
+              f"repro_sun_over_isotropic={np.round(repro_ratio, 4).tolist()} "
+              f"first_order_A_vs_B={first_order_error:.1e} "
               f"mie_toward_sun_over_isotropic={np.round(second_order[-1]['mie_toward_sun_over_isotropic'], 3).tolist()} "
               f"sun_T={np.round(q_fine['sun_transmittance'], 4).tolist()} "
               f"sky_E_A={np.round(q_fine['sky_irradiance_A'], 4).tolist()} "
