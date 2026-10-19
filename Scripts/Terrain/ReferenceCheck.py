@@ -243,6 +243,11 @@
 #       撮影の画と記録のカメラのずれ（本体は Scripts/Terrain/CameraOffset.py）。記録のカメラのまま補正なし（ずらし 0）で描いた
 #       Blender の深度（無いか古ければその場で描いて <撮影先>/blender に保存する）とエンジンの深度のずれが 0.05 画素以内であることを、
 #       既定では ref_cliff_01・ref_cliff_02 で検査する。報告は <撮影先>/camera_offset_check.json。
+#   python Scripts/Terrain/ReferenceCheck.py --rt-scene --engine <撮影先> [--views a,b,...] [--verify]
+#       荒野の地形がレイトレーシングのシーンに入り、光線が地形に当たることの検査（本体は Scripts/Terrain/RtScene.py）。
+#       視点ごとの Game.log の RT_SCENE の最後の行で instances・mega が 0 でなく、RTGI_HITS（開発ビルドの当たりの統計）の
+#       最後の行で mega_hits が 0 でないこと（wasteland-hide=all で MegaGeometry の候補が地形の区画だけのとき地形への当たり）。
+#       報告は <撮影先>/rt_scene_check.json。
 #   旧参照の移行（SHIFTED_REFERENCE_SCOPE）: ずらしありで描いた旧参照は --gray・--lit の領域の平均の比較だけに使い、
 #       --albedo・--normal・--projection はずらし 0 で描き直すまで古いとして落とす。
 #   python Scripts/Terrain/ReferenceCheck.py --regression --capture <after> --reference <before> [--verify]
@@ -5787,6 +5792,8 @@ def main():
     parser.add_argument("--aov", action="store_true", help="GBuffer の生の値（AOV）の撮影を検査する")
     parser.add_argument("--camera-offset", action="store_true",
                         help="撮影の画と記録のカメラのずれを、補正なしで描いた Blender の深度で検査する（CameraOffset.py）")
+    parser.add_argument("--rt-scene", action="store_true",
+                        help="荒野の地形が RT のシーンに入り、光線が地形に当たることを撮影のログで検査する（RtScene.py）")
     parser.add_argument("--projection", action="store_true",
                         help="Blender の深度（BlenderReference.py）とエンジンの深度の投影を照らす")
     parser.add_argument("--atmos-dump", action="store_true",
@@ -5873,6 +5880,15 @@ def main():
             return 1
         views = [v.strip() for v in args.views.split(",") if v.strip()]
         return CameraOffset.run(sys.modules[__name__], capture_dir, views, args.verify)
+    if args.rt_scene:
+        import RtScene
+        capture = args.capture or (args.engine[0] if args.engine else "")
+        capture_dir = os.path.normpath(capture if os.path.isabs(capture) else os.path.join(REPO_ROOT, capture))
+        if not capture or not os.path.isdir(capture_dir):
+            print(f"REFERENCE_CHECK result=fail reason=capture_dir_missing（--engine に撮影先を指定する） path={capture}")
+            return 1
+        views = [v.strip() for v in args.views.split(",") if v.strip()]
+        return RtScene.run(sys.modules[__name__], capture_dir, views, args.verify)
     if not args.capture:
         print("REFERENCE_CHECK result=fail reason=capture_missing（--capture を指定する）")
         return 1

@@ -15,7 +15,9 @@ layout(set = 0, binding = 1, std140) uniform RTGIComputeParameters
     uvec4 imageAndSceneCounts; // xy=画像寸法、z=インスタンス数、w=ライト数
     vec4 rayLimits; // x=最小距離、y=最大距離、z=pre-exposure、w=環境強度
     uvec4 temporalState; // x=履歴有効、y=ライトrevision差、z=weight制限、w=age上限
-    uvec4 sampleState; // x=試料系列の番号（RTGIのdispatchごとに1進む）、y=発光instance数、z=発光三角形数
+    // x=試料系列の番号（RTGIのdispatchごとに1進む）、y=発光instance数、z=発光三角形数、
+    // w=当たりの統計（開発ビルドだけ。0は数えない。それ以外はMegaGeometryの先頭のcustom index + 1）
+    uvec4 sampleState;
     vec4 previousCameraPosition; // xyz=履歴を書いた前フレームのカメラ位置、w=履歴に掛ける露出の比
     vec4 environmentParameters; // x=静的HDR環境の放射輝度の上限（倍率を掛ける前。0は上限なし）
 } parameters;
@@ -75,6 +77,14 @@ layout(set = 0, binding = 23, std430) readonly buffer RTGIEmitters
 {
     uvec4 values[];
 } emitters;
+
+// 1回目の拡散光線の当たりの統計（開発ビルドだけ書く）。[0]=光線の数、[1]=当たった数、[2]=MegaGeometryに当たった数
+layout(set = 0, binding = 24, std430) buffer RTGIHitStats
+{
+    uint values[4];
+} hitStats;
+
+shared uint sharedHitStats[3];
 
 layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer RTGIVertexData
 {
@@ -850,7 +860,10 @@ void StoreTemporalSample(uvec2 pixel,
 
 // 拡散の散乱光線を1本たどり、始点へ入る放射輝度を返す。外れれば環境光、当たれば命中面の点・spot・
 // 方向光と発光三角形の直接光（コサイン標本が発光面に当たっても発光は加えない）。命中面の位置・光線側の
-// 法線・反射率を返し、呼び側がそこからさらに散乱をたどれるようにする。
+// 法線・反射率を返し、呼び側がそこからさらに散乱をたどれるようにする。hitCustomIndexは当たった
+// instanceのcustom index（外れればRTGI_NO_HIT）。
+const uint RTGI_NO_HIT = 0xFFFFFFFFu;
+
 vec3 TraceDiffuseRay(vec3 rayOrigin,
                      vec3 rayDirection,
                      uvec2 pixel,
@@ -858,12 +871,14 @@ vec3 TraceDiffuseRay(vec3 rayOrigin,
                      out bool bSurfaceHit,
                      out vec3 hitPosition,
                      out vec3 hitNormal,
-                     out vec3 hitBaseColor)
+                     out vec3 hitBaseColor,
+                     out uint hitCustomIndex)
 {
     bSurfaceHit = false;
     hitPosition = vec3(0.0);
     hitNormal = vec3(0.0);
     hitBaseColor = vec3(0.0);
+    hitCustomIndex = RTGI_NO_HIT;
 
     rayQueryEXT query;
     rayQueryInitializeEXT(query,
@@ -893,6 +908,7 @@ vec3 TraceDiffuseRay(vec3 rayOrigin,
 
     float hitDistance = rayQueryGetIntersectionTEXT(query, true);
     uint customIndex = uint(rayQueryGetIntersectionInstanceCustomIndexEXT(query, true));
+    hitCustomIndex = customIndex;
     uint primitiveIndex = rayQueryGetIntersectionPrimitiveIndexEXT(query, true);
     RTGIInstanceData hitInstance;
     vec3 triangleNormal;
@@ -914,9 +930,12 @@ vec3 TraceDiffuseRay(vec3 rayOrigin,
                            hitBaseColor * SampleEmitterIrradiance(hitPosition, hitNormal, pixel, emitterDimension));
 }
 
-void main()
+// 1画素の拡散の間接光を求めて書く。firstHitCustomIndexは1回目の拡散光線が当たったinstanceのcustom index
+// （光線を引かなければRTGI_NO_HIT、外れればRTGI_NO_HIT）で、bRayTracedは光線を引いたか。
+void ShadeDiffuseIndirect(uvec2 pixel, out bool bRayTraced, out uint firstHitCustomIndex)
 {
-    uvec2 pixel = gl_GlobalInvocationID.xy;
+    bRayTraced = false;
+    firstHitCustomIndex = RTGI_NO_HIT;
     uvec2 imageSize = parameters.imageAndSceneCounts.xy;
     if (pixel.x >= imageSize.x || pixel.y >= imageSize.y)
     {
@@ -973,9 +992,11 @@ void main()
             vec3 bounceHitPosition;
             vec3 bounceHitNormal;
             vec3 bounceHitBaseColor;
+            bRayTraced = true;
             vec3 incomingRadiance = TraceDiffuseRay(rayOrigin, rayDirection, pixel, 3u,
                                                     bBounceHit, bounceHitPosition,
-                                                    bounceHitNormal, bounceHitBaseColor);
+                                                    bounceHitNormal, bounceHitBaseColor,
+                                                    firstHitCustomIndex);
             if (bBounceHit)
             {
                 // 2回目の拡散バウンス: 命中面が空と周りの面から受ける光（影の中の地面を照らす、物体の
@@ -990,10 +1011,12 @@ void main()
                 vec3 secondHitPosition;
                 vec3 secondHitNormal;
                 vec3 secondHitBaseColor;
+                uint secondHitCustomIndex;
                 vec3 secondIncoming = TraceDiffuseRay(
                     bounceHitPosition + bounceHitNormal * RAY_ORIGIN_OFFSET,
                     secondDirection, pixel, 6u,
-                    bSecondHit, secondHitPosition, secondHitNormal, secondHitBaseColor);
+                    bSecondHit, secondHitPosition, secondHitNormal, secondHitBaseColor,
+                    secondHitCustomIndex);
                 // 拡散面の出る放射輝度は反射率/π×照度で、コサイン標本の照度の推定はπ×入射放射輝度。
                 incomingRadiance += bounceHitBaseColor * SanitizeUnexposedRadiance(secondIncoming);
             }
@@ -1061,4 +1084,46 @@ void main()
                         viewDistance,
                         worldNormal,
                         material);
+}
+
+void main()
+{
+    // 当たりの統計を数えるかはdispatch全体で同じ（定数バッファの値）なので、barrierは一様な制御の中にある
+    bool bCountHits = parameters.sampleState.w != 0u;
+    if (bCountHits)
+    {
+        if (gl_LocalInvocationIndex < 3u)
+        {
+            sharedHitStats[gl_LocalInvocationIndex] = 0u;
+        }
+        barrier();
+    }
+
+    bool bRayTraced;
+    uint firstHitCustomIndex;
+    ShadeDiffuseIndirect(gl_GlobalInvocationID.xy, bRayTraced, firstHitCustomIndex);
+
+    if (bCountHits)
+    {
+        // 作業グループの中で足してから、1つの呼び出しだけがバッファへ足す
+        if (bRayTraced)
+        {
+            atomicAdd(sharedHitStats[0], 1u);
+            if (firstHitCustomIndex != RTGI_NO_HIT)
+            {
+                atomicAdd(sharedHitStats[1], 1u);
+                if (firstHitCustomIndex >= parameters.sampleState.w - 1u)
+                {
+                    atomicAdd(sharedHitStats[2], 1u);
+                }
+            }
+        }
+        barrier();
+        if (gl_LocalInvocationIndex == 0u && sharedHitStats[0] != 0u)
+        {
+            atomicAdd(hitStats.values[0], sharedHitStats[0]);
+            atomicAdd(hitStats.values[1], sharedHitStats[1]);
+            atomicAdd(hitStats.values[2], sharedHitStats[2]);
+        }
+    }
 }

@@ -1899,7 +1899,7 @@
 - notes: 危険地帯（描画）。2026-10-19 GAP-LIST の表の外の観察（Sol の批評 7）。Blender の深度の描画は反復の中で保存する。回帰の撮影の差は開いて見て、この変更だけによることを確かめる。
 
 ## SCN-WLR-LIT-SHADOW-REF-C01: ref_cliff_01 の影の領域の Cycles の参照を収束させる
-- status: todo
+- status: blocked
 - after: SCN-WL-CAMERA-OFFSET, SCN-WLR-RECAPTURE-GRAY-LIT
 - done-when: SCN-WLR-CYCLES-LIT で 2048 サンプルでも未判定だった ref_cliff_01 の影の崖・影の中の地面を、その領域を切り出した描画（Cycles の border。ずらし 0 のカメラ）で、種を変えた 2 本の差が SCN-WLR-CYCLES-GRAY と同じ基準に入るまで描き、直接光（太陽）・間接光（照り返し）・空の光のパスと太陽の可視率を分けて保存する。描画は 1 本 20 分を上限にし、超えるなら切り出しを狭めるか、届かない量を記録して BLOCKED にする。`--lit --require-judged`（この項目で作る）で 2 領域が判定済みになり、パスの和が全体と 1 % 以内で合うことを検査する。
 - verify: `python Scripts/Terrain/ReferenceCheck.py --lit --capture .harness/runs/scene-capture/SCN-WLR-CYCLES-LIT --require-judged ref_cliff_01:shadow_cliff,ref_cliff_01:shadow_ground --verify`

@@ -239,8 +239,13 @@ namespace NorvesLib::Core::Rendering
                                               const Container::VariableArray<SelectCandidate>& candidates,
                                               uint32_t meshCount);
 
-        /** @brief proxy から席の入力を作る（使えない proxy は bUsable が false） */
-        static void MakeMegaSlotEntry(const MegaGeometryProxy* proxy, MegaSlotEntry& entry);
+        /**
+         * @brief proxy から席の入力を作る（使えない proxy は bUsable が false）
+         * @param localBounds proxy のメッシュ全体の境界の球（ローカル）。null なら proxy の WorldBounds で選ぶ範囲を測る
+         */
+        static void MakeMegaSlotEntry(const MegaGeometryProxy* proxy,
+                                      const BoundingSphere* localBounds,
+                                      MegaSlotEntry& entry);
 
         /** @brief 席の入力とメッシュの GPU データから、インスタンスをパケットの末尾へ足す */
         static void AppendMegaInstance(const MegaGeometry::MegaMeshGPUData& gpuData,
@@ -248,7 +253,9 @@ namespace NorvesLib::Core::Rendering
                                        FramePacket& packet);
 
         /** @brief 写しの変わった席で席ごとの配列を直す（直せないときは作り直す）。直した席の数を返す */
-        uint32_t SyncMegaSlots(const MegaGeometryMirror& mirror, bool& outRebuilt);
+        uint32_t SyncMegaSlots(const MegaGeometryMirror& mirror,
+                               const MegaGeometryResources* megaGeometryResources,
+                               bool& outRebuilt);
 
         /** @brief 選んだ結果を RT_SCENE に出す（最初と、120 回ごと） */
         static void LogSelection(const char* path, const SelectionStats& stats, uint32_t& counter);

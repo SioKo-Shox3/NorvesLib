@@ -810,7 +810,8 @@ namespace NorvesLib::Core::Rendering
         uint32_t imageAndSceneCounts[4] = {};
         float rayLimits[4] = {};
         uint32_t temporalState[4] = {};
-        /// x=描画フレーム番号（静止中も毎フレーム別のレイを引く）、y=発光instance数、z=発光三角形数。
+        /// x=描画フレーム番号（静止中も毎フレーム別のレイを引く）、y=発光instance数、z=発光三角形数、
+        /// w=当たりの統計（開発ビルドだけ。0は数えない。それ以外はMegaGeometryの先頭のcustom index + 1）。
         uint32_t sampleState[4] = {};
         /// xyz=履歴を書いた前フレームのカメラ位置、w=履歴に掛ける露出の比（今のフレーム/履歴）。
         float previousCameraPosition[4] = {};
@@ -1257,8 +1258,9 @@ namespace NorvesLib::Core::Rendering
             RHI::ResourceBindType::RWTexture,
             RHI::ResourceBindType::RWTexture,
             RHI::ResourceBindType::RWTexture,
-            RHI::ResourceBindType::StructuredBuffer};
-        for (uint32_t bindingIndex = 0u; bindingIndex < 24u; ++bindingIndex)
+            RHI::ResourceBindType::StructuredBuffer,
+            RHI::ResourceBindType::RWBuffer};
+        for (uint32_t bindingIndex = 0u; bindingIndex < 25u; ++bindingIndex)
         {
             RHI::DescriptorBinding binding;
             binding.binding = bindingIndex;
@@ -1625,6 +1627,50 @@ namespace NorvesLib::Core::Rendering
         m_VsmPointFallbackSamples += stats[1];
         ++m_VsmStatsHarvestedExecutes;
     }
+
+#if NORVES_BUILD_DEVELOPMENT
+    void LightingPass::RTGIHitStatsReceiver::OnFrameReadback(const FrameReadbackResult& result)
+    {
+        // 提出しなかったフレームの統計（取り消し）は足さない
+        const uint32_t* const stats = result.Size >= RTGIHitStatsBytes ? static_cast<const uint32_t*>(result.Data) : nullptr;
+        if (result.Status != FrameReadbackStatus::Delivered || !stats)
+        {
+            return;
+        }
+        m_Rays += stats[0];
+        m_Hits += stats[1];
+        m_MegaHits += stats[2];
+        if ((m_Dispatches++ % 120u) == 0u)
+        {
+            Log("frame");
+        }
+    }
+
+    void LightingPass::RTGIHitStatsReceiver::Flush()
+    {
+        if (m_Dispatches > 0u)
+        {
+            Log("shutdown");
+        }
+        m_Dispatches = 0;
+        m_Rays = 0;
+        m_Hits = 0;
+        m_MegaHits = 0;
+    }
+
+    void LightingPass::RTGIHitStatsReceiver::Log(const char* reason) const
+    {
+        // 値は起動からの合計。mesh_hits はメッシュのインスタンス、mega_hits は MegaGeometry のインスタンスへの当たり
+        NORVES_LOG_INFO("LightingPass",
+                        "RTGI_HITS reason=%s dispatches=%llu rays=%llu hits=%llu mesh_hits=%llu mega_hits=%llu",
+                        reason,
+                        static_cast<unsigned long long>(m_Dispatches),
+                        static_cast<unsigned long long>(m_Rays),
+                        static_cast<unsigned long long>(m_Hits),
+                        static_cast<unsigned long long>(m_Hits - m_MegaHits),
+                        static_cast<unsigned long long>(m_MegaHits));
+    }
+#endif
 
     namespace
     {
@@ -2133,6 +2179,12 @@ namespace NorvesLib::Core::Rendering
         // まだ渡っていない統計は受け取らない（読み戻し先は GPU の完了の後に持ち主へ戻る）
         m_VsmStatsReadback.CancelPending();
         m_VsmStatsSink.reset();
+#if NORVES_BUILD_DEVELOPMENT
+        // RTGI の当たりの統計も同じく、渡った分だけを 1 度出す
+        m_RTGIHitStats.Flush();
+        m_RTGIHitStatsReadback.CancelPending();
+#endif
+        m_RTGIHitStatsSink.reset();
         m_VsmStatsHarvestedExecutes = 0;
         m_VsmFallbackSamples = 0;
         m_VsmPointFallbackSamples = 0;
@@ -3873,6 +3925,48 @@ namespace NorvesLib::Core::Rendering
         parameters.sampleState[0] = m_RTGISampleIndex;
         parameters.sampleState[1] = static_cast<uint32_t>(emitterEntries.size());
         parameters.sampleState[2] = emitterTriangleCount;
+        // 当たりの統計（開発ビルドだけ）。読み戻し先を借りられたときだけ数え、借りられなければ読まない置き場を束ねる
+        RHI::BufferPtr hitStatsBuffer;
+#if NORVES_BUILD_DEVELOPMENT
+        {
+            FrameReadbackRequest readbackRequest;
+            readbackRequest.Receiver = &m_RTGIHitStatsReadback;
+            readbackRequest.Size = RTGIHitStatsBytes;
+            readbackRequest.bZeroOnHost = true;
+            readbackRequest.ViewId = context.PhysicalLighting.ViewId;
+            readbackRequest.ViewportId = context.PhysicalLighting.ViewportId;
+            const FrameReadbackTarget hitStatsTarget = context.FrameResources->RequestReadback(readbackRequest);
+            if (hitStatsTarget.IsValid() && hitStatsTarget.Offset == 0)
+            {
+                hitStatsBuffer = hitStatsTarget.Buffer;
+                // MegaGeometry のインスタンスはメッシュのインスタンスの後ろに並ぶ（custom index は並びの番号）
+                const auto& rayTracingInstances = context.SnapshotRayTracingScene->Instances;
+                uint32_t megaFirstCustomIndex = static_cast<uint32_t>(rayTracingInstances.size());
+                for (uint32_t index = 0u; index < static_cast<uint32_t>(rayTracingInstances.size()); ++index)
+                {
+                    if (rayTracingInstances[index].MegaMeshId != 0u)
+                    {
+                        megaFirstCustomIndex = rayTracingInstances[index].Instance.customIndex;
+                        break;
+                    }
+                }
+                parameters.sampleState[3] = megaFirstCustomIndex + 1u;
+            }
+        }
+#endif
+        if (!hitStatsBuffer)
+        {
+            if (!m_RTGIHitStatsSink)
+            {
+                m_RTGIHitStatsSink = context.Device->CreateBuffer(RHI::BufferDesc(
+                    RTGIHitStatsBytes, RHI::ResourceUsage::StorageBuffer, false, "RTGI.HitStatsSink"));
+            }
+            hitStatsBuffer = m_RTGIHitStatsSink;
+            if (!hitStatsBuffer)
+            {
+                return fail();
+            }
+        }
         // 履歴の距離は前フレームのカメラから測ったものなので、現在の表面も同じカメラから測って比べる。
         if (const CameraProxy* previousCamera = context.GetPreviousCamera())
         {
@@ -3962,6 +4056,7 @@ namespace NorvesLib::Core::Rendering
             emitterUpload.Buffer,
             emitterUpload.GetOffset32(),
             emitterUpload.GetSize32());
+        computeDescriptorSet->BindStorageBuffer(24u, hitStatsBuffer, 0u, RTGIHitStatsBytes);
         computeDescriptorSet->BindTexture(9u, environmentTexture);
         computeDescriptorSet->BindSampler(9u, environmentSampler);
         computeDescriptorSet->BindTexture(10u, velocityTexture);

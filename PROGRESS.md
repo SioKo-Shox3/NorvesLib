@@ -5736,3 +5736,18 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 切り出しの枠は名指しの 2 領域を囲む (77, 281)〜(1769, 1086)（余白 8 画素つき）で画面の約 66 %（影の中の地面 2385 画素が画面の左右に散るため狭められない）。収束しない原因は反復 17 の見立てで、ライトツリーが太陽を選びにくい点で BSDF の標本が太陽に入る 1 標本の重みの大きさ。切り出しではライトツリーを切る
 - 描画は反復の外で切り離して走らせる（`.harness/runs/20261019-192352/shadow-ref-c01-render.ps1`。ログ `aux-SCN-WLR-LIT-SHADOW-REF-C01-crop-render.txt` の最初に START、最後に `END ... EXIT=<code>`）。見込みは種 2 本で約 40 分
 - Next（再開の反復）: ログの END と `shadow/cycles/ref_cliff_01.cycles.json` の `all_converged`・`regions`・`consistency` を開く。エンジンの撮影（カメラのずれを直した後の Game.exe）を撮り直し、`--lit --require-judged` の verify を保存する。届かなければ届かない量を記録して BLOCKED。本描画の旧材質（ずらしあり）の標本の位置の検査が撮り直した撮影で落ちる見込み（`SHIFTED_REFERENCE_SCOPE`）なので、そこも確かめる
+
+### SCN-WL-RT-TLAS-TERRAIN 途中（2026-10-20、run 20261019-192352 の反復 19）
+- 原因を確かめた: 地形の区画は `MegaGeometryComponent` で、proxy の `WorldBounds` は `MeshComponent::UpdateWorldBounds` が既定のローカルの箱（`GetLocalBounds` の ±1 m）を変換の並進（区画は頂点をワールドの座標で焼いて原点に置く）に置いた球（中心 0・半径 1.73 m）。`IsValid()` は真なので `MakeRayTracingSelectBounds` はこの球を使い、2 km 先のカメラから 198 区画すべてが 120 m の外になっていた（見立ての「半径 0」ではなく原点の 1.73 m の球）
+- Done（実装・ビルドまで）:
+  - `RenderingCoordinator.cpp`: TLAS に入れるかを決める MegaGeometry の境界を、MegaMesh 全体の境界（`MegaMeshGPUData::TotalBounds`。ローカル）を proxy の変換で写した球（半径は軸の拡大率の最大を掛ける）にした。メッシュの境界が無ければ従来どおり proxy の `WorldBounds`。全量の経路と差分の経路（`SyncMegaSlots`・`MakeMegaSlotEntry` に境界を渡す）の両方。同じメッシュが続く間は境界を使い回す
+  - RTGI の当たりの統計（開発ビルドだけ）: `DiffuseIndirect.comp` が 1 回目の拡散光線の数・当たり・MegaGeometry への当たり（custom index が MegaGeometry の先頭以上）を作業グループで足して binding 24 へ数える。数えるかは `sampleState.w`（0 は数えない）。`LightingPass` が読み戻し（VSM の統計と同じ借り方）、最初と 120 回ごと・終了時に `RTGI_HITS reason= dispatches= rays= hits= mesh_hits= mega_hits=`（起動からの合計）を出す。Release は読まない置き場を束ね、`sampleState.w` は 0
+  - `ReferenceCheck.py --rt-scene`（本体 `Scripts/Terrain/RtScene.py`）: 視点ごとの Game.log の最後の `RT_SCENE` で instances・mega > 0、最後の `RTGI_HITS` で mega_hits > 0、`wasteland-hide=all`（岩を外し小物 0）で MegaGeometry の候補が地形の区画だけなので mega_hits を地形への当たりとする。直す前の撮影（SCN-WL-CAMERA-OFFSET の ref_cliff_01）では `instances=0 ... out_of_range=198` と RTGI_HITS 無しで落ちることを確かめた
+- 証拠（`.harness/runs/20261019-192352/`）:
+  - `verify-SCN-WL-RT-TLAS-TERRAIN-1.txt`: Debug の Game のビルド EXIT=0。`DiffuseIndirect.comp` は glslc（vulkan1.3）でもコンパイルが通る
+  - `regression-before-SCN-WL-RT-TLAS-TERRAIN.txt`: before は今の RelWithDebInfo の Game.exe（00:55 のビルド、SHA-256 01c2c027…）で 01:53 に撮った SCN-WL-CAMERA-OFFSET の after を写した（同じ exe）
+- 撮影はしていない: 反復の間ずっと Blender の Cycles が GPU を使っていた（SCN-WLR-LIT-SHADOW-REF-C01 の切り出し、親の指示で `END` まで撮影しない）。描画の終わり（03:28 頃）が反復の壁時計の終わりと重なるので、親の指示どおり実装とビルドだけコミットした
+- Next（再開の反復）: 順番を守る。(1) RelWithDebInfo をビルドする前に、今の RelWithDebInfo の Game.exe（直す前）で荒野の GPU 時間を `-GpuTimingFrames`（`-Build` なし、verify の撮影と同じ `-GameArgs`、`-Views ref_cliff_01`）で測り、`AccelerationStructureBuild` と `FrameGPU` と `RT_SCENE` の区画の数を before として記録する。(2) verify の 2〜4 を回す（2 が RelWithDebInfo を -Build する）。(3) 同じ計測を after で撮る。(4) 灰色の 3 組（両方・太陽・空、ref_cliff_01・ref_far_01）を別の出力先に撮り、`--gray --engine <それ> --reference .harness/runs/scene-capture/SCN-WLR-CYCLES-GRAY` で影の崖・遠景の空の比を記録する（合否には使わない）。(5) 回帰の after の差を開いて、TLAS に入る物が増えた分だけかを見る
+- Notes:
+  - 選ぶ範囲の境界がメッシュ全体の境界になるので、ほかのシーンでも MegaGeometry の TLAS の候補の距離が変わる（proxy の既定の 1.73 m の球より大きい物は 120 m の境目で入りやすくなる）。回帰の撮影で確かめる
+  - `RTGI_HITS` は起動からの合計で、地形を置く前（TLAS が空）の dispatch は RTGI が動かないので入らない

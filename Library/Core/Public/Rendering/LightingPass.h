@@ -608,6 +608,36 @@ namespace NorvesLib::Core::Rendering
         uint64_t m_VsmFallbackSamples = 0;
         uint64_t m_VsmPointFallbackSamples = 0;
 
+        /** @brief RTGI の 1 回目の拡散光線の当たりの統計の大きさ（[0]=光線、[1]=当たり、[2]=MegaGeometry への当たり、[3]=予備） */
+        static constexpr uint32_t RTGIHitStatsBytes = 16;
+        /** @brief 当たりの統計を数えないとき（Release・読み戻し先を借りられないとき）に束ねる、読まない置き場 */
+        RHI::BufferPtr m_RTGIHitStatsSink;
+#if NORVES_BUILD_DEVELOPMENT
+        /**
+         * @brief RTGI の当たりの統計の受け手（開発ビルドだけ）
+         *
+         * 読み戻した dispatch ごとに合計へ足し、最初と 120 回ごと・終了時に `RTGI_HITS` を出す。光線が RT のシーンに
+         * 当たっているか（シーンが空・選ぶ範囲の外で外れていないか）をログで確かめるためのもの。
+         */
+        class RTGIHitStatsReceiver final : public IFrameReadbackReceiver
+        {
+        public:
+            void OnFrameReadback(const FrameReadbackResult& result) override;
+            /** @brief 合計を出して 0 へ戻す（読み戻した dispatch が無ければ出さない） */
+            void Flush();
+
+        private:
+            void Log(const char* reason) const;
+
+            uint64_t m_Dispatches = 0;
+            uint64_t m_Rays = 0;
+            uint64_t m_Hits = 0;
+            uint64_t m_MegaHits = 0;
+        };
+        RTGIHitStatsReceiver m_RTGIHitStats;
+        FrameReadbackReceiver m_RTGIHitStatsReadback{&m_RTGIHitStats};
+#endif
+
         /** @brief 太陽の VSM の読み出しの統計の読み戻しの結果を合計へ足す（提出の完了の後に RenderThread で呼ばれる） */
         void OnFrameReadback(const FrameReadbackResult& result) override;
         bool m_bNeuralBRDFAvailable = false;     ///< Neural BRDFが利用可能か
