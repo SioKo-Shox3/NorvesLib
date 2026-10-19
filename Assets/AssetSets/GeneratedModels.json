@@ -66,6 +66,43 @@
       "height_m": 2.8,
       "upsample_resolution": 1024,
       "usage": "wasteland-buildings"
+    },
+    {
+      "id": "street_lamp",
+      "prompt": "a single old village street lamp, one thick dark cast iron post on a heavy square stone base, a solid curved iron arm at the top holding one hanging square iron lantern with glass panes, simple sturdy shape, whole object standing upright on flat ground, three-quarter view, rustic old village style",
+      "seed": 3001,
+      "target_faces": 150000,
+      "texture_size": 2048,
+      "height_m": 3.2,
+      "usage": "night-village-props"
+    },
+    {
+      "id": "torch_post",
+      "prompt": "a single thick weathered wooden torch post, one sturdy square timber pole with a small iron bracket on top holding a round iron fire basket filled with coals and charred wood, simple sturdy shape, whole object standing upright on flat ground, three-quarter view, rustic old village style",
+      "seed": 3002,
+      "target_faces": 150000,
+      "texture_size": 2048,
+      "height_m": 2.2,
+      "usage": "night-village-props"
+    },
+    {
+      "id": "campfire_ring",
+      "prompt": "a single round campfire pit, a closed ring of large rounded grey field stones tightly packed together, a small cone of thick charred logs in the center over a bed of glowing ember coals and ash, no flames, compact low shape, whole object resting on flat ground, three-quarter view from above, rustic old village style",
+      "seed": 3003,
+      "target_faces": 150000,
+      "texture_size": 2048,
+      "height_m": 0.6,
+      "usage": "night-village-props"
+    },
+    {
+      "id": "well",
+      "prompt": "a single old round village well, a thick solid round wall of stacked grey fieldstones with a flat stone rim, two very thick square timber posts holding a thick wooden crossbeam and a small solid pitched roof, one wooden bucket sitting on the stone rim, no rope, compact simple sturdy shape, whole object standing on flat ground, three-quarter view, rustic old village style",
+      "seed": 3014,
+      "target_faces": 150000,
+      "texture_size": 2048,
+      "height_m": 2.6,
+      "upsample_resolution": 1024,
+      "usage": "night-village-props"
     }
   ]
 }

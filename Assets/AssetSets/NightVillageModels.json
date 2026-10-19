@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "name": "NightVillageModels",
+  "package_root": "Cooked/NightVillage",
+  "default_variant": "default",
+  "cook_assets": true,
+  "textures": [],
+  "models": [
+    {
+      "logical_path": "Assets/Models/Generated/street_lamp/street_lamp.glb",
+      "source_path": "Assets/Models/Generated/street_lamp/street_lamp.glb",
+      "fallback_min_triangles": 4096,
+      "package_name": "NightVillage/street_lamp.nvpkg",
+      "entry_name": "Assets/Models/Generated/street_lamp/street_lamp.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/Generated/torch_post/torch_post.glb",
+      "source_path": "Assets/Models/Generated/torch_post/torch_post.glb",
+      "fallback_min_triangles": 4096,
+      "package_name": "NightVillage/torch_post.nvpkg",
+      "entry_name": "Assets/Models/Generated/torch_post/torch_post.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/Generated/campfire_ring/campfire_ring.glb",
+      "source_path": "Assets/Models/Generated/campfire_ring/campfire_ring.glb",
+      "fallback_min_triangles": 4096,
+      "package_name": "NightVillage/campfire_ring.nvpkg",
+      "entry_name": "Assets/Models/Generated/campfire_ring/campfire_ring.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/Generated/well/well.glb",
+      "source_path": "Assets/Models/Generated/well/well.glb",
+      "fallback_min_triangles": 4096,
+      "package_name": "NightVillage/well.nvpkg",
+      "entry_name": "Assets/Models/Generated/well/well.nvmesh"
+    }
+  ]
+}
