@@ -197,6 +197,12 @@
 #       領域ごとに、エンジンと Cycles の露出前の線形の平均（輝度・RGB）と比、Cycles の内訳、GBuffer と再現のアルベド、
 #       再現した材質の AO の平均と、エンジンだけが掛ける材質の AO を Cycles の太陽の組・空の組に掛けた見込みとの比を書く。
 #       --verify は撮影・材質・Cycles の入力の記録を今のファイルと照らす。
+#       --require-judged <視点>:<領域>,... を付けると、名指しの領域が判定済みでなければ落とす。本描画（<参照>/cycles）で
+#       未判定の領域は、影の切り出しの参照（<参照>/LIT_CROP_DIR/{material,cycles}。BlenderReference.py --lit --crop-regions）
+#       で判定する: 切り出しの参照の入力（RefSplit。ずらし 0）とエンジンの撮影との条件の揃い、出力のハッシュ・カメラ・材質の
+#       標本の位置、名指しの領域を描いたこと、2 本の差の収束（--gray と同じ基準、1 本 LIT_MIN_SPP_PER_SEED サンプル以上）、
+#       太陽の直接光 + 空の直接光 + 間接光・直接光 + 間接光・太陽の組 + 空の組が領域ごとに合成の ±GRAY_SPLIT_TOLERANCE。
+#       通った領域は値（エンジンと Cycles の平均・比・内訳・太陽の可視率）を切り出しの描画で置き換え、cycles_source に印を書く。
 #
 #   python Scripts/Terrain/ReferenceCheck.py --tonemap --capture <出力先> [--lit-capture <SCN-WLR-CYCLES-LIT の出力先>]
 #                                            [--views a,b,...] [--verify]
@@ -423,6 +429,9 @@ LIT_VIEWS = ("ref_far_01", "ref_far_02", "ref_cliff_01", "ref_cliff_02", "ref_gr
 LIT_MATERIAL_DIR = "material"
 # 収束を判定する 1 本あたりのサンプル数の下限（BlenderReference.py の MIN_SPP_PER_SEED と同じ。届かない描画の領域は未判定）
 LIT_MIN_SPP_PER_SEED = 512
+# 本描画で収束しない領域の切り出しの参照の置き場（<参照> の下。BlenderReference.py の LIT_CROP_DIR と同じ）と、その内訳
+LIT_CROP_DIR = "shadow"
+LIT_CROP_PARTS = ("sun", "sky", "direct", "indirect", "sun_direct", "sky_direct")
 # --tonemap（表示変換の候補を同じ HDR に掛けて比べる）
 TONEMAP_VIEWS = LIT_VIEWS
 # Cycles の HDR（と、その露出を決めたエンジンの撮影）を借りる SCN-WLR-CYCLES-LIT の出力先
@@ -528,9 +537,14 @@ SHIFTED_REFERENCE_SCOPE = "region_means_only"
 # 記録（inputs.json の script_sha256・参照の署名の blender.scripts）も今の台本で描いたものとして照らす。
 # SCN-WL-CAMERA-OFFSET: ずらし 0 でない描画を起動の前に断り、自動補正と --camera-shift-hint を除いた（ふつうの Python の側だけ。
 # Blender の中で走る描画の関数は変えていない）。ずらしありの旧参照を --gray・--lit で使い続けるため
+# SCN-WLR-LIT-SHADOW-REF-C01: 切り出しの描画（--crop-regions。job の crop があるときだけ動く枝）と、材質の書き出し先の引数を
+# 足した。crop の無い job の描画（--depth・--gray・--albedo・--normal・--lit）は変えていない
 BLENDER_SCRIPT_EQUIVALENT_SHA256 = {
     "ab3aff4ec3c7776b27ad766059506d9e2f83b0e64904e76f76f54bbb508881e0":
         ("ad3cea721bf57a593caa9e7ab97228a6367fa94acd67bc00115e01886598be49",),
+    "74c6ee7e3fce1a91d42929fd5700ac225c8db2b9ba8f924ee1330036da50a5a4":
+        ("ab3aff4ec3c7776b27ad766059506d9e2f83b0e64904e76f76f54bbb508881e0",
+         "ad3cea721bf57a593caa9e7ab97228a6367fa94acd67bc00115e01886598be49"),
 }
 # 小数のずれを求めるのに使う画素: 深度の勾配が 1 画素あたり深度のこの割合未満（1 次の近似が効く所）
 SUBPIXEL_FIT_MAX_RELATIVE_GRADIENT = 0.01
@@ -5024,7 +5038,141 @@ def write_lit_photo_overview(path, rows, font):
     sheet.save(path)
 
 
-def run_lit(capture_dir, views, verify, engine_dirs=None, reference_root=None, expect=None):
+def parse_require_judged(text):
+    """--require-judged の <視点>:<領域>,... を [(視点, 領域)] にする。(組の一覧, 誤りの一覧)"""
+    pairs, errors = [], []
+    for item in (s.strip() for s in (text or "").split(",")):
+        if not item:
+            continue
+        view, _, region = item.partition(":")
+        if not view or region not in GR.REGIONS:
+            errors.append(f"--require-judged の {item} が <視点>:<領域>（領域は {','.join(GR.REGIONS)}）でない")
+            continue
+        pairs.append((view, region))
+    return pairs, errors
+
+
+def lit_crop_judge(crop_root, view, regions, engine_dir, engine_hdr, engine_depth, engine_records, engine_logs, verify):
+    """本描画で未判定の領域を、影の切り出しの参照（crop_root = <参照>/LIT_CROP_DIR）で判定する（--require-judged）。
+    (領域の名前 → 値, 失敗の一覧, 記録)"""
+    import RefSplit
+    failures = []
+    ok, reasons, reference = split_reference(crop_root, "lit", verify)
+    failures.extend(reasons)
+    record = {"reference": rel_dir(crop_root), "inputs_current": ok,
+              "reference_signature": (reference or {}).get("signature_sha256")}
+    failures.extend(RefSplit.check_reference_engine(reference, engine_records, engine_logs,
+                                                    RefSplit.load_reference_table(sys.modules[__name__], crop_root)))
+    cycles_dir = os.path.join(crop_root, GRAY_CYCLES_DIR)
+    material_dir = os.path.join(crop_root, LIT_MATERIAL_DIR)
+    meta_path = os.path.join(cycles_dir, f"{view}.cycles.json")
+    if not os.path.isfile(meta_path):
+        return {}, failures + [f"{rel_dir(meta_path)} が無い（BlenderReference.py --lit --crop-regions で描いていない）"], record
+    with open(meta_path, encoding="utf-8") as f:
+        meta = json.load(f)
+    crop = meta.get("crop") or {}
+    record.update({"crop": crop, "spp_per_seed": meta.get("spp_per_seed"), "stop_reason": meta.get("stop_reason"),
+                   "settings": meta.get("settings"), "render_seconds": meta.get("render_seconds"),
+                   "load_seconds": meta.get("load_seconds"), "consistency": meta.get("consistency")})
+    missing = [r for r in regions if r not in (crop.get("regions") or [])]
+    if missing:
+        failures.append(f"切り出しの描画が領域 {missing} を名指していない（{crop.get('regions')}）")
+    for name, digest in (meta.get("outputs_sha256") or {}).items():
+        path = os.path.join(cycles_dir, name)
+        if not os.path.isfile(path) or sha256_file(path) != digest:
+            failures.append(f"{rel_dir(cycles_dir)}/{name} が無いか、記録のハッシュと違う")
+    if any(v != 0.0 for v in reference_shift_px(meta)):
+        failures.append(f"切り出しの Cycles がカメラを {reference_shift_px(meta)} 画素ずらしている（ずらし 0 で描く）")
+    with open(os.path.join(engine_dir, f"{view}.aov.json"), encoding="utf-8-sig") as f:
+        failures.extend(gray_camera_match(json.load(f)["camera"], meta["camera_engine"]))
+    # 画素ごとの材質（ずらし 0）の標本の位置がエンジンの画素の中心に揃っていること
+    material_inputs = os.path.join(material_dir, "inputs.json")
+    material_view = {}
+    if os.path.isfile(material_inputs):
+        with open(material_inputs, encoding="utf-8") as f:
+            material_view = (json.load(f).get("views") or {}).get(view) or {}
+    if any(v != 0.0 for v in reference_shift_px(material_view)) or not material_view:
+        failures.append(f"切り出しの画素ごとの材質の記録が無いか、カメラをずらしている（{material_view.get('camera_shift_px')}）")
+    material_depth = os.path.join(material_dir, f"{view}.depth.pfm")
+    if os.path.isfile(material_depth):
+        subpixel = depth_subpixel_shift(engine_depth.astype(np.float64),
+                                        read_pfm_any(material_depth)[..., 0].astype(np.float64))
+        record["material_subpixel"] = subpixel
+        if math.hypot(subpixel["right_px"], subpixel["down_px"]) > NORMAL_SUBPIXEL_MAX_PX:
+            failures.append(f"切り出しの画素ごとの材質の標本の位置がエンジンの画素から ({subpixel['right_px']:+.3f}, "
+                            f"{subpixel['down_px']:+.3f}) 画素ずれている（{NORMAL_SUBPIXEL_MAX_PX} 画素以下）")
+    else:
+        failures.append(f"{rel_dir(material_depth)} が無い")
+    if failures:
+        return {}, failures, record
+
+    prefix = os.path.join(cycles_dir, view)
+    cycles = read_pfm_any(prefix + ".cycles.hdr.pfm").astype(np.float64)
+    seed_a = read_pfm_any(prefix + ".cycles.seed_a.pfm").astype(np.float64)
+    seed_b = read_pfm_any(prefix + ".cycles.seed_b.pfm").astype(np.float64)
+    parts = {g: read_pfm_any(prefix + f".cycles.{g}.pfm").astype(np.float64) for g in LIT_CROP_PARTS}
+    visibility = read_pfm_any(prefix + ".aux.visibility.pfm")[..., 0]
+    n_dot_l = read_pfm_any(prefix + ".aux.n_dot_l.pfm")[..., 0]
+    normal = read_pfm_any(prefix + ".aux.normal.pfm")
+    alpha = read_pfm_any(prefix + ".aux.alpha.pfm")[..., 0]
+    if cycles.shape != engine_hdr.shape:
+        return {}, [f"切り出しの Cycles の大きさ {cycles.shape} がエンジン {engine_hdr.shape} と違う"], record
+    for name, image in [("合成", cycles), ("A", seed_a), ("B", seed_b)] + list(parts.items()):
+        if not np.isfinite(image).all() or (image < 0.0).any():
+            failures.append(f"切り出しの Cycles の {name} に負・NaN・Inf がある")
+    # 領域は本描画と同じ定義（エンジンの深度と、切り出しで描いた太陽の見え方・法線）を、描いた枠の中に限る
+    x0, y0, x1, y1 = (int(v) for v in crop["border_px"])
+    inside = np.zeros(engine_depth.shape, dtype=bool)
+    inside[y0:y1 + 1, x0:x1 + 1] = True
+    masks = {name: m & inside for name, m in
+             GR.region_masks(engine_depth, normal[..., 1], n_dot_l, visibility, alpha > 0.5).items()}
+    stats, _ = GR.convergence(seed_a @ LUMA, seed_b @ LUMA, masks)
+    spp = int(meta.get("spp_per_seed") or 0)
+    engine_y = engine_hdr @ LUMA
+    cycles_y = cycles @ LUMA
+    entries = {}
+    for name in regions:
+        mask = masks[name]
+        entry = {"label": GR.REGION_LABELS[name], "pixels": int(mask.sum()), "convergence": stats[name],
+                 "cycles_source": f"{rel_dir(cycles_dir)}（切り出し）"}
+        if stats[name]["converged"] and spp >= LIT_MIN_SPP_PER_SEED:
+            entry["status"] = "判定"
+        elif stats[name]["pixels"] < GR.MIN_REGION_PX:
+            entry["status"] = "未判定（画素が足りない）"
+        elif spp < LIT_MIN_SPP_PER_SEED:
+            entry["status"] = "未判定（サンプルが下限に届かない）"
+        else:
+            entry["status"] = "未判定（収束しない）"
+        if mask.any():
+            e_rgb = gray_region_means(engine_hdr, mask)
+            c_rgb = gray_region_means(cycles, mask)
+            e_y = float(engine_y[mask].mean())
+            c_y = float(cycles_y[mask].mean())
+            sums = {g: float((parts[g][mask] @ LUMA).mean()) for g in parts}
+            split = {
+                "sun_direct_plus_sky_direct_plus_indirect": (sums["sun_direct"] + sums["sky_direct"] + sums["indirect"]) / c_y,
+                "direct_plus_indirect": (sums["direct"] + sums["indirect"]) / c_y,
+                "sun_plus_sky": (sums["sun"] + sums["sky"]) / c_y,
+            } if c_y > 0 else {}
+            entry.update({
+                "engine_y": e_y, "cycles_y": c_y, "ratio": e_y / c_y if c_y > 0 else None,
+                "engine_rgb": e_rgb.tolist(), "cycles_rgb": c_rgb.tolist(),
+                "ratio_rgb": (e_rgb / np.maximum(c_rgb, 1e-30)).tolist(),
+                "pixel_ratio_p10_p50_p90": np.percentile(engine_y[mask] / np.maximum(cycles_y[mask], 1e-6),
+                                                         [10, 50, 90]).tolist(),
+                "visibility_mean": float(visibility[mask].mean()),
+                "cycles_y_parts": sums,
+                "cycles_share": {g: sums[g] / c_y for g in parts} if c_y > 0 else {},
+                "cycles_split_consistency": split,
+            })
+            for key, value in split.items():
+                if abs(value - 1.0) > GRAY_SPLIT_TOLERANCE:
+                    failures.append(f"{name}: 切り出しの Cycles の {key} の和が合成の {value:.4f} 倍（±{GRAY_SPLIT_TOLERANCE}）")
+        entries[name] = entry
+    return entries, failures, record
+
+
+def run_lit(capture_dir, views, verify, engine_dirs=None, reference_root=None, expect=None, require_judged=None):
     """実材質の地形の比較。撮影先・参照の場所・入力の照らし方は run_gray と同じ（参照は <参照>/cycles と <参照>/material）"""
     import RefSplit
     failures = []
@@ -5187,6 +5335,55 @@ def run_lit(capture_dir, views, verify, engine_dirs=None, reference_root=None, e
     if photo_rows:
         write_lit_photo_overview(os.path.join(capture_dir, "lit_photo_overview.png"), photo_rows, font)
         report["photo_overview"] = "lit_photo_overview.png"
+
+    # --require-judged: 名指しの領域が判定済みであること。本描画で未判定なら影の切り出しの参照で判定する
+    if require_judged is not None:
+        pairs, errors = parse_require_judged(require_judged)
+        failures.extend(errors)
+        report["require_judged"] = {"pairs": [f"{v}:{r}" for v, r in pairs], "crop": {}}
+        results_by_view = {r["view"]: r for r in report["view_results"]}
+        for view in sorted({v for v, _ in pairs}):
+            wanted = [r for v, r in pairs if v == view]
+            result = results_by_view.get(view)
+            if result is None or not result.get("regions"):
+                failures.append(f"{view}: --require-judged の視点を比べていない（--views に入れる）")
+                continue
+            pending = [r for r in wanted if result["regions"][r]["status"] != "判定"]
+            if not pending:
+                continue
+            engine_dir = view_dirs[view]
+            engine_hdr, _meta, _ = lit_engine_hdr(engine_dir, view)
+            engine_depth = read_pfm_any(os.path.join(engine_dir, f"{view}.aov.depth.pfm"))[..., 0]
+            entries, crop_failures, crop_record = lit_crop_judge(
+                os.path.join(reference_root, LIT_CROP_DIR), view, pending, engine_dir, engine_hdr, engine_depth,
+                engine_records, engine_logs, verify)
+            report["require_judged"]["crop"][view] = crop_record
+            failures.extend(f"{view}: {f}" for f in crop_failures)
+            for name in pending:
+                main = result["regions"][name]
+                entry = entries.get(name)
+                if entry is None:
+                    failures.append(f"{view}:{name} が未判定（本描画は {main['status']}、切り出しの参照で判定できない）")
+                    continue
+                entry["main"] = {k: main.get(k) for k in ("status", "pixels", "convergence", "cycles_y", "ratio")}
+                result["regions"][name] = entry
+                conv = entry["convergence"]
+                print(f"REFERENCE_CHECK lit_crop view={view} region={name} status={entry['status']} pixels={entry['pixels']} "
+                      f"engine_y={entry.get('engine_y', float('nan')):.1f} cycles_y={entry.get('cycles_y', float('nan')):.1f} "
+                      f"ratio={entry.get('ratio') or float('nan'):.3f} "
+                      f"visibility={entry.get('visibility_mean', float('nan')):.3f} "
+                      f"share={json.dumps({k: round(v, 4) for k, v in entry.get('cycles_share', {}).items()})} "
+                      f"split={json.dumps({k: round(v, 5) for k, v in entry.get('cycles_split_consistency', {}).items()})} "
+                      f"mean_diff={conv.get('mean_diff', float('nan')):.4f} pixel_rms={conv.get('pixel_rms', float('nan')):.3f}")
+                if entry["status"] != "判定":
+                    failures.append(f"{view}:{name} が未判定（切り出しの参照でも {entry['status']}）")
+            print(f"REFERENCE_CHECK lit_crop view={view} reference={crop_record.get('reference_signature')} "
+                  f"inputs_current={int(bool(crop_record.get('inputs_current')))} spp_per_seed={crop_record.get('spp_per_seed')} "
+                  f"stop={crop_record.get('stop_reason')} border={(crop_record.get('crop') or {}).get('border_px')}")
+        for view, region in pairs:
+            entry = ((results_by_view.get(view) or {}).get("regions") or {}).get(region)
+            if entry is not None and entry["status"] == "判定":
+                print(f"REFERENCE_CHECK require_judged {view}:{region} judged=1 source={entry.get('cycles_source', '本描画')}")
     apply_expect(report, expect, "lit", failures)
     report["failures"] = failures
     report_path = os.path.join(capture_dir, "lit_check.json")
@@ -5632,6 +5829,9 @@ def main():
                              "の各行も判定する")
     parser.add_argument("--expect-selftest", action="store_true",
                         help="保存した撮影で、今の値で通る仕様が通り、外れる行・許さない未判定・仕様の誤りで落ちることを確かめる")
+    parser.add_argument("--require-judged", default=None,
+                        help="--lit: 判定済みでなければ落とす領域（<視点>:<領域>,...）。本描画で未判定なら <参照>/"
+                             f"{LIT_CROP_DIR} の切り出しの参照で判定する")
     parser.add_argument("--views", default="", help="検査する視点（カンマ区切り。省くと metrics.json の全視点）")
     parser.add_argument("--verify", action="store_true", help="入力のハッシュを今のファイルと照らし、古い結果を拒否する")
     args = parser.parse_args()
@@ -5641,6 +5841,9 @@ def main():
     expect = os.path.normpath(args.expect if os.path.isabs(args.expect) else os.path.join(REPO_ROOT, args.expect))         if args.expect else None
     if expect and not (args.gray or args.lit or args.blur_static or args.blur_motion):
         print("REFERENCE_CHECK result=fail reason=expect_unsupported（--expect は --gray・--lit・--blur-static・--blur-motion と使う）")
+        return 1
+    if args.require_judged is not None and not args.lit:
+        print("REFERENCE_CHECK result=fail reason=require_judged_unsupported（--require-judged は --lit と使う）")
         return 1
     if args.ref_split_selftest:
         import RefSplit
@@ -5732,7 +5935,7 @@ def main():
         return run_normal(capture_dir, views, args.verify)
     if args.lit:
         views = [v.strip() for v in args.views.split(",") if v.strip()]
-        return run_lit(capture_dir, views, args.verify, engine_dirs or None, reference, expect)
+        return run_lit(capture_dir, views, args.verify, engine_dirs or None, reference, expect, args.require_judged)
     if args.tonemap:
         views = [v.strip() for v in args.views.split(",") if v.strip()]
         lit_dir = args.lit_capture if os.path.isabs(args.lit_capture) else os.path.join(REPO_ROOT, args.lit_capture)

@@ -60,6 +60,17 @@
 #       描画は Blender を起動する前に断る（--skip-material でずらしありの旧材質を使う --lit も断る。材質から描き直す）。
 #       ずらしありで描いた旧参照は ReferenceCheck.SHIFTED_REFERENCE_SCOPE の範囲でだけ使う。
 #          材質の AO は Cycles に掛けない（エンジンだけの近似。照合の表に領域ごとの平均を書く）。照合は ReferenceCheck.py --lit。
+#
+#   python Scripts/Terrain/BlenderReference.py --lit --crop-regions shadow_cliff,shadow_ground --views <視点> ...
+#       本描画で収束しない領域だけを切り出して描く（SCN-WLR-LIT-SHADOW-REF-C01）。結果は <撮影>/LIT_CROP_DIR/ の下に
+#       material/・cycles/ として --lit と同じ形で書く（本描画の参照は触らない）。太陽の見え方で決めた領域のうち名指しの領域の
+#       画素を囲む枠（CROP_PAD_PX 画素の余白つき）を Cycles の border で描き、収束は名指しの領域だけで測る。
+#       本描画の 2 本の差は、2 回目の当たりで BSDF の標本が太陽の円盤に入った 1 標本（スループット ≈ アルベドの 2 乗 ×
+#       太陽の放射輝度）だけで決まっていた。ライトツリーは当たりの点の法線で太陽の選ばれやすさを見積もり、それが 0 に近い点では
+#       BSDF の標本の重みがほぼ 1 になるので、切り出しではライトツリーを切る（光の選び方だけの違いで、期待値は変わらない）。
+#       種ごとに、同じ枠を跳ね返り 0（直接光だけ）でも描き、太陽の組・空の組を太陽の直接光（sun_direct）・空の直接光
+#       （sky_direct）として書く（間接光 indirect は本描画の Diffuse/Glossy Indirect）。描画は 1 本 CROP_MAX_TOTAL_SECONDS
+#       （読み込みを含む）で止める。
 import argparse
 import hashlib
 import json
@@ -109,6 +120,13 @@ CHUNK_SPP = 64
 MIN_SPP_PER_SEED = 512
 MAX_SPP_PER_SEED = 2048
 MAX_SECONDS_PER_VIEW = 2400.0
+# 切り出しの描画（--crop-regions）: 結果の置き場、枠の余白、1 本の時間の上限（読み込みを含む）、1 本あたりのサンプル数の上限、
+# 直接光だけの描画の種（本描画の種と重ならない）
+LIT_CROP_DIR = "shadow"
+CROP_PAD_PX = 8
+CROP_MAX_TOTAL_SECONDS = 1200.0
+CROP_MAX_SPP_PER_SEED = 16384
+CROP_DIRECT_SEED_OFFSET = 1000000
 # 板の較正（エンジンの板の撮影 SCN-WLR-COMMON-LIGHT と同じ視点の太陽）
 PLATE_VIEW = "ref_cliff_01"
 PLATE_CASES = ("sun", "sky")
@@ -411,7 +429,10 @@ def run_gray(args, lit=False):
     """--gray（灰色の材質）と --lit（実材質。lit = True）の Cycles の描画"""
     mesh_dir = os.path.abspath(args.mesh)
     capture_dir = os.path.abspath(args.capture)
-    out_dir = os.path.join(capture_dir, GRAY_RESULT_DIR)
+    # 切り出しの描画は <撮影>/LIT_CROP_DIR/ の下に材質と Cycles を書く（カメラ・深度・撮影の記録は <撮影> から読む）
+    crop_regions = [r for r in (getattr(args, "crop_regions", "") or "").split(",") if r]
+    result_root = os.path.join(capture_dir, LIT_CROP_DIR) if crop_regions else capture_dir
+    out_dir = os.path.join(result_root, GRAY_RESULT_DIR)
     os.makedirs(out_dir, exist_ok=True)
     light = load_common_light()
     gray = light["gray_material"]
@@ -426,11 +447,11 @@ def run_gray(args, lit=False):
     # 実材質: 画素ごとの材質（カメラの光線の当たり）と、それを描いたときのカメラの小数のずらし・OSL
     lit_material = None
     if lit:
-        if not args.skip_material and run_material(args, "lit") != 0:
+        if not args.skip_material and run_material(args, "lit", result_root) != 0:
             return 1
         if args.material_only:
             return 0
-        material_dir = os.path.join(capture_dir, LIT_MATERIAL_DIR)
+        material_dir = os.path.join(result_root, LIT_MATERIAL_DIR)
         record_path = os.path.join(material_dir, "inputs.json")
         if not os.path.isfile(record_path):
             print(f"BLENDER_REFERENCE error {LIT_MATERIAL_DIR}/inputs.json が無い（--skip-material の前に材質を描いていない）")
@@ -507,12 +528,18 @@ def run_gray(args, lit=False):
             job.update({
                 "material_mode": "lit",
                 "camera_shift_px": material_view["camera_shift_px"],
-                "screen_material": {key: os.path.join(capture_dir, LIT_MATERIAL_DIR, f"{view}.{key}.pfm")
+                "screen_material": {key: os.path.join(result_root, LIT_MATERIAL_DIR, f"{view}.{key}.pfm")
                                     for key in ("albedo", "shaded_normal", "roughness")},
                 "osl": os.path.join(REPO_ROOT, lit_material["material"]["osl"]),
             })
+        if crop_regions:
+            job["crop"] = {"regions": crop_regions, "pad_px": CROP_PAD_PX, "max_total_seconds": CROP_MAX_TOTAL_SECONDS,
+                           "direct_seed_offset": CROP_DIRECT_SEED_OFFSET}
+            job["max_seconds"] = CROP_MAX_TOTAL_SECONDS
+        parts = ("hdr", "seed_a", "seed_b", "sun", "sky", "direct", "indirect") + \
+            (("sun_direct", "sky_direct") if crop_regions else ())
         job["required_outputs"] = [f"{prefix}.cycles.exr", f"{prefix}.aux.exr", f"{prefix}.cycles.json"] + \
-            [f"{prefix}.cycles.{part}.pfm" for part in ("hdr", "seed_a", "seed_b", "sun", "sky", "direct", "indirect")] + \
+            [f"{prefix}.cycles.{part}.pfm" for part in parts] + \
             [f"{prefix}.aux.{part}.pfm" for part in ("visibility", "n_dot_l", "normal", "alpha")]
         for stale in job["required_outputs"]:
             if os.path.exists(stale):
@@ -528,6 +555,8 @@ def run_gray(args, lit=False):
         view_records[view] = {"camera": camera, "width": width, "height": height,
                               "tiles": sorted(t["file"] for t in tiles), "triangles": triangles,
                               "sun_altitude_degrees": altitude, "sun_azimuth_degrees": azimuth}
+        if crop_regions:
+            view_records[view]["crop_regions"] = crop_regions
         if lit:
             view_records[view]["camera_shift_px"] = job["camera_shift_px"]
             view_records[view]["screen_material_sha256"] = {key: sha256_file(path)
@@ -581,12 +610,13 @@ def run_gray(args, lit=False):
     return 0
 
 
-def run_material(args, mode):
-    """--albedo（mode = albedo）・--normal（mode = normal）"""
+def run_material(args, mode, result_root=None):
+    """--albedo（mode = albedo）・--normal（mode = normal）・--lit の画素ごとの材質（mode = lit）。result_root を渡すと
+    <撮影> の代わりにその下へ書く（切り出しの描画）"""
     mesh_dir = os.path.abspath(args.mesh)
     capture_dir = os.path.abspath(args.capture)
     result_dir = MATERIAL_RESULT_DIRS[mode]
-    out_dir = os.path.join(capture_dir, result_dir)
+    out_dir = os.path.join(result_root or capture_dir, result_dir)
     mips_dir = os.path.abspath(args.mips) if args.mips else os.path.join(out_dir, "mips")
     os.makedirs(out_dir, exist_ok=True)
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -1689,8 +1719,39 @@ def render_gray_job(job):
     print(f"BLENDER_GRAY view={job['view']} regions=" +
           json.dumps({name: int(masks[name].sum()) for name in GR.REGIONS}), flush=True)
 
-    # 3. 本描画を CHUNK_SPP ずつ種を変えて重ね、偶数番目を A・奇数番目を B に足す
-    groups = ("combined", "sun", "sky", "direct", "indirect")
+    # 切り出し（job の crop）: 名指しの領域の画素を囲む枠だけを描き、領域は枠の中に限る。ライトツリーを切る
+    crop = job.get("crop")
+    crop_record = None
+    if crop:
+        targets = list(crop["regions"])
+        target = np.zeros((height, width), dtype=bool)
+        for name in targets:
+            target |= masks[name]
+        if not target.any():
+            raise RuntimeError(f"切り出しの領域 {targets} に画素が無い")
+        rows = np.nonzero(target.any(axis=1))[0]
+        columns = np.nonzero(target.any(axis=0))[0]
+        pad = int(crop["pad_px"])
+        x0, x1 = max(0, int(columns[0]) - pad), min(width - 1, int(columns[-1]) + pad)
+        y0, y1 = max(0, int(rows[0]) - pad), min(height - 1, int(rows[-1]) + pad)
+        # Blender の枠は左下が 0、右上が 1（画像の行は上が 0）
+        scene.render.use_border = True
+        scene.render.use_crop_to_border = False
+        scene.render.border_min_x, scene.render.border_max_x = x0 / width, (x1 + 1) / width
+        scene.render.border_min_y, scene.render.border_max_y = 1.0 - (y1 + 1) / height, 1.0 - y0 / height
+        inside = np.zeros((height, width), dtype=bool)
+        inside[y0:y1 + 1, x0:x1 + 1] = True
+        masks = {name: masks[name] & inside for name in GR.REGIONS}
+        scene.cycles.use_light_tree = False
+        crop_record = {"regions": targets, "border_px": [x0, y0, x1, y1], "pad_px": pad,
+                       "border_pixels": int(inside.sum()), "target_pixels": int(target.sum()),
+                       "max_total_seconds": float(crop["max_total_seconds"]), "light_tree": False,
+                       "direct_seed_offset": int(crop["direct_seed_offset"])}
+        print(f"BLENDER_GRAY view={job['view']} crop border=({x0},{y0})-({x1},{y1}) pixels={int(inside.sum())} "
+              f"target_pixels={int(target.sum())}", flush=True)
+
+    # 3. 本描画を CHUNK_SPP ずつ種を変えて重ね、偶数番目を A・奇数番目を B に足す（切り出しでは種ごとに直接光だけの描画も足す）
+    groups = ("combined", "sun", "sky", "direct", "indirect") + (("sun_direct", "sky_direct") if crop else ())
     sums = {seed: {g: np.zeros((height, width, 3), dtype=np.float64) for g in groups} for seed in ("a", "b")}
     chunk_spp = int(job["chunk_spp"])
     max_spp = int(job["max_spp_per_seed"])
@@ -1720,6 +1781,17 @@ def render_gray_job(job):
                 "indirect": parts["Diffuse Indirect"] * parts["Diffuse Color"] +
                             parts["Glossy Indirect"] * parts["Glossy Color"],
             }
+            if crop:
+                # 枠が名指しの領域を覆うこと（描いた画素の被覆）
+                if chunk == 0 and seed == "a" and (channels["ViewLayer.Combined.A"][target] < 0.5).any():
+                    raise RuntimeError("切り出しの枠が名指しの領域の画素を覆っていない")
+                # 直接光だけ（跳ね返り 0）を別の種で描き、太陽の組・空の組を太陽の直接光・空の直接光にする
+                set_gray_bounces(scene, 0)
+                scene.cycles.seed = int(crop["direct_seed_offset"]) + chunk
+                direct_channels = render_and_read(scene, exr_tmp)
+                set_gray_bounces(scene, GRAY_MAX_BOUNCES)
+                values["sun_direct"] = pass_rgb(direct_channels, "Combined_sun")
+                values["sky_direct"] = pass_rgb(direct_channels, "Combined_sky")
             for group in groups:
                 sums[seed][group] += values[group]
             chunk += 1
@@ -1729,6 +1801,9 @@ def render_gray_job(job):
         y_a = GR.luminance(sums["a"]["combined"] / per_seed)
         y_b = GR.luminance(sums["b"]["combined"] / per_seed)
         stats, all_converged = GR.convergence(y_a, y_b, masks)
+        if crop:
+            # 名指しの領域がすべて収束したときだけ止める（画素が下限に足りない領域は収束しない）
+            all_converged = all(stats[name]["converged"] for name in crop_record["regions"])
         elapsed = time.time() - loop_started
         history.append({"spp_per_seed": spp, "elapsed_seconds": elapsed, "regions": stats})
         print(f"BLENDER_GRAY view={job['view']} spp_per_seed={spp} elapsed={elapsed:.0f}s all_converged={int(all_converged)} " +
@@ -1741,6 +1816,9 @@ def render_gray_job(job):
             stop_reason = "max_spp"
             break
         if elapsed + pair_seconds > max_seconds:
+            stop_reason = "max_seconds"
+            break
+        if crop and time.time() - started + pair_seconds > crop_record["max_total_seconds"]:
             stop_reason = "max_seconds"
             break
     render_seconds = time.time() - loop_started
@@ -1758,6 +1836,14 @@ def render_gray_job(job):
         "direct_plus_indirect_over_combined": float(split_y.sum() / max(combined_y.sum(), 1e-30)),
         "sun_plus_sky_over_combined": float(groups_y.sum() / max(combined_y.sum(), 1e-30)),
     }
+    if crop:
+        # 太陽の直接光 + 空の直接光（直接光だけの描画）+ 間接光（本描画）を、名指しの領域ごとに合成と照らす
+        def three_way(mask):
+            whole = GR.luminance(final["combined"])[mask].sum()
+            parts_y = GR.luminance(final["sun_direct"] + final["sky_direct"] + final["indirect"])[mask].sum()
+            return float(parts_y / max(whole, 1e-30))
+        consistency["sun_direct_plus_sky_direct_plus_indirect_over_combined"] = three_way(target)
+        consistency["regions"] = {name: three_way(masks[name]) for name in crop_record["regions"] if masks[name].any()}
     names = []
     planes = []
     for group in groups:
@@ -1770,51 +1856,56 @@ def render_gray_job(job):
     GR.write_pfm(prefix + ".cycles.hdr.pfm", final["combined"])
     GR.write_pfm(prefix + ".cycles.seed_a.pfm", seed_a)
     GR.write_pfm(prefix + ".cycles.seed_b.pfm", seed_b)
-    for group in ("sun", "sky", "direct", "indirect"):
+    for group in groups[1:]:
         GR.write_pfm(prefix + f".cycles.{group}.pfm", final[group])
     outputs = {}
     for suffix in (".cycles.exr", ".cycles.seed_a.exr", ".cycles.seed_b.exr", ".aux.exr", ".cycles.hdr.pfm",
                    ".cycles.seed_a.pfm", ".cycles.seed_b.pfm", ".cycles.sun.pfm", ".cycles.sky.pfm",
                    ".cycles.direct.pfm", ".cycles.indirect.pfm", ".aux.visibility.pfm", ".aux.n_dot_l.pfm",
-                   ".aux.normal.pfm", ".aux.alpha.pfm"):
+                   ".aux.normal.pfm", ".aux.alpha.pfm") + \
+            ((".cycles.sun_direct.pfm", ".cycles.sky_direct.pfm") if crop else ()):
         outputs[os.path.basename(prefix) + suffix] = sha256_file(prefix + suffix)
+    meta = {
+        "view": job["view"],
+        "renderer": f"Blender {bpy.app.version_string} Cycles",
+        "device": device,
+        "width": width,
+        "height": height,
+        "camera_engine": job["camera"],
+        "camera_blender_matrix_world": matrix,
+        "camera_vertical_fov_degrees": math.degrees(vertical_fov),
+        "tiles": len(job["tiles"]),
+        "vertices": vertex_count,
+        "triangles": triangle_count,
+        "normals": "PLY の頂点の法線（custom_normal、点の領域）",
+        "triangles_rewound": flipped_count,
+        "material": material_record,
+        "camera_shift_px": [float(v) for v in shift_px],
+        "lighting": lighting,
+        "sun_altitude_degrees": job["sun_altitude_degrees"],
+        "sun_azimuth_degrees": job["sun_azimuth_degrees"],
+        "settings": {"max_bounces": GRAY_MAX_BOUNCES, "pixel_filter": {"type": "BOX", "width_px": GRAY_PIXEL_FILTER_WIDTH},
+                     "clamp": 0.0, "denoise": False, "adaptive": False, "chunk_spp": chunk_spp,
+                     "min_spp_per_seed": MIN_SPP_PER_SEED, "max_spp_per_seed": max_spp, "max_seconds": max_seconds,
+                     "visibility_spp": VISIBILITY_SPP},
+        "seeds": {"a": list(range(1, chunk + 1, 2)), "b": list(range(2, chunk + 1, 2))},
+        "spp_per_seed": per_seed * chunk_spp,
+        "stop_reason": stop_reason,
+        "all_converged": bool(all_converged),
+        "regions": stats,
+        "region_criteria": GR.criteria(),
+        "history": history,
+        "consistency": consistency,
+        "load_seconds": load_seconds,
+        "visibility_seconds": visibility_seconds,
+        "render_seconds": render_seconds,
+        "outputs_sha256": outputs,
+    }
+    if crop:
+        meta["crop"] = crop_record
+        meta["settings"]["light_tree"] = False
     with open(prefix + ".cycles.json", "w", encoding="utf-8") as f:
-        json.dump({
-            "view": job["view"],
-            "renderer": f"Blender {bpy.app.version_string} Cycles",
-            "device": device,
-            "width": width,
-            "height": height,
-            "camera_engine": job["camera"],
-            "camera_blender_matrix_world": matrix,
-            "camera_vertical_fov_degrees": math.degrees(vertical_fov),
-            "tiles": len(job["tiles"]),
-            "vertices": vertex_count,
-            "triangles": triangle_count,
-            "normals": "PLY の頂点の法線（custom_normal、点の領域）",
-            "triangles_rewound": flipped_count,
-            "material": material_record,
-            "camera_shift_px": [float(v) for v in shift_px],
-            "lighting": lighting,
-            "sun_altitude_degrees": job["sun_altitude_degrees"],
-            "sun_azimuth_degrees": job["sun_azimuth_degrees"],
-            "settings": {"max_bounces": GRAY_MAX_BOUNCES, "pixel_filter": {"type": "BOX", "width_px": GRAY_PIXEL_FILTER_WIDTH},
-                         "clamp": 0.0, "denoise": False, "adaptive": False, "chunk_spp": chunk_spp,
-                         "min_spp_per_seed": MIN_SPP_PER_SEED, "max_spp_per_seed": max_spp, "max_seconds": max_seconds,
-                         "visibility_spp": VISIBILITY_SPP},
-            "seeds": {"a": list(range(1, chunk + 1, 2)), "b": list(range(2, chunk + 1, 2))},
-            "spp_per_seed": per_seed * chunk_spp,
-            "stop_reason": stop_reason,
-            "all_converged": bool(all_converged),
-            "regions": stats,
-            "region_criteria": GR.criteria(),
-            "history": history,
-            "consistency": consistency,
-            "load_seconds": load_seconds,
-            "visibility_seconds": visibility_seconds,
-            "render_seconds": render_seconds,
-            "outputs_sha256": outputs,
-        }, f, indent=2, ensure_ascii=False)
+        json.dump(meta, f, indent=2, ensure_ascii=False)
     print(f"BLENDER_GRAY view={job['view']} done spp_per_seed={per_seed * chunk_spp} stop={stop_reason} "
           f"load={load_seconds:.1f}s render={render_seconds:.1f}s consistency={json.dumps(consistency)}", flush=True)
 
@@ -1838,7 +1929,8 @@ def main():
                         help="読む区画の範囲（既定は --depth が frustum、--gray が shadow）")
     parser.add_argument("--blender", default=DEFAULT_BLENDER, help="blender.exe")
     parser.add_argument("--chunk-spp", type=int, default=CHUNK_SPP, help="--gray: 1 回の描画のサンプル数")
-    parser.add_argument("--max-spp", type=int, default=MAX_SPP_PER_SEED, help="--gray: 1 本あたりのサンプル数の上限")
+    parser.add_argument("--max-spp", type=int, default=None,
+                        help=f"--gray: 1 本あたりのサンプル数の上限（既定 {MAX_SPP_PER_SEED}、--crop-regions では {CROP_MAX_SPP_PER_SEED}）")
     parser.add_argument("--max-seconds", type=float, default=MAX_SECONDS_PER_VIEW, help="--gray: 1 視点の本描画の時間の上限")
     parser.add_argument("--skip-plate", action="store_true", help="--gray: 板の較正を描かない")
     parser.add_argument("--plate-only", action="store_true", help="--gray: 板の較正だけを描く")
@@ -1850,9 +1942,19 @@ def main():
     parser.add_argument("--lit", action="store_true", help="実材質の地形を共通の照明で描く（画素ごとの材質と Cycles）")
     parser.add_argument("--skip-material", action="store_true", help="--lit: 画素ごとの材質を描き直さない")
     parser.add_argument("--material-only", action="store_true", help="--lit: 画素ごとの材質だけを描く（Cycles で描かない）")
+    parser.add_argument("--crop-regions", default="",
+                        help="--lit: 名指しの領域（カンマ区切り。GrayRegions.REGIONS）だけを切り出して <撮影>/" + LIT_CROP_DIR +
+                             "/ に描く（1 視点）")
     args = parser.parse_args()
     if int(args.depth) + int(args.gray) + int(args.albedo) + int(args.normal) + int(args.lit) != 1:
         parser.error("--depth・--gray・--albedo・--normal・--lit のどれか 1 つを指定してください")
+    if args.crop_regions:
+        GR = load_gray_regions()
+        unknown = [r for r in args.crop_regions.split(",") if r not in GR.REGIONS]
+        if not args.lit or unknown or len([v for v in args.views.split(",") if v]) != 1:
+            parser.error(f"--crop-regions は --lit と 1 つの --views と使い、領域は {','.join(GR.REGIONS)} から選ぶ"
+                         f"（知らない領域 {unknown}）")
+    args.max_spp = args.max_spp or (CROP_MAX_SPP_PER_SEED if args.crop_regions else MAX_SPP_PER_SEED)
     if args.albedo or args.normal:
         args.views = args.views or ",".join(ALBEDO_VIEWS)
         return run_material(args, "albedo" if args.albedo else "normal")
