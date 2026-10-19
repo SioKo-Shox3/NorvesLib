@@ -5658,3 +5658,18 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - Done: `DirectionalField.evaluate` の点の求積を解の求積の `EVALUATION_REFINEMENT`（2）倍にした（`quadrature` に倍率の引数）。検査の段で論文の 2 点を求めて動くことを確かめた（33 秒）
 - 段 1・段 2 の `--solve` を反復の外で切り離して起動する（台本の変更でハッシュが変わるので両方とも解き直し）: `.harness/runs/20261019-192352/atmos-ref-b-solve.ps1` を段ごとに 1 プロセス。ログは `.harness/runs/20261019-192352/aux-SCN-WLR-ATMOS-REF-B-solve-level1.txt`・`-level2.txt`（START に台本の sha256 とコミット、終わると `END ... EXIT=<code>`）。段 2 は前回 2 組で約 7.8 時間
 - Next（次の反復）: 両方のログに `END ... EXIT=0` があるか見る（無ければ python の `AtmosphereReference.py --solve` が走っているか確かめ、走っていれば重ねて起動せず待つ）。そろったら `python Scripts/Terrain/AtmosphereReference.py --verify` を保存して開き、収束 0.5 % を確かめて done。解の走行中と verify の前に台本を触らない
+
+### SCN-WLR-RECAPTURE-BLUR-STATIC 完了（2026-10-19、run 20261019-192352 の反復 12）
+- Done: SCN-WLR-FAR-BLUR-STATIC の静止の 10 組（ref2x を含む）を、同じ RelWithDebInfo の Game.exe（SHA-256 e2e2e3d9…、始めと終わりで同じ）でエンジンの実装の署名つきで撮り直した（`aux-SCN-WLR-REF-SPLIT-recapture.ps1 -Only static`、約 30 分）。値の変化を `Docs/RenderingValidation/WastelandFarBlurStatic.md` の表と「撮り直し」の節に書いた
+- 証拠（`.harness/runs/20261019-192352/`）:
+  - `aux-SCN-WLR-REF-SPLIT-recapture.txt`: static の 10 組と scale-075 の入力の記録が exit=0、same=1・all_ok=1
+  - `verify-SCN-WLR-RECAPTURE-BLUR-STATIC-1.txt`: `--blur-static --verify` result=pass・views=2・cases=9・inputs_current=1・EXIT=0
+  - `aux-SCN-WLR-RECAPTURE-BLUR-STATIC-before.txt`: 撮り直す前の `--verify`（engine_impl が無く落ちる、EXIT=1）。`-before-noverify.txt`: 前の撮影の値（--verify なし）
+  - `aux-SCN-WLR-RECAPTURE-BLUR-STATIC-value-diff.txt`: 前後の差。正解と比べる 8 組は 0.017 以下、条件の効きは 0.008 以下。haze-off だけ大きく動く（ref_far_01 のエイリアス 1.225 → 1.101、霞の比 0.74 → 0.78〜0.79）
+  - `aux-SCN-WLR-RECAPTURE-BLUR-STATIC-pages.txt`: base 以外は進行中 0・追い出し 0・描かれないクラスタ 0、全組 Game.exe が同じ・vt_used_mb 0
+  - 切り出しの並び `blur_ref_far_01.png`・`blur_ref_cliff_02.png` を開き、前の記録と同じ見え方（base・resident・aa-none の崖の筋の階段、aa-taa の柔らかさ、scale-075 の甘さ）を確かめた
+- Notes:
+  - 値の差の主な原因は、前の撮影（6ba6e8dd）の後に荒野の昼のグレーディングを中立にしたこと（3de2a835）。帯域は PNG の表示の値で測る
+  - 撮影の間、大気の正解の段 1・段 2 の `--solve` が裏で走っていた（CPU）。撮影は 30 分で終わり、影響は見ていない
+  - コードは変えていない。新しい試験は足していない
+- Next: TASKS.md の次の未完の項目（SCN-WLR-RECAPTURE-BLUR-MOTION など）。

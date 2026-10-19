@@ -1758,7 +1758,7 @@
 - notes: 危険地帯（描画の読み出し）。値は変えない。撮影の構成（Debug か RelWithDebInfo か）は SCN-WL-CAPTURE-SPEED の決定に揃えてよい（verify も同じ反復で直す）。
 
 ## SCN-WLR-ATMOS-REF-B: 大気の正解の高次の散乱を、方向を保ったまま重ねる形に直す
-- status: todo
+- status: blocked
 - after: SCN-WLR-ATMOS-DUMP
 - done-when: `Scripts/Terrain/AtmosphereReference.py` の B（散乱の回数で足す版）を、各回の散乱で位相関数（Rayleigh・HG）を方向ごとに掛け、方向別の放射輝度を次の回へ引き継ぐ形に直す（今は 2 回目以降を球の平均へ潰し、次の散乱源を σs × Ψ にしている。評価者の最小再現: 書き出しの係数・高度 1474.223367 m・太陽の高度 38° で、太陽方向の二次の散乱源が、位相関数を角度で積分した値の RGB 3.3694・2.9392・2.3542 分の 1）。方法（方向の格子での次数ごとの積分か、論文の著者の参照実装 RenderSkyPathTracing と同じ形のモンテカルロ）は選んでよい。`--verify` に、(1) 上の最小再現の条件で二次の散乱源を位相関数の角度の積分と照らす検査（1 % 以内）、(2) 歩数・方向・標本を倍にした段との差 0.5 % 以内の収束、(3) 1 回目だけの値が A・B で一致すること、を足す。A（論文の近似）は変えない。比べる表の更新は SCN-WLR-ATMOS-REF で行う。
 - verify: `python Scripts/Terrain/AtmosphereReference.py --verify`
@@ -1863,7 +1863,7 @@
 - notes: 2026-10-19 SCN-WLR-REF-SPLIT から分けた。撮影は反復の中で保存し、verify は保存の検査だけ。
 
 ## SCN-WLR-RECAPTURE-BLUR-STATIC: 遠景のぼけの静止の組を新しい記録の形で撮り直す
-- status: todo
+- status: done
 - after: SCN-WLR-REF-SPLIT
 - done-when: SCN-WLR-FAR-BLUR-STATIC の静止の 10 組（ref2x を含む）を、同じ Game.exe で新しい記録の形で撮り直し（`aux-SCN-WLR-REF-SPLIT-recapture.ps1 -Only static`、約 30 分）、`--blur-static --verify` が通ることと、値が前から変わった所を記録する。
 - verify: `python Scripts/Terrain/ReferenceCheck.py --blur-static --capture .harness/runs/scene-capture/SCN-WLR-FAR-BLUR-STATIC --verify`
