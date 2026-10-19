@@ -1,8 +1,7 @@
 ﻿# 撮影の画と記録のカメラのずれの検査（SCN-WL-CAMERA-OFFSET。ReferenceCheck.py --camera-offset から呼ぶ。単独では動かさない）。
 #
 # エンジンの撮影（CaptureScene.ps1 -Aov の出力）の視点ごとに、記録のカメラ（<視点>.aov.json の camera）のまま補正なしで
-# Blender の深度を描き（BlenderReference.py --depth。深度の描画はカメラをずらさない: --camera-shift-hint も深度からの自動補正も
-# 使わない）、エンジンの深度との小数のずれを ReferenceCheck.depth_subpixel_shift で、エンジンの深度が MAX_DEPTH_M 未満の画素で
+# Blender の深度を描き（BlenderReference.py --depth。カメラをずらさない。BlenderReference.py はずらしが 0 でない描画を断る）、エンジンの深度との小数のずれを ReferenceCheck.depth_subpixel_shift で、エンジンの深度が MAX_DEPTH_M 未満の画素で
 # 測る（全画面の値と画面の列ごとの値は記録だけ）。
 #   落ちる: Blender の深度が無いか描いた後に入力が変わった（--verify では撮影の入力も照らす）、Blender の記録のカメラ・画素数が
 #           撮影と違う、Blender のカメラの姿勢が記録のカメラからずれている（ずらし量が 0 でない）、

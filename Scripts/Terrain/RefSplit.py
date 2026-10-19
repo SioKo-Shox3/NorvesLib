@@ -354,6 +354,11 @@ def check_reference(rc, reference_root, mode, root=None):
     current, failures = reference_record(rc, reference_root, mode, root)
     reasons.extend(failures)
     if current is not None:
+        # 同じ画を描く前の版の台本で描いた参照は、今の台本で描いたものとして照らす（ReferenceCheck.BLENDER_SCRIPT_EQUIVALENT_SHA256）
+        scripts = current["blender"]["scripts"]
+        saved_script = (((body.get("blender") or {}).get("scripts")) or {}).get(BLENDER_SCRIPT)
+        if rc.blender_script_matches(scripts[BLENDER_SCRIPT], saved_script):
+            scripts[BLENDER_SCRIPT] = saved_script
         changed = diff_keys(body, current)
         if changed:
             shown = sorted({".".join(k.split(".")[:3]) for k in changed})

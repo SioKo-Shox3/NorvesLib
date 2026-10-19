@@ -199,12 +199,12 @@ ref_cliff_01 の 1.771 は未判定）、遠景 0.764〜0.968（5 視点）、�
 powershell -Command "& ./Scripts/CaptureScene.ps1 -Scene wasteland -OutDir .harness/runs/scene-capture/SCN-WLR-CYCLES-LIT `
   -Views ref_far_01,ref_far_02,ref_cliff_01,ref_cliff_02,ref_ground_01,ref_ground_02 -Configuration RelWithDebInfo -Build `
   -Width 1920 -Height 1080 -Hdr -Aov -LaunchPerView -GameArgs @('--wasteland-common-light','--wasteland-hide=all','--wasteland-finest-lod')"
-# Blender（1 視点ずつ。材質と Cycles で 1 視点 10〜40 分。ずらしの要る視点は材質を 2 回描く）
-python Scripts/Terrain/BlenderReference.py --lit --views ref_cliff_01 --camera-shift-hint 0.243,0.027 `
-  --mesh .harness/runs/scene-capture/SCN-WLR-BLENDER-TERRAIN-mesh --capture .harness/runs/scene-capture/SCN-WLR-CYCLES-LIT
+# Blender（1 視点ずつ。材質と Cycles で 1 視点 10〜40 分）。この参照を描いたときは、ずらしの要る視点の材質を 2 回描き
+# （ref_cliff_01 は --camera-shift-hint 0.243,0.027 から）、Cycles も同じずらしで描いた。SCN-WL-CAMERA-OFFSET の後は
+# --camera-shift-hint と深度からの自動補正は無く、描き直すときはどの視点もずらし 0 で描く
 python Scripts/Terrain/BlenderReference.py --lit --views ref_far_02 `
   --mesh .harness/runs/scene-capture/SCN-WLR-BLENDER-TERRAIN-mesh --capture .harness/runs/scene-capture/SCN-WLR-CYCLES-LIT
-#   （ref_far_01・ref_cliff_02・ref_ground_01・ref_ground_02 も同じ形で）
+#   （ref_far_01・ref_cliff_01・ref_cliff_02・ref_ground_01・ref_ground_02 も同じ形で）
 # 照合
 python Scripts/Terrain/ReferenceCheck.py --lit --views ref_far_01,ref_far_02,ref_cliff_01,ref_cliff_02,ref_ground_01,ref_ground_02 `
   --capture .harness/runs/scene-capture/SCN-WLR-CYCLES-LIT --verify

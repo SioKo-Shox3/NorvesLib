@@ -5715,3 +5715,17 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 直した描画のコードで SCN-WLR-CYCLES-GRAY・LIT などのエンジンの撮影は古くなった（エンジンの実装の署名）。撮り直しは SCN-WLR-RECAPTURE-GRAY-LIT。撮り直した `--lit` は旧参照のずらしの分（最大約 0.84 画素）が記録のカメラからの残りとして測られるので、そこで標本の位置の検査が通るか見る
   - 新しい試験は `--camera-offset`（done-when が名指し）だけ。`--ref-split-selftest` は変更後も 12 件 pass
 - Next: TASKS.md の次の未完の項目（SCN-WLR-RECAPTURE-GRAY-LIT など）。
+
+### SCN-WL-CAMERA-OFFSET 差し戻しの直し（2026-10-20、run 20261019-192352 の反復 16）
+- Done: 評価者の NEEDS_WORK（新しい Cycles の描画にずらしが入り得る）を直した。`BlenderReference.py`: `run_blender_job` がカメラのずらしが 0 でない job を Blender の起動前に断る。`--lit --skip-material` でずらしありの旧材質を使う描画は材質を読んだ直後に断る（材質から描き直す）。`--albedo`・`--normal`・`--lit` の材質の深度からの自動補正の描き直しと `--camera-shift-hint` を除き、ずらし 0 で 1 回描いて深度の小数のずれは記録（`subpixel_fits`）だけにした。台本のハッシュが変わっても旧参照が `--gray`・`--lit` で使えるよう、`ReferenceCheck.BLENDER_SCRIPT_EQUIVALENT_SHA256`（今の台本 → 同じ画を描く前の版）を足し、`check_blender_inputs` と `RefSplit.check_reference` がそれで照らす。記録は `WastelandCameraOffset.md`・`WastelandCyclesLit.md`（手順の `--camera-shift-hint` を除いた）
+- 証拠（`.harness/runs/20261019-192352/`）:
+  - `regression-before-SCN-WL-CAMERA-OFFSET-16.txt`: 反復の最初に今の Game.exe で before を撮り直した（4 シーン pass。反復 15 の before・after は `before-iter15`・`after-iter15` に退避）
+  - `guard-SCN-WL-CAMERA-OFFSET-16.txt`: 評価者の再現（SCN-WLR-CYCLES-LIT の ref_cliff_02 を `--lit --skip-material`）が `[0.7786, -0.0042]` の旧材質として exit=1 で断られる、`--camera-shift-hint` は引数の誤り、ずらしありの job は `run_blender_job` が job を書かずに False。SCN-WLR-CYCLES-GRAY・LIT の参照の署名と Blender の入力は変更後も合格
+  - `verify-SCN-WL-CAMERA-OFFSET-16-1.txt`: Debug の Game のビルド EXIT=0（Git Bash では `/m:1` がパスに変換されて MSBuild が落ちるので PowerShell で回した）
+  - `verify-SCN-WL-CAMERA-OFFSET-16-2.txt`: ref_cliff_01・02 の撮影 result=pass・EXIT=0
+  - `verify-SCN-WL-CAMERA-OFFSET-16-3.txt`: `--camera-offset --verify` result=pass・EXIT=0。Blender の深度は今回の台本（script_sha256 ab3aff4e…）で描き直した（前の深度は `SCN-WL-CAMERA-OFFSET-blender-iter15` に退避）。ずらし [0, 0]、残り ref_cliff_01 0.013・ref_cliff_02 0.032 画素
+  - `verify-SCN-WL-CAMERA-OFFSET-16-4.txt`: 回帰の after result=pass・EXIT=0、検証レイヤーのエラー 0。rendering3dtest・sandbox は同一、mega-bananas 60.3 dB・night-village 71.4 dB。差の画像を開き、散らばった点だけ（mega-bananas 523 画素・night-village 49 画素）で変更なしの揺らぎと確かめた
+- Notes:
+  - `BLENDER_SCRIPT_EQUIVALENT_SHA256` は台本のハッシュを手で書く。Blender の中で走る描画の関数を変えずに台本を直すときだけ足す（描画を変えたら足さず、参照は古くなる）
+  - `--ref-split-selftest` は変更後も 12 件 pass
+- Next: TASKS.md の次の未完の項目（SCN-WLR-RECAPTURE-GRAY-LIT など）。

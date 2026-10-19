@@ -82,8 +82,13 @@ Blender の深度はずらし 0 で描いた（ref_cliff_01 は 73 区画・6528
   カメラに揃うので、旧参照のずらしの分だけ参照の方がずれていて、それは領域の平均には効かない程度として扱う。
   SCN-WLR-CYCLES-GRAY の 2 視点はずらし 0 で描いてあり、そのまま使える。
 - 画素ごとの比較（`--albedo`・`--normal`・`--projection`）は、参照がずらしありなら「ずらし 0 で描き直すまで古い」として落とす。
-- 以後の新しい描画はずらし 0 で描く。`ReferenceCheck.py --record-reference`（`RefSplit.write_reference`）は、ずらしありの
-  参照の記録を書かない。
+- 以後の新しい描画はずらし 0 で描く。`BlenderReference.py` は、カメラのずらしが 0 でない描画を Blender を起動する前に断る
+  （深度からの自動補正と `--camera-shift-hint` は除いた。`--lit --skip-material` でずらしありの旧材質を使う描画も断るので、
+  材質から描き直す）。深度から求めた小数のずれは描画の記録（`subpixel_fits`）に残すだけで、合否は照合が決める。
+  `ReferenceCheck.py --record-reference`（`RefSplit.write_reference`）も、ずらしありの参照の記録を書かない。
+- この変更は Blender の中で走る描画の関数を変えていないので、前の版の台本で描いた結果の記録（`inputs.json` の `script_sha256`・
+  参照の署名の `blender.scripts`）は `ReferenceCheck.BLENDER_SCRIPT_EQUIVALENT_SHA256`（今の台本 → 同じ画を描く前の版）で今の
+  台本のものとして照らす。旧参照の署名はそのまま `--gray`・`--lit` で通る。
 
 ## 回帰の撮影
 
@@ -101,3 +106,8 @@ Blender の深度はずらし 0 で描いた（ref_cliff_01 は 73 区画・6528
 night-village は画面の 4 列で揃った 0.01〜0.03 画素のずれで、大きな座標のカメラで同じ丸めが直った分。mega-bananas は全体の
 ずれが無く、差は細い輪郭の点だけ（視線行列の成分の最後の桁の違いで、画素の中心にかかる三角形の縁の判定が変わる）。
 差の画像を開き、形・明るさ・影の変化が無いことを確かめた。
+
+`BlenderReference.py` のずらしの拒否（台本だけの変更）では、直した Game.exe で before を撮り直して after と並べた。
+rendering3dtest・sandbox は同一、mega-bananas 60.3 dB（差は画面に散らばった 523 画素の点だけ）・night-village 71.4 dB で、
+変更なしの揺らぎと同じ。検証レイヤーのエラーは 0。Blender の深度もこの台本で描き直し、残りは ref_cliff_01 0.013・
+ref_cliff_02 0.032 画素で前と同じ。

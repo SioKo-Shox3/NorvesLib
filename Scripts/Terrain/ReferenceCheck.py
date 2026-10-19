@@ -521,8 +521,17 @@ NORMAL_SUBPIXEL_MAX_PX = 0.1
 # 参照の署名（cycles/reference.json の cameras）に残る。ずらしありの旧参照（SCN-WLR-CYCLES-GRAY・LIT）は領域の平均の比較
 # （--gray・--lit）に限って使い続け、--lit の標本の位置は記録のカメラ（ずらし 0）からの残りで照らす。画素ごとの比較
 # （--albedo・--normal・--projection）はずらし 0 で描き直すまで古いとして落とす。以後の新しい描画はずらし 0 で描く
-# （RefSplit.write_reference もずらしありの参照の記録を書かない）
+# （BlenderReference.py はずらしが 0 でない描画を Blender を起動する前に断り、RefSplit.write_reference もずらしありの参照の
+# 記録を書かない）
 SHIFTED_REFERENCE_SCOPE = "region_means_only"
+# 描いた画を変えない BlenderReference.py の変更: 今の台本のハッシュ → 同じ画を描く前の版のハッシュ。前の版で描いた結果の
+# 記録（inputs.json の script_sha256・参照の署名の blender.scripts）も今の台本で描いたものとして照らす。
+# SCN-WL-CAMERA-OFFSET: ずらし 0 でない描画を起動の前に断り、自動補正と --camera-shift-hint を除いた（ふつうの Python の側だけ。
+# Blender の中で走る描画の関数は変えていない）。ずらしありの旧参照を --gray・--lit で使い続けるため
+BLENDER_SCRIPT_EQUIVALENT_SHA256 = {
+    "ab3aff4ec3c7776b27ad766059506d9e2f83b0e64904e76f76f54bbb508881e0":
+        ("ad3cea721bf57a593caa9e7ab97228a6367fa94acd67bc00115e01886598be49",),
+}
 # 小数のずれを求めるのに使う画素: 深度の勾配が 1 画素あたり深度のこの割合未満（1 次の近似が効く所）
 SUBPIXEL_FIT_MAX_RELATIVE_GRADIENT = 0.01
 # --atmos-dump: 空と霞の値の書き出し（SCN-WLR-ATMOS-DUMP）
@@ -1870,6 +1879,12 @@ def sha256_file(path):
     return digest.hexdigest()
 
 
+def blender_script_matches(current_sha256, recorded_sha256):
+    """記録の台本のハッシュが今の台本と同じか、同じ画を描く前の版か（BLENDER_SCRIPT_EQUIVALENT_SHA256）"""
+    return recorded_sha256 == current_sha256 or \
+        recorded_sha256 in BLENDER_SCRIPT_EQUIVALENT_SHA256.get(current_sha256, ())
+
+
 def check_blender_inputs(blender_dir):
     """Blender の結果の入力の記録（BlenderReference.py が書く inputs.json）を今のファイルと照らす。(合格か, 理由の一覧, 記録)"""
     path = os.path.join(blender_dir, "inputs.json")
@@ -1879,7 +1894,7 @@ def check_blender_inputs(blender_dir):
         record = json.load(f)
     reasons = []
     script = os.path.join(REPO_ROOT, record.get("script", ""))
-    if not os.path.isfile(script) or sha256_file(script) != record.get("script_sha256"):
+    if not os.path.isfile(script) or not blender_script_matches(sha256_file(script), record.get("script_sha256")):
         reasons.append(f"Blender の台本 {record.get('script')} が描いた後に変わった（古い結果）")
     current = hash_inputs("terrain_mesh")
     if current["files_sha256"] != (record.get("terrain_mesh_inputs") or {}).get("files_sha256"):

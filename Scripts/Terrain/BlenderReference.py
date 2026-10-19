@@ -51,11 +51,14 @@
 #   python Scripts/Terrain/BlenderReference.py --lit --mesh <書き出しのフォルダ> --capture <エンジンの撮影>
 #          [--views a,b,...] [--range shadow] [--max-spp N] [--max-seconds S] [--skip-material|--material-only]
 #       実材質の地形を共通の照明で描く（SCN-WLR-CYCLES-LIT）。
-#       1. 画素ごとの材質（--skip-material で省く）: --albedo と同じ描き方（OSL の出力を 1 サンプルで放射、深度から求めた小数の
-#          ずれでカメラを揃える）で、アルベド・法線マップを掛けた法線・粗さ・材質の AO を <撮影>/material/ に書く。
+#       1. 画素ごとの材質（--skip-material で省く）: --albedo と同じ描き方（OSL の出力を 1 サンプルで放射、撮影の記録のカメラの
+#          まま）で、アルベド・法線マップを掛けた法線・粗さ・材質の AO を <撮影>/material/ に書く。
 #       2. Cycles の描画: --gray と同じ照明・収束の基準・書き出し（<撮影>/cycles/）で、材質だけを替える。カメラの光線の当たりは
 #          1 の画素ごとの値を画面の座標で最近傍に引き（エンジンの GBuffer と同じ画素の中心の材質）、影・照り返しの光線の
-#          当たりは OSL の PASS_BOUNCE（アルベドと粗さを法線マップなし・等方の足跡で）で求める。カメラは 1 と同じだけずらす。
+#          当たりは OSL の PASS_BOUNCE（アルベドと粗さを法線マップなし・等方の足跡で）で求める。
+#       新しい描画はどれもカメラをずらさない（SCN-WL-CAMERA-OFFSET。撮影の画は記録のカメラと揃う）。カメラのずらしが 0 でない
+#       描画は Blender を起動する前に断る（--skip-material でずらしありの旧材質を使う --lit も断る。材質から描き直す）。
+#       ずらしありで描いた旧参照は ReferenceCheck.SHIFTED_REFERENCE_SCOPE の範囲でだけ使う。
 #          材質の AO は Cycles に掛けない（エンジンだけの近似。照合の表に領域ごとの平均を書く）。照合は ReferenceCheck.py --lit。
 import argparse
 import hashlib
@@ -145,11 +148,6 @@ MATERIAL_COLUMN_TRIANGLES = 20000000
 MATERIAL_COLUMNS = 4
 # 列の視錐台と描く範囲を列の外へ広げる画素の数
 MATERIAL_COLUMN_PAD_PX = 4
-# 標本の位置の揃え: エンジンの深度と Blender の深度から求めた画素の小数のずれ（ReferenceCheck.depth_subpixel_shift）が
-# これを超える視点は、そのずれだけカメラをずらして描き直し、エンジンの画素の中心と同じ点を描く。ずれは比べる値（アルベド・
-# 法線・粗さ）を使わず深度だけから求める。ref_cliff_01 では撮影のカメラの記録のままだと横に約 0.24 画素ずれ、崖の細部
-# （頂点の法線が隣の画素で十数度変わる所）で法線の差を作る
-MATERIAL_SUBPIXEL_TOLERANCE_PX = 0.05
 MATERIAL_SCRIPT = "Scripts/Terrain/TerrainMaterialReference.py"
 # 三角形を視錐台で間引くときの画角の余裕（区画を選ぶ FRUSTUM_MARGIN と同じ）
 ALBEDO_TRIANGLE_MARGIN = FRUSTUM_MARGIN
@@ -382,6 +380,12 @@ def engine_sun_direction(altitude_degrees, azimuth_degrees):
 
 def run_blender_job(args, out_dir, name, job, label="gray"):
     """job を書いて Blender をヘッドレスで 1 回起動する。成否"""
+    # 新しい描画はカメラをずらさない（ずらしが 0 でない job は起動する前に断る）
+    shift = [float(v) for v in (job.get("camera_shift_px") or [0.0, 0.0])]
+    if any(v != 0.0 for v in shift):
+        print(f"BLENDER_REFERENCE error job={name} カメラを ({shift[0]:+.3f}, {shift[1]:+.3f}) 画素ずらす描画は断る"
+              "（新しい描画はずらし 0）", flush=True)
+        return False
     job_path = os.path.join(out_dir, f"{name}.job.json")
     with open(job_path, "w", encoding="utf-8") as f:
         json.dump(job, f, indent=2, ensure_ascii=False)
@@ -436,6 +440,13 @@ def run_gray(args, lit=False):
         missing = [v for v in views if v not in lit_material.get("views", {})]
         if missing:
             print(f"BLENDER_REFERENCE error 画素ごとの材質に視点 {missing} が無い")
+            return 1
+        # 材質はカメラの光線の当たりなので、Cycles も材質と同じカメラで描く。ずらしありで描いた旧材質は使わない
+        shifted = {v: lit_material["views"][v].get("camera_shift_px") for v in views
+                   if any(float(s) != 0.0 for s in (lit_material["views"][v].get("camera_shift_px") or [0.0, 0.0]))}
+        if shifted:
+            print(f"BLENDER_REFERENCE error 画素ごとの材質がカメラをずらして描いた旧材質 {shifted}"
+                  "（--skip-material を外して材質から描き直す）")
             return 1
 
     plate_records = {}
@@ -625,39 +636,32 @@ def run_material(args, mode):
         with open(os.path.join(capture_dir, f"{view}.aov.json"), encoding="utf-8") as f:
             engine_depth_file = json.load(f)["depth"]["file"]
         engine_depth = RC.read_pfm_any(os.path.join(capture_dir, engine_depth_file))[..., 0].astype(np.float64)
-        # 撮影のカメラのまま（--camera-shift-hint があればそのずらしで）描き、深度から求めた小数のずれが許容を超えたら、
-        # そのずれだけカメラをずらして描き直す
-        shift = [float(v) for v in args.camera_shift_hint.split(",")] if getattr(args, "camera_shift_hint", "") else [0.0, 0.0]
-        fits = []
-        for attempt in range(2):
-            column_prefixes = []
-            for index in range(column_count):
-                column_job = dict(job)
-                column_job["camera_shift_px"] = shift
-                name = view if column_count == 1 else f"{view}.col{index}"
-                column_job["prefix"] = os.path.join(out_dir, name)
-                column_job["exr"] = f"{column_job['prefix']}.{mode}.exr"
-                if column_count > 1:
-                    column_job["columns"] = [edges[index], edges[index + 1]]
-                column_job["required_outputs"] = [f"{column_job['prefix']}.{mode}.json"] + \
-                    [f"{column_job['prefix']}.{part}.pfm" for part in parts]
-                if not run_blender_job(args, out_dir, name, column_job, label=mode):
-                    print(f"BLENDER_REFERENCE error view={view} Blender が失敗した（{result_dir}/{name}.blender.log）")
-                    return 1
-                column_prefixes.append(column_job["prefix"])
+        # 撮影の記録のカメラのまま（ずらし 0）で 1 回描く。深度から求めた小数のずれは記録するだけで、カメラを動かして描き直さない
+        # （残りのずれの合否は ReferenceCheck.py の照合が決める）
+        shift = [0.0, 0.0]
+        column_prefixes = []
+        for index in range(column_count):
+            column_job = dict(job)
+            column_job["camera_shift_px"] = shift
+            name = view if column_count == 1 else f"{view}.col{index}"
+            column_job["prefix"] = os.path.join(out_dir, name)
+            column_job["exr"] = f"{column_job['prefix']}.{mode}.exr"
             if column_count > 1:
-                join_material_columns(prefix, column_prefixes, edges, mode, parts)
-            blender_depth = RC.read_pfm_any(f"{prefix}.depth.pfm")[..., 0].astype(np.float64)
-            fit = RC.depth_subpixel_shift(engine_depth, blender_depth)
-            fit["camera_shift_px"] = list(shift)
-            fits.append(fit)
-            print(f"BLENDER_REFERENCE {mode} view={view} subpixel camera_shift=({shift[0]:+.3f},{shift[1]:+.3f}) "
-                  f"right_px={fit['right_px']:+.3f} down_px={fit['down_px']:+.3f} depth_bias={fit['depth_bias']:+.2e} "
-                  f"pixels={fit['pixels']}", flush=True)
-            if attempt > 0 or math.hypot(fit["right_px"], fit["down_px"]) <= MATERIAL_SUBPIXEL_TOLERANCE_PX:
-                break
-            # エンジンの画素 (x, y) は Blender の画の (x + right, y + down) を見ている。カメラのずらしは右・上が正
-            shift = [shift[0] + fit["right_px"], shift[1] - fit["down_px"]]
+                column_job["columns"] = [edges[index], edges[index + 1]]
+            column_job["required_outputs"] = [f"{column_job['prefix']}.{mode}.json"] + \
+                [f"{column_job['prefix']}.{part}.pfm" for part in parts]
+            if not run_blender_job(args, out_dir, name, column_job, label=mode):
+                print(f"BLENDER_REFERENCE error view={view} Blender が失敗した（{result_dir}/{name}.blender.log）")
+                return 1
+            column_prefixes.append(column_job["prefix"])
+        if column_count > 1:
+            join_material_columns(prefix, column_prefixes, edges, mode, parts)
+        blender_depth = RC.read_pfm_any(f"{prefix}.depth.pfm")[..., 0].astype(np.float64)
+        fit = RC.depth_subpixel_shift(engine_depth, blender_depth)
+        fit["camera_shift_px"] = list(shift)
+        fits = [fit]
+        print(f"BLENDER_REFERENCE {mode} view={view} subpixel right_px={fit['right_px']:+.3f} "
+              f"down_px={fit['down_px']:+.3f} depth_bias={fit['depth_bias']:+.2e} pixels={fit['pixels']}", flush=True)
         used_tiles.update(t["file"] for t in tiles)
         view_records[view] = {"camera": camera, "width": width, "height": height,
                               "tiles": sorted(t["file"] for t in tiles), "triangles": triangles,
@@ -1846,14 +1850,9 @@ def main():
     parser.add_argument("--lit", action="store_true", help="実材質の地形を共通の照明で描く（画素ごとの材質と Cycles）")
     parser.add_argument("--skip-material", action="store_true", help="--lit: 画素ごとの材質を描き直さない")
     parser.add_argument("--material-only", action="store_true", help="--lit: 画素ごとの材質だけを描く（Cycles で描かない）")
-    parser.add_argument("--camera-shift-hint", default="",
-                        help="--albedo・--normal・--lit: 1 視点のとき、最初の描画のカメラのずらし[画素]「右,上」"
-                             "（前に深度から求めた値。残りのずれは同じ許容で測り、超えたら描き直す）")
     args = parser.parse_args()
     if int(args.depth) + int(args.gray) + int(args.albedo) + int(args.normal) + int(args.lit) != 1:
         parser.error("--depth・--gray・--albedo・--normal・--lit のどれか 1 つを指定してください")
-    if args.camera_shift_hint and "," in args.views.strip(","):
-        parser.error("--camera-shift-hint は 1 視点（--views に 1 つ）のときだけ使えます")
     if args.albedo or args.normal:
         args.views = args.views or ",".join(ALBEDO_VIEWS)
         return run_material(args, "albedo" if args.albedo else "normal")
