@@ -5762,3 +5762,9 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 最初の起動は Windows PowerShell 5.1 で台本（BOM なしの UTF-8）を読み違え、描画の行を飛ばして撮影の段（-Build の後の ref_far_01 の起動）に入ったので止めた。ref_far_01 の撮影の出力が消えた（どのみち撮り直す）。ほかの視点・切り出しの材質・種 A の途中の和は触れていない。台本は pwsh で起動する
 - 種 B の段は 04:21 に EXIT=0: B は A と同じ 1216 サンプル（stop=b=target_spp）、合わせた 2 本の差は shadow_cliff 0.0000 / pixel_rms 0.016、shadow_ground 0.0000 / 0.012 で all_converged=1。パスの和は合成の 0.99997〜1.00004 倍（太陽の直接光 + 空の直接光 + 間接光）。続けて撮り直しの段が走っている
 - Next（再開の反復）: ログの END を見る。`shadow/cycles/ref_cliff_01.cycles.json` の `seed_runs.b.spp`（1216 の見込み）・`regions`・`consistency` と、撮り直しの `lit-recapture` ログを開く。verify を `verify-SCN-WLR-LIT-SHADOW-REF-C01-<n>.txt` に保存し、名指しの 2 領域の判定・パスの和（±1 %）・材質の標本の位置を確かめる。END が EXIT≠0 なら落ちた段から台本の段だけを回し直す
+
+### SCN-WLR-LIT-SHADOW-REF-C01 途中（2026-10-20、run 20261019-192352 の反復 22）
+- 切り離した台本は `END 2026-10-20T04:34:52 EXIT=0`（種 B 1216 サンプル、6 視点の撮り直し、Game.exe e7ed507c…、`--record-reference lit`）
+- verify（`verify-SCN-WLR-LIT-SHADOW-REF-C01-1.txt`）: 名指しの 2 領域は切り出しの参照で判定済み（shadow_cliff 2 本の差 0.0000 / pixel_rms 0.016・71283 画素・太陽の可視率 0.001・エンジン / Cycles 1.852、shadow_ground 0.0000 / 0.012・2388 画素・0.006・1.163）。パスの和は合成の 0.99996〜1.00003 倍。切り出しの材質の標本の位置は (−0.009, +0.009) 画素。撮り直しで ref_cliff_01・ref_cliff_02・ref_ground_02 の旧参照の位置ずれも 0.1 画素以内に入った
+- 残る失敗は 1 件だけ: ref_far_01 の本描画（ずらし (−0.107, −0.158) の旧参照）の材質が、記録のカメラから (+0.068, −0.088) 画素（0.111 > 0.1）。ずらしの換算（sensor_fit=VERTICAL で px / height）は合っている。直すには ref_far_01 の本描画をずらし 0 で描き直す（GPU 約 25 分で反復に収まらない）ので BLOCKED にした（`blocked/SCN-WLR-LIT-SHADOW-REF-C01.md` に手順）
+- Next: ref_far_01 を `BlenderReference.py --lit --views ref_far_01` でずらし 0 に描き直し、verify を保存して開く。ずらし 0 でも 0.1 画素を超えるなら、エンジンの ref_far_01 の撮影のずれとして別の項目にする
