@@ -5760,4 +5760,5 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 撮り直しが要る理由: 今の verify は、エンジンの実装が撮影（10-19 22:55）の後に変わった・Game.exe が違う、本描画の 4 視点の材質の標本の位置が記録のカメラから 0.25〜0.76 画素（撮影がカメラのずれを直す前）、切り出しの `cycles/reference.json` が無い、の 3 つでも落ちていた（`.harness/runs/scene-capture/SCN-WLR-CYCLES-LIT/lit_check.json`）。カメラのずれを直した Game.exe で撮り直せば、ずらし 0 の切り出しの材質（深度からの残り +0.243 画素は撮影の側のずれ）と本描画の旧材質（記録のカメラからの残りで照らす）のどちらも 0.1 画素以内に入る見込み
 - Notes:
   - 最初の起動は Windows PowerShell 5.1 で台本（BOM なしの UTF-8）を読み違え、描画の行を飛ばして撮影の段（-Build の後の ref_far_01 の起動）に入ったので止めた。ref_far_01 の撮影の出力が消えた（どのみち撮り直す）。ほかの視点・切り出しの材質・種 A の途中の和は触れていない。台本は pwsh で起動する
+- 種 B の段は 04:21 に EXIT=0: B は A と同じ 1216 サンプル（stop=b=target_spp）、合わせた 2 本の差は shadow_cliff 0.0000 / pixel_rms 0.016、shadow_ground 0.0000 / 0.012 で all_converged=1。パスの和は合成の 0.99997〜1.00004 倍（太陽の直接光 + 空の直接光 + 間接光）。続けて撮り直しの段が走っている
 - Next（再開の反復）: ログの END を見る。`shadow/cycles/ref_cliff_01.cycles.json` の `seed_runs.b.spp`（1216 の見込み）・`regions`・`consistency` と、撮り直しの `lit-recapture` ログを開く。verify を `verify-SCN-WLR-LIT-SHADOW-REF-C01-<n>.txt` に保存し、名指しの 2 領域の判定・パスの和（±1 %）・材質の標本の位置を確かめる。END が EXIT≠0 なら落ちた段から台本の段だけを回し直す
