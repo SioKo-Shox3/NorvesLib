@@ -5651,3 +5651,10 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 台本を `powershell -File ... -Only gray,lit` で呼ぶと配列が 1 つの文字列 `gray,lit` になり、何も撮らずに exit=0 で終わる。`pwsh -Command "& '<台本>' -Only gray,lit"` で呼ぶ
   - コードは変えていない。新しい試験は足していない
 - Next: TASKS.md の次の未完の項目（この項目を前提にした SCN-WLR-EXPECT-MATCH・SCN-WLR-LIT-SHADOW-REF-C01 など）。
+
+### SCN-WLR-ATMOS-REF-B 途中（2026-10-19、run 20261019-192352 の反復 11）
+- 測定: 反復 34 が反復の外で解いた段 1・段 2 で `--verify`（`verify-SCN-WLR-ATMOS-REF-B-1.txt`）: 段の差は Ψ B だけが残る（論文 0.673 %・荒野 0.983 %。空 B 0.09・0.19 %、区間 0.05・0.22 %、ほかも 0.21 % 以下）。荒野の Ψ B の差は赤の 6297 m・10000 m・太陽の余弦 0.3 に寄る
+- 原因: Ψ B を求める点の球の求積（解と同じ天頂角 8・方位 8・区画 4）。段 1 の表のまま点の求積だけ倍（16・16・8）にすると段 2 との差 0.98 % → 0.10 %、4 倍で 0.19 %。点の視線の歩数を倍にしても変わらない（`aux-SCN-WLR-ATMOS-REF-B-psi-probe-engine.txt`）。表の格子・歩数の誤差は段 1 の細かさで収まっている
+- Done: `DirectionalField.evaluate` の点の求積を解の求積の `EVALUATION_REFINEMENT`（2）倍にした（`quadrature` に倍率の引数）。検査の段で論文の 2 点を求めて動くことを確かめた（33 秒）
+- 段 1・段 2 の `--solve` を反復の外で切り離して起動する（台本の変更でハッシュが変わるので両方とも解き直し）: `.harness/runs/20261019-192352/atmos-ref-b-solve.ps1` を段ごとに 1 プロセス。ログは `.harness/runs/20261019-192352/aux-SCN-WLR-ATMOS-REF-B-solve-level1.txt`・`-level2.txt`（START に台本の sha256 とコミット、終わると `END ... EXIT=<code>`）。段 2 は前回 2 組で約 7.8 時間
+- Next（次の反復）: 両方のログに `END ... EXIT=0` があるか見る（無ければ python の `AtmosphereReference.py --solve` が走っているか確かめ、走っていれば重ねて起動せず待つ）。そろったら `python Scripts/Terrain/AtmosphereReference.py --verify` を保存して開き、収束 0.5 % を確かめて done。解の走行中と verify の前に台本を触らない

@@ -37,7 +37,8 @@
 # 数値の積分: 視線は中点則（空への視線は観測点の近くを細かく取る 2 乗の並び、地表や区間の視線は等間隔）。
 # 太陽の透過率は Bruneton 2017 の (r, μ) の並び（地平線の近くを細かく取る）の表を線形に引く。
 # 段 2 は段 1 の歩数・方向の数・表の細かさをすべて倍にしたもので、比べる量の差が CONVERGENCE_TOLERANCE 以内なら収束とする。
-# 段 2 では B の区画の中の位相関数の標本の分け数も倍にする。
+# 段 2 では B の区画の中の位相関数の標本の分け数も倍にする。B の任意の点の値（Ψ B）は、点の求積を解の求積の
+# EVALUATION_REFINEMENT 倍にして求める。
 # B の 2 回目の散乱の源は、点の周りの細かい向きの求積で 1 回目の光を直接積んだ値とも比べる（SECOND_ORDER_TOLERANCE）。
 # 比べる点は評価者の最小再現（書き出しの係数・空気遠近の起点の高度 + カメラの y・書き出しの太陽の高度）と観測点で、
 # 太陽の向きの σ_R G_R + σ_M G_M が等方とした源の何倍かも記録する。1 回目だけの値（A の視線の 1 回目の項と、B が次の回へ
@@ -118,6 +119,8 @@ LEVEL1 = {
 # 2 回目の散乱の源と位相関数の角度の積分・1 回目だけの値の A と B の一致などの検査だけに使う
 CHECK_PARAMETERS = dict(LEVEL1, orders_altitude=16, orders_cosine=16, orders_view_cosine=16, orders_view_azimuth=12,
                         orders_steps=64)
+# B の任意の点の値（DirectionalField.evaluate。Ψ B など）を求める点の求積の、解の求積（天頂角・方位・区画の分け数）に対する倍率
+EVALUATION_REFINEMENT = 2
 LUMINANCE_WEIGHTS = np.array([0.2126, 0.7152, 0.0722])
 # Ψ の値を比べる点（高度 m・太陽の天頂角の余弦）。荒野の視点の空と霞の視線が通る 10 km より下と、太陽の高度 38° の前後
 # （余弦 0.616。1000 km 先の視線の点では球の丸みで ±0.15 ずれる）に限る。15 km より上と太陽の低い所は段 2 でも段の差が
@@ -538,12 +541,14 @@ class DirectionalField:
 
     # --- 求積と位相関数の区画の平均 ---
 
-    def quadrature(self, radius):
+    def quadrature(self, radius, refinement=1):
         """半径 radius の点の w の求積: 向き [N,3]、球の平均の重み [N]、区画を subdivisions² に分けた向きと面に映した向き
         [N, 2Q², 3]（cell_mean が使う）と、cell_integral が使う補間の基底（天頂角の余弦は地平線の上下の区間ごとの GL の点の
-        ラグランジュ補間、方位は半周の点の余弦級数の補間）を、細かい標本（区間ごとの GL・全周の等間隔）で引いた値"""
+        ラグランジュ補間、方位は半周の点の余弦級数の補間）を、細かい標本（区間ごとの GL・全周の等間隔）で引いた値。
+        refinement は天頂角・方位・区画の分け数に掛ける倍率（evaluate が使う）"""
         bottom = self.medium.bottom
-        polar, azimuth, split = self.polar_count, self.azimuth_count, self.subdivisions
+        polar, azimuth = self.polar_count * refinement, self.azimuth_count * refinement
+        split = self.subdivisions * refinement
         directions, weight = horizon_split_directions(np.array([radius]), bottom, polar, azimuth)
         _, gauss = np.polynomial.legendre.leggauss(polar)
         horizon = -math.sqrt(max(1.0 - (bottom / radius) ** 2, 0.0))
@@ -872,14 +877,16 @@ class DirectionalField:
 
     def evaluate(self, altitude, sun_cosine, spec=ISOTROPIC, targets=None):
         """任意の点の散乱の源を、表の補間でなく、その点から視線を積んで求める（2 回目以降の光は収束した表から）。
-        既定は等方の源 = 入ってくる光の球の平均（Ψ と同じ意味）[N,3]。targets を与えると [N,T,3]"""
+        既定は等方の源 = 入ってくる光の球の平均（Ψ と同じ意味）[N,3]。targets を与えると [N,T,3]。
+        点の求積は解の求積の EVALUATION_REFINEMENT 倍の細かさで取る（解と同じ細かさでは、高い所の地平線の近くの明るい帯と
+        地表側の霞を球で平均する誤差が段 1 と段 2 で 1 % 近く残る）"""
         altitude = np.asarray(altitude, dtype=np.float64).ravel()
         sun_cosine = np.asarray(sun_cosine, dtype=np.float64).ravel()
         single = targets is None
         targets = np.array([[0.0, 1.0, 0.0]]) if single else np.asarray(targets, dtype=np.float64)
 
         def point(index):
-            quadrature = self.quadrature(self.medium.bottom + altitude[index])
+            quadrature = self.quadrature(self.medium.bottom + altitude[index], EVALUATION_REFINEMENT)
             first = self.first_order_at(quadrature, sun_cosine[index:index + 1])
             higher = self.scattered_at(quadrature, sun_cosine[index:index + 1], self.tables, self.ground, True)
             return self.sources_at(quadrature, first, higher, spec, targets)[0]
