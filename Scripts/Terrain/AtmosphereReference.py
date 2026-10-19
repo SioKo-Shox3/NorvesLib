@@ -3,15 +3,15 @@
 # 空の放射輝度・透過率・多重散乱・地表の照度を numpy で数値積分する。
 #
 # 使い方:
-#   python Scripts/Terrain/AtmosphereReference.py --solve [--dump <視点>.atmos.json] [--out <出力先>]
-#       論文の設定と、荒野の書き出し（--dump。省くと SCN-WLR-ATMOS-DUMP の ref_ground_02）の設定の 2 組で、歩数・方向の数・
-#       表の細かさをすべて倍にした段 2 の正解（1 組数分）と下の検査を求め、この台本と書き出しの中身のハッシュつきで
-#       <出力先>/atmosphere_reference_level2.json に保存する。
+#   python Scripts/Terrain/AtmosphereReference.py --solve [--level 1|2] [--dump <視点>.atmos.json] [--out <出力先>]
+#       論文の設定と、荒野の書き出し（--dump。省くと SCN-WLR-ATMOS-DUMP の ref_ground_02）の設定の 2 組で、段 1 か、歩数・方向の
+#       数・表の細かさをすべて倍にした段 2（既定）の正解と下の検査を求め、この台本と書き出しの中身のハッシュつきで
+#       <出力先>/atmosphere_reference_level<段>.json に保存する（重い。段 1 は 1 組数十分、段 2 は 1 組数時間）。
 #   python Scripts/Terrain/AtmosphereReference.py --verify [--dump ...] [--out ...]
-#       同じ 2 組で段 1 をその場で解き、保存した段 2 と比べる量がすべて CONVERGENCE_TOLERANCE 以内で一致することを確かめる
-#       （保存した段 2 のハッシュが今の入力と同じことも見る）。ほかに、鉛直の光学的深さの解析解との一致・多重散乱の級数が
-#       収束すること・B の 2 回目の散乱の源が位相関数の角度の積分と合うこと・1 回目だけの値が A と B で一致することを、
-#       段 1 はその場で、段 2 は保存した値で見る。結果を <出力先>/atmosphere_reference_verify.json に書く。
+#       保存した段 1 と段 2 の比べる量がすべて CONVERGENCE_TOLERANCE 以内で一致することを確かめる（どちらもハッシュが今の
+#       入力と同じことも見る）。ほかに、鉛直の光学的深さの解析解との一致・多重散乱の級数が収束すること・B の 2 回目の散乱の源が
+#       位相関数の角度の積分と合うこと・1 回目だけの値が A と B で一致することを、B の格子を粗くした検査の段（CHECK_PARAMETERS）
+#       をその場で解いて見て、段 1・段 2 は保存した値で見る。結果を <出力先>/atmosphere_reference_verify.json に書く。
 #   ほかのスクリプト（ReferenceCheck.py --atmos-ref）は import して使う。
 #
 # 媒質（高度 h の m、1/m）:
@@ -56,8 +56,8 @@ import numpy as np
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 DEFAULT_DUMP = os.path.join(REPO_ROOT, ".harness", "runs", "scene-capture", "SCN-WLR-ATMOS-DUMP", "ref_ground_02.atmos.json")
 DEFAULT_OUT = os.path.join(REPO_ROOT, ".harness", "runs", "scene-capture", "SCN-WLR-ATMOS-REF")
-# --solve が段 2 の正解と検査を保存する先（--out の下）
-SOLVE_FILE = "atmosphere_reference_level2.json"
+# --solve が段ごとの正解と検査を保存する先（--out の下。{level} は段）
+SOLVE_FILE = "atmosphere_reference_level{level}.json"
 
 # 段 2 と段 1 の相対差の上限（0.5 %）と、相対差の分母の下限（太陽 1 lux あたりの cd/m²・透過率）
 CONVERGENCE_TOLERANCE = 0.005
@@ -110,9 +110,14 @@ LEVEL1 = {
     "view_steps": 256, "hemisphere_elevation": 24, "hemisphere_azimuth": 48,
     # B（DirectionalField）: 点の高度・太陽の余弦、w の求積（地平線の上下それぞれの天頂角・半周の方位）、u の格子、視線の歩数、
     # 求積の 1 つの区画の中の位相関数を平均する標本の分け数（天頂角の余弦と方位のそれぞれ）
-    "orders_altitude": 16, "orders_cosine": 16, "orders_polar": 8, "orders_azimuth": 8,
-    "orders_view_cosine": 16, "orders_view_azimuth": 12, "orders_steps": 64, "orders_phase_subdivisions": 4,
+    # 点の格子・u の格子・歩数は、半分（検査の段）では段 1 と段 2 の差が 0.6〜1 % 残るので、この細かさを段 1 にする
+    "orders_altitude": 32, "orders_cosine": 32, "orders_polar": 8, "orders_azimuth": 8,
+    "orders_view_cosine": 32, "orders_view_azimuth": 24, "orders_steps": 128, "orders_phase_subdivisions": 4,
 }
+# --verify がその場で解く検査の段（B の点の格子・u の格子・歩数を段 1 の半分にしたもの。1 組数十秒）。収束は見ず、
+# 2 回目の散乱の源と位相関数の角度の積分・1 回目だけの値の A と B の一致などの検査だけに使う
+CHECK_PARAMETERS = dict(LEVEL1, orders_altitude=16, orders_cosine=16, orders_view_cosine=16, orders_view_azimuth=12,
+                        orders_steps=64)
 LUMINANCE_WEIGHTS = np.array([0.2126, 0.7152, 0.0722])
 # Ψ の値を比べる点（高度 m・太陽の天頂角の余弦）。荒野の視点の空と霞の視線が通る 10 km より下と、太陽の高度 38° の前後
 # （余弦 0.616。1000 km 先の視線の点では球の丸みで ±0.15 ずれる）に限る。15 km より上と太陽の低い所は段 2 でも段の差が
@@ -886,10 +891,10 @@ class DirectionalField:
 class Atmosphere:
     """1 組の設定と 1 つの段の正解。値は太陽の照度 1 lux あたり"""
 
-    def __init__(self, settings, level):
+    def __init__(self, settings, level, parameters=None):
         self.settings = settings
         self.level = level
-        self.parameters = level_parameters(level)
+        self.parameters = parameters or level_parameters(level)
         p = self.parameters
         started = time.time()
         self.medium = Medium(settings)
@@ -1232,8 +1237,8 @@ def correctness_checks(atmosphere, settings, sun_altitude, observer, repro_altit
 def check_failures(name, checks):
     failures = []
     level = checks["level"]
-    # 解析解との一致は段 2 の透過率の表で見る（段 1 の表は荒野の設定で 1.2e-3）
-    if level >= 2 and checks["vertical_optical_depth"]["max_relative_error"] > ANALYTIC_TOLERANCE:
+    # 解析解との一致は段 2 の透過率の表で見る（段 1 と検査の段の表は荒野の設定で 1.2e-3）
+    if level == 2 and checks["vertical_optical_depth"]["max_relative_error"] > ANALYTIC_TOLERANCE:
         failures.append(f"{name} 段 {level}: 鉛直の光学的深さが解析解と "
                         f"{checks['vertical_optical_depth']['max_relative_error']:.2e} 違う")
     if not checks["f_ms_max"] < 1.0:
@@ -1248,74 +1253,88 @@ def check_failures(name, checks):
     return failures
 
 
-def solve(dump_path, out_dir):
-    """段 2（重い。1 組数分）の収束を見る量と検査を求め、入力のハッシュつきで保存する。--verify はこれと段 1 を比べる"""
+def solve(dump_path, out_dir, level=2):
+    """段 level（重い。段 1 は 1 組数十分、段 2 は 1 組数時間）の収束を見る量と検査を求め、入力のハッシュつきで保存する。
+    --verify は保存した段 1 と段 2 を比べる"""
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sets, repro_altitude, failures = reference_sets(dump_path)
     result = {"inputs_sha256": inputs_sha256(dump_path), "dump": dump_path, "repro_altitude_m": repro_altitude,
-              "level": 2, "sets": {}}
+              "level": level, "sets": {}}
     for name, settings, sun_altitude, observer in sets:
-        fine = Atmosphere(settings, 2)
-        quantities = standard_quantities(fine, sun_altitude, observer)
-        checks = correctness_checks(fine, settings, sun_altitude, observer, repro_altitude)
+        atmosphere = Atmosphere(settings, level)
+        quantities = standard_quantities(atmosphere, sun_altitude, observer)
+        checks = correctness_checks(atmosphere, settings, sun_altitude, observer, repro_altitude)
         failures += check_failures(name, checks)
-        result["sets"][name] = {"parameters": fine.parameters, "sun_altitude_degrees": sun_altitude,
+        result["sets"][name] = {"parameters": atmosphere.parameters, "sun_altitude_degrees": sun_altitude,
                                 "observer_altitude_m": observer, "checks": checks,
                                 "quantities": {key: np.asarray(value).tolist() for key, value in quantities.items()}}
-        print(f"ATMOSPHERE_REFERENCE_SOLVE set={name} level=2 seconds={fine.seconds:.1f} orders={checks['orders']} "
-              f"second_order_max_rel={checks['second_order_max_relative']:.2e} "
+        print(f"ATMOSPHERE_REFERENCE_SOLVE set={name} level={level} seconds={atmosphere.seconds:.1f} "
+              f"orders={checks['orders']} second_order_max_rel={checks['second_order_max_relative']:.2e} "
               f"first_order_A_vs_B={checks['first_order_max_relative']:.1e}", flush=True)
     result["failures"] = failures
     os.makedirs(out_dir, exist_ok=True)
-    path = os.path.join(out_dir, SOLVE_FILE)
+    path = os.path.join(out_dir, SOLVE_FILE.format(level=level))
     with open(path, "w", encoding="utf-8") as f:
         json.dump(result, f, indent=1, ensure_ascii=False)
     for failure in failures:
         print(f"ATMOSPHERE_REFERENCE_SOLVE failure: {failure}")
-    print(f"ATMOSPHERE_REFERENCE_SOLVE result={'pass' if not failures else 'fail'} inputs_sha256={result['inputs_sha256']} "
-          f"report={path}")
+    print(f"ATMOSPHERE_REFERENCE_SOLVE result={'pass' if not failures else 'fail'} level={level} "
+          f"inputs_sha256={result['inputs_sha256']} report={path}")
     return 0 if not failures else 1
 
 
+def load_solved(out_dir, level, current_hash, failures):
+    """--solve が保存した段 level の結果と、入力のハッシュが今と同じか（無いか違えば failures に足す。無ければ None）"""
+    path = os.path.join(out_dir, SOLVE_FILE.format(level=level))
+    if not os.path.isfile(path):
+        failures.append(f"段 {level} の保存した結果が無い（--solve --level {level} で作る）: {path}")
+        return None, False
+    with open(path, encoding="utf-8") as f:
+        saved = json.load(f)
+    current = saved.get("inputs_sha256") == current_hash
+    if not current:
+        failures.append(f"段 {level} の保存した結果の入力のハッシュが今の台本・書き出しと違う（--solve --level {level} をやり直す）")
+    return saved, current
+
+
 def verify(dump_path, out_dir):
-    """段 1 をその場で解き、--solve が保存した段 2 と比べる（入力のハッシュが今と同じことも見る）。収束以外の検査は段 1 を
-    その場で、段 2 は保存した値で見る"""
+    """--solve が保存した段 1 と段 2 を比べる（入力のハッシュが今と同じことも見る）。収束以外の検査は検査の段
+    （CHECK_PARAMETERS）をその場で解いて見て、段 1・段 2 は保存した値で見る"""
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sets, repro_altitude, failures = reference_sets(dump_path)
-    saved_path = os.path.join(out_dir, SOLVE_FILE)
-    saved = None
-    if os.path.isfile(saved_path):
-        with open(saved_path, encoding="utf-8") as f:
-            saved = json.load(f)
-    else:
-        failures.append(f"段 2 の保存した結果が無い（--solve で作る）: {saved_path}")
     current_hash = inputs_sha256(dump_path)
-    inputs_current = saved is not None and saved.get("inputs_sha256") == current_hash
-    if saved is not None and not inputs_current:
-        failures.append("段 2 の保存した結果の入力のハッシュが今の台本・書き出しと違う（--solve をやり直す）")
+    saved1, current1 = load_solved(out_dir, 1, current_hash, failures)
+    saved2, current2 = load_solved(out_dir, 2, current_hash, failures)
+    inputs_current = current1 and current2
     report = {"criteria": {"convergence_tolerance": CONVERGENCE_TOLERANCE, "radiance_floor": CONVERGENCE_RADIANCE_FLOOR,
                            "analytic_tolerance": ANALYTIC_TOLERANCE, "second_order_tolerance": SECOND_ORDER_TOLERANCE,
-                           "first_order_tolerance": FIRST_ORDER_TOLERANCE, "level1": LEVEL1},
-              "inputs_sha256": current_hash, "inputs_current": inputs_current, "solve_report": saved_path, "sets": {}}
+                           "first_order_tolerance": FIRST_ORDER_TOLERANCE, "level1": LEVEL1,
+                           "check_parameters": CHECK_PARAMETERS},
+              "inputs_sha256": current_hash, "inputs_current": inputs_current,
+              "solve_reports": [os.path.join(out_dir, SOLVE_FILE.format(level=level)) for level in (1, 2)], "sets": {}}
     for name, settings, sun_altitude, observer in sets:
-        coarse = Atmosphere(settings, 1)
-        q_coarse = standard_quantities(coarse, sun_altitude, observer)
-        checks = {"level1": correctness_checks(coarse, settings, sun_altitude, observer, repro_altitude)}
-        failures += check_failures(name, checks["level1"])
-        fine_record = (saved or {}).get("sets", {}).get(name)
+        light = Atmosphere(settings, "check", CHECK_PARAMETERS)
+        checks = {"check": correctness_checks(light, settings, sun_altitude, observer, repro_altitude)}
+        failures += check_failures(name, checks["check"])
+        coarse_record = (saved1 or {}).get("sets", {}).get(name)
+        fine_record = (saved2 or {}).get("sets", {}).get(name)
+        for level, record in ((1, coarse_record), (2, fine_record)):
+            if record is None:
+                failures.append(f"{name}: 段 {level} の保存した結果に組が無い")
+            else:
+                checks[f"level{level}"] = record["checks"]
+                failures += check_failures(name, record["checks"])
         worst = {}
-        if fine_record is None:
-            failures.append(f"{name}: 段 2 の保存した結果に組が無い")
-        else:
-            checks["level2"] = fine_record["checks"]
-            failures += check_failures(name, fine_record["checks"])
-            worst = compare_levels(q_coarse, fine_record["quantities"])
+        if coarse_record is not None and fine_record is not None:
+            worst = compare_levels(coarse_record["quantities"], fine_record["quantities"])
         converged = bool(worst) and max(worst.values()) <= CONVERGENCE_TOLERANCE
         if worst and not converged:
             failures.append(f"{name}: 段 1 と段 2 の差が {CONVERGENCE_TOLERANCE} を超える: " +
                             ", ".join(f"{k}={v:.4f}" for k, v in worst.items() if v > CONVERGENCE_TOLERANCE))
-        q_fine = {key: np.asarray(value) for key, value in fine_record["quantities"].items()} if fine_record else q_coarse
-        repro = checks["level1"]["second_order_check"][0]
+        q_fine = {key: np.asarray(value) for key, value in (fine_record or coarse_record or
+                                                            {"quantities": standard_quantities(light, sun_altitude, observer)}
+                                                            )["quantities"].items()}
+        repro = checks["check"]["second_order_check"][0]
         repro_ratio = np.array(repro["combined_toward_sun_over_isotropic"])
         # 地表・太陽の余弦 0.6 の点（荒野の太陽の高度 38° に近い）
         ground_index = PSI_PROBE_COSINES.index(0.6)
@@ -1337,24 +1356,29 @@ def verify(dump_path, out_dir):
             "sun_direction": sun.tolist(),
         }
         report["sets"][name] = record
+        level1 = checks.get("level1", {})
         level2 = checks.get("level2", {})
         print(f"ATMOSPHERE_REFERENCE set={name} converged={int(converged)} "
               f"max_level_diff={max(worst.values(), default=float('nan')):.5f} "
               f"worst={max(worst, key=worst.get) if worst else '-'} "
-              f"analytic_vertical={checks['level1']['vertical_optical_depth']['max_relative_error']:.2e} "
-              f"f_ms_max={checks['level1']['f_ms_max']:.4f} orders={checks['level1']['orders']}/{level2.get('orders')} "
-              f"order_ratio_2={checks['level1']['order_ratios_first10'][0]:.4f} "
-              f"second_order_max_rel={checks['level1']['second_order_max_relative']:.2e}/"
+              f"analytic_vertical={checks['check']['vertical_optical_depth']['max_relative_error']:.2e} "
+              f"f_ms_max={checks['check']['f_ms_max']:.4f} "
+              f"orders={checks['check']['orders']}/{level1.get('orders')}/{level2.get('orders')} "
+              f"order_ratio_2={checks['check']['order_ratios_first10'][0]:.4f} "
+              f"second_order_max_rel={checks['check']['second_order_max_relative']:.2e}/"
+              f"{level1.get('second_order_max_relative', float('nan')):.2e}/"
               f"{level2.get('second_order_max_relative', float('nan')):.2e} "
               f"repro_altitude={repro_altitude:.6f} "
               f"repro_toward_sun_rel={np.round(repro['combined']['toward_sun_relative'], 5).tolist()} "
               f"repro_sun_over_isotropic={np.round(repro_ratio, 4).tolist()} "
-              f"first_order_A_vs_B={checks['level1']['first_order_max_relative']:.1e}/"
+              f"first_order_A_vs_B={checks['check']['first_order_max_relative']:.1e}/"
+              f"{level1.get('first_order_max_relative', float('nan')):.1e}/"
               f"{level2.get('first_order_max_relative', float('nan')):.1e} "
               f"sun_T={np.round(q_fine['sun_transmittance'], 4).tolist()} "
               f"sky_E_A={np.round(q_fine['sky_irradiance_A'], 4).tolist()} "
               f"sky_E_B={np.round(q_fine['sky_irradiance_B'], 4).tolist()} "
-              f"seconds={coarse.seconds:.1f}+{level2.get('seconds', float('nan')):.1f}(saved)")
+              f"seconds={light.seconds:.1f}+{level1.get('seconds', float('nan')):.1f}(saved)"
+              f"+{level2.get('seconds', float('nan')):.1f}(saved)")
         for key, value in worst.items():
             print(f"ATMOSPHERE_REFERENCE set={name} quantity={key} level1_vs_level2={value:.5f}")
     report["failures"] = failures
@@ -1371,13 +1395,14 @@ def verify(dump_path, out_dir):
 
 def main():
     parser = argparse.ArgumentParser(description="空と霞の数値の正解（Hillaire 2020 の定義から独立に積分する）")
-    parser.add_argument("--solve", action="store_true", help="段 2 の正解と検査を求めて保存する（重い）")
-    parser.add_argument("--verify", action="store_true", help="段 1 を解き、保存した段 2 との収束と解析解との一致を確かめる")
+    parser.add_argument("--solve", action="store_true", help="段の正解と検査を求めて保存する（重い）")
+    parser.add_argument("--level", type=int, choices=(1, 2), default=2, help="--solve で解く段")
+    parser.add_argument("--verify", action="store_true", help="保存した段 1 と段 2 の収束と、検査の段の解析解との一致などを確かめる")
     parser.add_argument("--dump", default=DEFAULT_DUMP, help="エンジンの書き出しの JSON（<視点>.atmos.json）")
     parser.add_argument("--out", default=DEFAULT_OUT, help="結果の JSON の出力先")
     args = parser.parse_args()
     if args.solve:
-        status = solve(args.dump, args.out)
+        status = solve(args.dump, args.out, args.level)
         if status or not args.verify:
             return status
     if args.verify:
