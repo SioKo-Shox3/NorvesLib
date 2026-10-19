@@ -5380,4 +5380,6 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - Cycles の OSL の描画は 1 視点あたり読み込みと OSL の準備に約 380 秒かかり、64 サンプル足すごとに約 9 秒（ref_ground_01 の試し: 64→385 秒、192→403 秒。`aux-SCN-WLR-CYCLES-LIT-A-trial-speed.txt`）。収束の基準は SCN-WLR-CYCLES-GRAY と同じ（1 本 512 サンプル以上）
   - 反復 23: 材質と Cycles の入力の記録を、同じ台本・値の表・撮影なら前の視点を残して足す形にした（視点を分けて描くため）。ref_cliff_01 は前に深度から求めたずらし (+0.243, +0.027) を `--camera-shift-hint` で最初から使う
   - 台本を変えたので、反復 22 の ref_ground_01 の描画（192 サンプル）は描き直す
-- 残り: ref_cliff_01・ref_ground_01・ref_far_01 の材質と Cycles、`--lit --verify`、記録の文書
+  - 反復 23: ref_cliff_01 の材質（4 列、5634 万三角形）をずらし (+0.243, +0.027) で 1 回だけ描き、残りのずれ (+0.010, −0.003) 画素で許容内（`aux-SCN-WLR-CYCLES-LIT-A-cliff.txt`、`material/inputs.json` に記録）
+  - ref_cliff_01 の Cycles（影の範囲 141 区画・1.21 億三角形）は 09:16 に起動し、太陽の見え方（aux）は 09:17 に書けたが、本描画の最初の 64 サンプルが 15 分を超えても返らない（GPU の使用率 3 %・メモリ 12.4/16 GB、Blender は 1 コア弱・20 GB）。OSL の準備が三角形の数か GPU のメモリで遅くなっている疑い。灰色（OSL なし）は同じ視点で読み込み 50 秒・描画 21 秒だった
+- 残り: ref_cliff_01 の Cycles（終わらなければ、本描画の区画を減らすか OSL の当たりの材質を軽くする手を考える）・ref_ground_01・ref_far_01 の材質と Cycles、`--lit --verify`、記録の文書
