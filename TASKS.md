@@ -1723,7 +1723,7 @@
 - notes: -
 
 ## SCN-WLR-CYCLES-LIT-A: 実材質の地形を共通の照明で 3 視点描き、エンジンと比べる
-- status: todo
+- status: done
 - after: SCN-WLR-CYCLES-GRAY, SCN-WLR-MATERIAL-NORMAL, SCN-WLR-DISPLAY-TRANSFORM
 - done-when: 実材質（SCN-WLR-MATERIAL-ALBEDO・NORMAL）・共通の照明で、ref_cliff_01・ref_far_01・ref_ground_01 を Cycles（SCN-WLR-CYCLES-GRAY と同じ収束の基準）とエンジン（地形だけ・共通の照明・最細の LOD）で描き、露出前の HDR の領域ごとの値の表と、SCN-WLR-DISPLAY-TRANSFORM の同じ表示変換を掛けた比較画像（エンジン｜Cycles）を作る。
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -Build -RequireAssets -Width 1920 -Height 1080 -Hdr -Aov -Views ref_cliff_01 -GameArgs wasteland-common-light,wasteland-hide=all,wasteland-finest-lod -OutDir .harness/runs/scene-capture/SCN-WLR-CYCLES-LIT-recheck`

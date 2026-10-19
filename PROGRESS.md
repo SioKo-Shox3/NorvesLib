@@ -5384,3 +5384,19 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - ref_cliff_01 の Cycles（影の範囲 141 区画・1.21 億三角形）は済み（1512 秒、`aux-SCN-WLR-CYCLES-LIT-A-cliff.txt`。Blender の出力は終わるまで書かれないので途中は見えない）。1 本 2048 サンプルの上限で止まり、日なたの地面・日なたの崖は収束（平均の差 0.0000・画素の RMS 0.002）、影の中の地面（2375 画素、平均の差 0.041・RMS 1.98）と影の崖（71400 画素、0.0005・0.121）は上限に届いて未判定。遠景は画素なし。512 サンプルで 626 秒、2048 で 1453 秒
   - ref_ground_01 の材質を今の台本で描き直した（91 秒、`aux-SCN-WLR-CYCLES-LIT-A-ground-material.txt`）。`material/inputs.json` に ref_cliff_01 と ref_ground_01 の 2 視点が残ることを確かめた
 - 残り: ref_ground_01 の Cycles（`--skip-material`）・ref_far_01 の材質と Cycles（1 視点ずつ起動してコミット。崖の材質と Cycles の記録は今の台本のハッシュで残っている）、`--lit --verify`、記録の文書。影の領域の未収束が他の視点でも続くなら、`--max-seconds` で上限を決めて未判定のまま進める
+
+### SCN-WLR-CYCLES-LIT-A 完了（2026-10-19、run 20261018-205227 の反復 24）
+- Done: 実材質・共通の照明で ref_cliff_01・ref_far_01・ref_ground_01 をエンジンと Cycles で描き、露出前の HDR の領域ごとの表と、エンジンの表示変換を両方に掛けた比較画像（エンジン｜Cycles）を作った。記録は `Docs/RenderingValidation/WastelandCyclesLit.md`（エンジンの照明・材質は直していない）
+  - 反復 24: ref_ground_01 の Cycles（124 区画・0.87 億三角形、512 サンプルで全領域が収束、描画 461 秒）と、ref_far_01 の材質（深度で (−0.107, −0.158) 画素ずらして描き直し、残り 0.020 画素）と Cycles（148 区画・1.31 億、512 で収束、567 秒）を描いた
+  - 結果（エンジン ÷ Cycles）: 日なたの地面 0.781〜0.821、日なたの崖 0.953（ref_cliff_01）・0.855（ref_ground_01）、遠景 0.902〜0.922、影の崖 1.771（未判定）。エンジンだけが掛ける材質の AO（日なたの地面で平均 0.62〜0.66）を Cycles に掛けた見込みとの比は 0.95〜0.97（崖 1.000・遠景 0.98〜0.99）で、灰色の材質の比と同じ大きさの残りになる。影の崖は AO では説明できない（1.86。RT のシーンが空のまま）
+- 証拠（`.harness/runs/20261018-205227/`）:
+  - `aux-SCN-WLR-CYCLES-LIT-A-ground.txt`: ref_ground_01 の Cycles（`--skip-material`）EXIT=0
+  - `aux-SCN-WLR-CYCLES-LIT-A-far.txt`: ref_far_01 の材質と Cycles EXIT=0（材質の記録 3 視点・Cycles の記録 3 視点）
+  - `verify-SCN-WLR-CYCLES-LIT-A-1.txt`: 1 視点の撮影（RelWithDebInfo・`-Build -RequireAssets -Hdr -Aov`、別の出力先）result=pass、EXIT=0。ログに `WASTELAND_COMMON_LIGHT view=ref_cliff_01 case=both`・`WASTELAND_FINEST_LOD`・`WASTELAND_HIDE mask=127` があることを確かめた。入力のハッシュ（sha256=9941e342…）は保存した撮影と同じ
+  - `verify-SCN-WLR-CYCLES-LIT-A-2.txt`: `--lit --verify` 3 視点 result=pass、inputs_current=1・material_inputs_current=1・cycles_inputs_current=1、EXIT=0
+  - 比較画像 `lit_ref_cliff_01.png`・`lit_ref_far_01.png`・`lit_ref_ground_01.png` を開き、幾何と模様が揃い、エンジンの日なたの地面が暗く模様が濃いこと、エンジンの崖の陰が浅く黄色いことを見た
+- Notes:
+  - ref_cliff_01 は実材質では影の 2 領域が 2048 サンプルでも収束しない（灰色では 512 で収束）。未判定のまま記録した
+  - 材質の AO の値（平らな砂地で 0.6 台）と直接光へ掛けることの是非は確かめていない。SCN-WLR-GAP-LIST の候補
+  - 新しい試験は足していない（verify の撮影と検査が確かめる）
+- Next: TASKS.md の次の未完の項目（SCN-WLR-CYCLES-LIT-B）。
