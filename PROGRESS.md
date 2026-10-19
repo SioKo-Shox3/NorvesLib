@@ -5510,3 +5510,17 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 済み（反復 37）: `--albedo --verify` を回し直して pass（`aux-SCN-WLR-GAP-LIST-albedo-verify.txt`、inputs_current=1・blender_inputs_current=1）。`--gap-list` で表を文書に書いた（26 項目。灰色の撮り直しの後も文書の本文の値と一致）。一覧の画像（1920 × 1840）を開いて 6 視点 × 4 列がそろうことを確かめた
   - 済み（反復 37）: 法線の Blender を描き直し（`aux-SCN-WLR-GAP-LIST-normal-blender.txt`、EXIT=0）、`--normal --verify` pass（`aux-SCN-WLR-GAP-LIST-normal-verify.txt`、inputs_current=1・blender_inputs_current=1）
   - 残り: 遠景のぼけの静止 10 組と動き 4 組の撮り直し（Game/GameModes/Wasteland・CaptureScene.ps1・CommonLight.json が撮影の後に変わった）→ `--blur-static --verify`・`--blur-motion --verify` → `--gap-list` → `LOOP_STOP`（boundary）→ verify
+
+### SCN-WLR-GAP-LIST 完了（2026-10-19、run 20261018-205227 の反復 36〜38 と親）
+
+- Done: 荒野の正解の絵の比較の結果を「描画の欠陥」13・「中身の欠陥」2・「条件不一致・未判定」11 に分けた一覧（`Docs/RenderingValidation/WastelandGapList.md`）と、写真｜エンジン（既定）｜エンジン（地形だけ・共通の照明）｜Cycles の一覧の画像（`.harness/runs/scene-capture/SCN-WLR-GAP-LIST/gap_overview.png`）、`ReferenceCheck.py --gap-list`（`--require-atmos` つき）を足した。ユーザーの 6 点ごとに原因と直す項目の案を書いた
+  - 反復 38 は遠景のぼけの撮り直し（全段 exit=0、Game.exe は始めと終わりで同じ）まで済ませて壁時計で止まり、遮断器で blocked になった。残りの検査は親が回した
+- 証拠（`.harness/runs/20261018-205227/`）:
+  - `aux-SCN-WLR-GAP-LIST-blur-static-verify.txt`: `--blur-static --verify` result=pass（9 組、inputs_current=1）
+  - `aux-SCN-WLR-GAP-LIST-blur-motion-verify.txt`: `--blur-motion --verify` result=pass（4 組、inputs_current=1）、EXIT=0
+  - 撮り直しで遠景のぼけの値が 0.01 未満動いたので、`--gap-list`（`--verify` なし）で文書の表を書き直した（3 行）
+  - `verify-SCN-WLR-GAP-LIST-parent.txt`: `--gap-list --verify` result=pass、components=8、items=26、doc_table=same、atmos_current=0（大気の正解の B の直し待ち。未判定の印 4 件）、EXIT=0
+  - 一覧の画像と文書を開いて、6 視点の 4 列と表・6 点の対応を確かめた
+- Notes:
+  - 大気の正解の B に依る判断（霧の太陽の側の二重・空気遠近の向き・写真の空の青・空の高次の散乱）は未判定。SCN-WLR-GAP-LIST-ATMOS で埋める
+- Next: 後ろの SCN-WL-* を一覧の「直す項目の順の案」で組み直す（親）。

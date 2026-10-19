@@ -1811,7 +1811,7 @@
 - notes: -
 
 ## SCN-WLR-GAP-LIST: 節目: 描画の欠陥と中身の欠陥を分けた一覧をユーザーに渡す
-- status: todo
+- status: done
 - after: SCN-WLR-CYCLES-GRAY, SCN-WLR-MATERIAL-NORMAL, SCN-WLR-CYCLES-LIT-B, SCN-WLR-ATMOS-DUMP, SCN-WLR-FAR-BLUR-MOTION, SCN-WLR-TONEMAP-EVAL
 - done-when: `ReferenceCheck.py --gap-list` を作り、SCN-WLR-CYCLES-GRAY・MATERIAL-ALBEDO・MATERIAL-NORMAL・CYCLES-LIT・ATMOS-REF・FAR-BLUR-STATIC・FAR-BLUR-MOTION・TONEMAP-EVAL の結果が揃い、入力のハッシュが今と一致することを検査する。差を「描画の欠陥（入力が一致してエンジン ≠ Cycles）」「中身の欠陥（条件が一致して Cycles ≠ 写真）」「条件不一致・未判定」に分けた一覧を、差の大きい順に `Docs/RenderingValidation/WastelandGapList.md` に書く。ユーザーの 6 点（遠景のぼけ・フォグ・空・雲・建物の浮き・植物）それぞれに、原因と直す項目の案を対応させる（雲・建物・植物はこの段の比較に入っていないので、同じ建物 1 棟・植物 1 株・雲の密度場を足して比べる段の案も書く）。写真｜エンジン｜Cycles の一覧の画像を 1 枚にまとめる。最後にリポジトリ直下へ中身が `boundary` の `LOOP_STOP` を書く（親がユーザーに渡し、後ろの項目を組み直す）。
 - verify: `python Scripts/Terrain/ReferenceCheck.py --gap-list --verify`
