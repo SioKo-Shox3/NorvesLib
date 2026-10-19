@@ -5591,3 +5591,11 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 画面全体の白飛びの「前」はブルームと FXAA を入れて測り直し、少しだけ下がった（例 ref_ground_01 0.1059 → 0.1029）。文書の表を直した
   - 新しい試験は足していない
 - Next: TASKS.md の次の未完の項目。
+
+### SCN-WLR-REF-SPLIT 閉じ（2026-10-19、run 20261019-192352 の反復 6）
+- Done: 反復 3 で済んだ範囲（コミット d4b2742a: 参照の入力とエンジンの実装の 2 つの署名、`--engine`・`--reference`、`CaptureRegression.ps1` と `--regression`、灰色・実材質の Cycles の参照の新しい形の記録）で verify を回し、項目を閉じた。残り（検証レイヤー・`-Motion`・エンジンの撮影の撮り直し）は SCN-WLR-REGRESSION-VALIDATION・REGRESSION-MOTION・RECAPTURE-* で行う
+- 証拠（`.harness/runs/20261019-192352/`）:
+  - `verify-SCN-WLR-REF-SPLIT-2.txt`: `--ref-split-selftest --verify` result=pass・cases=12・exit=0。参照の入力が今と一致（reference_recorded・reference_current が ok=1）、エンジンの実装・Game.exe・カメラ台本・出力の画像・照明・参照の出力の変更を古いとして落とす 7 件が期待どおり、エンジンやシェーダを変えても参照を再利用できる 2 件も期待どおり
+- Notes:
+  - コードは変えていない。新しい試験は足していない
+- Next: TASKS.md の次の未完の項目。

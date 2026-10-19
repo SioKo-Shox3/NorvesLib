@@ -1827,7 +1827,7 @@
 - notes: 2026-10-19 に親が足した（GAP-LIST を ATMOS-REF の解き待ちから外したため）。
 
 ## SCN-WLR-REF-SPLIT: 比較の記録を「参照の入力」と「エンジンの実装」に分け、撮影先を項目ごとに分け、回帰の撮影をまとめる
-- status: todo
+- status: done
 - after: SCN-WLR-GAP-LIST
 - done-when: (1) `Scripts/Terrain/ReferenceCheck.py` の入力の記録を 2 つの署名に分ける: 参照の入力（地形のメッシュ・材質の値の表〔Cycles が使う値だけ。材質の AO は入れない〕・共通の照明・カメラと Blender のカメラのずらし量・Blender の台本と出力の画像のハッシュ）と、エンジンの実装（描画のコード・`Game/GameApplicationHandler.cpp`・カメラ台本・撮影に使った Game.exe のハッシュ・出力の画像のハッシュ）。Cycles の参照は参照の入力が同じならエンジンの実装が変わっても再利用でき、Game の撮影はエンジンの実装が今と一致しないと古いとして落とす。(2) `--gray`・`--lit`・`--blur-static`・`--blur-motion` に `--engine`（複数回）と `--reference` を足す。(3) 回帰の撮影の台本 `Scripts/Terrain/CaptureRegression.ps1` と `ReferenceCheck.py --regression` を作る（RelWithDebInfo での検証レイヤーは SCN-WLR-REGRESSION-VALIDATION、`-Motion` の Rendering3DTest は SCN-WLR-REGRESSION-MOTION）。(4) 灰色・実材質の Cycles の参照を新しい形で記録し、参照の入力が今と一致すること、負の確認 `--ref-split-selftest`（12 件）が期待どおりであることを確かめる。エンジンの撮影の撮り直しは SCN-WLR-RECAPTURE-* で行う。
 - verify: `python Scripts/Terrain/ReferenceCheck.py --ref-split-selftest --verify`
