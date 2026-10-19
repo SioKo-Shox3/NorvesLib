@@ -1758,7 +1758,7 @@
 - notes: 危険地帯（描画の読み出し）。値は変えない。撮影の構成（Debug か RelWithDebInfo か）は SCN-WL-CAPTURE-SPEED の決定に揃えてよい（verify も同じ反復で直す）。
 
 ## SCN-WLR-ATMOS-REF-B: 大気の正解の高次の散乱を、方向を保ったまま重ねる形に直す
-- status: todo
+- status: blocked
 - after: SCN-WLR-ATMOS-DUMP
 - done-when: `Scripts/Terrain/AtmosphereReference.py` の B（散乱の回数で足す版）を、各回の散乱で位相関数（Rayleigh・HG）を方向ごとに掛け、方向別の放射輝度を次の回へ引き継ぐ形に直す（今は 2 回目以降を球の平均へ潰し、次の散乱源を σs × Ψ にしている。評価者の最小再現: 書き出しの係数・高度 1474.223367 m・太陽の高度 38° で、太陽方向の二次の散乱源が、位相関数を角度で積分した値の RGB 3.3694・2.9392・2.3542 分の 1）。方法（方向の格子での次数ごとの積分か、論文の著者の参照実装 RenderSkyPathTracing と同じ形のモンテカルロ）は選んでよい。`--verify` に、(1) 上の最小再現の条件で二次の散乱源を位相関数の角度の積分と照らす検査（1 % 以内）、(2) 歩数・方向・標本を倍にした段との差 0.5 % 以内の収束、(3) 1 回目だけの値が A・B で一致すること、を足す。A（論文の近似）は変えない。比べる表の更新は SCN-WLR-ATMOS-REF で行う。
 - verify: `python Scripts/Terrain/AtmosphereReference.py --verify`
@@ -1812,11 +1812,19 @@
 
 ## SCN-WLR-GAP-LIST: 節目: 描画の欠陥と中身の欠陥を分けた一覧をユーザーに渡す
 - status: todo
-- after: SCN-WLR-CYCLES-GRAY, SCN-WLR-MATERIAL-NORMAL, SCN-WLR-CYCLES-LIT-B, SCN-WLR-ATMOS-REF, SCN-WLR-FAR-BLUR-MOTION, SCN-WLR-TONEMAP-EVAL
+- after: SCN-WLR-CYCLES-GRAY, SCN-WLR-MATERIAL-NORMAL, SCN-WLR-CYCLES-LIT-B, SCN-WLR-ATMOS-DUMP, SCN-WLR-FAR-BLUR-MOTION, SCN-WLR-TONEMAP-EVAL
 - done-when: `ReferenceCheck.py --gap-list` を作り、SCN-WLR-CYCLES-GRAY・MATERIAL-ALBEDO・MATERIAL-NORMAL・CYCLES-LIT・ATMOS-REF・FAR-BLUR-STATIC・FAR-BLUR-MOTION・TONEMAP-EVAL の結果が揃い、入力のハッシュが今と一致することを検査する。差を「描画の欠陥（入力が一致してエンジン ≠ Cycles）」「中身の欠陥（条件が一致して Cycles ≠ 写真）」「条件不一致・未判定」に分けた一覧を、差の大きい順に `Docs/RenderingValidation/WastelandGapList.md` に書く。ユーザーの 6 点（遠景のぼけ・フォグ・空・雲・建物の浮き・植物）それぞれに、原因と直す項目の案を対応させる（雲・建物・植物はこの段の比較に入っていないので、同じ建物 1 棟・植物 1 株・雲の密度場を足して比べる段の案も書く）。写真｜エンジン｜Cycles の一覧の画像を 1 枚にまとめる。最後にリポジトリ直下へ中身が `boundary` の `LOOP_STOP` を書く（親がユーザーに渡し、後ろの項目を組み直す）。
 - verify: `python Scripts/Terrain/ReferenceCheck.py --gap-list --verify`
 - paths: Scripts/Terrain, Scripts, Docs/RenderingValidation, TASKS.md, PROGRESS.md
-- notes: この後ろの SCN-WL-* の項目は、この一覧を見て組み直す（それまでは after でこの項目を待つ）。
+- notes: この後ろの SCN-WL-* の項目は、この一覧を見て組み直す（それまでは after でこの項目を待つ）。2026-10-19: SCN-WLR-ATMOS-REF は B（高次の散乱）の直しの解き待ち（反復の外で 6〜10 時間、SCN-WLR-ATMOS-REF-B）。ユーザーが戻るまでに一覧を渡すため、この項目は ATMOS-REF を待たない。空と霞は SCN-WLR-ATMOS-DUMP・FAR-BLUR の結果と、ATMOS-REF の反復 6 の記録のうち A（論文の近似）で決まる比較で書き、B に依る判断（霧の「空の LUT × 不透明度」が太陽の側で正解の多重散乱の 2.2 倍、など）は「未判定（B の直し待ち。SCN-WLR-GAP-LIST-ATMOS で埋める）」とする。`--gap-list --verify` は ATMOS-REF の結果が古い（入力のハッシュが今と違う）ことを未判定の印として許し、ほかの結果は揃いと今との一致を検査する。未判定を許さない `--require-atmos` も用意する（SCN-WLR-GAP-LIST-ATMOS の verify が使う）。
+
+## SCN-WLR-GAP-LIST-ATMOS: 一覧の空と霞の未判定を、直した大気の正解で埋める
+- status: todo
+- after: SCN-WLR-ATMOS-REF, SCN-WLR-GAP-LIST
+- done-when: SCN-WLR-ATMOS-REF（直した B での比較の表と霞の二重の判断）の結果で、`Docs/RenderingValidation/WastelandGapList.md` の空と霞の「未判定（B の直し待ち）」を埋め、結論が変わった所（霧・空気遠近の直す項目の案）を書き直す。後ろの項目（空と霞を直す項目）の done-when が変わった結論と食い違うなら、その項目の notes に変わった結論を書き足す。`--gap-list --require-atmos --verify` が、ATMOS-REF も今の入力と一致し未判定が残っていないことを検査して通る。LOOP_STOP は書かない。
+- verify: `python Scripts/Terrain/ReferenceCheck.py --gap-list --require-atmos --verify`
+- paths: Scripts/Terrain, Docs/RenderingValidation, TASKS.md, PROGRESS.md
+- notes: 2026-10-19 に親が足した（GAP-LIST を ATMOS-REF の解き待ちから外したため）。
 
 ## SCN-WL-RTGI-COLOR: 照り返しの入力を成立させる
 - status: todo
