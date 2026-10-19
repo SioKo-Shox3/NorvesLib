@@ -213,6 +213,13 @@
 #       合否: 撮影が既定の荒野の表示（起動引数に TONEMAP_FORBIDDEN_ARG_PREFIXES が無い）で、各視点の HDR が PNG と合い（--hdr と
 #       同じ検査）、撮影の表示変換の記録が候補 current と同じ値であること、Cycles の描画とその入力（--lit と同じ記録）と写真が
 #       揃い、測った値がすべて有限であること。--verify は撮影と --lit-capture の撮影・Cycles の入力の記録を今のファイルと照らす。
+#   python Scripts/Terrain/ReferenceCheck.py --gap-list [--capture <出力先>] [--require-atmos] [--verify]
+#       節目の差の一覧（GapList.py）。灰色・アルベド・法線・実材質・大気の正解・遠景のぼけの静止と動き・表示変換の比較の報告が揃い、
+#       --verify で合格した記録で、撮影・描画の入力が今のファイルと一致することを検査し、差を「描画の欠陥」「中身の欠陥」
+#       「条件不一致・未判定」に分けて大きい順に並べた表を Docs/RenderingValidation/WastelandGapList.md の印の間に書き
+#       （--verify では書かずに同じであることを検査する）、写真｜エンジン｜Cycles の一覧の画像を <出力先>/gap_overview.png に、
+#       結果を <出力先>/gap_list_check.json に書く。<出力先> の既定は GAP_LIST_DIR。大気の正解の比較が古いことは
+#       未判定の印として許し、--require-atmos では許さない（B の直し待ちの項目が残っていても失敗にする）。
 #
 # 終了コード: すべて合格なら 0、どれかが不合格なら 1。
 import argparse
@@ -638,6 +645,9 @@ MOTION_GROUPS = (
     {"name": "base", "dir": ".", "args": (), "logs": (), "size": BLUR_SIZE, "resident": False},
 )
 MOTION_AA_GROUPS = ("fxaa", "taa", "base")
+
+# 差の一覧（--gap-list、GapList.py）の出力先
+GAP_LIST_DIR = os.path.join(".harness", "runs", "scene-capture", "SCN-WLR-GAP-LIST")
 MOTION_EPOCH_RE = re.compile(r"CAMERA_SCRIPT_EPOCH engine_frame=(\d+)")
 MOTION_REQUEST_RE = re.compile(r"CAMERA_SCRIPT_CAPTURE requested tag=(\S+) engine_frame=(\d+) position=\(([^)]*)\) "
                                r"yaw=(-?\d+(?:\.\d+)?) pitch=(-?\d+(?:\.\d+)?)")
@@ -5349,7 +5359,8 @@ def main():
     # 結果の行を保存して読むので、端末の符号に関わらず UTF-8 で書く
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     parser = argparse.ArgumentParser(description="荒野の正解の絵の比較で、保存した撮影の結果を検査する")
-    parser.add_argument("--capture", required=True, help="撮影の出力先（CaptureScene.ps1 の -OutDir）")
+    parser.add_argument("--capture", default="",
+                        help="撮影の出力先（CaptureScene.ps1 の -OutDir）。--gap-list で省くと GAP_LIST_DIR")
     parser.add_argument("--record-inputs", action="store_true", help="入力のハッシュを inputs.json に書く")
     parser.add_argument("--kind", default="engine", choices=sorted(INPUT_SETS), help="--record-inputs の入力の種類")
     parser.add_argument("--game-exe", default="", help="--record-inputs で中身のハッシュを書く、撮影に使った Game.exe")
@@ -5377,11 +5388,23 @@ def main():
                         help="実材質の地形のエンジンと Cycles の描画を、領域ごとの線形の平均の表と表示変換を掛けた比較画像で比べる")
     parser.add_argument("--tonemap", action="store_true",
                         help="表示変換の候補を、エンジンと Cycles の同じ HDR に掛けて並べ、手本の写真と比べる")
+    parser.add_argument("--gap-list", action="store_true",
+                        help="比較の結果が揃い今の入力と合うことを検査し、差を分類した一覧（WastelandGapList.md の表）と一覧の画像を作る")
+    parser.add_argument("--require-atmos", action="store_true",
+                        help="--gap-list で、大気の正解の比較（SCN-WLR-ATMOS-REF）の古さと B の直し待ちの項目を許さない")
     parser.add_argument("--lit-capture", default=TONEMAP_LIT_DIR,
                         help="--tonemap で Cycles の HDR を借りる SCN-WLR-CYCLES-LIT の出力先")
     parser.add_argument("--views", default="", help="検査する視点（カンマ区切り。省くと metrics.json の全視点）")
     parser.add_argument("--verify", action="store_true", help="入力のハッシュを今のファイルと照らし、古い結果を拒否する")
     args = parser.parse_args()
+    if args.gap_list:
+        import GapList
+        capture = args.capture or GAP_LIST_DIR
+        capture_dir = os.path.normpath(capture if os.path.isabs(capture) else os.path.join(REPO_ROOT, capture))
+        return GapList.run(sys.modules[__name__], capture_dir, args.verify, args.require_atmos)
+    if not args.capture:
+        print("REFERENCE_CHECK result=fail reason=capture_missing（--capture を指定する）")
+        return 1
     capture_dir = args.capture if os.path.isabs(args.capture) else os.path.join(REPO_ROOT, args.capture)
     capture_dir = os.path.normpath(capture_dir)
     if not os.path.isdir(capture_dir):
