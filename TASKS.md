@@ -1763,7 +1763,7 @@
 - done-when: `Scripts/Terrain/AtmosphereReference.py` の B（散乱の回数で足す版）を、各回の散乱で位相関数（Rayleigh・HG）を方向ごとに掛け、方向別の放射輝度を次の回へ引き継ぐ形に直す（今は 2 回目以降を球の平均へ潰し、次の散乱源を σs × Ψ にしている。評価者の最小再現: 書き出しの係数・高度 1474.223367 m・太陽の高度 38° で、太陽方向の二次の散乱源が、位相関数を角度で積分した値の RGB 3.3694・2.9392・2.3542 分の 1）。方法（方向の格子での次数ごとの積分か、論文の著者の参照実装 RenderSkyPathTracing と同じ形のモンテカルロ）は選んでよい。`--verify` に、(1) 上の最小再現の条件で二次の散乱源を位相関数の角度の積分と照らす検査（1 % 以内）、(2) 歩数・方向・標本を倍にした段との差 0.5 % 以内の収束、(3) 1 回目だけの値が A・B で一致すること、を足す。A（論文の近似）は変えない。比べる表の更新は SCN-WLR-ATMOS-REF で行う。
 - verify: `python Scripts/Terrain/AtmosphereReference.py --verify`
 - paths: Scripts/Terrain, Docs/RenderingValidation, TASKS.md, PROGRESS.md
-- notes: 2026-10-19 に SCN-WLR-ATMOS-REF から分けた（NEXT_FINDINGS.md の「反復 6 — SCN-WLR-ATMOS-REF」）。verify は 1 コマンド 10 分以内に収める（重い積分は反復の中で保存し、verify は保存した結果と小さな条件の検査に分けてよい）。
+- notes: 2026-10-19 に SCN-WLR-ATMOS-REF から分けた（NEXT_FINDINGS.md の「反復 6 — SCN-WLR-ATMOS-REF」）。verify は 1 コマンド 10 分以内に収める（重い積分は反復の中で保存し、verify は保存した結果と小さな条件の検査に分けてよい）。2026-10-19 反復 31 で blocked（収束 0.76〜1.07 %。blocked/resolved/SCN-WLR-ATMOS-REF-B.md）→ 推奨の 1 を採る: 表の 4 次元の引きを 3 次補間（Catmull-Rom）にして収束を測り直す。基準 0.5 % は変えない。それでも届かなければ 2 を採る: 視線・点の格子と歩数を倍にした組を新しい段 1 にし、段 2 の `--solve`（1 組 1〜2 時間）は反復の外で切り離したプロセスとして起動し、出力と入力のハッシュを保存する（重い処理は許可済み）。次の反復がその保存を検査して閉じる。走行中の段 2 を重ねて起動しない。
 
 ## SCN-WLR-ATMOS-REF: 空と霞を、独立に書いた大気の数値の正解と比べる
 - status: todo
