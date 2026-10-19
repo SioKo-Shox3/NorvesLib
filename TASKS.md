@@ -1732,7 +1732,7 @@
 - notes: Cycles の EXR は残して SCN-WLR-TONEMAP-EVAL・GAP-LIST で使い回す。最細の LOD の撮影は 1 視点あたり約 150 秒（6 視点で 903 秒）かかる。全視点の撮影は反復の中で 1 回走らせて保存し、verify は 1 視点の撮影（ビルドと起動の経路の確認。別の出力先）と、保存した結果の検査（入力のハッシュで古い結果を拒否）に分ける（ランナーの再検証は 1 コマンド 10 分）。
 
 ## SCN-WLR-CYCLES-LIT-B: 残りの 3 視点を描き、写真・エンジン・Cycles を並べる
-- status: todo
+- status: doing
 - after: SCN-WLR-CYCLES-LIT-A
 - done-when: ref_far_02・ref_cliff_02・ref_ground_02 を SCN-WLR-CYCLES-LIT-A と同じ条件で描き、6 視点すべての写真｜エンジン｜Cycles の比較画像と領域ごとの値の表を作る。写真とは照明・天気・現像が違うので、写真との差は「条件の違い」を分けて書く。
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -Build -RequireAssets -Width 1920 -Height 1080 -Hdr -Aov -Views ref_far_02 -GameArgs wasteland-common-light,wasteland-hide=all,wasteland-finest-lod -OutDir .harness/runs/scene-capture/SCN-WLR-CYCLES-LIT-recheck`

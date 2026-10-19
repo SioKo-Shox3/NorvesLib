@@ -5411,3 +5411,18 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - ref_far_02 の Cycles を `--skip-material` で描き直した（512 サンプルで全領域が収束、描画 492 秒、`aux-SCN-WLR-CYCLES-LIT-B-ref_far_02-cycles.txt`、EXIT=0）。照合（`aux-SCN-WLR-CYCLES-LIT-B-far-check.txt`、result=pass）: エンジン ÷ Cycles は日なたの地面 0.822・日なたの崖 0.868・影の崖 1.007（2894 画素、赤 0.77・青 1.41）・遠景 0.968、AO の見込みとの比 0.95〜1.05。写真は薄曇りで低木が多い（崖 ÷ 地面 写真 0.90・エンジン 1.21・Cycles 1.12）
   - `ReferenceCheck.git_output` に再試行（2 秒おきに 5 回）を足した。長い描画の後の入力の記録が、同時に走るコミットとの一時的な失敗で捨てられないように
 - 残り: ref_far_02 の Cycles、ref_cliff_02 の材質と Cycles（前の反復の連続実行の台本がこのまま続けて描く）、`--lit --verify` の 6 視点、記録の文書（6 視点の表・写真との比較と条件の違い）
+
+### SCN-WLR-CYCLES-LIT-B 完了（2026-10-19、run 20261018-205227 の反復 26）
+- Done: ref_far_02・ref_cliff_02・ref_ground_02 を LIT-A と同じ条件で描き、6 視点の写真｜エンジン｜Cycles の比較画像（`lit_photo_<視点>.png`・`lit_photo_overview.png`）と領域ごとの表を作った。記録は `Docs/RenderingValidation/WastelandCyclesLit.md`（6 視点の表、写真との比較の表、条件の違い〔天気・現像・太陽と崖の向き・隠した植生〕と、写真と並べても残るエンジンと Cycles の差を分けた）
+  - ref_cliff_02: 材質は深度から求めたずれ +0.779 画素でずらして描き直し（残り −0.016 画素）、Cycles（135 区画・1.22 億三角形）は 512 サンプルで全領域が収束（描画 598 秒、`aux-SCN-WLR-CYCLES-LIT-B-ref_cliff_02.txt`、EXIT=0）
+  - 結果（エンジン ÷ Cycles、判定した領域）: 日なたの地面 0.705〜0.822、日なたの崖 0.829〜0.953、影の崖 0.875〜1.007、遠景 0.764〜0.968、ref_cliff_02 の影の中の地面 2.223
+  - ref_cliff_02 は右手前の台地の長い影（太陽の高さ 24°）がエンジンに落ちない。この視点だけ `VSM_PAGES requested=38 levels_used=0x200`、`VSM_LIGHTING_STATS fallback_samples` が 1 回の描画あたり約 1210 万（他の視点 15 万〜390 万）で、影の地図が手前の地面を覆っていない疑い（未確認）
+  - 写真と比べても、地面はエンジンが Cycles より赤く青みが少ない（6 視点）。写真の地面の R/G に近いのは 6 視点中 4 視点で Cycles
+- 証拠（`.harness/runs/20261018-205227/`）:
+  - `verify-SCN-WLR-CYCLES-LIT-B-1.txt`: ref_far_02 の 1 視点の撮影（RelWithDebInfo・`-Build -RequireAssets -Hdr -Aov`、別の出力先）result=pass、EXIT=0。ログに `WASTELAND_COMMON_LIGHT view=ref_far_02 case=both`・`WASTELAND_FINEST_LOD`・`WASTELAND_HIDE mask=127` があることを確かめた。入力のハッシュ（sha256=9941e342…）は保存した撮影と同じ
+  - `verify-SCN-WLR-CYCLES-LIT-B-2.txt`: `--lit --verify` 6 視点 result=pass、inputs_current=1・material_inputs_current=1・cycles_inputs_current=1、EXIT=0
+  - `lit_photo_overview.png`・`lit_photo_ref_cliff_02.png`・`lit_photo_ref_far_02.png`・`lit_photo_ref_ground_02.png`・`lit_regions_ref_cliff_02.png` を開き、6 視点で幾何が揃うこと、写真の植生・雲・逆光の違い、ref_cliff_02 のエンジンに落ちた影が無いことを見た
+- Notes:
+  - 前の反復の ref_far_02 の描画は、描画の後の入力の記録で `git ls-files` が失敗して捨てられた（同時のコミットとぶつかった見立て）。`git_output` に再試行を足して描き直した
+  - 新しい試験は足していない（verify の撮影と検査が確かめる）
+- Next: TASKS.md の次の未完の項目。
