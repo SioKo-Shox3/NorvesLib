@@ -1,0 +1,81 @@
+{
+  "description": "SCN-WL-FAR-AA: TAA の静止の収束を 2 倍の解像度の正解に近づけた後の合否。比べる組は ref2x・resident（FXAA の対照）・aa-taa だけで、同じ Game.exe で撮り直したもの。",
+  "cases": [
+    "resident",
+    "aa-taa"
+  ],
+  "rows": [
+    {
+      "mode": "blur_static",
+      "view": "ref_far_01",
+      "region": "far",
+      "case": "aa-taa",
+      "quantity": "detail_loss_vs_resident",
+      "max": 0.0,
+      "note": "TAA の静止の細部の欠けが resident（FXAA）以下"
+    },
+    {
+      "mode": "blur_static",
+      "view": "ref_far_01",
+      "region": "far",
+      "case": "aa-taa",
+      "quantity": "alias",
+      "max": 0.345,
+      "note": "エイリアスが変更前の TAA（WastelandFarBlurStatic.md の撮り直しの値を小数 3 桁へ切り上げ）以下"
+    },
+    {
+      "mode": "blur_static",
+      "view": "ref_far_01",
+      "region": "cliff",
+      "case": "aa-taa",
+      "quantity": "detail_loss_vs_resident",
+      "max": 0.0,
+      "note": "TAA の静止の細部の欠けが resident（FXAA）以下"
+    },
+    {
+      "mode": "blur_static",
+      "view": "ref_far_01",
+      "region": "cliff",
+      "case": "aa-taa",
+      "quantity": "alias",
+      "max": 0.334,
+      "note": "エイリアスが変更前の TAA（WastelandFarBlurStatic.md の撮り直しの値を小数 3 桁へ切り上げ）以下"
+    },
+    {
+      "mode": "blur_static",
+      "view": "ref_cliff_02",
+      "region": "far",
+      "case": "aa-taa",
+      "quantity": "detail_loss_vs_resident",
+      "max": 0.0,
+      "note": "TAA の静止の細部の欠けが resident（FXAA）以下"
+    },
+    {
+      "mode": "blur_static",
+      "view": "ref_cliff_02",
+      "region": "far",
+      "case": "aa-taa",
+      "quantity": "alias",
+      "max": 0.318,
+      "note": "エイリアスが変更前の TAA（WastelandFarBlurStatic.md の撮り直しの値を小数 3 桁へ切り上げ）以下"
+    },
+    {
+      "mode": "blur_static",
+      "view": "ref_cliff_02",
+      "region": "cliff",
+      "case": "aa-taa",
+      "quantity": "detail_loss_vs_resident",
+      "max": 0.0,
+      "note": "TAA の静止の細部の欠けが resident（FXAA）以下"
+    },
+    {
+      "mode": "blur_static",
+      "view": "ref_cliff_02",
+      "region": "cliff",
+      "case": "aa-taa",
+      "quantity": "alias",
+      "max": 0.33,
+      "note": "エイリアスが変更前の TAA（WastelandFarBlurStatic.md の撮り直しの値を小数 3 桁へ切り上げ）以下"
+    }
+  ]
+}
