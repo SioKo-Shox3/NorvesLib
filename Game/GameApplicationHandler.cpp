@@ -271,6 +271,21 @@ namespace Game
         constexpr const TCHAR *kWastelandRenderScaleOption = TEXT("--wasteland-render-scale=");
         constexpr const TCHAR *kTerrainMipBiasOption = TEXT("--terrain-mip-bias=");
         constexpr const TCHAR *kTerrainAnisotropyOption = TEXT("--terrain-anisotropy=");
+        // --taa-current-weight=<0.01〜1>・--taa-clip-gamma=<0.25〜8>・--taa-sharpen=<0〜1>: TAA の現在の色の割合・履歴をクリップする箱の
+        // 半幅・書き戻しのシャープ化の強さ（開発ビルドだけ。遠景のエイリアスの撮り比べ。環境変数 NORVES_TAA_CURRENT_WEIGHT・
+        // NORVES_TAA_CLIP_GAMMA・NORVES_TAA_SHARPEN で描画側へ渡す。Rendering/TemporalAAParamOverride.h）
+        struct TemporalAAParamOption
+        {
+            const TCHAR *Prefix;
+            const char *EnvName;
+            float Minimum;
+            float Maximum;
+        };
+        constexpr TemporalAAParamOption kTemporalAAParamOptions[] = {
+            {TEXT("--taa-current-weight="), "NORVES_TAA_CURRENT_WEIGHT", 0.01f, 1.0f},
+            {TEXT("--taa-clip-gamma="), "NORVES_TAA_CLIP_GAMMA", 0.25f, 8.0f},
+            {TEXT("--taa-sharpen="), "NORVES_TAA_SHARPEN", 0.0f, 1.0f},
+        };
         // --vram-geometry-share=<1〜65535>: VRAM の予算のジオメトリの取り分（VT は 3。既定 1。開発ビルドだけ）。2 倍の解像度の撮影は
         // 描画先が大きく取り分の目標が縮み、ページの塊を足せずに要求が残るので広げる（何を描くかは変えない）。
         // 環境変数 NORVES_VRAM_GEOMETRY_SHARE で描画側へ渡す（--wasteland-finest-lod と一緒なら後に書いた方が効く）
@@ -1520,6 +1535,43 @@ namespace Game
                 LOG_WARNING("--terrain-anisotropy は開発ビルドだけで使えます。無視します");
 #endif
                 continue;
+            }
+            {
+                bool bTemporalAAParam = false;
+                bool bTemporalAAParamValid = true;
+                for (const TemporalAAParamOption &option : kTemporalAAParamOptions)
+                {
+                    if (!TryStripPrefix(args[i], option.Prefix, sceneValue))
+                    {
+                        continue;
+                    }
+                    bTemporalAAParam = true;
+#if NORVES_BUILD_DEVELOPMENT
+                    // TAA のパスが最初に定数を読む前に環境変数へ渡す
+                    float value = 0.0f;
+                    if (!TryParseBoundedFloat(sceneValue, option.Minimum, option.Maximum, value))
+                    {
+                        LOG_ERROR_F("TAA の差し替え（%s）は %.2f〜%.2f で指定してください", option.EnvName,
+                                    static_cast<double>(option.Minimum), static_cast<double>(option.Maximum));
+                        bTemporalAAParamValid = false;
+                        break;
+                    }
+                    char valueText[32] = {};
+                    std::snprintf(valueText, sizeof(valueText), "%.9g", static_cast<double>(value));
+                    _putenv_s(option.EnvName, valueText);
+#else
+                    LOG_WARNING("--taa-current-weight・--taa-clip-gamma・--taa-sharpen は開発ビルドだけで使えます。無視します");
+#endif
+                    break;
+                }
+                if (!bTemporalAAParamValid)
+                {
+                    return false;
+                }
+                if (bTemporalAAParam)
+                {
+                    continue;
+                }
             }
             if (TryStripPrefix(args[i], kVramGeometryShareOption, sceneValue))
             {

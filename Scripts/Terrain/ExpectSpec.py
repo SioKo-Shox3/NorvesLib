@@ -2,6 +2,8 @@
 # （SCN-WLR-EXPECT-MATCH。ReferenceCheck.py の --expect と --expect-selftest から呼ぶ。単独では動かさない）。
 #
 # 仕様の JSON（置き場は Scripts/Terrain/ExpectSpecs/）: {"description": "<説明>", "rows": [<行>, ...]}（行の並びだけでもよい）。
+# blur_static の仕様は "cases": [<組の名前>, ...] を持てる。持てば比べる条件の組をそれだけに絞り（resident は要る）、
+# ほかの組は撮らなくてよい（ある項目の撮影先へ、比べる組だけを撮り直すとき）。
 # 行の鍵（ほかの鍵は書き間違いとして拒む）:
 #   mode: gray | lit | blur_static | blur_motion。走らせたモードと違う行があれば仕様の誤りとして落とす
 #   view: 視点。region: 領域（gray・lit は GrayRegions.REGIONS、blur_* は far・cliff）
@@ -62,6 +64,24 @@ def load_spec(path):
     if not isinstance(spec, dict) or not isinstance(spec.get("rows"), list):
         return [], "", ["仕様は行の並びか、rows に行の並びを持つ表にする"]
     return spec["rows"], str(spec.get("description", "")), []
+
+
+def load_cases(path, known, baseline):
+    """仕様の cases（比べる条件の組）を読む。(組の名前の並び。無ければ None, 誤りの一覧)"""
+    try:
+        with open(path, encoding="utf-8-sig") as f:
+            spec = json.load(f)
+    except (OSError, ValueError):
+        return None, []  # 読めない仕様は判定（apply）の側で落とす
+    if not isinstance(spec, dict) or "cases" not in spec:
+        return None, []
+    cases = spec["cases"]
+    if not isinstance(cases, list) or not cases or not all(isinstance(c, str) for c in cases):
+        return None, [f"仕様 {path} の cases は組の名前の並びにする"]
+    errors = [f"仕様 {path} の cases に知らない組 {c} がある" for c in cases if c not in known]
+    if baseline not in cases:
+        errors.append(f"仕様 {path} の cases に比べる基準の組 {baseline} が無い")
+    return (None if errors else cases), errors
 
 
 def validate_row(rc, row, mode):

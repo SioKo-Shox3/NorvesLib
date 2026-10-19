@@ -1,5 +1,6 @@
 ﻿// TAA のパス（TemporalAAPass）の実装。Coreの登録済みのSceneView.cppから取り込む。
 #include "Rendering/TemporalAAPass.h"
+#include "Rendering/TemporalAAParamOverride.h"
 #include "Rendering/CameraViewConstants.h"
 #include "Rendering/FrameResourceOwner.h"
 #include "Rendering/RenderGraph/RenderGraphBuilder.h"
@@ -451,10 +452,11 @@ namespace NorvesLib::Core::Rendering
         params.ImageSize[1] = static_cast<float>(sceneColor->GetHeight());
         params.ImageSize[2] = 1.0f / params.ImageSize[0];
         params.ImageSize[3] = 1.0f / params.ImageSize[1];
-        params.Blend[0] = TemporalAACurrentFrameWeight;
+        const TemporalAABlendParams& blendParams = GetTemporalAABlendParams();
+        params.Blend[0] = blendParams.CurrentFrameWeight;
         params.Blend[1] = bUseHistory ? camera->PreExposure / m_History.GetPreExposure() : 1.0f;
-        params.Blend[2] = TemporalAAVarianceClipGamma;
-        params.Blend[3] = TemporalAASharpenStrength;
+        params.Blend[2] = blendParams.VarianceClipGamma;
+        params.Blend[3] = blendParams.SharpenStrength;
         params.Jitter[0] = m_FrameJitter.PixelX;
         params.Jitter[1] = m_FrameJitter.PixelY;
 

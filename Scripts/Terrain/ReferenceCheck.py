@@ -660,11 +660,11 @@ BLUR_PAGES_RE = re.compile(r"GEOMETRY_PAGES resident=(\d+) uploading=(\d+) ready
 # 条件を替える起動引数の頭（組の約束にないものが混ざっていないかを見る）
 BLUR_CONTROLLED_PREFIXES = ("--wasteland-aa=", "--wasteland-hide=", "--wasteland-render-scale=", "--wasteland-finest-lod",
                             "--terrain-mip-bias=", "--terrain-anisotropy=", "--mega-lod-error-px=",
-                            "--vram-geometry-share=")
+                            "--vram-geometry-share=", "--taa-current-weight=", "--taa-clip-gamma=", "--taa-sharpen=")
 # 既定の組（base）に出てはいけないログの行（差し替えが効いていない）
 BLUR_BASE_FORBIDDEN_LOGS = ("WASTELAND_BLUR_CASE ", "WASTELAND_AA_PASS ", "TERRAIN_SAMPLER ", "WASTELAND_FINEST_LOD ",
                             "WASTELAND_HIDE ", "VRAM_POOL_SHARE ", "GEOMETRY_PAGE_REQUEST_CAPACITY ",
-                            "MEGA_VISIBLE_LIST_CAPACITY ")
+                            "MEGA_VISIBLE_LIST_CAPACITY ", "TAA_PARAMS ")
 # 範囲: 正解の深度が BLUR_FAR_MIN_M より奥の地表（2×2 のすべてが奥）。崖はそのうち法線の |y| が BLUR_CLIFF_NORMAL_Y 未満
 BLUR_FAR_MIN_M = 1000.0
 BLUR_CLIFF_NORMAL_Y = 0.8
@@ -3297,15 +3297,23 @@ def blur_write_crops(path, tiles, center):
 def run_blur_static(capture_dir, verify, engine_dirs=None, reference_dir=None, expect=None):
     """遠景のぼけの静止の比較。組の撮影は engine_dirs（組ごとに <撮影先>/<組>/metrics.json を持つ最初の撮影先。省くと
     capture_dir）、正解の ref2x は reference_dir（省くと組と同じ探し方）から読み、結果は capture_dir に書く。
-    どの組（ref2x を含む）もエンジンの実装（RefSplit.py）が今と一致しないと古いとして落とし、組どうしで揃っていることも見る"""
+    どの組（ref2x を含む）もエンジンの実装（RefSplit.py）が今と一致しないと古いとして落とし、組どうしで揃っていることも見る。
+    仕様（--expect）が cases を持てば、比べる条件の組をそれだけに絞る（ほかの組は撮らなくてよい）"""
     import RefSplit
     started = time.time()
     failures = []
+    cases_def = BLUR_CASES
+    if expect:
+        import ExpectSpec
+        selected, case_errors = ExpectSpec.load_cases(expect, [case["name"] for case in BLUR_CASES], BLUR_BASELINE)
+        failures.extend(case_errors)
+        if selected:
+            cases_def = tuple(case for case in BLUR_CASES if case["name"] in selected)
     engine_dirs = engine_dirs or [capture_dir]
     reference_dir = reference_dir or RefSplit.resolve_group_dir(engine_dirs, BLUR_REFERENCE)
     groups = [(BLUR_REFERENCE, BLUR_REFERENCE_ARGS, BLUR_REFERENCE_LOGS,
                (BLUR_SIZE[0] * BLUR_REFERENCE_SCALE, BLUR_SIZE[1] * BLUR_REFERENCE_SCALE), True)]
-    groups += [(case["name"], case["args"], case["logs"], BLUR_SIZE, case["resident"]) for case in BLUR_CASES]
+    groups += [(case["name"], case["args"], case["logs"], BLUR_SIZE, case["resident"]) for case in cases_def]
     group_records = {}
     input_hashes = set()
     exe_hashes = set()
@@ -3376,7 +3384,7 @@ def run_blur_static(capture_dir, verify, engine_dirs=None, reference_dir=None, e
         cases = {}
         displays = {"ref2x": reference_display}
         case_bands_by_name = {}
-        for case in BLUR_CASES:
+        for case in cases_def:
             png = os.path.join(capture_dir, case["name"], f"{view}.png")
             if not os.path.isfile(png) or Image.open(png).size != BLUR_SIZE:
                 continue
@@ -3409,7 +3417,7 @@ def run_blur_static(capture_dir, verify, engine_dirs=None, reference_dir=None, e
                  "haze-off"]
         entry["crops"] = blur_write_crops(crops_path, [(n, displays[n]) for n in order if n in displays], (cy, cx))
         entry["crops_png"] = crops_path
-        missing_cases = [case["name"] for case in BLUR_CASES if case["name"] not in cases]
+        missing_cases = [case["name"] for case in cases_def if case["name"] not in cases]
         if missing_cases:
             failures.append(f"{view}: 比べられなかった条件がある: {missing_cases}")
         for name, result in cases.items():
@@ -3425,7 +3433,7 @@ def run_blur_static(capture_dir, verify, engine_dirs=None, reference_dir=None, e
                   f"noise_alias0={noise_row['bands'][0]['alias']:.3f} far_px={region['far_px']} cliff_px={region['cliff_px']}")
     # 条件ごとの効き（2 視点の平均。取り分だけを広げた組との差。base の差は既定の取り分の効き）
     effects = []
-    for case in BLUR_CASES:
+    for case in cases_def:
         if case["name"] == BLUR_BASELINE:
             continue
         deltas = []
@@ -3456,7 +3464,7 @@ def run_blur_static(capture_dir, verify, engine_dirs=None, reference_dir=None, e
     for failure in failures:
         print(f"REFERENCE_CHECK failure: {failure}")
     status = "pass" if not failures else "fail"
-    print(f"REFERENCE_CHECK result={status} mode=blur_static views={len(BLUR_VIEWS)} cases={len(BLUR_CASES)} "
+    print(f"REFERENCE_CHECK result={status} mode=blur_static views={len(BLUR_VIEWS)} cases={len(cases_def)} "
           f"inputs_current={int(inputs_all_current)} report={report_path}")
     return 0 if not failures else 1
 
