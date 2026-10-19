@@ -5524,3 +5524,17 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - Notes:
   - 大気の正解の B に依る判断（霧の太陽の側の二重・空気遠近の向き・写真の空の青・空の高次の散乱）は未判定。SCN-WLR-GAP-LIST-ATMOS で埋める
 - Next: 後ろの SCN-WL-* を一覧の「直す項目の順の案」で組み直す（親）。
+
+### SCN-NIGHT-VILLAGE 完了（2026-10-19、run 20261019-184206 の反復 1 と run 20261019-192352 の反復 1）
+- Done: `night-village` シーン。荒野の DEM の谷床の平らな所に、東西の道沿いの集落（建物 12 棟と西の端の門。日干し煉瓦の廃屋・石の小屋・物見櫓・給水塔を向きと大きさを変えて使い回す）と、街灯 4・焚き火・井戸・松明の柱 3・樽・木箱・荷車を置いた。太陽は地平線の下、月明かり（0.25 lx・高さ 35°・青白い平行光と影）、夜空は静的環境の一様な放射輝度、自動露出は測光 EV100 −4 で −2.8 EV の補正（Rendering3DTest の `--night` と同じ扱い）、夜のグレーディングで彩度を落とし白の釣り合いを青へ寄せた。名前付き視点 `overview`・`street`・`square`
+  - 前の反復で夜の明るさを直した（途中保存 1e60df61。空の輝度 8.4e-3 → 6.8e-3 cd/m^2、補正 −1.7 → −2.8 EV、彩度 0.55 → 0.42。−1.7 EV では画面の平均が符号化値で約 45 になり曇りの夕暮れに見えた）
+- 証拠（`.harness/runs/20261019-192352/`）:
+  - `verify-SCN-NIGHT-VILLAGE-1.txt`: Debug の Game のビルド EXIT=0
+  - `verify-SCN-NIGHT-VILLAGE-2.txt`: RelWithDebInfo の撮影 result=pass・EXIT=0。画面の平均の輝度 default 27.7・street 27.2・square 27.3、白飛び・黒つぶれの割合はすべて 0
+  - `verify-SCN-NIGHT-VILLAGE-3.txt`: 周回の試験 2 周 result=pass・EXIT=0（両周とも settled=1・textures=53・texture_bytes 同じ）
+  - 撮影の 3 枚（`.harness/runs/scene-capture/SCN-NIGHT-VILLAGE/`）を開いた: 深い青の夜空、暗い赤土の谷床、月に照らされた北側の建物の壁と地面に落ちる影、遠景のビュートの輪郭が見え、暗すぎず明るすぎず夜に見える
+- Notes:
+  - done-when の「cycle smoke 3 周」は、親が verify を 1 コマンド 10 分に収めるため 2 周に直した（3 周は Debug で 928 秒の実測）。2 周の pass で閉じた
+  - 焚き火・街灯・松明は光を出していない（発光させる部分の位置は計画書の夜の集落の小物の節）。灯りは SCN-NIGHT-LIGHTS で足す
+  - 新しい試験は足していない（verify の撮影と周回の試験が確かめる）
+- Next: TASKS.md の次の未完の項目。

@@ -2237,7 +2237,7 @@
 - notes: SCN-GEN-BUILDINGS-1 の notes の上限時間とやり直しを使う。
 
 ## SCN-NIGHT-VILLAGE: 夜の集落を組む
-- status: doing
+- status: done
 - done-when: `night-village` シーン: 荒野の高さ場の一角に、生成した建物と小物で道沿いの集落（建物 8〜12 棟。同じ建物は向きと大きさを変えて使い回す）を組む。太陽は地平線の下、月明かり（青白い弱い平行光と影）、夜の空、露出は自動露出で夜に合わせる（Rendering3DTest の `--night` の値の扱いを参考にする）。名前付き視点 `overview`・`street`（道の上の目の高さ）・`square`（焚き火の広場）。撮影を開いて、暗すぎず明るすぎず夜に見えることを確かめる。`night-village` の cycle smoke 3周が pass。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene night-village -Configuration RelWithDebInfo -Build -RequireAssets -OutDir .harness/runs/scene-capture/SCN-NIGHT-VILLAGE`
