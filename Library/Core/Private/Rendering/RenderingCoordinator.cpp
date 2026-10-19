@@ -939,15 +939,42 @@ namespace NorvesLib::Core::Rendering
         };
 
         /**
+         * @brief メッシュ全体の境界の球（ローカル）を TLAS のインスタンスの変換（3x4）で写す
+         * @return 写した球が有限なら true（半径は変換の軸の拡大率の最大を掛ける）
+         */
+        bool TransformRayTracingBoundsSphere(const float transform[12],
+                                             const BoundingSphere& localBounds,
+                                             float outSphere[4])
+        {
+            const float center[3] = {localBounds.CenterX, localBounds.CenterY, localBounds.CenterZ};
+            float maxScaleSquared = 0.0f;
+            for (uint32_t axis = 0; axis < 3; ++axis)
+            {
+                const float* rowValues = transform + axis * 4;
+                outSphere[axis] = rowValues[0] * center[0] + rowValues[1] * center[1] +
+                                  rowValues[2] * center[2] + rowValues[3];
+                // 列 axis（ローカルの軸 axis の写る先）の長さ
+                const float scaleSquared = transform[axis] * transform[axis] +
+                                           transform[4 + axis] * transform[4 + axis] +
+                                           transform[8 + axis] * transform[8 + axis];
+                maxScaleSquared = scaleSquared > maxScaleSquared ? scaleSquared : maxScaleSquared;
+            }
+            outSphere[3] = localBounds.Radius * std::sqrt(maxScaleSquared);
+            return std::isfinite(outSphere[0]) && std::isfinite(outSphere[1]) && std::isfinite(outSphere[2]) &&
+                   std::isfinite(outSphere[3]);
+        }
+
+        /**
          * @brief TLAS に入れるかを決める MegaGeometry の境界の球（ワールド）
          * @param localBounds メッシュ全体の境界の球（ローカル）。null なら proxy の WorldBounds
+         * @return メッシュの境界を写した球にしたら true
          *
-         * メッシュの境界があれば、それを proxy の変換で写した球（半径は変換の軸の拡大率の最大を掛ける）にする。
+         * メッシュの境界があれば、それを proxy の変換で写した球にする。
          * proxy の WorldBounds は MegaGeometryComponent では MeshComponent の既定のローカルの箱（±1 m）を変換の原点に
          * 置いた球で、頂点をワールドの座標で焼いて原点に置く地形の区画では、遠くの区画もすべて原点の球になる。
          * どちらも無ければ変換の並進と半径 0
          */
-        void MakeRayTracingSelectBounds(const MegaGeometryProxy& proxy,
+        bool MakeRayTracingSelectBounds(const MegaGeometryProxy& proxy,
                                         const BoundingSphere* localBounds,
                                         float outSphere[4])
         {
@@ -955,24 +982,9 @@ namespace NorvesLib::Core::Rendering
             {
                 float transform[12] = {};
                 CopyRayTracingInstanceTransform(proxy.WorldTransform, transform);
-                const float center[3] = {localBounds->CenterX, localBounds->CenterY, localBounds->CenterZ};
-                float maxScaleSquared = 0.0f;
-                for (uint32_t axis = 0; axis < 3; ++axis)
+                if (TransformRayTracingBoundsSphere(transform, *localBounds, outSphere))
                 {
-                    const float* rowValues = transform + axis * 4;
-                    outSphere[axis] = rowValues[0] * center[0] + rowValues[1] * center[1] +
-                                      rowValues[2] * center[2] + rowValues[3];
-                    // 列 axis（ローカルの軸 axis の写る先）の長さ
-                    const float scaleSquared = transform[axis] * transform[axis] +
-                                               transform[4 + axis] * transform[4 + axis] +
-                                               transform[8 + axis] * transform[8 + axis];
-                    maxScaleSquared = scaleSquared > maxScaleSquared ? scaleSquared : maxScaleSquared;
-                }
-                outSphere[3] = localBounds->Radius * std::sqrt(maxScaleSquared);
-                if (std::isfinite(outSphere[0]) && std::isfinite(outSphere[1]) && std::isfinite(outSphere[2]) &&
-                    std::isfinite(outSphere[3]))
-                {
-                    return;
+                    return true;
                 }
             }
             if (proxy.WorldBounds.IsValid())
@@ -981,13 +993,14 @@ namespace NorvesLib::Core::Rendering
                 outSphere[1] = proxy.WorldBounds.CenterY;
                 outSphere[2] = proxy.WorldBounds.CenterZ;
                 outSphere[3] = proxy.WorldBounds.Radius;
-                return;
+                return false;
             }
             const Math::Vector3 translation = proxy.WorldTransform.GetTranslationRow();
             outSphere[0] = translation.x;
             outSphere[1] = translation.y;
             outSphere[2] = translation.z;
             outSphere[3] = 0.0f;
+            return false;
         }
 
         /** @brief 選ぶ規則の原点（メインカメラの位置）。カメラが無ければ false で、距離では外さない（上限だけで選ぶ） */
@@ -1406,19 +1419,40 @@ namespace NorvesLib::Core::Rendering
         CollectMeshCandidates(meshResources, packet, meshCount, origin, bHasOrigin, candidates, stats);
         if (megaGeometryResources)
         {
+            // 席を作った時点でメッシュの GPU データが無かった席は、届いた後に境界をメッシュ全体の球へ直す
+            // （席は変わったときしか作り直さないので、ここで直さないと既定の proxy の球のまま残る）
+            RayTracingMegaMeshBoundsLookup meshBounds(megaGeometryResources);
+            const auto refreshMegaSlotBounds = [](RayTracingMegaMeshBoundsLookup& lookup, MegaSlotEntry& entry)
+            {
+                if (entry.bMeshBounds)
+                {
+                    return;
+                }
+                if (const BoundingSphere* localBounds = lookup.Find(entry.MegaMeshHandle))
+                {
+                    float sphere[4] = {};
+                    if (TransformRayTracingBoundsSphere(entry.Transform, *localBounds, sphere))
+                    {
+                        std::memcpy(entry.BoundsSphere, sphere, sizeof(sphere));
+                        entry.bMeshBounds = true;
+                    }
+                }
+            };
             for (uint32_t slot = 1; slot < slotCount; ++slot)
             {
-                const MegaSlotEntry& entry = m_MegaSlots[slot];
+                MegaSlotEntry& entry = m_MegaSlots[slot];
                 if (entry.bUsable)
                 {
+                    refreshMegaSlotBounds(meshBounds, entry);
                     ConsiderCandidate(origin, bHasOrigin, entry.BoundsSphere, meshCount + slot, candidates, stats);
                 }
             }
             for (uint32_t index = 0; index < static_cast<uint32_t>(m_UnslottedMegaEntries.size()); ++index)
             {
-                const MegaSlotEntry& entry = m_UnslottedMegaEntries[index];
+                MegaSlotEntry& entry = m_UnslottedMegaEntries[index];
                 if (entry.bUsable)
                 {
+                    refreshMegaSlotBounds(meshBounds, entry);
                     ConsiderCandidate(origin, bHasOrigin, entry.BoundsSphere, meshCount + slotCount + index,
                                       candidates, stats);
                 }
@@ -1529,7 +1563,7 @@ namespace NorvesLib::Core::Rendering
         {
             return;
         }
-        MakeRayTracingSelectBounds(*proxy, localBounds, entry.BoundsSphere);
+        entry.bMeshBounds = MakeRayTracingSelectBounds(*proxy, localBounds, entry.BoundsSphere);
         CopyRayTracingInstanceTransform(proxy->WorldTransform, entry.Transform);
         // 前の変換は写しの NoteDrawn が最後に描いたフレームから決めた値（変わると席が変わったものとして知らされる）
         if (IsFiniteRayTracingTransform(proxy->PreviousWorldTransform))

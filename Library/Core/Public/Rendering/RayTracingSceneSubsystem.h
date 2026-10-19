@@ -181,6 +181,8 @@ namespace NorvesLib::Core::Rendering
             MegaGeometry::MegaMeshHandle MegaMeshHandle;
             uint8_t Mask = 0;
             bool bHasPreviousTransform = false;
+            /** @brief BoundsSphere がメッシュ全体の境界を写した球（false は proxy の境界の代わり。メッシュが届いたら直す） */
+            bool bMeshBounds = false;
             /** @brief proxy があり、描けて（IsValid）、変換が有限 */
             bool bUsable = false;
         };
