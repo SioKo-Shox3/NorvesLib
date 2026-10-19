@@ -5426,3 +5426,9 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 前の反復の ref_far_02 の描画は、描画の後の入力の記録で `git ls-files` が失敗して捨てられた（同時のコミットとぶつかった見立て）。`git_output` に再試行を足して描き直した
   - 新しい試験は足していない（verify の撮影と検査が確かめる）
 - Next: TASKS.md の次の未完の項目。
+
+### SCN-WLR-CYCLES-LIT-B 締め（2026-10-19、run 20261018-205227 の反復 27）
+- Done: 前の反復は done を書く直前に壁時計で止まったので、描き直さずに保存した結果の有効性を確かめて閉じた
+  - `verify-SCN-WLR-CYCLES-LIT-B-3.txt`: ref_far_02 の 1 視点の撮影 result=pass、EXIT=0（入力のハッシュ sha256=9941e342… は保存した撮影と同じ。ログに `WASTELAND_COMMON_LIGHT`・`WASTELAND_FINEST_LOD`・`WASTELAND_HIDE mask=127`）
+  - `verify-SCN-WLR-CYCLES-LIT-B-4.txt`: `--lit --verify` 6 視点 result=pass、inputs_current=1・material_inputs_current=1・cycles_inputs_current=1、EXIT=0
+- Next: TASKS.md の次の未完の項目。
