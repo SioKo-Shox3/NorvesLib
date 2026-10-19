@@ -20,7 +20,7 @@
 
 ## 一覧の画像
 
-`.harness/runs/scene-capture/SCN-WLR-GAP-LIST/gap_overview.png`（1920 × 1864）。手本の 6 視点を行に、列は左から
+`.harness/runs/scene-capture/SCN-WLR-GAP-LIST/gap_overview.png`（1920 × 1840）。手本の 6 視点を行に、列は左から
 写真｜エンジン（既定の荒野。SCN-WLR-TONEMAP-EVAL の撮影）｜エンジン（地形だけ・共通の照明・最細の LOD）｜Cycles（同じ条件）。
 3・4 列目はエンジンの撮影の表示変換を両方に掛けた画（SCN-WLR-CYCLES-LIT の `lit_<視点>.png`）。
 
@@ -35,6 +35,46 @@
 ## 差の表
 
 <!-- gap-table:begin（ReferenceCheck.py --gap-list が書く。手で直さない） -->
+### 描画の欠陥（入力が一致して、エンジン ≠ Cycles・数値の正解）
+
+| 順 | 差 | 大きさ | 測った値 | ユーザーの点 | 出典 | 記号 |
+|---|---|---|---|---|---|---|
+| 1 | 落ちた影が欠ける・影に太陽が漏れる | 1.22 | 実材質 ref_cliff_02 の影の中の地面 エンジン ÷ Cycles 2.22、灰色 ref_cliff_01 の影の中の地面の太陽の分 5.88 倍 | 建物の浮き | SCN-WLR-CYCLES-LIT・SCN-WLR-CYCLES-GRAY | `shadow_missing` |
+| 2 | 遠景の画素あたりの標本の不足（エイリアス） | 0.74 | 常駐しきった既定（resident）の遠景・崖のエイリアス 0.64〜0.74、細部の欠け 0.23〜0.29（2 倍の解像度の正解の量に対する比） | 遠景のぼけ | SCN-WLR-FAR-BLUR-STATIC | `far_aliasing` |
+| 3 | 空の遮蔽が無い（レイトレーシングのシーンに地形が入らない） | 0.57 | 灰色 ref_cliff_01 の影の崖 1.57（空の分 1.55）、ref_far_01 の遠景の空の分 1.35 | 建物の浮き・遠景のぼけ・植物 | SCN-WLR-CYCLES-GRAY | `sky_occlusion_missing` |
+| 4 | 材質の AO を直接光と空の光に掛ける | 0.42 | 実材質の日なたの地面 0.70〜0.82（6 視点）、材質の AO を Cycles に掛けた見込みとの比 0.87〜0.98 | その他 | SCN-WLR-CYCLES-LIT | `material_ao_on_light` |
+| 5 | 今のグレーディング（コントラスト 1.35・彩度 1.2・色温度 0.05） | 0.38 | 同じ HDR で、今のグレーディングの地面の R/G 3.30（中立 2.40）、Cycles の HDR に掛けた白飛び 14.1 % | 空・その他 | SCN-WLR-TONEMAP-EVAL | `grading_current` |
+| 6 | 遠くのかすめる日差しが暗い（遠景の自己影の疑い） | 0.14 | 灰色 ref_far_01 の遠景の太陽の分 エンジン ÷ Cycles 0.88 | 遠景のぼけ | SCN-WLR-CYCLES-GRAY | `grazing_sun_dark` |
+| 7 | 多重散乱の表の格子の粗さ（8 × 32） | 0.14 | 多重散乱の表 Ψ エンジン ÷ 正解 A 0.877〜1.065。大気の正解の記録は古いが、A（論文の近似）と光学的深さだけで決まる | 空・フォグ | SCN-WLR-ATMOS-REF | `psi_grid` |
+| 8 | TAA で動くと履歴の読み直しで細部が消える（既定の FXAA では出ない） | 0.11 | TAA で振ったときの崖の細部の欠けの増え +0.107（30 フレーム後。既定の FXAA では 0.002 以内） | 遠景のぼけ | SCN-WLR-FAR-BLUR-MOTION | `taa_motion` |
+| 9 | 照り返しが無い | 0.09 | 灰色 ref_cliff_01 の日なたの崖の太陽の分 0.92（Cycles の間接光 7 %） | 建物の浮き・植物 | SCN-WLR-CYCLES-GRAY | `bounce_missing` |
+| 10 | 既定の LOD の選び方で細部が欠ける | 0.08 | 最細の段に固定すると崖の細部の欠け −0.077、エイリアス +0.264 | 遠景のぼけ | SCN-WLR-FAR-BLUR-STATIC | `lod_detail` |
+| 11 | 既定のジオメトリの取り分で遠景のページが常駐しきらない | 0.07 | ref_cliff_02 の遠景で既定の取り分 1 の欠け +0.043・エイリアス +0.070 | 遠景のぼけ | SCN-WLR-FAR-BLUR-STATIC | `geometry_residency` |
+| 12 | 地表の空の照度の求め方 | 0.03 | 水平面の空の照度 エンジン ÷ 正解 A 1.032。大気の正解の記録は古いが、A（論文の近似）と光学的深さだけで決まる | 空 | SCN-WLR-ATMOS-REF | `sky_illuminance_model` |
+| 13 | 空の輝度（論文の近似 A との差） | 0.02 | 空の方向別の輝度 エンジン ÷ 正解 A 0.978〜1.003（45 方向）。大気の正解の記録は古いが、A（論文の近似）と光学的深さだけで決まる | 空 | SCN-WLR-ATMOS-REF | `sky_model_a` |
+
+### 中身の欠陥（描画は入力どおりで、入力の値・設定が実際と食い違う）
+
+| 順 | 差 | 大きさ | 測った値 | ユーザーの点 | 出典 | 記号 |
+|---|---|---|---|---|---|---|
+| 1 | 霞の Mie が空の大気の半分ほど（空と霞で同じ大気が別の濃さ） | 0.92 | 地表への視線の (霧 ＋ 空気遠近の Mie) ÷ 空の大気の Mie の光学的深さ 0.52〜0.59。大気の正解の記録は古いが、A（論文の近似）と光学的深さだけで決まる | フォグ | SCN-WLR-ATMOS-REF | `haze_mie_thin` |
+| 2 | 太陽と地表の照度を海抜 0 m で求める（谷床は約 1450 m） | 0.22 | 谷床の高度（約 1474 m）の太陽の透過率 ÷ エンジンの地表（0 m）の透過率 1.223。大気の正解の記録は古いが、A（論文の近似）と光学的深さだけで決まる | 空・フォグ | SCN-WLR-ATMOS-REF | `altitude_mismatch` |
+
+### 条件不一致・未判定
+
+| 順 | 差 | 大きさ | 測った値 | ユーザーの点 | 出典 | 記号 |
+|---|---|---|---|---|---|---|
+| 1 | 写真の空がはるかに青い（設定と写真の処理の分け方） | 1.61 | 仰角 5.9° の色度 r 写真 0.11・エンジン 0.29・論文の設定の正解 0.18（論文の設定の正解は直す前の B）。未判定（B の直し待ち。SCN-WLR-GAP-LIST-ATMOS で埋める） | 空 | SCN-WLR-ATMOS-REF | `sky_blue_photo` |
+| 2 | 霧の周りの光に視線の向きの空の輝度を使う（太陽の側の二重の数え） | 1.25 | 太陽の側 10 km の霧の空の色 × 不透明度 ÷ 正解の霧の多重散乱 2.25（直す前の B）。未判定（B の直し待ち。SCN-WLR-GAP-LIST-ATMOS で埋める） | フォグ | SCN-WLR-ATMOS-REF | `fog_sky_color_double` |
+| 3 | 明るさの幅が写真より狭い | 1.06 | 露出を合わせた明るさの幅 写真 0.47・Cycles 0.23（中立の表示変換） | その他 | SCN-WLR-TONEMAP-EVAL | `photo_range` |
+| 4 | 写真の崖が青い（空の光・霞・天気） | 1.06 | 崖の B/G 写真 ÷ Cycles 1.20〜2.55（6 視点） | フォグ・空 | SCN-WLR-CYCLES-LIT | `photo_cliff_blue` |
+| 5 | 空気遠近の散乱光の向きの差が足りない | 0.80 | 太陽と反対の側 10 km の空気遠近の散乱光 ÷ 正解 0.56（直す前の B）。未判定（B の直し待ち。SCN-WLR-GAP-LIST-ATMOS で埋める） | フォグ | SCN-WLR-ATMOS-REF | `aerial_scatter_direction` |
+| 6 | 崖 ÷ 地面の明るさの比が写真と違う | 0.68 | 崖 ÷ 地面の比の写真との差 対数の平均 0.52（Cycles・中立の表示変換） | その他 | SCN-WLR-TONEMAP-EVAL | `photo_cliff_ground` |
+| 7 | 空の高次の散乱が足りない（論文の近似の限界） | 0.23 | 空の輝度 エンジン ÷ 正解 B 0.81〜1.00（直す前の B）。未判定（B の直し待ち。SCN-WLR-GAP-LIST-ATMOS で埋める） | 空 | SCN-WLR-ATMOS-REF | `sky_multiple_scattering` |
+| 8 | 未判定の領域 | － | 灰色・実材質の比較の領域 40 のうち 15 が未判定（画素が足りない・収束しない） | その他 | SCN-WLR-CYCLES-GRAY・SCN-WLR-CYCLES-LIT | `unresolved_regions` |
+| 9 | 雲 | － | この段の比較に入っていない（地形だけ・wasteland-hide=all で比べた） | 雲 | － | `clouds_not_compared` |
+| 10 | 建物 | － | この段の比較に入っていない（地形だけ・wasteland-hide=all で比べた） | 建物の浮き | － | `buildings_not_compared` |
+| 11 | 植物 | － | この段の比較に入っていない（地形だけ・wasteland-hide=all で比べた） | 植物 | － | `plants_not_compared` |
 <!-- gap-table:end -->
 
 ## ユーザーの 6 点への対応

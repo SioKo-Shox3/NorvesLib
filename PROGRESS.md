@@ -5503,3 +5503,9 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 木箱の上面の質感は板目でなく 3×3 の升目に見える（形は平らな蓋で崩れていない）。近くで見せるなら seed を変えて作り直す。
   - 新しい試験は足していない（verify の検査が確かめる）。
 - Next: TASKS.md の次の未完の項目。
+
+### SCN-WLR-GAP-LIST 途中（2026-10-19、run 20261018-205227 の反復 36〜37）
+- In progress: 済んだ段・残り
+  - 済み（反復 36、途中保存 36bd6b38）: `ReferenceCheck.py --gap-list`（本体は `Scripts/Terrain/GapList.py`）と `Docs/RenderingValidation/WastelandGapList.md` の文書（6 点への対応・直す項目の案・比べる段の案）。入力のハッシュが古い比較の撮り直しの台本 `.harness/runs/20261018-205227/aux-SCN-WLR-GAP-LIST-recapture.ps1`（`-Only` で段を選ぶ）で、灰色（エンジン 3 組と Cycles）とアルベドの Blender を描き直した（`aux-SCN-WLR-GAP-LIST-recapture.txt`、全段 exit=0、Game.exe 4deec25e…）
+  - 済み（反復 37）: `--albedo --verify` を回し直して pass（`aux-SCN-WLR-GAP-LIST-albedo-verify.txt`、inputs_current=1・blender_inputs_current=1）。`--gap-list` で表を文書に書いた（26 項目。灰色の撮り直しの後も文書の本文の値と一致）。一覧の画像（1920 × 1840）を開いて 6 視点 × 4 列がそろうことを確かめた
+  - 残り: 法線の Blender の描き直し（走行中）→ `--normal --verify`、遠景のぼけの静止 10 組と動き 4 組の撮り直し（Game/GameModes/Wasteland・CaptureScene.ps1・CommonLight.json が撮影の後に変わった）→ `--blur-static --verify`・`--blur-motion --verify` → `--gap-list` → `LOOP_STOP`（boundary）→ verify
