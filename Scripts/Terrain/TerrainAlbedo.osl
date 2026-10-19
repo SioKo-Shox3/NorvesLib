@@ -307,6 +307,11 @@ struct LayerSample
 #define PASS_SHADED_NORMAL 1
 #define PASS_ROUGHNESS 2
 #define PASS_BASE_NORMAL 3
+// 材質の AO（ORM の R を層の重みで混ぜた値。どの出力でも求める）だけを描く
+#define PASS_OCCLUSION 4
+// 照明つきの描画（BlenderReference.py --lit）の、カメラから直接見えない当たり（影・照り返しの光線）の材質: アルベドと粗さを、
+// 法線マップを引かずに等方の足跡で求める（照り返しは広い範囲を平均するので細部の異方性は効かない。標本を軽く保つ）
+#define PASS_BOUNCE 5
 #define LAYER_TEXTURE_PARAMS int albedoId, int normalId, int aoId, int roughId, int bDecode, int bTwoChannel, int passId
 #define LAYER_TEXTURE_ARGS albedoId, normalId, aoId, roughId, bDecode, bTwoChannel, passId
 #define SAND_TEXTURES TEX_SAND_ALBEDO, TEX_SAND_NORMAL, TEX_SAND_AO, TEX_SAND_ROUGH, SAND_ALBEDO_SRGB_DECODE, SAND_NORMAL_TWO_CHANNEL, Pass
@@ -353,7 +358,7 @@ void accumulate_projection(output LayerSample acc, float weight, LAYER_TEXTURE_P
     color occlusion = tex_aniso(aoId, ru, rv, dxu, dxv, dyu, dyv);
     acc.ao += occlusion[0] * weight;
     acc.lostDetail += (1.0 - normalFade * normalFade) * weight;
-    if (passId == PASS_ALBEDO)
+    if (passId == PASS_ALBEDO || passId == PASS_BOUNCE)
     {
         color sampled = tex_aniso(albedoId, ru, rv, dxu, dxv, dyu, dyv);
         if (bDecode)
@@ -370,7 +375,7 @@ void accumulate_projection(output LayerSample acc, float weight, LAYER_TEXTURE_P
         float slopeV = (-s * tx + c * ty) * normalFade;
         acc.perturbation += (axisU * slopeU + axisV * slopeV) * weight;
     }
-    if (passId == PASS_ROUGHNESS)
+    if (passId == PASS_ROUGHNESS || passId == PASS_BOUNCE)
     {
         color rough = tex_aniso(roughId, ru, rv, dxu, dxv, dyu, dyv);
         acc.roughness += rough[0] * weight;
@@ -709,21 +714,35 @@ shader TerrainAlbedo(vector CameraPosition = vector(0),
                      output color Weights = 0,
                      output color ShadedNormal = 0,
                      output color Roughness = 0,
-                     output color BaseNormal = 0)
+                     output color BaseNormal = 0,
+                     output color Occlusion = 0)
 {
     // 画素の面（エンジンの座標、カメラ相対で微分を求める）
     vector wp = to_engine(P);
     vector d = wp - CameraPosition;
     vector ng = normalize(to_engine(Ng));
     float depth = dot(d, CameraForward);
-    float pixelX = (dot(d, CameraRight) / (depth * TanHalfVertical * Aspect) * 0.5 + 0.5) * Width;
-    float pixelY = (0.5 - dot(d, CameraUp) / (depth * TanHalfVertical) * 0.5) * Height;
-    vector rayX = pixel_ray(pixelX + 1.0, pixelY, CameraForward, CameraRight, CameraUp, TanHalfVertical, Aspect, Width, Height);
-    vector rayY = pixel_ray(pixelX, pixelY + 1.0, CameraForward, CameraRight, CameraUp, TanHalfVertical, Aspect, Width, Height);
-    float planeDistance = dot(d, ng);
-    vector wdx = rayX * (planeDistance / dot(rayX, ng)) - d;
-    vector wdy = rayY * (planeDistance / dot(rayY, ng)) - d;
     float cameraDistance = length(d);
+    vector wdx;
+    vector wdy;
+    if (Pass == PASS_BOUNCE)
+    {
+        // 当たりの点はカメラの後ろや画面の外にもあるので、カメラからの距離の画素の大きさの等方の足跡を接平面に置く
+        float footprint = cameraDistance * 2.0 * TanHalfVertical / Height;
+        vector tangentU = tangent_axis(fabs(ng[1]) < 0.9 ? vector(0, 1, 0) : vector(1, 0, 0), ng);
+        wdx = tangentU * footprint;
+        wdy = cross(ng, tangentU) * footprint;
+    }
+    else
+    {
+        float pixelX = (dot(d, CameraRight) / (depth * TanHalfVertical * Aspect) * 0.5 + 0.5) * Width;
+        float pixelY = (0.5 - dot(d, CameraUp) / (depth * TanHalfVertical) * 0.5) * Height;
+        vector rayX = pixel_ray(pixelX + 1.0, pixelY, CameraForward, CameraRight, CameraUp, TanHalfVertical, Aspect, Width, Height);
+        vector rayY = pixel_ray(pixelX, pixelY + 1.0, CameraForward, CameraRight, CameraUp, TanHalfVertical, Aspect, Width, Height);
+        float planeDistance = dot(d, ng);
+        wdx = rayX * (planeDistance / dot(rayX, ng)) - d;
+        wdy = rayY * (planeDistance / dot(rayY, ng)) - d;
+    }
     float pixelMeters = max(length(wdx), length(wdy));
 
     // ShadeTerrainLayers
@@ -827,4 +846,7 @@ shader TerrainAlbedo(vector CameraPosition = vector(0),
     vector shaded = normalize(n + sand.perturbation * w[0] + dirt.perturbation * w[1] + rock.perturbation * w[2]);
     ShadedNormal = color(shaded[0], shaded[1], shaded[2]) * 0.5 + color(0.5);
     BaseNormal = color(n[0], n[1], n[2]) * 0.5 + color(0.5);
+    // 材質の AO（エンジンの GBuffer の材質の B。ライティングが環境光と直接光の一部に掛ける）
+    float occlusion = sand.ao * w[0] + dirt.ao * w[1] + rock.ao * w[2];
+    Occlusion = color(occlusion);
 }

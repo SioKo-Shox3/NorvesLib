@@ -182,10 +182,24 @@
 #       --verify は 3 組の撮影の inputs.json と、cycles/inputs.json（台本・GrayRegions.py・CommonLight.json・PLY・地形のメッシュの
 #       元の入力・エンジンの撮影の入力のハッシュ）を今のファイルと照らす。
 #
+#   python Scripts/Terrain/ReferenceCheck.py --lit --capture <出力先> [--views a,b,...] [--verify]
+#       実材質の地形を、エンジン（<出力先> の撮影。共通の照明・地形だけ・最細の LOD）と Cycles（BlenderReference.py --lit が
+#       <出力先>/material/ に画素ごとの材質、<出力先>/cycles/ に照明つきの描画を書いたもの）で比べ、<出力先>/lit_check.json と
+#       表示変換を掛けた比較画像 <出力先>/lit_<視点>.png（エンジン｜Cycles。エンジンの撮影の hdr.json の表示変換を両方に掛け、
+#       Cycles の空は一様な空で埋める）と、領域と比の画像 <出力先>/lit_regions_<視点>.png を書く。--views を省くと LIT_VIEWS。
+#       合否: エンジンの撮影の起動引数とログの印・撮った時点のページの常駐（--albedo と同じ）、画素ごとの材質の入力（--albedo と
+#       同じ値の表・OSL・ミップの段）と標本の位置のずれが NORMAL_SUBPIXEL_MAX_PX 以下、Cycles の出力のハッシュ・カメラ（ずらしは
+#       材質と同じ）・空の分かれ方・光の内訳の和（--gray と同じ）。領域と収束は --gray と同じ定義（1 本あたり
+#       LIT_MIN_SPP_PER_SEED サンプルに届かない描画の領域は未判定）で、比の大きさは記録するだけ。
+#       領域ごとに、エンジンと Cycles の露出前の線形の平均（輝度・RGB）と比、Cycles の内訳、GBuffer と再現のアルベド、
+#       再現した材質の AO の平均と、エンジンだけが掛ける材質の AO を Cycles の太陽の組・空の組に掛けた見込みとの比を書く。
+#       --verify は撮影・材質・Cycles の入力の記録を今のファイルと照らす。
+#
 # 終了コード: すべて合格なら 0、どれかが不合格なら 1。
 import argparse
 import hashlib
 import json
+import math
 import os
 import re
 import subprocess
@@ -341,6 +355,12 @@ GRAY_ROUGHNESS_TOLERANCE = 0.01
 GRAY_SKY_MISMATCH = 0.005
 GRAY_SPLIT_TOLERANCE = 0.01
 # --albedo（地表の材質の照明の無いアルベドの再現）
+# --lit（実材質の地形のエンジンと Cycles の比較）
+LIT_VIEWS = ("ref_cliff_01", "ref_far_01", "ref_ground_01")
+LIT_MATERIAL_DIR = "material"
+# 収束を判定する 1 本あたりのサンプル数の下限（BlenderReference.py の MIN_SPP_PER_SEED と同じ。届かない描画の領域は未判定）
+LIT_MIN_SPP_PER_SEED = 512
+
 ALBEDO_VIEWS = ("ref_cliff_01", "ref_ground_01")
 ALBEDO_GAME_ARGS = ("--wasteland-common-light", "--wasteland-finest-lod")
 ALBEDO_LOG_LINES = ("WASTELAND_FINEST_LOD ", "WASTELAND_HIDE mask=127 ", "WASTELAND_TERRAIN_MATERIAL ")
@@ -3816,7 +3836,10 @@ def gray_region_means(image, mask):
     return image[mask].reshape(-1, 3).mean(axis=0)
 
 
-def check_gray_view(capture_dir, cycles_dir, view, engine_hdr, engine_depth, diag_hdrs, light):
+def check_gray_view(capture_dir, cycles_dir, view, engine_hdr, engine_depth, diag_hdrs, light, preview_prefix="gray",
+                    out=None):
+    """視点ごとの Cycles とエンジンの比較（--gray・--lit）。out に辞書を渡すと、領域の画素（masks）・Cycles の合成（cycles）・
+    被覆（alpha）を入れて返す"""
     failures = []
     result = {"view": view}
     meta_path = os.path.join(cycles_dir, f"{view}.cycles.json")
@@ -3824,6 +3847,8 @@ def check_gray_view(capture_dir, cycles_dir, view, engine_hdr, engine_depth, dia
         return dict(result, failures=[f"{GRAY_CYCLES_DIR}/{view}.cycles.json が無い"], **{"pass": False})
     with open(meta_path, encoding="utf-8") as f:
         meta = json.load(f)
+    result["cycles_material"] = meta.get("material")
+    result["cycles_camera_shift_px"] = meta.get("camera_shift_px")
     for name, digest in (meta.get("outputs_sha256") or {}).items():
         path = os.path.join(cycles_dir, name)
         if not os.path.isfile(path) or sha256_file(path) != digest:
@@ -3916,7 +3941,9 @@ def check_gray_view(capture_dir, cycles_dir, view, engine_hdr, engine_depth, dia
         valid |= masks[name]
     reference = cycles_y[valid]
     scale = 0.5 / float(np.percentile(reference, 90)) if reference.size else 1.0
-    write_gray_preview(os.path.join(capture_dir, f"gray_{view}.png"), engine_hdr, cycles, masks, valid, scale)
+    write_gray_preview(os.path.join(capture_dir, f"{preview_prefix}_{view}.png"), engine_hdr, cycles, masks, valid, scale)
+    if out is not None:
+        out.update({"masks": masks, "cycles": cycles, "alpha": alpha, "parts": parts})
     result.update({"pass": not failures, "failures": failures})
     return result
 
@@ -4593,6 +4620,199 @@ def run_normal(capture_dir, views, verify):
     return 0 if not failures else 1
 
 
+# ---- --lit（実材質の地形のエンジンと Cycles の比較）----
+
+def check_cycles_lit_inputs(capture_dir, cycles_dir, engine_files_sha256, views):
+    """Cycles の実材質の描画の入力の記録を今のファイルと照らす。(合格か, 理由の一覧, 記録)"""
+    ok, reasons, record = check_blender_inputs(cycles_dir)
+    if record is None:
+        return False, [f"{GRAY_CYCLES_DIR}/inputs.json が無い（BlenderReference.py --lit を回していない）"], None
+    if record.get("kind") != "cycles_lit":
+        reasons.append(f"記録の種類が cycles_lit でない（{record.get('kind')}）")
+    for key, rel in (("gray_regions_sha256", GRAY_REGIONS_PATH), ("common_light_sha256", COMMON_LIGHT_PATH)):
+        if sha256_file(os.path.join(REPO_ROOT, rel)) != record.get(key):
+            reasons.append(f"{rel} が描いた後に変わった（古い結果）")
+    if record.get("engine_capture_files_sha256") != engine_files_sha256:
+        reasons.append("カメラと深度を借りたエンジンの撮影の入力が、今の撮影と違う")
+    material_record = os.path.join(capture_dir, LIT_MATERIAL_DIR, "inputs.json")
+    if not os.path.isfile(material_record) or sha256_file(material_record) != record.get("material_inputs_sha256"):
+        reasons.append(f"画素ごとの材質（{LIT_MATERIAL_DIR}/inputs.json）が Cycles で描いた後に描き直された")
+    osl_path = os.path.join(REPO_ROOT, record.get("material_osl", ""))
+    if not os.path.isfile(osl_path) or sha256_file(osl_path) != record.get("material_osl_sha256"):
+        reasons.append("当たりの材質の OSL が無いか、描いた後に変わった")
+    for view in views:
+        view_record = (record.get("views") or {}).get(view)
+        if view_record is None:
+            reasons.append(f"{view}: Cycles の記録に視点が無い")
+            continue
+        for key, digest in (view_record.get("screen_material_sha256") or {}).items():
+            path = os.path.join(capture_dir, LIT_MATERIAL_DIR, f"{view}.{key}.pfm")
+            if not os.path.isfile(path) or sha256_file(path) != digest:
+                reasons.append(f"{view}: 画素ごとの材質 {key} が Cycles で描いた後に変わった")
+        if not view_record.get("screen_material_sha256"):
+            reasons.append(f"{view}: 画素ごとの材質のハッシュの記録が無い")
+    return not reasons, reasons, record
+
+
+def lit_engine_hdr(capture_dir, view):
+    """エンジンの撮影の HDR と記録。(HDR, hdr.json, 失敗の一覧)"""
+    pfm = os.path.join(capture_dir, f"{view}.hdr.pfm")
+    meta_path = os.path.join(capture_dir, f"{view}.hdr.json")
+    if not os.path.isfile(pfm) or not os.path.isfile(meta_path):
+        return None, None, [f"{view}: HDR が無い"]
+    with open(meta_path, encoding="utf-8") as f:
+        meta = json.load(f)
+    failures = []
+    if meta.get("units") != "cd/m2" or meta.get("source") != "scene_color_before_bloom":
+        failures.append(f"{view}: hdr.json の単位・読み出し元が約束と違う")
+    hdr = DT.read_pfm(pfm).astype(np.float64)
+    if not np.isfinite(hdr).all() or (hdr < 0.0).any():
+        failures.append(f"{view}: HDR に負・NaN・Inf がある")
+    return hdr, meta, failures
+
+
+def write_lit_comparison(path, engine_hdr, cycles, alpha, meta, light):
+    """エンジン｜Cycles を、エンジンの撮影の表示変換（DisplayTransform.py。同じプリエクスポージャ・トーンマップ・
+    グレーディング・ビネット）で並べる。Cycles の空（透明の背景）は共通の照明の一様な空の放射輝度で埋める"""
+    params = DT.params_from_capture(meta)
+    sky = np.asarray(light["sky_radiance_rgb"], dtype=np.float64)
+    coverage = np.clip(alpha, 0.0, 1.0)[..., None]
+    cycles_sky = cycles + (1.0 - coverage) * sky
+    pre_exposure = float(meta["pre_exposure"])
+    panels = []
+    for image in (engine_hdr, cycles_sky):
+        display, _ = DT.display_transform(DT.expose(image.astype(np.float32), pre_exposure), params)
+        panels.append(display)
+    Image.fromarray(np.concatenate(panels, axis=1), "RGB").save(path)
+    return {"operator": params["operator"], "grading_mode": params["grading_mode"], "pre_exposure": pre_exposure,
+            "cycles_sky_fill_rgb": sky.tolist()}
+
+
+def run_lit(capture_dir, views, verify):
+    failures = []
+    light = load_common_light()
+    views = views or list(LIT_VIEWS)
+    report = {"mode": "lit", "verify": bool(verify), "views": views, "region_criteria": GR.criteria()}
+
+    # エンジンの撮影（共通の照明・地形だけ・最細の LOD・実材質）
+    engine_entry, engine_failures = albedo_engine_capture(capture_dir, views, verify)
+    failures.extend(engine_failures)
+    report["engine"] = engine_entry
+
+    # 画素ごとの材質（--albedo と同じ値の表・OSL・ミップの段の検査）
+    material_dir = os.path.join(capture_dir, LIT_MATERIAL_DIR)
+    material_ok, material_failures, material_record = check_albedo_inputs(
+        capture_dir, material_dir, views, engine_entry.get("files_sha256"), mode="lit")
+    report["material_inputs_current"] = material_ok
+    if (verify and not material_ok) or material_record is None:
+        failures.extend(material_failures)
+
+    # Cycles の結果の入力
+    cycles_dir = os.path.join(capture_dir, GRAY_CYCLES_DIR)
+    cycles_ok, cycles_failures, cycles_record = check_cycles_lit_inputs(capture_dir, cycles_dir,
+                                                                        engine_entry.get("files_sha256"), views)
+    report["cycles_inputs_current"] = cycles_ok
+    if (verify and not cycles_ok) or cycles_record is None:
+        failures.extend(cycles_failures)
+
+    report["view_results"] = []
+    for view in views:
+        engine_hdr, meta, hdr_failures = lit_engine_hdr(capture_dir, view)
+        failures.extend(hdr_failures)
+        if engine_hdr is None:
+            continue
+        log_name = view_game_log(capture_dir, view)
+        if log_name:
+            with open(os.path.join(capture_dir, log_name), encoding="utf-8", errors="replace") as f:
+                if f"WASTELAND_COMMON_LIGHT view={view} case=both " not in f.read():
+                    failures.append(f"{view}: Game のログに WASTELAND_COMMON_LIGHT view={view} case=both が無い")
+        engine_depth = read_pfm_any(os.path.join(capture_dir, f"{view}.aov.depth.pfm"))[..., 0]
+        engine_albedo = read_pfm_any(os.path.join(capture_dir, f"{view}.aov.albedo.pfm")).astype(np.float64)
+
+        # 画素ごとの材質の標本の位置が、エンジンの画素の中心に揃っていること（--normal と同じ許容）
+        material_view = (material_record or {}).get("views", {}).get(view, {})
+        prefix = os.path.join(material_dir, view)
+        subpixel = None
+        if os.path.isfile(prefix + ".depth.pfm"):
+            subpixel = depth_subpixel_shift(engine_depth.astype(np.float64),
+                                            read_pfm_any(prefix + ".depth.pfm")[..., 0].astype(np.float64))
+            subpixel["camera_shift_px"] = material_view.get("camera_shift_px")
+            if math.hypot(subpixel["right_px"], subpixel["down_px"]) > NORMAL_SUBPIXEL_MAX_PX:
+                failures.append(f"{view}: 画素ごとの材質の標本の位置がエンジンの画素から "
+                                f"({subpixel['right_px']:+.3f}, {subpixel['down_px']:+.3f}) 画素ずれている"
+                                f"（{NORMAL_SUBPIXEL_MAX_PX} 画素以下）")
+        else:
+            failures.append(f"{view}: 画素ごとの材質の深度 {LIT_MATERIAL_DIR}/{view}.depth.pfm が無い")
+
+        out = {}
+        result = check_gray_view(capture_dir, cycles_dir, view, engine_hdr, engine_depth, {}, light,
+                                 preview_prefix="lit_regions", out=out)
+        result["material_subpixel"] = subpixel
+        if int((result.get("cycles") or {}).get("spp_per_seed") or 0) < LIT_MIN_SPP_PER_SEED:
+            for entry in (result.get("regions") or {}).values():
+                if entry["status"] == "判定":
+                    entry["status"] = "未判定（サンプルが下限に届かない）"
+        if result.get("cycles_camera_shift_px") != material_view.get("camera_shift_px"):
+            result["failures"].append("Cycles のカメラのずらしが画素ごとの材質を描いたときと違う")
+            result["pass"] = False
+        report["view_results"].append(result)
+        failures.extend(f"{view}: {f}" for f in result["failures"])
+        if "masks" not in out:
+            continue
+
+        # 領域ごとの材質（エンジンの GBuffer のアルベドと、再現した材質のアルベド・AO）
+        blender_albedo = read_pfm_any(prefix + ".albedo.pfm").astype(np.float64)
+        occlusion = read_pfm_any(prefix + ".occlusion.pfm")[..., 0].astype(np.float64)
+        # エンジンだけが掛ける材質の AO の見込み（lighting.frag: 直接光 × mix(1, AO, 0.3)、環境光 × AO）を Cycles の
+        # 太陽の組・空の組へ掛けた値。太陽の組の照り返しにも直接光の係数を掛ける近似（原因の見立て用で、合否に使わない）
+        ao_model = (out["parts"]["sun"] * (0.7 + 0.3 * occlusion)[..., None] +
+                    out["parts"]["sky"] * occlusion[..., None]) @ LUMA
+        engine_y = engine_hdr @ LUMA
+        for name, entry in result["regions"].items():
+            mask = out["masks"][name]
+            if not mask.any():
+                continue
+            entry["engine_albedo_rgb"] = engine_albedo[mask].mean(axis=0).tolist()
+            entry["blender_albedo_rgb"] = blender_albedo[mask].mean(axis=0).tolist()
+            entry["material_ao_mean"] = float(occlusion[mask].mean())
+            entry["cycles_with_engine_ao_y"] = float(ao_model[mask].mean())
+            entry["ratio_to_cycles_with_engine_ao"] = float(engine_y[mask].mean() / max(ao_model[mask].mean(), 1e-30))
+
+        # 表示変換を掛けた比較画像（エンジン｜Cycles）
+        result["comparison"] = write_lit_comparison(os.path.join(capture_dir, f"lit_{view}.png"), engine_hdr,
+                                                    out["cycles"], out["alpha"], meta, light)
+        result["comparison"]["file"] = f"lit_{view}.png"
+        result["comparison"]["regions_file"] = f"lit_regions_{view}.png"
+
+        cycles = result.get("cycles", {})
+        print(f"REFERENCE_CHECK lit view={view} pass={int(result['pass'])} spp_per_seed={cycles.get('spp_per_seed')} "
+              f"stop={cycles.get('stop_reason')} sky_mismatch={result.get('sky_mismatch')} "
+              f"split={result.get('cycles_split_consistency')} "
+              f"material_subpixel=({(subpixel or {}).get('right_px', float('nan')):+.3f},"
+              f"{(subpixel or {}).get('down_px', float('nan')):+.3f})")
+        for name, entry in result["regions"].items():
+            conv = entry["convergence"]
+            print(f"REFERENCE_CHECK lit view={view} region={name} status={entry['status']} pixels={entry['pixels']} "
+                  f"engine_y={entry.get('engine_y', float('nan')):.1f} cycles_y={entry.get('cycles_y', float('nan')):.1f} "
+                  f"ratio={entry.get('ratio') or float('nan'):.3f} "
+                  f"ratio_rgb={np.round(entry['ratio_rgb'], 3).tolist() if entry.get('ratio_rgb') else None} "
+                  f"material_ao={entry.get('material_ao_mean', float('nan')):.3f} "
+                  f"ratio_with_engine_ao={entry.get('ratio_to_cycles_with_engine_ao', float('nan')):.3f} "
+                  f"mean_diff={conv.get('mean_diff', float('nan')):.4f} pixel_rms={conv.get('pixel_rms', float('nan')):.3f}")
+
+    report["failures"] = failures
+    report_path = os.path.join(capture_dir, "lit_check.json")
+    with open(report_path, "w", encoding="utf-8") as f:
+        json.dump(report, f, indent=2, ensure_ascii=False)
+    for failure in failures:
+        print(f"REFERENCE_CHECK failure: {failure}")
+    status = "pass" if not failures else "fail"
+    print(f"REFERENCE_CHECK result={status} mode=lit views={len(views)} "
+          f"inputs_current={int(bool(engine_entry.get('inputs_current')))} material_inputs_current={int(material_ok)} "
+          f"cycles_inputs_current={int(cycles_ok)} report={report_path}")
+    return 0 if not failures else 1
+
+
 def main():
     # 結果の行を保存して読むので、端末の符号に関わらず UTF-8 で書く
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -4621,6 +4841,8 @@ def main():
                         help="地表の材質の照明の無いアルベドを、エンジンの AOV と Blender の再現で照らす")
     parser.add_argument("--normal", action="store_true",
                         help="地表の材質の照明の無い法線と粗さを、エンジンの AOV と Blender の再現で照らす")
+    parser.add_argument("--lit", action="store_true",
+                        help="実材質の地形のエンジンと Cycles の描画を、領域ごとの線形の平均の表と表示変換を掛けた比較画像で比べる")
     parser.add_argument("--views", default="", help="検査する視点（カンマ区切り。省くと metrics.json の全視点）")
     parser.add_argument("--verify", action="store_true", help="入力のハッシュを今のファイルと照らし、古い結果を拒否する")
     args = parser.parse_args()
@@ -4666,8 +4888,12 @@ def main():
     if args.normal:
         views = [v.strip() for v in args.views.split(",") if v.strip()]
         return run_normal(capture_dir, views, args.verify)
+    if args.lit:
+        views = [v.strip() for v in args.views.split(",") if v.strip()]
+        return run_lit(capture_dir, views, args.verify)
     print("REFERENCE_CHECK result=fail reason=no_mode（--record-inputs か --hdr か --display か --plate か --aov か "
-          "--projection か --atmos-dump か --atmos-ref か --blur-static か --blur-motion か --gray か --albedo か --normal を指定する）")
+          "--projection か --atmos-dump か --atmos-ref か --blur-static か --blur-motion か --gray か --albedo か --normal か "
+          "--lit を指定する）")
     return 1
 
 

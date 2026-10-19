@@ -47,6 +47,16 @@
 #       <撮影>/albedo/ に、--normal は法線（ShadedNormal）・粗さ（Roughness）・法線マップを掛ける前の法線（BaseNormal）を
 #       出力ごとに描き直して <撮影>/normal/ に書く。どちらも頂点の法線と被覆も書き、最後に入力の記録 inputs.json を書く。
 #       照合は ReferenceCheck.py --albedo・--normal。
+#
+#   python Scripts/Terrain/BlenderReference.py --lit --mesh <書き出しのフォルダ> --capture <エンジンの撮影>
+#          [--views a,b,...] [--range shadow] [--max-spp N] [--max-seconds S] [--skip-material|--material-only]
+#       実材質の地形を共通の照明で描く（SCN-WLR-CYCLES-LIT）。
+#       1. 画素ごとの材質（--skip-material で省く）: --albedo と同じ描き方（OSL の出力を 1 サンプルで放射、深度から求めた小数の
+#          ずれでカメラを揃える）で、アルベド・法線マップを掛けた法線・粗さ・材質の AO を <撮影>/material/ に書く。
+#       2. Cycles の描画: --gray と同じ照明・収束の基準・書き出し（<撮影>/cycles/）で、材質だけを替える。カメラの光線の当たりは
+#          1 の画素ごとの値を画面の座標で最近傍に引き（エンジンの GBuffer と同じ画素の中心の材質）、影・照り返しの光線の
+#          当たりは OSL の PASS_BOUNCE（アルベドと粗さを法線マップなし・等方の足跡で）で求める。カメラは 1 と同じだけずらす。
+#          材質の AO は Cycles に掛けない（エンジンだけの近似。照合の表に領域ごとの平均を書く）。照合は ReferenceCheck.py --lit。
 import argparse
 import hashlib
 import json
@@ -115,8 +125,18 @@ MATERIAL_PASSES = {
     "normal": [("ShadedNormal", "shaded_normal", "shaded_world_normal_engine", "encoded_normal", 1),
                ("Roughness", "roughness", "r_final_roughness_g_base_roughness_b_lost_variance", None, 2),
                ("BaseNormal", "base_normal", "geometric_world_normal_engine_after_far_map", "encoded_normal", 3)],
+    "lit": [("Albedo", "albedo", "linear_albedo", None, 0),
+            ("ShadedNormal", "shaded_normal", "shaded_world_normal_engine", "encoded_normal", 1),
+            ("Roughness", "roughness", "r_final_roughness_g_base_roughness_b_lost_variance", None, 2),
+            ("Occlusion", "occlusion", "material_ambient_occlusion", None, 4)],
 }
-MATERIAL_RESULT_DIRS = {"albedo": ALBEDO_RESULT_DIR, "normal": NORMAL_RESULT_DIR}
+# --lit: 実材質の地形を共通の照明で描く（SCN-WLR-CYCLES-LIT）。まず画素ごとの材質（アルベド・法線・粗さ・AO）を --albedo と
+# 同じ描き方で <撮影>/material/ に描き、続けて Cycles の照明つきの描画を <撮影>/cycles/ に書く
+LIT_MATERIAL_DIR = "material"
+LIT_VIEWS = ("ref_cliff_01", "ref_far_01", "ref_ground_01")
+MATERIAL_RESULT_DIRS = {"albedo": ALBEDO_RESULT_DIR, "normal": NORMAL_RESULT_DIR, "lit": LIT_MATERIAL_DIR}
+# カメラから直接見えない当たりの材質を描く OSL の Pass（TerrainAlbedo.osl の PASS_BOUNCE）
+PASS_BOUNCE = 5
 # 区画の三角形の和がこれを超える視点は、画面を縦の列に分け、列ごとに Blender を起動してその列の視錐台に掛かる三角形だけで描く
 # （OSL の法線の出力の JIT が、数千万の三角形を読んだ後のプロセスで LLVM の IMAGE_REL_AMD64_ADDR32NB の制約に当たって
 # 落ちる。ref_ground_01 の 1000 万三角形では通り、ref_cliff_01 の 5500 万では落ちた）。列の視錐台に掛かる三角形は漏れなく
@@ -372,7 +392,8 @@ def run_blender_job(args, out_dir, name, job, label="gray"):
     return ok
 
 
-def run_gray(args):
+def run_gray(args, lit=False):
+    """--gray（灰色の材質）と --lit（実材質。lit = True）の Cycles の描画"""
     mesh_dir = os.path.abspath(args.mesh)
     capture_dir = os.path.abspath(args.capture)
     out_dir = os.path.join(capture_dir, GRAY_RESULT_DIR)
@@ -387,8 +408,27 @@ def run_gray(args):
     }
     views = [v for v in args.views.split(",") if v]
 
+    # 実材質: 画素ごとの材質（カメラの光線の当たり）と、それを描いたときのカメラの小数のずらし・OSL
+    lit_material = None
+    if lit:
+        if not args.skip_material and run_material(args, "lit") != 0:
+            return 1
+        if args.material_only:
+            return 0
+        material_dir = os.path.join(capture_dir, LIT_MATERIAL_DIR)
+        record_path = os.path.join(material_dir, "inputs.json")
+        if not os.path.isfile(record_path):
+            print(f"BLENDER_REFERENCE error {LIT_MATERIAL_DIR}/inputs.json が無い（--skip-material の前に材質を描いていない）")
+            return 1
+        with open(record_path, encoding="utf-8") as f:
+            lit_material = json.load(f)
+        missing = [v for v in views if v not in lit_material.get("views", {})]
+        if missing:
+            print(f"BLENDER_REFERENCE error 画素ごとの材質に視点 {missing} が無い")
+            return 1
+
     plate_records = {}
-    if not args.skip_plate:
+    if not args.skip_plate and not lit:
         altitude, azimuth = common_light_sun(light, PLATE_VIEW)
         for case in PLATE_CASES:
             name = f"plate_{case}"
@@ -440,6 +480,15 @@ def run_gray(args):
             "max_seconds": args.max_seconds,
             "prefix": prefix,
         }
+        if lit:
+            material_view = lit_material["views"][view]
+            job.update({
+                "material_mode": "lit",
+                "camera_shift_px": material_view["camera_shift_px"],
+                "screen_material": {key: os.path.join(capture_dir, LIT_MATERIAL_DIR, f"{view}.{key}.pfm")
+                                    for key in ("albedo", "shaded_normal", "roughness")},
+                "osl": os.path.join(REPO_ROOT, lit_material["material"]["osl"]),
+            })
         job["required_outputs"] = [f"{prefix}.cycles.exr", f"{prefix}.aux.exr", f"{prefix}.cycles.json"] + \
             [f"{prefix}.cycles.{part}.pfm" for part in ("hdr", "seed_a", "seed_b", "sun", "sky", "direct", "indirect")] + \
             [f"{prefix}.aux.{part}.pfm" for part in ("visibility", "n_dot_l", "normal", "alpha")]
@@ -447,15 +496,20 @@ def run_gray(args):
             if os.path.exists(stale):
                 os.remove(stale)
         triangles = sum(int(t["triangles"]) for t in tiles)
-        print(f"BLENDER_REFERENCE gray view={view} tiles={len(tiles)} triangles={triangles} range={args.range}",
+        label = "lit" if lit else "gray"
+        print(f"BLENDER_REFERENCE {label} view={view} tiles={len(tiles)} triangles={triangles} range={args.range}",
               flush=True)
-        if not run_blender_job(args, out_dir, view, job):
+        if not run_blender_job(args, out_dir, view, job, label=label):
             print(f"BLENDER_REFERENCE error view={view} Blender が失敗した（{GRAY_RESULT_DIR}/{view}.blender.log）")
             return 1
         used_tiles.update(t["file"] for t in tiles)
         view_records[view] = {"camera": camera, "width": width, "height": height,
                               "tiles": sorted(t["file"] for t in tiles), "triangles": triangles,
                               "sun_altitude_degrees": altitude, "sun_azimuth_degrees": azimuth}
+        if lit:
+            view_records[view]["camera_shift_px"] = job["camera_shift_px"]
+            view_records[view]["screen_material_sha256"] = {key: sha256_file(path)
+                                                            for key, path in job["screen_material"].items()}
 
     # 入力の記録（ReferenceCheck.py --gray --verify が今のファイルと照らす）。視点や板を描き直さなかった分は前の記録を残す
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -470,7 +524,7 @@ def run_gray(args):
     with open(os.path.join(capture_dir, "inputs.json"), encoding="utf-8") as f:
         engine_inputs = json.load(f)
     record.update({
-        "kind": "cycles_gray",
+        "kind": "cycles_lit" if lit else "cycles_gray",
         "script": normalize_rel(os.path.abspath(__file__)),
         "script_sha256": sha256_file(os.path.abspath(__file__)),
         "gray_regions_sha256": sha256_file(os.path.join(REPO_ROOT, GRAY_REGIONS)),
@@ -479,6 +533,12 @@ def run_gray(args):
         "git_commit": (RC.git_output(["rev-parse", "HEAD"]) or "").strip(),
         "sun_angle_degrees": SUN_ANGLE_DEGREES,
     })
+    if lit:
+        # 画素ごとの材質の記録（ReferenceCheck.py --lit が材質の照合と同じ検査で今のファイルと照らす）
+        record["material_inputs_sha256"] = sha256_file(os.path.join(capture_dir, LIT_MATERIAL_DIR, "inputs.json"))
+        record["material_osl"] = lit_material["material"]["osl"]
+        record["material_osl_sha256"] = lit_material["material"]["osl_sha256"]
+        record["bounce_pass"] = PASS_BOUNCE
     if plate_records:
         record.setdefault("plates", {}).update(plate_records)
     if view_records:
@@ -1244,6 +1304,113 @@ def make_gray_material(gray):
     return material, ior
 
 
+def screen_image(name, image, normal=False):
+    """画素ごとの材質の画（上の行が 0 行目、(高さ, 幅, チャンネル)）を Blender の浮動小数の画像にする（色空間の変換なし）。
+    normal なら値をエンジンの座標の向きから Blender の座標の向きへ移す。1 チャンネルは灰色の RGB にする"""
+    import bpy
+    height, width = image.shape[:2]
+    rgba = np.ones((height, width, 4), dtype=np.float32)
+    if normal:
+        rgba[..., :3] = np.stack([image[..., 0], -image[..., 2], image[..., 1]], axis=-1)
+    elif image.shape[-1] == 1:
+        rgba[..., :3] = image[..., :1]
+    else:
+        rgba[..., :3] = image[..., :3]
+    result = bpy.data.images.new(name, width=width, height=height, alpha=True, float_buffer=True)
+    result.colorspace_settings.name = "Non-Color"
+    # Blender の画像は下の行から並ぶ
+    result.pixels.foreach_set(np.ascontiguousarray(rgba[::-1]).ravel())
+    result.update()
+    return result
+
+
+def make_lit_material(job):
+    """実材質の地形（--lit）: カメラの光線の当たりは画素ごとの材質（--albedo と同じ描き方で描いたアルベド・法線マップを
+    掛けた法線・粗さ。画面の座標で最近傍に引く）、それ以外の光線（影・照り返し）の当たりは OSL の PASS_BOUNCE
+    （アルベドと粗さ、法線マップなし、等方の足跡）を Principled BSDF（金属度 0・IOR 1.5 で F0 0.04）に入れる。
+    (材質, IOR, 記録)"""
+    import bpy
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import GrayRegions as GR  # noqa: E402
+    f0 = 0.04
+    ior = (1.0 + math.sqrt(f0)) / (1.0 - math.sqrt(f0))
+    material = bpy.data.materials.new("TerrainLit")
+    material.use_nodes = True
+    nodes = material.node_tree.nodes
+    links = material.node_tree.links
+    nodes.clear()
+    output = nodes.new("ShaderNodeOutputMaterial")
+    mix = nodes.new("ShaderNodeMixShader")
+    light_path = nodes.new("ShaderNodeLightPath")
+    links.new(light_path.outputs["Is Camera Ray"], mix.inputs["Fac"])
+    links.new(mix.outputs["Shader"], output.inputs["Surface"])
+
+    def principled():
+        node = nodes.new("ShaderNodeBsdfPrincipled")
+        node.inputs["Metallic"].default_value = 0.0
+        node.inputs["IOR"].default_value = ior
+        node.inputs["Specular IOR Level"].default_value = 0.5
+        return node
+
+    # カメラの光線: 画面の座標（Window。左下が 0、右上が 1。カメラのずらしを含む描く枠）で画素の値を最近傍に引く
+    camera_bsdf = principled()
+    coords = nodes.new("ShaderNodeTexCoord")
+    width, height = int(job["width"]), int(job["height"])
+    images = {}
+    for key, socket, normal in (("albedo", "Base Color", False), ("shaded_normal", "Normal", True),
+                                ("roughness", "Roughness", False)):
+        pixels = GR.read_pfm(job["screen_material"][key])
+        if pixels.shape[:2] != (height, width):
+            raise RuntimeError(f"画素ごとの材質 {key} の大きさ {pixels.shape[:2]} が描画 {height}x{width} と違う")
+        if key == "roughness":
+            pixels = pixels[..., :1]
+        texture = nodes.new("ShaderNodeTexImage")
+        texture.image = screen_image(f"Screen_{key}", pixels, normal=normal)
+        texture.interpolation = "Closest"
+        texture.extension = "EXTEND"
+        links.new(coords.outputs["Window"], texture.inputs["Vector"])
+        links.new(texture.outputs["Color"], camera_bsdf.inputs[socket])
+        images[key] = os.path.basename(job["screen_material"][key])
+
+    # それ以外の光線: OSL の PASS_BOUNCE
+    bounce_bsdf = principled()
+    script = nodes.new("ShaderNodeScript")
+    script.mode = "EXTERNAL"
+    script.filepath = job["osl"]
+    if "Albedo" not in script.outputs or "Pass" not in script.inputs:
+        raise RuntimeError(f"OSL の台本を読めない（出力が無い）: {job['osl']}")
+    camera_record = job["camera"]
+    inputs = {
+        "CameraPosition": camera_record["position"],
+        "CameraForward": camera_record["forward"],
+        "CameraRight": camera_record["right"],
+        "CameraUp": camera_record["up"],
+        "TanHalfVertical": math.tan(math.radians(float(camera_record["vertical_fov_degrees"])) / 2.0),
+        "Aspect": float(camera_record["aspect_ratio"]),
+        "Width": float(width),
+        "Height": float(height),
+        "Pass": PASS_BOUNCE,
+    }
+    for name, value in inputs.items():
+        script.inputs[name].default_value = value
+    separate = nodes.new("ShaderNodeSeparateColor")
+    links.new(script.outputs["Albedo"], bounce_bsdf.inputs["Base Color"])
+    links.new(script.outputs["Roughness"], separate.inputs["Color"])
+    links.new(separate.outputs["Red"], bounce_bsdf.inputs["Roughness"])
+    links.new(bounce_bsdf.outputs["BSDF"], mix.inputs[1])
+    links.new(camera_bsdf.outputs["BSDF"], mix.inputs[2])
+    record = {
+        "type": "Principled BSDF（金属度 0・IOR {:.4f}・Specular IOR Level 0.5、F0 {}）".format(ior, f0),
+        "ior": ior,
+        "f0": f0,
+        "camera_rays": {"source": "画素ごとの材質（画面の座標で最近傍）", "images": images},
+        "other_rays": {"source": "OSL", "osl": os.path.basename(job["osl"]), "pass": PASS_BOUNCE,
+                       "normal": "補間した頂点の法線（法線マップなし）"},
+        "material_ambient_occlusion": "Cycles には掛けない（エンジンは GBuffer の材質の AO を環境光と直接光の一部に掛ける）",
+    }
+    return material, ior, record
+
+
 def look_at_matrix(position, target):
     """position から target を見る Blender のカメラの姿勢（−Z が視線、+Y が上に近い向き）"""
     import mathutils
@@ -1380,7 +1547,8 @@ def render_plate_job(job):
 
 
 def render_gray_job(job):
-    """灰色の地形を 1 視点描く: 太陽の見え方と法線、続けて種を変えた本描画を収束まで重ねる"""
+    """灰色（job の material_mode が lit なら実材質）の地形を 1 視点描く: 太陽の見え方と法線、続けて種を変えた本描画を
+    収束まで重ねる"""
     import bpy
     import mathutils
 
@@ -1388,7 +1556,17 @@ def render_gray_job(job):
     bpy.ops.wm.read_factory_settings(use_empty=True)
     scene = bpy.context.scene
     device = setup_cycles_device(scene)
-    material, ior = make_gray_material(job["gray_material"])
+    lit = job.get("material_mode") == "lit"
+    if lit:
+        # スクリプトノードは描画エンジンが Cycles の OSL のときに台本を読んで出入り口を作るので、材質より先に決める
+        scene.render.engine = "CYCLES"
+        scene.cycles.shading_system = True
+        material, ior, material_record = make_lit_material(job)
+    else:
+        material, ior = make_gray_material(job["gray_material"])
+        material_record = {"type": "Principled BSDF", "base_color": float(job["gray_material"]["albedo"]),
+                           "roughness": float(job["gray_material"]["roughness"]), "metallic": 0.0, "ior": ior,
+                           "specular_ior_level": 0.5, "f0": float(job["gray_material"]["f0"])}
 
     started = time.time()
     to_blender = mathutils.Matrix(engine_to_blender_matrix4())
@@ -1421,6 +1599,10 @@ def render_gray_job(job):
     scene.collection.objects.link(camera_object)
     camera_object.matrix_world = mathutils.Matrix(matrix)
     scene.camera = camera_object
+    # 画素の小数のずらし（右・上が正の画素。画素ごとの材質を描いたときと同じ。縦で合わせるカメラのずらしの単位は画の高さ）
+    shift_px = job.get("camera_shift_px") or [0.0, 0.0]
+    camera.shift_x = float(shift_px[0]) / float(job["height"])
+    camera.shift_y = float(shift_px[1]) / float(job["height"])
 
     lighting = job["lighting"]
     world, background = make_uniform_world(scene, lighting["sky_radiance_rgb"])
@@ -1587,9 +1769,8 @@ def render_gray_job(job):
             "triangles": triangle_count,
             "normals": "PLY の頂点の法線（custom_normal、点の領域）",
             "triangles_rewound": flipped_count,
-            "material": {"type": "Principled BSDF", "base_color": float(job["gray_material"]["albedo"]),
-                         "roughness": float(job["gray_material"]["roughness"]), "metallic": 0.0, "ior": ior,
-                         "specular_ior_level": 0.5, "f0": float(job["gray_material"]["f0"])},
+            "material": material_record,
+            "camera_shift_px": [float(v) for v in shift_px],
             "lighting": lighting,
             "sun_altitude_degrees": job["sun_altitude_degrees"],
             "sun_azimuth_degrees": job["sun_azimuth_degrees"],
@@ -1640,13 +1821,21 @@ def main():
     parser.add_argument("--albedo", action="store_true", help="地表の材質の照明の無いアルベドを描く")
     parser.add_argument("--normal", action="store_true", help="地表の材質の照明の無い法線と粗さを描く")
     parser.add_argument("--mips", default="",
-                        help="--albedo・--normal: ミップの段の画像を置くフォルダ（省くと <撮影>/albedo/mips・<撮影>/normal/mips）")
+                        help="--albedo・--normal・--lit: ミップの段の画像を置くフォルダ（省くと <撮影>/albedo/mips・"
+                             "<撮影>/normal/mips・<撮影>/material/mips）")
+    parser.add_argument("--lit", action="store_true", help="実材質の地形を共通の照明で描く（画素ごとの材質と Cycles）")
+    parser.add_argument("--skip-material", action="store_true", help="--lit: 画素ごとの材質を描き直さない")
+    parser.add_argument("--material-only", action="store_true", help="--lit: 画素ごとの材質だけを描く（Cycles で描かない）")
     args = parser.parse_args()
-    if int(args.depth) + int(args.gray) + int(args.albedo) + int(args.normal) != 1:
-        parser.error("--depth・--gray・--albedo・--normal のどれか 1 つを指定してください")
+    if int(args.depth) + int(args.gray) + int(args.albedo) + int(args.normal) + int(args.lit) != 1:
+        parser.error("--depth・--gray・--albedo・--normal・--lit のどれか 1 つを指定してください")
     if args.albedo or args.normal:
         args.views = args.views or ",".join(ALBEDO_VIEWS)
         return run_material(args, "albedo" if args.albedo else "normal")
+    if args.lit:
+        args.range = args.range or "shadow"
+        args.views = args.views or ",".join(LIT_VIEWS)
+        return run_gray(args, lit=True)
     if args.gray:
         args.range = args.range or "shadow"
         args.views = args.views or ",".join(GRAY_VIEWS)
