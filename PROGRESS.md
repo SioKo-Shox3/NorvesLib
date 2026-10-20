@@ -5813,3 +5813,20 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - Next: 記録だけの残り（合否には使わない）を次の反復で撮る — 灰色の 3 組（両方・太陽・空、ref_cliff_01・ref_far_01）の影の崖・遠景の空の比、荒野の GPU 時間（`AccelerationStructureBuild`・`FrameGPU`、RelWithDebInfo）。直す前の exe は残っていないので、GPU 時間の before は `hide=all` で RT のシーンが空の時の値として 1 回撮るか、before 無しとして記録する
 - Notes: 反復 5 の灰色の撮影（`tlas-terrain-gray.ps1`）は途中で止めたもので、結果は使わない
 - GPU 時間の after（記録だけ。`aux-SCN-WL-RT-TLAS-TERRAIN-gpu-after.txt`、RelWithDebInfo、ref_cliff_01・verify の撮影と同じ `-GameArgs`、120 フレーム）: GPU の median 18.106 ms・p95 42.497 ms、LightingPass の median 4.321 ms。RT のシーンに入る区画は 11（198 中）。TLAS の構築は計測の窓で起きない（`RT_SCENE update_skipped`。選ぶ物が変わらないと作り直さない）ので、`AccelerationStructureBuild` の時間は窓の中に出ない。before は残りの灰色の比と一緒に次の反復で扱う
+
+### SCN-WL-RT-TLAS-TERRAIN 完了（2026-10-20、run 20261020-094249 の反復 1。評価者の差し戻しの 2 点を直した）
+- コードは変えていない（評価者の指摘は記録の不足 2 点）。verify の 4 本を今の Game.exe（6e88a0c4…、コードは efccb747 と同じ）で回し直した
+- 証拠（`.harness/runs/20261020-094249/`）:
+  - `verify-SCN-WL-RT-TLAS-TERRAIN-1.txt`: Debug の Game のビルド EXIT=0
+  - `verify-SCN-WL-RT-TLAS-TERRAIN-2.txt`: RelWithDebInfo を -Build して ref_cliff_01 を撮影、result=pass・EXIT=0（commit 657a00d0、dirty=0）
+  - `verify-SCN-WL-RT-TLAS-TERRAIN-3.txt`: `--rt-scene` result=pass。`instances=11 mega=11 candidates=198 out_of_range=187`、`rays=1988002065 terrain_hits=380203841`（比 0.191）
+  - `verify-SCN-WL-RT-TLAS-TERRAIN-4.txt`: 回帰の after result=pass。rendering3dtest・sandbox は psnr=inf、mega-bananas 61.66、night-village 41.37（mean_diff +0.302）。夜の村は TLAS に入る MegaGeometry が 30 → 41 で、差は建物と地面の小物の間接光と空の階調の 1 段の揺れだけ（並べて開いて確かめた。差が 8 段を超える画素 2.3 %、32 段を超える画素 0.004 %）
+- 灰色の比（記録だけ。`aux-SCN-WL-RT-TLAS-TERRAIN-gray.txt`・`-gray-compare.txt`。3 組とも EXIT=0、`--gray` result=pass・板の較正 sun 0.9999・sky 1.0000。before は SCN-WLR-CYCLES-GRAY の gray_check.json＝TLAS が空の時）:
+  - ref_cliff_01 の影の崖: 1.574 → 1.450（太陽 1.664 → 1.481、空 1.550 → 1.444）。影の中の地面 1.452 → 1.368、日なたの崖の空の分 1.418 → 1.174、日なたの地面 0.953 → 0.926（空の分 1.008 → 0.895）
+  - ref_far_01 の遠景: 0.953 → 0.959、空の分 1.347 → 1.350（遠くの遮蔽は 120 m の外で変わらない。SCN-WL-RT-TLAS-RANGE）。日なたの地面の空の分 0.973 → 0.651（近くの地形が空を遮るようになった分。全体の比は 0.975 → 0.926）
+  - 撮影の RT のシーンは区画 11〜12（ref_far_01 は 12）
+- TLAS の構築の時間（`aux-SCN-WL-RT-TLAS-TERRAIN-tlas-build.txt`。run 20261019-192352 の gpu-before（直す前の exe、instances=0）と gpu-after（instances=11）の trace、ref_cliff_01・RelWithDebInfo・同じ `-GameArgs`）:
+  - before: TLAS が空で構築は起きない。`AccelerationStructureBuild`（GPU）は毎フレーム 0.0001 ms（最大 0.0009）。`RT.BuildAccelerationStructures`（CPU）の窓の median 0.012 ms
+  - after: 構築は起動から 17 回（ログ `built=1` ＋ `built=16`）。GPU は最初の 6 回が 0.216〜0.241 ms、続く 11 回が 0.033〜0.047 ms、合計 1.82 ms。以後は選ぶ物が変わらず作り直さない（`update_skipped=120`）ので計測の窓では 0.0001 ms。CPU の窓の median 0.052 ms（構築の回の最大 18.6 ms）
+- 荒野のフレームの GPU 時間（RelWithDebInfo、同じ 300 フレームの窓）: before 3.480 ms（p95 4.486）→ after 4.239 ms（p95 5.303）。LightingPass 0.893 → 1.437 ms、RT のシーンの区画 0 → 11。反復 6 の 18.106 ms（09:20）は大気の正解の段 2 の解 2 本（python、各 6 GB）が CPU を占めていた間の計測（CPU の median 80.9 ms）で、前後の比較には使わない
+- Next: TASKS.md の次の未完の項目
