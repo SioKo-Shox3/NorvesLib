@@ -1,0 +1,89 @@
+{
+  "description": "SCN-WL-GEOM-BUDGET: 既定のジオメトリの目標（作業集合の求め）で荒野の 1920×1080 の作業集合が常駐しきることの合否。比べる組は ref2x・base・resident だけで、変更後の同じ Game.exe で撮り直したもの。変更前は ref_cliff_02 の遠景で欠け +0.042・エイリアス +0.069。",
+  "cases": [
+    "base",
+    "resident"
+  ],
+  "rows": [
+    {
+      "mode": "blur_static",
+      "view": "ref_far_01",
+      "region": "far",
+      "case": "base",
+      "quantity": "detail_loss_vs_resident",
+      "min": -0.01,
+      "max": 0.01,
+      "note": "既定の取り分の base と取り分 9 の resident の細部の欠けの差が 0.01 以内（ジオメトリのページが既定の目標で常駐しきる）"
+    },
+    {
+      "mode": "blur_static",
+      "view": "ref_far_01",
+      "region": "far",
+      "case": "base",
+      "quantity": "alias_vs_resident",
+      "min": -0.01,
+      "max": 0.01,
+      "note": "既定の取り分の base と取り分 9 の resident のエイリアスの差が 0.01 以内（ジオメトリのページが既定の目標で常駐しきる）"
+    },
+    {
+      "mode": "blur_static",
+      "view": "ref_far_01",
+      "region": "cliff",
+      "case": "base",
+      "quantity": "detail_loss_vs_resident",
+      "min": -0.01,
+      "max": 0.01,
+      "note": "既定の取り分の base と取り分 9 の resident の細部の欠けの差が 0.01 以内（ジオメトリのページが既定の目標で常駐しきる）"
+    },
+    {
+      "mode": "blur_static",
+      "view": "ref_far_01",
+      "region": "cliff",
+      "case": "base",
+      "quantity": "alias_vs_resident",
+      "min": -0.01,
+      "max": 0.01,
+      "note": "既定の取り分の base と取り分 9 の resident のエイリアスの差が 0.01 以内（ジオメトリのページが既定の目標で常駐しきる）"
+    },
+    {
+      "mode": "blur_static",
+      "view": "ref_cliff_02",
+      "region": "far",
+      "case": "base",
+      "quantity": "detail_loss_vs_resident",
+      "min": -0.01,
+      "max": 0.01,
+      "note": "既定の取り分の base と取り分 9 の resident の細部の欠けの差が 0.01 以内（ジオメトリのページが既定の目標で常駐しきる）"
+    },
+    {
+      "mode": "blur_static",
+      "view": "ref_cliff_02",
+      "region": "far",
+      "case": "base",
+      "quantity": "alias_vs_resident",
+      "min": -0.01,
+      "max": 0.01,
+      "note": "既定の取り分の base と取り分 9 の resident のエイリアスの差が 0.01 以内（ジオメトリのページが既定の目標で常駐しきる）"
+    },
+    {
+      "mode": "blur_static",
+      "view": "ref_cliff_02",
+      "region": "cliff",
+      "case": "base",
+      "quantity": "detail_loss_vs_resident",
+      "min": -0.01,
+      "max": 0.01,
+      "note": "既定の取り分の base と取り分 9 の resident の細部の欠けの差が 0.01 以内（ジオメトリのページが既定の目標で常駐しきる）"
+    },
+    {
+      "mode": "blur_static",
+      "view": "ref_cliff_02",
+      "region": "cliff",
+      "case": "base",
+      "quantity": "alias_vs_resident",
+      "min": -0.01,
+      "max": 0.01,
+      "note": "既定の取り分の base と取り分 9 の resident のエイリアスの差が 0.01 以内（ジオメトリのページが既定の目標で常駐しきる）"
+    }
+  ]
+}
