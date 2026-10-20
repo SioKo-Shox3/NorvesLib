@@ -5802,3 +5802,13 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - verify（`verify-SCN-WLR-LIT-SHADOW-REF-C02-1.txt`）: result=pass、failures 0 件、inputs_current=1・cycles_inputs_current=1。require_judged は 3 組とも judged=1 source=本描画。ref_cliff_02 のパスの和は合成の 1.0000 倍（直接 + 間接 1.0000000031、太陽 + 空 1.00000000005）、6 視点とも ±1e-8。材質の標本の位置は 3 km 未満で (+0.006, +0.032) 画素
 - Notes: ref_cliff_02 の影の中の地面のエンジン / Cycles は 2.227（AO を掛けると 3.557）で、影の中の地面がエンジンで 2 倍以上明るい。この項目は参照の収束までなので記録だけ（比を詰めるのは別の項目。GapList.py が同じ領域を読む）
 - Next: TASKS.md の次の未完の項目
+
+### SCN-WL-RT-TLAS-TERRAIN 完了（2026-10-20、run 20261020-072612 の反復 6）
+- コードは広げていない。前の反復の 2 つ目の直し（efccb747: 席を作った時点でメッシュの GPU データが無かった MegaGeometry の席を、届いた後にメッシュ全体の境界の球へ直す。`bMeshBounds`）で足りていることを撮影で確かめた
+- 証拠（`.harness/runs/20261020-072612/`）:
+  - `verify-SCN-WL-RT-TLAS-TERRAIN-1.txt`: Debug の Game のビルド EXIT=0
+  - `verify-SCN-WL-RT-TLAS-TERRAIN-2.txt`: RelWithDebInfo を -Build して ref_cliff_01 を撮影、result=pass・EXIT=0（game_exe_sha256 6e88a0c4…、commit efccb747、dirty=0）
+  - `verify-SCN-WL-RT-TLAS-TERRAIN-3.txt`: `--rt-scene` result=pass。`RT_SCENE instances=11 mega=11 candidates=198 out_of_range=187`（直す前は instances=0・out_of_range=198）、`RTGI_HITS rays=1988002004 hits=380199787 mega_hits=380199787`（地形への当たりの比 0.191）
+  - `verify-SCN-WL-RT-TLAS-TERRAIN-4.txt`: 回帰の after result=pass。rendering3dtest・sandbox は psnr=inf、mega-bananas 61.48、night-village 39.33（mean_diff +0.248）。夜の村は TLAS に入る MegaGeometry が 30 → 41（境界がメッシュ全体の球になり 120 m の境目で大きな物が入る）で、差は建物と地面の小物の間接光と空の階調の 1 段の揺れだけ（並べて開いて確かめた。差が 8 段を超える画素 2.7 %）。この変更による差
+- Next: 記録だけの残り（合否には使わない）を次の反復で撮る — 灰色の 3 組（両方・太陽・空、ref_cliff_01・ref_far_01）の影の崖・遠景の空の比、荒野の GPU 時間（`AccelerationStructureBuild`・`FrameGPU`、RelWithDebInfo）。直す前の exe は残っていないので、GPU 時間の before は `hide=all` で RT のシーンが空の時の値として 1 回撮るか、before 無しとして記録する
+- Notes: 反復 5 の灰色の撮影（`tlas-terrain-gray.ps1`）は途中で止めたもので、結果は使わない

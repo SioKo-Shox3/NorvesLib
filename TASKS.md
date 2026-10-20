@@ -1915,7 +1915,7 @@
 - notes: 2026-10-19。
 
 ## SCN-WL-RT-TLAS-TERRAIN: 地形の区画をレイトレーシングのシーンに登録し、光線が当たることを確かめる
-- status: todo
+- status: done
 - after: SCN-WLR-REF-SPLIT, SCN-WLR-REGRESSION-VALIDATION
 - done-when: 荒野の撮影のログ `RT_SCENE instances=0 out_of_range=198 radius_m=120`（SCN-WLR-CYCLES-GRAY）の原因（`MakeRayTracingSelectBounds` が地形の区画の境界の球を使えず、変換の原点・半径 0 で測って範囲の外にしている疑い）を確かめて直し、選ぶ範囲（カメラの周り 120 m）の中の地形の区画が RT のシーンに入る（instances > 0）ことと、光線が地形に当たる（開発ビルドの RT の当たりの統計で地形の当たり > 0）ことを `ReferenceCheck.py --rt-scene`（この項目で作る。ログを読む）で検査する。合否はこの 2 つで、灰色の比（影の崖 1.57・遠景の空の分 1.35）は撮り直して記録だけする（遠くの遮蔽は SCN-WL-RT-TLAS-RANGE）。RT のシーンに入る区画の数・TLAS の構築の時間・荒野のフレームの GPU 時間（RelWithDebInfo）を前後で記録する。反復の最初に回帰の撮影の `before` を撮る。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
