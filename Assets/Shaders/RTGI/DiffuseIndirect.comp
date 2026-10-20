@@ -581,9 +581,18 @@ vec3 SampleEmitterIrradiance(vec3 worldPosition, vec3 normal, uvec2 pixel, uint 
                                       float(triangleTotal) / (PI * distanceSquared)));
 }
 
+// 当たりの面の誘電体の鏡面（F0 0.04 の GGX）。地形の当たりだけに足す（Cycles の参照の Principled BSDF と同じ層）。
+// 粗さは荒野の砂・土・岩肌の素材の粗さの平均（0.77〜0.96）の代表
+const float RTGI_HIT_SPECULAR_F0 = 0.04;
+const float RTGI_TERRAIN_HIT_ROUGHNESS = 0.87;
+
+// 命中面が光源から受けて viewDirection（命中面から光線の始点へ）へ返す放射輝度。specularWeight が 0 より大きければ
+// 拡散に誘電体の鏡面を足す（日の低い砂の地面のように、色の濃い拡散に対して色の付かない鏡面の割合が大きい面がある）
 vec3 ComputeDirectRadiance(vec3 worldPosition,
                            vec3 normal,
-                           vec3 baseColor)
+                           vec3 baseColor,
+                           vec3 viewDirection,
+                           float specularWeight)
 {
     vec3 radiance = vec3(0.0);
     for (uint lightIndex = 0u;
@@ -654,8 +663,22 @@ vec3 ComputeDirectRadiance(vec3 worldPosition,
         {
             continue;
         }
-        radiance += EvaluateLambertDiffuseBRDF(baseColor) *
-                    lightRadiance * (cosine * attenuation);
+        vec3 brdf = EvaluateLambertDiffuseBRDF(baseColor);
+        float viewCosine = dot(normal, viewDirection);
+        if (specularWeight > 0.0 && viewCosine > 1.0e-4)
+        {
+            // 拡散は鏡面の層の下にあり、鏡面が返す分（粗さを含めた Schlick の方向の反射率の近似）だけ減る
+            float specularAlbedo = RTGI_HIT_SPECULAR_F0 +
+                (max(1.0 - RTGI_TERRAIN_HIT_ROUGHNESS, RTGI_HIT_SPECULAR_F0) - RTGI_HIT_SPECULAR_F0) *
+                pow(1.0 - min(viewCosine, 1.0), 5.0);
+            brdf *= 1.0 - specularWeight * specularAlbedo;
+            vec3 halfVector = normalize(viewDirection + lightDirection);
+            float D = DistributionGGX(normal, halfVector, RTGI_TERRAIN_HIT_ROUGHNESS);
+            float G = GeometrySmithDirect(normal, viewDirection, lightDirection, RTGI_TERRAIN_HIT_ROUGHNESS);
+            vec3 F = FresnelSchlick(max(dot(viewDirection, halfVector), 0.0), vec3(RTGI_HIT_SPECULAR_F0));
+            brdf += specularWeight * D * G * F / max(4.0 * viewCosine * cosine, 1.0e-4);
+        }
+        radiance += brdf * lightRadiance * (cosine * attenuation);
     }
     return SanitizeUnexposedRadiance(radiance);
 }
@@ -1075,14 +1098,18 @@ vec3 TraceDiffuseRay(vec3 rayOrigin,
     hitPosition = rayOrigin + rayDirection * hitDistance;
     hitNormal = triangleNormal;
     hitBaseColor = hitInstance.baseColor.rgb;
-    // 地形の 3 層の混ぜ合わせの材質は、当たりの点の分類と層の平均の色を instance の色に掛ける
+    // 地形の 3 層の混ぜ合わせの材質は、当たりの点の分類と層の平均の色を instance の色に掛け、鏡面を足す
+    float hitSpecularWeight = 0.0;
     if (hitInstance.rayProxy.y > 0.5 && parameters.terrainMaskMix.w > 0.5)
     {
         hitBaseColor *= TerrainBounceAlbedo(hitPosition, triangleNormal);
+        hitSpecularWeight = 1.0;
     }
-    // 照り返しを切る撮影（--rtgi-bounce=off）は当たりの色を 0 にする（外れた光線の空の光だけが残る）
+    // 照り返しを切る撮影（--rtgi-bounce=off）は当たりの色と鏡面を 0 にする（外れた光線の空の光だけが残る）
     hitBaseColor *= parameters.environmentParameters.y;
-    return LimitRayRadiance(ComputeDirectRadiance(hitPosition, hitNormal, hitBaseColor) +
+    hitSpecularWeight *= parameters.environmentParameters.y;
+    return LimitRayRadiance(ComputeDirectRadiance(hitPosition, hitNormal, hitBaseColor, -rayDirection,
+                                                  hitSpecularWeight) +
                            hitBaseColor * SampleEmitterIrradiance(hitPosition, hitNormal, pixel, emitterDimension));
 }
 

@@ -1997,7 +1997,7 @@
 - notes: 2026-10-19 GAP-LIST の描画の欠陥 5（`grading_current`）。
 
 ## SCN-WL-RTGI-COLOR: 照り返しの色を地形の材質から取る
-- status: todo
+- status: done
 - after: SCN-WL-RT-TLAS-RANGE-ACCEPT, SCN-WLR-LIT-SHADOW-REF-C01, SCN-WLR-REGRESSION-VALIDATION
 - done-when: RTGI の二次の当たりの色が地形の材質を反映しない（`Assets/Shaders/RTGI/DiffuseIndirect.comp` 912 行付近はインスタンスの定数の色）のを直す。地表の分類の地図と層の代表の色（素材の平均の色）で当たりの色を決める程度でよい（材質の評価の共通化まで広げない）。判定の対照: RTGI は空から直接届く光も担い、切ると IBL・DDGI へ切り替わる（`lighting.frag` 1329 行付近）ので、RTGI の入・切ではなく、照り返しだけを切る開発ビルドの起動引数 `rtgi-bounce=off`（当たりの色を 0 にし、空から直接届く光は残す。この項目で作る）を対照にする。実材質の ref_cliff_01 で照り返しの入・切を撮り、その差（エンジンの照り返し）と SCN-WLR-LIT-SHADOW-REF-C01 の切り出しの Cycles の間接光の拡散の分（`indirect_diffuse`。鏡面の間接光を含めない）を、影の崖・影の中の地面で比べ、色度（r・g）の差 0.02 以内を `ReferenceCheck.py --bounce --expect`（`rtgi-color.json`）で検査する。明るさの比は記録だけにする（灰色でも 0.77〜1.10 で、当たりの色の外の原因。SCN-WL-RTGI-AMOUNT）。灰色の材質のときは代表の色も灰色になる（色度の差 0.005 以内）ことを反復の中で同じ形で確かめて記録する。入・切の画を並べて開き、崖の影の中と谷の底に砂の暖かい照り返しが入ることを見る。反復の最初に回帰の撮影の `before` を撮る。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`

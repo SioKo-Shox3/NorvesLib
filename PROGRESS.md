@@ -5988,3 +5988,15 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `aux-SCN-WL-SHADOW-LEAK-default-2.txt`: 既定の荒野の ref_cliff_01 result=pass。影のクラスタ 15461・17112（反復 1 の既定と同じ）で、テクスチャの地形にも詰める印が効いている
 - Notes: ラスタの MegaGeometry の経路（megageometry.frag）は今までどおり地形の受け手に A = 1 を書き、詰める印は書かない（荒野は可視バッファの経路）。新しい試験は足していない
 - Next: TASKS.md の次の未完の項目
+### SCN-WL-RTGI-COLOR 完了（2026-10-20、run 20261020-191231 の反復 3）
+- 前提: 親が切り出しの参照を `indirect_diffuse` つきで描き直した（`shadow/cycles/ref_cliff_01.cycles.indirect_diffuse.pfm`、`aux-SCN-WL-RTGI-COLOR-crop-rerender.txt` END EXIT=0）。`--bounce` はこれを使う（pass=indirect_diffuse）
+- 原因の残り: 当たりの色を材質から取っても、影の崖の色度の差が 0.030 残った。画素の材質（エンジンの AOV と Cycles のカメラの光線のアルベド）は 0.003 以内で一致し、層の平均の色も最も粗いミップと細かい段で 0.005 以内。Cycles の入る照り返しは、エンジンの照り返しに灰色の光の色（灰色の組の照り返しの色）を約 18 % 混ぜた形に r・g・b の 3 つとも合う。Cycles の当たりの面は Principled BSDF（F0 0.04）で色の付かない鏡面を返し、エンジンの当たりは拡散だけだった
+- コード: `DiffuseIndirect.comp` の当たりの直接光（`ComputeDirectRadiance`）に、地形の混ぜ合わせの材質の当たりだけ誘電体の鏡面（F0 0.04・GGX・粗さ 0.87。荒野の 3 層の素材の粗さの平均 0.77〜0.96 の代表）を足し、拡散を鏡面の方向の反射率の分だけ減らす。`--rtgi-bounce=off` は鏡面も 0 にする。`rtgi-color.json` は色度の 2 行だけにし、明るさの比は記録だけにした（SCN-WL-RTGI-AMOUNT）
+- 証拠（`.harness/runs/20261020-191231/`）:
+  - `regression-before-SCN-WL-RTGI-COLOR.txt` result=pass、`verify-SCN-WL-RTGI-COLOR-1.txt` Debug ビルド EXIT=0、`-2`・`-3` 入・切の撮影 result=pass
+  - `verify-SCN-WL-RTGI-COLOR-4.txt` `--expect rtgi-color.json --verify` result=pass（rows=2・failed=0、inputs_current=1・cycles_inputs_current=1）: 影の崖 色度の差 0.0187（鏡面の前 0.0299）、影の中の地面 0.0081（前 0.0133）。記録だけ: 明るさの比 影の崖 0.802・影の中の地面 0.954
+  - `aux-SCN-WL-RTGI-COLOR-gray-check.txt`（灰色の材質で同じ形、Cycles は灰色の本描画の間接光の全体）result=pass: 灰色の当たりは instance の灰色の定数（地形の混ぜ合わせを持たない）で、影の崖 色度の差 0.0025（0.005 以内）。影の中の地面は 0.022 でエンジンが青い（当たりの色でなく、日なたの斜面からの照り返しの量の不足。SCN-WL-SHADOW-LEAK の測りの 0.43 倍と同じ向きで、SCN-WL-RTGI-AMOUNT で扱う）
+  - `verify-SCN-WL-RTGI-COLOR-5.txt` 回帰の after result=pass。night-village psnr 63.7・mean_diff +0.011（地形の当たりの鏡面。before｜after｜差×10 を並べて開き、差はほぼ黒）、rendering3dtest 103.4・mega-bananas 60.0・sandbox inf
+  - 入｜切｜照り返しの画（`scene-capture/SCN-WL-RTGI-COLOR/bounce-on/bounce_ref_cliff_01.png`）を開いた: 崖の影の面と台地の斜面、手前の谷の底に砂の暖かい照り返しが入り、斑・縞は無い
+- Notes: 影の崖の余裕は 0.0013 と小さい。残りの差（エンジンがまだ赤い）は鏡面の近似（粗さの定数・Schlick の G）か 3 層の近似の平均の扱いと見込む（未確認）。鏡面は地形の当たりだけで、ほかの instance の当たりは拡散のまま。新しい試験は足していない。シェーダーの編集で行末が CRLF に書き換わったので difflib で元の混在へ戻した（numstat の 2 通りが一致）
+- Next: TASKS.md の次の未完の項目
