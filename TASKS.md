@@ -1819,7 +1819,7 @@
 - notes: この後ろの SCN-WL-* の項目は、この一覧を見て組み直す（それまでは after でこの項目を待つ）。2026-10-19: SCN-WLR-ATMOS-REF は B（高次の散乱）の直しの解き待ち（反復の外で 6〜10 時間、SCN-WLR-ATMOS-REF-B）。ユーザーが戻るまでに一覧を渡すため、この項目は ATMOS-REF を待たない。空と霞は SCN-WLR-ATMOS-DUMP・FAR-BLUR の結果と、ATMOS-REF の反復 6 の記録のうち A（論文の近似）で決まる比較で書き、B に依る判断（霧の「空の LUT × 不透明度」が太陽の側で正解の多重散乱の 2.2 倍、など）は「未判定（B の直し待ち。SCN-WLR-GAP-LIST-ATMOS で埋める）」とする。`--gap-list --verify` は ATMOS-REF の結果が古い（入力のハッシュが今と違う）ことを未判定の印として許し、ほかの結果は揃いと今との一致を検査する。未判定を許さない `--require-atmos` も用意する（SCN-WLR-GAP-LIST-ATMOS の verify が使う）。
 
 ## SCN-WLR-GAP-LIST-ATMOS: 一覧の空と霞の未判定を、直した大気の正解で埋める
-- status: todo
+- status: done
 - after: SCN-WLR-ATMOS-REF, SCN-WLR-GAP-LIST
 - done-when: SCN-WLR-ATMOS-REF（直した B での比較の表と霞の二重の判断）の結果で、`Docs/RenderingValidation/WastelandGapList.md` の空と霞の「未判定（B の直し待ち）」を埋め、結論が変わった所（霧・空気遠近の直す項目の案）を書き直す。後ろの項目（空と霞を直す項目）の done-when が変わった結論と食い違うなら、その項目の notes に変わった結論を書き足す。`--gap-list --require-atmos --verify` が、ATMOS-REF も今の入力と一致し未判定が残っていないことを検査して通る。LOOP_STOP は書かない。 検査は凍結した一覧（SCN-WLR-GAP-LIST の完了の時点の表）への大気の追補として行う: 大気以外の行は凍結した表と同じ（後の描画の修正で大気以外の比較が古くなっても落ちない）、大気の正解が今の入力と一致し未判定が残らない。`--atmos-addendum` はこの項目で作る（Sol の批評 3）。
 - verify: `python Scripts/Terrain/ReferenceCheck.py --gap-list --atmos-addendum --verify`
@@ -2091,7 +2091,7 @@
 - verify: `python Scripts/Terrain/ReferenceCheck.py --atmos-dump --capture .harness/runs/scene-capture/SCN-WL-SKY-ALTITUDE --verify`
 - verify: `python Scripts/Terrain/ReferenceCheck.py --atmos-ref --capture .harness/runs/scene-capture/SCN-WL-SKY-ALTITUDE --expect Scripts/Terrain/ExpectSpecs/sky-altitude.json --verify`
 - paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Assets/Shaders, Game/GameModes/Wasteland, Scripts, Docs/RenderingValidation, TASKS.md, PROGRESS.md
-- notes: 危険地帯（描画の既定値）。2026-10-19（Sol の批評 17）。高度は荒野の設定で渡す（ほかのシーンの既定は変えない。変えるなら全シーンへ値を移す）。`--atmos-ref` は保存した数値の参照を読み、解き直さない（SCN-WLR-ATMOS-REF で作る）。
+- notes: 危険地帯（描画の既定値）。2026-10-19（Sol の批評 17）。高度は荒野の設定で渡す（ほかのシーンの既定は変えない。変えるなら全シーンへ値を移す）。`--atmos-ref` は保存した数値の参照を読み、解き直さない（SCN-WLR-ATMOS-REF で作る）。2026-10-20 SCN-WLR-GAP-LIST-ATMOS の結論: 高さフォグの太陽の単一散乱も地表 0 m の太陽の透過率で求めていて、霧の透過率だけで減らした正解の 0.82 倍（0 m と 1474 m の透過率の比と同じ。向き・距離に依らない）。同じ原因なので、霧の太陽の透過率も谷床の高度で求める。
 
 ## SCN-WL-HAZE-ONE-MEDIUM: 霞を空の大気と同じ媒質として数える
 - status: todo
@@ -2120,7 +2120,7 @@
 - done-when: SCN-WLR-GAP-LIST-ATMOS の結論で、空の大気の Mie の設定（係数・尺度高さ）を変えるか、どの値にするかを決めて記録する（写真の空の青 `sky_blue_photo` を設定と写真の処理に分けた結果に従う）。変えるなら、その設定の数値の正解（A と B、SCN-WLR-ATMOS-REF-B と同じ段と収束の基準）を `AtmosphereReference.py --solve` で、反復の外で切り離したプロセスとして解いて保存する（設定の署名つき）。解き終わるまで項目を BLOCKED にして待ち方を書き、終わったら親が todo に戻す。保存した解の収束（段 1 と段 2 の差 0.5 %）を `--verify` で検査して閉じる。変えないなら、その理由を記録して閉じる。
 - verify: `python Scripts/Terrain/AtmosphereReference.py --verify`
 - paths: Scripts/Terrain, Docs/RenderingValidation, TASKS.md, PROGRESS.md
-- notes: 2026-10-19（Sol の 2 周目: 大気の設定を変えた後の数値の参照が無い）。
+- notes: 2026-10-19（Sol の 2 周目: 大気の設定を変えた後の数値の参照が無い）。2026-10-20 SCN-WLR-GAP-LIST-ATMOS の結論（`sky_blue_photo` の分け方）: 仰角 6° の色度 r は写真 0.11・エンジン 0.29・荒野の設定の正解 B 0.27・論文の設定（Mie の係数 1/25）の正解 0.17。写真への寄りはモデル（B）0.02・設定 0.10・カメラの処理（条件）0.06。帯の上下の明るさの比は写真 0.76・論文の設定 0.76・エンジン 1.01。差の大半は設定なので、空の Mie を論文の側へ寄せる案（値は写真の帯の色度と上下の比を目安に決める）。空の Mie を下げると、SCN-WL-HAZE-ONE-MEDIUM で空の大気に合わせた霞の目標も下がる。
 
 ## SCN-WL-SKY-SCATTER: 霧と空気遠近の散乱光と空の設定を、直した大気の正解の結論で直す
 - status: todo
@@ -2131,7 +2131,7 @@
 - verify: `python Scripts/Terrain/ReferenceCheck.py --atmos-ref --capture .harness/runs/scene-capture/SCN-WL-SKY-SCATTER --expect Scripts/Terrain/ExpectSpecs/sky-scatter.json --verify`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Terrain/CaptureRegression.ps1 -Item SCN-WL-SKY-SCATTER -Phase after`
 - paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Assets/Shaders, Game/GameModes, Scripts, Docs/RenderingValidation, TASKS.md, PROGRESS.md
-- notes: 危険地帯（描画の既定値）。2026-10-19（Sol の批評 17・22）。1 反復で閉じなければ、霧の式・空気遠近・空の設定・水平の境に分ける。
+- notes: 危険地帯（描画の既定値）。2026-10-19（Sol の批評 17・22）。1 反復で閉じなければ、霧の式・空気遠近・空の設定・水平の境に分ける。2026-10-20 SCN-WLR-GAP-LIST-ATMOS で結論が変わった（done-when の書き方と食い違う所）: (1) 霧の周りの光の太陽の側の二重の数え（`fog_sky_color_double`）は、方向を保つ正解 B では霧の透過率だけで減らした正解の 1.08 倍（横・反対 1.02〜1.03）で、上乗せは 5 % ほど。前の 2.2 倍は等方にした B によるもの。視線の向きの空の輝度を使う式のままで 5 % 以内に入る見込みで、直す主な対象ではない。(2) 代わりに霧と空気遠近の合成の順（`fog_aerial_order`。エンジンは霧の散乱光を空気遠近の透過率で減らさず、30 km で霧の散乱光の和が正解 B の 1.22〜1.31 倍）を直す。(3) 空気遠近（`aerial_scatter_direction`）は「向きの差が足りない」だけでなく全体に暗い（霞の散乱光の和 エンジン ÷ 正解 B 太陽の側 0.89〜0.94・横 0.82〜0.84・反対 0.73〜0.75、空気遠近だけで 0.45〜0.82。空の LUT の輝度を透過率の割合で配る近似）。(4) 空の輝度 エンジン ÷ B 0.67〜1.27 は論文の近似の等方の仮定によるモデルの違い（`sky_multiple_scattering`。照度の A ÷ B 1.010）で、空の設定や霞の式を直しても残る。「結論の各量が正解と 5 % 以内」に空の方向別の輝度の B との比を入れると、多重散乱のモデルを変えない限り届かない。
 
 ## SCN-WLR-BUILDING-REF-BASE: 建物 1 棟を比べる仕組みを作る
 - status: todo

@@ -1,0 +1,411 @@
+{
+  "task": "SCN-WLR-GAP-LIST",
+  "commit": "99bea2ee",
+  "date": "2026-10-19",
+  "note": "SCN-WLR-GAP-LIST の完了の時点の表の行（--gap-list --verify が合格した報告の items）。--atmos-addendum は大気以外の行をこの値のまま使う",
+  "components": {
+    "gray": "current",
+    "albedo": "current",
+    "normal": "current",
+    "lit": "current",
+    "atmos_ref": "stale",
+    "blur_static": "current",
+    "blur_motion": "current",
+    "tonemap": "current"
+  },
+  "items": [
+    {
+      "id": "shadow_missing",
+      "category": "render",
+      "label": "落ちた影が欠ける・影に太陽が漏れる",
+      "points": [
+        "建物の浮き"
+      ],
+      "source": [
+        "SCN-WLR-CYCLES-LIT",
+        "SCN-WLR-CYCLES-GRAY"
+      ],
+      "magnitude": 1.2227556771429562,
+      "value": "実材質 ref_cliff_02 の影の中の地面 エンジン ÷ Cycles 2.22、灰色 ref_cliff_01 の影の中の地面の太陽の分 5.88 倍",
+      "pending_atmos": false,
+      "note": ""
+    },
+    {
+      "id": "sky_occlusion_missing",
+      "category": "render",
+      "label": "空の遮蔽が無い（レイトレーシングのシーンに地形が入らない）",
+      "points": [
+        "建物の浮き",
+        "遠景のぼけ",
+        "植物"
+      ],
+      "source": [
+        "SCN-WLR-CYCLES-GRAY"
+      ],
+      "magnitude": 0.5735274779670994,
+      "value": "灰色 ref_cliff_01 の影の崖 1.57（空の分 1.55）、ref_far_01 の遠景の空の分 1.35",
+      "pending_atmos": false,
+      "note": ""
+    },
+    {
+      "id": "material_ao_on_light",
+      "category": "render",
+      "label": "材質の AO を直接光と空の光に掛ける",
+      "points": [
+        "その他"
+      ],
+      "source": [
+        "SCN-WLR-CYCLES-LIT"
+      ],
+      "magnitude": 0.41898502155231077,
+      "value": "実材質の日なたの地面 0.70〜0.82（6 視点）、材質の AO を Cycles に掛けた見込みとの比 0.87〜0.98",
+      "pending_atmos": false,
+      "note": ""
+    },
+    {
+      "id": "far_aliasing",
+      "category": "render",
+      "label": "遠景の画素あたりの標本の不足（エイリアス）",
+      "points": [
+        "遠景のぼけ"
+      ],
+      "source": [
+        "SCN-WLR-FAR-BLUR-STATIC"
+      ],
+      "magnitude": 0.7342782134757915,
+      "value": "常駐しきった既定（resident）の遠景・崖のエイリアス 0.64〜0.73、細部の欠け 0.23〜0.28（2 倍の解像度の正解の量に対する比）",
+      "pending_atmos": false,
+      "note": ""
+    },
+    {
+      "id": "grading_current",
+      "category": "render",
+      "label": "今のグレーディング（コントラスト 1.35・彩度 1.2・色温度 0.05）",
+      "points": [
+        "空",
+        "その他"
+      ],
+      "source": [
+        "SCN-WLR-TONEMAP-EVAL"
+      ],
+      "magnitude": 0.3764471745625153,
+      "value": "同じ HDR で、今のグレーディングの地面の R/G 3.30（中立 2.40）、Cycles の HDR に掛けた白飛び 14.1 %",
+      "pending_atmos": false,
+      "note": ""
+    },
+    {
+      "id": "grazing_sun_dark",
+      "category": "render",
+      "label": "遠くのかすめる日差しが暗い（遠景の自己影の疑い）",
+      "points": [
+        "遠景のぼけ"
+      ],
+      "source": [
+        "SCN-WLR-CYCLES-GRAY"
+      ],
+      "magnitude": 0.1416530383068355,
+      "value": "灰色 ref_far_01 の遠景の太陽の分 エンジン ÷ Cycles 0.88",
+      "pending_atmos": false,
+      "note": ""
+    },
+    {
+      "id": "psi_grid",
+      "category": "render",
+      "label": "多重散乱の表の格子の粗さ（8 × 32）",
+      "points": [
+        "空",
+        "フォグ"
+      ],
+      "source": [
+        "SCN-WLR-ATMOS-REF"
+      ],
+      "magnitude": 0.1399649407104493,
+      "value": "多重散乱の表 Ψ エンジン ÷ 正解 A 0.877〜1.065",
+      "pending_atmos": false,
+      "note": "大気の正解の記録は古いが、A（論文の近似）と光学的深さだけで決まる"
+    },
+    {
+      "id": "bounce_missing",
+      "category": "render",
+      "label": "照り返しが無い",
+      "points": [
+        "建物の浮き",
+        "植物"
+      ],
+      "source": [
+        "SCN-WLR-CYCLES-GRAY"
+      ],
+      "magnitude": 0.08835698653589041,
+      "value": "灰色 ref_cliff_01 の日なたの崖の太陽の分 0.92（Cycles の間接光 7 %）",
+      "pending_atmos": false,
+      "note": ""
+    },
+    {
+      "id": "taa_motion",
+      "category": "render",
+      "label": "TAA で動くと履歴の読み直しで細部が消える（既定の FXAA では出ない）",
+      "points": [
+        "遠景のぼけ"
+      ],
+      "source": [
+        "SCN-WLR-FAR-BLUR-MOTION"
+      ],
+      "magnitude": 0.10745482933624584,
+      "value": "TAA で振ったときの崖の細部の欠けの増え +0.107（30 フレーム後。既定の FXAA では 0.002 以内）",
+      "pending_atmos": false,
+      "note": ""
+    },
+    {
+      "id": "lod_detail",
+      "category": "render",
+      "label": "既定の LOD の選び方で細部が欠ける",
+      "points": [
+        "遠景のぼけ"
+      ],
+      "source": [
+        "SCN-WLR-FAR-BLUR-STATIC"
+      ],
+      "magnitude": 0.07633444820807866,
+      "value": "最細の段に固定すると崖の細部の欠け −0.076、エイリアス +0.263",
+      "pending_atmos": false,
+      "note": ""
+    },
+    {
+      "id": "geometry_residency",
+      "category": "render",
+      "label": "既定のジオメトリの取り分で遠景のページが常駐しきらない",
+      "points": [
+        "遠景のぼけ"
+      ],
+      "source": [
+        "SCN-WLR-FAR-BLUR-STATIC"
+      ],
+      "magnitude": 0.06936234154282994,
+      "value": "ref_cliff_02 の遠景で既定の取り分 1 の欠け +0.042・エイリアス +0.069",
+      "pending_atmos": false,
+      "note": ""
+    },
+    {
+      "id": "sky_illuminance_model",
+      "category": "render",
+      "label": "地表の空の照度の求め方",
+      "points": [
+        "空"
+      ],
+      "source": [
+        "SCN-WLR-ATMOS-REF"
+      ],
+      "magnitude": 0.03249307446511818,
+      "value": "水平面の空の照度 エンジン ÷ 正解 A 1.032",
+      "pending_atmos": false,
+      "note": "大気の正解の記録は古いが、A（論文の近似）と光学的深さだけで決まる"
+    },
+    {
+      "id": "sky_model_a",
+      "category": "render",
+      "label": "空の輝度（論文の近似 A との差）",
+      "points": [
+        "空"
+      ],
+      "source": [
+        "SCN-WLR-ATMOS-REF"
+      ],
+      "magnitude": 0.022377565821860346,
+      "value": "空の方向別の輝度 エンジン ÷ 正解 A 0.978〜1.003（45 方向）",
+      "pending_atmos": false,
+      "note": "大気の正解の記録は古いが、A（論文の近似）と光学的深さだけで決まる"
+    },
+    {
+      "id": "haze_mie_thin",
+      "category": "content",
+      "label": "霞の Mie が空の大気の半分ほど（空と霞で同じ大気が別の濃さ）",
+      "points": [
+        "フォグ"
+      ],
+      "source": [
+        "SCN-WLR-ATMOS-REF"
+      ],
+      "magnitude": 0.9181894100939312,
+      "value": "地表への視線の (霧 ＋ 空気遠近の Mie) ÷ 空の大気の Mie の光学的深さ 0.52〜0.59",
+      "pending_atmos": false,
+      "note": "大気の正解の記録は古いが、A（論文の近似）と光学的深さだけで決まる"
+    },
+    {
+      "id": "altitude_mismatch",
+      "category": "content",
+      "label": "太陽と地表の照度を海抜 0 m で求める（谷床は約 1450 m）",
+      "points": [
+        "空",
+        "フォグ"
+      ],
+      "source": [
+        "SCN-WLR-ATMOS-REF"
+      ],
+      "magnitude": 0.22277901953463908,
+      "value": "谷床の高度（約 1474 m）の太陽の透過率 ÷ エンジンの地表（0 m）の透過率 1.223",
+      "pending_atmos": false,
+      "note": "大気の正解の記録は古いが、A（論文の近似）と光学的深さだけで決まる"
+    },
+    {
+      "id": "sky_multiple_scattering",
+      "category": "open",
+      "label": "空の高次の散乱が足りない（論文の近似の限界）",
+      "points": [
+        "空"
+      ],
+      "source": [
+        "SCN-WLR-ATMOS-REF"
+      ],
+      "magnitude": 0.22728987496258934,
+      "value": "空の輝度 エンジン ÷ 正解 B 0.81〜1.00（直す前の B）",
+      "pending_atmos": true,
+      "note": "未判定（B の直し待ち。SCN-WLR-GAP-LIST-ATMOS で埋める）"
+    },
+    {
+      "id": "fog_sky_color_double",
+      "category": "open",
+      "label": "霧の周りの光に視線の向きの空の輝度を使う（太陽の側の二重の数え）",
+      "points": [
+        "フォグ"
+      ],
+      "source": [
+        "SCN-WLR-ATMOS-REF"
+      ],
+      "magnitude": 1.2475376103814346,
+      "value": "太陽の側 10 km の霧の空の色 × 不透明度 ÷ 正解の霧の多重散乱 2.25（直す前の B）",
+      "pending_atmos": true,
+      "note": "未判定（B の直し待ち。SCN-WLR-GAP-LIST-ATMOS で埋める）"
+    },
+    {
+      "id": "aerial_scatter_direction",
+      "category": "open",
+      "label": "空気遠近の散乱光の向きの差が足りない",
+      "points": [
+        "フォグ"
+      ],
+      "source": [
+        "SCN-WLR-ATMOS-REF"
+      ],
+      "magnitude": 0.7974669286464049,
+      "value": "太陽と反対の側 10 km の空気遠近の散乱光 ÷ 正解 0.56（直す前の B）",
+      "pending_atmos": true,
+      "note": "未判定（B の直し待ち。SCN-WLR-GAP-LIST-ATMOS で埋める）"
+    },
+    {
+      "id": "sky_blue_photo",
+      "category": "open",
+      "label": "写真の空がはるかに青い（設定と写真の処理の分け方）",
+      "points": [
+        "空"
+      ],
+      "source": [
+        "SCN-WLR-ATMOS-REF"
+      ],
+      "magnitude": 1.6132782292631034,
+      "value": "仰角 5.9° の色度 r 写真 0.11・エンジン 0.29・論文の設定の正解 0.18（論文の設定の正解は直す前の B）",
+      "pending_atmos": true,
+      "note": "未判定（B の直し待ち。SCN-WLR-GAP-LIST-ATMOS で埋める）"
+    },
+    {
+      "id": "photo_range",
+      "category": "open",
+      "label": "明るさの幅が写真より狭い",
+      "points": [
+        "その他"
+      ],
+      "source": [
+        "SCN-WLR-TONEMAP-EVAL"
+      ],
+      "magnitude": 1.0595707399559746,
+      "value": "露出を合わせた明るさの幅 写真 0.47・Cycles 0.23（中立の表示変換）",
+      "pending_atmos": false,
+      "note": ""
+    },
+    {
+      "id": "photo_cliff_ground",
+      "category": "open",
+      "label": "崖 ÷ 地面の明るさの比が写真と違う",
+      "points": [
+        "その他"
+      ],
+      "source": [
+        "SCN-WLR-TONEMAP-EVAL"
+      ],
+      "magnitude": 0.6757970920232264,
+      "value": "崖 ÷ 地面の比の写真との差 対数の平均 0.52（Cycles・中立の表示変換）",
+      "pending_atmos": false,
+      "note": ""
+    },
+    {
+      "id": "photo_cliff_blue",
+      "category": "open",
+      "label": "写真の崖が青い（空の光・霞・天気）",
+      "points": [
+        "フォグ",
+        "空"
+      ],
+      "source": [
+        "SCN-WLR-CYCLES-LIT"
+      ],
+      "magnitude": 1.0564206085559724,
+      "value": "崖の B/G 写真 ÷ Cycles 1.20〜2.55（6 視点）",
+      "pending_atmos": false,
+      "note": ""
+    },
+    {
+      "id": "unresolved_regions",
+      "category": "open",
+      "label": "未判定の領域",
+      "points": [
+        "その他"
+      ],
+      "source": [
+        "SCN-WLR-CYCLES-GRAY",
+        "SCN-WLR-CYCLES-LIT"
+      ],
+      "magnitude": null,
+      "value": "灰色・実材質の比較の領域 40 のうち 15 が未判定（画素が足りない・収束しない）",
+      "pending_atmos": false,
+      "note": ""
+    },
+    {
+      "id": "clouds_not_compared",
+      "category": "open",
+      "label": "雲",
+      "points": [
+        "雲"
+      ],
+      "source": [],
+      "magnitude": null,
+      "value": "この段の比較に入っていない（地形だけ・wasteland-hide=all で比べた）",
+      "pending_atmos": false,
+      "note": ""
+    },
+    {
+      "id": "buildings_not_compared",
+      "category": "open",
+      "label": "建物",
+      "points": [
+        "建物の浮き"
+      ],
+      "source": [],
+      "magnitude": null,
+      "value": "この段の比較に入っていない（地形だけ・wasteland-hide=all で比べた）",
+      "pending_atmos": false,
+      "note": ""
+    },
+    {
+      "id": "plants_not_compared",
+      "category": "open",
+      "label": "植物",
+      "points": [
+        "植物"
+      ],
+      "source": [],
+      "magnitude": null,
+      "value": "この段の比較に入っていない（地形だけ・wasteland-hide=all で比べた）",
+      "pending_atmos": false,
+      "note": ""
+    }
+  ]
+}

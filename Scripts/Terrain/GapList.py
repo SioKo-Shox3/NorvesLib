@@ -11,6 +11,10 @@
 #    対する比、色度は相対の差。
 # 3. 一覧の画像: 手本の 6 視点の 写真｜エンジン（既定の荒野）｜エンジン（地形だけ・共通の照明）｜Cycles（同じ条件）を 1 枚に
 #    並べて <出力先>/gap_overview.png に書く。
+# 4. 大気の追補（--atmos-addendum）: SCN-WLR-GAP-LIST の完了の時点の表（GAP_FROZEN）への大気の行の書き足しとして検査する。
+#    大気以外の行は凍結した値のまま使い（後の描画の修正で大気以外の比較が古くなっても落ちない）、比較の揃いと鮮度は大気の正解
+#    だけを照らす（古いことを許さない）。大気の行は今の報告から求め、未判定の印が表にも文書にも残らないことを検査する。
+#    一覧の画像は凍結した時点のものを残し、書き直さない。
 import json
 import math
 import os
@@ -51,8 +55,11 @@ GAP_POINTS = {
     "far_blur": "遠景のぼけ", "fog": "フォグ", "sky": "空", "clouds": "雲", "buildings": "建物の浮き", "plants": "植物",
     "other": "その他",
 }
-# B（大気の高次の散乱）の直しを待つ印
-GAP_PENDING_ATMOS = "未判定（B の直し待ち。SCN-WLR-GAP-LIST-ATMOS で埋める）"
+# B（大気の高次の散乱）に依る判断で、大気の正解の比較が古いときの印。前の印（B の直し待ち）も残っていないことを検査する
+GAP_PENDING_ATMOS = "未判定（大気の正解の比較が古い。撮り直して --atmos-ref --verify を回す）"
+GAP_PENDING_MARKERS = ("未判定（B の直し待ち", "未判定（大気の正解の比較が古い")
+# SCN-WLR-GAP-LIST の完了の時点の表の行（--atmos-addendum が大気以外の行に使う）
+GAP_FROZEN = os.path.join("Scripts", "Terrain", "GapListFrozen.json")
 
 
 def _scene_dir(rc, key):
@@ -393,7 +400,12 @@ def m_altitude(reports):
     if not illum.get("reference_sun_transmittance_at_haze_origin"):
         return None, "太陽の透過率の比較が無い"
     ratio = _luma(illum["reference_sun_transmittance_at_haze_origin"]) / _luma(illum["engine_sun_ground_transmittance"])
-    return ratio - 1.0, (f"谷床の高度（約 1474 m）の太陽の透過率 ÷ エンジンの地表（0 m）の透過率 {ratio:.3f}")
+    fog_sun = [_luma(r["engine"]["fog_sun_single"]) / _luma(r["same_media"]["fog_sun_fog_t_only"])
+               for az in (0, 90, 180) for r in _atmos_distances(reports, "direction", az, 0)
+               if r["same_media"].get("fog_sun_fog_t_only")]
+    fog_text = (f"、霧の太陽の単一散乱 ÷ 霧の透過率だけで減らした正解 {min(fog_sun):.3f}〜{max(fog_sun):.3f}"
+                f"（向き・距離に依らない）") if fog_sun else ""
+    return ratio - 1.0, (f"谷床の高度（約 1474 m）の太陽の透過率 ÷ エンジンの地表（0 m）の透過率 {ratio:.3f}{fog_text}")
 
 
 def _atmos_distances(reports, kind, azimuth, elevation=None, minimum_m=1000.0):
@@ -417,42 +429,76 @@ def m_haze_mie(reports):
 
 
 def m_sky_ms_b(reports):
-    sky = _atmos_view(reports).get("sky") or []
+    view = _atmos_view(reports)
+    sky = view.get("sky") or []
     ratios = [_luma(s["engine"]) / _luma(s["reference_B"]) for s in sky if s.get("reference_B")]
-    if not ratios:
+    illum = view.get("illuminance") or {}
+    if not ratios or not illum.get("reference_sky_horizontal_B"):
         return None, "空の輝度の比較が無い"
-    return max(_rel(r) for r in ratios), f"空の輝度 エンジン ÷ 正解 B {min(ratios):.2f}〜{max(ratios):.2f}（直す前の B）"
+    a_over_b = _luma(illum["reference_sky_horizontal_A"]) / _luma(illum["reference_sky_horizontal_B"])
+    return max(_rel(r) for r in ratios), (f"空の輝度 エンジン ÷ 正解 B {min(ratios):.2f}〜{max(ratios):.2f}（{len(ratios)} 方向。"
+                                          f"太陽の側の地平線で暗く、太陽から離れた高い空で明るい）、"
+                                          f"水平面の空の照度 正解 A ÷ B {a_over_b:.3f}（量でなく向きの配り方の差）")
+
+
+def _atmos_far_rows(reports, distance_m):
+    return [(az, r) for az in (0, 90, 180) for r in _atmos_distances(reports, "direction", az, 0)
+            if r["distance_m"] == distance_m]
 
 
 def m_fog_double(reports):
-    rows = [r for r in _atmos_distances(reports, "direction", 0, 0) if r["distance_m"] == 10000.0]
-    if not rows:
+    rows = _atmos_far_rows(reports, 10000.0)
+    if len(rows) != 3:
         return None, "霧の散乱光の内訳が無い"
-    row = rows[0]
-    ratio = _luma(row["engine"]["fog_sky_color_times_opacity"]) / _luma(row["same_media"]["fog_multiple"])
-    return _rel(ratio), f"太陽の側 10 km の霧の空の色 × 不透明度 ÷ 正解の霧の多重散乱 {ratio:.2f}（直す前の B）"
+    ratios = {az: _luma(r["engine"]["fog_sky_color_times_opacity"]) / _luma(r["same_media"]["fog_multiple_fog_t_only"])
+              for az, r in rows}
+    sun_a = _luma(rows[0][1]["engine"]["fog_sky_color_times_opacity"]) / _luma(rows[0][1]["same_media"]["fog_multiple_A"])
+    return _rel(ratios[0]), (f"10 km の霧の空の色 × 不透明度 ÷ 霧の透過率だけで減らした正解 B 太陽の側 {ratios[0]:.3f}・"
+                             f"横 {ratios[90]:.3f}・反対 {ratios[180]:.3f}。正解 A とは太陽の側 {sun_a:.2f} 倍（A の等方の仮定による）")
+
+
+def m_fog_order(reports):
+    rows = _atmos_far_rows(reports, 30000.0)
+    if len(rows) != 3:
+        return None, "霧の散乱光の内訳が無い"
+    order = [_luma(r["same_media"]["fog_multiple_fog_t_only"]) / _luma(r["same_media"]["fog_multiple"]) for _, r in rows]
+    term = [_luma(r["engine"]["fog_sky_color_times_opacity"]) / _luma(r["same_media"]["fog_multiple"]) for _, r in rows]
+    fog_sum = [(_luma(r["engine"]["fog_sky_color_times_opacity"]) + _luma(r["engine"]["fog_sun_single"])) /
+               (_luma(r["same_media"]["fog_sun"]) + _luma(r["same_media"]["fog_multiple"])) for _, r in rows]
+    return max(_rel(o) for o in order), (f"30 km の霧の空の色の項 ÷ 正解 B {min(term):.2f}〜{max(term):.2f}（霧の透過率だけで減らした"
+                                         f"正解 B とは距離で変わらない）、空気遠近の透過率で減らす分 {min(order):.2f}〜{max(order):.2f} 倍、"
+                                         f"霧の散乱光の和 ÷ 正解 B {min(fog_sum):.2f}〜{max(fog_sum):.2f}")
 
 
 def m_aerial_direction(reports):
-    rows = [r for r in _atmos_distances(reports, "direction", 180, 0) if r["distance_m"] == 10000.0]
+    rows = [(az, r) for az in (0, 90, 180) for r in _atmos_distances(reports, "direction", az, 0)]
     if not rows:
         return None, "空気遠近の散乱光の内訳が無い"
-    row = rows[0]
-    reference = _luma(row["same_media"]["air_sun"]) + _luma(row["same_media"]["air_multiple"])
-    ratio = _luma(row["engine"]["aerial_scattering_times_fog_t"]) / reference
-    return _rel(ratio), f"太陽と反対の側 10 km の空気遠近の散乱光 ÷ 正解 {ratio:.2f}（直す前の B）"
+    haze = {az: [r["engine_over_same_media_scattering"] for a, r in rows if a == az] for az in (0, 90, 180)}
+    aerial = [_luma(r["engine"]["aerial_scattering_times_fog_t"]) /
+              (_luma(r["same_media"]["air_sun"]) + _luma(r["same_media"]["air_multiple"])) for _, r in rows]
+    return _rel(min(min(v) for v in haze.values())), (
+        f"1 km より先の霞の散乱光の和 エンジン ÷ 正解 B 太陽の側 {min(haze[0]):.2f}〜{max(haze[0]):.2f}・"
+        f"横 {min(haze[90]):.2f}〜{max(haze[90]):.2f}・反対 {min(haze[180]):.2f}〜{max(haze[180]):.2f}、"
+        f"うち空気遠近 ÷ 正解 B {min(aerial):.2f}〜{max(aerial):.2f}")
 
 
 def m_sky_blue_photo(reports):
     bands = (_atmos_view(reports).get("photo") or {}).get("bands") or []
     if not bands:
         return None, "写真の空の比較が無い"
-    top = bands[0]
+    top, bottom = bands[0], bands[-1]
     photo_r = top["photo_chroma_rb"][0]
     engine_r = top["engine_radiance_chroma_rb"][0]
+    model_r = top["reference_B_chroma_rb"][0]
     paper_r = top["reference_paper_chroma_rb"][0]
-    return engine_r / photo_r - 1.0, (f"仰角 {top['elevation_deg']:.1f}° の色度 r 写真 {photo_r:.2f}・エンジン {engine_r:.2f}・"
-                                      f"論文の設定の正解 {paper_r:.2f}（論文の設定の正解は直す前の B）")
+    ratio = {key: _luma(top[key]) / _luma(bottom[key]) for key in ("photo", "engine_radiance", "reference_paper")}
+    return model_r / paper_r - 1.0, (
+        f"仰角 {top['elevation_deg']:.1f}° の色度 r 写真 {photo_r:.2f}・エンジン {engine_r:.2f}・正解 B {model_r:.2f}・"
+        f"論文の設定（Mie の係数 1/25）の正解 {paper_r:.2f}、帯の上下の明るさの比 写真 {ratio['photo']:.2f}・"
+        f"論文の設定 {ratio['reference_paper']:.2f}・エンジン {ratio['engine_radiance']:.2f}。写真への寄りはモデル（B）"
+        f"{engine_r - model_r:.2f}・設定 {model_r - paper_r:.2f}、残り {paper_r - photo_r:.2f} はカメラの処理（条件）。"
+        f"大きさは設定の分（色度 r の正解 B ÷ 論文の設定）")
 
 
 def m_photo_range(reports):
@@ -503,7 +549,8 @@ def m_not_compared(_):
     return None, "この段の比較に入っていない（地形だけ・wasteland-hide=all で比べた）"
 
 
-# 差の項目。category は GAP_CATEGORIES、points は GAP_POINTS、needs_atmos_b は B の直しに依る判断
+# 差の項目。category は GAP_CATEGORIES、points は GAP_POINTS、needs_atmos_b は B（方向を保つ多重散乱）に依る判断で、
+# 大気の正解の比較が古いときは未判定の印を付ける
 GAP_ITEMS = (
     {"id": "shadow_missing", "category": "render", "points": ("buildings",), "source": ("lit", "gray"),
      "label": "落ちた影が欠ける・影に太陽が漏れる", "measure": m_shadow_missing},
@@ -534,16 +581,22 @@ GAP_ITEMS = (
     {"id": "haze_mie_thin", "category": "content", "points": ("fog",), "source": ("atmos_ref",),
      "label": "霞の Mie が空の大気の半分ほど（空と霞で同じ大気が別の濃さ）", "measure": m_haze_mie},
     {"id": "altitude_mismatch", "category": "content", "points": ("sky", "fog"), "source": ("atmos_ref",),
-     "label": "太陽と地表の照度を海抜 0 m で求める（谷床は約 1450 m）", "measure": m_altitude},
-    {"id": "sky_multiple_scattering", "category": "open", "points": ("sky",), "source": ("atmos_ref",),
-     "label": "空の高次の散乱が足りない（論文の近似の限界）", "measure": m_sky_ms_b, "needs_atmos_b": True},
-    {"id": "fog_sky_color_double", "category": "open", "points": ("fog",), "source": ("atmos_ref",),
-     "label": "霧の周りの光に視線の向きの空の輝度を使う（太陽の側の二重の数え）", "measure": m_fog_double,
+     "label": "太陽と地表の照度・霧の太陽を海抜 0 m で求める（谷床は約 1450 m）", "measure": m_altitude},
+    {"id": "sky_multiple_scattering", "category": "render", "points": ("sky",), "source": ("atmos_ref",),
+     "label": "空の高次の散乱を等方に配る（論文の近似の限界。濃い Mie で前方へ寄る光を配り直す）", "measure": m_sky_ms_b,
      "needs_atmos_b": True},
-    {"id": "aerial_scatter_direction", "category": "open", "points": ("fog",), "source": ("atmos_ref",),
-     "label": "空気遠近の散乱光の向きの差が足りない", "measure": m_aerial_direction, "needs_atmos_b": True},
-    {"id": "sky_blue_photo", "category": "open", "points": ("sky",), "source": ("atmos_ref",),
-     "label": "写真の空がはるかに青い（設定と写真の処理の分け方）", "measure": m_sky_blue_photo, "needs_atmos_b": True},
+    {"id": "aerial_scatter_direction", "category": "render", "points": ("fog",), "source": ("atmos_ref",),
+     "label": "霞の散乱光が正解より暗い（空気遠近の散乱光を空の LUT の輝度の割合で配る近似。太陽から離れるほど暗い）",
+     "measure": m_aerial_direction, "needs_atmos_b": True},
+    {"id": "fog_aerial_order", "category": "render", "points": ("fog",), "source": ("atmos_ref",),
+     "label": "霧の散乱光を空気遠近の透過率で減らさない（霧と空気遠近の合成の順。遠くほど霧が明るい）",
+     "measure": m_fog_order, "needs_atmos_b": True},
+    {"id": "fog_sky_color_double", "category": "render", "points": ("fog",), "source": ("atmos_ref",),
+     "label": "霧の周りの光に視線の向きの空の輝度を使う（太陽の側の上乗せ。二重の数えは小さい）", "measure": m_fog_double,
+     "needs_atmos_b": True},
+    {"id": "sky_blue_photo", "category": "content", "points": ("sky",), "source": ("atmos_ref",),
+     "label": "空の Mie が濃い（写真の空がはるかに青く、上ほど暗い。残りはカメラの処理）", "measure": m_sky_blue_photo,
+     "needs_atmos_b": True},
     {"id": "photo_range", "category": "open", "points": ("other",), "source": ("tonemap",),
      "label": "明るさの幅が写真より狭い", "measure": m_photo_range},
     {"id": "photo_cliff_ground", "category": "open", "points": ("other",), "source": ("tonemap",),
@@ -561,11 +614,15 @@ GAP_ITEMS = (
 )
 
 
-def evaluate_items(reports, atmos_current):
+def _is_atmos(item):
+    return "atmos_ref" in item["source"]
+
+
+def evaluate_items(reports, atmos_current, items=GAP_ITEMS):
     rows = []
-    for item in GAP_ITEMS:
+    for item in items:
         magnitude, text = item["measure"](reports)
-        pending = bool(item.get("needs_atmos_b"))
+        pending = bool(item.get("needs_atmos_b")) and not atmos_current
         rows.append({"id": item["id"], "category": item["category"], "label": item["label"],
                      "points": [GAP_POINTS[p] for p in item["points"]],
                      "source": [GAP_TASKS[s] for s in item["source"]], "magnitude": magnitude, "value": text,
@@ -638,8 +695,24 @@ def write_overview(rc, out_path):
     return failures
 
 
-def run(rc, capture_dir, verify, require_atmos):
+def frozen_rows(rc, failures):
+    """凍結した表（GAP_FROZEN）の大気以外の行。大気以外の項目の並びが今の GAP_ITEMS と同じことも確かめる"""
+    path = os.path.join(rc.REPO_ROOT, GAP_FROZEN)
+    if not os.path.isfile(path):
+        failures.append(f"凍結した表 {GAP_FROZEN} が無い")
+        return []
+    with open(path, encoding="utf-8") as f:
+        frozen = json.load(f)
+    rows = [r for r in frozen.get("items") or [] if "SCN-WLR-ATMOS-REF" not in r["source"]]
+    wanted = [item["id"] for item in GAP_ITEMS if not _is_atmos(item)]
+    if [r["id"] for r in rows] != wanted:
+        failures.append(f"凍結した表の大気以外の項目 {[r['id'] for r in rows]} が今の項目 {wanted} と違う")
+    return rows
+
+
+def run(rc, capture_dir, verify, require_atmos, atmos_addendum=False):
     failures = []
+    require_atmos = require_atmos or atmos_addendum
     # 1 回の検査の中では入力のハッシュを種類ごとに 1 回だけ求める（どの比較も同じ今のファイルと照らす）
     original_hash = rc.hash_inputs
     cache = {}
@@ -654,6 +727,9 @@ def run(rc, capture_dir, verify, require_atmos):
         components = {}
         reports = {}
         for key, mode, inputs_fn in GAP_COMPONENTS:
+            # 大気の追補では大気以外の比較を照らさない（その行は凍結した表の値を使う）
+            if atmos_addendum and key != "atmos_ref":
+                continue
             entry, report = check_component(rc, key, mode, inputs_fn)
             components[key] = entry
             reports[key] = report
@@ -672,7 +748,11 @@ def run(rc, capture_dir, verify, require_atmos):
               f"{' allowed=pending_atmos' if state == 'stale' and allowed_stale else ''} "
               f"stale_reasons={len(entry.get('stale_reasons') or [])} problems={len(entry.get('problems') or [])}")
 
-    rows = evaluate_items(reports, atmos_current)
+    if atmos_addendum:
+        rows = frozen_rows(rc, failures) + evaluate_items(reports, atmos_current,
+                                                          [item for item in GAP_ITEMS if _is_atmos(item)])
+    else:
+        rows = evaluate_items(reports, atmos_current)
     for row in rows:
         if row["category"] != "open" and row["magnitude"] is None:
             failures.append(f"{row['id']}: 差の大きさを報告から求められない（{row['value']}）")
@@ -707,21 +787,27 @@ def run(rc, capture_dir, verify, require_atmos):
             with open(doc_path, "w", encoding="utf-8-sig", newline="") as f:
                 f.write(doc_text[:start] + wanted + doc_text[end:])
             doc_state = "written"
-        if require_atmos and GAP_PENDING_ATMOS.split("。")[0] in doc_text.replace(wanted, ""):
-            failures.append(f"{GAP_DOC} に「{GAP_PENDING_ATMOS.split('。')[0]}」が残っている")
+        if require_atmos:
+            for marker in GAP_PENDING_MARKERS:
+                if marker in doc_text:
+                    failures.append(f"{GAP_DOC} に「{marker}」が残っている")
 
     os.makedirs(capture_dir, exist_ok=True)
-    failures.extend(write_overview(rc, os.path.join(capture_dir, GAP_OVERVIEW)))
+    if not atmos_addendum:
+        failures.extend(write_overview(rc, os.path.join(capture_dir, GAP_OVERVIEW)))
 
     report = {"mode": "gap_list", "verify": bool(verify), "require_atmos": bool(require_atmos),
+              "atmos_addendum": bool(atmos_addendum), "frozen": GAP_FROZEN if atmos_addendum else None,
               "components": components, "atmos_current": atmos_current, "items": rows, "doc": GAP_DOC,
               "doc_table": doc_state, "overview": GAP_OVERVIEW, "failures": failures}
-    report_path = os.path.join(capture_dir, "gap_list_check.json")
+    # 大気の追補は凍結した時点の報告（gap_list_check.json）を上書きしない
+    report_path = os.path.join(capture_dir, "gap_list_atmos_check.json" if atmos_addendum else "gap_list_check.json")
     with open(report_path, "w", encoding="utf-8") as f:
         json.dump(report, f, indent=2, ensure_ascii=False)
     for failure in failures:
         print(f"REFERENCE_CHECK failure: {failure}")
     status = "pass" if not failures else "fail"
-    print(f"REFERENCE_CHECK result={status} mode=gap_list components={len(components)} "
+    print(f"REFERENCE_CHECK result={status} mode=gap_list atmos_addendum={int(bool(atmos_addendum))} "
+          f"components={len(components)} "
           f"atmos_current={int(atmos_current)} items={len(rows)} doc_table={doc_state} report={report_path}")
     return 0 if not failures else 1

@@ -5884,3 +5884,14 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `verify-SCN-WLR-ATMOS-REF-2.txt`: `--atmos-ref --verify` result=pass・inputs_current=1・EXIT=0。地表の太陽の透過率 3.0e-4、同じ媒質の高さフォグの透過率 7.7e-7・空気遠近 6.4e-3
 - Notes: 新しい試験は足していない。値は変えていない。WastelandGapList.md の `fog_sky_color_double`（2.2 倍）は SCN-WLR-GAP-LIST-ATMOS で今の結論（二重は 3〜6 %、代わりに合成の順と霧の太陽の高度）へ書き直す
 - Next: TASKS.md の次の未完の項目（SCN-WLR-GAP-LIST-ATMOS が開く）
+
+### SCN-WLR-GAP-LIST-ATMOS 完了（2026-10-20、run 20261020-094249 の反復 8）
+- Done:
+  - `ReferenceCheck.py --gap-list --atmos-addendum`（本体は `GapList.py`）: SCN-WLR-GAP-LIST の完了の時点の表（99bea2ee。`--gap-list --verify` が合格した報告の行を `Scripts/Terrain/GapListFrozen.json` に凍結）への大気の追補として検査する。大気以外の行は凍結した値、比較の揃いと鮮度は大気の正解だけを照らし古さを許さない、未判定の印（前の「B の直し待ち」も）が文書に残らない。一覧の画像と凍結した時点の報告は書き直さない（結果は `gap_list_atmos_check.json`）
+  - B に依っていた 4 項目を、方向を保つ B の結論で判定し直した（未判定 → 描画の欠陥 3・中身 1）。`sky_multiple_scattering`（空の高次の散乱を等方に配る。エンジン ÷ B 0.67〜1.27、照度の A ÷ B 1.010）、`aerial_scatter_direction`（霞の散乱光がどの向きでも暗い 0.73〜0.94、空気遠近だけで 0.45〜0.82）、`fog_sky_color_double`（二重の数えは 1.08 倍で小さい）、`sky_blue_photo`（中身へ。写真への寄りはモデル 0.02・設定 0.10・カメラ 0.06、論文の設定で上下の比 0.76 が写真と同じ）。新しく `fog_aerial_order`（霧の散乱光を空気遠近の透過率で減らさない。30 km で 1.22〜1.31 倍）を描画の欠陥に足した。`altitude_mismatch` に霧の太陽の 0.82 倍を足した
+  - `WastelandGapList.md` のフォグ・空の原因と直す項目の案、直す順の案、限界、検査の手順を書き直した。表は 27 項目（描画 17・中身 3・条件不一致 7）
+  - 結論が done-when と食い違う後ろの項目の notes に書き足した: SCN-WL-SKY-SCATTER（直す主な対象は合成の順と空気遠近の積み方。二重の数えは 5 % ほど。空の B との比はモデルを変えない限り 5 % に届かない）、SCN-WL-SKY-ALTITUDE（霧の太陽の透過率も谷床の高度で）、SCN-WLR-ATMOS-REF-NEWSET（写真の空の青の分け方）
+- 証拠（`.harness/runs/20261020-094249/`）:
+  - `verify-SCN-WLR-GAP-LIST-ATMOS-1.txt`: `--gap-list --atmos-addendum --verify` result=pass・atmos_addendum=1・components=1（SCN-WLR-ATMOS-REF state=current）・atmos_current=1・items=27・pending_atmos はすべて 0・doc_table=same、EXIT=0
+- Notes: 凍結した表は、99bea2ee の文書の表と GAP-LIST の報告（`gap_list_check.json`、2026-10-19 18:07）の行から作った表が一致することを確かめてから保存した。`--gap-list --require-atmos --verify`（追補でない形。大気以外の比較の鮮度も照らす）は回していない。新しい試験は足していない
+- Next: TASKS.md の次の未完の項目

@@ -256,13 +256,16 @@
 #   python Scripts/Terrain/ReferenceCheck.py --regression --capture <after> --reference <before> [--verify]
 #       回帰の撮影（Scripts/Terrain/CaptureRegression.ps1）の after を before と並べる（本体は Scripts/Terrain/Regression.py）。
 #
-#   python Scripts/Terrain/ReferenceCheck.py --gap-list [--capture <出力先>] [--require-atmos] [--verify]
+#   python Scripts/Terrain/ReferenceCheck.py --gap-list [--capture <出力先>] [--require-atmos | --atmos-addendum] [--verify]
 #       節目の差の一覧（GapList.py）。灰色・アルベド・法線・実材質・大気の正解・遠景のぼけの静止と動き・表示変換の比較の報告が揃い、
 #       --verify で合格した記録で、撮影・描画の入力が今のファイルと一致することを検査し、差を「描画の欠陥」「中身の欠陥」
 #       「条件不一致・未判定」に分けて大きい順に並べた表を Docs/RenderingValidation/WastelandGapList.md の印の間に書き
 #       （--verify では書かずに同じであることを検査する）、写真｜エンジン｜Cycles の一覧の画像を <出力先>/gap_overview.png に、
 #       結果を <出力先>/gap_list_check.json に書く。<出力先> の既定は GAP_LIST_DIR。大気の正解の比較が古いことは
-#       未判定の印として許し、--require-atmos では許さない（B の直し待ちの項目が残っていても失敗にする）。
+#       未判定の印として許し、--require-atmos では許さない（B に依る項目が未判定のままでも失敗にする）。
+#       --atmos-addendum は SCN-WLR-GAP-LIST の完了の時点の表（Scripts/Terrain/GapListFrozen.json）への大気の追補として検査する:
+#       大気以外の行は凍結した値のまま使い、大気の正解の比較だけが今の入力と一致し未判定が残らないことを確かめる
+#       （一覧の画像は書き直さず、結果は <出力先>/gap_list_atmos_check.json）。
 #
 #   python Scripts/Terrain/ReferenceCheck.py --grading --engine <撮影先> [--capture <6 視点の撮影先>] [--views a,b,...] [--verify]
 #       荒野のグレーディングを中立にした変更の検査（GradeNeutral.py）。<撮影先> の既定の荒野の撮影（既定の視点は GRADING_VIEWS の 2 つ）で、
@@ -5861,7 +5864,9 @@ def main():
     parser.add_argument("--gap-list", action="store_true",
                         help="比較の結果が揃い今の入力と合うことを検査し、差を分類した一覧（WastelandGapList.md の表）と一覧の画像を作る")
     parser.add_argument("--require-atmos", action="store_true",
-                        help="--gap-list で、大気の正解の比較（SCN-WLR-ATMOS-REF）の古さと B の直し待ちの項目を許さない")
+                        help="--gap-list で、大気の正解の比較（SCN-WLR-ATMOS-REF）の古さと B に依る未判定の項目を許さない")
+    parser.add_argument("--atmos-addendum", action="store_true",
+                        help="--gap-list を凍結した表への大気の追補として検査する（大気以外の行は凍結した値、大気は今の入力と一致し未判定なし）")
     parser.add_argument("--lit-capture", default=TONEMAP_LIT_DIR,
                         help="--tonemap で Cycles の HDR を借りる SCN-WLR-CYCLES-LIT の出力先")
     parser.add_argument("--engine", action="append", default=[],
@@ -5906,7 +5911,7 @@ def main():
         import GapList
         capture = args.capture or GAP_LIST_DIR
         capture_dir = os.path.normpath(capture if os.path.isabs(capture) else os.path.join(REPO_ROOT, capture))
-        return GapList.run(sys.modules[__name__], capture_dir, args.verify, args.require_atmos)
+        return GapList.run(sys.modules[__name__], capture_dir, args.verify, args.require_atmos, args.atmos_addendum)
     if args.grading:
         import GradeNeutral
         absolute = lambda d: os.path.normpath(d if os.path.isabs(d) else os.path.join(REPO_ROOT, d))
