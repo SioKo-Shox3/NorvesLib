@@ -5856,3 +5856,13 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 期待値 `far-aa-static.json` のエイリアスの上限は前の exe の絶対値で、今の exe では既定の TAA も超える
 - Notes: RT の自己遮蔽の直し（SCN-WL-RT-SELFHIT）の後へ回すかの判断を `blocked/SCN-WL-FAR-AA.md` に書いた。コードは変えていない
 - Next: 判断を待つ。再開したら `.harness/runs/20261020-094249/aux-SCN-WL-FAR-AA-sweep.ps1`（-Out で撮影先を指定）と `aux-SCN-WL-FAR-AA-eval.py` で撮り直して測る
+### SCN-WL-RT-SELFHIT 完了（2026-10-20、run 20261020-094249 の反復 6）
+- コード（`Assets/Shaders/RTGI/DiffuseIndirect.comp` だけ）: RTGI の 1 本目の拡散光線の始点を前の 2 mm（`RAY_ORIGIN_OFFSET`）へ戻し、一律の距離比例のずらし（`RaySurfaceOffset`）を消した。代わりに、当てた instance の光線の形のずれ（`rayProxy.x`、MegaGeometry の影の段の誤差、f50d0791）が 0.25 m 以上のときだけ、1 次面からの高さが min(ずれ, max(0.5 m, 距離 × 5e-4)) より低い当たりを読み飛ばして先から引き直す（最大 4 回）。ずれが 0.25 m 未満の instance（ふつうのシーンの小物。rendering3dtest の岩・家は 3 mm〜7 cm）とメッシュには当たり方を変えない
+- 証拠（`.harness/runs/20261020-094249/`）:
+  - `verify-SCN-WL-RT-SELFHIT-1.txt`: Debug の Game のビルド EXIT=0
+  - `verify-SCN-WL-RT-SELFHIT-2.txt`: 回帰の after result=pass。before は `.harness/runs/regression/SCN-WL-RT-TLAS-RANGE/before`（範囲を広げる前の exe）を写したもの。sandbox psnr=inf。rendering3dtest psnr=110.6（違う画素は 2 画素だけで差は 1/255）。mega-bananas 60.53（mean_diff -0.000、点状の 499 画素。TLAS-TERRAIN の回帰の 61.5 前後と同じ揺れの水準）。night-village 39.98（mean_diff +0.106）で、差は建物の間接光・遠くの崖（光線の形のずれ 7〜56 m の区画）・空の階調の 1 段だけ（並べて開いて確かめた。差が 8 段を超える画素 1.8 %、32 段を超える画素 0.09 %）。RT の範囲と自己遮蔽の直しによる差
+  - 空だけの条件（`common-light-case=sky`、ref_cliff_01・ref_far_01、RelWithDebInfo、`aux-SCN-WL-RT-SELFHIT-sky2.txt` EXIT=0）の `--gray` と同じ領域の空の比（`aux-SCN-WL-RT-SELFHIT-skyratio.txt`）: 影の崖 0.999・遠景 0.992（基準 1 ± 0.1）。日なたの崖 0.999、日なたの地面 0.983（ref_cliff_01）・0.980（ref_far_01）。一律に 0.5 m ずらした時（0.982・0.980）より 1 に近い
+- 試したこと: 読み飛ばしをずれのある instance すべてに効かせた版は、空の比は同じ（0.999・0.992）だが rendering3dtest が psnr 47.0（屋根と岩の間接光が 8 段を超える画素 0.7 %）で変わったので、ずれの下限 0.25 m を足した
+- DDGI のプローブの光線には入れない。プローブの光線はラスタの面でなく空中のプローブから出るので始点の食い違いが無く、RTGI だけで空の比が基準に入った
+- Notes: 空の比は使い捨ての台本（`ReferenceCheck.check_gray_view` に空だけの撮影を渡す）で測った。3 条件の `--gray --expect` の一式は SCN-WL-RT-TLAS-RANGE-ACCEPT で回す
+- Next: SCN-WL-RT-TLAS-RANGE-ACCEPT

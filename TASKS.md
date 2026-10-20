@@ -1939,7 +1939,7 @@
 - notes: 危険地帯（RT・メモリ）。2026-10-19（Sol の批評 8・10）。 2026-10-20（親）: 遮断器（3 回）で止まったので、残りを SCN-WL-RT-SELFHIT（ほかのシーンを変えない自己遮蔽の直し）と SCN-WL-RT-TLAS-RANGE-ACCEPT（verify 一式を 1 回回す）に分けた。この項目は回さない。範囲の規則と RT_BLAS の記録は 287e0b39、始点のずらしは 2994de47、途中の直しは f50d0791。
 
 ## SCN-WL-RT-SELFHIT: RT の光線の自己遮蔽を、光線に見せる形とラスタの形が違う物だけで除く
-- status: todo
+- status: done
 - after: SCN-WL-RT-TLAS-TERRAIN, SCN-WLR-REGRESSION-VALIDATION
 - done-when: SCN-WL-RT-TLAS-RANGE の続き。RTGI の 1 本目の拡散光線の始点を一律に max(0.5 m, 距離 × 5e-4) ずらす直しで荒野の空の比は合った（影の崖 0.982・遠景 0.980）が、回帰で mega-bananas（PSNR 31.3）と rendering3dtest（38.2）の見た目が変わった。始点のずらし・近い当たりの読み飛ばしを、光線に見せる形（MegaGeometry の RT 用の段）とラスタの形に差がある物だけに効かせる（例: その instance の RT 用の段の誤差の分だけ、同じ instance への近い当たりを読み飛ばす。f50d0791 の途中保存の続き）。DDGI のプローブの光線にも入れるかは測って決める。合否: (1) 反復の最初に撮った回帰の before と比べて、after で rendering3dtest・sandbox の差が無く、mega-bananas・night-village の差はこの変更だけによる（差の画を開いて確かめる）、(2) 荒野の空だけの条件（`common-light-case=sky`）で ref_cliff_01・ref_far_01 を撮り、`--gray` と同じ領域の空の比（影の崖・遠景）が 1 ± 0.1 に入ることを記録する（判定の一式は SCN-WL-RT-TLAS-RANGE-ACCEPT）。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
@@ -2029,7 +2029,7 @@
 - notes: 2026-10-19（Sol の批評 13 と 2 周目）。
 
 ## SCN-WL-FAR-AA: 遠景のエイリアスを、TAA の静止の収束で減らす
-- status: todo
+- status: blocked
 - after: SCN-WLR-EXPECT-MATCH, SCN-WLR-REGRESSION-MOTION, SCN-WLR-RECAPTURE-BLUR-MOTION, SCN-WL-RT-SELFHIT, SCN-WL-RT-TLAS-RANGE-ACCEPT
 - done-when: TAA の静止の収束を 2 倍の解像度の正解に近づける（分散の箱の幅・現在の色の割合・書き戻しのシャープ化を 1 つずつ変えて測る）。比べる組（ref2x・resident・FXAA の対照。いずれも Game の撮影なので、エンジンの実装が変わると古くなる）は、変更後の同じ Game.exe でこの項目の撮影先 `SCN-WL-FAR-AA/` へ撮り直す（SCN-WLR-FAR-BLUR-STATIC の記録の組と同じ起動引数。aa-taa は `wasteland-aa=taa,vram-geometry-share=9`）。`--blur-static --expect`（`far-aa-static.json`）で、TAA の静止の細部の欠けが resident（FXAA）以下・エイリアスが同じ Game.exe で撮った変更前の定数の TAA の組（定数は起動引数で与える）以下であること（差 ≤ 0。照明の絶対値に依存する上限は書かない。`far-aa-static.json` もこの形に直す）を検査する。荒野の既定の AA はこの項目では変えない。足りなければ、出力より細かい履歴（TAAU・DLAA 相当）の見込みを記録する（入れるかは次の項目で決める）。反復の最初に回帰の撮影の `before`（`-Motion` つき）を撮る。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`

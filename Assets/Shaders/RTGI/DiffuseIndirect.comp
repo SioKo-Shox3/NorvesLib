@@ -100,17 +100,21 @@ layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer RTG
 #include "Common/PbrMaterialEvaluation.glsl"
 #include "Common/RayTracingInstanceMask.glsl"
 const float RAY_ORIGIN_OFFSET = 0.002;
-// 1 次面から出す拡散光線の始点のずらし。遠くの面は深度から戻した位置の誤差とラスタの段の粗さが距離に比例して
-// 大きくなるので、カメラからの距離に比例して広げる（近くは RAY_ORIGIN_OFFSET）
-const float RAY_SURFACE_OFFSET_PER_METER = 5e-4;
 // 1 次面からの光線が、当てた instance の光線の形のずれ（rayProxy.x）より低い所で当たったときに読み飛ばす回数の上限
 const uint RTGI_PROXY_SELF_HIT_SKIPS = 4u;
-// 読み飛ばす高さの上限。遠くの大きな区画のフォールバックは誤差が数百 m になり、そのまま使うと本物の遮りまで抜ける
+// 読み飛ばす高さの上限（近く）。遠くの大きな区画のフォールバックは誤差が数百 m になり、そのまま使うと本物の遮りまで抜ける
 const float RTGI_PROXY_SELF_HIT_HEIGHT_MAX = 0.5;
+// 遠くの面は深度から戻した位置の誤差とラスタの段の粗さがカメラからの距離に比例して大きくなるので、
+// 読み飛ばす高さの上限も距離に比例して広げる
+const float RTGI_PROXY_SELF_HIT_HEIGHT_PER_METER = 5e-4;
+// 読み飛ばすのは光線の形のずれがこれ以上の instance だけ。焼いた階層の常駐のフォールバックのように、ずれが地面の
+// 起伏の大きさになる物で自分の面への当たりが空を遮る。数 cm のずれ（ふつうのシーンの小物の影の段）は今までどおり当てる
+const float RTGI_PROXY_SELF_HIT_ERROR_MIN = 0.25;
 
-float RaySurfaceOffset(float viewDistance)
+// 1 次面からの光線で、光線の形がラスタと違う instance（rayProxy.x が正）への当たりを読み飛ばす高さの上限
+float ProxySelfHitHeightLimit(float viewDistance)
 {
-    return max(RAY_ORIGIN_OFFSET, RAY_SURFACE_OFFSET_PER_METER * viewDistance);
+    return max(RTGI_PROXY_SELF_HIT_HEIGHT_MAX, RTGI_PROXY_SELF_HIT_HEIGHT_PER_METER * viewDistance);
 }
 // 画素ごとの履歴の年齢の上限（静止が続いたとき）。フレームごとの上限はtemporalState.wで、視点・光源・
 // シーンが動いているフレームでは8になる。重みは累積平均の 1-1/(年齢+1) で、上限は256/257。
@@ -875,15 +879,16 @@ void StoreTemporalSample(uvec2 pixel,
 // 方向光と発光三角形の直接光（コサイン標本が発光面に当たっても発光は加えない）。命中面の位置・光線側の
 // 法線・反射率を返し、呼び側がそこからさらに散乱をたどれるようにする。hitCustomIndexは当たった
 // instanceのcustom index（外れればRTGI_NO_HIT）。
-// surfaceHeight が 0 以上のとき、光線は法線 surfaceNormal の 1 次面からその高さだけずらした始点から出ている。
-// 当てた面の 1 次面からの高さが当てた instance の光線の形のずれ（rayProxy.x。RTGI_PROXY_SELF_HIT_HEIGHT_MAX で
-// 頭打ち）より低ければ、粗い光線の形がラスタの面の上に出ている所への自分の面への当たりとみなし、その先から引き直す。
+// proxyHeightLimit が 0 以上のとき、光線は法線 surfaceNormal の 1 次面から RAY_ORIGIN_OFFSET だけずらした始点から
+// 出ている。当てた面の 1 次面からの高さが当てた instance の光線の形のずれ（rayProxy.x。proxyHeightLimit で頭打ち）
+// より低ければ、粗い光線の形がラスタの面の上に出ている所への自分の面への当たりとみなし、その先から引き直す。
+// 光線の形のずれが RTGI_PROXY_SELF_HIT_ERROR_MIN より小さい instance への当たりは読み飛ばさない。
 const uint RTGI_NO_HIT = 0xFFFFFFFFu;
 
 vec3 TraceDiffuseRay(vec3 rayOrigin,
                      vec3 rayDirection,
                      vec3 surfaceNormal,
-                     float surfaceHeight,
+                     float proxyHeightLimit,
                      uvec2 pixel,
                      uint emitterDimension,
                      out bool bSurfaceHit,
@@ -941,9 +946,10 @@ vec3 TraceDiffuseRay(vec3 rayOrigin,
         {
             return vec3(0.0);
         }
-        float hitHeight = surfaceHeight + hitDistance * dot(rayDirection, surfaceNormal);
-        if (surfaceHeight < 0.0 || attempt == RTGI_PROXY_SELF_HIT_SKIPS ||
-            !(hitHeight < min(hitInstance.rayProxy.x, RTGI_PROXY_SELF_HIT_HEIGHT_MAX)))
+        float hitHeight = RAY_ORIGIN_OFFSET + hitDistance * dot(rayDirection, surfaceNormal);
+        if (proxyHeightLimit < 0.0 || attempt == RTGI_PROXY_SELF_HIT_SKIPS ||
+            !(hitInstance.rayProxy.x >= RTGI_PROXY_SELF_HIT_ERROR_MIN &&
+              hitHeight < min(hitInstance.rayProxy.x, proxyHeightLimit)))
         {
             break;
         }
@@ -1015,7 +1021,7 @@ void ShadeDiffuseIndirect(uvec2 pixel, out bool bRayTraced, out uint firstHitCus
             float diffuseWeight = EvaluateDiffuseMaterialWeight(material.r);
             vec3 rayDirection = CosineWeightedDirection(worldNormal, pixel,
                                                           parameters.sampleState.x);
-            vec3 rayOrigin = worldPosition + worldNormal * RaySurfaceOffset(viewDistance);
+            vec3 rayOrigin = worldPosition + worldNormal * RAY_ORIGIN_OFFSET;
 
             // 発光三角形の光は1次面と命中点の光源標本で数えるため、コサイン標本が発光面に
             // 当たっても発光を加えない。
@@ -1025,7 +1031,7 @@ void ShadeDiffuseIndirect(uvec2 pixel, out bool bRayTraced, out uint firstHitCus
             vec3 bounceHitBaseColor;
             bRayTraced = true;
             vec3 incomingRadiance = TraceDiffuseRay(rayOrigin, rayDirection, worldNormal,
-                                                    RaySurfaceOffset(viewDistance), pixel, 3u,
+                                                    ProxySelfHitHeightLimit(viewDistance), pixel, 3u,
                                                     bBounceHit, bounceHitPosition,
                                                     bounceHitNormal, bounceHitBaseColor,
                                                     firstHitCustomIndex);
