@@ -557,7 +557,14 @@ SHIFTED_REFERENCE_SCOPE = "region_means_only"
 # 足した。crop の無い job の描画（--depth・--gray・--albedo・--normal・--lit）は変えていない。続けて切り出しの種を 1 本ずつ
 # 別の起動で描く形にした（crop の枝と起動の段取りだけ。画素ごとの材質の描画は変えていない）。さらに切り出しの時間の上限を
 # 最初の 1 回の描画の後から数え、種 A の途中の和を使い直す --crop-reuse-a を足した（止める時刻と段取りだけで、1 回の描画は同じ）
+# SCN-WL-RTGI-COLOR: 切り出しの描画が間接光の拡散の分（indirect_diffuse）も書くようにした（足した出力だけで、ほかの出力は同じ）
 BLENDER_SCRIPT_EQUIVALENT_SHA256 = {
+    "38058f99bd46164fe57d871d7acf00cb03849449b43d4ac17e5c7857c6b268d8":
+        ("5570cce8bfb04ee9a69a87ec961f6c0f9b600acc2585eea64ff370c610b97afa",
+         "e4145a910c54272e5990a7e26ceafd537e6e7f1299253867292e4fe6dcc8dfd0",
+         "74c6ee7e3fce1a91d42929fd5700ac225c8db2b9ba8f924ee1330036da50a5a4",
+         "ab3aff4ec3c7776b27ad766059506d9e2f83b0e64904e76f76f54bbb508881e0",
+         "ad3cea721bf57a593caa9e7ab97228a6367fa94acd67bc00115e01886598be49"),
     "5570cce8bfb04ee9a69a87ec961f6c0f9b600acc2585eea64ff370c610b97afa":
         ("e4145a910c54272e5990a7e26ceafd537e6e7f1299253867292e4fe6dcc8dfd0",
          "74c6ee7e3fce1a91d42929fd5700ac225c8db2b9ba8f924ee1330036da50a5a4",
@@ -5870,6 +5877,8 @@ def main():
                         help="撮影の画と記録のカメラのずれを、補正なしで描いた Blender の深度で検査する（CameraOffset.py）")
     parser.add_argument("--rt-scene", action="store_true",
                         help="荒野の地形が RT のシーンに入り、光線が地形に当たることを撮影のログで検査する（RtScene.py）")
+    parser.add_argument("--bounce", action="store_true",
+                        help="RTGI の照り返し（--engine の入 − 切の撮影）を Cycles の間接光と比べる（RtgiBounce.py）")
     parser.add_argument("--projection", action="store_true",
                         help="Blender の深度（BlenderReference.py）とエンジンの深度の投影を照らす")
     parser.add_argument("--atmos-dump", action="store_true",
@@ -5929,8 +5938,9 @@ def main():
         import ExpectSpec
         return ExpectSpec.run_selftest(sys.modules[__name__], args.verify)
     expect = os.path.normpath(args.expect if os.path.isabs(args.expect) else os.path.join(REPO_ROOT, args.expect))         if args.expect else None
-    if expect and not (args.gray or args.lit or args.blur_static or args.blur_motion):
-        print("REFERENCE_CHECK result=fail reason=expect_unsupported（--expect は --gray・--lit・--blur-static・--blur-motion と使う）")
+    if expect and not (args.gray or args.lit or args.blur_static or args.blur_motion or args.bounce):
+        print("REFERENCE_CHECK result=fail reason=expect_unsupported（--expect は --gray・--lit・--blur-static・--blur-motion・"
+              "--bounce と使う）")
         return 1
     if args.require_judged is not None and not args.lit:
         print("REFERENCE_CHECK result=fail reason=require_judged_unsupported（--require-judged は --lit と使う）")
@@ -5958,6 +5968,12 @@ def main():
             return 1
         views = [v.strip() for v in args.views.split(",") if v.strip()]
         return CameraOffset.run(sys.modules[__name__], capture_dir, views, args.verify)
+    if args.bounce:
+        import RtgiBounce
+        absolute = lambda d: os.path.normpath(d if os.path.isabs(d) else os.path.join(REPO_ROOT, d))
+        views = [v.strip() for v in args.views.split(",") if v.strip()]
+        return RtgiBounce.run(sys.modules[__name__], [absolute(d) for d in args.engine],
+                              absolute(args.reference) if args.reference else "", views, args.verify, expect)
     if args.rt_scene:
         import RtScene
         capture = args.capture or (args.engine[0] if args.engine else "")

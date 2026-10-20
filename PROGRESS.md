@@ -5943,3 +5943,17 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 
 - Notes: 既知の限界として、荒野では段 0 の texel が 0.24 mm から 7.8 mm に粗くなる（カメラから数 m の接地の影がわずかにぼける。物理の半影は 1 m 離れた遮る物で約 4.7 mm）。ref_far_01 の遠景の食い違いは 4.56 % で上限の 5 % に近い（3 km より先はエンジンの地形の形と Cycles の参照の形の違いが混ざる）。試しの照合を既存の撮影で回したときに `scene-capture/SCN-WLR-CYCLES-LIT/lit_check.json` を 2 視点で上書きしたので、SCN-WLR-LIT-SHADOW-REF-C02 の照合（`--require-judged`、`--verify` なし）を回して 6 視点の報告に戻した（`aux-SCN-WL-SHADOW-PAGES-restore-lit-report.txt`、result=pass・inputs_current=0 はエンジンの変更による）。新しい試験は足していない
 - Next: SCN-WL-SHADOW-LEAK（影の距離・段の被覆の直しで灰色 ref_cliff_01 の影の中の地面の漏れが変わったかを先に確かめる）
+### SCN-WL-RTGI-COLOR 止め（2026-10-20、run 20261020-094249 の反復 12。理由と選択肢は blocked/SCN-WL-RTGI-COLOR.md）
+- コード:
+  - RTGI の当たりの色: 地形の 3 層の混ぜ合わせの材質の instance（`RayTracingSceneInstanceSnapshot::bTerrainBlend` → instance の表の RayProxy.y）は、当たりの点の地表の分類の地図の重み（舗石の斑・皮膜は平均の被覆、地図の外は傾斜の式）と、砂・土・岩肌のアルベドの最も粗いミップ（横 2 枚の並びは枠ごとの 2×1 のミップ）で当たりの色を決める（`DiffuseIndirect.comp` の `TerrainBounceAlbedo`）。値は `RayTracingSceneSnapshot::TerrainBlend`（MegaGeometry の材質から写す）、束縛は 25〜28。これまでは instance の定数の色（荒野は白 1.0）だった
+  - 開発ビルドの `--rtgi-bounce=on|off`（Game → 環境変数 NORVES_RTGI_BOUNCE → LightingPass。off は当たりの色を 0、ログ `RTGI_BOUNCE off source=env`）
+  - `ReferenceCheck.py --bounce`（`Scripts/Terrain/RtgiBounce.py`）、`ExpectSpecs/rtgi-color.json`、ExpectSpec の mode bounce。`BlenderReference.py` の切り出しの描画が間接光の拡散の分（`indirect_diffuse`）も書く（同じ画の台本として `BLENDER_SCRIPT_EQUIVALENT_SHA256` に足した。まだ描き直していない）
+- 証拠（`.harness/runs/20261020-094249/`）:
+  - `regression-before-SCN-WL-RTGI-COLOR.txt` result=pass、`verify-SCN-WL-RTGI-COLOR-1.txt` Debug ビルド EXIT=0、`-2`・`-3` 入・切の撮影 result=pass
+  - `verify-SCN-WL-RTGI-COLOR-4.txt` `--bounce --expect rtgi-color.json` result=fail（inputs_current=1）: 影の崖 比 0.690・色度の差 0.051、影の中の地面 比 0.638・色度の差 0.081（Cycles は間接光の全体）
+  - `aux-SCN-WL-RTGI-COLOR-gray-check.txt`（灰色の材質で同じ形）: 影の崖 比 0.765・色度の差 0.0025、影の中の地面 比 1.101・色度の差 0.022、日なたの地面 0.585・日なたの崖 0.675
+  - `verify-SCN-WL-RTGI-COLOR-5.txt` 回帰の after result=pass。night-village は psnr 40.4・mean_diff −0.35（地形の照り返しが白から材質の色になり、建物の壁の下が少し暗くなった。並べて開いて確かめた）、ほかは mean_diff 0.000
+  - 入｜切｜照り返しの画（`scene-capture/SCN-WL-RTGI-COLOR/bounce-on/bounce_ref_cliff_01.png`）を開いた: 崖の影の面と台地の斜面に砂色の暖かい照り返しが入り、斑・縞は無い
+- 止めた理由: 灰色（当たりの色が Cycles と同じ）でも明るさの比が 0.77 で、影の中の地面は色度が 0.022 ずれる。Cycles の間接光は鏡面の間接光を含み、エンジンの照り返しは拡散だけ。当たりの色の直しだけでは完了条件に届かず、比べ方と RTGI の量の直しの置き場の判断が要る
+- Notes: 新しい試験は足していない。編集で C++・シェーダーの行末が書き換わったので difflib で戻した（numstat の 2 通りが一致）
+- Next: blocked の判断を待つ（推奨: Cycles の拡散の間接光と比べ、切り出しを描き直し、RTGI の量は別の項目へ）

@@ -5,9 +5,10 @@
 # blur_static の仕様は "cases": [<組の名前>, ...] を持てる。持てば比べる条件の組をそれだけに絞り（resident は要る）、
 # ほかの組は撮らなくてよい（ある項目の撮影先へ、比べる組だけを撮り直すとき）。
 # 行の鍵（ほかの鍵は書き間違いとして拒む）:
-#   mode: gray | lit | blur_static | blur_motion。走らせたモードと違う行があれば仕様の誤りとして落とす
+#   mode: gray | lit | blur_static | blur_motion | bounce。走らせたモードと違う行があれば仕様の誤りとして落とす
 #   view: 視点。region: 領域（gray・lit は GrayRegions.REGIONS、blur_* は far・cliff）
-#   component: 成分（gray・lit だけ）。total・sun・sky・indirect・visibility・chroma（RGB の色度）
+#   component: 成分（gray・lit・bounce だけ）。total・sun・sky・indirect・visibility・chroma（RGB の色度）。
+#     bounce（ReferenceCheck.py --bounce。RTGI の照り返しと Cycles の間接光）は indirect と chroma だけ
 #   case: 組（blur_static は条件の組の名前、blur_motion は fxaa・taa・base）。tag: 撮影の名前（blur_motion だけ。static-0・motion-30 など）
 #   static: 振りと止めの差で比べる止めの撮影（blur_motion だけ。省くと tag の motion-<k> に対する static-<k>）
 #   quantity: 量
@@ -30,7 +31,9 @@ import io
 import json
 import os
 
-MODES = ("gray", "lit", "blur_static", "blur_motion")
+MODES = ("gray", "lit", "blur_static", "blur_motion", "bounce")
+# bounce の行で使える成分
+BOUNCE_COMPONENTS = ("indirect", "chroma")
 ROW_KEYS = ("mode", "view", "region", "component", "case", "tag", "static", "quantity", "min", "max",
             "allow_undetermined", "note")
 LIGHT_QUANTITIES = {"total": ("ratio",), "sun": ("ratio",), "sky": ("ratio",), "indirect": ("ratio",),
@@ -94,8 +97,10 @@ def validate_row(rc, row, mode):
     if row["mode"] != mode:
         errors.append(f"mode {row['mode']} は走らせたモード {mode} と違う")
     quantity = row.get("quantity")
-    if row["mode"] in ("gray", "lit"):
+    if row["mode"] in ("gray", "lit", "bounce"):
         views = rc.GRAY_VIEWS if row["mode"] == "gray" else rc.LIT_VIEWS
+        if row["mode"] == "bounce" and row.get("component") not in BOUNCE_COMPONENTS:
+            errors.append(f"bounce の成分は {'・'.join(BOUNCE_COMPONENTS)}（{row.get('component')!r} でない）")
         if row.get("view") not in views:
             errors.append(f"view {row.get('view')!r} は {row['mode']} の視点でない")
         if row.get("region") not in rc.GR.REGIONS:
@@ -247,7 +252,7 @@ def evaluate(rc, mode, report, rows):
             failures.extend(f"仕様の行 {index}（{label}）: {error}" for error in errors)
             results.append({"index": index, "label": label, "status": "仕様の誤り", "errors": errors, "pass": False})
             continue
-        if mode in ("gray", "lit"):
+        if mode in ("gray", "lit", "bounce"):
             value, reason = light_value(report, row)
         elif mode == "blur_static":
             value, reason = blur_static_value(rc, report, row)

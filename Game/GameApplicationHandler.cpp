@@ -271,6 +271,10 @@ namespace Game
         constexpr const TCHAR *kWastelandRenderScaleOption = TEXT("--wasteland-render-scale=");
         constexpr const TCHAR *kTerrainMipBiasOption = TEXT("--terrain-mip-bias=");
         constexpr const TCHAR *kTerrainAnisotropyOption = TEXT("--terrain-anisotropy=");
+        // --rtgi-bounce=on|off: RTGI の照り返し（光線が当たった面からの光）を切る（開発ビルドだけ）。off は当たりの色を 0 にし、
+        // 外れた光線の空の光は残す（RTGI を切ると IBL・DDGI へ替わるので、照り返しの量は入・切の差で測る。
+        // Scripts/Terrain/ReferenceCheck.py --bounce）。環境変数 NORVES_RTGI_BOUNCE で描画側（LightingPass）へ渡す
+        constexpr const TCHAR *kRTGIBounceOption = TEXT("--rtgi-bounce=");
         // --taa-current-weight=<0.01〜1>・--taa-clip-gamma=<0.25〜8>・--taa-sharpen=<0〜1>: TAA の現在の色の割合・履歴をクリップする箱の
         // 半幅・書き戻しのシャープ化の強さ（開発ビルドだけ。遠景のエイリアスの撮り比べ。環境変数 NORVES_TAA_CURRENT_WEIGHT・
         // NORVES_TAA_CLIP_GAMMA・NORVES_TAA_SHARPEN で描画側へ渡す。Rendering/TemporalAAParamOverride.h）
@@ -1533,6 +1537,21 @@ namespace Game
                 _putenv_s("NORVES_TERRAIN_MAX_ANISOTROPY", anisotropyText);
 #else
                 LOG_WARNING("--terrain-anisotropy は開発ビルドだけで使えます。無視します");
+#endif
+                continue;
+            }
+            if (TryStripPrefix(args[i], kRTGIBounceOption, sceneValue))
+            {
+#if NORVES_BUILD_DEVELOPMENT
+                // RTGI が最初に定数を作る前に環境変数へ渡す
+                if (sceneValue != TEXT("on") && sceneValue != TEXT("off"))
+                {
+                    LOG_ERROR("--rtgi-bounce は on か off で指定してください");
+                    return false;
+                }
+                _putenv_s("NORVES_RTGI_BOUNCE", sceneValue == TEXT("off") ? "0" : "1");
+#else
+                LOG_WARNING("--rtgi-bounce は開発ビルドだけで使えます。無視します");
 #endif
                 continue;
             }

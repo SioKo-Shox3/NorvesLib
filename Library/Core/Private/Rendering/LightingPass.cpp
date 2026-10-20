@@ -18,6 +18,8 @@
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
 #include "Rendering/VirtualShadowMapPass.h"
 #include "Rendering/VirtualShadowMapSample.h"
+#include "Rendering/RenderResources.h"
+#include "Rendering/TerrainBlendShading.h"
 #include "RHI/IDevice.h"
 #include "RHI/ICommandList.h"
 #include "RHI/IDescriptorSet.h"
@@ -30,6 +32,7 @@
 // HDR環境マップロード用
 #include "stb_image.h"
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <algorithm>
 #include <exception>
@@ -815,8 +818,17 @@ namespace NorvesLib::Core::Rendering
         uint32_t sampleState[4] = {};
         /// xyz=履歴を書いた前フレームのカメラ位置、w=履歴に掛ける露出の比（今のフレーム/履歴）。
         float previousCameraPosition[4] = {};
-        /// x=静的HDR環境の放射輝度の上限（倍率を掛ける前。0は上限なし）。
+        /// x=静的HDR環境の放射輝度の上限（倍率を掛ける前。0は上限なし）、y=当たりの色に掛ける倍率
+        /// （1。開発ビルドの --rtgi-bounce=off は 0 で、照り返しだけを切り空から直接届く光を残す）。
         float environmentParameters[4] = {};
+        /// 地形の当たりの色（RayTracingTerrainBlendSnapshot）。terrainMask = 地図の外縁の X・Z の最小・X・Z の広さの逆数
+        /// （z が 0 なら地図なし）、terrainMaskMix = 礫を土へ回す割合・外縁の帯の幅（m）・アルベドを sRGB から戻すビット
+        /// （TerrainBlendShading.h の砂 4・土 8・岩肌 16）・有効（1/0）、terrainSlope = 土・岩肌へ移る傾斜の始まり・終わり
+        /// （ラジアン）、terrainHeight = 土へ寄せる高さの始まり・終わり（m）・寄せの最大（ラジアン）・未使用。
+        float terrainMask[4] = {};
+        float terrainMaskMix[4] = {};
+        float terrainSlope[4] = {};
+        float terrainHeight[4] = {};
     };
 
     struct RTGIInstanceData
@@ -830,7 +842,8 @@ namespace NorvesLib::Core::Rendering
         uint32_t IndexCount = 0u;
         uint32_t CustomIndex = UINT32_MAX;
         float Transform[12] = {};
-        /// x=光線に見せる形のずれの上限（世界の長さ、RayTracingSceneInstanceSnapshot::RayProxyErrorMeters）。yzw は未使用
+        /// x=光線に見せる形のずれの上限（世界の長さ、RayTracingSceneInstanceSnapshot::RayProxyErrorMeters）、
+        /// y=地形の 3 層の混ぜ合わせの材質（1/0。当たりの色を地形の値から決める）。zw は未使用
         float RayProxy[4] = {};
     };
 
@@ -847,7 +860,7 @@ namespace NorvesLib::Core::Rendering
         uint32_t Reserved = 0u;
     };
 
-    static_assert(sizeof(RTGIComputeParameters) == 176u);
+    static_assert(sizeof(RTGIComputeParameters) == 240u);
     static_assert(sizeof(RTGIInstanceData) == 128u);
     static_assert(sizeof(RTGIEmitterEntry) == 16u);
 
@@ -1152,6 +1165,7 @@ namespace NorvesLib::Core::Rendering
             }
             bValidValues = bValidValues && IsFiniteNonNegativeRTGI(snapshot.RayProxyErrorMeters);
             instanceData.RayProxy[0] = snapshot.RayProxyErrorMeters;
+            instanceData.RayProxy[1] = snapshot.bTerrainBlend ? 1.0f : 0.0f;
             if (!bValidValues)
             {
                 return false;
@@ -1235,6 +1249,102 @@ namespace NorvesLib::Core::Rendering
         return true;
     }
 
+    /**
+     * @brief RTGI の当たりの色に掛ける倍率（1。開発ビルドで環境変数 NORVES_RTGI_BOUNCE が 0 なら 0）
+     *
+     * Game の --rtgi-bounce=off が環境変数へ渡す。当たりの色を 0 にして照り返し（当たった面からの光）だけを切り、
+     * 外れた光線の空の光は残す（RTGI を切ると IBL・DDGI へ切り替わるので、照り返しの量はこの入・切の差で測る）。
+     * プロセスの間は変わらないので、最初の 1 回だけ読む。
+     */
+    static float ResolveRTGIBounceScale()
+    {
+#if NORVES_BUILD_DEVELOPMENT
+        static const float scale = []
+        {
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4996)
+#endif
+            const char* value = std::getenv("NORVES_RTGI_BOUNCE");
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
+            const bool bOff = value != nullptr && value[0] == '0' && value[1] == '\0';
+            if (bOff)
+            {
+                LOG_INFO("RTGI_BOUNCE off source=env");
+            }
+            return bOff ? 0.0f : 1.0f;
+        }();
+        return scale;
+#else
+        return 1.0f;
+#endif
+    }
+
+    /**
+     * @brief 地形の当たりの色の値（RTGIComputeParameters の terrain*）と、束ねるテクスチャ（地図・砂・土・岩肌）を求める
+     *
+     * 3 層のアルベドがすべて引けたときだけ有効にする。地図が引けなければ傾斜の式だけで混ぜる。
+     * 引けない枠は fallback を束ねる（シェーダーは無効の印で読まない）。
+     */
+    static void ResolveRTGITerrainBlend(const RayTracingTerrainBlendSnapshot& terrain,
+                                        const TextureResources* textures,
+                                        const RHI::TexturePtr& fallback,
+                                        RTGIComputeParameters& parameters,
+                                        RHI::TexturePtr (&outTextures)[4])
+    {
+        for (RHI::TexturePtr& texture : outTextures)
+        {
+            texture = fallback;
+        }
+        if (!terrain.bValid || textures == nullptr)
+        {
+            return;
+        }
+        const RHI::TexturePtr sand = textures->GetRHITexturePtr(terrain.SandAlbedoTexture);
+        const RHI::TexturePtr dirt = textures->GetRHITexturePtr(terrain.DirtAlbedoTexture);
+        const RHI::TexturePtr rock = textures->GetRHITexturePtr(terrain.RockAlbedoTexture);
+        if (!sand || !dirt || !rock)
+        {
+            return;
+        }
+        outTextures[1] = sand;
+        outTextures[2] = dirt;
+        outTextures[3] = rock;
+        constexpr float DegreesToRadians = 3.14159265358979f / 180.0f;
+        const RHI::TexturePtr mask = terrain.SurfaceMaskTexture.IsValid()
+                                         ? textures->GetRHITexturePtr(terrain.SurfaceMaskTexture)
+                                         : RHI::TexturePtr{};
+        const float maskWidth = terrain.SurfaceMaskMaxXZ[0] - terrain.SurfaceMaskMinXZ[0];
+        const float maskDepth = terrain.SurfaceMaskMaxXZ[1] - terrain.SurfaceMaskMinXZ[1];
+        if (mask && maskWidth > 1.0e-3f && maskDepth > 1.0e-3f)
+        {
+            outTextures[0] = mask;
+            parameters.terrainMask[0] = terrain.SurfaceMaskMinXZ[0];
+            parameters.terrainMask[1] = terrain.SurfaceMaskMinXZ[1];
+            parameters.terrainMask[2] = 1.0f / maskWidth;
+            parameters.terrainMask[3] = 1.0f / maskDepth;
+        }
+        parameters.terrainMaskMix[0] = std::clamp(terrain.SurfaceMaskGravelToDirt, 0.0f, 1.0f);
+        parameters.terrainMaskMix[1] = std::max(terrain.SurfaceMaskEdgeFadeMeters, 1.0e-3f);
+        parameters.terrainMaskMix[2] =
+            static_cast<float>(ResolveTerrainAlbedoDecodeBits(sand.get(), dirt.get(), rock.get()));
+        parameters.terrainMaskMix[3] = 1.0f;
+        // smoothstep の両端が同じだと未定義なので、終わりを始まりより少し先へずらす（PackTerrainBlendParams と同じ）
+        const auto range = [](float start, float end, float* outPair)
+        {
+            outPair[0] = start;
+            outPair[1] = end > start + 1.0e-4f ? end : start + 1.0e-4f;
+        };
+        range(terrain.DirtSlopeDegrees[0] * DegreesToRadians, terrain.DirtSlopeDegrees[1] * DegreesToRadians,
+              &parameters.terrainSlope[0]);
+        range(terrain.RockSlopeDegrees[0] * DegreesToRadians, terrain.RockSlopeDegrees[1] * DegreesToRadians,
+              &parameters.terrainSlope[2]);
+        range(terrain.DirtHeightRange[0], terrain.DirtHeightRange[1], &parameters.terrainHeight[0]);
+        parameters.terrainHeight[2] = terrain.DirtHeightBiasDegrees * DegreesToRadians;
+    }
+
     static RHI::DescriptorSetDesc CreateRTGIComputeDescriptorSetDesc()
     {
         RHI::DescriptorSetDesc descriptorSetDesc;
@@ -1263,8 +1373,13 @@ namespace NorvesLib::Core::Rendering
             RHI::ResourceBindType::RWTexture,
             RHI::ResourceBindType::RWTexture,
             RHI::ResourceBindType::StructuredBuffer,
-            RHI::ResourceBindType::RWBuffer};
-        for (uint32_t bindingIndex = 0u; bindingIndex < 25u; ++bindingIndex)
+            RHI::ResourceBindType::RWBuffer,
+            // 25〜28: 地形の当たりの色（地表の分類の地図、砂・土・岩肌のアルベド）
+            RHI::ResourceBindType::CombinedImageSampler,
+            RHI::ResourceBindType::CombinedImageSampler,
+            RHI::ResourceBindType::CombinedImageSampler,
+            RHI::ResourceBindType::CombinedImageSampler};
+        for (uint32_t bindingIndex = 0u; bindingIndex < 29u; ++bindingIndex)
         {
             RHI::DescriptorBinding binding;
             binding.binding = bindingIndex;
@@ -3913,6 +4028,10 @@ namespace NorvesLib::Core::Rendering
                     context.PhysicalLighting.StaticEnvironmentMaxRadiance > 0.0f
                 ? context.PhysicalLighting.StaticEnvironmentMaxRadiance
                 : 0.0f;
+        parameters.environmentParameters[1] = ResolveRTGIBounceScale();
+        RHI::TexturePtr terrainTextures[4];
+        ResolveRTGITerrainBlend(context.SnapshotRayTracingScene->TerrainBlend, context.Resources.Textures,
+                                m_DefaultBlackTexture, parameters, terrainTextures);
         parameters.temporalState[0] = bHistoryReprojectionValid ? 1u : 0u;
         parameters.temporalState[1] = bLightRevisionMismatch ? 1u : 0u;
         parameters.temporalState[2] = lightWeightLimitedFrames > 0u ? 1u : 0u;
@@ -4083,6 +4202,11 @@ namespace NorvesLib::Core::Rendering
         computeDescriptorSet->BindStorageTexture(20u, writeHistory.Depth);
         computeDescriptorSet->BindStorageTexture(21u, writeHistory.Normal);
         computeDescriptorSet->BindStorageTexture(22u, writeHistory.Material);
+        for (uint32_t index = 0u; index < 4u; ++index)
+        {
+            computeDescriptorSet->BindTexture(25u + index, terrainTextures[index]);
+            computeDescriptorSet->BindSampler(25u + index, m_GBufferSampler);
+        }
         computeDescriptorSet->Update();
 
         const uint32_t groupCountX =

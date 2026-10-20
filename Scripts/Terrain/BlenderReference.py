@@ -69,7 +69,8 @@
 #       太陽の放射輝度）だけで決まっていた。ライトツリーは当たりの点の法線で太陽の選ばれやすさを見積もり、それが 0 に近い点では
 #       BSDF の標本の重みがほぼ 1 になるので、切り出しではライトツリーを切る（光の選び方だけの違いで、期待値は変わらない）。
 #       種ごとに、同じ枠を跳ね返り 0（直接光だけ）でも描き、太陽の組・空の組を太陽の直接光（sun_direct）・空の直接光
-#       （sky_direct）として書く（間接光 indirect は本描画の Diffuse/Glossy Indirect）。種は 1 本ずつ別の起動で描き、
+#       （sky_direct）として書く（間接光 indirect は本描画の Diffuse/Glossy Indirect。その拡散の分だけを indirect_diffuse
+#       にも書く。エンジンの RTGI の照り返しは拡散だけなので、ReferenceCheck.py --bounce はこちらと比べる）。種は 1 本ずつ別の起動で描き、
 #       1 本 CROP_MAX_TOTAL_SECONDS（読み込みと最初の 1 回の描画を除く）で止める: A は時間の上限まで描いて途中の和
 #       （cycles.part_a.*）を書き、B は A と同じサンプル数まで描いて A と合わせ、収束を測って --lit と同じ出力を書く。
 #       最初の 1 回の描画は BVH の構築を含み、同じ枠でも 500〜1000 秒と揺れるので、上限はその後のサンプルの時間に掛ける。
@@ -411,6 +412,10 @@ def reusable_part_a(part_a):
     if record.get("seed") != "a" or sha256_file(npz_path) != record.get("part_sha256"):
         print("BLENDER_REFERENCE 種 A の途中の和が記録と合わないので A から描く", flush=True)
         return False
+    with np.load(npz_path) as data:
+        if "indirect_diffuse" not in data.files:
+            print("BLENDER_REFERENCE 種 A の途中の和に間接光の拡散の分が無い（前の版の A）ので A から描く", flush=True)
+            return False
     return True
 
 
@@ -555,7 +560,7 @@ def run_gray(args, lit=False):
                            "direct_seed_offset": CROP_DIRECT_SEED_OFFSET}
             job["max_seconds"] = CROP_MAX_TOTAL_SECONDS
         parts = ("hdr", "seed_a", "seed_b", "sun", "sky", "direct", "indirect") + \
-            (("sun_direct", "sky_direct") if crop_regions else ())
+            (("sun_direct", "sky_direct", "indirect_diffuse") if crop_regions else ())
         aux_outputs = [f"{prefix}.aux.exr"] + \
             [f"{prefix}.aux.{part}.pfm" for part in ("visibility", "n_dot_l", "normal", "alpha")]
         job["required_outputs"] = [f"{prefix}.cycles.exr", f"{prefix}.cycles.json"] + \
@@ -1786,7 +1791,8 @@ def render_gray_job(job):
     # 3. 本描画を CHUNK_SPP ずつ種を変えて重ね、偶数番目を A・奇数番目を B に足す（切り出しでは種ごとに直接光だけの描画も足す）。
     # 切り出しは 1 回の起動で 1 本（crop の seed）だけを描く: A は時間の上限まで描いて途中の和を書き、B は A と同じサンプル数まで
     # 描いて A の和と合わせる（収束は合わせた後に測る）
-    groups = ("combined", "sun", "sky", "direct", "indirect") + (("sun_direct", "sky_direct") if crop else ())
+    groups = ("combined", "sun", "sky", "direct", "indirect") + \
+        (("sun_direct", "sky_direct", "indirect_diffuse") if crop else ())
     sums = {seed: {g: np.zeros((height, width, 3), dtype=np.float64) for g in groups} for seed in ("a", "b")}
     renders = {"a": 0, "b": 0}
     seed_order = (crop["seed"],) if crop else ("a", "b")
@@ -1823,6 +1829,8 @@ def render_gray_job(job):
                           parts["Glossy Direct"] * parts["Glossy Color"],
                 "indirect": parts["Diffuse Indirect"] * parts["Diffuse Color"] +
                             parts["Glossy Indirect"] * parts["Glossy Color"],
+                # 間接光のうち拡散の分（エンジンの RTGI の照り返しと同じ物。切り出しだけが書く）
+                "indirect_diffuse": parts["Diffuse Indirect"] * parts["Diffuse Color"],
             }
             if crop:
                 # 枠が名指しの領域を覆うこと（描いた画素の被覆）
@@ -1964,7 +1972,7 @@ def render_gray_job(job):
                    ".cycles.seed_a.pfm", ".cycles.seed_b.pfm", ".cycles.sun.pfm", ".cycles.sky.pfm",
                    ".cycles.direct.pfm", ".cycles.indirect.pfm", ".aux.visibility.pfm", ".aux.n_dot_l.pfm",
                    ".aux.normal.pfm", ".aux.alpha.pfm") + \
-            ((".cycles.sun_direct.pfm", ".cycles.sky_direct.pfm") if crop else ()):
+            ((".cycles.sun_direct.pfm", ".cycles.sky_direct.pfm", ".cycles.indirect_diffuse.pfm") if crop else ()):
         outputs[os.path.basename(prefix) + suffix] = sha256_file(prefix + suffix)
     meta = {
         "view": job["view"],

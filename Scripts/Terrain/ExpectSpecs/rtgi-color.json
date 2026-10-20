@@ -1,0 +1,43 @@
+{
+  "description": "SCN-WL-RTGI-COLOR: RTGI の照り返しの色が地形の材質を反映することを、実材質の ref_cliff_01 の照り返しの入・切の差（エンジンの照り返し）と Cycles の間接光（拡散の分。ReferenceCheck.py --bounce）で比べる。影の崖・影の中の地面で、色度（r・g）の差が 0.02 以内、明るさの比が 1 ± 0.15。",
+  "rows": [
+    {
+      "mode": "bounce",
+      "view": "ref_cliff_01",
+      "region": "shadow_cliff",
+      "component": "chroma",
+      "quantity": "chroma_diff",
+      "max": 0.02,
+      "note": "日なたの砂の地面から崖の影の面へ入る暖かい照り返し"
+    },
+    {
+      "mode": "bounce",
+      "view": "ref_cliff_01",
+      "region": "shadow_cliff",
+      "component": "indirect",
+      "quantity": "ratio",
+      "min": 0.85,
+      "max": 1.15,
+      "note": "照り返しの明るさ（エンジン ÷ Cycles）"
+    },
+    {
+      "mode": "bounce",
+      "view": "ref_cliff_01",
+      "region": "shadow_ground",
+      "component": "chroma",
+      "quantity": "chroma_diff",
+      "max": 0.02,
+      "note": "日の当たる崖と地面から谷の底の影へ入る照り返し"
+    },
+    {
+      "mode": "bounce",
+      "view": "ref_cliff_01",
+      "region": "shadow_ground",
+      "component": "indirect",
+      "quantity": "ratio",
+      "min": 0.85,
+      "max": 1.15,
+      "note": "照り返しの明るさ（エンジン ÷ Cycles）"
+    }
+  ]
+}

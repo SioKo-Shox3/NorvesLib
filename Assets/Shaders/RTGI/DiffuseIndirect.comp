@@ -19,7 +19,13 @@ layout(set = 0, binding = 1, std140) uniform RTGIComputeParameters
     // w=当たりの統計（開発ビルドだけ。0は数えない。それ以外はMegaGeometryの先頭のcustom index + 1）
     uvec4 sampleState;
     vec4 previousCameraPosition; // xyz=履歴を書いた前フレームのカメラ位置、w=履歴に掛ける露出の比
-    vec4 environmentParameters; // x=静的HDR環境の放射輝度の上限（倍率を掛ける前。0は上限なし）
+    // x=静的HDR環境の放射輝度の上限（倍率を掛ける前。0は上限なし）、y=当たりの色に掛ける倍率（照り返しを切ると 0）
+    vec4 environmentParameters;
+    // 地形の当たりの色（LightingPass.cpp の RTGIComputeParameters と同じ並び）
+    vec4 terrainMask;    // x,y=地表の分類の地図の外縁の X・Z の最小、z,w=X・Z の広さの逆数（z が 0 なら地図なし）
+    vec4 terrainMaskMix; // x=礫を土へ回す割合、y=外縁の帯の幅（m）、z=アルベドを sRGB から戻すビット、w=有効（1/0）
+    vec4 terrainSlope;   // x,y=土へ移る傾斜の始まり・終わり、z,w=岩肌へ移る傾斜の始まり・終わり（ラジアン）
+    vec4 terrainHeight;  // x,y=土へ寄せる高さの始まり・終わり（m）、z=寄せの最大（ラジアン）
 } parameters;
 
 layout(set = 0, binding = 2) uniform sampler2D gbufferNormal;
@@ -84,6 +90,13 @@ layout(set = 0, binding = 24, std430) buffer RTGIHitStats
 {
     uint values[4];
 } hitStats;
+
+// 地形の当たりの色: 地表の分類の地図（R = 露岩・G = 崖錐・B = 地表（細粒）・A = 地表（礫））と砂・土・岩肌のアルベド。
+// アルベドは最も粗いミップ（素材の平均の色）だけを読む
+layout(set = 0, binding = 25) uniform sampler2D terrainSurfaceMask;
+layout(set = 0, binding = 26) uniform sampler2D terrainSandAlbedo;
+layout(set = 0, binding = 27) uniform sampler2D terrainDirtAlbedo;
+layout(set = 0, binding = 28) uniform sampler2D terrainRockAlbedo;
 
 shared uint sharedHitStats[3];
 
@@ -875,6 +888,105 @@ void StoreTemporalSample(uvec2 pixel,
     imageStore(historyMaterialOutput, ivec2(pixel), safeMaterial);
 }
 
+// 地形の当たりの色: ラスタの 3 層の混ぜ合わせ（Common/TerrainLayerBlend.glsl）を、当たりの点の分類の重みと各層の
+// 素材の平均の色で近似する。斑・凹凸の混ぜ・揺らぎ・地層は平均（被覆の割合）へ寄せる。値は TerrainLayerBlend.glsl と同じ
+const float RTGI_TERRAIN_SAND_FLOOR = 0.02; // TERRAIN_SURFACE_MASK_SAND_FLOOR
+// 細粒の地表のうち礫の舗石（土の枠）になる割合（TERRAIN_PAVEMENT_* の値ノイズの和が 0.56 ± 0.05 を越える平均の割合）
+const float RTGI_TERRAIN_FINE_PAVEMENT_COVERAGE = 0.34;
+const float RTGI_TERRAIN_CRUST_COVERAGE = 0.3; // TERRAIN_CRUST_MEAN_COVERAGE
+const uint RTGI_TERRAIN_SAND_ALBEDO_SRGB_DECODE = 4u;
+const uint RTGI_TERRAIN_DIRT_ALBEDO_SRGB_DECODE = 8u;
+const uint RTGI_TERRAIN_ROCK_ALBEDO_SRGB_DECODE = 16u;
+
+vec3 TerrainBounceSrgbToLinear(vec3 encoded)
+{
+    vec3 c = clamp(encoded, vec3(0.0), vec3(1.0));
+    return mix(pow((c + 0.055) / 1.055, vec3(2.4)), c / 12.92, lessThanEqual(c, vec3(0.04045)));
+}
+
+bool IsTerrainAtlasPair(sampler2D albedo)
+{
+    ivec2 size = textureSize(albedo, 0);
+    return size.x == size.y * 2 && textureQueryLevels(albedo) >= 2;
+}
+
+// 素材の平均の色（最も粗いミップ）。横 2 枚の並びなら atlasHalf の枠（0 = 左・1 = 右）の平均（1 つ手前の 2×1 のミップ）
+vec3 TerrainLayerMeanAlbedo(sampler2D albedo, int atlasHalf, bool bDecode)
+{
+    int levels = textureQueryLevels(albedo);
+    vec3 color = atlasHalf >= 0 && IsTerrainAtlasPair(albedo)
+        ? texelFetch(albedo, ivec2(atlasHalf, 0), levels - 2).rgb
+        : texelFetch(albedo, ivec2(0), max(levels - 1, 0)).rgb;
+    return bDecode ? TerrainBounceSrgbToLinear(color) : color;
+}
+
+// 当たりの点の砂・土・岩肌の重み（合計 1）。sandShare は 1 層目のうち地図の砂（砂の枠の右）の割合
+vec3 TerrainBounceWeights(vec3 position, vec3 normal, out float sandShare)
+{
+    sandShare = 0.0;
+    // 傾斜の式（地図の外と外縁の帯。境目の揺らぎのノイズは平均の 0）
+    float slope = acos(clamp(normal.y, -1.0, 1.0));
+    float heightBias = smoothstep(parameters.terrainHeight.x, parameters.terrainHeight.y, position.y) *
+                       parameters.terrainHeight.z;
+    float dirt = smoothstep(parameters.terrainSlope.x, parameters.terrainSlope.y, slope + heightBias);
+    float rock = smoothstep(parameters.terrainSlope.z, parameters.terrainSlope.w, slope);
+    vec3 slopeWeights = vec3((1.0 - dirt) * (1.0 - rock), dirt * (1.0 - rock), rock);
+    vec2 invSize = parameters.terrainMask.zw;
+    if (invSize.x <= 0.0 || invSize.y <= 0.0)
+    {
+        return slopeWeights;
+    }
+    vec2 uv = (position.xz - parameters.terrainMask.xy) * invSize;
+    vec2 edgeMeters = min(uv, vec2(1.0) - uv) / invSize;
+    float coverage = clamp(min(edgeMeters.x, edgeMeters.y) / max(parameters.terrainMaskMix.y, 1.0e-3), 0.0, 1.0);
+    if (coverage <= 0.0)
+    {
+        return slopeWeights;
+    }
+    vec4 classes = textureLod(terrainSurfaceMask, uv, 0.0);
+    float total = classes.r + classes.g + classes.b + classes.a;
+    float sand = max(1.0 - total - RTGI_TERRAIN_SAND_FLOOR, 0.0);
+    if (total + sand < 1.0e-3)
+    {
+        return slopeWeights;
+    }
+    // 細粒と礫を、舗石の斑の平均の割合で砂の枠（土）と土の枠（礫の舗石）へ分ける
+    float gravelToDirt = parameters.terrainMaskMix.x;
+    float soil = classes.b * (1.0 - RTGI_TERRAIN_FINE_PAVEMENT_COVERAGE) + classes.a * (1.0 - gravelToDirt);
+    vec3 maskWeights = vec3(soil + sand,
+                            classes.g + classes.b * RTGI_TERRAIN_FINE_PAVEMENT_COVERAGE + classes.a * gravelToDirt,
+                            classes.r) / (total + sand);
+    vec3 weights = mix(slopeWeights, maskWeights, coverage);
+    float sandWeight = soil + sand > 1.0e-6 ? maskWeights.x * (sand / (soil + sand)) * coverage : 0.0;
+    sandShare = weights.x > 1.0e-4 ? clamp(sandWeight / weights.x, 0.0, 1.0) : 0.0;
+    return weights;
+}
+
+// 地形の当たりの反射率（0〜1）
+vec3 TerrainBounceAlbedo(vec3 position, vec3 normal)
+{
+    uint decodeBits = uint(parameters.terrainMaskMix.z + 0.5);
+    bool bSandDecode = (decodeBits & RTGI_TERRAIN_SAND_ALBEDO_SRGB_DECODE) != 0u;
+    bool bDirtDecode = (decodeBits & RTGI_TERRAIN_DIRT_ALBEDO_SRGB_DECODE) != 0u;
+    float sandShare;
+    vec3 weights = TerrainBounceWeights(position, normal, sandShare);
+    // 1 層目: 砂の枠の左（赤茶の土）に、土の枠の右（皮膜）を平均の被覆で、砂の枠の右（地図の砂）を地図の割合で混ぜる
+    vec3 firstLayer = TerrainLayerMeanAlbedo(terrainSandAlbedo, 0, bSandDecode);
+    if (IsTerrainAtlasPair(terrainDirtAlbedo))
+    {
+        firstLayer = mix(firstLayer, TerrainLayerMeanAlbedo(terrainDirtAlbedo, 1, bDirtDecode),
+                         RTGI_TERRAIN_CRUST_COVERAGE);
+    }
+    if (IsTerrainAtlasPair(terrainSandAlbedo))
+    {
+        firstLayer = mix(firstLayer, TerrainLayerMeanAlbedo(terrainSandAlbedo, 1, bSandDecode), sandShare);
+    }
+    vec3 dirt = TerrainLayerMeanAlbedo(terrainDirtAlbedo, 0, bDirtDecode);
+    vec3 rock = TerrainLayerMeanAlbedo(terrainRockAlbedo, -1,
+                                       (decodeBits & RTGI_TERRAIN_ROCK_ALBEDO_SRGB_DECODE) != 0u);
+    return clamp(firstLayer * weights.x + dirt * weights.y + rock * weights.z, vec3(0.0), vec3(1.0));
+}
+
 // 拡散の散乱光線を1本たどり、始点へ入る放射輝度を返す。外れれば環境光、当たれば命中面の点・spot・
 // 方向光と発光三角形の直接光（コサイン標本が発光面に当たっても発光は加えない）。命中面の位置・光線側の
 // 法線・反射率を返し、呼び側がそこからさらに散乱をたどれるようにする。hitCustomIndexは当たった
@@ -963,6 +1075,13 @@ vec3 TraceDiffuseRay(vec3 rayOrigin,
     hitPosition = rayOrigin + rayDirection * hitDistance;
     hitNormal = triangleNormal;
     hitBaseColor = hitInstance.baseColor.rgb;
+    // 地形の 3 層の混ぜ合わせの材質は、当たりの点の分類と層の平均の色を instance の色に掛ける
+    if (hitInstance.rayProxy.y > 0.5 && parameters.terrainMaskMix.w > 0.5)
+    {
+        hitBaseColor *= TerrainBounceAlbedo(hitPosition, triangleNormal);
+    }
+    // 照り返しを切る撮影（--rtgi-bounce=off）は当たりの色を 0 にする（外れた光線の空の光だけが残る）
+    hitBaseColor *= parameters.environmentParameters.y;
     return LimitRayRadiance(ComputeDirectRadiance(hitPosition, hitNormal, hitBaseColor) +
                            hitBaseColor * SampleEmitterIrradiance(hitPosition, hitNormal, pixel, emitterDimension));
 }

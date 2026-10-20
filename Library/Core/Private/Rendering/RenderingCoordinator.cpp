@@ -1624,6 +1624,29 @@ namespace NorvesLib::Core::Rendering
             instance.Material.EmissiveColor[channel] = material.EmissiveColor[channel];
         }
         instance.Material.EmissiveLuminanceNits = material.EmissiveLuminanceNits;
+        // 地形の 3 層の混ぜ合わせ: RTGI が当たりの点の分類と層の平均の色から当たりの色を決める（値はシーンで 1 組）
+        const MegaGeometry::MegaTerrainBlend& terrain = material.TerrainBlend;
+        if (terrain.bEnabled)
+        {
+            instance.bTerrainBlend = true;
+            RayTracingTerrainBlendSnapshot& snapshot = packet.RayTracingScene.TerrainBlend;
+            if (!snapshot.bValid)
+            {
+                snapshot.bValid = true;
+                snapshot.SandAlbedoTexture = material.AlbedoTexture;
+                snapshot.DirtAlbedoTexture = terrain.Dirt.AlbedoTexture;
+                snapshot.RockAlbedoTexture = terrain.Rock.AlbedoTexture;
+                snapshot.SurfaceMaskTexture = terrain.SurfaceMaskTexture;
+                std::memcpy(snapshot.SurfaceMaskMinXZ, terrain.SurfaceMaskMinXZ, sizeof(snapshot.SurfaceMaskMinXZ));
+                std::memcpy(snapshot.SurfaceMaskMaxXZ, terrain.SurfaceMaskMaxXZ, sizeof(snapshot.SurfaceMaskMaxXZ));
+                snapshot.SurfaceMaskGravelToDirt = terrain.SurfaceMaskGravelToDirt;
+                snapshot.SurfaceMaskEdgeFadeMeters = terrain.SurfaceMaskEdgeFadeMeters;
+                std::memcpy(snapshot.DirtSlopeDegrees, terrain.DirtSlopeDegrees, sizeof(snapshot.DirtSlopeDegrees));
+                std::memcpy(snapshot.RockSlopeDegrees, terrain.RockSlopeDegrees, sizeof(snapshot.RockSlopeDegrees));
+                std::memcpy(snapshot.DirtHeightRange, terrain.DirtHeightRange, sizeof(snapshot.DirtHeightRange));
+                snapshot.DirtHeightBiasDegrees = terrain.DirtHeightBiasDegrees;
+            }
+        }
         instance.Instance.customIndex = static_cast<uint32_t>(packet.RayTracingScene.Instances.size());
         instance.Instance.mask = entry.Mask;
         std::memcpy(instance.Instance.transform, entry.Transform, sizeof(entry.Transform));

@@ -118,12 +118,38 @@ namespace NorvesLib::Core::Rendering
          * RTGI は 1 次面から出す光線がこの高さより低い所で当てた面を、形のずれによる自分の面への当たりとして読み飛ばす。
          */
         float RayProxyErrorMeters = 0.0f;
+        /** @brief 地形の 3 層の混ぜ合わせの材質か。RTGI は当たりの色を RayTracingSceneSnapshot::TerrainBlend から決める */
+        bool bTerrainBlend = false;
+    };
+
+    /**
+     * @brief 光線の当たりで地形の色を決めるための、地形の 3 層の混ぜ合わせの値（MegaGeometry::MegaTerrainBlend の一部）
+     *
+     * RTGI は当たりの点の地表の分類の地図の重みと、3 層のアルベドの平均の色（最も粗いミップ）を混ぜて当たりの色にする。
+     * シーンに混ぜ合わせの材質が複数あるときは、最初に光線のシーンへ入った材質の値を使う。
+     */
+    struct RayTracingTerrainBlendSnapshot
+    {
+        bool bValid = false;
+        TextureHandle SandAlbedoTexture; ///< 1 層目（砂の枠。横 2 枚の並びなら左 = 土・右 = 地図の砂）
+        TextureHandle DirtAlbedoTexture; ///< 2 層目（土の枠。横 2 枚の並びなら左 = 土・右 = 皮膜）
+        TextureHandle RockAlbedoTexture; ///< 3 層目（岩肌）
+        TextureHandle SurfaceMaskTexture; ///< 地表の分類の地図（無効なら傾斜の式だけ）
+        float SurfaceMaskMinXZ[2] = {0.0f, 0.0f};
+        float SurfaceMaskMaxXZ[2] = {0.0f, 0.0f};
+        float SurfaceMaskGravelToDirt = 0.5f;
+        float SurfaceMaskEdgeFadeMeters = 32.0f;
+        float DirtSlopeDegrees[2] = {12.0f, 22.0f};
+        float RockSlopeDegrees[2] = {30.0f, 42.0f};
+        float DirtHeightRange[2] = {10.0f, 60.0f};
+        float DirtHeightBiasDegrees = 8.0f;
     };
 
     struct RayTracingSceneSnapshot
     {
         Container::VariableArray<RayTracingSceneInstanceSnapshot> Instances;
         RHI::AccelerationStructurePtr TopLevel;
+        RayTracingTerrainBlendSnapshot TerrainBlend;
 
         /**
          * @brief TLASと全インスタンスのray query入力が揃っているか判定
@@ -169,6 +195,7 @@ namespace NorvesLib::Core::Rendering
         {
             TopLevel.reset();
             Instances.clear();
+            TerrainBlend = RayTracingTerrainBlendSnapshot{};
         }
     };
 
