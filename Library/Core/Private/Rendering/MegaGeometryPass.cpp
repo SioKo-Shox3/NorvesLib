@@ -1738,8 +1738,8 @@ namespace NorvesLib::Core::Rendering
             }
             outRecord.bCaster = true;
             outRecord.bHasBounds = bHasShadowBounds;
-            // 地形は影の LOD を細かく選ぶ（MegaGeometryShadowFlagFineLod の理由を参照）
-            if (gpuData.Material.TerrainBlend.IsTerrainSurface())
+            // 影を詰める地形（荒野）は影の LOD を細かく選ぶ（MegaGeometryShadowFlagFineLod の理由を参照）
+            if (gpuData.Material.TerrainBlend.IsTightSunShadowSurface())
             {
                 ioEntry.Flags |= MegaGeometryShadowFlagFineLod;
             }

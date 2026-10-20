@@ -65,6 +65,8 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t TILE_FLAG_TERRAIN = 4u;
         /** @brief 地形の面（混ぜ合わせの有無に依らない。GBuffer の法線の A に地形の受け手を書く） */
         constexpr uint32_t TILE_FLAG_TERRAIN_SURFACE = 8u;
+        /** @brief 太陽の影を起伏に詰める地形の面（GBuffer の法線の A に 2 を書く。lighting.frag が法線の向きへずらさない） */
+        constexpr uint32_t TILE_FLAG_TERRAIN_TIGHT_SHADOW = 16u;
         /** @brief 地形の 2・3 層目のテクスチャの数（土・岩肌のアルベド・法線・ORM） */
         constexpr uint32_t TERRAIN_LAYER_TEXTURE_COUNT = 6;
         /** @brief 地表の分類の地図の、地形のテクスチャの並びでの添え字（2・3 層目の 6 枚の次） */
@@ -252,6 +254,8 @@ namespace NorvesLib::Core::Rendering
         bool bTerrainBlend = false;
         /** @brief 地形の面（MegaTerrainBlend::IsTerrainSurface）。混ぜ合わせの無い灰色の地形も GBuffer の法線の A に地形の受け手を書く */
         bool bTerrainSurface = false;
+        /** @brief 太陽の影を起伏に詰める地形の面（MegaTerrainBlend::IsTightSunShadowSurface） */
+        bool bTightSunShadow = false;
         RHI::TexturePtr TerrainTextures[VisibilityResolveGeometry::TERRAIN_TEXTURE_COUNT];
         float TerrainParams[VisibilityResolveGeometry::TERRAIN_PARAM_FLOATS] = {};
     };

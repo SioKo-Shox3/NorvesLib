@@ -148,6 +148,10 @@ namespace NorvesLib::Core::Rendering::VisibilityBuffer
         {
             entry.Header[0] |= MATERIAL_FLAG_TERRAIN_SURFACE;
         }
+        if (material.TerrainBlend.IsTightSunShadowSurface())
+        {
+            entry.Header[0] |= MATERIAL_FLAG_TERRAIN_TIGHT_SHADOW;
+        }
         if (material.TerrainBlend.bEnabled)
         {
             entry.Header[0] |= MATERIAL_FLAG_TERRAIN_BLEND;

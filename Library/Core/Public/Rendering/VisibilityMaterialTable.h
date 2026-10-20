@@ -53,6 +53,11 @@ namespace NorvesLib::Core::Rendering::VisibilityBuffer
      * （材質の解決が GBuffer の法線の A に地形の受け手を書く）。
      */
     constexpr uint32_t MATERIAL_FLAG_TERRAIN_SURFACE = 32u;
+    /**
+     * @brief 太陽の影を起伏に詰める地形の面（MegaTerrainBlend::IsTightSunShadowSurface）。詰めない地形の面と別の件にする
+     * （材質の解決が GBuffer の法線の A に 2 を書く）
+     */
+    constexpr uint32_t MATERIAL_FLAG_TERRAIN_TIGHT_SHADOW = 64u;
 
     /**
      * @brief 材質の表の 1 件（storage buffer の 1 要素。128 バイト）

@@ -50,11 +50,12 @@ const uint VSMS_PAGE_INDEX_MASK = (1u << 20) - 1u;
 const float VSMS_NORMAL_OFFSET_TEXELS = 1.5;
 const float VSMS_CONSTANT_BIAS_TEXELS = 1.5;
 // 地形の受け手の余裕のうち一定の分（使う段の texel の倍数）。影の描画は MegaGeometry の LOD を段の texel の誤差まで粗くする
-// （地形は VSM_MEGA_FINE_LOD_TEXELS の 1、ほかは VirtualShadowMapMegaCullDispatch::LodThresholdTexels の 4）ので、粗い段の面は主のカメラの細かい面より
+// （影を詰める地形〔荒野〕は VSM_MEGA_FINE_LOD_TEXELS の 1、ほかは VirtualShadowMapMegaCullDispatch::LodThresholdTexels の 4）ので、粗い段の面は主のカメラの細かい面より
 // 上に出ることがある。広く緩い地形の斜面に光が浅く当たると、余裕が 1.5 texel では粗い面が自分の受け手を遮り、斑状の影が散る
 // （荒野の崖錐。3 texel で消える）。地形の外の物体（段差・窓の奥の縁）は細かい接地の影を保つため 1.5 texel のまま
 const float VSMS_TERRAIN_CONSTANT_BIAS_TEXELS = 3.0;
-// 地形の受け手の法線の向きへのずらし（使う段の texel の倍数）。地形は光に浅く当たる広い面で、ほぼ上を向く法線の向きへ受け手を
+// 影を起伏に詰める地形の受け手（荒野。GBuffer の法線の A が 2）の法線の向きへのずらし（使う段の texel の倍数。ほかの地形の
+// 受け手は VSMS_NORMAL_OFFSET_TEXELS のまま）。地形は光に浅く当たる広い面で、ほぼ上を向く法線の向きへ受け手を
 // 持ち上げると、影の縁が地面の上で 1 ÷ tan(太陽の高さ) 倍だけ遮る物の側へ退く（荒野の太陽の高さ 10° で 1.5 texel が 1〜2 m）。
 // 地形の自分への影の斑は、一定の余裕（VSMS_TERRAIN_CONSTANT_BIAS_TEXELS）・傾きの余裕と、影の描画の地形の細かい LOD
 // （Common/VirtualShadowMapMegaCull.glsl の VSM_MEGA_FINE_LOD_TEXELS）が受け持つので、ずらさない

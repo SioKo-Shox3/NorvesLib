@@ -5974,3 +5974,17 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 影のクラスタ（`VSM_MEGA_CULL`）: 灰色の ref_cliff_01 は 9 千 → 1.8 万、既定の荒野の ref_cliff_01 は 1.7 万、どれも溢れ 0（容量 157 万）
 - Notes: 残りの漏れ（深度の比較の余裕の傾きの項）は、合否に届いたので触っていない。ラスタの MegaGeometry の経路（megageometry.frag。荒野は可視バッファの経路で描く）は、灰色の地形の受け手の印を書かない（混ぜ合わせの材質は今までどおり書く）。影の中の地面の太陽の比 1.78 の残りは照り返しの不足（SCN-WL-RTGI-COLOR）と縁の残りのずれ。灰色の撮影の経路が地形の扱いになったので、灰色で受け入れたほかの項目の値（地形どうしの接触影を切る分）が少し動きうる。新しい試験は足していない
 - Next: TASKS.md の次の未完の項目
+### SCN-WL-SHADOW-LEAK 差し戻しの直し（2026-10-20、run 20261020-191231 の反復 2）
+- 差し戻し 1（ほかのシーンの影を変えない）: 法線のずらし 0 と影の細かい LOD を、地形の面すべてから「影を起伏に詰める地形」（`MegaTerrainBlend::bTightSunShadow`・`IsTightSunShadowSurface()`）だけに絞った。荒野のモードの組み立てが荒野（`!m_bNightVillage`）のときだけ立て、テクスチャの地形・灰色の地形の両方へ渡す。夜の集落の地形は余裕 3 texel・ずらし 1.5 texel・LOD の許容 4 texel の元のまま
+- コード:
+  - 影の LOD: `MegaGeometryPass` は `IsTightSunShadowSurface()` のときだけ `MegaGeometryShadowFlagFineLod` を立てる
+  - ずらし: 材質の表は `MATERIAL_FLAG_TERRAIN_TIGHT_SHADOW`（64）で別の件にし、材質の解決は `TILE_FLAG_TERRAIN_TIGHT_SHADOW`（16）で GBuffer の法線の A に 2 を書く（法線は RGBA16F）。`lighting.frag` は A > 0.5 を地形の受け手（余裕 3 texel・接触影）、A > 1.5 を詰める受け手（ずらし `VSMS_TERRAIN_NORMAL_OFFSET_TEXELS` = 0）とする
+- 検証（`.harness/runs/20261020-191231/`。反復 1 の出力は `prev-iter1-verify-*.txt` に残した）:
+  - `verify-SCN-WL-SHADOW-LEAK-1.txt`: Debug の Game のビルド EXIT=0
+  - `verify-SCN-WL-SHADOW-LEAK-2〜4.txt`: 灰色の ref_cliff_01 の共通光・太陽だけ・空だけ、どれも result=pass・EXIT=0
+  - `verify-SCN-WL-SHADOW-LEAK-5.txt`: `--expect shadow-leak.json` result=pass（rows=2・failed=0）。影の中の地面の `visibility_mismatch` 0.0197・影の崖 0.0397（反復 1 と同じ値）。記録だけ: 太陽の比 影の中の地面 1.775・影の崖 1.201
+  - `verify-SCN-WL-SHADOW-LEAK-6.txt`: 回帰の after result=pass。before は反復 1 の最初に撮った変更前の状態のまま使った。night-village psnr 67.2（反復 1 は 61.0）、影のクラスタの記録は before と同じ並び（27832 ×4・27858・27703、溢れ 0）。変わった画素は 84（最大の差 40）で地平線近くの点だけ、建物の影の縁は動いていない（before｜after｜差を並べて開いて確かめた）。変更の無い mega-bananas も 479 画素変わる揺らぎがある（psnr 62.3）。rendering3dtest・sandbox は psnr=inf
+  - `aux-SCN-WL-SHADOW-LEAK-bananas-1m.txt`（差し戻し 2）: `--banana-count=1000000` の mega-bananas overview、result=pass。実配置 1,000,000（metrics の placed_bananas）、`VSM_MEGA_CULL instances=363445 clusters=763515 overflow=0`。バナナ・床は地形の面でないので細かい LOD の印は立たない
+  - `aux-SCN-WL-SHADOW-LEAK-default-2.txt`: 既定の荒野の ref_cliff_01 result=pass。影のクラスタ 15461・17112（反復 1 の既定と同じ）で、テクスチャの地形にも詰める印が効いている
+- Notes: ラスタの MegaGeometry の経路（megageometry.frag）は今までどおり地形の受け手に A = 1 を書き、詰める印は書かない（荒野は可視バッファの経路）。新しい試験は足していない
+- Next: TASKS.md の次の未完の項目

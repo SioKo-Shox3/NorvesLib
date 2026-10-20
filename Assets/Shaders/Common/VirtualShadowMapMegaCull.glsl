@@ -49,7 +49,7 @@ struct ShadowInstance
 };
 const uint SHADOW_FLAG_CASTER = 1u;
 const uint SHADOW_FLAG_BOUNDS = 2u;
-// 影の LOD を細かく選ぶ（地形。MegaGeometryPass.h の MegaGeometryShadowFlagFineLod）
+// 影の LOD を細かく選ぶ（影を起伏に詰める地形〔荒野〕。MegaGeometryPass.h の MegaGeometryShadowFlagFineLod）
 const uint SHADOW_FLAG_FINE_LOD = 4u;
 // SHADOW_FLAG_FINE_LOD のインスタンスの、太陽の段の LOD の誤差の許容（texel）。地形は自分の受け手を遮るので、粗い面が
 // 小さな起伏の頂を低くすると影が短くなる（荒野の ref_cliff_01 で太陽の高さ 10°）。許容 1 で主のカメラの細かい面と揃う

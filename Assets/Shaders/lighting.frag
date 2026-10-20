@@ -307,16 +307,16 @@ float CalculateRangeWindow(float distance, float range)
 #include "Common/VirtualShadowMapPoint.glsl"
 
 // 太陽の影の可視度。--shadow-method=vsm で VSM が使えるときは VSM、それ以外（R5 のハードシャドウの検証表示を含む）は CSM。
-// 地形の受け手（GBuffer の法線の A が 1）は VSM の深度の比較の余裕を広げ、法線の向きへずらさない
-// （VSMS_TERRAIN_CONSTANT_BIAS_TEXELS・VSMS_TERRAIN_NORMAL_OFFSET_TEXELS の理由を参照）。
-float CalculateSunShadow(vec3 worldPos, vec3 normal, bool bTerrainReceiver)
+// 地形の受け手（GBuffer の法線の A が 1 以上）は VSM の深度の比較の余裕を広げる（VSMS_TERRAIN_CONSTANT_BIAS_TEXELS の理由を参照）。
+// 影を起伏に詰める地形の受け手（A が 2。荒野）は、さらに法線の向きへずらさない（VSMS_TERRAIN_NORMAL_OFFSET_TEXELS の理由を参照）。
+float CalculateSunShadow(vec3 worldPos, vec3 normal, bool bTerrainReceiver, bool bTightTerrainShadow)
 {
     if (vsmBlock.vsm.control.x != 0u && !IsR5HardShadowValidationMode())
     {
         float texelMeters = 0.0;
         return VsmSampleSunShadowWithBias(worldPos, normal,
                                           bTerrainReceiver ? VSMS_TERRAIN_CONSTANT_BIAS_TEXELS : VSMS_CONSTANT_BIAS_TEXELS,
-                                          bTerrainReceiver ? VSMS_TERRAIN_NORMAL_OFFSET_TEXELS : VSMS_NORMAL_OFFSET_TEXELS,
+                                          bTightTerrainShadow ? VSMS_TERRAIN_NORMAL_OFFSET_TEXELS : VSMS_NORMAL_OFFSET_TEXELS,
                                           texelMeters);
     }
     return CalculateShadow(worldPos, normal);
@@ -1056,8 +1056,10 @@ void main()
     // データ展開
     vec3 albedo = albedoSample.rgb;
     vec3 N = normalize(normalSample.xyz);
-    // 地形の受け手（megageometry.frag・VisibilityResolve が法線の A に 1 を書く）。影の余裕と接触影の判定を変える
+    // 地形の受け手（megageometry.frag・VisibilityResolve が法線の A に 1 を書く）。影の余裕と接触影の判定を変える。
+    // A が 2 なら影を起伏に詰める地形の受け手（VisibilityResolve の VIS_TILE_FLAG_TERRAIN_TIGHT_SHADOW）
     bool bTerrainReceiver = normalSample.w > 0.5;
+    bool bTightTerrainShadow = normalSample.w > 1.5;
     float metallic = materialSample.r;
     float roughness = materialSample.g;
     float ao = materialSample.b;
@@ -1176,7 +1178,7 @@ void main()
         {
             shadow = params.shadowPadding0 != 0u
                          ? texture(rayTracingShadowVisibility, fragUV).r
-                         : CalculateSunShadow(worldPos, N, bTerrainReceiver);
+                         : CalculateSunShadow(worldPos, N, bTerrainReceiver, bTightTerrainShadow);
             // RT影は接地部も正しく遮るので、接触影はCSMの結果にだけ掛ける
             if (params.shadowPadding0 == 0u && shadow > 0.0 && NdotL > 0.0)
             {

@@ -342,6 +342,9 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         bool bEnabled = false;
         // 混ぜ合わせを使わない地形の面（灰色の地形など）でも、影と接触影で地形の受け手・投影物として扱う。bEnabled なら常に地形
         bool bTerrainSurface = false;
+        // 太陽の影を地形の起伏に詰める（地形の面のときだけ効く。荒野が立てる）。受け手を法線の向きへずらさず、影の描画の LOD を
+        // 細かく選ぶ（太陽が低いと、ずらしと粗い LOD が影の縁を遮る物の側へ退かせる）。偽なら地形の外と同じずらしと LOD のまま
+        bool bTightSunShadow = false;
         MegaTerrainLayer Dirt; // 2 層目（乾いた土）
         MegaTerrainLayer Rock; // 3 層目（岩肌）
 
@@ -385,9 +388,16 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
             return bEnabled || bTerrainSurface;
         }
 
+        /** @brief 地形の面で、太陽の影を起伏に詰めるか（bTightSunShadow）。ずらしを外し、影の LOD を細かくする */
+        bool IsTightSunShadowSurface() const
+        {
+            return IsTerrainSurface() && bTightSunShadow;
+        }
+
         bool operator==(const MegaTerrainBlend &other) const
         {
-            if (bEnabled != other.bEnabled || bTerrainSurface != other.bTerrainSurface)
+            if (bEnabled != other.bEnabled || bTerrainSurface != other.bTerrainSurface ||
+                bTightSunShadow != other.bTightSunShadow)
             {
                 return false;
             }

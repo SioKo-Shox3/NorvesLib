@@ -82,6 +82,8 @@ namespace Game::GameModes
         /// 灰色の地形の材質（--wasteland-gray-material）。立っていれば区画にテクスチャと混ぜ合わせを張らず、BaseColor を
         /// GrayAlbedo・粗さを GrayRoughness・金属度を 0 にする
         bool bGrayMaterial = false;
+        /// 太陽の影を地形の起伏に詰める（MegaTerrainBlend::bTightSunShadow）。荒野だけ立て、夜の集落の地形の影は変えない
+        bool bTightSunShadow = false;
         float GrayAlbedo = 0.0f;
         float GrayRoughness = 1.0f;
         uint32_t PendingTextureCount = 0;
@@ -796,6 +798,7 @@ namespace Game::GameModes
                 createInfo.Material.Metallic = 0.0f;
                 // 混ぜ合わせは張らないが、影と接触影は地形として扱う（色だけを替え、影の経路はテクスチャの地形と同じにする）
                 createInfo.Material.TerrainBlend.bTerrainSurface = true;
+                createInfo.Material.TerrainBlend.bTightSunShadow = assembly.bTightSunShadow;
             }
             else
             {
@@ -804,6 +807,7 @@ namespace Game::GameModes
                 createInfo.Material.ORMTexture = assembly.Material.ORMTexture;
                 createInfo.Material.bNormalTwoChannel = assembly.Material.bNormalTwoChannel;
                 createInfo.Material.TerrainBlend = assembly.TerrainBlend;
+                createInfo.Material.TerrainBlend.bTightSunShadow = assembly.bTightSunShadow;
                 for (uint32_t channel = 0; channel < 3; ++channel)
                 {
                     createInfo.Material.BaseColor[channel] = kTerrainAlbedoScale;
@@ -1482,6 +1486,7 @@ namespace Game::GameModes
             auto assembly = MakeShared<WastelandAssembly>();
             assembly->AssetSystem = assetSystem;
             assembly->TerrainExport.Directory = data.m_TerrainExportDir;
+            assembly->bTightSunShadow = !data.m_bNightVillage;
             // 灰色の材質の値は、共通の照明の Enter が読んだ CommonLight.json の gray_material から引く
             if (data.m_CommonLight.Opts.bGrayMaterial && data.m_CommonLight.bLoaded)
             {

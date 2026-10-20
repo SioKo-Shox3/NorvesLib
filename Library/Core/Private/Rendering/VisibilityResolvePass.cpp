@@ -168,6 +168,7 @@ namespace NorvesLib::Core::Rendering
                                 VisibilityResolveMaterial& material)
         {
             material.bTerrainSurface = terrain && terrain->IsTerrainSurface();
+            material.bTightSunShadow = terrain && terrain->IsTightSunShadowSurface();
             if (!terrain || !terrain->bEnabled)
             {
                 return;
@@ -833,6 +834,10 @@ namespace NorvesLib::Core::Rendering
             if (input.bTerrainSurface)
             {
                 bound.Flags |= VisibilityResolveGeometry::TILE_FLAG_TERRAIN_SURFACE;
+            }
+            if (input.bTightSunShadow)
+            {
+                bound.Flags |= VisibilityResolveGeometry::TILE_FLAG_TERRAIN_TIGHT_SHADOW;
             }
             if (input.bTerrainBlend)
             {

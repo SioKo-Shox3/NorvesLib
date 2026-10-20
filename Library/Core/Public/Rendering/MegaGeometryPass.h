@@ -32,7 +32,7 @@ namespace NorvesLib::Core::Rendering
     inline constexpr uint32_t MegaGeometryShadowFlagCaster = 1u;
     inline constexpr uint32_t MegaGeometryShadowFlagBounds = 2u;
     /**
-     * @brief 影の表の印: 影の LOD を細かく選ぶ（地形の面のメッシュ。MegaTerrainBlend::IsTerrainSurface）
+     * @brief 影の表の印: 影の LOD を細かく選ぶ（影を詰める地形の面のメッシュ。MegaTerrainBlend::IsTightSunShadowSurface）
      *
      * 地形は自分の面に自分の影を落とす受け手なので、影の LOD を粗くすると小さな起伏の頂が低くなり、影が短くなる。
      * この印のインスタンスだけ、許容を VirtualShadowMapMegaCullDispatch::LodThresholdTexels でなく
