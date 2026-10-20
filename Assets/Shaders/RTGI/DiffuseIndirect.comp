@@ -123,6 +123,8 @@ const float RTGI_PROXY_SELF_HIT_HEIGHT_PER_METER = 5e-4;
 // 読み飛ばすのは光線の形のずれがこれ以上の instance だけ。焼いた階層の常駐のフォールバックのように、ずれが地面の
 // 起伏の大きさになる物で自分の面への当たりが空を遮る。数 cm のずれ（ふつうのシーンの小物の影の段）は今までどおり当てる
 const float RTGI_PROXY_SELF_HIT_ERROR_MIN = 0.25;
+// 光線の形の内側から外へ出る当たりの読み飛ばす高さの上限に掛ける倍率（ProxySelfHitHeightLimit に対して）
+const float RTGI_PROXY_EXIT_HEIGHT_SCALE = 4.0;
 
 // 1 次面からの光線で、光線の形がラスタと違う instance（rayProxy.x が正）への当たりを読み飛ばす高さの上限
 float ProxySelfHitHeightLimit(float viewDistance)
@@ -1017,7 +1019,8 @@ vec3 TerrainBounceAlbedo(vec3 position, vec3 normal)
 // proxyHeightLimit が 0 以上のとき、光線は法線 surfaceNormal の 1 次面から RAY_ORIGIN_OFFSET だけずらした始点から
 // 出ている。当てた面の 1 次面からの高さが当てた instance の光線の形のずれ（rayProxy.x。proxyHeightLimit で頭打ち）
 // より低ければ、粗い光線の形がラスタの面の上に出ている所への自分の面への当たりとみなし、その先から引き直す。
-// 光線の形のずれが RTGI_PROXY_SELF_HIT_ERROR_MIN より小さい instance への当たりは読み飛ばさない。
+// 光線の形のずれが RTGI_PROXY_SELF_HIT_ERROR_MIN より小さい instance への当たりと、光線の形の面へ外から入る当たりは
+// 読み飛ばさない。
 const uint RTGI_NO_HIT = 0xFFFFFFFFu;
 
 vec3 TraceDiffuseRay(vec3 rayOrigin,
@@ -1082,9 +1085,15 @@ vec3 TraceDiffuseRay(vec3 rayOrigin,
             return vec3(0.0);
         }
         float hitHeight = RAY_ORIGIN_OFFSET + hitDistance * dot(rayDirection, surfaceNormal);
-        if (proxyHeightLimit < 0.0 || attempt == RTGI_PROXY_SELF_HIT_SKIPS ||
-            !(hitInstance.rayProxy.x >= RTGI_PROXY_SELF_HIT_ERROR_MIN &&
-              hitHeight < min(hitInstance.rayProxy.x, proxyHeightLimit)))
+        // 光線の形の面を 1 次面の側へ向けた法線に対して光線が入っていく当たり（起伏の上の点から隣の地面へ向かう光線）は、
+        // 細かい面でも隣の地面に当たるので読み飛ばさない。読み飛ばすのは光線の形の内側から外へ出る当たりだけ
+        vec3 proxyOutward = dot(triangleNormal, surfaceNormal) < 0.0 ? -triangleNormal : triangleNormal;
+        bool bEntersProxy = dot(rayDirection, proxyOutward) < 0.0;
+        // 内側から出る当たりは、1 次面が光線の形の下に沈んでいる所。当てると裏から当たった点の散乱が地面の下の空を拾うので、
+        // 近くの高さの上限を RTGI_PROXY_EXIT_HEIGHT_SCALE 倍まで広げて読み飛ばす
+        float skipHeight = min(hitInstance.rayProxy.x, proxyHeightLimit * RTGI_PROXY_EXIT_HEIGHT_SCALE);
+        if (proxyHeightLimit < 0.0 || attempt == RTGI_PROXY_SELF_HIT_SKIPS || bEntersProxy ||
+            !(hitInstance.rayProxy.x >= RTGI_PROXY_SELF_HIT_ERROR_MIN && hitHeight < skipHeight))
         {
             break;
         }

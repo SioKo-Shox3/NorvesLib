@@ -1,0 +1,34 @@
+{
+  "description": "SCN-WL-RTGI-AMOUNT: RTGI の照り返しの量が Cycles と合うことを、灰色の材質の ref_cliff_01 の照り返しの入・切の差（エンジンの照り返し）と灰色の参照 SCN-WLR-CYCLES-GRAY の間接光の拡散の分（indirect_diffuse。ReferenceCheck.py --bounce）で比べる。当たりの色が Cycles と同じ灰色なので、量の差は当たりの色の外の原因だけになる。影の崖・影の中の地面の明るさの比が 1 ± 0.15、影の中の地面の色度の差が 0.005 以内。日なたの地面・日なたの崖の比は記録だけにする。",
+  "rows": [
+    {
+      "mode": "bounce",
+      "view": "ref_cliff_01",
+      "region": "shadow_cliff",
+      "component": "indirect",
+      "quantity": "ratio",
+      "min": 0.85,
+      "max": 1.15,
+      "note": "日なたの地面から崖の影の面へ入る照り返しの量"
+    },
+    {
+      "mode": "bounce",
+      "view": "ref_cliff_01",
+      "region": "shadow_ground",
+      "component": "indirect",
+      "quantity": "ratio",
+      "min": 0.85,
+      "max": 1.15,
+      "note": "日の当たる崖と地面から谷の底の影へ入る照り返しの量"
+    },
+    {
+      "mode": "bounce",
+      "view": "ref_cliff_01",
+      "region": "shadow_ground",
+      "component": "chroma",
+      "quantity": "chroma_diff",
+      "max": 0.005,
+      "note": "影の中の地面の照り返しの空（青）と日なたの面（太陽の色）の割合"
+    }
+  ]
+}

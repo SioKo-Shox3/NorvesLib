@@ -6000,3 +6000,22 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 入｜切｜照り返しの画（`scene-capture/SCN-WL-RTGI-COLOR/bounce-on/bounce_ref_cliff_01.png`）を開いた: 崖の影の面と台地の斜面、手前の谷の底に砂の暖かい照り返しが入り、斑・縞は無い
 - Notes: 影の崖の余裕は 0.0013 と小さい。残りの差（エンジンがまだ赤い）は鏡面の近似（粗さの定数・Schlick の G）か 3 層の近似の平均の扱いと見込む（未確認）。鏡面は地形の当たりだけで、ほかの instance の当たりは拡散のまま。新しい試験は足していない。シェーダーの編集で行末が CRLF に書き換わったので difflib で元の混在へ戻した（numstat の 2 通りが一致）
 - Next: TASKS.md の次の未完の項目
+
+### SCN-WL-RTGI-AMOUNT 止め（2026-10-20、run 20261020-191231 の反復 4。理由と選択肢は blocked/SCN-WL-RTGI-AMOUNT.md）
+- Done（量は直した。色度の 1 行が未達）:
+  - `BlenderReference.py` の本描画（--gray・--lit）も間接光の拡散の分（`<視点>.cycles.indirect_diffuse.pfm`）を書く（足した出力だけ。`ReferenceCheck.py` の台本の同値の表に足した）。灰色の参照 SCN-WLR-CYCLES-GRAY を同じ設定で描き直して署名を記録した（`aux-SCN-WL-RTGI-AMOUNT-gray-rerender.txt` END EXIT=0、signature 73c3ec09…、ref_cliff_01 512 サンプルで収束）
+  - `Scripts/Terrain/ExpectSpecs/rtgi-amount.json`: 影の崖・影の中の地面の比 0.85〜1.15、影の中の地面の色度の差 0.005 以内
+  - 原因の切り分け（灰色の ref_cliff_01 の入・切、Cycles は indirect_diffuse）: 直す前（RTGI-COLOR の撮影）は影の崖 0.829・影の中の地面 1.439（色度の差 0.0210、エンジンが青い）・日なたの地面 0.843・日なたの崖 0.723（`aux-…-base.txt`）。Cycles の間接光の全体には鏡面の間接光が多く含まれ、拡散の分と比べ直すと「影の中の地面が足りない」は逆に多すぎだった
+  - 試し 1（光線の形へ外から入る当たりを読み飛ばさない）: 日なたの地面 0.892・日なたの崖 0.766・影の崖 0.842、影の中の地面 1.470 は変わらず（`aux-…-try1.txt`）
+  - 試し 2（加えて、光線の形の内側から出る当たりの読み飛ばす高さの上限を 4 倍）: 影の中の地面 1.470 → 0.923、色度の差 0.0202 → 0.0076。裏から当たった点の 2 回目の散乱が地面の下の一様な空を拾い、青い照り返しを足していた（`aux-…-try2.txt`）
+  - 試し 3（上限 16 倍）: 影の中の地面 0.862・色度の差 0.0081 で良くならないので 4 倍に戻した（`aux-…-try3.txt`）
+  - コード: `DiffuseIndirect.comp` の `TraceDiffuseRay` の読み飛ばしを、1 次面の側へ向けた光線の形の法線に対して内側から出る当たりだけにし、高さの上限を `RTGI_PROXY_EXIT_HEIGHT_SCALE`（4）倍にした
+- 証拠（`.harness/runs/20261020-191231/`）:
+  - `regression-before-SCN-WL-RTGI-AMOUNT.txt` result=pass・EXIT=0
+  - `verify-SCN-WL-RTGI-AMOUNT-1.txt` Debug の Game のビルド EXIT=0（Git Bash が `/m:1` をパスに書き換えるので MSYS_NO_PATHCONV=1 で回した）
+  - `verify-…-2`・`-3` 入・切の撮影 result=pass・EXIT=0
+  - `verify-…-4` `--expect rtgi-amount.json --verify` result=fail（inputs_current=1・cycles_inputs_current=1、rows=3・failed=1）: 影の崖 0.857 合格、影の中の地面 0.923 合格、影の中の地面の色度の差 0.0076（max 0.005）不合格。記録: 日なたの地面 0.842・日なたの崖 0.780
+  - `verify-…-5` 回帰の after result=pass。night-village psnr 60.3・mean_diff +0.010（建物の下の縁に差 ×10 でかすかな線。before｜after｜差を並べて開いた）、rendering3dtest・sandbox inf、mega-bananas 61.2
+  - 入｜切｜照り返しの画（`scene-capture/SCN-WL-RTGI-AMOUNT/bounce-on/bounce_ref_cliff_01.png`）を開いた: 崖と台地の斜面に照り返しが入り、斑・縞は無い
+- Notes: 残りの色度の差はエンジンの g が 0.0075 低い（r は合う）。試し 2・3 で 0.0076・0.0081 と揺れが小さく系統の差。日なたの地面・崖の比 0.84・0.78 の不足も残る（記録だけ）。灰色の参照を描き直したので、灰色で受け入れたほかの項目の参照の署名が変わった（描く設定は同じ）。新しい試験は足していない
+- Next: blocked/SCN-WL-RTGI-AMOUNT.md の判断（推奨: todo に戻して残りの色度を当たりの点の太陽の直接光・空の遮り・ノイズ取りの順に 1 つずつ測る）

@@ -37,7 +37,7 @@
 #          種を変えて重ね、偶数番目を A・奇数番目を B に足す。組ごとに GrayRegions.convergence で領域ごとの収束を測り、
 #          1 本あたり MIN_SPP_PER_SEED 以上で全領域が収束するか、--max-spp か --max-seconds に達したら止める。<視点>.cycles.exr（2 本の平均。
 #          合成・太陽の光の組・空の光の組・直接光・間接光）と、照合の読む PFM（<視点>.cycles.{hdr,seed_a,seed_b,sun,sky,
-#          direct,indirect}.pfm）・<視点>.cycles.json（設定と収束の経過）を書く。
+#          direct,indirect,indirect_diffuse}.pfm。indirect_diffuse は間接光の拡散の分）・<視点>.cycles.json（設定と収束の経過）を書く。
 #       最後に入力の記録 <撮影>/cycles/inputs.json（台本・GrayRegions.py・CommonLight.json・メッシュの一覧と PLY・地形のメッシュの元の
 #       入力のハッシュ、カメラと深度を借りたエンジンの撮影の入力のハッシュ files_sha256）を書く。
 #
@@ -559,8 +559,8 @@ def run_gray(args, lit=False):
             job["crop"] = {"regions": crop_regions, "pad_px": CROP_PAD_PX, "max_total_seconds": CROP_MAX_TOTAL_SECONDS,
                            "direct_seed_offset": CROP_DIRECT_SEED_OFFSET}
             job["max_seconds"] = CROP_MAX_TOTAL_SECONDS
-        parts = ("hdr", "seed_a", "seed_b", "sun", "sky", "direct", "indirect") + \
-            (("sun_direct", "sky_direct", "indirect_diffuse") if crop_regions else ())
+        parts = ("hdr", "seed_a", "seed_b", "sun", "sky", "direct", "indirect", "indirect_diffuse") + \
+            (("sun_direct", "sky_direct") if crop_regions else ())
         aux_outputs = [f"{prefix}.aux.exr"] + \
             [f"{prefix}.aux.{part}.pfm" for part in ("visibility", "n_dot_l", "normal", "alpha")]
         job["required_outputs"] = [f"{prefix}.cycles.exr", f"{prefix}.cycles.json"] + \
@@ -1791,8 +1791,8 @@ def render_gray_job(job):
     # 3. 本描画を CHUNK_SPP ずつ種を変えて重ね、偶数番目を A・奇数番目を B に足す（切り出しでは種ごとに直接光だけの描画も足す）。
     # 切り出しは 1 回の起動で 1 本（crop の seed）だけを描く: A は時間の上限まで描いて途中の和を書き、B は A と同じサンプル数まで
     # 描いて A の和と合わせる（収束は合わせた後に測る）
-    groups = ("combined", "sun", "sky", "direct", "indirect") + \
-        (("sun_direct", "sky_direct", "indirect_diffuse") if crop else ())
+    groups = ("combined", "sun", "sky", "direct", "indirect", "indirect_diffuse") + \
+        (("sun_direct", "sky_direct") if crop else ())
     sums = {seed: {g: np.zeros((height, width, 3), dtype=np.float64) for g in groups} for seed in ("a", "b")}
     renders = {"a": 0, "b": 0}
     seed_order = (crop["seed"],) if crop else ("a", "b")
@@ -1829,7 +1829,7 @@ def render_gray_job(job):
                           parts["Glossy Direct"] * parts["Glossy Color"],
                 "indirect": parts["Diffuse Indirect"] * parts["Diffuse Color"] +
                             parts["Glossy Indirect"] * parts["Glossy Color"],
-                # 間接光のうち拡散の分（エンジンの RTGI の照り返しと同じ物。切り出しだけが書く）
+                # 間接光のうち拡散の分（エンジンの RTGI の照り返しと同じ物。ReferenceCheck.py --bounce が比べる）
                 "indirect_diffuse": parts["Diffuse Indirect"] * parts["Diffuse Color"],
             }
             if crop:
@@ -1970,9 +1970,9 @@ def render_gray_job(job):
     outputs = {}
     for suffix in (".cycles.exr", ".cycles.seed_a.exr", ".cycles.seed_b.exr", ".aux.exr", ".cycles.hdr.pfm",
                    ".cycles.seed_a.pfm", ".cycles.seed_b.pfm", ".cycles.sun.pfm", ".cycles.sky.pfm",
-                   ".cycles.direct.pfm", ".cycles.indirect.pfm", ".aux.visibility.pfm", ".aux.n_dot_l.pfm",
+                   ".cycles.direct.pfm", ".cycles.indirect.pfm", ".cycles.indirect_diffuse.pfm", ".aux.visibility.pfm", ".aux.n_dot_l.pfm",
                    ".aux.normal.pfm", ".aux.alpha.pfm") + \
-            ((".cycles.sun_direct.pfm", ".cycles.sky_direct.pfm", ".cycles.indirect_diffuse.pfm") if crop else ()):
+            ((".cycles.sun_direct.pfm", ".cycles.sky_direct.pfm") if crop else ()):
         outputs[os.path.basename(prefix) + suffix] = sha256_file(prefix + suffix)
     meta = {
         "view": job["view"],
