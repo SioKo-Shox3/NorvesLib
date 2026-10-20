@@ -2035,10 +2035,10 @@
 ## SCN-WL-GOLDEN-DIFF-CAUSE: golden の Outdoor が 10-09 の後に R1 の四角で 712 画素変わった原因を確かめる
 - status: todo
 - after: SCN-WL-MATERIAL-AO-SHADING
-- done-when: golden 4 本が最後に通った f919b5f3（`.harness/runs/20261009-005300/verify-VTG9-FIX-NIGHT-RTGI-FIREFLIES-2.txt`）から 84bc0b53（AO の直しの前）までのどのコミットで、Outdoor の 712 画素（raw 最大 4、平均輝度 129.3821→129.3846。R1 の 2 枚の四角＝鏡面だけで見える黒い板 565 画素と半透明の板 132 画素、球の影の際 8 画素）が変わったかを特定し、意図した描画の直しか不具合かを分ける。不具合なら直す項目を TASKS.md に足す。分かっていること（`.harness/runs/20261021-055341/aux-SCN-WL-GOLDEN-REAPPROVE-analysis.txt`）: AO の直しの前のシェーダーで 712 画素がそのまま再現し、Indoor は差 0。lighting.frag・PbrMaterialEvaluation.glsl・gbuffer.frag・VisibilityResolve.glsl・volumetrics.frag を f919b5f3 の版にしても同じ 712 画素（シェーダーでなく C++ 側）。`NORVES_RENDER_PARALLEL_RECORD=0` でも画は変わらない。検証アプリは RTGI を切り（`INDIRECT_LIGHTING source=ibl`）、太陽の影は CSM、地形は無いので、荒野の RT・影・RTGI の項目は当たらない（各項目の回帰で sandbox・rendering3dtest も変わっていない）。疑い: 10-12〜10-14 の、SSR・Forward・照明・空の定数と記述子セットをフレームの持ち主から借りる形への移し替え（770999b3・2844976b・f9100682・c3b2294a・93e09578・1313cf3c など）。
-- verify: 二分探索の各段で `RenderingGoldenImageTest.exe --scene=outdoor --capture-source=back-buffer --write-baseline-staging` を撮り、`Outdoor.png` との差（`.harness/runs/20261021-055341/golden-reapprove/gdiff.py`）が 0 か 712 画素かを記録する
+- done-when: （2026-10-21 親が書き換え: 別の作業ツリーで古いコミットをビルドする二分探索はしない）golden 4 本が最後に通った f919b5f3 から 84bc0b53（AO の直しの前）までの間に Outdoor の 712 画素（raw 最大 4、平均輝度 129.3821→129.3846。R1 の 2 枚の四角＝鏡面だけで見える黒い板 565 画素と半透明の板 132 画素、球の影の際 8 画素）が変わった原因を、今の exe の中で絞る: 起動引数・環境変数で SSR・反射・半透明・影などを 1 つずつ切った撮影で、712 画素がどの描画の段の差かを局所化し、疑いのコミット（10-12〜10-14 のフレームの持ち主へ移した 770999b3・2844976b・f9100682・c3b2294a・93e09578・1313cf3c など）の差分をその段について読む。原因が特定できたら、意図した直しか不具合かを分け、不具合なら直す項目を TASKS.md に足す。1 反復で特定できなければ、局所化した段・読んだコミット・残る候補を記録して閉じてよい（SCN-WL-GOLDEN-REAPPROVE は、その記録を既知の差として再承認に進む）。分かっていること（`.harness/runs/20261021-055341/aux-SCN-WL-GOLDEN-REAPPROVE-analysis.txt`）: AO の直しの前のシェーダーで 712 画素がそのまま再現し、Indoor は差 0。シェーダーを f919b5f3 の版にしても同じ（C++ 側）。`NORVES_RENDER_PARALLEL_RECORD=0` でも変わらない。検証アプリは RTGI を切り、太陽の影は CSM、地形は無い。
+- verify: `ctest --test-dir build -C Debug --output-on-failure -R "^RenderingGoldenIndoorVulkanTest$"`
 - paths: TASKS.md, PROGRESS.md, Docs/RenderingValidation
-- notes: 2026-10-21 SCN-WL-GOLDEN-REAPPROVE の反復が足した。コミットを戻した exe が要る（約 10 段の Debug ビルド）。作業ツリーでほかのコミットへ切り替えない規則なので、別の作業ツリーとユーザーの承認が要る（`blocked/SCN-WL-GOLDEN-REAPPROVE.md`）。
+- notes: 2026-10-21 SCN-WL-GOLDEN-REAPPROVE の反復が足した。2026-10-21 親: 差は raw 最大 4 の小さなもので、別の作業ツリーでの約 10 段の Debug ビルドに見合わないため、今の exe での局所化とコードの読みに絞った（推奨案）。時間の見積もり: Debug のビルド 3 分、golden の撮影 1 本 約 1 分。
 
 ## SCN-WL-GOLDEN-REAPPROVE: 荒野の描画の直しで変わった基準画像を、差の原因を確かめて再承認する
 - status: todo
