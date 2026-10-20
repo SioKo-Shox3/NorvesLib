@@ -1,0 +1,25 @@
+{
+  "description": "SCN-WL-MATERIAL-AO-SHADING: 材質の AO を光線の遮蔽（RTGI）と二重に掛けないこと。実材質の地形を共通の照明で撮り（RTGI が働く撮影では材質の AO を直接光にも環境光にも掛けない）、材質の AO を使わない Cycles の参照 SCN-WLR-CYCLES-LIT と比べて、ref_ground_01 と ref_cliff_02 の日なたの地面の明るさの比が 1 ± 0.08。ref_cliff_02 はかすめる視線（N·V の中央が約 0.09）で、直接光の鏡面の遮蔽項（高さ相関の Smith GGX）にも依る。",
+  "rows": [
+    {
+      "mode": "lit",
+      "view": "ref_ground_01",
+      "region": "sunlit_ground",
+      "component": "total",
+      "quantity": "ratio",
+      "min": 0.92,
+      "max": 1.08,
+      "note": "太陽が高い視点の日なたの地面（太陽の組 83 %）"
+    },
+    {
+      "mode": "lit",
+      "view": "ref_cliff_02",
+      "region": "sunlit_ground",
+      "component": "total",
+      "quantity": "ratio",
+      "min": 0.92,
+      "max": 1.08,
+      "note": "遠くの地面をかすめて見る視点の日なたの地面（太陽の組 71 %、空の組 29 %）"
+    }
+  ]
+}

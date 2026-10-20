@@ -120,6 +120,19 @@ float GeometrySmithDirect(vec3 N, vec3 V, vec3 L, float roughness)
            GeometrySchlickGGX(max(dot(N, L), 0.0), roughness);
 }
 
+// 高さ相関の Smith GGX の遮蔽項 G2 = 1 / (1 + Λ(V) + Λ(L))（Heitz 2014。Cycles の Principled BSDF と同じ）。
+// 分けて掛ける G1(V)·G1(L) は、かすめる視線で遮蔽を二重に数えて鏡面を小さくしすぎる。
+float GeometrySmithHeightCorrelated(float NdotV, float NdotL, float roughness)
+{
+    float a = roughness * roughness;
+    float a2 = a * a;
+    float cosV2 = max(NdotV * NdotV, 1.0e-8);
+    float cosL2 = max(NdotL * NdotL, 1.0e-8);
+    float lambdaV = (sqrt(1.0 + a2 * (1.0 - cosV2) / cosV2) - 1.0) * 0.5;
+    float lambdaL = (sqrt(1.0 + a2 * (1.0 - cosL2) / cosL2) - 1.0) * 0.5;
+    return 1.0 / (1.0 + lambdaV + lambdaL);
+}
+
 float ComputeSpecularAO(float NdotV, float ao, float roughness)
 {
     return clamp(pow(NdotV + ao, exp2(-16.0 * roughness - 1.0)) - 1.0 + ao,
@@ -144,10 +157,7 @@ void EvaluateAnalyticalDirectEndpointBRDF(vec3 albedo,
     float NdotL = max(dot(N, L), 0.0);
     float VdotH = max(dot(V, H), 0.0);
     float D = DistributionGGX(N, H, roughness);
-    float k = ((roughness + 1.0) * (roughness + 1.0)) / 8.0;
-    float Gv = NdotV / (NdotV * (1.0 - k) + k);
-    float Gl = NdotL / (NdotL * (1.0 - k) + k);
-    float G = Gv * Gl;
+    float G = GeometrySmithHeightCorrelated(NdotV, NdotL, roughness);
     float brdfCommon = D * G / (4.0 * NdotV * NdotL + 0.0001);
     vec3 Fd = FresnelSchlick(VdotH, F0d);
     vec3 Fc = FresnelSchlick(VdotH, F0c);

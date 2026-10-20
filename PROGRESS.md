@@ -6032,3 +6032,26 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `verify-SCN-WL-RTGI-AMOUNT-5.txt` 回帰の after result=pass。sandbox psnr inf、night-village 68.7、rendering3dtest 59.7（最大の差 13）、mega-bananas 52.8・mean_diff +0.16（差が 20 を超える画素 230 点がバナナの上に散る。before｜after｜差×10 を並べて開き、差はほぼ黒で見た目は変わらない。RTGI の乱数の列が変わった分の粒）
 - Notes: 確率的に丸めた履歴は 1 フレームに 1 刻みまでの雑音を足すが、重み 1/257 の平均で消える。日なたの崖の比 0.79 の不足は残る（記録だけ）。新しい試験は足していない。シェーダーの編集で行末が全体で書き換わったので difflib で元の混在へ戻した（numstat の 2 通りが一致）
 - Next: TASKS.md の次の未完の項目
+
+### SCN-WL-MATERIAL-AO-SHADING 完了（2026-10-21、run 20261021-055341 の反復 2）
+- 結論: RTGI が働く撮影では、材質の AO を直接光にも環境光（RTGI の拡散）にも掛けない。あわせて直接光の鏡面の遮蔽項を高さ相関の Smith GGX（Cycles と同じ）にした。AO だけでは ref_cliff_02 が届かず、残りはかすめる視線（N·V の中央 約 0.09、粗さ 約 1.0）で分けて掛ける Schlick-GGX の G1·G1 が鏡面を小さくしすぎていた分だった
+- 案の比較（実材質の日なたの地面のエンジン ÷ Cycles。`aux-SCN-WL-MATERIAL-AO-SHADING-*-check.txt`）:
+  | 掛け方 | ref_ground_01 | ref_cliff_02 | ref_cliff_02 影の中の地面 | ref_cliff_02 影の崖 |
+  |---|---|---|---|---|
+  | 直す前（直接 ×(0.7+0.3·AO)・環境 ×AO） | 0.808 | 0.701 | 0.593 | 0.748 |
+  | 直接から外し環境だけ ×AO（見込み） | 0.900 | 0.774 | 0.602 | 0.759 |
+  | 直接から外し環境 ×mix(1, AO, 0.5)（見込み） | 0.932 | 0.822 | 0.774 | 0.881 |
+  | どちらにも掛けない（撮影） | 0.952 | 0.858 | 0.891 | 1.000 |
+  | どちらにも掛けない＋鏡面の Smith GGX（採用・撮影） | 0.973 | 0.925 | 0.891 | 1.000 |
+  見込みは直す前の撮影の領域の平均の AO と Cycles の太陽の組・空の組の割合から出した。太陽だけ・空だけの撮影（`noao-sun`・`noao-sky`）で、AO なしの ref_cliff_02 の日なたの地面の太陽の分が RGB 0.95・0.81・0.66（アルベドは一致）と青ほど足りず、白い鏡面の不足と分かった
+- コード: `lighting.frag` の直接光の `directAO`・`directSpecAO` を外し、`EvaluateRTGIEndpoint` の拡散の AO の引数を除いた（DDGI には材質 AO、IBL・平らな環境光には材質 AO×画面空間 AO を従来どおり掛ける）。`PbrMaterialEvaluation.glsl` に `GeometrySmithHeightCorrelated` を足し、`EvaluateAnalyticalDirectEndpointBRDF`（照明と半透明の前方描画）で使う。RTGI の当たりの鏡面（`GeometrySmithDirect`）と DFG LUT は変えていない。AO の焼き方は変えていない
+- `Scripts/Terrain/ExpectSpecs/material-ao.json`: ref_ground_01・ref_cliff_02 の日なたの地面の比 0.92〜1.08。`ReferenceCheck.py` の AO の見込みと `WastelandCyclesLit.md` の説明を「旧い掛け方」と書き直した（計算は変えていない）
+- 証拠（`.harness/runs/20261021-055341/`）:
+  - `regression-before-SCN-WL-MATERIAL-AO-SHADING.txt` result=pass・EXIT=0
+  - `verify-SCN-WL-MATERIAL-AO-SHADING-1.txt` Debug の Game のビルド EXIT=0、`-2`・`-3` 撮影 result=pass・EXIT=0（視点ごとに撮影先を分けた）
+  - `verify-SCN-WL-MATERIAL-AO-SHADING-4.txt` `--expect material-ao.json --verify` result=pass（rows=2・failed=0、inputs_current=1・cycles_inputs_current=1）: ref_ground_01 0.9728、ref_cliff_02 0.9250。記録: ref_ground_01 日なたの崖 0.945・遠景 0.974、ref_cliff_02 影の中の地面 0.891（RGB 0.96・0.87・0.76）・影の崖 1.000・遠景 0.939
+  - `verify-SCN-WL-MATERIAL-AO-SHADING-5.txt` 回帰の after result=pass（検証レイヤーのエラーなし）。mega-bananas psnr 28.2・mean_diff +6.2、rendering3dtest 31.5・+0.29、sandbox 40.9・+1.3、night-village 43.1・+0.25。before｜after｜差×10 を並べて開いた: mega-bananas は床板が少し明るく溝の暗さが浅くなる（溝は見える。バナナと影は変わらない）、rendering3dtest は地面の帯と石の球が少し明るい
+  - 見比べ `scene-capture/SCN-WL-MATERIAL-AO-SHADING/ref_ground_01/lit_ref_cliff_02.png` を開いた: エンジンと Cycles の日なたの地面・影・ビュートの明るさと色が揃う
+- 既知の限界（golden、`aux-SCN-WL-MATERIAL-AO-SHADING-golden*.txt`）: HEAD の時点で Outdoor が既に落ちていた（mean_flip 0.00044・raw 最大 4・712 画素。Indoor は通過）。この変更で Indoor が mean_flip 0.0000154・raw 最大 1・11 画素、Outdoor が mean_flip 0.0110・raw 最大 10・16156 画素で落ちる（日なたの直接光が AO の分と鏡面の分だけ明るくなる向き）。Outdoor の差にこの変更の外の差が混ざるので基準画像は再承認せず、再承認待ちとして記録する。GBufferFallback の 2 本は回していない
+- Notes: ref_cliff_02 の余裕は 0.005 と小さい。残りは空の光の分（日なたの地面の空の分 0.88、影の中の地面の青 0.76）で、遠くの地面で RTGI の空が足りない向き（未確認）。平らな砂地の AO 0.62 は SCN-WL-MATERIAL-AO-BAKE で確かめる。RTGI が働かないシーンでは環境光に材質 AO を掛けたまま。新しい試験は足していない
+- Next: TASKS.md の次の未完の項目

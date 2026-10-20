@@ -53,7 +53,8 @@ SCN-WLR-CYCLES-LIT-B（ref_far_02・ref_cliff_02・ref_ground_02 と写真との
 
 ## 結果（露出前の HDR、輝度 Y の線形の平均、cd/m²）
 
-「AO の見込み」は、エンジンだけが掛ける材質の AO（`lighting.frag`: 直接光 × mix(1, AO, 0.3)、環境光 × AO）を Cycles の太陽の組・
+「AO の見込み」は、この表を測った時点でエンジンだけが掛けていた材質の AO（`lighting.frag`: 直接光 × mix(1, AO, 0.3)、環境光 × AO。
+SCN-WL-MATERIAL-AO-SHADING で RTGI が働く撮影では直接光にも環境光にも掛けなくなった）を Cycles の太陽の組・
 空の組へ掛けた値に対するエンジンの比（原因の見立て用。太陽の組の照り返しにも直接光の係数を掛ける近似）。
 
 | 視点 | 領域 | 画素 | 判定 | エンジン | Cycles | 比 | RGB の比 | Cycles の太陽 / 間接 | 材質の AO | AO の見込みとの比 |

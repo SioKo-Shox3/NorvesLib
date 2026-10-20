@@ -665,13 +665,13 @@ vec3 EvaluateRTGIEndpoint(vec3 albedo,
                           float roughness,
                           vec3 N,
                           vec3 V,
-                          float ao,
                           float specularAO,
                           float iblIntensity,
                           vec2 brdf,
                           vec3 rtgiDiffuseRadiance)
 {
-    vec3 diffuse = max(rtgiDiffuseRadiance, vec3(0.0)) * ao;
+    // 拡散は光線で遮蔽を解いた照り返しをそのまま使う（材質の AO を重ねない。呼び出し側の説明を参照）
+    vec3 diffuse = max(rtgiDiffuseRadiance, vec3(0.0));
     vec3 specular = vec3(0.0);
     if (params.bIBLEnabled != 0u)
     {
@@ -1273,7 +1273,6 @@ void main()
 
     vec3 ambient = vec3(0.0);
     float specularAO = 1.0;
-    float directSpecularAO = 1.0;
     // ambient に含めた環境光の鏡面反射（露出前）と、その反射率（SSRへ渡す）
     vec3 indirectSpecular = vec3(0.0);
     vec3 indirectSpecularReflectance = vec3(0.0);
@@ -1319,7 +1318,6 @@ void main()
 
         // スペキュラAO（Lagarde 2014: 視線角度とラフネスに基づく遮蔽近似）
         specularAO = ComputeSpecularAO(NdotV, ao, roughness);
-        directSpecularAO = ComputeSpecularAO(NdotV, materialSample.b, roughness);
 
         if (params.bIBLEnabled != 0u)
         {
@@ -1330,8 +1328,9 @@ void main()
             vec2 dfgCoordinate = clamp(vec2(iblNdotV, iblRoughness),
                                        vec2(0.5 / 256.0), vec2(255.5 / 256.0));
             vec2 brdf = texture(brdfLUT, dfgCoordinate).rg;
-            // DDGIとRTGIは遮蔽を光線で解くため、画面空間AOを重ねず材質AOだけを掛ける。
-            float ddgiAmbientAO = bDDGIAvailable || bRTGIAvailable ? materialSample.b : ao;
+            // DDGIとRTGIは遮蔽を光線で解くため、画面空間AOを重ねない。DDGI（粗いプローブ）には材質AOだけを掛け、
+            // 画素ごとに光線を飛ばすRTGIには材質AOも掛けない（材質の焼いた遮蔽を光線の遮蔽に重ねると二重に暗くなる。
+            // 材質AOを使わない Cycles の参照と、日なたの地面・影の中の地面で合う。SCN-WL-MATERIAL-AO-SHADING）
             vec3 iblDiffuseAO = bDDGIAvailable || bRTGIAvailable ? vec3(materialSample.b) : diffuseAO;
             ambient = bRTGIAvailable
                 ? EvaluateRTGIEndpoint(iblAlbedo,
@@ -1339,7 +1338,6 @@ void main()
                                        iblRoughness,
                                        N,
                                        V,
-                                       ddgiAmbientAO,
                                        specularAO,
                                        iblIntensity,
                                        brdf,
@@ -1396,7 +1394,6 @@ void main()
                                                roughness,
                                                N,
                                                V,
-                                               materialSample.b,
                                                specularAO,
                                                0.0,
                                                rtgiBrdf,
@@ -1421,12 +1418,9 @@ void main()
         // 発光は露出を掛けた後で足す（下の outColor）。
     }
 
-    // 直接光へのAO適用（マイクロシャドウ近似）:
-    // 直接光はライト方向が明確なため、材質のAOだけを控えめに適用する（30%）。画面空間AOは
-    // 物体の近くの大きな遮蔽を表し、直接光ではその遮蔽を影（CSM・RT影）が解くので掛けない
-    // （掛けると日向の面まで暗くなる）。アンビエント/IBLへはフルAO適用（上記で適用済み）
-    float directAO = mix(1.0, materialSample.b, 0.3);
-    float directSpecAO = mix(1.0, directSpecularAO, 0.3);
+    // 直接光には AO を掛けない。光の向きが決まっている直接光の遮蔽は影（CSM・RT影・接触影）が解き、
+    // 材質の細かな凹凸の明暗は法線マップが出す。材質の AO は全方向から来る光の遮蔽の値なので、直接光に
+    // 掛けると日なたの面まで暗くなる（材質AOを使わない Cycles の参照と比べて確かめた。SCN-WL-MATERIAL-AO-SHADING）
 
     // 最終カラー（HDR）
     vec3 color;
@@ -1436,7 +1430,7 @@ void main()
     }
     else
     {
-        color = ambient + Lo_diffuse * directAO + Lo_specular * directSpecAO;
+        color = ambient + Lo_diffuse + Lo_specular;
     }
 
     float outputAlpha = bValidationRaw252 ? ComputeDebugDepth01(fragUV, depthSample) : 1.0;

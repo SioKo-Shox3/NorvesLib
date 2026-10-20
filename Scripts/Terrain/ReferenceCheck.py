@@ -5379,8 +5379,9 @@ def run_lit(capture_dir, views, verify, engine_dirs=None, reference_root=None, e
         # 領域ごとの材質（エンジンの GBuffer のアルベドと、再現した材質のアルベド・AO）
         blender_albedo = read_pfm_any(prefix + ".albedo.pfm").astype(np.float64)
         occlusion = read_pfm_any(prefix + ".occlusion.pfm")[..., 0].astype(np.float64)
-        # エンジンだけが掛ける材質の AO の見込み（lighting.frag: 直接光 × mix(1, AO, 0.3)、環境光 × AO）を Cycles の
-        # 太陽の組・空の組へ掛けた値。太陽の組の照り返しにも直接光の係数を掛ける近似（原因の見立て用で、合否に使わない）
+        # 旧い材質の AO の掛け方（SCN-WL-MATERIAL-AO-SHADING の前の lighting.frag: 直接光 × mix(1, AO, 0.3)、環境光 × AO。
+        # 今は RTGI が働く撮影では直接光にも環境光にも掛けない）を Cycles の太陽の組・空の組へ掛けた値。旧い撮影との
+        # 見比べ用に残す。太陽の組の照り返しにも直接光の係数を掛ける近似（原因の見立て用で、合否に使わない）
         ao_model = (out["parts"]["sun"] * (0.7 + 0.3 * occlusion)[..., None] +
                     out["parts"]["sky"] * occlusion[..., None]) @ LUMA
         engine_y = engine_hdr @ LUMA
