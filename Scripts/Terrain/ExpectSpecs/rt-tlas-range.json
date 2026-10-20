@@ -1,0 +1,25 @@
+{
+  "description": "SCN-WL-RT-TLAS-RANGE: RTGI の光線（最大 10 km）が空の遮蔽と照り返しに使う範囲の地形を RT のシーンに入れた後の合否。灰色の地形の空だけの成分（engine-sky ÷ Cycles の空のパス）が、影の崖と遠景で Cycles と ±10 % に入る。",
+  "rows": [
+    {
+      "mode": "gray",
+      "view": "ref_cliff_01",
+      "region": "shadow_cliff",
+      "component": "sky",
+      "quantity": "ratio",
+      "min": 0.9,
+      "max": 1.1,
+      "note": "影の崖の空の成分。遮る地形が RT のシーンに無いと Cycles より明るくなる"
+    },
+    {
+      "mode": "gray",
+      "view": "ref_far_01",
+      "region": "far",
+      "component": "sky",
+      "quantity": "ratio",
+      "min": 0.9,
+      "max": 1.1,
+      "note": "遠景の空の成分。120 m より遠い地形の遮蔽が要る"
+    }
+  ]
+}
