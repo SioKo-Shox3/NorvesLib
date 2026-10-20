@@ -1975,7 +1975,7 @@
 ## SCN-WL-SHADOW-LEAK: 影の中への太陽の漏れを直す
 - status: todo
 - after: SCN-WL-SHADOW-PAGES, SCN-WLR-REGRESSION-VALIDATION
-- done-when: 灰色の ref_cliff_01 で、影の中の地面に太陽が漏れる（エンジンの `engine-sun` ÷ Cycles の太陽のパスが 5.88）原因を確かめて直す（SCN-WL-RT-TLAS-*・SHADOW-PAGES で直っていれば、その確認と記録で閉じる）。灰色の 3 条件を ref_cliff_01 で撮り、`--gray --views ref_cliff_01` の太陽の成分が影の中の地面で 1 ± 0.15 に入ることを `--expect`（`shadow-leak.json`）で検査する。反復の最初に回帰の撮影の `before` を撮る（コードを変えないときは前の項目の `after` を使ってよい）。
+- done-when: 灰色の ref_cliff_01 で影の中の地面に太陽が漏れる原因（反復 11 で確かめた 3 つ: 法線の向きへのずらし `VSMS_NORMAL_OFFSET_TEXELS` = 1.5 が太陽の高さ 10° で影の縁を 1〜2 m 退かせる〔漏れの約 7 割〕、影の描画の MegaGeometry の LOD の許容 `LodThresholdTexels` = 4、残りは深度の比較の余裕の傾きの項）を直す。ずらしと影の LOD の変更は地形の受け手・荒野に絞り、ほかのシーンの影を変えない（回帰の撮影で確かめる。影の LOD の許容を下げるならバナナ 100 万本のクラスタの一覧の容量を超えないことも確かめる）。合否は太陽の可視率で決める: 灰色の 3 条件を ref_cliff_01 で撮り、`--gray --views ref_cliff_01 --expect`（`shadow-leak.json`）で、影の中の地面の `visibility_mismatch` ≤ 3 %（今 29.3 %）・影の崖 ≤ 5 %（今 12.4 %）を検査する。太陽の成分の比（エンジン ÷ Cycles）は記録だけにする（影の中の地面ではエンジンの太陽の照り返しが Cycles の 0.43 倍で、影が合っても 0.5 前後になる。照り返しは SCN-WL-RTGI-COLOR）。反復の最初に回帰の撮影の `before` を撮る。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -Build -RequireAssets -Width 1920 -Height 1080 -Hdr -Aov -Views ref_cliff_01 -GameArgs wasteland-common-light,wasteland-hide=all,wasteland-finest-lod,wasteland-gray-material -LaunchPerView -OutDir .harness/runs/scene-capture/SCN-WL-SHADOW-LEAK`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Hdr -Aov -Views ref_cliff_01 -GameArgs wasteland-common-light,common-light-case=sun,wasteland-hide=all,wasteland-finest-lod,wasteland-gray-material -LaunchPerView -OutDir .harness/runs/scene-capture/SCN-WL-SHADOW-LEAK/engine-sun`
@@ -1983,7 +1983,7 @@
 - verify: `python Scripts/Terrain/ReferenceCheck.py --gray --engine .harness/runs/scene-capture/SCN-WL-SHADOW-LEAK --reference .harness/runs/scene-capture/SCN-WLR-CYCLES-GRAY --views ref_cliff_01 --expect Scripts/Terrain/ExpectSpecs/shadow-leak.json --verify`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Terrain/CaptureRegression.ps1 -Item SCN-WL-SHADOW-LEAK -Phase after`
 - paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Assets/Shaders, Game, Scripts, Docs/RenderingValidation, TASKS.md, PROGRESS.md
-- notes: 危険地帯（影）。2026-10-19（Sol の批評 9・10 と 2 周目）。
+- notes: 危険地帯（影）。2026-10-19（Sol の批評 9・10 と 2 周目）。 2026-10-20（親）: 反復 11 の BLOCKED を推奨の案 A で解いた（合否を太陽の可視率にし、太陽の比は記録に）。反復 11 の測りの表と試しの値は `blocked/resolved/SCN-WL-SHADOW-LEAK-visibility.md`・`.harness/runs/20261020-094249/aux-SCN-WL-SHADOW-LEAK-*.txt`。
 
 ## SCN-WL-GRADE-NEUTRAL: 荒野のグレーディングを中立にする
 - status: done
@@ -2006,7 +2006,7 @@
 - verify: `python Scripts/Terrain/ReferenceCheck.py --bounce --engine .harness/runs/scene-capture/SCN-WL-RTGI-COLOR/bounce-on --engine .harness/runs/scene-capture/SCN-WL-RTGI-COLOR/bounce-off --reference .harness/runs/scene-capture/SCN-WLR-CYCLES-LIT --expect Scripts/Terrain/ExpectSpecs/rtgi-color.json --verify`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Terrain/CaptureRegression.ps1 -Item SCN-WL-RTGI-COLOR -Phase after`
 - paths: Assets/Shaders, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Game, Docs/RenderingValidation, Scripts, TASKS.md, PROGRESS.md
-- notes: 危険地帯（描画）。2026-10-19 書き直し（Sol の批評 11・12 と 2 周目）: 正解は内蔵のパストレーサーでなく Blender Cycles。「RTGI は既定で有効」は、光線は撃つが RT のシーンに地形が無い状態だった（SCN-WL-RT-TLAS-* で直す）。
+- notes: 危険地帯（描画）。2026-10-19 書き直し（Sol の批評 11・12 と 2 周目）: 正解は内蔵のパストレーサーでなく Blender Cycles。「RTGI は既定で有効」は、光線は撃つが RT のシーンに地形が無い状態だった（SCN-WL-RT-TLAS-* で直す）。 2026-10-20 SCN-WL-SHADOW-LEAK の測り: 灰色の ref_cliff_01 の影の中の地面で、エンジンの太陽の照り返しが Cycles の 0.43 倍（45 対 103。日なたの地面の照り返しは 13）。影の起伏の陰の側が日なたの斜面から受ける近い照り返しを RTGI が拾いきれていない見込み（解像度・ノイズ取りで日なたの隣と混ざる。未確認）。この項目の明るさの比 1 ± 0.15 はこの不足を含めて判定する。
 
 ## SCN-WL-MATERIAL-AO-SHADING: 材質の AO の掛け方を、光線の遮蔽と二重にならない形にする
 - status: todo
