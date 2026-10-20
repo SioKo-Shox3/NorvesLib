@@ -1997,20 +1997,32 @@
 - notes: 2026-10-19 GAP-LIST の描画の欠陥 5（`grading_current`）。
 
 ## SCN-WL-RTGI-COLOR: 照り返しの色を地形の材質から取る
-- status: blocked
+- status: todo
 - after: SCN-WL-RT-TLAS-RANGE-ACCEPT, SCN-WLR-LIT-SHADOW-REF-C01, SCN-WLR-REGRESSION-VALIDATION
-- done-when: RTGI の二次の当たりの色が地形の材質を反映しない（`Assets/Shaders/RTGI/DiffuseIndirect.comp` 912 行付近はインスタンスの定数の色）のを直す。地表の分類の地図と層の代表の色（素材の平均の色）で当たりの色を決める程度でよい（材質の評価の共通化まで広げない）。判定の対照: RTGI は空から直接届く光も担い、切ると IBL・DDGI へ切り替わる（`lighting.frag` 1329 行付近）ので、RTGI の入・切ではなく、照り返しだけを切る開発ビルドの起動引数 `rtgi-bounce=off`（当たりの色を 0 にし、空から直接届く光は残す。この項目で作る）を対照にする。実材質の ref_cliff_01 で照り返しの入・切を撮り、その差（エンジンの照り返し）と SCN-WLR-LIT-SHADOW-REF-C01 の Cycles の間接光のパスを、影の崖・影の中の地面で比べ、色度（r・g）の差 0.02 以内・明るさの比 1 ± 0.15 を `ReferenceCheck.py --bounce --expect`（`--bounce` はこの項目で作る。`rtgi-color.json`）で検査する。灰色の材質のときは代表の色も灰色になる（色度の差 0.005 以内）ことを反復の中で同じ形で確かめて記録する。入・切の画を並べて開き、崖の影の中と谷の底に砂の暖かい照り返しが入ることを見る。反復の最初に回帰の撮影の `before` を撮る。
+- done-when: RTGI の二次の当たりの色が地形の材質を反映しない（`Assets/Shaders/RTGI/DiffuseIndirect.comp` 912 行付近はインスタンスの定数の色）のを直す。地表の分類の地図と層の代表の色（素材の平均の色）で当たりの色を決める程度でよい（材質の評価の共通化まで広げない）。判定の対照: RTGI は空から直接届く光も担い、切ると IBL・DDGI へ切り替わる（`lighting.frag` 1329 行付近）ので、RTGI の入・切ではなく、照り返しだけを切る開発ビルドの起動引数 `rtgi-bounce=off`（当たりの色を 0 にし、空から直接届く光は残す。この項目で作る）を対照にする。実材質の ref_cliff_01 で照り返しの入・切を撮り、その差（エンジンの照り返し）と SCN-WLR-LIT-SHADOW-REF-C01 の切り出しの Cycles の間接光の拡散の分（`indirect_diffuse`。鏡面の間接光を含めない）を、影の崖・影の中の地面で比べ、色度（r・g）の差 0.02 以内を `ReferenceCheck.py --bounce --expect`（`rtgi-color.json`）で検査する。明るさの比は記録だけにする（灰色でも 0.77〜1.10 で、当たりの色の外の原因。SCN-WL-RTGI-AMOUNT）。灰色の材質のときは代表の色も灰色になる（色度の差 0.005 以内）ことを反復の中で同じ形で確かめて記録する。入・切の画を並べて開き、崖の影の中と谷の底に砂の暖かい照り返しが入ることを見る。反復の最初に回帰の撮影の `before` を撮る。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -Build -RequireAssets -Width 1920 -Height 1080 -Hdr -Aov -Views ref_cliff_01 -GameArgs wasteland-common-light,wasteland-hide=all,wasteland-finest-lod -LaunchPerView -OutDir .harness/runs/scene-capture/SCN-WL-RTGI-COLOR/bounce-on`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Hdr -Aov -Views ref_cliff_01 -GameArgs wasteland-common-light,wasteland-hide=all,wasteland-finest-lod,rtgi-bounce=off -LaunchPerView -OutDir .harness/runs/scene-capture/SCN-WL-RTGI-COLOR/bounce-off`
 - verify: `python Scripts/Terrain/ReferenceCheck.py --bounce --engine .harness/runs/scene-capture/SCN-WL-RTGI-COLOR/bounce-on --engine .harness/runs/scene-capture/SCN-WL-RTGI-COLOR/bounce-off --reference .harness/runs/scene-capture/SCN-WLR-CYCLES-LIT --expect Scripts/Terrain/ExpectSpecs/rtgi-color.json --verify`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Terrain/CaptureRegression.ps1 -Item SCN-WL-RTGI-COLOR -Phase after`
 - paths: Assets/Shaders, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Game, Docs/RenderingValidation, Scripts, TASKS.md, PROGRESS.md
-- notes: 危険地帯（描画）。2026-10-19 書き直し（Sol の批評 11・12 と 2 周目）: 正解は内蔵のパストレーサーでなく Blender Cycles。「RTGI は既定で有効」は、光線は撃つが RT のシーンに地形が無い状態だった（SCN-WL-RT-TLAS-* で直す）。 2026-10-20 SCN-WL-SHADOW-LEAK の測り: 灰色の ref_cliff_01 の影の中の地面で、エンジンの太陽の照り返しが Cycles の 0.43 倍（45 対 103。日なたの地面の照り返しは 13）。影の起伏の陰の側が日なたの斜面から受ける近い照り返しを RTGI が拾いきれていない見込み（解像度・ノイズ取りで日なたの隣と混ざる。未確認）。この項目の明るさの比 1 ± 0.15 はこの不足を含めて判定する。
+- notes: 危険地帯（描画）。2026-10-19 書き直し（Sol の批評 11・12 と 2 周目）: 正解は内蔵のパストレーサーでなく Blender Cycles。「RTGI は既定で有効」は、光線は撃つが RT のシーンに地形が無い状態だった（SCN-WL-RT-TLAS-* で直す）。 2026-10-20 SCN-WL-SHADOW-LEAK の測り: 灰色の ref_cliff_01 の影の中の地面で、エンジンの太陽の照り返しが Cycles の 0.43 倍（45 対 103。日なたの地面の照り返しは 13）。影の起伏の陰の側が日なたの斜面から受ける近い照り返しを RTGI が拾いきれていない見込み（解像度・ノイズ取りで日なたの隣と混ざる。未確認）。この項目の明るさの比 1 ± 0.15 はこの不足を含めて判定する。 2026-10-20（親）: 反復 12 の BLOCKED を推奨の案 A で解いた。当たりの色の直し・`--rtgi-bounce=off`・`--bounce` はコミット済み（006994f1）。比べる物を Cycles の間接光の拡散の分に揃え、切り出しの参照を `indirect_diffuse` つきで親が描き直す（ログ `.harness/runs/20261020-094249/aux-SCN-WL-RTGI-COLOR-crop-rerender.txt`、18:14 開始・約 70 分、END の後に親が todo のまま走らせる）。合否は色度だけにし、明るさの比と影の中の地面の色の配分は SCN-WL-RTGI-AMOUNT へ分けた。反復 12 の測りの表は `blocked/resolved/SCN-WL-RTGI-COLOR-diffuse-only.md`。
+
+## SCN-WL-RTGI-AMOUNT: 照り返しの量を Cycles の間接光の拡散の分に合わせる
+- status: todo
+- after: SCN-WL-RTGI-COLOR, SCN-WL-SHADOW-LEAK
+- done-when: SCN-WL-RTGI-COLOR（反復 12）の測りで、当たりの色が Cycles と同じ灰色の材質でも、エンジンの照り返し（`--rtgi-bounce` の入 − 切）が Cycles の間接光の拡散の分の 影の崖 0.77・日なたの地面 0.58・日なたの崖 0.68 しかなく、影の中の地面は比 1.10 なのに色度が 0.022 青い（空の照り返しが多く、日の当たった面の照り返しが少ない）。SCN-WL-SHADOW-LEAK の測りでも、影の中の地面の太陽の照り返しは Cycles の 0.43 倍。原因（見込み: 近くの地面どうしの照り返しが SCN-WL-RT-SELFHIT の近い当たりの読み飛ばしで抜ける、当たりの点の太陽の直接光の扱い・影、RTGI の解像度とノイズ取りで日なたの隣と混ざる）を 1 つずつ測って分け、直す。合否: 灰色の材質で ref_cliff_01 の照り返しの入・切を撮り、`--bounce --expect`（`rtgi-amount.json`。`--bounce` が灰色の参照 SCN-WLR-CYCLES-GRAY の間接光の拡散の分を読めるようにするのはこの項目）で、影の崖・影の中の地面の明るさの比が 1 ± 0.15、影の中の地面の色度の差が 0.005 以内。日なたの地面・日なたの崖の比は記録する。反復の最初に回帰の撮影の `before` を撮る。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -Build -RequireAssets -Width 1920 -Height 1080 -Hdr -Aov -Views ref_cliff_01 -GameArgs wasteland-common-light,wasteland-hide=all,wasteland-finest-lod,wasteland-gray-material -LaunchPerView -OutDir .harness/runs/scene-capture/SCN-WL-RTGI-AMOUNT/bounce-on`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Hdr -Aov -Views ref_cliff_01 -GameArgs wasteland-common-light,wasteland-hide=all,wasteland-finest-lod,wasteland-gray-material,rtgi-bounce=off -LaunchPerView -OutDir .harness/runs/scene-capture/SCN-WL-RTGI-AMOUNT/bounce-off`
+- verify: `python Scripts/Terrain/ReferenceCheck.py --bounce --engine .harness/runs/scene-capture/SCN-WL-RTGI-AMOUNT/bounce-on --engine .harness/runs/scene-capture/SCN-WL-RTGI-AMOUNT/bounce-off --reference .harness/runs/scene-capture/SCN-WLR-CYCLES-GRAY --expect Scripts/Terrain/ExpectSpecs/rtgi-amount.json --verify`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Terrain/CaptureRegression.ps1 -Item SCN-WL-RTGI-AMOUNT -Phase after`
+- paths: Assets/Shaders, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Game, Docs/RenderingValidation, Scripts, TASKS.md, PROGRESS.md
+- notes: 危険地帯（RTGI）。2026-10-20 親が SCN-WL-RTGI-COLOR から分けた。灰色の Cycles の参照（SCN-WLR-CYCLES-GRAY）に間接光の拡散の分が無ければ、その描き直し（20 分を超えるなら反復の外で起動して BLOCKED で待つ）から始める。時間の見積もり: 回帰の before・after 各 6 分、Debug のビルド 3 分、RelWithDebInfo のビルド 6 分、撮影 2 本 各 3 分。原因の切り分けは 1 視点の撮影（1 本 3 分）で回し、verify 一式は最後に 1 回。壁時計（75 分）の残りが 25 分を切ったら新しい試行を始めず、分かったことを書いてコミットして終える。ほかのシーンの見た目を変えない（回帰の撮影で確かめる）。
 
 ## SCN-WL-MATERIAL-AO-SHADING: 材質の AO の掛け方を、光線の遮蔽と二重にならない形にする
 - status: todo
-- after: SCN-WL-RTGI-COLOR, SCN-WL-SHADOW-LEAK, SCN-WLR-REGRESSION-VALIDATION
+- after: SCN-WL-RTGI-COLOR, SCN-WL-SHADOW-LEAK, SCN-WLR-REGRESSION-VALIDATION, SCN-WL-RTGI-AMOUNT
 - done-when: `lighting.frag` は材質の AO を直接光に ×(0.7 + 0.3·AO)、空の光に ×AO で掛ける。光線の遮蔽（RTGI・空の遮蔽）が働くようになった後で、材質の AO を直接光から外し空の光だけに掛ける（または重みを変える）案を比べ、実材質の日なたの地面のエンジン ÷ Cycles（今 0.70〜0.82。一番暗いのは ref_cliff_02）が ref_ground_01 と ref_cliff_02 の両方で 1 ± 0.08 に入る掛け方を採り、`--expect`（`material-ao.json`）で検査する。AO の値の焼き方は変えない（SCN-WL-MATERIAL-AO-BAKE）。視点ごとに撮影先を分ける。反復の最初に回帰の撮影の `before` を撮る。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -Build -RequireAssets -Width 1920 -Height 1080 -Hdr -Aov -Views ref_ground_01 -GameArgs wasteland-common-light,wasteland-hide=all,wasteland-finest-lod -LaunchPerView -OutDir .harness/runs/scene-capture/SCN-WL-MATERIAL-AO-SHADING/ref_ground_01`
@@ -2153,7 +2165,7 @@
 
 ## SCN-WLR-PLANT-REF-BASE: 低木 1 株を比べる仕組みを作る
 - status: todo
-- after: SCN-WL-MATERIAL-AO-BAKE, SCN-WL-SHADOW-LEAK, SCN-WL-RTGI-COLOR
+- after: SCN-WL-MATERIAL-AO-BAKE, SCN-WL-SHADOW-LEAK, SCN-WL-RTGI-COLOR, SCN-WL-RTGI-AMOUNT
 - done-when: 荒野の低木（ラビットブラシの模型）1 株だけを地形の上に残す起動引数（`wasteland-hide=all-but-plant`）と、株を近くと遠くで撮る視点 `plant_near`・`plant_far`（`Game/Scenes/SceneCatalog.h`）を足す。`BlenderReference.py` に同じ模型（不透明度のマスク・葉の両面の透過を素直に付ける）の読み込みを足し、`ReferenceCheck.py --plant`（株の日なたと陰の明るさ、葉の透過の明るさ、株の足元の影と遮蔽の比）を作る。検査の成り立つ条件と未判定で落ちる扱いは SCN-WLR-BUILDING-REF-BASE と同じ。`plant_near` を低いサンプル数で試しに描き、`--trial` で検査が回ることを確かめる。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -Build -RequireAssets -Width 1920 -Height 1080 -Hdr -Aov -Views plant_near -GameArgs wasteland-common-light,wasteland-hide=all-but-plant,wasteland-finest-lod -LaunchPerView -OutDir .harness/runs/scene-capture/SCN-WLR-PLANT-REF-BASE`
@@ -2206,7 +2218,7 @@
 
 ## SCN-WL-LIGHT-FINAL: 共通の照明の数値の確認と、既定の荒野の光を写真に合わせる
 - status: todo
-- after: SCN-WL-MATERIAL-AO-BAKE, SCN-WL-SKY-SCATTER, SCN-WL-RTGI-COLOR, SCN-WL-SHADOW-LEAK
+- after: SCN-WL-MATERIAL-AO-BAKE, SCN-WL-SKY-SCATTER, SCN-WL-RTGI-COLOR, SCN-WL-SHADOW-LEAK, SCN-WL-RTGI-AMOUNT
 - done-when: (1) 共通の照明（地形だけ・霞なし）の数値: これまでの修正の仕様（rt-tlas-range・shadow-pages・shadow-leak・rtgi-color・material-ao）を、今のコードで撮り直した撮影先 `SCN-WL-LIGHT-FINAL/`（灰色の 3 条件の ref_cliff_01・ref_far_01、実材質の ref_cliff_01・ref_cliff_02・ref_ground_01・ref_far_01、照り返しの入・切）に対して、`ReferenceCheck.py --light-final`（この項目で作る。全仕様をまとめて読む）でまとめて通す（後の修正が前の修正を壊していないことの確認）。撮影は反復の中で保存する。(2) 既定の荒野（前哨地・植物・礫・霞・雲あり）は Cycles の正解が無いので、6 視点を撮って写真と並べて開き、谷・崖の影・前哨地の照り返しと空の青、影の中の色と明るさの差を所見に書く（数値の合否にしない）。カメラパスで移動中の粒・残像・遮蔽の欠けが目立たないことを確かめる。直す所が残れば項目を足す。
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -Build -RequireAssets -Width 1920 -Height 1080 -Hdr -Aov -Views ref_cliff_02 -GameArgs wasteland-common-light,wasteland-hide=all,wasteland-finest-lod -LaunchPerView -OutDir .harness/runs/scene-capture/SCN-WL-LIGHT-FINAL-recheck`
 - verify: `python Scripts/Terrain/ReferenceCheck.py --light-final --engine-root .harness/runs/scene-capture/SCN-WL-LIGHT-FINAL --verify`
