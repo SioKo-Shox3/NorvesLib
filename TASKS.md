@@ -1766,7 +1766,7 @@
 - notes: 2026-10-19 に SCN-WLR-ATMOS-REF から分けた（NEXT_FINDINGS.md の「反復 6 — SCN-WLR-ATMOS-REF」）。verify は 1 コマンド 10 分以内に収める（重い積分は反復の中で保存し、verify は保存した結果と小さな条件の検査に分けてよい）。2026-10-19 反復 31 で blocked（収束 0.76〜1.07 %。blocked/resolved/SCN-WLR-ATMOS-REF-B.md）→ 推奨の 1 を採る: 表の 4 次元の引きを 3 次補間（Catmull-Rom）にして収束を測り直す。基準 0.5 % は変えない。それでも届かなければ 2 を採る: 視線・点の格子と歩数を倍にした組を新しい段 1 にし、段 2 の `--solve`（1 組 1〜2 時間）は反復の外で切り離したプロセスとして起動し、出力と入力のハッシュを保存する（重い処理は許可済み）。次の反復がその保存を検査して閉じる。走行中の段 2 を重ねて起動しない。
 
 ## SCN-WLR-ATMOS-REF: 空と霞を、独立に書いた大気の数値の正解と比べる
-- status: todo
+- status: done
 - after: SCN-WLR-ATMOS-REF-B
 - done-when: エンジンのコードを写さず、Hillaire 2020 の論文の定義（同じ係数・惑星の大きさ・オゾン）から `Scripts/Terrain/AtmosphereReference.py` で正解を数値積分する（多重散乱は論文の近似と、高次の散乱を回数で足す版の両方。歩数を倍にして 0.5 % 以内まで収束させる）。SCN-WLR-ATMOS-DUMP の値と、空の方向別の輝度・距離別の透過率と散乱光・地表の太陽と空の照度の比を、角度・距離ごとの表で比べる。高さフォグと空気遠近が同じ霞を二重に掛けていないかを、両方の光学的深さの内訳で調べる。写真の空（ground_02 の晴天）と並べ、差を「モデルの違い」「設定の違い（荒野の Mie の尺度高さ 1600 m・MieDensityScale 0.22 など）」「条件の違い（天気・時刻・カメラ）」に分ける。値は変えない。
 - verify: `python Scripts/Terrain/AtmosphereReference.py --verify`

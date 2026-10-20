@@ -2955,10 +2955,14 @@ def atmos_ref_view(capture_dir, view):
         same, same_t = reference.march(haze_origin, direction[None, :], sun, "B", start=0.0, end=distance,
                                        steps=ATMOS_REF_SEGMENT_STEPS, mie_scale=float(aerial["mie_density_scale"]),
                                        fog=fog, origin_world_y=camera_y, air_start=float(aerial["start_distance_m"]))
-        # 霧だけ・空気遠近だけの透過率（同じ媒質）
-        _, fog_only_t = reference.march(haze_origin, direction[None, :], sun, "B", start=0.0, end=distance,
-                                        steps=ATMOS_REF_SEGMENT_STEPS, mie_scale=0.0, fog=fog, origin_world_y=camera_y,
-                                        air_start=distance + 1.0)
+        # 同じ媒質を論文の近似（A）で積んだ値（霧と空気の周りの光を向きに依らない Ψ とする）
+        same_a, _ = reference.march(haze_origin, direction[None, :], sun, "A", start=0.0, end=distance,
+                                    steps=ATMOS_REF_SEGMENT_STEPS, mie_scale=float(aerial["mie_density_scale"]),
+                                    fog=fog, origin_world_y=camera_y, air_start=float(aerial["start_distance_m"]))
+        # 霧だけ・空気遠近だけの透過率（同じ媒質）。霧だけの散乱光は、霧の散乱光を霧の透過率だけで減らした値（B）
+        fog_only, fog_only_t = reference.march(haze_origin, direction[None, :], sun, "B", start=0.0, end=distance,
+                                               steps=ATMOS_REF_SEGMENT_STEPS, mie_scale=0.0, fog=fog,
+                                               origin_world_y=camera_y, air_start=distance + 1.0)
         _, air_only_t = reference.march(haze_origin, direction[None, :], sun, "B", start=0.0, end=distance,
                                         steps=ATMOS_REF_SEGMENT_STEPS, mie_scale=float(aerial["mie_density_scale"]),
                                         air_start=float(aerial["start_distance_m"]))
@@ -2998,7 +3002,12 @@ def atmos_ref_view(capture_dir, view):
                            "fog_multiple": (same["fog_multiple"][0] * sun_lux).tolist(),
                            "air_sun": (same["air_sun"][0] * sun_lux).tolist(),
                            "air_multiple": (same["air_multiple"][0] * sun_lux).tolist(),
-                           "total_scattering": (same["total"][0] * sun_lux).tolist()},
+                           "total_scattering": (same["total"][0] * sun_lux).tolist(),
+                           "fog_multiple_A": (same_a["fog_multiple"][0] * sun_lux).tolist(),
+                           "air_multiple_A": (same_a["air_multiple"][0] * sun_lux).tolist(),
+                           "total_scattering_A": (same_a["total"][0] * sun_lux).tolist(),
+                           "fog_sun_fog_t_only": (fog_only["fog_sun"][0] * sun_lux).tolist(),
+                           "fog_multiple_fog_t_only": (fog_only["fog_multiple"][0] * sun_lux).tolist()},
             "physical": {"transmittance": physical_t[0].tolist(),
                          "total_scattering": (physical["total"][0] * sun_lux).tolist(),
                          "total_scattering_A": (physical_a["total"][0] * sun_lux).tolist()},

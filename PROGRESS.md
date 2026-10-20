@@ -5866,3 +5866,21 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - DDGI のプローブの光線には入れない。プローブの光線はラスタの面でなく空中のプローブから出るので始点の食い違いが無く、RTGI だけで空の比が基準に入った
 - Notes: 空の比は使い捨ての台本（`ReferenceCheck.check_gray_view` に空だけの撮影を渡す）で測った。3 条件の `--gray --expect` の一式は SCN-WL-RT-TLAS-RANGE-ACCEPT で回す
 - Next: SCN-WL-RT-TLAS-RANGE-ACCEPT
+
+### SCN-WLR-ATMOS-REF 完了（2026-10-20、run 20261020-094249 の反復 7）
+- 反復 3 が反復の外で起動した段 1（5 組）・段 2（paper・engine）の `--solve` が終わっていた（段 1 09:01、段 2 論文 13:26・荒野 14:53、どれも result=pass・EXIT=0）。書き出しの入力が RTGI の直し（9cc289cb）で撮影の後に変わっていた（inputs_current=0）ので、同じ verify のコマンドで撮り直した（`aux-SCN-WLR-ATMOS-REF-recapture.txt`、EXIT=0、commit 9cc289cb・dirty=0）。比べる表は撮り直しの前と画素数の 1 行以外同じ
+- Done:
+  - `Docs/RenderingValidation/WastelandAtmosphereReference.md` を方向を保つ B で書き直した（収束・空の方向別の輝度・照度・距離別・霞の二重・Ψ・写真・差の分け方、「A と B で結論が変わるか」の節を足した）
+  - `ReferenceCheck.py --atmos-ref`: 同じ媒質の正解に、A（論文の近似）で積んだ霧と空気の多重散乱、霧の透過率だけで減らした霧の散乱光を書き足した（記録だけ。合否・署名は変えない）
+- 結論（新しい B）:
+  - 空: エンジン ÷ B 0.67〜1.27（太陽の側の地平線で暗く、太陽から離れた高い空で明るい）。A ÷ B と同じ形で、照度の A ÷ B は 1.010 なので配り方の違い（前の判定の 0.82〜1.00 から変わる）
+  - 霧の空の色の項の太陽の側の二重: 霧の透過率だけで減らした B の 1.06〜1.08 倍（横・反対 1.02〜1.03）で、上乗せは 3〜6 %。A では 2.1〜2.8 倍に見える（前の判定の 2.2 倍は等方にした B による）。判断は B に従い、二重は小さい
+  - 霧の散乱光は距離とともに向きに依らず正解 B より明るくなる（30 km で 1.2〜1.3 倍）。霧の透過率だけで減らした正解とは距離で変わらないので、エンジンは霧の散乱光を空気遠近の透過率で減らしていない（合成の順）
+  - 霧の太陽の単一散乱は正解の 0.818 倍で、0 m と 1474 m の太陽の透過率の比と同じ（霧の太陽に地表 0 m の透過率）
+  - 霞の散乱光の和はすべての向きで正解 B より暗い（0.73〜0.94）。主に空気遠近（B の 0.45〜0.83 倍）
+  - 写真: B は色度 r で 0.02 だけ写真へ寄る。写真との差の大半は設定（Mie）と条件（カメラ）
+- 証拠（`.harness/runs/20261020-094249/`）:
+  - `verify-SCN-WLR-ATMOS-REF-1.txt`: `AtmosphereReference.py --verify` result=pass・sets=2・inputs_current=1・EXIT=0。段 1 と段 2 の差の最大 論文 0.093 %（sky_B）・荒野 0.219 %（segment_scattering）、最小再現の太陽方向 ÷ 等方 3.3685・2.9385・2.3538
+  - `verify-SCN-WLR-ATMOS-REF-2.txt`: `--atmos-ref --verify` result=pass・inputs_current=1・EXIT=0。地表の太陽の透過率 3.0e-4、同じ媒質の高さフォグの透過率 7.7e-7・空気遠近 6.4e-3
+- Notes: 新しい試験は足していない。値は変えていない。WastelandGapList.md の `fog_sky_color_double`（2.2 倍）は SCN-WLR-GAP-LIST-ATMOS で今の結論（二重は 3〜6 %、代わりに合成の順と霧の太陽の高度）へ書き直す
+- Next: TASKS.md の次の未完の項目（SCN-WLR-GAP-LIST-ATMOS が開く）
