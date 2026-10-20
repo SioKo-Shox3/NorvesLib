@@ -14,6 +14,7 @@ R1 baseline candidate Indoor=D0D34A5F9CF478449EC34BC551DA190B9E77353E8CD807B3455
 R1 baseline candidate Indoor=D0D34A5F9CF478449EC34BC551DA190B9E77353E8CD807B3455E2AEB6B5E05E7 Outdoor=33B8B94CCE4B8C44A53B4593DEE5BEB739AA8570A87D4780FA0BD9122CFEAC91 CodeHead=06fb327cee94cdf7478810beae34e5e37b89dcaa を承認する。
 R1 baseline candidate Indoor=D0D34A5F9CF478449EC34BC551DA190B9E77353E8CD807B3455E2AEB6B5E05E7 Outdoor=18A44AE8E1408EF8EF0F13FFB1009750F748FB591349AACCEEEFC06EA4B5B857 CodeHead=6d3283227a4bef802a9d5a1cf8aa58b247e846b7 を承認する。
 R1 baseline candidate Indoor=D0D34A5F9CF478449EC34BC551DA190B9E77353E8CD807B3455E2AEB6B5E05E7 Outdoor=052BA21977383F565B9A07169DF7CD72CE2B79CA5482A6F6AA7727114D713268 CodeHead=f4c5266983dcc985b05caed4a26012ff3635a48f を承認する。
+R1 baseline candidate Indoor=C3FBC0EAC010F80FD75D4B1D17FFAE5A9FE2FA51E71ACEE480A2574A2478D8D7 Outdoor=7C7405EF3E2B7A1E6B3D5DCBE1DE14F06F662FF733D0683D4F6A5652667C8CA6 CodeHead=9848f86eed0a65891e773ea456dc38f00e130e51 を承認する。
 
 ## P6b plan and procedure approval
 P6b plan SHA256=37D08DE402478F1D1EBEEEE2D0D8F134492AA0A0EDEB2A4C8FF69527721A2AE3
@@ -138,4 +139,16 @@ GPU performance=Deferred; executions=0; destination=future CI GPU runner
 - 差分の範囲: 旧baselineとの差は57画素で、最大差は3/255の1画素で、残り56画素は1/255。x 98〜206・y 126〜158に収まり、球の周りだけ（57画素のうち53が物体の縁。箱のx 18〜94には無い）。符号付きの差の総和はR -8・G -4・B -2、平均輝度は129.3822→129.3821で変わらない。
 - 物理的な妥当性: 差は球の縁の画素に限られる。原因は、微分を有限差分から解析的な値へ替えた分（物体の縁でクアッドの隣の画素が別の面の値になる影響がなくなる）か、深度の比較の違い（IDのラスタはLessOrEqual、GBufferの描画はLess）による縁の画素の勝ち方の違いと推定する（どちらかは確かめていない）。解析的な微分が正しい値で、明るさの総和が変わらず最大差が3/255なので、色相・露出には影響しない。
 - 再生成: `UpdateRenderingGoldenBaselines.ps1 -GenerateCandidate -CodeHead f4c5266983dcc985b05caed4a26012ff3635a48f`を2回走らせ、どちらも成功した。候補はOutdoor `052BA219…713268`、Indoorは既存baseline `D0D34A5F…5E05E7`と一致した。
+- 閾値（`VisualThresholds.tsv`のmean FLIP上限`0.000001`、raw channel差上限8）は変更しない。
+
+## 直接光の鏡面の遮蔽項と視線行列の作り方の直し後のIndoor・Outdoor再承認
+- 2026-10-21、上の承認行のIndoor出力（SHA256=`C3FBC0EAC010F80FD75D4B1D17FFAE5A9FE2FA51E71ACEE480A2574A2478D8D7`）とOutdoor出力（SHA256=`7C7405EF3E2B7A1E6B3D5DCBE1DE14F06F662FF733D0683D4F6A5652667C8CA6`）を新しいbaselineとして承認した。承認はSCN-WL-GOLDEN-REAPPROVEの完了条件（差の原因と物理的な妥当性を確かめた再承認）による。上の「ビジビリティバッファを既定にした後のOutdoor再承認」の承認行は置換前の履歴として残す。
+- 差の原因は2つで、どちらも意図した描画の直しである。
+  1. 直接光の鏡面の遮蔽項を、分けて掛けるSchlick-GGXのG1·G1から高さ相関のSmith GGX（Cyclesと同じ形）へ替えた（`35875b6c`・`deccd8bc`。同じ変更で、RTGIが働く撮影では材質のAOを直接光とRTGIの拡散に掛けなくなった）。検証アプリはRTGIを切り（`INDIRECT_LIGHTING source=ibl`）材質のAOも1なので、AOの扱いの変更は画を変えない。差は遮蔽項の分だけである。
+  2. 視線行列を原点の向きと位置の平行移動に分けて作るようにした（`7ff66633`、`CameraViewConstants::BuildViewMatrix`）。数式では同じ行列で、小さな座標では成分の最後の桁だけが違い、丸めの境目の画素が1段動く。Outdoorだけに効く（`WastelandCameraOffset.md`の「基準画像（golden）への影響」）。
+- 切り分け: 照明の2本のシェーダー（`lighting.frag`・`PbrMaterialEvaluation.glsl`）を`84bc0b53`（1の前）の版にし、さらに`CameraViewConstants.cpp`を`7ff66633^`の版にしたビルドの撮影は、旧Outdoor baselineと差0である。シェーダーだけを戻した撮影は旧baselineと712画素（raw最大4）違い、その撮影と今の候補の差は16150画素（raw最大9）。2つの差の画素の和集合は、今の候補と旧baselineの差の16152画素をすべて含む。Indoorはシェーダーを戻すと旧baselineと差0になる。
+- 差分の範囲: Indoorは11画素（raw最大1、x 20〜53・y 112〜147）、平均輝度9.6853→9.6854。Outdoorは16152画素（raw最大10、2/255以上は2544画素、y 88〜255）、平均輝度129.3821→129.5437。Outdoorの差は鏡面だけで見える黒いR1の板が最大10段明るくなる分と、地面の1〜2段の等高線、球の際である。符号付きの差の総和はR +11232・G +9358・B +20905で、どの成分も明るくなる向きだけである。旧baseline｜候補｜差×20を並べて開き、形・位置・色相の変化が無いことを確かめた。
+- 物理的な妥当性: 高さ相関のSmith GGXは1/(1+Λv+Λl)で、分けて掛けるG1·G1の1/((1+Λv)(1+Λl))より常に大きいか等しい（ΛvΛl≥0）。差がすべて鏡面が強まる向きなのはこの式どおりで、Cyclesの式に一致させる直しである。荒野のCyclesとの比較では、日なたの地面のエンジン÷Cyclesがref_ground_01で0.952→0.973、ref_cliff_02で0.858→0.925と1へ近づいた（SCN-WL-MATERIAL-AO-SHADING）。
+- 予備の経路（`--visibility-buffer=off`）: `IndoorGBufferFallback.png`は新しい`Indoor.png`と同じ（SHA256=`C3FBC0EA…78D8D7`）。`OutdoorGBufferFallback.png`は`4C8653857B499ADDFB2F503D4241C55FDB2364E7A9A9341285911BF47B172129`へ置き換えた。旧baselineとの差は既定の経路と同じ16152画素（raw最大10）、新しい`Outdoor.png`との差は球の縁の50画素（raw最大3）で、ビジビリティバッファを既定にしたときのonとoffの差（57画素・raw最大3）と同じ形である。
+- 再生成: `UpdateRenderingGoldenBaselines.ps1 -GenerateCandidate -CodeHead 9848f86eed0a65891e773ea456dc38f00e130e51`を走らせ、候補はIndoor `C3FBC0EA…78D8D7`・Outdoor `7C7405EF…8C8CA6`。描画のコードが同じ`deccd8bc`での別の撮影と差0で、撮影は決定的である。
 - 閾値（`VisualThresholds.tsv`のmean FLIP上限`0.000001`、raw channel差上限8）は変更しない。

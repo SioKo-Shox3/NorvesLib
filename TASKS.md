@@ -2041,7 +2041,7 @@
 - notes: 2026-10-21 SCN-WL-GOLDEN-REAPPROVE の反復が足した。2026-10-21 親: 差は raw 最大 4 の小さなもので、別の作業ツリーでの約 10 段の Debug ビルドに見合わないため、今の exe での局所化とコードの読みに絞った（推奨案）。時間の見積もり: Debug のビルド 3 分、golden の撮影 1 本 約 1 分。
 
 ## SCN-WL-GOLDEN-REAPPROVE: 荒野の描画の直しで変わった基準画像を、差の原因を確かめて再承認する
-- status: todo
+- status: done
 - after: SCN-WL-MATERIAL-AO-SHADING, SCN-WL-GOLDEN-DIFF-CAUSE
 - done-when: 最後の再承認（52b399e7・83134c09）から後の描画の直しで、基準画像の検査が落ちている（SCN-WL-MATERIAL-AO-SHADING の前の HEAD で Outdoor が mean_flip 0.00044・712 画素、AO の直しの後は Indoor 11 画素・Outdoor 16156 画素。`.harness/runs/20261021-055341/aux-SCN-WL-MATERIAL-AO-SHADING-golden*.txt`）。(1) AO の直しの前から落ちていた Outdoor の 712 画素は、荒野の描画の項目ではなく 10-09〜10-14 の C++ 側の変更による（反復 4 の切り分け）。原因は SCN-WL-GOLDEN-DIFF-CAUSE の記録に従い、不具合と分かったものは直してから、特定できなかったものは局所化した段と残る候補を既知の差として承認の根拠に書く。AO の直しの差（Indoor 11 画素・Outdoor 16156 画素）は SCN-WL-MATERIAL-AO-SHADING（材質の AO を RTGI と重ねない・鏡面の遮蔽項を Cycles と同じ式に）による。(2) 差がすべて意図した描画の直しによることを、Indoor・Outdoor（予備の経路の基準画像があればそれも）の候補と今の基準画像を並べて開いて確かめる。意図しない差が見つかったら再承認せず、その原因を TASKS.md に足して BLOCKED にする。(3) `Docs/RenderingValidation/GoldenBaselines.md` の手順（`UpdateRenderingGoldenBaselines.ps1 -GenerateCandidate`→`R1Acceptance.md` の `R1 visual approval` 節に承認の行と hash と根拠→`-PublishApprovedCandidate`）で再承認する。根拠は差の原因の変更と、それが物理的な期待値（Cycles の比）へ近づく向きであること。コミット本文にも根拠を書く。
 - verify: `ctest --test-dir build -C Debug --output-on-failure -R "^(RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`

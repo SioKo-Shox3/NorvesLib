@@ -142,6 +142,7 @@ baseline更新を通常のコード変更と同じ変更単位へ混ぜない。
 
 - しきい値は `VisualThresholds.tsv` の同じシーンの行を使う（off 用の行は持たない）。
 - 置いた時点の値: `IndoorGBufferFallback.png` は `Indoor.png` と同じ（SHA-256 `D0D34A5F9CF478449EC34BC551DA190B9E77353E8CD807B3455E2AEB6B5E05E7`）。`OutdoorGBufferFallback.png` は、既定を on にして `Outdoor.png` を再承認する前の基準画像（`83134c09^`。SHA-256 `18A44AE8E1408EF8EF0F13FFB1009750F748FB591349AACCEEEFC06EA4B5B857`）。off の撮影はこれと完全に一致する。
+- 2026-10-21 に既定の 2 枚と一緒に置き換えた（`R1Acceptance.md` の「直接光の鏡面の遮蔽項と視線行列の作り方の直し後のIndoor・Outdoor再承認」）。`IndoorGBufferFallback.png` は `Indoor.png` と同じ `C3FBC0EA…78D8D7`、`OutdoorGBufferFallback.png` は `4C865385…7B172129`。
 - 更新の手順: `UpdateRenderingGoldenBaselines.ps1` と `CalibrateRenderingVisualThresholds.ps1` は on の 2 枚だけを扱う。off の 2 枚は、差が予備の経路の変更だけによると確かめたうえで次のように置き換える。
   `RenderingGoldenImageTest.exe --scene=<indoor|outdoor> --capture-source=back-buffer --visibility-buffer=off --write-baseline-staging` が `build\RenderingValidation\BaselineStaging\<Scene>GBufferFallback.png.tmp` を書くので、それを `Test\Core\Rendering\Baselines\RenderingValidation\<Scene>GBufferFallback.png` へ写す（同じ撮影の staging と基準画像のバイト一致を確かめてある）。
 - 経路の確認: 速度の検査（`RenderingVelocity*VulkanTest`）と golden は、画像・値の比較の後に `VisibilityBufferPathProbe`（`RenderingValidation/VisibilityBufferPathProbe.h`）がエンジンのログ（`VisibilityResolvePass` の `VISBUFFER_FALLBACK`・`VISBUFFER_RESOLVE_TILES`）で、走った経路を確かめる。on は解決を記録していて予備へ戻っていないこと、off は解決を通っていないことを求め、標準出力に `NORVESLIB_VISIBILITY_PATH mode=<on|off> resolve_logs=<n> fallback_logs=<n>` を出す。装置が対応しないと既定も黙って予備へ落ち、画像や速度の値だけでは区別できないための確認で、ログが無効なビルド（Release）では何も確かめない。

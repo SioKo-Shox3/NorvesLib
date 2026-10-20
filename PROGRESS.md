@@ -6089,3 +6089,18 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 切り分けで外れたもの: 飛行中のフレームの数（f919b5f3 では MAX_FRAMES_IN_FLIGHT=1、今は 2。=1 でも同じ差）、ドライバ（今も 610.88 で 10-06 の再承認と同じ）、トーンマップ・SSR・空・前方描画のシェーダー（f919b5f3〜84bc0b53 で変わっていない）
 - Notes: 疑いに挙がっていた 10-12〜10-14 のフレームの持ち主への移し替えは画を変えていなかった。SCN-WL-GOLDEN-REAPPROVE は、AO の直しの分とこの 712 画素の両方を原因の分かった差として再承認へ進める
 - Next: SCN-WL-GOLDEN-REAPPROVE
+
+### SCN-WL-GOLDEN-REAPPROVE 完了（2026-10-21、run 20261021-055341 の反復 6）
+- Done: golden の Indoor・Outdoor と予備の経路の 2 枚を再承認した。Indoor `C3FBC0EA…78D8D7`（予備も同じ）、Outdoor `7C7405EF…8C8CA6`、OutdoorGBufferFallback `4C865385…7B172129`。根拠は `R1Acceptance.md` の「直接光の鏡面の遮蔽項と視線行列の作り方の直し後のIndoor・Outdoor再承認」
+- 差の原因: (1) 直接光の鏡面の遮蔽項を高さ相関の Smith GGX にした分（35875b6c・deccd8bc。Outdoor 16150 画素・Indoor 11 画素。式から常に明るくなる向きで、差の総和も全成分が正）、(2) 視線行列の作り方の直しの丸めの分（7ff66633。Outdoor 712 画素）。反復 5 の撮影（シェーダーだけ戻す 712 画素・cpp も戻す 0 画素）と今の候補の差を分け、2 つの差の画素の和集合が候補の差 16152 画素をすべて含むことを確かめた
+- 証拠（`.harness/runs/20261021-055341/`）:
+  - `aux-SCN-WL-GOLDEN-REAPPROVE-iter6-start.txt`: 再承認の前の golden 4 本（Indoor 系 11 画素・Outdoor 系 16152 画素で落ちる）
+  - `aux-SCN-WL-GOLDEN-REAPPROVE-candidate.txt`: `-GenerateCandidate -CodeHead 9848f86e` exit 0・fixed_staging_validation=Success
+  - `aux-SCN-WL-GOLDEN-REAPPROVE-fallback-staging.txt`: off の 2 本の staging（mode=off resolve_logs=0）
+  - `aux-SCN-WL-GOLDEN-REAPPROVE-iter6-analysis.txt`: hash・差の画素数・分解・on と off の差（Outdoor 50 画素・raw 最大 3、球の縁）。反復 4 の HEAD の撮影と候補は差 0
+  - `golden-reapprove/iter6/*-diffx20.png`: 旧基準｜候補｜差×20 を Indoor・Outdoor・予備の Outdoor で開いた。Outdoor は鏡面だけで見える黒い R1 の板が明るく、地面に等高線、形・位置・色相は変わらない。Indoor は差がほぼ見えない
+  - `aux-SCN-WL-GOLDEN-REAPPROVE-publish.txt`: `-PublishApprovedCandidate` baseline_publish=PASS
+  - `verify-SCN-WL-GOLDEN-REAPPROVE-1.txt`: Indoor・Outdoor の golden 2 本 Passed・EXIT=0
+  - `aux-SCN-WL-GOLDEN-REAPPROVE-fallback-check.txt`: 予備の経路の 2 本 Passed・EXIT=0
+- Notes: 閾値は変えていない。R2Sky・R3Fog・R8Aces の基準画像の検査は回していない（この項目の対象外。鏡面の遮蔽項の変更が効くかは未確認）。新しい試験は足していない
+- Next: TASKS.md の次の未完の項目
