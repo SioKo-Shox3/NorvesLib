@@ -6019,3 +6019,16 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 入｜切｜照り返しの画（`scene-capture/SCN-WL-RTGI-AMOUNT/bounce-on/bounce_ref_cliff_01.png`）を開いた: 崖と台地の斜面に照り返しが入り、斑・縞は無い
 - Notes: 残りの色度の差はエンジンの g が 0.0075 低い（r は合う）。試し 2・3 で 0.0076・0.0081 と揺れが小さく系統の差。日なたの地面・崖の比 0.84・0.78 の不足も残る（記録だけ）。灰色の参照を描き直したので、灰色で受け入れたほかの項目の参照の署名が変わった（描く設定は同じ）。新しい試験は足していない
 - Next: blocked/SCN-WL-RTGI-AMOUNT.md の判断（推奨: todo に戻して残りの色度を当たりの点の太陽の直接光・空の遮り・ノイズ取りの順に 1 つずつ測る）
+
+### SCN-WL-RTGI-AMOUNT 完了（2026-10-21、run 20261021-055341 の反復 1）
+- 原因: 残りの色度の差は光の扱いでなく、RTGI の時間方向の履歴の半精度の丸めだった。灰色の撮影は太陽（白）と一様な空（4000:5000:6500）の足し合わせなので、画素の色は必ず白と空の色の張る面に乗る（旧い exe の太陽だけ・空だけ・両方の撮影は面からの外れが丸めの大きさ 1.0〜1.7 で、太陽だけ＋空だけ＝両方）。今の入・切の撮影は外れのばらつきが 4〜8、平均は影の中の地面の入 +7.3・影の崖の入 −4.3 で、明るさの帯（半精度の指数の境目）に沿った色の斑だった。履歴は rgba16f で静止時の重みが 256/257 なので、1 フレームの更新（差の 1/257）が半精度の刻み（値の 2.4〜4.9×10⁻⁴）と同じ桁になり、最も近い値への丸めで小さな更新が消えて大きな更新だけが残る。消え方が成分ごとの指数の位置で違うので、成分ごとの偏りが積もっていた
+- 切り分けで外したもの: ノイズ取りで日なたと混ざる分（日なたからの距離で分けても g の差は −0.0085〜−0.0048 で境目に集まらない）、当たりの色（灰色の地形は遠景を含めすべて混ぜ合わせを持たない）、上限処理・ノイズ取り（すべて線形か色相を保つ倍率）
+- コード: `DiffuseIndirect.comp` の `StoreTemporalSample` で、次のフレームが読む履歴の放射輝度だけを上下の隣の半精度の値へ確率的に丸める（`StochasticRoundToHalf`。期待値が元の値になる確率で選ぶ。乱数は `EmitterRandom` の 11〜13 番）。照り返しの出力（`diffuseIndirect`）は最も近い値への 1 回の丸めのまま。画の形式・契約（`RTGIContract.h`）は変えていない
+- 証拠（`.harness/runs/20261021-055341/`）:
+  - `regression-before-SCN-WL-RTGI-AMOUNT.txt` result=pass・EXIT=0（RelWithDebInfo を今の HEAD でビルドしてから撮った。`aux-relwithdebinfo-build-0.txt` EXIT=0）
+  - `aux-SCN-WL-RTGI-AMOUNT-try1*.txt`: 直した後の入・切で面からの外れの平均 影の中の地面 +0.9・影の崖 −0.4（ばらつき 2〜3）、`--expect` result=pass
+  - `verify-SCN-WL-RTGI-AMOUNT-1.txt` Debug の Game のビルド EXIT=0、`-2`・`-3` 入・切の撮影 result=pass・EXIT=0
+  - `verify-SCN-WL-RTGI-AMOUNT-4.txt` `--expect rtgi-amount.json --verify` result=pass（rows=3・failed=0、inputs_current=1・cycles_inputs_current=1）: 影の崖 比 0.862、影の中の地面 比 0.945、影の中の地面の色度の差 0.0037（直す前 0.0076）。記録: 日なたの地面 比 0.848（色度の差 0.0022）・日なたの崖 0.788（0.0029）・影の崖の色度の差 0.0013
+  - `verify-SCN-WL-RTGI-AMOUNT-5.txt` 回帰の after result=pass。sandbox psnr inf、night-village 68.7、rendering3dtest 59.7（最大の差 13）、mega-bananas 52.8・mean_diff +0.16（差が 20 を超える画素 230 点がバナナの上に散る。before｜after｜差×10 を並べて開き、差はほぼ黒で見た目は変わらない。RTGI の乱数の列が変わった分の粒）
+- Notes: 確率的に丸めた履歴は 1 フレームに 1 刻みまでの雑音を足すが、重み 1/257 の平均で消える。日なたの崖の比 0.79 の不足は残る（記録だけ）。新しい試験は足していない。シェーダーの編集で行末が全体で書き換わったので difflib で元の混在へ戻した（numstat の 2 通りが一致）
+- Next: TASKS.md の次の未完の項目

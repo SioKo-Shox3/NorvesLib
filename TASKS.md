@@ -2009,7 +2009,7 @@
 - notes: 危険地帯（描画）。2026-10-19 書き直し（Sol の批評 11・12 と 2 周目）: 正解は内蔵のパストレーサーでなく Blender Cycles。「RTGI は既定で有効」は、光線は撃つが RT のシーンに地形が無い状態だった（SCN-WL-RT-TLAS-* で直す）。 2026-10-20 SCN-WL-SHADOW-LEAK の測り: 灰色の ref_cliff_01 の影の中の地面で、エンジンの太陽の照り返しが Cycles の 0.43 倍（45 対 103。日なたの地面の照り返しは 13）。影の起伏の陰の側が日なたの斜面から受ける近い照り返しを RTGI が拾いきれていない見込み（解像度・ノイズ取りで日なたの隣と混ざる。未確認）。この項目の明るさの比 1 ± 0.15 はこの不足を含めて判定する。 2026-10-20（親）: 反復 12 の BLOCKED を推奨の案 A で解いた。当たりの色の直し・`--rtgi-bounce=off`・`--bounce` はコミット済み（006994f1）。比べる物を Cycles の間接光の拡散の分に揃え、切り出しの参照を `indirect_diffuse` つきで親が描き直す（ログ `.harness/runs/20261020-094249/aux-SCN-WL-RTGI-COLOR-crop-rerender.txt`、18:14 開始・約 70 分、END の後に親が todo のまま走らせる）。合否は色度だけにし、明るさの比と影の中の地面の色の配分は SCN-WL-RTGI-AMOUNT へ分けた。反復 12 の測りの表は `blocked/resolved/SCN-WL-RTGI-COLOR-diffuse-only.md`。
 
 ## SCN-WL-RTGI-AMOUNT: 照り返しの量を Cycles の間接光の拡散の分に合わせる
-- status: todo
+- status: done
 - after: SCN-WL-RTGI-COLOR, SCN-WL-SHADOW-LEAK
 - done-when: SCN-WL-RTGI-COLOR（反復 12）の測りで、当たりの色が Cycles と同じ灰色の材質でも、エンジンの照り返し（`--rtgi-bounce` の入 − 切）が Cycles の間接光の拡散の分の 影の崖 0.77・日なたの地面 0.58・日なたの崖 0.68 しかなく、影の中の地面は比 1.10 なのに色度が 0.022 青い（空の照り返しが多く、日の当たった面の照り返しが少ない）。SCN-WL-SHADOW-LEAK の測りでも、影の中の地面の太陽の照り返しは Cycles の 0.43 倍。原因（見込み: 近くの地面どうしの照り返しが SCN-WL-RT-SELFHIT の近い当たりの読み飛ばしで抜ける、当たりの点の太陽の直接光の扱い・影、RTGI の解像度とノイズ取りで日なたの隣と混ざる）を 1 つずつ測って分け、直す。合否: 灰色の材質で ref_cliff_01 の照り返しの入・切を撮り、`--bounce --expect`（`rtgi-amount.json`。`--bounce` が灰色の参照 SCN-WLR-CYCLES-GRAY の間接光の拡散の分を読めるようにするのはこの項目）で、影の崖・影の中の地面の明るさの比が 1 ± 0.15、影の中の地面の色度の差が 0.005 以内。日なたの地面・日なたの崖の比は記録する。反復の最初に回帰の撮影の `before` を撮る。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`

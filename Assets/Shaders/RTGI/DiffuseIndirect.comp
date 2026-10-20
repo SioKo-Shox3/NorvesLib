@@ -871,6 +871,27 @@ bool TryReadReprojectedHistory(vec2 currentUV,
     return true;
 }
 
+// 0 以上の値を、上下の隣の半精度の値のどちらかへ、期待値が元の値になる確率で丸める（u は 0〜1 の一様乱数）。
+// 静止時の履歴は 1 フレームに差の 1/257 しか動かず、その更新は半精度の刻み（値の 2.4〜4.9×10⁻⁴）と同じ桁なので、
+// 最も近い値への丸めでは小さな更新が消えて大きな更新だけが残る。消え方は成分ごとの指数の位置で違うので、
+// 履歴に成分ごとの偏り（照り返しの色のずれ）が積もる。確率的に丸めると、丸めの誤差は平均で 0 になる
+float StochasticRoundToHalf(float value, float u)
+{
+    uint nearestBits = packHalf2x16(vec2(value, 0.0)) & 0xFFFFu;
+    float nearest = unpackHalf2x16(nearestBits).x;
+    if (nearest == value || !(value > 0.0) || nearestBits >= 0x7BFFu)
+    {
+        return nearest;
+    }
+    // packHalf2x16 の丸めの向きは実装で違うので、値を挟むもう一方の隣を値との大小から決める
+    uint otherBits = nearest > value ? nearestBits - 1u : nearestBits + 1u;
+    float other = unpackHalf2x16(otherBits).x;
+    float lower = min(nearest, other);
+    float upper = max(nearest, other);
+    float upperProbability = (value - lower) / max(upper - lower, 1.0e-30);
+    return u < upperProbability ? upper : lower;
+}
+
 void StoreTemporalSample(uvec2 pixel,
                          vec3 radiance,
                          float age,
@@ -899,7 +920,13 @@ void StoreTemporalSample(uvec2 pixel,
     safeMaterial = clamp(safeMaterial, vec4(0.0), vec4(1.0));
 
     imageStore(diffuseIndirect, ivec2(pixel), vec4(safeRadiance, 1.0));
-    imageStore(historyRadianceOutput, ivec2(pixel), vec4(safeRadiance, 1.0));
+    // 次のフレームが読む履歴だけを確率的に丸める（この画の出力は最も近い値への 1 回の丸めのまま）
+    uint frameIndex = parameters.sampleState.x;
+    vec3 roundedHistoryRadiance = vec3(
+        StochasticRoundToHalf(safeRadiance.r, EmitterRandom(pixel, frameIndex, 11u)),
+        StochasticRoundToHalf(safeRadiance.g, EmitterRandom(pixel, frameIndex, 12u)),
+        StochasticRoundToHalf(safeRadiance.b, EmitterRandom(pixel, frameIndex, 13u)));
+    imageStore(historyRadianceOutput, ivec2(pixel), vec4(roundedHistoryRadiance, 1.0));
     imageStore(historyAgeOutput, ivec2(pixel), vec4(safeAge, 0.0, 0.0, 0.0));
     imageStore(historyConfidenceOutput,
                ivec2(pixel),
