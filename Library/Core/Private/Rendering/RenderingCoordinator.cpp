@@ -1318,8 +1318,6 @@ namespace NorvesLib::Core::Rendering
                     static_cast<uint32_t>(packet.RayTracingScene.Instances.size());
                 instance.Instance.mask = draw.bCastShadow ? RayTracingInstanceMaskShadowCaster
                                                           : RayTracingInstanceMaskNonShadowCaster;
-                // メッシュは光線にもラスタと同じ形を見せるので、裏面を外す光線（RTGI の拡散光線）からも両面とも当たる
-                instance.Instance.disableTriangleFacingCull = true;
                 CopyRayTracingInstanceTransform(worldTransform, instance.Instance.transform);
                 if (IsFiniteRayTracingTransform(previousWorldTransform))
                 {
@@ -1614,9 +1612,6 @@ namespace NorvesLib::Core::Rendering
         instance.Material.EmissiveLuminanceNits = material.EmissiveLuminanceNits;
         instance.Instance.customIndex = static_cast<uint32_t>(packet.RayTracingScene.Instances.size());
         instance.Instance.mask = entry.Mask;
-        // 光線に見せる段はラスタの段より粗く、細かい面から出た光線の始点が粗い面の下（閉じた形では内側）に入る。
-        // 裏面を外す光線（RTGI の拡散光線）はその面を通り抜け、外から当たる表面だけを遮るものとして数える
-        instance.Instance.disableTriangleFacingCull = false;
         std::memcpy(instance.Instance.transform, entry.Transform, sizeof(entry.Transform));
         if (entry.bHasPreviousTransform)
         {

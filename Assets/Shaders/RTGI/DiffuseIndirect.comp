@@ -99,6 +99,15 @@ layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer RTG
 #include "Common/PbrMaterialEvaluation.glsl"
 #include "Common/RayTracingInstanceMask.glsl"
 const float RAY_ORIGIN_OFFSET = 0.002;
+// 1 次面から出す拡散光線の始点のずらし。光線に見せる MegaGeometry の段（常駐のフォールバック）はラスタの段より粗く、
+// 2 mm では始点が光線の形の下や直上に入って自分の面に当たる。近くは 0.5 m、遠くはカメラからの距離に比例して広げる
+const float RAY_SURFACE_OFFSET_MINIMUM = 0.5;
+const float RAY_SURFACE_OFFSET_PER_METER = 2.5e-4;
+
+float RaySurfaceOffset(float viewDistance)
+{
+    return max(RAY_SURFACE_OFFSET_MINIMUM, RAY_SURFACE_OFFSET_PER_METER * viewDistance);
+}
 // 画素ごとの履歴の年齢の上限（静止が続いたとき）。フレームごとの上限はtemporalState.wで、視点・光源・
 // シーンが動いているフレームでは8になる。重みは累積平均の 1-1/(年齢+1) で、上限は256/257。
 const uint RTGI_HISTORY_MAXIMUM_AGE = 256u;
@@ -880,12 +889,10 @@ vec3 TraceDiffuseRay(vec3 rayOrigin,
     hitBaseColor = vec3(0.0);
     hitCustomIndex = RTGI_NO_HIT;
 
-    // 裏面は外す。MegaGeometry は光線にラスタより粗い段を見せるので、細かい面から出た光線が粗い面の裏に当たる
-    // 自己遮蔽を数えない（メッシュの instance は裏面を外さない印を持ち、両面とも当たる）
     rayQueryEXT query;
     rayQueryInitializeEXT(query,
                           sceneTopLevel,
-                          gl_RayFlagsOpaqueEXT | gl_RayFlagsCullBackFacingTrianglesEXT,
+                          gl_RayFlagsOpaqueEXT,
                           RayTracingInstanceMaskShadowCaster,
                           rayOrigin,
                           parameters.rayLimits.x,
@@ -986,7 +993,7 @@ void ShadeDiffuseIndirect(uvec2 pixel, out bool bRayTraced, out uint firstHitCus
             float diffuseWeight = EvaluateDiffuseMaterialWeight(material.r);
             vec3 rayDirection = CosineWeightedDirection(worldNormal, pixel,
                                                           parameters.sampleState.x);
-            vec3 rayOrigin = worldPosition + worldNormal * RAY_ORIGIN_OFFSET;
+            vec3 rayOrigin = worldPosition + worldNormal * RaySurfaceOffset(viewDistance);
 
             // 発光三角形の光は1次面と命中点の光源標本で数えるため、コサイン標本が発光面に
             // 当たっても発光を加えない。
