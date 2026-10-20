@@ -103,11 +103,13 @@ namespace NorvesLib::Core::Rendering
             uint64_t ByteCount = 0;
         };
 
-        /** @brief bIncludeAov の要求で、同じフレームの GBuffer の生の値（表面・幾何の 2 枚）を写した読み出し */
+        /** @brief AOV の枚数（表面・幾何・照明） */
+        static constexpr uint32_t AovImageCount = 3;
+        /** @brief bIncludeAov の要求で、同じフレームの GBuffer の生の値と照明の結果（表面・幾何・照明の 3 枚）を写した読み出し */
         struct PendingAovReadback
         {
             bool bRecorded = false;
-            PendingImageReadback Images[2];
+            PendingImageReadback Images[AovImageCount];
             FrameCaptureAovCamera Camera;
         };
         /** @brief bIncludeAtmosphere の要求で、同じフレームの大気の書き出し（1 枚）を写した読み出し */
@@ -152,8 +154,8 @@ namespace NorvesLib::Core::Rendering
         CapturedFrame m_CompletedFrame;
         Container::VariableArray<ReadbackSlot> m_ReadbackSlots;
         Container::VariableArray<ReadbackSlot> m_SceneColorReadbackSlots;
-        /** @brief AOV の表面・幾何の読み出し先（フレームの枠ごと） */
-        Container::VariableArray<ReadbackSlot> m_AovReadbackSlots[2];
+        /** @brief AOV の表面・幾何・照明の読み出し先（フレームの枠ごと） */
+        Container::VariableArray<ReadbackSlot> m_AovReadbackSlots[AovImageCount];
         /** @brief 大気の書き出しの読み出し先（フレームの枠ごと） */
         Container::VariableArray<ReadbackSlot> m_AtmosphereReadbackSlots;
     };

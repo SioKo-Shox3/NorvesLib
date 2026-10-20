@@ -167,6 +167,31 @@ namespace NorvesLib::Core::Rendering
         }
     } // namespace
 
+    VirtualShadowMapClipmapSettings FitVirtualShadowMapClipmapToShadowDistance(const VirtualShadowMapClipmapSettings& settings)
+    {
+        if (!IsValidVirtualShadowMapClipmapSettings(settings))
+        {
+            return settings;
+        }
+        const double required =
+            static_cast<double>(settings.MaxShadowDistance) * static_cast<double>(VirtualShadowMapThresholdDistanceScale);
+        const double coverage =
+            static_cast<double>(VirtualShadowMapLevelCoverageMeters(settings, settings.LevelCount - 1u));
+        if (!(coverage > 0.0) || coverage >= required)
+        {
+            return settings;
+        }
+        int scaleLevels = 0;
+        while (scaleLevels < VirtualShadowMapMaxFitScaleLevels && std::ldexp(coverage, scaleLevels) < required)
+        {
+            ++scaleLevels;
+        }
+        VirtualShadowMapClipmapSettings fitted = settings;
+        fitted.FirstWidthMeters = std::ldexp(settings.FirstWidthMeters, scaleLevels);
+        fitted.DepthRangeMeters = std::ldexp(settings.DepthRangeMeters, scaleLevels);
+        return fitted;
+    }
+
     int32_t SelectVirtualShadowMapLevel(const VirtualShadowMapClipmapSettings& settings,
                                         float distance,
                                         float fovYDegrees,

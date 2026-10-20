@@ -1453,6 +1453,8 @@ namespace NorvesLib::Core::Rendering
         {
             VirtualShadowMapClipmapSettings clipmapSettings;
             clipmapSettings.MaxShadowDistance = maxShadowDistance;
+            // 影の距離が既定の段の被覆を超える（荒野の数 km）ときは、段 0 の幅と深度の範囲を広げて最も粗い段で覆う
+            clipmapSettings = FitVirtualShadowMapClipmapToShadowDistance(clipmapSettings);
             const CameraProxy* activeCamera = context.GetActiveCamera();
             const VirtualShadowMapClipmap clipmap =
                 activeCamera != nullptr

@@ -364,11 +364,12 @@ namespace NorvesLib::Core::Rendering
     {
         const CapturedAov& aov = frame.Aov;
         if (!frame.IsSuccess() || !aov.bValid || !aov.Camera.bValid || aov.Surface.Width != aov.Geometry.Width ||
-            aov.Surface.Height != aov.Geometry.Height)
+            aov.Surface.Height != aov.Geometry.Height || aov.Surface.Width != aov.Lighting.Width ||
+            aov.Surface.Height != aov.Lighting.Height)
         {
             return false;
         }
-        // 表面 = アルベド（rgb）+ 粗さ（a）、幾何 = 法線（xyz）+ 視線方向の深度（w）
+        // 表面 = アルベド（rgb）+ 粗さ（a）、幾何 = 法線（xyz）+ 視線方向の深度（w）、照明 = 太陽の可視率（r）
         struct AovImage
         {
             const CapturedImage* Source;
@@ -381,10 +382,12 @@ namespace NorvesLib::Core::Rendering
             {&aov.Geometry, {0u, 1u, 2u}, 3u, TEXT(".aov.normal.pfm")},
             {&aov.Surface, {3u, 0u, 0u}, 1u, TEXT(".aov.roughness.pfm")},
             {&aov.Geometry, {3u, 0u, 0u}, 1u, TEXT(".aov.depth.pfm")},
+            {&aov.Lighting, {0u, 0u, 0u}, 1u, TEXT(".aov.sun_visibility.pfm")},
         };
+        constexpr uint32_t ImageCount = static_cast<uint32_t>(sizeof(images) / sizeof(images[0]));
         const String basePath = RemoveExtension(pngPath);
-        VariableArray<char> fileNames[4];
-        for (uint32_t index = 0; index < 4u; ++index)
+        VariableArray<char> fileNames[ImageCount];
+        for (uint32_t index = 0; index < ImageCount; ++index)
         {
             VariableArray<uint8_t> pfm;
             if (!BuildFloatPfm(*images[index].Source, images[index].Channels, images[index].ChannelCount, pfm))
@@ -417,6 +420,7 @@ namespace NorvesLib::Core::Rendering
             "  \"normal\": {\"file\": \"%s\", \"channels\": 3, \"meaning\": \"world_normal_y_up\", \"sky_value\": 0},\n"
             "  \"roughness\": {\"file\": \"%s\", \"channels\": 1, \"meaning\": \"perceptual_roughness\", \"sky_value\": 0},\n"
             "  \"depth\": {\"file\": \"%s\", \"channels\": 1, \"meaning\": \"view_axis_distance\", \"units\": \"m\", \"sky_value\": \"inf\"},\n"
+            "  \"sun_visibility\": {\"file\": \"%s\", \"channels\": 1, \"meaning\": \"sun_shadow_visibility\", \"source\": \"lighting\", \"sky_value\": 0, \"unavailable_value\": -1},\n"
             "  \"camera\": {\n"
             "    \"position\": [%.9g, %.9g, %.9g],\n"
             "    \"forward\": [%.9g, %.9g, %.9g],\n"
@@ -437,6 +441,7 @@ namespace NorvesLib::Core::Rendering
             fileNames[1].data(),
             fileNames[2].data(),
             fileNames[3].data(),
+            fileNames[4].data(),
             static_cast<double>(camera.Position[0]),
             static_cast<double>(camera.Position[1]),
             static_cast<double>(camera.Position[2]),

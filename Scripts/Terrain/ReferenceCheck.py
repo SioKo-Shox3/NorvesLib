@@ -434,6 +434,11 @@ GRAY_ALBEDO_RATIO = 0.999
 GRAY_ROUGHNESS_TOLERANCE = 0.01
 GRAY_SKY_MISMATCH = 0.005
 GRAY_SPLIT_TOLERANCE = 0.01
+# 太陽の可視率の比較（SCN-WL-SHADOW-PAGES）: エンジンの撮影の AOV（<視点>.aov.sun_visibility.pfm。照明が求めた影の結果）と、
+# Cycles の太陽の見え方（aux.visibility）を、領域の画素のうち Cycles の n·l が GR.SUNLIT_MIN_COS 以上（見え方が定まる面）で比べる。
+# 差の絶対値が VISIBILITY_MISMATCH_DELTA を超える画素（片方が主に日なた、もう片方が主に影）を食い違いとして、その割合を
+# 領域の visibility_mismatch に書く（--expect の成分 visibility）。AOV の無い撮影（-1 の構成・古い撮影）では書かない
+VISIBILITY_MISMATCH_DELTA = 0.5
 # --albedo（地表の材質の照明の無いアルベドの再現）
 # --lit（実材質の地形のエンジンと Cycles の比較）
 LIT_VIEWS = ("ref_far_01", "ref_far_02", "ref_cliff_01", "ref_cliff_02", "ref_ground_01", "ref_ground_02")
@@ -4128,6 +4133,18 @@ def check_gray_view(capture_dir, cycles_dir, view, engine_hdr, engine_depth, dia
 
     masks = GR.region_masks(engine_depth, normal[..., 1], n_dot_l, visibility, alpha > 0.5)
     stats, all_converged = GR.convergence(seed_a @ LUMA, seed_b @ LUMA, masks)
+    engine_visibility = None
+    visibility_path = os.path.join(engine_dir or capture_dir, f"{view}.aov.sun_visibility.pfm")
+    if os.path.isfile(visibility_path):
+        engine_visibility = read_pfm_any(visibility_path)[..., 0].astype(np.float64)
+        if engine_visibility.shape != engine_depth.shape:
+            failures.append(f"エンジンの太陽の可視率の大きさ {engine_visibility.shape} が深度 {engine_depth.shape} と違う")
+            engine_visibility = None
+        elif (engine_visibility[np.isfinite(engine_depth)] < 0.0).any():
+            # 照明の出力が無い構成（-1）は比べない
+            engine_visibility = None
+    result["engine_sun_visibility"] = os.path.basename(visibility_path) if engine_visibility is not None else None
+    visibility_defined = n_dot_l >= GR.SUNLIT_MIN_COS
     result.update({"cycles": {k: meta.get(k) for k in ("renderer", "device", "tiles", "triangles", "spp_per_seed",
                                                        "stop_reason", "load_seconds", "render_seconds")},
                    "cycles_settings": meta.get("settings"), "all_converged": all_converged})
@@ -4157,6 +4174,17 @@ def check_gray_view(capture_dir, cycles_dir, view, engine_hdr, engine_depth, dia
                 "visibility_mean": float(visibility[mask].mean()),
                 "cycles_share": {g: float((parts[g][mask] @ LUMA).mean() / c_y) for g in parts},
             })
+            compared = mask & visibility_defined
+            if engine_visibility is not None and compared.any():
+                difference = np.abs(engine_visibility[compared] - visibility[compared].astype(np.float64))
+                entry.update({
+                    "visibility_pixels": int(compared.sum()),
+                    "engine_visibility_mean": float(engine_visibility[compared].mean()),
+                    "cycles_visibility_mean": float(visibility[compared].mean()),
+                    "visibility_mismatch": float(np.mean(difference > VISIBILITY_MISMATCH_DELTA)),
+                    "visibility_engine_lit_cycles_shadow": float(np.mean(
+                        (engine_visibility[compared] - visibility[compared]) > VISIBILITY_MISMATCH_DELTA)),
+                })
             for case, hdr in diag_hdrs.items():
                 if view in hdr:
                     e_case = float((hdr[view][mask] @ LUMA).mean())
@@ -5385,6 +5413,9 @@ def run_lit(capture_dir, views, verify, engine_dirs=None, reference_root=None, e
                   f"ratio_rgb={np.round(entry['ratio_rgb'], 3).tolist() if entry.get('ratio_rgb') else None} "
                   f"material_ao={entry.get('material_ao_mean', float('nan')):.3f} "
                   f"ratio_with_engine_ao={entry.get('ratio_to_cycles_with_engine_ao', float('nan')):.3f} "
+                  f"visibility_mismatch={entry.get('visibility_mismatch', float('nan')):.4f} "
+                  f"visibility_engine={entry.get('engine_visibility_mean', float('nan')):.3f} "
+                  f"visibility_cycles={entry.get('cycles_visibility_mean', float('nan')):.3f} "
                   f"mean_diff={conv.get('mean_diff', float('nan')):.4f} pixel_rms={conv.get('pixel_rms', float('nan')):.3f}")
 
     if photo_rows:

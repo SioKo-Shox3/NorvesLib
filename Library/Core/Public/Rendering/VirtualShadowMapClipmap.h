@@ -160,6 +160,21 @@ namespace NorvesLib::Core::Rendering
                                                  float screenHeightPixels,
                                                  float* outThresholds);
 
+    /** @brief FitVirtualShadowMapClipmapToShadowDistance が段 0 の幅と深度の範囲に掛ける倍率の上限（log2） */
+    inline constexpr int VirtualShadowMapMaxFitScaleLevels = 16;
+
+    /**
+     * @brief 影の距離に合わせて、段 0 の幅と深度の範囲を広げた設定を返す
+     *
+     * 段を選ぶ距離の上限（MaxShadowDistance × VirtualShadowMapThresholdDistanceScale）を最も粗い段の被覆
+     * （VirtualShadowMapLevelCoverageMeters）が下回ると、その先の受け手はどの段にも入らず影が落ちない（段の数は固定）。
+     * そのときは段 0 の幅と深度の範囲（DepthRangeMeters）に同じ 2^k を掛ける（k は被覆が上限に届く最小の値。
+     * VirtualShadowMapMaxFitScaleLevels まで）。段の幅・texel は元の段 k 〜 k + LevelCount − 1 と同じになり、
+     * 深度の量子化と texel の比も変わらない。深度の範囲は、影の距離の中の受け手とそれを遮る物の光の向きの深度の差を覆う。
+     * 被覆が足りている（既定の 80 m など）・設定が不正なときは、設定をそのまま返す。
+     */
+    VirtualShadowMapClipmapSettings FitVirtualShadowMapClipmapToShadowDistance(const VirtualShadowMapClipmapSettings& settings);
+
     /** @brief 奥の薄めの重み（0 = 影のまま、1 = 影なし）。MaxShadowDistance の奥の FadeRatio の幅で滑らかに 0 → 1 */
     float VirtualShadowMapShadowFadeWeight(const VirtualShadowMapClipmapSettings& settings, float distance);
 

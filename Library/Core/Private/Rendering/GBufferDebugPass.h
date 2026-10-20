@@ -89,13 +89,15 @@ namespace NorvesLib::Core::Rendering
     };
 
     /**
-     * @brief 撮影の AOV: GBuffer の生の値を浮動小数の 2 枚へ書き、撮影の読み出しに渡す（--capture-aov）
+     * @brief 撮影の AOV: GBuffer の生の値と照明の結果を浮動小数の 3 枚へ書き、撮影の読み出しに渡す（--capture-aov）
      *
      * 表面（RGBA32F）: rgb = GBuffer.Albedo（照明が読むのと同じ線形のアルベド）、a = GBuffer.Material の粗さ。
      * 幾何（RGBA32F）: xyz = GBuffer.Normal（ワールドの法線。+Y が上。正規化し直さない）、
      *   w = 深度から戻したワールドの位置のカメラの前方向への距離（視線方向の深度 m）。
-     * 空の画素（照明と同じ判定: アルベドの a < 0.01）は表面 0・法線 0・深度 +∞。
-     * GBufferDebugPass の可視化と違い後処理を通さず、出力は "Capture.AovSurface"・"Capture.AovGeometry" として
+     * 照明（RGBA32F）: r = 太陽の可視率（LightingPass が Lighting.SpecularReflectance の a に書いた影の結果。n·l は掛けない）。
+     *   照明の出力がグラフに無い構成では -1。
+     * 空の画素（照明と同じ判定: アルベドの a < 0.01）は表面 0・法線 0・深度 +∞・可視率 0。
+     * GBufferDebugPass の可視化と違い後処理を通さず、出力は "Capture.AovSurface"・"Capture.AovGeometry"・"Capture.AovLighting" として
      * グラフの外へ出す（View が拾い、撮影の元にする）。統計が有効な構成（Debug・RelWithDebInfo）だけに存在する。
      */
     class GBufferAovPass final : public IViewPass, public IRenderGraphPass
@@ -131,12 +133,15 @@ namespace NorvesLib::Core::Rendering
         RHI::RenderPassPtr m_RenderPass;
         RHI::SamplerPtr m_Sampler;
         RHI::FramebufferPtr m_Framebuffer;
-        RHI::ITexture* m_FramebufferTargets[2] = {nullptr, nullptr};
+        RHI::ITexture* m_FramebufferTargets[3] = {nullptr, nullptr, nullptr};
         FrameUseRing<Use> m_Uses;
         FrameCaptureAovCamera m_LastCamera;
 
         RGResourceHandle m_SurfaceHandle;
         RGResourceHandle m_GeometryHandle;
+        RGResourceHandle m_LightingHandle;
+        /** @brief 照明の Lighting.SpecularReflectance（a = 太陽の可視率）。グラフに無ければ無効 */
+        RGTextureHandle m_ReflectanceHandle;
         RGTextureHandle m_AlbedoHandle;
         RGTextureHandle m_NormalHandle;
         RGTextureHandle m_MaterialHandle;

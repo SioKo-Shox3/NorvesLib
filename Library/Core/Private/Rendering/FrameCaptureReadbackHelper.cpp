@@ -272,12 +272,12 @@ namespace NorvesLib::Core::Rendering
             sceneColorReadback.bRecorded = true;
         }
 
-        // GBuffer の生の値も要求されていれば、表面・幾何の 2 枚とも同じフレームから写せることを先に確かめる
+        // GBuffer の生の値も要求されていれば、表面・幾何・照明の 3 枚とも同じフレームから写せることを先に確かめる
         PendingAovReadback aovReadback;
         if (m_ActiveRequest.bIncludeAov)
         {
-            const FrameCaptureSource* aovSources[2] = {&sources.AovSurface, &sources.AovGeometry};
-            for (uint32_t imageIndex = 0; imageIndex < 2u; ++imageIndex)
+            const FrameCaptureSource* aovSources[AovImageCount] = {&sources.AovSurface, &sources.AovGeometry, &sources.AovLighting};
+            for (uint32_t imageIndex = 0; imageIndex < AovImageCount; ++imageIndex)
             {
                 FrameCaptureResultStatus aovStatus = FrameCaptureResultStatus::SourceUnavailable;
                 if (aovSources[imageIndex]->FrameNumber != source->FrameNumber ||
@@ -336,8 +336,8 @@ namespace NorvesLib::Core::Rendering
         m_PendingSceneColor = sceneColorReadback;
         if (aovReadback.bRecorded)
         {
-            const FrameCaptureSource* aovSources[2] = {&sources.AovSurface, &sources.AovGeometry};
-            for (uint32_t imageIndex = 0; imageIndex < 2u; ++imageIndex)
+            const FrameCaptureSource* aovSources[AovImageCount] = {&sources.AovSurface, &sources.AovGeometry, &sources.AovLighting};
+            for (uint32_t imageIndex = 0; imageIndex < AovImageCount; ++imageIndex)
             {
                 const FrameCaptureSource& aovSource = *aovSources[imageIndex];
                 commandList->TextureBarrier(aovSource.Texture, aovSource.CurrentState, RHI::ResourceState::CopySource);
@@ -475,8 +475,8 @@ namespace NorvesLib::Core::Rendering
 
         if (m_PendingAov.bRecorded)
         {
-            CapturedImage* aovImages[2] = {&frame.Aov.Surface, &frame.Aov.Geometry};
-            for (uint32_t imageIndex = 0; imageIndex < 2u; ++imageIndex)
+            CapturedImage* aovImages[AovImageCount] = {&frame.Aov.Surface, &frame.Aov.Geometry, &frame.Aov.Lighting};
+            for (uint32_t imageIndex = 0; imageIndex < AovImageCount; ++imageIndex)
             {
                 if (!TryCopyImageReadback(m_AovReadbackSlots[imageIndex][frameSlotIndex],
                                           m_PendingAov.Images[imageIndex],

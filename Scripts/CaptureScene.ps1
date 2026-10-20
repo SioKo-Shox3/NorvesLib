@@ -60,7 +60,7 @@
 # 照らして古い撮影を拒否する。--blur-static は組ごとの Game.exe のハッシュが揃うことも求める）。
 # 開発ビルドの機能なので Release と、決定的でない -GpuTimingFrames とは併用できない。HDR が無い・大きさが PNG と違えば失敗にする。
 # -Aov を付けると、Game を --capture-aov 付きで起動し、視点ごとに PNG と同じフレームの GBuffer の生の値を浮動小数の画像に書く
-# （<視点>.aov.albedo.pfm〔線形のアルベド〕・.aov.normal.pfm〔ワールドの法線、+Y が上〕・.aov.roughness.pfm・.aov.depth.pfm
+# （<視点>.aov.albedo.pfm〔線形のアルベド〕・.aov.normal.pfm〔ワールドの法線、+Y が上〕・.aov.roughness.pfm・.aov.depth.pfm・.aov.sun_visibility.pfm〔照明の太陽の可視率〕
 # 〔カメラの前方向への距離 m、空は +∞〕と、カメラを書いた <視点>.aov.json。Core の Rendering/FrameCaptureHdrWriter.h）。
 # 値の検査は ReferenceCheck.py --aov。-Hdr と同じく開発ビルドの機能で、撮り終えたら入力のハッシュ（inputs.json）を書く。
 # -GameArgs に atmosphere-dump を含めると、Game は視点ごとに PNG と同じフレームの空と霞の値（空の LUT・前計算の表・決めた視線の
@@ -182,7 +182,7 @@ if ($Aov -and $GpuTimingFrames -gt 0)
     exit 1
 }
 # AOV の画像の名前（<視点> の後ろ）
-$aovSuffixes = @('.aov.albedo.pfm', '.aov.normal.pfm', '.aov.roughness.pfm', '.aov.depth.pfm', '.aov.json')
+$aovSuffixes = @('.aov.albedo.pfm', '.aov.normal.pfm', '.aov.roughness.pfm', '.aov.depth.pfm', '.aov.sun_visibility.pfm', '.aov.json')
 # 大気の書き出しのファイルの名前（<視点> の後ろ）
 $atmosphereSuffixes = @('.atmos.json', '.atmos.probe.f32', '.atmos.transmittance_lut.f32', '.atmos.radiance_lut.f32',
     '.atmos.transmittance_table.f32', '.atmos.multiple_scattering.f32', '.atmos.sky_view.f32')

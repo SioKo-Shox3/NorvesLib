@@ -5918,3 +5918,28 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - フレームの GPU 時間は before と比べられない: 描いたクラスタの数は同じ（41630・161662）なのに全パスが一様に 3〜8 倍遅い（VisibilityRasterPass 9.1 → 1.2 ms）。before は大気の正解の解 2 本が CPU を占めていた間（CPU のフレーム 53〜67 ms、after は 10.6〜11.8 ms）で、GPU が待たされて低いクロックで動いた値と見られる。before の exe（120 m）はもう無いので同じ条件で撮り直していない。after のフレームの GPU 時間は 3.8〜4.2 ms で、RTGI を含む LightingPass は 1.2〜1.4 ms
 - Notes: 最初の Debug のビルドは Git Bash のパスの書き換えで `/m:1` が壊れて MSBuild が引数で止まった（`aux-SCN-WL-RT-TLAS-RANGE-ACCEPT-debug-build-pathconv.txt`）。`MSYS_NO_PATHCONV=1` で同じコマンドを取り直した。新しい試験は足していない
 - Next: TASKS.md の次の未完の項目
+### SCN-WL-SHADOW-PAGES 完了（2026-10-20、run 20261020-094249 の反復 10）
+- 原因: VSM のクリップマップは 10 段（段 0 の幅 4 m、最も粗い段 9 の幅 2048 m、被覆は カメラから約 990 m）で、荒野の影の距離 4000 m の受け手の大半がどの段にも入らず影なしになっていた。ref_cliff_02（縦の画角 6.1°）は受け手が 0.9〜100 km にあり、画面のほぼ全体が段 9 を選んでその外に出ていた（`VSM_PAGES requested=38 levels_used=0x200`）。深度の範囲（±1000 m）も、太陽の高さ 24° で 1〜2 km 先の受け手と遮る物の深度の差に足りなかった。ref_far_01 の遠景（2〜8 km）は影の距離（4 km）と段の被覆の外で、自己影が無かった
+- コード:
+  - `FitVirtualShadowMapClipmapToShadowDistance`（VirtualShadowMapClipmap）: 段を選ぶ距離の上限（影の距離 × 2）を最も粗い段の被覆が下回るとき、段 0 の幅と深度の範囲に同じ 2^k を掛ける。段の数・ページの表・シェーダーは変えない。深度の量子化と texel の比も変わらない。既定の 80 m は 1 倍のままで、ほかのシーンは変わらない。ShadowMapPass がクリップマップの設定に掛ける
+  - 荒野の太陽の影の距離を 4000 → 10000 m にした（RT のシーンの範囲 10 km と揃える）。荒野は k = 5 で段 0 の幅 128 m（texel 7.8 mm）・最も粗い段 64 km・深度の範囲 ±32 km
+  - 撮影の AOV に太陽の可視率を足した: lighting.frag が `Lighting.SpecularReflectance` の a（SSR は rgb だけ読む）に影の結果（n·l は掛けない）を書き、GBufferAovPass が 3 枚目（`Capture.AovLighting`）へ写し、`<視点>.aov.sun_visibility.pfm` に書く（`.aov.json` の `sun_visibility`）。CaptureScene.ps1 の AOV の一覧にも足した
+  - `ReferenceCheck.py` の `--gray`・`--lit`: エンジンの可視率の AOV があれば、領域の画素のうち Cycles の n·l ≥ 0.1 の画素で、Cycles の太陽の見え方との差が 0.5 を超える割合を `visibility_mismatch` に書く（`--expect` の成分 visibility）。期待値 `Scripts/Terrain/ExpectSpecs/shadow-pages.json`（2 行、どちらも 5 % 以下）
+- 証拠（`.harness/runs/20261020-094249/`）:
+  - `regression-before-SCN-WL-SHADOW-PAGES.txt`: 反復の最初の回帰の before、result=pass・EXIT=0
+  - `verify-SCN-WL-SHADOW-PAGES-1.txt`: Debug の Game のビルド EXIT=0
+  - `verify-SCN-WL-SHADOW-PAGES-2.txt`・`-3.txt`: RelWithDebInfo（`-Build`）の ref_cliff_02・ref_far_01 の撮影、どちらも result=pass・EXIT=0。`.aov.sun_visibility.pfm` が書かれた
+  - `verify-SCN-WL-SHADOW-PAGES-4.txt`: `--lit --expect shadow-pages.json --verify` result=pass（rows=2・failed=0、inputs_current=1）。ref_cliff_02 の影の中の地面の食い違い 0.0018（エンジン 0.002・Cycles 0.001）、ref_far_01 の遠景 0.0456（エンジン 0.954・Cycles 0.934）。記録だけ: ref_cliff_02 の影の中の地面の明るさの比 2.227 → 0.658（材質の AO の見込みとの比 1.050）、影の崖の可視率の食い違い 0.053、遠景 0.011
+  - `verify-SCN-WL-SHADOW-PAGES-5.txt`: 回帰の after result=pass。rendering3dtest・sandbox psnr=inf、mega-bananas 61.95・night-village 69.39（どちらも mean_diff 0.000。前の反復の after と同じ揺れの水準）
+  - 撮影の画を開いて確かめた: 共通の照明の ref_cliff_02（before は `scene-capture/SCN-WL-SHADOW-PAGES/gpu-before`、after は `.../ref_cliff_02`）と既定の荒野の ref_cliff_02（`.../default`、`aux-SCN-WL-SHADOW-PAGES-default.txt` result=pass）で、右の台地の長い影が手前の地面に落ち、ビュートの左の裾にも影が落ちる。影の縁の破綻・斑は見えない
+- VSM のページ数と影の GPU 時間（RelWithDebInfo、`-GpuTimingFrames 300`、同じ `-GameArgs`。before `aux-SCN-WL-SHADOW-PAGES-gpu-before.txt`、after `aux-SCN-WL-SHADOW-PAGES-gpu-after.txt`）:
+
+  | | before | after |
+  |---|---|---|
+  | ref_cliff_02 の VSM のページ（段） | 38〜40（段 9 だけ） | 271〜275（段 4〜8） |
+  | ref_far_01 の VSM のページ（段） | 859〜894（段 4〜7・9） | 907〜911（段 0〜2・4〜8） |
+  | VirtualShadowMapPass median（cliff_02 / far_01） | 0.187 / 0.231 ms | 0.195 / 0.203 ms |
+  | フレームの GPU 時間 median（cliff_02 / far_01） | 3.904 / 4.539 ms | 3.884 / 4.554 ms |
+
+- Notes: 既知の限界として、荒野では段 0 の texel が 0.24 mm から 7.8 mm に粗くなる（カメラから数 m の接地の影がわずかにぼける。物理の半影は 1 m 離れた遮る物で約 4.7 mm）。ref_far_01 の遠景の食い違いは 4.56 % で上限の 5 % に近い（3 km より先はエンジンの地形の形と Cycles の参照の形の違いが混ざる）。試しの照合を既存の撮影で回したときに `scene-capture/SCN-WLR-CYCLES-LIT/lit_check.json` を 2 視点で上書きしたので、SCN-WLR-LIT-SHADOW-REF-C02 の照合（`--require-judged`、`--verify` なし）を回して 6 視点の報告に戻した（`aux-SCN-WL-SHADOW-PAGES-restore-lit-report.txt`、result=pass・inputs_current=0 はエンジンの変更による）。新しい試験は足していない
+- Next: SCN-WL-SHADOW-LEAK（影の距離・段の被覆の直しで灰色 ref_cliff_01 の影の中の地面の漏れが変わったかを先に確かめる）

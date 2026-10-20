@@ -54,11 +54,13 @@ namespace NorvesLib::Core::Rendering
         // 速度の表示の倍率。1 フレームの UV の動き（数千分の 1）を、灰色 0.5 からの差として見える大きさにする
         constexpr float GBufferDebugVelocityScale = 400.0f;
 
-        // gbuffer_aov.frag の AovParams（mat4 の逆ビュー投影・カメラの位置・前方向）
-        constexpr uint32_t AovParamsBytes = 64 + 16 + 16;
+        // gbuffer_aov.frag の AovParams（mat4 の逆ビュー投影・カメラの位置・前方向・照明の出力の有無）
+        constexpr uint32_t AovParamsBytes = 64 + 16 + 16 + 16;
         constexpr RHI::Format AovFormat = RHI::Format::R32G32B32A32_FLOAT;
+        // 書く枚数（表面・幾何・照明）
+        constexpr uint32_t AovTargetCount = 3;
 
-        // gbuffer_aov.frag の binding 0〜4（アルベド・法線・材質・深度・パラメータ）
+        // gbuffer_aov.frag の binding 0〜5（アルベド・法線・材質・深度・パラメータ・照明の鏡面の反射率）
         RHI::DescriptorSetDesc MakeGBufferAovDescriptorSetDesc()
         {
             RHI::DescriptorSetDesc desc;
@@ -67,6 +69,7 @@ namespace NorvesLib::Core::Rendering
                 AddBinding(desc, binding, RHI::ResourceBindType::CombinedImageSampler, RHI::ShaderStage::Pixel);
             }
             AddBinding(desc, 4, RHI::ResourceBindType::ConstantBuffer, RHI::ShaderStage::Pixel);
+            AddBinding(desc, 5, RHI::ResourceBindType::CombinedImageSampler, RHI::ShaderStage::Pixel);
             return desc;
         }
     } // namespace
@@ -393,7 +396,7 @@ namespace NorvesLib::Core::Rendering
         m_Sampler = m_Device->CreateSampler(samplerDesc);
 
         RHI::RenderPassDesc renderPassDesc;
-        for (uint32_t target = 0; target < 2u; ++target)
+        for (uint32_t target = 0; target < AovTargetCount; ++target)
         {
             RHI::AttachmentDesc colorAttachment;
             colorAttachment.format = AovFormat;
@@ -418,7 +421,7 @@ namespace NorvesLib::Core::Rendering
             pipelineDesc.rasterState.lineWidth = 1.0f;
             pipelineDesc.depthStencilState.depthTestEnable = false;
             pipelineDesc.depthStencilState.depthWriteEnable = false;
-            for (uint32_t target = 0; target < 2u; ++target)
+            for (uint32_t target = 0; target < AovTargetCount; ++target)
             {
                 RHI::BlendAttachmentDesc blendAttachment;
                 blendAttachment.blendEnable = false;
@@ -441,14 +444,18 @@ namespace NorvesLib::Core::Rendering
         m_Pipeline.reset();
         m_RenderPass.reset();
         m_Framebuffer.reset();
-        m_FramebufferTargets[0] = nullptr;
-        m_FramebufferTargets[1] = nullptr;
+        for (RHI::ITexture*& target : m_FramebufferTargets)
+        {
+            target = nullptr;
+        }
         m_Sampler.reset();
         m_Uses.Clear();
         m_VertexShader.reset();
         m_FragmentShader.reset();
         m_SurfaceHandle = {};
         m_GeometryHandle = {};
+        m_LightingHandle = {};
+        m_ReflectanceHandle = {};
         m_AlbedoHandle = {};
         m_NormalHandle = {};
         m_MaterialHandle = {};
@@ -471,6 +478,8 @@ namespace NorvesLib::Core::Rendering
     {
         m_SurfaceHandle = {};
         m_GeometryHandle = {};
+        m_LightingHandle = {};
+        m_ReflectanceHandle = {};
         m_AlbedoHandle = {};
         m_NormalHandle = {};
         m_MaterialHandle = {};
@@ -508,11 +517,20 @@ namespace NorvesLib::Core::Rendering
         {
             return;
         }
-        const Identity targetNames[2] = {RenderGraphResourceNames::CaptureAovSurface,
-                                         RenderGraphResourceNames::CaptureAovGeometry};
-        const char* targetDebugNames[2] = {"Capture_AovSurface", "Capture_AovGeometry"};
-        RGResourceHandle targets[2];
-        for (uint32_t target = 0; target < 2u; ++target)
+        // 照明の出力（a = 太陽の可視率）は、照明のパスがある構成だけ読む。無ければ可視率を -1 にする
+        RGTextureHandle reflectance;
+        if (builder.TryGetTexture(RenderGraphResourceNames::LightingSpecularReflectance, reflectance) &&
+            !builder.TryReadTexture(RenderGraphResourceNames::LightingSpecularReflectance, reflectance,
+                                    RHI::ResourceState::ShaderResource))
+        {
+            reflectance = {};
+        }
+        const Identity targetNames[AovTargetCount] = {RenderGraphResourceNames::CaptureAovSurface,
+                                                      RenderGraphResourceNames::CaptureAovGeometry,
+                                                      RenderGraphResourceNames::CaptureAovLighting};
+        const char* targetDebugNames[AovTargetCount] = {"Capture_AovSurface", "Capture_AovGeometry", "Capture_AovLighting"};
+        RGResourceHandle targets[AovTargetCount];
+        for (uint32_t target = 0; target < AovTargetCount; ++target)
         {
             RGTextureDesc desc = RGTextureDesc::RenderTarget(width, height, AovFormat, targetDebugNames[target]);
             desc.Usage = desc.Usage | RHI::ResourceUsage::TransferSrc;
@@ -534,6 +552,8 @@ namespace NorvesLib::Core::Rendering
 
         m_SurfaceHandle = targets[0];
         m_GeometryHandle = targets[1];
+        m_LightingHandle = targets[2];
+        m_ReflectanceHandle = reflectance;
         m_AlbedoHandle = albedo;
         m_NormalHandle = normal;
         m_MaterialHandle = material;
@@ -550,33 +570,47 @@ namespace NorvesLib::Core::Rendering
         }
         const CameraProxy* camera = context.GetActiveCamera();
         if (!context.CommandList || !m_Device || !m_Pipeline || !camera || !m_SurfaceHandle.IsValid() ||
-            !m_GeometryHandle.IsValid() || !m_AlbedoHandle.IsValid() || !m_NormalHandle.IsValid() ||
-            !m_MaterialHandle.IsValid() || !m_DepthHandle.IsValid())
+            !m_GeometryHandle.IsValid() || !m_LightingHandle.IsValid() || !m_AlbedoHandle.IsValid() ||
+            !m_NormalHandle.IsValid() || !m_MaterialHandle.IsValid() || !m_DepthHandle.IsValid())
         {
             return;
         }
 
-        const RHI::TexturePtr targets[2] = {resources.GetTexture(m_SurfaceHandle), resources.GetTexture(m_GeometryHandle)};
+        const RHI::TexturePtr targets[AovTargetCount] = {resources.GetTexture(m_SurfaceHandle),
+                                                         resources.GetTexture(m_GeometryHandle),
+                                                         resources.GetTexture(m_LightingHandle)};
         const RHI::TexturePtr albedoTexture = resources.GetTexture(m_AlbedoHandle);
         const RHI::TexturePtr normalTexture = resources.GetTexture(m_NormalHandle);
         const RHI::TexturePtr materialTexture = resources.GetTexture(m_MaterialHandle);
         const RHI::TexturePtr depthTexture = resources.GetTexture(m_DepthHandle);
-        if (!targets[0] || !targets[1] || !albedoTexture || !normalTexture || !materialTexture || !depthTexture)
+        const RHI::TexturePtr reflectanceTexture =
+            m_ReflectanceHandle.IsValid() ? resources.GetTexture(m_ReflectanceHandle) : RHI::TexturePtr{};
+        if (!targets[0] || !targets[1] || !targets[2] || !albedoTexture || !normalTexture || !materialTexture ||
+            !depthTexture)
         {
             return;
         }
 
-        if (!m_Framebuffer || m_FramebufferTargets[0] != targets[0].get() || m_FramebufferTargets[1] != targets[1].get())
+        bool bFramebufferCurrent = m_Framebuffer != nullptr;
+        for (uint32_t target = 0; target < AovTargetCount; ++target)
+        {
+            bFramebufferCurrent = bFramebufferCurrent && m_FramebufferTargets[target] == targets[target].get();
+        }
+        if (!bFramebufferCurrent)
         {
             RHI::FramebufferDesc framebufferDesc;
             framebufferDesc.renderPass = m_RenderPass;
-            framebufferDesc.colorTargets.push_back(targets[0]);
-            framebufferDesc.colorTargets.push_back(targets[1]);
+            for (uint32_t target = 0; target < AovTargetCount; ++target)
+            {
+                framebufferDesc.colorTargets.push_back(targets[target]);
+            }
             framebufferDesc.width = targets[0]->GetWidth();
             framebufferDesc.height = targets[0]->GetHeight();
             m_Framebuffer = m_Device->CreateFramebuffer(framebufferDesc);
-            m_FramebufferTargets[0] = m_Framebuffer ? targets[0].get() : nullptr;
-            m_FramebufferTargets[1] = m_Framebuffer ? targets[1].get() : nullptr;
+            for (uint32_t target = 0; target < AovTargetCount; ++target)
+            {
+                m_FramebufferTargets[target] = m_Framebuffer ? targets[target].get() : nullptr;
+            }
         }
         if (!m_Framebuffer)
         {
@@ -619,6 +653,8 @@ namespace NorvesLib::Core::Rendering
             forward[axis] /= forwardLength;
             params[20 + axis] = forward[axis];
         }
+        // x: 1 なら binding 5 が照明の出力（a = 太陽の可視率）。0 なら可視率を -1 にする
+        params[24] = reflectanceTexture ? 1.0f : 0.0f;
         use.ParamsUniform->Update(params, sizeof(params));
         RHI::DescriptorSetPtr& descriptorSet = use.DescriptorSet;
         const RHI::TexturePtr sources[4] = {albedoTexture, normalTexture, materialTexture, depthTexture};
@@ -628,6 +664,9 @@ namespace NorvesLib::Core::Rendering
             descriptorSet->BindSampler(binding, m_Sampler);
         }
         descriptorSet->BindConstantBuffer(4, use.ParamsUniform, 0, AovParamsBytes);
+        // 照明の出力が無い構成は、読まない代わりの画像（アルベド）を結ぶ
+        descriptorSet->BindTexture(5, reflectanceTexture ? reflectanceTexture : albedoTexture);
+        descriptorSet->BindSampler(5, m_Sampler);
         descriptorSet->Update();
 
         RHI::ICommandList* commandList = context.CommandList;

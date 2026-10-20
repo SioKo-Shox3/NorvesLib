@@ -225,8 +225,9 @@ namespace Game::GameModes
         // 足元までは描ける）
         constexpr float kNearPlane = 0.5f;
         // 太陽の影の到達距離[m]。谷床の視点から、写真に写る主要な崖（主役のビュート 0.5〜2.8 km、ground_02 の Rooster Butte 3.5 km）と、
-        // その影（仰角 58.5°で比高 200 m の崖から 120 m 前後）まで落とす
-        constexpr float kSunShadowMaxDistance = 4000.0f;
+        // その影（仰角 58.5°で比高 200 m の崖から 120 m 前後）に加え、遠景（far_01 の 2〜8 km）の起伏の自己影まで落とす。
+        // レイトレーシングのシーンの範囲（10 km）と揃える。クリップマップは段 0 の幅を広げてこの距離を覆う
+        constexpr float kSunShadowMaxDistance = 10000.0f;
         // 地形を置いてから SceneReady を出すまでの Tick の数（ページの読み込みが追いつく余裕）
         constexpr uint32_t kReadyTicksAfterTerrain = 90;
         // 1 Tick に読んで置く地形の区画の数（区画は 1 つ 37 MB 前後。読み込みと解析のメモリを数区画ぶんに抑える）

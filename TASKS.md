@@ -1961,7 +1961,7 @@
 - notes: 2026-10-20 親が SCN-WL-RT-TLAS-RANGE から分けた。時間の見積もり: 回帰の before 6 分、Debug のビルド 3 分、RelWithDebInfo のビルドと撮影 3 条件 × 2 視点 約 20 分、判定 1 分、回帰の after 6 分、GPU 時間 4 分（合計 約 40 分）。
 
 ## SCN-WL-SHADOW-PAGES: 仮想の影の地図が手前と遠くの地面を覆わない所を直す
-- status: todo
+- status: done
 - after: SCN-WL-RT-TLAS-RANGE-ACCEPT, SCN-WLR-LIT-SHADOW-REF-C02, SCN-WLR-REGRESSION-VALIDATION
 - done-when: 一覧の描画の欠陥 1（`shadow_missing`）のうち影の地図の覆いの欠けと、6（`grazing_sun_dark`。灰色 ref_far_01 の遠景の太陽の分 0.88）を直す。ref_cliff_02 で手前の台地の長い影（太陽の高さ 24°）が落ちない原因（この視点だけ `VSM_PAGES requested=38 levels_used=0x200`、影の地図に当たらない標本が 1 回の描画あたり約 1210 万）を確かめて直す。判定は太陽の可視率で行う（照り返しと材質の AO の差が混ざる全体の明るさでは決めない）: エンジンの撮影の AOV に太陽の可視率を足し（この項目で作る）、Cycles の可視率（SCN-WLR-LIT-SHADOW-REF-C02 と SCN-WLR-CYCLES-LIT の aux）と、ref_cliff_02 の影の中の地面と ref_far_01 の遠景で比べ、食い違う画素の割合が 5 % 以下であることを `--expect`（`shadow-pages.json`）で検査する。視点ごとに撮影先を分ける。VSM のページ数と影の GPU 時間を前後で記録する。既定の荒野の ref_cliff_02 を撮って開き、台地の影が地面に落ちることを見る。反復の最初に回帰の撮影の `before` を撮る。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`

@@ -379,9 +379,11 @@ namespace NorvesLib::Core::Rendering
         }
 
 #if NORVES_ENABLE_STATS
-        // 撮影の AOV（--capture-aov）: GBufferAovPass がこのフレームに書いた 2 枚と、そのカメラ
-        m_FrameAovTextures[0].reset();
-        m_FrameAovTextures[1].reset();
+        // 撮影の AOV（--capture-aov）: GBufferAovPass がこのフレームに書いた 3 枚と、そのカメラ
+        for (RHI::TexturePtr& texture : m_FrameAovTextures)
+        {
+            texture.reset();
+        }
         m_FrameAovCamera = FrameCaptureAovCamera{};
         if (IViewPass* aovPass = FindPass("GBufferAovPass"))
         {
@@ -389,11 +391,14 @@ namespace NorvesLib::Core::Rendering
             const FrameCaptureAovCamera& camera = static_cast<GBufferAovPass*>(aovPass)->GetLastCamera();
             RHI::TexturePtr aovSurface;
             RHI::TexturePtr aovGeometry;
+            RHI::TexturePtr aovLighting;
             if (camera.bValid && lastResult.TryGetTexture(RenderGraphResourceNames::CaptureAovSurface, aovSurface) &&
-                lastResult.TryGetTexture(RenderGraphResourceNames::CaptureAovGeometry, aovGeometry))
+                lastResult.TryGetTexture(RenderGraphResourceNames::CaptureAovGeometry, aovGeometry) &&
+                lastResult.TryGetTexture(RenderGraphResourceNames::CaptureAovLighting, aovLighting))
             {
                 m_FrameAovTextures[0] = aovSurface;
                 m_FrameAovTextures[1] = aovGeometry;
+                m_FrameAovTextures[2] = aovLighting;
                 m_FrameAovCamera = camera;
             }
         }
@@ -431,8 +436,10 @@ namespace NorvesLib::Core::Rendering
         m_FrameSceneColorTexture.reset();
         m_FrameSceneColorPreExposure = 0.0f;
         m_FrameSceneColorDisplay = FrameCaptureDisplayInfo{};
-        m_FrameAovTextures[0].reset();
-        m_FrameAovTextures[1].reset();
+        for (RHI::TexturePtr& texture : m_FrameAovTextures)
+        {
+            texture.reset();
+        }
         m_FrameAovCamera = FrameCaptureAovCamera{};
         m_FrameAtmosphereProbeTexture.reset();
         m_FrameAtmosphereInfo.bValid = false;

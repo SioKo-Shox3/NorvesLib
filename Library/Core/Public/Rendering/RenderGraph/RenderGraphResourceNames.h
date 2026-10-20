@@ -15,6 +15,9 @@ namespace NorvesLib::Core::Rendering::RenderGraphResourceNames
         Identity::Literal("Capture.AovSurface", sizeof("Capture.AovSurface") - 1);
     inline constexpr Identity CaptureAovGeometry =
         Identity::Literal("Capture.AovGeometry", sizeof("Capture.AovGeometry") - 1);
+    // 撮影の AOV の 3 枚目: 照明の結果（r = 太陽の可視率。LightingPass が Lighting.SpecularReflectance の a に書いた値）
+    inline constexpr Identity CaptureAovLighting =
+        Identity::Literal("Capture.AovLighting", sizeof("Capture.AovLighting") - 1);
     // 撮影の大気の書き出し（AtmosphereProbePass。--atmosphere-dump）: 決めた視線の高さフォグと空気遠近の値（グラフの外へ出す）
     inline constexpr Identity CaptureAtmosphereProbe =
         Identity::Literal("Capture.AtmosphereProbe", sizeof("Capture.AtmosphereProbe") - 1);

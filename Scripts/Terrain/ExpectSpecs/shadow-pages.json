@@ -1,0 +1,23 @@
+{
+  "description": "SCN-WL-SHADOW-PAGES: 仮想の影の地図が覆わなかった遠い受け手（ref_cliff_02 の台地の長い影の落ちる 1〜2 km の地面、ref_far_01 の 2〜8 km の遠景）に影が落ちることを、太陽の可視率で判定する。エンジンの撮影の AOV（照明が求めた影の結果）と Cycles の太陽の見え方が 0.5 を超えて食い違う画素の割合（Cycles の n·l が 0.1 以上の画素）が 5 % 以下。",
+  "rows": [
+    {
+      "mode": "lit",
+      "view": "ref_cliff_02",
+      "region": "shadow_ground",
+      "component": "visibility",
+      "quantity": "visibility_mismatch",
+      "max": 0.05,
+      "note": "台地の長い影（太陽の高さ 24°）の落ちる地面。最も粗い段（幅 2048 m）の外で影が落ちず、Cycles の影に日が当たっていた"
+    },
+    {
+      "mode": "lit",
+      "view": "ref_far_01",
+      "region": "far",
+      "component": "visibility",
+      "quantity": "visibility_mismatch",
+      "max": 0.05,
+      "note": "2 km より先の遠景。影の距離（4 km）と段の被覆（約 1 km）の外の起伏の自己影"
+    }
+  ]
+}

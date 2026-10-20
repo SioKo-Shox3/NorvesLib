@@ -1121,6 +1121,8 @@ void main()
     vec3 Lo_diffuse = vec3(0.0);
     vec3 Lo_specular = vec3(0.0);
     float sunVisibility = 0.0;
+    // 撮影の AOV へ渡す太陽の可視率（影の地図・RT 影と接触影の結果。n·l で 0 にしない。影を掛けない灯では 1）
+    float sunShadowVisibility = 1.0;
 
     for (uint i = 0u; i < params.lightCount; i++)
     {
@@ -1213,6 +1215,7 @@ void main()
         if (lightType < 0.5 && light.attenuation.z > 0.5)
         {
             sunVisibility = NdotL > 0.0 ? shadow : 0.0;
+            sunShadowVisibility = shadow;
         }
 
         if (bValidationLambert)
@@ -1438,5 +1441,6 @@ void main()
     outColor = vec4(ApplySceneColorPreExposure(color) + ResolveGBufferEmissiveSceneColor(emissive),
                     outputAlpha);
     outIndirectSpecular = vec4(ApplySceneColorPreExposure(indirectSpecular), 0.0);
-    outSpecularReflectance = vec4(clamp(indirectSpecularReflectance, vec3(0.0), vec3(1.0)), 0.0);
+    // a は SSR が読まない。撮影の AOV（GBufferAovPass）が太陽の可視率として読む
+    outSpecularReflectance = vec4(clamp(indirectSpecularReflectance, vec3(0.0), vec3(1.0)), clamp(sunShadowVisibility, 0.0, 1.0));
 }

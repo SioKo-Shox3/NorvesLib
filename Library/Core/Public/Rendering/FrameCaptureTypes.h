@@ -295,6 +295,8 @@ namespace NorvesLib::Core::Rendering
          */
         FrameCaptureSource AovSurface;
         FrameCaptureSource AovGeometry;
+        /** @brief GBufferAovPass の 3 枚目（RGBA32F）。r = 太陽の可視率（照明の影の結果。空の画素は 0） */
+        FrameCaptureSource AovLighting;
         FrameCaptureAovCamera AovCamera;
         /**
          * @brief AtmosphereProbePass の出力（RGBA32F。横 = 視線、縦 = FrameCaptureAtmosphereProbeRows の値の種類）
@@ -341,6 +343,7 @@ namespace NorvesLib::Core::Rendering
             RTGIHistoryAge = FrameCaptureSource{};
             AovSurface = FrameCaptureSource{};
             AovGeometry = FrameCaptureSource{};
+            AovLighting = FrameCaptureSource{};
             AovCamera = FrameCaptureAovCamera{};
             AtmosphereProbe = FrameCaptureSource{};
             AtmosphereInfo = FrameCaptureAtmosphereInfo{};
@@ -387,6 +390,8 @@ namespace NorvesLib::Core::Rendering
         CapturedImage Surface;
         /** @brief RGBA32F。xyz = ワールドの法線（GBuffer の値のまま）、w = 視線方向の深度 m。空の画素は xyz = 0・w = +∞ */
         CapturedImage Geometry;
+        /** @brief RGBA32F。r = 太陽の可視率（0〜1。影の地図・RT 影と接触影の結果で、n·l は掛けない）。空の画素は 0 */
+        CapturedImage Lighting;
         FrameCaptureAovCamera Camera;
     };
 
