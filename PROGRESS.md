@@ -5849,3 +5849,10 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - このコミットのコード: 一番よく合った最後の行の形にした（RTGI の 1 本目の拡散光線の始点を `RaySurfaceOffset(viewDistance)` = max(0.5 m, 距離 × 2.5e-4) だけ法線へずらす。裏面を外す印は光線の側も instance の側も消した。範囲の規則と `RT_BLAS` の記録は残す）
 - 次の一手: 遠景だけが 0.882 で基準 0.9 に少し足りない（2〜4 km 0.876、4 km〜 0.887。裏面を外した時は同じずらしで 1.000 なので、遠くで始点が光線の形の下に残る分）。距離の係数だけを 2.5e-4 → 5e-4 に上げて（近くの 0.5 m は変えない。影の崖・地面はカメラから 120 m 以内で係数が効かない）空だけの ref_far_01 を `-Build` で 1 本撮り、遠景が 0.9〜1.1 に入れば verify を全部 1 回回す（GPU 時間の after は before と同じ `-GpuTimingFrames 300` の撮影で）
 - Notes: 撮影の試しは steering に従い空だけ・1〜2 視点で回した。反復 3 では verify を回していない（遠景が基準を外れたままなので）。RelWithDebInfo・Debug の Game.exe は C++ の変更（裏面の印を消した 2 か所）の前のビルドのまま。次の反復の `-Build` で作り直す。シェーダーは実行時に読むので試しの撮影はビルド無しで回した
+### SCN-WL-FAR-AA 止め（2026-10-20、run 20261020-094249 の反復 5）
+- 回帰の撮影の before（-Motion つき）は result=pass（`regression-before-SCN-WL-FAR-AA.txt`）
+- 同じ Game.exe（66e43052…）で ref2x・resident・aa-none・TAA の 4 条件を撮って測った（`aux-SCN-WL-FAR-AA-sweep-eval.txt`）。箱の幅・現在の色の割合・シャープ化は欠けとエイリアスを入れ替えるだけで、クリップを外して収束させても欠けが resident より 0.06〜0.09 大きい
+- ref_far_01 では一致しない成分 ÷ 残った細部の 2 乗が TAA と resident で同じ（約 2.0。前の exe では TAA 0.75〜0.86・resident 1.07〜1.35）。ref2x と 1 倍の撮影の照明の当たり方が解像度で違い（崖の暗い点と筋）、AA で消えない差が測り方の床を作っている
+- 期待値 `far-aa-static.json` のエイリアスの上限は前の exe の絶対値で、今の exe では既定の TAA も超える
+- Notes: RT の自己遮蔽の直し（SCN-WL-RT-SELFHIT）の後へ回すかの判断を `blocked/SCN-WL-FAR-AA.md` に書いた。コードは変えていない
+- Next: 判断を待つ。再開したら `.harness/runs/20261020-094249/aux-SCN-WL-FAR-AA-sweep.ps1`（-Out で撮影先を指定）と `aux-SCN-WL-FAR-AA-eval.py` で撮り直して測る
