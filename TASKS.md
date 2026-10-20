@@ -2021,7 +2021,7 @@
 - notes: 危険地帯（RTGI）。2026-10-20 親が SCN-WL-RTGI-COLOR から分けた。灰色の Cycles の参照（SCN-WLR-CYCLES-GRAY）に間接光の拡散の分が無ければ、その描き直し（20 分を超えるなら反復の外で起動して BLOCKED で待つ）から始める。時間の見積もり: 回帰の before・after 各 6 分、Debug のビルド 3 分、RelWithDebInfo のビルド 6 分、撮影 2 本 各 3 分。原因の切り分けは 1 視点の撮影（1 本 3 分）で回し、verify 一式は最後に 1 回。壁時計（75 分）の残りが 25 分を切ったら新しい試行を始めず、分かったことを書いてコミットして終える。ほかのシーンの見た目を変えない（回帰の撮影で確かめる）。 2026-10-20（親）: 反復 4 の BLOCKED を推奨の 1 で解いた（閾値は緩めない）。量は直った（e33057f1。影の崖 0.857・影の中の地面 0.923）。残りは影の中の地面の色度の差 0.0076（エンジンの g が 0.0075 低い、2 回の試しで揺れ 0.0005）。候補を 1 視点の撮影 2 本（約 6 分）で 1 つずつ測る: 当たりの点の太陽の直接光（光線の形の法線での n·l）、粗い光線の形で当たりの点の空の遮りが少ない分、ノイズ取りの 3×3 で日なたと混ざる分。反復 4 の記録は `blocked/resolved/SCN-WL-RTGI-AMOUNT-chroma.md`。
 
 ## SCN-WL-MATERIAL-AO-SHADING: 材質の AO の掛け方を、光線の遮蔽と二重にならない形にする
-- status: done
+- status: doing
 - after: SCN-WL-RTGI-COLOR, SCN-WL-SHADOW-LEAK, SCN-WLR-REGRESSION-VALIDATION, SCN-WL-RTGI-AMOUNT
 - done-when: `lighting.frag` は材質の AO を直接光に ×(0.7 + 0.3·AO)、空の光に ×AO で掛ける。光線の遮蔽（RTGI・空の遮蔽）が働くようになった後で、材質の AO を直接光から外し空の光だけに掛ける（または重みを変える）案を比べ、実材質の日なたの地面のエンジン ÷ Cycles（今 0.70〜0.82。一番暗いのは ref_cliff_02）が ref_ground_01 と ref_cliff_02 の両方で 1 ± 0.08 に入る掛け方を採り、`--expect`（`material-ao.json`）で検査する。AO の値の焼き方は変えない（SCN-WL-MATERIAL-AO-BAKE）。視点ごとに撮影先を分ける。反復の最初に回帰の撮影の `before` を撮る。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
@@ -2031,6 +2031,14 @@
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Terrain/CaptureRegression.ps1 -Item SCN-WL-MATERIAL-AO-SHADING -Phase after`
 - paths: Assets/Shaders, Library/Core/Private/Rendering, Library/Core/Public/Rendering, Game, Scripts, Docs/RenderingValidation, TASKS.md, PROGRESS.md
 - notes: 危険地帯（既定の描画経路）。2026-10-19 GAP-LIST の描画の欠陥 4（`material_ao_on_light`。Sol の批評 13）。
+
+## SCN-WL-GOLDEN-REAPPROVE: 荒野の描画の直しで変わった基準画像を、差の原因を確かめて再承認する
+- status: todo
+- after: SCN-WL-MATERIAL-AO-SHADING
+- done-when: 最後の再承認（52b399e7・83134c09）から後の描画の直しで、基準画像の検査が落ちている（SCN-WL-MATERIAL-AO-SHADING の前の HEAD で Outdoor が mean_flip 0.00044・712 画素、AO の直しの後は Indoor 11 画素・Outdoor 16156 画素。`.harness/runs/20261021-055341/aux-SCN-WL-MATERIAL-AO-SHADING-golden*.txt`）。(1) AO の直しの前から落ちていた Outdoor の差がどの変更によるかを確かめる（SCN-WL-RT-TLAS-*・SELFHIT・SHADOW-*・RTGI-COLOR・RTGI-AMOUNT の確率的な丸めのどれか。コミットを戻した exe を作らず、各項目の回帰の撮影と差の画、必要なら変更を起動引数で切った撮影で分ける）。(2) 差がすべて意図した描画の直しによることを、Indoor・Outdoor（予備の経路の基準画像があればそれも）の候補と今の基準画像を並べて開いて確かめる。意図しない差が見つかったら再承認せず、その原因を TASKS.md に足して BLOCKED にする。(3) `Docs/RenderingValidation/GoldenBaselines.md` の手順（`UpdateRenderingGoldenBaselines.ps1 -GenerateCandidate`→`R1Acceptance.md` の `R1 visual approval` 節に承認の行と hash と根拠→`-PublishApprovedCandidate`）で再承認する。根拠は差の原因の変更と、それが物理的な期待値（Cycles の比）へ近づく向きであること。コミット本文にも根拠を書く。
+- verify: `ctest --test-dir build -C Debug --output-on-failure -R "^(RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
+- paths: Test/Core/Rendering/Baselines, Docs/RenderingValidation, Scripts, TASKS.md, PROGRESS.md
+- notes: 2026-10-21 親が足した。基準画像の承認はユーザーから任されている（差の原因と物理的妥当性を確かめて自分で記録する）。描画のコードは変えない。時間の見積もり: Debug のビルド 3 分、基準画像の検査 2 本 約 2 分、候補の生成 約 3 分、差の切り分けの撮影 1 本 3〜5 分。
 
 ## SCN-WL-MATERIAL-AO-BAKE: 地表の材質の AO の焼き方を確かめる
 - status: todo
@@ -2223,7 +2231,7 @@
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -Build -RequireAssets -Width 1920 -Height 1080 -Hdr -Aov -Views ref_cliff_02 -GameArgs wasteland-common-light,wasteland-hide=all,wasteland-finest-lod -LaunchPerView -OutDir .harness/runs/scene-capture/SCN-WL-LIGHT-FINAL-recheck`
 - verify: `python Scripts/Terrain/ReferenceCheck.py --light-final --engine-root .harness/runs/scene-capture/SCN-WL-LIGHT-FINAL --verify`
 - paths: Assets/Shaders, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Game, Scripts, Docs/RenderingValidation, TASKS.md, PROGRESS.md
-- notes: 危険地帯（描画）。2026-10-19 書き直し（Sol の批評 22 と 2 周目）: SCN-WLR-CYCLES-LIT は地形だけ・共通の照明・霞なしなので、既定の荒野の正解には読み替えない。verify の 1 本目は撮影の経路が今も通ることの確認（別の出力先）、2 本目は反復の中で保存した全組の検査。
+- notes: 危険地帯（描画）。2026-10-19 書き直し（Sol の批評 22 と 2 周目）: SCN-WLR-CYCLES-LIT は地形だけ・共通の照明・霞なしなので、既定の荒野の正解には読み替えない。verify の 1 本目は撮影の経路が今も通ることの確認（別の出力先）、2 本目は反復の中で保存した全組の検査。 2026-10-21（親）: 光の仕上げで基準画像が変わったら、SCN-WL-GOLDEN-REAPPROVE と同じ手順で差の原因を確かめて再承認してから閉じる。
 
 ## SCN-WL-SKY-AERIAL: 空の青・遠景の霞・全体の明るさと彩度を手本に合わせる
 - status: backlog
