@@ -5922,6 +5922,9 @@ def main():
             return 1
         views = [v.strip() for v in args.views.split(",") if v.strip()]
         return RtScene.run(sys.modules[__name__], capture_dir, views, args.verify)
+    if not args.capture and args.engine and (args.gray or args.lit):
+        # 灰色・実材質の比較は、--capture を省くと最初のエンジンの撮影先へ結果（gray_check.json など）を書く
+        args.capture = args.engine[0]
     if not args.capture:
         print("REFERENCE_CHECK result=fail reason=capture_missing（--capture を指定する）")
         return 1

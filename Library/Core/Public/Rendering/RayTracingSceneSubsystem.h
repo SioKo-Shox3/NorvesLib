@@ -20,12 +20,38 @@ namespace NorvesLib::Core::Rendering
     /**
      * @brief TLAS に入れるインスタンス（描画コマンドから作るメッシュと MegaGeometry の全部）を選ぶ規則
      *
-     * カメラ（メインカメラの位置）からインスタンスの境界の球の表面までの距離が RayTracingSelectRadiusMeters 以内のものを、
-     * 近い順に RayTracingSelectMaxInstances 本まで入れる。メッシュと MegaGeometry を区別せずに同じ規則で選ぶ。
+     * カメラ（メインカメラの位置）からインスタンスの境界の球の表面までの距離が、その球の半径で決まる範囲
+     * （RayTracingSelectRangeMeters）以内のものを、近い順に RayTracingSelectMaxInstances 本まで入れる。
+     * メッシュと MegaGeometry を区別せずに同じ規則で選ぶ。
      * 共有の TLAS は RT の影・RTGI・DDGI・パストレーサーが使うので、外れたインスタンスはどれからも見えない。
      */
     inline constexpr float RayTracingSelectRadiusMeters = 120.0f;
     inline constexpr uint32_t RayTracingSelectMaxInstances = 65536u;
+    /** @brief 大きな物を入れる距離の上限（RTGI の光線の最長。LightingPass の RTGI_RAY_MAXIMUM_DISTANCE と同じ 10 km） */
+    inline constexpr float RayTracingSelectFarRadiusMeters = 10000.0f;
+    /**
+     * @brief 大きな物を入れる距離の、境界の球の半径に対する比
+     *
+     * 半径 r の球は r × 30 の距離で見込む角の半分が約 1.9° になる。地形の DEM の区画（500 m 四方、半径約 360 m）は
+     * 光線の届く 10 km まで入り、岩（半径 10 m 程度）は 300 m まで入る。空の遮蔽と照り返しで効くのは見込む角の大きな物
+     */
+    inline constexpr float RayTracingSelectSizeRatio = 30.0f;
+
+    /**
+     * @brief 境界の球の半径から、TLAS に入れる距離（球の表面まで）を決める
+     *
+     * 小さな物は RayTracingSelectRadiusMeters まで、大きな物は半径 × RayTracingSelectSizeRatio
+     * （RayTracingSelectFarRadiusMeters で頭打ち）まで。半径が有限でなければ RayTracingSelectRadiusMeters
+     */
+    inline float RayTracingSelectRangeMeters(float boundsRadius)
+    {
+        const float range = boundsRadius * RayTracingSelectSizeRatio;
+        if (!(range > RayTracingSelectRadiusMeters))
+        {
+            return RayTracingSelectRadiusMeters;
+        }
+        return range < RayTracingSelectFarRadiusMeters ? range : RayTracingSelectFarRadiusMeters;
+    }
 
     /**
      * @brief FramePacketの描画スナップショットから加速構造を管理
@@ -195,6 +221,8 @@ namespace NorvesLib::Core::Rendering
             uint32_t MegaInstances = 0;
             uint32_t Candidates = 0;   // 選ぶ対象のインスタンスの数（メッシュと MegaGeometry）
             uint32_t OutOfRange = 0;   // 距離で外れた数
+            uint32_t Far = 0;          // 距離が RayTracingSelectRadiusMeters を超えるが大きさで入る候補の数
+            float FarthestMeters = 0.0f; // 入る候補の中で最も遠い距離（球の表面まで）
             uint32_t OverLimit = 0;    // 上限で外れた数
             uint32_t NotReady = 0;     // 選んだがメッシュの GPU データがまだ使えない数
             uint32_t PatchedSlots = 0; // 席ごとの配列を直した席の数（作り直したときは全部）

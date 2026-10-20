@@ -880,10 +880,12 @@ vec3 TraceDiffuseRay(vec3 rayOrigin,
     hitBaseColor = vec3(0.0);
     hitCustomIndex = RTGI_NO_HIT;
 
+    // 裏面は外す。MegaGeometry は光線にラスタより粗い段を見せるので、細かい面から出た光線が粗い面の裏に当たる
+    // 自己遮蔽を数えない（メッシュの instance は裏面を外さない印を持ち、両面とも当たる）
     rayQueryEXT query;
     rayQueryInitializeEXT(query,
                           sceneTopLevel,
-                          gl_RayFlagsOpaqueEXT,
+                          gl_RayFlagsOpaqueEXT | gl_RayFlagsCullBackFacingTrianglesEXT,
                           RayTracingInstanceMaskShadowCaster,
                           rayOrigin,
                           parameters.rayLimits.x,

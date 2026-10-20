@@ -1318,6 +1318,8 @@ namespace NorvesLib::Core::Rendering
                     static_cast<uint32_t>(packet.RayTracingScene.Instances.size());
                 instance.Instance.mask = draw.bCastShadow ? RayTracingInstanceMaskShadowCaster
                                                           : RayTracingInstanceMaskNonShadowCaster;
+                // メッシュは光線にもラスタと同じ形を見せるので、裏面を外す光線（RTGI の拡散光線）からも両面とも当たる
+                instance.Instance.disableTriangleFacingCull = true;
                 CopyRayTracingInstanceTransform(worldTransform, instance.Instance.transform);
                 if (IsFiniteRayTracingTransform(previousWorldTransform))
                 {
@@ -1612,6 +1614,9 @@ namespace NorvesLib::Core::Rendering
         instance.Material.EmissiveLuminanceNits = material.EmissiveLuminanceNits;
         instance.Instance.customIndex = static_cast<uint32_t>(packet.RayTracingScene.Instances.size());
         instance.Instance.mask = entry.Mask;
+        // 光線に見せる段はラスタの段より粗く、細かい面から出た光線の始点が粗い面の下（閉じた形では内側）に入る。
+        // 裏面を外す光線（RTGI の拡散光線）はその面を通り抜け、外から当たる表面だけを遮るものとして数える
+        instance.Instance.disableTriangleFacingCull = false;
         std::memcpy(instance.Instance.transform, entry.Transform, sizeof(entry.Transform));
         if (entry.bHasPreviousTransform)
         {
@@ -1630,11 +1635,16 @@ namespace NorvesLib::Core::Rendering
     {
         ++stats.Candidates;
         const float distance = bHasOrigin ? DistanceToRayTracingSelectBounds(origin, sphere) : 0.0f;
-        if (distance > RayTracingSelectRadiusMeters)
+        if (distance > RayTracingSelectRangeMeters(sphere[3]))
         {
             ++stats.OutOfRange;
             return;
         }
+        if (distance > RayTracingSelectRadiusMeters)
+        {
+            ++stats.Far;
+        }
+        stats.FarthestMeters = distance > stats.FarthestMeters ? distance : stats.FarthestMeters;
         candidates.push_back(SelectCandidate{distance, index});
     }
 
@@ -1725,7 +1735,8 @@ namespace NorvesLib::Core::Rendering
         }
         NORVES_LOG_INFO("RayTracingSceneSubsystem",
                         "RT_SCENE instances=%u excluded=%u path=%s mesh=%u mega=%u candidates=%u out_of_range=%u "
-                        "over_limit=%u not_ready=%u radius_m=%.0f limit=%u patched_slots=%u rebuilt=%u",
+                        "over_limit=%u not_ready=%u radius_m=%.0f limit=%u patched_slots=%u rebuilt=%u "
+                        "far=%u farthest_m=%.0f size_ratio=%.0f far_radius_m=%.0f",
                         stats.Instances,
                         stats.OutOfRange + stats.OverLimit,
                         path,
@@ -1738,7 +1749,11 @@ namespace NorvesLib::Core::Rendering
                         static_cast<double>(RayTracingSelectRadiusMeters),
                         RayTracingSelectMaxInstances,
                         stats.PatchedSlots,
-                        stats.bRebuilt ? 1u : 0u);
+                        stats.bRebuilt ? 1u : 0u,
+                        stats.Far,
+                        static_cast<double>(stats.FarthestMeters),
+                        static_cast<double>(RayTracingSelectSizeRatio),
+                        static_cast<double>(RayTracingSelectFarRadiusMeters));
     }
 
     bool RayTracingSceneSubsystem::BuildAccelerationStructures(RHI::DevicePtr device,
@@ -1787,6 +1802,10 @@ namespace NorvesLib::Core::Rendering
 
         Container::VariableArray<BottomLevelCacheEntry> activeBottomLevels;
         Container::VariableArray<RHI::AccelerationStructureInstanceDesc> tlasInstances;
+        // この回に新しく作った BLAS の数・三角形・同期の構築の時間（RT_BLAS に出す）
+        uint32_t builtBottomLevels = 0;
+        uint64_t builtTriangles = 0;
+        double buildMilliseconds = 0.0;
         for (RayTracingSceneInstanceSnapshot& instance : packet.RayTracingScene.Instances)
         {
             if (!instance.SourceVertexBuffer || !instance.SourceIndexBuffer ||
@@ -1900,11 +1919,17 @@ namespace NorvesLib::Core::Rendering
                 blasBuild.destination = entry.Structure;
                 blasBuild.geometries.push_back(geometry);
                 // ICommandListのBuildはTLAS用。BLASは加速構造リソースから同期構築する。
+                const auto buildStart = std::chrono::steady_clock::now();
                 if (!entry.Structure->Build(blasBuild))
                 {
                     clearPacketAccelerationStructures();
                     return false;
                 }
+                buildMilliseconds += std::chrono::duration<double, std::milli>(
+                                         std::chrono::steady_clock::now() - buildStart)
+                                         .count();
+                ++builtBottomLevels;
+                builtTriangles += primitiveCount;
 
                 activeBottomLevels.push_back(std::move(entry));
                 bottomLevel = &activeBottomLevels.back();
@@ -1919,6 +1944,27 @@ namespace NorvesLib::Core::Rendering
         }
 
         m_BottomLevelCache = std::move(activeBottomLevels);
+        if (builtBottomLevels > 0u)
+        {
+            // RT のシーンの大きさ（使っている BLAS の合計）と、この回に作った BLAS の同期の構築の時間
+            uint64_t cachedTriangles = 0;
+            uint64_t cachedBytes = 0;
+            for (const BottomLevelCacheEntry& entry : m_BottomLevelCache)
+            {
+                cachedTriangles += entry.IndexCount / 3u;
+                cachedBytes += entry.Structure ? entry.Structure->GetSize() : 0u;
+            }
+            NORVES_LOG_INFO("RayTracingSceneSubsystem",
+                            "RT_BLAS built=%u built_triangles=%llu build_ms=%.3f blas=%u triangles=%llu bytes=%llu "
+                            "instances=%u",
+                            builtBottomLevels,
+                            static_cast<unsigned long long>(builtTriangles),
+                            buildMilliseconds,
+                            static_cast<uint32_t>(m_BottomLevelCache.size()),
+                            static_cast<unsigned long long>(cachedTriangles),
+                            static_cast<unsigned long long>(cachedBytes),
+                            static_cast<uint32_t>(tlasInstances.size()));
+        }
         if (tlasInstances.empty())
         {
             m_TopLevelCache[frameSlot] = TopLevelCacheEntry{};
