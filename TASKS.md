@@ -2018,7 +2018,7 @@
 - verify: `python Scripts/Terrain/ReferenceCheck.py --bounce --engine .harness/runs/scene-capture/SCN-WL-RTGI-AMOUNT/bounce-on --engine .harness/runs/scene-capture/SCN-WL-RTGI-AMOUNT/bounce-off --reference .harness/runs/scene-capture/SCN-WLR-CYCLES-GRAY --expect Scripts/Terrain/ExpectSpecs/rtgi-amount.json --verify`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Terrain/CaptureRegression.ps1 -Item SCN-WL-RTGI-AMOUNT -Phase after`
 - paths: Assets/Shaders, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Game, Docs/RenderingValidation, Scripts, TASKS.md, PROGRESS.md
-- notes: 危険地帯（RTGI）。2026-10-20 親が SCN-WL-RTGI-COLOR から分けた。灰色の Cycles の参照（SCN-WLR-CYCLES-GRAY）に間接光の拡散の分が無ければ、その描き直し（20 分を超えるなら反復の外で起動して BLOCKED で待つ）から始める。時間の見積もり: 回帰の before・after 各 6 分、Debug のビルド 3 分、RelWithDebInfo のビルド 6 分、撮影 2 本 各 3 分。原因の切り分けは 1 視点の撮影（1 本 3 分）で回し、verify 一式は最後に 1 回。壁時計（75 分）の残りが 25 分を切ったら新しい試行を始めず、分かったことを書いてコミットして終える。ほかのシーンの見た目を変えない（回帰の撮影で確かめる）。
+- notes: 危険地帯（RTGI）。2026-10-20 親が SCN-WL-RTGI-COLOR から分けた。灰色の Cycles の参照（SCN-WLR-CYCLES-GRAY）に間接光の拡散の分が無ければ、その描き直し（20 分を超えるなら反復の外で起動して BLOCKED で待つ）から始める。時間の見積もり: 回帰の before・after 各 6 分、Debug のビルド 3 分、RelWithDebInfo のビルド 6 分、撮影 2 本 各 3 分。原因の切り分けは 1 視点の撮影（1 本 3 分）で回し、verify 一式は最後に 1 回。壁時計（75 分）の残りが 25 分を切ったら新しい試行を始めず、分かったことを書いてコミットして終える。ほかのシーンの見た目を変えない（回帰の撮影で確かめる）。 2026-10-20（親）: 反復 4 の BLOCKED を推奨の 1 で解いた（閾値は緩めない）。量は直った（e33057f1。影の崖 0.857・影の中の地面 0.923）。残りは影の中の地面の色度の差 0.0076（エンジンの g が 0.0075 低い、2 回の試しで揺れ 0.0005）。候補を 1 視点の撮影 2 本（約 6 分）で 1 つずつ測る: 当たりの点の太陽の直接光（光線の形の法線での n·l）、粗い光線の形で当たりの点の空の遮りが少ない分、ノイズ取りの 3×3 で日なたと混ざる分。反復 4 の記録は `blocked/resolved/SCN-WL-RTGI-AMOUNT-chroma.md`。
 
 ## SCN-WL-MATERIAL-AO-SHADING: 材質の AO の掛け方を、光線の遮蔽と二重にならない形にする
 - status: todo
