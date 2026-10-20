@@ -6065,3 +6065,18 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `-5` 回帰の after result=pass: mega-bananas psnr 28.18・+6.196、night-village 43.21・+0.251、rendering3dtest 31.50・+0.293、sandbox 40.92・+1.306（反復 2 とほぼ同じ）
 - Notes: 回帰の before は反復 2 の最初に撮ったもの（このタスクの変更の前）を残し、撮り直していない。ref_cliff_02 の余裕は 0.0046
 - Next: TASKS.md の次の未完の項目
+
+### SCN-WL-GOLDEN-REAPPROVE 止め（2026-10-21、run 20261021-055341 の反復 4。理由と選択肢は blocked/SCN-WL-GOLDEN-REAPPROVE.md）
+- 結論: 基準画像は再承認していない。今の差は AO の直しの分（意図した直し）と、それより前からある Outdoor の 712 画素に分かれ、後者は原因を確かめられなかった
+- 証拠（`.harness/runs/20261021-055341/`）:
+  - `aux-SCN-WL-GOLDEN-REAPPROVE-start.txt`: Debug のビルドと golden 4 本。Indoor・IndoorGBufferFallback が 11 画素（raw 最大 1）、Outdoor・OutdoorGBufferFallback が 16152 画素（raw 最大 10）で落ちる
+  - `aux-SCN-WL-GOLDEN-REAPPROVE-staging.txt`: 4 本の候補の撮影（`--write-baseline-staging`、on・off）。exit 0
+  - `aux-SCN-WL-GOLDEN-REAPPROVE-preao.txt`: lighting.frag・PbrMaterialEvaluation.glsl を 84bc0b53 の版に一時的に置いた撮影（撮影の直後に `git checkout` で戻した）。Outdoor は基準画像と 712 画素（raw 最大 4）で前の反復の記録と一致、Indoor は差 0
+  - `aux-SCN-WL-GOLDEN-REAPPROVE-oldshaders.txt`: lighting.frag・PbrMaterialEvaluation.glsl・gbuffer.frag・VisibilityResolve.glsl・volumetrics.frag を f919b5f3（golden が最後に通った 10-09）の版に一時的に置いても同じ 712 画素
+  - `aux-SCN-WL-GOLDEN-REAPPROVE-noparallel.txt`: `NORVES_RENDER_PARALLEL_RECORD=0` の撮影は並列の記録の撮影と差 0
+  - `aux-SCN-WL-GOLDEN-REAPPROVE-analysis.txt`: 上の組の差の画素数・最大差・位置。`golden-reapprove/` に並べた画と差の画（開いて確かめた）
+- AO の直しの分（Outdoor 16150 画素・Indoor 11 画素）: 高さ相関の Smith GGX で直接光の鏡面が強まる向き。鏡面だけで見える黒い R1 の板が最大 9 段明るく、地面に 1〜2 段の等高線。検証アプリの材質の AO は 1 なので AO を外した分の差は無い
+- 前からある 712 画素: R1 の黒い板 565・半透明の板 132・球の影の際 8、平均輝度 129.3821→129.3846。検証アプリは RTGI を切り（`INDIRECT_LIGHTING source=ibl`）太陽の影は CSM、地形も無いので、候補の荒野の項目（RT-TLAS・SELFHIT・SHADOW-*・RTGI-COLOR・RTGI-AMOUNT）は当たらない。シェーダーでもなく C++ 側。疑いは 10-12〜10-14 の定数と記述子セットをフレームの持ち主から借りる形への移し替え（SSR・Forward・照明・空）
+- TASKS.md: 原因を探す `SCN-WL-GOLDEN-DIFF-CAUSE` を足し、このタスクの `after:` に加えた
+- Notes: 起動引数では候補の変更を切れない（検証アプリが受け取るのは描画の共通の引数だけ）。シェーダーは実行時に `NORVES_SHADER_DIR` のソースからコンパイルされるので、シェーダーの版の切り分けは exe を作り直さずにできる。新しい試験は足していない
+- Next: blocked の判断（推奨は今の HEAD で再承認し、原因の調査は別に回す）

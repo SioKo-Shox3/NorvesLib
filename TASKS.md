@@ -2032,9 +2032,17 @@
 - paths: Assets/Shaders, Library/Core/Private/Rendering, Library/Core/Public/Rendering, Game, Scripts, Docs/RenderingValidation, TASKS.md, PROGRESS.md
 - notes: 危険地帯（既定の描画経路）。2026-10-19 GAP-LIST の描画の欠陥 4（`material_ao_on_light`。Sol の批評 13）。
 
-## SCN-WL-GOLDEN-REAPPROVE: 荒野の描画の直しで変わった基準画像を、差の原因を確かめて再承認する
+## SCN-WL-GOLDEN-DIFF-CAUSE: golden の Outdoor が 10-09 の後に R1 の四角で 712 画素変わった原因を確かめる
 - status: todo
 - after: SCN-WL-MATERIAL-AO-SHADING
+- done-when: golden 4 本が最後に通った f919b5f3（`.harness/runs/20261009-005300/verify-VTG9-FIX-NIGHT-RTGI-FIREFLIES-2.txt`）から 84bc0b53（AO の直しの前）までのどのコミットで、Outdoor の 712 画素（raw 最大 4、平均輝度 129.3821→129.3846。R1 の 2 枚の四角＝鏡面だけで見える黒い板 565 画素と半透明の板 132 画素、球の影の際 8 画素）が変わったかを特定し、意図した描画の直しか不具合かを分ける。不具合なら直す項目を TASKS.md に足す。分かっていること（`.harness/runs/20261021-055341/aux-SCN-WL-GOLDEN-REAPPROVE-analysis.txt`）: AO の直しの前のシェーダーで 712 画素がそのまま再現し、Indoor は差 0。lighting.frag・PbrMaterialEvaluation.glsl・gbuffer.frag・VisibilityResolve.glsl・volumetrics.frag を f919b5f3 の版にしても同じ 712 画素（シェーダーでなく C++ 側）。`NORVES_RENDER_PARALLEL_RECORD=0` でも画は変わらない。検証アプリは RTGI を切り（`INDIRECT_LIGHTING source=ibl`）、太陽の影は CSM、地形は無いので、荒野の RT・影・RTGI の項目は当たらない（各項目の回帰で sandbox・rendering3dtest も変わっていない）。疑い: 10-12〜10-14 の、SSR・Forward・照明・空の定数と記述子セットをフレームの持ち主から借りる形への移し替え（770999b3・2844976b・f9100682・c3b2294a・93e09578・1313cf3c など）。
+- verify: 二分探索の各段で `RenderingGoldenImageTest.exe --scene=outdoor --capture-source=back-buffer --write-baseline-staging` を撮り、`Outdoor.png` との差（`.harness/runs/20261021-055341/golden-reapprove/gdiff.py`）が 0 か 712 画素かを記録する
+- paths: TASKS.md, PROGRESS.md, Docs/RenderingValidation
+- notes: 2026-10-21 SCN-WL-GOLDEN-REAPPROVE の反復が足した。コミットを戻した exe が要る（約 10 段の Debug ビルド）。作業ツリーでほかのコミットへ切り替えない規則なので、別の作業ツリーとユーザーの承認が要る（`blocked/SCN-WL-GOLDEN-REAPPROVE.md`）。
+
+## SCN-WL-GOLDEN-REAPPROVE: 荒野の描画の直しで変わった基準画像を、差の原因を確かめて再承認する
+- status: todo
+- after: SCN-WL-MATERIAL-AO-SHADING, SCN-WL-GOLDEN-DIFF-CAUSE
 - done-when: 最後の再承認（52b399e7・83134c09）から後の描画の直しで、基準画像の検査が落ちている（SCN-WL-MATERIAL-AO-SHADING の前の HEAD で Outdoor が mean_flip 0.00044・712 画素、AO の直しの後は Indoor 11 画素・Outdoor 16156 画素。`.harness/runs/20261021-055341/aux-SCN-WL-MATERIAL-AO-SHADING-golden*.txt`）。(1) AO の直しの前から落ちていた Outdoor の差がどの変更によるかを確かめる（SCN-WL-RT-TLAS-*・SELFHIT・SHADOW-*・RTGI-COLOR・RTGI-AMOUNT の確率的な丸めのどれか。コミットを戻した exe を作らず、各項目の回帰の撮影と差の画、必要なら変更を起動引数で切った撮影で分ける）。(2) 差がすべて意図した描画の直しによることを、Indoor・Outdoor（予備の経路の基準画像があればそれも）の候補と今の基準画像を並べて開いて確かめる。意図しない差が見つかったら再承認せず、その原因を TASKS.md に足して BLOCKED にする。(3) `Docs/RenderingValidation/GoldenBaselines.md` の手順（`UpdateRenderingGoldenBaselines.ps1 -GenerateCandidate`→`R1Acceptance.md` の `R1 visual approval` 節に承認の行と hash と根拠→`-PublishApprovedCandidate`）で再承認する。根拠は差の原因の変更と、それが物理的な期待値（Cycles の比）へ近づく向きであること。コミット本文にも根拠を書く。
 - verify: `ctest --test-dir build -C Debug --output-on-failure -R "^(RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
 - paths: Test/Core/Rendering/Baselines, Docs/RenderingValidation, Scripts, TASKS.md, PROGRESS.md
