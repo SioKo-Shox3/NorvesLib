@@ -6080,3 +6080,12 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - TASKS.md: 原因を探す `SCN-WL-GOLDEN-DIFF-CAUSE` を足し、このタスクの `after:` に加えた
 - Notes: 起動引数では候補の変更を切れない（検証アプリが受け取るのは描画の共通の引数だけ）。シェーダーは実行時に `NORVES_SHADER_DIR` のソースからコンパイルされるので、シェーダーの版の切り分けは exe を作り直さずにできる。新しい試験は足していない
 - Next: blocked の判断（推奨は今の HEAD で再承認し、原因の調査は別に回す）
+
+### SCN-WL-GOLDEN-DIFF-CAUSE（2026-10-21、run 20261021-055341 の反復 5）
+- Done: golden の Outdoor が 10-09 の後に変わった 712 画素の原因を 7ff66633（10-20「視線行列を原点の向きと位置の平行移動に分けて作り…」）と特定した。`CameraViewConstants::BuildViewMatrix` だけを 7ff66633 の前の版にしてビルドすると、Outdoor は `Outdoor.png` と差 0 になる。数式では同じ行列の作り方の違いで、小さな座標では成分の最後の桁だけが違い、丸めの境目の画素だけが 1 段動く。意図した直しによる差で不具合ではないので、直す項目は足していない。記録は `Docs/RenderingValidation/WastelandCameraOffset.md` の「基準画像（golden）への影響」
+- 検証（`.harness/runs/20261021-055341/`）:
+  - `verify-SCN-WL-GOLDEN-DIFF-CAUSE-1.txt`・`-2.txt`: Debug の Game のビルド exit=0（-2 は一時の書き換えを戻した後のビルド）
+  - `aux-SCN-WL-GOLDEN-DIFF-CAUSE-captures.txt`: lighting.frag・PbrMaterialEvaluation.glsl を 84bc0b53 の版に一時的に置いた Outdoor の撮影。既定・`NORVES_FRAMES_IN_FLIGHT=1`・`=2` はどれも 712 画素（raw 最大 4、同じ画素）、さらに `CameraViewConstants.cpp` を 7ff66633^ の版にしたビルドでは 0 画素。撮影と差の画は `golden-diff-cause/`。撮影の後にシェーダーと cpp を `git checkout` で戻して再ビルドした
+- 切り分けで外れたもの: 飛行中のフレームの数（f919b5f3 では MAX_FRAMES_IN_FLIGHT=1、今は 2。=1 でも同じ差）、ドライバ（今も 610.88 で 10-06 の再承認と同じ）、トーンマップ・SSR・空・前方描画のシェーダー（f919b5f3〜84bc0b53 で変わっていない）
+- Notes: 疑いに挙がっていた 10-12〜10-14 のフレームの持ち主への移し替えは画を変えていなかった。SCN-WL-GOLDEN-REAPPROVE は、AO の直しの分とこの 712 画素の両方を原因の分かった差として再承認へ進める
+- Next: SCN-WL-GOLDEN-REAPPROVE

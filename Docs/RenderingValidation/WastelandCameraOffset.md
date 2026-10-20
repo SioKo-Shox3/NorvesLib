@@ -111,3 +111,22 @@ night-village は画面の 4 列で揃った 0.01〜0.03 画素のずれで、�
 rendering3dtest・sandbox は同一、mega-bananas 60.3 dB（差は画面に散らばった 523 画素の点だけ）・night-village 71.4 dB で、
 変更なしの揺らぎと同じ。検証レイヤーのエラーは 0。Blender の深度もこの台本で描き直し、残りは ref_cliff_01 0.013・
 ref_cliff_02 0.032 画素で前と同じ。
+
+## 基準画像（golden）への影響
+
+この直しは描画の検証の golden の Outdoor を 712 画素変える（raw 最大 4、平均輝度 129.3821→129.3846）。
+差は R1 の 2 枚の板（鏡面だけで見える黒い板と、その左の拡散の板）に散った +1 と、球の影の際の数画素で、
+形・位置・明るさの変化は無い。Indoor は差 0。予備の経路の OutdoorGBufferFallback も同じ場所に同じ画素数の差を持つ
+（古い視線行列での撮影は Outdoor だけで確かめた）。
+
+確かめ方（2026-10-21、NVIDIA 610.88。golden が最後に通った 10-09 の f919b5f3 と同じドライバ）:
+
+| 撮影（`RenderingGoldenImageTest.exe --scene=outdoor --capture-source=back-buffer --write-baseline-staging`） | `Outdoor.png` との差 |
+|---|---|
+| 今のコード（照明の 2 本のシェーダーだけ、後の AO の直しの前の 84bc0b53 の版） | 712 画素（raw 最大 4） |
+| 上と同じで `NORVES_FRAMES_IN_FLIGHT=1` / `=2` | 712 画素（同じ画素） |
+| 上と同じで `CameraViewConstants.cpp` だけを 7ff66633 の前の版にしてビルド | 0 画素 |
+
+視線行列の 2 つの作り方は数式では同じで、小さな座標（検証シーンのカメラは原点から数 m）では成分の最後の桁だけが違う。
+その違いが、深度から戻すワールドの位置と視線の向きを通って、丸めの境目にある画素だけを 1 段動かす。
+意図した直しによる丸めの差で、不具合ではない。golden の再承認では、この 712 画素を差の原因の分かった分として扱う。
