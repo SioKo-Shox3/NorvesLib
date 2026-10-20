@@ -1599,6 +1599,20 @@ namespace NorvesLib::Core::Rendering
         instance.VertexCount = gpuData.VertexCount;
         instance.VertexStride = vertexStride;
         instance.bGeometryOpaque = true;
+        // 光線に見せる段の誤差（ローカル空間）を、instance の最も大きい拡大率で世界の長さにする
+        const float localProxyError = gpuData.ShadowLODLevel < gpuData.LevelRanges.size()
+                                          ? gpuData.LevelRanges[gpuData.ShadowLODLevel].Error
+                                          : 0.0f;
+        float maxScaleSquared = 0.0f;
+        for (uint32_t column = 0u; column < 3u; ++column)
+        {
+            const float x = entry.Transform[column];
+            const float y = entry.Transform[4u + column];
+            const float z = entry.Transform[8u + column];
+            maxScaleSquared = std::max(maxScaleSquared, x * x + y * y + z * z);
+        }
+        const float proxyError = std::max(localProxyError, 0.0f) * std::sqrt(maxScaleSquared);
+        instance.RayProxyErrorMeters = std::isfinite(proxyError) ? proxyError : 0.0f;
         const MegaGeometry::MegaMeshMaterial& material = gpuData.Material;
         for (uint32_t channel = 0u; channel < 4u; ++channel)
         {
@@ -1949,16 +1963,23 @@ namespace NorvesLib::Core::Rendering
                 cachedTriangles += entry.IndexCount / 3u;
                 cachedBytes += entry.Structure ? entry.Structure->GetSize() : 0u;
             }
+            // 光線の形のずれの上限（RTGI が自分の面への当たりとして読み飛ばす高さ）の最大
+            float proxyErrorMaxMeters = 0.0f;
+            for (const RayTracingSceneInstanceSnapshot& instance : packet.RayTracingScene.Instances)
+            {
+                proxyErrorMaxMeters = std::max(proxyErrorMaxMeters, instance.RayProxyErrorMeters);
+            }
             NORVES_LOG_INFO("RayTracingSceneSubsystem",
                             "RT_BLAS built=%u built_triangles=%llu build_ms=%.3f blas=%u triangles=%llu bytes=%llu "
-                            "instances=%u",
+                            "instances=%u proxy_error_max_m=%.4f",
                             builtBottomLevels,
                             static_cast<unsigned long long>(builtTriangles),
                             buildMilliseconds,
                             static_cast<uint32_t>(m_BottomLevelCache.size()),
                             static_cast<unsigned long long>(cachedTriangles),
                             static_cast<unsigned long long>(cachedBytes),
-                            static_cast<uint32_t>(tlasInstances.size()));
+                            static_cast<uint32_t>(tlasInstances.size()),
+                            static_cast<double>(proxyErrorMaxMeters));
         }
         if (tlasInstances.empty())
         {

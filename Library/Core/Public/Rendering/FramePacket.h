@@ -111,6 +111,13 @@ namespace NorvesLib::Core::Rendering
         bool bHasPreviousTransform = false;
         RHI::AccelerationStructurePtr BottomLevel;
         RayTracingHitMaterialSnapshot Material;
+        /**
+         * @brief 光線に見せる形の、ラスタの細かい形からのずれの上限（世界の長さ、メートル）
+         *
+         * MegaGeometry の影の段（焼いた階層では常駐のフォールバック）のように、光線の形がラスタより粗いときに正。
+         * RTGI は 1 次面から出す光線がこの高さより低い所で当てた面を、形のずれによる自分の面への当たりとして読み飛ばす。
+         */
+        float RayProxyErrorMeters = 0.0f;
     };
 
     struct RayTracingSceneSnapshot

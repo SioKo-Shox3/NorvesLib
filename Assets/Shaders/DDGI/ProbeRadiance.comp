@@ -40,6 +40,7 @@ struct ProbeRayInstanceData
     vec4 transform0;
     vec4 transform1;
     vec4 transform2;
+    vec4 rayProxy; // x=光線に見せる形のずれの上限（世界の長さ）。この光線では使わない
 };
 
 struct LightData

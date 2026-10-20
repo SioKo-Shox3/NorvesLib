@@ -830,6 +830,8 @@ namespace NorvesLib::Core::Rendering
         uint32_t IndexCount = 0u;
         uint32_t CustomIndex = UINT32_MAX;
         float Transform[12] = {};
+        /// x=光線に見せる形のずれの上限（世界の長さ、RayTracingSceneInstanceSnapshot::RayProxyErrorMeters）。yzw は未使用
+        float RayProxy[4] = {};
     };
 
     /**
@@ -846,7 +848,7 @@ namespace NorvesLib::Core::Rendering
     };
 
     static_assert(sizeof(RTGIComputeParameters) == 176u);
-    static_assert(sizeof(RTGIInstanceData) == 112u);
+    static_assert(sizeof(RTGIInstanceData) == 128u);
     static_assert(sizeof(RTGIEmitterEntry) == 16u);
 
     // RTGIの静止判定に使うFNV-1a（64bit）。
@@ -935,7 +937,7 @@ namespace NorvesLib::Core::Rendering
         float MaterialBaseColor[4] = {};
         uint64_t TextureIds[6] = {};
     };
-    static_assert(sizeof(RTGIInstanceSignatureRecord) == 176u);
+    static_assert(sizeof(RTGIInstanceSignatureRecord) == 192u);
 
     // instanceの表の2行が同じか（8バイトずつ比べる）
     static inline bool IsSameRTGIInstanceData(const RTGIInstanceData& lhs, const RTGIInstanceData& rhs)
@@ -1148,6 +1150,8 @@ namespace NorvesLib::Core::Rendering
                 bValidValues = bValidValues && IsFiniteRTGI(snapshot.Instance.transform[transformIndex]);
                 instanceData.Transform[transformIndex] = snapshot.Instance.transform[transformIndex];
             }
+            bValidValues = bValidValues && IsFiniteNonNegativeRTGI(snapshot.RayProxyErrorMeters);
+            instanceData.RayProxy[0] = snapshot.RayProxyErrorMeters;
             if (!bValidValues)
             {
                 return false;
