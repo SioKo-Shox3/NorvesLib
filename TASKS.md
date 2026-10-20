@@ -2246,7 +2246,7 @@
 
 ## SCN-WL-LIGHT-FINAL: 共通の照明の数値の確認と、既定の荒野の光を写真に合わせる
 - status: todo
-- after: SCN-WL-MATERIAL-AO-BAKE, SCN-WL-SKY-SCATTER, SCN-WL-RTGI-COLOR, SCN-WL-SHADOW-LEAK, SCN-WL-RTGI-AMOUNT
+- after: SCN-WL-MATERIAL-AO-BAKE, SCN-WL-SKY-SCATTER, SCN-WL-RTGI-COLOR, SCN-WL-SHADOW-LEAK, SCN-WL-RTGI-AMOUNT, SCN-WL-MATERIAL-AO-OCCLUSION
 - done-when: (1) 共通の照明（地形だけ・霞なし）の数値: これまでの修正の仕様（rt-tlas-range・shadow-pages・shadow-leak・rtgi-color・material-ao）を、今のコードで撮り直した撮影先 `SCN-WL-LIGHT-FINAL/`（灰色の 3 条件の ref_cliff_01・ref_far_01、実材質の ref_cliff_01・ref_cliff_02・ref_ground_01・ref_far_01、照り返しの入・切）に対して、`ReferenceCheck.py --light-final`（この項目で作る。全仕様をまとめて読む）でまとめて通す（後の修正が前の修正を壊していないことの確認）。撮影は反復の中で保存する。(2) 既定の荒野（前哨地・植物・礫・霞・雲あり）は Cycles の正解が無いので、6 視点を撮って写真と並べて開き、谷・崖の影・前哨地の照り返しと空の青、影の中の色と明るさの差を所見に書く（数値の合否にしない）。カメラパスで移動中の粒・残像・遮蔽の欠けが目立たないことを確かめる。直す所が残れば項目を足す。
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -Build -RequireAssets -Width 1920 -Height 1080 -Hdr -Aov -Views ref_cliff_02 -GameArgs wasteland-common-light,wasteland-hide=all,wasteland-finest-lod -LaunchPerView -OutDir .harness/runs/scene-capture/SCN-WL-LIGHT-FINAL-recheck`
 - verify: `python Scripts/Terrain/ReferenceCheck.py --light-final --engine-root .harness/runs/scene-capture/SCN-WL-LIGHT-FINAL --verify`
