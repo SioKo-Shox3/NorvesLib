@@ -6055,3 +6055,13 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 既知の限界（golden、`aux-SCN-WL-MATERIAL-AO-SHADING-golden*.txt`）: HEAD の時点で Outdoor が既に落ちていた（mean_flip 0.00044・raw 最大 4・712 画素。Indoor は通過）。この変更で Indoor が mean_flip 0.0000154・raw 最大 1・11 画素、Outdoor が mean_flip 0.0110・raw 最大 10・16156 画素で落ちる（日なたの直接光が AO の分と鏡面の分だけ明るくなる向き）。Outdoor の差にこの変更の外の差が混ざるので基準画像は再承認せず、再承認待ちとして記録する。GBufferFallback の 2 本は回していない
 - Notes: ref_cliff_02 の余裕は 0.005 と小さい。残りは空の光の分（日なたの地面の空の分 0.88、影の中の地面の青 0.76）で、遠くの地面で RTGI の空が足りない向き（未確認）。平らな砂地の AO 0.62 は SCN-WL-MATERIAL-AO-BAKE で確かめる。RTGI が働かないシーンでは環境光に材質 AO を掛けたまま。新しい試験は足していない
 - Next: TASKS.md の次の未完の項目
+
+### SCN-WL-MATERIAL-AO-SHADING 差し戻しの対応（2026-10-21、run 20261021-055341 の反復 3）
+- Done: 評価者の指摘（高さ相関の Smith GGX が N·V=0 でも正の値を返し、裏向きの視線で鏡面が出る）を直した。`GeometrySmithHeightCorrelated` は N·V≤0 か N·L≤0 で 0 を返す（分けて掛ける G1·G1 と同じ境界）
+- 検証（`.harness/runs/20261021-055341/`）:
+  - `verify-SCN-WL-MATERIAL-AO-SHADING-1.txt` Debug の Game のビルド exit=0（Git Bash が `/m:1` をパスに書き換えて MSB1008 で落ちたので `MSYS_NO_PATHCONV=1` で撮り直した）
+  - `-2`・`-3` 撮影 exit=0（視点ごとに撮影先を分けた）
+  - `-4` `--expect material-ao.json --verify` result=pass（rows=2・failed=0、inputs_current=1・cycles_inputs_current=1）: ref_ground_01 0.9722、ref_cliff_02 0.9246（直す前 0.9728・0.9250）
+  - `-5` 回帰の after result=pass: mega-bananas psnr 28.18・+6.196、night-village 43.21・+0.251、rendering3dtest 31.50・+0.293、sandbox 40.92・+1.306（反復 2 とほぼ同じ）
+- Notes: 回帰の before は反復 2 の最初に撮ったもの（このタスクの変更の前）を残し、撮り直していない。ref_cliff_02 の余裕は 0.0046
+- Next: TASKS.md の次の未完の項目

@@ -122,8 +122,13 @@ float GeometrySmithDirect(vec3 N, vec3 V, vec3 L, float roughness)
 
 // 高さ相関の Smith GGX の遮蔽項 G2 = 1 / (1 + Λ(V) + Λ(L))（Heitz 2014。Cycles の Principled BSDF と同じ）。
 // 分けて掛ける G1(V)·G1(L) は、かすめる視線で遮蔽を二重に数えて鏡面を小さくしすぎる。
+// 視線か光が面の裏（0 に丸めた N·V・N·L）なら、G1·G1 と同じく 0 を返して鏡面を出さない。
 float GeometrySmithHeightCorrelated(float NdotV, float NdotL, float roughness)
 {
+    if (NdotV <= 0.0 || NdotL <= 0.0)
+    {
+        return 0.0;
+    }
     float a = roughness * roughness;
     float a2 = a * a;
     float cosV2 = max(NdotV * NdotV, 1.0e-8);
