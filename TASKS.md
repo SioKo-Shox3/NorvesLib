@@ -2030,14 +2030,14 @@
 
 ## SCN-WL-FAR-AA: 遠景のエイリアスを、TAA の静止の収束で減らす
 - status: todo
-- after: SCN-WLR-EXPECT-MATCH, SCN-WLR-REGRESSION-MOTION, SCN-WLR-RECAPTURE-BLUR-MOTION
-- done-when: TAA の静止の収束を 2 倍の解像度の正解に近づける（分散の箱の幅・現在の色の割合・書き戻しのシャープ化を 1 つずつ変えて測る）。比べる組（ref2x・resident・FXAA の対照。いずれも Game の撮影なので、エンジンの実装が変わると古くなる）は、変更後の同じ Game.exe でこの項目の撮影先 `SCN-WL-FAR-AA/` へ撮り直す（SCN-WLR-FAR-BLUR-STATIC の記録の組と同じ起動引数。aa-taa は `wasteland-aa=taa,vram-geometry-share=9`）。`--blur-static --expect`（`far-aa-static.json`）で、TAA の静止の細部の欠けが resident（FXAA）以下・エイリアスが今の TAA（0.345 / 0.336）以下であることを検査する。荒野の既定の AA はこの項目では変えない。足りなければ、出力より細かい履歴（TAAU・DLAA 相当）の見込みを記録する（入れるかは次の項目で決める）。反復の最初に回帰の撮影の `before`（`-Motion` つき）を撮る。
+- after: SCN-WLR-EXPECT-MATCH, SCN-WLR-REGRESSION-MOTION, SCN-WLR-RECAPTURE-BLUR-MOTION, SCN-WL-RT-SELFHIT, SCN-WL-RT-TLAS-RANGE-ACCEPT
+- done-when: TAA の静止の収束を 2 倍の解像度の正解に近づける（分散の箱の幅・現在の色の割合・書き戻しのシャープ化を 1 つずつ変えて測る）。比べる組（ref2x・resident・FXAA の対照。いずれも Game の撮影なので、エンジンの実装が変わると古くなる）は、変更後の同じ Game.exe でこの項目の撮影先 `SCN-WL-FAR-AA/` へ撮り直す（SCN-WLR-FAR-BLUR-STATIC の記録の組と同じ起動引数。aa-taa は `wasteland-aa=taa,vram-geometry-share=9`）。`--blur-static --expect`（`far-aa-static.json`）で、TAA の静止の細部の欠けが resident（FXAA）以下・エイリアスが同じ Game.exe で撮った変更前の定数の TAA の組（定数は起動引数で与える）以下であること（差 ≤ 0。照明の絶対値に依存する上限は書かない。`far-aa-static.json` もこの形に直す）を検査する。荒野の既定の AA はこの項目では変えない。足りなければ、出力より細かい履歴（TAAU・DLAA 相当）の見込みを記録する（入れるかは次の項目で決める）。反復の最初に回帰の撮影の `before`（`-Motion` つき）を撮る。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -Build -RequireAssets -Width 1920 -Height 1080 -Hdr -Views ref_far_01,ref_cliff_02 -GameArgs wasteland-aa=taa,vram-geometry-share=9 -OutDir .harness/runs/scene-capture/SCN-WL-FAR-AA/aa-taa`
 - verify: `python Scripts/Terrain/ReferenceCheck.py --blur-static --capture .harness/runs/scene-capture/SCN-WL-FAR-AA --expect Scripts/Terrain/ExpectSpecs/far-aa-static.json --verify`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Terrain/CaptureRegression.ps1 -Item SCN-WL-FAR-AA -Phase after -Motion`
 - paths: Assets/Shaders, Library/Core/Private/Rendering, Library/Core/Public/Rendering, Game, Scripts, Docs/RenderingValidation, TASKS.md, PROGRESS.md
-- notes: 危険地帯（TAA は既定の描画経路）。2026-10-19 GAP-LIST の描画の欠陥 2（`far_aliasing`。Sol の批評 14・15・21 と 2 周目）。ref2x（3840 × 2160）などの組は反復の中で撮って保存する（verify は aa-taa の 1 組と保存の検査）。
+- notes: 危険地帯（TAA は既定の描画経路）。2026-10-19 GAP-LIST の描画の欠陥 2（`far_aliasing`。Sol の批評 14・15・21 と 2 周目）。ref2x（3840 × 2160）などの組は反復の中で撮って保存する（verify は aa-taa の 1 組と保存の検査）。 2026-10-20（親）: 反復 5 の BLOCKED を推奨案で解いた。f50d0791 の RT の途中の直しを含む exe では、ref2x と 1 倍の差を解像度で変わる照明の差が占め（一致しない成分 ÷ 残った細部の 2 乗が TAA でも resident でも 2 前後）、AA の定数の調整では測れない。RT の自己遮蔽の直し（SCN-WL-RT-SELFHIT・SCN-WL-RT-TLAS-RANGE-ACCEPT）の後へ回し、エイリアスの上限を同じ exe の相対へ直した。反復 5 の掃引の台本 `aux-SCN-WL-FAR-AA-sweep.ps1`・評価 `aux-SCN-WL-FAR-AA-eval.py`（`.harness/runs/20261020-094249/`）は再開でそのまま使える。回帰の before（-Motion）は RT の直しの前の exe なので撮り直す。
 
 ## SCN-WL-FAR-AA-MOTION: 動いたときの TAA の細部の消失を減らし、荒野の既定を TAA にする
 - status: todo
