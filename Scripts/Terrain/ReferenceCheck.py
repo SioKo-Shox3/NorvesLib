@@ -649,7 +649,8 @@ BLUR_REFERENCE_SCALE = 2
 BLUR_REFERENCE_ARGS = ("--wasteland-aa=none", "--vram-geometry-share=9")
 BLUR_REFERENCE_LOGS = ("WASTELAND_AA_PASS fxaa=off", "WASTELAND_BLUR_CASE aa=none ", "VRAM_POOL_SHARE geometry=9 ")
 # 比べる組は、正解と同じジオメトリの取り分（9）で撮り、撮った時点でページが常駐しきって追い出しも止まっていることを確かめる
-# （既定の取り分 1 は 1920×1080 の 2 視点の作業集合が目標に収まらず、追い出しと読み直しが続いたまま撮れてしまう）。
+# （SCN-WL-GEOM-BUDGET の前は、既定の取り分 1 では 1920×1080 の 2 視点の作業集合が目標に収まらず、追い出しと読み直しが続いたまま
+# 撮れていた。今は既定の目標が作業集合の求めまで上がる。base と resident の差は geom-budget.json の仕様で検査する）。
 # 条件の効きは、取り分だけを広げた組（BLUR_BASELINE）との差で数える。既定の取り分そのものの効きは base との差で数える
 BLUR_SHARE_ARG = "--vram-geometry-share=9"
 BLUR_SHARE_LOG = "VRAM_POOL_SHARE geometry=9 "

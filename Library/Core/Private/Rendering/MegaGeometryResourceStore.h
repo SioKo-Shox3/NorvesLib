@@ -83,6 +83,14 @@ namespace NorvesLib::Core::Rendering
         /** @brief メッシュの区画の大きさの合計（バイト）。ページの区画は含まない。ストリーミングの目標から引く外せない分 */
         uint64_t GetMeshRegionBytes() const;
 
+        /**
+         * @brief メッシュの区画と、ページを流すメッシュのページの置き場の見込みの合計（バイト）
+         *
+         * 置き場の見込みは、各メッシュで 1 つの視点に常駐する見込みの量（流すページの区画の合計の 1/4）。
+         * VRAM の予算のジオメトリの枠の作業集合の求めに使う
+         */
+        uint64_t GetCommittedBytes() const;
+
         MegaGeometry::MegaMeshHandle CreateMegaMesh(const MegaGeometry::MegaMeshCreateInfo &createInfo);
         /** @brief 登録済みのメッシュの GPU データ（書き込みの完了は問わない。GPU で読むときは GetReadyMegaMeshGPUData） */
         const MegaGeometry::MegaMeshGPUData *GetMegaMeshGPUData(MegaGeometry::MegaMeshHandle handle) const;

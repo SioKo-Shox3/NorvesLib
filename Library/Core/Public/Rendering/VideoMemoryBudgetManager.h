@@ -2,6 +2,7 @@
 
 // VRAM の予算をプールへ割り振る計算。
 // 上限 = min(ヒープの予算, --vram-budget-mb)（どちらも無ければ DeviceLocal のヒープの大きさ）から、プール以外の使用量を引いた残りを、プールごとの取り分で分ける。
+// 作業集合の求め（SetPoolDemand）に取り分が届かないプールは求める量を目標にし、残りをほかのプールで分ける。
 // プール以外の使用量は、ヒープの使用量が取れるときは「ヒープの使用量 − プールの確保分」で決める。
 // 取れないときは台帳で数えきれない確保（解放待ち・パスが直接作るテクスチャ）があるので、上限の一定割合を見込む近似にする。
 // 時刻もデバイスも持たない計算だけの型なので、予算値を制御したテストから境界を確かめられる。
@@ -57,6 +58,8 @@ namespace NorvesLib::Core::Rendering
         uint64_t AvailableBytes = 0;
         /** @brief プールごとの目標の大きさ（バイト）。bLimited が false のとき全て 0 */
         uint64_t PoolTargetBytes[VideoMemoryPoolCount] = {};
+        /** @brief プールごとの作業集合の求め（SetPoolDemand。バイト）。目標がこれに合わせて上がったかは PoolTargetBytes と比べる */
+        uint64_t PoolDemandBytes[VideoMemoryPoolCount] = {};
 
         uint64_t GetTargetBytes(VideoMemoryPool pool) const
         {
@@ -93,10 +96,25 @@ namespace NorvesLib::Core::Rendering
             return m_ShareWeights[static_cast<uint32_t>(pool)];
         }
 
+        /**
+         * @brief プールが作業集合のために求める量を決める（バイト。0 は求めない）
+         *
+         * 取り分の目標がこの量に届かないプールは、この量（割り振れる量まで）を目標にし、残りを求めの無いプールへ
+         * 重みの比で分け直す。取り分の目標が既に届いているときは何も変えない。取り分を持たない（重み 0 の）プールには効かない。
+         */
+        void SetPoolDemand(VideoMemoryPool pool, uint64_t bytes)
+        {
+            m_DemandBytes[static_cast<uint32_t>(pool)] = bytes;
+        }
+
         /** @brief プールへ割り振る量を計算する */
         VideoMemoryBudgetResult Compute(const VideoMemoryBudgetInput &input) const
         {
             VideoMemoryBudgetResult result;
+            for (uint32_t i = 0; i < VideoMemoryPoolCount; ++i)
+            {
+                result.PoolDemandBytes[i] = m_DemandBytes[i];
+            }
 
             // 取り分を持たないプール（VSM の物理ページのように大きさが決まっているもの）の確保量は、目標を割り振らずに
             // 固定の取り置きとして割り振れる量から引く（引かないと、その分を取り分のあるプールへ二重に割り振る）
@@ -157,13 +175,33 @@ namespace NorvesLib::Core::Rendering
                 return result;
             }
 
-            // 取り分 = available * weight / total。先に商と余りに分けて、64bit を溢れさせない
-            const uint64_t quotient = result.AvailableBytes / totalWeight;
-            const uint64_t remainder = result.AvailableBytes % totalWeight;
-            for (uint32_t i = 0; i < VideoMemoryPoolCount; ++i)
+            // 取り分 = available * weight / total。求めを満たしたプールを除いて分け直すときも同じ式を使う
+            bool bDemandMet[VideoMemoryPoolCount] = {};
+            uint64_t restBytes = result.AvailableBytes;
+            uint64_t restWeight = totalWeight;
+            for (;;)
             {
-                const uint64_t weight = m_ShareWeights[i];
-                result.PoolTargetBytes[i] = quotient * weight + remainder * weight / totalWeight;
+                SplitByWeight(restBytes, restWeight, bDemandMet, result.PoolTargetBytes);
+                // 取り分の目標が求めに届かないプールは、求める量（残りまで）を目標に固定し、残りを分け直す。
+                // 固定するプールが無くなるまで繰り返す（プールの数だけで終わる）
+                bool bFixedAny = false;
+                for (uint32_t i = 0; i < VideoMemoryPoolCount; ++i)
+                {
+                    if (bDemandMet[i] || m_ShareWeights[i] == 0 || m_DemandBytes[i] <= result.PoolTargetBytes[i])
+                    {
+                        continue;
+                    }
+                    const uint64_t fixedBytes = m_DemandBytes[i] < restBytes ? m_DemandBytes[i] : restBytes;
+                    result.PoolTargetBytes[i] = fixedBytes;
+                    restBytes -= fixedBytes;
+                    restWeight -= m_ShareWeights[i];
+                    bDemandMet[i] = true;
+                    bFixedAny = true;
+                }
+                if (!bFixedAny)
+                {
+                    break;
+                }
             }
             return result;
         }
@@ -196,6 +234,23 @@ namespace NorvesLib::Core::Rendering
         }
 
     private:
+        // bytes を、目標を固定していないプールへ重みの比で分ける。先に商と余りに分けて、64bit を溢れさせない
+        void SplitByWeight(uint64_t bytes, uint64_t weightSum, const bool (&bFixed)[VideoMemoryPoolCount],
+                           uint64_t (&targets)[VideoMemoryPoolCount]) const
+        {
+            const uint64_t quotient = weightSum > 0 ? bytes / weightSum : 0;
+            const uint64_t remainder = weightSum > 0 ? bytes % weightSum : 0;
+            for (uint32_t i = 0; i < VideoMemoryPoolCount; ++i)
+            {
+                if (bFixed[i])
+                {
+                    continue;
+                }
+                const uint64_t weight = m_ShareWeights[i];
+                targets[i] = weightSum > 0 ? quotient * weight + remainder * weight / weightSum : 0;
+            }
+        }
+
         static bool HasChanged(uint64_t previous, uint64_t current)
         {
             const uint64_t difference = previous > current ? previous - current : current - previous;
@@ -203,6 +258,7 @@ namespace NorvesLib::Core::Rendering
         }
 
         uint32_t m_ShareWeights[VideoMemoryPoolCount] = {};
+        uint64_t m_DemandBytes[VideoMemoryPoolCount] = {};
         bool m_bLogged = false;
         bool m_bLoggedLimited = false;
         bool m_bLoggedEstimated = false;

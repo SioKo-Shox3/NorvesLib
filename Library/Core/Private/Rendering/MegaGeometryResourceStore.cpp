@@ -1189,6 +1189,17 @@ namespace NorvesLib::Core::Rendering
         return m_MeshRegionBytes;
     }
 
+    uint64_t MegaGeometryResourceStore::GetCommittedBytes() const
+    {
+        Thread::ScopedLock lock(m_Mutex);
+        uint64_t committedBytes = 0;
+        for (const uint64_t blockBytes : m_BlockCommittedBytes)
+        {
+            committedBytes += blockBytes;
+        }
+        return committedBytes;
+    }
+
     GeometryPool::RegionLease MegaGeometryResourceStore::AllocateMeshRegion(uint64_t regionBytes, uint64_t reservedPageBytes)
     {
         // ページを流すメッシュは、ページを自分と同じ塊にしか置けない。塊ごとにメッシュの区画とページの置き場の見込みを数え、

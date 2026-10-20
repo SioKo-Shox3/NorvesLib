@@ -1506,6 +1506,7 @@ namespace NorvesLib::Core::Rendering
         // ページを持つメッシュの、読み込み・書き込み・追い出し。窓口はストア（ストアより先に手放す）
         m_Impl->GeometryPageStreaming = Container::MakeUnique<GeometryPageStreamer>(*m_Impl->MegaGeometryResources);
         // 予算の取り分: ジオメトリは VT に比べて小さい（根のページと、要求されたページだけ）ので、VT : ジオメトリ = 3 : 1 にする。
+        // ジオメトリの目標は、読み込んだメッシュの作業集合の求め（PollVideoMemoryBudget）に届かなければ求めまで上がる。
         // 上限が無いときは目標を持たない（外さない）
         m_Impl->VideoMemoryBudget.SetPoolShare(VideoMemoryPool::VirtualTexture, 3);
         m_Impl->VideoMemoryBudget.SetPoolShare(VideoMemoryPool::Geometry, 1);
@@ -1896,6 +1897,16 @@ namespace NorvesLib::Core::Rendering
         input.PoolCapacityBytes[static_cast<uint32_t>(VideoMemoryPool::ShadowMap)] =
             impl->ShadowMapPoolBytes.Load(std::memory_order_acquire);
 
+        // ジオメトリの枠の作業集合の求め: 読み込んだメッシュの区画とページの置き場の見込みの合計に、読み込み中のメッシュが
+        // 塊を 1 つ丸ごと足せる余裕を加える。ページはメッシュと同じ塊にしか置けないので、取り分の目標で新しい塊が切り詰められると、
+        // 見込みを残せないメッシュのページが置き場を取り合って追い出しと読み直しが止まらない（荒野の 1920×1080 で作業集合の 8 割）
+        if (impl->MegaGeometryResources && impl->GeometryBuffers)
+        {
+            const uint64_t committedBytes = impl->MegaGeometryResources->GetCommittedBytes();
+            impl->VideoMemoryBudget.SetPoolDemand(VideoMemoryPool::Geometry,
+                                                  committedBytes > 0 ? committedBytes + impl->GeometryPoolBlockBytes : 0);
+        }
+
         const VideoMemoryBudgetResult result = impl->VideoMemoryBudget.Compute(input);
         impl->VideoMemoryBudgetLast = result;
 
@@ -1954,7 +1965,7 @@ namespace NorvesLib::Core::Rendering
                     "VRAM_POOLS cap_mb=%llu non_pool_mb=%llu vt_target_mb=%llu "
                     "vt_used_mb=%llu vt_evicted_tiles=%llu source=%s "
                     "geometry_target_mb=%llu geometry_used_mb=%llu "
-                    "geometry_evicted_pages=%llu shadow_map_pool_mb=%llu",
+                    "geometry_evicted_pages=%llu shadow_map_pool_mb=%llu geometry_demand_mb=%llu",
                     static_cast<unsigned long long>(result.CeilingBytes / kBytesPerMb),
                     static_cast<unsigned long long>(result.NonPoolBytes / kBytesPerMb),
                     static_cast<unsigned long long>(result.GetTargetBytes(VideoMemoryPool::VirtualTexture) / kBytesPerMb),
@@ -1964,7 +1975,9 @@ namespace NorvesLib::Core::Rendering
                     static_cast<unsigned long long>(result.GetTargetBytes(VideoMemoryPool::Geometry) / kBytesPerMb),
                     static_cast<unsigned long long>(geometryUsedBytes / kBytesPerMb),
                     static_cast<unsigned long long>(evictedPages),
-                    static_cast<unsigned long long>(shadowMapPoolMb));
+                    static_cast<unsigned long long>(shadowMapPoolMb),
+                    static_cast<unsigned long long>(result.PoolDemandBytes[static_cast<uint32_t>(VideoMemoryPool::Geometry)] /
+                                                    kBytesPerMb));
             }
             else
             {
