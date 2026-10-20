@@ -1926,7 +1926,7 @@
 - notes: 危険地帯（RT・RenderThread）。2026-10-19 GAP-LIST の描画の欠陥 3・9 の前提（Sol の批評 8）。RT の当たりの統計は開発ビルドだけ（Release に入れない）。回帰の撮影の差は開いて見て、この変更だけによることを確かめる。
 
 ## SCN-WL-RT-TLAS-RANGE: 空の遮蔽と照り返しに要る範囲の地形を、レイトレーシングのシーンに入れる
-- status: todo
+- status: backlog
 - after: SCN-WL-RT-TLAS-TERRAIN, SCN-WLR-EXPECT-MATCH, SCN-WLR-REGRESSION-VALIDATION
 - done-when: RTGI の光線（最大 10 km）が空の遮蔽と照り返しに使う範囲の地形を RT のシーンに入れる（例: カメラの周りは細かい区画、遠くは粗い段の代わりの形。範囲と段は測って決める）。灰色の地形の 3 条件（両方・太陽だけ・空だけ）を撮り、`--gray` の空の成分（エンジンの `engine-sky` ÷ Cycles の空のパス）が ref_cliff_01 の影の崖と ref_far_01 の遠景で 1 ± 0.1 に入ることを、`--expect`（`Scripts/Terrain/ExpectSpecs/rt-tlas-range.json`）で検査する。RT のシーンの大きさ・TLAS の構築の時間・フレームの GPU 時間を前後で記録する。反復の最初に回帰の撮影の `before` を撮る。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
@@ -1936,11 +1936,33 @@
 - verify: `python Scripts/Terrain/ReferenceCheck.py --gray --engine .harness/runs/scene-capture/SCN-WL-RT-TLAS-RANGE --reference .harness/runs/scene-capture/SCN-WLR-CYCLES-GRAY --expect Scripts/Terrain/ExpectSpecs/rt-tlas-range.json --verify`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Terrain/CaptureRegression.ps1 -Item SCN-WL-RT-TLAS-RANGE -Phase after`
 - paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Assets/Shaders, Game, Scripts, Docs/RenderingValidation, TASKS.md, PROGRESS.md
-- notes: 危険地帯（RT・メモリ）。2026-10-19（Sol の批評 8・10）。
+- notes: 危険地帯（RT・メモリ）。2026-10-19（Sol の批評 8・10）。 2026-10-20（親）: 遮断器（3 回）で止まったので、残りを SCN-WL-RT-SELFHIT（ほかのシーンを変えない自己遮蔽の直し）と SCN-WL-RT-TLAS-RANGE-ACCEPT（verify 一式を 1 回回す）に分けた。この項目は回さない。範囲の規則と RT_BLAS の記録は 287e0b39、始点のずらしは 2994de47、途中の直しは f50d0791。
+
+## SCN-WL-RT-SELFHIT: RT の光線の自己遮蔽を、光線に見せる形とラスタの形が違う物だけで除く
+- status: todo
+- after: SCN-WL-RT-TLAS-TERRAIN, SCN-WLR-REGRESSION-VALIDATION
+- done-when: SCN-WL-RT-TLAS-RANGE の続き。RTGI の 1 本目の拡散光線の始点を一律に max(0.5 m, 距離 × 5e-4) ずらす直しで荒野の空の比は合った（影の崖 0.982・遠景 0.980）が、回帰で mega-bananas（PSNR 31.3）と rendering3dtest（38.2）の見た目が変わった。始点のずらし・近い当たりの読み飛ばしを、光線に見せる形（MegaGeometry の RT 用の段）とラスタの形に差がある物だけに効かせる（例: その instance の RT 用の段の誤差の分だけ、同じ instance への近い当たりを読み飛ばす。f50d0791 の途中保存の続き）。DDGI のプローブの光線にも入れるかは測って決める。合否: (1) 反復の最初に撮った回帰の before と比べて、after で rendering3dtest・sandbox の差が無く、mega-bananas・night-village の差はこの変更だけによる（差の画を開いて確かめる）、(2) 荒野の空だけの条件（`common-light-case=sky`）で ref_cliff_01・ref_far_01 を撮り、`--gray` と同じ領域の空の比（影の崖・遠景）が 1 ± 0.1 に入ることを記録する（判定の一式は SCN-WL-RT-TLAS-RANGE-ACCEPT）。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Terrain/CaptureRegression.ps1 -Item SCN-WL-RT-SELFHIT -Phase after`
+- paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Assets/Shaders, Game, Scripts, Docs/RenderingValidation, TASKS.md, PROGRESS.md
+- notes: 危険地帯（RT）。2026-10-20 親が SCN-WL-RT-TLAS-RANGE から分けた。Rendering3DTest と各シーンの見た目を変えない（CLAUDE.md の絶対規則 7）。時間の見積もり: 回帰の before・after 各 6 分、Debug のビルド 3 分、RelWithDebInfo のビルド 6 分、空だけの 2 視点の撮影 1 本 5 分。調整は空だけ・1〜2 視点で回し、壁時計（75 分）の残りが 25 分を切ったら新しい試行を始めずに記録してコミットする。 回帰の before は撮り直さず、範囲を広げる前の exe で撮った `.harness/runs/regression/SCN-WL-RT-TLAS-RANGE/before` を `.harness/runs/regression/SCN-WL-RT-SELFHIT/before` へ写して使う（今の HEAD は途中の直しを含むので、撮り直すと比べる相手が変わる）。`--regression` は撮影の欠け・真っ黒・検証レイヤーのエラーだけで落ちるので、PSNR と差の画は自分で開いて判断する。
+
+## SCN-WL-RT-TLAS-RANGE-ACCEPT: RT の範囲と自己遮蔽の直しを、灰色の地形の空の比で受け入れる
+- status: todo
+- after: SCN-WL-RT-SELFHIT
+- done-when: コードを変えずに、SCN-WL-RT-TLAS-RANGE の verify 一式を 1 回回して保存し、灰色の地形の 3 条件で `--gray --expect Scripts/Terrain/ExpectSpecs/rt-tlas-range.json` が合格する（ref_cliff_01 の影の崖と ref_far_01 の遠景の空の成分が 1 ± 0.1）。RT のシーンの大きさ（`RT_BLAS`）・TLAS の構築の時間・フレームの GPU 時間を前後で記録する（前は `.harness/runs/20261020-094249/aux-SCN-WL-RT-TLAS-RANGE-gpu-before.txt`）。落ちたら原因を記録して BLOCKED にする（ここで直さない）。反復の最初に回帰の撮影の before を撮る。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -Build -RequireAssets -Width 1920 -Height 1080 -Hdr -Aov -Views ref_cliff_01,ref_far_01 -GameArgs wasteland-common-light,wasteland-hide=all,wasteland-finest-lod,wasteland-gray-material -LaunchPerView -OutDir .harness/runs/scene-capture/SCN-WL-RT-TLAS-RANGE`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Hdr -Aov -Views ref_cliff_01,ref_far_01 -GameArgs wasteland-common-light,common-light-case=sun,wasteland-hide=all,wasteland-finest-lod,wasteland-gray-material -LaunchPerView -OutDir .harness/runs/scene-capture/SCN-WL-RT-TLAS-RANGE/engine-sun`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Hdr -Aov -Views ref_cliff_01,ref_far_01 -GameArgs wasteland-common-light,common-light-case=sky,wasteland-hide=all,wasteland-finest-lod,wasteland-gray-material -LaunchPerView -OutDir .harness/runs/scene-capture/SCN-WL-RT-TLAS-RANGE/engine-sky`
+- verify: `python Scripts/Terrain/ReferenceCheck.py --gray --engine .harness/runs/scene-capture/SCN-WL-RT-TLAS-RANGE --reference .harness/runs/scene-capture/SCN-WLR-CYCLES-GRAY --expect Scripts/Terrain/ExpectSpecs/rt-tlas-range.json --verify`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Terrain/CaptureRegression.ps1 -Item SCN-WL-RT-TLAS-RANGE-ACCEPT -Phase after`
+- paths: Scripts/Terrain, Docs/RenderingValidation, TASKS.md, PROGRESS.md
+- notes: 2026-10-20 親が SCN-WL-RT-TLAS-RANGE から分けた。時間の見積もり: 回帰の before 6 分、Debug のビルド 3 分、RelWithDebInfo のビルドと撮影 3 条件 × 2 視点 約 20 分、判定 1 分、回帰の after 6 分、GPU 時間 4 分（合計 約 40 分）。
 
 ## SCN-WL-SHADOW-PAGES: 仮想の影の地図が手前と遠くの地面を覆わない所を直す
 - status: todo
-- after: SCN-WL-RT-TLAS-RANGE, SCN-WLR-LIT-SHADOW-REF-C02, SCN-WLR-REGRESSION-VALIDATION
+- after: SCN-WL-RT-TLAS-RANGE-ACCEPT, SCN-WLR-LIT-SHADOW-REF-C02, SCN-WLR-REGRESSION-VALIDATION
 - done-when: 一覧の描画の欠陥 1（`shadow_missing`）のうち影の地図の覆いの欠けと、6（`grazing_sun_dark`。灰色 ref_far_01 の遠景の太陽の分 0.88）を直す。ref_cliff_02 で手前の台地の長い影（太陽の高さ 24°）が落ちない原因（この視点だけ `VSM_PAGES requested=38 levels_used=0x200`、影の地図に当たらない標本が 1 回の描画あたり約 1210 万）を確かめて直す。判定は太陽の可視率で行う（照り返しと材質の AO の差が混ざる全体の明るさでは決めない）: エンジンの撮影の AOV に太陽の可視率を足し（この項目で作る）、Cycles の可視率（SCN-WLR-LIT-SHADOW-REF-C02 と SCN-WLR-CYCLES-LIT の aux）と、ref_cliff_02 の影の中の地面と ref_far_01 の遠景で比べ、食い違う画素の割合が 5 % 以下であることを `--expect`（`shadow-pages.json`）で検査する。視点ごとに撮影先を分ける。VSM のページ数と影の GPU 時間を前後で記録する。既定の荒野の ref_cliff_02 を撮って開き、台地の影が地面に落ちることを見る。反復の最初に回帰の撮影の `before` を撮る。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -Build -RequireAssets -Width 1920 -Height 1080 -Hdr -Aov -Views ref_cliff_02 -GameArgs wasteland-common-light,wasteland-hide=all,wasteland-finest-lod -LaunchPerView -OutDir .harness/runs/scene-capture/SCN-WL-SHADOW-PAGES/ref_cliff_02`
@@ -1976,7 +1998,7 @@
 
 ## SCN-WL-RTGI-COLOR: 照り返しの色を地形の材質から取る
 - status: todo
-- after: SCN-WL-RT-TLAS-RANGE, SCN-WLR-LIT-SHADOW-REF-C01, SCN-WLR-REGRESSION-VALIDATION
+- after: SCN-WL-RT-TLAS-RANGE-ACCEPT, SCN-WLR-LIT-SHADOW-REF-C01, SCN-WLR-REGRESSION-VALIDATION
 - done-when: RTGI の二次の当たりの色が地形の材質を反映しない（`Assets/Shaders/RTGI/DiffuseIndirect.comp` 912 行付近はインスタンスの定数の色）のを直す。地表の分類の地図と層の代表の色（素材の平均の色）で当たりの色を決める程度でよい（材質の評価の共通化まで広げない）。判定の対照: RTGI は空から直接届く光も担い、切ると IBL・DDGI へ切り替わる（`lighting.frag` 1329 行付近）ので、RTGI の入・切ではなく、照り返しだけを切る開発ビルドの起動引数 `rtgi-bounce=off`（当たりの色を 0 にし、空から直接届く光は残す。この項目で作る）を対照にする。実材質の ref_cliff_01 で照り返しの入・切を撮り、その差（エンジンの照り返し）と SCN-WLR-LIT-SHADOW-REF-C01 の Cycles の間接光のパスを、影の崖・影の中の地面で比べ、色度（r・g）の差 0.02 以内・明るさの比 1 ± 0.15 を `ReferenceCheck.py --bounce --expect`（`--bounce` はこの項目で作る。`rtgi-color.json`）で検査する。灰色の材質のときは代表の色も灰色になる（色度の差 0.005 以内）ことを反復の中で同じ形で確かめて記録する。入・切の画を並べて開き、崖の影の中と谷の底に砂の暖かい照り返しが入ることを見る。反復の最初に回帰の撮影の `before` を撮る。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -Build -RequireAssets -Width 1920 -Height 1080 -Hdr -Aov -Views ref_cliff_01 -GameArgs wasteland-common-light,wasteland-hide=all,wasteland-finest-lod -LaunchPerView -OutDir .harness/runs/scene-capture/SCN-WL-RTGI-COLOR/bounce-on`
