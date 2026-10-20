@@ -6104,3 +6104,13 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `aux-SCN-WL-GOLDEN-REAPPROVE-fallback-check.txt`: 予備の経路の 2 本 Passed・EXIT=0
 - Notes: 閾値は変えていない。R2Sky・R3Fog・R8Aces の基準画像の検査は回していない（この項目の対象外。鏡面の遮蔽項の変更が効くかは未確認）。新しい試験は足していない
 - Next: TASKS.md の次の未完の項目
+
+### SCN-WL-MATERIAL-AO-BAKE 完了（2026-10-21、run 20261021-055341 の反復 7）
+- 結論: 経路に誤りは無い。平らな砂地の AO 0.6 台は Poly Haven の AO の地図の値そのもの（赤茶の土 `red_mud_stones` 0.558・礫の舗石 `red_laterite_soil_stones` 0.626）。アトラス（`TerrainMaterials.py` は並べるだけ。左右の平均が元と一致）・クック（`PackOrmBase` は 8 bit をそのまま R へ、BC7 の linear）・標本（`DecodePbrOrmSample`）・層の混ぜ（重みの線形の和）はどれも値を変えない。参照の材質の再現の平らな地面の AO は ref_ground_01 平均 0.619・ref_cliff_02 0.601（遠いほどミップで地図の平均へ寄る）
+- 所見: 地図は素材自身の起伏より暗い。変位の地図を法線の傾きに最小二乗で合わせて実寸にした高さ場（全体 40 mm・25 mm）で焼き直すと平均 0.945・0.916、法線を積分した高さ場では 0.950・0.934（皮膜 0.976・砂 0.981）。地図の平均に届くのは起伏を約 4 倍にしたとき。RTGI が働く撮影では材質の AO は間接の鏡面だけに掛かり、地図の暗さで削られる分は日なたの地面の約 1 %（ref_ground_01）〜約 4 %（ref_cliff_02）の見積もり
+- AO の値は変えていない（再クックなし）。R は層の混ぜの高さにも使い、値を変えると層の境が変わるため。遮蔽として読む値だけを起伏から焼いた値にする直しを `SCN-WL-MATERIAL-AO-OCCLUSION` として TASKS.md に足した。記録は `Docs/RenderingValidation/WastelandMaterialAO.md`、`WastelandCyclesLit.md` の「確かめていない」の行に参照を足した
+- 証拠（`.harness/runs/20261021-055341/`）:
+  - `verify-SCN-WL-MATERIAL-AO-BAKE-1.txt` `--lit --expect material-ao.json --verify` result=pass（rows=2・failed=0、inputs_current=1・cycles_inputs_current=1、参照の署名 33d9c699…）: ref_ground_01 0.9722、ref_cliff_02 0.9246（SHADING の反復 3 と同じ。参照は描き直していない）
+  - `aux-SCN-WL-MATERIAL-AO-BAKE-analysis.txt`: 地図とアトラスの平均・分位、法線と変位からの焼き直し、平らな地面の AO、空の映り込みの反射率（split-sum の数値積分）。台本は `ao-bake/`
+- Notes: 変位の地図は Poly Haven の API から作業用の場所へ落とし、リポジトリには置いていない。焼き直しは平らな面の上向きの法線に対する余弦の重み（Poly Haven の焼き方の距離・法線の扱いは不明）。新しい試験は足していない
+- Next: SCN-WL-MATERIAL-AO-OCCLUSION

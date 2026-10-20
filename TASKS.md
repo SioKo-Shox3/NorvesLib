@@ -2049,12 +2049,24 @@
 - notes: 2026-10-21 親が足した。基準画像の承認はユーザーから任されている（差の原因と物理的妥当性を確かめて自分で記録する）。描画のコードは変えない。時間の見積もり: Debug のビルド 3 分、基準画像の検査 2 本 約 2 分、候補の生成 約 3 分、差の切り分けの撮影 1 本 3〜5 分。
 
 ## SCN-WL-MATERIAL-AO-BAKE: 地表の材質の AO の焼き方を確かめる
-- status: todo
+- status: done
 - after: SCN-WL-MATERIAL-AO-SHADING
 - done-when: 平らな砂地でも材質の AO が 0.6〜0.7 台になる理由（素材の ORM の R・クックの変換・層の混ぜ）を確かめる。誤りなら直して再クックする。参照の扱い: Cycles は材質の AO を使わない（SCN-WLR-REF-SPLIT で参照の入力から外した）ので、AO だけの変更なら参照の署名が変わらないことを `--lit --verify` で確かめて記録する。アルベド・法線・粗さに触れたなら、影響する参照（`--albedo`・`--normal`・`--lit` の Cycles）を描き直す項目を足し（SCN-WL-LIGHT-FINAL の前に置く）、この項目は AO の範囲で閉じる。直したら SCN-WL-MATERIAL-AO-SHADING と同じ撮影先の形で撮り直し、同じ仕様で検査し直す。誤りでなければ、理由と測った値を記録して閉じる。
 - verify: `python Scripts/Terrain/ReferenceCheck.py --lit --engine .harness/runs/scene-capture/SCN-WL-MATERIAL-AO-SHADING/ref_ground_01 --engine .harness/runs/scene-capture/SCN-WL-MATERIAL-AO-SHADING/ref_cliff_02 --reference .harness/runs/scene-capture/SCN-WLR-CYCLES-LIT --views ref_ground_01,ref_cliff_02 --expect Scripts/Terrain/ExpectSpecs/material-ao.json --verify`
 - paths: Tools/AssetCook, Assets, Scripts, Docs/RenderingValidation, Game/GameModes/Wasteland, TASKS.md, PROGRESS.md
 - notes: 2026-10-19（Sol の批評 13 と 2 周目）。
+
+## SCN-WL-MATERIAL-AO-OCCLUSION: 地表の材質の遮蔽の AO を、素材の起伏から焼いた値にする（層の混ぜの高さは変えない）
+- status: todo
+- after: SCN-WL-MATERIAL-AO-BAKE
+- done-when: SCN-WL-MATERIAL-AO-BAKE で、地表の素材の Poly Haven の AO の地図（赤茶の土 0.558・礫の舗石 0.626・皮膜の付いた土 0.858・砂 0.850）が、素材自身の起伏（変位・法線の地図を実寸にした高さ場）から焼いた AO（0.92〜0.98）より大幅に暗いと分かった（`Docs/RenderingValidation/WastelandMaterialAO.md`）。ORM の R は層の混ぜの高さにも使うので、高さに使う値（今の地図）は変えずに、照明が遮蔽として読む値（`lighting.frag` の材質の AO。RTGI では間接の鏡面、DDGI では拡散の環境光）だけを起伏から焼いた AO にする（高さと遮蔽を別のチャンネルに分けるなど、やり方はこの項目で選ぶ）。焼き直しの台本は `Scripts/Terrain/` に置き、`TerrainMaterials.py --verify` と同じく作り直しと一致するかを確かめられるようにする。層の混ぜ（土・皮膜・砂・岩肌の境）が変わらないことを、SCN-WL-MATERIAL-AO-SHADING の撮影とのアルベドの AOV の差で確かめる。参照の扱いは SCN-WL-MATERIAL-AO-BAKE と同じ（AO だけの変更なら `--lit --verify` で参照の署名が変わらないこと）。`material-ao.json` を撮り直した撮影で通し、日なたの地面の比が上がる向き（見込み ref_ground_01 約 +1 %・ref_cliff_02 約 +3 %）を記録する。反復の最初に回帰の撮影の `before` を撮る。視点ごとに撮影先を分ける。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -Build -RequireAssets -Width 1920 -Height 1080 -Hdr -Aov -Views ref_ground_01 -GameArgs wasteland-common-light,wasteland-hide=all,wasteland-finest-lod -LaunchPerView -OutDir .harness/runs/scene-capture/SCN-WL-MATERIAL-AO-OCCLUSION/ref_ground_01`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Hdr -Aov -Views ref_cliff_02 -GameArgs wasteland-common-light,wasteland-hide=all,wasteland-finest-lod -LaunchPerView -OutDir .harness/runs/scene-capture/SCN-WL-MATERIAL-AO-OCCLUSION/ref_cliff_02`
+- verify: `python Scripts/Terrain/ReferenceCheck.py --lit --engine .harness/runs/scene-capture/SCN-WL-MATERIAL-AO-OCCLUSION/ref_ground_01 --engine .harness/runs/scene-capture/SCN-WL-MATERIAL-AO-OCCLUSION/ref_cliff_02 --reference .harness/runs/scene-capture/SCN-WLR-CYCLES-LIT --views ref_ground_01,ref_cliff_02 --expect Scripts/Terrain/ExpectSpecs/material-ao.json --verify`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Terrain/CaptureRegression.ps1 -Item SCN-WL-MATERIAL-AO-OCCLUSION -Phase after`
+- paths: Tools/AssetCook, Assets, Scripts, Docs/RenderingValidation, Game/GameModes/Wasteland, TASKS.md, PROGRESS.md
+- notes: 危険地帯（描画・アセットロード）。2026-10-21 SCN-WL-MATERIAL-AO-BAKE の反復が足した。
 
 ## SCN-WL-FAR-AA: 遠景のエイリアスを、TAA の静止の収束で減らす
 - status: blocked
