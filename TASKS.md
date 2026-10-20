@@ -2036,7 +2036,7 @@
 - status: todo
 - after: SCN-WL-MATERIAL-AO-SHADING
 - done-when: （2026-10-21 親が書き換え: 別の作業ツリーで古いコミットをビルドする二分探索はしない）golden 4 本が最後に通った f919b5f3 から 84bc0b53（AO の直しの前）までの間に Outdoor の 712 画素（raw 最大 4、平均輝度 129.3821→129.3846。R1 の 2 枚の四角＝鏡面だけで見える黒い板 565 画素と半透明の板 132 画素、球の影の際 8 画素）が変わった原因を、今の exe の中で絞る: 起動引数・環境変数で SSR・反射・半透明・影などを 1 つずつ切った撮影で、712 画素がどの描画の段の差かを局所化し、疑いのコミット（10-12〜10-14 のフレームの持ち主へ移した 770999b3・2844976b・f9100682・c3b2294a・93e09578・1313cf3c など）の差分をその段について読む。原因が特定できたら、意図した直しか不具合かを分け、不具合なら直す項目を TASKS.md に足す。1 反復で特定できなければ、局所化した段・読んだコミット・残る候補を記録して閉じてよい（SCN-WL-GOLDEN-REAPPROVE は、その記録を既知の差として再承認に進む）。分かっていること（`.harness/runs/20261021-055341/aux-SCN-WL-GOLDEN-REAPPROVE-analysis.txt`）: AO の直しの前のシェーダーで 712 画素がそのまま再現し、Indoor は差 0。シェーダーを f919b5f3 の版にしても同じ（C++ 側）。`NORVES_RENDER_PARALLEL_RECORD=0` でも変わらない。検証アプリは RTGI を切り、太陽の影は CSM、地形は無い。
-- verify: `ctest --test-dir build -C Debug --output-on-failure -R "^RenderingGoldenIndoorVulkanTest$"`
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
 - paths: TASKS.md, PROGRESS.md, Docs/RenderingValidation
 - notes: 2026-10-21 SCN-WL-GOLDEN-REAPPROVE の反復が足した。2026-10-21 親: 差は raw 最大 4 の小さなもので、別の作業ツリーでの約 10 段の Debug ビルドに見合わないため、今の exe での局所化とコードの読みに絞った（推奨案）。時間の見積もり: Debug のビルド 3 分、golden の撮影 1 本 約 1 分。
 
