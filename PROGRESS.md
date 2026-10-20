@@ -5895,3 +5895,26 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `verify-SCN-WLR-GAP-LIST-ATMOS-1.txt`: `--gap-list --atmos-addendum --verify` result=pass・atmos_addendum=1・components=1（SCN-WLR-ATMOS-REF state=current）・atmos_current=1・items=27・pending_atmos はすべて 0・doc_table=same、EXIT=0
 - Notes: 凍結した表は、99bea2ee の文書の表と GAP-LIST の報告（`gap_list_check.json`、2026-10-19 18:07）の行から作った表が一致することを確かめてから保存した。`--gap-list --require-atmos --verify`（追補でない形。大気以外の比較の鮮度も照らす）は回していない。新しい試験は足していない
 - Next: TASKS.md の次の未完の項目
+
+### SCN-WL-RT-TLAS-RANGE-ACCEPT 完了（2026-10-20、run 20261020-094249 の反復 9）
+- コードは変えていない。SCN-WL-RT-TLAS-RANGE の verify 一式を 1 回回した（RT の範囲 10 km ＋ SCN-WL-RT-SELFHIT の自己遮蔽の直し）
+- 証拠（`.harness/runs/20261020-094249/`）:
+  - `regression-before-SCN-WL-RT-TLAS-RANGE-ACCEPT.txt`: 反復の最初の回帰の before、result=pass・EXIT=0
+  - `verify-SCN-WL-RT-TLAS-RANGE-ACCEPT-1.txt`: Debug の Game のビルド EXIT=0
+  - `verify-SCN-WL-RT-TLAS-RANGE-ACCEPT-2〜4.txt`: RelWithDebInfo（`-Build` は result=pass）の撮影、共通光・太陽だけ・空だけの 3 条件 × ref_cliff_01・ref_far_01、どれも result=pass・EXIT=0。撮影の画を開いて、灰色の崖・遠景に破綻が無いことを確かめた
+  - `verify-SCN-WL-RT-TLAS-RANGE-ACCEPT-5.txt`: `--gray --expect rt-tlas-range.json` result=pass（rows=2・failed=0、inputs_current=1）。影の崖の空の比 0.9994、遠景の空の比 0.9916（基準 1 ± 0.1）。ほかの領域（記録だけ）: ref_cliff_01 日なたの地面 0.954（空 0.983）・影の地面 1.242（空 0.832、2388 画素）・日なたの崖 0.958（空 0.999）・影の崖 1.184（太陽 1.901）、ref_far_01 日なたの地面 0.981（空 0.980）・遠景 0.965
+  - `verify-SCN-WL-RT-TLAS-RANGE-ACCEPT-6.txt`: 回帰の after result=pass。sandbox psnr=inf・rendering3dtest 108.5・mega-bananas 60.4・night-village 69.3（どれも mean_diff 0.000。RelWithDebInfo の exe は before と同じ 13:56 のビルドのままで、差は撮影の揺れだけ）
+- RT のシーンの大きさ・TLAS の構築・GPU 時間（`aux-SCN-WL-RT-TLAS-RANGE-ACCEPT-tlas.txt`。before は `aux-SCN-WL-RT-TLAS-RANGE-gpu-before.txt`、after は `aux-SCN-WL-RT-TLAS-RANGE-ACCEPT-gpu-after.txt`、どちらも `-GpuTimingFrames 300`・同じ `-GameArgs`）:
+
+  | | before（120 m） | after（10 km） |
+  |---|---|---|
+  | RT のシーン | instances 11（cliff）・12（far）、`RT_BLAS` の行は無い | instances 182（198 中、外れ 16、最遠 9979 m・9035 m）、BLAS 182 本・454.7 万三角形・318.9 MB |
+  | TLAS の構築（GPU、計測の窓） | 窓では起きない（median 0.0001 ms） | 窓では起きない（median 0.0001 ms、`update_skipped`） |
+  | TLAS・BLAS の構築（GPU、起動の後の構築のフレーム） | 17 フレーム・計 1.95 / 2.25 ms | 71 フレーム・計 28.5 / 21.6 ms（1 フレームの最大 3.07 / 1.33 ms） |
+  | `RT.BuildAccelerationStructures`（CPU、窓の median） | 0.120 / 0.122 ms | 0.192 / 0.194 ms |
+  | フレームの GPU 時間 median（cliff / far） | 17.194 / 14.293 ms | 3.773 / 4.201 ms |
+  | LightingPass median（cliff / far） | 3.738 / 3.729 ms | 1.400 / 1.233 ms |
+
+- フレームの GPU 時間は before と比べられない: 描いたクラスタの数は同じ（41630・161662）なのに全パスが一様に 3〜8 倍遅い（VisibilityRasterPass 9.1 → 1.2 ms）。before は大気の正解の解 2 本が CPU を占めていた間（CPU のフレーム 53〜67 ms、after は 10.6〜11.8 ms）で、GPU が待たされて低いクロックで動いた値と見られる。before の exe（120 m）はもう無いので同じ条件で撮り直していない。after のフレームの GPU 時間は 3.8〜4.2 ms で、RTGI を含む LightingPass は 1.2〜1.4 ms
+- Notes: 最初の Debug のビルドは Git Bash のパスの書き換えで `/m:1` が壊れて MSBuild が引数で止まった（`aux-SCN-WL-RT-TLAS-RANGE-ACCEPT-debug-build-pathconv.txt`）。`MSYS_NO_PATHCONV=1` で同じコマンドを取り直した。新しい試験は足していない
+- Next: TASKS.md の次の未完の項目

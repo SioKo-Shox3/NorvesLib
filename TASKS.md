@@ -1948,7 +1948,7 @@
 - notes: 危険地帯（RT）。2026-10-20 親が SCN-WL-RT-TLAS-RANGE から分けた。Rendering3DTest と各シーンの見た目を変えない（CLAUDE.md の絶対規則 7）。時間の見積もり: 回帰の before・after 各 6 分、Debug のビルド 3 分、RelWithDebInfo のビルド 6 分、空だけの 2 視点の撮影 1 本 5 分。調整は空だけ・1〜2 視点で回し、壁時計（75 分）の残りが 25 分を切ったら新しい試行を始めずに記録してコミットする。 回帰の before は撮り直さず、範囲を広げる前の exe で撮った `.harness/runs/regression/SCN-WL-RT-TLAS-RANGE/before` を `.harness/runs/regression/SCN-WL-RT-SELFHIT/before` へ写して使う（今の HEAD は途中の直しを含むので、撮り直すと比べる相手が変わる）。`--regression` は撮影の欠け・真っ黒・検証レイヤーのエラーだけで落ちるので、PSNR と差の画は自分で開いて判断する。
 
 ## SCN-WL-RT-TLAS-RANGE-ACCEPT: RT の範囲と自己遮蔽の直しを、灰色の地形の空の比で受け入れる
-- status: todo
+- status: done
 - after: SCN-WL-RT-SELFHIT
 - done-when: コードを変えずに、SCN-WL-RT-TLAS-RANGE の verify 一式を 1 回回して保存し、灰色の地形の 3 条件で `--gray --expect Scripts/Terrain/ExpectSpecs/rt-tlas-range.json` が合格する（ref_cliff_01 の影の崖と ref_far_01 の遠景の空の成分が 1 ± 0.1）。RT のシーンの大きさ（`RT_BLAS`）・TLAS の構築の時間・フレームの GPU 時間を前後で記録する（前は `.harness/runs/20261020-094249/aux-SCN-WL-RT-TLAS-RANGE-gpu-before.txt`）。落ちたら原因を記録して BLOCKED にする（ここで直さない）。反復の最初に回帰の撮影の before を撮る。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
