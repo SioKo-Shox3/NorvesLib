@@ -340,6 +340,8 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
     struct MegaTerrainBlend
     {
         bool bEnabled = false;
+        // 混ぜ合わせを使わない地形の面（灰色の地形など）でも、影と接触影で地形の受け手・投影物として扱う。bEnabled なら常に地形
+        bool bTerrainSurface = false;
         MegaTerrainLayer Dirt; // 2 層目（乾いた土）
         MegaTerrainLayer Rock; // 3 層目（岩肌）
 
@@ -377,9 +379,15 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         // 傾きを落とした分を、粗さの α² に足して鏡面の広がりへ移す（0 なら粗さを変えない）
         float DetailSlopeVariance[3] = {0.0f, 0.0f, 0.0f};
 
+        /** @brief 地形の面か（混ぜ合わせの材質か、bTerrainSurface）。影の余裕・接触影・影の LOD を地形の扱いにする */
+        bool IsTerrainSurface() const
+        {
+            return bEnabled || bTerrainSurface;
+        }
+
         bool operator==(const MegaTerrainBlend &other) const
         {
-            if (bEnabled != other.bEnabled)
+            if (bEnabled != other.bEnabled || bTerrainSurface != other.bTerrainSurface)
             {
                 return false;
             }

@@ -16,8 +16,8 @@
 //   VSM_COUNT_FALLBACK()     自分の段のページが無く、粗い段へ逃げた標本 1 つにつき 1 回呼ぶ（統計の数え上げ。既定は何もしない）
 //
 // 入口は VsmSampleSunShadow(worldPos, normal, texelMeters)。可視度（1 = 光が当たる、0 = 影）を返し、標本が実際に読んだ段の
-// texel の一辺（m。粗い段へ逃げた標本はその段の値。読めた標本の平均）を返す。深度の比較の余裕を受け手で変える側（地形の受け手）は
-// VsmSampleSunShadowWithBias(worldPos, normal, constantBiasTexels, texelMeters) を呼ぶ。
+// texel の一辺（m。粗い段へ逃げた標本はその段の値。読めた標本の平均）を返す。深度の比較の余裕と法線の向きへのずらしを受け手で
+// 変える側（地形の受け手）は VsmSampleSunShadowWithBias(worldPos, normal, constantBiasTexels, normalOffsetTexels, texelMeters) を呼ぶ。
 //
 // 影の縁は CSM（Common/SunShadowCsm.glsl の PCSSFilter）と同じ考え方で、ブロッカーの探索 → 物理の半影 → PCF の順に引く。
 // 半影の半幅（ワールドの長さ）は 受け手と遮る物の深度の差 × 太陽の角半径の tan で、接するところは鋭く、離れるほどぼける。
@@ -49,11 +49,16 @@ const uint VSMS_PAGE_INDEX_MASK = (1u << 20) - 1u;
 // 深度の比較の余裕のうち一定の分（使う段の texel の倍数。CSM の 1.5 texel と同じ）
 const float VSMS_NORMAL_OFFSET_TEXELS = 1.5;
 const float VSMS_CONSTANT_BIAS_TEXELS = 1.5;
-// 地形の受け手の余裕のうち一定の分（使う段の texel の倍数）。影の描画は MegaGeometry の LOD を段の texel の数個ぶん
-// （VirtualShadowMapMegaCullDispatch::LodThresholdTexels、既定 4）の誤差まで粗くするので、粗い段の面は主のカメラの細かい面より
+// 地形の受け手の余裕のうち一定の分（使う段の texel の倍数）。影の描画は MegaGeometry の LOD を段の texel の誤差まで粗くする
+// （地形は VSM_MEGA_FINE_LOD_TEXELS の 1、ほかは VirtualShadowMapMegaCullDispatch::LodThresholdTexels の 4）ので、粗い段の面は主のカメラの細かい面より
 // 上に出ることがある。広く緩い地形の斜面に光が浅く当たると、余裕が 1.5 texel では粗い面が自分の受け手を遮り、斑状の影が散る
 // （荒野の崖錐。3 texel で消える）。地形の外の物体（段差・窓の奥の縁）は細かい接地の影を保つため 1.5 texel のまま
 const float VSMS_TERRAIN_CONSTANT_BIAS_TEXELS = 3.0;
+// 地形の受け手の法線の向きへのずらし（使う段の texel の倍数）。地形は光に浅く当たる広い面で、ほぼ上を向く法線の向きへ受け手を
+// 持ち上げると、影の縁が地面の上で 1 ÷ tan(太陽の高さ) 倍だけ遮る物の側へ退く（荒野の太陽の高さ 10° で 1.5 texel が 1〜2 m）。
+// 地形の自分への影の斑は、一定の余裕（VSMS_TERRAIN_CONSTANT_BIAS_TEXELS）・傾きの余裕と、影の描画の地形の細かい LOD
+// （Common/VirtualShadowMapMegaCull.glsl の VSM_MEGA_FINE_LOD_TEXELS）が受け持つので、ずらさない
+const float VSMS_TERRAIN_NORMAL_OFFSET_TEXELS = 0.0;
 // 受け面の深度の傾きの下限（光と面の法線の余弦。CSM の ComputeReceiverDepthGradient と同じ）
 const float VSMS_MIN_NORMAL_COSINE = 0.05;
 
@@ -126,8 +131,10 @@ bool VsmFetchDepthWithFallback(uint level, vec2 lightXY, out float outDepthMeter
 
 // 太陽の可視度（1 = 光が当たる、0 = 影）。outTexelMeters は PCF の標本が実際に読んだ段の texel の一辺（m）の平均。
 // どの標本も読めなかった（無効・影の距離の外・不正な値・どの段にも無い）ときは、受け手の距離から選んだ段の値。
-// 無効・影の距離の外・不正な値は 1（影なし）。constantBiasTexels は深度の比較の余裕のうち一定の分（使う段の texel の倍数）。
-float VsmSampleSunShadowWithBias(vec3 worldPos, vec3 normal, float constantBiasTexels, out float outTexelMeters)
+// 無効・影の距離の外・不正な値は 1（影なし）。constantBiasTexels は深度の比較の余裕のうち一定の分、normalOffsetTexels は
+// 法線の向きへのずらしの大きさ（どちらも使う段の texel の倍数）。
+float VsmSampleSunShadowWithBias(vec3 worldPos, vec3 normal, float constantBiasTexels, float normalOffsetTexels,
+                                 out float outTexelMeters)
 {
     outTexelMeters = 0.0;
     if (VSM_PARAMS.control.x == 0u || VSM_PARAMS.control.y == 0u)
@@ -160,7 +167,7 @@ float VsmSampleSunShadowWithBias(vec3 worldPos, vec3 normal, float constantBiasT
                                   dot(unitNormal, VSM_PARAMS.lightUp.xyz),
                                   dot(unitNormal, VSM_PARAMS.lightDirection.xyz));
     const float sineToLight = min(length(lightNormal.xy), 1.0);
-    const vec3 offsetWorld = worldPos + unitNormal * (VSMS_NORMAL_OFFSET_TEXELS * texelMeters * sineToLight);
+    const vec3 offsetWorld = worldPos + unitNormal * (normalOffsetTexels * texelMeters * sineToLight);
 
     const vec2 lightXY = vec2(dot(offsetWorld, VSM_PARAMS.lightRight.xyz), dot(offsetWorld, VSM_PARAMS.lightUp.xyz));
     const float receiverDepth = dot(offsetWorld, VSM_PARAMS.lightDirection.xyz);
@@ -261,10 +268,10 @@ float VsmSampleSunShadowWithBias(vec3 worldPos, vec3 normal, float constantBiasT
     return shadow;
 }
 
-// 地形の外の受け手の太陽の可視度（余裕の一定の分は VSMS_CONSTANT_BIAS_TEXELS）。
+// 地形の外の受け手の太陽の可視度（余裕の一定の分は VSMS_CONSTANT_BIAS_TEXELS、ずらしは VSMS_NORMAL_OFFSET_TEXELS）。
 float VsmSampleSunShadow(vec3 worldPos, vec3 normal, out float outTexelMeters)
 {
-    return VsmSampleSunShadowWithBias(worldPos, normal, VSMS_CONSTANT_BIAS_TEXELS, outTexelMeters);
+    return VsmSampleSunShadowWithBias(worldPos, normal, VSMS_CONSTANT_BIAS_TEXELS, VSMS_NORMAL_OFFSET_TEXELS, outTexelMeters);
 }
 
 #endif // VIRTUAL_SHADOW_MAP_GLSL

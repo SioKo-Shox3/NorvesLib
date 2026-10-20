@@ -165,6 +165,7 @@ layout(std140, set = 0, binding = VIS_TILE_BINDING) uniform ResolveTileParams
 const uint VIS_TILE_FLAG_ORM = 1u;     // ORM の 1 枚が metallicTexture の枠に張られている
 const uint VIS_TILE_FLAG_SPARSE = 2u;  // 張ったテクスチャに sparse（VT）が 1 枚でもある
 const uint VIS_TILE_FLAG_TERRAIN = 4u; // 地形の 3 層の混ぜ合わせを持つ材質（2・3 層目のテクスチャと tileParams.terrain を使う）
+const uint VIS_TILE_FLAG_TERRAIN_SURFACE = 8u; // 地形の面（混ぜ合わせの無い灰色の地形を含む。法線の A に地形の受け手を書く）
 
 // MaterialTileClassifyPass の引数（材質ごとに 8 語）と一覧（タイルの番号の並び）。MaterialTileClassifyPass.h と同じ並び
 layout(std430, set = 0, binding = VIS_TILE_BINDING + 1) readonly buffer ResolveTileArgs
@@ -727,7 +728,7 @@ VisMaterialSurface VisEvaluateMaterialSurface(vec3 objectColor, VisMaterialEntry
     surface.albedo = vec4(ComposePbrSurfaceAlbedo(objectColor, samples), samples.Albedo.a);
     surface.normal = bTerrain ? terrainNormal : ApplyTangentSpaceNormal(resolved.tangentFrame, tangentNormal);
     surface.material = samples.Material;
-    surface.terrain = bTerrain ? 1.0 : 0.0;
+    surface.terrain = bTerrain || (tileParams.tile.z & VIS_TILE_FLAG_TERRAIN_SURFACE) != 0u ? 1.0 : 0.0;
     return surface;
 }
 #endif

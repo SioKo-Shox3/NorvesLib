@@ -170,7 +170,7 @@ void NodeStage(uint stage)
     const VsmSlice levelSlice = vsmSlices[level];
     const MegaInstance instance = LoadMegaInstance(instanceIndex);
     g_WorldMatrix = instance.world;
-    g_OrthoTexelMeters = levelSlice.info.y;
+    g_OrthoTexelMeters = ShadowLodTexelMeters(instanceIndex, levelSlice.info.y);
     g_ShadowPerspective = IsPerspectiveSlice(levelSlice);
     g_ShadowAxisZ = levelSlice.axisZ;
     g_ShadowTexelNdc = levelSlice.info.y;

@@ -45,6 +45,22 @@ layout(std430, set = 0, binding = 19) buffer VsmPageTable
 };
 
 /**
+ * @brief 太陽の段の LOD の判定に使う texel の一辺（m）。g_OrthoTexelMeters へ入れる
+ *
+ * 誤差 ÷ texel を cullData.lodBias（texel）と比べるので、SHADOW_FLAG_FINE_LOD のインスタンスは texel を
+ * VSM_MEGA_FINE_LOD_TEXELS ÷ lodBias 倍に縮め、許容を VSM_MEGA_FINE_LOD_TEXELS にする（許容がそれより細かいときは変えない）。
+ * texel は LOD の判定にしか使わない（段の範囲・ページの判定はスライスの値を直接読む）。
+ */
+float ShadowLodTexelMeters(uint instanceIndex, float levelTexelMeters)
+{
+    if ((shadowInstances[instanceIndex].info.y & SHADOW_FLAG_FINE_LOD) != 0u && cullData.lodBias > VSM_MEGA_FINE_LOD_TEXELS)
+    {
+        return levelTexelMeters * (VSM_MEGA_FINE_LOD_TEXELS / cullData.lodBias);
+    }
+    return levelTexelMeters;
+}
+
+/**
  * @brief 溢れて一覧・列に書けなかったクラスタ・節の球が覆う、割り当て済みで dirty のページへ再描画の印を付ける
  *
  * 覆うページの範囲は SphereHasDirtyPage と同じ（範囲の外へはみ出す分は切り捨てる）。ほかのスレッドも同じ欄へ印を書くので、
@@ -89,7 +105,7 @@ void SelectShadowCluster(uint instanceIndex, MegaInstance instance, uint level, 
     g_WorldMatrix = instance.world;
     g_LODSphere = instance.lodSphere;
     g_Clusters = ClusterArray(uvec2(instance.clusterInfo.x, instance.clusterInfo.y));
-    g_OrthoTexelMeters = levelSlice.info.y;
+    g_OrthoTexelMeters = ShadowLodTexelMeters(instanceIndex, levelSlice.info.y);
     g_ShadowPerspective = bPerspective;
     g_ShadowAxisZ = levelSlice.axisZ;
     g_ShadowTexelNdc = levelSlice.info.y;

@@ -31,6 +31,14 @@ namespace NorvesLib::Core::Rendering
     /** @brief 影の表（binding 18）の印: 影を落とす（bCastShadow）・境界（WorldBounds）が分かる */
     inline constexpr uint32_t MegaGeometryShadowFlagCaster = 1u;
     inline constexpr uint32_t MegaGeometryShadowFlagBounds = 2u;
+    /**
+     * @brief 影の表の印: 影の LOD を細かく選ぶ（地形の面のメッシュ。MegaTerrainBlend::IsTerrainSurface）
+     *
+     * 地形は自分の面に自分の影を落とす受け手なので、影の LOD を粗くすると小さな起伏の頂が低くなり、影が短くなる。
+     * この印のインスタンスだけ、許容を VirtualShadowMapMegaCullDispatch::LodThresholdTexels でなく
+     * Common/VirtualShadowMapMegaCull.glsl の VSM_MEGA_FINE_LOD_TEXELS にする（太陽の段だけ）。
+     */
+    inline constexpr uint32_t MegaGeometryShadowFlagFineLod = 4u;
 
     /**
      * @brief 影の表の1要素（GPU送信用。Common/VirtualShadowMapMegaCull.glsl の ShadowInstance と一致）。インスタンスの表と同じ並び（同じ添字）

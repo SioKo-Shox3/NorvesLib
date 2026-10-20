@@ -63,6 +63,8 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t TILE_FLAG_SPARSE = 2u;
         /** @brief 地形の 3 層の混ぜ合わせを持つ材質（2・3 層目のテクスチャと混ぜ方を束ねる） */
         constexpr uint32_t TILE_FLAG_TERRAIN = 4u;
+        /** @brief 地形の面（混ぜ合わせの有無に依らない。GBuffer の法線の A に地形の受け手を書く） */
+        constexpr uint32_t TILE_FLAG_TERRAIN_SURFACE = 8u;
         /** @brief 地形の 2・3 層目のテクスチャの数（土・岩肌のアルベド・法線・ORM） */
         constexpr uint32_t TERRAIN_LAYER_TEXTURE_COUNT = 6;
         /** @brief 地表の分類の地図の、地形のテクスチャの並びでの添え字（2・3 層目の 6 枚の次） */
@@ -248,6 +250,8 @@ namespace NorvesLib::Core::Rendering
          * （混ぜ方の値の mask・farMap も 0）
          */
         bool bTerrainBlend = false;
+        /** @brief 地形の面（MegaTerrainBlend::IsTerrainSurface）。混ぜ合わせの無い灰色の地形も GBuffer の法線の A に地形の受け手を書く */
+        bool bTerrainSurface = false;
         RHI::TexturePtr TerrainTextures[VisibilityResolveGeometry::TERRAIN_TEXTURE_COUNT];
         float TerrainParams[VisibilityResolveGeometry::TERRAIN_PARAM_FLOATS] = {};
     };

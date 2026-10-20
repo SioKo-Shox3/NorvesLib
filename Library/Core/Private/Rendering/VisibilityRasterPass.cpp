@@ -1195,8 +1195,9 @@ namespace NorvesLib::Core::Rendering
             {
                 const uint32_t materialIndex = m_MaterialTable.Add(VisibilityBuffer::MakeMaterialEntry(section.Material));
                 sectionMaterials.push_back(materialIndex);
-                // 地形の混ぜ合わせは表の件に入りきらないので、同じ添え字の並びで材質の解決へ渡す（予備の番号へ寄せた件は渡さない）
-                if (section.Material.TerrainBlend.bEnabled && materialIndex != m_MaterialTable.GetFallbackIndex())
+                // 地形の混ぜ合わせ（と地形の面の印）は表の件に入りきらないので、同じ添え字の並びで材質の解決へ渡す
+                // （予備の番号へ寄せた件は渡さない）
+                if (section.Material.TerrainBlend.IsTerrainSurface() && materialIndex != m_MaterialTable.GetFallbackIndex())
                 {
                     if (m_MaterialTerrainScratch.size() <= materialIndex)
                     {

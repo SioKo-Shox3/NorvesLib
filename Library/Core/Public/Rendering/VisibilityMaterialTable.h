@@ -46,6 +46,13 @@ namespace NorvesLib::Core::Rendering::VisibilityBuffer
      * 材質の解決は GBuffer の材質の A に 1 を書く（ラスタの gbuffer.frag と同じ印。lighting.frag が拡散だけで数える）。
      */
     constexpr uint32_t MATERIAL_FLAG_DIFFUSE_ONLY = 16u;
+    /**
+     * @brief 地形の面の MegaGeometry の材質（MegaTerrainBlend::IsTerrainSurface。混ぜ合わせの無い灰色の地形も含む）
+     *
+     * 地形の面は値が同じほかの材質と別の件にし、VisibilityRasterPass::GetMaterialTerrainBlend が同じ添え字で渡す
+     * （材質の解決が GBuffer の法線の A に地形の受け手を書く）。
+     */
+    constexpr uint32_t MATERIAL_FLAG_TERRAIN_SURFACE = 32u;
 
     /**
      * @brief 材質の表の 1 件（storage buffer の 1 要素。128 バイト）

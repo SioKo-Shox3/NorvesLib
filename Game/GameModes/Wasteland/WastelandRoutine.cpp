@@ -794,6 +794,8 @@ namespace Game::GameModes
                 }
                 createInfo.Material.Roughness = assembly.GrayRoughness;
                 createInfo.Material.Metallic = 0.0f;
+                // 混ぜ合わせは張らないが、影と接触影は地形として扱う（色だけを替え、影の経路はテクスチャの地形と同じにする）
+                createInfo.Material.TerrainBlend.bTerrainSurface = true;
             }
             else
             {

@@ -1973,7 +1973,7 @@
 - notes: 危険地帯（影・RenderThread）。2026-10-19（Sol の批評 4・9・22）。1 反復で閉じなければ、ref_cliff_02 の覆いと ref_far_01 のかすめる日差しに分ける。
 
 ## SCN-WL-SHADOW-LEAK: 影の中への太陽の漏れを直す
-- status: todo
+- status: done
 - after: SCN-WL-SHADOW-PAGES, SCN-WLR-REGRESSION-VALIDATION
 - done-when: 灰色の ref_cliff_01 で影の中の地面に太陽が漏れる原因（反復 11 で確かめた 3 つ: 法線の向きへのずらし `VSMS_NORMAL_OFFSET_TEXELS` = 1.5 が太陽の高さ 10° で影の縁を 1〜2 m 退かせる〔漏れの約 7 割〕、影の描画の MegaGeometry の LOD の許容 `LodThresholdTexels` = 4、残りは深度の比較の余裕の傾きの項）を直す。ずらしと影の LOD の変更は地形の受け手・荒野に絞り、ほかのシーンの影を変えない（回帰の撮影で確かめる。影の LOD の許容を下げるならバナナ 100 万本のクラスタの一覧の容量を超えないことも確かめる）。合否は太陽の可視率で決める: 灰色の 3 条件を ref_cliff_01 で撮り、`--gray --views ref_cliff_01 --expect`（`shadow-leak.json`）で、影の中の地面の `visibility_mismatch` ≤ 3 %（今 29.3 %）・影の崖 ≤ 5 %（今 12.4 %）を検査する。太陽の成分の比（エンジン ÷ Cycles）は記録だけにする（影の中の地面ではエンジンの太陽の照り返しが Cycles の 0.43 倍で、影が合っても 0.5 前後になる。照り返しは SCN-WL-RTGI-COLOR）。反復の最初に回帰の撮影の `before` を撮る。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`

@@ -307,7 +307,8 @@ float CalculateRangeWindow(float distance, float range)
 #include "Common/VirtualShadowMapPoint.glsl"
 
 // 太陽の影の可視度。--shadow-method=vsm で VSM が使えるときは VSM、それ以外（R5 のハードシャドウの検証表示を含む）は CSM。
-// 地形の受け手（GBuffer の法線の A が 1）は VSM の深度の比較の余裕を広げる（VSMS_TERRAIN_CONSTANT_BIAS_TEXELS の理由を参照）。
+// 地形の受け手（GBuffer の法線の A が 1）は VSM の深度の比較の余裕を広げ、法線の向きへずらさない
+// （VSMS_TERRAIN_CONSTANT_BIAS_TEXELS・VSMS_TERRAIN_NORMAL_OFFSET_TEXELS の理由を参照）。
 float CalculateSunShadow(vec3 worldPos, vec3 normal, bool bTerrainReceiver)
 {
     if (vsmBlock.vsm.control.x != 0u && !IsR5HardShadowValidationMode())
@@ -315,6 +316,7 @@ float CalculateSunShadow(vec3 worldPos, vec3 normal, bool bTerrainReceiver)
         float texelMeters = 0.0;
         return VsmSampleSunShadowWithBias(worldPos, normal,
                                           bTerrainReceiver ? VSMS_TERRAIN_CONSTANT_BIAS_TEXELS : VSMS_CONSTANT_BIAS_TEXELS,
+                                          bTerrainReceiver ? VSMS_TERRAIN_NORMAL_OFFSET_TEXELS : VSMS_NORMAL_OFFSET_TEXELS,
                                           texelMeters);
     }
     return CalculateShadow(worldPos, normal);

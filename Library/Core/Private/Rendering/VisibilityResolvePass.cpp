@@ -167,6 +167,7 @@ namespace NorvesLib::Core::Rendering
                                 const MegaGeometry::MegaTerrainBlend* terrain,
                                 VisibilityResolveMaterial& material)
         {
+            material.bTerrainSurface = terrain && terrain->IsTerrainSurface();
             if (!terrain || !terrain->bEnabled)
             {
                 return;
@@ -828,6 +829,10 @@ namespace NorvesLib::Core::Rendering
                         bound.Flags |= VisibilityResolveGeometry::TILE_FLAG_SPARSE;
                     }
                 }
+            }
+            if (input.bTerrainSurface)
+            {
+                bound.Flags |= VisibilityResolveGeometry::TILE_FLAG_TERRAIN_SURFACE;
             }
             if (input.bTerrainBlend)
             {

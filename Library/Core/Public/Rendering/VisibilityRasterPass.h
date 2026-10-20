@@ -246,14 +246,14 @@ namespace NorvesLib::Core::Rendering
         }
 
         /**
-         * @brief 最後の Execute が書いた材質の表の index 番の件が、地形の 3 層の混ぜ合わせを持つならその値（無ければ null）
+         * @brief 最後の Execute が書いた材質の表の index 番の件が、地形の面（MegaTerrainBlend::IsTerrainSurface）ならその値（無ければ null）
          *
          * 材質の表の件はテクスチャのハンドルを 7 枠しか持たないので、地形の 2・3 層目のハンドルと混ぜ方は、
          * 表と同じ添え字のこの並びで材質の解決へ渡す（MegaGeometry の区間の材質だけが持つ）。
          */
         const MegaGeometry::MegaTerrainBlend* GetMaterialTerrainBlend(size_t index) const
         {
-            return index < m_LastMaterialTerrain.size() && m_LastMaterialTerrain[index].bEnabled
+            return index < m_LastMaterialTerrain.size() && m_LastMaterialTerrain[index].IsTerrainSurface()
                        ? &m_LastMaterialTerrain[index]
                        : nullptr;
         }

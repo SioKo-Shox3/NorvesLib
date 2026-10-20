@@ -1,0 +1,23 @@
+{
+  "description": "SCN-WL-SHADOW-LEAK: 灰色の ref_cliff_01（太陽の高さ 10°）の影の中へ太陽が漏れないことを、太陽の可視率で判定する。エンジンの撮影の AOV（照明が求めた影の結果）と Cycles の太陽の見え方が 0.5 を超えて食い違う画素の割合（Cycles の n·l が 0.1 以上の画素）。太陽の成分の比（engine-sun ÷ Cycles）は影の中の地面の照り返しの不足（SCN-WL-RTGI-COLOR）が混ざるので記録だけにする。",
+  "rows": [
+    {
+      "mode": "gray",
+      "view": "ref_cliff_01",
+      "region": "shadow_ground",
+      "component": "visibility",
+      "quantity": "visibility_mismatch",
+      "max": 0.03,
+      "note": "影の中の地面（カメラから 360〜670 m の小さな起伏の影）。法線の向きへのずらしが影の縁を 1〜2 m 退かせ、影の LOD の粗い面が起伏の頂を低くして、Cycles の影に日が当たっていた（直す前 29.3 %）"
+    },
+    {
+      "mode": "gray",
+      "view": "ref_cliff_01",
+      "region": "shadow_cliff",
+      "component": "visibility",
+      "quantity": "visibility_mismatch",
+      "max": 0.05,
+      "note": "影の崖（直す前 12.4 %）"
+    }
+  ]
+}

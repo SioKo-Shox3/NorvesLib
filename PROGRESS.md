@@ -5957,3 +5957,20 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 止めた理由: 灰色（当たりの色が Cycles と同じ）でも明るさの比が 0.77 で、影の中の地面は色度が 0.022 ずれる。Cycles の間接光は鏡面の間接光を含み、エンジンの照り返しは拡散だけ。当たりの色の直しだけでは完了条件に届かず、比べ方と RTGI の量の直しの置き場の判断が要る
 - Notes: 新しい試験は足していない。編集で C++・シェーダーの行末が書き換わったので difflib で戻した（numstat の 2 通りが一致）
 - Next: blocked の判断を待つ（推奨: Cycles の拡散の間接光と比べ、切り出しを描き直し、RTGI の量は別の項目へ）
+### SCN-WL-SHADOW-LEAK 完了（2026-10-20、run 20261020-191231 の反復 1）
+- 原因（反復 11 で確かめた 3 つのうち 2 つを直した）: 地形の受け手を法線の向きへ 1.5 texel 持ち上げるずらしが、太陽の高さ 10° の地面で影の縁を 1〜2 m 遮る物の側へ退かせていた。影の描画の MegaGeometry の LOD の許容 4 texel が小さな起伏の頂を低くし、影を短くしていた。さらに、灰色の材質（`--wasteland-gray-material`）の地形は 3 層の混ぜ合わせを持たないので、地形の受け手（GBuffer の法線の A）にも地形の投影物にもなっておらず、灰色の検証は地形でない経路（余裕 1.5 texel・地形どうしの接触影あり）を測っていた（反復 11 の「地形の余裕 3 → 1.5 が効かない」はこのため）
+- コード:
+  - `MegaTerrainBlend::bTerrainSurface`・`IsTerrainSurface()`: 混ぜ合わせの無い地形の面も地形として扱う印。荒野の灰色の地形が立てる。可視バッファの材質の表は `MATERIAL_FLAG_TERRAIN_SURFACE` で別の件にし、`GetMaterialTerrainBlend` が地形の面の値も渡し、材質の解決は `TILE_FLAG_TERRAIN_SURFACE` で法線の A に 1 を書く
+  - 法線の向きへのずらし: `VsmSampleSunShadowWithBias` に `normalOffsetTexels` を足し、地形の受け手は `VSMS_TERRAIN_NORMAL_OFFSET_TEXELS` = 0（地形の外は 1.5 のまま）
+  - 影の LOD: 影の表の印 `MegaGeometryShadowFlagFineLod`（地形の面のメッシュ）。太陽の段の選択（平らな経路と BVH の経路）で、印のインスタンスだけ LOD の texel を縮め、許容を `VSM_MEGA_FINE_LOD_TEXELS` = 1 にする（ほかは 4 のまま、点光源の面は変えない）
+  - `Scripts/Terrain/ExpectSpecs/shadow-leak.json`（影の中の地面 ≤ 3 %・影の崖 ≤ 5 %、成分 visibility）
+- 証拠（`.harness/runs/20261020-191231/`）:
+  - `regression-before-SCN-WL-SHADOW-LEAK.txt`: 反復の最初の回帰の before、result=pass・EXIT=0
+  - `verify-SCN-WL-SHADOW-LEAK-1.txt`: Debug の Game のビルド EXIT=0
+  - `verify-SCN-WL-SHADOW-LEAK-2〜4.txt`: RelWithDebInfo（`-Build` は result=pass）の灰色の ref_cliff_01 の共通光・太陽だけ・空だけ、どれも result=pass・EXIT=0
+  - `verify-SCN-WL-SHADOW-LEAK-5.txt`: `--gray --expect shadow-leak.json --verify` result=pass（rows=2・failed=0、inputs_current=1）。影の中の地面の `visibility_mismatch` 0.0197（直す前 0.2930）、影の崖 0.0397（直す前 0.1244）。記録だけ: 太陽の比 影の中の地面 6.151 → 1.775・影の崖 1.858 → 1.201、明るさの比 影の中の地面 1.242 → 0.905・影の崖 1.175 → 1.041、日なたの地面・崖は 0.954・0.958 のまま
+  - `verify-SCN-WL-SHADOW-LEAK-6.txt`: 回帰の after result=pass。sandbox psnr=inf・rendering3dtest 110.6・mega-bananas 62.2（影のクラスタ 62160・溢れ 0 で before と同じ）・night-village 61.0（mean_diff −0.001。荒野の地形に落ちる建物の月の影の縁が細い線で動いた。before｜after｜差を並べて開いて確かめ、破綻は無い）
+  - 撮影の画を開いた: 灰色の太陽だけの ref_cliff_01 は崖錐の起伏の影が連なり、斑・縞は無い。既定の荒野（`scene-capture/SCN-WL-SHADOW-LEAK/default`、`aux-SCN-WL-SHADOW-LEAK-default.txt` result=pass）の ref_ground_01・ref_cliff_01 でも、ずらし 0 の地形に自分の影の斑は出ていない
+  - 影のクラスタ（`VSM_MEGA_CULL`）: 灰色の ref_cliff_01 は 9 千 → 1.8 万、既定の荒野の ref_cliff_01 は 1.7 万、どれも溢れ 0（容量 157 万）
+- Notes: 残りの漏れ（深度の比較の余裕の傾きの項）は、合否に届いたので触っていない。ラスタの MegaGeometry の経路（megageometry.frag。荒野は可視バッファの経路で描く）は、灰色の地形の受け手の印を書かない（混ぜ合わせの材質は今までどおり書く）。影の中の地面の太陽の比 1.78 の残りは照り返しの不足（SCN-WL-RTGI-COLOR）と縁の残りのずれ。灰色の撮影の経路が地形の扱いになったので、灰色で受け入れたほかの項目の値（地形どうしの接触影を切る分）が少し動きうる。新しい試験は足していない
+- Next: TASKS.md の次の未完の項目
