@@ -6703,3 +6703,18 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 反復 43 の描き直しが古い深度（53670bd1…）を記録した理由は追っていない（同じ exe の撮り直しでは深度は変わらない）
   - 新しい試験は足していない
 - Next: TASKS.md の次の未完の項目
+
+### SCN-WL-SKY-SCATTER-FOG 再検証（2026-10-22、run 20261021-055341 の反復 48）
+- 差し戻し: 評価者 45 の NEEDS_WORK の「B と 5 %」は親が done-when を直して解いた（霧の周りの光と和は A と 5 %、B との比は記録だけ）。残りの non-blocking（変更前の式の見積もりの台本が変更後の `atmos_aerial` の第 4 戻り値を旧来の重みとして空の輝度を掛け直し、先頭行が 9368 倍）を直した
+- Done: 変更前の式を、変更前のコミット（ff913187^）の `ReferenceCheck.py` を `git show` で読み込んだ式の写し `atmos_aerial`（その版の第 4 戻り値は霧の周りの光の重み）× 撮影の GPU の視線の向きの空の輝度（probe_test_media の行 1）で独立に積み直した。記録 `WastelandAtmosphereReference.md` の「変更前の式は B の 1.29〜1.63 倍」を新しい見積もりの値（輝度で 1.27〜1.63 倍、太陽の側 1.57〜1.63、RGB 1.15〜1.80、A の 1.43〜2.85 倍）と台本の場所へ直した。式・シェーダ・仕様は変えていない
+- 証拠（`.harness/runs/20261021-055341/`）:
+  - `aux-SCN-WL-SKY-SCATTER-FOG-predict-48.py` / `-predict-48.txt` 変更前の式の独立な見積もり EXIT=0。判定の 60 本で old ÷ B 1.268〜1.634、変更後（GPU）÷ B 0.568〜0.915 = A ÷ B 0.568〜0.914、変更後 ÷ A 0.998〜1.002。今回の撮影で回し直して同じ値
+  - `verify-SCN-WL-SKY-SCATTER-FOG-9.txt` Debug の Game のビルド EXIT=0
+  - `verify-SCN-WL-SKY-SCATTER-FOG-10.txt` ref_ground_02 の atmosphere-dump の撮影 result=pass・EXIT=0（commit c185e393 dirty=0）
+  - `verify-SCN-WL-SKY-SCATTER-FOG-11.txt` `--atmos-ref --expect sky-scatter-fog.json --verify` result=pass・inputs_current=1・5 行合格（霧の太陽 ÷ B の差 2.82 %、霧の周りの光 ÷ A の差 0.33 %、和 ÷ A の差 0.49 %。記録: 周りの光 ÷ B 0.5684〜0.9146、A ÷ B 0.5682〜0.9139、和 ÷ B 0.8460〜0.9493、A ÷ B 0.8458〜0.9497）。反復 45 と同じ値
+  - `verify-SCN-WL-SKY-SCATTER-FOG-12.txt` 回帰の after result=pass（rendering3dtest PSNR 105.9、mega-bananas 65.6、sandbox inf、night-village 71.7）。rendering3dtest の after を開き、天球・地面・球・岩が変わらないことを確かめた
+- Notes:
+  - エンジンのコードを変えていないので回帰の before は撮り直していない（反復 45 の before と比べた）
+  - シェーダのコメントの「正解 B の 1.3〜1.6 倍」は丸めた値で新しい見積もりと矛盾しないので、シェーダは触っていない
+  - 新しい試験は足していない
+- Next: TASKS.md の次の未完の項目
