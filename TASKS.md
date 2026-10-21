@@ -2109,8 +2109,8 @@
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -Build -RequireAssets -Width 1920 -Height 1080 -Views ref_cliff_02 -GameArgs vram-budget-mb=11000,geom-settle-trace=60 -OutDir .harness/runs/scene-capture/SCN-WL-GEOM-LOWVRAM`
 - verify: `python Scripts/Terrain/ReferenceCheck.py --geom-settle --engine .harness/runs/scene-capture/SCN-WL-GEOM-LOWVRAM --verify`
-- paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Game, Scripts, Docs/RenderingValidation, TASKS.md, PROGRESS.md
-- notes: 危険地帯（メモリ・ストリーミング・RenderThread）。2026-10-19（Sol の批評 16 と 2 周目）。1 反復で閉じなければ「推移の記録と検査」と「粗い段に下がる制御」に分ける。
+- paths: Assets/Shaders, Library/Core/Private/Rendering, Library/Core/Public/Rendering, Game, Scripts, Docs/RenderingValidation, TASKS.md, PROGRESS.md
+- notes: 危険地帯（メモリ・ストリーミング・RenderThread）。2026-10-19（Sol の批評 16 と 2 周目）。1 反復で閉じなければ「推移の記録と検査」と「粗い段に下がる制御」に分ける。 2026-10-21（親）: 反復 10 の BLOCKED を推奨の 1 で解いた。paths に Assets/Shaders を足した。`MegaGeometryCull.glsl` で、LOD で選ばれたが遮蔽で落ちたクラスタのページにも使用の印を書く（キャッシュされた VSM だけが使うページは、影のパスで LOD を選んだクラスタの印を描き直さないフレームでも書くかを合わせて見る）。要求の列（容量 4096）が溢れないこと、描く物は変えないので golden と回帰の撮影が変わらないことを確かめる。6600 MB で 60 秒の入れ替えが今の 3028 件から十分に減る（目安は 0。残るなら件数と原因を記録）。カリングのシェーダーは危険地帯。反復 10 の記録は `blocked/resolved/SCN-WL-GEOM-LOWVRAM-usage-marks.md` と PROGRESS.md。
 
 ## SCN-WL-LOD-DETAIL: AA の後で、地形の LOD の選び方を見直す
 - status: todo
