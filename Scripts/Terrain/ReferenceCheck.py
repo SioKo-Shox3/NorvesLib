@@ -2521,7 +2521,7 @@ def atmos_hg_phase(cosine, anisotropy):
 
 def atmos_aerial(meta, camera_y, direction, distance, profile):
     """Common/VolumetricsCommon.glsl の MarchFogAndAerial を、書き出した定数と高度ごとの表で求める（霧の太陽の単一散乱は
-    影の地図が要るので求めない）。(空気遠近の透過率, 単一散乱, 多重散乱, 霧の周りの光の重み（RGB。霧の散乱係数 × 透過率の積分）)"""
+    影の地図が要るので求めない）。(空気遠近の透過率, 単一散乱, 多重散乱, 霧の周りの光（各点の Ψ_ms × 霧の散乱係数 × 透過率の積分）)"""
     aerial = meta["aerial_perspective"]
     sky = meta["sky"]
     fog = meta["height_fog"]
@@ -2558,9 +2558,25 @@ def atmos_aerial(meta, camera_y, direction, distance, profile):
     psi = atmos_profile_lookup(profile, meta["aerial_profile"], 1, altitude)
     single = np.sum(transmittance * (rayleigh * rayleigh_phase + (mie_scattering * mie_phase)[:, None]) * sun_light, axis=0) * dt
     multiple = np.sum(transmittance * (rayleigh + mie_scattering[:, None]) * psi, axis=0) * dt
-    fog_weight = np.sum(transmittance * fog_scattering[:, None], axis=0) * dt
+    fog_ambient = np.sum(transmittance * psi * fog_scattering[:, None], axis=0) * dt
     air_t = np.exp(-np.clip(np.sum(step_air, axis=0), 0.0, 80.0))
-    return air_t, single, multiple, fog_weight
+    return air_t, single, multiple, fog_ambient
+
+
+def atmos_test_media_meta(meta):
+    """書き出しの検査用の割り振り（test_media。空気遠近の Mie の一部を高さフォグへ移した媒質）の定数で置き換えた書き出しの記述。
+    test_media が無いか無効なら None"""
+    test = meta.get("test_media")
+    if not isinstance(test, dict) or not test.get("valid"):
+        return None
+    media = json.loads(json.dumps(meta))
+    fog = media["height_fog"]
+    for key in ("enabled", "density_at_base_per_m", "base_height_m", "height_falloff_per_m"):
+        fog[key] = test["height_fog"][key]
+    aerial = media["aerial_perspective"]
+    for key in ("mie_density_scale", "shader_mie_extinction_per_m", "shader_mie_scattering_per_m"):
+        aerial[key] = test["aerial_perspective"][key]
+    return media
 
 
 def atmos_relative_error(actual, expected, floor):
@@ -2583,6 +2599,48 @@ def atmos_table_bilinear(table, row_position, column_position):
     fc = np.float32(column_position - column)
     return ((1 - fr) * (1 - fc) * table[row, column] + (1 - fr) * fc * table[row, column + 1] +
             fr * (1 - fc) * table[row + 1, column] + fr * fc * table[row + 1, column + 1])
+
+
+def atmos_probe_formula(meta, probe, rays, camera_y, radiance_lut, profile):
+    """1 つの媒質の視線の値（行 0〜9）を、書き出した定数（meta）と LUT・高度ごとの表で求めた値と比べた差の最大"""
+    worst_sample = 0.0
+    worst_fog_t = 0.0
+    worst_aerial_t = 0.0
+    worst_aerial_s = 0.0
+    worst_fog_ambient = 0.0
+    worst_composite = 0.0
+    fog = meta["height_fog"]
+    # 4c. GPU が引いた空の放射輝度 LUT の値（行 5）= 書き出した LUT を同じ向きで引いた値（書き出しが GPU の LUT と同じ）
+    for index, ray in enumerate(rays):
+        direction = np.array(ray["direction"], dtype=np.float64)
+        direction /= np.linalg.norm(direction)
+        distance = ray["distance_m"]
+        u, v = atmos_equirect_uv(direction)
+        sampled = np.maximum(atmos_bilinear(radiance_lut[..., :3], u, v, True), 0.0)
+        if fog["color_from_sky_radiance_lut"]:
+            worst_sample = max(worst_sample, atmos_relative_error(probe[5, index, :3], sampled, ATMOS_RADIANCE_FLOOR))
+        # 4d. 高さフォグの透過率（行 0）= 書き出した定数で ComputeAnalyticTransmittance を求めた値
+        expected_fog_t = atmos_fog_transmittance(fog, camera_y, direction[1], distance)
+        worst_fog_t = max(worst_fog_t, abs(probe[0, index, 0] - expected_fog_t))
+        # 4e. 空気遠近（行 3・4・7・8）と霧の周りの光（行 9）= 書き出した定数と高度ごとの表で MarchFogAndAerial を求めた値
+        opacity = probe[0, index, 1]
+        expected_t, expected_single, expected_multiple, fog_ambient = atmos_aerial(meta, camera_y, direction, distance,
+                                                                                   profile)
+        worst_aerial_t = max(worst_aerial_t, atmos_relative_error(probe[3, index, :3], expected_t, 1e-3))
+        for row, expected in ((4, expected_single + expected_multiple), (7, expected_single), (8, expected_multiple)):
+            worst_aerial_s = max(worst_aerial_s, atmos_relative_error(probe[row, index, :3], expected, ATMOS_RADIANCE_FLOOR))
+        if opacity > 0.0:
+            expected_ambient = fog_ambient if meta["aerial_perspective"]["available"] else probe[1, index, :3] * opacity
+            worst_fog_ambient = max(worst_fog_ambient, atmos_relative_error(probe[9, index, :3], expected_ambient,
+                                                                            ATMOS_RADIANCE_FLOOR))
+        # 4f. 合成（行 6）= 霧の周りの光（行 9）+ 霧の太陽の単一散乱（行 2）+ 空気遠近の散乱光（行 4）
+        composite = probe[9, index, :3] + probe[2, index, :3] if opacity > 0.0 else np.zeros(3)
+        if meta["aerial_perspective"]["available"]:
+            composite = composite + probe[4, index, :3]
+        worst_composite = max(worst_composite, atmos_relative_error(probe[6, index, :3], composite, ATMOS_RADIANCE_FLOOR))
+    return {"probe_sky_sample_max_rel": worst_sample, "fog_transmittance_max_abs": worst_fog_t,
+            "aerial_transmittance_max_rel": worst_aerial_t, "aerial_scattering_max_rel": worst_aerial_s,
+            "fog_ambient_max_rel": worst_fog_ambient, "composite_max_rel": worst_composite}
 
 
 def check_atmos_view(capture_dir, view, game_args):
@@ -2746,43 +2804,17 @@ def check_atmos_view(capture_dir, view, game_args):
     if worst_radiance > ATMOS_HALF_TOLERANCE:
         failures.append(f"空の放射輝度 LUT が sky-view の表と合わない（相対差の最大 {worst_radiance:.3g}）")
 
-    # 4c. GPU が引いた空の放射輝度 LUT の値（行 5）= 書き出した LUT を同じ向きで引いた値（書き出しが GPU の LUT と同じ）
+    # 4c〜4f. 視線の値が書き出した定数の式と合う（そのフレームの媒質）
     camera_y = meta["camera_position"][1]
-    worst_sample = 0.0
-    worst_fog_t = 0.0
-    worst_aerial_t = 0.0
-    worst_aerial_s = 0.0
-    worst_fog_ambient = 0.0
-    worst_composite = 0.0
     fog = meta["height_fog"]
     profile = arrays["aerial_profile"]
-    for index, ray in enumerate(rays):
-        direction = np.array(ray["direction"], dtype=np.float64)
-        direction /= np.linalg.norm(direction)
-        distance = ray["distance_m"]
-        u, v = atmos_equirect_uv(direction)
-        sampled = np.maximum(atmos_bilinear(radiance_lut[..., :3], u, v, True), 0.0)
-        if fog["color_from_sky_radiance_lut"]:
-            worst_sample = max(worst_sample, atmos_relative_error(probe[5, index, :3], sampled, ATMOS_RADIANCE_FLOOR))
-        # 4d. 高さフォグの透過率（行 0）= 書き出した定数で ComputeAnalyticTransmittance を求めた値
-        expected_fog_t = atmos_fog_transmittance(fog, camera_y, direction[1], distance)
-        worst_fog_t = max(worst_fog_t, abs(probe[0, index, 0] - expected_fog_t))
-        # 4e. 空気遠近（行 3・4・7・8）と霧の周りの光（行 9）= 書き出した定数と高度ごとの表で MarchFogAndAerial を求めた値
-        opacity = probe[0, index, 1]
-        expected_t, expected_single, expected_multiple, fog_weight = atmos_aerial(meta, camera_y, direction, distance,
-                                                                                  profile)
-        worst_aerial_t = max(worst_aerial_t, atmos_relative_error(probe[3, index, :3], expected_t, 1e-3))
-        for row, expected in ((4, expected_single + expected_multiple), (7, expected_single), (8, expected_multiple)):
-            worst_aerial_s = max(worst_aerial_s, atmos_relative_error(probe[row, index, :3], expected, ATMOS_RADIANCE_FLOOR))
-        if opacity > 0.0:
-            expected_ambient = probe[1, index, :3] * (fog_weight if meta["aerial_perspective"]["available"] else opacity)
-            worst_fog_ambient = max(worst_fog_ambient, atmos_relative_error(probe[9, index, :3], expected_ambient,
-                                                                            ATMOS_RADIANCE_FLOOR))
-        # 4f. 合成（行 6）= 霧の周りの光（行 9）+ 霧の太陽の単一散乱（行 2）+ 空気遠近の散乱光（行 4）
-        composite = probe[9, index, :3] + probe[2, index, :3] if opacity > 0.0 else np.zeros(3)
-        if meta["aerial_perspective"]["available"]:
-            composite = composite + probe[4, index, :3]
-        worst_composite = max(worst_composite, atmos_relative_error(probe[6, index, :3], composite, ATMOS_RADIANCE_FLOOR))
+    worst = atmos_probe_formula(meta, probe, rays, camera_y, radiance_lut, profile)
+    worst_sample = worst["probe_sky_sample_max_rel"]
+    worst_fog_t = worst["fog_transmittance_max_abs"]
+    worst_aerial_t = worst["aerial_transmittance_max_rel"]
+    worst_aerial_s = worst["aerial_scattering_max_rel"]
+    worst_fog_ambient = worst["fog_ambient_max_rel"]
+    worst_composite = worst["composite_max_rel"]
     # 4h. 空気遠近の高度ごとの表: 太陽の照度 ÷ 大気の外の照度 = 透過率の表を引いた値、Ψ_ms の段 = 多重散乱の表 × 大気の外の照度
     profile_meta = meta["aerial_profile"]
     sun_lux = meta["ground_illuminance"]["sun_top_of_atmosphere_normal_lux"]
@@ -2822,6 +2854,29 @@ def check_atmos_view(capture_dir, view, game_args):
         failures.append(f"合成の値が高さフォグと空気遠近の値から作った値と合わない（相対差の最大 {worst_composite:.3g}）")
     if not meta["aerial_perspective"]["available"] or not fog["enabled"]:
         failures.append("空気遠近か高さフォグが撮影のフレームで効いていない（荒野は両方を掛ける）")
+    # 4i. 検査用の割り振り（test_media）の視線の値も、その媒質の定数の式と合う（荒野は霧の割合が 0 なので、霧の式はここで測る）
+    test_meta = atmos_test_media_meta(meta)
+    if test_meta is not None:
+        test_probe, reason = atmos_read_floats(capture_dir, meta["test_media"])
+        if reason:
+            failures.append(f"test_media: {reason}")
+        elif test_probe.shape != probe.shape:
+            failures.append(f"test_media: 視線の値の形 {list(test_probe.shape)} が probe と合わない")
+        else:
+            test_worst = atmos_probe_formula(test_meta, test_probe, rays, camera_y, radiance_lut, profile)
+            result["test_media"] = dict(test_worst, fog_share=meta["test_media"]["fog_share"],
+                                        fog_density_at_base_per_m=test_meta["height_fog"]["density_at_base_per_m"],
+                                        min_fog_opacity=float(test_probe[0, :, 1].min()))
+            for key, tolerance in (("probe_sky_sample_max_rel", ATMOS_SAMPLE_TOLERANCE),
+                                   ("fog_transmittance_max_abs", ATMOS_FOG_T_TOLERANCE),
+                                   ("aerial_transmittance_max_rel", ATMOS_AERIAL_T_TOLERANCE),
+                                   ("aerial_scattering_max_rel", ATMOS_SAMPLE_TOLERANCE),
+                                   ("fog_ambient_max_rel", ATMOS_SAMPLE_TOLERANCE),
+                                   ("composite_max_rel", ATMOS_COMPOSITE_TOLERANCE)):
+                if not test_worst[key] <= tolerance:
+                    failures.append(f"検査用の割り振りの {key} が {test_worst[key]:.3g}（許容 {tolerance}）")
+            if not float(test_probe[0, :, 1].max()) > 0.0:
+                failures.append("検査用の割り振りに霧が無い（不透明度がすべて 0）")
 
     # 4g. 地表の照度: 太陽は大気の外の照度 × 地表の透過率、水平面は × sin(高度)。エンジンの太陽の方向光と同じ値
     ground = meta["ground_illuminance"]
@@ -2895,6 +2950,13 @@ def run_atmos_dump(capture_dir, views, verify):
               f"sun_normal_lux={ground.get('sun_normal_lux')} sky_horizontal_lux={ground.get('sky_horizontal_lux')} "
               f"sun_light={ground.get('sun_light_max_rel')} sun_t_vs_table={ground.get('sun_transmittance_vs_table_max_rel')} "
               f"inputs_current={int(bool(inputs_ok))}")
+        test = result.get("test_media")
+        if test:
+            print(f"REFERENCE_CHECK atmos_dump view={view} test_media fog_share={test['fog_share']:.3f} "
+                  f"fog_density={test['fog_density_at_base_per_m']:.4g} fog_t={test['fog_transmittance_max_abs']:.3g} "
+                  f"aerial_t={test['aerial_transmittance_max_rel']:.3g} aerial_s={test['aerial_scattering_max_rel']:.3g} "
+                  f"fog_ambient={test['fog_ambient_max_rel']:.3g} composite={test['composite_max_rel']:.3g} "
+                  f"probe_sky_sample={test['probe_sky_sample_max_rel']:.3g}")
         failures.extend(f"{view}: {failure}" for failure in result["failures"])
     report = {
         "mode": "atmos_dump",
@@ -3107,6 +3169,72 @@ def atmos_reference_set(settings, convergence):
         if rel <= ATMOS_REF_SET_TOLERANCE:
             return name, sets[name]["settings"], rel, newset_rel
     return "engine", settings, 0.0, newset_rel
+
+
+def atmos_ref_fog(reference, meta, probe, rays, haze_origin, camera_y, sun, sun_lux):
+    """検査用の割り振りの媒質（meta。atmos_test_media_meta）で評価した視線の値（probe）を、同じ媒質の正解 A・B と比べる
+    （地表への視線と、仰角 ATMOS_REF_HAZE_ELEVATIONS の視線の全方位・全距離）。霧の太陽の単一散乱は正解 B（A と同じ）と、
+    霧の周りの光はエンジンと同じ等方の近似の正解 A（霧の点の周りの光を Ψ とする）と、霧と空気遠近の散乱光の和（合成の順）は
+    正解 A の和と比べる。B との比と A ÷ B（多重散乱のモデルの差 sky_multiple_scattering）は記録だけ"""
+    fog = atmos_fog_settings(meta)
+    aerial = meta["aerial_perspective"]
+    names = ("fog_sun", "fog_multiple", "air_sun", "air_multiple")
+    rows = []
+    for index, ray in enumerate(rays):
+        if ray["kind"] != "ground" and ray["elevation_degrees"] not in ATMOS_REF_HAZE_ELEVATIONS:
+            continue
+        direction = np.array(ray["direction"], dtype=np.float64)
+        direction /= np.linalg.norm(direction)
+        distance = float(ray["distance_m"])
+        reference_values = {}
+        for version in ("A", "B"):
+            values, _ = reference.march(haze_origin, direction[None, :], sun, version, start=0.0, end=distance,
+                                        steps=ATMOS_REF_SEGMENT_STEPS, mie_scale=float(aerial["mie_density_scale"]),
+                                        fog=fog, origin_world_y=camera_y, air_start=float(aerial["start_distance_m"]))
+            reference_values[version] = {name: values[name][0] * sun_lux for name in names}
+            reference_values[version]["total"] = sum(reference_values[version][name] for name in names)
+        a = reference_values["A"]
+        b = reference_values["B"]
+        engine = {"fog_ambient": probe[9, index, :3], "fog_sun": probe[2, index, :3], "aerial_single": probe[7, index, :3],
+                  "aerial_multiple": probe[8, index, :3], "total": probe[6, index, :3]}
+        row = {"kind": ray["kind"], "azimuth_offset_deg": ray["azimuth_offset_degrees"],
+               "elevation_deg": ray["elevation_degrees"], "distance_m": distance, "fog_opacity": float(probe[0, index, 1]),
+               "engine": {key: value.tolist() for key, value in engine.items()},
+               "reference_A": {key: value.tolist() for key, value in a.items()},
+               "reference_B": {key: value.tolist() for key, value in b.items()},
+               "ambient_rel_A": atmos_relative_error(engine["fog_ambient"], a["fog_multiple"], ATMOS_RADIANCE_FLOOR),
+               "sun_rel_B": atmos_relative_error(engine["fog_sun"], b["fog_sun"], ATMOS_RADIANCE_FLOOR),
+               "aerial_single_rel_B": atmos_relative_error(engine["aerial_single"], b["air_sun"], ATMOS_RADIANCE_FLOOR),
+               "aerial_multiple_rel_A": atmos_relative_error(engine["aerial_multiple"], a["air_multiple"],
+                                                             ATMOS_RADIANCE_FLOOR),
+               "sum_rel_A": atmos_relative_error(engine["total"], a["total"], ATMOS_RADIANCE_FLOOR),
+               "ambient_over_A": atmos_ratio(engine["fog_ambient"], a["fog_multiple"]),
+               "ambient_over_B": atmos_ratio(engine["fog_ambient"], b["fog_multiple"]),
+               "ambient_A_over_B": atmos_ratio(a["fog_multiple"], b["fog_multiple"]),
+               "sun_over_B": atmos_ratio(engine["fog_sun"], b["fog_sun"]),
+               "sum_over_A": atmos_ratio(engine["total"], a["total"]),
+               "sum_over_B": atmos_ratio(engine["total"], b["total"]),
+               "sum_A_over_B": atmos_ratio(a["total"], b["total"]),
+               "ambient_share_of_sum": atmos_ratio(engine["fog_ambient"], engine["total"])}
+        rows.append(row)
+
+    def spread(key):
+        values = [float(row[key]) for row in rows]
+        return [min(values), max(values)] if values else [float("nan"), float("nan")]
+
+    def worst(key):
+        return max((float(row[key]) for row in rows), default=float("nan"))
+
+    return {"share": float(meta["test_media"]["fog_share"]),
+            "fog_density_at_base_per_m": float(fog["density_at_base_per_m"]),
+            "aerial_mie_density_scale": float(aerial["mie_density_scale"]),
+            "min_fog_opacity": min((row["fog_opacity"] for row in rows), default=0.0),
+            "ambient_max_rel": worst("ambient_rel_A"), "sun_max_rel": worst("sun_rel_B"), "sum_max_rel": worst("sum_rel_A"),
+            "aerial_single_max_rel": worst("aerial_single_rel_B"), "aerial_multiple_max_rel": worst("aerial_multiple_rel_A"),
+            "ambient_over_A": spread("ambient_over_A"), "ambient_over_B": spread("ambient_over_B"),
+            "ambient_A_over_B": spread("ambient_A_over_B"), "sun_over_B": spread("sun_over_B"),
+            "sum_over_A": spread("sum_over_A"), "sum_over_B": spread("sum_over_B"), "sum_A_over_B": spread("sum_A_over_B"),
+            "ambient_share_of_sum": spread("ambient_share_of_sum"), "rays": len(rows), "rows": rows}
 
 
 def atmos_ref_view(capture_dir, view, convergence=None):
@@ -3374,6 +3502,17 @@ def atmos_ref_view(capture_dir, view, convergence=None):
             "multiple_A_over_B": spread("air_multiple_A_over_B"),
             "rays": len(distance_rows),
         }
+    # 霧の周りの光と合成の順（SCN-WL-SKY-SCATTER-FOG）: 荒野は霧の割合が 0 なので、書き出しの検査用の割り振り（test_media。
+    # 空気遠近の Mie の一部を高さフォグへ移した媒質）で同じ視線を評価した値を、同じ媒質の正解と比べる（atmos_ref_fog）
+    test_meta = atmos_test_media_meta(meta)
+    if test_meta is not None:
+        test_probe, reason = atmos_read_floats(capture_dir, meta["test_media"])
+        if reason:
+            failures.append(f"test_media: {reason}")
+        else:
+            result["fog"] = atmos_ref_fog(reference, test_meta, test_probe, rays, haze_origin, camera_y, sun, sun_lux)
+            if not result["fog"]["min_fog_opacity"] > 0.0:
+                failures.append("検査用の割り振りに霧が無い視線がある（不透明度 0）")
     # 同じ媒質の透過率がエンジンと合う（平らな地面の解析式と球の上の数値積分の差だけ）ことで、媒質の読み違いが無いことを確かめる。
     # 空気遠近は光学的深さの相対差で判定する。地面の曲がりの差は光学的深さの約 1.4 %（30 km の地表への視線）で媒質の濃さに
     # 依らないが、透過率の相対差は光学的深さに比例して大きくなる（霞を空の大気の Mie そのままにすると 30 km で 2.2 %）。
@@ -3473,6 +3612,20 @@ def run_atmos_ref(capture_dir, views, verify, expect=None):
                       f"total_over_B={aerial_summary['total_over_B'][0]:.4f}..{aerial_summary['total_over_B'][1]:.4f} "
                       f"multiple_A_over_B={aerial_summary['multiple_A_over_B'][0]:.4f}..{aerial_summary['multiple_A_over_B'][1]:.4f} "
                       f"rays={aerial_summary['rays']}")
+            fog_summary = result.get("fog")
+            if fog_summary:
+                def span(key):
+                    return f"{fog_summary[key][0]:.4f}..{fog_summary[key][1]:.4f}"
+                print(f"REFERENCE_CHECK atmos_ref view={view} fog share={fog_summary['share']:.3f} "
+                      f"density={fog_summary['fog_density_at_base_per_m']:.4g} "
+                      f"aerial_mie_scale={fog_summary['aerial_mie_density_scale']:.3f} "
+                      f"ambient_max_rel_A={fog_summary['ambient_max_rel']:.4f} sun_max_rel_B={fog_summary['sun_max_rel']:.4f} "
+                      f"sum_max_rel_A={fog_summary['sum_max_rel']:.4f} "
+                      f"aerial_single_max_rel_B={fog_summary['aerial_single_max_rel']:.4f} "
+                      f"aerial_multiple_max_rel_A={fog_summary['aerial_multiple_max_rel']:.4f} "
+                      f"ambient_over_B={span('ambient_over_B')} ambient_A_over_B={span('ambient_A_over_B')} "
+                      f"sun_over_B={span('sun_over_B')} sum_over_B={span('sum_over_B')} "
+                      f"sum_A_over_B={span('sum_A_over_B')} rays={fog_summary['rays']}")
             haze = result.get("haze")
             if haze:
                 print(f"REFERENCE_CHECK atmos_ref view={view} haze_over_sky_mie ground_min={haze['ground_ratio_min']:.4f} "

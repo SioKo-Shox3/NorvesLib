@@ -221,8 +221,14 @@ namespace NorvesLib::Core::Rendering
 
     /** @brief 大気の書き出し（AtmosphereProbePass）が評価する視線の数の上限（volumetrics_probe.frag の kAtmosphereProbeMaxRays と同じ） */
     inline constexpr uint32_t FrameCaptureAtmosphereMaxRays = 256u;
-    /** @brief 大気の書き出しの画像の行の数（行の意味は AtmosphereProbePass と SaveCapturedAtmosphere の約束） */
+    /** @brief 大気の書き出しの 1 つの媒質の行の数（行の意味は AtmosphereProbePass と SaveCapturedAtmosphere の約束） */
     inline constexpr uint32_t FrameCaptureAtmosphereProbeRows = 10u;
+    /**
+     * @brief 大気の書き出しが同じ視線を評価する媒質の数（画像の行は媒質ごとに FrameCaptureAtmosphereProbeRows ずつ並ぶ）
+     *
+     * 0 番はそのフレームの媒質、1 番は検査用の割り振り（FrameCaptureAtmosphereTestMedia）。
+     */
+    inline constexpr uint32_t FrameCaptureAtmosphereMediumCount = 2u;
     /** @brief 霧と空気遠近を一緒に積む視線の歩数（Common/VolumetricsCommon.glsl の kAtmosphereSteps と同じ。書き出しに記録する） */
     inline constexpr uint32_t VolumetricsAtmosphereMarchSteps = 32u;
 
@@ -248,6 +254,24 @@ namespace NorvesLib::Core::Rendering
         float Direction[3] = {0.0f, 1.0f, 0.0f};
         /** @brief 評価した視線の長さ m */
         float DistanceMeters = 0.0f;
+    };
+
+    /**
+     * @brief 大気の書き出しの検査用の媒質: そのフレームの空気遠近の Mie の一部を高さフォグへ移した割り振り
+     *
+     * 霞を空の大気の Mie そのものとして高さフォグと空気遠近で割り振るシーン（荒野）で、霧の割合が 0 でも霧の式を正解と
+     * 比べられるようにする。高さフォグはワールドの y = 0 を基準に、その高度の空気遠近の Mie の消散係数 × FogShare の密度で、
+     * 空の Mie と同じ尺度高さで薄くする。空気遠近の Mie の密度の倍率は × (1 − FogShare)。描画には使わない。
+     */
+    struct FrameCaptureAtmosphereTestMedia
+    {
+        bool bValid = false;
+        float FogShare = 0.0f;
+        VolumetricFogParameters Fog;
+        AerialPerspectiveParameters Aerial;
+        /** @brief 空気遠近の定数（Mie は密度の倍率を掛けた後） */
+        float MieExtinction = 0.0f;
+        float MieScattering = 0.0f;
     };
 
     /**
@@ -279,6 +303,8 @@ namespace NorvesLib::Core::Rendering
         float MieExtinction = 0.0f;
         float MieScattering = 0.0f;
         float TransmittanceLutObserverV = 0.0f;
+        /** @brief 画像の 2 番目の媒質の行を評価した検査用の割り振り */
+        FrameCaptureAtmosphereTestMedia TestMedia;
         uint32_t RayCount = 0;
         FrameCaptureAtmosphereRay Rays[FrameCaptureAtmosphereMaxRays];
     };

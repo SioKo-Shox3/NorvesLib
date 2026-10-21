@@ -6663,3 +6663,26 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `verify-SCN-WL-SKY-SCATTER-8.txt` 回帰の after result=pass（4 シーンとも平均の差 0.000、PSNR 67.1〜∞）。rendering3dtest の after を開き、天球・地面・球・岩が変わらないことを確かめた
 - Notes: 6 視点と写真の並べは反復 39 のもの（`scene-capture/SCN-WL-SKY-SCATTER-views`）。それ以後のコミットは影のパスの株と植物の正解で、大気の値は変わらない（上の数値が反復 39 と同じ）。新しい試験は足していない
 - Next: SCN-WL-SKY-SCATTER-FOG
+
+### SCN-WL-SKY-SCATTER-FOG 完了（2026-10-22、run 20261021-055341 の反復 45）
+- Done:
+  - 大気の書き出しが同じ視線を 2 組の媒質で評価する（画像は媒質ごとに 10 行 × 2）。1 組目はそのフレーム、2 組目は検査用の割り振り（空気遠近の Mie の 0.37 を高さフォグへ移し、空気遠近の Mie は 0.63 倍。`AtmosphereProbePass::TestMediaFogShare`、`FrameCaptureAtmosphereTestMedia`）。書き出しの `test_media` に媒質と `<視点>.atmos.probe_test_media.f32` を記録する。描画には使わない
+  - 霧の周りの光の式: 空気遠近が有効なときは、視線の向きの空の輝度の代わりに各点の空の多重散乱の表 Ψ_ms × 霧の散乱係数 × 透過率を積む（`Common/VolumetricsCommon.glsl` の `MarchFogAndAerial`）。変更前の式は検査用の割り振りで正解 B の 1.29〜1.63 倍だった（式の写しの見積もり）。霧だけのシーンの式は変えていない
+  - `ReferenceCheck.py`: `--atmos-ref` に霧の節（`atmos_ref_fog`。霧の太陽の単一散乱を B と、霧の周りの光と和を A と比べ、B との比と A ÷ B を記録）、`--atmos-dump` に検査用の割り振りの式の写しの検査（霧の周りの光の写しも Ψ_ms の式へ）。`ExpectSpec.py` に量（`fog_test_share`・`fog_ambient`・`fog_sun_single`・`fog_aerial_sum`）、仕様 `sky-scatter-fog.json`
+  - 記録 `Docs/RenderingValidation/WastelandAtmosphereReference.md` の「霧の周りの光と合成の順を検査用の割り振りで比べる」。`kHazeFogShare` のコメントを今の式に合わせた（値は 0 のまま）
+- 証拠（`.harness/runs/20261021-055341/`）:
+  - `aux-SCN-WL-SKY-SCATTER-FOG-regression-before.txt` 反復の最初の回帰の before（編集の前）result=pass・EXIT=0
+  - `aux-SCN-WL-SKY-SCATTER-FOG-predict.txt`（台本 `-predict.py`）変更前の撮影の定数で、霧の周りの光の前の式と Ψ_ms の式を写して B・A と比べた見積もり
+  - `verify-SCN-WL-SKY-SCATTER-FOG-1〜4.txt` は `kHazeFogShare` のコメントを直す前の 1 回目（すべて合格）。入力のハッシュを今のソースに合わせるため、最終のソースで 5〜8 を回し直した
+  - `verify-SCN-WL-SKY-SCATTER-FOG-5.txt` Debug の Game のビルド EXIT=0
+  - `verify-SCN-WL-SKY-SCATTER-FOG-6.txt` ref_ground_02 の atmosphere-dump の撮影 result=pass・EXIT=0
+  - `verify-SCN-WL-SKY-SCATTER-FOG-7.txt` `--atmos-ref --expect sky-scatter-fog.json --verify` result=pass・inputs_current=1・5 行合格: newset との差 3.6e-9、割合 0.370、霧の太陽の単一散乱 ÷ B の差 2.8 %（0.981〜1.000）、霧の周りの光 ÷ A の差 0.33 %、和 ÷ A の差 0.49 %。記録: 霧の周りの光 ÷ B 0.568〜0.915（A ÷ B 0.568〜0.914）、和 ÷ B 0.846〜0.949（A ÷ B 0.846〜0.950）。既定の媒質の空気遠近の値は SCN-WL-SKY-SCATTER と同じ
+  - `aux-SCN-WL-SKY-SCATTER-FOG-atmos-dump.txt` `--atmos-dump --verify` result=pass（検査用の割り振りの GPU と式の写しの差: 霧の透過率 8e-6、霧の周りの光 7.6e-5、合成 7e-8）
+  - `verify-SCN-WL-SKY-SCATTER-FOG-8.txt` 回帰の after result=pass（4 シーンとも平均の差 0.000、PSNR 63.6〜∞）。rendering3dtest の after を開き、天球・地面・球・岩が変わらないことを確かめた
+  - `aux-SCN-WL-SKY-SCATTER-FOG-ground02-diff.txt` 荒野の ref_ground_02 を SCN-WL-SKY-SCATTER の撮影と比べた差（平均 0.0002、4 段を超える画素 0.03 %、遠景と株の所）。画像を開き、見た目が変わらないことを確かめた
+- Notes:
+  - done-when の「同じ媒質の正解 B と 5 %」は、霧の太陽の単一散乱だけを B と比べた。霧の周りの光が 5 % を超えたので、done-when のとおり式を直し、直した式の B との差が A ÷ B と同じ（霧の周りの光 0.003・和 0.005 以内）ことを示して、霧の周りの光と和は同じ近似の正解 A と 5 % にした（SCN-WL-SKY-SCATTER の空気遠近と同じ分け方）。B との比は記録だけ
+  - 霧の太陽の単一散乱の 2.8 % は太陽の側の仰角 2°・30 km で、霧の太陽にカメラの高度の照度を使う分
+  - 霧へ割り振るか（影つきの霞）は決めていない。直した式で 0.37 にしたときの遠い山の見た目は撮っていない
+  - 新しい試験は足していない
+- Next: TASKS.md の次の未完の項目

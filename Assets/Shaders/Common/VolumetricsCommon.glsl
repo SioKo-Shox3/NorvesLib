@@ -285,7 +285,8 @@ struct VolumetricsRayResult
     float FogOpacity;
     // 高さフォグの周りの光の色（空の放射輝度 LUT の視線の向きの値か、LUT が無いときの既定の色。負は 0）
     vec3 FogRadiance;
-    // 高さフォグの周りの光（FogRadiance × 霧の散乱係数 × 透過率を視線で積んだ値。空気遠近が無効なら × 不透明度）
+    // 高さフォグの周りの光。空気遠近が有効なら、各点の空の多重散乱の表 Ψ_ms（高度ごとの表）× 霧の散乱係数 × 透過率を
+    // 視線で積んだ値。無効なら FogRadiance × 不透明度
     vec3 FogAmbient;
     // 高さフォグの太陽の単一散乱（影つき）。不透明度が 0 のときは数えない
     vec3 FogDirectional;
@@ -299,8 +300,9 @@ struct VolumetricsRayResult
 // 空気遠近が有効なとき: 霧と空の媒質（Rayleigh・Mie）を 1 本の視線で一緒に進め、各点の散乱光をその点までの両方の透過率で減らして
 // 積む（霧を手前・空気遠近を奥と決めて重ねない）。空の媒質の高度は球の上で数え（カメラの位置にワールドの y = 0 の高度を足した点から）、
 // 掛け始める距離より手前は数えない。各点の空の散乱の源は空の LUT と同じ大気の値で、太陽の単一散乱（Rayleigh と Mie の位相 ×
-// 高度ごとの表の太陽の照度 × 透過率）と多重散乱（散乱係数 × 表の Ψ_ms）。霧は太陽の単一散乱（影つき）と周りの光（空の放射輝度 LUT の
-// 視線の向きの値）を散乱する。中点則で kAtmosphereSteps 歩
+// 高度ごとの表の太陽の照度 × 透過率）と多重散乱（散乱係数 × 表の Ψ_ms）。霧は太陽の単一散乱（影つき）と周りの光を散乱する。
+// 霧の周りの光は空の媒質と同じ多重散乱の表 Ψ_ms（等方の近似）で数える。視線の向きの空の輝度を使うと、その輝度が視線の奥の
+// 太陽の散乱まで含むので、霧の点の周りの光を多く数える（正解 B の 1.3〜1.6 倍）。中点則で kAtmosphereSteps 歩
 void MarchFogAndAerial(vec3 rayDirection, float rayDistance, inout VolumetricsRayResult result)
 {
     float startDistance = max(params.aerialPerspective.z, 0.0);
@@ -324,7 +326,7 @@ void MarchFogAndAerial(vec3 rayDirection, float rayDistance, inout VolumetricsRa
     float fogDepth = 0.0;
     vec3 single = vec3(0.0);
     vec3 multiple = vec3(0.0);
-    vec3 fogAmbientWeight = vec3(0.0);
+    vec3 fogAmbient = vec3(0.0);
     vec3 fogDirectional = vec3(0.0);
     for (int stepIndex = 0; stepIndex < kAtmosphereSteps; ++stepIndex)
     {
@@ -358,7 +360,7 @@ void MarchFogAndAerial(vec3 rayDirection, float rayDistance, inout VolumetricsRa
         multiple += transmittance * (rayleighScattering + vec3(mieScattering)) * multipleScattering * stepLength;
         if (fogScattering > 0.0)
         {
-            fogAmbientWeight += transmittance * (fogScattering * stepLength);
+            fogAmbient += transmittance * multipleScattering * (fogScattering * stepLength);
             if (bFogDirectional)
             {
                 vec3 samplePosition = params.cameraPositionAndPreExposure.xyz + rayDirection * sampleDistance;
@@ -380,7 +382,7 @@ void MarchFogAndAerial(vec3 rayDirection, float rayDistance, inout VolumetricsRa
     result.AerialScattering = result.AerialSingle + result.AerialMultiple;
     if (result.FogOpacity > 0.0)
     {
-        result.FogAmbient = result.FogRadiance * fogAmbientWeight;
+        result.FogAmbient = fogAmbient;
         result.FogDirectional = fogDirectional;
     }
 }

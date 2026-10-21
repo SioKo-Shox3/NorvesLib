@@ -2,6 +2,7 @@
 
 // 撮影の大気の書き出し（--atmosphere-dump）: 決めた視線ごとに、volumetrics.frag と同じ式（Common/VolumetricsCommon.glsl）で
 // 高さフォグと空気遠近を評価し、事前露出の前の値を書く。横 = 視線の番号、縦 = 値の種類（AtmosphereProbePass の行の約束）。
+// 媒質ごとに定数を替えて描き分けるので、縦はこの描画の媒質の最初の行（rayCount.y）から数える。
 
 layout(location = 0) in vec2 fragUV;
 layout(location = 0) out vec4 outColor;
@@ -12,14 +13,14 @@ const uint kAtmosphereProbeMaxRays = 256u;
 
 layout(std140, set = 0, binding = 5) uniform AtmosphereProbeRays
 {
-    uvec4 rayCount;                       // x = 視線の数
+    uvec4 rayCount;                       // x = 視線の数, y = この描画の媒質の最初の行
     vec4 rays[kAtmosphereProbeMaxRays];   // xyz = カメラからの向き（ワールド）, w = 距離 m
 } probe;
 
 void main()
 {
     uint rayIndex = uint(gl_FragCoord.x);
-    uint row = uint(gl_FragCoord.y);
+    uint row = uint(gl_FragCoord.y) - probe.rayCount.y;
     if (rayIndex >= min(probe.rayCount.x, kAtmosphereProbeMaxRays))
     {
         outColor = vec4(0.0);

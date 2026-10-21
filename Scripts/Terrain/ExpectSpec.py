@@ -31,6 +31,11 @@
 #       エンジンの空と同じ論文の近似の正解 A と比べる。
 #       newset_settings: 書き出しの空の設定と、正解の組 newset（AtmosphereReference.py --verify が収束を確かめた設定）の数値の
 #       相対差の最大（reference_set.newset_max_rel）。
+#       fog_test_share・fog_ambient・fog_sun_single・fog_aerial_sum: 書き出しの検査用の割り振り（test_media。空気遠近の Mie の
+#       一部を高さフォグへ移した媒質）で評価した霧の視線の値（fog。地表への視線と、仰角 0°・2° の視線の全方位・全距離）。
+#       fog_test_share は高さフォグへ移した割合。fog_ambient は霧の周りの光の、同じ近似の正解 A との RGB の相対差の最大、
+#       fog_sun_single は霧の太陽の単一散乱の正解 B（A と同じ）との、fog_aerial_sum は霧と空気遠近の散乱光の和（合成の順）の
+#       正解 A の和との RGB の相対差の最大。
 #       psi_grid・psi_cell: 多重散乱の表 Ψ_ms のエンジン ÷ 正解 A の、1 との差の絶対値の最大。psi_grid は表の格子点
 #       （psi_summary.grid_max_rel）、psi_cell は格子のセルの中心で表を補間した値（psi_summary.center_max_rel）。
 #       どちらも高度 10 km まで・太陽が地平線より上
@@ -87,6 +92,10 @@ ATMOS_REF_QUANTITIES = {"sun_transmittance": (("illuminance", "valley_floor"), "
                         "aerial_multiple": (("aerial",), "multiple_max_rel"),
                         "newset_settings": (("reference_set",), "newset_max_rel"),
                         "haze_optical_depth": (("haze",), "ground_max_rel"),
+                        "fog_test_share": (("fog",), "share"),
+                        "fog_ambient": (("fog",), "ambient_max_rel"),
+                        "fog_sun_single": (("fog",), "sun_max_rel"),
+                        "fog_aerial_sum": (("fog",), "sum_max_rel"),
                         "psi_grid": (("psi_summary",), "grid_max_rel"),
                         "psi_cell": (("psi_summary",), "center_max_rel")}
 # building の量 → 視点の検査の結果の (節, 鍵)

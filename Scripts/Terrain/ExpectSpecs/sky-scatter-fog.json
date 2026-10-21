@@ -1,0 +1,41 @@
+{
+  "description": "SCN-WL-SKY-SCATTER-FOG: 霧の周りの光と、霧と空気遠近を 1 本の視線で一緒に積む合成の順の合否。荒野の既定の霧の割合は 0（kHazeFogShare）なので、ref_ground_02 の大気の書き出しが同じ視線を検査用の割り振り（test_media。空気遠近の Mie の 0.37 を高さフォグへ移し、空気遠近の Mie は 0.63 倍）でもう一度評価した値を、同じ媒質の newset の正解（ReferenceCheck.py --atmos-ref）と比べる（地表への視線と仰角 0°・2° の視線の 4 方位 × 300 m〜30 km）。霧の太陽の単一散乱は正解 B（A と B で同じ）と 5 % 以内。霧の周りの光は空の多重散乱の表 Ψ_ms で数える（視線の向きの空の輝度を使う前の式は正解 B の 1.29〜1.63 倍で、この仕様に落ちる）ので、同じ等方の近似の正解 A と 5 % 以内。霧と空気遠近の散乱光の和（合成の順）は正解 A の和と 5 % 以内。霧の周りの光と和の正解 B との比、A ÷ B（多重散乱のモデルの差 sky_multiple_scattering）は記録だけ。",
+  "rows": [
+    {
+      "mode": "atmos_ref",
+      "view": "ref_ground_02",
+      "quantity": "newset_settings",
+      "max": 1e-06,
+      "note": "書き出しの空の設定と、正解の組 newset の設定の数値の相対差の最大（同じ設定で描いていること）"
+    },
+    {
+      "mode": "atmos_ref",
+      "view": "ref_ground_02",
+      "quantity": "fog_test_share",
+      "min": 0.369,
+      "max": 0.371,
+      "note": "検査用の割り振りで高さフォグへ移した空気遠近の Mie の割合（SCN-WL-HAZE-ONE-MEDIUM で試した 0.37）"
+    },
+    {
+      "mode": "atmos_ref",
+      "view": "ref_ground_02",
+      "quantity": "fog_sun_single",
+      "max": 0.05,
+      "note": "霧の太陽の単一散乱 ÷ 同じ媒質の正解 B の、RGB の相対差の最大（霧の光を空気遠近の透過率でも減らしていること）"
+    },
+    {
+      "mode": "atmos_ref",
+      "view": "ref_ground_02",
+      "quantity": "fog_ambient",
+      "max": 0.05,
+      "note": "霧の周りの光 ÷ 同じ媒質の正解 A（霧の点の周りの光を等方の Ψ とする、エンジンの空と同じ近似）の、RGB の相対差の最大"
+    },
+    {
+      "mode": "atmos_ref",
+      "view": "ref_ground_02",
+      "quantity": "fog_aerial_sum",
+      "max": 0.05,
+      "note": "霧と空気遠近の散乱光の和（合成の行）÷ 同じ媒質の正解 A の和の、RGB の相対差の最大"
+    }
+  ]
+}

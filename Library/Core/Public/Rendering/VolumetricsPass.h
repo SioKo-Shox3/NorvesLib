@@ -70,7 +70,9 @@ namespace NorvesLib::Core::Rendering
      * @brief 撮影の大気の書き出し（--atmosphere-dump）: 決めた視線の高さフォグと空気遠近を、VolumetricsPass と同じ式・同じ定数で評価する
      *
      * volumetrics.frag と共有の include（Common/VolumetricsCommon.glsl）を volumetrics_probe.frag で、カメラの位置から
-     * 決めた視線ごとに評価し、事前露出の前の値を RGBA32F の 1 枚（横 = 視線、縦 = FrameCaptureAtmosphereProbeRows の値の種類）へ書く。
+     * 決めた視線ごとに評価し、事前露出の前の値を RGBA32F の 1 枚（横 = 視線、縦 = 媒質ごとに FrameCaptureAtmosphereProbeRows の
+     * 値の種類）へ書く。媒質は FrameCaptureAtmosphereMediumCount 組で、0 番はそのフレームの定数、1 番は空気遠近の Mie の
+     * TestMediaFogShare を高さフォグへ移した検査用の割り振り（GetLastInfo().TestMedia。霧の割合が 0 のシーンでも霧の式を測る）。
      * 1 枚はグラフの外へ出し（RenderGraphResourceNames::CaptureAtmosphereProbe）、撮影の読み出しが同じフレームから写す。
      * シーンの色へは書かない。視線（GetLastInfo().Rays）:
      *   Direction: 太陽の方位からの方位差 kAzimuthOffsetsDegrees × 仰角 kElevationsDegrees の向きに、距離 kDistancesMeters まで
@@ -86,13 +88,16 @@ namespace NorvesLib::Core::Rendering
      *   6: volumetrics.frag がシーンの色へ足す光（行 9 + 行 2 + 行 4）、a = 合成のアルファ
      *   7: 空気遠近の太陽の単一散乱
      *   8: 空気遠近の多重散乱（空の多重散乱の表 Ψ_ms から）
-     *   9: 高さフォグの周りの光（行 1 の色 × 霧の散乱係数 × 透過率を視線で積んだ値。空気遠近が無効なら × 不透明度）
+     *   9: 高さフォグの周りの光（空気遠近が有効なら空の多重散乱の表 Ψ_ms × 霧の散乱係数 × 透過率を視線で積んだ値、
+     *      無効なら行 1 の色 × 不透明度）
      */
     class AtmosphereProbePass : public IViewPass, public IRenderGraphPass
     {
     public:
         /// Ground の視線の地表を、カメラからこの高さ（m）だけ下の水平面とみなす（荒野の視点の目の高さ）
         static constexpr float GroundEyeHeightMeters = 1.7f;
+        /// 検査用の割り振りで高さフォグへ移す空気遠近の Mie の割合（荒野で霞を霧へ割り振ったときに試した値）
+        static constexpr float TestMediaFogShare = 0.37f;
 
         /** @brief 環境変数 NORVES_ATMOSPHERE_DUMP が 1 か（Game の --atmosphere-dump が描画の初期化の前に置く） */
         static bool IsRequestedByEnvironment();

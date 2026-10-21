@@ -572,7 +572,7 @@ namespace NorvesLib::Core::Rendering
         if (!frame.IsSuccess() || !atmosphere.bValid || !info.bValid || info.RayCount == 0u ||
             info.RayCount > FrameCaptureAtmosphereMaxRays || probe.Format != RHI::Format::R32G32B32A32_FLOAT ||
             probe.BytesPerPixel != 16u || probe.Width != info.RayCount ||
-            probe.Height != FrameCaptureAtmosphereProbeRows ||
+            probe.Height != FrameCaptureAtmosphereProbeRows * FrameCaptureAtmosphereMediumCount ||
             probe.RowPitchBytes < static_cast<uint64_t>(probe.Width) * probe.BytesPerPixel ||
             probe.Pixels.size() < static_cast<size_t>(probe.RowPitchBytes) * probe.Height)
         {
@@ -580,14 +580,20 @@ namespace NorvesLib::Core::Rendering
         }
         const String basePath = RemoveExtension(pngPath);
 
-        // 決めた視線の値（GPU が volumetrics.frag と同じ式で評価したもの）: [行, 視線, RGBA]
-        VariableArray<float> probeValues;
-        probeValues.resize(static_cast<size_t>(probe.Height) * probe.Width * 4u);
-        for (uint32_t row = 0; row < probe.Height; ++row)
+        // 決めた視線の値（GPU が volumetrics.frag と同じ式で評価したもの）: 媒質ごとに [行, 視線, RGBA]
+        // （0 番 = そのフレームの媒質、1 番 = 検査用の割り振り）
+        VariableArray<float> mediumProbeValues[FrameCaptureAtmosphereMediumCount];
+        for (uint32_t medium = 0; medium < FrameCaptureAtmosphereMediumCount; ++medium)
         {
-            std::memcpy(probeValues.data() + static_cast<size_t>(row) * probe.Width * 4u,
-                        probe.Pixels.data() + static_cast<size_t>(row) * probe.RowPitchBytes,
-                        static_cast<size_t>(probe.Width) * 16u);
+            VariableArray<float>& values = mediumProbeValues[medium];
+            values.resize(static_cast<size_t>(FrameCaptureAtmosphereProbeRows) * probe.Width * 4u);
+            for (uint32_t row = 0; row < FrameCaptureAtmosphereProbeRows; ++row)
+            {
+                const uint32_t sourceRow = medium * FrameCaptureAtmosphereProbeRows + row;
+                std::memcpy(values.data() + static_cast<size_t>(row) * probe.Width * 4u,
+                            probe.Pixels.data() + static_cast<size_t>(sourceRow) * probe.RowPitchBytes,
+                            static_cast<size_t>(probe.Width) * 16u);
+            }
         }
 
         // 空の LUT と前計算の表（SkyAtmospherePass が同じパラメータで作る値。CPU で決まるので作り直して同じ値になる）
@@ -617,13 +623,14 @@ namespace NorvesLib::Core::Rendering
             VariableArray<char> Name;
         };
         FloatFile files[] = {
-            {TEXT(".atmos.probe.f32"), probeValues, {}},
+            {TEXT(".atmos.probe.f32"), mediumProbeValues[0], {}},
             {TEXT(".atmos.transmittance_lut.f32"), HalfTexelsToFloats(transmittanceTexels), {}},
             {TEXT(".atmos.radiance_lut.f32"), HalfTexelsToFloats(radianceTexels), {}},
             {TEXT(".atmos.transmittance_table.f32"), TableToFloats(transmittanceTable), {}},
             {TEXT(".atmos.multiple_scattering.f32"), TableToFloats(multipleScatteringTable), {}},
             {TEXT(".atmos.sky_view.f32"), TableToFloats(skyViewTable), {}},
             {TEXT(".atmos.aerial_profile.f32"), AerialProfileToFloats(aerialProfile), {}},
+            {TEXT(".atmos.probe_test_media.f32"), mediumProbeValues[1], {}},
         };
         for (FloatFile& file : files)
         {
@@ -813,7 +820,7 @@ namespace NorvesLib::Core::Rendering
 
         // 決めた視線の値（行の意味は AtmosphereProbePass の説明と同じ）
         AppendFormat(json, "  \"probe\": {");
-        AppendFileEntry(json, files[0].Name, probe.Height, probe.Width, 4u);
+        AppendFileEntry(json, files[0].Name, FrameCaptureAtmosphereProbeRows, probe.Width, 4u);
         AppendFormat(json, ", \"ground_eye_height_m\": ");
         AppendNumber(json, info.GroundEyeHeightMeters);
         AppendFormat(json, ",\n    \"rows\": ["
@@ -843,7 +850,29 @@ namespace NorvesLib::Core::Rendering
             AppendVector3(json, ray.Direction);
             AppendFormat(json, rayIndex + 1u < info.RayCount ? "},\n" : "}\n");
         }
-        AppendFormat(json, "    ]\n  }\n}\n");
+        AppendFormat(json, "    ]\n  },\n");
+
+        // 検査用の割り振り（空気遠近の Mie の一部を高さフォグへ移した媒質）で同じ視線を評価した値（行の意味は probe と同じ）
+        const FrameCaptureAtmosphereTestMedia& testMedia = info.TestMedia;
+        AppendFormat(json, "  \"test_media\": {\"valid\": %s, \"fog_share\": ", testMedia.bValid ? "true" : "false");
+        AppendNumber(json, testMedia.FogShare);
+        AppendFormat(json, ", ");
+        AppendFileEntry(json, files[7].Name, FrameCaptureAtmosphereProbeRows, probe.Width, 4u);
+        AppendFormat(json, ", \"rows\": \"same_as_probe\",\n    \"height_fog\": {\"enabled\": %s, \"density_at_base_per_m\": ",
+                     testMedia.Fog.bEnabled ? "true" : "false");
+        AppendNumber(json, testMedia.Fog.DensityAtBaseHeight);
+        AppendFormat(json, ", \"base_height_m\": ");
+        AppendNumber(json, testMedia.Fog.BaseHeight);
+        AppendFormat(json, ", \"height_falloff_per_m\": ");
+        AppendNumber(json, testMedia.Fog.HeightFalloffPerUnit);
+        AppendFormat(json, "},\n    \"aerial_perspective\": {\"enabled\": %s, \"mie_density_scale\": ",
+                     testMedia.Aerial.bEnabled ? "true" : "false");
+        AppendNumber(json, testMedia.Aerial.MieDensityScale);
+        AppendFormat(json, ", \"shader_mie_extinction_per_m\": ");
+        AppendNumber(json, testMedia.MieExtinction);
+        AppendFormat(json, ", \"shader_mie_scattering_per_m\": ");
+        AppendNumber(json, testMedia.MieScattering);
+        AppendFormat(json, "}\n  }\n}\n");
         return WriteBytes(basePath + String(TEXT(".atmos.json")), json.data(), json.size());
     }
 #else

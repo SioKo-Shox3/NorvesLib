@@ -825,6 +825,35 @@ namespace NorvesLib::Core::Rendering
             float Rays[FrameCaptureAtmosphereMaxRays][4];
         };
 
+        // 検査用の割り振り（FrameCaptureAtmosphereTestMedia）: そのフレームの空気遠近の Mie の TestMediaFogShare を高さフォグへ移す。
+        // 高さフォグはそのフレームの値を置き換える（ワールドの y = 0 を基準に、その高度の空気遠近の Mie の消散係数 × 割合の密度で、
+        // 空の Mie と同じ尺度高さで薄くする）。空気遠近が無効なら作らない（bValid = false）
+        FrameCaptureAtmosphereTestMedia BuildAtmosphereTestMedia(const SkyAtmosphereParameters& sky,
+                                                                 const VolumetricFogParameters& fog,
+                                                                 const AerialPerspectiveParameters& aerial)
+        {
+            FrameCaptureAtmosphereTestMedia media;
+            media.FogShare = AtmosphereProbePass::TestMediaFogShare;
+            media.Fog = fog;
+            media.Aerial = aerial;
+            if (!aerial.bEnabled || !(sky.MieScaleHeightMeters > 0.0f))
+            {
+                return media;
+            }
+            const float originMieExtinction = GetAtmosphereGroundExtinction(sky).Mie * aerial.MieDensityScale *
+                                              std::exp(-aerial.OriginAltitudeMeters / sky.MieScaleHeightMeters);
+            VolumetricFogParameters testFog;
+            testFog.bEnabled = true;
+            testFog.DensityAtBaseHeight = media.FogShare * originMieExtinction;
+            testFog.BaseHeight = 0.0f;
+            testFog.HeightFalloffPerUnit = 1.0f / sky.MieScaleHeightMeters;
+            media.Fog = SanitizeVolumetricFogParameters(testFog);
+            media.Aerial.MieDensityScale = aerial.MieDensityScale * (1.0f - media.FogShare);
+            media.Aerial = SanitizeAerialPerspectiveParameters(media.Aerial);
+            media.bValid = true;
+            return media;
+        }
+
         RHI::DescriptorSetDesc CreateAtmosphereProbeDescriptorSetDesc()
         {
             RHI::DescriptorSetDesc desc = CreateVolumetricsDescriptorSetDesc();
@@ -1089,7 +1118,7 @@ namespace NorvesLib::Core::Rendering
 
         BuildRays(m_SkyParameters);
         RGTextureDesc desc = RGTextureDesc::RenderTarget(m_LastInfo.RayCount,
-                                                         FrameCaptureAtmosphereProbeRows,
+                                                         FrameCaptureAtmosphereProbeRows * FrameCaptureAtmosphereMediumCount,
                                                          AtmosphereProbeFormat,
                                                          "Capture_AtmosphereProbe");
         desc.Usage = desc.Usage | RHI::ResourceUsage::TransferSrc;
@@ -1164,18 +1193,29 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        GPUVolumetricsParams params{};
-        VolumetricsParamsState paramsState;
-        BuildVolumetricsParams(context,
-                               *camera,
-                               m_FogParameters,
-                               m_SkyParameters,
-                               m_AerialPerspective,
-                               skyRadianceTexture,
-                               skyTransmittanceTexture,
-                               bActualShadowMapAvailable,
-                               params,
-                               paramsState);
+        // 媒質 0 = そのフレームの定数（VolumetricsPass と同じ）、媒質 1 = 検査用の割り振り
+        const FrameCaptureAtmosphereTestMedia testMedia =
+            BuildAtmosphereTestMedia(m_SkyParameters, m_FogParameters, m_AerialPerspective);
+        const VolumetricFogParameters* mediumFog[FrameCaptureAtmosphereMediumCount] = {&m_FogParameters, &testMedia.Fog};
+        const AerialPerspectiveParameters* mediumAerial[FrameCaptureAtmosphereMediumCount] = {&m_AerialPerspective,
+                                                                                              &testMedia.Aerial};
+        GPUVolumetricsParams mediumParams[FrameCaptureAtmosphereMediumCount]{};
+        VolumetricsParamsState mediumParamsState[FrameCaptureAtmosphereMediumCount];
+        for (uint32_t medium = 0; medium < FrameCaptureAtmosphereMediumCount; ++medium)
+        {
+            BuildVolumetricsParams(context,
+                                   *camera,
+                                   *mediumFog[medium],
+                                   m_SkyParameters,
+                                   *mediumAerial[medium],
+                                   skyRadianceTexture,
+                                   skyTransmittanceTexture,
+                                   bActualShadowMapAvailable,
+                                   mediumParams[medium],
+                                   mediumParamsState[medium]);
+        }
+        const GPUVolumetricsParams& params = mediumParams[0];
+        const VolumetricsParamsState& paramsState = mediumParamsState[0];
 
         GPUAtmosphereProbeRays rays{};
         rays.RayCount[0] = m_LastInfo.RayCount;
@@ -1188,14 +1228,35 @@ namespace NorvesLib::Core::Rendering
             rays.Rays[rayIndex][3] = ray.DistanceMeters;
         }
 
+        // 媒質ごとに定数・視線（y = その媒質の最初の行）・記述子セットを借りる
         FrameResourceLane* frameResources = context.FrameResources;
-        const FrameUploadAllocation paramsAllocation = frameResources->AllocateConstants(params);
-        const FrameUploadAllocation raysAllocation = frameResources->AllocateConstants(rays);
-        const RHI::DescriptorSetPtr descriptorSet = frameResources->AllocateDescriptorSet(m_DescriptorSetLayout).Set;
-        if (!paramsAllocation.IsValid() || !raysAllocation.IsValid() || !descriptorSet)
+        RHI::DescriptorSetPtr descriptorSets[FrameCaptureAtmosphereMediumCount];
+        for (uint32_t medium = 0; medium < FrameCaptureAtmosphereMediumCount; ++medium)
         {
-            NORVES_LOG_WARNING("AtmosphereProbePass", "定数か記述子セットを借りられないため、このフレームは大気を書き出しません");
-            return;
+            rays.RayCount[1] = medium * FrameCaptureAtmosphereProbeRows;
+            const FrameUploadAllocation paramsAllocation = frameResources->AllocateConstants(mediumParams[medium]);
+            const FrameUploadAllocation raysAllocation = frameResources->AllocateConstants(rays);
+            const RHI::DescriptorSetPtr descriptorSet = frameResources->AllocateDescriptorSet(m_DescriptorSetLayout).Set;
+            if (!paramsAllocation.IsValid() || !raysAllocation.IsValid() || !descriptorSet)
+            {
+                NORVES_LOG_WARNING("AtmosphereProbePass", "定数か記述子セットを借りられないため、このフレームは大気を書き出しません");
+                return;
+            }
+            const bool bAerialAvailable = mediumParamsState[medium].bAerialAvailable;
+            descriptorSet->BindConstantBuffer(2u, paramsAllocation.Buffer, paramsAllocation.GetOffset32(),
+                                              sizeof(GPUVolumetricsParams));
+            descriptorSet->BindConstantBuffer(5u, raysAllocation.Buffer, raysAllocation.GetOffset32(),
+                                              sizeof(GPUAtmosphereProbeRays));
+            descriptorSet->BindTexture(0u, sceneDepthTexture);
+            descriptorSet->BindSampler(0u, m_PointSampler);
+            descriptorSet->BindTexture(1u, skyRadianceTexture ? skyRadianceTexture : sceneDepthTexture);
+            descriptorSet->BindSampler(1u, skyRadianceTexture ? m_SkyRadianceSampler : m_PointSampler);
+            descriptorSet->BindTexture(3u, shadowMapTextureForSampling);
+            descriptorSet->BindSampler(3u, shadowMapSamplerForSampling);
+            descriptorSet->BindTexture(4u, bAerialAvailable ? skyTransmittanceTexture : sceneDepthTexture);
+            descriptorSet->BindSampler(4u, bAerialAvailable ? m_SkyTransmittanceSampler : m_PointSampler);
+            descriptorSet->Update();
+            descriptorSets[medium] = descriptorSet;
         }
 
         if (!m_Framebuffer || m_FramebufferTarget != target.get())
@@ -1213,33 +1274,24 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        descriptorSet->BindConstantBuffer(2u, paramsAllocation.Buffer, paramsAllocation.GetOffset32(),
-                                          sizeof(GPUVolumetricsParams));
-        descriptorSet->BindConstantBuffer(5u, raysAllocation.Buffer, raysAllocation.GetOffset32(),
-                                          sizeof(GPUAtmosphereProbeRays));
-        descriptorSet->BindTexture(0u, sceneDepthTexture);
-        descriptorSet->BindSampler(0u, m_PointSampler);
-        descriptorSet->BindTexture(1u, skyRadianceTexture ? skyRadianceTexture : sceneDepthTexture);
-        descriptorSet->BindSampler(1u, skyRadianceTexture ? m_SkyRadianceSampler : m_PointSampler);
-        descriptorSet->BindTexture(3u, shadowMapTextureForSampling);
-        descriptorSet->BindSampler(3u, shadowMapSamplerForSampling);
-        descriptorSet->BindTexture(4u, paramsState.bAerialAvailable ? skyTransmittanceTexture : sceneDepthTexture);
-        descriptorSet->BindSampler(4u, paramsState.bAerialAvailable ? m_SkyTransmittanceSampler : m_PointSampler);
-        descriptorSet->Update();
-
         RHI::Viewport viewport;
         viewport.width = static_cast<float>(target->GetWidth());
         viewport.height = static_cast<float>(target->GetHeight());
-        RHI::ScissorRect scissor;
-        scissor.right = static_cast<int32_t>(target->GetWidth());
-        scissor.bottom = static_cast<int32_t>(target->GetHeight());
         RHI::ICommandList* commandList = context.CommandList;
         commandList->BeginRenderPass(m_RenderPass, m_Framebuffer);
         commandList->SetViewport(viewport);
-        commandList->SetScissor(scissor);
         commandList->SetPipeline(m_Pipeline);
-        commandList->SetDescriptorSet(descriptorSet, 0);
-        commandList->Draw(3, 0);
+        for (uint32_t medium = 0; medium < FrameCaptureAtmosphereMediumCount; ++medium)
+        {
+            // その媒質の行だけを書く
+            RHI::ScissorRect scissor;
+            scissor.top = static_cast<int32_t>(medium * FrameCaptureAtmosphereProbeRows);
+            scissor.right = static_cast<int32_t>(target->GetWidth());
+            scissor.bottom = static_cast<int32_t>((medium + 1u) * FrameCaptureAtmosphereProbeRows);
+            commandList->SetScissor(scissor);
+            commandList->SetDescriptorSet(descriptorSets[medium], 0);
+            commandList->Draw(3, 0);
+        }
         commandList->EndRenderPass();
 
         // 評価に使った値（書き出しの JSON に残す）
@@ -1267,6 +1319,9 @@ namespace NorvesLib::Core::Rendering
         m_LastInfo.MieExtinction = params.MieExtinctionAndScaleHeight[0];
         m_LastInfo.MieScattering = params.AerialScattering[0];
         m_LastInfo.TransmittanceLutObserverV = params.AerialPerspective[3];
+        m_LastInfo.TestMedia = testMedia;
+        m_LastInfo.TestMedia.MieExtinction = mediumParams[1].MieExtinctionAndScaleHeight[0];
+        m_LastInfo.TestMedia.MieScattering = mediumParams[1].AerialScattering[0];
         m_LastInfo.bValid = true;
     }
 #endif
