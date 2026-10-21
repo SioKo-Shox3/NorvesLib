@@ -2191,6 +2191,28 @@
 - paths: Scripts, Docs/RenderingValidation, TASKS.md, PROGRESS.md
 - notes: 2026-10-19。Cycles の描画は反復の中で保存する。
 
+## SCN-WL-PROP-ALBEDO-SRGB: glTF の模型の基本色のテクスチャを sRGB として読む
+- status: todo
+- after: SCN-WLR-BUILDING-REF
+- done-when: SCN-WLR-BUILDING-REF の描画の欠陥 2（`Docs/RenderingValidation/WastelandBuildingRef.md`）: 建物のアルベドの AOV の中央値 0.656 がテクスチャの符号値のままで、sRGB を解かずに読まれている疑い（線形なら 0.36 前後）。クックの基本色の画像の扱い（`Tools/AssetCook/MeshCooker.cpp` の `MeshImageRole::Albedo`）と実行時のテクスチャの形式（UNORM か SRGB か）を確かめて直す。合否: outpost の建物のアルベドの AOV の中央値がテクスチャの線形の値と 3 % 以内で合う（`--building --expect`、`prop-albedo-srgb.json`。期待値はテクスチャから線形に戻した値の中央値をこの項目で測って書く）。同じ経路で読む glTF の模型（夜の集落の家・材質ギャラリーなど）の見た目も変わるので、絶対規則 7 に従い回帰の撮影の前後を開いて、差が sRGB の直しだけによることを確かめる。golden が変わるなら SCN-WL-GOLDEN-REAPPROVE と同じ手順で再承認する。反復の最初に回帰の撮影の `before` を撮る。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -Build -RequireAssets -Width 1920 -Height 1080 -Hdr -Aov -Views outpost -GameArgs wasteland-common-light,wasteland-hide=all-but-building,wasteland-finest-lod -LaunchPerView -OutDir .harness/runs/scene-capture/SCN-WL-PROP-ALBEDO-SRGB`
+- verify: `python Scripts/Terrain/ReferenceCheck.py --building --engine .harness/runs/scene-capture/SCN-WL-PROP-ALBEDO-SRGB --reference .harness/runs/scene-capture/SCN-WLR-BUILDING-REF --expect Scripts/Terrain/ExpectSpecs/prop-albedo-srgb.json --verify`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Terrain/CaptureRegression.ps1 -Item SCN-WL-PROP-ALBEDO-SRGB -Phase after`
+- paths: Tools/AssetCook, Library/Core/Private/Rendering, Library/Core/Public/Rendering, Assets/Shaders, Game, Scripts, Docs/RenderingValidation, Test/Core/Rendering/Baselines, TASKS.md, PROGRESS.md
+- notes: 危険地帯（アセットの読み込み・描画の既定）。2026-10-21 親が SCN-WLR-BUILDING-REF の直す項目の案 1 から足した（ユーザーの点「建物の浮き」の主因の見込み。確認 2 の前に直す）。模型の再クックが要るなら差分クックの印で関係する模型だけを焼き直す。時間の見積もり: 回帰の before・after 各 6 分、ビルド 3〜6 分、撮影 1 本 約 3 分。
+
+## SCN-WL-PROP-AO: 模型の遮蔽のテクスチャを、光線で遮る空の光・照り返しと二重にならない形で掛ける
+- status: todo
+- after: SCN-WL-PROP-ALBEDO-SRGB
+- done-when: SCN-WLR-BUILDING-REF の描画の欠陥 1: 陰の壁の目地が黒い（壁の 5.5 % の画素でエンジン ÷ Cycles 0.114。日なたの壁では 0.5 %）。模型の遮蔽のテクスチャを、RTGI が働くときは空の光・照り返しに重ねない形にする（地形で SCN-WL-MATERIAL-AO-SHADING がしたことの模型の版）。合否（`--building --expect`、`prop-ao.json`）: 壁でエンジン ÷ Cycles が 0.3 未満の画素の割合が Cycles の暗い目地の割合（1.5 %）の 2 倍以内、目地を除いた陰の壁の比が日なたの壁の比と 0.1 以内で揃う。ほかのシーンの模型にも効くので、回帰の撮影の前後を開いて差がこの直しだけによることを確かめ、golden が変わるなら再承認する。反復の最初に回帰の撮影の `before` を撮る。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -Build -RequireAssets -Width 1920 -Height 1080 -Hdr -Aov -Views outpost -GameArgs wasteland-common-light,wasteland-hide=all-but-building,wasteland-finest-lod -LaunchPerView -OutDir .harness/runs/scene-capture/SCN-WL-PROP-AO`
+- verify: `python Scripts/Terrain/ReferenceCheck.py --building --engine .harness/runs/scene-capture/SCN-WL-PROP-AO --reference .harness/runs/scene-capture/SCN-WLR-BUILDING-REF --expect Scripts/Terrain/ExpectSpecs/prop-ao.json --verify`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Terrain/CaptureRegression.ps1 -Item SCN-WL-PROP-AO -Phase after`
+- paths: Assets/Shaders, Library/Core/Private/Rendering, Library/Core/Public/Rendering, Game, Scripts, Docs/RenderingValidation, Test/Core/Rendering/Baselines, TASKS.md, PROGRESS.md
+- notes: 危険地帯（描画の既定）。2026-10-21 親が SCN-WLR-BUILDING-REF の直す項目の案 2 から足した。案 3（灰色の地面での比べ直し）・案 4（足元の土・汚れ、中身）は確認 2 の後に組む。時間の見積もり: 回帰の before・after 各 6 分、ビルド 3〜6 分、撮影 1 本 約 3 分。
+
 ## SCN-WLR-PLANT-REF-BASE: 低木 1 株を比べる仕組みを作る
 - status: todo
 - after: SCN-WL-MATERIAL-AO-BAKE, SCN-WL-SHADOW-LEAK, SCN-WL-RTGI-COLOR, SCN-WL-RTGI-AMOUNT
@@ -2246,7 +2268,7 @@
 
 ## SCN-WL-LIGHT-FINAL: 共通の照明の数値の確認と、既定の荒野の光を写真に合わせる
 - status: todo
-- after: SCN-WL-MATERIAL-AO-BAKE, SCN-WL-SKY-SCATTER, SCN-WL-RTGI-COLOR, SCN-WL-SHADOW-LEAK, SCN-WL-RTGI-AMOUNT, SCN-WL-MATERIAL-AO-OCCLUSION
+- after: SCN-WL-MATERIAL-AO-BAKE, SCN-WL-SKY-SCATTER, SCN-WL-RTGI-COLOR, SCN-WL-SHADOW-LEAK, SCN-WL-RTGI-AMOUNT, SCN-WL-MATERIAL-AO-OCCLUSION, SCN-WL-PROP-AO
 - done-when: (1) 共通の照明（地形だけ・霞なし）の数値: これまでの修正の仕様（rt-tlas-range・shadow-pages・shadow-leak・rtgi-color・material-ao）を、今のコードで撮り直した撮影先 `SCN-WL-LIGHT-FINAL/`（灰色の 3 条件の ref_cliff_01・ref_far_01、実材質の ref_cliff_01・ref_cliff_02・ref_ground_01・ref_far_01、照り返しの入・切）に対して、`ReferenceCheck.py --light-final`（この項目で作る。全仕様をまとめて読む）でまとめて通す（後の修正が前の修正を壊していないことの確認）。撮影は反復の中で保存する。(2) 既定の荒野（前哨地・植物・礫・霞・雲あり）は Cycles の正解が無いので、6 視点を撮って写真と並べて開き、谷・崖の影・前哨地の照り返しと空の青、影の中の色と明るさの差を所見に書く（数値の合否にしない）。カメラパスで移動中の粒・残像・遮蔽の欠けが目立たないことを確かめる。直す所が残れば項目を足す。
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -Build -RequireAssets -Width 1920 -Height 1080 -Hdr -Aov -Views ref_cliff_02 -GameArgs wasteland-common-light,wasteland-hide=all,wasteland-finest-lod -LaunchPerView -OutDir .harness/runs/scene-capture/SCN-WL-LIGHT-FINAL-recheck`
 - verify: `python Scripts/Terrain/ReferenceCheck.py --light-final --engine-root .harness/runs/scene-capture/SCN-WL-LIGHT-FINAL --verify`
