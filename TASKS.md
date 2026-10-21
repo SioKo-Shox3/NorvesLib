@@ -2268,7 +2268,7 @@
 - notes: 危険地帯（影）。2026-10-21 親が SCN-WLR-PLANT-REF-NEAR の直す項目の案 1 から足した（影の無い株は浮いて見えるので確認 2 の前に直す）。案 2（両面の透過）・案 3・4（アルファのマスク・素材の差し替え、中身）は確認 2 の後に組む（葉の素材を差し替えるときに合わせる）。時間の見積もり: 回帰の before・after 各 6 分、ビルド 3〜6 分、撮影 1 本 約 2 分、撒いた株の撮影 1 本 約 3 分。 2026-10-21（親）: 反復 28 の BLOCKED を推奨の 1 で解いた。影の比の差は 0.023 で合格。株の日なたは枝が引き下げていた（見え方 ≥ 0.9 の割合 葉 0.771・枝 0.488、比 葉 0.79・枝 0.36）。基準 2・3 を葉だけで判定し、葉の部分的な影の残り（PCF）を詰める。反復 28 の記録は `blocked/resolved/SCN-WL-PLANT-SHADOW-leaves-only.md`。
 
 ## SCN-WL-PLANT-SHADOW-RANGE: 影のパスに入れる株を低木優先・近い順にし、低木が 60 m まで太陽の影を落とすようにする
-- status: todo
+- status: done
 - after: SCN-WL-PLANT-SHADOW
 - done-when: SCN-WL-PLANT-SHADOW の記録（`aux-SCN-WL-PLANT-SHADOW-grass-after.txt`）で、撒いた株の視点（grass）の影のパスの株が塊の予算の上限 14892 で止まり（予算の外 43946）、影を落とすのはカメラから 4.2 m までの株だけだった（近くの草の束が予算を埋めている見込み）。影のパスに入れる株を、低木（ブラックブラッシュ・モルモンティー）を草より優先して近い順に選び、草は影のパスから外す（草の接地は接触影と AO に任せる）。低木はカメラから 60 m まで（遠景の方針で株の実体を描く範囲。`Docs/Plans/WastelandRebuild.md` の遠景の方針）影を落とす。合否: grass の視点で、60 m 以内の低木が影のパスの予算から 1 株も漏れず（`VSM_CASTERS` の `foliage_priority0_over_budget=0`）、影を落とす低木の最も遠い根元が 59 m 以上（上限を「根元まで 60 m 以内」とするので、60 m の内の最も遠い株の距離になる。2026-10-22 親が評価者 47 の差し戻しから「60 m 以上」を直した）。届かなければ届いた距離と塊の予算を記録して BLOCKED、影のパスの株の数・VSM のページの数・GPU 時間（中央値）を前後で記録する。plant_near の `--plant --expect plant-shadow.json` が変わらず合格する。反復の最初に回帰の撮影の `before` を撮る。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`

@@ -6718,3 +6718,17 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - シェーダのコメントの「正解 B の 1.3〜1.6 倍」は丸めた値で新しい見積もりと矛盾しないので、シェーダは触っていない
   - 新しい試験は足していない
 - Next: TASKS.md の次の未完の項目
+
+### SCN-WL-PLANT-SHADOW-RANGE 合否の直しの確認（2026-10-22、run 20261021-055341 の反復 49）
+- 差し戻し: 評価者 47 の NEEDS_WORK（最も遠い根元 59.96 m が「60 m 以上」に届かない）は、親が合否を「60 m の内の低木が予算から漏れず（`foliage_priority0_over_budget=0`）、最も遠い根元が 59 m 以上」へ直して解いた
+- Done: 保存された記録 `aux-SCN-WL-PLANT-SHADOW-RANGE-grass-after.txt` の `VSM_CASTERS` が `foliage_priority0_over_budget=0`・`foliage_priority0_farthest_m=59.96` で直した合否を満たすことを確かめた。記録 `Docs/RenderingValidation/WastelandPlantRef.md` の「低木の影を 60 m まで」に届く距離の合否の書き方を足した（全株の `foliage_farthest_m=60.0` は証拠にしない）。描画の距離・予算・式・エンジンのコードは変えていない
+- 証拠（`.harness/runs/20261021-055341/`）:
+  - `aux-SCN-WL-PLANT-SHADOW-RANGE-regression-before-49.txt` 反復の最初の回帰の before result=pass・EXIT=0
+  - `verify-SCN-WL-PLANT-SHADOW-RANGE-14.txt` Debug の Game のビルド EXIT=0
+  - `verify-SCN-WL-PLANT-SHADOW-RANGE-15.txt` plant_near の撮影（-Build）result=pass・EXIT=0（commit 47e320a2 dirty=0、Game.exe 7e0cba1c… は反復 47 と同じ）
+  - `verify-SCN-WL-PLANT-SHADOW-RANGE-16.txt` `--plant --expect plant-shadow.json --verify` result=pass・inputs_current=1・EXIT=0（影の比の差 0.0326、葉の見え方 0.8632、葉の比 0.8245）
+  - `verify-SCN-WL-PLANT-SHADOW-RANGE-17.txt` 回帰の after result=pass（rendering3dtest PSNR 107.5、mega-bananas 64.1、sandbox inf、night-village 73.2）。rendering3dtest の after を開き、天球・地面・球・岩が変わらないことを確かめた
+- Notes:
+  - grass の撮り直しはしていない（エンジンのコードが反復 42 の記録から変わっていないため、記録はそのまま使った）
+  - 新しい試験は足していない
+- Next: TASKS.md の次の未完の項目
