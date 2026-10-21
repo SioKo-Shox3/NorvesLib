@@ -6732,3 +6732,17 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - grass の撮り直しはしていない（エンジンのコードが反復 42 の記録から変わっていないため、記録はそのまま使った）
   - 新しい試験は足していない
 - Next: TASKS.md の次の未完の項目
+
+### SCN-WLR-PLANT-REF-FAR 完了（2026-10-22、run 20261021-055341 の反復 50）
+- Done: 低木 1 株の `plant_far`（30 m）を、`--blur-static` と同じ測り方（同じ Game.exe で撮った 2 倍の解像度・AA なしの正解 ref2x を 2×2 の線形の平均で縮めた画、帯域ごとの細部の残りとエイリアス）で比べる `ReferenceCheck.py --plant-far`（本体 `Scripts/Terrain/PlantFarCheck.py`）を足した。範囲は正解の深度から決める株の覆いで、アルファの縁・株の全体・株の中（記録だけ）・近くの地面（対照）。組は base（既定の TAA）が必須、aa-none・aa-fxaa はあれば比べる。合否は同じ Game.exe とエンジンの実装・起動引数とログの印・同じ株・常駐・範囲の画素・較正・各量が有限（値の閾値なし）。表と差の一覧と直す項目の案を `Docs/RenderingValidation/WastelandPlantRef.md` の「遠くでの見え方」に書いた。エンジンの値は変えていない
+- 結果: 縁の欠け / エイリアス base 0.662 / 0.388、aa-none 0.685 / 2.760、aa-fxaa 0.747 / 2.306（地面 base 0.375 / 0.342）。株に固有の分（縁 − 地面）は TAA で欠け +0.287・エイリアス +0.046、AA なしでエイリアス +2.156。base の株の全体の輝度は正解の 0.952
+- 証拠（`.harness/runs/20261021-055341/`）:
+  - `verify-SCN-WLR-PLANT-REF-FAR-1.txt` base の撮影（-Build）result=pass・EXIT=0（commit 010da922 dirty=0、Game.exe 7e0cba1c…）
+  - `aux-SCN-WLR-PLANT-REF-FAR-ref2x.txt`・`-aa-none.txt`・`-aa-fxaa.txt` 組の撮影 result=pass・EXIT=0（同じ Game.exe）
+  - `verify-SCN-WLR-PLANT-REF-FAR-2.txt` `--plant-far --verify` result=pass・groups=4・compared=3・inputs_current=1・same_game_exe=1・EXIT=0（較正 ぼかしの欠け 0.807・雑音の残り 0.957・雑音のエイリアス 0.810）
+  - 並べた画 `scene-capture/SCN-WLR-PLANT-REF-FAR/plant_far.png` を開き、正解の葉の房の斑、TAA の一様な塊、AA なし・FXAA の点描を確かめた
+- Notes:
+  - 撮影の途中（aa-none の inputs.json が書かれる前）に回した検査は「組ごとの Game.exe のハッシュが揃っていない」で落ちた（同じ exe の照合が効くことの確かめ。保存はしていない）
+  - 直す項目の案（TAA の株の細部の切り分け → 覆いを保つ描き方 → 前もって平均した遠景の段 → 比べ直し）は記録に書いただけで TASKS.md には足していない。足すかは計画が決める
+  - 新しい試験は足していない
+- Next: TASKS.md の次の未完の項目

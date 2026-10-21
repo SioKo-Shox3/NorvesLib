@@ -302,6 +302,11 @@
 #       比較が成り立つ条件と未判定で落ちる扱いは --building と同じ。--trial は収束の条件だけを外す。
 #       報告は <Cycles の書き先>/plant_check.json。--expect は影の比の差・株の日なたの太陽の見え方・株の日なたの比を仕様の
 #       閾値で判定する（ExpectSpec.py の plant）。
+#   python Scripts/Terrain/ReferenceCheck.py --plant-far --capture <撮影先> [--verify]
+#       低木 1 株の遠くでの見え方（視点 plant_far）を、--blur-static と同じ測り方（同じ Game.exe で撮った 2 倍の解像度の正解
+#       <撮影先>/ref2x）で、株のアルファの縁・株の全体・近くの地面の細部の欠けとエイリアスに分ける（PlantFarCheck.py。組は
+#       base〔既定の TAA〕と、あれば aa-none・aa-fxaa）。組が同じ Game.exe で撮られ、各量が判定できることを検査する
+#       （値の閾値は付けない）。報告は <撮影先>/plant_far_check.json、並べた画は <撮影先>/plant_far.png。
 #
 # 終了コード: すべて合格なら 0、どれかが不合格なら 1。
 import argparse
@@ -6573,6 +6578,9 @@ def main():
                         help="前哨地の建物 1 棟のエンジンと Cycles の比較（BuildingCheck.py。--engine と --reference）")
     parser.add_argument("--plant", action="store_true",
                         help="低木 1 株のエンジンと Cycles の比較（PlantCheck.py。--engine と --reference）")
+    parser.add_argument("--plant-far", action="store_true",
+                        help="低木 1 株の遠くでの見え方を、2 倍の解像度の正解とアルファの縁・株・近くの地面の帯域ごとの差で比べる"
+                             "（PlantFarCheck.py。--capture）")
     parser.add_argument("--trial", action="store_true",
                         help="--building・--plant: Cycles の収束の条件だけを外す（試しの描画）")
     parser.add_argument("--grading", action="store_true",
@@ -6739,6 +6747,9 @@ def main():
         return run_atmos_ref(capture_dir, views, args.verify, expect=expect)
     if args.blur_static:
         return run_blur_static(capture_dir, args.verify, engine_dirs or None, reference, expect)
+    if args.plant_far:
+        import PlantFarCheck
+        return PlantFarCheck.run(sys.modules[__name__], capture_dir, args.verify)
     if args.blur_motion:
         return run_blur_motion(capture_dir, args.verify, engine_dirs or None, reference, expect)
     if args.gray:
@@ -6758,7 +6769,7 @@ def main():
         lit_dir = args.lit_capture if os.path.isabs(args.lit_capture) else os.path.join(REPO_ROOT, args.lit_capture)
         return run_tonemap(capture_dir, os.path.normpath(lit_dir), views, args.verify)
     print("REFERENCE_CHECK result=fail reason=no_mode（--record-inputs か --hdr か --display か --plate か --aov か "
-          "--projection か --atmos-dump か --atmos-ref か --blur-static か --blur-motion か --gray か --albedo か --normal か "
+          "--projection か --atmos-dump か --atmos-ref か --blur-static か --plant-far か --blur-motion か --gray か --albedo か --normal か "
           "--lit か --tonemap か --grading を指定する）")
     return 1
 

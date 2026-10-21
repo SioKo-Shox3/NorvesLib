@@ -251,3 +251,104 @@ python Scripts/Terrain/BlenderReference.py --plant --mesh .harness/runs/scene-ca
 （512 サンプルで収束）。描き直した後の `--verify` は全体も result=pass（影の比の差 0.0326、葉の見え方 0.863、葉の比 0.8245）。
 Cycles の側の比は描き直す前と同じ（影の比 0.3065、葉の背面の比 0.7769）。コードの変更で深度が変わったときは、撮り直してから
 描き直す。
+
+## 遠くでの見え方（SCN-WLR-PLANT-REF-FAR、2026-10-22）
+
+同じ株を `plant_far`（株の 30 m 手前・目の高さ 1.7 m・2.5° 見下ろし。1 画素は株の所で 3.2 cm）で撮り、遠景のぼけの静止
+（`WastelandFarBlurStatic.md`、`--blur-static`）と同じ測り方で、2 倍の解像度の正解と比べた。比べただけで、エンジンの値と既定は
+変えていない。
+
+- 正解 `ref2x`: 3840 × 2160・AA なし・`-Aov`。起動引数は `--blur-static` の正解と同じ（`--wasteland-aa=none`・
+  `--vram-geometry-share=9`・`--mega-lod-error-px=0.5`）。線形の光で 2×2 を平均して 1920 × 1080 へ縮める。
+- 組: `base`（既定の TAA。verify の撮影）、`aa-none`（AA なし）、`aa-fxaa`（FXAA）。4 組とも同じ Game.exe（7e0cba1c…、
+  commit 010da922）で撮った。
+- 量: 表示の値の輝度の、隣り合うガウスの差の帯域（σ 0・1・2・4・8 画素）ごとの細部の残り（正解の帯域への射影の利得）と
+  エイリアス（正解に無い成分 ÷ 正解の量）。細かい 2 帯域（σ 0〜1・1〜2）を正解の量の重みでまとめ、1 − 残りを細部の欠けとする。
+- 範囲（正解の深度から）: 株の印は、深度から戻した位置が根元から水平に樹冠の半径 + 0.1 m 以内で根元の地面より 3 cm 以上
+  高い 4K の画素（1593 画素）。1 倍の画素の覆い = 2×2 のうちの株の印の割合（一部を覆う 275 画素、全部を覆う 248 画素）。
+  - 株の全体（plant）: 覆いが 0 より大きい画素と、その 1 画素の周り（664 画素。外接枠 21 × 32 画素）
+  - アルファの縁（edge）: 株の全体のうち、3×3 に覆い 1 未満の画素を含むもの（614 画素。株の模型はアルファのマスクを使わない
+    ので、縁は葉の帯と枝の輪郭と、葉の隙間に見える地面との境）
+  - 株の中（inner）: 株の全体のうち縁でないもの（50 画素。記録だけ）
+  - 近くの地面（ground。対照）: 外接枠を 32 画素広げた枠の地面で、株と空から 2σ 画素より離れたもの（4642〜7246 画素）。
+    同じ組・同じ距離の地形の欠けとエイリアスで、株の量からこの値を引いた差を株に固有の分とする。
+
+再現:
+
+```
+powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -Build -RequireAssets -Width 1920 -Height 1080 -Hdr -Views plant_far -GameArgs wasteland-common-light,wasteland-hide=all-but-plant -OutDir .harness/runs/scene-capture/SCN-WLR-PLANT-REF-FAR/base
+powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 3840 -Height 2160 -Hdr -Aov -Views plant_far -GameArgs wasteland-common-light,wasteland-hide=all-but-plant,wasteland-aa=none,vram-geometry-share=9,mega-lod-error-px=0.5 -OutDir .harness/runs/scene-capture/SCN-WLR-PLANT-REF-FAR/ref2x
+powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Hdr -Views plant_far -GameArgs wasteland-common-light,wasteland-hide=all-but-plant,wasteland-aa=none -OutDir .harness/runs/scene-capture/SCN-WLR-PLANT-REF-FAR/aa-none
+powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Hdr -Views plant_far -GameArgs wasteland-common-light,wasteland-hide=all-but-plant,wasteland-aa=fxaa -OutDir .harness/runs/scene-capture/SCN-WLR-PLANT-REF-FAR/aa-fxaa
+python Scripts/Terrain/ReferenceCheck.py --plant-far --capture .harness/runs/scene-capture/SCN-WLR-PLANT-REF-FAR --verify
+```
+
+`--plant-far` の合否は、組が同じ Game.exe とエンジンの実装で撮られ（`--verify` は今のファイルと照らす）、起動引数とログの印が
+組の約束どおりで、共通の照明・同じ株・ページの常駐・溢れなし、範囲の画素が下限（縁と全体 100、地面 1000）以上、較正
+（正解をぼかした画が欠けに、雑音を足した画がエイリアスに数えられる。株の全体で帯域 0 の欠け 0.807・雑音の残り 0.957・
+雑音のエイリアス 0.810）が通り、各組の縁・全体・地面の欠けとエイリアスが有限であること。値の閾値は付けていない。
+
+### 表（`--plant-far --verify`、result=pass）
+
+| 組 | 縁の欠け | 縁のエイリアス | 全体の欠け | 全体のエイリアス | 地面の欠け | 地面のエイリアス | 縁の欠け − 地面 | 縁のエイリアス − 地面 | 全体の線形の輝度 ÷ 正解 |
+|---|---|---|---|---|---|---|---|---|---|
+| base（TAA） | 0.662 | 0.388 | 0.679 | 0.387 | 0.375 | 0.342 | +0.287 | +0.046 | 0.952 |
+| aa-none | 0.685 | 2.760 | 0.706 | 2.756 | 0.452 | 0.604 | +0.233 | +2.156 | 1.004 |
+| aa-fxaa | 0.747 | 2.306 | 0.768 | 2.307 | 0.455 | 0.583 | +0.292 | +1.723 | 0.991 |
+
+帯域ごとの細部の残り（縁。σ 0〜1・1〜2・2〜4・4〜8）: base 0.26・0.87・1.14・1.13、aa-none 0.25・0.78・1.03・1.12、
+aa-fxaa 0.17・0.79・1.08・1.15（地面は base 0.54・0.78・0.88・0.95）。株の中（50 画素）の欠けは base 0.951・aa-none 1.062・
+aa-fxaa 1.131。
+
+並べた画 `.harness/runs/scene-capture/SCN-WLR-PLANT-REF-FAR/plant_far.png`（株の周りを 8 倍。左から正解・base・aa-none・
+aa-fxaa・範囲〔縁 赤・中 緑・地面 青〕）を開いて見たこと: 正解の株は、葉の房の明暗と隙間から見える地面が斑に混ざり、輪郭は
+房ごとに凹凸がある。base は輪郭が滑らかで、株の中の房の明暗がならされて灰褐色の一様な塊になる。aa-none と aa-fxaa は、
+株の中と縁が 1 画素ずつの暗い点と白い点の点描になり、縁から離れた所にも孤立した葉の点が飛ぶ（FXAA はほとんど変えない）。
+
+### 読み
+
+- **アルファの縁のエイリアス**: 1 画素 1 標本の組（aa-none・aa-fxaa）は縁のエイリアスが 2.3〜2.8 で、地面（0.58〜0.60）より
+  1.7〜2.2 大きい。株の葉（幅 0.6 cm 前後）と枝（断面 0.17 cm）は 30 m で 0.2〜0.05 画素で、`foliage.vert` が最小の幅 0.7 画素
+  （ブラックブラッシュは広げる上限 2.5 倍）まで広げた帯を 1 標本で当てるので、覆いが 0 か 1 の点になる。既定の TAA は縁の
+  エイリアスを地面と同じ程度（+0.05）まで下げる。FXAA は輪郭の段を見る処理で、点の明暗は減らない（−0.45 だけ）。
+- **細部の欠け**: どの組も株の最も細かい帯域（σ 0〜1）の残りは 0.17〜0.26 で、地面（0.47〜0.54）の半分。既定の TAA の株に
+  固有の欠けは +0.29（縁 0.662 − 地面 0.375）で、株の中では 0.95 が欠ける。σ 1〜2 は TAA の方が残る（0.87）。2〜8 画素の
+  帯域の残りが 1 を超える（1.03〜1.15）のは、株が正解より太く濃い塊として写るため。base は全体の線形の輝度が正解の 0.952 で、
+  明るい地面の前の暗い株が 5 % 濃い。aa-none は 1.004 なので、この濃さは広げの差でなく TAA の混ぜ方の側で生じている。
+- 地面（対照。株の周りの地形で、深度の中央値 37 m・1〜99 % 点 21〜480 m）は TAA で欠け 0.375・エイリアス 0.342。この地形の差は遠景のぼけの項目の側で扱い、
+  株の差は地面の差の上に乗る分として読む。
+
+### 差の一覧（遠く）
+
+大きさは株に固有の分（株の量 − 近くの地面）。
+
+| 順 | 分類 | 差 | 大きさ | 記号 |
+|---|---|---|---|---|
+| 1 | 描画の欠陥 | 既定の TAA で株の中の葉の房の明暗が消える | 縁の欠け +0.287（σ 0〜1 の残り 0.26、地面 0.54）、株の中の欠け 0.951、全体の輝度 0.952 | `plant_far_taa_detail_loss` |
+| 2 | 描画の欠陥（AA を切った経路） | 1 画素 1 標本で株が点描になる | 縁のエイリアス +2.156（aa-none）・+1.723（aa-fxaa） | `plant_far_edge_alias` |
+| 3 | 条件不一致・未判定 | 正解も 4K の画素で広げた形 | 最小の幅 0.7 画素は描く解像度の画素で数えるので、正解の葉は 1 倍の組より細く広げられる（枝はどちらも上限 2.5 倍）。本当の幅の株とは比べていない | `plant_far_reference_widened` |
+| 4 | 条件不一致・未判定 | 1 株・1 視点・静止 | 風 0 の 1 株だけ。風で揺れる株の TAA の残像と、撒いた株の重なりは見ていない | `plant_far_single_static` |
+| 5 | 条件不一致・未判定 | 株の中の画素が少ない | 株の中 50 画素（判定の下限 100 未満なので記録だけ）。株の印は根元から 3 cm 未満を地面に数える | `plant_far_inner_small` |
+
+### 直す項目の案（値は変えていない）
+
+順は 1 → 2 → 3 → 4。
+
+1. **TAA の株の細部の切り分け**（`plant_far_taa_detail_loss`）: `--plant-far` に遠景のぼけの静止と同じ組を足して、TAA の欠けを
+   ジッタ（`--taa-jitter-scale=0`）・現在の色の割合・箱の幅・シャープ化に分ける。地形では欠けの主因がジッタで描く中身が変わる
+   ことだった（SCN-WL-FAR-AA・SCN-WL-JITTER-LIGHTING）。株は葉の当たりがジッタの位置ごとに入れ替わるので、同じ形の可能性が
+   高い。全体の輝度 0.952 は、輝度の重みで混ぜる式（暗い色に寄る）の効きを、正解の 4K の画をジッタで読んで貯めた見積もり
+   （`--blur-static` の `blur_taa_estimate`）と比べて確かめる。確かめ: 縁の欠け − 地面と全体の輝度の比を、組ごとに表にする。
+2. **遠い株の覆いを保つ描き方**（`plant_far_edge_alias`、1 の結果で TAA 側の直しだけで足りなければ）: 画素より細い葉と枝を
+   最小の幅まで広げて 0/1 で当てる代わりに、広げた分を覆いの割合（本当の幅 ÷ 広げた幅）として持ち、アルファから覆い
+   （alpha-to-coverage）か、TAA が貯めるディザで描く。覆いの平均を保ったまま点の明暗を減らす。確かめ: aa-none・aa-fxaa の
+   縁のエイリアス − 地面が下がり、全体の輝度の比が 1 に近いまま、TAA の縁の欠け − 地面が増えない。
+3. **遠い株の前もって平均した形**（1・2 で足りなければ）: 30 m で葉 1 枚が 0.2 画素なので、葉の房を、不透明度と色のミップで
+   平均したカード（遠景の段）に替え、房の明暗を正解の 2×2 の平均と同じ尺度で持たせる。影のパスの遠景の段（葉 32 枚に 1 枚・
+   5.7 倍）は葉の面積を保つが房の隙間の模様を変えるので、描画に使うかは `--plant-far` の縁と全体の欠けで比べてから決める。
+4. **比べ直し**: 1〜3 の後、同じ組を同じ Game.exe で撮り直して `--plant-far` で比べ、風で揺れる株（風 0 を外した撮影）と
+   撒いた株の視点（`grass`）でも並べて見る（条件 4）。
+
+証拠は `.harness/runs/20261021-055341/` の `verify-SCN-WLR-PLANT-REF-FAR-1.txt`（base の撮影）、
+`verify-SCN-WLR-PLANT-REF-FAR-2.txt`（表）、`aux-SCN-WLR-PLANT-REF-FAR-ref2x.txt`・`-aa-none.txt`・`-aa-fxaa.txt`（組の撮影）。
+報告は `.harness/runs/scene-capture/SCN-WLR-PLANT-REF-FAR/plant_far_check.json`。
