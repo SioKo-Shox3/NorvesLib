@@ -15,7 +15,9 @@
 #     gray・lit: ratio（エンジン ÷ Cycles の比。成分 total・sun・sky・indirect）、chroma_diff（色度の差。成分 chroma）、
 #       visibility_mismatch（可視率の食い違いの割合。成分 visibility）
 #     blur_static: detail_loss（細部の欠け）、alias（エイリアス）、detail_loss_vs_resident・alias_vs_resident（その組 − resident。
-#       base と resident の差は case=base で書く）
+#       base と resident の差は case=base で書く）、detail_loss_vs_case・alias_vs_case（その組 − against の組。同じ Game.exe で
+#       撮った別の条件の組と比べる）
+#   against: _vs_case の量で引く組（blur_static だけ）
 #     blur_motion: detail_loss・alias（tag の撮影の値）、motion_static_detail_loss・motion_static_alias（振りと止めの差。振り − 止め）
 #     atmos_ref（ReferenceCheck.py --atmos-ref。行の鍵は mode・view・quantity と閾値だけ）: エンジンの書き出しの地表の値と、
 #       カメラの足元の谷床の高度で求めた期待値の RGB の相対差の最大（illuminance.valley_floor）。sun_transmittance（太陽の透過率）、
@@ -53,7 +55,7 @@ import os
 MODES = ("gray", "lit", "blur_static", "blur_motion", "bounce", "atmos_ref", "building", "plant")
 # bounce の行で使える成分
 BOUNCE_COMPONENTS = ("indirect", "chroma")
-ROW_KEYS = ("mode", "view", "region", "component", "case", "tag", "static", "quantity", "min", "max",
+ROW_KEYS = ("mode", "view", "region", "component", "case", "tag", "static", "against", "quantity", "min", "max",
             "allow_undetermined", "note")
 LIGHT_QUANTITIES = {"total": ("ratio",), "sun": ("ratio",), "sky": ("ratio",), "indirect": ("ratio",),
                     "visibility": ("visibility_mismatch",), "chroma": ("chroma_diff",)}
@@ -63,7 +65,8 @@ LIGHT_RATIO_KEYS = {"total": ("ratio", "比が無い"),
                     "sky": ("sky_ratio", "空だけのエンジンの撮影（engine-sky）が無い"),
                     "indirect": ("indirect_ratio", "エンジンの間接光を分けた撮影が無い")}
 BLUR_REGIONS = ("far", "cliff")
-BLUR_STATIC_QUANTITIES = ("detail_loss", "alias", "detail_loss_vs_resident", "alias_vs_resident")
+BLUR_STATIC_QUANTITIES = ("detail_loss", "alias", "detail_loss_vs_resident", "alias_vs_resident", "detail_loss_vs_case",
+                          "alias_vs_case")
 BLUR_MOTION_QUANTITIES = ("detail_loss", "alias", "motion_static_detail_loss", "motion_static_alias")
 BLUR_VALUE_KEYS = {"detail_loss": "fine_detail_loss", "alias": "fine_alias"}
 JUDGED = "判定"
@@ -184,8 +187,15 @@ def validate_row(rc, row, mode):
                 errors.append(f"case {row.get('case')!r} は条件の組でない（{'・'.join(cases)}）")
             if quantity not in BLUR_STATIC_QUANTITIES:
                 errors.append(f"blur_static の量は {'・'.join(BLUR_STATIC_QUANTITIES)}（{quantity!r} でない）")
+            elif str(quantity).endswith("_vs_case"):
+                if row.get("against") not in cases or row.get("against") == row.get("case"):
+                    errors.append(f"against {row.get('against')!r} は case と違う条件の組にする（{'・'.join(cases)}）")
+            elif "against" in row:
+                errors.append("against は _vs_case の量の行だけの鍵")
             errors.extend(f"{key} は blur_motion の行だけの鍵" for key in ("tag", "static") if key in row)
         else:
+            if "against" in row:
+                errors.append("against は blur_static の行だけの鍵")
             tags = [f"static-{k}" for k in rc.MOTION_OFFSETS] + [rc.MOTION_FINAL] + \
                 [f"motion-{k}" for k in rc.MOTION_OFFSETS]
             if row.get("view") != rc.MOTION_VIEW:
@@ -260,14 +270,15 @@ def blur_static_value(rc, report, row):
         return None, "視点を比べていない"
     cases = view["cases"]
     quantity = row["quantity"]
-    base = quantity.replace("_vs_resident", "")
+    base = quantity.replace("_vs_resident", "").replace("_vs_case", "")
     value = blur_region_value(cases.get(row["case"]), row["region"], base)
     if value is None:
         return None, f"組 {row['case']} の {row['region']} の値が無い"
-    if quantity.endswith("_vs_resident"):
-        baseline = blur_region_value(cases.get(rc.BLUR_BASELINE), row["region"], base)
+    if quantity != base:
+        against = rc.BLUR_BASELINE if quantity.endswith("_vs_resident") else row["against"]
+        baseline = blur_region_value(cases.get(against), row["region"], base)
         if baseline is None:
-            return None, f"組 {rc.BLUR_BASELINE} の {row['region']} の値が無い"
+            return None, f"組 {against} の {row['region']} の値が無い"
         value -= baseline
     return value, None
 

@@ -18,6 +18,7 @@
 | `case` | 組。`blur_static` は条件の組（base・resident・aa-taa など）、`blur_motion` は fxaa・taa・base |
 | `tag` | 撮影の名前（`blur_motion` だけ。static-0・static-8・static-30・static-60・motion-0・motion-8・motion-30） |
 | `static` | 振りと止めの差の止めの撮影（`blur_motion` だけ。省くと `tag` の motion-k に対する static-k） |
+| `against` | `_vs_case` の量で引く組（`blur_static` だけ。`case` と違う条件の組） |
 | `quantity` | 量（下の表） |
 | `min`・`max` | 下限・上限（両端を含む。どちらか一方は要る） |
 | `allow_undetermined` | 未判定を許すか（既定は許さない） |
@@ -30,6 +31,7 @@
 | `gray`・`lit` | `visibility_mismatch`（成分 visibility） | 太陽の可視率がエンジンと Cycles で食い違う画素の割合 |
 | `blur_static` | `detail_loss`・`alias` | その組の細部の欠け・エイリアス（2 倍の解像度の正解と比べた値） |
 | `blur_static` | `detail_loss_vs_resident`・`alias_vs_resident` | その組 − resident（base と resident の差は `case: base`） |
+| `blur_static` | `detail_loss_vs_case`・`alias_vs_case` | その組 − `against` の組（同じ Game.exe で撮った別の条件の組。照明の絶対値に依らない比べ方） |
 | `blur_motion` | `detail_loss`・`alias` | その組の `tag` の撮影の値 |
 | `blur_motion` | `motion_static_detail_loss`・`motion_static_alias` | 振りと止めの差（振り − 止め） |
 

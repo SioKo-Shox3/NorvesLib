@@ -6412,3 +6412,11 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - golden は反復 23 で通過を確かめた（`aux-SCN-WL-PROP-AO-golden.txt`）後に描画を変えていないので再承認しない
   - 新しい試験は足していない
 - Next: TASKS.md の次の未完の項目
+
+### SCN-WL-FAR-AA 止め（2026-10-21、run 20261021-055341 の反復 27。理由と選択肢は blocked/SCN-WL-FAR-AA.md）
+- 回帰の撮影の before（-Motion つき）は result=pass（`regression-before-SCN-WL-FAR-AA.txt`）
+- 同じ Game.exe（dc1fb56b…）で ref2x・resident・TAA の定数を 1 つずつ変えた 13 組を撮った（`aux-SCN-WL-FAR-AA-sweep.txt`、撮影先 `scene-capture/SCN-WL-FAR-AA-sweep3/`）。箱の幅・現在の色の割合・シャープ化は欠けとエイリアスを入れ替えるだけで、欠け ≤ resident に届く組は無い（既定の TAA 0.533・resident 0.238、ref_far_01 遠景）。地形のミップの偏りは効かない
+- 切り分け（一時的な計装。戻した）: 動きを 0 に固定しても同じ、ジッタ 0 で貯めると欠け 0.269（resident 並み）、ジッタ 0.5 倍では中くらいの帯域まで崩れる。並べた画でジッタの量により陰の斑・崖の明暗が変わる。理想の静止の TAA（正解の 4K 画をジッタで読んで貯めた画）の欠けは 0.09〜0.10。欠けの主因は混ぜ方の定数でなく、ジッタで描かれる中身が変わること
+- Done: `far-aa-static.json` を同じ exe の相対の形（欠け ≤ resident、エイリアス ≤ `aa-taa-prev`）に直し、`--blur-static` に組 `aa-taa-prev`、`ExpectSpec.py` に量 `detail_loss_vs_case`・`alias_vs_case`（鍵 `against`）を足した。TAA の定数は変えていない
+- Notes: RelWithDebInfo の Game.exe は計装入りのビルドのまま（ソースは戻した。次の `-Build` で作り直される）。新しい試験は足していない
+- Next: blocked/SCN-WL-FAR-AA.md の判断待ち（推奨: ジッタで変わる照明の経路を特定して直す項目を先に立てる）
