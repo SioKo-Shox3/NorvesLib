@@ -75,14 +75,18 @@ namespace NorvesLib::Core::Rendering
      * シーンの色へは書かない。視線（GetLastInfo().Rays）:
      *   Direction: 太陽の方位からの方位差 kAzimuthOffsetsDegrees × 仰角 kElevationsDegrees の向きに、距離 kDistancesMeters まで
      *   Ground: 方位差 kAzimuthOffsetsDegrees の向きに、カメラから GroundEyeHeightMeters 下の水平面の、水平距離 kDistancesMeters の点まで
-     * 行（どれも事前露出の前。放射輝度は cd/m²）:
+     * 行（どれも事前露出の前。放射輝度は cd/m²）。空気遠近が有効なときは、霧と空気遠近を 1 本の視線で一緒に積むので、
+     * 霧の光は空気遠近の透過率で、空気遠近の光は霧の透過率で、視線の上のその点までの分だけ減らした値:
      *   0: 高さフォグの透過率・不透明度・空気遠近の RGB の平均の透過率・合成のアルファ
-     *   1: 高さフォグの色（不透明度を掛ける前）、a = 空の放射輝度 LUT を使ったか
+     *   1: 高さフォグの周りの光の色（空の放射輝度 LUT の視線の向きの値か既定の色）、a = 空の放射輝度 LUT を使ったか
      *   2: 高さフォグの太陽の単一散乱（影つき）、a = 太陽の単一散乱が有効か
      *   3: 空気遠近の RGB の透過率、a = 空気遠近が有効か
-     *   4: 空気遠近の散乱光
+     *   4: 空気遠近の散乱光（行 7 と行 8 の和）
      *   5: 空の放射輝度 LUT のこの向きの値
-     *   6: volumetrics.frag がシーンの色へ足す光（高さフォグ + 空気遠近 × 高さフォグの透過率）、a = 合成のアルファ
+     *   6: volumetrics.frag がシーンの色へ足す光（行 9 + 行 2 + 行 4）、a = 合成のアルファ
+     *   7: 空気遠近の太陽の単一散乱
+     *   8: 空気遠近の多重散乱（空の多重散乱の表 Ψ_ms から）
+     *   9: 高さフォグの周りの光（行 1 の色 × 霧の散乱係数 × 透過率を視線で積んだ値。空気遠近が無効なら × 不透明度）
      */
     class AtmosphereProbePass : public IViewPass, public IRenderGraphPass
     {

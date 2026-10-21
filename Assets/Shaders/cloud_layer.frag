@@ -30,6 +30,9 @@ layout(set = 0, binding = 4) uniform sampler3D detailNoise;
 const float PI = 3.14159265359;
 // 視線を進める最長の距離(m)。これより先の雲は地平線の霞に溶けて見えない
 const float kMaxMarchDistance = 45000.0;
+// 雲の層に入る距離がこれより先の雲は、kMaxMarchDistance で空の色へ溶かし切る(m)。打ち切りの距離で雲が急に消えると、
+// その仰角に地平線と平行な明るさの境が出る（荒野の ref_ground_02 の仰角約 3° の境）
+const float kFadeStartDistance = 30000.0;
 const int kMinPrimarySteps = 32;
 const int kMaxPrimarySteps = 96;
 // 1 歩の長さの目安(m)。真上の 2.5 km は最少の歩数、地平線の方は最大の歩数で進む
@@ -335,6 +338,8 @@ void main()
     float cloudDistance = distanceWeight > 0.0 ? weightedDistance / distanceWeight : startDistance;
     float hazeVisibility = exp(-cloudDistance / kCloudHazeDistance);
     vec3 cloudRadiance = scattered * hazeVisibility + SampleSky(rayDirection) * opacity * (1.0 - hazeVisibility);
-    cloudRadiance = min(cloudRadiance * params.cameraPositionAndPreExposure.w, vec3(65504.0));
-    outColor = vec4(cloudRadiance, opacity);
+    // 打ち切りの距離へ近づくほど、雲を重ねる割合を 0 へ下げる（下の空の色がそのまま残る）
+    float fade = 1.0 - smoothstep(kFadeStartDistance, kMaxMarchDistance, startDistance);
+    cloudRadiance = min(cloudRadiance * fade * params.cameraPositionAndPreExposure.w, vec3(65504.0));
+    outColor = vec4(cloudRadiance, opacity * fade);
 }

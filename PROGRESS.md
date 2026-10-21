@@ -6579,3 +6579,25 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `verify-SCN-WLR-ATMOS-REF-NEWSET-1.txt` `AtmosphereReference.py --verify` result=pass・sets=3・inputs_current=1・EXIT=0（開始時の確かめも兼ねた）
 - Notes: 段 2 の秒数は 3 組を同時に解いたので前より長い（記録の表を新しい秒数に替えた）。設定をエンジンへ入れるのは SCN-WL-SKY-SCATTER。新しい試験は足していない
 - Next: TASKS.md の次の未完の項目
+### SCN-WL-SKY-SCATTER 完了（2026-10-22、run 20261021-055341 の反復 39）
+- Done:
+  - 空の Mie: `SkyAtmosphereParameters::MieDensityScale` を足し（地表の散乱と吸収の両方。透過率の積分・空のレイマーチ・表の写しの条件・比べ方・ハッシュ・`GetAtmosphereGroundExtinction(sky)`）、荒野だけ 0.5（`kSkyMieDensityScale`。SCN-WLR-ATMOS-REF-NEWSET の newset）。ほかのシーンは 1 のまま
+  - 空気遠近: 空の LUT の輝度を透過率の割合で配る近似をやめ、不透明物までの区間を 32 歩で進めて太陽の単一散乱と多重散乱（Ψ_ms）を積む（`Common/VolumetricsCommon.glsl` の `MarchFogAndAerial`）。高度ごとの太陽の照度 × 透過率と Ψ_ms は空の model から 128 段の表（`SkyAerialProfile`）にし、SkyAtmospherePass が context で渡して VolumetricsPass が定数へ詰める。霧と空気遠近は同じ視線で一緒に積む（合成の順を持たない）。霧だけのシーンの式は変えていない
+  - ref_ground_02 の空の高さ約 380 px の境: 雲の層の視線を層に入る距離 45 km で打ち切る所（仰角 2.98°）だった。30〜45 km で雲を重ねる割合を 0 へ滑らかに下げた（`cloud_layer.frag`）
+  - 大気の書き出し: 行を 10 に（空気遠近の単一散乱・多重散乱、霧の周りの光）、高度ごとの表のファイル、Mie の散乱係数と歩数を足した。`ReferenceCheck.py --atmos-dump` の式の写しを新しい式に、`--atmos-ref` は書き出しの設定が収束を確かめた組（engine・newset）と合えばその解を読み、空気遠近を単一散乱は正解 B と・多重散乱は正解 A と比べる（`aerial`）。`ExpectSpec.py` に量（`aerial_single`・`aerial_multiple`・`sky_horizontal_b`・`newset_settings`）、仕様 `sky-scatter.json`
+  - 記録 `Docs/RenderingValidation/WastelandAtmosphereReference.md` の「空の設定と空気遠近の散乱光をエンジンへ入れる」
+  - notes に従い霧の式の数値の検査を SCN-WL-SKY-SCATTER-FOG に分けた（荒野は霧の割合 0 で霧が無く、`fog_aerial_order`・`fog_sky_color_double` を測れない）
+- 証拠（`.harness/runs/20261021-055341/`）:
+  - `aux-SCN-WL-SKY-SCATTER-regression-before.txt` 反復の最初の回帰の before（編集の前）result=pass
+  - `verify-SCN-WL-SKY-SCATTER-1.txt` Debug の Game のビルド EXIT=0
+  - `verify-SCN-WL-SKY-SCATTER-2.txt` atmosphere-dump の撮影 result=pass・EXIT=0
+  - `verify-SCN-WL-SKY-SCATTER-3.txt` `--atmos-ref --expect sky-scatter.json --verify` result=pass・inputs_current=1・9 行合格: newset との差 3.6e-9、空気遠近の単一散乱 ÷ B 0.9995〜1.0007、多重散乱 ÷ A 0.9986〜1.0027、太陽の透過率と照度 0.02 %、空の照度 ÷ A 1.3 %、霞の光学的深さ 1.5 %、Ψ 0.6 %・1.1 %。記録: 空気遠近の和 ÷ B 太陽の側 0.84〜0.87・横 0.93〜0.95・反対 0.91〜0.93（多重散乱の A ÷ B 0.63〜0.92 のモデルの差）
+  - `aux-SCN-WL-SKY-SCATTER-atmos-dump.txt` `--atmos-dump --verify` result=pass（GPU と式の写しの差: 透過率 2.5e-4・散乱光 1.6e-4、高度ごとの表と表の差 1.6e-3・1.7e-7）
+  - `verify-SCN-WL-SKY-SCATTER-4.txt` 回帰の after result=pass。4 シーンとも平均の差 0.000（PSNR 65.6〜∞）。rendering3dtest の after を開き、天球・地面・球・岩が変わらないことを確かめた
+  - 6 視点: before `scene-capture/SCN-WL-SKY-SCATTER-before-views`（`aux-...-views-before.txt`）、after `scene-capture/SCN-WL-SKY-SCATTER-views`（`aux-...-views-after.txt`）、写真・前・後の並べ `compare_*.png`（`aux-SCN-WL-SKY-SCATTER-compare.py`）を開いた。ref_ground_02 の境は消えた（`aux-SCN-WL-SKY-SCATTER-border.txt`: 行の平均の段の最大 1.72（y=380）→ 0.37（雲の模様））。ref_far_01 の遠い崖の白い薄まりが減り写真の赤に近づき、ref_cliff_02 は地平線の遠い山が青く見える。上 1/3 の空の Y は 0.95〜1.04 倍、ref_cliff_01 は日なたが明るく全体 1.057 倍（地表の太陽 110 → 117 klx）（`aux-SCN-WL-SKY-SCATTER-views-diff.txt`）
+- Notes:
+  - 自分で足した `sky_horizontal_b`（水平面の空の照度 ÷ B、5 %）は 7.3 % で、A ÷ B が R 1.059・G 1.021・B 0.978 のモデルの差だけだった（エンジン ÷ A 1.3 %）ので、done-when のとおり合否から外して記録にした
+  - 変更前の書き出し（SCN-WL-PSI-GRID の写し）は sky-scatter.json に落ちる（newset との差 0.5、空気遠近の内訳は未判定）ことを確かめた
+  - 区間を進める 32 歩の GPU 時間は測っていない（荒野だけ。霧があるときの影の標本も 32 歩になる）
+  - 新しい試験は足していない
+- Next: TASKS.md の次の未完の項目（SCN-WL-SKY-SCATTER-FOG が開く）

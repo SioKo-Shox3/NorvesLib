@@ -207,6 +207,7 @@ namespace NorvesLib::Core::Rendering
         m_LastParameters = SkyAtmosphereParameters{};
         m_LutParameters = SkyAtmosphereParameters{};
         m_LutSunGroundTransmittance = Math::Vector3::Zero;
+        m_AerialProfile = SkyAerialProfile{};
         m_bLutValid = false;
         m_LastSunDiskPreExposedLuminance = 0.0f;
         m_bLastSunDiskSaturated = false;
@@ -369,6 +370,38 @@ namespace NorvesLib::Core::Rendering
         }
     }
 
+    void BuildSkyAerialProfile(const SkyAtmosphereModel& model, SkyAerialProfile& outProfile)
+    {
+        outProfile = SkyAerialProfile{};
+        const SkyAtmosphereParameters& parameters = model.GetParameters();
+        if (!parameters.bEnabled)
+        {
+            return;
+        }
+        const Math::Vector3 sunDirection =
+            MakeSunDirectionFromAltitudeAzimuth(parameters.SunAltitudeDegrees, parameters.SunAzimuthDegrees);
+        const double sunIrradiance = model.GetSunDiskIrradiance();
+        outProfile.SunCosine = sunDirection.y;
+        for (uint32_t index = 0u; index < SkyAerialProfileSize; ++index)
+        {
+            const double altitude = static_cast<double>(SkyAerialProfileMaxAltitudeMeters) * index /
+                                    static_cast<double>(SkyAerialProfileSize - 1u);
+            Math::Vector3 transmittance;
+            Math::Vector3 multipleScattering;
+            model.LookupSunTransmittanceAndMultipleScattering(altitude, sunDirection.y, transmittance, multipleScattering);
+            const float sun[3] = {transmittance.x, transmittance.y, transmittance.z};
+            const float psi[3] = {multipleScattering.x, multipleScattering.y, multipleScattering.z};
+            for (uint32_t channel = 0u; channel < 3u; ++channel)
+            {
+                outProfile.SunIlluminance[index][channel] = static_cast<float>(sunIrradiance * sun[channel]);
+                outProfile.MultipleScattering[index][channel] = static_cast<float>(sunIrradiance * psi[channel]);
+            }
+            outProfile.SunIlluminance[index][3] = 1.0f;
+            outProfile.MultipleScattering[index][3] = 1.0f;
+        }
+        outProfile.bValid = std::isfinite(sunIrradiance) && sunIrradiance > 0.0;
+    }
+
     bool SkyAtmospherePass::GenerateTransmittanceLut(const SkyAtmosphereModel& model)
     {
         if (!m_TransmittanceTexture)
@@ -493,6 +526,7 @@ namespace NorvesLib::Core::Rendering
                             model.ReusedSunIndependentTables() ? 1 : 0);
             m_LutParameters = parameters;
             m_LutSunGroundTransmittance = model.GetSunGroundTransmittance();
+            BuildSkyAerialProfile(model, m_AerialProfile);
             m_bLutValid = true;
         }
         return GenerateSunDiskTexture(parameters, preExposure, frameResources);
@@ -516,6 +550,7 @@ namespace NorvesLib::Core::Rendering
                                       bValid ? m_LastSunDiskPreExposedLuminance : 0.0f,
                                       bValid && m_bLastSunDiskSaturated,
                                       bValid);
+        context.SkyAtmosphere.AerialProfile = bValid ? m_AerialProfile : SkyAerialProfile{};
     }
 
     void SkyAtmospherePass::Declare(RenderGraphBuilder& builder)

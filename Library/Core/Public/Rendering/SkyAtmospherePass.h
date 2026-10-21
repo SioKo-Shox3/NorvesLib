@@ -39,6 +39,14 @@ namespace NorvesLib::Core::Rendering
                                    uint32_t height,
                                    Container::VariableArray<uint16_t>& outTexels);
 
+    /**
+     * @brief 空気遠近の高度ごとの表（SkyAerialProfile）を空の model から作る
+     *
+     * 太陽への透過率は model.LookupSunTransmittanceAndMultipleScattering の直接の積分、Ψ_ms は空のレイマーチと同じ表の引き方。
+     * 空が無効なら bValid が偽。
+     */
+    void BuildSkyAerialProfile(const SkyAtmosphereModel& model, SkyAerialProfile& outProfile);
+
     struct SkyAtmospherePassSettings
     {
         uint32_t TransmittanceWidth = 128;
@@ -132,6 +140,8 @@ namespace NorvesLib::Core::Rendering
         // 透過率LUT・放射輝度LUTを最後に作ったときのパラメータ。変わったときだけ作り直す。
         SkyAtmosphereParameters m_LutParameters;
         Math::Vector3 m_LutSunGroundTransmittance = Math::Vector3::Zero;
+        // LUT と同じ model から作った空気遠近の高度ごとの表（VolumetricsPass へ context で渡す）
+        SkyAerialProfile m_AerialProfile;
         bool m_bLutValid = false;
         // 最後に LUT を作った空の model。太陽だけが動いたときは、太陽に依らない表（透過率・多重散乱）をここから写す。
         Container::TUniquePtr<SkyAtmosphereModel> m_LutModel;

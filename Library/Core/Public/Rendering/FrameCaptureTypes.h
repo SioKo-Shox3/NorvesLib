@@ -222,7 +222,9 @@ namespace NorvesLib::Core::Rendering
     /** @brief 大気の書き出し（AtmosphereProbePass）が評価する視線の数の上限（volumetrics_probe.frag の kAtmosphereProbeMaxRays と同じ） */
     inline constexpr uint32_t FrameCaptureAtmosphereMaxRays = 256u;
     /** @brief 大気の書き出しの画像の行の数（行の意味は AtmosphereProbePass と SaveCapturedAtmosphere の約束） */
-    inline constexpr uint32_t FrameCaptureAtmosphereProbeRows = 7u;
+    inline constexpr uint32_t FrameCaptureAtmosphereProbeRows = 10u;
+    /** @brief 霧と空気遠近を一緒に積む視線の歩数（Common/VolumetricsCommon.glsl の kAtmosphereSteps と同じ。書き出しに記録する） */
+    inline constexpr uint32_t VolumetricsAtmosphereMarchSteps = 32u;
 
     /** @brief 大気の書き出しの視線の種類 */
     enum class FrameCaptureAtmosphereRayKind : uint8_t
@@ -275,6 +277,7 @@ namespace NorvesLib::Core::Rendering
         /** @brief 空気遠近の定数（VolumetricsPass が詰めた値。Mie は密度の倍率を掛けた後） */
         float RayleighExtinction[3] = {0.0f, 0.0f, 0.0f};
         float MieExtinction = 0.0f;
+        float MieScattering = 0.0f;
         float TransmittanceLutObserverV = 0.0f;
         uint32_t RayCount = 0;
         FrameCaptureAtmosphereRay Rays[FrameCaptureAtmosphereMaxRays];

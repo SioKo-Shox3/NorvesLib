@@ -244,6 +244,7 @@ namespace NorvesLib::Core::Rendering
             hash = HashRevisionValue(hash, sky.AtmosphereHeightMeters);
             hash = HashRevisionValue(hash, sky.RayleighScaleHeightMeters);
             hash = HashRevisionValue(hash, sky.MieScaleHeightMeters);
+            hash = HashRevisionValue(hash, sky.MieDensityScale);
             hash = HashRevisionValue(hash, sky.MieAnisotropy);
             hash = HashRevisionValue(hash, sky.GroundAlbedo.x);
             hash = HashRevisionValue(hash, sky.GroundAlbedo.y);

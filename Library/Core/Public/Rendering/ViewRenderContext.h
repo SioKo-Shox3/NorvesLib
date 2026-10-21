@@ -440,6 +440,8 @@ namespace NorvesLib::Core::Rendering
         RHI::TexturePtr RadianceTexture;
         RHI::TexturePtr SunDiskTexture;
         RHI::SamplerPtr Sampler;
+        // 空気遠近の高度ごとの表（LUT と同じ空の model から作った値）
+        SkyAerialProfile AerialProfile;
         float PreExposure = 1.0f;
         float SunDiskPreExposedLuminance = 0.0f;
         bool bSnapshotEnabled = false;
@@ -453,6 +455,7 @@ namespace NorvesLib::Core::Rendering
             RadianceTexture.reset();
             SunDiskTexture.reset();
             Sampler.reset();
+            AerialProfile = SkyAerialProfile{};
             PreExposure = 1.0f;
             SunDiskPreExposedLuminance = 0.0f;
             bSnapshotEnabled = false;

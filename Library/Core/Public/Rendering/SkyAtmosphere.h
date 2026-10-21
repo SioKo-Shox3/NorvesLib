@@ -32,6 +32,9 @@ namespace NorvesLib::Core::Rendering
         float AtmosphereHeightMeters = 80000.0f;
         float RayleighScaleHeightMeters = 8000.0f;
         float MieScaleHeightMeters = 1200.0f;
+        // エアロゾル（Mie）の密度の倍率。地表の散乱係数と吸収係数の両方に掛ける（散乱と吸収の分け方・尺度高さは変えない）。
+        // 1 で既定の係数（散乱 1.0e-4・吸収 1.11e-5 /m）
+        float MieDensityScale = 1.0f;
         float MieAnisotropy = 0.8f;
         Math::Vector3 GroundAlbedo = Math::Vector3(0.3f, 0.3f, 0.3f);
         // シーンの地表の、惑星の表面（海面）からの高度（m）。地表の太陽の透過率・照度、地表の空の照度はこの高度で、
@@ -66,6 +69,26 @@ namespace NorvesLib::Core::Rendering
     AerialPerspectiveParameters SanitizeAerialPerspectiveParameters(
         const AerialPerspectiveParameters& parameters);
 
+    /** 空気遠近の高度ごとの表（SkyAerialProfile）の段の数と、いちばん上の段の海面からの高度（m） */
+    inline constexpr uint32_t SkyAerialProfileSize = 128u;
+    inline constexpr float SkyAerialProfileMaxAltitudeMeters = 16000.0f;
+
+    /**
+     * @brief 空気遠近が不透明物までの区間の散乱光を積むための、高度ごとの太陽の光（SkyAtmospherePass が空の model から作る）
+     *
+     * 段 i は海面からの高度 i × SkyAerialProfileMaxAltitudeMeters / (SkyAerialProfileSize - 1) の点で、太陽の天頂角の余弦は
+     * SunCosine（カメラの真上の値。区間の中で地面の丸みによる太陽の高度の変わり方は数えない）。どれも RGB と未使用の 1 つ。
+     *   SunIlluminance: 大気の外の太陽の照度 × その点の太陽への透過率（lux）
+     *   MultipleScattering: 大気の外の太陽の照度 × 多重散乱の表 Ψ_ms（cd/m²。散乱係数と長さを掛けると散乱光）
+     */
+    struct SkyAerialProfile
+    {
+        float SunIlluminance[SkyAerialProfileSize][4] = {};
+        float MultipleScattering[SkyAerialProfileSize][4] = {};
+        float SunCosine = 0.0f;
+        bool bValid = false;
+    };
+
     /**
      * @brief 空に描く雲の層のパラメータ
      *
@@ -97,16 +120,18 @@ namespace NorvesLib::Core::Rendering
     /**
      * @brief 空の媒質の高度 0 での消散係数（1/m）
      *
-     * Rayleigh は RGB（散乱のみで吸収なし）、Mie は散乱と吸収の和で波長によらない。
+     * Rayleigh は RGB（散乱のみで吸収なし）、Mie は散乱と吸収の和で波長によらない（MieScattering はそのうちの散乱）。
      * オゾンは地表付近で密度 0 なので含めない。
      */
     struct AtmosphereGroundExtinction
     {
         Math::Vector3 Rayleigh = Math::Vector3::Zero;
         float Mie = 0.0f;
+        float MieScattering = 0.0f;
     };
 
-    AtmosphereGroundExtinction GetAtmosphereGroundExtinction();
+    /** parameters の空（MieDensityScale を掛けた Mie）の高度 0 での消散係数 */
+    AtmosphereGroundExtinction GetAtmosphereGroundExtinction(const SkyAtmosphereParameters& parameters);
 
     /**
      * @brief 空の評価結果
@@ -209,6 +234,17 @@ namespace NorvesLib::Core::Rendering
          * 埋めるときのように多くの点を引く側が使う。空が無効なら0。
          */
         Math::Vector3 GetTransmittance(float altitudeFraction, float cosine) const;
+
+        /**
+         * @brief 海面からの高度 altitudeMeters の点で、天頂との余弦 sunCosine の太陽への透過率（RGB）と多重散乱の表 Ψ_ms
+         *        （太陽の照度 1 lux あたりの放射輝度、RGB）を、空のレイマーチと同じ表の引き方で引く
+         *
+         * 空気遠近が不透明物までの区間の散乱光を積むときに使う（空の LUT と同じ大気の値）。空が無効なら 0。
+         */
+        void LookupSunTransmittanceAndMultipleScattering(double altitudeMeters,
+                                                         double sunCosine,
+                                                         Math::Vector3& outSunTransmittance,
+                                                         Math::Vector3& outMultipleScattering) const;
 
         /** 地表（GroundAltitudeMeters）の水平面に届く空の照度（太陽円盤を除く、lux、RGB） */
         Math::Vector3 GetGroundSkyIlluminance() const;

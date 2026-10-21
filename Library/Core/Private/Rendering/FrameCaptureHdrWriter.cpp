@@ -531,6 +531,18 @@ namespace NorvesLib::Core::Rendering
             return values;
         }
 
+        // 空気遠近の高度ごとの表（SkyAerialProfile）を [行, 段, RGBA] の単精度の並びに写す（行 0 = 太陽の照度 × 透過率、
+        // 行 1 = 太陽の照度 × Ψ_ms。VolumetricsPass が定数へ詰める値そのもの）
+        VariableArray<float> AerialProfileToFloats(const SkyAerialProfile& profile)
+        {
+            VariableArray<float> values;
+            values.resize(2u * SkyAerialProfileSize * 4u);
+            std::memcpy(values.data(), profile.SunIlluminance, sizeof(profile.SunIlluminance));
+            std::memcpy(values.data() + SkyAerialProfileSize * 4u, profile.MultipleScattering,
+                        sizeof(profile.MultipleScattering));
+            return values;
+        }
+
         // 前計算の表（RGB のセル）を単精度の並びに写す
         VariableArray<float> TableToFloats(const SkyAtmosphereModel::TableView& table)
         {
@@ -590,7 +602,10 @@ namespace NorvesLib::Core::Rendering
         const SkyAtmosphereModel::TableView transmittanceTable = model.GetTransmittanceTable();
         const SkyAtmosphereModel::TableView multipleScatteringTable = model.GetMultipleScatteringTable();
         const SkyAtmosphereModel::TableView skyViewTable = model.GetSkyViewTable();
-        if (transmittanceTable.Data == nullptr || multipleScatteringTable.Data == nullptr || skyViewTable.Data == nullptr)
+        SkyAerialProfile aerialProfile;
+        BuildSkyAerialProfile(model, aerialProfile);
+        if (transmittanceTable.Data == nullptr || multipleScatteringTable.Data == nullptr || skyViewTable.Data == nullptr ||
+            !aerialProfile.bValid)
         {
             return false;
         }
@@ -608,6 +623,7 @@ namespace NorvesLib::Core::Rendering
             {TEXT(".atmos.transmittance_table.f32"), TableToFloats(transmittanceTable), {}},
             {TEXT(".atmos.multiple_scattering.f32"), TableToFloats(multipleScatteringTable), {}},
             {TEXT(".atmos.sky_view.f32"), TableToFloats(skyViewTable), {}},
+            {TEXT(".atmos.aerial_profile.f32"), AerialProfileToFloats(aerialProfile), {}},
         };
         for (FloatFile& file : files)
         {
@@ -625,7 +641,7 @@ namespace NorvesLib::Core::Rendering
         const Math::Vector3 sunHorizontal(sunNormal.x * sunSine, sunNormal.y * sunSine, sunNormal.z * sunSine);
         const Math::Vector3 skyHorizontal = model.GetGroundSkyIlluminance();
         const Math::Vector3& sunTransmittance = model.GetSunGroundTransmittance();
-        const AtmosphereGroundExtinction groundExtinction = GetAtmosphereGroundExtinction();
+        const AtmosphereGroundExtinction groundExtinction = GetAtmosphereGroundExtinction(sky);
 
         VariableArray<char> json;
         const VariableArray<char> pngName = ToAsciiFileName(pngPath);
@@ -654,6 +670,8 @@ namespace NorvesLib::Core::Rendering
         AppendNumber(json, sky.RayleighScaleHeightMeters);
         AppendFormat(json, ", \"mie_scale_height_m\": ");
         AppendNumber(json, sky.MieScaleHeightMeters);
+        AppendFormat(json, ", \"mie_density_scale\": ");
+        AppendNumber(json, sky.MieDensityScale);
         AppendFormat(json, ", \"mie_anisotropy\": ");
         AppendNumber(json, sky.MieAnisotropy);
         AppendFormat(json, ", \"ground_albedo\": ");
@@ -668,6 +686,8 @@ namespace NorvesLib::Core::Rendering
         AppendVector3(json, groundExtinction.Rayleigh);
         AppendFormat(json, ", \"ground_extinction_mie_per_m\": ");
         AppendNumber(json, groundExtinction.Mie);
+        AppendFormat(json, ", \"ground_scattering_mie_per_m\": ");
+        AppendNumber(json, groundExtinction.MieScattering);
         AppendFormat(json, "},\n");
 
         const AerialPerspectiveParameters& aerial = info.Aerial;
@@ -684,6 +704,9 @@ namespace NorvesLib::Core::Rendering
         AppendVector3(json, info.RayleighExtinction);
         AppendFormat(json, ", \"shader_mie_extinction_per_m\": ");
         AppendNumber(json, info.MieExtinction);
+        AppendFormat(json, ", \"shader_mie_scattering_per_m\": ");
+        AppendNumber(json, info.MieScattering);
+        AppendFormat(json, ", \"march_steps\": %u", VolumetricsAtmosphereMarchSteps);
         AppendFormat(json, ", \"transmittance_lut_observer_v\": ");
         AppendNumber(json, info.TransmittanceLutObserverV);
         AppendFormat(json, "},\n");
@@ -778,6 +801,16 @@ namespace NorvesLib::Core::Rendering
             AppendFormat(json, column + 1u < skyViewTable.Columns ? ", " : "]},\n");
         }
 
+        // 空気遠近の高度ごとの表（VolumetricsPass が定数へ詰める値）
+        AppendFormat(json, "  \"aerial_profile\": {");
+        AppendFileEntry(json, files[6].Name, 2u, SkyAerialProfileSize, 4u);
+        AppendFormat(json, ", \"rows\": [\"sun_illuminance_times_transmittance_rgb_lux|1\", "
+                           "\"sun_illuminance_times_psi_ms_rgb_cd_m2|1\"], \"max_altitude_m\": ");
+        AppendNumber(json, SkyAerialProfileMaxAltitudeMeters);
+        AppendFormat(json, ", \"altitude\": \"sea_level_m = index * max_altitude_m / (size - 1)\", \"sun_cos_zenith\": ");
+        AppendNumber(json, aerialProfile.SunCosine);
+        AppendFormat(json, "},\n");
+
         // 決めた視線の値（行の意味は AtmosphereProbePass の説明と同じ）
         AppendFormat(json, "  \"probe\": {");
         AppendFileEntry(json, files[0].Name, probe.Height, probe.Width, 4u);
@@ -790,7 +823,10 @@ namespace NorvesLib::Core::Rendering
                            "\"aerial_transmittance_rgb|enabled\", "
                            "\"aerial_scattering_rgb_cd_m2|0\", "
                            "\"sky_radiance_lut_rgb_cd_m2|0\", "
-                           "\"composite_added_light_rgb_cd_m2|composite_alpha\"],\n    \"rays\": [\n");
+                           "\"composite_added_light_rgb_cd_m2|composite_alpha\", "
+                           "\"aerial_single_scattering_rgb_cd_m2|0\", "
+                           "\"aerial_multiple_scattering_rgb_cd_m2|0\", "
+                           "\"fog_ambient_light_rgb_cd_m2|0\"],\n    \"rays\": [\n");
         for (uint32_t rayIndex = 0; rayIndex < info.RayCount; ++rayIndex)
         {
             const FrameCaptureAtmosphereRay& ray = info.Rays[rayIndex];

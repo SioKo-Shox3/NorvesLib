@@ -215,7 +215,7 @@ namespace NorvesLib::Core::Rendering
                 ozone += OzoneDensity(altitude) * segment;
             }
             const double mieExtinction =
-                (static_cast<double>(kMieScattering) + kMieAbsorption) * mie;
+                (static_cast<double>(kMieScattering) + kMieAbsorption) * sanitized.MieDensityScale * mie;
             outOpticalDepth[0] =
                 kRayleighScatteringR * rayleigh + mieExtinction + kOzoneAbsorption[0] * ozone;
             outOpticalDepth[1] =
@@ -303,6 +303,10 @@ namespace NorvesLib::Core::Rendering
                                                           1.0e2f,
                                                           5.0e4f,
                                                           result.MieScaleHeightMeters);
+        result.MieDensityScale = ClampFinite(parameters.MieDensityScale,
+                                             0.0f,
+                                             100.0f,
+                                             result.MieDensityScale);
         result.MieAnisotropy = ClampFinite(parameters.MieAnisotropy,
                                            -0.9f,
                                            0.9f,
@@ -347,6 +351,7 @@ namespace NorvesLib::Core::Rendering
                lhs.AtmosphereHeightMeters == rhs.AtmosphereHeightMeters &&
                lhs.RayleighScaleHeightMeters == rhs.RayleighScaleHeightMeters &&
                lhs.MieScaleHeightMeters == rhs.MieScaleHeightMeters &&
+               lhs.MieDensityScale == rhs.MieDensityScale &&
                lhs.MieAnisotropy == rhs.MieAnisotropy &&
                lhs.GroundAlbedo.x == rhs.GroundAlbedo.x &&
                lhs.GroundAlbedo.y == rhs.GroundAlbedo.y &&
@@ -392,6 +397,7 @@ namespace NorvesLib::Core::Rendering
             previousParameters->AtmosphereHeightMeters == m_Parameters.AtmosphereHeightMeters &&
             previousParameters->RayleighScaleHeightMeters == m_Parameters.RayleighScaleHeightMeters &&
             previousParameters->MieScaleHeightMeters == m_Parameters.MieScaleHeightMeters &&
+            previousParameters->MieDensityScale == m_Parameters.MieDensityScale &&
             previousParameters->GroundAlbedo.x == m_Parameters.GroundAlbedo.x &&
             previousParameters->GroundAlbedo.y == m_Parameters.GroundAlbedo.y &&
             previousParameters->GroundAlbedo.z == m_Parameters.GroundAlbedo.z)
@@ -510,6 +516,32 @@ namespace NorvesLib::Core::Rendering
         return result;
     }
 
+    void SkyAtmosphereModel::LookupSunTransmittanceAndMultipleScattering(double altitudeMeters,
+                                                                         double sunCosine,
+                                                                         Math::Vector3& outSunTransmittance,
+                                                                         Math::Vector3& outMultipleScattering) const
+    {
+        outSunTransmittance = Math::Vector3::Zero;
+        outMultipleScattering = Math::Vector3::Zero;
+        if (!m_Parameters.bEnabled || m_MultipleScatteringTable.empty() || !std::isfinite(altitudeMeters) ||
+            !std::isfinite(sunCosine))
+        {
+            return;
+        }
+        const double radius = m_Parameters.PlanetRadiusMeters +
+                              std::clamp(altitudeMeters, 0.0, static_cast<double>(m_Parameters.AtmosphereHeightMeters));
+        // 太陽の透過率は表を補間せず直接積む（地表の太陽の透過率 GetSunGroundTransmittance と同じ積分）
+        double opticalDepth[3] = {0.0, 0.0, 0.0};
+        if (IntegrateOpticalDepth(m_Parameters, radius, sunCosine, opticalDepth))
+        {
+            outSunTransmittance = Math::Vector3(static_cast<float>(std::exp(-opticalDepth[0])),
+                                                static_cast<float>(std::exp(-opticalDepth[1])),
+                                                static_cast<float>(std::exp(-opticalDepth[2])));
+        }
+        const Rgb multipleScattering = LookupMultipleScattering(radius, sunCosine);
+        outMultipleScattering = Math::Vector3(multipleScattering.r, multipleScattering.g, multipleScattering.b);
+    }
+
     SkyAtmosphereModel::MarchResult SkyAtmosphereModel::March(
         const double origin[3],
         const double direction[3],
@@ -546,7 +578,8 @@ namespace NorvesLib::Core::Rendering
             : ComputeHenyeyGreensteinPhase(cosineToSun, m_Parameters.MieAnisotropy);
         const double rayleighCoefficients[3] = {
             kRayleighScatteringR, kRayleighScatteringG, kRayleighScatteringB};
-        const double mieExtinction = static_cast<double>(kMieScattering) + kMieAbsorption;
+        const double mieExtinction =
+            (static_cast<double>(kMieScattering) + kMieAbsorption) * m_Parameters.MieDensityScale;
 
         double inscattering[3] = {0.0, 0.0, 0.0};
         double transfer[3] = {0.0, 0.0, 0.0};
@@ -585,7 +618,8 @@ namespace NorvesLib::Core::Rendering
             const double multipleScatteringChannels[3] = {
                 multipleScattering.r, multipleScattering.g, multipleScattering.b};
 
-            const double mieScattering = kMieScattering * mieDensity;
+            const double mieScattering =
+                static_cast<double>(kMieScattering) * m_Parameters.MieDensityScale * mieDensity;
             for (uint32_t channel = 0u; channel < 3u; ++channel)
             {
                 const double rayleighScattering = rayleighCoefficients[channel] * rayleighDensity;
@@ -1119,13 +1153,15 @@ namespace NorvesLib::Core::Rendering
         return sanitized;
     }
 
-    AtmosphereGroundExtinction GetAtmosphereGroundExtinction()
+    AtmosphereGroundExtinction GetAtmosphereGroundExtinction(const SkyAtmosphereParameters& parameters)
     {
+        const SkyAtmosphereParameters sanitized = SanitizeSkyAtmosphereParameters(parameters);
         AtmosphereGroundExtinction extinction;
         extinction.Rayleigh = Math::Vector3(kRayleighScatteringR,
                                             kRayleighScatteringG,
                                             kRayleighScatteringB);
-        extinction.Mie = kMieScattering + kMieAbsorption;
+        extinction.Mie = (kMieScattering + kMieAbsorption) * sanitized.MieDensityScale;
+        extinction.MieScattering = kMieScattering * sanitized.MieDensityScale;
         return extinction;
     }
 

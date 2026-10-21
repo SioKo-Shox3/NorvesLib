@@ -34,15 +34,22 @@ namespace NorvesLib::Core::Rendering
             float CascadeView[PhysicalLightingShadowCascadeCount][16];
             float CascadeProjection[PhysicalLightingShadowCascadeCount][16];
             float CascadeSplitDistances[8];
-            // x=空気遠近が有効なら 1、y=距離の倍率、z=掛け始める距離（m）、w=観測点の高度の透過率 LUT の v
+            // x=空気遠近が有効なら 1、y=距離の倍率、z=掛け始める距離（m）、w=観測点の高度の透過率 LUT の v（書き出しの記録だけ）
             float AerialPerspective[4];
             // rgb=高度 0 の Rayleigh の消散係数（1/m）、w=Rayleigh のスケールハイト（m）
             float RayleighExtinctionAndScaleHeight[4];
             // x=高度 0 の Mie の消散係数（1/m。空気遠近の密度の倍率を掛けた値）、y=Mie のスケールハイト（m）、z=ワールドの y = 0 の高度（m）
             float MieExtinctionAndScaleHeight[4];
+            // xyz=太陽へ向かう向き、w=空の Mie の位相の異方性
+            float SunDirectionAndMieAnisotropy[4];
+            // x=高度 0 の Mie の散乱係数（1/m。空気遠近の密度の倍率を掛けた値）、y=高度ごとの表のいちばん上の段の高度（m）、
+            // z=惑星の半径（m）、w=未使用
+            float AerialScattering[4];
+            // 空気遠近の高度ごとの表（SkyAerialProfile）。[i] = 太陽の照度 × 透過率、[SkyAerialProfileSize + i] = 太陽の照度 × Ψ_ms
+            float AerialProfile[2u * SkyAerialProfileSize][4];
         };
 
-        static_assert(sizeof(GPUVolumetricsParams) == 752u);
+        static_assert(sizeof(GPUVolumetricsParams) == 784u + 2u * SkyAerialProfileSize * 16u);
 
         RHI::DescriptorSetDesc CreateVolumetricsDescriptorSetDesc()
         {
@@ -276,10 +283,11 @@ namespace NorvesLib::Core::Rendering
             outParams.FallbackFogColor[2] = scene ? SafeFogColorChannel(scene->FogColorB) : 0.0f;
             outParams.FallbackFogColor[3] = 1.0f;
 
-            // 空気遠近は空の放射輝度 LUT と透過率 LUT の両方があるときだけ掛ける
+            // 空気遠近は空の放射輝度 LUT・透過率 LUT と、同じ空の高度ごとの表があるときだけ掛ける
+            const SkyAerialProfile& aerialProfile = context.SkyAtmosphere.AerialProfile;
             outState.bAerialAvailable = aerial.bEnabled &&
                 skyRadianceTexture && skyTransmittanceTexture &&
-                skyTransmittanceTexture->GetHeight() > 0u;
+                skyTransmittanceTexture->GetHeight() > 0u && aerialProfile.bValid;
             if (outState.bAerialAvailable)
             {
                 const uint32_t transmittanceHeight = skyTransmittanceTexture->GetHeight();
@@ -290,7 +298,7 @@ namespace NorvesLib::Core::Rendering
                         sky.AtmosphereHeightMeters,
                     0.0f,
                     1.0f);
-                const AtmosphereGroundExtinction extinction = GetAtmosphereGroundExtinction();
+                const AtmosphereGroundExtinction extinction = GetAtmosphereGroundExtinction(sky);
                 outParams.AerialPerspective[0] = 1.0f;
                 outParams.AerialPerspective[1] = aerial.DistanceScale;
                 outParams.AerialPerspective[2] = aerial.StartDistanceMeters;
@@ -304,6 +312,18 @@ namespace NorvesLib::Core::Rendering
                 outParams.MieExtinctionAndScaleHeight[0] = extinction.Mie * aerial.MieDensityScale;
                 outParams.MieExtinctionAndScaleHeight[1] = sky.MieScaleHeightMeters;
                 outParams.MieExtinctionAndScaleHeight[2] = aerial.OriginAltitudeMeters;
+                const Math::Vector3 sunDirection =
+                    MakeSunDirectionFromAltitudeAzimuth(sky.SunAltitudeDegrees, sky.SunAzimuthDegrees);
+                outParams.SunDirectionAndMieAnisotropy[0] = sunDirection.x;
+                outParams.SunDirectionAndMieAnisotropy[1] = sunDirection.y;
+                outParams.SunDirectionAndMieAnisotropy[2] = sunDirection.z;
+                outParams.SunDirectionAndMieAnisotropy[3] = sky.MieAnisotropy;
+                outParams.AerialScattering[0] = extinction.MieScattering * aerial.MieDensityScale;
+                outParams.AerialScattering[1] = SkyAerialProfileMaxAltitudeMeters;
+                outParams.AerialScattering[2] = sky.PlanetRadiusMeters;
+                std::memcpy(outParams.AerialProfile[0], aerialProfile.SunIlluminance, sizeof(aerialProfile.SunIlluminance));
+                std::memcpy(outParams.AerialProfile[SkyAerialProfileSize], aerialProfile.MultipleScattering,
+                            sizeof(aerialProfile.MultipleScattering));
             }
 
             const ViewportRenderPlan* activeViewport = context.CurrentViewport;
@@ -1245,6 +1265,7 @@ namespace NorvesLib::Core::Rendering
         }
         m_LastInfo.DirectionalAnisotropy = params.DirectionalLightDirectionAndAnisotropy[3];
         m_LastInfo.MieExtinction = params.MieExtinctionAndScaleHeight[0];
+        m_LastInfo.MieScattering = params.AerialScattering[0];
         m_LastInfo.TransmittanceLutObserverV = params.AerialPerspective[3];
         m_LastInfo.bValid = true;
     }

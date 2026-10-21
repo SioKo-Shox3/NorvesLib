@@ -35,8 +35,8 @@ void main()
         ? clamp(dot(ray.AerialTransmittance, vec3(1.0 / 3.0)), 0.0, 1.0)
         : 1.0;
     // volumetrics.frag の合成と同じ式（事前露出と fp16 の上限の丸めは掛けない）
-    vec3 fogLight = ray.FogOpacity > 0.0 ? ray.FogRadiance * ray.FogOpacity + ray.FogDirectional : vec3(0.0);
-    vec3 compositeLight = bAerialEnabled ? fogLight + ray.AerialScattering * ray.FogTransmittance : fogLight;
+    vec3 fogLight = ray.FogOpacity > 0.0 ? ray.FogAmbient + ray.FogDirectional : vec3(0.0);
+    vec3 compositeLight = bAerialEnabled ? fogLight + ray.AerialScattering : fogLight;
     float compositeAlpha = bAerialEnabled
         ? clamp(1.0 - ray.FogTransmittance * aerialMeanTransmittance, 0.0, 1.0)
         : ray.FogOpacity;
@@ -69,8 +69,20 @@ void main()
             : vec3(0.0);
         outColor = vec4(skyRadiance, 0.0);
     }
-    else
+    else if (row == 6u)
     {
         outColor = vec4(compositeLight, compositeAlpha);
+    }
+    else if (row == 7u)
+    {
+        outColor = vec4(ray.AerialSingle, 0.0);
+    }
+    else if (row == 8u)
+    {
+        outColor = vec4(ray.AerialMultiple, 0.0);
+    }
+    else
+    {
+        outColor = vec4(ray.FogOpacity > 0.0 ? ray.FogAmbient : vec3(0.0), 0.0);
     }
 }

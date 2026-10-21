@@ -179,6 +179,7 @@ namespace NorvesLib::Core::Rendering
             hash = HashPathBytes(hash, &sky.AtmosphereHeightMeters, sizeof(float));
             hash = HashPathBytes(hash, &sky.RayleighScaleHeightMeters, sizeof(float));
             hash = HashPathBytes(hash, &sky.MieScaleHeightMeters, sizeof(float));
+            hash = HashPathBytes(hash, &sky.MieDensityScale, sizeof(float));
             hash = HashPathBytes(hash, &sky.MieAnisotropy, sizeof(float));
             hash = HashPathBytes(hash, &sky.GroundAlbedo.x, sizeof(float));
             hash = HashPathBytes(hash, &sky.GroundAlbedo.y, sizeof(float));

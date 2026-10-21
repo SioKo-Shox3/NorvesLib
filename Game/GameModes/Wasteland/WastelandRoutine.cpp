@@ -191,6 +191,11 @@ namespace Game::GameModes
         // 空のエアロゾル（Mie）の高さの尺度[m]。既定の 1.2 km の 1.33 倍にして柱の量を少し増やし、写真の白みの強い地平線の空に
         // 寄せる。2.4 km では青空の明るさは 1 割も変わらず、崖の視点の遠景の帯と空の比が写真の 0.46 から 0.34 へ離れた
         constexpr float kSkyMieScaleHeight = 1600.0f;
+        // 空のエアロゾル（Mie）の密度の倍率（地表の散乱と吸収の両方。既定の係数は散乱 1.0e-4・吸収 1.11e-5 /m）。谷床の観測点で
+        // 写真 ground_02 の空の帯の上下の明るさの比 0.76 に合う値（Docs/RenderingValidation/WastelandAtmosphereReference.md の
+        // 「空の大気の新しい設定」。方向を保つ正解 B で 0.764、1 倍では 0.824）。霞は空の大気の Mie そのもの（kHazeFogShare）
+        // なので、霞もこの倍率で薄くなる
+        constexpr float kSkyMieDensityScale = 0.5f;
         // 霞は空の大気の地表付近の Mie（海面で 1.11e-4 /m・尺度高さ 1.6 km。谷床で 4.4e-5 /m）そのもので、空と別の媒質を
         // 足さない。その Mie を高さフォグと空気遠近で割り振り、和が空の大気と同じ密度・同じ尺度高さになるようにする
         // （どの高さ・向きの視線でも、霞の光学的深さが空の大気の同じ視線の Mie と合う）。この割合が高さフォグの分で、残りを
@@ -445,6 +450,7 @@ namespace Game::GameModes
             sky.SunAltitudeDegrees = sunAltitudeDegrees;
             sky.SunAzimuthDegrees = sunAzimuthDegrees;
             sky.MieScaleHeightMeters = kSkyMieScaleHeight;
+            sky.MieDensityScale = kSkyMieDensityScale;
             sky.SunLuminanceNits = kSunLuminanceNits;
             sky.GroundAltitudeMeters = kSkyGroundAltitudeMeters;
             ctx.EngineRef.GetRenderWorld().SetSkyAtmosphere(sky);
@@ -452,7 +458,7 @@ namespace Game::GameModes
             // 霞の Mie を高さフォグと空気遠近で割り振る（kHazeFogShare）。高さフォグはワールドの y = 0 を基準に、その標高の
             // 空の大気の Mie の割合ぶんの密度で、空の Mie と同じ尺度高さで薄くする
             const float siteMieExtinction =
-                GetAtmosphereGroundExtinction().Mie * std::exp(-kSiteAltitudeMeters / kSkyMieScaleHeight);
+                GetAtmosphereGroundExtinction(sky).Mie * std::exp(-kSiteAltitudeMeters / kSkyMieScaleHeight);
             VolumetricFogParameters fog = MakeDefaultVolumetricFogParameters();
             fog.bEnabled = (hideMask & WastelandHide::Fog) == 0;
             fog.DensityAtBaseHeight = kHazeFogShare * siteMieExtinction;

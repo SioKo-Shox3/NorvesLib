@@ -1,0 +1,68 @@
+{
+  "description": "SCN-WL-SKY-SCATTER: 荒野の空の Mie を新しい設定（地表の散乱と吸収を 0.5 倍。SCN-WLR-ATMOS-REF-NEWSET が収束を確かめた組 newset）にし、空気遠近の散乱光を不透明物までの区間で太陽の単一散乱と多重散乱の表から積む（霧と空気遠近を 1 本の視線で一緒に積む）ことの合否。ref_ground_02 の大気の書き出しを、保存した newset の正解（ReferenceCheck.py --atmos-ref）と比べる。空気遠近の散乱光は、太陽の単一散乱を正解 B（A と B で同じ）と、多重散乱をエンジンの空と同じ論文の近似の正解 A と比べ、どちらも 5 % 以内（地表への視線と仰角 0°・2° の視線の 4 方位 × 300 m〜30 km）。多重散乱の A と B の差（空の多重散乱のモデルの差 sky_multiple_scattering）と、和の正解 B との比は記録だけ。空の Mie の設定に依る量（地表の太陽の透過率と照度、水平面の空の照度、霞の光学的深さ、多重散乱の表）も newset の正解と比べる。水平面の空の照度は同じ近似の正解 A と比べ、方向を保つ正解 B との差（sky_horizontal_b。newset の谷床で A ÷ B が R 1.059・G 1.021・B 0.978 のモデルの差）は記録だけ。変更前（空の Mie 1 倍、空気遠近は空の LUT の輝度を透過率の割合で配る）は newset の設定に合わず、空気遠近の多重散乱の行も無いので、この仕様に落ちる。",
+  "rows": [
+    {
+      "mode": "atmos_ref",
+      "view": "ref_ground_02",
+      "quantity": "newset_settings",
+      "max": 1e-06,
+      "note": "書き出しの空の設定と、正解の組 newset の設定の数値の相対差の最大（同じ設定で描いていること）"
+    },
+    {
+      "mode": "atmos_ref",
+      "view": "ref_ground_02",
+      "quantity": "aerial_single",
+      "max": 0.05,
+      "note": "空気遠近の太陽の単一散乱 ÷ 同じ媒質の正解 B の、RGB の相対差の最大"
+    },
+    {
+      "mode": "atmos_ref",
+      "view": "ref_ground_02",
+      "quantity": "aerial_multiple",
+      "max": 0.05,
+      "note": "空気遠近の多重散乱 ÷ 同じ媒質の正解 A（エンジンの空と同じ論文の近似）の、RGB の相対差の最大"
+    },
+    {
+      "mode": "atmos_ref",
+      "view": "ref_ground_02",
+      "quantity": "sun_transmittance",
+      "max": 0.01,
+      "note": "地表の太陽の透過率（谷床の高度。光学的深さだけで決まる）"
+    },
+    {
+      "mode": "atmos_ref",
+      "view": "ref_ground_02",
+      "quantity": "sun_horizontal",
+      "max": 0.01,
+      "note": "水平面の太陽の照度"
+    },
+    {
+      "mode": "atmos_ref",
+      "view": "ref_ground_02",
+      "quantity": "sky_horizontal",
+      "max": 0.03,
+      "note": "水平面の空の照度（太陽円盤を除く）の、谷床の高度の正解 A との相対差"
+    },
+    {
+      "mode": "atmos_ref",
+      "view": "ref_ground_02",
+      "quantity": "haze_optical_depth",
+      "max": 0.05,
+      "note": "地表への視線の (霧 ＋ 空気遠近の Mie) ÷ 空の大気の Mie の光学的深さの、1 との差の絶対値の最大"
+    },
+    {
+      "mode": "atmos_ref",
+      "view": "ref_ground_02",
+      "quantity": "psi_grid",
+      "max": 0.02,
+      "note": "多重散乱の表の格子点のエンジン ÷ A の、1 との差の絶対値の最大"
+    },
+    {
+      "mode": "atmos_ref",
+      "view": "ref_ground_02",
+      "quantity": "psi_cell",
+      "max": 0.02,
+      "note": "格子のセルの中心で多重散乱の表を補間した値のエンジン ÷ A の、1 との差の絶対値の最大"
+    }
+  ]
+}

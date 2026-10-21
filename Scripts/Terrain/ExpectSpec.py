@@ -24,6 +24,13 @@
 #       sun_horizontal（水平面の太陽の照度）、sky_horizontal（水平面の空の照度。期待値は論文の近似 A）。
 #       haze_optical_depth: 地表への視線の (霧 ＋ 空気遠近の Mie) の光学的深さ ÷ 空の大気の同じ視線の Mie の、1 との差の
 #       絶対値の最大（haze.ground_max_rel。全方位・全距離）
+#       sky_horizontal_b: 水平面の空の照度の、谷床の高度の方向を保つ正解 B との RGB の相対差の最大
+#       （illuminance.valley_floor.sky_horizontal_b_max_rel）。
+#       aerial_single・aerial_multiple: 空気遠近の散乱光の、同じ媒質の正解との RGB の相対差の最大（aerial。地表への視線と、
+#       仰角 0°・2° の視線の全方位・全距離）。aerial_single は太陽の単一散乱を正解 B（A と同じ）と、aerial_multiple は多重散乱を
+#       エンジンの空と同じ論文の近似の正解 A と比べる。
+#       newset_settings: 書き出しの空の設定と、正解の組 newset（AtmosphereReference.py --verify が収束を確かめた設定）の数値の
+#       相対差の最大（reference_set.newset_max_rel）。
 #       psi_grid・psi_cell: 多重散乱の表 Ψ_ms のエンジン ÷ 正解 A の、1 との差の絶対値の最大。psi_grid は表の格子点
 #       （psi_summary.grid_max_rel）、psi_cell は格子のセルの中心で表を補間した値（psi_summary.center_max_rel）。
 #       どちらも高度 10 km まで・太陽が地平線より上
@@ -75,6 +82,10 @@ JUDGED = "判定"
 ATMOS_REF_QUANTITIES = {"sun_transmittance": (("illuminance", "valley_floor"), "sun_transmittance_max_rel"),
                         "sun_horizontal": (("illuminance", "valley_floor"), "sun_horizontal_max_rel"),
                         "sky_horizontal": (("illuminance", "valley_floor"), "sky_horizontal_max_rel"),
+                        "sky_horizontal_b": (("illuminance", "valley_floor"), "sky_horizontal_b_max_rel"),
+                        "aerial_single": (("aerial",), "single_max_rel"),
+                        "aerial_multiple": (("aerial",), "multiple_max_rel"),
+                        "newset_settings": (("reference_set",), "newset_max_rel"),
                         "haze_optical_depth": (("haze",), "ground_max_rel"),
                         "psi_grid": (("psi_summary",), "grid_max_rel"),
                         "psi_cell": (("psi_summary",), "center_max_rel")}
