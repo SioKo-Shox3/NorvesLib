@@ -665,9 +665,14 @@ BLUR_SIZE = (1920, 1080)
 # 正解: 同じ視点を 2 倍の解像度・AA なしで撮った組（線形の光で 2×2 を平均して縮める）
 BLUR_REFERENCE = "ref2x"
 BLUR_REFERENCE_SCALE = 2
-# 4K は描画先が大きく VRAM のジオメトリの取り分の目標が縮み、ページの塊を足せずに要求が残る。取り分だけ広げる（描くものは変えない）
-BLUR_REFERENCE_ARGS = ("--wasteland-aa=none", "--vram-geometry-share=9")
-BLUR_REFERENCE_LOGS = ("WASTELAND_AA_PASS fxaa=off", "WASTELAND_BLUR_CASE aa=none ", "VRAM_POOL_SHARE geometry=9 ")
+# 4K は描画先が大きく VRAM のジオメトリの取り分の目標が縮み、ページの塊を足せずに要求が残る。取り分だけ広げる（描くものは変えない）。
+# MegaGeometry の LOD の誤差の閾値は 4K で BLUR_REFERENCE_LOD_ERROR_PX 画素（1 倍に直すと 0.25 画素）にし、比べる 1 倍の組の
+# どの段（TAA の View の 0.25 画素まで）よりも粗くない形を持たせる。正解の段が比べる組より粗いと、細かい段の組の正しい細部を
+# 欠けとエイリアスに数える（SCN-WL-LOD-DETAIL。4K で 1 画素の正解と 0.25 画素の正解の差は、欠け 0.12〜0.21・エイリアス 0.19〜0.25）
+BLUR_REFERENCE_LOD_ERROR_PX = "0.5"
+BLUR_REFERENCE_ARGS = ("--wasteland-aa=none", "--vram-geometry-share=9", f"--mega-lod-error-px={BLUR_REFERENCE_LOD_ERROR_PX}")
+BLUR_REFERENCE_LOGS = ("WASTELAND_AA_PASS fxaa=off", "WASTELAND_BLUR_CASE aa=none ", "VRAM_POOL_SHARE geometry=9 ",
+                       "MEGA_LOD_ERROR_PX threshold=0.500 ")
 # 比べる組は、正解と同じジオメトリの取り分（9）で撮り、撮った時点でページが常駐しきって追い出しも止まっていることを確かめる
 # （SCN-WL-GEOM-BUDGET の前は、既定の取り分 1 では 1920×1080 の 2 視点の作業集合が目標に収まらず、追い出しと読み直しが続いたまま
 # 撮れていた。今は既定の目標が作業集合の求めまで上がる。base と resident の差は geom-budget.json の仕様で検査する）。
@@ -689,6 +694,12 @@ BLUR_CASES = (
      "args": (BLUR_FXAA_ARG, BLUR_SHARE_ARG), "logs": (BLUR_FXAA_LOG, BLUR_SHARE_LOG), "resident": True},
     {"name": "aa-taa", "factor": "AA を TAA に", "args": ("--wasteland-aa=taa", BLUR_SHARE_ARG),
      "logs": ("WASTELAND_BLUR_CASE aa=taa ", BLUR_SHARE_LOG), "resident": True},
+    # TAA の View の LOD の誤差の倍率を SCN-WL-LOD-DETAIL の前の値（0.5）に起動引数で戻した組（ほかの定数は既定）。
+    # 倍率を変えた後の aa-taa と同じ Game.exe で撮って比べる
+    {"name": "aa-taa-lod-prev", "factor": "AA を TAA に（TAA の View の LOD の誤差の倍率は変更前の 0.5）",
+     "args": ("--wasteland-aa=taa", "--taa-geometry-lod-scale=0.5", BLUR_SHARE_ARG),
+     "logs": ("WASTELAND_BLUR_CASE aa=taa ", "TAA_PARAMS current_weight=0.100 clip_gamma=1.000 sharpen=0.500 jitter_scale=1.000 "
+              "geometry_lod_scale=0.500 source=env", BLUR_SHARE_LOG), "resident": True},
     # TAA の混ぜ方の定数を SCN-WL-FAR-AA の前の値（現在の色の割合 0.1・箱の半幅 1・シャープ化 0.25・TAA の View の LOD の誤差の
     # 倍率 1）に起動引数で戻した組。
     # 定数を変えた後の aa-taa と同じ Game.exe で撮って比べる
@@ -745,7 +756,7 @@ BLUR_CONTROLLED_PREFIXES = ("--wasteland-aa=", "--wasteland-hide=", "--wasteland
 # 既定の組（base）に出てはいけないログの行（差し替えが効いていない）
 BLUR_BASE_FORBIDDEN_LOGS = ("WASTELAND_BLUR_CASE ", "WASTELAND_AA_PASS ", "TERRAIN_SAMPLER ", "WASTELAND_FINEST_LOD ",
                             "WASTELAND_HIDE ", "VRAM_POOL_SHARE ", "GEOMETRY_PAGE_REQUEST_CAPACITY ",
-                            "MEGA_VISIBLE_LIST_CAPACITY ", "TAA_PARAMS ", "TAA_MOTION_PARAMS ")
+                            "MEGA_VISIBLE_LIST_CAPACITY ", "TAA_PARAMS ", "TAA_MOTION_PARAMS ", "MEGA_LOD_ERROR_PX ")
 # 範囲: 正解の深度が BLUR_FAR_MIN_M より奥の地表（2×2 のすべてが奥）。崖はそのうち法線の |y| が BLUR_CLIFF_NORMAL_Y 未満
 BLUR_FAR_MIN_M = 1000.0
 BLUR_CLIFF_NORMAL_Y = 0.8
@@ -3774,7 +3785,7 @@ def run_blur_static(capture_dir, verify, engine_dirs=None, reference_dir=None, e
                 for k in range(len(BLUR_SIGMAS) - 1)]
         cy, cx = np.argwhere(cliff_masks[0] if region["cliff_px_per_band"][0] > 0 else far_masks[0]).mean(axis=0)
         crops_path = os.path.join(capture_dir, f"blur_{view}.png")
-        order = ["ref2x", "base", BLUR_BASELINE, "finest-lod", "aa-none", "aa-taa", "aa-taa-prev", "aa-taa-nojitter",
+        order = ["ref2x", "base", BLUR_BASELINE, "finest-lod", "aa-none", "aa-taa", "aa-taa-lod-prev", "aa-taa-prev", "aa-taa-nojitter",
                  "mip-bias-m1", "aniso-1",
                  "scale-075",
                  "haze-off"]

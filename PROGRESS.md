@@ -6552,3 +6552,22 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `verify-SCN-WL-FAR-AA-MOTION-17.txt` 回帰の after（-Motion）result=pass（値は反復 35 と同じ）
   - 開いた画: `blur_motion_ref_far_01.png`（taa の motion-30 の崖の溝と棚の線が止めと同じ細かさ）
 - Notes: `Docs/RenderingValidation/WastelandGapList.md` は 2026-10-19 判定の記録なので書き換えていない（次に GapList を回すと far_aliasing・geometry_residency は TAA の組で出る）
+
+### SCN-WL-LOD-DETAIL 完了（2026-10-22、run 20261021-055341 の反復 37）
+- 測り直し（TAA が既定の後、同じ Game.exe 958662f8…、取り分 9）: TAA の View の LOD の誤差の倍率を 0.35・0.25・0.125 にした組は、今の正解（4K で LOD 1 画素）に対しては欠けもエイリアスも既定の 0.5 より悪い。ただし正解そのものが LOD の段で変わり（4K 1 画素と 0.25 画素の正解の差は欠け 0.12〜0.21・エイリアス 0.19〜0.25）、どの組も正解と同じ段のときに最も合う。正解を 4K 0.5 画素・0.25 画素に細かくすると、倍率 0.25 は欠けもエイリアスも 0.5 より小さい。倍率 0.125 は取り分 9 で追い出しが出る
+- Done: `TemporalAAGeometryLodScale` 0.5 → 0.25。`ReferenceCheck.py` の正解（`BLUR_REFERENCE_ARGS`）を 4K で LOD の誤差 0.5 画素（`--mega-lod-error-px=0.5`）にし、効きを `MegaGeometryPass` の新しいログ `MEGA_LOD_ERROR_PX threshold=` で照らす（base に出たら失敗）。比べる組 `aa-taa-lod-prev`（`--taa-geometry-lod-scale=0.5`）と仕様 `lod-detail.json`（16 行。欠け −0.01 以下・エイリアス 0 以下は aa-taa − aa-taa-lod-prev、base と aa-taa の差 ±0.01）を足した。記録は `WastelandFarBlurStatic.md` の「TAA の View の LOD の段」
+- 証拠（`.harness/runs/20261021-055341/`）:
+  - `verify-SCN-WL-LOD-DETAIL-0.txt` 開始時の Debug の Game のビルド EXIT=0
+  - `aux-SCN-WL-LOD-DETAIL-sweep.txt`・`-sweep-eval.txt` 掃引（台本 `aux-SCN-WL-LOD-DETAIL-sweep.ps1`・評価 `aux-SCN-WL-LOD-DETAIL-eval.py`、撮影先 `scene-capture/SCN-WL-LOD-DETAIL-sweep/`。比べる ref2x・aa-taa・resident は同じ exe の `SCN-WL-FAR-AA-MOTION/static/`）
+  - `verify-SCN-WL-LOD-DETAIL-1.txt` Debug の Game のビルド EXIT=0
+  - `verify-SCN-WL-LOD-DETAIL-2.txt` base の撮影（-Build）result=pass・EXIT=0（exe 6bd5ec55…）。同じ exe で ref2x・resident・aa-taa・aa-taa-lod-prev を撮った（`aux-SCN-WL-LOD-DETAIL-groups.txt`、全組 exit=0）
+  - `verify-SCN-WL-LOD-DETAIL-3.txt` `--blur-static --expect lod-detail.json --verify` result=pass・inputs_current=1・16 行合格: 欠け − aa-taa-lod-prev は −0.079・−0.082・−0.042・−0.055、エイリアスは −0.065・−0.075・−0.051・−0.076、base と aa-taa の差 0.001 以内。並べた画 `scene-capture/SCN-WL-LOD-DETAIL/blur_ref_far_01.png` を開き、崖の地層と縦の溝が正解と同じ細かさで、輪・縞・段のぎざつきが無いことを確かめた
+  - `aux-SCN-WL-LOD-DETAIL-gpu-before.txt`・`-gpu-after.txt`（既定の起動、視点ごと、300 フレーム）: GPU の median ref_far_01 10.18 → 10.57 ms、ref_cliff_02 8.48 → 8.60 ms（MegaGeometry 0.98 → 1.24、1.71 → 2.61 ms）。2 視点の常駐 12798 ページ・1423 MB → 17640 ページ・1967 MB、既定の取り分の base は 17782 ページ・1983 MB で追い出し 0
+  - `aux-SCN-WL-LOD-DETAIL-regression-after.txt` 回帰の after（-Motion）result=pass。平均の差は全シーン ±0.003 以内（rendering3dtest PSNR 57.8、motion-0 47.2）。前後と差×10（`regression/SCN-WL-LOD-DETAIL/sheet-r3d-overview.png`）を開き、差は MegaGeometry の岩が細かい段になる分だけで、天球・地面・球・岩の見た目は変わらないことを確かめた
+- Notes:
+  - 回帰の before は、同じ exe（958662f8…）で撮った SCN-WL-FAR-AA-MOTION の回帰の after を写した（`regression-before-SCN-WL-LOD-DETAIL.txt`。CaptureRegression の -Build が編集後のソースで作り直すため）
+  - 正解の段を細かくしたので、ほかの blur の仕様（far-aa-static・geom-budget・jitter-lighting・far-aa-motion）の保存の撮影の ref2x は古い（照合のログが合わない）。次に回すときは ref2x から撮り直す
+  - `--wasteland-finest-lod` の撮影は今の exe で起動の途中で落ちる（0xC0000409、NEXT_FINDINGS に記録）。GapList の `lod_detail` はこの組を使うので、一覧の値は更新していない
+  - 動きの撮り比べ（`--blur-motion`）は細かい段で撮り直していない
+  - 新しい試験は足していない
+- Next: TASKS.md の次の未完の項目

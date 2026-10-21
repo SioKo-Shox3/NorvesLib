@@ -33,10 +33,11 @@ namespace NorvesLib::Core::Rendering
      * @brief TAA を掛ける View で、MegaGeometry の LOD を選ぶ誤差の閾値（画素）に掛ける倍率。
      *
      * TAA はジッタで画素より細かい位置を標本して貯めるので、1 画素の誤差で選んだ段のままでは、画素より細かい形が
-     * 段で落ちた上にジッタの平均でもう一度ぼける（テクスチャのミップの偏りと同じ理由）。0.5 は 2 倍の解像度で
-     * 1 画素の誤差になる段で、細かい形のちらつきは履歴の平均が抑える。
+     * 段で落ちた上にジッタの平均でもう一度ぼける（テクスチャのミップの偏りと同じ理由）。細かい形のちらつきは履歴の平均が抑える。
+     * 0.25 は荒野の遠景を、同じ段より細かく描いた 2 倍の解像度の正解と比べて、細部の欠けとエイリアスが両方 0.5 より小さく、
+     * 既定のジオメトリの目標に常駐しきる段（Docs/RenderingValidation/WastelandFarBlurStatic.md の「TAA の View の LOD の段」）。
      */
-    inline constexpr float TemporalAAGeometryLodScale = 0.5f;
+    inline constexpr float TemporalAAGeometryLodScale = 0.25f;
 
     /**
      * @brief 履歴を再投影して読む 3 次の補間の鋭さ（Keys の 3 次の −a。0.5 が Catmull-Rom）。

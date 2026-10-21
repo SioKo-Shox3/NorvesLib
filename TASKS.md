@@ -2125,7 +2125,7 @@
 - notes: 危険地帯（メモリ・ストリーミング・RenderThread）。2026-10-19（Sol の批評 16 と 2 周目）。1 反復で閉じなければ「推移の記録と検査」と「粗い段に下がる制御」に分ける。 2026-10-21（親）: 反復 10 の BLOCKED を推奨の 1 で解いた。paths に Assets/Shaders を足した。`MegaGeometryCull.glsl` で、LOD で選ばれたが遮蔽で落ちたクラスタのページにも使用の印を書く（キャッシュされた VSM だけが使うページは、影のパスで LOD を選んだクラスタの印を描き直さないフレームでも書くかを合わせて見る）。要求の列（容量 4096）が溢れないこと、描く物は変えないので golden と回帰の撮影が変わらないことを確かめる。6600 MB で 60 秒の入れ替えが今の 3028 件から十分に減る（目安は 0。残るなら件数と原因を記録）。カリングのシェーダーは危険地帯。反復 10 の記録は `blocked/resolved/SCN-WL-GEOM-LOWVRAM-usage-marks.md` と PROGRESS.md。
 
 ## SCN-WL-LOD-DETAIL: AA の後で、地形の LOD の選び方を見直す
-- status: todo
+- status: done
 - after: SCN-WL-FAR-AA-MOTION, SCN-WL-GEOM-BUDGET, SCN-WLR-RECAPTURE-BLUR-STATIC
 - done-when: 一覧の描画の欠陥 10（`lod_detail`。最細に固定すると細部の欠け −0.076、エイリアス +0.263）を、TAA が既定になった後で測り直し、LOD の閾値を細かくしてもエイリアスが増えない範囲で細部の欠けを減らす。比べる組は変更後の同じ Game.exe でこの項目の撮影先 `SCN-WL-LOD-DETAIL/` へ撮り直し、`--blur-static --expect`（`lod-detail.json`）で、細部の欠けが今の既定より小さく、エイリアスが SCN-WL-FAR-AA-MOTION の後の既定以下であることを検査する。ページの量と GPU 時間を記録する。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`

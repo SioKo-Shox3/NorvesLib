@@ -1,0 +1,179 @@
+{
+  "description": "SCN-WL-LOD-DETAIL: TAA の View の MegaGeometry の LOD の誤差の倍率を 0.5 から 0.25 に細かくした後の合否。正解（ref2x）は 4K で LOD の誤差 0.5 画素（1 倍に直すと 0.25 画素）の段で撮る。比べる組は ref2x・base（既定の取り分）・resident（FXAA の対照）・aa-taa（既定の TAA）・aa-taa-lod-prev（倍率を起動引数で 0.5 に戻した TAA）で、どれも変更後の同じ Game.exe で撮り直したもの。",
+  "cases": [
+    "base",
+    "resident",
+    "aa-taa",
+    "aa-taa-lod-prev"
+  ],
+  "rows": [
+    {
+      "mode": "blur_static",
+      "view": "ref_far_01",
+      "region": "far",
+      "case": "aa-taa",
+      "against": "aa-taa-lod-prev",
+      "quantity": "detail_loss_vs_case",
+      "max": -0.01,
+      "note": "TAA の View の LOD の倍率 0.25 の既定の TAA の細部の欠けが、同じ Game.exe で撮った変更前の倍率 0.5 の TAA（aa-taa-lod-prev）より 0.01 以上小さい"
+    },
+    {
+      "mode": "blur_static",
+      "view": "ref_far_01",
+      "region": "far",
+      "case": "aa-taa",
+      "against": "aa-taa-lod-prev",
+      "quantity": "alias_vs_case",
+      "max": 0.0,
+      "note": "エイリアスが変更前の倍率 0.5 の TAA（SCN-WL-FAR-AA-MOTION の後の既定）以下"
+    },
+    {
+      "mode": "blur_static",
+      "view": "ref_far_01",
+      "region": "cliff",
+      "case": "aa-taa",
+      "against": "aa-taa-lod-prev",
+      "quantity": "detail_loss_vs_case",
+      "max": -0.01,
+      "note": "TAA の View の LOD の倍率 0.25 の既定の TAA の細部の欠けが、同じ Game.exe で撮った変更前の倍率 0.5 の TAA（aa-taa-lod-prev）より 0.01 以上小さい"
+    },
+    {
+      "mode": "blur_static",
+      "view": "ref_far_01",
+      "region": "cliff",
+      "case": "aa-taa",
+      "against": "aa-taa-lod-prev",
+      "quantity": "alias_vs_case",
+      "max": 0.0,
+      "note": "エイリアスが変更前の倍率 0.5 の TAA（SCN-WL-FAR-AA-MOTION の後の既定）以下"
+    },
+    {
+      "mode": "blur_static",
+      "view": "ref_cliff_02",
+      "region": "far",
+      "case": "aa-taa",
+      "against": "aa-taa-lod-prev",
+      "quantity": "detail_loss_vs_case",
+      "max": -0.01,
+      "note": "TAA の View の LOD の倍率 0.25 の既定の TAA の細部の欠けが、同じ Game.exe で撮った変更前の倍率 0.5 の TAA（aa-taa-lod-prev）より 0.01 以上小さい"
+    },
+    {
+      "mode": "blur_static",
+      "view": "ref_cliff_02",
+      "region": "far",
+      "case": "aa-taa",
+      "against": "aa-taa-lod-prev",
+      "quantity": "alias_vs_case",
+      "max": 0.0,
+      "note": "エイリアスが変更前の倍率 0.5 の TAA（SCN-WL-FAR-AA-MOTION の後の既定）以下"
+    },
+    {
+      "mode": "blur_static",
+      "view": "ref_cliff_02",
+      "region": "cliff",
+      "case": "aa-taa",
+      "against": "aa-taa-lod-prev",
+      "quantity": "detail_loss_vs_case",
+      "max": -0.01,
+      "note": "TAA の View の LOD の倍率 0.25 の既定の TAA の細部の欠けが、同じ Game.exe で撮った変更前の倍率 0.5 の TAA（aa-taa-lod-prev）より 0.01 以上小さい"
+    },
+    {
+      "mode": "blur_static",
+      "view": "ref_cliff_02",
+      "region": "cliff",
+      "case": "aa-taa",
+      "against": "aa-taa-lod-prev",
+      "quantity": "alias_vs_case",
+      "max": 0.0,
+      "note": "エイリアスが変更前の倍率 0.5 の TAA（SCN-WL-FAR-AA-MOTION の後の既定）以下"
+    },
+    {
+      "mode": "blur_static",
+      "view": "ref_far_01",
+      "region": "far",
+      "case": "base",
+      "against": "aa-taa",
+      "quantity": "detail_loss_vs_case",
+      "min": -0.01,
+      "max": 0.01,
+      "note": "既定の取り分の base と取り分 9 の aa-taa の差が 0.01 以内（細かい段のページも既定のジオメトリの目標で常駐しきる）"
+    },
+    {
+      "mode": "blur_static",
+      "view": "ref_far_01",
+      "region": "far",
+      "case": "base",
+      "against": "aa-taa",
+      "quantity": "alias_vs_case",
+      "min": -0.01,
+      "max": 0.01,
+      "note": "既定の取り分の base と取り分 9 の aa-taa の差が 0.01 以内（細かい段のページも既定のジオメトリの目標で常駐しきる）"
+    },
+    {
+      "mode": "blur_static",
+      "view": "ref_far_01",
+      "region": "cliff",
+      "case": "base",
+      "against": "aa-taa",
+      "quantity": "detail_loss_vs_case",
+      "min": -0.01,
+      "max": 0.01,
+      "note": "既定の取り分の base と取り分 9 の aa-taa の差が 0.01 以内（細かい段のページも既定のジオメトリの目標で常駐しきる）"
+    },
+    {
+      "mode": "blur_static",
+      "view": "ref_far_01",
+      "region": "cliff",
+      "case": "base",
+      "against": "aa-taa",
+      "quantity": "alias_vs_case",
+      "min": -0.01,
+      "max": 0.01,
+      "note": "既定の取り分の base と取り分 9 の aa-taa の差が 0.01 以内（細かい段のページも既定のジオメトリの目標で常駐しきる）"
+    },
+    {
+      "mode": "blur_static",
+      "view": "ref_cliff_02",
+      "region": "far",
+      "case": "base",
+      "against": "aa-taa",
+      "quantity": "detail_loss_vs_case",
+      "min": -0.01,
+      "max": 0.01,
+      "note": "既定の取り分の base と取り分 9 の aa-taa の差が 0.01 以内（細かい段のページも既定のジオメトリの目標で常駐しきる）"
+    },
+    {
+      "mode": "blur_static",
+      "view": "ref_cliff_02",
+      "region": "far",
+      "case": "base",
+      "against": "aa-taa",
+      "quantity": "alias_vs_case",
+      "min": -0.01,
+      "max": 0.01,
+      "note": "既定の取り分の base と取り分 9 の aa-taa の差が 0.01 以内（細かい段のページも既定のジオメトリの目標で常駐しきる）"
+    },
+    {
+      "mode": "blur_static",
+      "view": "ref_cliff_02",
+      "region": "cliff",
+      "case": "base",
+      "against": "aa-taa",
+      "quantity": "detail_loss_vs_case",
+      "min": -0.01,
+      "max": 0.01,
+      "note": "既定の取り分の base と取り分 9 の aa-taa の差が 0.01 以内（細かい段のページも既定のジオメトリの目標で常駐しきる）"
+    },
+    {
+      "mode": "blur_static",
+      "view": "ref_cliff_02",
+      "region": "cliff",
+      "case": "base",
+      "against": "aa-taa",
+      "quantity": "alias_vs_case",
+      "min": -0.01,
+      "max": 0.01,
+      "note": "既定の取り分の base と取り分 9 の aa-taa の差が 0.01 以内（細かい段のページも既定のジオメトリの目標で常駐しきる）"
+    }
+  ]
+}

@@ -488,6 +488,9 @@ namespace NorvesLib::Core::Rendering
             if (end != value && *end == '\0' && std::isfinite(threshold) && threshold > 0.0f)
             {
                 m_Settings.LODBias = threshold;
+                // 撮影の照合が差し替えの効きを確かめる行
+                NORVES_LOG_INFO("MegaGeometryPass", "MEGA_LOD_ERROR_PX threshold=%.3f source=env",
+                                static_cast<double>(threshold));
             }
         }
 
