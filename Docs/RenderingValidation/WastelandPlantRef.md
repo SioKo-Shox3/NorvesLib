@@ -229,5 +229,13 @@ GPU のフレームの中央値は前の撮影の揺れ（`FoliagePass` 7.93 ms�
 plant_near の `--plant --expect plant-shadow.json` の 3 行は変わらず合格（影の比の差 0.0325、葉の見え方 ≥ 0.9 の割合 0.863、
 葉の比 0.825）。全体の判定は「Cycles が領域に使ったエンジンの深度が今の撮影の深度と違う」で fail になるが、これは変更の前から:
 同じ日の変更前のソースで撮った深度（`scene-capture/SCN-WL-PLANT-SHADOW-RANGE-head/`）と変更後の深度はハッシュが同じで
-（53670bd1…）、10 月 21 日の撮影（e2d4787d…、Cycles の正解が使った深度）とは画面全体で約 0.04 % 遠い方へずれている。
-正解の撮り直しはこの項目の外。
+（53670bd1…）、10 月 21 日の撮影（e2d4787d…、Cycles の正解が使った深度）とは画面全体で約 0.04 % 遠い方へずれている
+（10 月 22 日の照明と VSM の印付けの深度からの位置の復元の変更の後）。
+
+正解（`SCN-WLR-PLANT-REF`）を今の撮影の深度で描き直した（株の PLY・地形のメッシュ・共通の照明は前と同じ。512 サンプルで全領域
+収束）。描き直した後の `--plant --expect plant-shadow.json --verify` は全体も result=pass で、Cycles の側の比は描き直す前と同じ
+（影の比 0.3064、葉の背面の比 0.7769。0.04 % の深度のずれは領域の分け方を変えない）:
+
+```
+python Scripts/Terrain/BlenderReference.py --plant --mesh .harness/runs/scene-capture/SCN-WLR-BLENDER-TERRAIN-mesh --capture .harness/runs/scene-capture/SCN-WL-PLANT-SHADOW-RANGE --views plant_near --max-seconds 1500 --out .harness/runs/scene-capture/SCN-WLR-PLANT-REF
+```

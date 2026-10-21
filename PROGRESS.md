@@ -6638,3 +6638,17 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - plant_near の正解（SCN-WLR-PLANT-REF）は今の深度で描き直さないと `--verify` の全体が通らない（NEXT_FINDINGS に記録）
   - 新しい試験は足していない
 - Next: TASKS.md の次の未完の項目
+
+### SCN-WL-PLANT-SHADOW-RANGE 再検証の直し（2026-10-22、run 20261021-055341 の反復 43）
+- 差し戻し: 反復 42 の `--plant --verify` が「Cycles が領域に使ったエンジンの深度が今の撮影の深度と違う」で fail（判定の 3 行は合格）。正解 SCN-WLR-PLANT-REF が 10 月 21 日の撮影の深度で描かれていた
+- Done: 今の HEAD（08ed7b10、dirty=0）で plant_near を撮り直し、その深度で Cycles の正解を描き直した。記録 `Docs/RenderingValidation/WastelandPlantRef.md` の「低木の影を 60 m まで」に描き直しと再現のコマンドを足した。エンジンのコードは変えていない
+- 証拠（`.harness/runs/20261021-055341/`）:
+  - `verify-SCN-WL-PLANT-SHADOW-RANGE-6.txt` Debug の Game のビルド EXIT=0
+  - `verify-SCN-WL-PLANT-SHADOW-RANGE-7.txt` plant_near の撮影（-Build）result=pass・EXIT=0（commit 08ed7b10 dirty=0）
+  - `aux-SCN-WL-PLANT-SHADOW-RANGE-cycles-redraw.txt` Cycles の描き直し EXIT=0（stop=converged、spp_per_seed=512、読み込み 33.3 秒・描画 29.5 秒）
+  - `verify-SCN-WL-PLANT-SHADOW-RANGE-8.txt` `--plant --expect plant-shadow.json --verify` result=pass・inputs_current=1・EXIT=0（影の比の差 0.0325、葉の見え方 0.8624、葉の比 0.8245。Cycles の比は描き直す前と同じ）。見比べの画像 `scene-capture/SCN-WLR-PLANT-REF/plant_plant_near.png` を開いた
+  - `verify-SCN-WL-PLANT-SHADOW-RANGE-9.txt` 回帰の after result=pass（rendering3dtest PSNR 130.6、mega-bananas 63.4、sandbox inf、night-village 50.3）。before は反復 42 の編集の前のもの（今回はエンジンを変えていない）
+- Notes:
+  - 正解を描き直したので、前の撮影（SCN-WL-PLANT-SHADOW・SCN-WLR-PLANT-REF-BASE）を --engine にした古い verify は深度の照合で落ちる
+  - 新しい試験は足していない
+- Next: TASKS.md の次の未完の項目
