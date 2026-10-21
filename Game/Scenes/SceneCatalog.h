@@ -188,6 +188,15 @@ namespace Game::Scenes
         {"ref_ground_01", SceneViewKind::FreePose, 90.0f, -2.0f, 0.0f, {300.0f, 1.5f, 1800.0f}},
         // ground_02: 写真の GPS（Battleship Rock の北 940 m の沢の中）から南東（方位 148°）の Franklin Butte と Rooster Butte を見る
         {"ref_ground_02", SceneViewKind::FreePose, -32.4f, 1.4f, 0.0f, {-1292.5f, 1.7f, -1894.5f}},
+        // 以下は低木 1 株を比べる撮影（--wasteland-hide=all-but-plant。Scripts/Terrain/ReferenceCheck.py --plant）の視点。
+        // 株は南東の平らな谷床の (360, 1965)（Game/GameModes/Wasteland/WastelandFoliage.h の kReferencePlantX・Z）。
+        // 向き（Yaw 124°。西北西）は、共通の照明の既定の太陽（仰角 58.5°、西南西）の水平の向きから 60° 離れ、上から日の当たる
+        // 樹冠と手前の陰の面、太陽を背にした葉、株の東北東の足元へ落ちる影が 1 枚に入る
+        // plant_near: 株の 2.5 m 手前の高さ 1.5 m から株を見下ろす。画の上の端を地平線より 5° 下にして、遠くの地形を入れない
+        // （最も細かい段の地形の撮影で、地平線まで入れるとジオメトリのページが 10 分で常駐しきらない）
+        {"plant_near", SceneViewKind::FreePose, 124.0f, -35.0f, 0.0f, {362.1f, 1.5f, 1966.4f}},
+        // plant_far: 同じ向きで株の 30 m 手前の目の高さから見る（遠くでの見え方）
+        {"plant_far", SceneViewKind::FreePose, 124.0f, -2.5f, 0.0f, {384.9f, 1.7f, 1981.8f}},
     };
 
     /// 荒野のシーンの id。地形は DEM の格子からクックで焼く（格子と区画は Scripts/Terrain と Scripts/CookAssets.ps1 で作る）

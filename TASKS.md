@@ -2214,7 +2214,7 @@
 - notes: 危険地帯（描画の既定）。2026-10-21 親が SCN-WLR-BUILDING-REF の直す項目の案 2 から足した。案 3（灰色の地面での比べ直し）・案 4（足元の土・汚れ、中身）は確認 2 の後に組む。時間の見積もり: 回帰の before・after 各 6 分、ビルド 3〜6 分、撮影 1 本 約 3 分。
 
 ## SCN-WLR-PLANT-REF-BASE: 低木 1 株を比べる仕組みを作る
-- status: todo
+- status: done
 - after: SCN-WL-MATERIAL-AO-BAKE, SCN-WL-SHADOW-LEAK, SCN-WL-RTGI-COLOR, SCN-WL-RTGI-AMOUNT
 - done-when: 荒野の低木（ラビットブラシの模型）1 株だけを地形の上に残す起動引数（`wasteland-hide=all-but-plant`）と、株を近くと遠くで撮る視点 `plant_near`・`plant_far`（`Game/Scenes/SceneCatalog.h`）を足す。`BlenderReference.py` に同じ模型（不透明度のマスク・葉の両面の透過を素直に付ける）の読み込みを足し、`ReferenceCheck.py --plant`（株の日なたと陰の明るさ、葉の透過の明るさ、株の足元の影と遮蔽の比）を作る。検査の成り立つ条件と未判定で落ちる扱いは SCN-WLR-BUILDING-REF-BASE と同じ。`plant_near` を低いサンプル数で試しに描き、`--trial` で検査が回ることを確かめる。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`

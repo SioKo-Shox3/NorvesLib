@@ -1,11 +1,13 @@
 ﻿#include "GameModes/Wasteland/WastelandFoliage.h"
 
+#include "Core/Public/FileStream/FileStream.h"
 #include "Core/Public/Logging/LogMacros.h"
 #include "Core/Public/Rendering/FoliageMesh.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 
 using namespace NorvesLib::Core;
@@ -521,6 +523,139 @@ namespace Game::GameModes::WastelandFoliage
     float WindTimeOffsetForView(const String &viewName)
     {
         return viewName == "grass_gust" ? kGustViewTimeOffset : 0.0f;
+    }
+
+    FoliageBatch MakeReferencePlant(const Terrain::TerrainHeightField &field)
+    {
+        FoliageBatch batch = MakeBatch(PlantKind::BlackbrushA);
+        batch.DebugName = "reference_blackbrush_a";
+        // 揺らさない（風のずれは 0）・間引かない（消える距離が始まりの距離以下なら全部残す）
+        batch.WindStrength = 0.0f;
+        batch.FadeStartDistance = 0.0f;
+        batch.FadeEndDistance = 0.0f;
+        FoliageInstance instance;
+        instance.Position[0] = kReferencePlantX;
+        instance.Position[1] = field.SampleHeight(kReferencePlantX, kReferencePlantZ) - kRootSink;
+        instance.Position[2] = kReferencePlantZ;
+        // 大きさは撒く株の中ほど（高さ 0.6 m のメッシュの 1.2 倍）。色の揺らぎ・揺れの位相は決めた値
+        instance.Yaw = 0.0f;
+        instance.HeightScale = 1.2f;
+        instance.WidthScale = 1.2f;
+        instance.ColorVariation = 0.5f;
+        instance.WindPhase = 0.25f;
+        instance.FadeThreshold = 0.0f;
+        auto instances = MakeShared<VariableArray<FoliageInstance>>();
+        instances->push_back(instance);
+        auto cells = MakeShared<VariableArray<FoliageCell>>();
+        FoliageCell cell;
+        for (uint32_t axis = 0; axis < 3; ++axis)
+        {
+            cell.BoundsMin[axis] = instance.Position[axis] - kCellBoundsSideMargin;
+            cell.BoundsMax[axis] = instance.Position[axis] + kCellBoundsSideMargin;
+        }
+        cell.BoundsMin[1] = instance.Position[1] - kCellBoundsBottomMargin;
+        cell.BoundsMax[1] = instance.Position[1] + kCellBoundsTopMargin;
+        cell.FirstInstance = 0;
+        cell.InstanceCount = 1;
+        cells->push_back(cell);
+        batch.Instances = TSharedPtr<const VariableArray<FoliageInstance>>(std::move(instances));
+        batch.Cells = TSharedPtr<const VariableArray<FoliageCell>>(std::move(cells));
+        return batch;
+    }
+
+    bool ExportReferencePlant(const FoliageBatch &batch, const String &path, ReferencePlantExport &outRecord)
+    {
+        outRecord = ReferencePlantExport{};
+        if (!batch.Mesh || !batch.Instances || batch.Instances->size() != 1u)
+        {
+            return false;
+        }
+        const FoliageMeshData &mesh = *batch.Mesh;
+        const FoliageInstance &instance = (*batch.Instances)[0];
+        outRecord.VertexCount = mesh.Vertices.size();
+        outRecord.TriangleCount = mesh.Indices.size() / 3u;
+        char header[640] = {};
+        const int headerLength = std::snprintf(
+            header, sizeof(header),
+            "ply\nformat binary_little_endian 1.0\n"
+            "comment NorvesLib wasteland reference plant source=%s\n"
+            "comment space=engine_world units=m axes=+X_east,+Y_up,+Z_south color=linear_albedo\n"
+            "element vertex %llu\nproperty float x\nproperty float y\nproperty float z\n"
+            "property float nx\nproperty float ny\nproperty float nz\n"
+            "property float red\nproperty float green\nproperty float blue\n"
+            "element face %llu\nproperty list uchar int vertex_indices\nend_header\n",
+            batch.DebugName, static_cast<unsigned long long>(outRecord.VertexCount),
+            static_cast<unsigned long long>(outRecord.TriangleCount));
+        if (headerLength <= 0 || headerLength >= static_cast<int>(sizeof(header)))
+        {
+            return false;
+        }
+        VariableArray<uint8_t> bytes;
+        bytes.reserve(static_cast<size_t>(headerLength) + mesh.Vertices.size() * 36u + outRecord.TriangleCount * 13u);
+        const auto append = [&bytes](const void *pData, size_t byteCount)
+        {
+            const uint8_t *begin = static_cast<const uint8_t *>(pData);
+            bytes.insert(bytes.end(), begin, begin + byteCount);
+        };
+        append(header, static_cast<size_t>(headerLength));
+        // foliage.vert と同じ置き方と色（風のずれは 0、距離の縮みは 1）
+        const float c = std::cos(instance.Yaw);
+        const float s = std::sin(instance.Yaw);
+        const float scale[3] = {instance.WidthScale, instance.HeightScale, instance.WidthScale};
+        float tipColor[3] = {};
+        for (uint32_t channel = 0; channel < 3; ++channel)
+        {
+            tipColor[channel] = batch.TipColorA[channel] +
+                                (batch.TipColorB[channel] - batch.TipColorA[channel]) * instance.ColorVariation;
+        }
+        const float brightnessPhase = instance.WindPhase * 7.31f + instance.ColorVariation * 3.17f;
+        const float brightness = 0.88f + 0.24f * (brightnessPhase - std::floor(brightnessPhase));
+        for (const FoliageVertex &vertex : mesh.Vertices)
+        {
+            const float local[3] = {vertex.Position[0] * scale[0], vertex.Position[1] * scale[1],
+                                    vertex.Position[2] * scale[2]};
+            const float position[3] = {instance.Position[0] + c * local[0] + s * local[2], instance.Position[1] + local[1],
+                                       instance.Position[2] - s * local[0] + c * local[2]};
+            const float normalLocal[3] = {vertex.Normal[0] / scale[0], vertex.Normal[1] / scale[1],
+                                          vertex.Normal[2] / scale[2]};
+            float normal[3] = {c * normalLocal[0] + s * normalLocal[2], normalLocal[1],
+                               -s * normalLocal[0] + c * normalLocal[2]};
+            const float length = std::sqrt(normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2]);
+            for (float &component : normal)
+            {
+                component = length > 0.0f ? component / length : 0.0f;
+            }
+            float albedo[3] = {};
+            for (uint32_t channel = 0; channel < 3; ++channel)
+            {
+                albedo[channel] =
+                    (batch.StemColor[channel] + (tipColor[channel] - batch.StemColor[channel]) * vertex.Tint) * brightness;
+            }
+            const float values[9] = {position[0], position[1], position[2], normal[0], normal[1],
+                                     normal[2],   albedo[0],   albedo[1],   albedo[2]};
+            append(values, sizeof(values));
+            const float dx = position[0] - instance.Position[0];
+            const float dz = position[2] - instance.Position[2];
+            outRecord.CrownRadius = std::max(outRecord.CrownRadius, std::sqrt(dx * dx + dz * dz));
+            outRecord.Height = std::max(outRecord.Height, position[1] - instance.Position[1]);
+        }
+        for (size_t i = 0; i + 2 < mesh.Indices.size(); i += 3)
+        {
+            const uint8_t count = 3;
+            const int32_t face[3] = {static_cast<int32_t>(mesh.Indices[i]), static_cast<int32_t>(mesh.Indices[i + 1]),
+                                     static_cast<int32_t>(mesh.Indices[i + 2])};
+            append(&count, sizeof(count));
+            append(face, sizeof(face));
+        }
+        NorvesLib::FileStream::FileStreamUniquePtr stream = NorvesLib::FileStream::FileStream::CreateUnique(
+            path, NorvesLib::FileStream::FileMode::Write, NorvesLib::FileStream::FileAccess::Write,
+            NorvesLib::FileStream::FileShare::None);
+        if (!stream || stream->Write(bytes.data(), bytes.size()) != bytes.size())
+        {
+            return false;
+        }
+        stream->Flush();
+        return true;
     }
 
 } // namespace Game::GameModes::WastelandFoliage

@@ -115,4 +115,30 @@ namespace Game::GameModes::WastelandFoliage
     /// 視点の名前に応じた風の時計のずらし[s]（grass_gust は grass と同じ構図で時刻だけを変えた 2 枚目）
     float WindTimeOffsetForView(const NorvesLib::Core::Container::String &viewName);
 
+    /// 低木 1 株を比べる撮影（--wasteland-hide=all-but-plant）で置く株の根元の (x, z)[m]。南東の谷床で周り 12 m の傾きが
+    /// 0.1° の平らな所。SceneCatalog.h の plant_near・plant_far がこの株を見る
+    inline constexpr float kReferencePlantX = 360.0f;
+    inline constexpr float kReferencePlantZ = 1965.0f;
+
+    /// 比べる 1 株の束: 葉の付いた丸い低木（ブラックブラッシュ A）を 1 株だけ、根元を field の高さに置く。
+    /// 正解の絵（Scripts/Terrain/BlenderReference.py --plant）と形を合わせるため、風で揺らさず、距離で間引かない
+    NorvesLib::Core::Rendering::FoliageBatch MakeReferencePlant(const NorvesLib::Core::Rendering::Terrain::TerrainHeightField &field);
+
+    /// 比べる 1 株の書き出しの記録
+    struct ReferencePlantExport
+    {
+        uint64_t VertexCount = 0;
+        uint64_t TriangleCount = 0;
+        /// 根元からの水平の最大の距離[m]と、根元からの高さの最大[m]（ワールドの頂点から）
+        float CrownRadius = 0.0f;
+        float Height = 0.0f;
+    };
+
+    /// 比べる 1 株を、foliage.vert と同じ置き方（インスタンスの位置・Y 軸まわりの回転・横と高さの倍率）と同じ色（線形の
+    /// アルベド）のワールドの三角形にして、PLY（binary_little_endian。頂点は位置・法線・色の float 9 つ、面は 3 角の int）で
+    /// path に書く。風のずれは無い株なので足さず、遠くで細い帯を広げる頂点シェーダーの処理は入れない（形そのもの）。
+    /// 書けなければ false
+    bool ExportReferencePlant(const NorvesLib::Core::Rendering::FoliageBatch &batch,
+                              const NorvesLib::Core::Container::String &path, ReferencePlantExport &outRecord);
+
 } // namespace Game::GameModes::WastelandFoliage

@@ -552,6 +552,44 @@ namespace Game::GameModes
             data.m_FoliageScatter.SetExclusions(std::move(circles), std::move(rects));
         }
 
+        /// 低木 1 株の撮影（--wasteland-hide=all-but-plant）の株を作り、配置をログへ出す。正解の絵
+        /// （Scripts/Terrain/BlenderReference.py --plant）が同じ形を置けるよう、撮影の保存先があれば（開発ビルドだけ）
+        /// 株のワールドの三角形を <保存先>/reference_plant.ply に書く
+        void PlaceReferencePlant(WastelandData &data)
+        {
+            data.m_ReferencePlant = WastelandFoliage::MakeReferencePlant(*data.m_pHeightField);
+            const NorvesLib::Core::Rendering::FoliageInstance &instance = (*data.m_ReferencePlant.Instances)[0];
+            WastelandFoliage::ReferencePlantExport record;
+            bool bExported = false;
+            const String plyName("reference_plant.ply");
+            if (!data.m_CaptureDirectory.empty())
+            {
+                bExported = WastelandFoliage::ExportReferencePlant(
+                    data.m_ReferencePlant, data.m_CaptureDirectory + String("/") + plyName, record);
+                if (!bExported)
+                {
+                    LOG_WARNING_F("WASTELAND_PLANT_EXPORT_FAILED dir=%s 比べる株のメッシュを書けません",
+                                  data.m_CaptureDirectory.c_str());
+                }
+            }
+            // 株の根元の位置[m]・Y 軸まわりの回転[rad]（foliage.vert: ローカルの (x, z) をワールドの (x cos + z sin, z cos − x sin)
+            // へ写す）・横と高さの倍率・色の揺らぎと揺れの位相・風の強さ・粗さ・地面の高さ。ply は書いたときだけ（書いた頂点・
+            // 三角形の数と広がり）
+            LOG_INFO_F("WASTELAND_PLANT_PLACEMENT id=%s reference=1 x=%.5f y=%.5f z=%.5f yaw_rad=%.8f width_scale=%.6f "
+                       "height_scale=%.6f color_variation=%.6f wind_phase=%.6f wind_strength=%.3f roughness=%.3f ground=%.5f "
+                       "ply=%s vertices=%llu triangles=%llu crown_radius=%.5f height=%.5f",
+                       data.m_ReferencePlant.DebugName, static_cast<double>(instance.Position[0]),
+                       static_cast<double>(instance.Position[1]), static_cast<double>(instance.Position[2]),
+                       static_cast<double>(instance.Yaw), static_cast<double>(instance.WidthScale),
+                       static_cast<double>(instance.HeightScale), static_cast<double>(instance.ColorVariation),
+                       static_cast<double>(instance.WindPhase), static_cast<double>(data.m_ReferencePlant.WindStrength),
+                       static_cast<double>(data.m_ReferencePlant.Roughness),
+                       static_cast<double>(data.m_pHeightField->SampleHeight(instance.Position[0], instance.Position[2])),
+                       bExported ? plyName.c_str() : "none", static_cast<unsigned long long>(record.VertexCount),
+                       static_cast<unsigned long long>(record.TriangleCount), static_cast<double>(record.CrownRadius),
+                       static_cast<double>(record.Height));
+        }
+
         /// カメラの (x,z) の周りの草・低木と石・礫の区画をそろえ、区画が変わったか bForcePublish なら、草・低木の束の後ろに
         /// 石・礫の束を並べて RenderWorld へ渡す（--wasteland-hide で外したものは渡さない）
         void UpdateFoliage(GameModeContext &ctx, WastelandData &data, float cameraX, float cameraZ, bool bForcePublish)
@@ -566,9 +604,15 @@ namespace Game::GameModes
             {
                 data.m_Foliage.Wind.TimeOffsetSeconds = WastelandFoliage::WindTimeOffsetForView(data.m_ViewName);
                 FoliageScene published = data.m_Foliage;
-                if ((data.m_HideMask & WastelandHide::Foliage) != 0)
+                const bool bReferencePlantOnly = (data.m_HideMask & WastelandHide::ReferencePlantOnly) != 0;
+                if ((data.m_HideMask & WastelandHide::Foliage) != 0 || bReferencePlantOnly)
                 {
                     published.Batches.clear();
+                }
+                // 低木 1 株の撮影（all-but-plant）: 撒いた草・低木の代わりに比べる 1 株だけを渡す
+                if (bReferencePlantOnly && data.m_ReferencePlant.Mesh)
+                {
+                    published.Batches.push_back(data.m_ReferencePlant);
                 }
                 if ((data.m_HideMask & WastelandHide::Gravel) == 0)
                 {
@@ -576,9 +620,10 @@ namespace Game::GameModes
                                              data.m_GravelBatches.end());
                 }
                 // 撮影の照合（ReferenceCheck.py --aov）が、外した草・石を渡していないことを確かめる
-                LOG_INFO_F("WASTELAND_FOLIAGE_PUBLISHED batches=%zu foliage_hidden=%d gravel_hidden=%d", published.Batches.size(),
-                           (data.m_HideMask & WastelandHide::Foliage) != 0 ? 1 : 0,
-                           (data.m_HideMask & WastelandHide::Gravel) != 0 ? 1 : 0);
+                LOG_INFO_F("WASTELAND_FOLIAGE_PUBLISHED batches=%zu foliage_hidden=%d gravel_hidden=%d reference_plant=%d",
+                           published.Batches.size(), (data.m_HideMask & WastelandHide::Foliage) != 0 ? 1 : 0,
+                           (data.m_HideMask & WastelandHide::Gravel) != 0 ? 1 : 0,
+                           bReferencePlantOnly && data.m_ReferencePlant.Mesh ? 1 : 0);
                 ctx.EngineRef.GetRenderWorld().SetFoliage(published);
             }
         }
@@ -1380,6 +1425,7 @@ namespace Game::GameModes
             {TEXT("gravel"), Gravel}, {TEXT("buildings"), Buildings}, {TEXT("aerial"), Aerial},
             {TEXT("fog"), Fog},       {TEXT("all"), All},
             {TEXT("all-but-building"), (All & ~static_cast<uint32_t>(Buildings)) | ReferenceBuildingOnly},
+            {TEXT("all-but-plant"), (All & ~static_cast<uint32_t>(Foliage)) | ReferencePlantOnly},
         };
         outMask = 0;
         outError.clear();
@@ -1424,7 +1470,7 @@ namespace Game::GameModes
         if (data.m_HideMask != 0)
         {
             LOG_INFO_F("WASTELAND_HIDE mask=%u clouds=%d foliage=%d rocks=%d gravel=%d buildings=%d aerial=%d fog=%d "
-                       "reference_building_only=%d",
+                       "reference_building_only=%d reference_plant_only=%d",
                        data.m_HideMask, (data.m_HideMask & WastelandHide::Clouds) != 0 ? 1 : 0,
                        (data.m_HideMask & WastelandHide::Foliage) != 0 ? 1 : 0,
                        (data.m_HideMask & WastelandHide::Rocks) != 0 ? 1 : 0,
@@ -1432,7 +1478,8 @@ namespace Game::GameModes
                        (data.m_HideMask & WastelandHide::Buildings) != 0 ? 1 : 0,
                        (data.m_HideMask & WastelandHide::Aerial) != 0 ? 1 : 0,
                        (data.m_HideMask & WastelandHide::Fog) != 0 ? 1 : 0,
-                       (data.m_HideMask & WastelandHide::ReferenceBuildingOnly) != 0 ? 1 : 0);
+                       (data.m_HideMask & WastelandHide::ReferenceBuildingOnly) != 0 ? 1 : 0,
+                       (data.m_HideMask & WastelandHide::ReferencePlantOnly) != 0 ? 1 : 0);
         }
         // 地形を最も細かい段で描く指定（--wasteland-finest-lod）と、地形の書き出し先（--wasteland-export-terrain）
         if (data.m_bFinestLod)
@@ -1476,6 +1523,7 @@ namespace Game::GameModes
         // 草・低木（高さ場の上に、地表の分類の地図で撒く）。高さ場が無ければ置かない。地図が読めなければ傾斜と密度の斑だけで撒く
         data.m_Foliage = NorvesLib::Core::Rendering::FoliageScene{};
         data.m_FoliageScatter.Reset();
+        data.m_ReferencePlant = NorvesLib::Core::Rendering::FoliageBatch{};
         data.m_GravelBatches.clear();
         data.m_GravelScatter.Reset();
         if (data.m_pHeightField)
@@ -1493,6 +1541,10 @@ namespace Game::GameModes
             // 石と礫は地図の礫・崖錐・沢底の重みで置くので、地図が無ければ置かない
             data.m_GravelScatter.Initialize(data.m_pHeightField, surfaceMask);
             data.m_FoliageScatter.Initialize(data.m_pHeightField, std::move(surfaceMask));
+            if ((data.m_HideMask & WastelandHide::ReferencePlantOnly) != 0)
+            {
+                PlaceReferencePlant(data);
+            }
             ApplyFoliageExclusions(data, nullptr);
             data.m_Foliage.Wind = WastelandFoliage::MakeWind();
             UpdateFoliage(ctx, data, pose.Position[0], pose.Position[2], true);
@@ -1789,6 +1841,7 @@ namespace Game::GameModes
         data.m_pSurfaceMask.reset();
         data.m_Foliage = NorvesLib::Core::Rendering::FoliageScene{};
         data.m_FoliageScatter.Reset();
+        data.m_ReferencePlant = NorvesLib::Core::Rendering::FoliageBatch{};
         data.m_GravelBatches.clear();
         data.m_GravelScatter.Reset();
         data.m_Rig.Leave(ctx);

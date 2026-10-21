@@ -88,6 +88,20 @@
 #       --trial は 1 本 BUILDING_TRIAL_SPP サンプルで止める試しの描画（書き先の既定 <撮影>/cycles-trial。収束しない）。
 #       入力の記録 <書き先>/inputs.json に、台本・領域の定義・共通の照明・glTF・地形のメッシュのハッシュとカメラ・配置を書く。
 #       照合は ReferenceCheck.py --building。
+#
+#   python Scripts/Terrain/BlenderReference.py --plant --mesh <書き出しのフォルダ> --capture <エンジンの撮影>
+#          [--views plant_near] [--range shadow] [--trial] [--max-spp N] [--out <書き先>]
+#       低木 1 株を比べる（SCN-WLR-PLANT-REF-BASE）。エンジンの撮影（Game の --wasteland-common-light・
+#       --wasteland-hide=all-but-plant・--wasteland-finest-lod を CaptureScene.ps1 -Hdr -Aov で撮ったもの）のログの
+#       WASTELAND_PLANT_PLACEMENT reference=1 の行と、撮影のフォルダの reference_plant.ply（Game が書いた株のワールドの
+#       三角形と線形のアルベド）を読み、同じ三角形を置く（PlantRegions.py）。株の模型はアルファ抜きを使わないので不透明度の
+#       マスクは全面 1。枝は Principled BSDF（頂点のアルベド・ログの粗さ・IOR 1.5）、葉はそれに両面の透過（Translucent BSDF。
+#       色は頂点のアルベドの PLANT_LEAF_TRANSMITTANCE_RATIO 倍）を足す。地形は灰色の材質で、照明・カメラ・収束の重ね方・
+#       書き出しは --building と同じ。物体の番号（枝 1・葉 2）と、葉の裏の見え方（白い透過の面で太陽だけを描く）も描き、
+#       <視点>.aux.depth.pfm・<視点>.aux.plant.pfm（物体の番号）・<視点>.aux.back_visibility.pfm を書く。領域はエンジンの深度
+#       （<撮影>/<視点>.aov.depth.pfm）と同じ面に当たった画素に限る。--trial は 1 本 PLANT_TRIAL_SPP サンプルで止める試しの描画
+#       （書き先の既定 <撮影>/cycles-trial）。入力の記録 <書き先>/inputs.json に、台本・領域の定義・共通の照明・株の PLY・
+#       地形のメッシュのハッシュとカメラ・配置を書く。照合は ReferenceCheck.py --plant。
 import argparse
 import hashlib
 import json
@@ -151,6 +165,16 @@ BUILDING_RESULT_DIR = "cycles-building"
 BUILDING_TRIAL_DIR = "cycles-trial"
 BUILDING_TRIAL_SPP = 64
 BUILDING_REGIONS = "Scripts/Terrain/BuildingRegions.py"
+# 低木 1 株の比較（--plant）: 視点・書き先・試しの描画の 1 本あたりのサンプル数・領域の定義・株の PLY の名前
+PLANT_VIEWS = ("plant_near",)
+PLANT_RESULT_DIR = "cycles-plant"
+PLANT_TRIAL_DIR = "cycles-trial"
+PLANT_TRIAL_SPP = 64
+PLANT_REGIONS = "Scripts/Terrain/PlantRegions.py"
+PLANT_PLY = "reference_plant.ply"
+# 葉の透過の色の、頂点のアルベド（反射）に対する比。薄い葉の可視域の透過は反射と同じ程度で、乾いた土地の低木の小さく厚い葉は
+# それより小さいので半分とする（エンジンの葉は透過を持たない。比べる段で透過の有無を切り分けるための素直な値）
+PLANT_LEAF_TRANSMITTANCE_RATIO = 0.5
 # 板の較正（エンジンの板の撮影 SCN-WLR-COMMON-LIGHT と同じ視点の太陽）
 PLATE_VIEW = "ref_cliff_01"
 PLATE_CASES = ("sun", "sky")
@@ -766,6 +790,115 @@ def run_building(args):
     with open(os.path.join(out_dir, "inputs.json"), "w", encoding="utf-8") as f:
         json.dump(record, f, indent=2, ensure_ascii=False)
     print(f"BLENDER_REFERENCE building record views={len(view_records)} out={normalize_rel(out_dir)}")
+    return 0
+
+
+def run_plant(args):
+    """--plant: 低木 1 株と灰色の地形を、エンジンの撮影と同じカメラ・共通の照明で描く（SCN-WLR-PLANT-REF-BASE）"""
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import ReferenceCheck as RC  # noqa: E402  ふつうの Python の側だけで使う
+    PR = load_plant_regions()
+    mesh_dir = os.path.abspath(args.mesh)
+    capture_dir = os.path.abspath(args.capture)
+    out_dir = os.path.abspath(args.out) if args.out else \
+        os.path.join(capture_dir, PLANT_TRIAL_DIR if args.trial else PLANT_RESULT_DIR)
+    os.makedirs(out_dir, exist_ok=True)
+    light = load_common_light()
+    lighting = {
+        "sky_radiance_rgb": [float(v) for v in light["sky_radiance_rgb"]],
+        "sun_illuminance_normal_lux": float(light["sun_illuminance_normal_lux"]),
+        "sun_angle_degrees": SUN_ANGLE_DEGREES,
+    }
+    views = [v for v in args.views.split(",") if v]
+    manifest = load_manifest(mesh_dir)
+    used_tiles = set()
+    view_records = {}
+    ply_path = os.path.join(capture_dir, PLANT_PLY)
+    for view in views:
+        # 株の配置はエンジンの撮影のログ（WASTELAND_PLANT_PLACEMENT の reference=1）から、形は撮影のフォルダの PLY から読む
+        log_name = RC.view_game_log(capture_dir, view) or f"{view}.Game.log"
+        with open(os.path.join(capture_dir, log_name), encoding="utf-8", errors="replace") as f:
+            placement, count = PR.parse_placement(f.read())
+        if placement is None or count != 1 or placement["ply"] != PLANT_PLY:
+            print(f"BLENDER_REFERENCE error view={view} 撮影のログに比べる株の配置（WASTELAND_PLANT_PLACEMENT reference=1、"
+                  f"ply={PLANT_PLY}）が 1 行でない（{count} 行。開発ビルドの --wasteland-hide=all-but-plant で撮る）")
+            return 1
+        if not os.path.isfile(ply_path):
+            print(f"BLENDER_REFERENCE error view={view} 株のメッシュ {PLANT_PLY} が撮影のフォルダに無い")
+            return 1
+        camera, width, height = read_engine_camera(capture_dir, view)
+        with open(os.path.join(capture_dir, f"{view}.aov.json"), encoding="utf-8-sig") as f:
+            engine_depth_pfm = os.path.join(capture_dir, json.load(f)["depth"]["file"])
+        tiles = [t for t in manifest["tiles"] if tile_in_range(t, camera, args.range)[0]]
+        altitude, azimuth = common_light_sun(light, view)
+        prefix = os.path.join(out_dir, view)
+        job = {
+            "kind": "gray",
+            "view": view,
+            "camera": camera,
+            "width": width,
+            "height": height,
+            "tiles": [os.path.join(mesh_dir, t["file"]) for t in tiles],
+            "lighting": lighting,
+            "sun_altitude_degrees": altitude,
+            "sun_azimuth_degrees": azimuth,
+            "to_sun_engine": engine_sun_direction(altitude, azimuth),
+            "gray_material": light["gray_material"],
+            "chunk_spp": args.chunk_spp,
+            "max_spp_per_seed": args.max_spp,
+            "max_seconds": args.max_seconds,
+            "prefix": prefix,
+            "engine_depth_pfm": engine_depth_pfm,
+            "plant": {"ply_path": ply_path, "placement": placement},
+        }
+        parts = ("hdr", "seed_a", "seed_b", "sun", "sky", "direct", "indirect", "indirect_diffuse")
+        job["required_outputs"] = [f"{prefix}.cycles.exr", f"{prefix}.cycles.json", f"{prefix}.aux.exr"] + \
+            [f"{prefix}.cycles.{part}.pfm" for part in parts] + \
+            [f"{prefix}.aux.{part}.pfm" for part in ("visibility", "n_dot_l", "normal", "alpha", "depth", "plant",
+                                                      "back_visibility")]
+        for stale in job["required_outputs"]:
+            if os.path.exists(stale):
+                os.remove(stale)
+        triangles = sum(int(t["triangles"]) for t in tiles)
+        print(f"BLENDER_REFERENCE plant view={view} id={placement['id']} tiles={len(tiles)} triangles={triangles} "
+              f"plant_triangles={placement['triangles']} range={args.range} max_spp={args.max_spp}", flush=True)
+        if not run_blender_job(args, out_dir, view, job, label="plant"):
+            print(f"BLENDER_REFERENCE error view={view} Blender が失敗した（{os.path.basename(out_dir)}/{view}.blender.log）")
+            return 1
+        used_tiles.update(t["file"] for t in tiles)
+        view_records[view] = {"camera": camera, "width": width, "height": height, "placement": placement,
+                              "tiles": sorted(t["file"] for t in tiles), "triangles": triangles,
+                              "sun_altitude_degrees": altitude, "sun_azimuth_degrees": azimuth,
+                              "engine_depth_sha256": sha256_file(engine_depth_pfm),
+                              "max_spp_per_seed": args.max_spp, "trial": bool(args.trial)}
+
+    # 参照の入力の記録（ReferenceCheck.py --plant --verify が今のファイルと照らす）。株の PLY はエンジンの撮影の出力なので、
+    # 照合はエンジンの撮影のフォルダの PLY のハッシュと比べる
+    record = {
+        "kind": "cycles_plant",
+        "script": normalize_rel(os.path.abspath(__file__)),
+        "script_sha256": sha256_file(os.path.abspath(__file__)),
+        "plant_regions_sha256": sha256_file(os.path.join(REPO_ROOT, PLANT_REGIONS)),
+        "gray_regions_sha256": sha256_file(os.path.join(REPO_ROOT, GRAY_REGIONS)),
+        "common_light_sha256": sha256_file(os.path.join(REPO_ROOT, COMMON_LIGHT)),
+        "plant_ply_sha256": sha256_file(ply_path),
+        "leaf_transmittance_ratio": PLANT_LEAF_TRANSMITTANCE_RATIO,
+        "terrain_material": "gray_material（CommonLight.json）",
+        "git_commit": (RC.git_output(["rev-parse", "HEAD"]) or "").strip(),
+        "sun_angle_degrees": SUN_ANGLE_DEGREES,
+        "mesh_dir": normalize_rel(mesh_dir),
+        "manifest_sha256": sha256_file(os.path.join(mesh_dir, "manifest.json")),
+        "ply_sha256": {name: sha256_file(os.path.join(mesh_dir, name)) for name in sorted(used_tiles)},
+        "terrain_mesh_inputs": RC.hash_inputs("terrain_mesh"),
+        "range": args.range,
+        "shadow_range_m": SHADOW_RANGE_M,
+        "coordinates": coordinate_record(),
+        "trial": bool(args.trial),
+        "views": view_records,
+    }
+    with open(os.path.join(out_dir, "inputs.json"), "w", encoding="utf-8") as f:
+        json.dump(record, f, indent=2, ensure_ascii=False)
+    print(f"BLENDER_REFERENCE plant record views={len(view_records)} out={normalize_rel(out_dir)}")
     return 0
 
 
@@ -1697,6 +1830,105 @@ def load_building_regions():
     return BuildingRegions
 
 
+def load_plant_regions():
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import PlantRegions  # noqa: E402  Blender の中でも numpy だけで動く
+    return PlantRegions
+
+
+def make_plant_material(name, roughness, leaf):
+    """株の材質: 頂点の色の属性 albedo（線形）を Base Color にした Principled BSDF（金属 0・IOR 1.5 で F0 0.04）。葉は
+    それに Translucent BSDF（色はアルベドの PLANT_LEAF_TRANSMITTANCE_RATIO 倍）を足して両面から光を通す"""
+    import bpy
+    material = bpy.data.materials.new(name)
+    material.use_nodes = True
+    nodes = material.node_tree.nodes
+    links = material.node_tree.links
+    nodes.clear()
+    attribute = nodes.new("ShaderNodeAttribute")
+    attribute.attribute_type = "GEOMETRY"
+    attribute.attribute_name = "albedo"
+    principled = nodes.new("ShaderNodeBsdfPrincipled")
+    output = nodes.new("ShaderNodeOutputMaterial")
+    links.new(attribute.outputs["Color"], principled.inputs["Base Color"])
+    principled.inputs["Metallic"].default_value = 0.0
+    principled.inputs["Roughness"].default_value = float(roughness)
+    principled.inputs["IOR"].default_value = 1.5
+    principled.inputs["Specular IOR Level"].default_value = 0.5
+    if not leaf:
+        links.new(principled.outputs["BSDF"], output.inputs["Surface"])
+        return material
+    scale = nodes.new("ShaderNodeVectorMath")
+    scale.operation = "SCALE"
+    scale.inputs["Scale"].default_value = PLANT_LEAF_TRANSMITTANCE_RATIO
+    links.new(attribute.outputs["Color"], scale.inputs[0])
+    translucent = nodes.new("ShaderNodeBsdfTranslucent")
+    links.new(scale.outputs["Vector"], translucent.inputs["Color"])
+    add = nodes.new("ShaderNodeAddShader")
+    links.new(principled.outputs["BSDF"], add.inputs[0])
+    links.new(translucent.outputs["BSDF"], add.inputs[1])
+    links.new(add.outputs["Shader"], output.inputs["Surface"])
+    return material
+
+
+def make_translucent_white_material(name):
+    """白い透過の面（Translucent BSDF、色 1）。葉の裏の見え方を描く"""
+    import bpy
+    material = bpy.data.materials.new(name)
+    material.use_nodes = True
+    nodes = material.node_tree.nodes
+    nodes.clear()
+    translucent = nodes.new("ShaderNodeBsdfTranslucent")
+    output = nodes.new("ShaderNodeOutputMaterial")
+    translucent.inputs["Color"].default_value = (1.0, 1.0, 1.0, 1.0)
+    material.node_tree.links.new(translucent.outputs["BSDF"], output.inputs["Surface"])
+    return material
+
+
+def place_plant(scene, plant):
+    """比べる株の PLY（エンジンのワールドの三角形）を枝と葉の 2 つの物体にして置く。物体の番号は枝
+    PlantRegions.PLANT_BRANCH_PASS_INDEX・葉 PLANT_LEAF_PASS_INDEX。記録の辞書を返す"""
+    import bpy
+    import mathutils
+    R = load_plant_regions()
+    placement = plant["placement"]
+    positions, normals, colors, triangles = R.read_plant_ply(plant["ply_path"])
+    if len(positions) != int(placement["vertices"]) or len(triangles) != int(placement["triangles"]):
+        raise RuntimeError(f"株の PLY の頂点・三角形の数がログと違う（PLY {len(positions)}・{len(triangles)}、ログ "
+                           f"{placement['vertices']}・{placement['triangles']}）")
+    triangles, flipped = orient_triangles(positions, triangles, normals)
+    leaf = R.leaf_triangles(normals, triangles)
+    to_blender = mathutils.Matrix(engine_to_blender_matrix4())
+    parts = {}
+    for part, mask, index in (("branch", ~leaf, R.PLANT_BRANCH_PASS_INDEX), ("leaf", leaf, R.PLANT_LEAF_PASS_INDEX)):
+        selected = triangles[mask]
+        if not len(selected):
+            raise RuntimeError(f"株の PLY に{'葉' if part == 'leaf' else '枝'}の三角形が無い")
+        used, remapped = np.unique(selected, return_inverse=True)
+        name = f"ReferencePlant_{part}"
+        mesh = build_mesh(name, positions[used], remapped.reshape(-1, 3).astype(np.int32), normals[used])
+        attribute = mesh.color_attributes.new("albedo", "FLOAT_COLOR", "POINT")
+        rgba = np.concatenate([colors[used], np.ones((len(used), 1), dtype=np.float32)], axis=1)
+        attribute.data.foreach_set("color", rgba.ravel())
+        mesh.materials.append(make_plant_material(name, placement["roughness"], part == "leaf"))
+        obj = bpy.data.objects.new(name, mesh)
+        scene.collection.objects.link(obj)
+        obj.matrix_world = to_blender
+        obj.pass_index = index
+        parts[part] = {"vertices": int(len(used)), "triangles": int(len(selected)),
+                       "albedo_mean": [float(v) for v in colors[used].mean(axis=0)]}
+    print(f"BLENDER_GRAY plant id={placement['id']} branch_triangles={parts['branch']['triangles']} "
+          f"leaf_triangles={parts['leaf']['triangles']} rewound={flipped}", flush=True)
+    return {"id": placement["id"], "placement": placement, "ply": PLANT_PLY, "parts": parts, "triangles_rewound": flipped,
+            "opacity_mask": "なし（模型はアルファ抜きを使わない。全面 1）",
+            "material": {"branch": "Principled BSDF（頂点のアルベド・粗さ・金属 0・IOR 1.5）",
+                         "leaf": "Principled BSDF + Translucent BSDF（色はアルベドの "
+                                 f"{PLANT_LEAF_TRANSMITTANCE_RATIO} 倍、両面）",
+                         "roughness": float(placement["roughness"]),
+                         "leaf_transmittance_ratio": PLANT_LEAF_TRANSMITTANCE_RATIO},
+            "occlusion": "頂点の遮蔽（FoliageVertex.Occlusion）は Cycles では使わない（光線で遮る）"}
+
+
 def place_building(scene, building):
     """比べる建物の glTF を Blender の読み込みで読み、エンジンの配置（位置・Y 軸まわりの回転・拡大率）で置く。材質は glTF の
     ものをそのまま使い、メッシュの物体の番号を BuildingRegions.BUILDING_PASS_INDEX にする。記録の辞書を返す"""
@@ -1854,7 +2086,9 @@ def render_gray_job(job):
     GR = load_gray_regions()
     # 建物 1 棟の比較（--building）: 領域と収束は BuildingRegions、ほかは灰色の地形と同じ
     building = job.get("building")
-    R = load_building_regions() if building else GR
+    # 低木 1 株の比較（--plant）: 領域と収束は PlantRegions
+    plant = job.get("plant")
+    R = load_building_regions() if building else (load_plant_regions() if plant else GR)
     bpy.ops.wm.read_factory_settings(use_empty=True)
     scene = bpy.context.scene
     device = setup_cycles_device(scene)
@@ -1889,6 +2123,7 @@ def render_gray_job(job):
         triangle_count += len(triangles)
         del positions, triangles, normals
     building_record = place_building(scene, building) if building else None
+    plant_record = place_plant(scene, plant) if plant else None
     load_seconds = time.time() - started
 
     matrix, vertical_fov = camera_to_blender(job["camera"])
@@ -1918,8 +2153,9 @@ def render_gray_job(job):
     sun.lightgroup = "sun"
     world.lightgroup = "sky"
     view_layer.use_pass_normal = True
-    view_layer.use_pass_object_index = bool(building)
-    for kind in ("diffuse", "glossy"):
+    view_layer.use_pass_object_index = bool(building or plant)
+    # 株の葉の透過は光の種類の分け方で透過のパスへ入ることがあるので、株では透過のパスも書いて直接光・間接光に足す
+    for kind in ("diffuse", "glossy") + (("transmission",) if plant else ()):
         for part in ("direct", "indirect", "color"):
             setattr(view_layer, f"use_pass_{kind}_{part}", True)
 
@@ -1960,6 +2196,21 @@ def render_gray_job(job):
         building_mask = (np.abs(channels[index_keys[0]] - R.BUILDING_PASS_INDEX) < 0.5) & (alpha > 0.5)
         if not building_mask.any():
             raise RuntimeError("建物が描画に映っていない（配置かカメラが違う）")
+    if plant:
+        # 株の画素の物体の番号（枝 1・葉 2、地形 0）
+        index_keys = [key for key in channels if ".Object Index." in key or ".IndexOB." in key]
+        if not index_keys:
+            raise RuntimeError(f"EXR に Object Index のパスが無い（あるもの: {sorted(channels)}）")
+        plant_index = np.where(alpha > 0.5, np.rint(channels[index_keys[0]]), 0.0).astype(np.float32)
+        if not (plant_index == R.PLANT_LEAF_PASS_INDEX).any() or not (plant_index == R.PLANT_BRANCH_PASS_INDEX).any():
+            raise RuntimeError("株の枝か葉が描画に映っていない（配置かカメラが違う）")
+        # 葉の裏の見え方: 白い透過の面を太陽だけ・直接光だけで描く。輝度 / (E⊥ × max(−n·l, 0) / π) が裏から見た太陽の見え方
+        view_layer.material_override = make_translucent_white_material("BackVisibilityWhite")
+        scene.cycles.seed = 0
+        back_rgb = pass_rgb(render_and_read(scene, exr_tmp), "Combined")
+        expected_back = float(lighting["sun_illuminance_normal_lux"]) * np.maximum(-n_dot_l, 0.0) / math.pi
+        back_visibility = np.where(n_dot_l < -1e-3, GR.luminance(back_rgb) / np.maximum(expected_back, 1e-6),
+                                   0.0).astype(np.float32)
     view_layer.material_override = None
     background.inputs["Strength"].default_value = 1.0
     set_gray_bounces(scene, GRAY_MAX_BOUNCES)
@@ -1978,6 +2229,17 @@ def render_gray_job(job):
         masks, region_record = R.region_masks(job["camera"], depth, building_mask, normal[..., 1], n_dot_l, visibility,
                                               alpha > 0.5, building["placement"], building["bounds"])
         building_record["regions"] = region_record
+    elif plant:
+        depth = render_view_depth(scene, exr_tmp, background)
+        engine_depth = GR.read_pfm(job["engine_depth_pfm"])[..., 0]
+        if engine_depth.shape != (height, width):
+            raise RuntimeError(f"エンジンの深度の大きさ {engine_depth.shape} が描画 {height}x{width} と違う")
+        GR.write_pfm(prefix + ".aux.depth.pfm", depth)
+        GR.write_pfm(prefix + ".aux.plant.pfm", plant_index)
+        GR.write_pfm(prefix + ".aux.back_visibility.pfm", back_visibility)
+        masks, region_record = R.region_masks(job["camera"], depth, engine_depth, plant_index, n_dot_l, visibility,
+                                              back_visibility, alpha > 0.5, plant["placement"])
+        plant_record["regions"] = region_record
     else:
         depth = GR.read_pfm(job["engine_depth_pfm"])[..., 0]
         if depth.shape != (height, width):
@@ -2049,7 +2311,8 @@ def render_gray_job(job):
             channels = render_and_read(scene, exr_tmp)
             parts = {name: pass_rgb(channels, name) for name in
                      ("Combined", "Combined_sun", "Combined_sky", "Diffuse Direct", "Diffuse Indirect",
-                      "Diffuse Color", "Glossy Direct", "Glossy Indirect", "Glossy Color")}
+                      "Diffuse Color", "Glossy Direct", "Glossy Indirect", "Glossy Color") +
+                     (("Transmission Direct", "Transmission Indirect", "Transmission Color") if plant else ())}
             values = {
                 "combined": parts["Combined"],
                 "sun": parts["Combined_sun"],
@@ -2061,6 +2324,9 @@ def render_gray_job(job):
                 # 間接光のうち拡散の分（エンジンの RTGI の照り返しと同じ物。ReferenceCheck.py --bounce が比べる）
                 "indirect_diffuse": parts["Diffuse Indirect"] * parts["Diffuse Color"],
             }
+            if plant:
+                values["direct"] = values["direct"] + parts["Transmission Direct"] * parts["Transmission Color"]
+                values["indirect"] = values["indirect"] + parts["Transmission Indirect"] * parts["Transmission Color"]
             if crop:
                 # 枠が名指しの領域を覆うこと（描いた画素の被覆）
                 if chunk == 0 and (channels["ViewLayer.Combined.A"][target] < 0.5).any():
@@ -2202,7 +2468,8 @@ def render_gray_job(job):
                    ".cycles.direct.pfm", ".cycles.indirect.pfm", ".cycles.indirect_diffuse.pfm", ".aux.visibility.pfm", ".aux.n_dot_l.pfm",
                    ".aux.normal.pfm", ".aux.alpha.pfm") + \
             ((".cycles.sun_direct.pfm", ".cycles.sky_direct.pfm") if crop else ()) + \
-            ((".aux.depth.pfm", ".aux.building.pfm") if building else ()):
+            ((".aux.depth.pfm", ".aux.building.pfm") if building else ()) + \
+            ((".aux.depth.pfm", ".aux.plant.pfm", ".aux.back_visibility.pfm") if plant else ()):
         outputs[os.path.basename(prefix) + suffix] = sha256_file(prefix + suffix)
     meta = {
         "view": job["view"],
@@ -2249,6 +2516,12 @@ def render_gray_job(job):
         meta["depth"] = {"meaning": "view_axis_distance", "units": "m", "sky_value": "inf", "samples": 1,
                          "pixel_filter": {"type": "BOX", "width_px": PIXEL_FILTER_WIDTH},
                          "depth_source": "emission of Camera Data View Z Depth"}
+    if plant:
+        meta["plant"] = plant_record
+        meta["depth"] = {"meaning": "view_axis_distance", "units": "m", "sky_value": "inf", "samples": 1,
+                         "pixel_filter": {"type": "BOX", "width_px": PIXEL_FILTER_WIDTH},
+                         "depth_source": "emission of Camera Data View Z Depth"}
+        meta["settings"]["transmission_passes"] = True
     with open(prefix + ".cycles.json", "w", encoding="utf-8") as f:
         json.dump(meta, f, indent=2, ensure_ascii=False)
     if crop:
@@ -2299,17 +2572,27 @@ def main():
                         help="--crop-regions: 記録と中身の合う種 A の途中の和を残し、種 B だけを描く")
     parser.add_argument("--building", action="store_true",
                         help="前哨地の建物 1 棟（撮影のログの配置）と灰色の地形を共通の照明で描く")
+    parser.add_argument("--plant", action="store_true",
+                        help="低木 1 株（撮影のログの配置と撮影のフォルダの PLY）と灰色の地形を共通の照明で描く")
     parser.add_argument("--trial", action="store_true",
-                        help=f"--building: 試しの描画（1 本 {BUILDING_TRIAL_SPP} サンプル。既定の書き先 <撮影>/{BUILDING_TRIAL_DIR}）")
-    parser.add_argument("--out", default="", help=f"--building: 書き先（省くと <撮影>/{BUILDING_RESULT_DIR}）")
+                        help=f"--building・--plant: 試しの描画（1 本 {BUILDING_TRIAL_SPP} サンプル。既定の書き先 "
+                             f"<撮影>/{BUILDING_TRIAL_DIR}）")
+    parser.add_argument("--out", default="", help=f"--building・--plant: 書き先（省くと <撮影>/{BUILDING_RESULT_DIR}・"
+                                                  f"<撮影>/{PLANT_RESULT_DIR}）")
     args = parser.parse_args()
-    if int(args.depth) + int(args.gray) + int(args.albedo) + int(args.normal) + int(args.lit) + int(args.building) != 1:
-        parser.error("--depth・--gray・--albedo・--normal・--lit・--building のどれか 1 つを指定してください")
+    if int(args.depth) + int(args.gray) + int(args.albedo) + int(args.normal) + int(args.lit) + int(args.building) + \
+            int(args.plant) != 1:
+        parser.error("--depth・--gray・--albedo・--normal・--lit・--building・--plant のどれか 1 つを指定してください")
     if args.building:
         args.range = args.range or "shadow"
         args.views = args.views or ",".join(BUILDING_VIEWS)
         args.max_spp = args.max_spp or (BUILDING_TRIAL_SPP if args.trial else MAX_SPP_PER_SEED)
         return run_building(args)
+    if args.plant:
+        args.range = args.range or "shadow"
+        args.views = args.views or ",".join(PLANT_VIEWS)
+        args.max_spp = args.max_spp or (PLANT_TRIAL_SPP if args.trial else MAX_SPP_PER_SEED)
+        return run_plant(args)
     if args.crop_reuse_a and not (args.crop_regions and args.skip_material):
         parser.error("--crop-reuse-a は --crop-regions と --skip-material と使う（材質を描き直すと A の途中の和は古い）")
     if args.crop_regions:

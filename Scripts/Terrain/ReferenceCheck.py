@@ -286,6 +286,12 @@
 #       （BuildingCheck.py。足元から 0〜2 m の地面の帯・壁の下端・壁の日なたと陰の明るさと比、深度から求めた建物の下端と地面の
 #       高さの差）。比較が成り立つ条件（深度の輪郭が 2 画素以内・Cycles の収束・領域の画素の下限）を満たさないか、表の領域が
 #       未判定なら落ちる（エンジンとの一致は求めない）。--trial は収束の条件だけを外す。報告は <Cycles の書き先>/building_check.json。
+#   python Scripts/Terrain/ReferenceCheck.py --plant --engine <撮影先> --reference <Cycles の書き先> [--views plant_near] [--trial]
+#                                            [--verify]
+#       低木 1 株を、エンジン（--wasteland-hide=all-but-plant の撮影）と Cycles（BlenderReference.py --plant）で比べる
+#       （PlantCheck.py。株の日なたと陰、太陽を背にした葉の透過、株の足元の影と日なたの遮蔽の明るさと、離れた地面との比）。
+#       比較が成り立つ条件と未判定で落ちる扱いは --building と同じ。--trial は収束の条件だけを外す。
+#       報告は <Cycles の書き先>/plant_check.json。
 #
 # 終了コード: すべて合格なら 0、どれかが不合格なら 1。
 import argparse
@@ -1614,7 +1620,8 @@ def aov_capture_args(capture_dir):
 
 
 def aov_hide_names(game_args):
-    """起動引数の --wasteland-hide= から外したものの名前の集合（all は全部、all-but-building は建物のほか全部に開く）"""
+    """起動引数の --wasteland-hide= から外したものの名前の集合（all は全部、all-but-building は建物のほか全部、all-but-plant は
+    草・低木のほか全部に開く）"""
     names = set()
     for arg in game_args or []:
         if arg.startswith(AOV_HIDE_PREFIX):
@@ -1624,6 +1631,9 @@ def aov_hide_names(game_args):
                 elif token == "all-but-building":
                     # 建物 1 棟だけを残す（建物を外したとは数えない）
                     names.update(set(AOV_HIDE_NAMES) - {"buildings"})
+                elif token == "all-but-plant":
+                    # 低木 1 株だけを置く（草・低木を外したとは数えない）
+                    names.update(set(AOV_HIDE_NAMES) - {"foliage"})
                 else:
                     names.add(token)
     return names
@@ -6035,7 +6045,10 @@ def main():
                         help="表示変換の候補を、エンジンと Cycles の同じ HDR に掛けて並べ、手本の写真と比べる")
     parser.add_argument("--building", action="store_true",
                         help="前哨地の建物 1 棟のエンジンと Cycles の比較（BuildingCheck.py。--engine と --reference）")
-    parser.add_argument("--trial", action="store_true", help="--building: Cycles の収束の条件だけを外す（試しの描画）")
+    parser.add_argument("--plant", action="store_true",
+                        help="低木 1 株のエンジンと Cycles の比較（PlantCheck.py。--engine と --reference）")
+    parser.add_argument("--trial", action="store_true",
+                        help="--building・--plant: Cycles の収束の条件だけを外す（試しの描画）")
     parser.add_argument("--grading", action="store_true",
                         help="荒野のグレーディングが中立で、HDR に neutral_plain を掛けた画が撮影の PNG と合うことを検査し、地面の R/G と白飛びの前後を記録する")
     parser.add_argument("--gap-list", action="store_true",
@@ -6125,6 +6138,12 @@ def main():
         views = [v.strip() for v in args.views.split(",") if v.strip()]
         return BuildingCheck.run(sys.modules[__name__], [absolute(d) for d in args.engine],
                                  absolute(args.reference) if args.reference else "", views, args.verify, args.trial)
+    if args.plant:
+        import PlantCheck
+        absolute = lambda d: os.path.normpath(d if os.path.isabs(d) else os.path.join(REPO_ROOT, d))
+        views = [v.strip() for v in args.views.split(",") if v.strip()]
+        return PlantCheck.run(sys.modules[__name__], [absolute(d) for d in args.engine],
+                              absolute(args.reference) if args.reference else "", views, args.verify, args.trial)
     if args.rt_scene:
         import RtScene
         capture = args.capture or (args.engine[0] if args.engine else "")

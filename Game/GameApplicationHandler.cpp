@@ -239,9 +239,11 @@ namespace Game
         // --wasteland-gray-material: 地形の材質を CommonLight.json の灰色に替える（Scripts/Terrain/ReferenceCheck.py --gray）
         constexpr const TCHAR *kWastelandGrayMaterialOption = TEXT("--wasteland-gray-material");
         Game::GameModes::WastelandCommonLight::Options s_WastelandCommonLight;
-        // --wasteland-hide=<clouds+foliage+rocks+gravel+buildings+aerial+fog の組み合わせ、または all・all-but-building>: 荒野から
-        // 比べるために外すもの（Game/GameModes/Wasteland/WastelandMode.h の WastelandHide）。all-but-building は前哨地の建物 1 棟
-        // だけを残す（Scripts/Terrain/ReferenceCheck.py --building）。シーンの設定なので Release でも効く
+        // --wasteland-hide=<clouds+foliage+rocks+gravel+buildings+aerial+fog の組み合わせ、または all・all-but-building・
+        // all-but-plant>: 荒野から比べるために外すもの（Game/GameModes/Wasteland/WastelandMode.h の WastelandHide）。
+        // all-but-building は前哨地の建物 1 棟だけを残す（Scripts/Terrain/ReferenceCheck.py --building）。all-but-plant は草・低木の
+        // 代わりに比べる低木 1 株だけを置く（ReferenceCheck.py --plant。株のメッシュの書き出しは開発ビルドだけ）。
+        // シーンの設定なので Release でも効く
         constexpr const TCHAR *kWastelandHideOption = TEXT("--wasteland-hide=");
         uint32_t s_WastelandHideMask = 0;
         // --wasteland-finest-lod: 正解の絵との比較のため、仮想化ジオメトリの LOD を最も細かい段に固定する（開発ビルドだけ）。
@@ -267,6 +269,9 @@ namespace Game
         constexpr const TCHAR *kWastelandExportTerrainOption = TEXT("--wasteland-export-terrain=");
         bool s_bWastelandFinestLod = false;
         String s_WastelandExportTerrainDir;
+        // --capture-png のパスのフォルダ（開発ビルドだけ）。低木 1 株の撮影（--wasteland-hide=all-but-plant）が比べる株のメッシュを
+        // そこへ書く（Game/GameModes/Wasteland/WastelandMode.h の m_CaptureDirectory）
+        String s_WastelandCaptureDir;
         // --wasteland-aa=fxaa|taa|none・--wasteland-render-scale=<0.5〜1>: 遠景のぼけの切り分けの撮影で、荒野のアンチエイリアシングと
         // 内部解像度を替える（開発ビルドだけ。Scripts/Terrain/ReferenceCheck.py --blur-static）。none は最初のフレームの前に
         // メインの SceneView のポストの FXAA のパスを止める（シーンを出ても戻さない）
@@ -718,6 +723,7 @@ namespace Game
         s_WastelandCommonLight = Game::GameModes::WastelandCommonLight::Options{};
         s_bWastelandFinestLod = false;
         s_WastelandExportTerrainDir.clear();
+        s_WastelandCaptureDir.clear();
         s_WastelandAntiAliasing = Game::GameModes::WastelandAntiAliasing::Default;
         s_WastelandRenderScale = 1.0f;
         m_StressStreamCellMeters = 0.0f;
@@ -1430,13 +1436,28 @@ namespace Game
 #endif
                 continue;
             }
+#if NORVES_BUILD_DEVELOPMENT
+            // --capture-png のフォルダを覚える（--capture-png はほかの処理も読むので、ここでは消費せずに次の判定へ進む）
+            if (TryStripPrefix(args[i], kCapturePngOption, sceneValue))
+            {
+                size_t directoryLength = 0;
+                for (size_t c = 0; c < sceneValue.size(); ++c)
+                {
+                    if (sceneValue[c] == '/' || sceneValue[c] == '\\')
+                    {
+                        directoryLength = c;
+                    }
+                }
+                s_WastelandCaptureDir = directoryLength > 0 ? sceneValue.substr(0, directoryLength) : String(".");
+            }
+#endif
             if (TryStripPrefix(args[i], kWastelandHideOption, sceneValue))
             {
                 String unknownName;
                 if (!Game::GameModes::WastelandHide::Parse(sceneValue, s_WastelandHideMask, unknownName))
                 {
                     LOG_ERROR_F("--wasteland-hide の名前「%s」は使えません（clouds・foliage・rocks・gravel・buildings・aerial・fog を + で"
-                                "つなぐか all・all-but-building）",
+                                "つなぐか all・all-but-building・all-but-plant）",
                                 unknownName.c_str());
                     return false;
                 }
@@ -3777,6 +3798,7 @@ namespace Game
                 mode->GetData().m_HideMask = s_WastelandHideMask;
                 mode->GetData().m_bFinestLod = s_bWastelandFinestLod;
                 mode->GetData().m_TerrainExportDir = s_WastelandExportTerrainDir;
+                mode->GetData().m_CaptureDirectory = s_WastelandCaptureDir;
                 mode->GetData().m_AntiAliasing = s_WastelandAntiAliasing;
                 mode->GetData().m_RenderScale = s_WastelandRenderScale;
                 if (!s_WastelandCommonLight.bEnabled && s_WastelandCommonLight.bGrayPlate)

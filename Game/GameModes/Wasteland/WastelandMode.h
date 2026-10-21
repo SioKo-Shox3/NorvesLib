@@ -81,10 +81,13 @@ namespace Game::GameModes
             /// 建物を比べる 1 棟（WastelandLayout の bReferenceBuilding）だけ残し、ほかの建物を外す。
             /// "all-but-building" は All から Buildings を除いてこれを足す（建物 1 棟だけの撮影）
             ReferenceBuildingOnly = 1u << 7u,
+            /// 草・低木の代わりに比べる 1 株（WastelandFoliage::MakeReferencePlant）だけを置く。
+            /// "all-but-plant" は All から Foliage を除いてこれを足す（低木 1 株だけの撮影）
+            ReferencePlantOnly = 1u << 8u,
         };
 
-        /// "clouds+foliage" のような名前の並びか "all"・"all-but-building" を読む。知らない名前・空の名前があれば
-        /// outError に入れて false
+        /// "clouds+foliage" のような名前の並びか "all"・"all-but-building"・"all-but-plant" を読む。知らない名前・空の名前が
+        /// あれば outError に入れて false
         bool Parse(const NorvesLib::Core::Container::String &value, uint32_t &outMask,
                    NorvesLib::Core::Container::String &outError);
     } // namespace WastelandHide
@@ -158,6 +161,11 @@ namespace Game::GameModes
         /// 地形の区画の LOD 0 を PLY で書き出すフォルダ（--wasteland-export-terrain。開発ビルドだけ。空なら書かない。
         /// WastelandTerrainExport.h）
         NorvesLib::Core::Container::String m_TerrainExportDir;
+        /// 撮影の保存先のフォルダ（--capture-png のパスのフォルダ。開発ビルドだけ。空なら無い）。低木 1 株の撮影
+        /// （--wasteland-hide=all-but-plant）が、比べる株のメッシュを <フォルダ>/reference_plant.ply に書く
+        NorvesLib::Core::Container::String m_CaptureDirectory;
+        /// 比べる 1 株の束（all-but-plant のときだけ Enter が作る。草・低木の代わりに渡す）
+        NorvesLib::Core::Rendering::FoliageBatch m_ReferencePlant;
         /// 遠景のぼけの切り分けの撮影（開発ビルドだけ）: アンチエイリアシング（--wasteland-aa）と内部解像度の倍率
         /// （--wasteland-render-scale。0.5〜1、1 なら替えない。Leave で 1 に戻す）
         WastelandAntiAliasing m_AntiAliasing = WastelandAntiAliasing::Default;

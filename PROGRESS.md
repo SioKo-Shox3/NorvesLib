@@ -6298,3 +6298,23 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 直す項目の案（SCN-WL-PROP-ALBEDO-SRGB → SCN-WL-PROP-AO → 灰色の地面での比べ直し → SCN-WL-BUILDING-GROUNDING）は記録に書いただけで TASKS.md には足していない。足すかは計画が決める。1 は同じ経路の glTF の模型を使うほかのシーンの見た目も変える
   - 新しい試験は足していない
 - Next: TASKS.md の次の未完の項目
+
+### SCN-WLR-PLANT-REF-BASE 完了（2026-10-21、run 20261021-055341 の反復 20）
+- Done: 低木 1 株をエンジンと Cycles で比べる仕組みを足した。記録は `Docs/RenderingValidation/WastelandPlantReference.md`
+  - Game: `--wasteland-hide=all-but-plant`（`WastelandHide::ReferencePlantOnly`。雲・岩・礫・建物・空気遠近・霧を外し、撒いた草・低木の代わりに `WastelandFoliage::MakeReferencePlant` の 1 株だけを渡す。風 0・間引きなし）。ログ `WASTELAND_PLANT_PLACEMENT`。開発ビルドは `--capture-png` のフォルダへ株のワールドの三角形と線形のアルベドを `reference_plant.ply` で書く（`ExportReferencePlant`。foliage.vert と同じ置き方と色）
+  - 視点 `plant_near`（2.5 m 手前・高さ 1.5 m・35° 見下ろし）・`plant_far`（30 m 手前・目の高さ）。株は (360, 1965)（DEM の周り 12 m の傾き 0.1°）
+  - `BlenderReference.py --plant`: PLY を枝と葉に分けて置き、枝は Principled、葉は Principled + Translucent（色はアルベドの 0.5 倍）。物体の番号・葉の裏の見え方・深度を書く。株の模型はアルファ抜きを使わないので不透明度のマスクは全面 1
+  - `ReferenceCheck.py --plant`（本体 `PlantCheck.py`、領域は `PlantRegions.py`）: 成り立つ条件と未判定で落ちる扱いは --building と同じ。株は画素のほとんどが輪郭に掛かるので、領域はエンジンと Blender の深度が 1 % 以内で同じ面に当たった画素に限る。表は株の日なた・陰・透過の葉・足元の影・足元の日なた（遮蔽）・離れた地面と、その比
+- 結果（試し 64 サンプル）: 輪郭 0.9996・0.9998、株の同じ面の割合 0.936。影の比 エンジン 0.62・Cycles 0.17（エンジンの株の影が縦の筋の塊になる）、透過の葉 ÷ 株の日なた 0.60・0.77
+- 証拠（`.harness/runs/20261021-055341/`）:
+  - `aux-SCN-WLR-PLANT-REF-BASE-build-debug.txt` 途中の Debug の Game のビルド EXIT=0
+  - `verify-SCN-WLR-PLANT-REF-BASE-1.txt` Debug の Game のビルド EXIT=0（最後の変更の後）
+  - `verify-SCN-WLR-PLANT-REF-BASE-2.txt` plant_near の撮影 result=pass・EXIT=0（267 秒、game_exe 084ce51e…）。PNG を開いて株と影が写ることを確かめた
+  - `aux-SCN-WLR-PLANT-REF-BASE-blender-trial.txt` Cycles の試し描き EXIT=0（全領域 2233 画素以上）
+  - `verify-SCN-WLR-PLANT-REF-BASE-3.txt` `--plant --trial --verify` result=pass・inputs_current=1・EXIT=0。見比べの画像 `scene-capture/SCN-WLR-PLANT-REF-BASE/cycles-trial/plant_plant_near.png` を開いた
+- Notes:
+  - ラビットブラシの模型は無い（低木は手続きのメッシュで枯れ草・ブラックブラッシュ・モルモンティー）。葉の付いた丸い低木のブラックブラッシュ A を比べる株にした
+  - 最初の視点（3 m 手前・高さ 1.2 m・15° 見下ろし、株は (300, 1760)）は地平線まで最も細かい段の地形が入り、ジオメトリのページが 5 GB を超えて増え続けて撮影が 600 秒で切れた。画の上の端を地平線より下にし、株を傾き 1.4 m / 3 m の所から平らな所へ移した
+  - 撮影の間も反復の外の大気の正解の解 3 本が走っていた
+  - 葉の透過の比 0.5 は仮の素直な値（`PLANT_LEAF_TRANSMITTANCE_RATIO`）。新しい試験は足していない
+- Next: TASKS.md の次の未完の項目
