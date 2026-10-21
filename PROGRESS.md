@@ -6376,3 +6376,24 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `aux-SCN-WL-PROP-AO-golden.txt` golden の Indoor・Outdoor 通過（変わらない）
 - Notes: 新しい試験は足していない。直す前の陰と日なたの差 0.034 が小さかったのは、日なたの壁も自己遮蔽で照り返しが欠けていたため（日なたの壁の比 0.808 → 0.879）
 - Next: blocked/SCN-WL-PROP-AO.md の判断待ち（推奨: 2 行目を灰色の地面の撮影で判定）
+
+### SCN-WLR-PLANT-REF-NEAR 完了（2026-10-21、run 20261021-055341 の反復 24）
+- Done: 低木 1 株を plant_near で Cycles で収束まで描き（1 本 512 サンプルで全領域収束、読み込み 44.6 秒・描画 43.3 秒）、`--plant`（`--trial` なし）で表にした。差を 3 つに分け、直す項目の案を `Docs/RenderingValidation/WastelandPlantRef.md` に書いた（値は変えていない）
+  - 描画の欠陥: (1) 株が太陽の影を落とさない（影の比 エンジン 0.621・Cycles 0.169。株は VSM・TLAS に入らず、影は接触影 0.3 m の縦の筋だけ）、(2) 株の中の自己の影の当たり外れ（株の日なた 0.503、見え方の AOV 0.647）、(3) 葉が光を透さない（透過の葉 0.388）
+  - 中身の欠陥: 葉に形が無い（4 頂点の帯、アルファのマスクなし）、株が手続きの帯と角柱だけ
+  - 条件・未判定: 地面の材質、1 画素より細い枝（日なたの枝 0.253）、足元の日なたの照度（0.890・0.977）、透過の比 0.5 は仮、1 株・1 視点
+  - 欠陥でない: 株の色の受け渡し（AOV 葉 0.183・枝 0.109 と PLY 0.183・0.107）、形と置き方、光の向き
+  - 直す項目の案: 株を太陽の VSM に描く → 両面の透過 → アルファのマスク・素材の差し替え → 灰色の地面での比べ直し
+- 証拠（`.harness/runs/20261021-055341/`）:
+  - `aux-SCN-WLR-PLANT-REF-NEAR-smoke.txt` 開始時の `--plant --trial --verify` が古い入力で落ちる（台本とシェーダーが撮影の後に変わった）
+  - `aux-SCN-WLR-PLANT-REF-NEAR-capture.txt` plant_near の撮り直し result=pass・EXIT=0（ビルドを含めて 122 秒、commit ae7d5131 dirty=0、game_exe e9373147…）。PNG を開いた
+  - `aux-SCN-WLR-PLANT-REF-NEAR-cycles.txt` Cycles の本描画 EXIT=0（stop=converged、spp_per_seed=512）
+  - `verify-SCN-WLR-PLANT-REF-NEAR-1.txt` `--plant --views plant_near --verify` result=pass・trial=0・inputs_current=1・EXIT=0（6 領域とも「判定」、輪郭 0.9996・0.9998）
+  - `aux-SCN-WLR-PLANT-REF-NEAR-breakdown.txt`・`-ndotl.txt`・`-shadow-extent.txt`・`-leaf-size.txt` 差の内訳
+  - 見比べの画像 `scene-capture/SCN-WLR-PLANT-REF/plant_plant_near.png` を開いた
+- Notes:
+  - 内訳の解析は使い捨ての台本で回した（リポジトリに入れていない）
+  - エンジンの撮り直しの領域の値は試しの撮影と同じ（株の描画の経路は SCN-WL-PROP-ALBEDO-SRGB・SCN-WL-PROP-AO で変わっていない）
+  - 直す項目の案は記録に書いただけで TASKS.md には足していない。足すかは計画が決める
+  - 新しい試験は足していない
+- Next: TASKS.md の次の未完の項目

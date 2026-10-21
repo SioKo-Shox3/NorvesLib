@@ -2226,7 +2226,7 @@
 - notes: 2026-10-19 GAP-LIST の比べる段の案（Sol の批評 5・6・19・20 と 2 周目）。
 
 ## SCN-WLR-PLANT-REF-NEAR: 低木 1 株を近くでエンジンと Cycles で比べる
-- status: todo
+- status: done
 - after: SCN-WLR-PLANT-REF-BASE
 - done-when: `plant_near` を Cycles で収束まで描いて保存し（1 本 25 分を上限）、`--plant`（`--trial` なし）で表にする。差を 3 つに分けて `Docs/RenderingValidation/WastelandPlantRef.md` に書き、直す項目の案（両面の透過・アルファのマスク・素材の差し替え）を書く（値は変えない）。
 - verify: `python Scripts/Terrain/ReferenceCheck.py --plant --engine .harness/runs/scene-capture/SCN-WLR-PLANT-REF-BASE --reference .harness/runs/scene-capture/SCN-WLR-PLANT-REF --views plant_near --verify`
