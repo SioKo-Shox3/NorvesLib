@@ -6128,3 +6128,20 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `aux-SCN-WL-MATERIAL-AO-OCCLUSION-bake-verify.txt` `TerrainOcclusion.py --verify` result=pass
 - Notes: 焼く刻みは変位の地図からの値と平均が揃う 1024 画素にした（4k では JPEG の法線の雑音で赤茶の土 0.906 と暗くなる）。ref_cliff_02 の余裕は 0.023 に増えた。`lit_check.json` の `material_ao` は参照の材質の再現の値（地図）のまま。AssetCook のテクスチャのスモーク（`AssetCookTextureUsageSmoke`）は回していない。記録は `Docs/RenderingValidation/WastelandMaterialAO.md` の「遮蔽の焼き直し」。新しい試験は足していない
 - Next: TASKS.md の次の未完の項目
+
+### SCN-WL-GEOM-BUDGET 完了（2026-10-21、run 20261021-055341 の反復 9）
+- Done: 既定のジオメトリの目標を作業集合の求めから決める。取り分（VT 3 : ジオメトリ 1）は変えず、読み込んだメッシュの区画とページの置き場の見込みの合計＋塊 1 つ分を求めとして渡し、取り分の目標が届かなければ求めを目標にする（`VideoMemoryBudgetManager::SetPoolDemand`・`MegaGeometryResourceStore::GetCommittedBytes`・`PollVideoMemoryBudget`）。実装は前の run の途中保存（bd7afd5e）で HEAD に入っていたので、この反復はその検証と記録。記録は `Docs/RenderingValidation/WastelandFarBlurStatic.md` の「既定のジオメトリの目標」
+  - 撮った時点の常駐: ref_cliff_02 は前 7128 ページ（788 MB、書き込み待ち 21・置き場待ち 984）→ 後 8121 ページ（897 MB、進行中 0・追い出し 0）、ref_far_01 は 3441 → 4043（resident と同じ）
+  - VRAM の内訳（上限 15280・プール以外 5116・VSM 623 MB は同じ）: ジオメトリの目標 2385 → 4164 MB（= 求め）、塊の確保 2741 → 4036 MB、VT の目標 7155 → 5375 MB（荒野は VT を使わない）
+  - GPU 時間（中央値 / p95）: ref_far_01 9.59 / 10.50 → 9.53 / 10.51 ms、ref_cliff_02 6.25 / 7.06 → 6.13 / 6.87 ms
+- 証拠（`.harness/runs/20261021-055341/`）:
+  - `regression-before-SCN-WL-GEOM-BUDGET.txt` result=pass・EXIT=0（求めを渡す 1 行を一時的に 0 にした RelWithDebInfo で撮った。撮影の後 `git checkout` で戻した）
+  - `aux-SCN-WL-GEOM-BUDGET-before.txt`: 同じ一時のビルドで荒野の base と GPU 時間（`scene-capture/SCN-WL-GEOM-BUDGET-before/`）
+  - `verify-SCN-WL-GEOM-BUDGET-1.txt` Debug の Game のビルド EXIT=0
+  - `verify-SCN-WL-GEOM-BUDGET-2.txt` base の撮影 result=pass・EXIT=0（Game.exe 9FE478F8…）
+  - `aux-SCN-WL-GEOM-BUDGET-pairs.txt`: 同じ Game.exe で ref2x・resident を撮影（exit 0、前後のハッシュ一致）
+  - `verify-SCN-WL-GEOM-BUDGET-3.txt` `--blur-static --expect geom-budget.json --verify` result=pass（rows=8・failed=0、inputs_current=1）: base − resident は欠け −0.0011〜+0.0004・エイリアス −0.0021〜−0.0006。切り出し `blur_ref_cliff_02.png` を開き、base と resident が見分けられないことを確かめた
+  - `aux-SCN-WL-GEOM-BUDGET-after-gpu.txt`・`aux-SCN-WL-GEOM-BUDGET-vram.txt`: 後の GPU 時間と VRAM_POOLS
+  - `verify-SCN-WL-GEOM-BUDGET-4.txt` 回帰の after result=pass: mega-bananas psnr 64.2、night-village 56.3、rendering3dtest 105.7、sandbox inf
+- Notes: 求めが割り振れる量を超えると VT の目標が 0 まで下がりうる（VT を使うシーンで VRAM が足りないとき）。予算が足りないときの扱いは SCN-WL-GEOM-LOWVRAM。新しい試験は足していない（`VideoMemoryBudgetManager` の求めの境界の単体の試験は無い）
+- Next: TASKS.md の次の未完の項目

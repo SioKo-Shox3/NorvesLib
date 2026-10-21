@@ -2092,7 +2092,7 @@
 - notes: 危険地帯（TAA）。2026-10-19（Sol の批評 14・15 と 2 周目）。静止の組（`static/`）は反復の中で撮って保存する。
 
 ## SCN-WL-GEOM-BUDGET: 荒野の遠景のジオメトリが既定の取り分で常駐しきるようにする
-- status: todo
+- status: done
 - after: SCN-WLR-EXPECT-MATCH, SCN-WLR-REGRESSION-VALIDATION, SCN-WLR-RECAPTURE-BLUR-STATIC
 - done-when: 既定のジオメトリのページの目標を、荒野の 1920 × 1080 の作業集合（ref_cliff_02 で 8120 ページ・897 MB）が常駐しきる大きさにし（目標を作業集合から決める）、既定の取り分の base と取り分を広げた resident（どちらも変更後の同じ Game.exe でこの項目の撮影先 `SCN-WL-GEOM-BUDGET/` へ撮り直す）の差（ref_cliff_02 の遠景で欠け +0.042・エイリアス +0.069）が 0.01 以内であることを `--blur-static --expect`（`geom-budget.json`）で検査する。VRAM の予算の内訳とフレームの GPU 時間を前後で記録する。反復の最初に回帰の撮影の `before` を撮る。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
