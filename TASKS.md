@@ -2167,12 +2167,12 @@
 - notes: 危険地帯（描画の既定値。空は全シーン共通）。2026-10-19（Sol の批評 17）。
 
 ## SCN-WLR-ATMOS-REF-NEWSET: 空の大気の新しい設定の数値の正解を解いて保存する
-- status: todo
+- status: done
 - after: SCN-WLR-GAP-LIST-ATMOS, SCN-WL-HAZE-ONE-MEDIUM, SCN-WL-PSI-GRID
 - done-when: SCN-WLR-GAP-LIST-ATMOS の結論で、空の大気の Mie の設定（係数・尺度高さ）を変えるか、どの値にするかを決めて記録する（写真の空の青 `sky_blue_photo` を設定と写真の処理に分けた結果に従う）。変えるなら、その設定の数値の正解（A と B、SCN-WLR-ATMOS-REF-B と同じ段と収束の基準）を `AtmosphereReference.py --solve` で、反復の外で切り離したプロセスとして解いて保存する（設定の署名つき）。解き終わるまで項目を BLOCKED にして待ち方を書き、終わったら親が todo に戻す。保存した解の収束（段 1 と段 2 の差 0.5 %）を `--verify` で検査して閉じる。変えないなら、その理由を記録して閉じる。
 - verify: `python Scripts/Terrain/AtmosphereReference.py --verify`
 - paths: Scripts/Terrain, Docs/RenderingValidation, TASKS.md, PROGRESS.md
-- notes: 2026-10-19（Sol の 2 周目: 大気の設定を変えた後の数値の参照が無い）。2026-10-20 SCN-WLR-GAP-LIST-ATMOS の結論（`sky_blue_photo` の分け方）: 仰角 6° の色度 r は写真 0.11・エンジン 0.29・荒野の設定の正解 B 0.27・論文の設定（Mie の係数 1/25）の正解 0.17。写真への寄りはモデル（B）0.02・設定 0.10・カメラの処理（条件）0.06。帯の上下の明るさの比は写真 0.76・論文の設定 0.76・エンジン 1.01。差の大半は設定なので、空の Mie を論文の側へ寄せる案（値は写真の帯の色度と上下の比を目安に決める）。空の Mie を下げると、SCN-WL-HAZE-ONE-MEDIUM で空の大気に合わせた霞の目標も下がる。 2026-10-21 反復 16: 変える。谷床の観測点（1572.55 m）で比べ直すと、帯の上下の比が写真 0.761 と合うのは空の Mie の地表の散乱と吸収を今の 0.5 倍（散乱 5.0e-5・吸収 5.55e-6 /m、尺度高さ 1600 m のまま。0.764）。論文の Mie では 0.688 で行き過ぎる（前の 0.76 は観測点 100 m）。色度 r は Mie を 0 にしても 0.16 で止まる（記録は WastelandAtmosphereReference.md の「空の大気の新しい設定」）。`AtmosphereReference.py` に組 `newset` を足し、台本の署名が変わるので段 1（6 組）と段 2（paper・engine・newset）を反復の外で解いている（`.harness/runs/20261021-055341/atmos-ref-newset-solve.ps1`、ログ `aux-SCN-WLR-ATMOS-REF-NEWSET-solve-*.txt`）。解き終わったら `--verify` を回して閉じる（解き直しはしない）。
+- notes: 2026-10-19（Sol の 2 周目: 大気の設定を変えた後の数値の参照が無い）。2026-10-20 SCN-WLR-GAP-LIST-ATMOS の結論（`sky_blue_photo` の分け方）: 仰角 6° の色度 r は写真 0.11・エンジン 0.29・荒野の設定の正解 B 0.27・論文の設定（Mie の係数 1/25）の正解 0.17。写真への寄りはモデル（B）0.02・設定 0.10・カメラの処理（条件）0.06。帯の上下の明るさの比は写真 0.76・論文の設定 0.76・エンジン 1.01。差の大半は設定なので、空の Mie を論文の側へ寄せる案（値は写真の帯の色度と上下の比を目安に決める）。空の Mie を下げると、SCN-WL-HAZE-ONE-MEDIUM で空の大気に合わせた霞の目標も下がる。 2026-10-21 反復 16: 変える。谷床の観測点（1572.55 m）で比べ直すと、帯の上下の比が写真 0.761 と合うのは空の Mie の地表の散乱と吸収を今の 0.5 倍（散乱 5.0e-5・吸収 5.55e-6 /m、尺度高さ 1600 m のまま。0.764）。論文の Mie では 0.688 で行き過ぎる（前の 0.76 は観測点 100 m）。色度 r は Mie を 0 にしても 0.16 で止まる（記録は WastelandAtmosphereReference.md の「空の大気の新しい設定」）。`AtmosphereReference.py` に組 `newset` を足し、台本の署名が変わるので段 1（6 組）と段 2（paper・engine・newset）を反復の外で解いている（`.harness/runs/20261021-055341/atmos-ref-newset-solve.ps1`、ログ `aux-SCN-WLR-ATMOS-REF-NEWSET-solve-*.txt`）。解き終わったら `--verify` を回して閉じる（解き直しはしない）。 2026-10-22 反復 38: 解き終わり、`--verify` result=pass・sets=3。newset の段 1 と段 2 の差は最大 0.229 %（区間の散乱光）。
 
 ## SCN-WL-SKY-SCATTER: 霧と空気遠近の散乱光と空の設定を、直した大気の正解の結論で直す
 - status: todo

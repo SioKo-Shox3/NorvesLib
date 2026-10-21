@@ -6571,3 +6571,11 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 動きの撮り比べ（`--blur-motion`）は細かい段で撮り直していない
   - 新しい試験は足していない
 - Next: TASKS.md の次の未完の項目
+### SCN-WLR-ATMOS-REF-NEWSET 完了（2026-10-22、run 20261021-055341 の反復 38）
+- Done: 反復の外で解いた段 1（6 組）と段 2（paper・engine・newset）がすべて `END ... EXIT=0` で終わった（台本 sha256 5813defb… が今の `AtmosphereReference.py` と同じことを確かめた）。`--verify` で newset の収束を確かめ、`Docs/RenderingValidation/WastelandAtmosphereReference.md` の収束の表に newset の列を足し、「空の大気の新しい設定」の節に解いた結果を書いた
+- 結果: newset の段 1 と段 2 の差は最大 0.229 %（水平 0.3〜10 km の区間の散乱光。空の輝度 B 0.217 %）で 0.5 % 以内。f_ms の最大 0.385、B の散乱の回数 15、1 回目だけの A と B の差 3.8e-15。paper・engine の差は前の解と同じ値
+- 証拠（`.harness/runs/20261021-055341/`）:
+  - `aux-SCN-WLR-ATMOS-REF-NEWSET-solve-level1.txt`・`-level2-paper.txt`・`-level2-engine.txt`・`-level2-newset.txt` 4 本とも EXIT=0
+  - `verify-SCN-WLR-ATMOS-REF-NEWSET-1.txt` `AtmosphereReference.py --verify` result=pass・sets=3・inputs_current=1・EXIT=0（開始時の確かめも兼ねた）
+- Notes: 段 2 の秒数は 3 組を同時に解いたので前より長い（記録の表を新しい秒数に替えた）。設定をエンジンへ入れるのは SCN-WL-SKY-SCATTER。新しい試験は足していない
+- Next: TASKS.md の次の未完の項目
