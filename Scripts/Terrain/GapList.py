@@ -292,12 +292,13 @@ def _blur_cases(reports, case, region):
 
 
 def m_far_aliasing(reports):
-    rows = _blur_cases(reports, "resident", "far") + _blur_cases(reports, "resident", "cliff")
+    # 荒野の既定の AA は TAA なので、常駐しきった TAA の組（aa-taa）で数える（resident は FXAA の対照）
+    rows = _blur_cases(reports, "aa-taa", "far") + _blur_cases(reports, "aa-taa", "cliff")
     if not rows:
-        return None, "遠景のぼけの resident の組が無い"
+        return None, "遠景のぼけの aa-taa の組が無い"
     alias = [e["fine_alias"] for _, e in rows]
     loss = [e["fine_detail_loss"] for _, e in rows]
-    return max(alias), (f"常駐しきった既定（resident）の遠景・崖のエイリアス {min(alias):.2f}〜{max(alias):.2f}、"
+    return max(alias), (f"常駐しきった既定の TAA（aa-taa）の遠景・崖のエイリアス {min(alias):.2f}〜{max(alias):.2f}、"
                         f"細部の欠け {min(loss):.2f}〜{max(loss):.2f}（2 倍の解像度の正解の量に対する比）")
 
 
@@ -366,8 +367,9 @@ def m_lod(reports):
 
 
 def m_residency(reports):
+    # 既定の取り分の base（TAA）は、取り分だけを広げた同じ TAA の aa-taa と比べる（AA の差を混ぜない）
     base = dict(_blur_cases(reports, "base", "far")).get("ref_cliff_02")
-    resident = dict(_blur_cases(reports, "resident", "far")).get("ref_cliff_02")
+    resident = dict(_blur_cases(reports, "aa-taa", "far")).get("ref_cliff_02")
     if not base or not resident:
         return None, "既定の取り分の組が無い"
     loss = base["fine_detail_loss"] - resident["fine_detail_loss"]

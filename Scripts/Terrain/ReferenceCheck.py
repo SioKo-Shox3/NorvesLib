@@ -3794,16 +3794,18 @@ def run_blur_static(capture_dir, verify, engine_dirs=None, reference_dir=None, e
             print(f"REFERENCE_CHECK blur_static view={view} calibration blur_loss0={blur_row['bands'][0]['detail_loss']:.3f} "
                   f"blur_alias={blur_row['fine_alias']:.3f} noise_kept0={noise_row['bands'][0]['detail_kept']:.3f} "
                   f"noise_alias0={noise_row['bands'][0]['alias']:.3f} far_px={region['far_px']} cliff_px={region['cliff_px']}")
-    # 条件ごとの効き（2 視点の平均。取り分だけを広げた組との差。base の差は既定の取り分の効き）
+    # 条件ごとの効き（2 視点の平均。取り分だけを広げた組との差）。base の差は既定の取り分の効きなので、base は AA が同じ
+    # TAA で取り分だけを広げた aa-taa と比べる（BLUR_BASELINE は FXAA の対照で、比べると AA の差が混ざる）
     effects = []
     for case in cases_def:
         if case["name"] == BLUR_BASELINE:
             continue
+        reference = "aa-taa" if case["name"] == "base" else BLUR_BASELINE
         deltas = []
         for entry in views:
             cases = entry.get("cases") or {}
-            if case["name"] in cases and BLUR_BASELINE in cases:
-                baseline = cases[BLUR_BASELINE]
+            if case["name"] in cases and reference in cases:
+                baseline = cases[reference]
                 key = "cliff" if baseline["cliff"] is not None and cases[case["name"]]["cliff"] is not None else "far"
                 deltas.append((cases[case["name"]][key]["fine_detail_loss"] - baseline[key]["fine_detail_loss"],
                                cases[case["name"]][key]["fine_alias"] - baseline[key]["fine_alias"]))

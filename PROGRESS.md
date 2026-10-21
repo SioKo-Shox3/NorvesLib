@@ -6540,3 +6540,15 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 速さ（端数 0・0.25・0.5）を替えた撮り比べはしていない。GPU 時間は測っていない（読み出しの回数は同じ 5 回）
   - 新しい試験は足していない
 - Next: TASKS.md の次の未完の項目
+
+
+### SCN-WL-FAR-AA-MOTION 差し戻しの直し（2026-10-22、run 20261021-055341 の反復 36）
+- Done: 既定の AA が TAA になったので、検査の既定の扱いを TAA の組へ直した。`GapList.py` の `m_residency` は base 対 aa-taa（取り分だけが違う同じ TAA）、`m_far_aliasing` は aa-taa の組で数える。`ReferenceCheck.py --blur-static` の条件の効きの base の行も aa-taa と比べる（resident は FXAA の対照のまま）
+  - 保存の静止レポートで base を aa-taa と同じにすると `m_residency` は 0（前は欠け −0.038・エイリアス −0.434）。`m_far_aliasing` は 0.2255（aa-taa の遠景・崖のエイリアス 0.19〜0.23）
+  - `verify-SCN-WL-FAR-AA-MOTION-13.txt` Debug の Game のビルド EXIT=0
+  - `verify-SCN-WL-FAR-AA-MOTION-14.txt` taa の撮影 result=pass・EXIT=0（exe 958662f8… で比べる組と同じ）
+  - `verify-SCN-WL-FAR-AA-MOTION-15.txt` `--blur-motion --verify` result=pass・inputs_current=1・6 行合格（taa の崖 +0.0112・遠景 +0.0052、エイリアスの増え +0.128、fxaa +0.0038、base の止めのエイリアス 0.199・差 +0.0108）
+  - `verify-SCN-WL-FAR-AA-MOTION-16.txt` `--blur-static --verify` result=pass・inputs_current=1・8 行合格（値は反復 35 と同じ）
+  - `verify-SCN-WL-FAR-AA-MOTION-17.txt` 回帰の after（-Motion）result=pass（値は反復 35 と同じ）
+  - 開いた画: `blur_motion_ref_far_01.png`（taa の motion-30 の崖の溝と棚の線が止めと同じ細かさ）
+- Notes: `Docs/RenderingValidation/WastelandGapList.md` は 2026-10-19 判定の記録なので書き換えていない（次に GapList を回すと far_aliasing・geometry_residency は TAA の組で出る）
