@@ -1,11 +1,11 @@
-﻿# 比較の検査（--gray・--lit・--blur-static・--blur-motion）に、領域・成分ごとの合否の閾値（仕様の JSON）を足す
+﻿# 比較の検査（--gray・--lit・--blur-static・--blur-motion・--bounce・--atmos-ref）に、領域・成分ごとの合否の閾値（仕様の JSON）を足す
 # （SCN-WLR-EXPECT-MATCH。ReferenceCheck.py の --expect と --expect-selftest から呼ぶ。単独では動かさない）。
 #
 # 仕様の JSON（置き場は Scripts/Terrain/ExpectSpecs/）: {"description": "<説明>", "rows": [<行>, ...]}（行の並びだけでもよい）。
 # blur_static の仕様は "cases": [<組の名前>, ...] を持てる。持てば比べる条件の組をそれだけに絞り（resident は要る）、
 # ほかの組は撮らなくてよい（ある項目の撮影先へ、比べる組だけを撮り直すとき）。
 # 行の鍵（ほかの鍵は書き間違いとして拒む）:
-#   mode: gray | lit | blur_static | blur_motion | bounce。走らせたモードと違う行があれば仕様の誤りとして落とす
+#   mode: gray | lit | blur_static | blur_motion | bounce | atmos_ref。走らせたモードと違う行があれば仕様の誤りとして落とす
 #   view: 視点。region: 領域（gray・lit は GrayRegions.REGIONS、blur_* は far・cliff）
 #   component: 成分（gray・lit・bounce だけ）。total・sun・sky・indirect・visibility・chroma（RGB の色度）。
 #     bounce（ReferenceCheck.py --bounce。RTGI の照り返しと Cycles の間接光）は indirect と chroma だけ
@@ -17,6 +17,9 @@
 #     blur_static: detail_loss（細部の欠け）、alias（エイリアス）、detail_loss_vs_resident・alias_vs_resident（その組 − resident。
 #       base と resident の差は case=base で書く）
 #     blur_motion: detail_loss・alias（tag の撮影の値）、motion_static_detail_loss・motion_static_alias（振りと止めの差。振り − 止め）
+#     atmos_ref（ReferenceCheck.py --atmos-ref。行の鍵は mode・view・quantity と閾値だけ）: エンジンの書き出しの地表の値と、
+#       カメラの足元の谷床の高度で求めた期待値の RGB の相対差の最大（illuminance.valley_floor）。sun_transmittance（太陽の透過率）、
+#       sun_horizontal（水平面の太陽の照度）、sky_horizontal（水平面の空の照度。期待値は論文の近似 A）
 #   min・max: 下限・上限（両端を含む。どちらか一方は要る）
 #   allow_undetermined: 未判定を許すか（既定は許さない）。note: 行の説明（判定には使わない）
 #
@@ -31,7 +34,7 @@ import io
 import json
 import os
 
-MODES = ("gray", "lit", "blur_static", "blur_motion", "bounce")
+MODES = ("gray", "lit", "blur_static", "blur_motion", "bounce", "atmos_ref")
 # bounce の行で使える成分
 BOUNCE_COMPONENTS = ("indirect", "chroma")
 ROW_KEYS = ("mode", "view", "region", "component", "case", "tag", "static", "quantity", "min", "max",
@@ -48,6 +51,9 @@ BLUR_STATIC_QUANTITIES = ("detail_loss", "alias", "detail_loss_vs_resident", "al
 BLUR_MOTION_QUANTITIES = ("detail_loss", "alias", "motion_static_detail_loss", "motion_static_alias")
 BLUR_VALUE_KEYS = {"detail_loss": "fine_detail_loss", "alias": "fine_alias"}
 JUDGED = "判定"
+# atmos_ref の量 → illuminance.valley_floor の鍵
+ATMOS_REF_QUANTITIES = {"sun_transmittance": "sun_transmittance_max_rel", "sun_horizontal": "sun_horizontal_max_rel",
+                        "sky_horizontal": "sky_horizontal_max_rel"}
 
 SPEC_DIR = os.path.join("Scripts", "Terrain", "ExpectSpecs")
 SELFTEST_DIR = os.path.join(".harness", "runs", "scene-capture", "SCN-WLR-EXPECT-MATCH")
@@ -111,6 +117,13 @@ def validate_row(rc, row, mode):
         elif quantity not in LIGHT_QUANTITIES[component]:
             errors.append(f"成分 {component} の量は {'・'.join(LIGHT_QUANTITIES[component])}（{quantity!r} でない）")
         errors.extend(f"{key} は blur_* の行だけの鍵" for key in ("case", "tag", "static") if key in row)
+    elif row["mode"] == "atmos_ref":
+        if not isinstance(row.get("view"), str) or not row["view"]:
+            errors.append(f"view {row.get('view')!r} は視点の名前でない")
+        if quantity not in ATMOS_REF_QUANTITIES:
+            errors.append(f"atmos_ref の量は {'・'.join(ATMOS_REF_QUANTITIES)}（{quantity!r} でない）")
+        errors.extend(f"{key} は atmos_ref の行に使わない鍵" for key in ("region", "component", "case", "tag", "static")
+                      if key in row)
     else:
         if row.get("region") not in BLUR_REGIONS:
             errors.append(f"region {row.get('region')!r} は far か cliff")
@@ -231,6 +244,18 @@ def blur_motion_value(report, row):
     return (value, None) if value is not None else (None, f"{row['tag']} の {row['region']} の値が無い")
 
 
+def atmos_ref_value(report, row):
+    """atmos_ref の行の値。(値, 未判定の理由)"""
+    view = next((v for v in report.get("views") or [] if v.get("view") == row["view"]), None)
+    if view is None:
+        return None, "視点が検査に無い"
+    valley = (view.get("illuminance") or {}).get("valley_floor")
+    if valley is None:
+        return None, "谷床の高度の期待値が無い（" + "; ".join(view.get("failures") or ["比べていない"])[:120] + "）"
+    value = valley.get(ATMOS_REF_QUANTITIES[row["quantity"]])
+    return (value, None) if value is not None else (None, f"{row['quantity']} の値が無い")
+
+
 def row_label(row):
     parts = [row.get("mode"), row.get("view"), row.get("case"), row.get("tag"), row.get("region"), row.get("component"),
              row.get("quantity")]
@@ -256,6 +281,8 @@ def evaluate(rc, mode, report, rows):
             value, reason = light_value(report, row)
         elif mode == "blur_static":
             value, reason = blur_static_value(rc, report, row)
+        elif mode == "atmos_ref":
+            value, reason = atmos_ref_value(report, row)
         else:
             value, reason = blur_motion_value(report, row)
         low, high = row.get("min"), row.get("max")

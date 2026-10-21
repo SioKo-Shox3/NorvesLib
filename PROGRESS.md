@@ -6156,3 +6156,23 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 証拠（`.harness/runs/20261021-055341/`）: `aux-SCN-WL-GEOM-LOWVRAM-smoke-build.txt`（開始時の Debug の Game のビルド EXIT=0）、`aux-SCN-WL-GEOM-LOWVRAM-explore-11000.txt`、`aux-SCN-WL-GEOM-LOWVRAM-explore-6600.txt`（記録の始め方を直す前）、`aux-SCN-WL-GEOM-LOWVRAM-low-6600.txt`（このコミットの Game.exe。3028 件）。`GeometryPageStreamerTest` は RelWithDebInfo で Passed（ストリーマの制御は HEAD のまま）
 - Notes: 6600 MB の撮影では読み込み中にも枠の目標が 2608 → 553 → 858 MB と揺れ（プール以外の使用量 3368〜5423 MB の揺れ。一時的な確保）、553 MB のときページの目標が 0 になって約 1000 ページを外して読み直していた（落ち着いた後は 5118 MB で揺れない）。プールの塊は目標より大きく確保済み（2567 MB）のまま縮まない。段 12・13 の粗いページが、書き込みを待つ細かい段の 64 件に読み込みの枠を塞がれて読めないまま残る。新しい試験は足していない
 - Next: blocked/SCN-WL-GEOM-LOWVRAM.md の判断の後に「粗い段に下がる制御」を続ける。verify の 11000 MB の撮影はこのコミットの Game.exe で撮り直していない
+
+### SCN-WL-SKY-ALTITUDE 完了（2026-10-21、run 20261021-055341 の反復 11）
+- Done:
+  - `SkyAtmosphereParameters::GroundAltitudeMeters`（既定 0 m。大気の厚さの半分・10 km までに丸める）を足した。地表の太陽の透過率（`GetSunGroundTransmittance`・`ComputeSunGroundTransmittance`・`ComputeSunGroundIlluminance`。太陽の方向光・高さフォグの太陽・PT の太陽が共有）と地表の空の照度はこの高度で、空の放射輝度の観測点（`GetObserverAltitudeMeters()` = 地表 + 100 m）と地平線の仰角、空気遠近が引く透過率 LUT の行はこの 100 m 上で求める。惑星の球と媒質の密度は海面から数える。比較（`AreSkyAtmosphereParametersEqual`）と描画の版のハッシュにも入れた。既定 0 m では計算が前と同じなので、ほかのシーンは変わらない
+  - 荒野は `kSkyGroundAltitudeMeters` = 1452.05 + 20.5 = 1472.55 m（ref_ground_02 の足元）を渡す
+  - 大気の書き出しに `sky.ground_altitude_m` を足し、`observer_altitude_m` を地表 + 100 m にした。`--atmos-dump` の地表の透過率と表の照合は地表の高度の行で引く
+  - `--atmos-ref`: 同じ式の太陽の透過率はエンジンの地表の高度で比べ、カメラの足元の谷床（空気遠近の起点 − 目の高さ）で求めた期待値（透過率の表と A の Ψ だけ。B は使わない）との相対差を `illuminance.valley_floor` に書く。`--expect` を `--atmos-ref` で使えるようにし（`ExpectSpec.py` の mode `atmos_ref`、量 sun_transmittance・sun_horizontal・sky_horizontal）、`Scripts/Terrain/ExpectSpecs/sky-altitude.json`（太陽 1 %・空 3 %）を足した
+  - `Docs/RenderingValidation/WastelandAtmosphereReference.md` に「谷床の高度へ移した後」を足した
+- 証拠（`.harness/runs/20261021-055341/`）:
+  - `verify-SCN-WL-SKY-ALTITUDE-1.txt`: Debug の Game のビルド EXIT=0
+  - `verify-SCN-WL-SKY-ALTITUDE-2.txt`: ref_ground_02 の大気の書き出しの撮影 result=pass・EXIT=0（game_exe_sha256 4eb2c618…。行末の直しの後に撮り直した。値は直す前の撮影と同じ）
+  - `verify-SCN-WL-SKY-ALTITUDE-3.txt`: `--atmos-dump --verify` result=pass・inputs_current=1・EXIT=0（地表の透過率と表の差 8.9e-4）
+  - `verify-SCN-WL-SKY-ALTITUDE-4.txt`: `--atmos-ref --expect sky-altitude.json --verify` result=pass・inputs_current=1・EXIT=0。谷床 1472.52 m（エンジン 1472.55 m）で太陽の透過率 0.03 %・水平面の太陽 0.03 %・空の照度（A）0.60 %。直す前の書き出し（SCN-WLR-ATMOS-DUMP の写し）では 21.7 %・21.7 %・82 % で 3 行とも落ちることを確かめた
+  - `aux-SCN-WL-SKY-ALTITUDE-views.txt`: 既定の荒野の 6 視点（`.harness/runs/scene-capture/SCN-WL-SKY-ALTITUDE-views`）EXIT=0。6 枚を開いた。太陽の法線照度 91709 → 110446 lux（R）で日なたが明るく、空の水平面の照度 19777 → 10927 lux（R）で影の中が暗い。露出は変えていない
+- Notes:
+  - 記録だけの変化: 高さフォグの太陽の単一散乱 ÷ 正解 0.80〜0.82 → 0.98〜1.00、空の輝度 エンジン ÷ B 0.67〜1.27 → 0.77〜1.17、太陽 ÷ 空（輝度 Y）2.36 → 4.58
+  - 6 視点を開いて見つけた前からの欠陥（10 月 19 日の SCN-WL-GRADE-NEUTRAL-6views にも同じ位置にある）: ref_far_02 の雲に等高線のような階調の段がはっきり出る（項目は無い。SCN-FIX-SKY-BANDING は mega シーンの空の横縞）。ref_ground_02 の空の高さ約 380 px の横の境は SCN-WL-SKY-SCATTER に入っている
+  - 谷床の標高は 1 つの値（ref_ground_02 の足元）にした。視点ごとの足元の差（数十 m）で太陽の透過率は 0.3 % ほどしか変わらない
+  - 新しい試験は足していない。`AtmosphereReference.py` は触っていない（保存した解の署名が変わるため）
+- Next: TASKS.md の次の未完の項目

@@ -1,0 +1,26 @@
+{
+  "description": "SCN-WL-SKY-ALTITUDE: 荒野の太陽と空の照度を谷床の高度で求めることの合否。ref_ground_02 の大気の書き出しの地表の太陽の透過率・水平面の太陽の照度・水平面の空の照度を、カメラの足元の谷床の高度（約 1472 m）で求めた期待値（透過率の表と論文の近似 A。ReferenceCheck.py --atmos-ref の illuminance.valley_floor）と比べ、RGB の相対差の最大が太陽は 1 %、空は 3 % 以内。変更前（海面 0 m で求めた値）は太陽の透過率が 0.82 倍で、この仕様に落ちる。",
+  "rows": [
+    {
+      "mode": "atmos_ref",
+      "view": "ref_ground_02",
+      "quantity": "sun_transmittance",
+      "max": 0.01,
+      "note": "地表の太陽の透過率（光学的深さだけで決まる）"
+    },
+    {
+      "mode": "atmos_ref",
+      "view": "ref_ground_02",
+      "quantity": "sun_horizontal",
+      "max": 0.01,
+      "note": "水平面の太陽の照度（大気の外の照度 × 透過率 × 太陽の高度の正弦）"
+    },
+    {
+      "mode": "atmos_ref",
+      "view": "ref_ground_02",
+      "quantity": "sky_horizontal",
+      "max": 0.03,
+      "note": "水平面の空の照度（太陽円盤を除く。期待値は論文の近似 A を谷床の高度で上半球に積んだ値）"
+    }
+  ]
+}

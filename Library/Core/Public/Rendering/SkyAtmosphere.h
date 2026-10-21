@@ -34,6 +34,10 @@ namespace NorvesLib::Core::Rendering
         float MieScaleHeightMeters = 1200.0f;
         float MieAnisotropy = 0.8f;
         Math::Vector3 GroundAlbedo = Math::Vector3(0.3f, 0.3f, 0.3f);
+        // シーンの地表の、惑星の表面（海面）からの高度（m）。地表の太陽の透過率・照度、地表の空の照度はこの高度で、
+        // 空の放射輝度の観測点はこの高度から SkyAtmosphereModel::ObserverAltitudeMeters 上で求める。惑星の球（地平線より下の
+        // 視線が当たる地面）と媒質の密度の高度は海面から数える。0 で地表を海面とみなす
+        float GroundAltitudeMeters = 0.0f;
     };
 
     /**
@@ -161,7 +165,7 @@ namespace NorvesLib::Core::Rendering
         const SkyAtmosphereParameters& GetParameters() const { return m_Parameters; }
 
         /**
-         * @brief 観測点（地表から ObserverAltitudeMeters の高さ）からviewDirectionを見た放射輝度
+         * @brief 観測点（地表 GroundAltitudeMeters から ObserverAltitudeMeters の高さ）からviewDirectionを見た放射輝度
          *
          * 空が無効、または方向が0・非有限ならbValid=falseで放射輝度0。
          */
@@ -180,7 +184,7 @@ namespace NorvesLib::Core::Rendering
         /** BuildSkyViewTableの表を補間した放射輝度。表が無ければEvaluateViewRadianceと同じ。 */
         SkyRadianceSample SampleSkyView(const Math::Vector3& viewDirection) const;
 
-        /** 地表での太陽の透過率（RGB）。ComputeSunGroundTransmittanceと同じ値。 */
+        /** 地表（GroundAltitudeMeters）での太陽の透過率（RGB）。ComputeSunGroundTransmittanceと同じ値。 */
         const Math::Vector3& GetSunGroundTransmittance() const
         {
             return m_SunGroundTransmittance;
@@ -194,11 +198,17 @@ namespace NorvesLib::Core::Rendering
          */
         Math::Vector3 GetTransmittance(float altitudeFraction, float cosine) const;
 
-        /** 地表の水平面に届く空の照度（太陽円盤を除く、lux、RGB） */
+        /** 地表（GroundAltitudeMeters）の水平面に届く空の照度（太陽円盤を除く、lux、RGB） */
         Math::Vector3 GetGroundSkyIlluminance() const;
 
-        /** 空の放射輝度を評価する観測点の地表からの高さ（m） */
+        /** 空の放射輝度を評価する観測点の、地表（GroundAltitudeMeters）からの高さ（m） */
         static constexpr float ObserverAltitudeMeters = 100.0f;
+
+        /** 空の放射輝度を評価する観測点の、惑星の表面（海面）からの高度（m）。GroundAltitudeMeters + ObserverAltitudeMeters */
+        float GetObserverAltitudeMeters() const
+        {
+            return m_Parameters.GroundAltitudeMeters + ObserverAltitudeMeters;
+        }
 
         /**
          * @brief 前計算の表の 1 つ（撮影の大気の書き出しが、表の値をそのまま書くための読み出し口）
@@ -317,13 +327,13 @@ namespace NorvesLib::Core::Rendering
         float cosine);
 
     /**
-     * @brief 地表から見た太陽の透過率（RGB）。空が無効なら0。
+     * @brief 地表（GroundAltitudeMeters）から見た太陽の透過率（RGB）。空が無効なら0。
      */
     Math::Vector3 ComputeSunGroundTransmittance(
         const SkyAtmosphereParameters& parameters);
 
     /**
-     * @brief 地表での太陽の照度（lux、RGB）。太陽円盤の照度×地表の透過率。
+     * @brief 地表（GroundAltitudeMeters）での太陽の照度（lux、RGB）。太陽円盤の照度×地表の透過率。
      *
      * ラスタの空の太陽の方向光とPTの太陽円盤の光源標本は、この値を共有する。
      * 空が無効なら0。

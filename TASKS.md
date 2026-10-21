@@ -2123,7 +2123,7 @@
 - notes: 危険地帯（描画）。2026-10-19（Sol の批評 22）。
 
 ## SCN-WL-SKY-ALTITUDE: 太陽と空の照度、空の表の観測点を谷床の高度で求める
-- status: todo
+- status: done
 - after: SCN-WLR-ATMOS-REF
 - done-when: 一覧の中身の欠陥 2（`altitude_mismatch`。太陽と地表の照度・空の LUT の観測点を海抜 0 m で求め、谷床は約 1474 m）を直す。`--atmos-ref` の期待値（太陽の透過率・水平面の太陽と空の照度）も谷床の高度で求めるように直し（今は高度 0 で求める。光学的深さと A で決まる量なので、保存した数値の参照の B は要らない）、エンジンの書き出しの太陽の透過率が 1 %、空の照度が 3 % 以内で合うことを `--expect`（`sky-altitude.json`）で検査する。既定の荒野の 6 視点を別の撮影先に撮って開く（太陽が約 2 割明るくなる。露出でまとめて帳尻を合わせない）。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`

@@ -139,7 +139,9 @@
 #       読み、ここでは解き直さない（無いか署名が今の台本・設定と違えば失敗）。
 #       合否: 入力のハッシュが今のファイルと合う（--verify）、AtmosphereReference.py --verify の結果が合格で同じ設定、同じ式で求まる値
 #       （地表の太陽の透過率、同じ媒質の高さフォグと空気遠近の透過率）が正解と ATMOS_REF_SAME_MODEL_TOLERANCE で合う。
-#       散乱光と空の輝度の差は記録するだけ（値は変えない）。
+#       散乱光と空の輝度の差は記録するだけ（値は変えない）。地表の太陽の透過率・水平面の太陽と空の照度は、カメラの足元の谷床の
+#       高度での期待値（透過率の表と A の Ψ の表だけで求める）との相対差も illuminance.valley_floor に書き、--expect
+#       （mode atmos_ref の行）で判定できる。
 #
 #   python Scripts/Terrain/ReferenceCheck.py --blur-static --capture <出力先> [--verify]
 #       遠景のぼけを、条件を 1 つずつ変えた静止の撮影（ref_far_01・ref_cliff_02）で切り分け、<出力先>/blur_static_check.json と、
@@ -2670,8 +2672,11 @@ def check_atmos_view(capture_dir, view, game_args):
     horizontal_error = atmos_relative_error(ground["sun_horizontal_lux"], sun_normal * np.sin(altitude), 1.0)
     light_error = atmos_relative_error(fog["sun_light_illuminance_lux"], sun_normal, 1.0) \
         if fog["sun_single_scattering"] else None
-    # 地表の太陽の透過率（直接の積分）= 透過率の表を地表・太陽の天頂角で引いた値（表の補間の分だけずれる）
-    table_sun = np.exp(-atmos_table_bilinear(table, 0.0, atmos_cosine_to_coordinate(np.sin(altitude)) * (table.shape[1] - 1)))
+    # 地表の太陽の透過率（直接の積分）= 透過率の表を地表（空の地表の高度）・太陽の天頂角で引いた値（表の補間の分だけずれる）。
+    # 表の行は高度の割合の平方根で並ぶ（4a と同じ）。地表の高度の無い古い書き出しは 0 m
+    ground_fraction = float(meta["sky"].get("ground_altitude_m", 0.0)) / atmosphere_height
+    table_sun = np.exp(-atmos_table_bilinear(table, np.sqrt(ground_fraction) * (table.shape[0] - 1),
+                                             atmos_cosine_to_coordinate(np.sin(altitude)) * (table.shape[1] - 1)))
     sun_table_error = atmos_relative_error(ground["sun_ground_transmittance"], table_sun, 1e-3)
     sky_lux = np.array(ground["sky_horizontal_lux"])
     result["ground_illuminance"] = {
@@ -2894,7 +2899,12 @@ def atmos_ref_view(capture_dir, view):
     sun_lux = float(meta["ground_illuminance"]["sun_top_of_atmosphere_normal_lux"])
     sun = AR.sun_direction_from_angles(sky["sun_altitude_degrees"], sky["sun_azimuth_degrees"])
     observer = float(sky["observer_altitude_m"])
+    # エンジンが地表の太陽と空の照度を求める高度（地表の高度の無い古い書き出しは 0 m）
+    engine_ground = float(sky.get("ground_altitude_m", 0.0))
     haze_origin = camera_y + float(aerial["origin_altitude_m"])
+    # 期待値を求める谷床の高度: カメラの足元（目の高さの下）の標高。エンジンの空の地表の高度とは別に、カメラの位置と
+    # ワールドの原点の標高から決める
+    valley_floor = haze_origin - float(meta["probe"]["ground_eye_height_m"])
     fog = atmos_fog_settings(meta)
     settings = AR.settings_from_dump(meta)
     started = time.time()
@@ -2912,6 +2922,7 @@ def atmos_ref_view(capture_dir, view):
     variant_atmospheres = {name: solutions[name] for name in variants}
     result = {"view": view, "reference_level": ATMOS_REF_LEVEL, "settings": settings, "sun_direction": sun.tolist(),
               "sun_top_of_atmosphere_lux": sun_lux, "observer_altitude_m": observer, "haze_origin_altitude_m": haze_origin,
+              "engine_ground_altitude_m": engine_ground, "valley_floor_altitude_m": valley_floor,
               "solutions": {name: AR.solution_path(AR.DEFAULT_OUT, s, ATMOS_REF_LEVEL)
                             for name, s in [("engine", settings)] + list(variants.items())}}
 
@@ -2938,8 +2949,8 @@ def atmos_ref_view(capture_dir, view):
     result["sky"] = sky_rows
 
     # 2. 地表の太陽と空の照度（lux）
-    # エンジンの地表の太陽の透過率は高度 0 の値（空の観測点の高度 observer とは別）
-    sun_t = reference.sun_transmittance(0.0, sun)
+    # エンジンの地表の太陽の透過率は空の地表の高度 engine_ground の値（空の観測点の高度 observer とは別）
+    sun_t = reference.sun_transmittance(engine_ground, sun)
     sin_altitude = sun[1]
     illuminance = {"engine_sun_horizontal": meta["ground_illuminance"]["sun_horizontal_lux"],
                    "engine_sky_horizontal": meta["ground_illuminance"]["sky_horizontal_lux"],
@@ -2962,6 +2973,25 @@ def atmos_ref_view(capture_dir, view):
                                                                        illuminance[f"reference_sky_horizontal_{version}"])
     sun_t_error = atmos_relative_error(illuminance["engine_sun_ground_transmittance"], sun_t, 1e-3)
     illuminance["sun_transmittance_max_rel"] = sun_t_error
+    # 谷床の高度の期待値（SCN-WL-SKY-ALTITUDE）: 太陽の透過率は光学的深さ、水平面の空の照度は論文の近似 A で決まる量なので、
+    # 保存した解の透過率の表と A の Ψ の表だけで求める（B の解は使わない）。エンジンの書き出しの値との相対差の最大（RGB）を書く
+    valley_sun_t = reference.sun_transmittance(valley_floor, sun)
+    valley_sun_horizontal = valley_sun_t * sin_altitude * sun_lux
+    valley_sky_a = reference.sky_horizontal_irradiance(valley_floor, sun, "A") * sun_lux
+    illuminance["valley_floor"] = {
+        "altitude_m": valley_floor,
+        "engine_ground_altitude_m": engine_ground,
+        "reference_sun_transmittance": valley_sun_t.tolist(),
+        "reference_sun_horizontal": valley_sun_horizontal.tolist(),
+        "reference_sky_horizontal_A": valley_sky_a.tolist(),
+        "sun_transmittance_max_rel": atmos_relative_error(illuminance["engine_sun_ground_transmittance"], valley_sun_t, 1e-3),
+        "sun_horizontal_max_rel": atmos_relative_error(illuminance["engine_sun_horizontal"], valley_sun_horizontal, 1.0),
+        "sky_horizontal_max_rel": atmos_relative_error(illuminance["engine_sky_horizontal"], valley_sky_a, 1.0),
+        # 海面（0 m）の値に対する谷床の値の比（記録だけ）
+        "sun_transmittance_over_sea_level": atmos_ratio(valley_sun_t, reference.sun_transmittance(0.0, sun)),
+        "sky_horizontal_A_over_sea_level": atmos_ratio(
+            valley_sky_a, reference.sky_horizontal_irradiance(0.0, sun, "A") * sun_lux),
+    }
     result["illuminance"] = illuminance
     if sun_t_error > ATMOS_REF_SAME_MODEL_TOLERANCE:
         failures.append(f"地表の太陽の透過率（同じ式）が正解と {sun_t_error:.3g} 違う（設定の読み違い）")
@@ -3091,7 +3121,7 @@ def atmos_ref_view(capture_dir, view):
     return result
 
 
-def run_atmos_ref(capture_dir, views, verify):
+def run_atmos_ref(capture_dir, views, verify, expect=None):
     failures = []
     inputs_ok, input_failures, record = check_inputs(capture_dir)
     if verify and not inputs_ok:
@@ -3123,9 +3153,18 @@ def run_atmos_ref(capture_dir, views, verify):
                   f"fog_t_max_abs={result['same_media_fog_transmittance_max_abs']:.2e} "
                   f"aerial_t_max_rel={result['same_media_aerial_transmittance_max_rel']:.2e} "
                   f"seconds={result['seconds']:.0f}")
+            valley = ill["valley_floor"]
+            print(f"REFERENCE_CHECK atmos_ref view={view} valley_floor_m={valley['altitude_m']:.2f} "
+                  f"engine_ground_m={valley['engine_ground_altitude_m']:.2f} "
+                  f"sun_t_rel={valley['sun_transmittance_max_rel']:.4f} "
+                  f"sun_horizontal_rel={valley['sun_horizontal_max_rel']:.4f} "
+                  f"sky_horizontal_A_rel={valley['sky_horizontal_max_rel']:.4f} "
+                  f"sun_t_over_sea_level={valley['sun_transmittance_over_sea_level']:.4f} "
+                  f"sky_A_over_sea_level={valley['sky_horizontal_A_over_sea_level']:.4f}")
     report = {"mode": "atmos_ref", "verify": bool(verify), "inputs_current": inputs_ok, "inputs_record": record,
               "criteria": {"same_model_tolerance": ATMOS_REF_SAME_MODEL_TOLERANCE, "reference_level": ATMOS_REF_LEVEL},
               "convergence_report": convergence_path, "views": results, "failures": failures}
+    apply_expect(report, expect, "atmos_ref", failures)
     report_path = os.path.join(capture_dir, "atmos_ref_check.json")
     with open(report_path, "w", encoding="utf-8") as f:
         json.dump(report, f, indent=2, ensure_ascii=False)
@@ -5940,7 +5979,7 @@ def main():
     parser.add_argument("--regression", action="store_true",
                         help="回帰の撮影の after（--capture）を before（--reference）と並べる（CaptureRegression.ps1 が呼ぶ）")
     parser.add_argument("--expect", default="",
-                        help="--gray・--lit・--blur-static・--blur-motion で、領域・成分ごとの合否の閾値の仕様（Scripts/Terrain/ExpectSpecs/ の JSON）"
+                        help="--gray・--lit・--blur-static・--blur-motion・--bounce・--atmos-ref で、領域・成分ごとの合否の閾値の仕様（Scripts/Terrain/ExpectSpecs/ の JSON）"
                              "の各行も判定する")
     parser.add_argument("--expect-selftest", action="store_true",
                         help="保存した撮影で、今の値で通る仕様が通り、外れる行・許さない未判定・仕様の誤りで落ちることを確かめる")
@@ -5954,9 +5993,9 @@ def main():
         import ExpectSpec
         return ExpectSpec.run_selftest(sys.modules[__name__], args.verify)
     expect = os.path.normpath(args.expect if os.path.isabs(args.expect) else os.path.join(REPO_ROOT, args.expect))         if args.expect else None
-    if expect and not (args.gray or args.lit or args.blur_static or args.blur_motion or args.bounce):
+    if expect and not (args.gray or args.lit or args.blur_static or args.blur_motion or args.bounce or args.atmos_ref):
         print("REFERENCE_CHECK result=fail reason=expect_unsupported（--expect は --gray・--lit・--blur-static・--blur-motion・"
-              "--bounce と使う）")
+              "--bounce・--atmos-ref と使う）")
         return 1
     if args.require_judged is not None and not args.lit:
         print("REFERENCE_CHECK result=fail reason=require_judged_unsupported（--require-judged は --lit と使う）")
@@ -6061,7 +6100,7 @@ def main():
         return run_atmos_dump(capture_dir, views, args.verify)
     if args.atmos_ref:
         views = [v.strip() for v in args.views.split(",") if v.strip()]
-        return run_atmos_ref(capture_dir, views, args.verify)
+        return run_atmos_ref(capture_dir, views, args.verify, expect=expect)
     if args.blur_static:
         return run_blur_static(capture_dir, args.verify, engine_dirs or None, reference, expect)
     if args.blur_motion:

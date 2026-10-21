@@ -223,6 +223,12 @@ namespace NorvesLib::Core::Rendering
             }
             return sanitized.SunLuminanceNits * SolarDiskSolidAngleSteradians;
         }
+
+        // 地表（GroundAltitudeMeters）の、大気の厚さに対する高度の割合
+        float GroundAltitudeFraction(const SkyAtmosphereParameters& sanitized)
+        {
+            return sanitized.GroundAltitudeMeters / sanitized.AtmosphereHeightMeters;
+        }
     } // namespace
 
     SkyAtmosphereParameters MakeDefaultSkyAtmosphereParameters()
@@ -279,6 +285,11 @@ namespace NorvesLib::Core::Rendering
                                              0.0f,
                                              1.0f,
                                              result.GroundAlbedo.z);
+        // 観測点（地表から ObserverAltitudeMeters 上）が大気の中に収まるよう、大気の厚さの半分までにする
+        result.GroundAltitudeMeters = ClampFinite(parameters.GroundAltitudeMeters,
+                                                  0.0f,
+                                                  std::min(1.0e4f, 0.5f * result.AtmosphereHeightMeters),
+                                                  result.GroundAltitudeMeters);
         return result;
     }
 
@@ -305,7 +316,8 @@ namespace NorvesLib::Core::Rendering
                lhs.MieAnisotropy == rhs.MieAnisotropy &&
                lhs.GroundAlbedo.x == rhs.GroundAlbedo.x &&
                lhs.GroundAlbedo.y == rhs.GroundAlbedo.y &&
-               lhs.GroundAlbedo.z == rhs.GroundAlbedo.z;
+               lhs.GroundAlbedo.z == rhs.GroundAlbedo.z &&
+               lhs.GroundAltitudeMeters == rhs.GroundAltitudeMeters;
     }
 
     SkyAtmosphereModel::SkyAtmosphereModel(const SkyAtmosphereParameters& parameters)
@@ -323,12 +335,12 @@ namespace NorvesLib::Core::Rendering
         m_SunAzimuth = std::atan2(m_SunDirection[2], m_SunDirection[0]);
         m_HorizonElevation = -std::acos(std::clamp(
             static_cast<double>(m_Parameters.PlanetRadiusMeters) /
-                (m_Parameters.PlanetRadiusMeters + ObserverAltitudeMeters),
+                (m_Parameters.PlanetRadiusMeters + GetObserverAltitudeMeters()),
             -1.0,
             1.0));
         m_SunDiskIrradiance = ComputeSunDiskIrradianceFromSanitized(m_Parameters);
-        m_SunGroundTransmittance =
-            ComputeAtmosphereTransmittanceFromSanitized(m_Parameters, 0.0f, sun.y);
+        m_SunGroundTransmittance = ComputeAtmosphereTransmittanceFromSanitized(
+            m_Parameters, GroundAltitudeFraction(m_Parameters), sun.y);
 
         // 多重散乱の表は透過率の表を、地表の空の照度は両方の表を引く。
         BuildTransmittanceTable();
@@ -651,9 +663,10 @@ namespace NorvesLib::Core::Rendering
 
     void SkyAtmosphereModel::BuildGroundSkyIrradiance()
     {
-        // 地表の水平面に上半球の空から届く照度（太陽の単位照度あたり）。仰角の正弦で等分した
-        // 格子で余弦の重みを積分する。地平線より下の地面を照らすのに使う。
-        const double origin[3] = {0.0, m_Parameters.PlanetRadiusMeters, 0.0};
+        // 地表（GroundAltitudeMeters）の水平面に上半球の空から届く照度（太陽の単位照度あたり）。仰角の正弦で
+        // 等分した格子で余弦の重みを積分する。地平線より下の地面を照らすのに使う。
+        const double origin[3] = {
+            0.0, static_cast<double>(m_Parameters.PlanetRadiusMeters) + m_Parameters.GroundAltitudeMeters, 0.0};
         double irradiance[3] = {0.0, 0.0, 0.0};
         for (uint32_t elevation = 0u; elevation < kGroundIrradianceElevationCount; ++elevation)
         {
@@ -787,7 +800,7 @@ namespace NorvesLib::Core::Rendering
         }
 
         const double origin[3] = {
-            0.0, m_Parameters.PlanetRadiusMeters + ObserverAltitudeMeters, 0.0};
+            0.0, static_cast<double>(m_Parameters.PlanetRadiusMeters) + GetObserverAltitudeMeters(), 0.0};
         const double direction[3] = {view.x, view.y, view.z};
         const MarchResult march =
             March(origin, direction, m_SunDirection, kViewSteps, false, true);
@@ -957,7 +970,7 @@ namespace NorvesLib::Core::Rendering
             return Math::Vector3::Zero;
         }
         return ComputeAtmosphereTransmittanceFromSanitized(
-            sanitized, 0.0f, MakeSunDirection(sanitized).y);
+            sanitized, GroundAltitudeFraction(sanitized), MakeSunDirection(sanitized).y);
     }
 
     Math::Vector3 ComputeSunGroundIlluminance(
@@ -970,7 +983,7 @@ namespace NorvesLib::Core::Rendering
             return Math::Vector3::Zero;
         }
         const Math::Vector3 transmittance = ComputeAtmosphereTransmittanceFromSanitized(
-            sanitized, 0.0f, MakeSunDirection(sanitized).y);
+            sanitized, GroundAltitudeFraction(sanitized), MakeSunDirection(sanitized).y);
         const float irradiance = ComputeSunDiskIrradianceFromSanitized(sanitized);
         return Math::Vector3(transmittance.x * irradiance,
                              transmittance.y * irradiance,

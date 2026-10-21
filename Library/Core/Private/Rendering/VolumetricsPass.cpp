@@ -284,9 +284,10 @@ namespace NorvesLib::Core::Rendering
             {
                 const uint32_t transmittanceHeight = skyTransmittanceTexture->GetHeight();
                 // 透過率 LUT の行は高度の割合 0〜1 を両端の texel の中心に置く（SkyAtmospherePass）。
-                // 空の放射輝度 LUT と同じ観測点の高度の行を引く。
+                // 空の放射輝度 LUT と同じ観測点の高度（地表 GroundAltitudeMeters の ObserverAltitudeMeters 上）の行を引く。
                 const float observerAltitudeFraction = std::clamp(
-                    SkyAtmosphereModel::ObserverAltitudeMeters / sky.AtmosphereHeightMeters,
+                    (sky.GroundAltitudeMeters + SkyAtmosphereModel::ObserverAltitudeMeters) /
+                        sky.AtmosphereHeightMeters,
                     0.0f,
                     1.0f);
                 const AtmosphereGroundExtinction extinction = GetAtmosphereGroundExtinction();

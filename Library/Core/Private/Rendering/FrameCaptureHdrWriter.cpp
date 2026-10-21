@@ -658,8 +658,10 @@ namespace NorvesLib::Core::Rendering
         AppendNumber(json, sky.MieAnisotropy);
         AppendFormat(json, ", \"ground_albedo\": ");
         AppendVector3(json, sky.GroundAlbedo);
+        AppendFormat(json, ", \"ground_altitude_m\": ");
+        AppendNumber(json, model.GetParameters().GroundAltitudeMeters);
         AppendFormat(json, ", \"observer_altitude_m\": ");
-        AppendNumber(json, SkyAtmosphereModel::ObserverAltitudeMeters);
+        AppendNumber(json, model.GetObserverAltitudeMeters());
         AppendFormat(json, ", \"sun_disk_solid_angle_sr\": ");
         AppendNumber(json, SolarDiskSolidAngleSteradians);
         AppendFormat(json, ", \"ground_extinction_rayleigh_per_m\": ");

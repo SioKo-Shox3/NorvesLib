@@ -195,6 +195,10 @@ namespace Game::GameModes
         // （尺度高さ 1.6 km）になり、3 km 先の崖の透過が 0.84 でなく 0.69 になる。高原の晴天のエアロゾルの光学的深さ
         // （0.05〜0.1）は、この高度から上の柱の量（0.07）に合う
         constexpr float kSiteAltitudeMeters = 1452.05f;
+        // 空の模型の地表の標高[m]。谷床（ref_ground_02 の足元の y ≈ 20.5 m）の標高で、地表の太陽の透過率・照度、地表の空の照度、
+        // 空の放射輝度の観測点（この 100 m 上）、高さフォグの太陽の照度をこの高度で求める。海面で求めると、尺度高さ 1.6 km の
+        // エアロゾルを谷床より下の分まで通すので、太陽が 0.82 倍に暗く、空の照度は低い高度の値（谷床の約 2 倍）になる
+        constexpr float kSkyGroundAltitudeMeters = kSiteAltitudeMeters + 20.5f;
         // 空気遠近で数えるエアロゾルの密度の倍率。空の模型（海面で Mie 1.11e-4 /m・尺度高さ 1.6 km）はこの標高で 4.5e-5 /m
         // （Rayleigh と合わせた視程 約 70 km）になり、3〜5 km 先の崖の赤みが空の色の霞で白く薄まった。コロラド高原の澄んだ空気は
         // 標準視程 約 180 km（IMPROVE の国立公園の観測）で、Rayleigh（約 1.1e-5 /m）を除くエアロゾルは約 1e-5 /m なので、
@@ -449,6 +453,7 @@ namespace Game::GameModes
             sky.SunAzimuthDegrees = sunAzimuthDegrees;
             sky.MieScaleHeightMeters = kSkyMieScaleHeight;
             sky.SunLuminanceNits = kSunLuminanceNits;
+            sky.GroundAltitudeMeters = kSkyGroundAltitudeMeters;
             ctx.EngineRef.GetRenderWorld().SetSkyAtmosphere(sky);
 
             VolumetricFogParameters fog = MakeDefaultVolumetricFogParameters();

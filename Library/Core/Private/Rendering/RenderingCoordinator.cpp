@@ -248,6 +248,7 @@ namespace NorvesLib::Core::Rendering
             hash = HashRevisionValue(hash, sky.GroundAlbedo.x);
             hash = HashRevisionValue(hash, sky.GroundAlbedo.y);
             hash = HashRevisionValue(hash, sky.GroundAlbedo.z);
+            hash = HashRevisionValue(hash, sky.GroundAltitudeMeters);
 
             const DDGIVolumeParameters& ddgi = packet.Scene.DDGIVolume;
             hash = HashRevisionValue(hash, ddgi.bEnabled);
