@@ -4,13 +4,14 @@
 #
 # 使い方:
 #   python Scripts/Terrain/AtmosphereReference.py --solve [--level 1|2] [--sets a,b,...] [--dump <視点>.atmos.json] [--out <出力先>]
-#       論文の設定（paper）と、荒野の書き出し（--dump。省くと SCN-WLR-ATMOS-DUMP の ref_ground_02）の設定（engine）の組で、段 1 か、
+#       論文の設定（paper）と、荒野の書き出し（--dump。省くと SCN-WLR-ATMOS-DUMP の ref_ground_02）の設定（engine）と、書き出しの
+#       設定の空の Mie だけを新しい値にした設定（newset。NEWSET_MIE_DENSITY_SCALE・観測点は谷床の上）の組で、段 1 か、
 #       歩数・方向の数・表の細かさをすべて倍にした段 2（既定）の正解と下の検査を求め、組ごとに設定の署名（この台本・設定・太陽の
 #       高度・観測点の高度・最小再現の高度・段の細かさのハッシュ）つきで <出力先>/atmosphere_reference_level<段>_<組>.json に
 #       保存する（重い。段 1 は 1 組数分、段 2 は 1 組数時間。組ごとに別のプロセスで並べてよい）。段 1 では、比べる表
 #       （ReferenceCheck.py --atmos-ref）が読む解そのものも <出力先>/atmosphere_solution_level1_<設定の名前>.pkl に保存する。
 #       --sets には、書き出しの設定を 1 つずつ論文の値へ戻した組（comparison_variants。段 1 だけ、解の保存だけ）も指定できる。
-#       省くと段 1 はすべての組、段 2 は paper と engine。書き出しを撮り直しても設定が同じなら署名は変わらない。
+#       省くと段 1 はすべての組、段 2 は paper・engine・newset。書き出しを撮り直しても設定が同じなら署名は変わらない。
 #   python Scripts/Terrain/AtmosphereReference.py --verify [--dump ...] [--out ...]
 #       保存した段 1 と段 2 の比べる量がすべて CONVERGENCE_TOLERANCE 以内で一致することを確かめる（どちらも署名が今の
 #       入力と同じことも見る）。ほかに、鉛直の光学的深さの解析解との一致・多重散乱の級数が収束すること・B の 2 回目の散乱の源が
@@ -111,6 +112,12 @@ PAPER_SETTINGS = {
 # エンジンの設定のうち書き出しの JSON に無いもの（SkyAtmosphere.cpp の設定値）: Mie の散乱と吸収の分け方（散乱 1.0e-4・吸収 1.11e-5 /m）。
 # オゾンは論文と同じ値を使っている
 ENGINE_MIE_SCATTERING_FRACTION = 1.0e-4 / (1.0e-4 + 1.11e-5)
+# 空の大気の新しい設定（SCN-WLR-ATMOS-REF-NEWSET）: 書き出しの設定の Mie の地表の散乱と吸収に掛ける倍率（尺度高さ 1600 m と
+# 散乱と吸収の分け方は変えない）。谷床の観測点で写真の空（ground_02）の帯の上下の明るさの比 0.76 に合う値
+# （WastelandAtmosphereReference.md の「空の大気の新しい設定」）
+NEWSET_MIE_DENSITY_SCALE = 0.5
+# 新しい設定の観測点の高度: 谷床の標高 1472.55 m の 100 m 上（SCN-WL-SKY-ALTITUDE の空の放射輝度 LUT の観測点）
+NEWSET_OBSERVER_ALTITUDE_M = 1572.55
 
 # 計算の細かさ（段 1。段 2 はすべて倍）
 LEVEL1 = {
@@ -1277,6 +1284,8 @@ def reference_sets(dump_path):
         sky = meta["sky"]
         repro_altitude = float(meta["aerial_perspective"]["origin_altitude_m"]) + float(meta["camera_position"][1])
         sets.append(("engine", settings_from_dump(meta), float(sky["sun_altitude_degrees"]), float(sky["observer_altitude_m"])))
+        sets.append(("newset", dict(settings_from_dump(meta, NEWSET_MIE_DENSITY_SCALE), name="newset"),
+                     float(sky["sun_altitude_degrees"]), NEWSET_OBSERVER_ALTITUDE_M))
     else:
         failures.append(f"書き出しの JSON が無い: {dump_path}")
     return sets, repro_altitude, failures
@@ -1335,7 +1344,7 @@ def check_failures(name, checks):
 def solve(dump_path, out_dir, level=2, names=None):
     """段 level（重い。段 1 は 1 組数分、段 2 は 1 組数時間）の収束を見る量と検査を組ごとに求め、設定の署名つきで保存する。
     段 1 では解そのものも保存する（save_solution）。names は解く組（paper・engine と comparison_variants の名前。省くと段 1 は
-    すべて、段 2 は paper と engine）。--verify は保存した段 1 と段 2 を比べる"""
+    すべて、段 2 は paper・engine・newset）。--verify は保存した段 1 と段 2 を比べる"""
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sets, repro_altitude, failures = reference_sets(dump_path)
     engine = [settings for name, settings, _, _ in sets if name == "engine"]
@@ -1502,7 +1511,7 @@ def main():
     parser = argparse.ArgumentParser(description="空と霞の数値の正解（Hillaire 2020 の定義から独立に積分する）")
     parser.add_argument("--solve", action="store_true", help="段の正解と検査を求めて保存する（重い）")
     parser.add_argument("--level", type=int, choices=(1, 2), default=2, help="--solve で解く段")
-    parser.add_argument("--sets", default=None, help="--solve で解く組（カンマ区切り。省くと段 1 はすべて、段 2 は paper と engine）")
+    parser.add_argument("--sets", default=None, help="--solve で解く組（カンマ区切り。省くと段 1 はすべて、段 2 は paper・engine・newset）")
     parser.add_argument("--verify", action="store_true", help="保存した段 1 と段 2 の収束と、検査の段の解析解との一致などを確かめる")
     parser.add_argument("--dump", default=DEFAULT_DUMP, help="エンジンの書き出しの JSON（<視点>.atmos.json）")
     parser.add_argument("--out", default=DEFAULT_OUT, help="結果の JSON の出力先")

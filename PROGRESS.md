@@ -6243,3 +6243,13 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 荒野の ref_ground_02 の前後（`scene-capture/SCN-WL-PSI-GRID/ref_ground_02-before-after-diffx20.png`）を開き、見分けられないことを確かめた
 - Notes: 方位・余弦の分け数・歩・格子の大きさは Python の写し（エンジンの書き出しと 1e-7 で一致）で比べて決めた（記録の表）。太陽だけを動かしたときに `reused_tables=1` になることは撮影では確かめていない（撮った荒野は太陽が動かない）。`Docs/RenderingValidation/WastelandGapList.md` の一覧は凍結した値のまま。新しい試験は足していない
 - Next: TASKS.md の次の未完の項目
+### SCN-WLR-ATMOS-REF-NEWSET 途中（2026-10-21、run 20261021-055341 の反復 16）
+- 開始時の `AtmosphereReference.py --verify` は result=pass・sets=2・inputs_current=1（台本を変える前）
+- 決めたこと: 空の大気の Mie を変える。地表の散乱と吸収を今の 0.5 倍（散乱 5.0e-5・吸収 5.55e-6 /m、消散 5.555e-5 /m）、尺度高さ 1600 m のまま。谷床の観測点（1572.55 m）で写真の空の帯と比べ直した掃引（検査の段の B、11 組）で、帯の上下の比が写真 0.761 と合うのが 0.5 倍（0.764）。論文の係数と尺度高さでは 0.688 で行き過ぎる（前の 0.76 は観測点 100 m の値）。色度 r（仰角 5.9°）は 0.222 → 0.195 で、Mie を 0 に近づけても 0.16 で止まる（写真 0.111 との残りはカメラの処理）
+- Done:
+  - `Scripts/Terrain/AtmosphereReference.py`: 組 `newset`（書き出しの設定の Mie だけ `NEWSET_MIE_DENSITY_SCALE` = 0.5 倍、観測点 `NEWSET_OBSERVER_ALTITUDE_M` = 1572.55 m）を足した。段 2 の既定の組は paper・engine・newset
+  - `Docs/RenderingValidation/WastelandAtmosphereReference.md` に「空の大気の新しい設定」の節（掃引の表・決めたことと理由・見込み）を足した
+  - 台本を変えたので保存した解の署名がすべて変わる。段 1（6 組）と段 2（paper・engine・newset）を反復の外で起動した（2026-10-21 14:10、`.harness/runs/20261021-055341/atmos-ref-newset-solve.ps1`、ログ `aux-SCN-WLR-ATMOS-REF-NEWSET-solve-level1.txt`・`-level2-paper.txt`・`-level2-engine.txt`・`-level2-newset.txt`、台本の sha256 5813defb…）。解き終わるまで `--verify` と `--atmos-ref` は署名の違いで落ちる
+- 証拠（`.harness/runs/20261021-055341/`）: `aux-SCN-WLR-ATMOS-REF-NEWSET-sweep.py`・`.txt`（EXIT=0）・`.json`
+- Notes: 掃引は検査の段（`CHECK_PARAMETERS`）で解いた。今の設定の行は段 1 の表と 0.001 以内で同じ。新しい試験は足していない
+- Next: 4 つのログに `END ... EXIT=0` が出たら（段 2 は 5〜8 時間の見込み）、`python Scripts/Terrain/AtmosphereReference.py --verify` を回して newset の段 1 と段 2 の差 0.5 % 以内を確かめ、収束の表に newset の列を足して閉じる。走行中に解きを重ねて起動しない
