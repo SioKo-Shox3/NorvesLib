@@ -3003,6 +3003,7 @@ def atmos_ref_view(capture_dir, view):
     distance_rows = []
     worst_fog_t = 0.0
     worst_aerial_t = 0.0
+    worst_aerial_depth = 0.0
     for index, ray in enumerate(rays):
         is_ground = ray["kind"] == "ground"
         if not is_ground and ray["elevation_degrees"] not in ATMOS_REF_HAZE_ELEVATIONS:
@@ -3081,15 +3082,27 @@ def atmos_ref_view(capture_dir, view):
         row["fog_plus_aerial_mie_over_physical_mie"] = (engine_fog_depth + engine_mie_depth) / max(physical_mie_depth, 1e-30)
         worst_fog_t = max(worst_fog_t, abs(engine_fog_t - float(np.mean(fog_only_t[0]))))
         worst_aerial_t = max(worst_aerial_t, atmos_relative_error(engine_aerial_t, air_only_t[0], 1e-3))
+        worst_aerial_depth = max(worst_aerial_depth, atmos_relative_error(
+            -np.log(np.maximum(engine_aerial_t, 1e-30)), -np.log(np.maximum(air_only_t[0], 1e-30)), 1e-3))
         distance_rows.append(row)
     result["distances"] = distance_rows
-    # 同じ媒質の透過率がエンジンと合う（平らな地面の解析式と球の上の数値積分の差だけ）ことで、媒質の読み違いが無いことを確かめる
+    # 霞を空の大気の地表付近の分として数えているか（SCN-WL-HAZE-ONE-MEDIUM）: 地表への視線の (霧 ＋ 空気遠近の Mie) の
+    # 光学的深さ ÷ 空の大気の同じ視線の Mie の、全方位・全距離の範囲と 1 との差の最大。光学的深さだけで決まるので B は使わない
+    ground_haze = [float(row["fog_plus_aerial_mie_over_physical_mie"]) for row in distance_rows if row["kind"] == "ground"]
+    if ground_haze:
+        result["haze"] = {"ground_ratio_min": min(ground_haze), "ground_ratio_max": max(ground_haze),
+                          "ground_max_rel": max(abs(ratio - 1.0) for ratio in ground_haze), "ground_rays": len(ground_haze)}
+    # 同じ媒質の透過率がエンジンと合う（平らな地面の解析式と球の上の数値積分の差だけ）ことで、媒質の読み違いが無いことを確かめる。
+    # 空気遠近は光学的深さの相対差で判定する。地面の曲がりの差は光学的深さの約 1.4 %（30 km の地表への視線）で媒質の濃さに
+    # 依らないが、透過率の相対差は光学的深さに比例して大きくなる（霞を空の大気の Mie そのままにすると 30 km で 2.2 %）。
+    # 透過率の相対差は記録だけにする
     result["same_media_fog_transmittance_max_abs"] = worst_fog_t
     result["same_media_aerial_transmittance_max_rel"] = worst_aerial_t
+    result["same_media_aerial_optical_depth_max_rel"] = worst_aerial_depth
     if worst_fog_t > ATMOS_REF_SAME_MODEL_TOLERANCE:
         failures.append(f"高さフォグの透過率（同じ媒質）が正解と {worst_fog_t:.3g} 違う")
-    if worst_aerial_t > ATMOS_REF_SAME_MODEL_TOLERANCE:
-        failures.append(f"空気遠近の透過率（同じ媒質）が正解と {worst_aerial_t:.3g} 違う")
+    if worst_aerial_depth > ATMOS_REF_SAME_MODEL_TOLERANCE:
+        failures.append(f"空気遠近の光学的深さ（同じ媒質）が正解と {worst_aerial_depth:.3g} 違う")
 
     # 4. 多重散乱の表 Ψ_ms（エンジンの表の格子の点で、正解 A・B と比べる）
     ms_meta = meta["multiple_scattering"]
@@ -3113,7 +3126,7 @@ def atmos_ref_view(capture_dir, view):
     result["photo"] = atmos_photo_sky(capture_dir, view, meta, sky_view, reference, variant_atmospheres, sun, sun_lux)
     result["seconds"] = time.time() - started
     result["sky_engine_over_B_max_log"] = worst_sky_b
-    values = [worst_sky_b, worst_fog_t, worst_aerial_t]
+    values = [worst_sky_b, worst_fog_t, worst_aerial_t, worst_aerial_depth]
     if not all(np.isfinite(v) for v in values):
         failures.append("比べた値に NaN がある")
     result["pass"] = not failures
@@ -3152,6 +3165,7 @@ def run_atmos_ref(capture_dir, views, verify, expect=None):
                   f"B={ill['reference_sun_over_sky_B']:.3f} sun_t_max_rel={ill['sun_transmittance_max_rel']:.2e} "
                   f"fog_t_max_abs={result['same_media_fog_transmittance_max_abs']:.2e} "
                   f"aerial_t_max_rel={result['same_media_aerial_transmittance_max_rel']:.2e} "
+                  f"aerial_depth_max_rel={result['same_media_aerial_optical_depth_max_rel']:.2e} "
                   f"seconds={result['seconds']:.0f}")
             valley = ill["valley_floor"]
             print(f"REFERENCE_CHECK atmos_ref view={view} valley_floor_m={valley['altitude_m']:.2f} "
@@ -3161,6 +3175,11 @@ def run_atmos_ref(capture_dir, views, verify, expect=None):
                   f"sky_horizontal_A_rel={valley['sky_horizontal_max_rel']:.4f} "
                   f"sun_t_over_sea_level={valley['sun_transmittance_over_sea_level']:.4f} "
                   f"sky_A_over_sea_level={valley['sky_horizontal_A_over_sea_level']:.4f}")
+            haze = result.get("haze")
+            if haze:
+                print(f"REFERENCE_CHECK atmos_ref view={view} haze_over_sky_mie ground_min={haze['ground_ratio_min']:.4f} "
+                      f"ground_max={haze['ground_ratio_max']:.4f} ground_max_rel={haze['ground_max_rel']:.4f} "
+                      f"rays={haze['ground_rays']}")
     report = {"mode": "atmos_ref", "verify": bool(verify), "inputs_current": inputs_ok, "inputs_record": record,
               "criteria": {"same_model_tolerance": ATMOS_REF_SAME_MODEL_TOLERANCE, "reference_level": ATMOS_REF_LEVEL},
               "convergence_report": convergence_path, "views": results, "failures": failures}

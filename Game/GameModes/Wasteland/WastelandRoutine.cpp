@@ -176,37 +176,30 @@ namespace Game::GameModes
         // 地形の材質（3 層の混ぜ合わせ）に掛ける明るさ。3 層のアルベドの画像は、線形の平均を実在の値へ較正してある
         // （Scripts/Terrain/TerrainMaterials.py: 細粒の赤い土 0.16・岩屑と礫 0.17・赤褐色の砂岩 0.22）ので掛けない
         constexpr float kTerrainAlbedoScale = 1.0f;
-        // 高さフォグ: 基準の高さでの密度[1/m]と、上へ向かって薄くなる割合[1/m]。遠景の霞は空気遠近が受け持つので、
-        // 谷床に薄く溜まる砂ぼこりの層にする。谷床は北から南東へ下がり、平らな所の高さは -38〜+39 m（5〜95%）なので、
-        // 基準を南東の低い谷床（-40 m）に置き、100 m で 1/e に薄くして北の高い谷床（+40 m）にも半分ほど残す。
-        // ビュートの頂（+100〜+200 m）より上ではほぼ消える。手本の写真は乾いた澄んだ空気で、3〜5 km 先の崖も赤く濃く写るので、
-        // 谷床の高さで 3 km の光学的深さ 0.06（透過 94 %）の薄い層にとどめる（0.00015 では 0.3 で、空気遠近と合わせて崖の
-        // 半分が空の色に置き換わり白く霞んだ）
-        constexpr float kFogDensity = 0.00003f;
-        constexpr float kFogBaseHeight = -40.0f;
-        constexpr float kFogFalloff = 0.01f;
-        // 空気遠近: 物理空の媒質の距離をそのまま数える（エアロゾルは下の倍率で地表の澄んだ空気の濃さにする）。谷床の向こうの
-        // ビュート（1〜3.5 km）が写真の遠い崖と同じく赤みを残して少し霞み、形は読めるようにする。300 m より手前は掛けない
-        // （足元・近くの崖の色は変えない）
+        // 空気遠近: 物理空の媒質の距離をそのまま、カメラの位置から数える（掛け始めの距離を置くと、その手前の霞を空の大気より
+        // 薄く数える。空の大気の地表の Mie では 300 m の光学的深さは 0.013 で、足元・近くの崖の色はほとんど変わらない）
         constexpr float kAerialPerspectiveDistanceScale = 1.0f;
-        constexpr float kAerialPerspectiveStartDistance = 300.0f;
+        constexpr float kAerialPerspectiveStartDistance = 0.0f;
         // ワールドの y = 0 の標高[m]。DEM の高さの基準（Assets/Terrain/ValleyOfTheGods/height.json の height_offset_m。
-        // 前哨地の床の標高 NAVD88）。空気遠近の媒質の密度をこの高度で数える。海面で数えると地表のエアロゾルが 2.5 倍
-        // （尺度高さ 1.6 km）になり、3 km 先の崖の透過が 0.84 でなく 0.69 になる。高原の晴天のエアロゾルの光学的深さ
-        // （0.05〜0.1）は、この高度から上の柱の量（0.07）に合う
+        // 前哨地の床の標高 NAVD88）。空気遠近と高さフォグの媒質の密度をこの高度で数える。海面で数えると地表のエアロゾルが
+        // 2.5 倍（尺度高さ 1.6 km）になる。高原の晴天のエアロゾルの光学的深さ（0.05〜0.1）は、この高度から上の柱の量（0.07）に合う
         constexpr float kSiteAltitudeMeters = 1452.05f;
         // 空の模型の地表の標高[m]。谷床（ref_ground_02 の足元の y ≈ 20.5 m）の標高で、地表の太陽の透過率・照度、地表の空の照度、
         // 空の放射輝度の観測点（この 100 m 上）、高さフォグの太陽の照度をこの高度で求める。海面で求めると、尺度高さ 1.6 km の
         // エアロゾルを谷床より下の分まで通すので、太陽が 0.82 倍に暗く、空の照度は低い高度の値（谷床の約 2 倍）になる
         constexpr float kSkyGroundAltitudeMeters = kSiteAltitudeMeters + 20.5f;
-        // 空気遠近で数えるエアロゾルの密度の倍率。空の模型（海面で Mie 1.11e-4 /m・尺度高さ 1.6 km）はこの標高で 4.5e-5 /m
-        // （Rayleigh と合わせた視程 約 70 km）になり、3〜5 km 先の崖の赤みが空の色の霞で白く薄まった。コロラド高原の澄んだ空気は
-        // 標準視程 約 180 km（IMPROVE の国立公園の観測）で、Rayleigh（約 1.1e-5 /m）を除くエアロゾルは約 1e-5 /m なので、
-        // 1e-5 ÷ 4.5e-5 ≒ 0.22 倍にする。空（放射輝度 LUT）の柱の量は変えない
-        constexpr float kAerialPerspectiveMieDensityScale = 0.22f;
         // 空のエアロゾル（Mie）の高さの尺度[m]。既定の 1.2 km の 1.33 倍にして柱の量を少し増やし、写真の白みの強い地平線の空に
         // 寄せる。2.4 km では青空の明るさは 1 割も変わらず、崖の視点の遠景の帯と空の比が写真の 0.46 から 0.34 へ離れた
         constexpr float kSkyMieScaleHeight = 1600.0f;
+        // 霞は空の大気の地表付近の Mie（海面で 1.11e-4 /m・尺度高さ 1.6 km。谷床で 4.4e-5 /m）そのもので、空と別の媒質を
+        // 足さない。その Mie を高さフォグと空気遠近で割り振り、和が空の大気と同じ密度・同じ尺度高さになるようにする
+        // （どの高さ・向きの視線でも、霞の光学的深さが空の大気の同じ視線の Mie と合う）。この割合が高さフォグの分で、残りを
+        // 空気遠近の Mie の密度の倍率にする。今は 0 にして、霞をすべて空気遠近で数える。高さフォグの周りの光は、太陽の散乱を
+        // すでに含む視線の向きの空の輝度に太陽の単一散乱を足すので、霧の不透明度が大きい長い視線で太陽の散乱を二重に数える。
+        // 0.37（谷床の霧を前の砂ぼこりの層と同じ 1.6e-5 /m に保つ割合）では、100 km 先の山が空より明るい白い影になった
+        // （手本の写真では青く、空より暗い）。0 なら山は地平線の空の青に沈む。霞の散乱光の和は、空の大気の正解 B に対して
+        // 0.37 で 1.02〜1.13 倍、0 で 0.85〜1.07 倍
+        constexpr float kHazeFogShare = 0.0f;
         // 太陽の円盤の輝度[cd/m^2]。空の模型はこれを大気の上端の値として透過率を掛けるので、大気圏外の太陽照度（約 134 klx）を
         // 円盤の立体角（6.87e-5 sr）で割った 1.95e9 にする。既定の 1.6e9（約 110 klx）は地表で測った値に近く、透過率を二重に
         // 掛けて空・雲・日向がそろって 2 割ほど暗くなる
@@ -456,11 +449,15 @@ namespace Game::GameModes
             sky.GroundAltitudeMeters = kSkyGroundAltitudeMeters;
             ctx.EngineRef.GetRenderWorld().SetSkyAtmosphere(sky);
 
+            // 霞の Mie を高さフォグと空気遠近で割り振る（kHazeFogShare）。高さフォグはワールドの y = 0 を基準に、その標高の
+            // 空の大気の Mie の割合ぶんの密度で、空の Mie と同じ尺度高さで薄くする
+            const float siteMieExtinction =
+                GetAtmosphereGroundExtinction().Mie * std::exp(-kSiteAltitudeMeters / kSkyMieScaleHeight);
             VolumetricFogParameters fog = MakeDefaultVolumetricFogParameters();
             fog.bEnabled = (hideMask & WastelandHide::Fog) == 0;
-            fog.DensityAtBaseHeight = kFogDensity;
-            fog.BaseHeight = kFogBaseHeight;
-            fog.HeightFalloffPerUnit = kFogFalloff;
+            fog.DensityAtBaseHeight = kHazeFogShare * siteMieExtinction;
+            fog.BaseHeight = 0.0f;
+            fog.HeightFalloffPerUnit = 1.0f / kSkyMieScaleHeight;
             ctx.EngineRef.GetRenderWorld().SetVolumetricFogParameters(fog);
 
             AerialPerspectiveParameters aerialPerspective;
@@ -468,7 +465,7 @@ namespace Game::GameModes
             aerialPerspective.DistanceScale = kAerialPerspectiveDistanceScale;
             aerialPerspective.StartDistanceMeters = kAerialPerspectiveStartDistance;
             aerialPerspective.OriginAltitudeMeters = kSiteAltitudeMeters;
-            aerialPerspective.MieDensityScale = kAerialPerspectiveMieDensityScale;
+            aerialPerspective.MieDensityScale = 1.0f - kHazeFogShare;
             ctx.EngineRef.GetRenderWorld().SetAerialPerspective(aerialPerspective);
 
             CloudLayerParameters cloudLayer;

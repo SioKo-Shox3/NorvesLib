@@ -1,0 +1,12 @@
+{
+  "description": "SCN-WL-HAZE-ONE-MEDIUM: 霞を空の大気の地表付近の分として数えることの合否。ref_ground_02 の大気の書き出しの地表への視線（4 方位 × 300 m〜30 km）で、(高さフォグ ＋ 空気遠近の Mie) の光学的深さが、空の大気の同じ視線の Mie の光学的深さと 5 % 以内で合う（ReferenceCheck.py --atmos-ref の haze.ground_max_rel）。光学的深さだけで決まるので、方向を保つ正解 B は使わない。変更前（霧は尺度高さ 100 m の砂ぼこりの層、空気遠近は Mie の 0.22 倍で 300 m から）は 0.37〜0.59 倍で、この仕様に落ちる。",
+  "rows": [
+    {
+      "mode": "atmos_ref",
+      "view": "ref_ground_02",
+      "quantity": "haze_optical_depth",
+      "max": 0.05,
+      "note": "地表への視線の (霧 ＋ 空気遠近の Mie) ÷ 空の大気の Mie の光学的深さの、1 との差の絶対値の最大"
+    }
+  ]
+}

@@ -6200,3 +6200,25 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `aux-SCN-WL-GEOM-LOWVRAM-release-compile.txt` Release 構成で Game のソースをコンパイル EXIT=0（`#else` 側が通る。警告は既存の FrameUploadArena.h の C4101 だけ）
 - Notes: Release の Game.exe を起動しての確認はしていない（Release の Core.lib が 10 月 19 日のままで、全体のビルドは重いのでコンパイルだけ確かめた）。シェーダーは変えていないので 6600 MB・通常の予算・golden・回帰の撮影は反復 12 の証拠のまま
 - Next: TASKS.md の次の未完の項目
+
+### SCN-WL-HAZE-ONE-MEDIUM 完了（2026-10-21、run 20261021-055341 の反復 14）
+- Done: 荒野の霞を空の大気の地表付近の Mie そのものとして数える。`kHazeFogShare`（高さフォグの分）で霞の Mie を高さフォグと空気遠近に割り振り、高さフォグは y = 0（標高 1452.05 m）の空の Mie（`GetAtmosphereGroundExtinction().Mie` × exp(−1452.05/1600)）× 割合・尺度高さ 1.6 km、空気遠近は Mie の倍率 1 − 割合・掛け始め 0 m にした（`Game/GameModes/Wasteland/WastelandRoutine.cpp`）。割合は 0（霞はすべて空気遠近）。空の Mie の設定と散乱光の式は変えていない
+  - `ReferenceCheck.py --atmos-ref` に `haze`（地表への視線 20 本の (霧 ＋ 空気遠近の Mie) ÷ 空の大気の Mie の光学的深さの範囲と 1 との差の最大）を足し、`ExpectSpec.py` の atmos_ref に量 `haze_optical_depth` を足した。仕様は `Scripts/Terrain/ExpectSpecs/haze-one-medium.json`（5 %）
+  - 同じ媒質の空気遠近の検査を、透過率の相対差から光学的深さの相対差に改めた（地面の曲がりの差は光学的深さの 1.3〜1.4 % で濃さに依らないが、透過率の相対差は濃さに比例して 2.16 % になり、読み違いでない差で 2 % を越えたため。透過率の差は記録に残す）
+  - 記録は `Docs/RenderingValidation/WastelandAtmosphereReference.md` の「霞を空の大気と同じ媒質にした後」
+- 結果: 光学的深さの比 0.37〜0.59 → 1.000〜1.015（30 km の 1.5 % は平らな地面と球の差）。霞の散乱光の和 エンジン ÷ 空の大気の正解 B は 前 0.59〜0.98 → 太陽の側 0.85・横 1.01〜1.02・反対 1.06〜1.07
+- 割合の決め方: 0.37（谷床の霧を前の 1.6e-5 /m に保つ）と 0 を撮って比べた。0.37 は散乱光 1.02〜1.13 倍だが、100 km 前後の山が空より明るい白い影になった（霧の周りの光が空の輝度に太陽の単一散乱を足すので、長い視線で太陽を二重に数える）。0 は山が地平線の空の青に沈み、手本の写真（青く空より暗い山）に近い
+- 証拠（`.harness/runs/20261021-055341/`）:
+  - `aux-SCN-WL-HAZE-ONE-MEDIUM-smoke-build.txt` 開始時の Debug の Game のビルド EXIT=0
+  - `aux-SCN-WL-HAZE-ONE-MEDIUM-before-spec.txt` 直す前の書き出し（SCN-WL-SKY-ALTITUDE の写し）で `haze-one-medium.json` が 0.6327 で落ちる（EXIT=1）
+  - `verify-SCN-WL-HAZE-ONE-MEDIUM-1〜3.txt` 割合 0.37 で回した verify（どれも pass。白い影のため採らず）
+  - `verify-SCN-WL-HAZE-ONE-MEDIUM-4.txt` Debug の Game のビルド EXIT=0（割合 0）
+  - `verify-SCN-WL-HAZE-ONE-MEDIUM-5.txt` ref_ground_02 の大気の書き出しの撮影 result=pass・EXIT=0（game_exe 978b8b41…）
+  - `verify-SCN-WL-HAZE-ONE-MEDIUM-6.txt` `--atmos-ref --expect haze-one-medium.json --verify` result=pass・inputs_current=1・EXIT=0（haze 0.0148、太陽と空の照度の谷床の値は前と同じ 0.03 %・0.60 %、aerial_depth_max_rel 1.36e-2）
+  - `aux-SCN-WL-HAZE-ONE-MEDIUM-trial-f037*.txt`・`aux-SCN-WL-HAZE-ONE-MEDIUM-trial-f000*.txt` 割合の比べ（f000 の検査の fail は透過率の相対差 0.0216 で、検査を光学的深さに改める前）
+  - `aux-SCN-WL-HAZE-ONE-MEDIUM-views.txt` 既定の荒野の 6 視点（`.harness/runs/scene-capture/SCN-WL-HAZE-ONE-MEDIUM-views`）EXIT=0。`compare_all.png`（前・後・手本の写真）を開いた
+- Notes:
+  - 6 視点: ref_cliff_02 の地平線の遠い山は前の淡い白い影が消えて青くなる。ref_far_01 の遠い崖の帯は輝度 Y 1.06 倍・色度 r 0.397 → 0.379 で少し白く薄まり、手本の澄んだ赤い崖から少し離れる（空の Mie の柱が濃い分。SCN-WLR-ATMOS-REF-NEWSET で空の Mie を下げると霞も下がる）。近い視点はほとんど変わらない
+  - 割合 0 では霞が影を持たない（空気遠近は太陽の影を数えない）。霧の式と合成の順を直す SCN-WL-SKY-SCATTER の後に、霧へ割り振るかを見直す
+  - 新しい試験は足していない
+- Next: TASKS.md の次の未完の項目
