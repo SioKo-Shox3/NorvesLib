@@ -1,0 +1,19 @@
+{
+  "description": "SCN-WL-PROP-AO: outpost の建物（wooden_shack）の壁（壁の下端・日なた・陰）で、エンジン ÷ Cycles が 0.3 未満の暗い目地の画素の割合が、Cycles の暗い目地の割合（Cycles の Y が壁の Cycles の Y の中央値の 0.3 倍未満。SCN-WLR-BUILDING-REF の描画で 1.46 %）の 2 倍以内。目地を除いた陰の壁と日なたの壁のエンジン ÷ Cycles の差が 0.1 以内。直す前（SCN-WL-PROP-ALBEDO-SRGB の撮影）は暗い目地 6.6 %（Cycles の 4.5 倍。陰の壁 7.5 %・日なたの壁 1.0 %）、差 0.034。",
+  "rows": [
+    {
+      "mode": "building",
+      "view": "outpost",
+      "quantity": "wall_dark_over_cycles",
+      "max": 2.0,
+      "note": "エンジンの暗い目地の割合 ÷ Cycles の暗い目地の割合"
+    },
+    {
+      "mode": "building",
+      "view": "outpost",
+      "quantity": "wall_shadow_sunlit_gap",
+      "max": 0.1,
+      "note": "目地を除いた陰の壁と日なたの壁のエンジン ÷ Cycles の差の絶対値"
+    }
+  ]
+}

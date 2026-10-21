@@ -26,6 +26,9 @@
 # 表（領域ごと）: エンジンと Cycles の線形の輝度 Y の平均（cd/m²）と RGB の平均、比（エンジン ÷ Cycles）、Cycles の内訳。
 # 量: 壁の日なた ÷ 壁の陰、壁の下端 ÷ 壁の日なたと陰の平均、足元の帯 ÷ 離れた日なたの地面（描画ごと）、建物の下端と地面の
 #   高さの差（描画ごと。BuildingRegions.bottom_gap）。
+# 壁の暗い目地（wall_dark。--expect の building の量）: 壁（壁の下端・日なた・陰）の画素で、エンジン ÷ Cycles が
+#   WALL_DARK_RATIO 未満の画素の割合と、Cycles の暗い目地（Cycles の Y が壁の Cycles の Y の中央値の WALL_DARK_RATIO 倍未満）の
+#   割合、その比。目地（エンジン ÷ Cycles が WALL_DARK_RATIO 未満）を除いた壁の陰と日なたのエンジン ÷ Cycles と、その差。
 import json
 import math
 import os
@@ -48,6 +51,9 @@ MIN_SPP_PER_SEED = 512
 PLACEMENT_TOLERANCE = 1e-4
 # 見比べの画像の拡大
 PREVIEW_SCALE = 3
+# 暗い目地とみなす比（エンジン ÷ Cycles、または Cycles ÷ 壁の Cycles の中央値）
+WALL_DARK_RATIO = 0.3
+WALL_REGIONS = ("wall_bottom", "wall_sunlit", "wall_shadow")
 
 
 def read_json(path):
@@ -230,6 +236,34 @@ def derived_ratios(table, key):
     }
 
 
+def wall_dark(engine_hdr, cycles, masks):
+    """壁の暗い目地の割合と、目地を除いた陰と日なたの壁の比（上の説明）"""
+    engine_y = engine_hdr @ GR.LUMA
+    cycles_y = cycles @ GR.LUMA
+    walls = np.zeros(cycles_y.shape, dtype=bool)
+    for name in WALL_REGIONS:
+        walls |= masks[name]
+    if not walls.any():
+        return None
+    with np.errstate(divide="ignore", invalid="ignore"):
+        dark = walls & (engine_y < WALL_DARK_RATIO * cycles_y)
+    cycles_dark = walls & (cycles_y < WALL_DARK_RATIO * float(np.median(cycles_y[walls])))
+    engine_fraction = float(dark.sum() / walls.sum())
+    cycles_fraction = float(cycles_dark.sum() / walls.sum())
+    record = {"wall_pixels": int(walls.sum()), "engine_fraction": engine_fraction, "cycles_fraction": cycles_fraction,
+              "over_cycles": engine_fraction / cycles_fraction if cycles_fraction > 0.0 else None, "regions": {}}
+    for name in WALL_REGIONS:
+        mask = masks[name]
+        kept = mask & ~dark
+        record["regions"][name] = {
+            "dark_fraction": float((dark & mask).sum() / mask.sum()) if mask.any() else None,
+            "ratio_excl_dark": float(engine_y[kept].mean() / cycles_y[kept].mean()) if kept.any() else None}
+    shadow = record["regions"]["wall_shadow"]["ratio_excl_dark"]
+    sunlit = record["regions"]["wall_sunlit"]["ratio_excl_dark"]
+    record["shadow_sunlit_gap"] = abs(shadow - sunlit) if shadow is not None and sunlit is not None else None
+    return record
+
+
 def write_preview(path, window, engine_hdr, cycles, masks, valid):
     """建物の周りを切り出して拡大: 左上エンジン、右上 Cycles（同じ露出）、左下 log2(エンジン ÷ Cycles)（±1 段で飽和）、右下 領域"""
     def display(image, scale):
@@ -382,6 +416,7 @@ def check_view(RC, engine_dir, reference_dir, view, record, verify, trial):
             failures.append(f"領域 {name}（{entry['label']}）が{entry['status']}（画素 {entry['pixels']}、"
                             f"下限 {BR.MIN_REGION_PX}）")
     result["regions"] = table
+    result["wall_dark"] = wall_dark(engine_hdr, cycles, masks)
     result["ratios"] = {"engine": derived_ratios(table, "engine_y"), "cycles": derived_ratios(table, "cycles_y")}
     for source, ratios in result["ratios"].items():
         for key, value in ratios.items():
@@ -444,6 +479,15 @@ def run(RC, engine_dirs, reference_dir, views, verify, trial, expect=None):
             print(f"REFERENCE_CHECK building view={view} bottom_gap source={source} gap_m={gap.get('gap_m')} "
                   f"bottom_y={gap.get('bottom_y')} ground_y={gap.get('ground_y')} "
                   f"placement_bottom_y={gap.get('placement_bottom_y')}")
+        dark = result.get("wall_dark")
+        if dark:
+            def text(v):
+                return "nan" if v is None else f"{v:.4f}"
+            print(f"REFERENCE_CHECK building view={view} wall_dark pixels={dark['wall_pixels']} "
+                  f"engine_fraction={text(dark['engine_fraction'])} cycles_fraction={text(dark['cycles_fraction'])} "
+                  f"over_cycles={text(dark['over_cycles'])} shadow_sunlit_gap={text(dark['shadow_sunlit_gap'])} " +
+                  " ".join(f"{n}_dark={text(r['dark_fraction'])} {n}_ratio_excl_dark={text(r['ratio_excl_dark'])}"
+                           for n, r in dark["regions"].items()))
         albedo = result.get("albedo")
         if albedo:
             print(f"REFERENCE_CHECK building view={view} engine_albedo pixels={albedo['pixels']} p5={albedo['p5']:.4f} "

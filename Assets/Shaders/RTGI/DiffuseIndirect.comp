@@ -120,9 +120,10 @@ const float RTGI_PROXY_SELF_HIT_HEIGHT_MAX = 0.5;
 // 遠くの面は深度から戻した位置の誤差とラスタの段の粗さがカメラからの距離に比例して大きくなるので、
 // 読み飛ばす高さの上限も距離に比例して広げる
 const float RTGI_PROXY_SELF_HIT_HEIGHT_PER_METER = 5e-4;
-// 読み飛ばすのは光線の形のずれがこれ以上の instance だけ。焼いた階層の常駐のフォールバックのように、ずれが地面の
-// 起伏の大きさになる物で自分の面への当たりが空を遮る。数 cm のずれ（ふつうのシーンの小物の影の段）は今までどおり当てる
-const float RTGI_PROXY_SELF_HIT_ERROR_MIN = 0.25;
+// 読み飛ばすのは光線の形の内側から外へ出る当たりだけで、光線の形のずれが正の instance なら、ずれの大きさに依らない。
+// 焼いた階層の常駐のフォールバックのように、ずれが地面の起伏の大きさになる物で自分の面への当たりが空を遮るほか、数 cm〜
+// 十数 cm のずれの模型でも、石積みの目地のくぼみ（粗い形の下に沈んだ 1 次面）から出た光線が粗い形の壁に裏から当たり、
+// 陰の壁の目地の照り返しと空の光がほぼ 0 になる（SCN-WL-PROP-AO）。外から入る当たりは小物の接地の影なので当てる
 // 光線の形の内側から外へ出る当たりの読み飛ばす高さの上限に掛ける倍率（ProxySelfHitHeightLimit に対して）
 const float RTGI_PROXY_EXIT_HEIGHT_SCALE = 4.0;
 
@@ -1046,8 +1047,7 @@ vec3 TerrainBounceAlbedo(vec3 position, vec3 normal)
 // proxyHeightLimit が 0 以上のとき、光線は法線 surfaceNormal の 1 次面から RAY_ORIGIN_OFFSET だけずらした始点から
 // 出ている。当てた面の 1 次面からの高さが当てた instance の光線の形のずれ（rayProxy.x。proxyHeightLimit で頭打ち）
 // より低ければ、粗い光線の形がラスタの面の上に出ている所への自分の面への当たりとみなし、その先から引き直す。
-// 光線の形のずれが RTGI_PROXY_SELF_HIT_ERROR_MIN より小さい instance への当たりと、光線の形の面へ外から入る当たりは
-// 読み飛ばさない。
+// 光線の形の面へ外から入る当たりは読み飛ばさない。
 const uint RTGI_NO_HIT = 0xFFFFFFFFu;
 
 vec3 TraceDiffuseRay(vec3 rayOrigin,
@@ -1120,7 +1120,7 @@ vec3 TraceDiffuseRay(vec3 rayOrigin,
         // 近くの高さの上限を RTGI_PROXY_EXIT_HEIGHT_SCALE 倍まで広げて読み飛ばす
         float skipHeight = min(hitInstance.rayProxy.x, proxyHeightLimit * RTGI_PROXY_EXIT_HEIGHT_SCALE);
         if (proxyHeightLimit < 0.0 || attempt == RTGI_PROXY_SELF_HIT_SKIPS || bEntersProxy ||
-            !(hitInstance.rayProxy.x >= RTGI_PROXY_SELF_HIT_ERROR_MIN && hitHeight < skipHeight))
+            !(hitInstance.rayProxy.x > 0.0 && hitHeight < skipHeight))
         {
             break;
         }

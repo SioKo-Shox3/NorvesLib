@@ -28,7 +28,10 @@
 #     building（ReferenceCheck.py --building。行の鍵は mode・view・quantity と閾値だけ）: エンジンのアルベドの AOV の、Cycles の
 #       建物の画素での線形の輝度の分布（視点の検査の結果の albedo）。albedo_p5・albedo_median・albedo_p95（5・50・95 % 点）、
 #       albedo_median_ratio（エンジンの中央値 ÷ 同じ画素の Cycles の拡散の色の中央値。Cycles は glTF の基本色をテクセルごとに
-#       線形へ戻してから標本する）
+#       線形へ戻してから標本する）。壁（壁の下端・日なた・陰）の暗い目地（視点の検査の結果の wall_dark）:
+#       wall_dark_fraction（エンジン ÷ Cycles が 0.3 未満の画素の割合）、wall_dark_over_cycles（その割合 ÷ Cycles の暗い目地の
+#       割合。Cycles の Y が壁の Cycles の Y の中央値の 0.3 倍未満の画素の割合）、wall_shadow_sunlit_gap（目地を除いた陰の壁と
+#       日なたの壁のエンジン ÷ Cycles の差の絶対値）
 #   min・max: 下限・上限（両端を含む。どちらか一方は要る）
 #   allow_undetermined: 未判定を許すか（既定は許さない）。note: 行の説明（判定には使わない）
 #
@@ -67,9 +70,12 @@ ATMOS_REF_QUANTITIES = {"sun_transmittance": (("illuminance", "valley_floor"), "
                         "haze_optical_depth": (("haze",), "ground_max_rel"),
                         "psi_grid": (("psi_summary",), "grid_max_rel"),
                         "psi_cell": (("psi_summary",), "center_max_rel")}
-# building の量 → 視点の検査の結果の albedo の鍵
-BUILDING_QUANTITIES = {"albedo_p5": "p5", "albedo_median": "p50", "albedo_p95": "p95",
-                       "albedo_median_ratio": "ratio_p50"}
+# building の量 → 視点の検査の結果の (節, 鍵)
+BUILDING_QUANTITIES = {"albedo_p5": ("albedo", "p5"), "albedo_median": ("albedo", "p50"), "albedo_p95": ("albedo", "p95"),
+                       "albedo_median_ratio": ("albedo", "ratio_p50"),
+                       "wall_dark_fraction": ("wall_dark", "engine_fraction"),
+                       "wall_dark_over_cycles": ("wall_dark", "over_cycles"),
+                       "wall_shadow_sunlit_gap": ("wall_dark", "shadow_sunlit_gap")}
 
 SPEC_DIR = os.path.join("Scripts", "Terrain", "ExpectSpecs")
 SELFTEST_DIR = os.path.join(".harness", "runs", "scene-capture", "SCN-WLR-EXPECT-MATCH")
@@ -288,10 +294,11 @@ def building_value(report, row):
     view = next((v for v in report.get("view_results") or [] if v.get("view") == row["view"]), None)
     if view is None:
         return None, "視点が検査に無い"
-    albedo = view.get("albedo")
-    if albedo is None:
-        return None, "albedo が無い（" + "; ".join(view.get("failures") or ["比べていない"])[:120] + "）"
-    value = albedo.get(BUILDING_QUANTITIES[row["quantity"]])
+    section, key = BUILDING_QUANTITIES[row["quantity"]]
+    values = view.get(section)
+    if values is None:
+        return None, f"{section} が無い（" + "; ".join(view.get("failures") or ["比べていない"])[:120] + "）"
+    value = values.get(key)
     return (value, None) if value is not None else (None, f"{row['quantity']} の値が無い")
 
 

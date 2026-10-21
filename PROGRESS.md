@@ -6360,3 +6360,19 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - ASCII だった `TextureAsyncTypes.h` に日本語のコメントを足したので BOM を付けた（BOM なしでは MSVC が行末を食った）
   - golden は変わらない（Test の exe は Game のシーンを使わず、既定の読み込みは変えていない）。新しい試験は足していない
 - Next: TASKS.md の次の未完の項目
+
+### SCN-WL-PROP-AO 止め（2026-10-21、run 20261021-055341 の反復 23。理由と選択肢は blocked/SCN-WL-PROP-AO.md）
+- 結論: 陰の壁の黒い目地は直した（暗い目地 6.61 % → 0.54 %、Cycles の 1.46 % の 0.37 倍）。done-when の 2 つ目「目地を除いた陰と日なたの壁の比の差 0.1 以内」は verify（実材質の地面）で 0.1004 と僅かに落ち、灰色の地面（`--wasteland-gray-material`）では 0.094 で通る。差の向きが地面の条件で入れ替わるので、閾値を緩めず判定の条件を決めてもらう
+- 原因: 遮蔽のテクスチャではなかった（RTGI が働くときは SCN-WL-MATERIAL-AO-SHADING から拡散に掛けていない）。一時的に HDR を RTGI の拡散だけ・AOV に材質の AO を書いて撮ると（`scene-capture/SCN-WL-PROP-AO-diag-rtgi`、計装は戻した）、暗い目地の画素は AO 平均 0.66 なのに RTGI の拡散が 174 cd/m²（ほかの陰の壁 1907）。模型の光線の形（常駐のフォールバック、wooden_shack のずれ 0.093 m）に目地のくぼみの内側から当たっていた
+- コード: `DiffuseIndirect.comp` の光線の形の内側から外へ出る当たりの読み飛ばしを、ずれ 0.25 m 以上の instance だけから、ずれが正の instance すべてへ広げた（`RTGI_PROXY_SELF_HIT_ERROR_MIN` を消した）。外から入る当たりは今までどおり当てる
+- 検査: `BuildingCheck.py` に壁の暗い目地の量 `wall_dark`（エンジン ÷ Cycles < 0.3 の割合、Cycles の Y が壁の中央値の 0.3 倍未満の割合、その比、目地を除いた陰と日なたの比の差）、`ExpectSpec.py` の building の量に `wall_dark_fraction`・`wall_dark_over_cycles`・`wall_shadow_sunlit_gap`、仕様 `prop-ao.json`。記録は `WastelandBuildingRef.md` の最後の節
+- 証拠（`.harness/runs/20261021-055341/`）:
+  - `regression-before-SCN-WL-PROP-AO.txt` 回帰の before result=pass・EXIT=0（変更の前）
+  - `verify-SCN-WL-PROP-AO-1.txt` Debug の Game のビルド EXIT=0
+  - `verify-SCN-WL-PROP-AO-2.txt` outpost の撮影 result=pass・EXIT=0
+  - `verify-SCN-WL-PROP-AO-3.txt` `--building --expect prop-ao.json --verify` result=fail（1 行目 0.3729 pass、2 行目 0.1004 fail）・inputs_current=1。見比べの画像を開き、エンジンの壁の黒い斑点が消えたことを確かめた
+  - `verify-SCN-WL-PROP-AO-4.txt` 回帰の after result=pass・EXIT=0: mega-bananas psnr 32.9（バナナの照り返しだけ、8 段超 3.7 %）、night-village 53.3、rendering3dtest 59.4、sandbox inf。前後と差×10 を並べて開いた
+  - `aux-SCN-WL-PROP-AO-graymat.txt`・`-graymat-check.txt` 灰色の地面の撮影と検査（2 行とも pass、陰 1.066・日なた 0.971）
+  - `aux-SCN-WL-PROP-AO-golden.txt` golden の Indoor・Outdoor 通過（変わらない）
+- Notes: 新しい試験は足していない。直す前の陰と日なたの差 0.034 が小さかったのは、日なたの壁も自己遮蔽で照り返しが欠けていたため（日なたの壁の比 0.808 → 0.879）
+- Next: blocked/SCN-WL-PROP-AO.md の判断待ち（推奨: 2 行目を灰色の地面の撮影で判定）
