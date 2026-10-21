@@ -239,3 +239,10 @@ plant_near の `--plant --expect plant-shadow.json` の 3 行は変わらず合�
 ```
 python Scripts/Terrain/BlenderReference.py --plant --mesh .harness/runs/scene-capture/SCN-WLR-BLENDER-TERRAIN-mesh --capture .harness/runs/scene-capture/SCN-WL-PLANT-SHADOW-RANGE --views plant_near --max-seconds 1500 --out .harness/runs/scene-capture/SCN-WLR-PLANT-REF
 ```
+
+その描き直しは、今のコードの撮影より前の深度（53670bd1…）を読んでいて、-Build で撮り直した深度（516bcf17…）と画面の
+ほぼ全画素で相対 1e-5 前後（最大 8.9e-5）ずれた。commit 323a90c0 の同じ exe で plant_near を 2 回撮ると深度のハッシュは
+2 回とも 516bcf17… で同じだったので、深度の照合はハッシュの一致のままにし、上のコマンドでこの深度から描き直した
+（512 サンプルで収束）。描き直した後の `--verify` は全体も result=pass（影の比の差 0.0326、葉の見え方 0.863、葉の比 0.8245）。
+Cycles の側の比は描き直す前と同じ（影の比 0.3065、葉の背面の比 0.7769）。コードの変更で深度が変わったときは、撮り直してから
+描き直す。

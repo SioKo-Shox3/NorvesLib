@@ -6686,3 +6686,20 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 霧へ割り振るか（影つきの霞）は決めていない。直した式で 0.37 にしたときの遠い山の見た目は撮っていない
   - 新しい試験は足していない
 - Next: TASKS.md の次の未完の項目
+
+### SCN-WL-PLANT-SHADOW-RANGE 再検証の直し 2（2026-10-22、run 20261021-055341 の反復 47）
+- 差し戻し: 反復 43 の後の再検証（-Build で撮り直し）で深度のハッシュが 516bcf17… になり、正解が記録した 53670bd1…（今のコードより前の撮影の深度）と違って `--plant --verify` が fail
+- Done: commit 323a90c0 の同じ exe（7e0cba1c…）で plant_near を 2 回撮り、深度のハッシュが 2 回とも 516bcf17… で同じことを確かめた。親の指示どおり PlantCheck.py の深度の照合はハッシュの一致のまま（許しの幅へは直していない）。verify と同じ撮影先の深度で Cycles の正解を描き直した。記録 `Docs/RenderingValidation/WastelandPlantRef.md` の「低木の影を 60 m まで」に書き足した。エンジンのコードは変えていない
+- 証拠（`.harness/runs/20261021-055341/`）:
+  - `aux-SCN-WL-PLANT-SHADOW-RANGE-regression-before-47.txt` 反復の最初の回帰の before result=pass・EXIT=0
+  - `verify-SCN-WL-PLANT-SHADOW-RANGE-10.txt` Debug の Game のビルド EXIT=0
+  - `verify-SCN-WL-PLANT-SHADOW-RANGE-11.txt` plant_near の撮影（-Build）result=pass・EXIT=0（commit 323a90c0 dirty=0）
+  - `aux-SCN-WL-PLANT-SHADOW-RANGE-repeat-47.txt` 同じ exe の撮り直し result=pass。深度のハッシュは 2 回とも 516bcf17…
+  - `aux-SCN-WL-PLANT-SHADOW-RANGE-cycles-redraw-47.txt` 描き直しの結果（512 サンプル・converged、記録の深度 516bcf17…）。描き直しのログ自体は台本のコメント行の文字化けで次の照合の出力に上書きされた（その出力は `-repeat-check-47.txt` に改名）
+  - `aux-SCN-WL-PLANT-SHADOW-RANGE-repeat-check-47.txt` 撮り直した方の `--plant --verify` result=pass・EXIT=0
+  - `verify-SCN-WL-PLANT-SHADOW-RANGE-12.txt` `--plant --expect plant-shadow.json --verify` result=pass・inputs_current=1・EXIT=0（影の比の差 0.0326、葉の見え方 0.8632、葉の比 0.8245）。見比べの画像 `scene-capture/SCN-WLR-PLANT-REF/plant_plant_near.png` を開いた
+  - `verify-SCN-WL-PLANT-SHADOW-RANGE-13.txt` 回帰の after result=pass（rendering3dtest PSNR 107.1、mega-bananas 62.9、sandbox inf、night-village 70.3）。rendering3dtest の after を開き、天球・地面・球・岩が変わらないことを確かめた
+- Notes:
+  - 反復 43 の描き直しが古い深度（53670bd1…）を記録した理由は追っていない（同じ exe の撮り直しでは深度は変わらない）
+  - 新しい試験は足していない
+- Next: TASKS.md の次の未完の項目
