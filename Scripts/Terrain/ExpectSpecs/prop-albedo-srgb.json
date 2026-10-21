@@ -1,13 +1,21 @@
 {
-  "description": "SCN-WL-PROP-ALBEDO-SRGB: glTF の模型の基本色のテクスチャを sRGB として読む。outpost の建物（wooden_shack）のアルベドの AOV の、Cycles の建物の画素での線形の輝度の中央値が、同じ画素のテクスチャの値を線形へ戻した中央値 0.3908 と 3 % 以内。期待値は直す前の撮影（SCN-WLR-BUILDING-REF-BASE。基本色を UNORM のまま標本し、BaseColor 1 で AOV へ書いていた）の建物の画素 6485 個の RGB を画素ごとに sRGB から線形へ戻した輝度の中央値（直す前の値は 0.6564）。テクスチャ全体の中央値（符号化した値 0.633、線形 0.361）は見えない面も含むので使わない。",
+  "description": "SCN-WL-PROP-ALBEDO-SRGB: glTF の模型の基本色のテクスチャを sRGB として読む（sRGB の形式で標本し、ハードがテクセルごとに線形へ戻してから補間する）。outpost の建物（wooden_shack）のアルベドの AOV の、Cycles の建物の画素での線形の輝度の中央値が、同じ画素の Cycles の拡散の色（Diffuse Color のパス。同じ glTF の基本色をテクセルごとに線形へ戻してから画素の広さで標本した値）の中央値と 3 % 以内。期待値 0.3853 は SCN-WLR-BUILDING-REF の描き直し（512 サンプルで収束）の建物の画素 6485 個の中央値。直す前の撮影（SCN-WLR-BUILDING-REF-BASE。基本色を UNORM のまま標本していた）は 0.6564（比 1.70）。補間した後に線形へ戻す順では暗い所と明るい所の境で値が違うので、補間した後の値を線形へ戻した値は期待値に使わない。",
   "rows": [
     {
       "mode": "building",
       "view": "outpost",
       "quantity": "albedo_median",
-      "min": 0.3791,
-      "max": 0.4025,
-      "note": "0.3908 × (1 ∓ 0.03)"
+      "min": 0.3738,
+      "max": 0.3969,
+      "note": "0.3853 × (1 ∓ 0.03)。Cycles の拡散の色の中央値"
+    },
+    {
+      "mode": "building",
+      "view": "outpost",
+      "quantity": "albedo_median_ratio",
+      "min": 0.97,
+      "max": 1.03,
+      "note": "エンジンの中央値 ÷ 同じ画素の Cycles の拡散の色の中央値（参照を描き直しても同じ基準で比べる）"
     }
   ]
 }

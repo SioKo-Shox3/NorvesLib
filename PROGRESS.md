@@ -6340,3 +6340,23 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 起動画面の球（クック済みの sRGB の石畳）など glTF でない材質も同じく UNORM のまま標本されている。この項目の範囲（glTF の模型）の外なので変えていない
   - golden は変わらない（Test の exe は Game のシーンを使わず、印の既定は偽）ので再承認していない。新しい試験は足していない
 - Next: TASKS.md の次の未完の項目
+
+### SCN-WL-PROP-ALBEDO-SRGB 差し戻しの直し（2026-10-21、run 20261021-055341 の反復 22）
+- Done: 反復 21 の差し戻し（UNORM で補間した後に線形へ戻しており、テクセルごとに戻してから補間する順になっていない）を直した
+  - 標本の後の戻し（`MegaMeshMaterial::bAlbedoSrgb`・`MATERIAL_FLAG_ALBEDO_SRGB`・`TILE_FLAG_ALBEDO_SRGB_DECODE` とシェーダーの分岐）を外した
+  - `TextureColorEncoding`（`GpuResourceTypes.h`）を足し、`TextureResources::LoadTextureAsync`・`CreateVirtualTexture(Async)` が `Srgb` を求められたら、クック済みの sRGB を UNORM へ読み替えずに sRGB の形式で上げる（ばらの元画像は RGBA8_SRGB。キャッシュの鍵は `|srgb` を足して既定と分ける）
+  - Game は glTF の模型の基本色だけ `Srgb` を求める（荒野・夜の集落の模型、Rendering3DTest の家・岩・スキャン資産、バナナ、mega-stress の模型。変位させた球は除く）
+  - 期待値: `BlenderReference.py --building` が拡散の色のパスを `<視点>.cycles.diffuse_color.pfm` に書き、`BuildingCheck.py` が同じ画素の Cycles の中央値とエンジン ÷ Cycles の比を出す。`ExpectSpec.py` に量 `albedo_median_ratio`。仕様 `prop-albedo-srgb.json` は中央値 0.3853 ± 3 % と比 0.97〜1.03
+- 結果: 建物のアルベドの中央値 0.3921、Cycles の拡散の色 0.3853、比 1.0175。記録は `Docs/RenderingValidation/WastelandBuildingRef.md` の最後の節
+- 証拠（`.harness/runs/20261021-055341/`）:
+  - `verify-SCN-WL-PROP-ALBEDO-SRGB-1.txt` Debug の Game のビルド EXIT=0
+  - `aux-SCN-WL-PROP-ALBEDO-SRGB-cycles-rerender-2.txt` 建物の Cycles の参照の描き直し EXIT=0（512 サンプルで収束、拡散の色を足した）
+  - `verify-SCN-WL-PROP-ALBEDO-SRGB-2.txt` outpost の撮影 result=pass・EXIT=0（604 秒）。PNG を開き、建物が石積みの色であることを確かめた
+  - `verify-SCN-WL-PROP-ALBEDO-SRGB-3.txt` `--building --expect --verify` expect 2 行 pass・inputs_current=1・EXIT=0
+  - `verify-SCN-WL-PROP-ALBEDO-SRGB-4.txt` 回帰の after result=pass・EXIT=0（190 秒、sandbox PSNR inf）。差の画素（`aux-SCN-WL-PROP-ALBEDO-SRGB-regression-diff-2.txt`）と差の範囲の画像を開き、変わったのが glTF の模型だけであることを確かめた
+- Notes:
+  - 回帰の before は反復 21 の開始時に撮った直す前の版をそのまま使った（今の HEAD は反復 21 の戻しを含むため撮り直さなかった）
+  - Cycles の拡散の色は画素の中の標本の平均（線形）なので、テクセルごとに戻してから標本した値になる。クックの sRGB のミップも線形で平均している
+  - ASCII だった `TextureAsyncTypes.h` に日本語のコメントを足したので BOM を付けた（BOM なしでは MSVC が行末を食った）
+  - golden は変わらない（Test の exe は Game のシーンを使わず、既定の読み込みは変えていない）。新しい試験は足していない
+- Next: TASKS.md の次の未完の項目

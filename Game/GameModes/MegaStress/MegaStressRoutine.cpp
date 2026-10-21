@@ -387,7 +387,8 @@ namespace Game::GameModes
         /// 作れない・常駐しないときは全常駐で読み直す。結果は主スレッドで届く
         void LoadMaterialTexture(TextureResources &textures, const TSharedPtr<StressPendingMaterial> &update,
                                  const String &path, TextureHandle MaterialCreateData::*member, bool bNormal,
-                                 bool bTryVirtualTexture)
+                                 bool bTryVirtualTexture,
+                                 TextureColorEncoding colorEncoding = TextureColorEncoding::Default)
         {
             TextureResources *pTextures = &textures;
             const auto onLoaded = [pTextures, update, path, member, bNormal](TextureHandle handle)
@@ -427,7 +428,7 @@ namespace Game::GameModes
             {
                 const bool bStarted = textures.CreateVirtualTextureAsync(
                     path,
-                    [pTextures, update, path, onLoaded](TextureHandle handle)
+                    [pTextures, update, path, onLoaded, colorEncoding](TextureHandle handle)
                     {
                         if (handle.IsValid() || update->bCancelled)
                         {
@@ -437,14 +438,15 @@ namespace Game::GameModes
                         LOG_WARNING_F("MEGA_STRESS_VT_FALLBACK path=%s 仮想テクスチャのミップテイルが常駐しないため、"
                                       "全常駐で読み直します",
                                       path.c_str());
-                        pTextures->LoadTextureAsync(path, onLoaded);
-                    });
+                        pTextures->LoadTextureAsync(path, onLoaded, colorEncoding);
+                    },
+                    colorEncoding);
                 if (bStarted)
                 {
                     return;
                 }
             }
-            textures.LoadTextureAsync(path, onLoaded);
+            textures.LoadTextureAsync(path, onLoaded, colorEncoding);
         }
 
         /// 常駐の粗い段の三角形の、面積を掛けた法線の和から、横に開いた殻かどうかと表の向きを決める。
@@ -598,8 +600,11 @@ namespace Game::GameModes
             pending->PendingTextureCount = 3;
             load.Material = pending;
             auto &textures = ctx.RenderResourcesRef.Textures();
+            // glTF の模型の基本色は sRGB で符号化されているので、sRGB の形式のまま読む。変位させた球は起動画面の
+            // 球と同じ材質のままにする
             LoadMaterialTexture(textures, pending, spec.Albedo, &MaterialCreateData::AlbedoTexture, false,
-                                spec.bVirtualTexture);
+                                spec.bVirtualTexture,
+                                spec.bDisplacedSphere ? TextureColorEncoding::Default : TextureColorEncoding::Srgb);
             LoadMaterialTexture(textures, pending, spec.Normal, &MaterialCreateData::NormalTexture, true,
                                 spec.bVirtualTexture);
             LoadMaterialTexture(textures, pending, spec.Orm, &MaterialCreateData::ORMTexture, false, spec.bVirtualTexture);
@@ -700,12 +705,6 @@ namespace Game::GameModes
             if (load.Spec.bDisplacedSphere)
             {
                 createInfo.Material.DisplacementUVSpacing = StartupBigSphere::DisplacementUVSpacing();
-            }
-            else
-            {
-                // glTF の模型の基本色は sRGB（UNORM で張られていればシェーダーが線形へ戻す）。変位させた球は起動画面の
-                // 球と同じ材質のままにする
-                createInfo.Material.bAlbedoSrgb = true;
             }
             createInfo.DebugName = load.Spec.Id.c_str();
             const MegaMeshHandle megaMesh = megaGeometry.CreateMegaMesh(createInfo);

@@ -104,8 +104,10 @@ namespace NorvesLib::Core::Rendering
         // 最後の所有者で登録を解放する。キャッシュが所有するハンドルには使用しない。
         Container::TSharedPtr<const void> AdoptAnonymousTexture(TextureHandle handle);
         TextureHandle LoadTexture(const Container::String &path);
+        // colorEncoding が Srgb なら、クック済みの sRGB を sRGB の形式のまま上げる（既定と別のテクスチャとしてキャッシュする）
         uint32_t LoadTextureAsync(const Container::String &path,
-                                  NorvesLib::Core::Delegate<void, TextureHandle> callback = {});
+                                  NorvesLib::Core::Delegate<void, TextureHandle> callback = {},
+                                  TextureColorEncoding colorEncoding = TextureColorEncoding::Default);
         uint32_t FlushCompletedTextureLoads();
         uint32_t GetPendingAsyncLoadCount() const;
 
@@ -147,7 +149,9 @@ namespace NorvesLib::Core::Rendering
         // 材質でサンプルしてはいけない。sparse に対応しないデバイス・v0.2 でないテクスチャ・マニフェストに無いパスは
         // 無効なハンドルを返す。フィードバックを有効にできないときも、VT を解放して無効なハンドルを返す。
         // pOutVirtualTextureIndex には VT の表の添字（フィードバックの要求が指す番号）を返す。
-        TextureHandle CreateVirtualTexture(const Container::String &path, uint32_t *pOutVirtualTextureIndex = nullptr);
+        // colorEncoding が Srgb なら、クック済みの sRGB を sRGB の形式のまま作る。
+        TextureHandle CreateVirtualTexture(const Container::String &path, uint32_t *pOutVirtualTextureIndex = nullptr,
+                                           TextureColorEncoding colorEncoding = TextureColorEncoding::Default);
         // VT のミップテイルが常駐してサンプルできるか。VT でないハンドルは false
         bool IsVirtualTextureReady(TextureHandle handle) const;
         // デバイスが sparse の VT に対応していて、CreateVirtualTexture を試せるか
@@ -158,7 +162,8 @@ namespace NorvesLib::Core::Rendering
         // 作れなかったときは false を返し、callback は呼ばない（呼び出し側が全常駐の LoadTextureAsync へ戻す）。
         // 一定のフレームの間にミップテイルが常駐しなければ VT を解放し、無効なハンドルで callback を呼ぶ。
         bool CreateVirtualTextureAsync(const Container::String &path,
-                                       NorvesLib::Core::Delegate<void, TextureHandle> callback);
+                                       NorvesLib::Core::Delegate<void, TextureHandle> callback,
+                                       TextureColorEncoding colorEncoding = TextureColorEncoding::Default);
         // VT のストリーマが落ち着いているか（要求済み・読み込み中・結び待ちのタイルが無い）。VT が無いときは true。
         // 起動画面の決定的な撮影が、タイルがそろってから撮るために使う。
         bool IsVirtualTextureStreamingIdle() const;

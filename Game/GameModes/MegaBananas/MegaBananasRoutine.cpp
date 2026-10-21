@@ -172,7 +172,7 @@ namespace Game::GameModes
         template <typename OnComplete>
         void LoadMaterialTexture(TextureResources &textures, const TSharedPtr<BananasPendingMaterial> &update,
                                  const String &path, TextureHandle MaterialCreateData::*member, bool bNormal,
-                                 OnComplete onComplete)
+                                 OnComplete onComplete, TextureColorEncoding colorEncoding = TextureColorEncoding::Default)
         {
             TextureResources *pTextures = &textures;
             textures.LoadTextureAsync(
@@ -200,7 +200,8 @@ namespace Game::GameModes
                     {
                         onComplete();
                     }
-                });
+                },
+                colorEncoding);
         }
 
         /// 床の頂点の UV: 世界の x・z を板 1 枚の実寸で割った値
@@ -471,7 +472,9 @@ namespace Game::GameModes
             assembly->Material = pending;
             auto &textures = ctx.RenderResourcesRef.Textures();
             const auto onComplete = []() {};
-            LoadMaterialTexture(textures, pending, albedoPath, &MaterialCreateData::AlbedoTexture, false, onComplete);
+            // glTF の基本色は sRGB で符号化されているので、sRGB の形式のまま上げる
+            LoadMaterialTexture(textures, pending, albedoPath, &MaterialCreateData::AlbedoTexture, false, onComplete,
+                                TextureColorEncoding::Srgb);
             LoadMaterialTexture(textures, pending, ormPath, &MaterialCreateData::ORMTexture, false, onComplete);
             LoadMaterialTexture(textures, pending, normalPath, &MaterialCreateData::NormalTexture, true, onComplete);
             data.m_pAssembly = assembly;
@@ -550,8 +553,6 @@ namespace Game::GameModes
                 createInfo.Material.NormalTexture = material.NormalTexture;
                 createInfo.Material.ORMTexture = material.ORMTexture;
                 createInfo.Material.bNormalTwoChannel = material.bNormalTwoChannel;
-                // glTF の模型の基本色は sRGB（UNORM で張られていればシェーダーが線形へ戻す）
-                createInfo.Material.bAlbedoSrgb = true;
                 createInfo.DebugName = "Banana";
 #if NORVES_BUILD_DEVELOPMENT
                 LogBananaBoundingSpheres(createInfo);

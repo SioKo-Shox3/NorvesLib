@@ -318,10 +318,22 @@ def check_view(RC, engine_dir, reference_dir, view, record, verify, trial):
         failures.append("エンジンのアルベドの AOV の大きさが Cycles と違う")
         return dict(result, failures=failures, **{"pass": False})
     albedo_y = albedo[building][:, :3] @ GR.LUMA
-    albedo_y = albedo_y[np.isfinite(albedo_y)]
+    finite = np.isfinite(albedo_y)
+    albedo_y = albedo_y[finite]
     if albedo_y.size:
         p5, p50, p95 = (float(v) for v in np.percentile(albedo_y, [5, 50, 95]))
         result["albedo"] = {"pixels": int(albedo_y.size), "p5": p5, "p50": p50, "p95": p95}
+        # Cycles の拡散の色（glTF の基本色をテクセルごとに線形へ戻してから標本した値）の、同じ画素の中央値と比
+        diffuse_path = prefix + ".cycles.diffuse_color.pfm"
+        if os.path.exists(diffuse_path):
+            diffuse = RC.read_pfm_any(diffuse_path).astype(np.float64)
+            if diffuse.shape[:2] != building.shape:
+                failures.append("Cycles の拡散の色の大きさがエンジンと違う")
+            else:
+                reference_y = (diffuse[building][:, :3] @ GR.LUMA)[finite]
+                reference_p50 = float(np.median(reference_y))
+                result["albedo"]["reference_p50"] = reference_p50
+                result["albedo"]["ratio_p50"] = p50 / reference_p50 if reference_p50 > 0.0 else None
 
     # 光の内訳の和（直接 + 間接、太陽の組 + 空の組 が合成に合う）
     surface = alpha > 0.5
@@ -436,6 +448,10 @@ def run(RC, engine_dirs, reference_dir, views, verify, trial, expect=None):
         if albedo:
             print(f"REFERENCE_CHECK building view={view} engine_albedo pixels={albedo['pixels']} p5={albedo['p5']:.4f} "
                   f"median={albedo['p50']:.4f} p95={albedo['p95']:.4f}")
+            if "reference_p50" in albedo:
+                ratio = albedo.get("ratio_p50")
+                print(f"REFERENCE_CHECK building view={view} cycles_diffuse_color median={albedo['reference_p50']:.4f} "
+                      f"engine_over_cycles={'nan' if ratio is None else f'{ratio:.4f}'}")
     RC.apply_expect(report, expect, "building", failures)
     report["failures"] = failures
     report_path = os.path.join(reference_dir, "building_check.json")

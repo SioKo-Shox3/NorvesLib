@@ -47,6 +47,8 @@ namespace NorvesLib::Core::Rendering
         Asset::AssetFallbackMode FallbackMode = Asset::AssetFallbackMode::FailOnCookedFailure;
         Container::TSharedPtr<const Asset::AssetSystem> AssetSystem;
         Container::TSharedPtr<TextureCookedMissingLog> CookedMissingLog;
+        // sRGB の色を sRGB の形式のまま上げる（TextureColorEncoding::Srgb。AssetSystem の UNORM への読み替えをしない）
+        bool bKeepSrgb = false;
     };
 
     struct PreparedTextureAssetPlan

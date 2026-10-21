@@ -26,7 +26,9 @@
 #       （psi_summary.grid_max_rel）、psi_cell は格子のセルの中心で表を補間した値（psi_summary.center_max_rel）。
 #       どちらも高度 10 km まで・太陽が地平線より上
 #     building（ReferenceCheck.py --building。行の鍵は mode・view・quantity と閾値だけ）: エンジンのアルベドの AOV の、Cycles の
-#       建物の画素での線形の輝度の分布（視点の検査の結果の albedo）。albedo_p5・albedo_median・albedo_p95（5・50・95 % 点）
+#       建物の画素での線形の輝度の分布（視点の検査の結果の albedo）。albedo_p5・albedo_median・albedo_p95（5・50・95 % 点）、
+#       albedo_median_ratio（エンジンの中央値 ÷ 同じ画素の Cycles の拡散の色の中央値。Cycles は glTF の基本色をテクセルごとに
+#       線形へ戻してから標本する）
 #   min・max: 下限・上限（両端を含む。どちらか一方は要る）
 #   allow_undetermined: 未判定を許すか（既定は許さない）。note: 行の説明（判定には使わない）
 #
@@ -66,7 +68,8 @@ ATMOS_REF_QUANTITIES = {"sun_transmittance": (("illuminance", "valley_floor"), "
                         "psi_grid": (("psi_summary",), "grid_max_rel"),
                         "psi_cell": (("psi_summary",), "center_max_rel")}
 # building の量 → 視点の検査の結果の albedo の鍵
-BUILDING_QUANTITIES = {"albedo_p5": "p5", "albedo_median": "p50", "albedo_p95": "p95"}
+BUILDING_QUANTITIES = {"albedo_p5": "p5", "albedo_median": "p50", "albedo_p95": "p95",
+                       "albedo_median_ratio": "ratio_p50"}
 
 SPEC_DIR = os.path.join("Scripts", "Terrain", "ExpectSpecs")
 SELFTEST_DIR = os.path.join(".harness", "runs", "scene-capture", "SCN-WLR-EXPECT-MATCH")

@@ -91,6 +91,18 @@ namespace NorvesLib::Core::Rendering
     };
 
     /**
+     * @brief 読み込むテクスチャの色の扱い（TextureResources::LoadTextureAsync・CreateVirtualTexture）
+     */
+    enum class TextureColorEncoding : uint8_t
+    {
+        /// AssetSystem の設定に従う（Game の既定は、クック済みの sRGB を元画像と同じ標本値にするため UNORM の形式で上げる）
+        Default,
+        /// sRGB で符号化した色（glTF の baseColorTexture）。sRGB の形式で上げ、ハードがテクセルごとに線形へ戻してから補間する。
+        /// ばらの元画像で読むときも RGBA8 の sRGB の形式にする
+        Srgb,
+    };
+
+    /**
      * @brief Shader creation info.
      */
     struct ShaderCreateInfo

@@ -60,10 +60,12 @@ namespace NorvesLib::Core::Rendering
 
         // AssetSystem が sRGB を UNORM として上げる互換設定のとき、クック済みの色空間を Linear に読み替える
         // （BC7 sRGB は BC7 UNORM、RGBA8 sRGB は RGBA8 UNORM としてアップロードされ、ばらの画像と同じ標本値になる）。
+        // sRGB の色を求められた読み込み（bKeepSrgb）は読み替えない。
         void ApplySrgbAsLinearPolicy(const Container::TSharedPtr<const Asset::AssetSystem> &assetSystem,
-                                     Asset::CookedTextureData &texture)
+                                     Asset::CookedTextureData &texture,
+                                     bool bKeepSrgb = false)
         {
-            if (assetSystem && assetSystem->GetTreatSrgbTexturesAsLinear() &&
+            if (!bKeepSrgb && assetSystem && assetSystem->GetTreatSrgbTexturesAsLinear() &&
                 texture.ColorSpace == Asset::CookedTextureColorSpace::SRGB)
             {
                 texture.ColorSpace = Asset::CookedTextureColorSpace::Linear;
@@ -758,7 +760,7 @@ namespace NorvesLib::Core::Rendering
             return result;
         }
 
-        ApplySrgbAsLinearPolicy(plan.AssetSystem, parseResult.Texture);
+        ApplySrgbAsLinearPolicy(plan.AssetSystem, parseResult.Texture, plan.bKeepSrgb);
         result.CookedTexture = Container::MakeShared<CookedTextureAsyncPayload>();
         result.CookedTexture->Texture = std::move(parseResult.Texture);
         result.bSuccess = true;
@@ -857,7 +859,7 @@ namespace NorvesLib::Core::Rendering
             return result;
         }
 
-        ApplySrgbAsLinearPolicy(plan.AssetSystem, parseResult.Texture);
+        ApplySrgbAsLinearPolicy(plan.AssetSystem, parseResult.Texture, plan.bKeepSrgb);
         result.CookedTexture = Container::MakeShared<CookedTextureAsyncPayload>();
         result.CookedTexture->Texture = std::move(parseResult.Texture);
         const int width = static_cast<int>(result.CookedTexture->Texture.Width);

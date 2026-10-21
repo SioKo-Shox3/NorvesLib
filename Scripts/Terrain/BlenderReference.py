@@ -85,6 +85,8 @@
 #       収束の重ね方・書き出しは --gray と同じ。建物の領域と収束は BuildingRegions.py（足元の帯・壁の下端・壁の日なたと陰）。
 #       領域を決めるため、太陽の見え方と一緒に物体の番号（建物 1）を描き、続けて --depth と同じ描き方で深度を描いて、
 #       <視点>.aux.depth.pfm（カメラの前方向への距離 m、空は +∞）と <視点>.aux.building.pfm（建物の画素 1）を書く。
+#       本描画の拡散の色のパス（Diffuse Color。glTF の基本色をテクセルごとに線形へ戻してから標本した値）を
+#       <視点>.cycles.diffuse_color.pfm に書く（エンジンのアルベドの AOV と比べる）。
 #       --trial は 1 本 BUILDING_TRIAL_SPP サンプルで止める試しの描画（書き先の既定 <撮影>/cycles-trial。収束しない）。
 #       入力の記録 <書き先>/inputs.json に、台本・領域の定義・共通の照明・glTF・地形のメッシュのハッシュとカメラ・配置を書く。
 #       照合は ReferenceCheck.py --building。
@@ -744,7 +746,7 @@ def run_building(args):
             "prefix": prefix,
             "building": {"gltf": placement["gltf"], "gltf_path": gltf_path, "placement": placement, "bounds": bounds},
         }
-        parts = ("hdr", "seed_a", "seed_b", "sun", "sky", "direct", "indirect", "indirect_diffuse")
+        parts = ("hdr", "seed_a", "seed_b", "sun", "sky", "direct", "indirect", "indirect_diffuse", "diffuse_color")
         job["required_outputs"] = [f"{prefix}.cycles.exr", f"{prefix}.cycles.json", f"{prefix}.aux.exr"] + \
             [f"{prefix}.cycles.{part}.pfm" for part in parts] + \
             [f"{prefix}.aux.{part}.pfm" for part in ("visibility", "n_dot_l", "normal", "alpha", "depth", "building")]
@@ -2283,7 +2285,7 @@ def render_gray_job(job):
     # 切り出しは 1 回の起動で 1 本（crop の seed）だけを描く: A は時間の上限まで描いて途中の和を書き、B は A と同じサンプル数まで
     # 描いて A の和と合わせる（収束は合わせた後に測る）
     groups = ("combined", "sun", "sky", "direct", "indirect", "indirect_diffuse") + \
-        (("sun_direct", "sky_direct") if crop else ())
+        (("sun_direct", "sky_direct") if crop else ()) + (("diffuse_color",) if building else ())
     sums = {seed: {g: np.zeros((height, width, 3), dtype=np.float64) for g in groups} for seed in ("a", "b")}
     renders = {"a": 0, "b": 0}
     seed_order = (crop["seed"],) if crop else ("a", "b")
@@ -2324,6 +2326,9 @@ def render_gray_job(job):
                 # 間接光のうち拡散の分（エンジンの RTGI の照り返しと同じ物。ReferenceCheck.py --bounce が比べる）
                 "indirect_diffuse": parts["Diffuse Indirect"] * parts["Diffuse Color"],
             }
+            if building:
+                # 拡散の色（照明の無い基本色。画素の中の標本の平均なので、線形の値を画素の広さで平均したもの）
+                values["diffuse_color"] = parts["Diffuse Color"]
             if plant:
                 values["direct"] = values["direct"] + parts["Transmission Direct"] * parts["Transmission Color"]
                 values["indirect"] = values["indirect"] + parts["Transmission Indirect"] * parts["Transmission Color"]
@@ -2468,7 +2473,7 @@ def render_gray_job(job):
                    ".cycles.direct.pfm", ".cycles.indirect.pfm", ".cycles.indirect_diffuse.pfm", ".aux.visibility.pfm", ".aux.n_dot_l.pfm",
                    ".aux.normal.pfm", ".aux.alpha.pfm") + \
             ((".cycles.sun_direct.pfm", ".cycles.sky_direct.pfm") if crop else ()) + \
-            ((".aux.depth.pfm", ".aux.building.pfm") if building else ()) + \
+            ((".aux.depth.pfm", ".aux.building.pfm", ".cycles.diffuse_color.pfm") if building else ()) + \
             ((".aux.depth.pfm", ".aux.plant.pfm", ".aux.back_visibility.pfm") if plant else ()):
         outputs[os.path.basename(prefix) + suffix] = sha256_file(prefix + suffix)
     meta = {

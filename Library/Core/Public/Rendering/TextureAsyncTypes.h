@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "Rendering/RenderTypes.h"
 #include "Rendering/GpuResourceTypes.h"
@@ -24,6 +24,8 @@ namespace NorvesLib::Core::Rendering
         TextureLoadSource Source = TextureLoadSource::LegacyFile;
         TextureAssetFallbackMode FallbackMode = TextureAssetFallbackMode::FailOnCookedFailure;
         uint64_t AssetGeneration = 0;
+        // sRGB の色を sRGB の形式のまま上げる（TextureColorEncoding::Srgb）
+        bool bKeepSrgb = false;
         bool bSuccess = false;
     };
 

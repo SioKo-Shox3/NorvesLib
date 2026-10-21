@@ -403,11 +403,12 @@ namespace NorvesLib::Core::Rendering
 
     uint32_t TextureResources::LoadTextureAsync(
         const Container::String &path,
-        NorvesLib::Core::Delegate<void, TextureHandle> callback)
+        NorvesLib::Core::Delegate<void, TextureHandle> callback,
+        TextureColorEncoding colorEncoding)
     {
         auto *impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
         return impl && impl->TextureAssets
-                   ? impl->TextureAssets->LoadTextureAsync(path, std::move(callback))
+                   ? impl->TextureAssets->LoadTextureAsync(path, std::move(callback), colorEncoding)
                    : 0;
     }
 
@@ -640,7 +641,8 @@ namespace NorvesLib::Core::Rendering
         }
     }
 
-    TextureHandle TextureResources::CreateVirtualTexture(const Container::String &path, uint32_t *pOutVirtualTextureIndex)
+    TextureHandle TextureResources::CreateVirtualTexture(const Container::String &path, uint32_t *pOutVirtualTextureIndex,
+                                                         TextureColorEncoding colorEncoding)
     {
         auto *impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
         if (!impl || !impl->bInitialized || !impl->GpuResources || !impl->TextureAssets)
@@ -669,8 +671,11 @@ namespace NorvesLib::Core::Rendering
 
         CookedVirtualTexturePlan plan;
         // 全常駐で読むクック済みと同じ標本値にするため、sRGB を UNORM として上げる互換設定も合わせる
+        // （sRGB の色を求められたときは sRGB の形式のまま作る）
+        const bool bTreatSrgbAsLinear =
+            assetSystem->GetTreatSrgbTexturesAsLinear() && colorEncoding != TextureColorEncoding::Srgb;
         if (!PrepareCookedVirtualTexture(assetSystem->GetCookedFileReader(), range.Request, range.BaseOffset, range.Size,
-                                         path, plan, &reason, assetSystem->GetTreatSrgbTexturesAsLinear()))
+                                         path, plan, &reason, bTreatSrgbAsLinear))
         {
             NORVES_LOG_ERROR("RenderResources",
                              "VTを作れません: クック済みのテクスチャを開けません "
@@ -796,14 +801,15 @@ namespace NorvesLib::Core::Rendering
     }
 
     bool TextureResources::CreateVirtualTextureAsync(const Container::String &path,
-                                                     NorvesLib::Core::Delegate<void, TextureHandle> callback)
+                                                     NorvesLib::Core::Delegate<void, TextureHandle> callback,
+                                                     TextureColorEncoding colorEncoding)
     {
         auto *impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
         if (!SupportsVirtualTexture())
         {
             return false;
         }
-        const TextureHandle handle = CreateVirtualTexture(path);
+        const TextureHandle handle = CreateVirtualTexture(path, nullptr, colorEncoding);
         if (!handle.IsValid())
         {
             return false;

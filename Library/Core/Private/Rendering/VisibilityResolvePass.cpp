@@ -226,9 +226,6 @@ namespace NorvesLib::Core::Rendering
             material.AO = ResolveMaterialTexture(textures, ao);
             material.ORM = ResolveMaterialTexture(textures, orm);
             material.Height = ResolveMaterialTexture(textures, height);
-            // ラスタの MegaGeometryPass と同じ判定（テクスチャが引けないときは白の既定なので戻さない）
-            material.bAlbedoSrgbDecode = (entry.Header[0] & VisibilityBuffer::MATERIAL_FLAG_ALBEDO_SRGB) != 0u &&
-                                         IsTerrainAlbedoSrgbDecodeNeeded(material.Albedo.get());
             if (material.bMegaGeometry)
             {
                 std::memcpy(&material.AOConstant, &entry.TexturesD[2], sizeof(float));
@@ -846,10 +843,6 @@ namespace NorvesLib::Core::Rendering
             {
                 bound.Flags |= VisibilityResolveGeometry::TILE_FLAG_TERRAIN;
                 std::memcpy(bound.TerrainParams, input.TerrainParams, sizeof(bound.TerrainParams));
-            }
-            else if (input.bAlbedoSrgbDecode)
-            {
-                bound.Flags |= VisibilityResolveGeometry::TILE_FLAG_ALBEDO_SRGB_DECODE;
             }
             boundMaterials.push_back(bound);
 

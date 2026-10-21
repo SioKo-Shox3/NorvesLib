@@ -763,7 +763,8 @@ namespace Game::GameModes
         /// 材質のテクスチャを 1 枚、非同期で読む。結果は主スレッドで target（assembly の中の枠）へ入れ、*pPending を減らす。
         /// pNormalTwoChannel は法線のときだけ渡し、クック済みの法線が BC5 かを入れる
         void LoadMaterialTexture(TextureResources &textures, const TSharedPtr<WastelandAssembly> &assembly,
-                                 const char *path, TextureHandle *target, bool *pNormalTwoChannel, uint32_t *pPending)
+                                 const char *path, TextureHandle *target, bool *pNormalTwoChannel, uint32_t *pPending,
+                                 TextureColorEncoding colorEncoding = TextureColorEncoding::Default)
         {
             TextureResources *pTextures = &textures;
             const String pathText(path);
@@ -793,7 +794,8 @@ namespace Game::GameModes
                             rhiTexture != nullptr && rhiTexture->GetFormat() == NorvesLib::RHI::Format::BC5_UNORM;
                     }
                     --*pPending;
-                });
+                },
+                colorEncoding);
         }
 
         /// 地形の区画 1 つを読み、MegaMesh にして置く。解析したメッシュはこの関数の中で手放す（ページはページの読み込み元が読む）
@@ -1082,8 +1084,9 @@ namespace Game::GameModes
                 load.Material.DebugName = spec.Id;
                 load.PendingTextureCount = 3;
                 load.bStarted = true;
+                // glTF の模型の基本色は sRGB で符号化されているので、sRGB の形式のまま上げる（標本の前にハードが線形へ戻す）
                 LoadMaterialTexture(textures, assembly, spec.AlbedoPath, &load.Material.AlbedoTexture, nullptr,
-                                    &load.PendingTextureCount);
+                                    &load.PendingTextureCount, TextureColorEncoding::Srgb);
                 LoadMaterialTexture(textures, assembly, spec.NormalPath, &load.Material.NormalTexture,
                                     &load.Material.bNormalTwoChannel, &load.PendingTextureCount);
                 LoadMaterialTexture(textures, assembly, spec.OrmPath, &load.Material.ORMTexture, nullptr,
@@ -1253,8 +1256,6 @@ namespace Game::GameModes
                 createInfo.Material.NormalTexture = material.NormalTexture;
                 createInfo.Material.ORMTexture = material.ORMTexture;
                 createInfo.Material.bNormalTwoChannel = material.bNormalTwoChannel;
-                // glTF の模型の基本色は sRGB（UNORM で張られていればシェーダーが線形へ戻す）
-                createInfo.Material.bAlbedoSrgb = true;
                 const Layout::PropKind kind = static_cast<Layout::PropKind>(kindIndex);
                 if (kind == Layout::PropKind::Cliff01 || kind == Layout::PropKind::Cliff02)
                 {

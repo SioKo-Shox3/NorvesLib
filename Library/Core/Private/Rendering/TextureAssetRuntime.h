@@ -54,7 +54,8 @@ namespace NorvesLib::Core::Rendering
         TextureHandle LoadTexture(const Container::String &path);
         uint32_t LoadTextureAsync(
             const Container::String &path,
-            NorvesLib::Core::Delegate<void, TextureHandle> callback = {});
+            NorvesLib::Core::Delegate<void, TextureHandle> callback = {},
+            TextureColorEncoding colorEncoding = TextureColorEncoding::Default);
         uint32_t FlushCompletedTextureLoads();
         uint32_t GetPendingAsyncLoadCount() const;
 

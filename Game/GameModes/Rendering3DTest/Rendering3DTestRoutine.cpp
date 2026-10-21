@@ -153,6 +153,8 @@ namespace Game::GameModes
             String Roughness; // 同上
             String AO;        // 同上
             String Height;    // 空なら視差の高さを読まない
+            // アルベドが sRGB で符号化した基本色（glTF の模型）なら true。sRGB の形式のまま読む
+            bool bAlbedoSrgb = false;
         };
 
         // クック済みのマニフェストにこの論理パスの項目があるか。クック済みを使わないとき（未設定）は常に false。
@@ -246,6 +248,9 @@ namespace Game::GameModes
                 }
             };
 
+            const TextureColorEncoding colorEncoding = kind == MaterialSlotKind::Albedo && paths.bAlbedoSrgb
+                                                           ? TextureColorEncoding::Srgb
+                                                           : TextureColorEncoding::Default;
             if (bTryVirtualTexture)
             {
                 const bool bStarted = textures.CreateVirtualTextureAsync(
@@ -262,14 +267,15 @@ namespace Game::GameModes
                                            "VTのミップテイルが常駐しないため、全常駐で読み直します",
                                            path.c_str());
                         LoadMaterialSlot(textures, update, paths, path, member, kind, false, onComplete);
-                    });
+                    },
+                    colorEncoding);
                 if (bStarted)
                 {
                     return;
                 }
                 NORVES_LOG_WARNING("Rendering3DTest", "VT_FALLBACK path=%s VTを作れないため、全常駐で読みます", path.c_str());
             }
-            textures.LoadTextureAsync(path, onLoaded);
+            textures.LoadTextureAsync(path, onLoaded, colorEncoding);
         }
 
         // 材質1つ分のテクスチャを非同期で読み、そろったら onComplete を呼ぶ。マニフェストにクック済みの ORM が
@@ -689,7 +695,10 @@ namespace Game::GameModes
                             static_cast<unsigned int>(load.Mesh->FallbackIndexCount));
 
             // 材質は VT（クック済みのアルベド・法線・ORM）で読む。そろったかは Material->PendingTextureCount で見る。
-            RequestMaterialTextures(data, ctx.RenderResourcesRef.Textures(), load.Material, paths, []() {});
+            // glTF の模型の基本色は sRGB で符号化されているので、sRGB の形式のまま読む（標本の前にハードが線形へ戻す）
+            MaterialTexturePaths modelPaths = paths;
+            modelPaths.bAlbedoSrgb = true;
+            RequestMaterialTextures(data, ctx.RenderResourcesRef.Textures(), load.Material, modelPaths, []() {});
             data.m_PendingMaterialUpdates.push_back(load.Material);
             data.m_CookedStartupModelLoads.push_back(std::move(load));
             return true;
@@ -798,8 +807,6 @@ namespace Game::GameModes
                     createInfo.Material.AOTexture = material.AOTexture;
                     createInfo.Material.ORMTexture = material.ORMTexture;
                     createInfo.Material.bNormalTwoChannel = material.bNormalTwoChannel;
-                    // glTF の模型の基本色は sRGB（UNORM で張られていればシェーダーが線形へ戻す）
-                    createInfo.Material.bAlbedoSrgb = true;
                     createInfo.DebugName = load.DebugName;
 
                     // MegaMesh は材質のテクスチャを所有しない。材質ごとに作った VT は、シーンの範囲で追跡して

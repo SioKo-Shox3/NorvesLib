@@ -639,7 +639,8 @@ namespace NorvesLib::Core::Rendering
     }
 
     uint32_t TextureAssetRuntime::LoadTextureAsync(const Container::String &path,
-                                                   NorvesLib::Core::Delegate<void, TextureHandle> callback)
+                                                   NorvesLib::Core::Delegate<void, TextureHandle> callback,
+                                                   TextureColorEncoding colorEncoding)
     {
         TextureHandle cachedHandle = TextureHandle::Invalid();
         uint32_t requestId = 0;
@@ -657,8 +658,13 @@ namespace NorvesLib::Core::Rendering
                 m_TextureAsyncLoads = Container::MakeUnique<TextureAsyncLoadQueue>();
             }
 
-            const TextureAssetLoadPlan plan =
-                GetTextureAssetResolverLocked().BuildTextureLoadPlan(path);
+            TextureAssetLoadPlan plan = GetTextureAssetResolverLocked().BuildTextureLoadPlan(path);
+            if (colorEncoding == TextureColorEncoding::Srgb)
+            {
+                // 同じパスの既定の読み込み（UNORM に読み替えたもの）とは別のテクスチャとしてキャッシュする
+                plan.bKeepSrgb = true;
+                plan.CacheKey += "|srgb";
+            }
             m_AsyncPlanBuiltBarrierForTesting.InvokeIfBound(plan);
 
             cachedHandle = m_TextureHandleCache
@@ -699,7 +705,13 @@ namespace NorvesLib::Core::Rendering
                     result.Source = cpuResult.Source;
                     result.FallbackMode = cpuResult.FallbackMode;
                     result.AssetGeneration = cpuResult.AssetGeneration;
+                    result.bKeepSrgb = plan.bKeepSrgb;
                     result.bSuccess = cpuResult.bSuccess;
+                    if (plan.bKeepSrgb && result.CreateInfo.PixelFormat == TextureCreateInfo::Format::RGBA8_UNORM)
+                    {
+                        // ばらの元画像で読んだ sRGB の色も sRGB の形式で上げる
+                        result.CreateInfo.PixelFormat = TextureCreateInfo::Format::RGBA8_SRGB;
+                    }
                 };
 
                 request->Task = Thread::Task::Create(taskFunction, Thread::TaskPriority::NORMAL);
@@ -779,6 +791,10 @@ namespace NorvesLib::Core::Rendering
             if (!decoded.bSuccess)
             {
                 return TextureHandle::Invalid();
+            }
+            if (result.bKeepSrgb && decoded.CreateInfo.PixelFormat == TextureCreateInfo::Format::RGBA8_UNORM)
+            {
+                decoded.CreateInfo.PixelFormat = TextureCreateInfo::Format::RGBA8_SRGB;
             }
 
             ScopedTextureCreateUploadProfileRole profileRole("main_render");
