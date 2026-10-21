@@ -2069,7 +2069,7 @@
 - notes: 危険地帯（描画・アセットロード）。2026-10-21 SCN-WL-MATERIAL-AO-BAKE の反復が足した。
 
 ## SCN-WL-JITTER-LIGHTING: TAA のジッタで描かれる照明の中身が変わる経路を探して直す
-- status: done
+- status: doing
 - after: SCN-WL-RT-TLAS-RANGE-ACCEPT, SCN-WLR-REGRESSION-VALIDATION
 - done-when: （2026-10-21 親が反復 29 の結果で書き換え）ジッタで描かれる中身が変わる経路は VSM の太陽の影と分かった（影を切るとジッタ 1 と 0 の欠けの差 0.264 → 0.097。ページのキャッシュを切っても同じなので使い回しは原因でない。4K の TAA の画で台地の根元の斜面に大きな影の斑が出る）。ジッタの有無で太陽の影の判定が変わる画素を、`VsmSampleSunShadowCore` の受け手の深度・傾き・余裕のデバッグの出力をジッタ 0 と 1 の 2 フレームで比べて特定し、判定がジッタの投影に依る式を直す。どちらの影が正しいかは Cycles の参照（SCN-WLR-CYCLES-GRAY・LIT の ref_far_01 の太陽の可視率）で照らし、直した後の影が Cycles の可視率と合うことも記録する。合否: `--blur-static --expect`（`jitter-lighting.json`）で、TAA（ジッタ 1）の遠景の細部の欠けが、中身が変わらない TAA の見積もり（ジッタ 0 の画を Halton の 8 点でずらして `temporal_aa.frag` の式で貯めた値。反復 29 の `aux-SCN-WL-JITTER-LIGHTING-taasim.py` を検査に組み込む。今 0.353）+ 0.05 以内（ref_far_01・ref_cliff_02 の遠景）。直せない経路が残ったら、経路と量を記録して BLOCKED にする。ほかのシーンの影を変えない（回帰の撮影を -Motion つきで前後に撮って開く。golden が変わるなら再承認）。反復の最初に回帰の撮影の `before` を撮る。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
@@ -2167,7 +2167,7 @@
 - notes: 危険地帯（描画の既定値。空は全シーン共通）。2026-10-19（Sol の批評 17）。
 
 ## SCN-WLR-ATMOS-REF-NEWSET: 空の大気の新しい設定の数値の正解を解いて保存する
-- status: blocked
+- status: todo
 - after: SCN-WLR-GAP-LIST-ATMOS, SCN-WL-HAZE-ONE-MEDIUM, SCN-WL-PSI-GRID
 - done-when: SCN-WLR-GAP-LIST-ATMOS の結論で、空の大気の Mie の設定（係数・尺度高さ）を変えるか、どの値にするかを決めて記録する（写真の空の青 `sky_blue_photo` を設定と写真の処理に分けた結果に従う）。変えるなら、その設定の数値の正解（A と B、SCN-WLR-ATMOS-REF-B と同じ段と収束の基準）を `AtmosphereReference.py --solve` で、反復の外で切り離したプロセスとして解いて保存する（設定の署名つき）。解き終わるまで項目を BLOCKED にして待ち方を書き、終わったら親が todo に戻す。保存した解の収束（段 1 と段 2 の差 0.5 %）を `--verify` で検査して閉じる。変えないなら、その理由を記録して閉じる。
 - verify: `python Scripts/Terrain/AtmosphereReference.py --verify`
