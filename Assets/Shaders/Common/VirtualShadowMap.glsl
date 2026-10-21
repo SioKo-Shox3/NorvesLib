@@ -18,6 +18,7 @@
 // 入口は VsmSampleSunShadow(worldPos, normal, texelMeters)。可視度（1 = 光が当たる、0 = 影）を返し、標本が実際に読んだ段の
 // texel の一辺（m。粗い段へ逃げた標本はその段の値。読めた標本の平均）を返す。深度の比較の余裕と法線の向きへのずらしを受け手で
 // 変える側（地形の受け手）は VsmSampleSunShadowWithBias(worldPos, normal, constantBiasTexels, normalOffsetTexels, texelMeters) を呼ぶ。
+// 草・低木の株の受け手は VsmSampleSunShadowFoliage（PCF の半径の下限と余裕の上限を葉の大きさに合わせる）。
 //
 // 影の縁は CSM（Common/SunShadowCsm.glsl の PCSSFilter）と同じ考え方で、ブロッカーの探索 → 物理の半影 → PCF の順に引く。
 // 半影の半幅（ワールドの長さ）は 受け手と遮る物の深度の差 × 太陽の角半径の tan で、接するところは鋭く、離れるほどぼける。
@@ -62,6 +63,13 @@ const float VSMS_TERRAIN_CONSTANT_BIAS_TEXELS = 3.0;
 const float VSMS_TERRAIN_NORMAL_OFFSET_TEXELS = 0.0;
 // 受け面の深度の傾きの下限（光と面の法線の余弦。CSM の ComputeReceiverDepthGradient と同じ）
 const float VSMS_MIN_NORMAL_COSINE = 0.05;
+// 草・低木の株の受け手（VsmSampleSunShadowFoliage）。葉は幅 0.5 cm・長さ 1.6 cm ほどの小片で、荒野の段 0 の texel（7.8 mm）と
+// 同じ大きさなので、1 texel の半径の PCF は隣の texel の手前の葉を拾い、日の当たる葉を一様に薄く翳らせる。PCF の半径の下限を
+// texel のこの倍にする（画素の大きさの下限はそのまま）。
+const float VSMS_FOLIAGE_MIN_RADIUS_TEXELS = 0.5;
+// 株の受け手の深度の比較の余裕の上限（texel の倍数）。光に浅く当たる葉の傾きの余裕（abs(slope) の和。余弦の下限で最大 40 texel）は、
+// 葉の大きさ（長さ 1.6 cm ≒ 2 texel）を超えて手前の葉の影まで消すので、葉の大きさまでに抑える
+const float VSMS_FOLIAGE_MAX_BIAS_TEXELS = 3.0;
 
 // カメラからの直線距離に対する段（CPU の SelectVirtualShadowMapLevel と同じ結果。d >= しきい値となる k の数）
 uint VsmSelectLevel(float distanceToCamera)
@@ -133,9 +141,10 @@ bool VsmFetchDepthWithFallback(uint level, vec2 lightXY, out float outDepthMeter
 // 太陽の可視度（1 = 光が当たる、0 = 影）。outTexelMeters は PCF の標本が実際に読んだ段の texel の一辺（m）の平均。
 // どの標本も読めなかった（無効・影の距離の外・不正な値・どの段にも無い）ときは、受け手の距離から選んだ段の値。
 // 無効・影の距離の外・不正な値は 1（影なし）。constantBiasTexels は深度の比較の余裕のうち一定の分、normalOffsetTexels は
-// 法線の向きへのずらしの大きさ（どちらも使う段の texel の倍数）。
-float VsmSampleSunShadowWithBias(vec3 worldPos, vec3 normal, float constantBiasTexels, float normalOffsetTexels,
-                                 out float outTexelMeters)
+// 法線の向きへのずらしの大きさ（どちらも使う段の texel の倍数）。minRadiusTexels は PCF の半径の下限のうち texel の倍数の分
+// （ほかの受け手は 1）、maxBiasTexels は深度の比較の余裕（一定の分 + 傾きの分）の上限（texel の倍数。抑えないときは大きな値）。
+float VsmSampleSunShadowCore(vec3 worldPos, vec3 normal, float constantBiasTexels, float normalOffsetTexels,
+                             float minRadiusTexels, float maxBiasTexels, out float outTexelMeters)
 {
     outTexelMeters = 0.0;
     if (VSM_PARAMS.control.x == 0u || VSM_PARAMS.control.y == 0u)
@@ -185,12 +194,12 @@ float VsmSampleSunShadowWithBias(vec3 worldPos, vec3 normal, float constantBiasT
 
     // 半径の下限はワールドで連続な量（段の切り替わりで縁の幅が跳ばない）: 画素の大きさ × 係数（pixel.x に掛けて渡される。
     // VirtualShadowMap::PCF_MIN_RADIUS_PIXELS）と使う段の 1 texel の大きいほう
-    const float minRadius = max(distanceToCamera * VSM_PARAMS.pixel.x, texelMeters);
+    const float minRadius = max(distanceToCamera * VSM_PARAMS.pixel.x, texelMeters * minRadiusTexels);
     const float maxRadius = max(VSM_PARAMS.pixel.z, minRadius);
 
     // ブロッカーの探索（CSM の FindBlockerDepth と同じ）: 探索の半径の 16 点のうち、受け手より手前にある標本の深度の平均を求める。
     // 各標本は自分の位置のページの表を引き、無ければ粗い段へ逃げる（どの段にも無い標本は遮る物なしとして扱う）
-    const float searchSlopeBias = constantBiasTexels + abs(slope.x) + abs(slope.y);
+    const float searchSlopeBias = min(constantBiasTexels + abs(slope.x) + abs(slope.y), maxBiasTexels);
     float blockerSum = 0.0;
     float blockerCount = 0.0;
     float searchEscapes = 0.0;
@@ -247,7 +256,7 @@ float VsmSampleSunShadowWithBias(vec3 worldPos, vec3 normal, float constantBiasT
         bool bEscaped = false;
         if (VsmFetchDepthWithFallback(level, lightXY + offset, blockerDepth, candidateTexel, bEscaped))
         {
-            const float bias = (constantBiasTexels + abs(slope.x) + abs(slope.y)) * candidateTexel;
+            const float bias = min(constantBiasTexels + abs(slope.x) + abs(slope.y), maxBiasTexels) * candidateTexel;
             visible = (sampleReceiver - bias > blockerDepth) ? 0.0 : 1.0;
             readTexelSum += candidateTexel;
             readCount += 1.0;
@@ -267,6 +276,21 @@ float VsmSampleSunShadowWithBias(vec3 worldPos, vec3 normal, float constantBiasT
     // 影の最大の距離の手前（最後のカスケードの幅の 10%）で影を薄め、境界で急に消えないようにする（CSM と同じ）
     shadow = mix(shadow, 1.0, smoothstep(shadowFar - VSM_PARAMS.range.z, shadowFar, viewDistance));
     return shadow;
+}
+
+// 余裕とずらしを受け手で変える太陽の可視度（PCF の半径の下限は 1 texel、余裕は抑えない）
+float VsmSampleSunShadowWithBias(vec3 worldPos, vec3 normal, float constantBiasTexels, float normalOffsetTexels,
+                                 out float outTexelMeters)
+{
+    return VsmSampleSunShadowCore(worldPos, normal, constantBiasTexels, normalOffsetTexels, 1.0, 1.0e30, outTexelMeters);
+}
+
+// 草・低木の株の受け手の太陽の可視度（PCF の半径の下限 VSMS_FOLIAGE_MIN_RADIUS_TEXELS、余裕の上限 VSMS_FOLIAGE_MAX_BIAS_TEXELS。
+// 余裕の一定の分とずらしはほかの物体と同じ）
+float VsmSampleSunShadowFoliage(vec3 worldPos, vec3 normal, out float outTexelMeters)
+{
+    return VsmSampleSunShadowCore(worldPos, normal, VSMS_CONSTANT_BIAS_TEXELS, VSMS_NORMAL_OFFSET_TEXELS,
+                                  VSMS_FOLIAGE_MIN_RADIUS_TEXELS, VSMS_FOLIAGE_MAX_BIAS_TEXELS, outTexelMeters);
 }
 
 // 地形の外の受け手の太陽の可視度（余裕の一定の分は VSMS_CONSTANT_BIAS_TEXELS、ずらしは VSMS_NORMAL_OFFSET_TEXELS）。

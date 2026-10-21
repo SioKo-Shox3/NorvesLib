@@ -4,6 +4,7 @@
 // インスタンスの位置・向き・大きさでワールドへ置いてから、根元は動かず先ほど大きく風下へずらす
 
 #include "Common/FoliageData.glsl"
+#include "Common/FoliagePlacement.glsl"
 
 // 頂点（FoliageVertex）
 layout(location = 0) in vec3 inPosition;
@@ -25,7 +26,6 @@ layout(location = 3) out float fragOcclusion;
 layout(location = 4) out vec4 fragCurrentClip;
 layout(location = 5) out vec4 fragPreviousClip;
 
-const float kTwoPi = 6.2831853;
 // 株が縮み始めてから消えるまでの、残す割合の幅（間引く範囲が 80 m なら、株は 6 m ほどかけて縮む）
 const float kFadeShrinkBand = 0.08;
 
@@ -43,56 +43,11 @@ float FoliageFadeScale(vec3 root, float threshold)
     return clamp((keep - threshold) / kFadeShrinkBand, 0.0, 1.0);
 }
 
-float FoliageHash(vec2 p)
-{
-    vec3 p3 = fract(vec3(p.xyx) * 0.1031);
-    p3 += dot(p3, p3.yzx + 33.33);
-    return fract((p3.x + p3.y) * p3.z);
-}
-
-// 滑らかな値ノイズ（0〜1）
-float FoliageValueNoise(vec2 p)
-{
-    vec2 cell = floor(p);
-    vec2 f = fract(p);
-    vec2 u = f * f * (3.0 - 2.0 * f);
-    float a = FoliageHash(cell);
-    float b = FoliageHash(cell + vec2(1.0, 0.0));
-    float c = FoliageHash(cell + vec2(0.0, 1.0));
-    float d = FoliageHash(cell + vec2(1.0, 1.0));
-    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
-}
-
-// 時刻 t の風のずれ（ワールドの XZ）。root は株の根元、flex はしなりの重み、plantHeight は株の高さ[m]、
-// plantPhase は株ごとの位相、partPhase は葉・枝ごとの位相。突風の塊（低周波の値ノイズ）が風下へ流れ、
-// 株は風下へ傾きながら固有の周波数で揺れ、葉・枝は横へ細かく震える
+// 時刻 t の風のずれ（ワールドの XZ）。式は Common/FoliagePlacement.glsl（影の描画 vsm_draw.vert と同じ）、値はこの束の定数
 vec2 FoliageWindOffset(vec2 root, float flex, float plantHeight, float plantPhase, float partPhase, float t)
 {
-    vec2 direction = foliage.wind.xy;
-    vec2 across = vec2(-direction.y, direction.x);
-    float speed = max(foliage.windParams.x, 0.1);
-    float scale = max(foliage.windParams.y, 0.1);
-    float strength = foliage.windParams.z;
-    float frequency = foliage.windParams.w;
-
-    vec2 flow = direction * speed * t;
-    float gust = 0.65 * FoliageValueNoise((root - flow) / scale) +
-                 0.35 * FoliageValueNoise((root - flow * 1.3) / (scale * 0.37) + vec2(17.31, 5.73));
-    // 揺れは風下へ進む波にする（隣の株と少しずつずれてそろう）
-    float sway = sin(kTwoPi * (frequency * t + plantPhase) - dot(root, direction) * (kTwoPi * frequency / speed));
-    float flutter = sin(kTwoPi * (frequency * 2.7 * t + partPhase + plantPhase * 0.37));
-
-    float lean = strength * (0.2 + 0.8 * gust);
-    float swing = strength * (0.15 + 0.35 * gust) * sway;
-    float shiver = strength * 0.25 * (0.3 + 0.7 * gust) * flutter;
-    return (direction * (lean + swing) + across * shiver) * (plantHeight * flex * flex);
-}
-
-// ずれた分だけ下げて、葉・枝の長さがおおよそ変わらないようにする
-vec3 ApplyFoliageWind(vec3 position, vec2 offset, float heightAboveRoot)
-{
-    float drop = 0.5 * dot(offset, offset) / max(heightAboveRoot, 0.02);
-    return position + vec3(offset.x, -min(drop, heightAboveRoot * 0.5), offset.y);
+    return FoliageWindOffsetFor(root, flex, plantHeight, plantPhase, partPhase, t, foliage.wind.xy, foliage.windParams.xy,
+                                foliage.windParams.z, foliage.windParams.w);
 }
 
 void main()
@@ -111,11 +66,11 @@ void main()
     float s = sin(yaw);
     vec3 scale = vec3(widthScale, heightScale, widthScale);
     vec3 local = inPosition * scale;
-    vec3 position = root + vec3(c * local.x + s * local.z, local.y, -s * local.x + c * local.z);
+    vec3 position = root + FoliageRotateYaw(local, c, s);
     vec3 sideLocal = inSide * scale;
-    vec3 side = vec3(c * sideLocal.x + s * sideLocal.z, sideLocal.y, -s * sideLocal.x + c * sideLocal.z);
+    vec3 side = FoliageRotateYaw(sideLocal, c, s);
     vec3 normalLocal = inNormal / scale;
-    vec3 normal = normalize(vec3(c * normalLocal.x + s * normalLocal.z, normalLocal.y, -s * normalLocal.x + c * normalLocal.z));
+    vec3 normal = normalize(FoliageRotateYaw(normalLocal, c, s));
 
     // 遠くで帯・枝が画素より細くなったら、横の向きへ広げて最小の幅を保つ（広げる上限は元の幅の倍率）
     float halfWidth = length(side);

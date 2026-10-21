@@ -175,18 +175,23 @@ namespace NorvesLib::Core::Rendering
         }
         const double required =
             static_cast<double>(settings.MaxShadowDistance) * static_cast<double>(VirtualShadowMapThresholdDistanceScale);
-        const double coverage =
-            static_cast<double>(VirtualShadowMapLevelCoverageMeters(settings, settings.LevelCount - 1u));
+        VirtualShadowMapClipmapSettings fitted = settings;
+        double coverage = static_cast<double>(VirtualShadowMapLevelCoverageMeters(fitted, fitted.LevelCount - 1u));
         if (!(coverage > 0.0) || coverage >= required)
         {
             return settings;
+        }
+        // 先に段を足す（段 0 の texel と深度の範囲を保つ）
+        while (fitted.LevelCount < std::max(VirtualShadowMapFitMaxLevelCount, settings.LevelCount) && coverage < required)
+        {
+            ++fitted.LevelCount;
+            coverage = static_cast<double>(VirtualShadowMapLevelCoverageMeters(fitted, fitted.LevelCount - 1u));
         }
         int scaleLevels = 0;
         while (scaleLevels < VirtualShadowMapMaxFitScaleLevels && std::ldexp(coverage, scaleLevels) < required)
         {
             ++scaleLevels;
         }
-        VirtualShadowMapClipmapSettings fitted = settings;
         fitted.FirstWidthMeters = std::ldexp(settings.FirstWidthMeters, scaleLevels);
         fitted.DepthRangeMeters = std::ldexp(settings.DepthRangeMeters, scaleLevels);
         return fitted;

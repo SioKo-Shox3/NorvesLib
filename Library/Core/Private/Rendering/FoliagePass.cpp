@@ -136,9 +136,6 @@ namespace NorvesLib::Core::Rendering
             return buffer;
         }
 
-        /// 風の時計の折り返し[s]（float の精度を保つ。折り返しの瞬間だけ揺れが飛ぶ）
-        constexpr double kWindClockWrapSeconds = 4096.0;
-
         RHI::DescriptorSetDesc CreateFoliageDescriptorSetDesc()
         {
             RHI::DescriptorSetDesc descriptorSetDesc;
@@ -356,12 +353,10 @@ namespace NorvesLib::Core::Rendering
             renderHeight > 0 ? 2.0f * std::tan(halfFovRadians) / static_cast<float>(renderHeight) : 0.0f;
 
         // 風の向きと時計（決定的な撮影では 1/60 秒の固定刻みで、エポックの始めから数える）
+        // （影の描画 VirtualShadowMapPass も同じ関数で向きと時計を決める）
         const FoliageWindParameters &wind = scene->Wind;
-        const float directionLength = std::sqrt(wind.DirectionX * wind.DirectionX + wind.DirectionZ * wind.DirectionZ);
-        frameTemplate.wind[0] = directionLength > 1.0e-6f ? wind.DirectionX / directionLength : 1.0f;
-        frameTemplate.wind[1] = directionLength > 1.0e-6f ? wind.DirectionZ / directionLength : 0.0f;
-        const float windTime =
-            static_cast<float>(std::fmod(context.TotalTime, kWindClockWrapSeconds)) + wind.TimeOffsetSeconds;
+        FoliageWindDirection(wind, frameTemplate.wind[0], frameTemplate.wind[1]);
+        const float windTime = FoliageWindClock(context.TotalTime, wind);
         frameTemplate.wind[2] = windTime;
         frameTemplate.wind[3] = windTime - context.DeltaTime;
         frameTemplate.windParams[0] = wind.GustSpeed;

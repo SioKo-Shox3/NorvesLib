@@ -20,7 +20,8 @@ namespace NorvesLib::Core::Rendering
      *
      * ビジビリティバッファの解決（または GBuffer の描画）の後・SSAO と影の印付けの前に置き、GBuffer の 5 枚と深度へ重ねて描く。
      * 頂点シェーダーで風に揺らすので、頂点を読み直す解決の経路には載せない。束ごとに 1 回の DrawIndexedInstanced で描き、
-     * 帯は両面（カリングなし）。影は照明が GBuffer の深度から引くので受ける（影は落とさない）。
+     * 帯は両面（カリングなし）。影は照明が GBuffer の深度から引くので受ける。太陽の影を落とすのは、カメラに近い株を同じ置き方で
+     * 仮想シャドウマップへ描く VirtualShadowMapPass（VirtualShadowMapFoliageCasters.h）。
      *
      * メッシュとインスタンスの配列は作った後に書き換えない値なので、初めて描くときに一度だけ GPU のバッファへ置き、束が
      * 一覧から外れてから十分な回数の描画を待って捨てる。定数・記述子セットは毎フレーム文脈の FrameResources（フレームの持ち主）

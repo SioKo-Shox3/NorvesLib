@@ -309,11 +309,15 @@ float CalculateRangeWindow(float distance, float range)
 // 太陽の影の可視度。--shadow-method=vsm で VSM が使えるときは VSM、それ以外（R5 のハードシャドウの検証表示を含む）は CSM。
 // 地形の受け手（GBuffer の法線の A が 1 以上）は VSM の深度の比較の余裕を広げる（VSMS_TERRAIN_CONSTANT_BIAS_TEXELS の理由を参照）。
 // 影を起伏に詰める地形の受け手（A が 2。荒野）は、さらに法線の向きへずらさない（VSMS_TERRAIN_NORMAL_OFFSET_TEXELS の理由を参照）。
-float CalculateSunShadow(vec3 worldPos, vec3 normal, bool bTerrainReceiver, bool bTightTerrainShadow)
+float CalculateSunShadow(vec3 worldPos, vec3 normal, bool bTerrainReceiver, bool bTightTerrainShadow, bool bFoliageReceiver)
 {
     if (vsmBlock.vsm.control.x != 0u && !IsR5HardShadowValidationMode())
     {
         float texelMeters = 0.0;
+        if (bFoliageReceiver)
+        {
+            return VsmSampleSunShadowFoliage(worldPos, normal, texelMeters);
+        }
         return VsmSampleSunShadowWithBias(worldPos, normal,
                                           bTerrainReceiver ? VSMS_TERRAIN_CONSTANT_BIAS_TEXELS : VSMS_CONSTANT_BIAS_TEXELS,
                                           bTightTerrainShadow ? VSMS_TERRAIN_NORMAL_OFFSET_TEXELS : VSMS_NORMAL_OFFSET_TEXELS,
@@ -1063,8 +1067,11 @@ void main()
     float metallic = materialSample.r;
     float roughness = materialSample.g;
     float ao = materialSample.b;
-    // 鏡面の無い材質（GBuffer の材質の A。MaterialCreateData::bDiffuseOnly）。直接光・環境光とも純ランバートで数える
+    // 鏡面の無い材質（GBuffer の材質の A が 1。MaterialCreateData::bDiffuseOnly）。直接光・環境光とも純ランバートで数える
     bool bDiffuseOnlyMaterial = materialSample.a > 0.5;
+    // 草・低木の株（GBuffer の材質の A が 0.25。foliage.frag）。株は太陽の VSM に描かれ、株の中の影は VSM が受け持つので、
+    // 接触影を掛けない（画面の深度の比べは手前の葉と奥の葉の段で画素ごとに当たり外れになり、点の明暗に崩れる）
+    bool bFoliageReceiver = materialSample.a > 0.125 && materialSample.a < 0.375;
     // 拡散の環境光に掛ける遮蔽（多重反射の近似で色ごとに弱める）
     vec3 diffuseAO = vec3(ao);
 
@@ -1178,9 +1185,9 @@ void main()
         {
             shadow = params.shadowPadding0 != 0u
                          ? texture(rayTracingShadowVisibility, fragUV).r
-                         : CalculateSunShadow(worldPos, N, bTerrainReceiver, bTightTerrainShadow);
-            // RT影は接地部も正しく遮るので、接触影はCSMの結果にだけ掛ける
-            if (params.shadowPadding0 == 0u && shadow > 0.0 && NdotL > 0.0)
+                         : CalculateSunShadow(worldPos, N, bTerrainReceiver, bTightTerrainShadow, bFoliageReceiver);
+            // RT影は接地部も正しく遮るので、接触影はCSMの結果にだけ掛ける（草・低木の株の受け手には掛けない）
+            if (params.shadowPadding0 == 0u && shadow > 0.0 && NdotL > 0.0 && !bFoliageReceiver)
             {
                 shadow *= CalculateContactShadow(worldPos, depthSample, N, L, 1.0e30, bTerrainReceiver);
             }

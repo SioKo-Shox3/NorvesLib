@@ -142,6 +142,11 @@ namespace NorvesLib::Core::Rendering
             ProceduralChunk = 2,
             /** @brief スキニングの塊（MeshIndexChunk。頂点は計算シェーダーが変形したもの） */
             SkinnedChunk = 3,
+            /**
+             * @brief 草・低木の株の塊（VSM の影の描画だけで使う。頂点は FoliageVertex、置き方は塊の記録の World。
+             *        VirtualShadowMapFoliageCasters.h）
+             */
+            FoliageChunk = 4,
         };
 
         /** @brief 描画の記録のフラグ（GLSL の VIS_RECORD_FLAG_* と一致） */

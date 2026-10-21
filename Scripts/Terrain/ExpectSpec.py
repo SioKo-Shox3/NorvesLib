@@ -32,6 +32,10 @@
 #       wall_dark_fraction（エンジン ÷ Cycles が 0.3 未満の画素の割合）、wall_dark_over_cycles（その割合 ÷ Cycles の暗い目地の
 #       割合。Cycles の Y が壁の Cycles の Y の中央値の 0.3 倍未満の画素の割合）、wall_shadow_sunlit_gap（目地を除いた陰の壁と
 #       日なたの壁のエンジン ÷ Cycles の差の絶対値）
+#     plant（ReferenceCheck.py --plant。行の鍵は mode・view・quantity と閾値だけ）: 低木 1 株の比較の視点の検査の結果の
+#       plant_metrics。shadow_ratio_abs_diff（足元の影 ÷ 離れた地面の、エンジンと Cycles の差の絶対値）、
+#       sunlit_visible_fraction（株の日なたの画素のうち、エンジンの太陽の見え方の AOV が 0.9 以上の割合）、
+#       plant_sunlit_ratio（株の日なたのエンジン ÷ Cycles）、shadow_visibility_mean（株の陰のエンジンの太陽の見え方の平均）
 #   min・max: 下限・上限（両端を含む。どちらか一方は要る）
 #   allow_undetermined: 未判定を許すか（既定は許さない）。note: 行の説明（判定には使わない）
 #
@@ -46,7 +50,7 @@ import io
 import json
 import os
 
-MODES = ("gray", "lit", "blur_static", "blur_motion", "bounce", "atmos_ref", "building")
+MODES = ("gray", "lit", "blur_static", "blur_motion", "bounce", "atmos_ref", "building", "plant")
 # bounce の行で使える成分
 BOUNCE_COMPONENTS = ("indirect", "chroma")
 ROW_KEYS = ("mode", "view", "region", "component", "case", "tag", "static", "quantity", "min", "max",
@@ -76,6 +80,11 @@ BUILDING_QUANTITIES = {"albedo_p5": ("albedo", "p5"), "albedo_median": ("albedo"
                        "wall_dark_fraction": ("wall_dark", "engine_fraction"),
                        "wall_dark_over_cycles": ("wall_dark", "over_cycles"),
                        "wall_shadow_sunlit_gap": ("wall_dark", "shadow_sunlit_gap")}
+# plant の量 → 視点の検査の結果の (節, 鍵)
+PLANT_QUANTITIES = {"shadow_ratio_abs_diff": ("plant_metrics", "shadow_ratio_abs_diff"),
+                    "sunlit_visible_fraction": ("plant_metrics", "sunlit_visible_fraction"),
+                    "plant_sunlit_ratio": ("plant_metrics", "plant_sunlit_ratio"),
+                    "shadow_visibility_mean": ("plant_metrics", "shadow_visibility_mean")}
 
 SPEC_DIR = os.path.join("Scripts", "Terrain", "ExpectSpecs")
 SELFTEST_DIR = os.path.join(".harness", "runs", "scene-capture", "SCN-WLR-EXPECT-MATCH")
@@ -153,6 +162,14 @@ def validate_row(rc, row, mode):
         if quantity not in BUILDING_QUANTITIES:
             errors.append(f"building の量は {'・'.join(BUILDING_QUANTITIES)}（{quantity!r} でない）")
         errors.extend(f"{key} は building の行に使わない鍵" for key in ("region", "component", "case", "tag", "static")
+                      if key in row)
+    elif row["mode"] == "plant":
+        import PlantCheck
+        if row.get("view") not in PlantCheck.PLANT_VIEWS:
+            errors.append(f"view {row.get('view')!r} は plant の視点でない")
+        if quantity not in PLANT_QUANTITIES:
+            errors.append(f"plant の量は {'・'.join(PLANT_QUANTITIES)}（{quantity!r} でない）")
+        errors.extend(f"{key} は plant の行に使わない鍵" for key in ("region", "component", "case", "tag", "static")
                       if key in row)
     else:
         if row.get("region") not in BLUR_REGIONS:
@@ -289,12 +306,12 @@ def atmos_ref_value(report, row):
     return (value, None) if value is not None else (None, f"{row['quantity']} の値が無い")
 
 
-def building_value(report, row):
-    """building の行の値。(値, 未判定の理由)"""
+def building_value(report, row, quantities=BUILDING_QUANTITIES):
+    """building・plant の行の値（quantities は量 → 視点の検査の結果の (節, 鍵)）。(値, 未判定の理由)"""
     view = next((v for v in report.get("view_results") or [] if v.get("view") == row["view"]), None)
     if view is None:
         return None, "視点が検査に無い"
-    section, key = BUILDING_QUANTITIES[row["quantity"]]
+    section, key = quantities[row["quantity"]]
     values = view.get(section)
     if values is None:
         return None, f"{section} が無い（" + "; ".join(view.get("failures") or ["比べていない"])[:120] + "）"
@@ -331,6 +348,8 @@ def evaluate(rc, mode, report, rows):
             value, reason = atmos_ref_value(report, row)
         elif mode == "building":
             value, reason = building_value(report, row)
+        elif mode == "plant":
+            value, reason = building_value(report, row, PLANT_QUANTITIES)
         else:
             value, reason = blur_motion_value(report, row)
         low, high = row.get("min"), row.get("max")

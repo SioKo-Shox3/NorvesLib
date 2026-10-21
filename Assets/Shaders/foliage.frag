@@ -43,8 +43,8 @@ void main()
     outAlbedo = vec4(fragAlbedo, 1.0);
     // a は地形の印（草・低木は 0）
     outNormal = vec4(normal, 0.0);
-    // 金属度 0・粗さ・株の中の遮蔽
-    outMaterial = vec4(0.0, foliage.stemColor.a, fragOcclusion, 0.0);
+    // 金属度 0・粗さ・株の中の遮蔽・草・低木の株の印（a = 0.25。照明は株の受け手に接触影を掛けない。lighting.frag）
+    outMaterial = vec4(0.0, foliage.stemColor.a, fragOcclusion, 0.25);
     outEmissive = vec4(0.0, 0.0, 0.0, 1.0);
 
     outVelocity = vec2(0.0);

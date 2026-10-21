@@ -29,6 +29,10 @@
 # 表（領域ごと）: エンジンと Cycles の線形の輝度 Y の平均（cd/m²）と RGB の平均、比（エンジン ÷ Cycles）、Cycles の内訳。
 # 量（描画ごと）: 株の陰 ÷ 株の日なた、透過の葉 ÷ 株の日なた、株の日なた ÷ 離れた地面、足元の影 ÷ 離れた地面（影の比）、
 #   足元の日なた ÷ 離れた地面（遮蔽の比）。
+# --expect の plant の量（視点の検査の結果の plant_metrics）: 影の比のエンジンと Cycles の差の絶対値（shadow_ratio_abs_diff）、
+#   株の日なたの画素のうちエンジンの太陽の見え方の AOV（<視点>.aov.sun_visibility.pfm。照明が求めた影の結果）が
+#   SUNLIT_VISIBLE_MIN 以上の割合（sunlit_visible_fraction）、株の日なたのエンジン ÷ Cycles（plant_sunlit_ratio）。
+#   株の陰の AOV の平均（shadow_visibility_mean）も記録する。
 import json
 import math
 import os
@@ -52,6 +56,8 @@ MIN_SPP_PER_SEED = 512
 PLACEMENT_TOLERANCE = 1e-4
 # 見比べの画像の拡大
 PREVIEW_SCALE = 2
+# 株の日なたで「太陽が見える」とするエンジンの太陽の見え方の AOV の下限（Cycles の株の日なたの領域の見え方の下限と同じ 0.9）
+SUNLIT_VISIBLE_MIN = 0.9
 
 
 def read_json(path):
@@ -227,6 +233,30 @@ def region_values(engine_hdr, cycles, parts, masks):
     return table
 
 
+def plant_metrics(RC, engine_dir, aov, masks, table, ratios):
+    """--expect の plant の量（エンジンの太陽の見え方の AOV と、表・比から求める値）"""
+    metrics = {"sunlit_visible_min": SUNLIT_VISIBLE_MIN}
+    engine_ratio = (ratios.get("engine") or {}).get("ground_shadow_over_ref")
+    cycles_ratio = (ratios.get("cycles") or {}).get("ground_shadow_over_ref")
+    metrics["shadow_ratio_abs_diff"] = (abs(engine_ratio - cycles_ratio)
+                                        if engine_ratio is not None and cycles_ratio is not None else None)
+    metrics["plant_sunlit_ratio"] = table["plant_sunlit"].get("ratio")
+    entry = aov.get("sun_visibility") or {}
+    path = os.path.join(engine_dir, entry.get("file", ""))
+    if not entry.get("file") or not os.path.isfile(path):
+        metrics.update({"sunlit_visible_fraction": None, "shadow_visibility_mean": None})
+        return metrics
+    visibility = RC.read_pfm_any(path)[..., 0].astype(np.float64)
+    for name, key in (("plant_sunlit", "sunlit"), ("plant_shadow", "shadow")):
+        mask = masks[name] & np.isfinite(visibility) & (visibility >= 0.0)
+        values = visibility[mask]
+        metrics[f"{key}_visibility_pixels"] = int(values.size)
+        metrics[f"{key}_visibility_mean"] = float(values.mean()) if values.size else None
+    values = visibility[masks["plant_sunlit"] & np.isfinite(visibility) & (visibility >= 0.0)]
+    metrics["sunlit_visible_fraction"] = float((values >= SUNLIT_VISIBLE_MIN).mean()) if values.size else None
+    return metrics
+
+
 def derived_ratios(table, key):
     """描画（key = engine_y か cycles_y）ごとの、領域どうしの比"""
     def value(name):
@@ -384,6 +414,7 @@ def check_view(RC, engine_dir, reference_dir, view, record, verify, trial):
         for key, value in ratios.items():
             if value is None:
                 failures.append(f"{source} の {key} が求まらない")
+    result["plant_metrics"] = plant_metrics(RC, engine_dir, aov, masks, table, result["ratios"])
     valid = plant.copy()
     for name in PR.REGIONS:
         valid |= masks[name]
@@ -394,7 +425,7 @@ def check_view(RC, engine_dir, reference_dir, view, record, verify, trial):
     return result
 
 
-def run(RC, engine_dirs, reference_dir, views, verify, trial):
+def run(RC, engine_dirs, reference_dir, views, verify, trial, expect=None):
     failures = []
     views = views or list(PLANT_VIEWS)
     if not engine_dirs or not reference_dir:
@@ -430,6 +461,10 @@ def run(RC, engine_dirs, reference_dir, views, verify, trial):
         for source, ratios in (result.get("ratios") or {}).items():
             print(f"REFERENCE_CHECK plant view={view} ratios source={source} " +
                   " ".join(f"{k}={v if v is None else round(v, 4)}" for k, v in ratios.items()))
+        metrics = result.get("plant_metrics") or {}
+        print(f"REFERENCE_CHECK plant view={view} metrics " +
+              " ".join(f"{k}={v if v is None or isinstance(v, int) else round(v, 4)}" for k, v in metrics.items()))
+    RC.apply_expect(report, expect, "plant", failures)
     report["failures"] = failures
     report_path = os.path.join(reference_dir, "plant_check.json")
     with open(report_path, "w", encoding="utf-8") as f:

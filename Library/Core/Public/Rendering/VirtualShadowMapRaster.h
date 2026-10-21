@@ -14,6 +14,8 @@
 // 描画の規則:
 //   - 頂点シェーダーは記録の頂点を（ビジビリティバッファと同じ BDA の読み方で）読み、ワールドへ変換し、ライト空間の位置を
 //     そのページの局所の texel 座標の NDC へ写す。ページの外はビューポートの外になり、ラスタライザが捨てる。背面は省かない。
+//     草・低木の株の塊（RecordKind::FoliageChunk）だけは頂点が FoliageVertex で、記録の World に置いた株の置き方と描画の定数の風で
+//     foliage.vert と同じ式（Common/FoliagePlacement.glsl）で置く（展開は三角形ごとのページの絞り込みをせず、境界が覆うページへ描く）。
 //   - 断片シェーダーは物理ページの texel へ atomicMin(floatBitsToUint(深度 [0,1])) を書く（何も無い texel は 1.0 のビット）。
 //   - 物理ページへ書く前に、消去（VirtualShadowMapPages の VsmClear）が dirty のページを 1.0 のビットで埋めていること。
 //
@@ -170,6 +172,12 @@ namespace NorvesLib::Core::Rendering
         RHI::BufferPtr MegaChunks;
         RHI::BufferPtr MegaList;
         uint32_t MegaCapacity = 0;
+        /**
+         * @brief 草・低木の株の塊（RecordKind::FoliageChunk）を置く、全部の束に共通の風（VirtualShadowMapFoliageCasters.h）。
+         *        FoliageWind = (吹いていく向き X, Z, 風の時計[s], 0)、FoliageWindParams = (突風の速さ[m/s], 突風の大きさ[m], 0, 0)
+         */
+        float FoliageWind[4] = {1.0f, 0.0f, 0.0f, 0.0f};
+        float FoliageWindParams[4] = {};
     };
 
     /** @brief 展開と描画の 2 つのパイプラインと、128×128 の添付なしのレンダーパスを持つ */

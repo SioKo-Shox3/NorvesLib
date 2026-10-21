@@ -15,6 +15,11 @@
 namespace NorvesLib::Core::Rendering
 {
     inline constexpr uint32_t VirtualShadowMapMaxLevels = 16u;
+    /**
+     * @brief FitVirtualShadowMapClipmapToShadowDistance が足せる段の数の上限（ページの表の太陽のスライスの数 VirtualShadowMap::LEVEL_COUNT）。
+     *        荒野（影の距離 10 km）は段を 12 にして段 0 の幅 32 m（texel 1.95 mm）。葉（幅 5 mm）の影を 2.5 texel で受ける
+     */
+    inline constexpr uint32_t VirtualShadowMapFitMaxLevelCount = 12u;
 
     /**
      * @brief クリップマップの設定
@@ -164,11 +169,12 @@ namespace NorvesLib::Core::Rendering
     inline constexpr int VirtualShadowMapMaxFitScaleLevels = 16;
 
     /**
-     * @brief 影の距離に合わせて、段 0 の幅と深度の範囲を広げた設定を返す
+     * @brief 影の距離に合わせて、段を足し、足りなければ段 0 の幅と深度の範囲を広げた設定を返す
      *
      * 段を選ぶ距離の上限（MaxShadowDistance × VirtualShadowMapThresholdDistanceScale）を最も粗い段の被覆
-     * （VirtualShadowMapLevelCoverageMeters）が下回ると、その先の受け手はどの段にも入らず影が落ちない（段の数は固定）。
-     * そのときは段 0 の幅と深度の範囲（DepthRangeMeters）に同じ 2^k を掛ける（k は被覆が上限に届く最小の値。
+     * （VirtualShadowMapLevelCoverageMeters）が下回ると、その先の受け手はどの段にも入らず影が落ちない。
+     * そのときは先に段を VirtualShadowMapFitMaxLevelCount まで 1 つずつ足し（段 0 の texel を保つ）、それでも届かなければ
+     * 段 0 の幅と深度の範囲（DepthRangeMeters）に同じ 2^k を掛ける（k は被覆が上限に届く最小の値。
      * VirtualShadowMapMaxFitScaleLevels まで）。段の幅・texel は元の段 k 〜 k + LevelCount − 1 と同じになり、
      * 深度の量子化と texel の比も変わらない。深度の範囲は、影の距離の中の受け手とそれを遮る物の光の向きの深度の差を覆う。
      * 被覆が足りている（既定の 80 m など）・設定が不正なときは、設定をそのまま返す。

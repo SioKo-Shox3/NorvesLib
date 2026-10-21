@@ -8,6 +8,7 @@
  * GameThread が RenderWorld::SetFoliageBatches で束の一覧を与え、毎フレームの FramePacket に写して RenderThread へ渡す。
  * メッシュとインスタンスの配列は作った後に書き換えない共有の値（TSharedPtr<const ...>）で、写しは参照を数えるだけで済む。
  * 描くのは FoliagePass（ビジビリティの解決の後に GBuffer へ直接ラスタする）で、束ごとに 1 回のインスタンス描画にする。
+ * 太陽の影は、カメラに近い株だけを VirtualShadowMapPass が同じ置き方で仮想シャドウマップへ描く（VirtualShadowMapFoliageCasters.h）。
  * 地形全体へ撒く束は、インスタンスを区画（FoliageCell）ごとにまとめ、区画ごとに視錐台で外し、距離で株を間引く
  * （区画ごとに 1 回のインスタンス描画）。
  */
@@ -15,6 +16,7 @@
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
 
+#include <cmath>
 #include <cstdint>
 
 namespace NorvesLib::Core::Rendering
@@ -104,6 +106,9 @@ namespace NorvesLib::Core::Rendering
         /// 下げる（株は FadeThreshold が残す割合を下回ると縮んで消える）。FadeEndDistance が FadeStartDistance 以下なら間引かない
         float FadeStartDistance = 0.0f;
         float FadeEndDistance = 0.0f;
+        /// 太陽の影（VSM）を落とす株の、カメラから根元までの距離の上限[m]（0 で落とさない）。内側の株を近い順に、
+        /// 株の影の塊の予算（VirtualShadowMapFoliageCasters.h）に収まるだけ影のパスで描く。外の株の接地は照明の接触影だけで出る
+        float ShadowDistance = 25.0f;
         /// 茎・根元の色と、先の色の 2 つ（線形のアルベド）。インスタンスの ColorVariation で先の 2 色を混ぜる
         float StemColor[3] = {0.2f, 0.17f, 0.12f};
         float TipColorA[3] = {0.4f, 0.3f, 0.15f};
@@ -135,6 +140,23 @@ namespace NorvesLib::Core::Rendering
         /// 風の時計に足す値[s]（撮影で、同じ構図の時刻だけを変えた 2 枚を撮るのに使う）
         float TimeOffsetSeconds = 0.0f;
     };
+
+    /// 風の時計の折り返し[s]（float の精度を保つ。折り返しの瞬間だけ揺れが飛ぶ）
+    inline constexpr double FoliageWindClockWrapSeconds = 4096.0;
+
+    /// 描画のフレームの時刻 totalTime[s] での風の時計[s]（GBuffer の描画と影の描画が同じ値で揺らす）
+    inline float FoliageWindClock(double totalTime, const FoliageWindParameters &wind)
+    {
+        return static_cast<float>(std::fmod(totalTime, FoliageWindClockWrapSeconds)) + wind.TimeOffsetSeconds;
+    }
+
+    /// 風の吹いていく向きを長さ 1 にした XZ（長さが 0 なら +X）
+    inline void FoliageWindDirection(const FoliageWindParameters &wind, float &outX, float &outZ)
+    {
+        const float length = std::sqrt(wind.DirectionX * wind.DirectionX + wind.DirectionZ * wind.DirectionZ);
+        outX = length > 1.0e-6f ? wind.DirectionX / length : 1.0f;
+        outZ = length > 1.0e-6f ? wind.DirectionZ / length : 0.0f;
+    }
 
     /// FramePacket で渡す草・低木の一覧
     struct FoliageScene

@@ -65,9 +65,13 @@ namespace NorvesLib::Core::Rendering
         /** @brief クリップマップの 1 段のページの数（一辺）。ページの表の一辺 */
         constexpr uint32_t TABLE_DIMENSION = 128;
         constexpr uint32_t TABLE_ENTRIES_PER_LEVEL = TABLE_DIMENSION * TABLE_DIMENSION;
-        /** @brief 段の数（クリップマップの既定と同じ）。VSM の資源を作るときの既定のスライスの数でもある */
-        constexpr uint32_t LEVEL_COUNT = VirtualShadowMapClipmapSettings{}.LevelCount;
-        static_assert(LEVEL_COUNT >= 1 && LEVEL_COUNT <= VirtualShadowMapMaxLevels, "段の数はクリップマップの上限に収まること");
+        /**
+         * @brief 太陽の段のスライスの数（影の距離に合わせて足せる段の上限 VirtualShadowMapFitMaxLevelCount。既定の段の数 10 より多い分は、
+         *        段を足さないシーンでは空のスライス）。VSM の資源を作るときの既定のスライスの数で、点光源のスライスはこの後ろに並ぶ
+         */
+        constexpr uint32_t LEVEL_COUNT = VirtualShadowMapFitMaxLevelCount;
+        static_assert(LEVEL_COUNT >= VirtualShadowMapClipmapSettings{}.LevelCount && LEVEL_COUNT <= VirtualShadowMapMaxLevels,
+                      "太陽のスライスは既定の段の数以上、クリップマップの上限以下");
         /**
          * @brief 展開のインスタンスと塊の段の印が持てるスライスの数の上限。展開のインスタンスの段の欄は 8 ビット
          *        （インスタンスの y = スライス | 物理ページ << 8。物理ページは 24 ビットまで）

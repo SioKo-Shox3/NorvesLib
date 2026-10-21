@@ -7,7 +7,8 @@
 //
 // 展開（vsm_expand.comp）が作った間接描画の 1 回 = 1 つの塊（塊の番号が counts.x 以上なら MegaGeometry のクラスタの記録 = binding 4）。頂点の番号（0 .. 三角形の数 × 3 - 1）から塊の中の三角形とその頂点を決め、
 // インスタンスの番号（展開が書いた範囲の中の位置）から（スライス・絶対のページ・物理ページ）を引く。インスタンスの y は スライス（下位 8 ビット）| 物理ページ << 8。
-// 頂点の読み方は VisLoadTrianglePositions と同じ（記録の BDA。位置だけを読む）。
+// 頂点の読み方は VisLoadTrianglePositions と同じ（記録の BDA。位置だけを読む）。草・低木の株の塊（VIS_KIND_FOLIAGE_CHUNK）は
+// 頂点が FoliageVertex で、World に置いた株の置き方と params の風で foliage.vert と同じ式で置く（VsmPlaceFoliageVertex）。
 //
 // ライト空間の位置（lx, ly）を、そのページの局所の texel 座標 ((lx - ページの x × ページの幅) / texel の一辺) へ写し、
 // 128 texel = NDC の [-1, 1] とする。ページの外はビューポートの外になり、ラスタライザが捨てる。
@@ -23,6 +24,7 @@
 #include "Common/VisibilityBuffer.glsl"
 #include "Common/VisibilityTriangleFetch.glsl"
 #include "Common/VirtualShadowMapChunk.glsl"
+#include "Common/FoliagePlacement.glsl"
 // binding 5: スライスの表（ページの一辺・texel・投影の行列）
 #define VSM_SLICE_BINDING 5
 #include "Common/VirtualShadowMapSlice.glsl"
@@ -37,6 +39,10 @@ layout(std140, set = 0, binding = 0) uniform VsmRasterParams
     vec4 depth;
     // x: ホストが書いた塊の数（これ以降の塊の番号は MegaGeometry のクラスタの記録）
     uvec4 counts;
+    // 株の塊の風: xy = 吹いていく向き（XZ。長さ 1）、z = 風の時計[s]
+    vec4 foliageWind;
+    // x = 突風の塊の流れる速さ[m/s]、y = 塊の大きさ[m]
+    vec4 foliageWindParams;
 } params;
 
 layout(std430, set = 0, binding = 1) readonly buffer VsmInstances
@@ -54,6 +60,37 @@ layout(std430, set = 0, binding = 4) readonly buffer VsmMegaChunks
 {
     VsmShadowChunk megaChunks[];
 };
+
+// 草・低木の株の頂点（FoliageVertex の 13 個の float: 位置 3・法線 3・横 3・しなりの重み・色の混ぜ・遮蔽・揺れの位相）
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer VsmFoliageVertexWords
+{
+    float words[];
+};
+const uint VSM_FOLIAGE_VERTEX_FLOATS = 13u;
+
+// 株の塊の頂点 vertexIndex を、foliage.vert と同じ置き方でワールドへ置く（帯を画素の幅まで広げる処理は画面の描画だけのもので、影には使わない）。
+// 置き方は塊の World（VirtualShadowMapFoliageCasters.h）: world0 = (根元 xyz, 向き)、world1 = (横の倍率, 高さの倍率, 揺れの位相,
+// 距離で縮める倍率)、world2 = (風の強さ, 揺れの周波数, メッシュの高さ, 0)
+vec3 VsmPlaceFoliageVertex(VisibilityDrawRecord record, uint vertexIndex, vec4 world0, vec4 world1, vec4 world2)
+{
+    VsmFoliageVertexWords foliageVertices = VsmFoliageVertexWords(VisRecordVertexAddress(record));
+    const uint base = vertexIndex * VSM_FOLIAGE_VERTEX_FLOATS;
+    const vec3 position = vec3(foliageVertices.words[base], foliageVertices.words[base + 1u], foliageVertices.words[base + 2u]);
+    const float flex = foliageVertices.words[base + 9u];
+    const float partPhase = foliageVertices.words[base + 12u];
+
+    const vec3 root = world0.xyz;
+    const float c = cos(world0.w);
+    const float s = sin(world0.w);
+    const float widthScale = world1.x * world1.w;
+    const float heightScale = world1.y * world1.w;
+    const vec3 local = position * vec3(widthScale, heightScale, widthScale);
+    const vec3 placed = root + FoliageRotateYaw(local, c, s);
+    const float plantHeight = world2.z * heightScale;
+    const vec2 offset = FoliageWindOffsetFor(root.xz, flex, plantHeight, world1.z, partPhase, params.foliageWind.z,
+                                             params.foliageWind.xy, params.foliageWindParams.xy, world2.x, world2.y);
+    return ApplyFoliageWind(placed, offset, max(local.y, 0.0));
+}
 
 layout(location = 0) flat out uint outPhysicalPage;
 layout(location = 1) out float outDepth;
@@ -82,14 +119,23 @@ void main()
     VisIndexWords indices = VisIndexWords(VisRecordIndexAddress(record));
     VisVertexArray vertices = VisVertexArray(VisRecordVertexAddress(record));
     const uint vertexIndex = VisLoadTriangleVertexIndex(record, indices, triangle, corner);
-    const vec4 local = vec4(vertices.vertices[vertexIndex].px,
-                            vertices.vertices[vertexIndex].py,
-                            vertices.vertices[vertexIndex].pz,
-                            1.0);
     const vec4 world0 = bMega ? megaChunks[megaIndex].world0 : chunks[instance.x].world0;
     const vec4 world1 = bMega ? megaChunks[megaIndex].world1 : chunks[instance.x].world1;
     const vec4 world2 = bMega ? megaChunks[megaIndex].world2 : chunks[instance.x].world2;
-    const vec3 world = vec3(dot(world0, local), dot(world1, local), dot(world2, local));
+    vec3 world;
+    if (!bMega && VisRecordKind(record) == VIS_KIND_FOLIAGE_CHUNK)
+    {
+        // 草・低木の株: 頂点は FoliageVertex、World は株の置き方
+        world = VsmPlaceFoliageVertex(record, vertexIndex, world0, world1, world2);
+    }
+    else
+    {
+        const vec4 local = vec4(vertices.vertices[vertexIndex].px,
+                                vertices.vertices[vertexIndex].py,
+                                vertices.vertices[vertexIndex].pz,
+                                1.0);
+        world = vec3(dot(world0, local), dot(world1, local), dot(world2, local));
+    }
 
     const uint level = instance.y & 255u;
     const uint physical = instance.y >> 8u;

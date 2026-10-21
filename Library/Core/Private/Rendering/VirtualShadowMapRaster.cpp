@@ -32,9 +32,11 @@ namespace NorvesLib::Core::Rendering
             float lightDirection[4];
             float depth[4];      // x = 深度の原点、y = 1 / (2 × 深度の範囲)
             uint32_t counts[4];  // x = 塊の数、y = スライスの数、z = インスタンスの容量、w = MegaGeometry のクラスタの記録の容量
+            float foliageWind[4];        // 株の塊の風: xy = 吹いていく向き（XZ）、z = 風の時計[s]
+            float foliageWindParams[4];  // x = 突風の速さ[m/s]、y = 突風の大きさ[m]
         };
         // ページの一辺・texel・範囲の原点・投影の行列はスライスの表（GPUVsmSlice。ExpandBindSlices・DrawBindSlices）にある
-        static_assert(sizeof(GPURasterParams) == 80, "vsm_expand.comp・vsm_draw.vert の VsmRasterParams と同じ大きさにすること");
+        static_assert(sizeof(GPURasterParams) == 112, "vsm_expand.comp・vsm_draw.vert の VsmRasterParams と同じ大きさにすること");
 
         // 絶対のページの番号を int32 でシェーダーへ渡せる範囲（範囲の端 + 128 ページが溢れない余裕を持つ）
         constexpr int64_t MaxOriginMagnitude = 1ll << 30;
@@ -610,6 +612,8 @@ namespace NorvesLib::Core::Rendering
         params.counts[3] = bMega ? dispatch.MegaCapacity : 0u;
         params.counts[2] = instanceCapacity > std::numeric_limits<uint32_t>::max() ? std::numeric_limits<uint32_t>::max()
                                                                                     : static_cast<uint32_t>(instanceCapacity);
+        std::copy(dispatch.FoliageWind, dispatch.FoliageWind + 4, params.foliageWind);
+        std::copy(dispatch.FoliageWindParams, dispatch.FoliageWindParams + 4, params.foliageWindParams);
 
         // スライスの表（ページの一辺・texel・範囲の原点・投影の行列）。外から渡されなければクリップマップから作る
         GPUVsmSlice sliceStorage[VirtualShadowMapMaxSlices];

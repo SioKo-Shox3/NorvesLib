@@ -292,7 +292,8 @@
 #       低木 1 株を、エンジン（--wasteland-hide=all-but-plant の撮影）と Cycles（BlenderReference.py --plant）で比べる
 #       （PlantCheck.py。株の日なたと陰、太陽を背にした葉の透過、株の足元の影と日なたの遮蔽の明るさと、離れた地面との比）。
 #       比較が成り立つ条件と未判定で落ちる扱いは --building と同じ。--trial は収束の条件だけを外す。
-#       報告は <Cycles の書き先>/plant_check.json。
+#       報告は <Cycles の書き先>/plant_check.json。--expect は影の比の差・株の日なたの太陽の見え方・株の日なたの比を仕様の
+#       閾値で判定する（ExpectSpec.py の plant）。
 #
 # 終了コード: すべて合格なら 0、どれかが不合格なら 1。
 import argparse
@@ -6090,9 +6091,9 @@ def main():
         return ExpectSpec.run_selftest(sys.modules[__name__], args.verify)
     expect = os.path.normpath(args.expect if os.path.isabs(args.expect) else os.path.join(REPO_ROOT, args.expect))         if args.expect else None
     if expect and not (args.gray or args.lit or args.blur_static or args.blur_motion or args.bounce or args.atmos_ref or
-                       args.building):
+                       args.building or args.plant):
         print("REFERENCE_CHECK result=fail reason=expect_unsupported（--expect は --gray・--lit・--blur-static・--blur-motion・"
-              "--bounce・--atmos-ref・--building と使う）")
+              "--bounce・--atmos-ref・--building・--plant と使う）")
         return 1
     if args.require_judged is not None and not args.lit:
         print("REFERENCE_CHECK result=fail reason=require_judged_unsupported（--require-judged は --lit と使う）")
@@ -6146,7 +6147,8 @@ def main():
         absolute = lambda d: os.path.normpath(d if os.path.isabs(d) else os.path.join(REPO_ROOT, d))
         views = [v.strip() for v in args.views.split(",") if v.strip()]
         return PlantCheck.run(sys.modules[__name__], [absolute(d) for d in args.engine],
-                              absolute(args.reference) if args.reference else "", views, args.verify, args.trial)
+                              absolute(args.reference) if args.reference else "", views, args.verify, args.trial,
+                              expect=expect)
     if args.rt_scene:
         import RtScene
         capture = args.capture or (args.engine[0] if args.engine else "")

@@ -69,13 +69,19 @@ namespace NorvesLib::Core::Rendering
             uint32_t DroppedChunks = 0;
             /** @brief 境界・アドレス・塊を作れず、集められなかった描画の数 */
             uint32_t SkippedDraws = 0;
+            /** @brief 記録にした草・低木の株の数と塊の数（VirtualShadowMapFoliageCasters.h） */
+            uint32_t FoliageDraws = 0;
+            uint32_t FoliageChunks = 0;
+            /** @brief 影の距離の内側にあって、株の塊の予算に収まらず描かなかった株の数 */
+            uint32_t FoliageOverBudget = 0;
 
             bool operator==(const CasterStats& other) const
             {
                 return ProceduralDraws == other.ProceduralDraws && ProceduralChunks == other.ProceduralChunks &&
                        SkinnedDraws == other.SkinnedDraws && SkinnedChunks == other.SkinnedChunks &&
                        CulledChunks == other.CulledChunks && DroppedChunks == other.DroppedChunks &&
-                       SkippedDraws == other.SkippedDraws;
+                       SkippedDraws == other.SkippedDraws && FoliageDraws == other.FoliageDraws &&
+                       FoliageChunks == other.FoliageChunks && FoliageOverBudget == other.FoliageOverBudget;
             }
         };
 

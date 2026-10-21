@@ -39,6 +39,8 @@ const uint VIS_KIND_NONE = 0u;
 const uint VIS_KIND_MEGA_CLUSTER = 1u;
 const uint VIS_KIND_PROCEDURAL_CHUNK = 2u;
 const uint VIS_KIND_SKINNED_CHUNK = 3u;
+// 草・低木の株の塊（VSM の影の描画だけ。頂点は FoliageVertex。VisibilityBuffer.h の RecordKind::FoliageChunk）
+const uint VIS_KIND_FOLIAGE_CHUNK = 4u;
 
 // 記録のフラグ（VisibilityBuffer.h の RECORD_FLAG_* と一致）
 const uint VIS_RECORD_FLAG_INDEX16 = 1u;

@@ -51,6 +51,9 @@ layout(std140, set = 0, binding = 0) uniform VsmRasterParams
     vec4 depth;
     // x: ホストが書いた塊の数、y: スライスの数、z: インスタンスの容量、w: MegaGeometry のクラスタの記録の容量（0 なら無し）
     uvec4 counts;
+    // 株の塊の風（vsm_draw.vert だけが読む）
+    vec4 foliageWind;
+    vec4 foliageWindParams;
 } params;
 
 layout(std430, set = 0, binding = 1) readonly buffer VsmChunks
@@ -259,7 +262,9 @@ bool PrepareTouched(inout uint builtLevel, inout bool bBuiltFilter, VisibilityDr
         return bBuiltFilter;
     }
     const uint total = size.x * size.y;
-    const bool bFilter = total >= 2u && total <= TOUCH_MAX_PAGES && triangles != 0u && VisRecordHasAddresses(record);
+    // 草・低木の株の塊は頂点が FoliageVertex で、置き方は描画の頂点シェーダーが決めるので、三角形ごとには絞らない（境界が覆うページへ描く）
+    const bool bFilter = total >= 2u && total <= TOUCH_MAX_PAGES && triangles != 0u && VisRecordHasAddresses(record) &&
+                         VisRecordKind(record) != VIS_KIND_FOLIAGE_CHUNK;
     if (bFilter)
     {
         // 前のスライスの印の読み手が終わってから消す
