@@ -2306,7 +2306,7 @@
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -Build -RequireAssets -Width 1920 -Height 1080 -Views ref_far_01,ref_far_02,ref_cliff_01,ref_cliff_02,ref_ground_01,ref_ground_02 -OutDir .harness/runs/scene-capture/SCN-WL-REVIEW-2`
 - verify: `python Scripts/Terrain/CompareReference.py --capture .harness/runs/scene-capture/SCN-WL-REVIEW-2 --verify`
 - paths: Scripts/Terrain, Docs/RenderingValidation, TASKS.md, PROGRESS.md
-- notes: 2026-10-19: 確認 2 の後で、建物・植物・雲の直す項目と中身（NAIP の航空写真〔取得はユーザーの許可〕・スキャンの葉・スキャンの礫・建物の風化）を組む。
+- notes: 2026-10-19: 確認 2 の後で、建物・植物・雲の直す項目と中身（NAIP の航空写真〔取得はユーザーの許可〕・スキャンの葉・スキャンの礫・建物の風化）を組む。 2026-10-21（ユーザー了承）: 遠景の方針。地形は今の事前クックの環状の段＋MegaGeometry の DAG とページの読み込みのまま（インポスター不要）。植物は 〜60 m を株の実体（スキャンの葉）、60 m〜1.5 km 前後を八面体のインポスター（Blender でスキャンの株から焼く）、それより先は NAIP の航空写真の地形の色に植生の斑として任せる。インポスターの項目は SCN-WLR-PLANT-REF-FAR の結果（遠景の植物の欠け）を見て、確認 2 の後の植物の作業に組む。あわせて `Docs/RenderingValidation/WastelandDem.md` の遠景の節（58 メッシュ等）が今の horizon.json（98 メッシュ）と合わないので直す。
 ## SCN-WL-BLENDER-TERRAIN-VIEW: Blender に荒野の地形と手本の視点を再現する
 - status: backlog
 - done-when: Blender のヘッドレスで、荒野の地形の主役の崖の周り（Battleship Rock の範囲と崖錐、`Assets/Terrain/ValleyOfTheGods/height.r32`）をメッシュとして読み込み、手本の視点（`WastelandRoutine.cpp` の `kReferenceShots` の ref_cliff_01・cliff）と同じカメラを置いて描く台本を `Scripts/Terrain/` に作る。エンジンの座標（X・Z・高さ・向き）と Blender の座標の変換を 1 か所にまとめる。Blender の描画と、同じ視点のエンジンの撮影を並べた図を開き、崖の輪郭が重なる（輪郭の差が数画素以内）ことを確かめる。崖の素材を置く次の項目は、この台本の上で配置を見ながら直す。
