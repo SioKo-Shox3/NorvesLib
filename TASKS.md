@@ -2268,7 +2268,7 @@
 - notes: 危険地帯（影）。2026-10-21 親が SCN-WLR-PLANT-REF-NEAR の直す項目の案 1 から足した（影の無い株は浮いて見えるので確認 2 の前に直す）。案 2（両面の透過）・案 3・4（アルファのマスク・素材の差し替え、中身）は確認 2 の後に組む（葉の素材を差し替えるときに合わせる）。時間の見積もり: 回帰の before・after 各 6 分、ビルド 3〜6 分、撮影 1 本 約 2 分、撒いた株の撮影 1 本 約 3 分。 2026-10-21（親）: 反復 28 の BLOCKED を推奨の 1 で解いた。影の比の差は 0.023 で合格。株の日なたは枝が引き下げていた（見え方 ≥ 0.9 の割合 葉 0.771・枝 0.488、比 葉 0.79・枝 0.36）。基準 2・3 を葉だけで判定し、葉の部分的な影の残り（PCF）を詰める。反復 28 の記録は `blocked/resolved/SCN-WL-PLANT-SHADOW-leaves-only.md`。
 
 ## SCN-WL-PLANT-SHADOW-RANGE: 影のパスに入れる株を低木優先・近い順にし、低木が 60 m まで太陽の影を落とすようにする
-- status: done
+- status: todo
 - after: SCN-WL-PLANT-SHADOW
 - done-when: SCN-WL-PLANT-SHADOW の記録（`aux-SCN-WL-PLANT-SHADOW-grass-after.txt`）で、撒いた株の視点（grass）の影のパスの株が塊の予算の上限 14892 で止まり（予算の外 43946）、影を落とすのはカメラから 4.2 m までの株だけだった（近くの草の束が予算を埋めている見込み）。影のパスに入れる株を、低木（ブラックブラッシュ・モルモンティー）を草より優先して近い順に選び、草は影のパスから外す（草の接地は接触影と AO に任せる）。低木はカメラから 60 m まで（遠景の方針で株の実体を描く範囲。`Docs/Plans/WastelandRebuild.md` の遠景の方針）影を落とす。合否: grass の視点で、影を落とす低木の最も遠い根元が 60 m 以上（届かなければ届いた距離と塊の予算を記録して BLOCKED）、影のパスの株の数・VSM のページの数・GPU 時間（中央値）を前後で記録する。plant_near の `--plant --expect plant-shadow.json` が変わらず合格する。反復の最初に回帰の撮影の `before` を撮る。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
@@ -2276,7 +2276,7 @@
 - verify: `python Scripts/Terrain/ReferenceCheck.py --plant --engine .harness/runs/scene-capture/SCN-WL-PLANT-SHADOW-RANGE --reference .harness/runs/scene-capture/SCN-WLR-PLANT-REF --views plant_near --expect Scripts/Terrain/ExpectSpecs/plant-shadow.json --verify`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Terrain/CaptureRegression.ps1 -Item SCN-WL-PLANT-SHADOW-RANGE -Phase after`
 - paths: Assets/Shaders, Library/Core/Private/Rendering, Library/Core/Public/Rendering, Game, Scripts, Docs/RenderingValidation, TASKS.md, PROGRESS.md
-- notes: 危険地帯（影）。2026-10-21 親が SCN-WL-PLANT-SHADOW の記録から足した（影が 4.2 m までしか落ちないと、確認 2 の絵で中景の低木が浮いて見える）。時間の見積もり: 回帰の before・after 各 7 分、ビルド 3〜6 分、撮影 plant_near 約 2 分・grass 約 3 分。
+- notes: 危険地帯（影）。2026-10-21 親が SCN-WL-PLANT-SHADOW の記録から足した（影が 4.2 m までしか落ちないと、確認 2 の絵で中景の低木が浮いて見える）。時間の見積もり: 回帰の before・after 各 7 分、ビルド 3〜6 分、撮影 plant_near 約 2 分・grass 約 3 分。 2026-10-22（親）: 遮断器の BLOCKED を解いた。3 回のうち 1 回は親の操縦の誤り（反復 41 が STEER に従って SKY-SCATTER の記録を直し、この項目の着地と数えられた）。反復 43 の落ちた理由: Cycles の正解（f6eae327）を `SCN-WL-PLANT-SHADOW-RANGE-head` の撮影（08ed7b10 の前のコード、深度 53670bd1…）の深度で描いたが、今のコードの撮影の深度は 516bcf17… で、画面のほぼ全画素が相対 1e-5 前後（最大 8.9e-5）ずれる（08ed7b10 のシェーダの変更による演算の差と見込む）。直し方: verify と同じ撮影先（`SCN-WL-PLANT-SHADOW-RANGE`）を今のコードで撮ってから、その深度で plant_near の正解を描き直す。DONE の前に、同じ exe で撮り直しても深度のハッシュが変わらないこと（ランナーの再検証は -Build で撮り直す）を 1 回確かめる。同じ exe でも変わるなら、PlantCheck.py の深度の照合をハッシュの一致から許容幅（相対 1e-3 以下。領域の判定の DEPTH_MATCH_RELATIVE 0.01 より十分小さい）へ直す。BlenderReference.py は参照の記録が script_sha256 を持つので、ほかの参照を古くしないよう触らない（深度の写しが要るなら PlantCheck 側か別の小さな台本で置く）。
 
 ## SCN-WLR-PLANT-REF-FAR: 低木の遠くでの見え方を 2 倍の解像度の正解と比べる
 - status: todo
