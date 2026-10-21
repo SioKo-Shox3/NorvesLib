@@ -2192,7 +2192,7 @@
 - notes: 2026-10-19。Cycles の描画は反復の中で保存する。
 
 ## SCN-WL-PROP-ALBEDO-SRGB: glTF の模型の基本色のテクスチャを sRGB として読む
-- status: todo
+- status: done
 - after: SCN-WLR-BUILDING-REF
 - done-when: SCN-WLR-BUILDING-REF の描画の欠陥 2（`Docs/RenderingValidation/WastelandBuildingRef.md`）: 建物のアルベドの AOV の中央値 0.656 がテクスチャの符号値のままで、sRGB を解かずに読まれている疑い（線形なら 0.36 前後）。クックの基本色の画像の扱い（`Tools/AssetCook/MeshCooker.cpp` の `MeshImageRole::Albedo`）と実行時のテクスチャの形式（UNORM か SRGB か）を確かめて直す。合否: outpost の建物のアルベドの AOV の中央値がテクスチャの線形の値と 3 % 以内で合う（`--building --expect`、`prop-albedo-srgb.json`。期待値はテクスチャから線形に戻した値の中央値をこの項目で測って書く）。同じ経路で読む glTF の模型（夜の集落の家・材質ギャラリーなど）の見た目も変わるので、絶対規則 7 に従い回帰の撮影の前後を開いて、差が sRGB の直しだけによることを確かめる。golden が変わるなら SCN-WL-GOLDEN-REAPPROVE と同じ手順で再承認する。反復の最初に回帰の撮影の `before` を撮る。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`

@@ -461,6 +461,10 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
 
         // NormalTexture が2チャンネル（BC5）のとき true。Zはシェーダーが XY から戻す
         bool bNormalTwoChannel = false;
+        // AlbedoTexture が sRGB で符号化した基本色（glTF の baseColorTexture）のとき true。テクスチャが UNORM の形式で
+        // 張られている（Game はクック済みの sRGB を元画像と同じ標本値にするため UNORM で上げる）と、シェーダーが線形へ戻す。
+        // sRGB の形式ならハードが戻すので何もしない。地形の混ぜ合わせの材質は TerrainBlendShading の判定で戻すので使わない
+        bool bAlbedoSrgb = false;
 
         // POMパラメータ
         float HeightScale = 0.0f;

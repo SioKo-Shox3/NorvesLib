@@ -1585,7 +1585,8 @@ namespace NorvesLib::Core::Rendering
                    a.AlbedoTexture == b.AlbedoTexture && a.NormalTexture == b.NormalTexture &&
                    a.MetallicTexture == b.MetallicTexture && a.RoughnessTexture == b.RoughnessTexture &&
                    a.AOTexture == b.AOTexture && a.ORMTexture == b.ORMTexture && a.HeightTexture == b.HeightTexture &&
-                   a.bNormalTwoChannel == b.bNormalTwoChannel && a.HeightScale == b.HeightScale &&
+                   a.bNormalTwoChannel == b.bNormalTwoChannel && a.bAlbedoSrgb == b.bAlbedoSrgb &&
+                   a.HeightScale == b.HeightScale &&
                    a.bHasHeightMap == b.bHasHeightMap && a.DisplacementUVSpacing == b.DisplacementUVSpacing &&
                    a.TerrainBlend == b.TerrainBlend;
         }
@@ -3136,9 +3137,12 @@ namespace NorvesLib::Core::Rendering
                 bTerrainBlend ? resolveTexture(terrain.SurfaceMaskTexture, nullptr) : RHI::TexturePtr();
             // 遠景の地図も引けたときだけ使う（引けなければ遠くでも画素ごとの式で描く）
             RHI::TexturePtr farMap = bTerrainBlend ? resolveTexture(terrain.FarMapTexture, nullptr) : RHI::TexturePtr();
-            // 3 層のアルベドが UNORM で張られていれば、シェーダーが sRGB から線形へ戻す
-            const uint32_t albedoDecodeBits = ResolveTerrainAlbedoDecodeBits(albedo.get(), terrainTextures[0].get(),
-                                                                             terrainTextures[3].get());
+            // 3 層のアルベドが UNORM で張られていれば、シェーダーが sRGB から線形へ戻す。地形でない材質は、基本色が sRGB の
+            // 材質（bAlbedoSrgb）だけ 1 層目（材質のアルベドの枠）のビットを立てる（シェーダーは地形でなくてもこのビットで戻す）
+            const uint32_t albedoDecodeBits =
+                bTerrainBlend ? ResolveTerrainAlbedoDecodeBits(albedo.get(), terrainTextures[0].get(), terrainTextures[3].get())
+                : mat.bAlbedoSrgb && IsTerrainAlbedoSrgbDecodeNeeded(albedo.get()) ? TERRAIN_BLEND_SAND_ALBEDO_SRGB_DECODE
+                                                                                    : 0u;
             PackTerrainBlendParams(terrain, bTerrainBlend, surfaceMask != nullptr, farMap != nullptr, albedoDecodeBits,
                                    uniform.TerrainParams);
             if (!surfaceMask)

@@ -142,3 +142,23 @@ outpost の距離では、建物は幾何として浮いておらず（0.13〜0.
      色は周りの地面のアルベド（0.15 前後）から始める。
    - 汚れ: 壁の下 0.3〜0.6 m を地面の土の色へ寄せる汚れの層（模型の材質の高さの重ねか、壁の下端のデカール）。
      確かめは、1〜3 の後に Cycles にも同じ物を置き、近い視点を足して写真の手本（土の壁の集落の写真）と並べる。
+
+## 描画の欠陥 2 を直した結果（SCN-WL-PROP-ALBEDO-SRGB）
+
+- 原因: クックは基本色を `nvtex.v0.rgba8.srgb` で出している（`MeshCooker.cpp` の `MeshImageRole::Albedo`）。Game はクック済みの
+  sRGB を元画像と同じ標本値にするため UNORM の形式で上げる（`AssetSystem::SetTreatSrgbTexturesAsLinear`）。地形はシェーダーで
+  線形へ戻していた（`TerrainBlendShading.h`）が、模型の材質は戻していなかった。
+- 直し: `MegaMeshMaterial::bAlbedoSrgb`（glTF の模型を置く Game の各シーンが立てる）で、テクスチャが UNORM なら標本の後に線形へ戻す。
+  ラスタ（`megageometry.frag`）と可視性バッファの解決（`VisibilityResolve.glsl`。材質の表の `MATERIAL_FLAG_ALBEDO_SRGB`）の両方。
+  sRGB の形式で張られたときはハードが戻すので何もしない。起動画面の球など glTF でない材質は変えていない。
+- 合否（`ReferenceCheck.py --building --expect Scripts/Terrain/ExpectSpecs/prop-albedo-srgb.json`）: 建物の画素 6485 個のアルベドの
+  AOV の輝度の中央値 0.656 → 0.391（期待値 0.3908 ± 3 %）。期待値は直す前の撮影の同じ画素の値を画素ごとに線形へ戻した中央値。
+  テクスチャ全体の線形の中央値 0.361 は見えない面も含むので期待値にしていない（見える画素の符号化した値の中央値は 0.656、
+  テクスチャ全体は 0.633）。
+- 直した後の表: 壁の Y エンジン ÷ Cycles 日なた 1.28 → 0.80、陰 1.17 → 0.72、壁の下端 0.88。壁の日なた ÷ 陰 3.68（Cycles 3.32）。
+  エンジンの方が暗くなったのは、地面の照り返しの違い（実材質 0.15 と灰色 0.3。条件 2）と陰の壁の黒い目地（欠陥 1）が
+  まだ混ざるため。比べ直し（直す項目の案 3）で切り分ける。
+- ほかのシーン（回帰の撮影の前後。`.harness/runs/regression/SCN-WL-PROP-ALBEDO-SRGB/`）: 変わった画素は glTF の模型だけで、
+  ほぼすべて暗く色が濃くなる向き。Rendering3DTest は家と岩（7.7 % の画素、球・地面・天球は同じ）、mega-bananas はバナナ（17.7 %、
+  床は同じ）、夜の集落は家・塔・崖の模型（5.8 %）、sandbox は差 0。基準画像の検査（Test の exe）は Game のシーンを使わず、
+  印の既定は偽なので変わらない。

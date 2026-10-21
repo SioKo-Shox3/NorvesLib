@@ -6318,3 +6318,25 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 撮影の間も反復の外の大気の正解の解 3 本が走っていた
   - 葉の透過の比 0.5 は仮の素直な値（`PLANT_LEAF_TRANSMITTANCE_RATIO`）。新しい試験は足していない
 - Next: TASKS.md の次の未完の項目
+
+### SCN-WL-PROP-ALBEDO-SRGB 完了（2026-10-21、run 20261021-055341 の反復 21）
+- Done: glTF の模型の基本色を sRGB として読む。クックは基本色を sRGB で出していたが、Game はクック済みの sRGB を UNORM で上げ（`SetTreatSrgbTexturesAsLinear`）、模型の材質はシェーダーで戻していなかった（地形だけ戻していた）
+  - `MegaMeshMaterial::bAlbedoSrgb` を足し、テクスチャが UNORM なら標本の後に線形へ戻す。ラスタ（`megageometry.frag`。非地形の材質は地形の混ぜ方の値の 1 層目の戻しのビット）と可視性バッファの解決（材質の表の `MATERIAL_FLAG_ALBEDO_SRGB` → `TILE_FLAG_ALBEDO_SRGB_DECODE`）の両方
+  - 印を立てるのは glTF の模型を置く所だけ: 荒野・夜の集落の模型、Rendering3DTest の家と岩、mega-bananas のバナナ、mega-stress の模型（変位させた球は除く）
+  - `ReferenceCheck.py --building --expect`（`ExpectSpec.py` に building のモード、`BuildingCheck.py` がアルベドの AOV の建物の画素の 5・50・95 % 点を書く）と仕様 `prop-albedo-srgb.json`
+- 結果: 建物のアルベドの中央値 0.656 → 0.391（期待値 0.3908 ± 3 %）。記録は `Docs/RenderingValidation/WastelandBuildingRef.md` の最後の節
+- 証拠（`.harness/runs/20261021-055341/`）:
+  - `aux-SCN-WL-PROP-ALBEDO-SRGB-regression-before.txt` 開始時の回帰の before（RelWithDebInfo のビルドを含む）result=pass・EXIT=0
+  - `verify-SCN-WL-PROP-ALBEDO-SRGB-1.txt` Debug の Game のビルド EXIT=0
+  - `verify-SCN-WL-PROP-ALBEDO-SRGB-2.txt` outpost の撮影 result=pass・EXIT=0（597 秒）。PNG を開き、白く飛んでいた壁が石積みの色になったこと、ほかは同じことを確かめた
+  - `aux-SCN-WL-PROP-ALBEDO-SRGB-expect-before.txt` 直す前の撮影で同じ仕様が落ちる（0.6564 が範囲外）
+  - `aux-SCN-WL-PROP-ALBEDO-SRGB-cycles-rerender.txt` 建物の Cycles の参照の描き直し EXIT=0（512 サンプルで収束）
+  - `verify-SCN-WL-PROP-ALBEDO-SRGB-3.txt` `--building --expect --verify` result=pass・expect pass・inputs_current=1・EXIT=0
+  - `verify-SCN-WL-PROP-ALBEDO-SRGB-4.txt` 回帰の after result=pass・EXIT=0（sandbox PSNR inf、ほか 3 シーンは模型だけ変化）。前後の PNG と差の画素の範囲（`aux-SCN-WL-PROP-ALBEDO-SRGB-regression-diff.txt`）を開いた
+- Notes:
+  - 期待値はテクスチャ全体の線形の中央値（0.361）ではなく、直す前の撮影の同じ画素の値を画素ごとに線形へ戻した中央値（0.3908）にした。テクスチャ全体は見えない面も含み、正しく直しても 8 % ずれるため
+  - 建物の Cycles の参照（SCN-WLR-BUILDING-REF）は、SCN-WLR-PLANT-REF-BASE で `BlenderReference.py` が変わったため古い結果として --verify で落ちた。同じ入力（SCN-WLR-BUILDING-REF-BASE の撮影）で描き直した（表の値は前と同じ）
+  - 直した後は壁の Y がエンジン ÷ Cycles で日なた 0.80・陰 0.72 と暗い側へ移った。地面の照り返しの違いと黒い目地がまだ混ざる（直す項目の案 2・3 で切り分け）
+  - 起動画面の球（クック済みの sRGB の石畳）など glTF でない材質も同じく UNORM のまま標本されている。この項目の範囲（glTF の模型）の外なので変えていない
+  - golden は変わらない（Test の exe は Game のシーンを使わず、印の既定は偽）ので再承認していない。新しい試験は足していない
+- Next: TASKS.md の次の未完の項目

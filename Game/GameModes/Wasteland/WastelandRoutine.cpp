@@ -1253,6 +1253,8 @@ namespace Game::GameModes
                 createInfo.Material.NormalTexture = material.NormalTexture;
                 createInfo.Material.ORMTexture = material.ORMTexture;
                 createInfo.Material.bNormalTwoChannel = material.bNormalTwoChannel;
+                // glTF の模型の基本色は sRGB（UNORM で張られていればシェーダーが線形へ戻す）
+                createInfo.Material.bAlbedoSrgb = true;
                 const Layout::PropKind kind = static_cast<Layout::PropKind>(kindIndex);
                 if (kind == Layout::PropKind::Cliff01 || kind == Layout::PropKind::Cliff02)
                 {

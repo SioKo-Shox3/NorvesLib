@@ -701,6 +701,12 @@ namespace Game::GameModes
             {
                 createInfo.Material.DisplacementUVSpacing = StartupBigSphere::DisplacementUVSpacing();
             }
+            else
+            {
+                // glTF の模型の基本色は sRGB（UNORM で張られていればシェーダーが線形へ戻す）。変位させた球は起動画面の
+                // 球と同じ材質のままにする
+                createInfo.Material.bAlbedoSrgb = true;
+            }
             createInfo.DebugName = load.Spec.Id.c_str();
             const MegaMeshHandle megaMesh = megaGeometry.CreateMegaMesh(createInfo);
             if (!megaMesh.IsValid())

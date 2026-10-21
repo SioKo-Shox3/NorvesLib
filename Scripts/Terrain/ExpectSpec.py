@@ -25,6 +25,8 @@
 #       psi_grid・psi_cell: 多重散乱の表 Ψ_ms のエンジン ÷ 正解 A の、1 との差の絶対値の最大。psi_grid は表の格子点
 #       （psi_summary.grid_max_rel）、psi_cell は格子のセルの中心で表を補間した値（psi_summary.center_max_rel）。
 #       どちらも高度 10 km まで・太陽が地平線より上
+#     building（ReferenceCheck.py --building。行の鍵は mode・view・quantity と閾値だけ）: エンジンのアルベドの AOV の、Cycles の
+#       建物の画素での線形の輝度の分布（視点の検査の結果の albedo）。albedo_p5・albedo_median・albedo_p95（5・50・95 % 点）
 #   min・max: 下限・上限（両端を含む。どちらか一方は要る）
 #   allow_undetermined: 未判定を許すか（既定は許さない）。note: 行の説明（判定には使わない）
 #
@@ -39,7 +41,7 @@ import io
 import json
 import os
 
-MODES = ("gray", "lit", "blur_static", "blur_motion", "bounce", "atmos_ref")
+MODES = ("gray", "lit", "blur_static", "blur_motion", "bounce", "atmos_ref", "building")
 # bounce の行で使える成分
 BOUNCE_COMPONENTS = ("indirect", "chroma")
 ROW_KEYS = ("mode", "view", "region", "component", "case", "tag", "static", "quantity", "min", "max",
@@ -63,6 +65,8 @@ ATMOS_REF_QUANTITIES = {"sun_transmittance": (("illuminance", "valley_floor"), "
                         "haze_optical_depth": (("haze",), "ground_max_rel"),
                         "psi_grid": (("psi_summary",), "grid_max_rel"),
                         "psi_cell": (("psi_summary",), "center_max_rel")}
+# building の量 → 視点の検査の結果の albedo の鍵
+BUILDING_QUANTITIES = {"albedo_p5": "p5", "albedo_median": "p50", "albedo_p95": "p95"}
 
 SPEC_DIR = os.path.join("Scripts", "Terrain", "ExpectSpecs")
 SELFTEST_DIR = os.path.join(".harness", "runs", "scene-capture", "SCN-WLR-EXPECT-MATCH")
@@ -132,6 +136,14 @@ def validate_row(rc, row, mode):
         if quantity not in ATMOS_REF_QUANTITIES:
             errors.append(f"atmos_ref の量は {'・'.join(ATMOS_REF_QUANTITIES)}（{quantity!r} でない）")
         errors.extend(f"{key} は atmos_ref の行に使わない鍵" for key in ("region", "component", "case", "tag", "static")
+                      if key in row)
+    elif row["mode"] == "building":
+        import BuildingCheck
+        if row.get("view") not in BuildingCheck.BUILDING_VIEWS:
+            errors.append(f"view {row.get('view')!r} は building の視点でない")
+        if quantity not in BUILDING_QUANTITIES:
+            errors.append(f"building の量は {'・'.join(BUILDING_QUANTITIES)}（{quantity!r} でない）")
+        errors.extend(f"{key} は building の行に使わない鍵" for key in ("region", "component", "case", "tag", "static")
                       if key in row)
     else:
         if row.get("region") not in BLUR_REGIONS:
@@ -268,6 +280,18 @@ def atmos_ref_value(report, row):
     return (value, None) if value is not None else (None, f"{row['quantity']} の値が無い")
 
 
+def building_value(report, row):
+    """building の行の値。(値, 未判定の理由)"""
+    view = next((v for v in report.get("view_results") or [] if v.get("view") == row["view"]), None)
+    if view is None:
+        return None, "視点が検査に無い"
+    albedo = view.get("albedo")
+    if albedo is None:
+        return None, "albedo が無い（" + "; ".join(view.get("failures") or ["比べていない"])[:120] + "）"
+    value = albedo.get(BUILDING_QUANTITIES[row["quantity"]])
+    return (value, None) if value is not None else (None, f"{row['quantity']} の値が無い")
+
+
 def row_label(row):
     parts = [row.get("mode"), row.get("view"), row.get("case"), row.get("tag"), row.get("region"), row.get("component"),
              row.get("quantity")]
@@ -295,6 +319,8 @@ def evaluate(rc, mode, report, rows):
             value, reason = blur_static_value(rc, report, row)
         elif mode == "atmos_ref":
             value, reason = atmos_ref_value(report, row)
+        elif mode == "building":
+            value, reason = building_value(report, row)
         else:
             value, reason = blur_motion_value(report, row)
         low, high = row.get("min"), row.get("max")

@@ -195,6 +195,11 @@ void main()
                                             terrainSurfaceMaskTexture, terrainFarMapTexture, surface, bVirtualTexture,
                                             terrainNormal);
     }
+    else if ((uint(terrain.layers.w + 0.5) & TERRAIN_BLEND_SAND_ALBEDO_SRGB_DECODE) != 0u)
+    {
+        // 地形でない材質: sRGB で符号化した基本色が UNORM の形式で張られているので、線形へ戻す（MegaMeshMaterial::bAlbedoSrgb）
+        textureSamples.Albedo.rgb = TerrainSrgbToLinear(textureSamples.Albedo.rgb);
+    }
     // VT のフィードバック: POM の後の UV で欲しいタイルの要求を書く（VT のテクスチャごとに表の番号を持つ）。
     // 高さだけは POM の前の元の UV で書く。
     WriteVirtualTextureFeedback(albedoTexture, texCoord, DecodeVirtualTextureFeedbackParam(mvp.materialParams.w),

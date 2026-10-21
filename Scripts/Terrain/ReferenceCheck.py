@@ -281,11 +281,12 @@
 #       その各視点も検査して、写真｜前｜後の比較画像 <6 視点の撮影先>/grading_sheet.png を書く。報告は <撮影先>/grading_check.json。
 #       --verify は撮影の入力の記録を今のファイルと照らす。
 #   python Scripts/Terrain/ReferenceCheck.py --building --engine <撮影先> --reference <Cycles の書き先> [--views outpost] [--trial]
-#                                            [--verify]
+#                                            [--expect <仕様の JSON>] [--verify]
 #       前哨地の建物 1 棟を、エンジン（--wasteland-hide=all-but-building の撮影）と Cycles（BlenderReference.py --building）で比べる
 #       （BuildingCheck.py。足元から 0〜2 m の地面の帯・壁の下端・壁の日なたと陰の明るさと比、深度から求めた建物の下端と地面の
 #       高さの差）。比較が成り立つ条件（深度の輪郭が 2 画素以内・Cycles の収束・領域の画素の下限）を満たさないか、表の領域が
 #       未判定なら落ちる（エンジンとの一致は求めない）。--trial は収束の条件だけを外す。報告は <Cycles の書き先>/building_check.json。
+#       --expect はエンジンのアルベドの AOV の建物の画素の分布を仕様の閾値で判定する（ExpectSpec.py の building）。
 #   python Scripts/Terrain/ReferenceCheck.py --plant --engine <撮影先> --reference <Cycles の書き先> [--views plant_near] [--trial]
 #                                            [--verify]
 #       低木 1 株を、エンジン（--wasteland-hide=all-but-plant の撮影）と Cycles（BlenderReference.py --plant）で比べる
@@ -6074,7 +6075,7 @@ def main():
     parser.add_argument("--regression", action="store_true",
                         help="回帰の撮影の after（--capture）を before（--reference）と並べる（CaptureRegression.ps1 が呼ぶ）")
     parser.add_argument("--expect", default="",
-                        help="--gray・--lit・--blur-static・--blur-motion・--bounce・--atmos-ref で、領域・成分ごとの合否の閾値の仕様（Scripts/Terrain/ExpectSpecs/ の JSON）"
+                        help="--gray・--lit・--blur-static・--blur-motion・--bounce・--atmos-ref・--building で、領域・成分ごとの合否の閾値の仕様（Scripts/Terrain/ExpectSpecs/ の JSON）"
                              "の各行も判定する")
     parser.add_argument("--expect-selftest", action="store_true",
                         help="保存した撮影で、今の値で通る仕様が通り、外れる行・許さない未判定・仕様の誤りで落ちることを確かめる")
@@ -6088,9 +6089,10 @@ def main():
         import ExpectSpec
         return ExpectSpec.run_selftest(sys.modules[__name__], args.verify)
     expect = os.path.normpath(args.expect if os.path.isabs(args.expect) else os.path.join(REPO_ROOT, args.expect))         if args.expect else None
-    if expect and not (args.gray or args.lit or args.blur_static or args.blur_motion or args.bounce or args.atmos_ref):
+    if expect and not (args.gray or args.lit or args.blur_static or args.blur_motion or args.bounce or args.atmos_ref or
+                       args.building):
         print("REFERENCE_CHECK result=fail reason=expect_unsupported（--expect は --gray・--lit・--blur-static・--blur-motion・"
-              "--bounce・--atmos-ref と使う）")
+              "--bounce・--atmos-ref・--building と使う）")
         return 1
     if args.require_judged is not None and not args.lit:
         print("REFERENCE_CHECK result=fail reason=require_judged_unsupported（--require-judged は --lit と使う）")
@@ -6137,7 +6139,8 @@ def main():
         absolute = lambda d: os.path.normpath(d if os.path.isabs(d) else os.path.join(REPO_ROOT, d))
         views = [v.strip() for v in args.views.split(",") if v.strip()]
         return BuildingCheck.run(sys.modules[__name__], [absolute(d) for d in args.engine],
-                                 absolute(args.reference) if args.reference else "", views, args.verify, args.trial)
+                                 absolute(args.reference) if args.reference else "", views, args.verify, args.trial,
+                                 expect=expect)
     if args.plant:
         import PlantCheck
         absolute = lambda d: os.path.normpath(d if os.path.isabs(d) else os.path.join(REPO_ROOT, d))

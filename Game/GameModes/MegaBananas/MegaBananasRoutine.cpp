@@ -550,6 +550,8 @@ namespace Game::GameModes
                 createInfo.Material.NormalTexture = material.NormalTexture;
                 createInfo.Material.ORMTexture = material.ORMTexture;
                 createInfo.Material.bNormalTwoChannel = material.bNormalTwoChannel;
+                // glTF の模型の基本色は sRGB（UNORM で張られていればシェーダーが線形へ戻す）
+                createInfo.Material.bAlbedoSrgb = true;
                 createInfo.DebugName = "Banana";
 #if NORVES_BUILD_DEVELOPMENT
                 LogBananaBoundingSpheres(createInfo);

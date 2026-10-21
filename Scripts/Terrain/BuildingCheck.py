@@ -312,6 +312,16 @@ def check_view(RC, engine_dir, reference_dir, view, record, verify, trial):
     if not building.any():
         failures.append("Cycles に建物の画素が無い")
         return dict(result, failures=failures, **{"pass": False})
+    # エンジンのアルベドの AOV（線形）の、Cycles の建物の画素での輝度の分布（--expect の building の量）
+    albedo = RC.read_pfm_any(os.path.join(engine_dir, aov["albedo"]["file"])).astype(np.float64)
+    if albedo.shape[:2] != building.shape:
+        failures.append("エンジンのアルベドの AOV の大きさが Cycles と違う")
+        return dict(result, failures=failures, **{"pass": False})
+    albedo_y = albedo[building][:, :3] @ GR.LUMA
+    albedo_y = albedo_y[np.isfinite(albedo_y)]
+    if albedo_y.size:
+        p5, p50, p95 = (float(v) for v in np.percentile(albedo_y, [5, 50, 95]))
+        result["albedo"] = {"pixels": int(albedo_y.size), "p5": p5, "p50": p50, "p95": p95}
 
     # 光の内訳の和（直接 + 間接、太陽の組 + 空の組 が合成に合う）
     surface = alpha > 0.5
@@ -384,7 +394,7 @@ def check_view(RC, engine_dir, reference_dir, view, record, verify, trial):
     return result
 
 
-def run(RC, engine_dirs, reference_dir, views, verify, trial):
+def run(RC, engine_dirs, reference_dir, views, verify, trial, expect=None):
     failures = []
     views = views or list(BUILDING_VIEWS)
     if not engine_dirs or not reference_dir:
@@ -422,6 +432,11 @@ def run(RC, engine_dirs, reference_dir, views, verify, trial):
             print(f"REFERENCE_CHECK building view={view} bottom_gap source={source} gap_m={gap.get('gap_m')} "
                   f"bottom_y={gap.get('bottom_y')} ground_y={gap.get('ground_y')} "
                   f"placement_bottom_y={gap.get('placement_bottom_y')}")
+        albedo = result.get("albedo")
+        if albedo:
+            print(f"REFERENCE_CHECK building view={view} engine_albedo pixels={albedo['pixels']} p5={albedo['p5']:.4f} "
+                  f"median={albedo['p50']:.4f} p95={albedo['p95']:.4f}")
+    RC.apply_expect(report, expect, "building", failures)
     report["failures"] = failures
     report_path = os.path.join(reference_dir, "building_check.json")
     with open(report_path, "w", encoding="utf-8") as f:

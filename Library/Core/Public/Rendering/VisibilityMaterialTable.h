@@ -58,6 +58,12 @@ namespace NorvesLib::Core::Rendering::VisibilityBuffer
      * （材質の解決が GBuffer の法線の A に 2 を書く）
      */
     constexpr uint32_t MATERIAL_FLAG_TERRAIN_TIGHT_SHADOW = 64u;
+    /**
+     * @brief 基本色が sRGB で符号化された MegaGeometry の材質（MegaMeshMaterial::bAlbedoSrgb）
+     *
+     * 材質の解決は、アルベドのテクスチャが UNORM の形式で張られていれば標本の後に線形へ戻す（ラスタの megageometry.frag と同じ）。
+     */
+    constexpr uint32_t MATERIAL_FLAG_ALBEDO_SRGB = 128u;
 
     /**
      * @brief 材質の表の 1 件（storage buffer の 1 要素。128 バイト）

@@ -798,6 +798,8 @@ namespace Game::GameModes
                     createInfo.Material.AOTexture = material.AOTexture;
                     createInfo.Material.ORMTexture = material.ORMTexture;
                     createInfo.Material.bNormalTwoChannel = material.bNormalTwoChannel;
+                    // glTF の模型の基本色は sRGB（UNORM で張られていればシェーダーが線形へ戻す）
+                    createInfo.Material.bAlbedoSrgb = true;
                     createInfo.DebugName = load.DebugName;
 
                     // MegaMesh は材質のテクスチャを所有しない。材質ごとに作った VT は、シーンの範囲で追跡して

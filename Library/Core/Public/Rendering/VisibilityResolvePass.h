@@ -67,6 +67,8 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t TILE_FLAG_TERRAIN_SURFACE = 8u;
         /** @brief 太陽の影を起伏に詰める地形の面（GBuffer の法線の A に 2 を書く。lighting.frag が法線の向きへずらさない） */
         constexpr uint32_t TILE_FLAG_TERRAIN_TIGHT_SHADOW = 16u;
+        /** @brief sRGB で符号化した基本色が UNORM の形式で張られている材質（標本の後に線形へ戻す。地形の混ぜ合わせの材質には立てない） */
+        constexpr uint32_t TILE_FLAG_ALBEDO_SRGB_DECODE = 32u;
         /** @brief 地形の 2・3 層目のテクスチャの数（土・岩肌のアルベド・法線・ORM） */
         constexpr uint32_t TERRAIN_LAYER_TEXTURE_COUNT = 6;
         /** @brief 地表の分類の地図の、地形のテクスチャの並びでの添え字（2・3 層目の 6 枚の次） */
@@ -256,6 +258,8 @@ namespace NorvesLib::Core::Rendering
         bool bTerrainSurface = false;
         /** @brief 太陽の影を起伏に詰める地形の面（MegaTerrainBlend::IsTightSunShadowSurface） */
         bool bTightSunShadow = false;
+        /** @brief 基本色が sRGB の材質（MATERIAL_FLAG_ALBEDO_SRGB）で、アルベドのテクスチャが UNORM の形式で張られている */
+        bool bAlbedoSrgbDecode = false;
         RHI::TexturePtr TerrainTextures[VisibilityResolveGeometry::TERRAIN_TEXTURE_COUNT];
         float TerrainParams[VisibilityResolveGeometry::TERRAIN_PARAM_FLOATS] = {};
     };

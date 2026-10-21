@@ -141,7 +141,8 @@ namespace NorvesLib::Core::Rendering::VisibilityBuffer
         // MegaGeometry の定数 AO を予約語へ格納する。ハンドルの領域とは重ならない。
         std::memcpy(&entry.TexturesD[2], &material.OcclusionStrength, sizeof(float));
         entry.Header[0] = (material.bNormalTwoChannel ? MATERIAL_FLAG_NORMAL_TWO_CHANNEL : 0u) |
-                          (material.bHasHeightMap ? MATERIAL_FLAG_HAS_HEIGHT : 0u) | MATERIAL_FLAG_MEGA_GEOMETRY;
+                          (material.bHasHeightMap ? MATERIAL_FLAG_HAS_HEIGHT : 0u) |
+                          (material.bAlbedoSrgb ? MATERIAL_FLAG_ALBEDO_SRGB : 0u) | MATERIAL_FLAG_MEGA_GEOMETRY;
         entry.Header[1] = static_cast<uint32_t>(ShadingModel::DefaultLit);
         entry.Header[2] = static_cast<uint32_t>(BlendMode::Opaque);
         if (material.TerrainBlend.IsTerrainSurface())
