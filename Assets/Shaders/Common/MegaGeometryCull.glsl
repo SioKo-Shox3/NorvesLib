@@ -616,7 +616,7 @@ bool IsPageResident(uint pageTableBase, uint pageId)
 /**
  * @brief ページを要求する（同じフレームの同じページは1回だけ列へ積む）
  *
- * 常駐していない子のページの要求と、描いたクラスタの常駐ページの使用の印の両方に使う。
+ * 常駐していない子のページの要求と、カットが使う常駐ページ（描いた・遮蔽で落ちたクラスタと、子に任せた子のページ）の使用の印の両方に使う。
  * どちらもページの表の位置を積むだけで、ホストが自分の記録から区別する（使用の印はホストの LRU を使われた順にする）。
  *
  * 印の交換で重複を省く: ページの表の requestStamp を今のフレームの印に替え、前の値が同じ印なら先に誰かが積んだ。
@@ -655,14 +655,17 @@ void RequestPage(uint pageTableBase, uint pageId)
  *   - 自分の誤差が許容を超える（もっと細かい子が欲しい）ときは、子のページが常駐していなければ穴を作らないよう自分を描き、
  *     outRequestPage に子のページを返す（呼び出し側が、実際に描かれたときだけ要求する）。子のページが常駐していれば、
  *     子が描くので自分は描かない。同じグループの子は同じページなので、子と親が重なって描かれることは無い。
+ *     このとき outUsedChildPage に子のページを返す（子のクラスタが遮蔽で描かれなくても、カットが使うページとして印を出す）。
  *   - どちらも、親のグループの誤差が許容を超える（親では粗すぎる）ときだけ描く。
  *
  * @param outRequestPage 子のページが常駐していないために自分を描くとき、その子のページ。それ以外は INVALID_PAGE_ID
+ * @param outUsedChildPage 子のページが常駐していて子に任せるとき、その子のページ。それ以外は INVALID_PAGE_ID
  * @return true = このクラスタを描画すべき
  */
-bool ShouldDrawBakedCluster(GPUClusterData cluster, uint pageTableBase, out uint outRequestPage)
+bool ShouldDrawBakedCluster(GPUClusterData cluster, uint pageTableBase, out uint outRequestPage, out uint outUsedChildPage)
 {
     outRequestPage = INVALID_PAGE_ID;
+    outUsedChildPage = INVALID_PAGE_ID;
     if (!IsPageResident(pageTableBase, cluster.bakedInfo.w))
     {
         return false; // 自分のページが無い → 親が代わりに描く
@@ -685,6 +688,7 @@ bool ShouldDrawBakedCluster(GPUClusterData cluster, uint pageTableBase, out uint
         uint childPage = cluster.pageInfo.x;
         if (IsPageResident(pageTableBase, childPage))
         {
+            outUsedChildPage = childPage;
             return false;
         }
         outRequestPage = childPage;
@@ -830,7 +834,8 @@ bool ShouldDrawShadowCluster(GPUClusterData cluster, vec3 center, uint pageTable
     if ((cluster.bakedInfo.x & CLUSTER_FLAG_BAKED_LOD) != 0u)
     {
         uint requestPage;
-        return ShouldDrawBakedCluster(cluster, pageTableBase, requestPage);
+        uint usedChildPage;
+        return ShouldDrawBakedCluster(cluster, pageTableBase, requestPage, usedChildPage);
     }
     return ShouldDrawCluster(cluster, center);
 }
@@ -1029,19 +1034,24 @@ void ProcessCluster(uint instanceIndex, MegaInstance instance, uint clusterIndex
     // 視錐台・法線のコーン・LODの判定（遮蔽の判定の前。1パス目と2パス目で同じ式なので、2パス目が1パス目の判定を
     // 判定し直せる。ページの表はフレームの間は変わらないので、ページの常駐の判定もパスの間で食い違わない）
     uint requestPage = INVALID_PAGE_ID;
-    // 描いたときに使用の印を出す、このクラスタ自身のページ（焼き込みの階層を持たないクラスタはページを持たない）
+    // 視錐台と法線のコーンを通り、子のページが常駐していて子に任せるときの子のページ。子のクラスタが遮蔽で描かれなくても
+    // カットが使うので使用の印を出す（出さないと、遮蔽で描かれない子のページが LRU の最古に見えて外され、親が描かれて
+    // 要求し直す読み直しが続く）
+    uint usedChildPage = INVALID_PAGE_ID;
+    // 描いたとき・LOD で選ばれたが遮蔽で落ちたときに使用の印を出す、このクラスタ自身のページ（焼き込みの階層を持たないクラスタはページを持たない）
     uint ownPage = ((cluster.bakedInfo.x & CLUSTER_FLAG_BAKED_LOD) != 0u) ? cluster.bakedInfo.w : INVALID_PAGE_ID;
     bool bPassesBasicTests =
         !FrustumCullSphere(center, radius) &&
         !NormalConeCull(cluster.normalCone.xyz, cluster.normalCone.w, localCenter, localRadius) &&
         (((cluster.bakedInfo.x & CLUSTER_FLAG_BAKED_LOD) != 0u)
-             ? ShouldDrawBakedCluster(cluster, instance.bvhInfo.w, requestPage)
+             ? ShouldDrawBakedCluster(cluster, instance.bvhInfo.w, requestPage, usedChildPage)
              : ShouldDrawCluster(cluster, center));
 
     if (cullData.cullPass == CULL_PASS_FIRST)
     {
         if (!bPassesBasicTests)
         {
+            RequestPage(instance.bvhInfo.w, usedChildPage);
             return;
         }
         // 前のフレームの HZB に隠れていれば描かない（この描画の深度から2パス目の HZB を作る）
@@ -1066,6 +1076,8 @@ void ProcessCluster(uint instanceIndex, MegaInstance instance, uint clusterIndex
     {
         if (!bPassesBasicTests)
         {
+            // 2パス目へ回された範囲・節から初めてたどり着いたクラスタの分（1パス目に見たものは同じ記録の印で省かれる）
+            RequestPage(instance.bvhInfo.w, usedChildPage);
             return;
         }
         // 1パス目が描いたもの（たどり着き、前の HZB に隠れなかった）は描き済み
@@ -1078,6 +1090,9 @@ void ProcessCluster(uint instanceIndex, MegaInstance instance, uint clusterIndex
         if (OcclusionCullSphere(center, radius))
         {
             CountStat(STAT_OCCLUDED);
+            // LOD で選ばれたが遮蔽で落ちた: 子のページは要求しないが、自分のページは使用の印を出す（隠れている間に外されると、
+            // 見えたときに粗い段が出る。予算が足りないときは隠れた物から外すより、親が描かれて読み直す入れ替えの方が重い）
+            RequestPage(instance.bvhInfo.w, ownPage);
             return;
         }
         EmitDrawCommand(instanceIndex, instance, clusterIndex, cluster);
@@ -1088,12 +1103,17 @@ void ProcessCluster(uint instanceIndex, MegaInstance instance, uint clusterIndex
     }
 
     // 従来の経路: 遮蔽の判定なしの1回の判定（bHiZEnabled=0）
-    if (bPassesBasicTests && !OcclusionCullSphere(center, radius))
+    if (!bPassesBasicTests)
+    {
+        RequestPage(instance.bvhInfo.w, usedChildPage);
+        return;
+    }
+    if (!OcclusionCullSphere(center, radius))
     {
         EmitDrawCommand(instanceIndex, instance, clusterIndex, cluster);
         RequestPage(instance.bvhInfo.w, requestPage);
-        RequestPage(instance.bvhInfo.w, ownPage);
     }
+    RequestPage(instance.bvhInfo.w, ownPage);
 }
 
 #endif // NORVES_MEGA_GEOMETRY_CULL_GLSL

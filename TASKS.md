@@ -2103,7 +2103,7 @@
 - notes: 危険地帯（メモリ・ストリーミング）。2026-10-19 GAP-LIST の描画の欠陥 11（`geometry_residency`。Sol の批評 16 と 2 周目）。ref2x・resident の組は反復の中で撮って保存する。
 
 ## SCN-WL-GEOM-LOWVRAM: VRAM の空きが少ないときに、ジオメトリの読み込みが粗い段で落ち着くようにする
-- status: todo
+- status: done
 - after: SCN-WL-GEOM-BUDGET
 - done-when: 通常の LOD の選び方で、予算が足りないとき（ほかのアプリが VRAM を約 4 GB 使う 2026-10-19 の実測。開発ビルドだけの予算の上書き `vram-budget-mb` で再現する。この項目で作る）に、要求・追い出し・LOD の選び方で粗い段に下がって落ち着くようにする。最細の LOD の固定（`wasteland-finest-lod`）は比較用で段 0 しか描かないので、この項目の対象にしない（予算が足りないときに固定を外す退避もしない。比較の撮影は `-LaunchPerView` で回避済み）。落ち着いた後の 60 秒の推移（要求・読み込み中・追い出し・常駐の量・選んだ段）を `geom-settle-trace`（開発ビルドだけ。この項目で作る）で記録し、追い出しが止まり使用量が予算の内に留まることを `ReferenceCheck.py --geom-settle`（この項目で作る）で検査する。通常の予算の撮影が SCN-WL-GEOM-BUDGET の仕様を満たし続けることも反復の中で確かめる。Release に検証用の仕組みを入れない。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`

@@ -6176,3 +6176,17 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 谷床の標高は 1 つの値（ref_ground_02 の足元）にした。視点ごとの足元の差（数十 m）で太陽の透過率は 0.3 % ほどしか変わらない
   - 新しい試験は足していない。`AtmosphereReference.py` は触っていない（保存した解の署名が変わるため）
 - Next: TASKS.md の次の未完の項目
+
+### SCN-WL-GEOM-LOWVRAM 完了（2026-10-21、run 20261021-055341 の反復 12）
+- Done: `Assets/Shaders/Common/MegaGeometryCull.glsl` の `ProcessCluster` で、視錐台と法線のコーンを通ったクラスタが常駐している子のページに任せるとき（`ShouldDrawBakedCluster` の新しい出力 `outUsedChildPage`）はその子のページに、LOD で選ばれたが遮蔽で落ちたとき（2パス目の遮蔽・従来の経路の遮蔽）は自分のページに使用の印を書く。子のページの要求は描いたクラスタだけのまま、描く物は変えない。影（VSM）は今までどおり要求も印も出さない（影のためにページを読み込まないので、影だけが使うページは要求し直されず入れ替えにならない）。記録は `Docs/RenderingValidation/WastelandFarBlurStatic.md` の「VRAM が少ないとき」
+- 結果（ref_cliff_02）: 6600 MB で 60 秒の追い出し 3028 → 0 件（常駐 2295 ページ・249.98 MB ≤ ページの目標 250.09 MB、最も細かい常駐は段 2、未常駐 385 は予算で止まったまま、記録の前の追い出し 18、要求の溢れ 0）。11000 MB は 4289 ページ・472.82 MB・追い出し 0・溢れ 0。2 枚の PNG を開き、穴や崩れが無く見分けられないことを確かめた
+- 証拠（`.harness/runs/20261021-055341/`）:
+  - `verify-SCN-WL-GEOM-LOWVRAM-1.txt` Debug の Game のビルド EXIT=0
+  - `verify-SCN-WL-GEOM-LOWVRAM-2.txt` 11000 MB の撮影 result=pass・EXIT=0（game_exe 4eb2c618…。シェーダーは実行時に Assets から組む）
+  - `verify-SCN-WL-GEOM-LOWVRAM-3.txt` `--geom-settle --verify` result=pass・inputs_current=1・EXIT=0
+  - `aux-SCN-WL-GEOM-LOWVRAM-marks-6600.txt` 6600 MB の撮影と `--geom-settle --verify` result=pass
+  - `aux-SCN-WL-GEOM-LOWVRAM-budget-spec.txt` 通常の予算の ref2x（-Aov で撮り直し）・resident・base を同じ Game.exe で撮り、`--blur-static --expect geom-budget.json --verify` result=pass（rows=8・failed=0。base − resident は欠け +0.0004〜+0.0010・エイリアス −0.0006〜+0.0020。base・resident とも 8121 ページ・追い出し 0・溢れ 0）
+  - `regression-before-SCN-WL-GEOM-LOWVRAM.txt`（作業ツリーのシェーダーを一時的に HEAD へ戻して撮り、撮影の後に戻した）・`regression-after-SCN-WL-GEOM-LOWVRAM.txt` result=pass: mega-bananas psnr 62.0、night-village 72.2、rendering3dtest 109.1、sandbox inf、平均の差 0
+  - `aux-SCN-WL-GEOM-LOWVRAM-golden.txt` golden の Indoor・Outdoor Passed・EXIT=0
+- Notes: 印の数が増えた分の GPU 時間は測っていない（印は記録ごとの印の交換で 1 ページ 1 回に省く）。6600 MB の読み込み中の枠の目標の揺れと、目標より大きく確保したまま縮まないプールの塊（2567 MB）は残る。新しい試験は足していない
+- Next: TASKS.md の次の未完の項目
