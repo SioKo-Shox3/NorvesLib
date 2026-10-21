@@ -11,6 +11,7 @@
 #include "Bridge/BridgeServerHost.h"
 #include "Bridge/NorvesLibBridgeAdapter.h"
 #include "Debug/CameraScriptCapture.h"
+#include "Debug/GeometrySettleTrace.h"
 #include "Debug/MultiViewCapture.h"
 #include "Debug/SequenceFrameCapture.h"
 #include "GameModes/Rendering3DTest/M9WorldAcceptance.h"
@@ -206,6 +207,10 @@ namespace Game
         Game::Debug::SequenceFrameCapture m_SequenceFrameCapture;
         // --capture-views で、1回の起動の中でシーンの複数の名前付き視点を順に撮る。
         Game::Debug::MultiViewCapture m_MultiViewCapture;
+#if NORVES_BUILD_DEVELOPMENT
+        // --geom-settle-trace で、ジオメトリのページの読み込みが落ち着いた後の推移をログへ書く（開発ビルドだけ）
+        Game::Debug::GeometrySettleTrace m_GeometrySettleTrace;
+#endif
         /// 撮影役がシーンの GameMode へ出す、視点の切り替えの依頼の窓口（GameMode には非所有のポインタで渡す）
         Game::Scenes::SceneViewSwitch m_SceneViewSwitch;
         /// カメラの台本の撮影の段取り（epoch・capture・wait-ready）の窓口（GameMode には非所有のポインタで渡す）

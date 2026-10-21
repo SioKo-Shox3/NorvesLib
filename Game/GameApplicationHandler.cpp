@@ -149,6 +149,10 @@ namespace Game
         // 高さフォグ・地表の照度）を浮動小数のファイルとして PNG の横へ書く（開発ビルドだけ。--capture-views と併せて使う）。
         // 書き出しのパスは描画の初期化の前に環境変数 NORVES_ATMOSPHERE_DUMP=1 で頼む（Core の AtmosphereProbePass）
         constexpr const TCHAR *kAtmosphereDumpOption = TEXT("--atmosphere-dump");
+        // --geom-settle-trace=<秒>: ジオメトリのページの読み込みが落ち着いた後の推移を、1 秒ごとに GEOM_SETTLE_TRACE の行へ
+        // 決めた秒数だけ書き、書き終えてから --capture-png で撮る（開発ビルドだけ。Debug/GeometrySettleTrace.h）
+        constexpr const TCHAR *kGeomSettleTraceOption = TEXT("--geom-settle-trace=");
+        constexpr uint32_t kGeomSettleTraceMaxSeconds = 600;
         // --exit-after-rendered-frames=<n>: ApplicationProcessor の、落ち着いてから撮るまでの描画フレーム数（--capture-views も同じ数で撮る）
         constexpr const TCHAR *kExitAfterRenderedFramesOption = TEXT("--exit-after-rendered-frames=");
         // ApplicationProcessor の --capture-png が、落ち着いてから撮るまでに描く既定のフレーム数（kCapturePngDefaultSettledRenderedFrames）
@@ -2335,6 +2339,7 @@ namespace Game
         bool bCaptureHdr = false;
         bool bCaptureAov = false;
         bool bAtmosphereDump = false;
+        uint32_t geomSettleTraceSeconds = 0;
         for (size_t i = 0; i < args.size(); ++i)
         {
             String value;
@@ -2380,6 +2385,15 @@ namespace Game
                     return false;
                 }
                 captureViewSettleRenderedFrames = frames;
+            }
+            else if (TryStripPrefix(args[i], kGeomSettleTraceOption, value))
+            {
+                if (!TryParseUInt32(value, geomSettleTraceSeconds) || geomSettleTraceSeconds == 0 ||
+                    geomSettleTraceSeconds > kGeomSettleTraceMaxSeconds)
+                {
+                    LOG_ERROR("--geom-settle-trace には 1〜600 の秒数を指定する");
+                    return false;
+                }
             }
         }
         if (!m_CaptureViewsRequest.empty())
@@ -2442,6 +2456,24 @@ namespace Game
         if (bAtmosphereDump)
         {
             LOG_WARNING("--atmosphere-dump は開発ビルドだけで使えます。無視します");
+        }
+#endif
+#if NORVES_BUILD_DEVELOPMENT
+        if (geomSettleTraceSeconds > 0)
+        {
+            // 記録の間は --capture-png の撮影を止める。--capture-views の撮影は止められないので併用しない
+            if (!m_CaptureViewNames.empty())
+            {
+                LOG_ERROR("--geom-settle-trace は --capture-views と併用できません（1 視点の --capture-png と使う）");
+                return false;
+            }
+            m_GeometrySettleTrace.Configure(geomSettleTraceSeconds);
+            LOG_INFO_F("GEOM_SETTLE_TRACE configured seconds=%u", geomSettleTraceSeconds);
+        }
+#else
+        if (geomSettleTraceSeconds > 0)
+        {
+            LOG_WARNING("--geom-settle-trace は開発ビルドだけで使えます。無視します");
         }
 #endif
         if ((bHasCharacterDrive && !m_bDogMovementSmoke) || (m_bDogMovementSmoke && m_bAnimationDebugRequested))
@@ -3136,6 +3168,9 @@ namespace Game
             m_MultiViewCapture.OnPostRender(NorvesLib::Core::Engine::GEngine->GetRenderWorld(), HasPendingM9WorldWork());
         }
         LogVramLedgerOnce();
+#if NORVES_BUILD_DEVELOPMENT
+        m_GeometrySettleTrace.OnPostRender();
+#endif
     }
 
     void GameApplicationHandler::LogVramLedgerOnce()
@@ -3293,6 +3328,13 @@ namespace Game
     bool GameApplicationHandler::HasPendingAssetConsumers() const
     {
         // --capture-views は撮り終えるまで、ApplicationProcessor の --capture-png の撮影と終了を止めておく
+#if NORVES_BUILD_DEVELOPMENT
+        // --geom-settle-trace は、記録を書き終えるまで撮影と終了を止める
+        if (m_GeometrySettleTrace.IsHolding())
+        {
+            return true;
+        }
+#endif
         return HasPendingM9WorldWork() || m_MultiViewCapture.IsHoldingEngineCapture();
     }
 

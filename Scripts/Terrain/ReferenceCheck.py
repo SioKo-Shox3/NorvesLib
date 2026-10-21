@@ -14,6 +14,10 @@
 #       CaptureScene.ps1 -Hdr の撮影（<視点>.png・<視点>.hdr.pfm・<視点>.hdr.json・metrics.json）を視点ごとに検査し、
 #       結果を <出力先>/hdr_check.json に書く。--views を省くと metrics.json の全視点を見る。
 #       --verify は入力のハッシュ（inputs.json）を今のファイルと照らし、違えば古い結果として失敗にする。
+#   python Scripts/Terrain/ReferenceCheck.py --geom-settle --engine <出力先> [--verify]
+#       CaptureScene.ps1 -GameArgs vram-budget-mb=<MB>,geom-settle-trace=<秒> の撮影の Game.log の推移（GEOM_SETTLE_TRACE）から、
+#       VRAM の予算が足りないときにジオメトリのページの追い出しが止まり、使用量が予算の内に留まることを検査し、
+#       結果を <出力先>/geom_settle_check.json に書く（基準は GeomSettle.py の冒頭）。
 #
 # 入力のハッシュ（inputs.json）: 種類ごとに決めたパス（INPUT_SETS）の、git が追跡するか無視されていないファイルの中身の SHA-256 を
 # パスの順に並べたものの SHA-256。荒野の撮影では描画のコード・シェーダー・荒野の組み立て・視点の定義・資産の組の定義・撮影の台本・
@@ -5895,6 +5899,8 @@ def main():
                         help="空と霞の値の書き出し（--atmosphere-dump）が揃い、描画に使われた値と合うことを検査する")
     parser.add_argument("--atmos-ref", action="store_true",
                         help="空と霞の書き出しを、AtmosphereReference.py の独立な正解と比べた表を作る")
+    parser.add_argument("--geom-settle", action="store_true",
+                        help="VRAM の予算が足りないときのジオメトリのページの落ち着き（GeomSettle.py）を、--engine の撮影の推移で検査する")
     parser.add_argument("--blur-static", action="store_true",
                         help="遠景のぼけを、2 倍の解像度の正解と条件ごとの撮影の帯域ごとの差で切り分けた表を作る")
     parser.add_argument("--blur-motion", action="store_true",
@@ -5984,6 +5990,14 @@ def main():
         views = [v.strip() for v in args.views.split(",") if v.strip()]
         return RtgiBounce.run(sys.modules[__name__], [absolute(d) for d in args.engine],
                               absolute(args.reference) if args.reference else "", views, args.verify, expect)
+    if args.geom_settle:
+        import GeomSettle
+        capture = args.capture or (args.engine[0] if args.engine else "")
+        capture_dir = os.path.normpath(capture if os.path.isabs(capture) else os.path.join(REPO_ROOT, capture))
+        if not capture or not os.path.isdir(capture_dir):
+            print(f"REFERENCE_CHECK result=fail reason=capture_dir_missing（--engine に撮影先を指定する） path={capture}")
+            return 1
+        return GeomSettle.run(sys.modules[__name__], capture_dir, args.verify)
     if args.rt_scene:
         import RtScene
         capture = args.capture or (args.engine[0] if args.engine else "")

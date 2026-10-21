@@ -281,6 +281,36 @@ namespace NorvesLib::Core::Rendering
         RenderResources* m_pOwner = nullptr;
     };
 
+    // ジオメトリのページのストリーミングの、ある時点の数（撮影の推移の記録 --geom-settle-trace が読む）
+    struct GeometryPageStreamingSnapshot
+    {
+        uint32_t WantedPages = 0;
+        uint32_t ReadingPages = 0;
+        uint32_t ReadyPages = 0;
+        uint32_t UploadingPages = 0;
+        uint32_t ResidentPages = 0;
+        // 常駐と書き込み中のページの区画の合計（バイト）。ページの目標と比べる量
+        uint64_t ResidentBytes = 0;
+        // 追い出したページ・書き込みを始めたページの累計
+        uint64_t EvictedPages = 0;
+        uint64_t PagesUploaded = 0;
+        // 目標に収まらず書き込みを見送ったフレームの累計
+        uint64_t BudgetBlockedFrames = 0;
+        // ページの常駐の目標（ジオメトリの枠から外せない区画を引いた残り）。bBudgetLimited が false なら目標なし
+        bool bBudgetLimited = false;
+        uint64_t BudgetBytes = 0;
+        // 外せないメッシュの区画（根のページなど）の合計（バイト）
+        uint64_t FixedBytes = 0;
+        // ジオメトリのプールの区画の使用量と、塊として確保した量（バイト）
+        uint64_t PoolUsedBytes = 0;
+        uint64_t PoolCapacityBytes = 0;
+        // 要求の列の溢れの累計（容量を超えて捨てた要求と使用の印）
+        uint64_t RequestOverflowTotal = 0;
+        // 段ごとの常駐（書き込み中を含む）と、要求されたまま常駐していないページの数。添字が段（0 が最も細かい）
+        Container::VariableArray<uint32_t> ResidentPagesPerLevel;
+        Container::VariableArray<uint32_t> PendingPagesPerLevel;
+    };
+
     class MegaGeometryResources
     {
     public:
@@ -323,6 +353,8 @@ namespace NorvesLib::Core::Rendering
         bool IsPageStreamingEnabled() const;
         // ページの読み込み・書き込みが進行中、または要求されたまま読み込んでいないページがあるか（読み込みの落ち着きの判定に使う）。
         bool HasPendingPageStreaming() const;
+        // ページのストリーミングの今の数を out へ写す（GameThread から。ストリーマが無ければ false）。
+        bool GetPageStreamingSnapshot(GeometryPageStreamingSnapshot &out) const;
 
         ModelHandle RegisterModel(MegaGeometry::MegaMeshHandle megaMeshHandle,
                                   const Container::String &debugName = "",

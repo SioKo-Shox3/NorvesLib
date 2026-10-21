@@ -1252,6 +1252,36 @@ namespace NorvesLib::Core::Rendering
         return impl && impl->GeometryPageStreaming && impl->GeometryPageStreaming->HasPendingWork();
     }
 
+    bool MegaGeometryResources::GetPageStreamingSnapshot(GeometryPageStreamingSnapshot &out) const
+    {
+        auto *impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
+        if (!impl || !impl->GeometryPageStreaming)
+        {
+            return false;
+        }
+        const GeometryPageStreamerStats stats = impl->GeometryPageStreaming->GetStats();
+        out.WantedPages = stats.WantedPages;
+        out.ReadingPages = stats.ReadingPages;
+        out.ReadyPages = stats.ReadyPages;
+        out.UploadingPages = stats.UploadingPages;
+        out.ResidentPages = stats.ResidentPages;
+        out.ResidentBytes = stats.ResidentBytes;
+        out.EvictedPages = stats.EvictedPages;
+        out.PagesUploaded = stats.PagesUploaded;
+        out.BudgetBlockedFrames = stats.BudgetBlockedFrames;
+        impl->GeometryPageStreaming->GetResidentBudget(out.bBudgetLimited, out.BudgetBytes);
+        impl->GeometryPageStreaming->GetLevelCounts(out.ResidentPagesPerLevel, out.PendingPagesPerLevel);
+        out.FixedBytes = impl->MegaGeometryResources ? impl->MegaGeometryResources->GetMeshRegionBytes() : 0;
+        if (impl->GeometryBuffers)
+        {
+            const GeometryPoolStats pool = impl->GeometryBuffers->GetStats();
+            out.PoolUsedBytes = pool.UsedBytes;
+            out.PoolCapacityBytes = pool.CapacityBytes;
+        }
+        out.RequestOverflowTotal = impl->GeometryPageFeedback ? impl->GeometryPageFeedback->GetStats().OverflowTotal : 0;
+        return true;
+    }
+
     bool MegaGeometryResources::TakePageRequests(MegaGeometry::GeometryPageRequestSet &out)
     {
         auto *impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;

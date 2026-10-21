@@ -258,6 +258,9 @@ if ($validationLayerArgument -and $Configuration -eq 'Release')
 $validationLayerExpected = ($Configuration -eq 'Debug' -or $validationLayerArgument)
 # 大気の書き出し（--atmosphere-dump）は開発ビルドの Game の --capture-views の撮影だけが書く
 $atmosphereDump = ($extraArguments -contains '--atmosphere-dump')
+# ジオメトリの落ち着きの推移（--geom-settle-trace=<秒>）は開発ビルドの Game だけが書く。ReferenceCheck.py --geom-settle が
+# Game.log の GEOM_SETTLE_TRACE の行を検査し、--verify で入力のハッシュ（inputs.json）を照らすので、横に入力を記録する
+$geomSettleTrace = [bool]($extraArguments | Where-Object { $_ -like '--geom-settle-trace=*' })
 if ($atmosphereDump -and $Configuration -eq 'Release')
 {
     Write-Output 'CAPTURE_SCENE result=fail reason=atmosphere_dump_in_release（atmosphere-dump は開発ビルドの機能で、Release の Game は書かない。RelWithDebInfo か Debug で撮る）'
@@ -1550,9 +1553,9 @@ $metricsPath = Join-Path $outRoot 'metrics.json'
 $metricsJson = $metrics | ConvertTo-Json -Depth 8
 [IO.File]::WriteAllText($metricsPath, $metricsJson, (New-Object System.Text.UTF8Encoding($false)))
 
-# HDR・AOV・大気の書き出しの撮影は、入力のハッシュ（inputs.json）を横に書く。撮影が失敗したときは古い入力を残さない。
+# HDR・AOV・大気の書き出し・ジオメトリの落ち着きの推移の撮影は、入力のハッシュ（inputs.json）を横に書く。撮影が失敗したときは古い入力を残さない。
 # 署名は metrics.json の視点・起動引数から出力の画像とカメラ台本を辿るので、metrics.json を書いた後に記録する
-if ($Hdr -or $Aov -or $atmosphereDump)
+if ($Hdr -or $Aov -or $atmosphereDump -or $geomSettleTrace)
 {
     $inputsPath = Join-Path $outRoot 'inputs.json'
     Remove-Item -LiteralPath $inputsPath -Force -ErrorAction SilentlyContinue

@@ -328,6 +328,45 @@ namespace NorvesLib::Core::Rendering
         }
 
         /**
+         * @brief 段ごとのページの数（撮影の推移の記録が、選ばれた段の分布として読む）
+         * @param outResident 段ごとの常駐（公開済み）と書き込み中のページの数。添字が段（0 が最も細かい）
+         * @param outPending 段ごとの、要求されたまま常駐していない（要求済み・読み込み中・読み込み済み）ページの数
+         */
+        void GetLevelCounts(Container::VariableArray<uint32_t> &outResident,
+                            Container::VariableArray<uint32_t> &outPending) const
+        {
+            Thread::ScopedLock lock(m_Mutex);
+            outResident.clear();
+            outPending.clear();
+            for (const auto &pair : m_Records)
+            {
+                const GeometryPageState state = pair.second.State;
+                const bool bResident = IsLive(state);
+                const bool bPending = state == GeometryPageState::Wanted || state == GeometryPageState::Reading ||
+                                      state == GeometryPageState::Ready;
+                if (!bResident && !bPending)
+                {
+                    continue;
+                }
+                const uint32_t level = pair.second.Desc.Level;
+                Container::VariableArray<uint32_t> &counts = bResident ? outResident : outPending;
+                if (counts.size() <= level)
+                {
+                    counts.resize(level + 1, 0u);
+                }
+                ++counts[level];
+            }
+        }
+
+        /** @brief 今の常駐の目標（SetResidentBudget で決めた値） */
+        void GetResidentBudget(bool &outLimited, uint64_t &outBytes) const
+        {
+            Thread::ScopedLock lock(m_Mutex);
+            outLimited = m_bBudgetLimited;
+            outBytes = m_BudgetBytes;
+        }
+
+        /**
          * @brief 読み込み・書き込みが進行中、または進められる要求が残っているか
          *
          * 読み込み中・書き込み中のページがあれば true。要求済み・読み込み済みのページは、直前の Update が目標に収まらず
