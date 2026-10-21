@@ -6435,3 +6435,19 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 中身が変わらないときの TAA の見積もり（ジッタ 0 の画を FFT でずらして TAA の式で貯める、`aux-SCN-WL-JITTER-LIGHTING-taasim.py`）は欠け 0.353（ジッタ 0 の +0.084）で、合否の +0.05 は経路を直しても届かない見込み
 - Notes: 回帰の after（-Motion つき）は result=pass、全シーンの平均の差 0（`verify-SCN-WL-JITTER-LIGHTING-5.txt`）。RelWithDebInfo の Game.exe はその -Build で計装なしに作り直した。新しい試験は足していない。Debug のビルド（verify 1）は `verify-SCN-WL-JITTER-LIGHTING-1.txt`
 - Next: blocked/SCN-WL-JITTER-LIGHTING.md の判断待ち（推奨: VSM の経路を直す項目を立て、閾値も一緒に見直す）
+
+### SCN-WL-PLANT-SHADOW 完了（2026-10-21、run 20261021-055341 の反復 30。反復 28 の BLOCKED を親が推奨 1 で解いた後）
+- Done: `PlantCheck.py` で株の日なたを Cycles の株の印で葉と枝に分け（`plant_sunlit_parts`）、`plant-shadow.json` の基準 2・3 を葉の量 `leaf_sunlit_visible_fraction`・`leaf_sunlit_ratio` にした（閾値は変えていない。枝は条件不一致 `plant_branch_subpixel` として値を記録するだけ。`ExpectSpec.py` に量を足した）。葉の部分的な影の残りを詰めた: 株の受け手の余裕の上限を texel の倍数（3 texel = 5.9 mm）から長さ 1.6 cm へ、法線の向きへのずらし 1.5 → 0.5 texel、PCF の半径の下限の画素の分を半分（`VirtualShadowMap.glsl` の `VSMS_FOLIAGE_*`）。結果と撒いた株の前後は `WastelandPlantRef.md` の「案 1 の結果」
+- 証拠（`.harness/runs/20261021-055341/`。番号は反復 26 のものを上書きした）:
+  - `verify-SCN-WL-PLANT-SHADOW-1.txt` Debug の Game のビルド EXIT=0
+  - `verify-SCN-WL-PLANT-SHADOW-2.txt` plant_near の撮影（-Build）result=pass・EXIT=0
+  - `verify-SCN-WL-PLANT-SHADOW-3.txt` `--plant --expect plant-shadow.json --verify` result=pass・inputs_current=1・reference_inputs_checked=1: 影の比の差 0.023、葉の見え方 ≥ 0.9 の割合 0.835、葉の比 0.803（枝 0.561・0.368 は記録）
+  - `verify-SCN-WL-PLANT-SHADOW-4.txt` 回帰の after result=pass・EXIT=0: night-village psnr 46.5、mega-bananas 65.2、rendering3dtest 121、sandbox inf。前後と差×10 を並べて開き、夜の村の差が撒いた株の画素だけ（株が影を受けるようになった分）で、地面・建物・空は変わらないことを確かめた
+  - `aux-SCN-WL-PLANT-SHADOW-grass-after.txt` 撒いた株の grass: GPU 中央値 15.73 → 19.26 ms、影のパスの株 0 → 14892（塊の予算の上限、予算の外 43946、最も遠い根元 4.2 m）、VSM のページ 1270 → 1966、段 0x3bf → 0xeff
+- Notes:
+  - 回帰の before は反復 26 の開始時に撮ったもの（`regression-before-SCN-WL-PLANT-SHADOW.txt`）を使った（この項目の変更の前の状態）
+  - 試しの撮影は `scene-capture/SCN-WL-PLANT-SHADOW-it30a`〜`it30d`（余裕を長さに: 葉 0.791・0.794、ずらし 0.5: 0.796・0.800、ずらし 0: 0.790・0.800、PCF の画素の分を半分: 0.835・0.803）
+  - 撒いた株の影の距離の境は、束の `ShadowDistance` 25 m でなく塊の予算（`FOLIAGE_SHADOW_CHUNK_BUDGET`）で 4.2 m に決まる。CPU の中央値も 33.2 → 52.1 ms（`RG.Record.*` 11.4 → 27.5 ms）に増えた
+  - 地面に落ちる株の影は画素ごとの 0/1 の点描になり、1 texel より細い枝の影は点線に途切れる（Cycles は柔らかく線で続く）。判定の量の外なので記録だけ（`WastelandPlantRef.md`・NEXT_FINDINGS）
+  - 新しい試験は足していない
+- Next: TASKS.md の次の未完の項目

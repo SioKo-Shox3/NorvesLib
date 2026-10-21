@@ -37,7 +37,8 @@
 #     plant（ReferenceCheck.py --plant。行の鍵は mode・view・quantity と閾値だけ）: 低木 1 株の比較の視点の検査の結果の
 #       plant_metrics。shadow_ratio_abs_diff（足元の影 ÷ 離れた地面の、エンジンと Cycles の差の絶対値）、
 #       sunlit_visible_fraction（株の日なたの画素のうち、エンジンの太陽の見え方の AOV が 0.9 以上の割合）、
-#       plant_sunlit_ratio（株の日なたのエンジン ÷ Cycles）、shadow_visibility_mean（株の陰のエンジンの太陽の見え方の平均）
+#       plant_sunlit_ratio（株の日なたのエンジン ÷ Cycles）、shadow_visibility_mean（株の陰のエンジンの太陽の見え方の平均）、
+#       leaf_sunlit_visible_fraction・leaf_sunlit_ratio（同じ 2 つを株の日なたの葉の画素だけで。葉が未判定なら未判定）
 #   min・max: 下限・上限（両端を含む。どちらか一方は要る）
 #   allow_undetermined: 未判定を許すか（既定は許さない）。note: 行の説明（判定には使わない）
 #
@@ -87,7 +88,9 @@ BUILDING_QUANTITIES = {"albedo_p5": ("albedo", "p5"), "albedo_median": ("albedo"
 PLANT_QUANTITIES = {"shadow_ratio_abs_diff": ("plant_metrics", "shadow_ratio_abs_diff"),
                     "sunlit_visible_fraction": ("plant_metrics", "sunlit_visible_fraction"),
                     "plant_sunlit_ratio": ("plant_metrics", "plant_sunlit_ratio"),
-                    "shadow_visibility_mean": ("plant_metrics", "shadow_visibility_mean")}
+                    "shadow_visibility_mean": ("plant_metrics", "shadow_visibility_mean"),
+                    "leaf_sunlit_visible_fraction": ("plant_metrics", "leaf_sunlit_visible_fraction"),
+                    "leaf_sunlit_ratio": ("plant_metrics", "leaf_sunlit_ratio")}
 
 SPEC_DIR = os.path.join("Scripts", "Terrain", "ExpectSpecs")
 SELFTEST_DIR = os.path.join(".harness", "runs", "scene-capture", "SCN-WLR-EXPECT-MATCH")

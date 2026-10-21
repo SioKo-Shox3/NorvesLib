@@ -2246,7 +2246,7 @@
 - notes: 2026-10-19。Cycles の描画は反復の中で保存する。
 
 ## SCN-WL-PLANT-SHADOW: 低木を太陽の影（VSM）に描く
-- status: todo
+- status: done
 - after: SCN-WLR-PLANT-REF-NEAR
 - done-when: SCN-WLR-PLANT-REF-NEAR の描画の欠陥 1・2（`Docs/RenderingValidation/WastelandPlantRef.md` の直す項目の案 1）: 株が太陽の影を落とさない（影の比 エンジン 0.621・Cycles 0.169。株は VSM・TLAS に入らず、影は接触影 0.3 m の縦の筋だけ）、株の中の自己の影の当たり外れ。株を太陽の VSM へ `foliage.vert` と同じ置き方で描く（葉の帯は両面、風の揺れも同じ）。接触影は接地の補いとして残す。撒いた株（2 万株超）は遠い株を影のパスで間引くか簡略の形で描き、距離の境を記録する（光線の影 TLAS に入れる案は後に回す）。合否（`--plant --views plant_near --expect`、`plant-shadow.json`）: 影の比が Cycles の 0.169 と ±0.1、株の葉の日なたの見え方の AOV が 0.9 以上の画素の割合 0.8 以上、株の葉の日なたのエンジン ÷ Cycles が 0.8〜1.25（閾値は変えない）。枝（断面 0.17 cm で 1 画素より細い）は SCN-WLR-PLANT-REF-NEAR の分類どおり条件不一致 `plant_branch_subpixel` として値を記録するだけにする（`PlantCheck.py` で葉と枝の領域を分ける）。撒いた株の撮影（`grass` の視点）で影のパスの株の数・使う VSM の段とページの数・GPU 時間を前後で記録する。ほかのシーンに株は無いが、回帰の撮影の前後を開いて確かめる。反復の最初に回帰の撮影の `before` を撮る。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`

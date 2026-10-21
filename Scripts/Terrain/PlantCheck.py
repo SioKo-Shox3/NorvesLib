@@ -32,7 +32,10 @@
 # --expect の plant の量（視点の検査の結果の plant_metrics）: 影の比のエンジンと Cycles の差の絶対値（shadow_ratio_abs_diff）、
 #   株の日なたの画素のうちエンジンの太陽の見え方の AOV（<視点>.aov.sun_visibility.pfm。照明が求めた影の結果）が
 #   SUNLIT_VISIBLE_MIN 以上の割合（sunlit_visible_fraction）、株の日なたのエンジン ÷ Cycles（plant_sunlit_ratio）。
-#   株の陰の AOV の平均（shadow_visibility_mean）も記録する。
+#   株の陰の AOV の平均（shadow_visibility_mean）も記録する。株の日なたを Cycles の株の印で葉と枝に分けた同じ量
+#   （leaf_sunlit_visible_fraction・leaf_sunlit_ratio、branch_sunlit_visible_fraction・branch_sunlit_ratio）も求める。
+#   葉は収束と画素の数で判定し、枝は条件不一致 SUBPIXEL_BRANCH_CONDITION として値を記録するだけ（視点の検査の結果の
+#   plant_sunlit_parts）。
 import json
 import math
 import os
@@ -58,6 +61,9 @@ PLACEMENT_TOLERANCE = 1e-4
 PREVIEW_SCALE = 2
 # 株の日なたで「太陽が見える」とするエンジンの太陽の見え方の AOV の下限（Cycles の株の日なたの領域の見え方の下限と同じ 0.9）
 SUNLIT_VISIBLE_MIN = 0.9
+# 株の日なたの枝の条件不一致の分類（WastelandPlantRef.md。断面 0.17 cm の枝は 1 画素より細く、エンジンは最小の画素幅まで
+# 広げた 1 標本、Cycles は画素の中の平均なので、比べる条件が揃わない）
+SUBPIXEL_BRANCH_CONDITION = "plant_branch_subpixel"
 
 
 def read_json(path):
@@ -233,27 +239,68 @@ def region_values(engine_hdr, cycles, parts, masks):
     return table
 
 
-def plant_metrics(RC, engine_dir, aov, masks, table, ratios):
-    """--expect の plant の量（エンジンの太陽の見え方の AOV と、表・比から求める値）"""
+def sunlit_parts(engine_hdr, cycles, seed_a, seed_b, masks, leaf, trial, spp):
+    """株の日なたを葉と枝に分けた表（PlantRegions の領域の定義は変えず、Cycles の株の印で分ける）。
+    葉は収束と画素の数で判定・未判定を決め、枝は SCN-WLR-PLANT-REF-NEAR の分類どおり条件不一致（SUBPIXEL_BRANCH_CONDITION）"""
+    engine_y, cycles_y = engine_hdr @ GR.LUMA, cycles @ GR.LUMA
+    y_a, y_b = seed_a @ GR.LUMA, seed_b @ GR.LUMA
+    parts = {}
+    for name, mask in (("leaf", masks["plant_sunlit"] & leaf), ("branch", masks["plant_sunlit"] & ~leaf)):
+        entry = {"pixels": int(mask.sum())}
+        if mask.any():
+            e_y, c_y = float(engine_y[mask].mean()), float(cycles_y[mask].mean())
+            a, b = y_a[mask], y_b[mask]
+            mean = float(0.5 * (a.mean() + b.mean()))
+            entry.update({"engine_y": e_y, "cycles_y": c_y, "ratio": e_y / c_y if c_y > 0.0 else None,
+                          "mean_diff": float(abs(a.mean() - b.mean()) / mean) if mean > 0.0 else None,
+                          "pixel_rms": float(np.sqrt(np.mean((a - b) ** 2)) / mean) if mean > 0.0 else None})
+        converged = (entry.get("mean_diff") is not None and entry["mean_diff"] <= GR.CONVERGENCE_MEAN and
+                     entry["pixel_rms"] <= GR.CONVERGENCE_PIXEL_RMS and spp >= MIN_SPP_PER_SEED)
+        if name == "branch":
+            entry["status"] = f"条件不一致（{SUBPIXEL_BRANCH_CONDITION}）"
+        elif entry["pixels"] < PR.MIN_REGION_PX:
+            entry["status"] = "未判定（画素が足りない）"
+        elif entry.get("ratio") is None:
+            entry["status"] = "未判定（値が求まらない）"
+        elif trial:
+            entry["status"] = "判定（試し: 収束を見ない）"
+        else:
+            entry["status"] = "判定" if converged else "未判定（収束しない）"
+        parts[name] = entry
+    return parts
+
+
+def plant_metrics(RC, engine_dir, aov, masks, table, ratios, leaf, parts):
+    """--expect の plant の量（エンジンの太陽の見え方の AOV と、表・比から求める値）。leaf_* は株の日なたの葉の画素だけ、
+    branch_* は枝の画素だけ（条件不一致の記録）。葉が未判定なら leaf_* は None（--expect で未判定になる）"""
     metrics = {"sunlit_visible_min": SUNLIT_VISIBLE_MIN}
     engine_ratio = (ratios.get("engine") or {}).get("ground_shadow_over_ref")
     cycles_ratio = (ratios.get("cycles") or {}).get("ground_shadow_over_ref")
     metrics["shadow_ratio_abs_diff"] = (abs(engine_ratio - cycles_ratio)
                                         if engine_ratio is not None and cycles_ratio is not None else None)
     metrics["plant_sunlit_ratio"] = table["plant_sunlit"].get("ratio")
+    leaf_judged = parts["leaf"]["status"].startswith("判定")
+    metrics["leaf_sunlit_ratio"] = parts["leaf"].get("ratio") if leaf_judged else None
+    metrics["branch_sunlit_ratio"] = parts["branch"].get("ratio")
+    metrics["branch_condition"] = SUBPIXEL_BRANCH_CONDITION
     entry = aov.get("sun_visibility") or {}
     path = os.path.join(engine_dir, entry.get("file", ""))
     if not entry.get("file") or not os.path.isfile(path):
-        metrics.update({"sunlit_visible_fraction": None, "shadow_visibility_mean": None})
+        metrics.update({"sunlit_visible_fraction": None, "shadow_visibility_mean": None,
+                        "leaf_sunlit_visible_fraction": None, "branch_sunlit_visible_fraction": None})
         return metrics
     visibility = RC.read_pfm_any(path)[..., 0].astype(np.float64)
+    readable = np.isfinite(visibility) & (visibility >= 0.0)
     for name, key in (("plant_sunlit", "sunlit"), ("plant_shadow", "shadow")):
-        mask = masks[name] & np.isfinite(visibility) & (visibility >= 0.0)
-        values = visibility[mask]
+        values = visibility[masks[name] & readable]
         metrics[f"{key}_visibility_pixels"] = int(values.size)
         metrics[f"{key}_visibility_mean"] = float(values.mean()) if values.size else None
-    values = visibility[masks["plant_sunlit"] & np.isfinite(visibility) & (visibility >= 0.0)]
-    metrics["sunlit_visible_fraction"] = float((values >= SUNLIT_VISIBLE_MIN).mean()) if values.size else None
+    for key, mask in (("sunlit", masks["plant_sunlit"]), ("leaf_sunlit", masks["plant_sunlit"] & leaf),
+                      ("branch_sunlit", masks["plant_sunlit"] & ~leaf)):
+        values = visibility[mask & readable]
+        metrics[f"{key}_visible_fraction"] = float((values >= SUNLIT_VISIBLE_MIN).mean()) if values.size else None
+    if not leaf_judged:
+        metrics["leaf_sunlit_visible_fraction"] = None
     return metrics
 
 
@@ -414,7 +461,10 @@ def check_view(RC, engine_dir, reference_dir, view, record, verify, trial):
         for key, value in ratios.items():
             if value is None:
                 failures.append(f"{source} の {key} が求まらない")
-    result["plant_metrics"] = plant_metrics(RC, engine_dir, aov, masks, table, result["ratios"])
+    leaf = np.rint(plant_index).astype(np.int32) == PR.PLANT_LEAF_PASS_INDEX
+    parts_sunlit = sunlit_parts(engine_hdr, cycles, seed_a, seed_b, masks, leaf, trial, spp)
+    result["plant_sunlit_parts"] = parts_sunlit
+    result["plant_metrics"] = plant_metrics(RC, engine_dir, aov, masks, table, result["ratios"], leaf, parts_sunlit)
     valid = plant.copy()
     for name in PR.REGIONS:
         valid |= masks[name]
@@ -461,9 +511,14 @@ def run(RC, engine_dirs, reference_dir, views, verify, trial, expect=None):
         for source, ratios in (result.get("ratios") or {}).items():
             print(f"REFERENCE_CHECK plant view={view} ratios source={source} " +
                   " ".join(f"{k}={v if v is None else round(v, 4)}" for k, v in ratios.items()))
+        for name, entry in (result.get("plant_sunlit_parts") or {}).items():
+            print(f"REFERENCE_CHECK plant view={view} sunlit_part={name} status={entry['status']} pixels={entry['pixels']} "
+                  f"engine_y={entry.get('engine_y', float('nan')):.1f} cycles_y={entry.get('cycles_y', float('nan')):.1f} "
+                  f"ratio={entry.get('ratio') or float('nan'):.3f} "
+                  f"mean_diff={entry.get('mean_diff') or float('nan'):.4f} pixel_rms={entry.get('pixel_rms') or float('nan'):.3f}")
         metrics = result.get("plant_metrics") or {}
         print(f"REFERENCE_CHECK plant view={view} metrics " +
-              " ".join(f"{k}={v if v is None or isinstance(v, int) else round(v, 4)}" for k, v in metrics.items()))
+              " ".join(f"{k}={v if v is None or isinstance(v, (int, str)) else round(v, 4)}" for k, v in metrics.items()))
     RC.apply_expect(report, expect, "plant", failures)
     report["failures"] = failures
     report_path = os.path.join(reference_dir, "plant_check.json")
