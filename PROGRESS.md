@@ -6253,3 +6253,22 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 証拠（`.harness/runs/20261021-055341/`）: `aux-SCN-WLR-ATMOS-REF-NEWSET-sweep.py`・`.txt`（EXIT=0）・`.json`
 - Notes: 掃引は検査の段（`CHECK_PARAMETERS`）で解いた。今の設定の行は段 1 の表と 0.001 以内で同じ。新しい試験は足していない
 - Next: 4 つのログに `END ... EXIT=0` が出たら（段 2 は 5〜8 時間の見込み）、`python Scripts/Terrain/AtmosphereReference.py --verify` を回して newset の段 1 と段 2 の差 0.5 % 以内を確かめ、収束の表に newset の列を足して閉じる。走行中に解きを重ねて起動しない
+### SCN-WLR-BUILDING-REF-BASE 完了（2026-10-21、run 20261021-055341 の反復 17）
+- Done: 前哨地の建物 1 棟をエンジンと Cycles で比べる仕組みを足した。記録は `Docs/RenderingValidation/WastelandBuildingReference.md`
+  - Game: `--wasteland-hide=all-but-building`（`WastelandHide::ReferenceBuildingOnly`。雲・草・岩・礫・空気遠近・霧を外し、建物は `PropPlacement::bReferenceBuilding` の 1 棟だけ残す）。比べる 1 棟は道の東の石積みの物置（造成の範囲 3。outpost から日なたの西の壁と陰の北の壁が両方見える）。置いた建物ごとにログ `WASTELAND_BUILDING_PLACEMENT`（glTF・reference・位置・yaw_rad・拡大率・mesh_min_y）を書く
+  - `BlenderReference.py --building`: ログの配置で同じ glTF を Blender の glTF の読み込みで置き（yaw は Blender の z 軸まわりの −yaw）、灰色の地形・共通の照明で `--gray` と同じ重ね方で描く。物体の番号と深度（View Z Depth の放射、光源として標本にしない）も書く。`--trial` は 1 本 64 サンプル
+  - `ReferenceCheck.py --building`（本体 `BuildingCheck.py`、領域は `BuildingRegions.py`）: 深度の輪郭 2 画素以内・収束（GrayRegions と同じ基準、1 本 512 サンプル以上。`--trial` で外す）・領域の画素の下限 200・配置とカメラの一致・光の内訳を満たさないか、未判定の領域があれば落ちる。足元から 0〜2 m の地面・4〜8 m の日なたの地面・壁の下端・壁の日なたと陰の値と比、深度から求めた建物の下端と地面の高さの差を表に書く。`aov_hide_names` が all-but-building を読む
+- 結果（試し 64 サンプル）: 深度の輪郭 両方向 1.000。壁の日なた ÷ 陰 エンジン 3.64・Cycles 3.32、足元の帯 ÷ 離れた地面 0.883・0.819、下端と地面の差 両方 +0.047 m
+- 証拠（`.harness/runs/20261021-055341/`）:
+  - `aux-SCN-WLR-BUILDING-REF-BASE-smoke-build.txt` 開始時の Debug の Game のビルド EXIT=0
+  - `verify-SCN-WLR-BUILDING-REF-BASE-1.txt` Debug の Game のビルド EXIT=0（比べる建物を物置に替えた後）
+  - `verify-SCN-WLR-BUILDING-REF-BASE-2.txt` outpost の撮影 result=pass・EXIT=0（game_exe 4a55284e…。ログに reference_building_only=1・配置の行 1 行）
+  - `aux-SCN-WLR-BUILDING-REF-BASE-blender-trial.txt` Cycles の試し描き EXIT=0（全領域 200 画素以上）
+  - `verify-SCN-WLR-BUILDING-REF-BASE-3.txt` `--building --trial --verify` result=pass・inputs_current=1・EXIT=0。見比べの画像 `scene-capture/SCN-WLR-BUILDING-REF-BASE/cycles-trial/building_outpost.png` を開いた
+- Notes:
+  - 最初は日干し煉瓦の廃屋（造成の範囲 2）で撮ったが、outpost から見える北と東の壁がどちらも陰で日なたの壁が無いので、物置に替えた
+  - 地形のメッシュは 10 月 18 日の書き出し（`SCN-WLR-BLENDER-TERRAIN-mesh`）のまま。その後に変わった地形の入力は ORM の AO（テクスチャ）だけで形は同じ（深度の輪郭 1.000 で確かめた）
+  - Cycles の地形は灰色 0.3 なので、地面の値はエンジンの実材質と直接比べられない（比だけを見る）
+  - エンジンの北の壁（陰）に、目地のあたりで黒に近い斑点が出る（Cycles には無い）。照明を直した後の比較で切り分ける
+  - 新しい試験は足していない
+- Next: TASKS.md の次の未完の項目

@@ -93,6 +93,8 @@ namespace Game::GameModes::WastelandLayout
         float Z = 0.0f;
         float Yaw = 0.0f;
         float Scale = 1.0f;
+        /// 建物 1 棟を比べる撮影（--wasteland-hide=all-but-building）で残す建物か（DEM の前哨地の 1 棟だけが真）
+        bool bReferenceBuilding = false;
     };
 
     /// 配置の内訳（ログ用）

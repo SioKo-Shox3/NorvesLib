@@ -116,6 +116,9 @@ namespace Game::GameModes::WastelandLayout
         };
         static_assert(TerrainSpec::kOutpostPadCount == 1u + sizeof(kOutpostSlots) / sizeof(kOutpostSlots[0]),
                       "造成の範囲は道と建物ごとに 1 つ");
+        // 建物 1 棟を比べる撮影で残す建物の造成の範囲の番号。道の東の石積みの物置で、outpost の視点から西の壁（共通の照明の
+        // 太陽で日なた）と北の壁（陰）が両方見える（道の西の建物は見える壁がどちらも陰になる）
+        constexpr uint32_t kReferenceBuildingPad = 3u;
         // 造成した平らな足元に据えるので、埋める深さは手続きの盆地（kBuildingSink）より浅い[m]
         constexpr float kOutpostBuildingSink = 0.15f;
         // 草・石を置かない道の幅の半分[m]（造成の箱の幅 3 m に、轍の外の踏み固めた縁を足す）
@@ -470,6 +473,7 @@ namespace Game::GameModes::WastelandLayout
                 CenterAt(shape, pad.CenterX, pad.CenterZ, placement.Yaw, 1.0f, placement.X, placement.Z);
                 placement.Y =
                     GroundedY(field, shape, placement.X, placement.Z, placement.Yaw, 1.0f, 1.0f, kOutpostBuildingSink);
+                placement.bReferenceBuilding = slot.Pad == kReferenceBuildingPad;
                 out.push_back(placement);
                 ++stats.Buildings;
             }

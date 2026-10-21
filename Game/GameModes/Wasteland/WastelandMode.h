@@ -78,9 +78,13 @@ namespace Game::GameModes
             /// 高さフォグ
             Fog = 1u << 6u,
             All = (1u << 7u) - 1u,
+            /// 建物を比べる 1 棟（WastelandLayout の bReferenceBuilding）だけ残し、ほかの建物を外す。
+            /// "all-but-building" は All から Buildings を除いてこれを足す（建物 1 棟だけの撮影）
+            ReferenceBuildingOnly = 1u << 7u,
         };
 
-        /// "clouds+foliage" のような名前の並びか "all" を読む。知らない名前・空の名前があれば outError に入れて false
+        /// "clouds+foliage" のような名前の並びか "all"・"all-but-building" を読む。知らない名前・空の名前があれば
+        /// outError に入れて false
         bool Parse(const NorvesLib::Core::Container::String &value, uint32_t &outMask,
                    NorvesLib::Core::Container::String &outError);
     } // namespace WastelandHide

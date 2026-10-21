@@ -2155,7 +2155,7 @@
 - notes: 危険地帯（描画の既定値。空は全シーン共通）。2026-10-19（Sol の批評 17）。
 
 ## SCN-WLR-ATMOS-REF-NEWSET: 空の大気の新しい設定の数値の正解を解いて保存する
-- status: todo
+- status: blocked
 - after: SCN-WLR-GAP-LIST-ATMOS, SCN-WL-HAZE-ONE-MEDIUM, SCN-WL-PSI-GRID
 - done-when: SCN-WLR-GAP-LIST-ATMOS の結論で、空の大気の Mie の設定（係数・尺度高さ）を変えるか、どの値にするかを決めて記録する（写真の空の青 `sky_blue_photo` を設定と写真の処理に分けた結果に従う）。変えるなら、その設定の数値の正解（A と B、SCN-WLR-ATMOS-REF-B と同じ段と収束の基準）を `AtmosphereReference.py --solve` で、反復の外で切り離したプロセスとして解いて保存する（設定の署名つき）。解き終わるまで項目を BLOCKED にして待ち方を書き、終わったら親が todo に戻す。保存した解の収束（段 1 と段 2 の差 0.5 %）を `--verify` で検査して閉じる。変えないなら、その理由を記録して閉じる。
 - verify: `python Scripts/Terrain/AtmosphereReference.py --verify`
@@ -2174,7 +2174,7 @@
 - notes: 危険地帯（描画の既定値）。2026-10-19（Sol の批評 17・22）。1 反復で閉じなければ、霧の式・空気遠近・空の設定・水平の境に分ける。2026-10-20 SCN-WLR-GAP-LIST-ATMOS で結論が変わった（done-when の書き方と食い違う所）: (1) 霧の周りの光の太陽の側の二重の数え（`fog_sky_color_double`）は、方向を保つ正解 B では霧の透過率だけで減らした正解の 1.08 倍（横・反対 1.02〜1.03）で、上乗せは 5 % ほど。前の 2.2 倍は等方にした B によるもの。視線の向きの空の輝度を使う式のままで 5 % 以内に入る見込みで、直す主な対象ではない。(2) 代わりに霧と空気遠近の合成の順（`fog_aerial_order`。エンジンは霧の散乱光を空気遠近の透過率で減らさず、30 km で霧の散乱光の和が正解 B の 1.22〜1.31 倍）を直す。(3) 空気遠近（`aerial_scatter_direction`）は「向きの差が足りない」だけでなく全体に暗い（霞の散乱光の和 エンジン ÷ 正解 B 太陽の側 0.89〜0.94・横 0.82〜0.84・反対 0.73〜0.75、空気遠近だけで 0.45〜0.82。空の LUT の輝度を透過率の割合で配る近似）。(4) 空の輝度 エンジン ÷ B 0.67〜1.27 は論文の近似の等方の仮定によるモデルの違い（`sky_multiple_scattering`。照度の A ÷ B 1.010）で、空の設定や霞の式を直しても残る。「結論の各量が正解と 5 % 以内」に空の方向別の輝度の B との比を入れると、多重散乱のモデルを変えない限り届かない。 2026-10-20（親）: SCN-WLR-GAP-LIST-ATMOS の結論に合わせて合否の量を絞った（空の方向別の輝度は記録だけ）。写真と並べて空の明るさの配り方の差が目に見えるなら、方向を保つ多重散乱を確認 2（SCN-WL-REVIEW-2）で検討する。
 
 ## SCN-WLR-BUILDING-REF-BASE: 建物 1 棟を比べる仕組みを作る
-- status: todo
+- status: done
 - after: SCN-WL-MATERIAL-AO-BAKE, SCN-WL-SHADOW-LEAK
 - done-when: 前哨地の建物 1 棟だけを残す起動引数（`wasteland-hide=all-but-building`。`Game/GameApplicationHandler.cpp` で解く）と、撮影のログへの建物の配置（glTF・位置・向き・大きさ）の書き出しを足す。`BlenderReference.py` に同じ glTF を同じ配置で置く読み込みを足し、`ReferenceCheck.py --building`（建物の足元から 0〜2 m の地面の帯・壁の下端・壁の日なたと陰の明るさの比、深度から求めた建物の下端と地面の高さの差）を作る。検査は比較が成り立つ条件（エンジンと Blender の深度の輪郭が 2 画素以内・Cycles の収束が SCN-WLR-CYCLES-GRAY と同じ基準・各領域の画素の下限）を満たさない、または表の領域が未判定なら落ちる（エンジンとの一致は求めない）。`--trial` は収束の条件だけを外す。共通の照明・ずらし 0 のカメラで、`outpost` の視点を低いサンプル数（64）で試しに描き、`--trial` で検査が回ることを確かめる。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`

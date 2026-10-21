@@ -280,6 +280,12 @@
 #       白飛びの割合（写真の崖・地面の枠の地形の画素と画面全体）の前後を記録する。--capture に 6 視点を -Hdr で撮った別の撮影先を渡すと、
 #       その各視点も検査して、写真｜前｜後の比較画像 <6 視点の撮影先>/grading_sheet.png を書く。報告は <撮影先>/grading_check.json。
 #       --verify は撮影の入力の記録を今のファイルと照らす。
+#   python Scripts/Terrain/ReferenceCheck.py --building --engine <撮影先> --reference <Cycles の書き先> [--views outpost] [--trial]
+#                                            [--verify]
+#       前哨地の建物 1 棟を、エンジン（--wasteland-hide=all-but-building の撮影）と Cycles（BlenderReference.py --building）で比べる
+#       （BuildingCheck.py。足元から 0〜2 m の地面の帯・壁の下端・壁の日なたと陰の明るさと比、深度から求めた建物の下端と地面の
+#       高さの差）。比較が成り立つ条件（深度の輪郭が 2 画素以内・Cycles の収束・領域の画素の下限）を満たさないか、表の領域が
+#       未判定なら落ちる（エンジンとの一致は求めない）。--trial は収束の条件だけを外す。報告は <Cycles の書き先>/building_check.json。
 #
 # 終了コード: すべて合格なら 0、どれかが不合格なら 1。
 import argparse
@@ -1608,12 +1614,18 @@ def aov_capture_args(capture_dir):
 
 
 def aov_hide_names(game_args):
-    """起動引数の --wasteland-hide= から外したものの名前の集合（all は全部に開く）"""
+    """起動引数の --wasteland-hide= から外したものの名前の集合（all は全部、all-but-building は建物のほか全部に開く）"""
     names = set()
     for arg in game_args or []:
         if arg.startswith(AOV_HIDE_PREFIX):
             for token in arg[len(AOV_HIDE_PREFIX):].split("+"):
-                names.update(AOV_HIDE_NAMES if token == "all" else {token})
+                if token == "all":
+                    names.update(AOV_HIDE_NAMES)
+                elif token == "all-but-building":
+                    # 建物 1 棟だけを残す（建物を外したとは数えない）
+                    names.update(set(AOV_HIDE_NAMES) - {"buildings"})
+                else:
+                    names.add(token)
     return names
 
 
@@ -6021,6 +6033,9 @@ def main():
                         help="実材質の地形のエンジンと Cycles の描画を、領域ごとの線形の平均の表と表示変換を掛けた比較画像で比べる")
     parser.add_argument("--tonemap", action="store_true",
                         help="表示変換の候補を、エンジンと Cycles の同じ HDR に掛けて並べ、手本の写真と比べる")
+    parser.add_argument("--building", action="store_true",
+                        help="前哨地の建物 1 棟のエンジンと Cycles の比較（BuildingCheck.py。--engine と --reference）")
+    parser.add_argument("--trial", action="store_true", help="--building: Cycles の収束の条件だけを外す（試しの描画）")
     parser.add_argument("--grading", action="store_true",
                         help="荒野のグレーディングが中立で、HDR に neutral_plain を掛けた画が撮影の PNG と合うことを検査し、地面の R/G と白飛びの前後を記録する")
     parser.add_argument("--gap-list", action="store_true",
@@ -6104,6 +6119,12 @@ def main():
             print(f"REFERENCE_CHECK result=fail reason=capture_dir_missing（--engine に撮影先を指定する） path={capture}")
             return 1
         return GeomSettle.run(sys.modules[__name__], capture_dir, args.verify)
+    if args.building:
+        import BuildingCheck
+        absolute = lambda d: os.path.normpath(d if os.path.isabs(d) else os.path.join(REPO_ROOT, d))
+        views = [v.strip() for v in args.views.split(",") if v.strip()]
+        return BuildingCheck.run(sys.modules[__name__], [absolute(d) for d in args.engine],
+                                 absolute(args.reference) if args.reference else "", views, args.verify, args.trial)
     if args.rt_scene:
         import RtScene
         capture = args.capture or (args.engine[0] if args.engine else "")

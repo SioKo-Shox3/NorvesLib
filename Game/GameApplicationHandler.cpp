@@ -239,8 +239,9 @@ namespace Game
         // --wasteland-gray-material: 地形の材質を CommonLight.json の灰色に替える（Scripts/Terrain/ReferenceCheck.py --gray）
         constexpr const TCHAR *kWastelandGrayMaterialOption = TEXT("--wasteland-gray-material");
         Game::GameModes::WastelandCommonLight::Options s_WastelandCommonLight;
-        // --wasteland-hide=<clouds+foliage+rocks+gravel+buildings+aerial+fog の組み合わせ、または all>: 荒野から比べるために
-        // 外すもの（Game/GameModes/Wasteland/WastelandMode.h の WastelandHide）。シーンの設定なので Release でも効く
+        // --wasteland-hide=<clouds+foliage+rocks+gravel+buildings+aerial+fog の組み合わせ、または all・all-but-building>: 荒野から
+        // 比べるために外すもの（Game/GameModes/Wasteland/WastelandMode.h の WastelandHide）。all-but-building は前哨地の建物 1 棟
+        // だけを残す（Scripts/Terrain/ReferenceCheck.py --building）。シーンの設定なので Release でも効く
         constexpr const TCHAR *kWastelandHideOption = TEXT("--wasteland-hide=");
         uint32_t s_WastelandHideMask = 0;
         // --wasteland-finest-lod: 正解の絵との比較のため、仮想化ジオメトリの LOD を最も細かい段に固定する（開発ビルドだけ）。
@@ -1435,7 +1436,7 @@ namespace Game
                 if (!Game::GameModes::WastelandHide::Parse(sceneValue, s_WastelandHideMask, unknownName))
                 {
                     LOG_ERROR_F("--wasteland-hide の名前「%s」は使えません（clouds・foliage・rocks・gravel・buildings・aerial・fog を + で"
-                                "つなぐか all）",
+                                "つなぐか all・all-but-building）",
                                 unknownName.c_str());
                     return false;
                 }

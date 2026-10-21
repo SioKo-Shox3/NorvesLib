@@ -75,6 +75,19 @@
 #       （cycles.part_a.*）を書き、B は A と同じサンプル数まで描いて A と合わせ、収束を測って --lit と同じ出力を書く。
 #       最初の 1 回の描画は BVH の構築を含み、同じ枠でも 500〜1000 秒と揺れるので、上限はその後のサンプルの時間に掛ける。
 #       --crop-reuse-a は記録と中身の合う A の途中の和を残し、B だけを描く。
+#
+#   python Scripts/Terrain/BlenderReference.py --building --mesh <書き出しのフォルダ> --capture <エンジンの撮影>
+#          [--views outpost] [--range shadow] [--trial] [--max-spp N] [--out <書き先>]
+#       前哨地の建物 1 棟を比べる（SCN-WLR-BUILDING-REF-BASE）。エンジンの撮影（Game の --wasteland-common-light・
+#       --wasteland-hide=all-but-building・--wasteland-finest-lod を CaptureScene.ps1 -Hdr -Aov で撮ったもの）のログの
+#       WASTELAND_BUILDING_PLACEMENT reference=1 の行から glTF と配置（位置・Y 軸まわりの回転・拡大率）を読み、同じ glTF を
+#       Blender の glTF の読み込み（材質も glTF のまま）で同じ配置に置く。地形は灰色の材質（--gray と同じ）で、照明・カメラ・
+#       収束の重ね方・書き出しは --gray と同じ。建物の領域と収束は BuildingRegions.py（足元の帯・壁の下端・壁の日なたと陰）。
+#       領域を決めるため、太陽の見え方と一緒に物体の番号（建物 1）を描き、続けて --depth と同じ描き方で深度を描いて、
+#       <視点>.aux.depth.pfm（カメラの前方向への距離 m、空は +∞）と <視点>.aux.building.pfm（建物の画素 1）を書く。
+#       --trial は 1 本 BUILDING_TRIAL_SPP サンプルで止める試しの描画（書き先の既定 <撮影>/cycles-trial。収束しない）。
+#       入力の記録 <書き先>/inputs.json に、台本・領域の定義・共通の照明・glTF・地形のメッシュのハッシュとカメラ・配置を書く。
+#       照合は ReferenceCheck.py --building。
 import argparse
 import hashlib
 import json
@@ -132,6 +145,12 @@ CROP_PAD_PX = 8
 CROP_MAX_TOTAL_SECONDS = 1200.0
 CROP_MAX_SPP_PER_SEED = 16384
 CROP_DIRECT_SEED_OFFSET = 1000000
+# 建物 1 棟の比較（--building）: 視点・書き先・試しの描画の 1 本あたりのサンプル数・領域の定義
+BUILDING_VIEWS = ("outpost",)
+BUILDING_RESULT_DIR = "cycles-building"
+BUILDING_TRIAL_DIR = "cycles-trial"
+BUILDING_TRIAL_SPP = 64
+BUILDING_REGIONS = "Scripts/Terrain/BuildingRegions.py"
 # 板の較正（エンジンの板の撮影 SCN-WLR-COMMON-LIGHT と同じ視点の太陽）
 PLATE_VIEW = "ref_cliff_01"
 PLATE_CASES = ("sun", "sky")
@@ -645,6 +664,108 @@ def run_gray(args, lit=False):
     with open(record_path, "w", encoding="utf-8") as f:
         json.dump(record, f, indent=2, ensure_ascii=False)
     print(f"BLENDER_REFERENCE gray record plates={len(record.get('plates', {}))} views={len(record.get('views', {}))}")
+    return 0
+
+
+def run_building(args):
+    """--building: 前哨地の建物 1 棟と灰色の地形を、エンジンの撮影と同じカメラ・共通の照明で描く（SCN-WLR-BUILDING-REF-BASE）"""
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import ReferenceCheck as RC  # noqa: E402  ふつうの Python の側だけで使う
+    BR = load_building_regions()
+    mesh_dir = os.path.abspath(args.mesh)
+    capture_dir = os.path.abspath(args.capture)
+    out_dir = os.path.abspath(args.out) if args.out else \
+        os.path.join(capture_dir, BUILDING_TRIAL_DIR if args.trial else BUILDING_RESULT_DIR)
+    os.makedirs(out_dir, exist_ok=True)
+    light = load_common_light()
+    lighting = {
+        "sky_radiance_rgb": [float(v) for v in light["sky_radiance_rgb"]],
+        "sun_illuminance_normal_lux": float(light["sun_illuminance_normal_lux"]),
+        "sun_angle_degrees": SUN_ANGLE_DEGREES,
+    }
+    views = [v for v in args.views.split(",") if v]
+    manifest = load_manifest(mesh_dir)
+    used_tiles = set()
+    view_records = {}
+    for view in views:
+        # 建物の配置はエンジンの撮影のログ（WASTELAND_BUILDING_PLACEMENT の reference=1）から読む
+        log_name = RC.view_game_log(capture_dir, view) or f"{view}.Game.log"
+        with open(os.path.join(capture_dir, log_name), encoding="utf-8", errors="replace") as f:
+            placement, count = BR.parse_placement(f.read())
+        if placement is None or count != 1:
+            print(f"BLENDER_REFERENCE error view={view} 撮影のログに比べる建物の配置（WASTELAND_BUILDING_PLACEMENT reference=1）が "
+                  f"1 行でない（{count} 行。--wasteland-hide=all-but-building で撮る）")
+            return 1
+        gltf_path = os.path.join(REPO_ROOT, placement["gltf"])
+        bounds = BR.gltf_bounds(gltf_path)
+        camera, width, height = read_engine_camera(capture_dir, view)
+        tiles = [t for t in manifest["tiles"] if tile_in_range(t, camera, args.range)[0]]
+        altitude, azimuth = common_light_sun(light, view)
+        prefix = os.path.join(out_dir, view)
+        job = {
+            "kind": "gray",
+            "view": view,
+            "camera": camera,
+            "width": width,
+            "height": height,
+            "tiles": [os.path.join(mesh_dir, t["file"]) for t in tiles],
+            "lighting": lighting,
+            "sun_altitude_degrees": altitude,
+            "sun_azimuth_degrees": azimuth,
+            "to_sun_engine": engine_sun_direction(altitude, azimuth),
+            "gray_material": light["gray_material"],
+            "chunk_spp": args.chunk_spp,
+            "max_spp_per_seed": args.max_spp,
+            "max_seconds": args.max_seconds,
+            "prefix": prefix,
+            "building": {"gltf": placement["gltf"], "gltf_path": gltf_path, "placement": placement, "bounds": bounds},
+        }
+        parts = ("hdr", "seed_a", "seed_b", "sun", "sky", "direct", "indirect", "indirect_diffuse")
+        job["required_outputs"] = [f"{prefix}.cycles.exr", f"{prefix}.cycles.json", f"{prefix}.aux.exr"] + \
+            [f"{prefix}.cycles.{part}.pfm" for part in parts] + \
+            [f"{prefix}.aux.{part}.pfm" for part in ("visibility", "n_dot_l", "normal", "alpha", "depth", "building")]
+        for stale in job["required_outputs"]:
+            if os.path.exists(stale):
+                os.remove(stale)
+        triangles = sum(int(t["triangles"]) for t in tiles)
+        print(f"BLENDER_REFERENCE building view={view} id={placement['id']} tiles={len(tiles)} triangles={triangles} "
+              f"range={args.range} max_spp={args.max_spp}", flush=True)
+        if not run_blender_job(args, out_dir, view, job, label="building"):
+            print(f"BLENDER_REFERENCE error view={view} Blender が失敗した（{os.path.basename(out_dir)}/{view}.blender.log）")
+            return 1
+        used_tiles.update(t["file"] for t in tiles)
+        view_records[view] = {"camera": camera, "width": width, "height": height, "placement": placement,
+                              "bounds": bounds, "tiles": sorted(t["file"] for t in tiles), "triangles": triangles,
+                              "sun_altitude_degrees": altitude, "sun_azimuth_degrees": azimuth,
+                              "max_spp_per_seed": args.max_spp, "trial": bool(args.trial)}
+
+    # 参照の入力の記録（ReferenceCheck.py --building --verify が今のファイルと照らす）。エンジンの実装には結び付けない
+    # （カメラと建物の配置は記録の値をエンジンの撮影と照らす）
+    record = {
+        "kind": "cycles_building",
+        "script": normalize_rel(os.path.abspath(__file__)),
+        "script_sha256": sha256_file(os.path.abspath(__file__)),
+        "building_regions_sha256": sha256_file(os.path.join(REPO_ROOT, BUILDING_REGIONS)),
+        "gray_regions_sha256": sha256_file(os.path.join(REPO_ROOT, GRAY_REGIONS)),
+        "common_light_sha256": sha256_file(os.path.join(REPO_ROOT, COMMON_LIGHT)),
+        "gltf_sha256": {view_records[v]["placement"]["gltf"]: sha256_file(os.path.join(REPO_ROOT, view_records[v]["placement"]["gltf"]))
+                        for v in view_records},
+        "terrain_material": "gray_material（CommonLight.json）",
+        "git_commit": (RC.git_output(["rev-parse", "HEAD"]) or "").strip(),
+        "sun_angle_degrees": SUN_ANGLE_DEGREES,
+        "mesh_dir": normalize_rel(mesh_dir),
+        "manifest_sha256": sha256_file(os.path.join(mesh_dir, "manifest.json")),
+        "ply_sha256": {name: sha256_file(os.path.join(mesh_dir, name)) for name in sorted(used_tiles)},
+        "terrain_mesh_inputs": RC.hash_inputs("terrain_mesh"),
+        "range": args.range,
+        "shadow_range_m": SHADOW_RANGE_M,
+        "coordinates": coordinate_record(),
+        "trial": bool(args.trial),
+        "views": view_records,
+    }
+    with open(os.path.join(out_dir, "inputs.json"), "w", encoding="utf-8") as f:
+        json.dump(record, f, indent=2, ensure_ascii=False)
+    print(f"BLENDER_REFERENCE building record views={len(view_records)} out={normalize_rel(out_dir)}")
     return 0
 
 
@@ -1570,6 +1691,92 @@ def load_gray_regions():
     return GrayRegions
 
 
+def load_building_regions():
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import BuildingRegions  # noqa: E402  Blender の中でも numpy だけで動く
+    return BuildingRegions
+
+
+def place_building(scene, building):
+    """比べる建物の glTF を Blender の読み込みで読み、エンジンの配置（位置・Y 軸まわりの回転・拡大率）で置く。材質は glTF の
+    ものをそのまま使い、メッシュの物体の番号を BuildingRegions.BUILDING_PASS_INDEX にする。記録の辞書を返す"""
+    import bpy
+    import mathutils
+    R = load_building_regions()
+    try:
+        bpy.ops.preferences.addon_enable(module="io_scene_gltf2")
+    except (RuntimeError, AttributeError):
+        pass
+    before = set(bpy.data.objects)
+    bpy.ops.import_scene.gltf(filepath=building["gltf_path"])
+    imported = [obj for obj in bpy.data.objects if obj not in before]
+    meshes = [obj for obj in imported if obj.type == "MESH"]
+    if not meshes:
+        raise RuntimeError(f"glTF からメッシュを読めない: {building['gltf_path']}")
+    root = bpy.data.objects.new("ReferenceBuilding", None)
+    scene.collection.objects.link(root)
+    for obj in imported:
+        if obj.parent is None:
+            obj.parent = root
+    # glTF の読み込みはローカルの +Y 上を +Z 上へ移す（x, y, z → x, −z, y。エンジンからの移し方と同じ）。エンジンの yaw は
+    # ローカルの (x, z) をワールドの (x cos − z sin, z cos + x sin) へ写すので、Blender（y = −Z）では z 軸まわりの −yaw
+    placement = building["placement"]
+    scale = float(placement["scale"])
+    root.matrix_world = (mathutils.Matrix.Translation(mathutils.Vector(engine_to_blender(placement["position"]))) @
+                         mathutils.Matrix.Rotation(-float(placement["yaw_rad"]), 4, "Z") @
+                         mathutils.Matrix.Diagonal((scale, scale, scale, 1.0)))
+    bpy.context.view_layer.update()
+    lowest = math.inf
+    triangles = 0
+    materials = set()
+    for obj in meshes:
+        obj.pass_index = R.BUILDING_PASS_INDEX
+        world = obj.matrix_world
+        lowest = min(lowest, min((world @ vertex.co).z for vertex in obj.data.vertices))
+        triangles += sum(len(polygon.vertices) - 2 for polygon in obj.data.polygons)
+        materials.update(slot.material.name for slot in obj.material_slots if slot.material)
+    expected_bottom = float(placement["position"][1] + placement["mesh_min_y"] * scale)
+    print(f"BLENDER_GRAY building id={placement['id']} meshes={len(meshes)} triangles={triangles} "
+          f"bottom={lowest:.4f} expected_bottom={expected_bottom:.4f}", flush=True)
+    return {"id": placement["id"], "gltf": building["gltf"], "placement": placement, "bounds": building["bounds"],
+            "meshes": len(meshes), "triangles": triangles, "materials": sorted(materials),
+            "material_source": "glTF の材質（Blender の glTF の読み込み。遮蔽のテクスチャは Cycles では使わない）",
+            "blender_bottom_z": lowest, "placement_bottom_y": expected_bottom}
+
+
+def render_view_depth(scene, exr_path, background):
+    """カメラの前方向への距離 m（View Z Depth を放射する材質を全体に掛け、1 サンプル・箱の幅 PIXEL_FILTER_WIDTH で描く。
+    --depth と同じ描き方）。空は +∞。描いた後に設定を本描画のものへ戻す"""
+    import bpy
+    material = bpy.data.materials.new("EngineViewDepth")
+    material.use_nodes = True
+    nodes = material.node_tree.nodes
+    nodes.clear()
+    camera_data = nodes.new("ShaderNodeCameraData")
+    emission = nodes.new("ShaderNodeEmission")
+    output = nodes.new("ShaderNodeOutputMaterial")
+    material.node_tree.links.new(camera_data.outputs["View Z Depth"], emission.inputs["Color"])
+    emission.inputs["Strength"].default_value = 1.0
+    material.node_tree.links.new(emission.outputs["Emission"], output.inputs["Surface"])
+    # 放射する三角形を光源として標本にしない（全体に掛けると光源の木を何千万の三角形で作り直して止まったように遅くなる。
+    # 深度はカメラの光線の当たりの放射だけを読むので値は変わらない）
+    material.cycles.emission_sampling = "NONE"
+    view_layer = scene.view_layers[0]
+    view_layer.material_override = material
+    background.inputs["Strength"].default_value = 0.0
+    set_gray_bounces(scene, 0)
+    scene.cycles.samples = 1
+    scene.cycles.seed = 0
+    scene.cycles.filter_width = PIXEL_FILTER_WIDTH
+    channels = render_and_read(scene, exr_path)
+    view_layer.material_override = None
+    background.inputs["Strength"].default_value = 1.0
+    set_gray_bounces(scene, GRAY_MAX_BOUNCES)
+    scene.cycles.filter_width = GRAY_PIXEL_FILTER_WIDTH
+    depth = channels["ViewLayer.Combined.R"]
+    return np.where(channels["ViewLayer.Combined.A"] > 0.5, depth, np.float32(np.inf)).astype(np.float32)
+
+
 def render_plate_job(job):
     """灰色の板だけの場面を sun か sky で描く（Cycles 側の尺度の較正）"""
     import bpy
@@ -1645,6 +1852,9 @@ def render_gray_job(job):
     import mathutils
 
     GR = load_gray_regions()
+    # 建物 1 棟の比較（--building）: 領域と収束は BuildingRegions、ほかは灰色の地形と同じ
+    building = job.get("building")
+    R = load_building_regions() if building else GR
     bpy.ops.wm.read_factory_settings(use_empty=True)
     scene = bpy.context.scene
     device = setup_cycles_device(scene)
@@ -1678,6 +1888,7 @@ def render_gray_job(job):
         vertex_count += len(positions)
         triangle_count += len(triangles)
         del positions, triangles, normals
+    building_record = place_building(scene, building) if building else None
     load_seconds = time.time() - started
 
     matrix, vertical_fov = camera_to_blender(job["camera"])
@@ -1707,6 +1918,7 @@ def render_gray_job(job):
     sun.lightgroup = "sun"
     world.lightgroup = "sky"
     view_layer.use_pass_normal = True
+    view_layer.use_pass_object_index = bool(building)
     for kind in ("diffuse", "glossy"):
         for part in ("direct", "indirect", "color"):
             setattr(view_layer, f"use_pass_{kind}_{part}", True)
@@ -1739,6 +1951,15 @@ def render_gray_job(job):
     visibility = np.where(n_dot_l > 1e-3, white_y / np.maximum(expected, 1e-6), 0.0).astype(np.float32)
     if not (alpha > 0.5).any() or not (white_y > 0.0).any():
         raise RuntimeError("太陽の見え方の描画が空（表面か光が無い。装置のメモリ不足を疑う）")
+    if building:
+        # 建物の画素（Object Index。画素の中の標本の取り方に依らず、当たった物の番号）
+        # パスの名前は Blender 5.2 で「Object Index」（前の版は IndexOB）
+        index_keys = [key for key in channels if ".Object Index." in key or ".IndexOB." in key]
+        if not index_keys:
+            raise RuntimeError(f"EXR に Object Index のパスが無い（あるもの: {sorted(channels)}）")
+        building_mask = (np.abs(channels[index_keys[0]] - R.BUILDING_PASS_INDEX) < 0.5) & (alpha > 0.5)
+        if not building_mask.any():
+            raise RuntimeError("建物が描画に映っていない（配置かカメラが違う）")
     view_layer.material_override = None
     background.inputs["Strength"].default_value = 1.0
     set_gray_bounces(scene, GRAY_MAX_BOUNCES)
@@ -1749,13 +1970,21 @@ def render_gray_job(job):
     GR.write_pfm(prefix + ".aux.normal.pfm", normal)
     GR.write_pfm(prefix + ".aux.alpha.pfm", alpha)
 
-    # 2. 領域（エンジンの深度と Cycles の法線・見え方から）
-    depth = GR.read_pfm(job["engine_depth_pfm"])[..., 0]
-    if depth.shape != (height, width):
-        raise RuntimeError(f"エンジンの深度の大きさ {depth.shape} が描画 {height}x{width} と違う")
-    masks = GR.region_masks(depth, normal[..., 1], n_dot_l, visibility, alpha > 0.5)
+    # 2. 領域（灰色の地形: エンジンの深度と Cycles の法線・見え方から。建物: Cycles の深度・物体の番号・法線・見え方から）
+    if building:
+        depth = render_view_depth(scene, exr_tmp, background)
+        GR.write_pfm(prefix + ".aux.depth.pfm", depth)
+        GR.write_pfm(prefix + ".aux.building.pfm", building_mask.astype(np.float32))
+        masks, region_record = R.region_masks(job["camera"], depth, building_mask, normal[..., 1], n_dot_l, visibility,
+                                              alpha > 0.5, building["placement"], building["bounds"])
+        building_record["regions"] = region_record
+    else:
+        depth = GR.read_pfm(job["engine_depth_pfm"])[..., 0]
+        if depth.shape != (height, width):
+            raise RuntimeError(f"エンジンの深度の大きさ {depth.shape} が描画 {height}x{width} と違う")
+        masks = GR.region_masks(depth, normal[..., 1], n_dot_l, visibility, alpha > 0.5)
     print(f"BLENDER_GRAY view={job['view']} regions=" +
-          json.dumps({name: int(masks[name].sum()) for name in GR.REGIONS}), flush=True)
+          json.dumps({name: int(masks[name].sum()) for name in R.REGIONS}), flush=True)
 
     # 切り出し（job の crop）: 名指しの領域の画素を囲む枠だけを描き、領域は枠の中に限る。ライトツリーを切る
     crop = job.get("crop")
@@ -1870,12 +2099,12 @@ def render_gray_job(job):
         spp = per_seed * chunk_spp
         y_a = GR.luminance(sums["a"]["combined"] / per_seed)
         y_b = GR.luminance(sums["b"]["combined"] / per_seed)
-        stats, all_converged = GR.convergence(y_a, y_b, masks)
+        stats, all_converged = R.convergence(y_a, y_b, masks)
         elapsed = time.time() - loop_started
         history.append({"spp_per_seed": spp, "elapsed_seconds": elapsed, "regions": stats})
         print(f"BLENDER_GRAY view={job['view']} spp_per_seed={spp} elapsed={elapsed:.0f}s all_converged={int(all_converged)} " +
               " ".join(f"{name}={stats[name].get('mean_diff', float('nan')):.4f}/{stats[name].get('pixel_rms', float('nan')):.3f}"
-                       for name in GR.REGIONS), flush=True)
+                       for name in R.REGIONS), flush=True)
         if all_converged and spp >= MIN_SPP_PER_SEED:
             stop_reason = "converged"
             break
@@ -1972,7 +2201,8 @@ def render_gray_job(job):
                    ".cycles.seed_a.pfm", ".cycles.seed_b.pfm", ".cycles.sun.pfm", ".cycles.sky.pfm",
                    ".cycles.direct.pfm", ".cycles.indirect.pfm", ".cycles.indirect_diffuse.pfm", ".aux.visibility.pfm", ".aux.n_dot_l.pfm",
                    ".aux.normal.pfm", ".aux.alpha.pfm") + \
-            ((".cycles.sun_direct.pfm", ".cycles.sky_direct.pfm") if crop else ()):
+            ((".cycles.sun_direct.pfm", ".cycles.sky_direct.pfm") if crop else ()) + \
+            ((".aux.depth.pfm", ".aux.building.pfm") if building else ()):
         outputs[os.path.basename(prefix) + suffix] = sha256_file(prefix + suffix)
     meta = {
         "view": job["view"],
@@ -2002,7 +2232,7 @@ def render_gray_job(job):
         "stop_reason": stop_reason,
         "all_converged": bool(all_converged),
         "regions": stats,
-        "region_criteria": GR.criteria(),
+        "region_criteria": R.criteria(),
         "history": history,
         "consistency": consistency,
         "load_seconds": load_seconds,
@@ -2014,6 +2244,11 @@ def render_gray_job(job):
         meta["crop"] = crop_record
         meta["settings"]["light_tree"] = False
         meta["seed_runs"] = seed_runs
+    if building:
+        meta["building"] = building_record
+        meta["depth"] = {"meaning": "view_axis_distance", "units": "m", "sky_value": "inf", "samples": 1,
+                         "pixel_filter": {"type": "BOX", "width_px": PIXEL_FILTER_WIDTH},
+                         "depth_source": "emission of Camera Data View Z Depth"}
     with open(prefix + ".cycles.json", "w", encoding="utf-8") as f:
         json.dump(meta, f, indent=2, ensure_ascii=False)
     if crop:
@@ -2062,9 +2297,19 @@ def main():
                              "/ に描く（1 視点）")
     parser.add_argument("--crop-reuse-a", action="store_true",
                         help="--crop-regions: 記録と中身の合う種 A の途中の和を残し、種 B だけを描く")
+    parser.add_argument("--building", action="store_true",
+                        help="前哨地の建物 1 棟（撮影のログの配置）と灰色の地形を共通の照明で描く")
+    parser.add_argument("--trial", action="store_true",
+                        help=f"--building: 試しの描画（1 本 {BUILDING_TRIAL_SPP} サンプル。既定の書き先 <撮影>/{BUILDING_TRIAL_DIR}）")
+    parser.add_argument("--out", default="", help=f"--building: 書き先（省くと <撮影>/{BUILDING_RESULT_DIR}）")
     args = parser.parse_args()
-    if int(args.depth) + int(args.gray) + int(args.albedo) + int(args.normal) + int(args.lit) != 1:
-        parser.error("--depth・--gray・--albedo・--normal・--lit のどれか 1 つを指定してください")
+    if int(args.depth) + int(args.gray) + int(args.albedo) + int(args.normal) + int(args.lit) + int(args.building) != 1:
+        parser.error("--depth・--gray・--albedo・--normal・--lit・--building のどれか 1 つを指定してください")
+    if args.building:
+        args.range = args.range or "shadow"
+        args.views = args.views or ",".join(BUILDING_VIEWS)
+        args.max_spp = args.max_spp or (BUILDING_TRIAL_SPP if args.trial else MAX_SPP_PER_SEED)
+        return run_building(args)
     if args.crop_reuse_a and not (args.crop_regions and args.skip_material):
         parser.error("--crop-reuse-a は --crop-regions と --skip-material と使う（材質を描き直すと A の途中の和は古い）")
     if args.crop_regions:

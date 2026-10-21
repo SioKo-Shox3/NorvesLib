@@ -1256,12 +1256,22 @@ namespace Game::GameModes
                 Layout::BuildPlacements(field, shapes, kProceduralLayout, placements, stats);
             }
 
+            // 外す建物: 全部（buildings）か、比べる 1 棟のほか（all-but-building）
+            const auto isHiddenBuilding = [hideMask](const Layout::PropPlacement &placement)
+            {
+                if (!Layout::GetPropKindSpec(placement.Kind).bBuilding)
+                {
+                    return false;
+                }
+                return (hideMask & WastelandHide::Buildings) != 0 ||
+                       ((hideMask & WastelandHide::ReferenceBuildingOnly) != 0 && !placement.bReferenceBuilding);
+            };
             uint32_t placedPerKind[Layout::kPropKindCount] = {};
             uint32_t placed = 0;
             for (const Layout::PropPlacement &placement : placements)
             {
                 const uint32_t kindIndex = static_cast<uint32_t>(placement.Kind);
-                if ((hideMask & WastelandHide::Buildings) != 0 && Layout::GetPropKindSpec(placement.Kind).bBuilding)
+                if (isHiddenBuilding(placement))
                 {
                     continue;
                 }
@@ -1321,18 +1331,34 @@ namespace Game::GameModes
                 assembly.FoliageRoadRects.push_back(
                     {road.CenterX, road.CenterZ, road.AlongX, road.AlongZ, road.HalfLength, road.HalfWidth});
             }
-            // 建物の最下点の高さと、その位置の地形の高さ（最下点が地面より下 = 埋まっている）を確かめられるよう出す（置いた建物だけ）
+            // 建物の最下点の高さと、その位置の地形の高さ（最下点が地面より下 = 埋まっている）を確かめられるよう出す（置いた建物だけ）。
+            // 続く WASTELAND_BUILDING_PLACEMENT は正解の絵（Scripts/Terrain/BlenderReference.py --building）が同じ glTF を同じ配置で
+            // 置くための値: Entity の位置[m]・Y 軸まわりの回転[rad]（ローカルの (x, z) をワールドの
+            // (x cos − z sin, z cos + x sin) へ写す。WastelandLayout.cpp の RotateXZ）・一様な拡大率
+            bool bReferenceBuildingPlaced = false;
             for (const Layout::PropPlacement &placement : placements)
             {
-                if (Layout::GetPropKindSpec(placement.Kind).bBuilding && (hideMask & WastelandHide::Buildings) == 0)
+                if (Layout::GetPropKindSpec(placement.Kind).bBuilding && !isHiddenBuilding(placement))
                 {
-                    const float bottom = placement.Y + shapes[static_cast<uint32_t>(placement.Kind)].MinY * placement.Scale;
-                    LOG_INFO_F("WASTELAND_BUILDING id=%s x=%.1f z=%.1f bottom=%.2f ground=%.2f yaw_deg=%.1f",
-                               Layout::GetPropKindSpec(placement.Kind).Id, static_cast<double>(placement.X),
-                               static_cast<double>(placement.Z), static_cast<double>(bottom),
-                               static_cast<double>(field.SampleHeight(placement.X, placement.Z)),
+                    const Layout::PropKindSpec &spec = Layout::GetPropKindSpec(placement.Kind);
+                    const float minY = shapes[static_cast<uint32_t>(placement.Kind)].MinY;
+                    const float bottom = placement.Y + minY * placement.Scale;
+                    LOG_INFO_F("WASTELAND_BUILDING id=%s x=%.1f z=%.1f bottom=%.2f ground=%.2f yaw_deg=%.1f", spec.Id,
+                               static_cast<double>(placement.X), static_cast<double>(placement.Z),
+                               static_cast<double>(bottom), static_cast<double>(field.SampleHeight(placement.X, placement.Z)),
                                static_cast<double>(placement.Yaw * 180.0f / 3.14159265f));
+                    LOG_INFO_F("WASTELAND_BUILDING_PLACEMENT id=%s gltf=%s reference=%d x=%.5f y=%.5f z=%.5f yaw_rad=%.8f "
+                               "scale=%.6f mesh_min_y=%.5f",
+                               spec.Id, spec.MeshPath, placement.bReferenceBuilding ? 1 : 0, static_cast<double>(placement.X),
+                               static_cast<double>(placement.Y), static_cast<double>(placement.Z),
+                               static_cast<double>(placement.Yaw), static_cast<double>(placement.Scale),
+                               static_cast<double>(minY));
+                    bReferenceBuildingPlaced = bReferenceBuildingPlaced || placement.bReferenceBuilding;
                 }
+            }
+            if ((hideMask & WastelandHide::ReferenceBuildingOnly) != 0 && !bReferenceBuildingPlaced)
+            {
+                LOG_WARNING("WASTELAND_REFERENCE_BUILDING_MISSING 比べる 1 棟を置けませんでした（DEM の前哨地でない・資産が無い）");
             }
             if ((hideMask & WastelandHide::Rocks) == 0)
             {
@@ -1353,6 +1379,7 @@ namespace Game::GameModes
             {TEXT("clouds"), Clouds}, {TEXT("foliage"), Foliage},     {TEXT("rocks"), Rocks},
             {TEXT("gravel"), Gravel}, {TEXT("buildings"), Buildings}, {TEXT("aerial"), Aerial},
             {TEXT("fog"), Fog},       {TEXT("all"), All},
+            {TEXT("all-but-building"), (All & ~static_cast<uint32_t>(Buildings)) | ReferenceBuildingOnly},
         };
         outMask = 0;
         outError.clear();
@@ -1396,14 +1423,16 @@ namespace Game::GameModes
         // 外すもの（--wasteland-hide）を、撮影の照合が読めるようにログへ残す
         if (data.m_HideMask != 0)
         {
-            LOG_INFO_F("WASTELAND_HIDE mask=%u clouds=%d foliage=%d rocks=%d gravel=%d buildings=%d aerial=%d fog=%d",
+            LOG_INFO_F("WASTELAND_HIDE mask=%u clouds=%d foliage=%d rocks=%d gravel=%d buildings=%d aerial=%d fog=%d "
+                       "reference_building_only=%d",
                        data.m_HideMask, (data.m_HideMask & WastelandHide::Clouds) != 0 ? 1 : 0,
                        (data.m_HideMask & WastelandHide::Foliage) != 0 ? 1 : 0,
                        (data.m_HideMask & WastelandHide::Rocks) != 0 ? 1 : 0,
                        (data.m_HideMask & WastelandHide::Gravel) != 0 ? 1 : 0,
                        (data.m_HideMask & WastelandHide::Buildings) != 0 ? 1 : 0,
                        (data.m_HideMask & WastelandHide::Aerial) != 0 ? 1 : 0,
-                       (data.m_HideMask & WastelandHide::Fog) != 0 ? 1 : 0);
+                       (data.m_HideMask & WastelandHide::Fog) != 0 ? 1 : 0,
+                       (data.m_HideMask & WastelandHide::ReferenceBuildingOnly) != 0 ? 1 : 0);
         }
         // 地形を最も細かい段で描く指定（--wasteland-finest-lod）と、地形の書き出し先（--wasteland-export-terrain）
         if (data.m_bFinestLod)
