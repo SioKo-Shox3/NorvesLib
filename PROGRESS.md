@@ -6652,3 +6652,14 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 正解を描き直したので、前の撮影（SCN-WL-PLANT-SHADOW・SCN-WLR-PLANT-REF-BASE）を --engine にした古い verify は深度の照合で落ちる
   - 新しい試験は足していない
 - Next: TASKS.md の次の未完の項目
+
+### SCN-WL-SKY-SCATTER 再検証（2026-10-22、run 20261021-055341 の反復 44）
+- 差し戻し（反復 39 の評価者）の「B と 5 %」は、親が反復 40 の BLOCKED の案 1 で done-when を直して解いた（空気遠近の和と空の照度の B との比は記録だけ）。記録の節は反復 41 で `WastelandAtmosphereReference.md` に書いた。式・シェーダ・文書は今回変えていない
+- 証拠（`.harness/runs/20261021-055341/`）:
+  - `aux-SCN-WL-SKY-SCATTER-regression-before-44.txt` 反復の最初の回帰の before result=pass・EXIT=0
+  - `verify-SCN-WL-SKY-SCATTER-5.txt` Debug の Game のビルド EXIT=0
+  - `verify-SCN-WL-SKY-SCATTER-6.txt` ref_ground_02 の atmosphere-dump の撮影 result=pass・EXIT=0（commit fa50969e dirty=0）。画像を開き、空の高さ約 380 px の横の境が無いことを確かめた
+  - `verify-SCN-WL-SKY-SCATTER-7.txt` `--atmos-ref --expect sky-scatter.json --verify` result=pass・inputs_current=1・9 行合格（単一散乱 ÷ B 0.9995〜1.0007、多重散乱 ÷ A 0.9986〜1.0027、空の照度 ÷ A 1.3 %）。記録だけの値は和 ÷ B 0.8373〜0.9475、照度の B との差 7.33 % で、文書の数値と同じ
+  - `verify-SCN-WL-SKY-SCATTER-8.txt` 回帰の after result=pass（4 シーンとも平均の差 0.000、PSNR 67.1〜∞）。rendering3dtest の after を開き、天球・地面・球・岩が変わらないことを確かめた
+- Notes: 6 視点と写真の並べは反復 39 のもの（`scene-capture/SCN-WL-SKY-SCATTER-views`）。それ以後のコミットは影のパスの株と植物の正解で、大気の値は変わらない（上の数値が反復 39 と同じ）。新しい試験は足していない
+- Next: SCN-WL-SKY-SCATTER-FOG
