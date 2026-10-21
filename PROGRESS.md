@@ -6601,3 +6601,15 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 区間を進める 32 歩の GPU 時間は測っていない（荒野だけ。霧があるときの影の標本も 32 歩になる）
   - 新しい試験は足していない
 - Next: TASKS.md の次の未完の項目（SCN-WL-SKY-SCATTER-FOG が開く）
+
+
+### SCN-WL-SKY-SCATTER 合否の分け方の記録（2026-10-22、run 20261021-055341 の反復 41。親の操縦で今回のタスク SCN-WL-PLANT-SHADOW-RANGE の代わりに行った）
+
+- Done:
+  - done-when の書き直しと status を todo に戻すのは親が a805a38d で済ませていたので触っていない
+  - `Scripts/Terrain/ExpectSpecs/sky-scatter.json` の説明は、単一散乱を B・多重散乱と水平面の空の照度を A と比べ、和の B との比と照度の B との差（`sky_horizontal_b`）を記録だけにする分け方を正しく書いていたので直していない
+  - `Docs/RenderingValidation/WastelandAtmosphereReference.md` に「合否と記録の分け方・多重散乱のモデルの差の残り」の節を足した。和 ÷ B 0.84〜0.95（最小 0.837 は太陽の側の地表への視線の約 300 m）、水平面の空の照度 エンジン ÷ B は R 1.073・G 1.030・B 0.983（赤 7.3 %）。数値は保存した `scene-capture/SCN-WL-SKY-SCATTER/atmos_ref_check.json` から読み、撮影・式・シェーダはやり直していない
+- Notes:
+  - 水平面の空の照度 ÷ A は done-when が 5 %、`sky-scatter.json` の幅は 3 %（実測 1.3 %）。仕様の方が狭いだけで食い違いではないので幅は変えていない
+  - SCN-WL-PLANT-SHADOW-RANGE は未着手（status は todo のまま）
+- Next: SCN-WL-SKY-SCATTER の再検証（ランナー）、SCN-WL-PLANT-SHADOW-RANGE
