@@ -6272,3 +6272,11 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - エンジンの北の壁（陰）に、目地のあたりで黒に近い斑点が出る（Cycles には無い）。照明を直した後の比較で切り分ける
   - 新しい試験は足していない
 - Next: TASKS.md の次の未完の項目
+
+### SCN-WLR-BUILDING-REF-BASE 再検証の取り直し（2026-10-21、run 20261021-055341 の反復 18）
+- Done: コードは 2ac1bc7e のまま verify 3 本を保存し直した。反復 17 の後の再検証で撮影が 10 分を超えたのは、反復の外の大気の正解の解 4 本が論理コア 32 のうち約 23 を使っていたため（解はコア 16〜31 に絞られた）
+  - `verify-SCN-WLR-BUILDING-REF-BASE-4.txt` Debug の Game のビルド EXIT=0
+  - `verify-SCN-WLR-BUILDING-REF-BASE-5.txt` outpost の撮影 result=pass・EXIT=0（commit=2ac1bc7e dirty=0、game_exe 4a55284e…）。撮影 1 本の所要: RelWithDebInfo のビルドを含めて全体 154 秒、Game の起動から終了まで 131 秒（`aux-SCN-WLR-BUILDING-REF-BASE-capture-wall.txt`）。10 分の上限から遠いので verify の構成は変えない
+  - `verify-SCN-WLR-BUILDING-REF-BASE-6.txt` `--building --trial --verify` result=pass・inputs_current=1・EXIT=0（5 領域とも判定、輪郭 1.000）
+- Next: なし（評価はランナー）
+- Notes: 再検証の撮影が遅いときは、まず同時に走る重い処理（大気の解など）の CPU の占有を疑う。止まった撮影のログでは地形のメッシュの読み込み 1 本に 25〜30 秒かかっていた
