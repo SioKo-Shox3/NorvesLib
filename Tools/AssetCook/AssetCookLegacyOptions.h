@@ -12,6 +12,8 @@ namespace NorvesLib::Tools::AssetCook::Detail
     {
         Core::Container::AnsiString Usage, Quality, Generate;
         std::filesystem::path OrmAoPath, OrmRoughnessPath, OrmMetallicPath;
+        // ORM の A に詰める遮蔽(省略可。無ければ A=255)。
+        std::filesystem::path OrmOcclusionPath;
         bool bFlipNormalY = false;
         uint32_t FallbackMinTriangles = 0;
         uint32_t DagRootMaxClusters = 0;

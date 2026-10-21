@@ -50,8 +50,10 @@ $ErrorActionPreference = "Stop"
 
 $RepoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 $ValidUsages = @("albedo", "normal", "orm", "single", "height16")
-$OrmSourceKeys = @("orm_ao", "orm_roughness", "orm_metallic")
-$OrmArguments = @{ orm_ao = "--orm-ao"; orm_roughness = "--orm-roughness"; orm_metallic = "--orm-metallic" }
+# orm_occlusion は A に詰める照明用の遮蔽（省略可。R の AO を地形の層の混ぜの高さに使う材質が、遮蔽だけを別の値にする）
+$OrmSourceKeys = @("orm_ao", "orm_roughness", "orm_metallic", "orm_occlusion")
+$OrmArguments = @{ orm_ao = "--orm-ao"; orm_roughness = "--orm-roughness"; orm_metallic = "--orm-metallic";
+    orm_occlusion = "--orm-occlusion" }
 
 function Resolve-RepoPath {
     param([string]$Path)

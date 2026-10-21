@@ -6114,3 +6114,17 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `aux-SCN-WL-MATERIAL-AO-BAKE-analysis.txt`: 地図とアトラスの平均・分位、法線と変位からの焼き直し、平らな地面の AO、空の映り込みの反射率（split-sum の数値積分）。台本は `ao-bake/`
 - Notes: 変位の地図は Poly Haven の API から作業用の場所へ落とし、リポジトリには置いていない。焼き直しは平らな面の上向きの法線に対する余弦の重み（Poly Haven の焼き方の距離・法線の扱いは不明）。新しい試験は足していない
 - Next: SCN-WL-MATERIAL-AO-OCCLUSION
+
+### SCN-WL-MATERIAL-AO-OCCLUSION 完了（2026-10-21、run 20261021-055341 の反復 8）
+- Done: 地表の材質の遮蔽の AO を、素材の起伏から焼いた値にした。ORM の R（AO の地図）は層の混ぜの高さのまま残し、A に遮蔽を入れて照明が読む `Material.z` を A にする（`TerrainLayerBlend.glsl`）。焼き直しは `Scripts/Terrain/TerrainOcclusion.py`（`--build`・`--verify`。法線の地図を 1024 画素で積分した実寸の高さ場から焼き、アトラスの並びの `<アトラス>_occl_8k.png` を書く）。焼いた平均は赤茶の土 0.950・礫の舗石 0.934・皮膜 0.976・砂 0.981。岩肌は AO の地図をそのまま A に入れた
+- 焼き器: `orm_occlusion`（`--orm-occlusion`）の 4 枠目を足した（`CookAssets.ps1`・`Main.cpp`・`SingleAssetCook`・`PackOrmBase`）。無い ORM は A=255 で差分クックの印も従来のバイト列なので、ほかの資産は焼き直されない。地形の ORM 3 件だけを RelWithDebInfo の AssetCook で `-OnlyLogicalPath ... -Force` で焼いた（`aux-SCN-WL-MATERIAL-AO-OCCLUSION-cook.txt`、cooked=3・untouched=396・10 秒）
+- 参照: `RefSplit.AO_ASSET_KEYS` に `orm_occlusion` を足し、参照の署名は `33d9c699…` のまま（Cycles は材質の AO を使わない）
+- 証拠（`.harness/runs/20261021-055341/`）:
+  - `regression-before-SCN-WL-MATERIAL-AO-OCCLUSION.txt` result=pass・EXIT=0（シェーダーと資産を変える前に撮った）
+  - `verify-SCN-WL-MATERIAL-AO-OCCLUSION-1.txt` Debug の Game のビルド EXIT=0、`-2`・`-3` 撮影 result=pass・EXIT=0（視点ごとに撮影先を分けた）
+  - `verify-SCN-WL-MATERIAL-AO-OCCLUSION-4.txt` `--expect material-ao.json --verify` result=pass（rows=2・failed=0、inputs_current=1・cycles_inputs_current=1）: ref_ground_01 0.9830（直す前 0.9722、+1.1 %）、ref_cliff_02 0.9426（0.9246、+1.9 %。見込みの +3 % より小さい）。見比べ `lit_ref_cliff_02.png` を開き、エンジンと Cycles の明るさと色が揃う
+  - `verify-SCN-WL-MATERIAL-AO-OCCLUSION-5.txt` 回帰の after result=pass: mega-bananas psnr 61.3、night-village 60.9、rendering3dtest・sandbox inf
+  - `aux-SCN-WL-MATERIAL-AO-OCCLUSION-aov-diff.txt`: SHADING の撮影とのアルベドの AOV の差は平均が小数 5 桁まで同じ、0.01 を超える画素は 716・750（0.03〜0.04 %）で皮膜の斑の縁と地平に点で散る（`ao-occlusion/*-albedo-diff.png` を開いた）。A を入れて BC7 の符号の詰め方が変わった R・G の丸めの分（粗さの AOV の差は平均 0.001・最大 0.047）
+  - `aux-SCN-WL-MATERIAL-AO-OCCLUSION-bake-verify.txt` `TerrainOcclusion.py --verify` result=pass
+- Notes: 焼く刻みは変位の地図からの値と平均が揃う 1024 画素にした（4k では JPEG の法線の雑音で赤茶の土 0.906 と暗くなる）。ref_cliff_02 の余裕は 0.023 に増えた。`lit_check.json` の `material_ao` は参照の材質の再現の値（地図）のまま。AssetCook のテクスチャのスモーク（`AssetCookTextureUsageSmoke`）は回していない。記録は `Docs/RenderingValidation/WastelandMaterialAO.md` の「遮蔽の焼き直し」。新しい試験は足していない
+- Next: TASKS.md の次の未完の項目

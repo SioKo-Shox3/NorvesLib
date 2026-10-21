@@ -932,14 +932,15 @@ namespace NorvesLib::Tools::AssetCook
             return true;
         }
 
-        // ORM の 3 枠を R(AO)・G(粗さ)・B(メタリック)に詰めた RGBA8 を作る。
-        // 無い枠は AO=1・粗さ=1・メタリック=0。大きさは存在する枠で一致していなければならない。
+        // ORM の 4 枠を R(AO)・G(粗さ)・B(メタリック)・A(遮蔽)に詰めた RGBA8 を作る。
+        // 無い枠は AO=1・粗さ=1・メタリック=0・遮蔽=1。大きさは存在する枠で一致していなければならない。
         bool PackOrmBase(const OrmSourceImages &orm, MipImage &outBase, ErrorString &error)
         {
-            const TextureSourceImage *slots[3] = {&orm.Ao, &orm.Roughness, &orm.Metallic};
-            const uint8_t missingValues[3] = {255, 255, 0};
+            constexpr int SLOT_COUNT = 4;
+            const TextureSourceImage *slots[SLOT_COUNT] = {&orm.Ao, &orm.Roughness, &orm.Metallic, &orm.Occlusion};
+            const uint8_t missingValues[SLOT_COUNT] = {255, 255, 0, 255};
 
-            MipImage decoded[3];
+            MipImage decoded[SLOT_COUNT];
             bool bAnyPresent = false;
             uint32_t width = 0;
             uint32_t height = 0;
@@ -947,7 +948,7 @@ namespace NorvesLib::Tools::AssetCook
             singleChannel.PixelFormat = CookedTexturePixelFormat::R8UNorm;
             singleChannel.OutputChannels = 1;
 
-            for (int slot = 0; slot < 3; ++slot)
+            for (int slot = 0; slot < SLOT_COUNT; ++slot)
             {
                 if (!slots[slot]->IsPresent())
                 {
@@ -975,7 +976,7 @@ namespace NorvesLib::Tools::AssetCook
 
             if (!bAnyPresent)
             {
-                error = "ORM には AO・粗さ・メタリックのどれか 1 枚が要ります";
+                error = "ORM には AO・粗さ・メタリック・遮蔽のどれか 1 枚が要ります";
                 return false;
             }
 
@@ -983,7 +984,7 @@ namespace NorvesLib::Tools::AssetCook
             outBase.Width = width;
             outBase.Height = height;
             outBase.Bytes.assign(pixelCount * 4, 255);
-            for (int slot = 0; slot < 3; ++slot)
+            for (int slot = 0; slot < SLOT_COUNT; ++slot)
             {
                 const bool bPresent = slots[slot]->IsPresent();
                 for (size_t i = 0; i < pixelCount; ++i)

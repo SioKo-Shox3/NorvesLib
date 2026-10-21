@@ -139,13 +139,16 @@ struct TerrainSurfaceInput
 };
 
 // 1 層の標本（重み付きの和）。Perturbation は法線の傾き（ワールドの向き。幾何の法線に足して正規化する）。
-// LostDetail は法線マップの傾きを落とした割合（傾きの分散の 1 - 残した割合^2。粗さへ移す）
+// LostDetail は法線マップの傾きを落とした割合（傾きの分散の 1 - 残した割合^2。粗さへ移す）。
+// Material.z は ORM の R（素材の AO の地図）で、層の混ぜの高さ（くぼみほど低い）に使う。Occlusion は ORM の A（素材の起伏から
+// 焼いた遮蔽。Scripts/Terrain/TerrainOcclusion.py）で、照明が遮蔽として読む材質の AO になる
 struct TerrainLayerSample
 {
     vec4 Albedo;
     vec3 Material;
     vec3 Perturbation;
     float LostDetail;
+    float Occlusion;
 };
 
 // 遠景の地図の標本。Weights は砂・土・岩肌の重み（合計 1）、Normal は画素の平均の法線、Amount は地図へ移す割合（0〜1）
@@ -421,12 +424,14 @@ void AccumulateTerrainProjection(inout TerrainLayerSample acc, float weight,
     const vec3 tangentNormal =
         DecodePbrTangentNormal(SampleMaterialTextureGrad(normalTex, ruv, dx, dy, normalLod, bVirtualTexture),
                                bNormalTwoChannel);
-    const vec3 material = DecodePbrOrmSample(SampleMaterialTextureGrad(ormTex, ruv, dx, dy, ormLod, bVirtualTexture));
+    const vec4 ormSample = SampleMaterialTextureGrad(ormTex, ruv, dx, dy, ormLod, bVirtualTexture);
+    const vec3 material = DecodePbrOrmSample(ormSample);
     const vec2 slope = transpose(rotation) * (tangentNormal.xy / max(tangentNormal.z, 0.1)) * normalFade;
     acc.Albedo += albedo * weight;
     acc.Material += material * weight;
     acc.Perturbation += (axisU * slope.x + axisV * slope.y) * weight;
     acc.LostDetail += (1.0 - normalFade * normalFade) * weight;
+    acc.Occlusion += ormSample.a * weight;
 }
 
 // 1 層を、距離の 2 つの段 × 投影（projection の重みが 0 でないもの）で標本する。uvScale は層の UV の倍率。
@@ -441,6 +446,7 @@ TerrainLayerSample SampleTerrainLayer(sampler2D albedoTex, sampler2D normalTex, 
     acc.Material = vec3(0.0);
     acc.Perturbation = vec3(0.0);
     acc.LostDetail = 0.0;
+    acc.Occlusion = 0.0;
     const vec3 p = surface.WorldPosition;
     const vec3 pdx = surface.WorldDx;
     const vec3 pdy = surface.WorldDy;
@@ -610,6 +616,7 @@ PbrMaterialTextureSamples ShadeTerrainLayers(TerrainBlendParams params,
             sand.Material = sand.Material * crustWeights.x + crustLayer.Material * crustWeights.y;
             sand.Perturbation = sand.Perturbation * crustWeights.x + crustLayer.Perturbation * crustWeights.y;
             sand.LostDetail = sand.LostDetail * crustWeights.x + crustLayer.LostDetail * crustWeights.y;
+            sand.Occlusion = sand.Occlusion * crustWeights.x + crustLayer.Occlusion * crustWeights.y;
         }
     }
     // 地図の砂（沢底と吹きだまり）: 土（と皮膜）の上に、右の枠の砂を高さ（AO）で混ぜる。砂は土の窪みから埋まる
@@ -625,6 +632,7 @@ PbrMaterialTextureSamples ShadeTerrainLayers(TerrainBlendParams params,
         sand.Material = sand.Material * fillWeights.x + sandFill.Material * fillWeights.y;
         sand.Perturbation = sand.Perturbation * fillWeights.x + sandFill.Perturbation * fillWeights.y;
         sand.LostDetail = sand.LostDetail * fillWeights.x + sandFill.LostDetail * fillWeights.y;
+        sand.Occlusion = sand.Occlusion * fillWeights.x + sandFill.Occlusion * fillWeights.y;
     }
     TerrainLayerSample dirt = sand;
     TerrainLayerSample rock = sand;
@@ -645,6 +653,7 @@ PbrMaterialTextureSamples ShadeTerrainLayers(TerrainBlendParams params,
         rock.Albedo.rgb = mix(rock.Albedo.rgb * strata.Tint, VARNISH_ALBEDO, strata.Varnish);
         rock.Material.y *= mix(1.0, 0.85, strata.Varnish);
         rock.Material.z *= strata.Occlusion;
+        rock.Occlusion *= strata.Occlusion;
         rock.Perturbation += strata.Perturbation;
     }
 
@@ -666,6 +675,8 @@ PbrMaterialTextureSamples ShadeTerrainLayers(TerrainBlendParams params,
     }
     result.TangentNormal = vec3(0.0, 0.0, 1.0);
     result.Material = sand.Material * w.x + dirt.Material * w.y + rock.Material * w.z;
+    // 照明が読む材質の AO は、高さ（R）でなく焼いた遮蔽（A）を同じ重みで混ぜた値
+    result.Material.z = dot(vec3(sand.Occlusion, dirt.Occlusion, rock.Occlusion), w);
     // 落とした細かい法線の傾きの分散を粗さの α²（= 粗さ^4）に足す（Toksvig と同じ考え方で、鏡面の山を細かい凹凸の分だけ広げる）
     const float lostVariance = dot(vec3(sand.LostDetail, dirt.LostDetail, rock.LostDetail) * params.farMix.yzw, w);
     if (lostVariance > 0.0)

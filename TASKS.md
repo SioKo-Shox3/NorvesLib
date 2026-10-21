@@ -2057,7 +2057,7 @@
 - notes: 2026-10-19（Sol の批評 13 と 2 周目）。
 
 ## SCN-WL-MATERIAL-AO-OCCLUSION: 地表の材質の遮蔽の AO を、素材の起伏から焼いた値にする（層の混ぜの高さは変えない）
-- status: todo
+- status: done
 - after: SCN-WL-MATERIAL-AO-BAKE
 - done-when: SCN-WL-MATERIAL-AO-BAKE で、地表の素材の Poly Haven の AO の地図（赤茶の土 0.558・礫の舗石 0.626・皮膜の付いた土 0.858・砂 0.850）が、素材自身の起伏（変位・法線の地図を実寸にした高さ場）から焼いた AO（0.92〜0.98）より大幅に暗いと分かった（`Docs/RenderingValidation/WastelandMaterialAO.md`）。ORM の R は層の混ぜの高さにも使うので、高さに使う値（今の地図）は変えずに、照明が遮蔽として読む値（`lighting.frag` の材質の AO。RTGI では間接の鏡面、DDGI では拡散の環境光）だけを起伏から焼いた AO にする（高さと遮蔽を別のチャンネルに分けるなど、やり方はこの項目で選ぶ）。焼き直しの台本は `Scripts/Terrain/` に置き、`TerrainMaterials.py --verify` と同じく作り直しと一致するかを確かめられるようにする。層の混ぜ（土・皮膜・砂・岩肌の境）が変わらないことを、SCN-WL-MATERIAL-AO-SHADING の撮影とのアルベドの AOV の差で確かめる。参照の扱いは SCN-WL-MATERIAL-AO-BAKE と同じ（AO だけの変更なら `--lit --verify` で参照の署名が変わらないこと）。`material-ao.json` を撮り直した撮影で通し、日なたの地面の比が上がる向き（見込み ref_ground_01 約 +1 %・ref_cliff_02 約 +3 %）を記録する。反復の最初に回帰の撮影の `before` を撮る。視点ごとに撮影先を分ける。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`

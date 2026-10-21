@@ -51,11 +51,14 @@ namespace NorvesLib::Tools::AssetCook
     };
 
     // ORM の元画像。それぞれ R(グレースケールなら同じ値)を読む。無い枠は AO=1・粗さ=1・メタリック=0。
+    // Occlusion は A に詰める照明用の遮蔽(省略可。無ければ A=255)。R の AO を別の用途(地形の層の混ぜの高さ)に
+    // 使う材質が、照明の読む遮蔽を別の値にするときに使う。
     struct OrmSourceImages
     {
         TextureSourceImage Ao;
         TextureSourceImage Roughness;
         TextureSourceImage Metallic;
+        TextureSourceImage Occlusion;
     };
 
     struct TextureUsageCookParams

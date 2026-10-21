@@ -24,6 +24,7 @@
       "cook_usage": "orm",
       "orm_ao": "Assets/Textures/PolyHaven/wasteland_soil_sand/wasteland_soil_sand_ao_8k.png",
       "orm_roughness": "Assets/Textures/PolyHaven/wasteland_soil_sand/wasteland_soil_sand_rough_8k.png",
+      "orm_occlusion": "Assets/Textures/PolyHaven/wasteland_soil_sand/wasteland_soil_sand_occl_8k.png",
       "package_name": "PolyHaven/wasteland_soil_sand/wasteland_soil_sand_orm.nvpkg",
       "entry_name": "Assets/Textures/PolyHaven/wasteland_soil_sand/wasteland_soil_sand_orm_8k.nvtex"
     },
@@ -46,6 +47,7 @@
       "cook_usage": "orm",
       "orm_ao": "Assets/Textures/PolyHaven/wasteland_dirt_crust/wasteland_dirt_crust_ao_8k.png",
       "orm_roughness": "Assets/Textures/PolyHaven/wasteland_dirt_crust/wasteland_dirt_crust_rough_8k.png",
+      "orm_occlusion": "Assets/Textures/PolyHaven/wasteland_dirt_crust/wasteland_dirt_crust_occl_8k.png",
       "package_name": "PolyHaven/wasteland_dirt_crust/wasteland_dirt_crust_orm.nvpkg",
       "entry_name": "Assets/Textures/PolyHaven/wasteland_dirt_crust/wasteland_dirt_crust_orm_8k.nvtex"
     },
@@ -68,6 +70,7 @@
       "cook_usage": "orm",
       "orm_ao": "Assets/Textures/PolyHaven/cliff_side/cliff_side_ao_4k.jpg",
       "orm_roughness": "Assets/Textures/PolyHaven/cliff_side/cliff_side_rough_4k.jpg",
+      "orm_occlusion": "Assets/Textures/PolyHaven/cliff_side/cliff_side_ao_4k.jpg",
       "package_name": "PolyHaven/cliff_side/cliff_side_orm.nvpkg",
       "entry_name": "Assets/Textures/PolyHaven/cliff_side/cliff_side_orm_4k.nvtex"
     },

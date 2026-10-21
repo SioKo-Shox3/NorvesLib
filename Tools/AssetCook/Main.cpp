@@ -35,7 +35,8 @@ namespace
     {
         const bool bHasOrmSource = !options.OrmAoPath.empty() ||
                                    !options.OrmRoughnessPath.empty() ||
-                                   !options.OrmMetallicPath.empty();
+                                   !options.OrmMetallicPath.empty() ||
+                                   !options.OrmOcclusionPath.empty();
         if (options.Usage.empty())
         {
             if (bHasOrmSource || !options.Quality.empty())
@@ -79,14 +80,14 @@ namespace
             if (!options.InputPath.empty() && bHasOrmSource)
             {
                 error = "--usage orm は --input（詰め済みの1枚）か "
-                        "--orm-ao・--orm-roughness・--orm-metallic "
+                        "--orm-ao・--orm-roughness・--orm-metallic・--orm-occlusion "
                         "のどちらか一方で指定してください";
                 return false;
             }
             if (options.InputPath.empty() && !bHasOrmSource)
             {
                 error = "--usage orm には --input か "
-                        "--orm-ao・--orm-roughness・--orm-metallic のどれか 1 "
+                        "--orm-ao・--orm-roughness・--orm-metallic・--orm-occlusion のどれか 1 "
                         "つが要ります";
                 return false;
             }
@@ -321,6 +322,14 @@ namespace
                     return false;
                 }
                 outOptions.OrmMetallicPath = value;
+            }
+            else if (argument == "--orm-occlusion")
+            {
+                if (!readValue())
+                {
+                    return false;
+                }
+                outOptions.OrmOcclusionPath = value;
             }
             else
             {

@@ -1,7 +1,7 @@
 ﻿# 荒野の正解の絵の比較（SCN-WLR-*）の記録を、2 つの署名に分ける（SCN-WLR-REF-SPLIT。ReferenceCheck.py から呼ぶ。単独では動かさない）。
 #
 # 参照の入力（Cycles の参照の署名。<参照>/cycles/reference.json）:
-#   地形のメッシュ（書き出しの元の入力のハッシュ〔AO の画像 orm_ao は除く〕・書き出しの一覧・読んだ PLY）、材質の値の表（Cycles が
+#   地形のメッシュ（書き出しの元の入力のハッシュ〔AO の画像 orm_ao・遮蔽の画像 orm_occlusion は除く〕・書き出しの一覧・読んだ PLY）、材質の値の表（Cycles が
 #   使う値だけ。材質の AO〔AO の段・AO の定数〕は Cycles が使わないので入れない。灰色では CommonLight.json の gray_material）、共通の照明（CommonLight.json・GrayRegions.py）、
 #   カメラと Blender のカメラのずらし量、Blender の台本と出力の画像のハッシュ。
 #   描画のコードや Game.exe は入れないので、参照の入力が同じなら、エンジンの実装が変わっても Cycles の参照をそのまま使える。
@@ -44,8 +44,9 @@ TABLE_IMPLEMENTATION_KEYS = ("shader_sha256", "material_log_sha256")
 AO_TEXTURE_SUFFIX = "_ao"
 # シェーダーの定数のうち材質の AO だけに効くもの（名前にこれを含む。STRATA_*_MEAN_OCCLUSION など）
 AO_CONSTANT_MARK = "OCCLUSION"
-# 地形の資産の組のテクスチャのうち AO の画像を指す鍵（地形のメッシュの入力に入れない）
-AO_ASSET_KEYS = ("orm_ao",)
+# 地形の資産の組のテクスチャのうち AO の画像を指す鍵（地形のメッシュの入力に入れない。orm_occlusion は照明が読む遮蔽で、
+# Cycles は使わない）
+AO_ASSET_KEYS = ("orm_ao", "orm_occlusion")
 # 出力の画像（視点の名前に続くもの）
 OUTPUT_RE = r"^{view}(\.[A-Za-z0-9_-]+)*\.(png|pfm)$"
 SELFTEST_DIR = os.path.join(".harness", "runs", "scene-capture", "SCN-WLR-REF-SPLIT")

@@ -186,17 +186,22 @@ namespace NorvesLib::Tools::AssetCook
 
                 TextureSourceImage mainSource;
                 OrmSourceImages ormSources;
-                std::vector<uint8_t> ormBytes[3];
-                ErrorString ormNames[3];
+                std::vector<uint8_t> ormBytes[4];
+                ErrorString ormNames[4];
                 cookParams.bFlipNormalY = options.bFlipNormalY;
                 if (cookParams.Usage == TextureUsage::Orm && options.InputPath.empty())
                 {
-                    const std::filesystem::path *ormPaths[3] = {&options.OrmAoPath, &options.OrmRoughnessPath,
-                                                                &options.OrmMetallicPath};
-                    TextureSourceImage *ormSlots[3] = {&ormSources.Ao, &ormSources.Roughness, &ormSources.Metallic};
-                    for (int slot = 0; slot < 3; ++slot)
+                    const std::filesystem::path *ormPaths[4] = {&options.OrmAoPath, &options.OrmRoughnessPath,
+                                                                &options.OrmMetallicPath, &options.OrmOcclusionPath};
+                    TextureSourceImage *ormSlots[4] = {&ormSources.Ao, &ormSources.Roughness, &ormSources.Metallic,
+                                                       &ormSources.Occlusion};
+                    for (int slot = 0; slot < 4; ++slot)
                     {
-                        sourceHashBytes.push_back(ormPaths[slot]->empty() ? 0 : 1);
+                        // 遮蔽の枠（4 枠目）は有るときだけ印に足す。無い ORM の印は 3 枠だけのときと同じバイト列にする
+                        if (slot < 3 || !ormPaths[slot]->empty())
+                        {
+                            sourceHashBytes.push_back(ormPaths[slot]->empty() ? 0 : 1);
+                        }
                         if (ormPaths[slot]->empty())
                         {
                             continue;
@@ -1228,6 +1233,7 @@ namespace NorvesLib::Tools::AssetCook
             options.OrmAoPath = request.OrmAoPath;
             options.OrmRoughnessPath = request.OrmRoughnessPath;
             options.OrmMetallicPath = request.OrmMetallicPath;
+            options.OrmOcclusionPath = request.OrmOcclusionPath;
             options.bFlipNormalY = request.bFlipNormalY;
             options.FallbackMinTriangles = request.FallbackMinTriangles;
             options.DagRootMaxClusters = request.DagRootMaxClusters;
@@ -1319,7 +1325,7 @@ namespace NorvesLib::Tools::AssetCook
         bool ValidateCookOptions(const CookOptions& outOptions, std::string& error)
         {
             const bool hasOrm = !outOptions.OrmAoPath.empty() || !outOptions.OrmRoughnessPath.empty() ||
-                                !outOptions.OrmMetallicPath.empty();
+                                !outOptions.OrmMetallicPath.empty() || !outOptions.OrmOcclusionPath.empty();
             const bool separateOrm = outOptions.Usage == "orm" && hasOrm && outOptions.InputPath.empty();
             if (outOptions.Usage.empty())
             {
@@ -1458,6 +1464,7 @@ namespace NorvesLib::Tools::AssetCook
             request.OrmAoPath = options.OrmAoPath;
             request.OrmRoughnessPath = options.OrmRoughnessPath;
             request.OrmMetallicPath = options.OrmMetallicPath;
+            request.OrmOcclusionPath = options.OrmOcclusionPath;
             request.bFlipNormalY = options.bFlipNormalY;
             request.FallbackMinTriangles = options.FallbackMinTriangles;
             request.DagRootMaxClusters = options.DagRootMaxClusters;

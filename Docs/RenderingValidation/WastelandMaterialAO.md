@@ -10,8 +10,8 @@
 - ただし地図の値は、素材自身の起伏から焼いた遮蔽より大幅に暗い。変位の地図を法線の地図の傾きに合わせて実寸にした高さ場
   （全体の高さ 25〜40 mm）で焼き直すと、平均は 0.92〜0.95。Poly Haven の AO は変位から焼き直した AO と形の相関は高い（0.74・0.86）が、
   同じ平均にするには起伏を約 4 倍にする必要がある。遮蔽の物理量ではなく、くぼみを強調した地図として作られている。
-- AO の値は変えていない（再クックしていない）。ORM の R は層の混ぜの高さにも使うので、値を変えると土・皮膜・砂・岩肌の境が
-  変わる。遮蔽として照明が読む値だけを起伏から焼いた値にする直しは、SCN-WL-MATERIAL-AO-OCCLUSION で行う。
+- ORM の R（AO の地図）は層の混ぜの高さにも使うので、値を変えると土・皮膜・砂・岩肌の境が変わる。R はそのまま残し、
+  照明が遮蔽として読む値だけを起伏から焼いた値にした（SCN-WL-MATERIAL-AO-OCCLUSION。下の「遮蔽の焼き直し」）。
 - RTGI が働く荒野の撮影では、材質の AO は間接の鏡面（空の映り込み）にだけ掛かる（SCN-WL-MATERIAL-AO-SHADING の後）。
   地図の暗さで削られる分は、日なたの地面の明るさの約 1 %（ref_ground_01）〜約 4 %（ref_cliff_02）と見積もった。
 
@@ -65,6 +65,35 @@ AO の値も、アルベド・法線・粗さも変えていないので、Cycle
 `ReferenceCheck.py --lit --expect material-ao.json --verify` は今の入力で `inputs_current=1`・`cycles_inputs_current=1`
 （参照の署名 `33d9c699…9e86930e9d05`）、日なたの地面の比 ref_ground_01 0.9722・ref_cliff_02 0.9246 で合格。
 
+## 遮蔽の焼き直し（SCN-WL-MATERIAL-AO-OCCLUSION、2026-10-21）
+
+高さと遮蔽を ORM の別のチャンネルに分けた。R は今までどおり AO の地図（層の混ぜの高さ）、A に素材の起伏から焼いた遮蔽を入れ、
+照明が読む材質の AO（`Material.z`）を A の値にする。
+
+| 段 | どこ | 中身 |
+|---|---|---|
+| 焼き直し | `Scripts/Terrain/TerrainOcclusion.py --build` | 法線の地図を 1024 画素へ縮めて積分した実寸の高さ場で、上の「法線から」と同じ遮蔽を焼き、タイルの周期で双線形に 4k へ広げて、アトラスの並びの `<アトラス>_occl_8k.png` を書く。`--verify` は法線・AO の地図の md5、作り直しとの一致、素材ごとの平均（0.90〜0.99 で地図より明るい）を確かめる |
+| 資産の組 | `Assets/AssetSets/WastelandTerrain.json` の `orm_occlusion` | 砂の枠・土の枠は焼いた画像、岩肌（`cliff_side`）は AO の地図そのもの（平均 0.961 で起伏とほぼ同じなので変えない） |
+| クック | `Scripts/CookAssets.ps1`（`--orm-occlusion`）→ `Tools/AssetCook/TextureCooker.cpp` の `PackOrmBase` | 4 枠目を A に詰める。無い ORM は従来どおり A=255 で、差分クックの印も従来と同じバイト列（ほかの資産は焼き直されない） |
+| 層の混ぜ | `Assets/Shaders/Common/TerrainLayerBlend.glsl` | 層の標本に `Occlusion`（A）を足し、皮膜・砂の混ぜ・層の重みで R と同じ重みで混ぜる。岩肌は地層の `strata.Occlusion` を高さと遮蔽の両方に掛ける。高さの混ぜは R のまま |
+
+焼いた平均: 赤茶の土 0.950・礫の舗石 0.934・皮膜の付いた土 0.976・砂 0.981（地図は 0.558・0.625・0.858・0.850）。
+焼く刻みを 1024 画素にしたのは、変位の地図から焼いた値と平均が揃うため。元の 4k の刻みでは JPEG の法線の雑音が高さに積もり、
+赤茶の土 0.906・砂 0.968 と暗くなる（2048 画素では 0.924・0.973）。
+
+### 撮影での確かめ
+
+- 層の混ぜ: SCN-WL-MATERIAL-AO-SHADING の撮影とのアルベドの AOV の差は、平均のアルベドが小数 5 桁まで同じで、差が 0.01 を
+  超える画素は ref_ground_01 716・ref_cliff_02 750（全体の 0.03〜0.04 %。0.05 を超えるのは 9・17）。差の画素は皮膜の斑の縁と
+  地平の遠い地形に点で散る。A に遮蔽が入って BC7 の符号の詰め方が変わり、R・G の丸めが 1〜2 段動いた分（粗さの AOV の差は
+  平均 0.001・最大 0.047）で、境の位置は変わらない。
+- 参照: `--lit --expect material-ao.json --verify` は `inputs_current=1`・`cycles_inputs_current=1`、参照の署名は
+  `33d9c699…9e86930e9d05` のまま（`orm_occlusion` は `RefSplit.AO_ASSET_KEYS` で地形のメッシュの入力から外す。Cycles は材質の AO を
+  使わない）。日なたの地面の比は ref_ground_01 0.9722 → 0.9830（+1.1 %）、ref_cliff_02 0.9246 → 0.9426（+1.9 %）。
+  ref_cliff_02 は見込みの約 +3 % より小さい。`lit_check.json` の `material_ao` は参照の材質の再現の値（AO の地図）のままで、
+  エンジンの遮蔽ではない。
+- 回帰: 荒野の外のシーン（rendering3dtest・mega-bananas・sandbox・night-village）は PSNR 61 以上か差なし。
+
 ## 記録の場所
 
 - `.harness/runs/20261021-055341/aux-SCN-WL-MATERIAL-AO-BAKE-analysis.txt`: 地図の値・焼き直し・平らな地面の AO・映り込みの反射率
@@ -72,3 +101,5 @@ AO の値も、アルベド・法線・粗さも変えていないので、Cycle
   変位の地図は Poly Haven の files の API から落とした（`red_mud_stones_disp_4k.png` md5 `1c82936a…`、
   `red_laterite_soil_stones_disp_4k.png` md5 `2457439d…`。リポジトリには置いていない）
 - `.harness/runs/20261021-055341/verify-SCN-WL-MATERIAL-AO-BAKE-1.txt`: `--lit --verify` の出力
+- `.harness/runs/20261021-055341/verify-SCN-WL-MATERIAL-AO-OCCLUSION-*.txt`: 遮蔽の焼き直しの後のビルド・撮影・`--lit --verify`・回帰。
+  `aux-SCN-WL-MATERIAL-AO-OCCLUSION-aov-diff.txt` が AOV の差、`ao-occlusion/` が地図と焼いた遮蔽・アルベドの差の画
