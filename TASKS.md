@@ -2233,6 +2233,17 @@
 - paths: Scripts, Docs/RenderingValidation, TASKS.md, PROGRESS.md
 - notes: 2026-10-19。Cycles の描画は反復の中で保存する。
 
+## SCN-WL-PLANT-SHADOW: 低木を太陽の影（VSM）に描く
+- status: todo
+- after: SCN-WLR-PLANT-REF-NEAR
+- done-when: SCN-WLR-PLANT-REF-NEAR の描画の欠陥 1・2（`Docs/RenderingValidation/WastelandPlantRef.md` の直す項目の案 1）: 株が太陽の影を落とさない（影の比 エンジン 0.621・Cycles 0.169。株は VSM・TLAS に入らず、影は接触影 0.3 m の縦の筋だけ）、株の中の自己の影の当たり外れ。株を太陽の VSM へ `foliage.vert` と同じ置き方で描く（葉の帯は両面、風の揺れも同じ）。接触影は接地の補いとして残す。撒いた株（2 万株超）は遠い株を影のパスで間引くか簡略の形で描き、距離の境を記録する（光線の影 TLAS に入れる案は後に回す）。合否（`--plant --views plant_near --expect`、`plant-shadow.json`）: 影の比が Cycles の 0.169 と ±0.1、株の日なたの見え方の AOV が 0.9 以上の画素の割合 0.8 以上、株の日なたのエンジン ÷ Cycles が 0.8〜1.25。撒いた株の撮影（`grass` の視点）で影のパスの株の数・使う VSM の段とページの数・GPU 時間を前後で記録する。ほかのシーンに株は無いが、回帰の撮影の前後を開いて確かめる。反復の最初に回帰の撮影の `before` を撮る。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -Build -RequireAssets -Width 1920 -Height 1080 -Hdr -Aov -Views plant_near -GameArgs wasteland-common-light,wasteland-hide=all-but-plant,wasteland-finest-lod -LaunchPerView -OutDir .harness/runs/scene-capture/SCN-WL-PLANT-SHADOW`
+- verify: `python Scripts/Terrain/ReferenceCheck.py --plant --engine .harness/runs/scene-capture/SCN-WL-PLANT-SHADOW --reference .harness/runs/scene-capture/SCN-WLR-PLANT-REF --views plant_near --expect Scripts/Terrain/ExpectSpecs/plant-shadow.json --verify`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Terrain/CaptureRegression.ps1 -Item SCN-WL-PLANT-SHADOW -Phase after`
+- paths: Assets/Shaders, Library/Core/Private/Rendering, Library/Core/Public/Rendering, Game, Scripts, Docs/RenderingValidation, TASKS.md, PROGRESS.md
+- notes: 危険地帯（影）。2026-10-21 親が SCN-WLR-PLANT-REF-NEAR の直す項目の案 1 から足した（影の無い株は浮いて見えるので確認 2 の前に直す）。案 2（両面の透過）・案 3・4（アルファのマスク・素材の差し替え、中身）は確認 2 の後に組む（葉の素材を差し替えるときに合わせる）。時間の見積もり: 回帰の before・after 各 6 分、ビルド 3〜6 分、撮影 1 本 約 2 分、撒いた株の撮影 1 本 約 3 分。
+
 ## SCN-WLR-PLANT-REF-FAR: 低木の遠くでの見え方を 2 倍の解像度の正解と比べる
 - status: todo
 - after: SCN-WLR-PLANT-REF-NEAR, SCN-WL-LOD-DETAIL
@@ -2270,7 +2281,7 @@
 
 ## SCN-WL-LIGHT-FINAL: 共通の照明の数値の確認と、既定の荒野の光を写真に合わせる
 - status: todo
-- after: SCN-WL-MATERIAL-AO-BAKE, SCN-WL-SKY-SCATTER, SCN-WL-RTGI-COLOR, SCN-WL-SHADOW-LEAK, SCN-WL-RTGI-AMOUNT, SCN-WL-MATERIAL-AO-OCCLUSION, SCN-WL-PROP-AO
+- after: SCN-WL-MATERIAL-AO-BAKE, SCN-WL-SKY-SCATTER, SCN-WL-RTGI-COLOR, SCN-WL-SHADOW-LEAK, SCN-WL-RTGI-AMOUNT, SCN-WL-MATERIAL-AO-OCCLUSION, SCN-WL-PROP-AO, SCN-WL-PLANT-SHADOW
 - done-when: (1) 共通の照明（地形だけ・霞なし）の数値: これまでの修正の仕様（rt-tlas-range・shadow-pages・shadow-leak・rtgi-color・material-ao）を、今のコードで撮り直した撮影先 `SCN-WL-LIGHT-FINAL/`（灰色の 3 条件の ref_cliff_01・ref_far_01、実材質の ref_cliff_01・ref_cliff_02・ref_ground_01・ref_far_01、照り返しの入・切）に対して、`ReferenceCheck.py --light-final`（この項目で作る。全仕様をまとめて読む）でまとめて通す（後の修正が前の修正を壊していないことの確認）。撮影は反復の中で保存する。(2) 既定の荒野（前哨地・植物・礫・霞・雲あり）は Cycles の正解が無いので、6 視点を撮って写真と並べて開き、谷・崖の影・前哨地の照り返しと空の青、影の中の色と明るさの差を所見に書く（数値の合否にしない）。カメラパスで移動中の粒・残像・遮蔽の欠けが目立たないことを確かめる。直す所が残れば項目を足す。
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -Build -RequireAssets -Width 1920 -Height 1080 -Hdr -Aov -Views ref_cliff_02 -GameArgs wasteland-common-light,wasteland-hide=all,wasteland-finest-lod -LaunchPerView -OutDir .harness/runs/scene-capture/SCN-WL-LIGHT-FINAL-recheck`
 - verify: `python Scripts/Terrain/ReferenceCheck.py --light-final --engine-root .harness/runs/scene-capture/SCN-WL-LIGHT-FINAL --verify`
