@@ -94,6 +94,20 @@ namespace NorvesLib::Core::Rendering
     };
 
     /**
+     * @brief 遠い株の太陽の影（VSM）だけに使う簡略のメッシュの段
+     *
+     * 頂点の形式は束の Mesh と同じで、しなりの重み・揺れの位相も同じ値を持つ（風の置き方の株の高さは束の Mesh の Height を使う）。
+     */
+    struct FoliageShadowLod
+    {
+        Container::TSharedPtr<const FoliageMeshData> Mesh;
+        /// この段を使い始める、カメラから根元までの距離[m]
+        float StartDistance = 0.0f;
+        /// true なら影を風で揺らさない（揺れが影の texel より小さい遠い段。ページのキャッシュを毎フレーム捨てない）
+        bool bStill = false;
+    };
+
+    /**
      * @brief 1 種類の株の束（1 回のインスタンス描画で描く）
      */
     struct FoliageBatch
@@ -109,6 +123,10 @@ namespace NorvesLib::Core::Rendering
         /// 太陽の影（VSM）を落とす株の、カメラから根元までの距離の上限[m]（0 で落とさない）。内側の株を近い順に、
         /// 株の影の塊の予算（VirtualShadowMapFoliageCasters.h）に収まるだけ影のパスで描く。外の株の接地は照明の接触影だけで出る
         float ShadowDistance = 25.0f;
+        /// 影を落とす株を選ぶ順の段（小さい段の株を全部見てから次の段へ。同じ段の中は近い順）。予算は小さい段の株が先に使う
+        uint32_t ShadowPriority = 0;
+        /// 遠い株の影の簡略のメッシュ（StartDistance の小さい順）。空ならどの距離の株も Mesh で影を描く
+        Container::VariableArray<FoliageShadowLod> ShadowLods;
         /// 茎・根元の色と、先の色の 2 つ（線形のアルベド）。インスタンスの ColorVariation で先の 2 色を混ぜる
         float StemColor[3] = {0.2f, 0.17f, 0.12f};
         float TipColorA[3] = {0.4f, 0.3f, 0.15f};

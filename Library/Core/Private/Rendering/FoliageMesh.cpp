@@ -289,6 +289,17 @@ namespace NorvesLib::Core::Rendering::FoliageMesh
         // ---- 細い枝の低木 ----
 
         constexpr uint32_t kMaxBranchPoints = 8;
+        /// 1 回に作る影の簡略のメッシュの数の上限
+        constexpr uint32_t kMaxShrubProxies = 4;
+
+        /// 影の簡略のメッシュを積む先と作り方
+        struct ShrubProxyTarget
+        {
+            MeshBuilder *Builder = nullptr;
+            ShrubShadowProxyDesc Desc;
+            /// 葉の長さと幅に掛ける倍率（√LeafKeepEvery）
+            float LeafScale = 1.0f;
+        };
 
         struct ShrubContext
         {
@@ -297,6 +308,11 @@ namespace NorvesLib::Core::Rendering::FoliageMesh
             const ShrubDesc *Desc = nullptr;
             /// 根元から最も遠い枝先までの道のりの目安[m]（しなりの重みの分母）
             float MaxReach = 1.0f;
+            /// 影の簡略のメッシュ（乱数を使わない。本体と同じ値から積む）
+            ShrubProxyTarget Proxies[kMaxShrubProxies];
+            uint32_t ProxyCount = 0;
+            /// 株の中で積んだ葉の通し番号（簡略のメッシュの間引きに使う）
+            uint32_t LeafSerial = 0;
         };
 
         /// 樹冠の外形（楕円体）に対して、点がどれだけ外にあるか（1 で外形の面、1 未満が内側）
@@ -370,6 +386,30 @@ namespace NorvesLib::Core::Rendering::FoliageMesh
                 const uint32_t i3 = builder.AddVertex(tip, normal, V3{}, flex, tint, occlusion);
                 builder.AddTriangle(i0, i1, i2);
                 builder.AddTriangle(i1, i3, i2);
+
+                // 影の簡略のメッシュ: LeafKeepEvery 枚に 1 枚を、葉の中ほどを中心に長さと幅を広げて積む
+                const uint32_t serial = context.LeafSerial++;
+                for (uint32_t proxyIndex = 0; proxyIndex < context.ProxyCount; ++proxyIndex)
+                {
+                    const ShrubProxyTarget &proxy = context.Proxies[proxyIndex];
+                    if (serial % std::max(proxy.Desc.LeafKeepEvery, 1u) != 0u)
+                    {
+                        continue;
+                    }
+                    const float scale = proxy.LeafScale;
+                    const V3 proxyBase = middle - direction * (length * 0.45f * scale);
+                    const V3 proxyTip = middle + direction * (length * 0.55f * scale);
+                    const float proxyHalfWidth = halfWidth * scale;
+                    MeshBuilder &proxyBuilder = *proxy.Builder;
+                    const uint32_t p0 = proxyBuilder.AddVertex(proxyBase, normal, V3{}, flex, tint, occlusion);
+                    const uint32_t p1 = proxyBuilder.AddVertex(middle - sideDir * proxyHalfWidth, normal, sideDir * -proxyHalfWidth, flex,
+                                                               tint, occlusion);
+                    const uint32_t p2 = proxyBuilder.AddVertex(middle + sideDir * proxyHalfWidth, normal, sideDir * proxyHalfWidth, flex,
+                                                               tint, occlusion);
+                    const uint32_t p3 = proxyBuilder.AddVertex(proxyTip, normal, V3{}, flex, tint, occlusion);
+                    proxyBuilder.AddTriangle(p0, p1, p2);
+                    proxyBuilder.AddTriangle(p1, p3, p2);
+                }
             }
         }
 
@@ -402,6 +442,10 @@ namespace NorvesLib::Core::Rendering::FoliageMesh
             // 根元の枝は株全体で同じ位相（株の揺れ）、細い枝ほど別々に揺れる
             const float branchPhase = level == 0 ? 0.0f : random.Next01();
             context.Builder->SetPhase(branchPhase);
+            for (uint32_t proxyIndex = 0; proxyIndex < context.ProxyCount; ++proxyIndex)
+            {
+                context.Proxies[proxyIndex].Builder->SetPhase(branchPhase);
+            }
             const float step = length / static_cast<float>(segments);
             V3 position = start;
             V3 heading = direction;
@@ -424,6 +468,14 @@ namespace NorvesLib::Core::Rendering::FoliageMesh
                 position = position + heading * step;
             }
             AddPrism(*context.Builder, points, radii, flex, tint, occlusion, segments + 1);
+            for (uint32_t proxyIndex = 0; proxyIndex < context.ProxyCount; ++proxyIndex)
+            {
+                const ShrubProxyTarget &proxy = context.Proxies[proxyIndex];
+                if (static_cast<int32_t>(level) <= proxy.Desc.MaxPrismLevel)
+                {
+                    AddPrism(*proxy.Builder, points, radii, flex, tint, occlusion, segments + 1);
+                }
+            }
 
             // 葉は細い枝と枝先に付ける（丸い株の灰緑の小さな葉の房）
             if (desc.LeavesPerTwig > 0 && level + 1 >= maxLevel)
@@ -555,6 +607,12 @@ namespace NorvesLib::Core::Rendering::FoliageMesh
 
     Container::TSharedPtr<FoliageMeshData> BuildShrub(const ShrubDesc &desc)
     {
+        return BuildShrub(desc, nullptr, 0u, nullptr);
+    }
+
+    Container::TSharedPtr<FoliageMeshData> BuildShrub(const ShrubDesc &desc, const ShrubShadowProxyDesc *proxies, uint32_t proxyCount,
+                                                      Container::TSharedPtr<FoliageMeshData> *outProxies)
+    {
         auto mesh = Container::MakeShared<FoliageMeshData>();
         MeshBuilder builder(*mesh);
         FoliageRandom random(desc.Seed);
@@ -562,6 +620,20 @@ namespace NorvesLib::Core::Rendering::FoliageMesh
         context.Builder = &builder;
         context.Random = &random;
         context.Desc = &desc;
+        // 影の簡略のメッシュの積む先（MeshBuilder は積む先のメッシュを参照で持つので、この関数の終わりまで置いておく）
+        proxyCount = (proxies != nullptr && outProxies != nullptr) ? std::min(proxyCount, kMaxShrubProxies) : 0u;
+        Container::VariableArray<MeshBuilder> proxyBuilders;
+        proxyBuilders.reserve(proxyCount);
+        for (uint32_t proxyIndex = 0; proxyIndex < proxyCount; ++proxyIndex)
+        {
+            outProxies[proxyIndex] = Container::MakeShared<FoliageMeshData>();
+            proxyBuilders.emplace_back(*outProxies[proxyIndex]);
+            ShrubProxyTarget &target = context.Proxies[proxyIndex];
+            target.Builder = &proxyBuilders.back();
+            target.Desc = proxies[proxyIndex];
+            target.LeafScale = std::sqrt(static_cast<float>(std::max(proxies[proxyIndex].LeafKeepEvery, 1u)));
+        }
+        context.ProxyCount = proxyCount;
         context.MaxReach = std::sqrt(desc.Height * desc.Height + desc.CrownRadius * desc.CrownRadius) * 1.1f;
         const bool bRounded = desc.Form == ShrubForm::Rounded;
         const uint32_t stemCount = std::max(1u, desc.StemCount);

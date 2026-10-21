@@ -182,7 +182,9 @@ namespace NorvesLib::Core::Rendering
             uint64_t LastUsedCollect = 0;
         };
         Container::VariableArray<FoliageMeshEntry> FoliageMeshes;
-        /** @brief 束の番号 → FoliageMeshes の番号（今回の集めの作業。-1 は未解決、-2 は作れない） */
+        /**
+         * @brief 束の番号 × MAX_FOLIAGE_SHADOW_LODS ＋ 影の段 → FoliageMeshes の番号（今回の集めの作業。-1 は未解決、-2 は作れない）
+         */
         Container::VariableArray<int32_t> FoliageBatchMesh;
         Container::VariableArray<VirtualShadowMap::FoliageShadowCandidate> FoliageCandidates;
         uint64_t FoliageCollectCount = 0;
@@ -191,6 +193,12 @@ namespace NorvesLib::Core::Rendering
         float FoliageWindParams[4] = {};
         /** @brief 影に描いた株のうち最も遠い株の根元までの距離[m]（ログ用） */
         float FoliageFarthest = 0.0f;
+        /** @brief 影に描いた ShadowPriority 0 の株のうち最も遠い株の根元までの距離[m]（ログ用） */
+        float FoliagePriority0Farthest = 0.0f;
+        /** @brief ShadowPriority 0 の株のうち、予算の外で影に描かなかった株の数（ログ用） */
+        uint32_t FoliagePriority0OverBudget = 0;
+        /** @brief 影に描いた株の数を影の段ごとに（ログ用） */
+        uint32_t FoliageLodPlants[VirtualShadowMap::MAX_FOLIAGE_SHADOW_LODS] = {};
     };
 
     namespace
@@ -257,6 +265,9 @@ namespace NorvesLib::Core::Rendering
         {
             ++state.FoliageCollectCount;
             state.FoliageFarthest = 0.0f;
+            state.FoliagePriority0Farthest = 0.0f;
+            state.FoliagePriority0OverBudget = 0;
+            std::fill(std::begin(state.FoliageLodPlants), std::end(state.FoliageLodPlants), 0u);
             // GBuffer の描画（FoliagePass）と同じ風の向きと時計
             FoliageWindDirection(scene.Wind, state.FoliageWind[0], state.FoliageWind[1]);
             state.FoliageWind[2] = FoliageWindClock(totalTime, scene.Wind);
@@ -269,17 +280,22 @@ namespace NorvesLib::Core::Rendering
             const float cameraPosition[3] = {camera.PositionX, camera.PositionY, camera.PositionZ};
             VirtualShadowMap::CollectFoliageShadowCandidates(scene, cameraPosition, state.FoliageCandidates);
             state.FoliageBatchMesh.clear();
-            state.FoliageBatchMesh.resize(scene.Batches.size(), -1);
+            state.FoliageBatchMesh.resize(scene.Batches.size() * VirtualShadowMap::MAX_FOLIAGE_SHADOW_LODS, -1);
             // 株の塊は、ほかの投影物の後ろに、予算と記録の上限の残りの小さい方まで足す
             const size_t budgetEnd = std::min<size_t>(VirtualShadowMap::MAX_CASTER_CHUNKS,
                                                       state.Chunks.size() + VirtualShadowMap::FOLIAGE_SHADOW_CHUNK_BUDGET);
             for (const VirtualShadowMap::FoliageShadowCandidate& candidate : state.FoliageCandidates)
             {
                 const FoliageBatch& batch = scene.Batches[candidate.Batch];
-                int32_t& meshIndex = state.FoliageBatchMesh[candidate.Batch];
+                const float distance = std::sqrt(candidate.DistanceSquared);
+                // 遠い株は簡略のメッシュの段で描く（1 株の塊の数を減らして、予算で遠くまで届かせる）
+                const uint32_t lod = VirtualShadowMap::SelectFoliageShadowLod(batch, distance);
+                const Container::TSharedPtr<const FoliageMeshData>& lodMesh = VirtualShadowMap::FoliageShadowLodMesh(batch, lod);
+                const bool bStill = lod != 0u && batch.ShadowLods[lod - 1u].bStill;
+                int32_t& meshIndex = state.FoliageBatchMesh[candidate.Batch * VirtualShadowMap::MAX_FOLIAGE_SHADOW_LODS + lod];
                 if (meshIndex == -1)
                 {
-                    meshIndex = AcquireFoliageShadowMesh(device, state, batch.Mesh);
+                    meshIndex = AcquireFoliageShadowMesh(device, state, lodMesh);
                     meshIndex = meshIndex < 0 ? -2 : meshIndex;
                 }
                 if (meshIndex < 0)
@@ -292,35 +308,41 @@ namespace NorvesLib::Core::Rendering
                 if (state.Chunks.size() + entry.Blocks.size() > budgetEnd)
                 {
                     ++state.Stats.FoliageOverBudget;
+                    state.FoliagePriority0OverBudget += candidate.Priority == 0u ? 1u : 0u;
                     continue;
                 }
                 const FoliageInstance& instance = (*batch.Instances)[candidate.Instance];
-                const float distance = std::sqrt(candidate.DistanceSquared);
                 const float fadeScale = VirtualShadowMap::FoliageFadeScale(batch, distance, instance.FadeThreshold);
                 VirtualShadowMap::FoliageShadowMesh mesh;
                 mesh.VertexAddress = entry.Vertex->GetDeviceAddress();
                 mesh.IndexAddress = entry.Index->GetDeviceAddress();
                 mesh.BlockBounds = entry.Blocks.data();
                 mesh.BlockCount = static_cast<uint32_t>(entry.Blocks.size());
-                mesh.IndexCount = static_cast<uint32_t>(batch.Mesh->Indices.size());
+                mesh.IndexCount = static_cast<uint32_t>(lodMesh->Indices.size());
                 VirtualShadowMap::CasterBounds bounds;
                 bool bHasBounds = false;
                 const uint32_t added = VirtualShadowMap::AppendFoliageInstance(
-                    batch, mesh, instance, fadeScale, clipmap, state.Chunks, state.Stats, bounds, bHasBounds, slices);
+                    batch, mesh, instance, fadeScale, clipmap, state.Chunks, state.Stats, bounds, bHasBounds, slices, bStill);
                 if (added == 0u || !bHasBounds)
                 {
                     continue;
                 }
                 state.FoliageFarthest = std::max(state.FoliageFarthest, distance);
+                if (candidate.Priority == 0u)
+                {
+                    state.FoliagePriority0Farthest = std::max(state.FoliagePriority0Farthest, distance);
+                }
+                ++state.FoliageLodPlants[lod];
 
-                // キャッシュの無効化の入力: 風で揺れる株は毎フレーム動いた物として扱う（鍵は束のインスタンスの配列と番号）
+                // キャッシュの無効化の入力: 風で揺れる株は毎フレーム動いた物として扱う（鍵は束のインスタンスの配列と番号）。
+                // 揺らさない段の株は、置き方か段が変わったときだけ動いた物にする
                 VirtualShadowMap::CasterMotionEntry motion;
                 motion.Key = VirtualShadowMap::CasterHashCombine(
                     VirtualShadowMap::CasterHashCombine(0x464F4C49ull, reinterpret_cast<uintptr_t>(batch.Instances.get())), candidate.Instance);
                 const float placement[5] = {instance.Position[0], instance.Position[1], instance.Position[2], instance.Yaw, fadeScale};
                 motion.Signature = VirtualShadowMap::CasterHashCombine(VirtualShadowMap::CasterHashFloats(1469598103934665603ull, placement, 5u),
-                                                                       reinterpret_cast<uintptr_t>(batch.Mesh.get()));
-                motion.bAlwaysChanged = batch.WindStrength != 0.0f;
+                                                                       reinterpret_cast<uintptr_t>(lodMesh.get()));
+                motion.bAlwaysChanged = batch.WindStrength != 0.0f && !bStill;
                 motion.bHasBounds = true;
                 motion.Bounds = bounds;
                 state.Motion.push_back(motion);
@@ -1079,7 +1101,8 @@ namespace NorvesLib::Core::Rendering
         state.ReportsSinceLog = 0;
         NORVES_LOG_INFO("VirtualShadowMapPass",
                         "VSM_CASTERS procedural_chunks=%u skinned_chunks=%u culled=%u dropped=%u skipped=%u "
-                        "foliage_plants=%u foliage_chunks=%u foliage_over_budget=%u foliage_farthest_m=%.1f",
+                        "foliage_plants=%u foliage_chunks=%u foliage_over_budget=%u foliage_farthest_m=%.1f "
+                        "foliage_priority0_farthest_m=%.2f foliage_priority0_over_budget=%u foliage_lod_plants=%u/%u/%u/%u",
                         stats.ProceduralChunks,
                         stats.SkinnedChunks,
                         stats.CulledChunks,
@@ -1088,7 +1111,13 @@ namespace NorvesLib::Core::Rendering
                         stats.FoliageDraws,
                         stats.FoliageChunks,
                         stats.FoliageOverBudget,
-                        static_cast<double>(state.FoliageFarthest));
+                        static_cast<double>(state.FoliageFarthest),
+                        static_cast<double>(state.FoliagePriority0Farthest),
+                        state.FoliagePriority0OverBudget,
+                        state.FoliageLodPlants[0],
+                        state.FoliageLodPlants[1],
+                        state.FoliageLodPlants[2],
+                        state.FoliageLodPlants[3]);
     }
 
     bool VirtualShadowMapPass::RecordRaster(ViewRenderContext& context, uint64_t /*frameSerial*/)

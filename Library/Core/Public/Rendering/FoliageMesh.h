@@ -69,10 +69,32 @@ namespace NorvesLib::Core::Rendering::FoliageMesh
         float LeafWidth = 0.004f;
     };
 
+    /**
+     * @brief 遠い株の太陽の影に使う、低木の簡略のメッシュの作り方
+     *
+     * 本体と同じ枝と葉の並び（同じ種）から、細い枝の角柱を省き、葉を間引いて残りを大きくする。葉は LeafKeepEvery 枚に 1 枚を残し、
+     * 長さと幅をどちらも √LeafKeepEvery 倍にして（葉の中ほどを中心に広げる）、樹冠の葉の面積の合計を保つ。
+     */
+    struct ShrubShadowProxyDesc
+    {
+        /// 角柱を残す枝の段の上限（0 = 根元の枝だけ。負なら枝を残さない）
+        int32_t MaxPrismLevel = 1;
+        /// 葉を何枚に 1 枚残すか（1 で全部）
+        uint32_t LeafKeepEvery = 4;
+    };
+
     /// 枯れ草の株のメッシュを作る
     Container::TSharedPtr<FoliageMeshData> BuildGrassClump(const GrassClumpDesc &desc);
 
     /// 細い枝の低木のメッシュを作る
     Container::TSharedPtr<FoliageMeshData> BuildShrub(const ShrubDesc &desc);
+
+    /**
+     * @brief 細い枝の低木のメッシュと、同じ形の影の簡略のメッシュ（proxyCount 個）を作る
+     *
+     * 本体は BuildShrub(desc) と同じ（簡略のメッシュを作っても乱数の進み方は変わらない）。outProxies[i] は proxies[i] の作り方で作る。
+     */
+    Container::TSharedPtr<FoliageMeshData> BuildShrub(const ShrubDesc &desc, const ShrubShadowProxyDesc *proxies, uint32_t proxyCount,
+                                                      Container::TSharedPtr<FoliageMeshData> *outProxies);
 
 } // namespace NorvesLib::Core::Rendering::FoliageMesh

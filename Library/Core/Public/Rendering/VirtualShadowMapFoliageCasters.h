@@ -5,8 +5,10 @@
 // インデックスのアドレスに、株の置き方（根元・向き・倍率・位相・距離で縮める倍率）と束の風の値を World の 12 個の float に持たせ、
 // VSM の描画（vsm_draw.vert）が foliage.vert と同じ式（Common/FoliagePlacement.glsl）で置く。葉の帯は両面で描く（VSM の描画は背面を省かない）。
 //
-// 選び方: カメラから根元までの距離が束の ShadowDistance 以内の株を、近い順に、塊の数の予算（FOLIAGE_SHADOW_CHUNK_BUDGET と
-// 記録の上限 MAX_CASTER_CHUNKS の残りの小さい方）に収まるだけ選ぶ。距離の外・予算の外の株は太陽の影を落とさない（照明の接触影だけが残る）。
+// 選び方: カメラから根元までの距離が束の ShadowDistance 以内の株を、束の ShadowPriority の小さい順、同じ段の中は近い順に、
+// 塊の数の予算（FOLIAGE_SHADOW_CHUNK_BUDGET と記録の上限 MAX_CASTER_CHUNKS の残りの小さい方）に収まるだけ選ぶ。
+// 距離の外・予算の外の株は太陽の影を落とさない（照明の接触影だけが残る）。遠い株は束の ShadowLods の簡略のメッシュで描き、
+// 1 株の塊の数を減らす（SelectFoliageShadowLod）。
 // 株のメッシュは 128 三角形のブロック（MESH_BLOCK_INDICES。メッシュの先頭から整列）ごとに 1 つの塊にし、塊の境界はブロックの
 // ローカルの境界を株の置き方で写して、風で動く量の上限（FoliageWindMargin）だけ広げる。
 //
@@ -142,16 +144,46 @@ namespace NorvesLib::Core::Rendering
             return bounds;
         }
 
-        /** @brief 影に描く株の候補（束の番号・インスタンスの番号・根元までの距離の 2 乗） */
+        /** @brief 1 株の影に使うメッシュの段の数の上限（束の Mesh を含む。ShadowLods の 3 つ目より後ろは使わない） */
+        constexpr uint32_t MAX_FOLIAGE_SHADOW_LODS = 4u;
+
+        /**
+         * @brief 根元までの距離 distance[m] の株の影に使うメッシュの段（0 = 束の Mesh、k = ShadowLods[k − 1]）
+         *
+         * StartDistance を超えた最後の段を選ぶ。メッシュの無い段は飛ばす。
+         */
+        inline uint32_t SelectFoliageShadowLod(const FoliageBatch& batch, float distance)
+        {
+            uint32_t lod = 0;
+            const uint32_t count = std::min(static_cast<uint32_t>(batch.ShadowLods.size()), MAX_FOLIAGE_SHADOW_LODS - 1u);
+            for (uint32_t index = 0; index < count; ++index)
+            {
+                const FoliageShadowLod& level = batch.ShadowLods[index];
+                if (level.Mesh && !level.Mesh->Indices.empty() && distance >= level.StartDistance)
+                {
+                    lod = index + 1u;
+                }
+            }
+            return lod;
+        }
+
+        /** @brief 段 lod（SelectFoliageShadowLod）のメッシュ */
+        inline const Container::TSharedPtr<const FoliageMeshData>& FoliageShadowLodMesh(const FoliageBatch& batch, uint32_t lod)
+        {
+            return lod == 0u ? batch.Mesh : batch.ShadowLods[lod - 1u].Mesh;
+        }
+
+        /** @brief 影に描く株の候補（束の番号・インスタンスの番号・束の ShadowPriority・根元までの距離の 2 乗） */
         struct FoliageShadowCandidate
         {
             uint32_t Batch = 0;
             uint32_t Instance = 0;
+            uint32_t Priority = 0;
             float DistanceSquared = 0.0f;
         };
 
         /**
-         * @brief 根元がカメラから束の ShadowDistance 以内の株を集めて、近い順に並べる
+         * @brief 根元がカメラから束の ShadowDistance 以内の株を集めて、束の ShadowPriority の小さい順、同じ段の中は近い順に並べる
          *
          * 区画（FoliageCell）があれば、カメラから区画の箱までの最短の距離が ShadowDistance を超える区画を見ない。
          * 距離で縮めて消える株（FoliageFadeScale が 0）は除く。
@@ -183,7 +215,7 @@ namespace NorvesLib::Core::Rendering
                         {
                             continue;
                         }
-                        outCandidates.push_back(FoliageShadowCandidate{batchIndex, index, distanceSquared});
+                        outCandidates.push_back(FoliageShadowCandidate{batchIndex, index, batch.ShadowPriority, distanceSquared});
                     }
                 };
                 if (!batch.Cells || batch.Cells->empty())
@@ -211,6 +243,10 @@ namespace NorvesLib::Core::Rendering
                 }
             }
             std::sort(outCandidates.begin(), outCandidates.end(), [](const FoliageShadowCandidate& a, const FoliageShadowCandidate& b) {
+                if (a.Priority != b.Priority)
+                {
+                    return a.Priority < b.Priority;
+                }
                 if (a.DistanceSquared != b.DistanceSquared)
                 {
                     return a.DistanceSquared < b.DistanceSquared;
@@ -232,7 +268,9 @@ namespace NorvesLib::Core::Rendering
 
         /**
          * @brief 1 株の塊を記録に足す。どのスライスの範囲にも入らない塊は省き、記録の上限を超えたら書かずに数える
-         * @param worldBounds 出力: 足した塊の境界を合わせた箱（足さなければ変えない）
+         * @param mesh 株の影に使う段のメッシュ（束の Mesh か ShadowLods の 1 つ）。風の置き方の株の高さは束の Mesh の Height を使う
+         * @param bStill true なら風で揺らさない（風の強さを 0 にして置き、境界も広げない）
+         * @param inOutWorldBounds 出力: 足した塊の境界を合わせた箱（足さなければ変えない）
          * @return 足した塊の数
          */
         inline uint32_t AppendFoliageInstance(const FoliageBatch& batch,
@@ -244,14 +282,16 @@ namespace NorvesLib::Core::Rendering
                                               CasterStats& inOutStats,
                                               CasterBounds& inOutWorldBounds,
                                               bool& inOutHasWorldBounds,
-                                              const CasterSliceTable* slices = nullptr)
+                                              const CasterSliceTable* slices = nullptr,
+                                              bool bStill = false)
         {
             if (mesh.VertexAddress == 0u || mesh.IndexAddress == 0u || mesh.BlockBounds == nullptr || mesh.BlockCount == 0u || !batch.Mesh)
             {
                 return 0u;
             }
+            const float windStrength = bStill ? 0.0f : batch.WindStrength;
             const float plantHeight = batch.Mesh->Height * instance.HeightScale * fadeScale;
-            const float windMargin = FoliageWindMargin(batch.WindStrength, plantHeight);
+            const float windMargin = FoliageWindMargin(windStrength, plantHeight);
             VsmShadowChunk chunk;
             chunk.Record.Kind = static_cast<uint32_t>(VisibilityBuffer::RecordKind::FoliageChunk);
             chunk.Record.VertexBase = 0u;
@@ -259,7 +299,7 @@ namespace NorvesLib::Core::Rendering
             chunk.Record.IndexAddress = mesh.IndexAddress;
             const float placement[12] = {instance.Position[0], instance.Position[1], instance.Position[2], instance.Yaw,
                                          instance.WidthScale,  instance.HeightScale, instance.WindPhase,   fadeScale,
-                                         batch.WindStrength,   batch.WindSwayFrequency, batch.Mesh->Height, 0.0f};
+                                         windStrength,         batch.WindSwayFrequency, batch.Mesh->Height, 0.0f};
             std::copy(placement, placement + 12, chunk.World);
             uint32_t added = 0;
             for (uint32_t block = 0; block < mesh.BlockCount; ++block)

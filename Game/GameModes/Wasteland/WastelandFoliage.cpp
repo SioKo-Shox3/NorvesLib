@@ -47,6 +47,13 @@ namespace Game::GameModes::WastelandFoliage
         constexpr float kGustScale = 14.0f;
         // grass_gust の風の時計のずらし[s]（草の揺れ 0.9 Hz で 1.3 周期、突風の塊は 5.6 m 流れる）
         constexpr float kGustViewTimeOffset = 1.4f;
+        // 低木の太陽の影（VSM）: 遠景の方針で株の実体を描く 60 m まで落とす（Docs/Plans/WastelandRebuild.md の遠景の方針）。
+        // ブラックブラッシュ 1 株は約 300 塊なので、株の影の塊の予算（約 1.6 万）に 60 m の内の数百株を収めるには遠い株を簡略にする。
+        // 6 m からは細い枝先の角柱を省いて葉を 4 枚に 1 枚（2 倍の大きさ）に、15 m からは枝を省いて葉を 32 枚に 1 枚（5.7 倍）にする
+        // （15 m の先の影の texel は 1 cm 前後で、株の揺れの数 cm は texel の数個なので影を揺らさない）
+        constexpr float kShrubShadowDistance = 60.0f;
+        constexpr float kShrubShadowMidDistance = 6.0f;
+        constexpr float kShrubShadowFarDistance = 15.0f;
 
         /// 位置から決まる乱数（0〜1）
         float Hash2(int32_t x, int32_t z, uint32_t salt)
@@ -139,6 +146,8 @@ namespace Game::GameModes::WastelandFoliage
                 desc.BladeWidth = 0.0035f;
                 desc.Segments = 8;
                 batch.Mesh = FoliageMesh::BuildGrassClump(desc);
+                // 草は太陽の影を落とさない（接地は照明の接触影と AO に任せ、影の予算を低木に使う）
+                batch.ShadowDistance = 0.0f;
                 // 根元は前の年の灰褐色の枯れ葉、先は麦わら色〜灰色がかった黄土（写真の手前の草の株）
                 SetColor(batch.StemColor, 132.0f, 114.0f, 90.0f);
                 SetColor(batch.TipColorA, 182.0f, 152.0f, 104.0f);
@@ -172,7 +181,13 @@ namespace Game::GameModes::WastelandFoliage
                 desc.LeavesPerTwig = 5;
                 desc.LeafLength = 0.016f;
                 desc.LeafWidth = 0.005f;
-                batch.Mesh = FoliageMesh::BuildShrub(desc);
+                // 影の簡略のメッシュ（中景: 根元から 2 段の枝と 4 枚に 1 枚の葉、遠景: 32 枚に 1 枚の葉だけ）
+                const FoliageMesh::ShrubShadowProxyDesc proxies[2] = {{1, 4u}, {-1, 32u}};
+                TSharedPtr<FoliageMeshData> proxyMeshes[2];
+                batch.Mesh = FoliageMesh::BuildShrub(desc, proxies, 2u, proxyMeshes);
+                batch.ShadowDistance = kShrubShadowDistance;
+                batch.ShadowLods.push_back(FoliageShadowLod{proxyMeshes[0], kShrubShadowMidDistance, false});
+                batch.ShadowLods.push_back(FoliageShadowLod{proxyMeshes[1], kShrubShadowFarDistance, true});
                 // 枝は暗い灰褐色、葉はそれより少し明るい褐色がかった灰色（写真の低木は地面より暗い褐色の塊。
                 // 曇天の写真で樹冠の輝度は隣の地面の 0.35〜0.5 倍）
                 SetColor(batch.StemColor, 106.0f, 88.0f, 74.0f);
@@ -204,6 +219,9 @@ namespace Game::GameModes::WastelandFoliage
                 desc.TwigRadius = 0.0012f;
                 desc.LeavesPerTwig = 0;
                 batch.Mesh = FoliageMesh::BuildShrub(desc);
+                // 細い茎だけの株は 1 株の塊が少ないので簡略にせず、遠い株の影を揺らさないだけにする
+                batch.ShadowDistance = kShrubShadowDistance;
+                batch.ShadowLods.push_back(FoliageShadowLod{batch.Mesh, kShrubShadowFarDistance, true});
                 // 根元は木質の褐色、茎は黄緑〜くすんだオリーブ
                 SetColor(batch.StemColor, 112.0f, 96.0f, 72.0f);
                 SetColor(batch.TipColorA, 148.0f, 146.0f, 102.0f);
@@ -242,11 +260,15 @@ namespace Game::GameModes::WastelandFoliage
         {
             m_Templates[kindIndex] = MakeBatch(static_cast<PlantKind>(kindIndex));
             const FoliageBatch &batch = m_Templates[kindIndex];
-            LOG_INFO_F("WASTELAND_FOLIAGE_KIND id=%s vertices=%zu triangles=%zu height=%.2f fade=[%.0f,%.0f]",
+            LOG_INFO_F("WASTELAND_FOLIAGE_KIND id=%s vertices=%zu triangles=%zu height=%.2f fade=[%.0f,%.0f] shadow_distance=%.0f "
+                       "shadow_lod_triangles=%zu/%zu",
                        batch.DebugName, batch.Mesh ? batch.Mesh->Vertices.size() : 0u,
                        batch.Mesh ? batch.Mesh->Indices.size() / 3u : 0u,
                        batch.Mesh ? static_cast<double>(batch.Mesh->Height) : 0.0,
-                       static_cast<double>(batch.FadeStartDistance), static_cast<double>(batch.FadeEndDistance));
+                       static_cast<double>(batch.FadeStartDistance), static_cast<double>(batch.FadeEndDistance),
+                       static_cast<double>(batch.ShadowDistance),
+                       batch.ShadowLods.size() > 0u && batch.ShadowLods[0].Mesh ? batch.ShadowLods[0].Mesh->Indices.size() / 3u : 0u,
+                       batch.ShadowLods.size() > 1u && batch.ShadowLods[1].Mesh ? batch.ShadowLods[1].Mesh->Indices.size() / 3u : 0u);
         }
         LOG_INFO_F("WASTELAND_FOLIAGE_SCATTER mask=%d cell=%.1f candidate=%.1f generate_radius=%.0f",
                    m_pMask ? 1 : 0, static_cast<double>(kCellSize), static_cast<double>(kCandidateSpacing),
@@ -533,6 +555,8 @@ namespace Game::GameModes::WastelandFoliage
         batch.WindStrength = 0.0f;
         batch.FadeStartDistance = 0.0f;
         batch.FadeEndDistance = 0.0f;
+        // 比べる Cycles の描画は全部の枝と葉で影を落とすので、どの距離でも本体のメッシュで影を描く
+        batch.ShadowLods.clear();
         FoliageInstance instance;
         instance.Position[0] = kReferencePlantX;
         instance.Position[1] = field.SampleHeight(kReferencePlantX, kReferencePlantZ) - kRootSink;

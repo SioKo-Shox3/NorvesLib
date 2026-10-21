@@ -6613,3 +6613,28 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 水平面の空の照度 ÷ A は done-when が 5 %、`sky-scatter.json` の幅は 3 %（実測 1.3 %）。仕様の方が狭いだけで食い違いではないので幅は変えていない
   - SCN-WL-PLANT-SHADOW-RANGE は未着手（status は todo のまま）
 - Next: SCN-WL-SKY-SCATTER の再検証（ランナー）、SCN-WL-PLANT-SHADOW-RANGE
+
+### SCN-WL-PLANT-SHADOW-RANGE 完了（2026-10-22、run 20261021-055341 の反復 42）
+- 原因: 影のパスの予算 16384 塊を埋めていたのは草でなく礫の小石（1 個 1 塊、足元に 1 m² あたり約 240 個）だった
+- Done:
+  - `FoliageBatch` に `ShadowPriority`（小さい段から、同じ段は近い順）と `ShadowLods`（遠い株の影の簡略のメッシュの段と、揺らさない段）を足した。`VirtualShadowMapFoliageCasters.h` の候補の並べ方・段の選び方、`VirtualShadowMapPass` の集め方（段ごとのメッシュ、揺らさない段はページのキャッシュを毎フレーム捨てない）。`VSM_CASTERS` に `foliage_priority0_farthest_m`・`foliage_priority0_over_budget`・`foliage_lod_plants` を足した
+  - `FoliageMesh::BuildShrub` の多重定義で、本体と同じ生成の中から影の簡略のメッシュを作る（乱数の進み方は同じで本体は変わらない。細い枝の角柱を省き、葉を間引いて √n 倍）
+  - 荒野: 低木の `ShadowDistance` 60 m、ブラックブラッシュは 6 m から中景（枝 2 段・葉 1/4）、15 m から遠景（葉 1/32 だけ・揺らさない）。モルモンティーは 15 m から揺らさないだけ。草は `ShadowDistance` 0。礫は段 1。比べる株は本体のまま
+  - 記録 `Docs/RenderingValidation/WastelandPlantRef.md` の「低木の影を 60 m まで」
+- 証拠（`.harness/runs/20261021-055341/`）:
+  - `aux-SCN-WL-PLANT-SHADOW-RANGE-regression-before.txt` 反復の最初の回帰の before（編集の前）result=pass
+  - `aux-SCN-WL-PLANT-SHADOW-RANGE-grass-before.txt` 変更前の grass: GPU 中央値 22.90 ms、株 14892・塊 16384・予算の外 43946・最も遠い根元 4.2 m、VSM のページ 1956
+  - `verify-SCN-WL-PLANT-SHADOW-RANGE-1.txt`・`-2.txt` Debug の Game のビルド EXIT=0
+  - `aux-SCN-WL-PLANT-SHADOW-RANGE-grass-after.txt` 変更後の grass: GPU 中央値 18.14 ms（VsmDraw 0.98 → 1.95、VirtualShadowMapPass 1.99 → 2.85 ms）、株 4232（段ごと 3299/181/752）・塊 16384・段 0 の低木の予算の外 0・低木の最も遠い根元 59.96 m、VSM のページ 1965。前後の画を並べて開き、中景〜遠景の低木の根元から影の筋が伸びることを確かめた
+  - `verify-SCN-WL-PLANT-SHADOW-RANGE-3.txt` plant_near の撮影（-Build）result=pass・EXIT=0
+  - `verify-SCN-WL-PLANT-SHADOW-RANGE-4.txt` `--plant --expect plant-shadow.json --verify`: expect result=pass（3 行: 影の比の差 0.0325、葉の見え方 0.863、葉の比 0.825）。全体は「Cycles が領域に使ったエンジンの深度が今の撮影の深度と違う」で result=fail・EXIT=1
+  - `aux-SCN-WL-PLANT-SHADOW-RANGE-head-plant-near.txt`・`-head-plant-check.txt` 変更を退避した HEAD のソースで撮った plant_near: 深度のハッシュは変更後と同じ 53670bd1…（Cycles の正解が使った 10 月 21 日の深度は e2d4787d…）、同じ理由で fail、3 行の値も同じ（0.0325・0.862・0.824）。深度の不一致は変更の前から
+  - `verify-SCN-WL-PLANT-SHADOW-RANGE-5.txt` 回帰の after result=pass: rendering3dtest PSNR 110、mega-bananas 64.5、sandbox inf、night-village 50.4（差は撒いた株の点だけ。前後と差×10 を並べて開いた）
+- Notes:
+  - 低木の上限は done-when の 60 m（根元までの距離 ≤ 60 m）なので最も遠い根元は 59.96 m。上限の内の低木はすべて影を落とした（予算の外 0）
+  - grass の GPU のフレームの中央値は前の撮影が揺れていて（変更と関係しない FoliagePass 7.93 ms）、差はパスの中央値で読んだ
+  - 小石の影は低木が使った残りの予算で足元の約 2 m までに縮んだ
+  - 段の切り替わり（6 m・15 m）で影の形が変わるのは動きの撮影で見ていない
+  - plant_near の正解（SCN-WLR-PLANT-REF）は今の深度で描き直さないと `--verify` の全体が通らない（NEXT_FINDINGS に記録）
+  - 新しい試験は足していない
+- Next: TASKS.md の次の未完の項目

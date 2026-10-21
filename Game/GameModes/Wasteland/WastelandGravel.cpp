@@ -386,6 +386,8 @@ namespace Game::GameModes::WastelandGravel
             batch.MaxWidenRatio = 1.0f;
             batch.FadeStartDistance = desc.FadeStart;
             batch.FadeEndDistance = desc.FadeEnd;
+            // 太陽の影は低木（段 0）が株の影の予算を使った残りで、近い石から落とす
+            batch.ShadowPriority = 1;
             static const char *const kNames[kTierCount][kKindsPerTier] = {
                 {"gravel_pebble_red", "gravel_pebble_brown", "gravel_pebble_rust", "gravel_pebble_pale"},
                 {"gravel_stone_red", "gravel_stone_brown", "gravel_stone_rust", "gravel_stone_pale"},
