@@ -2205,13 +2205,15 @@
 ## SCN-WL-PROP-AO: 模型の遮蔽のテクスチャを、光線で遮る空の光・照り返しと二重にならない形で掛ける
 - status: todo
 - after: SCN-WL-PROP-ALBEDO-SRGB
-- done-when: SCN-WLR-BUILDING-REF の描画の欠陥 1: 陰の壁の目地が黒い（壁の 5.5 % の画素でエンジン ÷ Cycles 0.114。日なたの壁では 0.5 %）。模型の遮蔽のテクスチャを、RTGI が働くときは空の光・照り返しに重ねない形にする（地形で SCN-WL-MATERIAL-AO-SHADING がしたことの模型の版）。合否（`--building --expect`、`prop-ao.json`）: 壁でエンジン ÷ Cycles が 0.3 未満の画素の割合が Cycles の暗い目地の割合（1.5 %）の 2 倍以内、目地を除いた陰の壁の比が日なたの壁の比と 0.1 以内で揃う。ほかのシーンの模型にも効くので、回帰の撮影の前後を開いて差がこの直しだけによることを確かめ、golden が変わるなら再承認する。反復の最初に回帰の撮影の `before` を撮る。
+- done-when: SCN-WLR-BUILDING-REF の描画の欠陥 1: 陰の壁の目地が黒い（壁の 5.5 % の画素でエンジン ÷ Cycles 0.114。日なたの壁では 0.5 %）。模型の遮蔽のテクスチャを、RTGI が働くときは空の光・照り返しに重ねない形にする（地形で SCN-WL-MATERIAL-AO-SHADING がしたことの模型の版）。合否（`--building --expect`）: 実材質の地面の撮影で、壁でエンジン ÷ Cycles が 0.3 未満の画素の割合が Cycles の暗い目地の割合（1.5 %）の 2 倍以内（`prop-ao.json`）。Cycles の参照と同じ灰色 0.3 の地面（`wasteland-gray-material`）の撮影で、目地を除いた陰の壁の比が日なたの壁の比と 0.1 以内で揃う（`prop-ao-gray.json`。陰の壁は光の 7 割が照り返しで、地面の反射率が違うと比が揃わないため）。ほかのシーンの模型にも効くので、回帰の撮影の前後を開いて差がこの直しだけによることを確かめ、golden が変わるなら再承認する。反復の最初に回帰の撮影の `before` を撮る。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -Build -RequireAssets -Width 1920 -Height 1080 -Hdr -Aov -Views outpost -GameArgs wasteland-common-light,wasteland-hide=all-but-building,wasteland-finest-lod -LaunchPerView -OutDir .harness/runs/scene-capture/SCN-WL-PROP-AO`
 - verify: `python Scripts/Terrain/ReferenceCheck.py --building --engine .harness/runs/scene-capture/SCN-WL-PROP-AO --reference .harness/runs/scene-capture/SCN-WLR-BUILDING-REF --expect Scripts/Terrain/ExpectSpecs/prop-ao.json --verify`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Hdr -Aov -Views outpost -GameArgs wasteland-common-light,wasteland-hide=all-but-building,wasteland-finest-lod,wasteland-gray-material -LaunchPerView -OutDir .harness/runs/scene-capture/SCN-WL-PROP-AO/gray`
+- verify: `python Scripts/Terrain/ReferenceCheck.py --building --engine .harness/runs/scene-capture/SCN-WL-PROP-AO/gray --reference .harness/runs/scene-capture/SCN-WLR-BUILDING-REF --expect Scripts/Terrain/ExpectSpecs/prop-ao-gray.json --verify`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Terrain/CaptureRegression.ps1 -Item SCN-WL-PROP-AO -Phase after`
 - paths: Assets/Shaders, Library/Core/Private/Rendering, Library/Core/Public/Rendering, Game, Scripts, Docs/RenderingValidation, Test/Core/Rendering/Baselines, TASKS.md, PROGRESS.md
-- notes: 危険地帯（描画の既定）。2026-10-21 親が SCN-WLR-BUILDING-REF の直す項目の案 2 から足した。案 3（灰色の地面での比べ直し）・案 4（足元の土・汚れ、中身）は確認 2 の後に組む。時間の見積もり: 回帰の before・after 各 6 分、ビルド 3〜6 分、撮影 1 本 約 3 分。
+- notes: 危険地帯（描画の既定）。2026-10-21 親が SCN-WLR-BUILDING-REF の直す項目の案 2 から足した。案 3（灰色の地面での比べ直し）・案 4（足元の土・汚れ、中身）は確認 2 の後に組む。時間の見積もり: 回帰の before・after 各 6 分、ビルド 3〜6 分、撮影 1 本 約 3 分。 2026-10-21（親）: 反復 23 の BLOCKED を推奨の 1 で解いた。黒い目地は直った（56e92496。暗い目地 6.61 % → 0.54 %）。陰と日なたの比の差は地面の反射率の違いで向きが入れ替わる（実材質 0.1004・灰色 0.094）ので、2 つ目の条件は Cycles と同じ灰色の地面の撮影で判定する。`prop-ao.json` は 1 行目（暗い目地の割合）だけにし、2 行目を `prop-ao-gray.json` に移す。閾値は緩めない。
 
 ## SCN-WLR-PLANT-REF-BASE: 低木 1 株を比べる仕組みを作る
 - status: done
