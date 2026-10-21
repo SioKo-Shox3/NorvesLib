@@ -2069,7 +2069,7 @@
 - notes: 危険地帯（描画・アセットロード）。2026-10-21 SCN-WL-MATERIAL-AO-BAKE の反復が足した。
 
 ## SCN-WL-FAR-AA: 遠景のエイリアスを、TAA の静止の収束で減らす
-- status: blocked
+- status: todo
 - after: SCN-WLR-EXPECT-MATCH, SCN-WLR-REGRESSION-MOTION, SCN-WLR-RECAPTURE-BLUR-MOTION, SCN-WL-RT-SELFHIT, SCN-WL-RT-TLAS-RANGE-ACCEPT
 - done-when: TAA の静止の収束を 2 倍の解像度の正解に近づける（分散の箱の幅・現在の色の割合・書き戻しのシャープ化を 1 つずつ変えて測る）。比べる組（ref2x・resident・FXAA の対照。いずれも Game の撮影なので、エンジンの実装が変わると古くなる）は、変更後の同じ Game.exe でこの項目の撮影先 `SCN-WL-FAR-AA/` へ撮り直す（SCN-WLR-FAR-BLUR-STATIC の記録の組と同じ起動引数。aa-taa は `wasteland-aa=taa,vram-geometry-share=9`）。`--blur-static --expect`（`far-aa-static.json`）で、TAA の静止の細部の欠けが resident（FXAA）以下・エイリアスが同じ Game.exe で撮った変更前の定数の TAA の組（定数は起動引数で与える）以下であること（差 ≤ 0。照明の絶対値に依存する上限は書かない。`far-aa-static.json` もこの形に直す）を検査する。荒野の既定の AA はこの項目では変えない。足りなければ、出力より細かい履歴（TAAU・DLAA 相当）の見込みを記録する（入れるかは次の項目で決める）。反復の最初に回帰の撮影の `before`（`-Motion` つき）を撮る。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
