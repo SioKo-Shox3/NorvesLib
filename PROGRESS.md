@@ -6397,3 +6397,18 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 直す項目の案は記録に書いただけで TASKS.md には足していない。足すかは計画が決める
   - 新しい試験は足していない
 - Next: TASKS.md の次の未完の項目
+
+### SCN-WL-PROP-AO 完了（2026-10-21、run 20261021-055341 の反復 25。反復 23 の BLOCKED を親が推奨 1 で解いた後）
+- Done: 判定を 2 つの仕様に分けた。`prop-ao.json` は暗い目地の割合だけ（実材質の地面の撮影）、`prop-ao-gray.json` は目地を除いた陰と日なたの壁の比の差（Cycles と同じ灰色 0.3 の地面の撮影）。閾値は変えていない。描画のコードは反復 23 の 56e92496 のまま（RTGI の光線が模型の光線の形に内側から当たる自己遮蔽の読み飛ばし）
+- 証拠（`.harness/runs/20261021-055341/`）:
+  - `verify-SCN-WL-PROP-AO-5.txt` Debug の Game のビルド EXIT=0
+  - `verify-SCN-WL-PROP-AO-6.txt` 実材質の地面の outpost の撮影 result=pass・EXIT=0
+  - `verify-SCN-WL-PROP-AO-7.txt` `--building --expect prop-ao.json --verify` result=pass（暗い目地 0.54 %、Cycles の 1.46 % の 0.3729 倍）・inputs_current=1・EXIT=0
+  - `verify-SCN-WL-PROP-AO-8.txt` 灰色の地面の outpost の撮影 result=pass・EXIT=0
+  - `verify-SCN-WL-PROP-AO-9.txt` `--building --expect prop-ao-gray.json --verify` result=pass（差 0.0945、陰 1.0655・日なた 0.9710）・inputs_current=1・EXIT=0。見比べの画像を開き、エンジンの壁に黒い目地が無いことを確かめた
+  - `verify-SCN-WL-PROP-AO-10.txt` 回帰の after result=pass・EXIT=0: mega-bananas psnr 32.92（8 段超 3.7 %）、night-village 53.2、rendering3dtest 59.4、sandbox inf。mega-bananas の前後と差×10 を並べて開き、差がバナナ（glTF の模型）の照り返しだけで床と空は変わらないことを確かめた
+- Notes:
+  - 回帰の before は反復 23 の開始時（直す前）に撮ったものを使った（直しの差を見るため。反復 25 は仕様の分割だけで描画を変えていない）
+  - golden は反復 23 で通過を確かめた（`aux-SCN-WL-PROP-AO-golden.txt`）後に描画を変えていないので再承認しない
+  - 新しい試験は足していない
+- Next: TASKS.md の次の未完の項目

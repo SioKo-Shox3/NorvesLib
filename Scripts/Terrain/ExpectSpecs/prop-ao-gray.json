@@ -1,0 +1,12 @@
+{
+  "description": "SCN-WL-PROP-AO: outpost の建物（wooden_shack）で、目地を除いた陰の壁と日なたの壁のエンジン ÷ Cycles の差が 0.1 以内。Cycles の参照と同じ灰色 0.3 の地面（--wasteland-gray-material）の撮影で判定する。陰の壁は光の 7 割が地面の照り返しなので、地面の反射率が Cycles と違う実材質の撮影では比が揃わない（実材質 0.1004・灰色 0.094、差の向きが入れ替わる）。直す前（SCN-WL-PROP-ALBEDO-SRGB の実材質の撮影）は差 0.034 だったが、日なたの壁も自己遮蔽で照り返しが欠けていた。",
+  "rows": [
+    {
+      "mode": "building",
+      "view": "outpost",
+      "quantity": "wall_shadow_sunlit_gap",
+      "max": 0.1,
+      "note": "目地を除いた陰の壁と日なたの壁のエンジン ÷ Cycles の差の絶対値"
+    }
+  ]
+}

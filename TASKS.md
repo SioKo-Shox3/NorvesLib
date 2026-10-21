@@ -2203,7 +2203,7 @@
 - notes: 危険地帯（アセットの読み込み・描画の既定）。2026-10-21 親が SCN-WLR-BUILDING-REF の直す項目の案 1 から足した（ユーザーの点「建物の浮き」の主因の見込み。確認 2 の前に直す）。模型の再クックが要るなら差分クックの印で関係する模型だけを焼き直す。時間の見積もり: 回帰の before・after 各 6 分、ビルド 3〜6 分、撮影 1 本 約 3 分。
 
 ## SCN-WL-PROP-AO: 模型の遮蔽のテクスチャを、光線で遮る空の光・照り返しと二重にならない形で掛ける
-- status: todo
+- status: done
 - after: SCN-WL-PROP-ALBEDO-SRGB
 - done-when: SCN-WLR-BUILDING-REF の描画の欠陥 1: 陰の壁の目地が黒い（壁の 5.5 % の画素でエンジン ÷ Cycles 0.114。日なたの壁では 0.5 %）。模型の遮蔽のテクスチャを、RTGI が働くときは空の光・照り返しに重ねない形にする（地形で SCN-WL-MATERIAL-AO-SHADING がしたことの模型の版）。合否（`--building --expect`）: 実材質の地面の撮影で、壁でエンジン ÷ Cycles が 0.3 未満の画素の割合が Cycles の暗い目地の割合（1.5 %）の 2 倍以内（`prop-ao.json`）。Cycles の参照と同じ灰色 0.3 の地面（`wasteland-gray-material`）の撮影で、目地を除いた陰の壁の比が日なたの壁の比と 0.1 以内で揃う（`prop-ao-gray.json`。陰の壁は光の 7 割が照り返しで、地面の反射率が違うと比が揃わないため）。ほかのシーンの模型にも効くので、回帰の撮影の前後を開いて差がこの直しだけによることを確かめ、golden が変わるなら再承認する。反復の最初に回帰の撮影の `before` を撮る。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
