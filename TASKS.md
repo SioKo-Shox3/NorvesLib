@@ -2069,7 +2069,7 @@
 - notes: 危険地帯（描画・アセットロード）。2026-10-21 SCN-WL-MATERIAL-AO-BAKE の反復が足した。
 
 ## SCN-WL-JITTER-LIGHTING: TAA のジッタで描かれる照明の中身が変わる経路を探して直す
-- status: doing
+- status: done
 - after: SCN-WL-RT-TLAS-RANGE-ACCEPT, SCN-WLR-REGRESSION-VALIDATION
 - done-when: （2026-10-21 親が反復 29 の結果で書き換え）ジッタで描かれる中身が変わる経路は VSM の太陽の影と分かった（影を切るとジッタ 1 と 0 の欠けの差 0.264 → 0.097。ページのキャッシュを切っても同じなので使い回しは原因でない。4K の TAA の画で台地の根元の斜面に大きな影の斑が出る）。ジッタの有無で太陽の影の判定が変わる画素を、`VsmSampleSunShadowCore` の受け手の深度・傾き・余裕のデバッグの出力をジッタ 0 と 1 の 2 フレームで比べて特定し、判定がジッタの投影に依る式を直す。どちらの影が正しいかは Cycles の参照（SCN-WLR-CYCLES-GRAY・LIT の ref_far_01 の太陽の可視率）で照らし、直した後の影が Cycles の可視率と合うことも記録する。合否: `--blur-static --expect`（`jitter-lighting.json`）で、TAA（ジッタ 1）の遠景の細部の欠けが、中身が変わらない TAA の見積もり（ジッタ 0 の画を Halton の 8 点でずらして `temporal_aa.frag` の式で貯めた値。反復 29 の `aux-SCN-WL-JITTER-LIGHTING-taasim.py` を検査に組み込む。今 0.353）+ 0.05 以内（ref_far_01・ref_cliff_02 の遠景）。直せない経路が残ったら、経路と量を記録して BLOCKED にする。ほかのシーンの影を変えない（回帰の撮影を -Motion つきで前後に撮って開く。golden が変わるなら再承認）。反復の最初に回帰の撮影の `before` を撮る。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`

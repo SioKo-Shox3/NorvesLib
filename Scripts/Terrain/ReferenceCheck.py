@@ -763,6 +763,14 @@ BLUR_TAA_ESTIMATE_FRAMES = 64
 BLUR_TAA_ESTIMATE_CURRENT_WEIGHT = 0.1
 BLUR_TAA_ESTIMATE_CLIP_GAMMA = 1.0
 BLUR_TAA_ESTIMATE_SHARPEN = 0.25
+# 見積もりは 1 視点 4 分かかるので、--verify なしの走りで 1 回だけ解き、入力（ジッタ 0 の組の撮影の署名: エンジンの実装と
+# Game.exe のハッシュ）と台本（見積もりの式と定数のハッシュ）の署名つきで <撮影先>/BLUR_TAA_ESTIMATE_DIR/<視点>.luma.npy に
+# 保存する。--verify は保存した輝度を読み、署名が今と合うことを照らすだけ（解き直さない）。撮影は同じ exe でも画素が
+# ビット単位では揃わない（撮り直しで PNG のハッシュが変わる）ので、PNG のハッシュは記録だけにし、撮り直しの揺れは
+# ジッタ 0 の組の細部の欠け（遠景・崖）が解いたときから BLUR_TAA_ESTIMATE_SOURCE_DRIFT 以内であることで照らす
+# （2026-10-22 の撮り直しで揺れは欠け 0.0002 未満、見積もりの欠けも 0.0002）
+BLUR_TAA_ESTIMATE_DIR = "taa-estimate"
+BLUR_TAA_ESTIMATE_SOURCE_DRIFT = 0.005
 # 荒野は仮想テクスチャを使わない（VRAM_POOLS の vt_used_mb がどの行も 0）。使っていれば常駐の確かめが要るので失敗にする
 BLUR_VT_LOG_KEY = "VRAM_POOLS "
 
@@ -3395,6 +3403,64 @@ def blur_taa_estimate(display):
     return np.clip(blur_encode_srgb(np.clip(history, 0, None)), 0, 1)
 
 
+def blur_taa_estimate_script_sha256():
+    """見積もりの台本の署名: 見積もりの輝度を作る式（PNG の読み・sRGB の変換・見積もり）と定数のハッシュ"""
+    import inspect
+    parts = [inspect.getsource(f) for f in (blur_load_display, blur_decode_srgb, blur_encode_srgb, blur_taa_estimate)]
+    parts.append(json.dumps([BLUR_TAA_ESTIMATE_FRAMES, BLUR_TAA_ESTIMATE_CURRENT_WEIGHT, BLUR_TAA_ESTIMATE_CLIP_GAMMA,
+                             BLUR_TAA_ESTIMATE_SHARPEN, LUMA.tolist()]))
+    return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()
+
+
+def blur_taa_estimate_luma(capture_dir, view, source_png, source_display, source_group, source_result, verify):
+    """BLUR_TAA_ESTIMATE の輝度を、署名つきで保存した見積もりから読む。署名（ジッタ 0 の組の撮影の署名 source_group・台本の
+    ハッシュ）が今と合わないか、ジッタ 0 の組の欠け（source_result）が解いたときから動いていれば、--verify では解き直さずに
+    失敗の理由を返し、そうでなければ解き直して保存する。戻り値は (輝度 or None, 失敗 or None, 記録)"""
+    out_dir = os.path.join(capture_dir, BLUR_TAA_ESTIMATE_DIR)
+    luma_path = os.path.join(out_dir, f"{view}.luma.npy")
+    record_path = os.path.join(out_dir, f"{view}.json")
+    signature = {"source_identity": source_group.get("identity"),
+                 "source_game_exe_sha256": source_group.get("game_exe_sha256"),
+                 "script_sha256": blur_taa_estimate_script_sha256()}
+    source_loss = {region: (source_result.get(region) or {}).get("fine_detail_loss") for region in ("far", "cliff")}
+    record = None
+    if os.path.isfile(record_path):
+        with open(record_path, encoding="utf-8") as f:
+            record = json.load(f)
+    if not all(signature.values()):
+        reason = "ジッタ 0 の組の撮影の署名（inputs.json の identity・Game.exe のハッシュ）が無い"
+    elif record is not None and os.path.isfile(luma_path) and sha256_file(luma_path) == record.get("luma_sha256"):
+        stale = [key for key, value in signature.items() if record.get(key) != value]
+        recorded_loss = record.get("source_fine_detail_loss") or {}
+        drift = {region: abs(value - recorded_loss[region]) for region, value in source_loss.items()
+                 if value is not None and recorded_loss.get(region) is not None}
+        if set(drift) != {region for region, value in source_loss.items() if value is not None}:
+            stale.append("source_fine_detail_loss")
+        elif max(drift.values(), default=0.0) > BLUR_TAA_ESTIMATE_SOURCE_DRIFT:
+            stale.append(f"ジッタ 0 の組の欠けが解いたときから {max(drift.values()):.4f} 動いた"
+                         f"（上限 {BLUR_TAA_ESTIMATE_SOURCE_DRIFT}）")
+        if not stale:
+            return np.load(luma_path), None, dict(record, source_fine_detail_loss_drift=drift)
+        reason = f"署名が今と合わない（{', '.join(stale)}）"
+    else:
+        reason = "保存が無いか、輝度のファイルが記録のハッシュと合わない"
+    if verify:
+        return None, (f"{view}: 中身が変わらない TAA の見積もりの{reason}。--verify なしで 1 回解いて保存する"
+                      f"（{rel_dir(out_dir)}）"), record
+    started = time.time()
+    luma = blur_taa_estimate(source_display) @ LUMA
+    os.makedirs(out_dir, exist_ok=True)
+    np.save(luma_path, luma)
+    record = dict(signature, luma_sha256=sha256_file(luma_path), source_png=rel_dir(source_png),
+                  source_png_sha256=sha256_file(source_png), source_fine_detail_loss=source_loss,
+                  solve_seconds=time.time() - started)
+    with open(record_path, "w", encoding="utf-8") as f:
+        json.dump(record, f, indent=2, ensure_ascii=False)
+    print(f"REFERENCE_CHECK blur_static view={view} taa_estimate solved seconds={record['solve_seconds']:.1f} "
+          f"saved={luma_path}")
+    return luma, None, record
+
+
 def blur_bands(luma):
     """隣り合うガウスの差の帯域（細かい順）"""
     blurred = [blur_gaussian(luma, sigma) for sigma in BLUR_SIGMAS]
@@ -3606,6 +3672,7 @@ def run_blur_static(capture_dir, verify, engine_dirs=None, reference_dir=None, e
                                                require_resident)
         failures.extend(f"{name}: {failure}" for failure in group_failures)
         group_records[name] = {"inputs_current": inputs_ok, "dir": rel_dir(group_dir),
+                               "identity": (record or {}).get("identity"),
                                "game_exe_sha256": (record or {}).get("game_exe_sha256"), **info}
     if len(input_hashes) > 1:
         failures.append(f"組ごとのエンジンの実装が揃っていない（{len(input_hashes)} 通り。同じ実装で撮った組だけを比べる）")
@@ -3671,13 +3738,21 @@ def run_blur_static(capture_dir, verify, engine_dirs=None, reference_dir=None, e
             if not all(np.isfinite(values)):
                 failures.append(f"{view}: {case['name']} の値に NaN・Inf がある")
             cases[case["name"]] = {"factor": case["factor"], "far": far_result, "cliff": cliff_result}
-        if BLUR_TAA_ESTIMATE_SOURCE in displays:
-            estimate_bands = blur_bands(blur_taa_estimate(displays[BLUR_TAA_ESTIMATE_SOURCE]) @ LUMA)
-            cases[BLUR_TAA_ESTIMATE] = {
-                "factor": f"中身が変わらない TAA の見積もり（{BLUR_TAA_ESTIMATE_SOURCE} をジッタの 8 点でずらして TAA の式で貯める）",
-                "far": blur_compare(reference_bands, estimate_bands, far_masks),
-                "cliff": blur_compare(reference_bands, estimate_bands, cliff_masks)
-                if min(region["cliff_px_per_band"]) > 0 else None}
+        if BLUR_TAA_ESTIMATE_SOURCE in displays and BLUR_TAA_ESTIMATE_SOURCE in cases:
+            estimate_luma, estimate_failure, estimate_record = blur_taa_estimate_luma(
+                capture_dir, view, os.path.join(capture_dir, BLUR_TAA_ESTIMATE_SOURCE, f"{view}.png"),
+                displays[BLUR_TAA_ESTIMATE_SOURCE], group_records.get(BLUR_TAA_ESTIMATE_SOURCE) or {},
+                cases[BLUR_TAA_ESTIMATE_SOURCE], verify)
+            if estimate_failure:
+                failures.append(estimate_failure)
+            else:
+                estimate_bands = blur_bands(estimate_luma)
+                cases[BLUR_TAA_ESTIMATE] = {
+                    "factor": f"中身が変わらない TAA の見積もり（{BLUR_TAA_ESTIMATE_SOURCE} をジッタの 8 点でずらして TAA の式で貯める）",
+                    "far": blur_compare(reference_bands, estimate_bands, far_masks),
+                    "cliff": blur_compare(reference_bands, estimate_bands, cliff_masks)
+                    if min(region["cliff_px_per_band"]) > 0 else None,
+                    "estimate_record": estimate_record}
         entry["cases"] = cases
         # 霞が細部の見えを下げる量: 霞ありの帯域の量 ÷ 霞なしの帯域の量（同じ範囲・同じ取り分。正解との比ではない）
         if BLUR_BASELINE in case_bands_by_name and "haze-off" in case_bands_by_name:

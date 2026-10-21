@@ -6471,3 +6471,19 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 見積もりの計算は 1 視点で数分かかる（`--blur-static` の検査が長くなった）
   - 新しい試験は足していない
 - Next: TASKS.md の次の未完の項目（SCN-WL-FAR-AA の定数の掃引の撮り直し）
+
+### SCN-WL-JITTER-LIGHTING 再検証の時間切れの直し（2026-10-22、run 20261021-055341 の反復 32）
+- 差し戻し: ランナーの再検証で `--blur-static ... --verify` が 10 分を超えた（前の版は 702 秒。うち見積もり `blur_taa_estimate` が 1 視点 170〜240 秒）。直しのコード（585d1fe4）は変えていない
+- Done: `ReferenceCheck.py` の見積もりを `--verify` なしの走りで 1 回だけ解き、`<撮影先>/taa-estimate/<視点>.luma.npy` と記録 `<視点>.json` に署名つきで保存する形にした（`blur_taa_estimate_luma`）。署名はジッタ 0 の組の撮影の identity・Game.exe のハッシュと、見積もりの式（PNG の読み・sRGB の変換・見積もり）と定数のハッシュ。`--verify` は保存した輝度を読み、署名を照らすだけで、合わなければ解き直さずに失敗にする。撮り直すと同じ exe でも PNG のハッシュが変わる（2026-10-22 に 2 回撮り直して確かめた）ので、PNG のハッシュは記録だけにし、撮り直しの揺れはジッタ 0 の組の遠景・崖の欠けが解いたときから 0.005 以内であることで照らす（撮り直しの揺れは欠け 0.0002 未満、見積もりを解き直したときの欠けの差も 0.0002）。記録は `WastelandFarBlurStatic.md`
+- 証拠（`.harness/runs/20261021-055341/`）:
+  - `verify-SCN-WL-JITTER-LIGHTING-7.txt` Debug の Game のビルド EXIT=0
+  - `verify-SCN-WL-JITTER-LIGHTING-8.txt`・`-9.txt` aa-taa（-Build）・aa-taa-nojitter の撮影 result=pass・EXIT=0（見積もりを解いた後に撮り直した。ランナーの再検証と同じ順）
+  - `verify-SCN-WL-JITTER-LIGHTING-10.txt` `--blur-static --expect jitter-lighting.json --verify` result=pass・inputs_current=1・**所要 31 秒**: ref_far_01 aa-taa − 見積もり +0.0173、ref_cliff_02 +0.0462（上限 0.05）
+  - `verify-SCN-WL-JITTER-LIGHTING-v32-refcheck.txt` 撮り直す前の `--verify` 所要 50 秒・result=pass
+  - `verify-SCN-WL-JITTER-LIGHTING-11.txt` 回帰の after（-Motion）result=pass、全シーンの平均の差 0（PSNR 最小 mega-bananas 51.3）
+- Notes:
+  - 見積もりの記録の source_png_sha256 を書き換えて `--verify` を走らせ、失敗（未判定）になることを確かめてから戻した。今の版は撮り直しの揺れの照らし（欠けの差 0.005）で落ちる
+  - `--verify` なしの走り（見積もりを解く）は 2 視点で約 7 分。エンジンの実装か Game.exe が変わったら、verify の前に 1 回走らせる
+  - Git Bash から `cmake --build ... -- /m:1` を走らせると `/m:1` がパスに書き換えられて MSBuild が落ちる（PowerShell から走らせた）
+  - 新しい試験は足していない
+- Next: TASKS.md の次の未完の項目
