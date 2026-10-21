@@ -688,8 +688,14 @@ BLUR_CASES = (
     # 定数を変えた後の aa-taa と同じ Game.exe で撮って比べる
     {"name": "aa-taa-prev", "factor": "AA を TAA に（混ぜ方の定数は変更前の値）",
      "args": ("--wasteland-aa=taa", "--taa-current-weight=0.1", "--taa-clip-gamma=1", "--taa-sharpen=0.25", BLUR_SHARE_ARG),
-     "logs": ("WASTELAND_BLUR_CASE aa=taa ", "TAA_PARAMS current_weight=0.100 clip_gamma=1.000 sharpen=0.250 source=env",
+     "logs": ("WASTELAND_BLUR_CASE aa=taa ",
+              "TAA_PARAMS current_weight=0.100 clip_gamma=1.000 sharpen=0.250 jitter_scale=1.000 source=env",
               BLUR_SHARE_LOG), "resident": True},
+    # TAA のサブピクセルのジッタを 0 にして履歴を貯めた組（--taa-jitter-scale=0）。ジッタで描かれる中身が変わる経路が残ると
+    # aa-taa の欠けがこの組より大きくなる（SCN-WL-JITTER-LIGHTING）。aa-taa と同じ Game.exe で撮って比べる
+    {"name": "aa-taa-nojitter", "factor": "AA を TAA に（ジッタ 0）",
+     "args": ("--wasteland-aa=taa", "--taa-jitter-scale=0", BLUR_SHARE_ARG),
+     "logs": ("WASTELAND_BLUR_CASE aa=taa ", "jitter_scale=0.000 source=env", BLUR_SHARE_LOG), "resident": True},
     {"name": "aa-none", "factor": "AA なし（FXAA のパスを外す）", "args": ("--wasteland-aa=none", BLUR_SHARE_ARG),
      "logs": ("WASTELAND_BLUR_CASE aa=none ", "WASTELAND_AA_PASS fxaa=off", BLUR_SHARE_LOG), "resident": True},
     {"name": "haze-off", "factor": "霞（空気遠近と高さフォグ）を切る", "args": ("--wasteland-hide=aerial+fog", BLUR_SHARE_ARG),
@@ -3598,7 +3604,8 @@ def run_blur_static(capture_dir, verify, engine_dirs=None, reference_dir=None, e
                 for k in range(len(BLUR_SIGMAS) - 1)]
         cy, cx = np.argwhere(cliff_masks[0] if region["cliff_px_per_band"][0] > 0 else far_masks[0]).mean(axis=0)
         crops_path = os.path.join(capture_dir, f"blur_{view}.png")
-        order = ["ref2x", "base", BLUR_BASELINE, "finest-lod", "aa-none", "aa-taa", "aa-taa-prev", "mip-bias-m1", "aniso-1",
+        order = ["ref2x", "base", BLUR_BASELINE, "finest-lod", "aa-none", "aa-taa", "aa-taa-prev", "aa-taa-nojitter",
+                 "mip-bias-m1", "aniso-1",
                  "scale-075",
                  "haze-off"]
         entry["crops"] = blur_write_crops(crops_path, [(n, displays[n]) for n in order if n in displays], (cy, cx))

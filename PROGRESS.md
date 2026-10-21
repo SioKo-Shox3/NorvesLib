@@ -6427,3 +6427,11 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 届かない理由: 枝（1 画素より細い。REF-NEAR の `plant_branch_subpixel`）の見え方の割合 0.488・比 0.36・n·l の平均 0.69 倍。葉は 0.771・0.79。見え方を全部 1 にした見積もりでも比は 0.74 前後
 - Notes: 解析は使い捨ての台本（リポジトリに入れていない）。回帰の after・撒いた株の after・Debug のビルドは止めたので回していない。新しい試験は足していない
 - Next: blocked/SCN-WL-PLANT-SHADOW.md の判断待ち（推奨: 基準 2・3 を葉の画素で判定し、枝は未判定として記録）
+
+### SCN-WL-JITTER-LIGHTING 止め（2026-10-21、run 20261021-055341 の反復 29。理由と選択肢は blocked/SCN-WL-JITTER-LIGHTING.md）
+- 回帰の撮影の before（-Motion つき）は result=pass（`regression-before-SCN-WL-JITTER-LIGHTING.txt`）
+- Done: 開発ビルドだけの起動引数 `--taa-jitter-scale=<0〜1>`（環境変数 `NORVES_TAA_JITTER_SCALE`、`TemporalAAPass::BeginFrame` でジッタに掛ける。既定 1 で描画は変えない）、`--blur-static` の組 `aa-taa-nojitter`、仕様 `jitter-lighting.json`（ジッタ 1 の遠景の欠け ≤ ジッタ 0 + 0.05）を足した。`aa-taa-prev` のログの印は `TAA_PARAMS` の行に `jitter_scale` が増えたのに合わせた
+- 切り分け（一時の計装 `NORVES_DIAG_LIGHT_CUT`。コミットしていない）: ref_far_01 の遠景の欠けのジッタ 1 と 0 の差は既定 0.264、RTGI を切って 0.262、接触影を切って 0.264（同じ）、**太陽の影（VSM）を切って 0.097**。VSM のキャッシュを切っても同じ（ページの使い回しは原因でない）。4K を TAA で撮った画は 4K の AA なしと粗い帯域まで違い、台地の根元の斜面に大きな影の斑が出る（ジッタで VSM の自己の影の判定そのものが変わる）。評価 `aux-SCN-WL-JITTER-LIGHTING-eval.txt`・`aux-SCN-WL-JITTER-LIGHTING-reftaa.txt`
+- 中身が変わらないときの TAA の見積もり（ジッタ 0 の画を FFT でずらして TAA の式で貯める、`aux-SCN-WL-JITTER-LIGHTING-taasim.py`）は欠け 0.353（ジッタ 0 の +0.084）で、合否の +0.05 は経路を直しても届かない見込み
+- Notes: 回帰の after（-Motion つき）は result=pass、全シーンの平均の差 0（`verify-SCN-WL-JITTER-LIGHTING-5.txt`）。RelWithDebInfo の Game.exe はその -Build で計装なしに作り直した。新しい試験は足していない。Debug のビルド（verify 1）は `verify-SCN-WL-JITTER-LIGHTING-1.txt`
+- Next: blocked/SCN-WL-JITTER-LIGHTING.md の判断待ち（推奨: VSM の経路を直す項目を立て、閾値も一緒に見直す）

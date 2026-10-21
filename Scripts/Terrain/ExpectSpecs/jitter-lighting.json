@@ -1,0 +1,30 @@
+{
+  "description": "SCN-WL-JITTER-LIGHTING: TAA のサブピクセルのジッタで描かれる照明の中身が変わらないことの合否。比べる組は ref2x（正解）・resident（FXAA の対照）・aa-taa・aa-taa-nojitter（--taa-jitter-scale=0 で履歴を貯めた TAA）で、どれも同じ Game.exe で撮ったもの。",
+  "cases": [
+    "resident",
+    "aa-taa",
+    "aa-taa-nojitter"
+  ],
+  "rows": [
+    {
+      "mode": "blur_static",
+      "view": "ref_far_01",
+      "region": "far",
+      "case": "aa-taa",
+      "against": "aa-taa-nojitter",
+      "quantity": "detail_loss_vs_case",
+      "max": 0.05,
+      "note": "TAA（ジッタ 1）の遠景の細部の欠けが、同じ Game.exe のジッタ 0 の TAA の欠け + 0.05 以内（ジッタで描かれる中身が変わらない）"
+    },
+    {
+      "mode": "blur_static",
+      "view": "ref_cliff_02",
+      "region": "far",
+      "case": "aa-taa",
+      "against": "aa-taa-nojitter",
+      "quantity": "detail_loss_vs_case",
+      "max": 0.05,
+      "note": "TAA（ジッタ 1）の遠景の細部の欠けが、同じ Game.exe のジッタ 0 の TAA の欠け + 0.05 以内（ジッタで描かれる中身が変わらない）"
+    }
+  ]
+}

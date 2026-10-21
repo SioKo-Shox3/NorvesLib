@@ -287,7 +287,9 @@ namespace Game
         constexpr const TCHAR *kRTGIBounceOption = TEXT("--rtgi-bounce=");
         // --taa-current-weight=<0.01〜1>・--taa-clip-gamma=<0.25〜8>・--taa-sharpen=<0〜1>: TAA の現在の色の割合・履歴をクリップする箱の
         // 半幅・書き戻しのシャープ化の強さ（開発ビルドだけ。遠景のエイリアスの撮り比べ。環境変数 NORVES_TAA_CURRENT_WEIGHT・
-        // NORVES_TAA_CLIP_GAMMA・NORVES_TAA_SHARPEN で描画側へ渡す。Rendering/TemporalAAParamOverride.h）
+        // NORVES_TAA_CLIP_GAMMA・NORVES_TAA_SHARPEN で描画側へ渡す。Rendering/TemporalAAParamOverride.h）。
+        // --taa-jitter-scale=<0〜1>: サブピクセルのジッタに掛ける倍率（開発ビルドだけ。0 はジッタを掛けずに履歴を貯める。
+        // ジッタで描かれる中身が変わる経路の切り分け。環境変数 NORVES_TAA_JITTER_SCALE）
         struct TemporalAAParamOption
         {
             const TCHAR *Prefix;
@@ -299,6 +301,7 @@ namespace Game
             {TEXT("--taa-current-weight="), "NORVES_TAA_CURRENT_WEIGHT", 0.01f, 1.0f},
             {TEXT("--taa-clip-gamma="), "NORVES_TAA_CLIP_GAMMA", 0.25f, 8.0f},
             {TEXT("--taa-sharpen="), "NORVES_TAA_SHARPEN", 0.0f, 1.0f},
+            {TEXT("--taa-jitter-scale="), "NORVES_TAA_JITTER_SCALE", 0.0f, 1.0f},
         };
         // --vram-geometry-share=<1〜65535>: VRAM の予算のジオメトリの取り分（VT は 3。既定 1。開発ビルドだけ）。2 倍の解像度の撮影は
         // 描画先が大きく取り分の目標が縮み、ページの塊を足せずに要求が残るので広げる（何を描くかは変えない）。
@@ -1610,7 +1613,7 @@ namespace Game
                     std::snprintf(valueText, sizeof(valueText), "%.9g", static_cast<double>(value));
                     _putenv_s(option.EnvName, valueText);
 #else
-                    LOG_WARNING("--taa-current-weight・--taa-clip-gamma・--taa-sharpen は開発ビルドだけで使えます。無視します");
+                    LOG_WARNING("--taa-current-weight・--taa-clip-gamma・--taa-sharpen・--taa-jitter-scale は開発ビルドだけで使えます。無視します");
 #endif
                     break;
                 }
