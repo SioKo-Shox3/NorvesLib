@@ -6487,3 +6487,21 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - Git Bash から `cmake --build ... -- /m:1` を走らせると `/m:1` がパスに書き換えられて MSBuild が落ちる（PowerShell から走らせた）
   - 新しい試験は足していない
 - Next: TASKS.md の次の未完の項目
+
+### SCN-WL-JITTER-LIGHTING ジッタ 0／1 の画素ごとの判定の証拠（2026-10-22、run 20261021-055341 の反復 33）
+- 差し戻し: `VsmSampleSunShadowCore` の受け手の深度・傾き・余裕をジッタ 0／1 で比べ、判定が反転する画素を特定した証拠が無い。直しのコード（585d1fe4）は変えていない
+- Done: 照明に一時の計装（コミットしていない。ソースは戻した）を入れ、受け手の中心の texel の判定の値（受け手の深度 − 余裕 − 中心の texel の深度）を、直した後の位置の復元と直す前の絶対座標の逆 ViewProjection の位置の 2 通りで同じフレームから AOV（`.aov.vsmdiag.pfm`。照明の反射率の目標を一時に RGBA32F）に書き、ジッタ 1 と 0 を同じ exe で撮って画素ごとに比べた。ref_far_01 の 6〜9 km で中心の判定が反転する画素は直す前 24.5 % → 直した後 1.34 %、直す前の位置のライトの向きの深度のずれはジッタ 1 で中央 +8.1 m（95 % +81 m）・ジッタ 0 で +0.8 m（余裕の中央 5.4 m）。縁でない画素の例（ref_far_01 (525,626) 5811 m: 直す前 −44.8 → +47.7 m で日なた → 影、直した後 −46.1 → −46.2 m で日なたのまま）と表は `WastelandFarBlurStatic.md` の「ジッタ 0 と 1 の画素ごとの判定」
+- 証拠（`.harness/runs/20261021-055341/`）:
+  - `aux-SCN-WL-JITTER-LIGHTING-vsmdiag-j1.txt`・`-j0.txt` 計装入りの撮影 result=pass・EXIT=0（撮影先 `scene-capture/SCN-WL-JITTER-LIGHTING-vsmdiag/j1`・`j0`）
+  - `aux-SCN-WL-JITTER-LIGHTING-vsmdiag-compare.txt` 画素ごとの比較（台本 `aux-SCN-WL-JITTER-LIGHTING-vsmdiag.py`）
+  - `verify-SCN-WL-JITTER-LIGHTING-12.txt` Debug の Game のビルド EXIT=0
+  - `verify-SCN-WL-JITTER-LIGHTING-13.txt`・`-14.txt` 計装を戻した後の aa-taa（-Build）・aa-taa-nojitter の撮影 result=pass・EXIT=0
+  - `verify-SCN-WL-JITTER-LIGHTING-15.txt` 1 回目の `--verify` は result=fail（作り直した Game.exe のハッシュが ref2x・resident・見積もりと違う）。同じ exe で ref2x（`aux-SCN-WL-JITTER-LIGHTING-ref2x.txt`）・resident（`aux-SCN-WL-JITTER-LIGHTING-resident.txt`）を撮り直し、見積もりを解き直した（`aux-SCN-WL-JITTER-LIGHTING-estimate-solve.txt` result=pass・292 秒）
+  - `verify-SCN-WL-JITTER-LIGHTING-16.txt` `--blur-static --expect jitter-lighting.json --verify` result=pass・inputs_current=1・30 秒: ref_far_01 aa-taa − 見積もり +0.0172、ref_cliff_02 +0.0461（上限 0.05）
+  - `verify-SCN-WL-JITTER-LIGHTING-17.txt` 回帰の after（-Motion）result=pass、平均の差 0（PSNR 最小 mega-bananas 51.3）。mega-bananas の after を開き、床・空・バナナの影に崩れが無いことを確かめた
+- Notes:
+  - 回帰の before は反復 31 の開始時（直す前）のもの（`regression-before-SCN-WL-JITTER-LIGHTING.txt`）を使った。この反復は追跡しているレンダリングのコードを変えていない
+  - 同じソースでも Game.exe を作り直すとハッシュが変わる。計装の撮影の後は ref2x・resident・見積もりも撮り直す
+  - Cycles との照らし合わせは反復 31 の遠景の可視率（エンジン 0.958・Cycles 0.934）のまま。画素ごとに Cycles と並べてはいない
+  - 新しい試験は足していない
+- Next: TASKS.md の次の未完の項目
