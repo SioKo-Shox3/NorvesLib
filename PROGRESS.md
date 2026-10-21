@@ -6190,3 +6190,13 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `aux-SCN-WL-GEOM-LOWVRAM-golden.txt` golden の Indoor・Outdoor Passed・EXIT=0
 - Notes: 印の数が増えた分の GPU 時間は測っていない（印は記録ごとの印の交換で 1 ページ 1 回に省く）。6600 MB の読み込み中の枠の目標の揺れと、目標より大きく確保したまま縮まないプールの塊（2567 MB）は残る。新しい試験は足していない
 - Next: TASKS.md の次の未完の項目
+
+### SCN-WL-GEOM-LOWVRAM 差し戻しの直し（2026-10-21、run 20261021-055341 の反復 13）
+- Done: 予算の上書き `--vram-budget-mb` の解析と `SetVideoMemoryCapMb` への適用を `NORVES_BUILD_DEVELOPMENT` で囲み、Release では受け取って警告を出して無視する（`Game/GameApplicationHandler.cpp`）。4K の比較の撮影（ref2x）で要求の列が溢れる限界を `Docs/RenderingValidation/WastelandFarBlurStatic.md` の「VRAM が少ないとき」の残りに記録した（累計 1130201 件、印を足す前は 90648 件。1920×1080 は溢れ 0）
+- 証拠（`.harness/runs/20261021-055341/`）:
+  - `verify-SCN-WL-GEOM-LOWVRAM-4.txt` Debug の Game のビルド EXIT=0
+  - `verify-SCN-WL-GEOM-LOWVRAM-5.txt` 11000 MB の撮影 result=pass・EXIT=0（game_exe 6ac3b435…。ログの VRAM_BUDGET cap_mb=11000 で上書きが RelWithDebInfo で効く。request_overflow=0）
+  - `verify-SCN-WL-GEOM-LOWVRAM-6.txt` `--geom-settle --verify` result=pass・inputs_current=1・EXIT=0（60 秒の追い出し 0・常駐 472.82 MB）
+  - `aux-SCN-WL-GEOM-LOWVRAM-release-compile.txt` Release 構成で Game のソースをコンパイル EXIT=0（`#else` 側が通る。警告は既存の FrameUploadArena.h の C4101 だけ）
+- Notes: Release の Game.exe を起動しての確認はしていない（Release の Core.lib が 10 月 19 日のままで、全体のビルドは重いのでコンパイルだけ確かめた）。シェーダーは変えていないので 6600 MB・通常の予算・golden・回帰の撮影は反復 12 の証拠のまま
+- Next: TASKS.md の次の未完の項目

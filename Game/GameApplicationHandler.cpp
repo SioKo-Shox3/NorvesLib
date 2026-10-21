@@ -1063,12 +1063,17 @@ namespace Game
             String vramBudgetValue;
             if (TryStripPrefix(args[i], kVramBudgetOption, vramBudgetValue))
             {
+                // 予算の上書きは検証用なので開発ビルドだけで効かせる。Release では受け取って無視する
+#if NORVES_BUILD_DEVELOPMENT
                 if (!TryParseUInt32(vramBudgetValue, s_VramBudgetCapMb))
                 {
                     LOG_ERROR("Game command line parse failed: --vram-budget-mb は "
                               "0 以上の整数（MB）で指定する");
                     return false;
                 }
+#else
+                LOG_WARNING("--vram-budget-mb は開発ビルドだけで使えます。無視します");
+#endif
                 continue;
             }
 
@@ -2656,10 +2661,12 @@ namespace Game
     {
         LOG_INFO("GameApplicationHandler::OnPostInitialize()");
 
-        // --vram-budget-mb の上限を RenderResources へ渡す（0 は上限なし）。
+        // --vram-budget-mb の上限を RenderResources へ渡す（0 は上限なし。開発ビルドだけ）。
         if (NorvesLib::Core::Engine::GEngine)
         {
+#if NORVES_BUILD_DEVELOPMENT
             NorvesLib::Core::Engine::GEngine->GetRenderResources().SetVideoMemoryCapMb(s_VramBudgetCapMb);
+#endif
             // --mega-occlusion の指定（既定は有効）を MegaGeometry へ渡す
             NorvesLib::Core::Engine::GEngine->GetRenderResources().MegaGeometry().SetOcclusionCullingEnabled(s_bMegaOcclusion);
             // --geometry-streaming の指定（既定は有効）。メッシュを作る前に決める
