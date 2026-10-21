@@ -161,6 +161,18 @@ namespace NorvesLib::Core::Rendering
     public:
         explicit SkyAtmosphereModel(const SkyAtmosphereParameters& parameters);
 
+        /**
+         * @brief previous と太陽に依らない設定が同じなら、透過率と多重散乱の表を previous から写して作る
+         *
+         * 2 つの表は惑星の半径・大気の厚さ・尺度高さ・地表のアルベドだけで決まり、太陽の向きと明るさ・地表の高度・
+         * Mie の異方性に依らない。太陽が動くたびに作り直す側（空の LUT・空由来の IBL）は、前の model を渡して
+         * 表の前計算を省く（多重散乱の表がいちばん重い）。previous が nullptr か設定が違えば 1 引数の構築と同じ。
+         */
+        SkyAtmosphereModel(const SkyAtmosphereParameters& parameters, const SkyAtmosphereModel* previous);
+
+        /** 透過率と多重散乱の表を、previous から写して作ったか */
+        bool ReusedSunIndependentTables() const { return m_bReusedSunIndependentTables; }
+
         /** sanitize済みのパラメータ */
         const SkyAtmosphereParameters& GetParameters() const { return m_Parameters; }
 
@@ -286,6 +298,7 @@ namespace NorvesLib::Core::Rendering
         Container::VariableArray<float> m_TransmittanceTable;
         Container::VariableArray<float> m_MultipleScatteringTable;
         Container::VariableArray<float> m_SkyViewTable;
+        bool m_bReusedSunIndependentTables = false;
     };
 
     /**

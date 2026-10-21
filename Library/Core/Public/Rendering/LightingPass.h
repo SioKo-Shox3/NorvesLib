@@ -573,6 +573,8 @@ namespace NorvesLib::Core::Rendering
         uint32_t m_SkyAtmosphereIblRadianceWidth = 0;
         uint32_t m_SkyAtmosphereIblRadianceHeight = 0;
         bool m_bSkyAtmosphereIblCacheValid = false;
+        // 最後に空由来の IBL を作った空の model。太陽だけが動いたときは、太陽に依らない表をここから写す。
+        Container::TUniquePtr<SkyAtmosphereModel> m_SkyAtmosphereIblModel;
         bool m_bSkyAtmosphereIblAvailable = false;
         // 静的HDR環境の一様な差し替え（SceneProxy::bStaticEnvironmentUniform）。差し替えている間は、読み込んだ静的HDRの
         // 3 枚を退避し、一様な放射輝度から作った 3 枚を m_EnvironmentTexture などの位置に置く（選ぶ側の式は変えない）

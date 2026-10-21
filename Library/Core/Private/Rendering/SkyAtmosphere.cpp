@@ -31,10 +31,14 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t kOpticalDepthSteps = 64u;
         constexpr uint32_t kTransmittanceTableAltitudeCount = 32u;
         constexpr uint32_t kTransmittanceTableCosineCount = 128u;
-        constexpr uint32_t kMultipleScatteringAltitudeCount = 8u;
-        constexpr uint32_t kMultipleScatteringCosineCount = 32u;
-        constexpr uint32_t kMultipleScatteringDirectionSqrt = 8u;
-        constexpr uint32_t kMultipleScatteringSteps = 16u;
+        // 多重散乱の表。低い太陽の地表の付近で Ψ が急に変わるので、補間の誤差が 2 % に収まる格子にする。
+        // 点の周りの球は、天頂角の余弦を地平線（地表に当たるかの境）で 2 つに分けてガウス・ルジャンドルで取り、
+        // 方位は太陽を含む面について対称なので半周を等間隔で取る。
+        constexpr uint32_t kMultipleScatteringAltitudeCount = 32u;
+        constexpr uint32_t kMultipleScatteringCosineCount = 64u;
+        constexpr uint32_t kMultipleScatteringPolarCount = 12u;
+        constexpr uint32_t kMultipleScatteringAzimuthCount = 2u;
+        constexpr uint32_t kMultipleScatteringSteps = 32u;
         constexpr uint32_t kViewSteps = 32u;
         constexpr uint32_t kGroundIrradianceElevationCount = 8u;
         constexpr uint32_t kGroundIrradianceAzimuthCount = 16u;
@@ -55,6 +59,36 @@ namespace NorvesLib::Core::Rendering
         {
             const double x = -1.0 + 2.0 * static_cast<double>(index) / (count - 1u);
             return x * std::abs(x);
+        }
+
+        // [-1, 1] のガウス・ルジャンドルの節点と重み（ルジャンドル多項式の根をニュートン法で求める）。
+        void ComputeGaussLegendre(uint32_t count, double outNodes[], double outWeights[])
+        {
+            for (uint32_t i = 0u; i < count; ++i)
+            {
+                double x = std::cos(3.14159265358979323846 * (i + 0.75) / (count + 0.5));
+                double derivative = 1.0;
+                for (uint32_t iteration = 0u; iteration < 100u; ++iteration)
+                {
+                    double p0 = 1.0;
+                    double p1 = x;
+                    for (uint32_t k = 2u; k <= count; ++k)
+                    {
+                        const double p2 = ((2.0 * k - 1.0) * x * p1 - (k - 1.0) * p0) / k;
+                        p0 = p1;
+                        p1 = p2;
+                    }
+                    derivative = count * (x * p1 - p0) / (x * x - 1.0);
+                    const double delta = p1 / derivative;
+                    x -= delta;
+                    if (std::abs(delta) < 1.0e-15)
+                    {
+                        break;
+                    }
+                }
+                outNodes[i] = x;
+                outWeights[i] = 2.0 / ((1.0 - x * x) * derivative * derivative);
+            }
         }
 
         float ClampFinite(float value, float minimum, float maximum, float fallback)
@@ -129,6 +163,7 @@ namespace NorvesLib::Core::Rendering
         }
 
         // 同じ光路が惑星（半径bottom）に当たるまでの距離。当たらなければ負。
+        // 地表の点（radius = bottom）から下へ向かう光路は距離0で当たる（丸めで負になった距離を0にする）。
         double DistanceToGround(double radius, double cosine, double bottom)
         {
             if (cosine >= 0.0)
@@ -140,8 +175,7 @@ namespace NorvesLib::Core::Rendering
             {
                 return -1.0;
             }
-            const double distance = -radius * cosine - std::sqrt(discriminant);
-            return distance >= 0.0 ? distance : -1.0;
+            return std::max(-radius * cosine - std::sqrt(discriminant), 0.0);
         }
 
         // 半径radiusの点から天頂との余弦cosineの向きに大気の上端まで、Rayleigh・Mieの消散係数と
@@ -321,6 +355,12 @@ namespace NorvesLib::Core::Rendering
     }
 
     SkyAtmosphereModel::SkyAtmosphereModel(const SkyAtmosphereParameters& parameters)
+        : SkyAtmosphereModel(parameters, nullptr)
+    {
+    }
+
+    SkyAtmosphereModel::SkyAtmosphereModel(const SkyAtmosphereParameters& parameters,
+                                           const SkyAtmosphereModel* previous)
         : m_Parameters(SanitizeSkyAtmosphereParameters(parameters))
     {
         if (!m_Parameters.bEnabled)
@@ -343,8 +383,28 @@ namespace NorvesLib::Core::Rendering
             m_Parameters, GroundAltitudeFraction(m_Parameters), sun.y);
 
         // 多重散乱の表は透過率の表を、地表の空の照度は両方の表を引く。
-        BuildTransmittanceTable();
-        BuildMultipleScatteringTable();
+        // 2 つの表は太陽に依らないので、同じ大気の previous があれば写す。
+        const SkyAtmosphereParameters* previousParameters =
+            previous != nullptr ? &previous->m_Parameters : nullptr;
+        if (previousParameters != nullptr && previousParameters->bEnabled &&
+            !previous->m_TransmittanceTable.empty() && !previous->m_MultipleScatteringTable.empty() &&
+            previousParameters->PlanetRadiusMeters == m_Parameters.PlanetRadiusMeters &&
+            previousParameters->AtmosphereHeightMeters == m_Parameters.AtmosphereHeightMeters &&
+            previousParameters->RayleighScaleHeightMeters == m_Parameters.RayleighScaleHeightMeters &&
+            previousParameters->MieScaleHeightMeters == m_Parameters.MieScaleHeightMeters &&
+            previousParameters->GroundAlbedo.x == m_Parameters.GroundAlbedo.x &&
+            previousParameters->GroundAlbedo.y == m_Parameters.GroundAlbedo.y &&
+            previousParameters->GroundAlbedo.z == m_Parameters.GroundAlbedo.z)
+        {
+            m_TransmittanceTable = previous->m_TransmittanceTable;
+            m_MultipleScatteringTable = previous->m_MultipleScatteringTable;
+            m_bReusedSunIndependentTables = true;
+        }
+        else
+        {
+            BuildTransmittanceTable();
+            BuildMultipleScatteringTable();
+        }
         BuildGroundSkyIrradiance();
     }
 
@@ -583,17 +643,34 @@ namespace NorvesLib::Core::Rendering
         const double albedo[3] = {m_Parameters.GroundAlbedo.x,
                                   m_Parameters.GroundAlbedo.y,
                                   m_Parameters.GroundAlbedo.z};
+        double gaussNodes[kMultipleScatteringPolarCount];
+        double gaussWeights[kMultipleScatteringPolarCount];
+        ComputeGaussLegendre(kMultipleScatteringPolarCount, gaussNodes, gaussWeights);
         constexpr uint32_t directionCount =
-            kMultipleScatteringDirectionSqrt * kMultipleScatteringDirectionSqrt;
-        // 立体角 4π/N と等方の位相関数 1/(4π) の積。
-        constexpr double directionWeight = 1.0 / directionCount;
+            2u * kMultipleScatteringPolarCount * kMultipleScatteringAzimuthCount;
+        double directionCosines[directionCount];
+        // 球の平均の重み（和が1）。等方の位相関数 1/(4π) と立体角の積。
+        double directionWeights[directionCount];
         for (uint32_t row = 0u; row < kMultipleScatteringAltitudeCount; ++row)
         {
             const double v = static_cast<double>(row) / (kMultipleScatteringAltitudeCount - 1u);
-            const double origin[3] = {
-                0.0,
-                m_Parameters.PlanetRadiusMeters + m_Parameters.AtmosphereHeightMeters * v * v * v,
-                0.0};
+            const double originRadius =
+                m_Parameters.PlanetRadiusMeters + m_Parameters.AtmosphereHeightMeters * v * v * v;
+            const double origin[3] = {0.0, originRadius, 0.0};
+            const double planetRatio = m_Parameters.PlanetRadiusMeters / originRadius;
+            const double horizon = -std::sqrt(std::max(0.0, 1.0 - planetRatio * planetRatio));
+            for (uint32_t part = 0u; part < 2u; ++part)
+            {
+                const double lower = part == 0u ? -1.0 : horizon;
+                const double upper = part == 0u ? horizon : 1.0;
+                for (uint32_t polar = 0u; polar < kMultipleScatteringPolarCount; ++polar)
+                {
+                    const uint32_t index = part * kMultipleScatteringPolarCount + polar;
+                    directionCosines[index] = 0.5 * (upper - lower) * gaussNodes[polar] + 0.5 * (upper + lower);
+                    directionWeights[index] = (upper - lower) * gaussWeights[polar] /
+                                              (4.0 * kMultipleScatteringAzimuthCount);
+                }
+            }
             for (uint32_t column = 0u; column < kMultipleScatteringCosineCount; ++column)
             {
                 const double sunCosine =
@@ -603,15 +680,15 @@ namespace NorvesLib::Core::Rendering
                                        0.0};
                 double secondOrder[3] = {0.0, 0.0, 0.0};
                 double transferSum[3] = {0.0, 0.0, 0.0};
-                for (uint32_t polar = 0u; polar < kMultipleScatteringDirectionSqrt; ++polar)
+                for (uint32_t polar = 0u; polar < 2u * kMultipleScatteringPolarCount; ++polar)
                 {
-                    const double cosine =
-                        1.0 - 2.0 * (polar + 0.5) / kMultipleScatteringDirectionSqrt;
+                    const double cosine = directionCosines[polar];
                     const double sine = std::sqrt(std::max(0.0, 1.0 - cosine * cosine));
-                    for (uint32_t azimuth = 0u; azimuth < kMultipleScatteringDirectionSqrt; ++azimuth)
+                    const double directionWeight = directionWeights[polar];
+                    for (uint32_t azimuth = 0u; azimuth < kMultipleScatteringAzimuthCount; ++azimuth)
                     {
-                        const double phi =
-                            2.0 * kPi * (azimuth + 0.5) / kMultipleScatteringDirectionSqrt;
+                        // 太陽の方位（+x）からの半周。太陽は z = 0 の面にあるので、反対の半周は同じ値になる
+                        const double phi = kPi * (azimuth + 0.5) / kMultipleScatteringAzimuthCount;
                         const double direction[3] = {
                             sine * std::cos(phi), cosine, sine * std::sin(phi)};
                         const MarchResult march = March(origin, direction, sun,
@@ -640,9 +717,9 @@ namespace NorvesLib::Core::Rendering
                         }
                         for (uint32_t channel = 0u; channel < 3u; ++channel)
                         {
-                            secondOrder[channel] += inscattering[channel] +
-                                                    throughput[channel] * groundLight[channel];
-                            transferSum[channel] += transfer[channel];
+                            secondOrder[channel] += directionWeight *
+                                (inscattering[channel] + throughput[channel] * groundLight[channel]);
+                            transferSum[channel] += directionWeight * transfer[channel];
                         }
                     }
                 }
@@ -651,9 +728,9 @@ namespace NorvesLib::Core::Rendering
                     (static_cast<size_t>(row) * kMultipleScatteringCosineCount + column) * 3u;
                 for (uint32_t channel = 0u; channel < 3u; ++channel)
                 {
-                    const double secondOrderLuminance = secondOrder[channel] * directionWeight;
+                    const double secondOrderLuminance = secondOrder[channel];
                     const double transferFraction =
-                        std::clamp(transferSum[channel] * directionWeight, 0.0, 0.99);
+                        std::clamp(transferSum[channel], 0.0, 0.99);
                     m_MultipleScatteringTable[offset + channel] =
                         static_cast<float>(secondOrderLuminance / (1.0 - transferFraction));
                 }

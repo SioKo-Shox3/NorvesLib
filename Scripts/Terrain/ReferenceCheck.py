@@ -2787,6 +2787,46 @@ def atmos_ratio(a, b):
     return a / b if abs(b) > 1e-30 else float("nan")
 
 
+def atmos_psi_summary(table, ms_meta, psi_rows, reference):
+    """多重散乱の表 Ψ_ms のエンジン ÷ 正解 A の要約（SCN-WL-PSI-GRID）。格子点（psi_rows）と、比べる範囲の格子のセルの中心で
+    表を双線形に補間した値（空の LUT が表を引くのと同じ補間）の両方。セルの位置はエンジンの並び（高度は v^3、余弦は x|x|）を
+    書き出しの格子から逆に引くので、並びの式に依らず書き出しの値だけで求まる。正解は A だけ（B は使わない）"""
+    altitudes = np.asarray(ms_meta["altitude_m"], dtype=np.float64)
+    cosines = np.asarray(ms_meta["sun_cos_zenith"], dtype=np.float64)
+    grid = [float(row["engine_over_A"]) for row in psi_rows if np.isfinite(row["engine_over_A"])]
+    centers = []
+    for i in range(len(altitudes) - 1):
+        if altitudes[i + 1] > ATMOS_REF_PSI_MAX_ALTITUDE:
+            break
+        for j in range(len(cosines) - 1):
+            if cosines[j] < ATMOS_REF_PSI_MIN_COSINE:
+                continue
+            # 行と列の中点（表の位置の空間で）
+            altitude = float((0.5 * (np.cbrt(altitudes[i]) + np.cbrt(altitudes[i + 1]))) ** 3)
+            x = 0.5 * (np.sign(cosines[j]) * np.sqrt(abs(cosines[j])) + np.sign(cosines[j + 1]) * np.sqrt(abs(cosines[j + 1])))
+            centers.append((i, j, altitude, float(x * abs(x))))
+    center_ratios = []
+    worst_center = None
+    if centers:
+        expected = reference.field.evaluate([c[2] for c in centers], [c[3] for c in centers])
+        for (i, j, altitude, cosine), a in zip(centers, expected):
+            engine = 0.25 * (table[i, j] + table[i, j + 1] + table[i + 1, j] + table[i + 1, j + 1])
+            ratio = atmos_ratio(engine, a)
+            center_ratios.append(ratio)
+            if worst_center is None or abs(ratio - 1.0) > abs(worst_center["engine_over_A"] - 1.0):
+                worst_center = {"altitude_m": altitude, "sun_cosine": cosine, "engine_over_A": ratio}
+    summary = {"rows": int(table.shape[0]), "columns": int(table.shape[1]),
+               "max_altitude_m": ATMOS_REF_PSI_MAX_ALTITUDE, "min_sun_cosine": ATMOS_REF_PSI_MIN_COSINE,
+               "grid_points": len(grid), "cell_centers": len(center_ratios)}
+    if grid:
+        summary.update(grid_engine_over_A_min=min(grid), grid_engine_over_A_max=max(grid),
+                       grid_max_rel=max(abs(r - 1.0) for r in grid))
+    if center_ratios:
+        summary.update(center_engine_over_A_min=min(center_ratios), center_engine_over_A_max=max(center_ratios),
+                       center_max_rel=max(abs(r - 1.0) for r in center_ratios), worst_center=worst_center)
+    return summary
+
+
 def atmos_fog_settings(meta):
     fog = meta["height_fog"]
     return {"density_at_base_per_m": fog["density_at_base_per_m"], "base_height_m": fog["base_height_m"],
@@ -3121,6 +3161,7 @@ def atmos_ref_view(capture_dir, view):
         row["engine_over_A"] = atmos_ratio(row["engine"], a)
         row["engine_over_B"] = atmos_ratio(row["engine"], b)
     result["psi"] = psi_rows
+    result["psi_summary"] = atmos_psi_summary(arrays["multiple_scattering"], ms_meta, psi_rows, reference)
 
     # 5. 写真の空との並べ
     result["photo"] = atmos_photo_sky(capture_dir, view, meta, sky_view, reference, variant_atmospheres, sun, sun_lux)
@@ -3180,6 +3221,13 @@ def run_atmos_ref(capture_dir, views, verify, expect=None):
                 print(f"REFERENCE_CHECK atmos_ref view={view} haze_over_sky_mie ground_min={haze['ground_ratio_min']:.4f} "
                       f"ground_max={haze['ground_ratio_max']:.4f} ground_max_rel={haze['ground_max_rel']:.4f} "
                       f"rays={haze['ground_rays']}")
+            psi = result.get("psi_summary") or {}
+            if psi.get("grid_points") and psi.get("cell_centers"):
+                print(f"REFERENCE_CHECK atmos_ref view={view} psi_over_A table={psi['rows']}x{psi['columns']} "
+                      f"grid={psi['grid_engine_over_A_min']:.4f}..{psi['grid_engine_over_A_max']:.4f} "
+                      f"grid_max_rel={psi['grid_max_rel']:.4f} points={psi['grid_points']} "
+                      f"center={psi['center_engine_over_A_min']:.4f}..{psi['center_engine_over_A_max']:.4f} "
+                      f"center_max_rel={psi['center_max_rel']:.4f} cells={psi['cell_centers']}")
     report = {"mode": "atmos_ref", "verify": bool(verify), "inputs_current": inputs_ok, "inputs_record": record,
               "criteria": {"same_model_tolerance": ATMOS_REF_SAME_MODEL_TOLERANCE, "reference_level": ATMOS_REF_LEVEL},
               "convergence_report": convergence_path, "views": results, "failures": failures}

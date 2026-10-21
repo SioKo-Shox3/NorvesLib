@@ -2144,7 +2144,7 @@
 - notes: 危険地帯（描画の既定値）。2026-10-19（Sol の批評 17）。
 
 ## SCN-WL-PSI-GRID: 多重散乱の表の格子を細かくする
-- status: todo
+- status: done
 - after: SCN-WLR-ATMOS-REF, SCN-WLR-REGRESSION-VALIDATION
 - done-when: 一覧の描画の欠陥 7（`psi_grid`。多重散乱の表 Ψ のエンジン ÷ 正解 A が 0.877〜1.065、表は 8 × 32）を直し、2 % 以内にする（A は保存した数値の参照。格子の大きさ・作る時間・メモリを記録する）。空の表は全シーン共通なので、反復の最初に回帰の撮影の `before` を撮る。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`

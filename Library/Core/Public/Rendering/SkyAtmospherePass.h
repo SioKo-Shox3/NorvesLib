@@ -2,6 +2,7 @@
 
 #include "Rendering/IViewPass.h"
 #include "Rendering/RenderGraph/IRenderGraphPass.h"
+#include "Container/PointerTypes.h"
 #include "Rendering/SkyAtmosphere.h"
 #include "RHI/RHITypes.h"
 #include <cstdint>
@@ -132,6 +133,8 @@ namespace NorvesLib::Core::Rendering
         SkyAtmosphereParameters m_LutParameters;
         Math::Vector3 m_LutSunGroundTransmittance = Math::Vector3::Zero;
         bool m_bLutValid = false;
+        // 最後に LUT を作った空の model。太陽だけが動いたときは、太陽に依らない表（透過率・多重散乱）をここから写す。
+        Container::TUniquePtr<SkyAtmosphereModel> m_LutModel;
         float m_LastSunDiskPreExposedLuminance = 0.0f;
         bool m_bLastSunDiskSaturated = false;
         // 太陽の円盤は事前露出でフレームごとに変わるので、フレームの持ち主から借りた領域に書き、

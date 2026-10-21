@@ -14,6 +14,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <utility>
 
 namespace NorvesLib::Core::Rendering
 {
@@ -468,7 +469,10 @@ namespace NorvesLib::Core::Rendering
             // LUTは空のパラメータ（太陽の向きを含む）が変わったときだけ作る。
             m_bLutValid = false;
             const auto startTime = std::chrono::steady_clock::now();
-            SkyAtmosphereModel model(parameters);
+            Container::TUniquePtr<SkyAtmosphereModel> created =
+                Container::MakeUnique<SkyAtmosphereModel>(parameters, m_LutModel.get());
+            m_LutModel = std::move(created);
+            SkyAtmosphereModel& model = *m_LutModel;
             model.BuildSkyViewTable();
             if (!GenerateTransmittanceLut(model) || !GenerateRadianceLut(model))
             {
@@ -478,14 +482,15 @@ namespace NorvesLib::Core::Rendering
                 std::chrono::steady_clock::now() - startTime).count();
             NORVES_LOG_INFO("SkyAtmospherePass",
                             "Sky LUT generated in %.1f ms (radiance %ux%u, transmittance %ux%u, "
-                            "sun altitude %.2f, azimuth %.2f)",
+                            "sun altitude %.2f, azimuth %.2f, reused_tables=%d)",
                             elapsedMilliseconds,
                             m_Settings.RadianceWidth,
                             m_Settings.RadianceHeight,
                             m_Settings.TransmittanceWidth,
                             m_Settings.TransmittanceHeight,
                             parameters.SunAltitudeDegrees,
-                            parameters.SunAzimuthDegrees);
+                            parameters.SunAzimuthDegrees,
+                            model.ReusedSunIndependentTables() ? 1 : 0);
             m_LutParameters = parameters;
             m_LutSunGroundTransmittance = model.GetSunGroundTransmittance();
             m_bLutValid = true;

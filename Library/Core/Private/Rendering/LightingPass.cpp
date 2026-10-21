@@ -737,10 +737,12 @@ namespace NorvesLib::Core::Rendering
                              horizontal * std::sin(longitude));
     }
 
+    // previousModel は前に作った空の model（太陽に依らない表を写す。作った model をここへ戻す）。
     static bool BuildSkyAtmosphereRadianceSource(
         const SkyAtmosphereParameters& parameters,
         uint32_t width,
         uint32_t height,
+        Container::TUniquePtr<SkyAtmosphereModel>& previousModel,
         Container::VariableArray<float>& outSource)
     {
         outSource.clear();
@@ -765,7 +767,10 @@ namespace NorvesLib::Core::Rendering
         }
 
         outSource.resize(pixelCount * 4u, 0.0f);
-        SkyAtmosphereModel model(sanitized);
+        Container::TUniquePtr<SkyAtmosphereModel> created =
+            Container::MakeUnique<SkyAtmosphereModel>(sanitized, previousModel.get());
+        previousModel = std::move(created);
+        SkyAtmosphereModel& model = *previousModel;
         model.BuildSkyViewTable();
         for (uint32_t y = 0u; y < height; ++y)
         {
@@ -4985,6 +4990,7 @@ namespace NorvesLib::Core::Rendering
         if (!BuildSkyAtmosphereRadianceSource(sanitized,
                                               radianceWidth,
                                               radianceHeight,
+                                              m_SkyAtmosphereIblModel,
                                               sourceData))
         {
             NORVES_LOG_WARNING("LightingPass",

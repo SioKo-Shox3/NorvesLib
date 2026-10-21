@@ -22,6 +22,9 @@
 #       sun_horizontal（水平面の太陽の照度）、sky_horizontal（水平面の空の照度。期待値は論文の近似 A）。
 #       haze_optical_depth: 地表への視線の (霧 ＋ 空気遠近の Mie) の光学的深さ ÷ 空の大気の同じ視線の Mie の、1 との差の
 #       絶対値の最大（haze.ground_max_rel。全方位・全距離）
+#       psi_grid・psi_cell: 多重散乱の表 Ψ_ms のエンジン ÷ 正解 A の、1 との差の絶対値の最大。psi_grid は表の格子点
+#       （psi_summary.grid_max_rel）、psi_cell は格子のセルの中心で表を補間した値（psi_summary.center_max_rel）。
+#       どちらも高度 10 km まで・太陽が地平線より上
 #   min・max: 下限・上限（両端を含む。どちらか一方は要る）
 #   allow_undetermined: 未判定を許すか（既定は許さない）。note: 行の説明（判定には使わない）
 #
@@ -57,7 +60,9 @@ JUDGED = "判定"
 ATMOS_REF_QUANTITIES = {"sun_transmittance": (("illuminance", "valley_floor"), "sun_transmittance_max_rel"),
                         "sun_horizontal": (("illuminance", "valley_floor"), "sun_horizontal_max_rel"),
                         "sky_horizontal": (("illuminance", "valley_floor"), "sky_horizontal_max_rel"),
-                        "haze_optical_depth": (("haze",), "ground_max_rel")}
+                        "haze_optical_depth": (("haze",), "ground_max_rel"),
+                        "psi_grid": (("psi_summary",), "grid_max_rel"),
+                        "psi_cell": (("psi_summary",), "center_max_rel")}
 
 SPEC_DIR = os.path.join("Scripts", "Terrain", "ExpectSpecs")
 SELFTEST_DIR = os.path.join(".harness", "runs", "scene-capture", "SCN-WLR-EXPECT-MATCH")

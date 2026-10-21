@@ -1,0 +1,19 @@
+{
+  "description": "SCN-WL-PSI-GRID: 多重散乱の表 Ψ_ms が論文の近似 A（AtmosphereReference.py の段 1 が保存した解。表の補間でなく点ごとに視線を積んだ値）と 2 % 以内で合うことの合否。ref_ground_02 の大気の書き出しの表で、高度 10 km まで・太陽が地平線より上の格子点と、格子のセルの中心で表を補間した値（空の LUT が表を引くのと同じ双線形）の両方を見る（ReferenceCheck.py --atmos-ref の psi_summary）。変更前（8 × 32、点の周りの球は一様な余弦 8 × 方位 8・16 歩）は格子点で 0.877〜1.065 倍で、この仕様に落ちる。",
+  "rows": [
+    {
+      "mode": "atmos_ref",
+      "view": "ref_ground_02",
+      "quantity": "psi_grid",
+      "max": 0.02,
+      "note": "表の格子点のエンジン ÷ A の、1 との差の絶対値の最大"
+    },
+    {
+      "mode": "atmos_ref",
+      "view": "ref_ground_02",
+      "quantity": "psi_cell",
+      "max": 0.02,
+      "note": "格子のセルの中心で表を補間した値のエンジン ÷ A の、1 との差の絶対値の最大"
+    }
+  ]
+}

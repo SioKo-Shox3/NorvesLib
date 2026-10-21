@@ -6222,3 +6222,24 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 割合 0 では霞が影を持たない（空気遠近は太陽の影を数えない）。霧の式と合成の順を直す SCN-WL-SKY-SCATTER の後に、霧へ割り振るかを見直す
   - 新しい試験は足していない
 - Next: TASKS.md の次の未完の項目
+
+### SCN-WL-PSI-GRID 完了（2026-10-21、run 20261021-055341 の反復 15）
+- Done: 多重散乱の表 Ψ を 8 × 32 から 32 × 64 にし、点の周りの球を一様な余弦 8 × 方位 8・16 歩から、余弦を地平線で 2 つに分けたガウス・ルジャンドル 12 ずつ × 方位 2（半周）・32 歩にした（`SkyAtmosphere.cpp` の `BuildMultipleScatteringTable`）。主因は表の格子より球の求積（Python の写しで格子点どうしでも 12 % 出る）で、補間の誤差も 8 × 32 ではセルの中心で 16.5 %
+  - 透過率と Ψ の表は太陽に依らないので、`SkyAtmosphereModel(parameters, previous)` で前の model から写す。`SkyAtmospherePass`（`m_LutModel`）と `LightingPass` の空由来の IBL（`m_SkyAtmosphereIblModel`）が前の model を持ち、太陽だけが動いたときは作り直さない。ログの `Sky LUT generated` に `reused_tables` を足した
+  - `DistanceToGround` は丸めで負になった距離を 0 にする（高度 0 m の点から下への視線が −4.7e-10 m で惑星を素通りしていた。新しい球の求積で起きる）
+  - 検査: `ReferenceCheck.py --atmos-ref` に `psi_summary`（格子点と格子のセルの中心で補間した値のエンジン ÷ A）を足し、`ExpectSpec.py` の atmos_ref に量 `psi_grid`・`psi_cell` を足した。仕様は `Scripts/Terrain/ExpectSpecs/psi-grid.json`（どちらも 2 %）。記録は `Docs/RenderingValidation/WastelandAtmosphereReference.md` の「多重散乱の表を細かくした後」
+- 結果: 格子点 0.877〜1.065 → 0.991〜1.001（512 点、0.92 %）、セルの中心 0.897〜1.165 → 0.995〜1.012（465 セル、1.19 %）。表のメモリ 3 KB → 24 KB、空の LUT を作る時間 44.9 → 282.9 ms（RelWithDebInfo、初回。太陽だけの変更では表を写す）
+- 証拠（`.harness/runs/20261021-055341/`）:
+  - `aux-SCN-WL-PSI-GRID-smoke-build.txt` 開始時の Debug の Game のビルド EXIT=0
+  - `regression-before-SCN-WL-PSI-GRID.txt` 回帰の before result=pass・EXIT=0（変更前の HEAD で撮った）
+  - `aux-SCN-WL-PSI-GRID-before-spec.txt` 変更前の書き出し（SCN-WL-HAZE-ONE-MEDIUM の写し）で `psi-grid.json` が 0.1228・0.1654 で落ちる（EXIT=1）
+  - `aux-SCN-WL-PSI-GRID-trial1*.txt` 先に試した ガウス 16 × 方位 4（701 ms。重いので 12 × 2 に下げた）
+  - `verify-SCN-WL-PSI-GRID-1.txt` Debug の Game のビルド EXIT=0
+  - `verify-SCN-WL-PSI-GRID-2.txt` ref_ground_02 の大気の書き出しの撮影 result=pass・EXIT=0（game_exe d58e87d3…）
+  - `verify-SCN-WL-PSI-GRID-3.txt` `--atmos-ref --expect psi-grid.json --verify` result=pass・inputs_current=1・EXIT=0（psi_grid 0.0092・psi_cell 0.0119）
+  - `aux-SCN-WL-PSI-GRID-other-specs.txt` 同じ書き出しで `sky-altitude.json`（空の照度 0.0135 ≤ 0.03）・`haze-one-medium.json`（0.0148）も pass
+  - `verify-SCN-WL-PSI-GRID-4.txt` 回帰の after result=pass: mega-bananas psnr 47.4（平均 +0.64）、night-village 70.8、rendering3dtest 53.1、sandbox 49.6（+0.52）。前・後・差×20 を開き、空がわずかに明るく暖かいだけで見分けられない（`regression/SCN-WL-PSI-GRID/after/*-before-after-diffx20.png`）
+  - `aux-SCN-WL-PSI-GRID-tests.txt` `SkyAtmosphereModelTest` Passed（golden はこの回では実行ファイル名の誤りで未実行）、`aux-SCN-WL-PSI-GRID-golden.txt` golden の Indoor・Outdoor Passed・EXIT=0
+  - 荒野の ref_ground_02 の前後（`scene-capture/SCN-WL-PSI-GRID/ref_ground_02-before-after-diffx20.png`）を開き、見分けられないことを確かめた
+- Notes: 方位・余弦の分け数・歩・格子の大きさは Python の写し（エンジンの書き出しと 1e-7 で一致）で比べて決めた（記録の表）。太陽だけを動かしたときに `reused_tables=1` になることは撮影では確かめていない（撮った荒野は太陽が動かない）。`Docs/RenderingValidation/WastelandGapList.md` の一覧は凍結した値のまま。新しい試験は足していない
+- Next: TASKS.md の次の未完の項目
