@@ -6420,3 +6420,10 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - Done: `far-aa-static.json` を同じ exe の相対の形（欠け ≤ resident、エイリアス ≤ `aa-taa-prev`）に直し、`--blur-static` に組 `aa-taa-prev`、`ExpectSpec.py` に量 `detail_loss_vs_case`・`alias_vs_case`（鍵 `against`）を足した。TAA の定数は変えていない
 - Notes: RelWithDebInfo の Game.exe は計装入りのビルドのまま（ソースは戻した。次の `-Build` で作り直される）。新しい試験は足していない
 - Next: blocked/SCN-WL-FAR-AA.md の判断待ち（推奨: ジッタで変わる照明の経路を特定して直す項目を先に立てる）
+
+### SCN-WL-PLANT-SHADOW 止め（2026-10-21、run 20261021-055341 の反復 26・28。理由と選択肢は blocked/SCN-WL-PLANT-SHADOW.md）
+- 反復 26（時間切れ。変更は途中保存の feaa9216・7c803f1b）: 株を太陽の VSM に `foliage.vert` と同じ置き方で描く（`VirtualShadowMapFoliageCasters.h`・`vsm_draw.vert` の株の塊、風で揺れる株は毎フレーム無効化）。株の受け手は接触影を掛けず、PCF の半径の下限と余裕の上限を葉に合わせる。荒野の VSM の当てはめは段 0 を広げる前に段を 12 まで足す（段 0 の幅 32 m・texel 1.95 mm）。`plant-shadow.json` と `--plant --expect` を足した。回帰の before は `regression-before-SCN-WL-PLANT-SHADOW.txt`（result=pass）、撒いた株の before は `aux-SCN-WL-PLANT-SHADOW-grass-before.txt`（GPU 中央値 15.727 ms）
+- 反復 28: 株の受け手の法線が光の反対を向く画素は、光の側へ向けて影を引く（`lighting.frag`）。撮影 `scene-capture/SCN-WL-PLANT-SHADOW-try6/`、判定 `aux-SCN-WL-PLANT-SHADOW-try6-check.txt`: 影の比の差 0.023（合格）、見え方の割合 0.698（基準 0.8）、株の日なたの比 0.697（基準 0.8〜1.25）
+- 届かない理由: 枝（1 画素より細い。REF-NEAR の `plant_branch_subpixel`）の見え方の割合 0.488・比 0.36・n·l の平均 0.69 倍。葉は 0.771・0.79。見え方を全部 1 にした見積もりでも比は 0.74 前後
+- Notes: 解析は使い捨ての台本（リポジトリに入れていない）。回帰の after・撒いた株の after・Debug のビルドは止めたので回していない。新しい試験は足していない
+- Next: blocked/SCN-WL-PLANT-SHADOW.md の判断待ち（推奨: 基準 2・3 を葉の画素で判定し、枝は未判定として記録）

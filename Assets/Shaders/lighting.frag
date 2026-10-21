@@ -1183,9 +1183,12 @@ void main()
         if ((!bValidationLambert || bValidationHardShadow) &&
             lightType < 0.5 && light.attenuation.z > 0.5 && params.bShadowEnabled != 0u)
         {
+            // 草・低木の株は両面の薄い帯なので、法線が光の反対を向く画素も光の側へ向けて引く（法線の向きへのずらしと深度の
+            // 傾きの余裕が葉の裏へ潜り、自分の葉の影に入らないように）
+            vec3 shadowNormal = (bFoliageReceiver && dot(N, L) < 0.0) ? -N : N;
             shadow = params.shadowPadding0 != 0u
                          ? texture(rayTracingShadowVisibility, fragUV).r
-                         : CalculateSunShadow(worldPos, N, bTerrainReceiver, bTightTerrainShadow, bFoliageReceiver);
+                         : CalculateSunShadow(worldPos, shadowNormal, bTerrainReceiver, bTightTerrainShadow, bFoliageReceiver);
             // RT影は接地部も正しく遮るので、接触影はCSMの結果にだけ掛ける（草・低木の株の受け手には掛けない）
             if (params.shadowPadding0 == 0u && shadow > 0.0 && NdotL > 0.0 && !bFoliageReceiver)
             {
