@@ -1,0 +1,27 @@
+{
+  "description": "SCN-WL-PLANT-SHADOW: 荒野の低木 1 株（plant_near、共通の照明・株 1 株だけ・最細の LOD）を太陽の VSM に描いた後、SCN-WLR-PLANT-REF の Cycles の描画と比べる。足元の影 ÷ 離れた地面（影の比）がエンジンと Cycles で ±0.1 以内（直す前はエンジン 0.621・Cycles 0.169。株は VSM に入らず、影は接触影の縦の筋だけ）、株の日なたの画素のうちエンジンの太陽の見え方の AOV が 0.9 以上の割合が 0.8 以上（直す前は株の日なたの見え方の平均 0.647、35 % が 0.5 未満）、株の日なたのエンジン ÷ Cycles が 0.8〜1.25（直す前 0.503）。株の陰の見え方の平均は記録だけ。",
+  "rows": [
+    {
+      "mode": "plant",
+      "view": "plant_near",
+      "quantity": "shadow_ratio_abs_diff",
+      "max": 0.1,
+      "note": "足元の影 ÷ 離れた地面の、エンジンと Cycles の差の絶対値"
+    },
+    {
+      "mode": "plant",
+      "view": "plant_near",
+      "quantity": "sunlit_visible_fraction",
+      "min": 0.8,
+      "note": "株の日なたで、エンジンの太陽の見え方の AOV が 0.9 以上の画素の割合"
+    },
+    {
+      "mode": "plant",
+      "view": "plant_near",
+      "quantity": "plant_sunlit_ratio",
+      "min": 0.8,
+      "max": 1.25,
+      "note": "株の日なたのエンジン ÷ Cycles"
+    }
+  ]
+}
