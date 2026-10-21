@@ -6,6 +6,8 @@
 //   NORVES_TAA_SHARPEN        … 書き戻すときのシャープ化の強さ（0〜1）
 //   NORVES_TAA_JITTER_SCALE   … サブピクセルのジッタに掛ける倍率（0〜1。0 はジッタを掛けずに履歴を貯める。
 //                               Game の --taa-jitter-scale。ジッタで描かれる中身が変わる経路の切り分けに使う）
+//   NORVES_TAA_GEOMETRY_LOD_SCALE … TAA の View で MegaGeometry の LOD の誤差の閾値に掛ける倍率（0.125〜1。1 は TAA の無い
+//                               View と同じ段。Game の --taa-geometry-lod-scale）
 #pragma once
 
 #include "Logging/LogMacros.h"
@@ -23,6 +25,7 @@ namespace NorvesLib::Core::Rendering
         float VarianceClipGamma = TemporalAAVarianceClipGamma;
         float SharpenStrength = TemporalAASharpenStrength;
         float JitterScale = 1.0f;
+        float GeometryLodScale = TemporalAAGeometryLodScale;
     };
 
 #if NORVES_BUILD_DEVELOPMENT
@@ -63,11 +66,14 @@ namespace NorvesLib::Core::Rendering
             bOverridden |= TryReadBoundedEnv("NORVES_TAA_CLIP_GAMMA", 0.25f, 8.0f, params.VarianceClipGamma);
             bOverridden |= TryReadBoundedEnv("NORVES_TAA_SHARPEN", 0.0f, 1.0f, params.SharpenStrength);
             bOverridden |= TryReadBoundedEnv("NORVES_TAA_JITTER_SCALE", 0.0f, 1.0f, params.JitterScale);
+            bOverridden |= TryReadBoundedEnv("NORVES_TAA_GEOMETRY_LOD_SCALE", 0.125f, 1.0f, params.GeometryLodScale);
             if (bOverridden)
             {
-                LOG_INFO_F("TAA_PARAMS current_weight=%.3f clip_gamma=%.3f sharpen=%.3f jitter_scale=%.3f source=env",
+                LOG_INFO_F("TAA_PARAMS current_weight=%.3f clip_gamma=%.3f sharpen=%.3f jitter_scale=%.3f geometry_lod_scale=%.3f "
+                           "source=env",
                            static_cast<double>(params.CurrentFrameWeight), static_cast<double>(params.VarianceClipGamma),
-                           static_cast<double>(params.SharpenStrength), static_cast<double>(params.JitterScale));
+                           static_cast<double>(params.SharpenStrength), static_cast<double>(params.JitterScale),
+                           static_cast<double>(params.GeometryLodScale));
             }
             return params;
         }

@@ -2081,7 +2081,7 @@
 - notes: 危険地帯（描画の既定・TAA）。2026-10-21 親が SCN-WL-FAR-AA の反復 27 の BLOCKED（推奨 1）から足した。`--blur-static` の比べる組に aa-taa-nojitter を足す必要がある（ref2x・resident はこの項目の撮影先に同じ exe で撮るか、SCN-WL-FAR-AA の撮影先から読む）。反復 27 の掃引の台本 `aux-SCN-WL-FAR-AA-sweep.ps1`・評価 `aux-SCN-WL-FAR-AA-eval.py`・並び `aux-SCN-WL-FAR-AA-sheet.py`（`.harness/runs/20261021-055341/`）はそのまま使える。時間の見積もり: 回帰の before・after 各 7 分、ビルド 3〜6 分、撮影 2 視点 1 組 約 4 分、経路の切り分け 1 組 約 4 分 × 6 前後。壁時計（75 分）の残りが 25 分を切ったら新しい切り分けを始めず、分かったことを書いてコミットして終える。 2026-10-21（親）: 反復 29 の BLOCKED を推奨の 1 で解いた。`--taa-jitter-scale` と比べる組 aa-taa-nojitter はコミット済み（77523926）。経路を切る一時の計装 `NORVES_DIAG_LIGHT_CUT` は入れ直せば台本 `aux-SCN-WL-JITTER-LIGHTING-sweep.ps1` で使える。閾値は「ジッタ 0 + 0.05」から「中身が変わらない TAA の見積もり + 0.05」に替えた（見積もりでもジッタ 0 の +0.084 が残るため）。VSM は危険地帯。反復 29 の記録は `blocked/resolved/SCN-WL-JITTER-LIGHTING-vsm.md`。
 
 ## SCN-WL-FAR-AA: 遠景のエイリアスを、TAA の静止の収束で減らす
-- status: todo
+- status: done
 - after: SCN-WLR-EXPECT-MATCH, SCN-WLR-REGRESSION-MOTION, SCN-WLR-RECAPTURE-BLUR-MOTION, SCN-WL-RT-SELFHIT, SCN-WL-RT-TLAS-RANGE-ACCEPT, SCN-WL-JITTER-LIGHTING
 - done-when: TAA の静止の収束を 2 倍の解像度の正解に近づける（分散の箱の幅・現在の色の割合・書き戻しのシャープ化を 1 つずつ変えて測る）。比べる組（ref2x・resident・FXAA の対照。いずれも Game の撮影なので、エンジンの実装が変わると古くなる）は、変更後の同じ Game.exe でこの項目の撮影先 `SCN-WL-FAR-AA/` へ撮り直す（SCN-WLR-FAR-BLUR-STATIC の記録の組と同じ起動引数。aa-taa は `wasteland-aa=taa,vram-geometry-share=9`）。`--blur-static --expect`（`far-aa-static.json`）で、TAA の静止の細部の欠けが resident（FXAA）以下・エイリアスが同じ Game.exe で撮った変更前の定数の TAA の組（定数は起動引数で与える）以下であること（差 ≤ 0。照明の絶対値に依存する上限は書かない。`far-aa-static.json` もこの形に直す）を検査する。荒野の既定の AA はこの項目では変えない。足りなければ、出力より細かい履歴（TAAU・DLAA 相当）の見込みを記録する（入れるかは次の項目で決める）。反復の最初に回帰の撮影の `before`（`-Motion` つき）を撮る。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`

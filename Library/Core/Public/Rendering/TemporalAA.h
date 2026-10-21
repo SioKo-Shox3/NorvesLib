@@ -24,9 +24,19 @@ namespace NorvesLib::Core::Rendering
      * @brief 書き戻すときのシャープ化の強さ（上下左右4画素の平均との差を足す割合）。
      *
      * 履歴を混ぜると細かな模様が柔らかくなるので、SceneColor へ書き戻す色だけを少し鋭くする
-     * （履歴には鋭くする前の色を残す）。
+     * （履歴には鋭くする前の色を残す）。0.5 は荒野の遠景を 2 倍の解像度の正解と比べて決めた値で、TemporalAAGeometryLodScale と
+     * 組で細部の欠けが FXAA 以下・エイリアスが 0.25 のときより小さくなる（Docs/RenderingValidation/WastelandFarBlurStatic.md）。
      */
-    inline constexpr float TemporalAASharpenStrength = 0.25f;
+    inline constexpr float TemporalAASharpenStrength = 0.5f;
+
+    /**
+     * @brief TAA を掛ける View で、MegaGeometry の LOD を選ぶ誤差の閾値（画素）に掛ける倍率。
+     *
+     * TAA はジッタで画素より細かい位置を標本して貯めるので、1 画素の誤差で選んだ段のままでは、画素より細かい形が
+     * 段で落ちた上にジッタの平均でもう一度ぼける（テクスチャのミップの偏りと同じ理由）。0.5 は 2 倍の解像度で
+     * 1 画素の誤差になる段で、細かい形のちらつきは履歴の平均が抑える。
+     */
+    inline constexpr float TemporalAAGeometryLodScale = 0.5f;
 
     /**
      * @brief 1つのフレームのジッタ

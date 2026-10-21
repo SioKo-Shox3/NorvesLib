@@ -1,5 +1,5 @@
 {
-  "description": "SCN-WL-FAR-AA: TAA の静止の収束を 2 倍の解像度の正解に近づけた後の合否。比べる組は ref2x・resident（FXAA の対照）・aa-taa・aa-taa-prev（変更前の定数を起動引数で与えた TAA）で、どれも同じ Game.exe で撮り直したもの。照明の絶対値に依る上限は書かない。",
+  "description": "SCN-WL-FAR-AA: TAA の静止の収束を 2 倍の解像度の正解に近づけた後の合否。比べる組は ref2x・resident（FXAA の対照）・aa-taa・aa-taa-prev（変更前の定数（現在の色の割合 0.1・箱の半幅 1・シャープ化 0.25・TAA の View の LOD の誤差の倍率 1）を起動引数で与えた TAA）で、どれも同じ Game.exe で撮り直したもの。照明の絶対値に依る上限は書かない。",
   "cases": [
     "resident",
     "aa-taa",

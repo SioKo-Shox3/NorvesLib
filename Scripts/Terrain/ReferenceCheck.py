@@ -684,12 +684,15 @@ BLUR_CASES = (
      "logs": (BLUR_SHARE_LOG,), "resident": True},
     {"name": "aa-taa", "factor": "AA を TAA に", "args": ("--wasteland-aa=taa", BLUR_SHARE_ARG),
      "logs": ("WASTELAND_BLUR_CASE aa=taa ", BLUR_SHARE_LOG), "resident": True},
-    # TAA の混ぜ方の定数を SCN-WL-FAR-AA の前の値（現在の色の割合 0.1・箱の半幅 1・シャープ化 0.25）に起動引数で戻した組。
+    # TAA の混ぜ方の定数を SCN-WL-FAR-AA の前の値（現在の色の割合 0.1・箱の半幅 1・シャープ化 0.25・TAA の View の LOD の誤差の
+    # 倍率 1）に起動引数で戻した組。
     # 定数を変えた後の aa-taa と同じ Game.exe で撮って比べる
     {"name": "aa-taa-prev", "factor": "AA を TAA に（混ぜ方の定数は変更前の値）",
-     "args": ("--wasteland-aa=taa", "--taa-current-weight=0.1", "--taa-clip-gamma=1", "--taa-sharpen=0.25", BLUR_SHARE_ARG),
+     "args": ("--wasteland-aa=taa", "--taa-current-weight=0.1", "--taa-clip-gamma=1", "--taa-sharpen=0.25",
+              "--taa-geometry-lod-scale=1", BLUR_SHARE_ARG),
      "logs": ("WASTELAND_BLUR_CASE aa=taa ",
-              "TAA_PARAMS current_weight=0.100 clip_gamma=1.000 sharpen=0.250 jitter_scale=1.000 source=env",
+              "TAA_PARAMS current_weight=0.100 clip_gamma=1.000 sharpen=0.250 jitter_scale=1.000 geometry_lod_scale=1.000 "
+              "source=env",
               BLUR_SHARE_LOG), "resident": True},
     # TAA のサブピクセルのジッタを 0 にして履歴を貯めた組（--taa-jitter-scale=0）。ジッタで描かれる中身が変わる経路が残ると
     # aa-taa の欠けがこの組より大きくなる（SCN-WL-JITTER-LIGHTING）。aa-taa と同じ Game.exe で撮って比べる。
@@ -697,7 +700,7 @@ BLUR_CASES = (
     {"name": "aa-taa-nojitter", "factor": "AA を TAA に（ジッタ 0）",
      "args": ("--wasteland-aa=taa", "--taa-jitter-scale=0", BLUR_SHARE_ARG),
      "logs": ("WASTELAND_BLUR_CASE aa=taa ",
-              "TAA_PARAMS current_weight=0.100 clip_gamma=1.000 sharpen=0.250 jitter_scale=0.000 source=env",
+              "TAA_PARAMS current_weight=0.100 clip_gamma=1.000 sharpen=0.500 jitter_scale=0.000 ",
               BLUR_SHARE_LOG), "resident": True},
     {"name": "aa-none", "factor": "AA なし（FXAA のパスを外す）", "args": ("--wasteland-aa=none", BLUR_SHARE_ARG),
      "logs": ("WASTELAND_BLUR_CASE aa=none ", "WASTELAND_AA_PASS fxaa=off", BLUR_SHARE_LOG), "resident": True},
@@ -729,7 +732,7 @@ BLUR_PAGES_RE = re.compile(r"GEOMETRY_PAGES resident=(\d+) uploading=(\d+) ready
 BLUR_CONTROLLED_PREFIXES = ("--wasteland-aa=", "--wasteland-hide=", "--wasteland-render-scale=", "--wasteland-finest-lod",
                             "--terrain-mip-bias=", "--terrain-anisotropy=", "--mega-lod-error-px=",
                             "--vram-geometry-share=", "--taa-current-weight=", "--taa-clip-gamma=", "--taa-sharpen=",
-                            "--taa-jitter-scale=")
+                            "--taa-jitter-scale=", "--taa-geometry-lod-scale=")
 # 既定の組（base）に出てはいけないログの行（差し替えが効いていない）
 BLUR_BASE_FORBIDDEN_LOGS = ("WASTELAND_BLUR_CASE ", "WASTELAND_AA_PASS ", "TERRAIN_SAMPLER ", "WASTELAND_FINEST_LOD ",
                             "WASTELAND_HIDE ", "VRAM_POOL_SHARE ", "GEOMETRY_PAGE_REQUEST_CAPACITY ",
@@ -762,7 +765,7 @@ BLUR_TAA_ESTIMATE_SOURCE = "aa-taa-nojitter"
 BLUR_TAA_ESTIMATE_FRAMES = 64
 BLUR_TAA_ESTIMATE_CURRENT_WEIGHT = 0.1
 BLUR_TAA_ESTIMATE_CLIP_GAMMA = 1.0
-BLUR_TAA_ESTIMATE_SHARPEN = 0.25
+BLUR_TAA_ESTIMATE_SHARPEN = 0.5
 # 見積もりは 1 視点 4 分かかるので、--verify なしの走りで 1 回だけ解き、入力（ジッタ 0 の組の撮影の署名: エンジンの実装と
 # Game.exe のハッシュ）と台本（見積もりの式と定数のハッシュ）の署名つきで <撮影先>/BLUR_TAA_ESTIMATE_DIR/<視点>.luma.npy に
 # 保存する。--verify は保存した輝度を読み、署名が今と合うことを照らすだけ（解き直さない）。撮影は同じ exe でも画素が

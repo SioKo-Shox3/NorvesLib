@@ -6505,3 +6505,19 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - Cycles との照らし合わせは反復 31 の遠景の可視率（エンジン 0.958・Cycles 0.934）のまま。画素ごとに Cycles と並べてはいない
   - 新しい試験は足していない
 - Next: TASKS.md の次の未完の項目
+### SCN-WL-FAR-AA 完了（2026-10-22、run 20261021-055341 の反復 34）
+- 掃引（ジッタの照明の直しの後の同じ Game.exe ae1d67a1…、比べる組は SCN-WL-JITTER-LIGHTING の ref2x・resident・aa-taa）: シャープ化 0.5・箱の半幅 2・現在の色の割合 0.05 は今も欠けとエイリアスを入れ替えるだけで、欠けが resident 以下の組は無い。欠けは σ 0〜1 の帯域だけ（TAA 0.57・resident 0.75）で、1 画素の誤差で選んだ LOD の段に画素より細かい形が無く、ジッタの平均でぼけるだけだった。TAA の View の LOD の誤差を 0.5 画素（正解の 4K の段と同じ）にすると欠けもエイリアスも下がり、シャープ化 0.5 と組で 4 範囲とも欠けが resident を下回る
+- Done: `TemporalAAGeometryLodScale = 0.5`（投影にジッタがある View だけ `MegaGeometryPass` の LOD の誤差の閾値に掛ける）と `TemporalAASharpenStrength` 0.25 → 0.5。箱の幅・現在の色の割合は変えない。荒野の既定の AA（FXAA）は変えていない。開発ビルドの `--taa-geometry-lod-scale=<0.125〜1>`（環境変数 `NORVES_TAA_GEOMETRY_LOD_SCALE`、TAA_PARAMS のログに `geometry_lod_scale`）を足し、`aa-taa-prev` の組に `--taa-geometry-lod-scale=1` を足した。中身が変わらない TAA の見積もりのシャープ化を既定に合わせて 0.5 にした。記録は `WastelandFarBlurStatic.md` の「TAA の静止の収束」。TAAU・DLAA 相当は合否に届いたので入れていない
+- 証拠（`.harness/runs/20261021-055341/`）:
+  - `regression-before-SCN-WL-FAR-AA-v34.txt` 回帰の before（-Motion）result=pass（この反復の最初に撮った）
+  - `aux-SCN-WL-FAR-AA-sweep4.txt`・`-sweep4-eval.txt` 掃引（台本 `aux-SCN-WL-FAR-AA-sweep4.ps1`、撮影先 `scene-capture/SCN-WL-FAR-AA-sweep4/`）、全組 exit=0
+  - `verify-SCN-WL-FAR-AA-1.txt` Debug の Game のビルド EXIT=0
+  - `verify-SCN-WL-FAR-AA-2.txt` aa-taa（-Build）の撮影 result=pass・EXIT=0。同じ exe（b2424251…）で ref2x・resident・aa-taa-prev を `scene-capture/SCN-WL-FAR-AA/` へ撮った（`aux-SCN-WL-FAR-AA-sweep4.txt` の 2 回目、全組 exit=0）
+  - `verify-SCN-WL-FAR-AA-3.txt` `--blur-static --expect far-aa-static.json --verify` result=pass・inputs_current=1・8 行合格: 欠け − resident は −0.039・−0.031・−0.038・−0.069、エイリアス − aa-taa-prev は −0.117・−0.129・−0.081・−0.126（ref_far_01 遠景の欠け/エイリアス 0.173/0.208、resident 0.212/0.635、変更前 0.348/0.325）。並べた画 `scene-capture/SCN-WL-FAR-AA/blur_ref_far_01.png` を開き、崖の地層と縦の溝が ref2x と同じ細かさで、resident の尖塔の縁の段が出ないことを確かめた
+  - `verify-SCN-WL-FAR-AA-4.txt` 回帰の after（-Motion）result=pass。平均の差は全シーン ±0.05 以内。TAA を既定で掛ける rendering3dtest は PSNR 54（motion-0 は 45.6、差 8 超の画素 0.56 %）。前後と差×10 を並べて開き（`regression/SCN-WL-FAR-AA/sheet-r3d-overview.motion-0.png`）、差は MegaGeometry の岩（細かい段になる）と縁のシャープ化だけで、天球・地面・球・岩の見た目は変わらないことを確かめた
+- Notes:
+  - TAA の View では細かい段のページが増える（荒野の 2 視点の常駐 897 MB → 1422 MB、取り分 9 の撮影）。GPU 時間は測っていない
+  - golden の GPU の試験は回していない（rendering3dtest の撮影の平均の差は 0）
+  - jitter-lighting.json の比べる組は今の exe で撮り直していない（ジッタ 0 の組のログの照合を `sharpen=0.500 jitter_scale=0.000 ` にした。撮り直したら見積もりも解き直す）
+  - 新しい試験は足していない
+- Next: TASKS.md の次の未完の項目

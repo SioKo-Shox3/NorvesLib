@@ -33,6 +33,7 @@
 #include "Rendering/SharedResourceRegistry.h"
 #include "Rendering/SparseResidencyShading.h"
 #include "Rendering/TerrainBlendShading.h"
+#include "Rendering/TemporalAAParamOverride.h"
 #include "Rendering/TerrainSamplerOverride.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Rendering/VirtualTextureFeedbackMaterial.h"
@@ -3225,7 +3226,10 @@ namespace NorvesLib::Core::Rendering
         frustumPlanes.CopyToShaderData(baseUniform.FrustumPlanes);
         baseUniform.InstanceCount = static_cast<uint32_t>(instanceTable.size());
         baseUniform.TotalGroupCount = static_cast<uint32_t>(totalGroups);
-        baseUniform.LODBias = m_Settings.LODBias;
+        // TAA の View（投影にジッタがある）は画素より細かい位置を標本して貯めるので、細かい段まで描く（TemporalAAGeometryLodScale）
+        const bool bProjectionJittered = cam.ProjectionJitterNdcX != 0.0f || cam.ProjectionJitterNdcY != 0.0f;
+        baseUniform.LODBias =
+            m_Settings.LODBias * (bProjectionJittered ? GetTemporalAABlendParams().GeometryLodScale : 1.0f);
         baseUniform.ScreenHeight = static_cast<float>(m_CurrentHeight);
         // projectionFactor = screenHeight / (2 * tan(fov/2))
         const float halfFovTan = std::tan(cameraConstants.FieldOfViewRadians * 0.5f);
