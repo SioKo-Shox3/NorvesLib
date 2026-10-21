@@ -2184,7 +2184,7 @@
 - notes: 2026-10-19 GAP-LIST の比べる段の案（Sol の批評 5・6・19・20 と 2 周目）。照明を直した後に比べる（直る前の既知の差を報告しない）。
 
 ## SCN-WLR-BUILDING-REF: 建物 1 棟をエンジンと Cycles で比べる
-- status: todo
+- status: done
 - after: SCN-WLR-BUILDING-REF-BASE
 - done-when: `outpost` の視点を Cycles で収束まで描いて保存し（描画は 1 本 25 分を上限。超えるなら切り出しを狭める）、`--building`（`--trial` なし）で表にする。差を一覧と同じ 3 つに分けて `Docs/RenderingValidation/WastelandBuildingRef.md` に書き、直す項目の案（接地・隙間・足元の土・汚れ）を書く（値は変えない）。
 - verify: `python Scripts/Terrain/ReferenceCheck.py --building --engine .harness/runs/scene-capture/SCN-WLR-BUILDING-REF-BASE --reference .harness/runs/scene-capture/SCN-WLR-BUILDING-REF --verify`

@@ -6280,3 +6280,21 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `verify-SCN-WLR-BUILDING-REF-BASE-6.txt` `--building --trial --verify` result=pass・inputs_current=1・EXIT=0（5 領域とも判定、輪郭 1.000）
 - Next: なし（評価はランナー）
 - Notes: 再検証の撮影が遅いときは、まず同時に走る重い処理（大気の解など）の CPU の占有を疑う。止まった撮影のログでは地形のメッシュの読み込み 1 本に 25〜30 秒かかっていた
+
+### SCN-WLR-BUILDING-REF 完了（2026-10-21、run 20261021-055341 の反復 19）
+- Done: outpost の建物 1 棟を Cycles で収束まで描き（1 本 512 サンプルで全領域収束、読み込み 54.8 秒・描画 34.6 秒。切り出しは不要）、`--building`（`--trial` なし）で表にした。差を一覧と同じ 3 つに分け、直す項目の案を `Docs/RenderingValidation/WastelandBuildingRef.md` に書いた（値は変えていない）
+  - 描画の欠陥: (1) 陰の壁の目地が黒い（壁の 5.5 % の画素でエンジン ÷ Cycles 0.114。日なたの壁では 0.5 %。遮蔽のテクスチャを空の光・照り返しに掛ける疑い）、(2) 建物の基本色が sRGB を解かずに読まれる疑い（アルベドの AOV の中央値 0.656 がテクスチャの符号化した値 0.633 と合い、線形の値は 0.361。壁の Y 日なた 1.28 倍）
+  - 中身の欠陥: 足元の土・壁の下の汚れが無い（壁の下端のアルベドが上の壁と同じ、足元の地面のアルベドも離れた地面と同じ）
+  - 条件・未判定: 地面の材質（実材質 0.15 と灰色 0.3）、壁の比（欠陥と照り返しの地面の違いが混ざる）、1 視点だけ、屋根の縁の白い画素
+  - 欠陥でない: 接地の暗さ（照度の見込みで 3〜6 % 以内）、隙間（下端 − 地面 +0.047 m が両方同じ、見える側は 0.13〜0.29 m 埋まる）、手前の地面の横の縞（アルベドの模様で影ではない）
+- 証拠（`.harness/runs/20261021-055341/`）:
+  - `aux-SCN-WLR-BUILDING-REF-smoke.txt` 開始時の `--building --trial --verify`（試しの描画）result=pass・EXIT=0
+  - `aux-SCN-WLR-BUILDING-REF-cycles.txt` Cycles の本描画 EXIT=0（stop=converged、spp_per_seed=512、所要 2 分）
+  - `verify-SCN-WLR-BUILDING-REF-1.txt` `--building --verify` result=pass・trial=0・inputs_current=1・EXIT=0（5 領域とも「判定」、輪郭 1.000）
+  - `aux-SCN-WLR-BUILDING-REF-breakdown.txt`・`-ground-streaks.txt`・`-ground-level.txt` 差の内訳（エンジンの AOV と Cycles の光の内訳）
+  - 見比べの画像 `scene-capture/SCN-WLR-BUILDING-REF/building_outpost.png` を開いた
+- Notes:
+  - 内訳の解析は使い捨ての台本で回した（リポジトリに入れていない）。テクスチャの値は glb の埋め込みの画像から読んだ
+  - 直す項目の案（SCN-WL-PROP-ALBEDO-SRGB → SCN-WL-PROP-AO → 灰色の地面での比べ直し → SCN-WL-BUILDING-GROUNDING）は記録に書いただけで TASKS.md には足していない。足すかは計画が決める。1 は同じ経路の glTF の模型を使うほかのシーンの見た目も変える
+  - 新しい試験は足していない
+- Next: TASKS.md の次の未完の項目
