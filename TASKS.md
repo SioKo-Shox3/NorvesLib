@@ -2092,7 +2092,7 @@
 - notes: 危険地帯（TAA は既定の描画経路）。2026-10-19 GAP-LIST の描画の欠陥 2（`far_aliasing`。Sol の批評 14・15・21 と 2 周目）。ref2x（3840 × 2160）などの組は反復の中で撮って保存する（verify は aa-taa の 1 組と保存の検査）。 2026-10-20（親）: 反復 5 の BLOCKED を推奨案で解いた。f50d0791 の RT の途中の直しを含む exe では、ref2x と 1 倍の差を解像度で変わる照明の差が占め（一致しない成分 ÷ 残った細部の 2 乗が TAA でも resident でも 2 前後）、AA の定数の調整では測れない。RT の自己遮蔽の直し（SCN-WL-RT-SELFHIT・SCN-WL-RT-TLAS-RANGE-ACCEPT）の後へ回し、エイリアスの上限を同じ exe の相対へ直した。反復 5 の掃引の台本 `aux-SCN-WL-FAR-AA-sweep.ps1`・評価 `aux-SCN-WL-FAR-AA-eval.py`（`.harness/runs/20261020-094249/`）は再開でそのまま使える。回帰の before（-Motion）は RT の直しの前の exe なので撮り直す。 2026-10-21（親）: 反復 27 の BLOCKED を推奨の 1 で解いた。ジッタで照明の中身が変わる経路の直しを SCN-WL-JITTER-LIGHTING として先に立て、この項目はその後に定数の掃引を撮り直す（合否の形は反復 27 で同じ exe の相対に直した 5273b5a9 のまま）。
 
 ## SCN-WL-FAR-AA-MOTION: 動いたときの TAA の細部の消失を減らし、荒野の既定を TAA にする
-- status: todo
+- status: done
 - after: SCN-WL-FAR-AA, SCN-WLR-REGRESSION-MOTION, SCN-WLR-RECAPTURE-BLUR-MOTION
 - done-when: 動きに応じた履歴の鋭さの補い（再投影の補間の質・速さに応じた近傍の色の押さえ込みの幅）を足し、SCN-WLR-FAR-BLUR-MOTION と同じ組（taa は `camera-script=Scripts/CameraScripts/wasteland-far-pan.txt,wasteland-aa=taa,vram-geometry-share=9`）で、TAA で振ったときと止めたときの崖の細部の欠けの差（今 +0.107）を +0.03 以下にする。静止をぼかして差を縮めていないこと（静止の細部の欠けとエイリアスが SCN-WL-FAR-AA の仕様を満たし続ける）を、静止の組 `static/` でも検査する。比べる組（ref2x・FXAA の対照）は変更後の同じ Game.exe でこの項目の撮影先 `SCN-WL-FAR-AA-MOTION/` へ撮り直す。満たしたら荒野の既定の AA を TAA にし、検査の「base は FXAA」という前提を直す（FXAA の対照の組を残す）。6 視点と固定の経路の連番を撮って開く。反復の最初に回帰の撮影の `before`（`-Motion` つき）を撮る。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`

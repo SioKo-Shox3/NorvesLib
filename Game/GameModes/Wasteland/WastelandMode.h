@@ -95,7 +95,7 @@ namespace Game::GameModes
     /// 遠景のぼけの切り分けの撮影で替えるアンチエイリアシング（--wasteland-aa。開発ビルドだけ）
     enum class WastelandAntiAliasing : uint8_t
     {
-        /// 既定（FXAA）
+        /// 既定（昼の荒野は TAA、夜の村は FXAA）
         Default,
         Fxaa,
         TemporalAA,

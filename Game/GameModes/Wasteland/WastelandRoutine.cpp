@@ -1717,8 +1717,11 @@ namespace Game::GameModes
         {
             camera->SetExposureCompensation(kCameraOutputCompensationEV);
         }
-        camera->SetAntiAliasingMode(data.m_AntiAliasing == WastelandAntiAliasing::TemporalAA ? CameraAntiAliasingMode::TemporalAA
-                                                                                            : CameraAntiAliasingMode::FXAA);
+        // 昼の荒野の既定は TAA（遠景の崖の細部とエイリアスを 2 倍の解像度の正解と比べて決めた。
+        // Docs/RenderingValidation/WastelandFarBlurMotion.md）。夜の村の既定は FXAA のまま
+        const bool bTemporalAA = data.m_AntiAliasing == WastelandAntiAliasing::TemporalAA ||
+                                 (data.m_AntiAliasing == WastelandAntiAliasing::Default && !data.m_bNightVillage);
+        camera->SetAntiAliasingMode(bTemporalAA ? CameraAntiAliasingMode::TemporalAA : CameraAntiAliasingMode::FXAA);
         // 遠景のぼけの切り分けの撮影の内部解像度（--wasteland-render-scale）
         if (data.m_RenderScale < 1.0f)
         {

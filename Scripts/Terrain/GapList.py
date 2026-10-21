@@ -350,7 +350,7 @@ def m_taa_motion(reports):
         if row.get("region") == "cliff" and row.get("offset") == max(r["offset"] for r in
                                                                        reports["blur_motion"]["history_effect"]):
             return row["detail_loss"], (f"TAA で振ったときの崖の細部の欠けの増え +{row['detail_loss']:.3f}"
-                                        f"（{row['offset']} フレーム後。既定の FXAA では 0.002 以内）")
+                                        f"（{row['offset']} フレーム後。履歴の無い FXAA では 0.002 以内）")
     return None, "動きの切り分けが無い"
 
 
@@ -569,7 +569,7 @@ GAP_ITEMS = (
     {"id": "bounce_missing", "category": "render", "points": ("buildings", "plants"), "source": ("gray",),
      "label": "照り返しが無い", "measure": m_bounce},
     {"id": "taa_motion", "category": "render", "points": ("far_blur",), "source": ("blur_motion",),
-     "label": "TAA で動くと履歴の読み直しで細部が消える（既定の FXAA では出ない）", "measure": m_taa_motion},
+     "label": "TAA で動くと履歴の読み直しで細部が消える（履歴の無い FXAA では出ない）", "measure": m_taa_motion},
     {"id": "lod_detail", "category": "render", "points": ("far_blur",), "source": ("blur_static",),
      "label": "既定の LOD の選び方で細部が欠ける", "measure": m_lod},
     {"id": "geometry_residency", "category": "render", "points": ("far_blur",), "source": ("blur_static",),

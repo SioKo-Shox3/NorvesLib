@@ -5,6 +5,8 @@
 下の「撮り直し」）。ブランチ `feature/scene-launcher`。タスク SCN-WLR-FAR-BLUR-MOTION。
 測り方は SCN-WLR-FAR-BLUR-STATIC（`WastelandFarBlurStatic.md`）と同じ。既定の見た目は変えていない（AA とジオメトリの取り分は
 開発ビルドの起動引数、台本の撮影は開発ビルドの `--camera-script` と `--capture-views` の組み合わせだけで働く）。
+2026-10-22 に動きに応じた履歴の鋭さの補いを足し、昼の荒野の既定の AA を TAA にした（下の「動きに応じた履歴の鋭さの補い」。
+タスク SCN-WL-FAR-AA-MOTION）。それより上の表は既定が FXAA のときの撮影。
 
 ## 撮り方
 
@@ -118,3 +120,71 @@ RelWithDebInfo の Game.exe（SHA-256 e2e2e3d9…、撮影の始めと終わり�
   静止の切り分けの 1 位（1 画素 1 標本のエイリアス）にも効く。費用が大きいので、上の 2 つで足りないときに比べる。
 - 速さの依存は確かめていない。端数 0.5 付近が最もぼけ、整数の画素の動きではほとんどぼけないはずなので、直した後は振りの速さを
   2〜3 通り（端数 0・0.25・0.5）にして比べる。
+
+## 動きに応じた履歴の鋭さの補い（2026-10-22、SCN-WL-FAR-AA-MOTION）
+
+SCN-WL-FAR-AA で TAA の静止の収束（シャープ化 0.5・TAA の View の LOD の誤差 0.5 画素）を直した後は、止めの TAA の欠けが
+下がった分だけ動きの分が目立ち、Catmull-Rom のままの TAA の motion-30 − static-30 は崖 +0.154・遠景 +0.143 になっていた
+（掃引の組 taa-cr。エイリアスの差は +0.017）。
+
+直したこと（`Assets/Shaders/temporal_aa.frag`、定数は `Rendering/TemporalAA.h`）:
+
+- **履歴の再投影の補間の質**: 履歴を読む 3 次を Catmull-Rom（Keys の a = −0.5）から a = −1.0 へ鋭くした
+  （`TemporalAAHistoryCubicSharpness = 1.0`）。端数 f の 4 点の重みは w0 = a·f(1−f)²、w1 = (a+2)f³ − (a+3)f² + 1、w3 = a(1−f)f²、
+  w2 = 1 − w0 − w1 − w3。端数 0（止まった画・整数の画素の動き）では重みが中央の 1 画素だけになるので、止まった画は変わらない。
+  行き過ぎた分は今までどおり分散の箱のクリップが抑える。
+- **補間のぼけに応じた現在の色の割合**: 補間でぼける量は f(1 − f) に比例するので、両軸の 4f(1 − f) の和（0〜1）で、現在の色の
+  割合を 0.1 から 0.15 へ寄せる（`TemporalAAResampleCurrentFrameWeight = 0.15`）。積もる読み直しの回数が減る。速さそのものでなく
+  端数で決めるので、整数の画素の動きでは割合は変わらない。
+- 開発ビルドの起動引数 `--taa-history-sharpness=<0〜1.5>`・`--taa-resample-current-weight=<0.01〜1>`（環境変数
+  `NORVES_TAA_HISTORY_SHARPNESS`・`NORVES_TAA_RESAMPLE_CURRENT_WEIGHT`、ログ `TAA_MOTION_PARAMS`）で撮り比べられる。
+
+掃引（同じ Game.exe c82f161e…、ref_far_01 を台本で振る。撮影先 `.harness/runs/scene-capture/SCN-WL-FAR-AA-MOTION-sweep/`。
+値は 細部の欠け / エイリアス）:
+
+| 組 | 鋭さ | 割合 | static-60 崖 | motion-30 崖 | motion-30 − static-30 崖 | 遠景 |
+|---|---|---|---|---|---|---|
+| taa-cr | 0.5 | 0.1 | 0.182 / 0.199 | 0.344 / 0.219 | +0.154 / +0.017 | +0.143 / +0.011 |
+| taa-w3 | 0.5 | 0.3 | 0.181 / 0.198 | 0.238 / 0.313 | +0.049 / +0.112 | +0.043 / +0.106 |
+| taa-s075-w2 | 0.75 | 0.2 | 0.182 / 0.198 | 0.230 / 0.293 | +0.041 / +0.091 | +0.034 / +0.084 |
+| taa-s1 | 1.0 | 0.1 | 0.182 / 0.199 | 0.215 / 0.338 | +0.025 / +0.136 | +0.018 / +0.129 |
+| 既定（下の撮影） | 1.0 | 0.15 | 0.182 / 0.199 | 0.200 / 0.330 | +0.011 / +0.128 | +0.005 / +0.120 |
+| taa-s1-w3 | 1.0 | 0.3 | 0.182 / 0.199 | 0.179 / 0.369 | −0.010 / +0.167 | −0.014 / +0.159 |
+
+どの組も止めの値は同じ（端数 0 では変わらない）。振ったときの欠けの減りとエイリアスの増えはおおむね和が一定で入れ替わり、
+割合を上げるより補間を鋭くする方がエイリアスの増えが少ない。鋭さ 1.0 に割合 0.15 を足すと、鋭さだけより欠けもエイリアスも小さい。
+
+### 既定の撮影（SCN-WL-FAR-AA-MOTION/）
+
+全組を同じ RelWithDebInfo の Game.exe（SHA-256 958662f8…、撮影の始めと終わりで同じ）で撮った（6 視点と歩いた連番は、行末だけが違う
+同じソースから作った 14727aef… で撮った。その exe で撮った全組の値は 958662f8… の値と 0.0005 以内で同じ）。fxaa は `--wasteland-aa=fxaa` で
+AA を FXAA に固定した対照、base は既定（取り分 1・TAA）。
+
+| 組 | static-30 | static-60 | motion-30 | motion-30 − static-30 |
+|---|---|---|---|---|
+| taa 遠景 | 0.180 / 0.211 | 0.172 / 0.208 | 0.184 / 0.331 | +0.005 / +0.120 |
+| taa 崖 | 0.190 / 0.202 | 0.182 / 0.199 | 0.200 / 0.330 | +0.011 / +0.128 |
+| fxaa 崖 | 0.217 / 0.637 | 0.214 / 0.634 | 0.221 / 0.625 | +0.004 / −0.012 |
+
+- base は taa と同じ値（取り分 1 でもページが常駐しきり、AA は TAA）。
+- 振っている間の TAA の崖の欠け（0.200）は FXAA（0.221）より小さく、エイリアス（0.330）は FXAA（0.625）の約半分。
+  帯域ごとの細部の残りは σ 0〜1 が 0.72（止め 0.77）、σ 1〜2 は 1.02（止め 0.96）で、中ほどの帯域は少し強調される。
+- 静止の組（`static/`。ref2x・resident = FXAA の対照・aa-taa・aa-taa-prev）は SCN-WL-FAR-AA の値と 0.001 以内で同じで、
+  `far-aa-static.json` の 8 行が通る（欠け − resident −0.032〜−0.069、エイリアス − aa-taa-prev −0.081〜−0.129）。
+- 切り出しの並び `blur_motion_ref_far_01.png` を開き、taa の motion-30 で崖の縦の溝と棚の線が止めと同じ細かさで残り、
+  縁に輪や縞が出ていないことを確かめた。荒野の 6 視点（`views6/sheet6.png`）と、ground の視点から固定の台本
+  `wasteland-gravel-walk.txt` で歩いた連番（`walk/`、360〜600 フレームを 12 フレームおき）を開き、礫・低木に引きずる残像や
+  崩れが無いことを確かめた。
+
+検査: `python Scripts/Terrain/ReferenceCheck.py --blur-motion --capture .harness/runs/scene-capture/SCN-WL-FAR-AA-MOTION
+--expect Scripts/Terrain/ExpectSpecs/far-aa-motion.json --verify`（taa の振り − 止めが崖・遠景とも +0.03 以下、エイリアスの増えが
+0.2 以下、FXAA の対照の振り − 止めが ±0.01、base の止めのエイリアスが 0.4 以下で既定が TAA であること、base の振り − 止めも +0.03 以下）。
+
+### 既定の AA と検査の組
+
+- 昼の荒野の既定の AA を TAA にした（`WastelandRoutine.cpp`。夜の村は FXAA のまま）。`--wasteland-aa=fxaa` で FXAA に戻せる。
+- `ReferenceCheck.py` の組: resident（`--blur-static` の AA の対照）・霞・内部解像度・ミップの偏り・異方性・最細の LOD の組と、
+  `--blur-motion` の fxaa は `--wasteland-aa=fxaa` で FXAA に固定し、resident との差が条件だけの効きになるようにした。base は既定（TAA）。
+  `geom-budget.json` は既定の取り分の base を、取り分 9 で同じ TAA の aa-taa と比べる形に直した。
+- 他のシーンの TAA も同じ定数を使う。rendering3dtest は止めの画が前後で同じ（平均の差 0、PSNR 55）で、振りの画だけ縁と
+  煉瓦の模様が鋭くなる（motion-30 の PSNR 41.9、差 8 超の画素 1.6 %）。

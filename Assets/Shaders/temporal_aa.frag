@@ -7,6 +7,7 @@
 //    カメラの動きを深度で求める。velocity と前のカメラの基準は、描画がゲームのフレームを飛ばしたときも
 //    履歴を書いたフレームに揃えてある（揃わないフレームでは履歴を使わない）。
 // 3. 現在の色と履歴を 1/(1 + 輝度) の重みで混ぜ、明るい画素のちらつきを抑える。
+//    再投影が画素の間に落ちる（動きの端数がある）ほど、補間で落ちる細部が積もるので現在の色の割合を上げる。
 // 履歴が無いときと、再投影が画面の外に出たときは現在の色をそのまま使う。
 // ジッタは前のカメラにも同じ量を掛けてあるので、velocity と再投影にはジッタが入らない。
 
@@ -27,6 +28,8 @@ layout(std140, set = 0, binding = 4) uniform TemporalAAParams
     vec4 imageSize;                  // xy: 寸法、zw: 逆数
     vec4 blend;                      // x: 現在の色の割合、y: 履歴へ掛ける露出の比、z: クリップの箱の半幅
     vec4 jitter;                     // xy: ジッタ（画素）
+    vec4 reprojection;               // x: 履歴の補間の 3 次の鋭さ（Keys の −a。0.5 が Catmull-Rom、既定 1）、
+                                     // y: 補間で最もぼける画素（端数 0.5）の現在の色の割合
 } params;
 
 // RGBA16F の上限。非有限値や溢れた値が履歴へ残り続けないように切る。
@@ -64,17 +67,22 @@ vec3 ClipToBox(vec3 history, vec3 center, vec3 extents)
     return scale > 1.0 ? center + offset / scale : history;
 }
 
-// 履歴を Catmull-Rom で読む（双線形で毎フレーム読み直すと、動く面のぼけが積もるため）。
+// 履歴を Keys の 3 次（a = −params.reprojection.x。0.5 なら Catmull-Rom）で読む（双線形で毎フレーム読み直すと、
+// 動く面のぼけが積もるため）。端数が 0 なら重みは中央の 1 画素だけになり、止まった画は鋭さによらず同じ。
 // 4×4 の重みのうち四隅を除いた12画素を、双線形の5回の読み出しにまとめる。負の重みで出た値はクリップで抑える。
-vec3 SampleHistoryCatmullRom(vec2 uv)
+// fraction には各軸の端数（0〜1）を返す。
+vec3 SampleHistoryCubic(vec2 uv, out vec2 fraction)
 {
     vec2 samplePosition = uv * params.imageSize.xy;
     vec2 texelPosition1 = floor(samplePosition - 0.5) + 0.5;
     vec2 f = samplePosition - texelPosition1;
-    vec2 w0 = f * (-0.5 + f * (1.0 - 0.5 * f));
-    vec2 w1 = 1.0 + f * f * (-2.5 + 1.5 * f);
-    vec2 w2 = f * (0.5 + f * (2.0 - 1.5 * f));
-    vec2 w3 = f * f * (-0.5 + 0.5 * f);
+    fraction = f;
+    float a = -params.reprojection.x;
+    vec2 g = 1.0 - f;
+    vec2 w0 = a * f * g * g;
+    vec2 w1 = (a + 2.0) * f * f * f - (a + 3.0) * f * f + 1.0;
+    vec2 w3 = a * g * f * f;
+    vec2 w2 = 1.0 - w0 - w1 - w3;
     vec2 w12 = w1 + w2;
     vec2 uv0 = (texelPosition1 - 1.0) * params.imageSize.zw;
     vec2 uv3 = (texelPosition1 + 2.0) * params.imageSize.zw;
@@ -172,7 +180,8 @@ void main()
         return;
     }
 
-    vec3 history = SanitizeColor(SampleHistoryCatmullRom(previousUV) * params.blend.y);
+    vec2 fraction;
+    vec3 history = SanitizeColor(SampleHistoryCubic(previousUV, fraction) * params.blend.y);
 
     vec3 mean = moment1 / 9.0;
     vec3 sigma = sqrt(max(moment2 / 9.0 - mean * mean, vec3(0.0)));
@@ -181,8 +190,13 @@ void main()
 
     float currentLuma = dot(current, vec3(0.2126, 0.7152, 0.0722));
     float historyLuma = dot(history, vec3(0.2126, 0.7152, 0.0722));
-    float currentWeight = params.blend.x / (1.0 + currentLuma);
-    float historyWeight = (1.0 - params.blend.x) / (1.0 + historyLuma);
+    // 補間のぼけは端数 f で f(1 − f) に比例する（0.5 で最大、整数の画素の動きでは 0）。両軸の和を 0〜1 に収め、
+    // 現在の色の割合を blend.x から reprojection.y へ寄せる
+    vec2 spread = 4.0 * fraction * (1.0 - fraction);
+    float resampleBlur = clamp(spread.x + spread.y, 0.0, 1.0);
+    float currentFraction = mix(params.blend.x, max(params.reprojection.y, params.blend.x), resampleBlur);
+    float currentWeight = currentFraction / (1.0 + currentLuma);
+    float historyWeight = (1.0 - currentFraction) / (1.0 + historyLuma);
     vec3 resolved = (current * currentWeight + history * historyWeight) / max(currentWeight + historyWeight, 1.0e-6);
     outColor = vec4(SanitizeColor(resolved), currentAlpha);
 }

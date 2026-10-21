@@ -1,0 +1,66 @@
+{
+  "description": "SCN-WL-FAR-AA-MOTION: TAA の履歴の再投影の補間を鋭くし、補間でぼける画素の現在の色の割合を上げた後の、振りと止めの細部の欠けの差の合否。比べる組は ref2x・fxaa（AA を FXAA に固定した対照）・taa・base（既定。荒野の既定の AA は TAA）で、どれも同じ Game.exe で撮り直したもの。変更前（Catmull-Rom・割合 0.1）の taa の motion-30 − static-30 は崖 +0.154・遠景 +0.143。",
+  "rows": [
+    {
+      "mode": "blur_motion",
+      "view": "ref_far_01",
+      "region": "cliff",
+      "case": "taa",
+      "tag": "motion-30",
+      "quantity": "motion_static_detail_loss",
+      "max": 0.03,
+      "note": "TAA で振ったときと止めたときの崖の細部の欠けの差が +0.03 以下"
+    },
+    {
+      "mode": "blur_motion",
+      "view": "ref_far_01",
+      "region": "far",
+      "case": "taa",
+      "tag": "motion-30",
+      "quantity": "motion_static_detail_loss",
+      "max": 0.03,
+      "note": "TAA で振ったときと止めたときの遠景の細部の欠けの差が +0.03 以下"
+    },
+    {
+      "mode": "blur_motion",
+      "view": "ref_far_01",
+      "region": "cliff",
+      "case": "taa",
+      "tag": "motion-30",
+      "quantity": "motion_static_alias",
+      "max": 0.2,
+      "note": "振ったときのエイリアスの増えの上限（止めの TAA 約 0.2・FXAA 約 0.6 に対して、振っても FXAA より小さく保つ）"
+    },
+    {
+      "mode": "blur_motion",
+      "view": "ref_far_01",
+      "region": "cliff",
+      "case": "fxaa",
+      "tag": "motion-30",
+      "quantity": "motion_static_detail_loss",
+      "min": -0.01,
+      "max": 0.01,
+      "note": "履歴の無い FXAA の対照は振りと止めが同じ"
+    },
+    {
+      "mode": "blur_motion",
+      "view": "ref_far_01",
+      "region": "cliff",
+      "case": "base",
+      "tag": "static-60",
+      "quantity": "alias",
+      "max": 0.4,
+      "note": "既定の AA が TAA であること（FXAA の止めのエイリアスは 0.6 前後、TAA は 0.2 前後）"
+    },
+    {
+      "mode": "blur_motion",
+      "view": "ref_far_01",
+      "region": "cliff",
+      "case": "base",
+      "tag": "motion-30",
+      "quantity": "motion_static_detail_loss",
+      "max": 0.03,
+      "note": "既定（取り分 1・TAA）でも振ったときと止めたときの崖の細部の欠けの差が +0.03 以下"
+    }
+  ]
+}

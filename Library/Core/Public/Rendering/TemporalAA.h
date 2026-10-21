@@ -39,6 +39,25 @@ namespace NorvesLib::Core::Rendering
     inline constexpr float TemporalAAGeometryLodScale = 0.5f;
 
     /**
+     * @brief 履歴を再投影して読む 3 次の補間の鋭さ（Keys の 3 次の −a。0.5 が Catmull-Rom）。
+     *
+     * 動きに端数があると、毎フレームの読み直しで高い周波数が少しずつ落ち、現在の色の割合の逆数のフレーム数だけ積もる。
+     * 大きいほど読み直しで落ちる量が減る（行き過ぎた分は分散の箱のクリップが抑える）。端数 0（止まった画・整数の画素の動き）
+     * では重みが中央の 1 画素だけになるので、止まった画は変わらない。1.0 は荒野の遠景を 1 フレーム 2.5 画素で振って 2 倍の
+     * 解像度の正解と比べて決めた値で、Catmull-Rom（0.5）では振ったときの崖の細部の欠けが止めたときより +0.15 多い
+     * （Docs/RenderingValidation/WastelandFarBlurMotion.md）。
+     */
+    inline constexpr float TemporalAAHistoryCubicSharpness = 1.0f;
+
+    /**
+     * @brief 再投影が画素の間に落ちて補間で最もぼける画素（両軸の端数の f(1 − f) の和が 1/4 以上）で使う、現在の色の割合。
+     *
+     * 端数が 0 の画素は TemporalAACurrentFrameWeight のまま、間は f(1 − f) に比例して寄せる。止まった画は変わらない。
+     * 上げるほど読み直しの積もる回数が減って細部が残り、エイリアスが戻る。TemporalAAHistoryCubicSharpness と組で決めた値。
+     */
+    inline constexpr float TemporalAAResampleCurrentFrameWeight = 0.15f;
+
+    /**
      * @brief 1つのフレームのジッタ
      *
      * Pixel は画素単位のずらし量（-0.5〜0.5）、Ndc は投影後の NDC でのずらし量（2 × 画素 / 寸法）。

@@ -38,8 +38,10 @@ namespace NorvesLib::Core::Rendering
             float Blend[4];
             // xy: このフレームのジッタ（画素）
             float Jitter[4];
+            // x: 履歴の補間の 3 次の鋭さ（Keys の −a）、y: 補間で最もぼける画素の現在の色の割合
+            float Reprojection[4];
         };
-        static_assert(sizeof(GPUTemporalAAParams) == 256u);
+        static_assert(sizeof(GPUTemporalAAParams) == 272u);
 
         constexpr uint32_t ParamsBinding = 4u;
 
@@ -465,6 +467,8 @@ namespace NorvesLib::Core::Rendering
         params.Blend[3] = blendParams.SharpenStrength;
         params.Jitter[0] = m_FrameJitter.PixelX;
         params.Jitter[1] = m_FrameJitter.PixelY;
+        params.Reprojection[0] = blendParams.HistoryCubicSharpness;
+        params.Reprojection[1] = blendParams.ResampleCurrentFrameWeight;
 
         // 定数と記述子セットはこの Execute の分をフレームの持ち主から借りる（解決と書き戻しで同じ定数を読む）
         const RHI::DescriptorSetPtr resolveDescriptorSet =

@@ -8,6 +8,9 @@
 //                               Game の --taa-jitter-scale。ジッタで描かれる中身が変わる経路の切り分けに使う）
 //   NORVES_TAA_GEOMETRY_LOD_SCALE … TAA の View で MegaGeometry の LOD の誤差の閾値に掛ける倍率（0.125〜1。1 は TAA の無い
 //                               View と同じ段。Game の --taa-geometry-lod-scale）
+//   NORVES_TAA_HISTORY_SHARPNESS … 履歴を再投影して読む 3 次の補間の鋭さ（0〜1.5。0.5 が Catmull-Rom。
+//                               Game の --taa-history-sharpness）
+//   NORVES_TAA_RESAMPLE_CURRENT_WEIGHT … 補間で最もぼける画素の現在の色の割合（0.01〜1。Game の --taa-resample-current-weight）
 #pragma once
 
 #include "Logging/LogMacros.h"
@@ -26,6 +29,8 @@ namespace NorvesLib::Core::Rendering
         float SharpenStrength = TemporalAASharpenStrength;
         float JitterScale = 1.0f;
         float GeometryLodScale = TemporalAAGeometryLodScale;
+        float HistoryCubicSharpness = TemporalAAHistoryCubicSharpness;
+        float ResampleCurrentFrameWeight = TemporalAAResampleCurrentFrameWeight;
     };
 
 #if NORVES_BUILD_DEVELOPMENT
@@ -67,6 +72,17 @@ namespace NorvesLib::Core::Rendering
             bOverridden |= TryReadBoundedEnv("NORVES_TAA_SHARPEN", 0.0f, 1.0f, params.SharpenStrength);
             bOverridden |= TryReadBoundedEnv("NORVES_TAA_JITTER_SCALE", 0.0f, 1.0f, params.JitterScale);
             bOverridden |= TryReadBoundedEnv("NORVES_TAA_GEOMETRY_LOD_SCALE", 0.125f, 1.0f, params.GeometryLodScale);
+            bool bMotionOverridden = false;
+            bMotionOverridden |= TryReadBoundedEnv("NORVES_TAA_HISTORY_SHARPNESS", 0.0f, 1.5f, params.HistoryCubicSharpness);
+            bMotionOverridden |=
+                TryReadBoundedEnv("NORVES_TAA_RESAMPLE_CURRENT_WEIGHT", 0.01f, 1.0f, params.ResampleCurrentFrameWeight);
+            if (bMotionOverridden)
+            {
+                // 止まった画の定数の行（TAA_PARAMS）は撮影の照合が読むので、動きの定数は別の行に出す
+                LOG_INFO_F("TAA_MOTION_PARAMS history_sharpness=%.3f resample_current_weight=%.3f source=env",
+                           static_cast<double>(params.HistoryCubicSharpness),
+                           static_cast<double>(params.ResampleCurrentFrameWeight));
+            }
             if (bOverridden)
             {
                 LOG_INFO_F("TAA_PARAMS current_weight=%.3f clip_gamma=%.3f sharpen=%.3f jitter_scale=%.3f geometry_lod_scale=%.3f "

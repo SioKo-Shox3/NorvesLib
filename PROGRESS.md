@@ -6521,3 +6521,22 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - jitter-lighting.json の比べる組は今の exe で撮り直していない（ジッタ 0 の組のログの照合を `sharpen=0.500 jitter_scale=0.000 ` にした。撮り直したら見積もりも解き直す）
   - 新しい試験は足していない
 - Next: TASKS.md の次の未完の項目
+
+### SCN-WL-FAR-AA-MOTION 完了（2026-10-22、run 20261021-055341 の反復 35）
+- Done: `temporal_aa.frag` の履歴の再投影の 3 次を Catmull-Rom（Keys の a = −0.5）から鋭さ 1.0（a = −1.0、`TemporalAAHistoryCubicSharpness`）にし、再投影の端数の 4f(1 − f) の両軸の和で、現在の色の割合を 0.1 から 0.15（`TemporalAAResampleCurrentFrameWeight`）へ寄せた。端数 0 では重みが中央の 1 画素・割合 0.1 のままなので止まった画は変わらない。開発ビルドの `--taa-history-sharpness`・`--taa-resample-current-weight`（ログ `TAA_MOTION_PARAMS`）を足した。昼の荒野の既定の AA を TAA にした（夜の村は FXAA のまま）。`ReferenceCheck.py` の resident・条件の組・動きの fxaa は `--wasteland-aa=fxaa` で FXAA に固定し、base は既定（TAA）とした。`geom-budget.json` は base を同じ TAA の aa-taa と比べる形に直した。仕様 `far-aa-motion.json` を足した。記録は `WastelandFarBlurMotion.md` の「動きに応じた履歴の鋭さの補い」
+- 証拠（`.harness/runs/20261021-055341/`）:
+  - `regression-before-SCN-WL-FAR-AA-MOTION.txt` 回帰の before（-Motion）result=pass（反復の最初に撮った）
+  - `aux-SCN-WL-FAR-AA-MOTION-sweep.txt`（台本 `aux-SCN-WL-FAR-AA-MOTION-sweep.ps1`・評価 `aux-SCN-WL-FAR-AA-MOTION-eval.py`）: 変更前の定数の崖の motion-30 − static-30 は +0.154 / エイリアス +0.017。鋭さ 1.0 で +0.025 / +0.136、割合 0.3 で +0.049 / +0.112、両方で −0.010 / +0.167。止めの値はどの組も同じ
+  - `verify-SCN-WL-FAR-AA-MOTION-8.txt` Debug の Game のビルド EXIT=0（`-1.txt` は行末を直す前のソース）
+  - `verify-SCN-WL-FAR-AA-MOTION-9.txt` taa の撮影（-Build）result=pass・EXIT=0。同じ exe（958662f8…）で ref2x・fxaa・base・static/ の 4 組を撮った（`aux-SCN-WL-FAR-AA-MOTION-final.txt` の 2 回目、全組 exit=0）
+  - `verify-SCN-WL-FAR-AA-MOTION-10.txt` `--blur-motion --expect far-aa-motion.json --verify` result=pass・inputs_current=1・6 行合格: taa の motion-30 − static-30 崖 +0.0106・遠景 +0.0047、エイリアスの増え +0.128、fxaa +0.004、base の止めのエイリアス 0.199（既定が TAA）・base の差 +0.011
+  - `verify-SCN-WL-FAR-AA-MOTION-11.txt` `--blur-static --capture .../static --expect far-aa-static.json --verify` result=pass・inputs_current=1・8 行合格（欠け − resident −0.032〜−0.070、エイリアス − aa-taa-prev −0.081〜−0.129。SCN-WL-FAR-AA と同じ値）
+  - `verify-SCN-WL-FAR-AA-MOTION-12.txt` 回帰の after（-Motion）result=pass。止めの画は平均の差 0（rendering3dtest PSNR 55、mega-bananas 64、night-village 70、sandbox inf）。rendering3dtest の振りの motion-30 は PSNR 41.9（差 8 超の画素 1.6 %）。前後と差×10（`regression/SCN-WL-FAR-AA-MOTION/sheet-r3d-motion-30.png`・`crop-r3d-motion-30.png`）を開き、差は縁と煉瓦の模様が振っても鋭く残る分だけで、天球・地面・球・岩の見た目は変わらないことを確かめた
+  - 開いた画: `scene-capture/SCN-WL-FAR-AA-MOTION/blur_motion_ref_far_01.png`（taa の motion-30 の崖の溝と棚の線が止めと同じ細かさ、輪・縞なし）、6 視点 `views6/sheet6.png`（既定で TAA、FXAA 外れ、履歴 2125 フレーム使用）、固定の台本 `wasteland-gravel-walk.txt` で歩いた連番 `walk/`（360〜600 を 12 フレームおき 21 枚。`aux-SCN-WL-FAR-AA-MOTION-walk.txt`。`sheet.png`・`crop_near.png`・`sky_1x.png`）で礫・低木に引きずる残像や崩れが無いこと
+- Notes:
+  - `GameApplicationHandler.cpp` は行末が混在しているので、編集後に元の行末へ戻した。エンジンの実装の署名はソースのバイトで取るので、戻した後に全組を撮り直した（6 視点と連番は戻す前の exe 14727aef…。同じソースの行末だけの違い）
+  - 振っている間は σ 1〜2 の帯域の残りが 1.02（止め 0.96）で、中ほどの帯域が少し強調される
+  - 夜の村は既定の AA を変えていない（回帰の撮影の見た目を保つため）
+  - 速さ（端数 0・0.25・0.5）を替えた撮り比べはしていない。GPU 時間は測っていない（読み出しの回数は同じ 5 回）
+  - 新しい試験は足していない
+- Next: TASKS.md の次の未完の項目

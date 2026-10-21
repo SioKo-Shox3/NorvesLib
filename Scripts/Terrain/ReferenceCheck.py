@@ -674,14 +674,19 @@ BLUR_REFERENCE_LOGS = ("WASTELAND_AA_PASS fxaa=off", "WASTELAND_BLUR_CASE aa=non
 # 条件の効きは、取り分だけを広げた組（BLUR_BASELINE）との差で数える。既定の取り分そのものの効きは base との差で数える
 BLUR_SHARE_ARG = "--vram-geometry-share=9"
 BLUR_SHARE_LOG = "VRAM_POOL_SHARE geometry=9 "
+# AA を FXAA に固定する起動引数と、その印（荒野の既定は TAA なので、FXAA の対照の組はこれで撮る）
+BLUR_FXAA_ARG = "--wasteland-aa=fxaa"
+BLUR_FXAA_LOG = "WASTELAND_BLUR_CASE aa=fxaa "
 BLUR_BASELINE = "resident"
 # 条件ごとの組（撮影の出力先の下のフォルダ）。args は起動引数に要るもの、logs は Game のログに要る行の一部、
 # resident は撮った時点の常駐を求めるか（base は既定の取り分のまま撮るので求めない。状態は記録する）
 BLUR_CASES = (
-    {"name": "base", "factor": "既定（取り分 1・FXAA・霞あり・内部解像度 1・LOD 既定・ミップの偏り 0・異方性 16）",
+    {"name": "base", "factor": "既定（取り分 1・TAA・霞あり・内部解像度 1・LOD 既定・ミップの偏り 0・異方性 16）",
      "args": (), "logs": (), "resident": False},
-    {"name": BLUR_BASELINE, "factor": "ジオメトリの取り分 9（ページが常駐しきる。ほかは既定）", "args": (BLUR_SHARE_ARG,),
-     "logs": (BLUR_SHARE_LOG,), "resident": True},
+    # 荒野の既定の AA は TAA（SCN-WL-FAR-AA-MOTION から）。resident は FXAA の対照として AA を FXAA に固定し、条件の組
+    # （霞・内部解像度・ミップの偏り・異方性・LOD）も同じく FXAA に固定して、resident との差が条件だけの効きになるようにする
+    {"name": BLUR_BASELINE, "factor": "ジオメトリの取り分 9・FXAA（ページが常駐しきる。AA の対照）",
+     "args": (BLUR_FXAA_ARG, BLUR_SHARE_ARG), "logs": (BLUR_FXAA_LOG, BLUR_SHARE_LOG), "resident": True},
     {"name": "aa-taa", "factor": "AA を TAA に", "args": ("--wasteland-aa=taa", BLUR_SHARE_ARG),
      "logs": ("WASTELAND_BLUR_CASE aa=taa ", BLUR_SHARE_LOG), "resident": True},
     # TAA の混ぜ方の定数を SCN-WL-FAR-AA の前の値（現在の色の割合 0.1・箱の半幅 1・シャープ化 0.25・TAA の View の LOD の誤差の
@@ -704,20 +709,23 @@ BLUR_CASES = (
               BLUR_SHARE_LOG), "resident": True},
     {"name": "aa-none", "factor": "AA なし（FXAA のパスを外す）", "args": ("--wasteland-aa=none", BLUR_SHARE_ARG),
      "logs": ("WASTELAND_BLUR_CASE aa=none ", "WASTELAND_AA_PASS fxaa=off", BLUR_SHARE_LOG), "resident": True},
-    {"name": "haze-off", "factor": "霞（空気遠近と高さフォグ）を切る", "args": ("--wasteland-hide=aerial+fog", BLUR_SHARE_ARG),
-     "logs": ("WASTELAND_HIDE mask=96 ", BLUR_SHARE_LOG), "resident": True},
-    {"name": "scale-075", "factor": "内部解像度 0.75", "args": ("--wasteland-render-scale=0.75", BLUR_SHARE_ARG),
-     "logs": ("WASTELAND_BLUR_CASE aa=default render_scale=0.750", BLUR_SHARE_LOG), "resident": True},
-    {"name": "mip-bias-m1", "factor": "地形のミップの偏り −1", "args": ("--terrain-mip-bias=-1", BLUR_SHARE_ARG),
+    {"name": "haze-off", "factor": "霞（空気遠近と高さフォグ）を切る",
+     "args": ("--wasteland-hide=aerial+fog", BLUR_FXAA_ARG, BLUR_SHARE_ARG),
+     "logs": ("WASTELAND_HIDE mask=96 ", BLUR_FXAA_LOG, BLUR_SHARE_LOG), "resident": True},
+    {"name": "scale-075", "factor": "内部解像度 0.75", "args": ("--wasteland-render-scale=0.75", BLUR_FXAA_ARG, BLUR_SHARE_ARG),
+     "logs": ("WASTELAND_BLUR_CASE aa=fxaa render_scale=0.750", BLUR_SHARE_LOG), "resident": True},
+    {"name": "mip-bias-m1", "factor": "地形のミップの偏り −1", "args": ("--terrain-mip-bias=-1", BLUR_FXAA_ARG, BLUR_SHARE_ARG),
      "logs": ("TERRAIN_SAMPLER pass=MegaGeometry mip_bias=-1.000 max_anisotropy=16",
-              "TERRAIN_SAMPLER pass=VisibilityResolve mip_bias=-1.000 max_anisotropy=16", BLUR_SHARE_LOG), "resident": True},
-    {"name": "aniso-1", "factor": "地形の異方性フィルタを切る（等方）", "args": ("--terrain-anisotropy=1", BLUR_SHARE_ARG),
+              "TERRAIN_SAMPLER pass=VisibilityResolve mip_bias=-1.000 max_anisotropy=16", BLUR_FXAA_LOG, BLUR_SHARE_LOG),
+     "resident": True},
+    {"name": "aniso-1", "factor": "地形の異方性フィルタを切る（等方）", "args": ("--terrain-anisotropy=1", BLUR_FXAA_ARG, BLUR_SHARE_ARG),
      "logs": ("TERRAIN_SAMPLER pass=MegaGeometry mip_bias=0.000 max_anisotropy=1",
-              "TERRAIN_SAMPLER pass=VisibilityResolve mip_bias=0.000 max_anisotropy=1", BLUR_SHARE_LOG), "resident": True},
+              "TERRAIN_SAMPLER pass=VisibilityResolve mip_bias=0.000 max_anisotropy=1", BLUR_FXAA_LOG, BLUR_SHARE_LOG),
+     "resident": True},
     # 地形の LOD を最細に固定する。起動引数がジオメトリの取り分を 255 に、要求の列の容量を 131072 に、可視クラスタの列と
     # 区間の描画コマンドの上限を 8388608 に上げる（描くものは段のほかは変えない）
-    {"name": "finest-lod", "factor": "地形の LOD を最も細かい段に固定", "args": ("--wasteland-finest-lod",),
-     "logs": ("WASTELAND_FINEST_LOD lod=0", "VRAM_POOL_SHARE geometry=255 ",
+    {"name": "finest-lod", "factor": "地形の LOD を最も細かい段に固定", "args": ("--wasteland-finest-lod", BLUR_FXAA_ARG),
+     "logs": ("WASTELAND_FINEST_LOD lod=0", BLUR_FXAA_LOG, "VRAM_POOL_SHARE geometry=255 ",
               "GEOMETRY_PAGE_REQUEST_CAPACITY capacity=131072 ", "MEGA_VISIBLE_LIST_CAPACITY capacity=8388608 "),
      "resident": True},
 )
@@ -732,11 +740,12 @@ BLUR_PAGES_RE = re.compile(r"GEOMETRY_PAGES resident=(\d+) uploading=(\d+) ready
 BLUR_CONTROLLED_PREFIXES = ("--wasteland-aa=", "--wasteland-hide=", "--wasteland-render-scale=", "--wasteland-finest-lod",
                             "--terrain-mip-bias=", "--terrain-anisotropy=", "--mega-lod-error-px=",
                             "--vram-geometry-share=", "--taa-current-weight=", "--taa-clip-gamma=", "--taa-sharpen=",
-                            "--taa-jitter-scale=", "--taa-geometry-lod-scale=")
+                            "--taa-jitter-scale=", "--taa-geometry-lod-scale=", "--taa-history-sharpness=",
+                            "--taa-resample-current-weight=")
 # 既定の組（base）に出てはいけないログの行（差し替えが効いていない）
 BLUR_BASE_FORBIDDEN_LOGS = ("WASTELAND_BLUR_CASE ", "WASTELAND_AA_PASS ", "TERRAIN_SAMPLER ", "WASTELAND_FINEST_LOD ",
                             "WASTELAND_HIDE ", "VRAM_POOL_SHARE ", "GEOMETRY_PAGE_REQUEST_CAPACITY ",
-                            "MEGA_VISIBLE_LIST_CAPACITY ", "TAA_PARAMS ")
+                            "MEGA_VISIBLE_LIST_CAPACITY ", "TAA_PARAMS ", "TAA_MOTION_PARAMS ")
 # 範囲: 正解の深度が BLUR_FAR_MIN_M より奥の地表（2×2 のすべてが奥）。崖はそのうち法線の |y| が BLUR_CLIFF_NORMAL_Y 未満
 BLUR_FAR_MIN_M = 1000.0
 BLUR_CLIFF_NORMAL_Y = 0.8
@@ -801,14 +810,14 @@ MOTION_VERTICAL_FOV_DEG = 12.77
 MOTION_ALIGN_MAX_PX = 0.25
 MOTION_SHIFT_TOLERANCE_PX = 0.5
 MOTION_ALIGN_CROP = (432, 768)
-# 組: 正解（2 倍の解像度・AA なし）と、FXAA・TAA を正解と同じ取り分で撮った組。base は verify の撮影（<出力先> そのもの。
-# 既定の取り分・FXAA）で、記録だけ
+# 組: 正解（2 倍の解像度・AA なし）と、FXAA・TAA を正解と同じ取り分で撮った組。base は <出力先> そのものの撮影（既定の取り分・
+# 既定の AA。荒野の既定は SCN-WL-FAR-AA-MOTION から TAA で、それより前の撮影は FXAA）で、記録だけ。fxaa は AA を FXAA に固定した対照
 MOTION_REFERENCE = "ref2x"
 MOTION_GROUPS = (
     {"name": MOTION_REFERENCE, "dir": MOTION_REFERENCE, "args": BLUR_REFERENCE_ARGS, "logs": BLUR_REFERENCE_LOGS,
      "size": (BLUR_SIZE[0] * BLUR_REFERENCE_SCALE, BLUR_SIZE[1] * BLUR_REFERENCE_SCALE), "resident": True},
-    {"name": "fxaa", "dir": "fxaa", "args": (BLUR_SHARE_ARG,), "logs": (BLUR_SHARE_LOG,), "size": BLUR_SIZE,
-     "resident": True},
+    {"name": "fxaa", "dir": "fxaa", "args": (BLUR_FXAA_ARG, BLUR_SHARE_ARG), "logs": (BLUR_FXAA_LOG, BLUR_SHARE_LOG),
+     "size": BLUR_SIZE, "resident": True},
     {"name": "taa", "dir": "taa", "args": ("--wasteland-aa=taa", BLUR_SHARE_ARG),
      "logs": ("WASTELAND_BLUR_CASE aa=taa ", BLUR_SHARE_LOG), "size": BLUR_SIZE, "resident": True},
     {"name": "base", "dir": ".", "args": (), "logs": (), "size": BLUR_SIZE, "resident": False},
