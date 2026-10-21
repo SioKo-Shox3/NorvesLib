@@ -5056,6 +5056,8 @@ namespace NorvesLib::Core::Rendering
                 CameraViewConstants::BuildForDevice(*activeCamera, context.GetActiveAspectRatio(), context.Device);
             cameraConstants.CopyCameraPosition(params.cameraPosition);
             cameraConstants.CopyShaderInverseViewProjection(params.invViewProjection);
+            cameraConstants.CopyShaderCameraRelativeInverseViewProjection(params.invViewProjectionCameraRelative);
+            cameraConstants.CopyDepthLinearization(params.depthLinearization);
             cameraConstants.CopyShaderViewProjection(params.viewProjection);
             bProjectionJittered = activeCamera->ProjectionJitterNdcX != 0.0f ||
                                   activeCamera->ProjectionJitterNdcY != 0.0f;

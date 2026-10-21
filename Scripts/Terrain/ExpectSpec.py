@@ -17,7 +17,7 @@
 #     blur_static: detail_loss（細部の欠け）、alias（エイリアス）、detail_loss_vs_resident・alias_vs_resident（その組 − resident。
 #       base と resident の差は case=base で書く）、detail_loss_vs_case・alias_vs_case（その組 − against の組。同じ Game.exe で
 #       撮った別の条件の組と比べる）
-#   against: _vs_case の量で引く組（blur_static だけ）
+#   against: _vs_case の量で引く組（blur_static だけ。撮った組のほか、計算で作る taa-estimate〔中身が変わらない TAA の見積もり〕）
 #     blur_motion: detail_loss・alias（tag の撮影の値）、motion_static_detail_loss・motion_static_alias（振りと止めの差。振り − 止め）
 #     atmos_ref（ReferenceCheck.py --atmos-ref。行の鍵は mode・view・quantity と閾値だけ）: エンジンの書き出しの地表の値と、
 #       カメラの足元の谷床の高度で求めた期待値の RGB の相対差の最大（illuminance.valley_floor）。sun_transmittance（太陽の透過率）、
@@ -191,8 +191,10 @@ def validate_row(rc, row, mode):
             if quantity not in BLUR_STATIC_QUANTITIES:
                 errors.append(f"blur_static の量は {'・'.join(BLUR_STATIC_QUANTITIES)}（{quantity!r} でない）")
             elif str(quantity).endswith("_vs_case"):
-                if row.get("against") not in cases or row.get("against") == row.get("case"):
-                    errors.append(f"against {row.get('against')!r} は case と違う条件の組にする（{'・'.join(cases)}）")
+                # 引く組には、撮った組のほかに計算で作る組（中身が変わらない TAA の見積もり）も選べる
+                against_cases = cases + [rc.BLUR_TAA_ESTIMATE]
+                if row.get("against") not in against_cases or row.get("against") == row.get("case"):
+                    errors.append(f"against {row.get('against')!r} は case と違う条件の組にする（{'・'.join(against_cases)}）")
             elif "against" in row:
                 errors.append("against は _vs_case の量の行だけの鍵")
             errors.extend(f"{key} は blur_motion の行だけの鍵" for key in ("tag", "static") if key in row)

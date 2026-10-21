@@ -26,7 +26,9 @@ layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 // std140。VirtualShadowMapPages.cpp の GPUVsmParams と同じ並び
 layout(std140, set = 0, binding = 0) uniform VsmParams
 {
+    // カメラの位置を原点にした逆ビュー射影行列（深度から位置を戻すときの画素の向き）
     mat4 invViewProjection;
+    // xyz: カメラの位置、w: 近方面 ÷ 遠方面（深度から前方への距離の比を求める。0 なら印を付けない）
     vec4 cameraPosition;
     vec4 lightRight;
     vec4 lightUp;
@@ -322,9 +324,18 @@ void main()
         return;
     }
 
+    // 位置は照明（lighting.frag の ReconstructWorldPosition）と同じ式で戻す: 画素の向きをカメラの位置を原点にした逆行列で
+    // 深度 0.5 の点として求め、深度から求めた前方への距離の比（1 ÷ ((1 - 深度) + 深度 × 近方面 ÷ 遠方面) に比例）で伸ばす。
+    // 絶対座標の逆行列で戻すと、数 km 先では桁落ちで位置が m 単位でずれ、TAA のジッタのたびに印を付けるページが変わる
     const vec2 uv = (vec2(pixel) + 0.5) / vec2(params.screen.xy);
-    const vec4 world4 = params.invViewProjection * vec4(uv * 2.0 - 1.0, depth, 1.0);
-    const vec3 world = world4.xyz / world4.w;
+    const vec4 ray4 = params.invViewProjection * vec4(uv * 2.0 - 1.0, 0.5, 1.0);
+    const float nearOverFar = params.cameraPosition.w;
+    const float denominator = (1.0 - depth) + depth * nearOverFar;
+    if (!(nearOverFar > 0.0) || !(denominator > 0.0) || ray4.w == 0.0)
+    {
+        return;
+    }
+    const vec3 world = params.cameraPosition.xyz + (ray4.xyz / ray4.w) * ((0.5 + 0.5 * nearOverFar) / denominator);
 
     // 太陽の段の数が 0 のとき（夜など太陽のクリップマップが無効）は太陽の印付けを飛ばす。点光源だけが印を付ける
     if (params.control.w != 0u)

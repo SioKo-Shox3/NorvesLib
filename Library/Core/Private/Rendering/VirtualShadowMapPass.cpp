@@ -1389,7 +1389,10 @@ namespace NorvesLib::Core::Rendering
         {
             const CameraViewConstants cameraConstants =
                 CameraViewConstants::BuildForDevice(*camera, context.GetActiveAspectRatio(), context.Device);
-            cameraConstants.CopyShaderInverseViewProjection(dispatch.InverseViewProjection);
+            cameraConstants.CopyShaderCameraRelativeInverseViewProjection(dispatch.InverseViewProjection);
+            float depthLinearization[2] = {};
+            cameraConstants.CopyDepthLinearization(depthLinearization);
+            dispatch.DepthNearOverFar = depthLinearization[1];
             dispatch.CameraPosition[0] = camera->PositionX;
             dispatch.CameraPosition[1] = camera->PositionY;
             dispatch.CameraPosition[2] = camera->PositionZ;

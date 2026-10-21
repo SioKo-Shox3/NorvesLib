@@ -39,6 +39,8 @@ namespace NorvesLib::Core::Rendering
         GPUDDGILightingParams ddgi;
         float viewProjection[16]; // 接触影のレイを画面へ写すViewProjection（TAAのジッタ込み）
         float contactShadowParams[4]; // x=レイの長さ(m、0で無効), y=雑音の時間のずらし, z=遮る物体の厚さの下限(m)
+        float invViewProjectionCameraRelative[16]; // カメラの位置を原点にした逆ViewProjection（深度から位置を戻すときの画素の向き）
+        float depthLinearization[4]; // x=近方面(m), y=近方面÷遠方面（深度から前方への距離を求める。正射影は0で、invViewProjectionで戻す）
     };
 
     struct GPULightData
@@ -54,7 +56,7 @@ namespace NorvesLib::Core::Rendering
     static_assert(offsetof(GPUDDGILightingParams, probeSpacing) == 16);
     static_assert(offsetof(GPUDDGILightingParams, probeCounts) == 32);
     static_assert(offsetof(GPUDDGILightingParams, info) == 48);
-    static_assert(sizeof(GPULightingParams) == 864);
+    static_assert(sizeof(GPULightingParams) == 944);
     static_assert(offsetof(GPULightingParams, invViewProjection) == 0);
     static_assert(offsetof(GPULightingParams, cameraPosition) == 64);
     static_assert(offsetof(GPULightingParams, ambientColor) == 80);
@@ -77,6 +79,8 @@ namespace NorvesLib::Core::Rendering
     static_assert(offsetof(GPULightingParams, ddgi) == 720);
     static_assert(offsetof(GPULightingParams, viewProjection) == 784);
     static_assert(offsetof(GPULightingParams, contactShadowParams) == 848);
+    static_assert(offsetof(GPULightingParams, invViewProjectionCameraRelative) == 864);
+    static_assert(offsetof(GPULightingParams, depthLinearization) == 928);
     static_assert(sizeof(GPULightData) == 64);
     static_assert(offsetof(GPULightData, position) == 0);
     static_assert(offsetof(GPULightData, direction) == 16);

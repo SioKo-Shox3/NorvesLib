@@ -118,9 +118,11 @@ namespace NorvesLib::Core::Rendering
         float PointPcfRadiusTexels = VirtualShadowMap::DEFAULT_PCF_RADIUS_TEXELS;
         /** @brief 点光源の PCF の半径に足す、ワールドの長さの分（m）。点光源の物理の半影は扱わないので既定は 0 */
         float PointFilterRadiusMeters = 0.0f;
-        /** @brief シェーダー向け（列優先）の逆ビュー射影行列 */
+        /** @brief シェーダー向け（列優先）の、カメラの位置を原点にした逆ビュー射影行列（CameraViewConstants::CameraRelativeInverseViewProjectionMatrix） */
         float InverseViewProjection[16] = {};
         float CameraPosition[3] = {};
+        /** @brief 透視投影の近方面 ÷ 遠方面（CameraViewConstants::CopyDepthLinearization の [1]）。深度から位置を戻す。0 なら印を付けない */
+        float DepthNearOverFar = 0.0f;
         /** @brief カメラの前方（ワールド。長さは問わない。0・非有限なら印付けをしない）。影の範囲を前方への距離で測るのに使う */
         float CameraForward[3] = {};
         /**

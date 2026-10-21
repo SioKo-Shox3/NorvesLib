@@ -24,8 +24,8 @@ namespace NorvesLib::Core::Rendering
         // シェーダー（vsm_mark.comp・vsm_allocate.comp・vsm_clear.comp）の VsmParams（std140）と同じ並び
         struct GPUVsmParams
         {
-            float invViewProjection[16];
-            float cameraPosition[4];
+            float invViewProjection[16]; // カメラの位置を原点にした逆ビュー射影行列（VirtualShadowMapPagesDispatch::InverseViewProjection）
+            float cameraPosition[4];     // xyz = カメラの位置、w = 近方面 ÷ 遠方面（vsm_mark.comp が深度から位置を戻す）
             float lightRight[4];
             float lightUp[4];
             uint32_t screen[4];  // x = 幅、y = 高さ、z = スライスの数、w = 印付けが選ぶ太陽の段の、スライスの表での先頭の番号
@@ -211,6 +211,7 @@ namespace NorvesLib::Core::Rendering
             {
                 params.cameraPosition[axis] = dispatch.CameraPosition[axis];
             }
+            params.cameraPosition[3] = dispatch.DepthNearOverFar;
             params.screen[0] = width;
             params.screen[1] = height;
         }

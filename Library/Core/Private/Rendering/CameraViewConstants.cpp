@@ -35,6 +35,14 @@ namespace NorvesLib::Core::Rendering
         constants.InverseProjectionMatrix = Math::MatrixUtils::Inverse(constants.ProjectionMatrix);
         constants.InverseViewProjectionMatrix = Math::MatrixUtils::Inverse(constants.ViewProjectionMatrix);
         constants.CullingViewProjectionMatrix = BuildCullingViewProjectionMatrix(camera, constants.AspectRatio);
+        constants.CameraRelativeInverseViewProjectionMatrix =
+            Math::MatrixUtils::Inverse(constants.ProjectionMatrix * BuildViewRotationMatrix(camera));
+        if (camera.Projection == ProjectionType::Perspective && camera.NearPlane > 0.0f &&
+            camera.FarPlane > camera.NearPlane)
+        {
+            constants.DepthNearPlane = camera.NearPlane;
+            constants.DepthFarPlane = camera.FarPlane;
+        }
         return constants;
     }
 
@@ -50,20 +58,27 @@ namespace NorvesLib::Core::Rendering
             constants.ViewProjectionMatrix = constants.ProjectionMatrix * constants.ViewMatrix;
             constants.InverseProjectionMatrix = Math::MatrixUtils::Inverse(constants.ProjectionMatrix);
             constants.InverseViewProjectionMatrix = Math::MatrixUtils::Inverse(constants.ViewProjectionMatrix);
+            constants.CameraRelativeInverseViewProjectionMatrix =
+                Math::MatrixUtils::Inverse(constants.ProjectionMatrix * BuildViewRotationMatrix(camera));
         }
         return constants;
     }
 
     Math::Matrix4x4 CameraViewConstants::BuildViewMatrix(const CameraProxy &camera)
     {
-        const Math::Vector3 forward(camera.ForwardX, camera.ForwardY, camera.ForwardZ);
-        const Math::Vector3 up(camera.UpX, camera.UpY, camera.UpZ);
         // 向きは原点から前の向きへの視線で作り、位置は後から平行移動で掛ける。注視点を「位置 + 前」で作ると、
         // 座標が大きい所（荒野の 2 km など）で float の丸め（2 km で約 2.4e-4）が前の向きをずらし、
         // 望遠の視点で画が 1 画素近く記録のカメラからずれる（列ベクトル規約: ビュー = 回転 × 平行移動(−位置)）。
-        const Math::Vector3 origin(0.0f, 0.0f, 0.0f);
-        return Math::MatrixUtils::CreateLookAt(origin, forward, up) *
+        return BuildViewRotationMatrix(camera) *
                Math::MatrixUtils::CreateTranslation(-camera.PositionX, -camera.PositionY, -camera.PositionZ);
+    }
+
+    Math::Matrix4x4 CameraViewConstants::BuildViewRotationMatrix(const CameraProxy &camera)
+    {
+        const Math::Vector3 forward(camera.ForwardX, camera.ForwardY, camera.ForwardZ);
+        const Math::Vector3 up(camera.UpX, camera.UpY, camera.UpZ);
+        const Math::Vector3 origin(0.0f, 0.0f, 0.0f);
+        return Math::MatrixUtils::CreateLookAt(origin, forward, up);
     }
 
     Math::Matrix4x4 CameraViewConstants::BuildProjectionMatrix(const CameraProxy &camera, float aspectRatio)
@@ -128,6 +143,18 @@ namespace NorvesLib::Core::Rendering
     void CameraViewConstants::CopyShaderInverseViewProjection(float *out) const
     {
         Math::MatrixUtils::TransposeToShaderData(InverseViewProjectionMatrix, out);
+    }
+
+    void CameraViewConstants::CopyShaderCameraRelativeInverseViewProjection(float *out) const
+    {
+        Math::MatrixUtils::TransposeToShaderData(CameraRelativeInverseViewProjectionMatrix, out);
+    }
+
+    void CameraViewConstants::CopyDepthLinearization(float *out) const
+    {
+        const bool bValid = DepthNearPlane > 0.0f && DepthFarPlane > DepthNearPlane;
+        out[0] = bValid ? DepthNearPlane : 0.0f;
+        out[1] = bValid ? DepthNearPlane / DepthFarPlane : 0.0f;
     }
 
     void CameraViewConstants::CopyCameraPosition(float *out, uint32_t count) const

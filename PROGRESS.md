@@ -6451,3 +6451,23 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 地面に落ちる株の影は画素ごとの 0/1 の点描になり、1 texel より細い枝の影は点線に途切れる（Cycles は柔らかく線で続く）。判定の量の外なので記録だけ（`WastelandPlantRef.md`・NEXT_FINDINGS）
   - 新しい試験は足していない
 - Next: TASKS.md の次の未完の項目
+
+### SCN-WL-JITTER-LIGHTING 完了（2026-10-21、run 20261021-055341 の反復 31。反復 29 の BLOCKED を親が推奨 1 で解いた後）
+- 原因: 照明（`lighting.frag` の `ReconstructWorldPosition`）と VSM の印付け（`vsm_mark.comp`）が、深度から位置を絶対座標の逆 ViewProjection で戻していた。D32 の標準の向き（近方面 0.5 m）では数 km 先の 1 − 深度が 1e-4 前後しかなく、逆行列の丸めが桁落ちで m 単位の視線の向きのずれになる。ジッタで投影が毎フレーム変わると丸めも変わり、ずれが画面全体でまとまって揺れる（float32 の試算: 6 km でフレームごとの平均の揺れ 1.1 m、9 km で 1.6 m）。太陽の低い遠景の斜面で受け手が影の余裕をまたいで前後し、大きな影の斑を TAA が貯めていた
+- Done: `CameraViewConstants` にカメラ基準の逆 ViewProjection（`CameraRelativeInverseViewProjectionMatrix`）・`BuildViewRotationMatrix`・深度の線形化の定数（`CopyDepthLinearization`）を足し、照明と印付けは「カメラ基準の向き（深度 0.5 の点）× 前方への距離の比（1 ÷ ((1 − 深度) + 深度 × 近方面 ÷ 遠方面) に比例）」で位置を戻す（正射影は今までの式）。照明の定数に `invViewProjectionCameraRelative`・`depthLinearization` を足し、VSM の印付けの `invViewProjection` をカメラ基準に、`cameraPosition.w` を近方面 ÷ 遠方面にした。試算ではジッタによる位置の揺れが 9 km でも 0.001 m
+- 合否の形: `ReferenceCheck.py` に中身が変わらない TAA の見積もり `taa-estimate`（反復 29 の `taasim` を `blur_taa_estimate` として組み込み。aa-taa-nojitter の画から作る）を足し、`jitter-lighting.json` の `against` を `taa-estimate` に、`ExpectSpec.py` の `against` に計算の組を許した。`--taa-jitter-scale=` を起動引数の照合に足し、aa-taa-nojitter のログの印を TAA_PARAMS の行（見積もりの定数と同じこと）にした
+- 証拠（`.harness/runs/20261021-055341/`）:
+  - `regression-before-SCN-WL-JITTER-LIGHTING.txt` 回帰の before（-Motion）result=pass（この反復の最初に撮り直した）
+  - `verify-SCN-WL-JITTER-LIGHTING-1.txt` Debug の Game のビルド EXIT=0
+  - `verify-SCN-WL-JITTER-LIGHTING-2.txt`・`-3.txt` aa-taa（-Build）・aa-taa-nojitter の撮影 result=pass・EXIT=0。同じ exe で ref2x（`aux-SCN-WL-JITTER-LIGHTING-ref2x.txt`）・resident（`aux-SCN-WL-JITTER-LIGHTING-resident.txt`）も撮った
+  - `verify-SCN-WL-JITTER-LIGHTING-4.txt` `--blur-static --expect jitter-lighting.json --verify` result=pass・inputs_current=1: ref_far_01 遠景の欠け aa-taa 0.348（直す前 0.533）・ジッタ 0 0.244（直す前 0.269）・見積もり 0.331 → +0.017、ref_cliff_02 0.311・0.236・0.265 → +0.046。並べた画 `scene-capture/SCN-WL-JITTER-LIGHTING/blur_ref_far_01.png` を開き、TAA の台地の根元の斜面の影が ref2x と同じ形で、大きな影の斑が無いことを確かめた
+  - `aux-SCN-WL-JITTER-LIGHTING-gray.txt` Cycles の参照（SCN-WLR-CYCLES-GRAY）との灰色の ref_far_01 result=pass: 遠景の太陽の可視率 エンジン 0.958・Cycles 0.934、0.5 を超えて食い違う画素 3.0 %（エンジンが日なたで Cycles が影 2.0 %）、日なたの地面 0 %。遠景の比 0.968
+  - `verify-SCN-WL-JITTER-LIGHTING-5.txt` 回帰の after（-Motion）result=pass、全シーンの平均の差 0（PSNR 最小 mega-bananas 51.3、night-village 55.6、rendering3dtest 64〜73、sandbox 84.9）。mega-bananas の前後と差×10 を並べて開き、違うのは散らばった単独の画素（差 8 超 0.04 %）だけで、床・空・バナナの影は変わらないことを確かめた
+- Notes:
+  - 記録は `Docs/RenderingValidation/WastelandFarBlurStatic.md` の「TAA のジッタで太陽の影が変わる経路」
+  - 直す前の太陽の可視率の Cycles との比較は記録が無い（直す前の灰色の撮影は可視率の AOV を書く前の版）。可視率の比較は FXAA の 1 フレーム（ジッタなし）
+  - 回帰で平均の差が 0 なので golden の再承認はしていない（golden の GPU の試験は回していない）
+  - ほかのパス（RT の影・体積・雲・TAA・被写界深度・RTGI の静止の署名）は今も絶対座標の逆 ViewProjection で位置を戻す。遠景で同じ桁落ちがあるかは調べていない
+  - 見積もりの計算は 1 視点で数分かかる（`--blur-static` の検査が長くなった）
+  - 新しい試験は足していない
+- Next: TASKS.md の次の未完の項目（SCN-WL-FAR-AA の定数の掃引の撮り直し）

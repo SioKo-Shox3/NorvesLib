@@ -37,6 +37,8 @@ layout(std140, set = 0, binding = 4) uniform LightingParams
     uvec4 ddgiInfo; // x=DDGI有効フラグ
     mat4 viewProjection; // 接触影のレイを画面へ写すViewProjection（TAAのジッタ込み）
     vec4 contactShadowParams; // x=レイの長さ(m、0で無効), y=雑音の時間のずらし, z=遮る物体の厚さの下限(m)
+    mat4 invViewProjectionCameraRelative; // カメラの位置を原点にした逆ViewProjection（深度から位置を戻すときの画素の向き）
+    vec4 depthLinearization; // x=近方面(m), y=近方面÷遠方面（正射影は0で、invViewProjectionで戻す）
 } params;
 
 // ライトデータ構造
@@ -247,10 +249,24 @@ vec3 SamplePrefilteredSpecular(vec3 direction, float roughness)
 // ========================================
 // 深度からワールド座標を復元
 // ========================================
+// 透視投影では、画素の向きをカメラの位置を原点にした逆行列で深度 0.5 の点として求め、深度から求めた前方への距離の比で伸ばす
+// （深度 = 遠方面 ÷ (遠方面 - 近方面) × (1 - 近方面 ÷ 前方への距離) なので、前方への距離は 1 ÷ ((1 - 深度) + 深度 × 近方面 ÷ 遠方面) に比例する）。絶対座標の逆ViewProjectionで戻すと、数 km 先では
+// 1 - 深度が小さく行列の丸めが桁落ちで m 単位の位置のずれになり、そのずれが TAA のジッタのたびに画面全体でまとまって変わる
+// （太陽の影の判定が揺れ、遠景に大きな影の斑が出る）。1 - 深度は float で丸めなく求まる
 vec3 ReconstructWorldPosition(vec2 uv, float depth)
 {
     // UV→NDC座標変換 (VulkanのY軸反転を考慮)
     vec4 clipPos = vec4(uv * 2.0 - 1.0, depth, 1.0);
+    if (params.depthLinearization.x > 0.0)
+    {
+        vec4 ray4 = params.invViewProjectionCameraRelative * vec4(clipPos.xy, 0.5, 1.0);
+        float denominator = (1.0 - depth) + depth * params.depthLinearization.y;
+        if (ray4.w != 0.0 && denominator > 0.0)
+        {
+            float rayDenominator = 0.5 + 0.5 * params.depthLinearization.y;
+            return params.cameraPosition.xyz + (ray4.xyz / ray4.w) * (rayDenominator / denominator);
+        }
+    }
     vec4 worldPos = params.invViewProjection * clipPos;
     return worldPos.xyz / worldPos.w;
 }

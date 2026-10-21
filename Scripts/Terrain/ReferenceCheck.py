@@ -692,10 +692,13 @@ BLUR_CASES = (
               "TAA_PARAMS current_weight=0.100 clip_gamma=1.000 sharpen=0.250 jitter_scale=1.000 source=env",
               BLUR_SHARE_LOG), "resident": True},
     # TAA のサブピクセルのジッタを 0 にして履歴を貯めた組（--taa-jitter-scale=0）。ジッタで描かれる中身が変わる経路が残ると
-    # aa-taa の欠けがこの組より大きくなる（SCN-WL-JITTER-LIGHTING）。aa-taa と同じ Game.exe で撮って比べる
+    # aa-taa の欠けがこの組より大きくなる（SCN-WL-JITTER-LIGHTING）。aa-taa と同じ Game.exe で撮って比べる。
+    # 混ぜ方の定数は、この組から作る中身が変わらない TAA の見積もり（BLUR_TAA_ESTIMATE）の定数と同じであることをログで確かめる
     {"name": "aa-taa-nojitter", "factor": "AA を TAA に（ジッタ 0）",
      "args": ("--wasteland-aa=taa", "--taa-jitter-scale=0", BLUR_SHARE_ARG),
-     "logs": ("WASTELAND_BLUR_CASE aa=taa ", "jitter_scale=0.000 source=env", BLUR_SHARE_LOG), "resident": True},
+     "logs": ("WASTELAND_BLUR_CASE aa=taa ",
+              "TAA_PARAMS current_weight=0.100 clip_gamma=1.000 sharpen=0.250 jitter_scale=0.000 source=env",
+              BLUR_SHARE_LOG), "resident": True},
     {"name": "aa-none", "factor": "AA なし（FXAA のパスを外す）", "args": ("--wasteland-aa=none", BLUR_SHARE_ARG),
      "logs": ("WASTELAND_BLUR_CASE aa=none ", "WASTELAND_AA_PASS fxaa=off", BLUR_SHARE_LOG), "resident": True},
     {"name": "haze-off", "factor": "霞（空気遠近と高さフォグ）を切る", "args": ("--wasteland-hide=aerial+fog", BLUR_SHARE_ARG),
@@ -725,7 +728,8 @@ BLUR_PAGES_RE = re.compile(r"GEOMETRY_PAGES resident=(\d+) uploading=(\d+) ready
 # 条件を替える起動引数の頭（組の約束にないものが混ざっていないかを見る）
 BLUR_CONTROLLED_PREFIXES = ("--wasteland-aa=", "--wasteland-hide=", "--wasteland-render-scale=", "--wasteland-finest-lod",
                             "--terrain-mip-bias=", "--terrain-anisotropy=", "--mega-lod-error-px=",
-                            "--vram-geometry-share=", "--taa-current-weight=", "--taa-clip-gamma=", "--taa-sharpen=")
+                            "--vram-geometry-share=", "--taa-current-weight=", "--taa-clip-gamma=", "--taa-sharpen=",
+                            "--taa-jitter-scale=")
 # 既定の組（base）に出てはいけないログの行（差し替えが効いていない）
 BLUR_BASE_FORBIDDEN_LOGS = ("WASTELAND_BLUR_CASE ", "WASTELAND_AA_PASS ", "TERRAIN_SAMPLER ", "WASTELAND_FINEST_LOD ",
                             "WASTELAND_HIDE ", "VRAM_POOL_SHARE ", "GEOMETRY_PAGE_REQUEST_CAPACITY ",
@@ -747,6 +751,18 @@ BLUR_CALIB_BLUR_MAX_ALIAS = 0.1
 BLUR_CALIB_NOISE_GAIN = 0.05
 BLUR_CALIB_NOISE_MIN_ALIAS = 0.3
 BLUR_CALIB_SEED = 20261019
+# 中身が変わらない TAA の見積もり（撮影でなく計算で作る組）: ジッタ 0 の TAA の画（BLUR_TAA_ESTIMATE_SOURCE）を、TAA と同じ
+# Halton(2, 3) の 8 点のサブピクセルだけ FFT で正確にずらした 8 枚を入力に、temporal_aa.frag・temporal_aa_copy.frag の式
+# （3×3 の分散の箱でクリップ・輝度の重みで混ぜる・書き戻しのシャープ化）で BLUR_TAA_ESTIMATE_FRAMES フレーム貯める。
+# ジッタで描かれる中身が変わらないときに TAA が残す欠けの目安で、aa-taa をこれと比べる（SCN-WL-JITTER-LIGHTING）。
+# エイリアスの残る 1 倍の画をずらすので、実際の標本より欠けが多めに出る見積もり。定数は TAA の既定と同じ
+# （aa-taa-nojitter の組のログの TAA_PARAMS で確かめる）
+BLUR_TAA_ESTIMATE = "taa-estimate"
+BLUR_TAA_ESTIMATE_SOURCE = "aa-taa-nojitter"
+BLUR_TAA_ESTIMATE_FRAMES = 64
+BLUR_TAA_ESTIMATE_CURRENT_WEIGHT = 0.1
+BLUR_TAA_ESTIMATE_CLIP_GAMMA = 1.0
+BLUR_TAA_ESTIMATE_SHARPEN = 0.25
 # 荒野は仮想テクスチャを使わない（VRAM_POOLS の vt_used_mb がどの行も 0）。使っていれば常駐の確かめが要るので失敗にする
 BLUR_VT_LOG_KEY = "VRAM_POOLS "
 
@@ -3319,6 +3335,66 @@ def blur_gaussian(image, sigma):
     return out
 
 
+def blur_taa_estimate(display):
+    """BLUR_TAA_ESTIMATE の画（表示の値 0〜1）を、ジッタ 0 の TAA の画の表示の値から作る"""
+    def halton(index, base):
+        f, result = 1.0, 0.0
+        while index > 0:
+            f /= base
+            result += f * (index % base)
+            index //= base
+        return result
+
+    linear = blur_decode_srgb(display)
+    height, width = linear.shape[:2]
+    fy = np.fft.fftfreq(height)[:, None]
+    fx = np.fft.fftfreq(width)[None, :]
+    spectra = [np.fft.fft2(linear[..., c]) for c in range(3)]
+
+    def shifted(ox, oy):
+        phase = np.exp(-2j * np.pi * (fx * ox + fy * oy))
+        return np.clip(np.stack([np.real(np.fft.ifft2(spectrum * phase)) for spectrum in spectra], axis=-1), 0, None)
+
+    frames = [shifted(halton(i, 2) - 0.5, halton(i, 3) - 0.5) for i in range(1, 9)]
+    luma = np.array([0.2126, 0.7152, 0.0722])
+
+    def to_ycocg(c):
+        return np.stack([0.25 * c[..., 0] + 0.5 * c[..., 1] + 0.25 * c[..., 2], 0.5 * c[..., 0] - 0.5 * c[..., 2],
+                         -0.25 * c[..., 0] + 0.5 * c[..., 1] - 0.25 * c[..., 2]], -1)
+
+    def to_rgb(y):
+        return np.stack([y[..., 0] + y[..., 1] - y[..., 2], y[..., 0] + y[..., 2], y[..., 0] - y[..., 1] - y[..., 2]], -1)
+
+    def neighbor(image, dy, dx):
+        padded = np.pad(image, ((1, 1), (1, 1), (0, 0)), mode="edge")
+        return padded[1 + dy:1 + dy + height, 1 + dx:1 + dx + width]
+
+    history = None
+    for k in range(BLUR_TAA_ESTIMATE_FRAMES):
+        current = frames[k % len(frames)]
+        if history is None:
+            history = current
+            continue
+        ys = [to_ycocg(neighbor(current, dy, dx)) for dy in (-1, 0, 1) for dx in (-1, 0, 1)]
+        mean = sum(ys) / 9
+        sigma = np.sqrt(np.maximum(sum(y * y for y in ys) / 9 - mean * mean, 0))
+        offset = to_ycocg(history) - mean
+        scale = np.max(np.abs(offset) / np.maximum(BLUR_TAA_ESTIMATE_CLIP_GAMMA * sigma, 1e-5), axis=-1, keepdims=True)
+        clipped = np.maximum(to_rgb(np.where(scale > 1, mean + offset / np.maximum(scale, 1e-9), mean + offset)), 0)
+        current_weight = BLUR_TAA_ESTIMATE_CURRENT_WEIGHT / (1 + current @ luma)[..., None]
+        history_weight = (1 - BLUR_TAA_ESTIMATE_CURRENT_WEIGHT) / (1 + clipped @ luma)[..., None]
+        result = (current * current_weight + clipped * history_weight) / np.maximum(current_weight + history_weight, 1e-6)
+        if BLUR_TAA_ESTIMATE_SHARPEN > 0:
+            compressed = result / (1 + result @ luma)[..., None]
+            around = [neighbor(compressed, dy, dx) for dy, dx in ((-1, 0), (1, 0), (0, 1), (0, -1))]
+            low = np.minimum.reduce([compressed] + around)
+            high = np.maximum.reduce([compressed] + around)
+            sharpened = np.clip(compressed + BLUR_TAA_ESTIMATE_SHARPEN * (compressed - 0.25 * sum(around)), low, high)
+            result = sharpened / np.maximum(1 - sharpened @ luma, 1e-4)[..., None]
+        history = result
+    return np.clip(blur_encode_srgb(np.clip(history, 0, None)), 0, 1)
+
+
 def blur_bands(luma):
     """隣り合うガウスの差の帯域（細かい順）"""
     blurred = [blur_gaussian(luma, sigma) for sigma in BLUR_SIGMAS]
@@ -3595,6 +3671,13 @@ def run_blur_static(capture_dir, verify, engine_dirs=None, reference_dir=None, e
             if not all(np.isfinite(values)):
                 failures.append(f"{view}: {case['name']} の値に NaN・Inf がある")
             cases[case["name"]] = {"factor": case["factor"], "far": far_result, "cliff": cliff_result}
+        if BLUR_TAA_ESTIMATE_SOURCE in displays:
+            estimate_bands = blur_bands(blur_taa_estimate(displays[BLUR_TAA_ESTIMATE_SOURCE]) @ LUMA)
+            cases[BLUR_TAA_ESTIMATE] = {
+                "factor": f"中身が変わらない TAA の見積もり（{BLUR_TAA_ESTIMATE_SOURCE} をジッタの 8 点でずらして TAA の式で貯める）",
+                "far": blur_compare(reference_bands, estimate_bands, far_masks),
+                "cliff": blur_compare(reference_bands, estimate_bands, cliff_masks)
+                if min(region["cliff_px_per_band"]) > 0 else None}
         entry["cases"] = cases
         # 霞が細部の見えを下げる量: 霞ありの帯域の量 ÷ 霞なしの帯域の量（同じ範囲・同じ取り分。正解との比ではない）
         if BLUR_BASELINE in case_bands_by_name and "haze-off" in case_bands_by_name:
