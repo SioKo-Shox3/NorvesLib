@@ -3,7 +3,9 @@
 #
 # 使い方（ふつうの Python から。視点ごとに Blender をヘッドレスで起動し、この台本を --python で渡す）:
 #   python Scripts/Terrain/BlenderOcclusionReference.py --mesh <地形の書き出しのフォルダ> --capture <エンジンの撮影>
-#          [--views contact_near] [--case sky|sun] [--range shadow] [--trial] [--spp N] [--out <書き先>]
+#          [--views contact_near] [--case sky|sun] [--kind rocks|terrain|plant] [--set <組の名前>] [--range shadow]
+#          [--trial] [--spp N] [--out <書き先>]
+#   全組（OcclusionSets.py の組）をまとめて描くときは OcclusionSets.py --cycles から呼ぶ。
 #
 # 入力（書き出しの契約。Docs/RenderingValidation/WastelandOcclusion.md の「比べの書き出しの契約」）:
 #   - 地形: Game の --wasteland-export-terrain が書いた区画ごとの LOD 0 の PLY と manifest.json（--mesh。BlenderReference.py と同じ）
@@ -12,7 +14,9 @@
 #     形はメッシュのローカルの座標の LOD 0 の PLY（occlusion_props.<名前>.ply と occlusion_props.manifest.json）、配置は
 #     occlusion_props.placements.csv（mesh, 位置, 四元数 (x, y, z, w), 拡大率, 影を落とすか）。ワールドの位置 =
 #     位置 + (四元数の共役の回転)(拡大率 ⊙ ローカルの位置)。崖錐の岩は撮影の視点から 300 m 以内だけが置かれる（Game の
-#     kGrayTalusRadius）ので、書き出しの全行をそのまま置く。
+#     kGrayTalusRadius）ので、書き出しの全行をそのまま置く。地形だけ・低木の組（--kind terrain|plant）は配置が 0 行。
+#   - 低木の組（--kind plant）: 比べる株を BlenderReference.py の --plant と同じく、撮影のログの WASTELAND_PLANT_PLACEMENT
+#     reference=1 の行と撮影のフォルダの reference_plant.ply から置く（材質は模型の色と葉の透過。灰色にしない）。
 #   - カメラ: エンジンの撮影の <視点>.aov.json。照明: CommonLight.json の空（--case sky）か太陽（--case sun）だけ。
 #   - 材質: 地形も小物も CommonLight.json の gray_material（Principled BSDF、法線は頂点の補間した法線。エンジンの
 #     --wasteland-gray-material と同じ）。
@@ -23,7 +27,8 @@
 #                          normal と同じ意味なので、同じ面の判定の法線の許容差はこちらで比べる）
 #   <視点>.aux.geometric_normal.pfm  三角形の面の法線（幾何の法線。エンジンの座標の向き。Geometry の True Normal を
 #                          シェーダの AOV で出す。視線の側へ向く。照合は深度から戻した面の向きと合うかを確かめる）
-#   <視点>.aux.object.pfm  物体の識別（地形 0、崖錐の岩 1、崖の面の塊 2、そのほかの小物 3、空 −1。Object Index のパス）
+#   <視点>.aux.object.pfm  物体の識別（地形 0、崖錐の岩 1、崖の面の塊 2、そのほかの小物 3、株の枝 4、株の葉 5、空 −1。
+#                          Object Index のパス）
 #   <視点>.aux.alpha.pfm   面に当たった画素 1
 #   <視点>.cycles.hdr.pfm  本描画（線形の RGB。エンジンの HDR と同じ尺度）。--trial は低いサンプル数の試し
 #   <視点>.cycles.json     設定・物体の数・時間
@@ -61,6 +66,9 @@ TERRAIN_INDEX = 0
 TALUS_INDEX = 1
 CLIFF_SCAN_INDEX = 2
 OTHER_PROP_INDEX = 3
+PLANT_BRANCH_INDEX = 4
+PLANT_LEAF_INDEX = 5
+KINDS = ("rocks", "terrain", "plant")
 TALUS_MESHES = ("boulder_01_4k", "rock_09_4k")
 CLIFF_SCAN_PREFIX = "rock_face_"
 
@@ -139,8 +147,22 @@ def run(args):
     views = [v for v in args.views.split(",") if v]
     view_records = {}
     used_tiles = set()
+    plant_ply = os.path.join(capture_dir, BR.PLANT_PLY)
+    if args.kind == "plant" and not os.path.isfile(plant_ply):
+        print(f"OCCLUSION_REFERENCE error 株のメッシュ {BR.PLANT_PLY} が撮影のフォルダに無い（--wasteland-hide=all-but-plant で撮る）")
+        return 1
     for view in views:
         camera, width, height = BR.read_engine_camera(capture_dir, view)
+        plant = None
+        if args.kind == "plant":
+            # 株の配置は撮影のログ（WASTELAND_PLANT_PLACEMENT の reference=1）から読む（BlenderReference.py の --plant と同じ）
+            log_name = RC.view_game_log(capture_dir, view) or f"{view}.Game.log"
+            with open(os.path.join(capture_dir, log_name), encoding="utf-8", errors="replace") as f:
+                placement, count = BR.load_plant_regions().parse_placement(f.read())
+            if placement is None or count != 1 or placement["ply"] != BR.PLANT_PLY:
+                print(f"OCCLUSION_REFERENCE error view={view} 撮影のログに比べる株の配置が 1 行でない（{count} 行）")
+                return 1
+            plant = {"ply_path": plant_ply, "placement": placement}
         tiles = [t for t in manifest["tiles"] if BR.tile_in_range(t, camera, args.range)[0]]
         altitude, azimuth = BR.common_light_sun(light, view)
         prefix = os.path.join(out_dir, view)
@@ -158,6 +180,7 @@ def run(args):
             "gray_material": light["gray_material"],
             "spp": spp,
             "prefix": prefix,
+            "plant": plant,
         }
         job["required_outputs"] = [f"{prefix}.cycles.json", f"{prefix}.cycles.hdr.pfm"] + \
             [f"{prefix}.aux.{part}.pfm" for part in AUX_PARTS]
@@ -178,10 +201,14 @@ def run(args):
                               "sun_altitude_degrees": altitude, "sun_azimuth_degrees": azimuth,
                               "engine_depth_sha256": BR.sha256_file(engine_depth_pfm), "spp": spp,
                               "trial": bool(args.trial)}
+        if plant is not None:
+            view_records[view]["plant_placement"] = plant["placement"]
 
     script_dir = os.path.dirname(os.path.abspath(__file__))
     record = {
         "kind": "cycles_occlusion",
+        "set": args.set or os.path.basename(out_dir),
+        "set_kind": args.kind,
         "script": BR.normalize_rel(os.path.abspath(__file__)),
         "script_sha256": BR.sha256_file(os.path.abspath(__file__)),
         "blender_reference_sha256": BR.sha256_file(os.path.join(script_dir, "BlenderReference.py")),
@@ -199,8 +226,11 @@ def run(args):
         "props_placements_sha256": BR.sha256_file(placements_path),
         "props_ply_sha256": {name: BR.sha256_file(os.path.join(capture_dir, mesh_files[name])) for name in used_meshes},
         "props_count": len(placements),
+        "plant_ply_sha256": BR.sha256_file(plant_ply) if args.kind == "plant" else None,
+        "plant_material": "模型の頂点の色と葉の透過（BlenderReference.place_plant）" if args.kind == "plant" else None,
         "object_index": {"terrain": TERRAIN_INDEX, "talus": TALUS_INDEX, "cliff_scan": CLIFF_SCAN_INDEX,
-                         "other_prop": OTHER_PROP_INDEX, "sky": -1},
+                         "other_prop": OTHER_PROP_INDEX, "plant_branch": PLANT_BRANCH_INDEX,
+                         "plant_leaf": PLANT_LEAF_INDEX, "sky": -1},
         "range": args.range,
         "coordinates": BR.coordinate_record(),
         "trial": bool(args.trial),
@@ -301,6 +331,12 @@ def render_job(job_path):
         obj.matrix_world = to_blender @ mathutils.Matrix(prop_world_matrix(row).tolist())
         obj.pass_index = object_index_for_mesh(row["mesh"])
         per_index[obj.pass_index] = per_index.get(obj.pass_index, 0) + 1
+    # 低木の組: 比べる株を枝と葉の 2 つの物体で置き、物体の識別を小物と重ならない番号へ付け直す
+    plant_record = None
+    if job.get("plant"):
+        plant_record = BR.place_plant(scene, job["plant"])
+        for part, index in (("branch", PLANT_BRANCH_INDEX), ("leaf", PLANT_LEAF_INDEX)):
+            bpy.data.objects[f"ReferencePlant_{part}"].pass_index = index
     load_seconds = time.time() - started
     print(f"BLENDER_OCCLUSION view={job['view']} loaded terrain_triangles={terrain_triangles} props={len(placements)} "
           f"seconds={load_seconds:.1f}", flush=True)
@@ -394,6 +430,7 @@ def render_job(job_path):
         "props": len(placements),
         "props_per_object_index": {str(k): v for k, v in sorted(per_index.items())},
         "prop_mesh_triangles": prop_triangles,
+        "plant": plant_record,
         "object_pixels": counts,
         "seconds": {"load": load_seconds, "aux": aux_seconds, "render": render_seconds},
     }
@@ -409,6 +446,8 @@ def main():
     parser.add_argument("--capture", help="エンジンの撮影（--wasteland-gray-material）")
     parser.add_argument("--views", default="contact_near")
     parser.add_argument("--case", choices=CASES, default="sky")
+    parser.add_argument("--kind", choices=KINDS, default="rocks", help="組の種類（地形だけ・岩塊・低木）")
+    parser.add_argument("--set", default="", help="組の名前（記録に書く。既定は書き先のフォルダの名前）")
     parser.add_argument("--range", choices=("frustum", "shadow", "all"), default="shadow")
     parser.add_argument("--trial", action="store_true", help=f"試しの描画（既定 {TRIAL_SPP} サンプル）")
     parser.add_argument("--spp", type=int, default=0)

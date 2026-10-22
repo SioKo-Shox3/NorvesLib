@@ -7227,3 +7227,13 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 並べた画 `scene-capture/SCN-WLR-OCCLUSION-EXPORT/cycles/rocks-sky/occlusion_preview/contact_near.png` を開いた: 岩の形と位置・地形の稜線が重なる
 - Notes: 崖錐の岩の幾何の法線の割合が低い（23 %）のは三角形が画素より小さく、隣の画素が別の三角形に乗るため（深度から戻す向きが三角形の向きにならない）。閾値 0.5 は全体の割合に掛けた。新しい試験は足していない（verify の照合が確かめる）
 - Next: TASKS.md の次の未完（SCN-WLR-OCCLUSION-SETS）
+
+### SCN-WLR-OCCLUSION-SETS 小さな遮蔽の比べの全組をエンジンで撮り、Cycles の試しの描画をそろえる（2026-10-23、run 20261022-173753 の反復 29）
+- Done: 全組を同じ Game.exe で撮る `Scripts/Terrain/OcclusionSets.py`（`--capture`・`--cycles [--trial]`、組の一覧 `occlusion_sets.json`）を足した。組は 1 組 1 視点の 8 組（terrain・rocks〔contact_near〕・rocks-cliff〔ref_cliff_01〕・plant × 空だけ・太陽だけ）。Game は起動ごとに視点を中心に崖錐の岩を選んで `occlusion_props.*` を書くので、2 視点を同じフォルダで撮ると後の視点の配置で前の配置が消える（最初の撮影で見つけ、組を視点ごとに分けた）。`BlenderOcclusionReference.py` に `--kind terrain|rocks|plant`・`--set`、低木の組の株（BlenderReference.place_plant。物体の識別 枝 4・葉 5）、小物 0 個の組を足した。`OcclusionCompare.py` に組の種類ごとの映るべき物体、低木の組の株の PLY の照合と株の形（輪郭を含めた株の画素の深度の一致 90 % 以上・エンジンだけが手前を見る画素 0.1 倍以下）、灰色の確かめを灰色の物体に限る扱い、組どうしの Game.exe と実装のハッシュ・組の一覧の揃いを足した。幾何の法線の確かめを 5 画素が 1 つの平面に乗る画素（0.5° 以内、1 万画素以上）に限った（遠い ref_cliff_01 では全画素で幾何 55.9 %・陰影 58.8 % と見分けられず、平面の画素では 99.99 %・48.4 %）。結果と契約を `Docs/RenderingValidation/WastelandOcclusion.md` の「比べの組」に書いた
+- 証拠（`.harness/runs/20261022-173753/`）:
+  - `verify-SCN-WLR-OCCLUSION-SETS-1.txt`: `OcclusionSets.py --capture --build` の 8 組すべて exit=0・pass=1、`OCCLUSION_SETS mode=capture sets=8 result=pass`。全組 game_exe f6869834・files a5d0a251。props は rocks 14931・rocks-cliff 3・ほか 0。末尾の `EXIT=0` は `$(date)` の後の `$?` なので終了コードを表さない（合否は result=pass の行）。`aux-SCN-WLR-OCCLUSION-SETS-capture-shared-props.txt` は 2 視点を同じフォルダで撮っていた版（止めて撮り直した）
+  - `aux-SCN-WLR-OCCLUSION-SETS-cycles-trial.txt`・`-cycles-trial-2.txt`: 8 組の Cycles の試し（64 サンプル）すべて exit=0・ok=1、1 組 50〜78 秒
+  - `verify-SCN-WLR-OCCLUSION-SETS-2.txt`: `--occlusion --trial --verify` result=pass・EXIT=0（終了コードを先に取った）。同じ面 terrain 99.97 %・rocks 99.98 %・rocks-cliff 99.96 %・plant 100 %、幾何の法線（平面の画素）99.99 %・89.5 %・99.99 %・92.3 %。低木の株の画素の深度の一致 93.6 %・エンジンだけ 0.045 倍
+  - 並べた画 `scene-capture/SCN-WLR-OCCLUSION-SETS/cycles/rocks-sun/occlusion_preview/contact_near.png`・`plant-sun/.../plant_near.png`・`terrain-sun/.../ref_cliff_01.png` と、撮影 `terrain-sky/ref_cliff_01.png`・`rocks-sky/contact_near.png` を開いた: 形・位置・影の位置が重なる。rocks-sun は Cycles の岩の落とす影がエンジンより大きく濃く、plant-sun はエンジンの株の影が濃い塊・Cycles は細い線
+- Notes: rocks-cliff の組は崖錐の岩が視点から 300 m（`kGrayTalusRadius`）の外で置かれず、スキャンの崖の塊も画の 0.07 % なので、地形だけの組とほぼ同じ画（範囲か BVH の列の容量を変えるのは paths の外。文書に記載）。前の項目の岩塊の組（SCN-WLR-OCCLUSION-EXPORT）の照合は今も pass（台本を変えたので `--verify` では古い参照になる）。新しい試験は足していない（verify の照合が確かめる）
+- Next: TASKS.md の次の未完（SCN-WLR-OCCLUSION-METRIC）

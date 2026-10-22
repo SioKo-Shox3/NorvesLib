@@ -15,12 +15,21 @@
 #   GrayRegions.EDGE_MARGIN_PX 画素より離れた画素（輪郭の除外）を分母にし、PlantRegions.same_surface（深度の差が
 #   DEPTH_MATCH_RELATIVE 以内）で、陰影の法線（エンジンの AOV の normal と Cycles の Normal のパス。どちらも頂点の補間）の
 #   角の差が NORMAL_MATCH_DEGREES 以内の画素を同じ面とする。割合が MIN_SAME_SURFACE_FRACTION 以上で合格。物体の識別
-#   （Cycles の Object Index。地形 0・崖錐の岩 1・崖の面の塊 2）ごとの割合も書く。
+#   （Cycles の Object Index。地形 0・崖錐の岩 1・崖の面の塊 2・株の枝 4・葉 5）ごとの割合も書く。
+# 組の種類（参照の記録の set_kind。OcclusionSets.py の組。無い記録は岩塊の組）: 組のどれかの視点の分母に、種類の物体
+#   （REQUIRED_OBJECTS。地形だけ = 地形、岩塊 = 地形と崖錐の岩かスキャンの崖の塊、低木 = 地形と株）が映ること。低木の組は株の PLY が
+#   エンジンの撮影のものと合い、株の形が合うこと（株は枝と葉の間で深度が跳び、同じ面の分母にはほとんど残らないので、
+#   輪郭を含めた Cycles の株の画素でエンジンの深度が合う割合が MIN_SAME_SURFACE_FRACTION 以上、Cycles の地形の画素で
+#   エンジンだけが手前に面を見る画素が株の画素の MAX_PLANT_ENGINE_ONLY_RATIO 倍以下）。
+# 組どうし: エンジンの撮影の Game.exe と実装のハッシュが全組で揃うこと。エンジンの置き場に OcclusionSets.py の
+#   occlusion_sets.json があれば、そこに載った組のすべてに参照があり、組の種類が合うこと。
 # 幾何の法線（Cycles の True Normal の AOV、aux.geometric_normal）: Cycles の深度から戻した位置の隣の画素との差の外積
-#   （深度の面の向き）と比べる。輪郭から離れ上下左右の隣が面に当たる画素のうち、角の差が GEOMETRIC_MATCH_DEGREES 以内の
+#   （深度の面の向き）と比べる。輪郭から離れ上下左右の隣が面に当たり、その 5 画素の幾何の法線が PLANAR_DEGREES 以内で
+#   そろう画素（三角形が画素より大きい所。MIN_PLANAR_PIXELS 以上）のうち、角の差が GEOMETRIC_MATCH_DEGREES 以内の
 #   割合が MIN_GEOMETRIC_FRACTION 以上で、陰影の法線の同じ割合より高いこと（補間の法線を幾何の法線として出していないこと）。
 # 材質: エンジンの AOV のアルベドと粗さが、面のどの画素でも CommonLight.json の gray_material と MATERIAL_AOV_TOLERANCE 以内
-#   （地形も小物も灰色。Cycles は同じ値の Principled BSDF を全体に掛ける）。
+#   （地形も小物も灰色。Cycles は同じ値の Principled BSDF を全体に掛ける）。低木の組は株が模型の色のままなので、同じ面の
+#   画素のうち Cycles の物体が灰色のもの（GRAY_OBJECTS）だけで確かめる。
 # 書くもの: <参照の組>/occlusion_check.json と、並べた画 <参照の組>/occlusion_preview/<視点>.png
 #   （上: エンジンの HDR と Cycles の HDR を同じ露出で、下: 同じ面の判定〔緑 一致、赤 不一致、灰 輪郭、黒 空〕と物体の識別）。
 import json
@@ -39,12 +48,27 @@ MATERIAL_AOV_TOLERANCE = 1.5 / 255.0
 NORMAL_MATCH_DEGREES = 10.0
 GEOMETRIC_MATCH_DEGREES = 2.0
 MIN_GEOMETRIC_FRACTION = 0.5
+# 幾何の法線の判定に使う画素: 上下左右の隣の幾何の法線が中央とこの角度以内（同じ平面）。その画素の下限
+PLANAR_DEGREES = 0.5
+MIN_PLANAR_PIXELS = 10000
 REQUIRED_GAME_ARGS = ("wasteland-common-light", "wasteland-gray-material", "wasteland-finest-lod")
 SCRIPT = "Scripts/Terrain/BlenderOcclusionReference.py"
 BLENDER_REFERENCE = "Scripts/Terrain/BlenderReference.py"
 PROPS_MANIFEST = "occlusion_props.manifest.json"
 PROPS_PLACEMENTS = "occlusion_props.placements.csv"
-OBJECT_NAMES = {0: "terrain", 1: "talus", 2: "cliff_scan", 3: "other_prop"}
+OBJECT_NAMES = {0: "terrain", 1: "talus", 2: "cliff_scan", 3: "other_prop", 4: "plant_branch", 5: "plant_leaf"}
+GRAY_OBJECTS = (0, 1, 2, 3)
+PLANT_OBJECTS = (4, 5)
+# 低木の組の株の形: Cycles の地形の画素でエンジンだけが手前に面を見る画素の、株の画素に対する割合の上限
+MAX_PLANT_ENGINE_ONLY_RATIO = 0.10
+# 組の種類 → 組のどれかの視点に映るべき物体（並びの 1 つごとに、そのうちどれかが映ればよい）
+REQUIRED_OBJECTS = {
+    "terrain": (("terrain",),),
+    "rocks": (("terrain",), ("talus", "cliff_scan")),
+    "plant": (("terrain",), ("plant_branch", "plant_leaf")),
+}
+SETS_FILE = "occlusion_sets.json"
+PLANT_PLY = "reference_plant.ply"
 PREVIEW_DIR = "occlusion_preview"
 
 
@@ -91,8 +115,12 @@ def check_set_inputs(RC, engine_dir, reference_dir, record, verify, trial):
                if RC.sha256_file(os.path.join(engine_dir, f"occlusion_props.{name}.ply")) != digest]
     if changed:
         failures.append(f"小物の形（PLY）が参照の描いたものと違う: {', '.join(changed)}")
-    if not record.get("props_ply_sha256"):
+    if int(record.get("props_count") or 0) > 0 and not record.get("props_ply_sha256"):
         failures.append("小物の形の記録が無い")
+    if record.get("set_kind") == "plant":
+        plant_ply = os.path.join(engine_dir, PLANT_PLY)
+        if not os.path.isfile(plant_ply) or RC.sha256_file(plant_ply) != record.get("plant_ply_sha256"):
+            failures.append(f"比べる株（{PLANT_PLY}）が参照の描いたものと違う")
     if verify:
         inputs_ok, input_failures, _ = RC.check_inputs(engine_dir)
         if not inputs_ok:
@@ -138,16 +166,40 @@ def depth_surface_normal(camera, depth):
     return normal, valid & ~GR.edge_mask(depth)
 
 
+def planar_pixels(geometric_normal, valid):
+    """上下左右の隣の幾何の法線が中央と PLANAR_DEGREES 以内でそろう画素（5 画素が 1 つの平面に乗る。三角形が画素より
+    大きい所）。遠い視点では三角形が画素ほどの大きさになり、隣との差から戻した向きが周りの三角形を均した向きになるので、
+    判定はこの画素で行う"""
+    cos_limit = math.cos(math.radians(PLANAR_DEGREES))
+    center = geometric_normal[1:-1, 1:-1]
+    planar = np.zeros(valid.shape, dtype=bool)
+    same = np.ones(center.shape[:2], dtype=bool)
+    for neighbor in (geometric_normal[1:-1, 2:], geometric_normal[1:-1, :-2], geometric_normal[2:, 1:-1],
+                     geometric_normal[:-2, 1:-1]):
+        same &= np.sum(center * neighbor, axis=-1) >= cos_limit
+    planar[1:-1, 1:-1] = same
+    return valid & planar
+
+
 def geometric_normal_check(camera, cycles_depth, cycles_normal, geometric_normal, object_index):
-    """幾何の法線の AOV が深度の面の向きと合うか（陰影の法線と並べる）"""
-    surface_normal, valid = depth_surface_normal(camera, cycles_depth)
+    """幾何の法線の AOV が深度の面の向きと合うか（陰影の法線と並べる）。判定は 5 画素が 1 つの平面に乗る画素で行い、
+    輪郭から離れた全画素の割合も参考に書く"""
+    surface_normal, valid_all = depth_surface_normal(camera, cycles_depth)
+    valid = planar_pixels(geometric_normal, valid_all)
     cos_limit = math.cos(math.radians(GEOMETRIC_MATCH_DEGREES))
-    geometric_ok = valid & (np.sum(surface_normal * geometric_normal, axis=-1) >= cos_limit)
-    shading_ok = valid & (np.sum(surface_normal * cycles_normal, axis=-1) >= cos_limit)
+    geometric_dot = np.sum(surface_normal * geometric_normal, axis=-1) >= cos_limit
+    shading_dot = np.sum(surface_normal * cycles_normal, axis=-1) >= cos_limit
+    geometric_ok = valid & geometric_dot
+    shading_ok = valid & shading_dot
     pixels = max(int(valid.sum()), 1)
+    all_pixels = max(int(valid_all.sum()), 1)
     result = {"pixels": int(valid.sum()),
               "geometric_fraction": round(float(geometric_ok.sum()) / pixels, 4),
               "shading_fraction": round(float(shading_ok.sum()) / pixels, 4),
+              "planar_degrees": PLANAR_DEGREES, "min_planar_pixels": MIN_PLANAR_PIXELS,
+              "all_pixels": {"pixels": int(valid_all.sum()),
+                             "geometric_fraction": round(float((valid_all & geometric_dot).sum()) / all_pixels, 4),
+                             "shading_fraction": round(float((valid_all & shading_dot).sum()) / all_pixels, 4)},
               "tolerance_degrees": GEOMETRIC_MATCH_DEGREES, "min_fraction": MIN_GEOMETRIC_FRACTION, "per_object": {}}
     cos_shading = np.clip(np.sum(geometric_normal * cycles_normal, axis=-1), -1.0, 1.0)
     hit = valid & (np.linalg.norm(geometric_normal, axis=-1) > 0.5)
@@ -163,6 +215,9 @@ def geometric_normal_check(camera, cycles_depth, cycles_normal, geometric_normal
                                           "geometric_fraction": round(float((geometric_ok & mask).sum()) / count, 4),
                                           "shading_fraction": round(float((shading_ok & mask).sum()) / count, 4)}
     failures = []
+    if result["pixels"] < MIN_PLANAR_PIXELS:
+        failures.append(f"幾何の法線を判定できる画素（5 画素が 1 つの平面に乗る）が {result['pixels']} で "
+                        f"{MIN_PLANAR_PIXELS} に届かない")
     if result["geometric_fraction"] < MIN_GEOMETRIC_FRACTION:
         failures.append(f"幾何の法線が深度の面の向きと {GEOMETRIC_MATCH_DEGREES}° 以内で合う画素の割合 "
                         f"{result['geometric_fraction']:.4f} が {MIN_GEOMETRIC_FRACTION} に届かない")
@@ -185,7 +240,8 @@ def write_preview(path, engine_hdr, cycles_hdr, domain, same, edge, object_index
     judge[edge] = (110, 110, 110)
     judge[domain & ~same] = (220, 50, 50)
     judge[same] = (60, 190, 80)
-    colors = {0: (150, 120, 90), 1: (240, 160, 40), 2: (80, 140, 230), 3: (200, 80, 200)}
+    colors = {0: (150, 120, 90), 1: (240, 160, 40), 2: (80, 140, 230), 3: (200, 80, 200), 4: (120, 70, 40),
+              5: (90, 200, 90)}
     objects = np.zeros(engine_hdr.shape, dtype=np.uint8)
     for value, color in colors.items():
         objects[object_index == value] = color
@@ -231,6 +287,8 @@ def check_view(RC, engine_dir, reference_dir, record, view):
     domain, same, edge = same_surface_masks(engine_depth, engine_normal, cycles_depth, cycles_normal)
     gray = read_json(os.path.join(RC.REPO_ROOT, RC.COMMON_LIGHT_PATH))["gray_material"]
     surface = np.isfinite(engine_depth)
+    if record.get("set_kind") == "plant":
+        surface = same & np.isin(object_index, GRAY_OBJECTS)
     albedo_error = float(np.abs(engine_albedo[surface] - float(gray["albedo"])).max()) if surface.any() else math.inf
     roughness_error = float(np.abs(engine_roughness[surface] - float(gray["roughness"])).max()) if surface.any()         else math.inf
     result["material_aov"] = {"albedo": float(gray["albedo"]), "roughness": float(gray["roughness"]),
@@ -258,18 +316,59 @@ def check_view(RC, engine_dir, reference_dir, record, view):
         "tolerance": {"depth_relative": PR.DEPTH_MATCH_RELATIVE, "normal_degrees": NORMAL_MATCH_DEGREES,
                       "edge_margin_px": GR.EDGE_MARGIN_PX},
     })
+    if record.get("set_kind") == "plant":
+        # 株は枝と葉の間で深度が跳ぶので、同じ面の分母（輪郭を除く）にはほとんど残らない。輪郭を含めた株の画素で形を照らす
+        plant = np.isin(object_index, PLANT_OBJECTS)
+        plant_pixels = int(plant.sum())
+        matched = float((PR.same_surface(cycles_depth, engine_depth) & plant).sum()) / float(max(plant_pixels, 1))
+        nearer = (object_index == 0) & np.isfinite(engine_depth) & \
+            (engine_depth < cycles_depth * (1.0 - PR.DEPTH_MATCH_RELATIVE))
+        engine_only = float(nearer.sum()) / float(max(plant_pixels, 1))
+        result["plant_silhouette"] = {"plant_pixels": plant_pixels, "depth_match_fraction": round(matched, 4),
+                                      "engine_only_nearer_pixels": int(nearer.sum()),
+                                      "engine_only_nearer_ratio": round(engine_only, 4),
+                                      "min_depth_match": MIN_SAME_SURFACE_FRACTION,
+                                      "max_engine_only_ratio": MAX_PLANT_ENGINE_ONLY_RATIO}
+        if plant_pixels == 0 or matched < MIN_SAME_SURFACE_FRACTION:
+            failures.append(f"株の画素（輪郭を含む {plant_pixels}）でエンジンの深度が合う割合 {matched:.4f} が "
+                            f"{MIN_SAME_SURFACE_FRACTION} に届かない")
+        if engine_only > MAX_PLANT_ENGINE_ONLY_RATIO:
+            failures.append(f"Cycles の地形の画素でエンジンだけが手前に面を見る画素が株の画素の {engine_only:.4f} 倍で "
+                            f"{MAX_PLANT_ENGINE_ONLY_RATIO} を超える")
     result["geometric_normal"], geometric_failures = geometric_normal_check(
         meta["camera"], cycles_depth, cycles_normal, geometric_normal, object_index)
     failures.extend(geometric_failures)
     if fraction < MIN_SAME_SURFACE_FRACTION:
         failures.append(f"同じ面の画素の割合 {fraction:.4f} が {MIN_SAME_SURFACE_FRACTION} に届かない")
-    if "talus" not in per_object:
-        failures.append("崖錐の岩の画素が無い（配置かカメラが違う）")
     preview = os.path.join(reference_dir, PREVIEW_DIR, f"{view}.png")
     write_preview(preview, engine_hdr, cycles_hdr, domain, same, edge, object_index)
     result["preview"] = RC.rel_dir(preview)
     result["pass"] = not failures
     return result
+
+
+def check_across_sets(engine_root, reference_root, sets):
+    """組どうしの照合（エンジンの撮影の Game.exe と実装の揃い、OcclusionSets.py の組の一覧の揃い）。失敗の一覧"""
+    failures = []
+    for key in ("game_exe_sha256", "files_sha256"):
+        values = set()
+        for name in sets:
+            path = os.path.join(engine_root, name, "inputs.json")
+            if os.path.isfile(path):
+                values.add(read_json(path).get(key))
+        if len(values) > 1:
+            failures.append(f"組ごとのエンジンの撮影の {key} が揃っていない（{len(values)} 通り）")
+    listing = os.path.join(engine_root, SETS_FILE)
+    if os.path.isfile(listing):
+        listed = read_json(listing).get("sets") or {}
+        missing = [name for name in listed if name not in sets]
+        if missing:
+            failures.append(f"{SETS_FILE} の組 {', '.join(missing)} の参照が無い")
+        for name in sets:
+            kind = read_json(os.path.join(reference_root, name, "inputs.json")).get("set_kind") or "rocks"
+            if name in listed and kind != listed[name].get("kind"):
+                failures.append(f"{name}: 参照の組の種類 {kind} が {SETS_FILE} の種類 {listed[name].get('kind')} と違う")
+    return failures
 
 
 def run(RC, engine_root, reference_root, views, verify, trial):
@@ -309,9 +408,18 @@ def run(RC, engine_root, reference_root, views, verify, trial):
                   f"geometric_normal={(result.get('geometric_normal') or {}).get('geometric_fraction')} "
                   f"shading_normal={(result.get('geometric_normal') or {}).get('shading_fraction')} "
                   f"pass={int(result['pass'])}", flush=True)
+        kind = record.get("set_kind") or "rocks"
+        seen = {obj for result in entry["views"].values() for obj in (result.get("per_object") or {})}
+        for options in REQUIRED_OBJECTS.get(kind, ()):
+            if not seen.intersection(options):
+                reason = f"組（{kind}）のどの視点にも {'・'.join(options)} の画素が無い（配置かカメラが違う）"
+                entry["input_failures"].append(reason)
+                failures.append(f"{name}: {reason}")
         report["sets"][name] = entry
         with open(os.path.join(reference_dir, "occlusion_check.json"), "w", encoding="utf-8") as f:
             json.dump(entry, f, indent=2, ensure_ascii=False)
+    if sets:
+        failures.extend(check_across_sets(engine_root, reference_root, sets))
     report["failures"] = failures
     for reason in failures:
         print(f"REFERENCE_CHECK occlusion failure: {reason}")

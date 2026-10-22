@@ -2512,7 +2512,7 @@
 - notes: 2026-10-22 親が確認 2（SCN-WL-REVIEW-2）とユーザーの所見（地形の造形が荒い・遮蔽による影の落ち方の質が低い）から、ユーザーの順（空と霞 → 遮蔽 → 地形の形 → 植物 → 地面 → 建物）の前半として足した。Sol の批評（写真との比は撮影時の処理を含むので合否にしない・遮蔽の撮影は岩と株を残す・参照の描き直しを項目にする・大きな項目は先に分ける）を反映した。 `wasteland-gray-material` の広げは開発ビルドの起動引数の中だけ（既定の描画は変えない。地形だけの組〔hide=all〕の撮影は変わらないことを確かめる）。時間の見積もり: 灰色の広げ 15 分、書き出しと台本 30 分、撮影 約 3 分（-Build で +3〜6 分）、試しの描画 3〜5 分。 壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える（未達のまま DONE にしない）。20 分を超える Blender・Cycles の描画は反復の外で起動して BLOCKED で待つ（ログに START と `END ... EXIT=` を書き、入力のハッシュ・出力先を blocked の理由に書く。終わったら親が todo に戻す。その間は GPU を使う別の処理を重ねない）。
 
 ## SCN-WLR-OCCLUSION-SETS: 小さな遮蔽の比べの全組をエンジンで撮り、Cycles の試しの描画をそろえる
-- status: todo
+- status: done
 - after: SCN-WLR-OCCLUSION-EXPORT
 - done-when: SCN-WLR-OCCLUSION-EXPORT の契約で、3 組 × 2 照明をそろえる: (i) 地形だけ（DEM の溝。灰色、`wasteland-hide=all`、ref_cliff_01）、(ii) 岩塊・スキャンの塊と地形（灰色、contact_near・ref_cliff_01）、(iii) 低木の根元（`wasteland-hide=all-but-plant`、plant_near。SCN-WLR-PLANT-REF の株）。照明は共通の照明の空だけ・太陽だけ。全組を同じ exe で撮る台本（`Scripts/Terrain/OcclusionSets.py --capture --out <置き場>`、この項目で作る。後の直しの項目もこれで撮り直す）と、全組の Cycles の試しの描画（低いサンプル数）を作る。合否: `--occlusion --trial --verify` で全組の入力の照合と同じ面の画素の割合（90 % 以上）が通る。礫（近景の石と礫）はこの回の対象から外す（撮影でも隠す）。
 - verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-WLR-OCCLUSION-SETS --build`
