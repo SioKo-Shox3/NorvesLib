@@ -201,7 +201,7 @@ SETS = {
         "photos": INTERIOR_PHOTOS, "role_counts": INTERIOR_ROLE_COUNTS, "total": INTERIOR_TOTAL,
         "doc": os.path.join("Docs", "RenderingValidation", "InteriorLightReference.md"),
         "fields": ("page_url", "original_url", "author", "license_url", "light", "contents", "compare"),
-        "header": {"source": "Wikimedia Commons", "subject": "Low sun through windows into rooms (interior light reference)"},
+        "header": {"source": "Wikimedia Commons", "subject": "窓から低い日が差す部屋（室内の光の手本）"},
         "terrain": False, "doc_terms": INTERIOR_DOC_TERMS,
     },
 }

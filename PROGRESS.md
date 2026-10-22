@@ -7117,3 +7117,8 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 証拠（`.harness/runs/20261022-173753/`）: `verify-SCN-INT-REFERENCE-SELECT-1.txt`（`--verify --set InteriorLight` の 31 行すべて OK、result=pass・EXIT=0）、`aux-SCN-INT-REFERENCE-SELECT-valley.txt`（既定の荒野の組の `--verify` が引き続き result=pass・EXIT=0）
 - Notes: 4 つの要素が 1 枚に揃う写真は見つからず、要素ごとに分けた。低い日の写真（window_02）は冬の正午の 16.3° で夕日ではないが、高さの手本として使う。写真の明るさの比はカメラの処理を含むので合否の数値にしない。家具の種類（SCN-GEN-FURNITURE-1・2）は変えていない。新しい試験は足していない
 - Next: TASKS.md の次の未完
+
+### SCN-INT-REFERENCE-SELECT 窓の手本の差し替えを探して BLOCKED（2026-10-22、run 20261022-173753 の反復 15）
+- Done: 評価者の non-blocking の指摘どおり、`ReferencePhotos.py` の室内の組の manifest の `subject` を日本語にした。
+- Notes: blocking の指摘（低い夕日が木の床と漆喰かレンガの壁の部屋に差す写真が無い）を直すため、Commons の全文検索・構造化データ・分類（Sunlight by country ほか約 1 万件）・撮影者 W.carter のアップロードを探したが、1 枚で揃う許諾済みの写真は見つからなかった。条件を 2 枚の組で満たすとみなすか、出どころを広げるかは完了条件の変更なので `blocked/SCN-INT-REFERENCE-SELECT.md` に選択肢と推奨（2 枚の組）を書いた。
+- Next: 人の判断を待つ。TASKS.md の次の未完
