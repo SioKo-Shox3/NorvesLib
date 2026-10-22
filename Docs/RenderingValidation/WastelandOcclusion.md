@@ -60,3 +60,35 @@ LightingPass が RTGI の定数の `environmentParameters.z` を 1 にする。�
 
 診断の出力が既定で無効なことは、ランチャーの 4 シーン（rendering3dtest・mega-bananas・sandbox・night-village）の回帰の撮影で
 確かめた（検証レイヤーのエラー 0、PSNR 55.0〜55.8 dB・平均の差 −0.02 以内。差は比べた撮影の後に入った表示の Blit の ±0.5 段の雑音の分）。
+
+## 比べの書き出しの契約（SCN-WLR-OCCLUSION-EXPORT）
+
+小さな遮蔽をエンジンと Cycles で比べるとき、両方が同じ形・同じ配置・同じ材質・同じカメラと照明を描いていることを、
+画素ごとの同じ面の照合で確かめてから値を比べる。判定日: 2026-10-23。
+
+| 項目 | エンジン | Cycles（`Scripts/Terrain/BlenderOcclusionReference.py`） |
+|---|---|---|
+| 起動引数・入力 | 開発ビルドの `--wasteland-common-light`・`common-light-case=sky か sun`・`--wasteland-gray-material`・`--wasteland-finest-lod`・`--wasteland-aa=fxaa`、`CaptureScene.ps1 -Hdr -Aov` | 地形は `--wasteland-export-terrain` の区画の LOD 0 の PLY（`--mesh`）、小物は撮影のフォルダの `occlusion_props.*`、カメラは `<視点>.aov.json` |
+| 材質 | 地形と小物（崖錐の岩塊・スキャンの崖の塊・配置表の小物）の BaseColor を `gray_material` のアルベド、粗さを同じ値、金属度 0、テクスチャ・法線マップ・崖の色味なし。BaseColor は GBuffer と RTGI・DDGI の当たりの反射率の両方に使われる | 全体に `gray_material` の Principled BSDF（IOR 1.5 で F0 0.04）。法線は頂点の補間した法線 |
+| 小物の形 | `Game/GameModes/Wasteland/WastelandPropExport.cpp` が、作った MegaMesh の LOD 0 をメッシュのローカルの座標の PLY（`occlusion_props.<名前>.ply`、地形の書き出しと同じ並び）と一覧 `occlusion_props.manifest.json` に書く | 形ごとにメッシュを 1 つ作り、配置ごとに共有して置く |
+| 配置 | 置いた小物の行を `occlusion_props.placements.csv`（形・位置・四元数 (x, y, z, w)・拡大率・影を落とすか）に書く。ワールド = 位置 + (四元数の共役の回転)(拡大率 ⊙ ローカル) | 同じ式の行列に座標の変換（BlenderReference.py の `engine_to_blender_matrix4`）を掛ける |
+| 崖錐の岩の範囲 | 灰色の材質の撮影だけ、視点から水平 300 m 以内の岩だけを置く（`kGrayTalusRadius`）。全域の岩（約 27 万個）を最も細かい段で描くと MegaGeometry の BVH のたどりの列（1 << 22）が溢れ、地形がまるごと抜ける（contact_near で bvh_overflow 約 1530 万、`scene-capture/SCN-WLR-OCCLUSION-EXPORT/probe-nogray`）。300 m に限ると溢れ 0 | 書き出しの全行をそのまま置く（同じ岩だけ） |
+| 照合の画 | AOV の深度・法線・アルベド・粗さ | `<視点>.aux.depth.pfm`（深度）・`aux.normal.pfm`（Normal のパス）・`aux.object.pfm`（Object Index。地形 0・崖錐の岩 1・崖の面の塊 2・そのほか 3・空 −1） |
+
+照合（`ReferenceCheck.py --occlusion [--trial] --engine-root <置き場> --reference <参照の置き場> --verify`、本体は `OcclusionCompare.py`）:
+組は参照の置き場の下の `inputs.json`（`cycles_occlusion`）を持つフォルダで、エンジンの置き場の同じ名前のフォルダと組む。
+入力は、小物の形と配置のハッシュ（今のエンジンの撮影のファイルと）、台本・借りた BlenderReference.py・共通の照明・地形のメッシュ（`check_blender_inputs`）、
+起動引数と照明の組、カメラを照らす。同じ面は、どちらかが面に当たった画素から、両方の深度の空との境・深度の跳びの 2 画素（`GrayRegions.edge_mask`）を
+除いた画素を分母に、`PlantRegions.same_surface`（深度の差 1 % 以内）かつ法線の角の差 10° 以内の割合で、90 % 以上を合格とする。
+エンジンの AOV のアルベドと粗さが面のどの画素でも `gray_material` と 1.5/255 以内であることも確かめる。
+
+岩塊の組（rocks-sky。contact_near、空だけ、雲・草と低木・礫・建物・空気遠近・霧を隠す。`scene-capture/SCN-WLR-OCCLUSION-EXPORT/rocks-sky` と
+`cycles/rocks-sky`、Cycles は試しの 64 サンプル）:
+
+- 置いた小物 14931 個（崖錐の岩塊 boulder_01 9476・板 rock_09 5452、影を落とす岩 7、スキャンの崖の塊 3）。Cycles は地形の区画 156（1.23 億三角形）と
+  同じ小物を読み込みに 56 秒、照合の画に 12 秒、本描画に 7 秒（RTX 4080 の OptiX）
+- 同じ面の画素 99.98 %（分母 1891498 画素、輪郭 89844 画素を除く）。地形 100 %、崖錐の岩 99.93 %。エンジンだけ・Cycles だけが面に当たった画素は 0。
+  スキャンの崖の塊はこの視点に映らない
+- エンジンの AOV のアルベドの差は最大 0.0020（8 bit の丸め）、粗さの差 0
+- 並べた画（`cycles/rocks-sky/occlusion_preview/contact_near.png`）で岩の形と位置が重なる。Cycles では岩の根元と岩の間の地面が空の遮蔽で暗く
+  なるが、エンジンではほとんど暗くならない（上の順位 1。影を落とさない岩は RTGI の光線に見えない）。値の比べ方は SCN-WLR-OCCLUSION-METRIC で決める

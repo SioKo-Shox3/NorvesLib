@@ -29,6 +29,7 @@
 #include "GameModes/Wasteland/WastelandFoliage.h"
 #include "GameModes/Wasteland/WastelandNightLights.h"
 #include "GameModes/Wasteland/WastelandTalus.h"
+#include "GameModes/Wasteland/WastelandPropExport.h"
 #include "GameModes/Wasteland/WastelandTerrainExport.h"
 #include "Scenes/SceneCatalog.h"
 #include "Scenes/SceneReadiness.h"
@@ -78,6 +79,13 @@ namespace Game::GameModes
         uint64_t PlacedVertices = 0;
         /// 区画の LOD 0 の書き出し（--wasteland-export-terrain のときだけ。Directory が空なら何もしない）
         WastelandTerrainExport::State TerrainExport;
+        /// 小物の形と配置の書き出し（--wasteland-gray-material で撮影の保存先があるときだけ。小さな遮蔽の比べの Cycles の正解
+        /// Scripts/Terrain/BlenderOcclusionReference.py が同じ形を同じ配置で置く。Directory が空なら何もしない）
+        WastelandPropExport::State PropExport;
+        /// 灰色の材質の撮影で、崖錐の岩を視点（TalusCenterX・TalusCenterZ）から kGrayTalusRadius 以内に限るか
+        bool bLimitTalus = false;
+        float TalusCenterX = 0.0f;
+        float TalusCenterZ = 0.0f;
         /// 1 層目（砂）の材質
         MaterialCreateData Material;
         /// 2 層目（乾いた土）・3 層目（岩肌）と混ぜ方
@@ -188,6 +196,10 @@ namespace Game::GameModes
         // 崖の岩（花崗岩のスキャン。アルベドの平均がリニアで 0.13 : 0.09 : 0.065）に掛ける色。メサの岩肌（rock_face、
         // 0.12 : 0.06 : 0.03）の赤みに寄せ、足元で灰色に浮かないようにする
         constexpr float kCliffTint[3] = {1.0f, 0.75f, 0.55f};
+        /// 灰色の材質の撮影（--wasteland-gray-material。小さな遮蔽の比べ）で崖錐の岩を置く、視点からの水平の距離の上限[m]。
+        /// 比べは最も細かい段（--wasteland-finest-lod）で撮るが、全域の岩（約 27 万個）を最も細かい段で描くと MegaGeometry の
+        /// BVH のたどりの列が溢れて地形が抜ける。視点の近くの遮蔽に効く範囲の岩だけを置き、Cycles の正解にも同じ岩だけを渡す
+        constexpr float kGrayTalusRadius = 300.0f;
         // 地形の材質（3 層の混ぜ合わせ）に掛ける明るさ。3 層のアルベドの画像は、線形の平均を実在の値へ較正してある
         // （Scripts/Terrain/TerrainMaterials.py: 細粒の赤い土 0.16・岩屑と礫 0.17・赤褐色の砂岩 0.22）ので掛けない
         constexpr float kTerrainAlbedoScale = 1.0f;
@@ -1303,6 +1315,32 @@ namespace Game::GameModes
             VariableArray<Component::MegaScatterInstance> fragments;
             WastelandTalus::TalusStats stats;
             WastelandTalus::BuildTalusRocks(field, *pMask, assembly.TalusShapes, exclusions, casters, fragments, stats);
+            if (assembly.bLimitTalus)
+            {
+                const auto keepNear = [&assembly](VariableArray<Component::MegaScatterInstance> &instances)
+                {
+                    VariableArray<Component::MegaScatterInstance> kept;
+                    for (const Component::MegaScatterInstance &instance : instances)
+                    {
+                        const float dx = instance.Position.x - assembly.TalusCenterX;
+                        const float dz = instance.Position.z - assembly.TalusCenterZ;
+                        if (dx * dx + dz * dz <= kGrayTalusRadius * kGrayTalusRadius)
+                        {
+                            kept.push_back(instance);
+                        }
+                    }
+                    instances = std::move(kept);
+                };
+                const size_t plannedCasters = casters.size();
+                const size_t plannedFragments = fragments.size();
+                keepNear(casters);
+                keepNear(fragments);
+                LOG_INFO_F("WASTELAND_TALUS_GRAY_LIMIT radius_m=%.1f center_x=%.2f center_z=%.2f casters=%zu/%zu "
+                           "fragments=%zu/%zu",
+                           static_cast<double>(kGrayTalusRadius), static_cast<double>(assembly.TalusCenterX),
+                           static_cast<double>(assembly.TalusCenterZ), casters.size(), plannedCasters, fragments.size(),
+                           plannedFragments);
+            }
 
             const MegaMeshHandle meshes[WastelandTalus::kTalusMeshCount] = {
                 assembly.Props[static_cast<uint32_t>(Layout::PropKind::TalusCrag)].MegaMesh,
@@ -1343,6 +1381,42 @@ namespace Game::GameModes
             uint32_t fragmentRanges = 0;
             const uint32_t placedCasters = spawnScatter(casters, true, casterRanges);
             const uint32_t placedFragments = spawnScatter(fragments, false, fragmentRanges);
+            if (assembly.PropExport.IsEnabled())
+            {
+                const String meshNames[WastelandTalus::kTalusMeshCount] = {
+                    WastelandPropExport::MeshNameFromLogicalPath(
+                        String(Layout::GetPropKindSpec(Layout::PropKind::TalusCrag).MeshPath)),
+                    WastelandPropExport::MeshNameFromLogicalPath(
+                        String(Layout::GetPropKindSpec(Layout::PropKind::TalusSlab).MeshPath)),
+                };
+                const auto recordScatter = [&](const VariableArray<Component::MegaScatterInstance> &instances, bool bCastShadow,
+                                               uint32_t placedCount)
+                {
+                    if (placedCount == 0)
+                    {
+                        return;
+                    }
+                    for (const Component::MegaScatterInstance &instance : instances)
+                    {
+                        WastelandPropExport::PlacementRecord record;
+                        record.Mesh = meshNames[instance.MeshIndex < WastelandTalus::kTalusMeshCount ? instance.MeshIndex : 0];
+                        record.Position[0] = instance.Position.x;
+                        record.Position[1] = instance.Position.y;
+                        record.Position[2] = instance.Position.z;
+                        record.Rotation[0] = instance.Rotation.x;
+                        record.Rotation[1] = instance.Rotation.y;
+                        record.Rotation[2] = instance.Rotation.z;
+                        record.Rotation[3] = instance.Rotation.w;
+                        record.Scale[0] = instance.Scale.x;
+                        record.Scale[1] = instance.Scale.y;
+                        record.Scale[2] = instance.Scale.z;
+                        record.bCastShadow = bCastShadow;
+                        assembly.PropExport.Placements.push_back(std::move(record));
+                    }
+                };
+                recordScatter(casters, true, placedCasters);
+                recordScatter(fragments, false, placedFragments);
+            }
             // 行を作り終えるまで（シーンの準備ができる前）だけ、仕事の列の予算を上げる
             if (placedCasters + placedFragments != 0 && !assembly.bMassBudgetRaised)
             {
@@ -1365,9 +1439,10 @@ namespace Game::GameModes
         }
 
         /// 材質のテクスチャがそろった読み込みを MegaMesh にしてモデルとして登録し、load.MegaMesh に入れる（解析したメッシュは手放す）。
-        /// pTint は材質の BaseColor に掛ける色（無ければ nullptr）。作れないときは理由を出して false
-        bool CreatePropMegaMesh(GameModeContext &ctx, WastelandPropLoad &load, const char *id, const char *meshPath,
-                                const float *pTint)
+        /// pTint は材質の BaseColor に掛ける色（無ければ nullptr）。灰色の材質（--wasteland-gray-material）なら地形と同じ灰色に
+        /// 替え、小物の書き出しが有効なら LOD 0 の形を書く。作れないときは理由を出して false
+        bool CreatePropMegaMesh(GameModeContext &ctx, WastelandAssembly &assembly, WastelandPropLoad &load, const char *id,
+                                const char *meshPath, const float *pTint)
         {
             auto &megaGeometry = ctx.RenderResourcesRef.MegaGeometry();
             const MaterialCreateData &material = load.Material;
@@ -1388,11 +1463,30 @@ namespace Game::GameModes
                 return false;
             }
             createInfo.PageSource = load.PageSource;
-            createInfo.Material.AlbedoTexture = material.AlbedoTexture;
-            createInfo.Material.NormalTexture = material.NormalTexture;
-            createInfo.Material.ORMTexture = material.ORMTexture;
-            createInfo.Material.bNormalTwoChannel = material.bNormalTwoChannel;
-            if (pTint != nullptr)
+            if (assembly.PropExport.IsEnabled())
+            {
+                WastelandPropExport::ExportMesh(assembly.PropExport, String(meshPath), *load.Mesh);
+            }
+            if (assembly.bGrayMaterial)
+            {
+                // 灰色の材質: 地形の灰色と同じく、既定の白のアルベド・平らな法線のテクスチャに BaseColor（GBuffer のアルベドと
+                // RTGI・DDGI の当たりの反射率の両方に使われる）と粗さ・金属度の定数を掛ける。法線は頂点の補間した法線のまま。
+                // 崖の色味（pTint）も掛けない
+                for (uint32_t channel = 0; channel < 3; ++channel)
+                {
+                    createInfo.Material.BaseColor[channel] = assembly.GrayAlbedo;
+                }
+                createInfo.Material.Roughness = assembly.GrayRoughness;
+                createInfo.Material.Metallic = 0.0f;
+            }
+            else
+            {
+                createInfo.Material.AlbedoTexture = material.AlbedoTexture;
+                createInfo.Material.NormalTexture = material.NormalTexture;
+                createInfo.Material.ORMTexture = material.ORMTexture;
+                createInfo.Material.bNormalTwoChannel = material.bNormalTwoChannel;
+            }
+            if (pTint != nullptr && !assembly.bGrayMaterial)
             {
                 for (uint32_t channel = 0; channel < 3; ++channel)
                 {
@@ -1432,7 +1526,7 @@ namespace Game::GameModes
                 if (load.bStarted)
                 {
                     const WastelandCliffScan::AssetSpec &spec = table.Assets[assetIndex];
-                    CreatePropMegaMesh(ctx, load, spec.Id.c_str(), spec.MeshPath.c_str(), nullptr);
+                    CreatePropMegaMesh(ctx, assembly, load, spec.Id.c_str(), spec.MeshPath.c_str(), nullptr);
                 }
             }
             uint32_t placed = 0;
@@ -1459,6 +1553,21 @@ namespace Game::GameModes
                 component->SetMegaMeshHandle(load.MegaMesh);
                 component->SetCastShadow(true);
                 ++placed;
+                if (assembly.PropExport.IsEnabled())
+                {
+                    WastelandPropExport::PlacementRecord record;
+                    record.Mesh = WastelandPropExport::MeshNameFromLogicalPath(spec.MeshPath);
+                    record.Position[0] = placement.Position.x;
+                    record.Position[1] = placement.Position.y;
+                    record.Position[2] = placement.Position.z;
+                    record.Rotation[0] = placement.Rotation.x;
+                    record.Rotation[1] = placement.Rotation.y;
+                    record.Rotation[2] = placement.Rotation.z;
+                    record.Rotation[3] = placement.Rotation.w;
+                    record.Scale[0] = record.Scale[1] = record.Scale[2] = placement.Scale;
+                    record.bCastShadow = true;
+                    assembly.PropExport.Placements.push_back(std::move(record));
+                }
 
                 // Entity の行ベクトルのワールド行列は、ローカルの向きを四元数の標準の回転の逆（共役の回転）で写す
                 const NorvesLib::Math::Quaternion &q = placement.Rotation;
@@ -1515,7 +1624,7 @@ namespace Game::GameModes
                 }
                 const Layout::PropKind kind = static_cast<Layout::PropKind>(kindIndex);
                 const bool bCliff = kind == Layout::PropKind::Cliff01 || kind == Layout::PropKind::Cliff02;
-                if (!CreatePropMegaMesh(ctx, load, spec.Id, spec.MeshPath, bCliff ? kCliffTint : nullptr))
+                if (!CreatePropMegaMesh(ctx, assembly, load, spec.Id, spec.MeshPath, bCliff ? kCliffTint : nullptr))
                 {
                     continue;
                 }
@@ -1568,11 +1677,28 @@ namespace Game::GameModes
                 {
                     continue;
                 }
+                const NorvesLib::Math::Quaternion rotation(NorvesLib::Math::Vector3(0.0f, 1.0f, 0.0f), placement.Yaw);
                 object->SetPosition(placement.X, placement.Y, placement.Z);
                 object->SetScale(placement.Scale, placement.Scale, placement.Scale);
-                object->SetRotation(NorvesLib::Math::Quaternion(NorvesLib::Math::Vector3(0.0f, 1.0f, 0.0f), placement.Yaw));
+                object->SetRotation(rotation);
                 component->SetMegaMeshHandle(assembly.Props[kindIndex].MegaMesh);
                 component->SetCastShadow(WastelandNightLights::CastsShadow(placement.Kind));
+                if (assembly.PropExport.IsEnabled())
+                {
+                    WastelandPropExport::PlacementRecord record;
+                    record.Mesh =
+                        WastelandPropExport::MeshNameFromLogicalPath(String(Layout::GetPropKindSpec(placement.Kind).MeshPath));
+                    record.Position[0] = placement.X;
+                    record.Position[1] = placement.Y;
+                    record.Position[2] = placement.Z;
+                    record.Rotation[0] = rotation.x;
+                    record.Rotation[1] = rotation.y;
+                    record.Rotation[2] = rotation.z;
+                    record.Rotation[3] = rotation.w;
+                    record.Scale[0] = record.Scale[1] = record.Scale[2] = placement.Scale;
+                    record.bCastShadow = WastelandNightLights::CastsShadow(placement.Kind);
+                    assembly.PropExport.Placements.push_back(std::move(record));
+                }
                 ++placedPerKind[kindIndex];
                 ++placed;
                 placedPlacements.push_back(placement);
@@ -1660,6 +1786,11 @@ namespace Game::GameModes
             if (!assembly.CliffScanTable.Placements.empty())
             {
                 PlaceCliffScans(ctx, field, assembly);
+            }
+            if (assembly.PropExport.IsEnabled())
+            {
+                WastelandPropExport::WriteRecords(assembly.PropExport);
+                assembly.PropExport.Placements = VariableArray<WastelandPropExport::PlacementRecord>();
             }
         }
     } // namespace
@@ -1827,6 +1958,14 @@ namespace Game::GameModes
                 assembly->bGrayMaterial = true;
                 assembly->GrayAlbedo = data.m_CommonLight.Def.GrayMaterialAlbedo;
                 assembly->GrayRoughness = data.m_CommonLight.Def.GrayMaterialRoughness;
+                // 撮影の保存先があれば、小物の形と配置を occlusion_props.* として書く（開発ビルドの撮影だけ）
+                if (!data.m_CaptureDirectory.empty())
+                {
+                    assembly->PropExport.Directory = data.m_CaptureDirectory;
+                }
+                assembly->bLimitTalus = true;
+                assembly->TalusCenterX = pose.Position[0];
+                assembly->TalusCenterZ = pose.Position[2];
             }
             if (CollectTerrainTiles(*assetSystem, data.m_pHeightField->GetGridLayout(), *assembly))
             {

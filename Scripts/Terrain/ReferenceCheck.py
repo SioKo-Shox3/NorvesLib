@@ -126,6 +126,12 @@
 #       読み飛ばしの分類と場所、TLAS の行、光線の始点のずらしの定数を <撮影先>/occlusion_diag_check.json と
 #       <撮影先>/occlusion_diag/<視点>.png に書く（本体は OcclusionDiag.py。結果は Docs/RenderingValidation/WastelandOcclusion.md）。
 #
+#   python Scripts/Terrain/ReferenceCheck.py --occlusion [--trial] --engine-root <エンジンの撮影の置き場> --reference <参照の置き場>
+#          [--views contact_near] [--verify]
+#       小さな遮蔽の比べの書き出しの契約（灰色の材質の小物と地形の形・配置・カメラ・照明）を、エンジンの撮影と
+#       BlenderOcclusionReference.py の Cycles の参照の組ごとに照らし、同じ面を見ている画素の割合（輪郭を除く）を測る
+#       （本体は OcclusionCompare.py。結果は <参照の組>/occlusion_check.json と occlusion_preview/<視点>.png）。
+#
 #   python Scripts/Terrain/ReferenceCheck.py --cloud-far --engine <撮影先> [--views ref_far_01,ref_far_02] [--verify]
 #       [--expect Scripts/Terrain/ExpectSpecs/cloud-far-composite.json] [--flicker]
 #       CaptureScene.ps1 -GameArgs cloud-dump の手本の視点の撮影で、遠い雲が消える原因（中身・45 km の打ち切り・距離の溶かし・
@@ -6622,6 +6628,9 @@ def main():
                         help="雲の密度場の書き出し（--cloud-dump）から雲の透過率を求め直し、エンジンの描画の値と照らす")
     parser.add_argument("--occlusion-diag", action="store_true",
                         help="RTGI の遮蔽の診断（-Aov の撮影の RTGI の空の分と読み飛ばし。OcclusionDiag.py）を視点ごとに測る")
+    parser.add_argument("--occlusion", action="store_true",
+                        help="小さな遮蔽の比べの書き出しの契約と同じ面の画素の割合を、--engine-root と --reference の組ごとに照らす"
+                             "（OcclusionCompare.py）")
     parser.add_argument("--cloud-far", action="store_true",
                         help="手本の視点で遠い雲が消える原因を、雲の書き出しの反実仮想で量に分ける")
     parser.add_argument("--cloud", action="store_true",
@@ -6782,6 +6791,12 @@ def main():
             return 1
         views = [v.strip() for v in args.views.split(",") if v.strip()]
         return OcclusionDiag.run(sys.modules[__name__], capture_dir, views, args.verify)
+    if args.occlusion:
+        import OcclusionCompare
+        absolute = lambda d: os.path.normpath(d if os.path.isabs(d) else os.path.join(REPO_ROOT, d))
+        views = [v.strip() for v in args.views.split(",") if v.strip()]
+        return OcclusionCompare.run(sys.modules[__name__], absolute(args.engine_root) if args.engine_root else "",
+                                    absolute(args.reference) if args.reference else "", views, args.verify, args.trial)
     if args.cloud_far:
         import CloudFarCause
         capture = args.capture or (args.engine[0] if args.engine else "")

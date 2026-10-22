@@ -7201,3 +7201,17 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `verify-SCN-WL-FINEST-LOD-CRASH-4.txt`: 回帰 result=pass・EXIT=0（before は `aux-SCN-WL-FINEST-LOD-CRASH-regression-before.txt`、この反復の最初に撮った）。PSNR mega-bananas 65.89・night-village 69.87・rendering3dtest 104.02・sandbox inf、平均の差 0.000。rendering3dtest の撮影を開き、家・球・岩・地面が以前どおり
 - Notes: rocks の 2 枚は落ちずに撮れるが、地形がまるごと抜け岩も欠ける。BVH のたどりの列（1 << 22 の constexpr）が node_peak 約 1480 万・leaf_peak 約 540 万で溢れ（bvh_overflow 約 1540 万）、contact_near は可視クラスタの列（838 万）も約 1404 万で溢れる。列を広げる試し（列 1 << 24 は区間の上限 838 万のままだと VRAM 不足で同じ落ち方、区間の上限を 1 << 22 にすると溢れ 0 で撮れるが BVH の溢れで地形は抜けたまま）は戻した。数と VRAM の見込みは NEXT_FINDINGS に書いた（遮蔽の比べ SCN-WLR-OCCLUSION-EXPORT の前提に関わる）。新しい試験は足していない（verify の撮影が確かめる）
 - Next: TASKS.md の次の未完
+
+### SCN-WLR-OCCLUSION-EXPORT 小さな遮蔽の比べの書き出しの契約と岩塊の組 1 つ（2026-10-23、run 20261022-173753 の反復 27）
+- Done: 開発ビルドの `--wasteland-gray-material` を小物（崖錐の岩塊・スキャンの崖の塊・配置表の小物。`CreatePropMegaMesh`）にも掛けた（BaseColor を gray_material のアルベド、粗さを同じ値、金属度 0、テクスチャ・法線マップ・崖の色味なし。BaseColor は GBuffer と RTGI・DDGI の当たりの反射率の両方に使われる）。撮影の保存先があれば、小物の LOD 0 の形（ローカルの座標の PLY）と置いた配置（位置・四元数・拡大率・影を落とすか）を `occlusion_props.*` に書く `Game/GameModes/Wasteland/WastelandPropExport.{h,cpp}` を足した（地形の書き出し WastelandTerrainExport.* は Cycles の参照の記録の terrain_mesh の入力なので触らない）。灰色の材質の撮影だけ、崖錐の岩を視点から水平 300 m 以内に限る（`kGrayTalusRadius`）。Cycles 側は `Scripts/Terrain/BlenderOcclusionReference.py`（BlenderReference.py の関数を借り、BlenderReference.py は変えない。深度・Normal・Object Index の照合の画と本描画、入力の記録）、照合は `ReferenceCheck.py --occlusion`（`OcclusionCompare.py`。小物の形と配置・台本・共通の照明・地形のメッシュ・起動引数と照明の組・カメラの照合、AOV の材質が灰色か、同じ面の画素の割合）。契約と結果を `Docs/RenderingValidation/WastelandOcclusion.md` の「比べの書き出しの契約」に書いた
+- 結果: 岩塊の組（rocks-sky、contact_near、空だけ）で置いた小物 14931 個（boulder_01 9476・rock_09 5452・スキャンの崖の塊 3）。同じ面の画素 99.98 %（分母 1891498、輪郭 89844 を除く。地形 100 %・崖錐の岩 99.93 %、片方だけが面に当たった画素 0）。エンジンの AOV のアルベドの差は最大 0.0020（8 bit の丸め）・粗さの差 0。Cycles の試し（64 サンプル）は読み込み 56 秒・照合の画 12 秒・本描画 7 秒
+- 証拠（`.harness/runs/20261022-173753/`）:
+  - `verify-SCN-WLR-OCCLUSION-EXPORT-6.txt`: Debug の Game のビルド EXIT=0（`-4.txt` は新しい .cpp が vcxproj に入る前のリンクの失敗。`-1.txt` は WastelandPropExport に分ける前の版）
+  - `verify-SCN-WLR-OCCLUSION-EXPORT-5.txt`: contact_near（finest-lod・灰色・岩あり・HDR・AOV・FXAA）result=pass・EXIT=0、`[ERROR]` 0、全フレームで bvh_overflow=0、`WASTELAND_PROP_EXPORT meshes=10 failed=0 placements=14931`、`WASTELAND_TALUS_GRAY_LIMIT casters=7/96 fragments=14921/274965`
+  - `aux-SCN-WLR-OCCLUSION-EXPORT-cycles-trial.txt`: `BlenderOcclusionReference.py --trial` の START・END と EXIT=0
+  - `verify-SCN-WLR-OCCLUSION-EXPORT-8.txt`: `--occlusion --trial --verify` result=pass・EXIT=0（`-7.txt` は起動引数の記録の先頭の -- を照合が外していなかった版の fail）
+  - 並べた画 `scene-capture/SCN-WLR-OCCLUSION-EXPORT/cycles/rocks-sky/occlusion_preview/contact_near.png` を開いた: 岩の形と位置、地形の稜線が重なり、同じ面の判定は輪郭の線のほか全面が一致。Cycles では岩の根元と岩の間の地面が空の遮蔽で暗くなるが、エンジンではほとんど暗くならない（SCN-WLR-OCCLUSION-DIAG の原因 1）
+  - `aux-SCN-WLR-OCCLUSION-EXPORT-terrain-only.txt`: 地形だけの組（hide=all・灰色・ref_cliff_01）を撮り、SCN-WL-LIGHT-FINAL/gray（同じ起動引数）と比べて深度が同一・平均の輝度の比 0.999999・画素の差の 99 % 点 0（360 画素が違う）。灰色の広げは地形だけの撮影を変えない
+  - `aux-SCN-WLR-OCCLUSION-EXPORT-probe-nogray.txt`: 灰色・範囲の制限の前の同じ組は bvh_overflow 約 1530 万で地形がまるごと抜ける（`scene-capture/SCN-WLR-OCCLUSION-EXPORT/probe-nogray/contact_near.png`）
+- Notes: 崖錐の岩を 300 m に限るのは、最も細かい段で全域の岩を描くと BVH のたどりの列（Library の constexpr 1 << 22）が溢れて地形が抜けるため（列を広げる直しは paths の外）。比べの撮影（灰色の材質）だけに掛け、Cycles にも同じ岩だけを渡すので照合は成り立つ。視点から 300 m より遠い岩の遮蔽は比べに入らない。既定の描画（灰色の材質なし）の経路は変えていないので回帰の撮影は回していない。新しい試験は足していない（verify の検査が確かめる）
+- Next: TASKS.md の次の未完（SCN-WLR-OCCLUSION-SETS）

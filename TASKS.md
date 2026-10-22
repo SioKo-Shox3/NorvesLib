@@ -2502,7 +2502,7 @@
 - notes: 危険地帯（MegaGeometry・メモリ）。2026-10-23 親が SCN-WLR-OCCLUSION-DIAG の BLOCKED（推奨の案 1）から足した。遮蔽の比べ（Cycles のメッシュと同じ最も細かい段で撮る）の前提。時間の見積もり: 回帰の before・after 各 7 分、ビルド 3〜6 分、落ちる撮影の再現 1 本 約 3 分、WER と記号の引き 10〜20 分。壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える。
 
 ## SCN-WLR-OCCLUSION-EXPORT: 小さな遮蔽の比べの書き出しの契約と、岩塊の組 1 つを成り立たせる
-- status: todo
+- status: done
 - after: SCN-WLR-OCCLUSION-DIAG, SCN-WL-FINEST-LOD-CRASH
 - done-when: 小さな遮蔽を Cycles と比べるための書き出しの契約を作り、崖錐の岩塊・スキャンの崖の塊と地形の組（空だけ）の 1 組で成り立たせる。(1) 開発ビルドの `wasteland-gray-material` を、地形だけでなく小物（崖錐の岩塊・スキャンの崖の塊。`WastelandRoutine.cpp` の `CreatePropMegaMesh` の材質）にも掛け、ラスタ・RTGI の当たりの材質・Cycles でアルベド・粗さ・法線の扱いをそろえて AOV で確かめる。(2) 岩塊・スキャンの塊の配置と形を Cycles へ渡す書き出しと、それを読む Blender の台本を、`BlenderReference.py` を変えずに別の台本（`Scripts/Terrain/BlenderOcclusionReference.py` など）で作る（BlenderReference.py は参照の記録が script_sha256 を持ち、変えるとほかの参照が古くなる）。(3) 書き出しの契約: Cycles の深度・幾何の法線・物体の識別の AOV を出し、エンジンと Cycles の同じ画素が同じ面を見ているかを、位置と法線の許容差と輪郭の除外で判定する（既存の `PlantRegions.py` の面の照合を使う）。一致した画素の割合を記録する。合否: 岩塊の組（空だけ）のエンジンの撮影と Cycles の試しの描画（低いサンプル数）がそろい、入力の記録（形のハッシュ・配置・カメラ・照明）の照合と、同じ面の画素の割合（90 % 以上。輪郭を除く）が `ReferenceCheck.py --occlusion --trial --verify` で通る。並べて開いて形と影の位置が重なることを確かめる。礫（近景の石と礫）はこの回の対象から外す（撮影でも隠す）。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
