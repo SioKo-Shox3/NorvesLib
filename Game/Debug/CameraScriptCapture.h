@@ -38,6 +38,9 @@ namespace Game::Debug
 
         bool IsConfigured() const { return !m_OutputDirectory.empty(); }
 
+        /// 撮るごとに、PNG と同じフレームのブルームの前の HDR（<視点>.<tag>.hdr.pfm・.hdr.json）も書くか（--capture-hdr。開発ビルドだけ）
+        void SetCaptureHdr(bool bEnable) { m_bCaptureHdr = bEnable; }
+
         /// このフレームを 0 番として、決定的な撮影のエポックを始め直す（台本の Tick から呼ぶ）
         void BeginEpoch();
 
@@ -67,6 +70,7 @@ namespace Game::Debug
         uint32_t m_ReadyFrames = 0;
         bool m_bFailed = false;
         bool m_bWaitingResult = false;
+        bool m_bCaptureHdr = false;
         NorvesLib::Core::Container::String m_PendingTag;
         uint64_t m_PendingEngineFrame = 0;
         /// 結果を待ち始めてから描いた（OnPostRender の）回数

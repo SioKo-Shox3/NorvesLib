@@ -1,0 +1,82 @@
+{
+  "description": "SCN-WL-CLOUD-FAR-RANGE: 雲を積む範囲を固定の 45 km の打ち切りから雲の層の球殻に入る所から出る所までに替え、30〜45 km の距離の溶かしを外したことの合否。遠い雲は雲までの区間の空気遠近（SCN-WL-CLOUD-FAR-COMPOSITE）で地平線の霞に溶ける。今の歩（最大 192 歩）と細かい歩（最大 1024 歩、1 歩 90 m）の写真と同じ画素の範囲の平均の差、ref_far_01 の雲の範囲の時間方向のちらつき（8 フレームおきの連番 8 枚の HDR（ブルームの前）の Y の標準偏差 ÷ 平均の平均。変更の前の連番との比）、ref_far_01 の霞の後の雲のコントラストの平均（変更の前 0.7006）、雲の合成の期待値（SCN-WL-CLOUD-FAR-COMPOSITE の行）を見る。",
+  "rows": [
+    {
+      "mode": "cloud_far",
+      "view": "ref_far_01",
+      "quantity": "fine_radiance_mean_rel",
+      "max": 0.05,
+      "note": "写真と同じ画素の範囲の視線の、霞の後の雲の放射輝度の Y の平均の、今の歩と細かい歩の相対差"
+    },
+    {
+      "mode": "cloud_far",
+      "view": "ref_far_01",
+      "quantity": "fine_opacity_mean_rel",
+      "max": 0.05,
+      "note": "同じ範囲の雲の不透明度の平均の、今の歩と細かい歩の相対差"
+    },
+    {
+      "mode": "cloud_far",
+      "view": "ref_far_01",
+      "quantity": "fine_rays",
+      "min": 100,
+      "note": "細かい歩と比べた視線の数（検査が成り立つこと）"
+    },
+    {
+      "mode": "cloud_far",
+      "view": "ref_far_02",
+      "quantity": "fine_radiance_mean_rel",
+      "max": 0.05,
+      "note": "写真と同じ画素の範囲の視線の、霞の後の雲の放射輝度の Y の平均の、今の歩と細かい歩の相対差"
+    },
+    {
+      "mode": "cloud_far",
+      "view": "ref_far_02",
+      "quantity": "fine_opacity_mean_rel",
+      "max": 0.05,
+      "note": "同じ範囲の雲の不透明度の平均の、今の歩と細かい歩の相対差"
+    },
+    {
+      "mode": "cloud_far",
+      "view": "ref_far_02",
+      "quantity": "fine_rays",
+      "min": 100,
+      "note": "細かい歩と比べた視線の数（検査が成り立つこと）"
+    },
+    {
+      "mode": "cloud_far",
+      "view": "ref_far_01",
+      "quantity": "flicker_ratio",
+      "max": 1.0,
+      "note": "雲の範囲の画素の時間方向のちらつきの、変更の後 ÷ 前（前と同じか小さい）"
+    },
+    {
+      "mode": "cloud_far",
+      "view": "ref_far_01",
+      "quantity": "flicker_pixels",
+      "min": 100,
+      "note": "ちらつきを数えた雲の範囲の画素の数（検査が成り立つこと）"
+    },
+    {
+      "mode": "cloud_far",
+      "view": "ref_far_01",
+      "quantity": "contrast_mean",
+      "min": 0.7007,
+      "note": "写真と同じ画素の範囲の霞の後の雲のコントラストの平均が、変更の前（SCN-WL-CLOUD-FAR-COMPOSITE の撮影の 0.7006）より上がる"
+    },
+    {
+      "mode": "cloud_far",
+      "view": "ref_far_01",
+      "quantity": "composite_max_rel",
+      "max": 0.05,
+      "note": "GPU の霞の後の雲の放射輝度と、同じ入力から雲までの区間の空気遠近を 256 歩で積み直した期待値の、RGB の相対差の最大"
+    },
+    {
+      "mode": "cloud_far",
+      "view": "ref_far_02",
+      "quantity": "composite_max_rel",
+      "max": 0.05,
+      "note": "GPU の霞の後の雲の放射輝度と、同じ入力から雲までの区間の空気遠近を 256 歩で積み直した期待値の、RGB の相対差の最大"
+    }
+  ]
+}

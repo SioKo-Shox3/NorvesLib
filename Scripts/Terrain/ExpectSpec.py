@@ -43,7 +43,10 @@
 #       （CloudFarCause.py の composite。雲までの区間の空気遠近を GPU の書き出しの霞の前の値から細かい歩で積み直した値）。
 #       composite_max_rel（GPU の霞の後の雲の放射輝度と期待値の RGB の相対差の最大）、double_add_max_rel（手前の大気を二重に
 #       足す合成の値と期待値の差の最大。composite_max_rel の閾値より大きければ、二重の足し込みはその行で落ちる）、
-#       composite_rays・composite_partial_rays（比べた視線の数と、そのうち不透明度が 1 − 0.05 以下の視線の数）
+#       composite_rays・composite_partial_rays（比べた視線の数と、そのうち不透明度が 1 − 0.05 以下の視線の数）。
+#       fine_radiance_mean_rel・fine_opacity_mean_rel・fine_rays（写真と同じ画素の範囲の霞の後の雲の放射輝度の Y・不透明度の平均の、
+#       今の歩と細かい歩の相対差と視線の数。CloudFarCause.py の fine）、flicker_ratio・flicker_pixels（--flicker の ref_far_01 の
+#       雲の範囲の時間方向のちらつきの変更の後 ÷ 前と画素の数）、contrast_mean（段 0 の霞の後の雲のコントラストの平均）
 #     building（ReferenceCheck.py --building。行の鍵は mode・view・quantity と閾値だけ）: エンジンのアルベドの AOV の、Cycles の
 #       建物の画素での線形の輝度の分布（視点の検査の結果の albedo）。albedo_p5・albedo_median・albedo_p95（5・50・95 % 点）、
 #       albedo_median_ratio（エンジンの中央値 ÷ 同じ画素の Cycles の拡散の色の中央値。Cycles は glTF の基本色をテクセルごとに
@@ -107,7 +110,13 @@ ATMOS_REF_QUANTITIES = {"sun_transmittance": (("illuminance", "valley_floor"), "
 CLOUD_FAR_QUANTITIES = {"composite_max_rel": (("composite",), "max_rel"),
                         "double_add_max_rel": (("composite",), "double_add_max_rel"),
                         "composite_rays": (("composite",), "rays"),
-                        "composite_partial_rays": (("composite",), "partial_rays")}
+                        "composite_partial_rays": (("composite",), "partial_rays"),
+                        "fine_radiance_mean_rel": (("fine",), "radiance_mean_rel"),
+                        "fine_opacity_mean_rel": (("fine",), "opacity_mean_rel"),
+                        "fine_rays": (("fine",), "rays"),
+                        "flicker_ratio": (("flicker",), "ratio"),
+                        "flicker_pixels": (("flicker",), "pixels"),
+                        "contrast_mean": (("stages", "current"), "contrast_mean")}
 # building の量 → 視点の検査の結果の (節, 鍵)
 BUILDING_QUANTITIES = {"albedo_p5": ("albedo", "p5"), "albedo_median": ("albedo", "p50"), "albedo_p95": ("albedo", "p95"),
                        "albedo_median_ratio": ("albedo", "ratio_p50"),

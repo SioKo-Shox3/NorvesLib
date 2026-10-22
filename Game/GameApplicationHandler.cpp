@@ -2500,6 +2500,7 @@ namespace Game
             m_CameraScriptCapture.Configure(captureDirectory, m_CaptureViewNames[0]);
 #if NORVES_BUILD_DEVELOPMENT
             m_MultiViewCapture.SetCaptureHdr(bCaptureHdr);
+            m_CameraScriptCapture.SetCaptureHdr(bCaptureHdr);
             m_MultiViewCapture.SetCaptureAov(bCaptureAov);
             m_MultiViewCapture.SetCaptureAtmosphere(bAtmosphereDump);
             if (bAtmosphereDump)

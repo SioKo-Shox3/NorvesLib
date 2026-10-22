@@ -50,10 +50,9 @@ RADIANCE_FLOOR = 1.0
 
 # cloud_layer の GLSL の定数（Common/CloudLayerCommon.glsl。契約の文書と同じ）
 PI = 3.14159265359
-MAX_MARCH_DISTANCE = 45000.0
-FADE_START_DISTANCE = 30000.0
+# 視線は雲の層の球殻に入る所から出る所まで進める（SCN-WL-CLOUD-FAR-RANGE の前は 45 km の打ち切りと 30〜45 km の溶かしがあった）
 MIN_PRIMARY_STEPS = 32
-MAX_PRIMARY_STEPS = 96
+MAX_PRIMARY_STEPS = 192
 PRIMARY_STEP_TARGET = 90.0
 LIGHT_STEPS = 6
 LIGHT_FIRST_STEP = 70.0
@@ -65,7 +64,9 @@ MIN_TRANSMITTANCE = 0.01
 DENSITY_THRESHOLD = 0.001
 # 遠い雲の消える原因を分ける診断の切り替え（GLSL の kCloudDiagnostic*）。書き出しの反実仮想の列（SCN-WL-CLOUD-FAR-CAUSE）が
 # 視線の値の 7 行目の w の 4 の位より上に持つ
+# 細かい歩で積む（歩数の上限を DIAGNOSTIC_MAX_PRIMARY_STEPS へ上げる。SCN-WL-CLOUD-FAR-RANGE の前は 45 km の打ち切りを外す切り替え）
 DIAGNOSTIC_NO_MARCH_LIMIT = 1
+# 距離の溶かしを外す（SCN-WL-CLOUD-FAR-RANGE で溶かしそのものを外したので、今は何も変えない）
 DIAGNOSTIC_NO_FADE = 2
 # 雲までの区間の空気遠近を外す（SCN-WL-CLOUD-FAR-COMPOSITE の前は独自の 22 km の霞を外す切り替えだった）
 DIAGNOSTIC_NO_HAZE = 4
@@ -333,12 +334,10 @@ class CloudModel:
                 return result
             start = max(top_hit[0], 0.0)
             end = bottom_hit[0] if (bottom_hit[0] <= bottom_hit[1] and bottom_hit[0] > 0.0) else top_hit[1]
-        no_limit = bool(flags & DIAGNOSTIC_NO_MARCH_LIMIT)
-        max_steps = DIAGNOSTIC_MAX_PRIMARY_STEPS if no_limit else MAX_PRIMARY_STEPS
-        if not (end > start) or (not no_limit and start > MAX_MARCH_DISTANCE):
+        fine = bool(flags & DIAGNOSTIC_NO_MARCH_LIMIT)
+        max_steps = DIAGNOSTIC_MAX_PRIMARY_STEPS if fine else MAX_PRIMARY_STEPS
+        if not (end > start):
             return result
-        if not no_limit:
-            end = min(end, start + MAX_MARCH_DISTANCE)
         segment = end - start
         step_count = int(np.clip(int(segment / PRIMARY_STEP_TARGET), MIN_PRIMARY_STEPS, max_steps))
         step_length = segment / step_count
@@ -399,8 +398,8 @@ class CloudModel:
         if not flags & DIAGNOSTIC_NO_HAZE and self.aerial_enabled and cloud_distance > 0.0:
             aerial_transmittance, aerial_scattering = self.aerial(direction, cloud_distance)
         haze = float(np.mean(aerial_transmittance))
-        fade = 1.0 if flags & DIAGNOSTIC_NO_FADE else 1.0 - float(smoothstep(FADE_START_DISTANCE, MAX_MARCH_DISTANCE, start))
-        radiance = (scattered * aerial_transmittance + aerial_scattering * opacity) * fade
+        fade = 1.0
+        radiance = scattered * aerial_transmittance + aerial_scattering * opacity
         result.update({
             "marched": True, "start_distance": start, "end_distance": end, "step_count": step_count,
             "step_length": step_length, "steps_taken": steps_taken, "transmittance": transmittance,

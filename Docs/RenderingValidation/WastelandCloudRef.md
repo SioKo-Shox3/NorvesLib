@@ -332,3 +332,50 @@ GPU 時間（ref_far_01、300 フレームの中央値、RelWithDebInfo）: 替�
 powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -Build -RequireAssets -Width 1920 -Height 1080 -Hdr -Views ref_far_01,ref_far_02 -GameArgs cloud-dump -OutDir .harness/runs/scene-capture/SCN-WL-CLOUD-FAR-COMPOSITE
 python Scripts/Terrain/ReferenceCheck.py --cloud-far --engine .harness/runs/scene-capture/SCN-WL-CLOUD-FAR-COMPOSITE --expect Scripts/Terrain/ExpectSpecs/cloud-far-composite.json --verify
 ```
+
+## 遠い雲を積む範囲を地平線まで広げる（SCN-WL-CLOUD-FAR-RANGE）
+
+SCN-WL-CLOUD-FAR-CAUSE の (ii) 打ち切り（見える割合の増え 0.000・0.001）と (iii) 距離の溶かし（0.024・0.016）のうち、溶かしの寄与が
+あったので、雲の式（`Common/CloudLayerCommon.glsl`）の 45 km の打ち切りと 30〜45 km の溶かしを外した。視線は雲の層の球殻に入る所から
+出る所まで進め（固定の距離にしない）、遠い雲は雲までの区間の空気遠近（SCN-WL-CLOUD-FAR-COMPOSITE）だけで地平線の霞に溶ける。
+荒野の雲の層（地表から 2500〜3600 m）では、地平線の向きの区間は約 36 km（層に入る距離 約 180 km）で、前の打ち切りでは区間の長さは
+変わらず、層に入る距離が 45 km より先の視線が雲を持たなかった。
+
+歩数の上限を 96 から 192 に上げた（1 歩の目安 90 m は同じ）。96 のままでは、溶かしで薄めていた地平線の近くの遠い雲が見えるように
+なった分、歩の端数による時間方向のちらつきが前より 1.35 % 大きかった（画面の 450〜600 行で増え、上の空は同じ）。128 では 1.32 %、
+192 で前の 0.989 倍になった。
+
+測り方（`ReferenceCheck.py --cloud-far --flicker`、仕様 `cloud-far-range.json`）:
+
+- 細かい歩との差: 写真と同じ画素の範囲の視線で、今の歩（最大 192）と細かい歩（診断の切り替え 1。最大 1024 歩）の霞の後の雲の
+  放射輝度の Y と不透明度の平均の相対差。GPU の反実仮想の列が細かい歩の写しと透過率 0.002 以内で合う
+- ちらつき: ref_far_01 で固定の時計の連番（`Scripts/CameraScripts/wasteland-cloud-flicker.txt`。エポックから 60 フレーム後から
+  8 フレームおきに 8 枚）を `-Hdr` で撮り、雲の範囲（写真と同じ画素の範囲で不透明度 0.05 以上の画素）の HDR の Y の時間方向の
+  標準偏差 ÷ 平均を画素ごとに求めた平均。変更の前は同じ Game.exe で雲のシェーダーだけを HEAD の版へ戻して撮った（シェーダーは
+  実行時に Assets から読む）。8 bit の PNG では空の画素の 74 % で時間の変化が量子化の 1 段より小さく 0 になるので使わない。
+  同じシェーダーで撮り直したときの揺れは約 0.2 %
+
+| 量 | ref_far_01 | ref_far_02 |
+|---|---|---|
+| 霞の後の雲の放射輝度の平均の、細かい歩との差 | 0.0000 | 0.0000 |
+| 不透明度の平均の、細かい歩との差 | 0.0000 | 0.0000 |
+| ちらつき（前 → 後、後 ÷ 前） | 0.00080 → 0.00079（0.989） | — |
+| 霞の後の雲のコントラストの平均（前 → 後） | 0.7006 → 0.7107 | 0.6484 → 0.6564 |
+| 合成の期待値との差の最大 | 0.0000 | 0.0001 |
+
+ref_far_02 の雲の階調の段（SCN-WL-CLOUD-BANDING の対象）は、前後の画を拡大し明暗を引き伸ばして見比べ、増えていない。
+地平線の手前の雲の切れ目（前は溶かしで空の青が残った所）は遠い雲で埋まる。
+
+GPU 時間（ref_far_01、300 フレームの中央値、RelWithDebInfo）: 前（HEAD 57af3dff、10 月 23 日 01:22 の計測）11.295 ms
+（CloudLayerPass 2.133 ms）→ 後 11.183 ms（CloudLayerPass 2.598 ms）。雲のパスの増えは 0.47 ms で、全体の差はほかのパス
+（VisibilityRasterPass 1.554 → 1.267 ms）の揺れの方が大きい。
+
+再現:
+
+```
+powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -Build -RequireAssets -Width 1920 -Height 1080 -Hdr -Views ref_far_01,ref_far_02 -GameArgs cloud-dump -OutDir .harness/runs/scene-capture/SCN-WL-CLOUD-FAR-RANGE
+powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Hdr -Views ref_far_01 -GameArgs camera-script=Scripts/CameraScripts/wasteland-cloud-flicker.txt -OutDir .harness/runs/scene-capture/SCN-WL-CLOUD-FAR-RANGE-flicker/after
+python Scripts/Terrain/ReferenceCheck.py --cloud-far --flicker --engine .harness/runs/scene-capture/SCN-WL-CLOUD-FAR-RANGE --expect Scripts/Terrain/ExpectSpecs/cloud-far-range.json --verify
+```
+
+（`-flicker/before` は変更の前の雲のシェーダーで同じ連番を撮る。）

@@ -1090,8 +1090,8 @@ namespace NorvesLib::Core::Rendering
         AppendFormat(json, "    \"remap_min_range\": 1e-05\n  },\n");
 
         // 視線の進め方（cloud_layer.frag と同じ定数）
-        AppendFormat(json, "  \"march\": {\"max_distance_m\": 45000, \"fade_start_distance_m\": 30000, "
-                           "\"min_steps\": 32, \"max_steps\": 96, \"step_target_m\": 90, \"min_transmittance\": 0.01, "
+        AppendFormat(json, "  \"march\": {\"range\": \"cloud layer shell entry to exit\", "
+                           "\"min_steps\": 32, \"max_steps\": 192,\"step_target_m\": 90, \"min_transmittance\": 0.01, "
                            "\"density_threshold\": 0.001, \"camera_altitude_floor_m\": 1.0, "
                            "\"jitter\": \"fract(52.9829189 * fract(dot(pixel + 5.588238 * frame_phase, (0.06711056, 0.00583715))))\", "
                            "\"frame_phase\": \"temporal_frame_index mod 1024\", "
@@ -1123,9 +1123,9 @@ namespace NorvesLib::Core::Rendering
                            "\"term\": \"sky_above * mix(0.6, 1, h) + 0.5 * ground_radiance * mix(1, 0.3, h)\"},\n");
         AppendFormat(json, "    \"integration\": \"scattered += T * sigma * (sun_illuminance * sun_term + ambient) * (1 - exp(-sigma * dt)) / max(sigma, 1e-7)\",\n");
         AppendFormat(json, "    \"background\": {\"aerial_steps\": 32, "
-                           "\"radiance\": \"(scattered * aerial_transmittance(d) + aerial_scattering(0, d) * opacity) * fade\", "
+                           "\"radiance\": \"scattered * aerial_transmittance(d) + aerial_scattering(0, d) * opacity\", "
                            "\"aerial\": \"VolumetricsCommon.glsl MarchFogAndAerial without fog, d = cloud_distance\", "
-                           "\"fade\": \"1 - smoothstep(30000, 45000, start_distance)\"}},\n");
+                           "\"fade\": \"1\"}},\n");
         AppendFormat(json, "  \"sky_radiance_lut\": {");
         const VariableArray<char> radianceName = ToAsciiFileName(radiancePath);
         AppendFileEntry(json, radianceName, lutSettings.RadianceHeight, lutSettings.RadianceWidth, 4u);

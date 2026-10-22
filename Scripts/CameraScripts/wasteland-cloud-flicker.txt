@@ -1,0 +1,35 @@
+﻿# 荒野の ref_far_01 の視点でカメラを止めたまま、雲の時間方向のちらつきを数える連番を撮る
+# （--scene=wasteland --capture-views=ref_far_01 --camera-script=Scripts/CameraScripts/wasteland-cloud-flicker.txt。
+# 撮影は Scripts/CaptureScene.ps1 -Hdr -Views ref_far_01 -GameArgs camera-script=...、検査は ReferenceCheck.py --cloud-far --flicker）。
+# 書式は Game/Input/CameraScript.h。決定的な撮影の時計は 1 フレーム 1/60 秒で固定。
+# 落ち着いてからエポック（時間・TAA の履歴とジッタの列・自動露出を数え直す）を始め、TAA の履歴が溜まる 60 フレームの後から
+# 8 フレームおきに 8 枚撮る（撮影の要求は同時に 1 つだけなので、撮る行の間は 8 フレーム空ける）。8 枚は 56 フレーム（0.93 秒）に収まる。
+# 撮る名前（<視点>.<名前>.png と、-Hdr のときブルームの前の <視点>.<名前>.hdr.pfm）: seq-<k>（k = 0〜7）
+# 台本が終わると基準の視点へ戻り、--capture-views が ref_far_01.png を撮る。
+
+# 1. 地形を置いた後の落ち着きを待ち、エポックを始める
+120 wait-ready
+1 home epoch
+60
+
+# 2. 8 フレームおきに 8 枚撮る
+1 capture=seq-0
+7
+1 capture=seq-1
+7
+1 capture=seq-2
+7
+1 capture=seq-3
+7
+1 capture=seq-4
+7
+1 capture=seq-5
+7
+1 capture=seq-6
+7
+1 capture=seq-7
+10
+
+# 3. 基準の視点へ戻す
+1 home
+10

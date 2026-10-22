@@ -122,7 +122,7 @@
 #       定数が契約（Docs/RenderingValidation/WastelandCloudDump.md）どおりで、格子が描画で GPU へ上げた値と同じことを確かめる。
 #
 #   python Scripts/Terrain/ReferenceCheck.py --cloud-far --engine <撮影先> [--views ref_far_01,ref_far_02] [--verify]
-#       [--expect Scripts/Terrain/ExpectSpecs/cloud-far-composite.json]
+#       [--expect Scripts/Terrain/ExpectSpecs/cloud-far-composite.json] [--flicker]
 #       CaptureScene.ps1 -GameArgs cloud-dump の手本の視点の撮影で、遠い雲が消える原因（中身・45 km の打ち切り・距離の溶かし・
 #       独自の 22 km の霞）を、書き出しの反実仮想の列と写真と同じ画素の範囲の視線で量に分け、<撮影先>/cloud_far_check.json に書く
 #       （本体は CloudFarCause.py）。
@@ -6670,6 +6670,8 @@ def main():
                         help="保存の写しで、参照の入力とエンジンの実装の署名の正と負を確かめる")
     parser.add_argument("--regression", action="store_true",
                         help="回帰の撮影の after（--capture）を before（--reference）と並べる（CaptureRegression.ps1 が呼ぶ）")
+    parser.add_argument("--flicker", action="store_true",
+                        help="--cloud-far で、ref_far_01 の雲の範囲の時間方向のちらつきを <撮影先>-flicker/before・after の連番で比べる")
     parser.add_argument("--expect", default="",
                         help="--gray・--lit・--blur-static・--blur-motion・--bounce・--atmos-ref・--building で、領域・成分ごとの合否の閾値の仕様（Scripts/Terrain/ExpectSpecs/ の JSON）"
                              "の各行も判定する")
@@ -6772,7 +6774,7 @@ def main():
             print(f"REFERENCE_CHECK result=fail reason=capture_dir_missing（--engine に撮影先を指定する） path={capture}")
             return 1
         views = [v.strip() for v in args.views.split(",") if v.strip()]
-        return CloudFarCause.run(sys.modules[__name__], capture_dir, views, args.verify, expect)
+        return CloudFarCause.run(sys.modules[__name__], capture_dir, views, args.verify, expect, args.flicker)
     if args.cloud_dump:
         import CloudDumpCheck
         capture = args.capture or (args.engine[0] if args.engine else "")

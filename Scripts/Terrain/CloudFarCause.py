@@ -2,7 +2,7 @@
 #
 # 使い方:
 #   python Scripts/Terrain/ReferenceCheck.py --cloud-far --engine <撮影先> [--views ref_far_01,ref_far_02] [--verify]
-#       [--expect Scripts/Terrain/ExpectSpecs/cloud-far-composite.json]
+#       [--expect Scripts/Terrain/ExpectSpecs/cloud-far-composite.json] [--flicker]
 #       CaptureScene.ps1 -GameArgs cloud-dump の撮影（<視点>.cloud.json と書き出しのファイル、<視点>.png）を視点ごとに読み、
 #       結果を <撮影先>/cloud_far_check.json に書く。--verify は入力のハッシュ（inputs.json）を今のファイルと照らす。
 #       --expect は雲の合成（雲までの区間の空気遠近。SCN-WL-CLOUD-FAR-COMPOSITE）の期待値の行を仕様の閾値で判定する
@@ -10,6 +10,7 @@
 #
 # 同じ密度場・時刻・視線（画素と歩の端数）のまま、雲の式（Common/CloudLayerCommon.glsl）の診断の切り替えを段ごとに足す:
 #   段 0 = 今の描画、段 1 = 45 km の打ち切りを外す、段 2 = さらに 30〜45 km の距離の溶かしを外す、
+#   （SCN-WL-CLOUD-FAR-RANGE で打ち切りと溶かしを外したので、今は段 1 = 細かい歩（最大 1024 歩）で積む、段 2 = 段 1 と同じ）、
 #   段 3 = さらに雲までの区間の空気遠近を外す（SCN-WL-CLOUD-FAR-CAUSE の時は独自の 22 km の霞。SCN-WL-CLOUD-FAR-COMPOSITE で
 #   地面と同じ空気遠近へ替えた。替える前の霞の値は legacy_haze として記録に併せて書く）。
 # GPU の書き出しは格子の視線（横 16 × 縦 9）の後ろに、上の 7 行の視線を段 1・2・3 で評価した反実仮想の列を持つ。
@@ -28,6 +29,10 @@
 #     (iii) 距離の溶かし = 段 1 → 2 の増え、(iv) 独自の霞 = 段 2 → 3 の増え、残り = 雲があるのに段 3 でも見えない割合
 #     （雲の明るさが後ろの空に近い）。段の順に依らない見方として、打ち切りのまま霞だけ・溶かしと霞を外した値も書く
 #   - 診断の併記: CloudPhotoStats.py の色の閾値（線形の R ÷ B ≥ 0.7）の被覆を、写真と撮影の PNG で求めた値
+# 細かい歩との差（fine）: 写真と同じ画素の範囲の視線の、霞の後の雲の放射輝度の Y と不透明度の平均を段 0 と段 1 で比べた相対差。
+# ちらつき（--flicker。flicker）: ref_far_01 の雲の範囲（写真と同じ画素の範囲で段 0 の不透明度が CLOUD_OPACITY 以上の画素）の、
+#   連番 <撮影先>-flicker/before・after の <視点>.seq-<k>.hdr.pfm（Scripts/CameraScripts/wasteland-cloud-flicker.txt を -Hdr で撮る。
+#   固定の時計で 8 フレームおきに 8 枚）の Y の時間方向の標準偏差 ÷ 平均を画素ごとに求めた平均と、後 ÷ 前の比。
 # 合否（--verify）:
 #   1. 書き出しがあり、撮影の起動引数に --cloud-dump がある。反実仮想の列が段 1・2・3 のどれも 1 本以上ある
 #   2. 格子の視線と反実仮想の列の全部で、写しの雲の透過率が GPU と CloudDumpCheck.TRANSMITTANCE_TOLERANCE 以内、歩数が同じ
@@ -76,6 +81,81 @@ LUMA = np.array([0.2126, 0.7152, 0.0722])
 EXPECT_AERIAL_STEPS = 256
 # 替える前の独自の霞（雲の光の 1/e が空の色へ置き換わる距離。記録の legacy_haze だけに使う）
 LEGACY_HAZE_DISTANCE = 22000.0
+# SCN-WL-CLOUD-FAR-RANGE の前の打ち切りと溶かしの距離(m)。記録の層に入る距離の割合だけに使う
+LEGACY_MAX_MARCH_DISTANCE = 45000.0
+LEGACY_FADE_START_DISTANCE = 30000.0
+# ちらつきの連番（Scripts/CameraScripts/wasteland-cloud-flicker.txt の capture=seq-<k>）の枚数と、撮影先の名前の後ろに付ける置き場
+FLICKER_FRAMES = 8
+FLICKER_SUFFIX = "-flicker"
+FLICKER_VIEW = "ref_far_01"
+
+
+def fine_difference(current, fine):
+    """段 0（今の歩）と細かい歩（DIAGNOSTIC_MAX_PRIMARY_STEPS まで）の、写真と同じ画素の範囲の平均の相対差"""
+    if not current or len(current) != len(fine):
+        return None
+    radiance = np.array([v["radiance_y"] for v in current])
+    radiance_fine = np.array([v["radiance_y"] for v in fine])
+    opacity = np.array([v["opacity"] for v in current])
+    opacity_fine = np.array([v["opacity"] for v in fine])
+    return {
+        "rays": len(current),
+        "radiance_mean": float(np.mean(radiance)), "radiance_mean_fine": float(np.mean(radiance_fine)),
+        "radiance_mean_rel": float(abs(np.mean(radiance) - np.mean(radiance_fine)) / max(float(np.mean(radiance_fine)), 1e-6)),
+        "opacity_mean": float(np.mean(opacity)), "opacity_mean_fine": float(np.mean(opacity_fine)),
+        "opacity_mean_rel": float(abs(np.mean(opacity) - np.mean(opacity_fine)) / max(float(np.mean(opacity_fine)), 1e-6)),
+    }
+
+
+def read_pfm(path):
+    """PFM（下から上の行）を上から下の (高さ, 幅, 3) の配列で読む。読めなければ None"""
+    with open(path, "rb") as f:
+        header = f.readline().strip()
+        width, height = (int(v) for v in f.readline().split())
+        scale = float(f.readline())
+        data = np.fromfile(f, dtype="<f4" if scale < 0 else ">f4")
+    if header != b"PF" or data.size != width * height * 3:
+        return None
+    return data.reshape(height, width, 3)[::-1].astype(np.float64)
+
+
+def flicker_metric(sequence_dir, view, pixels):
+    """連番の HDR（<視点>.seq-<k>.hdr.pfm。ブルームの前の放射輝度）の画素の Y の時間方向の標準偏差 ÷ 平均（画素ごと）の
+    平均と 95 % 点。8 bit の PNG は空の画素の大半で時間の変化が量子化の 1 段より小さく 0 になるので使わない。揃わなければ (None, 理由)"""
+    frames = []
+    for k in range(FLICKER_FRAMES):
+        path = os.path.join(sequence_dir, f"{view}.seq-{k}.hdr.pfm")
+        image = read_pfm(path) if os.path.isfile(path) else None
+        if image is None:
+            return None, f"連番の HDR が無いか読めない {path}"
+        frames.append(image @ LUMA)
+    stack = np.stack(frames)
+    xs = np.array([int(x) for x, _ in pixels])
+    ys = np.array([int(y) for _, y in pixels])
+    if stack.shape[1] <= ys.max() or stack.shape[2] <= xs.max():
+        return None, f"連番の大きさ {stack.shape[2]}x{stack.shape[1]} が書き出しの画素と合わない"
+    values = stack[:, ys, xs]
+    ratio = values.std(axis=0) / np.maximum(values.mean(axis=0), 1e-6)
+    return {"mean": float(np.mean(ratio)), "p95": float(np.percentile(ratio, 95)), "frames": FLICKER_FRAMES}, None
+
+
+def measure_flicker(capture_dir, view, pixels, cloudy, failures):
+    """雲の範囲の画素（写真と同じ画素の範囲のうち段 0 の不透明度が CLOUD_OPACITY 以上）の時間方向のちらつきを、変更の前と後の連番
+    （<撮影先>-flicker/before・after）で比べる"""
+    cloud_pixels = [p for p, c in zip(pixels, cloudy) if c]
+    base = os.path.normpath(capture_dir) + FLICKER_SUFFIX
+    result = {"pixels": len(cloud_pixels), "before_dir": base + "/before", "after_dir": base + "/after"}
+    if not cloud_pixels:
+        failures.append("ちらつき: 雲の範囲の画素が無い")
+        return result
+    for phase in ("before", "after"):
+        value, reason = flicker_metric(os.path.join(base, phase), view, cloud_pixels)
+        if value is None:
+            failures.append(f"ちらつき（{phase}）: {reason}")
+            return result
+        result[phase] = value
+    result["ratio"] = result["after"]["mean"] / max(result["before"]["mean"], 1e-9)
+    return result
 
 
 def luminance(rgb):
@@ -91,8 +171,8 @@ def evaluate(model, march, direction, flags, legacy_haze=False):
                 "fade": 1.0, "haze": 1.0, "red_blue": float(sky[0] / max(sky[2], 1e-6)), "sky_y": sky_y,
                 "final_y": sky_y}
     opacity = float(np.clip(1.0 - march["transmittance"], 0.0, 1.0))
-    fade = 1.0 if flags & CD.DIAGNOSTIC_NO_FADE else \
-        1.0 - float(CD.smoothstep(CD.FADE_START_DISTANCE, CD.MAX_MARCH_DISTANCE, march["start_distance"]))
+    # 距離の溶かしは SCN-WL-CLOUD-FAR-RANGE で外した
+    fade = 1.0
     if legacy_haze:
         haze = float(np.exp(-march["cloud_distance"] / LEGACY_HAZE_DISTANCE))
         radiance = (march["scattered"] * haze + sky * opacity * (1.0 - haze)) * fade
@@ -246,7 +326,7 @@ def check_composite(model, probe, pixels):
         direction = direction / np.linalg.norm(direction)
         scattered = probe[1, index, :3].astype(np.float64)
         distance = float(probe[1, index, 3])
-        fade = 1.0 - float(CD.smoothstep(CD.FADE_START_DISTANCE, CD.MAX_MARCH_DISTANCE, float(probe[4, index, 3])))
+        fade = 1.0
         transmittance = np.ones(3)
         scattering = np.zeros(3)
         if model.aerial_enabled and distance > 0.0:
@@ -294,7 +374,7 @@ def summarize(values):
     }
 
 
-def measure_view(rc, capture_dir, view, game_args):
+def measure_view(rc, capture_dir, view, game_args, flicker=False):
     failures = []
     result = {"view": view}
     if CD.GAME_ARG not in (game_args or []):
@@ -365,10 +445,11 @@ def measure_view(rc, capture_dir, view, game_args):
             "start_distance_km_median": float(np.nanmedian(start_distance) / 1000.0),
             "start_distance_km_p10_p90": [float(np.nanpercentile(start_distance, 10) / 1000.0),
                                           float(np.nanpercentile(start_distance, 90) / 1000.0)],
-            "beyond_march_limit_fraction": float(np.mean(start_distance > CD.MAX_MARCH_DISTANCE)),
-            "within_fade_fraction": float(np.mean((start_distance > CD.FADE_START_DISTANCE) &
-                                                  (start_distance <= CD.MAX_MARCH_DISTANCE))),
+            "beyond_march_limit_fraction": float(np.mean(start_distance > LEGACY_MAX_MARCH_DISTANCE)),
+            "within_fade_fraction": float(np.mean((start_distance > LEGACY_FADE_START_DISTANCE) &
+                                                  (start_distance <= LEGACY_MAX_MARCH_DISTANCE))),
         },
+        "fine": fine_difference(stage_values["current"], stage_values["no_march_limit"]),
         "stages": stages,
         "attribution": {
             "content_no_cloud": 1.0 - cloud_fraction,
@@ -380,11 +461,14 @@ def measure_view(rc, capture_dir, view, game_args):
             "cloud_but_invisible_after_all": cloud_fraction - visible[3],
         },
     })
+    if flicker and view == FLICKER_VIEW:
+        cloudy = [v["opacity"] >= CLOUD_OPACITY for v in stage_values["current"]]
+        result["flicker"] = measure_flicker(capture_dir, view, pixels, cloudy, failures)
     result.update({"pass": not failures, "failures": failures})
     return result
 
 
-def run(rc, capture_dir, views, verify, expect=None):
+def run(rc, capture_dir, views, verify, expect=None, flicker=False):
     failures = []
     inputs_ok, input_failures, record = rc.check_inputs(capture_dir)
     if verify and not inputs_ok:
@@ -400,7 +484,7 @@ def run(rc, capture_dir, views, verify, expect=None):
         if view not in metric_views:
             failures.append(f"{view}: metrics.json に無い視点")
             continue
-        result = measure_view(rc, capture_dir, view, game_args)
+        result = measure_view(rc, capture_dir, view, game_args, flicker)
         results.append(result)
         failures.extend(f"{view}: {failure}" for failure in result["failures"])
         for flags, stats in result.get("probe", {}).items():
@@ -441,12 +525,24 @@ def run(rc, capture_dir, views, verify, expect=None):
             print(f"REFERENCE_CHECK cloud_far view={view} hdr_y_p5={hdr['p5_over_median']:.3f} "
                   f"hdr_y_p95={hdr['p95_over_median']:.3f} hdr_over_model_median={result['hdr_over_model_median']:.3f} "
                   f"photo_y_p5={photo_spread[0]:.3f} photo_y_p95={photo_spread[1]:.3f}")
+        fine = result.get("fine")
+        if fine:
+            print(f"REFERENCE_CHECK cloud_far view={view} fine rays={fine['rays']} "
+                  f"radiance_mean={fine['radiance_mean']:.1f} radiance_mean_fine={fine['radiance_mean_fine']:.1f} "
+                  f"radiance_mean_rel={fine['radiance_mean_rel']:.4f} opacity_mean={fine['opacity_mean']:.4f} "
+                  f"opacity_mean_fine={fine['opacity_mean_fine']:.4f} opacity_mean_rel={fine['opacity_mean_rel']:.4f}")
+        flick = result.get("flicker")
+        if flick and "ratio" in flick:
+            print(f"REFERENCE_CHECK cloud_far view={view} flicker pixels={flick['pixels']} "
+                  f"before_mean={flick['before']['mean']:.5f} after_mean={flick['after']['mean']:.5f} "
+                  f"before_p95={flick['before']['p95']:.5f} after_p95={flick['after']['p95']:.5f} ratio={flick['ratio']:.4f}")
         attribution = result["attribution"]
         print(f"REFERENCE_CHECK cloud_far view={view} attribution " +
               " ".join(f"{key}={value:.3f}" for key, value in attribution.items()))
     report = {
         "mode": "cloud_far",
         "verify": bool(verify),
+        "flicker": bool(flicker),
         "inputs_current": inputs_ok,
         "inputs_record": record,
         "game_args": game_args,

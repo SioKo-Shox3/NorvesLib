@@ -35,13 +35,12 @@ layout(set = 0, binding = 3) uniform sampler3D shapeNoise;
 layout(set = 0, binding = 4) uniform sampler3D detailNoise;
 
 const float PI = 3.14159265359;
-// 視線を進める最長の距離(m)。これより先の雲は地平線の霞に溶けて見えない
-const float kMaxMarchDistance = 45000.0;
-// 雲の層に入る距離がこれより先の雲は、kMaxMarchDistance で空の色へ溶かし切る(m)。打ち切りの距離で雲が急に消えると、
-// その仰角に地平線と平行な明るさの境が出る（荒野の ref_ground_02 の仰角約 3° の境）
-const float kFadeStartDistance = 30000.0;
+// 視線は雲の層の球殻に入る所から出る所まで進める（固定の距離で打ち切らない）。遠い雲は雲までの区間の空気遠近
+// （IntegrateCloudAerial）で地平線の霞に溶けるので、距離で溶かす割合も掛けない
 const int kMinPrimarySteps = 32;
-const int kMaxPrimarySteps = 96;
+// 地平線の向きの区間（荒野は層の底から頂まで約 36 km）は最大の歩数で進む（1 歩 約 190 m）。溶かしを外して見えるようになった
+// 地平線の近くの遠い雲の、歩の端数による時間方向のちらつきを、溶かしていた前より大きくしない歩数（SCN-WL-CLOUD-FAR-RANGE）
+const int kMaxPrimarySteps = 192;
 // 1 歩の長さの目安(m)。真上の 2.5 km は最少の歩数、地平線の方は最大の歩数で進む
 const float kPrimaryStepTarget = 90.0;
 // 太陽へ向かう光学的深さを数える回数と最初の歩幅(m)。歩幅は 1 回ごとに 1.8 倍
@@ -56,13 +55,14 @@ const float kMinTransmittance = 0.01;
 
 // 遠い雲の消える原因を分ける診断の切り替え（撮影の雲の書き出しの CloudProbePass が視線ごとに立てる。開発ビルドだけ。
 // 描画の cloud_layer.frag は常に 0 で、既定の描画は変わらない）
-// 45 km の打ち切りを外し、雲の層を出るまで進める（歩数の上限を kDiagnosticMaxPrimarySteps へ上げる）
+// 細かい歩で積む（歩数の上限を kDiagnosticMaxPrimarySteps へ上げ、1 歩を kPrimaryStepTarget に近づける）。
+// SCN-WL-CLOUD-FAR-RANGE の前は 45 km の打ち切りを外す切り替えだった
 const uint kCloudDiagnosticNoMarchLimit = 1u;
-// 30〜45 km の距離の溶かしを外す
+// 距離の溶かしを外す（SCN-WL-CLOUD-FAR-RANGE で溶かしそのものを外したので、今は何も変えない）
 const uint kCloudDiagnosticNoFade = 2u;
 // 雲までの区間の空気遠近を外す
 const uint kCloudDiagnosticNoHaze = 4u;
-// 打ち切りを外したときの歩数の上限（地平線の向きの雲の層の区間 約 36 km を 90 m の歩で進められる数）
+// 細かい歩で積むときの歩数の上限（地平線の向きの雲の層の区間 約 36 km を 90 m の歩で進められる数）
 const int kDiagnosticMaxPrimarySteps = 1024;
 
 bool IsFiniteFloat(float value)
@@ -271,15 +271,11 @@ CloudRayResult MarchCloudLayerWithDiagnostics(vec3 rayDirection, float jitter, u
         startDistance = max(topHit.x, 0.0);
         endDistance = (bottomHit.x <= bottomHit.y && bottomHit.x > 0.0) ? bottomHit.x : topHit.y;
     }
-    bool bNoMarchLimit = (diagnosticFlags & kCloudDiagnosticNoMarchLimit) != 0u;
-    int maxPrimarySteps = bNoMarchLimit ? kDiagnosticMaxPrimarySteps : kMaxPrimarySteps;
-    if (!(endDistance > startDistance) || (!bNoMarchLimit && startDistance > kMaxMarchDistance))
+    bool bFineSteps = (diagnosticFlags & kCloudDiagnosticNoMarchLimit) != 0u;
+    int maxPrimarySteps = bFineSteps ? kDiagnosticMaxPrimarySteps : kMaxPrimarySteps;
+    if (!(endDistance > startDistance))
     {
         return result;
-    }
-    if (!bNoMarchLimit)
-    {
-        endDistance = min(endDistance, startDistance + kMaxMarchDistance);
     }
 
     float segmentLength = endDistance - startDistance;
@@ -468,7 +464,7 @@ void IntegrateCloudAerial(vec3 rayDirection, float rayDistance, out vec3 transmi
     scattering = max(scattering, vec3(0.0));
 }
 
-// 雲の放射輝度（事前露出の前、打ち切りの距離へ溶かす割合 fade を掛けた値）。opacity は 1 - 透過率、
+// 雲の放射輝度（事前露出の前）。fade は距離で溶かす割合で、今は常に 1（書き出しの列の並びを保つために返す）。opacity は 1 - 透過率、
 // diagnosticFlags は診断の切り替え（kCloudDiagnostic*。描画は 0）。aerialVisibility は雲までの空気遠近の透過率の RGB の平均
 vec3 ComposeCloudRadianceWithDiagnostics(CloudRayResult ray, vec3 rayDirection, float opacity, uint diagnosticFlags,
                                          out float aerialVisibility, out float fade)
@@ -483,12 +479,8 @@ vec3 ComposeCloudRadianceWithDiagnostics(CloudRayResult ray, vec3 rayDirection, 
         IntegrateCloudAerial(rayDirection, ray.CloudDistance, aerialTransmittance, aerialScattering);
     }
     aerialVisibility = dot(aerialTransmittance, vec3(1.0 / 3.0));
-    vec3 cloudRadiance = ray.Scattered * aerialTransmittance + aerialScattering * opacity;
-    // 打ち切りの距離へ近づくほど、雲を重ねる割合を 0 へ下げる（下の空の色がそのまま残る）
-    fade = (diagnosticFlags & kCloudDiagnosticNoFade) != 0u
-               ? 1.0
-               : 1.0 - smoothstep(kFadeStartDistance, kMaxMarchDistance, ray.StartDistance);
-    return cloudRadiance * fade;
+    fade = 1.0;
+    return ray.Scattered * aerialTransmittance + aerialScattering * opacity;
 }
 
 vec3 ComposeCloudRadiance(CloudRayResult ray, vec3 rayDirection, float opacity,

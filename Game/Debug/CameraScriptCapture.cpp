@@ -6,6 +6,7 @@
 #include "Core/Public/Engine/NorvesEngine.h"
 #include "Core/Public/Engine/SkeletalAssetSession.h"
 #include "Core/Public/Logging/LogMacros.h"
+#include "Core/Public/Rendering/FrameCaptureHdrWriter.h"
 #include "Core/Public/Rendering/FrameCaptureTypes.h"
 #include "Core/Public/Rendering/RenderWorld.h"
 
@@ -87,6 +88,7 @@ namespace Game::Debug
         }
         NorvesLib::Core::Rendering::FrameCaptureRequest request;
         request.SourceKind = NorvesLib::Core::Rendering::FrameCaptureSourceKind::BackBuffer;
+        request.bIncludeSceneColor = m_bCaptureHdr;
         m_PendingTag = tag;
         if (!NorvesLib::Core::Engine::GEngine->GetRenderWorld().RequestFrameCapture(request).IsAccepted())
         {
@@ -138,6 +140,14 @@ namespace Game::Debug
                         static_cast<unsigned int>(capturedFrame.Status), static_cast<unsigned int>(capturedFrame.Format),
                         capturedFrame.Width, capturedFrame.Height, path.c_str());
             Fail("save_failed");
+            return;
+        }
+        if (m_bCaptureHdr && !NorvesLib::Core::Rendering::SaveCapturedSceneColorHdr(capturedFrame, path))
+        {
+            LOG_ERROR_F("CAMERA_SCRIPT_CAPTURE hdr save failed scene_color=%d format=%u",
+                        capturedFrame.SceneColor.bValid ? 1 : 0,
+                        static_cast<unsigned int>(capturedFrame.SceneColor.Format));
+            Fail("hdr_save_failed");
             return;
         }
         LOG_INFO_F("CAMERA_SCRIPT_CAPTURE saved tag=%s frame=%llu requested_engine_frame=%llu width=%u height=%u path=%s",
