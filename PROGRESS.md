@@ -6793,3 +6793,13 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 収束の見込み: 画素の差の RMS は縁 0.33（64 サンプル）なので、1 本 700 サンプル前後で 0.10 を切る。描画は数分
   - 新しい試験は足していない
 - Next: TASKS.md の次の未完の項目（SCN-WLR-CLOUD-REF）
+
+### SCN-WLR-CLOUD-REF-BLENDER 差し戻しの修正（2026-10-22、run 20261021-055341 の反復 54）
+- Done: 評価者の指摘（空の画が全画素 NaN でも `max(worst_sky, sky_error)` が NaN を飛ばして合格になる）を直した
+  - `CloudCheck.py`: Cycles の出力（seed_a・seed_b・alpha_a・alpha_b・空・透過率）を読んだ直後に `np.isfinite` で調べ、有限でない値があればその個数を書いて落とす。空と透過率の最大の差は一覧を集めて `np.max` で取る（NaN が残り、上限の比べで落ちる）
+  - `WastelandCloudBlender.md` の成り立つ条件 2 に「Cycles の出力に NaN・Inf が無い」を足した
+- 証拠（`.harness/runs/20261021-055341/`）:
+  - `verify-SCN-WLR-CLOUD-REF-BLENDER-3.txt` `--cloud --trial --verify` result=pass・inputs_current=1・EXIT=0（数値は反復 53 と同じ）
+  - `aux-SCN-WLR-CLOUD-REF-BLENDER-nan.txt` 空の画・透過率の画をメモリ上で全画素 NaN にした再現（画の保存と報告の書き出しを止める）。どちらも「Cycles の出力に有限でない値がある」で result=fail・EXIT 1
+- Notes: 再現の台本は報告の `open(..., "w")` を止めていなかったので `cloud_check.json` が一度空になり、その後の verify で書き直した。新しい試験は足していない
+- Next: TASKS.md の次の未完の項目（SCN-WLR-CLOUD-REF）

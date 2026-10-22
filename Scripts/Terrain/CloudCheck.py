@@ -223,14 +223,22 @@ def check_view(RC, engine_dir, reference_dir, view, record, game_args, trial):
             failures.append(f"Cycles の {part} の大きさ {image.shape[1]}×{image.shape[0]} が撮影 {width}×{height} と違う")
     if failures and any("大きさ" in f for f in failures):
         return {"view": view, "pass": False, "failures": failures}
+    # NaN・Inf の混じった画は差を測れない（max で集めると NaN が消えて合格に見える）ので、比べる前に落とす
+    nonfinite = {part: int(np.size(image) - np.count_nonzero(np.isfinite(image))) for part, image in images.items()}
+    nonfinite = {part: count for part, count in nonfinite.items() if count}
+    result["nonfinite_values"] = nonfinite
+    if nonfinite:
+        return {**result, "pass": False, "failures": failures + [
+            "Cycles の出力に有限でない値がある（" + "、".join(f"{p} {c} 個" for p, c in nonfinite.items()) + "）"]}
     rgb_a, rgb_b = images["seed_a"], images["seed_b"]
     alpha_a, alpha_b = images["alpha_a"][..., 0], images["alpha_b"][..., 0]
     rgb = 0.5 * (rgb_a + rgb_b)
     alpha = 0.5 * (alpha_a + alpha_b)
 
     # 3〜4. 空と体積
-    worst_sky = 0.0
-    worst_t = 0.0
+    # 最大は np.max で取る（組み込みの max は NaN を飛ばす）。NaN は下の `not ... <=` で落ちる
+    sky_errors = []
+    t_errors = []
     for ray in rays:
         pixel = ray["pixel"]
         direction = np.asarray(ray["direction"])
@@ -238,7 +246,7 @@ def check_view(RC, engine_dir, reference_dir, view, record, game_args, trial):
         # 空だけの画は視線の画素そのもの（窓で均すと空の勾配が混ざる）
         cycles_sky = images["sky"][int(math.floor(pixel[1])), int(math.floor(pixel[0]))].astype(np.float64)
         sky_error = float(np.max(np.abs(cycles_sky - expected_sky) / np.maximum(np.abs(expected_sky), CD.RADIANCE_FLOOR)))
-        worst_sky = max(worst_sky, sky_error)
+        sky_errors.append(sky_error)
         fine = float(np.mean([CV.fine_transmittance(model, model.ray_direction(center, target))
                               for center in CV.window_centers(pixel, width, height)]))
         cycles_t = float(window_mean(images["transmittance"][..., 0], pixel))
@@ -247,13 +255,15 @@ def check_view(RC, engine_dir, reference_dir, view, record, game_args, trial):
         engine_y = float(GR.luminance(np.asarray(ray["engine_scattered_rgb"])))
         cycles_y = float(GR.luminance(cycles_rgb))
         t_error = abs(cycles_t - fine)
-        worst_t = max(worst_t, t_error)
+        t_errors.append(t_error)
         ray.update({"sky_relative_error": sky_error, "fine_transmittance": fine, "cycles_transmittance": cycles_t,
                     "transmittance_error": t_error, "cycles_render_transmittance": render_t, "engine_y": engine_y, "cycles_y": cycles_y,
                     "cycles_rgb": cycles_rgb.tolist(), "cycles_opacity": float(np.clip(1.0 - cycles_t, 0.0, 1.0)),
                     "ratio": ratio(engine_y, cycles_y)})
         ray["engine_y_per_opacity"] = engine_y / ray["opacity"] if ray["opacity"] >= CV.CLOUD_OPACITY else None
         ray["cycles_y_per_opacity"] = cycles_y / ray["cycles_opacity"] if ray["cycles_opacity"] >= CV.CLOUD_OPACITY else None
+    worst_sky = float(np.max(sky_errors)) if sky_errors else math.nan
+    worst_t = float(np.max(t_errors)) if t_errors else math.nan
     result["sky_max_relative_error"] = worst_sky
     result["transmittance_max_error"] = worst_t
     if not worst_sky <= SKY_TOLERANCE:
