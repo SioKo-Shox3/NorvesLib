@@ -7042,3 +7042,15 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `aux-SCN-WL-GEOM-POOL-PLACEMENT-mega-gpu.txt` mega-bananas の -GpuTimingFrames 300（前 = 同じ Game.exe に `NORVES_GEOMETRY_POOL_BLOCK_MB=1024`）。GPU 中央値 default 3.934 → 3.892 ms・close 4.352 → 4.368・low 6.273 → 6.272・horizon 3.295 → 2.875。4 視点とも wanted=0・failed=0。VRAM はプールの塊 1024 → 2048 MB（使用 3.6〜7.4 MB）、ヒープの使用 3701 → 4725 MB（+1024 MB）
 - Notes: 小さなシーンも塊 1 個ぶん（+1 GB）の VRAM を先に取る。小さなシーンの塊を小さくするか（作業集合に合わせて塊を作る）は計画が決める。新しい試験は足していない
 - Next: SCN-WL-GEOM-REQUEST-CAPACITY（要求の列の既定を 32768 へ）
+
+### SCN-WL-GEOM-REQUEST-CAPACITY 完了（2026-10-22、run 20261022-173753 の反復 8）
+- Done: ジオメトリのページの要求の列の既定の容量（`GeometryPageRequestBuffer::DefaultCapacity`）を 4096 → 32768 にした（要求のバッファは 1 枚 16 KB → 128 KB、3 枚）。置き場の既定は SCN-WL-GEOM-POOL-PLACEMENT の 2 GB の塊。`--geom-requests`・要求の読み取りのまとめ・`request_peak` は adfd4b44 のまま。環境変数 `NORVES_GEOMETRY_PAGE_REQUEST_CAPACITY`・`--geometry-request-capacity` は既定の容量〜1048576 のまま（下限が 32768 に上がる）。`--wasteland-finest-lod` の 131072 は、最も細かい段で 1 視点 3 万ページ近くを使い 32768 では余裕が無いので残し、注釈だけ直した
+- 溢れの原因（反復 4 で確かめた）: 0f487546（TAA の View の LOD を 0.5 画素）と既定の AA の TAA 化で溢れ始め、a0c76d9e（0.25 画素）で約 4 倍
+- 証拠（`.harness/runs/20261022-173753/`）:
+  - `verify-SCN-WL-GEOM-REQUEST-CAPACITY-4.txt` Debug の Game のビルド EXIT=0
+  - `verify-SCN-WL-GEOM-REQUEST-CAPACITY-5.txt` 既定の荒野の 7 視点の撮影（RelWithDebInfo、-Build）result=pass・EXIT=0
+  - `verify-SCN-WL-GEOM-REQUEST-CAPACITY-6.txt` `--geom-requests --verify` result=pass default_capacity=32768。最後の行と 7 視点とも撮る直前に request_overflow=0・wanted=0・failed=0、request_peak 最大 11018（容量の 34 %）。落ち着くまで ref_far_01 17.5 秒・ref_far_02 15.2・ref_cliff_01 26.7・ref_cliff_02 14.2・ref_ground_01 10.2・ref_ground_02 7.7・cliff 12.5 秒。ref_cliff_01.png・cliff.png を開き欠けが無いことを確かめた
+  - `verify-SCN-WL-GEOM-REQUEST-CAPACITY-7.txt` 回帰の after result=pass（before は `aux-SCN-WL-GEOM-REQUEST-CAPACITY-regression-before-2.txt`、HEAD 1f9cb28c）。4 シーンとも平均の差 0、PSNR mega-bananas 63.97・night-village 72.05・rendering3dtest 110.64・sandbox inf
+  - `aux-SCN-WL-GEOM-REQUEST-CAPACITY-mega-gpu.txt` mega-bananas の -GpuTimingFrames 300（前 = HEAD 1f9cb28c の Game.exe・容量 4096、後 = 32768）。GPU 中央値 default 3.905 → 3.994 ms・close 4.355 → 4.370・low 6.266 → 6.277・horizon 3.162 → 2.826。4 視点とも前後で request_overflow=0・wanted=0・failed=0、request_peak 31〜65
+- Notes: 新しい試験は足していない。RenderResources.cpp の環境変数の注釈（「既定の容量を超える」）は行末が混在する箇所なので触っていない
+- Next: TASKS.md の次の未完

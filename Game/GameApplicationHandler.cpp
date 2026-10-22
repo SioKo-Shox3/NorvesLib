@@ -267,7 +267,8 @@ namespace Game
         constexpr const TCHAR *kWastelandFinestLodOption = TEXT("--wasteland-finest-lod");
         constexpr const char *kFinestLodErrorPx = "1e-06";
         constexpr const char *kFinestLodGeometryShare = "255";
-        // 最も細かい段の地形は 1 視点で 3 万ページ近くを使うので、要求の列の容量（NORVES_GEOMETRY_PAGE_REQUEST_CAPACITY）を広げる
+        // 最も細かい段の地形は 1 視点で 3 万ページ近くを使い、既定の容量（32768）では余裕が無いので、要求の列の容量
+        // （NORVES_GEOMETRY_PAGE_REQUEST_CAPACITY）を広げる
         constexpr const char *kFinestLodPageRequestCapacity = "131072";
         // ジオメトリのプールの塊の大きさ（MB。NORVES_GEOMETRY_POOL_BLOCK_MB。描画側が maxStorageBufferRange に抑える）
         constexpr const char *kFinestLodGeometryBlockMb = "4095";

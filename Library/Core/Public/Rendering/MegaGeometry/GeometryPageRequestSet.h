@@ -21,8 +21,8 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         constexpr uint32_t CountWord = 0;
         constexpr uint32_t OverflowWord = 1;
         constexpr uint32_t CapacityWord = 2;
-        /** @brief 要求1枚のバッファの既定の容量（要求の件数。ヘッダを除く） */
-        constexpr uint32_t DefaultCapacity = 4096;
+        /** @brief 要求1枚のバッファの既定の容量（要求の件数。ヘッダを除く）。既定の荒野の崖の視点は 1 フレームに約 1.1 万件を積む */
+        constexpr uint32_t DefaultCapacity = 32768;
 
         constexpr uint64_t GetBufferBytes(uint32_t capacity)
         {

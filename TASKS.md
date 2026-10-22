@@ -2383,7 +2383,7 @@
 - notes: 危険地帯（メモリ・ジオメトリのストリーミング。全シーンの VRAM の使い方に効く）。2026-10-22 親が SCN-WL-GEOM-REQUEST-CAPACITY の BLOCKED（推奨の案 1）から足した。溢れの始まりは 0f487546（TAA の View の LOD を 0.5 画素）と既定の AA の TAA 化、a0c76d9e（0.25 画素）で約 4 倍。時間の見積もり: 回帰の before・after 各 7 分、ビルド 3〜6 分、7 視点の撮影 約 10 分（落ち着かない視点があれば長くなる。1 視点の試しから始める）。壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える。
 
 ## SCN-WL-GEOM-REQUEST-CAPACITY: ジオメトリのページの要求の列を、既定の荒野で溢れない大きさにする
-- status: todo
+- status: done
 - after: SCN-WL-REVIEW-2, SCN-WL-GEOM-POOL-PLACEMENT
 - done-when: SCN-WL-CLIFF-SCAN-PLACE の BLOCKED（`blocked/resolved/SCN-WL-CLIFF-SCAN-PLACE-request-capacity.md`）: 既定の荒野の撮影で、最後の `GEOMETRY_PAGES` の `request_overflow` が 1000 万件を超える（SCN-WL-REVIEW-2 の 6 視点 13,929,488、SCN-WL-LIGHT-FINAL-views6 14,572,308。10 月 21 日の SCN-WL-SKY-ALTITUDE-views は 0）。1 フレーム約 8400 件の要求・使用の印が `GeometryPageRequestBuffer::DefaultCapacity`（4096）の列に来て、溢れた使用の印が LRU に届かず `evicted`・`parent_wait` が出る。増えた原因の変更（見込み: TAA の View の LOD を 0.25 画素へ細かくした a0c76d9e）を確かめ、既定の容量を荒野の既定の視点で溢れない値へ上げる（要求の重複を減らす直しで足りるならそれを選んでよい）。合否: 既定の荒野の 6 視点と cliff の撮影の最後の `GEOMETRY_PAGES` で `request_overflow=0`・`wanted=0`・`failed=0`（`--geom-requests`。ログを読んで判定する検査はこの項目で作る）。mega-bananas の撮影でも溢れ 0 を確かめ、要求のバッファの大きさと GPU 時間（中央値）を前後で記録する。ほかのシーンの見た目を変えない（回帰の撮影）。反復の最初に回帰の撮影の `before` を撮る。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
