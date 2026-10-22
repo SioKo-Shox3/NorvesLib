@@ -103,6 +103,9 @@ SCN-WLR-CYCLES-GRAY・LIT は BlenderReference.py の f2795eae（LIT は 5570cce
 | rtgi-color | ref_cliff_01 影の崖 色度の差 | 0.0079 | ≤ 0.02 | 合格 |
 | rtgi-color | ref_cliff_01 影の中の地面 色度の差 | 0.0033 | ≤ 0.02 | 合格 |
 
+項目を閉じるときに同じ Game.exe（c6e459ee…、入力 17758db1…）で `--light-final --verify` を回し直し、同じ 10 行・5 仕様の合格を確かめた。項目の verify の撮影（`SCN-WL-LIGHT-FINAL-recheck/` の ref_cliff_02）も同じ exe・入力で通る。
+照り返しの直しは RTGI のシェーダーだけで、RTGI を切る基準画像の検査（RenderingGoldenIndoorVulkanTest・RenderingGoldenOutdoorVulkanTest）は再承認なしで合格した。
+
 ## 2. 既定の荒野を写真と並べる
 
 撮影: `CaptureScene.ps1 -Scene wasteland -Hdr -Views ref_far_01,ref_far_02,ref_cliff_01,ref_cliff_02,ref_ground_01,ref_ground_02`

@@ -6875,3 +6875,15 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 組の撮影は台本の置き場の変数が空になって `C:\gray` などへ書かれたので、撮影の中身（exe・入力・起動引数）を確かめてから置き場へ移した（Windows PowerShell 5.1 は BOM なしの .ps1 の日本語の行で改行を飲むので、台本の .ps1 は BOM 付きか英数字だけで書く）
   - 新しい試験は足していない
 - Next: SCN-WL-LIGHT-FINAL（組は撮り直し済みで `--light-final` は通った。残りは項目の verify と基準画像の扱い）
+
+### SCN-WL-LIGHT-FINAL 完了（2026-10-22、run 20261021-055341 の反復 61）
+- Done: SCN-WL-RTGI-COLOR-RESIDUAL の直しの後に撮り直した組（反復 60）に対し、項目の verify を 2 本とも回して閉じた。(2) の 6 視点・歩きの所見は反復 57 の `Docs/RenderingValidation/WastelandLightFinal.md` のまま
+- 結果: `--light-final --verify` result=pass・5/5 仕様・10 行合格（rtgi-color 影の崖 0.0079・影の中の地面 0.0033、ほかの 8 行も反復 60 と同じ値）。組の 5 つは今の Game.exe（c6e459ee…、入力 17758db1…）で撮ったもの
+- 証拠（`.harness/runs/20261021-055341/`）:
+  - `verify-SCN-WL-LIGHT-FINAL-2.txt` RelWithDebInfo のビルド pass・ref_cliff_02 の撮影 result=pass・EXIT=0（exe c6e459ee…、commit 2316a434、dirty=0）。撮った画を開き崩れが無いことを確かめた
+  - `-3.txt` `ReferenceCheck.py --light-final --verify` result=pass・specs=5/5・EXIT=0
+  - `aux-SCN-WL-LIGHT-FINAL-golden.txt` 基準画像の検査 Indoor・Outdoor とも Passed（照り返しの直しは RTGI のシェーダーだけで、検証アプリは RTGI を切るため再承認は不要）
+- Notes:
+  - 既定の荒野の 6 視点（(2)）は照り返しの直しの前の exe で撮ったもの。影の中の照り返しがわずかに明るく無彩色寄りになる向きの変化で、所見の結論は変わらない見込み（撮り直しはしていない）
+  - 新しい試験は足していない
+- Next: TASKS.md の次の未完

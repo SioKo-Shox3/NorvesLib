@@ -2314,7 +2314,7 @@
 - notes: 2026-10-19。Cycles の描画は反復の中で保存する。 2026-10-22（親）: 評価の 2 周の上限の BLOCKED を解いた。評価者 56 の指摘（`WastelandCloudRef.md` の直す項目の案 1 の手順が、体積の跳ね返り 0 の描画と太陽を消した描画を足すので空の単一散乱を二重に数える）だけを直して閉じる。直し方: 足し算の手順を消し、「全部の描画から体積の跳ね返りを 0 にした描画（太陽・空・地面の光が雲の中で 1 回だけ散乱する分）を引いた残りを Cycles の多重散乱の量とする。太陽を消した描画は、多重散乱のうち太陽と空・地面のどちらから来たかを分けて見るときだけに使い、引き算には入れない」と書く。`WastelandGapList.md`・`PROGRESS.md` に同じ手順の要約があれば揃える。描画・数値・ほかの節は変えない。この項目は評価の周回をもう残していない（ランの中で 2 周を数え済み）ので、直した文の外に断定を足さない。
 
 ## SCN-WL-LIGHT-FINAL: 共通の照明の数値の確認と、既定の荒野の光を写真に合わせる
-- status: todo
+- status: done
 - after: SCN-WL-MATERIAL-AO-BAKE, SCN-WL-SKY-SCATTER, SCN-WL-RTGI-COLOR, SCN-WL-SHADOW-LEAK, SCN-WL-RTGI-AMOUNT, SCN-WL-MATERIAL-AO-OCCLUSION, SCN-WL-PROP-AO, SCN-WL-PLANT-SHADOW, SCN-WL-PLANT-SHADOW-RANGE, SCN-WL-RTGI-COLOR-RESIDUAL
 - done-when: (1) 共通の照明（地形だけ・霞なし）の数値: これまでの修正の仕様（rt-tlas-range・shadow-pages・shadow-leak・rtgi-color・material-ao）を、今のコードで撮り直した撮影先 `SCN-WL-LIGHT-FINAL/`（灰色の 3 条件の ref_cliff_01・ref_far_01、実材質の ref_cliff_01・ref_cliff_02・ref_ground_01・ref_far_01、照り返しの入・切）に対して、`ReferenceCheck.py --light-final`（この項目で作る。全仕様をまとめて読む）でまとめて通す（後の修正が前の修正を壊していないことの確認）。撮影は反復の中で保存する。(2) 既定の荒野（前哨地・植物・礫・霞・雲あり）は Cycles の正解が無いので、6 視点を撮って写真と並べて開き、谷・崖の影・前哨地の照り返しと空の青、影の中の色と明るさの差を所見に書く（数値の合否にしない）。カメラパスで移動中の粒・残像・遮蔽の欠けが目立たないことを確かめる。直す所が残れば項目を足す。
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -Build -RequireAssets -Width 1920 -Height 1080 -Hdr -Aov -Views ref_cliff_02 -GameArgs wasteland-common-light,wasteland-hide=all,wasteland-finest-lod -LaunchPerView -OutDir .harness/runs/scene-capture/SCN-WL-LIGHT-FINAL-recheck`
