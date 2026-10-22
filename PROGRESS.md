@@ -6803,3 +6803,21 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `aux-SCN-WLR-CLOUD-REF-BLENDER-nan.txt` 空の画・透過率の画をメモリ上で全画素 NaN にした再現（画の保存と報告の書き出しを止める）。どちらも「Cycles の出力に有限でない値がある」で result=fail・EXIT 1
 - Notes: 再現の台本は報告の `open(..., "w")` を止めていなかったので `cloud_check.json` が一度空になり、その後の verify で書き直した。新しい試験は足していない
 - Next: TASKS.md の次の未完の項目（SCN-WLR-CLOUD-REF）
+
+### SCN-WLR-CLOUD-REF 完了（2026-10-22、run 20261021-055341 の反復 55）
+- Done: cloud_sky を Cycles で収束まで描いて（1 本 704 サンプルで 5 領域とも収束、焼き 180 秒・描画 115 秒）`scene-capture/SCN-WLR-CLOUD-REF/` に保存し、`--cloud`（`--trial` なし）で表にした。差を 3 つに分けて `Docs/RenderingValidation/WastelandCloudRef.md` に書き、直す項目の案（多重散乱・遠い雲の霞・ノイズの解像度・時間方向の蓄積・地面への雲の影）を書いた（値は変えていない）。差の一覧（`WastelandGapList.md` の雲の節）に結果への参照を足した
+  - `CloudBreakdown.py`: 書き出しの式の太陽の項だけを差し替えて、空と地面・太陽の 1 回目・多重散乱の近似の分と、太陽へ細かく積んだ 1 回目を領域ごとに求め直す。仰角ごとに方位を一周する視線の雲の当たる割合と、霞の前後の画素の色も書く
+  - `CloudPhotoStats.py`: 手本の写真と撮影の空の雲の被覆（線形の R ÷ B ≥ 0.7）・明るさの分布・縁の鋭さを並べ、雲の印を重ねた画を書く
+- 結果: エンジン ÷ Cycles は厚い雲 1.01・縁 1.49・銀の縁 1.05・日の当たる側 1.18・影の側 0.72。太陽への 6 回の歩は細かく積んだ値と 0.5 % 以内（影の側だけ −10 %）で、差は多重散乱の近似（雲の厚さを見ない）による。写真の視点（仰角 3〜10°）では霞の前の白い雲の割合 0.57〜1.00 が写真の被覆（0.54・0.97・1.00）と同じ並びで、雲の霞（22 km）と 30〜45 km の消えで 0.00〜0.03 になる
+- 証拠（`.harness/runs/20261021-055341/`）:
+  - `aux-SCN-WLR-CLOUD-REF-blender.txt` Cycles の本描画 EXIT=0（stop_reason=converged）
+  - `verify-SCN-WLR-CLOUD-REF-1.txt`・`-2.txt` `--cloud --verify` result=pass・trial=0・all_converged=1・inputs_current=1・EXIT=0（2 は参照の書き先に内訳と写真の報告を足した後）
+  - `aux-SCN-WLR-CLOUD-REF-breakdown.txt` 内訳と仰角ごとの見え方 EXIT=0（式のままの値は書き出しの GPU の値と 0.1 % 以内）
+  - `aux-SCN-WLR-CLOUD-REF-far01-capture.txt` ref_far_01 の今のコードの撮影 result=pass・EXIT=0
+  - `aux-SCN-WLR-CLOUD-REF-photo.txt` 写真と撮影の雲の被覆 EXIT=0（写真 0.805、撮影 0.001）
+  - 見比べの画 `scene-capture/SCN-WLR-CLOUD-REF/cloud_cloud_sky.png` と `cloud_photo_far_01.png` を開き、縁の明るさ・影の側の暗さの差と、写真の積雲と撮影の一面の青いベールを確かめた
+- Notes:
+  - 照合の台本（BlenderReference.py・CloudVolume.py・CloudDumpCheck.py）は参照の入力の記録でハッシュを照らすので触らず、内訳は新しい台本に分けた
+  - 直す項目の案は記録に書いただけで TASKS.md には足していない。足すかは計画が決める
+  - 新しい試験は足していない
+- Next: TASKS.md の次の未完の項目
