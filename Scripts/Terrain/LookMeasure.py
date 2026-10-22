@@ -19,7 +19,8 @@
 # --look-depth <撮影の出力先> を渡すと、そこの <視点>.aov.depth.pfm（-Aov の撮影）で撮影の領域の深度の中央値と 3 km より先の割合を書く。
 # 出力: <出力先>/look_<写真>.png（上: 写真、下: 撮影。注釈を重ねる）、look_metrics.json、look_table.md（文書に貼る表）。
 # --verify: 6 写真すべてで、各領域が写真・撮影の両方で空でないか、absent に理由があるかと、撮影の PNG と HDR（-Hdr）がそろい
-# 1920×1080 以上で同じ大きさかを確かめる。終了コード: 満たせば 0、満たさなければ 1。
+# 1920×1080 以上で同じ大きさかを確かめる。-Hdr を付けずに撮った出力先（metrics.json の hdr が false。ブルームと AA を入れた
+# 見た目の確認の撮影）は HDR を求めず、撮影 HDR の値を「－」にする。終了コード: 満たせば 0、満たさなければ 1。
 import json
 import math
 import os
@@ -219,6 +220,15 @@ def write_table(report, region_labels, path):
         file.write("\n".join(lines) + "\n")
 
 
+def capture_hdr_flag(capture_dir):
+    """撮影が -Hdr で撮られたか（CaptureScene.ps1 の metrics.json の hdr。記録が無ければ撮られたとみなす）"""
+    path = os.path.join(capture_dir, "metrics.json")
+    if not os.path.isfile(path):
+        return True
+    with open(path, encoding="utf-8-sig") as file:
+        return bool(json.load(file).get("hdr", True))
+
+
 def run_look(capture_dir, out_dir, wanted, depth_dir, verify):
     """--look の本体。終了コードを返す"""
     annotations = load_regions()
@@ -228,6 +238,7 @@ def run_look(capture_dir, out_dir, wanted, depth_dir, verify):
     failures = []
     report = {"regions": region_labels, "photos": {}}
     photos = [p for p in PHOTOS if not wanted or p["id"] in wanted]
+    capture_has_hdr = capture_hdr_flag(capture_dir)
     for entry in photos:
         photo_id, view = entry["id"], entry["view"]
         annotation = annotations["photos"].get(photo_id)
@@ -241,7 +252,8 @@ def run_look(capture_dir, out_dir, wanted, depth_dir, verify):
         photo_path = os.path.join(PHOTO_DIR, photo_id + ".jpg")
         png_path = os.path.join(capture_dir, view + ".png")
         hdr_path = os.path.join(capture_dir, view + ".hdr.pfm")
-        missing = [path for path in (photo_path, png_path, hdr_path) if not os.path.isfile(path)]
+        required = (photo_path, png_path, hdr_path) if capture_has_hdr else (photo_path, png_path)
+        missing = [path for path in required if not os.path.isfile(path)]
         if missing:
             failures.extend(f"ファイルが無い: {path}" for path in missing)
             continue
@@ -258,8 +270,8 @@ def run_look(capture_dir, out_dir, wanted, depth_dir, verify):
             failures.append(f"撮影が小さい: {png_path}（{capture.width}×{capture.height}）")
         png_codes = np.asarray(capture)
         png_linear = srgb_to_linear(png_codes.astype(np.float64))
-        hdr = read_pfm(hdr_path)
-        if hdr.shape[:2] != png_codes.shape[:2]:
+        hdr = read_pfm(hdr_path) if capture_has_hdr else None
+        if hdr is not None and hdr.shape[:2] != png_codes.shape[:2]:
             failures.append(f"{view} の HDR の大きさ {hdr.shape[1]}×{hdr.shape[0]} が PNG と違う")
             continue
         capture_size = (capture.width, capture.height)
@@ -300,7 +312,7 @@ def run_look(capture_dir, out_dir, wanted, depth_dir, verify):
                 "geometry_capture": geometry_stats(directions, sun, capture_mask),
                 "photo": color_stats(photo_linear, photo_mask, photo_codes),
                 "png": color_stats(png_linear, capture_mask, png_codes),
-                "hdr": color_stats(hdr, capture_mask),
+                "hdr": color_stats(hdr, capture_mask) if hdr is not None else {"pixels": 0},
             }
             if depth is not None and depth.shape == capture_mask.shape:
                 values = depth[capture_mask]
@@ -385,5 +397,6 @@ def run_look(capture_dir, out_dir, wanted, depth_dir, verify):
             print(f"COMPARE_REFERENCE_LOOK failure={failure}")
         print(f"COMPARE_REFERENCE_LOOK result=fail failures={len(failures)}")
         return 1
-    print(f"COMPARE_REFERENCE_LOOK result=pass photos={len(report['photos'])} out={out_dir}" + (" verify=1" if verify else ""))
+    print(f"COMPARE_REFERENCE_LOOK result=pass photos={len(report['photos'])} hdr={int(capture_has_hdr)} out={out_dir}"
+          + (" verify=1" if verify else ""))
     return 0

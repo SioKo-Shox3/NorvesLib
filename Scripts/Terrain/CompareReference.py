@@ -6,6 +6,8 @@
 #                                              [--verify] [--note <一覧の先頭の添え書き>]
 #   python Scripts/Terrain/CompareReference.py --capture <-Hdr の撮影の OutDir> --look [--look-depth <-Aov の撮影>] [--verify]
 #       写りの差を写真ごとの固定の領域で診断する（LookMeasure.py。注釈は LookRegions.json）
+#   python Scripts/Terrain/CompareReference.py --capture <--display-check=scene -Hdr の撮影> --look-select <-Hdr の撮影> [--verify]
+#       昼の表示の変換の候補を --look-select の HDR にオフラインで掛けて並べ、選んだ候補を --capture の撮影と照らす（LookSelect.py）
 # 写真ごとに <出力先>/reference_<写真>.png と <出力先>/reference_metrics.json を書き、数値を 1 行ずつ出す。
 # 並べた写真をすべて縦に積んだ一覧（左に写真、右に撮影。輪郭と枠は重ねない）を <出力先>/reference_overview.png に書く
 # （節目の確認でユーザーに渡す 1 枚）。
@@ -279,6 +281,9 @@ def main():
         "--look", action="store_true", help="写りの差を写真ごとの固定の領域（LookRegions.json）で診断する（LookMeasure.py。撮影は -Hdr）"
     )
     parser.add_argument("--look-depth", default="", help="--look で領域の深度を見る -Aov の撮影の出力先（省くと深度を書かない）")
+    parser.add_argument(
+        "--look-select", default="", help="昼の表示の変換の候補を掛ける -Hdr の撮影の出力先（LookSelect.py。--capture は --display-check=scene の撮影）"
+    )
     args = parser.parse_args()
 
     wanted = [p for p in args.photos.split(",") if p]
@@ -289,6 +294,10 @@ def main():
         from LookMeasure import run_look
 
         return run_look(args.capture, out_dir, wanted, args.look_depth, args.verify)
+    if args.look_select:
+        from LookSelect import run_look_select
+
+        return run_look_select(args.look_select, args.capture, out_dir, args.verify)
     note = resolve_note(out_dir, args.note)
     failures = []
     views = catalog_views()

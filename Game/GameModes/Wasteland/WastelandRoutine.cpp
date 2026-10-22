@@ -165,8 +165,14 @@ namespace Game::GameModes
         // そのまま表示の 0.128 になる。カメラの JPEG は標準出力感度（ISO 12232）で同じ露出の中間の灰を sRGB 118（表示のリニアで 0.18）に
         // 置くので、同じ記録の露出でも中間調が 0.18 / 0.128 = 1.41 倍（+0.49 段）明るく写る。露出の値は記録のまま、この現像の差だけを補う
         constexpr float kCameraOutputCompensationEV = 0.49f;
-        // 日中のグレーディング。トーンマップは暗部を縮めない NeutralLinear にし、空の光だけの影の中が黒くつぶれないようにする。
-        // グレーディングは中立（コントラスト 1・彩度 1・色温度 0）にする。コントラスト 1.35・彩度 1.2 の S 字は、同じ HDR を写真の
+        // 日中の表示の変換（暫定。植物・地面の後の確認で見直す）。保存した 6 視点の HDR に候補の曲線と露出の補正をオフラインで掛け、
+        // 晴れの写真 3 枚の固定の領域の距離で並べて、カメラだけで選べて白飛び・黒つぶれが増えない候補の中で最も近い
+        // 「View の既定の演算子（ACES Filmic、肩のある曲線）・中立のグレーディング・露出の補正 −1 EV」を採った
+        // （Docs/RenderingValidation/WastelandLookCamera.md。写真との距離は現像・天気・材質の差を含む作風の参考）。
+        // 露出の補正は上の現像の差（kCameraOutputCompensationEV）に足す。ACES Filmic は中間調を持ち上げる曲線なので、−1 EV で
+        // 中間の灰は今の NeutralLinear より約 0.7 段暗く、明部は肩で丸まる
+        constexpr float kDayLookExposureOffsetEV = -1.0f;
+        // 日中のグレーディングは中立（コントラスト 1・彩度 1・色温度 0）にする。コントラスト 1.35・彩度 1.2 の S 字は、同じ HDR を写真の
         // 崖と地面に合わせて比べたとき、地面の R/G と白飛びを写真より離す側に働いた（Docs/RenderingValidation/WastelandToneMapEval.md）。
         // 色と明るさの差は照明と中身で詰め、表示側の色づけで隠さない。ビネットは画面の隅を少し落とす程度
         constexpr float kGradingContrast = 1.0f;
@@ -1907,7 +1913,7 @@ namespace Game::GameModes
         }
         else
         {
-            camera->SetExposureCompensation(kCameraOutputCompensationEV);
+            camera->SetExposureCompensation(kCameraOutputCompensationEV + kDayLookExposureOffsetEV);
         }
         // 昼の荒野の既定は TAA（遠景の崖の細部とエイリアスを 2 倍の解像度の正解と比べて決めた。
         // Docs/RenderingValidation/WastelandFarBlurMotion.md）。夜の村の既定は FXAA のまま
@@ -1928,10 +1934,11 @@ namespace Game::GameModes
         }
         // 日中のトーンマップとグレーディング（このシーンのカメラだけ。ほかのシーンのカメラは各自のひな形を使う）
         CameraProxy &proxyTemplate = data.m_Rig.ProxyTemplate();
-        proxyTemplate.ToneMapCurve = CameraToneMapCurve::NeutralLinear;
         proxyTemplate.GradingOverride.bEnabled = true;
         if (data.m_bNightVillage)
         {
+            // 夜は暗部を縮めない NeutralLinear
+            proxyTemplate.ToneMapCurve = CameraToneMapCurve::NeutralLinear;
             // 夜: 測光が暗いほど暗く保つ自動露出の補正と、彩度を落とした夜のグレーディング
             proxyTemplate.AutoExposureCurve.bEnabled = true;
             proxyTemplate.AutoExposureCurve.DarkEV100 = kNightDarkSceneEV100;
@@ -1945,6 +1952,8 @@ namespace Game::GameModes
         }
         else
         {
+            // 昼は View の既定の演算子（ACES Filmic）。--tone-map で View の演算子を替えた撮影ではそちらになる
+            proxyTemplate.ToneMapCurve = CameraToneMapCurve::ViewDefault;
             proxyTemplate.GradingOverride.Contrast = kGradingContrast;
             proxyTemplate.GradingOverride.ContrastPivot = kGradingContrastPivot;
             proxyTemplate.GradingOverride.Saturation = kGradingSaturation;

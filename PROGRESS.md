@@ -7064,3 +7064,14 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - cliff.png・ref_cliff_01.png を開き、cliff の上の壁の塊 3 個が比較図 `scene-capture/SCN-WL-CLIFF-SCAN-PLACE-compare/compare_cliff.png` の Blender の塊と同じ位置・形に写り、壁から浮いた隙間が見えないことを確かめた
 - Notes: 新しい試験は足していない
 - Next: TASKS.md の次の未完
+
+### SCN-WL-LOOK-CAMERA 完了（2026-10-22、run 20261022-173753 の反復 10）
+- Done: `CompareReference.py --look-select`（本体 `Scripts/Terrain/LookSelect.py`）を作り、SCN-WL-LOOK-MEASURE の 6 視点の HDR に 7 曲線（今の NeutralLinear・前のグレーディング・neutral_mild・ACES 2.0 LUT・ACES Filmic・Uncharted 2・Reinhard）× 露出の補正 −1.0〜+1.5 EV（0.5 刻み）の 42 候補を DisplayTransform.py でオフラインに掛け、晴れの写真 3 枚の `--look` の領域の距離（式は WastelandLookCamera.md）で並べた。今の設定は 9 位（D 1.617）、カメラだけで選べて白飛び・黒つぶれが増えない最上位は ACES Filmic・中立・−1 EV（D 1.471、次点の ACES 2.0 LUT 1.472 は View の演算子なので選べない）。これを `WastelandRoutine.cpp` の昼の分岐だけに入れた（`CameraToneMapCurve::ViewDefault`・`kDayLookExposureOffsetEV = −1`。NeutralLinear の代入は夜の分岐へ移した）。`--look` は -Hdr でない撮影（metrics.json の hdr=false）では HDR を求めない。記録は `Docs/RenderingValidation/WastelandLookCamera.md`（候補の表・選んだ理由・照合・回帰・`--gray`/`--lit`/`--light-final` が表示の変換の前の HDR を読むことの台本の行）
+- 証拠（`.harness/runs/20261022-173753/`）:
+  - `verify-SCN-WL-LOOK-CAMERA-1.txt` Debug の Game のビルド EXIT=0（初回は Git Bash が /m:1 を変換して失敗したので PowerShell で回し直した）
+  - `verify-SCN-WL-LOOK-CAMERA-2.txt` `--display-check=scene -Hdr` の 6 視点の撮影（RelWithDebInfo、-Build）result=pass・EXIT=0
+  - `verify-SCN-WL-LOOK-CAMERA-3.txt` `--look-select --verify` result=pass。selected=aces_filmic-1.0EV、6 視点とも ±1 段の中 100 %・最大 1 段、記録の演算子 1・中立のグレーディング・プリエクスポージャ × 2^−1 が一致
+  - `verify-SCN-WL-LOOK-CAMERA-4.txt` 通常の 6 視点（ブルーム・TAA）result=pass・EXIT=0、`-5.txt` `--look --verify` result=pass photos=6 hdr=0。look_far_01.png・look_cliff_01.png を開き、地面の橙の飽和が収まり空が灰色寄りに暗くなったことを見た
+  - `verify-SCN-WL-LOOK-CAMERA-6.txt` 回帰の after result=pass（before は `aux-SCN-WL-LOOK-CAMERA-regression-before.txt`）。4 シーンとも平均の差 0、PSNR night-village 71.32・mega-bananas 65.96・rendering3dtest 105.10・sandbox inf
+- Notes: 暫定。D の改善は地面と崖を暗くする側で、青空は写真より暗くなる（cliff_01 の青空 Y 写真 0.287・撮影 0.131）。植物・地面の後（確認 3）に同じ `--look-select` で選び直す。昼の曲線は View の既定に従うので `--tone-map=aces20-lut` の撮影では LUT になる。荒野の `--display` の照合（ReferenceCheck.py の ramp-neutral の組）は NeutralLinear の荒野を前提にしているので、次に回すときは組の約束の見直しが要る。新しい試験は足していない
+- Next: TASKS.md の次の未完
