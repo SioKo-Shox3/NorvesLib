@@ -2515,7 +2515,14 @@
 - status: done
 - after: SCN-WLR-OCCLUSION-EXPORT
 - done-when: SCN-WLR-OCCLUSION-EXPORT の契約で、3 組 × 2 照明をそろえる: (i) 地形だけ（DEM の溝。灰色、`wasteland-hide=all`、ref_cliff_01）、(ii) 岩塊・スキャンの塊と地形（灰色、contact_near・ref_cliff_01）、(iii) 低木の根元（`wasteland-hide=all-but-plant`、plant_near。SCN-WLR-PLANT-REF の株）。照明は共通の照明の空だけ・太陽だけ。全組を同じ exe で撮る台本（`Scripts/Terrain/OcclusionSets.py --capture --out <置き場>`、この項目で作る。後の直しの項目もこれで撮り直す）と、全組の Cycles の試しの描画（低いサンプル数）を作る。合否: `--occlusion --trial --verify` で全組の入力の照合と同じ面の画素の割合（90 % 以上）が通る。礫（近景の石と礫）はこの回の対象から外す（撮影でも隠す）。
-- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-WLR-OCCLUSION-SETS --build`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-WLR-OCCLUSION-SETS --sets terrain-sky --build`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-WLR-OCCLUSION-SETS --sets terrain-sun`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-WLR-OCCLUSION-SETS --sets rocks-sky`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-WLR-OCCLUSION-SETS --sets rocks-sun`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-WLR-OCCLUSION-SETS --sets rocks-cliff-sky`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-WLR-OCCLUSION-SETS --sets rocks-cliff-sun`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-WLR-OCCLUSION-SETS --sets plant-sky`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-WLR-OCCLUSION-SETS --sets plant-sun`
 - verify: `python Scripts/Terrain/ReferenceCheck.py --occlusion --trial --engine-root .harness/runs/scene-capture/SCN-WLR-OCCLUSION-SETS --reference .harness/runs/scene-capture/SCN-WLR-OCCLUSION-SETS/cycles --verify`
 - paths: Scripts, Docs/RenderingValidation, TASKS.md, PROGRESS.md
 - notes: 2026-10-22 親が確認 2（SCN-WL-REVIEW-2）とユーザーの所見（地形の造形が荒い・遮蔽による影の落ち方の質が低い）から、ユーザーの順（空と霞 → 遮蔽 → 地形の形 → 植物 → 地面 → 建物）の前半として足した。Sol の批評（写真との比は撮影時の処理を含むので合否にしない・遮蔽の撮影は岩と株を残す・参照の描き直しを項目にする・大きな項目は先に分ける）を反映した。 時間の見積もり: 台本 20 分、エンジンの撮影 6 組 約 18 分（-Build で +3〜6 分）、試しの描画 6 組 約 20〜30 分（20 分を超えるなら反復の外）。 壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える（未達のまま DONE にしない）。20 分を超える Blender・Cycles の描画は反復の外で起動して BLOCKED で待つ（ログに START と `END ... EXIT=` を書き、入力のハッシュ・出力先を blocked の理由に書く。終わったら親が todo に戻す。その間は GPU を使う別の処理を重ねない）。
@@ -2541,7 +2548,14 @@
 - after: SCN-WLR-OCCLUSION-CYCLES
 - done-when: 最初の編集の前に、SCN-WLR-OCCLUSION-DIAG と SCN-WLR-OCCLUSION-CYCLES の値から、直す原因 1 つ（候補: 近い当たりの読み飛ばしの範囲、RT 用の形の差、ノイズ取りが小さな遮蔽を消すこと）と、その原因が効く必須の層を決めて `WastelandOcclusion.md` に書く。遮蔽済みの RTGI 全体に GTAO を掛ける形は二重の遮蔽になるので採らない。材質の AO と二重に数えない（SCN-WL-MATERIAL-AO-SHADING の結論）。合否（`--occlusion --expect`、`occlusion-fix.json`）: 決めた層のくぼみの比のエンジン ÷ Cycles が 0.85〜1.15、ほかの全層が前より悪くならない（同じ画素で ±3 %）、対照の層の Y が同じ画素で前の ±3 %（全体を暗くして合わせない）。全組（地形・岩塊・株）を `OcclusionSets.py --capture` で撮り直して判定する。ref_cliff_01 の GPU 時間（中央値、300 フレーム）を前後で記録。既定の描画経路を変えるので、回帰の 4 シーンと、RTGI を使うほかのシーン（material-gallery など）を撮って差の画を開き、基準画像（golden）の検査を回し、変わるなら SCN-WL-GOLDEN-REAPPROVE と同じ手順で再承認する。全層の範囲の達成は SCN-WL-OCCLUSION-ACCEPT で見る。反復の最初に回帰の撮影の `before` を撮る。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
-- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-WL-OCCLUSION-FIX --build`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-WL-OCCLUSION-FIX --sets terrain-sky --build`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-WL-OCCLUSION-FIX --sets terrain-sun`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-WL-OCCLUSION-FIX --sets rocks-sky`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-WL-OCCLUSION-FIX --sets rocks-sun`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-WL-OCCLUSION-FIX --sets rocks-cliff-sky`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-WL-OCCLUSION-FIX --sets rocks-cliff-sun`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-WL-OCCLUSION-FIX --sets plant-sky`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-WL-OCCLUSION-FIX --sets plant-sun`
 - verify: `python Scripts/Terrain/ReferenceCheck.py --occlusion --engine-root .harness/runs/scene-capture/SCN-WL-OCCLUSION-FIX --reference .harness/runs/scene-capture/SCN-WLR-OCCLUSION-SETS/cycles --regions Scripts/Terrain/ExpectSpecs/occlusion-regions.json --expect Scripts/Terrain/ExpectSpecs/occlusion-fix.json --verify`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Views ref_cliff_01 -GpuTimingFrames 300 -GpuFrameBudgetMs 33.3 -OutDir .harness/runs/scene-capture/SCN-WL-OCCLUSION-FIX/timing`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Terrain/CaptureRegression.ps1 -Item SCN-WL-OCCLUSION-FIX -Phase after`
@@ -2553,7 +2567,14 @@
 - after: SCN-WL-OCCLUSION-FIX
 - done-when: 最初の編集の前に、SCN-WLR-OCCLUSION-CYCLES の太陽だけの組の値と雑音から、許容（例: IoU 0.9 以上・縁の幅が Cycles の ±50 %・漏れ 2 % 以下）を確定して `WastelandOcclusion.md` に書き、外れる所を直す（候補: 岩塊・スキャンの塊・株の VSM の LOD と 1 texel の大きさ、バイアスで浮く接地の影、PCSS の柔らかさ）。全部が許容の中なら、記録して変えずに閉じる。合否（`--occlusion --expect`、`sun-shadow.json`）: 直した層が許容に入り、ほかの層が悪くならない。全組を撮り直して判定する。ref_cliff_01 の GPU 時間（中央値）を前後で記録、回帰の 4 シーンと VSM を使うほかのシーン、基準画像（golden）の検査、変わるなら再承認。反復の最初に回帰の撮影の `before` を撮る。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
-- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-WL-SUN-SHADOW-FIX --build`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-WL-SUN-SHADOW-FIX --sets terrain-sky --build`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-WL-SUN-SHADOW-FIX --sets terrain-sun`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-WL-SUN-SHADOW-FIX --sets rocks-sky`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-WL-SUN-SHADOW-FIX --sets rocks-sun`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-WL-SUN-SHADOW-FIX --sets rocks-cliff-sky`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-WL-SUN-SHADOW-FIX --sets rocks-cliff-sun`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-WL-SUN-SHADOW-FIX --sets plant-sky`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-WL-SUN-SHADOW-FIX --sets plant-sun`
 - verify: `python Scripts/Terrain/ReferenceCheck.py --occlusion --engine-root .harness/runs/scene-capture/SCN-WL-SUN-SHADOW-FIX --reference .harness/runs/scene-capture/SCN-WLR-OCCLUSION-SETS/cycles --regions Scripts/Terrain/ExpectSpecs/occlusion-regions.json --expect Scripts/Terrain/ExpectSpecs/sun-shadow.json --verify`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Views ref_cliff_01 -GpuTimingFrames 300 -GpuFrameBudgetMs 33.3 -OutDir .harness/runs/scene-capture/SCN-WL-SUN-SHADOW-FIX/timing`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Terrain/CaptureRegression.ps1 -Item SCN-WL-SUN-SHADOW-FIX -Phase after`
@@ -2564,7 +2585,14 @@
 - status: todo
 - after: SCN-WL-SUN-SHADOW-FIX
 - done-when: 空の遮蔽と太陽の影の直しの後に、同じ exe で全組と共通の照明の組を撮り直して受け入れる。合否: (1) `--occlusion --expect`（`occlusion-accept.json`）で必須の全層のくぼみの比のエンジン ÷ Cycles が 0.85〜1.15、太陽の影が SCN-WL-SUN-SHADOW-FIX で確定した許容の中、(2) SCN-WL-LIGHT-FINAL の組（灰色の両方・太陽だけ・空だけ、実材質、照り返しの切）を撮り直し、`--light-final --verify` が通る（前の直しを壊していない）、(3) 既定の荒野の 6 視点を撮って写真と並べて開き、溝の奥・岩の下・株の根元の暗がりと棚の影を所見に書く。(1) に届かない層が残れば、残りの原因を直す項目を TASKS.md に足し、この項目は BLOCKED にする。
-- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-WL-OCCLUSION-ACCEPT --build`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-WL-OCCLUSION-ACCEPT --sets terrain-sky --build`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-WL-OCCLUSION-ACCEPT --sets terrain-sun`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-WL-OCCLUSION-ACCEPT --sets rocks-sky`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-WL-OCCLUSION-ACCEPT --sets rocks-sun`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-WL-OCCLUSION-ACCEPT --sets rocks-cliff-sky`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-WL-OCCLUSION-ACCEPT --sets rocks-cliff-sun`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-WL-OCCLUSION-ACCEPT --sets plant-sky`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-WL-OCCLUSION-ACCEPT --sets plant-sun`
 - verify: `python Scripts/Terrain/ReferenceCheck.py --occlusion --engine-root .harness/runs/scene-capture/SCN-WL-OCCLUSION-ACCEPT --reference .harness/runs/scene-capture/SCN-WLR-OCCLUSION-SETS/cycles --regions Scripts/Terrain/ExpectSpecs/occlusion-regions.json --expect Scripts/Terrain/ExpectSpecs/occlusion-accept.json --verify`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Hdr -Aov -Views ref_cliff_01,ref_far_01 -GameArgs wasteland-common-light,wasteland-hide=all,wasteland-finest-lod,wasteland-aa=fxaa,wasteland-gray-material -LaunchPerView -OutDir .harness/runs/scene-capture/SCN-WL-OCCLUSION-ACCEPT/light-final/gray`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Hdr -Aov -Views ref_cliff_01,ref_far_01 -GameArgs wasteland-common-light,wasteland-hide=all,wasteland-finest-lod,wasteland-aa=fxaa,common-light-case=sun,wasteland-gray-material -LaunchPerView -OutDir .harness/runs/scene-capture/SCN-WL-OCCLUSION-ACCEPT/light-final/gray/engine-sun`

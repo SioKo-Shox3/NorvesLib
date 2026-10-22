@@ -5,6 +5,9 @@
 #       組ごとに CaptureScene.ps1 -Hdr -Aov -LaunchPerView で <置き場>/<組> へ撮る（--build は最初の組だけビルドする）。
 #       撮り終えたら、全組の Game.exe と実装のハッシュが揃っていること・小物の書き出し（occlusion_props.*）があること・
 #       低木の組に比べる株（reference_plant.ply）があることを確かめ、<置き場>/occlusion_sets.json に組の一覧を書く。
+#       1 組の撮影は約 2 分なので、verify では 1 行 10 分の上限に収まるよう --sets <組> で 1 組ずつ撮る。--sets で組を
+#       絞ったときは撮った組だけを確かめ、全組の揃い（ハッシュ・撮っていない組）は記録だけにする（揃いの合否は
+#       最後の ReferenceCheck.py --occlusion が全組の撮影で見る）。
 #   python Scripts/Terrain/OcclusionSets.py --cycles --out <置き場> [--trial] [--sets ...] [--mesh <地形の書き出し>]
 #       組ごとに BlenderOcclusionReference.py で Cycles の参照を <置き場>/cycles/<組> へ描く（--trial は低いサンプル数）。
 #
@@ -158,13 +161,20 @@ def run_capture(args, sets, root):
     previous = read_json(os.path.join(root, SETS_FILE)).get("sets", {}) if os.path.isfile(os.path.join(root, SETS_FILE)) else {}
     merged = {name: entry for name, entry in previous.items() if name in set_definitions()}
     merged.update(records)
+    across = []
     for key in ("game_exe_sha256", "files_sha256"):
         values = {entry.get(key) for entry in merged.values()}
         if len(values) != 1 or None in values:
-            failures.append(f"組ごとの {key} が揃っていない（{len(values)} 通り）")
+            across.append(f"組ごとの {key} が揃っていない（{len(values)} 通り）")
     missing = [name for name in set_definitions() if name not in merged]
     if missing:
-        failures.append(f"撮っていない組がある: {', '.join(missing)}")
+        across.append(f"撮っていない組がある: {', '.join(missing)}")
+    # 組を絞った撮影では、ほかの組は前の撮影のまま（撮り直しの途中）なので揃いは記録だけにする
+    if args.sets:
+        for reason in across:
+            print(f"OCCLUSION_SETS note: {reason}（組を絞った撮影なので合否に入れない）")
+    else:
+        failures.extend(across)
     with open(os.path.join(root, SETS_FILE), "w", encoding="utf-8") as f:
         json.dump({"kind": "occlusion_sets", "sets": merged}, f, indent=2, ensure_ascii=False)
     for reason in failures:

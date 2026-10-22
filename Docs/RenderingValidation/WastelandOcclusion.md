@@ -111,6 +111,10 @@ python Scripts/Terrain/OcclusionSets.py --cycles --trial --out <置き場> [--se
 python Scripts/Terrain/ReferenceCheck.py --occlusion --trial --engine-root <置き場> --reference <置き場>/cycles --verify
 ```
 
+1 組の撮影は約 2 分（全 8 組で約 17 分）なので、verify は 1 行 10 分の上限に収まるよう `--sets <組>` で 1 組ずつ撮る（最初の行だけ
+`--build`）。組を絞った撮影は撮った組だけを確かめ、全組のハッシュの揃いと撮っていない組は記録だけにする。揃いの合否は最後の
+`ReferenceCheck.py --occlusion` が全組の撮影で見る。
+
 組は 1 組 1 視点（Game は起動ごとに視点を中心に崖錐の岩を選んで `occlusion_props.*` を撮影のフォルダへ書くので、2 視点を同じフォルダで
 撮ると後の視点の配置で前の視点の配置が消える）。照明は共通の照明の空だけ（`-sky`）と太陽だけ（`-sun`）。どれも `wasteland-common-light`・
 `wasteland-gray-material`・`wasteland-finest-lod`・`wasteland-aa=fxaa` で、礫は隠す。

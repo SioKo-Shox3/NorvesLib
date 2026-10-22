@@ -7237,3 +7237,12 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 並べた画 `scene-capture/SCN-WLR-OCCLUSION-SETS/cycles/rocks-sun/occlusion_preview/contact_near.png`・`plant-sun/.../plant_near.png`・`terrain-sun/.../ref_cliff_01.png` と、撮影 `terrain-sky/ref_cliff_01.png`・`rocks-sky/contact_near.png` を開いた: 形・位置・影の位置が重なる。rocks-sun は Cycles の岩の落とす影がエンジンより大きく濃く、plant-sun はエンジンの株の影が濃い塊・Cycles は細い線
 - Notes: rocks-cliff の組は崖錐の岩が視点から 300 m（`kGrayTalusRadius`）の外で置かれず、スキャンの崖の塊も画の 0.07 % なので、地形だけの組とほぼ同じ画（範囲か BVH の列の容量を変えるのは paths の外。文書に記載）。前の項目の岩塊の組（SCN-WLR-OCCLUSION-EXPORT）の照合は今も pass（台本を変えたので `--verify` では古い参照になる）。新しい試験は足していない（verify の照合が確かめる）
 - Next: TASKS.md の次の未完（SCN-WLR-OCCLUSION-METRIC）
+
+### SCN-WLR-OCCLUSION-SETS の verify を組ごとの行に分ける（2026-10-23、run 20261022-173753 の反復 30）
+- Done: 反復 29 の再検証で、全 8 組を 1 コマンドで撮る verify（約 17 分）が 1 コマンド 10 分の上限を超えて落ちた。`OcclusionSets.py --capture` は `--sets <組>` で組を絞ったとき撮った組だけを確かめ、全組のハッシュの揃いと撮っていない組は note として記録だけにする形にした（揃いの合否は最後の `ReferenceCheck.py --occlusion` が全組の撮影で見る）。この項目と、同じ形の verify を持つ SCN-WL-OCCLUSION-FIX・SCN-WL-SUN-SHADOW-FIX・SCN-WL-OCCLUSION-ACCEPT の撮影の行を 1 組 1 行（最初の行だけ `--build`）に書き換えた。使い方を `WastelandOcclusion.md` の「比べの組」に書いた
+- 証拠（`.harness/runs/20261022-173753/`、全組をこの反復で撮り直した）:
+  - `verify-SCN-WLR-OCCLUSION-SETS-3.txt`〜`-10.txt`: 8 組すべて CAPTURE_SCENE result=pass・pass=1・EXIT=0、1 行 88〜131 秒（最初の行のビルド result=pass を含む）。全組 game_exe f6869834・files a5d0a251、props は rocks 14931・rocks-cliff 3・ほか 0
+  - `verify-SCN-WLR-OCCLUSION-SETS-11.txt`: `--occlusion --trial --verify` result=pass・EXIT=0（93 秒）。同じ面 terrain 99.97 %・rocks 99.98 %・rocks-cliff 99.96 %・plant 100 %、幾何の法線 99.99 %・89.49 %・99.99 %・92.28 %
+  - 撮影 `scene-capture/SCN-WLR-OCCLUSION-SETS/rocks-sky/contact_near.png` を開いた: 灰色の岩塊と地形が欠けずに写る
+- Notes: `--set` という別名は足さず、前からある `--sets` に 1 組を渡す形にした。新しい試験は足していない
+- Next: TASKS.md の次の未完（SCN-WLR-OCCLUSION-METRIC）
