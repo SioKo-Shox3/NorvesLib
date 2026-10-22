@@ -2306,7 +2306,7 @@
 - notes: 2026-10-19（Sol の 2 周目）。
 
 ## SCN-WLR-CLOUD-REF: 雲をエンジンと Cycles で比べる
-- status: todo
+- status: done
 - after: SCN-WLR-CLOUD-REF-BLENDER
 - done-when: `cloud_sky` を Cycles で収束まで描いて保存し（1 本 25 分を上限）、`--cloud`（`--trial` なし）で表にする。雲の形（密度場の作り方）は中身として、写真の雲の被覆・明るさの分布と並べて別に書く。差を 3 つに分けて `Docs/RenderingValidation/WastelandCloudRef.md` に書き、直す項目の案（地面への雲の影・時間方向の蓄積・ノイズの解像度・多重散乱）を書く（値は変えない）。
 - verify: `python Scripts/Terrain/ReferenceCheck.py --cloud --engine .harness/runs/scene-capture/SCN-WLR-CLOUD-REF-DUMP --reference .harness/runs/scene-capture/SCN-WLR-CLOUD-REF --verify`
