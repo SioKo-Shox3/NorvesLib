@@ -6965,3 +6965,14 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 前の反復が残した未追跡の `Game/GameModes/Wasteland/WastelandNightLights.{h,cpp}`・`Docs/RenderingValidation/NightVillageLights.md` は、この反復の間に別の途中保存のコミット（f8f5c7a4）で追跡された
   - 新しい試験は足していない
 - Next: TASKS.md の次の未完
+
+### SCN-NIGHT-LIGHTS 再検証して閉じる（2026-10-22、run 20261022-173753 の反復 1）
+- Done: run 20261022-144923 の反復 3 の実装（3ec40762・f8f5c7a4）と記録 `Docs/RenderingValidation/NightVillageLights.md` を、今の HEAD で verify を回して確かめ直した。足りない所は無く、コードは変えていない
+  - `RenderingCoordinator.cpp` の光源の revision: 明るさを hash から外し、前に進めた時点から 2 倍を超えた変化と 0 との行き来だけで進める。revision を読むのは RTGI の履歴（`LightingPass.cpp`・`RTGIContract.h`）だけで、パストレーサーは光源表のバイト列の署名（`PathTracingPass.inl` の `m_DeclaredLightSignature`）で累積を捨てることを読んで確かめた
+- 証拠（`.harness/runs/20261022-173753/`）:
+  - `verify-SCN-NIGHT-LIGHTS-1.txt` Debug の Game のビルド EXIT=0
+  - `verify-SCN-NIGHT-LIGHTS-2.txt` RelWithDebInfo のビルド pass・撮影 result=pass・EXIT=0。白飛び・黒つぶれの割合は 3 視点とも 0、画面の平均の輝度 default 34.3・street 38.8・square 48.5（前の反復と同じ）
+  - `scene-capture/SCN-NIGHT-LIGHTS/views.Game.log`: `NIGHT_VILLAGE_LIGHTS point_lights=8 lamps=4 torches=3 campfires=1 doorways=5 shadowed_max=4`、`NIGHT_VILLAGE_FLICKER`（焚き火 4913 → 4622 → 4234 lm、松明も 4 秒おきに変わる）、`INDIRECT_LIGHTING source=rtgi`、`point_shadow_lights=4`、ERROR 0 行
+  - `street.png`・`square.png` を開いた: street は手前の街灯の周りの道と右の家の壁が暖色に照らされ、背後の街灯が木箱と樽の前面を照らし、左右の日干し煉瓦の家の戸口が光る。square は焚き火の周りの地面が照らされ、石の輪の外側に輪の影が落ち、右奥の松明の足元も照らされる。ブルームは街灯と炎の周りに留まる
+- Notes: street の視点では、影を落とす灯の影の多くが物の奥（カメラから見えない側）へ落ちるので、影の境がはっきり見えるのは square の焚き火の石の輪。性能は測っていない（SCN-ACCEPT で判断）。新しい試験は足していない
+- Next: TASKS.md の次の未完
