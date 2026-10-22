@@ -6843,3 +6843,20 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - Notes:
   - 再描画と新しい試験はしていない（差し戻しは手順の文だけ）
 - Next: TASKS.md の次の未完の項目
+
+### SCN-WL-RTGI-COLOR-RESIDUAL 完了（2026-10-22、run 20261021-055341 の反復 59）
+- Done: RTGI の 2 回目の散乱の光線で、地形の当たりの鏡面の映り込み（空と周りの面の光。重み π×GGX の BRDF）も返し、拡散を鏡面が返す分だけ減らした（`DiffuseIndirect.comp`。鏡面の割合と BRDF は命中面の太陽の直接光と関数で共有）。原因と測りは `Docs/RenderingValidation/WastelandLightFinal.md` の 1 節に書いた
+  - 切り分け: 1 次面のアルベドはエンジンと Cycles で同じなので、照り返し ÷ アルベドで比べると、エンジン ÷ Cycles は影の崖 (0.92, 0.84, 0.72)。足りない分は (106, 107, 124) とほぼ無彩色で、当たりの点の空の映り込みの欠けと量・色が合った（層の平均の色の近似なら足りない分は赤くなる）
+- 結果: rtgi-color の色度の差 影の崖 0.0201 → 0.0079・影の中の地面 0.0175 → 0.0033（明るさの比 0.881 → 0.913・0.953 → 0.990）。灰色の rtgi-amount は影の崖 0.863・影の中の地面 0.945・色度の差 0.0037 で合格（灰色の当たりは鏡面を持たない）
+- 証拠（`.harness/runs/20261021-055341/`）:
+  - `verify-SCN-WL-RTGI-COLOR-RESIDUAL-1.txt` Debug の Game のビルド EXIT=0（シェーダーは実行時に読むのでビルドに入らない）
+  - `-2.txt`・`-3.txt` 実材質の照り返しの入・切の撮影 result=pass・EXIT=0（ログに DiffuseIndirect.comp のコンパイルと INDIRECT_LIGHTING source=rtgi）
+  - `-4.txt` `--bounce --expect rtgi-color.json --verify` result=pass・2 行合格・EXIT=0
+  - `-5.txt`・`-6.txt` 灰色の入・切の撮影 result=pass・EXIT=0、`-7.txt` `--expect rtgi-amount.json --verify` result=pass・3 行合格・EXIT=0
+  - `-8.txt` 回帰の撮影 after result=pass（PSNR 63〜inf、ほかのシーンは変わらない）。before は `aux-SCN-WL-RTGI-COLOR-RESIDUAL-regression-before.txt`
+  - 並べた画 `scene-capture/SCN-WL-RTGI-COLOR-RESIDUAL/bounce-on/bounce_ref_cliff_01.png` を開き、照り返しに粒や欠けが無いことを確かめた
+- Notes:
+  - SCN-WL-LIGHT-FINAL の組（`scene-capture/SCN-WL-LIGHT-FINAL/`）は直す前の Game.exe・シェーダーで反復の外の台本が 12:35 に撮り終えたもので、この直しの後は撮り直しが要る（`--light-final` は LIGHT-FINAL の項目で回す）
+  - 灰色の rtgi-amount の影の崖 0.863 は下限 0.85 に近い（この直しで変わらない値）
+  - 新しい試験は足していない
+- Next: SCN-WL-LIGHT-FINAL の組を撮り直して `--light-final` を通す

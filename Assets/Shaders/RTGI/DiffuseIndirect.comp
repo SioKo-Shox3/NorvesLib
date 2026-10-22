@@ -589,6 +589,29 @@ vec3 SampleEmitterIrradiance(vec3 worldPosition, vec3 normal, uvec2 pixel, uint 
 const float RTGI_HIT_SPECULAR_F0 = 0.04;
 const float RTGI_TERRAIN_HIT_ROUGHNESS = 0.87;
 
+// 当たりの面の鏡面が viewCosine の向きへ返す割合（粗さを含めた Schlick の方向の反射率の近似）。拡散は鏡面の層の下にあり、
+// この分だけ減る
+float TerrainHitSpecularAlbedo(float viewCosine)
+{
+    return RTGI_HIT_SPECULAR_F0 +
+        (max(1.0 - RTGI_TERRAIN_HIT_ROUGHNESS, RTGI_HIT_SPECULAR_F0) - RTGI_HIT_SPECULAR_F0) *
+        pow(1.0 - min(viewCosine, 1.0), 5.0);
+}
+
+// 当たりの面の鏡面の BRDF（GGX）。viewDirection・lightDirection は面から外へ向き、viewCosine・lightCosine は正
+vec3 EvaluateTerrainHitSpecularBRDF(vec3 normal,
+                                    vec3 viewDirection,
+                                    vec3 lightDirection,
+                                    float viewCosine,
+                                    float lightCosine)
+{
+    vec3 halfVector = normalize(viewDirection + lightDirection);
+    float D = DistributionGGX(normal, halfVector, RTGI_TERRAIN_HIT_ROUGHNESS);
+    float G = GeometrySmithDirect(normal, viewDirection, lightDirection, RTGI_TERRAIN_HIT_ROUGHNESS);
+    vec3 F = FresnelSchlick(max(dot(viewDirection, halfVector), 0.0), vec3(RTGI_HIT_SPECULAR_F0));
+    return D * G * F / max(4.0 * viewCosine * lightCosine, 1.0e-4);
+}
+
 // 命中面が光源から受けて viewDirection（命中面から光線の始点へ）へ返す放射輝度。specularWeight が 0 より大きければ
 // 拡散に誘電体の鏡面を足す（日の低い砂の地面のように、色の濃い拡散に対して色の付かない鏡面の割合が大きい面がある）
 vec3 ComputeDirectRadiance(vec3 worldPosition,
@@ -670,16 +693,9 @@ vec3 ComputeDirectRadiance(vec3 worldPosition,
         float viewCosine = dot(normal, viewDirection);
         if (specularWeight > 0.0 && viewCosine > 1.0e-4)
         {
-            // 拡散は鏡面の層の下にあり、鏡面が返す分（粗さを含めた Schlick の方向の反射率の近似）だけ減る
-            float specularAlbedo = RTGI_HIT_SPECULAR_F0 +
-                (max(1.0 - RTGI_TERRAIN_HIT_ROUGHNESS, RTGI_HIT_SPECULAR_F0) - RTGI_HIT_SPECULAR_F0) *
-                pow(1.0 - min(viewCosine, 1.0), 5.0);
-            brdf *= 1.0 - specularWeight * specularAlbedo;
-            vec3 halfVector = normalize(viewDirection + lightDirection);
-            float D = DistributionGGX(normal, halfVector, RTGI_TERRAIN_HIT_ROUGHNESS);
-            float G = GeometrySmithDirect(normal, viewDirection, lightDirection, RTGI_TERRAIN_HIT_ROUGHNESS);
-            vec3 F = FresnelSchlick(max(dot(viewDirection, halfVector), 0.0), vec3(RTGI_HIT_SPECULAR_F0));
-            brdf += specularWeight * D * G * F / max(4.0 * viewCosine * cosine, 1.0e-4);
+            brdf *= 1.0 - specularWeight * TerrainHitSpecularAlbedo(viewCosine);
+            brdf += specularWeight *
+                    EvaluateTerrainHitSpecularBRDF(normal, viewDirection, lightDirection, viewCosine, cosine);
         }
         radiance += brdf * lightRadiance * (cosine * attenuation);
     }
@@ -1060,12 +1076,14 @@ vec3 TraceDiffuseRay(vec3 rayOrigin,
                      out vec3 hitPosition,
                      out vec3 hitNormal,
                      out vec3 hitBaseColor,
+                     out float hitSpecularWeight,
                      out uint hitCustomIndex)
 {
     bSurfaceHit = false;
     hitPosition = vec3(0.0);
     hitNormal = vec3(0.0);
     hitBaseColor = vec3(0.0);
+    hitSpecularWeight = 0.0;
     hitCustomIndex = RTGI_NO_HIT;
 
     rayQueryEXT query;
@@ -1135,7 +1153,6 @@ vec3 TraceDiffuseRay(vec3 rayOrigin,
     hitNormal = triangleNormal;
     hitBaseColor = hitInstance.baseColor.rgb;
     // 地形の 3 層の混ぜ合わせの材質は、当たりの点の分類と層の平均の色を instance の色に掛け、鏡面を足す
-    float hitSpecularWeight = 0.0;
     if (hitInstance.rayProxy.y > 0.5 && parameters.terrainMaskMix.w > 0.5)
     {
         hitBaseColor *= TerrainBounceAlbedo(hitPosition, triangleNormal);
@@ -1211,12 +1228,13 @@ void ShadeDiffuseIndirect(uvec2 pixel, out bool bRayTraced, out uint firstHitCus
             vec3 bounceHitPosition;
             vec3 bounceHitNormal;
             vec3 bounceHitBaseColor;
+            float bounceHitSpecularWeight;
             bRayTraced = true;
             vec3 incomingRadiance = TraceDiffuseRay(rayOrigin, rayDirection, worldNormal,
                                                     ProxySelfHitHeightLimit(viewDistance), pixel, 3u,
                                                     bBounceHit, bounceHitPosition,
                                                     bounceHitNormal, bounceHitBaseColor,
-                                                    firstHitCustomIndex);
+                                                    bounceHitSpecularWeight, firstHitCustomIndex);
             if (bBounceHit)
             {
                 // 2回目の拡散バウンス: 命中面が空と周りの面から受ける光（影の中の地面を照らす、物体の
@@ -1231,14 +1249,32 @@ void ShadeDiffuseIndirect(uvec2 pixel, out bool bRayTraced, out uint firstHitCus
                 vec3 secondHitPosition;
                 vec3 secondHitNormal;
                 vec3 secondHitBaseColor;
+                float secondHitSpecularWeight;
                 uint secondHitCustomIndex;
                 vec3 secondIncoming = TraceDiffuseRay(
                     bounceHitPosition + bounceHitNormal * RAY_ORIGIN_OFFSET,
                     secondDirection, bounceHitNormal, -1.0, pixel, 6u,
                     bSecondHit, secondHitPosition, secondHitNormal, secondHitBaseColor,
-                    secondHitCustomIndex);
+                    secondHitSpecularWeight, secondHitCustomIndex);
                 // 拡散面の出る放射輝度は反射率/π×照度で、コサイン標本の照度の推定はπ×入射放射輝度。
-                incomingRadiance += bounceHitBaseColor * SanitizeUnexposedRadiance(secondIncoming);
+                // 鏡面のある当たり（地形）は、同じ標本で鏡面の映り込み（空の光と周りの面の光）も返す。コサイン標本の
+                // 重みは π×BRDF。拡散は命中面の直接光と同じく鏡面が返す分だけ減る。これが無いと、色の濃い砂の
+                // 照り返しに混ざる色の付かない空の映り込みが抜け、照り返しが Cycles より赤くなる
+                vec3 secondReflectance = bounceHitBaseColor;
+                float bounceViewCosine = dot(bounceHitNormal, -rayDirection);
+                if (bounceHitSpecularWeight > 0.0 && bounceViewCosine > 1.0e-4)
+                {
+                    secondReflectance *= 1.0 - bounceHitSpecularWeight *
+                                                   TerrainHitSpecularAlbedo(bounceViewCosine);
+                    float secondCosine = dot(bounceHitNormal, secondDirection);
+                    if (secondCosine > 1.0e-4)
+                    {
+                        secondReflectance += bounceHitSpecularWeight * PI *
+                            EvaluateTerrainHitSpecularBRDF(bounceHitNormal, -rayDirection, secondDirection,
+                                                           bounceViewCosine, secondCosine);
+                    }
+                }
+                incomingRadiance += secondReflectance * SanitizeUnexposedRadiance(secondIncoming);
             }
 
             // 1次面を照らす発光三角形の直接光（反射率を掛ける前の単位でコサイン標本に加える）。
