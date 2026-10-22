@@ -7134,3 +7134,9 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 証拠（`.harness/runs/20261022-173753/`）: `verify-SCN-INT-REFERENCE-SELECT-2.txt`（`--verify --set InteriorLight` の 30 行すべて OK、result=pass・EXIT=0）
 - Notes: 検査は役割・枚数・欄・見出しを確かめるだけで、写真の中身が条件に合うかは見ない（中身は文書の表と一覧の PNG で確かめた）。新しい試験は足していない
 - Next: TASKS.md の次の未完
+
+### SCN-WL-ATMOS-INPUT 地表の消散の範囲に全試料の日の分布を使う理由と向きを書き、出典の版の日付を直して閉じる（2026-10-23、run 20261022-173753 の反復 18）
+- Done: 反復 16 の差し戻し（晴天の日だけの分布の代わりに全試料の日の分布を使った）を親が代用を認める形で解いたのに沿って、`WastelandAtmosphereReference.md` の日ごとの観測の範囲の節に、晴天の日だけの分布が取れない理由（IMPROVE は 3 日に 1 回の決まった日に天気を問わず採り、行に晴天の印も要約にも晴天だけの分布も無い）と、代用が範囲を広めに取る向き（煙・砂塵・前線の日で上側の裾が長く、中の判定は甘い側、95 % より上の外の判定は変わらない向き、柱は AERONET の晴天の観測なので代用なし）を書いた。出典の版を「2025 年 8 月 26 日」から「1988〜2025 年のデータの 2026 年 8 月の版」に直した（出典ページの「Regional Haze Rule Summary data through 1988 – 2025 (August 2026)」を確かめた。ファイル名の `8_26` は版の年月）。範囲の表と別記の見出しを「全試料の日の分布」に揃えた。候補の判定・既定の値・感度の表は変えていない。新しい感度の撮影はしていない
+- 証拠（`.harness/runs/20261022-173753/`）: `verify-SCN-WL-ATMOS-INPUT-8.txt`（RelWithDebInfo のビルド result=pass、ref_ground_02 の大気の書き出しの撮影 result=pass・EXIT=0、dirty=0 の HEAD d5413cd6）、`verify-SCN-WL-ATMOS-INPUT-9.txt`（`--atmos-ref --expect sky-scatter.json --verify` result=pass・rows=9 failed=0・EXIT=0）
+- Notes: 前の反復 16 の記録の「2025-08-26 版」はこの版の日付の読み違い。新しい試験は足していない
+- Next: TASKS.md の次の未完
