@@ -51,11 +51,14 @@
 #   python Scripts/Terrain/ReferenceCheck.py --display --capture <出力先> [--verify]
 #       表示変換の再現（DisplayTransform.py）を、Game の --display-check（ブルームと FXAA を外す）で撮った 3 組と照らし、
 #       結果を <出力先>/display_check.json に書く。--verify は組ごとの inputs.json を今のファイルと照らす。
-#       <出力先>/ramp-neutral: 荒野（カメラの差し替えの NeutralLinear とグレーディングの式 1）を --display-check=ramp で撮った 1 視点
+#       <出力先>/ramp-neutral: 夜の集落（night-village。カメラの差し替えの NeutralLinear とグレーディングの式 1）を
+#           --display-check=ramp で撮った 1 視点（昼の荒野は SCN-WL-LOOK-CAMERA から View の既定の演算子になったので、
+#           NeutralLinear の差し替えを撮れるのは夜の集落）
 #       <出力先>/ramp-aces: 差し替えの無いカメラのシーンを --tone-map=aces20-lut --display-check=ramp で撮った 1 視点
 #           どちらもトーンマップの入力が色の階段（DisplayTransform.display_ramp。明るさ 12 段 × R・G・B・C・M・Y・灰）になる。
 #           区画の縁から RAMP_BORDER 画素より内側のすべての画素で、PNG と再現の差が 3 成分とも RAMP_WITHIN_LEVELS 段以内なら合格。
-#       <出力先>/scene: 荒野の SCN-WLR-BASELINE と同じ 8 視点を --display-check=scene -Hdr で撮ったもの。
+#       <出力先>/scene: 荒野の SCN-WLR-BASELINE と同じ 8 視点を --display-check=scene -Hdr で撮ったもの（昼の荒野の曲線
+#           ACES Filmic とグレーディングの式 1。--tone-map を付けずに撮る）。
 #           視点ごとに、HDR に表示変換を掛けた 8 bit の値と PNG の差が 3 成分とも SCENE_WITHIN_LEVELS 段以内の画素が
 #           SCENE_WITHIN_RATIO 以上なら合格。
 #       どの組も、撮影の記録（hdr.json の post）でブルームと FXAA が外れ、色の階段の有無と演算子が組の約束どおりであることも見る。
@@ -417,11 +420,12 @@ RAMP_BORDER = 2
 RAMP_WITHIN_LEVELS = 1
 SCENE_WITHIN_LEVELS = 1
 SCENE_WITHIN_RATIO = 0.99
-# 組ごとの約束: (組の名前, 色の階段か, 演算子)。scene は荒野の基準の 8 視点を全部要る
+# 組ごとの約束: (組の名前, 色の階段か, 演算子)。scene は荒野の基準の 8 視点を全部要る。
+# ramp-neutral は夜の集落の NeutralLinear、scene は昼の荒野の曲線（View の既定の ACES Filmic。WastelandLookCamera.md）
 DISPLAY_SETS = (
     ("ramp-neutral", True, DT.OPERATOR_NEUTRAL_LINEAR),
     ("ramp-aces", True, DT.OPERATOR_ACES20_LUT),
-    ("scene", False, DT.OPERATOR_NEUTRAL_LINEAR),
+    ("scene", False, DT.OPERATOR_ACES_FILMIC),
 )
 DISPLAY_SCENE_VIEWS = ("ref_far_01", "ref_far_02", "ref_cliff_01", "ref_cliff_02", "ref_ground_01", "ref_ground_02",
                        "outpost", "ground")

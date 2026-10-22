@@ -34,6 +34,22 @@
 | `ramp-aces` | sandbox overview、`tone-map=aces20-lut,display-check=ramp`（ACES 2.0 LUT・View の既定のビネット） | 同上 | 全画素 1 段以内、完全一致 91.0 % |
 | `scene` | 荒野の基準の 8 視点、`display-check=scene -Hdr` | 視点ごとに画素の 99 % 以上が 1 段以内 | 8 視点とも全画素 1 段以内（最大 1 段）、完全一致 82.8〜86.4 % |
 
+2026-10-22 から昼の荒野の曲線は View の既定の演算子（ACES Filmic）・中立のグレーディング・露出の補正 −1 EV になった
+（`WastelandLookCamera.md`）。組の約束を次に改めた（`ReferenceCheck.py` の `DISPLAY_SETS`）:
+
+- `ramp-neutral`: NeutralLinear の差し替えを撮れるのは夜の集落だけになったので、`night-village` の overview を `display-check=ramp -Hdr` で撮る
+  （NeutralLinear・グレーディングの式 1 の夜の値・差し替えのビネット）。約束の演算子は 5 のまま。
+- `scene`: 約束の演算子を 1（ACES Filmic）にした。`--tone-map` を付けずに撮る（付けると昼の荒野も View の演算子に従う）。
+- `ramp-aces` は変えない。
+
+検査は `python Scripts/Terrain/ReferenceCheck.py --display --capture .harness/runs/scene-capture/SCN-WL-LOOK-CAMERA/display-sets --verify`。
+
+| 組 | 撮影 | 結果（2026-10-22、RelWithDebInfo、1920×1080、58dfac7a の Game.exe） |
+|---|---|---|
+| `ramp-neutral` | 夜の集落 overview、`display-check=ramp` | 全画素 1 段以内、完全一致 83.9 % |
+| `ramp-aces` | sandbox overview、`tone-map=aces20-lut,display-check=ramp` | 全画素 1 段以内、完全一致 91.0 % |
+| `scene` | 荒野の基準の 8 視点、`display-check=scene -Hdr`（ACES Filmic） | 8 視点とも全画素 1 段以内（最大 1 段）、完全一致 82.9〜86.0 % |
+
 値を一つずらすと照合は落ちる（荒野 ref_cliff_01 のブルームなしの撮影で、1 段以内の画素がコントラスト 1.35→1.30 で 38 %、
 彩度 1.2→1.15 で 61 %、ビネットを外すと 39 %、露出 +1/12 段で 0.03 %）。荒野の色温度 0.05 は 8 bit で 1 段未満の差しか生まず
 1 段の照合では見分けられないが、0 にすると完全一致が 86.4 % から 51.0 % に落ち、R・B の平均の差が ±0.25〜0.27 段に開く。

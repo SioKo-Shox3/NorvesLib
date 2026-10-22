@@ -63,7 +63,8 @@ far_01・cliff_01・ground_02 の列は写真ごとの d、白飛び・黒つぶ
   cliff_01 の崖が 0.79 → 0.20 に減り、青空の Y の項は far_01 0.17 → 0.44・cliff_01 0.53 → 1.13 に増える。
 - 色の項（RG・BR）は曲線で少ししか動かない。ground_02 と cliff_01 の青空の BR の項（0.9〜1.3）は空気の散乱の色の差（差 6）で、
   どの候補でも残る。
-- NeutralLinear にコントラスト・彩度を足した候補（neutral_old_grade・neutral_mild）は露出を下げても白飛びが今より増え、選べない。
+- NeutralLinear にコントラスト・彩度を足した候補のうち、neutral_old_grade は露出を下げても白飛びが今より増え、選べない。
+  neutral_mild は −1.0 EV（15 位、D 1.702、白飛び 0.001 %）だけが選べる条件を満たすが、今の設定より遠い。
 
 ## 選んだ変換と理由
 
@@ -99,6 +100,9 @@ far_01・cliff_01・ground_02 の列は写真ごとの d、白飛び・黒つぶ
 
 ブルームと TAA を入れた通常の 6 視点（`scene-capture/SCN-WL-LOOK-CAMERA/views`、`--look --verify` は HDR の無い撮影として PNG だけを測る）は
 `look_<写真>.png` を写真と並べて開いて見た。far_01 の青空の Y は写真 0.708・撮影 0.522、地面 0.129・0.289、崖 0.202・0.325。
+
+既存の表示変換の照合（`ReferenceCheck.py --display`）は、`scene` の組の約束を ACES Filmic に、`ramp-neutral` の組の撮影を夜の集落に
+改めて通した（`DisplayTransformCheck.md`。3 組とも全画素 1 段以内）。
 
 ## 夜の集落とほかのシーン（回帰）
 

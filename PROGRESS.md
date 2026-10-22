@@ -7075,3 +7075,15 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `verify-SCN-WL-LOOK-CAMERA-6.txt` 回帰の after result=pass（before は `aux-SCN-WL-LOOK-CAMERA-regression-before.txt`）。4 シーンとも平均の差 0、PSNR night-village 71.32・mega-bananas 65.96・rendering3dtest 105.10・sandbox inf
 - Notes: 暫定。D の改善は地面と崖を暗くする側で、青空は写真より暗くなる（cliff_01 の青空 Y 写真 0.287・撮影 0.131）。植物・地面の後（確認 3）に同じ `--look-select` で選び直す。昼の曲線は View の既定に従うので `--tone-map=aces20-lut` の撮影では LUT になる。荒野の `--display` の照合（ReferenceCheck.py の ramp-neutral の組）は NeutralLinear の荒野を前提にしているので、次に回すときは組の約束の見直しが要る。新しい試験は足していない
 - Next: TASKS.md の次の未完
+
+### SCN-WL-LOOK-CAMERA 差し戻しの直し: 表示変換の照合の組の約束（2026-10-22、run 20261022-173753 の反復 11）
+- Done: 評価者の NEEDS_WORK（昼の荒野を ACES Filmic にした後も `ReferenceCheck.py` の `DISPLAY_SETS` が `scene`・`ramp-neutral` に NeutralLinear を要求し、`--display --verify` が通らない）を直した。`scene` の約束の演算子を 1（ACES Filmic）にし、`ramp-neutral` は NeutralLinear の差し替えが残る夜の集落（night-village overview、`display-check=ramp`）で撮る組にした。撮影手順と結果を `DisplayTransformCheck.md` に、`WastelandLookCamera.md` に照合を通したことを書いた。non-blocking の「neutral_mild は選べない」は「−1.0 EV（15 位、D 1.702）だけが条件を満たすが今の設定より遠い」に直した。エンジンのコードは変えていない
+- 証拠（`.harness/runs/20261022-173753/`）:
+  - `verify-SCN-WL-LOOK-CAMERA-7.txt` Debug の Game のビルド EXIT=0
+  - `verify-SCN-WL-LOOK-CAMERA-8.txt` `--display-check=scene -Hdr` の 6 視点（RelWithDebInfo、-Build）result=pass・EXIT=0
+  - `verify-SCN-WL-LOOK-CAMERA-9.txt` `--look-select --verify` result=pass。selected=aces_filmic-1.0EV（D 1.4713、今の設定は 9/42 位）、6 視点とも ±1 段の中 100 %・最大 1 段
+  - `verify-SCN-WL-LOOK-CAMERA-10.txt` 通常の 6 視点 result=pass（白飛び・黒つぶれ 0）、`-11.txt` `--look --verify` result=pass photos=6。look_far_01.png を開き、前の反復と同じ値（青空 Y 0.522・地面 0.289・崖 0.325）を確かめた
+  - `aux-SCN-WL-LOOK-CAMERA-display-sets.txt` 3 組を撮り直して `ReferenceCheck.py --display --verify` result=pass。ramp-neutral（夜の集落、演算子 5）全画素 1 段以内・完全一致 83.9 %、ramp-aces 全画素 1 段以内・91.0 %、scene（荒野の 8 視点、演算子 1）全画素 1 段以内・完全一致 82.9〜86.0 %
+  - `verify-SCN-WL-LOOK-CAMERA-12.txt` 回帰の after result=pass。before は反復 10 の変更の前の Game.exe のもの（この反復は C++ を変えていないので撮り直さず、変更の前と比べる組を残した）。4 シーンとも平均の差 0、PSNR night-village 70.17・mega-bananas 65.63・rendering3dtest 106.63・sandbox inf
+- Notes: 新しい試験は足していない
+- Next: TASKS.md の次の未完
