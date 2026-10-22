@@ -37,12 +37,13 @@
   },
   "tolerance": 0.15,
   "convergence": {
-    "note": "本描画の Cycles は種を seeds 個描き、必須の層ごとに Cycles のくぼみの比の種の間の差（最大 − 最小）÷ 平均が許容差 × fraction_of_tolerance 以下になるまで spp を上げる。試しの描画（--trial）は測って記録するだけ",
+    "note": "本描画の Cycles は種を seeds 個描き、必須の層ごとに Cycles のくぼみの比の種の間の差（最大 − 最小）÷ 平均が許容差 × fraction_of_tolerance 以下になるまで spp を上げる。試しの描画（--trial）は測って記録するだけ。測りは参照の記録（inputs.json の seed_outputs）のハッシュが合う今回の種だけを読み、min_seeds 個に届かなければ試しでも不合格",
     "seeds": 2,
+    "min_seeds": 2,
     "fraction_of_tolerance": 0.3333
   },
   "sun": {
-    "note": "影 = 可視率が shadow_threshold 未満（両方を filter_radius_px の箱で均す）。漏れ = Cycles で umbra 未満なのにエンジンで shadow_threshold 以上の画素 ÷ Cycles の umbra の画素。縁の幅 = 可視率が umbra〜lit の画素の世界の面積 ÷ 影の境の世界の長さ（画素の面の傾きの伸びは視線との cos の下限 min_view_cos まで）",
+    "note": "影 = 可視率が shadow_threshold 未満（両方を filter_radius_px の箱で均す）。漏れ = Cycles で umbra 未満なのにエンジンで shadow_threshold 以上の画素 ÷ Cycles の umbra の画素。縁の幅 = (lit − umbra) × 半影（可視率 umbra〜lit）の世界の面積 ÷ 半影の上の可視率の世界の勾配の大きさの面積分（余面積の式。幅 w で直線に変わる帯なら境の向きによらず w。画素の世界の歩みは Cycles の深度と幾何の法線の接平面から求め、視線と面の cos の下限は min_view_cos）",
     "shadow_threshold": 0.5,
     "umbra": 0.1,
     "lit": 0.9,

@@ -346,7 +346,7 @@ def check_view(RC, engine_dir, reference_dir, record, view, regions=None, set_na
     if regions is not None:
         import OcclusionMetric
         data = {"aov": aov, "same": same, "object_index": object_index, "engine_hdr": engine_hdr, "cycles_hdr": cycles_hdr,
-                "cycles_depth": cycles_depth, "cycles_normal": cycles_normal}
+                "cycles_depth": cycles_depth, "cycles_normal": cycles_normal, "cycles_geometric_normal": geometric_normal}
         result["metric"], metric_failures = OcclusionMetric.measure_view(
             RC, regions, set_name, record, engine_dir, reference_dir, view, data, trial)
         failures.extend(f"測り: {reason}" for reason in metric_failures)

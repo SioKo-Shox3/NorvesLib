@@ -7257,3 +7257,14 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 重ね画像 `scene-capture/SCN-WLR-OCCLUSION-SETS/cycles/{terrain-sky,terrain-sun,rocks-sky,rocks-sun,plant-sky}/occlusion_regions/*.png` を開いた: 溝が崖の柱の間、接する帯が岩の根元、根元が株の下、rocks-sun の漏れが岩の地面への影に出る
 - Notes: 層は法線の方位で分けない（共通の照明の空は一様な放射輝度）。rocks-cliff の組は地形だけとほぼ同じ画なので必須に入れていない。cavity と物体からの距離は画面の上の標本の見込み（領域を選ぶためだけ）。megamesh_cluster_stats の影の段が最も細かい段の撮影で VSM に使われるかは記録からは分からない。新しい試験は足していない（verify の検査が確かめる）
 - Next: TASKS.md の次の未完（SCN-WLR-OCCLUSION-CYCLES）
+
+### SCN-WLR-OCCLUSION-METRIC 評価者の差し戻し 2 点を直す（2026-10-23、run 20261022-173753 の反復 32）
+- Done: (1) 影の縁の幅を余面積の式 w = (lit − umbra)·A ÷ ∫|∇v|dA に替えた。画素の世界の歩みは Cycles の深度と幾何の法線の接平面から求め（`surface_jacobian`）、可視率の勾配は面の切れ目を越えない隣の差分を (JᵀJ)⁻¹ で世界の勾配へ直す。境の向きによらない。(2) `BlenderOcclusionReference.py` は描く前に前の描画の `seed*` をすべて消し、`inputs.json` の視点に `seed_outputs`（種・部分・ファイル・sha256）を書く。`OcclusionMetric.recorded_seed_files` は記録の種だけをハッシュを照らして読み、`convergence.min_seeds`（2）に届かなければ試しでも不合格。太陽の可視率も記録の種 0 を読む
+- 結果（試し）: 8 組の Cycles を描き直した（64 サンプル・種 2）。空の組の比は前と同じ。縁の幅 エンジン / Cycles は terrain-sun 1.68 / 1.52 m、rocks-sun 0.105 / 0.115 m、plant-sun 0.026 / 0.027 m（文書の表を直した）
+- 証拠（`.harness/runs/20261022-173753/`）:
+  - `aux-SCN-WLR-OCCLUSION-METRIC-findings-32.txt`: 視線と cos 0.25 の平面で傾ける軸 3 通り × 半影の向き 3 通りの縁の幅が 0.639〜0.642 m（期待 0.64 m）。古い seed1 の残り・ハッシュ違い・記録なしで種が 2 つに届かない／不合格の理由が出る
+  - `aux-SCN-WLR-OCCLUSION-METRIC-cycles-trial-3.txt`: 8 組すべて exit=0、`mode=cycles sets=8 result=pass`、START・END
+  - `verify-SCN-WLR-OCCLUSION-METRIC-2.txt`: verify の result=pass・EXIT=0、8 組とも pass=1
+  - 重ね画像 `cycles/rocks-sun/occlusion_regions/contact_near.png` と `cycles/terrain-sky/occlusion_regions/ref_cliff_01.png` を開いた（漏れが岩の地面への影、溝が崖の柱の間）
+- Notes: 縁の幅は半影の勾配の雑音で小さめに出る（Cycles の 64 サンプルの雑音もエンジンの点描も同じ向き）。新しい試験は足していない
+- Next: TASKS.md の次の未完（SCN-WLR-OCCLUSION-CYCLES）

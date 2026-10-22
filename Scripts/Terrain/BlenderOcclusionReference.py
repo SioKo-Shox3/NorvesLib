@@ -31,7 +31,9 @@
 #                          Object Index のパス）
 #   <視点>.aux.alpha.pfm   面に当たった画素 1
 #   <視点>.cycles.hdr.pfm  本描画（線形の RGB。エンジンの HDR と同じ尺度。種 0）。--trial は低いサンプル数の試し
-#   <視点>.cycles.seed<k>.hdr.pfm  --seeds N（既定 1）の 2 つめからの種 k の本描画（収束の確かめ。OcclusionMetric.py）
+#   <視点>.cycles.seed<k>.hdr.pfm  --seeds N（既定 1）の 2 つめからの種 k の本描画（収束の確かめ。OcclusionMetric.py）。
+#                          描く前に前の描画の seed<k> をすべて消し、inputs.json の視点の seed_outputs に今回の種の出力の
+#                          ハッシュを書く（測りはこの記録の種だけを読む）
 #   <視点>.cycles.sun_visibility.pfm  太陽だけの組（--case sun）の太陽の可視率（種 0）。拡散の直接光のパス（DiffDir）の
 #                          輝度を、太陽の影を切った同じ描画の DiffDir の輝度で割った値（太陽の円盤の半影を含む 0〜1。材質の
 #                          BRDF と N·L は割り算で消える）。太陽へ向かない面（影なしの DiffDir が 0）は −1。種 k は
@@ -41,6 +43,7 @@
 # 照合は Scripts/Terrain/ReferenceCheck.py --occlusion（OcclusionCompare.py）。
 import argparse
 import csv
+import glob
 import json
 import math
 import os
@@ -196,7 +199,8 @@ def run(args):
             [f"{prefix}.aux.{part}.pfm" for part in AUX_PARTS] + \
             [seed_output(prefix, seed, "hdr") for seed in range(job["seeds"])] + \
             ([seed_output(prefix, seed, "sun_visibility") for seed in range(job["seeds"])] if args.case == "sun" else [])
-        for stale in job["required_outputs"]:
+        # 前の描画の種の出力（今回より種が多かった描画の seed<k>）も消し、今回の種だけが残るようにする
+        for stale in job["required_outputs"] + glob.glob(glob.escape(prefix) + ".cycles.seed*.pfm"):
             if os.path.exists(stale):
                 os.remove(stale)
         triangles = sum(int(t["triangles"]) for t in tiles)
@@ -213,6 +217,12 @@ def run(args):
                               "sun_altitude_degrees": altitude, "sun_azimuth_degrees": azimuth,
                               "engine_depth_sha256": BR.sha256_file(engine_depth_pfm), "spp": spp,
                               "seeds": job["seeds"],
+                              # 種ごとの出力のハッシュ（測りはこの記録の種だけを読み、ハッシュが合わない出力を不合格にする）
+                              "seed_outputs": [{"seed": seed, "part": part,
+                                                "file": os.path.basename(seed_output(prefix, seed, part)),
+                                                "sha256": BR.sha256_file(seed_output(prefix, seed, part))}
+                                               for seed in range(job["seeds"])
+                                               for part in (("hdr", "sun_visibility") if args.case == "sun" else ("hdr",))],
                               "trial": bool(args.trial)}
         if plant is not None:
             view_records[view]["plant_placement"] = plant["placement"]

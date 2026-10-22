@@ -15,13 +15,17 @@
 # 太陽だけの組（照明の組 sun）:
 #   - エンジンの sun_visibility の AOV と Cycles の太陽の可視率（<視点>.cycles.sun_visibility.pfm。BlenderOcclusionReference.py）
 #     を、同じ面の灰色の物体の画素で、両方とも太陽へ向く画素（Cycles の可視率が −1 でない）で比べる。
-#   - 影の位置の一致（影 = 可視率が shadow_threshold 未満の IoU）、影の縁の幅（可視率が penumbra の範囲の画素の世界の面積 ÷
-#     影の境の世界の長さ、m）、漏れ（Cycles で可視率が umbra 未満なのにエンジンで shadow_threshold 以上の画素の割合）。
+#   - 影の位置の一致（影 = 可視率が shadow_threshold 未満の IoU）、影の縁の幅（半影の世界の面積と可視率の世界の勾配の
+#     面積分から余面積の式で求めた m。境の向きによらない）、漏れ（Cycles で可視率が umbra 未満なのにエンジンで
+#     shadow_threshold 以上の画素の割合）。
+# 種: Cycles の出力は参照の記録（inputs.json の視点の seed_outputs）のハッシュが合う今回の種だけを読み、
+#   convergence.min_seeds 個に届かなければ試しの描画でも不合格にする（前の描画の種の残りで収束を通さない）。
 #   - VSM の 1 texel の大きさ（段の式から求めた影の境の画素の texel の中央値）・バイアス・使ったページ・影の LOD を
 #     撮影のログ（VSM_CLIPMAP・VSM_TEXEL・VSM_PAGES・megamesh_cluster_stats）から記録する。値の合否は直しの項目が決める。
 # 書くもの: 結果は OcclusionCompare の視点ごとの結果の "metric" に入る（<参照の組>/occlusion_check.json）。重ね画像は
 #   <参照の組>/occlusion_regions/<視点>.png（空: 左上 Cycles の HDR に領域の色、右上 層、左下 エンジンの HDR、右下 cavity。
 #   太陽: 左上 Cycles の可視率、右上 エンジンの可視率、左下 影の一致、右下 半影と影の境）。
+import hashlib
 import json
 import math
 import os
@@ -260,12 +264,64 @@ def boundary(mask, domain):
     return edge
 
 
-def edge_width(visibility, domain, area, length, sun):
-    """影の縁の幅（m）= 半影の画素の世界の面積の和 ÷ 影の境の世界の長さの和"""
+def surface_jacobian(camera, depth, normal, min_view_cos):
+    """画素の隣への 1 画素の歩みの世界の変位（列の向き, 行の向き。(高さ, 幅, 3) の m）。深度から戻した位置の面の接平面
+    （幾何の法線）の上で、隣の画素の視線が当たる点への変位の微分。視線と面の cos は min_view_cos まで"""
+    height, width = depth.shape
+    rays = PR.pixel_rays(camera, width, height)
+    tan_half = math.tan(math.radians(float(camera["vertical_fov_degrees"])) / 2.0)
+    right = np.asarray(camera["right"], dtype=np.float64) * (2.0 / width * tan_half * float(camera["aspect_ratio"]))
+    down = -np.asarray(camera["up"], dtype=np.float64) * (2.0 / height * tan_half)
+    ray_length = np.linalg.norm(rays, axis=-1)
+    facing = np.sum(normal * rays, axis=-1)
+    facing = np.where(facing < 0.0, -1.0, 1.0) * np.maximum(np.abs(facing), float(min_view_cos) * ray_length)
+    t = np.where(np.isfinite(depth), depth, np.nan)[..., None]
+    steps = []
+    for step in (right, down):
+        along = np.sum(normal * step, axis=-1) / facing
+        steps.append(t * (step[None, None, :] - rays * along[..., None]))
+    return steps[0], steps[1]
+
+
+def screen_gradient(value, usable, positions, step, axis):
+    """axis（1 = 列, 0 = 行）の向きの画素 1 つあたりの value の差（両隣が使えれば中央差分、片方だけなら片側、無ければ NaN）。
+    隣が使えるのは、usable で、位置が 1 画素の歩みの 3 倍以内（面の切れ目を越えない）のとき"""
+    reach = 3.0 * np.linalg.norm(step, axis=-1)
+    diffs = []
+    # shift −1 は次の画素（前向きの差）、+1 は前の画素（後ろ向きの差）。端で反対側へ回り込む隣は使わない
+    for shift in (-1, 1):
+        neighbor = np.roll(value, shift, axis=axis)
+        ok = usable & np.roll(usable, shift, axis=axis) & \
+            (np.linalg.norm(np.roll(positions, shift, axis=axis) - positions, axis=-1) <= reach)
+        edge = [slice(None), slice(None)]
+        edge[axis] = slice(-1, None) if shift == -1 else slice(0, 1)
+        ok[tuple(edge)] = False
+        diffs.append((np.where(ok, (neighbor - value) * -shift, 0.0), ok))
+    (forward, forward_ok), (backward, backward_ok) = diffs
+    return np.where(forward_ok & backward_ok, 0.5 * (forward + backward),
+                    np.where(forward_ok, forward, np.where(backward_ok, backward, np.nan)))
+
+
+def edge_width(visibility, domain, footprint, sun):
+    """影の縁の幅（m）。半影（可視率 umbra〜lit）の世界の面積 A と、半影の上の可視率の世界の勾配の積分 ∫|∇v|dA から
+    w = (lit − umbra)·A ÷ ∫|∇v|dA（余面積の式。幅 w で可視率が直線に変わる帯なら境の向きによらず w になる）。
+    footprint は (画素の世界の面積, 列の向きの歩み, 行の向きの歩み, 位置)"""
+    area, step_x, step_y, positions = footprint
     penumbra = domain & (visibility > float(sun["umbra"])) & (visibility < float(sun["lit"]))
     border = boundary(visibility < float(sun["shadow_threshold"]), domain)
-    total_length = float(length[border].sum())
-    return (float(area[penumbra].sum()) / total_length if total_length > 0.0 else math.nan), penumbra, border
+    gx = screen_gradient(visibility, domain, positions, step_x, axis=1)
+    gy = screen_gradient(visibility, domain, positions, step_y, axis=0)
+    # 世界の勾配の大きさ² = g_screenᵀ (JᵀJ)⁻¹ g_screen（J = [列の歩み, 行の歩み]）
+    a = np.sum(step_x * step_x, axis=-1)
+    b = np.sum(step_x * step_y, axis=-1)
+    c = np.sum(step_y * step_y, axis=-1)
+    det = a * c - b * b
+    with np.errstate(invalid="ignore", divide="ignore"):
+        gradient = np.sqrt(np.maximum((c * gx * gx - 2.0 * b * gx * gy + a * gy * gy) / det, 0.0))
+    usable = penumbra & np.isfinite(gradient) & np.isfinite(area) & (det > 0.0)
+    flux = float((area[usable] * gradient[usable]).sum())
+    width = (float(sun["lit"]) - float(sun["umbra"])) * float(area[usable].sum()) / flux if flux > 0.0 else math.nan
+    return width, penumbra, border
 
 
 def vsm_record(engine_dir, view, spec):
@@ -344,13 +400,12 @@ def sun_metric(spec, engine_dir, view, ctx):
     iou = float((engine_shadow & cycles_shadow).sum()) / union if union else math.nan
     cycles_umbra = domain & (cycles_v < float(sun["umbra"]))
     leak = domain & cycles_umbra & (engine_v >= threshold)
-    cos_view = np.abs(np.sum(ctx["normal"] * ctx["unit_rays"], axis=-1))
-    stretch = 1.0 / np.maximum(cos_view, float(sun["min_view_cos"]))
     pixel_size = ctx["pixel_size"]
-    area = np.where(domain, pixel_size ** 2 * stretch, 0.0)
-    length = np.where(domain, pixel_size * np.sqrt(stretch), 0.0)
-    engine_width, engine_penumbra, engine_border = edge_width(engine_v, domain, area, length, sun)
-    cycles_width, cycles_penumbra, cycles_border = edge_width(cycles_v, domain, area, length, sun)
+    step_x, step_y = surface_jacobian(ctx["camera"], ctx["depth"], ctx["geometric_normal"], float(sun["min_view_cos"]))
+    area = np.where(domain, np.linalg.norm(np.cross(step_x, step_y), axis=-1), 0.0)
+    footprint = (area, step_x, step_y, ctx["positions"])
+    engine_width, engine_penumbra, engine_border = edge_width(engine_v, domain, footprint, sun)
+    cycles_width, cycles_penumbra, cycles_border = edge_width(cycles_v, domain, footprint, sun)
     vsm = vsm_record(engine_dir, view, spec)
     texel = receiver_texel(pixel_size, vsm.get("clipmap"), spec)
     border_texel = texel[cycles_border & np.isfinite(texel)]
@@ -443,11 +498,11 @@ def measure_view(RC, spec, set_name, record, engine_dir, reference_dir, view, da
     set_kind = record.get("set_kind") or "rocks"
     camera = record["views"][view]["camera"]
     depth = data["cycles_depth"]
-    positions, unit_rays, pixel_size, focal = geometry(camera, depth)
+    positions, _, pixel_size, focal = geometry(camera, depth)
     normal = data["cycles_normal"]
     ctx = {"spec": spec, "same": data["same"], "object_index": data["object_index"], "engine_hdr": data["engine_hdr"],
-           "cycles_hdr": data["cycles_hdr"], "positions": positions, "unit_rays": unit_rays,
-           "pixel_size": pixel_size, "normal": normal}
+           "cycles_hdr": data["cycles_hdr"], "positions": positions, "pixel_size": pixel_size, "normal": normal,
+           "camera": camera, "depth": depth, "geometric_normal": data["cycles_geometric_normal"]}
     prefix = os.path.join(reference_dir, view)
     overlay_path = os.path.join(reference_dir, OVERLAY_DIR, f"{view}.png")
     if case == "sun":
@@ -455,10 +510,11 @@ def measure_view(RC, spec, set_name, record, engine_dir, reference_dir, view, da
         engine_visibility = None
         if "sun_visibility" in aov and os.path.isfile(os.path.join(engine_dir, aov["sun_visibility"]["file"])):
             engine_visibility = RC.read_pfm_any(os.path.join(engine_dir, aov["sun_visibility"]["file"]))[..., 0]
-        cycles_path = prefix + ".cycles.sun_visibility.pfm"
+        sun_files, seed_failures = recorded_seed_files(record, reference_dir, view, "sun_visibility")
         ctx["engine_sun_visibility"] = engine_visibility
-        ctx["cycles_sun_visibility"] = RC.read_pfm_any(cycles_path)[..., 0] if os.path.isfile(cycles_path) else None
+        ctx["cycles_sun_visibility"] = RC.read_pfm_any(sun_files[0])[..., 0] if sun_files else None
         result, failures, overlay = sun_metric(spec, engine_dir, view, ctx)
+        failures = seed_failures + failures
         result["kind"] = "sun"
         if overlay is not None:
             write_sun_overlay(overlay_path, overlay)
@@ -470,18 +526,40 @@ def measure_view(RC, spec, set_name, record, engine_dir, reference_dir, view, da
     non_terrain = np.isfinite(depth) & (data["object_index"] > OBJECT_IDS["terrain"])
     ctx["near_object"] = object_distance(spec, depth, positions, focal, non_terrain)
     ctx["strata"] = strata(spec, normal, depth)
-    seeds = []
-    seed = 1
-    while os.path.isfile(f"{prefix}.cycles.seed{seed}.hdr.pfm"):
-        seeds.append(RC.read_pfm_any(f"{prefix}.cycles.seed{seed}.hdr.pfm")[..., :3])
-        seed += 1
-    ctx["cycles_seed_hdr"] = seeds
+    seed_files, seed_failures = recorded_seed_files(record, reference_dir, view, "hdr")
+    ctx["cycles_seed_hdr"] = [RC.read_pfm_any(path)[..., :3] for path in seed_files[1:]]
     result, masks = sky_metric(spec, set_name, set_kind, record, view, ctx, trial)
     result["kind"] = "sky"
-    failures = required_failures(spec, set_name, view, result, trial)
+    min_seeds = int(spec["convergence"]["min_seeds"])
+    if len(seed_files) < min_seeds:
+        # 試しの描画でも、種の間の差を測れない描画は通さない
+        seed_failures.append(f"今回の描画の記録に合う Cycles の種が {len(seed_files)} 個で {min_seeds} 個に届かない")
+    failures = seed_failures + required_failures(spec, set_name, view, result, trial)
     write_sky_overlay(overlay_path, ctx, masks)
     result["overlay"] = RC.rel_dir(overlay_path)
     return result, failures
+
+
+def recorded_seed_files(record, reference_dir, view, part):
+    """参照の記録（inputs.json の視点の seed_outputs）にある今回の描画の種の出力のうち、ハッシュが合うものの道（種の順）と
+    失敗の一覧。記録に無い種の出力（前の描画の残り）は読まない。ハッシュが合わない・無い種があればそこで打ち切る"""
+    outputs = sorted((item for item in (((record.get("views") or {}).get(view) or {}).get("seed_outputs") or [])
+                      if item.get("part") == part), key=lambda item: int(item["seed"]))
+    if not outputs:
+        return [], [f"参照の記録に {part} の種の出力のハッシュ（seed_outputs）が無い"]
+    paths = []
+    for expected, item in enumerate(outputs):
+        path = os.path.join(reference_dir, item["file"])
+        if int(item["seed"]) != expected:
+            return paths, [f"参照の記録の {part} の種が 0 から続いていない（{expected} の代わりに {item['seed']}）"]
+        if not os.path.isfile(path):
+            return paths, [f"記録にある種の出力 {item['file']} が無い"]
+        with open(path, "rb") as f:
+            digest = hashlib.sha256(f.read()).hexdigest()
+        if digest != item["sha256"]:
+            return paths, [f"種の出力 {item['file']} が参照の記録のハッシュと合わない（今回の描画の出力でない）"]
+        paths.append(path)
+    return paths, []
 
 
 def missing_required(spec, measured):
