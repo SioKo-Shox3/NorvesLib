@@ -2443,7 +2443,7 @@
 - notes: 2026-10-22 SCN-WL-ATMOS-INPUT の閉じ方（親の判断）で足した。status は backlog: 遠景の帯の色は遠い地表の反射に強く左右されるので、後半の NAIP の色と遠景の植生が入る前に大気の入力を合わせると二度手間になる。置き場所は後半の計画で決める。正解の解き直しは CPU が重い（撮影とコアを分ける）。Mie は波長によらない係数のままで、Ångström 指数（AERONET の Railroad_Valley の 440-870 nm の中央値 1.09）は試さない（試すなら CPU の正解の感度の調べから始める別の項目）。候補の地表の消散は日ごとの観測の 95 % の上なので、採るなら範囲の外の値を使う理由（写真の日の霞の量）を書く。
 
 ## SCN-WL-CLOUD-FAR-CAUSE: 手本の視点で遠い雲が消える原因を、反実仮想で量に分ける
-- status: todo
+- status: done
 - after: SCN-WL-ATMOS-INPUT
 - done-when: SCN-WLR-CLOUD-REF の直す項目の案 2 の前段: ref_far_01 で雲の被覆が写真 0.805・撮影 0.001（遠い雲が霞に埋もれて一面の青いベールになる）。今の書き出しは開始の距離が 45 km を超えると積む前に戻るので、出力が空でも「雲が無い」と「打ち切りで見ていない」を分けられない。同じ密度場・時刻・視線を固定し、開発ビルドの診断の切り替え（この項目で足す。既定の描画は変えない）で、(a) 打ち切りを外す、(b) 30〜45 km の距離の溶かしを外す、(c) 独自の 22 km の霞（`kCloudHazeDistance`）を外す、を段階的に掛けた書き出しを ref_far_01 と ref_far_02 で撮る。地平線までの雲の密度の積分と、各段の霞の前の雲の透過率・雲の放射輝度・霞の後の最終の画素の雲のコントラストを、写真と同じ画素の範囲で測り（`ReferenceCheck.py --cloud-far`、この項目で作る）、原因 (i) その方向に雲が無い（中身）、(ii) 打ち切り、(iii) 距離の溶かし、(iv) 独自の霞 の寄与を量で示す（併存を認める）。`CloudPhotoStats.py` の色の閾値の被覆は診断として併記する。結果を `Docs/RenderingValidation/WastelandCloudRef.md` に書く。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`

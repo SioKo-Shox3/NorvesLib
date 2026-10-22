@@ -2,7 +2,8 @@
 
 // 撮影の雲の書き出し（--cloud-dump）: 決めた画素の視線ごとに、cloud_layer.frag と同じ式（Common/CloudLayerCommon.glsl）・
 // 同じ定数・同じ歩の端数（画素とフレームの interleaved gradient noise）で雲の層を進め、事前露出の前の値を書く。
-// 横 = 視線の番号、縦 = 値の種類（CloudProbePass の行の約束）。
+// 横 = 視線の番号、縦 = 値の種類（CloudProbePass の行の約束）。視線ごとの診断の切り替え（pixels の z）を立てた列は、
+// 同じ画素の視線を打ち切り・溶かし・霞を外して評価する（遠い雲の消える原因を分ける反実仮想。描画には効かない）。
 
 layout(location = 0) in vec2 fragUV;
 layout(location = 0) out vec4 outColor;
@@ -15,7 +16,7 @@ layout(std140, set = 0, binding = 5) uniform CloudProbeRays
 {
     uvec4 rayCount;                       // x = 視線の数
     vec4 targetSize;                      // xy = 雲を描く画面の大きさ（画素）
-    vec4 pixels[kCloudProbeMaxRays];      // xy = 画素の中心（gl_FragCoord と同じ。左上が原点）
+    vec4 pixels[kCloudProbeMaxRays];      // xy = 画素の中心（gl_FragCoord と同じ。左上が原点）、z = 診断の切り替え（kCloudDiagnostic*）
 } probe;
 
 void main()
@@ -29,6 +30,7 @@ void main()
     }
 
     vec2 pixel = probe.pixels[rayIndex].xy;
+    uint diagnosticFlags = uint(probe.pixels[rayIndex].z + 0.5);
     vec2 uv = pixel / probe.targetSize.xy;
     float depth = textureLod(sceneDepthTexture, uv, 0.0).r;
     bool bSkyPixel = !(IsFiniteFloat(depth) && depth < 0.999999);
@@ -36,7 +38,8 @@ void main()
     vec3 rayDirection;
     bool bDirection = ComputeCloudRayDirection(uv, rayDirection);
     float jitter = InterleavedGradientNoise(pixel, params.sunDirectionAndFrameIndex.w);
-    CloudRayResult ray = bDirection ? MarchCloudLayer(rayDirection, jitter) : MakeEmptyCloudRayResult();
+    CloudRayResult ray = bDirection ? MarchCloudLayerWithDiagnostics(rayDirection, jitter, diagnosticFlags)
+                                    : MakeEmptyCloudRayResult();
     float opacity = clamp(1.0 - ray.Transmittance, 0.0, 1.0);
     float hazeVisibility = 1.0;
     float fade = 1.0;
@@ -45,7 +48,7 @@ void main()
     float alpha = 0.0;
     if (ray.bMarched && opacity > 0.0)
     {
-        cloudRadiance = ComposeCloudRadiance(ray, rayDirection, opacity, hazeVisibility, fade);
+        cloudRadiance = ComposeCloudRadianceWithDiagnostics(ray, rayDirection, opacity, diagnosticFlags, hazeVisibility, fade);
         alpha = bSkyPixel ? opacity * fade : 0.0;
     }
 
@@ -80,6 +83,6 @@ void main()
     else
     {
         outColor = vec4(ray.OpticalDepth, float(ray.StepCount), ray.StepLength,
-                        (ray.bMarched ? 1.0 : 0.0) + (bDirection ? 2.0 : 0.0));
+                        (ray.bMarched ? 1.0 : 0.0) + (bDirection ? 2.0 : 0.0) + 4.0 * float(diagnosticFlags));
     }
 }

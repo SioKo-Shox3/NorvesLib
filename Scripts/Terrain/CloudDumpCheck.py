@@ -62,6 +62,12 @@ DETAIL_MAX_DISTANCE = 18000.0
 CLOUD_HAZE_DISTANCE = 22000.0
 MIN_TRANSMITTANCE = 0.01
 DENSITY_THRESHOLD = 0.001
+# 遠い雲の消える原因を分ける診断の切り替え（GLSL の kCloudDiagnostic*）。書き出しの反実仮想の列（SCN-WL-CLOUD-FAR-CAUSE）が
+# 視線の値の 7 行目の w の 4 の位より上に持つ
+DIAGNOSTIC_NO_MARCH_LIMIT = 1
+DIAGNOSTIC_NO_FADE = 2
+DIAGNOSTIC_NO_HAZE = 4
+DIAGNOSTIC_MAX_PRIMARY_STEPS = 1024
 
 
 def fnv1a64(data):
@@ -92,6 +98,16 @@ def smoothstep(edge0, edge1, value):
 
 def mix(a, b, t):
     return a * (1.0 - t) + b * t
+
+
+def probe_diagnostic_flags(probe):
+    """視線ごとの診断の切り替え（格子の視線は 0）"""
+    return np.rint(probe[7, :, 3]).astype(np.int64) >> 2
+
+
+def grid_columns(probe):
+    """格子の視線（診断の切り替えを立てていない列）の番号"""
+    return [int(i) for i in np.where(probe_diagnostic_flags(probe) == 0)[0]]
 
 
 def sample_trilinear(texture, coords):
@@ -236,7 +252,8 @@ class CloudModel:
         root = np.sqrt(discriminant)
         return -b - root, -b + root
 
-    def march(self, direction, jitter, with_light=True):
+    def march(self, direction, jitter, with_light=True, flags=0):
+        """flags は診断の切り替え（DIAGNOSTIC_*。GLSL の MarchCloudLayerWithDiagnostics と ComposeCloudRadianceWithDiagnostics）"""
         result = {"marched": False, "transmittance": 1.0, "optical_depth": 0.0, "steps_taken": 0}
         camera = self.camera
         origin_y = self.planet_radius + max(camera[1], 1.0)
@@ -258,11 +275,14 @@ class CloudModel:
                 return result
             start = max(top_hit[0], 0.0)
             end = bottom_hit[0] if (bottom_hit[0] <= bottom_hit[1] and bottom_hit[0] > 0.0) else top_hit[1]
-        if not (end > start) or start > MAX_MARCH_DISTANCE:
+        no_limit = bool(flags & DIAGNOSTIC_NO_MARCH_LIMIT)
+        max_steps = DIAGNOSTIC_MAX_PRIMARY_STEPS if no_limit else MAX_PRIMARY_STEPS
+        if not (end > start) or (not no_limit and start > MAX_MARCH_DISTANCE):
             return result
-        end = min(end, start + MAX_MARCH_DISTANCE)
+        if not no_limit:
+            end = min(end, start + MAX_MARCH_DISTANCE)
         segment = end - start
-        step_count = int(np.clip(int(segment / PRIMARY_STEP_TARGET), MIN_PRIMARY_STEPS, MAX_PRIMARY_STEPS))
+        step_count = int(np.clip(int(segment / PRIMARY_STEP_TARGET), MIN_PRIMARY_STEPS, max_steps))
         step_length = segment / step_count
 
         thickness = self.top - self.bottom
@@ -315,14 +335,16 @@ class CloudModel:
             optical_depth += sigma * step_length
         cloud_distance = weighted_distance / distance_weight if distance_weight > 0.0 else start
         opacity = float(np.clip(1.0 - transmittance, 0.0, 1.0))
-        haze = np.exp(-cloud_distance / CLOUD_HAZE_DISTANCE)
-        fade = 1.0 - float(smoothstep(FADE_START_DISTANCE, MAX_MARCH_DISTANCE, start))
+        haze = 1.0 if flags & DIAGNOSTIC_NO_HAZE else np.exp(-cloud_distance / CLOUD_HAZE_DISTANCE)
+        fade = 1.0 if flags & DIAGNOSTIC_NO_FADE else 1.0 - float(smoothstep(FADE_START_DISTANCE, MAX_MARCH_DISTANCE, start))
         radiance = (scattered * haze + sample_sky(self.sky_lut, direction) * opacity * (1.0 - haze)) * fade
         result.update({
             "marched": True, "start_distance": start, "end_distance": end, "step_count": step_count,
             "step_length": step_length, "steps_taken": steps_taken, "transmittance": transmittance,
             "optical_depth": optical_depth, "scattered": scattered, "cloud_distance": cloud_distance,
-            "sky_above": sky_above, "ground_radiance": ground, "radiance": radiance, "fade": fade,
+            "sky_above": sky_above, "ground_radiance": ground, "radiance": radiance, "fade": fade, "haze": haze,
+            # 区間の全部の密度の積分（透過率の打ち切りの前。消散係数を掛けた光学的深さ）
+            "optical_depth_full": float(np.sum(densities[active]) * step_length * self.extinction),
         })
         return result
 
@@ -531,7 +553,9 @@ def check_view(rc, capture_dir, view, game_args):
     cloud_rays = 0
     thick_rays = 0
     non_sky = 0
-    for index, pixel in enumerate(probe_entry["pixels"]):
+    # 反実仮想の列（診断の切り替えを立てた列）は ReferenceCheck.py --cloud-far が見る
+    for index in grid_columns(probe):
+        pixel = probe_entry["pixels"][index]
         gpu = {"transmittance": probe[0, index, 0], "alpha": probe[0, index, 1], "fade": probe[0, index, 2],
                "steps_taken": int(round(probe[0, index, 3])), "scattered": probe[1, index, :3],
                "cloud_distance": probe[1, index, 3], "radiance": probe[2, index, :3], "direction": probe[3, index, :3],

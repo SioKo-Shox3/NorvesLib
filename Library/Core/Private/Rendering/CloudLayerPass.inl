@@ -899,7 +899,16 @@ namespace NorvesLib::Core::Rendering
             float TargetSize[4];
             float Pixels[FrameCaptureCloudMaxRays][4];
         };
-        static_assert(CloudProbePass::kRayColumns * CloudProbePass::kRayRows <= FrameCaptureCloudMaxRays);
+        // 遠い雲の消える原因を分ける反実仮想の列: 区画の格子の上から kStageGridRows 行の視線を、同じ画素・同じ歩の端数のまま
+        // 診断の切り替え（Common/CloudLayerCommon.glsl の kCloudDiagnostic*）を段ごとに足して評価し、格子の視線の後ろへ並べる。
+        // 段は 1 = 打ち切りを外す、2 = さらに距離の溶かしを外す、3 = さらに独自の霞を外す で、列ごとに 1 → 2 → 3 と回す
+        constexpr uint32_t kStageGridRows = 7u;
+        constexpr uint32_t kGridRayCount = CloudProbePass::kRayColumns * CloudProbePass::kRayRows;
+        constexpr uint32_t kStageRayCount = CloudProbePass::kRayColumns * kStageGridRows;
+        constexpr uint32_t kProbeRayCount = kGridRayCount + kStageRayCount;
+        constexpr float kStageDiagnosticFlags[3] = {1.0f, 3.0f, 7.0f};
+        static_assert(kStageGridRows <= CloudProbePass::kRayRows);
+        static_assert(kProbeRayCount <= FrameCaptureCloudMaxRays);
         static_assert(sizeof(GPUCloudLayerParams) == FrameCaptureCloudShaderParamCount * sizeof(float));
 
         RHI::DescriptorSetDesc CreateCloudProbeDescriptorSetDesc()
@@ -1107,7 +1116,7 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        const uint32_t rayCount = kRayColumns * kRayRows;
+        const uint32_t rayCount = CloudLayerPassDetail::kProbeRayCount;
         RGTextureDesc desc = RGTextureDesc::RenderTarget(rayCount,
                                                          FrameCaptureCloudProbeRows,
                                                          CloudLayerPassDetail::CloudProbeFormat,
@@ -1173,9 +1182,9 @@ namespace NorvesLib::Core::Rendering
         GPUCloudLayerParams params{};
         BuildCloudLayerParams(context, *camera, m_CloudLayer, m_SkyParameters, m_SunIlluminance, params);
 
-        // 視線: 画面を横 kRayColumns × 縦 kRayRows に分けた区画の中心に最も近い画素の中心
+        // 視線: 画面を横 kRayColumns × 縦 kRayRows に分けた区画の中心に最も近い画素の中心。その後ろに反実仮想の列
         GPUCloudProbeRays rays{};
-        const uint32_t rayCount = kRayColumns * kRayRows;
+        const uint32_t rayCount = kProbeRayCount;
         rays.RayCount[0] = rayCount;
         rays.TargetSize[0] = static_cast<float>(targetWidth);
         rays.TargetSize[1] = static_cast<float>(targetHeight);
@@ -1191,6 +1200,15 @@ namespace NorvesLib::Core::Rendering
                 m_LastInfo.RayPixels[rayIndex][0] = rays.Pixels[rayIndex][0];
                 m_LastInfo.RayPixels[rayIndex][1] = rays.Pixels[rayIndex][1];
             }
+        }
+        for (uint32_t stageIndex = 0; stageIndex < kStageRayCount; ++stageIndex)
+        {
+            const uint32_t rayIndex = kGridRayCount + stageIndex;
+            rays.Pixels[rayIndex][0] = rays.Pixels[stageIndex][0];
+            rays.Pixels[rayIndex][1] = rays.Pixels[stageIndex][1];
+            rays.Pixels[rayIndex][2] = kStageDiagnosticFlags[stageIndex % 3u];
+            m_LastInfo.RayPixels[rayIndex][0] = rays.Pixels[rayIndex][0];
+            m_LastInfo.RayPixels[rayIndex][1] = rays.Pixels[rayIndex][1];
         }
 
         FrameResourceLane* frameResources = context.FrameResources;

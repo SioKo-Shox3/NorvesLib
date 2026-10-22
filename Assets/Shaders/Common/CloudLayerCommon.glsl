@@ -44,6 +44,17 @@ const float kCloudHazeDistance = 22000.0;
 // 透過率がこれを下回ったら進むのをやめる
 const float kMinTransmittance = 0.01;
 
+// 遠い雲の消える原因を分ける診断の切り替え（撮影の雲の書き出しの CloudProbePass が視線ごとに立てる。開発ビルドだけ。
+// 描画の cloud_layer.frag は常に 0 で、既定の描画は変わらない）
+// 45 km の打ち切りを外し、雲の層を出るまで進める（歩数の上限を kDiagnosticMaxPrimarySteps へ上げる）
+const uint kCloudDiagnosticNoMarchLimit = 1u;
+// 30〜45 km の距離の溶かしを外す
+const uint kCloudDiagnosticNoFade = 2u;
+// 独自の 22 km の霞（kCloudHazeDistance）を外す
+const uint kCloudDiagnosticNoHaze = 4u;
+// 打ち切りを外したときの歩数の上限（地平線の向きの雲の層の区間 約 36 km を 90 m の歩で進められる数）
+const int kDiagnosticMaxPrimarySteps = 1024;
+
 bool IsFiniteFloat(float value)
 {
     return !isnan(value) && !isinf(value);
@@ -204,8 +215,9 @@ bool ComputeCloudRayDirection(vec2 uv, out vec3 rayDirection)
     return true;
 }
 
-// カメラの位置から rayDirection へ雲の層を進める。jitter（0〜1）は歩の位置の端数
-CloudRayResult MarchCloudLayer(vec3 rayDirection, float jitter)
+// カメラの位置から rayDirection へ雲の層を進める。jitter（0〜1）は歩の位置の端数、diagnosticFlags は診断の切り替え
+// （kCloudDiagnostic*。描画は 0）
+CloudRayResult MarchCloudLayerWithDiagnostics(vec3 rayDirection, float jitter, uint diagnosticFlags)
 {
     CloudRayResult result = MakeEmptyCloudRayResult();
     vec3 cameraPosition = params.cameraPositionAndPreExposure.xyz;
@@ -249,14 +261,19 @@ CloudRayResult MarchCloudLayer(vec3 rayDirection, float jitter)
         startDistance = max(topHit.x, 0.0);
         endDistance = (bottomHit.x <= bottomHit.y && bottomHit.x > 0.0) ? bottomHit.x : topHit.y;
     }
-    if (!(endDistance > startDistance) || startDistance > kMaxMarchDistance)
+    bool bNoMarchLimit = (diagnosticFlags & kCloudDiagnosticNoMarchLimit) != 0u;
+    int maxPrimarySteps = bNoMarchLimit ? kDiagnosticMaxPrimarySteps : kMaxPrimarySteps;
+    if (!(endDistance > startDistance) || (!bNoMarchLimit && startDistance > kMaxMarchDistance))
     {
         return result;
     }
-    endDistance = min(endDistance, startDistance + kMaxMarchDistance);
+    if (!bNoMarchLimit)
+    {
+        endDistance = min(endDistance, startDistance + kMaxMarchDistance);
+    }
 
     float segmentLength = endDistance - startDistance;
-    int stepCount = clamp(int(segmentLength / kPrimaryStepTarget), kMinPrimarySteps, kMaxPrimarySteps);
+    int stepCount = clamp(int(segmentLength / kPrimaryStepTarget), kMinPrimarySteps, maxPrimarySteps);
     float stepLength = segmentLength / float(stepCount);
 
     vec3 sunDirection = normalize(params.sunDirectionAndFrameIndex.xyz);
@@ -288,7 +305,7 @@ CloudRayResult MarchCloudLayer(vec3 rayDirection, float jitter)
     int stepsTaken = 0;
     float weightedDistance = 0.0;
     float distanceWeight = 0.0;
-    for (int stepIndex = 0; stepIndex < kMaxPrimarySteps; ++stepIndex)
+    for (int stepIndex = 0; stepIndex < maxPrimarySteps; ++stepIndex)
     {
         if (stepIndex >= stepCount || transmittance < kMinTransmittance)
         {
@@ -380,14 +397,28 @@ CloudRayResult MarchCloudLayer(vec3 rayDirection, float jitter)
     return result;
 }
 
-// 雲の放射輝度（事前露出の前、打ち切りの距離へ溶かす割合 fade を掛けた値）。opacity は 1 - 透過率
+CloudRayResult MarchCloudLayer(vec3 rayDirection, float jitter)
+{
+    return MarchCloudLayerWithDiagnostics(rayDirection, jitter, 0u);
+}
+
+// 雲の放射輝度（事前露出の前、打ち切りの距離へ溶かす割合 fade を掛けた値）。opacity は 1 - 透過率、
+// diagnosticFlags は診断の切り替え（kCloudDiagnostic*。描画は 0）
+vec3 ComposeCloudRadianceWithDiagnostics(CloudRayResult ray, vec3 rayDirection, float opacity, uint diagnosticFlags,
+                                         out float hazeVisibility, out float fade)
+{
+    // 遠い雲ほど、手前の空気の散乱で空の色に溶ける
+    hazeVisibility = (diagnosticFlags & kCloudDiagnosticNoHaze) != 0u ? 1.0 : exp(-ray.CloudDistance / kCloudHazeDistance);
+    vec3 cloudRadiance = ray.Scattered * hazeVisibility + SampleSky(rayDirection) * opacity * (1.0 - hazeVisibility);
+    // 打ち切りの距離へ近づくほど、雲を重ねる割合を 0 へ下げる（下の空の色がそのまま残る）
+    fade = (diagnosticFlags & kCloudDiagnosticNoFade) != 0u
+               ? 1.0
+               : 1.0 - smoothstep(kFadeStartDistance, kMaxMarchDistance, ray.StartDistance);
+    return cloudRadiance * fade;
+}
+
 vec3 ComposeCloudRadiance(CloudRayResult ray, vec3 rayDirection, float opacity,
                           out float hazeVisibility, out float fade)
 {
-    // 遠い雲ほど、手前の空気の散乱で空の色に溶ける
-    hazeVisibility = exp(-ray.CloudDistance / kCloudHazeDistance);
-    vec3 cloudRadiance = ray.Scattered * hazeVisibility + SampleSky(rayDirection) * opacity * (1.0 - hazeVisibility);
-    // 打ち切りの距離へ近づくほど、雲を重ねる割合を 0 へ下げる（下の空の色がそのまま残る）
-    fade = 1.0 - smoothstep(kFadeStartDistance, kMaxMarchDistance, ray.StartDistance);
-    return cloudRadiance * fade;
+    return ComposeCloudRadianceWithDiagnostics(ray, rayDirection, opacity, 0u, hazeVisibility, fade);
 }

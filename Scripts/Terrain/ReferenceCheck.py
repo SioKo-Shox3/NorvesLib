@@ -121,6 +121,10 @@
 #       定数からエンジンの式で視線ごとの雲の透過率を求め直し、同じ視線を GPU が描画と同じ式で評価した値と 1 % 以内で合うこと、
 #       定数が契約（Docs/RenderingValidation/WastelandCloudDump.md）どおりで、格子が描画で GPU へ上げた値と同じことを確かめる。
 #
+#   python Scripts/Terrain/ReferenceCheck.py --cloud-far --engine <撮影先> [--views ref_far_01,ref_far_02] [--verify]
+#       CaptureScene.ps1 -GameArgs cloud-dump の手本の視点の撮影で、遠い雲が消える原因（中身・45 km の打ち切り・距離の溶かし・
+#       独自の 22 km の霞）を、書き出しの反実仮想の列と写真と同じ画素の範囲の視線で量に分け、<撮影先>/cloud_far_check.json に書く
+#       （本体は CloudFarCause.py）。
 #   python Scripts/Terrain/ReferenceCheck.py --cloud --engine <雲の書き出しの撮影> --reference <Cycles の書き先>
 #                                            [--views cloud_sky] [--trial] [--verify]
 #       雲の書き出しの視線ごとに、エンジン（GPU が描画と同じ式で評価した霞の前の散乱光と透過率）と Cycles（BlenderReference.py
@@ -6610,6 +6614,8 @@ def main():
                         help="空と霞の書き出しを、AtmosphereReference.py の独立な正解と比べた表を作る")
     parser.add_argument("--cloud-dump", action="store_true",
                         help="雲の密度場の書き出し（--cloud-dump）から雲の透過率を求め直し、エンジンの描画の値と照らす")
+    parser.add_argument("--cloud-far", action="store_true",
+                        help="手本の視点で遠い雲が消える原因を、雲の書き出しの反実仮想で量に分ける")
     parser.add_argument("--cloud", action="store_true",
                         help="雲の書き出しの視線ごとの透過率と放射輝度を、Cycles の体積の描画と比べる（CloudCheck.py。--engine と --reference）")
     parser.add_argument("--geom-settle", action="store_true",
@@ -6757,6 +6763,15 @@ def main():
         views = [v.strip() for v in args.views.split(",") if v.strip()]
         return CloudCheck.run(sys.modules[__name__], [absolute(d) for d in args.engine],
                               absolute(args.reference) if args.reference else "", views, args.verify, args.trial)
+    if args.cloud_far:
+        import CloudFarCause
+        capture = args.capture or (args.engine[0] if args.engine else "")
+        capture_dir = os.path.normpath(capture if os.path.isabs(capture) else os.path.join(REPO_ROOT, capture))
+        if not capture or not os.path.isdir(capture_dir):
+            print(f"REFERENCE_CHECK result=fail reason=capture_dir_missing（--engine に撮影先を指定する） path={capture}")
+            return 1
+        views = [v.strip() for v in args.views.split(",") if v.strip()]
+        return CloudFarCause.run(sys.modules[__name__], capture_dir, views, args.verify)
     if args.cloud_dump:
         import CloudDumpCheck
         capture = args.capture or (args.engine[0] if args.engine else "")
@@ -6854,7 +6869,7 @@ def main():
         lit_dir = args.lit_capture if os.path.isabs(args.lit_capture) else os.path.join(REPO_ROOT, args.lit_capture)
         return run_tonemap(capture_dir, os.path.normpath(lit_dir), views, args.verify)
     print("REFERENCE_CHECK result=fail reason=no_mode（--record-inputs か --hdr か --display か --plate か --aov か "
-          "--projection か --atmos-dump か --atmos-ref か --cloud-dump か --cloud か --blur-static か --plant-far か --blur-motion か --gray か --albedo か --normal か "
+          "--projection か --atmos-dump か --atmos-ref か --cloud-dump か --cloud-far か --cloud か --blur-static か --plant-far か --blur-motion か --gray か --albedo か --normal か "
           "--lit か --tonemap か --grading を指定する）")
     return 1
 

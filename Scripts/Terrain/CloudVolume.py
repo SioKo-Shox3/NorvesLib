@@ -90,6 +90,11 @@ def load_dump(capture_dir, view):
         raise ValueError("; ".join(failures))
     model = CD.CloudModel(meta, shape.astype(np.float64) / 255.0, detail.astype(np.float64) / 255.0,
                           lut.astype(np.float64))
+    # 格子の視線だけを残す（反実仮想の列は ReferenceCheck.py --cloud-far が見る）
+    columns = CD.grid_columns(probe)
+    if len(columns) != probe.shape[1]:
+        meta["probe"]["pixels"] = [meta["probe"]["pixels"][i] for i in columns]
+        probe = probe[:, columns, :]
     return meta, model, probe
 
 
