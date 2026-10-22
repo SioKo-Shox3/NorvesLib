@@ -2338,7 +2338,7 @@
 - notes: 危険地帯（描画）。SCN-WL-LIGHT-FINAL の反復 57 で `--light-final` が見つけた（記録は `Docs/RenderingValidation/WastelandLightFinal.md`）。反復の最初に回帰の撮影の `before` を撮る。直した後に SCN-WL-LIGHT-FINAL の組を撮り直して `--light-final` を通す。
 
 ## SCN-WL-CLOUD-BANDING: 雲の階調の段（等高線のような平らな段）を消す
-- status: todo
+- status: done
 - after: SCN-WLR-CLOUD-REF, SCN-WL-CLOUD-FAR-RANGE
 - done-when: 既定の荒野の雲に、明るさが平らな段になって等高線のように並ぶ階調の段が出る（SCN-WL-LIGHT-FINAL の歩きの連続撮影 `scene-capture/SCN-WL-LIGHT-FINAL-views6/walk/` の空と、ref_far_02。10 月 19 日の SCN-WL-GRADE-NEUTRAL-6views にも同じ位置にある）。原因（雲の密度・光の量子化、低解像度の雲の拡大、表示の 8 bit の丸めのどれか）を切り分けて直し、同じ視点の撮影で段が見えないことを拡大して確かめる。SCN-FIX-SKY-BANDING（mega シーンの空の横縞）と同じ原因なら一緒に扱う。
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -Build -RequireAssets -Width 1920 -Height 1080 -Views ref_far_02 -OutDir .harness/runs/scene-capture/SCN-WL-CLOUD-BANDING`
@@ -2696,7 +2696,7 @@
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -Views overview -Build -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-FIX-SKY-BANDING`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -OutDir .harness/runs/startup-capture/SCN-FIX-SKY-BANDING`
 - paths: Assets/Shaders, Library/Core/Private/Rendering, Library/Core/Public/Rendering, Docs/RenderingValidation, Test/Core/Rendering, Scripts, TASKS.md, PROGRESS.md
-- notes: 2026-10-14 SCN-MEGA-ACCEPT-1M の撮影で見つけた（前からある見た目の欠陥も直す方針）。描画を変える項目なので起動画面 default の比較を入れた。
+- notes: 2026-10-14 SCN-MEGA-ACCEPT-1M の撮影で見つけた（前からある見た目の欠陥も直す方針）。描画を変える項目なので起動画面 default の比較を入れた。 2026-10-23 SCN-WL-CLOUD-BANDING の反復 22: 原因は同じ（表示の 8 bit の丸めにディザが無い。空の列が 1 段ずつの平らな帯）で、表示の Blit のディザで直した。同じ Game.exe で Blit だけを戻した前の撮影と比べ、mega-stress の overview の上 350 行の平らな帯の長さの平均 7.263 → 2.836・95 % 点 10 → 7、隣の差が 1 段以下の割合 1.000 → 0.999（最大 2。雑音で隣が逆の向きへ丸まった所）。記録は WastelandCloudRef.md の SCN-WL-CLOUD-BANDING の節。「隣の差が 1 段以下」をディザの 2 段の 0.1 % を許す形に読み替えて閉じるかは計画が決める。
 
 ## SCN-ACCEPT: ランチャーと全シーンの受入れを記録する
 - status: todo

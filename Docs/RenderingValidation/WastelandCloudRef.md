@@ -379,3 +379,49 @@ python Scripts/Terrain/ReferenceCheck.py --cloud-far --flicker --engine .harness
 ```
 
 （`-flicker/before` は変更の前の雲のシェーダーで同じ連番を撮る。）
+
+## 雲の階調の段を消す（SCN-WL-CLOUD-BANDING）
+
+既定の荒野の ref_far_02 の雲に、明るさが平らな段になって等高線のように並ぶ階調の段が出ていた。原因の候補（雲の密度・光の
+量子化、低解像度の雲の拡大、表示の 8 bit の丸め）を、同じフレームのシーンカラー（`ref_far_02.hdr.pfm`、RGBA16F）と表示の
+PNG で切り分けた。
+
+- シーンカラー: 雲の縦の列の隣り合う画素の相対差の中央値は 0.3〜0.7 %、差が 0 の所は約 1 %。値は滑らかに変わり、
+  密度・光の量子化や拡大の段は無い（雲の層の重なりの間の細い切れ目は空が覗く雲の形で、段ではない）。
+- 表示の PNG: 同じ列が 1 段ずつ変わる平らな帯（最長 63 画素）になる。トーンマップの出力（`ToneMappedColor`）は RGBA16F で、
+  丸めはスワップチェーン（8 bit の sRGB）への書き込みの 1 か所だけ。原因は表示の 8 bit の丸めで、ディザが無かった。
+
+直し方: 表示の Blit（`Assets/Shaders/blit.frag`）で、8 bit へ丸める前に sRGB の符号化値の上で画素の位置だけで決まる
+[-0.5, 0.5) 段の一様な雑音（RGB で共通）を足す。値は隣り合う 2 つの段へ端数の割合で振り分けられ、平均は元の値のまま、
+丸めの前の値からの差は 1 段未満（雑音の無い丸めとの差は 1 段以下）。sRGB の形式のスワップチェーンでは雑音を足した符号化値を
+リニアへ戻して機器の符号化に渡し、UNORM の形式ではシェーダーで丸める。雑音はフレームで変えないので、同じ画の撮影は決定的なまま。
+0 と 255 の端は動かない。全シーンの表示に掛かるが、変わるのは各画素の 1 段の丸めの向きだけ。
+
+結果（`Scripts/Terrain/BandingCheck.py`、上 450 行の G ≥ 150 の画素、縦の列を 4 画素おき）:
+
+| 量 | 前 | 後 |
+|---|---|---|
+| 平らな帯の長さの平均 | 2.757 | 2.021 |
+| 平らな帯の長さの 95 % 点 | 9 | 6 |
+| 平らな帯の長さの最大 | 63 | 34 |
+| 9 × 9 の区画の平均の前後の差（平均・最大） | — | 0.060・0.457 段 |
+
+前は HEAD 26771864 の撮影（`scene-capture/SCN-WL-CLOUD-FAR-RANGE/ref_far_02.png`、同じシェーダー・同じ視点）。前の平らな帯が
+最も長い所を 4 倍に拡大し G を ±6 段の幅で引き伸ばした見比べ（`scene-capture/SCN-WL-CLOUD-BANDING/banding/banding_zoom.png`）で、
+前は 1 段ずつの等高線の縞、後は滑らかな階調に細かな雑音が乗るだけになった。後の撮影の空を等倍で切り出しても段は見えない。
+
+mega シーンの空の横縞（SCN-FIX-SKY-BANDING）も同じ原因（空の列が 1 段ずつの平らな帯）だった。同じ Game.exe で Blit だけを
+HEAD の版へ戻して撮った mega-stress の overview と比べ、上 350 行の平らな帯の長さの平均 7.263 → 2.836、95 % 点 10 → 7、
+最大 56 → 40、区画の平均の差 0.066 段。隣り合う画素の差が 1 段以下の割合は 1.000 → 0.999（最大 1 → 2。2 段は雑音で
+隣の画素が逆の向きへ丸まった所）。
+
+再現:
+
+```
+powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -Build -RequireAssets -Width 1920 -Height 1080 -Views ref_far_02 -OutDir .harness/runs/scene-capture/SCN-WL-CLOUD-BANDING
+python Scripts/Terrain/BandingCheck.py --before .harness/runs/scene-capture/SCN-WL-CLOUD-FAR-RANGE/ref_far_02.png --after .harness/runs/scene-capture/SCN-WL-CLOUD-BANDING/ref_far_02.png --rows 0:450 --out .harness/runs/scene-capture/SCN-WL-CLOUD-BANDING/banding --verify
+powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -Views overview -Build -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-FIX-SKY-BANDING
+python Scripts/Terrain/BandingCheck.py --before .harness/runs/scene-capture/SCN-FIX-SKY-BANDING-before/overview.png --after .harness/runs/scene-capture/SCN-FIX-SKY-BANDING/overview.png --rows 0:350 --min-g 0 --out .harness/runs/scene-capture/SCN-FIX-SKY-BANDING/banding --verify
+```
+
+（`SCN-FIX-SKY-BANDING-before` は Blit を HEAD の版へ戻して同じ Game.exe で撮る。シェーダーは実行時に Assets から読む。）
