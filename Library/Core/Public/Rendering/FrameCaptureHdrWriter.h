@@ -51,4 +51,20 @@ namespace NorvesLib::Core::Rendering
      * @return 大気の書き出しが読み出せていて、すべて書けたら true
      */
     bool SaveCapturedAtmosphere(const CapturedFrame& frame, const Container::String& pngPath);
+
+    /**
+     * @brief 撮影で同じフレームから読み出した雲の書き出し（--cloud-dump）と、雲の密度場・照明の入力を書き出す
+     *
+     * FrameCaptureRequest::bIncludeClouds で得た CapturedFrame::Clouds を、pngPath の拡張子を除いた名前へ書く。
+     *   <名前>.cloud.probe.f32           … 決めた画素の視線の雲（GPU が cloud_layer.frag と同じ式で評価した値。32 bit 浮動小数）
+     *   <名前>.cloud.shape_noise.u8      … 密度場の基本の形の 3D ノイズ（RGBA8。CloudLayerPass が GPU へ上げる値）
+     *   <名前>.cloud.detail_noise.u8     … 密度場の細部の 3D ノイズ（RGBA8）
+     *   <名前>.cloud.sky_radiance_lut.f32 … 空の放射輝度 LUT（cd/m²。雲の環境光と雲の後ろの空を引く表）
+     *   <名前>.cloud.json                … 上の形・軸、cloud_layer.frag の定数、格子の世界の座標・大きさ・補間・風のずれ・時刻、
+     *                                     照明の式と係数（太陽・空・位相関数・多重散乱の近似・背景）、視線の画素の一覧
+     * ノイズと LUT は撮影のフレームのパラメータから CloudLayerPass・SkyAtmospherePass と同じ関数で作り直す（CPU で決まる値）。
+     * 撮影の起動引数（--cloud-dump）のための開発ビルドの機能で、開発ビルドでないときは何も書かず false を返す。
+     * @return 雲の書き出しが読み出せていて、すべて書けたら true
+     */
+    bool SaveCapturedClouds(const CapturedFrame& frame, const Container::String& pngPath);
 } // namespace NorvesLib::Core::Rendering

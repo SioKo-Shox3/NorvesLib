@@ -39,6 +39,9 @@ namespace NorvesLib::Core::Rendering
         }
         m_AtmosphereReadbackSlots.clear();
         m_AtmosphereReadbackSlots.resize(frameSlotCount);
+        m_PendingClouds = PendingCloudReadback{};
+        m_CloudReadbackSlots.clear();
+        m_CloudReadbackSlots.resize(frameSlotCount);
         return true;
     }
 
@@ -62,6 +65,8 @@ namespace NorvesLib::Core::Rendering
             slots.clear();
         }
         m_AtmosphereReadbackSlots.clear();
+        m_PendingClouds = PendingCloudReadback{};
+        m_CloudReadbackSlots.clear();
     }
 
     FrameCaptureRequestResult FrameCaptureReadbackHelper::RequestFrameCapture()
@@ -92,6 +97,7 @@ namespace NorvesLib::Core::Rendering
             request.bIncludeSceneColor && request.SourceKind != FrameCaptureSourceKind::SceneColor;
         m_ActiveRequest.bIncludeAov = request.bIncludeAov;
         m_ActiveRequest.bIncludeAtmosphere = request.bIncludeAtmosphere;
+        m_ActiveRequest.bIncludeClouds = request.bIncludeClouds;
         m_State = State::Requested;
         return {FrameCaptureRequestStatus::Accepted, m_ActiveRequest.RequestId};
     }
@@ -312,6 +318,24 @@ namespace NorvesLib::Core::Rendering
             atmosphereReadback.bRecorded = true;
         }
 
+        // 雲の書き出しも要求されていれば、同じフレームに書かれた 1 枚を写せることを先に確かめる
+        PendingCloudReadback cloudReadback;
+        if (m_ActiveRequest.bIncludeClouds)
+        {
+            FrameCaptureResultStatus cloudStatus = FrameCaptureResultStatus::SourceUnavailable;
+            if (!sources.CloudInfo.bValid || sources.CloudProbe.FrameNumber != source->FrameNumber ||
+                !TryPrepareImageReadback(sources.CloudProbe,
+                                         m_CloudReadbackSlots[frameSlotIndex],
+                                         cloudReadback.Image,
+                                         cloudStatus))
+            {
+                PublishFailure(cloudStatus, source->FrameNumber);
+                return FrameCaptureRecordStatus::PublishedFailure;
+            }
+            cloudReadback.Info = sources.CloudInfo;
+            cloudReadback.bRecorded = true;
+        }
+
         ReadbackSlot& slot = m_ReadbackSlots[frameSlotIndex];
         if (!EnsureReadbackSlot(slot, byteCount))
         {
@@ -362,6 +386,18 @@ namespace NorvesLib::Core::Rendering
             commandList->TextureBarrier(atmosphereSource.Texture, RHI::ResourceState::CopySource, atmosphereSource.RestoreState);
         }
         m_PendingAtmosphere = atmosphereReadback;
+        if (cloudReadback.bRecorded)
+        {
+            const FrameCaptureSource& cloudSource = sources.CloudProbe;
+            commandList->TextureBarrier(cloudSource.Texture, cloudSource.CurrentState, RHI::ResourceState::CopySource);
+            commandList->CopyTextureToBuffer(cloudSource.Texture,
+                                             m_CloudReadbackSlots[frameSlotIndex].Buffer,
+                                             cloudReadback.Image.Width,
+                                             cloudReadback.Image.Height,
+                                             0);
+            commandList->TextureBarrier(cloudSource.Texture, RHI::ResourceState::CopySource, cloudSource.RestoreState);
+        }
+        m_PendingClouds = cloudReadback;
 
         m_PendingReadback.RequestId = m_ActiveRequest.RequestId;
         m_PendingReadback.FrameNumber = source->FrameNumber;
@@ -503,11 +539,25 @@ namespace NorvesLib::Core::Rendering
             frame.Atmosphere.bValid = true;
         }
 
+        if (m_PendingClouds.bRecorded)
+        {
+            if (!TryCopyImageReadback(m_CloudReadbackSlots[frameSlotIndex],
+                                      m_PendingClouds.Image,
+                                      frame.Clouds.Probe))
+            {
+                PublishFailure(FrameCaptureResultStatus::MapFailed, m_PendingReadback.FrameNumber);
+                return;
+            }
+            frame.Clouds.Info = m_PendingClouds.Info;
+            frame.Clouds.bValid = true;
+        }
+
         m_CompletedFrame = frame;
         m_PendingReadback = PendingReadback{};
         m_PendingSceneColor = PendingSceneColorReadback{};
         m_PendingAov = PendingAovReadback{};
         m_PendingAtmosphere = PendingAtmosphereReadback{};
+        m_PendingClouds = PendingCloudReadback{};
         m_State = State::CompletedUnconsumed;
     }
 
@@ -527,6 +577,7 @@ namespace NorvesLib::Core::Rendering
         m_PendingSceneColor = PendingSceneColorReadback{};
         m_PendingAov = PendingAovReadback{};
         m_PendingAtmosphere = PendingAtmosphereReadback{};
+        m_PendingClouds = PendingCloudReadback{};
         m_ActiveRequest = FrameCaptureRequestSnapshot{};
         m_State = State::Idle;
         return true;
@@ -711,6 +762,7 @@ namespace NorvesLib::Core::Rendering
         m_PendingSceneColor = PendingSceneColorReadback{};
         m_PendingAov = PendingAovReadback{};
         m_PendingAtmosphere = PendingAtmosphereReadback{};
+        m_PendingClouds = PendingCloudReadback{};
         m_State = State::CompletedUnconsumed;
     }
 

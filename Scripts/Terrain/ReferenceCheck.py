@@ -106,6 +106,12 @@
 #          95 % が PROJECTION_DEPTH_P95 以下（単位・軸・原点の取り違えと、エンジンが粗い段で描いた所を見つける）。
 #       4. 撮影の起動引数と Game のログに、共通の照明・地形だけ（WASTELAND_HIDE mask=127）・最も細かい段（WASTELAND_FINEST_LOD）がある。
 #
+#   python Scripts/Terrain/ReferenceCheck.py --cloud-dump --engine <撮影先> [--views cloud_sky] [--verify]
+#       CaptureScene.ps1 -GameArgs cloud-dump の撮影（<視点>.cloud.json と、雲の密度場の 3D ノイズの格子・決めた画素の視線の値・
+#       空の放射輝度 LUT）を検査し、結果を <撮影先>/cloud_dump_check.json に書く（本体は CloudDumpCheck.py）。書き出した格子と
+#       定数からエンジンの式で視線ごとの雲の透過率を求め直し、同じ視線を GPU が描画と同じ式で評価した値と 1 % 以内で合うこと、
+#       定数が契約（Docs/RenderingValidation/WastelandCloudDump.md）どおりで、格子が描画で GPU へ上げた値と同じことを確かめる。
+#
 #   python Scripts/Terrain/ReferenceCheck.py --atmos-dump --capture <出力先> [--views a,b,...] [--verify]
 #       CaptureScene.ps1 -GameArgs atmosphere-dump の撮影（<視点>.atmos.json と、そこに書かれた 32 bit 浮動小数の生のファイル）を
 #       視点ごとに検査し、結果を <出力先>/atmos_dump_check.json に書く。--verify は入力のハッシュ（inputs.json）を今のファイルと照らす。
@@ -6558,6 +6564,8 @@ def main():
                         help="空と霞の値の書き出し（--atmosphere-dump）が揃い、描画に使われた値と合うことを検査する")
     parser.add_argument("--atmos-ref", action="store_true",
                         help="空と霞の書き出しを、AtmosphereReference.py の独立な正解と比べた表を作る")
+    parser.add_argument("--cloud-dump", action="store_true",
+                        help="雲の密度場の書き出し（--cloud-dump）から雲の透過率を求め直し、エンジンの描画の値と照らす")
     parser.add_argument("--geom-settle", action="store_true",
                         help="VRAM の予算が足りないときのジオメトリのページの落ち着き（GeomSettle.py）を、--engine の撮影の推移で検査する")
     parser.add_argument("--blur-static", action="store_true",
@@ -6681,6 +6689,15 @@ def main():
         return PlantCheck.run(sys.modules[__name__], [absolute(d) for d in args.engine],
                               absolute(args.reference) if args.reference else "", views, args.verify, args.trial,
                               expect=expect)
+    if args.cloud_dump:
+        import CloudDumpCheck
+        capture = args.capture or (args.engine[0] if args.engine else "")
+        capture_dir = os.path.normpath(capture if os.path.isabs(capture) else os.path.join(REPO_ROOT, capture))
+        if not capture or not os.path.isdir(capture_dir):
+            print(f"REFERENCE_CHECK result=fail reason=capture_dir_missing（--engine に撮影先を指定する） path={capture}")
+            return 1
+        views = [v.strip() for v in args.views.split(",") if v.strip()]
+        return CloudDumpCheck.run(sys.modules[__name__], capture_dir, views, args.verify)
     if args.rt_scene:
         import RtScene
         capture = args.capture or (args.engine[0] if args.engine else "")
@@ -6769,7 +6786,7 @@ def main():
         lit_dir = args.lit_capture if os.path.isabs(args.lit_capture) else os.path.join(REPO_ROOT, args.lit_capture)
         return run_tonemap(capture_dir, os.path.normpath(lit_dir), views, args.verify)
     print("REFERENCE_CHECK result=fail reason=no_mode（--record-inputs か --hdr か --display か --plate か --aov か "
-          "--projection か --atmos-dump か --atmos-ref か --blur-static か --plant-far か --blur-motion か --gray か --albedo か --normal か "
+          "--projection か --atmos-dump か --atmos-ref か --cloud-dump か --blur-static か --plant-far か --blur-motion か --gray か --albedo か --normal か "
           "--lit か --tonemap か --grading を指定する）")
     return 1
 

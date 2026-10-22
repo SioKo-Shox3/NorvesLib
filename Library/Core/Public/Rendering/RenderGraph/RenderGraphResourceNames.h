@@ -21,6 +21,9 @@ namespace NorvesLib::Core::Rendering::RenderGraphResourceNames
     // 撮影の大気の書き出し（AtmosphereProbePass。--atmosphere-dump）: 決めた視線の高さフォグと空気遠近の値（グラフの外へ出す）
     inline constexpr Identity CaptureAtmosphereProbe =
         Identity::Literal("Capture.AtmosphereProbe", sizeof("Capture.AtmosphereProbe") - 1);
+    // 撮影の雲の書き出し（CloudProbePass。--cloud-dump）: 決めた画素の視線の雲の値（グラフの外へ出す）
+    inline constexpr Identity CaptureCloudProbe =
+        Identity::Literal("Capture.CloudProbe", sizeof("Capture.CloudProbe") - 1);
     // 計算シェーダーでスキニングした今・前のフレームの頂点（ワールド空間。1 頂点 32 バイト）
     inline constexpr Identity SkinningCurrentVertices =
         Identity::Literal("Skinning.CurrentVertices", sizeof("Skinning.CurrentVertices") - 1);

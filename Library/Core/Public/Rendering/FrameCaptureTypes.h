@@ -46,6 +46,13 @@ namespace NorvesLib::Core::Rendering
          * 結果は CapturedFrame::Atmosphere に入る。
          */
         bool bIncludeAtmosphere = false;
+        /**
+         * @brief 同じフレームのメインSceneViewの雲の書き出し（決めた画素の視線の雲の透過率・散乱光と、その評価に使った値）も読み出す
+         *
+         * CloudProbePass（--cloud-dump で足す。統計が有効な構成だけ）が書いた 1 枚と、その評価に使った値を写し、
+         * 結果は CapturedFrame::Clouds に入る。
+         */
+        bool bIncludeClouds = false;
     };
 
     struct FrameCaptureRequestSnapshot
@@ -56,6 +63,7 @@ namespace NorvesLib::Core::Rendering
         bool bIncludeSceneColor = false;
         bool bIncludeAov = false;
         bool bIncludeAtmosphere = false;
+        bool bIncludeClouds = false;
 
         bool IsValid() const
         {
@@ -309,6 +317,50 @@ namespace NorvesLib::Core::Rendering
         FrameCaptureAtmosphereRay Rays[FrameCaptureAtmosphereMaxRays];
     };
 
+    /** @brief 雲の書き出し（CloudProbePass）が評価する視線の数の上限（cloud_layer_probe.frag の kCloudProbeMaxRays と同じ） */
+    inline constexpr uint32_t FrameCaptureCloudMaxRays = 256u;
+    /** @brief 雲の書き出しの行の数（行の意味は CloudProbePass と SaveCapturedClouds の約束） */
+    inline constexpr uint32_t FrameCaptureCloudProbeRows = 8u;
+    /** @brief cloud_layer.frag の定数（CloudLayerParams。std140）の float の数 */
+    inline constexpr uint32_t FrameCaptureCloudShaderParamCount = 52u;
+
+    /**
+     * @brief 雲の書き出しを評価したフレームの値（CloudProbePass が CloudLayerPass と同じ規則で求めたもの）
+     *
+     * 密度場の 3D ノイズの texel は書き出しが CloudLayerPass と同じ関数（BuildCloudNoiseTexels）で作り直す。
+     */
+    struct FrameCaptureCloudInfo
+    {
+        bool bValid = false;
+        /** @brief CloudLayerPass と同じ規則で詰めた cloud_layer.frag の定数（CloudLayerParams の std140 の並びのまま） */
+        float ShaderParams[FrameCaptureCloudShaderParamCount] = {};
+        /** @brief そのフレームの雲の層と空のパラメータ（sanitize 済み） */
+        CloudLayerParameters Cloud;
+        SkyAtmosphereParameters Sky;
+        /** @brief 雲の風のずれを決めた時刻（秒）と、歩の端数の位相に使ったフレームの番号 */
+        double TimeSeconds = 0.0;
+        uint64_t TemporalFrameIndex = 0;
+        /** @brief 雲を描く画面の大きさ（画素。視線の画素の座標の基準） */
+        uint32_t TargetWidth = 0;
+        uint32_t TargetHeight = 0;
+        /** @brief 3D ノイズの一辺の texel の数（基本の形・細部） */
+        uint32_t ShapeNoiseSize = 0;
+        uint32_t DetailNoiseSize = 0;
+        /** @brief 周期の比（細部・天気の模様の周期 = 基本の形の周期 × 比）と、風のずれの規則（CloudLayerPass の定数） */
+        float DetailScaleRatio = 0.0f;
+        float WeatherScaleRatio = 0.0f;
+        float DetailWindRatio = 0.0f;
+        float DetailRiseVelocity = 0.0f;
+        float WeatherRotationCos = 0.0f;
+        float WeatherRotationSin = 0.0f;
+        float WeatherHighScale = 0.0f;
+        float WeatherHighPhaseU = 0.0f;
+        float WeatherHighPhaseW = 0.0f;
+        uint32_t RayCount = 0;
+        /** @brief 視線の画素の中心（gl_FragCoord と同じ。左上が原点） */
+        float RayPixels[FrameCaptureCloudMaxRays][2] = {};
+    };
+
     struct FrameCaptureSourceSet
     {
         FrameCaptureSource PresentationColor;
@@ -334,6 +386,13 @@ namespace NorvesLib::Core::Rendering
          */
         FrameCaptureSource AtmosphereProbe;
         FrameCaptureAtmosphereInfo AtmosphereInfo;
+        /**
+         * @brief CloudProbePass の出力（RGBA32F。横 = 視線、縦 = FrameCaptureCloudProbeRows の値の種類）
+         *
+         * --cloud-dump でパスを足した構成で、そのフレームにパスが書いたときだけ入る。
+         */
+        FrameCaptureSource CloudProbe;
+        FrameCaptureCloudInfo CloudInfo;
         /** @brief このフレームにメインSceneViewのパストレーサーが累積した試料数（ラスタなら0） */
         uint32_t PathTracingSampleCount = 0;
         /** @brief SceneColor に掛かっているプリエクスポージャ（割ると放射輝度 cd/m²。0 は不明） */
@@ -376,6 +435,8 @@ namespace NorvesLib::Core::Rendering
             AovCamera = FrameCaptureAovCamera{};
             AtmosphereProbe = FrameCaptureSource{};
             AtmosphereInfo = FrameCaptureAtmosphereInfo{};
+            CloudProbe = FrameCaptureSource{};
+            CloudInfo = FrameCaptureCloudInfo{};
             PathTracingSampleCount = 0;
             SceneColorPreExposure = 0.0f;
             SceneColorDisplay = FrameCaptureDisplayInfo{};
@@ -434,6 +495,16 @@ namespace NorvesLib::Core::Rendering
         FrameCaptureAtmosphereInfo Info;
     };
 
+    /** @brief FrameCaptureRequest::bIncludeClouds で同じフレームから読み出した雲の書き出し */
+    struct CapturedClouds
+    {
+        /** @brief 読み出せたか（要求していない・失敗したときは false で、ほかの値は空） */
+        bool bValid = false;
+        /** @brief RGBA32F。横 = 視線（Info.RayPixels の順）、縦 = 値の種類 */
+        CapturedImage Probe;
+        FrameCaptureCloudInfo Info;
+    };
+
     struct CapturedFrame
     {
         FrameCaptureResultStatus Status = FrameCaptureResultStatus::SourceUnavailable;
@@ -457,6 +528,8 @@ namespace NorvesLib::Core::Rendering
         CapturedAov Aov;
         /** @brief 要求したときだけ入る、同じフレームの大気の書き出し */
         CapturedAtmosphere Atmosphere;
+        /** @brief 要求したときだけ入る、同じフレームの雲の書き出し */
+        CapturedClouds Clouds;
 
         bool IsSuccess() const
         {

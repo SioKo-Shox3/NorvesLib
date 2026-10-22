@@ -3,6 +3,7 @@
 #include "Container/VariableArray.h"
 #include "Debug/DebugConfig.h"
 #include "FileStream/FileStream.h"
+#include "Rendering/CloudLayerPass.h"
 #include "Rendering/FrameCaptureTypes.h"
 #include "Rendering/SkyAtmosphere.h"
 #include "Rendering/SkyAtmospherePass.h"
@@ -875,6 +876,267 @@ namespace NorvesLib::Core::Rendering
         AppendFormat(json, "}\n  }\n}\n");
         return WriteBytes(basePath + String(TEXT(".atmos.json")), json.data(), json.size());
     }
+
+    namespace
+    {
+        // 名前付きの 4 つの float（cloud_layer.frag の定数の vec4 の 1 つ）を JSON の配列で書く
+        void AppendFloat4(VariableArray<char>& out, const char* name, const float* pValues, bool bLast = false)
+        {
+            AppendFormat(out, "\"%s\": [", name);
+            for (uint32_t index = 0; index < 4u; ++index)
+            {
+                AppendNumber(out, pValues[index]);
+                AppendFormat(out, index + 1u < 4u ? ", " : "]");
+            }
+            AppendFormat(out, bLast ? "" : ", ");
+        }
+    } // namespace
+
+    bool SaveCapturedClouds(const CapturedFrame& frame, const Container::String& pngPath)
+    {
+        const CapturedClouds& clouds = frame.Clouds;
+        const FrameCaptureCloudInfo& info = clouds.Info;
+        const CapturedImage& probe = clouds.Probe;
+        if (!frame.IsSuccess() || !clouds.bValid || !info.bValid || info.RayCount == 0u ||
+            info.RayCount > FrameCaptureCloudMaxRays || probe.Format != RHI::Format::R32G32B32A32_FLOAT ||
+            probe.BytesPerPixel != 16u || probe.Width != info.RayCount || probe.Height != FrameCaptureCloudProbeRows ||
+            probe.RowPitchBytes < static_cast<uint64_t>(probe.Width) * probe.BytesPerPixel ||
+            probe.Pixels.size() < static_cast<size_t>(probe.RowPitchBytes) * probe.Height)
+        {
+            return false;
+        }
+        const String basePath = RemoveExtension(pngPath);
+
+        // 決めた画素の視線の値（GPU が cloud_layer.frag と同じ式で評価したもの）: [行, 視線, RGBA]
+        VariableArray<float> probeValues;
+        probeValues.resize(static_cast<size_t>(FrameCaptureCloudProbeRows) * probe.Width * 4u);
+        for (uint32_t row = 0; row < FrameCaptureCloudProbeRows; ++row)
+        {
+            std::memcpy(probeValues.data() + static_cast<size_t>(row) * probe.Width * 4u,
+                        probe.Pixels.data() + static_cast<size_t>(row) * probe.RowPitchBytes,
+                        static_cast<size_t>(probe.Width) * 16u);
+        }
+
+        // 密度場の 3D ノイズ（CloudLayerPass が GPU へ上げる値と同じ関数で作り直す。CPU で決まるので同じ値になる）
+        VariableArray<uint8_t> shapeTexels;
+        VariableArray<uint8_t> detailTexels;
+        BuildCloudNoiseTexels(shapeTexels, detailTexels);
+        const uint32_t shapeSize = info.ShapeNoiseSize;
+        const uint32_t detailSize = info.DetailNoiseSize;
+        if (shapeTexels.size() != static_cast<size_t>(shapeSize) * shapeSize * shapeSize * 4u ||
+            detailTexels.size() != static_cast<size_t>(detailSize) * detailSize * detailSize * 4u)
+        {
+            return false;
+        }
+
+        // 空の放射輝度 LUT（雲の環境光と雲の後ろの空を引いた表。SkyAtmospherePass と同じ関数で作り直す）
+        SkyAtmosphereModel model(info.Sky);
+        model.BuildSkyViewTable();
+        const SkyAtmospherePassSettings lutSettings;
+        VariableArray<uint16_t> radianceTexels;
+        BuildSkyRadianceLutTexels(model, lutSettings.RadianceWidth, lutSettings.RadianceHeight, radianceTexels);
+        const VariableArray<float> radianceValues = HalfTexelsToFloats(radianceTexels);
+        if (radianceValues.empty())
+        {
+            return false;
+        }
+
+        const String probePath = basePath + String(TEXT(".cloud.probe.f32"));
+        const String shapePath = basePath + String(TEXT(".cloud.shape_noise.u8"));
+        const String detailPath = basePath + String(TEXT(".cloud.detail_noise.u8"));
+        const String radiancePath = basePath + String(TEXT(".cloud.sky_radiance_lut.f32"));
+        if (!WriteFloats(probePath, probeValues) || !WriteBytes(shapePath, shapeTexels.data(), shapeTexels.size()) ||
+            !WriteBytes(detailPath, detailTexels.data(), detailTexels.size()) || !WriteFloats(radiancePath, radianceValues))
+        {
+            return false;
+        }
+
+        const float* shaderParams = info.ShaderParams;
+        const CloudLayerParameters& cloud = info.Cloud;
+        const SkyAtmosphereParameters& sky = info.Sky;
+        VariableArray<char> json;
+        const VariableArray<char> pngName = ToAsciiFileName(pngPath);
+        AppendFormat(json, "{\n  \"format\": \"norves_cloud_dump_v1\",\n  \"png\": \"%s\",\n  \"frame_number\": %llu,\n",
+                     pngName.data(), static_cast<unsigned long long>(frame.FrameNumber));
+        AppendFormat(json, "  \"conventions\": {\"color\": \"linear_rec709_d65\", \"radiance_units\": \"cd/m2\", "
+                           "\"illuminance_units\": \"lux\", \"world\": \"y_up_meters\", \"pre_exposure\": \"removed\", "
+                           "\"pixel\": \"gl_FragCoord (origin top-left, pixel center at +0.5)\", "
+                           "\"uv\": \"pixel / target_size\", \"clip\": \"(uv * 2 - 1, 1, 1)\", "
+                           "\"matrix\": \"column_major (inverse_view_projection[column * 4 + row])\"},\n");
+
+        // 時刻と画面
+        AppendFormat(json, "  \"time_seconds\": ");
+        AppendNumber(json, info.TimeSeconds);
+        AppendFormat(json, ",\n  \"temporal_frame_index\": %llu,\n  \"target\": {\"width\": %u, \"height\": %u},\n",
+                     static_cast<unsigned long long>(info.TemporalFrameIndex), info.TargetWidth, info.TargetHeight);
+
+        // cloud_layer.frag の定数（CloudLayerParams。CloudLayerPass と同じ規則で詰めた値そのもの）
+        AppendFormat(json, "  \"shader_params\": {\"inverse_view_projection\": [");
+        for (uint32_t index = 0; index < 16u; ++index)
+        {
+            AppendNumber(json, shaderParams[index]);
+            AppendFormat(json, index + 1u < 16u ? ", " : "],\n    ");
+        }
+        AppendFloat4(json, "camera_position_and_pre_exposure", shaderParams + 16);
+        AppendFloat4(json, "sun_direction_and_frame_index", shaderParams + 20);
+        AppendFloat4(json, "sun_illuminance", shaderParams + 24);
+        AppendFormat(json, "\n    ");
+        AppendFloat4(json, "layer_altitudes_and_coverage", shaderParams + 28);
+        AppendFloat4(json, "extinction_and_inverse_scales", shaderParams + 32);
+        AppendFormat(json, "\n    ");
+        AppendFloat4(json, "shape_and_weather_offset", shaderParams + 36);
+        AppendFloat4(json, "detail_offset", shaderParams + 40);
+        AppendFloat4(json, "ground_albedo", shaderParams + 44);
+        AppendFloat4(json, "weather_high_offset", shaderParams + 48, true);
+        AppendFormat(json, "},\n");
+
+        // 雲の層と空のパラメータ
+        AppendFormat(json, "  \"cloud_layer\": {\"enabled\": %s, \"bottom_altitude_m\": ", cloud.bEnabled ? "true" : "false");
+        AppendNumber(json, cloud.BottomAltitudeMeters);
+        AppendFormat(json, ", \"top_altitude_m\": ");
+        AppendNumber(json, cloud.TopAltitudeMeters);
+        AppendFormat(json, ", \"coverage\": ");
+        AppendNumber(json, cloud.Coverage);
+        AppendFormat(json, ", \"extinction_per_m\": ");
+        AppendNumber(json, cloud.ExtinctionPerMeter);
+        AppendFormat(json, ", \"shape_scale_m\": ");
+        AppendNumber(json, cloud.ShapeScaleMeters);
+        AppendFormat(json, ", \"wind_velocity_m_s\": [");
+        AppendNumber(json, cloud.WindVelocityX);
+        AppendFormat(json, ", ");
+        AppendNumber(json, cloud.WindVelocityZ);
+        AppendFormat(json, "]},\n  \"sky\": {\"sun_altitude_degrees\": ");
+        AppendNumber(json, sky.SunAltitudeDegrees);
+        AppendFormat(json, ", \"sun_azimuth_degrees\": ");
+        AppendNumber(json, sky.SunAzimuthDegrees);
+        AppendFormat(json, ", \"planet_radius_m\": ");
+        AppendNumber(json, sky.PlanetRadiusMeters);
+        AppendFormat(json, ", \"ground_albedo\": ");
+        AppendVector3(json, sky.GroundAlbedo);
+        AppendFormat(json, "},\n");
+
+        // 密度場: 3D ノイズの格子と、世界の位置からの引き方（式は Common/CloudLayerCommon.glsl の SampleCloudDensity）
+        const VariableArray<char> shapeName = ToAsciiFileName(shapePath);
+        const VariableArray<char> detailName = ToAsciiFileName(detailPath);
+        AppendFormat(json, "  \"density_field\": {\n");
+        AppendFormat(json, "    \"shape_noise\": {\"file\": \"%s\", \"dtype\": \"uint8\", \"shape\": [%u, %u, %u, 4], "
+                           "\"layout\": \"z_y_x_rgba\", \"fnv1a64\": \"%016llx\", "
+                           "\"channels\": \"r=perlin_worley g,b,a=inverted_worley_fbm(cells 4,8,16 first)\"},\n",
+                     shapeName.data(), shapeSize, shapeSize, shapeSize,
+                     static_cast<unsigned long long>(HashCloudNoiseTexels(shapeTexels)));
+        AppendFormat(json, "    \"detail_noise\": {\"file\": \"%s\", \"dtype\": \"uint8\", \"shape\": [%u, %u, %u, 4], "
+                           "\"layout\": \"z_y_x_rgba\", \"fnv1a64\": \"%016llx\", "
+                           "\"channels\": \"r,g,b=inverted_worley_fbm(cells 2,4,8 first) a=1\"},\n",
+                     detailName.data(), detailSize, detailSize, detailSize,
+                     static_cast<unsigned long long>(HashCloudNoiseTexels(detailTexels)));
+        AppendFormat(json, "    \"texel_format\": \"rgba8_unorm (value / 255, linear)\", \"interpolation\": \"trilinear\", "
+                           "\"wrap\": \"repeat\", \"texel_center\": \"(index + 0.5) / size\", \"mip\": 0,\n");
+        AppendFormat(json, "    \"sample_position\": \"(world_x, altitude_above_planet_surface_m, world_z); "
+                           "altitude = |(x - camera_x, planet_radius + max(camera_y, 1) + direction_y * t, z - camera_z)| - planet_radius\",\n");
+        AppendFormat(json, "    \"shape_period_m\": ");
+        AppendNumber(json, cloud.ShapeScaleMeters);
+        AppendFormat(json, ", \"detail_scale_ratio\": ");
+        AppendNumber(json, info.DetailScaleRatio);
+        AppendFormat(json, ", \"weather_scale_ratio\": ");
+        AppendNumber(json, info.WeatherScaleRatio);
+        AppendFormat(json, ",\n    \"wind\": {\"detail_wind_ratio\": ");
+        AppendNumber(json, info.DetailWindRatio);
+        AppendFormat(json, ", \"detail_rise_velocity_m_s\": ");
+        AppendNumber(json, info.DetailRiseVelocity);
+        AppendFormat(json, ", \"shape_offset_m\": \"fmod(wind * time, shape_period)\", "
+                           "\"detail_offset_m\": \"fmod((wind_x * ratio, rise, wind_z * ratio) * time, detail_period)\", "
+                           "\"weather_offset_uv\": \"fract(rotation * wind * time / weather_period)\", "
+                           "\"weather_high_offset_uv\": \"fract((v, u) * high_scale + high_phase)\"},\n");
+        AppendFormat(json, "    \"weather\": {\"rotation_cos_sin\": [");
+        AppendNumber(json, info.WeatherRotationCos);
+        AppendFormat(json, ", ");
+        AppendNumber(json, info.WeatherRotationSin);
+        AppendFormat(json, "], \"high_scale\": ");
+        AppendNumber(json, info.WeatherHighScale);
+        AppendFormat(json, ", \"high_phase_uw\": [");
+        AppendNumber(json, info.WeatherHighPhaseU);
+        AppendFormat(json, ", ");
+        AppendNumber(json, info.WeatherHighPhaseW);
+        AppendFormat(json, "], \"low_slice_v\": 0.37, \"high_slice_v\": 0.71, \"weights_low_r_low_g_high_r\": [0.55, 0.2, 0.25], "
+                           "\"coverage_smoothstep\": \"(1 - coverage - 0.08, 1 - coverage + 0.22)\", "
+                           "\"mask_threshold\": 0.001},\n");
+        AppendFormat(json, "    \"height_profile\": {\"bottom_ramp\": [0.0, 0.07], \"top_limit\": \"mix(0.35, 1, coverage_mask)\", "
+                           "\"top_ramp_start_fraction\": 0.55},\n");
+        AppendFormat(json, "    \"shape\": {\"low_fbm_weights_gba\": [0.625, 0.25, 0.125], "
+                           "\"base\": \"clamp(remap(r, low_fbm - 1, 1, 0, 1))\", "
+                           "\"coverage\": \"clamp(remap(base * profile, 1 - coverage_mask, 1, 0, 1)) * coverage_mask\"},\n");
+        AppendFormat(json, "    \"detail\": {\"fbm_weights_rgb\": [0.625, 0.25, 0.125], \"height_blend_scale\": 4.0, "
+                           "\"erosion\": 0.35, \"max_distance_m\": 18000, \"light_march_detail_steps\": 3},\n");
+        AppendFormat(json, "    \"remap_min_range\": 1e-05\n  },\n");
+
+        // 視線の進め方（cloud_layer.frag と同じ定数）
+        AppendFormat(json, "  \"march\": {\"max_distance_m\": 45000, \"fade_start_distance_m\": 30000, "
+                           "\"min_steps\": 32, \"max_steps\": 96, \"step_target_m\": 90, \"min_transmittance\": 0.01, "
+                           "\"density_threshold\": 0.001, \"camera_altitude_floor_m\": 1.0, "
+                           "\"jitter\": \"fract(52.9829189 * fract(dot(pixel + 5.588238 * frame_phase, (0.06711056, 0.00583715))))\", "
+                           "\"frame_phase\": \"temporal_frame_index mod 1024\", "
+                           "\"step_transmittance\": \"exp(-density * extinction * step_length)\"},\n");
+
+        // 雲の照明に使う値（太陽・空・位相・多重散乱の近似・背景）
+        AppendFormat(json, "  \"lighting\": {\"sun_direction\": [");
+        AppendNumber(json, shaderParams[20]);
+        AppendFormat(json, ", ");
+        AppendNumber(json, shaderParams[21]);
+        AppendFormat(json, ", ");
+        AppendNumber(json, shaderParams[22]);
+        AppendFormat(json, "], \"sun_illuminance_lux\": [");
+        AppendNumber(json, shaderParams[24]);
+        AppendFormat(json, ", ");
+        AppendNumber(json, shaderParams[25]);
+        AppendFormat(json, ", ");
+        AppendNumber(json, shaderParams[26]);
+        AppendFormat(json, "],\n    \"phase\": {\"function\": \"mix(hg(cos, g_forward * s), hg(cos, g_backward * s), backward_weight)\", "
+                           "\"g_forward\": 0.8, \"g_backward\": -0.3, \"backward_weight\": 0.3, "
+                           "\"octave_scale\": \"s = 0.5^octave\", \"hg_denominator_floor\": 0.0001},\n");
+        AppendFormat(json, "    \"multiple_scattering\": {\"octaves\": 3, \"contribution\": 0.5, \"attenuation\": 0.5, "
+                           "\"sun_term\": \"sum c^i * exp(-light_optical_depth * a^i) * phase_i\"},\n");
+        AppendFormat(json, "    \"light_march\": {\"steps\": 6, \"first_step_m\": 70, \"step_growth\": 1.8, "
+                           "\"sample\": \"noise_position + sun_direction * (distance + step / 2), height_fraction from position y\"},\n");
+        AppendFormat(json, "    \"ambient\": {\"sky_above\": \"0.2 * (sky(0,1,0) + sky(0.866,0.5,0) + sky(-0.866,0.5,0) + "
+                           "sky(0,0.5,0.866) + sky(0,0.5,-0.866))\", "
+                           "\"ground_radiance\": \"ground_albedo * (sun_illuminance * max(sun_y, 0) / pi + sky_above)\", "
+                           "\"term\": \"sky_above * mix(0.6, 1, h) + 0.5 * ground_radiance * mix(1, 0.3, h)\"},\n");
+        AppendFormat(json, "    \"integration\": \"scattered += T * sigma * (sun_illuminance * sun_term + ambient) * (1 - exp(-sigma * dt)) / max(sigma, 1e-7)\",\n");
+        AppendFormat(json, "    \"background\": {\"haze_distance_m\": 22000, "
+                           "\"radiance\": \"(scattered * exp(-d / haze) + sky(direction) * opacity * (1 - exp(-d / haze))) * fade\", "
+                           "\"fade\": \"1 - smoothstep(30000, 45000, start_distance)\"}},\n");
+        AppendFormat(json, "  \"sky_radiance_lut\": {");
+        const VariableArray<char> radianceName = ToAsciiFileName(radiancePath);
+        AppendFileEntry(json, radianceName, lutSettings.RadianceHeight, lutSettings.RadianceWidth, 4u);
+        AppendFormat(json, ", \"gpu_format\": \"rgba16f\", \"units\": \"cd/m2\", \"mapping\": \"equirectangular\", "
+                           "\"sampler\": \"bilinear, wrap u, clamp v\", "
+                           "\"x\": \"longitude = ((x + 0.5) / width - 0.5) * 2pi = atan2(z, x)\", "
+                           "\"y\": \"latitude = ((y + 0.5) / height - 0.5) * pi, direction_y = -sin(latitude)\"},\n");
+
+        // 決めた画素の視線の値（行の意味は CloudProbePass の説明と同じ）
+        const VariableArray<char> probeName = ToAsciiFileName(probePath);
+        AppendFormat(json, "  \"probe\": {");
+        AppendFileEntry(json, probeName, FrameCaptureCloudProbeRows, probe.Width, 4u);
+        AppendFormat(json, ",\n    \"rows\": ["
+                           "\"transmittance|alpha|fade|steps_taken\", "
+                           "\"scattered_rgb_cd_m2|cloud_distance_m\", "
+                           "\"cloud_radiance_rgb_cd_m2|haze_visibility\", "
+                           "\"ray_direction_xyz|jitter\", "
+                           "\"sky_above_rgb_cd_m2|start_distance_m\", "
+                           "\"ground_radiance_rgb_cd_m2|end_distance_m\", "
+                           "\"background_sky_rgb_cd_m2|scene_depth\", "
+                           "\"optical_depth|step_count|step_length_m|flags(1=marched,2=direction)\"],\n    \"pixels\": [");
+        for (uint32_t rayIndex = 0; rayIndex < info.RayCount; ++rayIndex)
+        {
+            AppendFormat(json, "[");
+            AppendNumber(json, info.RayPixels[rayIndex][0]);
+            AppendFormat(json, ", ");
+            AppendNumber(json, info.RayPixels[rayIndex][1]);
+            AppendFormat(json, rayIndex + 1u < info.RayCount ? "], " : "]");
+        }
+        AppendFormat(json, "]\n  }\n}\n");
+        return WriteBytes(basePath + String(TEXT(".cloud.json")), json.data(), json.size());
+    }
 #else
     bool SaveCapturedSceneColorHdr(const CapturedFrame&, const Container::String&)
     {
@@ -887,6 +1149,11 @@ namespace NorvesLib::Core::Rendering
     }
 
     bool SaveCapturedAtmosphere(const CapturedFrame&, const Container::String&)
+    {
+        return false;
+    }
+
+    bool SaveCapturedClouds(const CapturedFrame&, const Container::String&)
     {
         return false;
     }

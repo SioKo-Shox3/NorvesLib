@@ -1227,6 +1227,13 @@ namespace NorvesLib::Core::Rendering
             NORVES_LOG_INFO("SceneView", "ATMOSPHERE_DUMP --atmosphere-dump により大気の書き出しのパスを追加する");
             AddPass(MakeUnique<AtmosphereProbePass>());
         }
+        // CloudProbePass: 撮影の雲の書き出し（決めた画素の視線の雲。Game の --cloud-dump が環境変数 NORVES_CLOUD_DUMP で渡す）。
+        // シーンの色へは書かない
+        if (CloudProbePass::IsRequestedByEnvironment())
+        {
+            NORVES_LOG_INFO("SceneView", "CLOUD_DUMP --cloud-dump により雲の書き出しのパスを追加する");
+            AddPass(MakeUnique<CloudProbePass>());
+        }
 #endif
 
         // PostProcessStack: TemporalAA -> AutoExposure -> Bloom -> ToneMapping -> Vignette -> FXAA -> Upscale -> DebugDraw

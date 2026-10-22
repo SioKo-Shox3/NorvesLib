@@ -6755,3 +6755,22 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 評価者の再現（inputs.json を無いものとして `check_group(..., verify=False)`）が「inputs.json が無い」で落ちることを確かめた。並べた画の「範囲」の字を開いて確かめた
 - Notes: 新しい試験は足していない
 - Next: TASKS.md の次の未完の項目
+
+### SCN-WLR-CLOUD-REF-DUMP 完了（2026-10-22、run 20261021-055341 の反復 52）
+- Done: 雲の式を `Assets/Shaders/Common/CloudLayerCommon.glsl` へ移し、描画（`cloud_layer.frag`）と書き出し（`cloud_layer_probe.frag`）で共有した。定数の詰め方を `BuildCloudLayerParams` に切り出し、`CloudProbePass`（統計が有効な構成だけ。環境変数 `NORVES_CLOUD_DUMP`）が画面の 16 × 9 の画素の視線を描画と同じ定数・同じ歩の端数で評価する。Game の `--cloud-dump`（開発ビルドだけ）で `<視点>.cloud.json`・`probe.f32`・`shape_noise.u8`・`detail_noise.u8`・`sky_radiance_lut.f32` を書く（`SaveCapturedClouds`。撮影の読み出しの経路に雲の 1 枚を足した）。`CLOUD_NOISE` のログに格子の FNV-1a を足した。視点 `cloud_sky`（`SceneCatalog.h`）、`CaptureScene.ps1 -GameArgs cloud-dump`、`ReferenceCheck.py --cloud-dump`（本体 `Scripts/Terrain/CloudDumpCheck.py`）を足した。入力の契約は `Docs/RenderingValidation/WastelandCloudDump.md`
+- 結果: 視線 144・雲のある視線 81・厚い視線 42。書き出した格子からエンジンの式で求め直した透過率と GPU の差は最大 0.0025（中央値 0.00009）。格子の FNV-1a はファイル・JSON・ログ（描画と書き出しのパス）で同じ。定数は契約から求め直した値と 5e-8 以内
+- 証拠（`.harness/runs/20261021-055341/`）:
+  - `verify-SCN-WLR-CLOUD-REF-DUMP-1.txt` Debug の Game のビルド EXIT=0（行末を直す前のコード）
+  - `verify-SCN-WLR-CLOUD-REF-DUMP-2.txt` cloud_sky の撮影 result=pass（行末を直す前のコード。入力のハッシュが今と違うので合否に使わない）
+  - `verify-SCN-WLR-CLOUD-REF-DUMP-3.txt` 最終のコードの cloud_sky の撮影（-Build）result=pass・EXIT=0（Game.exe 88925d4f…、rays=144、frame 235）。PNG を開き、空と雲だけが写ることを確かめた
+  - `verify-SCN-WLR-CLOUD-REF-DUMP-4.txt` 最終のコードの Debug の Game のビルド EXIT=0
+  - `verify-SCN-WLR-CLOUD-REF-DUMP-5.txt` `--cloud-dump --verify` result=pass・inputs_current=1・EXIT=0（透過率 0.00255、向き 1.7e-4、端数 8.1e-4、区間 3.6e-4。記録: 光学的深さ 2.6 %、散乱光 2.5 %）
+  - `aux-SCN-WLR-CLOUD-REF-DUMP-ref-ground-02-compare.txt` 荒野の ref_ground_02 を SCN-WL-SKY-SCATTER-FOG の撮影（描画のコードは HEAD と同じ）と比べた result=pass（平均の差 0.0004、PSNR 62.2）。差の画を開き、雲の所の差は最大 2 段、大きい差は遠くのビュートの岩肌だけであることを確かめた
+  - `aux-SCN-WLR-CLOUD-REF-DUMP-regression-after.txt` 回帰の after result=pass（rendering3dtest PSNR 106.9、mega-bananas 66.8、sandbox inf、night-village 70.4）。rendering3dtest の after を開き、天球・地面・球・岩が変わらないことを確かめた
+- Notes:
+  - 回帰の before は撮っていない。反復 49 の after（`regression/SCN-WL-PLANT-SHADOW-RANGE/after`、描画のコードは 47e320a2 から HEAD まで変わっていない）を `regression/SCN-WLR-CLOUD-REF-DUMP/before` へ写して比べた
+  - 向きと区間の許容幅（1e-3・2e-3）は、GPU の単精度の桁落ち（逆射影の w が 2 どうしの差、惑星の半径の 2 乗の差）の大きさから決めた。GPU の向きで進め直しても透過率の差は 0.0028
+  - 検査の効き: 同じ撮影で覆う割合 +0.01 で差 0.31、消散係数 × 1.05 で 0.019 になり落ちる（記録に書いた。試験としては足していない）
+  - 行末の混在するファイル 4 本（GameApplicationHandler.cpp・RenderFrameExecutor.cpp・View.cpp・View.h）を編集で全体 CRLF にしてしまい、元の行末へ直してから撮り直した
+  - 新しい試験は足していない
+- Next: TASKS.md の次の未完の項目（SCN-WLR-CLOUD-REF-BLENDER）

@@ -2288,7 +2288,7 @@
 - notes: 2026-10-19（Sol の批評 20 と 2 周目）。2 倍の解像度の正解は反復の中で撮って保存する。
 
 ## SCN-WLR-CLOUD-REF-DUMP: 雲の密度場を書き出す
-- status: todo
+- status: done
 - after: SCN-WL-SKY-SCATTER
 - done-when: 起動引数 `cloud-dump`（開発ビルドだけ）で、エンジンの雲の密度場（3 次元の格子の値・格子のワールドの座標と大きさ・補間のしかた・雲の時刻・風のずれ）と、雲の照明に使う値（太陽・空の光・位相関数・多重散乱の近似の係数・背景の照明）を書き出す（入力の契約として文書に固定する）。空だけを写す視点 `cloud_sky`（`Game/Scenes/SceneCatalog.h`）を足す。書き出した格子からエンジンの式で数本の視線の透過率を Python で再計算し、エンジンの描画（雲の透過率）と 1 % 以内で合うことを `ReferenceCheck.py --cloud-dump`（この項目で作る）で検査する。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`

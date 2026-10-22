@@ -67,6 +67,9 @@
 # 空気遠近と高さフォグ・地表の照度）を <視点>.atmos.json と <視点>.atmos.*.f32 に書く（Core の Rendering/FrameCaptureHdrWriter.h）。
 # Game の --capture-views の撮影だけが書くので、視点が 1 つでも 1 回の起動で撮る形（--capture-views）にする。値の検査は
 # ReferenceCheck.py --atmos-dump。-Hdr と同じく開発ビルドの機能で、撮り終えたら入力のハッシュ（inputs.json）を書く。
+# -GameArgs に cloud-dump を含めると、Game は視点ごとに PNG と同じフレームの雲の密度場（3D ノイズの格子と引き方・時刻・風のずれ）と
+# 照明の入力、決めた画素の視線の雲の透過率と散乱光を <視点>.cloud.json と <視点>.cloud.* に書く（Core の
+# Rendering/FrameCaptureHdrWriter.h）。atmosphere-dump と同じく 1 回の起動で撮る形にし、値の検査は ReferenceCheck.py --cloud-dump。
 #
 # -CompareWith <dir> を与えると、その撮影（同じ視点名の PNG）と視点ごとに比べる。平均輝度の差が -CompareMeanLuminanceLimit 以下、
 # PSNR が -ComparePsnrLimit 以上なら一致（式は CaptureStartupScene.ps1 の -CompareDeterministicWith と同じ）。
@@ -186,6 +189,8 @@ $aovSuffixes = @('.aov.albedo.pfm', '.aov.normal.pfm', '.aov.roughness.pfm', '.a
 # 大気の書き出しのファイルの名前（<視点> の後ろ）
 $atmosphereSuffixes = @('.atmos.json', '.atmos.probe.f32', '.atmos.transmittance_lut.f32', '.atmos.radiance_lut.f32',
     '.atmos.transmittance_table.f32', '.atmos.multiple_scattering.f32', '.atmos.sky_view.f32')
+# 雲の書き出しのファイルの名前（<視点> の後ろ）
+$cloudSuffixes = @('.cloud.json', '.cloud.probe.f32', '.cloud.shape_noise.u8', '.cloud.detail_noise.u8', '.cloud.sky_radiance_lut.f32')
 
 # 検査の名前: 「A,B」の1文字列でも配列でも受ける。
 $requiredChecks = @($RequireChecks | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' } | Select-Object -Unique)
@@ -258,6 +263,8 @@ if ($validationLayerArgument -and $Configuration -eq 'Release')
 $validationLayerExpected = ($Configuration -eq 'Debug' -or $validationLayerArgument)
 # 大気の書き出し（--atmosphere-dump）は開発ビルドの Game の --capture-views の撮影だけが書く
 $atmosphereDump = ($extraArguments -contains '--atmosphere-dump')
+# 雲の書き出し（--cloud-dump）も同じく開発ビルドの Game の --capture-views の撮影だけが書く
+$cloudDump = ($extraArguments -contains '--cloud-dump')
 # ジオメトリの落ち着きの推移（--geom-settle-trace=<秒>）は開発ビルドの Game だけが書く。ReferenceCheck.py --geom-settle が
 # Game.log の GEOM_SETTLE_TRACE の行を検査し、--verify で入力のハッシュ（inputs.json）を照らすので、横に入力を記録する
 $geomSettleTrace = [bool]($extraArguments | Where-Object { $_ -like '--geom-settle-trace=*' })
@@ -271,7 +278,17 @@ if ($atmosphereDump -and $GpuTimingFrames -gt 0)
     Write-Output 'CAPTURE_SCENE result=fail reason=atmosphere_dump_with_gpu_timing（atmosphere-dump は決定的な撮影と併せて使う）'
     exit 1
 }
-if ($atmosphereDump)
+if ($cloudDump -and $Configuration -eq 'Release')
+{
+    Write-Output 'CAPTURE_SCENE result=fail reason=cloud_dump_in_release（cloud-dump は開発ビルドの機能で、Release の Game は書かない。RelWithDebInfo か Debug で撮る）'
+    exit 1
+}
+if ($cloudDump -and $GpuTimingFrames -gt 0)
+{
+    Write-Output 'CAPTURE_SCENE result=fail reason=cloud_dump_with_gpu_timing（cloud-dump は決定的な撮影と併せて使う）'
+    exit 1
+}
+if ($atmosphereDump -or $cloudDump)
 {
     $useMultiView = $true
 }
@@ -1401,6 +1418,32 @@ for ($runIndex = 0; $runIndex -lt $runs.Count; ++$runIndex)
                     $shot.Name, $atmosphereInfo.rays, $atmosphereInfo.frame_number)
             }
         }
+        # 雲の書き出し: PNG と同じ起動で書かれていること（値の検査は ReferenceCheck.py --cloud-dump）
+        $cloudInfo = $null
+        if ($cloudDump)
+        {
+            $bCloudFresh = $true
+            foreach ($cloudSuffix in $cloudSuffixes)
+            {
+                $cloudPath = Join-Path $outRoot "$($shot.Name)$cloudSuffix"
+                if (-not (Test-Path -LiteralPath $cloudPath) -or (Get-Item -LiteralPath $cloudPath).LastWriteTimeUtc -lt $runStartUtc)
+                {
+                    $failures += "$($shot.Name): 雲の書き出しが無い（$([IO.Path]::GetFileName($cloudPath))）"
+                    $bCloudFresh = $false
+                }
+            }
+            if ($bCloudFresh)
+            {
+                $cloudMeta = Get-Content -LiteralPath (Join-Path $outRoot "$($shot.Name).cloud.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+                $cloudInfo = [ordered]@{
+                    meta = "$($shot.Name).cloud.json"
+                    rays = @($cloudMeta.probe.pixels).Count
+                    frame_number = [long]$cloudMeta.frame_number
+                }
+                Write-Output ("CAPTURE_SCENE clouds view={0} rays={1} frame={2}" -f `
+                    $shot.Name, $cloudInfo.rays, $cloudInfo.frame_number)
+            }
+        }
         $result = [ordered]@{
             view = $shot.Name
             scene_view = if ($shot.SceneView -ne '') { $shot.SceneView } else { $shot.DefaultViewName }
@@ -1427,6 +1470,7 @@ for ($runIndex = 0; $runIndex -lt $runs.Count; ++$runIndex)
             hdr = $hdrInfo
             aov = $aovInfo
             atmosphere = $atmosphereInfo
+            clouds = $cloudInfo
         }
         $results += [pscustomobject]$result
         Write-Output ("CAPTURE_SCENE view={0} size={1}x{2} mean_luminance={3} clipped_white_ratio={4} crushed_black_ratio={5}" -f `
@@ -1539,6 +1583,7 @@ $metrics = [ordered]@{
     hdr = [bool]$Hdr
     aov = [bool]$Aov
     atmosphere_dump = [bool]$atmosphereDump
+    cloud_dump = [bool]$cloudDump
     timing_warmup_frames = $TimingWarmupFrames
     timing_ready_margin_frames = $TimingReadyMarginFrames
     require_checks = $requiredChecks
@@ -1553,9 +1598,9 @@ $metricsPath = Join-Path $outRoot 'metrics.json'
 $metricsJson = $metrics | ConvertTo-Json -Depth 8
 [IO.File]::WriteAllText($metricsPath, $metricsJson, (New-Object System.Text.UTF8Encoding($false)))
 
-# HDR・AOV・大気の書き出し・ジオメトリの落ち着きの推移の撮影は、入力のハッシュ（inputs.json）を横に書く。撮影が失敗したときは古い入力を残さない。
+# HDR・AOV・大気と雲の書き出し・ジオメトリの落ち着きの推移の撮影は、入力のハッシュ（inputs.json）を横に書く。撮影が失敗したときは古い入力を残さない。
 # 署名は metrics.json の視点・起動引数から出力の画像とカメラ台本を辿るので、metrics.json を書いた後に記録する
-if ($Hdr -or $Aov -or $atmosphereDump -or $geomSettleTrace)
+if ($Hdr -or $Aov -or $atmosphereDump -or $cloudDump -or $geomSettleTrace)
 {
     $inputsPath = Join-Path $outRoot 'inputs.json'
     Remove-Item -LiteralPath $inputsPath -Force -ErrorAction SilentlyContinue

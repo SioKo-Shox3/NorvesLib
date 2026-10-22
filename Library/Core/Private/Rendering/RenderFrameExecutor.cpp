@@ -86,6 +86,15 @@ namespace NorvesLib::Core::Rendering
                     request.Packet->FrameNumber);
                 result.CaptureSources.AtmosphereInfo = primarySceneView->GetFrameAtmosphereInfo();
             }
+            // 撮影の雲の書き出し（--cloud-dump）。CloudProbePass がこのフレームに書いたときだけ入る
+            if (primarySceneView->GetFrameCloudInfo().bValid)
+            {
+                SetFrameCaptureSource(
+                    result.CaptureSources.CloudProbe,
+                    primarySceneView->GetFrameCloudProbeTexture(),
+                    request.Packet->FrameNumber);
+                result.CaptureSources.CloudInfo = primarySceneView->GetFrameCloudInfo();
+            }
             if (auto* pathTracingPass = dynamic_cast<PathTracingPass*>(
                     primarySceneView->FindPass("PathTracingPass")))
             {

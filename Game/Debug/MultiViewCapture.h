@@ -75,6 +75,13 @@ namespace Game::Debug
          */
         void SetCaptureAtmosphere(bool bCaptureAtmosphere) { m_bCaptureAtmosphere = bCaptureAtmosphere; }
 
+        /**
+         * @brief 視点ごとの PNG の横へ、同じフレームの雲の密度場と照明の入力・決めた画素の視線の雲を書くか（--cloud-dump）
+         *
+         * 書き出しの形式は Core の SaveCapturedClouds（<視点>.cloud.json と <視点>.cloud.*）。書けなければ撮影の失敗にする。
+         */
+        void SetCaptureClouds(bool bCaptureClouds) { m_bCaptureClouds = bCaptureClouds; }
+
         /// ApplicationProcessor の --capture-png の撮影と終了を止めておくか（有効な間は撮り終えた後も止める）
         bool IsHoldingEngineCapture() const { return IsEnabled(); }
 
@@ -112,6 +119,7 @@ namespace Game::Debug
         bool m_bCaptureHdr = false;
         bool m_bCaptureAov = false;
         bool m_bCaptureAtmosphere = false;
+        bool m_bCaptureClouds = false;
 
         Phase m_Phase = Phase::Settling;
         size_t m_ViewIndex = 0;

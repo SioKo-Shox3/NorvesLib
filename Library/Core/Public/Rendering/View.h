@@ -268,6 +268,12 @@ namespace NorvesLib::Core::Rendering
         /** @brief GetFrameAtmosphereProbeTexture の評価に使った値（書いていないフレームは bValid が false） */
         const FrameCaptureAtmosphereInfo& GetFrameAtmosphereInfo() const { return m_FrameAtmosphereInfo; }
 
+        /** @brief このフレームに CloudProbePass（--cloud-dump）が書いた雲の書き出しの 1 枚。書いていなければ空 */
+        const RHI::TexturePtr& GetFrameCloudProbeTexture() const { return m_FrameCloudProbeTexture; }
+
+        /** @brief GetFrameCloudProbeTexture の評価に使った値（書いていないフレームは bValid が false） */
+        const FrameCaptureCloudInfo& GetFrameCloudInfo() const { return m_FrameCloudInfo; }
+
         // ========================================
         // 設定
         // ========================================
@@ -320,6 +326,8 @@ namespace NorvesLib::Core::Rendering
         FrameCaptureAovCamera m_FrameAovCamera;
         RHI::TexturePtr m_FrameAtmosphereProbeTexture;
         FrameCaptureAtmosphereInfo m_FrameAtmosphereInfo;
+        RHI::TexturePtr m_FrameCloudProbeTexture;
+        FrameCaptureCloudInfo m_FrameCloudInfo;
         FrameCaptureDisplayInfo m_FrameSceneColorDisplay;
 
         // 設定

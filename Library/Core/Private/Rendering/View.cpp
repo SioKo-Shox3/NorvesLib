@@ -13,6 +13,7 @@
 #include "Rendering/ViewRenderContext.h"
 #include "Rendering/VignettePass.h"
 #include "Rendering/VolumetricsPass.h"
+#include "Rendering/CloudLayerPass.h"
 #include "Debug/Stats.h"
 #include "Logging/LogMacros.h"
 #include <cstring>
@@ -416,6 +417,20 @@ namespace NorvesLib::Core::Rendering
                 m_FrameAtmosphereInfo = info;
             }
         }
+        // 撮影の雲の書き出し（--cloud-dump）: CloudProbePass がこのフレームに書いた 1 枚と、その評価に使った値
+        m_FrameCloudProbeTexture.reset();
+        m_FrameCloudInfo.bValid = false;
+        if (IViewPass* cloudPass = FindPass("CloudProbePass"))
+        {
+            // GetName() がその名前を返すのはそのクラスだけ
+            const FrameCaptureCloudInfo& info = static_cast<CloudProbePass*>(cloudPass)->GetLastInfo();
+            RHI::TexturePtr probeTexture;
+            if (info.bValid && lastResult.TryGetTexture(RenderGraphResourceNames::CaptureCloudProbe, probeTexture))
+            {
+                m_FrameCloudProbeTexture = probeTexture;
+                m_FrameCloudInfo = info;
+            }
+        }
 #endif
 
         RHI::TexturePtr outputTexture;
@@ -443,6 +458,8 @@ namespace NorvesLib::Core::Rendering
         m_FrameAovCamera = FrameCaptureAovCamera{};
         m_FrameAtmosphereProbeTexture.reset();
         m_FrameAtmosphereInfo.bValid = false;
+        m_FrameCloudProbeTexture.reset();
+        m_FrameCloudInfo.bValid = false;
     }
 
     void View::SetFrameOutputTexture(RHI::TexturePtr texture)

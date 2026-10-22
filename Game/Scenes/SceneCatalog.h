@@ -197,6 +197,10 @@ namespace Game::Scenes
         {"plant_near", SceneViewKind::FreePose, 124.0f, -35.0f, 0.0f, {362.1f, 1.5f, 1966.4f}},
         // plant_far: 同じ向きで株の 30 m 手前の目の高さから見る（遠くでの見え方）
         {"plant_far", SceneViewKind::FreePose, 124.0f, -2.5f, 0.0f, {384.9f, 1.7f, 1981.8f}},
+        // cloud_sky: 雲の書き出し（--cloud-dump。Scripts/Terrain/ReferenceCheck.py --cloud-dump・--cloud）の空だけを写す視点。
+        // 南東の平らな谷床の目の高さから、南南西を仰角 45° で見上げる（既定の 60° の画角の下の端が仰角 15° で、地形が入らない）。
+        // 共通の照明の既定の太陽（仰角 58.5°、西南西）は画の右上の外の近くにあり、太陽の側の雲の縁と太陽を背にした雲が 1 枚に入る
+        {"cloud_sky", SceneViewKind::FreePose, 14.0f, 45.0f, 0.0f, {300.0f, 1.5f, 1800.0f}},
     };
 
     /// 荒野のシーンの id。地形は DEM の格子からクックで焼く（格子と区画は Scripts/Terrain と Scripts/CookAssets.ps1 で作る）

@@ -168,6 +168,7 @@ namespace Game::Debug
             request.bIncludeSceneColor = m_bCaptureHdr;
             request.bIncludeAov = m_bCaptureAov;
             request.bIncludeAtmosphere = m_bCaptureAtmosphere;
+            request.bIncludeClouds = m_bCaptureClouds;
             if (!renderWorld.RequestFrameCapture(request).IsAccepted())
             {
                 Fail("capture_request_rejected");
@@ -239,6 +240,17 @@ namespace Game::Debug
             }
             LOG_INFO_F("CAPTURE_VIEWS view=%s atmosphere saved rays=%u", viewName.c_str(),
                        capturedFrame.Atmosphere.Info.RayCount);
+        }
+        if (m_bCaptureClouds)
+        {
+            if (!NorvesLib::Core::Rendering::SaveCapturedClouds(capturedFrame, path))
+            {
+                LOG_ERROR_F("CAPTURE_VIEWS view=%s cloud save failed clouds=%d", viewName.c_str(),
+                            capturedFrame.Clouds.bValid ? 1 : 0);
+                Fail("cloud_save_failed");
+                return;
+            }
+            LOG_INFO_F("CAPTURE_VIEWS view=%s clouds saved rays=%u", viewName.c_str(), capturedFrame.Clouds.Info.RayCount);
         }
 
         ++m_ViewIndex;

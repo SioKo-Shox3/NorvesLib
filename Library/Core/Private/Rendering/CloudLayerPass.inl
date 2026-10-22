@@ -8,12 +8,14 @@
 #include "Rendering/SceneProxy.h"
 #include "Rendering/ShaderManager.h"
 #include "Rendering/ViewRenderContext.h"
+#include "RHI/ICommandList.h"
 #include "RHI/IDevice.h"
 #include "Logging/LogMacros.h"
 
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <exception>
 
@@ -59,6 +61,8 @@ namespace NorvesLib::Core::Rendering
         constexpr double WeatherHighScale = 2.7;
         constexpr double WeatherHighPhaseU = 0.31;
         constexpr double WeatherHighPhaseW = 0.53;
+        // 細部を上へ動かす速さ（m/s。湧き上がるように形を変える）
+        constexpr double DetailRiseVelocity = -1.5;
 
         RHI::DescriptorSetDesc CreateCloudLayerDescriptorSetDesc()
         {
@@ -365,7 +369,123 @@ namespace NorvesLib::Core::Rendering
             const double wrapped = value - std::floor(value);
             return static_cast<float>(std::isfinite(wrapped) ? wrapped : 0.0);
         }
+
+        // cloud_layer.frag の定数を詰める。CloudLayerPass と CloudProbePass（撮影の雲の書き出し）が同じ値を使う
+        void BuildCloudLayerParams(const ViewRenderContext& context,
+                                   const CameraProxy& camera,
+                                   const CloudLayerParameters& cloudLayer,
+                                   const SkyAtmosphereParameters& sky,
+                                   const Math::Vector3& sunIlluminance,
+                                   GPUCloudLayerParams& outParams)
+        {
+            GPUCloudLayerParams params{};
+            const CameraViewConstants cameraConstants =
+                CameraViewConstants::BuildForDevice(camera, context.GetActiveAspectRatio(), context.Device);
+            cameraConstants.CopyShaderInverseViewProjection(params.InverseViewProjection);
+            params.CameraPositionAndPreExposure[0] = camera.PositionX;
+            params.CameraPositionAndPreExposure[1] = camera.PositionY;
+            params.CameraPositionAndPreExposure[2] = camera.PositionZ;
+            params.CameraPositionAndPreExposure[3] = SafeCloudPreExposure(&camera);
+
+            const Math::Vector3 sunDirection = MakeSunDirectionFromAltitudeAzimuth(sky.SunAltitudeDegrees,
+                                                                                  sky.SunAzimuthDegrees);
+            params.SunDirectionAndFrameIndex[0] = sunDirection.x;
+            params.SunDirectionAndFrameIndex[1] = sunDirection.y;
+            params.SunDirectionAndFrameIndex[2] = sunDirection.z;
+            params.SunDirectionAndFrameIndex[3] = static_cast<float>(context.TemporalFrameIndex % 1024u);
+            params.SunIlluminance[0] = std::isfinite(sunIlluminance.x) ? std::max(sunIlluminance.x, 0.0f) : 0.0f;
+            params.SunIlluminance[1] = std::isfinite(sunIlluminance.y) ? std::max(sunIlluminance.y, 0.0f) : 0.0f;
+            params.SunIlluminance[2] = std::isfinite(sunIlluminance.z) ? std::max(sunIlluminance.z, 0.0f) : 0.0f;
+
+            params.LayerAltitudesAndCoverage[0] = sky.PlanetRadiusMeters;
+            params.LayerAltitudesAndCoverage[1] = cloudLayer.BottomAltitudeMeters;
+            params.LayerAltitudesAndCoverage[2] = cloudLayer.TopAltitudeMeters;
+            params.LayerAltitudesAndCoverage[3] = cloudLayer.Coverage;
+
+            const double shapeScale = cloudLayer.ShapeScaleMeters;
+            const double detailScale = shapeScale * DetailScaleRatio;
+            const double weatherScale = shapeScale * WeatherScaleRatio;
+            params.ExtinctionAndInverseScales[0] = cloudLayer.ExtinctionPerMeter;
+            params.ExtinctionAndInverseScales[1] = static_cast<float>(1.0 / shapeScale);
+            params.ExtinctionAndInverseScales[2] = static_cast<float>(1.0 / detailScale);
+            params.ExtinctionAndInverseScales[3] = static_cast<float>(1.0 / weatherScale);
+
+            // 決定的な撮影では TotalTime が 1/60 秒の固定刻みなので、同じフレームの撮影で同じ位置に雲が来る
+            const double timeSeconds = std::isfinite(context.TotalTime) ? context.TotalTime : 0.0;
+            const double windX = cloudLayer.WindVelocityX;
+            const double windZ = cloudLayer.WindVelocityZ;
+            params.ShapeAndWeatherOffset[0] = WrapWindOffset(windX, timeSeconds, shapeScale);
+            params.ShapeAndWeatherOffset[1] = WrapWindOffset(windZ, timeSeconds, shapeScale);
+            // 天気の模様は回転と倍率を掛けた後のテクスチャ座標で折り返す。世界の軸の距離で折り返すと、
+            // 回転・倍率の後では 1 の整数倍にならず、折り返した瞬間に雲の分布が飛ぶ
+            const double weatherOffsetX = std::isfinite(windX * timeSeconds) ? windX * timeSeconds : 0.0;
+            const double weatherOffsetZ = std::isfinite(windZ * timeSeconds) ? windZ * timeSeconds : 0.0;
+            const double weatherU = (WeatherRotationCos * weatherOffsetX - WeatherRotationSin * weatherOffsetZ) / weatherScale;
+            const double weatherV = (WeatherRotationSin * weatherOffsetX + WeatherRotationCos * weatherOffsetZ) / weatherScale;
+            params.ShapeAndWeatherOffset[2] = WrapUnit(weatherU);
+            params.ShapeAndWeatherOffset[3] = WrapUnit(weatherV);
+            params.WeatherHighOffset[0] = WrapUnit(weatherV * WeatherHighScale + WeatherHighPhaseU);
+            params.WeatherHighOffset[1] = WrapUnit(weatherU * WeatherHighScale + WeatherHighPhaseW);
+            params.DetailOffset[0] = WrapWindOffset(windX * DetailWindRatio, timeSeconds, detailScale);
+            // 細部は上へもゆっくり動かし、湧き上がるように形を変える
+            params.DetailOffset[1] = WrapWindOffset(DetailRiseVelocity, timeSeconds, detailScale);
+            params.DetailOffset[2] = WrapWindOffset(windZ * DetailWindRatio, timeSeconds, detailScale);
+
+            params.GroundAlbedo[0] = sky.GroundAlbedo.x;
+            params.GroundAlbedo[1] = sky.GroundAlbedo.y;
+            params.GroundAlbedo[2] = sky.GroundAlbedo.z;
+            outParams = params;
+        }
+
+        // 雲の 3D ノイズのテクスチャを作る（CloudLayerPass と CloudProbePass が同じ値を上げる）。作れなければ false
+        bool CreateNoiseTextures(RHI::IDevice* device,
+                                 const char* ownerName,
+                                 RHI::TexturePtr& outShape,
+                                 RHI::TexturePtr& outDetail)
+        {
+            const auto startTime = std::chrono::steady_clock::now();
+            Container::VariableArray<uint8_t> shapeTexels;
+            Container::VariableArray<uint8_t> detailTexels;
+            GenerateShapeNoise(shapeTexels);
+            GenerateDetailNoise(detailTexels);
+            outShape = CreateNoiseTexture(device, ShapeNoiseSize, shapeTexels, "CloudLayer.ShapeNoise");
+            outDetail = CreateNoiseTexture(device, DetailNoiseSize, detailTexels, "CloudLayer.DetailNoise");
+            if (!outShape || !outDetail)
+            {
+                outShape.reset();
+                outDetail.reset();
+                return false;
+            }
+            const double elapsedMs = std::chrono::duration<double, std::milli>(
+                                         std::chrono::steady_clock::now() - startTime)
+                                         .count();
+            NORVES_LOG_INFO(ownerName,
+                            "CLOUD_NOISE shape=%u detail=%u generate_ms=%.1f shape_fnv1a64=%016llx detail_fnv1a64=%016llx",
+                            ShapeNoiseSize,
+                            DetailNoiseSize,
+                            elapsedMs,
+                            static_cast<unsigned long long>(HashCloudNoiseTexels(shapeTexels)),
+                            static_cast<unsigned long long>(HashCloudNoiseTexels(detailTexels)));
+            return true;
+        }
     } // namespace CloudLayerPassDetail
+
+    void BuildCloudNoiseTexels(Container::VariableArray<uint8_t>& outShape, Container::VariableArray<uint8_t>& outDetail)
+    {
+        CloudLayerPassDetail::GenerateShapeNoise(outShape);
+        CloudLayerPassDetail::GenerateDetailNoise(outDetail);
+    }
+
+    uint64_t HashCloudNoiseTexels(const Container::VariableArray<uint8_t>& texels)
+    {
+        uint64_t hash = 0xcbf29ce484222325ull;
+        for (const uint8_t value : texels)
+        {
+            hash ^= value;
+            hash *= 0x100000001b3ull;
+        }
+        return hash;
+    }
 
     CloudLayerPass::~CloudLayerPass()
     {
@@ -477,36 +597,23 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
-        const auto startTime = std::chrono::steady_clock::now();
-        Container::VariableArray<uint8_t> shapeTexels;
-        Container::VariableArray<uint8_t> detailTexels;
-        CloudLayerPassDetail::GenerateShapeNoise(shapeTexels);
-        CloudLayerPassDetail::GenerateDetailNoise(detailTexels);
-        m_ShapeNoiseTexture = CloudLayerPassDetail::CreateNoiseTexture(m_Device,
-                                                                       CloudLayerPassDetail::ShapeNoiseSize,
-                                                                       shapeTexels,
-                                                                       "CloudLayer.ShapeNoise");
-        m_DetailNoiseTexture = CloudLayerPassDetail::CreateNoiseTexture(m_Device,
-                                                                        CloudLayerPassDetail::DetailNoiseSize,
-                                                                        detailTexels,
-                                                                        "CloudLayer.DetailNoise");
-        if (!m_ShapeNoiseTexture || !m_DetailNoiseTexture)
+        if (!CloudLayerPassDetail::CreateNoiseTextures(m_Device, "CloudLayerPass", m_ShapeNoiseTexture, m_DetailNoiseTexture))
         {
             NORVES_LOG_ERROR("CloudLayerPass", "雲の 3D ノイズを作れないため、雲を描きません");
-            m_ShapeNoiseTexture.reset();
-            m_DetailNoiseTexture.reset();
             m_bNoiseGenerationFailed = true;
             return false;
         }
-        const double elapsedMs = std::chrono::duration<double, std::milli>(
-                                     std::chrono::steady_clock::now() - startTime)
-                                     .count();
-        NORVES_LOG_INFO("CloudLayerPass",
-                        "CLOUD_NOISE shape=%u detail=%u generate_ms=%.1f",
-                        CloudLayerPassDetail::ShapeNoiseSize,
-                        CloudLayerPassDetail::DetailNoiseSize,
-                        elapsedMs);
         return true;
+    }
+
+    void CloudLayerPass::UpdateSunIlluminance()
+    {
+        if (!m_bSunIlluminanceValid || !AreSkyAtmosphereParametersEqual(m_SunIlluminanceSky, m_SkyParameters))
+        {
+            m_SunIlluminance = ComputeSunGroundIlluminance(m_SkyParameters);
+            m_SunIlluminanceSky = m_SkyParameters;
+            m_bSunIlluminanceValid = true;
+        }
     }
 
     void CloudLayerPass::Declare(RenderGraphBuilder& builder)
@@ -601,69 +708,9 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        if (!m_bSunIlluminanceValid || !AreSkyAtmosphereParametersEqual(m_SunIlluminanceSky, m_SkyParameters))
-        {
-            m_SunIlluminance = ComputeSunGroundIlluminance(m_SkyParameters);
-            m_SunIlluminanceSky = m_SkyParameters;
-            m_bSunIlluminanceValid = true;
-        }
-
+        UpdateSunIlluminance();
         GPUCloudLayerParams params{};
-        const CameraViewConstants cameraConstants =
-            CameraViewConstants::BuildForDevice(*activeCamera, context.GetActiveAspectRatio(), context.Device);
-        cameraConstants.CopyShaderInverseViewProjection(params.InverseViewProjection);
-        params.CameraPositionAndPreExposure[0] = activeCamera->PositionX;
-        params.CameraPositionAndPreExposure[1] = activeCamera->PositionY;
-        params.CameraPositionAndPreExposure[2] = activeCamera->PositionZ;
-        params.CameraPositionAndPreExposure[3] = SafeCloudPreExposure(activeCamera);
-
-        const Math::Vector3 sunDirection = MakeSunDirectionFromAltitudeAzimuth(m_SkyParameters.SunAltitudeDegrees,
-                                                                              m_SkyParameters.SunAzimuthDegrees);
-        params.SunDirectionAndFrameIndex[0] = sunDirection.x;
-        params.SunDirectionAndFrameIndex[1] = sunDirection.y;
-        params.SunDirectionAndFrameIndex[2] = sunDirection.z;
-        params.SunDirectionAndFrameIndex[3] = static_cast<float>(context.TemporalFrameIndex % 1024u);
-        params.SunIlluminance[0] = std::isfinite(m_SunIlluminance.x) ? std::max(m_SunIlluminance.x, 0.0f) : 0.0f;
-        params.SunIlluminance[1] = std::isfinite(m_SunIlluminance.y) ? std::max(m_SunIlluminance.y, 0.0f) : 0.0f;
-        params.SunIlluminance[2] = std::isfinite(m_SunIlluminance.z) ? std::max(m_SunIlluminance.z, 0.0f) : 0.0f;
-
-        params.LayerAltitudesAndCoverage[0] = m_SkyParameters.PlanetRadiusMeters;
-        params.LayerAltitudesAndCoverage[1] = m_CloudLayer.BottomAltitudeMeters;
-        params.LayerAltitudesAndCoverage[2] = m_CloudLayer.TopAltitudeMeters;
-        params.LayerAltitudesAndCoverage[3] = m_CloudLayer.Coverage;
-
-        const double shapeScale = m_CloudLayer.ShapeScaleMeters;
-        const double detailScale = shapeScale * DetailScaleRatio;
-        const double weatherScale = shapeScale * WeatherScaleRatio;
-        params.ExtinctionAndInverseScales[0] = m_CloudLayer.ExtinctionPerMeter;
-        params.ExtinctionAndInverseScales[1] = static_cast<float>(1.0 / shapeScale);
-        params.ExtinctionAndInverseScales[2] = static_cast<float>(1.0 / detailScale);
-        params.ExtinctionAndInverseScales[3] = static_cast<float>(1.0 / weatherScale);
-
-        // 決定的な撮影では TotalTime が 1/60 秒の固定刻みなので、同じフレームの撮影で同じ位置に雲が来る
-        const double timeSeconds = std::isfinite(context.TotalTime) ? context.TotalTime : 0.0;
-        const double windX = m_CloudLayer.WindVelocityX;
-        const double windZ = m_CloudLayer.WindVelocityZ;
-        params.ShapeAndWeatherOffset[0] = WrapWindOffset(windX, timeSeconds, shapeScale);
-        params.ShapeAndWeatherOffset[1] = WrapWindOffset(windZ, timeSeconds, shapeScale);
-        // 天気の模様は回転と倍率を掛けた後のテクスチャ座標で折り返す。世界の軸の距離で折り返すと、
-        // 回転・倍率の後では 1 の整数倍にならず、折り返した瞬間に雲の分布が飛ぶ
-        const double weatherOffsetX = std::isfinite(windX * timeSeconds) ? windX * timeSeconds : 0.0;
-        const double weatherOffsetZ = std::isfinite(windZ * timeSeconds) ? windZ * timeSeconds : 0.0;
-        const double weatherU = (WeatherRotationCos * weatherOffsetX - WeatherRotationSin * weatherOffsetZ) / weatherScale;
-        const double weatherV = (WeatherRotationSin * weatherOffsetX + WeatherRotationCos * weatherOffsetZ) / weatherScale;
-        params.ShapeAndWeatherOffset[2] = WrapUnit(weatherU);
-        params.ShapeAndWeatherOffset[3] = WrapUnit(weatherV);
-        params.WeatherHighOffset[0] = WrapUnit(weatherV * WeatherHighScale + WeatherHighPhaseU);
-        params.WeatherHighOffset[1] = WrapUnit(weatherU * WeatherHighScale + WeatherHighPhaseW);
-        params.DetailOffset[0] = WrapWindOffset(windX * DetailWindRatio, timeSeconds, detailScale);
-        // 細部は上へもゆっくり動かし、湧き上がるように形を変える
-        params.DetailOffset[1] = WrapWindOffset(-1.5, timeSeconds, detailScale);
-        params.DetailOffset[2] = WrapWindOffset(windZ * DetailWindRatio, timeSeconds, detailScale);
-
-        params.GroundAlbedo[0] = m_SkyParameters.GroundAlbedo.x;
-        params.GroundAlbedo[1] = m_SkyParameters.GroundAlbedo.y;
-        params.GroundAlbedo[2] = m_SkyParameters.GroundAlbedo.z;
+        BuildCloudLayerParams(context, *activeCamera, m_CloudLayer, m_SkyParameters, m_SunIlluminance, params);
 
         RHI::DescriptorSetPtr descriptorSet;
         RHI::BufferPtr paramsBuffer;
@@ -839,4 +886,387 @@ namespace NorvesLib::Core::Rendering
         m_FramebufferSceneColorTexture = sceneColorTexture.get();
         return true;
     }
+
+#if NORVES_ENABLE_STATS
+    namespace CloudLayerPassDetail
+    {
+        constexpr RHI::Format CloudProbeFormat = RHI::Format::R32G32B32A32_FLOAT;
+
+        // cloud_layer_probe.frag の CloudProbeRays（std140）
+        struct alignas(16) GPUCloudProbeRays
+        {
+            uint32_t RayCount[4];
+            float TargetSize[4];
+            float Pixels[FrameCaptureCloudMaxRays][4];
+        };
+        static_assert(CloudProbePass::kRayColumns * CloudProbePass::kRayRows <= FrameCaptureCloudMaxRays);
+        static_assert(sizeof(GPUCloudLayerParams) == FrameCaptureCloudShaderParamCount * sizeof(float));
+
+        RHI::DescriptorSetDesc CreateCloudProbeDescriptorSetDesc()
+        {
+            RHI::DescriptorSetDesc desc = CreateCloudLayerDescriptorSetDesc();
+            RHI::DescriptorBinding raysBinding;
+            raysBinding.binding = 5u;
+            raysBinding.type = RHI::ResourceBindType::ConstantBuffer;
+            raysBinding.stages = RHI::ShaderStage::Pixel;
+            desc.bindings.push_back(raysBinding);
+            return desc;
+        }
+    } // namespace CloudLayerPassDetail
+
+    bool CloudProbePass::IsRequestedByEnvironment()
+    {
+        char* value = nullptr;
+        size_t length = 0;
+        bool bRequested = false;
+        if (_dupenv_s(&value, &length, "NORVES_CLOUD_DUMP") == 0 && value)
+        {
+            bRequested = std::strcmp(value, "1") == 0;
+        }
+        std::free(value);
+        return bRequested;
+    }
+
+    CloudProbePass::~CloudProbePass()
+    {
+        Shutdown();
+    }
+
+    bool CloudProbePass::Initialize(ViewRenderContext& context)
+    {
+        using namespace CloudLayerPassDetail;
+        m_Device = context.Device;
+        m_bInitialized = true;
+        if (!m_Device || !context.ShaderMgr)
+        {
+            return true;
+        }
+
+        m_VertexShader = context.ShaderMgr->LoadShader("fullscreen.vert", RHI::ShaderStage::Vertex);
+        m_FragmentShader = context.ShaderMgr->LoadShader("cloud_layer_probe.frag", RHI::ShaderStage::Pixel);
+        if (!m_VertexShader || !m_FragmentShader)
+        {
+            NORVES_LOG_WARNING("CloudProbePass", "雲の書き出しのシェーダーの読み込みに失敗。このパスは何もしません");
+            return true;
+        }
+
+        // サンプラーは CloudLayerPass と同じ設定（深度は点、空の LUT は線形、ノイズは線形で 3 方向とも繰り返す）
+        RHI::SamplerDesc depthSamplerDesc;
+        depthSamplerDesc.filterMin = RHI::FilterMode::Point;
+        depthSamplerDesc.filterMag = RHI::FilterMode::Point;
+        depthSamplerDesc.filterMip = RHI::FilterMode::Point;
+        depthSamplerDesc.addressU = RHI::TextureAddressMode::Clamp;
+        depthSamplerDesc.addressV = RHI::TextureAddressMode::Clamp;
+        depthSamplerDesc.addressW = RHI::TextureAddressMode::Clamp;
+        m_SceneDepthSampler = m_Device->CreateSampler(depthSamplerDesc);
+
+        RHI::SamplerDesc skyRadianceSamplerDesc;
+        skyRadianceSamplerDesc.filterMin = RHI::FilterMode::Linear;
+        skyRadianceSamplerDesc.filterMag = RHI::FilterMode::Linear;
+        skyRadianceSamplerDesc.filterMip = RHI::FilterMode::Linear;
+        skyRadianceSamplerDesc.addressU = RHI::TextureAddressMode::Wrap;
+        skyRadianceSamplerDesc.addressV = RHI::TextureAddressMode::Clamp;
+        skyRadianceSamplerDesc.addressW = RHI::TextureAddressMode::Clamp;
+        m_SkyRadianceSampler = m_Device->CreateSampler(skyRadianceSamplerDesc);
+
+        RHI::SamplerDesc noiseSamplerDesc = skyRadianceSamplerDesc;
+        noiseSamplerDesc.addressV = RHI::TextureAddressMode::Wrap;
+        noiseSamplerDesc.addressW = RHI::TextureAddressMode::Wrap;
+        m_NoiseSampler = m_Device->CreateSampler(noiseSamplerDesc);
+
+        m_DescriptorSetLayout = m_Device->GetOrCreateDescriptorSetLayout(CreateCloudProbeDescriptorSetDesc());
+
+        RHI::RenderPassDesc renderPassDesc;
+        RHI::AttachmentDesc colorAttachment;
+        colorAttachment.format = CloudProbeFormat;
+        colorAttachment.isDepthStencil = false;
+        colorAttachment.clear = false;
+        colorAttachment.loadOp = RHI::AttachmentLoadOp::DontCare;
+        colorAttachment.storeOp = RHI::AttachmentStoreOp::Store;
+        colorAttachment.initialState = RHI::ResourceState::RenderTarget;
+        colorAttachment.finalState = RHI::ResourceState::ShaderResource;
+        renderPassDesc.colorAttachments.push_back(colorAttachment);
+        renderPassDesc.hasDepthStencil = false;
+        m_RenderPass = m_Device->CreateRenderPass(renderPassDesc);
+        if (m_RenderPass && m_SceneDepthSampler && m_SkyRadianceSampler && m_NoiseSampler && m_DescriptorSetLayout)
+        {
+            RHI::GraphicsPipelineDesc pipelineDesc;
+            pipelineDesc.vertexShader = m_VertexShader;
+            pipelineDesc.pixelShader = m_FragmentShader;
+            pipelineDesc.primitiveTopology = RHI::PrimitiveTopology::TriangleList;
+            pipelineDesc.rasterState.polygonMode = RHI::PolygonMode::Fill;
+            pipelineDesc.rasterState.cullMode = RHI::CullMode::None;
+            pipelineDesc.rasterState.frontFace = RHI::FrontFace::CounterClockwise;
+            pipelineDesc.rasterState.lineWidth = 1.0f;
+            pipelineDesc.depthStencilState.depthTestEnable = false;
+            pipelineDesc.depthStencilState.depthWriteEnable = false;
+            RHI::BlendAttachmentDesc blendAttachment;
+            blendAttachment.blendEnable = false;
+            blendAttachment.colorWriteMask = RHI::ColorWriteMask::All;
+            pipelineDesc.blendState.attachments.push_back(blendAttachment);
+            pipelineDesc.renderPass = m_RenderPass;
+            pipelineDesc.descriptorSetLayouts.push_back(CreateCloudProbeDescriptorSetDesc());
+            m_Pipeline = m_Device->CreateGraphicsPipeline(pipelineDesc);
+        }
+        if (!m_Pipeline)
+        {
+            NORVES_LOG_WARNING("CloudProbePass", "雲の書き出しのパイプラインの作成に失敗。このパスは何もしません");
+        }
+        return true;
+    }
+
+    void CloudProbePass::Shutdown()
+    {
+        m_Pipeline.reset();
+        m_Framebuffer.reset();
+        m_FramebufferTarget = nullptr;
+        m_RenderPass.reset();
+        m_DescriptorSetLayout.reset();
+        m_ShapeNoiseTexture.reset();
+        m_DetailNoiseTexture.reset();
+        m_bNoiseGenerationFailed = false;
+        m_NoiseSampler.reset();
+        m_SkyRadianceSampler.reset();
+        m_SceneDepthSampler.reset();
+        m_FragmentShader.reset();
+        m_VertexShader.reset();
+        m_TargetHandle = {};
+        m_SceneDepthHandle = {};
+        m_SkyAtmosphereRadianceHandle = {};
+        m_bSunIlluminanceValid = false;
+        m_LastInfo = FrameCaptureCloudInfo{};
+        m_Device = nullptr;
+        m_bInitialized = false;
+    }
+
+    void CloudProbePass::Setup(ViewRenderContext& /*context*/)
+    {
+    }
+
+    void CloudProbePass::Execute(ViewRenderContext& /*context*/)
+    {
+        // RenderGraph 経由（Execute(resources, context)）でだけ動く。
+    }
+
+    bool CloudProbePass::EnsureNoiseTextures()
+    {
+        if (m_ShapeNoiseTexture && m_DetailNoiseTexture)
+        {
+            return true;
+        }
+        if (m_bNoiseGenerationFailed || !m_Device)
+        {
+            return false;
+        }
+        if (!CloudLayerPassDetail::CreateNoiseTextures(m_Device, "CloudProbePass", m_ShapeNoiseTexture, m_DetailNoiseTexture))
+        {
+            NORVES_LOG_WARNING("CloudProbePass", "雲の 3D ノイズを作れないため、雲を書き出しません");
+            m_bNoiseGenerationFailed = true;
+            return false;
+        }
+        return true;
+    }
+
+    void CloudProbePass::Declare(RenderGraphBuilder& builder)
+    {
+        m_TargetHandle = {};
+        m_SceneDepthHandle = {};
+        m_SkyAtmosphereRadianceHandle = {};
+        m_LastInfo.bValid = false;
+
+        // 初期化を済ませたのにパイプラインが無いときは何も宣言しない
+        if (m_bInitialized && !m_Pipeline)
+        {
+            return;
+        }
+
+        // CloudLayerPass::Declare と同じ値（同じスナップショット）。CloudLayerPass が描かない構成では書き出さない
+        const ViewRenderContext* context = builder.GetContext();
+        const SceneProxy* snapshotScene = context ? context->SnapshotScene : nullptr;
+        m_SkyParameters = snapshotScene
+                              ? SanitizeSkyAtmosphereParameters(snapshotScene->SkyAtmosphere)
+                              : SkyAtmosphereParameters{};
+        m_CloudLayer = snapshotScene
+                           ? SanitizeCloudLayerParameters(snapshotScene->CloudLayer)
+                           : CloudLayerParameters{};
+        m_CloudLayer.bEnabled = m_CloudLayer.bEnabled && m_SkyParameters.bEnabled;
+        if (!m_CloudLayer.bEnabled)
+        {
+            return;
+        }
+
+        RGTextureHandle sceneDepthHandle;
+        RGTextureHandle skyRadianceHandle;
+        if (!builder.TryReadTexture(RenderGraphResourceNames::SceneDepth,
+                                    sceneDepthHandle,
+                                    RHI::ResourceState::ShaderResource) ||
+            !builder.TryReadTexture(RenderGraphResourceNames::SkyAtmosphereRadiance,
+                                    skyRadianceHandle,
+                                    RHI::ResourceState::ShaderResource))
+        {
+            return;
+        }
+
+        const uint32_t rayCount = kRayColumns * kRayRows;
+        RGTextureDesc desc = RGTextureDesc::RenderTarget(rayCount,
+                                                         FrameCaptureCloudProbeRows,
+                                                         CloudLayerPassDetail::CloudProbeFormat,
+                                                         "Capture_CloudProbe");
+        desc.Usage = desc.Usage | RHI::ResourceUsage::TransferSrc;
+        const RGTextureHandle targetHandle =
+            builder.WriteTextureAttachment(RenderGraphResourceNames::CaptureCloudProbe,
+                                           desc,
+                                           RGAttachmentKind::Color,
+                                           RHI::AttachmentLoadOp::DontCare,
+                                           RHI::AttachmentStoreOp::Store,
+                                           RHI::ResourceState::RenderTarget,
+                                           RHI::ResourceState::ShaderResource);
+        if (!targetHandle.IsValid())
+        {
+            return;
+        }
+        // 撮影の読み出しはグラフの実行の後なので、外へ出して寿命を延ばす
+        builder.ExportTexture(RenderGraphResourceNames::CaptureCloudProbe, targetHandle);
+        m_TargetHandle = targetHandle.ToResourceHandle();
+        m_SceneDepthHandle = sceneDepthHandle.ToResourceHandle();
+        m_SkyAtmosphereRadianceHandle = skyRadianceHandle.ToResourceHandle();
+        builder.PreserveInsertionOrder();
+    }
+
+    void CloudProbePass::Execute(RenderGraphResources& resources, ViewRenderContext& context)
+    {
+        using namespace CloudLayerPassDetail;
+        m_LastInfo.bValid = false;
+        if (!m_bInitialized && !Initialize(context))
+        {
+            return;
+        }
+        const CameraProxy* camera = context.GetActiveCamera();
+        if (!context.CommandList || !context.FrameResources || !m_Device || !m_Pipeline || !camera ||
+            !m_TargetHandle.IsValid() || !m_SceneDepthHandle.IsValid() || !m_SkyAtmosphereRadianceHandle.IsValid() ||
+            !EnsureNoiseTextures())
+        {
+            return;
+        }
+
+        const RHI::TexturePtr target = resources.GetTexture(m_TargetHandle);
+        const RHI::TexturePtr sceneDepthTexture = resources.GetTexture(m_SceneDepthHandle);
+        const RHI::TexturePtr skyRadianceTexture = resources.GetTexture(m_SkyAtmosphereRadianceHandle);
+        if (!target || !sceneDepthTexture || !skyRadianceTexture)
+        {
+            return;
+        }
+        // 雲を描く画面（CloudLayerPass の描画先）は深度と同じ大きさ
+        const uint32_t targetWidth = sceneDepthTexture->GetWidth();
+        const uint32_t targetHeight = sceneDepthTexture->GetHeight();
+        if (targetWidth == 0u || targetHeight == 0u)
+        {
+            return;
+        }
+
+        if (!m_bSunIlluminanceValid || !AreSkyAtmosphereParametersEqual(m_SunIlluminanceSky, m_SkyParameters))
+        {
+            m_SunIlluminance = ComputeSunGroundIlluminance(m_SkyParameters);
+            m_SunIlluminanceSky = m_SkyParameters;
+            m_bSunIlluminanceValid = true;
+        }
+        GPUCloudLayerParams params{};
+        BuildCloudLayerParams(context, *camera, m_CloudLayer, m_SkyParameters, m_SunIlluminance, params);
+
+        // 視線: 画面を横 kRayColumns × 縦 kRayRows に分けた区画の中心に最も近い画素の中心
+        GPUCloudProbeRays rays{};
+        const uint32_t rayCount = kRayColumns * kRayRows;
+        rays.RayCount[0] = rayCount;
+        rays.TargetSize[0] = static_cast<float>(targetWidth);
+        rays.TargetSize[1] = static_cast<float>(targetHeight);
+        for (uint32_t row = 0; row < kRayRows; ++row)
+        {
+            for (uint32_t column = 0; column < kRayColumns; ++column)
+            {
+                const uint32_t rayIndex = row * kRayColumns + column;
+                const uint32_t pixelX = std::min((2u * column + 1u) * targetWidth / (2u * kRayColumns), targetWidth - 1u);
+                const uint32_t pixelY = std::min((2u * row + 1u) * targetHeight / (2u * kRayRows), targetHeight - 1u);
+                rays.Pixels[rayIndex][0] = static_cast<float>(pixelX) + 0.5f;
+                rays.Pixels[rayIndex][1] = static_cast<float>(pixelY) + 0.5f;
+                m_LastInfo.RayPixels[rayIndex][0] = rays.Pixels[rayIndex][0];
+                m_LastInfo.RayPixels[rayIndex][1] = rays.Pixels[rayIndex][1];
+            }
+        }
+
+        FrameResourceLane* frameResources = context.FrameResources;
+        const FrameUploadAllocation paramsAllocation = frameResources->AllocateConstants(params);
+        const FrameUploadAllocation raysAllocation = frameResources->AllocateConstants(rays);
+        const RHI::DescriptorSetPtr descriptorSet = frameResources->AllocateDescriptorSet(m_DescriptorSetLayout).Set;
+        if (!paramsAllocation.IsValid() || !raysAllocation.IsValid() || !descriptorSet)
+        {
+            NORVES_LOG_WARNING("CloudProbePass", "定数か記述子セットを借りられないため、このフレームは雲を書き出しません");
+            return;
+        }
+        descriptorSet->BindTexture(0u, sceneDepthTexture);
+        descriptorSet->BindSampler(0u, m_SceneDepthSampler);
+        descriptorSet->BindTexture(1u, skyRadianceTexture);
+        descriptorSet->BindSampler(1u, m_SkyRadianceSampler);
+        descriptorSet->BindConstantBuffer(2u, paramsAllocation.Buffer, paramsAllocation.GetOffset32(),
+                                          sizeof(GPUCloudLayerParams));
+        descriptorSet->BindTexture(3u, m_ShapeNoiseTexture);
+        descriptorSet->BindSampler(3u, m_NoiseSampler);
+        descriptorSet->BindTexture(4u, m_DetailNoiseTexture);
+        descriptorSet->BindSampler(4u, m_NoiseSampler);
+        descriptorSet->BindConstantBuffer(5u, raysAllocation.Buffer, raysAllocation.GetOffset32(),
+                                          sizeof(GPUCloudProbeRays));
+        descriptorSet->Update();
+
+        if (!m_Framebuffer || m_FramebufferTarget != target.get())
+        {
+            RHI::FramebufferDesc framebufferDesc;
+            framebufferDesc.renderPass = m_RenderPass;
+            framebufferDesc.colorTargets.push_back(target);
+            framebufferDesc.width = target->GetWidth();
+            framebufferDesc.height = target->GetHeight();
+            m_Framebuffer = m_Device->CreateFramebuffer(framebufferDesc);
+            m_FramebufferTarget = m_Framebuffer ? target.get() : nullptr;
+        }
+        if (!m_Framebuffer)
+        {
+            return;
+        }
+
+        RHI::Viewport viewport;
+        viewport.width = static_cast<float>(target->GetWidth());
+        viewport.height = static_cast<float>(target->GetHeight());
+        RHI::ScissorRect scissor;
+        scissor.right = static_cast<int32_t>(target->GetWidth());
+        scissor.bottom = static_cast<int32_t>(target->GetHeight());
+        RHI::ICommandList* commandList = context.CommandList;
+        commandList->BeginRenderPass(m_RenderPass, m_Framebuffer);
+        commandList->SetViewport(viewport);
+        commandList->SetScissor(scissor);
+        commandList->SetPipeline(m_Pipeline);
+        commandList->SetDescriptorSet(descriptorSet, 0);
+        commandList->Draw(3, 0);
+        commandList->EndRenderPass();
+
+        // 評価に使った値（書き出しの JSON に残す）
+        std::memcpy(m_LastInfo.ShaderParams, &params, sizeof(params));
+        m_LastInfo.Cloud = m_CloudLayer;
+        m_LastInfo.Sky = m_SkyParameters;
+        m_LastInfo.TimeSeconds = std::isfinite(context.TotalTime) ? context.TotalTime : 0.0;
+        m_LastInfo.TemporalFrameIndex = context.TemporalFrameIndex;
+        m_LastInfo.TargetWidth = targetWidth;
+        m_LastInfo.TargetHeight = targetHeight;
+        m_LastInfo.ShapeNoiseSize = ShapeNoiseSize;
+        m_LastInfo.DetailNoiseSize = DetailNoiseSize;
+        m_LastInfo.DetailScaleRatio = DetailScaleRatio;
+        m_LastInfo.WeatherScaleRatio = WeatherScaleRatio;
+        m_LastInfo.DetailWindRatio = DetailWindRatio;
+        m_LastInfo.DetailRiseVelocity = static_cast<float>(DetailRiseVelocity);
+        m_LastInfo.WeatherRotationCos = static_cast<float>(WeatherRotationCos);
+        m_LastInfo.WeatherRotationSin = static_cast<float>(WeatherRotationSin);
+        m_LastInfo.WeatherHighScale = static_cast<float>(WeatherHighScale);
+        m_LastInfo.WeatherHighPhaseU = static_cast<float>(WeatherHighPhaseU);
+        m_LastInfo.WeatherHighPhaseW = static_cast<float>(WeatherHighPhaseW);
+        m_LastInfo.RayCount = rayCount;
+        m_LastInfo.bValid = true;
+    }
+#endif
 } // namespace NorvesLib::Core::Rendering
