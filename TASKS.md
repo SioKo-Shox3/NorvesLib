@@ -2402,7 +2402,7 @@
 - paths: Scripts/Terrain, Scripts, Assets/AssetSets, Game/GameModes/Wasteland, Docs/RenderingValidation, TASKS.md, PROGRESS.md
 - notes: 2026-10-22（親）: 反復 2 の BLOCKED（要求の列の溢れ）を推奨の案 1 で解いた。既定の容量の直しを SCN-WL-GEOM-REQUEST-CAPACITY として先に立て、この項目はその後に verify を回し直して閉じる（配置の経路・3 個の配置・比較の合格は反復 1 の証拠のまま）。
 ## SCN-WL-LOOK-MEASURE: 写真と撮影の写りの差を、写真ごとの固定の領域で診断する
-- status: todo
+- status: done
 - after: SCN-WL-REVIEW-2
 - done-when: 確認 2 の差 3・6・7（地面と崖が写真より明るい・晴天の空が白い・遠景の霞が桃色）を診断する `CompareReference.py --look`（この項目で作る）を足す。写真ごとに実際に写っている領域を固定の注釈（多角形。`Scripts/Terrain/LookRegions.json` など）で決める: 青空（雲を除く）・雲・近景の日なたの地面・崖・3 km より先の地形の帯。空は写真ごとに写る仰角が違う（ref_far_01 の上端は約 9.9°、ref_ground_02 は約 6.7°、ref_cliff_02 は約 3.1°）ので、領域ごとに仰角の範囲・太陽からの角距離・雲の有無を記録し、写っていない領域は「この写真に無い」と明記する。量: 領域の線形の平均 Y と色度（R ÷ G・B ÷ R）、地面 Y ÷ 青空 Y、崖 Y ÷ 地面 Y、遠景の帯と近景の地面の色度の差、白飛び・黒つぶれの割合。写真は sRGB を線形に戻すが、撮影時のトーンカーブ・ホワイトバランス・局所補正は残るので、写真との比は診断の値で合否にしない（表に「写真の処理を含む」と書く）。撮影は 6 視点を -Hdr で撮り、表示の前の HDR を保存する（SCN-WL-LOOK-CAMERA がオフラインで表示の変換を選ぶため）。合否: 6 写真すべてで注釈の領域が空でないか「この写真に無い」と記録され、写真と撮影の両方に重ねた注釈の画像を開いて領域が意図どおりであることを確かめる。結果を `Docs/RenderingValidation/WastelandLook.md`（新規）に表で書き、差を (a) カメラの写り、(b) 物の明るさ（アルベド・植生の被覆）、(c) 空と霞の入力（媒質・地表の反射の色・写真の天気）に分ける見立てを書く。値は変えない。
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -Build -RequireAssets -Width 1920 -Height 1080 -Hdr -Views ref_far_01,ref_far_02,ref_cliff_01,ref_cliff_02,ref_ground_01,ref_ground_02 -OutDir .harness/runs/scene-capture/SCN-WL-LOOK-MEASURE`

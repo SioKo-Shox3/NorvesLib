@@ -4,6 +4,8 @@
 # 使い方:
 #   python Scripts/Terrain/CompareReference.py --capture <CaptureScene.ps1 の OutDir> [--photos far_01,cliff_01] [--out <出力先>]
 #                                              [--verify] [--note <一覧の先頭の添え書き>]
+#   python Scripts/Terrain/CompareReference.py --capture <-Hdr の撮影の OutDir> --look [--look-depth <-Aov の撮影>] [--verify]
+#       写りの差を写真ごとの固定の領域で診断する（LookMeasure.py。注釈は LookRegions.json）
 # 写真ごとに <出力先>/reference_<写真>.png と <出力先>/reference_metrics.json を書き、数値を 1 行ずつ出す。
 # 並べた写真をすべて縦に積んだ一覧（左に写真、右に撮影。輪郭と枠は重ねない）を <出力先>/reference_overview.png に書く
 # （節目の確認でユーザーに渡す 1 枚）。
@@ -273,12 +275,20 @@ def main():
     parser.add_argument(
         "--note", default=None, help="一覧の先頭に書く添え書き（節目の確認で渡すときの注記。省くと前に保存した添え書きを使い、\"\" で消す）"
     )
+    parser.add_argument(
+        "--look", action="store_true", help="写りの差を写真ごとの固定の領域（LookRegions.json）で診断する（LookMeasure.py。撮影は -Hdr）"
+    )
+    parser.add_argument("--look-depth", default="", help="--look で領域の深度を見る -Aov の撮影の出力先（省くと深度を書かない）")
     args = parser.parse_args()
 
     wanted = [p for p in args.photos.split(",") if p]
     photos = [p for p in PHOTOS if not wanted or p["id"] in wanted]
     out_dir = args.out or args.capture
     os.makedirs(out_dir, exist_ok=True)
+    if args.look:
+        from LookMeasure import run_look
+
+        return run_look(args.capture, out_dir, wanted, args.look_depth, args.verify)
     note = resolve_note(out_dir, args.note)
     failures = []
     views = catalog_views()

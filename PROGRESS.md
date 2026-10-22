@@ -7011,3 +7011,13 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 試し: 容量 32768 ＋ 塊 2047 MB（環境変数だけ）で ref_cliff_01 を 1 視点だけ撮ると 106 秒で落ち着き、最後の行で request_overflow=0・wanted=0・failed=0・evicted=0（`aux-...-block2g.txt`・`-block2g-check.txt`。`--verify` は環境変数の上書きを正しく落とす）。検査は視点ごとに起動した撮影（撮影の印を書かない）ではそのログの最後の行を使う
 - Notes: 容量 32768 なら要求のバッファは 1 枚 128 KB × 3。`--wasteland-finest-lod` の 131072 は、最も細かい段で 1 視点 3 万ページ近くを使い 32768 では余裕が無いので、そのまま残す。新しい試験は足していない
 - Next: 置き場の扱いが決まったら、容量を 32768 にして 7 視点・mega-bananas・回帰で確かめて閉じる
+
+### SCN-WL-LOOK-MEASURE 写りの差を固定の領域で診断して閉じる（2026-10-22、run 20261022-173753 の反復 5）
+- Done: `CompareReference.py --look`（本体は `Scripts/Terrain/LookMeasure.py`、注釈は `Scripts/Terrain/LookRegions.json`）を作った。写真ごとに 青空（雲を除く）・雲・近景の日なたの地面・崖・3 km より先の地形の帯 を 16:9 の絵の割合の多角形で置き、写真と撮影の両方に重ねる（構図の合わない遠景の帯は撮影の側だけ `capture_polygon`）。写っていない領域は absent に理由を書く。領域ごとに線形の平均の Y・R÷G・B÷R・白飛び・黒つぶれ（写真・撮影の PNG・撮影の HDR）、仰角の範囲と太陽からの角距離（SceneCatalog.h と kReferenceShots のカメラと太陽から）、地面 ÷ 青空・崖 ÷ 地面・遠景の帯 − 地面 の色度を書く。結果と (a)/(b)/(c) の見立てを `Docs/RenderingValidation/WastelandLook.md` に書いた。値は変えていない
+- 証拠（`.harness/runs/20261022-173753/`）:
+  - `verify-SCN-WL-LOOK-MEASURE-1.txt` RelWithDebInfo のビルド pass・6 視点の -Hdr の撮影 result=pass・EXIT=0（白飛び・黒つぶれ 0、HDR 6 枚）
+  - `verify-SCN-WL-LOOK-MEASURE-2.txt` `--look --verify` result=pass photos=6・EXIT=0。画面の上端の仰角 ref_far_01 9.9°・ref_ground_02 6.6°・ref_cliff_02 3.0°（タスクの値と同じ）
+  - `scene-capture/SCN-WL-LOOK-MEASURE/look_<写真>.png` を 6 枚とも開き、領域が意図した物に乗ることを確かめた（ground_01・ground_02 の遠景の帯と ground_02 の崖は空が混じったので置き直した）。遠景の帯は -Aov の撮影 SCN-WLR-CYCLES-LIT の深度（`--look-depth`）で 5 視点とも 3 km より先が 100 %
+- 見立て（詳しくは WastelandLook.md）: 差 3 は青空がほぼ合う（far_01 0.89 倍）まま地面 1.7〜3.0 倍・崖 1.7〜6.7 倍で、表示の変換は比を変えていない → (b) 植生の被覆と崖の明るさ・遮蔽が主、(a) 写真の露出とトーンカーブが上乗せ。差 6 は地平線に近いほど撮影の空の B÷R が足りず（ground_02 1.70 と写真 3.82、far_01 は一致）HDR の時点で白い → (c) が主、ground_02 の写真の処理が差を大きく見せる。差 7 は遠景で写真ほど青みが足されず（B÷R の増え 0.3〜0.7 倍）地面の赤みが残る → (c) 空気遠近の散乱光の色が主、(b) 岩肌の赤みが重なる
+- Notes: 撮影の雲は写真に合わせていないので「雲」の領域は写真の雲と撮影の同じ所の空の比べになる。地面の領域は低木と株の影を画素ごとに分けていない。新しい試験は足していない
+- Next: TASKS.md の次の未完（SCN-WL-LOOK-CAMERA は `scene-capture/SCN-WL-LOOK-MEASURE/*.hdr.pfm` を使える）
