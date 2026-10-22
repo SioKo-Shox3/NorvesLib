@@ -1,12 +1,16 @@
-﻿# 荒野（Valley of the Gods、ユタ州）の比較の手本の写真を Wikimedia Commons から落とし、
-# manifest.json（URL・作者・ライセンス・撮影の位置と向きの推定・写っている物）と縮小一覧の PNG を書く。
-# 写真・範囲・主役の地形・前哨地の候補の選んだ理由は Docs/RenderingValidation/WastelandReference.md。
+﻿# シーンの比較の手本の写真を Wikimedia Commons から落とし、
+# manifest.json（URL・作者・ライセンス・撮影の条件の推定・写っている物）と縮小一覧の PNG を書く。
+# 手本の組は 2 つ:
+#   ValleyOfTheGods  荒野（ユタ州）。写真・範囲・主役の地形・前哨地の候補の選んだ理由は
+#                    Docs/RenderingValidation/WastelandReference.md
+#   InteriorLight    室内の光。写真と、写真から決めた部屋の大きさ・窓の向き・太陽の高さ・家具の並びは
+#                    Docs/RenderingValidation/InteriorLightReference.md
 #
-# 使い方:
-#   python Scripts/Terrain/ReferencePhotos.py --fetch    写真を落として manifest.json と contact_sheet.png を書く
-#   python Scripts/Terrain/ReferencePhotos.py --verify   落とした写真・manifest・範囲・.gitignore・文書が揃っているかを見る
-#   python Scripts/Terrain/ReferencePhotos.py --sheet    落とし済みの写真から一覧の PNG だけ作り直す
-# 写真は Assets/Reference/ValleyOfTheGods/ に置く（git 管理外）。
+# 使い方（--set を省くと ValleyOfTheGods）:
+#   python Scripts/Terrain/ReferencePhotos.py --fetch  [--set 組]  写真を落として manifest.json と contact_sheet.png を書く
+#   python Scripts/Terrain/ReferencePhotos.py --verify [--set 組]  落とした写真・manifest・.gitignore・文書が揃っているかを見る
+#   python Scripts/Terrain/ReferencePhotos.py --sheet  [--set 組]  落とし済みの写真から一覧の PNG だけ作り直す
+# 写真は Assets/Reference/<組>/ に置く（git 管理外）。
 # 終了コード: すべて満たせば 0、どれかが欠ければ 1。
 import argparse
 import hashlib
@@ -22,10 +26,6 @@ import urllib.parse
 import urllib.request
 
 REPO_ROOT = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
-OUT_DIR = os.path.join(REPO_ROOT, "Assets", "Reference", "ValleyOfTheGods")
-MANIFEST_PATH = os.path.join(OUT_DIR, "manifest.json")
-SHEET_PATH = os.path.join(OUT_DIR, "contact_sheet.png")
-DOC_PATH = os.path.join(REPO_ROOT, "Docs", "RenderingValidation", "WastelandReference.md")
 GITIGNORE_PATH = os.path.join(REPO_ROOT, ".gitignore")
 COMMONS_API = "https://commons.wikimedia.org/w/api.php"
 USER_AGENT = "NorvesLibReferencePhotos/1.0 (https://commons.wikimedia.org/wiki/Category:Valley_of_the_Gods)"
@@ -126,6 +126,91 @@ PHOTOS = [
     },
 ]
 
+# 室内の光の手本。役割ごとの枚数の範囲（低い日が窓から差す部屋・色移り・床の艶・光の筋）と全体の枚数
+INTERIOR_ROLE_COUNTS = {"window": (1, 2), "bleed": (1, 2), "gloss": (1, 2), "shafts": (1, 2)}
+INTERIOR_TOTAL = (4, 6)
+
+# light は窓の向きと太陽の高さの推定と根拠。太陽の高さは EXIF の時刻と位置からの計算（位置が無いものは写真からの目安）
+INTERIOR_PHOTOS = [
+    {
+        "id": "window_01", "role": "window",
+        "title": "File:Luxurious Drawing Room in a Historic European Palace (55246911504).jpg",
+        "light": "EXIF の GPS（41.1420, -8.5746。ポルトの Palácio do Freixo）と時刻 2026-04-23 10:20（WEST = UTC+1）から"
+                 "太陽の高さ 39.5°・方位 110°（東南東）。左の壁の背の高い縦長の窓から入った直射が、窓の桟の格子の形のまま床に斜めに伸びる",
+        "contents": "宮殿の客間（天井高 約 6 m の推定。扉の高さ 約 3 m の 2 倍）。明るい木と濃い木の菱形の寄木の床に窓の形の日だまりが"
+                    "斜めに伸び、日の当たる所の木が橙に光る。中央に淡い色の絨毯、木の机、青い肘掛け椅子とソファの組。"
+                    "壁は淡い緑の漆喰に金の縁取りと絵と鏡。35 mm 換算 14 mm の広角",
+        "compare": "日だまりと日陰の床の明るさの比（直射と回り込む光の比）、日だまりの縁のぼけ（太陽の円盤による半影）、"
+                   "日向の木の床の色の温かさ、日陰の床と壁に残る照り返しの明るさ、家具の脚の長い影",
+    },
+    {
+        "id": "window_02", "role": "window",
+        "title": "File:Sunlight in an old workshop.jpg",
+        "light": "EXIF の位置（58.3569, 11.5159。スウェーデン Lysekil の Gåseberg）と時刻 2017-02-07 12:04（CET = UTC+1）から"
+                 "太陽の高さ 16.3°・方位 174°（冬の正午のほぼ真南の低い太陽）。左の壁の高い窓の列から入った光が床を横切って奥の壁の下部まで届く",
+        "contents": "古い機械の作業場（奥行き 15 m 以上・天井高 約 5 m の木の柱と波板の建屋）。低い太陽の光が窓の形のまま床に長く伸び、"
+                    "日向の照り返しが天井の梁と壁を暖色に照らす。床はコンクリートに土埃。左の壁に配電盤。3 枚の露出からのトーンマップ",
+        "compare": "低い太陽の日だまりの長さと向き（窓の高さと太陽の高さで決まる）、奥の壁に這い上がる光の帯、照り返しで天井の梁が見える明るさ、"
+                   "窓に対する室内の暗部の明るさ（トーンマップの処理があるので比は目安）",
+    },
+    {
+        "id": "gloss_01", "role": "gloss",
+        "title": "File:Empty apartment room with corner windows.jpg",
+        "light": "EXIF の時刻 2018-08-08 15:08（EDT）と分類（マンハッタン）から太陽の高さ 約 53°・方位 約 237°（南西）の推定"
+                 "（建物の位置は記録なし。街の中の数 km の違いは高さに効かない）。右の窓から入った直射が窓の脇の壁と床に小さな日だまりを作る",
+        "contents": "空き部屋の角（家具なし）。濃い色の堅木の床（艶のある仕上げ）、白い漆喰の壁と幅木、角を挟む 2 つの上げ下げ窓。"
+                    "床に窓と明るい壁の像がぼやけて縦に伸びて映る。窓の外は隣のビル。スマートフォン（Nexus 5）の写真",
+        "compare": "床の艶の映り込み（窓と明るい壁の像の伸び方とぼけ方 = 粗さ、映り込みの明るさ = 斜めの角度のフレネル）、"
+                   "板の継ぎ目での映り込みの途切れ、日だまりから白い壁へ回る照り返しの広がり、窓の脇の壁の明るさの勾配",
+    },
+    {
+        "id": "bleed_01", "role": "bleed",
+        "title": "File:Sarasota FL Selby Gardens Payne Mansion inside02.jpg",
+        "light": "EXIF の時刻 2011-06-19 16:15（EDT と見る。カメラの時計の時差は確かめられない）と Selby 植物園の位置（約 27.33, -82.54）"
+                 "から太陽の高さ 約 53°・方位 273°（西）。右の壁のアーチ付きのフランス窓から入る直射が床に格子の日だまりを 2 つ作る",
+        "contents": "邸宅（Christy Payne House）の玄関広間（天井高 約 5 m の推定。フランス窓の高さ 約 3 m から）。黄色の漆喰の壁、"
+                    "白い階段と手すり、白い扉枠と天井。濃い色の艶のある床に窓の格子の日だまり。木の飾り棚、大時計、壁の絵",
+        "compare": "黄色の壁からの色移り（白い天井・階段の側面・扉枠が黄に染まる量）、日だまりの照り返しで明るくなる周りの床と壁の下部、"
+                   "艶のある床の窓の格子の映り込み、日だまりの縁の鋭さ",
+    },
+    {
+        "id": "shafts_01", "role": "shafts",
+        "title": "File:Dust dancing in the sunlight P9060755c.jpg",
+        "light": "EXIF の時刻 2005-09-06 09:10。位置の記録は無い（作者の説明は「古い馬場」）。光の筋の傾きから太陽の高さは"
+                 "25〜35° の目安（画面の奥行きの向きが分からないので幅を持たせる）。上部の窓から入る朝の光",
+        "contents": "古い馬場の室内（ヴォールトの天井、レンガと剥げた漆喰の壁、土の床、工事の足場と一輪車）。上部の窓から斜めに差す"
+                    "3 本の光の筋が塵の舞う空気の中に白く見え、床に細長い日だまりを作る",
+        "compare": "光の筋の明るさと背景の暗部の比（筋が見えるのは暗い背景の前）、筋の縁の鋭さと筋の中の明るさのむら、"
+                   "床の日だまりと筋のつながり、レンガと漆喰の壁の照り返しの暖かさ",
+    },
+]
+
+# 室内の光の文書に、写真から決めた部屋の条件として書いてあるべき見出しの語
+INTERIOR_DOC_TERMS = ("部屋の大きさ", "窓の向き", "太陽の高さ", "家具の並び")
+
+# 手本の組。terrain は荒野の範囲・地形・前哨地の候補の確かめを行う組
+SETS = {
+    "ValleyOfTheGods": {
+        "photos": PHOTOS, "role_counts": ROLE_COUNTS, "total": None,
+        "doc": os.path.join("Docs", "RenderingValidation", "WastelandReference.md"),
+        "fields": ("page_url", "original_url", "author", "license_url", "heading", "contents", "compare"),
+        "header": {"source": "Wikimedia Commons", "region": "Valley of the Gods, San Juan County, Utah (BLM)"},
+        "terrain": True, "doc_terms": (),
+    },
+    "InteriorLight": {
+        "photos": INTERIOR_PHOTOS, "role_counts": INTERIOR_ROLE_COUNTS, "total": INTERIOR_TOTAL,
+        "doc": os.path.join("Docs", "RenderingValidation", "InteriorLightReference.md"),
+        "fields": ("page_url", "original_url", "author", "license_url", "light", "contents", "compare"),
+        "header": {"source": "Wikimedia Commons", "subject": "Low sun through windows into rooms (interior light reference)"},
+        "terrain": False, "doc_terms": INTERIOR_DOC_TERMS,
+    },
+}
+
+
+def set_paths(name):
+    out_dir = os.path.join(REPO_ROOT, "Assets", "Reference", name)
+    return out_dir, os.path.join(out_dir, "manifest.json"), os.path.join(out_dir, "contact_sheet.png")
+
 
 def utm_from_latlon(lat, lon, zone=12):
     # GRS80 の横メルカトル（Krüger の級数）。NAD83 と WGS84 の差（約 1 m）はここでは無視する
@@ -202,18 +287,20 @@ def crop_record():
             "outpost_candidates": OUTPOST_CANDIDATES}
 
 
-def fetch():
-    os.makedirs(OUT_DIR, exist_ok=True)
+def fetch(name):
+    spec = SETS[name]
+    out_dir, manifest_path, _ = set_paths(name)
+    os.makedirs(out_dir, exist_ok=True)
     context = ssl_context()
-    infos = query_commons([photo["title"] for photo in PHOTOS], context)
+    infos = query_commons([photo["title"] for photo in spec["photos"]], context)
     entries = []
-    for photo in PHOTOS:
+    for photo in spec["photos"]:
         info = infos[photo["title"]]
         meta = {key: value.get("value", "") for key, value in info.get("extmetadata", {}).items()}
         license_name = strip_html(meta.get("LicenseShortName"))
         if FORBIDDEN_LICENSE.search(license_name) or not ALLOWED_LICENSE.match(license_name):
             raise RuntimeError("使えないライセンス: %s (%s)" % (photo["title"], license_name))
-        path = os.path.join(OUT_DIR, local_name(photo))
+        path = os.path.join(out_dir, local_name(photo))
         if not (os.path.exists(path) and os.path.getsize(path) == info["size"]):
             print("取得: %s (%.1f MB)" % (photo["title"], info["size"] / 1e6))
             payload = http_get(info["url"], context)
@@ -221,11 +308,7 @@ def fetch():
                 raise RuntimeError("Commons の SHA-1 と一致しない: %s" % photo["title"])
             with open(path, "wb") as stream:
                 stream.write(payload)
-        camera = dict(photo["camera"])
-        if camera.get("lat") is not None:
-            east, north = utm_from_latlon(camera["lat"], camera["lon"])
-            camera.update(east=round(east), north=round(north))
-        entries.append({
+        entry = {
             "id": photo["id"], "role": photo["role"], "file": local_name(photo),
             "commons_title": photo["title"], "page_url": info["descriptionurl"], "original_url": info["url"],
             "author": strip_html(meta.get("Artist")), "credit": strip_html(meta.get("Credit")),
@@ -233,16 +316,25 @@ def fetch():
             "date_taken": strip_html(meta.get("DateTimeOriginal")),
             "width": info["width"], "height": info["height"], "size_bytes": info["size"],
             "sha1": info["sha1"], "sha256": sha256_of(path),
-            "camera": camera, "heading": photo["heading"], "contents": photo["contents"], "compare": photo["compare"],
-        })
-    manifest = {"source": "Wikimedia Commons", "region": "Valley of the Gods, San Juan County, Utah (BLM)",
-                "photos": entries}
-    manifest.update(crop_record())
-    with open(MANIFEST_PATH, "w", encoding="utf-8", newline="\n") as stream:
+        }
+        if "camera" in photo:
+            camera = dict(photo["camera"])
+            if camera.get("lat") is not None:
+                east, north = utm_from_latlon(camera["lat"], camera["lon"])
+                camera.update(east=round(east), north=round(north))
+            entry.update(camera=camera, heading=photo["heading"])
+        else:
+            entry["light"] = photo["light"]
+        entry.update(contents=photo["contents"], compare=photo["compare"])
+        entries.append(entry)
+    manifest = dict(spec["header"], photos=entries)
+    if spec["terrain"]:
+        manifest.update(crop_record())
+    with open(manifest_path, "w", encoding="utf-8", newline="\n") as stream:
         json.dump(manifest, stream, ensure_ascii=False, indent=2)
         stream.write("\n")
-    print("manifest: %s" % MANIFEST_PATH)
-    build_sheet(manifest)
+    print("manifest: %s" % manifest_path)
+    build_sheet(name, manifest)
 
 
 def label_font():
@@ -256,8 +348,9 @@ def label_font():
     return ImageFont.load_default()
 
 
-def build_sheet(manifest):
+def build_sheet(name, manifest):
     from PIL import Image, ImageDraw
+    out_dir, _, sheet_path = set_paths(name)
     font = label_font()
     cell_w, cell_h, label_h, columns = 560, 380, 44, 3
     photos = manifest["photos"]
@@ -265,7 +358,7 @@ def build_sheet(manifest):
     sheet = Image.new("RGB", (columns * cell_w, rows * (cell_h + label_h)), (24, 24, 24))
     draw = ImageDraw.Draw(sheet)
     for index, entry in enumerate(photos):
-        with Image.open(os.path.join(OUT_DIR, entry["file"])) as image:
+        with Image.open(os.path.join(out_dir, entry["file"])) as image:
             image = image.convert("RGB")
             image.thumbnail((cell_w - 10, cell_h - 10))
             x = (index % columns) * cell_w
@@ -277,45 +370,12 @@ def build_sheet(manifest):
             while len(text) > 1 and draw.textlength(text, font=font) > cell_w - 12:
                 text = text[:-2] + "…"
             draw.text((x + 6, y + cell_h + 4 + 18 * line), text, fill=color, font=font)
-    sheet.save(SHEET_PATH)
-    print("一覧: %s (%dx%d)" % (SHEET_PATH, sheet.width, sheet.height))
+    sheet.save(sheet_path)
+    print("一覧: %s (%dx%d)" % (sheet_path, sheet.width, sheet.height))
 
 
-def verify():
-    failures = []
-
-    def check(condition, message):
-        print(("OK   " if condition else "FAIL ") + message)
-        if not condition:
-            failures.append(message)
-
-    check(os.path.exists(MANIFEST_PATH), "manifest.json がある")
-    if not os.path.exists(MANIFEST_PATH):
-        return 1
-    with open(MANIFEST_PATH, encoding="utf-8") as stream:
-        manifest = json.load(stream)
-    photos = manifest.get("photos", [])
-    check([entry["id"] for entry in photos] == [photo["id"] for photo in PHOTOS], "manifest の写真がスクリプトの一覧と一致する")
-    for role, (low, high) in ROLE_COUNTS.items():
-        count = sum(1 for entry in photos if entry["role"] == role)
-        check(low <= count <= high, "%s の写真が %d 枚（%d〜%d 枚）" % (role, count, low, high))
-    for entry in photos:
-        path = os.path.join(OUT_DIR, entry["file"])
-        exists = os.path.exists(path)
-        check(exists and os.path.getsize(path) == entry["size_bytes"] and sha256_of(path) == entry["sha256"],
-              "%s: ファイルがあり大きさと SHA-256 が manifest と一致する" % entry["file"])
-        license_name = entry.get("license", "")
-        check(bool(ALLOWED_LICENSE.match(license_name)) and not FORBIDDEN_LICENSE.search(license_name),
-              "%s: ライセンス %s は PD・CC0・CC BY・CC BY-SA のどれか（NC・ND なし）" % (entry["id"], license_name))
-        missing = [key for key in ("page_url", "original_url", "author", "license_url", "heading", "contents", "compare")
-                   if not entry.get(key)]
-        camera = entry.get("camera", {})
-        if camera.get("source") == "gps":
-            if camera.get("east") is None:
-                missing.append("camera.east")
-        elif not camera.get("note"):
-            missing.append("camera.note")
-        check(not missing, "%s: 記録の欄が揃っている%s" % (entry["id"], "" if not missing else "（欠け: %s）" % ", ".join(missing)))
+def verify_terrain(manifest, check):
+    # 荒野の組だけ: 切り出しの範囲・名前の付いた地形・前哨地の候補が DEM のタイルの内側にあるか
     crop = manifest.get("crop", {})
     check(crop == dict(CROP, width_m=CROP["east_max"] - CROP["east_min"], height_m=CROP["north_max"] - CROP["north_min"]),
           "manifest の範囲がスクリプトの範囲と一致する")
@@ -332,48 +392,98 @@ def verify():
     for candidate in OUTPOST_CANDIDATES:
         inside = CROP["east_min"] <= candidate["east"] <= CROP["east_max"] and CROP["north_min"] <= candidate["north"] <= CROP["north_max"]
         check(inside, "前哨地の候補 %s が範囲の内側" % candidate["id"])
-    if os.path.exists(SHEET_PATH):
+
+
+def verify(name):
+    spec = SETS[name]
+    out_dir, manifest_path, sheet_path = set_paths(name)
+    doc_path = os.path.join(REPO_ROOT, spec["doc"])
+    failures = []
+
+    def check(condition, message):
+        print(("OK   " if condition else "FAIL ") + message)
+        if not condition:
+            failures.append(message)
+
+    print("set=%s" % name)
+    check(os.path.exists(manifest_path), "manifest.json がある")
+    if not os.path.exists(manifest_path):
+        return 1
+    with open(manifest_path, encoding="utf-8") as stream:
+        manifest = json.load(stream)
+    photos = manifest.get("photos", [])
+    check([entry["id"] for entry in photos] == [photo["id"] for photo in spec["photos"]], "manifest の写真がスクリプトの一覧と一致する")
+    for role, (low, high) in spec["role_counts"].items():
+        count = sum(1 for entry in photos if entry["role"] == role)
+        check(low <= count <= high, "%s の写真が %d 枚（%d〜%d 枚）" % (role, count, low, high))
+    if spec["total"]:
+        low, high = spec["total"]
+        check(low <= len(photos) <= high, "写真が全部で %d 枚（%d〜%d 枚）" % (len(photos), low, high))
+    for entry in photos:
+        path = os.path.join(out_dir, entry["file"])
+        exists = os.path.exists(path)
+        check(exists and os.path.getsize(path) == entry["size_bytes"] and sha256_of(path) == entry["sha256"],
+              "%s: ファイルがあり大きさと SHA-256 が manifest と一致する" % entry["file"])
+        license_name = entry.get("license", "")
+        check(bool(ALLOWED_LICENSE.match(license_name)) and not FORBIDDEN_LICENSE.search(license_name),
+              "%s: ライセンス %s は PD・CC0・CC BY・CC BY-SA のどれか（NC・ND なし）" % (entry["id"], license_name))
+        missing = [key for key in spec["fields"] if not entry.get(key)]
+        if spec["terrain"]:
+            camera = entry.get("camera", {})
+            if camera.get("source") == "gps":
+                if camera.get("east") is None:
+                    missing.append("camera.east")
+            elif not camera.get("note"):
+                missing.append("camera.note")
+        check(not missing, "%s: 記録の欄が揃っている%s" % (entry["id"], "" if not missing else "（欠け: %s）" % ", ".join(missing)))
+    if spec["terrain"]:
+        verify_terrain(manifest, check)
+    if os.path.exists(sheet_path):
         from PIL import Image
-        with Image.open(SHEET_PATH) as sheet:
+        with Image.open(sheet_path) as sheet:
             sheet_size = sheet.size
-        newest = max(os.path.getmtime(os.path.join(OUT_DIR, entry["file"])) for entry in photos
-                     if os.path.exists(os.path.join(OUT_DIR, entry["file"])))
-        check(os.path.getmtime(SHEET_PATH) >= newest, "一覧の PNG がある（%dx%d）・写真より新しい" % sheet_size)
+        newest = max(os.path.getmtime(os.path.join(out_dir, entry["file"])) for entry in photos
+                     if os.path.exists(os.path.join(out_dir, entry["file"])))
+        check(os.path.getmtime(sheet_path) >= newest, "一覧の PNG がある（%dx%d）・写真より新しい" % sheet_size)
     else:
         check(False, "一覧の PNG がある")
     with open(GITIGNORE_PATH, encoding="utf-8-sig") as stream:
         ignore_lines = {line.strip() for line in stream}
     for pattern in ("/Assets/Reference/", "/Assets/Terrain/"):
         check(pattern in ignore_lines, ".gitignore に %s がある" % pattern)
-    if os.path.exists(DOC_PATH):
-        with open(DOC_PATH, encoding="utf-8-sig") as stream:
+    if os.path.exists(doc_path):
+        with open(doc_path, encoding="utf-8-sig") as stream:
             doc = stream.read()
-        coordinates = ["%d" % CROP[key] for key in ("east_min", "east_max", "north_min", "north_max")]
-        check(all(value in doc for value in coordinates), "文書に範囲の座標が書いてある")
+        if spec["terrain"]:
+            coordinates = ["%d" % CROP[key] for key in ("east_min", "east_max", "north_min", "north_max")]
+            check(all(value in doc for value in coordinates), "文書に範囲の座標が書いてある")
         check(all(entry["id"] in doc for entry in photos), "文書に写真ごとの節がある")
+        for term in spec["doc_terms"]:
+            check(term in doc, "文書に「%s」が書いてある" % term)
     else:
-        check(False, "文書 %s がある" % os.path.relpath(DOC_PATH, REPO_ROOT))
+        check(False, "文書 %s がある" % spec["doc"])
     print("result=%s" % ("pass" if not failures else "fail (%d)" % len(failures)))
     return 0 if not failures else 1
 
 
 def main():
-    parser = argparse.ArgumentParser(description="荒野の手本の写真を落とし、manifest と一覧を書いて確かめる")
+    parser = argparse.ArgumentParser(description="シーンの手本の写真を落とし、manifest と一覧を書いて確かめる")
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--fetch", action="store_true", help="写真を落として manifest.json と一覧の PNG を書く")
     group.add_argument("--sheet", action="store_true", help="一覧の PNG だけ作り直す")
-    group.add_argument("--verify", action="store_true", help="写真・manifest・範囲・.gitignore・文書を確かめる")
+    group.add_argument("--verify", action="store_true", help="写真・manifest・.gitignore・文書を確かめる")
+    parser.add_argument("--set", choices=sorted(SETS), default="ValleyOfTheGods", help="手本の組（既定は荒野）")
     args = parser.parse_args()
     # 出力をファイルへ保存して読むので、端末の文字コードに依らず UTF-8 で書く
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     if args.fetch:
-        fetch()
+        fetch(args.set)
         return 0
     if args.sheet:
-        with open(MANIFEST_PATH, encoding="utf-8") as stream:
-            build_sheet(json.load(stream))
+        with open(set_paths(args.set)[1], encoding="utf-8") as stream:
+            build_sheet(args.set, json.load(stream))
         return 0
-    return verify()
+    return verify(args.set)
 
 
 if __name__ == "__main__":

@@ -7111,3 +7111,9 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `aux-SCN-WL-ATMOS-INPUT-sensitivity-12b.txt`・`-12c.txt`（と `.json`）入力ごとの表
 - Notes: 今の設定の谷の高さの Mie の消散 22.4 Mm⁻¹ は IMPROVE の霞の濃い日の約 2.1 倍で実測の範囲の外（密度 0.5 は空の帯の明るさの比に合わせた値）。範囲へ下げると地平線の空は青くなる（B÷R 1.47 → 1.61〜1.80）が遠景の帯の赤い岩の増えは減る。実測の柱 0.060 と地表の消散 ≤ 10.5 Mm⁻¹ は今の 1 つの指数の Mie の分布では同時に満たせない。どちらも記録だけで、項目に足すかは計画が決める。USGS の分光ライブラリの標本を帯域で積んだ値は取り出していない（全体 5.1 GB）。新しい試験は足していない
 - Next: TASKS.md の次の未完
+
+### SCN-INT-REFERENCE-SELECT 室内の光の手本の写真を選んで閉じる（2026-10-22、run 20261022-173753 の反復 14）
+- Done: Wikimedia Commons から手本の写真を 5 枚選んで `Assets/Reference/InteriorLight/` に落とした（git 管理外）: window_01 寄木の床に伸びる窓の日だまり（CC BY 4.0、太陽の高さ 39.5°）・window_02 低い太陽の日だまりが奥の壁まで届く作業場（CC BY-SA 4.0、16.3°）・gloss_01 艶のある堅木の床の映り込み（CC BY-SA 3.0）・bleed_01 黄色の漆喰の壁からの色移り（CC BY-SA 3.0）・shafts_01 塵の舞う空気の中の光の筋とレンガの壁（CC BY-SA 4.0）。太陽の高さは EXIF の時刻と位置からの計算。`ReferencePhotos.py` に `--set`（既定 ValleyOfTheGods、InteriorLight を追加）を足し、室内の組は役割ごとの枚数・全体の枚数 4〜6・光の条件の欄・文書の部屋の条件の見出しを確かめる。`Docs/RenderingValidation/InteriorLightReference.md` に写真ごとの比べる所と、写真から決めた部屋（12 × 8 × 5 m、西向きの壁に幅 2.0 × 高さ 3.2 m の窓 3 つ、太陽の高さ 15°・窓の法線から南へ 30°、北の端の壁はレンガ、赤いラグとソファと机の位置、視点 overview・window・corner の位置）を書いた。一覧の PNG を開いて 5 枚の中身を確かめた
+- 証拠（`.harness/runs/20261022-173753/`）: `verify-SCN-INT-REFERENCE-SELECT-1.txt`（`--verify --set InteriorLight` の 31 行すべて OK、result=pass・EXIT=0）、`aux-SCN-INT-REFERENCE-SELECT-valley.txt`（既定の荒野の組の `--verify` が引き続き result=pass・EXIT=0）
+- Notes: 4 つの要素が 1 枚に揃う写真は見つからず、要素ごとに分けた。低い日の写真（window_02）は冬の正午の 16.3° で夕日ではないが、高さの手本として使う。写真の明るさの比はカメラの処理を含むので合否の数値にしない。家具の種類（SCN-GEN-FURNITURE-1・2）は変えていない。新しい試験は足していない
+- Next: TASKS.md の次の未完
