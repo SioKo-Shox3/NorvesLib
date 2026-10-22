@@ -21,9 +21,26 @@
 | bleed_01 | 色の強い壁からの色移り | [Sarasota FL Selby Gardens Payne Mansion inside02](https://commons.wikimedia.org/wiki/File:Sarasota_FL_Selby_Gardens_Payne_Mansion_inside02.jpg) | Ebyabe | CC BY-SA 3.0 | 約 53°（建物と時刻） |
 | shafts_01 | 光の筋（塵の舞う空気） | [Dust dancing in the sunlight P9060755c](https://commons.wikimedia.org/wiki/File:Dust_dancing_in_the_sunlight_P9060755c.jpg) | E.mil.mil | CC BY-SA 4.0 | 25〜35°（筋の傾きからの目安） |
 
-完了条件の 4 つの要素（低い日が大きな窓から差す木の床と漆喰かレンガの壁の部屋・色移り・床の艶・光の筋）に 1 枚以上ずつ当てた。
-1 枚で全部が揃う写真は見つからなかったので、要素ごとに分けて比べる。CC BY・CC BY-SA の写真を比較画像に載せるときは、
-作者とライセンスを画像の脇に書く（`manifest.json` の `author`・`license`・`page_url`）。
+完了条件の 4 つの要素（低い日が大きな窓から差す木の床と漆喰かレンガの壁の部屋・色移り・床の艶・光の筋）のうち、色移り・床の艶・光の筋は
+1 枚ずつ当てた。1 枚目の要素（窓の役割）は、下の「窓の役割の分け方」のとおり window_01 と window_02 の 2 枚の組で満たす。
+CC BY・CC BY-SA の写真を比較画像に載せるときは、作者とライセンスを画像の脇に書く（`manifest.json` の `author`・`license`・`page_url`）。
+
+### 窓の役割の分け方
+
+低い夕日が大きな窓から木の床と漆喰かレンガの壁の部屋に差す写真は、Wikimedia Commons の全文検索・構造化データ（sunlight・golden hour・
+wood flooring）・分類（Sunlight through windows・Sunlight on floors・Sunlight by country ほか約 1 万件）を探しても、許諾の合うものが
+1 枚では見つからなかった。そこで窓の役割を次の 2 枚に分け、それぞれ写っている条件の所だけを比べる。
+
+| 比べる量 | 手本 | この写真で比べない所 |
+|---|---|---|
+| 木の床と漆喰の壁の日向の色、日だまりの縁のぼけ（半影）、日陰の床と壁の照り返し、家具の脚の影 | window_01（午前 10:20・太陽の高さ 39.5°） | 日だまりの長さと奥の壁への届き方（太陽が高く、日だまりが窓際で短い） |
+| 低い日の長い日だまりの形と向き、奥の壁の下部に這い上がる光の帯、照り返しで見える天井の梁 | window_02（冬の正午・太陽の高さ 16.3°） | 床と壁の色・質感（コンクリートの床と波板の壁で、部屋の材と違う） |
+
+- 夕日の色（低い太陽の赤み）の手本は 1 枚も無い。window_02 は冬の正午で、高さは低いが夕方の色ではない。太陽と空の色は大気の式
+  （太陽の高さ 15° のときの透過）に任せ、写真に合わせて手で色を付けない（下の「太陽の高さ」の節と同じ方針）。
+- 夕日の色の手本が欲しくなったら、Commons 以外の出どころ（Flickr の CC BY・CC BY-SA の写真を URL とライセンスを手で記録して）か、
+  ユーザー自身の撮影（夕方に西向きの窓から日が差す木の床の部屋）で、window の 2 枚目（window_02）を差し替える。
+  差し替えたら `ReferencePhotos.py` の `INTERIOR_PHOTOS` とこの表を直し、`--fetch --set InteriorLight` で一覧の PNG を作り直す。
 
 ### window_01 — 寄木の床に伸びる窓の日だまり
 

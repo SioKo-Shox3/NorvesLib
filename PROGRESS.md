@@ -7128,3 +7128,9 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 証拠（`.harness/runs/20261022-173753/`）: `verify-SCN-WL-ATMOS-INPUT-6.txt`（RelWithDebInfo のビルド result=pass、ref_ground_02 の大気の書き出しの撮影 result=pass・EXIT=0）、`verify-SCN-WL-ATMOS-INPUT-7.txt`（`--atmos-ref --expect sky-scatter.json --verify` result=pass・rows=9 failed=0・EXIT=0）、`aux-SCN-WL-ATMOS-INPUT-improve-daily-abext.txt`（IMPROVE の日ごとの分布と入力ごとの割合）、`aux-SCN-WL-ATMOS-INPUT-aeronet-railroad-valley-l2-daily.txt`・`-aod550.txt`（AERONET の取得と 550 nm の分布）
 - Notes: 前の版の「実測の柱と地表の消散は 1 つの指数の分布では同時に満たせない」は代表の平均を範囲の端にした判定だったので取り下げた。IMPROVE の試料は天気で選ばないので、地表の消散は晴天だけの分布でなく全試料の日の分布で代えた。範囲の中の判定は日ごとの分布の 5〜95 % とした（文書に書いた決め方）。密度 0.2・0.1 は柱が 5 % の下で範囲の外になった。新しい試験は足していない
 - Next: TASKS.md の次の未完
+
+### SCN-INT-REFERENCE-SELECT 窓の役割を 2 枚の組で満たす形を文書に書いて閉じる（2026-10-23、run 20261022-173753 の反復 17）
+- Done: 反復 15 の BLOCKED を親が推奨の案 1 で解いたのに沿って、`InteriorLightReference.md` の写真の節の「4 つの要素に 1 枚以上ずつ当てた」を書き直し、「窓の役割の分け方」の節を足した。window_01（木の床・漆喰の壁の日向の色・日だまりの縁のぼけ・照り返し・家具の脚の影。太陽が高いので日だまりの長さは比べない）と window_02（低い日の長い日だまりの形と向き・奥の壁に這い上がる光・梁の照り返し。床と壁の材は比べない）の組で窓の役割を満たす表と、Commons で探した範囲、夕日の色の手本は無いので色は大気の式に任せること、欲しくなったら Commons 以外の出どころかユーザーの撮影で window_02 を差し替える方針を書いた。写真・manifest・スクリプトは変えていない（`subject` の日本語化は反復 15 で済み）。一覧の PNG を開いて 5 枚の中身を確かめた
+- 証拠（`.harness/runs/20261022-173753/`）: `verify-SCN-INT-REFERENCE-SELECT-2.txt`（`--verify --set InteriorLight` の 30 行すべて OK、result=pass・EXIT=0）
+- Notes: 検査は役割・枚数・欄・見出しを確かめるだけで、写真の中身が条件に合うかは見ない（中身は文書の表と一覧の PNG で確かめた）。新しい試験は足していない
+- Next: TASKS.md の次の未完
