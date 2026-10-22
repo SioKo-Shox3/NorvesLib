@@ -354,7 +354,8 @@ Blender で崖の面に置く項目（SCN-WL-CLIFF-SCAN-PLACE・NEAR）と、足
 
 合計: 新しく落としたのは 112 MB（モデル 3 件の 4K の glTF・.bin・色・法線・ARM）と 1.8 MB（cliff_side の高さ）。取得は
 `Scripts/FetchPolyHavenModels.ps1 -Set wasteland`・`Scripts/FetchPolyHavenTextures.ps1 -Set wasteland`（どちらも git 管理外の `Assets/Models/PolyHaven/`・`Assets/Textures/PolyHaven/` へ、MD5 で照合）。
-クックの一覧（`WastelandModels.json`）へは、置く項目で塊の使い方が決まってから足す。
+rock_face_01・02 は SCN-WL-CLIFF-SCAN-PLACE でクックの一覧（`WastelandModels.json`）へ足した。崖の面に置く経路と配置表は
+`WastelandCliffScan.md`。
 
 色の扱い: スキャンのモデルの色は灰色寄り（平均の線形の色で rock_face_01 Y 0.133・R ÷ G 1.31、rock_face_02 0.146・1.34、boulder_01 0.125・1.51）で、
 地衣の緑と青灰の斑がある。形（メッシュと法線）だけをスキャンから取り、色は `cliff_side` の較正した色を塊へ投影して地形の崖とそろえる（SCN-WL-CLIFF-SCAN-NEAR）。

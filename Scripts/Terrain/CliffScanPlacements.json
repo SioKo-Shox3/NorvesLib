@@ -1,0 +1,185 @@
+{
+  "version": 1,
+  "description": "荒野の崖の面に貼るスキャンの塊の配置（Scripts/Terrain/BlenderCliffScan.py が書く。読むのは Game/GameModes/Wasteland/WastelandCliffScan.h）",
+  "coordinate": "engine world: m, +X east, +Y up, +Z south (origin and height datum: Assets/Terrain/ValleyOfTheGods/height.json)",
+  "rotation_convention": "rotation_xyzw is passed to Entity::SetRotation as is; the row-vector world matrix maps a local direction by the inverse of the quaternion's standard rotation",
+  "source": {
+    "generator": "Scripts/Terrain/BlenderCliffScan.py --place",
+    "terrain_mesh_manifest_sha256": "d9fd54839c59045ed501ca2cdb91edefc776cf468adffd89536cf4cd53ac4b58",
+    "blender": "5.2.2 LTS"
+  },
+  "assets": [
+    {
+      "id": "rock_face_01",
+      "mesh": "Assets/Models/PolyHaven/rock_face_01/rock_face_01_4k.gltf",
+      "albedo": "Assets/Models/PolyHaven/rock_face_01/cooked/rock_face_01_albedo",
+      "normal": "Assets/Models/PolyHaven/rock_face_01/cooked/rock_face_01_normal",
+      "orm": "Assets/Models/PolyHaven/rock_face_01/cooked/rock_face_01_orm"
+    },
+    {
+      "id": "rock_face_02",
+      "mesh": "Assets/Models/PolyHaven/rock_face_02/rock_face_02_4k.gltf",
+      "albedo": "Assets/Models/PolyHaven/rock_face_02/cooked/rock_face_02_albedo",
+      "normal": "Assets/Models/PolyHaven/rock_face_02/cooked/rock_face_02_normal",
+      "orm": "Assets/Models/PolyHaven/rock_face_02/cooked/rock_face_02_orm"
+    }
+  ],
+  "placements": [
+    {
+      "name": "battleship_west_01",
+      "asset": "rock_face_01",
+      "position": [
+        -1616.72827,
+        137.7944,
+        -850.6413
+      ],
+      "rotation_xyzw": [
+        -0.28829467,
+        0.50119704,
+        -0.17985702,
+        0.79582608
+      ],
+      "scale": 3.0,
+      "world_bounds_min": [
+        -1620.255,
+        137.436,
+        -857.093
+      ],
+      "world_bounds_max": [
+        -1612.595,
+        152.574,
+        -842.859
+      ],
+      "blender_check": {
+        "anchor_engine": [
+          -1616.37,
+          145.0,
+          -850.0
+        ],
+        "face_normal_engine": [
+          -0.8757,
+          0.0,
+          0.4829
+        ],
+        "face_tilt_degrees": 80.6,
+        "fit_yaw_degrees": -5.0,
+        "fit_pitch_degrees": 5.0,
+        "offset_along_normal_m": 0.06,
+        "rim_gap_p50_p90_max_m": [
+          -0.098,
+          0.509,
+          1.091
+        ],
+        "rim_within_tolerance_fraction": 0.8953,
+        "visible_area_fraction": 0.4075,
+        "vertex_below_top_surface_fraction": 0.5542,
+        "rim_vertices": 888,
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "battleship_west_02",
+      "asset": "rock_face_02",
+      "position": [
+        -1592.21851,
+        165.85448,
+        -828.59344
+      ],
+      "rotation_xyzw": [
+        -0.22467336,
+        0.41466573,
+        -0.10084859,
+        0.87601584
+      ],
+      "scale": 4.0,
+      "world_bounds_min": [
+        -1598.296,
+        163.612,
+        -836.031
+      ],
+      "world_bounds_max": [
+        -1591.515,
+        176.178,
+        -825.285
+      ],
+      "blender_check": {
+        "anchor_engine": [
+          -1595.912,
+          170.0,
+          -830.0
+        ],
+        "face_normal_engine": [
+          -0.7864,
+          0.0,
+          0.6178
+        ],
+        "face_tilt_degrees": 85.8,
+        "fit_yaw_degrees": -5.0,
+        "fit_pitch_degrees": 5.0,
+        "offset_along_normal_m": -1.208,
+        "rim_gap_p50_p90_max_m": [
+          -0.058,
+          0.494,
+          0.961
+        ],
+        "rim_within_tolerance_fraction": 0.9033,
+        "visible_area_fraction": 0.539,
+        "vertex_below_top_surface_fraction": 0.4503,
+        "rim_vertices": 755,
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "battleship_west_03",
+      "asset": "rock_face_01",
+      "position": [
+        -1592.52539,
+        138.00287,
+        -821.85883
+      ],
+      "rotation_xyzw": [
+        -0.2647467,
+        0.44875687,
+        -0.13783355,
+        0.8423351
+      ],
+      "scale": 3.0,
+      "world_bounds_min": [
+        -1596.579,
+        137.663,
+        -828.484
+      ],
+      "world_bounds_max": [
+        -1587.099,
+        152.624,
+        -814.648
+      ],
+      "blender_check": {
+        "anchor_engine": [
+          -1591.151,
+          145.0,
+          -822.0
+        ],
+        "face_normal_engine": [
+          -0.796,
+          0.0,
+          0.6052
+        ],
+        "face_tilt_degrees": 81.4,
+        "fit_yaw_degrees": -5.0,
+        "fit_pitch_degrees": 10.0,
+        "offset_along_normal_m": 0.826,
+        "rim_gap_p50_p90_max_m": [
+          -0.192,
+          0.498,
+          1.514
+        ],
+        "rim_within_tolerance_fraction": 0.9032,
+        "visible_area_fraction": 0.4333,
+        "vertex_below_top_surface_fraction": 0.5384,
+        "rim_vertices": 888,
+        "import_bounds_error_m": 0.0
+      }
+    }
+  ]
+}

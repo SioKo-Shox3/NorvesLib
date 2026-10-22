@@ -202,6 +202,50 @@
       "source_path": "Assets/Models/PolyHaven/rock_09/textures/rock_09_arm_cal_4k.png",
       "package_name": "Wasteland/rock_09_arm.nvpkg",
       "entry_name": "Assets/Models/PolyHaven/rock_09/textures/rock_09_arm_cal_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Models/PolyHaven/rock_face_01/cooked/rock_face_01_albedo",
+      "cook_usage": "orm",
+      "source_path": "Assets/Models/PolyHaven/rock_face_01/textures/rock_face_01_diff_lin_4k.png",
+      "package_name": "Wasteland/rock_face_01_diff.nvpkg",
+      "entry_name": "Assets/Models/PolyHaven/rock_face_01/textures/rock_face_01_diff_lin_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Models/PolyHaven/rock_face_01/cooked/rock_face_01_normal",
+      "cook_usage": "normal",
+      "flip_normal_y": true,
+      "source_path": "Assets/Models/PolyHaven/rock_face_01/textures/rock_face_01_nor_gl_4k.jpg",
+      "package_name": "Wasteland/rock_face_01_nor.nvpkg",
+      "entry_name": "Assets/Models/PolyHaven/rock_face_01/textures/rock_face_01_nor_gl_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Models/PolyHaven/rock_face_01/cooked/rock_face_01_orm",
+      "cook_usage": "orm",
+      "source_path": "Assets/Models/PolyHaven/rock_face_01/textures/rock_face_01_arm_cal_4k.png",
+      "package_name": "Wasteland/rock_face_01_arm.nvpkg",
+      "entry_name": "Assets/Models/PolyHaven/rock_face_01/textures/rock_face_01_arm_cal_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Models/PolyHaven/rock_face_02/cooked/rock_face_02_albedo",
+      "cook_usage": "orm",
+      "source_path": "Assets/Models/PolyHaven/rock_face_02/textures/rock_face_02_diff_lin_4k.png",
+      "package_name": "Wasteland/rock_face_02_diff.nvpkg",
+      "entry_name": "Assets/Models/PolyHaven/rock_face_02/textures/rock_face_02_diff_lin_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Models/PolyHaven/rock_face_02/cooked/rock_face_02_normal",
+      "cook_usage": "normal",
+      "flip_normal_y": true,
+      "source_path": "Assets/Models/PolyHaven/rock_face_02/textures/rock_face_02_nor_gl_4k.jpg",
+      "package_name": "Wasteland/rock_face_02_nor.nvpkg",
+      "entry_name": "Assets/Models/PolyHaven/rock_face_02/textures/rock_face_02_nor_gl_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Models/PolyHaven/rock_face_02/cooked/rock_face_02_orm",
+      "cook_usage": "orm",
+      "source_path": "Assets/Models/PolyHaven/rock_face_02/textures/rock_face_02_arm_cal_4k.png",
+      "package_name": "Wasteland/rock_face_02_arm.nvpkg",
+      "entry_name": "Assets/Models/PolyHaven/rock_face_02/textures/rock_face_02_arm_cal_4k.nvtex"
     }
   ],
   "models": [
@@ -287,6 +331,24 @@
       "fallback_min_triangles": 32768,
       "package_name": "Wasteland/rock_09.nvpkg",
       "entry_name": "Assets/Models/PolyHaven/rock_09/rock_09_4k.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/PolyHaven/rock_face_01/rock_face_01_4k.gltf",
+      "source_path": "Assets/Models/PolyHaven/rock_face_01/rock_face_01_4k.gltf",
+      "extra_sources": [
+        "Assets/Models/PolyHaven/rock_face_01/rock_face_01.bin"
+      ],
+      "package_name": "Wasteland/rock_face_01.nvpkg",
+      "entry_name": "Assets/Models/PolyHaven/rock_face_01/rock_face_01_4k.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/PolyHaven/rock_face_02/rock_face_02_4k.gltf",
+      "source_path": "Assets/Models/PolyHaven/rock_face_02/rock_face_02_4k.gltf",
+      "extra_sources": [
+        "Assets/Models/PolyHaven/rock_face_02/rock_face_02.bin"
+      ],
+      "package_name": "Wasteland/rock_face_02.nvpkg",
+      "entry_name": "Assets/Models/PolyHaven/rock_face_02/rock_face_02_4k.nvmesh"
     }
   ]
 }

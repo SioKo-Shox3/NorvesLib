@@ -24,6 +24,7 @@
 #include "Core/Public/Rendering/Terrain/TerrainHeightField.h"
 #include "Core/Public/Rendering/VolumetricFog.h"
 #include "GameModes/Rendering3DTest/SkySunControl.h"
+#include "GameModes/Wasteland/WastelandCliffScan.h"
 #include "GameModes/Wasteland/WastelandLayout.h"
 #include "GameModes/Wasteland/WastelandFoliage.h"
 #include "GameModes/Wasteland/WastelandTalus.h"
@@ -91,6 +92,12 @@ namespace Game::GameModes
         WastelandPropLoad Props[Layout::kPropKindCount];
         /// 崖錐の岩の散布に使うメッシュの形（落石の種類の読み込みで書き、MegaMesh を作れたら bAvailable を立てる）
         WastelandTalus::TalusMeshShape TalusShapes[WastelandTalus::kTalusMeshCount];
+        /// 崖の面に貼るスキャンの塊の配置表と、素材ごとの読み込み（テクスチャの読み込みの結果が枠を指すので、固定の配列で持つ）
+        WastelandCliffScan::Table CliffScanTable;
+        WastelandPropLoad CliffScanLoads[WastelandCliffScan::kMaxAssets];
+        /// 塊の素材ごとのメッシュの頂点の標本（置いた塊のワールドの範囲と地形に埋まった割合をログに出す。MegaMesh を作ると
+        /// メッシュを手放すので、読み込みのときに写す）
+        VariableArray<NorvesLib::Math::Vector3> CliffScanPoints[WastelandCliffScan::kMaxAssets];
         /// 置いた建物の足元と道（草・低木を撒かない範囲。PlaceProps が書く）
         VariableArray<WastelandFoliage::ExclusionCircle> FoliageBuildingCircles;
         VariableArray<WastelandFoliage::ExclusionRect> FoliageRoadRects;
@@ -250,6 +257,8 @@ namespace Game::GameModes
         constexpr float kViewTalusClearRadius = 6.0f;
         // 崖錐の岩の底の高さを引く頂点を選ぶ元の標本の数の上限（メッシュの頂点を等間隔に間引く。WastelandTalus が凸包の頂点へ絞る）
         constexpr size_t kTalusPointSamples = 2048;
+        // 崖の面の塊のワールドの範囲と埋まった割合を測る頂点の標本の数の上限（メッシュの頂点を等間隔に間引く）
+        constexpr size_t kCliffScanPointSamples = 4096;
         // 崖錐の岩の行（数万）を作る間だけ使う、散布の仕事の列の 1 フレームの時間[ms]。既定の 1 ms では Debug で
         // 数百フレームかかり、行が揃う前に撮影が始まる。シーンの準備ができる前の読み込みの間だけ上げ、作り終えたら戻す
         constexpr float kTalusMassMillisecondsPerFrame = 16.0f;
@@ -986,6 +995,69 @@ namespace Game::GameModes
             }
         }
 
+        /// クック済みのメッシュを解決・解析して load.Mesh と load.PageSource に入れる（材質のテクスチャ 3 枚がクック済みかも確かめる）。
+        /// クック済みが無い・壊れているときは理由を出して false（その種類を置かずに続ける）
+        bool ResolvePropMesh(const TSharedPtr<const Asset::AssetSystem> &assetSystem, WastelandPropLoad &load, const char *id,
+                             const char *meshPath, const char *albedoPath, const char *normalPath, const char *ormPath)
+        {
+            const Asset::AssetResolveResult resolved = assetSystem->ResolveAsset(meshPath, Asset::AssetKind::Model);
+            if (!resolved.UsedCooked())
+            {
+                LOG_WARNING_F("COOKED_MODEL_MISSING scene=wasteland id=%s path=%s クック済みのメッシュがありません。"
+                              "Scripts/CookAssets.ps1 で焼くと置けます",
+                              id, meshPath);
+                return false;
+            }
+            bool bTexturesCooked = true;
+            for (const char *path : {albedoPath, normalPath, ormPath})
+            {
+                if (!assetSystem->FindCookedVariant(AnsiString(path), Asset::AssetKind::Texture).ShouldUseCooked())
+                {
+                    LOG_WARNING_F("COOKED_MODEL_TEXTURES_MISSING scene=wasteland id=%s path=%s "
+                                  "クック済みのテクスチャがありません",
+                                  id, path);
+                    bTexturesCooked = false;
+                }
+            }
+            if (!bTexturesCooked)
+            {
+                return false;
+            }
+            Asset::CookedMeshParseResult parsed = Asset::ParseCookedMesh(resolved.Blob);
+            if (!parsed.Succeeded() || parsed.Mesh.Clusters.empty() || parsed.Mesh.Vertices.empty())
+            {
+                LOG_WARNING_F("COOKED_MODEL_MISSING scene=wasteland id=%s path=%s status=%u "
+                              "クック済みのメッシュを解析できません",
+                              id, meshPath, static_cast<unsigned int>(parsed.Status));
+                return false;
+            }
+            Asset::AssetCookedRange pageRange;
+            if (parsed.Mesh.Pages.size() >= 2 && Asset::AssetSystem::TryMakeCookedRange(resolved, pageRange))
+            {
+                load.PageSource = MakeCookedMeshPageSource(parsed.Mesh, assetSystem->GetCookedFileReader(),
+                                                           pageRange.Request, pageRange.BaseOffset);
+            }
+            load.Mesh = MakeShared<Asset::CookedMeshData>(std::move(parsed.Mesh));
+            return true;
+        }
+
+        /// 材質のテクスチャ 3 枚（アルベド・法線・ORM）の読み込みを始め、load を読み込み中にする
+        void StartPropTextures(TextureResources &textures, const TSharedPtr<WastelandAssembly> &assembly,
+                               WastelandPropLoad &load, const char *id, const char *albedoPath, const char *normalPath,
+                               const char *ormPath)
+        {
+            load.Material.DebugName = id;
+            load.PendingTextureCount = 3;
+            load.bStarted = true;
+            // glTF の模型の基本色は sRGB で符号化されているので、sRGB の形式のまま上げる（標本の前にハードが線形へ戻す）
+            LoadMaterialTexture(textures, assembly, albedoPath, &load.Material.AlbedoTexture, nullptr,
+                                &load.PendingTextureCount, TextureColorEncoding::Srgb);
+            LoadMaterialTexture(textures, assembly, normalPath, &load.Material.NormalTexture,
+                                &load.Material.bNormalTwoChannel, &load.PendingTextureCount);
+            LoadMaterialTexture(textures, assembly, ormPath, &load.Material.ORMTexture, nullptr,
+                                &load.PendingTextureCount);
+        }
+
         /// 小物・建物の置く種類（前哨地の建物と崖の足元の落石。夜の集落では集落の建物・小物と崖の足元の落石）のクック済みメッシュを
         /// 解決・解析し、材質のテクスチャの読み込みを始める。クック済みが無い・壊れている種類は理由を出して読み飛ばす（その種類を置かずに続ける）
         void StartPropLoads(GameModeContext &ctx, const TSharedPtr<const Asset::AssetSystem> &assetSystem,
@@ -1005,44 +1077,11 @@ namespace Game::GameModes
                 }
                 const Layout::PropKindSpec &spec = Layout::GetPropKindSpec(static_cast<Layout::PropKind>(kindIndex));
                 WastelandPropLoad &load = assembly->Props[kindIndex];
-                const Asset::AssetResolveResult resolved = assetSystem->ResolveAsset(spec.MeshPath, Asset::AssetKind::Model);
-                if (!resolved.UsedCooked())
-                {
-                    LOG_WARNING_F("COOKED_MODEL_MISSING scene=wasteland id=%s path=%s クック済みのメッシュがありません。"
-                                  "Scripts/CookAssets.ps1 で焼くと置けます",
-                                  spec.Id, spec.MeshPath);
-                    continue;
-                }
-                bool bTexturesCooked = true;
-                for (const char *path : {spec.AlbedoPath, spec.NormalPath, spec.OrmPath})
-                {
-                    if (!assetSystem->FindCookedVariant(AnsiString(path), Asset::AssetKind::Texture).ShouldUseCooked())
-                    {
-                        LOG_WARNING_F("COOKED_MODEL_TEXTURES_MISSING scene=wasteland id=%s path=%s "
-                                      "クック済みのテクスチャがありません",
-                                      spec.Id, path);
-                        bTexturesCooked = false;
-                    }
-                }
-                if (!bTexturesCooked)
+                if (!ResolvePropMesh(assetSystem, load, spec.Id, spec.MeshPath, spec.AlbedoPath, spec.NormalPath,
+                                     spec.OrmPath))
                 {
                     continue;
                 }
-                Asset::CookedMeshParseResult parsed = Asset::ParseCookedMesh(resolved.Blob);
-                if (!parsed.Succeeded() || parsed.Mesh.Clusters.empty() || parsed.Mesh.Vertices.empty())
-                {
-                    LOG_WARNING_F("COOKED_MODEL_MISSING scene=wasteland id=%s path=%s status=%u "
-                                  "クック済みのメッシュを解析できません",
-                                  spec.Id, spec.MeshPath, static_cast<unsigned int>(parsed.Status));
-                    continue;
-                }
-                Asset::AssetCookedRange pageRange;
-                if (parsed.Mesh.Pages.size() >= 2 && Asset::AssetSystem::TryMakeCookedRange(resolved, pageRange))
-                {
-                    load.PageSource = MakeCookedMeshPageSource(parsed.Mesh, assetSystem->GetCookedFileReader(),
-                                                               pageRange.Request, pageRange.BaseOffset);
-                }
-                load.Mesh = MakeShared<Asset::CookedMeshData>(std::move(parsed.Mesh));
 
                 // ローカルの範囲（拡大前）と表の向き
                 Layout::PropMeshShape &shape = load.Shape;
@@ -1088,25 +1127,64 @@ namespace Game::GameModes
                            static_cast<double>(shape.MaxZ - shape.MinZ), static_cast<double>(openRatio),
                            static_cast<double>(shape.FrontYaw * 180.0f / 3.14159265f));
 
-                load.Material.DebugName = spec.Id;
-                load.PendingTextureCount = 3;
-                load.bStarted = true;
-                // glTF の模型の基本色は sRGB で符号化されているので、sRGB の形式のまま上げる（標本の前にハードが線形へ戻す）
-                LoadMaterialTexture(textures, assembly, spec.AlbedoPath, &load.Material.AlbedoTexture, nullptr,
-                                    &load.PendingTextureCount, TextureColorEncoding::Srgb);
-                LoadMaterialTexture(textures, assembly, spec.NormalPath, &load.Material.NormalTexture,
-                                    &load.Material.bNormalTwoChannel, &load.PendingTextureCount);
-                LoadMaterialTexture(textures, assembly, spec.OrmPath, &load.Material.ORMTexture, nullptr,
-                                    &load.PendingTextureCount);
+                StartPropTextures(textures, assembly, load, spec.Id, spec.AlbedoPath, spec.NormalPath, spec.OrmPath);
                 ++started;
             }
             LOG_INFO_F("WASTELAND_PROP_LOADS kinds=%u started=%u", Layout::kPropKindCount, started);
         }
 
-        /// 読み込みを始めた種類の材質のテクスチャがすべて届いたか
+        /// 崖の面に貼るスキャンの塊の配置表（WastelandCliffScan.h）を読み、素材ごとにクック済みメッシュを解決・解析して、
+        /// 材質のテクスチャの読み込みを始める。配置表が無い・壊れているときは理由を出して塊を置かずに続ける
+        void StartCliffScanLoads(GameModeContext &ctx, const TSharedPtr<const Asset::AssetSystem> &assetSystem,
+                                 const TSharedPtr<WastelandAssembly> &assembly)
+        {
+            String error;
+            if (!WastelandCliffScan::LoadTable(assembly->CliffScanTable, error))
+            {
+                LOG_WARNING_F("WASTELAND_CLIFF_SCAN_TABLE_MISSING %s 崖の面のスキャンの塊を置きません", error.c_str());
+                return;
+            }
+            const WastelandCliffScan::Table &table = assembly->CliffScanTable;
+            auto &textures = ctx.RenderResourcesRef.Textures();
+            uint32_t started = 0;
+            for (uint32_t assetIndex = 0; assetIndex < table.Assets.size(); ++assetIndex)
+            {
+                const WastelandCliffScan::AssetSpec &spec = table.Assets[assetIndex];
+                WastelandPropLoad &load = assembly->CliffScanLoads[assetIndex];
+                if (!ResolvePropMesh(assetSystem, load, spec.Id.c_str(), spec.MeshPath.c_str(), spec.AlbedoPath.c_str(),
+                                     spec.NormalPath.c_str(), spec.OrmPath.c_str()))
+                {
+                    continue;
+                }
+                VariableArray<NorvesLib::Math::Vector3> &points = assembly->CliffScanPoints[assetIndex];
+                const size_t vertexCount = load.Mesh->Vertices.size();
+                const size_t stride =
+                    std::max<size_t>(1, (vertexCount + kCliffScanPointSamples - 1) / kCliffScanPointSamples);
+                points.clear();
+                for (size_t index = 0; index < vertexCount; index += stride)
+                {
+                    const Asset::CookedMeshVertex &vertex = load.Mesh->Vertices[index];
+                    points.push_back(NorvesLib::Math::Vector3(vertex.Position.X, vertex.Position.Y, vertex.Position.Z));
+                }
+                StartPropTextures(textures, assembly, load, spec.Id.c_str(), spec.AlbedoPath.c_str(),
+                                  spec.NormalPath.c_str(), spec.OrmPath.c_str());
+                ++started;
+            }
+            LOG_INFO_F("WASTELAND_CLIFF_SCAN_TABLE path=%s assets=%zu started=%u placements=%zu",
+                       WastelandCliffScan::TablePath().c_str(), table.Assets.size(), started, table.Placements.size());
+        }
+
+        /// 読み込みを始めた種類（小物・建物と崖の面の塊）の材質のテクスチャがすべて届いたか
         bool ArePropTexturesLoaded(const WastelandAssembly &assembly)
         {
             for (const WastelandPropLoad &load : assembly.Props)
+            {
+                if (load.bStarted && load.PendingTextureCount != 0)
+                {
+                    return false;
+                }
+            }
+            for (const WastelandPropLoad &load : assembly.CliffScanLoads)
             {
                 if (load.bStarted && load.PendingTextureCount != 0)
                 {
@@ -1223,6 +1301,139 @@ namespace Game::GameModes
                        static_cast<double>(stats.MinCasterHeight), stats.SupportPoints[0], stats.SupportPoints[1]);
         }
 
+        /// 材質のテクスチャがそろった読み込みを MegaMesh にしてモデルとして登録し、load.MegaMesh に入れる（解析したメッシュは手放す）。
+        /// pTint は材質の BaseColor に掛ける色（無ければ nullptr）。作れないときは理由を出して false
+        bool CreatePropMegaMesh(GameModeContext &ctx, WastelandPropLoad &load, const char *id, const char *meshPath,
+                                const float *pTint)
+        {
+            auto &megaGeometry = ctx.RenderResourcesRef.MegaGeometry();
+            const MaterialCreateData &material = load.Material;
+            if (!material.AlbedoTexture.IsValid() || !material.NormalTexture.IsValid() || !material.ORMTexture.IsValid())
+            {
+                LOG_WARNING_F("WASTELAND_PROP_SKIPPED id=%s 材質のテクスチャを読めないため置きません"
+                              "（albedo=%d normal=%d orm=%d）",
+                              id, material.AlbedoTexture.IsValid() ? 1 : 0, material.NormalTexture.IsValid() ? 1 : 0,
+                              material.ORMTexture.IsValid() ? 1 : 0);
+                load.Mesh.reset();
+                return false;
+            }
+            MegaMeshCreateInfo createInfo;
+            if (!BuildMegaMeshCreateInfoFromCookedMesh(*load.Mesh, createInfo))
+            {
+                LOG_WARNING_F("WASTELAND_PROP_SKIPPED id=%s MegaMesh の入力を作れませんでした", id);
+                load.Mesh.reset();
+                return false;
+            }
+            createInfo.PageSource = load.PageSource;
+            createInfo.Material.AlbedoTexture = material.AlbedoTexture;
+            createInfo.Material.NormalTexture = material.NormalTexture;
+            createInfo.Material.ORMTexture = material.ORMTexture;
+            createInfo.Material.bNormalTwoChannel = material.bNormalTwoChannel;
+            if (pTint != nullptr)
+            {
+                for (uint32_t channel = 0; channel < 3; ++channel)
+                {
+                    createInfo.Material.BaseColor[channel] = pTint[channel];
+                }
+            }
+            createInfo.DebugName = id;
+            const MegaMeshHandle megaMesh = megaGeometry.CreateMegaMesh(createInfo);
+            load.Mesh.reset();
+            if (!megaMesh.IsValid())
+            {
+                LOG_WARNING_F("WASTELAND_PROP_SKIPPED id=%s MegaMesh を作れませんでした", id);
+                return false;
+            }
+            const ModelHandle model = megaGeometry.RegisterModel(megaMesh, id, meshPath);
+            if (!model.IsValid())
+            {
+                megaGeometry.ReleaseMegaMesh(megaMesh);
+                LOG_WARNING_F("WASTELAND_PROP_SKIPPED id=%s モデルとして登録できませんでした", id);
+                return false;
+            }
+            // 同じ種類の全 Entity が 1 つの Model を共有する。シーンを出るときにスコープが返す
+            ctx.ScopeRef.TrackModel(model);
+            load.MegaMesh = megaMesh;
+            return true;
+        }
+
+        /// 配置表の崖の面の塊を置く（素材ごとに MegaMesh を作り、塊ごとに Entity を置く）。置いた塊ごとに、頂点の標本から求めた
+        /// ワールドの範囲と、地形の高さより下にある標本の割合（地形に埋まった割合）を出す（Scripts/Terrain/BlenderCliffScan.py の
+        /// 記録と比べる）
+        void PlaceCliffScans(GameModeContext &ctx, const Terrain::TerrainHeightField &field, WastelandAssembly &assembly)
+        {
+            const WastelandCliffScan::Table &table = assembly.CliffScanTable;
+            for (uint32_t assetIndex = 0; assetIndex < table.Assets.size(); ++assetIndex)
+            {
+                WastelandPropLoad &load = assembly.CliffScanLoads[assetIndex];
+                if (load.bStarted)
+                {
+                    const WastelandCliffScan::AssetSpec &spec = table.Assets[assetIndex];
+                    CreatePropMegaMesh(ctx, load, spec.Id.c_str(), spec.MeshPath.c_str(), nullptr);
+                }
+            }
+            uint32_t placed = 0;
+            for (const WastelandCliffScan::Placement &placement : table.Placements)
+            {
+                const WastelandCliffScan::AssetSpec &spec = table.Assets[placement.AssetIndex];
+                const WastelandPropLoad &load = assembly.CliffScanLoads[placement.AssetIndex];
+                if (!load.MegaMesh.IsValid())
+                {
+                    LOG_WARNING_F("WASTELAND_CLIFF_SCAN_SKIPPED name=%s asset=%s 素材を読めないため置きません",
+                                  placement.Name.c_str(), spec.Id.c_str());
+                    continue;
+                }
+                Entity *object = ctx.ScopeRef.SpawnObject<Entity>();
+                auto *component =
+                    object != nullptr ? ctx.WorldRef.CreateComponent<Component::MegaGeometryComponent>(object) : nullptr;
+                if (component == nullptr)
+                {
+                    continue;
+                }
+                object->SetPosition(placement.Position.x, placement.Position.y, placement.Position.z);
+                object->SetScale(placement.Scale, placement.Scale, placement.Scale);
+                object->SetRotation(placement.Rotation);
+                component->SetMegaMeshHandle(load.MegaMesh);
+                component->SetCastShadow(true);
+                ++placed;
+
+                // Entity の行ベクトルのワールド行列は、ローカルの向きを四元数の標準の回転の逆（共役の回転）で写す
+                const NorvesLib::Math::Quaternion &q = placement.Rotation;
+                const NorvesLib::Math::Quaternion toWorld(-q.x, -q.y, -q.z, q.w);
+                NorvesLib::Math::Vector3 lo(std::numeric_limits<float>::max(), std::numeric_limits<float>::max(),
+                                            std::numeric_limits<float>::max());
+                NorvesLib::Math::Vector3 hi(std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest(),
+                                            std::numeric_limits<float>::lowest());
+                uint32_t inside = 0;
+                const VariableArray<NorvesLib::Math::Vector3> &points = assembly.CliffScanPoints[placement.AssetIndex];
+                for (const NorvesLib::Math::Vector3 &local : points)
+                {
+                    const NorvesLib::Math::Vector3 rotated = toWorld * local;
+                    const NorvesLib::Math::Vector3 world(placement.Position.x + rotated.x * placement.Scale,
+                                                         placement.Position.y + rotated.y * placement.Scale,
+                                                         placement.Position.z + rotated.z * placement.Scale);
+                    lo = NorvesLib::Math::Vector3(std::min(lo.x, world.x), std::min(lo.y, world.y), std::min(lo.z, world.z));
+                    hi = NorvesLib::Math::Vector3(std::max(hi.x, world.x), std::max(hi.y, world.y), std::max(hi.z, world.z));
+                    if (world.y < field.SampleHeight(world.x, world.z))
+                    {
+                        ++inside;
+                    }
+                }
+                LOG_INFO_F("WASTELAND_CLIFF_SCAN_PLACEMENT name=%s asset=%s x=%.3f y=%.3f z=%.3f qx=%.6f qy=%.6f qz=%.6f "
+                           "qw=%.6f scale=%.4f min=%.2f,%.2f,%.2f max=%.2f,%.2f,%.2f inside=%.3f samples=%zu",
+                           placement.Name.c_str(), spec.Id.c_str(), static_cast<double>(placement.Position.x),
+                           static_cast<double>(placement.Position.y), static_cast<double>(placement.Position.z),
+                           static_cast<double>(q.x), static_cast<double>(q.y), static_cast<double>(q.z),
+                           static_cast<double>(q.w), static_cast<double>(placement.Scale), static_cast<double>(lo.x),
+                           static_cast<double>(lo.y), static_cast<double>(lo.z), static_cast<double>(hi.x),
+                           static_cast<double>(hi.y), static_cast<double>(hi.z),
+                           points.empty() ? 0.0 : static_cast<double>(inside) / static_cast<double>(points.size()),
+                           points.size());
+            }
+            LOG_INFO_F("WASTELAND_CLIFF_SCAN placed=%u planned=%zu assets=%zu", placed, table.Placements.size(),
+                       table.Assets.size());
+        }
+
         /// 材質がそろった種類を MegaMesh にし、高さ場から決めた配置に Entity を置き、崖錐の岩を散布で置く。
         /// hideMask で外した建物・崖錐の岩は置かない（草・低木を撒かない範囲は外さないときと同じに残す）。
         /// bNightVillage なら前哨地の代わりに夜の集落の建物と小物を置く
@@ -1230,7 +1441,6 @@ namespace Game::GameModes
                         const Terrain::TerrainSurfaceMask *pMask, WastelandAssembly &assembly, uint32_t hideMask,
                         bool bNightVillage)
         {
-            auto &megaGeometry = ctx.RenderResourcesRef.MegaGeometry();
             Layout::PropMeshShape shapes[Layout::kPropKindCount];
             for (uint32_t kindIndex = 0; kindIndex < Layout::kPropKindCount; ++kindIndex)
             {
@@ -1240,55 +1450,12 @@ namespace Game::GameModes
                 {
                     continue;
                 }
-                const MaterialCreateData &material = load.Material;
-                if (!material.AlbedoTexture.IsValid() || !material.NormalTexture.IsValid() ||
-                    !material.ORMTexture.IsValid())
-                {
-                    LOG_WARNING_F("WASTELAND_PROP_SKIPPED id=%s 材質のテクスチャを読めないため置きません"
-                                  "（albedo=%d normal=%d orm=%d）",
-                                  spec.Id, material.AlbedoTexture.IsValid() ? 1 : 0, material.NormalTexture.IsValid() ? 1 : 0,
-                                  material.ORMTexture.IsValid() ? 1 : 0);
-                    load.Mesh.reset();
-                    continue;
-                }
-                MegaMeshCreateInfo createInfo;
-                if (!BuildMegaMeshCreateInfoFromCookedMesh(*load.Mesh, createInfo))
-                {
-                    LOG_WARNING_F("WASTELAND_PROP_SKIPPED id=%s MegaMesh の入力を作れませんでした", spec.Id);
-                    load.Mesh.reset();
-                    continue;
-                }
-                createInfo.PageSource = load.PageSource;
-                createInfo.Material.AlbedoTexture = material.AlbedoTexture;
-                createInfo.Material.NormalTexture = material.NormalTexture;
-                createInfo.Material.ORMTexture = material.ORMTexture;
-                createInfo.Material.bNormalTwoChannel = material.bNormalTwoChannel;
                 const Layout::PropKind kind = static_cast<Layout::PropKind>(kindIndex);
-                if (kind == Layout::PropKind::Cliff01 || kind == Layout::PropKind::Cliff02)
+                const bool bCliff = kind == Layout::PropKind::Cliff01 || kind == Layout::PropKind::Cliff02;
+                if (!CreatePropMegaMesh(ctx, load, spec.Id, spec.MeshPath, bCliff ? kCliffTint : nullptr))
                 {
-                    for (uint32_t channel = 0; channel < 3; ++channel)
-                    {
-                        createInfo.Material.BaseColor[channel] = kCliffTint[channel];
-                    }
-                }
-                createInfo.DebugName = spec.Id;
-                const MegaMeshHandle megaMesh = megaGeometry.CreateMegaMesh(createInfo);
-                load.Mesh.reset();
-                if (!megaMesh.IsValid())
-                {
-                    LOG_WARNING_F("WASTELAND_PROP_SKIPPED id=%s MegaMesh を作れませんでした", spec.Id);
                     continue;
                 }
-                const ModelHandle model = megaGeometry.RegisterModel(megaMesh, spec.Id, spec.MeshPath);
-                if (!model.IsValid())
-                {
-                    megaGeometry.ReleaseMegaMesh(megaMesh);
-                    LOG_WARNING_F("WASTELAND_PROP_SKIPPED id=%s モデルとして登録できませんでした", spec.Id);
-                    continue;
-                }
-                // 同じ種類の全 Entity が 1 つの Model を共有する。シーンを出るときにスコープが返す
-                ctx.ScopeRef.TrackModel(model);
-                load.MegaMesh = megaMesh;
                 load.Shape.bAvailable = true;
                 shapes[kindIndex] = load.Shape;
                 if (Layout::IsTalusKind(kind))
@@ -1419,6 +1586,11 @@ namespace Game::GameModes
             {
                 PlaceTalusRocks(ctx, field, pMask, assembly,
                                 bNightVillage ? Game::Scenes::kNightVillageSceneId : Game::Scenes::kWastelandSceneId);
+            }
+            // 崖の面の塊は、読み込みを始めたとき（荒野で岩を外さないとき）だけ置く
+            if (!assembly.CliffScanTable.Placements.empty())
+            {
+                PlaceCliffScans(ctx, field, assembly);
             }
         }
     } // namespace
@@ -1682,6 +1854,11 @@ namespace Game::GameModes
                 LogTerrainMaterial(blend, bSurfaceMask, bFarMap);
                 // 岩・崖・建物。地形の上に据えるので、地形を置けるときだけ読む
                 StartPropLoads(ctx, assetSystem, assembly, data.m_bNightVillage);
+                // 崖の面のスキャンの塊（配置表）。荒野だけで、岩を外す撮影（--wasteland-hide=rocks・all）では読まない
+                if (!data.m_bNightVillage && (data.m_HideMask & WastelandHide::Rocks) == 0)
+                {
+                    StartCliffScanLoads(ctx, assetSystem, assembly);
+                }
                 data.m_pAssembly = assembly;
             }
         }

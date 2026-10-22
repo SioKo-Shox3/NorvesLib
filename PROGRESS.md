@@ -6903,3 +6903,22 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 低木の色は見た目で「地面より明るい」と見えたが、測ると株の範囲の Y 0.16〜0.26 は地面 0.37〜0.45 より暗く、差は彩度（R ÷ G 1.75〜1.87 と 2.32〜2.46）だったので、所見は測った値で書いた
   - 試験は足していない
 - Next: ユーザーの判定の後、植物（インポスター・スキャンの葉）・スキャンの礫・NAIP・建物の風化の項目を組む
+
+### SCN-WL-CLIFF-SCAN-PLACE 完了（2026-10-22、run 20261022-144923 の反復 1）
+- Done: Blender で崖の面に置いたスキャンの塊を配置表（`Scripts/Terrain/CliffScanPlacements.json`）に書き出し、荒野のシーンが起動のたびに読んで仮想化ジオメトリの Entity として置く経路を作った。配置を変えても地形の焼き直しは要らない（配置表と素材のクックだけ）。手順と照合は `Docs/RenderingValidation/WastelandCliffScan.md`
+  - エンジン: `Game/GameModes/Wasteland/WastelandCliffScan.{h,cpp}`（配置表の読み込み）、`WastelandRoutine.cpp` に素材ごとの読み込み・MegaMesh 化・塊ごとの Entity（影を落とす）。小物の読み込みと MegaMesh 化は小物と塊で共用の関数に切り出した。`--wasteland-hide=rocks`（all を含む）では読まない
+  - Blender: `Scripts/Terrain/BlenderCliffScan.py`（`--place` 置いて配置表と .blend を書く／`--export` 人が動かした .blend から書き直す／`--render` エンジンと同じカメラで描く／`--compare` エンジンの塊の画素と重ねる）
+  - 素材: rock_face_01・02 のアルベドと粗さを砂岩へ較正（`Scripts/CalibrateScanRockAlbedo.py`、rock_face_01 だけ明暗の指数 0.45）し、`WastelandModels.json` に足して RelWithDebInfo の AssetCook で焼いた
+- 結果: Battleship Rock の南西の上の壁に 3 個（rock_face_01 ×2・rock_face_02 ×1、拡大率 3〜4、約 13〜15 m）。縁の壁からの距離の 90 百分位 0.49〜0.51 m、見える面 0.41〜0.54。エンジンの塊の画素と Blender の塊の画素の IoU は cliff 0.83〜0.90・ref_cliff_01 0.74〜0.79、重心のずれ 0.2〜2.5 画素、重なった画素の深度の差は周りの地形の差と同じ（塊 0.09〜0.66 m・地形 0.12〜0.73 m）。エンジンが出した塊のワールドの範囲は配置表の記録と 0.05〜0.10 m 以内
+- 証拠（`.harness/runs/20261022-144923/`）:
+  - `verify-SCN-WL-CLIFF-SCAN-PLACE-1.txt` Debug の Game のビルド EXIT=0
+  - `-3.txt` RelWithDebInfo のビルド pass・cliff と ref_cliff_01 の 1920×1080 の撮影 result=pass・EXIT=0（白飛び 0・黒つぶれ 0）。`views.Game.log` に `WASTELAND_CLIFF_SCAN placed=3 planned=3`、MEGA_CAPACITY 124 行すべて draw_dropped=0・overflow=0（bvh_overflow=0・visible_list_overflow=0）、最後の GEOMETRY_PAGES は wanted=0・failed=0。`-2.txt` は最初の置き場（西の壁の中ほど。ref_cliff_01 から隠れたので置き直した）の撮影
+  - `aux-SCN-WL-CLIFF-SCAN-PLACE-aov-with.txt`・`-aov-without.txt` 照合の撮影（-Aov・FXAA、塊なしは配置表を退けて撮り、撮った後に戻した。ハッシュ同じ）result=pass、`aux-SCN-WL-CLIFF-SCAN-PLACE-compare.txt` `--compare --verify` result=pass・6 組すべて pass・EXIT=0
+  - 比較図 `scene-capture/SCN-WL-CLIFF-SCAN-PLACE-compare/compare_cliff.png`・`compare_ref_cliff_01.png` と撮影 `scene-capture/SCN-WL-CLIFF-SCAN-PLACE/cliff.png`・`ref_cliff_01.png` を開き、両方の視点で塊が Blender と同じ形・位置に映り、縁が壁から浮いた隙間が見えないことを確かめた
+- Notes:
+  - 置き方の基準（縁の 90 百分位 0.5 m・見える面 0.25 以上）と照合の合格の線（IoU 0.7・重心 3 画素・深度は地形の差 ＋ 0.25 m）は、測った値を見てから決めた。理由は WastelandCliffScan.md（縁を壁に全部入れると見える面が 1〜9 % になる、遠い視点では地形の LOD の差で縁の 1 画素が入れ替わる）
+  - 見え方: 殻は壁から出る部分だけが斑に見え、まとまった岩には見えない。崖の覆い方（下地の壁を下げるか・重ね方・拡大率）は SCN-WL-CLIFF-SCAN-NEAR で決める
+  - 塊なしの照合の撮影は配置表を一時的に退けて撮った（配置表の差し替えの起動引数は Game/GameApplicationHandler.cpp が paths の外なので足していない）
+  - 地形の書き出し（`scene-capture/SCN-WLR-BLENDER-TERRAIN-mesh`、10 月 18 日）はその後の地形の形の変更が無い（材質の AO だけ）ので使った。照合で周りの地形の深度の差も小さかった
+  - 新しい試験は足していない
+- Next: SCN-WL-CLIFF-SCAN-NEAR

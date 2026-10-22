@@ -67,7 +67,7 @@ namespace Game::GameModes
             Clouds = 1u << 0u,
             /// 草・低木
             Foliage = 1u << 1u,
-            /// 崖錐の岩
+            /// 崖錐の岩と、崖の面に貼るスキャンの塊（WastelandCliffScan.h）
             Rocks = 1u << 2u,
             /// 近景の石と礫
             Gravel = 1u << 3u,

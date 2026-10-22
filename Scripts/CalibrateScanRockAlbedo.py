@@ -1,4 +1,5 @@
-﻿# 荒野の足元の落石に使う Poly Haven の岩のスキャン（boulder_01・rock_09）のアルベドを崖の赤褐色の砂岩の色へ寄せた
+﻿# 荒野の足元の落石と崖の面の塊に使う Poly Haven の岩のスキャン（boulder_01・rock_09・rock_face_01・rock_face_02）の
+# アルベドを崖の赤褐色の砂岩の色へ寄せた
 # PNG（<id>_diff_lin_4k.png）と、粗さを乾いた砂岩の値へ寄せた ARM の PNG（<id>_arm_cal_4k.png）を書く。
 # Assets/AssetSets/WastelandModels.json がこの 2 枚をアルベドと ORM として焼く。
 #
@@ -51,6 +52,8 @@ TARGET_GREEN_OVER_BLUE = 1.5
 CHROMA_KEEP = 0.35
 # 元の輝度の明暗（画素の輝度 ÷ 平均の輝度）を残す指数。1 なら元の明暗のまま
 LUMINANCE_CONTRAST = 0.5
+# 岩ごとの明暗の指数（無ければ LUMINANCE_CONTRAST）。rock_face_01 は層の間の割れ目の陰が深く、0.5 では暗い斑の下限を割る
+LUMINANCE_CONTRAST_BY_ID = {"rock_face_01": 0.45}
 # 較正後の輝度の 5 百分位の、平均に対する下限（暗い斑が残っていないか）
 DARK_PERCENTILE_MIN = 0.45
 # 確かめるときの許容（平均の輝度の相対誤差・色の比の相対誤差）
@@ -62,7 +65,8 @@ ROUGHNESS_CONTRAST = 0.5
 ROUGHNESS_MIN = 0.6
 ROUGHNESS_TOLERANCE = 0.02
 
-ROCK_IDS = ["boulder_01", "rock_09"]
+# rock_face_01・02 は崖の面に貼る塊（Scripts/Terrain/CliffScanPlacements.json が置く）。色は落石と同じ目標へ寄せる
+ROCK_IDS = ["boulder_01", "rock_09", "rock_face_01", "rock_face_02"]
 
 
 def srgb_to_linear(encoded):
@@ -138,7 +142,7 @@ def check_arm(rock_id, arm):
     return True
 
 
-def calibrate(linear):
+def calibrate(linear, contrast=LUMINANCE_CONTRAST):
     mean, _ = mean_color(linear)
     pixel_luminance = numpy.maximum(linear @ LUMINANCE.astype(numpy.float32), 1.0e-5)[..., None]
     # 色度（輝度で割った色）の、平均の色度に対する偏り
@@ -147,10 +151,10 @@ def calibrate(linear):
     target = target_color()
     target_chroma = target / TARGET_LUMINANCE
     chroma = target_chroma * numpy.power(deviation, CHROMA_KEEP)
-    # 偏りを掛けた色度の輝度を 1 に戻し、画素の輝度の明暗は LUMINANCE_CONTRAST の指数で縮めて残す
+    # 偏りを掛けた色度の輝度を 1 に戻し、画素の輝度の明暗は contrast の指数で縮めて残す
     chroma /= numpy.maximum(chroma @ LUMINANCE.astype(numpy.float32), 1.0e-5)[..., None]
     mean_luminance = float(mean @ LUMINANCE)
-    shaped = chroma * (mean_luminance * numpy.power(pixel_luminance / mean_luminance, LUMINANCE_CONTRAST))
+    shaped = chroma * (mean_luminance * numpy.power(pixel_luminance / mean_luminance, contrast))
     # 1 に収めた分だけ平均が下がるので、収めた後の平均が目標になるまで倍率を詰める
     _, shaped_luminance = mean_color(shaped)
     scale = TARGET_LUMINANCE / shaped_luminance
@@ -214,7 +218,7 @@ def main():
             continue
         linear = load_linear(path)
         describe(rock_id, "source", linear)
-        encoded, clipped = calibrate(linear)
+        encoded, clipped = calibrate(linear, LUMINANCE_CONTRAST_BY_ID.get(rock_id, LUMINANCE_CONTRAST))
         out_path = calibrated_path(rock_id)
         Image.fromarray(encoded, "RGB").save(out_path)
         print("wrote %s clipped=%.4f" % (os.path.relpath(out_path, REPO_ROOT), clipped))
