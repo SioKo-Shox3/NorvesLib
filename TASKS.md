@@ -2452,12 +2452,12 @@
 - notes: 2026-10-14 親: 荒野の地形は DEM（Valley of the Gods）に替わる（SCN-WL-*）。集落は同じ DEM の範囲の別の平らな所に置く。 2026-10-19 親: verify を RelWithDebInfo に揃え、周回の試験を 1 コマンド 10 分に収まる形にした（Debug の撮影は約 11 分、3 周は 928 秒の実測）。
 
 ## SCN-NIGHT-LIGHTS: 夜の集落に灯りを入れる
-- status: done
+- status: doing
 - done-when: 街灯・松明・焚き火の点光源（暖色。影付きは VSM の点光源の上限の 4 灯までを手前の主役に、残りは影無し）、灯りのガラスと窓の発光（ブルーム）、焚き火の明るさの揺らぎ（時間で揺れる）、RTGI による壁や地面への照り返しを入れる。`street`・`square` の撮影を開いて、灯りの周りが照らされ影が落ちる・窓が光る・白飛びが広がりすぎないことを確かめる。性能はこの項目では測らず、SCN-ACCEPT の夜の最終配置で、影と間接光の内訳から影付きの灯数・影の解像度・更新の設定を判断する。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene night-village -Configuration RelWithDebInfo -Build -RequireAssets -OutDir .harness/runs/scene-capture/SCN-NIGHT-LIGHTS`
 - paths: Game, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Docs/RenderingValidation, Scripts, TASKS.md, PROGRESS.md
-- notes: 点光源の影は 4 灯まで（`PointShadowSnapshot.h` 19 行付近）。 2026-10-12 親: 計測の見直し（ユーザーの指摘「節目に計測を入れても意味があるのかを考えるべき」。計測ごとに、問い・結果で変わる判断・測らずに分からないかの 3 点を書き、書けないものは置かない。Sol の批評を反映）。 2026-10-19 親: verify を RelWithDebInfo に揃え、周回の試験を 1 コマンド 10 分に収まる形にした（Debug の撮影は約 11 分、3 周は 928 秒の実測）。
+- notes: 点光源の影は 4 灯まで（`PointShadowSnapshot.h` 19 行付近）。 2026-10-12 親: 計測の見直し（ユーザーの指摘「節目に計測を入れても意味があるのかを考えるべき」。計測ごとに、問い・結果で変わる判断・測らずに分からないかの 3 点を書き、書けないものは置かない。Sol の批評を反映）。 2026-10-19 親: verify を RelWithDebInfo に揃え、周回の試験を 1 コマンド 10 分に収まる形にした（Debug の撮影は約 11 分、3 周は 928 秒の実測）。 2026-10-22（親）: run 20261022-144923 の反復 3 は完了の信号を出さずに終わり、status は done だが評価者を通っていない（RenderingCoordinator に触れる危険地帯）。次の反復は、反復 3 のコミット（3ec40762・f8f5c7a4）と記録 `Docs/RenderingValidation/NightVillageLights.md` が done-when を満たすかを verify で確かめ、足りない所だけ直して DONE で閉じる（評価者を通すため）。
 
 ## SCN-MATERIAL-GALLERY: 材質ギャラリーを作る
 - status: doing
