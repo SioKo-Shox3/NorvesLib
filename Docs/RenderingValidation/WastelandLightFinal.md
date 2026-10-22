@@ -83,7 +83,25 @@ SCN-WLR-CYCLES-GRAY・LIT は BlenderReference.py の f2795eae（LIT は 5570cce
   鏡面が返す分だけ減らした（`DiffuseIndirect.comp`。命中面の太陽の直接光と同じ層の分け方。灰色の材質の当たりは鏡面を持たないので
   変わらない）。直した後の色度の差は影の崖 0.0079・影の中の地面 0.0033（明るさの比 0.913・0.990）、灰色の rtgi-amount は
   影の崖 0.863・影の中の地面 0.945・色度の差 0.0037 で合格（撮影は `scene-capture/SCN-WL-RTGI-COLOR-RESIDUAL/`）。
-  この節の表の値は直す前の撮影のもので、`--light-final` の組は撮り直す。
+  上の表の値は直す前の撮影のもの。
+
+### 直した後の結果（Game.exe c6e459ee…、入力 17758db1…、コミット 3ead3f53 で撮影）
+
+組を全部撮り直して `--light-final --verify` を通した（5 仕様・10 行合格。報告は `SCN-WL-LIGHT-FINAL/light_final_check.json`）。
+変わったのは rtgi-color の 2 行だけで、ほかの 8 行は直す前と同じ値。
+
+| 仕様 | 行 | 値 | 範囲 | 合否 |
+|---|---|---|---|---|
+| rt-tlas-range | gray ref_cliff_01 影の崖 空の比 | 1.049 | 0.9〜1.1 | 合格 |
+| rt-tlas-range | gray ref_far_01 遠景 空の比 | 1.044 | 0.9〜1.1 | 合格 |
+| shadow-leak | gray ref_cliff_01 影の中の地面 見え方の食い違い | 0.0053 | ≤ 0.03 | 合格 |
+| shadow-leak | gray ref_cliff_01 影の崖 見え方の食い違い | 0.0125 | ≤ 0.05 | 合格 |
+| shadow-pages | lit ref_cliff_02 影の中の地面 見え方の食い違い | 0.0004 | ≤ 0.05 | 合格 |
+| shadow-pages | lit ref_far_01 遠景 見え方の食い違い | 0.0302 | ≤ 0.05 | 合格 |
+| material-ao | lit ref_ground_01 日なたの地面 比 | 0.983 | 0.92〜1.08 | 合格 |
+| material-ao | lit ref_cliff_02 日なたの地面 比 | 0.943 | 0.92〜1.08 | 合格 |
+| rtgi-color | ref_cliff_01 影の崖 色度の差 | 0.0079 | ≤ 0.02 | 合格 |
+| rtgi-color | ref_cliff_01 影の中の地面 色度の差 | 0.0033 | ≤ 0.02 | 合格 |
 
 ## 2. 既定の荒野を写真と並べる
 
@@ -134,7 +152,8 @@ SCN-WLR-CYCLES-GRAY・LIT は BlenderReference.py の f2795eae（LIT は 5570cce
 
 | 撮影 | 置き場 |
 |---|---|
-| 共通の照明の組（FXAA） | `.harness/runs/scene-capture/SCN-WL-LIGHT-FINAL/` |
+| 共通の照明の組（FXAA。照り返しの色を直した後） | `.harness/runs/scene-capture/SCN-WL-LIGHT-FINAL/` |
+| 共通の照明の組（FXAA。照り返しの色を直す前） | `.harness/runs/scene-capture/SCN-WL-LIGHT-FINAL-before-residual/` |
 | 共通の照明の組（既定の TAA。材質の標本の位置で落ちた組） | `.harness/runs/scene-capture/SCN-WL-LIGHT-FINAL-taa/` |
 | 照り返しの入・切の撮り直し | `.harness/runs/scene-capture/SCN-WL-LIGHT-FINAL-repeat/` |
 | 既定の荒野の 6 視点・前哨地・歩き | `.harness/runs/scene-capture/SCN-WL-LIGHT-FINAL-views6/`（`extra/`・`walk/`） |

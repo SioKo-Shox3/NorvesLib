@@ -6860,3 +6860,18 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 灰色の rtgi-amount の影の崖 0.863 は下限 0.85 に近い（この直しで変わらない値）
   - 新しい試験は足していない
 - Next: SCN-WL-LIGHT-FINAL の組を撮り直して `--light-final` を通す
+
+### SCN-WL-RTGI-COLOR-RESIDUAL 差し戻しの直し（2026-10-22、run 20261021-055341 の反復 60）
+- Done: 反復 59 の差し戻し（SCN-WL-LIGHT-FINAL の組が直す前の撮影のまま・`--light-final` が回っていない）を直した。直した後の同じ Game.exe（c6e459ee…、入力 17758db1…、コミット 3ead3f53）で組の 5 つ（gray・gray/engine-sun・gray/engine-sky・lit・bounce-off）を全部撮り直し、`ReferenceCheck.py --light-final --engine-root .harness/runs/scene-capture/SCN-WL-LIGHT-FINAL --verify` を通した。直す前の組は `SCN-WL-LIGHT-FINAL-before-residual/` へ移した。結果の表を `Docs/RenderingValidation/WastelandLightFinal.md` に足した
+- 結果: `--light-final` result=pass・5 仕様・10 行合格。rtgi-color は影の崖 0.0079・影の中の地面 0.0033、ほかの 8 行は直す前と同じ値。組の 5 つとも metrics の失敗なし・inputs.json あり
+- 証拠（`.harness/runs/20261021-055341/`）:
+  - `verify-SCN-WL-RTGI-COLOR-RESIDUAL-9.txt` Debug の Game のビルド EXIT=0
+  - `-10.txt`・`-11.txt` 実材質の入・切の撮影 result=pass、`-12.txt` rtgi-color result=pass（0.0079・0.0033）
+  - `-13.txt`・`-14.txt` 灰色の入・切の撮影 result=pass、`-15.txt` rtgi-amount result=pass（0.8625・0.9449・0.0037）
+  - `-16.txt` 回帰の撮影 after result=pass（4 シーン）
+  - `aux-SCN-WL-RTGI-COLOR-RESIDUAL-light-final-{gray,gray-sun,gray-sky,lit,bounce-off}.txt` 組の撮影 result=pass、`aux-SCN-WL-RTGI-COLOR-RESIDUAL-light-final-check.txt` `--light-final --verify` result=pass・EXIT=0（報告 `scene-capture/SCN-WL-LIGHT-FINAL/light_final_check.json`）
+  - 撮り直した `SCN-WL-LIGHT-FINAL/lit/ref_cliff_01.png` を開き、崩れが無いことを確かめた
+- Notes:
+  - 組の撮影は台本の置き場の変数が空になって `C:\gray` などへ書かれたので、撮影の中身（exe・入力・起動引数）を確かめてから置き場へ移した（Windows PowerShell 5.1 は BOM なしの .ps1 の日本語の行で改行を飲むので、台本の .ps1 は BOM 付きか英数字だけで書く）
+  - 新しい試験は足していない
+- Next: SCN-WL-LIGHT-FINAL（組は撮り直し済みで `--light-final` は通った。残りは項目の verify と基準画像の扱い）
