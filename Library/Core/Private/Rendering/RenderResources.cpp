@@ -133,8 +133,10 @@ namespace NorvesLib::Core::Rendering
         Container::TUniquePtr<GeometryPool> GeometryBuffers;
         // プールの1つの塊の大きさ（Initialize の前に SetGeometryPoolBlockBytes で替えられる）。ページに分けたメッシュは
         // ページを自分と同じ塊にしか置けないので、メッシュの常駐部分で塊が埋まると見えている所のページも読めなくなる。
-        // 256 MB では荒野の 100 区画の常駐部分だけで塊がほぼ埋まったため、1 視点の作業集合が収まる 1 GB にする
-        uint64_t GeometryPoolBlockBytes = 1024ull * 1024ull * 1024ull;
+        // 256 MB では荒野の 100 区画の常駐部分だけで塊がほぼ埋まった。1 GB では荒野の崖の視点（約 3 GB の作業集合）で
+        // 3 つの塊が使用中のページで満杯になり、ページを置けずに追い出しと読み直しが止まらなかったので 2 GB にする
+        // （Initialize で storage buffer の 1 つの束縛の上限 maxStorageBufferRange に抑える）
+        uint64_t GeometryPoolBlockBytes = 2048ull * 1024ull * 1024ull;
         // タイル・ミップテイルのデータと、ジオメトリの区画の中身を、ステージングのリング経由でテクスチャの領域・バッファへ書く経路。
         // リングのバッファは最初の書き込みまで作らない。GPU が止まってから手放す（Shutdown の WaitIdle の後）。
         Container::TUniquePtr<TileUploader> TileUpload;
@@ -1505,6 +1507,15 @@ namespace NorvesLib::Core::Rendering
             }
         }
 #endif
+        // 塊は 1 つの storage buffer として束縛するので、既定の大きさも maxStorageBufferRange（MB 単位に切り下げ）に抑える
+        {
+            constexpr uint64_t BytesPerMb = 1024ull * 1024ull;
+            const uint64_t maxRange = m_Impl->Device ? m_Impl->Device->GetCapabilities().MaxStorageBufferRange : 0;
+            if (maxRange != 0 && m_Impl->GeometryPoolBlockBytes > maxRange)
+            {
+                m_Impl->GeometryPoolBlockBytes = maxRange / BytesPerMb * BytesPerMb;
+            }
+        }
         m_Impl->GeometryBuffers = Container::MakeUnique<GeometryPool>(m_Impl->Device, m_Impl->GeometryPoolBlockBytes);
         m_Impl->SkinnedMeshes = Container::MakeUnique<SkinnedMeshGpuStore>(m_Impl->Device);
         m_Impl->MegaGeometryResources = Container::MakeUnique<MegaGeometryResourceStore>(

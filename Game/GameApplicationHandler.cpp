@@ -198,6 +198,11 @@ namespace Game
 #if NORVES_BUILD_DEVELOPMENT
         constexpr const TCHAR *kMegaLodErrorPxOption = TEXT("--mega-lod-error-px=");
 #endif
+        // --geometry-request-capacity=<件数>: ジオメトリのページの要求の列の 1 枚の容量を替える（開発ビルドだけ。撮影用）。
+        // 環境変数 NORVES_GEOMETRY_PAGE_REQUEST_CAPACITY と同じ効き方をする（描画側が既定の容量〜1048576 に限る）。
+#if NORVES_BUILD_DEVELOPMENT
+        constexpr const TCHAR *kGeometryRequestCapacityOption = TEXT("--geometry-request-capacity=");
+#endif
         // --render-parallel-record=on|off: 監査したパスを区間ごとのリストへ同時に記録するか（既定 on）。
         // off では全パスを 1 本のリストへ記録する。環境変数 NORVES_RENDER_PARALLEL_RECORD（1 で on）で描画側へ渡す。
         constexpr const TCHAR *kRenderParallelRecordOption = TEXT("--render-parallel-record=");
@@ -1302,6 +1307,20 @@ namespace Game
                 char thresholdText[32] = {};
                 std::snprintf(thresholdText, sizeof(thresholdText), "%.9g", static_cast<double>(threshold));
                 _putenv_s("NORVES_MEGA_LOD_ERROR_PX", thresholdText);
+                continue;
+            }
+            if (TryStripPrefix(args[i], kGeometryRequestCapacityOption, sceneValue))
+            {
+                // 描画側の初期化（要求のバッファを作る）より前に環境変数へ渡す
+                uint32_t capacity = 0;
+                if (!TryParseUInt32(sceneValue, capacity) || capacity == 0)
+                {
+                    LOG_ERROR("--geometry-request-capacity は正の整数で指定してください");
+                    return false;
+                }
+                char capacityText[16] = {};
+                std::snprintf(capacityText, sizeof(capacityText), "%u", capacity);
+                _putenv_s("NORVES_GEOMETRY_PAGE_REQUEST_CAPACITY", capacityText);
                 continue;
             }
 #endif

@@ -7031,3 +7031,14 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 見立ての変更: 差 6 は「地平線に近いほど」から「地平線に近い空（ground_02 B÷R 写真 3.30・撮影 1.76）と低い太陽の反対側の空（cliff_01 仰角 16°、5.67 と 2.90）で撮影の青みが約半分、真昼の far_01 は一致」へ。地面 ÷ 青空は撮影が 1.2〜2.9 倍
 - Notes: 新しい試験は足していない
 - Next: TASKS.md の次の未完
+### SCN-WL-GEOM-POOL-PLACEMENT 完了（2026-10-22、run 20261022-173753 の反復 7）
+
+- 変えたこと: (1) ジオメトリのプールの塊の既定を 1 GB → 2 GB にした（`RenderResources.cpp`。既定の大きさも maxStorageBufferRange に抑える）。ページはメッシュと同じ塊にしか置けないので、崖の視点の作業集合（約 3 GB）を 1 GB の塊に分けると 3 塊が使用中のページで満杯になり NoSpace で止まっていた。(2) 開発ビルドの起動引数 `--geometry-request-capacity=<件数>`（`NORVES_GEOMETRY_PAGE_REQUEST_CAPACITY` と同じ働き）。要求の列の既定は 4096 のまま。(3) `ReferenceCheck.py --geom-requests` に、視点を撮る直前の wanted・failed、視点ごとの落ち着くまでの時間（前の視点の撮影〜撮影。初めの視点は SCENE_READY から。上限 120 秒）、Game.log の 10 MB の上限の判定を足し、`--verify` は起動引数の件数を既定の代わりに照合する
+- 証拠（`.harness/runs/20261022-173753/`）:
+  - `verify-SCN-WL-GEOM-POOL-PLACEMENT-1.txt` Debug の Game のビルド EXIT=0
+  - `verify-SCN-WL-GEOM-POOL-PLACEMENT-2.txt` 容量 32768 で既定の荒野の 7 視点を 1 回の起動で続けて撮影 result=pass・EXIT=0
+  - `verify-SCN-WL-GEOM-POOL-PLACEMENT-3.txt` `--geom-requests --verify` result=pass。7 視点とも撮る直前に request_overflow=0・wanted=0・failed=0。落ち着くまで ref_far_01 17.3 秒・ref_far_02 15.3・ref_cliff_01 26.7・ref_cliff_02 14.1・ref_ground_01 10.1・ref_ground_02 7.7・cliff 12.4 秒（前の 1 GB では ref_cliff_01 が 10 分 34 秒）。request_peak 最大 11018。Game.log 4.4 MB。プールは塊 2 個・使用 3769 / 4039 MB、ジオメトリの目標 5190 MB の中（ヒープの使用 9907 / 15280 MB）。ref_cliff_01.png を開き欠けが無いことを確かめた
+  - `verify-SCN-WL-GEOM-POOL-PLACEMENT-4.txt` 回帰の after result=pass（before は `aux-SCN-WL-GEOM-POOL-PLACEMENT-regression-before.txt`）。PSNR mega-bananas 64.88・night-village 71.05・rendering3dtest 105.46・sandbox inf
+  - `aux-SCN-WL-GEOM-POOL-PLACEMENT-mega-gpu.txt` mega-bananas の -GpuTimingFrames 300（前 = 同じ Game.exe に `NORVES_GEOMETRY_POOL_BLOCK_MB=1024`）。GPU 中央値 default 3.934 → 3.892 ms・close 4.352 → 4.368・low 6.273 → 6.272・horizon 3.295 → 2.875。4 視点とも wanted=0・failed=0。VRAM はプールの塊 1024 → 2048 MB（使用 3.6〜7.4 MB）、ヒープの使用 3701 → 4725 MB（+1024 MB）
+- Notes: 小さなシーンも塊 1 個ぶん（+1 GB）の VRAM を先に取る。小さなシーンの塊を小さくするか（作業集合に合わせて塊を作る）は計画が決める。新しい試験は足していない
+- Next: SCN-WL-GEOM-REQUEST-CAPACITY（要求の列の既定を 32768 へ）

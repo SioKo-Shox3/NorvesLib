@@ -20,8 +20,10 @@
 #       結果を <出力先>/geom_settle_check.json に書く（基準は GeomSettle.py の冒頭）。
 #   python Scripts/Terrain/ReferenceCheck.py --geom-requests --capture <出力先> [--verify]
 #       撮影の Game.log の最後の GEOMETRY_PAGES で、ジオメトリのページの要求の列が溢れず（request_overflow=0）、
-#       要求したページが残らない（wanted=0・failed=0）ことを検査し、結果を <出力先>/geom_request_check.json に書く。
-#       --verify は撮影の容量が今の既定と同じで、環境変数で広げていないことも確かめる（基準は GeomRequestCheck.py の冒頭）。
+#       要求したページが残らない（wanted=0・failed=0）こと、視点ごとに 120 秒以内に落ち着くこと、Game.log が大きさの上限に
+#       届かないことを検査し、結果を <出力先>/geom_request_check.json に書く。
+#       --verify は撮影の容量が今の既定（起動引数 geometry-request-capacity=<件数> で撮ったときはその件数）と同じで、
+#       ほかに環境変数で広げていないことも確かめる（基準は GeomRequestCheck.py の冒頭）。
 #
 # 入力のハッシュ（inputs.json）: 種類ごとに決めたパス（INPUT_SETS）の、git が追跡するか無視されていないファイルの中身の SHA-256 を
 # パスの順に並べたものの SHA-256。荒野の撮影では描画のコード・シェーダー・荒野の組み立て・視点の定義・資産の組の定義・撮影の台本・

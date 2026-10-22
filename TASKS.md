@@ -2372,7 +2372,7 @@
 - notes: 台本の名前は目安（`BlenderTerrainView.py`）。変えるなら verify も同じ反復で直す。 2026-10-16 親: SCN-WLR-BLENDER-TERRAIN に含めた（エンジンが描く地形のメッシュをそのまま持ち込む形に替えた）。
 
 ## SCN-WL-GEOM-POOL-PLACEMENT: ジオメトリのページの置き場を、崖の視点の作業集合が置ける既定にする
-- status: todo
+- status: done
 - after: SCN-WL-REVIEW-2
 - done-when: SCN-WL-GEOM-REQUEST-CAPACITY の BLOCKED（`blocked/resolved/SCN-WL-GEOM-REQUEST-CAPACITY-pool.md`）: 要求の列を 32768 にすると溢れは 0 になるが、ref_cliff_01 で置き場が埋まり（`GeometryPageUploadStart::NoSpace`。1 GB の塊 4 個のうち 3 個が使用中のページで満杯、ページは自分のメッシュと同じ塊にしか置けない）、視点の切り替えから 10 分以上 `wanted` が残り、追い出しと読み直しを繰り返す。4096 の間は溢れた使用の印が LRU に届かず、使っているページが外されて見かけ上落ち着いていた（SCN-WL-REVIEW-2 は evicted=7513）。置き方の既定を直す（候補: 塊を大きくする、`NORVES_GEOMETRY_POOL_SPREAD` の分け置きを既定にする、空きのある塊へページを置けるようにする。環境変数で塊 2047 MB にすると ref_cliff_01 は 106 秒で wanted=0・evicted=0）。要求の列の既定はこの項目では 4096 のまま。確かめでは開発ビルドの起動引数 `geometry-request-capacity=<件数>`（この項目で足す。環境変数 `NORVES_GEOMETRY_PAGE_REQUEST_CAPACITY` と同じ働き）で 32768 にする。合否: 32768 で既定の荒野の 7 視点を続けて撮り（前の視点のページが残る形）、`--geom-requests` で各視点の最後の `GEOMETRY_PAGES` が `request_overflow=0`・`wanted=0`・`failed=0`、視点ごとの落ち着くまでの時間が 120 秒以内（`--geom-requests` に足す）、プールの使用量が VRAM の予算の中。Game.log が 10 MB の上限に届かない（届くならログの量を絞る）。mega-bananas の撮影でも落ち着き、VRAM の使用量と GPU 時間（中央値）を前後で記録する。ほかのシーンの見た目を変えない（回帰の撮影）。反復の最初に回帰の撮影の `before` を撮る。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
