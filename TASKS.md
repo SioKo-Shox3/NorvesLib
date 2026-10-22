@@ -2634,11 +2634,11 @@
 - paths: Game, Assets/AssetSets, Scripts, Test/Game/Bridge/CMakeLists.txt, Test/Core/Rendering/CMakeLists.txt, TASKS.md, PROGRESS.md
 - notes: 2026-10-19 親: verify を RelWithDebInfo に揃え、周回の試験を 1 コマンド 10 分に収まる形にした（Debug の撮影は約 11 分、3 周は 928 秒の実測）。
 ## SCN-INT-REFERENCE-SELECT: 室内の光の手本の写真を選ぶ
-- status: doing
+- status: todo
 - done-when: 室内の光のシーンの手本にする実写の写真（パブリックドメイン・CC0・CC BY・CC BY-SA）を 4〜6 枚選ぶ: 低い夕日が大きな窓から差し込む木の床と漆喰かレンガの壁の部屋、色の強い面からの色移り、床の艶の反射、光の筋（塵の舞う空気）。`Assets/Reference/InteriorLight/` に落とし（git 管理外）、manifest（URL・作者・ライセンス・写っている物）を書き、部屋の大きさ・窓の向き・太陽の高さ・家具の並びを写真から決めて `Docs/RenderingValidation/InteriorLightReference.md` に書く。写真の一覧の PNG を開いて確かめる。
 - verify: `python Scripts/Terrain/ReferencePhotos.py --verify --set InteriorLight`
 - paths: Scripts/Terrain, Docs/RenderingValidation, .gitignore, TASKS.md, PROGRESS.md
-- notes: 2026-10-15 ユーザー: 室内の光も「ほぼ実写」の美しさを見るシーン。家具の生成（SCN-GEN-FURNITURE-*）は、この写真に合わせて選び直してよい。`ReferencePhotos.py` に手本の組を選ぶ引数を足してよい。
+- notes: 2026-10-15 ユーザー: 室内の光も「ほぼ実写」の美しさを見るシーン。家具の生成（SCN-GEN-FURNITURE-*）は、この写真に合わせて選び直してよい。`ReferencePhotos.py` に手本の組を選ぶ引数を足してよい。 2026-10-23（親）: 反復 15 の BLOCKED を推奨の案 1 で解いた。Commons を広く探しても 1 枚で条件が揃う許諾の合う写真が無かったので、窓の役割は window_01（木の床・漆喰の壁の日向の色・日だまりの縁のぼけ）と window_02（16.3° の低い日の長い日だまりと奥の壁に這い上がる光）の組で満たす。夕日の色（低い太陽の赤み）の手本は無いので、色は大気の式に任せる。文書（`InteriorLightReference.md`）にこの分け方と、夕日の色の手本が欲しくなったら Commons 以外の出どころかユーザーの撮影で 2 枚目を差し替える方針を書いて閉じる。探した範囲の記録は `blocked/resolved/SCN-INT-REFERENCE-SELECT-window-pair.md`。
 
 ## SCN-GEN-FURNITURE-1: 室内の家具を生成する（机・椅子・本棚・ソファ）
 - status: todo
