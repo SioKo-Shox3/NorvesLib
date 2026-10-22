@@ -6955,7 +6955,7 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 撮影で直接入る起動でも ImGui モジュールを登録する（`--scene=material-gallery` のとき。名札のため）
 - 証拠（`.harness/runs/20261022-144923/`）:
   - `verify-SCN-MATERIAL-GALLERY-1.txt` Debug の Game のビルド EXIT=0
-  - `verify-SCN-MATERIAL-GALLERY-2.txt` 撮影 result=pass・EXIT=0（4 視点、白飛び・黒つぶれの割合はどれも 0.05 % 未満）。ログに `MATERIAL_GALLERY_MATERIALS_READY materials=44`、`MATERIAL_GALLERY_TEXTURE_MISSING` 0 行
+  - `verify-SCN-MATERIAL-GALLERY-2.txt` 撮影 result=pass・EXIT=0（4 視点、白飛びの割合はどれも 0.05 % 未満、黒つぶれの割合は約 1.7〜7.2 %）。ログに `MATERIAL_GALLERY_MATERIALS_READY materials=44`、`MATERIAL_GALLERY_TEXTURE_MISSING` 0 行
   - `verify-SCN-MATERIAL-GALLERY-3.txt` 周回 2 周 result=pass・EXIT=0（2 周とも textures=170・texture_bytes 3.48 GB で増えない）
   - 撮影 `scene-capture/SCN-MATERIAL-GALLERY/` を開いた: close で castle_brick_01 の板の目地が凹み、レンガの上の縁が太陽の側で明るい（法線と視差の向きが合う）。textures で sand_01・asphalt_02・marble_01・aerial_rocks_02・coast_sand_rocks_02 の色と名札が読め、marble は滑らかな照り、asphalt は艶なし（ORM の粗さの並びが合う）。spheres で金属度が右へ鏡面に、粗さが奥へぼけ、軸の名札が読める
 - Notes:
@@ -6986,4 +6986,15 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `street.png` を開いた: 左の家の横の壁と表、奥の家に十字の桟の暖色の窓が光り、周りに薄くブルームがにじむ。戸口・街灯の周りの道と壁の照らされ方は前と同じ。`square.png` は前と同じ（焚き火の石の輪の影、松明の足元。家は画面の端で壁を浅い角度で見るので窓は映らない）。`default.png` では集落の家の窓が光る
   - `verify-SCN-NIGHT-LIGHTS-3/4.txt` は裏の壁の窓を足す前の版（表と左右だけ）の同じ verify
 - Notes: 窓は壁の外に立てた板で、室内の奥行きは無い（壁を切り欠く模型の手直しは生成の側の仕事）。石の物置（wooden_shack）には窓を付けていない。性能は測っていない（SCN-ACCEPT で判断）。新しい試験は足していない
+- Next: TASKS.md の次の未完
+
+### SCN-MATERIAL-GALLERY アルベドを sRGB で読んで閉じる（2026-10-22、run 20261022-173753 の反復 3）
+- Done: 評価者の差し戻し（アルベドが線形化されない）を直した。ギャラリーの読み込み関数 `LoadGalleryTexture` に色空間の引数を足し、アルベドだけ `TextureColorEncoding::Srgb` で読む（Game の既定の互換設定はクック済みの sRGB を UNORM で上げ、符号値 0.5 を線形 0.5 として扱っていた）。法線・ORM・高さは既定のまま
+- 証拠（`.harness/runs/20261022-173753/`）:
+  - `verify-SCN-MATERIAL-GALLERY-3.txt` Debug の Game のビルド EXIT=0
+  - `verify-SCN-MATERIAL-GALLERY-4.txt` 撮影 result=pass・EXIT=0。白飛びの割合は 4 視点とも 0.002 % 未満、黒つぶれの割合 overview(default) 2.6 %・textures 2.7 %・spheres 1.7 %・close 14.3 %（close は手前の台座と板の影が画面の左下を占める）。ログに `MATERIAL_GALLERY_MATERIALS_READY materials=44`、`MATERIAL_GALLERY_TEXTURE_MISSING` 0 行、ERROR 0 行
+  - `verify-SCN-MATERIAL-GALLERY-5.txt` 周回 2 周 result=pass・EXIT=0（2 周とも textures=170・texture_bytes 3.48 GB で増えない）
+  - 撮影 `scene-capture/SCN-MATERIAL-GALLERY/` を開いた: 前の撮影より色の彩度と明暗の差が出た（sand_01 の黄土、aerial_rocks_02 の苔の緑、castle_brick_01 の赤みのレンガと黄色の地衣、石の床の茶）。白っぽかった中間調が沈み、marble_01 は明るいまま。close で目地の凹みと太陽の側の縁の明るさは前と同じ（法線・視差の向き）。spheres の金属度・粗さの名札が読める
+  - `verify-SCN-MATERIAL-GALLERY-1/2.txt` は軸の名札を日本語（金属度・粗さ）にした版の同じ verify。名札の表示のフォントに日本語の字形が無く「??? 0.2」と化けたので、名札は英語の `metallic`・`roughness` に戻した
+- Notes: 軸の名札は id と同じ機械的な表記として英語のまま（名札を描くフォントは英数だけ）。前の記録の「黒つぶれ 0.05 % 未満」の誤記を実測の値に直した。性能は測っていない。新しい試験は足していない
 - Next: TASKS.md の次の未完

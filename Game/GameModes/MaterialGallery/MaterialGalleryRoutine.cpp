@@ -350,11 +350,13 @@ namespace Game::GameModes
         }
 
         /// テクスチャ 1 枚を非同期で読み、結果を member へ入れる。全部そろったら材質を更新して onComplete を呼ぶ。
-        /// 焼いていないテクスチャは読まず（ばらの 4K の元画像を無圧縮で全部常駐させない）、欠けとして数える
+        /// 焼いていないテクスチャは読まず（ばらの 4K の元画像を無圧縮で全部常駐させない）、欠けとして数える。
+        /// アルベドは colorEncoding に Srgb を渡し、sRGB の形式のまま上げて線形へ戻す
         template <typename OnComplete>
         void LoadGalleryTexture(TextureResources &textures, const Asset::AssetSystem *assetSystem,
                                 const TSharedPtr<GalleryPendingMaterial> &pending, const String &path,
-                                TextureHandle MaterialCreateData::*member, bool bNormal, OnComplete onComplete)
+                                TextureHandle MaterialCreateData::*member, bool bNormal, OnComplete onComplete,
+                                TextureColorEncoding colorEncoding = TextureColorEncoding::Default)
         {
             if (assetSystem == nullptr ||
                 !assetSystem->FindCookedVariant(AnsiString(path.c_str()), Asset::AssetKind::Texture).ShouldUseCooked())
@@ -394,7 +396,8 @@ namespace Game::GameModes
                     {
                         onComplete();
                     }
-                });
+                },
+                colorEncoding);
         }
 
         /// 材質 1 つ（無地の仮の材質）を作り、テクスチャの読み込みを始める。そろったら材質を更新する
@@ -466,7 +469,7 @@ namespace Game::GameModes
             };
             TextureResources &textures = ctx.RenderResourcesRef.Textures();
             LoadGalleryTexture(textures, assetSystem, pending, albedoPath, &MaterialCreateData::AlbedoTexture, false,
-                               onComplete);
+                               onComplete, TextureColorEncoding::Srgb);
             LoadGalleryTexture(textures, assetSystem, pending, normalPath, &MaterialCreateData::NormalTexture, true,
                                onComplete);
             LoadGalleryTexture(textures, assetSystem, pending, ormPath, &MaterialCreateData::ORMTexture, false,
