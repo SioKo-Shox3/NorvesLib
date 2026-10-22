@@ -7171,3 +7171,13 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 証拠（`.harness/runs/20261022-173753/`）: `aux-SCN-WLR-OCCLUSION-DIAG-capture-no-finest-2.txt`（`wasteland-finest-lod` を外した同じ組の撮影 result=pass・EXIT=0）、`aux-SCN-WLR-OCCLUSION-DIAG-check-no-finest-2.txt`（`--occlusion-diag --verify` result=pass・EXIT=0）、`verify-SCN-WLR-OCCLUSION-DIAG-1.txt`（Debug の Game のビルド）、`verify-SCN-WLR-OCCLUSION-DIAG-2.txt`・`-3.txt`（verify の組の撮影。2 視点とも 0xC0000409 で落ちる）、`-4.txt`（verify の組の `--occlusion-diag` は撮影が無く fail）。診断の画 `scene-capture/SCN-WLR-OCCLUSION-DIAG-no-finest/occlusion_diag/contact_near.png`・`ref_cliff_01.png` と contact_near の撮影を開いて確かめた
 - Notes: verify の `--wasteland-finest-lod` の撮影は、前からある落ち方（sw_raster_list 256 MB の直後に 0xC0000409。NEXT_FINDINGS の SCN-WL-LOD-DETAIL の記録）で撮れない。verify の組を変えるかは完了条件の変更なので `blocked/SCN-WLR-OCCLUSION-DIAG.md` に選択肢と推奨（finest-lod を外して閉じ、落ち方の直しは別の項目）を書いた。新しい試験は足していない
 - Next: 人の判断を待つ。TASKS.md の次の未完
+### SCN-GEN-FURNITURE-1 室内の家具 4 種を生成してクックする（2026-10-23、run 20261022-173753 の反復 24）
+- Done: `GeneratedModels.json` に `wooden_table`（0.76 m、seed 3101）・`wooden_chair`（0.95 m、seed 3102・`upsample_resolution` 1024）・`bookshelf`（2.2 m、seed 3103・1024）・`sofa`（0.85 m、seed 3104）を足した（15 万面・テクスチャ 2048・用途 `interior-light-furniture`。色と材は `InteriorLightReference.md` の家具の並びに合わせ、机と椅子は明るい樫、本棚は濃い胡桃に本、ソファは淡い灰青の布）。クックの一覧 `Assets/AssetSets/InteriorLightModels.json`（`Cooked/InteriorLight`）を足した
+  - 参照画像（`verify-SCN-GEN-FURNITURE-1-gen1.txt`、`--reference-only`）を開いた: 机は厚い天板・幕板・太い角脚 4 本、椅子は板の座面・背板 2 枚・角脚、本棚は 5 段の棚に背表紙の本、ソファは 3 人掛けのクッションと肘掛け・木の脚
+  - 3D（`-gen2.txt`、`--reuse-reference`）: 机 138 秒・149,986 面（1536）、椅子 129 秒・149,984 面（1024）、本棚 277 秒・149,873 面（1024）、ソファ 279 秒・149,448 面（1536）。実行全体 835 秒、失敗・見送りなし
+  - プレビュー（`-preview.txt`、正面・横・上）を開いた: 4 種とも形が崩れず、浮いた破片や欠けは無い。椅子の背板 2 枚と脚、本棚の棚と本の列、ソファの座と背のクッションがそろう
+  - 寸法（`aux-SCN-GEN-FURNITURE-1-bounds.txt`、幅 × 高さ × 奥行き）: 机 1.90 × 0.76 × 0.91 m、椅子 0.46 × 0.95 × 0.53 m、本棚 1.51 × 2.20 × 0.60 m、ソファ 1.87 × 0.85 × 0.87 m
+  - クック（`-cook.txt`）: RelWithDebInfo の AssetCook で `-OnlyLogicalPath` に 4 種だけを指定して `cooked=4`・`untouched=473`・EXIT=0
+- 証拠（`.harness/runs/20261022-173753/`）: `verify-SCN-GEN-FURNITURE-1-1.txt`（4 種とも `VERIFY_OK ... cooked`、`VERIFY pass`、EXIT=0）
+- Notes: 実寸は高さで合わせるので、本棚の幅（1.51 m、文書は 1.8 m）とソファの幅（1.87 m、文書は 2.2 m）は文書より狭く、本棚の奥行き 0.60 m は深め。部屋に置くときに位置を詰めるか横に伸ばすかは室内の光のシーンを組む項目で決める。新しい試験は足していない（verify の検査が確かめる）
+- Next: TASKS.md の次の未完

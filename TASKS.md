@@ -2662,7 +2662,7 @@
 - notes: 2026-10-15 ユーザー: 室内の光も「ほぼ実写」の美しさを見るシーン。家具の生成（SCN-GEN-FURNITURE-*）は、この写真に合わせて選び直してよい。`ReferencePhotos.py` に手本の組を選ぶ引数を足してよい。 2026-10-23（親）: 反復 15 の BLOCKED を推奨の案 1 で解いた。Commons を広く探しても 1 枚で条件が揃う許諾の合う写真が無かったので、窓の役割は window_01（木の床・漆喰の壁の日向の色・日だまりの縁のぼけ）と window_02（16.3° の低い日の長い日だまりと奥の壁に這い上がる光）の組で満たす。夕日の色（低い太陽の赤み）の手本は無いので、色は大気の式に任せる。文書（`InteriorLightReference.md`）にこの分け方と、夕日の色の手本が欲しくなったら Commons 以外の出どころかユーザーの撮影で 2 枚目を差し替える方針を書いて閉じる。探した範囲の記録は `blocked/resolved/SCN-INT-REFERENCE-SELECT-window-pair.md`。
 
 ## SCN-GEN-FURNITURE-1: 室内の家具を生成する（机・椅子・本棚・ソファ）
-- status: todo
+- status: done
 - done-when: SCN-GEN-BUILDINGS-1 と同じ形で、`wooden_table`・`wooden_chair`・`bookshelf`・`sofa` を 10〜20 万面・テクスチャ 2048 で生成し、参照画像とプレビューを開いて形を確かめ、クックの一覧 `Assets/AssetSets/InteriorLightModels.json` に足してクックが通る。
 - verify: `python Scripts/GenerateSceneModels.py --verify --require-cooked --ids wooden_table,wooden_chair,bookshelf,sofa`
 - paths: Assets/AssetSets, Scripts, Tools/ComfyWorkflows, TASKS.md, PROGRESS.md

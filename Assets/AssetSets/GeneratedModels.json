@@ -131,6 +131,44 @@
       "height_m": 1.2,
       "upsample_resolution": 1024,
       "usage": "night-village-props"
+    },
+    {
+      "id": "wooden_table",
+      "prompt": "a single plain rectangular wooden dining table, one thick flat solid oak tabletop, long and narrow, four thick straight square wooden legs, no tablecloth, nothing on the table, simple sturdy shape, whole object standing on flat floor, three-quarter view, warm honey oak, classic farmhouse interior style",
+      "seed": 3101,
+      "target_faces": 150000,
+      "texture_size": 2048,
+      "height_m": 0.76,
+      "usage": "interior-light-furniture"
+    },
+    {
+      "id": "wooden_chair",
+      "prompt": "a single plain wooden dining chair, one thick solid flat wooden seat, four thick straight square wooden legs, one solid flat wooden backrest panel, no spindles, no cushion, simple sturdy shape, whole object standing on flat floor, three-quarter view, warm honey oak, classic farmhouse interior style",
+      "seed": 3102,
+      "target_faces": 150000,
+      "texture_size": 2048,
+      "height_m": 0.95,
+      "upsample_resolution": 1024,
+      "usage": "interior-light-furniture"
+    },
+    {
+      "id": "bookshelf",
+      "prompt": "a single tall wide wooden bookshelf, a solid dark walnut cabinet with thick side panels, a solid back panel and five thick flat shelves, each shelf filled with rows of old hardcover books standing upright, simple sturdy blocky shape, whole object standing upright on flat floor, front three-quarter view, classic study interior style",
+      "seed": 3103,
+      "target_faces": 150000,
+      "texture_size": 2048,
+      "height_m": 2.2,
+      "upsample_resolution": 1024,
+      "usage": "interior-light-furniture"
+    },
+    {
+      "id": "sofa",
+      "prompt": "a single long three-seat sofa upholstered in pale greyish blue linen fabric, thick soft rectangular seat cushions and back cushions, thick rounded armrests, short wooden feet, smooth simple solid shape, whole object standing on flat floor, front three-quarter view, classic living room interior style",
+      "seed": 3104,
+      "target_faces": 150000,
+      "texture_size": 2048,
+      "height_m": 0.85,
+      "usage": "interior-light-furniture"
     }
   ]
 }

@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "name": "InteriorLightModels",
+  "package_root": "Cooked/InteriorLight",
+  "default_variant": "default",
+  "cook_assets": true,
+  "textures": [],
+  "models": [
+    {
+      "logical_path": "Assets/Models/Generated/wooden_table/wooden_table.glb",
+      "source_path": "Assets/Models/Generated/wooden_table/wooden_table.glb",
+      "fallback_min_triangles": 4096,
+      "package_name": "InteriorLight/wooden_table.nvpkg",
+      "entry_name": "Assets/Models/Generated/wooden_table/wooden_table.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/Generated/wooden_chair/wooden_chair.glb",
+      "source_path": "Assets/Models/Generated/wooden_chair/wooden_chair.glb",
+      "fallback_min_triangles": 4096,
+      "package_name": "InteriorLight/wooden_chair.nvpkg",
+      "entry_name": "Assets/Models/Generated/wooden_chair/wooden_chair.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/Generated/bookshelf/bookshelf.glb",
+      "source_path": "Assets/Models/Generated/bookshelf/bookshelf.glb",
+      "fallback_min_triangles": 4096,
+      "package_name": "InteriorLight/bookshelf.nvpkg",
+      "entry_name": "Assets/Models/Generated/bookshelf/bookshelf.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/Generated/sofa/sofa.glb",
+      "source_path": "Assets/Models/Generated/sofa/sofa.glb",
+      "fallback_min_triangles": 4096,
+      "package_name": "InteriorLight/sofa.nvpkg",
+      "entry_name": "Assets/Models/Generated/sofa/sofa.nvmesh"
+    }
+  ]
+}
