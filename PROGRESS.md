@@ -7280,3 +7280,8 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 証拠（`.harness/runs/20261022-173753/`）: `verify-SCN-GEN-FURNITURE-2-1.txt`（3 種とも `VERIFY_OK ... cooked`、`VERIFY pass`、EXIT=0）
 - Notes: ラグは一様な拡縮なので厚みが 5.2 cm と実物（1〜2 cm）より厚く、短辺は 2.42 m（文書は 2.5 m）。床に置くときに沈めるかは室内の光のシーンを組む項目で決める。ラグの文様は参照画像より暗くぼけている。`CookAssets.ps1` の `-OnlyLogicalPath` は "Assets/" を除いた論理パスで、`pwsh -File` に渡すとカンマ区切りが 1 つの文字列になって照合しない（`-Command` で配列にして渡す。失敗の記録 `aux-SCN-GEN-FURNITURE-2-cook-*.txt`）。生成は反復の外の Cycles の本描画（SCN-WLR-OCCLUSION-CYCLES）の END を待ってから始めた。新しい試験は足していない（verify の検査が確かめる）
 - Next: TASKS.md の次の未完
+
+## 2026-10-23 SCN-WLR-OCCLUSION-CYCLES（run 20261022-173753 の反復 35）
+- Done: 反復の外の本描画（全 8 組・1024 サンプル・種 2・デノイズなし、08:01〜08:13、`END ... EXIT=0`）を verify（`--occlusion --regions ... --verify`、`--trial` なし）で照らし `mode=occlusion sets=8 result=pass`・EXIT=0（`verify-SCN-WLR-OCCLUSION-CYCLES-1.txt`）。必須の 4 層は画素数の下限を満たし種の間の差は最大 0.0001。参照の記録（入力のハッシュ・形・配置・カメラ・照明・サンプル数）と今のエンジンの値（エンジン ÷ Cycles: 崖の溝 1.093・岩の接する帯 1.313 / 1.273・株の根元 1.250、太陽の IoU 0.930 / 0.497 / 0.768・漏れ 0.9 % / 41.9 % / 0 %）を `WastelandOcclusion.md` の「Cycles の本描画」に書いた
+- Next: TASKS.md の次の未完（SCN-WL-OCCLUSION-FIX）
+- Notes: 本描画の Cycles の比は 64 サンプルの試しと小数 3 桁で同じ（区域の平均なので試しで足りていた）。本描画は 1 組 66〜120 秒・8 組 12 分で、見込み（25〜35 分）より短い。rocks-cliff の 2 組も本描画にした（試しが残ると `--trial` なしの照合で落ちるため）。新しい試験は足していない

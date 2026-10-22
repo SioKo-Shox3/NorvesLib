@@ -2536,7 +2536,7 @@
 - notes: 2026-10-22 親が確認 2（SCN-WL-REVIEW-2）とユーザーの所見（地形の造形が荒い・遮蔽による影の落ち方の質が低い）から、ユーザーの順（空と霞 → 遮蔽 → 地形の形 → 植物 → 地面 → 建物）の前半として足した。Sol の批評（写真との比は撮影時の処理を含むので合否にしない・遮蔽の撮影は岩と株を残す・参照の描き直しを項目にする・大きな項目は先に分ける）を反映した。 `--regions` はこの項目で足す。時間の見積もり: マスクと層と集計の台本 40〜50 分、実行 数分。 壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える（未達のまま DONE にしない）。20 分を超える Blender・Cycles の描画は反復の外で起動して BLOCKED で待つ（ログに START と `END ... EXIT=` を書き、入力のハッシュ・出力先を blocked の理由に書く。終わったら親が todo に戻す。その間は GPU を使う別の処理を重ねない）。
 
 ## SCN-WLR-OCCLUSION-CYCLES: 小さな遮蔽の比べの Cycles の正解を、決めた収束の条件まで描く
-- status: todo
+- status: done
 - after: SCN-WLR-OCCLUSION-METRIC
 - done-when: SCN-WLR-OCCLUSION-METRIC で決めた収束の条件（`occlusion-regions.json`）まで、6 組の Cycles の正解を種を 2 つにして描き、参照の記録（入力のハッシュ・形・配置・カメラ・照明・サンプル数）を書く。合計が 20 分を超えるので反復の外で起動して BLOCKED で待ち、終わったら親が todo に戻す。合否: 6 本がそろい、`--occlusion --regions ... --verify`（`--trial` なし）で入力の照合・収束・必須の層の画素数が通る（エンジン ÷ Cycles の値は記録だけ。合否は直しの項目）。今のエンジンの値を `WastelandOcclusion.md` に書く。
 - verify: `python Scripts/Terrain/ReferenceCheck.py --occlusion --engine-root .harness/runs/scene-capture/SCN-WLR-OCCLUSION-SETS --reference .harness/runs/scene-capture/SCN-WLR-OCCLUSION-SETS/cycles --regions Scripts/Terrain/ExpectSpecs/occlusion-regions.json --verify`

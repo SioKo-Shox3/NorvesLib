@@ -231,3 +231,68 @@ Cycles の太陽の可視率は `BlenderOcclusionReference.py` が太陽だけ�
 右下 cavity。太陽: 左上 Cycles の可視率、右上 エンジンの可視率、左下 一致（灰 両方の影・赤 Cycles だけの影〔明るい赤は漏れ〕・青 エンジンだけの影）、
 右下 半影（橙 Cycles・水色 エンジン・黄 両方）と Cycles の影の境（白）。開いて、溝が崖の柱の間、接する帯が岩の根元、根元が株の下の円に乗ること、
 rocks-sun の漏れが岩の地面への影に出ることを確かめた。
+
+## Cycles の本描画（SCN-WLR-OCCLUSION-CYCLES）
+
+上の測り方の収束の条件まで、全 8 組の Cycles の正解を本描画で描いた記録。判定日: 2026-10-23。エンジンの撮影は SCN-WLR-OCCLUSION-SETS のもの
+（Game.exe f6869834）で撮り直していない。
+
+```
+python Scripts/Terrain/OcclusionSets.py --cycles --seeds 2 --out .harness/runs/scene-capture/SCN-WLR-OCCLUSION-SETS
+python Scripts/Terrain/ReferenceCheck.py --occlusion --engine-root .harness/runs/scene-capture/SCN-WLR-OCCLUSION-SETS --reference .harness/runs/scene-capture/SCN-WLR-OCCLUSION-SETS/cycles --regions Scripts/Terrain/ExpectSpecs/occlusion-regions.json --verify
+```
+
+必須の組は 6 組（terrain・rocks・plant）だが、`ReferenceCheck.py --occlusion` は参照の置き場の全組を照らし、試しの描画が残る組は `--trial` なしで
+不合格になるので、rocks-cliff の 2 組も本描画にした。判定は `--trial` なしで `mode=occlusion sets=8 result=pass`。
+
+### 参照の記録
+
+各組の `cycles/<組>/inputs.json` に書かれた値。全組に共通: 1920 × 1080、1024 サンプル・種 2（0 と 1）・デノイズなし、`trial: false`、
+git a7a44425、入力のハッシュ `BlenderOcclusionReference.py` c4db1e43…・`BlenderReference.py` af4cfd5f…・共通の照明 4f18ff20…・
+`OcclusionSets.py` c90dc54e…・`occlusion-regions.json` 3ee7526e…、地形の書き出し `SCN-WLR-BLENDER-TERRAIN-mesh`（manifest d9fd5483…）。
+照明は空だけの組が一様な空の放射輝度 RGB (4000, 5000, 6500)・太陽 0、太陽だけの組が空 0・太陽の法線照度 100000 lx・円盤の角 0.536°。
+
+| 組 | 視点 | カメラの位置（縦の画角） | 太陽の高度 / 方位 | 三角形 | 置いた物 | エンジンの深度 |
+|---|---|---|---|---|---|---|
+| terrain-sky・terrain-sun | ref_cliff_01 | (−2595, 44.37, −1550)（18.3°） | 10° / 172° | 1.21 億 | 地形だけ | 25a22c0f… |
+| rocks-sky・rocks-sun | contact_near | (−2178, 59.91, −1307.5)（60°） | 58.5° / 154° | 1.23 億 | 崖錐の岩とスキャンの崖の塊 14931（配置 73e089d6…） | e77a7383… |
+| rocks-cliff-sky・rocks-cliff-sun | ref_cliff_01 | (−2595, 44.37, −1550)（18.3°） | 10° / 172° | 1.21 億 | スキャンの崖の塊 3（配置 2b3cbc15…） | 0e0a142e… |
+| plant-sky・plant-sun | plant_near | (362.1, −40.01, 1966.4)（60°） | 58.5° / 154° | 0.82 億 | 株 1（PLY b1fb5c34…） | e2d4787d… |
+
+種の出力は `<視点>.cycles.hdr.pfm`（種 0）と `<視点>.cycles.seed1.hdr.pfm`（種 1）で、ハッシュは `seed_outputs` にある。
+時間は 8 組で 12 分（1 組 66〜120 秒。2026-10-23 08:01〜08:13、ログ `aux-SCN-WLR-OCCLUSION-CYCLES-render.txt` の `END ... EXIT=0`）。
+
+### 今のエンジンの値
+
+空だけの組（エンジン ÷ Cycles は記録だけ。合否は直しの項目の SCN-WL-OCCLUSION-FIX が決める）:
+
+| 組 / 視点 | 領域 | 層 | 画素（くぼみ / 対照） | エンジンの比 | Cycles の比 | エンジン ÷ Cycles | 種の間の差 | 必須 |
+|---|---|---|---|---|---|---|---|---|
+| terrain-sky / ref_cliff_01 | groove | 60° 以上・500 m 以上 | 22364 / 31603 | 0.844 | 0.772 | 1.093 | 0.0000 | 必須 |
+| terrain-sky / ref_cliff_01 | groove | 30〜60°・500 m 以上 | 1327 / 85003 | 0.784 | 0.724 | 1.082 | 0.0007 | |
+| rocks-sky / contact_near | contact | 0〜30°・0〜10 m | 79697 / 382548 | 1.013 | 0.771 | 1.313 | 0.0000 | 必須 |
+| rocks-sky / contact_near | contact | 30〜60°・10〜50 m | 15025 / 39170 | 0.982 | 0.772 | 1.273 | 0.0000 | 必須 |
+| rocks-sky / contact_near | contact | 0〜30°・10〜50 m | 17409 / 1962 | 0.991 | 0.791 | 1.253 | 0.0001 | |
+| rocks-sky / contact_near | groove | 60° 以上・10〜50 m | 2852 / 4437 | 0.858 | 0.827 | 1.037 | 0.0001 | |
+| rocks-sky / contact_near | groove | 30〜60°・10〜50 m | 42 / 39170 | 0.773 | 0.745 | 1.037 | 0.0013 | |
+| rocks-cliff-sky / ref_cliff_01 | groove | 60° 以上・500 m 以上 | 22351 / 30835 | 0.844 | 0.772 | 1.093 | 0.0000 | |
+| rocks-cliff-sky / ref_cliff_01 | groove | 30〜60°・500 m 以上 | 1327 / 85000 | 0.784 | 0.724 | 1.082 | 0.0007 | |
+| rocks-cliff-sky / ref_cliff_01 | contact | 60° 以上・500 m 以上 | 57 / 30835 | 0.988 | 0.798 | 1.238 | 0.0018 | |
+| plant-sky / plant_near | plant_root | 0〜30°・0〜10 m | 37537 / 1293107 | 0.979 | 0.783 | 1.250 | 0.0001 | 必須 |
+
+- 必須の 4 層は画素数の下限を満たし、種の間の差は最大 0.0001（条件 0.05）で収束した
+- 本描画の Cycles の比は試し（64 サンプル）と小数 3 桁で同じで、エンジン ÷ Cycles の差は最大 0.001。区域の平均なので試しのサンプル数でも足りていた
+- 岩塊の接する帯と株の根元は Cycles で対照の 0.77〜0.78 倍に暗くなるが、エンジンは 0.98〜1.01 でほぼ暗くならず、エンジン ÷ Cycles は 1.25〜1.31。
+  崖の溝は 1.09
+
+太陽だけの組（値の合否は SCN-WL-SUN-SHADOW-FIX が決める。VSM の記録はエンジンの撮影が同じなので上の試しの表のまま）:
+
+| 組 / 視点 | IoU | 漏れ | 縁の幅 エンジン / Cycles | 受け手の texel |
+|---|---|---|---|---|
+| terrain-sun / ref_cliff_01 | 0.930 | 0.9 % | 1.68 / 1.52 m | 0.125 m |
+| rocks-cliff-sun / ref_cliff_01 | 0.930 | 0.9 % | 1.68 / 1.53 m | 0.125 m |
+| rocks-sun / contact_near | 0.497 | 41.9 % | 0.105 / 0.115 m | 3.9 mm |
+| plant-sun / plant_near | 0.768 | 0 % | 0.026 / 0.027 m | 1.95 mm |
+
+重ね画像（`cycles/rocks-sky/occlusion_regions/contact_near.png`・`cycles/rocks-sun/occlusion_regions/contact_near.png`）を開いた。本描画の Cycles の HDR に
+目立つ雑音は無く、接する帯が岩の根元、漏れ（明るい赤）が大きな岩の地面への影に出る。verify の出力は `.harness/runs/20261022-173753/verify-SCN-WLR-OCCLUSION-CYCLES-1.txt`。
