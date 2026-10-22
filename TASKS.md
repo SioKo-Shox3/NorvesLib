@@ -2371,16 +2371,27 @@
 - paths: Scripts/Terrain, Scripts, Docs/RenderingValidation, TASKS.md, PROGRESS.md
 - notes: 台本の名前は目安（`BlenderTerrainView.py`）。変えるなら verify も同じ反復で直す。 2026-10-16 親: SCN-WLR-BLENDER-TERRAIN に含めた（エンジンが描く地形のメッシュをそのまま持ち込む形に替えた）。
 
-## SCN-WL-GEOM-REQUEST-CAPACITY: ジオメトリのページの要求の列を、既定の荒野で溢れない大きさにする
+## SCN-WL-GEOM-POOL-PLACEMENT: ジオメトリのページの置き場を、崖の視点の作業集合が置ける既定にする
 - status: todo
 - after: SCN-WL-REVIEW-2
+- done-when: SCN-WL-GEOM-REQUEST-CAPACITY の BLOCKED（`blocked/resolved/SCN-WL-GEOM-REQUEST-CAPACITY-pool.md`）: 要求の列を 32768 にすると溢れは 0 になるが、ref_cliff_01 で置き場が埋まり（`GeometryPageUploadStart::NoSpace`。1 GB の塊 4 個のうち 3 個が使用中のページで満杯、ページは自分のメッシュと同じ塊にしか置けない）、視点の切り替えから 10 分以上 `wanted` が残り、追い出しと読み直しを繰り返す。4096 の間は溢れた使用の印が LRU に届かず、使っているページが外されて見かけ上落ち着いていた（SCN-WL-REVIEW-2 は evicted=7513）。置き方の既定を直す（候補: 塊を大きくする、`NORVES_GEOMETRY_POOL_SPREAD` の分け置きを既定にする、空きのある塊へページを置けるようにする。環境変数で塊 2047 MB にすると ref_cliff_01 は 106 秒で wanted=0・evicted=0）。要求の列の既定はこの項目では 4096 のまま。確かめでは開発ビルドの起動引数 `geometry-request-capacity=<件数>`（この項目で足す。環境変数 `NORVES_GEOMETRY_PAGE_REQUEST_CAPACITY` と同じ働き）で 32768 にする。合否: 32768 で既定の荒野の 7 視点を続けて撮り（前の視点のページが残る形）、`--geom-requests` で各視点の最後の `GEOMETRY_PAGES` が `request_overflow=0`・`wanted=0`・`failed=0`、視点ごとの落ち着くまでの時間が 120 秒以内（`--geom-requests` に足す）、プールの使用量が VRAM の予算の中。Game.log が 10 MB の上限に届かない（届くならログの量を絞る）。mega-bananas の撮影でも落ち着き、VRAM の使用量と GPU 時間（中央値）を前後で記録する。ほかのシーンの見た目を変えない（回帰の撮影）。反復の最初に回帰の撮影の `before` を撮る。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -Build -RequireAssets -Width 1920 -Height 1080 -Views ref_far_01,ref_far_02,ref_cliff_01,ref_cliff_02,ref_ground_01,ref_ground_02,cliff -GameArgs geometry-request-capacity=32768 -OutDir .harness/runs/scene-capture/SCN-WL-GEOM-POOL-PLACEMENT`
+- verify: `python Scripts/Terrain/ReferenceCheck.py --geom-requests --capture .harness/runs/scene-capture/SCN-WL-GEOM-POOL-PLACEMENT --verify`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Terrain/CaptureRegression.ps1 -Item SCN-WL-GEOM-POOL-PLACEMENT -Phase after`
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Game, Scripts, Docs/RenderingValidation, TASKS.md, PROGRESS.md
+- notes: 危険地帯（メモリ・ジオメトリのストリーミング。全シーンの VRAM の使い方に効く）。2026-10-22 親が SCN-WL-GEOM-REQUEST-CAPACITY の BLOCKED（推奨の案 1）から足した。溢れの始まりは 0f487546（TAA の View の LOD を 0.5 画素）と既定の AA の TAA 化、a0c76d9e（0.25 画素）で約 4 倍。時間の見積もり: 回帰の before・after 各 7 分、ビルド 3〜6 分、7 視点の撮影 約 10 分（落ち着かない視点があれば長くなる。1 視点の試しから始める）。壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える。
+
+## SCN-WL-GEOM-REQUEST-CAPACITY: ジオメトリのページの要求の列を、既定の荒野で溢れない大きさにする
+- status: todo
+- after: SCN-WL-REVIEW-2, SCN-WL-GEOM-POOL-PLACEMENT
 - done-when: SCN-WL-CLIFF-SCAN-PLACE の BLOCKED（`blocked/resolved/SCN-WL-CLIFF-SCAN-PLACE-request-capacity.md`）: 既定の荒野の撮影で、最後の `GEOMETRY_PAGES` の `request_overflow` が 1000 万件を超える（SCN-WL-REVIEW-2 の 6 視点 13,929,488、SCN-WL-LIGHT-FINAL-views6 14,572,308。10 月 21 日の SCN-WL-SKY-ALTITUDE-views は 0）。1 フレーム約 8400 件の要求・使用の印が `GeometryPageRequestBuffer::DefaultCapacity`（4096）の列に来て、溢れた使用の印が LRU に届かず `evicted`・`parent_wait` が出る。増えた原因の変更（見込み: TAA の View の LOD を 0.25 画素へ細かくした a0c76d9e）を確かめ、既定の容量を荒野の既定の視点で溢れない値へ上げる（要求の重複を減らす直しで足りるならそれを選んでよい）。合否: 既定の荒野の 6 視点と cliff の撮影の最後の `GEOMETRY_PAGES` で `request_overflow=0`・`wanted=0`・`failed=0`（`--geom-requests`。ログを読んで判定する検査はこの項目で作る）。mega-bananas の撮影でも溢れ 0 を確かめ、要求のバッファの大きさと GPU 時間（中央値）を前後で記録する。ほかのシーンの見た目を変えない（回帰の撮影）。反復の最初に回帰の撮影の `before` を撮る。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -Build -RequireAssets -Width 1920 -Height 1080 -Views ref_far_01,ref_far_02,ref_cliff_01,ref_cliff_02,ref_ground_01,ref_ground_02,cliff -OutDir .harness/runs/scene-capture/SCN-WL-GEOM-REQUEST-CAPACITY`
 - verify: `python Scripts/Terrain/ReferenceCheck.py --geom-requests --capture .harness/runs/scene-capture/SCN-WL-GEOM-REQUEST-CAPACITY --verify`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Terrain/CaptureRegression.ps1 -Item SCN-WL-GEOM-REQUEST-CAPACITY -Phase after`
 - paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Scripts, Docs/RenderingValidation, TASKS.md, PROGRESS.md
-- notes: 危険地帯（ジオメトリのストリーミング・公開ヘッダ）。2026-10-22 親が SCN-WL-CLIFF-SCAN-PLACE の BLOCKED（推奨の案 1）から足した。開発ビルドの環境変数 `NORVES_GEOMETRY_PAGE_REQUEST_CAPACITY` と `--wasteland-finest-lod` の 131072 の扱いも、既定の値に合わせて見直す。時間の見積もり: 回帰の before・after 各 7 分、ビルド 3〜6 分、7 視点の撮影 約 8 分。壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える。
+- notes: 危険地帯（ジオメトリのストリーミング・公開ヘッダ）。2026-10-22 親が SCN-WL-CLIFF-SCAN-PLACE の BLOCKED（推奨の案 1）から足した。開発ビルドの環境変数 `NORVES_GEOMETRY_PAGE_REQUEST_CAPACITY` と `--wasteland-finest-lod` の 131072 の扱いも、既定の値に合わせて見直す。時間の見積もり: 回帰の before・after 各 7 分、ビルド 3〜6 分、7 視点の撮影 約 8 分。壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える。 2026-10-22（親）: 反復 4（run 20261022-173753）の BLOCKED（容量を上げると崖の視点で置き場が埋まる）を推奨の案 1 で解いた。置き場の既定の直しを SCN-WL-GEOM-POOL-PLACEMENT として先に立て、この項目はその後に既定の容量を 32768 にして 7 視点・mega-bananas・回帰で確かめて閉じる（`--geom-requests`・要求の読み取りのまとめ・`request_peak` は adfd4b44 のまま）。
 
 ## SCN-WL-CLIFF-SCAN-PLACE: Blender で置いたスキャンの崖をエンジンへ持ち込む経路を作る
 - status: todo
