@@ -7122,3 +7122,9 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - Done: 評価者の non-blocking の指摘どおり、`ReferencePhotos.py` の室内の組の manifest の `subject` を日本語にした。
 - Notes: blocking の指摘（低い夕日が木の床と漆喰かレンガの壁の部屋に差す写真が無い）を直すため、Commons の全文検索・構造化データ・分類（Sunlight by country ほか約 1 万件）・撮影者 W.carter のアップロードを探したが、1 枚で揃う許諾済みの写真は見つからなかった。条件を 2 枚の組で満たすとみなすか、出どころを広げるかは完了条件の変更なので `blocked/SCN-INT-REFERENCE-SELECT.md` に選択肢と推奨（2 枚の組）を書いた。
 - Next: 人の判断を待つ。TASKS.md の次の未完
+
+### SCN-WL-ATMOS-INPUT 実測の範囲を代表の平均と日ごとの観測の範囲に分け、写真へ近づく候補を保留の項目にして閉じる（2026-10-23、run 20261022-173753 の反復 16）
+- Done: 親の再開の条件 (1)(2)(3) に沿って閉じた。`WastelandAtmosphereReference.md` の範囲の節を、代表の平均（EPA の技術補遺の 20 % clearest / most impaired days の平均。most impaired は人為の寄与で選んだ日で上限ではないと明記、Railroad Valley の平均 0.060）と、日ごとの観測の範囲（IMPROVE の RHR 要約データ 2025-08-26 版の日ごとの `ABext`、コロラド高原の 4 地点・2014〜2018 年・2281 日: 5 % 2.7・50 % 7.9・95 % 18.9 Mm⁻¹。AERONET Railroad_Valley の Level 2.0 の日平均・2001〜2025 年・5916 日の 550 nm: 5 % 0.015・50 % 0.044・75 % 0.072・95 % 0.146）に分けて書き直し、試した入力ごとに範囲の中か外かと分布の位置を取り直した。写真へ近づく 2 入力（尺度高さ 2400 m・密度 1.0）は柱が範囲の中、地表の消散が 95 % の上（その値以上の日 1.5 %・0.7 %）。両方が範囲の中の入力（密度 0.25・尺度高さ 1200 m・0.15 で 2400 m）はどれも写真から離れる向き。候補の値と同じ入力での `--solve` の解き直しと空の白みの評価を SCN-WL-ATMOS-CANDIDATE（backlog）としてこの項目の直後に足した。既定の値は変えていない。新しい感度の撮影はしていない（反復 12・13 の表を使った）
+- 証拠（`.harness/runs/20261022-173753/`）: `verify-SCN-WL-ATMOS-INPUT-6.txt`（RelWithDebInfo のビルド result=pass、ref_ground_02 の大気の書き出しの撮影 result=pass・EXIT=0）、`verify-SCN-WL-ATMOS-INPUT-7.txt`（`--atmos-ref --expect sky-scatter.json --verify` result=pass・rows=9 failed=0・EXIT=0）、`aux-SCN-WL-ATMOS-INPUT-improve-daily-abext.txt`（IMPROVE の日ごとの分布と入力ごとの割合）、`aux-SCN-WL-ATMOS-INPUT-aeronet-railroad-valley-l2-daily.txt`・`-aod550.txt`（AERONET の取得と 550 nm の分布）
+- Notes: 前の版の「実測の柱と地表の消散は 1 つの指数の分布では同時に満たせない」は代表の平均を範囲の端にした判定だったので取り下げた。IMPROVE の試料は天気で選ばないので、地表の消散は晴天だけの分布でなく全試料の日の分布で代えた。範囲の中の判定は日ごとの分布の 5〜95 % とした（文書に書いた決め方）。密度 0.2・0.1 は柱が 5 % の下で範囲の外になった。新しい試験は足していない
+- Next: TASKS.md の次の未完
