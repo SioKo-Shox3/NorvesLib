@@ -1,8 +1,8 @@
 {
   "version": 1,
   "description": "荒野の崖の面に貼るスキャンの塊の配置（Scripts/Terrain/BlenderCliffScan.py が書く。読むのは Game/GameModes/Wasteland/WastelandCliffScan.h）",
-  "coordinate": "engine world: m, +X east, +Y up, +Z south (origin and height datum: Assets/Terrain/ValleyOfTheGods/height.json)",
-  "rotation_convention": "rotation_xyzw is passed to Entity::SetRotation as is; the row-vector world matrix maps a local direction by the inverse of the quaternion's standard rotation",
+  "coordinate": "エンジンのワールド座標: m、+X 東・+Y 上・+Z 南（原点と高さの基準は Assets/Terrain/ValleyOfTheGods/height.json）",
+  "rotation_convention": "rotation_xyzw はそのまま Entity::SetRotation に渡す。行ベクトルのワールド行列は、ローカルの向きを四元数の標準の回転の逆で写す",
   "source": {
     "generator": "Scripts/Terrain/BlenderCliffScan.py --place",
     "terrain_mesh_manifest_sha256": "d9fd54839c59045ed501ca2cdb91edefc776cf468adffd89536cf4cd53ac4b58",

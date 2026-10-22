@@ -137,6 +137,9 @@ COMPARE_RING_PX = 6
 # 拡大の倍率と余白[画素]
 COMPARE_ZOOM = 4
 COMPARE_CROP_PAD_PX = 24
+# 比較図の添え書きの字体（日本語が描ける順に探す。CompareLight.py と同じ）
+LABEL_FONT_PATHS = ("C:/Windows/Fonts/YuGothM.ttc", "C:/Windows/Fonts/meiryo.ttc", "C:/Windows/Fonts/msgothic.ttc")
+LABEL_FONT_SIZE = 16
 
 
 # ---- 塊の素材のメッシュ（glTF を numpy で読む。Blender の読み込みと同じ形） ----
@@ -273,9 +276,9 @@ def write_table(roots, source, extra=None):
         "version": 1,
         "description": "荒野の崖の面に貼るスキャンの塊の配置（Scripts/Terrain/BlenderCliffScan.py が書く。"
                        "読むのは Game/GameModes/Wasteland/WastelandCliffScan.h）",
-        "coordinate": "engine world: m, +X east, +Y up, +Z south (origin and height datum: Assets/Terrain/ValleyOfTheGods/height.json)",
-        "rotation_convention": "rotation_xyzw is passed to Entity::SetRotation as is; the row-vector world matrix maps a local "
-                               "direction by the inverse of the quaternion's standard rotation",
+        "coordinate": "エンジンのワールド座標: m、+X 東・+Y 上・+Z 南（原点と高さの基準は Assets/Terrain/ValleyOfTheGods/height.json）",
+        "rotation_convention": "rotation_xyzw はそのまま Entity::SetRotation に渡す。行ベクトルのワールド行列は、"
+                               "ローカルの向きを四元数の標準の回転の逆で写す",
         "source": source,
         "assets": [ASSETS[asset_id] for asset_id in used],
         "placements": placements,
@@ -776,7 +779,9 @@ def outline(mask):
 
 
 def run_compare(args):
-    from PIL import Image, ImageDraw
+    from PIL import Image, ImageDraw, ImageFont
+    font_path = next((path for path in LABEL_FONT_PATHS if os.path.isfile(path)), None)
+    font = ImageFont.truetype(font_path, LABEL_FONT_SIZE) if font_path else ImageFont.load_default()
     views = [v for v in args.views.split(",") if v]
     os.makedirs(args.out, exist_ok=True)
     report = {"views": {}, "iou_min": COMPARE_IOU_MIN, "centroid_max_px": COMPARE_CENTROID_MAX_PX,
@@ -841,11 +846,11 @@ def run_compare(args):
         canvas.paste(blender_img.resize(half, Image.LANCZOS), (0, 28))
         canvas.paste(engine_img.resize(half, Image.LANCZOS), (half[0], 28))
         draw = ImageDraw.Draw(canvas)
-        draw.text((8, 6), f"{view}: Blender (left) | engine (right)", fill=(255, 255, 255))
+        draw.text((8, 4), f"{view}: 左 Blender／右 エンジン", fill=(255, 255, 255), font=font)
         x = 0
-        for crop, title in zip(crops, ("Blender", "engine", "engine + outlines (red Blender, cyan engine)")):
+        for crop, title in zip(crops, ("Blender", "エンジン", "エンジン＋輪郭（赤 Blender・水色 エンジン）")):
             canvas.paste(crop, (x, top_h + 28))
-            draw.text((x + 8, top_h + 8), f"{title} x{zoom} [{x0},{y0}]-[{x1},{y1}]", fill=(255, 255, 255))
+            draw.text((x + 8, top_h + 4), f"{title} ×{zoom} [{x0},{y0}]-[{x1},{y1}]", fill=(255, 255, 255), font=font)
             x += crop.width
         path = os.path.join(args.out, f"compare_{view}.png")
         canvas.save(path)

@@ -6922,3 +6922,10 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 地形の書き出し（`scene-capture/SCN-WLR-BLENDER-TERRAIN-mesh`、10 月 18 日）はその後の地形の形の変更が無い（材質の AO だけ）ので使った。照合で周りの地形の深度の差も小さかった
   - 新しい試験は足していない
 - Next: SCN-WL-CLIFF-SCAN-NEAR
+
+### SCN-WL-CLIFF-SCAN-PLACE 差し戻し（2026-10-22、run 20261022-144923 の反復 2）— BLOCKED
+- Done: 差し戻しの non-blocking を直した。比較図の添え書き（`BlenderCliffScan.py --compare`）を日本語にし、日本語の字体（CompareLight.py と同じ探し方）で描く。配置表の `coordinate`・`rotation_convention` の説明文を日本語にした（台本の書き出しと `CliffScanPlacements.json` の両方。エンジンはこの 2 つを読まない）
+  - `aux-SCN-WL-CLIFF-SCAN-PLACE-compare-ja.txt` `--compare --verify` result=pass・EXIT=0。`scene-capture/SCN-WL-CLIFF-SCAN-PLACE-compare/compare_cliff.png` を開き、日本語の添え書きが化けずに描けることを確かめた
+- 止めた理由: 「溢れ 0」のうち、ジオメトリのページの要求の列の溢れ（`request_overflow=10321510 request_capacity=4096`）は塊を足す前の既定の荒野の撮影から出ている（SCN-WL-REVIEW-2 で 13929488、-Aov・FXAA の撮影では 295〜436）。直す場所は Library/Core（`GeometryPageRequestBuffer::DefaultCapacity`）か Game/GameApplicationHandler.cpp で paths の外、撮影の台本で容量を上げるのは測り方で通すことになる。判断の選択肢と推奨は `blocked/SCN-WL-CLIFF-SCAN-PLACE.md`
+- Notes: Blender の描画の `.blender.json` の `table_sha256` は配置表の説明文を直す前の値のまま（記録だけで照合には使わない。配置の数値は変えていない）。試験は足していない
+- Next: 溢れの扱いが決まったら SCN-WL-CLIFF-SCAN-PLACE を再検証して閉じる

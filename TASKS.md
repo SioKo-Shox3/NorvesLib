@@ -2372,7 +2372,7 @@
 - notes: 台本の名前は目安（`BlenderTerrainView.py`）。変えるなら verify も同じ反復で直す。 2026-10-16 親: SCN-WLR-BLENDER-TERRAIN に含めた（エンジンが描く地形のメッシュをそのまま持ち込む形に替えた）。
 
 ## SCN-WL-CLIFF-SCAN-PLACE: Blender で置いたスキャンの崖をエンジンへ持ち込む経路を作る
-- status: done
+- status: doing
 - after: SCN-WL-REVIEW-2
 - done-when: Blender で地形の上に置いたスキャンの崖・岩の塊の配置（素材・位置・向き・大きさ）を配置表（JSON）に書き出し、荒野のシーンがそれを読んで仮想化ジオメトリのインスタンスとして置く経路を作る。配置を変えても地形の焼き直しは要らない（配置表と素材のクックだけ）。試しに選んだ素材の塊を 2〜3 個、Battleship Rock の崖の面に置き、Blender の描画とエンジンの撮影（1920×1080）を並べて、位置・向き・大きさがそろうこと、地形から浮かず埋もれ過ぎないことを開いて確かめる。溢れ 0。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
