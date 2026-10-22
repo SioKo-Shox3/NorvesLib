@@ -55,5 +55,8 @@ LightingPass が RTGI の定数の `environmentParameters.z` を 1 にする。�
 
 `--wasteland-finest-lod` を付けた撮影は、2 視点とも SCENE_READY の前に終了コード −1073740791（0xC0000409）で落ちる（直前のログは
 `sw_raster_list mb=256.00`）。この項目の変更の前からある落ち方（NEXT_FINDINGS の SCN-WL-LOD-DETAIL の記録）と同じで、上の数は
-`--wasteland-finest-lod` を外した撮影（`scene-capture/SCN-WLR-OCCLUSION-DIAG-no-finest`）で測った。最も細かい段の地形では
+`--wasteland-finest-lod` を外した撮影（`scene-capture/SCN-WLR-OCCLUSION-DIAG`。撮り直しても数は小数 4 桁まで同じ）で測った。最も細かい段の地形では
 光線の形のずれと読み飛ばしの割合が変わりうるので、落ち方を直した後に同じ組で測り直す。
+
+診断の出力が既定で無効なことは、ランチャーの 4 シーン（rendering3dtest・mega-bananas・sandbox・night-village）の回帰の撮影で
+確かめた（検証レイヤーのエラー 0、PSNR 55.0〜55.8 dB・平均の差 −0.02 以内。差は比べた撮影の後に入った表示の Blit の ±0.5 段の雑音の分）。

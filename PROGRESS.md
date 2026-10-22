@@ -7181,3 +7181,13 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 証拠（`.harness/runs/20261022-173753/`）: `verify-SCN-GEN-FURNITURE-1-1.txt`（4 種とも `VERIFY_OK ... cooked`、`VERIFY pass`、EXIT=0）
 - Notes: 実寸は高さで合わせるので、本棚の幅（1.51 m、文書は 1.8 m）とソファの幅（1.87 m、文書は 2.2 m）は文書より狭く、本棚の奥行き 0.60 m は深め。部屋に置くときに位置を詰めるか横に伸ばすかは室内の光のシーンを組む項目で決める。新しい試験は足していない（verify の検査が確かめる）
 - Next: TASKS.md の次の未完
+### SCN-WLR-OCCLUSION-DIAG RTGI が小さな遮蔽を落としていないかを診断する（2026-10-23、run 20261022-173753 の反復 25）
+- Done: 親が verify の撮影から `wasteland-finest-lod` を外したので（反復 23 の BLOCKED を案 1 で解いた）、反復 23 の実装のまま新しい verify の組を回して閉じた。コードは変えていない。`WastelandOcclusion.md` の撮影先を verify の撮影（`scene-capture/SCN-WLR-OCCLUSION-DIAG`）に直し、診断の出力が既定で無効なことを確かめた回帰の撮影の結果を足した
+- 証拠（`.harness/runs/20261022-173753/`）:
+  - `verify-SCN-WLR-OCCLUSION-DIAG-5.txt`: Debug の Game のビルド EXIT=0
+  - `verify-SCN-WLR-OCCLUSION-DIAG-6.txt`: contact_near・ref_cliff_01 の撮影（HDR・AOV、FXAA）result=pass・EXIT=0、2 視点とも exit_code=0
+  - `verify-SCN-WLR-OCCLUSION-DIAG-7.txt`: `--occlusion-diag --verify` result=pass・EXIT=0。contact_near は遮られた所の空の分 生 0.473 → 時間の蓄積の後 0.464 → 空間のフィルタの後 0.464、0.1〜2 m の読み飛ばし 19.1 %（うち空へ抜けた 17.6 %）。ref_cliff_01 は 0.514 → 0.506 → 0.506、0.1〜2 m 8.4 %。反復 23 の撮影と小数 4 桁まで同じ
+  - 診断の画 `scene-capture/SCN-WLR-OCCLUSION-DIAG/occlusion_diag/contact_near.png`・`ref_cliff_01.png` を開いた: contact_near は岩塊の根元の地面が 3 段とも周りと同じ明るさで、手前の地面に 0.1〜2 m の読み飛ばし（赤）が広がる。ref_cliff_01 は崖の縦の溝に赤い帯が並ぶ
+  - `aux-SCN-WLR-OCCLUSION-DIAG-regression-after.txt`: 回帰 result=pass・EXIT=0、4 シーンとも `[ERROR]` 0。before は反復 23 の前に撮っていなかったので、直前の回帰の after（`regression/SCN-WL-CLOUD-FAR-RANGE/after`、HEAD 26771864）を写して使った。PSNR mega-bananas 54.97・night-village 55.66・rendering3dtest 55.63・sandbox 55.79、平均の差 −0.02 以内。sandbox も含め一様に約 55 dB なのは c12ee89b の表示の Blit の ±0.5 段の雑音の分。rendering3dtest の撮影を開き、家・球・岩・地面が以前どおり
+- Notes: 読み飛ばしの割合は最も細かい LOD の段で変わりうる（文書に記載。測り直しは SCN-WL-FINEST-LOD-CRASH の後）。新しい試験は足していない（verify の検査が確かめる）
+- Next: TASKS.md の次の未完
