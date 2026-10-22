@@ -18,6 +18,10 @@
 #       CaptureScene.ps1 -GameArgs vram-budget-mb=<MB>,geom-settle-trace=<秒> の撮影の Game.log の推移（GEOM_SETTLE_TRACE）から、
 #       VRAM の予算が足りないときにジオメトリのページの追い出しが止まり、使用量が予算の内に留まることを検査し、
 #       結果を <出力先>/geom_settle_check.json に書く（基準は GeomSettle.py の冒頭）。
+#   python Scripts/Terrain/ReferenceCheck.py --geom-requests --capture <出力先> [--verify]
+#       撮影の Game.log の最後の GEOMETRY_PAGES で、ジオメトリのページの要求の列が溢れず（request_overflow=0）、
+#       要求したページが残らない（wanted=0・failed=0）ことを検査し、結果を <出力先>/geom_request_check.json に書く。
+#       --verify は撮影の容量が今の既定と同じで、環境変数で広げていないことも確かめる（基準は GeomRequestCheck.py の冒頭）。
 #
 # 入力のハッシュ（inputs.json）: 種類ごとに決めたパス（INPUT_SETS）の、git が追跡するか無視されていないファイルの中身の SHA-256 を
 # パスの順に並べたものの SHA-256。荒野の撮影では描画のコード・シェーダー・荒野の組み立て・視点の定義・資産の組の定義・撮影の台本・
@@ -6604,6 +6608,8 @@ def main():
                         help="雲の書き出しの視線ごとの透過率と放射輝度を、Cycles の体積の描画と比べる（CloudCheck.py。--engine と --reference）")
     parser.add_argument("--geom-settle", action="store_true",
                         help="VRAM の予算が足りないときのジオメトリのページの落ち着き（GeomSettle.py）を、--engine の撮影の推移で検査する")
+    parser.add_argument("--geom-requests", action="store_true",
+                        help="ジオメトリのページの要求の列の溢れ（GeomRequestCheck.py）を、--capture の撮影の Game.log で検査する")
     parser.add_argument("--blur-static", action="store_true",
                         help="遠景のぼけを、2 倍の解像度の正解と条件ごとの撮影の帯域ごとの差で切り分けた表を作る")
     parser.add_argument("--blur-motion", action="store_true",
@@ -6717,6 +6723,14 @@ def main():
             print(f"REFERENCE_CHECK result=fail reason=capture_dir_missing（--engine に撮影先を指定する） path={capture}")
             return 1
         return GeomSettle.run(sys.modules[__name__], capture_dir, args.verify)
+    if args.geom_requests:
+        import GeomRequestCheck
+        capture = args.capture or (args.engine[0] if args.engine else "")
+        capture_dir = os.path.normpath(capture if os.path.isabs(capture) else os.path.join(REPO_ROOT, capture))
+        if not capture or not os.path.isdir(capture_dir):
+            print(f"REFERENCE_CHECK result=fail reason=capture_dir_missing（--capture に撮影先を指定する） path={capture}")
+            return 1
+        return GeomRequestCheck.run(sys.modules[__name__], capture_dir, args.verify)
     if args.building:
         import BuildingCheck
         absolute = lambda d: os.path.normpath(d if os.path.isabs(d) else os.path.join(REPO_ROOT, d))

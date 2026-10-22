@@ -65,6 +65,8 @@ namespace NorvesLib::Core::Rendering
             uint64_t OverflowTotal = 0;
             // 読み戻した要求の延べ件数
             uint64_t RequestsRead = 0;
+            // 1 枚のバッファへ積もうとした要求の最大（溢れた分を含む。容量の余裕を見る）
+            uint32_t PeakRequests = 0;
         };
 
         explicit GeometryPageRequestRing(Container::TSharedPtr<RHI::IDevice> device, const Config &config = Config())
@@ -335,6 +337,7 @@ namespace NorvesLib::Core::Rendering
             m_Pending.Merge(decoded);
             ++m_Stats.BuffersRead;
             m_Stats.RequestsRead += result.Accepted;
+            m_Stats.PeakRequests = std::max(m_Stats.PeakRequests, result.Accepted + result.Overflow);
             if (result.Overflow != 0)
             {
                 ++m_Stats.BuffersOverflowed;

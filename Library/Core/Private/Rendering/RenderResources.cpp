@@ -1815,7 +1815,7 @@ namespace NorvesLib::Core::Rendering
                 LOG_INFO("GEOMETRY_PAGES resident=%u uploading=%u ready=%u "
                          "reading=%u wanted=%u failed=%u "
                          "resident_mb=%.2f evicted=%llu budget_blocked=%llu "
-                         "parent_wait=%llu upload_blocked=%llu request_overflow=%llu request_capacity=%u",
+                         "parent_wait=%llu upload_blocked=%llu request_overflow=%llu request_capacity=%u request_peak=%u",
                          static_cast<unsigned>(stats.ResidentPages), static_cast<unsigned>(stats.UploadingPages),
                          static_cast<unsigned>(stats.ReadyPages), static_cast<unsigned>(stats.ReadingPages),
                          static_cast<unsigned>(stats.WantedPages), static_cast<unsigned>(stats.FailedPages),
@@ -1825,7 +1825,8 @@ namespace NorvesLib::Core::Rendering
                          static_cast<unsigned long long>(stats.ParentWaitSkips),
                          static_cast<unsigned long long>(stats.UploadBlockedFrames),
                          static_cast<unsigned long long>(requestStats.OverflowTotal),
-                         static_cast<unsigned>(requestStats.Capacity));
+                         static_cast<unsigned>(requestStats.Capacity),
+                         static_cast<unsigned>(requestStats.PeakRequests));
                 impl.GeometryPageLoggedStats = stats;
                 impl.bGeometryPageLogged = true;
             }

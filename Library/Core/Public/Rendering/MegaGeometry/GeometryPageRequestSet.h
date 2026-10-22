@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <utility>
 
 namespace NorvesLib::Core::Rendering::MegaGeometry
 {
@@ -80,11 +81,21 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
             // GPU が書いた数が容量を超えていても、読むのは容量までにとどめる（別の値が書かれていても範囲外を読まない）
             const uint32_t count = std::min(words[GeometryPageRequestBuffer::CountWord], capacity);
             result.Overflow = words[GeometryPageRequestBuffer::OverflowWord];
+            // 1 件ずつ並びへ差し込むと件数の 2 乗の移動になるので、表の位置で並べてからまとめて併せる
+            VariableArray<Request> batch;
+            batch.reserve(count);
             for (uint32_t index = 0; index < count; ++index)
             {
-                Add(words[GeometryPageRequestBuffer::HeaderWords + index], frame, tableVersion);
+                Request request;
+                request.TableIndex = words[GeometryPageRequestBuffer::HeaderWords + index];
+                request.LastRequestedFrame = frame;
+                request.TableVersion = tableVersion;
+                batch.push_back(request);
                 ++result.Accepted;
             }
+            std::sort(batch.begin(), batch.end(),
+                      [](const Request &a, const Request &b) { return a.TableIndex < b.TableIndex; });
+            MergeSorted(batch);
             m_OverflowTotal += result.Overflow;
             return result;
         }
@@ -117,10 +128,7 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
 
         void Merge(const GeometryPageRequestSet &other)
         {
-            for (const Request &request : other.m_Requests)
-            {
-                Add(request.TableIndex, request.LastRequestedFrame, request.TableVersion);
-            }
+            MergeSorted(other.m_Requests);
             m_OverflowTotal += other.m_OverflowTotal;
         }
 
@@ -139,6 +147,50 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         uint64_t GetOverflowTotal() const { return m_OverflowTotal; }
 
     private:
+        /**
+         * @brief 表の位置の昇順の並び（同じ位置が続いてよい）を併せる
+         *
+         * 同じ位置は Add と同じく、今ある要求、渡した要求の順に足したときの結果（新しいフレームの要求とその版）を残す
+         */
+        void MergeSorted(const VariableArray<Request> &sorted)
+        {
+            if (sorted.empty())
+            {
+                return;
+            }
+            VariableArray<Request> merged;
+            merged.reserve(m_Requests.size() + sorted.size());
+            auto append = [&merged](const Request &request)
+            {
+                if (!merged.empty() && merged.back().TableIndex == request.TableIndex)
+                {
+                    Request &last = merged.back();
+                    if (request.LastRequestedFrame >= last.LastRequestedFrame)
+                    {
+                        last.LastRequestedFrame = request.LastRequestedFrame;
+                        last.TableVersion = std::max(last.TableVersion, request.TableVersion);
+                    }
+                    return;
+                }
+                merged.push_back(request);
+            };
+            size_t own = 0;
+            size_t other = 0;
+            while (own < m_Requests.size() || other < sorted.size())
+            {
+                if (other >= sorted.size() ||
+                    (own < m_Requests.size() && m_Requests[own].TableIndex <= sorted[other].TableIndex))
+                {
+                    append(m_Requests[own++]);
+                }
+                else
+                {
+                    append(sorted[other++]);
+                }
+            }
+            m_Requests = std::move(merged);
+        }
+
         VariableArray<Request> m_Requests;
         uint64_t m_OverflowTotal = 0;
     };

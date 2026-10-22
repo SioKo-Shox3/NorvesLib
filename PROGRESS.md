@@ -6998,3 +6998,16 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `verify-SCN-MATERIAL-GALLERY-1/2.txt` は軸の名札を日本語（金属度・粗さ）にした版の同じ verify。名札の表示のフォントに日本語の字形が無く「??? 0.2」と化けたので、名札は英語の `metallic`・`roughness` に戻した
 - Notes: 軸の名札は id と同じ機械的な表記として英語のまま（名札を描くフォントは英数だけ）。前の記録の「黒つぶれ 0.05 % 未満」の誤記を実測の値に直した。性能は測っていない。新しい試験は足していない
 - Next: TASKS.md の次の未完
+
+### SCN-WL-GEOM-REQUEST-CAPACITY 途中（2026-10-22、run 20261022-173753 の反復 4）— BLOCKED
+- Done: ログを読んで判定する検査 `ReferenceCheck.py --geom-requests`（`Scripts/Terrain/GeomRequestCheck.py`）を作った。ログの最後と各視点を撮る直前の `GEOMETRY_PAGES` で request_overflow・wanted・failed が 0 か、`--verify` で撮影の容量が今の既定と同じで環境変数・`--wasteland-finest-lod` で広げていないかを見る。`GEOMETRY_PAGES` の行に `request_peak`（1 枚へ積もうとした要求の最大）を足した。要求の読み取り（`GeometryPageRequestSet::AddBuffer`・`Merge`）を 1 件ずつの差し込み（件数の 2 乗の移動）から、並べてまとめて併せる形にした（同じ位置の扱いは Add と同じ）
+- 止めた理由: 既定の容量を 32768 にして 7 視点を撮ると溢れは 0（`request_peak` 最大 11005 件 = 容量の 34 %）になったが、ref_cliff_01 で `wanted=257`・`ready=64` が残り、切り替えから撮るまで 10 分 34 秒かかった。書き込みが NoSpace（ページはメッシュと同じ 1 GB の塊にしか置けず、4 塊のうち 3 塊が使用中のページで満杯）で止まる。4096 の間は溢れた使用の印が LRU に届かず、使っているページを外して見かけ上落ち着いていた。直すにはジオメトリのプールの置き方の既定を変える必要があり、この項目の範囲を超えるので `blocked/SCN-WL-GEOM-REQUEST-CAPACITY.md` に選択肢と推奨を書いた。既定の容量は 4096 に戻した
+- 溢れの原因: 0f487546（TAA の View の LOD を 0.5 画素）と既定の AA の TAA 化から溢れ始め（10/22 03:13 の SCN-WL-FAR-AA-MOTION が最初）、a0c76d9e（0.25 画素）で約 4 倍になった（SCN-WL-LOD-DETAIL-gpu-before 6,149,814 → gpu-after 28,534,050）
+- 証拠（`.harness/runs/20261022-173753/`）:
+  - `verify-SCN-WL-GEOM-REQUEST-CAPACITY-1.txt` 容量 32768 の版の Debug の Game のビルド EXIT=0
+  - `verify-SCN-WL-GEOM-REQUEST-CAPACITY-2.txt` 容量 32768 の版の 7 視点の撮影 result=pass・EXIT=0。`-3.txt` その `--geom-requests --verify` は fail（wanted=257、ログが 10 MB で切れて ref_cliff_01 以後の視点の値が無い）。`aux-...-check-32768.txt` は検査の直し（撮る直前の行が無い視点を落とす）の後の同じ判定。前の撮影 SCN-WL-REVIEW-2 も request_overflow=13929488 で落ちることを確かめた
+  - `aux-...-regression-before.txt`・`aux-...-regression-after.txt` 回帰の撮影（after は容量 4096 ＋ 読み取りの直し）result=pass。4 シーンとも平均の差 0、PSNR mega-bananas 64.8・night-village 71.6・rendering3dtest 107・sandbox inf
+  - `aux-...-mega-before.txt`・`aux-...-mega-after.txt` mega-bananas の 300 フレームの計測。GPU の中央値 3.948 → 4.028 ms、request_overflow=0、request_peak=31、容量 4096（バッファ 1 枚 16 KB × 3）。描画スレッドの中央値 4.75 → 10.02 ms は待ち（GT.WaitRenderThread 4.3 → 9.7 ms）が増えた分で、描画スレッドの仕事（RT.RenderViews 1.61 → 1.89 ms）はほぼ同じ。要求 31 件の読み取りの直しでは説明できないので、撮影時の負荷のばらつきと見ている
+- 試し: 容量 32768 ＋ 塊 2047 MB（環境変数だけ）で ref_cliff_01 を 1 視点だけ撮ると 106 秒で落ち着き、最後の行で request_overflow=0・wanted=0・failed=0・evicted=0（`aux-...-block2g.txt`・`-block2g-check.txt`。`--verify` は環境変数の上書きを正しく落とす）。検査は視点ごとに起動した撮影（撮影の印を書かない）ではそのログの最後の行を使う
+- Notes: 容量 32768 なら要求のバッファは 1 枚 128 KB × 3。`--wasteland-finest-lod` の 131072 は、最も細かい段で 1 視点 3 万ページ近くを使い 32768 では余裕が無いので、そのまま残す。新しい試験は足していない
+- Next: 置き場の扱いが決まったら、容量を 32768 にして 7 視点・mega-bananas・回帰で確かめて閉じる
