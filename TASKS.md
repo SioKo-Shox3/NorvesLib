@@ -2338,12 +2338,12 @@
 - notes: 危険地帯（描画）。SCN-WL-LIGHT-FINAL の反復 57 で `--light-final` が見つけた（記録は `Docs/RenderingValidation/WastelandLightFinal.md`）。反復の最初に回帰の撮影の `before` を撮る。直した後に SCN-WL-LIGHT-FINAL の組を撮り直して `--light-final` を通す。
 
 ## SCN-WL-CLOUD-BANDING: 雲の階調の段（等高線のような平らな段）を消す
-- status: backlog
-- after: SCN-WLR-CLOUD-REF
+- status: todo
+- after: SCN-WLR-CLOUD-REF, SCN-WL-CLOUD-FAR-RANGE
 - done-when: 既定の荒野の雲に、明るさが平らな段になって等高線のように並ぶ階調の段が出る（SCN-WL-LIGHT-FINAL の歩きの連続撮影 `scene-capture/SCN-WL-LIGHT-FINAL-views6/walk/` の空と、ref_far_02。10 月 19 日の SCN-WL-GRADE-NEUTRAL-6views にも同じ位置にある）。原因（雲の密度・光の量子化、低解像度の雲の拡大、表示の 8 bit の丸めのどれか）を切り分けて直し、同じ視点の撮影で段が見えないことを拡大して確かめる。SCN-FIX-SKY-BANDING（mega シーンの空の横縞）と同じ原因なら一緒に扱う。
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -Build -RequireAssets -Width 1920 -Height 1080 -Views ref_far_02 -OutDir .harness/runs/scene-capture/SCN-WL-CLOUD-BANDING`
 - paths: Assets/Shaders, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Game, Scripts, Docs/RenderingValidation, TASKS.md, PROGRESS.md
-- notes: SCN-WL-LIGHT-FINAL の反復 57 で足した。優先は計画が決める。
+- notes: SCN-WL-LIGHT-FINAL の反復 57 で足した。優先は計画が決める。 2026-10-22（親）: 確認 2 の後の計画で、遠い雲の積む範囲（SCN-WL-CLOUD-FAR-RANGE）の後に回す。
 
 ## SCN-WL-SKY-AERIAL: 空の青・遠景の霞・全体の明るさと彩度を手本に合わせる
 - status: backlog
@@ -2354,7 +2354,7 @@
 - verify: `python Scripts/Terrain/CompareReference.py --capture .harness/runs/scene-capture/SCN-WL-SKY-AERIAL --verify`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -OutDir .harness/runs/startup-capture/SCN-WL-SKY-AERIAL`
 - paths: Assets/Shaders, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Game/GameModes, Scripts, Docs/RenderingValidation, TASKS.md, PROGRESS.md
-- notes: 危険地帯（描画の既定値）。2026-10-16 ユーザーの決定（確認 1 の後）で足した。1 反復で閉じなければ、空の青と霞を先に閉じ、明るさと彩度を後ろの項目に分ける。 2026-10-19 SCN-WL-SKY-ALTITUDE・HAZE-ONE-MEDIUM・PSI-GRID・SCN-WLR-ATMOS-REF-NEWSET・SCN-WL-SKY-SCATTER に分けた（GAP-LIST の後の組み直し）。この項目は回さない。
+- notes: 危険地帯（描画の既定値）。2026-10-16 ユーザーの決定（確認 1 の後）で足した。1 反復で閉じなければ、空の青と霞を先に閉じ、明るさと彩度を後ろの項目に分ける。 2026-10-19 SCN-WL-SKY-ALTITUDE・HAZE-ONE-MEDIUM・PSI-GRID・SCN-WLR-ATMOS-REF-NEWSET・SCN-WL-SKY-SCATTER に分けた（GAP-LIST の後の組み直し）。この項目は回さない。 2026-10-22（親）: 残り（露出・トーンマップ・彩度・霞の色）は SCN-WL-LOOK-MEASURE・SCN-WL-LOOK-CAMERA・SCN-WL-ATMOS-INPUT に受け継いだ。この項目は回さない。
 
 ## SCN-WL-REVIEW-2: 節目の確認 2（地面・植生・岩・光と色）をユーザーに渡す
 - status: done
@@ -2390,9 +2390,164 @@
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -Build -RequireAssets -Width 1920 -Height 1080 -Views cliff,ref_cliff_01 -OutDir .harness/runs/scene-capture/SCN-WL-CLIFF-SCAN-PLACE`
 - paths: Scripts/Terrain, Scripts, Assets/AssetSets, Game/GameModes/Wasteland, Docs/RenderingValidation, TASKS.md, PROGRESS.md
 - notes: 2026-10-22（親）: 反復 2 の BLOCKED（要求の列の溢れ）を推奨の案 1 で解いた。既定の容量の直しを SCN-WL-GEOM-REQUEST-CAPACITY として先に立て、この項目はその後に verify を回し直して閉じる（配置の経路・3 個の配置・比較の合格は反復 1 の証拠のまま）。
+## SCN-WL-LOOK-MEASURE: 写真と撮影の写りの差を、写真ごとの固定の領域で診断する
+- status: todo
+- after: SCN-WL-REVIEW-2
+- done-when: 確認 2 の差 3・6・7（地面と崖が写真より明るい・晴天の空が白い・遠景の霞が桃色）を診断する `CompareReference.py --look`（この項目で作る）を足す。写真ごとに実際に写っている領域を固定の注釈（多角形。`Scripts/Terrain/LookRegions.json` など）で決める: 青空（雲を除く）・雲・近景の日なたの地面・崖・3 km より先の地形の帯。空は写真ごとに写る仰角が違う（ref_far_01 の上端は約 9.9°、ref_ground_02 は約 6.7°、ref_cliff_02 は約 3.1°）ので、領域ごとに仰角の範囲・太陽からの角距離・雲の有無を記録し、写っていない領域は「この写真に無い」と明記する。量: 領域の線形の平均 Y と色度（R ÷ G・B ÷ R）、地面 Y ÷ 青空 Y、崖 Y ÷ 地面 Y、遠景の帯と近景の地面の色度の差、白飛び・黒つぶれの割合。写真は sRGB を線形に戻すが、撮影時のトーンカーブ・ホワイトバランス・局所補正は残るので、写真との比は診断の値で合否にしない（表に「写真の処理を含む」と書く）。撮影は 6 視点を -Hdr で撮り、表示の前の HDR を保存する（SCN-WL-LOOK-CAMERA がオフラインで表示の変換を選ぶため）。合否: 6 写真すべてで注釈の領域が空でないか「この写真に無い」と記録され、写真と撮影の両方に重ねた注釈の画像を開いて領域が意図どおりであることを確かめる。結果を `Docs/RenderingValidation/WastelandLook.md`（新規）に表で書き、差を (a) カメラの写り、(b) 物の明るさ（アルベド・植生の被覆）、(c) 空と霞の入力（媒質・地表の反射の色・写真の天気）に分ける見立てを書く。値は変えない。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -Build -RequireAssets -Width 1920 -Height 1080 -Hdr -Views ref_far_01,ref_far_02,ref_cliff_01,ref_cliff_02,ref_ground_01,ref_ground_02 -OutDir .harness/runs/scene-capture/SCN-WL-LOOK-MEASURE`
+- verify: `python Scripts/Terrain/CompareReference.py --capture .harness/runs/scene-capture/SCN-WL-LOOK-MEASURE --look --verify`
+- paths: Scripts, Docs/RenderingValidation, TASKS.md, PROGRESS.md
+- notes: 2026-10-22 親が確認 2（SCN-WL-REVIEW-2）とユーザーの所見（地形の造形が荒い・遮蔽による影の落ち方の質が低い）から、ユーザーの順（空と霞 → 遮蔽 → 地形の形 → 植物 → 地面 → 建物）の前半として足した。Sol の批評（写真との比は撮影時の処理を含むので合否にしない・遮蔽の撮影は岩と株を残す・参照の描き直しを項目にする・大きな項目は先に分ける）を反映した。 SCN-WL-SKY-AERIAL（backlog）の残り（露出とトーンマップ）を受け継ぐ。時間の見積もり: 6 視点の撮影 約 8 分（-Build で +3〜6 分）、注釈と集計の台本 30〜40 分。 壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える（未達のまま DONE にしない）。20 分を超える Blender・Cycles の描画は反復の外で起動して BLOCKED で待つ（ログに START と `END ... EXIT=` を書き、入力のハッシュ・出力先を blocked の理由に書く。終わったら親が todo に戻す。その間は GPU を使う別の処理を重ねない）。
+
+## SCN-WL-LOOK-CAMERA: 荒野の昼の表示の変換を、保存した HDR でオフラインに選んで暫定で入れる
+- status: todo
+- after: SCN-WL-LOOK-MEASURE
+- done-when: SCN-WL-LOOK-MEASURE で保存した 6 視点の HDR に、表示の変換の候補（今の NeutralLinear と今のグレーディング、`Docs/RenderingValidation/WastelandToneMapEval.md` で比べた候補、肩のある filmic 系の曲線、露出の補正の幅）をオフラインで掛け（候補ごとに撮り直さない。再現は `Scripts/Terrain/DisplayTransform.py` を候補の曲線に広げる）、晴れの写真（far_01・cliff_01・ground_02）の `--look` の診断の距離（式と重みは文書に先に書く）で候補を並べる。写真との距離は写真の現像・天気・材質の差を含むので、作風を選ぶ参考に留め、物理の正しさの証拠にしない。今の設定も候補に入れ、今の設定が最上位なら変えずに記録して閉じる。選んだ変換は荒野の昼の分岐の中だけに入れる（`Game/GameModes/Wasteland/WastelandRoutine.cpp`。夜の集落・ほかのシーン・大気・材質・全シーン共通の既定値は変えない。カメラの曲線の代入が夜との分岐の前にあるなら昼の分岐へ移す）。この項目は暫定で、最終の確認は植物・地面の後（確認 3）に置く。合否（`CompareReference.py --look-select`、この項目で作る）: (1) 候補の表と選んだ理由（参考の順位と、白飛び・黒つぶれの割合が今より増えないこと）が文書にある、(2) ブルームと FXAA を外して撮った組（`--display-check=scene`）で、選んだ曲線のオフラインの再現とエンジンの出力が ±1 %（既存の `--display` の照合と同じ考え方）、(3) 昼にだけ効き、夜の集落の撮影が変わらない（回帰）、(4) Cycles と比べる検査（`--gray`・`--lit`・`--light-final`）が表示の変換の前の HDR を読むことを台本で確かめて記録。ブルームと FXAA を入れた通常の 6 視点は写真と並べて開く見た目の確認に使う。反復の最初に回帰の撮影の `before` を撮る。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -Build -RequireAssets -Width 1920 -Height 1080 -Hdr -Views ref_far_01,ref_far_02,ref_cliff_01,ref_cliff_02,ref_ground_01,ref_ground_02 -GameArgs display-check=scene -OutDir .harness/runs/scene-capture/SCN-WL-LOOK-CAMERA/display-check`
+- verify: `python Scripts/Terrain/CompareReference.py --capture .harness/runs/scene-capture/SCN-WL-LOOK-CAMERA/display-check --look-select .harness/runs/scene-capture/SCN-WL-LOOK-MEASURE --verify`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Views ref_far_01,ref_far_02,ref_cliff_01,ref_cliff_02,ref_ground_01,ref_ground_02 -OutDir .harness/runs/scene-capture/SCN-WL-LOOK-CAMERA/views`
+- verify: `python Scripts/Terrain/CompareReference.py --capture .harness/runs/scene-capture/SCN-WL-LOOK-CAMERA/views --look --verify`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Terrain/CaptureRegression.ps1 -Item SCN-WL-LOOK-CAMERA -Phase after`
+- paths: Game/GameModes/Wasteland, Scripts, Docs/RenderingValidation, TASKS.md, PROGRESS.md
+- notes: 2026-10-22 親が確認 2（SCN-WL-REVIEW-2）とユーザーの所見（地形の造形が荒い・遮蔽による影の落ち方の質が低い）から、ユーザーの順（空と霞 → 遮蔽 → 地形の形 → 植物 → 地面 → 建物）の前半として足した。Sol の批評（写真との比は撮影時の処理を含むので合否にしない・遮蔽の撮影は岩と株を残す・参照の描き直しを項目にする・大きな項目は先に分ける）を反映した。 時間の見積もり: 回帰の before・after 各 7 分、Debug のビルド 3 分、6 視点の撮影 2 組 約 16 分（-Build で +3〜6 分）、オフラインの候補の評価 10〜20 分。 壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える（未達のまま DONE にしない）。20 分を超える Blender・Cycles の描画は反復の外で起動して BLOCKED で待つ（ログに START と `END ... EXIT=` を書き、入力のハッシュ・出力先を blocked の理由に書く。終わったら親が todo に戻す。その間は GPU を使う別の処理を重ねない）。
+
+## SCN-WL-ATMOS-INPUT: 遠景の霞の色を決めている大気の入力を切り分ける
+- status: todo
+- after: SCN-WL-LOOK-CAMERA
+- done-when: 確認 2 の差 7（遠景の霞が淡い桃色に白む: cliff_02 の奥の平地と山、ground_01 の奥のメサの帯。写真は遠い山が青い）と SCN-WL-LOOK-MEASURE の (c)。大気の式は正解と合わせ済み（SCN-WL-SKY-SCATTER・SKY-SCATTER-FOG）なので、今の入力の感度を調べる: 空の LUT と空気遠近の多重散乱が使う地表の反射の RGB（`SkyAtmosphereParameters` の地面のアルベド 0.3 の灰色）、Mie の密度（荒野の `MieDensityScale` 0.5）と尺度高さ（1600 m）。大気の書き出し（`--atmosphere-dump`）でそれぞれを動かし、遠景の帯（3〜30 km）の散乱光と透過率の色度がどの入力でどれだけ動くかを表にする。今の Mie は波長によらない値で、CPU の正解も同じなので、波長の依存（Ångström 指数）はこの項目では試さず、モデルの制約として記録する（試すなら CPU の感度の調べから始める別の項目を足す）。実測の範囲（その高度の乾燥地の晴天のエアロゾルの量・赤い砂漠の地表の反射率。出典を書く）の中で遠景の色の向きを写真に近づける入力があれば、その値と、正解（`AtmosphereReference.py --solve`）を同じ入力で解き直す作業を、この項目の直後に新しい項目として TASKS.md に足す（この項目では既定の値を変えない）。無ければ「今のモデルの入力の範囲では写真の色の向きに届かない」と記録して値を変えない（カメラへ押し付けない）。合否: 入力ごとの遠景の色度の変化の表と出典を `Docs/RenderingValidation/WastelandAtmosphereReference.md` に書き、`--atmos-ref`（今の設定）が引き続き通る。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -Build -RequireAssets -Width 1920 -Height 1080 -Views ref_ground_02 -GameArgs atmosphere-dump -OutDir .harness/runs/scene-capture/SCN-WL-ATMOS-INPUT`
+- verify: `python Scripts/Terrain/ReferenceCheck.py --atmos-ref --capture .harness/runs/scene-capture/SCN-WL-ATMOS-INPUT --expect Scripts/Terrain/ExpectSpecs/sky-scatter.json --verify`
+- paths: Scripts, Docs/RenderingValidation, Game/GameModes/Wasteland, TASKS.md, PROGRESS.md
+- notes: 2026-10-22 親が確認 2（SCN-WL-REVIEW-2）とユーザーの所見（地形の造形が荒い・遮蔽による影の落ち方の質が低い）から、ユーザーの順（空と霞 → 遮蔽 → 地形の形 → 植物 → 地面 → 建物）の前半として足した。Sol の批評（写真との比は撮影時の処理を含むので合否にしない・遮蔽の撮影は岩と株を残す・参照の描き直しを項目にする・大きな項目は先に分ける）を反映した。 入力を動かす試しは開発ビルドの起動引数か書き出しの台本で行い、既定の値は変えない。正解の解き直しは CPU が重い（撮影とコアを分ける）。時間の見積もり: 書き出し 1 回 約 3 分 × 6 前後。 壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える（未達のまま DONE にしない）。20 分を超える Blender・Cycles の描画は反復の外で起動して BLOCKED で待つ（ログに START と `END ... EXIT=` を書き、入力のハッシュ・出力先を blocked の理由に書く。終わったら親が todo に戻す。その間は GPU を使う別の処理を重ねない）。
+
+## SCN-WL-CLOUD-FAR-CAUSE: 手本の視点で遠い雲が消える原因を、反実仮想で量に分ける
+- status: todo
+- after: SCN-WL-ATMOS-INPUT
+- done-when: SCN-WLR-CLOUD-REF の直す項目の案 2 の前段: ref_far_01 で雲の被覆が写真 0.805・撮影 0.001（遠い雲が霞に埋もれて一面の青いベールになる）。今の書き出しは開始の距離が 45 km を超えると積む前に戻るので、出力が空でも「雲が無い」と「打ち切りで見ていない」を分けられない。同じ密度場・時刻・視線を固定し、開発ビルドの診断の切り替え（この項目で足す。既定の描画は変えない）で、(a) 打ち切りを外す、(b) 30〜45 km の距離の溶かしを外す、(c) 独自の 22 km の霞（`kCloudHazeDistance`）を外す、を段階的に掛けた書き出しを ref_far_01 と ref_far_02 で撮る。地平線までの雲の密度の積分と、各段の霞の前の雲の透過率・雲の放射輝度・霞の後の最終の画素の雲のコントラストを、写真と同じ画素の範囲で測り（`ReferenceCheck.py --cloud-far`、この項目で作る）、原因 (i) その方向に雲が無い（中身）、(ii) 打ち切り、(iii) 距離の溶かし、(iv) 独自の霞 の寄与を量で示す（併存を認める）。`CloudPhotoStats.py` の色の閾値の被覆は診断として併記する。結果を `Docs/RenderingValidation/WastelandCloudRef.md` に書く。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -Build -RequireAssets -Width 1920 -Height 1080 -Hdr -Views ref_far_01,ref_far_02 -GameArgs cloud-dump -OutDir .harness/runs/scene-capture/SCN-WL-CLOUD-FAR-CAUSE`
+- verify: `python Scripts/Terrain/ReferenceCheck.py --cloud-far --engine .harness/runs/scene-capture/SCN-WL-CLOUD-FAR-CAUSE --verify`
+- paths: Library/Core/Private/Rendering, Assets/Shaders, Game, Scripts, Docs/RenderingValidation, TASKS.md, PROGRESS.md
+- notes: 2026-10-22 親が確認 2（SCN-WL-REVIEW-2）とユーザーの所見（地形の造形が荒い・遮蔽による影の落ち方の質が低い）から、ユーザーの順（空と霞 → 遮蔽 → 地形の形 → 植物 → 地面 → 建物）の前半として足した。Sol の批評（写真との比は撮影時の処理を含むので合否にしない・遮蔽の撮影は岩と株を残す・参照の描き直しを項目にする・大きな項目は先に分ける）を反映した。 診断の切り替えは開発ビルドだけ（Release に入れない）。共有の GLSL（雲の書き出しと共有）に触れるので、切り替えが既定で無効なことを回帰の撮影で確かめる。時間の見積もり: ビルド 3〜6 分、書き出し 4 段 × 2 視点 約 12 分。 壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える（未達のまま DONE にしない）。20 分を超える Blender・Cycles の描画は反復の外で起動して BLOCKED で待つ（ログに START と `END ... EXIT=` を書き、入力のハッシュ・出力先を blocked の理由に書く。終わったら親が todo に戻す。その間は GPU を使う別の処理を重ねない）。
+
+## SCN-WL-CLOUD-FAR-COMPOSITE: 遠い雲の霞を大気の空気遠近に替える
+- status: todo
+- after: SCN-WL-CLOUD-FAR-CAUSE
+- done-when: SCN-WL-CLOUD-FAR-CAUSE で (iv) 独自の霞の寄与があれば直す: 雲の霞（22 km の近似）を大気の空気遠近（雲までの区間の透過率と散乱光。地面と同じ表）に替え、手前の大気を二重に足さない。積む範囲（打ち切り）はこの項目では変えない。合否: (1) 新しい合成の独立な期待値（CPU で同じ入力から積んだ値。`--cloud-far --expect`、`cloud-far-composite.json`）と、霞の後の値が ±5 %、手前の大気の二重の足し込みが無い（期待値の行で落とせる形にする）、(2) ref_far_01 の霞の後の最終の画素の雲のコントラストを前後で記録、(3) `--cloud-dump --verify` を撮り直して通す（雲の書き出しと式を共有する）、(4) ref_far_01 の GPU 時間（中央値、300 フレーム）を前後で記録。原因が (i) だけなら、被覆・層の高さ・形の大きさの見立てを書いて BLOCKED にする（遮蔽の項目は雲を待たずに進む）。共有の GLSL を変えるので、回帰の 4 シーンに加え雲を使うシーンを撮って開く。反復の最初に回帰の撮影の `before` を撮る。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -Build -RequireAssets -Width 1920 -Height 1080 -Hdr -Views ref_far_01,ref_far_02 -GameArgs cloud-dump -OutDir .harness/runs/scene-capture/SCN-WL-CLOUD-FAR-COMPOSITE`
+- verify: `python Scripts/Terrain/ReferenceCheck.py --cloud-far --engine .harness/runs/scene-capture/SCN-WL-CLOUD-FAR-COMPOSITE --expect Scripts/Terrain/ExpectSpecs/cloud-far-composite.json --verify`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Hdr -Views cloud_sky -GameArgs cloud-dump -OutDir .harness/runs/scene-capture/SCN-WLR-CLOUD-REF-DUMP`
+- verify: `python Scripts/Terrain/ReferenceCheck.py --cloud-dump --engine .harness/runs/scene-capture/SCN-WLR-CLOUD-REF-DUMP --verify`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Views ref_far_01 -GpuTimingFrames 300 -GpuFrameBudgetMs 33.3 -OutDir .harness/runs/scene-capture/SCN-WL-CLOUD-FAR-COMPOSITE/timing`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Terrain/CaptureRegression.ps1 -Item SCN-WL-CLOUD-FAR-COMPOSITE -Phase after`
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Scripts, Docs/RenderingValidation, Test/Core/Rendering/Baselines, TASKS.md, PROGRESS.md
+- notes: 2026-10-22 親が確認 2（SCN-WL-REVIEW-2）とユーザーの所見（地形の造形が荒い・遮蔽による影の落ち方の質が低い）から、ユーザーの順（空と霞 → 遮蔽 → 地形の形 → 植物 → 地面 → 建物）の前半として足した。Sol の批評（写真との比は撮影時の処理を含むので合否にしない・遮蔽の撮影は岩と株を残す・参照の描き直しを項目にする・大きな項目は先に分ける）を反映した。 危険地帯（描画の既定・共有の GLSL）。時間の見積もり: 回帰の before・after 各 7 分、ビルド 3〜6 分、2 視点 約 4 分、雲の書き出し 約 3 分、計測 約 3 分。 壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える（未達のまま DONE にしない）。20 分を超える Blender・Cycles の描画は反復の外で起動して BLOCKED で待つ（ログに START と `END ... EXIT=` を書き、入力のハッシュ・出力先を blocked の理由に書く。終わったら親が todo に戻す。その間は GPU を使う別の処理を重ねない）。
+
+## SCN-WL-CLOUD-FAR-RANGE: 遠い雲を積む範囲を地平線まで広げ、時間方向のちらつきを測る
+- status: todo
+- after: SCN-WL-CLOUD-FAR-COMPOSITE
+- done-when: SCN-WL-CLOUD-FAR-CAUSE で (ii)・(iii) の寄与があれば直す: 積む範囲を球殻の交差と雲の層の高さから求め（固定の距離にしない）、30〜45 km の溶かしを外すか地平線の手前へ移す。遠い区間の歩を粗くするなら、細かく積んだ値との差を ±5 % に収める。固定の時計で撮る連番（8 フレーム。CaptureScene の連番の撮影、無ければこの項目で足す）で、雲の範囲の画素の時間方向の標準偏差 ÷ 平均（`--cloud-far --flicker`、この項目で作る）が変更の前と同じか小さい。合否（`--cloud-far --expect`、`cloud-far-range.json`）: 細かい積分との差 ±5 %、ちらつきの指標が前以下、ref_far_01 の霞の後の雲のコントラストが前より上がる（前後を記録）、`--cloud-dump --verify` を撮り直して通す、SCN-WL-CLOUD-BANDING の対象の段（ref_far_02）を増やさない（拡大して開く）、ref_far_01 の GPU 時間（中央値）を前後で記録。原因に (ii)・(iii) が無ければ、記録して変えずに閉じる。反復の最初に回帰の撮影の `before` を撮る。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -Build -RequireAssets -Width 1920 -Height 1080 -Hdr -Views ref_far_01,ref_far_02 -GameArgs cloud-dump -OutDir .harness/runs/scene-capture/SCN-WL-CLOUD-FAR-RANGE`
+- verify: `python Scripts/Terrain/ReferenceCheck.py --cloud-far --flicker --engine .harness/runs/scene-capture/SCN-WL-CLOUD-FAR-RANGE --expect Scripts/Terrain/ExpectSpecs/cloud-far-range.json --verify`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Hdr -Views cloud_sky -GameArgs cloud-dump -OutDir .harness/runs/scene-capture/SCN-WLR-CLOUD-REF-DUMP`
+- verify: `python Scripts/Terrain/ReferenceCheck.py --cloud-dump --engine .harness/runs/scene-capture/SCN-WLR-CLOUD-REF-DUMP --verify`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Views ref_far_01 -GpuTimingFrames 300 -GpuFrameBudgetMs 33.3 -OutDir .harness/runs/scene-capture/SCN-WL-CLOUD-FAR-RANGE/timing`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Terrain/CaptureRegression.ps1 -Item SCN-WL-CLOUD-FAR-RANGE -Phase after`
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Scripts, Docs/RenderingValidation, Test/Core/Rendering/Baselines, TASKS.md, PROGRESS.md
+- notes: 2026-10-22 親が確認 2（SCN-WL-REVIEW-2）とユーザーの所見（地形の造形が荒い・遮蔽による影の落ち方の質が低い）から、ユーザーの順（空と霞 → 遮蔽 → 地形の形 → 植物 → 地面 → 建物）の前半として足した。Sol の批評（写真との比は撮影時の処理を含むので合否にしない・遮蔽の撮影は岩と株を残す・参照の描き直しを項目にする・大きな項目は先に分ける）を反映した。 危険地帯（描画の既定・共有の GLSL）。時間の見積もり: 回帰の before・after 各 7 分、ビルド 3〜6 分、2 視点 約 4 分、連番 約 5 分、雲の書き出し 約 3 分、計測 約 3 分。 壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える（未達のまま DONE にしない）。20 分を超える Blender・Cycles の描画は反復の外で起動して BLOCKED で待つ（ログに START と `END ... EXIT=` を書き、入力のハッシュ・出力先を blocked の理由に書く。終わったら親が todo に戻す。その間は GPU を使う別の処理を重ねない）。
+
+## SCN-WLR-OCCLUSION-DIAG: RTGI が小さな遮蔽を落としていないかを経路ごとに診断する
+- status: todo
+- after: SCN-WL-ATMOS-INPUT
+- done-when: ユーザーの所見（確認 2、2026-10-22）「遮蔽による影の落ち方の質が低い」（溝の奥・岩の下・株の根元が暗くならない）。荒野で RTGI が働くとき、材質の AO は直接光にも拡散にも掛からず（`WastelandMaterialAO.md`）、遮蔽は RTGI の空の分と太陽の影だけで決まる。足す前に、今の経路が小さな遮蔽を落としていないかを診断する: (1) 崖錐の岩塊・スキャンの崖の塊・低木が TLAS に入っているか、RT 用の代理の形とラスタの形の差、(2) 近い当たりの読み飛ばし（`Assets/Shaders/RTGI/DiffuseIndirect.comp` の高さの上限 0.5 m と視距離に比例する項。SCN-WL-RT-SELFHIT）が 0.1〜2 m の遮蔽を消していないか（読み飛ばした当たりの数と場所）、(3) 光線の始点のずらし、(4) 生の RTGI → 時間の蓄積の後 → 空間のフィルタの後の空の分（開発ビルドの診断の出力。無ければこの項目で足す）。視点は ref_cliff_01（崖の溝）と、崖錐の岩塊と低木を 10〜20 m で見る `contact_near`（この項目で足す）。照明は共通の照明の空だけ、岩と株は残す。礫（近景の石と礫）はこの回の対象から外す（撮影でも隠す）。値は変えない。結果と原因の順位（証拠つき）を `Docs/RenderingValidation/WastelandOcclusion.md`（新規）に書く。診断の出力の画を開いて確かめる。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -Build -RequireAssets -Width 1920 -Height 1080 -Hdr -Aov -Views contact_near,ref_cliff_01 -GameArgs wasteland-common-light,common-light-case=sky,wasteland-hide=clouds+gravel+buildings+aerial+fog,wasteland-finest-lod,wasteland-aa=fxaa -LaunchPerView -OutDir .harness/runs/scene-capture/SCN-WLR-OCCLUSION-DIAG`
+- verify: `python Scripts/Terrain/ReferenceCheck.py --occlusion-diag --capture .harness/runs/scene-capture/SCN-WLR-OCCLUSION-DIAG --verify`
+- paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Assets/Shaders, Game, Scripts, Docs/RenderingValidation, TASKS.md, PROGRESS.md
+- notes: 2026-10-22 親が確認 2（SCN-WL-REVIEW-2）とユーザーの所見（地形の造形が荒い・遮蔽による影の落ち方の質が低い）から、ユーザーの順（空と霞 → 遮蔽 → 地形の形 → 植物 → 地面 → 建物）の前半として足した。Sol の批評（写真との比は撮影時の処理を含むので合否にしない・遮蔽の撮影は岩と株を残す・参照の描き直しを項目にする・大きな項目は先に分ける）を反映した。 危険地帯（RTGI に診断の出力を足す）。診断の出力は開発ビルドだけで、既定で無効（回帰の撮影で確かめる）。雲の項目が BLOCKED でもこの項目は進める（after は大気の項目）。時間の見積もり: ビルド 3〜6 分、2 視点 約 5 分、診断の出力の実装 20〜30 分、回帰 約 7 分。 壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える（未達のまま DONE にしない）。20 分を超える Blender・Cycles の描画は反復の外で起動して BLOCKED で待つ（ログに START と `END ... EXIT=` を書き、入力のハッシュ・出力先を blocked の理由に書く。終わったら親が todo に戻す。その間は GPU を使う別の処理を重ねない）。
+
+## SCN-WLR-OCCLUSION-EXPORT: 小さな遮蔽の比べの書き出しの契約と、岩塊の組 1 つを成り立たせる
+- status: todo
+- after: SCN-WLR-OCCLUSION-DIAG
+- done-when: 小さな遮蔽を Cycles と比べるための書き出しの契約を作り、崖錐の岩塊・スキャンの崖の塊と地形の組（空だけ）の 1 組で成り立たせる。(1) 開発ビルドの `wasteland-gray-material` を、地形だけでなく小物（崖錐の岩塊・スキャンの崖の塊。`WastelandRoutine.cpp` の `CreatePropMegaMesh` の材質）にも掛け、ラスタ・RTGI の当たりの材質・Cycles でアルベド・粗さ・法線の扱いをそろえて AOV で確かめる。(2) 岩塊・スキャンの塊の配置と形を Cycles へ渡す書き出しと、それを読む Blender の台本を、`BlenderReference.py` を変えずに別の台本（`Scripts/Terrain/BlenderOcclusionReference.py` など）で作る（BlenderReference.py は参照の記録が script_sha256 を持ち、変えるとほかの参照が古くなる）。(3) 書き出しの契約: Cycles の深度・幾何の法線・物体の識別の AOV を出し、エンジンと Cycles の同じ画素が同じ面を見ているかを、位置と法線の許容差と輪郭の除外で判定する（既存の `PlantRegions.py` の面の照合を使う）。一致した画素の割合を記録する。合否: 岩塊の組（空だけ）のエンジンの撮影と Cycles の試しの描画（低いサンプル数）がそろい、入力の記録（形のハッシュ・配置・カメラ・照明）の照合と、同じ面の画素の割合（90 % 以上。輪郭を除く）が `ReferenceCheck.py --occlusion --trial --verify` で通る。並べて開いて形と影の位置が重なることを確かめる。礫（近景の石と礫）はこの回の対象から外す（撮影でも隠す）。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -Build -RequireAssets -Width 1920 -Height 1080 -Hdr -Aov -Views contact_near -GameArgs wasteland-common-light,common-light-case=sky,wasteland-hide=clouds+foliage+gravel+buildings+aerial+fog,wasteland-finest-lod,wasteland-gray-material,wasteland-aa=fxaa -LaunchPerView -OutDir .harness/runs/scene-capture/SCN-WLR-OCCLUSION-EXPORT/rocks-sky`
+- verify: `python Scripts/Terrain/ReferenceCheck.py --occlusion --trial --engine-root .harness/runs/scene-capture/SCN-WLR-OCCLUSION-EXPORT --reference .harness/runs/scene-capture/SCN-WLR-OCCLUSION-EXPORT/cycles --verify`
+- paths: Game/GameModes/Wasteland, Game/GameApplicationHandler.cpp, Scripts, Docs/RenderingValidation, TASKS.md, PROGRESS.md
+- notes: 2026-10-22 親が確認 2（SCN-WL-REVIEW-2）とユーザーの所見（地形の造形が荒い・遮蔽による影の落ち方の質が低い）から、ユーザーの順（空と霞 → 遮蔽 → 地形の形 → 植物 → 地面 → 建物）の前半として足した。Sol の批評（写真との比は撮影時の処理を含むので合否にしない・遮蔽の撮影は岩と株を残す・参照の描き直しを項目にする・大きな項目は先に分ける）を反映した。 `wasteland-gray-material` の広げは開発ビルドの起動引数の中だけ（既定の描画は変えない。地形だけの組〔hide=all〕の撮影は変わらないことを確かめる）。時間の見積もり: 灰色の広げ 15 分、書き出しと台本 30 分、撮影 約 3 分（-Build で +3〜6 分）、試しの描画 3〜5 分。 壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える（未達のまま DONE にしない）。20 分を超える Blender・Cycles の描画は反復の外で起動して BLOCKED で待つ（ログに START と `END ... EXIT=` を書き、入力のハッシュ・出力先を blocked の理由に書く。終わったら親が todo に戻す。その間は GPU を使う別の処理を重ねない）。
+
+## SCN-WLR-OCCLUSION-SETS: 小さな遮蔽の比べの全組をエンジンで撮り、Cycles の試しの描画をそろえる
+- status: todo
+- after: SCN-WLR-OCCLUSION-EXPORT
+- done-when: SCN-WLR-OCCLUSION-EXPORT の契約で、3 組 × 2 照明をそろえる: (i) 地形だけ（DEM の溝。灰色、`wasteland-hide=all`、ref_cliff_01）、(ii) 岩塊・スキャンの塊と地形（灰色、contact_near・ref_cliff_01）、(iii) 低木の根元（`wasteland-hide=all-but-plant`、plant_near。SCN-WLR-PLANT-REF の株）。照明は共通の照明の空だけ・太陽だけ。全組を同じ exe で撮る台本（`Scripts/Terrain/OcclusionSets.py --capture --out <置き場>`、この項目で作る。後の直しの項目もこれで撮り直す）と、全組の Cycles の試しの描画（低いサンプル数）を作る。合否: `--occlusion --trial --verify` で全組の入力の照合と同じ面の画素の割合（90 % 以上）が通る。礫（近景の石と礫）はこの回の対象から外す（撮影でも隠す）。
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-WLR-OCCLUSION-SETS --build`
+- verify: `python Scripts/Terrain/ReferenceCheck.py --occlusion --trial --engine-root .harness/runs/scene-capture/SCN-WLR-OCCLUSION-SETS --reference .harness/runs/scene-capture/SCN-WLR-OCCLUSION-SETS/cycles --verify`
+- paths: Scripts, Docs/RenderingValidation, TASKS.md, PROGRESS.md
+- notes: 2026-10-22 親が確認 2（SCN-WL-REVIEW-2）とユーザーの所見（地形の造形が荒い・遮蔽による影の落ち方の質が低い）から、ユーザーの順（空と霞 → 遮蔽 → 地形の形 → 植物 → 地面 → 建物）の前半として足した。Sol の批評（写真との比は撮影時の処理を含むので合否にしない・遮蔽の撮影は岩と株を残す・参照の描き直しを項目にする・大きな項目は先に分ける）を反映した。 時間の見積もり: 台本 20 分、エンジンの撮影 6 組 約 18 分（-Build で +3〜6 分）、試しの描画 6 組 約 20〜30 分（20 分を超えるなら反復の外）。 壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える（未達のまま DONE にしない）。20 分を超える Blender・Cycles の描画は反復の外で起動して BLOCKED で待つ（ログに START と `END ... EXIT=` を書き、入力のハッシュ・出力先を blocked の理由に書く。終わったら親が todo に戻す。その間は GPU を使う別の処理を重ねない）。
+
+## SCN-WLR-OCCLUSION-METRIC: 小さな遮蔽と太陽の影の測り方（領域・層・収束の条件）を、本描画の前に決める
+- status: todo
+- after: SCN-WLR-OCCLUSION-SETS
+- done-when: `ReferenceCheck.py --occlusion` の測りを、SCN-WLR-OCCLUSION-SETS の試しの描画で作り、Cycles の本描画の前に定義を固める。空だけの組: 同じ面の画素（EXPORT の契約）だけを使い、法線・距離・傾斜で層に分け、必須のくぼみの領域（崖の柱の間の溝・岩塊と斜面の接する帯・株の根元）と、遮蔽物の無い対照（同じ層の開けた画素）を固定する。量は層ごとの（くぼみの Y ÷ 対照の Y）のエンジン ÷ Cycles。層ごとの最低の画素数・分母の下限・Cycles の収束の条件（種の間の差が許容差の 1/3 以下になるまで描く）を決め、`Scripts/Terrain/ExpectSpecs/occlusion-regions.json` に書く。必須の層が欠ける・画素数が足りない・未収束は不合格にする（難しい層を外して通せないようにする）。太陽だけの組: `sun_visibility` の AOV と Cycles の太陽の可視率で、影の位置の一致（IoU）・影の縁の幅（世界座標の m）・漏れ（Cycles で影なのにエンジンで日なたの割合）を出し、VSM の 1 texel の大きさ・バイアス・使ったページ・影の LOD を記録する。マスクと層の重ね画像を保存して開く。値は変えない。試しの描画での値を「試し」と明記して `Docs/RenderingValidation/WastelandOcclusion.md` に書く。
+- verify: `python Scripts/Terrain/ReferenceCheck.py --occlusion --trial --engine-root .harness/runs/scene-capture/SCN-WLR-OCCLUSION-SETS --reference .harness/runs/scene-capture/SCN-WLR-OCCLUSION-SETS/cycles --regions Scripts/Terrain/ExpectSpecs/occlusion-regions.json --verify`
+- paths: Scripts, Docs/RenderingValidation, TASKS.md, PROGRESS.md
+- notes: 2026-10-22 親が確認 2（SCN-WL-REVIEW-2）とユーザーの所見（地形の造形が荒い・遮蔽による影の落ち方の質が低い）から、ユーザーの順（空と霞 → 遮蔽 → 地形の形 → 植物 → 地面 → 建物）の前半として足した。Sol の批評（写真との比は撮影時の処理を含むので合否にしない・遮蔽の撮影は岩と株を残す・参照の描き直しを項目にする・大きな項目は先に分ける）を反映した。 `--regions` はこの項目で足す。時間の見積もり: マスクと層と集計の台本 40〜50 分、実行 数分。 壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える（未達のまま DONE にしない）。20 分を超える Blender・Cycles の描画は反復の外で起動して BLOCKED で待つ（ログに START と `END ... EXIT=` を書き、入力のハッシュ・出力先を blocked の理由に書く。終わったら親が todo に戻す。その間は GPU を使う別の処理を重ねない）。
+
+## SCN-WLR-OCCLUSION-CYCLES: 小さな遮蔽の比べの Cycles の正解を、決めた収束の条件まで描く
+- status: todo
+- after: SCN-WLR-OCCLUSION-METRIC
+- done-when: SCN-WLR-OCCLUSION-METRIC で決めた収束の条件（`occlusion-regions.json`）まで、6 組の Cycles の正解を種を 2 つにして描き、参照の記録（入力のハッシュ・形・配置・カメラ・照明・サンプル数）を書く。合計が 20 分を超えるので反復の外で起動して BLOCKED で待ち、終わったら親が todo に戻す。合否: 6 本がそろい、`--occlusion --regions ... --verify`（`--trial` なし）で入力の照合・収束・必須の層の画素数が通る（エンジン ÷ Cycles の値は記録だけ。合否は直しの項目）。今のエンジンの値を `WastelandOcclusion.md` に書く。
+- verify: `python Scripts/Terrain/ReferenceCheck.py --occlusion --engine-root .harness/runs/scene-capture/SCN-WLR-OCCLUSION-SETS --reference .harness/runs/scene-capture/SCN-WLR-OCCLUSION-SETS/cycles --regions Scripts/Terrain/ExpectSpecs/occlusion-regions.json --verify`
+- paths: Scripts, Docs/RenderingValidation, TASKS.md, PROGRESS.md
+- notes: 2026-10-22 親が確認 2（SCN-WL-REVIEW-2）とユーザーの所見（地形の造形が荒い・遮蔽による影の落ち方の質が低い）から、ユーザーの順（空と霞 → 遮蔽 → 地形の形 → 植物 → 地面 → 建物）の前半として足した。Sol の批評（写真との比は撮影時の処理を含むので合否にしない・遮蔽の撮影は岩と株を残す・参照の描き直しを項目にする・大きな項目は先に分ける）を反映した。 時間の見積もり: 1 本 15〜40 分 × 6（反復の外）。 壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える（未達のまま DONE にしない）。20 分を超える Blender・Cycles の描画は反復の外で起動して BLOCKED で待つ（ログに START と `END ... EXIT=` を書き、入力のハッシュ・出力先を blocked の理由に書く。終わったら親が todo に戻す。その間は GPU を使う別の処理を重ねない）。
+
+## SCN-WL-OCCLUSION-FIX: 空の遮蔽の小さな欠けを、確かめた原因 1 つで直す
+- status: todo
+- after: SCN-WLR-OCCLUSION-CYCLES
+- done-when: 最初の編集の前に、SCN-WLR-OCCLUSION-DIAG と SCN-WLR-OCCLUSION-CYCLES の値から、直す原因 1 つ（候補: 近い当たりの読み飛ばしの範囲、RT 用の形の差、ノイズ取りが小さな遮蔽を消すこと）と、その原因が効く必須の層を決めて `WastelandOcclusion.md` に書く。遮蔽済みの RTGI 全体に GTAO を掛ける形は二重の遮蔽になるので採らない。材質の AO と二重に数えない（SCN-WL-MATERIAL-AO-SHADING の結論）。合否（`--occlusion --expect`、`occlusion-fix.json`）: 決めた層のくぼみの比のエンジン ÷ Cycles が 0.85〜1.15、ほかの全層が前より悪くならない（同じ画素で ±3 %）、対照の層の Y が同じ画素で前の ±3 %（全体を暗くして合わせない）。全組（地形・岩塊・株）を `OcclusionSets.py --capture` で撮り直して判定する。ref_cliff_01 の GPU 時間（中央値、300 フレーム）を前後で記録。既定の描画経路を変えるので、回帰の 4 シーンと、RTGI を使うほかのシーン（material-gallery など）を撮って差の画を開き、基準画像（golden）の検査を回し、変わるなら SCN-WL-GOLDEN-REAPPROVE と同じ手順で再承認する。全層の範囲の達成は SCN-WL-OCCLUSION-ACCEPT で見る。反復の最初に回帰の撮影の `before` を撮る。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-WL-OCCLUSION-FIX --build`
+- verify: `python Scripts/Terrain/ReferenceCheck.py --occlusion --engine-root .harness/runs/scene-capture/SCN-WL-OCCLUSION-FIX --reference .harness/runs/scene-capture/SCN-WLR-OCCLUSION-SETS/cycles --regions Scripts/Terrain/ExpectSpecs/occlusion-regions.json --expect Scripts/Terrain/ExpectSpecs/occlusion-fix.json --verify`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Views ref_cliff_01 -GpuTimingFrames 300 -GpuFrameBudgetMs 33.3 -OutDir .harness/runs/scene-capture/SCN-WL-OCCLUSION-FIX/timing`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Terrain/CaptureRegression.ps1 -Item SCN-WL-OCCLUSION-FIX -Phase after`
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Scripts, Docs/RenderingValidation, Test/Core/Rendering/Baselines, TASKS.md, PROGRESS.md
+- notes: 2026-10-22 親が確認 2（SCN-WL-REVIEW-2）とユーザーの所見（地形の造形が荒い・遮蔽による影の落ち方の質が低い）から、ユーザーの順（空と霞 → 遮蔽 → 地形の形 → 植物 → 地面 → 建物）の前半として足した。Sol の批評（写真との比は撮影時の処理を含むので合否にしない・遮蔽の撮影は岩と株を残す・参照の描き直しを項目にする・大きな項目は先に分ける）を反映した。 危険地帯（RTGI・描画の既定）。時間の見積もり: 回帰の before・after 各 7〜9 分、ビルド 3〜6 分、全組の撮影 約 18 分、計測 約 3 分。 壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える（未達のまま DONE にしない）。20 分を超える Blender・Cycles の描画は反復の外で起動して BLOCKED で待つ（ログに START と `END ... EXIT=` を書き、入力のハッシュ・出力先を blocked の理由に書く。終わったら親が todo に戻す。その間は GPU を使う別の処理を重ねない）。
+
+## SCN-WL-SUN-SHADOW-FIX: 太陽の影の位置・縁・漏れを Cycles に合わせる
+- status: todo
+- after: SCN-WL-OCCLUSION-FIX
+- done-when: 最初の編集の前に、SCN-WLR-OCCLUSION-CYCLES の太陽だけの組の値と雑音から、許容（例: IoU 0.9 以上・縁の幅が Cycles の ±50 %・漏れ 2 % 以下）を確定して `WastelandOcclusion.md` に書き、外れる所を直す（候補: 岩塊・スキャンの塊・株の VSM の LOD と 1 texel の大きさ、バイアスで浮く接地の影、PCSS の柔らかさ）。全部が許容の中なら、記録して変えずに閉じる。合否（`--occlusion --expect`、`sun-shadow.json`）: 直した層が許容に入り、ほかの層が悪くならない。全組を撮り直して判定する。ref_cliff_01 の GPU 時間（中央値）を前後で記録、回帰の 4 シーンと VSM を使うほかのシーン、基準画像（golden）の検査、変わるなら再承認。反復の最初に回帰の撮影の `before` を撮る。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-WL-SUN-SHADOW-FIX --build`
+- verify: `python Scripts/Terrain/ReferenceCheck.py --occlusion --engine-root .harness/runs/scene-capture/SCN-WL-SUN-SHADOW-FIX --reference .harness/runs/scene-capture/SCN-WLR-OCCLUSION-SETS/cycles --regions Scripts/Terrain/ExpectSpecs/occlusion-regions.json --expect Scripts/Terrain/ExpectSpecs/sun-shadow.json --verify`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Views ref_cliff_01 -GpuTimingFrames 300 -GpuFrameBudgetMs 33.3 -OutDir .harness/runs/scene-capture/SCN-WL-SUN-SHADOW-FIX/timing`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Terrain/CaptureRegression.ps1 -Item SCN-WL-SUN-SHADOW-FIX -Phase after`
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Scripts, Docs/RenderingValidation, Test/Core/Rendering/Baselines, TASKS.md, PROGRESS.md
+- notes: 2026-10-22 親が確認 2（SCN-WL-REVIEW-2）とユーザーの所見（地形の造形が荒い・遮蔽による影の落ち方の質が低い）から、ユーザーの順（空と霞 → 遮蔽 → 地形の形 → 植物 → 地面 → 建物）の前半として足した。Sol の批評（写真との比は撮影時の処理を含むので合否にしない・遮蔽の撮影は岩と株を残す・参照の描き直しを項目にする・大きな項目は先に分ける）を反映した。 危険地帯（VSM・描画の既定）。時間の見積もり: 回帰の before・after 各 7〜9 分、ビルド 3〜6 分、全組の撮影 約 18 分、計測 約 3 分。 壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える（未達のまま DONE にしない）。20 分を超える Blender・Cycles の描画は反復の外で起動して BLOCKED で待つ（ログに START と `END ... EXIT=` を書き、入力のハッシュ・出力先を blocked の理由に書く。終わったら親が todo に戻す。その間は GPU を使う別の処理を重ねない）。
+
+## SCN-WL-OCCLUSION-ACCEPT: 遮蔽と影の直しの受け入れ（全層の範囲と、前の直しを壊していないこと）
+- status: todo
+- after: SCN-WL-SUN-SHADOW-FIX
+- done-when: 空の遮蔽と太陽の影の直しの後に、同じ exe で全組と共通の照明の組を撮り直して受け入れる。合否: (1) `--occlusion --expect`（`occlusion-accept.json`）で必須の全層のくぼみの比のエンジン ÷ Cycles が 0.85〜1.15、太陽の影が SCN-WL-SUN-SHADOW-FIX で確定した許容の中、(2) SCN-WL-LIGHT-FINAL の組（灰色の両方・太陽だけ・空だけ、実材質、照り返しの切）を撮り直し、`--light-final --verify` が通る（前の直しを壊していない）、(3) 既定の荒野の 6 視点を撮って写真と並べて開き、溝の奥・岩の下・株の根元の暗がりと棚の影を所見に書く。(1) に届かない層が残れば、残りの原因を直す項目を TASKS.md に足し、この項目は BLOCKED にする。
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-WL-OCCLUSION-ACCEPT --build`
+- verify: `python Scripts/Terrain/ReferenceCheck.py --occlusion --engine-root .harness/runs/scene-capture/SCN-WL-OCCLUSION-ACCEPT --reference .harness/runs/scene-capture/SCN-WLR-OCCLUSION-SETS/cycles --regions Scripts/Terrain/ExpectSpecs/occlusion-regions.json --expect Scripts/Terrain/ExpectSpecs/occlusion-accept.json --verify`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Hdr -Aov -Views ref_cliff_01,ref_far_01 -GameArgs wasteland-common-light,wasteland-hide=all,wasteland-finest-lod,wasteland-aa=fxaa,wasteland-gray-material -LaunchPerView -OutDir .harness/runs/scene-capture/SCN-WL-OCCLUSION-ACCEPT/light-final/gray`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Hdr -Aov -Views ref_cliff_01,ref_far_01 -GameArgs wasteland-common-light,wasteland-hide=all,wasteland-finest-lod,wasteland-aa=fxaa,common-light-case=sun,wasteland-gray-material -LaunchPerView -OutDir .harness/runs/scene-capture/SCN-WL-OCCLUSION-ACCEPT/light-final/gray/engine-sun`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Hdr -Aov -Views ref_cliff_01,ref_far_01 -GameArgs wasteland-common-light,wasteland-hide=all,wasteland-finest-lod,wasteland-aa=fxaa,common-light-case=sky,wasteland-gray-material -LaunchPerView -OutDir .harness/runs/scene-capture/SCN-WL-OCCLUSION-ACCEPT/light-final/gray/engine-sky`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Hdr -Aov -Views ref_cliff_01,ref_cliff_02,ref_ground_01,ref_far_01 -GameArgs wasteland-common-light,wasteland-hide=all,wasteland-finest-lod,wasteland-aa=fxaa -LaunchPerView -OutDir .harness/runs/scene-capture/SCN-WL-OCCLUSION-ACCEPT/light-final/lit`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Hdr -Aov -Views ref_cliff_01 -GameArgs wasteland-common-light,wasteland-hide=all,wasteland-finest-lod,wasteland-aa=fxaa,rtgi-bounce=off -LaunchPerView -OutDir .harness/runs/scene-capture/SCN-WL-OCCLUSION-ACCEPT/light-final/bounce-off`
+- verify: `python Scripts/Terrain/ReferenceCheck.py --light-final --engine-root .harness/runs/scene-capture/SCN-WL-OCCLUSION-ACCEPT/light-final --verify`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Views ref_far_01,ref_far_02,ref_cliff_01,ref_cliff_02,ref_ground_01,ref_ground_02 -OutDir .harness/runs/scene-capture/SCN-WL-OCCLUSION-ACCEPT/views`
+- verify: `python Scripts/Terrain/CompareReference.py --capture .harness/runs/scene-capture/SCN-WL-OCCLUSION-ACCEPT/views --verify`
+- paths: Scripts, Docs/RenderingValidation, TASKS.md, PROGRESS.md
+- notes: 2026-10-22 親が確認 2（SCN-WL-REVIEW-2）とユーザーの所見（地形の造形が荒い・遮蔽による影の落ち方の質が低い）から、ユーザーの順（空と霞 → 遮蔽 → 地形の形 → 植物 → 地面 → 建物）の前半として足した。Sol の批評（写真との比は撮影時の処理を含むので合否にしない・遮蔽の撮影は岩と株を残す・参照の描き直しを項目にする・大きな項目は先に分ける）を反映した。 時間の見積もり: 全組の撮影 約 18 分（-Build で +3〜6 分）、共通の照明の組 約 30 分、6 視点 約 8 分。75 分に近いので、撮影は台本でまとめて流し、待つ間に記録を書く。 壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える（未達のまま DONE にしない）。20 分を超える Blender・Cycles の描画は反復の外で起動して BLOCKED で待つ（ログに START と `END ... EXIT=` を書き、入力のハッシュ・出力先を blocked の理由に書く。終わったら親が todo に戻す。その間は GPU を使う別の処理を重ねない）。
+
 ## SCN-WL-CLIFF-SCAN-NEAR: 主役の崖の表面をスキャンの崖で作り、手本の写真に合わせる
 - status: todo
-- after: SCN-WL-CLIFF-SCAN-PLACE
+- after: SCN-WL-CLIFF-SCAN-PLACE, SCN-WL-OCCLUSION-ACCEPT
 - done-when: Blender の台本で、Battleship Rock と Franklin Butte の尖塔の台座の急な面をスキャンの崖の塊で覆い、写真の崖の層の段・縦の割れ目・板状の剥離・崖錐の岩の散らばりに合わせる（塊の繰り返しが見えないよう、回転・大きさ・素材を混ぜる）。材質の色は砂岩の実測の明るさの範囲に合わせ、地形の崖の色と継ぎ目なく馴染ませる。ref_cliff_01・ref_cliff_02・cliff の比較画像（写真｜撮影、1920×1080）を開き、崖の面が丸い面の筋ではなく、影を落とす本物の岩の立体に見えることを確かめる。三角形の数と読み込みの時間を記録する（溢れ 0）。式の焼き込み（`TerrainCliffDetail.cpp`）は、覆った崖の下地として残すか外すかを撮影で決める。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -Build -RequireAssets -Width 1920 -Height 1080 -Views cliff,ref_cliff_01,ref_cliff_02 -OutDir .harness/runs/scene-capture/SCN-WL-CLIFF-SCAN-NEAR`
