@@ -6976,3 +6976,14 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `street.png`・`square.png` を開いた: street は手前の街灯の周りの道と右の家の壁が暖色に照らされ、背後の街灯が木箱と樽の前面を照らし、左右の日干し煉瓦の家の戸口が光る。square は焚き火の周りの地面が照らされ、石の輪の外側に輪の影が落ち、右奥の松明の足元も照らされる。ブルームは街灯と炎の周りに留まる
 - Notes: street の視点では、影を落とす灯の影の多くが物の奥（カメラから見えない側）へ落ちるので、影の境がはっきり見えるのは square の焚き火の石の輪。性能は測っていない（SCN-ACCEPT で判断）。新しい試験は足していない
 - Next: TASKS.md の次の未完
+
+### SCN-NIGHT-LIGHTS 窓の発光を足して閉じる（2026-10-22、run 20261022-173753 の反復 2）
+- Done: 評価者の差し戻し（窓の発光が無い）を直した。生成した日干し煉瓦の家の壁には開口が無いので、表（戸口の右）・左右・裏の 4 面の壁の外の面から 2 cm 外に、光るガラスの板（幅 0.7 m・高さ 0.6 m を 2 × 2 の枡に分け、5 cm の隙間の壁が十字の桟に見える。60 nits・室内の灯りの暖色）を立てた（`WastelandNightLights.cpp` の `BuildWindowGlow`）。壁の外の面の位置は GLB の頂点から窓の範囲ごとに測った。戸口の奥の板と窓は家と同じ拡大率で置く（前は戸口の板を拡大率 1 で置いていて、拡大した家では戸口の下端が暗かった）。記録 `Docs/RenderingValidation/NightVillageLights.md` を更新
+- 証拠（`.harness/runs/20261022-173753/`）:
+  - `verify-SCN-NIGHT-LIGHTS-5.txt` Debug の Game のビルド EXIT=0
+  - `verify-SCN-NIGHT-LIGHTS-6.txt` RelWithDebInfo のビルド pass・撮影 result=pass・EXIT=0。白飛び・黒つぶれの割合は 3 視点とも 0、画面の平均の輝度 default 34.8・street 40.8・square 48.5
+  - `scene-capture/SCN-NIGHT-LIGHTS/views.Game.log`: `NIGHT_VILLAGE_LIGHTS point_lights=8 lamps=4 torches=3 campfires=1 doorways=5 windows=20 shadowed_max=4`、`NIGHT_VILLAGE_FLICKER`（焚き火 4913 → 4622 → 4234 lm）、`INDIRECT_LIGHTING source=rtgi`、`point_shadow_lights=4`、ERROR 0 行
+  - `street.png` を開いた: 左の家の横の壁と表、奥の家に十字の桟の暖色の窓が光り、周りに薄くブルームがにじむ。戸口・街灯の周りの道と壁の照らされ方は前と同じ。`square.png` は前と同じ（焚き火の石の輪の影、松明の足元。家は画面の端で壁を浅い角度で見るので窓は映らない）。`default.png` では集落の家の窓が光る
+  - `verify-SCN-NIGHT-LIGHTS-3/4.txt` は裏の壁の窓を足す前の版（表と左右だけ）の同じ verify
+- Notes: 窓は壁の外に立てた板で、室内の奥行きは無い（壁を切り欠く模型の手直しは生成の側の仕事）。石の物置（wooden_shack）には窓を付けていない。性能は測っていない（SCN-ACCEPT で判断）。新しい試験は足していない
+- Next: TASKS.md の次の未完

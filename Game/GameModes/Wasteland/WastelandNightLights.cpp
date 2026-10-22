@@ -33,6 +33,7 @@ namespace Game::GameModes::WastelandNightLights
         constexpr uint32_t kLanternGlassMeshHandleId = 940;
         constexpr uint32_t kFlameMeshHandleId = 941;
         constexpr uint32_t kDoorwayGlowMeshHandleId = 942;
+        constexpr uint32_t kWindowGlowMeshHandleId = 943;
 
         // 灯りの色（リニアの sRGB）。街灯は古い白熱灯・ガス灯の 2700 K 前後、松明と焚き火は炎の 1800 K 前後、戸口の奥は
         // 油の灯の 2000 K 前後
@@ -54,6 +55,9 @@ namespace Game::GameModes::WastelandNightLights
         constexpr float kLanternGlassNits = 800.0f;
         constexpr float kFlameNits = 600.0f;
         constexpr float kRoomNits = 25.0f;
+        // 窓のガラス越しの室内の灯り（窓辺の油の灯に照らされた室内とガラス。戸口の奥より少し明るく、ブルームが窓の周りに
+        // 薄くにじむ程度）
+        constexpr float kWindowNits = 60.0f;
         // 発光体の GBuffer のアルベド（照明を受けた分が発光に足されないよう暗くする。CustomData の 0 は 1 として扱われる）
         constexpr float kEmitterAlbedo = 0.02f;
 
@@ -88,6 +92,19 @@ namespace Game::GameModes::WastelandNightLights
         constexpr float kDoorwayGlowMaxX = 0.7f;
         constexpr float kDoorwayGlowMinY = -1.5f;
         constexpr float kDoorwayGlowMaxY = 0.95f;
+        // 窓: 生成した家の壁には開口が無いので、壁の外の面のすぐ外に光るガラスの板を立てる（2 × 2 の枡を桟の幅だけ離し、
+        // 隙間から見える壁が十字の桟になる）。壁の外の面（窓の範囲の頂点の最も外）は表 z 2.32・右（+X）x 2.22・
+        // 左（−X）x −2.49・裏（−Z）z −2.6。窓は戸口の楣（y 0.4）に上端を揃え、表は戸口の右の壁、ほかは壁の中央に置く
+        constexpr float kWindowWallGap = 0.02f;
+        constexpr float kFrontWallZ = 2.32f;
+        constexpr float kRightWallX = 2.22f;
+        constexpr float kLeftWallX = -2.49f;
+        constexpr float kBackWallZ = -2.6f;
+        constexpr float kFrontWindowCenterX = 1.2f;
+        constexpr float kWindowCenterY = 0.1f;
+        constexpr float kWindowHalfWidth = 0.35f;
+        constexpr float kWindowHalfHeight = 0.3f;
+        constexpr float kWindowMullion = 0.05f;
 
         /// 小物のローカルの点をワールドへ写す（WastelandLayout.cpp の配置と同じ: Y 軸まわりの角 a で、ローカルの (x, z) を
         /// (x cos a − z sin a, z cos a + x sin a) へ写し、拡大率を掛けて位置を足す）
@@ -161,6 +178,55 @@ namespace Game::GameModes::WastelandNightLights
                                          {kDoorwayGlowMinX, kDoorwayGlowMaxY, kDoorwayGlowZ}};
             const float front[3] = {0.0f, 0.0f, 1.0f};
             AppendQuad(vertices, indices, corners, front);
+        }
+
+        /// 窓 1 つ（中心 center、壁に沿った右向き right、外向きの法線 normal。上は +Y）を 2 × 2 の枡で足す
+        void AppendWindow(VariableArray<Mesh3DVertex> &vertices, VariableArray<uint32_t> &indices,
+                          const float (&center)[3], const float (&right)[3], const float (&normal)[3])
+        {
+            const float halfGap = 0.5f * kWindowMullion;
+            const float spansU[2][2] = {{-kWindowHalfWidth, -halfGap}, {halfGap, kWindowHalfWidth}};
+            const float spansV[2][2] = {{-kWindowHalfHeight, -halfGap}, {halfGap, kWindowHalfHeight}};
+            for (const auto &spanV : spansV)
+            {
+                for (const auto &spanU : spansU)
+                {
+                    // 法線の向きから見て反時計回り（左下・右下・右上・左上の順）
+                    const float us[4] = {spanU[0], spanU[1], spanU[1], spanU[0]};
+                    const float vs[4] = {spanV[0], spanV[0], spanV[1], spanV[1]};
+                    float corners[4][3];
+                    for (uint32_t corner = 0; corner < 4; ++corner)
+                    {
+                        for (uint32_t axis = 0; axis < 3; ++axis)
+                        {
+                            corners[corner][axis] = center[axis] + right[axis] * us[corner];
+                        }
+                        corners[corner][1] += vs[corner];
+                    }
+                    AppendQuad(vertices, indices, corners, normal);
+                }
+            }
+        }
+
+        /// 日干し煉瓦の家の窓（表の戸口の右と、左右の横の壁・裏の壁の中央）
+        void BuildWindowGlow(VariableArray<Mesh3DVertex> &vertices, VariableArray<uint32_t> &indices)
+        {
+            const float frontCenter[3] = {kFrontWindowCenterX, kWindowCenterY, kFrontWallZ + kWindowWallGap};
+            const float frontRight[3] = {1.0f, 0.0f, 0.0f};
+            const float frontNormal[3] = {0.0f, 0.0f, 1.0f};
+            AppendWindow(vertices, indices, frontCenter, frontRight, frontNormal);
+            const float rightCenter[3] = {kRightWallX + kWindowWallGap, kWindowCenterY, 0.0f};
+            const float rightRight[3] = {0.0f, 0.0f, -1.0f};
+            const float rightNormal[3] = {1.0f, 0.0f, 0.0f};
+            AppendWindow(vertices, indices, rightCenter, rightRight, rightNormal);
+            const float leftCenter[3] = {kLeftWallX - kWindowWallGap, kWindowCenterY, 0.0f};
+            const float leftRight[3] = {0.0f, 0.0f, 1.0f};
+            const float leftNormal[3] = {-1.0f, 0.0f, 0.0f};
+            AppendWindow(vertices, indices, leftCenter, leftRight, leftNormal);
+            const float backCenter[3] = {0.0f, kWindowCenterY, kBackWallZ - kWindowWallGap};
+            const float backRight[3] = {-1.0f, 0.0f, 0.0f};
+            const float backNormal[3] = {0.0f, 0.0f, -1.0f};
+            AppendWindow(vertices, indices, backCenter, backRight, backNormal);
         }
 
         bool RegisterMesh(GameModeContext &ctx, uint32_t id, const VariableArray<Mesh3DVertex> &vertices,
@@ -276,7 +342,11 @@ namespace Game::GameModes::WastelandNightLights
         indices.clear();
         BuildDoorwayGlow(vertices, indices);
         const bool bDoorwayMesh = RegisterMesh(ctx, kDoorwayGlowMeshHandleId, vertices, indices);
-        if (!bLanternMesh || !bFlameMesh || !bDoorwayMesh)
+        vertices.clear();
+        indices.clear();
+        BuildWindowGlow(vertices, indices);
+        const bool bWindowMesh = RegisterMesh(ctx, kWindowGlowMeshHandleId, vertices, indices);
+        if (!bLanternMesh || !bFlameMesh || !bDoorwayMesh || !bWindowMesh)
         {
             LOG_ERROR("night-village: 灯りの発光体のメッシュを登録できませんでした");
         }
@@ -287,12 +357,14 @@ namespace Game::GameModes::WastelandNightLights
             bFlameMesh ? CreateEmitterMaterial(ctx, "NightFlame", kFireColor, kFlameNits) : MaterialHandle::Invalid();
         const MaterialHandle doorwayMaterial =
             bDoorwayMesh ? CreateEmitterMaterial(ctx, "NightDoorwayGlow", kRoomColor, kRoomNits) : MaterialHandle::Invalid();
+        const MaterialHandle windowMaterial =
+            bWindowMesh ? CreateEmitterMaterial(ctx, "NightWindowGlow", kRoomColor, kWindowNits) : MaterialHandle::Invalid();
 
         uint32_t lamps = 0;
         uint32_t torches = 0;
         uint32_t campfires = 0;
         uint32_t doorways = 0;
-        constexpr float kUnitScale[3] = {1.0f, 1.0f, 1.0f};
+        uint32_t windows = 0;
         for (const Layout::PropPlacement &placement : placed)
         {
             FlickerLight flicker;
@@ -349,11 +421,18 @@ namespace Game::GameModes::WastelandNightLights
             }
             case Layout::PropKind::AdobeRuin:
             {
+                // 戸口の奥の板と窓は家と同じ拡大率で置く（拡大した家の戸口の下端や壁の外の面に合わせる）
+                const float scale[3] = {placement.Scale, placement.Scale, placement.Scale};
+                const NorvesLib::Math::Vector3 position(placement.X, placement.Y, placement.Z);
                 if (doorwayMaterial.IsValid())
                 {
-                    SpawnEmitter(ctx, placement, kDoorwayGlowMeshHandleId, doorwayMaterial,
-                                 NorvesLib::Math::Vector3(placement.X, placement.Y, placement.Z), kUnitScale);
+                    SpawnEmitter(ctx, placement, kDoorwayGlowMeshHandleId, doorwayMaterial, position, scale);
                     ++doorways;
+                }
+                if (windowMaterial.IsValid())
+                {
+                    SpawnEmitter(ctx, placement, kWindowGlowMeshHandleId, windowMaterial, position, scale);
+                    windows += 4;
                 }
                 continue;
             }
@@ -377,8 +456,9 @@ namespace Game::GameModes::WastelandNightLights
                        static_cast<double>(flicker.FlickerAmount), bCastShadows ? 1 : 0);
             state.Lights.push_back(flicker);
         }
-        LOG_INFO_F("NIGHT_VILLAGE_LIGHTS point_lights=%zu lamps=%u torches=%u campfires=%u doorways=%u shadowed_max=4",
-                   state.Lights.size(), lamps, torches, campfires, doorways);
+        LOG_INFO_F("NIGHT_VILLAGE_LIGHTS point_lights=%zu lamps=%u torches=%u campfires=%u doorways=%u windows=%u "
+                   "shadowed_max=4",
+                   state.Lights.size(), lamps, torches, campfires, doorways, windows);
     }
 
     void Tick(State &state, float deltaTime)
