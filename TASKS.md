@@ -2407,7 +2407,7 @@
 - notes: 危険地帯（描画）。今の粒子は画面空間のボードだけ（`ParticleSystem.cpp` 166〜191 行付近）。半透明の描画順と TAA との兼ね合いに注意。 2026-10-15 親: 手本の写真（晴れた日の Valley of the Gods）に砂塵は写っていないので外した。
 
 ## SCN-WASTELAND-POLISH: 荒野を実写に近い風景として仕上げる（確認 3）
-- status: todo
+- status: backlog
 - after: SCN-WLR-GAP-LIST
 - done-when: `wasteland` のカメラパス（前哨地へ近づいて建物の間を抜け、ビュートを見上げる 40〜60 秒）を決め、グレーディング・露出・霞・雲・低木の量を手本の写真に合わせて整える。手本の全視点の比較画像（写真｜撮影｜同じ視点のパストレースの正解）とカメラパスの途中 6 時刻の撮影（1920×1080）を開き、評価者が見る条件（浮き・継ぎ目・繰り返し・形の対応・移動中のちらつき・光の誤り）を満たすことを確かめ、一覧を `Docs/RenderingValidation/WastelandReference.md` の「確認 3」にまとめる。1920×1080・RelWithDebInfo の GPU・gt・rt の median と p95 を記録する（荒野は美しさを見るシーンなので合否に使わない。操作できる程度＝20〜30 fps 以上を下回ったときだけ、支配する処理を書く）。`wasteland` の cycle smoke 2 周（RelWithDebInfo。1 シーンの最小。1 コマンド 10 分に収めるため 2026-10-19 に 3 周から変えた）が pass。最後に `LOOP_STOP`（中身 `boundary`）を書いてランナーを止める（親がユーザーに渡す。実写と並べて成立するかの判断はユーザー）。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
@@ -2415,7 +2415,7 @@
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -OutDir .harness/runs/scene-capture/SCN-WASTELAND-POLISH`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Build -Scenes wasteland -Cycles 2 -Configuration RelWithDebInfo`
 - paths: Game, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Assets/AssetSets, Docs/RenderingValidation, Scripts, TASKS.md, PROGRESS.md
-- notes: 2026-10-15 ユーザー: 荒野と室内の光は「ほぼ実写」の美しさを見るシーンで、速さは他のシーンで見る。60 fps の条件は外した（リアルタイムで、操作できる程度ならよい）。 2026-10-19 親: verify を RelWithDebInfo に揃え、周回の試験を 1 コマンド 10 分に収まる形にした（Debug の撮影は約 11 分、3 周は 928 秒の実測）。
+- notes: 2026-10-15 ユーザー: 荒野と室内の光は「ほぼ実写」の美しさを見るシーンで、速さは他のシーンで見る。60 fps の条件は外した（リアルタイムで、操作できる程度ならよい）。 2026-10-19 親: verify を RelWithDebInfo に揃え、周回の試験を 1 コマンド 10 分に収まる形にした（Debug の撮影は約 11 分、3 周は 928 秒の実測）。 2026-10-22（親）: 確認 2（SCN-WL-REVIEW-2）の後の中身の計画（植物の見た目と密度・インポスター・地面の明るさ・空と霞・沢の物など）をユーザーと決めるまで backlog に下げた。計画が決まったら、その項目を after に足して todo に戻す。
 
 ## SCN-GEN-VILLAGE-PROPS-1: 夜の集落の小物を生成する（街灯・松明の柱・焚き火の囲い・井戸）
 - status: done
