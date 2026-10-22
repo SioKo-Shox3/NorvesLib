@@ -6746,3 +6746,12 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 直す項目の案（TAA の株の細部の切り分け → 覆いを保つ描き方 → 前もって平均した遠景の段 → 比べ直し）は記録に書いただけで TASKS.md には足していない。足すかは計画が決める
   - 新しい試験は足していない
 - Next: TASKS.md の次の未完の項目
+
+### SCN-WLR-PLANT-REF-FAR 差し戻しの対応（2026-10-22、run 20261021-055341 の反復 51）
+- Done: `PlantFarCheck.py` で、入力の記録（inputs.json のエンジンの実装）が無い組を `--verify` に関係なく落とすようにした（Game.exe のハッシュが無い組も従来どおり落ちる）。今のファイルとの一致だけを `--verify` で確かめる。`same_game_exe` は全組のハッシュが 1 通りで、かつ無い組が無いときだけ 1。並べた画の範囲の名前を日本語（「範囲」、日本語の字を持つ字体で描く）にした
+- 証拠（`.harness/runs/20261021-055341/`）:
+  - `verify-SCN-WLR-PLANT-REF-FAR-3.txt` base の撮影（-Build）result=pass・exit=0（commit 99b96941 dirty=0、Game.exe 7e0cba1c…）
+  - `verify-SCN-WLR-PLANT-REF-FAR-4.txt` `--plant-far --verify` result=pass・groups=4・compared=3・inputs_current=1・same_game_exe=1・exit=0（4 組とも Game.exe 7e0cba1c…。量は反復 50 の記録と同じ）
+  - 評価者の再現（inputs.json を無いものとして `check_group(..., verify=False)`）が「inputs.json が無い」で落ちることを確かめた。並べた画の「範囲」の字を開いて確かめた
+- Notes: 新しい試験は足していない
+- Next: TASKS.md の次の未完の項目

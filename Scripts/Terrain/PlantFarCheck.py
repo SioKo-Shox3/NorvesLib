@@ -22,8 +22,9 @@
 #     2σ（帯域の粗い側）画素より離れたもの。株と同じ組・同じ距離の地形の欠けとエイリアスで、株の量からこの値を引いた差を
 #     株に固有の分として記録する。
 # 合否（改善の閾値は付けない。値は記録するだけ）:
-#   1. 組（必須は ref2x・base。aa-none・aa-fxaa はあれば比べる）: 撮影があり、--verify は入力（エンジンの実装、RefSplit）が
-#      今のファイルと合う。全部の組のエンジンの実装と Game.exe のハッシュが同じ（同じ Game.exe で撮った組だけを比べる）。
+#   1. 組（必須は ref2x・base。aa-none・aa-fxaa はあれば比べる）: 撮影があり、入力の記録（inputs.json のエンジンの実装）と
+#      Game.exe のハッシュがある（--verify に関係なく）。--verify は入力（RefSplit）が今のファイルと合う。全部の組のエンジンの
+#      実装と Game.exe のハッシュが同じ（同じ Game.exe で撮った組だけを比べる）。
 #      条件を替える起動引数（BLUR_CONTROLLED_PREFIXES）とログの印が組の約束どおりで、約束にない差し替えの印が無い。
 #      共通の照明で撮り、比べる株の配置の行が 1 行で、どの組も同じ株・同じ位置。仮想テクスチャを使っていない。撮った時点で
 #      ジオメトリのページの進行中が 0 で追い出しが無く、描くクラスタが溢れていない。PNG の大きさが約束どおり。
@@ -68,6 +69,8 @@ REGION_LABELS = {"edge": "アルファの縁", "plant": "株の全体", "inner":
 # 並べた画の拡大と、外接枠からの余白[画素]
 PREVIEW_SCALE = 8
 PREVIEW_PAD_PX = 8
+# 並べた画の名前の字（日本語の字を持つもの。無ければ既定の字）
+LABEL_FONT_PATHS = ("C:/Windows/Fonts/YuGothM.ttc", "C:/Windows/Fonts/meiryo.ttc", "C:/Windows/Fonts/msgothic.ttc")
 
 
 def group_specs(RC):
@@ -99,7 +102,9 @@ def check_group(RC, group_dir, spec, size, verify):
     record["inputs_current"] = inputs_ok
     record["identity"] = (engine or {}).get("identity")
     record["game_exe_sha256"] = (engine or {}).get("game_exe_sha256")
-    if verify and not inputs_ok:
+    # 入力の記録と Game.exe のハッシュは --verify に関係なく要る（同じ Game.exe で撮ったかを比べる元）。
+    # 今のファイルとの一致だけを --verify で確かめる
+    if engine is None or (verify and not inputs_ok):
         failures.extend(input_failures)
     if engine is not None and not record["game_exe_sha256"]:
         failures.append("inputs.json に撮影に使った Game.exe のハッシュが無い")
@@ -222,7 +227,9 @@ def regions(RC, coverage, sky):
 
 def write_preview(path, tiles, masks, bbox):
     """株の周りを PREVIEW_SCALE 倍に広げて横に並べる（名前を左上に書く）。最後に範囲（縁 赤・中 緑・地面 青）"""
-    from PIL import ImageDraw
+    from PIL import ImageDraw, ImageFont
+    font_path = next((p for p in LABEL_FONT_PATHS if os.path.isfile(p)), None)
+    font = ImageFont.truetype(font_path, 16) if font_path else ImageFont.load_default()
     top, bottom = max(bbox["top"] - PREVIEW_PAD_PX, 0), bbox["bottom"] + PREVIEW_PAD_PX
     left, right = max(bbox["left"] - PREVIEW_PAD_PX, 0), bbox["right"] + PREVIEW_PAD_PX
     images = []
@@ -234,12 +241,12 @@ def write_preview(path, tiles, masks, bbox):
     for key, channel in (("edge", 0), ("inner", 1), ("ground", 2)):
         region = masks[key][top:bottom, left:right]
         overlay[..., channel] = np.where(region, 255.0, overlay[..., channel])
-    images.append(("regions", overlay.astype(np.uint8)))
+    images.append(("範囲", overlay.astype(np.uint8)))
     ch, cw = images[0][1].shape[:2]
     sheet = Image.new("RGB", (cw * PREVIEW_SCALE * len(images), ch * PREVIEW_SCALE), (0, 0, 0))
     for index, (name, crop) in enumerate(images):
         tile = Image.fromarray(crop).resize((cw * PREVIEW_SCALE, ch * PREVIEW_SCALE), Image.NEAREST)
-        ImageDraw.Draw(tile).text((6, 6), name, fill=(255, 255, 0))
+        ImageDraw.Draw(tile).text((6, 6), name, fill=(255, 255, 0), font=font)
         sheet.paste(tile, (index * cw * PREVIEW_SCALE, 0))
     sheet.save(path)
     return {"top": top, "bottom": bottom, "left": left, "right": right, "scale": PREVIEW_SCALE}
@@ -268,6 +275,7 @@ def run(RC, capture_dir, verify):
     exes = {r.get("game_exe_sha256") for r in groups.values()}
     if len(identities) > 1:
         failures.append(f"組ごとのエンジンの実装が揃っていない（{len(identities)} 通り。同じ実装で撮った組だけを比べる）")
+    same_exe = len(exes) == 1 and None not in exes
     if len(exes) > 1:
         failures.append(f"組ごとの Game.exe のハッシュが揃っていない（{len(exes)} 通り。同じ Game.exe で撮った組だけを比べる）")
     reference_placement = placements.get(REFERENCE)
@@ -404,6 +412,6 @@ def run(RC, capture_dir, verify):
     for failure in failures:
         print(f"REFERENCE_CHECK failure: {failure}")
     print(f"REFERENCE_CHECK result={'pass' if not failures else 'fail'} mode=plant_far groups={len(groups)} "
-          f"compared={len(results)} inputs_current={int(inputs_current)} same_game_exe={int(len(exes) == 1)} "
+          f"compared={len(results)} inputs_current={int(inputs_current)} same_game_exe={int(same_exe)} "
           f"report={report_path}")
     return 0 if not failures else 1
