@@ -2315,12 +2315,35 @@
 
 ## SCN-WL-LIGHT-FINAL: 共通の照明の数値の確認と、既定の荒野の光を写真に合わせる
 - status: todo
-- after: SCN-WL-MATERIAL-AO-BAKE, SCN-WL-SKY-SCATTER, SCN-WL-RTGI-COLOR, SCN-WL-SHADOW-LEAK, SCN-WL-RTGI-AMOUNT, SCN-WL-MATERIAL-AO-OCCLUSION, SCN-WL-PROP-AO, SCN-WL-PLANT-SHADOW, SCN-WL-PLANT-SHADOW-RANGE
+- after: SCN-WL-MATERIAL-AO-BAKE, SCN-WL-SKY-SCATTER, SCN-WL-RTGI-COLOR, SCN-WL-SHADOW-LEAK, SCN-WL-RTGI-AMOUNT, SCN-WL-MATERIAL-AO-OCCLUSION, SCN-WL-PROP-AO, SCN-WL-PLANT-SHADOW, SCN-WL-PLANT-SHADOW-RANGE, SCN-WL-RTGI-COLOR-RESIDUAL
 - done-when: (1) 共通の照明（地形だけ・霞なし）の数値: これまでの修正の仕様（rt-tlas-range・shadow-pages・shadow-leak・rtgi-color・material-ao）を、今のコードで撮り直した撮影先 `SCN-WL-LIGHT-FINAL/`（灰色の 3 条件の ref_cliff_01・ref_far_01、実材質の ref_cliff_01・ref_cliff_02・ref_ground_01・ref_far_01、照り返しの入・切）に対して、`ReferenceCheck.py --light-final`（この項目で作る。全仕様をまとめて読む）でまとめて通す（後の修正が前の修正を壊していないことの確認）。撮影は反復の中で保存する。(2) 既定の荒野（前哨地・植物・礫・霞・雲あり）は Cycles の正解が無いので、6 視点を撮って写真と並べて開き、谷・崖の影・前哨地の照り返しと空の青、影の中の色と明るさの差を所見に書く（数値の合否にしない）。カメラパスで移動中の粒・残像・遮蔽の欠けが目立たないことを確かめる。直す所が残れば項目を足す。
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -Build -RequireAssets -Width 1920 -Height 1080 -Hdr -Aov -Views ref_cliff_02 -GameArgs wasteland-common-light,wasteland-hide=all,wasteland-finest-lod -LaunchPerView -OutDir .harness/runs/scene-capture/SCN-WL-LIGHT-FINAL-recheck`
 - verify: `python Scripts/Terrain/ReferenceCheck.py --light-final --engine-root .harness/runs/scene-capture/SCN-WL-LIGHT-FINAL --verify`
 - paths: Assets/Shaders, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Game, Scripts, Docs/RenderingValidation, TASKS.md, PROGRESS.md
-- notes: 危険地帯（描画）。2026-10-19 書き直し（Sol の批評 22 と 2 周目）: SCN-WLR-CYCLES-LIT は地形だけ・共通の照明・霞なしなので、既定の荒野の正解には読み替えない。verify の 1 本目は撮影の経路が今も通ることの確認（別の出力先）、2 本目は反復の中で保存した全組の検査。 2026-10-21（親）: 光の仕上げで基準画像が変わったら、SCN-WL-GOLDEN-REAPPROVE と同じ手順で差の原因を確かめて再承認してから閉じる。
+- notes: 危険地帯（描画）。2026-10-19 書き直し（Sol の批評 22 と 2 周目）: SCN-WLR-CYCLES-LIT は地形だけ・共通の照明・霞なしなので、既定の荒野の正解には読み替えない。verify の 1 本目は撮影の経路が今も通ることの確認（別の出力先）、2 本目は反復の中で保存した全組の検査。 2026-10-21（親）: 光の仕上げで基準画像が変わったら、SCN-WL-GOLDEN-REAPPROVE と同じ手順で差の原因を確かめて再承認してから閉じる。 2026-10-22（反復 57）: `--light-final` と組の撮影（AA は FXAA に固定）・(2) の 6 視点と歩きの所見は済んだ（`Docs/RenderingValidation/WastelandLightFinal.md`）。rtgi-color の影の崖が 0.0201 で落ちたので SCN-WL-RTGI-COLOR-RESIDUAL を足した。直した後は組を撮り直して `--light-final` を通すだけでよい。
+
+## SCN-WL-RTGI-COLOR-RESIDUAL: 実材質の照り返しが Cycles より赤い偏りを直す
+- status: todo
+- after: SCN-WL-RTGI-AMOUNT
+- done-when: SCN-WL-LIGHT-FINAL の撮影（FXAA に固定した `SCN-WL-LIGHT-FINAL/lit`・`bounce-off`）で、rtgi-color.json の影の崖の色度の差が 0.0201（上限 0.02。SCN-WL-RTGI-COLOR を閉じたとき 0.0187）、影の中の地面が 0.0175（同 0.0081）。同じ exe の撮り直しでも同じ値で、揺らぎではない。エンジンの照り返しの r が Cycles より約 0.02 大きい（影の崖 (0.797, 0.166) に対し Cycles (0.777, 0.177)）。原因を切り分けて直す（見立て: 当たりの点の鏡面が太陽だけで空の光を返さない、層の平均の色の近似、SCN-WL-RTGI-AMOUNT の裏当たりの読み飛ばしで青い分が消えて偏りが表に出た）。rtgi-color.json の 2 行が通り、灰色の rtgi-amount.json も通ること。閾値は変えない。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -Build -RequireAssets -Width 1920 -Height 1080 -Hdr -Aov -Views ref_cliff_01 -GameArgs wasteland-common-light,wasteland-hide=all,wasteland-finest-lod,wasteland-aa=fxaa -LaunchPerView -OutDir .harness/runs/scene-capture/SCN-WL-RTGI-COLOR-RESIDUAL/bounce-on`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Hdr -Aov -Views ref_cliff_01 -GameArgs wasteland-common-light,wasteland-hide=all,wasteland-finest-lod,wasteland-aa=fxaa,rtgi-bounce=off -LaunchPerView -OutDir .harness/runs/scene-capture/SCN-WL-RTGI-COLOR-RESIDUAL/bounce-off`
+- verify: `python Scripts/Terrain/ReferenceCheck.py --bounce --engine .harness/runs/scene-capture/SCN-WL-RTGI-COLOR-RESIDUAL/bounce-on --engine .harness/runs/scene-capture/SCN-WL-RTGI-COLOR-RESIDUAL/bounce-off --reference .harness/runs/scene-capture/SCN-WLR-CYCLES-LIT --expect Scripts/Terrain/ExpectSpecs/rtgi-color.json --verify`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Hdr -Aov -Views ref_cliff_01 -GameArgs wasteland-common-light,wasteland-hide=all,wasteland-finest-lod,wasteland-aa=fxaa,wasteland-gray-material -LaunchPerView -OutDir .harness/runs/scene-capture/SCN-WL-RTGI-COLOR-RESIDUAL/gray-on`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Hdr -Aov -Views ref_cliff_01 -GameArgs wasteland-common-light,wasteland-hide=all,wasteland-finest-lod,wasteland-aa=fxaa,wasteland-gray-material,rtgi-bounce=off -LaunchPerView -OutDir .harness/runs/scene-capture/SCN-WL-RTGI-COLOR-RESIDUAL/gray-off`
+- verify: `python Scripts/Terrain/ReferenceCheck.py --bounce --engine .harness/runs/scene-capture/SCN-WL-RTGI-COLOR-RESIDUAL/gray-on --engine .harness/runs/scene-capture/SCN-WL-RTGI-COLOR-RESIDUAL/gray-off --reference .harness/runs/scene-capture/SCN-WLR-CYCLES-GRAY --expect Scripts/Terrain/ExpectSpecs/rtgi-amount.json --verify`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Terrain/CaptureRegression.ps1 -Item SCN-WL-RTGI-COLOR-RESIDUAL -Phase after`
+- paths: Assets/Shaders, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Game, Scripts, Docs/RenderingValidation, TASKS.md, PROGRESS.md
+- notes: 危険地帯（描画）。SCN-WL-LIGHT-FINAL の反復 57 で `--light-final` が見つけた（記録は `Docs/RenderingValidation/WastelandLightFinal.md`）。反復の最初に回帰の撮影の `before` を撮る。直した後に SCN-WL-LIGHT-FINAL の組を撮り直して `--light-final` を通す。
+
+## SCN-WL-CLOUD-BANDING: 雲の階調の段（等高線のような平らな段）を消す
+- status: backlog
+- after: SCN-WLR-CLOUD-REF
+- done-when: 既定の荒野の雲に、明るさが平らな段になって等高線のように並ぶ階調の段が出る（SCN-WL-LIGHT-FINAL の歩きの連続撮影 `scene-capture/SCN-WL-LIGHT-FINAL-views6/walk/` の空と、ref_far_02。10 月 19 日の SCN-WL-GRADE-NEUTRAL-6views にも同じ位置にある）。原因（雲の密度・光の量子化、低解像度の雲の拡大、表示の 8 bit の丸めのどれか）を切り分けて直し、同じ視点の撮影で段が見えないことを拡大して確かめる。SCN-FIX-SKY-BANDING（mega シーンの空の横縞）と同じ原因なら一緒に扱う。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -Build -RequireAssets -Width 1920 -Height 1080 -Views ref_far_02 -OutDir .harness/runs/scene-capture/SCN-WL-CLOUD-BANDING`
+- paths: Assets/Shaders, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Game, Scripts, Docs/RenderingValidation, TASKS.md, PROGRESS.md
+- notes: SCN-WL-LIGHT-FINAL の反復 57 で足した。優先は計画が決める。
 
 ## SCN-WL-SKY-AERIAL: 空の青・遠景の霞・全体の明るさと彩度を手本に合わせる
 - status: backlog

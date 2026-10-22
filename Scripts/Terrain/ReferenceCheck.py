@@ -321,6 +321,11 @@
 #       <撮影先>/ref2x）で、株のアルファの縁・株の全体・近くの地面の細部の欠けとエイリアスに分ける（PlantFarCheck.py。組は
 #       base〔既定の TAA〕と、あれば aa-none・aa-fxaa）。組が同じ Game.exe で撮られ、各量が判定できることを検査する
 #       （値の閾値は付けない）。報告は <撮影先>/plant_far_check.json、並べた画は <撮影先>/plant_far.png。
+#   python Scripts/Terrain/ReferenceCheck.py --light-final --engine-root <撮影の置き場> [--verify]
+#       共通の照明（地形だけ・霞なし）の直しの仕様（rt-tlas-range・shadow-leak・shadow-pages・material-ao・rtgi-color）を、
+#       同じ Game.exe で撮り直した 1 つの置き場（gray/ と その engine-sun/・engine-sky/、lit/、bounce-off/）の撮影で、仕様を書いた
+#       ときと同じ比べ方（--gray・--lit・--bounce と同じ参照）でまとめて判定する（LightFinal.py）。報告は
+#       <撮影の置き場>/light_final_check.json。
 #
 # 終了コード: すべて合格なら 0、どれかが不合格なら 1。
 import argparse
@@ -608,9 +613,21 @@ SHIFTED_REFERENCE_SCOPE = "region_means_only"
 # SCN-WL-RTGI-AMOUNT: 本描画（--gray・--lit）も間接光の拡散の分を書くようにした（足した出力だけで、ほかの出力は同じ）
 # SCN-WLR-CLOUD-REF-BLENDER: 雲の描画（--cloud。job の kind が cloud のときだけ動く枝）を足し、--mesh を --cloud のほかで
 # 求める形にした。ほかの描画の関数は変えていない
+# SCN-WL-LIGHT-FINAL: 建物（--building）・低木（--plant）の枝と建物の拡散の色の出力（47aae7bf・fb7275f2・5e6c648b の版）は、
+# どれも job の building・plant があるときだけ動く枝で、地形の --gray・--lit の描画は変えていないので、その前の版
+# （f2795eae とその同値）で描いた SCN-WLR-CYCLES-GRAY・LIT を今の台本で描いたものとして照らす
 BLENDER_SCRIPT_EQUIVALENT_SHA256 = {
     "af4cfd5fd878318f650f7c7559efc7b3e08ed2ef883602d3230ebf5c48281789":
-        ("5e6c648bcd9929cbc2dbb0aa2ed28b6a7a11aed044475881bb2c51506451efbe",),
+        ("5e6c648bcd9929cbc2dbb0aa2ed28b6a7a11aed044475881bb2c51506451efbe",
+         "fb7275f260c76d5f6f9e328cd56b49c2777a02bd79435daf1bd8581490ae1701",
+         "47aae7bf4b23d3562eb80925dc7c5afd8981357ef11b55202e372da93a8cec16",
+         "f2795eae2b4454d8b34ef15526636379e276927b7db34706d2da67ac746aebca",
+         "38058f99bd46164fe57d871d7acf00cb03849449b43d4ac17e5c7857c6b268d8",
+         "5570cce8bfb04ee9a69a87ec961f6c0f9b600acc2585eea64ff370c610b97afa",
+         "e4145a910c54272e5990a7e26ceafd537e6e7f1299253867292e4fe6dcc8dfd0",
+         "74c6ee7e3fce1a91d42929fd5700ac225c8db2b9ba8f924ee1330036da50a5a4",
+         "ab3aff4ec3c7776b27ad766059506d9e2f83b0e64904e76f76f54bbb508881e0",
+         "ad3cea721bf57a593caa9e7ab97228a6367fa94acd67bc00115e01886598be49"),
     "f2795eae2b4454d8b34ef15526636379e276927b7db34706d2da67ac746aebca":
         ("38058f99bd46164fe57d871d7acf00cb03849449b43d4ac17e5c7857c6b268d8",
          "5570cce8bfb04ee9a69a87ec961f6c0f9b600acc2585eea64ff370c610b97afa",
@@ -6570,6 +6587,11 @@ def main():
                         help="荒野の地形が RT のシーンに入り、光線が地形に当たることを撮影のログで検査する（RtScene.py）")
     parser.add_argument("--bounce", action="store_true",
                         help="RTGI の照り返し（--engine の入 − 切の撮影）を Cycles の間接光と比べる（RtgiBounce.py）")
+    parser.add_argument("--light-final", action="store_true",
+                        help="共通の照明の直しの仕様（rt-tlas-range・shadow-leak・shadow-pages・material-ao・rtgi-color）を、"
+                             "--engine-root の 1 つの置き場の撮影でまとめて通す（LightFinal.py）")
+    parser.add_argument("--engine-root", default="",
+                        help="--light-final の撮影の置き場（gray/・gray/engine-sun/・gray/engine-sky/・lit/・bounce-off/ を持つ所）")
     parser.add_argument("--projection", action="store_true",
                         help="Blender の深度（BlenderReference.py）とエンジンの深度の投影を照らす")
     parser.add_argument("--atmos-dump", action="store_true",
@@ -6681,6 +6703,12 @@ def main():
         views = [v.strip() for v in args.views.split(",") if v.strip()]
         return RtgiBounce.run(sys.modules[__name__], [absolute(d) for d in args.engine],
                               absolute(args.reference) if args.reference else "", views, args.verify, expect)
+    if args.light_final:
+        import LightFinal
+        root = args.engine_root
+        return LightFinal.run(sys.modules[__name__],
+                              os.path.normpath(root if os.path.isabs(root) else os.path.join(REPO_ROOT, root)) if root else "",
+                              args.verify)
     if args.geom_settle:
         import GeomSettle
         capture = args.capture or (args.engine[0] if args.engine else "")
