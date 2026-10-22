@@ -144,7 +144,7 @@ namespace Game::GameModes::WastelandPropExport
         const int headerLength = std::snprintf(
             header, sizeof(header),
             "ply\nformat binary_little_endian 1.0\n"
-            "comment NorvesLib wasteland prop LOD0 source=%s\n"
+            "comment kind=norveslib_wasteland_prop lod=0 source=%s\n"
             "comment space=mesh_local units=m axes=+X_east,+Y_up,+Z_south\n"
             "element vertex %llu\nproperty float x\nproperty float y\nproperty float z\n"
             "property float nx\nproperty float ny\nproperty float nz\n"
@@ -200,7 +200,7 @@ namespace Game::GameModes::WastelandPropExport
         VariableArray<char> json;
         AppendText(json, "{\n  \"format\": \"ply_binary_le_lod0\",\n  \"space\": \"mesh_local\",\n  \"units\": \"m\",\n"
                          "  \"axes\": {\"x\": \"east\", \"y\": \"up\", \"z\": \"south\"},\n"
-                         "  \"lod\": \"finest (LOD level 0 clusters, not decimated, not welded)\",\n"
+                         "  \"lod\": \"最も細かい段（LOD 0 のクラスタ。間引きも頂点の溶接もしない）\",\n"
                          "  \"placement\": \"world = position + rotate(conjugate(rotation), scale * local)\",\n"
                          "  \"tiles\": [\n");
         char line[1024] = {};

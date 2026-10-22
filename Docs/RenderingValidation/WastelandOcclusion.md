@@ -73,13 +73,16 @@ LightingPass が RTGI の定数の `environmentParameters.z` を 1 にする。�
 | 小物の形 | `Game/GameModes/Wasteland/WastelandPropExport.cpp` が、作った MegaMesh の LOD 0 をメッシュのローカルの座標の PLY（`occlusion_props.<名前>.ply`、地形の書き出しと同じ並び）と一覧 `occlusion_props.manifest.json` に書く | 形ごとにメッシュを 1 つ作り、配置ごとに共有して置く |
 | 配置 | 置いた小物の行を `occlusion_props.placements.csv`（形・位置・四元数 (x, y, z, w)・拡大率・影を落とすか）に書く。ワールド = 位置 + (四元数の共役の回転)(拡大率 ⊙ ローカル) | 同じ式の行列に座標の変換（BlenderReference.py の `engine_to_blender_matrix4`）を掛ける |
 | 崖錐の岩の範囲 | 灰色の材質の撮影だけ、視点から水平 300 m 以内の岩だけを置く（`kGrayTalusRadius`）。全域の岩（約 27 万個）を最も細かい段で描くと MegaGeometry の BVH のたどりの列（1 << 22）が溢れ、地形がまるごと抜ける（contact_near で bvh_overflow 約 1530 万、`scene-capture/SCN-WLR-OCCLUSION-EXPORT/probe-nogray`）。300 m に限ると溢れ 0 | 書き出しの全行をそのまま置く（同じ岩だけ） |
-| 照合の画 | AOV の深度・法線・アルベド・粗さ | `<視点>.aux.depth.pfm`（深度）・`aux.normal.pfm`（Normal のパス）・`aux.object.pfm`（Object Index。地形 0・崖錐の岩 1・崖の面の塊 2・そのほか 3・空 −1） |
+| 照合の画 | AOV の深度・法線（頂点の補間した陰影の法線）・アルベド・粗さ | `<視点>.aux.depth.pfm`（深度）・`aux.normal.pfm`（陰影の法線。Normal のパス）・`aux.geometric_normal.pfm`（幾何の法線。三角形の面の向き。Geometry の True Normal をシェーダの AOV `GeometricNormal` で出す）・`aux.object.pfm`（Object Index。地形 0・崖錐の岩 1・崖の面の塊 2・そのほか 3・空 −1） |
 
 照合（`ReferenceCheck.py --occlusion [--trial] --engine-root <置き場> --reference <参照の置き場> --verify`、本体は `OcclusionCompare.py`）:
 組は参照の置き場の下の `inputs.json`（`cycles_occlusion`）を持つフォルダで、エンジンの置き場の同じ名前のフォルダと組む。
 入力は、小物の形と配置のハッシュ（今のエンジンの撮影のファイルと）、台本・借りた BlenderReference.py・共通の照明・地形のメッシュ（`check_blender_inputs`）、
 起動引数と照明の組、カメラを照らす。同じ面は、どちらかが面に当たった画素から、両方の深度の空との境・深度の跳びの 2 画素（`GrayRegions.edge_mask`）を
-除いた画素を分母に、`PlantRegions.same_surface`（深度の差 1 % 以内）かつ法線の角の差 10° 以内の割合で、90 % 以上を合格とする。
+除いた画素を分母に、`PlantRegions.same_surface`（深度の差 1 % 以内）かつ陰影の法線の角の差 10° 以内の割合で、90 % 以上を合格とする。
+法線の許容差は陰影の法線どうしで比べる（エンジンの AOV の normal も頂点の補間で、幾何の法線を持たない）。幾何の法線は、Cycles の深度から戻した位置の
+上下・左右の隣との差の外積（深度の面の向き）と比べ、輪郭から離れた画素のうち 2° 以内で合う割合が 0.5 以上で、陰影の法線の同じ割合より高いことを確かめる
+（補間の法線を幾何の法線として出していないことの確かめ。崖錐の岩は三角形が画素より小さく、隣の画素が別の三角形に乗るので割合が低い）。
 エンジンの AOV のアルベドと粗さが面のどの画素でも `gray_material` と 1.5/255 以内であることも確かめる。
 
 岩塊の組（rocks-sky。contact_near、空だけ、雲・草と低木・礫・建物・空気遠近・霧を隠す。`scene-capture/SCN-WLR-OCCLUSION-EXPORT/rocks-sky` と
@@ -90,5 +93,7 @@ LightingPass が RTGI の定数の `environmentParameters.z` を 1 にする。�
 - 同じ面の画素 99.98 %（分母 1891498 画素、輪郭 89844 画素を除く）。地形 100 %、崖錐の岩 99.93 %。エンジンだけ・Cycles だけが面に当たった画素は 0。
   スキャンの崖の塊はこの視点に映らない
 - エンジンの AOV のアルベドの差は最大 0.0020（8 bit の丸め）、粗さの差 0
+- 幾何の法線が深度の面の向きと 2° 以内で合う画素 68.5 %（地形 87.9 %・崖錐の岩 23.0 %、1886550 画素）、陰影の法線では 38.9 %（地形 48.9 %・崖錐の岩
+  15.3 %）。幾何の法線と陰影の法線の角の差は中央値 2.4°・99 % 点 29.6°（画素 (550, 450) の岩の面で 18.5°）
 - 並べた画（`cycles/rocks-sky/occlusion_preview/contact_near.png`）で岩の形と位置が重なる。Cycles では岩の根元と岩の間の地面が空の遮蔽で暗く
   なるが、エンジンではほとんど暗くならない（上の順位 1。影を落とさない岩は RTGI の光線に見えない）。値の比べ方は SCN-WLR-OCCLUSION-METRIC で決める

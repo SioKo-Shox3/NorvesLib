@@ -19,7 +19,10 @@
 #
 # 出力（<書き先>/。既定は <撮影>/cycles-occlusion、--trial なら <撮影>/cycles-occlusion-trial）:
 #   <視点>.aux.depth.pfm   カメラの前方向への距離 m（空は +∞。BlenderReference.render_view_depth と同じ描き方）
-#   <視点>.aux.normal.pfm  頂点の補間した法線（エンジンの座標の向き。Cycles の Normal のパス。エンジンの AOV の normal と同じ意味）
+#   <視点>.aux.normal.pfm  頂点の補間した法線（陰影の法線。エンジンの座標の向き。Cycles の Normal のパス。エンジンの AOV の
+#                          normal と同じ意味なので、同じ面の判定の法線の許容差はこちらで比べる）
+#   <視点>.aux.geometric_normal.pfm  三角形の面の法線（幾何の法線。エンジンの座標の向き。Geometry の True Normal を
+#                          シェーダの AOV で出す。視線の側へ向く。照合は深度から戻した面の向きと合うかを確かめる）
 #   <視点>.aux.object.pfm  物体の識別（地形 0、崖錐の岩 1、崖の面の塊 2、そのほかの小物 3、空 −1。Object Index のパス）
 #   <視点>.aux.alpha.pfm   面に当たった画素 1
 #   <視点>.cycles.hdr.pfm  本描画（線形の RGB。エンジンの HDR と同じ尺度）。--trial は低いサンプル数の試し
@@ -48,6 +51,10 @@ TRIAL_DIR = "cycles-occlusion-trial"
 TRIAL_SPP = 64
 FULL_SPP = 1024
 CASES = ("sky", "sun")
+# 照合の画の AOV の部分（<視点>.aux.<部分>.pfm）
+AUX_PARTS = ("depth", "normal", "geometric_normal", "object", "alpha")
+# 幾何の法線を出すシェーダの AOV の名前
+GEOMETRIC_NORMAL_AOV = "GeometricNormal"
 
 # 物体の識別（Object Index のパス）
 TERRAIN_INDEX = 0
@@ -153,7 +160,7 @@ def run(args):
             "prefix": prefix,
         }
         job["required_outputs"] = [f"{prefix}.cycles.json", f"{prefix}.cycles.hdr.pfm"] + \
-            [f"{prefix}.aux.{part}.pfm" for part in ("depth", "normal", "object", "alpha")]
+            [f"{prefix}.aux.{part}.pfm" for part in AUX_PARTS]
         for stale in job["required_outputs"]:
             if os.path.exists(stale):
                 os.remove(stale)
@@ -230,6 +237,24 @@ def run_blender_job(args, out_dir, name, job):
 
 # ---- Blender の中の側 ----
 
+def make_aux_material(name):
+    """照合の画の材質: 白いランバート面に、Geometry の True Normal（三角形の面の法線）をシェーダの AOV へ書く出力を足す"""
+    material = BR.make_diffuse_material(name, 1.0)
+    nodes = material.node_tree.nodes
+    geometry = nodes.new("ShaderNodeNewGeometry")
+    aov = nodes.new("ShaderNodeOutputAOV")
+    aov.aov_name = GEOMETRIC_NORMAL_AOV
+    material.node_tree.links.new(geometry.outputs["True Normal"], aov.inputs["Color"])
+    return material
+
+
+def blender_to_engine_normal(normal_blender):
+    """Blender の向き (x, y, z) をエンジンの向き (x, z, −y) へ直し、長さを 1 にする（面に当たらない画素は 0）"""
+    normal = np.stack([normal_blender[..., 0], normal_blender[..., 2], -normal_blender[..., 1]], axis=-1)
+    length = np.linalg.norm(normal, axis=-1, keepdims=True)
+    return np.where(length > 1e-6, normal / np.maximum(length, 1e-6), 0.0).astype(np.float32)
+
+
 def render_job(job_path):
     import bpy
     import mathutils
@@ -300,6 +325,9 @@ def render_job(job_path):
     view_layer = scene.view_layers[0]
     view_layer.use_pass_normal = True
     view_layer.use_pass_object_index = True
+    geometric_aov = view_layer.aovs.add()
+    geometric_aov.name = GEOMETRIC_NORMAL_AOV
+    geometric_aov.type = "COLOR"
 
     prefix = job["prefix"]
     exr_tmp = prefix + ".render.exr"
@@ -309,8 +337,9 @@ def render_job(job_path):
     # 1. 深度（空は +∞）
     aux_started = time.time()
     depth = BR.render_view_depth(scene, exr_tmp, background)
-    # 2. 法線と物体の識別: 白いランバート面を 1 サンプル・画素の中心に寄せたフィルタで描き、Normal と Object Index のパスを読む
-    view_layer.material_override = BR.make_diffuse_material("OcclusionAuxWhite", 1.0)
+    # 2. 法線と物体の識別: 白いランバート面を 1 サンプル・画素の中心に寄せたフィルタで描き、Normal（陰影の法線）・
+    #    幾何の法線の AOV・Object Index のパスを読む
+    view_layer.material_override = make_aux_material("OcclusionAuxWhite")
     background_strength = background.inputs["Strength"].default_value
     BR.set_gray_bounces(scene, 0)
     scene.cycles.samples = 1
@@ -322,10 +351,8 @@ def render_job(job_path):
     BR.set_gray_bounces(scene, BR.GRAY_MAX_BOUNCES)
     scene.cycles.filter_width = BR.GRAY_PIXEL_FILTER_WIDTH
     alpha = channels["ViewLayer.Combined.A"].astype(np.float32)
-    normal_blender = BR.pass_rgb(channels, "Normal", ("X", "Y", "Z"))
-    normal = np.stack([normal_blender[..., 0], normal_blender[..., 2], -normal_blender[..., 1]], axis=-1)
-    length = np.linalg.norm(normal, axis=-1, keepdims=True)
-    normal = np.where(length > 1e-6, normal / np.maximum(length, 1e-6), 0.0).astype(np.float32)
+    normal = blender_to_engine_normal(BR.pass_rgb(channels, "Normal", ("X", "Y", "Z")))
+    geometric_normal = blender_to_engine_normal(BR.pass_rgb(channels, GEOMETRIC_NORMAL_AOV))
     index_keys = [key for key in channels if ".Object Index." in key or ".IndexOB." in key]
     if not index_keys:
         raise RuntimeError(f"EXR に Object Index のパスが無い（あるもの: {sorted(channels)}）")
@@ -333,6 +360,7 @@ def render_job(job_path):
     aux_seconds = time.time() - aux_started
     GR.write_pfm(prefix + ".aux.depth.pfm", depth)
     GR.write_pfm(prefix + ".aux.normal.pfm", normal)
+    GR.write_pfm(prefix + ".aux.geometric_normal.pfm", geometric_normal)
     GR.write_pfm(prefix + ".aux.object.pfm", object_index)
     GR.write_pfm(prefix + ".aux.alpha.pfm", alpha)
     counts = {str(int(v)): int((object_index == v).sum()) for v in np.unique(object_index)}
@@ -359,6 +387,8 @@ def render_job(job_path):
         "max_bounces": BR.GRAY_MAX_BOUNCES,
         "pixel_filter_width": BR.GRAY_PIXEL_FILTER_WIDTH,
         "aux_pixel_filter_width": BR.PIXEL_FILTER_WIDTH,
+        "aux_normals": {"normal": "陰影の法線（頂点の補間。Normal のパス）",
+                        "geometric_normal": f"幾何の法線（三角形の面。True Normal のシェーダの AOV {GEOMETRIC_NORMAL_AOV}）"},
         "terrain_tiles": len(job["tiles"]),
         "terrain_triangles": terrain_triangles,
         "props": len(placements),

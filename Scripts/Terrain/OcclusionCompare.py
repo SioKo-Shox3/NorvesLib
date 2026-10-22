@@ -13,9 +13,12 @@
 #     撮影のフォルダのものと合う。カメラがエンジンの aov.json と合う。--trial でない照合は試しの描画を拒む。
 # 同じ面の画素（視点ごと）: エンジンと Cycles のどちらかが面に当たった画素のうち、両方の深度の空との境・深度の跳びから
 #   GrayRegions.EDGE_MARGIN_PX 画素より離れた画素（輪郭の除外）を分母にし、PlantRegions.same_surface（深度の差が
-#   DEPTH_MATCH_RELATIVE 以内）で、法線（エンジンの AOV の normal と Cycles の Normal のパス）の角の差が
-#   NORMAL_MATCH_DEGREES 以内の画素を同じ面とする。割合が MIN_SAME_SURFACE_FRACTION 以上で合格。物体の識別
+#   DEPTH_MATCH_RELATIVE 以内）で、陰影の法線（エンジンの AOV の normal と Cycles の Normal のパス。どちらも頂点の補間）の
+#   角の差が NORMAL_MATCH_DEGREES 以内の画素を同じ面とする。割合が MIN_SAME_SURFACE_FRACTION 以上で合格。物体の識別
 #   （Cycles の Object Index。地形 0・崖錐の岩 1・崖の面の塊 2）ごとの割合も書く。
+# 幾何の法線（Cycles の True Normal の AOV、aux.geometric_normal）: Cycles の深度から戻した位置の隣の画素との差の外積
+#   （深度の面の向き）と比べる。輪郭から離れ上下左右の隣が面に当たる画素のうち、角の差が GEOMETRIC_MATCH_DEGREES 以内の
+#   割合が MIN_GEOMETRIC_FRACTION 以上で、陰影の法線の同じ割合より高いこと（補間の法線を幾何の法線として出していないこと）。
 # 材質: エンジンの AOV のアルベドと粗さが、面のどの画素でも CommonLight.json の gray_material と MATERIAL_AOV_TOLERANCE 以内
 #   （地形も小物も灰色。Cycles は同じ値の Principled BSDF を全体に掛ける）。
 # 書くもの: <参照の組>/occlusion_check.json と、並べた画 <参照の組>/occlusion_preview/<視点>.png
@@ -34,6 +37,8 @@ MIN_SAME_SURFACE_FRACTION = 0.90
 # エンジンの AOV の材質（灰色）の許容差（8 bit の GBuffer の 1.5 段）
 MATERIAL_AOV_TOLERANCE = 1.5 / 255.0
 NORMAL_MATCH_DEGREES = 10.0
+GEOMETRIC_MATCH_DEGREES = 2.0
+MIN_GEOMETRIC_FRACTION = 0.5
 REQUIRED_GAME_ARGS = ("wasteland-common-light", "wasteland-gray-material", "wasteland-finest-lod")
 SCRIPT = "Scripts/Terrain/BlenderOcclusionReference.py"
 BLENDER_REFERENCE = "Scripts/Terrain/BlenderReference.py"
@@ -113,6 +118,60 @@ def same_surface_masks(engine_depth, engine_normal, cycles_depth, cycles_normal)
     return domain, same, edge & (engine_hit | cycles_hit)
 
 
+def depth_surface_normal(camera, depth):
+    """(深度から戻した面の向き〔視線の側へ向けた単位の向き〕, 使える画素)。向きは上下・左右の隣の画素の位置の差の外積"""
+    height, width = depth.shape
+    rays = PR.pixel_rays(camera, width, height)
+    finite = np.isfinite(depth)
+    positions = np.asarray(camera["position"], dtype=np.float64)[None, None, :] +         rays * np.where(finite, depth, 0.0)[..., None]
+    normal = np.zeros(positions.shape, dtype=np.float64)
+    valid = np.zeros(depth.shape, dtype=bool)
+    dx = positions[1:-1, 2:] - positions[1:-1, :-2]
+    dy = positions[2:, 1:-1] - positions[:-2, 1:-1]
+    normal[1:-1, 1:-1] = np.cross(dx, dy)
+    valid[1:-1, 1:-1] = finite[1:-1, 1:-1] & finite[1:-1, 2:] & finite[1:-1, :-2] & finite[2:, 1:-1] & finite[:-2, 1:-1]
+    length = np.linalg.norm(normal, axis=-1, keepdims=True)
+    valid &= length[..., 0] > 0.0
+    normal = normal / np.maximum(length, 1e-30)
+    facing = np.sum(normal * rays, axis=-1) > 0.0
+    normal[facing] *= -1.0
+    return normal, valid & ~GR.edge_mask(depth)
+
+
+def geometric_normal_check(camera, cycles_depth, cycles_normal, geometric_normal, object_index):
+    """幾何の法線の AOV が深度の面の向きと合うか（陰影の法線と並べる）"""
+    surface_normal, valid = depth_surface_normal(camera, cycles_depth)
+    cos_limit = math.cos(math.radians(GEOMETRIC_MATCH_DEGREES))
+    geometric_ok = valid & (np.sum(surface_normal * geometric_normal, axis=-1) >= cos_limit)
+    shading_ok = valid & (np.sum(surface_normal * cycles_normal, axis=-1) >= cos_limit)
+    pixels = max(int(valid.sum()), 1)
+    result = {"pixels": int(valid.sum()),
+              "geometric_fraction": round(float(geometric_ok.sum()) / pixels, 4),
+              "shading_fraction": round(float(shading_ok.sum()) / pixels, 4),
+              "tolerance_degrees": GEOMETRIC_MATCH_DEGREES, "min_fraction": MIN_GEOMETRIC_FRACTION, "per_object": {}}
+    cos_shading = np.clip(np.sum(geometric_normal * cycles_normal, axis=-1), -1.0, 1.0)
+    hit = valid & (np.linalg.norm(geometric_normal, axis=-1) > 0.5)
+    if hit.any():
+        angles = np.degrees(np.arccos(cos_shading[hit]))
+        result["geometric_vs_shading_degrees"] = {"median": round(float(np.median(angles)), 3),
+                                                   "p99": round(float(np.percentile(angles, 99)), 3)}
+    for value, name in OBJECT_NAMES.items():
+        mask = valid & (object_index == value)
+        if mask.any():
+            count = float(mask.sum())
+            result["per_object"][name] = {"pixels": int(mask.sum()),
+                                          "geometric_fraction": round(float((geometric_ok & mask).sum()) / count, 4),
+                                          "shading_fraction": round(float((shading_ok & mask).sum()) / count, 4)}
+    failures = []
+    if result["geometric_fraction"] < MIN_GEOMETRIC_FRACTION:
+        failures.append(f"幾何の法線が深度の面の向きと {GEOMETRIC_MATCH_DEGREES}° 以内で合う画素の割合 "
+                        f"{result['geometric_fraction']:.4f} が {MIN_GEOMETRIC_FRACTION} に届かない")
+    if result["geometric_fraction"] <= result["shading_fraction"]:
+        failures.append(f"幾何の法線の割合 {result['geometric_fraction']:.4f} が陰影の法線の割合 "
+                        f"{result['shading_fraction']:.4f} より高くない（補間の法線を出している）")
+    return result, failures
+
+
 def write_preview(path, engine_hdr, cycles_hdr, domain, same, edge, object_index):
     def display(image, scale):
         linear = np.clip(image * scale, 0.0, 1.0)
@@ -143,7 +202,7 @@ def check_view(RC, engine_dir, reference_dir, record, view):
     aov_path = os.path.join(engine_dir, f"{view}.aov.json")
     prefix = os.path.join(reference_dir, view)
     needed = [aov_path, os.path.join(engine_dir, f"{view}.hdr.pfm")] + \
-        [f"{prefix}.aux.{part}.pfm" for part in ("depth", "normal", "object")] + [f"{prefix}.cycles.hdr.pfm"]
+        [f"{prefix}.aux.{part}.pfm" for part in ("depth", "normal", "geometric_normal", "object")] + [f"{prefix}.cycles.hdr.pfm"]
     missing = [os.path.basename(p) for p in needed if not os.path.isfile(p)]
     if missing:
         failures.append(f"無いファイル: {', '.join(missing)}")
@@ -161,6 +220,7 @@ def check_view(RC, engine_dir, reference_dir, record, view):
     engine_roughness = RC.read_pfm_any(os.path.join(engine_dir, aov["roughness"]["file"]))[..., 0].astype(np.float64)
     cycles_depth = RC.read_pfm_any(prefix + ".aux.depth.pfm")[..., 0].astype(np.float64)
     cycles_normal = RC.read_pfm_any(prefix + ".aux.normal.pfm")[..., :3].astype(np.float64)
+    geometric_normal = RC.read_pfm_any(prefix + ".aux.geometric_normal.pfm")[..., :3].astype(np.float64)
     object_index = RC.read_pfm_any(prefix + ".aux.object.pfm")[..., 0]
     cycles_hdr = RC.read_pfm_any(prefix + ".cycles.hdr.pfm")[..., :3].astype(np.float64)
     if engine_depth.shape != cycles_depth.shape:
@@ -198,6 +258,9 @@ def check_view(RC, engine_dir, reference_dir, record, view):
         "tolerance": {"depth_relative": PR.DEPTH_MATCH_RELATIVE, "normal_degrees": NORMAL_MATCH_DEGREES,
                       "edge_margin_px": GR.EDGE_MARGIN_PX},
     })
+    result["geometric_normal"], geometric_failures = geometric_normal_check(
+        meta["camera"], cycles_depth, cycles_normal, geometric_normal, object_index)
+    failures.extend(geometric_failures)
     if fraction < MIN_SAME_SURFACE_FRACTION:
         failures.append(f"同じ面の画素の割合 {fraction:.4f} が {MIN_SAME_SURFACE_FRACTION} に届かない")
     if "talus" not in per_object:
@@ -243,6 +306,8 @@ def run(RC, engine_root, reference_root, views, verify, trial):
             print(f"REFERENCE_CHECK occlusion set={name} view={view} same_surface={result.get('same_surface_fraction')} "
                   f"domain={result.get('domain_pixels')} per_object="
                   f"{json.dumps({k: v['same_surface_fraction'] for k, v in result.get('per_object', {}).items()})} "
+                  f"geometric_normal={(result.get('geometric_normal') or {}).get('geometric_fraction')} "
+                  f"shading_normal={(result.get('geometric_normal') or {}).get('shading_fraction')} "
                   f"pass={int(result['pass'])}", flush=True)
         report["sets"][name] = entry
         with open(os.path.join(reference_dir, "occlusion_check.json"), "w", encoding="utf-8") as f:

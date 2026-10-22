@@ -7215,3 +7215,15 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `aux-SCN-WLR-OCCLUSION-EXPORT-probe-nogray.txt`: 灰色・範囲の制限の前の同じ組は bvh_overflow 約 1530 万で地形がまるごと抜ける（`scene-capture/SCN-WLR-OCCLUSION-EXPORT/probe-nogray/contact_near.png`）
 - Notes: 崖錐の岩を 300 m に限るのは、最も細かい段で全域の岩を描くと BVH のたどりの列（Library の constexpr 1 << 22）が溢れて地形が抜けるため（列を広げる直しは paths の外）。比べの撮影（灰色の材質）だけに掛け、Cycles にも同じ岩だけを渡すので照合は成り立つ。視点から 300 m より遠い岩の遮蔽は比べに入らない。既定の描画（灰色の材質なし）の経路は変えていないので回帰の撮影は回していない。新しい試験は足していない（verify の検査が確かめる）
 - Next: TASKS.md の次の未完（SCN-WLR-OCCLUSION-SETS）
+
+### SCN-WLR-OCCLUSION-EXPORT 差し戻しの直し: 幾何の法線の AOV（2026-10-23、run 20261022-173753 の反復 28）
+- Done: 反復 27 の `aux.normal.pfm` は頂点の補間した法線（Normal のパス）で、done-when (3) の幾何の法線になっていなかった。`BlenderOcclusionReference.py` の照合の画の材質に Geometry の True Normal をシェーダの AOV `GeometricNormal` へ書く出力を足し、`<視点>.aux.geometric_normal.pfm`（三角形の面の向き）を別に出す。`aux.normal.pfm` は陰影の法線として残し、エンジンの AOV の normal（これも頂点の補間）との法線の許容差に使う。照合（`OcclusionCompare.py`）は幾何の法線を Cycles の深度から戻した面の向き（隣の画素との差の外積）と比べ、輪郭から離れた画素で 2° 以内の割合が 0.5 以上かつ陰影の法線の割合より高いことを確かめる（補間の法線を出していれば両方の割合が等しく落ちる）。契約を `Docs/RenderingValidation/WastelandOcclusion.md` に書いた。`WastelandPropExport.cpp` の PLY の見出しの説明を機械の照合向けの key=value に、manifest の lod の説明を日本語にした
+- 結果: 評価者の画素 (550, 450) で幾何の法線と陰影の法線の角の差 18.541°（評価者が三角形の外積で求めた値と一致）。幾何の法線が深度の面の向きと 2° 以内で合う画素 68.54 %（地形 87.87 %・崖錐の岩 23.01 %）、陰影の法線は 38.89 %。同じ面の画素 99.98 %（地形 100 %・崖錐の岩 99.93 %）、アルベドの差 0.0020・粗さの差 0
+- 証拠（`.harness/runs/20261022-173753/`）:
+  - `verify-SCN-WLR-OCCLUSION-EXPORT-9.txt`: Debug の Game のビルド EXIT=0
+  - `verify-SCN-WLR-OCCLUSION-EXPORT-10.txt`: contact_near（rocks-sky）の撮影 result=pass・EXIT=0、`[ERROR]` 0、全 112 行で bvh_overflow=0、`WASTELAND_TALUS_GRAY_LIMIT casters=7/96 fragments=14921/274965`
+  - `aux-SCN-WLR-OCCLUSION-EXPORT-cycles-trial-2.txt`: 幾何の法線の AOV を足した台本の試しの描画（64 サンプル）EXIT=0、読み込み 54 秒・照合の画 13 秒・本描画 7 秒
+  - `verify-SCN-WLR-OCCLUSION-EXPORT-11.txt`: `--occlusion --trial --verify` result=pass・EXIT=0（same_surface=0.9998・geometric_normal=0.6854・shading_normal=0.3889）
+  - 並べた画 `scene-capture/SCN-WLR-OCCLUSION-EXPORT/cycles/rocks-sky/occlusion_preview/contact_near.png` を開いた: 岩の形と位置・地形の稜線が重なる
+- Notes: 崖錐の岩の幾何の法線の割合が低い（23 %）のは三角形が画素より小さく、隣の画素が別の三角形に乗るため（深度から戻す向きが三角形の向きにならない）。閾値 0.5 は全体の割合に掛けた。新しい試験は足していない（verify の照合が確かめる）
+- Next: TASKS.md の次の未完（SCN-WLR-OCCLUSION-SETS）
