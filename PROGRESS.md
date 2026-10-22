@@ -7246,3 +7246,14 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 撮影 `scene-capture/SCN-WLR-OCCLUSION-SETS/rocks-sky/contact_near.png` を開いた: 灰色の岩塊と地形が欠けずに写る
 - Notes: `--set` という別名は足さず、前からある `--sets` に 1 組を渡す形にした。新しい試験は足していない
 - Next: TASKS.md の次の未完（SCN-WLR-OCCLUSION-METRIC）
+
+### SCN-WLR-OCCLUSION-METRIC 小さな遮蔽と太陽の影の測り方を本描画の前に決める（2026-10-23、run 20261022-173753 の反復 31）
+- Done: 測りの本体 `Scripts/Terrain/OcclusionMetric.py` と定義 `Scripts/Terrain/ExpectSpecs/occlusion-regions.json` を足し、`ReferenceCheck.py --occlusion` に `--regions` を足した（`OcclusionCompare.check_view` が視点ごとに呼ぶ）。空だけの組は同じ面の画素を傾斜 × 距離の層に分け、溝（cavity 0.3 以上・傾斜 30° 以上）・岩塊と斜面の接する帯（岩の面から 0.5 m 以内）・株の根元（水平 0.6 m 以内）と同じ層の開けた対照（cavity 0.05 以下・物から 3 m 以上）の Y の比のエンジン ÷ Cycles を出す。必須の 4 層が欠ける・画素数（2000 / 5000）や分母の下限に届かない・Cycles の種の間の差が許容差 0.15 の 1/3 を超える（本描画）・必須の組が測られないと不合格。太陽だけの組は IoU・漏れ・縁の幅（m）と VSM の段・ページ・受け手の texel・影の LOD を記録する。Cycles の太陽の可視率を出すため `BlenderOcclusionReference.py` に拡散の直接光のパスを影ありと影なしで描いて割る出力と `--seeds`（`OcclusionSets.py --cycles --seeds` から渡す）を足した。定義と試しの値を `WastelandOcclusion.md` の「測り方」に書いた
+- 結果（試し）: エンジン ÷ Cycles は溝 1.093・接する帯 1.313 / 1.272・株の根元 1.251。必須の層の種の間の差 0.0001〜0.0004。太陽は terrain-sun IoU 0.931・漏れ 0.9 %、rocks-sun IoU 0.497・漏れ 41.9 %、plant-sun IoU 0.767・漏れ 0 %（エンジンだけの影 21.8 %）
+- 証拠（`.harness/runs/20261022-173753/`）:
+  - `aux-SCN-WLR-OCCLUSION-METRIC-cycles-trial-2.txt`: 8 組の Cycles の試し（64 サンプル・種 2）すべて exit=0、`mode=cycles sets=8 result=pass`、START・END と EXIT=0（`-cycles-trial.txt` はパス名 DiffDir の誤りで terrain-sun が落ちた版）
+  - `verify-SCN-WLR-OCCLUSION-METRIC-1.txt`: verify の `--occlusion --trial --regions ... --verify` result=pass・EXIT=0、8 組とも pass=1
+  - `aux-SCN-WLR-OCCLUSION-METRIC-negative.txt`: 種が 1 つ・未収束・画素不足・層の欠け・分母不足・組の欠けで不合格の理由が出ることを確かめた
+  - 重ね画像 `scene-capture/SCN-WLR-OCCLUSION-SETS/cycles/{terrain-sky,terrain-sun,rocks-sky,rocks-sun,plant-sky}/occlusion_regions/*.png` を開いた: 溝が崖の柱の間、接する帯が岩の根元、根元が株の下、rocks-sun の漏れが岩の地面への影に出る
+- Notes: 層は法線の方位で分けない（共通の照明の空は一様な放射輝度）。rocks-cliff の組は地形だけとほぼ同じ画なので必須に入れていない。cavity と物体からの距離は画面の上の標本の見込み（領域を選ぶためだけ）。megamesh_cluster_stats の影の段が最も細かい段の撮影で VSM に使われるかは記録からは分からない。新しい試験は足していない（verify の検査が確かめる）
+- Next: TASKS.md の次の未完（SCN-WLR-OCCLUSION-CYCLES）

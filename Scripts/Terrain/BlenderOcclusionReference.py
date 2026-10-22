@@ -30,7 +30,12 @@
 #   <視点>.aux.object.pfm  物体の識別（地形 0、崖錐の岩 1、崖の面の塊 2、そのほかの小物 3、株の枝 4、株の葉 5、空 −1。
 #                          Object Index のパス）
 #   <視点>.aux.alpha.pfm   面に当たった画素 1
-#   <視点>.cycles.hdr.pfm  本描画（線形の RGB。エンジンの HDR と同じ尺度）。--trial は低いサンプル数の試し
+#   <視点>.cycles.hdr.pfm  本描画（線形の RGB。エンジンの HDR と同じ尺度。種 0）。--trial は低いサンプル数の試し
+#   <視点>.cycles.seed<k>.hdr.pfm  --seeds N（既定 1）の 2 つめからの種 k の本描画（収束の確かめ。OcclusionMetric.py）
+#   <視点>.cycles.sun_visibility.pfm  太陽だけの組（--case sun）の太陽の可視率（種 0）。拡散の直接光のパス（DiffDir）の
+#                          輝度を、太陽の影を切った同じ描画の DiffDir の輝度で割った値（太陽の円盤の半影を含む 0〜1。材質の
+#                          BRDF と N·L は割り算で消える）。太陽へ向かない面（影なしの DiffDir が 0）は −1。種 k は
+#                          <視点>.cycles.seed<k>.sun_visibility.pfm
 #   <視点>.cycles.json     設定・物体の数・時間
 #   inputs.json            入力の記録（台本・借りた台本・共通の照明・地形のメッシュ・小物の形と配置のハッシュ、カメラ・照明）
 # 照合は Scripts/Terrain/ReferenceCheck.py --occlusion（OcclusionCompare.py）。
@@ -58,6 +63,10 @@ FULL_SPP = 1024
 CASES = ("sky", "sun")
 # 照合の画の AOV の部分（<視点>.aux.<部分>.pfm）
 AUX_PARTS = ("depth", "normal", "geometric_normal", "object", "alpha")
+# 太陽の可視率を出す画素: 太陽の影を切った DiffDir の輝度が、その 99 % 点のこの倍より大きい（太陽へ向く面）
+SUN_VISIBILITY_MIN_DIRECT = 0.02
+# 拡散の直接光のパスの多層 EXR の名前
+DIFFUSE_DIRECT_PASS = "Diffuse Direct"
 # 幾何の法線を出すシェーダの AOV の名前
 GEOMETRIC_NORMAL_AOV = "GeometricNormal"
 
@@ -179,11 +188,14 @@ def run(args):
             "to_sun_engine": BR.engine_sun_direction(altitude, azimuth),
             "gray_material": light["gray_material"],
             "spp": spp,
+            "seeds": max(int(args.seeds), 1),
             "prefix": prefix,
             "plant": plant,
         }
-        job["required_outputs"] = [f"{prefix}.cycles.json", f"{prefix}.cycles.hdr.pfm"] + \
-            [f"{prefix}.aux.{part}.pfm" for part in AUX_PARTS]
+        job["required_outputs"] = [f"{prefix}.cycles.json"] + \
+            [f"{prefix}.aux.{part}.pfm" for part in AUX_PARTS] + \
+            [seed_output(prefix, seed, "hdr") for seed in range(job["seeds"])] + \
+            ([seed_output(prefix, seed, "sun_visibility") for seed in range(job["seeds"])] if args.case == "sun" else [])
         for stale in job["required_outputs"]:
             if os.path.exists(stale):
                 os.remove(stale)
@@ -200,6 +212,7 @@ def run(args):
                               "tiles": sorted(t["file"] for t in tiles), "triangles": triangles,
                               "sun_altitude_degrees": altitude, "sun_azimuth_degrees": azimuth,
                               "engine_depth_sha256": BR.sha256_file(engine_depth_pfm), "spp": spp,
+                              "seeds": job["seeds"],
                               "trial": bool(args.trial)}
         if plant is not None:
             view_records[view]["plant_placement"] = plant["placement"]
@@ -240,6 +253,11 @@ def run(args):
         json.dump(record, f, indent=2, ensure_ascii=False)
     print(f"OCCLUSION_REFERENCE record views={len(view_records)} out={BR.normalize_rel(out_dir)}")
     return 0
+
+
+def seed_output(prefix, seed, part):
+    """種ごとの本描画の出力（種 0 は <視点>.cycles.<部分>.pfm、種 k は <視点>.cycles.seed<k>.<部分>.pfm）"""
+    return f"{prefix}.cycles.{part}.pfm" if seed == 0 else f"{prefix}.cycles.seed{seed}.{part}.pfm"
 
 
 def run_blender_job(args, out_dir, name, job):
@@ -355,9 +373,10 @@ def render_job(job_path):
 
     lighting = job["lighting"]
     world, background = BR.make_uniform_world(scene, lighting["sky_radiance_rgb"])
+    sun = None
     if lighting["case"] == "sun":
-        BR.make_sun_lamp(scene, lighting["sun_illuminance_normal_lux"], job["to_sun_engine"],
-                         lighting["sun_angle_degrees"])
+        sun = BR.make_sun_lamp(scene, lighting["sun_illuminance_normal_lux"], job["to_sun_engine"],
+                               lighting["sun_angle_degrees"])
     view_layer = scene.view_layers[0]
     view_layer.use_pass_normal = True
     view_layer.use_pass_object_index = True
@@ -403,15 +422,42 @@ def render_job(job_path):
     print(f"BLENDER_OCCLUSION view={job['view']} aux object_pixels={json.dumps(counts)} seconds={aux_seconds:.1f}",
           flush=True)
 
-    # 3. 本描画（job の spp を 1 回。デノイズなし）
+    # 3. 本描画（job の spp を種ごとに 1 回。デノイズなし）。太陽だけの組は拡散の直接光のパスも読む
     render_started = time.time()
+    seeds = int(job.get("seeds", 1))
+    if sun is not None:
+        view_layer.use_pass_diffuse_direct = True
     scene.cycles.samples = int(job["spp"])
-    scene.cycles.seed = 0
-    channels = BR.render_and_read(scene, exr_tmp)
-    hdr = BR.pass_rgb(channels, "Combined")
-    GR.write_pfm(prefix + ".cycles.hdr.pfm", hdr.astype(np.float32))
+    diffuse_direct = []
+    for seed in range(seeds):
+        scene.cycles.seed = seed
+        channels = BR.render_and_read(scene, exr_tmp)
+        hdr = BR.pass_rgb(channels, "Combined")
+        GR.write_pfm(seed_output(prefix, seed, "hdr"), hdr.astype(np.float32))
+        if sun is not None:
+            diffuse_direct.append(BR.pass_rgb(channels, DIFFUSE_DIRECT_PASS) @ np.asarray(GR.LUMA))
     render_seconds = time.time() - render_started
-    print(f"BLENDER_OCCLUSION view={job['view']} render spp={job['spp']} seconds={render_seconds:.1f}", flush=True)
+    print(f"BLENDER_OCCLUSION view={job['view']} render spp={job['spp']} seeds={seeds} seconds={render_seconds:.1f}",
+          flush=True)
+    # 4. 太陽の可視率: 太陽の影を切って同じ spp で描いた DiffDir で割る（材質の BRDF と N·L が消え、影と半影だけが残る）
+    visibility_seconds = 0.0
+    if sun is not None:
+        visibility_started = time.time()
+        light = sun.data
+        if hasattr(light, "use_shadow"):
+            light.use_shadow = False
+        if hasattr(light, "cycles") and hasattr(light.cycles, "cast_shadow"):
+            light.cycles.cast_shadow = False
+        scene.cycles.seed = 0
+        channels = BR.render_and_read(scene, exr_tmp)
+        unshadowed = BR.pass_rgb(channels, DIFFUSE_DIRECT_PASS) @ np.asarray(GR.LUMA)
+        lit = unshadowed > SUN_VISIBILITY_MIN_DIRECT * max(float(np.percentile(unshadowed, 99)), 1e-12)
+        for seed, shadowed in enumerate(diffuse_direct):
+            visibility = np.where(lit, np.clip(shadowed / np.maximum(unshadowed, 1e-30), 0.0, 1.0), -1.0)
+            GR.write_pfm(seed_output(prefix, seed, "sun_visibility"), visibility.astype(np.float32))
+        visibility_seconds = time.time() - visibility_started
+        print(f"BLENDER_OCCLUSION view={job['view']} sun_visibility lit_pixels={int(lit.sum())} "
+              f"seconds={visibility_seconds:.1f}", flush=True)
 
     record = {
         "view": job["view"],
@@ -420,6 +466,9 @@ def render_job(job_path):
         "material": {"type": "Principled BSDF", "base_color": float(job["gray_material"]["albedo"]),
                      "roughness": float(job["gray_material"]["roughness"]), "metallic": 0.0, "ior": ior},
         "spp": int(job["spp"]),
+        "seeds": seeds,
+        "sun_visibility": ("DiffDir の輝度 ÷ 太陽の影を切った DiffDir の輝度（種ごと）。影なしの DiffDir が 99 % 点の "
+                           f"{SUN_VISIBILITY_MIN_DIRECT} 倍以下の画素は −1") if sun is not None else None,
         "max_bounces": BR.GRAY_MAX_BOUNCES,
         "pixel_filter_width": BR.GRAY_PIXEL_FILTER_WIDTH,
         "aux_pixel_filter_width": BR.PIXEL_FILTER_WIDTH,
@@ -432,7 +481,8 @@ def render_job(job_path):
         "prop_mesh_triangles": prop_triangles,
         "plant": plant_record,
         "object_pixels": counts,
-        "seconds": {"load": load_seconds, "aux": aux_seconds, "render": render_seconds},
+        "seconds": {"load": load_seconds, "aux": aux_seconds, "render": render_seconds,
+                    "sun_visibility": visibility_seconds},
     }
     with open(prefix + ".cycles.json", "w", encoding="utf-8") as f:
         json.dump(record, f, indent=2, ensure_ascii=False)
@@ -451,6 +501,7 @@ def main():
     parser.add_argument("--range", choices=("frustum", "shadow", "all"), default="shadow")
     parser.add_argument("--trial", action="store_true", help=f"試しの描画（既定 {TRIAL_SPP} サンプル）")
     parser.add_argument("--spp", type=int, default=0)
+    parser.add_argument("--seeds", type=int, default=1, help="本描画の種の数（2 以上で収束の確かめに使う種 1〜を足す）")
     parser.add_argument("--out", default="")
     parser.add_argument("--blender", default=BR.DEFAULT_BLENDER)
     args = parser.parse_args(argv)

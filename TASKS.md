@@ -2528,7 +2528,7 @@
 - notes: 2026-10-22 親が確認 2（SCN-WL-REVIEW-2）とユーザーの所見（地形の造形が荒い・遮蔽による影の落ち方の質が低い）から、ユーザーの順（空と霞 → 遮蔽 → 地形の形 → 植物 → 地面 → 建物）の前半として足した。Sol の批評（写真との比は撮影時の処理を含むので合否にしない・遮蔽の撮影は岩と株を残す・参照の描き直しを項目にする・大きな項目は先に分ける）を反映した。 時間の見積もり: 台本 20 分、エンジンの撮影 6 組 約 18 分（-Build で +3〜6 分）、試しの描画 6 組 約 20〜30 分（20 分を超えるなら反復の外）。 壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える（未達のまま DONE にしない）。20 分を超える Blender・Cycles の描画は反復の外で起動して BLOCKED で待つ（ログに START と `END ... EXIT=` を書き、入力のハッシュ・出力先を blocked の理由に書く。終わったら親が todo に戻す。その間は GPU を使う別の処理を重ねない）。
 
 ## SCN-WLR-OCCLUSION-METRIC: 小さな遮蔽と太陽の影の測り方（領域・層・収束の条件）を、本描画の前に決める
-- status: todo
+- status: done
 - after: SCN-WLR-OCCLUSION-SETS
 - done-when: `ReferenceCheck.py --occlusion` の測りを、SCN-WLR-OCCLUSION-SETS の試しの描画で作り、Cycles の本描画の前に定義を固める。空だけの組: 同じ面の画素（EXPORT の契約）だけを使い、法線・距離・傾斜で層に分け、必須のくぼみの領域（崖の柱の間の溝・岩塊と斜面の接する帯・株の根元）と、遮蔽物の無い対照（同じ層の開けた画素）を固定する。量は層ごとの（くぼみの Y ÷ 対照の Y）のエンジン ÷ Cycles。層ごとの最低の画素数・分母の下限・Cycles の収束の条件（種の間の差が許容差の 1/3 以下になるまで描く）を決め、`Scripts/Terrain/ExpectSpecs/occlusion-regions.json` に書く。必須の層が欠ける・画素数が足りない・未収束は不合格にする（難しい層を外して通せないようにする）。太陽だけの組: `sun_visibility` の AOV と Cycles の太陽の可視率で、影の位置の一致（IoU）・影の縁の幅（世界座標の m）・漏れ（Cycles で影なのにエンジンで日なたの割合）を出し、VSM の 1 texel の大きさ・バイアス・使ったページ・影の LOD を記録する。マスクと層の重ね画像を保存して開く。値は変えない。試しの描画での値を「試し」と明記して `Docs/RenderingValidation/WastelandOcclusion.md` に書く。
 - verify: `python Scripts/Terrain/ReferenceCheck.py --occlusion --trial --engine-root .harness/runs/scene-capture/SCN-WLR-OCCLUSION-SETS --reference .harness/runs/scene-capture/SCN-WLR-OCCLUSION-SETS/cycles --regions Scripts/Terrain/ExpectSpecs/occlusion-regions.json --verify`

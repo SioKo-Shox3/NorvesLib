@@ -1,0 +1,62 @@
+{
+  "description": "SCN-WLR-OCCLUSION-METRIC: 小さな遮蔽と太陽の影の測りの定義（OcclusionMetric.py。ReferenceCheck.py --occlusion --regions）。空だけの組は同じ面の画素だけを傾斜 × 距離の層に分け、くぼみの領域（崖の柱の間の溝 groove・岩塊と斜面の接する帯 contact・株の根元 plant_root）と同じ層の開けた地形の対照 control の Y の比を、エンジン ÷ Cycles で比べる。required の層が欠ける・画素数が足りない・分母が下限に届かない・Cycles が未収束（本描画）は不合格。太陽だけの組は sun_visibility の AOV と Cycles の太陽の可視率で影の IoU・縁の幅・漏れを出し、VSM の texel・バイアス・ページ・影の LOD を記録する（合否は直しの項目）。値は SCN-WLR-OCCLUSION-SETS の試しの描画（64 サンプル・種 2）で決めた。",
+  "cavity": {
+    "note": "画面の上の幾何のくぼみ。向きごとに世界の半径 radii_m の標本の点の、接平面からの仰角の sin の最大を求めて向きで平均する。標本は 3 次元の距離が半径の reach_factor 倍以内だけ。深度は Cycles の照合の画（エンジンと同じ面）",
+    "radii_m": [0.25, 0.5, 1, 2, 4, 8],
+    "directions": 8,
+    "max_offset_px": 256,
+    "reach_factor": 2.0
+  },
+  "object_distance": {
+    "note": "地形でない物（岩塊・崖の塊・株）の面までの 3 次元の距離の画面の上の見込み。標本の中に無ければ +∞",
+    "radii_m": [0.05, 0.1, 0.2, 0.35, 0.5, 1, 2, 3],
+    "directions": 12,
+    "max_offset_px": 512
+  },
+  "strata": {
+    "note": "傾斜（陰影の法線と上の角、度）× カメラの前方向の距離（m）。共通の照明の空は一様な放射輝度なので方位では分けない",
+    "slope_degrees": [0, 30, 60, 180],
+    "distance_m": [0, 10, 50, 500, 100000]
+  },
+  "regions": {
+    "groove": {"note": "崖の柱の間の溝: 傾斜の下限以上で cavity が下限以上の地形の画素（地形でない物から min_clearance_m 以上）", "min_slope_degrees": 30, "min_cavity": 0.3},
+    "contact": {"note": "岩塊と斜面の接する帯: 岩塊・崖の塊の面から 3 次元で max_distance_m 以内の地形の画素", "max_distance_m": 0.5},
+    "plant_root": {"note": "株の根元: 株の置き場所から水平に max_root_distance_m 以内の地形の画素（株の冠の半径 0.6 m）", "max_root_distance_m": 0.6},
+    "control": {"note": "対照: 同じ層の開けた地形の画素（cavity が上限以下で、地形でない物から min_clearance_m 以上。くぼみの領域を除く）", "max_cavity": 0.05, "min_clearance_m": 3.0}
+  },
+  "sky_set_regions": {
+    "terrain": ["groove"],
+    "rocks": ["contact", "groove"],
+    "plant": ["plant_root"]
+  },
+  "limits": {
+    "min_region_pixels": 2000,
+    "min_control_pixels": 5000,
+    "min_control_y_fraction": 0.05,
+    "min_cycles_ratio": 0.05
+  },
+  "tolerance": 0.15,
+  "convergence": {
+    "note": "本描画の Cycles は種を seeds 個描き、必須の層ごとに Cycles のくぼみの比の種の間の差（最大 − 最小）÷ 平均が許容差 × fraction_of_tolerance 以下になるまで spp を上げる。試しの描画（--trial）は測って記録するだけ",
+    "seeds": 2,
+    "fraction_of_tolerance": 0.3333
+  },
+  "sun": {
+    "note": "影 = 可視率が shadow_threshold 未満（両方を filter_radius_px の箱で均す）。漏れ = Cycles で umbra 未満なのにエンジンで shadow_threshold 以上の画素 ÷ Cycles の umbra の画素。縁の幅 = 可視率が umbra〜lit の画素の世界の面積 ÷ 影の境の世界の長さ（画素の面の傾きの伸びは視線との cos の下限 min_view_cos まで）",
+    "shadow_threshold": 0.5,
+    "umbra": 0.1,
+    "lit": 0.9,
+    "filter_radius_px": 1,
+    "min_view_cos": 0.1,
+    "vsm_virtual_resolution": 16384,
+    "min_domain_pixels": 50000,
+    "min_shadow_pixels": 2000
+  },
+  "required_note": "必須の層は、試しの描画でくぼみ・対照とも画素数の下限を満たした層のうち、本描画の組（terrain・rocks・plant。rocks-cliff は地形だけの組とほぼ同じ画なので外す）の領域ごとの全部。ここに無い層も測って記録する",
+  "required": [
+    {"set": "terrain-sky", "view": "ref_cliff_01", "region": "groove", "stratum": "slope60-180_d500-100000"},
+    {"set": "rocks-sky", "view": "contact_near", "region": "contact", "stratum": "slope0-30_d0-10"},
+    {"set": "rocks-sky", "view": "contact_near", "region": "contact", "stratum": "slope30-60_d10-50"},
+    {"set": "plant-sky", "view": "plant_near", "region": "plant_root", "stratum": "slope0-30_d0-10"}
+  ]
+}

@@ -252,7 +252,7 @@ def write_preview(path, engine_hdr, cycles_hdr, domain, same, edge, object_index
     image.resize((image.width // 2, image.height // 2), Image.BILINEAR).save(path)
 
 
-def check_view(RC, engine_dir, reference_dir, record, view):
+def check_view(RC, engine_dir, reference_dir, record, view, regions=None, set_name="", trial=False):
     result = {"view": view, "pass": False, "failures": []}
     failures = result["failures"]
     aov_path = os.path.join(engine_dir, f"{view}.aov.json")
@@ -343,6 +343,13 @@ def check_view(RC, engine_dir, reference_dir, record, view):
     preview = os.path.join(reference_dir, PREVIEW_DIR, f"{view}.png")
     write_preview(preview, engine_hdr, cycles_hdr, domain, same, edge, object_index)
     result["preview"] = RC.rel_dir(preview)
+    if regions is not None:
+        import OcclusionMetric
+        data = {"aov": aov, "same": same, "object_index": object_index, "engine_hdr": engine_hdr, "cycles_hdr": cycles_hdr,
+                "cycles_depth": cycles_depth, "cycles_normal": cycles_normal}
+        result["metric"], metric_failures = OcclusionMetric.measure_view(
+            RC, regions, set_name, record, engine_dir, reference_dir, view, data, trial)
+        failures.extend(f"測り: {reason}" for reason in metric_failures)
     result["pass"] = not failures
     return result
 
@@ -371,8 +378,28 @@ def check_across_sets(engine_root, reference_root, sets):
     return failures
 
 
-def run(RC, engine_root, reference_root, views, verify, trial):
+def print_metric(name, view, metric):
+    """測りの要点を 1 行ずつ出す"""
+    if metric.get("kind") == "sun":
+        print(f"REFERENCE_CHECK occlusion metric set={name} view={view} kind=sun iou={metric.get('shadow_iou')} "
+              f"leak={metric.get('leak_fraction')} edge_width_m={json.dumps(metric.get('edge_width_m'))} "
+              f"receiver_texel_m={metric.get('receiver_texel_m_median')}", flush=True)
+        return
+    for region, per_stratum in (metric.get("regions") or {}).items():
+        for stratum, entry in per_stratum.items():
+            print(f"REFERENCE_CHECK occlusion metric set={name} view={view} region={region} stratum={stratum} "
+                  f"pixels={entry['region_pixels']}/{entry['control_pixels']} "
+                  f"engine_over_cycles={entry.get('engine_over_cycles')} ratio_engine={entry.get('ratio_engine')} "
+                  f"ratio_cycles={entry.get('ratio_cycles')} seed_difference={entry.get('seed_difference')}", flush=True)
+
+
+def run(RC, engine_root, reference_root, views, verify, trial, regions_path=""):
+    regions = None
+    if regions_path:
+        import OcclusionMetric
+        regions = OcclusionMetric.load_spec(regions_path)
     report = {"mode": "occlusion", "verify": bool(verify), "trial": bool(trial),
+              "regions": RC.rel_dir(regions_path) if regions_path else "",
               "engine_root": RC.rel_dir(engine_root) if engine_root else "",
               "reference_root": RC.rel_dir(reference_root) if reference_root else "", "sets": {}}
     failures = []
@@ -398,8 +425,8 @@ def run(RC, engine_root, reference_root, views, verify, trial):
         failures.extend(f"{name}: {reason}" for reason in entry["input_failures"])
         set_views = views or sorted((record.get("views") or {}).keys())
         for view in set_views:
-            result = check_view(RC, engine_dir, reference_dir, record, view) if os.path.isdir(engine_dir) else \
-                {"view": view, "pass": False, "failures": ["エンジンの撮影が無い"]}
+            result = check_view(RC, engine_dir, reference_dir, record, view, regions, name, trial) \
+                if os.path.isdir(engine_dir) else {"view": view, "pass": False, "failures": ["エンジンの撮影が無い"]}
             entry["views"][view] = result
             failures.extend(f"{name}/{view}: {reason}" for reason in result["failures"])
             print(f"REFERENCE_CHECK occlusion set={name} view={view} same_surface={result.get('same_surface_fraction')} "
@@ -408,6 +435,8 @@ def run(RC, engine_root, reference_root, views, verify, trial):
                   f"geometric_normal={(result.get('geometric_normal') or {}).get('geometric_fraction')} "
                   f"shading_normal={(result.get('geometric_normal') or {}).get('shading_fraction')} "
                   f"pass={int(result['pass'])}", flush=True)
+            if result.get("metric"):
+                print_metric(name, view, result["metric"])
         kind = record.get("set_kind") or "rocks"
         seen = {obj for result in entry["views"].values() for obj in (result.get("per_object") or {})}
         for options in REQUIRED_OBJECTS.get(kind, ()):
@@ -420,6 +449,10 @@ def run(RC, engine_root, reference_root, views, verify, trial):
             json.dump(entry, f, indent=2, ensure_ascii=False)
     if sets:
         failures.extend(check_across_sets(engine_root, reference_root, sets))
+    if regions is not None:
+        import OcclusionMetric
+        measured = {(name, view) for name, entry in report["sets"].items() for view in entry["views"]}
+        failures.extend(OcclusionMetric.missing_required(regions, measured))
     report["failures"] = failures
     for reason in failures:
         print(f"REFERENCE_CHECK occlusion failure: {reason}")

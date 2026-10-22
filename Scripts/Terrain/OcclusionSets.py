@@ -10,6 +10,7 @@
 #       最後の ReferenceCheck.py --occlusion が全組の撮影で見る）。
 #   python Scripts/Terrain/OcclusionSets.py --cycles --out <置き場> [--trial] [--sets ...] [--mesh <地形の書き出し>]
 #       組ごとに BlenderOcclusionReference.py で Cycles の参照を <置き場>/cycles/<組> へ描く（--trial は低いサンプル数）。
+#       --seeds N で種を N 個描く（測りの収束の確かめ。OcclusionMetric.py）。
 #
 # 組（3 種類 × 照明 2。照明は共通の照明の空だけ sky・太陽だけ sun。どれも灰色の材質・最も細かい段・FXAA で、礫は隠す。
 # 1 組 1 視点）:
@@ -190,7 +191,8 @@ def run_cycles(args, sets, root):
         command = [sys.executable, os.path.join(REPO_ROOT, "Scripts", "Terrain", "BlenderOcclusionReference.py"),
                    "--mesh", mesh_dir, "--capture", os.path.join(root, name), "--views", ",".join(definition["views"]),
                    "--case", definition["case"], "--kind", definition["kind"], "--set", name,
-                   "--out", os.path.join(root, CYCLES_DIR, name)] + (["--trial"] if args.trial else [])
+                   "--out", os.path.join(root, CYCLES_DIR, name), "--seeds", str(args.seeds)] + \
+            (["--trial"] if args.trial else [])
         started = time.time()
         print(f"OCCLUSION_SETS cycles set={name} views={','.join(definition['views'])} trial={int(args.trial)}", flush=True)
         completed = subprocess.run(command, cwd=REPO_ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace")
@@ -215,6 +217,8 @@ def main():
     parser.add_argument("--build", action="store_true", help="最初の組の撮影の前に Game をビルドする")
     parser.add_argument("--trial", action="store_true", help="Cycles を低いサンプル数で試しに描く")
     parser.add_argument("--sets", default="", help="組を絞る（コンマ区切り）")
+    parser.add_argument("--seeds", type=int, default=1,
+                        help="Cycles の本描画の種の数（収束の確かめは 2 つ以上。occlusion-regions.json の convergence）")
     parser.add_argument("--mesh", default=DEFAULT_MESH, help="地形の書き出しのフォルダ（--wasteland-export-terrain）")
     args = parser.parse_args()
     if args.capture == args.cycles:
