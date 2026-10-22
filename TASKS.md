@@ -2490,7 +2490,6 @@
 - paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Assets/Shaders, Game, Scripts, Docs/RenderingValidation, TASKS.md, PROGRESS.md
 - notes: 2026-10-22 親が確認 2（SCN-WL-REVIEW-2）とユーザーの所見（地形の造形が荒い・遮蔽による影の落ち方の質が低い）から、ユーザーの順（空と霞 → 遮蔽 → 地形の形 → 植物 → 地面 → 建物）の前半として足した。Sol の批評（写真との比は撮影時の処理を含むので合否にしない・遮蔽の撮影は岩と株を残す・参照の描き直しを項目にする・大きな項目は先に分ける）を反映した。 危険地帯（RTGI に診断の出力を足す）。診断の出力は開発ビルドだけで、既定で無効（回帰の撮影で確かめる）。雲の項目が BLOCKED でもこの項目は進める（after は大気の項目）。時間の見積もり: ビルド 3〜6 分、2 視点 約 5 分、診断の出力の実装 20〜30 分、回帰 約 7 分。 壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える（未達のまま DONE にしない）。20 分を超える Blender・Cycles の描画は反復の外で起動して BLOCKED で待つ（ログに START と `END ... EXIT=` を書き、入力のハッシュ・出力先を blocked の理由に書く。終わったら親が todo に戻す。その間は GPU を使う別の処理を重ねない）。 2026-10-23（親）: 反復 23 の BLOCKED（`wasteland-finest-lod` の撮影が SCENE_READY の前に 0xC0000409 で落ちる。SCN-WL-LOD-DETAIL の反復 37 と同じ既知の落ち方）を推奨の案 1 で解いた。verify の撮影から `wasteland-finest-lod` を外し、外した撮影の結果で閉じる（上位 2 つの原因〔崖錐の岩の 99.97 % と株が RTGI の光線に見えない、0.1〜2 m の読み飛ばし〕は LOD の段によらない仕組み）。落ち方の直しは SCN-WL-FINEST-LOD-CRASH に分け、比べの組（SCN-WLR-OCCLUSION-EXPORT 以降）はその後に回す。読み飛ばしの割合の数は最も細かい段で変わりうると文書に書く。
 
-
 ## SCN-WL-FINEST-LOD-CRASH: 最も細かい LOD の撮影（`wasteland-finest-lod`）で岩・株を出すと落ちる不具合を直す
 - status: todo
 - after: SCN-WLR-OCCLUSION-DIAG
@@ -2501,6 +2500,7 @@
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Terrain/CaptureRegression.ps1 -Item SCN-WL-FINEST-LOD-CRASH -Phase after`
 - paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Scripts, Docs/RenderingValidation, TASKS.md, PROGRESS.md
 - notes: 危険地帯（MegaGeometry・メモリ）。2026-10-23 親が SCN-WLR-OCCLUSION-DIAG の BLOCKED（推奨の案 1）から足した。遮蔽の比べ（Cycles のメッシュと同じ最も細かい段で撮る）の前提。時間の見積もり: 回帰の before・after 各 7 分、ビルド 3〜6 分、落ちる撮影の再現 1 本 約 3 分、WER と記号の引き 10〜20 分。壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える。
+
 ## SCN-WLR-OCCLUSION-EXPORT: 小さな遮蔽の比べの書き出しの契約と、岩塊の組 1 つを成り立たせる
 - status: todo
 - after: SCN-WLR-OCCLUSION-DIAG, SCN-WL-FINEST-LOD-CRASH
