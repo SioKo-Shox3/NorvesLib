@@ -7,6 +7,7 @@
 #include "Rendering/RenderGraph/RenderGraphResources.h"
 #include "Rendering/SceneProxy.h"
 #include "Rendering/ShaderManager.h"
+#include "Rendering/SkyAtmosphere.h"
 #include "Rendering/ViewRenderContext.h"
 #include "RHI/ICommandList.h"
 #include "RHI/IDevice.h"
@@ -44,8 +45,19 @@ namespace NorvesLib::Core::Rendering
             float GroundAlbedo[4];
             // xy=天気の模様（細かい方）のテクスチャ座標のずれ（0〜1）、zw=未使用
             float WeatherHighOffset[4];
+            // 雲までの区間の空気遠近（VolumetricsPass が地面に掛けるのと同じ空の媒質と表）
+            // x=有効なら 1、y=距離の倍率、z=掛け始める距離（m）、w=ワールドの y = 0 の海面からの高度（m）
+            float AerialPerspective[4];
+            // rgb=高度 0 の Rayleigh の消散係数（1/m）、w=スケールハイト（m）
+            float RayleighExtinctionAndScaleHeight[4];
+            // x=高度 0 の Mie の消散係数（1/m）、y=スケールハイト（m）、z=高度 0 の Mie の散乱係数（1/m）、w=位相の異方性
+            float MieExtinctionAndScattering[4];
+            // x=高度ごとの表のいちばん上の段の海面からの高度（m）、yzw=未使用
+            float AerialProfileRange[4];
+            // 空気遠近の高度ごとの表（SkyAerialProfile）。[i] = 太陽の照度 × 透過率、[SkyAerialProfileSize + i] = 太陽の照度 × Ψ_ms
+            float AerialProfile[2u * SkyAerialProfileSize][4];
         };
-        static_assert(sizeof(GPUCloudLayerParams) == 208u);
+        static_assert(sizeof(GPUCloudLayerParams) == 272u + 2u * SkyAerialProfileSize * 16u);
 
         // 基本の形と細部の 3D ノイズの一辺の texel の数
         constexpr uint32_t ShapeNoiseSize = 64u;
@@ -434,6 +446,33 @@ namespace NorvesLib::Core::Rendering
             params.GroundAlbedo[0] = sky.GroundAlbedo.x;
             params.GroundAlbedo[1] = sky.GroundAlbedo.y;
             params.GroundAlbedo[2] = sky.GroundAlbedo.z;
+
+            // 雲までの区間の空気遠近は、VolumetricsPass（BuildVolumetricsParams）が地面に掛けるのと同じ媒質・同じ表で積む。
+            // 空気遠近が無効か表が無ければ、地面と同じく何も掛けない
+            const SceneProxy* scene = context.SnapshotScene;
+            const AerialPerspectiveParameters aerial =
+                scene ? SanitizeAerialPerspectiveParameters(scene->AerialPerspective) : AerialPerspectiveParameters{};
+            const SkyAerialProfile& aerialProfile = context.SkyAtmosphere.AerialProfile;
+            if (aerial.bEnabled && sky.bEnabled && aerialProfile.bValid)
+            {
+                const AtmosphereGroundExtinction extinction = GetAtmosphereGroundExtinction(sky);
+                params.AerialPerspective[0] = 1.0f;
+                params.AerialPerspective[1] = aerial.DistanceScale;
+                params.AerialPerspective[2] = aerial.StartDistanceMeters;
+                params.AerialPerspective[3] = aerial.OriginAltitudeMeters;
+                params.RayleighExtinctionAndScaleHeight[0] = extinction.Rayleigh.x;
+                params.RayleighExtinctionAndScaleHeight[1] = extinction.Rayleigh.y;
+                params.RayleighExtinctionAndScaleHeight[2] = extinction.Rayleigh.z;
+                params.RayleighExtinctionAndScaleHeight[3] = sky.RayleighScaleHeightMeters;
+                params.MieExtinctionAndScattering[0] = extinction.Mie * aerial.MieDensityScale;
+                params.MieExtinctionAndScattering[1] = sky.MieScaleHeightMeters;
+                params.MieExtinctionAndScattering[2] = extinction.MieScattering * aerial.MieDensityScale;
+                params.MieExtinctionAndScattering[3] = sky.MieAnisotropy;
+                params.AerialProfileRange[0] = SkyAerialProfileMaxAltitudeMeters;
+                std::memcpy(params.AerialProfile[0], aerialProfile.SunIlluminance, sizeof(aerialProfile.SunIlluminance));
+                std::memcpy(params.AerialProfile[SkyAerialProfileSize], aerialProfile.MultipleScattering,
+                            sizeof(aerialProfile.MultipleScattering));
+            }
             outParams = params;
         }
 

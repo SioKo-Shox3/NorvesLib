@@ -59,13 +59,15 @@ LIGHT_STEPS = 6
 LIGHT_FIRST_STEP = 70.0
 LIGHT_STEP_GROWTH = 1.8
 DETAIL_MAX_DISTANCE = 18000.0
-CLOUD_HAZE_DISTANCE = 22000.0
+# 雲までの区間の空気遠近を積む歩数（kCloudAerialSteps。VolumetricsCommon.glsl の kAtmosphereSteps と同じ中点則）
+AERIAL_STEPS = 32
 MIN_TRANSMITTANCE = 0.01
 DENSITY_THRESHOLD = 0.001
 # 遠い雲の消える原因を分ける診断の切り替え（GLSL の kCloudDiagnostic*）。書き出しの反実仮想の列（SCN-WL-CLOUD-FAR-CAUSE）が
 # 視線の値の 7 行目の w の 4 の位より上に持つ
 DIAGNOSTIC_NO_MARCH_LIMIT = 1
 DIAGNOSTIC_NO_FADE = 2
+# 雲までの区間の空気遠近を外す（SCN-WL-CLOUD-FAR-COMPOSITE の前は独自の 22 km の霞を外す切り替えだった）
 DIAGNOSTIC_NO_HAZE = 4
 DIAGNOSTIC_MAX_PRIMARY_STEPS = 1024
 
@@ -154,7 +156,8 @@ def sample_sky(lut, direction):
 class CloudModel:
     """書き出しの JSON と格子から組み立てた、エンジンの雲の式の写し"""
 
-    def __init__(self, meta, shape_noise, detail_noise, sky_lut):
+    def __init__(self, meta, shape_noise, detail_noise, sky_lut, aerial_profile=None):
+        """aerial_profile は書き出しの空気遠近の高度ごとの表（[2, 段, 4]。<視点>.cloud.aerial_profile.f32）"""
         params = meta["shader_params"]
         field = meta["density_field"]
         self.shape_noise = shape_noise
@@ -182,9 +185,64 @@ class CloudModel:
         self.detail_offset = np.array(params["detail_offset"][:3], dtype=np.float64)
         self.weather_high_offset = np.array(params["weather_high_offset"][:2], dtype=np.float64)
         self.ground_albedo = np.array(params["ground_albedo"][:3], dtype=np.float64)
+        # 雲までの区間の空気遠近（GLSL の IntegrateCloudAerial。地面の VolumetricsPass と同じ媒質と表）
+        aerial = params.get("aerial_perspective", [0.0, 1.0, 0.0, 0.0])
+        self.aerial_enabled = float(aerial[0]) > 0.5 and aerial_profile is not None
+        self.aerial_distance_scale = float(aerial[1])
+        self.aerial_start_distance = max(float(aerial[2]), 0.0)
+        self.aerial_origin_altitude = float(aerial[3])
+        rayleigh = params.get("rayleigh_extinction_and_scale_height", [0.0, 0.0, 0.0, 1.0])
+        self.rayleigh_extinction = np.array(rayleigh[:3], dtype=np.float64)
+        self.rayleigh_scale_height = float(rayleigh[3])
+        mie = params.get("mie_extinction_and_scattering", [0.0, 1.0, 0.0, 0.0])
+        self.mie_extinction = float(mie[0])
+        self.mie_scale_height = float(mie[1])
+        self.mie_scattering = float(mie[2])
+        self.mie_anisotropy = float(mie[3])
+        self.aerial_profile_max_altitude = float(params.get("aerial_profile_range", [1.0])[0])
+        self.aerial_profile = None if aerial_profile is None else np.asarray(aerial_profile, dtype=np.float64)
         weather = field["weather"]
         self.rotation_cos, self.rotation_sin = (float(v) for v in weather["rotation_cos_sin"])
         self.high_scale = float(weather["high_scale"])
+
+    # ---- 雲までの空気遠近（IntegrateCloudAerial） ----
+    def aerial_profile_lookup(self, row, altitude):
+        """SampleCloudAerialProfile（高度ごとの表を海面からの高度で線形に引く）。altitude は配列、戻りは [n, 3]"""
+        size = self.aerial_profile.shape[1]
+        position = np.clip(altitude / self.aerial_profile_max_altitude, 0.0, 1.0) * (size - 1)
+        index = np.minimum(position.astype(np.int64), size - 2)
+        weight = (position - index)[:, None]
+        table = self.aerial_profile[row, :, :3]
+        return table[index] * (1.0 - weight) + table[index + 1] * weight
+
+    def aerial(self, direction, distance, steps=AERIAL_STEPS):
+        """カメラから direction の向きに distance m の区間の空気遠近（RGB の透過率, 散乱光）。steps 歩の中点則"""
+        direction = np.asarray(direction, dtype=np.float64)
+        step_length = distance / steps
+        sample_distance = (np.arange(steps) + 0.5) * step_length
+        origin_height = self.camera[1] + self.aerial_origin_altitude
+        from_center = np.stack([direction[0] * sample_distance,
+                                self.planet_radius + origin_height + direction[1] * sample_distance,
+                                direction[2] * sample_distance], axis=1)
+        altitude = np.linalg.norm(from_center, axis=1) - self.planet_radius
+        weight = np.where(sample_distance >= self.aerial_start_distance, self.aerial_distance_scale, 0.0)
+        rayleigh_density = np.exp(np.clip(-altitude / self.rayleigh_scale_height, -80.0, 80.0))
+        mie_density = np.exp(np.clip(-altitude / self.mie_scale_height, -80.0, 80.0))
+        rayleigh = self.rayleigh_extinction[None, :] * (rayleigh_density * weight)[:, None]
+        mie = (self.mie_scattering * mie_density * weight)[:, None]
+        step_depth = (rayleigh + (self.mie_extinction * mie_density * weight)[:, None]) * step_length
+        # その歩の中点までの透過率
+        sample_transmittance = np.exp(-(np.cumsum(step_depth, axis=0) - 0.5 * step_depth))
+        cosine = float(np.clip(np.dot(direction, self.sun_direction), -1.0, 1.0))
+        rayleigh_phase = 0.0596831 * (1.0 + cosine * cosine)
+        g = self.mie_anisotropy
+        mie_phase = (1.0 - g * g) / (12.5663706 * max(1.0 + g * g - 2.0 * g * cosine, 1.0e-4) ** 1.5)
+        sun = self.aerial_profile_lookup(0, altitude)
+        psi = self.aerial_profile_lookup(1, altitude)
+        scattering = np.sum(sample_transmittance * ((rayleigh * rayleigh_phase + mie * mie_phase) * sun + (rayleigh + mie) * psi),
+                            axis=0) * step_length
+        transmittance = np.exp(-np.clip(np.sum(step_depth, axis=0), 0.0, 80.0))
+        return transmittance, np.maximum(scattering, 0.0)
 
     # ---- 密度（SampleCloudDensity） ----
     def coverage_mask(self, x, z):
@@ -335,14 +393,20 @@ class CloudModel:
             optical_depth += sigma * step_length
         cloud_distance = weighted_distance / distance_weight if distance_weight > 0.0 else start
         opacity = float(np.clip(1.0 - transmittance, 0.0, 1.0))
-        haze = 1.0 if flags & DIAGNOSTIC_NO_HAZE else np.exp(-cloud_distance / CLOUD_HAZE_DISTANCE)
+        # 雲までの区間の大気: 雲の光を透過率で減らし、区間の散乱光を雲が覆う割合だけ足す（ComposeCloudRadianceWithDiagnostics）
+        aerial_transmittance = np.ones(3)
+        aerial_scattering = np.zeros(3)
+        if not flags & DIAGNOSTIC_NO_HAZE and self.aerial_enabled and cloud_distance > 0.0:
+            aerial_transmittance, aerial_scattering = self.aerial(direction, cloud_distance)
+        haze = float(np.mean(aerial_transmittance))
         fade = 1.0 if flags & DIAGNOSTIC_NO_FADE else 1.0 - float(smoothstep(FADE_START_DISTANCE, MAX_MARCH_DISTANCE, start))
-        radiance = (scattered * haze + sample_sky(self.sky_lut, direction) * opacity * (1.0 - haze)) * fade
+        radiance = (scattered * aerial_transmittance + aerial_scattering * opacity) * fade
         result.update({
             "marched": True, "start_distance": start, "end_distance": end, "step_count": step_count,
             "step_length": step_length, "steps_taken": steps_taken, "transmittance": transmittance,
             "optical_depth": optical_depth, "scattered": scattered, "cloud_distance": cloud_distance,
             "sky_above": sky_above, "ground_radiance": ground, "radiance": radiance, "fade": fade, "haze": haze,
+            "aerial_transmittance": aerial_transmittance, "aerial_scattering": aerial_scattering,
             # 区間の全部の密度の積分（透過率の打ち切りの前。消散係数を掛けた光学的深さ）
             "optical_depth_full": float(np.sum(densities[active]) * step_length * self.extinction),
         })
@@ -506,6 +570,7 @@ def check_view(rc, capture_dir, view, game_args):
     field = meta.get("density_field", {})
     shape_noise = read_array(capture_dir, field.get("shape_noise", {}), np.uint8, failures, "基本の形の 3D ノイズ")
     detail_noise = read_array(capture_dir, field.get("detail_noise", {}), np.uint8, failures, "細部の 3D ノイズ")
+    aerial_profile = read_array(capture_dir, meta.get("aerial_profile", {}), "<f4", failures, "空気遠近の高度ごとの表")
     probe = None
     sky_lut = None
     probe_entry = meta.get("probe", {})
@@ -545,7 +610,8 @@ def check_view(rc, capture_dir, view, game_args):
     result["constants_max_relative_error"] = check_constants(meta, failures)
 
     # 3〜5. 視線ごとに求め直す
-    model = CloudModel(meta, shape_noise.astype(np.float64) / 255.0, detail_noise.astype(np.float64) / 255.0, sky_lut)
+    model = CloudModel(meta, shape_noise.astype(np.float64) / 255.0, detail_noise.astype(np.float64) / 255.0, sky_lut,
+                       aerial_profile)
     target = (int(meta["target"]["width"]), int(meta["target"]["height"]))
     rays = []
     worst = {"transmittance_abs": 0.0, "direction": 0.0, "jitter": 0.0, "distance_rel": 0.0, "optical_depth_rel": 0.0,

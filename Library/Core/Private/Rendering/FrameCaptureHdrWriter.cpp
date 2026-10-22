@@ -945,13 +945,22 @@ namespace NorvesLib::Core::Rendering
         const String shapePath = basePath + String(TEXT(".cloud.shape_noise.u8"));
         const String detailPath = basePath + String(TEXT(".cloud.detail_noise.u8"));
         const String radiancePath = basePath + String(TEXT(".cloud.sky_radiance_lut.f32"));
+        // 雲までの空気遠近の高度ごとの表（定数の AerialProfile。[行, 段, RGBA]、行 0 = 太陽の照度 × 透過率、行 1 = 太陽の照度 × Ψ_ms）
+        const String aerialProfilePath = basePath + String(TEXT(".cloud.aerial_profile.f32"));
+        const float* shaderParams = info.ShaderParams;
+        constexpr uint32_t AerialProfileParamOffset = 68u;
+        static_assert(AerialProfileParamOffset + 8u * SkyAerialProfileSize == FrameCaptureCloudShaderParamCount);
+        VariableArray<float> aerialProfileValues;
+        aerialProfileValues.resize(2u * SkyAerialProfileSize * 4u);
+        std::memcpy(aerialProfileValues.data(), shaderParams + AerialProfileParamOffset,
+                    aerialProfileValues.size() * sizeof(float));
         if (!WriteFloats(probePath, probeValues) || !WriteBytes(shapePath, shapeTexels.data(), shapeTexels.size()) ||
-            !WriteBytes(detailPath, detailTexels.data(), detailTexels.size()) || !WriteFloats(radiancePath, radianceValues))
+            !WriteBytes(detailPath, detailTexels.data(), detailTexels.size()) || !WriteFloats(radiancePath, radianceValues) ||
+            !WriteFloats(aerialProfilePath, aerialProfileValues))
         {
             return false;
         }
 
-        const float* shaderParams = info.ShaderParams;
         const CloudLayerParameters& cloud = info.Cloud;
         const SkyAtmosphereParameters& sky = info.Sky;
         VariableArray<char> json;
@@ -987,8 +996,19 @@ namespace NorvesLib::Core::Rendering
         AppendFloat4(json, "shape_and_weather_offset", shaderParams + 36);
         AppendFloat4(json, "detail_offset", shaderParams + 40);
         AppendFloat4(json, "ground_albedo", shaderParams + 44);
-        AppendFloat4(json, "weather_high_offset", shaderParams + 48, true);
+        AppendFloat4(json, "weather_high_offset", shaderParams + 48);
+        AppendFormat(json, "\n    ");
+        AppendFloat4(json, "aerial_perspective", shaderParams + 52);
+        AppendFloat4(json, "rayleigh_extinction_and_scale_height", shaderParams + 56);
+        AppendFormat(json, "\n    ");
+        AppendFloat4(json, "mie_extinction_and_scattering", shaderParams + 60);
+        AppendFloat4(json, "aerial_profile_range", shaderParams + 64, true);
         AppendFormat(json, "},\n");
+        AppendFormat(json, "  \"aerial_profile\": {");
+        const VariableArray<char> aerialProfileName = ToAsciiFileName(aerialProfilePath);
+        AppendFileEntry(json, aerialProfileName, 2u, SkyAerialProfileSize, 4u);
+        AppendFormat(json, ", \"rows\": [\"sun_illuminance_times_transmittance_lux\", \"sun_illuminance_times_psi_ms_cd_m2\"], "
+                           "\"altitude\": \"sea level altitude = index * aerial_profile_range.x / (size - 1)\"},\n");
 
         // 雲の層と空のパラメータ
         AppendFormat(json, "  \"cloud_layer\": {\"enabled\": %s, \"bottom_altitude_m\": ", cloud.bEnabled ? "true" : "false");
@@ -1102,8 +1122,9 @@ namespace NorvesLib::Core::Rendering
                            "\"ground_radiance\": \"ground_albedo * (sun_illuminance * max(sun_y, 0) / pi + sky_above)\", "
                            "\"term\": \"sky_above * mix(0.6, 1, h) + 0.5 * ground_radiance * mix(1, 0.3, h)\"},\n");
         AppendFormat(json, "    \"integration\": \"scattered += T * sigma * (sun_illuminance * sun_term + ambient) * (1 - exp(-sigma * dt)) / max(sigma, 1e-7)\",\n");
-        AppendFormat(json, "    \"background\": {\"haze_distance_m\": 22000, "
-                           "\"radiance\": \"(scattered * exp(-d / haze) + sky(direction) * opacity * (1 - exp(-d / haze))) * fade\", "
+        AppendFormat(json, "    \"background\": {\"aerial_steps\": 32, "
+                           "\"radiance\": \"(scattered * aerial_transmittance(d) + aerial_scattering(0, d) * opacity) * fade\", "
+                           "\"aerial\": \"VolumetricsCommon.glsl MarchFogAndAerial without fog, d = cloud_distance\", "
                            "\"fade\": \"1 - smoothstep(30000, 45000, start_distance)\"}},\n");
         AppendFormat(json, "  \"sky_radiance_lut\": {");
         const VariableArray<char> radianceName = ToAsciiFileName(radiancePath);
@@ -1120,7 +1141,7 @@ namespace NorvesLib::Core::Rendering
         AppendFormat(json, ",\n    \"rows\": ["
                            "\"transmittance|alpha|fade|steps_taken\", "
                            "\"scattered_rgb_cd_m2|cloud_distance_m\", "
-                           "\"cloud_radiance_rgb_cd_m2|haze_visibility\", "
+                           "\"cloud_radiance_rgb_cd_m2|aerial_visibility\", "
                            "\"ray_direction_xyz|jitter\", "
                            "\"sky_above_rgb_cd_m2|start_distance_m\", "
                            "\"ground_radiance_rgb_cd_m2|end_distance_m\", "

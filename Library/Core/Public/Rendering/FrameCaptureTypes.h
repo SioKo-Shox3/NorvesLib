@@ -322,7 +322,7 @@ namespace NorvesLib::Core::Rendering
     /** @brief 雲の書き出しの行の数（行の意味は CloudProbePass と SaveCapturedClouds の約束） */
     inline constexpr uint32_t FrameCaptureCloudProbeRows = 8u;
     /** @brief cloud_layer.frag の定数（CloudLayerParams。std140）の float の数 */
-    inline constexpr uint32_t FrameCaptureCloudShaderParamCount = 52u;
+    inline constexpr uint32_t FrameCaptureCloudShaderParamCount = 68u + 8u * SkyAerialProfileSize;
 
     /**
      * @brief 雲の書き出しを評価したフレームの値（CloudProbePass が CloudLayerPass と同じ規則で求めたもの）

@@ -1,0 +1,47 @@
+{
+  "description": "SCN-WL-CLOUD-FAR-COMPOSITE: 遠い雲の霞（雲の光を距離 22 km で空の向きの輝度へ寄せる独自の近似）を、地面と同じ大気の空気遠近（雲までの区間の RGB の透過率と散乱光。VolumetricsPass と同じ空の媒質と高度ごとの表）に替えたことの合否。合成は (雲の散乱光 × 区間の透過率 + 区間の散乱光 × 不透明度) × 溶かす割合で、雲の後ろの空の画素が持つ同じ区間の散乱光（1 − 不透明度の分）と二重に数えない。ref_far_01・ref_far_02 の雲の書き出しの格子の視線で、GPU の値を CPU で細かい歩から積み直した期待値と比べる。変更前（独自の霞）は空気遠近の定数も表も書き出しに無く、期待値と合わないので、この仕様に落ちる。",
+  "rows": [
+    {
+      "mode": "cloud_far",
+      "view": "ref_far_01",
+      "quantity": "composite_max_rel",
+      "max": 0.05,
+      "note": "GPU の霞の後の雲の放射輝度と、同じ入力（GPU の霞の前の散乱光・透過率・雲までの距離）から雲までの区間の空気遠近を 256 歩で積み直した期待値の、RGB の相対差の最大（格子の視線のうち空の画素で雲のある視線）"
+    },
+    {
+      "mode": "cloud_far",
+      "view": "ref_far_01",
+      "quantity": "double_add_max_rel",
+      "min": 0.05,
+      "note": "手前の大気を二重に足す合成（区間の散乱光を不透明度で重みづけずに全部足す）の値と期待値の差の最大。0.05 を超えるので、二重に足す合成は composite_max_rel の行で落ちる"
+    },
+    {
+      "mode": "cloud_far",
+      "view": "ref_far_01",
+      "quantity": "composite_rays",
+      "min": 10,
+      "note": "比べた視線の数（検査が成り立つこと）"
+    },
+    {
+      "mode": "cloud_far",
+      "view": "ref_far_02",
+      "quantity": "composite_max_rel",
+      "max": 0.05,
+      "note": "GPU の霞の後の雲の放射輝度と、同じ入力（GPU の霞の前の散乱光・透過率・雲までの距離）から雲までの区間の空気遠近を 256 歩で積み直した期待値の、RGB の相対差の最大（格子の視線のうち空の画素で雲のある視線）"
+    },
+    {
+      "mode": "cloud_far",
+      "view": "ref_far_02",
+      "quantity": "double_add_max_rel",
+      "min": 0.05,
+      "note": "手前の大気を二重に足す合成（区間の散乱光を不透明度で重みづけずに全部足す）の値と期待値の差の最大。0.05 を超えるので、二重に足す合成は composite_max_rel の行で落ちる"
+    },
+    {
+      "mode": "cloud_far",
+      "view": "ref_far_02",
+      "quantity": "composite_rays",
+      "min": 10,
+      "note": "比べた視線の数（検査が成り立つこと）"
+    }
+  ]
+}

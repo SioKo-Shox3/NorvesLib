@@ -39,6 +39,11 @@
 #       psi_grid・psi_cell: 多重散乱の表 Ψ_ms のエンジン ÷ 正解 A の、1 との差の絶対値の最大。psi_grid は表の格子点
 #       （psi_summary.grid_max_rel）、psi_cell は格子のセルの中心で表を補間した値（psi_summary.center_max_rel）。
 #       どちらも高度 10 km まで・太陽が地平線より上
+#     cloud_far（ReferenceCheck.py --cloud-far。行の鍵は mode・view・quantity と閾値だけ）: 格子の視線の雲の合成の期待値
+#       （CloudFarCause.py の composite。雲までの区間の空気遠近を GPU の書き出しの霞の前の値から細かい歩で積み直した値）。
+#       composite_max_rel（GPU の霞の後の雲の放射輝度と期待値の RGB の相対差の最大）、double_add_max_rel（手前の大気を二重に
+#       足す合成の値と期待値の差の最大。composite_max_rel の閾値より大きければ、二重の足し込みはその行で落ちる）、
+#       composite_rays・composite_partial_rays（比べた視線の数と、そのうち不透明度が 1 − 0.05 以下の視線の数）
 #     building（ReferenceCheck.py --building。行の鍵は mode・view・quantity と閾値だけ）: エンジンのアルベドの AOV の、Cycles の
 #       建物の画素での線形の輝度の分布（視点の検査の結果の albedo）。albedo_p5・albedo_median・albedo_p95（5・50・95 % 点）、
 #       albedo_median_ratio（エンジンの中央値 ÷ 同じ画素の Cycles の拡散の色の中央値。Cycles は glTF の基本色をテクセルごとに
@@ -65,7 +70,7 @@ import io
 import json
 import os
 
-MODES = ("gray", "lit", "blur_static", "blur_motion", "bounce", "atmos_ref", "building", "plant")
+MODES = ("gray", "lit", "blur_static", "blur_motion", "bounce", "atmos_ref", "building", "plant", "cloud_far")
 # bounce の行で使える成分
 BOUNCE_COMPONENTS = ("indirect", "chroma")
 ROW_KEYS = ("mode", "view", "region", "component", "case", "tag", "static", "against", "quantity", "min", "max",
@@ -98,6 +103,11 @@ ATMOS_REF_QUANTITIES = {"sun_transmittance": (("illuminance", "valley_floor"), "
                         "fog_aerial_sum": (("fog",), "sum_max_rel"),
                         "psi_grid": (("psi_summary",), "grid_max_rel"),
                         "psi_cell": (("psi_summary",), "center_max_rel")}
+# cloud_far の量 → (視点の検査の結果の節の道筋, 鍵)
+CLOUD_FAR_QUANTITIES = {"composite_max_rel": (("composite",), "max_rel"),
+                        "double_add_max_rel": (("composite",), "double_add_max_rel"),
+                        "composite_rays": (("composite",), "rays"),
+                        "composite_partial_rays": (("composite",), "partial_rays")}
 # building の量 → 視点の検査の結果の (節, 鍵)
 BUILDING_QUANTITIES = {"albedo_p5": ("albedo", "p5"), "albedo_median": ("albedo", "p50"), "albedo_p95": ("albedo", "p95"),
                        "albedo_median_ratio": ("albedo", "ratio_p50"),
@@ -180,6 +190,13 @@ def validate_row(rc, row, mode):
         if quantity not in ATMOS_REF_QUANTITIES:
             errors.append(f"atmos_ref の量は {'・'.join(ATMOS_REF_QUANTITIES)}（{quantity!r} でない）")
         errors.extend(f"{key} は atmos_ref の行に使わない鍵" for key in ("region", "component", "case", "tag", "static")
+                      if key in row)
+    elif row["mode"] == "cloud_far":
+        if not isinstance(row.get("view"), str) or not row["view"]:
+            errors.append(f"view {row.get('view')!r} は視点の名前でない")
+        if quantity not in CLOUD_FAR_QUANTITIES:
+            errors.append(f"cloud_far の量は {'・'.join(CLOUD_FAR_QUANTITIES)}（{quantity!r} でない）")
+        errors.extend(f"{key} は cloud_far の行に使わない鍵" for key in ("region", "component", "case", "tag", "static")
                       if key in row)
     elif row["mode"] == "building":
         import BuildingCheck
@@ -327,12 +344,12 @@ def blur_motion_value(report, row):
     return (value, None) if value is not None else (None, f"{row['tag']} の {row['region']} の値が無い")
 
 
-def atmos_ref_value(report, row):
-    """atmos_ref の行の値。(値, 未判定の理由)"""
+def atmos_ref_value(report, row, quantities=ATMOS_REF_QUANTITIES):
+    """atmos_ref・cloud_far の行の値（quantities は量 → (節の道筋, 鍵)）。(値, 未判定の理由)"""
     view = next((v for v in report.get("views") or [] if v.get("view") == row["view"]), None)
     if view is None:
         return None, "視点が検査に無い"
-    path, key = ATMOS_REF_QUANTITIES[row["quantity"]]
+    path, key = quantities[row["quantity"]]
     section = view
     for name in path:
         section = (section or {}).get(name)
@@ -382,6 +399,8 @@ def evaluate(rc, mode, report, rows):
             value, reason = blur_static_value(rc, report, row)
         elif mode == "atmos_ref":
             value, reason = atmos_ref_value(report, row)
+        elif mode == "cloud_far":
+            value, reason = atmos_ref_value(report, row, CLOUD_FAR_QUANTITIES)
         elif mode == "building":
             value, reason = building_value(report, row)
         elif mode == "plant":

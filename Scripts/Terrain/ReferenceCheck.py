@@ -122,6 +122,7 @@
 #       定数が契約（Docs/RenderingValidation/WastelandCloudDump.md）どおりで、格子が描画で GPU へ上げた値と同じことを確かめる。
 #
 #   python Scripts/Terrain/ReferenceCheck.py --cloud-far --engine <撮影先> [--views ref_far_01,ref_far_02] [--verify]
+#       [--expect Scripts/Terrain/ExpectSpecs/cloud-far-composite.json]
 #       CaptureScene.ps1 -GameArgs cloud-dump の手本の視点の撮影で、遠い雲が消える原因（中身・45 km の打ち切り・距離の溶かし・
 #       独自の 22 km の霞）を、書き出しの反実仮想の列と写真と同じ画素の範囲の視線で量に分け、<撮影先>/cloud_far_check.json に書く
 #       （本体は CloudFarCause.py）。
@@ -6685,9 +6686,9 @@ def main():
         return ExpectSpec.run_selftest(sys.modules[__name__], args.verify)
     expect = os.path.normpath(args.expect if os.path.isabs(args.expect) else os.path.join(REPO_ROOT, args.expect))         if args.expect else None
     if expect and not (args.gray or args.lit or args.blur_static or args.blur_motion or args.bounce or args.atmos_ref or
-                       args.building or args.plant):
+                       args.building or args.plant or args.cloud_far):
         print("REFERENCE_CHECK result=fail reason=expect_unsupported（--expect は --gray・--lit・--blur-static・--blur-motion・"
-              "--bounce・--atmos-ref・--building・--plant と使う）")
+              "--bounce・--atmos-ref・--building・--plant・--cloud-far と使う）")
         return 1
     if args.require_judged is not None and not args.lit:
         print("REFERENCE_CHECK result=fail reason=require_judged_unsupported（--require-judged は --lit と使う）")
@@ -6771,7 +6772,7 @@ def main():
             print(f"REFERENCE_CHECK result=fail reason=capture_dir_missing（--engine に撮影先を指定する） path={capture}")
             return 1
         views = [v.strip() for v in args.views.split(",") if v.strip()]
-        return CloudFarCause.run(sys.modules[__name__], capture_dir, views, args.verify)
+        return CloudFarCause.run(sys.modules[__name__], capture_dir, views, args.verify, expect)
     if args.cloud_dump:
         import CloudDumpCheck
         capture = args.capture or (args.engine[0] if args.engine else "")

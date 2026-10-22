@@ -2,12 +2,16 @@
 #
 # 使い方:
 #   python Scripts/Terrain/ReferenceCheck.py --cloud-far --engine <撮影先> [--views ref_far_01,ref_far_02] [--verify]
+#       [--expect Scripts/Terrain/ExpectSpecs/cloud-far-composite.json]
 #       CaptureScene.ps1 -GameArgs cloud-dump の撮影（<視点>.cloud.json と書き出しのファイル、<視点>.png）を視点ごとに読み、
 #       結果を <撮影先>/cloud_far_check.json に書く。--verify は入力のハッシュ（inputs.json）を今のファイルと照らす。
+#       --expect は雲の合成（雲までの区間の空気遠近。SCN-WL-CLOUD-FAR-COMPOSITE）の期待値の行を仕様の閾値で判定する
+#       （ExpectSpec.py の cloud_far）。
 #
 # 同じ密度場・時刻・視線（画素と歩の端数）のまま、雲の式（Common/CloudLayerCommon.glsl）の診断の切り替えを段ごとに足す:
 #   段 0 = 今の描画、段 1 = 45 km の打ち切りを外す、段 2 = さらに 30〜45 km の距離の溶かしを外す、
-#   段 3 = さらに独自の 22 km の霞（kCloudHazeDistance）を外す。
+#   段 3 = さらに雲までの区間の空気遠近を外す（SCN-WL-CLOUD-FAR-CAUSE の時は独自の 22 km の霞。SCN-WL-CLOUD-FAR-COMPOSITE で
+#   地面と同じ空気遠近へ替えた。替える前の霞の値は legacy_haze として記録に併せて書く）。
 # GPU の書き出しは格子の視線（横 16 × 縦 9）の後ろに、上の 7 行の視線を段 1・2・3 で評価した反実仮想の列を持つ。
 # 写真と同じ画素の範囲（写真の地形の輪郭より上の空で、撮影でも空の画素）は、書き出しの格子と定数だけからエンジンの式の写し
 # （CloudDumpCheck.CloudModel）で段ごとに求める。写しが GPU の反実仮想の列と合うことを合否で確かめる。
@@ -30,6 +34,13 @@
 #   3. 写真と同じ画素の範囲に MIN_RANGE_RAYS 本以上の視線がある
 #   4. 入力のハッシュが今のファイルと合う（--verify のとき）
 # 量の値そのもの（被覆・寄与）は合否にしない（写真は撮影時の処理を含む）。
+#
+# 合成の期待値（composite。--expect の行が見る）: 格子の視線のうち空の画素で雲のある（不透明度 CLOUD_OPACITY 以上）視線ごとに、
+# GPU の書き出しの雲の散乱光（霞の前）・透過率・雲までの距離・層に入る距離・向きを入力に、雲までの区間の空気遠近を
+# EXPECT_AERIAL_STEPS 歩（GPU の 8 倍）の中点則で積み直し、期待値 (散乱光 × 区間の透過率 + 区間の散乱光 × 不透明度) × 溶かす割合を
+# 作って、GPU の霞の後の雲の放射輝度と比べる（RGB の相対差の最大 max_rel）。手前の大気を二重に足す形（区間の散乱光を不透明度で
+# 重みづけずに全部足す。後ろの空の画素がすでに持つ 1 − 不透明度の分を二重に数える）の値も同じ入力で作り、期待値との差の最大
+# （double_add_max_rel）を書く。これが閾値より大きければ、二重に足す合成は max_rel の行で落ちる。
 import json
 import os
 
@@ -61,14 +72,18 @@ FAINT_CONTRAST = 0.02
 RANGE_STRIDE = 10
 MIN_RANGE_RAYS = 100
 LUMA = np.array([0.2126, 0.7152, 0.0722])
+# 合成の期待値で雲までの区間の空気遠近を積む歩数（GPU の CD.AERIAL_STEPS とは別の離散化で求める）
+EXPECT_AERIAL_STEPS = 256
+# 替える前の独自の霞（雲の光の 1/e が空の色へ置き換わる距離。記録の legacy_haze だけに使う）
+LEGACY_HAZE_DISTANCE = 22000.0
 
 
 def luminance(rgb):
     return float(np.asarray(rgb, dtype=np.float64) @ LUMA)
 
 
-def evaluate(model, march, direction, flags):
-    """1 本の視線の段の値。march は同じ視線を flags の打ち切りの扱いで進めた結果"""
+def evaluate(model, march, direction, flags, legacy_haze=False):
+    """1 本の視線の段の値。march は同じ視線を flags の打ち切りの扱いで進めた結果。legacy_haze は替える前の独自の霞で合成する"""
     sky = CD.sample_sky(model.sky_lut, direction)
     sky_y = luminance(sky)
     if not march["marched"]:
@@ -76,10 +91,18 @@ def evaluate(model, march, direction, flags):
                 "fade": 1.0, "haze": 1.0, "red_blue": float(sky[0] / max(sky[2], 1e-6)), "sky_y": sky_y,
                 "final_y": sky_y}
     opacity = float(np.clip(1.0 - march["transmittance"], 0.0, 1.0))
-    haze = 1.0 if flags & CD.DIAGNOSTIC_NO_HAZE else float(np.exp(-march["cloud_distance"] / CD.CLOUD_HAZE_DISTANCE))
     fade = 1.0 if flags & CD.DIAGNOSTIC_NO_FADE else \
         1.0 - float(CD.smoothstep(CD.FADE_START_DISTANCE, CD.MAX_MARCH_DISTANCE, march["start_distance"]))
-    radiance = (march["scattered"] * haze + sky * opacity * (1.0 - haze)) * fade
+    if legacy_haze:
+        haze = float(np.exp(-march["cloud_distance"] / LEGACY_HAZE_DISTANCE))
+        radiance = (march["scattered"] * haze + sky * opacity * (1.0 - haze)) * fade
+    else:
+        transmittance = np.ones(3)
+        scattering = np.zeros(3)
+        if not flags & CD.DIAGNOSTIC_NO_HAZE and model.aerial_enabled and march["cloud_distance"] > 0.0:
+            transmittance, scattering = model.aerial(direction, march["cloud_distance"])
+        haze = float(np.mean(transmittance))
+        radiance = (march["scattered"] * transmittance + scattering * opacity) * fade
     final = radiance + sky * (1.0 - opacity * fade)
     final_y = luminance(final)
     return {"transmittance": float(march["transmittance"]), "opacity": opacity,
@@ -202,6 +225,50 @@ def check_probe(model, probe, pixels, target, failures):
     return stats
 
 
+def check_composite(model, probe, pixels):
+    """格子の視線の合成の期待値（上の説明の composite）。GPU の書き出しの霞の前の値を入力に、空気遠近を細かい歩で積み直す"""
+    max_rel = 0.0
+    double_add_max_rel = 0.0
+    aerial_visibility_rel = 0.0
+    rays = 0
+    partial = 0
+    worst = None
+    for index in CD.grid_columns(probe):
+        depth = float(probe[6, index, 3])
+        sky_pixel = not (np.isfinite(depth) and depth < 0.999999)
+        marched = bool(int(round(probe[7, index, 3])) & 1)
+        opacity = float(np.clip(1.0 - probe[0, index, 0], 0.0, 1.0))
+        if not sky_pixel or not marched or opacity < CLOUD_OPACITY:
+            continue
+        rays += 1
+        partial += int(opacity <= 1.0 - CLOUD_OPACITY)
+        direction = probe[3, index, :3].astype(np.float64)
+        direction = direction / np.linalg.norm(direction)
+        scattered = probe[1, index, :3].astype(np.float64)
+        distance = float(probe[1, index, 3])
+        fade = 1.0 - float(CD.smoothstep(CD.FADE_START_DISTANCE, CD.MAX_MARCH_DISTANCE, float(probe[4, index, 3])))
+        transmittance = np.ones(3)
+        scattering = np.zeros(3)
+        if model.aerial_enabled and distance > 0.0:
+            transmittance, scattering = model.aerial(direction, distance, steps=EXPECT_AERIAL_STEPS)
+        expected = (scattered * transmittance + scattering * opacity) * fade
+        double_add = (scattered * transmittance + scattering) * fade
+        gpu = probe[2, index, :3].astype(np.float64)
+        error = CD.relative_error(gpu, expected, CD.RADIANCE_FLOOR)
+        if error >= max_rel:
+            max_rel = error
+            worst = {"pixel": pixels[index], "opacity": opacity, "cloud_distance_m": distance, "gpu": gpu.tolist(),
+                     "expected": expected.tolist()}
+        double_add_max_rel = max(double_add_max_rel, CD.relative_error(double_add, expected, CD.RADIANCE_FLOOR))
+        aerial_visibility_rel = max(aerial_visibility_rel,
+                                    abs(float(probe[2, index, 3]) - float(np.mean(transmittance))) /
+                                    max(float(np.mean(transmittance)), 1e-6))
+    return {"rays": rays, "partial_rays": partial, "max_rel": max_rel if rays else None,
+            "double_add_max_rel": double_add_max_rel if rays else None,
+            "aerial_visibility_max_rel": aerial_visibility_rel if rays else None, "worst": worst,
+            "aerial_enabled": bool(model.aerial_enabled), "expect_aerial_steps": EXPECT_AERIAL_STEPS}
+
+
 def summarize(values):
     """段の値の一覧の平均と割合"""
     if not values:
@@ -243,15 +310,17 @@ def measure_view(rc, capture_dir, view, game_args):
     detail = CD.read_array(capture_dir, field["detail_noise"], np.uint8, failures, "細部の 3D ノイズ")
     probe = CD.read_array(capture_dir, meta["probe"], "<f4", failures, "視線の値")
     lut = CD.read_array(capture_dir, meta["sky_radiance_lut"], "<f4", failures, "空の放射輝度 LUT")
+    aerial = CD.read_array(capture_dir, meta.get("aerial_profile", {}), "<f4", failures, "空気遠近の高度ごとの表")
     if failures:
         result.update({"pass": False, "failures": failures})
         return result
     model = CD.CloudModel(meta, shape.astype(np.float64) / 255.0, detail.astype(np.float64) / 255.0,
-                          lut.astype(np.float64))
+                          lut.astype(np.float64), aerial)
     target = (int(meta["target"]["width"]), int(meta["target"]["height"]))
     result["frame_number"] = meta.get("frame_number")
     result["time_seconds"] = meta.get("time_seconds")
     result["probe"] = check_probe(model, probe, meta["probe"]["pixels"], target, failures)
+    result["composite"] = check_composite(model, probe, meta["probe"]["pixels"])
 
     pixels, range_info = range_pixels(view, capture_dir, target)
     result["range"] = range_info
@@ -263,6 +332,7 @@ def measure_view(rc, capture_dir, view, game_args):
         failures.append(f"写真と同じ画素の範囲の視線が {len(pixels)} 本で {MIN_RANGE_RAYS} 本に足りない")
 
     stage_values = {name: [] for name, _ in STAGES + SINGLE_STAGES}
+    stage_values["legacy_haze"] = []
     full_depth = []
     start_distance = []
     for pixel in pixels:
@@ -275,6 +345,7 @@ def measure_view(rc, capture_dir, view, game_args):
         for name, flags in STAGES + SINGLE_STAGES:
             march = unlimited if flags & CD.DIAGNOSTIC_NO_MARCH_LIMIT else limited
             stage_values[name].append(evaluate(model, march, direction, flags))
+        stage_values["legacy_haze"].append(evaluate(model, limited, direction, 0, legacy_haze=True))
     full_depth = np.array(full_depth)
     start_distance = np.array(start_distance)
     content_cloud = 1.0 - np.exp(-full_depth) >= CLOUD_OPACITY
@@ -313,7 +384,7 @@ def measure_view(rc, capture_dir, view, game_args):
     return result
 
 
-def run(rc, capture_dir, views, verify):
+def run(rc, capture_dir, views, verify, expect=None):
     failures = []
     inputs_ok, input_failures, record = rc.check_inputs(capture_dir)
     if verify and not inputs_ok:
@@ -337,6 +408,13 @@ def run(rc, capture_dir, views, verify):
                   f"marched={stats['marched']} cloudy={stats['cloudy']} "
                   f"transmittance_max_abs={stats['transmittance_max_abs']:.4f} step_mismatch={stats['step_mismatch']} "
                   f"radiance_max_rel={stats['radiance_max_rel']:.4f}")
+        composite = result.get("composite")
+        if composite:
+            fmt = lambda v: "none" if v is None else f"{v:.4f}"
+            print(f"REFERENCE_CHECK cloud_far view={view} composite rays={composite['rays']} "
+                  f"partial_rays={composite['partial_rays']} aerial_enabled={int(composite['aerial_enabled'])} "
+                  f"max_rel={fmt(composite['max_rel'])} double_add_max_rel={fmt(composite['double_add_max_rel'])} "
+                  f"aerial_visibility_max_rel={fmt(composite['aerial_visibility_max_rel'])}")
         if "content" not in result:
             continue
         content = result["content"]
@@ -381,6 +459,8 @@ def run(rc, capture_dir, views, verify):
         "views": results,
         "failures": failures,
     }
+    rc.apply_expect(report, expect, "cloud_far", failures)
+    report["failures"] = failures
     report_path = os.path.join(capture_dir, "cloud_far_check.json")
     with open(report_path, "w", encoding="utf-8") as f:
         json.dump(report, f, indent=2, ensure_ascii=False, default=float)

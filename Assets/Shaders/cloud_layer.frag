@@ -35,9 +35,9 @@ void main()
         return;
     }
 
-    float hazeVisibility;
+    float aerialVisibility;
     float fade;
-    vec3 cloudRadiance = ComposeCloudRadiance(ray, rayDirection, opacity, hazeVisibility, fade);
+    vec3 cloudRadiance = ComposeCloudRadiance(ray, rayDirection, opacity, aerialVisibility, fade);
     cloudRadiance = min(cloudRadiance * params.cameraPositionAndPreExposure.w, vec3(65504.0));
     outColor = vec4(cloudRadiance, opacity * fade);
 }

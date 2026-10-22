@@ -116,7 +116,7 @@ def elevation_sweep(model):
             after = march["radiance"] + sky * (1.0 - opacity * march["fade"])
             samples.append({"opacity": opacity, "before": before, "after": after, "sky": sky,
                             "start": march["start_distance"], "distance": march["cloud_distance"],
-                            "haze": float(np.exp(-march["cloud_distance"] / CD.CLOUD_HAZE_DISTANCE)), "fade": march["fade"]})
+                            "haze": float(march["haze"]), "fade": march["fade"]})
         cloudy = [s for s in samples if s["opacity"] >= CD.CLOUD_OPACITY]
 
         def red_blue(rgb):

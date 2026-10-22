@@ -3,7 +3,7 @@
 // 撮影の雲の書き出し（--cloud-dump）: 決めた画素の視線ごとに、cloud_layer.frag と同じ式（Common/CloudLayerCommon.glsl）・
 // 同じ定数・同じ歩の端数（画素とフレームの interleaved gradient noise）で雲の層を進め、事前露出の前の値を書く。
 // 横 = 視線の番号、縦 = 値の種類（CloudProbePass の行の約束）。視線ごとの診断の切り替え（pixels の z）を立てた列は、
-// 同じ画素の視線を打ち切り・溶かし・霞を外して評価する（遠い雲の消える原因を分ける反実仮想。描画には効かない）。
+// 同じ画素の視線を打ち切り・溶かし・空気遠近を外して評価する（遠い雲の消える原因を分ける反実仮想。描画には効かない）。
 
 layout(location = 0) in vec2 fragUV;
 layout(location = 0) out vec4 outColor;
@@ -41,14 +41,14 @@ void main()
     CloudRayResult ray = bDirection ? MarchCloudLayerWithDiagnostics(rayDirection, jitter, diagnosticFlags)
                                     : MakeEmptyCloudRayResult();
     float opacity = clamp(1.0 - ray.Transmittance, 0.0, 1.0);
-    float hazeVisibility = 1.0;
+    float aerialVisibility = 1.0;
     float fade = 1.0;
     vec3 cloudRadiance = vec3(0.0);
     // cloud_layer.frag がこの画素に重ねる割合（空でない画素・雲の無い視線は 0）
     float alpha = 0.0;
     if (ray.bMarched && opacity > 0.0)
     {
-        cloudRadiance = ComposeCloudRadianceWithDiagnostics(ray, rayDirection, opacity, diagnosticFlags, hazeVisibility, fade);
+        cloudRadiance = ComposeCloudRadianceWithDiagnostics(ray, rayDirection, opacity, diagnosticFlags, aerialVisibility, fade);
         alpha = bSkyPixel ? opacity * fade : 0.0;
     }
 
@@ -62,7 +62,7 @@ void main()
     }
     else if (row == 2u)
     {
-        outColor = vec4(cloudRadiance, hazeVisibility);
+        outColor = vec4(cloudRadiance, aerialVisibility);
     }
     else if (row == 3u)
     {

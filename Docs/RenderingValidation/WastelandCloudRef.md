@@ -143,7 +143,7 @@ python Scripts/Terrain/CloudPhotoStats.py --capture .harness/runs/scene-capture/
 | 3 | 写真の明るさの分布 | － | 写真は別の日・時刻・現像で、撮影は空気遠近・露出・トーンマップの後。雲 ÷ 青空 1.22 と、式の霞の前の 1.58〜1.87 は直に比べない | `cloud_photo_exposure` |
 | 4 | 1 視点・1 時刻だけ | － | 太陽の仰角 58.5° の cloud_sky だけ。低い太陽（夕方）の雲の縁と、写真の視点の雲そのものは Cycles と比べていない | `cloud_single_view` |
 | 5 | 散乱光の差（描画の欠陥 1）を多重散乱の近似へ帰すこと | － | 仮説。エンジンの近似の 2・3 回目の項は縁で 1 回目の 1.6 倍、影の側で 2.2 倍。Cycles の全部とエンジンの「空と地面 + 1 回目」の差（残差）は縁で 375、影の側で 10548 だが、Cycles の空と地面・1 回目・多重散乱を分けていないので、残差を多重散乱の量とは言えない | `cloud_multiple_scattering` |
-| 6 | 写真の視点で雲が見えないこと（写真の被覆 0.805、ref_far_01 の撮影 0.001）の原因 | － | 候補は遠い雲の霞（雲の霞は距離 22 km で空の向きの輝度へ寄せる独自の近似で、大気の空気遠近の表 `WastelandAtmosphereReference.md` を使わない。45 km で打ち切り）。霞の前後の白い雲の割合（仰角 3〜10° で 0.57〜1.00 → 0.00〜0.03）は cloud_sky の位置から全方位で測った参考値で、写真の構図・位置・画素の範囲で霞の前の被覆を測っていないので、密度場の被覆が写真と合うか（中身の欠陥か描画の欠陥か）は未判定。Cycles は霞を描かない。**判定済み（下の「手本の視点で遠い雲が消える原因」）: 打ち切りの寄与は 0 で、霞と、空を切れ目なく覆う雲の中身が主** | `cloud_far_haze` |
+| 6 | 写真の視点で雲が見えないこと（写真の被覆 0.805、ref_far_01 の撮影 0.001）の原因 | － | 候補は遠い雲の霞（雲の霞は距離 22 km で空の向きの輝度へ寄せる独自の近似で、大気の空気遠近の表 `WastelandAtmosphereReference.md` を使わない。45 km で打ち切り）。霞の前後の白い雲の割合（仰角 3〜10° で 0.57〜1.00 → 0.00〜0.03）は cloud_sky の位置から全方位で測った参考値で、写真の構図・位置・画素の範囲で霞の前の被覆を測っていないので、密度場の被覆が写真と合うか（中身の欠陥か描画の欠陥か）は未判定。Cycles は霞を描かない。**判定済み（下の「手本の視点で遠い雲が消える原因」）: 打ち切りの寄与は 0 で、霞と、空を切れ目なく覆う雲の中身が主**。霞は地面と同じ空気遠近へ替えた（下の「遠い雲の霞を空気遠近に替える」） | `cloud_far_haze` |
 
 ## 欠陥でないと分かった所
 
@@ -294,3 +294,41 @@ ref_far_01 0.36、ref_far_02 0.44。打ち切りのまま霞だけを外すと�
 書き出しの格子の視線 144 本の値はビット単位で同じ。HDR は ref_far_01 で 421 行、ref_far_02 で 177 行より上がビット単位で同じで、
 差は遠くの岩肌と頂の輪郭（ジオメトリの常駐の揺らぎ）だけ（`.harness/runs/20261022-173753/aux-SCN-WL-CLOUD-FAR-CAUSE-default-unchanged.txt`、
 差の画 `.harness/runs/scene-capture/SCN-WL-CLOUD-FAR-CAUSE/default_diff_mask.png`）。
+
+## 遠い雲の霞を空気遠近に替える（SCN-WL-CLOUD-FAR-COMPOSITE）
+
+前節の (iv) 独自の霞を、地面と同じ大気の空気遠近に替えた。判定日: 2026-10-23。
+
+- 式: 雲の放射輝度 = (雲の散乱光 × T_air(d) + S_air(0, d) × 不透明度) × 溶かす割合。T_air・S_air はカメラから雲の光を返した所の
+  距離の平均 d までの区間の RGB の透過率と散乱光で、`VolumetricsPass` が地面に掛けるのと同じ空の媒質（Rayleigh・空気遠近の Mie の倍率）・
+  同じ高度ごとの表（太陽の照度 × 透過率、Ψ_ms）を 32 歩の中点則で積む（`Common/CloudLayerCommon.glsl` の `IntegrateCloudAerial`。
+  契約は `WastelandCloudDump.md`）。雲の後ろの空の画素は同じ区間の散乱光を含み、合成で 1 − 不透明度 × 溶かす割合を掛けて残るので、
+  区間の散乱光は雲が覆う割合だけ足す（手前の大気を二重に数えない）。45 km の打ち切りと 30〜45 km の溶かしは変えていない。
+- 撮影: `.harness/runs/scene-capture/SCN-WL-CLOUD-FAR-COMPOSITE`（RelWithDebInfo、1920 × 1080、`-Hdr -Views ref_far_01,ref_far_02
+  -GameArgs cloud-dump`）。
+
+| 量 | ref_far_01 | ref_far_02 |
+|---|---|---|
+| 合成の期待値との RGB の相対差の最大（格子の視線の雲のある 71 本・50 本。期待値は GPU の霞の前の値から空気遠近を 256 歩で積み直した値） | 0.0001 | 0.0001 |
+| 手前の大気を二重に足す合成と期待値の差の最大（これが 0.05 を超えるので、二重の足し込みは上の行で落ちる） | 2.55 | 4.93 |
+| 最終の画素の雲のコントラストの平均（95 % 点）: 替える前 → 後（写真と同じ画素の範囲、写しの値） | 0.310（0.586）→ 0.701（1.125） | 0.348（0.920）→ 0.648（1.465） |
+| 雲が見える割合（コントラスト 0.10 以上）: 前 → 後 | 0.896 → 0.981 | 0.758 → 0.820 |
+| 白い雲の色の割合（最終の画素の R ÷ B ≥ 0.7）: 前 → 後 | 0.000 → 0.946 | 0.042 → 0.654 |
+| 最終の画素の Y の 5 %・95 % 点 ÷ 中央値: 前 → 後（写真） | 0.850・1.062 → 0.811・1.097（0.834・1.122） | 0.556・1.142 → 0.451・1.214（0.626・1.286） |
+| 撮影の HDR の中央値 ÷ 写しの段 0 の中央値（写しが画を再現する） | 0.998 | 0.999 |
+
+替える前の値は同じ撮影の格子から替える前の霞の式で求めた値（`cloud_far_check.json` の `legacy_haze`。前節の段 0 と同じ値）。
+空気遠近を外した段（霞の前）のコントラストの平均は 0.830・0.739 で、空気遠近は雲までの区間（中央値 20 km 前後）の分だけ雲を
+空へ寄せる。雲は白く写る（撮影の画を開いて確かめた）。ref_far_01 の空を切れ目なく覆う層は
+中身（前節の (i)）の側で、この項目では変えていない。
+
+GPU 時間（ref_far_01、300 フレームの中央値、RelWithDebInfo）: 替える前 10.664 ms（CloudLayerPass 2.008 ms）→ 後 10.976 ms
+（CloudLayerPass 2.057 ms）。雲のパスの増えは 0.05 ms で、全体の差の残りはほかのパス（VisibilityRasterPass 1.265 → 1.637 ms）の揺れ。
+替える前は同じ Game.exe で雲の 3 つのシェーダーだけを HEAD の版へ戻して測った（シェーダーは実行時に Assets から読む）。
+
+再現:
+
+```
+powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -Build -RequireAssets -Width 1920 -Height 1080 -Hdr -Views ref_far_01,ref_far_02 -GameArgs cloud-dump -OutDir .harness/runs/scene-capture/SCN-WL-CLOUD-FAR-COMPOSITE
+python Scripts/Terrain/ReferenceCheck.py --cloud-far --engine .harness/runs/scene-capture/SCN-WL-CLOUD-FAR-COMPOSITE --expect Scripts/Terrain/ExpectSpecs/cloud-far-composite.json --verify
+```

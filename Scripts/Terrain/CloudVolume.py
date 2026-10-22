@@ -86,10 +86,11 @@ def load_dump(capture_dir, view):
     detail = CD.read_array(capture_dir, field["detail_noise"], np.uint8, failures, "細部の 3D ノイズ")
     probe = CD.read_array(capture_dir, meta["probe"], "<f4", failures, "視線の値")
     lut = CD.read_array(capture_dir, meta["sky_radiance_lut"], "<f4", failures, "空の放射輝度 LUT")
+    aerial = CD.read_array(capture_dir, meta.get("aerial_profile", {}), "<f4", failures, "空気遠近の高度ごとの表")
     if failures:
         raise ValueError("; ".join(failures))
     model = CD.CloudModel(meta, shape.astype(np.float64) / 255.0, detail.astype(np.float64) / 255.0,
-                          lut.astype(np.float64))
+                          lut.astype(np.float64), aerial)
     # 格子の視線だけを残す（反実仮想の列は ReferenceCheck.py --cloud-far が見る）
     columns = CD.grid_columns(probe)
     if len(columns) != probe.shape[1]:

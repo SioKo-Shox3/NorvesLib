@@ -1,10 +1,13 @@
 ﻿// 雲の層の式。cloud_layer.frag（描画）と cloud_layer_probe.frag（撮影の雲の書き出し --cloud-dump）が共有する。
 // 惑星の球殻にした雲の層を視線で進め、3D ノイズの密度から太陽の散乱光（前方・後方の 2 つの位相と多重散乱の近似）と
-// 空の環境光を積分する。定数の並び・式を変えたら、書き出しの契約（Docs/RenderingValidation/WastelandCloudDump.md）と
+// 空の環境光を積分し、雲までの区間の大気の空気遠近（地面と同じ高度ごとの表）を掛ける。定数の並び・式を変えたら、書き出しの契約（Docs/RenderingValidation/WastelandCloudDump.md）と
 // Scripts/Terrain/CloudDumpCheck.py の再計算も合わせて直す。
 
 layout(set = 0, binding = 0) uniform sampler2D sceneDepthTexture;
 layout(set = 0, binding = 1) uniform sampler2D skyAtmosphereRadiance;
+
+// 空気遠近の高度ごとの表の段の数（SkyAerialProfileSize。VolumetricsCommon.glsl の kAerialProfileSize と同じ）
+const uint kCloudAerialProfileSize = 128u;
 
 layout(std140, set = 0, binding = 2) uniform CloudLayerParams
 {
@@ -18,6 +21,13 @@ layout(std140, set = 0, binding = 2) uniform CloudLayerParams
     vec4 detailOffset;                   // xyz=細部の風のずれ(m)
     vec4 groundAlbedo;
     vec4 weatherHighOffset;              // xy=天気の模様(細かい方)のテクスチャ座標のずれ(0〜1)
+    // 雲までの区間の空気遠近（VolumetricsPass が地面に掛けるのと同じ空の媒質と表）
+    vec4 aerialPerspective;              // x=有効なら 1, y=距離の倍率, z=掛け始める距離(m), w=ワールドの y = 0 の海面からの高度(m)
+    vec4 rayleighExtinctionAndScaleHeight; // rgb=高度 0 の消散係数(1/m), w=スケールハイト(m)
+    vec4 mieExtinctionAndScattering;     // x=高度 0 の消散係数(1/m), y=スケールハイト(m), z=高度 0 の散乱係数(1/m), w=位相の異方性
+    vec4 aerialProfileRange;             // x=高度ごとの表のいちばん上の段の海面からの高度(m)
+    // 高度ごとの表: [i] = 太陽の照度 × 透過率(lux), [kCloudAerialProfileSize + i] = 太陽の照度 × 多重散乱の表 Ψ_ms(cd/m²)
+    vec4 aerialProfile[2u * kCloudAerialProfileSize];
 } params;
 
 // 基本の形: R=Perlin-Worley, G・B・A=反転 Worley の fbm（低い周波数から）。細部: R・G・B=反転 Worley の fbm
@@ -39,8 +49,8 @@ const int kLightSteps = 6;
 const float kLightFirstStep = 70.0;
 // 細部で縁を削るのはこの距離までにする（遠い雲は画面で小さく、細部は見えない）
 const float kDetailMaxDistance = 18000.0;
-// 雲の向こうの霞: この距離で雲の光の 1/e が空の色へ置き換わる(m)
-const float kCloudHazeDistance = 22000.0;
+// 雲までの区間の空気遠近を積む歩数（VolumetricsCommon.glsl の kAtmosphereSteps と同じ中点則）
+const int kCloudAerialSteps = 32;
 // 透過率がこれを下回ったら進むのをやめる
 const float kMinTransmittance = 0.01;
 
@@ -50,7 +60,7 @@ const float kMinTransmittance = 0.01;
 const uint kCloudDiagnosticNoMarchLimit = 1u;
 // 30〜45 km の距離の溶かしを外す
 const uint kCloudDiagnosticNoFade = 2u;
-// 独自の 22 km の霞（kCloudHazeDistance）を外す
+// 雲までの区間の空気遠近を外す
 const uint kCloudDiagnosticNoHaze = 4u;
 // 打ち切りを外したときの歩数の上限（地平線の向きの雲の層の区間 約 36 km を 90 m の歩で進められる数）
 const int kDiagnosticMaxPrimarySteps = 1024;
@@ -402,14 +412,78 @@ CloudRayResult MarchCloudLayer(vec3 rayDirection, float jitter)
     return MarchCloudLayerWithDiagnostics(rayDirection, jitter, 0u);
 }
 
-// 雲の放射輝度（事前露出の前、打ち切りの距離へ溶かす割合 fade を掛けた値）。opacity は 1 - 透過率、
-// diagnosticFlags は診断の切り替え（kCloudDiagnostic*。描画は 0）
-vec3 ComposeCloudRadianceWithDiagnostics(CloudRayResult ray, vec3 rayDirection, float opacity, uint diagnosticFlags,
-                                         out float hazeVisibility, out float fade)
+// 空気遠近の高度ごとの表を、海面からの高度 altitude（m）で線形に引く（row 0 = 太陽の照度 × 透過率、row 1 = 太陽の照度 × Ψ_ms）。
+// VolumetricsCommon.glsl の SampleAerialProfile と同じ
+vec3 SampleCloudAerialProfile(uint row, float altitude)
 {
-    // 遠い雲ほど、手前の空気の散乱で空の色に溶ける
-    hazeVisibility = (diagnosticFlags & kCloudDiagnosticNoHaze) != 0u ? 1.0 : exp(-ray.CloudDistance / kCloudHazeDistance);
-    vec3 cloudRadiance = ray.Scattered * hazeVisibility + SampleSky(rayDirection) * opacity * (1.0 - hazeVisibility);
+    float position = clamp(altitude / params.aerialProfileRange.x, 0.0, 1.0) * float(kCloudAerialProfileSize - 1u);
+    uint index = min(uint(position), kCloudAerialProfileSize - 2u);
+    float weight = position - float(index);
+    uint base = row * kCloudAerialProfileSize + index;
+    return mix(params.aerialProfile[base].rgb, params.aerialProfile[base + 1u].rgb, weight);
+}
+
+// カメラから rayDirection の向きに rayDistance m の区間の空気遠近（RGB の透過率と散乱光。事前露出の前）。
+// VolumetricsCommon.glsl の MarchFogAndAerial の空の媒質の分（霧を除く）と同じ式・同じ歩数: 高度は球の上で数え、各点の散乱の源は
+// 太陽の単一散乱（Rayleigh と Mie の位相 × 表の太陽の照度 × 透過率）と多重散乱（散乱係数 × 表の Ψ_ms）
+void IntegrateCloudAerial(vec3 rayDirection, float rayDistance, out vec3 transmittance, out vec3 scattering)
+{
+    float startDistance = max(params.aerialPerspective.z, 0.0);
+    float distanceScale = params.aerialPerspective.y;
+    float planetRadius = params.layerAltitudesAndCoverage.x;
+    float originHeight = params.cameraPositionAndPreExposure.y + params.aerialPerspective.w;
+    float viewSunCosine = clamp(dot(rayDirection, params.sunDirectionAndFrameIndex.xyz), -1.0, 1.0);
+    float rayleighPhase = 0.0596831 * (1.0 + viewSunCosine * viewSunCosine);
+    float anisotropy = params.mieExtinctionAndScattering.w;
+    float mieDenominator = max(1.0 + anisotropy * anisotropy - 2.0 * anisotropy * viewSunCosine, 1.0e-4);
+    float miePhase = (1.0 - anisotropy * anisotropy) / (12.5663706 * pow(mieDenominator, 1.5));
+
+    float stepLength = rayDistance / float(kCloudAerialSteps);
+    vec3 airDepth = vec3(0.0);
+    scattering = vec3(0.0);
+    for (int stepIndex = 0; stepIndex < kCloudAerialSteps; ++stepIndex)
+    {
+        float sampleDistance = (float(stepIndex) + 0.5) * stepLength;
+        vec3 fromCenter = vec3(rayDirection.x * sampleDistance,
+                               planetRadius + originHeight + rayDirection.y * sampleDistance,
+                               rayDirection.z * sampleDistance);
+        float altitude = length(fromCenter) - planetRadius;
+        float airWeight = sampleDistance >= startDistance ? distanceScale : 0.0;
+        float rayleighDensity = exp(clamp(-altitude / params.rayleighExtinctionAndScaleHeight.w, -80.0, 80.0));
+        float mieDensity = exp(clamp(-altitude / params.mieExtinctionAndScattering.y, -80.0, 80.0));
+        vec3 rayleighScattering = params.rayleighExtinctionAndScaleHeight.rgb * (rayleighDensity * airWeight);
+        float mieScattering = params.mieExtinctionAndScattering.z * mieDensity * airWeight;
+        vec3 stepAirDepth = (rayleighScattering + vec3(params.mieExtinctionAndScattering.x * mieDensity * airWeight)) *
+                            stepLength;
+        // その歩の中点までの透過率
+        vec3 sampleTransmittance = exp(-(airDepth + 0.5 * stepAirDepth));
+        vec3 sunIlluminance = SampleCloudAerialProfile(0u, altitude);
+        vec3 multipleScattering = SampleCloudAerialProfile(1u, altitude);
+        scattering += sampleTransmittance *
+                      ((rayleighScattering * rayleighPhase + vec3(mieScattering * miePhase)) * sunIlluminance +
+                       (rayleighScattering + vec3(mieScattering)) * multipleScattering) * stepLength;
+        airDepth += stepAirDepth;
+    }
+    transmittance = exp(-clamp(airDepth, vec3(0.0), vec3(80.0)));
+    scattering = max(scattering, vec3(0.0));
+}
+
+// 雲の放射輝度（事前露出の前、打ち切りの距離へ溶かす割合 fade を掛けた値）。opacity は 1 - 透過率、
+// diagnosticFlags は診断の切り替え（kCloudDiagnostic*。描画は 0）。aerialVisibility は雲までの空気遠近の透過率の RGB の平均
+vec3 ComposeCloudRadianceWithDiagnostics(CloudRayResult ray, vec3 rayDirection, float opacity, uint diagnosticFlags,
+                                         out float aerialVisibility, out float fade)
+{
+    // 雲までの区間の大気: 雲の光を区間の透過率で減らし、区間の散乱光を雲が覆う割合（opacity）だけ足す。雲の後ろの空の画素
+    // （空の LUT）は同じ区間の散乱光をすでに含み、合成で 1 - opacity を掛けて残るので、雲の分だけ足せば手前の大気を二重に数えない。
+    // 空気遠近が無効なら地面と同じく何も掛けない
+    vec3 aerialTransmittance = vec3(1.0);
+    vec3 aerialScattering = vec3(0.0);
+    if ((diagnosticFlags & kCloudDiagnosticNoHaze) == 0u && params.aerialPerspective.x > 0.5 && ray.CloudDistance > 0.0)
+    {
+        IntegrateCloudAerial(rayDirection, ray.CloudDistance, aerialTransmittance, aerialScattering);
+    }
+    aerialVisibility = dot(aerialTransmittance, vec3(1.0 / 3.0));
+    vec3 cloudRadiance = ray.Scattered * aerialTransmittance + aerialScattering * opacity;
     // 打ち切りの距離へ近づくほど、雲を重ねる割合を 0 へ下げる（下の空の色がそのまま残る）
     fade = (diagnosticFlags & kCloudDiagnosticNoFade) != 0u
                ? 1.0
@@ -418,7 +492,7 @@ vec3 ComposeCloudRadianceWithDiagnostics(CloudRayResult ray, vec3 rayDirection, 
 }
 
 vec3 ComposeCloudRadiance(CloudRayResult ray, vec3 rayDirection, float opacity,
-                          out float hazeVisibility, out float fade)
+                          out float aerialVisibility, out float fade)
 {
-    return ComposeCloudRadianceWithDiagnostics(ray, rayDirection, opacity, 0u, hazeVisibility, fade);
+    return ComposeCloudRadianceWithDiagnostics(ray, rayDirection, opacity, 0u, aerialVisibility, fade);
 }
