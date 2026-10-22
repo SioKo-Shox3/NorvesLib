@@ -7087,3 +7087,16 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `verify-SCN-WL-LOOK-CAMERA-12.txt` 回帰の after result=pass。before は反復 10 の変更の前の Game.exe のもの（この反復は C++ を変えていないので撮り直さず、変更の前と比べる組を残した）。4 シーンとも平均の差 0、PSNR night-village 70.17・mega-bananas 65.63・rendering3dtest 106.63・sandbox inf
 - Notes: 新しい試験は足していない
 - Next: TASKS.md の次の未完
+
+### SCN-WL-ATMOS-INPUT 遠景の霞の色の入力の感度を調べて閉じる（2026-10-22、run 20261022-173753 の反復 12）
+- Done: 開発ビルドの環境変数 `NORVES_WASTELAND_ATMOS_INPUT`（`WastelandRoutine.cpp` の `ApplyAtmosphereInputOverride`。地表の反射の RGB・Mie の密度の倍率・尺度高さを差し替え、Game.log に `WASTELAND_ATMOS_INPUT` を出す）と、書き出しの probe から遠景の帯の L・T と空の色度を並べる `Scripts/Terrain/AtmosInputSensitivity.py` を作り、ref_ground_02 の大気の書き出しを今の設定 ＋ 5 通り（赤い砂漠のアルベド・Mie 密度 0.25/1.0・尺度高さ 1200/2400 m）で撮って表にした。表・出典・読みは `WastelandAtmosphereReference.md` の SCN-WL-ATMOS-INPUT。既定の値は変えていない
+- 結論: 今のモデルの入力の範囲（Mie の柱 0.018〜0.073・地表の反射を赤い砂漠まで）では、遠景を写真の向き（青く）へ動かしながら地平線の空を悪くしない入力は無い。Mie を増やすと赤い岩の遠景の B÷R の増えは写真へ近づく（far_01 の帯 +0.226 → +0.274）が、灰色の面では減り（白むだけ）、空の B÷R が 2.31 → 1.74 と差 6 を悪くする。Mie を減らすと空は青くなるが遠景の増えは減る。赤い砂漠のアルベドは両方を赤くする。霞の散乱光そのものは青く（B÷R 1.7〜2.1）、桃色は撮影の遠景の帯が近い（3.4〜4.5 km）ことと岩肌の赤み（WastelandLook.md の (b)）による。正解の解き直しの項目は足していない
+- 証拠（`.harness/runs/20261022-173753/`）:
+  - `verify-SCN-WL-ATMOS-INPUT-1.txt` 初回の -Build はビルドの失敗（`Math::Vector3` が見えない）。直して回し直した
+  - `verify-SCN-WL-ATMOS-INPUT-2.txt` RelWithDebInfo のビルドと ref_ground_02 の大気の書き出しの撮影 result=pass・EXIT=0（環境変数なし = 今の設定）
+  - `verify-SCN-WL-ATMOS-INPUT-3.txt` `--atmos-ref --expect sky-scatter.json --verify` result=pass（9 行 failed=0）・EXIT=0
+  - `aux-SCN-WL-ATMOS-INPUT-variants.txt` 5 通りの撮影すべて result=pass・EXIT=0。各 views.Game.log の `WASTELAND_ATMOS_INPUT` 行で差し替えた値を確かめた
+  - `aux-SCN-WL-ATMOS-INPUT-sensitivity.txt`・`.json` 入力ごとの表
+  - `aux-SCN-WL-ATMOS-INPUT-build-after-pragma.txt` 撮影の後に `#pragma warning` の push/pop の位置だけ直し（コードの生成は同じ）、RelWithDebInfo の Game を警告なしでビルドした EXIT=0
+- Notes: Mie の波長の依存（Ångström 指数）はモデルの制約として記録だけ（試すなら CPU の正解の感度から始める別の項目。足すかは計画が決める）。エアロゾルの光学的深さの範囲は AERONET の気候値の文献を拠り所にした値で、この谷に近い地点の観測値は取り出していない。`WastelandRoutine.cpp` の `kSiteAltitudeMeters` の注釈の「柱の量（0.07）」は密度の倍率 1 のときの値で、今の 0.5 では 0.036（注釈は直していない）。新しい試験は足していない
+- Next: TASKS.md の次の未完

@@ -37,6 +37,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
 
@@ -460,6 +461,57 @@ namespace Game::GameModes
             LOG_INFO_F("WASTELAND_TERRAIN_MATERIAL %s", json.data());
         }
 
+#if NORVES_BUILD_DEVELOPMENT
+        /// 大気の入力の感度の調べ（開発ビルドだけ）: 環境変数 NORVES_WASTELAND_ATMOS_INPUT の
+        /// "albedo=<r>,<g>,<b>;mie=<密度の倍率>;mie_h=<尺度高さ[m]>"（どの項目も省ける）で空の大気の入力を差し替える。
+        /// 既定の値は変えない（Docs/RenderingValidation/WastelandAtmosphereReference.md の SCN-WL-ATMOS-INPUT）
+        void ApplyAtmosphereInputOverride(SkyAtmosphereParameters &sky)
+        {
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4996)
+#endif
+            const char *value = std::getenv("NORVES_WASTELAND_ATMOS_INPUT");
+            if (value == nullptr || value[0] == '\0')
+            {
+                return;
+            }
+            // sscanf の非推奨の警告も同じ push の中で抑える（pop は関数の末尾）
+            float albedo[3] = {0.0f, 0.0f, 0.0f};
+            float mieDensity = 0.0f;
+            float mieHeight = 0.0f;
+            const char *cursor = value;
+            while (*cursor != '\0')
+            {
+                if (std::sscanf(cursor, "albedo=%f,%f,%f", &albedo[0], &albedo[1], &albedo[2]) == 3)
+                {
+                    sky.GroundAlbedo.x = albedo[0];
+                    sky.GroundAlbedo.y = albedo[1];
+                    sky.GroundAlbedo.z = albedo[2];
+                }
+                else if (std::sscanf(cursor, "mie_h=%f", &mieHeight) == 1)
+                {
+                    sky.MieScaleHeightMeters = mieHeight;
+                }
+                else if (std::sscanf(cursor, "mie=%f", &mieDensity) == 1)
+                {
+                    sky.MieDensityScale = mieDensity;
+                }
+                const char *next = std::strchr(cursor, ';');
+                if (next == nullptr)
+                {
+                    break;
+                }
+                cursor = next + 1;
+            }
+            LOG_INFO_F("WASTELAND_ATMOS_INPUT albedo=%.4g,%.4g,%.4g mie=%.4g mie_h=%.6g", sky.GroundAlbedo.x,
+                       sky.GroundAlbedo.y, sky.GroundAlbedo.z, sky.MieDensityScale, sky.MieScaleHeightMeters);
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
+        }
+#endif
+
         /// 物理空・太陽・高さフォグ・空気遠近・雲の層（hideMask で外したものは点けない）
         void ApplyEnvironment(GameModeContext &ctx, float sunAltitudeDegrees, float sunAzimuthDegrees, uint32_t hideMask)
         {
@@ -471,17 +523,20 @@ namespace Game::GameModes
             sky.MieDensityScale = kSkyMieDensityScale;
             sky.SunLuminanceNits = kSunLuminanceNits;
             sky.GroundAltitudeMeters = kSkyGroundAltitudeMeters;
+#if NORVES_BUILD_DEVELOPMENT
+            ApplyAtmosphereInputOverride(sky);
+#endif
             ctx.EngineRef.GetRenderWorld().SetSkyAtmosphere(sky);
 
             // 霞の Mie を高さフォグと空気遠近で割り振る（kHazeFogShare）。高さフォグはワールドの y = 0 を基準に、その標高の
             // 空の大気の Mie の割合ぶんの密度で、空の Mie と同じ尺度高さで薄くする
             const float siteMieExtinction =
-                GetAtmosphereGroundExtinction(sky).Mie * std::exp(-kSiteAltitudeMeters / kSkyMieScaleHeight);
+                GetAtmosphereGroundExtinction(sky).Mie * std::exp(-kSiteAltitudeMeters / sky.MieScaleHeightMeters);
             VolumetricFogParameters fog = MakeDefaultVolumetricFogParameters();
             fog.bEnabled = (hideMask & WastelandHide::Fog) == 0;
             fog.DensityAtBaseHeight = kHazeFogShare * siteMieExtinction;
             fog.BaseHeight = 0.0f;
-            fog.HeightFalloffPerUnit = 1.0f / kSkyMieScaleHeight;
+            fog.HeightFalloffPerUnit = 1.0f / sky.MieScaleHeightMeters;
             ctx.EngineRef.GetRenderWorld().SetVolumetricFogParameters(fog);
 
             AerialPerspectiveParameters aerialPerspective;

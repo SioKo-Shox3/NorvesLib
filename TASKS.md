@@ -2424,7 +2424,7 @@
 - notes: 2026-10-22 親が確認 2（SCN-WL-REVIEW-2）とユーザーの所見（地形の造形が荒い・遮蔽による影の落ち方の質が低い）から、ユーザーの順（空と霞 → 遮蔽 → 地形の形 → 植物 → 地面 → 建物）の前半として足した。Sol の批評（写真との比は撮影時の処理を含むので合否にしない・遮蔽の撮影は岩と株を残す・参照の描き直しを項目にする・大きな項目は先に分ける）を反映した。 時間の見積もり: 回帰の before・after 各 7 分、Debug のビルド 3 分、6 視点の撮影 2 組 約 16 分（-Build で +3〜6 分）、オフラインの候補の評価 10〜20 分。 壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える（未達のまま DONE にしない）。20 分を超える Blender・Cycles の描画は反復の外で起動して BLOCKED で待つ（ログに START と `END ... EXIT=` を書き、入力のハッシュ・出力先を blocked の理由に書く。終わったら親が todo に戻す。その間は GPU を使う別の処理を重ねない）。
 
 ## SCN-WL-ATMOS-INPUT: 遠景の霞の色を決めている大気の入力を切り分ける
-- status: todo
+- status: done
 - after: SCN-WL-LOOK-CAMERA
 - done-when: 確認 2 の差 7（遠景の霞が淡い桃色に白む: cliff_02 の奥の平地と山、ground_01 の奥のメサの帯。写真は遠い山が青い）と SCN-WL-LOOK-MEASURE の (c)。大気の式は正解と合わせ済み（SCN-WL-SKY-SCATTER・SKY-SCATTER-FOG）なので、今の入力の感度を調べる: 空の LUT と空気遠近の多重散乱が使う地表の反射の RGB（`SkyAtmosphereParameters` の地面のアルベド 0.3 の灰色）、Mie の密度（荒野の `MieDensityScale` 0.5）と尺度高さ（1600 m）。大気の書き出し（`--atmosphere-dump`）でそれぞれを動かし、遠景の帯（3〜30 km）の散乱光と透過率の色度がどの入力でどれだけ動くかを表にする。今の Mie は波長によらない値で、CPU の正解も同じなので、波長の依存（Ångström 指数）はこの項目では試さず、モデルの制約として記録する（試すなら CPU の感度の調べから始める別の項目を足す）。実測の範囲（その高度の乾燥地の晴天のエアロゾルの量・赤い砂漠の地表の反射率。出典を書く）の中で遠景の色の向きを写真に近づける入力があれば、その値と、正解（`AtmosphereReference.py --solve`）を同じ入力で解き直す作業を、この項目の直後に新しい項目として TASKS.md に足す（この項目では既定の値を変えない）。無ければ「今のモデルの入力の範囲では写真の色の向きに届かない」と記録して値を変えない（カメラへ押し付けない）。合否: 入力ごとの遠景の色度の変化の表と出典を `Docs/RenderingValidation/WastelandAtmosphereReference.md` に書き、`--atmos-ref`（今の設定）が引き続き通る。
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -Build -RequireAssets -Width 1920 -Height 1080 -Views ref_ground_02 -GameArgs atmosphere-dump -OutDir .harness/runs/scene-capture/SCN-WL-ATMOS-INPUT`
