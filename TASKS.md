@@ -2394,7 +2394,7 @@
 - notes: 危険地帯（ジオメトリのストリーミング・公開ヘッダ）。2026-10-22 親が SCN-WL-CLIFF-SCAN-PLACE の BLOCKED（推奨の案 1）から足した。開発ビルドの環境変数 `NORVES_GEOMETRY_PAGE_REQUEST_CAPACITY` と `--wasteland-finest-lod` の 131072 の扱いも、既定の値に合わせて見直す。時間の見積もり: 回帰の before・after 各 7 分、ビルド 3〜6 分、7 視点の撮影 約 8 分。壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える。 2026-10-22（親）: 反復 4（run 20261022-173753）の BLOCKED（容量を上げると崖の視点で置き場が埋まる）を推奨の案 1 で解いた。置き場の既定の直しを SCN-WL-GEOM-POOL-PLACEMENT として先に立て、この項目はその後に既定の容量を 32768 にして 7 視点・mega-bananas・回帰で確かめて閉じる（`--geom-requests`・要求の読み取りのまとめ・`request_peak` は adfd4b44 のまま）。
 
 ## SCN-WL-CLIFF-SCAN-PLACE: Blender で置いたスキャンの崖をエンジンへ持ち込む経路を作る
-- status: todo
+- status: done
 - after: SCN-WL-REVIEW-2, SCN-WL-GEOM-REQUEST-CAPACITY
 - done-when: Blender で地形の上に置いたスキャンの崖・岩の塊の配置（素材・位置・向き・大きさ）を配置表（JSON）に書き出し、荒野のシーンがそれを読んで仮想化ジオメトリのインスタンスとして置く経路を作る。配置を変えても地形の焼き直しは要らない（配置表と素材のクックだけ）。試しに選んだ素材の塊を 2〜3 個、Battleship Rock の崖の面に置き、Blender の描画とエンジンの撮影（1920×1080）を並べて、位置・向き・大きさがそろうこと、地形から浮かず埋もれ過ぎないことを開いて確かめる。溢れ 0。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`

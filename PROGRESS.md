@@ -7054,3 +7054,13 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `aux-SCN-WL-GEOM-REQUEST-CAPACITY-mega-gpu.txt` mega-bananas の -GpuTimingFrames 300（前 = HEAD 1f9cb28c の Game.exe・容量 4096、後 = 32768）。GPU 中央値 default 3.905 → 3.994 ms・close 4.355 → 4.370・low 6.266 → 6.277・horizon 3.162 → 2.826。4 視点とも前後で request_overflow=0・wanted=0・failed=0、request_peak 31〜65
 - Notes: 新しい試験は足していない。RenderResources.cpp の環境変数の注釈（「既定の容量を超える」）は行末が混在する箇所なので触っていない
 - Next: TASKS.md の次の未完
+
+### SCN-WL-CLIFF-SCAN-PLACE 完了（2026-10-22、run 20261022-173753 の反復 9）
+- Done: SCN-WL-GEOM-REQUEST-CAPACITY（要求の列の既定 32768）の後に verify を回し直し、残っていた「溢れ 0」を確かめて閉じた。コードの変更は無い（配置の経路・3 個の配置・Blender との比較の合格は run 20261022-144923 の反復 1 の証拠のまま。差し戻しの non-blocking の日本語化は同じ run の反復 2 で済み）
+- 証拠（`.harness/runs/20261022-173753/`）:
+  - `verify-SCN-WL-CLIFF-SCAN-PLACE-1.txt` Debug の Game のビルド EXIT=0
+  - `verify-SCN-WL-CLIFF-SCAN-PLACE-2.txt` cliff と ref_cliff_01 の 1920×1080 の撮影（RelWithDebInfo、-Build）result=pass・EXIT=0（白飛び 0・黒つぶれ 0）。`views.Game.log` に `WASTELAND_CLIFF_SCAN placed=3 planned=3`、MEGA_CAPACITY 51 行すべて draw_dropped=0・bvh_overflow=0・visible_list_overflow=0
+  - `aux-SCN-WL-CLIFF-SCAN-PLACE-geom-requests.txt` `--geom-requests --verify` result=pass。最後の GEOMETRY_PAGES と 2 視点とも撮る直前に request_overflow=0・wanted=0・failed=0（request_peak 最大 11018 = 容量 32768 の 34 %、落ち着くまで cliff 16.9 秒・ref_cliff_01 15.4 秒）
+  - cliff.png・ref_cliff_01.png を開き、cliff の上の壁の塊 3 個が比較図 `scene-capture/SCN-WL-CLIFF-SCAN-PLACE-compare/compare_cliff.png` の Blender の塊と同じ位置・形に写り、壁から浮いた隙間が見えないことを確かめた
+- Notes: 新しい試験は足していない
+- Next: TASKS.md の次の未完
