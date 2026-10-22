@@ -6887,3 +6887,19 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 既定の荒野の 6 視点（(2)）は照り返しの直しの前の exe で撮ったもの。影の中の照り返しがわずかに明るく無彩色寄りになる向きの変化で、所見の結論は変わらない見込み（撮り直しはしていない）
   - 新しい試験は足していない
 - Next: TASKS.md の次の未完
+
+### SCN-WL-REVIEW-2 完了（2026-10-22、run 20261021-055341 の反復 62）
+- Done: 手本の 6 視点を RelWithDebInfo・1920×1080 で撮り直し、写真｜撮影の一覧（`.harness/runs/scene-capture/SCN-WL-REVIEW-2/reference_overview.png`、1920×3478。先頭に「近くの主役の崖のスキャン、遠い低木のインポスター、空の青と遠景の霞は、この確認の後で直す予定」と添えた）と、写真との差の大きい順の所見・技術の欠陥・確認の後に組む作業の候補を `Docs/RenderingValidation/WastelandReference.md` の「確認 2」に書いた
+- 実装: `Scripts/Terrain/CompareReference.py` の `--note` を `<出力先>/reference_note.txt` に保存し、`--note` を省いた再実行（`--verify` の再検証）でも同じ添え書きの一覧を書くようにした（確認 1 の評価の差し戻し。`--note ""` で消す）。報告の JSON にも `note` を入れ、出力に `COMPARE_REFERENCE note=` を出す
+- あわせて（タスクの notes）: `Docs/RenderingValidation/WastelandDem.md` の遠景の節を今の `horizon.json` に合わせた（メッシュ 58 → 98 個の内訳、castle・mid・far の範囲と頂点数）
+- 検証（`.harness/runs/20261021-055341/`）:
+  - `verify-SCN-WL-REVIEW-2-1.txt`: RelWithDebInfo のビルド pass、6 視点 1920×1080 result=pass（白飛び 0・黒つぶれ 0）、EXIT=0。`views.Game.log` の `MEGA_CAPACITY` 226 行すべて draw_dropped=0・overflow=0、最後の `GEOMETRY_PAGES` は resident=22000・wanted=0・failed=0（途中は取り分の中で evicted あり）
+  - `aux-SCN-WL-REVIEW-2-overview-note.txt`: `--note` 付きで一覧を書いた result=pass・EXIT=0。一覧の SHA-256 f452ef47…（`aux-SCN-WL-REVIEW-2-overview-sha-before.txt`）
+  - `verify-SCN-WL-REVIEW-2-2.txt`: `--note` なしの `CompareReference.py --verify` result=pass photos=6・EXIT=0、`note=` に保存した添え書きが出て、一覧の SHA-256 も f452ef47… で同じ
+- 開いた画像: 一覧の全行、ref_ground_01・ref_far_02・ref_ground_02・ref_cliff_02 の下半分、ref_cliff_01 の崖の切り出し
+- 所見の要点: 差の大きい順に、中景から先（低木は 120 m で消える）に植生が無い、低木が緑の無い灰色、地面と崖が写真より明るい（色の向きは合った）、土の皮膜と礫の舗石の斑の縁がくっきりして迷彩に見える、ground_02 の手前が礫も岩も無い砂の起伏、空が白っぽい、遠景が桃色に白む、主役の崖の上の壁が縦の丸い柱
+- Notes:
+  - リポジトリ直下に `LOOP_STOP`（中身 `boundary`）を書いた。親がユーザーに一覧を渡し、判定を待つ
+  - 低木の色は見た目で「地面より明るい」と見えたが、測ると株の範囲の Y 0.16〜0.26 は地面 0.37〜0.45 より暗く、差は彩度（R ÷ G 1.75〜1.87 と 2.32〜2.46）だったので、所見は測った値で書いた
+  - 試験は足していない
+- Next: ユーザーの判定の後、植物（インポスター・スキャンの葉）・スキャンの礫・NAIP・建物の風化の項目を組む

@@ -2357,7 +2357,7 @@
 - notes: 危険地帯（描画の既定値）。2026-10-16 ユーザーの決定（確認 1 の後）で足した。1 反復で閉じなければ、空の青と霞を先に閉じ、明るさと彩度を後ろの項目に分ける。 2026-10-19 SCN-WL-SKY-ALTITUDE・HAZE-ONE-MEDIUM・PSI-GRID・SCN-WLR-ATMOS-REF-NEWSET・SCN-WL-SKY-SCATTER に分けた（GAP-LIST の後の組み直し）。この項目は回さない。
 
 ## SCN-WL-REVIEW-2: 節目の確認 2（地面・植生・岩・光と色）をユーザーに渡す
-- status: todo
+- status: done
 - after: SCN-WL-LIGHT-FINAL, SCN-WL-FAR-AA-MOTION, SCN-WL-GEOM-LOWVRAM, SCN-WL-LOD-DETAIL, SCN-WLR-BUILDING-REF, SCN-WLR-PLANT-REF-FAR, SCN-WLR-CLOUD-REF
 - done-when: SCN-WL-REVIEW-1 と同じ形で、手本の全視点の比較画像の一覧と所見（「確認 2」）を書き、`LOOP_STOP`（中身 `boundary`）を書いてランナーを止める。一覧の先頭の注記（`--note`）が `--verify` の再実行で消えないようにする（確認 1 の評価の差し戻し。注記を保存して再検証でも同じ一覧を出す）。
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -Build -RequireAssets -Width 1920 -Height 1080 -Views ref_far_01,ref_far_02,ref_cliff_01,ref_cliff_02,ref_ground_01,ref_ground_02 -OutDir .harness/runs/scene-capture/SCN-WL-REVIEW-2`

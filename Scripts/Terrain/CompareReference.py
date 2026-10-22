@@ -7,6 +7,8 @@
 # 写真ごとに <出力先>/reference_<写真>.png と <出力先>/reference_metrics.json を書き、数値を 1 行ずつ出す。
 # 並べた写真をすべて縦に積んだ一覧（左に写真、右に撮影。輪郭と枠は重ねない）を <出力先>/reference_overview.png に書く
 # （節目の確認でユーザーに渡す 1 枚）。
+# --note の添え書きは <出力先>/reference_note.txt に保存し、--note を省いた再実行（--verify の再検証など）でも同じ添え書きの一覧を書く。
+# 添え書きを消すときは --note "" を渡す。
 #
 # 並べ方: 撮影は 16:9 で、横の画角を写真の横の画角に合わせてある（WastelandRoutine.cpp の kReferenceShots）。写真は横幅を
 # 撮影にそろえ、16:9 より縦に長ければ上下の中央を切り、短ければ上下に帯を足す（どちらも同じ視野の範囲を並べる）。
@@ -76,6 +78,8 @@ OUTLINE_MEDIAN_COLUMNS = 9
 # 一覧の 1 枚の絵の大きさ[px]（16:9）と、行ごとの見出しの高さ[px]
 OVERVIEW_PANEL_SIZE = (960, 540)
 OVERVIEW_LABEL_HEIGHT = 34
+# 一覧の添え書きを保存するファイル（出力先の中）
+NOTE_FILE = "reference_note.txt"
 REGIONS = (("sky", "空"), ("cliff", "崖"), ("ground", "地面"))
 REGION_COLORS = {"cliff": (255, 140, 0), "ground": (0, 200, 80)}
 
@@ -243,19 +247,39 @@ def catalog_views():
         return set(re.findall(r'\{"(ref_[a-z0-9_]+)"', file.read()))
 
 
+def resolve_note(out_dir, note_arg):
+    """一覧の添え書きを決める。--note を渡したら保存（空なら保存を消す）し、省いたら前に保存した添え書きを読む"""
+    note_path = os.path.join(out_dir, NOTE_FILE)
+    if note_arg is None:
+        if not os.path.isfile(note_path):
+            return ""
+        with open(note_path, encoding="utf-8") as file:
+            return file.read().strip()
+    note = note_arg.strip()
+    if note:
+        with open(note_path, "w", encoding="utf-8") as file:
+            file.write(note + "\n")
+    elif os.path.isfile(note_path):
+        os.remove(note_path)
+    return note
+
+
 def main():
     parser = argparse.ArgumentParser(description="荒野の手本の写真と、同じ構図に寄せた視点の撮影を並べて比べる")
     parser.add_argument("--capture", required=True, help="CaptureScene.ps1 の OutDir（<視点>.png がある）")
     parser.add_argument("--photos", default="", help="比べる写真の ID（カンマ区切り。省くとすべて）")
     parser.add_argument("--out", default="", help="出力先（省くと --capture）")
     parser.add_argument("--verify", action="store_true", help="写真・撮影がそろい、撮影が 1920×1080 以上かを確かめる")
-    parser.add_argument("--note", default="", help="一覧の先頭に書く添え書き（節目の確認で渡すときの注記）")
+    parser.add_argument(
+        "--note", default=None, help="一覧の先頭に書く添え書き（節目の確認で渡すときの注記。省くと前に保存した添え書きを使い、\"\" で消す）"
+    )
     args = parser.parse_args()
 
     wanted = [p for p in args.photos.split(",") if p]
     photos = [p for p in PHOTOS if not wanted or p["id"] in wanted]
     out_dir = args.out or args.capture
     os.makedirs(out_dir, exist_ok=True)
+    note = resolve_note(out_dir, args.note)
     failures = []
     views = catalog_views()
     albedo = terrain_albedo()
@@ -268,7 +292,7 @@ def main():
     print("COMPARE_REFERENCE albedo " + " ".join(
         f"{name}={layer['luminance']:.3f}" if layer else f"{name}=missing" for name, layer in albedo["layers"].items()
     ) + f" scale={albedo['scale']:.2f}")
-    report = {"albedo": albedo, "photos": {}}
+    report = {"albedo": albedo, "note": note, "photos": {}}
     font = load_font(18)
     overview_rows = []
 
@@ -336,7 +360,8 @@ def main():
     with open(os.path.join(out_dir, "reference_metrics.json"), "w", encoding="utf-8") as file:
         json.dump(report, file, ensure_ascii=False, indent=2)
     if overview_rows:
-        write_overview(overview_rows, os.path.join(out_dir, "reference_overview.png"), font, args.note)
+        write_overview(overview_rows, os.path.join(out_dir, "reference_overview.png"), font, note)
+        print("COMPARE_REFERENCE note=" + (note if note else "（なし）"))
     else:
         failures.append("一覧に並べる組が無い")
     if failures:
