@@ -227,6 +227,25 @@ namespace Game::Scenes
         "Assets/Models/Generated/campfire_ring/campfire_ring.glb",
     };
 
+    /// 材質ギャラリーの視点。展示場は石の床の 70 × 50 m（中心 x -4・z 10）で、台座の列は z 0・5・10・15 に 1 列 10〜11 基、
+    /// 画面の左（+X）から右（-X）へ並び、どれも -Z（通路の側）を向く。金属度 × 粗さの球のひな壇は x -20 を中心に z 2〜7.5 にある。
+    /// 座標は +Z 向きが Yaw 0（Yaw 90 が -X 向き）。位置の y は床からの高さ[m]
+    inline constexpr SceneViewDescriptor kMaterialGalleryViews[] = {
+        // 展示場の手前の右寄りの高さ 9 m から、台座の 4 列と奥のひな壇を斜めに見渡す視点。起動時の既定
+        {"overview", SceneViewKind::FreePose, 42.0f, -17.0f, 0.0f, {14.0f, 9.0f, -12.0f}},
+        // 1 列目の通路の目の高さから、中央の台座 5 基の板・球と名札を見る視点
+        {"textures", SceneViewKind::FreePose, 0.0f, -11.0f, 0.0f, {0.0f, 2.0f, -5.5f}},
+        // ひな壇の正面から、金属度 × 粗さの 6 × 6 の球を見る視点
+        {"spheres", SceneViewKind::FreePose, 0.0f, -8.0f, 0.0f, {-20.0f, 2.6f, -4.5f}},
+        // 2 列目の castle_brick_01 の板へ 1.1 m まで寄り、斜めから視差オクルージョンの凹凸を見る視点
+        {"close", SceneViewKind::FreePose, 42.5f, -27.4f, 0.0f, {10.65f, 1.62f, 4.24f}},
+    };
+    /// 材質ギャラリーのシーンの id と、読み込めないとシーンが成り立たない資産（展示場の床。Poly Haven の CC0 を落とす）
+    inline constexpr const char *kMaterialGallerySceneId = "material-gallery";
+    inline constexpr const char *kMaterialGalleryRequiredAssets[] = {
+        "Assets/Textures/PolyHaven/stone_floor/stone_floor_diff_4k.jpg",
+        "Assets/Textures/PolyHaven/castle_brick_01/castle_brick_01_disp_4k.jpg",
+    };
     /// 確認用の sandbox の id。シーンの一覧に載るのは開発ビルドだけ
     inline constexpr const char *kSandboxSceneId = "sandbox";
 
@@ -335,6 +354,19 @@ namespace Game::Scenes
             sizeof(kNightVillageRequiredAssets) / sizeof(kNightVillageRequiredAssets[0]),
             "python Scripts/GenerateSceneModels.py --ids adobe_ruin,wooden_shack,watchtower,water_tower,stone_arch,"
             "street_lamp,torch_post,campfire_ring,well,barrel,crate,cart",
+            nullptr,
+        },
+        {
+            kMaterialGallerySceneId,
+            "材質ギャラリー",
+            "石の床の展示場に、Poly Haven の地面・壁・木・金属・屋根と荒野の材質を、視差を付けた板と球で並べる。金属度 × 粗さの球の格子もある。",
+            "Assets/Launcher/Thumbnails/material-gallery.png",
+            Game::GameModes::MaterialGallery,
+            kMaterialGalleryViews,
+            sizeof(kMaterialGalleryViews) / sizeof(kMaterialGalleryViews[0]),
+            kMaterialGalleryRequiredAssets,
+            sizeof(kMaterialGalleryRequiredAssets) / sizeof(kMaterialGalleryRequiredAssets[0]),
+            "powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/FetchPolyHavenTextures.ps1 -Set gallery",
             nullptr,
         },
 #if NORVES_BUILD_DEVELOPMENT

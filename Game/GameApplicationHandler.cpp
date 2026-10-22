@@ -48,6 +48,7 @@
 #include "GameModes/MegaBananas/MegaBananasMode.h"
 #include "GameModes/MegaStress/MegaStressMode.h"
 #include "GameModes/Sandbox/SandboxMode.h"
+#include "GameModes/MaterialGallery/MaterialGalleryMode.h"
 #include "GameModes/Wasteland/WastelandMode.h"
 #include "Scenes/SceneCatalog.h"
 
@@ -2595,7 +2596,9 @@ namespace Game
         // ポーズメニュー（Esc）のためにも登録する。撮影・自動実行の起動は、描画やキー割り当てを変えないよう使わない。
         m_bPauseMenuWanted = !bAutomatedRun || bOpenPauseMenu;
         m_bOpenPauseMenuAtStartup = bOpenPauseMenu;
-        if (bImGui || m_bLauncherStartup || m_bPauseMenuWanted || bOpenSceneInfo)
+        // 材質ギャラリーの名札は ImGui で描き、撮影にも載せるので、そのシーンへ直接入る起動でも登録する
+        const bool bGalleryLabels = Scenes::SceneTextEquals(m_StartupSceneId.c_str(), Scenes::kMaterialGallerySceneId);
+        if (bImGui || m_bLauncherStartup || m_bPauseMenuWanted || bOpenSceneInfo || bGalleryLabels)
         {
             NorvesLib::Core::Module::RegisterImGuiModule(
                 NorvesLib::Core::Module::GetModuleRegistry());
@@ -3657,7 +3660,7 @@ namespace Game
         const NorvesLib::Core::GameMode::GameModeId mode = pScene != nullptr ? pScene->Mode : Game::GameModes::Launcher;
         const bool bSwitchable = mode == Game::GameModes::Wasteland || mode == Game::GameModes::NightVillage ||
                                  mode == Game::GameModes::MegaBananas || mode == Game::GameModes::Sandbox ||
-                                 mode == Game::GameModes::MegaStress;
+                                 mode == Game::GameModes::MegaStress || mode == Game::GameModes::MaterialGallery;
         if (viewNames.size() > 1 && !bSwitchable)
         {
             LOG_ERROR_F("CAPTURE_VIEWS_UNSUPPORTED scene=%s 実行中に視点を置き直せないシーンです（視点ごとに起動して撮る）",
@@ -3855,6 +3858,24 @@ namespace Game
                 auto mode = MakeUnique<WastelandMode>();
                 mode->GetData().m_bNightVillage = true;
                 mode->GetData().m_pScriptCapture = scriptCapture;
+                mode->GetData().m_ViewName = viewName;
+                mode->GetData().m_CameraScriptPath = scriptPath;
+                mode->GetData().m_CameraPathTime = pathTime;
+                mode->GetData().m_bCameraPathPlay = bPathPlay;
+                mode->GetData().m_pPauseMenu = pauseMenu;
+                mode->GetData().m_pViewSwitch = viewSwitch;
+                mode->GetData().m_GetAssetSystem = getAssetSystem;
+                return mode;
+            });
+        // 材質ギャラリー。視点・台本は起動引数から渡す。テクスチャが焼いてあるかは AssetSystem で確かめる
+        stateMachine->Registry().Register(
+            MaterialGallery,
+            [viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath, pathTime = m_CameraPathTime,
+             bPathPlay = m_bCameraPathPlay, pauseMenu = &m_PauseMenu, viewSwitch = &m_SceneViewSwitch,
+             getAssetSystem = [this]() { return GetAssetSystemSnapshot(); }](const GameModeParams&)
+                -> Container::TUniquePtr<IGameMode>
+            {
+                auto mode = MakeUnique<MaterialGalleryMode>();
                 mode->GetData().m_ViewName = viewName;
                 mode->GetData().m_CameraScriptPath = scriptPath;
                 mode->GetData().m_CameraPathTime = pathTime;

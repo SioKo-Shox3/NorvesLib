@@ -15,6 +15,9 @@
 #
 # -Set wasteland を付けると、荒野のシーンが使う地形の3層（砂・ひび割れた乾いた土・岩肌）と、石の床
 # （材質ギャラリーの展示場・夜の集落の道）を、地面の区画と同じ5枚（色・法線・粗さ・AO・高さ、4K）で落とす。
+# -Set gallery を付けると、材質ギャラリー（Game の material-gallery。Game/GameModes/MaterialGallery/MaterialGalleryRoutine.cpp の
+# kGalleryMaterials）が並べる Poly Haven の材質すべて（地面の区画・負荷用・荒野の組と、荒野の地形の候補の赤土の組）を、
+# 台座の板の視差に使う高さ（disp）を含む5枚で落とす。既にある4枚は MD5 が一致すれば落とし直さないので、足りない高さだけが増える。
 # -Set を省くと従来の地面の区画の組（既定）を落とす。-StressSet はどちらの -Set にも足せる。
 #
 # 終了コード: すべてそろえば0、どれかを落とせない・MD5が合わなければ1。
@@ -26,8 +29,8 @@ param(
     # 負荷モード用の材質の組も落とす
     [switch]$StressSet,
 
-    # 落とす組。startup = 起動画面の地面の区画（既定）、wasteland = 荒野のシーン
-    [ValidateSet('startup', 'wasteland')]
+    # 落とす組。startup = 起動画面の地面の区画（既定）、wasteland = 荒野のシーン、gallery = 材質ギャラリー
+    [ValidateSet('startup', 'wasteland', 'gallery')]
     [string]$Set = 'startup'
 )
 
@@ -56,7 +59,14 @@ $wastelandAssetIds = @(
     # 近くの主役の崖のスキャンの面の色と高さ（水平の地層の段を持つ赤茶の堆積岩の崖。SCN-WL-CLIFF-SCAN-SELECT）
     'cliff_side'
 )
-$assetIds = if ($Set -eq 'wasteland') { $wastelandAssetIds } else { $startupAssetIds }
+# 荒野の地形の候補として落とした赤土の組（Assets/Textures/PolyHaven/wasteland_terrain_materials.json の残り）。材質ギャラリーだけが高さまで落とす
+$wastelandCandidateAssetIds = @(
+    'red_mud_stones',
+    'red_laterite_soil_stones',
+    'cracked_red_ground',
+    'red_sand',
+    'red_dirt_mud_01'
+)
 # 負荷モード用の材質（-StressSet のときだけ落とす）
 $stressAssetIds = @(
     'aerial_rocks_02',
@@ -89,8 +99,21 @@ $mapSuffixes = @{ Diffuse = 'diff'; nor_dx = 'nor_dx'; Rough = 'rough'; AO = 'ao
 # API の地図の名前 → 使う解像度と形式。見本の区画は高さも使い、負荷用は使わない。
 $swatchMaps = @('Diffuse', 'nor_dx', 'Rough', 'AO', 'Displacement')
 $stressMaps = @('Diffuse', 'nor_dx', 'Rough', 'AO')
+if ($Set -eq 'gallery')
+{
+    # 材質ギャラリーは台座の板に視差を付けるので、負荷用と赤土の組も高さまで落とす
+    $assetIds = @($startupAssetIds) + @($wastelandAssetIds) + @($wastelandCandidateAssetIds) + @($stressAssetIds)
+}
+elseif ($Set -eq 'wasteland')
+{
+    $assetIds = $wastelandAssetIds
+}
+else
+{
+    $assetIds = $startupAssetIds
+}
 $targets = @($assetIds | ForEach-Object { [pscustomobject]@{ Id = $_; Maps = $swatchMaps } })
-if ($StressSet)
+if ($StressSet -and $Set -ne 'gallery')
 {
     $targets += @($stressAssetIds | ForEach-Object { [pscustomobject]@{ Id = $_; Maps = $stressMaps } })
 }

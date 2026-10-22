@@ -6947,3 +6947,21 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 2 倍以内のゆっくりした明るさの変化では、RTGI の照り返しは履歴の年齢の上限の分だけ遅れて追従する（点ける・消すはすぐ追従）
   - 性能は測っていない（SCN-ACCEPT で判断）。新しい試験は足していない
 - Next: TASKS.md の次の未完
+
+### SCN-MATERIAL-GALLERY 完了（2026-10-22、run 20261022-144923 の反復 4）
+
+- Done: `material-gallery` シーン（`Game/GameModes/MaterialGallery/`）。石の床（stone_floor、70 × 50 m）の屋外の展示場に台座 43 基を 4 列（地面／岩・壁・木／床・金属・屋根／荒野の組）に並べ、各台座に 55° 起こした板（視差オクルージョン付き。深さは材質ごとに 2 mm〜5 cm、UV は Poly Haven の実寸）と半径 0.3 m の球を載せた。x −20 のひな壇に金属度 0〜1（左右）× 粗さ 0〜1（奥へ上がる段）の 6 × 6 の球。名札は ImGui で台座の前面へ投影し（14 m まで、展示の箱に視線が遮られる名札は描かない）、撮影にも載せる。物理空の昼（太陽 仰角 40°・方位 235°、EV100 15、FXAA）。視点 overview・textures・spheres・close
+  - テクスチャ: `Scripts/FetchPolyHavenTextures.ps1 -Set gallery`（全材質を高さ込みの 5 枚で。今回 disp を 29 枚取得）、焼きの一覧 `Assets/AssetSets/MaterialGalleryTextures.json`（荒野の候補・荒野の組の未焼きの 10 材質と全部の高さ、66 項目）。焼いていないテクスチャは読まずに `MATERIAL_GALLERY_TEXTURE_MISSING` を出し、`CaptureScene.ps1 -RequireAssets` の欠けに数える
+  - 撮影で直接入る起動でも ImGui モジュールを登録する（`--scene=material-gallery` のとき。名札のため）
+- 証拠（`.harness/runs/20261022-144923/`）:
+  - `verify-SCN-MATERIAL-GALLERY-1.txt` Debug の Game のビルド EXIT=0
+  - `verify-SCN-MATERIAL-GALLERY-2.txt` 撮影 result=pass・EXIT=0（4 視点、白飛び・黒つぶれの割合はどれも 0.05 % 未満）。ログに `MATERIAL_GALLERY_MATERIALS_READY materials=44`、`MATERIAL_GALLERY_TEXTURE_MISSING` 0 行
+  - `verify-SCN-MATERIAL-GALLERY-3.txt` 周回 2 周 result=pass・EXIT=0（2 周とも textures=170・texture_bytes 3.48 GB で増えない）
+  - 撮影 `scene-capture/SCN-MATERIAL-GALLERY/` を開いた: close で castle_brick_01 の板の目地が凹み、レンガの上の縁が太陽の側で明るい（法線と視差の向きが合う）。textures で sand_01・asphalt_02・marble_01・aerial_rocks_02・coast_sand_rocks_02 の色と名札が読め、marble は滑らかな照り、asphalt は艶なし（ORM の粗さの並びが合う）。spheres で金属度が右へ鏡面に、粗さが奥へぼけ、軸の名札が読める
+- Notes:
+  - 無地の実体の色は材質の BaseColor ではなく MeshComponent の CustomData（ObjectColor）で決まる（BaseColor だけでは白のまま描かれた）。台座・ひな壇・格子の球は CustomData で色を渡した
+  - 荒野の地形の砂・土（wasteland_soil_sand・wasteland_dirt_crust、8K の較正済み）は高さの画像が無いので、板は視差なしで見せる
+  - AssetCook の実行ファイルが前回の焼きから変わっていて、全体の焼きは荒野の DEM の区画で 1 項目 3 分かかった（残り約 125 項目で数時間）。途中で止め、焼き直し済みの 301 項目（ギャラリーの 66 を含む）だけを `-OnlyLogicalPath` でマニフェストへ反映した（cooked=0 skipped=301）。荒野の地形の残りは前の版の焼きのまま
+  - 前の反復が残した未追跡の `Game/GameModes/Wasteland/WastelandNightLights.{h,cpp}`・`Docs/RenderingValidation/NightVillageLights.md` は、この反復の間に別の途中保存のコミット（f8f5c7a4）で追跡された
+  - 新しい試験は足していない
+- Next: TASKS.md の次の未完

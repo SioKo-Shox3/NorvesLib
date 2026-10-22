@@ -1822,6 +1822,7 @@ if(NORVES_BRIDGE_SDK_DIR)
         ${CMAKE_SOURCE_DIR}/Game/Input/CameraScript.cpp
         ${CMAKE_SOURCE_DIR}/Game/Scenes/FreeCameraRig.cpp
         ${CMAKE_SOURCE_DIR}/Game/GameModes/Sandbox/SandboxRoutine.cpp
+        ${CMAKE_SOURCE_DIR}/Game/GameModes/MaterialGallery/MaterialGalleryRoutine.cpp
         ${CMAKE_SOURCE_DIR}/Game/GameModes/MegaBananas/MegaBananasRoutine.cpp
         ${CMAKE_SOURCE_DIR}/Game/GameModes/MegaStress/MegaStressRoutine.cpp
         ${CMAKE_SOURCE_DIR}/Game/Input/PickingController.cpp

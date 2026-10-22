@@ -44,6 +44,9 @@ namespace Game::GameModes
     /// 夜の集落のシーン。荒野と同じ地形の一角に生成した建物と小物で道沿いの集落を組み、月明かりと夜空で描く（荒野のモードの型を使う）
     inline constexpr NorvesLib::Core::GameMode::GameModeId NightVillage = "NightVillage"_id;
 
+    /// 材質ギャラリー。石の床の展示場に Poly Haven の材質を台座の板と球で並べ、金属度 × 粗さの球の格子を置く
+    inline constexpr NorvesLib::Core::GameMode::GameModeId MaterialGallery = "MaterialGallery"_id;
+
     /// 仮想化ジオメトリの負荷シーン（開発ビルドだけランチャーに出る）。多種のメッシュの個別 Entity を置く
     inline constexpr NorvesLib::Core::GameMode::GameModeId MegaStress = "MegaStress"_id;
 
