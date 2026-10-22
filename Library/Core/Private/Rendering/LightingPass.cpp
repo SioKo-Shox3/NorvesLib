@@ -1287,6 +1287,34 @@ namespace NorvesLib::Core::Rendering
 #endif
     }
 
+    // 遮蔽の診断（開発ビルドだけ。Game の --capture-aov が環境変数 NORVES_RTGI_OCCLUSION_DIAG=1 で頼む）。RTGI の出力・履歴の a に
+    // 空の分と読み飛ばしの分類を詰める（DiffuseIndirect.comp の StoreTemporalSample）。照明は rgb だけを読むので画は変わらない
+    static bool IsRTGIOcclusionDiagnosticRequested()
+    {
+#if NORVES_BUILD_DEVELOPMENT
+        static const bool bRequested = []
+        {
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4996)
+#endif
+            const char* value = std::getenv("NORVES_RTGI_OCCLUSION_DIAG");
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
+            const bool bOn = value != nullptr && value[0] == '1' && value[1] == '\0';
+            if (bOn)
+            {
+                LOG_INFO("RTGI_OCCLUSION_DIAG on source=env");
+            }
+            return bOn;
+        }();
+        return bRequested;
+#else
+        return false;
+#endif
+    }
+
     /**
      * @brief 地形の当たりの色の値（RTGIComputeParameters の terrain*）と、束ねるテクスチャ（地図・砂・土・岩肌）を求める
      *
@@ -4034,6 +4062,7 @@ namespace NorvesLib::Core::Rendering
                 ? context.PhysicalLighting.StaticEnvironmentMaxRadiance
                 : 0.0f;
         parameters.environmentParameters[1] = ResolveRTGIBounceScale();
+        parameters.environmentParameters[2] = IsRTGIOcclusionDiagnosticRequested() ? 1.0f : 0.0f;
         RHI::TexturePtr terrainTextures[4];
         ResolveRTGITerrainBlend(context.SnapshotRayTracingScene->TerrainBlend, context.Resources.Textures,
                                 m_DefaultBlackTexture, parameters, terrainTextures);

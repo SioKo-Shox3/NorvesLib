@@ -132,6 +132,18 @@ float ProxySelfHitHeightLimit(float viewDistance)
 {
     return max(RTGI_PROXY_SELF_HIT_HEIGHT_MAX, RTGI_PROXY_SELF_HIT_HEIGHT_PER_METER * viewDistance);
 }
+
+// 遮蔽の診断（開発ビルドの --capture-aov だけ。environmentParameters.z が 1）。1 次面の光線が読み飛ばした自分の面への
+// 当たりの 1 次面からの高さの最大（読み飛ばしが無ければ負）。TraceDiffuseRay が書き、ShadeDiffuseIndirect が分類して出力の a へ詰める
+float gOcclusionDiagSkippedHeight = -1.0;
+// 読み飛ばした高さの分類の境目（m）。0.1〜2 m は岩の下・株の根元・溝の奥の小さな遮蔽の大きさ
+const float RTGI_OCCLUSION_DIAG_SMALL_HEIGHT = 0.1;
+const float RTGI_OCCLUSION_DIAG_LARGE_HEIGHT = 2.0;
+
+bool IsOcclusionDiagnosticEnabled()
+{
+    return parameters.environmentParameters.z > 0.5;
+}
 // 画素ごとの履歴の年齢の上限（静止が続いたとき）。フレームごとの上限はtemporalState.wで、視点・光源・
 // シーンが動いているフレームでは8になる。重みは累積平均の 1-1/(年齢+1) で、上限は256/257。
 const uint RTGI_HISTORY_MAXIMUM_AGE = 256u;
@@ -764,8 +776,10 @@ bool TryReadReprojectedHistory(vec2 currentUV,
                                float materialSpread,
                                out vec3 previousRadiance,
                                out float previousAge,
-                               out float previousConfidence)
+                               out float previousConfidence,
+                               out float previousSkyVisibility)
 {
+    previousSkyVisibility = 1.0;
     if (parameters.temporalState.x == 0u)
     {
         return false;
@@ -793,6 +807,7 @@ bool TryReadReprojectedHistory(vec2 currentUV,
     ivec2 baseTexel = ivec2(floor(texelPosition));
     vec2 fraction = texelPosition - vec2(baseTexel);
     vec3 radianceSum = vec3(0.0);
+    float skyVisibilitySum = 0.0;
     float ageSum = 0.0;
     float confidenceSum = 0.0;
     float weightSum = 0.0;
@@ -818,7 +833,8 @@ bool TryReadReprojectedHistory(vec2 currentUV,
         float sampledDistance = texelFetch(historyDepth, texel, 0).r;
         vec3 sampledNormal = texelFetch(historyNormal, texel, 0).xyz;
         vec3 sampledMaterial = texelFetch(historyMaterial, texel, 0).rgb;
-        vec3 sampledRadiance = texelFetch(historyRadiance, texel, 0).rgb;
+        vec4 sampledHistory = texelFetch(historyRadiance, texel, 0);
+        vec3 sampledRadiance = sampledHistory.rgb;
         float sampledAge = texelFetch(historyAge, texel, 0).r;
         float sampledConfidence = texelFetch(historyConfidence, texel, 0).r;
         if (!IsFiniteScalar(sampledDistance) || !IsFiniteVector(sampledNormal) ||
@@ -860,6 +876,8 @@ bool TryReadReprojectedHistory(vec2 currentUV,
         }
 
         radianceSum += sampledRadiance * bilinearWeight;
+        skyVisibilitySum += (IsFiniteScalar(sampledHistory.a) ? clamp(sampledHistory.a, 0.0, 1.0) : 1.0) *
+                            bilinearWeight;
         ageSum += sampledAge * bilinearWeight;
         confidenceSum += sampledConfidence * bilinearWeight;
         weightSum += bilinearWeight;
@@ -870,6 +888,7 @@ bool TryReadReprojectedHistory(vec2 currentUV,
         return false;
     }
     previousRadiance = radianceSum / weightSum;
+    previousSkyVisibility = skyVisibilitySum / weightSum;
     previousAge = ageSum / weightSum;
     previousConfidence = confidenceSum / weightSum;
 
@@ -915,9 +934,16 @@ void StoreTemporalSample(uvec2 pixel,
                          float confidence,
                          float viewDistance,
                          vec3 normal,
-                         vec4 material)
+                         vec4 material,
+                         float skyVisibility,
+                         float diagnosticCode)
 {
     vec3 safeRadiance = SanitizeRadiance(radiance);
+    // 遮蔽の診断: 履歴の a = 時間の蓄積の後の空の分、出力の a = 2 × 符号 + 空の分（符号 = 生の空 + 2 × 読み飛ばしの分類、
+    // 空間のフィルタが空の分を取り出して均す）。診断しないときはどちらも 1（照明は rgb だけを読む）
+    float safeSkyVisibility = IsFiniteScalar(skyVisibility) ? clamp(skyVisibility, 0.0, 1.0) : 1.0;
+    float outputAlpha = IsOcclusionDiagnosticEnabled() ? 2.0 * diagnosticCode + safeSkyVisibility : 1.0;
+    float historyAlpha = IsOcclusionDiagnosticEnabled() ? safeSkyVisibility : 1.0;
     float safeAge = IsFiniteScalar(age)
         ? clamp(age,
                 0.0,
@@ -936,14 +962,14 @@ void StoreTemporalSample(uvec2 pixel,
     }
     safeMaterial = clamp(safeMaterial, vec4(0.0), vec4(1.0));
 
-    imageStore(diffuseIndirect, ivec2(pixel), vec4(safeRadiance, 1.0));
+    imageStore(diffuseIndirect, ivec2(pixel), vec4(safeRadiance, outputAlpha));
     // 次のフレームが読む履歴だけを確率的に丸める（この画の出力は最も近い値への 1 回の丸めのまま）
     uint frameIndex = parameters.sampleState.x;
     vec3 roundedHistoryRadiance = vec3(
         StochasticRoundToHalf(safeRadiance.r, EmitterRandom(pixel, frameIndex, 11u)),
         StochasticRoundToHalf(safeRadiance.g, EmitterRandom(pixel, frameIndex, 12u)),
         StochasticRoundToHalf(safeRadiance.b, EmitterRandom(pixel, frameIndex, 13u)));
-    imageStore(historyRadianceOutput, ivec2(pixel), vec4(roundedHistoryRadiance, 1.0));
+    imageStore(historyRadianceOutput, ivec2(pixel), vec4(roundedHistoryRadiance, historyAlpha));
     imageStore(historyAgeOutput, ivec2(pixel), vec4(safeAge, 0.0, 0.0, 0.0));
     imageStore(historyConfidenceOutput,
                ivec2(pixel),
@@ -1142,6 +1168,7 @@ vec3 TraceDiffuseRay(vec3 rayOrigin,
         {
             break;
         }
+        gOcclusionDiagSkippedHeight = max(gOcclusionDiagSkippedHeight, hitHeight);
         rayMinimum = hitDistance + RAY_ORIGIN_OFFSET;
     }
     if (dot(triangleNormal, rayDirection) > 0.0)
@@ -1201,6 +1228,9 @@ void ShadeDiffuseIndirect(uvec2 pixel, out bool bRayTraced, out uint firstHitCus
     // 同じ表面点までの距離で、履歴側と同じカメラを基準にする。無効画素は0とする。
     float previousViewDistance = 0.0;
     float viewDistance = 0.0;
+    // 遮蔽の診断: この画の 1 本目の光線が空へ抜けたか（コサイン標本なので画素の平均が空の見える割合）と読み飛ばしの分類
+    float rawSkyVisibility = 1.0;
+    float diagnosticCode = 0.0;
 
     if (bSurfaceValid)
     {
@@ -1235,6 +1265,12 @@ void ShadeDiffuseIndirect(uvec2 pixel, out bool bRayTraced, out uint firstHitCus
                                                     bBounceHit, bounceHitPosition,
                                                     bounceHitNormal, bounceHitBaseColor,
                                                     bounceHitSpecularWeight, firstHitCustomIndex);
+            rawSkyVisibility = firstHitCustomIndex == RTGI_NO_HIT ? 1.0 : 0.0;
+            float skipClass = gOcclusionDiagSkippedHeight < 0.0                              ? 0.0
+                              : gOcclusionDiagSkippedHeight < RTGI_OCCLUSION_DIAG_SMALL_HEIGHT ? 1.0
+                              : gOcclusionDiagSkippedHeight < RTGI_OCCLUSION_DIAG_LARGE_HEIGHT ? 2.0
+                                                                                               : 3.0;
+            diagnosticCode = rawSkyVisibility + 2.0 * skipClass;
             if (bBounceHit)
             {
                 // 2回目の拡散バウンス: 命中面が空と周りの面から受ける光（影の中の地面を照らす、物体の
@@ -1294,6 +1330,7 @@ void ShadeDiffuseIndirect(uvec2 pixel, out bool bRayTraced, out uint firstHitCus
     vec3 previousRadiance = vec3(0.0);
     float previousAge = 0.0;
     float previousConfidence = 0.0;
+    float previousSkyVisibility = 1.0;
     float normalSpread = 0.0;
     float materialSpread = 0.0;
     // 静止が続いているフレームの履歴は法線・材質で棄却しないため、近傍のばらつきは要らない。
@@ -1311,8 +1348,10 @@ void ShadeDiffuseIndirect(uvec2 pixel, out bool bRayTraced, out uint firstHitCus
                                   materialSpread,
                                   previousRadiance,
                                   previousAge,
-                                  previousConfidence);
+                                  previousConfidence,
+                                  previousSkyVisibility);
     float historyWeight = 0.0;
+    float outputSkyVisibility = rawSkyVisibility;
     float outputAge = 0.0;
     float outputConfidence = bSurfaceValid ? RTGI_HISTORY_INITIAL_CONFIDENCE : 0.0;
     if (bHistoryAccepted)
@@ -1327,6 +1366,7 @@ void ShadeDiffuseIndirect(uvec2 pixel, out bool bRayTraced, out uint firstHitCus
         }
         historyWeight = clamp(historyWeight, 0.0, RTGI_HISTORY_MAXIMUM_WEIGHT);
         outputRadiance = mix(outputRadiance, previousRadiance, historyWeight);
+        outputSkyVisibility = mix(rawSkyVisibility, previousSkyVisibility, historyWeight);
         outputAge = min(previousAge + 1.0,
                         min(float(parameters.temporalState.w),
                             float(RTGI_HISTORY_MAXIMUM_AGE)));
@@ -1339,7 +1379,9 @@ void ShadeDiffuseIndirect(uvec2 pixel, out bool bRayTraced, out uint firstHitCus
                         outputConfidence,
                         viewDistance,
                         worldNormal,
-                        material);
+                        material,
+                        outputSkyVisibility,
+                        diagnosticCode);
 }
 
 void main()

@@ -8,6 +8,9 @@
 //                   w = 深度から戻したワールドの位置のカメラの前方向への距離（視線方向の深度 m）
 //   出力 2（照明）: r = 太陽の可視率（lighting.frag が Lighting.SpecularReflectance の a に書いた影の結果。n·l は掛けない）。
 //                   照明の出力が無い構成（params.lighting.x = 0）は -1
+//                   g = RTGI の時間の蓄積の後の出力の a（遮蔽の診断。2 × 符号 + 空の分、符号 = 生の空 + 2 × 読み飛ばしの分類。
+//                   RTGI/DiffuseIndirect.comp の StoreTemporalSample）、b = 空間のフィルタの後の空の分。
+//                   RTGI が無い構成（params.lighting.y = 0）は g・b とも -1
 //   空の画素（照明と同じ判定: アルベドの a < 0.01）は表面 0・法線 0・深度 +∞・可視率 0
 // 後処理を通さないので、書いた値がそのまま撮影の読み出しに渡る。
 // ========================================
@@ -30,10 +33,12 @@ layout(std140, set = 0, binding = 4) uniform AovParams
     vec4 cameraPosition;
     // xyz = カメラの前方向（単位ベクトル）
     vec4 cameraForward;
-    // x = 1 なら lightingReflectance が照明の出力（a = 太陽の可視率）
+    // x = 1 なら lightingReflectance が照明の出力（a = 太陽の可視率）、y = 1 なら rtgiTemporal・rtgiFiltered が同じフレームの RTGI
     vec4 lighting;
 } params;
 layout(set = 0, binding = 5) uniform sampler2D lightingReflectance;
+layout(set = 0, binding = 6) uniform sampler2D rtgiTemporal;
+layout(set = 0, binding = 7) uniform sampler2D rtgiFiltered;
 
 void main()
 {
@@ -57,5 +62,8 @@ void main()
     outSurface = vec4(albedo.rgb, roughness);
     outGeometry = vec4(normal, viewDepth);
     const float sunVisibility = params.lighting.x > 0.5 ? texelFetch(lightingReflectance, pixel, 0).a : -1.0;
-    outLighting = vec4(sunVisibility, 0.0, 0.0, 0.0);
+    const bool bRTGI = params.lighting.y > 0.5;
+    const float rtgiTemporalCode = bRTGI ? texelFetch(rtgiTemporal, pixel, 0).a : -1.0;
+    const float rtgiFilteredSky = bRTGI ? texelFetch(rtgiFiltered, pixel, 0).a : -1.0;
+    outLighting = vec4(sunVisibility, rtgiTemporalCode, rtgiFilteredSky, 0.0);
 }

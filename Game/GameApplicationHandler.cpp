@@ -814,6 +814,14 @@ namespace Game
         {
             // コマンドライン引数のログ出力
             LOG_INFO_F("Arg[%zu]=%s", i, args[i].c_str());
+#if NORVES_BUILD_DEVELOPMENT
+            // --capture-aov（1 視点の撮影でも複数視点の撮影でも）は、描画の初期化の前に RTGI の遮蔽の診断を頼む。LightingPass が
+            // RTGI の出力の a へ空の分と読み飛ばしの分類を詰め、GBufferAovPass が AOV の照明の g・b に写す
+            if (args[i] == TEXT("--capture-aov"))
+            {
+                _putenv_s("NORVES_RTGI_OCCLUSION_DIAG", "1");
+            }
+#endif
 
             if (args[i] == kRendering3DTestPhysicsSmokeOption)
             {

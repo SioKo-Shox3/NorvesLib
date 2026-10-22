@@ -384,6 +384,8 @@ namespace NorvesLib::Core::Rendering
             {&aov.Surface, {3u, 0u, 0u}, 1u, TEXT(".aov.roughness.pfm")},
             {&aov.Geometry, {3u, 0u, 0u}, 1u, TEXT(".aov.depth.pfm")},
             {&aov.Lighting, {0u, 0u, 0u}, 1u, TEXT(".aov.sun_visibility.pfm")},
+            {&aov.Lighting, {1u, 0u, 0u}, 1u, TEXT(".aov.rtgi_temporal_code.pfm")},
+            {&aov.Lighting, {2u, 0u, 0u}, 1u, TEXT(".aov.rtgi_filtered_sky.pfm")},
         };
         constexpr uint32_t ImageCount = static_cast<uint32_t>(sizeof(images) / sizeof(images[0]));
         const String basePath = RemoveExtension(pngPath);
@@ -405,7 +407,7 @@ namespace NorvesLib::Core::Rendering
 
         const VariableArray<char> pngName = ToAsciiFileName(pngPath);
         const FrameCaptureAovCamera& camera = aov.Camera;
-        char json[4096] = {};
+        char json[8192] = {};
         const int jsonLength = std::snprintf(
             json,
             sizeof(json),
@@ -422,6 +424,8 @@ namespace NorvesLib::Core::Rendering
             "  \"roughness\": {\"file\": \"%s\", \"channels\": 1, \"meaning\": \"perceptual_roughness\", \"sky_value\": 0},\n"
             "  \"depth\": {\"file\": \"%s\", \"channels\": 1, \"meaning\": \"view_axis_distance\", \"units\": \"m\", \"sky_value\": \"inf\"},\n"
             "  \"sun_visibility\": {\"file\": \"%s\", \"channels\": 1, \"meaning\": \"sun_shadow_visibility\", \"source\": \"lighting\", \"sky_value\": 0, \"unavailable_value\": -1},\n"
+            "  \"rtgi_temporal_code\": {\"file\": \"%s\", \"channels\": 1, \"meaning\": \"rtgi_occlusion_diag_2xcode_plus_temporal_sky\", \"code\": \"raw_sky_plus_2x_skip_class\", \"skip_class_heights_m\": [0.1, 2.0], \"source\": \"rtgi_temporal\", \"sky_value\": 0, \"unavailable_value\": -1},\n"
+            "  \"rtgi_filtered_sky\": {\"file\": \"%s\", \"channels\": 1, \"meaning\": \"rtgi_occlusion_diag_filtered_sky\", \"source\": \"rtgi_denoised\", \"sky_value\": 0, \"unavailable_value\": -1},\n"
             "  \"camera\": {\n"
             "    \"position\": [%.9g, %.9g, %.9g],\n"
             "    \"forward\": [%.9g, %.9g, %.9g],\n"
@@ -443,6 +447,8 @@ namespace NorvesLib::Core::Rendering
             fileNames[2].data(),
             fileNames[3].data(),
             fileNames[4].data(),
+            fileNames[5].data(),
+            fileNames[6].data(),
             static_cast<double>(camera.Position[0]),
             static_cast<double>(camera.Position[1]),
             static_cast<double>(camera.Position[2]),

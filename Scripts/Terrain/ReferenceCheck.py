@@ -121,6 +121,11 @@
 #       定数からエンジンの式で視線ごとの雲の透過率を求め直し、同じ視線を GPU が描画と同じ式で評価した値と 1 % 以内で合うこと、
 #       定数が契約（Docs/RenderingValidation/WastelandCloudDump.md）どおりで、格子が描画で GPU へ上げた値と同じことを確かめる。
 #
+#   python Scripts/Terrain/ReferenceCheck.py --occlusion-diag --capture <撮影先> [--views contact_near,ref_cliff_01] [--verify]
+#       CaptureScene.ps1 -Aov の撮影（開発ビルド）で、RTGI の空の分を生 → 時間の蓄積の後 → 空間のフィルタの後で比べ、近い当たりの
+#       読み飛ばしの分類と場所、TLAS の行、光線の始点のずらしの定数を <撮影先>/occlusion_diag_check.json と
+#       <撮影先>/occlusion_diag/<視点>.png に書く（本体は OcclusionDiag.py。結果は Docs/RenderingValidation/WastelandOcclusion.md）。
+#
 #   python Scripts/Terrain/ReferenceCheck.py --cloud-far --engine <撮影先> [--views ref_far_01,ref_far_02] [--verify]
 #       [--expect Scripts/Terrain/ExpectSpecs/cloud-far-composite.json] [--flicker]
 #       CaptureScene.ps1 -GameArgs cloud-dump の手本の視点の撮影で、遠い雲が消える原因（中身・45 km の打ち切り・距離の溶かし・
@@ -6615,6 +6620,8 @@ def main():
                         help="空と霞の書き出しを、AtmosphereReference.py の独立な正解と比べた表を作る")
     parser.add_argument("--cloud-dump", action="store_true",
                         help="雲の密度場の書き出し（--cloud-dump）から雲の透過率を求め直し、エンジンの描画の値と照らす")
+    parser.add_argument("--occlusion-diag", action="store_true",
+                        help="RTGI の遮蔽の診断（-Aov の撮影の RTGI の空の分と読み飛ばし。OcclusionDiag.py）を視点ごとに測る")
     parser.add_argument("--cloud-far", action="store_true",
                         help="手本の視点で遠い雲が消える原因を、雲の書き出しの反実仮想で量に分ける")
     parser.add_argument("--cloud", action="store_true",
@@ -6766,6 +6773,15 @@ def main():
         views = [v.strip() for v in args.views.split(",") if v.strip()]
         return CloudCheck.run(sys.modules[__name__], [absolute(d) for d in args.engine],
                               absolute(args.reference) if args.reference else "", views, args.verify, args.trial)
+    if args.occlusion_diag:
+        import OcclusionDiag
+        capture = args.capture or (args.engine[0] if args.engine else "")
+        capture_dir = os.path.normpath(capture if os.path.isabs(capture) else os.path.join(REPO_ROOT, capture))
+        if not capture or not os.path.isdir(capture_dir):
+            print(f"REFERENCE_CHECK result=fail reason=capture_dir_missing（--capture に撮影先を指定する） path={capture}")
+            return 1
+        views = [v.strip() for v in args.views.split(",") if v.strip()]
+        return OcclusionDiag.run(sys.modules[__name__], capture_dir, views, args.verify)
     if args.cloud_far:
         import CloudFarCause
         capture = args.capture or (args.engine[0] if args.engine else "")

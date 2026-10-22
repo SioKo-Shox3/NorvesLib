@@ -7,6 +7,7 @@
 #include "Rendering/RenderGraph/RenderGraphBuilder.h"
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
 #include "Rendering/RenderGraph/RenderGraphResources.h"
+#include "Rendering/RTGIContract.h"
 #include "Rendering/ShaderManager.h"
 #include "Rendering/ViewRenderContext.h"
 #include "RHI/IBuffer.h"
@@ -60,7 +61,8 @@ namespace NorvesLib::Core::Rendering
         // 書く枚数（表面・幾何・照明）
         constexpr uint32_t AovTargetCount = 3;
 
-        // gbuffer_aov.frag の binding 0〜5（アルベド・法線・材質・深度・パラメータ・照明の鏡面の反射率）
+        // gbuffer_aov.frag の binding 0〜7（アルベド・法線・材質・深度・パラメータ・照明の鏡面の反射率・
+        // RTGI の時間の蓄積の後・空間のフィルタの後）
         RHI::DescriptorSetDesc MakeGBufferAovDescriptorSetDesc()
         {
             RHI::DescriptorSetDesc desc;
@@ -70,6 +72,8 @@ namespace NorvesLib::Core::Rendering
             }
             AddBinding(desc, 4, RHI::ResourceBindType::ConstantBuffer, RHI::ShaderStage::Pixel);
             AddBinding(desc, 5, RHI::ResourceBindType::CombinedImageSampler, RHI::ShaderStage::Pixel);
+            AddBinding(desc, 6, RHI::ResourceBindType::CombinedImageSampler, RHI::ShaderStage::Pixel);
+            AddBinding(desc, 7, RHI::ResourceBindType::CombinedImageSampler, RHI::ShaderStage::Pixel);
             return desc;
         }
     } // namespace
@@ -456,6 +460,7 @@ namespace NorvesLib::Core::Rendering
         m_GeometryHandle = {};
         m_LightingHandle = {};
         m_ReflectanceHandle = {};
+        m_RTGITemporalHandle = {};
         m_AlbedoHandle = {};
         m_NormalHandle = {};
         m_MaterialHandle = {};
@@ -480,6 +485,7 @@ namespace NorvesLib::Core::Rendering
         m_GeometryHandle = {};
         m_LightingHandle = {};
         m_ReflectanceHandle = {};
+        m_RTGITemporalHandle = {};
         m_AlbedoHandle = {};
         m_NormalHandle = {};
         m_MaterialHandle = {};
@@ -525,6 +531,14 @@ namespace NorvesLib::Core::Rendering
         {
             reflectance = {};
         }
+        // RTGI の時間の蓄積の後の出力（a = 遮蔽の診断）は、RTGI が動く構成だけ読む
+        RGTextureHandle rtgiTemporal;
+        if (builder.TryGetTexture(RenderGraphResourceNames::RTGIDiffuseIndirect, rtgiTemporal) &&
+            !builder.TryReadTexture(RenderGraphResourceNames::RTGIDiffuseIndirect, rtgiTemporal,
+                                    RHI::ResourceState::ShaderResource))
+        {
+            rtgiTemporal = {};
+        }
         const Identity targetNames[AovTargetCount] = {RenderGraphResourceNames::CaptureAovSurface,
                                                       RenderGraphResourceNames::CaptureAovGeometry,
                                                       RenderGraphResourceNames::CaptureAovLighting};
@@ -554,6 +568,7 @@ namespace NorvesLib::Core::Rendering
         m_GeometryHandle = targets[1];
         m_LightingHandle = targets[2];
         m_ReflectanceHandle = reflectance;
+        m_RTGITemporalHandle = rtgiTemporal;
         m_AlbedoHandle = albedo;
         m_NormalHandle = normal;
         m_MaterialHandle = material;
@@ -655,6 +670,15 @@ namespace NorvesLib::Core::Rendering
         }
         // x: 1 なら binding 5 が照明の出力（a = 太陽の可視率）。0 なら可視率を -1 にする
         params[24] = reflectanceTexture ? 1.0f : 0.0f;
+        // y: 1 なら binding 6・7 が同じフレームの RTGI の時間の蓄積の後・空間のフィルタの後（a = 遮蔽の診断）。0 なら -1 にする
+        const RHI::TexturePtr rtgiTemporalTexture =
+            m_RTGITemporalHandle.IsValid() ? resources.GetTexture(m_RTGITemporalHandle) : RHI::TexturePtr{};
+        const RTGIResult& rtgiResult = context.PhysicalLighting.RTGI.Result;
+        const bool bRTGIAvailable = rtgiTemporalTexture && rtgiResult.IsComplete() &&
+                                    rtgiResult.FrameNumber == context.FrameNumber &&
+                                    rtgiResult.Width == rtgiTemporalTexture->GetWidth() &&
+                                    rtgiResult.Height == rtgiTemporalTexture->GetHeight();
+        params[25] = bRTGIAvailable ? 1.0f : 0.0f;
         use.ParamsUniform->Update(params, sizeof(params));
         RHI::DescriptorSetPtr& descriptorSet = use.DescriptorSet;
         const RHI::TexturePtr sources[4] = {albedoTexture, normalTexture, materialTexture, depthTexture};
@@ -667,6 +691,11 @@ namespace NorvesLib::Core::Rendering
         // 照明の出力が無い構成は、読まない代わりの画像（アルベド）を結ぶ
         descriptorSet->BindTexture(5, reflectanceTexture ? reflectanceTexture : albedoTexture);
         descriptorSet->BindSampler(5, m_Sampler);
+        // RTGI が無い構成も同じく、読まない代わりの画像を結ぶ
+        descriptorSet->BindTexture(6, bRTGIAvailable ? rtgiTemporalTexture : albedoTexture);
+        descriptorSet->BindSampler(6, m_Sampler);
+        descriptorSet->BindTexture(7, bRTGIAvailable ? rtgiResult.DiffuseIndirectRadiance : albedoTexture);
+        descriptorSet->BindSampler(7, m_Sampler);
         descriptorSet->Update();
 
         RHI::ICommandList* commandList = context.CommandList;

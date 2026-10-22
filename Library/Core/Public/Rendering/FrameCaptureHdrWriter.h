@@ -28,6 +28,9 @@ namespace NorvesLib::Core::Rendering
      *   <名前>.aov.roughness.pfm … 1 チャンネル（"Pf"）。粗さ
      *   <名前>.aov.depth.pfm     … 1 チャンネル（"Pf"）。カメラの前方向への距離 m（視線方向の深度）
      *   <名前>.aov.sun_visibility.pfm … 1 チャンネル（"Pf"）。照明が求めた太陽の可視率（0〜1。n·l は掛けない。空は 0、照明の出力が無い構成は -1）
+     *   <名前>.aov.rtgi_temporal_code.pfm … 1 チャンネル。RTGI の遮蔽の診断の時間の蓄積の後の出力の a（2 × 符号 + 空の分。
+     *                                       符号 = 生の空 + 2 × 読み飛ばしの分類。RTGI が無い構成は -1）
+     *   <名前>.aov.rtgi_filtered_sky.pfm  … 1 チャンネル。空間のフィルタの後の空の分（RTGI が無い構成は -1）
      *   <名前>.aov.json          … 大きさ・フレーム番号・各画像の意味・カメラ（位置・向き・画角）
      * 撮影の起動引数（--capture-aov）のための開発ビルドの機能で、開発ビルドでないときは何も書かず false を返す。
      * @return AOV が読み出せていて、対応する形式で、すべて書けたら true

@@ -480,7 +480,10 @@ namespace NorvesLib::Core::Rendering
         CapturedImage Surface;
         /** @brief RGBA32F。xyz = ワールドの法線（GBuffer の値のまま）、w = 視線方向の深度 m。空の画素は xyz = 0・w = +∞ */
         CapturedImage Geometry;
-        /** @brief RGBA32F。r = 太陽の可視率（0〜1。影の地図・RT 影と接触影の結果で、n·l は掛けない）。空の画素は 0 */
+        /**
+         * @brief RGBA32F。r = 太陽の可視率（0〜1。影の地図・RT 影と接触影の結果で、n·l は掛けない）。空の画素は 0。
+         * g = RTGI の遮蔽の診断の時間の蓄積の後の出力の a（2 × 符号 + 空の分）、b = 空間のフィルタの後の空の分（RTGI が無ければ -1）
+         */
         CapturedImage Lighting;
         FrameCaptureAovCamera Camera;
     };

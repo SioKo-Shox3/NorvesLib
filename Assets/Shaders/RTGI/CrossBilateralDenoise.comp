@@ -43,6 +43,17 @@ bool IsFiniteVector(vec3 value)
            !any(isinf(value));
 }
 
+// 遮蔽の診断（DiffuseIndirect.comp の StoreTemporalSample）: 入力の a = 2 × 符号 + 時間の蓄積の後の空の分。
+// 符号を除いた空の分を放射輝度と同じ重みで均して出力の a へ書く。診断しないときは入力の a が 1 なので出力の a も 1
+float DecodeSkyVisibility(float encoded)
+{
+    if (!IsFiniteScalar(encoded) || encoded < 0.0)
+    {
+        return 1.0;
+    }
+    return clamp(encoded - 2.0 * floor(encoded * 0.5), 0.0, 1.0);
+}
+
 vec3 SanitizeRadiance(vec3 value)
 {
     if (!IsFiniteVector(value))
@@ -89,6 +100,7 @@ void main()
     float accumulatedWeight = 0.0;
     vec3 centerRadiance = vec3(0.0);
     float centerWeight = 0.0;
+    float accumulatedSky = 0.0;
     float neighborMaximumLuminance = -1.0;
     for (int offsetY = -1; offsetY <= 1; ++offsetY)
     {
@@ -129,8 +141,9 @@ void main()
                 continue;
             }
 
-            vec3 sampleRadiance = SanitizeRadiance(
-                texelFetch(temporalRadiance, samplePixel, 0).rgb);
+            vec4 sampleTemporal = texelFetch(temporalRadiance, samplePixel, 0);
+            vec3 sampleRadiance = SanitizeRadiance(sampleTemporal.rgb);
+            float sampleSky = DecodeSkyVisibility(sampleTemporal.a);
             float spatialWeight = (offsetX == 0 ? 2.0 : 1.0) *
                                   (offsetY == 0 ? 2.0 : 1.0);
             float weight = spatialWeight *
@@ -146,8 +159,10 @@ void main()
             {
                 centerRadiance = sampleRadiance;
                 centerWeight = weight;
+                accumulatedSky += sampleSky * weight;
                 continue;
             }
+            accumulatedSky += sampleSky * (weight * neighborScale);
             neighborMaximumLuminance = max(neighborMaximumLuminance,
                                            RadianceLuminance(sampleRadiance));
             accumulatedRadiance += sampleRadiance * (weight * neighborScale);
@@ -166,8 +181,12 @@ void main()
     accumulatedRadiance += centerRadiance * centerWeight;
     accumulatedWeight += centerWeight;
 
+    vec4 centerTemporal = texelFetch(temporalRadiance, pixel, 0);
     vec3 result = accumulatedWeight > 0.0
         ? accumulatedRadiance / accumulatedWeight
-        : SanitizeRadiance(texelFetch(temporalRadiance, pixel, 0).rgb);
-    imageStore(denoisedRadiance, pixel, vec4(SanitizeRadiance(result), 1.0));
+        : SanitizeRadiance(centerTemporal.rgb);
+    float filteredSky = accumulatedWeight > 0.0
+        ? accumulatedSky / accumulatedWeight
+        : DecodeSkyVisibility(centerTemporal.a);
+    imageStore(denoisedRadiance, pixel, vec4(SanitizeRadiance(result), filteredSky));
 }

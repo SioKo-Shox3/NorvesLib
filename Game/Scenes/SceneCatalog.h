@@ -197,6 +197,10 @@ namespace Game::Scenes
         {"plant_near", SceneViewKind::FreePose, 124.0f, -35.0f, 0.0f, {362.1f, 1.5f, 1966.4f}},
         // plant_far: 同じ向きで株の 30 m 手前の目の高さから見る（遠くでの見え方）
         {"plant_far", SceneViewKind::FreePose, 124.0f, -2.5f, 0.0f, {384.9f, 1.7f, 1981.8f}},
+        // contact_near: 遮蔽の診断（Scripts/Terrain/ReferenceCheck.py --occlusion-diag）の視点。ref_cliff_01 と同じ向き（東南東）で、
+        // Battleship Rock の西の崖錐の裾の岩塊の群れ（ref_cliff_01 の画の下の中ほど、(-2165, -1300) 付近）の 15 m 手前の目の高さから、
+        // 裾の岩塊とその周りの地面を少し見下ろす
+        {"contact_near", SceneViewKind::FreePose, -61.5f, -4.0f, 0.0f, {-2178.0f, 1.7f, -1307.5f}},
         // cloud_sky: 雲の書き出し（--cloud-dump。Scripts/Terrain/ReferenceCheck.py --cloud-dump・--cloud）の空だけを写す視点。
         // 南東の平らな谷床の目の高さから、南南西を仰角 45° で見上げる（既定の 60° の画角の下の端が仰角 15° で、地形が入らない）。
         // 共通の照明の既定の太陽（仰角 58.5°、西南西）は画の右上の外の近くにあり、太陽の側の雲の縁と太陽を背にした雲が 1 枚に入る
