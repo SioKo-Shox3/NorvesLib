@@ -2634,7 +2634,7 @@
 - paths: Game, Assets/AssetSets, Scripts, Test/Game/Bridge/CMakeLists.txt, Test/Core/Rendering/CMakeLists.txt, TASKS.md, PROGRESS.md
 - notes: 2026-10-19 親: verify を RelWithDebInfo に揃え、周回の試験を 1 コマンド 10 分に収まる形にした（Debug の撮影は約 11 分、3 周は 928 秒の実測）。
 ## SCN-INT-REFERENCE-SELECT: 室内の光の手本の写真を選ぶ
-- status: done
+- status: doing
 - done-when: 室内の光のシーンの手本にする実写の写真（パブリックドメイン・CC0・CC BY・CC BY-SA）を 4〜6 枚選ぶ: 低い夕日が大きな窓から差し込む木の床と漆喰かレンガの壁の部屋、色の強い面からの色移り、床の艶の反射、光の筋（塵の舞う空気）。`Assets/Reference/InteriorLight/` に落とし（git 管理外）、manifest（URL・作者・ライセンス・写っている物）を書き、部屋の大きさ・窓の向き・太陽の高さ・家具の並びを写真から決めて `Docs/RenderingValidation/InteriorLightReference.md` に書く。写真の一覧の PNG を開いて確かめる。
 - verify: `python Scripts/Terrain/ReferencePhotos.py --verify --set InteriorLight`
 - paths: Scripts/Terrain, Docs/RenderingValidation, .gitignore, TASKS.md, PROGRESS.md
