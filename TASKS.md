@@ -2306,12 +2306,12 @@
 - notes: 2026-10-19（Sol の 2 周目）。
 
 ## SCN-WLR-CLOUD-REF: 雲をエンジンと Cycles で比べる
-- status: done
+- status: todo
 - after: SCN-WLR-CLOUD-REF-BLENDER
 - done-when: `cloud_sky` を Cycles で収束まで描いて保存し（1 本 25 分を上限）、`--cloud`（`--trial` なし）で表にする。雲の形（密度場の作り方）は中身として、写真の雲の被覆・明るさの分布と並べて別に書く。差を 3 つに分けて `Docs/RenderingValidation/WastelandCloudRef.md` に書き、直す項目の案（地面への雲の影・時間方向の蓄積・ノイズの解像度・多重散乱）を書く（値は変えない）。
 - verify: `python Scripts/Terrain/ReferenceCheck.py --cloud --engine .harness/runs/scene-capture/SCN-WLR-CLOUD-REF-DUMP --reference .harness/runs/scene-capture/SCN-WLR-CLOUD-REF --verify`
 - paths: Scripts, Docs/RenderingValidation, TASKS.md, PROGRESS.md
-- notes: 2026-10-19。Cycles の描画は反復の中で保存する。
+- notes: 2026-10-19。Cycles の描画は反復の中で保存する。 2026-10-22（親）: 評価の 2 周の上限の BLOCKED を解いた。評価者 56 の指摘（`WastelandCloudRef.md` の直す項目の案 1 の手順が、体積の跳ね返り 0 の描画と太陽を消した描画を足すので空の単一散乱を二重に数える）だけを直して閉じる。直し方: 足し算の手順を消し、「全部の描画から体積の跳ね返りを 0 にした描画（太陽・空・地面の光が雲の中で 1 回だけ散乱する分）を引いた残りを Cycles の多重散乱の量とする。太陽を消した描画は、多重散乱のうち太陽と空・地面のどちらから来たかを分けて見るときだけに使い、引き算には入れない」と書く。`WastelandGapList.md`・`PROGRESS.md` に同じ手順の要約があれば揃える。描画・数値・ほかの節は変えない。この項目は評価の周回をもう残していない（ランの中で 2 周を数え済み）ので、直した文の外に断定を足さない。
 
 ## SCN-WL-LIGHT-FINAL: 共通の照明の数値の確認と、既定の荒野の光を写真に合わせる
 - status: todo
