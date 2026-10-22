@@ -171,19 +171,27 @@ class CloudModel:
         self.high_scale = float(weather["high_scale"])
 
     # ---- 密度（SampleCloudDensity） ----
-    def density(self, position, height_fraction, detail_mask):
-        position = np.atleast_2d(position)
-        height_fraction = np.atleast_1d(height_fraction).astype(np.float64)
-        detail_mask = np.broadcast_to(np.atleast_1d(detail_mask), height_fraction.shape)
-        weather_u = (self.rotation_cos * position[:, 0] - self.rotation_sin * position[:, 2]) * self.inverse_weather
-        weather_v = (self.rotation_sin * position[:, 0] + self.rotation_cos * position[:, 2]) * self.inverse_weather
+    def coverage_mask(self, x, z):
+        """天気の模様の覆いの印（雲の座標の x・z だけで決まる）"""
+        x = np.atleast_1d(x).astype(np.float64)
+        z = np.atleast_1d(z).astype(np.float64)
+        weather_u = (self.rotation_cos * x - self.rotation_sin * z) * self.inverse_weather
+        weather_v = (self.rotation_sin * x + self.rotation_cos * z) * self.inverse_weather
         low = sample_trilinear(self.shape_noise, np.stack(
             [weather_u + self.weather_offset[0], np.full_like(weather_u, 0.37), weather_v + self.weather_offset[1]], axis=-1))
         high = sample_trilinear(self.shape_noise, np.stack(
             [weather_v * self.high_scale + self.weather_high_offset[0], np.full_like(weather_u, 0.71),
              weather_u * self.high_scale + self.weather_high_offset[1]], axis=-1))
         weather_value = clamp01(low[:, 0] * 0.55 + low[:, 1] * 0.2 + high[:, 0] * 0.25)
-        mask = smoothstep(1.0 - self.coverage - 0.08, 1.0 - self.coverage + 0.22, weather_value)
+        return smoothstep(1.0 - self.coverage - 0.08, 1.0 - self.coverage + 0.22, weather_value)
+
+    def density(self, position, height_fraction, detail_mask, mask=None):
+        """mask は coverage_mask の値（省くと位置から求める）"""
+        position = np.atleast_2d(position)
+        height_fraction = np.atleast_1d(height_fraction).astype(np.float64)
+        detail_mask = np.broadcast_to(np.atleast_1d(detail_mask), height_fraction.shape)
+        if mask is None:
+            mask = self.coverage_mask(position[:, 0], position[:, 2])
         top_limit = mix(0.35, 1.0, mask)
         profile = (clamp01(remap(height_fraction, 0.0, 0.07, 0.0, 1.0)) *
                    clamp01(remap(height_fraction, top_limit * 0.55, top_limit, 1.0, 0.0)))

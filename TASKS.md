@@ -2298,7 +2298,7 @@
 - notes: 2026-10-19 GAP-LIST の比べる段の案（Sol の批評 6・19・20）。空と霞を直した後に比べる。
 
 ## SCN-WLR-CLOUD-REF-BLENDER: 雲の密度場を Blender の体積に読み込み、比べる検査を作る
-- status: todo
+- status: done
 - after: SCN-WLR-CLOUD-REF-DUMP
 - done-when: `BlenderReference.py` に、書き出した密度場を Blender の体積（同じ格子・同じ散乱と吸収の係数・HG の位相関数・同じ太陽と空）として読み込む処理を足し、`ReferenceCheck.py --cloud`（`cloud_sky` の視線ごとの雲の透過率と放射輝度、縁の明るさ・銀の縁・影の側の暗さ）を作る。検査の成り立つ条件（収束・未判定で落ちる）は SCN-WLR-BUILDING-REF-BASE と同じ。低いサンプル数で試しに描いて `SCN-WLR-CLOUD-REF-BLENDER/` に保存し、`--trial` で検査が回ることを確かめる。
 - verify: `python Scripts/Terrain/ReferenceCheck.py --cloud --engine .harness/runs/scene-capture/SCN-WLR-CLOUD-REF-DUMP --reference .harness/runs/scene-capture/SCN-WLR-CLOUD-REF-BLENDER --trial --verify`

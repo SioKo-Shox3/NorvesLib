@@ -112,6 +112,14 @@
 #       定数からエンジンの式で視線ごとの雲の透過率を求め直し、同じ視線を GPU が描画と同じ式で評価した値と 1 % 以内で合うこと、
 #       定数が契約（Docs/RenderingValidation/WastelandCloudDump.md）どおりで、格子が描画で GPU へ上げた値と同じことを確かめる。
 #
+#   python Scripts/Terrain/ReferenceCheck.py --cloud --engine <雲の書き出しの撮影> --reference <Cycles の書き先>
+#                                            [--views cloud_sky] [--trial] [--verify]
+#       雲の書き出しの視線ごとに、エンジン（GPU が描画と同じ式で評価した霞の前の散乱光と透過率）と Cycles（BlenderReference.py
+#       --cloud が書き出しの密度場を体積として描いたもの）の雲の透過率と放射輝度を比べ、縁の明るさ・銀の縁・影の側の暗さを
+#       表にする（CloudCheck.py）。比較が成り立つ条件（書き出しの検査・同じ書き出し・カメラと空と体積の照合・Cycles の収束・
+#       領域の視線の下限）を満たさないか、表の領域・量が未判定なら落ちる（エンジンとの一致は求めない）。--trial は収束の条件
+#       だけを外す。報告は <Cycles の書き先>/cloud_check.json。
+#
 #   python Scripts/Terrain/ReferenceCheck.py --atmos-dump --capture <出力先> [--views a,b,...] [--verify]
 #       CaptureScene.ps1 -GameArgs atmosphere-dump の撮影（<視点>.atmos.json と、そこに書かれた 32 bit 浮動小数の生のファイル）を
 #       視点ごとに検査し、結果を <出力先>/atmos_dump_check.json に書く。--verify は入力のハッシュ（inputs.json）を今のファイルと照らす。
@@ -598,7 +606,11 @@ SHIFTED_REFERENCE_SCOPE = "region_means_only"
 # 最初の 1 回の描画の後から数え、種 A の途中の和を使い直す --crop-reuse-a を足した（止める時刻と段取りだけで、1 回の描画は同じ）
 # SCN-WL-RTGI-COLOR: 切り出しの描画が間接光の拡散の分（indirect_diffuse）も書くようにした（足した出力だけで、ほかの出力は同じ）
 # SCN-WL-RTGI-AMOUNT: 本描画（--gray・--lit）も間接光の拡散の分を書くようにした（足した出力だけで、ほかの出力は同じ）
+# SCN-WLR-CLOUD-REF-BLENDER: 雲の描画（--cloud。job の kind が cloud のときだけ動く枝）を足し、--mesh を --cloud のほかで
+# 求める形にした。ほかの描画の関数は変えていない
 BLENDER_SCRIPT_EQUIVALENT_SHA256 = {
+    "af4cfd5fd878318f650f7c7559efc7b3e08ed2ef883602d3230ebf5c48281789":
+        ("5e6c648bcd9929cbc2dbb0aa2ed28b6a7a11aed044475881bb2c51506451efbe",),
     "f2795eae2b4454d8b34ef15526636379e276927b7db34706d2da67ac746aebca":
         ("38058f99bd46164fe57d871d7acf00cb03849449b43d4ac17e5c7857c6b268d8",
          "5570cce8bfb04ee9a69a87ec961f6c0f9b600acc2585eea64ff370c610b97afa",
@@ -6566,6 +6578,8 @@ def main():
                         help="空と霞の書き出しを、AtmosphereReference.py の独立な正解と比べた表を作る")
     parser.add_argument("--cloud-dump", action="store_true",
                         help="雲の密度場の書き出し（--cloud-dump）から雲の透過率を求め直し、エンジンの描画の値と照らす")
+    parser.add_argument("--cloud", action="store_true",
+                        help="雲の書き出しの視線ごとの透過率と放射輝度を、Cycles の体積の描画と比べる（CloudCheck.py。--engine と --reference）")
     parser.add_argument("--geom-settle", action="store_true",
                         help="VRAM の予算が足りないときのジオメトリのページの落ち着き（GeomSettle.py）を、--engine の撮影の推移で検査する")
     parser.add_argument("--blur-static", action="store_true",
@@ -6590,7 +6604,7 @@ def main():
                         help="低木 1 株の遠くでの見え方を、2 倍の解像度の正解とアルファの縁・株・近くの地面の帯域ごとの差で比べる"
                              "（PlantFarCheck.py。--capture）")
     parser.add_argument("--trial", action="store_true",
-                        help="--building・--plant: Cycles の収束の条件だけを外す（試しの描画）")
+                        help="--building・--plant・--cloud: Cycles の収束の条件だけを外す（試しの描画）")
     parser.add_argument("--grading", action="store_true",
                         help="荒野のグレーディングが中立で、HDR に neutral_plain を掛けた画が撮影の PNG と合うことを検査し、地面の R/G と白飛びの前後を記録する")
     parser.add_argument("--gap-list", action="store_true",
@@ -6689,6 +6703,12 @@ def main():
         return PlantCheck.run(sys.modules[__name__], [absolute(d) for d in args.engine],
                               absolute(args.reference) if args.reference else "", views, args.verify, args.trial,
                               expect=expect)
+    if args.cloud:
+        import CloudCheck
+        absolute = lambda d: os.path.normpath(d if os.path.isabs(d) else os.path.join(REPO_ROOT, d))
+        views = [v.strip() for v in args.views.split(",") if v.strip()]
+        return CloudCheck.run(sys.modules[__name__], [absolute(d) for d in args.engine],
+                              absolute(args.reference) if args.reference else "", views, args.verify, args.trial)
     if args.cloud_dump:
         import CloudDumpCheck
         capture = args.capture or (args.engine[0] if args.engine else "")
@@ -6786,7 +6806,7 @@ def main():
         lit_dir = args.lit_capture if os.path.isabs(args.lit_capture) else os.path.join(REPO_ROOT, args.lit_capture)
         return run_tonemap(capture_dir, os.path.normpath(lit_dir), views, args.verify)
     print("REFERENCE_CHECK result=fail reason=no_mode（--record-inputs か --hdr か --display か --plate か --aov か "
-          "--projection か --atmos-dump か --atmos-ref か --cloud-dump か --blur-static か --plant-far か --blur-motion か --gray か --albedo か --normal か "
+          "--projection か --atmos-dump か --atmos-ref か --cloud-dump か --cloud か --blur-static か --plant-far か --blur-motion か --gray か --albedo か --normal か "
           "--lit か --tonemap か --grading を指定する）")
     return 1
 

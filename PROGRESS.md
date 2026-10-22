@@ -6774,3 +6774,22 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 行末の混在するファイル 4 本（GameApplicationHandler.cpp・RenderFrameExecutor.cpp・View.cpp・View.h）を編集で全体 CRLF にしてしまい、元の行末へ直してから撮り直した
   - 新しい試験は足していない
 - Next: TASKS.md の次の未完の項目（SCN-WLR-CLOUD-REF-BLENDER）
+
+### SCN-WLR-CLOUD-REF-BLENDER 完了（2026-10-22、run 20261021-055341 の反復 53）
+- Done: 雲の書き出しを Blender の体積として読み込み、エンジンと比べる仕組みを足した。記録は `Docs/RenderingValidation/WastelandCloudBlender.md`
+  - `BlenderReference.py --cloud`: `CloudVolume.py` が書き出しの密度の式（CloudDumpCheck.CloudModel）をカメラの水平の向きに揃えた 16 m の格子で焼き（1785 × 1045 × 74、約 180 秒）、OpenVDB の体積として置く。散乱の係数 = 密度 × 0.006 /m・吸収 0、位相関数は HG(0.8)・HG(−0.3) の 2 つの Volume Scatter を 0.7・0.3 で足す。太陽は書き出しの照度（RGB）、空は LUT を SampleSky と同じ引き方で引く World、地面はアルベド 0.3 の板、霞は描かない。空だけの画・透過率の画（吸収だけの体積を光線の歩で積む）・本描画（種 A・B）を書く。`--trial` は 1 本 64 サンプル
+  - `ReferenceCheck.py --cloud`（本体 `CloudCheck.py`）: 書き出しの検査・同じ書き出し・カメラと格子と領域の一致・投影（0.5 画素）・空（1 %）・透過率の画と式の透過率（0.01）・収束（GrayRegions と同じ。`--trial` で外す）・領域ごとの視線 3 本以上を満たさなければ落ちる。視線ごと・領域ごと（厚い雲・縁・銀の縁・日の当たる側・影の側）の表と、縁の明るさ・銀の縁・影の側の暗さを書く
+  - `CloudDumpCheck.CloudModel` に覆いの印を列ごとに求める `coverage_mask` を切り出した（式は同じ）
+  - `BlenderReference.py` は雲の枝を足しただけなので、前の版（5e6c648b…）で描いた参照を今の台本と同じとみなす対応を `ReferenceCheck.BLENDER_SCRIPT_EQUIVALENT_SHA256` に足した
+- 結果（試し 64 サンプル）: 投影 0.22 画素、空の相対差 0.09 %、透過率の差 最大 0.0050（中央値 0.0005）。領域の比（エンジン ÷ Cycles）厚い雲 1.02・縁 1.48・銀の縁 1.04・日の当たる側 1.19・影の側 0.72（未収束なので判断に使わない）
+- 証拠（`.harness/runs/20261021-055341/`）:
+  - `aux-SCN-WLR-CLOUD-REF-BLENDER-blender-trial.txt` Cycles の試し描き EXIT=0（焼き 176 秒、描画 11 秒、密度のある点 3361 万）
+  - `verify-SCN-WLR-CLOUD-REF-BLENDER-1.txt`・`-2.txt` `--cloud --trial --verify` result=pass・inputs_current=1・EXIT=0（2 は見比べの画の枠の色を直した後）
+  - `aux-SCN-WLR-CLOUD-REF-BLENDER-no-trial.txt` `--trial` なしは収束の条件（1 本 64 / 512 サンプル、5 領域とも未収束）で落ちる EXIT=1
+  - 見比べの画 `scene-capture/SCN-WLR-CLOUD-REF-BLENDER/cloud_cloud_sky.png` を開き、雲の形と位置がエンジンと Cycles で同じことを確かめた
+- Notes:
+  - 最初は本描画の α で透過率を照らしたが、散乱した標本で透明が切れるので窓の平均でも式と最大 0.097 違った（画面全体の透過率の画を並べて、形は同じで粒だけが粗いことを確かめた）。吸収だけの体積を光線の歩で積む透過率の画に替えると 16 サンプルで最大 0.005 になったので、上限を 0.01 に締めた
+  - Volume Scatter の色の既定は 0.8（散乱が 2 割減る）なので白にした
+  - 収束の見込み: 画素の差の RMS は縁 0.33（64 サンプル）なので、1 本 700 サンプル前後で 0.10 を切る。描画は数分
+  - 新しい試験は足していない
+- Next: TASKS.md の次の未完の項目（SCN-WLR-CLOUD-REF）

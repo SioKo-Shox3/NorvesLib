@@ -104,6 +104,28 @@
 #       （<撮影>/<視点>.aov.depth.pfm）と同じ面に当たった画素に限る。--trial は 1 本 PLANT_TRIAL_SPP サンプルで止める試しの描画
 #       （書き先の既定 <撮影>/cycles-trial）。入力の記録 <書き先>/inputs.json に、台本・領域の定義・共通の照明・株の PLY・
 #       地形のメッシュのハッシュとカメラ・配置を書く。照合は ReferenceCheck.py --plant。
+#
+#   python Scripts/Terrain/BlenderReference.py --cloud --capture <雲の書き出しの撮影> [--views cloud_sky] [--trial]
+#          [--max-spp N] [--max-seconds S] [--out <書き先>]
+#       雲を比べる（SCN-WLR-CLOUD-REF-BLENDER）。CaptureScene.ps1 -GameArgs cloud-dump の撮影の書き出し（<視点>.cloud.json と
+#       3D ノイズの格子・空の放射輝度 LUT。契約は Docs/RenderingValidation/WastelandCloudDump.md）から、CloudVolume.py が
+#       エンジンの密度の式（CloudDumpCheck.CloudModel）を 16 m の格子で評価した体積（OpenVDB、格子 density）を Blender の
+#       Volume として置き、雲の層の外は真空で描く（空気遠近・霞は描かない。エンジンの霞の前の散乱光と比べる）。
+#       材質: 散乱の係数 = 密度 × 消散係数（荒野 0.006 /m）で吸収は 0（エンジンの積分と同じく散乱のアルベド 1）。位相関数は
+#       エンジンの最初の回の mix(HG(0.8), HG(−0.3), 0.3) を、異方性 0.8 と −0.3 の Volume Scatter を係数 0.7 と 0.3 で足して作る
+#       （多重散乱はエンジンの近似でなく Cycles が光路で数える。体積の跳ね返り CLOUD_VOLUME_BOUNCES 回まで）。
+#       太陽: 書き出しの太陽の地表の照度（RGB）を照度とする Sun（角の直径は SUN_ANGLE_DEGREES）。空: 空の放射輝度 LUT を
+#       エンジンの SampleSky と同じ引き方（正距円筒、横は繰り返し、縦は端で止める線形）で引く World。地面: カメラの下の高度 0 に
+#       書き出しの地面のアルベドの拡散の板（半辺 CLOUD_GROUND_HALF_SIZE_M）。カメラ: 書き出しの逆の視線行列から求めた向き・
+#       縦の画角を、雲の式の高度（max(カメラの y, 1)）に置く。
+#       描き方: 透明の背景で、雲の散乱光（RGB）と不透明度（α = 1 − 雲の透過率）を、画素の中心に寄せたフィルタで描く。
+#       先に雲を隠した空だけの画（<視点>.aux.sky.pfm）と、同じ格子の吸収だけの体積を光線の歩で積んだ透過率の画
+#       （<視点>.aux.transmittance.pfm。置き方の照合用）を描き、続けて種を変えた本描画を CHUNK_SPP サンプルずつ A・B に重ね、
+#       CloudVolume の視線の領域で収束を測る（--gray と同じ基準と止め方）。<視点>.cycles.{hdr,seed_a,seed_b}.pfm（RGB）・
+#       <視点>.cycles.{alpha,alpha_a,alpha_b}.pfm・<視点>.cycles.json（設定・格子・収束の経過）を書く。--trial は 1 本
+#       CLOUD_TRIAL_SPP サンプルで止める試しの描画（書き先の既定 <撮影>/cycles-trial）。入力の記録 <書き先>/inputs.json に、
+#       台本・CloudVolume.py・CloudDumpCheck.py・GrayRegions.py と書き出しのファイルのハッシュ、カメラ・格子・領域を書く。
+#       照合は ReferenceCheck.py --cloud。
 import argparse
 import hashlib
 import json
@@ -177,6 +199,23 @@ PLANT_PLY = "reference_plant.ply"
 # 葉の透過の色の、頂点のアルベド（反射）に対する比。薄い葉の可視域の透過は反射と同じ程度で、乾いた土地の低木の小さく厚い葉は
 # それより小さいので半分とする（エンジンの葉は透過を持たない。比べる段で透過の有無を切り分けるための素直な値）
 PLANT_LEAF_TRANSMITTANCE_RATIO = 0.5
+# 雲の比較（--cloud）
+CLOUD_VIEWS = ("cloud_sky",)
+CLOUD_RESULT_DIR = "cycles-cloud"
+CLOUD_TRIAL_DIR = "cycles-trial"
+CLOUD_TRIAL_SPP = 64
+CLOUD_VOLUME = "Scripts/Terrain/CloudVolume.py"
+CLOUD_DUMP_CHECK = "Scripts/Terrain/CloudDumpCheck.py"
+# 体積の跳ね返りの上限（雲の光学的深さは数〜十程度で、散乱のアルベド 1 の光路は深さの 2 乗ほど跳ねる）と地面の拡散の跳ね返り
+CLOUD_VOLUME_BOUNCES = 256
+CLOUD_DIFFUSE_BOUNCES = 8
+# 地面の板の半辺[m]（雲の層の 2500〜3600 m から 2.9° より下を見る向きは板に当たる）
+CLOUD_GROUND_HALF_SIZE_M = 60000.0
+# 空だけの画のサンプル数（空の引き方の照合。画素の中心の 1 本の視線の値）
+CLOUD_SKY_SPP = 4
+# 透過率の画のサンプル数（同じ密度の吸収だけの体積を光線の歩で積む。散乱のある本描画の α は散乱した標本で透明が切れるので
+# 粒が粗く、置き方の照合に使えない）
+CLOUD_TRANSMITTANCE_SPP = 16
 # 板の較正（エンジンの板の撮影 SCN-WLR-COMMON-LIGHT と同じ視点の太陽）
 PLATE_VIEW = "ref_cliff_01"
 PLATE_CASES = ("sun", "sky")
@@ -483,7 +522,7 @@ def run_blender_job(args, out_dir, name, job, label="gray"):
         f.write(completed.stdout)
         f.write(completed.stderr)
     for line in completed.stdout.splitlines():
-        if line.startswith("BLENDER_GRAY") or line.startswith("BLENDER_ALBEDO"):
+        if line.startswith("BLENDER_GRAY") or line.startswith("BLENDER_ALBEDO") or line.startswith("BLENDER_CLOUD"):
             print(line, flush=True)
     ok = completed.returncode == 0 and all(os.path.isfile(p) for p in job["required_outputs"])
     print(f"BLENDER_REFERENCE {label} job={name} ok={int(ok)} exit={completed.returncode} "
@@ -904,6 +943,100 @@ def run_plant(args):
     return 0
 
 
+def load_cloud_volume():
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import CloudVolume  # noqa: E402  Blender の中でも numpy だけで動く
+    return CloudVolume
+
+
+def run_cloud(args):
+    """--cloud: 雲の書き出しの密度場を Blender の体積として、書き出しの太陽・空とカメラで描く（SCN-WLR-CLOUD-REF-BLENDER）"""
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import ReferenceCheck as RC  # noqa: E402  ふつうの Python の側だけで使う
+    CV = load_cloud_volume()
+    capture_dir = os.path.abspath(args.capture)
+    out_dir = os.path.abspath(args.out) if args.out else \
+        os.path.join(capture_dir, CLOUD_TRIAL_DIR if args.trial else CLOUD_RESULT_DIR)
+    os.makedirs(out_dir, exist_ok=True)
+    views = [v for v in args.views.split(",") if v]
+    view_records = {}
+    dump_sha256 = {}
+    for view in views:
+        try:
+            meta, model, probe = CV.load_dump(capture_dir, view)
+            target = CV.target_size(meta)
+            frame = CV.camera_frame(model, target)
+            grid = CV.grid_spec(model, target, frame)
+        except ValueError as error:
+            print(f"BLENDER_REFERENCE error view={view} 雲の書き出しを読めない（{error}）")
+            return 1
+        pixels = meta["probe"]["pixels"]
+        members = CV.region_members(CV.ray_table(model, probe, pixels, target))
+        for name in CV.dump_files(meta, view):
+            dump_sha256[name] = sha256_file(os.path.join(capture_dir, name))
+        lighting = {
+            "sun_direction": model.sun_direction.tolist(), "sun_illuminance_lux": model.sun_illuminance.tolist(),
+            "sun_angle_degrees": SUN_ANGLE_DEGREES, "ground_albedo": model.ground_albedo.tolist(),
+            "extinction_per_m": model.extinction,
+            "phase": meta["lighting"]["phase"],
+        }
+        prefix = os.path.join(out_dir, view)
+        job = {
+            "kind": "cloud",
+            "view": view,
+            "capture_dir": capture_dir,
+            "width": target[0],
+            "height": target[1],
+            "camera": frame,
+            "grid": grid,
+            "pixels": pixels,
+            "regions": members,
+            "lighting": lighting,
+            "chunk_spp": args.chunk_spp,
+            "max_spp_per_seed": args.max_spp,
+            "max_seconds": args.max_seconds,
+            "trial": bool(args.trial),
+            "prefix": prefix,
+        }
+        job["required_outputs"] = [f"{prefix}.cycles.json", f"{prefix}.aux.sky.pfm", f"{prefix}.aux.transmittance.pfm"] + \
+            [f"{prefix}.cycles.{part}.pfm" for part in ("hdr", "seed_a", "seed_b", "alpha", "alpha_a", "alpha_b")]
+        for stale in job["required_outputs"]:
+            if os.path.exists(stale):
+                os.remove(stale)
+        print(f"BLENDER_REFERENCE cloud view={view} grid={grid['dims']} voxel={grid['voxel_size_m']} "
+              f"regions={ {k: len(v) for k, v in members.items()} } max_spp={args.max_spp}", flush=True)
+        if not run_blender_job(args, out_dir, view, job, label="cloud"):
+            print(f"BLENDER_REFERENCE error view={view} Blender が失敗した（{os.path.basename(out_dir)}/{view}.blender.log）")
+            return 1
+        view_records[view] = {"camera": frame, "grid": grid, "width": target[0], "height": target[1],
+                              "regions": members, "lighting": lighting, "max_spp_per_seed": args.max_spp,
+                              "trial": bool(args.trial)}
+
+    # 参照の入力の記録（ReferenceCheck.py --cloud が書き出しのハッシュを照らし、--verify で台本を今のファイルと照らす）
+    record = {
+        "kind": "cycles_cloud",
+        "script": normalize_rel(os.path.abspath(__file__)),
+        "script_sha256": sha256_file(os.path.abspath(__file__)),
+        "cloud_volume_sha256": sha256_file(os.path.join(REPO_ROOT, CLOUD_VOLUME)),
+        "cloud_dump_check_sha256": sha256_file(os.path.join(REPO_ROOT, CLOUD_DUMP_CHECK)),
+        "gray_regions_sha256": sha256_file(os.path.join(REPO_ROOT, GRAY_REGIONS)),
+        "engine_dir": normalize_rel(capture_dir),
+        "dump_sha256": dump_sha256,
+        "git_commit": (RC.git_output(["rev-parse", "HEAD"]) or "").strip(),
+        "sun_angle_degrees": SUN_ANGLE_DEGREES,
+        "volume_bounces": CLOUD_VOLUME_BOUNCES,
+        "diffuse_bounces": CLOUD_DIFFUSE_BOUNCES,
+        "ground_half_size_m": CLOUD_GROUND_HALF_SIZE_M,
+        "criteria": CV.criteria(),
+        "trial": bool(args.trial),
+        "views": view_records,
+    }
+    with open(os.path.join(out_dir, "inputs.json"), "w", encoding="utf-8") as f:
+        json.dump(record, f, indent=2, ensure_ascii=False)
+    print(f"BLENDER_REFERENCE cloud record views={len(view_records)} out={normalize_rel(out_dir)}")
+    return 0
+
+
 def run_material(args, mode, result_root=None):
     """--albedo（mode = albedo）・--normal（mode = normal）・--lit の画素ごとの材質（mode = lit）。result_root を渡すと
     <撮影> の代わりにその下へ書く（切り出しの描画）"""
@@ -1191,6 +1324,8 @@ def render_job(job_path):
         render_gray_job(job)
     elif kind == "albedo":
         render_albedo_job(job)
+    elif kind == "cloud":
+        render_cloud_job(job)
     else:
         render_depth_job(job)
 
@@ -2538,6 +2673,328 @@ def render_gray_job(job):
           f"load={load_seconds:.1f}s render={render_seconds:.1f}s consistency={json.dumps(consistency)}", flush=True)
 
 
+def make_cloud_material(extinction, phase):
+    """雲の体積の材質: 格子 density × 消散係数を、位相関数の 2 つの HG の重みで 2 つの Volume Scatter（白、吸収なし）に分けて足す"""
+    import bpy
+    material = bpy.data.materials.new("CloudVolume")
+    material.use_nodes = True
+    nodes = material.node_tree.nodes
+    links = material.node_tree.links
+    nodes.clear()
+    attribute = nodes.new("ShaderNodeAttribute")
+    attribute.attribute_type = "GEOMETRY"
+    attribute.attribute_name = "density"
+    add = nodes.new("ShaderNodeAddShader")
+    output = nodes.new("ShaderNodeOutputMaterial")
+    backward_weight = float(phase["backward_weight"])
+    lobes = ((float(phase["g_forward"]), 1.0 - backward_weight), (float(phase["g_backward"]), backward_weight))
+    for index, (anisotropy, weight) in enumerate(lobes):
+        scale = nodes.new("ShaderNodeMath")
+        scale.operation = "MULTIPLY"
+        scale.inputs[1].default_value = float(extinction) * weight
+        links.new(attribute.outputs["Fac"], scale.inputs[0])
+        scatter = nodes.new("ShaderNodeVolumeScatter")
+        scatter.phase = "HENYEY_GREENSTEIN"
+        # Volume Scatter の色の既定は 0.8（散乱の係数 = 密度 × 色）なので白にする
+        scatter.inputs["Color"].default_value = (1.0, 1.0, 1.0, 1.0)
+        scatter.inputs["Anisotropy"].default_value = anisotropy
+        links.new(scale.outputs["Value"], scatter.inputs["Density"])
+        links.new(scatter.outputs["Volume"], add.inputs[index])
+    links.new(add.outputs["Shader"], output.inputs["Volume"])
+    return material
+
+
+def make_lut_world(scene, lut):
+    """空の放射輝度 LUT（[行, 列, RGBA]、正距円筒）を、エンジンの SampleSky と同じ引き方で引く World。
+    エンジンの向き (X, Y, Z) = (x, z, −y)（Blender の視線の向き）で、u = atan2(Z, X) / 2π + 0.5、v = asin(−Y) / π + 0.5。
+    画像の行は LUT の行の順に置く（Blender の画像の v = (行 + 0.5) / 高さ が LUT の行）。横は繰り返し、縦は端の texel の中心で止める"""
+    import bpy
+    height, width = lut.shape[:2]
+    image = bpy.data.images.new("SkyRadianceLut", width=width, height=height, alpha=True, float_buffer=True)
+    image.colorspace_settings.name = "Non-Color"
+    image.pixels.foreach_set(np.ascontiguousarray(lut, dtype=np.float32).ravel())
+    world = bpy.data.worlds.new("CloudSky")
+    world.use_nodes = True
+    nodes = world.node_tree.nodes
+    links = world.node_tree.links
+    nodes.clear()
+    coordinate = nodes.new("ShaderNodeTexCoord")
+    unit = nodes.new("ShaderNodeVectorMath")
+    unit.operation = "NORMALIZE"
+    links.new(coordinate.outputs["Generated"], unit.inputs[0])
+    separate = nodes.new("ShaderNodeSeparateXYZ")
+    links.new(unit.outputs["Vector"], separate.inputs[0])
+
+    def math_node(operation, *inputs):
+        node = nodes.new("ShaderNodeMath")
+        node.operation = operation
+        for slot, value in enumerate(inputs):
+            if isinstance(value, (int, float)):
+                node.inputs[slot].default_value = float(value)
+            else:
+                links.new(value, node.inputs[slot])
+        return node.outputs["Value"]
+
+    engine_z = math_node("MULTIPLY", separate.outputs["Y"], -1.0)
+    u = math_node("MULTIPLY_ADD", math_node("ARCTAN2", engine_z, separate.outputs["X"]), 0.5 / math.pi, 0.5)
+    v = math_node("MULTIPLY_ADD", math_node("ARCSINE", math_node("MULTIPLY", separate.outputs["Z"], -1.0)),
+                  1.0 / math.pi, 0.5)
+    clamp = nodes.new("ShaderNodeClamp")
+    clamp.inputs["Min"].default_value = 0.5 / height
+    clamp.inputs["Max"].default_value = 1.0 - 0.5 / height
+    links.new(v, clamp.inputs["Value"])
+    combine = nodes.new("ShaderNodeCombineXYZ")
+    links.new(u, combine.inputs["X"])
+    links.new(clamp.outputs["Result"], combine.inputs["Y"])
+    texture = nodes.new("ShaderNodeTexImage")
+    texture.image = image
+    texture.interpolation = "Linear"
+    texture.extension = "REPEAT"
+    links.new(combine.outputs["Vector"], texture.inputs["Vector"])
+    background = nodes.new("ShaderNodeBackground")
+    background.inputs["Strength"].default_value = 1.0
+    links.new(texture.outputs["Color"], background.inputs["Color"])
+    output = nodes.new("ShaderNodeOutputWorld")
+    links.new(background.outputs["Background"], output.inputs["Surface"])
+    scene.world = world
+    return world
+
+
+def render_cloud_job(job):
+    """雲の体積を 1 視点描く: 書き出しから密度の格子を焼き、空だけの画と、種を変えた本描画を収束まで重ねる"""
+    import bpy
+    import mathutils
+    import openvdb
+
+    GR = load_gray_regions()
+    CV = load_cloud_volume()
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    scene = bpy.context.scene
+    device = setup_cycles_device(scene)
+    prefix = job["prefix"]
+    width, height = int(job["width"]), int(job["height"])
+    pixels = job["pixels"]
+    regions = {name: [int(i) for i in indices] for name, indices in job["regions"].items()}
+
+    # 1. 密度の格子（OpenVDB の格子 density。値は格子の点、格子の点 (i, j, k) は格子の空間の (i, j, k) × 大きさ）
+    started = time.time()
+    meta, model, _ = CV.load_dump(job["capture_dir"], job["view"])
+    grid = job["grid"]
+    density = CV.bake_density(model, grid)
+    bake_seconds = time.time() - started
+    grid_record = {
+        "dims": [int(n) for n in density.shape], "voxel_size_m": float(grid["voxel_size_m"]),
+        "nonzero_voxels": int(np.count_nonzero(density)), "max_density": float(density.max()),
+        "density_sum": float(density.sum(dtype=np.float64)),
+        "density_sha256": hashlib.sha256(np.ascontiguousarray(density).tobytes()).hexdigest(),
+        "bake_seconds": bake_seconds,
+    }
+    vdb = openvdb.FloatGrid()
+    vdb.name = "density"
+    vdb.copyFromArray(density, tolerance=0.0)
+    vdb.transform = openvdb.createLinearTransform(voxelSize=float(grid["voxel_size_m"]))
+    grid_record["active_voxels"] = int(vdb.activeVoxelCount())
+    del density
+    vdb_path = prefix + ".density.vdb"
+    openvdb.write(vdb_path, grids=[vdb])
+    del vdb
+    volume = bpy.data.volumes.new("CloudDensity")
+    volume.filepath = vdb_path
+    volume.grids.load()
+    volume.render.precision = "FULL"
+    # 密度がこれ以下の格子の点は空（エンジンの視線も密度 0.001 以下の歩を飛ばす）
+    volume.render.clipping = CV.CD.DENSITY_THRESHOLD
+    lighting = job["lighting"]
+    volume.materials.append(make_cloud_material(lighting["extinction_per_m"], lighting["phase"]))
+    volume_object = bpy.data.objects.new("CloudDensity", volume)
+    scene.collection.objects.link(volume_object)
+    axis_i = engine_to_blender(grid["axes"]["i"])
+    axis_j = engine_to_blender(grid["axes"]["j"])
+    axis_k = engine_to_blender(grid["axes"]["k"])
+    origin = engine_to_blender(grid["origin_frame"])
+    matrix = mathutils.Matrix(((axis_i[0], axis_j[0], axis_k[0], origin[0]), (axis_i[1], axis_j[1], axis_k[1], origin[1]),
+                               (axis_i[2], axis_j[2], axis_k[2], origin[2]), (0.0, 0.0, 0.0, 1.0)))
+    if matrix.to_3x3().determinant() <= 0.0:
+        raise RuntimeError("格子の軸が左手系（体積が裏返る）")
+    volume_object.matrix_world = matrix
+
+    # 2. 地面・太陽・空・カメラ
+    half = CLOUD_GROUND_HALF_SIZE_M
+    ground_mesh = bpy.data.meshes.new("CloudGround")
+    ground_mesh.from_pydata([(-half, -half, 0.0), (half, -half, 0.0), (half, half, 0.0), (-half, half, 0.0)], [],
+                            [(0, 1, 2, 3)])
+    ground_material = bpy.data.materials.new("CloudGround")
+    ground_material.use_nodes = True
+    ground_nodes = ground_material.node_tree.nodes
+    ground_nodes.clear()
+    diffuse = ground_nodes.new("ShaderNodeBsdfDiffuse")
+    albedo = [float(v) for v in lighting["ground_albedo"]]
+    diffuse.inputs["Color"].default_value = (albedo[0], albedo[1], albedo[2], 1.0)
+    diffuse.inputs["Roughness"].default_value = 0.0
+    ground_output = ground_nodes.new("ShaderNodeOutputMaterial")
+    ground_material.node_tree.links.new(diffuse.outputs["BSDF"], ground_output.inputs["Surface"])
+    ground_mesh.materials.append(ground_material)
+    ground = bpy.data.objects.new("CloudGround", ground_mesh)
+    scene.collection.objects.link(ground)
+
+    sun_rgb = [float(v) for v in lighting["sun_illuminance_lux"]]
+    sun_peak = max(sun_rgb)
+    sun = make_sun_lamp(scene, sun_peak, lighting["sun_direction"], lighting["sun_angle_degrees"])
+    sun.data.color = tuple(v / sun_peak for v in sun_rgb)
+    make_lut_world(scene, model.sky_lut)
+
+    frame = job["camera"]
+    camera_matrix, vertical_fov = camera_to_blender({
+        "position": frame["position_frame"], "right": frame["right"], "up": frame["up"], "forward": frame["forward"],
+        "vertical_fov_degrees": frame["vertical_fov_degrees"]})
+    camera = bpy.data.cameras.new("EngineCamera")
+    camera.type = "PERSP"
+    camera.sensor_fit = "VERTICAL"
+    camera.angle_y = vertical_fov
+    camera.clip_start = 0.1
+    camera.clip_end = CLIP_END_M
+    camera_object = bpy.data.objects.new("EngineCamera", camera)
+    scene.collection.objects.link(camera_object)
+    camera_object.matrix_world = mathutils.Matrix(camera_matrix)
+    scene.camera = camera_object
+
+    exr_tmp = prefix + ".render.exr"
+    configure_gray_cycles(scene, width, height, exr_tmp)
+    cycles = scene.cycles
+    # 視線の画素の値と比べるので、画素の中の標本を画素の中心に寄せる
+    cycles.filter_width = PIXEL_FILTER_WIDTH
+    cycles.max_bounces = CLOUD_VOLUME_BOUNCES + CLOUD_DIFFUSE_BOUNCES
+    cycles.diffuse_bounces = CLOUD_DIFFUSE_BOUNCES
+    cycles.glossy_bounces = 0
+    cycles.transmission_bounces = 0
+    cycles.volume_bounces = CLOUD_VOLUME_BOUNCES
+    cycles.transparent_max_bounces = 8
+    load_seconds = time.time() - started
+
+    # 3. 空だけの画（雲を隠し、背景を描く。空の引き方とカメラの視線の照合に使う）
+    volume_object.hide_render = True
+    scene.render.film_transparent = False
+    cycles.samples = CLOUD_SKY_SPP
+    cycles.seed = 0
+    sky = pass_rgb(render_and_read(scene, exr_tmp), "Combined")
+    GR.write_pfm(prefix + ".aux.sky.pfm", sky)
+    volume_object.hide_render = False
+    scene.render.film_transparent = True
+
+    # 4. 透過率の画: 同じ格子・同じ消散係数の吸収だけの体積を、光線の歩で積む描き方（volume_biased）で描き、1 − α を書く
+    #    （置き方・密度・消散係数の照合に使う。散乱が無いので α は標本の揺らぎをほとんど持たない）
+    scatter_material = volume.materials[0]
+    absorb_material = bpy.data.materials.new("CloudAbsorption")
+    absorb_material.use_nodes = True
+    absorb_nodes = absorb_material.node_tree.nodes
+    absorb_nodes.clear()
+    absorb_attribute = absorb_nodes.new("ShaderNodeAttribute")
+    absorb_attribute.attribute_type = "GEOMETRY"
+    absorb_attribute.attribute_name = "density"
+    absorb_scale = absorb_nodes.new("ShaderNodeMath")
+    absorb_scale.operation = "MULTIPLY"
+    absorb_scale.inputs[1].default_value = float(lighting["extinction_per_m"])
+    absorption = absorb_nodes.new("ShaderNodeVolumeAbsorption")
+    # 吸収の係数 = 密度 × (1 − 色) なので黒にする
+    absorption.inputs["Color"].default_value = (0.0, 0.0, 0.0, 1.0)
+    absorb_output = absorb_nodes.new("ShaderNodeOutputMaterial")
+    absorb_links = absorb_material.node_tree.links
+    absorb_links.new(absorb_attribute.outputs["Fac"], absorb_scale.inputs[0])
+    absorb_links.new(absorb_scale.outputs["Value"], absorption.inputs["Density"])
+    absorb_links.new(absorption.outputs["Volume"], absorb_output.inputs["Volume"])
+    volume.materials[0] = absorb_material
+    cycles.volume_biased = True
+    cycles.samples = CLOUD_TRANSMITTANCE_SPP
+    cycles.seed = 0
+    transmittance = 1.0 - render_and_read(scene, exr_tmp)["ViewLayer.Combined.A"]
+    GR.write_pfm(prefix + ".aux.transmittance.pfm", transmittance)
+    volume.materials[0] = scatter_material
+    cycles.volume_biased = False
+
+    # 5. 本描画: 種を変えて A・B に重ね、視線の領域で収束を測る
+    chunk_spp = int(job["chunk_spp"])
+    max_spp = int(job["max_spp_per_seed"])
+    max_seconds = float(job["max_seconds"])
+    cycles.samples = chunk_spp
+    sums = {seed: np.zeros((height, width, 4), dtype=np.float64) for seed in ("a", "b")}
+    chunk = 0
+    history = []
+    stop_reason = None
+    loop_started = time.time()
+    while True:
+        for seed in ("a", "b"):
+            cycles.seed = 1 + chunk
+            sums[seed] += pass_rgb(render_and_read(scene, exr_tmp), "Combined", ("R", "G", "B", "A"))
+            chunk += 1
+        per_seed = chunk // 2
+        spp = per_seed * chunk_spp
+        y_a = GR.luminance(sums["a"][..., :3] / per_seed)
+        y_b = GR.luminance(sums["b"][..., :3] / per_seed)
+        stats, all_converged = CV.convergence(y_a, y_b, pixels, regions)
+        elapsed = time.time() - loop_started
+        history.append({"spp_per_seed": spp, "elapsed_seconds": elapsed, "regions": stats})
+        print(f"BLENDER_CLOUD view={job['view']} spp_per_seed={spp} elapsed={elapsed:.0f}s "
+              f"all_converged={int(all_converged)} " +
+              " ".join(f"{name}={stats[name].get('mean_diff', float('nan')):.4f}/{stats[name].get('pixel_rms', float('nan')):.3f}"
+                       for name in CV.REGIONS), flush=True)
+        if all_converged and spp >= MIN_SPP_PER_SEED:
+            stop_reason = "converged"
+            break
+        if spp + chunk_spp > max_spp:
+            stop_reason = "max_spp"
+            break
+        if elapsed + elapsed / per_seed > max_seconds:
+            stop_reason = "max_seconds"
+            break
+    render_seconds = time.time() - loop_started
+    if os.path.exists(vdb_path):
+        os.remove(vdb_path)
+
+    per_seed = chunk // 2
+    seed_a = sums["a"] / per_seed
+    seed_b = sums["b"] / per_seed
+    GR.write_pfm(prefix + ".cycles.seed_a.pfm", seed_a[..., :3])
+    GR.write_pfm(prefix + ".cycles.seed_b.pfm", seed_b[..., :3])
+    GR.write_pfm(prefix + ".cycles.hdr.pfm", 0.5 * (seed_a[..., :3] + seed_b[..., :3]))
+    GR.write_pfm(prefix + ".cycles.alpha_a.pfm", seed_a[..., 3])
+    GR.write_pfm(prefix + ".cycles.alpha_b.pfm", seed_b[..., 3])
+    GR.write_pfm(prefix + ".cycles.alpha.pfm", 0.5 * (seed_a[..., 3] + seed_b[..., 3]))
+    meta_record = {
+        "view": job["view"],
+        "renderer": f"Blender {bpy.app.version_string} Cycles",
+        "device": device,
+        "width": width,
+        "height": height,
+        "camera": frame,
+        "grid": grid,
+        "grid_record": grid_record,
+        "lighting": lighting,
+        "settings": {"volume_bounces": CLOUD_VOLUME_BOUNCES, "diffuse_bounces": CLOUD_DIFFUSE_BOUNCES,
+                     "max_bounces": CLOUD_VOLUME_BOUNCES + CLOUD_DIFFUSE_BOUNCES, "volume_biased": bool(cycles.volume_biased),
+                     "volume_precision": volume.render.precision, "volume_clipping": float(volume.render.clipping),
+                     "pixel_filter": {"type": "BOX", "width_px": PIXEL_FILTER_WIDTH}, "film_transparent": True,
+                     "clamp": 0.0, "denoise": False, "adaptive": False, "chunk_spp": chunk_spp,
+                     "min_spp_per_seed": MIN_SPP_PER_SEED, "max_spp_per_seed": max_spp, "max_seconds": max_seconds,
+                     "sky_spp": CLOUD_SKY_SPP, "ground_half_size_m": CLOUD_GROUND_HALF_SIZE_M,
+                     "transmittance_pass": {"material": "Volume Absorption（密度 × 消散係数）", "volume_biased": True,
+                                            "spp": CLOUD_TRANSMITTANCE_SPP},
+                     "sun_color": list(sun.data.color), "sun_strength": float(sun.data.energy)},
+        "regions": regions,
+        "spp_per_seed": per_seed * chunk_spp,
+        "stop_reason": stop_reason,
+        "all_converged": bool(history[-1]["regions"] and all(history[-1]["regions"][n]["converged"] for n in CV.REGIONS)),
+        "trial": bool(job.get("trial")),
+        "load_seconds": load_seconds,
+        "render_seconds": render_seconds,
+        "history": history,
+    }
+    with open(prefix + ".cycles.json", "w", encoding="utf-8") as f:
+        json.dump(meta_record, f, indent=2, ensure_ascii=False)
+    print(f"BLENDER_CLOUD view={job['view']} done spp_per_seed={per_seed * chunk_spp} stop={stop_reason} "
+          f"bake={bake_seconds:.1f}s load={load_seconds:.1f}s render={render_seconds:.1f}s "
+          f"active_voxels={grid_record['active_voxels']}", flush=True)
+
+
 def main():
     if IN_BLENDER:
         argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
@@ -2549,7 +3006,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--depth", action="store_true", help="地形の深度を描く")
     parser.add_argument("--gray", action="store_true", help="灰色の地形を共通の照明で描く（板の較正と視点）")
-    parser.add_argument("--mesh", required=True, help="Game の --wasteland-export-terrain が書いたフォルダ")
+    parser.add_argument("--mesh", default="", help="Game の --wasteland-export-terrain が書いたフォルダ（--cloud では使わない）")
     parser.add_argument("--capture", required=True, help="エンジンの撮影（CaptureScene.ps1 -Aov の -OutDir）")
     parser.add_argument("--views", default="", help="描く視点（カンマ区切り。--depth で省くと metrics.json の全視点、"
                                                     "--gray で省くと " + ",".join(GRAY_VIEWS) + "）")
@@ -2579,15 +3036,23 @@ def main():
                         help="前哨地の建物 1 棟（撮影のログの配置）と灰色の地形を共通の照明で描く")
     parser.add_argument("--plant", action="store_true",
                         help="低木 1 株（撮影のログの配置と撮影のフォルダの PLY）と灰色の地形を共通の照明で描く")
+    parser.add_argument("--cloud", action="store_true",
+                        help="雲の書き出し（--capture に cloud-dump の撮影）の密度場を体積として、書き出しの太陽と空で描く")
     parser.add_argument("--trial", action="store_true",
-                        help=f"--building・--plant: 試しの描画（1 本 {BUILDING_TRIAL_SPP} サンプル。既定の書き先 "
+                        help=f"--building・--plant・--cloud: 試しの描画（1 本 {BUILDING_TRIAL_SPP} サンプル。既定の書き先 "
                              f"<撮影>/{BUILDING_TRIAL_DIR}）")
-    parser.add_argument("--out", default="", help=f"--building・--plant: 書き先（省くと <撮影>/{BUILDING_RESULT_DIR}・"
-                                                  f"<撮影>/{PLANT_RESULT_DIR}）")
+    parser.add_argument("--out", default="", help=f"--building・--plant・--cloud: 書き先（省くと <撮影>/{BUILDING_RESULT_DIR}・"
+                                                  f"<撮影>/{PLANT_RESULT_DIR}・<撮影>/{CLOUD_RESULT_DIR}）")
     args = parser.parse_args()
     if int(args.depth) + int(args.gray) + int(args.albedo) + int(args.normal) + int(args.lit) + int(args.building) + \
-            int(args.plant) != 1:
-        parser.error("--depth・--gray・--albedo・--normal・--lit・--building・--plant のどれか 1 つを指定してください")
+            int(args.plant) + int(args.cloud) != 1:
+        parser.error("--depth・--gray・--albedo・--normal・--lit・--building・--plant・--cloud のどれか 1 つを指定してください")
+    if args.cloud:
+        args.views = args.views or ",".join(CLOUD_VIEWS)
+        args.max_spp = args.max_spp or (CLOUD_TRIAL_SPP if args.trial else MAX_SPP_PER_SEED)
+        return run_cloud(args)
+    if not args.mesh:
+        parser.error("--mesh を指定してください（--cloud のほかは地形のメッシュを読む）")
     if args.building:
         args.range = args.range or "shadow"
         args.views = args.views or ",".join(BUILDING_VIEWS)
