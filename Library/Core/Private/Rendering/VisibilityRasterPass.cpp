@@ -65,6 +65,20 @@ namespace NorvesLib::Core::Rendering
             return result;
         }
 
+        // 記録の表の容量。LargeCapacityStep までは 2 の累乗、それより上は LargeCapacityStep の倍数へ切り上げる
+        // （最も細かい LOD の 800 万を超える枠を 2 の累乗へ丸めると、使わない枠だけで数百 MB の VRAM を取る）
+        uint32_t RoundUpRecordCapacity(uint32_t value)
+        {
+            constexpr uint32_t LargeCapacityStep = 1u << 22;
+            if (value <= LargeCapacityStep)
+            {
+                return NextPowerOfTwo(value);
+            }
+            const uint64_t rounded =
+                (static_cast<uint64_t>(value) + LargeCapacityStep - 1u) / LargeCapacityStep * LargeCapacityStep;
+            return static_cast<uint32_t>(std::min<uint64_t>(rounded, std::numeric_limits<uint32_t>::max()));
+        }
+
         void AddBinding(RHI::DescriptorSetDesc& desc,
                         uint32_t binding,
                         RHI::ResourceBindType type,
@@ -790,7 +804,7 @@ namespace NorvesLib::Core::Rendering
         // 今の記録の提出の完了まで残すので、ここで置き換えてよい。新しい表の最初の書き込みは Common からのバリアで始まる
         if (!m_RecordTable || m_RecordCapacity < recordCapacity)
         {
-            const uint32_t capacity = std::max(64u, NextPowerOfTwo(recordCapacity));
+            const uint32_t capacity = std::max(64u, RoundUpRecordCapacity(recordCapacity));
             // GPU 専用のメモリ（ホストが書く記録は RecordUpload からのコピーで入れる）
             RHI::BufferDesc desc(static_cast<uint64_t>(capacity) * RecordBytes,
                                  RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::TransferDst,

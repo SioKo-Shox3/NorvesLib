@@ -7191,3 +7191,13 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `aux-SCN-WLR-OCCLUSION-DIAG-regression-after.txt`: 回帰 result=pass・EXIT=0、4 シーンとも `[ERROR]` 0。before は反復 23 の前に撮っていなかったので、直前の回帰の after（`regression/SCN-WL-CLOUD-FAR-RANGE/after`、HEAD 26771864）を写して使った。PSNR mega-bananas 54.97・night-village 55.66・rendering3dtest 55.63・sandbox 55.79、平均の差 −0.02 以内。sandbox も含め一様に約 55 dB なのは c12ee89b の表示の Blit の ±0.5 段の雑音の分。rendering3dtest の撮影を開き、家・球・岩・地面が以前どおり
 - Notes: 読み飛ばしの割合は最も細かい LOD の段で変わりうる（文書に記載。測り直しは SCN-WL-FINEST-LOD-CRASH の後）。新しい試験は足していない（verify の検査が確かめる）
 - Next: TASKS.md の次の未完
+
+### SCN-WL-FINEST-LOD-CRASH 最も細かい LOD の撮影で岩・株を出すと落ちる不具合を直す（2026-10-23、run 20261022-173753 の反復 26）
+- Done: 落ちる所を特定した。WER のダンプ（%LOCALAPPDATA%\CrashDumps\Game.exe.76072.dmp）を LLVM の lldb で開くと、主スレッドの `RenderGraph::RecordParallelPasses` → `JobSystem::ParallelFor` の `std::rethrow_exception` から terminate → abort（0xC0000409・ucrtbase）。例外の型は投げた情報（ThrowInfo）を Game.exe から引いて `std::runtime_error`、一時の診断で中身が GBufferPass の並列の記録の中の「バッファメモリの割り当てに失敗しました」（VulkanBuffer の vkAllocateMemory の失敗）と分かった。最も細かい段では区間のコマンドが 1 パス約 2500 万あり、`MegaGeometryPass::EnsureBatchBuffers` がコマンドの容量を 2 の累乗（1 億 3422 万、間接描画と描画情報で約 3.5 GB）へ丸め、続く `VisibilityRasterPass` の記録の表（838 万＋1 を 1677 万へ丸めて 1 GB）の確保が VRAM の予算（約 14 GB、使用 13.3 GB）に当たっていた。1 << 22 を超えるコマンドの容量と記録の表の容量を 2 の累乗でなく 1 << 22 の倍数へ切り上げるようにした（1 << 22 以下は今までどおり 2 の累乗）。まとめた描画のバッファの確保を `VRAM_LEDGER mega_batch` でログに出す
+- 証拠（`.harness/runs/20261022-173753/`）:
+  - `verify-SCN-WL-FINEST-LOD-CRASH-1.txt`: Debug の Game のビルド EXIT=0
+  - `verify-SCN-WL-FINEST-LOD-CRASH-2.txt`: contact_near・ref_cliff_01（finest-lod・岩と株あり・HDR・AOV・FXAA）result=pass・EXIT=0、2 視点とも exit_code=0 で SCENE_READY に届き `[ERROR]` 0。`mega_batch` 1344 MB（容量 5033 万）・`visbuffer_records` 768 MB、VRAM の使用 15062 MB（予算 14218 MB）
+  - `verify-SCN-WL-FINEST-LOD-CRASH-3.txt`: ref_far_01（finest-lod）result=pass・EXIT=0。撮影を開き、メサ・崖・低木・礫が以前どおり。bvh_overflow 0・可視の列の溢れ 0
+  - `verify-SCN-WL-FINEST-LOD-CRASH-4.txt`: 回帰 result=pass・EXIT=0（before は `aux-SCN-WL-FINEST-LOD-CRASH-regression-before.txt`、この反復の最初に撮った）。PSNR mega-bananas 65.89・night-village 69.87・rendering3dtest 104.02・sandbox inf、平均の差 0.000。rendering3dtest の撮影を開き、家・球・岩・地面が以前どおり
+- Notes: rocks の 2 枚は落ちずに撮れるが、地形がまるごと抜け岩も欠ける。BVH のたどりの列（1 << 22 の constexpr）が node_peak 約 1480 万・leaf_peak 約 540 万で溢れ（bvh_overflow 約 1540 万）、contact_near は可視クラスタの列（838 万）も約 1404 万で溢れる。列を広げる試し（列 1 << 24 は区間の上限 838 万のままだと VRAM 不足で同じ落ち方、区間の上限を 1 << 22 にすると溢れ 0 で撮れるが BVH の溢れで地形は抜けたまま）は戻した。数と VRAM の見込みは NEXT_FINDINGS に書いた（遮蔽の比べ SCN-WLR-OCCLUSION-EXPORT の前提に関わる）。新しい試験は足していない（verify の撮影が確かめる）
+- Next: TASKS.md の次の未完

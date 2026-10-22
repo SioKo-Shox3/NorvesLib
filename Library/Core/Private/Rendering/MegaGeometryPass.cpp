@@ -4326,6 +4326,21 @@ namespace NorvesLib::Core::Rendering
             value |= value >> 16;
             return value + 1u;
         }
+
+        // まとめた描画のコマンドの容量。LargeCommandCapacityStep までは 2 の累乗、それより上は LargeCommandCapacityStep の
+        // 倍数へ切り上げる（最も細かい LOD の数千万のコマンドを 2 の累乗へ丸めると、使わない枠だけで GB 単位の VRAM を取り、
+        // 後の確保が VRAM の予算に当たって落ちる）
+        uint32_t RoundUpCommandCapacity(uint32_t value)
+        {
+            constexpr uint32_t LargeCommandCapacityStep = 1u << 22;
+            if (value <= LargeCommandCapacityStep)
+            {
+                return NextPowerOfTwo(value);
+            }
+            const uint64_t rounded = (static_cast<uint64_t>(value) + LargeCommandCapacityStep - 1u) /
+                                     LargeCommandCapacityStep * LargeCommandCapacityStep;
+            return static_cast<uint32_t>(std::min<uint64_t>(rounded, 0xFFFFFFFFull));
+        }
     } // namespace
 
     // ========================================
@@ -4638,7 +4653,7 @@ namespace NorvesLib::Core::Rendering
             return true;
         }
 
-        const uint32_t newCommandCapacity = NextPowerOfTwo(std::max(commandCapacity, m_CommandCapacity));
+        const uint32_t newCommandCapacity = RoundUpCommandCapacity(std::max(commandCapacity, m_CommandCapacity));
         const uint32_t newCounterCapacity = NextPowerOfTwo(std::max(counterCapacity, m_CounterCapacity));
 
         // IndirectDrawコマンドバッファ (SSBO + IndirectBuffer)
@@ -4683,6 +4698,11 @@ namespace NorvesLib::Core::Rendering
         m_DrawInfoBuffer = drawInfoBuffer;
         m_CommandCapacity = newCommandCapacity;
         m_CounterCapacity = newCounterCapacity;
+        NORVES_LOG_INFO("MegaGeometryPass",
+                        "VRAM_LEDGER mega_batch mb=%.2f command_capacity=%u counter_capacity=%u",
+                        static_cast<double>(indirectDesc.Size + countDesc.Size + drawInfoDesc.Size) / (1024.0 * 1024.0),
+                        newCommandCapacity,
+                        newCounterCapacity);
         return true;
     }
 
