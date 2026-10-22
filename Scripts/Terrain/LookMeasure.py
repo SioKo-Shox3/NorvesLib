@@ -13,6 +13,8 @@
 #   写真との比は診断の値で、合否にしない（表に「写真の処理を含む」と書く）。撮影の HDR は表示の変換の前の放射輝度（cd/m²）。
 # 領域の向き（撮影の視点のカメラ〔SceneCatalog.h の Yaw・Pitch と WastelandRoutine.cpp の kReferenceShots の縦の画角〕から）:
 #   仰角の範囲[度]と、太陽（kReferenceShots の高度・方位。写真の日時に合わせた値）からの角距離の最小・平均[度]。
+#   写真の多角形と撮影の多角形（capture_polygon）で別々に求める。写真のカメラの向き・画角は記録が無いので、写真の側は
+#   撮影の視点のカメラで近似した値（構図の合っていない ground_01 では写真の水平線の位置が違い、粗い近似）。
 #
 # --look-depth <撮影の出力先> を渡すと、そこの <視点>.aov.depth.pfm（-Aov の撮影）で撮影の領域の深度の中央値と 3 km より先の割合を書く。
 # 出力: <出力先>/look_<写真>.png（上: 写真、下: 撮影。注釈を重ねる）、look_metrics.json、look_table.md（文書に貼る表）。
@@ -46,6 +48,10 @@ REGION_COLORS = {
     "far_band": (255, 0, 220),
 }
 SOURCES = (("photo", "写真"), ("png", "撮影 PNG"), ("hdr", "撮影 HDR"))
+PHOTO_GEOMETRY_NOTE = (
+    "写真の角度は、写真のカメラの記録が無いので撮影の視点のカメラで近似した値"
+    "（構図の合っていない ground_01 では写真の水平線の位置が違い、粗い近似）"
+)
 
 
 def load_regions():
@@ -166,7 +172,7 @@ def fmt(value, digits=3):
 def write_table(report, region_labels, path):
     """文書に貼る表（Markdown）"""
     lines = [
-        "| 写真 | 領域 | 仰角[度] | 太陽からの角距離 最小/平均[度] | 写真 Y | 写真 R÷G / B÷R | 撮影 PNG Y | 撮影 PNG R÷G / B÷R | 撮影 HDR Y[cd/m²] | 撮影 HDR R÷G / B÷R | 白飛び 写真/撮影 | 黒つぶれ 写真/撮影 |",
+        "| 写真 | 領域 | 仰角[度] 写真※ / 撮影 | 太陽からの角距離 最小・平均[度] 写真※ / 撮影 | 写真 Y | 写真 R÷G / B÷R | 撮影 PNG Y | 撮影 PNG R÷G / B÷R | 撮影 HDR Y[cd/m²] | 撮影 HDR R÷G / B÷R | 白飛び 写真/撮影 | 黒つぶれ 写真/撮影 |",
         "|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for photo_id, entry in report["photos"].items():
@@ -175,10 +181,11 @@ def write_table(report, region_labels, path):
             if "absent" in region:
                 lines.append(f"| {photo_id} | {label} | この写真に無い（{region['absent']}） |  |  |  |  |  |  |  |  |  |")
                 continue
-            g = region["geometry"]
+            gp, gc = region["geometry_photo"], region["geometry_capture"]
             p, c, h = region["photo"], region["png"], region["hdr"]
             lines.append(
-                f"| {photo_id} | {label} | {g['elevation_min']:.1f}〜{g['elevation_max']:.1f} | {g['sun_angle_min']:.0f} / {g['sun_angle_mean']:.0f} "
+                f"| {photo_id} | {label} | {gp['elevation_min']:.1f}〜{gp['elevation_max']:.1f} / {gc['elevation_min']:.1f}〜{gc['elevation_max']:.1f} "
+                f"| {gp['sun_angle_min']:.0f}・{gp['sun_angle_mean']:.0f} / {gc['sun_angle_min']:.0f}・{gc['sun_angle_mean']:.0f} "
                 f"| {fmt(p.get('luminance'))} | {fmt(p.get('r_over_g'), 2)} / {fmt(p.get('b_over_r'), 2)} "
                 f"| {fmt(c.get('luminance'))} | {fmt(c.get('r_over_g'), 2)} / {fmt(c.get('b_over_r'), 2)} "
                 f"| {fmt(h.get('luminance'), 0)} | {fmt(h.get('r_over_g'), 2)} / {fmt(h.get('b_over_r'), 2)} "
@@ -186,6 +193,8 @@ def write_table(report, region_labels, path):
                 f"| {100 * p.get('crushed', 0):.1f} % / {100 * c.get('crushed', 0):.1f} % |"
             )
     lines += [
+        "",
+        f"※ {PHOTO_GEOMETRY_NOTE}",
         "",
         "| 写真 | 天気 | 地面 Y ÷ 青空 Y 写真/PNG/HDR | 崖 Y ÷ 地面 Y 写真/PNG/HDR | 遠景の帯 − 地面 の R÷G 写真/PNG/HDR | 遠景の帯 − 地面 の B÷R 写真/PNG/HDR |",
         "|---|---|---|---|---|---|",
@@ -255,6 +264,7 @@ def run_look(capture_dir, out_dir, wanted, depth_dir, verify):
             continue
         capture_size = (capture.width, capture.height)
         directions, sun = view_directions(camera, capture_size)
+        photo_directions, _ = view_directions(camera, PANEL_SIZE)
         depth = None
         if depth_dir:
             depth_path = os.path.join(depth_dir, view + ".aov.depth.pfm")
@@ -285,7 +295,9 @@ def run_look(capture_dir, out_dir, wanted, depth_dir, verify):
                 "capture_polygon": capture_polygon,
                 "clouds": spec.get("clouds"),
                 "note": spec.get("note"),
-                "geometry": geometry_stats(directions, sun, capture_mask),
+                "geometry_photo": geometry_stats(photo_directions, sun, photo_mask),
+                "geometry_photo_approximate": True,
+                "geometry_capture": geometry_stats(directions, sun, capture_mask),
                 "photo": color_stats(photo_linear, photo_mask, photo_codes),
                 "png": color_stats(png_linear, capture_mask, png_codes),
                 "hdr": color_stats(hdr, capture_mask),
@@ -340,14 +352,19 @@ def run_look(capture_dir, out_dir, wanted, depth_dir, verify):
             if "absent" in region:
                 text_lines.append(f"{name}（{label}）: この写真に無い（{region['absent']}）")
                 continue
-            g = region["geometry"]
+            gp, gc = region["geometry_photo"], region["geometry_capture"]
             text_lines.append(
-                f"{name}（{label}）: 仰角 {g['elevation_min']:.1f}〜{g['elevation_max']:.1f}°　太陽から {g['sun_angle_min']:.0f}°〜（平均 {g['sun_angle_mean']:.0f}°）"
-                f"　Y 写真 {fmt(region['photo'].get('luminance'))}・撮影 {fmt(region['png'].get('luminance'))}"
+                f"{name}（{label}）: 仰角 写真※ {gp['elevation_min']:.1f}〜{gp['elevation_max']:.1f}°・撮影 {gc['elevation_min']:.1f}〜{gc['elevation_max']:.1f}°"
+                f"　太陽から平均 写真※ {gp['sun_angle_mean']:.0f}°・撮影 {gc['sun_angle_mean']:.0f}°"
+            )
+            text_lines.append(
+                f"　　Y 写真 {fmt(region['photo'].get('luminance'))}・撮影 {fmt(region['png'].get('luminance'))}"
                 f"　R÷G {fmt(region['photo'].get('r_over_g'), 2)}・{fmt(region['png'].get('r_over_g'), 2)}"
                 f"　B÷R {fmt(region['photo'].get('b_over_r'), 2)}・{fmt(region['png'].get('b_over_r'), 2)}"
             )
         text_lines.append("値は線形の平均。写真の値は撮影時のトーンカーブ・ホワイトバランス・局所補正を含むので、合否にしない")
+        head, _, tail = PHOTO_GEOMETRY_NOTE.partition("（")
+        text_lines += [f"※ {head}", f"　（{tail}"]
         text_height = 12 + 28 * len(text_lines)
         sheet = Image.new("RGB", (PANEL_SIZE[0], PANEL_SIZE[1] * 2 + text_height), (24, 24, 24))
         sheet.paste(photo_image, (0, 0))
