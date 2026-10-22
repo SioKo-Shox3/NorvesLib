@@ -27,6 +27,7 @@
 #include "GameModes/Wasteland/WastelandCliffScan.h"
 #include "GameModes/Wasteland/WastelandLayout.h"
 #include "GameModes/Wasteland/WastelandFoliage.h"
+#include "GameModes/Wasteland/WastelandNightLights.h"
 #include "GameModes/Wasteland/WastelandTalus.h"
 #include "GameModes/Wasteland/WastelandTerrainExport.h"
 #include "Scenes/SceneCatalog.h"
@@ -342,13 +343,14 @@ namespace Game::GameModes
         constexpr float kNightDarkSceneEV100 = -4.0f;
         constexpr float kNightDarkSceneCompensationEV = -2.8f;
         constexpr float kNightBrightSceneEV100 = 14.0f;
-        // 夜のグレーディング: 暗部を縮めない NeutralLinear のまま、コントラストを少しだけ立て、彩度を大きく落とす（暗い所の見えは
-        // 色が薄い。0.85・0.55 では谷床の赤い土が夕方の色に見えた）。白の釣り合いを青へ寄せる（GradingOverride の色温度は ±1 で
-        // 赤と青の利得を ±10 % 動かす）
+        // 夜のグレーディング: 暗部を縮めない NeutralLinear のまま、コントラストを少しだけ立て、彩度を落とす（暗い所の見えは
+        // 色が薄い。0.85・0.55 では月明かりだけの谷床の赤い土が夕方の色に見えた）。白の釣り合いを青へ寄せる（GradingOverride の
+        // 色温度は ±1 で赤と青の利得を ±10 % 動かす）。灯りを入れた後は、自動露出が灯りの周りに合って月明かりの所は暗く沈むので、
+        // 灯りの暖色が残るよう彩度 0.42・色温度 −1 から戻した（0.42・−1 では街灯の光の輪が桃色がかった灰色に見えた）
         constexpr float kNightGradingContrast = 1.1f;
         constexpr float kNightGradingContrastPivot = 0.18f;
-        constexpr float kNightGradingSaturation = 0.42f;
-        constexpr float kNightGradingTemperature = -1.0f;
+        constexpr float kNightGradingSaturation = 0.65f;
+        constexpr float kNightGradingTemperature = -0.5f;
 
         /// モードが組むシーンの id（SceneCatalog.h。視点の定義とシーンの準備の報告に使う）
         const char *SceneIdOf(const WastelandData &data)
@@ -1436,10 +1438,10 @@ namespace Game::GameModes
 
         /// 材質がそろった種類を MegaMesh にし、高さ場から決めた配置に Entity を置き、崖錐の岩を散布で置く。
         /// hideMask で外した建物・崖錐の岩は置かない（草・低木を撒かない範囲は外さないときと同じに残す）。
-        /// bNightVillage なら前哨地の代わりに夜の集落の建物と小物を置く
+        /// bNightVillage なら前哨地の代わりに夜の集落の建物と小物を置き、置いた小物と建物に合わせて灯り（pNightLights）を置く
         void PlaceProps(GameModeContext &ctx, const Terrain::TerrainHeightField &field,
                         const Terrain::TerrainSurfaceMask *pMask, WastelandAssembly &assembly, uint32_t hideMask,
-                        bool bNightVillage)
+                        bool bNightVillage, WastelandNightLights::State *pNightLights)
         {
             Layout::PropMeshShape shapes[Layout::kPropKindCount];
             for (uint32_t kindIndex = 0; kindIndex < Layout::kPropKindCount; ++kindIndex)
@@ -1490,6 +1492,7 @@ namespace Game::GameModes
             };
             uint32_t placedPerKind[Layout::kPropKindCount] = {};
             uint32_t placed = 0;
+            VariableArray<Layout::PropPlacement> placedPlacements;
             for (const Layout::PropPlacement &placement : placements)
             {
                 const uint32_t kindIndex = static_cast<uint32_t>(placement.Kind);
@@ -1508,9 +1511,14 @@ namespace Game::GameModes
                 object->SetScale(placement.Scale, placement.Scale, placement.Scale);
                 object->SetRotation(NorvesLib::Math::Quaternion(NorvesLib::Math::Vector3(0.0f, 1.0f, 0.0f), placement.Yaw));
                 component->SetMegaMeshHandle(assembly.Props[kindIndex].MegaMesh);
-                component->SetCastShadow(true);
+                component->SetCastShadow(WastelandNightLights::CastsShadow(placement.Kind));
                 ++placedPerKind[kindIndex];
                 ++placed;
+                placedPlacements.push_back(placement);
+            }
+            if (bNightVillage && pNightLights != nullptr)
+            {
+                WastelandNightLights::Place(ctx, placedPlacements, *pNightLights);
             }
             LOG_INFO_F("WASTELAND_PROPS placed=%u planned=%zu buildings=%u foot_rays=%u foot_hits=%u cliffs=%u "
                        "foot_boulders=%u basin_boulders=%u cliff_view_samples=%u village_props=%u",
@@ -1960,6 +1968,8 @@ namespace Game::GameModes
                                  (data.m_TerrainSettledTick == 0 ||
                                   data.m_TickCount < data.m_TerrainSettledTick + kReadyTicksAfterTerrain);
         data.m_Rig.Tick(ctx, deltaTime, bSuspended || bHoldScript);
+        // 夜の集落の松明と焚き火の揺らぎ
+        WastelandNightLights::Tick(data.m_NightLights, deltaTime);
         // 草・低木: カメラが区画を跨いだら、近づいた区画を作り、離れた区画を捨てる
         {
             const NorvesLib::Math::Vector3 cameraPosition = data.m_Rig.GetController().GetPosition();
@@ -1983,7 +1993,7 @@ namespace Game::GameModes
                 if (assembly.bPlaced && ArePropTexturesLoaded(assembly) && !assembly.bPropsPlaced)
                 {
                     PlaceProps(ctx, *data.m_pHeightField, data.m_pSurfaceMask.get(), assembly, data.m_HideMask,
-                               data.m_bNightVillage);
+                               data.m_bNightVillage, &data.m_NightLights);
                     assembly.bPropsPlaced = true;
                     // 置いた建物の足元と道から草・低木を外す（区画を作り直す）
                     if (!assembly.FoliageBuildingCircles.empty() || !assembly.FoliageRoadRects.empty())
@@ -2037,8 +2047,9 @@ namespace Game::GameModes
         data.m_Rig.Leave(ctx);
         // 地形の Entity・モデル・カメラの実体は GameModeScope::Cleanup が返す。空と霧は RenderWorld の設定なので戻す。
         WastelandCommonLight::Leave(ctx, data.m_CommonLight);
-        // 月明かりの実体はスコープが返す
+        // 月明かりと灯りの実体はスコープが返す
         data.m_pMoon = nullptr;
+        WastelandNightLights::Leave(data.m_NightLights);
         ResetEnvironment(ctx);
         if (data.m_RenderScale < 1.0f)
         {

@@ -334,6 +334,13 @@ namespace NorvesLib::Core::Rendering
             return full.Count == set.GetCount() && full.Xor == set.GetXor() && full.Sum == set.GetSum();
         }
 
+        // 光源の revision を進める明るさの変化の比。前の revision の時点の明るさからこの倍率を超えて明るく・暗くなった灯が
+        // あるときだけ進める。炎の揺らぎ（±25 % ほど）のような小さな変化で RTGI の履歴を毎フレーム捨てると、1 画素 1 本の
+        // 光線の雑音がそのまま残る。小さな変化では履歴を保ち、間接光を揺らぎの平均へ収束させる（直接光は毎フレームの値で
+        // 描く。パストレーサーは光源表の中身の署名で累積を捨てるので、この比に関わらず変化に追従する）
+        constexpr float LightRevisionIntensityStepRatio = 2.0f;
+
+        /** @brief 光源表の revision の hash。明るさ（CanonicalIntensity）は入れない（HasLightIntensityStepped で比べる） */
         uint64_t HashLightRevision(const Container::VariableArray<LightProxy>& lights)
         {
             uint64_t hash = RevisionHashOffset;
@@ -351,7 +358,6 @@ namespace NorvesLib::Core::Rendering
                 hash = HashRevisionValue(hash, light.ColorR);
                 hash = HashRevisionValue(hash, light.ColorG);
                 hash = HashRevisionValue(hash, light.ColorB);
-                hash = HashRevisionValue(hash, light.CanonicalIntensity);
                 hash = HashRevisionValue(hash, light.Range);
                 hash = HashRevisionValue(hash, light.AttenuationConstant);
                 hash = HashRevisionValue(hash, light.AttenuationLinear);
@@ -365,6 +371,46 @@ namespace NorvesLib::Core::Rendering
                 hash = HashRevisionValue(hash, static_cast<uint32_t>(light.AffectedLayers));
             }
             return hash;
+        }
+
+        /** @brief 前の revision の時点の明るさ（references）から、LightRevisionIntensityStepRatio を超えて変わった灯があるか */
+        bool HasLightIntensityStepped(const Container::VariableArray<LightProxy>& lights,
+                                      const Container::VariableArray<float>& references)
+        {
+            if (lights.size() != references.size())
+            {
+                return true;
+            }
+            for (size_t index = 0; index < lights.size(); ++index)
+            {
+                const float reference = references[index];
+                const float current = lights[index].CanonicalIntensity;
+                if (!(reference > 0.0f) || !(current > 0.0f))
+                {
+                    // 点けた・消した（0 との行き来）と、非有限の値は変化として扱う
+                    if (!(reference == current))
+                    {
+                        return true;
+                    }
+                    continue;
+                }
+                if (current > reference * LightRevisionIntensityStepRatio ||
+                    current * LightRevisionIntensityStepRatio < reference)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        void StoreLightRevisionIntensities(const Container::VariableArray<LightProxy>& lights,
+                                           Container::VariableArray<float>& outReferences)
+        {
+            outReferences.resize(lights.size());
+            for (size_t index = 0; index < lights.size(); ++index)
+            {
+                outReferences[index] = lights[index].CanonicalIntensity;
+            }
         }
 
         uint64_t AdvanceRevision(uint64_t revision)
@@ -2270,6 +2316,7 @@ namespace NorvesLib::Core::Rendering
         m_LastLightRevisionHash = 0u;
         m_bSceneRevisionHashValid = false;
         m_bLightRevisionHashValid = false;
+        m_LightRevisionIntensities.clear();
         m_GPUTimingMailbox.Clear();
 
         if (m_Diagnostics)
@@ -4654,27 +4701,36 @@ namespace NorvesLib::Core::Rendering
             m_SceneRevision = AdvanceRevision(m_SceneRevision);
         }
 
-        // 光源表の hash は、光源表が変わったときだけ計算し直す
+        // 光源表の hash は、光源表が変わったときだけ計算し直す。明るさは hash に入れず、前の revision の時点の明るさから
+        // 大きく変わった灯があるときだけ revision を進める（LightRevisionIntensityStepRatio）
+        bool bLightTableChanged = false;
         if (!packet.LightDelta.bActive)
         {
             m_PacketLightRevisionHash = HashLightRevision(packet.Scene.LightProxies);
             m_bPacketLightRevisionDirty = true;
+            bLightTableChanged = true;
         }
         else if (m_bPacketLightRevisionDirty)
         {
             m_PacketLightRevisionHash = HashLightRevision(m_PacketLights);
             m_bPacketLightRevisionDirty = false;
+            bLightTableChanged = true;
         }
+        const Container::VariableArray<LightProxy>& revisionLights =
+            packet.LightDelta.bActive ? m_PacketLights : packet.Scene.LightProxies;
         const uint64_t lightHash = m_PacketLightRevisionHash;
         if (!m_bLightRevisionHashValid)
         {
             m_LastLightRevisionHash = lightHash;
             m_bLightRevisionHashValid = true;
+            StoreLightRevisionIntensities(revisionLights, m_LightRevisionIntensities);
         }
-        else if (m_LastLightRevisionHash != lightHash)
+        else if (m_LastLightRevisionHash != lightHash ||
+                 (bLightTableChanged && HasLightIntensityStepped(revisionLights, m_LightRevisionIntensities)))
         {
             m_LastLightRevisionHash = lightHash;
             m_LightRevision = AdvanceRevision(m_LightRevision);
+            StoreLightRevisionIntensities(revisionLights, m_LightRevisionIntensities);
         }
 
         packet.SceneRevision = m_SceneRevision;

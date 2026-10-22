@@ -6929,3 +6929,21 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 止めた理由: 「溢れ 0」のうち、ジオメトリのページの要求の列の溢れ（`request_overflow=10321510 request_capacity=4096`）は塊を足す前の既定の荒野の撮影から出ている（SCN-WL-REVIEW-2 で 13929488、-Aov・FXAA の撮影では 295〜436）。直す場所は Library/Core（`GeometryPageRequestBuffer::DefaultCapacity`）か Game/GameApplicationHandler.cpp で paths の外、撮影の台本で容量を上げるのは測り方で通すことになる。判断の選択肢と推奨は `blocked/SCN-WL-CLIFF-SCAN-PLACE.md`
 - Notes: Blender の描画の `.blender.json` の `table_sha256` は配置表の説明文を直す前の値のまま（記録だけで照合には使わない。配置の数値は変えていない）。試験は足していない
 - Next: 溢れの扱いが決まったら SCN-WL-CLIFF-SCAN-PLACE を再検証して閉じる
+
+### SCN-NIGHT-LIGHTS 完了（2026-10-22、run 20261022-144923 の反復 3）
+- Done: 夜の集落に灯りを入れた（`Game/GameModes/Wasteland/WastelandNightLights.{h,cpp}`。値と理由は `Docs/RenderingValidation/NightVillageLights.md`）
+  - 点光源: 街灯 4（1000 lm・2700 K 前後・影あり）、焚き火 1（5000 lm・影あり・±25 % の揺らぎ）、松明 3（1500 lm・影無し・±18 % の揺らぎ）。影を描く 4 灯は描画側がカメラに近い順に選ぶ。位置は生成した GLB の頂点から測った
+  - 発光体: ランタンのガラスを覆う角錐台・炎の楕円体・日干し煉瓦の家の戸口の奥の板（ブルーム）。不透明度 1 の半透明の経路で描き、レイトレーシングのシーンに入れない（RTGI が点光源と二重に数え、小さく明るい面の標本が照り返しに粒を出したため）
+  - 揺らぎ: `RenderingCoordinator.cpp` の光源の revision の hash から明るさを外し、前に進めた時点から 2 倍を超えて変わった灯があるときだけ進める（`LightRevisionIntensityStepRatio`）。毎フレームの揺らぎで revision が進み、RTGI の履歴が毎フレーム絞られて地面と壁の一面に粒が出たため。revision を読むのは RTGI だけで、パストレーサーは光源表の中身の署名で累積を捨てる
+  - 夜のグレーディングの彩度 0.42 → 0.65・色温度 −1 → −0.5（灯りの暖色を残す。灯りを入れると自動露出が灯りに合い、月明かりの所は暗く沈む）
+- 証拠（`.harness/runs/20261022-144923/`）:
+  - `verify-SCN-NIGHT-LIGHTS-1.txt` Debug の Game のビルド EXIT=0
+  - `verify-SCN-NIGHT-LIGHTS-2.txt` RelWithDebInfo のビルド pass・撮影 result=pass・EXIT=0。白飛び・黒つぶれの割合は 3 視点とも 0、画面の平均の輝度 default 34.3・street 38.8・square 48.5
+  - `views.Game.log`: `NIGHT_VILLAGE_LIGHTS point_lights=8 lamps=4 torches=3 campfires=1 doorways=5`、`NIGHT_VILLAGE_FLICKER`（焚き火 4913 → 4622 → 4234 lm）、`INDIRECT_LIGHTING source=rtgi`、`point_shadow_lights=4`、ERROR 0 行
+  - `street.png`・`square.png`・`default.png` を開いた: 街灯と焚き火の周りの地面と壁が暖色に照らされ、焚き火の石の輪の影・家と木箱の脇の灯りの影の境が落ち、戸口が暖色に光る。ブルームは灯りの周りに留まり、照り返しに粒は無い
+  - 途中の撮影 `aux-SCN-NIGHT-LIGHTS-try2〜4.txt`（`scene-capture/SCN-NIGHT-LIGHTS-try2〜4`）: 揺らぎの revision を直す前の粒（`SCN-NIGHT-LIGHTS` の最初の版は上書き済み）、発光体を RTGI の光源から外す前の壁の粒、松明の足元の円盤の影を見て直した
+- Notes:
+  - 窓の発光は、生成した建物に窓の開口が無い（日干し煉瓦の家は戸口だけ、石の小屋は板の戸）ので、日干し煉瓦の家の戸口の奥の室内の灯りで代えた
+  - 2 倍以内のゆっくりした明るさの変化では、RTGI の照り返しは履歴の年齢の上限の分だけ遅れて追従する（点ける・消すはすぐ追従）
+  - 性能は測っていない（SCN-ACCEPT で判断）。新しい試験は足していない
+- Next: TASKS.md の次の未完

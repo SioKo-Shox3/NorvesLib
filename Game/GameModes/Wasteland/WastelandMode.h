@@ -34,6 +34,7 @@
 #include "GameModes/Wasteland/WastelandCommonLight.h"
 #include "GameModes/Wasteland/WastelandFoliage.h"
 #include "GameModes/Wasteland/WastelandGravel.h"
+#include "GameModes/Wasteland/WastelandNightLights.h"
 #include "Pause/PauseMenu.h"
 #include "Scenes/FreeCameraRig.h"
 #include "Scenes/SceneViewSwitch.h"
@@ -112,6 +113,8 @@ namespace Game::GameModes
         bool m_bNightVillage = false;
         /// 夜の集落の月明かり（非所有。実体はスコープが返す。Enter で作り、Leave で空に戻す）
         NorvesLib::Core::Component::DirectionalLightComponent *m_pMoon = nullptr;
+        /// 夜の集落の灯り（街灯・松明・焚き火の点光源と発光体。小物を置くときに作り、Tick で揺らし、Leave で空に戻す）
+        Game::GameModes::WastelandNightLights::State m_NightLights;
         /// 起動時の視点の名前（--scene-view。空ならシーンの既定の視点）
         NorvesLib::Core::Container::String m_ViewName;
         /// 入力の台本のパス（--camera-script。空なら流さない）

@@ -653,6 +653,8 @@ namespace NorvesLib::Core::Rendering
         uint64_t m_LastLightRevisionHash = 0u;
         bool m_bSceneRevisionHashValid = false;
         bool m_bLightRevisionHashValid = false;
+        /** @brief 光源の revision を最後に進めた時点の各灯の明るさ（光源表の並び。明るさの大きな変化だけで revision を進める） */
+        Container::VariableArray<float> m_LightRevisionIntensities;
         Container::UnorderedMap<uint64_t, CameraProxy> m_Cameras;
         uint64_t m_NextCameraId = 1;
         uint64_t m_MainCameraId = 0;
