@@ -7268,3 +7268,15 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 重ね画像 `cycles/rocks-sun/occlusion_regions/contact_near.png` と `cycles/terrain-sky/occlusion_regions/ref_cliff_01.png` を開いた（漏れが岩の地面への影、溝が崖の柱の間）
 - Notes: 縁の幅は半影の勾配の雑音で小さめに出る（Cycles の 64 サンプルの雑音もエンジンの点描も同じ向き）。新しい試験は足していない
 - Next: TASKS.md の次の未完（SCN-WLR-OCCLUSION-CYCLES）
+
+### SCN-GEN-FURNITURE-2 室内の家具 3 種（植木鉢・ランプ・ラグ）を生成してクックする（2026-10-23、run 20261022-173753 の反復 34）
+- Done: `GeneratedModels.json` に `potted_plant`（1.3 m、seed 3105）・`floor_lamp`（1.6 m、seed 3106・`upsample_resolution` 1024）・`rug`（seed 3107）を足した（15 万面・テクスチャ 2048・用途 `interior-light-furniture`。色は `InteriorLightReference.md` の家具の並びに合わせ、植木鉢は素焼きの鉢のカシワバゴム、ランプは真鍮の台座と柱に生成りの布のシェード、ラグは濃い赤のペルシャ文様）。クックの一覧 `Assets/AssetSets/InteriorLightModels.json` に 3 種を足した
+  - 参照画像（`verify-SCN-GEN-FURNITURE-2-gen1.txt`、`--reference-only`）を開いた: 植木鉢は素焼きの鉢・細い幹・上に大きな葉の塊、ランプは丸い台座・まっすぐな柱・円筒のシェード、ラグは長方形の平らな敷物で縁取りと中央の文様・両端の房
+  - 3D（`-gen2.txt`、`--reuse-reference`）: 植木鉢 195 秒・148,240 面（1536）、ランプ 129 秒・145,009 面（1024）、ラグ 93 秒・149,562 面（1536）。実行全体 430 秒、失敗・見送りなし
+  - ラグは高さ（厚み）で実寸を合わせるので、生成後に長辺が文書の 3.5 m になる厚み 0.0522 m に定義を直し `--refit` した（`aux-SCN-GEN-FURNITURE-2-refit-preview.txt`）
+  - 寸法（同じファイルの BOUNDS、幅 × 高さ × 奥行き）: 植木鉢 0.65 × 1.30 × 0.67 m、ランプ 0.55 × 1.60 × 0.54 m、ラグ 3.50 × 0.05 × 2.42 m
+  - プレビュー（正面・横・上）を開いた: 3 種とも形が崩れず、浮いた破片や欠けは無い。植木鉢は鉢の土・幹・葉の塊、ランプは台座・柱・引き紐・シェード、ラグは平らで反りが無く両端に房
+  - クック（`verify-SCN-GEN-FURNITURE-2-cook.txt`）: RelWithDebInfo の AssetCook で `-OnlyLogicalPath` に 3 種だけを指定して `cooked=3`・`untouched=477`・EXIT=0
+- 証拠（`.harness/runs/20261022-173753/`）: `verify-SCN-GEN-FURNITURE-2-1.txt`（3 種とも `VERIFY_OK ... cooked`、`VERIFY pass`、EXIT=0）
+- Notes: ラグは一様な拡縮なので厚みが 5.2 cm と実物（1〜2 cm）より厚く、短辺は 2.42 m（文書は 2.5 m）。床に置くときに沈めるかは室内の光のシーンを組む項目で決める。ラグの文様は参照画像より暗くぼけている。`CookAssets.ps1` の `-OnlyLogicalPath` は "Assets/" を除いた論理パスで、`pwsh -File` に渡すとカンマ区切りが 1 つの文字列になって照合しない（`-Command` で配列にして渡す。失敗の記録 `aux-SCN-GEN-FURNITURE-2-cook-*.txt`）。生成は反復の外の Cycles の本描画（SCN-WLR-OCCLUSION-CYCLES）の END を待ってから始めた。新しい試験は足していない（verify の検査が確かめる）
+- Next: TASKS.md の次の未完

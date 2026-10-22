@@ -33,6 +33,27 @@
       "fallback_min_triangles": 4096,
       "package_name": "InteriorLight/sofa.nvpkg",
       "entry_name": "Assets/Models/Generated/sofa/sofa.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/Generated/potted_plant/potted_plant.glb",
+      "source_path": "Assets/Models/Generated/potted_plant/potted_plant.glb",
+      "fallback_min_triangles": 4096,
+      "package_name": "InteriorLight/potted_plant.nvpkg",
+      "entry_name": "Assets/Models/Generated/potted_plant/potted_plant.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/Generated/floor_lamp/floor_lamp.glb",
+      "source_path": "Assets/Models/Generated/floor_lamp/floor_lamp.glb",
+      "fallback_min_triangles": 4096,
+      "package_name": "InteriorLight/floor_lamp.nvpkg",
+      "entry_name": "Assets/Models/Generated/floor_lamp/floor_lamp.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/Generated/rug/rug.glb",
+      "source_path": "Assets/Models/Generated/rug/rug.glb",
+      "fallback_min_triangles": 4096,
+      "package_name": "InteriorLight/rug.nvpkg",
+      "entry_name": "Assets/Models/Generated/rug/rug.nvmesh"
     }
   ]
 }

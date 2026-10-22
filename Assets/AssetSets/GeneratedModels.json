@@ -169,6 +169,34 @@
       "texture_size": 2048,
       "height_m": 0.85,
       "usage": "interior-light-furniture"
+    },
+    {
+      "id": "potted_plant",
+      "prompt": "a single large leafy indoor fiddle leaf fig plant in a round terracotta pot, a few thick upright stems with many large broad flat glossy green leaves, full bushy shape, simple solid pot, whole object standing on flat floor, three-quarter view, classic living room interior style",
+      "seed": 3105,
+      "target_faces": 150000,
+      "texture_size": 2048,
+      "height_m": 1.3,
+      "usage": "interior-light-furniture"
+    },
+    {
+      "id": "floor_lamp",
+      "prompt": "a single classic standing floor lamp, a heavy round flat brass base, one straight solid brass pole, a large cylindrical drum lampshade of cream white linen fabric on top, lamp switched off, simple sturdy shape, whole object standing upright on flat floor, three-quarter view, classic living room interior style",
+      "seed": 3106,
+      "target_faces": 150000,
+      "texture_size": 2048,
+      "height_m": 1.6,
+      "upsample_resolution": 1024,
+      "usage": "interior-light-furniture"
+    },
+    {
+      "id": "rug",
+      "prompt": "a single flat rectangular area rug lying flat on the floor, thick woven wool, deep red with a traditional persian pattern and a dark border, short fringe on both ends, completely flat with no folds, whole rug visible, viewed from a high three-quarter angle above, classic living room interior style",
+      "seed": 3107,
+      "target_faces": 150000,
+      "texture_size": 2048,
+      "height_m": 0.0522,
+      "usage": "interior-light-furniture"
     }
   ]
 }
