@@ -114,3 +114,11 @@ cliff と ref_cliff_01 の両方から見える崖の面を、両方の撮影の
 - 棚の残り: 中ほどの棚（写真の y 0.605）は上の壁と崖錐の境の線で、岩塊の上端の折れが線に沿って 10 画素以上続かない所が多い。左の短い棚（y 0.61〜0.64）は撮影では壁が無く、外形を上げないと置けない
 - 費用（既定の撮影 `look/`、棚の岩塊だけの配置表）: 岩塊の三角形 合計 306 万（boulder_01 66122 × 40、rock_09 12416 × 28、殻 3 個）。配置表を読み始めてから全部を置くまで 102 秒（地形の読み込みと重なる。起動から SCENE_READY までの中）。VRAM の使用の最大 10035 MB（予算 15280 MB）。MEGA_CAPACITY の draw_dropped・bvh_overflow・visible_list_overflow は 0、GEOMETRY_PAGES の request_overflow 0・failed 0
 - 式の焼き込み（`TerrainCliffDetail.cpp`）は下地として残している。殻を貼れない原因は焼き込みの溝の起伏なので、殻を使うなら Battleship Rock の範囲だけ焼き込みを外す（崖の変形なしの区画は `Assets/Models/WastelandTerrainCliffOff/` にある）かを、閉じた岩塊で覆い切った後に撮って決める
+
+### 尾根を地形の焼き込みで段に刻む試し（反復 25、案 2）
+
+- 仕組み: `Scripts/Terrain/MakeBattleshipCarve.py` が、刻む前の形の撮影（`scene-capture/SCN-WL-CLIFF-SCAN-NEAR/shape-before-carve`）の列ごとの外形の最も上の画素の世界の位置（尾根の点）と、同じ水平の距離で写真の注釈の外形の行を通る視線の高さ（目標）から、3 画素ごとの刻み（前の縁が尾根の点を通る半径 18 m の円、目標まで上げるか下げる）を `Tools/AssetCook/TerrainCliffCarveBattleship.h` に書く。`TerrainCliffDetail.cpp` は近景の格子の高さに、点に最も近い中心の刻みを掛ける（`CarveBattleshipHeight`。法線も刻んだ高さから引く）。刻みが届く区画（dem:0,2・dem:1,2）だけ元のハッシュに `kTerrainCliffCarveVersion` を足す
+- 刻み: 359 個（上げる 244・下げる 115）、上げる量の最大 29.2 m（左の縁と右の段）、下げる量の最大 13.2 m。世界の範囲 X −2132〜−1648・Z −1346〜−1133
+- 形（`scene-capture/SCN-WL-CLIFF-SCAN-NEAR/carve-1/shape_cliff_01.png`）: 棚 0.487・角 0.000・外形 6.3／7.6 画素（ずらし 2, −2）。外形はずらす前後とも基準に入る。角は空との縁だけで、角の 8 画素の内に縦と横の両方の折れが無い（下から見上げる視点では上げた段の頂の面が見えず、壁の正面は 1 つの向き）。棚は位置合わせのずらしが (0, −7) から (2, −2) に動いた分だけ線が岩塊の上端から外れて下がる
+- 見た目（`carve-1/look-reference_cliff_01.png`・`look-cliff.png`）: 上げた段は、急な升目に掛かる崖の細部の縦の割れ目で薄い縦の板が櫛のように並んだ壁に見え、上端に細い尖りが並ぶ（細分した升目の滑らかな面が段の縁で行き過ぎ、押し出しが上へ乗る）。cliff の視点では左の段が板の柵に見える。写真の厚い砂岩の段にならないので、既定では掛けない（`kBattleshipCarveEnabled = false`。区画は前と同じ焼きの結果に戻した）
+- 焼き: dem:0,2 は 34 秒（111 万三角形）、dem:1,2 は 526 秒（857 万三角形。刻まない焼きは 893 万）。刻みを止めて焼き直した 2 区画のパッケージは刻む前と SHA-256 が一致

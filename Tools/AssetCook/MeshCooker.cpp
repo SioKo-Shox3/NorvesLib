@@ -3655,6 +3655,10 @@ namespace NorvesLib::Tools::AssetCook
             if (bCliffDetail)
             {
                 hash = Fnv1a64UpdateLe64(hash, static_cast<uint64_t>(kTerrainCliffDetailVersion));
+                if (TerrainCliffCarveTouches(source.Layout, firstColumn, cellsX, firstRow, cellsZ))
+                {
+                    hash = Fnv1a64UpdateLe64(hash, static_cast<uint64_t>(kTerrainCliffCarveVersion));
+                }
             }
             v1Result.SourceHash = hash;
             std::printf("TERRAIN_DEM_TILE tile=%u,%u tiles=%ux%u grid=%ux%u spacing=%.9g vertices=%zu triangles=%zu "

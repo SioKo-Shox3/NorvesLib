@@ -1,4 +1,5 @@
 ﻿#include "TerrainCliffDetail.h"
+#include "TerrainCliffCarveBattleship.h"
 
 #include <algorithm>
 #include <cmath>
@@ -501,7 +502,69 @@ namespace NorvesLib::Tools::AssetCook
             return std::clamp(displacement, -kMaxDisplacement, kMaxDisplacement);
         }
 
-        // 焼く格子: 近景の高さ場か、遠景の段の高さの並びと、その格子に掛ける範囲
+        // Battleship Rock の尾根の刻み（TerrainCliffCarveBattleship.h）が届く範囲（m。刻みの円の外接の箱）
+        struct CarveBounds
+        {
+            double MinX = std::numeric_limits<double>::max();
+            double MaxX = std::numeric_limits<double>::lowest();
+            double MinZ = std::numeric_limits<double>::max();
+            double MaxZ = std::numeric_limits<double>::lowest();
+        };
+
+        // 尾根の刻みを掛けるか。刻むと外形は写真に合うが、上げた壁が薄い縦の板の並びに見え上端が尖るので、既定では掛けない
+        // （WastelandCliffScan.md の「尾根を地形の焼き込みで段に刻む試し」）
+        constexpr bool kBattleshipCarveEnabled = false;
+
+        const CarveBounds &BattleshipCarveBounds()
+        {
+            static const CarveBounds bounds = []
+            {
+                CarveBounds result;
+                if (!kBattleshipCarveEnabled)
+                {
+                    return result;
+                }
+                for (const TerrainCliffCarveStamp &stamp : kBattleshipCarveStamps)
+                {
+                    result.MinX = std::min(result.MinX, stamp.CenterX - kBattleshipCarveRadius);
+                    result.MaxX = std::max(result.MaxX, stamp.CenterX + kBattleshipCarveRadius);
+                    result.MinZ = std::min(result.MinZ, stamp.CenterZ - kBattleshipCarveRadius);
+                    result.MaxZ = std::max(result.MaxZ, stamp.CenterZ + kBattleshipCarveRadius);
+                }
+                return result;
+            }();
+            return bounds;
+        }
+
+        // 刻んだ後の高さ。点に最も近い中心の刻みが半径の内にあれば、その刻みの目標の高さまで上げる（向き 1）か下げる（向き -1）
+        float CarveBattleshipHeight(double x, double z, float height)
+        {
+            const CarveBounds &bounds = BattleshipCarveBounds();
+            if (x < bounds.MinX || x > bounds.MaxX || z < bounds.MinZ || z > bounds.MaxZ)
+            {
+                return height;
+            }
+            const TerrainCliffCarveStamp *nearest = nullptr;
+            double nearestDistance = kBattleshipCarveRadius * kBattleshipCarveRadius;
+            for (const TerrainCliffCarveStamp &stamp : kBattleshipCarveStamps)
+            {
+                const double dx = x - stamp.CenterX;
+                const double dz = z - stamp.CenterZ;
+                const double distance = dx * dx + dz * dz;
+                if (distance <= nearestDistance)
+                {
+                    nearestDistance = distance;
+                    nearest = &stamp;
+                }
+            }
+            if (nearest == nullptr)
+            {
+                return height;
+            }
+            return nearest->Direction > 0 ? std::max(height, nearest->Height) : std::min(height, nearest->Height);
+        }
+
+        // 焼く格子: 近景の高さ場か、遠景の段の高さの並びと、その格子に掛ける範囲。近景は Battleship Rock の尾根の刻みを掛けた高さ
         struct CliffGrid
         {
             Terrain::TerrainGridLayout Layout;
@@ -512,8 +575,47 @@ namespace NorvesLib::Tools::AssetCook
 
             float Height(uint32_t column, uint32_t row) const
             {
-                return Heights != nullptr ? Heights[static_cast<size_t>(row) * Layout.Columns + column]
-                                          : Field->GetGridVertexHeight(column, row);
+                if (Heights != nullptr)
+                {
+                    return Heights[static_cast<size_t>(row) * Layout.Columns + column];
+                }
+                return CarveBattleshipHeight(Layout.FirstX + static_cast<double>(column) * Layout.Spacing,
+                                             Layout.FirstZ + static_cast<double>(row) * Layout.Spacing,
+                                             Field->GetGridVertexHeight(column, row));
+            }
+
+            // 近景の点 (x, z) の法線。刻みの届く範囲では刻んだ格子の高さの差分から、外は高さ場の法線のまま
+            Terrain::TerrainNormal NearNormal(float x, float z, float sampleSpacing) const
+            {
+                const CarveBounds &bounds = BattleshipCarveBounds();
+                const double reach = static_cast<double>(sampleSpacing) + 2.0 * Layout.Spacing;
+                if (x < bounds.MinX - reach || x > bounds.MaxX + reach || z < bounds.MinZ - reach || z > bounds.MaxZ + reach)
+                {
+                    return Field->SampleNormal(x, z, sampleSpacing);
+                }
+                const auto sample = [this](double px, double pz)
+                {
+                    const double gx =
+                        std::clamp((px - Layout.FirstX) / Layout.Spacing, 0.0, static_cast<double>(Layout.Columns - 1));
+                    const double gz =
+                        std::clamp((pz - Layout.FirstZ) / Layout.Spacing, 0.0, static_cast<double>(Layout.Rows - 1));
+                    const uint32_t ix = std::min(static_cast<uint32_t>(gx), Layout.Columns - 2);
+                    const uint32_t iz = std::min(static_cast<uint32_t>(gz), Layout.Rows - 2);
+                    const double tx = gx - ix;
+                    const double tz = gz - iz;
+                    const double h0 = Height(ix, iz) + (Height(ix + 1, iz) - Height(ix, iz)) * tx;
+                    const double h1 = Height(ix, iz + 1) + (Height(ix + 1, iz + 1) - Height(ix, iz + 1)) * tx;
+                    return h0 + (h1 - h0) * tz;
+                };
+                const double e = sampleSpacing > 0.0f ? sampleSpacing : 0.5;
+                const double dx = sample(x + e, z) - sample(x - e, z);
+                const double dz = sample(x, z + e) - sample(x, z - e);
+                const double length = std::sqrt(dx * dx + 4.0 * e * e + dz * dz);
+                Terrain::TerrainNormal normal;
+                normal.X = static_cast<float>(-dx / length);
+                normal.Y = static_cast<float>(2.0 * e / length);
+                normal.Z = static_cast<float>(-dz / length);
+                return normal;
             }
         };
 
@@ -1100,11 +1202,10 @@ namespace NorvesLib::Tools::AssetCook
                     }
                     else
                     {
-                        const Terrain::TerrainHeightField &field = *grid.Field;
                         const float x = static_cast<float>(layout.FirstX + static_cast<double>(globalColumn) * layout.Spacing);
                         const float z = static_cast<float>(layout.FirstZ + static_cast<double>(globalRow) * layout.Spacing);
-                        const float y = field.GetGridVertexHeight(globalColumn, globalRow);
-                        const Terrain::TerrainNormal normal = field.SampleNormal(x, z, normalSpacing);
+                        const float y = grid.Height(globalColumn, globalRow);
+                        const Terrain::TerrainNormal normal = grid.NearNormal(x, z, normalSpacing);
                         if (!std::isfinite(y) || !std::isfinite(normal.X) || !std::isfinite(normal.Y) || !std::isfinite(normal.Z))
                         {
                             outError = "DEM の区画の頂点の高さ・法線が有限でありません";
@@ -1295,7 +1396,7 @@ namespace NorvesLib::Tools::AssetCook
                         }
                         else
                         {
-                            normal = grid.Field->SampleNormal(x, z, normalSpacing);
+                            normal = grid.NearNormal(x, z, normalSpacing);
                         }
                         if (!std::isfinite(y) || !std::isfinite(normal.X) || !std::isfinite(normal.Y) || !std::isfinite(normal.Z))
                         {
@@ -1474,6 +1575,20 @@ namespace NorvesLib::Tools::AssetCook
         grid.Regions = kNearRegions;
         grid.RegionCount = sizeof(kNearRegions) / sizeof(kNearRegions[0]);
         return GridTileIntersects(grid, firstColumn, cellsX, firstRow, cellsZ, kWindowMargin);
+    }
+
+    bool TerrainCliffCarveTouches(const Core::Rendering::Terrain::TerrainGridLayout &layout, uint32_t firstColumn,
+                                  uint32_t cellsX, uint32_t firstRow, uint32_t cellsZ)
+    {
+        // 法線の差分と細分の周りの升目の分だけ余白を足す
+        const double margin = static_cast<double>(kWindowMargin + 2) * layout.Spacing;
+        const CarveBounds &bounds = BattleshipCarveBounds();
+        const double minX = layout.FirstX + static_cast<double>(firstColumn) * layout.Spacing;
+        const double maxX = layout.FirstX + static_cast<double>(firstColumn + cellsX) * layout.Spacing;
+        const double minZ = layout.FirstZ + static_cast<double>(firstRow) * layout.Spacing;
+        const double maxZ = layout.FirstZ + static_cast<double>(firstRow + cellsZ) * layout.Spacing;
+        return maxX >= bounds.MinX - margin && minX <= bounds.MaxX + margin && maxZ >= bounds.MinZ - margin &&
+               minZ <= bounds.MaxZ + margin;
     }
 
     bool BuildTerrainCliffTile(const Core::Rendering::Terrain::TerrainHeightField &field, uint32_t firstColumn,

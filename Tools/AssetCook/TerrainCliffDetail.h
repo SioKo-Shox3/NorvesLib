@@ -14,7 +14,8 @@
 // 細分しない升目は今までと同じ頂点と三角形のまま。細分した升目と接する升目は、境の辺の点を共有する扇で埋めて
 // 継ぎ目を作らない。区画の境の頂点は全体の格子の番号だけから決まるので、隣の区画とビット単位で同じになる。
 // 遠景の段は元のメッシュのうち、細分する升目とその周りの升目だけを張り直し、ほかの三角形と頂点は元のまま使う。
-// 配置の高さ（岩・建物）は今までの高さ場のまま（TerrainHeightField）で、ここで焼いた形は使わない。
+// Battleship Rock の主役の壁だけは、尾根を写真の段（平らな頂・縦の壁）に刻んだ格子の高さ（TerrainCliffCarveBattleship.h）から焼く。
+// 配置の高さ（岩・建物）は今までの高さ場のまま（TerrainHeightField）で、ここで焼いた形と刻みは使わない。
 // ---------------------------------------------------------------------------
 
 #include "Container/String.h"
@@ -27,6 +28,10 @@ namespace NorvesLib::Tools::AssetCook
 {
     /// 崖の細部の焼き直しの版。形の関数や値を変えたら上げる（クックの元のハッシュに入る）
     inline constexpr uint32_t kTerrainCliffDetailVersion = 5u;
+
+    /// Battleship Rock の尾根の刻み（TerrainCliffCarveBattleship.h）の版。刻みの表か掛け方を変えたら上げる（刻みが届く区画だけ
+    /// クックの元のハッシュに入る。ほかの区画の焼きの結果は変わらない）
+    inline constexpr uint32_t kTerrainCliffCarveVersion = 1u;
 
     /// 焼いた頂点（位置・法線・UV。メッシュの頂点の記録と同じ並び）
     struct TerrainCliffVertex
@@ -54,6 +59,10 @@ namespace NorvesLib::Tools::AssetCook
     /// 格子の区画（最初の升目 firstColumn・firstRow から cellsX × cellsZ 升目）が、崖の細部を焼く範囲に掛かるか
     bool TerrainCliffTileIntersects(const Core::Rendering::Terrain::TerrainGridLayout &layout, uint32_t firstColumn,
                                     uint32_t cellsX, uint32_t firstRow, uint32_t cellsZ);
+
+    /// 格子の区画に、Battleship Rock の尾根の刻みが届くか
+    bool TerrainCliffCarveTouches(const Core::Rendering::Terrain::TerrainGridLayout &layout, uint32_t firstColumn,
+                                  uint32_t cellsX, uint32_t firstRow, uint32_t cellsZ);
 
     /// 格子の区画を、崖の細部を足して焼く。UV はワールドの XZ を textureTileMeters で割った値。
     /// 頂点の位置・法線が有限でなければ false を返し、outError に理由を書く
