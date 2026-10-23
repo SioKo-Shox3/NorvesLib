@@ -7483,3 +7483,10 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 証拠（`.harness/runs/20261023-124311/`）: `verify-SCN-WL-SHAPE-MEASURE-1.txt`（`--shape --verify` result=pass photos=5）・`-2.txt`（far_02 だけの `--look --verify` result=pass photos=1）・`aux-SCN-WL-SHAPE-MEASURE-expect-cases.txt`（baseline の仕様 pass、target の仕様は棚と角などで fail、未知の写真の ID・選んだ写真の行が無い仕様・注釈の無い写真・知らない鍵・求まらない値がそれぞれ fail、`--look --expect` の範囲内 pass と範囲外 fail）。開いた画: `scene-capture/SCN-WL-SHAPE-CAUSE/lod-default/shape_<写真>.png` の 5 枚（far_01・cliff_01 は同じ台本の試しの出力で確かめた）
 - Next: TASKS.md の次の未完（崖の形の直し。合否は `--shape --expect` の担当の写真の行）
 - Notes: 角は写真ごとに 2〜7 点で、1 点で 0.14〜0.5 動く。far_01 の Cedar Mesa の縁は外形の形が違い 127 画素右で合う（棚と角の置き場所が粗い）。ground_02 の Rooster Butte だけ平行移動の探す範囲を幅の ±12 % に広げた（撮影の構図が幅の約 1 割ずれる）。外形のずらす前の距離は far_02・ground_02 では構図のずれが大半なので、形の直しの外形の判定はずらした後の値を使う。新しい試験は足していない
+
+## 2026-10-24 SCN-WL-SHAPE-MEASURE の差し戻しの直し（run 20261023-124311 の反復 18、閉じた）
+- Done: 評価者の指摘 2 点を直した。(1) 深度の段は、外側の 2 点（さらに 3 画素先）から深度の逆数を直線で延ばした予測が両側とも 5 % 以上外れるときだけにした（斜めに見た平面の勾配を棚と数えない。`ShapeMeasure.depth_step`）。(2) `--photos` を省いたときの選択を注釈と独立の 5 枚（`SHAPE_PHOTOS`）にし、注釈の欠けた写真は落ちる。重ね画像の値の無い表示を「－」にした
+- 値の変化: far_02 の棚の一致 0.387 → 0.375（Setting Hen Butte 0.36 → 0.34）、崖の変形なしの far_02 0.26 → 0.24。ほかの写真・量は同じ。`WastelandShape.md` と `shape-baseline.json` の注記を直した（min は変えない）
+- 証拠（`.harness/runs/20261023-124311/`）: `verify-SCN-WL-SHAPE-MEASURE-3.txt`（`--shape --verify` result=pass photos=5 EXIT=0）・`-4.txt`（far_02 の `--look --verify` result=pass photos=1 EXIT=0）・`aux-SCN-WL-SHAPE-MEASURE-rework-repro.txt`（評価者の単一平面の再現で棚の一致 0.0、平面に 20 % の段で 1.0、正面の平面の段で 1.0、far_02 の注釈を除いた既定の選択で「far_02 の注釈が ShapeAnnotations.json に無い」で fail）。開いた画: `shape_far_02.png`・`shape_far_01.png`（2 本の尖塔の棚が「－」）
+- Next: TASKS.md の次の未完
+- Notes: 新しい試験は足していない

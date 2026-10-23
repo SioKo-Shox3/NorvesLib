@@ -54,10 +54,17 @@ kSampleStepPx = 2
 kGeometricCoverage = 0.95
 DIRECTIONS = {"x": (1, 0), "y": (0, 1), "d1": (1, 1), "d2": (1, -1)}
 ORTHOGONAL = {"x": "y", "y": "x", "d1": "d2", "d2": "d1"}
+# --photos を省いたときに測る写真（注釈はこの全部に要る）
+SHAPE_PHOTOS = ("far_01", "far_02", "cliff_01", "cliff_02", "ground_02")
 
 
 def fmt(value, digits=3):
     return "none" if value is None else f"{value:.{digits}f}"
+
+
+def fmt_display(value, digits=2):
+    """重ね画像の文字（人が読む）。値が無いときは「－」"""
+    return "－" if value is None else f"{value:.{digits}f}"
 
 
 def load_annotations():
@@ -91,11 +98,31 @@ def fold_maps(depth, normal, readable):
         dot = np.sum(shifted(normal, dx, dy, 0.0) * shifted(normal, -dx, -dy, 0.0), axis=2)
         both = terrain_a & terrain_b
         bend = both & read_a & read_b & (dot <= cos_limit)
-        step = both & (np.abs(depth_a - depth_b) > kDepthStepRatio * np.maximum(np.minimum(depth_a, depth_b), 1e-6))
+        step = both & depth_step(terrain, safe, dx, dy, depth_a, depth_b)
         silhouette = terrain_a ^ terrain_b
         raw[name] = bend | step | silhouette
     only = {name: raw[name] & ~raw[ORTHOGONAL[name]] for name in DIRECTIONS}
     return {name: line_filter(only[name], DIRECTIONS[name], kLineMinPx) for name in DIRECTIONS}
+
+
+def depth_step(terrain, safe, dx, dy, depth_a, depth_b):
+    """前後の 2 点 a・b の間の深度の段。連続した面の勾配（斜めに見た平面の深度の変化）は段にしない:
+    外側の 2 点（a の先・b の先）から深度の逆数を直線で延ばして相手の点を予測し、どちらの側からの予測とも
+    kDepthStepRatio 以上外れるときだけ段とする（平面の深度の逆数は画面の座標でほぼ一次なので、平面では外れない。
+    折れも外れるが、折れは面の法線でも数える）。外側の点が地形でない側は使わず、両側とも使えないときは a・b の差だけで決める"""
+    inverse_a = 1.0 / np.maximum(depth_a, 1e-6)
+    inverse_b = 1.0 / np.maximum(depth_b, 1e-6)
+    limit = kDepthStepRatio * np.minimum(inverse_a, inverse_b)
+    outer_a = shifted(terrain, 2 * dx, 2 * dy, False)
+    outer_b = shifted(terrain, -2 * dx, -2 * dy, False)
+    inverse_outer_a = 1.0 / np.maximum(shifted(safe, 2 * dx, 2 * dy, 0.0), 1e-6)
+    inverse_outer_b = 1.0 / np.maximum(shifted(safe, -2 * dx, -2 * dy, 0.0), 1e-6)
+    # a と b の間は外側の間隔の 2 倍
+    miss_from_a = np.abs(inverse_b - (inverse_a + 2.0 * (inverse_a - inverse_outer_a))) > limit
+    miss_from_b = np.abs(inverse_a - (inverse_b + 2.0 * (inverse_b - inverse_outer_b))) > limit
+    plain = np.abs(depth_a - depth_b) > kDepthStepRatio * np.maximum(np.minimum(depth_a, depth_b), 1e-6)
+    return np.where(outer_a & outer_b, miss_from_a & miss_from_b,
+                    np.where(outer_a, miss_from_a, np.where(outer_b, miss_from_b, plain)))
 
 
 def line_filter(mask, crossing, length):
@@ -328,7 +355,8 @@ def run_shape(capture_dir, out_dir, wanted, verify, expect_path):
                              "match_radius_px": kMatchRadiusPx, "search_fraction": list(kSearchFraction),
                              "corner_min_pixels": kCornerMinPixels, "reference_width": kReferenceWidth},
               "capture": os.path.relpath(capture_dir, REPO_ROOT), "photos": {}}
-    photos = [p for p in PHOTOS if p["id"] in wanted] if wanted else [p for p in PHOTOS if p["id"] in annotations]
+    # 既定の選択は注釈の有無と独立に決めた 5 枚（注釈が欠けた写真は下で落ちる）
+    photos = [p for p in PHOTOS if p["id"] in (wanted or SHAPE_PHOTOS)]
     all_residuals = []
     for entry in photos:
         photo_id, view = entry["id"], entry["view"]
@@ -413,7 +441,7 @@ def run_shape(capture_dir, out_dir, wanted, verify, expect_path):
         lines = [f"上: 写真 {photo_id}（水色 = 外形、黄 = 棚、桃 = 角）　下: 撮影 {view}（{size[0]}×{size[1]}）の面の法線と深度の折れ（赤）・"
                  f"撮影の外形（水色）・ずらした注釈（緑 = 一致、橙 = 不一致、黄 = 写真の外形）"]
         for name, record in cliffs.items():
-            lines.append(f"{name}: 棚の一致 {fmt(record['shelf_match'], 2)}（{record['shelves']} 本）　角の一致 {fmt(record['corner_match'], 2)}"
+            lines.append(f"{name}: 棚の一致 {fmt_display(record['shelf_match'])}（{record['shelves']} 本）　角の一致 {fmt_display(record['corner_match'])}"
                          f"（{record['corners']} 点）　外形の距離の中央値 {record['outline_distance_median_px']:.1f} 画素"
                          f"（ずらした後 {record['outline_residual_median_px']:.1f}、ずらした量 {record['shift_px'][0]:.0f}, "
                          f"{record['shift_px'][1]:.0f}）")
