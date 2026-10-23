@@ -521,10 +521,11 @@ foreach ($specFile in $specFiles) {
         # （source_path は高さ場の仕様のヘッダで、変更の検出だけに使う）。"terrain-tile:dem:<x>,<z>" は DEM の格子の区画を焼く
         # （source_path は格子の記述で、AssetCook が高さ場の読む記述と同じか・格子のファイルの SHA-256 が記述と合うかを確かめる。
         # 格子のファイルと区画の割り方のヘッダは extra_sources に入れ、どれが変わっても焼き直す）。
+        # "terrain-tile:dem-plain:<x>,<z>" は dem と同じ区画を崖の細部（TerrainCliffDetail.cpp）なしで焼く（撮り比べ用）。
         if (Test-PropertyExists -Object $model -Name "generate") {
             $generate = Get-StringField -Object $model -Name "generate" -Context $context
-            if (($generate -ne "displaced-sphere") -and ($generate -notmatch '^terrain-tile:(dem:)?\d+,\d+$')) {
-                throw "$context の generate は displaced-sphere か terrain-tile:<x>,<z>・terrain-tile:dem:<x>,<z> だけを指定できます"
+            if (($generate -ne "displaced-sphere") -and ($generate -notmatch '^terrain-tile:(dem:|dem-plain:)?\d+,\d+$')) {
+                throw "$context の generate は displaced-sphere か terrain-tile:<x>,<z>・terrain-tile:dem:<x>,<z>・terrain-tile:dem-plain:<x>,<z> だけを指定できます"
             }
             $cookArguments += @("--generate", $generate)
         }

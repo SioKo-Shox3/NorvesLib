@@ -2648,7 +2648,7 @@
 - notes: 危険地帯（MegaGeometry の LOD・VSM・VRAM）。2026-10-23 親が SCN-WL-SUN-SHADOW-FIX の反復 3 の BLOCKED（推奨の案 3）から足した。verify は組を 1 つに絞る（ほかの組の非悪化は撮り直した組の記録で確かめ、足りなければ組ごとの行を足す）。時間の見積もり: 回帰の before・after 各 7〜9 分、ビルド 3〜6 分、1 組の撮影 約 3 分、試し 1 回 約 5 分 × 3 前後。壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える。 2026-10-24（親）: 評価の 2 周目（反復 14）は描画の直し（既定の描画の岩の影の LOD・全体の IoU 0.9084・GPU 中央値 18.404 ms・VRAM 9,715 MB・回帰の 4 シーン）を認め、`--sets` 無指定でも必須の層と太陽の決めた視点を参照の有無で絞る判定の退行だけを指摘した。親が `OcclusionCompare.py` を `--sets` を指定したときだけ絞る形に直し、参照の置き場が terrain-sun だけの再現で無指定の判定が必須の層 4 件・太陽の視点 2 件の欠けで exit=1 になること、`--sets` の 3 本のうち 2 本が exit=0（太陽 4 組 94 秒・空 2 組 249 秒）で、rocks-cliff-sky,terrain-sky は走行中の反復の未コミットの `Tools/AssetCook/MeshCooker.cpp` の書き換えによる参照の古さの 2 件だけで落ち、画素の判定は合格なことを確かめて done にした。
 
 ## SCN-WL-SHAPE-CAUSE: 地形が丸く粗く見える原因を、LOD・崖の生成・格子の段・材質の陰影に切り分ける
-- status: todo
+- status: done
 - after: SCN-WL-OCCLUSION-ACCEPT
 - done-when: ユーザーの所見（確認 2、2026-10-22）「地形の造形が荒い」（崖も斜面も粘土のように丸く、棚・割れ目・角が無い）の原因を、直す前に切り分ける。今の地形は単純な 1 m の格子ではない: `Tools/AssetCook/TerrainCliffDetail.cpp` の崖の生成は一部を 0.25 m 相当まで細分化し、棚・割れ目・最大 2.5 m の押し出しを足す。far_01 の主役の崖には遠景の 2 m の格子の段も使われる。手本の 5 視点（ref_far_01,ref_far_02,ref_cliff_01,ref_cliff_02,ref_ground_02）を同じ条件（共通の照明・灰色の材質・岩は残す）で、(a) 通常の LOD、(b) 最も細かい LOD（`wasteland-finest-lod`）、(c) 崖の手続きの変形を切った版（開発ビルドの起動引数、この項目で足す。既定は変えない）で撮り、深度と幾何の法線の AOV（無ければこの項目で足す。描画と読み戻しの変更なので危険地帯）で、丸く見える所ごとに原因（DEM の高さの格子の限界・LOD の簡略化・崖の生成の設定・遠景の格子の段・材質の陰影）を分ける。写真と並べて、効き目の大きい直し（上端の角・連続する水平の棚・壁から崖錐へ移る大きな塊・谷床の流路・細かな凹凸）を、場所（崖の名前と世界座標の範囲）ごとに所見に書く。値は変えない。結果を `Docs/RenderingValidation/WastelandShape.md`（新規）に書き、重ね画像と並べた画を開いて確かめる。合否は `ReferenceCheck.py --shape-cause --verify`（この項目で作る。3 組の撮影がそろい同じ exe で撮られ、所見の表が文書にあること）。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`

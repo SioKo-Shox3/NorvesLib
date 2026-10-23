@@ -7462,3 +7462,10 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 開いた画: `scene-capture/SCN-WL-ROCK-LOD-SHADOW/timing/ref_cliff_01.png`（崖錐の岩の面に影の斑なし）
 - Next: TASKS.md の次の未完
 - Notes: `-6.txt` の 22 ms は同じ Game.exe でほかの処理と重なった計測と判断した（雲・VSM など直しと関係ないパスも同じ比で伸びた）。新しい試験は足していない
+
+## 2026-10-24 SCN-WL-SHAPE-CAUSE（run 20261023-124311 の反復 15、閉じた）
+- Done: 地形が丸く粗く見える原因を、手本の 5 視点を 3 組（通常の LOD・最も細かい LOD・崖の手続きの変形なし）で撮って深度から求めた幾何の法線で切り分け、`Docs/RenderingValidation/WastelandShape.md` に結論と所見の表を書いた。崖の変形を切る版は、AssetCook の生成 `terrain-tile:dem-plain:<x>,<z>`（崖の細部を焼かない）で崖の範囲の 67 区画（近景 25・castle 42）を別の論理パス `Assets/Models/WastelandTerrainCliffOff/` へ焼き（一覧 `Assets/AssetSets/WastelandTerrainCliffOff.json` は `WriteTerrainAssetSet.py --write` が書く）、開発ビルドの起動引数 `--wasteland-cliff-detail=off` で差し替える。判定は `ReferenceCheck.py --shape-cause`（`Scripts/Terrain/ShapeCause.py`）。既定の描画・既定のクックは変えていない
+- 結論: 1 近景の谷床と崖錐は DEM の 1 m の格子の限界（3 組とも折れ目 0〜15 %）、2 1.5 km より遠い崖は通常の LOD の簡略化（ref_far_01 の castle の段 64〜78 % → 最も細かい段 77〜88 %）、3 主役の崖の壁は崖の生成が縦の溝だけを足し角と棚が浅い（ref_cliff_01 の壁 38 % → 50 %）、4 遠景の段は陰影の法線が形より丸い（39〜61 %）、5 地平の台地は遠景の格子の段
+- 証拠（`.harness/runs/20261023-124311/`）: `verify-SCN-WL-SHAPE-CAUSE-1.txt`（Debug の Game のビルド EXIT=0）・`-2.txt`（RelWithDebInfo EXIT=0）・`-3.txt`〜`-5.txt`（3 組の撮影 result=pass、同じ Game.exe acf9830b…、`-5` のログに `WASTELAND_CLIFF_DETAIL_OFF swapped=67 tiles=198`）・`-6.txt`（`--shape-cause --verify` result=pass）。開いた画: `scene-capture/SCN-WL-SHAPE-CAUSE/shape_cause/<視点>.png` の 5 枚
+- Next: TASKS.md の次の未完（地形の形の物差しの項目。直す順は文書の「効き目の大きい直し」の列）
+- Notes: AssetCook の実行ファイルが変わったので、`CookAssets.ps1` を `-OnlyLogicalPath` なしで回すと全項目の印が変わって全部（崖の区画は 1 区画で最大 16 分）を焼き直す。崖の変形なしの区画だけを焼くときは `-OnlyLogicalPath 'Assets/Models/WastelandTerrainCliffOff/*'`（この反復は 8 分 22 秒）。法線の AOV は灰色の材質でも頂点の法線なので、形の物差しには深度から求めた幾何の法線を使い、描画と読み戻しは変えていない。崖の範囲の表は `TerrainCliffDetail.cpp` の kNearRegions と `WriteTerrainAssetSet.py` の CLIFF_NEAR_REGIONS の 2 か所にある。新しい試験は足していない

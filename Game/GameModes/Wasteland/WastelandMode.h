@@ -161,6 +161,8 @@ namespace Game::GameModes
         uint32_t m_HideMask = 0;
         /// 地形を最も細かい段で描く（--wasteland-finest-lod。開発ビルドだけ。閾値は起動引数の解析が描画側へ渡し、ここはログの印だけ）
         bool m_bFinestLod = false;
+        /// 崖の細部を焼かなかった区画に差し替える（--wasteland-cliff-detail=off。開発ビルドだけ。地形の形の切り分けの撮り比べ）
+        bool m_bCliffDetailOff = false;
         /// 地形の区画の LOD 0 を PLY で書き出すフォルダ（--wasteland-export-terrain。開発ビルドだけ。空なら書かない。
         /// WastelandTerrainExport.h）
         NorvesLib::Core::Container::String m_TerrainExportDir;

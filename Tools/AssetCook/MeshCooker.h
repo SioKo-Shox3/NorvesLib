@@ -166,6 +166,10 @@ namespace NorvesLib::Tools::AssetCook
     [[nodiscard]] bool TryParseTerrainTileGenerate(Core::Container::AnsiStringView generate, uint32_t& outTileX,
                                                    uint32_t& outTileZ, bool& outDem);
 
+    // --generate の値が "terrain-tile:dem-plain:<x>,<z>"（崖の細部を焼かない DEM の区画。形の解釈は "dem:" と同じで、
+    // 撮り比べで崖の手続きの変形を切った版を別の論理パスへ焼くためのもの）か
+    [[nodiscard]] bool IsTerrainTileCliffDetailOffGenerate(Core::Container::AnsiStringView generate);
+
     // 荒野の地形の区画 (tileX, tileZ) を高さ場（Rendering/Terrain/TerrainHeightField.h。Game と共有）から作り、
     // NVMESH v1 に焼く（--generate terrain-tile:<x>,<z>）。外周の頂点は階層のどの段でも動かさない。
     [[nodiscard]] bool CookTerrainTileToNvmesh(uint32_t tileX,
@@ -181,6 +185,7 @@ namespace NorvesLib::Tools::AssetCook
     // ファイル）の区画 (tileX, tileZ) を NVMESH v1 に焼く（--generate terrain-tile:dem:<x>,<z>）。区画の数と格子の間隔は
     // 格子の記述から決まり、格子のファイルの SHA-256 が記述の sha256 と違えば失敗する。inputBytes は一覧の source_path
     // （格子の記述）の中身で、高さ場の読む記述と同じでなければならない。外周の頂点は階層のどの段でも動かさない。
+    // bAllowCliffDetail が偽なら、崖の細部（TerrainCliffDetail.h の細分と押し出し）を近景にも遠景にも焼かない。
     [[nodiscard]] bool CookTerrainDemTileToNvmesh(const uint8_t* inputBytes,
                                                   size_t inputSize,
                                                   uint32_t tileX,
@@ -190,7 +195,8 @@ namespace NorvesLib::Tools::AssetCook
                                                   MeshCookResult& outResult,
                                                   Core::Container::AnsiString& error,
                                                   uint32_t fallbackMinTriangles = 0,
-                                                  uint32_t dagRootMaxClusters = 0);
+                                                  uint32_t dagRootMaxClusters = 0,
+                                                  bool bAllowCliffDetail = true);
 
     // DEM の隣り合う 2 区画（B は A の東か南の隣）をクックと同じ引数で LOD の階層まで焼き、境の頂点の位置・法線・UV が
     // 両区画でビット単位で同じで、どの段・根のクラスタの集まり・フォールバックの段でも境の開いた辺が元の 1 升目の辺のまま

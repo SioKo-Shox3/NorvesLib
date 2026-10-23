@@ -1,0 +1,831 @@
+{
+  "version": 1,
+  "name": "WastelandTerrainCliffOff",
+  "package_root": "Cooked/WastelandTerrainCliffOff",
+  "default_variant": "default",
+  "cook_assets": true,
+  "textures": [],
+  "models": [
+    {
+      "logical_path": "Assets/Models/WastelandTerrainCliffOff/WastelandDem_0_1.generated",
+      "source_path": "Assets/Terrain/ValleyOfTheGods/height.json",
+      "extra_sources": [
+        "Assets/Terrain/ValleyOfTheGods/height.r32",
+        "Library/Core/Public/Rendering/Terrain/TerrainHeightField.h"
+      ],
+      "generate": "terrain-tile:dem-plain:0,1",
+      "package_name": "WastelandTerrainCliffOff/WastelandDem_0_1.nvpkg",
+      "entry_name": "Assets/Models/WastelandTerrainCliffOff/WastelandDem_0_1.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/WastelandTerrainCliffOff/WastelandDem_1_1.generated",
+      "source_path": "Assets/Terrain/ValleyOfTheGods/height.json",
+      "extra_sources": [
+        "Assets/Terrain/ValleyOfTheGods/height.r32",
+        "Library/Core/Public/Rendering/Terrain/TerrainHeightField.h"
+      ],
+      "generate": "terrain-tile:dem-plain:1,1",
+      "package_name": "WastelandTerrainCliffOff/WastelandDem_1_1.nvpkg",
+      "entry_name": "Assets/Models/WastelandTerrainCliffOff/WastelandDem_1_1.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/WastelandTerrainCliffOff/WastelandDem_2_1.generated",
+      "source_path": "Assets/Terrain/ValleyOfTheGods/height.json",
+      "extra_sources": [
+        "Assets/Terrain/ValleyOfTheGods/height.r32",
+        "Library/Core/Public/Rendering/Terrain/TerrainHeightField.h"
+      ],
+      "generate": "terrain-tile:dem-plain:2,1",
+      "package_name": "WastelandTerrainCliffOff/WastelandDem_2_1.nvpkg",
+      "entry_name": "Assets/Models/WastelandTerrainCliffOff/WastelandDem_2_1.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/WastelandTerrainCliffOff/WastelandDem_3_1.generated",
+      "source_path": "Assets/Terrain/ValleyOfTheGods/height.json",
+      "extra_sources": [
+        "Assets/Terrain/ValleyOfTheGods/height.r32",
+        "Library/Core/Public/Rendering/Terrain/TerrainHeightField.h"
+      ],
+      "generate": "terrain-tile:dem-plain:3,1",
+      "package_name": "WastelandTerrainCliffOff/WastelandDem_3_1.nvpkg",
+      "entry_name": "Assets/Models/WastelandTerrainCliffOff/WastelandDem_3_1.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/WastelandTerrainCliffOff/WastelandDem_0_2.generated",
+      "source_path": "Assets/Terrain/ValleyOfTheGods/height.json",
+      "extra_sources": [
+        "Assets/Terrain/ValleyOfTheGods/height.r32",
+        "Library/Core/Public/Rendering/Terrain/TerrainHeightField.h"
+      ],
+      "generate": "terrain-tile:dem-plain:0,2",
+      "package_name": "WastelandTerrainCliffOff/WastelandDem_0_2.nvpkg",
+      "entry_name": "Assets/Models/WastelandTerrainCliffOff/WastelandDem_0_2.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/WastelandTerrainCliffOff/WastelandDem_1_2.generated",
+      "source_path": "Assets/Terrain/ValleyOfTheGods/height.json",
+      "extra_sources": [
+        "Assets/Terrain/ValleyOfTheGods/height.r32",
+        "Library/Core/Public/Rendering/Terrain/TerrainHeightField.h"
+      ],
+      "generate": "terrain-tile:dem-plain:1,2",
+      "package_name": "WastelandTerrainCliffOff/WastelandDem_1_2.nvpkg",
+      "entry_name": "Assets/Models/WastelandTerrainCliffOff/WastelandDem_1_2.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/WastelandTerrainCliffOff/WastelandDem_2_2.generated",
+      "source_path": "Assets/Terrain/ValleyOfTheGods/height.json",
+      "extra_sources": [
+        "Assets/Terrain/ValleyOfTheGods/height.r32",
+        "Library/Core/Public/Rendering/Terrain/TerrainHeightField.h"
+      ],
+      "generate": "terrain-tile:dem-plain:2,2",
+      "package_name": "WastelandTerrainCliffOff/WastelandDem_2_2.nvpkg",
+      "entry_name": "Assets/Models/WastelandTerrainCliffOff/WastelandDem_2_2.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/WastelandTerrainCliffOff/WastelandDem_3_2.generated",
+      "source_path": "Assets/Terrain/ValleyOfTheGods/height.json",
+      "extra_sources": [
+        "Assets/Terrain/ValleyOfTheGods/height.r32",
+        "Library/Core/Public/Rendering/Terrain/TerrainHeightField.h"
+      ],
+      "generate": "terrain-tile:dem-plain:3,2",
+      "package_name": "WastelandTerrainCliffOff/WastelandDem_3_2.nvpkg",
+      "entry_name": "Assets/Models/WastelandTerrainCliffOff/WastelandDem_3_2.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/WastelandTerrainCliffOff/WastelandDem_0_3.generated",
+      "source_path": "Assets/Terrain/ValleyOfTheGods/height.json",
+      "extra_sources": [
+        "Assets/Terrain/ValleyOfTheGods/height.r32",
+        "Library/Core/Public/Rendering/Terrain/TerrainHeightField.h"
+      ],
+      "generate": "terrain-tile:dem-plain:0,3",
+      "package_name": "WastelandTerrainCliffOff/WastelandDem_0_3.nvpkg",
+      "entry_name": "Assets/Models/WastelandTerrainCliffOff/WastelandDem_0_3.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/WastelandTerrainCliffOff/WastelandDem_1_3.generated",
+      "source_path": "Assets/Terrain/ValleyOfTheGods/height.json",
+      "extra_sources": [
+        "Assets/Terrain/ValleyOfTheGods/height.r32",
+        "Library/Core/Public/Rendering/Terrain/TerrainHeightField.h"
+      ],
+      "generate": "terrain-tile:dem-plain:1,3",
+      "package_name": "WastelandTerrainCliffOff/WastelandDem_1_3.nvpkg",
+      "entry_name": "Assets/Models/WastelandTerrainCliffOff/WastelandDem_1_3.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/WastelandTerrainCliffOff/WastelandDem_2_3.generated",
+      "source_path": "Assets/Terrain/ValleyOfTheGods/height.json",
+      "extra_sources": [
+        "Assets/Terrain/ValleyOfTheGods/height.r32",
+        "Library/Core/Public/Rendering/Terrain/TerrainHeightField.h"
+      ],
+      "generate": "terrain-tile:dem-plain:2,3",
+      "package_name": "WastelandTerrainCliffOff/WastelandDem_2_3.nvpkg",
+      "entry_name": "Assets/Models/WastelandTerrainCliffOff/WastelandDem_2_3.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/WastelandTerrainCliffOff/WastelandDem_3_3.generated",
+      "source_path": "Assets/Terrain/ValleyOfTheGods/height.json",
+      "extra_sources": [
+        "Assets/Terrain/ValleyOfTheGods/height.r32",
+        "Library/Core/Public/Rendering/Terrain/TerrainHeightField.h"
+      ],
+      "generate": "terrain-tile:dem-plain:3,3",
+      "package_name": "WastelandTerrainCliffOff/WastelandDem_3_3.nvpkg",
+      "entry_name": "Assets/Models/WastelandTerrainCliffOff/WastelandDem_3_3.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/WastelandTerrainCliffOff/WastelandDem_4_3.generated",
+      "source_path": "Assets/Terrain/ValleyOfTheGods/height.json",
+      "extra_sources": [
+        "Assets/Terrain/ValleyOfTheGods/height.r32",
+        "Library/Core/Public/Rendering/Terrain/TerrainHeightField.h"
+      ],
+      "generate": "terrain-tile:dem-plain:4,3",
+      "package_name": "WastelandTerrainCliffOff/WastelandDem_4_3.nvpkg",
+      "entry_name": "Assets/Models/WastelandTerrainCliffOff/WastelandDem_4_3.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/WastelandTerrainCliffOff/WastelandDem_0_4.generated",
+      "source_path": "Assets/Terrain/ValleyOfTheGods/height.json",
+      "extra_sources": [
+        "Assets/Terrain/ValleyOfTheGods/height.r32",
+        "Library/Core/Public/Rendering/Terrain/TerrainHeightField.h"
+      ],
+      "generate": "terrain-tile:dem-plain:0,4",
+      "package_name": "WastelandTerrainCliffOff/WastelandDem_0_4.nvpkg",
+      "entry_name": "Assets/Models/WastelandTerrainCliffOff/WastelandDem_0_4.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/WastelandTerrainCliffOff/WastelandDem_1_4.generated",
+      "source_path": "Assets/Terrain/ValleyOfTheGods/height.json",
+      "extra_sources": [
+        "Assets/Terrain/ValleyOfTheGods/height.r32",
+        "Library/Core/Public/Rendering/Terrain/TerrainHeightField.h"
+      ],
+      "generate": "terrain-tile:dem-plain:1,4",
+      "package_name": "WastelandTerrainCliffOff/WastelandDem_1_4.nvpkg",
+      "entry_name": "Assets/Models/WastelandTerrainCliffOff/WastelandDem_1_4.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/WastelandTerrainCliffOff/WastelandDem_2_4.generated",
+      "source_path": "Assets/Terrain/ValleyOfTheGods/height.json",
+      "extra_sources": [
+        "Assets/Terrain/ValleyOfTheGods/height.r32",
+        "Library/Core/Public/Rendering/Terrain/TerrainHeightField.h"
+      ],
+      "generate": "terrain-tile:dem-plain:2,4",
+      "package_name": "WastelandTerrainCliffOff/WastelandDem_2_4.nvpkg",
+      "entry_name": "Assets/Models/WastelandTerrainCliffOff/WastelandDem_2_4.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/WastelandTerrainCliffOff/WastelandDem_3_4.generated",
+      "source_path": "Assets/Terrain/ValleyOfTheGods/height.json",
+      "extra_sources": [
+        "Assets/Terrain/ValleyOfTheGods/height.r32",
+        "Library/Core/Public/Rendering/Terrain/TerrainHeightField.h"
+      ],
+      "generate": "terrain-tile:dem-plain:3,4",
+      "package_name": "WastelandTerrainCliffOff/WastelandDem_3_4.nvpkg",
+      "entry_name": "Assets/Models/WastelandTerrainCliffOff/WastelandDem_3_4.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/WastelandTerrainCliffOff/WastelandDem_4_4.generated",
+      "source_path": "Assets/Terrain/ValleyOfTheGods/height.json",
+      "extra_sources": [
+        "Assets/Terrain/ValleyOfTheGods/height.r32",
+        "Library/Core/Public/Rendering/Terrain/TerrainHeightField.h"
+      ],
+      "generate": "terrain-tile:dem-plain:4,4",
+      "package_name": "WastelandTerrainCliffOff/WastelandDem_4_4.nvpkg",
+      "entry_name": "Assets/Models/WastelandTerrainCliffOff/WastelandDem_4_4.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/WastelandTerrainCliffOff/WastelandDem_6_6.generated",
+      "source_path": "Assets/Terrain/ValleyOfTheGods/height.json",
+      "extra_sources": [
+        "Assets/Terrain/ValleyOfTheGods/height.r32",
+        "Library/Core/Public/Rendering/Terrain/TerrainHeightField.h"
+      ],
+      "generate": "terrain-tile:dem-plain:6,6",
+      "package_name": "WastelandTerrainCliffOff/WastelandDem_6_6.nvpkg",
+      "entry_name": "Assets/Models/WastelandTerrainCliffOff/WastelandDem_6_6.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/WastelandTerrainCliffOff/WastelandDem_7_6.generated",
+      "source_path": "Assets/Terrain/ValleyOfTheGods/height.json",
+      "extra_sources": [
+        "Assets/Terrain/ValleyOfTheGods/height.r32",
+        "Library/Core/Public/Rendering/Terrain/TerrainHeightField.h"
+      ],
+      "generate": "terrain-tile:dem-plain:7,6",
+      "package_name": "WastelandTerrainCliffOff/WastelandDem_7_6.nvpkg",
+      "entry_name": "Assets/Models/WastelandTerrainCliffOff/WastelandDem_7_6.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/WastelandTerrainCliffOff/WastelandDem_6_7.generated",
+      "source_path": "Assets/Terrain/ValleyOfTheGods/height.json",
+      "extra_sources": [
+        "Assets/Terrain/ValleyOfTheGods/height.r32",
+        "Library/Core/Public/Rendering/Terrain/TerrainHeightField.h"
+      ],
+      "generate": "terrain-tile:dem-plain:6,7",
+      "package_name": "WastelandTerrainCliffOff/WastelandDem_6_7.nvpkg",
+      "entry_name": "Assets/Models/WastelandTerrainCliffOff/WastelandDem_6_7.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/WastelandTerrainCliffOff/WastelandDem_7_7.generated",
+      "source_path": "Assets/Terrain/ValleyOfTheGods/height.json",
+      "extra_sources": [
+        "Assets/Terrain/ValleyOfTheGods/height.r32",
+        "Library/Core/Public/Rendering/Terrain/TerrainHeightField.h"
+      ],
+      "generate": "terrain-tile:dem-plain:7,7",
+      "package_name": "WastelandTerrainCliffOff/WastelandDem_7_7.nvpkg",
+      "entry_name": "Assets/Models/WastelandTerrainCliffOff/WastelandDem_7_7.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/WastelandTerrainCliffOff/WastelandDem_8_7.generated",
+      "source_path": "Assets/Terrain/ValleyOfTheGods/height.json",
+      "extra_sources": [
+        "Assets/Terrain/ValleyOfTheGods/height.r32",
+        "Library/Core/Public/Rendering/Terrain/TerrainHeightField.h"
+      ],
+      "generate": "terrain-tile:dem-plain:8,7",
+      "package_name": "WastelandTerrainCliffOff/WastelandDem_8_7.nvpkg",
+      "entry_name": "Assets/Models/WastelandTerrainCliffOff/WastelandDem_8_7.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/WastelandTerrainCliffOff/WastelandDem_7_8.generated",
+      "source_path": "Assets/Terrain/ValleyOfTheGods/height.json",
+      "extra_sources": [
+        "Assets/Terrain/ValleyOfTheGods/height.r32",
+        "Library/Core/Public/Rendering/Terrain/TerrainHeightField.h"
+      ],
+      "generate": "terrain-tile:dem-plain:7,8",
+      "package_name": "WastelandTerrainCliffOff/WastelandDem_7_8.nvpkg",
+      "entry_name": "Assets/Models/WastelandTerrainCliffOff/WastelandDem_7_8.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/WastelandTerrainCliffOff/WastelandDem_8_8.generated",
+      "source_path": "Assets/Terrain/ValleyOfTheGods/height.json",
+      "extra_sources": [
+        "Assets/Terrain/ValleyOfTheGods/height.r32",
+        "Library/Core/Public/Rendering/Terrain/TerrainHeightField.h"
+      ],
+      "generate": "terrain-tile:dem-plain:8,8",
+      "package_name": "WastelandTerrainCliffOff/WastelandDem_8_8.nvpkg",
+      "entry_name": "Assets/Models/WastelandTerrainCliffOff/WastelandDem_8_8.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_0_0.generated",
+      "source_path": "Assets/Terrain/ValleyOfTheGods/horizon.json",
+      "extra_sources": [
+        "Assets/Terrain/ValleyOfTheGods/horizon/castle_0_0.bin",
+        "Library/Core/Public/Rendering/Terrain/TerrainHeightField.h",
+        "Assets/Terrain/ValleyOfTheGods/height.json",
+        "Assets/Terrain/ValleyOfTheGods/height.r32"
+      ],
+      "generate": "terrain-tile:dem-plain:0,0",
+      "package_name": "WastelandTerrainCliffOff/WastelandHorizon_castle_0_0.nvpkg",
+      "entry_name": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_0_0.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_1_0.generated",
+      "source_path": "Assets/Terrain/ValleyOfTheGods/horizon.json",
+      "extra_sources": [
+        "Assets/Terrain/ValleyOfTheGods/horizon/castle_1_0.bin",
+        "Library/Core/Public/Rendering/Terrain/TerrainHeightField.h",
+        "Assets/Terrain/ValleyOfTheGods/height.json",
+        "Assets/Terrain/ValleyOfTheGods/height.r32"
+      ],
+      "generate": "terrain-tile:dem-plain:1,0",
+      "package_name": "WastelandTerrainCliffOff/WastelandHorizon_castle_1_0.nvpkg",
+      "entry_name": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_1_0.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_2_0.generated",
+      "source_path": "Assets/Terrain/ValleyOfTheGods/horizon.json",
+      "extra_sources": [
+        "Assets/Terrain/ValleyOfTheGods/horizon/castle_2_0.bin",
+        "Library/Core/Public/Rendering/Terrain/TerrainHeightField.h",
+        "Assets/Terrain/ValleyOfTheGods/height.json",
+        "Assets/Terrain/ValleyOfTheGods/height.r32"
+      ],
+      "generate": "terrain-tile:dem-plain:2,0",
+      "package_name": "WastelandTerrainCliffOff/WastelandHorizon_castle_2_0.nvpkg",
+      "entry_name": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_2_0.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_3_0.generated",
+      "source_path": "Assets/Terrain/ValleyOfTheGods/horizon.json",
+      "extra_sources": [
+        "Assets/Terrain/ValleyOfTheGods/horizon/castle_3_0.bin",
+        "Library/Core/Public/Rendering/Terrain/TerrainHeightField.h",
+        "Assets/Terrain/ValleyOfTheGods/height.json",
+        "Assets/Terrain/ValleyOfTheGods/height.r32"
+      ],
+      "generate": "terrain-tile:dem-plain:3,0",
+      "package_name": "WastelandTerrainCliffOff/WastelandHorizon_castle_3_0.nvpkg",
+      "entry_name": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_3_0.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_4_0.generated",
+      "source_path": "Assets/Terrain/ValleyOfTheGods/horizon.json",
+      "extra_sources": [
+        "Assets/Terrain/ValleyOfTheGods/horizon/castle_4_0.bin",
+        "Library/Core/Public/Rendering/Terrain/TerrainHeightField.h",
+        "Assets/Terrain/ValleyOfTheGods/height.json",
+        "Assets/Terrain/ValleyOfTheGods/height.r32"
+      ],
+      "generate": "terrain-tile:dem-plain:4,0",
+      "package_name": "WastelandTerrainCliffOff/WastelandHorizon_castle_4_0.nvpkg",
+      "entry_name": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_4_0.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_5_0.generated",
+      "source_path": "Assets/Terrain/ValleyOfTheGods/horizon.json",
+      "extra_sources": [
+        "Assets/Terrain/ValleyOfTheGods/horizon/castle_5_0.bin",
+        "Library/Core/Public/Rendering/Terrain/TerrainHeightField.h",
+        "Assets/Terrain/ValleyOfTheGods/height.json",
+        "Assets/Terrain/ValleyOfTheGods/height.r32"
+      ],
+      "generate": "terrain-tile:dem-plain:5,0",
+      "package_name": "WastelandTerrainCliffOff/WastelandHorizon_castle_5_0.nvpkg",
+      "entry_name": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_5_0.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_0_1.generated",
+      "source_path": "Assets/Terrain/ValleyOfTheGods/horizon.json",
+      "extra_sources": [
+        "Assets/Terrain/ValleyOfTheGods/horizon/castle_0_1.bin",
+        "Library/Core/Public/Rendering/Terrain/TerrainHeightField.h",
+        "Assets/Terrain/ValleyOfTheGods/height.json",
+        "Assets/Terrain/ValleyOfTheGods/height.r32"
+      ],
+      "generate": "terrain-tile:dem-plain:6,0",
+      "package_name": "WastelandTerrainCliffOff/WastelandHorizon_castle_0_1.nvpkg",
+      "entry_name": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_0_1.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_1_1.generated",
+      "source_path": "Assets/Terrain/ValleyOfTheGods/horizon.json",
+      "extra_sources": [
+        "Assets/Terrain/ValleyOfTheGods/horizon/castle_1_1.bin",
+        "Library/Core/Public/Rendering/Terrain/TerrainHeightField.h",
+        "Assets/Terrain/ValleyOfTheGods/height.json",
+        "Assets/Terrain/ValleyOfTheGods/height.r32"
+      ],
+      "generate": "terrain-tile:dem-plain:7,0",
+      "package_name": "WastelandTerrainCliffOff/WastelandHorizon_castle_1_1.nvpkg",
+      "entry_name": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_1_1.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_2_1.generated",
+      "source_path": "Assets/Terrain/ValleyOfTheGods/horizon.json",
+      "extra_sources": [
+        "Assets/Terrain/ValleyOfTheGods/horizon/castle_2_1.bin",
+        "Library/Core/Public/Rendering/Terrain/TerrainHeightField.h",
+        "Assets/Terrain/ValleyOfTheGods/height.json",
+        "Assets/Terrain/ValleyOfTheGods/height.r32"
+      ],
+      "generate": "terrain-tile:dem-plain:8,0",
+      "package_name": "WastelandTerrainCliffOff/WastelandHorizon_castle_2_1.nvpkg",
+      "entry_name": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_2_1.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_3_1.generated",
+      "source_path": "Assets/Terrain/ValleyOfTheGods/horizon.json",
+      "extra_sources": [
+        "Assets/Terrain/ValleyOfTheGods/horizon/castle_3_1.bin",
+        "Library/Core/Public/Rendering/Terrain/TerrainHeightField.h",
+        "Assets/Terrain/ValleyOfTheGods/height.json",
+        "Assets/Terrain/ValleyOfTheGods/height.r32"
+      ],
+      "generate": "terrain-tile:dem-plain:9,0",
+      "package_name": "WastelandTerrainCliffOff/WastelandHorizon_castle_3_1.nvpkg",
+      "entry_name": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_3_1.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_4_1.generated",
+      "source_path": "Assets/Terrain/ValleyOfTheGods/horizon.json",
+      "extra_sources": [
+        "Assets/Terrain/ValleyOfTheGods/horizon/castle_4_1.bin",
+        "Library/Core/Public/Rendering/Terrain/TerrainHeightField.h",
+        "Assets/Terrain/ValleyOfTheGods/height.json",
+        "Assets/Terrain/ValleyOfTheGods/height.r32"
+      ],
+      "generate": "terrain-tile:dem-plain:10,0",
+      "package_name": "WastelandTerrainCliffOff/WastelandHorizon_castle_4_1.nvpkg",
+      "entry_name": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_4_1.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_5_1.generated",
+      "source_path": "Assets/Terrain/ValleyOfTheGods/horizon.json",
+      "extra_sources": [
+        "Assets/Terrain/ValleyOfTheGods/horizon/castle_5_1.bin",
+        "Library/Core/Public/Rendering/Terrain/TerrainHeightField.h",
+        "Assets/Terrain/ValleyOfTheGods/height.json",
+        "Assets/Terrain/ValleyOfTheGods/height.r32"
+      ],
+      "generate": "terrain-tile:dem-plain:11,0",
+      "package_name": "WastelandTerrainCliffOff/WastelandHorizon_castle_5_1.nvpkg",
+      "entry_name": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_5_1.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_0_2.generated",
+      "source_path": "Assets/Terrain/ValleyOfTheGods/horizon.json",
+      "extra_sources": [
+        "Assets/Terrain/ValleyOfTheGods/horizon/castle_0_2.bin",
+        "Library/Core/Public/Rendering/Terrain/TerrainHeightField.h",
+        "Assets/Terrain/ValleyOfTheGods/height.json",
+        "Assets/Terrain/ValleyOfTheGods/height.r32"
+      ],
+      "generate": "terrain-tile:dem-plain:12,0",
+      "package_name": "WastelandTerrainCliffOff/WastelandHorizon_castle_0_2.nvpkg",
+      "entry_name": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_0_2.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_1_2.generated",
+      "source_path": "Assets/Terrain/ValleyOfTheGods/horizon.json",
+      "extra_sources": [
+        "Assets/Terrain/ValleyOfTheGods/horizon/castle_1_2.bin",
+        "Library/Core/Public/Rendering/Terrain/TerrainHeightField.h",
+        "Assets/Terrain/ValleyOfTheGods/height.json",
+        "Assets/Terrain/ValleyOfTheGods/height.r32"
+      ],
+      "generate": "terrain-tile:dem-plain:13,0",
+      "package_name": "WastelandTerrainCliffOff/WastelandHorizon_castle_1_2.nvpkg",
+      "entry_name": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_1_2.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_2_2.generated",
+      "source_path": "Assets/Terrain/ValleyOfTheGods/horizon.json",
+      "extra_sources": [
+        "Assets/Terrain/ValleyOfTheGods/horizon/castle_2_2.bin",
+        "Library/Core/Public/Rendering/Terrain/TerrainHeightField.h",
+        "Assets/Terrain/ValleyOfTheGods/height.json",
+        "Assets/Terrain/ValleyOfTheGods/height.r32"
+      ],
+      "generate": "terrain-tile:dem-plain:14,0",
+      "package_name": "WastelandTerrainCliffOff/WastelandHorizon_castle_2_2.nvpkg",
+      "entry_name": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_2_2.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_3_2.generated",
+      "source_path": "Assets/Terrain/ValleyOfTheGods/horizon.json",
+      "extra_sources": [
+        "Assets/Terrain/ValleyOfTheGods/horizon/castle_3_2.bin",
+        "Library/Core/Public/Rendering/Terrain/TerrainHeightField.h",
+        "Assets/Terrain/ValleyOfTheGods/height.json",
+        "Assets/Terrain/ValleyOfTheGods/height.r32"
+      ],
+      "generate": "terrain-tile:dem-plain:15,0",
+      "package_name": "WastelandTerrainCliffOff/WastelandHorizon_castle_3_2.nvpkg",
+      "entry_name": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_3_2.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_4_2.generated",
+      "source_path": "Assets/Terrain/ValleyOfTheGods/horizon.json",
+      "extra_sources": [
+        "Assets/Terrain/ValleyOfTheGods/horizon/castle_4_2.bin",
+        "Library/Core/Public/Rendering/Terrain/TerrainHeightField.h",
+        "Assets/Terrain/ValleyOfTheGods/height.json",
+        "Assets/Terrain/ValleyOfTheGods/height.r32"
+      ],
+      "generate": "terrain-tile:dem-plain:16,0",
+      "package_name": "WastelandTerrainCliffOff/WastelandHorizon_castle_4_2.nvpkg",
+      "entry_name": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_4_2.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_5_2.generated",
+      "source_path": "Assets/Terrain/ValleyOfTheGods/horizon.json",
+      "extra_sources": [
+        "Assets/Terrain/ValleyOfTheGods/horizon/castle_5_2.bin",
+        "Library/Core/Public/Rendering/Terrain/TerrainHeightField.h",
+        "Assets/Terrain/ValleyOfTheGods/height.json",
+        "Assets/Terrain/ValleyOfTheGods/height.r32"
+      ],
+      "generate": "terrain-tile:dem-plain:17,0",
+      "package_name": "WastelandTerrainCliffOff/WastelandHorizon_castle_5_2.nvpkg",
+      "entry_name": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_5_2.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_0_3.generated",
+      "source_path": "Assets/Terrain/ValleyOfTheGods/horizon.json",
+      "extra_sources": [
+        "Assets/Terrain/ValleyOfTheGods/horizon/castle_0_3.bin",
+        "Library/Core/Public/Rendering/Terrain/TerrainHeightField.h",
+        "Assets/Terrain/ValleyOfTheGods/height.json",
+        "Assets/Terrain/ValleyOfTheGods/height.r32"
+      ],
+      "generate": "terrain-tile:dem-plain:18,0",
+      "package_name": "WastelandTerrainCliffOff/WastelandHorizon_castle_0_3.nvpkg",
+      "entry_name": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_0_3.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_1_3.generated",
+      "source_path": "Assets/Terrain/ValleyOfTheGods/horizon.json",
+      "extra_sources": [
+        "Assets/Terrain/ValleyOfTheGods/horizon/castle_1_3.bin",
+        "Library/Core/Public/Rendering/Terrain/TerrainHeightField.h",
+        "Assets/Terrain/ValleyOfTheGods/height.json",
+        "Assets/Terrain/ValleyOfTheGods/height.r32"
+      ],
+      "generate": "terrain-tile:dem-plain:19,0",
+      "package_name": "WastelandTerrainCliffOff/WastelandHorizon_castle_1_3.nvpkg",
+      "entry_name": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_1_3.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_2_3.generated",
+      "source_path": "Assets/Terrain/ValleyOfTheGods/horizon.json",
+      "extra_sources": [
+        "Assets/Terrain/ValleyOfTheGods/horizon/castle_2_3.bin",
+        "Library/Core/Public/Rendering/Terrain/TerrainHeightField.h",
+        "Assets/Terrain/ValleyOfTheGods/height.json",
+        "Assets/Terrain/ValleyOfTheGods/height.r32"
+      ],
+      "generate": "terrain-tile:dem-plain:20,0",
+      "package_name": "WastelandTerrainCliffOff/WastelandHorizon_castle_2_3.nvpkg",
+      "entry_name": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_2_3.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_3_3.generated",
+      "source_path": "Assets/Terrain/ValleyOfTheGods/horizon.json",
+      "extra_sources": [
+        "Assets/Terrain/ValleyOfTheGods/horizon/castle_3_3.bin",
+        "Library/Core/Public/Rendering/Terrain/TerrainHeightField.h",
+        "Assets/Terrain/ValleyOfTheGods/height.json",
+        "Assets/Terrain/ValleyOfTheGods/height.r32"
+      ],
+      "generate": "terrain-tile:dem-plain:21,0",
+      "package_name": "WastelandTerrainCliffOff/WastelandHorizon_castle_3_3.nvpkg",
+      "entry_name": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_3_3.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_4_3.generated",
+      "source_path": "Assets/Terrain/ValleyOfTheGods/horizon.json",
+      "extra_sources": [
+        "Assets/Terrain/ValleyOfTheGods/horizon/castle_4_3.bin",
+        "Library/Core/Public/Rendering/Terrain/TerrainHeightField.h",
+        "Assets/Terrain/ValleyOfTheGods/height.json",
+        "Assets/Terrain/ValleyOfTheGods/height.r32"
+      ],
+      "generate": "terrain-tile:dem-plain:22,0",
+      "package_name": "WastelandTerrainCliffOff/WastelandHorizon_castle_4_3.nvpkg",
+      "entry_name": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_4_3.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_5_3.generated",
+      "source_path": "Assets/Terrain/ValleyOfTheGods/horizon.json",
+      "extra_sources": [
+        "Assets/Terrain/ValleyOfTheGods/horizon/castle_5_3.bin",
+        "Library/Core/Public/Rendering/Terrain/TerrainHeightField.h",
+        "Assets/Terrain/ValleyOfTheGods/height.json",
+        "Assets/Terrain/ValleyOfTheGods/height.r32"
+      ],
+      "generate": "terrain-tile:dem-plain:23,0",
+      "package_name": "WastelandTerrainCliffOff/WastelandHorizon_castle_5_3.nvpkg",
+      "entry_name": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_5_3.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_0_4.generated",
+      "source_path": "Assets/Terrain/ValleyOfTheGods/horizon.json",
+      "extra_sources": [
+        "Assets/Terrain/ValleyOfTheGods/horizon/castle_0_4.bin",
+        "Library/Core/Public/Rendering/Terrain/TerrainHeightField.h",
+        "Assets/Terrain/ValleyOfTheGods/height.json",
+        "Assets/Terrain/ValleyOfTheGods/height.r32"
+      ],
+      "generate": "terrain-tile:dem-plain:24,0",
+      "package_name": "WastelandTerrainCliffOff/WastelandHorizon_castle_0_4.nvpkg",
+      "entry_name": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_0_4.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_1_4.generated",
+      "source_path": "Assets/Terrain/ValleyOfTheGods/horizon.json",
+      "extra_sources": [
+        "Assets/Terrain/ValleyOfTheGods/horizon/castle_1_4.bin",
+        "Library/Core/Public/Rendering/Terrain/TerrainHeightField.h",
+        "Assets/Terrain/ValleyOfTheGods/height.json",
+        "Assets/Terrain/ValleyOfTheGods/height.r32"
+      ],
+      "generate": "terrain-tile:dem-plain:25,0",
+      "package_name": "WastelandTerrainCliffOff/WastelandHorizon_castle_1_4.nvpkg",
+      "entry_name": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_1_4.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_2_4.generated",
+      "source_path": "Assets/Terrain/ValleyOfTheGods/horizon.json",
+      "extra_sources": [
+        "Assets/Terrain/ValleyOfTheGods/horizon/castle_2_4.bin",
+        "Library/Core/Public/Rendering/Terrain/TerrainHeightField.h",
+        "Assets/Terrain/ValleyOfTheGods/height.json",
+        "Assets/Terrain/ValleyOfTheGods/height.r32"
+      ],
+      "generate": "terrain-tile:dem-plain:26,0",
+      "package_name": "WastelandTerrainCliffOff/WastelandHorizon_castle_2_4.nvpkg",
+      "entry_name": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_2_4.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_3_4.generated",
+      "source_path": "Assets/Terrain/ValleyOfTheGods/horizon.json",
+      "extra_sources": [
+        "Assets/Terrain/ValleyOfTheGods/horizon/castle_3_4.bin",
+        "Library/Core/Public/Rendering/Terrain/TerrainHeightField.h",
+        "Assets/Terrain/ValleyOfTheGods/height.json",
+        "Assets/Terrain/ValleyOfTheGods/height.r32"
+      ],
+      "generate": "terrain-tile:dem-plain:27,0",
+      "package_name": "WastelandTerrainCliffOff/WastelandHorizon_castle_3_4.nvpkg",
+      "entry_name": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_3_4.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_4_4.generated",
+      "source_path": "Assets/Terrain/ValleyOfTheGods/horizon.json",
+      "extra_sources": [
+        "Assets/Terrain/ValleyOfTheGods/horizon/castle_4_4.bin",
+        "Library/Core/Public/Rendering/Terrain/TerrainHeightField.h",
+        "Assets/Terrain/ValleyOfTheGods/height.json",
+        "Assets/Terrain/ValleyOfTheGods/height.r32"
+      ],
+      "generate": "terrain-tile:dem-plain:28,0",
+      "package_name": "WastelandTerrainCliffOff/WastelandHorizon_castle_4_4.nvpkg",
+      "entry_name": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_4_4.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_5_4.generated",
+      "source_path": "Assets/Terrain/ValleyOfTheGods/horizon.json",
+      "extra_sources": [
+        "Assets/Terrain/ValleyOfTheGods/horizon/castle_5_4.bin",
+        "Library/Core/Public/Rendering/Terrain/TerrainHeightField.h",
+        "Assets/Terrain/ValleyOfTheGods/height.json",
+        "Assets/Terrain/ValleyOfTheGods/height.r32"
+      ],
+      "generate": "terrain-tile:dem-plain:29,0",
+      "package_name": "WastelandTerrainCliffOff/WastelandHorizon_castle_5_4.nvpkg",
+      "entry_name": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_5_4.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_0_5.generated",
+      "source_path": "Assets/Terrain/ValleyOfTheGods/horizon.json",
+      "extra_sources": [
+        "Assets/Terrain/ValleyOfTheGods/horizon/castle_0_5.bin",
+        "Library/Core/Public/Rendering/Terrain/TerrainHeightField.h",
+        "Assets/Terrain/ValleyOfTheGods/height.json",
+        "Assets/Terrain/ValleyOfTheGods/height.r32"
+      ],
+      "generate": "terrain-tile:dem-plain:30,0",
+      "package_name": "WastelandTerrainCliffOff/WastelandHorizon_castle_0_5.nvpkg",
+      "entry_name": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_0_5.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_1_5.generated",
+      "source_path": "Assets/Terrain/ValleyOfTheGods/horizon.json",
+      "extra_sources": [
+        "Assets/Terrain/ValleyOfTheGods/horizon/castle_1_5.bin",
+        "Library/Core/Public/Rendering/Terrain/TerrainHeightField.h",
+        "Assets/Terrain/ValleyOfTheGods/height.json",
+        "Assets/Terrain/ValleyOfTheGods/height.r32"
+      ],
+      "generate": "terrain-tile:dem-plain:31,0",
+      "package_name": "WastelandTerrainCliffOff/WastelandHorizon_castle_1_5.nvpkg",
+      "entry_name": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_1_5.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_2_5.generated",
+      "source_path": "Assets/Terrain/ValleyOfTheGods/horizon.json",
+      "extra_sources": [
+        "Assets/Terrain/ValleyOfTheGods/horizon/castle_2_5.bin",
+        "Library/Core/Public/Rendering/Terrain/TerrainHeightField.h",
+        "Assets/Terrain/ValleyOfTheGods/height.json",
+        "Assets/Terrain/ValleyOfTheGods/height.r32"
+      ],
+      "generate": "terrain-tile:dem-plain:32,0",
+      "package_name": "WastelandTerrainCliffOff/WastelandHorizon_castle_2_5.nvpkg",
+      "entry_name": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_2_5.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_3_5.generated",
+      "source_path": "Assets/Terrain/ValleyOfTheGods/horizon.json",
+      "extra_sources": [
+        "Assets/Terrain/ValleyOfTheGods/horizon/castle_3_5.bin",
+        "Library/Core/Public/Rendering/Terrain/TerrainHeightField.h",
+        "Assets/Terrain/ValleyOfTheGods/height.json",
+        "Assets/Terrain/ValleyOfTheGods/height.r32"
+      ],
+      "generate": "terrain-tile:dem-plain:33,0",
+      "package_name": "WastelandTerrainCliffOff/WastelandHorizon_castle_3_5.nvpkg",
+      "entry_name": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_3_5.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_4_5.generated",
+      "source_path": "Assets/Terrain/ValleyOfTheGods/horizon.json",
+      "extra_sources": [
+        "Assets/Terrain/ValleyOfTheGods/horizon/castle_4_5.bin",
+        "Library/Core/Public/Rendering/Terrain/TerrainHeightField.h",
+        "Assets/Terrain/ValleyOfTheGods/height.json",
+        "Assets/Terrain/ValleyOfTheGods/height.r32"
+      ],
+      "generate": "terrain-tile:dem-plain:34,0",
+      "package_name": "WastelandTerrainCliffOff/WastelandHorizon_castle_4_5.nvpkg",
+      "entry_name": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_4_5.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_5_5.generated",
+      "source_path": "Assets/Terrain/ValleyOfTheGods/horizon.json",
+      "extra_sources": [
+        "Assets/Terrain/ValleyOfTheGods/horizon/castle_5_5.bin",
+        "Library/Core/Public/Rendering/Terrain/TerrainHeightField.h",
+        "Assets/Terrain/ValleyOfTheGods/height.json",
+        "Assets/Terrain/ValleyOfTheGods/height.r32"
+      ],
+      "generate": "terrain-tile:dem-plain:35,0",
+      "package_name": "WastelandTerrainCliffOff/WastelandHorizon_castle_5_5.nvpkg",
+      "entry_name": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_5_5.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_0_6.generated",
+      "source_path": "Assets/Terrain/ValleyOfTheGods/horizon.json",
+      "extra_sources": [
+        "Assets/Terrain/ValleyOfTheGods/horizon/castle_0_6.bin",
+        "Library/Core/Public/Rendering/Terrain/TerrainHeightField.h",
+        "Assets/Terrain/ValleyOfTheGods/height.json",
+        "Assets/Terrain/ValleyOfTheGods/height.r32"
+      ],
+      "generate": "terrain-tile:dem-plain:36,0",
+      "package_name": "WastelandTerrainCliffOff/WastelandHorizon_castle_0_6.nvpkg",
+      "entry_name": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_0_6.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_1_6.generated",
+      "source_path": "Assets/Terrain/ValleyOfTheGods/horizon.json",
+      "extra_sources": [
+        "Assets/Terrain/ValleyOfTheGods/horizon/castle_1_6.bin",
+        "Library/Core/Public/Rendering/Terrain/TerrainHeightField.h",
+        "Assets/Terrain/ValleyOfTheGods/height.json",
+        "Assets/Terrain/ValleyOfTheGods/height.r32"
+      ],
+      "generate": "terrain-tile:dem-plain:37,0",
+      "package_name": "WastelandTerrainCliffOff/WastelandHorizon_castle_1_6.nvpkg",
+      "entry_name": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_1_6.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_2_6.generated",
+      "source_path": "Assets/Terrain/ValleyOfTheGods/horizon.json",
+      "extra_sources": [
+        "Assets/Terrain/ValleyOfTheGods/horizon/castle_2_6.bin",
+        "Library/Core/Public/Rendering/Terrain/TerrainHeightField.h",
+        "Assets/Terrain/ValleyOfTheGods/height.json",
+        "Assets/Terrain/ValleyOfTheGods/height.r32"
+      ],
+      "generate": "terrain-tile:dem-plain:38,0",
+      "package_name": "WastelandTerrainCliffOff/WastelandHorizon_castle_2_6.nvpkg",
+      "entry_name": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_2_6.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_3_6.generated",
+      "source_path": "Assets/Terrain/ValleyOfTheGods/horizon.json",
+      "extra_sources": [
+        "Assets/Terrain/ValleyOfTheGods/horizon/castle_3_6.bin",
+        "Library/Core/Public/Rendering/Terrain/TerrainHeightField.h",
+        "Assets/Terrain/ValleyOfTheGods/height.json",
+        "Assets/Terrain/ValleyOfTheGods/height.r32"
+      ],
+      "generate": "terrain-tile:dem-plain:39,0",
+      "package_name": "WastelandTerrainCliffOff/WastelandHorizon_castle_3_6.nvpkg",
+      "entry_name": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_3_6.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_4_6.generated",
+      "source_path": "Assets/Terrain/ValleyOfTheGods/horizon.json",
+      "extra_sources": [
+        "Assets/Terrain/ValleyOfTheGods/horizon/castle_4_6.bin",
+        "Library/Core/Public/Rendering/Terrain/TerrainHeightField.h",
+        "Assets/Terrain/ValleyOfTheGods/height.json",
+        "Assets/Terrain/ValleyOfTheGods/height.r32"
+      ],
+      "generate": "terrain-tile:dem-plain:40,0",
+      "package_name": "WastelandTerrainCliffOff/WastelandHorizon_castle_4_6.nvpkg",
+      "entry_name": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_4_6.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_5_6.generated",
+      "source_path": "Assets/Terrain/ValleyOfTheGods/horizon.json",
+      "extra_sources": [
+        "Assets/Terrain/ValleyOfTheGods/horizon/castle_5_6.bin",
+        "Library/Core/Public/Rendering/Terrain/TerrainHeightField.h",
+        "Assets/Terrain/ValleyOfTheGods/height.json",
+        "Assets/Terrain/ValleyOfTheGods/height.r32"
+      ],
+      "generate": "terrain-tile:dem-plain:41,0",
+      "package_name": "WastelandTerrainCliffOff/WastelandHorizon_castle_5_6.nvpkg",
+      "entry_name": "Assets/Models/WastelandTerrainCliffOff/WastelandHorizon_castle_5_6.nvmesh"
+    }
+  ]
+}

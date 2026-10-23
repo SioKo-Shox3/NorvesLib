@@ -6704,6 +6704,10 @@ def main():
                              f"{LIT_CROP_DIR} の切り出しの参照で判定する")
     parser.add_argument("--views", default="", help="検査する視点（カンマ区切り。省くと metrics.json の全視点）")
     parser.add_argument("--sets", default="", help="--occlusion: 判定する組（カンマ区切り。省くと参照の置き場の全組）")
+    parser.add_argument("--shape-cause", action="store_true",
+                        help="地形の形の切り分けの 3 組（通常の LOD・最も細かい LOD・崖の変形なし）を深度と幾何の法線で測る"
+                             "（ShapeCause.py）")
+    parser.add_argument("--capture-root", default="", help="--shape-cause: 3 組の撮影の置き場")
     parser.add_argument("--verify", action="store_true", help="入力のハッシュを今のファイルと照らし、古い結果を拒否する")
     args = parser.parse_args()
     if args.expect_selftest:
@@ -6747,6 +6751,12 @@ def main():
         views = [v.strip() for v in args.views.split(",") if v.strip()]
         return RtgiBounce.run(sys.modules[__name__], [absolute(d) for d in args.engine],
                               absolute(args.reference) if args.reference else "", views, args.verify, expect)
+    if args.shape_cause:
+        import ShapeCause
+        root = args.capture_root
+        return ShapeCause.run(sys.modules[__name__],
+                              os.path.normpath(root if os.path.isabs(root) else os.path.join(REPO_ROOT, root)) if root else "",
+                              args.verify)
     if args.light_final:
         import LightFinal
         root = args.engine_root

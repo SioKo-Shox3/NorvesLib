@@ -792,10 +792,35 @@ namespace Game::GameModes
             return String(TerrainSpec::kDemCookedMeshLogicalPathPrefix) + suffix;
         }
 
+        /// 崖の細部を焼かなかった区画（--wasteland-cliff-detail=off）の論理パスの置き場と、差し替える元の置き場（近景と遠景の
+        /// 論理パスの頭 kDemCookedMeshLogicalPathPrefix・kHorizonCookedMeshLogicalPathPrefix のフォルダ）。
+        /// Scripts/Terrain/WriteTerrainAssetSet.py が Assets/AssetSets/WastelandTerrainCliffOff.json に書く
+        constexpr const char *kCliffDetailOffModelDirectory = "Assets/Models/WastelandTerrainCliffOff/";
+        constexpr const char *kTerrainModelDirectory = "Assets/Models/WastelandTerrain/";
+
+        /// 区画の論理パスを、崖の細部を焼かなかった版に差し替える。その版のクック済みが無い区画（崖の細部の範囲の外）は
+        /// 元のまま。差し替えたら true
+        bool SwapToCliffDetailOff(const Asset::AssetSystem &assetSystem, String &path)
+        {
+            const AnsiString logical(path.c_str());
+            const AnsiString directory(kTerrainModelDirectory);
+            if (logical.find(directory) != 0)
+            {
+                return false;
+            }
+            const AnsiString swapped = AnsiString(kCliffDetailOffModelDirectory) + logical.substr(directory.size());
+            if (!assetSystem.FindCookedVariant(swapped, Asset::AssetKind::Model).ShouldUseCooked())
+            {
+                return false;
+            }
+            path = String(swapped.c_str());
+            return true;
+        }
+
         /// 格子の並びから DEM の全区画の論理パスを並べ、どれもクック済みがあるかを確かめる（中身はまだ読まない）。
-        /// 1 つでも無いときは理由を出して false
+        /// 1 つでも無いときは理由を出して false。bCliffDetailOff なら、崖の細部を焼かなかった版がある区画をそちらに替える
         bool CollectTerrainTiles(const Asset::AssetSystem &assetSystem, const Terrain::TerrainGridLayout &layout,
-                                 WastelandAssembly &assembly)
+                                 WastelandAssembly &assembly, bool bCliffDetailOff)
         {
             const uint32_t tilesX = TerrainSpec::DemTileCount(layout.Columns);
             const uint32_t tilesZ = TerrainSpec::DemTileCount(layout.Rows);
@@ -849,6 +874,15 @@ namespace Game::GameModes
                 assembly.TilePaths.push_back(std::move(path));
             }
             LOG_INFO_F("WASTELAND_HORIZON_MESHES count=%zu", horizonMeshes.size());
+            if (bCliffDetailOff)
+            {
+                uint32_t swapped = 0;
+                for (String &path : assembly.TilePaths)
+                {
+                    swapped += SwapToCliffDetailOff(assetSystem, path) ? 1u : 0u;
+                }
+                LOG_INFO_F("WASTELAND_CLIFF_DETAIL_OFF swapped=%u tiles=%zu", swapped, assembly.TilePaths.size());
+            }
             return true;
         }
 
@@ -1978,7 +2012,7 @@ namespace Game::GameModes
                 assembly->TalusCenterX = pose.Position[0];
                 assembly->TalusCenterZ = pose.Position[2];
             }
-            if (CollectTerrainTiles(*assetSystem, data.m_pHeightField->GetGridLayout(), *assembly))
+            if (CollectTerrainTiles(*assetSystem, data.m_pHeightField->GetGridLayout(), *assembly, data.m_bCliffDetailOff))
             {
                 assembly->Material.DebugName = "WastelandTerrain";
                 MegaTerrainBlend &blend = assembly->TerrainBlend;

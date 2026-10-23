@@ -3388,7 +3388,8 @@ namespace NorvesLib::Tools::AssetCook
         // 開いた外周（区画の境・縫い目の帯の両端・DEM の外の縁）の頂点は階層のどの段でも動かさない
         bool CookTerrainHorizonMeshInternal(const uint8_t* inputBytes, size_t inputSize, uint32_t meshIndex,
                                             uint32_t tileZ, MeshCookResult& outResult, AnsiString& error,
-                                            uint32_t fallbackMinTriangles, uint32_t dagRootMaxClusters)
+                                            uint32_t fallbackMinTriangles, uint32_t dagRootMaxClusters,
+                                            bool bAllowCliffDetail)
         {
             namespace Terrain = NorvesLib::Core::Rendering::Terrain;
             namespace Spec = NorvesLib::Core::Rendering::Terrain::WastelandTerrain;
@@ -3507,7 +3508,7 @@ namespace NorvesLib::Tools::AssetCook
             // castle の段の区画が崖の細部を焼く範囲（TerrainCliffDetail.cpp の遠景の範囲）に掛かれば、急な升目を細分して
             // 地層の凹凸を押し出す。区画の境の点が隣の区画と同じになるよう、格子は castle の段のメッシュをすべて並べて作る
             bool bCliffDetail = false;
-            if (IsHorizonCliffLevelMesh(entry.Name))
+            if (bAllowCliffDetail && IsHorizonCliffLevelMesh(entry.Name))
             {
                 TerrainCliffHorizonGrid grid;
                 VariableArray<float> levelHeights;
@@ -3574,7 +3575,8 @@ namespace NorvesLib::Tools::AssetCook
         // 入力が遠景の地形の記述なら、(x, 0) は遠景の x 番目のメッシュ（CookTerrainHorizonMeshInternal）
         bool CookTerrainDemTileInternal(const uint8_t* inputBytes, size_t inputSize, uint32_t tileX, uint32_t tileZ,
                                         AnsiStringView format, AnsiStringView logicalPath, MeshCookResult& outResult,
-                                        AnsiString& error, uint32_t fallbackMinTriangles, uint32_t dagRootMaxClusters)
+                                        AnsiString& error, uint32_t fallbackMinTriangles, uint32_t dagRootMaxClusters,
+                                        bool bAllowCliffDetail)
         {
             namespace Spec = NorvesLib::Core::Rendering::Terrain::WastelandTerrain;
 
@@ -3591,7 +3593,7 @@ namespace NorvesLib::Tools::AssetCook
             if (IsTerrainHorizonDescriptor(inputBytes, inputSize))
             {
                 return CookTerrainHorizonMeshInternal(inputBytes, inputSize, tileX, tileZ, outResult, error,
-                                                      fallbackMinTriangles, dagRootMaxClusters);
+                                                      fallbackMinTriangles, dagRootMaxClusters, bAllowCliffDetail);
             }
 
             DemTerrainSource source;
@@ -3601,14 +3603,15 @@ namespace NorvesLib::Tools::AssetCook
             }
             VariableArray<MeshVertexPnt> vertices;
             VariableArray<uint32_t> indices;
-            // 崖の細部を焼く範囲（TerrainCliffDetail.cpp の近景の範囲）に掛かる区画は、急な升目を細分して地層の凹凸を押し出す
+            // 崖の細部を焼く範囲（TerrainCliffDetail.cpp の近景の範囲）に掛かる区画は、急な升目を細分して地層の凹凸を押し出す。
+            // bAllowCliffDetail が偽（terrain-tile:dem-plain）なら、どの区画も DEM の格子のまま焼く
             uint32_t firstColumn = 0;
             uint32_t cellsX = 0;
             uint32_t firstRow = 0;
             uint32_t cellsZ = 0;
             Spec::DemTileCellRange(tileX, source.Layout.Columns, firstColumn, cellsX);
             Spec::DemTileCellRange(tileZ, source.Layout.Rows, firstRow, cellsZ);
-            const bool bCliffDetail = cellsX != 0 && cellsZ != 0 &&
+            const bool bCliffDetail = bAllowCliffDetail && cellsX != 0 && cellsZ != 0 &&
                                       TerrainCliffTileIntersects(source.Layout, firstColumn, cellsX, firstRow, cellsZ);
             if (bCliffDetail)
             {
@@ -4442,6 +4445,14 @@ namespace NorvesLib::Tools::AssetCook
                                      uint32_t& outTileZ, bool& outDem)
     {
         namespace Spec = NorvesLib::Core::Rendering::Terrain::WastelandTerrain;
+        if (IsTerrainTileCliffDetailOffGenerate(generate))
+        {
+            // "dem-plain:" は崖の細部を焼かない DEM の区画（番号の形は "dem:" と同じ）
+            const AnsiStringView plainPrefix("terrain-tile:dem-plain:");
+            const AnsiString demGenerate =
+                AnsiString("terrain-tile:dem:") + AnsiString(generate.substr(plainPrefix.size()));
+            return TryParseTerrainTileGenerate(AnsiStringView(demGenerate), outTileX, outTileZ, outDem);
+        }
         const AnsiStringView prefix("terrain-tile:");
         if (generate.size() <= prefix.size() || generate.substr(0, prefix.size()) != prefix)
         {
@@ -4477,6 +4488,12 @@ namespace NorvesLib::Tools::AssetCook
         return true;
     }
 
+    bool IsTerrainTileCliffDetailOffGenerate(NorvesLib::Core::Container::AnsiStringView generate)
+    {
+        const AnsiStringView prefix("terrain-tile:dem-plain:");
+        return generate.size() > prefix.size() && generate.substr(0, prefix.size()) == prefix;
+    }
+
     bool CookTerrainTileToNvmesh(uint32_t tileX, uint32_t tileZ, NorvesLib::Core::Container::AnsiStringView format,
                                  NorvesLib::Core::Container::AnsiStringView logicalPath, MeshCookResult& outResult,
                                  NorvesLib::Core::Container::AnsiString& error, uint32_t fallbackMinTriangles,
@@ -4496,11 +4513,11 @@ namespace NorvesLib::Tools::AssetCook
                                     NorvesLib::Core::Container::AnsiStringView format,
                                     NorvesLib::Core::Container::AnsiStringView logicalPath, MeshCookResult& outResult,
                                     NorvesLib::Core::Container::AnsiString& error, uint32_t fallbackMinTriangles,
-                                    uint32_t dagRootMaxClusters)
+                                    uint32_t dagRootMaxClusters, bool bAllowCliffDetail)
     {
         AnsiString internalError;
         if (!CookTerrainDemTileInternal(inputBytes, inputSize, tileX, tileZ, format, logicalPath, outResult,
-                                        internalError, fallbackMinTriangles, dagRootMaxClusters))
+                                        internalError, fallbackMinTriangles, dagRootMaxClusters, bAllowCliffDetail))
         {
             error = internalError;
             return false;

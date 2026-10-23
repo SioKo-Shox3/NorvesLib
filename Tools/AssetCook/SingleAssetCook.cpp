@@ -742,7 +742,9 @@ namespace NorvesLib::Tools::AssetCook
                 : bTerrainTile && bTerrainDem
                     ? CookTerrainDemTileToNvmesh(inputBytes.data(), inputBytes.size(), terrainTileX, terrainTileZ,
                                                  options.Format, logicalPath, meshResult, meshError,
-                                                 options.FallbackMinTriangles, options.DagRootMaxClusters)
+                                                 options.FallbackMinTriangles, options.DagRootMaxClusters,
+                                                 !IsTerrainTileCliffDetailOffGenerate(
+                                                     NorvesLib::Core::Container::AnsiStringView(options.Generate)))
                 : bTerrainTile
                     ? CookTerrainTileToNvmesh(terrainTileX, terrainTileZ, options.Format, logicalPath, meshResult,
                                               meshError, options.FallbackMinTriangles, options.DagRootMaxClusters)

@@ -280,6 +280,11 @@ namespace Game
         constexpr const char *kFinestLodClusterCapacity = "8388608";
         constexpr const TCHAR *kWastelandExportTerrainOption = TEXT("--wasteland-export-terrain=");
         bool s_bWastelandFinestLod = false;
+        // --wasteland-cliff-detail=off: 地形の形の切り分けの撮り比べのため、崖の細部（Tools/AssetCook/TerrainCliffDetail.cpp の
+        // 細分と押し出し）を焼かなかった区画（Assets/AssetSets/WastelandTerrainCliffOff.json）に差し替える（開発ビルドだけ）。
+        // =on は既定と同じ
+        constexpr const TCHAR *kWastelandCliffDetailOption = TEXT("--wasteland-cliff-detail=");
+        bool s_bWastelandCliffDetailOff = false;
         String s_WastelandExportTerrainDir;
         // --capture-png のパスのフォルダ（開発ビルドだけ）。低木 1 株の撮影（--wasteland-hide=all-but-plant）が比べる株のメッシュを
         // そこへ書く（Game/GameModes/Wasteland/WastelandMode.h の m_CaptureDirectory）
@@ -749,6 +754,7 @@ namespace Game
         s_DisplayCheckMode = DisplayCheckMode::None;
         s_WastelandCommonLight = Game::GameModes::WastelandCommonLight::Options{};
         s_bWastelandFinestLod = false;
+        s_bWastelandCliffDetailOff = false;
         s_WastelandExportTerrainDir.clear();
         s_WastelandCaptureDir.clear();
         s_WastelandAntiAliasing = Game::GameModes::WastelandAntiAliasing::Default;
@@ -1531,6 +1537,20 @@ namespace Game
                 _putenv_s("NORVES_MEGA_MAX_DRAW_COUNT", kFinestLodClusterCapacity);
 #else
                 LOG_WARNING("--wasteland-finest-lod は開発ビルドだけで使えます。無視します");
+#endif
+                continue;
+            }
+            if (TryStripPrefix(args[i], kWastelandCliffDetailOption, sceneValue))
+            {
+                if (sceneValue != TEXT("off") && sceneValue != TEXT("on"))
+                {
+                    LOG_ERROR("--wasteland-cliff-detail には off か on を指定してください");
+                    return false;
+                }
+#if NORVES_BUILD_DEVELOPMENT
+                s_bWastelandCliffDetailOff = sceneValue == TEXT("off");
+#else
+                LOG_WARNING("--wasteland-cliff-detail は開発ビルドだけで使えます。無視します");
 #endif
                 continue;
             }
@@ -3886,6 +3906,7 @@ namespace Game
                 mode->GetData().m_CommonLight.Opts = s_WastelandCommonLight;
                 mode->GetData().m_HideMask = s_WastelandHideMask;
                 mode->GetData().m_bFinestLod = s_bWastelandFinestLod;
+                mode->GetData().m_bCliffDetailOff = s_bWastelandCliffDetailOff;
                 mode->GetData().m_TerrainExportDir = s_WastelandExportTerrainDir;
                 mode->GetData().m_CaptureDirectory = s_WastelandCaptureDir;
                 mode->GetData().m_AntiAliasing = s_WastelandAntiAliasing;

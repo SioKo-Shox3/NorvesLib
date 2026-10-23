@@ -11,6 +11,10 @@
 # 遠景のメッシュ（Scripts/Terrain/HorizonDem.py の horizon.json）の項目も書く。遠景の項目は source_path が遠景の記述で、
 # generate の terrain-tile:dem:<n>,0 が記述の n 番目のメッシュを表す（extra_sources はメッシュのファイル・ヘッダと、
 # 縫い目の法線を引く近景の格子）。遠景を作り直したら --write で書き直す。
+# 崖の細部を切った撮り比べの一覧 Assets/AssetSets/WastelandTerrainCliffOff.json も書く・確かめる。崖の細部
+# （Tools/AssetCook/TerrainCliffDetail.cpp）を焼く範囲に掛かる近景の区画と遠景の castle の段のメッシュだけを、
+# generate を terrain-tile:dem-plain:<x>,<z> にして論理パスの置き場 Assets/Models/WastelandTerrainCliffOff/ へ焼く。
+# Game は --wasteland-cliff-detail=off のときだけ、この置き場にクック済みがある区画をこちらに差し替える。
 # 終了コード: --write は書けたら 0、--verify は一致すれば 0・違えば 1。
 import argparse
 import json
@@ -23,6 +27,18 @@ HEADER_PATH = "Library/Core/Public/Rendering/Terrain/TerrainHeightField.h"
 ASSET_SET_PATH = "Assets/AssetSets/WastelandTerrain.json"
 DEM_GENERATE = re.compile(r"^terrain-tile:dem:(\d+),(\d+)$")
 HORIZON_DESCRIPTOR_PATH = "Assets/Terrain/ValleyOfTheGods/horizon.json"
+CLIFF_OFF_ASSET_SET_PATH = "Assets/AssetSets/WastelandTerrainCliffOff.json"
+CLIFF_OFF_MODEL_DIR = "Assets/Models/WastelandTerrainCliffOff/"
+# Tools/AssetCook/TerrainCliffDetail.cpp の kNearRegions（エンジンの m: MinX, MaxX, MinZ, MaxZ）と窓の余白
+# （(kWindowMargin + 1) 升目）。範囲を変えたらここも合わせる（ずれると差し替えの漏れた区画に崖の細部が残る）
+CLIFF_NEAR_REGIONS = [
+    (-2150.0, -900.0, -1650.0, -420.0),
+    (-760.0, -240.0, -660.0, -140.0),
+    (640.0, 1160.0, 560.0, 1160.0),
+    (960.0, 1460.0, 1140.0, 1960.0),
+]
+CLIFF_WINDOW_MARGIN_CELLS = 4
+CLIFF_HORIZON_LEVEL_PREFIX = "castle_"
 
 
 def read_text(relative_path):
@@ -103,6 +119,44 @@ def horizon_entries():
     return entries, summary
 
 
+def cliff_off_entries(dem, horizon):
+    # 崖の細部を焼く範囲に掛かる近景の区画（TerrainCliffTileIntersects と同じ判定）と、遠景の castle の段の全メッシュ
+    grid = json.loads(read_text(dem[0]["source_path"]))
+    header = read_text(HEADER_PATH)
+    tile_cells = int(header_value(header, "kDemTileCells", r"(\d+)u"))
+    spacing = float(grid["vertex_spacing_m"])
+    first_x = float(grid["first_vertex_engine"]["x"])
+    first_z = float(grid["first_vertex_engine"]["z"])
+    cells_x = int(grid["width"]) - 1
+    cells_z = int(grid["height"]) - 1
+    margin = CLIFF_WINDOW_MARGIN_CELLS * spacing
+    picked = []
+    for entry in dem:
+        tile_x, tile_z = (int(value) for value in DEM_GENERATE.match(entry["generate"]).groups())
+        x0 = tile_x * tile_cells
+        z0 = tile_z * tile_cells
+        min_x = first_x + x0 * spacing
+        max_x = first_x + min(x0 + tile_cells, cells_x) * spacing
+        min_z = first_z + z0 * spacing
+        max_z = first_z + min(z0 + tile_cells, cells_z) * spacing
+        if any(max_x >= rx0 - margin and min_x <= rx1 + margin and max_z >= rz0 - margin and min_z <= rz1 + margin
+               for rx0, rx1, rz0, rz1 in CLIFF_NEAR_REGIONS):
+            picked.append(entry)
+    picked += [entry for entry in horizon
+               if entry["logical_path"].split("/")[-1].startswith("WastelandHorizon_" + CLIFF_HORIZON_LEVEL_PREFIX)]
+    models = []
+    for entry in picked:
+        name = entry["logical_path"].split("/")[-1].rsplit(".", 1)[0]
+        model = dict(entry)
+        model["logical_path"] = f"{CLIFF_OFF_MODEL_DIR}{name}.generated"
+        model["generate"] = entry["generate"].replace("terrain-tile:dem:", "terrain-tile:dem-plain:")
+        model["package_name"] = f"WastelandTerrainCliffOff/{name}.nvpkg"
+        model["entry_name"] = f"{CLIFF_OFF_MODEL_DIR}{name}.nvmesh"
+        models.append(model)
+    return {"version": 1, "name": "WastelandTerrainCliffOff", "package_root": "Cooked/WastelandTerrainCliffOff",
+            "default_variant": "default", "cook_assets": True, "textures": [], "models": models}
+
+
 def is_horizon_entry(model):
     return isinstance(model, dict) and model.get("source_path") == HORIZON_DESCRIPTOR_PATH
 
@@ -134,6 +188,10 @@ def main():
         with open(os.path.join(REPO_ROOT, ASSET_SET_PATH), "w", encoding="utf-8", newline="\r\n") as file:
             file.write(text)
         print(f"wrote {ASSET_SET_PATH} dem_entries={len(entries)} horizon_entries={len(horizon)} other_models={len(kept)}")
+        cliff_off = cliff_off_entries(entries, horizon)
+        with open(os.path.join(REPO_ROOT, CLIFF_OFF_ASSET_SET_PATH), "w", encoding="utf-8", newline="\r\n") as file:
+            file.write(json.dumps(cliff_off, ensure_ascii=False, indent=2) + "\n")
+        print(f"wrote {CLIFF_OFF_ASSET_SET_PATH} models={len(cliff_off['models'])}")
         return 0
 
     failures = []
@@ -145,6 +203,9 @@ def main():
         for index, (got, want) in enumerate(zip(got_entries, want_entries)):
             if got != want:
                 failures.append(f"{label} の項目 {index} が違います: 一覧 {got.get('logical_path')}・期待 {want['logical_path']}")
+    cliff_off_path = os.path.join(REPO_ROOT, CLIFF_OFF_ASSET_SET_PATH)
+    if not os.path.exists(cliff_off_path) or json.loads(read_text(CLIFF_OFF_ASSET_SET_PATH)) != cliff_off_entries(entries, horizon):
+        failures.append(f"{CLIFF_OFF_ASSET_SET_PATH} が今の格子と遠景から求めたものと違います（--write で書き直す）")
     for failure in failures[:20]:
         print("FAIL " + failure)
     print(f"dem_entries={len(actual)} expected={len(entries)} horizon_entries={len(actual_horizon)} "
