@@ -274,6 +274,9 @@ namespace NorvesLib::Core::Rendering
         /** @brief GetFrameCloudProbeTexture の評価に使った値（書いていないフレームは bValid が false） */
         const FrameCaptureCloudInfo& GetFrameCloudInfo() const { return m_FrameCloudInfo; }
 
+        /** @brief このフレームに CloudProbePass が書いた全画素の雲の不透明度の画像（--wasteland-cloud-opacity）。書いていなければ空 */
+        const RHI::TexturePtr& GetFrameCloudOpacityTexture() const { return m_FrameCloudOpacityTexture; }
+
         // ========================================
         // 設定
         // ========================================
@@ -328,6 +331,7 @@ namespace NorvesLib::Core::Rendering
         FrameCaptureAtmosphereInfo m_FrameAtmosphereInfo;
         RHI::TexturePtr m_FrameCloudProbeTexture;
         FrameCaptureCloudInfo m_FrameCloudInfo;
+        RHI::TexturePtr m_FrameCloudOpacityTexture;
         FrameCaptureDisplayInfo m_FrameSceneColorDisplay;
 
         // 設定

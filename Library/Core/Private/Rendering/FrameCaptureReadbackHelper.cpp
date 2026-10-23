@@ -42,6 +42,8 @@ namespace NorvesLib::Core::Rendering
         m_PendingClouds = PendingCloudReadback{};
         m_CloudReadbackSlots.clear();
         m_CloudReadbackSlots.resize(frameSlotCount);
+        m_CloudOpacityReadbackSlots.clear();
+        m_CloudOpacityReadbackSlots.resize(frameSlotCount);
         return true;
     }
 
@@ -67,6 +69,7 @@ namespace NorvesLib::Core::Rendering
         m_AtmosphereReadbackSlots.clear();
         m_PendingClouds = PendingCloudReadback{};
         m_CloudReadbackSlots.clear();
+        m_CloudOpacityReadbackSlots.clear();
     }
 
     FrameCaptureRequestResult FrameCaptureReadbackHelper::RequestFrameCapture()
@@ -334,6 +337,21 @@ namespace NorvesLib::Core::Rendering
             }
             cloudReadback.Info = sources.CloudInfo;
             cloudReadback.bRecorded = true;
+            // 全画素の雲の不透明度の画像も書いたフレームなら、同じフレームの 1 枚を写せることを先に確かめる
+            if (sources.CloudInfo.bOpacity)
+            {
+                FrameCaptureResultStatus opacityStatus = FrameCaptureResultStatus::SourceUnavailable;
+                if (sources.CloudOpacity.FrameNumber != source->FrameNumber ||
+                    !TryPrepareImageReadback(sources.CloudOpacity,
+                                             m_CloudOpacityReadbackSlots[frameSlotIndex],
+                                             cloudReadback.OpacityImage,
+                                             opacityStatus))
+                {
+                    PublishFailure(opacityStatus, source->FrameNumber);
+                    return FrameCaptureRecordStatus::PublishedFailure;
+                }
+                cloudReadback.bOpacityRecorded = true;
+            }
         }
 
         ReadbackSlot& slot = m_ReadbackSlots[frameSlotIndex];
@@ -396,6 +414,17 @@ namespace NorvesLib::Core::Rendering
                                              cloudReadback.Image.Height,
                                              0);
             commandList->TextureBarrier(cloudSource.Texture, RHI::ResourceState::CopySource, cloudSource.RestoreState);
+        }
+        if (cloudReadback.bOpacityRecorded)
+        {
+            const FrameCaptureSource& opacitySource = sources.CloudOpacity;
+            commandList->TextureBarrier(opacitySource.Texture, opacitySource.CurrentState, RHI::ResourceState::CopySource);
+            commandList->CopyTextureToBuffer(opacitySource.Texture,
+                                             m_CloudOpacityReadbackSlots[frameSlotIndex].Buffer,
+                                             cloudReadback.OpacityImage.Width,
+                                             cloudReadback.OpacityImage.Height,
+                                             0);
+            commandList->TextureBarrier(opacitySource.Texture, RHI::ResourceState::CopySource, opacitySource.RestoreState);
         }
         m_PendingClouds = cloudReadback;
 
@@ -550,6 +579,17 @@ namespace NorvesLib::Core::Rendering
             }
             frame.Clouds.Info = m_PendingClouds.Info;
             frame.Clouds.bValid = true;
+            if (m_PendingClouds.bOpacityRecorded)
+            {
+                if (!TryCopyImageReadback(m_CloudOpacityReadbackSlots[frameSlotIndex],
+                                          m_PendingClouds.OpacityImage,
+                                          frame.Clouds.Opacity))
+                {
+                    PublishFailure(FrameCaptureResultStatus::MapFailed, m_PendingReadback.FrameNumber);
+                    return;
+                }
+                frame.Clouds.bOpacityValid = true;
+            }
         }
 
         m_CompletedFrame = frame;

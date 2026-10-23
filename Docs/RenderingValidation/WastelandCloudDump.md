@@ -114,6 +114,67 @@ FNV-1a（`shape_fnv1a64`・`detail_fnv1a64`）を残す。書き出しは同じ�
 
 記録（合否に使わない）: 光学的深さ、散乱光・描画の放射輝度・上の空の平均・照り返し・雲の後ろの空の相対差。
 
+## 全画素の雲の不透明度の画像（`--wasteland-cloud-opacity`）
+
+256 本の視線だけでは雲の塊・切れ間・縁を画素で測れず、描画の画面からは不透明度を取れない（`cloud_layer.frag` は前乗算のアルファで
+RGB だけを書き、画面のアルファを保つ）。そのため、雲の書き出しと同じフレーム・同じ定数で、画面の全画素の雲だけの不透明度を書く。
+タスク SCN-WL-CLOUD-OPACITY-AOV。開発ビルドだけの機能で、Release の Game は起動引数を無視し（警告だけ）、専用の資源もパスも作らない
+（`CloudProbePass` は統計が有効な構成だけにある）。
+
+| 何 | どこ | 何をするか |
+|---|---|---|
+| `--wasteland-cloud-opacity` | `Game/GameApplicationHandler.cpp`・`Game/Debug/MultiViewCapture.cpp` | `--cloud-dump` と併せて使う（無ければ起動で失敗）。環境変数 `NORVES_CLOUD_OPACITY=1` を置き、`CloudProbePass` が不透明度の画像も書く（ログに `CLOUD_OPACITY`） |
+| `cloud_layer_opacity.frag` | `Assets/Shaders/` | `cloud_layer.frag` と同じ式・同じ深度の判定・同じ歩の端数（`gl_FragCoord` とフレームの位相）で全画素の雲を進める |
+| `CloudProbePass` | `Library/Core/Private/Rendering/CloudLayerPass.inl` | 視線の 1 枚と同じ記述子セット（同じ定数・同じ深度）で、深度と同じ大きさの RGBA32F の 1 枚（`Capture.CloudOpacity`）へ書き、グラフの外へ出す。大きさが深度と違うフレームは書かない |
+| 読み戻し | `FrameCaptureReadbackHelper` | 雲の書き出しを写すフレームで、同じフレームの 1 枚を、フレームの枠ごとの読み出し先（`m_CloudOpacityReadbackSlots`）へ写す。枠はそのフレームの完了を待ってから読み、次に同じ枠を使うフレームまで写したものに触らない |
+| `SaveCapturedCloudOpacity` | `Library/Core/Public/Rendering/FrameCaptureHdrWriter.h` | `<視点>.cloud.opacity.f32` と `<視点>.cloud.opacity.json` を書く |
+| `ReferenceCheck.py --cloud-opacity` | `Scripts/Terrain/CloudOpacityCheck.py` | 下の合否を確かめ、`cloud_opacity_check.json` と見える形の画像 `cloud_opacity_<視点>.png`（灰 = 不透明度、茶 = 地形のマスク、十字 = 視線の位置で緑が合格）を書く |
+
+画像（`.cloud.opacity.f32`）は [行, 列, RGBA] の 32 bit 浮動小数（リトルエンディアン）。**行 0 が画面の上**、列 0 が左
+（`gl_FragCoord` と同じ向き。画素の中心は +0.5）。
+
+| チャンネル | 中身 |
+|---|---|
+| r | **雲だけの不透明度（溶かす割合を掛けた後）** = (1 − 雲の透過率) × fade。`cloud_layer.frag` が重ねるアルファと同じ値。霞（空気遠近）・太陽の円盤・地形を含まない。地形の画素は 0 |
+| g | 1 − 雲の透過率（溶かす割合を掛ける前）。地形の画素は 0 |
+| b | 地形のマスク（深度が有限で 0.999999 より小さい画素 = 空でない画素は 1、空の画素は 0） |
+| a | 打ち切りの距離へ溶かす割合（雲の無い視線・地形の画素は 1） |
+
+合否に使う値は r（溶かす割合を掛けた後）とした。画面に重なる雲そのものを測るため。今の式では溶かす割合は常に 1
+（SCN-WL-CLOUD-FAR-RANGE で溶かしを外した）なので r と g は同じ値になる。
+
+JSON（`.cloud.opacity.json`、形式 `norves_cloud_opacity_v1`）には、同じフレームの雲の書き出しの名前、フレームの番号、時刻、
+歩の端数の位相に使ったフレームの番号、画面の大きさ、画像の形・向き・チャンネル、カメラ（位置と `cloud_layer.frag` の定数の
+逆の射影の行列。視線の向き = normalize(逆の射影 × (uv × 2 − 1, 1, 1) の点 − 位置)、uv = 画素 ÷ 画面の大きさ）、地形と空の
+画素の数・空の画素の不透明度の平均と最大を書く。
+
+### 合否（`ReferenceCheck.py --cloud-opacity`）
+
+1. 形式・ファイルの形が JSON と合い、撮影の起動引数に `--wasteland-cloud-opacity` と `--cloud-dump`、Game のログに `CLOUD_OPACITY`
+   と保存の印がある。雲の書き出しと同じフレームの番号・時刻・画面の大きさ・逆の射影の行列・カメラの位置。
+2. 値がすべて有限で、r・g・a が 0〜1、地形のマスクが 0 か 1。
+3. 地形のマスクの外だけに値がある（マスクが 1 の画素の r・g が 0）。
+4. 雲の書き出しの格子の視線（144 本。診断の切り替えを立てた反実仮想の 112 本は記録だけ）ごとに、書き出しの視線の向きを記録の
+   射影で画素へ戻し（書き出しの画素の中心との差 1.5 画素以内。GPU の単精度の視線の向きは 2.5〜2.8e-4 rad ずれ、ref_far_01 の横の画角 22.8° で 1.2 画素に当たる）、その画素の r と視線の重ねる割合、空の画素では g と
+   1 − 透過率の差が 0.01 以内。地形のマスクと視線の深度の空かどうかが合う。
+5. 全視点で雲のある視線（不透明度 0.05 以上）が 10 本以上ある。
+
+反実仮想の 112 本は、同じ画素を細かい歩（歩数の上限 1024）で積んだ値などで、描画の値と違ってよいので合否に入れない。
+
+### 結果（2026-10-24）
+
+撮影 `.harness/runs/scene-capture/SCN-WL-CLOUD-OPACITY-AOV`（RelWithDebInfo、1920 × 1080、cloud_sky・ref_far_01）。
+
+| 視点 | フレーム | 地形の画素 | 空の画素 | 空の不透明度の平均 | 空で 0.05 以上の割合 | 空の視線 / 雲の視線 | 不透明度の差の最大 | 投影の位置の差の最大 |
+|---|---|---|---|---|---|---|---|---|
+| cloud_sky | 235 | 0 | 2073600 | 0.269 | 0.566 | 144 / 81 | 0 | 0.23 画素 |
+| ref_far_01 | 1081 | 1082577 | 991023 | 0.940 | 0.994 | 71 / 71 | 8.2e-5 | 0.53 画素 |
+
+見える形の画像（`cloud_opacity_<視点>.png`）は、撮影の PNG と雲の塊・切れ間・地形の輪郭の位置が一致する。ref_far_01 は空の 99 % が
+不透明度 0.05 以上で、平均 0.94 の一様な雲の膜になっている（晴れの手本の写真の視点で白い曇り空に見える所見を量で裏付ける）。
+既定の描画（`cloud_layer.frag`・`CloudLayerPass`）は変えていない。不透明度の画像のパスは起動引数のあるときだけ毎フレーム全画素の雲を
+もう 1 度進めるので、その撮影の GPU 時間は既定の描画の時間にならない（`cloud-dump` は GPU 時間の撮影と併せられない）。
+
 ## 結果
 
 撮影: `.harness/runs/scene-capture/SCN-WLR-CLOUD-REF-DUMP/`（RelWithDebInfo、1920 × 1080、`-Hdr -Views cloud_sky -GameArgs cloud-dump`、

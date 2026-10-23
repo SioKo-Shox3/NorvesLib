@@ -108,6 +108,9 @@ namespace NorvesLib::Core::Rendering
      *   5: 地面の照り返しの放射輝度、a = 区間の終わり
      *   6: 視線の向きの空の放射輝度 LUT の値（雲の後ろの空）、a = その画素の深度
      *   7: 視線の光学的深さ・決めた歩数・1 歩の長さ、a = 雲の層を進めたか（1）+ 向きを求められたか（2）
+     *
+     * 環境変数 NORVES_CLOUD_OPACITY が 1 なら、同じ定数・同じフレームで画面の全画素の雲の不透明度の画像（RGBA32F、雲を描く
+     * 画面と同じ大きさ。チャンネルは cloud_layer_opacity.frag）も書き、グラフの外へ出す（RenderGraphResourceNames::CaptureCloudOpacity）。
      */
     class CloudProbePass : public IViewPass, public IRenderGraphPass
     {
@@ -118,6 +121,8 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief 環境変数 NORVES_CLOUD_DUMP が 1 か（Game の --cloud-dump が描画の初期化の前に置く） */
         static bool IsRequestedByEnvironment();
+        /** @brief 環境変数 NORVES_CLOUD_OPACITY が 1 か（Game の --wasteland-cloud-opacity が描画の初期化の前に置く） */
+        static bool IsOpacityRequestedByEnvironment();
 
         ~CloudProbePass() override;
 
@@ -151,8 +156,15 @@ namespace NorvesLib::Core::Rendering
         RHI::FramebufferPtr m_Framebuffer;
         RHI::ITexture* m_FramebufferTarget = nullptr;
         RHI::PipelinePtr m_Pipeline;
+        // 全画素の雲の不透明度の画像（NORVES_CLOUD_OPACITY のときだけ作る）
+        bool m_bOpacityRequested = false;
+        RHI::ShaderPtr m_OpacityFragmentShader;
+        RHI::PipelinePtr m_OpacityPipeline;
+        RHI::FramebufferPtr m_OpacityFramebuffer;
+        RHI::ITexture* m_OpacityFramebufferTarget = nullptr;
 
         RGResourceHandle m_TargetHandle;
+        RGResourceHandle m_OpacityHandle;
         RGResourceHandle m_SceneDepthHandle;
         RGResourceHandle m_SkyAtmosphereRadianceHandle;
         CloudLayerParameters m_CloudLayer;

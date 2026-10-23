@@ -82,6 +82,13 @@ namespace Game::Debug
          */
         void SetCaptureClouds(bool bCaptureClouds) { m_bCaptureClouds = bCaptureClouds; }
 
+        /**
+         * @brief 雲の書き出しの横へ、同じフレームの全画素の雲の不透明度の画像も書くか（--wasteland-cloud-opacity。--cloud-dump と併せる）
+         *
+         * 書き出しの形式は Core の SaveCapturedCloudOpacity（<視点>.cloud.opacity.json と .f32）。書けなければ撮影の失敗にする。
+         */
+        void SetCaptureCloudOpacity(bool bCaptureCloudOpacity) { m_bCaptureCloudOpacity = bCaptureCloudOpacity; }
+
         /// ApplicationProcessor の --capture-png の撮影と終了を止めておくか（有効な間は撮り終えた後も止める）
         bool IsHoldingEngineCapture() const { return IsEnabled(); }
 
@@ -120,6 +127,7 @@ namespace Game::Debug
         bool m_bCaptureAov = false;
         bool m_bCaptureAtmosphere = false;
         bool m_bCaptureClouds = false;
+        bool m_bCaptureCloudOpacity = false;
 
         Phase m_Phase = Phase::Settling;
         size_t m_ViewIndex = 0;

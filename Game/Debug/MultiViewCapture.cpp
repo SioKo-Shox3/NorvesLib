@@ -251,6 +251,18 @@ namespace Game::Debug
                 return;
             }
             LOG_INFO_F("CAPTURE_VIEWS view=%s clouds saved rays=%u", viewName.c_str(), capturedFrame.Clouds.Info.RayCount);
+            if (m_bCaptureCloudOpacity)
+            {
+                if (!NorvesLib::Core::Rendering::SaveCapturedCloudOpacity(capturedFrame, path))
+                {
+                    LOG_ERROR_F("CAPTURE_VIEWS view=%s cloud opacity save failed opacity=%d", viewName.c_str(),
+                                capturedFrame.Clouds.bOpacityValid ? 1 : 0);
+                    Fail("cloud_opacity_save_failed");
+                    return;
+                }
+                LOG_INFO_F("CAPTURE_VIEWS view=%s cloud opacity saved width=%u height=%u", viewName.c_str(),
+                           capturedFrame.Clouds.Opacity.Width, capturedFrame.Clouds.Opacity.Height);
+            }
         }
 
         ++m_ViewIndex;

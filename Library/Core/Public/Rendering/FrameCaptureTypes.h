@@ -359,6 +359,8 @@ namespace NorvesLib::Core::Rendering
         uint32_t RayCount = 0;
         /** @brief 視線の画素の中心（gl_FragCoord と同じ。左上が原点） */
         float RayPixels[FrameCaptureCloudMaxRays][2] = {};
+        /** @brief 同じフレーム・同じ定数で全画素の雲の不透明度の画像（TargetWidth × TargetHeight）も書いたか */
+        bool bOpacity = false;
     };
 
     struct FrameCaptureSourceSet
@@ -393,6 +395,12 @@ namespace NorvesLib::Core::Rendering
          */
         FrameCaptureSource CloudProbe;
         FrameCaptureCloudInfo CloudInfo;
+        /**
+         * @brief CloudProbePass の全画素の雲の不透明度の画像（RGBA32F。雲を描く画面と同じ大きさ。チャンネルは cloud_layer_opacity.frag）
+         *
+         * --wasteland-cloud-opacity でパスに足した構成で、そのフレームに書いたとき（CloudInfo.bOpacity）だけ入る。
+         */
+        FrameCaptureSource CloudOpacity;
         /** @brief このフレームにメインSceneViewのパストレーサーが累積した試料数（ラスタなら0） */
         uint32_t PathTracingSampleCount = 0;
         /** @brief SceneColor に掛かっているプリエクスポージャ（割ると放射輝度 cd/m²。0 は不明） */
@@ -437,6 +445,7 @@ namespace NorvesLib::Core::Rendering
             AtmosphereInfo = FrameCaptureAtmosphereInfo{};
             CloudProbe = FrameCaptureSource{};
             CloudInfo = FrameCaptureCloudInfo{};
+            CloudOpacity = FrameCaptureSource{};
             PathTracingSampleCount = 0;
             SceneColorPreExposure = 0.0f;
             SceneColorDisplay = FrameCaptureDisplayInfo{};
@@ -506,6 +515,10 @@ namespace NorvesLib::Core::Rendering
         /** @brief RGBA32F。横 = 視線（Info.RayPixels の順）、縦 = 値の種類 */
         CapturedImage Probe;
         FrameCaptureCloudInfo Info;
+        /** @brief 全画素の雲の不透明度の画像を読み出せたか（Info.bOpacity のフレームだけ） */
+        bool bOpacityValid = false;
+        /** @brief RGBA32F。行は上から（gl_FragCoord と同じ向き）。チャンネルは cloud_layer_opacity.frag の約束 */
+        CapturedImage Opacity;
     };
 
     struct CapturedFrame

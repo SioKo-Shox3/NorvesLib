@@ -155,6 +155,10 @@ namespace Game
         // 風のずれ）と照明の入力、決めた画素の視線の雲の透過率と散乱光を PNG の横へ書く（開発ビルドだけ。--capture-views と
         // 併せて使う）。書き出しのパスは描画の初期化の前に環境変数 NORVES_CLOUD_DUMP=1 で頼む（Core の CloudProbePass）
         constexpr const TCHAR *kCloudDumpOption = TEXT("--cloud-dump");
+        // --wasteland-cloud-opacity: --cloud-dump の書き出しの横へ、同じフレーム・同じ定数で画面の全画素の雲だけの不透明度と
+        // 地形のマスクを 32 bit 浮動小数の画像として書く（開発ビルドだけ。--cloud-dump と併せて使う）。
+        // 描画の初期化の前に環境変数 NORVES_CLOUD_OPACITY=1 で CloudProbePass に頼む
+        constexpr const TCHAR *kCloudOpacityOption = TEXT("--wasteland-cloud-opacity");
         // --geom-settle-trace=<秒>: ジオメトリのページの読み込みが落ち着いた後の推移を、1 秒ごとに GEOM_SETTLE_TRACE の行へ
         // 決めた秒数だけ書き、書き終えてから --capture-png で撮る（開発ビルドだけ。Debug/GeometrySettleTrace.h）
         constexpr const TCHAR *kGeomSettleTraceOption = TEXT("--geom-settle-trace=");
@@ -2471,6 +2475,7 @@ namespace Game
         bool bCaptureAov = false;
         bool bAtmosphereDump = false;
         bool bCloudDump = false;
+        bool bCloudOpacity = false;
         uint32_t geomSettleTraceSeconds = 0;
         for (size_t i = 0; i < args.size(); ++i)
         {
@@ -2486,6 +2491,10 @@ namespace Game
             else if (ToStdString(args[i]) == std::basic_string<TCHAR>(kCloudDumpOption))
             {
                 bCloudDump = true;
+            }
+            else if (ToStdString(args[i]) == std::basic_string<TCHAR>(kCloudOpacityOption))
+            {
+                bCloudOpacity = true;
             }
             else if (ToStdString(args[i]) == std::basic_string<TCHAR>(kCaptureAovOption))
             {
@@ -2581,6 +2590,12 @@ namespace Game
                 // 描画の初期化（OnPreInitialize の後）で SceneView が CloudProbePass を足す
                 _putenv_s("NORVES_CLOUD_DUMP", "1");
             }
+            m_MultiViewCapture.SetCaptureCloudOpacity(bCloudDump && bCloudOpacity);
+            if (bCloudDump && bCloudOpacity)
+            {
+                // 同じく CloudProbePass が全画素の雲の不透明度の画像も書く
+                _putenv_s("NORVES_CLOUD_OPACITY", "1");
+            }
 #else
             (void)bCaptureHdr;
             (void)bCaptureAov;
@@ -2600,6 +2615,11 @@ namespace Game
             LOG_ERROR("--cloud-dump は --capture-views と併せて指定する（視点ごとの撮影の横へ書く）");
             return false;
         }
+        if (bCloudOpacity && !bCloudDump)
+        {
+            LOG_ERROR("--wasteland-cloud-opacity は --cloud-dump と併せて指定する（雲の書き出しの横へ書く）");
+            return false;
+        }
 #else
         if (bAtmosphereDump)
         {
@@ -2608,6 +2628,10 @@ namespace Game
         if (bCloudDump)
         {
             LOG_WARNING("--cloud-dump は開発ビルドだけで使えます。無視します");
+        }
+        if (bCloudOpacity)
+        {
+            LOG_WARNING("--wasteland-cloud-opacity は開発ビルドだけで使えます。無視します");
         }
 #endif
 #if NORVES_BUILD_DEVELOPMENT

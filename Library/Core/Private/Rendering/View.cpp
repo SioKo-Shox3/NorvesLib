@@ -420,6 +420,7 @@ namespace NorvesLib::Core::Rendering
         // 撮影の雲の書き出し（--cloud-dump）: CloudProbePass がこのフレームに書いた 1 枚と、その評価に使った値
         m_FrameCloudProbeTexture.reset();
         m_FrameCloudInfo.bValid = false;
+        m_FrameCloudOpacityTexture.reset();
         if (IViewPass* cloudPass = FindPass("CloudProbePass"))
         {
             // GetName() がその名前を返すのはそのクラスだけ
@@ -429,6 +430,13 @@ namespace NorvesLib::Core::Rendering
             {
                 m_FrameCloudProbeTexture = probeTexture;
                 m_FrameCloudInfo = info;
+                // 全画素の雲の不透明度の画像（同じフレームに書いたときだけ。取れなければ書いていない扱いにする）
+                RHI::TexturePtr opacityTexture;
+                if (info.bOpacity && lastResult.TryGetTexture(RenderGraphResourceNames::CaptureCloudOpacity, opacityTexture))
+                {
+                    m_FrameCloudOpacityTexture = opacityTexture;
+                }
+                m_FrameCloudInfo.bOpacity = m_FrameCloudOpacityTexture != nullptr;
             }
         }
 #endif
@@ -460,6 +468,7 @@ namespace NorvesLib::Core::Rendering
         m_FrameAtmosphereInfo.bValid = false;
         m_FrameCloudProbeTexture.reset();
         m_FrameCloudInfo.bValid = false;
+        m_FrameCloudOpacityTexture.reset();
     }
 
     void View::SetFrameOutputTexture(RHI::TexturePtr texture)

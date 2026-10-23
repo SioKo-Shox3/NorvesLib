@@ -94,6 +94,13 @@ namespace NorvesLib::Core::Rendering
                     primarySceneView->GetFrameCloudProbeTexture(),
                     request.Packet->FrameNumber);
                 result.CaptureSources.CloudInfo = primarySceneView->GetFrameCloudInfo();
+                if (result.CaptureSources.CloudInfo.bOpacity)
+                {
+                    SetFrameCaptureSource(
+                        result.CaptureSources.CloudOpacity,
+                        primarySceneView->GetFrameCloudOpacityTexture(),
+                        request.Packet->FrameNumber);
+                }
             }
             if (auto* pathTracingPass = dynamic_cast<PathTracingPass*>(
                     primarySceneView->FindPass("PathTracingPass")))

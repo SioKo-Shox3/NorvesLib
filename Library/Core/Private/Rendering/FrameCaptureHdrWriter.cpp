@@ -1167,6 +1167,103 @@ namespace NorvesLib::Core::Rendering
         AppendFormat(json, "]\n  }\n}\n");
         return WriteBytes(basePath + String(TEXT(".cloud.json")), json.data(), json.size());
     }
+
+    bool SaveCapturedCloudOpacity(const CapturedFrame& frame, const Container::String& pngPath)
+    {
+        const CapturedClouds& clouds = frame.Clouds;
+        const FrameCaptureCloudInfo& info = clouds.Info;
+        const CapturedImage& image = clouds.Opacity;
+        if (!frame.IsSuccess() || !clouds.bValid || !clouds.bOpacityValid || !info.bValid || !info.bOpacity ||
+            image.Format != RHI::Format::R32G32B32A32_FLOAT || image.BytesPerPixel != 16u || image.Width == 0u ||
+            image.Height == 0u || image.Width != info.TargetWidth || image.Height != info.TargetHeight ||
+            image.RowPitchBytes < static_cast<uint64_t>(image.Width) * image.BytesPerPixel ||
+            image.Pixels.size() < static_cast<size_t>(image.RowPitchBytes) * image.Height)
+        {
+            return false;
+        }
+        const String basePath = RemoveExtension(pngPath);
+
+        // [行, 列, RGBA]。読み出しの行は上から（gl_FragCoord と同じ）なので、そのまま詰める
+        VariableArray<float> values;
+        values.resize(static_cast<size_t>(image.Width) * image.Height * 4u);
+        for (uint32_t row = 0; row < image.Height; ++row)
+        {
+            std::memcpy(values.data() + static_cast<size_t>(row) * image.Width * 4u,
+                        image.Pixels.data() + static_cast<size_t>(row) * image.RowPitchBytes,
+                        static_cast<size_t>(image.Width) * 16u);
+        }
+
+        // 記録の集計（合否は Scripts/Terrain/CloudOpacityCheck.py が値から求め直す）
+        uint64_t terrainPixels = 0;
+        uint64_t skyPixels = 0;
+        uint64_t cloudPixels = 0;
+        uint64_t nonFinite = 0;
+        double opacitySum = 0.0;
+        float opacityMax = 0.0f;
+        for (size_t pixel = 0; pixel < values.size() / 4u; ++pixel)
+        {
+            const float* rgba = values.data() + pixel * 4u;
+            if (!std::isfinite(rgba[0]) || !std::isfinite(rgba[1]) || !std::isfinite(rgba[2]) || !std::isfinite(rgba[3]))
+            {
+                ++nonFinite;
+                continue;
+            }
+            if (rgba[2] > 0.5f)
+            {
+                ++terrainPixels;
+                continue;
+            }
+            ++skyPixels;
+            opacitySum += rgba[0];
+            opacityMax = std::max(opacityMax, rgba[0]);
+            cloudPixels += rgba[0] >= 0.05f ? 1u : 0u;
+        }
+
+        const String imagePath = basePath + String(TEXT(".cloud.opacity.f32"));
+        if (!WriteFloats(imagePath, values))
+        {
+            return false;
+        }
+
+        const float* shaderParams = info.ShaderParams;
+        VariableArray<char> json;
+        const VariableArray<char> pngName = ToAsciiFileName(pngPath);
+        const VariableArray<char> imageName = ToAsciiFileName(imagePath);
+        const VariableArray<char> dumpName = ToAsciiFileName(basePath + String(TEXT(".cloud.json")));
+        AppendFormat(json, "{\n  \"format\": \"norves_cloud_opacity_v1\",\n  \"png\": \"%s\",\n  \"cloud_dump\": \"%s\",\n"
+                           "  \"frame_number\": %llu,\n",
+                     pngName.data(), dumpName.data(), static_cast<unsigned long long>(frame.FrameNumber));
+        AppendFormat(json, "  \"time_seconds\": ");
+        AppendNumber(json, info.TimeSeconds);
+        AppendFormat(json, ",\n  \"temporal_frame_index\": %llu,\n  \"target\": {\"width\": %u, \"height\": %u},\n",
+                     static_cast<unsigned long long>(info.TemporalFrameIndex), info.TargetWidth, info.TargetHeight);
+        AppendFormat(json, "  \"image\": {");
+        AppendFileEntry(json, imageName, image.Height, image.Width, 4u);
+        AppendFormat(json, ",\n    \"orientation\": \"row 0 = top of the screen, column 0 = left (gl_FragCoord, pixel center at +0.5)\",\n"
+                           "    \"channels\": [\"opacity_after_fade\", \"opacity_before_fade\", \"terrain_mask\", \"fade\"],\n"
+                           "    \"value\": \"opacity_after_fade = (1 - cloud transmittance) * fade, the alpha cloud_layer.frag blends; "
+                           "no haze, sun disk or terrain; 0 on terrain pixels\",\n"
+                           "    \"terrain_mask\": \"1 where scene depth is finite and < 0.999999 (not sky), else 0\"},\n");
+        // カメラ（cloud_layer.frag の定数の逆の射影とカメラの位置。視線の向き = normalize(逆の射影 × (uv * 2 - 1, 1, 1) の点 − 位置)）
+        AppendFormat(json, "  \"camera\": {\"position\": ");
+        AppendVector3(json, shaderParams + 16);
+        AppendFormat(json, ", \"clip\": \"(uv * 2 - 1, 1, 1), uv = pixel / target_size\", "
+                           "\"matrix\": \"column_major (inverse_view_projection[column * 4 + row])\", \"inverse_view_projection\": [");
+        for (uint32_t index = 0; index < 16u; ++index)
+        {
+            AppendNumber(json, shaderParams[index]);
+            AppendFormat(json, index + 1u < 16u ? ", " : "]},\n");
+        }
+        AppendFormat(json, "  \"summary\": {\"terrain_pixels\": %llu, \"sky_pixels\": %llu, \"cloud_pixels_0_05\": %llu, "
+                           "\"non_finite\": %llu, \"sky_mean_opacity\": ",
+                     static_cast<unsigned long long>(terrainPixels), static_cast<unsigned long long>(skyPixels),
+                     static_cast<unsigned long long>(cloudPixels), static_cast<unsigned long long>(nonFinite));
+        AppendNumber(json, skyPixels > 0u ? opacitySum / static_cast<double>(skyPixels) : 0.0);
+        AppendFormat(json, ", \"max_opacity\": ");
+        AppendNumber(json, opacityMax);
+        AppendFormat(json, "}\n}\n");
+        return WriteBytes(basePath + String(TEXT(".cloud.opacity.json")), json.data(), json.size());
+    }
 #else
     bool SaveCapturedSceneColorHdr(const CapturedFrame&, const Container::String&)
     {
@@ -1184,6 +1281,11 @@ namespace NorvesLib::Core::Rendering
     }
 
     bool SaveCapturedClouds(const CapturedFrame&, const Container::String&)
+    {
+        return false;
+    }
+
+    bool SaveCapturedCloudOpacity(const CapturedFrame&, const Container::String&)
     {
         return false;
     }

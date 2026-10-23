@@ -125,6 +125,9 @@ namespace NorvesLib::Core::Rendering
             bool bRecorded = false;
             PendingImageReadback Image;
             FrameCaptureCloudInfo Info;
+            /** @brief 同じフレームの全画素の雲の不透明度の画像も写したか（Info.bOpacity のフレームだけ） */
+            bool bOpacityRecorded = false;
+            PendingImageReadback OpacityImage;
         };
 
         static bool TryGetBytesPerPixel(RHI::Format format, uint32_t& outBytesPerPixel);
@@ -168,6 +171,8 @@ namespace NorvesLib::Core::Rendering
         Container::VariableArray<ReadbackSlot> m_AtmosphereReadbackSlots;
         /** @brief 雲の書き出しの読み出し先（フレームの枠ごと） */
         Container::VariableArray<ReadbackSlot> m_CloudReadbackSlots;
+        /** @brief 全画素の雲の不透明度の画像の読み出し先（フレームの枠ごと） */
+        Container::VariableArray<ReadbackSlot> m_CloudOpacityReadbackSlots;
     };
 
 } // namespace NorvesLib::Core::Rendering

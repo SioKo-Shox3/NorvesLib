@@ -72,4 +72,16 @@ namespace NorvesLib::Core::Rendering
      * @return 雲の書き出しが読み出せていて、すべて書けたら true
      */
     bool SaveCapturedClouds(const CapturedFrame& frame, const Container::String& pngPath);
+
+    /**
+     * @brief 撮影で同じフレームから読み出した全画素の雲の不透明度の画像（--wasteland-cloud-opacity）を書き出す
+     *
+     * CapturedFrame::Clouds の Opacity（CloudProbePass が雲の書き出しと同じ定数で書いた 1 枚）を、pngPath の拡張子を除いた名前へ書く。
+     *   <名前>.cloud.opacity.f32  … [行, 列, RGBA] の 32 bit 浮動小数。行 0 が画面の上（gl_FragCoord と同じ向き）。
+     *                              r = 雲だけの不透明度（溶かす割合を掛けた後）、g = 1 − 透過率（掛ける前）、b = 地形のマスク、a = 溶かす割合
+     *   <名前>.cloud.opacity.json … 上の形・向き・チャンネル、フレームの番号・時刻、カメラ（位置と逆の射影の行列）、画素の数の集計
+     * 開発ビルドでないときは何も書かず false を返す。
+     * @return 不透明度の画像が読み出せていて、すべて書けたら true
+     */
+    bool SaveCapturedCloudOpacity(const CapturedFrame& frame, const Container::String& pngPath);
 } // namespace NorvesLib::Core::Rendering

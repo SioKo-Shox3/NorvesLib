@@ -962,17 +962,31 @@ namespace NorvesLib::Core::Rendering
         }
     } // namespace CloudLayerPassDetail
 
+    namespace CloudLayerPassDetail
+    {
+        // 環境変数が 1 か
+        bool IsEnvironmentFlagSet(const char* name)
+        {
+            char* value = nullptr;
+            size_t length = 0;
+            bool bRequested = false;
+            if (_dupenv_s(&value, &length, name) == 0 && value)
+            {
+                bRequested = std::strcmp(value, "1") == 0;
+            }
+            std::free(value);
+            return bRequested;
+        }
+    } // namespace CloudLayerPassDetail
+
     bool CloudProbePass::IsRequestedByEnvironment()
     {
-        char* value = nullptr;
-        size_t length = 0;
-        bool bRequested = false;
-        if (_dupenv_s(&value, &length, "NORVES_CLOUD_DUMP") == 0 && value)
-        {
-            bRequested = std::strcmp(value, "1") == 0;
-        }
-        std::free(value);
-        return bRequested;
+        return CloudLayerPassDetail::IsEnvironmentFlagSet("NORVES_CLOUD_DUMP");
+    }
+
+    bool CloudProbePass::IsOpacityRequestedByEnvironment()
+    {
+        return CloudLayerPassDetail::IsEnvironmentFlagSet("NORVES_CLOUD_OPACITY");
     }
 
     CloudProbePass::~CloudProbePass()
@@ -1055,6 +1069,26 @@ namespace NorvesLib::Core::Rendering
             pipelineDesc.renderPass = m_RenderPass;
             pipelineDesc.descriptorSetLayouts.push_back(CreateCloudProbeDescriptorSetDesc());
             m_Pipeline = m_Device->CreateGraphicsPipeline(pipelineDesc);
+
+            // 全画素の雲の不透明度の画像: 同じ形式・同じ記述子セットのレイアウトで、フラグメントシェーダーだけ替える
+            m_bOpacityRequested = IsOpacityRequestedByEnvironment();
+            if (m_bOpacityRequested)
+            {
+                m_OpacityFragmentShader = context.ShaderMgr->LoadShader("cloud_layer_opacity.frag", RHI::ShaderStage::Pixel);
+                if (m_OpacityFragmentShader)
+                {
+                    pipelineDesc.pixelShader = m_OpacityFragmentShader;
+                    m_OpacityPipeline = m_Device->CreateGraphicsPipeline(pipelineDesc);
+                }
+                if (m_OpacityPipeline)
+                {
+                    NORVES_LOG_INFO("CloudProbePass", "CLOUD_OPACITY 全画素の雲の不透明度の画像を書く");
+                }
+                else
+                {
+                    NORVES_LOG_WARNING("CloudProbePass", "雲の不透明度の画像のパイプラインの作成に失敗。不透明度の画像は書きません");
+                }
+            }
         }
         if (!m_Pipeline)
         {
@@ -1065,6 +1099,12 @@ namespace NorvesLib::Core::Rendering
 
     void CloudProbePass::Shutdown()
     {
+        m_OpacityPipeline.reset();
+        m_OpacityFramebuffer.reset();
+        m_OpacityFramebufferTarget = nullptr;
+        m_OpacityFragmentShader.reset();
+        m_bOpacityRequested = false;
+        m_OpacityHandle = {};
         m_Pipeline.reset();
         m_Framebuffer.reset();
         m_FramebufferTarget = nullptr;
@@ -1118,6 +1158,7 @@ namespace NorvesLib::Core::Rendering
     void CloudProbePass::Declare(RenderGraphBuilder& builder)
     {
         m_TargetHandle = {};
+        m_OpacityHandle = {};
         m_SceneDepthHandle = {};
         m_SkyAtmosphereRadianceHandle = {};
         m_LastInfo.bValid = false;
@@ -1176,6 +1217,31 @@ namespace NorvesLib::Core::Rendering
         // 撮影の読み出しはグラフの実行の後なので、外へ出して寿命を延ばす
         builder.ExportTexture(RenderGraphResourceNames::CaptureCloudProbe, targetHandle);
         m_TargetHandle = targetHandle.ToResourceHandle();
+
+        // 全画素の雲の不透明度の画像（雲を描く画面と同じ大きさ。Execute で深度と同じ大きさかを確かめる）
+        const uint32_t renderWidth = context ? context->GetActiveRenderWidth() : 0u;
+        const uint32_t renderHeight = context ? context->GetActiveRenderHeight() : 0u;
+        if (m_bOpacityRequested && m_OpacityPipeline && renderWidth > 0u && renderHeight > 0u)
+        {
+            RGTextureDesc opacityDesc = RGTextureDesc::RenderTarget(renderWidth,
+                                                                    renderHeight,
+                                                                    CloudLayerPassDetail::CloudProbeFormat,
+                                                                    "Capture_CloudOpacity");
+            opacityDesc.Usage = opacityDesc.Usage | RHI::ResourceUsage::TransferSrc;
+            const RGTextureHandle opacityHandle =
+                builder.WriteTextureAttachment(RenderGraphResourceNames::CaptureCloudOpacity,
+                                               opacityDesc,
+                                               RGAttachmentKind::Color,
+                                               RHI::AttachmentLoadOp::DontCare,
+                                               RHI::AttachmentStoreOp::Store,
+                                               RHI::ResourceState::RenderTarget,
+                                               RHI::ResourceState::ShaderResource);
+            if (opacityHandle.IsValid())
+            {
+                builder.ExportTexture(RenderGraphResourceNames::CaptureCloudOpacity, opacityHandle);
+                m_OpacityHandle = opacityHandle.ToResourceHandle();
+            }
+        }
         m_SceneDepthHandle = sceneDepthHandle.ToResourceHandle();
         m_SkyAtmosphereRadianceHandle = skyRadianceHandle.ToResourceHandle();
         builder.PreserveInsertionOrder();
@@ -1302,6 +1368,47 @@ namespace NorvesLib::Core::Rendering
         commandList->SetDescriptorSet(descriptorSet, 0);
         commandList->Draw(3, 0);
         commandList->EndRenderPass();
+
+        // 全画素の雲の不透明度の画像: 同じ記述子セット（同じ定数・同じ深度）で、雲を描く画面と同じ大きさの 1 枚へ書く。
+        // gl_FragCoord を cloud_layer.frag と同じにするため、大きさが深度と違えば書かない
+        m_LastInfo.bOpacity = false;
+        const RHI::TexturePtr opacityTarget = m_OpacityHandle.IsValid() ? resources.GetTexture(m_OpacityHandle) : nullptr;
+        if (opacityTarget && m_OpacityPipeline && opacityTarget->GetWidth() == targetWidth &&
+            opacityTarget->GetHeight() == targetHeight)
+        {
+            if (!m_OpacityFramebuffer || m_OpacityFramebufferTarget != opacityTarget.get())
+            {
+                RHI::FramebufferDesc framebufferDesc;
+                framebufferDesc.renderPass = m_RenderPass;
+                framebufferDesc.colorTargets.push_back(opacityTarget);
+                framebufferDesc.width = targetWidth;
+                framebufferDesc.height = targetHeight;
+                m_OpacityFramebuffer = m_Device->CreateFramebuffer(framebufferDesc);
+                m_OpacityFramebufferTarget = m_OpacityFramebuffer ? opacityTarget.get() : nullptr;
+            }
+            if (m_OpacityFramebuffer)
+            {
+                RHI::Viewport opacityViewport;
+                opacityViewport.width = static_cast<float>(targetWidth);
+                opacityViewport.height = static_cast<float>(targetHeight);
+                RHI::ScissorRect opacityScissor;
+                opacityScissor.right = static_cast<int32_t>(targetWidth);
+                opacityScissor.bottom = static_cast<int32_t>(targetHeight);
+                commandList->BeginRenderPass(m_RenderPass, m_OpacityFramebuffer);
+                commandList->SetViewport(opacityViewport);
+                commandList->SetScissor(opacityScissor);
+                commandList->SetPipeline(m_OpacityPipeline);
+                commandList->SetDescriptorSet(descriptorSet, 0);
+                commandList->Draw(3, 0);
+                commandList->EndRenderPass();
+                m_LastInfo.bOpacity = true;
+            }
+        }
+        else if (m_OpacityHandle.IsValid())
+        {
+            NORVES_LOG_WARNING("CloudProbePass", "雲の不透明度の画像の大きさが深度（%ux%u）と違うため、このフレームは書きません",
+                               targetWidth, targetHeight);
+        }
 
         // 評価に使った値（書き出しの JSON に残す）
         std::memcpy(m_LastInfo.ShaderParams, &params, sizeof(params));

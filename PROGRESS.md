@@ -7542,3 +7542,11 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 記録: 刻んだ dem:1,2 は 857 万三角形（刻まない 893 万）・dem:0,2 は 111 万三角形（刻まない 97 万）。刻んだ撮影の VRAM・溢れは記録していない（既定に入れないため）
 - Next: 判断待ち（`blocked/SCN-WL-CLIFF-SCAN-NEAR.md`）
 - Notes: AssetCook を変えると地形の 214 項目すべての印が変わり、verify の地形のクックの行（直列）は 1 行 10 分を超える。この反復では地形の全項目を焼き直していないので、その行は回していない（刻みを止めた AssetCook の出力は刻む前と同じで、dem:0,2・dem:1,2 のパッケージの SHA-256 が刻む前と一致）。合否の仕様は変えていない。新しい試験は足していない
+
+## 2026-10-24 SCN-WL-CLOUD-OPACITY-AOV（run 20261023-124311 の反復 26、閉じた）
+- Done: 開発ビルドの起動引数 `--wasteland-cloud-opacity`（`--cloud-dump` と併せる。無ければ起動で失敗、Release は警告して無視）で、`CloudProbePass` が雲の書き出しと同じ記述子セット（同じ定数・同じ深度・同じフレーム）で全画素の雲だけの不透明度を RGBA32F の 1 枚（`Capture.CloudOpacity`、深度と同じ大きさ）へ書く（新規 `Assets/Shaders/cloud_layer_opacity.frag`。r = (1 − 透過率) × fade = cloud_layer.frag が重ねるアルファ、g = 掛ける前、b = 地形のマスク、a = fade）。読み戻しはフレームの枠ごとの読み出し先（`m_CloudOpacityReadbackSlots`）。`SaveCapturedCloudOpacity` が `<視点>.cloud.opacity.f32`（行 0 = 画面の上）と `.json`（フレームの番号・時刻・カメラの位置と逆の射影・向き・チャンネル・集計）を書く。`ReferenceCheck.py --cloud-opacity`（新規 `Scripts/Terrain/CloudOpacityCheck.py`）。契約と結果は `Docs/RenderingValidation/WastelandCloudDump.md` の「全画素の雲の不透明度の画像」
+- 決めたこと: 合否に使う値は fade を掛けた後（画面に重なる雲そのもの）。今の式では fade は常に 1 で r = g。照らす視線は格子の 144 本で、反実仮想の 112 本は記録だけ。投影の位置の許容は 1.5 画素（GPU の単精度の視線の向きが 2.5〜2.8e-4 rad ずれ、ref_far_01 の横の画角 22.8° で 1.2 画素。0.5 画素では ref_far_01 の 2 本が 0.52 画素で落ちた: `verify-SCN-WL-CLOUD-OPACITY-AOV-4.txt`）
+- 値: cloud_sky 空の不透明度の平均 0.269・0.05 以上 56.6 %・差の最大 0、ref_far_01 平均 0.940・0.05 以上 99.4 %・差の最大 8.2e-5（晴れの視点の一様な雲の膜を量で確認）
+- 証拠（`.harness/runs/20261023-124311/`）: `verify-SCN-WL-CLOUD-OPACITY-AOV-1.txt`（Debug EXIT=0）・`-2.txt`（RelWithDebInfo EXIT=0）・`-3.txt`（撮影 result=pass）・`-5.txt`（`--cloud-opacity --verify` result=pass cloud_rays=152 inputs_current=1 EXIT=0）。開いた画: `scene-capture/SCN-WL-CLOUD-OPACITY-AOV/cloud_opacity_cloud_sky.png`・`cloud_opacity_ref_far_01.png`（撮影の PNG と塊・切れ間・地形の輪郭が一致）・`ref_far_01.png`
+- Next: TASKS.md の次の未完（雲の形の項目は全画素の不透明度で塊・切れ間・縁を測れる）
+- Notes: 既定の描画のコード（cloud_layer.frag・CloudLayerPass）は変えていない。GPU 時間は測っていない（cloud-dump は GPU 時間の撮影と併せられず、既定の描画は変わらない）。cloud.json の形式は変えていない（雲の正解の入力の記録は古くならない）。新しい試験は足していない
