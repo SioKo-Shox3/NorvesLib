@@ -7390,3 +7390,8 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - Done: 親の判断（案 3）のとおり、rocks-sun / contact_near の IoU の行を地面（地形の受け手）の画素だけの IoU で判定する形にした（`sun-shadow.json` の `iou_receiver: terrain`、`OcclusionMetric.sun_metric` の受け手ごとの IoU、`OcclusionCompare.sun_iou`）。岩の面の IoU（全体 0.880・岩の面 0.865）は既知の限界として `WastelandOcclusion.md` に値つきで書いた。描画の直しは 094784bb のまま。verify: Debug の Game ビルド EXIT=0（`verify-SCN-WL-SUN-SHADOW-FIX-34.txt`）、全 8 組の撮影 pass（`-35`〜`-42`）、判定 result=pass（`-43`。rocks-sun 地面の IoU 0.954・漏れ 0.89 %・縁の比 1.01、plant-sun 0.925、terrain-sun・rocks-cliff-sun 0.930）、ref_cliff_01 の GPU 時間の中央値 15.502 ms（`-44`。予算 33.3 ms の内）、回帰の before・after pass（`aux-SCN-WL-SUN-SHADOW-FIX-regression-before-iter6.txt`・`-45`）
 - Next: TASKS.md の次の未完（岩の面の差は SCN-WL-ROCK-LOD-SHADOW で全体の IoU 0.90 に戻す）
 - Notes: この反復は判定の Python だけを変え、描画・シェーダーは変えていないので基準画像の検査は回していない（基準画像は 8d5ca7c9 で 094784bb の後の描画を再承認済み）。受け手ごとの IoU は 3 × 3 で均した画素で測るので、文書の「直しの試し」の均さない値（岩の面 約 0.78）と違う。新しい試験は足していない
+
+## 2026-10-23 SCN-GOLDEN-REVERIFY（run 20261023-124311 の反復 7、閉じた）
+- Done: 親が直した verify（検査の実行ファイル `RenderingGoldenImageTest` だけの Debug のビルド）を HEAD（ad155fdb）で回し、ビルド EXIT=0（`.harness/runs/20261023-124311/verify-SCN-GOLDEN-REVERIFY-6.txt`）、基準画像の検査 RenderingGoldenIndoorVulkanTest・RenderingGoldenOutdoorVulkanTest は両方 Passed・EXIT=0（`-7.txt`）。再承認は 8d5ca7c9 のまま（原因の特定と根拠は反復 4 の記録と R1Acceptance.md）
+- Next: TASKS.md の次の未完
+- Notes: ad155fdb は判定の Python だけの変更で描画を変えておらず、検査は 8d5ca7c9 の基準画像のまま通った。新しい試験は足していない
