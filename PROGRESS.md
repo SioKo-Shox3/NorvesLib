@@ -7339,3 +7339,10 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `aux-SCN-WL-OCCLUSION-FIX-rock-face-40.png`・`.txt`: rocks-sky の contact_near の直す前・後・0.3 倍未満に暗くなった画素（7823）を並べた画を開き、岩の面に黒い斑が無いことを確かめた。`cycles/rocks-sky/occlusion_preview/contact_near.png` と `regression/SCN-WL-OCCLUSION-FIX/after/night-village-diff.png`（最大 42 段・2 段超え 778 画素のまばらな点）も開いた
 - Next: TASKS.md の次の未完
 - Notes: 基準画像の検査は回していない（検証アプリは RTGI を切り、設定の既定も切で、切のときは影を落とさない物が拡散の光線の印に入らず読み飛ばしも効かない。HEAD の版でも同じ値で落ちる前からの差は反復 36 の `aux-...-golden-head.txt`）。GPU 時間の差 +0.37 ms はほとんど FoliagePass（1.915 → 2.211 ms）の揺れ。新しい試験は足していない
+
+## 2026-10-23 SCN-WL-SUN-SHADOW-FIX（run 20261023-124311 の反復 1、途中）
+- Done: 最初の編集の前に、本描画の Cycles の種の間の雑音（IoU 0.973〜0.999・漏れ 0）と今の値から許容（IoU 0.90 以上・漏れ 2 % 以下・縁の幅の比 0.5〜1.5・ほかは悪くならない）を確定し `WastelandOcclusion.md` の「太陽の影の許容」に書いた。判定 `Scripts/Terrain/ExpectSpecs/sun-shadow.json` と `OcclusionCompare.check_expect` の太陽の分（前後の共通の画素で測り直す）を足した。配置の CSV の照合は、参照が描いた CSV（ハッシュが記録と同じもの）と `cast_shadow` の列だけが違うなら同じとみなす（Cycles はこの列を使わない）
+- 証拠（`.harness/runs/20261023-124311/`）: `aux-SCN-WL-SUN-SHADOW-FIX-expect-selfcheck.txt`（直す前の撮影どうしで、外の 2 組〔rocks-sun IoU・漏れ、plant-sun IoU〕だけが落ち、地形の 2 組と空だけの組は pass）、`aux-...-regression-before.txt`（回帰の before、4 シーン pass）、`aux-...-try-*.txt`（試しの撮影）、`aux-...-timing-fragments.txt`（小片に影を落とさせた版の既定の荒野が 600 秒で打ち切り）
+- 試したこと（どれも入れていない。値は `WastelandOcclusion.md` の「直しの試し」）: 崖錐の小片にも影を落とさせると rocks-sun は IoU 0.497 → 0.851・漏れ 41.9 % → 2.16 %（地面への岩の影は一致）。岩の影の LOD を 1 texel にしても、物体の受け手の余裕を 4 texel で抑えても、岩の面の IoU は 0.774 → 0.78 で効かない
+- Next: 同じ項目の続き。(1) 小片の影を VSM だけに描き CSM から外す（投影物の印を分ける）、(2) 岩の面の自分への影の差（法線の向きのずらしと、太陽へ向くかの判定に使う法線）、(3) plant-sun の IoU 0.768（エンジンだけの影の塊）を調べる
+- Notes: 小片に影を落とさせた版で既定の荒野を撮ると `csm_mega_casters=275267`・カスケードごとの三角形 約 21 億で 600 秒の打ち切り（`scene-capture/SCN-WL-SUN-SHADOW-FIX/timing/ref_cliff_01.Game.log`）。`kCasterBudget` の注記の理由がまだ生きている。新しい試験は足していない

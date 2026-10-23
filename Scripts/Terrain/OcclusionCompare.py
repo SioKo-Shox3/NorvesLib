@@ -36,7 +36,10 @@
 #   同じ参照・同じ領域で測り直し、同じ画素で前後を比べる（視点ごとに、前と後のどちらの撮影でも Cycles と同じ面の画素だけで
 #   前後の両方を測る。前後の測り直しは並べた画・重ね画像を書かない）。空だけの組の層のうち、targets の層はエンジン ÷ Cycles が target_range の内、
 #   ほかの層（くぼみ・対照の画素が領域の定義の下限以上）は 1 からの離れが前の値の worse_tolerance 倍を越えて増えない、対照の
-#   エンジンの Y の平均が前の 1 ± control_y_tolerance の内。結果は <エンジンの置き場>/occlusion_expect.json。
+#   エンジンの Y の平均が前の 1 ± control_y_tolerance の内。定義に sun があれば太陽だけの組も同じ画素で前後を測り、
+#   sun.targets の視点は IoU が iou_min 以上・漏れが leak_max 以下・縁の幅の比（エンジン ÷ Cycles）が edge_ratio_range の内、
+#   ほかの視点は前に許容の内なら内のまま、外なら IoU・漏れが前より悪くならない（ExpectSpecs/sun-shadow.json）。
+#   結果は <エンジンの置き場>/occlusion_expect.json。
 import json
 import math
 import os
@@ -89,6 +92,24 @@ def capture_case(game_args):
     return None
 
 
+def placement_rows_without_shadow(path):
+    """配置の CSV を、影を落とすかの列を除いた行の並びで読む"""
+    with open(path, encoding="utf-8") as f:
+        rows = [line.rstrip("\r\n").split(",") for line in f if line.strip()]
+    column = rows[0].index("cast_shadow") if rows and "cast_shadow" in rows[0] else -1
+    return [[value for index, value in enumerate(row) if index != column] for row in rows]
+
+
+def same_placements_but_shadow(RC, engine_dir, record):
+    """参照が描いた配置（記録の capture_dir の CSV。ハッシュが記録と同じもの）と、影を落とすかの列だけが違うか。
+    Cycles は全部の小物に影を落とさせ、この列を使わないので、列の違いは参照の絵を変えない"""
+    drawn = os.path.join(RC.REPO_ROOT, record.get("capture_dir") or "", PROPS_PLACEMENTS)
+    if not record.get("capture_dir") or not os.path.isfile(drawn) or \
+            RC.sha256_file(drawn) != record.get("props_placements_sha256"):
+        return False
+    return placement_rows_without_shadow(drawn) == placement_rows_without_shadow(os.path.join(engine_dir, PROPS_PLACEMENTS))
+
+
 def check_set_inputs(RC, engine_dir, reference_dir, record, verify, trial):
     """組の入力の照合。失敗の一覧"""
     failures = []
@@ -112,7 +133,8 @@ def check_set_inputs(RC, engine_dir, reference_dir, record, verify, trial):
             failures.append(f"エンジンの撮影に {name} が無い")
     if failures:
         return failures
-    if RC.sha256_file(os.path.join(engine_dir, PROPS_PLACEMENTS)) != record.get("props_placements_sha256"):
+    if RC.sha256_file(os.path.join(engine_dir, PROPS_PLACEMENTS)) != record.get("props_placements_sha256") and \
+            not same_placements_but_shadow(RC, engine_dir, record):
         failures.append("小物の配置（placements.csv）が参照の描いたものと違う")
     if RC.sha256_file(os.path.join(engine_dir, PROPS_MANIFEST)) != record.get("props_manifest_sha256"):
         failures.append("小物の形の一覧（manifest）が参照の描いたものと違う")
@@ -448,10 +470,16 @@ def check_expect(RC, expect, regions, report, reference_root, views, trial):
               "worse_tolerance": worse_tolerance, "control_y_tolerance": control_tolerance, "masks": [], "layers": [],
               "controls": []}
     seen_targets = set()
+    sun = expect.get("sun")
+    if sun is not None:
+        record["sun"] = []
     for name, entry in report["sets"].items():
         reference_dir = os.path.join(reference_root, name)
         inputs = read_json(os.path.join(reference_dir, "inputs.json"))
         if (inputs.get("lighting") or {}).get("case") == "sun":
+            if sun is not None:
+                failures.extend(check_expect_sun(RC, sun, regions, entry, name, inputs, baseline_root, reference_dir,
+                                                 views, trial, record))
             continue
         baseline_dir = os.path.join(baseline_root, name)
         if not os.path.isdir(baseline_dir):
@@ -522,7 +550,71 @@ def check_expect(RC, expect, regions, report, reference_root, views, trial):
                                     f"1 ± {control_tolerance} の外")
     for missing in sorted(targets - seen_targets):
         failures.append(f"決めた層 {'/'.join(missing)} が測れない")
+    if sun is not None:
+        measured_sun = {(row["set"], row["view"]) for row in record["sun"]}
+        for target in sun["targets"]:
+            if (target["set"], target["view"]) not in measured_sun:
+                failures.append(f"太陽の決めた視点 {target['set']}/{target['view']} が測れない")
     return record, failures
+
+
+def sun_within(sun, metric):
+    """太陽の量が許容の内か。(内か, 外れた量の一覧)"""
+    low, high = (float(v) for v in sun["edge_ratio_range"])
+    width = metric.get("edge_width_m") or {}
+    ratio = float(width.get("engine", 0.0)) / max(float(width.get("cycles", 0.0)), 1e-9)
+    outside = []
+    if float(metric["shadow_iou"]) < float(sun["iou_min"]):
+        outside.append("iou")
+    if float(metric["leak_fraction"]) > float(sun["leak_max"]):
+        outside.append("leak")
+    if not low <= ratio <= high:
+        outside.append("edge")
+    return not outside, outside, ratio
+
+
+def check_expect_sun(RC, sun, regions, entry, name, inputs, baseline_root, reference_dir, views, trial, record):
+    """太陽だけの組を前後の共通の画素で測り直し、許容と悪化を確かめる。失敗の一覧"""
+    failures = []
+    baseline_dir = os.path.join(baseline_root, name)
+    if not os.path.isdir(baseline_dir):
+        return [f"前の撮影 {RC.rel_dir(baseline_dir)} が無い"]
+    engine_dir = os.path.join(RC.REPO_ROOT, entry["engine"])
+    targets = {(t["set"], t["view"]) for t in sun["targets"]}
+    for view in views or sorted((inputs.get("views") or {}).keys()):
+        same_before = engine_same_mask(RC, baseline_dir, reference_dir, view)
+        same_after = engine_same_mask(RC, engine_dir, reference_dir, view)
+        if same_before is None or same_after is None:
+            failures.append(f"{name}/{view} の前後の同じ面の画素を求められない（撮影のファイルが無い）")
+            continue
+        common = same_before & same_after
+        before = (check_view(RC, baseline_dir, reference_dir, inputs, view, regions, name, trial, common,
+                             write_images=False).get("metric") or {})
+        after = (check_view(RC, engine_dir, reference_dir, inputs, view, regions, name, trial, common,
+                            write_images=False).get("metric") or {})
+        if before.get("kind") != "sun" or after.get("kind") != "sun" or "shadow_iou" not in after:
+            failures.append(f"{name}/{view} の太陽の量を前後で測れない")
+            continue
+        before_ok, _, before_ratio = sun_within(sun, before)
+        after_ok, outside, after_ratio = sun_within(sun, after)
+        is_target = (name, view) in targets
+        row = {"set": name, "view": view, "target": is_target, "common_pixels": int(common.sum()),
+               "xor_pixels": int((same_before ^ same_after).sum()),
+               "iou": [before["shadow_iou"], after["shadow_iou"]], "leak": [before["leak_fraction"], after["leak_fraction"]],
+               "edge_ratio": [round(before_ratio, 4), round(after_ratio, 4)], "outside": outside}
+        if is_target or before_ok:
+            row["pass"] = after_ok
+            if not after_ok:
+                failures.append(f"{name}/{view} の太陽の影が許容の外（{'・'.join(outside)}。IoU {after['shadow_iou']}・"
+                                f"漏れ {after['leak_fraction']}・縁の比 {after_ratio:.3f}）")
+        else:
+            row["pass"] = (float(after["shadow_iou"]) >= float(before["shadow_iou"]) and
+                           float(after["leak_fraction"]) <= float(before["leak_fraction"]))
+            if not row["pass"]:
+                failures.append(f"{name}/{view} の太陽の影が前より悪い（IoU {before['shadow_iou']} → {after['shadow_iou']}・"
+                                f"漏れ {before['leak_fraction']} → {after['leak_fraction']}）")
+        record["sun"].append(row)
+    return failures
 
 
 def print_expect(record):
@@ -539,6 +631,11 @@ def print_expect(record):
         print(f"REFERENCE_CHECK occlusion expect control set={row['set']} view={row['view']} stratum={row['stratum']} "
               f"pixels={row['pixels']} before_y={row['before_y']:.3f} after_y={row['after_y']:.3f} "
               f"after_over_before={row['after_over_before']} pass={int(row['pass'])}", flush=True)
+    for row in record.get("sun") or []:
+        print(f"REFERENCE_CHECK occlusion expect sun set={row['set']} view={row['view']} target={int(row['target'])} "
+              f"common={row['common_pixels']} xor={row['xor_pixels']} iou={row['iou'][0]}->{row['iou'][1]} "
+              f"leak={row['leak'][0]}->{row['leak'][1]} edge_ratio={row['edge_ratio'][0]}->{row['edge_ratio'][1]} "
+              f"outside={','.join(row['outside']) or '-'} pass={int(row['pass'])}", flush=True)
 
 
 def run(RC, engine_root, reference_root, views, verify, trial, regions_path="", expect_path=None):
