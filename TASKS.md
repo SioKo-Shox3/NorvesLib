@@ -2735,7 +2735,7 @@
 - notes: 2026-10-24 親が確認 2 の後の計画の後半の頭（雲の形）として足した。親の所見（2026-10-23、SCN-WL-OCCLUSION-ACCEPT の 6 視点）: 遠い雲が見えるようになった代わりに、雲の層がどの視点でも空を一様に薄く覆い、晴れの写真（ground_02・cliff_01）の視点でも白い曇り空に見える。Sol の批評 2 回（`Docs/Plans/WastelandRebuild-SolCritique-TerrainCloud-20261024.txt` の 8〜11・17 と、雲の組み直しへの再批評: 正式な正解は今の書き出しとハッシュが合わない・比の悪化は 1 からの隔たりで測る・全画素の不透明度は今の画面のアルファからは取れない・形の閾値は粗い斑点や穴の開いた膜で通らないよう調整の前に独立の見本で固定する・遠景のちらつきと段の検査・Cycles の生成は反復の中で同期・75 分に収まるよう前の撮影と調整と受け入れを分ける）を反映した。 撮影は SCN-WL-CLOUD-OPACITY-AOV のものを読む（撮り直さない）。HDRI は `Assets/Reference/SkySamples/`（git 管理外。出典・ライセンス・大きさは文書に書く）。時間の見積もり: HDRI の取得と投影 15 分、台本 30〜40 分、合成の試験 15 分。 壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える（未達のまま DONE にしない）。verify は 1 行 10 分未満（RelWithDebInfo のビルドは別の行）。GPU 時間（`-GpuTimingFrames 300`）は中央値を記録し合否にしない（33.3 ms を超えたら支配する処理を書く）。
 
 ## SCN-WL-CLOUD-SHAPE-BEFORE: 雲の形を変える前の、遠景の雲・段・回帰・GPU 時間の撮影をそろえる
-- status: todo
+- status: done
 - after: SCN-WL-CLOUD-SHAPE-METRIC
 - done-when: 雲の形の調整（SCN-WL-CLOUD-SHAPE-TUNE）と受け入れ（SCN-WL-CLOUD-SHAPE-ACCEPT）の比べの元を、今の雲のシェーダーで撮って保存する（コードと値は変えない）: (1) ちらつきの連番の前（`camera-script=Scripts/CameraScripts/wasteland-cloud-flicker.txt`、ref_far_01、`-Hdr`）を `.harness/runs/scene-capture/SCN-WL-CLOUD-SHAPE-ACCEPT/far-flicker/before` に、(2) 段の前の PNG（ref_far_02 の既定の撮影）を `.harness/runs/scene-capture/SCN-WL-CLOUD-SHAPE-BEFORE/banding` に、(3) 回帰の撮影の `before`（`-Item SCN-WL-CLOUD-SHAPE-ACCEPT`）、(4) GPU 時間（ref_far_01）、(5) 6 視点の撮影（写真と並べる前の画）。撮った Game.exe のハッシュと雲のシェーダーのハッシュを文書に書く。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`

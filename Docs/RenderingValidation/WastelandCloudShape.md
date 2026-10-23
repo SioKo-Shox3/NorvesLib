@@ -252,3 +252,45 @@ cloud_sky は 6 行で落ちる: 縁が美術上の上限の 4 倍ぼけ（49 �
 - 開いた画: 量の画 `.harness/runs/scene-capture/SCN-WL-CLOUD-OPACITY-AOV/cloud_shape_cloud_sky.png`・`cloud_shape_ref_far_01.png`（左が不透明度、
   右が塊の色分けと縁の点。cloud_sky は塊の周りに灰の膜の帯が広く、測れた縁の緑の点が塊の外周に並ぶ）、見本のマスク
   `Assets/Reference/SkySamples/masks/*.png`（積雲の塊と青い切れ間がマスクと合う。光輪と巻雲の混入は上の限界のとおり）。
+
+## 形を変える前の撮影（SCN-WL-CLOUD-SHAPE-BEFORE）
+
+雲の形の調整（SCN-WL-CLOUD-SHAPE-TUNE）と受け入れ（SCN-WL-CLOUD-SHAPE-ACCEPT）が比べる元。コードと値を変えずに今の雲のシェーダーで撮った。
+
+### 撮った版
+
+- Game.exe（RelWithDebInfo、コミット 11e1afca、作業ツリーの変更なし）: SHA-256 `d041326b223422fb6dce2fd61083cbccdcb60c8dd26e78ce965dc929ef44ae6f`
+- 雲のシェーダーは起動時にソースから組み立てる（`VulkanShaderCompiler::CompileFromSource`。組み立て済みの SPIR-V は置かない）ので、ソースの SHA-256 を記録する。
+  最後に変えたコミットは 26771864。
+  - `Assets/Shaders/cloud_layer.frag`: `39793e56aab649406c3898b616289f59255735a5280c14fea6498ab63a1b1359`
+  - `Assets/Shaders/Common/CloudLayerCommon.glsl`: `b000287e91465c4ef80e08c4e9cc009511776bfc4eee3e4251afa475aef1f0ba`
+  - `Assets/Shaders/cloud_layer_opacity.frag`（不透明度の画像。既定の描画では使わない）: `87a026729af42acc28b12bff6052867c295ac54aeaa1cbeb5b114dbfb6c68fbe`
+- 撮影の入力の記録（`far-flicker/before/inputs.json`）: sha256 `278b65b7…`、files 689・asset_sources 189・asset_missing 0。
+
+### 置き場と値（`.harness/runs/` の下）
+
+| 組 | 置き場 | 中身 |
+|---|---|---|
+| ちらつきの連番 | `scene-capture/SCN-WL-CLOUD-SHAPE-ACCEPT/far-flicker/before` | ref_far_01、`-Hdr`、台本 `wasteland-cloud-flicker.txt` の `seq-0`〜`seq-7`（8 枚、7 フレームおき）の PNG と PFM |
+| 段 | `scene-capture/SCN-WL-CLOUD-SHAPE-BEFORE/banding` | ref_far_02 の既定の撮影の PNG |
+| 6 視点 | `scene-capture/SCN-WL-CLOUD-SHAPE-BEFORE/views` | ref_far_01・ref_far_02・ref_cliff_01・ref_cliff_02・ref_ground_01・ref_ground_02 |
+| GPU 時間 | `scene-capture/SCN-WL-CLOUD-SHAPE-BEFORE/timing` | ref_far_01、300 フレーム |
+| 回帰 | `regression/SCN-WL-CLOUD-SHAPE-ACCEPT/before` | rendering3dtest・mega-bananas・sandbox・night-village の overview（検証レイヤーあり） |
+
+GPU 時間（ref_far_01、300 フレーム、記録だけで合否にしない）: 中央値 13.95 ms・平均 14.05 ms・95 百分位 17.47 ms・最大 20.75 ms（予算 33.3 ms に収まる）。
+処理ごとの中央値は FoliagePass 3.31・LightingPass 2.55・**CloudLayerPass 2.35**・VisibilityRasterPass 1.34・MegaGeometry 1.34 ms
+（CloudLayerPass の 95 百分位 4.09 ms・最大 4.46 ms）。CPU は中央値 27.6 ms（ゲームスレッドの中央値 27.4 ms）。
+
+### 開いた画
+
+- 6 視点: どの視点も雲の層が空を広く覆う。ref_far_01・ref_cliff_02・ref_ground_02 は空のほぼ全部が白い薄い膜で、青い切れ間がほとんど無い。
+  ref_far_02・ref_ground_01・ref_cliff_01 は青い切れ間があるが、塊の縁が広くぼけて層の帯に見える（上の量の表と合う）。
+- 段（`banding/ref_far_02.png`）: 雲の明るさに等高線のような階調の段がはっきり出る（とくに画面の上半分の塊の縁と右上）。
+- ちらつきの連番: 8 枚とも撮れ、画面の平均の明るさは 8 枚で同じ。
+- 回帰: 4 シーンの overview が撮れ、`capture.txt` は all_ok=1。
+
+### 確かめたこと
+
+`.harness/runs/20261023-124311/` の `verify-SCN-WL-CLOUD-SHAPE-BEFORE-1.txt`（RelWithDebInfo のビルド EXIT=0）・`-2.txt`（連番 result=pass、
+台本の capture 8 個と PNG 8 枚が一致）・`-3.txt`（段 result=pass）・`-4.txt`（6 視点 result=pass）・`-5.txt`（GPU 時間 result=pass、
+within_budget=True）・`-6.txt`（回帰 result=pass、482 秒）。

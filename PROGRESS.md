@@ -7571,3 +7571,10 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 証拠（`.harness/runs/20261023-124311/`）: `verify-SCN-WL-CLOUD-SHAPE-METRIC-3.txt`（selftest result=pass、既知の幅 20 画素を 19.9996 画素 EXIT=0）・`-4.txt`（`--cloud-shape --engine ... --verify` result=pass inputs_current=1 EXIT=0）・`aux-SCN-WL-CLOUD-SHAPE-METRIC-engine-expect-2.txt`（今の cloud_sky を定義で判定 result=fail の 6 行）。開いた画: `scene-capture/SCN-WL-CLOUD-OPACITY-AOV/cloud_shape_cloud_sky.png`・`cloud_shape_ref_far_01.png`（地形と画面の端に接する縁が赤、穴の縁が緑）
 - Next: TASKS.md の次の未完（雲の形の調整は cloud-shape.json を変えずに通す）
 - Notes: 新しい試験は足していない
+
+## 2026-10-24 SCN-WL-CLOUD-SHAPE-BEFORE（run 20261023-124311 の反復 30、閉じた）
+- Done: コードと値を変えずに、雲の形の調整と受け入れが比べる元を撮った: ちらつきの連番（ref_far_01・-Hdr・seq-0〜7 の 8 枚）を `scene-capture/SCN-WL-CLOUD-SHAPE-ACCEPT/far-flicker/before`、段の前（ref_far_02）を `scene-capture/SCN-WL-CLOUD-SHAPE-BEFORE/banding`、6 視点を `.../views`、GPU 時間を `.../timing`、回帰を `regression/SCN-WL-CLOUD-SHAPE-ACCEPT/before`。Game.exe（d041326b…）と雲のシェーダーのソース（cloud_layer.frag 39793e56…・CloudLayerCommon.glsl b000287e…）の SHA-256、置き場、GPU 時間、開いた画の所見を `WastelandCloudShape.md` の「形を変える前の撮影」に書いた
+- 値: GPU 時間（ref_far_01、300 フレーム）中央値 13.95 ms・95 百分位 17.47 ms（予算 33.3 ms 内）、CloudLayerPass の中央値 2.35 ms・95 百分位 4.09 ms
+- 証拠（`.harness/runs/20261023-124311/`）: `verify-SCN-WL-CLOUD-SHAPE-BEFORE-1.txt`（RelWithDebInfo のビルド EXIT=0）・`-2.txt`（連番 result=pass）・`-3.txt`（段 result=pass）・`-4.txt`（6 視点 result=pass）・`-5.txt`（GPU 時間 result=pass）・`-6.txt`（回帰 result=pass 482 秒）。開いた画: `scene-capture/SCN-WL-CLOUD-SHAPE-BEFORE/views/*.png`（晴れの視点も白い膜の空）・`banding/ref_far_02.png`（雲に等高線のような段）
+- Next: SCN-WL-CLOUD-SHAPE-TUNE（cloud-shape.json を変えずに通す。比べの元はこの置き場）
+- Notes: 雲のシェーダーは起動時にソースから組み立てるので、ハッシュはソースで記録した。新しい試験は足していない
