@@ -24,6 +24,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <cwchar>
 
 namespace NorvesLib::Core::Rendering
@@ -37,6 +38,44 @@ namespace NorvesLib::Core::Rendering
             return method == PointShadowMethod::Vsm
                        ? VirtualShadowMap::LEVEL_COUNT + PointShadowMaxLights * PointShadowFaceCount * VirtualShadowMapPointSettings{}.MipCount
                        : VirtualShadowMap::LEVEL_COUNT;
+        }
+
+        /**
+         * MegaGeometry の影の LOD の許容（texel）。主のカメラの LOD の閾値を環境変数 NORVES_MEGA_LOD_ERROR_PX で既定（1 画素）より
+         * 細かくした撮り比べ（--wasteland-finest-lod）では、影の許容も同じ比で縮める。
+         *
+         * 正解の絵（Cycles）は主の形も影を落とす形も LOD 0 なので、主だけを最も細かい段にすると、影は既定の 4 texel の粗い段の形で落ちる。
+         * 崖錐の岩の光に浅い面では、粗い段の滑らかな面が細かな起伏の自分への影を消し、岩の面の影が Cycles より少なくなる
+         * （WastelandOcclusion.md の「岩の影の LOD」）。閾値を替えない既定の描画では許容は変わらない。
+         */
+        float MegaShadowLodTexels(float defaultTexels)
+        {
+            static const float s_Scale = []() {
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4996)
+#endif
+                const char* text = std::getenv("NORVES_MEGA_LOD_ERROR_PX");
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
+                if (text == nullptr || text[0] == '\0')
+                {
+                    return 1.0f;
+                }
+                char* end = nullptr;
+                const float threshold = std::strtof(text, &end);
+                if (end == text || *end != '\0' || !std::isfinite(threshold) || threshold <= 0.0f)
+                {
+                    return 1.0f;
+                }
+                const float scale = std::min(1.0f, threshold / MegaGeometryPassSettings{}.LODBias);
+                // 撮影の照合が影の許容の効きを確かめる行
+                NORVES_LOG_INFO("VirtualShadowMapPass", "VSM_MEGA_LOD_SCALE scale=%.6g source=NORVES_MEGA_LOD_ERROR_PX",
+                                static_cast<double>(scale));
+                return scale;
+            }();
+            return defaultTexels * s_Scale;
         }
 
 #if NORVES_BUILD_DEVELOPMENT
@@ -1236,6 +1275,7 @@ namespace NorvesLib::Core::Rendering
         megaDispatch.MegaPageTable = inputs.PageTableBuffer;
         megaDispatch.InstanceCount = inputs.InstanceCount;
         megaDispatch.TotalGroups = inputs.TotalGroups;
+        megaDispatch.LodThresholdTexels = MegaShadowLodTexels(megaDispatch.LodThresholdTexels);
         const bool bRecorded = m_MegaCull->Record(commandList, megaDispatch);
 
         for (const RHI::BufferPtr& buffer : megaBuffers)

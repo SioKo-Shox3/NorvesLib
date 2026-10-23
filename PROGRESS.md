@@ -7425,3 +7425,16 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 証拠（`.harness/runs/20261023-124311/`）: `verify-SCN-WL-OCCLUSION-ACCEPT-10.txt`（terrain-sky とビルド）〜`-17.txt`（8 組の撮影、各 EXIT=0）・`-18.txt`（遮蔽の判定 pass）・`-19.txt`〜`-23.txt`（共通の照明の組の撮影 EXIT=0）・`-24.txt`（`--light-final` pass）・`-25.txt`（6 視点の撮影 pass）・`-26.txt`（`CompareReference.py --verify` pass、photos=6）。反復 8 の `-1.txt`〜`-9.txt` は前の Game.exe の記録
 - Next: TASKS.md の次の項目（SCN-WL-OCCLUSION-ACCEPT の後に回す項目）
 - Notes: 6 視点で、冠の遮りの範囲（40 m・64 個）の外の中景の株（ref_ground_02）は根元の暗がりが無い。崖の溝の奥と崖錐の段の影の帯は写真より浅い。地面と崖が写真より明るく彩度が高いのは前からの差。どれも必須の層の判定の外なので記録だけにした。新しい試験は足していない
+
+## 2026-10-23 SCN-WL-ROCK-LOD-SHADOW（run 20261023-124311 の反復 12、閉じた）
+- Done: 最初に試しで確かめた: 比べの撮影の主のカメラは既に最も細かい段で、違うのは VSM の影の LOD の許容（4 texel）だけだった。影を最も細かい段にすると rocks-sun の全体の IoU 0.880 → 0.910（岩の面 0.865 → 0.899）、1 texel でも 0.908。主のカメラの閾値 `NORVES_MEGA_LOD_ERROR_PX` を既定の 1 画素より細かくした撮り比べ（`--wasteland-finest-lod`）では、影の許容も同じ比で縮める形を入れた（`VirtualShadowMapPass.cpp` の `MegaShadowLodTexels`、ログの `VSM_MEGA_LOD_SCALE`）。既定の描画は変わらない。`sun-shadow.json` の rocks-sun の行を全体の IoU に戻した。記録は `WastelandOcclusion.md` の「岩の影の LOD」
+- 証拠（`.harness/runs/20261023-124311/`）:
+  - `aux-SCN-WL-ROCK-LOD-SHADOW-regression-before.txt`: 回帰の before result=pass（4 シーン）
+  - `aux-...-try-finest-*.txt`・`aux-...-try-1texel-*.txt`・`aux-...-try-head.txt`: 試しの撮影と rocks-sun だけの判定（参照を rocks-sun だけ写した置き場 `scene-capture/SCN-WL-ROCK-LOD-SHADOW-ref-rocks-sun`）
+  - `verify-SCN-WL-ROCK-LOD-SHADOW-1.txt`: Debug の Game のビルド EXIT=0。`-2.txt`: rocks-sun の撮影（`--build`）EXIT=0。ほかの 7 組は同じ Game.exe（82fbf94e…）で `aux-...-other-sets.txt`（sets=8 result=pass）
+  - `-3.txt`: `--occlusion --expect sun-shadow.json --verify` result=pass。rocks-sun 全体の IoU 0.9097・漏れ 0.53 %・縁の比 1.04、terrain-sun・rocks-cliff-sun 0.930 → 0.937、plant-sun 0.9245、空だけの組の層は変化 0.0001 以内、対照の Y 0.997〜1.000 倍
+  - `-4.txt`: ref_cliff_01 の GPU 中央値 15.706 ms（前 16.127 ms）、VRAM の使用 9715 MB（前 9715 MB、予算 15280 MB）
+  - `-5.txt`: 回帰の after result=pass（4 シーン、PSNR 67.3 dB 以上）
+  - 開いた画: `scene-capture/SCN-WL-ROCK-LOD-SHADOW-ref-rocks-sun/rocks-sun/occlusion_regions/contact_near.png`（一致の象限で、岩の面の影が灰〔両方の影〕になり、赤〔Cycles だけ〕は細かな点がわずかに残る）
+- Next: TASKS.md の次の未完
+- Notes: 既定の描画の岩の影を 1 texel にする形は入れていない（全部の MegaGeometry を 1 texel にするとバナナ 100 万本で影のクラスタの一覧の容量を超える注記があり、岩の印だけを細かくする費用は測っていない。NEXT_FINDINGS に記録）。比べの撮影の影のクラスタは 27125 → 304941 で溢れ 0。判定は全 8 組の撮影を求めるので、verify の rocks-sun の撮影に加えて残りの 7 組を同じ置き場へ撮った。基準画像の検査は回していない（検証アプリは閾値を替えず、既定の描画の許容は変わらない）。新しい試験は足していない
