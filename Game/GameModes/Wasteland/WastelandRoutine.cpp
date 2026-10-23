@@ -1381,7 +1381,9 @@ namespace Game::GameModes
             uint32_t casterRanges = 0;
             uint32_t fragmentRanges = 0;
             const uint32_t placedCasters = spawnScatter(casters, true, casterRanges);
-            const uint32_t placedFragments = spawnScatter(fragments, false, fragmentRanges);
+            // 小片も影を落とす（地面と岩に落ちる小片の影が無いと、太陽の影が Cycles より大きく欠ける）。
+            // CSM はフォグだけが読む間、大きい順の上限までしか描かない（ShadowMapPass の CsmFogMegaCasterBudget）
+            const uint32_t placedFragments = spawnScatter(fragments, true, fragmentRanges);
             if (assembly.PropExport.IsEnabled())
             {
                 const String meshNames[WastelandTalus::kTalusMeshCount] = {
@@ -1416,7 +1418,7 @@ namespace Game::GameModes
                     }
                 };
                 recordScatter(casters, true, placedCasters);
-                recordScatter(fragments, false, placedFragments);
+                recordScatter(fragments, true, placedFragments);
             }
             // 行を作り終えるまで（シーンの準備ができる前）だけ、仕事の列の予算を上げる
             if (placedCasters + placedFragments != 0 && !assembly.bMassBudgetRaised)

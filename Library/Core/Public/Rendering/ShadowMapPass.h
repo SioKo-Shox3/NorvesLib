@@ -222,6 +222,8 @@ namespace NorvesLib::Core::Rendering
         bool m_bHasSkinnedCasters = false;
         // CSM_MEGA_SKIPPED を出したか（省いた間は 1 回だけ出し、描き戻したら出し直す）
         bool m_bLoggedCsmMegaSkipped = false;
+        // CSM_MEGA_FOG_BUDGET で最後に出した、上限で省いた投影物の数（変わったときだけ出す）
+        uint32_t m_LoggedCsmFogBudgetDropped = 0;
         // VSM_CLIPMAP / VSM_TEXEL を出したか（起動後に 1 回だけ出す）
         bool m_bLoggedVsmClipmap = false;
 

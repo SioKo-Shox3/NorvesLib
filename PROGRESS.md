@@ -7346,3 +7346,14 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 試したこと（どれも入れていない。値は `WastelandOcclusion.md` の「直しの試し」）: 崖錐の小片にも影を落とさせると rocks-sun は IoU 0.497 → 0.851・漏れ 41.9 % → 2.16 %（地面への岩の影は一致）。岩の影の LOD を 1 texel にしても、物体の受け手の余裕を 4 texel で抑えても、岩の面の IoU は 0.774 → 0.78 で効かない
 - Next: 同じ項目の続き。(1) 小片の影を VSM だけに描き CSM から外す（投影物の印を分ける）、(2) 岩の面の自分への影の差（法線の向きのずらしと、太陽へ向くかの判定に使う法線）、(3) plant-sun の IoU 0.768（エンジンだけの影の塊）を調べる
 - Notes: 小片に影を落とさせた版で既定の荒野を撮ると `csm_mega_casters=275267`・カスケードごとの三角形 約 21 億で 600 秒の打ち切り（`scene-capture/SCN-WL-SUN-SHADOW-FIX/timing/ref_cliff_01.Game.log`）。`kCasterBudget` の注記の理由がまだ生きている。新しい試験は足していない
+
+## 2026-10-23 SCN-WL-SUN-SHADOW-FIX（run 20261023-124311 の反復 2、途中）
+- Done: 崖錐の小片（274965 個）にも影を落とさせ（`WastelandRoutine.cpp`）、CSM を読むのがボリュームのフォグだけの間は CSM へ描く MegaGeometry を境界の半径の大きい順に 384 個までにした（`ShadowMapPass.cpp` の `CsmFogMegaCasterBudget`。選ぶのは投影物の作り直し・メッシュの変化と、選んでいない席が上限の半径以上になったときだけ）。反復 1 の「既定の荒野が 600 秒で止まる」を解いた。記録は `WastelandOcclusion.md` の「小片の影を VSM に描き、フォグだけが読む CSM は大きい順に絞る」
+- 証拠（`.harness/runs/20261023-124311/`）:
+  - `verify-SCN-WL-SUN-SHADOW-FIX-1.txt`: Debug の Game のビルド EXIT=0。`-2.txt`〜`-9.txt`: 全 8 組の撮影 EXIT=0
+  - `-10.txt`: `--occlusion --expect sun-shadow.json --verify` result=fail。rocks-sun IoU 0.497 → 0.851・漏れ 41.9 % → 2.16 %・縁の比 0.91 → 0.99（IoU・漏れが外）、plant-sun 0.768 のまま（IoU が外）、terrain-sun・rocks-cliff-sun は内のまま。空だけの組は rocks-sky の接する帯 1.0485 → 1.0117・1.0363 → 1.0024、ほかの層と対照は変化 0.0001 以内
+  - `-11.txt`: 既定の荒野 ref_cliff_01 の GPU 中央値 15.96 ms（直す前の値は SCN-WL-OCCLUSION-FIX の後の 15.106 ms。Library・Game はその後変わっていない）、ShadowMapPass 1.645 → 2.150 ms、CPU の中央値 27.28 ms（前 27.18）、`CSM_MEGA_FOG_BUDGET budget=384 dropped=274886`
+  - `-12.txt`: 回帰の after result=pass（4 シーン、PSNR 63.2 dB 以上）。before は反復 1 のもの（`aux-...-regression-before.txt`）
+  - 開いた画: `scene-capture/SCN-WLR-OCCLUSION-SETS/cycles/rocks-sun/occlusion_regions/contact_near.png`（地面に落ちる岩の影は両方の影〔灰〕で重なり、外れは岩の面の細かい点〔赤〕）
+- Next: 同じ項目の続き。(1) rocks-sun の岩の面: 法線の地図の法線が太陽へ向いても幾何の法線が背く画素（Cycles だけの影の 27 %）を影にする扱いと、`VSMS_NORMAL_OFFSET_TEXELS` のずらしを幾何の法線で測る形を試す。(2) plant-sun の株の下の塊（エンジンだけの影）を調べる
+- Notes: 上限を入れる前の版（一覧を毎フレーム作って選ぶ）は CSM の記録 35.9 ms・CPU の中央値 59.6 ms になり、選んだ番号を持ち回る形に変えた。その途中の版は、席の差分で Slots が UnslottedBase を越えて伸びたときに印の配列の外へ書いて 0xC0000374 で落ちた（直した）。基準画像の検査は回していない（10-22 からの前からの差で落ちる。SCN-WL-OCCLUSION-FIX の反復 36）。壁時計の残りが 25 分を切ったので新しい試しは始めなかった。新しい試験は足していない

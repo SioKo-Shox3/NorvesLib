@@ -81,6 +81,10 @@ namespace NorvesLib::Core::Rendering
         // MegaGeometryの段の誤差が、影の地図の何テクセル以下なら粗い段を使うか
         constexpr float MegaShadowLODErrorTexels = 1.0f;
 
+        // CSM を読むのがボリュームのフォグだけのときに描く MegaGeometry の投影物の上限（境界の半径の大きい順）。
+        // 荒野の地形の区画・遠景・建物・大岩（約 300）が入り、崖錐の小片（27 万）は入らない
+        constexpr uint32_t CsmFogMegaCasterBudget = 384;
+
         // 1回の描画の段と範囲
         struct MegaShadowRange
         {
@@ -358,8 +362,21 @@ namespace NorvesLib::Core::Rendering
         bool bFromMirror = false;
         bool bValid = false;
 
+        // CSM をフォグだけが読むときに描く投影物の番号（境界の半径の大きい順に上限まで。席の順に並べる）。
+        // 作り直し・メッシュの変化で選び直し、席の差分では選んでいない席が上限の半径以上になったときだけ選び直す
+        Container::VariableArray<uint32_t> FogIds;
+        Container::VariableArray<uint8_t> FogSelected;
+        float FogCutRadius = 0.0f;
+        uint32_t FogDropped = 0;
+        bool bFogDirty = true;
+
         void Clear()
         {
+            FogIds.clear();
+            FogSelected.clear();
+            FogCutRadius = 0.0f;
+            FogDropped = 0;
+            bFogDirty = true;
             Slots.clear();
             Unslotted.clear();
             UnslottedBase = 1;
@@ -419,8 +436,105 @@ namespace NorvesLib::Core::Rendering
             Ranges.Set(id, bounds);
         }
 
+        // 番号（席、または UnslottedBase + 位置）の投影物
+        const Entry* FindEntry(uint32_t id) const
+        {
+            if (id < Slots.size())
+            {
+                return id != 0 ? &Slots[id] : nullptr;
+            }
+            if (id >= UnslottedBase && id - UnslottedBase < Unslotted.size())
+            {
+                return &Unslotted[id - UnslottedBase];
+            }
+            return nullptr;
+        }
+
+        // 描ける投影物の世界の境界の半径（描けなければ負）
+        float EntryRadius(const Entry& entry) const
+        {
+            const auto mesh = entry.bCastShadow ? Meshes.find(entry.Handle.Id) : Meshes.end();
+            if (mesh == Meshes.end() || !mesh->second.GpuData)
+            {
+                return -1.0f;
+            }
+            const BoundingSphere bounds = TransformMegaBounds(mesh->second.TotalBounds, entry.World);
+            return IsDrawableMegaBounds(bounds) ? bounds.Radius : -1.0f;
+        }
+
+        // 席の差分で直した席が、選んでいないのに上限の半径以上なら選び直す
+        void MarkFogPatched(uint32_t slot)
+        {
+            if (bFogDirty || (slot < FogSelected.size() && FogSelected[slot] != 0))
+            {
+                return;
+            }
+            const float radius = EntryRadius(Slots[slot]);
+            bFogDirty = radius >= 0.0f && radius >= FogCutRadius;
+        }
+
+        // フォグだけが読む CSM の投影物を選ぶ（選び直しが要るときだけ）
+        void UpdateFogSelection(uint32_t budget)
+        {
+            if (!bFogDirty)
+            {
+                return;
+            }
+            bFogDirty = false;
+            struct Candidate
+            {
+                float Radius = 0.0f;
+                uint32_t Id = 0;
+            };
+            Container::VariableArray<Candidate> candidates;
+            candidates.reserve(Slots.size() + Unslotted.size());
+            const auto consider = [&](uint32_t id, const Entry& entry)
+            {
+                const float radius = EntryRadius(entry);
+                if (radius >= 0.0f)
+                {
+                    candidates.push_back({radius, id});
+                }
+            };
+            for (size_t slot = 1; slot < Slots.size(); ++slot)
+            {
+                consider(static_cast<uint32_t>(slot), Slots[slot]);
+            }
+            for (size_t index = 0; index < Unslotted.size(); ++index)
+            {
+                consider(UnslottedBase + static_cast<uint32_t>(index), Unslotted[index]);
+            }
+            FogDropped = 0;
+            FogCutRadius = 0.0f;
+            if (candidates.size() > budget)
+            {
+                std::nth_element(candidates.begin(),
+                                 candidates.begin() + budget,
+                                 candidates.end(),
+                                 [](const Candidate& a, const Candidate& b)
+                                 { return a.Radius > b.Radius || (a.Radius == b.Radius && a.Id < b.Id); });
+                FogDropped = static_cast<uint32_t>(candidates.size() - budget);
+                candidates.resize(budget);
+                FogCutRadius = candidates.front().Radius;
+                for (const Candidate& candidate : candidates)
+                {
+                    FogCutRadius = std::min(FogCutRadius, candidate.Radius);
+                }
+            }
+            FogIds.clear();
+            // 席の差分で Slots は UnslottedBase を越えて伸びることがある（Unslotted が空のとき）
+            FogSelected.assign(std::max(Slots.size(), static_cast<size_t>(UnslottedBase) + Unslotted.size()), 0u);
+            for (const Candidate& candidate : candidates)
+            {
+                FogIds.push_back(candidate.Id);
+                FogSelected[candidate.Id] = 1u;
+            }
+            std::sort(FogIds.begin(), FogIds.end());
+        }
+
         void PlaceAll()
         {
+            bFogDirty = true;
             for (size_t slot = 1; slot < Slots.size(); ++slot)
             {
                 Place(static_cast<uint32_t>(slot), Slots[slot]);
@@ -528,6 +642,7 @@ namespace NorvesLib::Core::Rendering
                         }
                         MakeEntry(resources, mirror->FindBySlot(slot), Slots[slot]);
                         Place(slot, Slots[slot]);
+                        MarkFogPatched(slot);
                     }
                     Revision = mirror->GetRevision();
                     if (bMeshChanged)
@@ -575,11 +690,13 @@ namespace NorvesLib::Core::Rendering
         // モデルは LOD0 だけを持ち、実行時に作る階層も段ごとに頂点の基点が違ううえ簡略化に失敗した群を飛ばすため、
         // 1 段を 1 回の範囲で描けない。手続きで作る球は粗い段を連続した範囲として持ち、テクセルに見合う段を使う）。
         // 行列は MegaGeometryPass と同じくプロキシの行列をそのままシェーダーへ渡す
+        // ids を渡したときは、その番号（席の順）の投影物だけを集める
         void CollectMegaShadowCasters(const ShadowMapMegaCasterCache& cache,
-                                      Container::VariableArray<MegaShadowCaster>& outCasters)
+                                      Container::VariableArray<MegaShadowCaster>& outCasters,
+                                      const Container::VariableArray<uint32_t>* ids = nullptr)
         {
             outCasters.clear();
-            outCasters.reserve(cache.Ranges.GetCount());
+            outCasters.reserve(ids != nullptr ? ids->size() : cache.Ranges.GetCount());
             const auto append = [&](const ShadowMapMegaCasterCache::Entry& entry)
             {
                 if (!entry.bCastShadow)
@@ -611,6 +728,17 @@ namespace NorvesLib::Core::Rendering
                 }
                 outCasters.push_back(caster);
             };
+            if (ids != nullptr)
+            {
+                for (const uint32_t id : *ids)
+                {
+                    if (const ShadowMapMegaCasterCache::Entry* entry = cache.FindEntry(id))
+                    {
+                        append(*entry);
+                    }
+                }
+                return;
+            }
             for (size_t slot = 1; slot < cache.Slots.size(); ++slot)
             {
                 append(cache.Slots[slot]);
@@ -1114,11 +1242,15 @@ namespace NorvesLib::Core::Rendering
         // 太陽の影を VSM が受け持つ間は、CSM へ MegaGeometry を描かない。CSM を読む物（半透明・ボリュームのフォグ・検証表示・
         // 影の測定）が無いときだけ。MegaGeometry の描画は（インスタンス数 × 根の段の三角形数 × カスケード数）で増え、
         // 1 万本のバナナでは CSM だけでフレームの GPU 時間の約 6 割になる。カスケードの行列は変えない（上の境界の計算に含めたまま）
-        const bool bVsmOwnsSunShadow =
+        const bool bVsmOwnsSurfaceShadow =
             m_ShadowMethod == ShadowMethod::Vsm && m_pSunVsmPass != nullptr && m_pSunVsmPass->IsActive() &&
             context.PhysicalLighting.SunClipmap.bEnabled && context.GetActiveTransparentCommands().empty() &&
-            !(context.SnapshotScene != nullptr && context.SnapshotScene->VolumetricFog.bEnabled) &&
             context.GetActiveDebugMode() == DebugViewMode::Normal;
+        const bool bVolumetricFog = context.SnapshotScene != nullptr && context.SnapshotScene->VolumetricFog.bEnabled;
+        const bool bVsmOwnsSunShadow = bVsmOwnsSurfaceShadow && !bVolumetricFog;
+        // CSM を読むのがボリュームのフォグだけのとき。フォグの影はカスケードのテクセル（0.7 m〜）の粗さなので、
+        // 大きい順に上限までの投影物だけを描く（崖錐の小片のように VSM の細かい影のために影を落とす物が多数あっても止まらない）
+        const bool bCsmReadOnlyByFog = bVsmOwnsSurfaceShadow && bVolumetricFog;
         const bool bSkipMegaCasters = bVsmOwnsSunShadow && megaCasterCount != 0u;
         if (bSkipMegaCasters != m_bLoggedCsmMegaSkipped)
         {
@@ -1131,9 +1263,27 @@ namespace NorvesLib::Core::Rendering
         const bool bCanDrawMegaCasters = cascadedShadowMatrices.bEnabled && megaCasterCount != 0u && !bSkipMegaCasters;
         // 描く一覧は描くフレームだけ作る
         Container::VariableArray<MegaShadowCaster> megaCasters;
+        uint32_t fogBudgetDropped = 0;
         if (bCanDrawMegaCasters)
         {
-            CollectMegaShadowCasters(*m_MegaCasters, megaCasters);
+            if (bCsmReadOnlyByFog)
+            {
+                m_MegaCasters->UpdateFogSelection(CsmFogMegaCasterBudget);
+                fogBudgetDropped = m_MegaCasters->FogDropped;
+                CollectMegaShadowCasters(*m_MegaCasters, megaCasters, &m_MegaCasters->FogIds);
+            }
+            else
+            {
+                CollectMegaShadowCasters(*m_MegaCasters, megaCasters);
+            }
+        }
+        if (fogBudgetDropped != m_LoggedCsmFogBudgetDropped)
+        {
+            m_LoggedCsmFogBudgetDropped = fogBudgetDropped;
+            NORVES_LOG_INFO("ShadowMapPass",
+                            "CSM_MEGA_FOG_BUDGET budget=%u dropped=%u",
+                            CsmFogMegaCasterBudget,
+                            fogBudgetDropped);
         }
 
         // 4つのFramebufferで同じキャスターを記録するため、カスケードごとに別の定数と記述子セットを借りる。

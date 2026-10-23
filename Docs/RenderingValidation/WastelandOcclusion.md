@@ -423,3 +423,27 @@ rocks-sun だけを撮った試し（撮影 `.harness/runs/scene-capture/SCN-WL-
   MegaGeometry の投影物を全部描き（`csm_mega_casters=275267`・カスケードごとの三角形 約 21 億）、600 秒で撮影が打ち切られた
   （`SCN-WL-SUN-SHADOW-FIX/timing/ref_cliff_01.Game.log`）。`WastelandTalus.cpp` の `kCasterBudget` の注記の理由と同じ。小片の影は
   VSM だけに描き CSM から外す（投影物の印を分ける）形が要る
+
+### 小片の影を VSM に描き、フォグだけが読む CSM は大きい順に絞る（2026-10-23、入れた）
+
+崖錐の小片（274965 個）にも影を落とさせ（`WastelandRoutine.cpp` の小片の散布を `SetCastShadow(true)`）、CSM を読むのがボリュームのフォグだけの間
+（VSM が地表の影を受け持ち、半透明・検証表示が無い）は、CSM へ描く MegaGeometry を境界の半径の大きい順に 384 個までにした
+（`ShadowMapPass.cpp` の `CsmFogMegaCasterBudget`。選ぶのは投影物の作り直し・メッシュの変化のときと、選んでいない席が上限の半径以上に
+なったときだけ。記録は `CSM_MEGA_FOG_BUDGET budget=384 dropped=274886`）。フォグの影はカスケードの texel（0.73〜4.29 m）の粗さなので、
+地形の区画・遠景・建物・大岩が入れば足りる。VSM・RT のシーンは全部の小片を投影物として持つ。
+
+| 量 | 直す前 | 後 |
+|---|---|---|
+| rocks-sun / contact_near の IoU・漏れ・縁の比 | 0.497・41.9 %・0.91 | 0.851・2.16 %・0.99（IoU と漏れがまだ外） |
+| plant-sun / plant_near | 0.768・0 %・0.98 | 変わらない（IoU が外） |
+| terrain-sun・rocks-cliff-sun / ref_cliff_01 | 0.930・0.9 %・1.10 | 変わらない（内） |
+| rocks-sky / contact_near の接する帯（slope0-30_d0-10・slope30-60_d10-50） | 1.0485・1.0363 | 1.0117・1.0024（小片が RT の影を落とす物になり、拡散の光線が小片に当たる） |
+| ほかの空だけの層・対照 | — | 変化 0.0001 以内 |
+| 既定の荒野 ref_cliff_01 の GPU 時間の中央値（RelWithDebInfo、300 フレーム） | 15.106 ms（SCN-WL-OCCLUSION-FIX の後） | 15.96 ms（ShadowMapPass 1.645 → 2.150 ms。予算 33.3 ms の内） |
+| 同じ撮影の CPU の中央値・CSM の記録 | 27.18 ms・3.54 ms | 27.28 ms・3.08 ms |
+| CSM のカスケードごとの描画の数（c0〜c3） | 71・99・129・153 | 245・252・260・333 |
+
+- 上限を入れる前に一覧を毎フレーム作って選ぶ形にすると、CSM の記録が 35.9 ms・CPU の中央値が 59.6 ms になった。選んだ番号を持ち回る形で戻した
+- 残る外れは rocks-sun の岩の面（Cycles だけが影の画素が光に浅い面に寄り、うち 27 % は Cycles の幾何の法線が太陽に背く画素）と plant-sun の
+  株の下の塊。次の候補は、岩の受け手で法線の地図の法線が太陽へ向いても幾何の法線が背く画素を影にする扱いと、法線の向きのずらし
+  （`VirtualShadowMap.glsl` の `VSMS_NORMAL_OFFSET_TEXELS`）を幾何の法線で測ること
