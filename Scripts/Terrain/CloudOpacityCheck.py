@@ -14,12 +14,13 @@
 #      不透明度の画像のパスを足した印と保存の印がある。雲の書き出しと同じフレームの番号・時刻・画面の大きさ・逆の射影の行列。
 #   2. 値がすべて有限で、r・g・a が 0〜1、地形のマスクが 0 か 1。
 #   3. 地形のマスクの外だけに値がある（マスクが 1 の画素の r・g が 0）。
-#   4. 雲の書き出しの視線（診断の切り替えの無い格子の視線）ごとに、書き出しの視線の向きを記録の逆の射影の行列から求めた投影で
+#   4. 雲の書き出しの 256 本の視線（格子の 144 本と、診断の切り替えを立てた反実仮想の 112 本）ごとに、書き出しの視線の向きを記録の逆の射影の行列から求めた投影で
 #      画素へ戻し（書き出しの画素の中心との差が POSITION_TOLERANCE 画素以内）、その画素の r と視線の重ねる割合（行 0 の y）、
 #      空の画素では g と 1 − 透過率（行 0 の x）の差が OPACITY_TOLERANCE（0.01）以内。地形のマスクと視線の深度（行 6 の w）の
 #      空かどうかが合う。
-#   5. 全視点で雲のある視線（不透明度 CLOUD_OPACITY 以上）が MIN_CLOUD_RAYS 本以上ある（検査が成り立つ）。
-# 記録（合否に使わない）: 反実仮想の列（診断の切り替えを立てた視線）の差、空の画素の不透明度の平均・分位、雲の画素の割合。
+#      反実仮想の 112 本は格子の上から 7 行と同じ画素を細かい歩などで積んだ値で、描画との差は同じ 0.01 で抑える。
+#   5. 全視点で雲のある格子の視線（不透明度 CLOUD_OPACITY 以上）が MIN_CLOUD_RAYS 本以上ある（検査が成り立つ）。
+# 記録（合否に使わない）: 反実仮想の列だけの差の最大、空の画素の不透明度の平均・分位、雲の画素の割合。
 import json
 import os
 
@@ -31,6 +32,8 @@ LOG_LINES = ("CLOUD_OPACITY ",)
 FORMAT = "norves_cloud_opacity_v1"
 DUMP_FORMAT = "norves_cloud_dump_v1"
 PROBE_ROWS = 8
+# 雲の書き出しの視線の数（格子の 144 本 + 反実仮想の 112 本）。全部を照らす
+PROBE_RAYS = 256
 # 画像の値と書き出しの視線の値の差の上限
 OPACITY_TOLERANCE = 0.01
 # 投影で戻した画素と書き出しの画素の中心の差の上限（画素）。書き出しの視線の向きは GPU が単精度の逆の射影から求めた値で、
@@ -140,7 +143,7 @@ def check_view(rc, capture_dir, view, game_args):
         result.update({"pass": False, "failures": failures})
         return result
     pixels = dump["probe"].get("pixels", [])
-    if probe.shape[0] != PROBE_ROWS or probe.shape[1] != len(pixels):
+    if probe.shape[0] != PROBE_ROWS or probe.shape[1] != len(pixels) or len(pixels) != PROBE_RAYS:
         failures.append(f"視線の値の形 {list(probe.shape)} が約束と違う")
         result.update({"pass": False, "failures": failures})
         return result
@@ -209,22 +212,21 @@ def check_view(rc, capture_dir, view, game_args):
                 entry.update({"opacity_abs_error": opacity_error, "opacity_before_fade_abs_error": before_error})
                 if diagnostic:
                     diagnostic_worst = max(diagnostic_worst, opacity_error)
-                else:
-                    worst["position_px"] = max(worst["position_px"], position_error)
-                    worst["opacity_abs"] = max(worst["opacity_abs"], opacity_error)
-                    worst["opacity_before_fade_abs"] = max(worst["opacity_before_fade_abs"], before_error)
-                    if position_error > POSITION_TOLERANCE:
-                        ray_failures.append(f"投影した画素が書き出しの画素の中心から {position_error:.3f} 画素ずれる")
-                    if opacity_error > OPACITY_TOLERANCE:
-                        ray_failures.append(f"不透明度 {value[0]:.4f} が視線の重ねる割合 {alpha:.4f} と違う")
-                    if before_error > OPACITY_TOLERANCE:
-                        ray_failures.append(f"1 − 透過率 {value[1]:.4f} が視線の値 {before_fade:.4f} と違う")
-                    if bool(value[2] > 0.5) == sky_pixel:
-                        ray_failures.append(f"地形のマスク {int(value[2] > 0.5)} が視線の深度（空 {int(sky_pixel)}）と合わない")
+                worst["position_px"] = max(worst["position_px"], position_error)
+                worst["opacity_abs"] = max(worst["opacity_abs"], opacity_error)
+                worst["opacity_before_fade_abs"] = max(worst["opacity_before_fade_abs"], before_error)
+                if position_error > POSITION_TOLERANCE:
+                    ray_failures.append(f"投影した画素が書き出しの画素の中心から {position_error:.3f} 画素ずれる")
+                if opacity_error > OPACITY_TOLERANCE:
+                    ray_failures.append(f"不透明度 {value[0]:.4f} が視線の重ねる割合 {alpha:.4f} と違う")
+                if before_error > OPACITY_TOLERANCE:
+                    ray_failures.append(f"1 − 透過率 {value[1]:.4f} が視線の値 {before_fade:.4f} と違う")
+                if bool(value[2] > 0.5) == sky_pixel:
+                    ray_failures.append(f"地形のマスク {int(value[2] > 0.5)} が視線の深度（空 {int(sky_pixel)}）と合わない")
         if not diagnostic:
             sky_rays += int(sky_pixel)
             cloud_rays += int(sky_pixel and alpha >= CLOUD_OPACITY)
-            failures.extend(f"視線 {index}（画素 {pixel}）: {f}" for f in ray_failures)
+        failures.extend(f"視線 {index}（画素 {pixel}、診断の切り替え {diagnostic}）: {f}" for f in ray_failures)
         entry["pass"] = not ray_failures
         entry["failures"] = ray_failures
         rays.append(entry)
@@ -242,10 +244,10 @@ def check_view(rc, capture_dir, view, game_args):
         "writer_summary": meta.get("summary"),
     }
     preview = os.path.join(capture_dir, f"cloud_opacity_{view}.png")
-    write_preview(preview, safe, [r for r in rays if not r["diagnostic"]])
+    write_preview(preview, safe, rays)
     grid_rays = sum(1 for r in rays if not r["diagnostic"])
     result.update({
-        "rays": grid_rays, "sky_rays": sky_rays, "cloud_rays": cloud_rays, "worst": worst,
+        "rays": len(rays), "grid_rays": grid_rays, "sky_rays": sky_rays, "cloud_rays": cloud_rays, "worst": worst,
         "diagnostic_rays": len(rays) - grid_rays, "diagnostic_opacity_max_abs": diagnostic_worst,
         "frame_number": meta.get("frame_number"), "time_seconds": meta.get("time_seconds"),
         "summary": summary, "preview": os.path.basename(preview), "ray_results": rays,
@@ -297,7 +299,7 @@ def run(rc, capture_dir, views, verify):
         "criteria": {
             "opacity_tolerance": OPACITY_TOLERANCE, "position_tolerance_px": POSITION_TOLERANCE,
             "range_epsilon": RANGE_EPSILON, "cloud_opacity": CLOUD_OPACITY, "min_cloud_rays": MIN_CLOUD_RAYS,
-            "value": "r = opacity after fade (cloud_layer.frag alpha), g = 1 - transmittance before fade",
+            "value": "r = 溶かす割合を掛けた後の不透明度（cloud_layer.frag が重ねるアルファ）、g = 掛ける前の 1 − 透過率",
         },
         "views": results,
         "failures": failures,

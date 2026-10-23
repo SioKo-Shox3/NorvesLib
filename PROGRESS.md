@@ -7550,3 +7550,10 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 証拠（`.harness/runs/20261023-124311/`）: `verify-SCN-WL-CLOUD-OPACITY-AOV-1.txt`（Debug EXIT=0）・`-2.txt`（RelWithDebInfo EXIT=0）・`-3.txt`（撮影 result=pass）・`-5.txt`（`--cloud-opacity --verify` result=pass cloud_rays=152 inputs_current=1 EXIT=0）。開いた画: `scene-capture/SCN-WL-CLOUD-OPACITY-AOV/cloud_opacity_cloud_sky.png`・`cloud_opacity_ref_far_01.png`（撮影の PNG と塊・切れ間・地形の輪郭が一致）・`ref_far_01.png`
 - Next: TASKS.md の次の未完（雲の形の項目は全画素の不透明度で塊・切れ間・縁を測れる）
 - Notes: 既定の描画のコード（cloud_layer.frag・CloudLayerPass）は変えていない。GPU 時間は測っていない（cloud-dump は GPU 時間の撮影と併せられず、既定の描画は変わらない）。cloud.json の形式は変えていない（雲の正解の入力の記録は古くならない）。新しい試験は足していない
+
+## 2026-10-24 SCN-WL-CLOUD-OPACITY-AOV（run 20261023-124311 の反復 27、差し戻しの直し）
+- Done: `ReferenceCheck.py --cloud-opacity` が雲の書き出しの 256 本すべて（格子の 144 本と反実仮想の 112 本）の不透明度・1 − 透過率・地形のマスク・投影の位置を合否に入れ、視線の数が 256 でなければ落とす（前は反実仮想の 112 本を記録だけにしていた）。`.cloud.opacity.json` の人が読む説明（`orientation`・`value`・`terrain_mask`）を日本語にした（Core は実行文字集合が UTF-8 でないので u8 の文字列で書く）
+- 値: cloud_sky rays=256 差の最大 0・位置 0.23 画素、ref_far_01 rays=256 差の最大 8.2e-5（反実仮想の列だけでも 8.2e-5）・位置 0.53 画素。視線 144 のアルファだけを 0.5 ずらした写しはメモリ上で落ちることを確かめた（ファイルは変えていない）
+- 証拠（`.harness/runs/20261023-124311/`）: `verify-SCN-WL-CLOUD-OPACITY-AOV-6.txt`（Debug EXIT=0）・`-7.txt`（RelWithDebInfo EXIT=0）・`-8.txt`（撮影 result=pass）・`-9.txt`（`--cloud-opacity --verify` result=pass rays=256 × 2 視点 inputs_current=1 EXIT=0）。開いた画: `scene-capture/SCN-WL-CLOUD-OPACITY-AOV/cloud_opacity_ref_far_01.png`（全視線の十字が緑、地形の輪郭が一致）。JSON の説明が UTF-8 の日本語で読めることを確かめた
+- Next: TASKS.md の次の未完
+- Notes: 既定の描画のコードは変えていない。新しい試験は足していない

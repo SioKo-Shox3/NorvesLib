@@ -1239,11 +1239,16 @@ namespace NorvesLib::Core::Rendering
                      static_cast<unsigned long long>(info.TemporalFrameIndex), info.TargetWidth, info.TargetHeight);
         AppendFormat(json, "  \"image\": {");
         AppendFileEntry(json, imageName, image.Height, image.Width, 4u);
-        AppendFormat(json, ",\n    \"orientation\": \"row 0 = top of the screen, column 0 = left (gl_FragCoord, pixel center at +0.5)\",\n"
+        // 人が読む説明は日本語。Core は実行文字集合を UTF-8 にしていないので u8 の文字列で UTF-8 のまま書く
+        static constexpr char8_t kOrientation[] = u8"行 0 = 画面の上、列 0 = 左（gl_FragCoord と同じ。画素の中心は +0.5）";
+        static constexpr char8_t kValue[] =
+            u8"opacity_after_fade = (1 − 雲の透過率) × fade。cloud_layer.frag が重ねるアルファで、霞・太陽の円盤・地形を含まない。地形の画素は 0";
+        static constexpr char8_t kTerrainMask[] = u8"シーンの深度が有限で 0.999999 より小さい画素（空でない画素）は 1、ほかは 0";
+        AppendFormat(json, ",\n    \"orientation\": \"%s\",\n"
                            "    \"channels\": [\"opacity_after_fade\", \"opacity_before_fade\", \"terrain_mask\", \"fade\"],\n"
-                           "    \"value\": \"opacity_after_fade = (1 - cloud transmittance) * fade, the alpha cloud_layer.frag blends; "
-                           "no haze, sun disk or terrain; 0 on terrain pixels\",\n"
-                           "    \"terrain_mask\": \"1 where scene depth is finite and < 0.999999 (not sky), else 0\"},\n");
+                           "    \"value\": \"%s\",\n    \"terrain_mask\": \"%s\"},\n",
+                     reinterpret_cast<const char*>(kOrientation), reinterpret_cast<const char*>(kValue),
+                     reinterpret_cast<const char*>(kTerrainMask));
         // カメラ（cloud_layer.frag の定数の逆の射影とカメラの位置。視線の向き = normalize(逆の射影 × (uv * 2 - 1, 1, 1) の点 − 位置)）
         AppendFormat(json, "  \"camera\": {\"position\": ");
         AppendVector3(json, shaderParams + 16);
