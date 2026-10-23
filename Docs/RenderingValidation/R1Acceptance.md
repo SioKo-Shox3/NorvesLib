@@ -15,6 +15,7 @@ R1 baseline candidate Indoor=D0D34A5F9CF478449EC34BC551DA190B9E77353E8CD807B3455
 R1 baseline candidate Indoor=D0D34A5F9CF478449EC34BC551DA190B9E77353E8CD807B3455E2AEB6B5E05E7 Outdoor=18A44AE8E1408EF8EF0F13FFB1009750F748FB591349AACCEEEFC06EA4B5B857 CodeHead=6d3283227a4bef802a9d5a1cf8aa58b247e846b7 を承認する。
 R1 baseline candidate Indoor=D0D34A5F9CF478449EC34BC551DA190B9E77353E8CD807B3455E2AEB6B5E05E7 Outdoor=052BA21977383F565B9A07169DF7CD72CE2B79CA5482A6F6AA7727114D713268 CodeHead=f4c5266983dcc985b05caed4a26012ff3635a48f を承認する。
 R1 baseline candidate Indoor=C3FBC0EAC010F80FD75D4B1D17FFAE5A9FE2FA51E71ACEE480A2574A2478D8D7 Outdoor=7C7405EF3E2B7A1E6B3D5DCBE1DE14F06F662FF733D0683D4F6A5652667C8CA6 CodeHead=9848f86eed0a65891e773ea456dc38f00e130e51 を承認する。
+R1 baseline candidate Indoor=9203FB88ED51B25777131585F9D502BFE5EB3B43A3528BF6E0D745E223686E8F Outdoor=DCBA9DA2D481F813A7FD53BBCBA6D569147ECF44857CAF76989ABDA603E1B23F CodeHead=2a687351599354ee0b1163166b673dffa43cc351 を承認する。
 
 ## P6b plan and procedure approval
 P6b plan SHA256=37D08DE402478F1D1EBEEEE2D0D8F134492AA0A0EDEB2A4C8FF69527721A2AE3
@@ -151,4 +152,16 @@ GPU performance=Deferred; executions=0; destination=future CI GPU runner
 - 物理的な妥当性: 高さ相関のSmith GGXは1/(1+Λv+Λl)で、分けて掛けるG1·G1の1/((1+Λv)(1+Λl))より常に大きいか等しい（ΛvΛl≥0）。差がすべて鏡面が強まる向きなのはこの式どおりで、Cyclesの式に一致させる直しである。荒野のCyclesとの比較では、日なたの地面のエンジン÷Cyclesがref_ground_01で0.952→0.973、ref_cliff_02で0.858→0.925と1へ近づいた（SCN-WL-MATERIAL-AO-SHADING）。
 - 予備の経路（`--visibility-buffer=off`）: `IndoorGBufferFallback.png`は新しい`Indoor.png`と同じ（SHA256=`C3FBC0EA…78D8D7`）。`OutdoorGBufferFallback.png`は`4C8653857B499ADDFB2F503D4241C55FDB2364E7A9A9341285911BF47B172129`へ置き換えた。旧baselineとの差は既定の経路と同じ16152画素（raw最大10）、新しい`Outdoor.png`との差は球の縁の50画素（raw最大3）で、ビジビリティバッファを既定にしたときのonとoffの差（57画素・raw最大3）と同じ形である。
 - 再生成: `UpdateRenderingGoldenBaselines.ps1 -GenerateCandidate -CodeHead 9848f86eed0a65891e773ea456dc38f00e130e51`を走らせ、候補はIndoor `C3FBC0EA…78D8D7`・Outdoor `7C7405EF…8C8CA6`。描画のコードが同じ`deccd8bc`での別の撮影と差0で、撮影は決定的である。
+- 閾値（`VisualThresholds.tsv`のmean FLIP上限`0.000001`、raw channel差上限8）は変更しない。
+
+## 表示の8 bitの丸めのディザと深度からの位置の復元の直し後のIndoor・Outdoor再承認
+- 2026-10-23、上の承認行のIndoor出力（SHA256=`9203FB88ED51B25777131585F9D502BFE5EB3B43A3528BF6E0D745E223686E8F`）とOutdoor出力（SHA256=`DCBA9DA2D481F813A7FD53BBCBA6D569147ECF44857CAF76989ABDA603E1B23F`）を新しいbaselineとして承認した。承認はSCN-GOLDEN-REVERIFYの完了条件（差の原因と物理的な妥当性を確かめた再承認）による。上の「直接光の鏡面の遮蔽項と視線行列の作り方の直し後のIndoor・Outdoor再承認」の承認行は置換前の履歴として残す。
+- 差の原因は2つで、どちらも意図した描画の変更である。
+  1. 表示のBlitで8 bitへ丸める前に、sRGBの符号化値へ画素の位置だけで決まる±0.5段の一様な雑音を足すようにした（`c12ee89b`、`blit.frag`）。雲や空の緩い階調が1段ずつの平らな帯になって等高線のように並ぶのを消す変更で、雑音はフレームで変えないので撮影は決定的なままである。IndoorとOutdoorのほぼすべての差はこの分である。
+  2. 照明とVSMの印付けで深度から位置を復元する式を、カメラ基準の向きと深度から求めた前方への距離にした（`585d1fe4`、`CameraViewConstants`・`LightingPass`・`lighting.frag`・`vsm_mark.comp`）。数式では同じ位置で、丸めの境目の画素の影の判定が動く。Outdoorだけに効く。
+- 切り分け: `blit.frag`だけを`c12ee89b^`の版にした撮影は、Indoorが旧baselineと差0、Outdoorは6画素（raw最大4）だけ残る。シェーダーをすべて`2ae72946`の版にしても同じ6画素が残る（Library側の差）。さらに`585d1fe4`をLibraryとシェーダーごと戻したビルドのOutdoorの撮影は旧baselineと差0である。戻しは作業ツリーで一時的に行い、撮影の後に元へ戻して建て直した。2ae72946の時点の合格の記録はビルドを含まないctestのログで、そのときの検査の実行ファイルが`585d1fe4`を含んでいたかは確かめられない。描画のコードが同じ版での2回の撮影（候補の生成とその前の撮影）はバイト単位で一致し、撮影は決定的である。
+- 差分の範囲: Indoorは8929画素（すべて1/255、画面全体）、平均輝度9.6854→9.7784。Outdoorは20356画素（1/255が20353、3/255が2、4/255が1）、平均輝度129.5437→129.5860。2/255以上の3画素はx 168〜176・y 137〜142の黄色と桃色の球の接地の影の縁で、`585d1fe4`の分である（その分の6画素は符号付きの差の総和R -9・G -7・B -13）。旧baseline｜候補｜差×40を並べて開き、差が画面全体に均一な1段の粒と、Outdoorの地面の階調に沿った旧来の段の境目の輪だけで、形・位置・色相の変化が無いことを確かめた。
+- 物理的な妥当性: ディザの出力の期待値は丸める前の符号化値に等しく、最も近い段への丸めが平らな面で同じ向きへ偏らせていた分（Indoorの暗い面の端数など）が元の値へ戻る。平均輝度の差（Indoor +0.093段、Outdoor +0.042段）はこの偏りの解消で、どの画素も元の段から1段以内である。位置の復元の直しは同じ位置を桁落ちの少ない形で求めるもので、変わるのは影の境目の数画素だけである。
+- 予備の経路（`--visibility-buffer=off`）: `IndoorGBufferFallback.png`は新しい`Indoor.png`と同じ（SHA256=`9203FB88…686E8F`）。`OutdoorGBufferFallback.png`は`A9ED378DA3146F190171451710A8334F0C74E9AA73642AEC00D7F6C031F0032E`へ置き換えた。旧baselineとの差は既定の経路と同じ形の20359画素（raw最大4）、新しい`Outdoor.png`との差は球の縁の52画素（raw最大3）で、ビジビリティバッファを既定にしたときのonとoffの差と同じ形である。置き換えの後に予備の経路の検査2本もPassedになった。
+- 再生成: `UpdateRenderingGoldenBaselines.ps1 -GenerateCandidate -CodeHead 2a687351599354ee0b1163166b673dffa43cc351`を走らせ、候補はIndoor `9203FB88…686E8F`・Outdoor `DCBA9DA2…B1E23F`。`-PublishApprovedCandidate`でsourceへ置き、Indoor・Outdoorの検査がPassedになった。
 - 閾値（`VisualThresholds.tsv`のmean FLIP上限`0.000001`、raw channel差上限8）は変更しない。

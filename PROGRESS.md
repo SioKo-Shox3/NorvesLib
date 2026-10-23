@@ -7369,3 +7369,14 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 開いた画: `scene-capture/SCN-WLR-OCCLUSION-SETS/cycles/plant-sun/occlusion_regions/plant_near.png`（エンジンだけの影〔青〕が株の輪郭のすぐ下の帯）、`.../rocks-sun/occlusion_regions/contact_near.png`（ずらし 0 で広い面の斑なし、外れは岩の面の細かな点）
 - Next: 同じ項目の続き。rocks-sun の岩の面（IoU 0.880）。主のカメラ・影の描画の岩の LOD と Cycles の 4k のスキャンの形の差を確かめる
 - Notes: 幾何の法線が太陽に背く画素を影にする形は Cycles の幾何の法線で試算しても IoU +0.004 で、入れていない。一定の余裕 0.75 texel は悪くなった（0.870）。基準画像の検査は回していない（10-22 からの前からの差で落ちる）。壁時計の残りが 25 分を切ったので新しい試しは始めなかった。新しい試験は足していない
+
+## 2026-10-23 SCN-GOLDEN-REVERIFY（run 20261023-124311 の反復 4）
+- Done: 基準画像の検査（Indoor 8929 画素・Outdoor 20356 画素）の差の原因を 2 つに特定し、Indoor・Outdoor と予備の経路の 2 枚を再承認した。(1) 表示の Blit の 8 bit の丸めの前の ±0.5 段のディザ（c12ee89b）: 差の画は画面全体に均一な 1 段の粒と、Outdoor の地面の階調の旧来の段の境目の輪だけ。`blit.frag` だけを戻すと Indoor は旧 baseline と差 0。(2) 深度からの位置の復元の式の直し（585d1fe4）: Outdoor の球の接地の影の縁の 6 画素（raw 最大 4）。シェーダーを全部 2ae72946 に戻しても残り、585d1fe4 を Library ごと戻したビルドで差 0。戻しは作業ツリーで一時的に行い、元に戻して建て直した。根拠と範囲は `R1Acceptance.md` の「表示の8 bitの丸めのディザと深度からの位置の復元の直し後のIndoor・Outdoor再承認」
+- 証拠（`.harness/runs/20261023-124311/`）:
+  - `verify-SCN-GOLDEN-REVERIFY-1.txt`（HEAD の版）・`-2.txt`（戻しの試しの後に建て直した版）: Debug の全体のビルド EXIT=1。失敗は前からある 4 つの試験の実行ファイルだけ（AssetManifestReloadBridgeLoopbackTest・NorvesLibBridgeAdapterScriptComponentTest・RenderGraphCompileTest・RenderingDDGILightingContractTest のコンパイル・リンクのエラー。1 回目と 2 回目で同じ組）。Core.lib と RenderingGoldenImageTest.exe は作れた
+  - `-3.txt`: `RenderingGoldenIndoorVulkanTest`・`RenderingGoldenOutdoorVulkanTest` とも Passed・EXIT=0
+  - `aux-SCN-GOLDEN-REVERIFY-head-diff.txt`（今の版と旧 baseline の差）、`-nodither-diff.txt`（ディザを戻した版）、`-revert585-diff.txt`（585d1fe4 とディザを戻した版、差 0）
+  - `aux-SCN-GOLDEN-REVERIFY-candidate.txt`（GenerateCandidate EXIT=0、候補は戻しの前の撮影とバイト一致）・`-publish.txt`（baseline_publish=PASS）
+  - `aux-SCN-GOLDEN-REVERIFY-fallback-diff.txt`・`-fallback-ctest.txt`: 予備の経路の 2 枚を置き換え、検査 2 本 Passed
+- Next: TASKS.md の次の未完
+- Notes: verify の全体のビルドは、この項目と関係しない 4 つの試験の前からのビルドの失敗で EXIT=1 のまま（paths の外。NEXT_FINDINGS に記録）。10-22 の SCN-WL-LIGHT-FINAL の合格のログはビルドを含まず、その時の検査の実行ファイルが 585d1fe4 を含んでいたかは確かめられない。閾値は変えていない。新しい試験は足していない
