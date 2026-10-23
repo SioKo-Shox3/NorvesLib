@@ -336,7 +336,8 @@ float CalculateSunShadow(vec3 worldPos, vec3 normal, bool bTerrainReceiver, bool
         }
         return VsmSampleSunShadowWithBias(worldPos, normal,
                                           bTerrainReceiver ? VSMS_TERRAIN_CONSTANT_BIAS_TEXELS : VSMS_CONSTANT_BIAS_TEXELS,
-                                          bTightTerrainShadow ? VSMS_TERRAIN_NORMAL_OFFSET_TEXELS : VSMS_NORMAL_OFFSET_TEXELS,
+                                          bTightTerrainShadow ? VSMS_TERRAIN_NORMAL_OFFSET_TEXELS
+                                          : (bTerrainReceiver ? VSMS_NORMAL_OFFSET_TEXELS : VSMS_OBJECT_NORMAL_OFFSET_TEXELS),
                                           texelMeters);
     }
     return CalculateShadow(worldPos, normal);
@@ -500,6 +501,13 @@ float CalculateContactShadow(vec3 worldPos, float depth, vec3 normal, vec3 L, fl
             continue;
         }
         sceneNormal /= sceneNormalLength;
+        // 草・低木の株の画素（GBuffer の材質の A が株の印）は遮らない。株は細い枝と葉のまばらな塊で、深度の面とその奥の
+        // 厚さを詰まった物とみなすと、画面の上で株の輪郭のすぐ下の地面に塊の影が出る。株の影は太陽の影（VSM）が受け持つ
+        float sceneMaterialMark = texelFetch(gbufferMaterial, texel, 0).a;
+        if (sceneMaterialMark > 0.125 && sceneMaterialMark < 0.375)
+        {
+            continue;
+        }
         if (bTerrainReceiver)
         {
             // 地形の受け手を地形の画素（A が 1）は遮らない。地形どうしの陰は太陽の影が受け持ち、接触影が拾うのは

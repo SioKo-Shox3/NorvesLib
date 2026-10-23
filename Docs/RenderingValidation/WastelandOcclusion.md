@@ -447,3 +447,38 @@ rocks-sun だけを撮った試し（撮影 `.harness/runs/scene-capture/SCN-WL-
 - 残る外れは rocks-sun の岩の面（Cycles だけが影の画素が光に浅い面に寄り、うち 27 % は Cycles の幾何の法線が太陽に背く画素）と plant-sun の
   株の下の塊。次の候補は、岩の受け手で法線の地図の法線が太陽へ向いても幾何の法線が背く画素を影にする扱いと、法線の向きのずらし
   （`VirtualShadowMap.glsl` の `VSMS_NORMAL_OFFSET_TEXELS`）を幾何の法線で測ること
+
+### 株の画素を接触影の遮りから外し、物体の受け手の法線のずらしを 0 にする（2026-10-23、入れた）
+
+- plant-sun の株の下の塊（エンジンだけの影）は画面空間の接触影だった。株の画素の深度の面と奥の 0.3 m を詰まった物とみなし、画面の上で株の
+  輪郭のすぐ下の地面を遮っていた。株の画素（GBuffer の材質の A が株の印）を接触影の遮りにしない（`lighting.frag` の `CalculateContactShadow`）。
+  株の影は VSM（段 0 の texel 1.95 mm）が受け持つ
+- rocks-sun の岩の面: 物体の受け手（地形・株の外）の VSM の法線の向きへのずらしを 1.5 → 0 texel にした（`VirtualShadowMap.glsl` の
+  `VSMS_OBJECT_NORMAL_OFFSET_TEXELS`。荒野の外の地形の受け手は `VSMS_NORMAL_OFFSET_TEXELS` の 1.5 のまま）。1.5 texel（荒野の段で 約 6 mm）
+  ずらすと、光に浅く当たる岩の面の細かな凹凸の自分への影を受け手が飛び越える。広い面の斑は出ない（重ね画像 `contact_near.png`）
+
+試し（rocks-sun / contact_near、撮影 `.harness/runs/scene-capture/SCN-WL-SUN-SHADOW-FIX-try-*`）:
+
+| 試し | IoU | 漏れ |
+|---|---|---|
+| 反復 2 の後 | 0.851 | 2.16 % |
+| 深度から作る幾何の法線が太陽に背く画素を影にする（`-try-geonormal`、入れていない） | 0.847 | 1.82 % |
+| ずらし 0.5 texel（`-try-offset05`） | 0.874 | 1.23 % |
+| ずらし 0（`-try-offset0`、入れた） | 0.880 | 0.89 % |
+| ずらし 0 ＋一定の余裕 1.5 → 0.75 texel（`-try-offset0-bias075`、入れていない） | 0.870 | 0.83 % |
+
+- 幾何の法線の判定は効かない。Cycles の幾何の法線（`aux.geometric_normal`）そのもので閾値（N·L < 0〜−0.3）を掛ける試算でも IoU は最大 +0.004。
+  Cycles は幾何の法線が太陽に背く画素の多くを日なたに描く（エンジンだけが影になった画素の Cycles の幾何の N·L の中央値 −0.04）
+- 残る外れは岩の面の細かな点（Cycles だけが影の画素の幾何の N·L の中央値 0.20）。主のカメラ・影の描画の岩の LOD と、Cycles の 4k のスキャンの
+  形の差が候補
+
+全組の撮り直し（`.harness/runs/20261023-124311/verify-SCN-WL-SUN-SHADOW-FIX-22.txt`〜`-33.txt`）:
+
+| 量 | 直す前 | 後 |
+|---|---|---|
+| plant-sun / plant_near の IoU・漏れ・縁の比 | 0.768・0 %・0.98 | 0.925・0 %・0.96（内） |
+| rocks-sun / contact_near | 0.497・41.9 %・0.91 | 0.880・0.89 %・1.01（IoU がまだ外） |
+| terrain-sun・rocks-cliff-sun / ref_cliff_01 | 0.930・0.9 %・1.10 | 変わらない（内） |
+| 空だけの組の層・対照 | — | 反復 2 の値のまま（rocks-sky の接する帯 1.0117・1.0024、ほかの変化 0.0001 以内） |
+| 既定の荒野 ref_cliff_01 の GPU 時間の中央値 | 15.106 ms | 15.608 ms（CPU の中央値 26.39 ms。予算 33.3 ms の内） |
+| 回帰の 4 シーン（after） | — | pass |

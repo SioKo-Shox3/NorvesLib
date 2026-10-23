@@ -7357,3 +7357,15 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 開いた画: `scene-capture/SCN-WLR-OCCLUSION-SETS/cycles/rocks-sun/occlusion_regions/contact_near.png`（地面に落ちる岩の影は両方の影〔灰〕で重なり、外れは岩の面の細かい点〔赤〕）
 - Next: 同じ項目の続き。(1) rocks-sun の岩の面: 法線の地図の法線が太陽へ向いても幾何の法線が背く画素（Cycles だけの影の 27 %）を影にする扱いと、`VSMS_NORMAL_OFFSET_TEXELS` のずらしを幾何の法線で測る形を試す。(2) plant-sun の株の下の塊（エンジンだけの影）を調べる
 - Notes: 上限を入れる前の版（一覧を毎フレーム作って選ぶ）は CSM の記録 35.9 ms・CPU の中央値 59.6 ms になり、選んだ番号を持ち回る形に変えた。その途中の版は、席の差分で Slots が UnslottedBase を越えて伸びたときに印の配列の外へ書いて 0xC0000374 で落ちた（直した）。基準画像の検査は回していない（10-22 からの前からの差で落ちる。SCN-WL-OCCLUSION-FIX の反復 36）。壁時計の残りが 25 分を切ったので新しい試しは始めなかった。新しい試験は足していない
+
+## 2026-10-23 SCN-WL-SUN-SHADOW-FIX（run 20261023-124311 の反復 3、途中）
+- Done: plant-sun の株の下の塊（エンジンだけの影）は画面空間の接触影だった。株の画素（GBuffer の材質の A が株の印）を接触影の遮りにしない（`lighting.frag`）。物体の受け手（地形・株の外）の VSM の法線の向きへのずらしを 1.5 → 0 texel にした（`VirtualShadowMap.glsl` の `VSMS_OBJECT_NORMAL_OFFSET_TEXELS`）。記録は `WastelandOcclusion.md` の「株の画素を接触影の遮りから外し、物体の受け手の法線のずらしを 0 にする」
+- 証拠（`.harness/runs/20261023-124311/`）:
+  - `verify-SCN-WL-SUN-SHADOW-FIX-22.txt`: Debug の Game のビルド EXIT=0。`-23.txt`〜`-30.txt`: 全 8 組の撮影 EXIT=0
+  - `-31.txt`: `--occlusion --expect sun-shadow.json --verify` result=fail。plant-sun IoU 0.768 → 0.925（内）、rocks-sun IoU 0.497 → 0.880・漏れ 41.9 % → 0.89 %（IoU だけ外）、terrain-sun・rocks-cliff-sun は内のまま、空だけの組の層・対照は反復 2 の値のまま
+  - `-32.txt`: 既定の荒野 ref_cliff_01 の GPU 中央値 15.608 ms（予算 33.3 ms の内）、CPU の中央値 26.39 ms
+  - `-33.txt`: 回帰の after result=pass（4 シーン）。before は反復 1 のもの
+  - `-13.txt`〜`-21.txt` は入れなかった試し（幾何の法線が背く画素を影にする形）の撮影。試しの判定は `aux-SCN-WL-SUN-SHADOW-FIX-iter3-*`・`aux-...-try-foliagecontact*`・`aux-...-try-offset*`
+  - 開いた画: `scene-capture/SCN-WLR-OCCLUSION-SETS/cycles/plant-sun/occlusion_regions/plant_near.png`（エンジンだけの影〔青〕が株の輪郭のすぐ下の帯）、`.../rocks-sun/occlusion_regions/contact_near.png`（ずらし 0 で広い面の斑なし、外れは岩の面の細かな点）
+- Next: 同じ項目の続き。rocks-sun の岩の面（IoU 0.880）。主のカメラ・影の描画の岩の LOD と Cycles の 4k のスキャンの形の差を確かめる
+- Notes: 幾何の法線が太陽に背く画素を影にする形は Cycles の幾何の法線で試算しても IoU +0.004 で、入れていない。一定の余裕 0.75 texel は悪くなった（0.870）。基準画像の検査は回していない（10-22 からの前からの差で落ちる）。壁時計の残りが 25 分を切ったので新しい試しは始めなかった。新しい試験は足していない

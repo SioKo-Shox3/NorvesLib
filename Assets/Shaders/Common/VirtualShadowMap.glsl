@@ -50,6 +50,11 @@ const uint VSMS_PAGE_INDEX_MASK = (1u << 20) - 1u;
 // 深度の比較の余裕のうち一定の分（使う段の texel の倍数。CSM の 1.5 texel と同じ）
 const float VSMS_NORMAL_OFFSET_TEXELS = 1.5;
 const float VSMS_CONSTANT_BIAS_TEXELS = 1.5;
+// 地形・株の外の受け手（岩・建物）の太陽の影の法線の向きへのずらし（使う段の texel の倍数）。1.5 texel ずらすと、光に浅く当たる
+// 岩の面の細かな凹凸が自分の面へ落とす影（数 mm〜数 cm）を受け手が飛び越え、Cycles では影になる浅い面が日なたに残る
+// （荒野の崖錐の岩の面。WastelandOcclusion.md の「太陽の影の許容」）。自分の面の斑は一定の余裕（VSMS_CONSTANT_BIAS_TEXELS）と
+// 傾きの余裕が受け持つ
+const float VSMS_OBJECT_NORMAL_OFFSET_TEXELS = 0.0;
 // 地形の受け手の余裕のうち一定の分（使う段の texel の倍数）。影の描画は MegaGeometry の LOD を段の texel の誤差まで粗くする
 // （影を詰める地形〔荒野〕は VSM_MEGA_FINE_LOD_TEXELS の 1、ほかは VirtualShadowMapMegaCullDispatch::LodThresholdTexels の 4）ので、粗い段の面は主のカメラの細かい面より
 // 上に出ることがある。広く緩い地形の斜面に光が浅く当たると、余裕が 1.5 texel では粗い面が自分の受け手を遮り、斑状の影が散る
