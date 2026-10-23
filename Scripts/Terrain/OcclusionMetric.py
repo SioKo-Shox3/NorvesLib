@@ -401,6 +401,13 @@ def sun_metric(spec, engine_dir, view, ctx):
     cycles_shadow = domain & (cycles_v < threshold)
     union = int((engine_shadow | cycles_shadow).sum())
     iou = float((engine_shadow & cycles_shadow).sum()) / union if union else math.nan
+    # 受け手ごとの IoU（地形と、岩・株などの物体の面）。均した影の画素をそのまま受け手で分ける
+    terrain = ctx["object_index"] == OBJECT_IDS["terrain"]
+    receiver_iou = {}
+    for receiver, mask in (("terrain", terrain), ("objects", ~terrain)):
+        part_union = int(((engine_shadow | cycles_shadow) & mask).sum())
+        receiver_iou[receiver] = round(float((engine_shadow & cycles_shadow & mask).sum()) / part_union, 4) \
+            if part_union else None
     cycles_umbra = domain & (cycles_v < float(sun["umbra"]))
     leak = domain & cycles_umbra & (engine_v >= threshold)
     pixel_size = ctx["pixel_size"]
@@ -416,6 +423,7 @@ def sun_metric(spec, engine_dir, view, ctx):
         "domain_pixels": int(domain.sum()),
         "shadow_pixels": {"engine": int(engine_shadow.sum()), "cycles": int(cycles_shadow.sum())},
         "shadow_iou": round(iou, 4),
+        "shadow_iou_receivers": receiver_iou,
         "leak_fraction": round(float(leak.sum()) / max(int(cycles_umbra.sum()), 1), 4),
         "leak_pixels": int(leak.sum()), "cycles_umbra_pixels": int(cycles_umbra.sum()),
         "engine_only_shadow_fraction": round(float((engine_shadow & ~cycles_shadow).sum()) / max(union, 1), 4),

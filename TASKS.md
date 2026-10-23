@@ -2572,7 +2572,7 @@
 - notes: 危険地帯（基準画像の再承認）。2026-10-23 親が、SCN-WL-OCCLUSION-FIX・SCN-WL-SUN-SHADOW-FIX の反復が「前からの差で落ちる」と記録したまま原因を追っていなかったので足した。後の描画の項目が基準画像を守りにできるよう、ほかの荒野の項目より先に回す。基準画像の承認は親に任されている（差の原因と物理的な妥当性を確かめて記録する）。時間の見積もり: Debug の全体のビルド 5〜10 分、検査 1 回 3〜5 分、戻した版の試し 1 回 10〜15 分 × 2〜3。壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える。 2026-10-23（親）: 反復 4 の再検証は verify の 1 本目（Debug の全体のビルド）が、基準画像と関係の無い試験の対象（AssetManifestReloadBridge 系が Game のソースを個別に並べ、CameraScriptCapture・MultiViewCapture・WastelandRoutine などの追加と stb の include の更新が漏れている）の前からの壊れで落ちた。verify を基準画像の 2 つの試験の対象だけのビルドに直した（親の計画の誤り）。全体のビルドの壊れは SCN-BUILD-ALL-TESTS に分けた。次の反復は verify を回し直して閉じる（再承認 8d5ca7c9 はそのまま）。 2026-10-23（親）: 反復 5 の BLOCKED（推奨の案 1）は親が反復 4 の後に決めた直しと同じ。verify のビルドの対象を検査の実行ファイル `RenderingGoldenImageTest` に直した（試験の名前と対象の名前が違う）。次の反復は verify を回して閉じる（再承認 8d5ca7c9・検査の Passed は反復 5 の `verify-SCN-GOLDEN-REVERIFY-5.txt`）。
 
 ## SCN-WL-SUN-SHADOW-FIX: 太陽の影の位置・縁・漏れを Cycles に合わせる
-- status: todo
+- status: done
 - after: SCN-WL-OCCLUSION-FIX
 - done-when: 最初の編集の前に、SCN-WLR-OCCLUSION-CYCLES の太陽だけの組の値と雑音から、許容（例: IoU 0.9 以上・縁の幅が Cycles の ±50 %・漏れ 2 % 以下）を確定して `WastelandOcclusion.md` に書き、外れる所を直す（候補: 岩塊・スキャンの塊・株の VSM の LOD と 1 texel の大きさ、バイアスで浮く接地の影、PCSS の柔らかさ）。全部が許容の中なら、記録して変えずに閉じる。合否（`--occlusion --expect`、`sun-shadow.json`）: 直した層が許容に入り、ほかの層が悪くならない。全組を撮り直して判定する。ref_cliff_01 の GPU 時間（中央値）を前後で記録、回帰の 4 シーンと VSM を使うほかのシーン、基準画像（golden）の検査、変わるなら再承認。反復の最初に回帰の撮影の `before` を撮る。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`

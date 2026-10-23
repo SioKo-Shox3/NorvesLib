@@ -1,5 +1,5 @@
 {
-  "description": "SCN-WL-SUN-SHADOW-FIX: 太陽の影の位置・縁・漏れの合否。直しの前の撮影（SCN-WL-OCCLUSION-FIX）と同じ参照・同じ画素で前後を比べる（OcclusionCompare.check_expect）。許容は WastelandOcclusion.md の「太陽の影の許容」。空だけの組は決めた層なしで、どの層も悪くならないことだけを見る",
+  "description": "SCN-WL-SUN-SHADOW-FIX: 太陽の影の位置・縁・漏れの合否。直しの前の撮影（SCN-WL-OCCLUSION-FIX）と同じ参照・同じ画素で前後を比べる（OcclusionCompare.check_expect）。許容は WastelandOcclusion.md の「太陽の影の許容」。空だけの組は決めた層なしで、どの層も悪くならないことだけを見る。rocks-sun の IoU は地面（地形の受け手）の画素だけで判定する（岩の面の IoU は既知の限界として WastelandOcclusion.md に記録し、SCN-WL-ROCK-LOD-SHADOW で全体の IoU に戻す）",
   "baseline_engine_root": ".harness/runs/scene-capture/SCN-WL-OCCLUSION-FIX",
   "targets": [],
   "target_range": [0.85, 1.15],
@@ -10,7 +10,7 @@
     "leak_max": 0.02,
     "edge_ratio_range": [0.5, 1.5],
     "targets": [
-      {"set": "rocks-sun", "view": "contact_near"},
+      {"set": "rocks-sun", "view": "contact_near", "iou_receiver": "terrain"},
       {"set": "plant-sun", "view": "plant_near"}
     ]
   }

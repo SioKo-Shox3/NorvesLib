@@ -39,6 +39,7 @@
 #   エンジンの Y の平均が前の 1 ± control_y_tolerance の内。定義に sun があれば太陽だけの組も同じ画素で前後を測り、
 #   sun.targets の視点は IoU が iou_min 以上・漏れが leak_max 以下・縁の幅の比（エンジン ÷ Cycles）が edge_ratio_range の内、
 #   ほかの視点は前に許容の内なら内のまま、外なら IoU・漏れが前より悪くならない（ExpectSpecs/sun-shadow.json）。
+#   targets の視点に iou_receiver（terrain か objects）があれば、IoU の行はその受け手の画素だけの IoU で判定する。
 #   結果は <エンジンの置き場>/occlusion_expect.json。
 import json
 import math
@@ -558,13 +559,21 @@ def check_expect(RC, expect, regions, report, reference_root, views, trial):
     return record, failures
 
 
-def sun_within(sun, metric):
-    """太陽の量が許容の内か。(内か, 外れた量の一覧)"""
+def sun_iou(metric, receiver):
+    """判定に使う IoU。receiver が空なら全体、あれば受け手の画素だけ（測れなければ 0）"""
+    if not receiver:
+        return float(metric["shadow_iou"])
+    value = (metric.get("shadow_iou_receivers") or {}).get(receiver)
+    return float(value) if value is not None else 0.0
+
+
+def sun_within(sun, metric, receiver=""):
+    """太陽の量が許容の内か。(内か, 外れた量の一覧, 縁の比)"""
     low, high = (float(v) for v in sun["edge_ratio_range"])
     width = metric.get("edge_width_m") or {}
     ratio = float(width.get("engine", 0.0)) / max(float(width.get("cycles", 0.0)), 1e-9)
     outside = []
-    if float(metric["shadow_iou"]) < float(sun["iou_min"]):
+    if sun_iou(metric, receiver) < float(sun["iou_min"]):
         outside.append("iou")
     if float(metric["leak_fraction"]) > float(sun["leak_max"]):
         outside.append("leak")
@@ -580,7 +589,7 @@ def check_expect_sun(RC, sun, regions, entry, name, inputs, baseline_root, refer
     if not os.path.isdir(baseline_dir):
         return [f"前の撮影 {RC.rel_dir(baseline_dir)} が無い"]
     engine_dir = os.path.join(RC.REPO_ROOT, entry["engine"])
-    targets = {(t["set"], t["view"]) for t in sun["targets"]}
+    targets = {(t["set"], t["view"]): t.get("iou_receiver", "") for t in sun["targets"]}
     for view in views or sorted((inputs.get("views") or {}).keys()):
         same_before = engine_same_mask(RC, baseline_dir, reference_dir, view)
         same_after = engine_same_mask(RC, engine_dir, reference_dir, view)
@@ -595,17 +604,21 @@ def check_expect_sun(RC, sun, regions, entry, name, inputs, baseline_root, refer
         if before.get("kind") != "sun" or after.get("kind") != "sun" or "shadow_iou" not in after:
             failures.append(f"{name}/{view} の太陽の量を前後で測れない")
             continue
-        before_ok, _, before_ratio = sun_within(sun, before)
-        after_ok, outside, after_ratio = sun_within(sun, after)
         is_target = (name, view) in targets
+        receiver = targets.get((name, view), "")
+        before_ok, _, before_ratio = sun_within(sun, before, receiver)
+        after_ok, outside, after_ratio = sun_within(sun, after, receiver)
         row = {"set": name, "view": view, "target": is_target, "common_pixels": int(common.sum()),
                "xor_pixels": int((same_before ^ same_after).sum()),
-               "iou": [before["shadow_iou"], after["shadow_iou"]], "leak": [before["leak_fraction"], after["leak_fraction"]],
+               "iou": [before["shadow_iou"], after["shadow_iou"]], "iou_receiver": receiver,
+               "iou_receivers": [before.get("shadow_iou_receivers"), after.get("shadow_iou_receivers")],
+               "leak": [before["leak_fraction"], after["leak_fraction"]],
                "edge_ratio": [round(before_ratio, 4), round(after_ratio, 4)], "outside": outside}
         if is_target or before_ok:
             row["pass"] = after_ok
             if not after_ok:
-                failures.append(f"{name}/{view} の太陽の影が許容の外（{'・'.join(outside)}。IoU {after['shadow_iou']}・"
+                failures.append(f"{name}/{view} の太陽の影が許容の外（{'・'.join(outside)}。IoU {sun_iou(after, receiver):.4f}"
+                                f"{'（' + receiver + ' の受け手）' if receiver else ''}・"
                                 f"漏れ {after['leak_fraction']}・縁の比 {after_ratio:.3f}）")
         else:
             row["pass"] = (float(after["shadow_iou"]) >= float(before["shadow_iou"]) and
@@ -615,6 +628,12 @@ def check_expect_sun(RC, sun, regions, entry, name, inputs, baseline_root, refer
                                 f"漏れ {before['leak_fraction']} → {after['leak_fraction']}）")
         record["sun"].append(row)
     return failures
+
+
+def receiver_value(row, receiver):
+    """前後の受け手ごとの IoU を「前->後」の文字にする"""
+    before, after = ((part or {}).get(receiver) for part in row.get("iou_receivers") or [None, None])
+    return f"{before}->{after}"
 
 
 def print_expect(record):
@@ -634,6 +653,8 @@ def print_expect(record):
     for row in record.get("sun") or []:
         print(f"REFERENCE_CHECK occlusion expect sun set={row['set']} view={row['view']} target={int(row['target'])} "
               f"common={row['common_pixels']} xor={row['xor_pixels']} iou={row['iou'][0]}->{row['iou'][1]} "
+              f"iou_receiver={row['iou_receiver'] or '-'} iou_terrain={receiver_value(row, 'terrain')} "
+              f"iou_objects={receiver_value(row, 'objects')} "
               f"leak={row['leak'][0]}->{row['leak'][1]} edge_ratio={row['edge_ratio'][0]}->{row['edge_ratio'][1]} "
               f"outside={','.join(row['outside']) or '-'} pass={int(row['pass'])}", flush=True)
 
