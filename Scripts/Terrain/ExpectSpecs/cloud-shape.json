@@ -1,0 +1,154 @@
+{
+  "description": "SCN-WL-CLOUD-SHAPE-METRIC: 雲の形（ReferenceCheck.py --cloud-shape）の合否。調整の前に固定した。basis=samples の行は独立の見本（Poly Haven の CC0 の部分曇りの空の HDRI 3 枚を sample_view の向き・画角へ 3 つの方位で投影し、赤 ÷ 青 > 0.6 で作った雲のマスク）の値の幅から、basis=art の行は不透明度でしか測れない量の美術上の判断。根拠と見本の値は Docs/RenderingValidation/WastelandCloudShape.md の「塊・切れ間・縁の量」。値が求まらない量（塊が無い等）は落ちる。",
+  "sample_view": {
+    "view": "cloud_sky",
+    "source": "SCN-WL-CLOUD-OPACITY-AOV/cloud_sky.cloud.opacity.json",
+    "target": {
+      "width": 1920,
+      "height": 1080
+    },
+    "camera": {
+      "position": [
+        300,
+        -42.3400383,
+        1800
+      ],
+      "inverse_view_projection": [
+        -0.995983183,
+        0,
+        -0.248308465,
+        1.76638064e-08,
+        -0.0987590477,
+        -0.408204079,
+        0.396193802,
+        7.06552257e-08,
+        -600.107666,
+        84.6951828,
+        -3600.64697,
+        -2.0003593,
+        599.937439,
+        -83.9880219,
+        3601.33716,
+        2.00036168
+      ]
+    },
+    "sun_direction": [
+      -0.469618648,
+      0.852640152,
+      0.229048297
+    ],
+    "note": "--selftest が見本を投影する視点。SCN-WL-CLOUD-OPACITY-AOV の cloud_sky の撮影の画面の大きさ・カメラ・太陽の向き（撮影の置き場は git 管理外なので写した）"
+  },
+  "rows": [
+    {
+      "quantity": "gap_fraction",
+      "views": [
+        "cloud_sky"
+      ],
+      "min": 0.4966,
+      "max": 0.8359,
+      "basis": "samples",
+      "note": "切れ間の割合。見本 9 枚の値 0.5531〜0.7794。見本の最小・最大を幅の 25 % ずつ外へ広げた"
+    },
+    {
+      "quantity": "blob_count",
+      "views": [
+        "cloud_sky"
+      ],
+      "min": 3,
+      "max": 22,
+      "basis": "samples",
+      "note": "塊の数。見本 9 枚の値 4〜17。見本の最小・最大を 1.25 倍ずつ外へ広げた"
+    },
+    {
+      "quantity": "blob_area_median",
+      "views": [
+        "cloud_sky"
+      ],
+      "min": 0.000737,
+      "max": 0.051,
+      "basis": "samples",
+      "note": "塊の面積の中央値（空の画素に対する割合）。見本 9 枚の値 0.0009216〜0.04081。見本の最小・最大を 1.25 倍ずつ外へ広げた"
+    },
+    {
+      "quantity": "blob_area_p90",
+      "views": [
+        "cloud_sky"
+      ],
+      "min": 0.0262,
+      "max": 0.2,
+      "basis": "samples",
+      "note": "塊の面積の 90 百分位。見本 9 枚の値 0.03276〜0.16。見本の最小・最大を 1.25 倍ずつ外へ広げた"
+    },
+    {
+      "quantity": "blob_area_p90_over_median",
+      "views": [
+        "cloud_sky"
+      ],
+      "min": 2.79,
+      "max": 84.0724,
+      "basis": "samples",
+      "note": "塊の面積の 90 百分位 ÷ 中央値。見本 9 枚の値 3.487〜67.26。見本の最小・最大を 1.25 倍ずつ外へ広げた"
+    },
+    {
+      "quantity": "largest_blob_share",
+      "views": [
+        "cloud_sky"
+      ],
+      "min": 0.224,
+      "max": 0.8423,
+      "basis": "samples",
+      "note": "最大の塊 ÷ 雲（0.3 以上）の面積。見本 9 枚の値 0.327〜0.7392。見本の最小・最大を幅の 25 % ずつ外へ広げた"
+    },
+    {
+      "quantity": "film_fraction",
+      "views": [
+        "cloud_sky"
+      ],
+      "min": null,
+      "max": 0.1,
+      "basis": "art",
+      "note": "薄い膜（0.1〜0.3）の割合。写真の積雲の半透明の縁は塊の外周の数画素の帯で、空の 1 割を超える膜は晴れの空を一様に覆う膜に見える（親の所見）。下限は置かない"
+    },
+    {
+      "quantity": "thick_share",
+      "views": [
+        "cloud_sky"
+      ],
+      "min": 0.5,
+      "max": 0.95,
+      "basis": "art",
+      "note": "0.6 以上 ÷ 0.3 以上。積雲の本体は光学的に厚く、塊の過半は 0.6 以上。0.95 を超えると縁の階調の無い切り抜きになる"
+    },
+    {
+      "quantity": "blob_opacity_std_median",
+      "views": [
+        "cloud_sky"
+      ],
+      "min": 0.08,
+      "max": 0.3,
+      "basis": "art",
+      "note": "塊ごとの不透明度の標準偏差の中央値。塊の中に厚い芯と薄い縁・ちぎれの揺れがある（0.08 未満は一様な斑点）。0.30 を超えるのは画素ごとの雑音"
+    },
+    {
+      "quantity": "edge_width_median_px",
+      "views": [
+        "cloud_sky"
+      ],
+      "min": 1.5,
+      "max": 12.0,
+      "basis": "art",
+      "note": "縁の幅（0.1 から min(0.5, 塊の最大 × 0.8) まで、画素）の中央値。cloud_sky の画角（横 118°、中央で約 10 画素/度）で、積雲の縁の移り変わりは 1° 前後まで。1.5 画素未満は縁が急な切り抜き、12 画素を超えるとぼけた綿に見える"
+    },
+    {
+      "quantity": "edge_measured_fraction",
+      "views": [
+        "cloud_sky"
+      ],
+      "min": 0.25,
+      "max": null,
+      "basis": "art",
+      "note": "測れた縁の割合。縁の幅の中央値が外周の一部の偏った標本にならないための下限"
+    }
+  ]
+}

@@ -126,6 +126,15 @@
 #       検査し、結果を <撮影先>/cloud_opacity_check.json、見える形を cloud_opacity_<視点>.png に書く（本体は CloudOpacityCheck.py）。
 #       値が有限で 0〜1、地形のマスクの外だけに値があり、同じ撮影の雲の書き出しの視線を記録の射影で画素へ戻した値と 0.01 以内で合う。
 #
+#   python Scripts/Terrain/ReferenceCheck.py --cloud-shape --engine <撮影先> [--views cloud_sky,ref_far_01] [--verify]
+#                                            [--expect Scripts/Terrain/ExpectSpecs/cloud-shape.json]
+#       同じ撮影の全画素の雲だけの不透明度の画像で、地平の上 2° より上の空の画素の切れ間・薄い膜・塊（数・面積の分布・最大の塊の
+#       割合・画面の端に触れる数）・厚い部分・塊の中の揺れ・縁の幅を測り、<撮影先>/cloud_shape_check.json と量の画
+#       cloud_shape_<視点>.png に書く（本体は CloudShapeCheck.py）。--expect は量ごとの範囲の仕様を判定する。
+#   python Scripts/Terrain/ReferenceCheck.py --cloud-shape --selftest [--expect <仕様>]
+#       合成の画像（一様な層・雲なし・細かなノイズ・粗い斑点・穴の開いた膜）が仕様で落ち、既知の幅の縁が ±1 画素で測れ、
+#       独立の見本（Poly Haven の HDRI のマスク）がマスクで測れる行を通ることを確かめる。仕様を省くと ExpectSpecs/cloud-shape.json。
+#
 #   python Scripts/Terrain/ReferenceCheck.py --occlusion-diag --capture <撮影先> [--views contact_near,ref_cliff_01] [--verify]
 #       CaptureScene.ps1 -Aov の撮影（開発ビルド）で、RTGI の空の分を生 → 時間の蓄積の後 → 空間のフィルタの後で比べ、近い当たりの
 #       読み飛ばしの分類と場所、TLAS の行、光線の始点のずらしの定数を <撮影先>/occlusion_diag_check.json と
@@ -6642,6 +6651,8 @@ def main():
                         help="雲の密度場の書き出し（--cloud-dump）から雲の透過率を求め直し、エンジンの描画の値と照らす")
     parser.add_argument("--cloud-opacity", action="store_true",
                         help="全画素の雲だけの不透明度の画像（--wasteland-cloud-opacity）を、同じ撮影の雲の書き出しの視線と照らす")
+    parser.add_argument("--cloud-shape", action="store_true",
+                        help="全画素の雲だけの不透明度の画像で、雲の塊・切れ間・縁の量を測る（CloudShapeCheck.py）")
     parser.add_argument("--occlusion-diag", action="store_true",
                         help="RTGI の遮蔽の診断（-Aov の撮影の RTGI の空の分と読み飛ばし。OcclusionDiag.py）を視点ごとに測る")
     parser.add_argument("--occlusion", action="store_true",
@@ -6729,13 +6740,17 @@ def main():
         return ExpectSpec.run_selftest(sys.modules[__name__], args.verify)
     expect = os.path.normpath(args.expect if os.path.isabs(args.expect) else os.path.join(REPO_ROOT, args.expect))         if args.expect else None
     if expect and not (args.gray or args.lit or args.blur_static or args.blur_motion or args.bounce or args.atmos_ref or
-                       args.building or args.plant or args.cloud_far or args.occlusion or args.cloud):
+                       args.building or args.plant or args.cloud_far or args.occlusion or args.cloud or args.cloud_shape):
         print("REFERENCE_CHECK result=fail reason=expect_unsupported（--expect は --gray・--lit・--blur-static・--blur-motion・"
-              "--bounce・--atmos-ref・--building・--plant・--cloud-far・--occlusion・--cloud と使う）")
+              "--bounce・--atmos-ref・--building・--plant・--cloud-far・--occlusion・--cloud・--cloud-shape と使う）")
         return 1
     if args.selftest:
+        if args.cloud_shape:
+            import CloudShapeCheck
+            return CloudShapeCheck.run_selftest(sys.modules[__name__], REPO_ROOT,
+                                                expect or os.path.join(REPO_ROOT, CloudShapeCheck.DEFAULT_EXPECT))
         if not args.cloud:
-            print("REFERENCE_CHECK result=fail reason=selftest_unsupported（--selftest は --cloud と使う）")
+            print("REFERENCE_CHECK result=fail reason=selftest_unsupported（--selftest は --cloud か --cloud-shape と使う）")
             return 1
         import CloudCheck
         return CloudCheck.run_selftest(expect or os.path.join(REPO_ROOT, CloudCheck.DEFAULT_EXPECT))
@@ -6863,6 +6878,15 @@ def main():
             return 1
         views = [v.strip() for v in args.views.split(",") if v.strip()]
         return CloudOpacityCheck.run(sys.modules[__name__], capture_dir, views, args.verify)
+    if args.cloud_shape:
+        import CloudShapeCheck
+        capture = args.capture or (args.engine[0] if args.engine else "")
+        capture_dir = os.path.normpath(capture if os.path.isabs(capture) else os.path.join(REPO_ROOT, capture))
+        if not capture or not os.path.isdir(capture_dir):
+            print(f"REFERENCE_CHECK result=fail reason=capture_dir_missing（--engine に撮影先を指定する） path={capture}")
+            return 1
+        views = [v.strip() for v in args.views.split(",") if v.strip()]
+        return CloudShapeCheck.run(sys.modules[__name__], capture_dir, views, args.verify, expect)
     if args.rt_scene:
         import RtScene
         capture = args.capture or (args.engine[0] if args.engine else "")
@@ -6951,7 +6975,7 @@ def main():
         lit_dir = args.lit_capture if os.path.isabs(args.lit_capture) else os.path.join(REPO_ROOT, args.lit_capture)
         return run_tonemap(capture_dir, os.path.normpath(lit_dir), views, args.verify)
     print("REFERENCE_CHECK result=fail reason=no_mode（--record-inputs か --hdr か --display か --plate か --aov か "
-          "--projection か --atmos-dump か --atmos-ref か --cloud-dump か --cloud-opacity か --cloud-far か --cloud か --blur-static か --plant-far か --blur-motion か --gray か --albedo か --normal か "
+          "--projection か --atmos-dump か --atmos-ref か --cloud-dump か --cloud-opacity か --cloud-shape か --cloud-far か --cloud か --blur-static か --plant-far か --blur-motion か --gray か --albedo か --normal か "
           "--lit か --tonemap か --grading を指定する）")
     return 1
 
