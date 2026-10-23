@@ -7512,3 +7512,9 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 証拠（`.harness/runs/20261023-124311/`）: `verify-SCN-WLR-CLOUD-REF-CURRENT-1.txt`（RelWithDebInfo のビルド EXIT=0）・`-2.txt`（書き出しの撮影 result=pass）・`-3.txt`（`--cloud --verify` result=pass、inputs_current=1、all_converged=1）・`aux-SCN-WLR-CLOUD-REF-CURRENT-blender.txt`（Cycles の生成 EXIT=0）。開いた画: `scene-capture/SCN-WLR-CLOUD-REF-CURRENT/cycles/cloud_cloud_sky.png`（雲の形と位置は両方で同じ）
 - Next: SCN-WL-CLOUD-CHECK-EXPECT（基準はこの表）
 - Notes: SCN-WLR-CLOUD-REF-DUMP の置き場はその後の項目（26771864）で撮り直されて上書きされており、前の正解が使った書き出しそのものは残っていない（前の正解の inputs.json にハッシュだけある）。GPU 時間は測っていない（描画のコードを変えていない）。新しい試験は足していない
+
+## 2026-10-24 SCN-WLR-CLOUD-REF-CURRENT（run 20261023-124311 の反復 22、差し戻しを直して閉じた）
+- Done: 反復 21 の再検証は verify の撮影の行が dump を撮り直し（cloud.json 6e7105e3… → 34943e9f…、probe は同じ）、Cycles の正解が読んだ書き出しと合わなくなって落ちた。親が verify から撮影の行を外した（107fc22a）ので、撮り直された今の dump から同じ台本で Cycles を同期で描き直した（704 spp で全領域が収束、焼き 263 秒・描画 139 秒・全体 413 秒）。`WastelandCloudShape.md` の組の記録（ハッシュ・コミット・時間）と、書き出しを撮り直したら描き直すことを直した。表の値は 3 桁まで同じで変えていない
+- 証拠（`.harness/runs/20261023-124311/`）: `aux-SCN-WLR-CLOUD-REF-CURRENT-blender-2.txt`（Cycles の生成 EXIT=0）・`verify-SCN-WLR-CLOUD-REF-CURRENT-4.txt`（RelWithDebInfo のビルド EXIT=0、Game.exe ab0adb16… のまま）・`-5.txt`（`--cloud --verify` result=pass、inputs_current=1）。開いた画: `scene-capture/SCN-WLR-CLOUD-REF-CURRENT/cycles/cloud_cloud_sky.png`（雲の形と位置は両方で同じ）
+- Next: SCN-WL-CLOUD-CHECK-EXPECT（基準は WastelandCloudShape.md の表）
+- Notes: 同じ Game.exe でも cloud_sky.cloud.json のハッシュは撮影ごとに変わることがある（10-23 の SCN-WLR-CLOUD-REF-DUMP と今の撮影は 34943e9f…、反復 21 の最初の撮影は 6e7105e3…）。どのフィールドが変わるかは前の版が残っておらず未確認。Git Bash から cmake の `-- /m:1` を渡すとパスに変換されて MSBuild が失敗するので、ビルドの verify は PowerShell で回した

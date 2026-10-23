@@ -12,17 +12,20 @@
 ### 組と条件
 
 - エンジン: `.harness/runs/scene-capture/SCN-WLR-CLOUD-REF-CURRENT/dump`（Game.exe ab0adb16…、RelWithDebInfo、入力の記録の
-  コミット aa8f845c）。cloud_sky（南南西を仰角 45° で見上げる、1920 × 1080）の雲の書き出し（`-GameArgs cloud-dump`）。
+  コミット 1c32fa29）。cloud_sky（南南西を仰角 45° で見上げる、1920 × 1080）の雲の書き出し（`-GameArgs cloud-dump`）。
 - Cycles: `.harness/runs/scene-capture/SCN-WLR-CLOUD-REF-CURRENT/cycles`。台本は前の正解と同じ（`BlenderReference.py --cloud`、変えていない）。
   密度場を 16 m の格子の体積（1785 × 1045 × 74、値のある格子 33612591、密度の最大 0.741）として置いた。Blender 5.2.2・OptiX（RTX 4080）。
-  焼き 276 秒・読み込み 283 秒、描画 145 秒で、1 本 704 サンプルで全領域が収束して止まった（全体 432 秒、25 分の上限から遠い）。
+  焼き 263 秒・読み込み 269 秒、描画 139 秒で、1 本 704 サンプルで全領域が収束して止まった（全体 413 秒、25 分の上限から遠い）。
+- 書き出しと正解の組: Cycles の `inputs.json` は読んだ書き出しのハッシュ（`cloud_sky.cloud.json` 34943e9f…・`cloud_sky.cloud.probe.f32` 496193cb…）
+  を持ち、`--verify` は今の置き場の書き出しとの一致を求める。同じ Game.exe でも `cloud_sky.cloud.json` は撮るたびに同じとは限らない
+  （6e7105e3… と 34943e9f… の 2 通りを撮った。probe と散乱光・不透明度の値は同じ）ので、書き出しを撮り直したら Cycles も描き直す。
 - 前の正解との関係: 前の正解（`SCN-WLR-CLOUD-REF`、8113ba38 のコードの書き出しから描いた）は消していない。前の正解が記録した書き出しの
-  ハッシュ（`cloud_sky.cloud.json` 36755f04…・`cloud_sky.cloud.probe.f32` e24ecf5a…）は今の書き出し（6e7105e3…・496193cb…）と合わないので、
+  ハッシュ（`cloud_sky.cloud.json` 36755f04…・`cloud_sky.cloud.probe.f32` e24ecf5a…）は今の書き出し（34943e9f…・496193cb…）と合わないので、
   今のコードの比べは `--verify` で古い扱いになる。形のノイズ（dbf55267…）・細部のノイズ（e024ab47…）・空の LUT（03700ec1…）のハッシュは同じ。
   今の組の値は前の正解の表と、エンジンの散乱光・不透明度が 144 本の視線で一致し、Cycles の Y も 10⁻⁶ の相対差で一致した
   （cloud_sky の視点では雲は 3.5〜5 km にあり、その後の遠い雲の変更〔積む範囲・空気遠近の合成〕の効かない範囲）。
 
-再現:
+再現（書き出しの撮影と Cycles の描画は続けて 1 回ずつ行い、照合は保存した組に対して回す）:
 
 ```
 cmake --build build --config RelWithDebInfo --target Game -- /m:1
@@ -32,7 +35,8 @@ python Scripts/Terrain/ReferenceCheck.py --cloud --engine .harness/runs/scene-ca
 ```
 
 `--cloud --verify` は result=pass（書き出しの検査に合格、投影の差 0.22 画素、空の相対差 最大 0.09 %、透過率の画と式の差 最大 0.0050、
-Cycles の出力に NaN・Inf なし、全領域が収束、`inputs_current=1`）。
+Cycles の出力に NaN・Inf なし、全領域が収束、`inputs_current=1`）。下の表の値は 6e7105e3… の書き出しから描いた組で測り、
+34943e9f… の書き出しから描き直した今の組でも 3 桁まで同じ（Cycles の Y の相対差 10⁻⁶ 以下）。
 
 ### 5 領域の比
 
