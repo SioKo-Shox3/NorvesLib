@@ -7327,3 +7327,15 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 比較画像 `scene-capture/SCN-INTERIOR-ROOM-ref/compare/{default,window,corner}.compare.png` を開いた: 窓の格子の日だまりの形・位置、レンガの壁と東の壁の日だまり、家具の影はエンジンと Cycles で一致する。Cycles は艶のある濃い木の床に窓と日だまりが暖色で映り、奥の隅は暗く暖かい照り返しで、window_01・window_02 の手本に近い。エンジンは日陰の床が青白く、window では床の手前が白く光り、漆喰の壁と天井に粗い粒が残って明るすぎる
 - Notes: エンジンの日向の床（AOV のアルベド 0.1〜0.35 の画素）は直射の拡散の期待値に対して R 1.64・G 2.17・B 4.80 倍、Cycles は 1.36・1.72・3.24 倍で、エンジンだけにほぼ無彩色の約 300 cd/m² が足される（遮られない空の鏡面反射と合う量）。差の原因は反復 38 の NEXT_FINDINGS の 3 点（鏡面の環境光が室内で遮られない・RTGI の時間の蓄積・RTGI の当たりの反射率）で、どれも Library とシェーダーの改修が要りこの項目の paths の外。判断を `blocked/SCN-INTERIOR-ROOM.md` に書いた。verify の撮影と周回は Game を変えていないので回していない。新しい試験は足していない
 - Next: 人の判断待ち（blocked/SCN-INTERIOR-ROOM.md）
+
+## 2026-10-23 SCN-WL-OCCLUSION-FIX（run 20261022-173753 の反復 40）
+- Done: 反復 37 の直し（052bac84。前後を共通の画素で比べる・直す前の GPU 時間を同じビルドで測る起動引数・岩の自分への近い当たりの読み飛ばし）の版で verify を全部回し直して閉じた。`WastelandOcclusion.md` の「直した結果」の表と GPU 時間・回帰を最終の版の値に書き換えた
+- 証拠（`.harness/runs/20261022-173753/`）:
+  - `verify-SCN-WL-OCCLUSION-FIX-12.txt`: Debug の Game のビルド EXIT=0
+  - `-13.txt`〜`-20.txt`: 全 8 組の撮影 CAPTURE result=pass・EXIT=0
+  - `-21.txt`: `--occlusion --expect --verify` result=pass・EXIT=0。決めた 2 層 1.313 → 1.0485・1.273 → 1.0363、ほかの層は変化 0.0002 以内、対照の Y 0.985 / 0.993 倍。前後の画素の xor は terrain-sky 10・rocks-cliff-sky 11・ほか 0 で、共通の画素だけで測った
+  - `aux-SCN-WL-OCCLUSION-FIX-timing-before-2.txt`（直す前、`--wasteland-rtgi-non-caster-occlusion=off`。ゲームのログで引数が効いたことを確かめた）14.733 ms、`-22.txt`（後）15.106 ms。どちらも予算 33.3 ms の内、LightingPass 1.531 → 1.533 ms
+  - `-23.txt`: 回帰の after result=pass（検証レイヤーのログ 4 本とも空、PSNR 64.1 dB 以上）。before は反復 36 の直す前のもの
+  - `aux-SCN-WL-OCCLUSION-FIX-rock-face-40.png`・`.txt`: rocks-sky の contact_near の直す前・後・0.3 倍未満に暗くなった画素（7823）を並べた画を開き、岩の面に黒い斑が無いことを確かめた。`cycles/rocks-sky/occlusion_preview/contact_near.png` と `regression/SCN-WL-OCCLUSION-FIX/after/night-village-diff.png`（最大 42 段・2 段超え 778 画素のまばらな点）も開いた
+- Next: TASKS.md の次の未完
+- Notes: 基準画像の検査は回していない（検証アプリは RTGI を切り、設定の既定も切で、切のときは影を落とさない物が拡散の光線の印に入らず読み飛ばしも効かない。HEAD の版でも同じ値で落ちる前からの差は反復 36 の `aux-...-golden-head.txt`）。GPU 時間の差 +0.37 ms はほとんど FoliagePass（1.915 → 2.211 ms）の揺れ。新しい試験は足していない

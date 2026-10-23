@@ -326,26 +326,29 @@ git a7a44425、入力のハッシュ `BlenderOcclusionReference.py` c4db1e43…�
 
 | 組 / 視点 | 領域 | 層 | 画素（くぼみ / 対照） | エンジン ÷ Cycles 前 → 後 | 判定 |
 |---|---|---|---|---|---|
-| rocks-sky / contact_near | contact | 0〜30°・0〜10 m | 79697 / 382548 | 1.313 → **1.012** | 決めた層（0.85〜1.15） |
-| rocks-sky / contact_near | contact | 30〜60°・10〜50 m | 15025 / 39170 | 1.273 → **1.002** | 決めた層 |
-| rocks-sky / contact_near | contact | 0〜30°・10〜50 m | 17409 / 1962 | 1.253 → 1.004 | 対照が下限未満（記録だけ） |
+| rocks-sky / contact_near | contact | 0〜30°・0〜10 m | 79697 / 382548 | 1.313 → **1.049** | 決めた層（0.85〜1.15） |
+| rocks-sky / contact_near | contact | 30〜60°・10〜50 m | 15025 / 39170 | 1.273 → **1.036** | 決めた層 |
+| rocks-sky / contact_near | contact | 0〜30°・10〜50 m | 17409 / 1962 | 1.253 → 1.048 | 対照が下限未満（記録だけ） |
 | rocks-sky / contact_near | groove | 60° 以上・10〜50 m | 2852 / 4437 | 1.037 → 1.037 | 対照が下限未満（記録だけ） |
-| terrain-sky / ref_cliff_01 | groove | 60° 以上・500 m 以上 | 22363 / 31603 | 1.093 → 1.093 | 悪くならない |
-| rocks-cliff-sky / ref_cliff_01 | groove | 60° 以上・500 m 以上 | 22352 / 30837 | 1.093 → 1.093 | 悪くならない |
+| terrain-sky / ref_cliff_01 | groove | 60° 以上・500 m 以上 | 22363 / 31602 | 1.093 → 1.093 | 悪くならない |
+| rocks-cliff-sky / ref_cliff_01 | groove | 60° 以上・500 m 以上 | 22351 / 30835 | 1.093 → 1.093 | 悪くならない |
 | plant-sky / plant_near | plant_root | 0〜30°・0〜10 m | 37537 / 1293107 | 1.250 → 1.250 | 悪くならない（株は RT のシーンに無い） |
 
 - 対照のエンジンの Y（同じ画素）: contact_near の 0〜30°・0〜10 m が前の 0.985 倍、30〜60°・10〜50 m が 0.993 倍（周りの岩が空を少し遮る分）。ほかの視点は 1.000 倍
 - 太陽だけの組は変わらない（IoU 0.930 / 0.497 / 0.768・漏れ 0.9 % / 41.9 % / 0 %）。直したのは拡散の光線だけで、影の光線と VSM は変えていない
 - 並べた画 `cycles/rocks-sky/occlusion_preview/contact_near.png` を開いた: 岩の根元と岩の間の地面が暗くなり、Cycles の画と同じ向きに寄った
-- ref_cliff_01 の既定の荒野の GPU 時間（中央値、300 フレーム）は直した後で 14.611 ms（p95 15.494 ms、LightingPass 1.51 ms。`SCN-WL-OCCLUSION-FIX/timing`）。
-  同じ構成の直す前の計測はこの項目では撮っていない（光線が当たる instance は TLAS に既に入っていて、増えるのは当たりの判定だけ）
+- 表の値は下の「自分への当たりの読み飛ばし」を入れた最終の版の撮影（`--expect` は前後で Cycles と同じ面の画素の積だけを測る。前後の画素の差は
+  terrain-sky 10 画素・rocks-cliff-sky 11 画素で、共通の画素だけで測った）
+- ref_cliff_01 の既定の荒野の GPU 時間（中央値、300 フレーム、同じ RelWithDebInfo のビルドを単独で前 → 後の順に測った）: 直す前
+  （`--wasteland-rtgi-non-caster-occlusion=off`、`SCN-WL-OCCLUSION-FIX/timing-before`）14.733 ms（p95 15.800 ms）、直した後（`timing`）15.106 ms
+  （p95 16.514 ms）。LightingPass（RTGI を含む）は 1.531 → 1.533 ms で、差 +0.37 ms のほとんどは直しと関係の無い FoliagePass（1.915 → 2.211 ms）の揺れ
 - ランチャーの 4 シーンの回帰（`.harness/runs/regression/SCN-WL-OCCLUSION-FIX`）: 検証レイヤーのエラー 0、rendering3dtest・mega-bananas・sandbox は PSNR 62.6 dB 以上で
   平均の差 0（設定が切のまま）。night-village は荒野の夜なので設定が入り、PSNR 63.9 dB・平均の差 +0.004（差の画 `after/night-village-diff.png` は灯りの周りの
   まばらな点だけ）。material-gallery（設定は切）は 10-22 の撮影と最大 1 段の差（PSNR 54.3〜54.7 dB）
 - 基準画像の検査（Indoor・Outdoor）は落ちるが、この項目の変更を HEAD の版へ戻しても同じ値（Indoor 8929 画素・mean_flip 0.0053、Outdoor 20356 画素・
   mean_flip 0.0089）で落ちるので、この直しによる差ではない（検証アプリは RTGI を切り、設定の既定も切）。再承認はしていない
 
-### 岩の面の黒い斑と自分への当たりの読み飛ばし（2026-10-23、検証の途中）
+### 岩の面の黒い斑と自分への当たりの読み飛ばし（2026-10-23）
 
 上の結果の撮影には、影を落とさない崖錐の岩の面に黒い斑が出ていた（`contact_near` のエンジンの HDR で、直す前の 0.3 倍未満に暗くなった画素が
 約 9 万。判定は地形の画素だけを測るので通っていた）。岩の光線の形は焼き込んだ階層の最も粗い段（常駐のフォールバック）でラスタとのずれが大きく、
@@ -359,4 +362,7 @@ git a7a44425、入力のハッシュ `BlenderOcclusionReference.py` c4db1e43…�
 - 起動引数 `--wasteland-rtgi-non-caster-occlusion=off`（開発ビルドだけ）で直す前の印に戻せる。GPU 時間の前後はこれで同じビルドを測る
 - 前後の比べ（`--expect`）は、視点ごとに前後どちらの撮影でも Cycles と同じ面の画素の積だけで前後の両方を測り直す（前の版は前後を別の画素で
   測っていた。差は terrain-sky 10 画素・rocks-cliff-sky 13 画素）。測り直しは並べた画・重ね画像を書かない
-- 残り: 全 8 組の撮り直し・`--expect` の判定・ref_cliff_01 の GPU 時間の前後・回帰の 4 シーンを、この直しで回し直す
+- この直しで全 8 組を撮り直した（上の表）。rocks-sky の contact_near で直す前の 0.3 倍未満に暗くなった画素は 7823（試しと同じ。岩の輪郭のずれと
+  岩の根元の地面の遮り）で、直す前・後・暗くなった画素を並べた画で岩の面は直す前と同じ明るさだった
+- 回帰の 4 シーンはこの版でも検証レイヤーのエラー 0、rendering3dtest 102.9 dB・mega-bananas 65.4 dB・sandbox は差 0（設定が切）、night-village 64.1 dB・
+  平均の差 +0.004（差の画は灯りの周りのまばらな点だけ）。設定が切のシーンでは影を落とさない物が拡散の光線の印に入らないので、読み飛ばしも効かない
