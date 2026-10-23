@@ -2544,7 +2544,7 @@
 - notes: 2026-10-22 親が確認 2（SCN-WL-REVIEW-2）とユーザーの所見（地形の造形が荒い・遮蔽による影の落ち方の質が低い）から、ユーザーの順（空と霞 → 遮蔽 → 地形の形 → 植物 → 地面 → 建物）の前半として足した。Sol の批評（写真との比は撮影時の処理を含むので合否にしない・遮蔽の撮影は岩と株を残す・参照の描き直しを項目にする・大きな項目は先に分ける）を反映した。 時間の見積もり: 1 本 15〜40 分 × 6（反復の外）。 壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える（未達のまま DONE にしない）。20 分を超える Blender・Cycles の描画は反復の外で起動して BLOCKED で待つ（ログに START と `END ... EXIT=` を書き、入力のハッシュ・出力先を blocked の理由に書く。終わったら親が todo に戻す。その間は GPU を使う別の処理を重ねない）。 2026-10-23（親）: 反復の外の本描画が `END 2026-10-23T08:13:06 EXIT=0`（`OCCLUSION_SETS mode=cycles sets=8 result=pass`）で終わったので todo に戻した。次の反復は blocked の理由の「再開の手順」に従う（verify を回して保存し、今のエンジンの値と参照の記録を文書に書いて閉じる）。
 
 ## SCN-WL-OCCLUSION-FIX: 空の遮蔽の小さな欠けを、確かめた原因 1 つで直す
-- status: doing
+- status: todo
 - after: SCN-WLR-OCCLUSION-CYCLES
 - done-when: 最初の編集の前に、SCN-WLR-OCCLUSION-DIAG と SCN-WLR-OCCLUSION-CYCLES の値から、直す原因 1 つ（候補: 近い当たりの読み飛ばしの範囲、RT 用の形の差、ノイズ取りが小さな遮蔽を消すこと）と、その原因が効く必須の層を決めて `WastelandOcclusion.md` に書く。遮蔽済みの RTGI 全体に GTAO を掛ける形は二重の遮蔽になるので採らない。材質の AO と二重に数えない（SCN-WL-MATERIAL-AO-SHADING の結論）。合否（`--occlusion --expect`、`occlusion-fix.json`）: 決めた層のくぼみの比のエンジン ÷ Cycles が 0.85〜1.15、ほかの全層が前より悪くならない（同じ画素で ±3 %）、対照の層の Y が同じ画素で前の ±3 %（全体を暗くして合わせない）。全組（地形・岩塊・株）を `OcclusionSets.py --capture` で撮り直して判定する。ref_cliff_01 の GPU 時間（中央値、300 フレーム）を前後で記録。既定の描画経路を変えるので、回帰の 4 シーンと、RTGI を使うほかのシーン（material-gallery など）を撮って差の画を開き、基準画像（golden）の検査を回し、変わるなら SCN-WL-GOLDEN-REAPPROVE と同じ手順で再承認する。全層の範囲の達成は SCN-WL-OCCLUSION-ACCEPT で見る。反復の最初に回帰の撮影の `before` を撮る。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
@@ -2560,7 +2560,7 @@
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Views ref_cliff_01 -GpuTimingFrames 300 -GpuFrameBudgetMs 33.3 -OutDir .harness/runs/scene-capture/SCN-WL-OCCLUSION-FIX/timing`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Terrain/CaptureRegression.ps1 -Item SCN-WL-OCCLUSION-FIX -Phase after`
 - paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Scripts, Docs/RenderingValidation, Test/Core/Rendering/Baselines, TASKS.md, PROGRESS.md
-- notes: 2026-10-22 親が確認 2（SCN-WL-REVIEW-2）とユーザーの所見（地形の造形が荒い・遮蔽による影の落ち方の質が低い）から、ユーザーの順（空と霞 → 遮蔽 → 地形の形 → 植物 → 地面 → 建物）の前半として足した。Sol の批評（写真との比は撮影時の処理を含むので合否にしない・遮蔽の撮影は岩と株を残す・参照の描き直しを項目にする・大きな項目は先に分ける）を反映した。 危険地帯（RTGI・描画の既定）。時間の見積もり: 回帰の before・after 各 7〜9 分、ビルド 3〜6 分、全組の撮影 約 18 分、計測 約 3 分。 壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える（未達のまま DONE にしない）。20 分を超える Blender・Cycles の描画は反復の外で起動して BLOCKED で待つ（ログに START と `END ... EXIT=` を書き、入力のハッシュ・出力先を blocked の理由に書く。終わったら親が todo に戻す。その間は GPU を使う別の処理を重ねない）。
+- notes: 2026-10-22 親が確認 2（SCN-WL-REVIEW-2）とユーザーの所見（地形の造形が荒い・遮蔽による影の落ち方の質が低い）から、ユーザーの順（空と霞 → 遮蔽 → 地形の形 → 植物 → 地面 → 建物）の前半として足した。Sol の批評（写真との比は撮影時の処理を含むので合否にしない・遮蔽の撮影は岩と株を残す・参照の描き直しを項目にする・大きな項目は先に分ける）を反映した。 危険地帯（RTGI・描画の既定）。時間の見積もり: 回帰の before・after 各 7〜9 分、ビルド 3〜6 分、全組の撮影 約 18 分、計測 約 3 分。 壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える（未達のまま DONE にしない）。20 分を超える Blender・Cycles の描画は反復の外で起動して BLOCKED で待つ（ログに START と `END ... EXIT=` を書き、入力のハッシュ・出力先を blocked の理由に書く。終わったら親が todo に戻す。その間は GPU を使う別の処理を重ねない）。 2026-10-23（親）: 反復 37 の時間切れの BLOCKED（判断は不要）を todo に戻した。次の反復は `blocked/resolved/SCN-WL-OCCLUSION-FIX-reverify.md` の再開の手順（verify の回し直し・直す前後の GPU 時間・回帰・岩の面を並べた画の確かめ）だけを行って閉じる。
 
 ## SCN-WL-SUN-SHADOW-FIX: 太陽の影の位置・縁・漏れを Cycles に合わせる
 - status: todo
