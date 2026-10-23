@@ -651,3 +651,9 @@ rocks-sun / contact_near の全体の IoU 0.880 の外れ（崖錐の岩の面�
 | 既定の荒野 ref_cliff_01 の GPU 時間の中央値（RelWithDebInfo、300 フレーム） | 15.706 ms（この項目の前と同じ既定の描画の Game.exe） | 15.772 ms（p95 17.127 ms、予算 33.3 ms の内。VirtualShadowMapPass 0.663 → 0.637 ms） |
 | 既定の荒野 ref_cliff_01 の VRAM の使用（`VRAM_BUDGET`） | 9715 MB（予算 15280 MB） | 9715 MB（予算 15280 MB） |
 | 回帰の 4 シーン（before・after） | — | pass（PSNR 62.7 dB 以上、平均の差 0.000） |
+
+判定は 8 組を 1 コマンドで回すと 8〜10 分かかる（空だけの組は 1 組約 2 分、太陽だけの組は約 30 秒。前後の測り直しを含む）ので、
+`ReferenceCheck.py --occlusion --sets` で太陽の 4 組・plant-sky と rocks-sky・rocks-cliff-sky と terrain-sky の 3 本に分けて回す
+（各 98・208・218 秒、どれも pass で値は上の表と同じ。撮影の Game.exe と実装の揃いと組の一覧の参照の有無は、絞っても全組で見る）。
+同じ Game.exe（5b77f919…）の ref_cliff_01 の GPU 時間は、ほかの処理と重なった計測で中央値 22.078 ms（全部のパスが一様に約 1.5 倍、
+CPU も 26 → 35 ms）、測り直しで 16.727 ms（VirtualShadowMapPass 0.635 ms）。VRAM の使用はどちらも 9715 MB。

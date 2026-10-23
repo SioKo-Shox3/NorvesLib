@@ -127,13 +127,14 @@
 #       <撮影先>/occlusion_diag/<視点>.png に書く（本体は OcclusionDiag.py。結果は Docs/RenderingValidation/WastelandOcclusion.md）。
 #
 #   python Scripts/Terrain/ReferenceCheck.py --occlusion [--trial] --engine-root <エンジンの撮影の置き場> --reference <参照の置き場>
-#          [--views contact_near] [--verify]
+#          [--views contact_near] [--sets rocks-sun,terrain-sun] [--verify]
 #       小さな遮蔽の比べの書き出しの契約（灰色の材質の小物と地形の形・配置・カメラ・照明）を、エンジンの撮影と
 #       BlenderOcclusionReference.py の Cycles の参照の組ごとに照らし、同じ面を見ている画素の割合（輪郭を除く）を測る
 #       （本体は OcclusionCompare.py。結果は <参照の組>/occlusion_check.json と occlusion_preview/<視点>.png）。
 #       --regions <定義> で、空だけの組の層ごとのくぼみの比と太陽だけの組の影の一致・縁・漏れも測る（OcclusionMetric.py。
 #       重ね画像は <参照の組>/occlusion_regions/<視点>.png）。--expect <定義>（ExpectSpecs/occlusion-fix.json）で、定義の直しの前の
 #       撮影を同じ画素で測り直し、決めた層の範囲・ほかの層が悪くならないこと・対照の Y が変わらないことを確かめる。
+#       --sets で判定する組を絞る（1 コマンドの時間を分けるため。名前の無い組は fail。必須の層・決めた層はその組の分だけ求める）。
 #
 #   python Scripts/Terrain/ReferenceCheck.py --cloud-far --engine <撮影先> [--views ref_far_01,ref_far_02] [--verify]
 #       [--expect Scripts/Terrain/ExpectSpecs/cloud-far-composite.json] [--flicker]
@@ -6702,6 +6703,7 @@ def main():
                         help="--lit: 判定済みでなければ落とす領域（<視点>:<領域>,...）。本描画で未判定なら <参照>/"
                              f"{LIT_CROP_DIR} の切り出しの参照で判定する")
     parser.add_argument("--views", default="", help="検査する視点（カンマ区切り。省くと metrics.json の全視点）")
+    parser.add_argument("--sets", default="", help="--occlusion: 判定する組（カンマ区切り。省くと参照の置き場の全組）")
     parser.add_argument("--verify", action="store_true", help="入力のハッシュを今のファイルと照らし、古い結果を拒否する")
     args = parser.parse_args()
     if args.expect_selftest:
@@ -6802,7 +6804,8 @@ def main():
         views = [v.strip() for v in args.views.split(",") if v.strip()]
         return OcclusionCompare.run(sys.modules[__name__], absolute(args.engine_root) if args.engine_root else "",
                                     absolute(args.reference) if args.reference else "", views, args.verify, args.trial,
-                                    absolute(args.regions) if args.regions else "", expect)
+                                    absolute(args.regions) if args.regions else "", expect,
+                                    [s.strip() for s in args.sets.split(",") if s.strip()])
     if args.cloud_far:
         import CloudFarCause
         capture = args.capture or (args.engine[0] if args.engine else "")

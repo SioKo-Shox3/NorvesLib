@@ -41,6 +41,9 @@
 #   ほかの視点は前に許容の内なら内のまま、外なら IoU・漏れが前より悪くならない（ExpectSpecs/sun-shadow.json）。
 #   targets の視点に iou_receiver（terrain か objects）があれば、IoU の行はその受け手の画素だけの IoU で判定する。
 #   結果は <エンジンの置き場>/occlusion_expect.json。
+# --sets <組,...>: 判定する組を絞る（1 コマンドの時間を分けるため）。参照の置き場に無い名前は fail。必須の層・決めた層・
+#   太陽の決めた視点は、絞った組の分だけ求める。組の一覧（occlusion_sets.json）の参照の有無と、撮影の Game.exe と実装の
+#   揃いは全組で見る。
 import json
 import math
 import os
@@ -404,12 +407,12 @@ def check_view(RC, engine_dir, reference_dir, record, view, regions=None, set_na
     return result
 
 
-def check_across_sets(engine_root, reference_root, sets):
+def check_across_sets(engine_root, reference_root, sets, reference_sets):
     """組どうしの照合（エンジンの撮影の Game.exe と実装の揃い、OcclusionSets.py の組の一覧の揃い）。失敗の一覧"""
     failures = []
     for key in ("game_exe_sha256", "files_sha256"):
         values = set()
-        for name in sets:
+        for name in reference_sets:
             path = os.path.join(engine_root, name, "inputs.json")
             if os.path.isfile(path):
                 values.add(read_json(path).get(key))
@@ -418,7 +421,7 @@ def check_across_sets(engine_root, reference_root, sets):
     listing = os.path.join(engine_root, SETS_FILE)
     if os.path.isfile(listing):
         listed = read_json(listing).get("sets") or {}
-        missing = [name for name in listed if name not in sets]
+        missing = [name for name in listed if name not in reference_sets]
         if missing:
             failures.append(f"{SETS_FILE} の組 {', '.join(missing)} の参照が無い")
         for name in sets:
@@ -466,7 +469,7 @@ def check_expect(RC, expect, regions, report, reference_root, views, trial):
     control_tolerance = float(expect["control_y_tolerance"])
     min_region = int(regions["limits"]["min_region_pixels"])
     min_control = int(regions["limits"]["min_control_pixels"])
-    targets = {(t["set"], t["view"], t["region"], t["stratum"]) for t in expect["targets"]}
+    targets = {(t["set"], t["view"], t["region"], t["stratum"]) for t in expect["targets"] if t["set"] in report["sets"]}
     record = {"baseline_engine_root": RC.rel_dir(baseline_root), "target_range": [low, high],
               "worse_tolerance": worse_tolerance, "control_y_tolerance": control_tolerance, "masks": [], "layers": [],
               "controls": []}
@@ -554,7 +557,7 @@ def check_expect(RC, expect, regions, report, reference_root, views, trial):
     if sun is not None:
         measured_sun = {(row["set"], row["view"]) for row in record["sun"]}
         for target in sun["targets"]:
-            if (target["set"], target["view"]) not in measured_sun:
+            if target["set"] in report["sets"] and (target["set"], target["view"]) not in measured_sun:
                 failures.append(f"太陽の決めた視点 {target['set']}/{target['view']} が測れない")
     return record, failures
 
@@ -659,7 +662,7 @@ def print_expect(record):
               f"outside={','.join(row['outside']) or '-'} pass={int(row['pass'])}", flush=True)
 
 
-def run(RC, engine_root, reference_root, views, verify, trial, regions_path="", expect_path=None):
+def run(RC, engine_root, reference_root, views, verify, trial, regions_path="", expect_path=None, only_sets=None):
     regions = None
     if regions_path:
         import OcclusionMetric
@@ -681,6 +684,13 @@ def run(RC, engine_root, reference_root, views, verify, trial, regions_path="", 
                 sets.append(name)
         if not sets:
             failures.append("参照の置き場に cycles_occlusion の組が無い（BlenderOcclusionReference.py を回していない）")
+    reference_sets = list(sets)
+    if only_sets:
+        unknown = [name for name in only_sets if name not in reference_sets]
+        if unknown:
+            failures.append(f"--sets の組 {', '.join(unknown)} が参照の置き場に無い")
+        sets = [name for name in reference_sets if name in only_sets]
+        report["only_sets"] = sets
     for name in sets:
         reference_dir = os.path.join(reference_root, name)
         engine_dir = os.path.join(engine_root, name)
@@ -714,11 +724,12 @@ def run(RC, engine_root, reference_root, views, verify, trial, regions_path="", 
         with open(os.path.join(reference_dir, "occlusion_check.json"), "w", encoding="utf-8") as f:
             json.dump(entry, f, indent=2, ensure_ascii=False)
     if sets:
-        failures.extend(check_across_sets(engine_root, reference_root, sets))
+        failures.extend(check_across_sets(engine_root, reference_root, sets, reference_sets))
     if regions is not None:
         import OcclusionMetric
         measured = {(name, view) for name, entry in report["sets"].items() for view in entry["views"]}
-        failures.extend(OcclusionMetric.missing_required(regions, measured))
+        required = {"required": [item for item in regions["required"] if item["set"] in sets]}
+        failures.extend(OcclusionMetric.missing_required(required, measured))
     if expect_path:
         if regions is None:
             failures.append("--expect は --regions と一緒に使う")

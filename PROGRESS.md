@@ -7449,3 +7449,16 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 開いた画: `scene-capture/SCN-WL-ROCK-LOD-SHADOW/timing/ref_cliff_01.png`（崖錐の岩の面に影の斑なし）
 - Next: TASKS.md の次の未完
 - Notes: 印を付けたのは崖錐の岩（boulder_01・rock_09）だけで、スキャンの崖・建物は 4 texel のまま。比べの撮影（最も細かい段）の VRAM の使用 14335 MB が予算 14196 MB を超えるのは主のカメラの最も細かい段による前からの記録で、影の直しでは変わらない。新しい試験は足していない
+
+## 2026-10-24 SCN-WL-ROCK-LOD-SHADOW（run 20261023-124311 の反復 14、閉じた）
+- Done: 反復 13 の再検証の時間切れ（8 組の遮蔽の判定が 1 コマンド 10 分を超えた）を直した。`ReferenceCheck.py --occlusion` に判定する組を絞る `--sets` を足し（`OcclusionCompare.run`。名前の無い組は fail、必須の層・決めた層・太陽の決めた視点は絞った組の分だけ求め、撮影の Game.exe と実装の揃い・組の一覧の参照の有無は全組で見る）、verify の判定を太陽の 4 組・plant-sky と rocks-sky・rocks-cliff-sky と terrain-sky の 3 本に分けた。描画の直し（反復 13）は変えていない。記録は `WastelandOcclusion.md` の「岩の影の LOD」
+- 証拠（`.harness/runs/20261023-124311/`）:
+  - `verify-SCN-WL-ROCK-LOD-SHADOW-1.txt`: Debug の Game のビルド EXIT=0。`-2.txt`: rocks-sun の撮影（`--build`）EXIT=0（188 秒）。Game.exe は反復 13 と同じ 5b77f919…（8 組の inputs.json で一致）
+  - `-3.txt`: 太陽の 4 組の判定 pass（98 秒）。rocks-sun 全体の IoU 0.9084・地面 0.9607・岩の面 0.8969・漏れ 0.55 %・縁の比 1.04、terrain-sun・rocks-cliff-sun 0.930、plant-sun 0.9245
+  - `-4.txt`（plant-sky・rocks-sky、208 秒）・`-5.txt`（rocks-cliff-sky・terrain-sky、218 秒）: pass。対照の Y は前の 0.997〜1.000 倍
+  - `-6.txt`: ref_cliff_01 の GPU 中央値 22.078 ms（予算 33.3 ms の内）・VRAM 9715 MB。全部のパスが一様に約 1.5 倍で CPU も 35 ms だったので 1 回だけ測り直した `aux-SCN-WL-ROCK-LOD-SHADOW-14-timing-retry.txt`: 16.727 ms（VirtualShadowMapPass 0.635 ms）・VRAM 9715 MB
+  - `-7.txt`: 回帰の after result=pass（4 シーン、PSNR 65.3 dB 以上）
+  - 組ごとの所要の測り: `aux-SCN-WL-ROCK-LOD-SHADOW-14-set-*.txt`（空の組 112〜132 秒、太陽の組 27〜30 秒。terrain-sun は測りの外側の時間切れで止まり、`-3.txt` で判定した）
+  - 開いた画: `scene-capture/SCN-WL-ROCK-LOD-SHADOW/timing/ref_cliff_01.png`（崖錐の岩の面に影の斑なし）
+- Next: TASKS.md の次の未完
+- Notes: `-6.txt` の 22 ms は同じ Game.exe でほかの処理と重なった計測と判断した（雲・VSM など直しと関係ないパスも同じ比で伸びた）。新しい試験は足していない
