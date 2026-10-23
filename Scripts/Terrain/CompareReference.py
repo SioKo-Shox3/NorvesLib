@@ -8,6 +8,9 @@
 #       写りの差を写真ごとの固定の領域で診断する（LookMeasure.py。注釈は LookRegions.json）
 #   python Scripts/Terrain/CompareReference.py --capture <--display-check=scene -Hdr の撮影> --look-select <-Hdr の撮影> [--verify]
 #       昼の表示の変換の候補を --look-select の HDR にオフラインで掛けて並べ、選んだ候補を --capture の撮影と照らす（LookSelect.py）
+#   python Scripts/Terrain/CompareReference.py --capture <-Aov の撮影の OutDir> --shape [--photos ...] [--expect <仕様>] [--verify]
+#       崖の棚・角・外形を写真の注釈（ShapeAnnotations.json）と撮影の深度と幾何の法線で測る（ShapeMeasure.py）
+#   --expect は --look・--shape の量の行の合否（PhotoExpect.py）。--photos の未知の写真の ID は落とす
 # 写真ごとに <出力先>/reference_<写真>.png と <出力先>/reference_metrics.json を書き、数値を 1 行ずつ出す。
 # 並べた写真をすべて縦に積んだ一覧（左に写真、右に撮影。輪郭と枠は重ねない）を <出力先>/reference_overview.png に書く
 # （節目の確認でユーザーに渡す 1 枚）。
@@ -284,16 +287,33 @@ def main():
     parser.add_argument(
         "--look-select", default="", help="昼の表示の変換の候補を掛ける -Hdr の撮影の出力先（LookSelect.py。--capture は --display-check=scene の撮影）"
     )
+    parser.add_argument(
+        "--shape", action="store_true", help="崖の棚・角・外形を写真の注釈（ShapeAnnotations.json）と撮影の深度と幾何の法線で測る（ShapeMeasure.py。撮影は -Aov）"
+    )
+    parser.add_argument("--expect", default="", help="--look・--shape の量の行の合否の仕様（PhotoExpect.py）")
     args = parser.parse_args()
 
     wanted = [p for p in args.photos.split(",") if p]
+    unknown = [p for p in wanted if p not in {entry["id"] for entry in PHOTOS}]
+    if unknown:
+        print(f"COMPARE_REFERENCE failure=未知の写真の ID {unknown}")
+        print("COMPARE_REFERENCE result=fail failures=1")
+        return 1
+    if args.expect and not (args.look or args.shape):
+        print("COMPARE_REFERENCE failure=--expect は --look か --shape と使う")
+        print("COMPARE_REFERENCE result=fail failures=1")
+        return 1
     photos = [p for p in PHOTOS if not wanted or p["id"] in wanted]
     out_dir = args.out or args.capture
     os.makedirs(out_dir, exist_ok=True)
+    if args.shape:
+        from ShapeMeasure import run_shape
+
+        return run_shape(args.capture, out_dir, wanted, args.verify, args.expect)
     if args.look:
         from LookMeasure import run_look
 
-        return run_look(args.capture, out_dir, wanted, args.look_depth, args.verify)
+        return run_look(args.capture, out_dir, wanted, args.look_depth, args.verify, args.expect)
     if args.look_select:
         from LookSelect import run_look_select
 

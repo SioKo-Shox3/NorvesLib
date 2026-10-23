@@ -1,0 +1,20 @@
+﻿{
+  "description": "崖の形の絶対の基準（CompareReference.py --shape --expect。WastelandShape.md の「形の物差し」）。棚の一致 0.6 以上・角の一致 0.5 以上・ずらした後の外形の距離の中央値 8 画素（位置の許容）以下。今の撮影（SCN-WL-SHAPE-CAUSE の lod-default）は全部の写真で棚と角の行が落ちる。形の直しの項目は、担当の写真の行をこの仕様から写して使う",
+  "rows": [
+    {"photo": "far_01", "quantity": "shelf_match", "min": 0.6},
+    {"photo": "far_01", "quantity": "corner_match", "min": 0.5},
+    {"photo": "far_01", "quantity": "outline_residual_median_px", "max": 8.0},
+    {"photo": "far_02", "quantity": "shelf_match", "min": 0.6},
+    {"photo": "far_02", "quantity": "corner_match", "min": 0.5},
+    {"photo": "far_02", "quantity": "outline_residual_median_px", "max": 8.0},
+    {"photo": "cliff_01", "quantity": "shelf_match", "min": 0.6},
+    {"photo": "cliff_01", "quantity": "corner_match", "min": 0.5},
+    {"photo": "cliff_01", "quantity": "outline_residual_median_px", "max": 8.0},
+    {"photo": "cliff_02", "quantity": "shelf_match", "min": 0.6},
+    {"photo": "cliff_02", "quantity": "corner_match", "min": 0.5},
+    {"photo": "cliff_02", "quantity": "outline_residual_median_px", "max": 8.0},
+    {"photo": "ground_02", "quantity": "shelf_match", "min": 0.6},
+    {"photo": "ground_02", "quantity": "corner_match", "min": 0.5},
+    {"photo": "ground_02", "quantity": "outline_residual_median_px", "max": 8.0}
+  ]
+}

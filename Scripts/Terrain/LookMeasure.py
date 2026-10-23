@@ -18,8 +18,9 @@
 #
 # --look-depth <撮影の出力先> を渡すと、そこの <視点>.aov.depth.pfm（-Aov の撮影）で撮影の領域の深度の中央値と 3 km より先の割合を書く。
 # 出力: <出力先>/look_<写真>.png（上: 写真、下: 撮影。注釈を重ねる）、look_metrics.json、look_table.md（文書に貼る表）。
-# --verify: 6 写真すべてで、各領域が写真・撮影の両方で空でないか、absent に理由があるかと、撮影の PNG と HDR（-Hdr）がそろい
-# 1920×1080 以上で同じ大きさかを確かめる。-Hdr を付けずに撮った出力先（metrics.json の hdr が false。ブルームと AA を入れた
+# --verify: 選んだ写真（--photos。省くと 6 写真）すべてで、各領域が写真・撮影の両方で空でないか、absent に理由があるかと、
+# 撮影の PNG と HDR（-Hdr）がそろい 1920×1080 以上で同じ大きさかを確かめる。
+# --expect <仕様>: look_metrics.json の写真の記録の量の行の合否（PhotoExpect.py）。-Hdr を付けずに撮った出力先（metrics.json の hdr が false。ブルームと AA を入れた
 # 見た目の確認の撮影）は HDR を求めず、撮影 HDR の値を「－」にする。終了コード: 満たせば 0、満たさなければ 1。
 import json
 import math
@@ -229,7 +230,7 @@ def capture_hdr_flag(capture_dir):
         return bool(json.load(file).get("hdr", True))
 
 
-def run_look(capture_dir, out_dir, wanted, depth_dir, verify):
+def run_look(capture_dir, out_dir, wanted, depth_dir, verify, expect_path=""):
     """--look の本体。終了コードを返す"""
     annotations = load_regions()
     region_labels = annotations["regions"]
@@ -390,8 +391,15 @@ def run_look(capture_dir, out_dir, wanted, depth_dir, verify):
         json.dump(report, file, ensure_ascii=False, indent=2)
     if report["photos"]:
         write_table(report, region_labels, os.path.join(out_dir, "look_table.md"))
-    if verify and len(report["photos"]) != len(PHOTOS):
-        failures.append(f"診断した写真が {len(report['photos'])} 枚（{len(PHOTOS)} 枚すべてが要る）")
+    if not photos:
+        failures.append("診断する写真が無い（空の選択）")
+    if verify and len(report["photos"]) != len(photos):
+        failures.append(f"診断した写真が {len(report['photos'])} 枚（選んだ {len(photos)} 枚すべてが要る）")
+    if expect_path:
+        from PhotoExpect import evaluate
+
+        failures.extend(evaluate(expect_path, report["photos"], {p["id"] for p in photos}, {p["id"] for p in PHOTOS},
+                                 "COMPARE_REFERENCE_LOOK_EXPECT", False))
     if failures:
         for failure in failures:
             print(f"COMPARE_REFERENCE_LOOK failure={failure}")
