@@ -7526,3 +7526,11 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 記録（張り出し付きの塊 52 個の配置表）: 三角形 合計 418 万、配置表を読み始めてから置き終えるまで 105 秒、VRAM の使用の最大 10035 MB（予算 15280 MB）、draw_dropped・bvh_overflow・visible_list_overflow・request_overflow・failed は 0
 - Next: 判断待ち（`blocked/SCN-WL-CLIFF-SCAN-NEAR.md`）
 - Notes: 合否の仕様は変えていない。式の焼き込みは変えていない（クック・Cycles の参照は古くならない）。派生の素材は Blender でなく numpy で頂点を写して書いた（頂点の位置と法線だけの決まった変換で、UV と索引は元のまま）。`WastelandModels.json` は「engine」の入力の一部なので、その記録の撮影は入力が今と違う扱いになる。新しい試験は足していない
+
+## 2026-10-24 SCN-WL-CLOUD-CHECK-EXPECT（run 20261023-124311 の反復 24、閉じた）
+- Done: `ReferenceCheck.py --cloud` に `--expect <仕様>` を足した（`CloudCheck.evaluate_expect`）。領域の比と 3 つの量の比（エンジンの量 ÷ Cycles の量）の誤差を e = |ln 比| とし、e が基準の比の隔たり ＋ 許容を超えたら落とす。未知の領域・量、基準の欠け（判定した視点の 5 領域・3 量に行が無い、base_ratio が正の有限でない）、収束していない領域（量は使う 2 領域。--trial でも求める）、求まらない比、重なった行、結果の無い視点の行も落ちる。仕様 `Scripts/Terrain/ExpectSpecs/cloud-ref.json`（基準の比は SCN-WLR-CLOUD-REF-CURRENT の表を小数 4 桁）。`--cloud --selftest`（`CloudCheck.run_selftest`）を足した。量の定義を `CloudCheck.QUANTITIES` の 1 か所にした。許容の根拠と表は `WastelandCloudShape.md` の「比の悪化の合否」
+- 許容: 同じ Game.exe（ab0adb16…）で cloud_sky の書き出しを 2 回撮った揺れは 0（6 ファイルのハッシュが同じ、144 本の散乱光・不透明度の差 0）なので、Cycles の種の違う 2 本の平均の差（量は 2 領域の和）を 0.001 に切り上げた値: 厚い雲 0.003・縁 0.004・銀の縁 0.003・日の当たる側 0.002・影の側 0.008、縁の明るさ 0.006・銀の縁 0.007・影の側の暗さ 0.010
+- 基準の撮影の置き場: 反復 23 で `WastelandModels.json` が変わり `SCN-WLR-CLOUD-REF-CURRENT/dump` の入力の記録が古くなって `--verify` が落ちたので、最初の置き場を `dump-1c32fa29` へ移し、この反復の 2 回目の撮影（雲の書き出しのハッシュが同じ、入力の記録のコミット 069508d8）を `dump` に置いた。Cycles の正解は描き直していない
+- 証拠（`.harness/runs/20261023-124311/`）: `verify-SCN-WL-CLOUD-CHECK-EXPECT-1.txt`（`--cloud --selftest` result=pass cases=48 failed=0 EXIT=0）・`-2.txt`（`--cloud ... --expect cloud-ref.json --verify` の 8 行とも pass、result=pass inputs_current=1 EXIT=0）・`aux-SCN-WL-CLOUD-CHECK-EXPECT-dump2.txt`（2 回目の撮影 result=pass、RelWithDebInfo のビルド EXIT=0 で Game.exe は ab0adb16… のまま）・`aux-SCN-WL-CLOUD-CHECK-EXPECT-jitter.txt`（2 回の撮影の揺れ 0）
+- Next: TASKS.md の次の未完（SCN-WL-CLOUD-OPACITY-AOV など、雲の描画を変える項目の比べはこの仕様で行う）
+- Notes: GPU 時間は測っていない（描画のコードを変えていない）。selftest 以外の新しい試験は足していない

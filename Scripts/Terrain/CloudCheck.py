@@ -2,7 +2,8 @@
 #
 # 使い方:
 #   python Scripts/Terrain/ReferenceCheck.py --cloud --engine <雲の書き出しの撮影> --reference <Cycles の書き先>
-#          [--views cloud_sky] [--trial] [--verify]
+#          [--views cloud_sky] [--trial] [--verify] [--expect Scripts/Terrain/ExpectSpecs/cloud-ref.json]
+#   python Scripts/Terrain/ReferenceCheck.py --cloud --selftest [--expect <仕様>]
 #       <雲の書き出しの撮影>: CaptureScene.ps1 -Hdr -Views cloud_sky -GameArgs cloud-dump の撮影。<Cycles の書き先>:
 #       BlenderReference.py --cloud が書いたフォルダ。結果を <Cycles の書き先>/cloud_check.json と、見比べの画像
 #       <Cycles の書き先>/cloud_<視点>.png（左 エンジンの HDR、右 Cycles の雲の散乱光 + 透過率の画 × 空だけの画。同じ露出。視線の画素に
@@ -31,9 +32,18 @@
 # 表（領域ごと）: 両方の輝度 Y の平均・比・不透明度の平均・Y / 不透明度の平均。
 # 量（描画ごと）: 縁の明るさ = 縁の Y / 不透明度 ÷ 厚い雲の Y / 不透明度、銀の縁 = 銀の縁の Y / 不透明度 ÷ 縁の Y / 不透明度、
 #   影の側の暗さ = 影の側の Y ÷ 日の当たる側の Y（それぞれ領域の平均の比）。
+#
+# 比の悪化の合否（--expect <仕様>。SCN-WL-CLOUD-CHECK-EXPECT）: 仕様の JSON は {"description": ..., "rows": [<行>, ...]}。行の鍵
+#   （ほかの鍵は書き間違いとして拒む）: view（視点）、region（CloudVolume.REGIONS の領域）か quantity（QUANTITIES の量）のどちらか
+#   1 つ、base_ratio（基準の組のエンジン ÷ Cycles。量は エンジンの量 ÷ Cycles の量）、tolerance（e の許容）、note（説明）。
+#   誤差は e = |ln(比)|（1.48→1.60 も 0.72→0.60 も e が増える）で、e > |ln(base_ratio)| ＋ tolerance なら落ちる。
+#   未知の領域・量、基準の欠け（判定した視点の領域・量に行が無い、base_ratio が正の有限でない）、収束していない領域（量は
+#   使う 2 領域）、値が求まらない行、重なった行、結果の無い視点の行も落ちる。--trial でも収束は求める。
+#   --selftest（run_selftest）は合成の結果でこの判定を確かめる。
 import json
 import math
 import os
+import tempfile
 
 import numpy as np
 from PIL import Image, ImageDraw
@@ -59,6 +69,15 @@ RECORD_TOLERANCE = 1e-9
 PREVIEW_SCALE = 0.5
 REGION_COLORS = {"cloud_body": (255, 255, 255), "cloud_edge": (80, 200, 255), "silver_lining": (255, 210, 0),
                  "body_sunlit": (0, 220, 120), "body_shadow": (255, 60, 60)}
+# 量 → (分子の領域, 分母の領域, 領域の表の値の鍵の後半)
+QUANTITIES = {
+    "edge_brightness": ("cloud_edge", "cloud_body", "y_per_opacity"),
+    "silver_lining": ("silver_lining", "cloud_edge", "y_per_opacity"),
+    "shadow_darkness": ("body_shadow", "body_sunlit", "y"),
+}
+# --cloud --selftest が仕様を省いたときに読む仕様（リポジトリの根からの道）
+DEFAULT_EXPECT = "Scripts/Terrain/ExpectSpecs/cloud-ref.json"
+EXPECT_ROW_KEYS = ("view", "region", "quantity", "base_ratio", "tolerance", "note")
 
 
 def read_json(path):
@@ -309,11 +328,7 @@ def check_view(RC, engine_dir, reference_dir, view, record, game_args, trial):
         return {side: ratio((table[numerator] or {}).get(f"{side}_{key}"), (table[denominator] or {}).get(f"{side}_{key}"))
                 for side in ("engine", "cycles")}
 
-    quantities = {
-        "edge_brightness": quantity("cloud_edge", "cloud_body", "y_per_opacity"),
-        "silver_lining": quantity("silver_lining", "cloud_edge", "y_per_opacity"),
-        "shadow_darkness": quantity("body_shadow", "body_sunlit", "y"),
-    }
+    quantities = {name: quantity(*spec) for name, spec in QUANTITIES.items()}
     for name, values in quantities.items():
         if not finite(values["engine"], values["cycles"]):
             failures.append(f"量 {name} が求まらない（未判定）")
@@ -337,7 +352,244 @@ def check_view(RC, engine_dir, reference_dir, view, record, game_args, trial):
     return result
 
 
-def run(RC, engine_dirs, reference_dir, views, verify, trial):
+def expect_rows(spec_path):
+    """仕様の行を読む。(行の並び, 失敗の一覧)"""
+    if not os.path.isfile(spec_path):
+        return None, [f"仕様 {spec_path} が無い"]
+    try:
+        spec = read_json(spec_path)
+    except (OSError, ValueError) as error:
+        return None, [f"仕様 {spec_path} が読めない: {error}"]
+    rows = spec.get("rows") if isinstance(spec, dict) else spec
+    if not isinstance(rows, list) or not rows:
+        return None, [f"仕様 {spec_path} に行が無い"]
+    return rows, []
+
+
+def positive_finite(value):
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value > 0.0
+
+
+def evaluate_expect(spec_path, results, quiet=False):
+    """視点の結果を仕様の行で判定する。(失敗の一覧, 行ごとの判定)"""
+    rows, failures = expect_rows(spec_path)
+    if rows is None:
+        return failures, []
+    by_view = {result["view"]: result for result in results}
+    judged = []
+    seen = set()
+    for index, row in enumerate(rows):
+        label = f"行 {index + 1}"
+        if not isinstance(row, dict):
+            failures.append(f"{label} が JSON のオブジェクトでない")
+            continue
+        unknown = [key for key in row if key not in EXPECT_ROW_KEYS]
+        if unknown:
+            failures.append(f"{label} に知らない鍵 {unknown}")
+            continue
+        view = row.get("view")
+        if ("region" in row) == ("quantity" in row):
+            failures.append(f"{label} は region か quantity のどちらか 1 つを持つ")
+            continue
+        kind = "region" if "region" in row else "quantity"
+        name = row[kind]
+        if kind == "region" and name not in CV.REGIONS:
+            failures.append(f"{label} の領域 {name} が未知")
+            continue
+        if kind == "quantity" and name not in QUANTITIES:
+            failures.append(f"{label} の量 {name} が未知")
+            continue
+        where = f"view={view} {kind}={name}"
+        if (view, kind, name) in seen:
+            failures.append(f"{label}（{where}）が前の行と重なる")
+            continue
+        seen.add((view, kind, name))
+        base = row.get("base_ratio")
+        tolerance = row.get("tolerance")
+        if not positive_finite(base):
+            failures.append(f"{label}（{where}）の基準の比 base_ratio が欠けているか正の有限でない（{base}）")
+            continue
+        if not (positive_finite(tolerance) or tolerance == 0):
+            failures.append(f"{label}（{where}）の許容 tolerance が欠けているか 0 以上の有限でない（{tolerance}）")
+            continue
+        result = by_view.get(view)
+        if result is None:
+            failures.append(f"{label}（{where}）の視点の結果が無い")
+            continue
+        regions = (result.get("regions") or {})
+        stats = ((result.get("convergence") or {}).get("regions") or {})
+        needed = [name] if kind == "region" else list(QUANTITIES[name][:2])
+        unconverged = [r for r in needed if not (stats.get(r) or {}).get("converged")]
+        if kind == "region":
+            value = (regions.get(name) or {}).get("ratio")
+        else:
+            values = (result.get("quantities") or {}).get(name) or {}
+            value = ratio(values.get("engine"), values.get("cycles"))
+        entry = {"view": view, kind: name, "base_ratio": base, "tolerance": tolerance, "ratio": value}
+        judged.append(entry)
+        if unconverged:
+            entry["pass"] = False
+            failures.append(f"{label}（{where}）の領域 {', '.join(unconverged)} が収束していない")
+            if not quiet:
+                print(f"REFERENCE_CHECK cloud expect {where} unconverged={','.join(unconverged)} result=fail")
+            continue
+        if not positive_finite(value):
+            entry["pass"] = False
+            failures.append(f"{label}（{where}）の比が求まらない（{value}）")
+            if not quiet:
+                print(f"REFERENCE_CHECK cloud expect {where} ratio=undetermined result=fail")
+            continue
+        error = abs(math.log(value))
+        base_error = abs(math.log(base))
+        limit = base_error + tolerance
+        entry.update({"error": error, "base_error": base_error, "limit": limit, "pass": error <= limit})
+        if not quiet:
+            print(f"REFERENCE_CHECK cloud expect {where} ratio={value:.4f} error={error:.4f} base_ratio={base} "
+                  f"base_error={base_error:.4f} tolerance={tolerance} limit={limit:.4f} "
+                  f"result={'pass' if entry['pass'] else 'fail'}")
+        if not entry["pass"]:
+            failures.append(f"{label}（{where}）の比 {value:.4f} の隔たり {error:.4f} が基準 {base} の隔たり {base_error:.4f} ＋ "
+                            f"許容 {tolerance} を超えた（悪化）")
+    # 判定した視点の領域・量に行が無ければ基準の欠け
+    for result in results:
+        for kind, names in (("region", CV.REGIONS), ("quantity", tuple(QUANTITIES))):
+            for name in names:
+                if (result["view"], kind, name) not in seen:
+                    failures.append(f"視点 {result['view']} の {kind} {name} の基準の行が仕様に無い（基準の欠け）")
+    return failures, judged
+
+
+def synthetic_result(rows, view):
+    """仕様の基準の比をそのまま持つ合成の結果（全領域が収束）"""
+    regions = {name: {"ratio": 1.0} for name in CV.REGIONS}
+    quantities = {name: {"engine": 1.0, "cycles": 1.0} for name in QUANTITIES}
+    for row in rows:
+        if row.get("view") != view:
+            continue
+        if row.get("region") in regions:
+            regions[row["region"]]["ratio"] = row["base_ratio"]
+        if row.get("quantity") in quantities:
+            quantities[row["quantity"]] = {"engine": row["base_ratio"], "cycles": 1.0}
+    stats = {name: {"converged": True} for name in CV.REGIONS}
+    return {"view": view, "regions": regions, "quantities": quantities, "convergence": {"regions": stats}}
+
+
+def set_ratio(result, kind, name, value):
+    if kind == "region":
+        result["regions"][name]["ratio"] = value
+    else:
+        result["quantities"][name] = {"engine": value, "cycles": 1.0}
+
+
+def run_selftest(spec_path):
+    """合成の結果で --expect の判定を確かめる。基準のまま・1 へ近づけた・許容の内側は通り、1 から遠ざけた・未知・欠け・未収束は落ちる"""
+    rows, failures = expect_rows(spec_path)
+    if rows is None:
+        for failure in failures:
+            print(f"REFERENCE_CHECK failure: {failure}")
+        print("REFERENCE_CHECK result=fail mode=cloud_selftest cases=0")
+        return 1
+    views = sorted({row.get("view") for row in rows if isinstance(row, dict)})
+    if len(views) != 1:
+        print(f"REFERENCE_CHECK failure: 仕様の視点が 1 つでない（{views}）")
+        print("REFERENCE_CHECK result=fail mode=cloud_selftest cases=0")
+        return 1
+    view = views[0]
+    base = synthetic_result(rows, view)
+    cases = []
+
+    def case(label, expect_pass, result, case_rows=None, must_name=None):
+        """1 つの場合を判定する。case_rows があれば仕様を書き換えた写しで判定する"""
+        path = spec_path
+        temp = None
+        if case_rows is not None:
+            temp = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8")
+            json.dump({"rows": case_rows}, temp, ensure_ascii=False)
+            temp.close()
+            path = temp.name
+        try:
+            case_failures, _ = evaluate_expect(path, [result], quiet=True)
+        finally:
+            if temp is not None:
+                os.remove(temp.name)
+        got_pass = not case_failures
+        ok = got_pass == expect_pass
+        if ok and must_name and not any(must_name in f for f in case_failures):
+            ok = False
+        cases.append(ok)
+        print(f"REFERENCE_CHECK cloud selftest case={label} expected={'pass' if expect_pass else 'fail'} "
+              f"got={'pass' if got_pass else 'fail'} result={'pass' if ok else 'fail'}"
+              + (f" first_failure={case_failures[0]}" if case_failures else ""))
+
+    def copy(result):
+        return json.loads(json.dumps(result))
+
+    case("base", True, base)
+    for row in rows:
+        kind = "region" if "region" in row else "quantity"
+        name = row[kind]
+        ratio_base = row["base_ratio"]
+        tolerance = row["tolerance"]
+        away = 1.0 if ratio_base >= 1.0 else -1.0
+        # 1 から遠ざける（許容 ＋ 0.01 だけ隔たりを増やす）
+        worse = copy(base)
+        set_ratio(worse, kind, name, ratio_base * math.exp(away * (tolerance + 0.01)))
+        case(f"{kind}-{name}-away", False, worse, must_name=f"{kind}={name}")
+        # 許容の半分だけ遠ざける（揺れの内側）
+        inside = copy(base)
+        set_ratio(inside, kind, name, ratio_base * math.exp(away * 0.5 * tolerance))
+        case(f"{kind}-{name}-inside-tolerance", True, inside)
+        # 1 へ近づける（改善）
+        better = copy(base)
+        set_ratio(better, kind, name, ratio_base * math.exp(-away * min(abs(math.log(ratio_base)), 0.05)))
+        case(f"{kind}-{name}-toward-one", True, better)
+        # 1 の反対側へ同じ隔たりより遠くへ跳ぶ（向きを変えても隔たりで測る）
+        flipped = copy(base)
+        set_ratio(flipped, kind, name, ratio_base ** -1 * math.exp(-away * (tolerance + 0.01)))
+        case(f"{kind}-{name}-flip-away", False, flipped, must_name=f"{kind}={name}")
+    # 項目の例: 縁 1.48→1.60、影の側 0.72→0.60
+    for name, value in (("cloud_edge", 1.60), ("body_shadow", 0.60)):
+        example = copy(base)
+        set_ratio(example, "region", name, value)
+        case(f"{name}-example-{value}", False, example, must_name=f"region={name}")
+    # 未知の領域・量
+    case("unknown-region", False, base,
+         rows + [{"view": view, "region": "cloud_top", "base_ratio": 1.0, "tolerance": 0.01}], must_name="未知")
+    case("unknown-quantity", False, base,
+         rows + [{"view": view, "quantity": "edge_contrast", "base_ratio": 1.0, "tolerance": 0.01}], must_name="未知")
+    # 基準の欠け: 領域の行が無い・量の行が無い・base_ratio が無い・0
+    first_region = next(r for r in rows if "region" in r)
+    first_quantity = next(r for r in rows if "quantity" in r)
+    case("missing-region-row", False, base, [r for r in rows if r is not first_region], must_name="基準の欠け")
+    case("missing-quantity-row", False, base, [r for r in rows if r is not first_quantity], must_name="基準の欠け")
+    no_base = [dict(r) for r in rows]
+    del no_base[0]["base_ratio"]
+    case("missing-base-ratio", False, base, no_base, must_name="base_ratio")
+    zero_base = [dict(r) for r in rows]
+    zero_base[0]["base_ratio"] = 0.0
+    case("zero-base-ratio", False, base, zero_base, must_name="base_ratio")
+    no_tolerance = [dict(r) for r in rows]
+    del no_tolerance[0]["tolerance"]
+    case("missing-tolerance", False, base, no_tolerance, must_name="tolerance")
+    case("unknown-key", False, base, [dict(rows[0], margin=0.1)] + rows[1:], must_name="知らない鍵")
+    case("duplicate-row", False, base, rows + [dict(rows[0])], must_name="重なる")
+    case("other-view", False, base, rows + [dict(first_region, view="cloud_far")], must_name="視点の結果が無い")
+    # 収束していない領域（領域の行と、その領域を使う量の行が落ちる）
+    unconverged = copy(base)
+    unconverged["convergence"]["regions"]["body_shadow"]["converged"] = False
+    case("unconverged-region", False, unconverged, must_name="region=body_shadow")
+    case("unconverged-quantity", False, unconverged, must_name="quantity=shadow_darkness")
+    # 値が求まらない
+    undetermined = copy(base)
+    undetermined["regions"]["cloud_edge"]["ratio"] = None
+    case("undetermined-ratio", False, undetermined, must_name="求まらない")
+    passed = all(cases)
+    print(f"REFERENCE_CHECK result={'pass' if passed else 'fail'} mode=cloud_selftest cases={len(cases)} "
+          f"failed={cases.count(False)} spec={spec_path}")
+    return 0 if passed else 1
+
+
+def run(RC, engine_dirs, reference_dir, views, verify, trial, expect=None):
     failures = []
     if len(engine_dirs) != 1:
         print("REFERENCE_CHECK result=fail reason=engine_missing（--engine に雲の書き出しの撮影を 1 つ指定する）")
@@ -380,6 +632,10 @@ def run(RC, engine_dirs, reference_dir, views, verify, trial):
                   f"converged={int(bool(conv.get('regions', {}).get(name, {}).get('converged')))}")
         for name, values in (result.get("quantities") or {}).items():
             print(f"REFERENCE_CHECK cloud view={view} quantity={name} engine={values['engine']} cycles={values['cycles']}")
+    expect_judged = None
+    if expect:
+        expect_failures, expect_judged = evaluate_expect(expect, results)
+        failures.extend(f"仕様 {RC.rel_dir(expect)}: {f}" for f in expect_failures)
     report = {
         "mode": "cloud",
         "verify": bool(verify),
@@ -394,6 +650,7 @@ def run(RC, engine_dirs, reference_dir, views, verify, trial):
         "criteria": dict(CV.criteria(), min_spp_per_seed=MIN_SPP_PER_SEED, sky_tolerance=SKY_TOLERANCE,
                          transmittance_tolerance=TRANSMITTANCE_TOLERANCE, projection_tolerance_px=PROJECTION_TOLERANCE_PX),
         "views": results,
+        "expect": {"spec": RC.rel_dir(expect), "rows": expect_judged} if expect else None,
         "failures": failures,
     }
     report_path = os.path.join(reference_dir, "cloud_check.json")

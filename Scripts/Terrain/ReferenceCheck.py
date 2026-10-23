@@ -143,11 +143,16 @@
 #       （本体は CloudFarCause.py）。
 #   python Scripts/Terrain/ReferenceCheck.py --cloud --engine <雲の書き出しの撮影> --reference <Cycles の書き先>
 #                                            [--views cloud_sky] [--trial] [--verify]
+#                                            [--expect Scripts/Terrain/ExpectSpecs/cloud-ref.json]
 #       雲の書き出しの視線ごとに、エンジン（GPU が描画と同じ式で評価した霞の前の散乱光と透過率）と Cycles（BlenderReference.py
 #       --cloud が書き出しの密度場を体積として描いたもの）の雲の透過率と放射輝度を比べ、縁の明るさ・銀の縁・影の側の暗さを
 #       表にする（CloudCheck.py）。比較が成り立つ条件（書き出しの検査・同じ書き出し・カメラと空と体積の照合・Cycles の収束・
 #       領域の視線の下限）を満たさないか、表の領域・量が未判定なら落ちる（エンジンとの一致は求めない）。--trial は収束の条件
-#       だけを外す。報告は <Cycles の書き先>/cloud_check.json。
+#       だけを外す。報告は <Cycles の書き先>/cloud_check.json。--expect は、領域の比と量のエンジン ÷ Cycles の比の 1 からの
+#       隔たり e = |ln 比| が、仕様の基準の比の隔たり ＋ 許容を超えたら落とす（比の悪化の判定）。
+#   python Scripts/Terrain/ReferenceCheck.py --cloud --selftest [--expect <仕様>]
+#       --cloud --expect の判定を合成の結果で確かめる（基準のままは通り、比を 1 から遠ざけた結果・未知の領域・基準の欠け・
+#       収束していない領域は落ちる）。仕様を省くと ExpectSpecs/cloud-ref.json。
 #
 #   python Scripts/Terrain/ReferenceCheck.py --atmos-dump --capture <出力先> [--views a,b,...] [--verify]
 #       CaptureScene.ps1 -GameArgs atmosphere-dump の撮影（<視点>.atmos.json と、そこに書かれた 32 bit 浮動小数の生のファイル）を
@@ -6695,7 +6700,7 @@ def main():
     parser.add_argument("--flicker", action="store_true",
                         help="--cloud-far で、ref_far_01 の雲の範囲の時間方向のちらつきを <撮影先>-flicker/before・after の連番で比べる")
     parser.add_argument("--expect", default="",
-                        help="--gray・--lit・--blur-static・--blur-motion・--bounce・--atmos-ref・--building で、領域・成分ごとの合否の閾値の仕様（Scripts/Terrain/ExpectSpecs/ の JSON）"
+                        help="--gray・--lit・--blur-static・--blur-motion・--bounce・--atmos-ref・--building・--cloud で、領域・成分ごとの合否の閾値の仕様（Scripts/Terrain/ExpectSpecs/ の JSON）"
                              "の各行も判定する")
     parser.add_argument("--expect-selftest", action="store_true",
                         help="保存した撮影で、今の値で通る仕様が通り、外れる行・許さない未判定・仕様の誤りで落ちることを確かめる")
@@ -6708,6 +6713,8 @@ def main():
                         help="地形の形の切り分けの 3 組（通常の LOD・最も細かい LOD・崖の変形なし）を深度と幾何の法線で測る"
                              "（ShapeCause.py）")
     parser.add_argument("--capture-root", default="", help="--shape-cause: 3 組の撮影の置き場")
+    parser.add_argument("--selftest", action="store_true",
+                        help="--cloud: --expect の判定を合成の結果で確かめる（仕様を省くと ExpectSpecs/cloud-ref.json）")
     parser.add_argument("--verify", action="store_true", help="入力のハッシュを今のファイルと照らし、古い結果を拒否する")
     args = parser.parse_args()
     if args.expect_selftest:
@@ -6715,10 +6722,16 @@ def main():
         return ExpectSpec.run_selftest(sys.modules[__name__], args.verify)
     expect = os.path.normpath(args.expect if os.path.isabs(args.expect) else os.path.join(REPO_ROOT, args.expect))         if args.expect else None
     if expect and not (args.gray or args.lit or args.blur_static or args.blur_motion or args.bounce or args.atmos_ref or
-                       args.building or args.plant or args.cloud_far or args.occlusion):
+                       args.building or args.plant or args.cloud_far or args.occlusion or args.cloud):
         print("REFERENCE_CHECK result=fail reason=expect_unsupported（--expect は --gray・--lit・--blur-static・--blur-motion・"
-              "--bounce・--atmos-ref・--building・--plant・--cloud-far・--occlusion と使う）")
+              "--bounce・--atmos-ref・--building・--plant・--cloud-far・--occlusion・--cloud と使う）")
         return 1
+    if args.selftest:
+        if not args.cloud:
+            print("REFERENCE_CHECK result=fail reason=selftest_unsupported（--selftest は --cloud と使う）")
+            return 1
+        import CloudCheck
+        return CloudCheck.run_selftest(expect or os.path.join(REPO_ROOT, CloudCheck.DEFAULT_EXPECT))
     if args.require_judged is not None and not args.lit:
         print("REFERENCE_CHECK result=fail reason=require_judged_unsupported（--require-judged は --lit と使う）")
         return 1
@@ -6798,7 +6811,7 @@ def main():
         absolute = lambda d: os.path.normpath(d if os.path.isabs(d) else os.path.join(REPO_ROOT, d))
         views = [v.strip() for v in args.views.split(",") if v.strip()]
         return CloudCheck.run(sys.modules[__name__], [absolute(d) for d in args.engine],
-                              absolute(args.reference) if args.reference else "", views, args.verify, args.trial)
+                              absolute(args.reference) if args.reference else "", views, args.verify, args.trial, expect)
     if args.occlusion_diag:
         import OcclusionDiag
         capture = args.capture or (args.engine[0] if args.engine else "")

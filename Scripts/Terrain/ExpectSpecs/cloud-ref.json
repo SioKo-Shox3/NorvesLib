@@ -1,0 +1,61 @@
+{
+  "description": "SCN-WL-CLOUD-CHECK-EXPECT: 雲の Cycles の比べ（ReferenceCheck.py --cloud）の比の悪化の合否。誤差は e = |ln(エンジン ÷ Cycles)| で、e が基準の組（SCN-WLR-CLOUD-REF-CURRENT、Docs/RenderingValidation/WastelandCloudShape.md の基準の表）の隔たり |ln(base_ratio)| ＋ tolerance を超えたら落ちる。許容の根拠は同じ文書の「比の悪化の合否」。描画のソースを変えた後の比べは、新しい書き出しとその Cycles の組で行う。",
+  "rows": [
+    {
+      "view": "cloud_sky",
+      "region": "cloud_body",
+      "base_ratio": 1.0095,
+      "tolerance": 0.003,
+      "note": "厚い雲の Y のエンジン ÷ Cycles。許容 = 2 回の撮影の揺れ 0 ＋ Cycles の種の違う 2 本の平均の差 0.00208 を 0.001 に切り上げ"
+    },
+    {
+      "view": "cloud_sky",
+      "region": "cloud_edge",
+      "base_ratio": 1.4875,
+      "tolerance": 0.004,
+      "note": "縁の Y のエンジン ÷ Cycles。許容 = 2 回の撮影の揺れ 0 ＋ Cycles の種の違う 2 本の平均の差 0.00383 を 0.001 に切り上げ"
+    },
+    {
+      "view": "cloud_sky",
+      "region": "silver_lining",
+      "base_ratio": 1.049,
+      "tolerance": 0.003,
+      "note": "銀の縁の Y のエンジン ÷ Cycles。許容 = 2 回の撮影の揺れ 0 ＋ Cycles の種の違う 2 本の平均の差 0.00269 を 0.001 に切り上げ"
+    },
+    {
+      "view": "cloud_sky",
+      "region": "body_sunlit",
+      "base_ratio": 1.1832,
+      "tolerance": 0.002,
+      "note": "日の当たる側の Y のエンジン ÷ Cycles。許容 = 2 回の撮影の揺れ 0 ＋ Cycles の種の違う 2 本の平均の差 0.00177 を 0.001 に切り上げ"
+    },
+    {
+      "view": "cloud_sky",
+      "region": "body_shadow",
+      "base_ratio": 0.7151,
+      "tolerance": 0.008,
+      "note": "影の側の Y のエンジン ÷ Cycles。許容 = 2 回の撮影の揺れ 0 ＋ Cycles の種の違う 2 本の平均の差 0.00754 を 0.001 に切り上げ"
+    },
+    {
+      "view": "cloud_sky",
+      "quantity": "edge_brightness",
+      "base_ratio": 1.5143,
+      "tolerance": 0.006,
+      "note": "縁の明るさ（縁の Y / 不透明度 ÷ 厚い雲の Y / 不透明度）のエンジン ÷ Cycles。許容 = 2 回の撮影の揺れ 0 ＋ 使う 2 領域の Cycles の平均の差の和 0.00591 を 0.001 に切り上げ"
+    },
+    {
+      "view": "cloud_sky",
+      "quantity": "silver_lining",
+      "base_ratio": 0.6729,
+      "tolerance": 0.007,
+      "note": "銀の縁（銀の縁の Y / 不透明度 ÷ 縁の Y / 不透明度）のエンジン ÷ Cycles。許容 = 2 回の撮影の揺れ 0 ＋ 使う 2 領域の Cycles の平均の差の和 0.00652 を 0.001 に切り上げ"
+    },
+    {
+      "view": "cloud_sky",
+      "quantity": "shadow_darkness",
+      "base_ratio": 0.6044,
+      "tolerance": 0.01,
+      "note": "影の側の暗さ（影の側の Y ÷ 日の当たる側の Y）のエンジン ÷ Cycles。許容 = 2 回の撮影の揺れ 0 ＋ 使う 2 領域の Cycles の平均の差の和 0.00931 を 0.001 に切り上げ"
+    }
+  ]
+}
