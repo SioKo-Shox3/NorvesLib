@@ -7401,3 +7401,15 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 証拠（`.harness/runs/20261023-124311/`）: `verify-SCN-WL-OCCLUSION-ACCEPT-1.txt`（terrain-sky と RelWithDebInfo のビルド pass）・`-2.txt`〜`-8.txt`（ほかの 7 組 EXIT=0）・`-9.txt`（判定 result=fail、失敗は plant_root の 1 行だけ）
 - Next: BLOCKED（`blocked/SCN-WL-OCCLUSION-ACCEPT.md`）。SCN-WL-PLANT-ROOT-OCCLUSION の後に todo へ戻して verify を全部回し直す
 - Notes: 共通の照明の組（`--light-final`）と既定の荒野の 6 視点は撮っていない。撮影をまとめて流す台本の誤り（順序つき辞書を整数で引いて位置の番号になった）で 2〜9 本目が 1 本ずつ前の番号のファイルに入り、terrain-sky とビルドが抜けた。ファイルを先頭の CMD 行どおりの番号へ付け替え、terrain-sky の抜けた判定は `aux-SCN-WL-OCCLUSION-ACCEPT-check-without-terrain-sky.txt` に残した。回し直した後は壁時計の残りが 30 分を切り、約 30 分の共通の照明の組を途中で止めた（途中の出力は消した）。新しい試験は足していない
+
+## 2026-10-23 SCN-WL-PLANT-ROOT-OCCLUSION（run 20261023-124311 の反復 9、閉じた）
+- Done: 最初の編集の前に直し方を「株ごとの冠の楕円体を RTGI の拡散の光線に掛ける」に決めて `WastelandOcclusion.md` の「株の根元の空の遮蔽」に書いた（TLAS の代理の形は RT だけの形の経路が無く採らない）。LightingPass が描画のスナップショットの株の一覧から、カメラから冠の縁まで 40 m 以内の冠を距離 ÷ 横の半径の小さい順に 64 個まで選び（`CollectRTGIFoliageCrowns`）、`DiffuseIndirect.comp` の `TraceDiffuseRay` が始点から当たり（外れなら最大の距離）までの冠の弦の長さで透過 exp(−0.75 × 弦 ÷ 直径) を掛ける。株の画素から出る光線には掛けない。散らした小物の遮り（`SetRTGINonShadowCasterOcclusion`、荒野だけ）が入っているときだけ冠の表を作る。影の光線・VSM は変えていない
+- 証拠（`.harness/runs/20261023-124311/`）:
+  - `aux-SCN-WL-PLANT-ROOT-OCCLUSION-regression-before.txt`: 回帰の before result=pass（4 シーン）
+  - `verify-SCN-WL-PLANT-ROOT-OCCLUSION-1.txt`: Debug の Game のビルド EXIT=0。`-2.txt`・`-3.txt`: 全 8 組の撮影 result=pass（同じ Game.exe 1c3d832d…）
+  - `-4.txt`: `--occlusion --expect plant-root.json --verify` result=pass。plant_root 1.2504 → 0.9814（エンジンの比 0.768・Cycles 0.783）、ほかの層は変化 0.0001 以内、対照の Y は plant_near 0.997 倍・ほか 1.000 倍、太陽の 4 組は内（plant-sun IoU 0.923 → 0.9245）
+  - `-5.txt`: ref_cliff_01 の GPU 中央値 15.288 ms（前 15.502 ms。LightingPass 1.541 → 1.883 ms）、予算 33.3 ms の内
+  - `-6.txt`: 回帰の after result=pass（4 シーン、平均の差 0、PSNR 63.4 dB 以上）
+  - 開いた画: `scene-capture/SCN-WLR-OCCLUSION-SETS/cycles/plant-sky/occlusion_preview/plant_near.png`（エンジンの株の根元に Cycles と同じ大きさの柔らかな暗がり）
+- Next: SCN-WL-OCCLUSION-ACCEPT（todo）で受け入れを回し直す
+- Notes: 光学的な厚さの試しの 1.5 は plant_root のエンジンの比 0.645（÷ Cycles 0.824）で暗すぎた（`aux-SCN-WL-PLANT-ROOT-OCCLUSION-try1-*.txt`、株の組だけ撮り直してほかの 7 組は受け入れの撮影を写した置き場）。冠の中の葉の照り返しは数えず、光学的な厚さに含めた。基準画像の検査は回していない（検証アプリは散らした小物の遮りが切で冠の数 0）。新しい試験は足していない

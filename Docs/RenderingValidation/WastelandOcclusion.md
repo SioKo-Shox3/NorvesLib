@@ -536,3 +536,42 @@ Cycles の 4k のスキャンの形の差の見込み。SCN-WL-ROCK-LOD-SHADOW �
   出るが、エンジンには出ない。原因は上の「RT のシーン」のとおり株が RTGI の光線の形に無いことで、SCN-WL-OCCLUSION-FIX では直していない。
   直しは SCN-WL-PLANT-ROOT-OCCLUSION に分けた
 - 共通の照明の組の撮り直し（`--light-final --verify`）と既定の荒野の 6 視点の所見は、株の根元を直した後の受け入れの回し直しで撮る
+
+## 株の根元の空の遮蔽（SCN-WL-PLANT-ROOT-OCCLUSION）
+
+最初の編集の前に直し方を 1 つに決めた記録。判定日: 2026-10-23。
+
+| 候補 | 判断 |
+|---|---|
+| 株の枝と葉の塊を粗い代理の形で TLAS に入れ、拡散の光線だけに当てる | 採らない。TLAS の instance は描画の命令（メッシュ・MegaGeometry）からしか作らず、ラスタに描かない RT だけの形の経路が無い。代理の形の BLAS・印・葉の透過（不透明でない当たり）を足すと RHI と RT のシーンの組み立てに手が入る |
+| 株ごとの解析的な遮り（冠の楕円体）を RTGI の拡散の光線に掛ける | **これを採る**。描画のスナップショットの株の一覧（`FoliageScene`）から、カメラの近くの冠を上限の数まで選んで楕円体の表にし、`DiffuseIndirect.comp` の `TraceDiffuseRay` が光線の始点から当たり（外れなら光線の最大の距離）までに通る冠の弦の長さで透過 exp(−光学的な厚さ) を掛ける |
+
+- 冠の楕円体: 株のメッシュの頂点の箱（横は X・Z の幅の平均の半分 × 横の倍率、縦は最小〜最大の高さ × 高さの倍率）。中心は根元の真上。
+  葉と枝のまばらな塊なので、中心を通る光線の光学的な厚さを 1 つの値（`RTGI_FOLIAGE_CROWN_OPTICAL_DEPTH`）にし、弦の長さに比例させる。
+  値は 0.75（中心を通る光線の透過 0.47）。試しの 1.5 では plant_root のエンジンの比が 0.645（エンジン ÷ Cycles 0.824）で暗すぎた。
+  冠の中の葉の照り返し（葉に当たった空の光が根元へ散る分）を数えない分も、この値に含まれる
+- 選ぶ範囲と上限: カメラから冠の縁まで 40 m 以内、距離 ÷ 冠の横の半径の小さい順に 64 個（`RTGI_FOLIAGE_CROWN_CAPACITY`）。撒いた 4 万株の大半は外れ、
+  遠い株の根元は画面で小さいので遮りを数えない。縦の半径が 0.1 m 未満の株（細い草）は選ばない
+- 株の画素（GBuffer の材質の A が株の印）から出る光線には掛けない（株の見た目は変えない）。影の光線・VSM・太陽の影・光源への影の光線は変えない
+- 荒野だけで入れる: 散らした小物の RTGI の遮り（`SetRTGINonShadowCasterOcclusion`、荒野だけが入れる。既定は切）が入っているときだけ冠の表を作る。
+  切のシーンは冠の数 0 で、シェーダーは何もしない
+
+### 直した結果
+
+全 8 組を直した Game.exe（RelWithDebInfo、`1c3d832d…`）で撮り直し（`.harness/runs/scene-capture/SCN-WL-PLANT-ROOT-OCCLUSION`）、受け入れの撮影
+（SCN-WL-OCCLUSION-ACCEPT）と同じ参照・同じ画素で比べた（`ReferenceCheck.py --occlusion ... --expect Scripts/Terrain/ExpectSpecs/plant-root.json --verify` が `result=pass`）。
+
+| 組 / 視点 | 領域・層 | 前 → 後 | 判定 |
+|---|---|---|---|
+| plant-sky / plant_near | plant_root 0〜30°・0〜10 m | エンジン ÷ Cycles 1.2504 → **0.9814**（エンジンの比 0.979 → 0.768、Cycles 0.783） | 決めた層（0.85〜1.15） |
+| terrain-sky・rocks-cliff-sky / ref_cliff_01 | groove 60° 以上・500 m 以上 | 1.0927 → 1.0927・1.0932 → 1.0932 | 悪くならない |
+| rocks-sky / contact_near | contact 0〜30°・0〜10 m、30〜60°・10〜50 m | 1.0117 → 1.0117、1.0024 → 1.0024 | 悪くならない |
+| plant-sun / plant_near | 太陽 | IoU 0.923 → 0.9245・漏れ 0 %・縁の比 0.95 → 0.96 | 内 |
+| terrain-sun・rocks-cliff-sun / ref_cliff_01、rocks-sun / contact_near | 太陽 | 変化なし（IoU 0.930・0.930・地面 0.954） | 内 |
+
+- 対照のエンジンの Y（同じ画素）: plant-sky / plant_near が前の 0.997 倍、ほかの視点は 1.000 倍
+- 並べた画 `cycles/plant-sky/occlusion_preview/plant_near.png` を開いた: エンジンの株の根元の地面に、Cycles と同じ冠の大きさの柔らかな暗がりが出る
+- 株を隠した組（地形・岩塊）は値が前と同じ
+- ref_cliff_01 の既定の荒野の GPU 時間（中央値、300 フレーム、RelWithDebInfo）: 15.288 ms（p95 16.461 ms、予算 33.3 ms の内）。直す前は SCN-WL-SUN-SHADOW-FIX の
+  最後の計測（Library・シェーダーはこの項目の前と同じ）の 15.502 ms。LightingPass（RTGI を含む）は 1.541 → 1.883 ms で、冠の判定（光線ごとに最大 64 個）の分。
+  冠の表は dispatch ごとに借りる 2 KB（64 × 32 バイト）で、VRAM の常駐は増えない

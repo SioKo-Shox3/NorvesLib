@@ -27,6 +27,7 @@ layout(set = 0, binding = 1, std140) uniform RTGIComputeParameters
     vec4 terrainMaskMix; // x=礫を土へ回す割合、y=外縁の帯の幅（m）、z=アルベドを sRGB から戻すビット、w=有効（1/0）
     vec4 terrainSlope;   // x,y=土へ移る傾斜の始まり・終わり、z,w=岩肌へ移る傾斜の始まり・終わり（ラジアン）
     vec4 terrainHeight;  // x,y=土へ寄せる高さの始まり・終わり（m）、z=寄せの最大（ラジアン）
+    vec4 foliageOcclusion; // x=株の冠の数（RTGIFoliageCrowns の行の数の半分。0 なら遮らない）
 } parameters;
 
 layout(set = 0, binding = 2) uniform sampler2D gbufferNormal;
@@ -99,6 +100,12 @@ layout(set = 0, binding = 25) uniform sampler2D terrainSurfaceMask;
 layout(set = 0, binding = 26) uniform sampler2D terrainSandAlbedo;
 layout(set = 0, binding = 27) uniform sampler2D terrainDirtAlbedo;
 layout(set = 0, binding = 28) uniform sampler2D terrainRockAlbedo;
+// 株の冠の楕円体（LightingPass.cpp の RTGIFoliageCrown。1 つの冠が 2 行: 中心の xyz と中心を通る光線の光学的な厚さ、
+// 半径の逆数の xyz）。拡散の光線が通る冠の弦の長さで透過を掛け、株の根元の空の光を遮る
+layout(set = 0, binding = 29, std430) readonly buffer RTGIFoliageCrowns
+{
+    vec4 foliageCrowns[];
+};
 
 shared uint sharedHitStats[3];
 
@@ -1094,6 +1101,47 @@ vec3 TerrainBounceAlbedo(vec3 position, vec3 normal)
 // 光線の形の面へ外から入る当たりは読み飛ばさない。
 const uint RTGI_NO_HIT = 0xFFFFFFFFu;
 
+// 株の画素から出る光線は冠で遮らない（株の見た目を変えない）。ShadeDiffuseIndirect が 1 次面ごとに置く
+bool gFoliageCrownOcclusion = true;
+
+// 始点 origin から向き direction（長さ 1）へ maxDistance までに通る株の冠の透過。冠の中の弦の長さを冠の直径に対する割合にし、
+// 中心を通る光線の光学的な厚さに掛けて足す
+float FoliageCrownTransmittance(vec3 origin, vec3 direction, float maxDistance)
+{
+    uint crownCount = uint(max(parameters.foliageOcclusion.x, 0.0) + 0.5);
+    if (!gFoliageCrownOcclusion || crownCount == 0u)
+    {
+        return 1.0;
+    }
+    float opticalDepth = 0.0;
+    for (uint index = 0u; index < crownCount; ++index)
+    {
+        vec4 centerAndDepth = foliageCrowns[2u * index];
+        vec3 inverseRadii = foliageCrowns[2u * index + 1u].xyz;
+        // 冠を単位球へ写した空間で光線と球の交わりを解く
+        vec3 localOrigin = (origin - centerAndDepth.xyz) * inverseRadii;
+        vec3 localDirection = direction * inverseRadii;
+        float a = dot(localDirection, localDirection);
+        float b = dot(localOrigin, localDirection);
+        float c = dot(localOrigin, localOrigin) - 1.0;
+        float discriminant = b * b - a * c;
+        if (a <= 0.0 || discriminant <= 0.0)
+        {
+            continue;
+        }
+        float root = sqrt(discriminant);
+        float entry = max((-b - root) / a, 0.0);
+        float exit = min((-b + root) / a, maxDistance);
+        if (exit <= entry)
+        {
+            continue;
+        }
+        // 単位球の中の弦の長さ ÷ 直径 2
+        opticalDepth += centerAndDepth.w * (exit - entry) * sqrt(a) * 0.5;
+    }
+    return exp(-opticalDepth);
+}
+
 vec3 TraceDiffuseRay(vec3 rayOrigin,
                      vec3 rayDirection,
                      vec3 surfaceNormal,
@@ -1147,7 +1195,8 @@ vec3 TraceDiffuseRay(vec3 rayOrigin,
                 // 静的HDRの太陽のような極端に明るい画素は、少ない光線では確率的な粒になるので上限で縮める
                 return LimitStaticEnvironmentRadiance(textureLod(environmentRadiance,
                                                                  EquirectangularUV(rayDirection),
-                                                                 0.0).rgb) * parameters.rayLimits.w;
+                                                                 0.0).rgb) * parameters.rayLimits.w *
+                       FoliageCrownTransmittance(rayOrigin, rayDirection, parameters.rayLimits.y);
             }
             return vec3(0.0);
         }
@@ -1206,7 +1255,8 @@ vec3 TraceDiffuseRay(vec3 rayOrigin,
     hitSpecularWeight *= parameters.environmentParameters.y;
     return LimitRayRadiance(ComputeDirectRadiance(hitPosition, hitNormal, hitBaseColor, -rayDirection,
                                                   hitSpecularWeight) +
-                           hitBaseColor * SampleEmitterIrradiance(hitPosition, hitNormal, pixel, emitterDimension));
+                           hitBaseColor * SampleEmitterIrradiance(hitPosition, hitNormal, pixel, emitterDimension)) *
+           FoliageCrownTransmittance(rayOrigin, rayDirection, hitDistance);
 }
 
 // 1画素の拡散の間接光を求めて書く。firstHitCustomIndexは1回目の拡散光線が当たったinstanceのcustom index
@@ -1267,6 +1317,8 @@ void ShadeDiffuseIndirect(uvec2 pixel, out bool bRayTraced, out uint firstHitCus
             vec3 rayDirection = CosineWeightedDirection(worldNormal, pixel,
                                                           parameters.sampleState.x);
             vec3 rayOrigin = worldPosition + worldNormal * RAY_ORIGIN_OFFSET;
+            // 草・低木の株（GBuffer の材質の A が 0.25。foliage.frag）の画素は冠で遮らない
+            gFoliageCrownOcclusion = !(material.a > 0.125 && material.a < 0.375);
 
             // 発光三角形の光は1次面と命中点の光源標本で数えるため、コサイン標本が発光面に
             // 当たっても発光を加えない。

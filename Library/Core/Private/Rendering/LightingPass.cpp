@@ -11,6 +11,7 @@
 #include "Rendering/SceneView.h"
 #include "Rendering/CameraViewConstants.h"
 #include "Rendering/FramePacket.h"
+#include "Rendering/FoliageTypes.h"
 #include "Rendering/DDGIVolume.h"
 #include "Rendering/DfgLut.h"
 #include "Rendering/EnvironmentMapSource.h"
@@ -835,7 +836,138 @@ namespace NorvesLib::Core::Rendering
         float terrainMaskMix[4] = {};
         float terrainSlope[4] = {};
         float terrainHeight[4] = {};
+        /// x=株の冠の数（RTGIFoliageCrown の数。0 なら遮らない。CollectRTGIFoliageCrowns）。
+        float foliageOcclusion[4] = {};
     };
+
+    /// RTGI の拡散の光線を遮る株の冠の数の上限と、選ぶ範囲[m]（カメラから冠の縁まで）
+    static constexpr uint32_t RTGI_FOLIAGE_CROWN_CAPACITY = 64u;
+    static constexpr float RTGI_FOLIAGE_CROWN_RANGE = 40.0f;
+    /// 冠の中心を通る光線の光学的な厚さ（葉と枝のまばらな塊の透過。WastelandOcclusion.md の「株の根元の空の遮蔽」）
+    static constexpr float RTGI_FOLIAGE_CROWN_OPTICAL_DEPTH = 0.75f;
+    /// これより縦の半径[m]が小さい株（細い草）は冠にしない
+    static constexpr float RTGI_FOLIAGE_CROWN_MIN_HALF_HEIGHT = 0.1f;
+
+    /// 株の冠の楕円体（DiffuseIndirect.comp の RTGIFoliageCrowns の 2 行）
+    struct RTGIFoliageCrown
+    {
+        /// xyz=中心のワールドの位置[m]、w=中心を通る光線の光学的な厚さ
+        float CenterAndOpticalDepth[4] = {};
+        /// xyz=半径の逆数[1/m]
+        float InverseRadii[4] = {};
+    };
+    static_assert(sizeof(RTGIFoliageCrown) == 32u);
+
+    /// 株の束の一覧から、カメラの近くの冠を距離 ÷ 横の半径の小さい順に上限まで選ぶ
+    static void CollectRTGIFoliageCrowns(const FoliageScene& scene,
+                                         const float cameraPosition[3],
+                                         Container::VariableArray<RTGIFoliageCrown>& outCrowns)
+    {
+        outCrowns.clear();
+        Container::VariableArray<float> scores;
+        for (const FoliageBatch& batch : scene.Batches)
+        {
+            if (!batch.Mesh || !batch.Instances || batch.Mesh->Vertices.empty())
+            {
+                continue;
+            }
+            // 株のメッシュの頂点の箱（根元が原点）
+            float boundsMin[3] = {std::numeric_limits<float>::max(), std::numeric_limits<float>::max(),
+                                  std::numeric_limits<float>::max()};
+            float boundsMax[3] = {std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest(),
+                                  std::numeric_limits<float>::lowest()};
+            for (const FoliageVertex& vertex : batch.Mesh->Vertices)
+            {
+                for (uint32_t axis = 0u; axis < 3u; ++axis)
+                {
+                    boundsMin[axis] = std::min(boundsMin[axis], vertex.Position[axis]);
+                    boundsMax[axis] = std::max(boundsMax[axis], vertex.Position[axis]);
+                }
+            }
+            const float meshHalfWidth = 0.25f * ((boundsMax[0] - boundsMin[0]) + (boundsMax[2] - boundsMin[2]));
+            const float meshHalfHeight = 0.5f * (boundsMax[1] - boundsMin[1]);
+            const float meshCenterHeight = 0.5f * (boundsMax[1] + boundsMin[1]);
+            if (!(meshHalfWidth > 0.0f) || !(meshHalfHeight > 0.0f))
+            {
+                continue;
+            }
+            const Container::VariableArray<FoliageInstance>& instances = *batch.Instances;
+            auto considerRange = [&](uint32_t first, uint32_t count)
+            {
+                const uint32_t end = std::min<uint32_t>(first + count, static_cast<uint32_t>(instances.size()));
+                for (uint32_t index = first; index < end; ++index)
+                {
+                    const FoliageInstance& instance = instances[index];
+                    const float radius = meshHalfWidth * instance.WidthScale;
+                    const float halfHeight = meshHalfHeight * instance.HeightScale;
+                    if (!(radius > 0.0f) || !(halfHeight >= RTGI_FOLIAGE_CROWN_MIN_HALF_HEIGHT))
+                    {
+                        continue;
+                    }
+                    const float center[3] = {instance.Position[0],
+                                             instance.Position[1] + meshCenterHeight * instance.HeightScale,
+                                             instance.Position[2]};
+                    const float dx = center[0] - cameraPosition[0];
+                    const float dy = center[1] - cameraPosition[1];
+                    const float dz = center[2] - cameraPosition[2];
+                    const float distance = std::sqrt(dx * dx + dy * dy + dz * dz);
+                    if (!std::isfinite(distance) ||
+                        distance - std::max(radius, halfHeight) > RTGI_FOLIAGE_CROWN_RANGE)
+                    {
+                        continue;
+                    }
+                    const float score = distance / radius;
+                    size_t slot = outCrowns.size();
+                    if (slot >= RTGI_FOLIAGE_CROWN_CAPACITY)
+                    {
+                        // 席が埋まっていれば、いちばん悪い席より良いときだけ入れ替える
+                        slot = static_cast<size_t>(std::max_element(scores.begin(), scores.end()) - scores.begin());
+                        if (!(score < scores[slot]))
+                        {
+                            continue;
+                        }
+                    }
+                    else
+                    {
+                        outCrowns.push_back(RTGIFoliageCrown{});
+                        scores.push_back(0.0f);
+                    }
+                    RTGIFoliageCrown& crown = outCrowns[slot];
+                    crown.CenterAndOpticalDepth[0] = center[0];
+                    crown.CenterAndOpticalDepth[1] = center[1];
+                    crown.CenterAndOpticalDepth[2] = center[2];
+                    crown.CenterAndOpticalDepth[3] = RTGI_FOLIAGE_CROWN_OPTICAL_DEPTH;
+                    crown.InverseRadii[0] = 1.0f / radius;
+                    crown.InverseRadii[1] = 1.0f / halfHeight;
+                    crown.InverseRadii[2] = 1.0f / radius;
+                    scores[slot] = score;
+                }
+            };
+            if (batch.Cells && !batch.Cells->empty())
+            {
+                for (const FoliageCell& cell : *batch.Cells)
+                {
+                    // 区画の箱からカメラまでの最短の距離が範囲の外なら中の株を見ない
+                    float squaredDistance = 0.0f;
+                    for (uint32_t axis = 0u; axis < 3u; ++axis)
+                    {
+                        const float outside = std::max({cell.BoundsMin[axis] - cameraPosition[axis], 0.0f,
+                                                        cameraPosition[axis] - cell.BoundsMax[axis]});
+                        squaredDistance += outside * outside;
+                    }
+                    if (squaredDistance > RTGI_FOLIAGE_CROWN_RANGE * RTGI_FOLIAGE_CROWN_RANGE)
+                    {
+                        continue;
+                    }
+                    considerRange(cell.FirstInstance, cell.InstanceCount);
+                }
+            }
+            else
+            {
+                considerRange(0u, static_cast<uint32_t>(instances.size()));
+            }
+        }
+    }
 
     struct RTGIInstanceData
     {
@@ -867,7 +999,7 @@ namespace NorvesLib::Core::Rendering
         uint32_t Reserved = 0u;
     };
 
-    static_assert(sizeof(RTGIComputeParameters) == 240u);
+    static_assert(sizeof(RTGIComputeParameters) == 256u);
     static_assert(sizeof(RTGIInstanceData) == 128u);
     static_assert(sizeof(RTGIEmitterEntry) == 16u);
 
@@ -1414,8 +1546,10 @@ namespace NorvesLib::Core::Rendering
             RHI::ResourceBindType::CombinedImageSampler,
             RHI::ResourceBindType::CombinedImageSampler,
             RHI::ResourceBindType::CombinedImageSampler,
-            RHI::ResourceBindType::CombinedImageSampler};
-        for (uint32_t bindingIndex = 0u; bindingIndex < 29u; ++bindingIndex)
+            RHI::ResourceBindType::CombinedImageSampler,
+            // 29: 株の冠の楕円体（RTGIFoliageCrown）
+            RHI::ResourceBindType::StructuredBuffer};
+        for (uint32_t bindingIndex = 0u; bindingIndex < 30u; ++bindingIndex)
         {
             RHI::DescriptorBinding binding;
             binding.binding = bindingIndex;
@@ -4067,6 +4201,13 @@ namespace NorvesLib::Core::Rendering
         parameters.environmentParameters[1] = ResolveRTGIBounceScale();
         parameters.environmentParameters[2] = IsRTGIOcclusionDiagnosticRequested() ? 1.0f : 0.0f;
         parameters.environmentParameters[3] = context.bRTGINonShadowCasterOcclusion ? 1.0f : 0.0f;
+        // 散らした小物の遮りを頼んだシーン（荒野）だけ、株の冠で拡散の光線を遮る。株は RT のシーンに無い
+        Container::VariableArray<RTGIFoliageCrown> foliageCrowns;
+        if (context.bRTGINonShadowCasterOcclusion && context.SnapshotFoliage)
+        {
+            CollectRTGIFoliageCrowns(*context.SnapshotFoliage, lightingParams.cameraPosition, foliageCrowns);
+        }
+        parameters.foliageOcclusion[0] = static_cast<float>(foliageCrowns.size());
         RHI::TexturePtr terrainTextures[4];
         ResolveRTGITerrainBlend(context.SnapshotRayTracingScene->TerrainBlend, context.Resources.Textures,
                                 m_DefaultBlackTexture, parameters, terrainTextures);
@@ -4164,7 +4305,14 @@ namespace NorvesLib::Core::Rendering
                                                          requiredEmitterBufferSize,
                                                          FrameUploadUsage::Storage,
                                                          "RTGI.DiffuseIndirect.Emitters.Unowned");
-        if (!parametersUpload.IsValid() || !emitterUpload.IsValid())
+        // 冠が無いフレームは 0 で埋めた 1 つ（数 0 を渡すので読まれない）
+        const ExecuteUpload foliageCrownUpload =
+            BorrowUpload(context,
+                         foliageCrowns.empty() ? nullptr : foliageCrowns.data(),
+                         sizeof(RTGIFoliageCrown) * std::max<size_t>(foliageCrowns.size(), 1u),
+                         FrameUploadUsage::Storage,
+                         "RTGI.DiffuseIndirect.FoliageCrowns.Unowned");
+        if (!parametersUpload.IsValid() || !emitterUpload.IsValid() || !foliageCrownUpload.IsValid())
         {
             return fail();
         }
@@ -4218,6 +4366,11 @@ namespace NorvesLib::Core::Rendering
             emitterUpload.GetOffset32(),
             emitterUpload.GetSize32());
         computeDescriptorSet->BindStorageBuffer(24u, hitStatsBuffer, 0u, RTGIHitStatsBytes);
+        computeDescriptorSet->BindStorageBuffer(
+            29u,
+            foliageCrownUpload.Buffer,
+            foliageCrownUpload.GetOffset32(),
+            foliageCrownUpload.GetSize32());
         computeDescriptorSet->BindTexture(9u, environmentTexture);
         computeDescriptorSet->BindSampler(9u, environmentSampler);
         computeDescriptorSet->BindTexture(10u, velocityTexture);

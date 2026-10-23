@@ -1,0 +1,45 @@
+{
+  "description": "SCN-WL-PLANT-ROOT-OCCLUSION: 株の冠の楕円体で RTGI の拡散の光線を遮る直しの判定。受け入れの撮影（SCN-WL-OCCLUSION-ACCEPT）と同じ参照・同じ画素で前後を比べる（OcclusionCompare.check_expect）。決めた層は plant-sky / plant_near の株の根元で、エンジン ÷ Cycles が target_range の内。ほかの層と対照は前の撮影から悪くならない。太陽は sun-shadow.json の許容のまま、太陽だけの組の全視点を決めた視点にする（rocks-sun は地面の受け手の IoU）",
+  "baseline_engine_root": ".harness/runs/scene-capture/SCN-WL-OCCLUSION-ACCEPT",
+  "targets": [
+    {
+      "set": "plant-sky",
+      "view": "plant_near",
+      "region": "plant_root",
+      "stratum": "slope0-30_d0-10"
+    }
+  ],
+  "target_range": [
+    0.85,
+    1.15
+  ],
+  "worse_tolerance": 0.03,
+  "control_y_tolerance": 0.03,
+  "sun": {
+    "iou_min": 0.9,
+    "leak_max": 0.02,
+    "edge_ratio_range": [
+      0.5,
+      1.5
+    ],
+    "targets": [
+      {
+        "set": "terrain-sun",
+        "view": "ref_cliff_01"
+      },
+      {
+        "set": "rocks-sun",
+        "view": "contact_near",
+        "iou_receiver": "terrain"
+      },
+      {
+        "set": "rocks-cliff-sun",
+        "view": "ref_cliff_01"
+      },
+      {
+        "set": "plant-sun",
+        "view": "plant_near"
+      }
+    ]
+  }
+}
