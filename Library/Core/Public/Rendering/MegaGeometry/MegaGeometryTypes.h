@@ -475,6 +475,14 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
          */
         float DisplacementUVSpacing = 0.0f;
 
+        /**
+         * @brief VSM の影の LOD を細かく選ぶか（太陽の段だけ。MegaGeometryPass.h の MegaGeometryShadowFlagFineLod）
+         *
+         * 細かな起伏が自分の面へ影を落とすメッシュ（荒野の崖錐の岩）に付ける。影の描画の許容を
+         * Common/VirtualShadowMapMegaCull.glsl の VSM_MEGA_FINE_LOD_TEXELS にする。陰影・主のカメラの LOD は変えない。
+         */
+        bool bFineShadowLod = false;
+
         // 地形の 3 層の混ぜ合わせ（bEnabled のときだけ。上の Albedo・Normal・ORM が 1 層目）
         MegaTerrainBlend TerrainBlend;
     };

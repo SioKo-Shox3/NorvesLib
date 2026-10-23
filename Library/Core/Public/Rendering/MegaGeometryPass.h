@@ -32,9 +32,11 @@ namespace NorvesLib::Core::Rendering
     inline constexpr uint32_t MegaGeometryShadowFlagCaster = 1u;
     inline constexpr uint32_t MegaGeometryShadowFlagBounds = 2u;
     /**
-     * @brief 影の表の印: 影の LOD を細かく選ぶ（影を詰める地形の面のメッシュ。MegaTerrainBlend::IsTightSunShadowSurface）
+     * @brief 影の表の印: 影の LOD を細かく選ぶ（影を詰める地形の面のメッシュ〔MegaTerrainBlend::IsTightSunShadowSurface〕と、
+     * 材質の MegaMeshMaterial::bFineShadowLod のメッシュ）
      *
      * 地形は自分の面に自分の影を落とす受け手なので、影の LOD を粗くすると小さな起伏の頂が低くなり、影が短くなる。
+     * 細かな起伏の岩（荒野の崖錐の岩）も、粗い段の滑らかな面が光に浅い面の自分への細かな影を消す。
      * この印のインスタンスだけ、許容を VirtualShadowMapMegaCullDispatch::LodThresholdTexels でなく
      * Common/VirtualShadowMapMegaCull.glsl の VSM_MEGA_FINE_LOD_TEXELS にする（太陽の段だけ）。
      */
@@ -231,8 +233,7 @@ namespace NorvesLib::Core::Rendering
          * @brief LODの段を選ぶ誤差の閾値（画素）
          *
          * 段で失われる形の誤差を画面へ投影した大きさがこの値以下になる最も粗い段を描く。
-         * 環境変数 NORVES_MEGA_LOD_ERROR_PX（正の数）で替えられる（撮り比べ用）。1 より細かくすると、VSM の影の LOD の許容
-         * （VirtualShadowMapMegaCullDispatch::LodThresholdTexels）も同じ比で縮む（VirtualShadowMapPass.cpp の MegaShadowLodTexels）。
+         * 環境変数 NORVES_MEGA_LOD_ERROR_PX（正の数）で替えられる（撮り比べ用）。
          * 1 画素は起動画面の撮り比べで決めた値: 近接（2.5 m）は LOD0、低角度（6 m）は LOD1 が選ばれ、
          * 変更前の段と同じで見た目の差が出ない。これより粗い段（低角度の LOD2）は目地の陰影が目に見えて変わる。
          */

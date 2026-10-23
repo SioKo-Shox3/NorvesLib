@@ -1443,9 +1443,10 @@ namespace Game::GameModes
 
         /// 材質のテクスチャがそろった読み込みを MegaMesh にしてモデルとして登録し、load.MegaMesh に入れる（解析したメッシュは手放す）。
         /// pTint は材質の BaseColor に掛ける色（無ければ nullptr）。灰色の材質（--wasteland-gray-material）なら地形と同じ灰色に
-        /// 替え、小物の書き出しが有効なら LOD 0 の形を書く。作れないときは理由を出して false
+        /// 替え、小物の書き出しが有効なら LOD 0 の形を書く。bFineShadowLod なら影の LOD を細かく選ぶ（崖錐の岩。
+        /// MegaMeshMaterial::bFineShadowLod）。作れないときは理由を出して false
         bool CreatePropMegaMesh(GameModeContext &ctx, WastelandAssembly &assembly, WastelandPropLoad &load, const char *id,
-                                const char *meshPath, const float *pTint)
+                                const char *meshPath, const float *pTint, bool bFineShadowLod = false)
         {
             auto &megaGeometry = ctx.RenderResourcesRef.MegaGeometry();
             const MaterialCreateData &material = load.Material;
@@ -1496,6 +1497,8 @@ namespace Game::GameModes
                     createInfo.Material.BaseColor[channel] = pTint[channel];
                 }
             }
+            // 崖錐の岩の光に浅い面は、影の粗い段の滑らかな面だと細かな起伏の自分への影が消える（WastelandOcclusion.md の「岩の影の LOD」）
+            createInfo.Material.bFineShadowLod = bFineShadowLod;
             createInfo.DebugName = id;
             const MegaMeshHandle megaMesh = megaGeometry.CreateMegaMesh(createInfo);
             load.Mesh.reset();
@@ -1627,7 +1630,8 @@ namespace Game::GameModes
                 }
                 const Layout::PropKind kind = static_cast<Layout::PropKind>(kindIndex);
                 const bool bCliff = kind == Layout::PropKind::Cliff01 || kind == Layout::PropKind::Cliff02;
-                if (!CreatePropMegaMesh(ctx, assembly, load, spec.Id, spec.MeshPath, bCliff ? kCliffTint : nullptr))
+                if (!CreatePropMegaMesh(ctx, assembly, load, spec.Id, spec.MeshPath, bCliff ? kCliffTint : nullptr,
+                                        Layout::IsTalusKind(kind)))
                 {
                     continue;
                 }

@@ -7438,3 +7438,14 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 開いた画: `scene-capture/SCN-WL-ROCK-LOD-SHADOW-ref-rocks-sun/rocks-sun/occlusion_regions/contact_near.png`（一致の象限で、岩の面の影が灰〔両方の影〕になり、赤〔Cycles だけ〕は細かな点がわずかに残る）
 - Next: TASKS.md の次の未完
 - Notes: 既定の描画の岩の影を 1 texel にする形は入れていない（全部の MegaGeometry を 1 texel にするとバナナ 100 万本で影のクラスタの一覧の容量を超える注記があり、岩の印だけを細かくする費用は測っていない。NEXT_FINDINGS に記録）。比べの撮影の影のクラスタは 27125 → 304941 で溢れ 0。判定は全 8 組の撮影を求めるので、verify の rocks-sun の撮影に加えて残りの 7 組を同じ置き場へ撮った。基準画像の検査は回していない（検証アプリは閾値を替えず、既定の描画の許容は変わらない）。新しい試験は足していない
+
+## 2026-10-24 SCN-WL-ROCK-LOD-SHADOW（run 20261023-124311 の反復 13、閉じた）
+- Done: 反復 12 の差し戻し（直しが撮り比べ専用）を直した。崖錐の岩の材質に `MegaMeshMaterial::bFineShadowLod` を足し、影の表の印 `MegaGeometryShadowFlagFineLod`（地形と同じ）で、既定の描画でも岩の太陽の段の影の許容を 1 texel にした（`WastelandRoutine.cpp` の `CreatePropMegaMesh`）。撮り比べだけ影の許容を縮める `MegaShadowLodTexels` は外した。記録は `WastelandOcclusion.md` の「岩の影の LOD」
+- 証拠（`.harness/runs/20261023-124311/`）:
+  - `verify-SCN-WL-ROCK-LOD-SHADOW-1.txt`: Debug の Game のビルド EXIT=0。`-2.txt`: rocks-sun の撮影（`--build`）EXIT=0。ほかの 7 組は同じ Game.exe（5b77f919…）で `aux-SCN-WL-ROCK-LOD-SHADOW-other-sets-13.txt`（EXIT=0）
+  - `-3.txt`: `--occlusion --expect sun-shadow.json --verify` result=pass（8 組）。rocks-sun 全体の IoU 0.9084・地面 0.9607・岩の面 0.8969・漏れ 0.55 %・縁の比 1.04。terrain-sun・rocks-cliff-sun 0.930（前と同じ）、plant-sun 0.9245、空だけの組の層は前と同じ値
+  - `-4.txt`: 既定の荒野 ref_cliff_01 の GPU 中央値 15.772 ms（前 15.706 ms、p95 17.127 ms、予算 33.3 ms）、VRAM の使用 9715 MB（前 9715 MB、予算 15280 MB）。影のクラスタの最大 403082・溢れ 0
+  - `-5.txt`: 回帰の after result=pass（4 シーン、PSNR 62.7 dB 以上）。before は反復 12 の撮影（既定の描画は反復 12 で変わっていない）
+  - 開いた画: `scene-capture/SCN-WL-ROCK-LOD-SHADOW/timing/ref_cliff_01.png`（崖錐の岩の面に影の斑なし）
+- Next: TASKS.md の次の未完
+- Notes: 印を付けたのは崖錐の岩（boulder_01・rock_09）だけで、スキャンの崖・建物は 4 texel のまま。比べの撮影（最も細かい段）の VRAM の使用 14335 MB が予算 14196 MB を超えるのは主のカメラの最も細かい段による前からの記録で、影の直しでは変わらない。新しい試験は足していない

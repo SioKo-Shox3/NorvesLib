@@ -501,7 +501,7 @@ rocks-sun / contact_near の全体の IoU（0.880）だけが許容 0.90 に届�
 **既知の限界: 岩の面の IoU。** 崖錐の岩の面の上の太陽の影は、全体の IoU 0.880・岩の面の IoU 0.865（均した画素。均さない画素で 約 0.78）で
 Cycles に届かない。Cycles だけが影の画素は光に浅い岩の面の細かな点（Cycles の幾何の N·L の中央値 0.20）で、主のカメラ・影の描画の岩の LOD と
 Cycles の 4k のスキャンの形の差の見込み。SCN-WL-ROCK-LOD-SHADOW で岩の形の細かさを合わせ、そこで rocks-sun の IoU の行を全体の IoU 0.90 に戻す。
-（→ 原因は影の描画の LOD だった。下の「岩の影の LOD」で全体の IoU 0.910 になり、判定を全体の IoU に戻した）
+（→ 原因は影の描画の LOD だった。下の「岩の影の LOD」で崖錐の岩の影を 1 texel の許容にして全体の IoU 0.908 になり、判定を全体の IoU に戻した）
 
 閉じた撮り直し（判定の直しだけで、描画は 094784bb のまま。`.harness/runs/20261023-124311/verify-SCN-WL-SUN-SHADOW-FIX-34.txt`〜`-45.txt`）:
 
@@ -626,27 +626,28 @@ rocks-sun / contact_near の全体の IoU 0.880 の外れ（崖錐の岩の面�
 - 影の LOD で岩の面の IoU は動く。粗い段の滑らかな面が、光に浅い面の細かな起伏の自分への影を消していた
 - 4 texel から 1 texel でほぼ効き切る（最も細かい段との差 0.002）
 
-入れた形: 主のカメラの LOD の閾値を環境変数 `NORVES_MEGA_LOD_ERROR_PX` で既定（1 画素）より細かくした撮り比べでは、VSM の影の LOD の許容
-（`VirtualShadowMapMegaCullDispatch::LodThresholdTexels`）も同じ比で縮める（`VirtualShadowMapPass.cpp` の `MegaShadowLodTexels`。撮影のログの
-`VSM_MEGA_LOD_SCALE`）。`--wasteland-finest-lod` は閾値を 1e−6 画素にするので、影も最も細かい段になり、主の形・影の形とも Cycles と同じ LOD 0 で比べる。
-閾値を替えない既定の描画（荒野の起動・ほかのシーン）では許容は 4 texel のまま変わらない。
+入れた形: 崖錐の岩（`boulder_01`・`rock_09`）の材質に `MegaMeshMaterial::bFineShadowLod` を付け、影の表の印 `MegaGeometryShadowFlagFineLod`
+（地形と同じ）で太陽の段の影の許容を 1 texel にする（`WastelandRoutine.cpp` の `CreatePropMegaMesh`）。既定の荒野の描画でも撮り比べでも同じ形で効く。
+ほかの MegaGeometry（スキャンの崖・建物・バナナ 100 万本など）の許容は 4 texel のまま。主のカメラの LOD・陰影は変えない。
 
-- 既定の描画の岩の影を 1 texel にする形は入れていない。全部の MegaGeometry を 1 texel にすると、バナナ 100 万本で選ぶクラスタが一覧の容量を超える
-  （`LodThresholdTexels` の注記）。既定の主のカメラは 1 画素の段なので、影だけを細かくすると受け手の粗い面の下に影の面が出る恐れもある。
-  岩の印だけを細かくする形の費用（既定の荒野の GPU 時間・影のクラスタの数）は測っていない
-- 比べの撮影の影のクラスタ（rocks-sun / contact_near）: `VSM_MEGA_CULL` の最大 27125 → 304941、`VSM_RASTER` の chunk 22596 → 302494。溢れ 0。
-  VRAM の使用は 14335 MB のまま（予算 14317 → 14190 MB。最も細かい段の撮影が予算を超えるのは前からの記録〔SCN-WL-FINEST-LOD-CRASH〕）
+- 全部の MegaGeometry を 1 texel にしないのは、バナナ 100 万本で選ぶクラスタが一覧の容量を超えるため（`LodThresholdTexels` の注記）
+- 撮り比べ（`--wasteland-finest-lod`）だけ影の許容を主のカメラと同じ比で縮める前の形は外した。比べの影は既定の描画と同じ許容になる
+- 影のクラスタ（`VSM_MEGA_CULL` の最大、溢れ 0）: 比べの rocks-sun / contact_near で 72311（既定の 4 texel 27125、全部を最も細かい段 304941）、
+  既定の荒野 ref_cliff_01 で 403082
+- 比べの撮影の VRAM の使用は 14335 MB（予算 14196 MB）で前と同じ。予算を超えるのは主のカメラを最も細かい段にする撮影の前からの記録
+  （SCN-WL-FINEST-LOD-CRASH）で、既定の描画の VRAM は下の表のとおり変わらない
+- 既定の荒野の ref_cliff_01 の撮影（`scene-capture/SCN-WL-ROCK-LOD-SHADOW/timing/ref_cliff_01.png`）で、崖錐の岩の面に影の斑は出ていない
 
-判定は `sun-shadow.json` の rocks-sun の行を全体の IoU（`iou_receiver` なし）に戻した。全 8 組を同じ Game.exe（82fbf94e…）で撮り直した結果
-（`.harness/runs/20261023-124311/verify-SCN-WL-ROCK-LOD-SHADOW-1.txt`〜`-5.txt`、rocks-sun 以外の 7 組の撮影は `aux-SCN-WL-ROCK-LOD-SHADOW-other-sets.txt`）:
+判定は `sun-shadow.json` の rocks-sun の行を全体の IoU（`iou_receiver` なし）に戻した。全 8 組を同じ Game.exe（5b77f919…）で撮り直した結果
+（`.harness/runs/20261023-124311/verify-SCN-WL-ROCK-LOD-SHADOW-1.txt`〜`-5.txt`、rocks-sun 以外の 7 組の撮影は `aux-SCN-WL-ROCK-LOD-SHADOW-other-sets-13.txt`）:
 
 | 量 | 前（SCN-WL-OCCLUSION-ACCEPT の撮影） | 後 |
 |---|---|---|
 | `--occlusion --expect sun-shadow.json --verify` | — | pass（8 組） |
-| rocks-sun / contact_near の全体・地面・岩の面の IoU、漏れ、縁の比 | 0.880・0.954・0.865、0.89 %、1.01 | 0.910・0.961・0.899、0.53 %、1.04（内） |
-| terrain-sun・rocks-cliff-sun / ref_cliff_01 の IoU・漏れ | 0.930・0.89 % | 0.937・0.78 %（地形の影も最も細かい段になった分） |
+| rocks-sun / contact_near の全体・地面・岩の面の IoU、漏れ、縁の比 | 0.880・0.954・0.865、0.89 %、1.01 | 0.908・0.961・0.897、0.55 %、1.04（内） |
+| terrain-sun・rocks-cliff-sun / ref_cliff_01 の IoU・漏れ | 0.930・0.89 % | 0.930・0.89 %（変わらない） |
 | plant-sun / plant_near の IoU | 0.9245 | 0.9245 |
-| 空だけの組の層・対照 | — | 変化 0.0001 以内（rocks-sky の接する帯 1.0117・1.0024、溝 1.0927・1.0932、plant_root 0.9814）、対照の Y は plant_near 0.997 倍・ほか 1.000 倍 |
-| 既定の荒野 ref_cliff_01 の GPU 時間の中央値（RelWithDebInfo、300 フレーム） | 16.127 ms（SCN-WL-PLANT-ROOT-OCCLUSION の後。Library・シェーダーはこの項目の前と同じ） | 15.706 ms（p95 16.886 ms、予算 33.3 ms の内。VirtualShadowMapPass 0.634 → 0.663 ms） |
-| 既定の荒野 ref_cliff_01 の VRAM の使用（`VRAM_BUDGET`） | 9715 MB（予算 15280 MB） | 9715 MB（予算 15280 MB。既定の描画は `VSM_MEGA_LOD_SCALE` の行が出ず、許容は変わらない） |
-| 回帰の 4 シーン（before・after） | — | pass（PSNR 67.3 dB 以上、平均の差 0.000） |
+| 空だけの組の層・対照 | — | 変化 0.0001 以内（rocks-sky の接する帯 1.0117・1.0024、溝 1.0927・1.0932、plant_root 0.9814） |
+| 既定の荒野 ref_cliff_01 の GPU 時間の中央値（RelWithDebInfo、300 フレーム） | 15.706 ms（この項目の前と同じ既定の描画の Game.exe） | 15.772 ms（p95 17.127 ms、予算 33.3 ms の内。VirtualShadowMapPass 0.663 → 0.637 ms） |
+| 既定の荒野 ref_cliff_01 の VRAM の使用（`VRAM_BUDGET`） | 9715 MB（予算 15280 MB） | 9715 MB（予算 15280 MB） |
+| 回帰の 4 シーン（before・after） | — | pass（PSNR 62.7 dB 以上、平均の差 0.000） |
