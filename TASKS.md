@@ -2562,6 +2562,15 @@
 - paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Scripts, Docs/RenderingValidation, Test/Core/Rendering/Baselines, TASKS.md, PROGRESS.md
 - notes: 2026-10-22 親が確認 2（SCN-WL-REVIEW-2）とユーザーの所見（地形の造形が荒い・遮蔽による影の落ち方の質が低い）から、ユーザーの順（空と霞 → 遮蔽 → 地形の形 → 植物 → 地面 → 建物）の前半として足した。Sol の批評（写真との比は撮影時の処理を含むので合否にしない・遮蔽の撮影は岩と株を残す・参照の描き直しを項目にする・大きな項目は先に分ける）を反映した。 危険地帯（RTGI・描画の既定）。時間の見積もり: 回帰の before・after 各 7〜9 分、ビルド 3〜6 分、全組の撮影 約 18 分、計測 約 3 分。 壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える（未達のまま DONE にしない）。20 分を超える Blender・Cycles の描画は反復の外で起動して BLOCKED で待つ（ログに START と `END ... EXIT=` を書き、入力のハッシュ・出力先を blocked の理由に書く。終わったら親が todo に戻す。その間は GPU を使う別の処理を重ねない）。 2026-10-23（親）: 反復 37 の時間切れの BLOCKED（判断は不要）を todo に戻した。次の反復は `blocked/resolved/SCN-WL-OCCLUSION-FIX-reverify.md` の再開の手順（verify の回し直し・直す前後の GPU 時間・回帰・岩の面を並べた画の確かめ）だけを行って閉じる。
 
+## SCN-GOLDEN-REVERIFY: 10 月 22 日の後に落ち始めた基準画像の検査の原因を特定し、再承認か直しで通す
+- status: todo
+- after: SCN-WL-REVIEW-2
+- done-when: 基準画像の検査（`Docs/RenderingValidation/GoldenBaselines.md`。Indoor・Outdoor）は SCN-WL-LIGHT-FINAL（2ae72946）で両方 Passed だったが、その後のどこかから落ちる（SCN-WL-OCCLUSION-FIX の記録: Indoor 8929 画素・Outdoor 20356 画素、HEAD の版でも同じ値。`aux-SCN-WL-OCCLUSION-FIX-golden*.txt`）。差の画を開き、差の場所・大きさ・色から原因の変更を特定する（候補: 表示の 8 bit の丸めのディザ c12ee89b、材質ギャラリーの sRGB の読み 51835bcd、ジオメトリのプールの塊 1f9cb28c・要求の列 4118d33d、雲の式 57af3dff・26771864、RTGI の変更 6063068e・052bac84・06a9a98a、夜の集落の RenderingCoordinator 3ec40762・9bbd5abd、最も細かい LOD の容量 15b775f5）。疑わしい変更だけを一時的に戻した版で検査を回して確かめてよい（戻しはコミットしない。作業ツリーを元に戻してから終える）。差が意図した変更だけによるなら、`GoldenBaselines.md` の手順（`UpdateRenderingGoldenBaselines.ps1 -GenerateCandidate` → `-PublishApprovedCandidate`）で再承認し、根拠（どの変更の何の差か・新しい値が物理的に妥当か）をコミット本文と `Docs/RenderingValidation/R1Acceptance.md` に書く。不具合による差なら、その変更を直す（範囲の外なら直しの項目を足して BLOCKED）。合否: 基準画像の検査が Passed。閾値は変えない。
+- verify: `cmake --build build --config Debug -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure -R "^(RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
+- paths: Test/Core/Rendering/Baselines, Docs/RenderingValidation, Scripts, Library/Core/Private/Rendering, Library/Core/Public/Rendering, Assets/Shaders, Game, TASKS.md, PROGRESS.md
+- notes: 危険地帯（基準画像の再承認）。2026-10-23 親が、SCN-WL-OCCLUSION-FIX・SCN-WL-SUN-SHADOW-FIX の反復が「前からの差で落ちる」と記録したまま原因を追っていなかったので足した。後の描画の項目が基準画像を守りにできるよう、ほかの荒野の項目より先に回す。基準画像の承認は親に任されている（差の原因と物理的な妥当性を確かめて記録する）。時間の見積もり: Debug の全体のビルド 5〜10 分、検査 1 回 3〜5 分、戻した版の試し 1 回 10〜15 分 × 2〜3。壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える。
+
 ## SCN-WL-SUN-SHADOW-FIX: 太陽の影の位置・縁・漏れを Cycles に合わせる
 - status: todo
 - after: SCN-WL-OCCLUSION-FIX
