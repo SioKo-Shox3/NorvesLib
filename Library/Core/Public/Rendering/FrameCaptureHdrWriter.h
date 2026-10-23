@@ -31,6 +31,8 @@ namespace NorvesLib::Core::Rendering
      *   <名前>.aov.rtgi_temporal_code.pfm … 1 チャンネル。RTGI の遮蔽の診断の時間の蓄積の後の出力の a（2 × 符号 + 空の分。
      *                                       符号 = 生の空 + 2 × 読み飛ばしの分類。RTGI が無い構成は -1）
      *   <名前>.aov.rtgi_filtered_sky.pfm  … 1 チャンネル。空間のフィルタの後の空の分（RTGI が無い構成は -1）
+     *   <名前>.aov.geometric_normal.pfm   … 1 チャンネル。可視バッファの解決が書いた三角形の面の幾何の法線を八面体の
+     *                                       12 + 12 ビットに詰めた整数 + 1（1 + u × 4096 + v。空は 0、無い画素・構成は -1）
      *   <名前>.aov.json          … 大きさ・フレーム番号・各画像の意味・カメラ（位置・向き・画角）
      * 撮影の起動引数（--capture-aov）のための開発ビルドの機能で、開発ビルドでないときは何も書かず false を返す。
      * @return AOV が読み出せていて、対応する形式で、すべて書けたら true

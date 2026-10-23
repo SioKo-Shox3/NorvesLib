@@ -393,6 +393,15 @@ const float BVH_LOD_PRUNE_MARGIN = 1.001;
 mat4 g_WorldMatrix;
 vec4 g_LODSphere;
 ClusterArray g_Clusters;
+// このインスタンスの主のカメラの LOD の許容の下限（画素。MegaInstance::mainLodFloor）。主の判定がインスタンスを決めるときに入れ、
+// 影の判定は入れない（0 のまま cullData.lodBias を使う）
+float g_InstanceLodFloor = 0.0;
+
+// LOD の判定に使う許容: 全体の許容と、インスタンスの下限の大きい方
+float EffectiveLodBias()
+{
+    return max(cullData.lodBias, g_InstanceLodFloor);
+}
 // 正射影の LOD（cullData.orthoLod = 1）で、誤差を texel へ直すための texel の一辺（m）。影の段ごとに、段を決める側が main の最初に入れる
 float g_OrthoTexelMeters = 1.0;
 // 点光源の面（透視のスライス）の LOD。g_ShadowPerspective が真のとき、texel の一辺は面の軸の向きの距離から求める。
@@ -682,7 +691,7 @@ bool ShouldDrawBakedCluster(GPUClusterData cluster, uint pageTableBase, out uint
         selfError = ProjectBakedError(cluster.boundsSphere.xyz, cluster.boundsSphere.w,
                                       uintBitsToFloat(cluster.lodInfo.y));
     }
-    if (selfError > cullData.lodBias)
+    if (selfError > EffectiveLodBias())
     {
         // 自分の誤差が大きすぎる → より詳細な段を使う。ただし子のページが無いなら、穴を作らず自分を描く
         uint childPage = cluster.pageInfo.x;
@@ -708,7 +717,7 @@ bool ShouldDrawBakedCluster(GPUClusterData cluster, uint pageTableBase, out uint
                                         uintBitsToFloat(cluster.bakedInfo.y));
     }
     // 親が粗すぎるときだけ自分を描く。NaN なら自分を描く側へ倒す
-    return !(parentError <= cullData.lodBias);
+    return !(parentError <= EffectiveLodBias());
 }
 
 /**
@@ -782,7 +791,7 @@ bool ShouldDrawCluster(GPUClusterData cluster, vec3 center)
             GPUClusterData parent = g_Clusters.clusters[parentStart + i];
             float parentError = uintBitsToFloat(parent.lodInfo.y);
             float parentProjectedError = parentError * errorScale;
-            if (parentProjectedError <= cullData.lodBias)
+            if (parentProjectedError <= EffectiveLodBias())
             {
                 return false; // 親で十分
             }
@@ -792,7 +801,7 @@ bool ShouldDrawCluster(GPUClusterData cluster, vec3 center)
     }
 
     // LOD N > 0: 自身の投影誤差が許容範囲内のとき描画候補
-    if (projectedError > cullData.lodBias)
+    if (projectedError > EffectiveLodBias())
     {
         return false; // 自身の誤差が大きすぎる → より詳細なレベルを使う
     }
@@ -809,7 +818,7 @@ bool ShouldDrawCluster(GPUClusterData cluster, vec3 center)
         GPUClusterData parent = g_Clusters.clusters[parentStart + i];
         float parentError = uintBitsToFloat(parent.lodInfo.y);
         float parentProjectedError = parentError * errorScale;
-        if (parentProjectedError > cullData.lodBias)
+        if (parentProjectedError > EffectiveLodBias())
         {
             return true; // 親が粗すぎるので自身を描画
         }

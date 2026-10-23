@@ -18,6 +18,9 @@ namespace NorvesLib::Core::Rendering::RenderGraphResourceNames
     // 撮影の AOV の 3 枚目: 照明の結果（r = 太陽の可視率。LightingPass が Lighting.SpecularReflectance の a に書いた値）
     inline constexpr Identity CaptureAovLighting =
         Identity::Literal("Capture.AovLighting", sizeof("Capture.AovLighting") - 1);
+    // 撮影の AOV のために可視バッファの解決が書く、三角形の面の幾何の法線（xyz）と書いたフレームの印（w）
+    inline constexpr Identity VisResolveGeometricNormal =
+        Identity::Literal("VisResolve.GeometricNormal", sizeof("VisResolve.GeometricNormal") - 1);
     // 撮影の大気の書き出し（AtmosphereProbePass。--atmosphere-dump）: 決めた視線の高さフォグと空気遠近の値（グラフの外へ出す）
     inline constexpr Identity CaptureAtmosphereProbe =
         Identity::Literal("Capture.AtmosphereProbe", sizeof("Capture.AtmosphereProbe") - 1);

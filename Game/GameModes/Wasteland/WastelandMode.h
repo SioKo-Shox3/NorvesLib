@@ -163,6 +163,8 @@ namespace Game::GameModes
         bool m_bFinestLod = false;
         /// 崖の細部を焼かなかった区画に差し替える（--wasteland-cliff-detail=off。開発ビルドだけ。地形の形の切り分けの撮り比べ）
         bool m_bCliffDetailOff = false;
+        /// 灰色の材質の撮影でも崖錐の岩を視点の近くに限らない（--wasteland-talus-limit=off。開発ビルドだけ。地形の形の切り分けの撮り比べ）
+        bool m_bTalusLimitOff = false;
         /// 地形の区画の LOD 0 を PLY で書き出すフォルダ（--wasteland-export-terrain。開発ビルドだけ。空なら書かない。
         /// WastelandTerrainExport.h）
         NorvesLib::Core::Container::String m_TerrainExportDir;

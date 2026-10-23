@@ -634,7 +634,7 @@ namespace NorvesLib::Core::Rendering
             uint32_t ClusterAddressLow;    // クラスタ配列のデバイスアドレス
             uint32_t ClusterAddressHigh;
             uint32_t ClusterCount;
-            uint32_t Reserved0;
+            float MainLodFloorPixels;      // 主のカメラの LOD の許容の下限（画素。0 なら無い。MegaMeshMaterial::MainLodFloorPixels）
             uint32_t SectionIndex;         // 材質の区間の番号
             uint32_t VertexBase;           // 頂点の基点（プールの塊の先頭から。頂点単位）
             uint32_t IndexBase;            // インデックスの基点（プールの塊の先頭から。インデックス単位）

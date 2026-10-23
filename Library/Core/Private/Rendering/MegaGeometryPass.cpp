@@ -1691,6 +1691,9 @@ namespace NorvesLib::Core::Rendering
         mesh.ClusterAddressLow = static_cast<uint32_t>(clusterAddressWithOffset & 0xFFFFFFFFull);
         mesh.ClusterAddressHigh = static_cast<uint32_t>(clusterAddressWithOffset >> 32);
         mesh.ClusterCount = gpuData.ClusterCount;
+        // 主のカメラの LOD の許容の下限（崖錐の岩を地形の最も細かい段の撮り比べで通常の段に保つ。0 なら無い）
+        mesh.MainLodFloorPixels =
+            std::isfinite(gpuData.Material.MainLodFloorPixels) ? std::max(gpuData.Material.MainLodFloorPixels, 0.0f) : 0.0f;
         mesh.SectionIndex = sectionIndex;
         mesh.VertexBase = static_cast<uint32_t>(vertexBase);
         mesh.IndexBase = static_cast<uint32_t>(indexBase);

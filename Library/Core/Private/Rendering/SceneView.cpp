@@ -1094,6 +1094,8 @@ namespace NorvesLib::Core::Rendering
             visibilityResolvePass->SetRasterPass(visibilityRasterPassPtr);
             visibilityResolvePass->SetSkinningComputePass(skinningComputePassPtr);
             visibilityResolvePass->SetClassifyPass(materialTileClassifyPassPtr);
+            // 撮影の AOV（--capture-aov）は、三角形の面の幾何の法線も GBufferAovPass へ渡す
+            visibilityResolvePass->SetWriteGeometricNormal(m_bCaptureAovEnabled);
             visibilityRasterPassPtr->SetResolvePass(visibilityResolvePass.get());
             skinningComputePassPtr->SetResolvePass(visibilityResolvePass.get());
             gbufferPassPtr->SetVisibilityResolvePass(visibilityResolvePass.get());

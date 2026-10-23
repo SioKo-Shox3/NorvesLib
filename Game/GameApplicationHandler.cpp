@@ -285,6 +285,10 @@ namespace Game
         // =on は既定と同じ
         constexpr const TCHAR *kWastelandCliffDetailOption = TEXT("--wasteland-cliff-detail=");
         bool s_bWastelandCliffDetailOff = false;
+        // --wasteland-talus-limit=off: 灰色の材質の撮影で崖錐の岩を視点の近くに限る制限を外し、既定の描画と同じく全部を置く
+        // （開発ビルドだけ。地形の形の切り分けの撮り比べで崖錐の塊を残す）。=on は既定と同じ
+        constexpr const TCHAR *kWastelandTalusLimitOption = TEXT("--wasteland-talus-limit=");
+        bool s_bWastelandTalusLimitOff = false;
         String s_WastelandExportTerrainDir;
         // --capture-png のパスのフォルダ（開発ビルドだけ）。低木 1 株の撮影（--wasteland-hide=all-but-plant）が比べる株のメッシュを
         // そこへ書く（Game/GameModes/Wasteland/WastelandMode.h の m_CaptureDirectory）
@@ -755,6 +759,7 @@ namespace Game
         s_WastelandCommonLight = Game::GameModes::WastelandCommonLight::Options{};
         s_bWastelandFinestLod = false;
         s_bWastelandCliffDetailOff = false;
+        s_bWastelandTalusLimitOff = false;
         s_WastelandExportTerrainDir.clear();
         s_WastelandCaptureDir.clear();
         s_WastelandAntiAliasing = Game::GameModes::WastelandAntiAliasing::Default;
@@ -1551,6 +1556,20 @@ namespace Game
                 s_bWastelandCliffDetailOff = sceneValue == TEXT("off");
 #else
                 LOG_WARNING("--wasteland-cliff-detail は開発ビルドだけで使えます。無視します");
+#endif
+                continue;
+            }
+            if (TryStripPrefix(args[i], kWastelandTalusLimitOption, sceneValue))
+            {
+                if (sceneValue != TEXT("off") && sceneValue != TEXT("on"))
+                {
+                    LOG_ERROR("--wasteland-talus-limit には off か on を指定してください");
+                    return false;
+                }
+#if NORVES_BUILD_DEVELOPMENT
+                s_bWastelandTalusLimitOff = sceneValue == TEXT("off");
+#else
+                LOG_WARNING("--wasteland-talus-limit は開発ビルドだけで使えます。無視します");
 #endif
                 continue;
             }
@@ -3907,6 +3926,7 @@ namespace Game
                 mode->GetData().m_HideMask = s_WastelandHideMask;
                 mode->GetData().m_bFinestLod = s_bWastelandFinestLod;
                 mode->GetData().m_bCliffDetailOff = s_bWastelandCliffDetailOff;
+                mode->GetData().m_bTalusLimitOff = s_bWastelandTalusLimitOff;
                 mode->GetData().m_TerrainExportDir = s_WastelandExportTerrainDir;
                 mode->GetData().m_CaptureDirectory = s_WastelandCaptureDir;
                 mode->GetData().m_AntiAliasing = s_WastelandAntiAliasing;

@@ -483,6 +483,15 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
          */
         bool bFineShadowLod = false;
 
+        /**
+         * @brief 主のカメラの LOD を選ぶ誤差の許容の下限（画素。0 なら無い）
+         *
+         * 全体の許容（MegaGeometryPassSettings::LODBias・NORVES_MEGA_LOD_ERROR_PX）がこれより小さくても、このメッシュは
+         * この許容で選ぶ。地形だけを最も細かい段で撮る撮り比べ（荒野の --wasteland-talus-limit=off）で、崖錐の岩を通常の段に保つ。
+         * 影の LOD は変えない。
+         */
+        float MainLodFloorPixels = 0.0f;
+
         // 地形の 3 層の混ぜ合わせ（bEnabled のときだけ。上の Albedo・Normal・ORM が 1 層目）
         MegaTerrainBlend TerrainBlend;
     };

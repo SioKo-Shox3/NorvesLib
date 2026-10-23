@@ -10,6 +10,7 @@
 #include "Rendering/RTGIContract.h"
 #include "Rendering/ShaderManager.h"
 #include "Rendering/ViewRenderContext.h"
+#include "Rendering/VisibilityResolvePass.h"
 #include "RHI/IBuffer.h"
 #include "RHI/ICommandList.h"
 #include "RHI/IDescriptorSet.h"
@@ -74,6 +75,7 @@ namespace NorvesLib::Core::Rendering
             AddBinding(desc, 5, RHI::ResourceBindType::CombinedImageSampler, RHI::ShaderStage::Pixel);
             AddBinding(desc, 6, RHI::ResourceBindType::CombinedImageSampler, RHI::ShaderStage::Pixel);
             AddBinding(desc, 7, RHI::ResourceBindType::CombinedImageSampler, RHI::ShaderStage::Pixel);
+            AddBinding(desc, 8, RHI::ResourceBindType::CombinedImageSampler, RHI::ShaderStage::Pixel);
             return desc;
         }
     } // namespace
@@ -461,6 +463,7 @@ namespace NorvesLib::Core::Rendering
         m_LightingHandle = {};
         m_ReflectanceHandle = {};
         m_RTGITemporalHandle = {};
+        m_GeometricNormalHandle = {};
         m_AlbedoHandle = {};
         m_NormalHandle = {};
         m_MaterialHandle = {};
@@ -486,6 +489,7 @@ namespace NorvesLib::Core::Rendering
         m_LightingHandle = {};
         m_ReflectanceHandle = {};
         m_RTGITemporalHandle = {};
+        m_GeometricNormalHandle = {};
         m_AlbedoHandle = {};
         m_NormalHandle = {};
         m_MaterialHandle = {};
@@ -539,6 +543,14 @@ namespace NorvesLib::Core::Rendering
         {
             rtgiTemporal = {};
         }
+        // 可視バッファの解決が書いた三角形の面の幾何の法線は、解決が書く構成（--capture-aov と可視バッファ）だけ読む
+        RGTextureHandle geometricNormal;
+        if (builder.TryGetTexture(RenderGraphResourceNames::VisResolveGeometricNormal, geometricNormal) &&
+            !builder.TryReadTexture(RenderGraphResourceNames::VisResolveGeometricNormal, geometricNormal,
+                                    RHI::ResourceState::ShaderResource))
+        {
+            geometricNormal = {};
+        }
         const Identity targetNames[AovTargetCount] = {RenderGraphResourceNames::CaptureAovSurface,
                                                       RenderGraphResourceNames::CaptureAovGeometry,
                                                       RenderGraphResourceNames::CaptureAovLighting};
@@ -569,6 +581,7 @@ namespace NorvesLib::Core::Rendering
         m_LightingHandle = targets[2];
         m_ReflectanceHandle = reflectance;
         m_RTGITemporalHandle = rtgiTemporal;
+        m_GeometricNormalHandle = geometricNormal;
         m_AlbedoHandle = albedo;
         m_NormalHandle = normal;
         m_MaterialHandle = material;
@@ -679,6 +692,10 @@ namespace NorvesLib::Core::Rendering
                                     rtgiResult.Width == rtgiTemporalTexture->GetWidth() &&
                                     rtgiResult.Height == rtgiTemporalTexture->GetHeight();
         params[25] = bRTGIAvailable ? 1.0f : 0.0f;
+        // z: binding 8 の幾何の法線のうち、w がこの値の画素だけがこのフレームに解決が書いた面の法線（0 なら幾何の法線は無い）
+        const RHI::TexturePtr geometricNormalTexture =
+            m_GeometricNormalHandle.IsValid() ? resources.GetTexture(m_GeometricNormalHandle) : RHI::TexturePtr{};
+        params[26] = geometricNormalTexture ? VisibilityResolvePass::GetGeometricNormalTag(context.FrameNumber) : 0.0f;
         use.ParamsUniform->Update(params, sizeof(params));
         RHI::DescriptorSetPtr& descriptorSet = use.DescriptorSet;
         const RHI::TexturePtr sources[4] = {albedoTexture, normalTexture, materialTexture, depthTexture};
@@ -696,6 +713,8 @@ namespace NorvesLib::Core::Rendering
         descriptorSet->BindSampler(6, m_Sampler);
         descriptorSet->BindTexture(7, bRTGIAvailable ? rtgiResult.DiffuseIndirectRadiance : albedoTexture);
         descriptorSet->BindSampler(7, m_Sampler);
+        descriptorSet->BindTexture(8, geometricNormalTexture ? geometricNormalTexture : albedoTexture);
+        descriptorSet->BindSampler(8, m_Sampler);
         descriptorSet->Update();
 
         RHI::ICommandList* commandList = context.CommandList;

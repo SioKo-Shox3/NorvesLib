@@ -86,6 +86,9 @@ namespace Game::GameModes
         bool bLimitTalus = false;
         float TalusCenterX = 0.0f;
         float TalusCenterZ = 0.0f;
+        /// 崖錐の岩の主のカメラの LOD の許容の下限（画素。--wasteland-talus-limit=off で崖錐の岩を全部置くときだけ 1。
+        /// 地形を最も細かい段で撮っても、岩は通常の段で描いて BVH のたどりの列を溢れさせない。MegaMeshMaterial::MainLodFloorPixels）
+        float TalusMainLodFloorPixels = 0.0f;
         /// 1 層目（砂）の材質
         MaterialCreateData Material;
         /// 2 層目（乾いた土）・3 層目（岩肌）と混ぜ方
@@ -1376,6 +1379,12 @@ namespace Game::GameModes
                            static_cast<double>(assembly.TalusCenterZ), casters.size(), plannedCasters, fragments.size(),
                            plannedFragments);
             }
+            else if (assembly.bGrayMaterial)
+            {
+                // --wasteland-talus-limit=off: 灰色の材質でも既定の描画と同じ数を置いたことを撮影のログに残す
+                LOG_INFO_F("WASTELAND_TALUS_GRAY_LIMIT off casters=%zu fragments=%zu main_lod_floor_px=%.2f", casters.size(),
+                           fragments.size(), static_cast<double>(assembly.TalusMainLodFloorPixels));
+            }
 
             const MegaMeshHandle meshes[WastelandTalus::kTalusMeshCount] = {
                 assembly.Props[static_cast<uint32_t>(Layout::PropKind::TalusCrag)].MegaMesh,
@@ -1480,7 +1489,8 @@ namespace Game::GameModes
         /// 替え、小物の書き出しが有効なら LOD 0 の形を書く。bFineShadowLod なら影の LOD を細かく選ぶ（崖錐の岩。
         /// MegaMeshMaterial::bFineShadowLod）。作れないときは理由を出して false
         bool CreatePropMegaMesh(GameModeContext &ctx, WastelandAssembly &assembly, WastelandPropLoad &load, const char *id,
-                                const char *meshPath, const float *pTint, bool bFineShadowLod = false)
+                                const char *meshPath, const float *pTint, bool bFineShadowLod = false,
+                                float mainLodFloorPixels = 0.0f)
         {
             auto &megaGeometry = ctx.RenderResourcesRef.MegaGeometry();
             const MaterialCreateData &material = load.Material;
@@ -1533,6 +1543,7 @@ namespace Game::GameModes
             }
             // 崖錐の岩の光に浅い面は、影の粗い段の滑らかな面だと細かな起伏の自分への影が消える（WastelandOcclusion.md の「岩の影の LOD」）
             createInfo.Material.bFineShadowLod = bFineShadowLod;
+            createInfo.Material.MainLodFloorPixels = mainLodFloorPixels;
             createInfo.DebugName = id;
             const MegaMeshHandle megaMesh = megaGeometry.CreateMegaMesh(createInfo);
             load.Mesh.reset();
@@ -1665,7 +1676,8 @@ namespace Game::GameModes
                 const Layout::PropKind kind = static_cast<Layout::PropKind>(kindIndex);
                 const bool bCliff = kind == Layout::PropKind::Cliff01 || kind == Layout::PropKind::Cliff02;
                 if (!CreatePropMegaMesh(ctx, assembly, load, spec.Id, spec.MeshPath, bCliff ? kCliffTint : nullptr,
-                                        Layout::IsTalusKind(kind)))
+                                        Layout::IsTalusKind(kind),
+                                        Layout::IsTalusKind(kind) ? assembly.TalusMainLodFloorPixels : 0.0f))
                 {
                     continue;
                 }
@@ -2008,7 +2020,8 @@ namespace Game::GameModes
                 {
                     assembly->PropExport.Directory = data.m_CaptureDirectory;
                 }
-                assembly->bLimitTalus = true;
+                assembly->bLimitTalus = !data.m_bTalusLimitOff;
+                assembly->TalusMainLodFloorPixels = data.m_bTalusLimitOff ? 1.0f : 0.0f;
                 assembly->TalusCenterX = pose.Position[0];
                 assembly->TalusCenterZ = pose.Position[2];
             }

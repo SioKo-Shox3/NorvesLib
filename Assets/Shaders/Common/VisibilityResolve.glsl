@@ -82,11 +82,14 @@ layout(std140, set = 0, binding = 0) uniform ResolveParams
     vec4 cameraPosition;   // xyz = ワールドのカメラ位置
     vec4 viewport;         // x, y, 幅, 高さ（画素。ラスタの描画範囲）
     uvec4 screen;          // x = 画面の幅, y = 画面の高さ, z = フラグ, w = 材質の表の件数
-    vec4 frame;            // x = 発光に掛けるプリエクスポージャ（ラスタの frameParams.y と同じ値）, y = MegaGeometry のデバッグの表示（RESOLVE_DEBUG_*）
+    vec4 frame;            // x = 発光に掛けるプリエクスポージャ（ラスタの frameParams.y と同じ値）, y = MegaGeometry のデバッグの表示（RESOLVE_DEBUG_*）,
+                           // z = 幾何の法線の印（RESOLVE_FLAG_GEOMETRIC_NORMAL のときだけ。w へそのまま書く）
 } params;
 
 // params.screen.z のビット
 const uint RESOLVE_FLAG_PREVIOUS_VALID = 1u;
+// 撮影の AOV（--capture-aov）のために、三角形の面の幾何の法線を binding 31 へ書く
+const uint RESOLVE_FLAG_GEOMETRIC_NORMAL = 2u;
 
 // params.frame.y の値（MegaGeometry のデバッグの表示。MegaGeometryPass の DEBUG_PAYLOAD_MODE_* と同じ並び）。
 // 0 でなければ、MegaGeometry のクラスタの画素は材質を引かず、描画の記録の payload（クラスタの番号・LOD の段）から色を作る
@@ -141,6 +144,9 @@ layout(set = 0, binding = 7, rgba16f) writeonly uniform image2D normalImage;
 layout(set = 0, binding = 8, rg16f) writeonly uniform image2D velocityImage;
 layout(set = 0, binding = 9, rgba8) writeonly uniform image2D materialImage;
 layout(set = 0, binding = 10, rgba16f) writeonly uniform image2D emissiveImage;
+// 三角形の面の幾何の法線（xyz。頂点の法線の側へ向ける）と、w = params.frame.z（このフレームに書いた印）。
+// RESOLVE_FLAG_GEOMETRIC_NORMAL が無いフレームは書かない（束縛は GBuffer.Normal の代わりでよい）
+layout(set = 0, binding = 31, rgba16f) writeonly uniform image2D geometricNormalImage;
 
 #ifdef NORVES_VISRESOLVE_TILES
 #ifdef NORVES_VISRESOLVE_DUMP
@@ -827,6 +833,22 @@ void main()
                               ? ComputePreExposedEmissive(materialEntry.emissive.rgb, materialEntry.emissive.a, params.frame.x)
                               : vec3(0.0);
     imageStore(emissiveImage, ivec2(pixel), vec4(emissive, 1.0));
+    if ((params.screen.z & RESOLVE_FLAG_GEOMETRIC_NORMAL) != 0u)
+    {
+        // 面の法線は 3 頂点の辺の外積（補間の法線や法線マップを含まない形そのもの）。巻きの向きに依らず頂点の法線の側へ向け、
+        // 頂点の法線が退化していればカメラの側へ向ける。退化した三角形は 0 を書く
+        const vec3 faceCross = cross(triangle.position[1] - triangle.position[0], triangle.position[2] - triangle.position[0]);
+        const float faceLength = length(faceCross);
+        vec3 faceNormal = faceLength > 1.0e-12 ? faceCross / faceLength : vec3(0.0);
+        const vec3 vertexNormalSum = triangle.normal[0] + triangle.normal[1] + triangle.normal[2];
+        const vec3 towards = dot(vertexNormalSum, vertexNormalSum) > 1.0e-6 ? vertexNormalSum
+                                                                              : params.cameraPosition.xyz - triangle.position[0];
+        if (dot(faceNormal, towards) < 0.0)
+        {
+            faceNormal = -faceNormal;
+        }
+        imageStore(geometricNormalImage, ivec2(pixel), vec4(faceNormal, params.frame.z));
+    }
 
 #ifdef NORVES_VISRESOLVE_DUMP
     const uint base = (pixel.y * params.screen.x + pixel.x) * VIS_RESOLVE_DUMP_STRIDE;

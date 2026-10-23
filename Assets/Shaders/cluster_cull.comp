@@ -56,6 +56,7 @@ void main()
     }
 
     g_WorldMatrix = instance.world;
+    g_InstanceLodFloor = instance.mainLodFloor;
     g_LODSphere = instance.lodSphere;
     g_Clusters = ClusterArray(uvec2(instance.clusterInfo.x, instance.clusterInfo.y));
 

@@ -2,13 +2,16 @@
 #
 #   python Scripts/Terrain/ReferenceCheck.py --shape-cause --capture-root <撮影の置き場> [--verify]
 #
-# 置き場の 3 組（どれも CaptureScene.ps1 -Hdr -Aov、共通の照明・灰色の材質・雲と草と砂利と建物と霞を外し岩は残す・FXAA）:
+# 置き場の 3 組（どれも CaptureScene.ps1 -Hdr -Aov、共通の照明・灰色の材質・雲と草と砂利と建物と霞を外し岩は残す・FXAA）。
+# 崖錐の岩は灰色の材質の撮影でも視点の近くに限らず、既定の描画と同じ数を置く（--wasteland-talus-limit=off。ログの
+# WASTELAND_TALUS_GRAY_LIMIT off で確かめる）:
 #   lod-default/      通常の LOD
 #   lod-finest/       最も細かい LOD（--wasteland-finest-lod）
 #   cliff-detail-off/ 最も細かい LOD で、崖の手続きの変形（Tools/AssetCook/TerrainCliffDetail.cpp の細分と押し出し）を焼かなかった
 #                     区画に差し替えた版（--wasteland-cliff-detail=off。Assets/AssetSets/WastelandTerrainCliffOff.json）
-# 視点ごとに、深度の AOV とカメラから位置を戻して幾何の法線（kStride 画素ずつ離れた位置の差の外積。1 画素の差は崖の面の
-# 細かな凹凸で揺れすぎる）を求め、次を測る:
+# 視点ごとに、可視バッファの解決が書いた三角形の面の幾何の法線（<視点>.aov.geometric_normal.pfm。八面体の 12 + 12 ビット。
+# 深度から戻した位置の微分は D32 の深度の量子化で遠景に偽の折れ目を作るので使わない）を読み、次を測る（位置は深度から戻し、
+# 世界座標の範囲・距離・格子の段を引くのにだけ使う）:
 #   - 折れ目の密度: 幾何の法線が 2 × kStride 画素の間で kCreaseDegrees を超えて曲がる画素の割合（丸いほど小さい）
 #   - LOD の差: 通常の LOD と最も細かい LOD の幾何の法線の角の差が kDiffDegrees を超える画素の割合
 #   - 崖の生成の差: 最も細かい LOD と崖の変形を切った版の差（同じ測り方）
@@ -17,7 +20,8 @@
 #   - 材質の陰影: GBuffer の法線（陰影に使う頂点の法線）と幾何の法線の角の差が kShadingDegrees を超える画素の割合
 # 画面を GRID_COLUMNS × GRID_ROWS の升に分け、升ごとの値と世界座標の範囲（5〜95 百分位）を <置き場>/shape_cause.json に書き、
 # 視点ごとの並べた画（写真・撮影・3 組の幾何の法線の陰影・原因の重ね）を <置き場>/shape_cause/<視点>.png に書く。
-# 落ちる: 組の撮影（metrics.json・inputs.json・視点の PNG と深度・法線の AOV）が無い・起動引数が組の条件と違う・
+# 落ちる: 組の撮影（metrics.json・inputs.json・視点の PNG と深度・法線・幾何の法線の AOV）が無い・起動引数が組の条件と違う・
+#   幾何の法線が地形の画素の kGeometricCoverage 未満にしか無い・崖錐の岩を視点の近くに限った（ログ）・
 #   組の Game.exe が揃わない・崖の変形を切った版で区画が差し替わっていない（ログの WASTELAND_CLIFF_DETAIL_OFF swapped）・
 #   所見の文書（DOC）に所見の表（視点ごとの行と原因の列）が無い・--verify で入力が撮影の後に変わった。
 import json
@@ -36,7 +40,7 @@ VIEWS = ["ref_far_01", "ref_far_02", "ref_cliff_01", "ref_cliff_02", "ref_ground
 PHOTOS = {"ref_far_01": "far_01", "ref_far_02": "far_02", "ref_cliff_01": "cliff_01", "ref_cliff_02": "cliff_02",
           "ref_ground_02": "ground_02"}
 BASE_ARGS = ["--wasteland-common-light", "--wasteland-hide=clouds+foliage+gravel+buildings+aerial+fog",
-             "--wasteland-gray-material", "--wasteland-aa=fxaa"]
+             "--wasteland-gray-material", "--wasteland-aa=fxaa", "--wasteland-talus-limit=off"]
 SETS = {
     "lod-default": BASE_ARGS,
     "lod-finest": BASE_ARGS + ["--wasteland-finest-lod"],
@@ -53,6 +57,8 @@ kGridPixels = 4.0
 kShadingDegrees = 15.0
 # 深度の段差（隣との相対の差がこれを超える画素は輪郭として法線を求めない）
 kDepthJump = 0.02
+# 深度の有効な画素のうち、幾何の法線が読める画素がこの割合に満たない視点は落とす
+kGeometricCoverage = 0.95
 GRID_COLUMNS = 4
 GRID_ROWS = 3
 PANEL = (640, 360)
@@ -65,12 +71,30 @@ def load_levels(RC):
              float(level["z_min"]), float(level["z_max"])) for level in document["levels"]]
 
 
+def decode_geometric_normal(packed):
+    """gbuffer_aov.frag の PackGeometricNormal（1 + u × 4096 + v）を戻す。(法線, 読める画素)"""
+    readable = np.isfinite(packed) & (packed >= 1.0)
+    value = np.where(readable, packed - 1.0, 0.0)
+    u = np.floor(value / 4096.0)
+    v = value - u * 4096.0
+    px = u / 4095.0 * 2.0 - 1.0
+    py = v / 4095.0 * 2.0 - 1.0
+    pz = 1.0 - np.abs(px) - np.abs(py)
+    lower = pz < 0.0
+    fx = np.where(lower, (1.0 - np.abs(py)) * np.where(px >= 0.0, 1.0, -1.0), px)
+    fy = np.where(lower, (1.0 - np.abs(px)) * np.where(py >= 0.0, 1.0, -1.0), py)
+    normal = np.stack([fx, fy, pz], axis=2)
+    normal /= np.maximum(np.linalg.norm(normal, axis=2), 1e-12)[:, :, None]
+    return normal, readable
+
+
 def view_geometry(RC, set_dir, view):
-    """(位置, 幾何の法線, GBuffer の法線, 有効な画素, 1 画素の大きさ m, カメラ)。読めなければ None と理由"""
+    """(位置, 幾何の法線, GBuffer の法線, 有効な画素, 1 画素の大きさ m, カメラ, 幾何の法線の被覆率)。読めなければ None と理由"""
     meta_path = os.path.join(set_dir, f"{view}.aov.json")
     depth_path = os.path.join(set_dir, f"{view}.aov.depth.pfm")
     normal_path = os.path.join(set_dir, f"{view}.aov.normal.pfm")
-    for path in (meta_path, depth_path, normal_path, os.path.join(set_dir, f"{view}.png")):
+    geometric_path = os.path.join(set_dir, f"{view}.aov.geometric_normal.pfm")
+    for path in (meta_path, depth_path, normal_path, geometric_path, os.path.join(set_dir, f"{view}.png")):
         if not os.path.isfile(path):
             return None, f"{os.path.relpath(path, RC.REPO_ROOT)} が無い"
     with open(meta_path, encoding="utf-8-sig") as f:
@@ -82,8 +106,10 @@ def view_geometry(RC, set_dir, view):
     finite = np.isfinite(depth) & (depth > 0.0)
     safe = np.where(finite, depth, 0.0)
     position = np.asarray(camera["position"], dtype=np.float64)[None, None, :] + rays * safe[:, :, None]
-    # 中心差分の位置の差の外積。隣の深度が飛ぶ画素（輪郭）は外す
-    valid = finite.copy()
+    geometric, readable = decode_geometric_normal(RC.read_pfm_any(geometric_path)[:, :, 0].astype(np.float64))
+    coverage = float(np.count_nonzero(readable & finite)) / max(1, int(np.count_nonzero(finite)))
+    # 隣の深度が飛ぶ画素（輪郭）と幾何の法線の無い画素は外す
+    valid = finite & readable
     valid[:, :kStride] = valid[:, -kStride:] = False
     valid[:kStride, :] = valid[-kStride:, :] = False
     for axis in (0, 1):
@@ -91,19 +117,10 @@ def view_geometry(RC, set_dir, view):
         behind = np.roll(safe, kStride, axis=axis)
         valid &= np.isfinite(np.roll(depth, -kStride, axis=axis)) & np.isfinite(np.roll(depth, kStride, axis=axis))
         valid &= np.abs(ahead - behind) <= kDepthJump * np.maximum(safe, 1e-6) + 0.05
-    dx = np.roll(position, -kStride, axis=1) - np.roll(position, kStride, axis=1)
-    dy = np.roll(position, kStride, axis=0) - np.roll(position, -kStride, axis=0)
-    geometric = np.cross(dx, dy)
-    length = np.linalg.norm(geometric, axis=2)
-    valid &= length > 1e-12
-    geometric /= np.maximum(length, 1e-12)[:, :, None]
-    # カメラへ向ける
-    flip = np.sum(geometric * rays, axis=2) > 0.0
-    geometric[flip] *= -1.0
     shading_length = np.linalg.norm(shading, axis=2)
     shading = shading / np.maximum(shading_length, 1e-12)[:, :, None]
     footprint = safe * 2.0 * np.tan(np.radians(float(camera["vertical_fov_degrees"])) / 2.0) / height
-    return (position, geometric, shading, valid, footprint, camera), None
+    return (position, geometric, shading, valid, footprint, camera, coverage), None
 
 
 def angle_degrees(a, b):
@@ -167,7 +184,12 @@ def measure_view(RC, levels, root, view):
     shapes = {geometry[1].shape for geometry in data.values()}
     if len(shapes) != 1:
         return None, None, [f"視点 {view} の 3 組の大きさが違う: {sorted(shapes)}"]
-    position, default_normal, shading, default_valid, footprint, camera = data["lod-default"]
+    coverages = {name: data[name][6] for name in SETS}
+    low = {name: value for name, value in coverages.items() if value < kGeometricCoverage}
+    if low:
+        return None, None, [f"視点 {view} の幾何の法線の被覆率が {kGeometricCoverage:.2f} 未満: "
+                            + ", ".join(f"{name}={value:.3f}" for name, value in low.items())]
+    position, default_normal, shading, default_valid, footprint, camera, _ = data["lod-default"]
     finest_normal, finest_valid = data["lod-finest"][1], data["lod-finest"][3]
     off_normal, off_valid = data["cliff-detail-off"][1], data["cliff-detail-off"][3]
     spacing, level_index = level_spacing(levels, position)
@@ -213,6 +235,7 @@ def measure_view(RC, levels, root, view):
     record = {
         "view": view,
         "terrain_pixels": int(np.count_nonzero(whole)),
+        "geometric_coverage": {name: round(value, 4) for name, value in coverages.items()},
         "grid_limited": fraction(grid_limited, whole),
         "lod_diff": fraction(lod_diff, common),
         "cliff_diff": fraction(cliff_diff, common),
@@ -242,8 +265,8 @@ def measure_view(RC, levels, root, view):
                         (cliff_diff, (40, 230, 60))):
         overlay[mask] = overlay[mask] * 0.25 + np.asarray(color, dtype=np.float32) * 0.75
     panels.append(("重ね 青=格子 黄=陰影 赤=LOD 緑=崖", Image.fromarray(overlay.astype(np.uint8)).resize(PANEL, Image.LANCZOS)))
-    for name, label in (("lod-default", "幾何の法線 通常の LOD"), ("lod-finest", "幾何の法線 最も細かい LOD"),
-                        ("cliff-detail-off", "幾何の法線 崖の変形なし")):
+    for name, label in (("lod-default", "面の法線 通常の LOD"), ("lod-finest", "面の法線 最も細かい LOD"),
+                        ("cliff-detail-off", "面の法線 崖の変形なし")):
         panels.append((label, shade(data[name][1], data[name][3]).resize(PANEL, Image.LANCZOS)))
     sheet = Image.new("RGB", (PANEL[0] * 3, PANEL[1] * 2), (0, 0, 0))
     draw = ImageDraw.Draw(sheet)
@@ -322,6 +345,26 @@ def run(RC, root, verify):
             ok, reasons, _ = RC.check_inputs(set_dir)
             if not ok:
                 failures.extend(f"組 {name}: {reason}" for reason in reasons)
+        # 崖錐の岩を視点の近くに限らなかったこと（灰色の材質の撮影の制限を外した印）と、MegaGeometry の BVH のたどりの列の溢れ
+        talus_off = None
+        bvh_overflow = 0
+        for view in VIEWS:
+            log_name = RC.view_game_log(set_dir, view)
+            log_path = os.path.join(set_dir, log_name) if log_name else ""
+            if log_path and os.path.isfile(log_path):
+                with open(log_path, encoding="utf-8", errors="replace") as f:
+                    log_text = f.read()
+                if "WASTELAND_TALUS_GRAY_LIMIT radius_m" in log_text:
+                    talus_off = False
+                elif talus_off is None and "WASTELAND_TALUS_GRAY_LIMIT off" in log_text:
+                    talus_off = True
+                bvh_overflow = max([bvh_overflow] + [int(value) for value in re.findall(r"bvh_overflow=(\d+)", log_text)])
+                break
+        entry["talus_limit_off"] = talus_off
+        entry["bvh_overflow_max"] = bvh_overflow
+        print(f"SHAPE_CAUSE_SET name={name} talus_limit_off={talus_off} bvh_overflow_max={bvh_overflow}")
+        if not talus_off:
+            failures.append(f"組 {name} のログに崖錐の岩の制限を外した印（WASTELAND_TALUS_GRAY_LIMIT off）が無い")
         if name == "cliff-detail-off":
             swapped = None
             for view in VIEWS:

@@ -53,6 +53,8 @@ namespace NorvesLib::Core::Rendering
         // 地形の 2・3 層目のテクスチャと地表の分類の地図と遠景の地図（シェーダーの VIS_TERRAIN_BINDING から 8 枚。材質ごとの形だけ。
         // メッシュの表より後ろ）
         constexpr uint32_t TerrainTextureBindingFirst = 23u;
+        // 撮影の AOV の幾何の法線（シェーダーの geometricNormalImage。地形のテクスチャの 8 枚より後ろ。全部の形に置く）
+        constexpr uint32_t GeometricNormalBindingIndex = 31u;
 
         // bFeedback: 材質ごとの形の最後に VT の要求のバッファ（シェーダーの VT_FEEDBACK_BINDING）を足す（bTiles のときだけ）
         RHI::DescriptorSetDesc MakeDescriptorSetDesc(bool bDump, bool bTiles, bool bFeedback)
@@ -130,6 +132,13 @@ namespace NorvesLib::Core::Rendering
                 RHI::DescriptorBinding binding;
                 binding.binding = MegaMeshTableBindingIndex;
                 binding.type = RHI::ResourceBindType::StructuredBuffer;
+                binding.stages = RHI::ShaderStage::Compute;
+                desc.bindings.push_back(binding);
+            }
+            {
+                RHI::DescriptorBinding binding;
+                binding.binding = GeometricNormalBindingIndex;
+                binding.type = RHI::ResourceBindType::RWTexture;
                 binding.stages = RHI::ShaderStage::Compute;
                 desc.bindings.push_back(binding);
             }
@@ -620,6 +629,13 @@ namespace NorvesLib::Core::Rendering
         {
             return false;
         }
+        // 幾何の法線を書く印は、書く先が画面に収まるときだけ（無いのに立てると代わりに束ねた Normal へ書いてしまう）
+        if ((params.Screen[2] & VisibilityResolveGeometry::FLAG_GEOMETRIC_NORMAL) != 0u &&
+            (!dispatch.GeometricNormal || width > dispatch.GeometricNormal->GetWidth() ||
+             height > dispatch.GeometricNormal->GetHeight()))
+        {
+            return false;
+        }
         if (m_bDump &&
             dispatch.Dump->GetSize() < static_cast<uint64_t>(width) * height * VisibilityResolveGeometry::DUMP_STRIDE_BYTES)
         {
@@ -690,6 +706,8 @@ namespace NorvesLib::Core::Rendering
         set.BindStorageTexture(8, dispatch.Velocity);
         set.BindStorageTexture(9, dispatch.Material);
         set.BindStorageTexture(10, dispatch.Emissive);
+        // 幾何の法線を書かないフレームは、同じ形式（RGBA16F）の Normal を束ねる（印が無いのでシェーダーは書かない）
+        set.BindStorageTexture(GeometricNormalBindingIndex, dispatch.GeometricNormal ? dispatch.GeometricNormal : dispatch.Normal);
         if (m_bDump)
         {
             set.BindStorageBuffer(DumpBindingIndex, dispatch.Dump, 0, ClampBindSize(dispatch.Dump->GetSize()));
@@ -979,6 +997,7 @@ namespace NorvesLib::Core::Rendering
         m_MaterialHandle = {};
         m_VelocityHandle = {};
         m_EmissiveHandle = {};
+        m_GeometricNormalHandle = {};
         m_TileArgsHandle = {};
         m_TileListHandle = {};
         m_TileStatsHandle = {};
@@ -1033,6 +1052,7 @@ namespace NorvesLib::Core::Rendering
         m_MaterialHandle = {};
         m_VelocityHandle = {};
         m_EmissiveHandle = {};
+        m_GeometricNormalHandle = {};
         m_TileArgsHandle = {};
         m_TileListHandle = {};
         m_TileStatsHandle = {};
@@ -1093,6 +1113,31 @@ namespace NorvesLib::Core::Rendering
         builder.Write(m_MaterialHandle, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
         builder.Write(m_VelocityHandle, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
         builder.Write(m_EmissiveHandle, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
+
+        // 撮影の AOV の幾何の法線（GBufferAovPass が読む）。ID と同じ大きさで、書かなかった画素は印が合わないので読まれない
+        if (m_bWriteGeometricNormal)
+        {
+            const ViewRenderContext* context = builder.GetContext();
+            const uint32_t width = context ? context->GetActiveRenderWidth() : 0;
+            const uint32_t height = context ? context->GetActiveRenderHeight() : 0;
+            if (width != 0 && height != 0)
+            {
+                RGTextureDesc geometricNormalDesc;
+                geometricNormalDesc.Width = width;
+                geometricNormalDesc.Height = height;
+                geometricNormalDesc.Format = RHI::Format::R16G16B16A16_FLOAT;
+                geometricNormalDesc.Usage = RHI::ResourceUsage::ShaderRead | RHI::ResourceUsage::ShaderWrite;
+                geometricNormalDesc.DebugName = "VisResolve.GeometricNormal";
+                const RGTextureHandle geometricNormal = builder.WriteTexture(RenderGraphResourceNames::VisResolveGeometricNormal,
+                                                                             geometricNormalDesc,
+                                                                             RHI::ResourceState::UnorderedAccess,
+                                                                             RHI::ResourceState::ShaderResource);
+                if (geometricNormal.IsValid())
+                {
+                    m_GeometricNormalHandle = geometricNormal.ToResourceHandle();
+                }
+            }
+        }
 
         // スキニングの変形した頂点（今・前）はデバイスアドレスで読む。計算シェーダーの書き込みを、この読み取りへ見せる
         if (m_SkinningComputePass)
@@ -1227,6 +1272,18 @@ namespace NorvesLib::Core::Rendering
                                                                  dispatch.IdTexture->GetWidth(),
                                                                  dispatch.IdTexture->GetHeight(),
                                                                  m_RasterPass->GetMaterialTableCount());
+        // 撮影の AOV の幾何の法線は、書く先が画面全体に収まるときだけ書く（収まらなければ書かず、AOV は読めない値になる）
+        if (m_GeometricNormalHandle.IsValid())
+        {
+            RHI::TexturePtr geometricNormal = resources.GetTexture(m_GeometricNormalHandle);
+            if (geometricNormal && dispatch.Params.Screen[0] <= geometricNormal->GetWidth() &&
+                dispatch.Params.Screen[1] <= geometricNormal->GetHeight())
+            {
+                dispatch.GeometricNormal = geometricNormal;
+                dispatch.Params.Screen[2] |= VisibilityResolveGeometry::FLAG_GEOMETRIC_NORMAL;
+                dispatch.Params.Frame[2] = GetGeometricNormalTag(context.FrameNumber);
+            }
+        }
         // 発光はプリエクスポージャ後の値で GBuffer_Emissive へ書く（GBufferPass・MegaGeometryPass・LightingPass と同じ値）
         dispatch.Params.Frame[0] = ResolveSceneColorPreExposure(camera);
         // MegaGeometry のデバッグの表示（クラスタの色・LOD の段）は、描画の記録の payload から色を作る（MegaGeometryPass が

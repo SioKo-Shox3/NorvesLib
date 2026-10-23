@@ -31,7 +31,7 @@ struct MegaInstanceRow
 struct MegaMeshEntry
 {
     vec4 lodSphere;       // LODの選択に使うメッシュ共通の境界球（ローカル。w<=0ならクラスタごとの中心で選ぶ）
-    uvec4 clusterInfo;    // x,y = クラスタ配列のデバイスアドレス（下位・上位）, z = クラスタ数, w = 予約
+    uvec4 clusterInfo;    // x,y = クラスタ配列のデバイスアドレス（下位・上位）, z = クラスタ数, w = 主のカメラの LOD の許容の下限（画素。float のビット。0 なら無い）
     uvec4 drawInfo;       // x = 材質の区間の番号, y = 頂点の基点（塊の先頭から。頂点単位）, z = インデックスの基点（塊の先頭から。インデックス単位）, w = 予約
     uvec4 bvhInfo;        // x,y = BVH の節の配列のデバイスアドレス（下位・上位。BVH が無ければ 0）, z = 節の数, w = ページの表の先頭（このメッシュのページの範囲の先頭）
     vec4 boundsSphere;    // メッシュ全体の締まった境界球（ローカル。w<=0 なら無い）。インスタンスと範囲の判定が拡大率を掛けて使う
@@ -47,6 +47,7 @@ struct MegaInstance
     uvec4 drawInfo;       // x = 材質の区間の番号, y = 頂点の基点（塊の先頭から。頂点単位）, z = インデックスの基点（塊の先頭から。インデックス単位）, w = 予約
     uvec4 bvhInfo;        // x,y = BVH の節の配列のデバイスアドレス（下位・上位。BVH が無ければ 0）, z = 節の数, w = ページの表の先頭（このメッシュのページの範囲の先頭）
     vec4 boundsSphere;    // メッシュ全体の締まった境界球（ローカル。w<=0 なら無い）
+    float mainLodFloor;   // 主のカメラの LOD の許容の下限（画素。0 なら無い。MegaMeshMaterial::MainLodFloorPixels）
 };
 
 layout(std430, set = 0, binding = MEGA_INSTANCE_BINDING) readonly buffer MegaInstanceRowBuffer
@@ -72,6 +73,7 @@ MegaInstance LoadMegaInstance(uint index)
     instance.drawInfo = uvec4(mesh.drawInfo.xyz, 0u);
     instance.bvhInfo = mesh.bvhInfo;
     instance.boundsSphere = mesh.boundsSphere;
+    instance.mainLodFloor = uintBitsToFloat(mesh.clusterInfo.w);
     return instance;
 }
 

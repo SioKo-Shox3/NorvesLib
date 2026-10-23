@@ -269,7 +269,7 @@ void AppendDeferredCluster(uint instanceIndex, uint clusterIndex)
 bool CanPruneBvhNodeByLOD(BvhNode node)
 {
     return ProjectBakedError(node.sphere.xyz, node.sphere.w, uintBitsToFloat(node.info.x)) * BVH_LOD_PRUNE_MARGIN
-           <= cullData.lodBias;
+           <= EffectiveLodBias();
 }
 
 // 判定を通った節の子を積む段の番号（2パス目へ回した節の段は、席の段と同じく段1の列へ積む）
@@ -516,6 +516,7 @@ bool PassesSeatBasicTests(uint instanceIndex, out BvhNode root, out vec3 center,
     MegaInstance instance = LoadMegaInstance(instanceIndex);
 
     g_WorldMatrix = instance.world;
+    g_InstanceLodFloor = instance.mainLodFloor;
     bvhAddress = uvec2(instance.bvhInfo.x, instance.bvhInfo.y);
     BvhNodeArray bvh = BvhNodeArray(bvhAddress);
     root = bvh.nodes[0];
@@ -698,6 +699,7 @@ void TestNode(uint instanceIndex, uint nodeIndex, bool bPass1Reached)
     MegaInstance instance = LoadMegaInstance(instanceIndex);
 
     g_WorldMatrix = instance.world;
+    g_InstanceLodFloor = instance.mainLodFloor;
     BvhNodeArray bvh = BvhNodeArray(uvec2(instance.bvhInfo.x, instance.bvhInfo.y));
     BvhNode node = bvh.nodes[nodeIndex];
 
@@ -756,6 +758,7 @@ MegaInstance BindClusterInstance(uint instanceIndex)
 {
     MegaInstance instance = LoadMegaInstance(instanceIndex);
     g_WorldMatrix = instance.world;
+    g_InstanceLodFloor = instance.mainLodFloor;
     g_LODSphere = instance.lodSphere;
     g_Clusters = ClusterArray(uvec2(instance.clusterInfo.x, instance.clusterInfo.y));
     return instance;

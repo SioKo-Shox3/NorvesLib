@@ -56,6 +56,8 @@ namespace NorvesLib::Core::Rendering
         /** @brief ResolveParams::Screen[2] のビット（シェーダーの RESOLVE_FLAG_*
          * と同じ） */
         constexpr uint32_t FLAG_PREVIOUS_VALID = 1u;
+        /** @brief 三角形の面の幾何の法線を VisibilityResolveDispatch::GeometricNormal へ書く（w = Frame[2] の印） */
+        constexpr uint32_t FLAG_GEOMETRIC_NORMAL = 2u;
         /** @brief 材質ごとの形の dispatch
          * の定数（ResolveTileParams::tile.z）のビット（シェーダーの VIS_TILE_FLAG_*
          * と同じ） */
@@ -290,6 +292,9 @@ namespace NorvesLib::Core::Rendering
         /** @brief 発光の出力（GBuffer.Emissive。RGBA16F。ほかの出力と同じく
          * UnorderedAccess の状態で渡す） */
         RHI::TexturePtr Emissive;
+        /** @brief 撮影の AOV の幾何の法線の出力（RGBA16F。UnorderedAccess の状態で渡す）。null なら書かない
+         * （Params.Screen[2] の FLAG_GEOMETRIC_NORMAL を落とし、束縛は Normal で埋める） */
+        RHI::TexturePtr GeometricNormal;
         /** @brief 検証用の版（Initialize の bDump）の出力。画素あたり
          * DUMP_STRIDE_BYTES。製品の版では使わない */
         RHI::BufferPtr Dump;
@@ -538,6 +543,18 @@ namespace NorvesLib::Core::Rendering
          */
         void SetClassifyPass(const MaterialTileClassifyPass* pass) { m_ClassifyPass = pass; }
         const MaterialTileClassifyPass* GetClassifyPass() const { return m_ClassifyPass; }
+        /**
+         * @brief 撮影の AOV（--capture-aov）のために、三角形の面の幾何の法線を VisResolve.GeometricNormal へ書くか
+         *
+         * 書くフレームは w に印（フレームの番号から作る値。GetGeometricNormalTag）を入れる。GBufferAovPass は印が合う画素だけを
+         * 幾何の法線として読み、可視バッファで解決しなかった画素（ラスタの GBuffer の物）は読めない値にする
+         */
+        void SetWriteGeometricNormal(bool bWrite) { m_bWriteGeometricNormal = bWrite; }
+        /** @brief フレームの番号から作る幾何の法線の印（RGBA16F の w に正確に入る 1〜2048 の整数） */
+        static float GetGeometricNormalTag(uint64_t frameNumber)
+        {
+            return static_cast<float>(frameNumber % 2048u) + 1.0f;
+        }
         /** @brief 材質ごとの形の記録が使い回す作業配列の容量（検査用） */
         size_t GetTileUseScratchCapacity() const { return m_Resolve.GetTileUseScratchCapacity(); }
 
@@ -591,6 +608,9 @@ namespace NorvesLib::Core::Rendering
         RGResourceHandle m_MaterialHandle;
         RGResourceHandle m_VelocityHandle;
         RGResourceHandle m_EmissiveHandle;
+        // 撮影の AOV の幾何の法線（m_bWriteGeometricNormal のときだけ Declare が作る）
+        RGResourceHandle m_GeometricNormalHandle;
+        bool m_bWriteGeometricNormal = false;
         // 分類の出力の読み取り（Declare が読むと宣言したときだけ有効）
         RGResourceHandle m_TileArgsHandle;
         RGResourceHandle m_TileListHandle;

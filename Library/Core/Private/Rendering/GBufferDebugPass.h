@@ -144,6 +144,8 @@ namespace NorvesLib::Core::Rendering
         RGTextureHandle m_ReflectanceHandle;
         /** @brief RTGI の時間の蓄積の後の出力（a = 遮蔽の診断の符号と空の分）。グラフに無ければ無効 */
         RGTextureHandle m_RTGITemporalHandle;
+        /** @brief 可視バッファの解決が書いた三角形の面の幾何の法線（w = 書いたフレームの印）。グラフに無ければ無効 */
+        RGTextureHandle m_GeometricNormalHandle;
         RGTextureHandle m_AlbedoHandle;
         RGTextureHandle m_NormalHandle;
         RGTextureHandle m_MaterialHandle;
