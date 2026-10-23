@@ -1,0 +1,9 @@
+﻿{
+  "description": "Battleship Rock の壁をスキャンの崖で覆う項目の形の合否（CompareReference.py --shape --photos cliff_01 --expect。WastelandShape.md の「形の物差し」）。cliff_01 の写真の崖は Battleship Rock だけ。棚の一致と角の一致とずらした後の外形の距離は絶対の基準（shape-target.json の cliff_01 の行。今 0.27・0.14・10.8 画素で 3 つとも届かない）まで上げ、ずらす前の外形の距離は今の値から悪くならない（shape-baseline.json の cliff_01 の行。今 11.4 画素）。スキャンを置く前に書き、置いた後に変えない",
+  "rows": [
+    {"photo": "cliff_01", "cliff": "Battleship Rock", "quantity": "shelf_match", "min": 0.6, "note": "今 0.272（4 本）"},
+    {"photo": "cliff_01", "cliff": "Battleship Rock", "quantity": "corner_match", "min": 0.5, "note": "今 0.143（7 点）"},
+    {"photo": "cliff_01", "cliff": "Battleship Rock", "quantity": "outline_residual_median_px", "max": 8.0, "note": "今 10.8"},
+    {"photo": "cliff_01", "cliff": "Battleship Rock", "quantity": "outline_distance_median_px", "max": 12.4, "note": "今 11.4"}
+  ]
+}

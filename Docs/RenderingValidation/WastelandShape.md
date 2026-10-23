@@ -135,6 +135,18 @@ SCN-WL-SHAPE-CAUSE の lod-default（通常の LOD、灰色の材質、崖錐の
 - 前からの改善（`Scripts/Terrain/ExpectSpecs/shape-baseline.json`）: 今の値から悪くならない（棚の一致 −0.03・外形の距離 +1 画素の揺れまで）。直しの項目は担当の写真の行の min を今の値より上げて書く（例: 棚の一致を今の値 + 0.15 以上）
 - 外形の距離のずらす前の値は、far_02（48 画素）と ground_02（32 画素）では撮影の構図のずれ（地平の高さと崖の左右の位置）が大半で、形の直しでは変わらない。形の直しの外形の判定はずらした後の値を使う
 
+## スキャンの崖の担当の範囲
+
+崖の面をスキャンの塊で覆う項目と、崖の生成（`Tools/AssetCook/TerrainCliffDetail.cpp`）を直す項目の場所を分ける。世界座標はエンジンの m（X 東・Z 南）。
+
+| 項目 | 崖 | 範囲 | 合否の仕様 |
+|---|---|---|---|
+| SCN-WL-CLIFF-SCAN-NEAR | Battleship Rock の壁と、壁から崖錐へ移る塊 | X −2350〜−1300・Z −1650〜−420（壁は X −2135〜−1587・Z −1318〜−851、崖錐は X −2338〜−1352・Z −1470〜−579） | `ExpectSpecs/shape-scan-battleship.json`（cliff_01） |
+| SCN-WL-CLIFF-SCAN-FRANKLIN | Franklin Butte の尖塔の台座 | X −760〜−240・Z −660〜−140（崖の細部の近景の範囲と同じ） | `shape-scan-franklin.json`（cliff_02・ground_02） |
+| 崖の生成の項目 | Rooster Butte・Setting Hen Butte・castle の段 | Rooster Butte X 640〜1160・Z 560〜1160、Setting Hen Butte X 960〜1460・Z 1140〜1960、castle の段（`kCastleRegions`。Z −4038 より北） | 担当の写真の行 |
+
+`shape-scan-battleship.json` は、スキャンを置く前の撮影（SCN-WL-SHAPE-CAUSE の lod-default）の値と絶対の基準から書いた: 棚の一致 0.6 以上（今 0.272）・角の一致 0.5 以上（今 0.143）・ずらした後の外形の距離 8 画素以下（今 10.8）・ずらす前の外形の距離 12.4 画素以下（今 11.4、悪くならない）。
+
 ## 既知の限界
 
 - 折れ目と差の画素は面の法線から測るので、1 画素に複数の三角形が入る遠景（最も細かい LOD の 0.5 m/画素より遠い崖）では、画素が拾う三角形で値が揺れる。値は 3 組の比べにだけ使う（絶対の目標にしない）。
