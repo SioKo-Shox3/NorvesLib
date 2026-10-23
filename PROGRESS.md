@@ -7380,3 +7380,8 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `aux-SCN-GOLDEN-REVERIFY-fallback-diff.txt`・`-fallback-ctest.txt`: 予備の経路の 2 枚を置き換え、検査 2 本 Passed
 - Next: TASKS.md の次の未完
 - Notes: verify の全体のビルドは、この項目と関係しない 4 つの試験の前からのビルドの失敗で EXIT=1 のまま（paths の外。NEXT_FINDINGS に記録）。10-22 の SCN-WL-LIGHT-FINAL の合格のログはビルドを含まず、その時の検査の実行ファイルが 585d1fe4 を含んでいたかは確かめられない。閾値は変えていない。新しい試験は足していない
+
+## 2026-10-23 SCN-GOLDEN-REVERIFY（run 20261023-124311 の反復 5）
+- Done: 回し直した基準画像の検査 Indoor・Outdoor は両方 Passed・EXIT=0（`.harness/runs/20261023-124311/verify-SCN-GOLDEN-REVERIFY-5.txt`）。Debug の全体のビルドは EXIT=1（`-4.txt`）で、エラーは反復 4 と同じ 4 つの試験の実行ファイルだけ（AssetManifestReloadBridgeLoopbackTest 1 件・NorvesLibBridgeAdapterScriptComponentTest 31 件・RenderGraphCompileTest 2 件・RenderingDDGILightingContractTest 12 件）
+- Next: BLOCKED。直すには Test/Core/Rendering・Test/Game/Bridge を触る必要があり paths の外。verify を検査のターゲットだけのビルドに替えるかの判断を `blocked/SCN-GOLDEN-REVERIFY.md` に書いた
+- Notes: Git Bash では `-- /m:1` がパスに変換されて MSBuild が MSB1008 で落ちるので、verify のビルドは PowerShell で回す
