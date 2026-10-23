@@ -2605,7 +2605,7 @@
 
 ## SCN-WL-OCCLUSION-ACCEPT: 遮蔽と影の直しの受け入れ（全層の範囲と、前の直しを壊していないこと）
 - status: todo
-- after: SCN-WL-SUN-SHADOW-FIX
+- after: SCN-WL-SUN-SHADOW-FIX, SCN-WL-PLANT-ROOT-OCCLUSION
 - done-when: 空の遮蔽と太陽の影の直しの後に、同じ exe で全組と共通の照明の組を撮り直して受け入れる。合否: (1) `--occlusion --expect`（`occlusion-accept.json`）で必須の全層のくぼみの比のエンジン ÷ Cycles が 0.85〜1.15、太陽の影が SCN-WL-SUN-SHADOW-FIX で確定した許容の中、(2) SCN-WL-LIGHT-FINAL の組（灰色の両方・太陽だけ・空だけ、実材質、照り返しの切）を撮り直し、`--light-final --verify` が通る（前の直しを壊していない）、(3) 既定の荒野の 6 視点を撮って写真と並べて開き、溝の奥・岩の下・株の根元の暗がりと棚の影を所見に書く。(1) に届かない層が残れば、残りの原因を直す項目を TASKS.md に足し、この項目は BLOCKED にする。
 - verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-WL-OCCLUSION-ACCEPT --sets terrain-sky --build`
 - verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-WL-OCCLUSION-ACCEPT --sets terrain-sun`
@@ -2625,7 +2625,7 @@
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Views ref_far_01,ref_far_02,ref_cliff_01,ref_cliff_02,ref_ground_01,ref_ground_02 -OutDir .harness/runs/scene-capture/SCN-WL-OCCLUSION-ACCEPT/views`
 - verify: `python Scripts/Terrain/CompareReference.py --capture .harness/runs/scene-capture/SCN-WL-OCCLUSION-ACCEPT/views --verify`
 - paths: Scripts, Docs/RenderingValidation, TASKS.md, PROGRESS.md
-- notes: 2026-10-22 親が確認 2（SCN-WL-REVIEW-2）とユーザーの所見（地形の造形が荒い・遮蔽による影の落ち方の質が低い）から、ユーザーの順（空と霞 → 遮蔽 → 地形の形 → 植物 → 地面 → 建物）の前半として足した。Sol の批評（写真との比は撮影時の処理を含むので合否にしない・遮蔽の撮影は岩と株を残す・参照の描き直しを項目にする・大きな項目は先に分ける）を反映した。 時間の見積もり: 全組の撮影 約 18 分（-Build で +3〜6 分）、共通の照明の組 約 30 分、6 視点 約 8 分。75 分に近いので、撮影は台本でまとめて流し、待つ間に記録を書く。 壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える（未達のまま DONE にしない）。20 分を超える Blender・Cycles の描画は反復の外で起動して BLOCKED で待つ（ログに START と `END ... EXIT=` を書き、入力のハッシュ・出力先を blocked の理由に書く。終わったら親が todo に戻す。その間は GPU を使う別の処理を重ねない）。
+- notes: 2026-10-22 親が確認 2（SCN-WL-REVIEW-2）とユーザーの所見（地形の造形が荒い・遮蔽による影の落ち方の質が低い）から、ユーザーの順（空と霞 → 遮蔽 → 地形の形 → 植物 → 地面 → 建物）の前半として足した。Sol の批評（写真との比は撮影時の処理を含むので合否にしない・遮蔽の撮影は岩と株を残す・参照の描き直しを項目にする・大きな項目は先に分ける）を反映した。 時間の見積もり: 全組の撮影 約 18 分（-Build で +3〜6 分）、共通の照明の組 約 30 分、6 視点 約 8 分。75 分に近いので、撮影は台本でまとめて流し、待つ間に記録を書く。 壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える（未達のまま DONE にしない）。20 分を超える Blender・Cycles の描画は反復の外で起動して BLOCKED で待つ（ログに START と `END ... EXIT=` を書き、入力のハッシュ・出力先を blocked の理由に書く。終わったら親が todo に戻す。その間は GPU を使う別の処理を重ねない）。 2026-10-23（親）: 反復 8 の BLOCKED（株の根元の層 1.2504 だけが範囲の外）を推奨の案 1 で解いた。SCN-WL-PLANT-ROOT-OCCLUSION の後に回し、verify を全部（8 組・判定・共通の照明の組・6 視点）回し直す。株の根元はユーザーの所見の 1 つなので、範囲から外す案 2 は採らない。
 
 ## SCN-WL-ROCK-LOD-SHADOW: 崖錐の岩の面の細かな太陽の影を、岩の形の細かさ（LOD）で Cycles に合わせる
 - status: todo
