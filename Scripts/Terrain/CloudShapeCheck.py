@@ -85,6 +85,26 @@ def remap(image, xs, ys, interpolation, border):
                      borderMode=cv2.BORDER_CONSTANT, borderValue=border)
 
 
+def bilinear_taps_invalid(sample_x, sample_y, sky):
+    """双線形の標本が使う画素（重みが 0 でない物）の全部を調べ、画面の外を含むか・空の外を含むかを返す。
+
+    画面の外の値や空の外の 0 を補間に混ぜた標本は、閾値の交差を作り得るので交差に使わない。
+    """
+    height, width = sky.shape
+    x0 = np.floor(sample_x)
+    y0 = np.floor(sample_y)
+    x1 = np.where(sample_x > x0, x0 + 1.0, x0)
+    y1 = np.where(sample_y > y0, y0 + 1.0, y0)
+    off_screen = (x0 < 0) | (x1 >= width) | (y0 < 0) | (y1 >= height)
+    not_sky = np.zeros(sample_x.shape, dtype=bool)
+    for tap_y in (y0, y1):
+        for tap_x in (x0, x1):
+            row = np.clip(tap_y, 0, height - 1).astype(np.int64)
+            column = np.clip(tap_x, 0, width - 1).astype(np.int64)
+            not_sky |= ~sky[row, column]
+    return off_screen, not_sky & ~off_screen
+
+
 def measure_edges(opacity, sky, labels, counted, upper):
     """塊の外周の画素から、不透明度の勾配の向きに 0.1 から上の閾値（塊ごと）まで上がる距離を測る。
 
@@ -92,7 +112,6 @@ def measure_edges(opacity, sky, labels, counted, upper):
     勾配の向きへ進んで上の閾値に届く位置を、0.25 画素の歩の双線形の標本と線形の補間で求め、その差を幅とする。
     その区間がほかの塊・画面の外・空の外（地形か仰角の下限より下）を通る縁、64 画素の内に閾値に届かない縁は測れない縁。
     """
-    height, width = opacity.shape
     counted_mask = counted[labels]
     eroded = cv2.erode(counted_mask.astype(np.uint8), np.ones((3, 3), np.uint8), borderType=cv2.BORDER_CONSTANT,
                        borderValue=0)
@@ -117,19 +136,18 @@ def measure_edges(opacity, sky, labels, counted, upper):
     sample_x = xs[:, None] + gx[:, None] * steps[None, :]
     sample_y = ys[:, None] + gy[:, None] * steps[None, :]
     values = remap(opacity.astype(np.float32), sample_x, sample_y, cv2.INTER_LINEAR, -1.0).astype(np.float64)
-    near_x = np.floor(sample_x + 0.5)
-    near_y = np.floor(sample_y + 0.5)
-    outside = (near_x < 0) | (near_x >= width) | (near_y < 0) | (near_y >= height)
+    # 補間に使う 4 画素のどれかが画面の外か空の外なら、その標本は交差に使わず、区間に入れば測れない縁にする
+    outside, outside_sky = bilinear_taps_invalid(sample_x, sample_y, sky)
+    invalid = outside | outside_sky
     sample_labels = remap(labels.astype(np.float32), sample_x, sample_y, cv2.INTER_NEAREST, -1.0).astype(np.int64)
-    sample_sky = remap(sky.astype(np.float32), sample_x, sample_y, cv2.INTER_NEAREST, 0.0) > 0.5
     own = labels[ys, xs]
     other = (sample_labels > 0) & (sample_labels != own[:, None])
     index = np.arange(steps.size)[None, :]
 
-    below = (values < EDGE_LOW) & (index <= center) & ~outside
+    below = (values < EDGE_LOW) & (index <= center) & ~invalid
     has_low = below.any(axis=1)
     low_index = np.where(has_low, steps.size - 1 - np.argmax(below[:, ::-1], axis=1), 0)
-    above = (values >= upper[own][:, None]) & (index > low_index[:, None]) & ~outside
+    above = (values >= upper[own][:, None]) & (index > low_index[:, None]) & ~invalid
     has_high = above.any(axis=1)
     high_index = np.where(has_high, np.argmax(above, axis=1), steps.size - 1)
     span_end = np.maximum(high_index, center)
@@ -139,7 +157,7 @@ def measure_edges(opacity, sky, labels, counted, upper):
     span_back = np.where(has_low[:, None], in_span, (index <= center) & in_span)
     hit_other = (other & span_back).any(axis=1)
     hit_screen = (outside & span_back).any(axis=1)
-    hit_outside_sky = (~sample_sky & ~outside & span_back).any(axis=1)
+    hit_outside_sky = (outside_sky & span_back).any(axis=1)
 
     rows = np.arange(xs.size)
     low_value = values[rows, low_index]

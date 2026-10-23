@@ -7564,3 +7564,10 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 証拠（`.harness/runs/20261023-124311/`）: `verify-SCN-WL-CLOUD-SHAPE-METRIC-1.txt`（selftest result=pass EXIT=0）・`-2.txt`（`--cloud-shape --engine ... --verify` result=pass inputs_current=1 EXIT=0）・`aux-SCN-WL-CLOUD-SHAPE-METRIC-engine-expect.txt`（今の cloud_sky を定義で判定 result=fail の 6 行）・`aux-SCN-WL-CLOUD-SHAPE-METRIC-fetch.txt`（取得の記録）。開いた画: `scene-capture/SCN-WL-CLOUD-OPACITY-AOV/cloud_shape_cloud_sky.png`・`cloud_shape_ref_far_01.png`、`Assets/Reference/SkySamples/masks/*.png`
 - Next: TASKS.md の次の未完（雲の形の調整は cloud-shape.json を変えずに通す）
 - Notes: 太陽を画面に入れる向き（0°・90°）は光輪が雲のマスクに入って塊がつながるので見本に使わない（太陽から 45° 以内も除く）。候補の kloppenheim_05・rustig_koppie の puresky は画角の中がほぼ晴れで外し、ファイルを消した。縁の幅は片側 64 画素までしか追わないので、ぼけた縁は小さめに出る。selftest 以外の新しい試験は足していない
+
+## 2026-10-24 SCN-WL-CLOUD-SHAPE-METRIC（run 20261023-124311 の反復 29、差し戻しの直し）
+- Done: 縁の幅で、双線形の標本が補間に使う 4 画素のどれかが画面の外か空の外なら閾値の交差に使わず、区間に入れば `screen_edge`・`outside_sky` にする形へ直した（前は画面の外の値 −1 を補間に混ぜ、丸めた位置で画面の内と判定して架空の 0.1 の交差を作っていた）。評価者の最小再現（全画素 0.35 以上）は measured 0・縁の幅は求まらない（screen_edge 46・no_gradient 270）になる
+- 値（変えていない撮影、定義も変えていない）: cloud_sky 縁の幅 48.44 → 49.39 画素・測れた縁 0.497 → 0.469（画面の端 189 → 522）、ref_far_01 縁の幅 10.83 → 11.03 画素・測れた縁 0.126 → 0.119。ほかの量は同じ。固定した定義では前と同じ 6 行で落ちる。`WastelandCloudShape.md` の表と縁の幅の説明を直した
+- 証拠（`.harness/runs/20261023-124311/`）: `verify-SCN-WL-CLOUD-SHAPE-METRIC-3.txt`（selftest result=pass、既知の幅 20 画素を 19.9996 画素 EXIT=0）・`-4.txt`（`--cloud-shape --engine ... --verify` result=pass inputs_current=1 EXIT=0）・`aux-SCN-WL-CLOUD-SHAPE-METRIC-engine-expect-2.txt`（今の cloud_sky を定義で判定 result=fail の 6 行）。開いた画: `scene-capture/SCN-WL-CLOUD-OPACITY-AOV/cloud_shape_cloud_sky.png`・`cloud_shape_ref_far_01.png`（地形と画面の端に接する縁が赤、穴の縁が緑）
+- Next: TASKS.md の次の未完（雲の形の調整は cloud-shape.json を変えずに通す）
+- Notes: 新しい試験は足していない
