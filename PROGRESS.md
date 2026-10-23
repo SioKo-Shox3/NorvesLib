@@ -7316,3 +7316,14 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 開いた画（`scene-capture/SCN-INTERIOR-ROOM/`）: overview は床に窓の桟の格子の日だまりが長く伸び、北のレンガの壁に斜めの日だまりと植木鉢の葉の影、東の壁にも日が届く。window は逆光の窓 3 つと床に映る椅子の脚（SSR）。corner は奥の南の隅の本棚が照り返しで見え、南の壁に日だまり
 - Next: TASKS.md の次の未完
 - Notes: 撮影に見える欠陥のうち 3 つはエンジン（Library）側の原因で、この項目の paths の外なので直していない（NEXT_FINDINGS に記録）。(1) 日陰の床が青白く、window では床の手前が白く光る: 鏡面の環境光が空の前計算をそのまま足し、室内でも遮られない（RTGI の床の空の見え方は 2〜3 %、`scene-capture/SCN-INTERIOR-ROOM-aov`）。(2) 漆喰の面のざらつき: 撮影の 60 フレームでは RTGI の時間の蓄積が足りない（300 フレームで大きく減る、`SCN-INTERIOR-ROOM-f300`）。(3) 単位のアルベドでも当たりの反射率は 99 百分位で平均より 1.2〜2.5 倍（ラグの赤は約 5 倍）明るい。撮影は既定の 1280×720 で、1920×1080 の比較画像とパストレースの正解はこの項目の verify に無いので撮っていない。新しい試験は足していない（verify の撮影と周回が確かめる）
+
+## 2026-10-23 SCN-INTERIOR-ROOM（run 20261022-173753 の反復 39、BLOCKED）
+- Done: 差し戻し（1920×1080 の写真との比較画像と同じ視点のパストレースの正解が無い）に応えて、`Scripts/InteriorLightReference.py` を足した。`--render` は部屋・材質（同じ Poly Haven の画像・単位のアルベド × 倍率・粗さ）・家具 8 点（同じ GLB・置き場所）・太陽（高さ 15°・方位 240°、SkyAtmosphere.cpp と同じ式の透過率を掛けた照度 53260/39320/23973 lux、視直径 0.536°）を Blender Cycles で組み直し、エンジンの撮影の `<視点>.aov.json` のカメラで 1024 サンプル（OIDN）で描く。空は Blender の多重散乱の空（太陽の円盤なし）を、エンジンの撮影の窓の外の空の画素の輝度の比の中央値で倍した（倍率 663.7。lm/W の 683 に近く、空の強さはほぼ同じ）。`--compare` はエンジンの HDR と Cycles に同じ露出と表示変換（DisplayTransform.py、エンジンの `<視点>.hdr.json`）を掛け、上にエンジン・Cycles、下に手本の写真 2 枚（作者とライセンスつき）を並べた 1920×1080 の比較画像と、領域ごとの輝度の比と色を書く
+- 証拠（`.harness/runs/20261022-173753/`）:
+  - `aux-SCN-INTERIOR-ROOM-ref-capture-hdr.txt`: 1920×1080・`-Hdr -Aov` の撮影 result=pass・EXIT=0（`scene-capture/SCN-INTERIOR-ROOM-ref/`）。`-GameArgs atmosphere-dump` を足すと室内では FRAME_CAPTURE_FAILED status=SourceUnavailable で撮れない（`aux-...-ref-capture.txt`・`-ref-capture-atmos.txt`）ので、空は上の倍率で合わせた
+  - `aux-SCN-INTERIOR-ROOM-cycles-render.txt`: 3 視点 result=pass・EXIT=0・家具 8 点・1 視点 33〜39 秒
+  - `aux-SCN-INTERIOR-ROOM-compare.txt`: result=pass・EXIT=0。エンジン ÷ Cycles の輝度の中央値は overview で日向の床 1.54・日陰の床 2.46・日陰の壁 1.31・天井 1.71、window で 1.63・16.3・1.25・2.00、corner で 1.80・4.97・1.50・1.55。日陰の床の青と緑の比はエンジン 1.23・Cycles 0.71（overview）
+  - `verify-SCN-INTERIOR-ROOM-4.txt`: Debug の Game のビルド EXIT=0（Game は変えていない）
+  - 比較画像 `scene-capture/SCN-INTERIOR-ROOM-ref/compare/{default,window,corner}.compare.png` を開いた: 窓の格子の日だまりの形・位置、レンガの壁と東の壁の日だまり、家具の影はエンジンと Cycles で一致する。Cycles は艶のある濃い木の床に窓と日だまりが暖色で映り、奥の隅は暗く暖かい照り返しで、window_01・window_02 の手本に近い。エンジンは日陰の床が青白く、window では床の手前が白く光り、漆喰の壁と天井に粗い粒が残って明るすぎる
+- Notes: エンジンの日向の床（AOV のアルベド 0.1〜0.35 の画素）は直射の拡散の期待値に対して R 1.64・G 2.17・B 4.80 倍、Cycles は 1.36・1.72・3.24 倍で、エンジンだけにほぼ無彩色の約 300 cd/m² が足される（遮られない空の鏡面反射と合う量）。差の原因は反復 38 の NEXT_FINDINGS の 3 点（鏡面の環境光が室内で遮られない・RTGI の時間の蓄積・RTGI の当たりの反射率）で、どれも Library とシェーダーの改修が要りこの項目の paths の外。判断を `blocked/SCN-INTERIOR-ROOM.md` に書いた。verify の撮影と周回は Game を変えていないので回していない。新しい試験は足していない
+- Next: 人の判断待ち（blocked/SCN-INTERIOR-ROOM.md）
