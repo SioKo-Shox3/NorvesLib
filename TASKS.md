@@ -2563,13 +2563,13 @@
 - notes: 2026-10-22 親が確認 2（SCN-WL-REVIEW-2）とユーザーの所見（地形の造形が荒い・遮蔽による影の落ち方の質が低い）から、ユーザーの順（空と霞 → 遮蔽 → 地形の形 → 植物 → 地面 → 建物）の前半として足した。Sol の批評（写真との比は撮影時の処理を含むので合否にしない・遮蔽の撮影は岩と株を残す・参照の描き直しを項目にする・大きな項目は先に分ける）を反映した。 危険地帯（RTGI・描画の既定）。時間の見積もり: 回帰の before・after 各 7〜9 分、ビルド 3〜6 分、全組の撮影 約 18 分、計測 約 3 分。 壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える（未達のまま DONE にしない）。20 分を超える Blender・Cycles の描画は反復の外で起動して BLOCKED で待つ（ログに START と `END ... EXIT=` を書き、入力のハッシュ・出力先を blocked の理由に書く。終わったら親が todo に戻す。その間は GPU を使う別の処理を重ねない）。 2026-10-23（親）: 反復 37 の時間切れの BLOCKED（判断は不要）を todo に戻した。次の反復は `blocked/resolved/SCN-WL-OCCLUSION-FIX-reverify.md` の再開の手順（verify の回し直し・直す前後の GPU 時間・回帰・岩の面を並べた画の確かめ）だけを行って閉じる。
 
 ## SCN-GOLDEN-REVERIFY: 10 月 22 日の後に落ち始めた基準画像の検査の原因を特定し、再承認か直しで通す
-- status: done
+- status: doing
 - after: SCN-WL-REVIEW-2
 - done-when: 基準画像の検査（`Docs/RenderingValidation/GoldenBaselines.md`。Indoor・Outdoor）は SCN-WL-LIGHT-FINAL（2ae72946）で両方 Passed だったが、その後のどこかから落ちる（SCN-WL-OCCLUSION-FIX の記録: Indoor 8929 画素・Outdoor 20356 画素、HEAD の版でも同じ値。`aux-SCN-WL-OCCLUSION-FIX-golden*.txt`）。差の画を開き、差の場所・大きさ・色から原因の変更を特定する（候補: 表示の 8 bit の丸めのディザ c12ee89b、材質ギャラリーの sRGB の読み 51835bcd、ジオメトリのプールの塊 1f9cb28c・要求の列 4118d33d、雲の式 57af3dff・26771864、RTGI の変更 6063068e・052bac84・06a9a98a、夜の集落の RenderingCoordinator 3ec40762・9bbd5abd、最も細かい LOD の容量 15b775f5）。疑わしい変更だけを一時的に戻した版で検査を回して確かめてよい（戻しはコミットしない。作業ツリーを元に戻してから終える）。差が意図した変更だけによるなら、`GoldenBaselines.md` の手順（`UpdateRenderingGoldenBaselines.ps1 -GenerateCandidate` → `-PublishApprovedCandidate`）で再承認し、根拠（どの変更の何の差か・新しい値が物理的に妥当か）をコミット本文と `Docs/RenderingValidation/R1Acceptance.md` に書く。不具合による差なら、その変更を直す（範囲の外なら直しの項目を足して BLOCKED）。合否: 基準画像の検査が Passed。閾値は変えない。
-- verify: `cmake --build build --config Debug -- /m:1`
+- verify: `cmake --build build --config Debug --target RenderingGoldenIndoorVulkanTest RenderingGoldenOutdoorVulkanTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure -R "^(RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
 - paths: Test/Core/Rendering/Baselines, Docs/RenderingValidation, Scripts, Library/Core/Private/Rendering, Library/Core/Public/Rendering, Assets/Shaders, Game, TASKS.md, PROGRESS.md
-- notes: 危険地帯（基準画像の再承認）。2026-10-23 親が、SCN-WL-OCCLUSION-FIX・SCN-WL-SUN-SHADOW-FIX の反復が「前からの差で落ちる」と記録したまま原因を追っていなかったので足した。後の描画の項目が基準画像を守りにできるよう、ほかの荒野の項目より先に回す。基準画像の承認は親に任されている（差の原因と物理的な妥当性を確かめて記録する）。時間の見積もり: Debug の全体のビルド 5〜10 分、検査 1 回 3〜5 分、戻した版の試し 1 回 10〜15 分 × 2〜3。壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える。
+- notes: 危険地帯（基準画像の再承認）。2026-10-23 親が、SCN-WL-OCCLUSION-FIX・SCN-WL-SUN-SHADOW-FIX の反復が「前からの差で落ちる」と記録したまま原因を追っていなかったので足した。後の描画の項目が基準画像を守りにできるよう、ほかの荒野の項目より先に回す。基準画像の承認は親に任されている（差の原因と物理的な妥当性を確かめて記録する）。時間の見積もり: Debug の全体のビルド 5〜10 分、検査 1 回 3〜5 分、戻した版の試し 1 回 10〜15 分 × 2〜3。壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える。 2026-10-23（親）: 反復 4 の再検証は verify の 1 本目（Debug の全体のビルド）が、基準画像と関係の無い試験の対象（AssetManifestReloadBridge 系が Game のソースを個別に並べ、CameraScriptCapture・MultiViewCapture・WastelandRoutine などの追加と stb の include の更新が漏れている）の前からの壊れで落ちた。verify を基準画像の 2 つの試験の対象だけのビルドに直した（親の計画の誤り）。全体のビルドの壊れは SCN-BUILD-ALL-TESTS に分けた。次の反復は verify を回し直して閉じる（再承認 8d5ca7c9 はそのまま）。
 
 ## SCN-WL-SUN-SHADOW-FIX: 太陽の影の位置・縁・漏れを Cycles に合わせる
 - status: todo
@@ -2791,6 +2791,14 @@
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -OutDir .harness/runs/startup-capture/SCN-FIX-SKY-BANDING`
 - paths: Assets/Shaders, Library/Core/Private/Rendering, Library/Core/Public/Rendering, Docs/RenderingValidation, Test/Core/Rendering, Scripts, TASKS.md, PROGRESS.md
 - notes: 2026-10-14 SCN-MEGA-ACCEPT-1M の撮影で見つけた（前からある見た目の欠陥も直す方針）。描画を変える項目なので起動画面 default の比較を入れた。 2026-10-23 SCN-WL-CLOUD-BANDING の反復 22: 原因は同じ（表示の 8 bit の丸めにディザが無い。空の列が 1 段ずつの平らな帯）で、表示の Blit のディザで直した。同じ Game.exe で Blit だけを戻した前の撮影と比べ、mega-stress の overview の上 350 行の平らな帯の長さの平均 7.263 → 2.836・95 % 点 10 → 7、隣の差が 1 段以下の割合 1.000 → 0.999（最大 2。雑音で隣が逆の向きへ丸まった所）。記録は WastelandCloudRef.md の SCN-WL-CLOUD-BANDING の節。「隣の差が 1 段以下」をディザの 2 段の 0.1 % を許す形に読み替えて閉じるかは計画が決める。
+
+## SCN-BUILD-ALL-TESTS: Debug の全体のビルドで落ちる試験の対象（Game のソースの一覧の更新漏れ）を直す
+- status: todo
+- after: SCN-GOLDEN-REVERIFY
+- done-when: `cmake --build build --config Debug -- /m:1`（全体）が、試験の対象の一部で落ちる（2026-10-23 の SCN-GOLDEN-REVERIFY の再検証 `.harness/runs/20261023-124311/recheck-SCN-GOLDEN-REVERIFY-4-1.txt`）: `Rendering3DTestRoutine.cpp` の `stb_image.h` が見つからない（C1083）、`GameApplicationHandler.obj` から CameraScriptCapture・GeometrySettleTrace・MultiViewCapture・WastelandHide::Parse・WastelandRoutine などが未解決（LNK2019）。Game のソースを個別に並べている試験の対象の一覧と include の道を、Game の今のソースに合わせる（同じ一覧を二重に持たない形にできるならそうする。試験を増やさない・消さない）。合否: Debug の全体のビルドが EXIT=0。ctest は回さない（落ちる対象のビルドが通ることだけを見る。ローカルの試験の全走は重いので、ユーザーの方針どおり関係の試験だけ）。
+- verify: `cmake --build build --config Debug -- /m:1`
+- paths: Test, CMakeLists.txt, Game/CMakeLists.txt, cmake, TASKS.md, PROGRESS.md
+- notes: 2026-10-23 親が SCN-GOLDEN-REVERIFY の再検証の落ちから足した。全体のビルドは 10〜20 分かかる見込み（1 コマンド 10 分の再検証の上限に当たるなら、verify を落ちていた対象の名前を並べたビルドに分ける）。壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える。
 
 ## SCN-ACCEPT: ランチャーと全シーンの受入れを記録する
 - status: todo
