@@ -47,6 +47,9 @@ namespace Game::GameModes
     /// 材質ギャラリー。石の床の展示場に Poly Haven の材質を台座の板と球で並べ、金属度 × 粗さの球の格子を置く
     inline constexpr NorvesLib::Core::GameMode::GameModeId MaterialGallery = "MaterialGallery"_id;
 
+    /// 室内の光。板張りの床と漆喰の壁の部屋に大きな窓から低い夕日を差し込ませ、生成した家具を置く
+    inline constexpr NorvesLib::Core::GameMode::GameModeId InteriorLight = "InteriorLight"_id;
+
     /// 仮想化ジオメトリの負荷シーン（開発ビルドだけランチャーに出る）。多種のメッシュの個別 Entity を置く
     inline constexpr NorvesLib::Core::GameMode::GameModeId MegaStress = "MegaStress"_id;
 

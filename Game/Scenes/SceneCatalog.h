@@ -250,6 +250,25 @@ namespace Game::Scenes
         "Assets/Textures/PolyHaven/stone_floor/stone_floor_diff_4k.jpg",
         "Assets/Textures/PolyHaven/castle_brick_01/castle_brick_01_disp_4k.jpg",
     };
+    /// 室内の光のシーンの視点。部屋は 12 × 8 × 5 m で、床の南西の角が原点、x が窓の壁に沿って北、z が窓の壁（西、z 0）から
+    /// 部屋の内側（東）、y が上（Docs/RenderingValidation/InteriorLightReference.md の「視点」）。夕日は西南西の高さ 15° から
+    /// x 2.5・6.0・9.5 の 3 つの窓に差す。座標は +Z 向きが Yaw 0（Yaw 90 が -X 向き）
+    inline constexpr SceneViewDescriptor kInteriorLightViews[] = {
+        // 南の奥の隅寄りの目の高さから、北東の (12, 1.0, 2.0) へ、床の日だまりの列・赤いラグとソファ・照らされた北のレンガの壁を
+        // 見渡す視点。起動時の既定
+        {"overview", SceneViewKind::FreePose, -113.2f, -2.8f, 0.0f, {0.8f, 1.6f, 6.8f}},
+        // 奥の壁の前の中ほどから窓の壁へ向かう逆光の視点。窓の白飛びと日陰の壁・床の映り込みの境を見る
+        {"window", SceneViewKind::FreePose, 180.0f, 5.0f, 0.0f, {6.0f, 1.4f, 7.6f}},
+        // 北の窓の前から奥の南の隅 (0, 1.2, 8) へ向かい、本棚の暗部の照り返しと天井・梁を見る視点
+        {"corner", SceneViewKind::FreePose, 56.3f, 6.0f, 0.0f, {9.0f, 1.5f, 2.0f}},
+    };
+    /// 室内の光のシーンの id と、読み込めないとシーンが成り立たない資産（床の単位のアルベドと赤いラグの GLB）
+    inline constexpr const char *kInteriorLightSceneId = "interior-light";
+    inline constexpr const char *kInteriorLightRequiredAssets[] = {
+        "Assets/Textures/PolyHaven/wood_floor/wood_floor_diff_unit_4k.png",
+        "Assets/Models/Generated/rug/rug_albedo_unit.png",
+        "Assets/Models/Generated/rug/rug.glb",
+    };
     /// 確認用の sandbox の id。シーンの一覧に載るのは開発ビルドだけ
     inline constexpr const char *kSandboxSceneId = "sandbox";
 
@@ -371,6 +390,20 @@ namespace Game::Scenes
             kMaterialGalleryRequiredAssets,
             sizeof(kMaterialGalleryRequiredAssets) / sizeof(kMaterialGalleryRequiredAssets[0]),
             "powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/FetchPolyHavenTextures.ps1 -Set gallery",
+            nullptr,
+        },
+        {
+            kInteriorLightSceneId,
+            "室内の光",
+            "板張りの床と漆喰の壁の部屋に、大きな窓から低い夕日が差し込む。生成した家具を置き、窓の日だまり・照り返し・赤いラグの色移り・床の映り込みを見る。",
+            "Assets/Launcher/Thumbnails/interior-light.png",
+            Game::GameModes::InteriorLight,
+            kInteriorLightViews,
+            sizeof(kInteriorLightViews) / sizeof(kInteriorLightViews[0]),
+            kInteriorLightRequiredAssets,
+            sizeof(kInteriorLightRequiredAssets) / sizeof(kInteriorLightRequiredAssets[0]),
+            "powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/FetchPolyHavenTextures.ps1 -Set interior; "
+            "python Scripts/MakeInteriorLightAlbedo.py",
             nullptr,
         },
 #if NORVES_BUILD_DEVELOPMENT

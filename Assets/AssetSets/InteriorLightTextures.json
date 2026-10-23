@@ -1,0 +1,153 @@
+{
+  "version": 1,
+  "name": "InteriorLightTextures",
+  "package_root": "Cooked/InteriorLight",
+  "default_variant": "default",
+  "cook_assets": true,
+  "textures": [
+    {
+      "logical_path": "Assets/Textures/PolyHaven/wood_floor/wood_floor_nor_dx_4k.jpg",
+      "source_path": "Assets/Textures/PolyHaven/wood_floor/wood_floor_nor_dx_4k.jpg",
+      "cook_usage": "normal",
+      "package_name": "PolyHaven/wood_floor/wood_floor_nor_dx.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/wood_floor/wood_floor_nor_dx_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/wood_floor/wood_floor_orm_4k",
+      "cook_usage": "orm",
+      "orm_ao": "Assets/Textures/PolyHaven/wood_floor/wood_floor_ao_4k.jpg",
+      "orm_roughness": "Assets/Textures/PolyHaven/wood_floor/wood_floor_rough_4k.jpg",
+      "package_name": "PolyHaven/wood_floor/wood_floor_orm.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/wood_floor/wood_floor_orm_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/beige_wall_001/beige_wall_001_diff_4k.jpg",
+      "source_path": "Assets/Textures/PolyHaven/beige_wall_001/beige_wall_001_diff_4k.jpg",
+      "cook_usage": "albedo",
+      "package_name": "PolyHaven/beige_wall_001/beige_wall_001_diff.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/beige_wall_001/beige_wall_001_diff_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/beige_wall_001/beige_wall_001_nor_dx_4k.jpg",
+      "source_path": "Assets/Textures/PolyHaven/beige_wall_001/beige_wall_001_nor_dx_4k.jpg",
+      "cook_usage": "normal",
+      "package_name": "PolyHaven/beige_wall_001/beige_wall_001_nor_dx.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/beige_wall_001/beige_wall_001_nor_dx_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/beige_wall_001/beige_wall_001_orm_4k",
+      "cook_usage": "orm",
+      "orm_ao": "Assets/Textures/PolyHaven/beige_wall_001/beige_wall_001_ao_4k.jpg",
+      "orm_roughness": "Assets/Textures/PolyHaven/beige_wall_001/beige_wall_001_rough_4k.jpg",
+      "package_name": "PolyHaven/beige_wall_001/beige_wall_001_orm.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/beige_wall_001/beige_wall_001_orm_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/red_brick/red_brick_nor_dx_4k.jpg",
+      "source_path": "Assets/Textures/PolyHaven/red_brick/red_brick_nor_dx_4k.jpg",
+      "cook_usage": "normal",
+      "package_name": "PolyHaven/red_brick/red_brick_nor_dx.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/red_brick/red_brick_nor_dx_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/red_brick/red_brick_orm_4k",
+      "cook_usage": "orm",
+      "orm_ao": "Assets/Textures/PolyHaven/red_brick/red_brick_ao_4k.jpg",
+      "orm_roughness": "Assets/Textures/PolyHaven/red_brick/red_brick_rough_4k.jpg",
+      "package_name": "PolyHaven/red_brick/red_brick_orm.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/red_brick/red_brick_orm_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/dark_wood/dark_wood_nor_dx_4k.jpg",
+      "source_path": "Assets/Textures/PolyHaven/dark_wood/dark_wood_nor_dx_4k.jpg",
+      "cook_usage": "normal",
+      "package_name": "PolyHaven/dark_wood/dark_wood_nor_dx.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/dark_wood/dark_wood_nor_dx_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/dark_wood/dark_wood_orm_4k",
+      "cook_usage": "orm",
+      "orm_ao": "Assets/Textures/PolyHaven/dark_wood/dark_wood_ao_4k.jpg",
+      "orm_roughness": "Assets/Textures/PolyHaven/dark_wood/dark_wood_rough_4k.jpg",
+      "package_name": "PolyHaven/dark_wood/dark_wood_orm.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/dark_wood/dark_wood_orm_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/wood_floor/wood_floor_diff_unit_4k.png",
+      "source_path": "Assets/Textures/PolyHaven/wood_floor/wood_floor_diff_unit_4k.png",
+      "cook_usage": "albedo",
+      "package_name": "PolyHaven/wood_floor/wood_floor_diff_unit.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/wood_floor/wood_floor_diff_unit_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/red_brick/red_brick_diff_unit_4k.png",
+      "source_path": "Assets/Textures/PolyHaven/red_brick/red_brick_diff_unit_4k.png",
+      "cook_usage": "albedo",
+      "package_name": "PolyHaven/red_brick/red_brick_diff_unit.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/red_brick/red_brick_diff_unit_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/dark_wood/dark_wood_diff_unit_4k.png",
+      "source_path": "Assets/Textures/PolyHaven/dark_wood/dark_wood_diff_unit_4k.png",
+      "cook_usage": "albedo",
+      "package_name": "PolyHaven/dark_wood/dark_wood_diff_unit.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/dark_wood/dark_wood_diff_unit_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Models/Generated/wooden_table/wooden_table_albedo_unit.png",
+      "source_path": "Assets/Models/Generated/wooden_table/wooden_table_albedo_unit.png",
+      "cook_usage": "albedo",
+      "package_name": "Generated/wooden_table/wooden_table_albedo_unit.nvpkg",
+      "entry_name": "Assets/Models/Generated/wooden_table/wooden_table_albedo_unit.nvtex"
+    },
+    {
+      "logical_path": "Assets/Models/Generated/wooden_chair/wooden_chair_albedo_unit.png",
+      "source_path": "Assets/Models/Generated/wooden_chair/wooden_chair_albedo_unit.png",
+      "cook_usage": "albedo",
+      "package_name": "Generated/wooden_chair/wooden_chair_albedo_unit.nvpkg",
+      "entry_name": "Assets/Models/Generated/wooden_chair/wooden_chair_albedo_unit.nvtex"
+    },
+    {
+      "logical_path": "Assets/Models/Generated/bookshelf/bookshelf_albedo_unit.png",
+      "source_path": "Assets/Models/Generated/bookshelf/bookshelf_albedo_unit.png",
+      "cook_usage": "albedo",
+      "package_name": "Generated/bookshelf/bookshelf_albedo_unit.nvpkg",
+      "entry_name": "Assets/Models/Generated/bookshelf/bookshelf_albedo_unit.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/forrest_ground_01/forrest_ground_01_diff_unit_4k.png",
+      "source_path": "Assets/Textures/PolyHaven/forrest_ground_01/forrest_ground_01_diff_unit_4k.png",
+      "cook_usage": "albedo",
+      "package_name": "PolyHaven/forrest_ground_01/forrest_ground_01_diff_unit.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/forrest_ground_01/forrest_ground_01_diff_unit_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Models/Generated/sofa/sofa_albedo_unit.png",
+      "source_path": "Assets/Models/Generated/sofa/sofa_albedo_unit.png",
+      "cook_usage": "albedo",
+      "package_name": "Generated/sofa/sofa_albedo_unit.nvpkg",
+      "entry_name": "Assets/Models/Generated/sofa/sofa_albedo_unit.nvtex"
+    },
+    {
+      "logical_path": "Assets/Models/Generated/potted_plant/potted_plant_albedo_unit.png",
+      "source_path": "Assets/Models/Generated/potted_plant/potted_plant_albedo_unit.png",
+      "cook_usage": "albedo",
+      "package_name": "Generated/potted_plant/potted_plant_albedo_unit.nvpkg",
+      "entry_name": "Assets/Models/Generated/potted_plant/potted_plant_albedo_unit.nvtex"
+    },
+    {
+      "logical_path": "Assets/Models/Generated/floor_lamp/floor_lamp_albedo_unit.png",
+      "source_path": "Assets/Models/Generated/floor_lamp/floor_lamp_albedo_unit.png",
+      "cook_usage": "albedo",
+      "package_name": "Generated/floor_lamp/floor_lamp_albedo_unit.nvpkg",
+      "entry_name": "Assets/Models/Generated/floor_lamp/floor_lamp_albedo_unit.nvtex"
+    },
+    {
+      "logical_path": "Assets/Models/Generated/rug/rug_albedo_unit.png",
+      "source_path": "Assets/Models/Generated/rug/rug_albedo_unit.png",
+      "cook_usage": "albedo",
+      "package_name": "Generated/rug/rug_albedo_unit.nvpkg",
+      "entry_name": "Assets/Models/Generated/rug/rug_albedo_unit.nvtex"
+    }
+  ]
+}

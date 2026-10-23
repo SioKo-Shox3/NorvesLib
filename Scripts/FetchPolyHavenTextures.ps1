@@ -18,6 +18,8 @@
 # -Set gallery を付けると、材質ギャラリー（Game の material-gallery。Game/GameModes/MaterialGallery/MaterialGalleryRoutine.cpp の
 # kGalleryMaterials）が並べる Poly Haven の材質すべて（地面の区画・負荷用・荒野の組と、荒野の地形の候補の赤土の組）を、
 # 台座の板の視差に使う高さ（disp）を含む5枚で落とす。既にある4枚は MD5 が一致すれば落とし直さないので、足りない高さだけが増える。
+# -Set interior を付けると、室内の光のシーン（Game の interior-light。Game/GameModes/InteriorLight/InteriorLightRoutine.cpp の
+# 部屋の材質）の床・壁・梁の材質を、負荷用と同じ4枚（色・法線・粗さ・AO、4K）で落とす。焼く一覧は Assets/AssetSets/InteriorLightTextures.json。
 # -Set を省くと従来の地面の区画の組（既定）を落とす。-StressSet はどちらの -Set にも足せる。
 #
 # 終了コード: すべてそろえば0、どれかを落とせない・MD5が合わなければ1。
@@ -29,8 +31,8 @@ param(
     # 負荷モード用の材質の組も落とす
     [switch]$StressSet,
 
-    # 落とす組。startup = 起動画面の地面の区画（既定）、wasteland = 荒野のシーン、gallery = 材質ギャラリー
-    [ValidateSet('startup', 'wasteland', 'gallery')]
+    # 落とす組。startup = 起動画面の地面の区画（既定）、wasteland = 荒野のシーン、gallery = 材質ギャラリー、interior = 室内の光
+    [ValidateSet('startup', 'wasteland', 'gallery', 'interior')]
     [string]$Set = 'startup'
 )
 
@@ -99,10 +101,23 @@ $mapSuffixes = @{ Diffuse = 'diff'; nor_dx = 'nor_dx'; Rough = 'rough'; AO = 'ao
 # API の地図の名前 → 使う解像度と形式。見本の区画は高さも使い、負荷用は使わない。
 $swatchMaps = @('Diffuse', 'nor_dx', 'Rough', 'AO', 'Displacement')
 $stressMaps = @('Diffuse', 'nor_dx', 'Rough', 'AO')
+# 室内の光の部屋の材質: 樫の板張りの床・温かい白の漆喰（3 面の壁と天井）・赤いレンガ（北の端の壁）・濃い色の木（天井の梁と窓の枠）
+$interiorAssetIds = @(
+    'wood_floor',
+    'beige_wall_001',
+    'red_brick',
+    'dark_wood'
+)
+$interiorMode = $Set -eq 'interior'
 if ($Set -eq 'gallery')
 {
     # 材質ギャラリーは台座の板に視差を付けるので、負荷用と赤土の組も高さまで落とす
     $assetIds = @($startupAssetIds) + @($wastelandAssetIds) + @($wastelandCandidateAssetIds) + @($stressAssetIds)
+}
+elseif ($interiorMode)
+{
+    # 室内の光は高さを使わない（広い壁と床に視差を掛けない）ので、下で4枚の組にする
+    $assetIds = $interiorAssetIds
 }
 elseif ($Set -eq 'wasteland')
 {
@@ -112,7 +127,8 @@ else
 {
     $assetIds = $startupAssetIds
 }
-$targets = @($assetIds | ForEach-Object { [pscustomobject]@{ Id = $_; Maps = $swatchMaps } })
+$assetMaps = if ($interiorMode) { $stressMaps } else { $swatchMaps }
+$targets = @($assetIds | ForEach-Object { [pscustomobject]@{ Id = $_; Maps = $assetMaps } })
 if ($StressSet -and $Set -ne 'gallery')
 {
     $targets += @($stressAssetIds | ForEach-Object { [pscustomobject]@{ Id = $_; Maps = $stressMaps } })

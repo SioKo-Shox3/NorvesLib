@@ -48,6 +48,7 @@
 #include "GameModes/MegaBananas/MegaBananasMode.h"
 #include "GameModes/MegaStress/MegaStressMode.h"
 #include "GameModes/Sandbox/SandboxMode.h"
+#include "GameModes/InteriorLight/InteriorLightMode.h"
 #include "GameModes/MaterialGallery/MaterialGalleryMode.h"
 #include "GameModes/Wasteland/WastelandMode.h"
 #include "Scenes/SceneCatalog.h"
@@ -3708,7 +3709,8 @@ namespace Game
         const NorvesLib::Core::GameMode::GameModeId mode = pScene != nullptr ? pScene->Mode : Game::GameModes::Launcher;
         const bool bSwitchable = mode == Game::GameModes::Wasteland || mode == Game::GameModes::NightVillage ||
                                  mode == Game::GameModes::MegaBananas || mode == Game::GameModes::Sandbox ||
-                                 mode == Game::GameModes::MegaStress || mode == Game::GameModes::MaterialGallery;
+                                 mode == Game::GameModes::MegaStress || mode == Game::GameModes::MaterialGallery ||
+                                 mode == Game::GameModes::InteriorLight;
         if (viewNames.size() > 1 && !bSwitchable)
         {
             LOG_ERROR_F("CAPTURE_VIEWS_UNSUPPORTED scene=%s 実行中に視点を置き直せないシーンです（視点ごとに起動して撮る）",
@@ -3925,6 +3927,24 @@ namespace Game
                 -> Container::TUniquePtr<IGameMode>
             {
                 auto mode = MakeUnique<MaterialGalleryMode>();
+                mode->GetData().m_ViewName = viewName;
+                mode->GetData().m_CameraScriptPath = scriptPath;
+                mode->GetData().m_CameraPathTime = pathTime;
+                mode->GetData().m_bCameraPathPlay = bPathPlay;
+                mode->GetData().m_pPauseMenu = pauseMenu;
+                mode->GetData().m_pViewSwitch = viewSwitch;
+                mode->GetData().m_GetAssetSystem = getAssetSystem;
+                return mode;
+            });
+        // 室内の光。視点・台本は起動引数から渡す。テクスチャと家具のメッシュが焼いてあるかは AssetSystem で確かめる
+        stateMachine->Registry().Register(
+            InteriorLight,
+            [viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath, pathTime = m_CameraPathTime,
+             bPathPlay = m_bCameraPathPlay, pauseMenu = &m_PauseMenu, viewSwitch = &m_SceneViewSwitch,
+             getAssetSystem = [this]() { return GetAssetSystemSnapshot(); }](const GameModeParams&)
+                -> Container::TUniquePtr<IGameMode>
+            {
+                auto mode = MakeUnique<InteriorLightMode>();
                 mode->GetData().m_ViewName = viewName;
                 mode->GetData().m_CameraScriptPath = scriptPath;
                 mode->GetData().m_CameraPathTime = pathTime;
