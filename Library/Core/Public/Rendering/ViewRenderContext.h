@@ -577,6 +577,8 @@ namespace NorvesLib::Core::Rendering
         /** @brief FramePacketのRTGI有効化とTLAS完全性。 */
         bool bRTGIEnabled = true;
         bool bRTGITLASAvailable = false;
+        /** @brief RTGIの拡散の光線が影を落とさない不透明物体にも当たるか（FramePacket の同名の値）。 */
+        bool bRTGINonShadowCasterOcclusion = false;
         RTGIRayQueryCapability RTGICapability;
 
         /** @brief SnapshotScene未接続時に使用する空パラメータ値 */

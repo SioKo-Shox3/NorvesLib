@@ -296,3 +296,51 @@ git a7a44425、入力のハッシュ `BlenderOcclusionReference.py` c4db1e43…�
 
 重ね画像（`cycles/rocks-sky/occlusion_regions/contact_near.png`・`cycles/rocks-sun/occlusion_regions/contact_near.png`）を開いた。本描画の Cycles の HDR に
 目立つ雑音は無く、接する帯が岩の根元、漏れ（明るい赤）が大きな岩の地面への影に出る。verify の出力は `.harness/runs/20261022-173753/verify-SCN-WLR-OCCLUSION-CYCLES-1.txt`。
+
+## 直す原因（SCN-WL-OCCLUSION-FIX）
+
+最初の編集の前に、上の診断と本描画の値から直す原因を 1 つに決めた記録。判定日: 2026-10-23。
+
+| 候補 | 値 | 判断 |
+|---|---|---|
+| RT 用の形の差（崖錐の岩が RTGI の光線の形に無い） | 岩塊の接する帯のエンジン ÷ Cycles が 1.313（0〜30°・0〜10 m）・1.273（30〜60°・10〜50 m）。エンジンの比 0.98〜1.01 で接する帯がほとんど暗くならない。影を落とさない崖錐の岩（274965 個のうち 96 個以外）は TLAS に入っているが印が `NonShadowCaster` で、RTGI の光線（`ShadowCaster` だけを調べる）に当たらない（診断の順位 1） | **これを直す** |
+| 近い当たりの読み飛ばしの範囲 | 崖の溝 1.093（60° 以上・500 m 以上）・1.082（30〜60°）。合否の幅 0.85〜1.15 に既に入る。接する帯の画素の読み飛ばしは岩が光線に無いので測れない | 今は直さない（形の差を直した後に残る差で見直す） |
+| ノイズ取りが小さな遮蔽を消す | 遮られた所の空の分は生 → 時間の蓄積 → 空間のフィルタで −0.009 以内（診断の順位 3） | 原因ではない |
+
+- 効く必須の層は rocks-sky / contact_near の接する帯 `contact` の 0〜30°・0〜10 m と 30〜60°・10〜50 m の 2 層。株の根元（1.250）は株が RT のシーンに
+  そもそも無い別の原因で、この項目では直さない。崖の溝の層は前より悪くならないことだけを見る
+- 直し方: RTGI の拡散の光線（`DiffuseIndirect.comp` の `TraceDiffuseRay`）が、影を落とさない不透明物にも当たるようにする。影を落とすかは
+  直接光の影（VSM・RT の影・RTGI と DDGI の光源への影の光線）の印のまま変えない。影を落とさない物は荒野の崖錐の岩のほかにランチャーの
+  各シーン（mega-bananas のバナナ・rendering3dtest の電球と負荷の板・sandbox）にもあり、そちらの見た目を変えないよう、描画の設定
+  `RenderingCoordinator::SetRTGINonShadowCasterOcclusion` で荒野だけが入れる（既定は切）
+- 遮蔽済みの RTGI 全体に GTAO を掛ける形は二重の遮蔽になるので採らない。材質の AO は直接光にも拡散にも掛からないまま（`WastelandMaterialAO.md`）で、
+  光線が岩に当たって暗くなる分と二重には数えない
+- 合否（`Scripts/Terrain/ExpectSpecs/occlusion-fix.json`、`ReferenceCheck.py --occlusion --expect`）: 決めた 2 層のエンジン ÷ Cycles が 0.85〜1.15、
+  ほかの全層のエンジン ÷ Cycles の 1 からの離れが前（SCN-WLR-OCCLUSION-SETS の撮影）の値の 3 % を越えて増えない、対照の層のエンジンの Y の平均が
+  同じ画素で前の ±3 %
+
+### 直した結果
+
+全 8 組を直した Game.exe で撮り直し（`.harness/runs/scene-capture/SCN-WL-OCCLUSION-FIX`）、直しの前の撮影（SCN-WLR-OCCLUSION-SETS）と同じ参照・同じ領域の画素で比べた
+（`ReferenceCheck.py --occlusion ... --expect Scripts/Terrain/ExpectSpecs/occlusion-fix.json --verify` が `result=pass`。前後の表は撮影の置き場の `occlusion_expect.json`）。
+
+| 組 / 視点 | 領域 | 層 | 画素（くぼみ / 対照） | エンジン ÷ Cycles 前 → 後 | 判定 |
+|---|---|---|---|---|---|
+| rocks-sky / contact_near | contact | 0〜30°・0〜10 m | 79697 / 382548 | 1.313 → **1.012** | 決めた層（0.85〜1.15） |
+| rocks-sky / contact_near | contact | 30〜60°・10〜50 m | 15025 / 39170 | 1.273 → **1.002** | 決めた層 |
+| rocks-sky / contact_near | contact | 0〜30°・10〜50 m | 17409 / 1962 | 1.253 → 1.004 | 対照が下限未満（記録だけ） |
+| rocks-sky / contact_near | groove | 60° 以上・10〜50 m | 2852 / 4437 | 1.037 → 1.037 | 対照が下限未満（記録だけ） |
+| terrain-sky / ref_cliff_01 | groove | 60° 以上・500 m 以上 | 22363 / 31603 | 1.093 → 1.093 | 悪くならない |
+| rocks-cliff-sky / ref_cliff_01 | groove | 60° 以上・500 m 以上 | 22352 / 30837 | 1.093 → 1.093 | 悪くならない |
+| plant-sky / plant_near | plant_root | 0〜30°・0〜10 m | 37537 / 1293107 | 1.250 → 1.250 | 悪くならない（株は RT のシーンに無い） |
+
+- 対照のエンジンの Y（同じ画素）: contact_near の 0〜30°・0〜10 m が前の 0.985 倍、30〜60°・10〜50 m が 0.993 倍（周りの岩が空を少し遮る分）。ほかの視点は 1.000 倍
+- 太陽だけの組は変わらない（IoU 0.930 / 0.497 / 0.768・漏れ 0.9 % / 41.9 % / 0 %）。直したのは拡散の光線だけで、影の光線と VSM は変えていない
+- 並べた画 `cycles/rocks-sky/occlusion_preview/contact_near.png` を開いた: 岩の根元と岩の間の地面が暗くなり、Cycles の画と同じ向きに寄った
+- ref_cliff_01 の既定の荒野の GPU 時間（中央値、300 フレーム）は直した後で 14.611 ms（p95 15.494 ms、LightingPass 1.51 ms。`SCN-WL-OCCLUSION-FIX/timing`）。
+  同じ構成の直す前の計測はこの項目では撮っていない（光線が当たる instance は TLAS に既に入っていて、増えるのは当たりの判定だけ）
+- ランチャーの 4 シーンの回帰（`.harness/runs/regression/SCN-WL-OCCLUSION-FIX`）: 検証レイヤーのエラー 0、rendering3dtest・mega-bananas・sandbox は PSNR 62.6 dB 以上で
+  平均の差 0（設定が切のまま）。night-village は荒野の夜なので設定が入り、PSNR 63.9 dB・平均の差 +0.004（差の画 `after/night-village-diff.png` は灯りの周りの
+  まばらな点だけ）。material-gallery（設定は切）は 10-22 の撮影と最大 1 段の差（PSNR 54.3〜54.7 dB）
+- 基準画像の検査（Indoor・Outdoor）は落ちるが、この項目の変更を HEAD の版へ戻しても同じ値（Indoor 8929 画素・mean_flip 0.0053、Outdoor 20356 画素・
+  mean_flip 0.0089）で落ちるので、この直しによる差ではない（検証アプリは RTGI を切り、設定の既定も切）。再承認はしていない

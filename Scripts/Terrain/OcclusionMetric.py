@@ -192,7 +192,10 @@ def sky_metric(spec, set_name, set_kind, record, view, ctx, trial):
             ratio_cycles = float(cycles_y[region_pixels].mean()) / max(control_cycles, 1e-30)
             entry.update({"ratio_engine": round(ratio_engine, 4), "ratio_cycles": round(ratio_cycles, 4),
                           "engine_over_cycles": round(ratio_engine / max(ratio_cycles, 1e-30), 4),
-                          "control_cycles_y_fraction": round(control_cycles / max(reference_level, 1e-30), 4)})
+                          "control_cycles_y_fraction": round(control_cycles / max(reference_level, 1e-30), 4),
+                          # 直しの前後を同じ画素で比べるためのエンジンの Y の平均（OcclusionCompare.check_expect）
+                          "engine_y_region": float(engine_y[region_pixels].mean()),
+                          "engine_y_control": float(engine_y[control_pixels].mean())})
             seed_ratios = [ratio_cycles] + [float(y[region_pixels].mean()) / max(float(y[control_pixels].mean()), 1e-30)
                                             for y in seed_y]
             if len(seed_ratios) > 1:

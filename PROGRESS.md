@@ -7285,3 +7285,18 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - Done: 反復の外の本描画（全 8 組・1024 サンプル・種 2・デノイズなし、08:01〜08:13、`END ... EXIT=0`）を verify（`--occlusion --regions ... --verify`、`--trial` なし）で照らし `mode=occlusion sets=8 result=pass`・EXIT=0（`verify-SCN-WLR-OCCLUSION-CYCLES-1.txt`）。必須の 4 層は画素数の下限を満たし種の間の差は最大 0.0001。参照の記録（入力のハッシュ・形・配置・カメラ・照明・サンプル数）と今のエンジンの値（エンジン ÷ Cycles: 崖の溝 1.093・岩の接する帯 1.313 / 1.273・株の根元 1.250、太陽の IoU 0.930 / 0.497 / 0.768・漏れ 0.9 % / 41.9 % / 0 %）を `WastelandOcclusion.md` の「Cycles の本描画」に書いた
 - Next: TASKS.md の次の未完（SCN-WL-OCCLUSION-FIX）
 - Notes: 本描画の Cycles の比は 64 サンプルの試しと小数 3 桁で同じ（区域の平均なので試しで足りていた）。本描画は 1 組 66〜120 秒・8 組 12 分で、見込み（25〜35 分）より短い。rocks-cliff の 2 組も本描画にした（試しが残ると `--trial` なしの照合で落ちるため）。新しい試験は足していない
+
+## 2026-10-23 SCN-WL-OCCLUSION-FIX（run 20261022-173753 の反復 36）
+- Done: 直す原因を「RT 用の形の差（影を落とさない崖錐の岩が RTGI の拡散の光線に当たらない）」、効く層を rocks-sky / contact_near の接する帯の 2 層に決めて `WastelandOcclusion.md` の「直す原因」に書いてから、描画の設定 `RenderingCoordinator::SetRTGINonShadowCasterOcclusion`（FramePacket → ViewRenderContext → RTGI の定数 `environmentParameters.w`）を足し、`DiffuseIndirect.comp` の拡散の光線の印に影を落とさない物を加える形にした。荒野だけが入れ（既定は切）、ほかのシーンは変わらない。影の光線・VSM・DDGI の印は変えていない。合否の `ReferenceCheck.py --occlusion --expect`（`occlusion-fix.json`。直す前の撮影を同じ参照・同じ画素で測り直して比べる `OcclusionCompare.check_expect`）を足した
+- 証拠（`.harness/runs/20261022-173753/`）:
+  - `verify-SCN-WL-OCCLUSION-FIX-1.txt`: Debug の Game のビルド EXIT=0
+  - `-2.txt`〜`-9.txt`: 全 8 組の撮影 CAPTURE result=pass・EXIT=0
+  - `-10.txt`: `--occlusion --expect --verify` result=pass・EXIT=0。接する帯 1.313 → 1.012・1.273 → 1.002、ほかの層は変化 0.0004 以内、対照の Y 0.985 / 0.993 倍
+  - `-11.txt`: ref_cliff_01 の GPU 時間の中央値 14.611 ms（予算 33.3 ms の内）
+  - `-12.txt`: 回帰の after result=pass（検証レイヤーのエラー 0、PSNR 62.6 dB 以上）。before は `aux-SCN-WL-OCCLUSION-FIX-regression-before.txt`
+  - `aux-SCN-WL-OCCLUSION-FIX-expect-selfcheck.txt`: 直す前の撮影どうしで比べると決めた層だけが不合格になる（判定の陰性の確かめ）
+  - `aux-SCN-WL-OCCLUSION-FIX-golden.txt`・`-golden-head.txt`: 基準画像の検査は今の版も HEAD の版も同じ値で落ちる（前からの差）
+  - `aux-SCN-WL-OCCLUSION-FIX-material-gallery.txt`: material-gallery の 4 視点は 10-22 の撮影と最大 1 段の差
+  - 開いた画: `cycles/rocks-sky/occlusion_preview/contact_near.png`（岩の根元が暗くなり Cycles に寄る）、`regression/SCN-WL-OCCLUSION-FIX/after/night-village-diff.png`（灯りの周りのまばらな点だけ）
+- Next: TASKS.md の次の未完
+- Notes: ref_cliff_01 の GPU 時間の直す前の値は撮っていない（反復の最初に撮らなかった。後で撮るとエンジンの撮影の入力のハッシュが合わなくなる）。基準画像の検査（Indoor 8929 画素・Outdoor 20356 画素）は 10-22 の SCN-WL-LIGHT-FINAL の後のどこかで落ち始めた前からの差で、原因は追っていない（NEXT_FINDINGS に記録）。株の根元（1.250）は株が RT のシーンに無い別の原因で残る。Git Bash から `cmake --build ... -- /m:1` を回すと `/m:1` がパスに変わって MSBuild が落ちるので `MSYS_NO_PATHCONV=1` を付けた。新しい試験は足していない（verify の照合が確かめる）

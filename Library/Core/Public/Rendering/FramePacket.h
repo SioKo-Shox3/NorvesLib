@@ -290,6 +290,9 @@ namespace NorvesLib::Core::Rendering
         /** @brief RTGIの明示的な有効化。資源が不完全ならfallbackへ戻る。 */
         bool bRTGIEnabled = true;
 
+        /** @brief RTGIの拡散の光線が影を落とさない不透明物体にも当たるか（RenderingCoordinator::SetRTGINonShadowCasterOcclusion）。 */
+        bool bRTGINonShadowCasterOcclusion = false;
+
         /** @brief シーン構成・ジオメトリ・環境のFramePacket値revision。 */
         uint64_t SceneRevision = 0;
 
@@ -424,6 +427,7 @@ namespace NorvesLib::Core::Rendering
             bTemporalEpochStart = false;
             EpochFrameIndex = 0;
             bRTGIEnabled = true;
+            bRTGINonShadowCasterOcclusion = false;
             SceneRevision = 0;
             LightRevision = 0;
             SceneGeneration = 0;

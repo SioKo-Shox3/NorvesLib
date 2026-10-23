@@ -4,7 +4,8 @@
 
 // 影を落とす不透明物体。影・DDGI・RTGIの光線はこのbitだけを調べる。
 const uint RayTracingInstanceMaskShadowCaster = 0x01u;
-// 影を落とさない不透明物体。全bitで調べるパストレーサーだけが当たる。
+// 影を落とさない不透明物体。全bitで調べるパストレーサーと、シーンが頼んだとき（SetRTGINonShadowCasterOcclusion）の
+// RTGIの拡散の光線だけが当たる。
 const uint RayTracingInstanceMaskNonShadowCaster = 0x02u;
 
 #endif

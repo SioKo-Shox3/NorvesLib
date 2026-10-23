@@ -586,6 +586,7 @@ namespace Game::GameModes
             ctx.EngineRef.GetRenderWorld().SetStaticEnvironmentUniformRadiance(false, NorvesLib::Math::Vector3::Zero);
             ctx.EngineRef.GetRenderWorld().SetSunShadowMaxDistance(0.0f);
             ctx.EngineRef.GetRenderWorld().SetFoliage(FoliageScene{});
+            ctx.EngineRef.GetRenderWorld().GetRenderingCoordinator().SetRTGINonShadowCasterOcclusion(false);
         }
 
         /// 視点の空・太陽・霧を置く: 共通の照明（--wasteland-common-light）ならその一様な空と太陽、それ以外は物理空と
@@ -1935,6 +1936,9 @@ namespace Game::GameModes
         // 手本の写真の構図の視点では、太陽を写真の時刻の推定に替える（共通の照明なら、その定義の視点ごとの向き）
         const WastelandReferenceShot *referenceShot = FindReferenceShot(data.m_ViewName);
         ApplyViewEnvironment(ctx, data);
+        // 崖錐の岩の大半は影を落とさない（VSM の投影物にしない）が、RT のシーンには入る。RTGI の拡散の光線を当てて、
+        // 岩の根元と岩の間の地面の空の光を遮る（WastelandOcclusion.md の「直す原因」）
+        ctx.EngineRef.GetRenderWorld().GetRenderingCoordinator().SetRTGINonShadowCasterOcclusion(true);
 
         // 地形の区画を読み、材質のテクスチャの読み込みを始める。無いときは空と太陽だけで組み立てを終える
         TSharedPtr<const Asset::AssetSystem> assetSystem;

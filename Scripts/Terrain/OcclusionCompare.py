@@ -32,6 +32,10 @@
 #   画素のうち Cycles の物体が灰色のもの（GRAY_OBJECTS）だけで確かめる。
 # 書くもの: <参照の組>/occlusion_check.json と、並べた画 <参照の組>/occlusion_preview/<視点>.png
 #   （上: エンジンの HDR と Cycles の HDR を同じ露出で、下: 同じ面の判定〔緑 一致、赤 不一致、灰 輪郭、黒 空〕と物体の識別）。
+# --expect <定義>（--regions と一緒に。例 ExpectSpecs/occlusion-fix.json）: 定義の baseline_engine_root（直しの前のエンジンの撮影）を
+#   同じ参照・同じ領域で測り直し、同じ画素で前後を比べる。空だけの組の層のうち、targets の層はエンジン ÷ Cycles が target_range の内、
+#   ほかの層（くぼみ・対照の画素が領域の定義の下限以上）は 1 からの離れが前の値の worse_tolerance 倍を越えて増えない、対照の
+#   エンジンの Y の平均が前の 1 ± control_y_tolerance の内。結果は <エンジンの置き場>/occlusion_expect.json。
 import json
 import math
 import os
@@ -393,7 +397,105 @@ def print_metric(name, view, metric):
                   f"ratio_cycles={entry.get('ratio_cycles')} seed_difference={entry.get('seed_difference')}", flush=True)
 
 
-def run(RC, engine_root, reference_root, views, verify, trial, regions_path=""):
+def sky_layers(entry):
+    """組の結果から空だけの組の層 {(視点, 領域, 層): 値} を取り出す"""
+    layers = {}
+    for view, result in (entry.get("views") or {}).items():
+        metric = result.get("metric") or {}
+        if metric.get("kind") != "sky":
+            continue
+        for region, per_stratum in (metric.get("regions") or {}).items():
+            for stratum, values in per_stratum.items():
+                if "engine_over_cycles" in values:
+                    layers[(view, region, stratum)] = values
+    return layers
+
+
+def check_expect(RC, expect, regions, report, reference_root, views, trial):
+    """直しの前の撮影を同じ参照・領域で測り直し、前後の層を比べる。(記録, 失敗の一覧)"""
+    failures = []
+    baseline_root = os.path.normpath(os.path.join(RC.REPO_ROOT, expect["baseline_engine_root"]))
+    low, high = (float(v) for v in expect["target_range"])
+    worse_tolerance = float(expect["worse_tolerance"])
+    control_tolerance = float(expect["control_y_tolerance"])
+    min_region = int(regions["limits"]["min_region_pixels"])
+    min_control = int(regions["limits"]["min_control_pixels"])
+    targets = {(t["set"], t["view"], t["region"], t["stratum"]) for t in expect["targets"]}
+    record = {"baseline_engine_root": RC.rel_dir(baseline_root), "target_range": [low, high],
+              "worse_tolerance": worse_tolerance, "control_y_tolerance": control_tolerance, "layers": [], "controls": []}
+    seen_targets = set()
+    for name, entry in report["sets"].items():
+        reference_dir = os.path.join(reference_root, name)
+        inputs = read_json(os.path.join(reference_dir, "inputs.json"))
+        if (inputs.get("lighting") or {}).get("case") == "sun":
+            continue
+        baseline_dir = os.path.join(baseline_root, name)
+        if not os.path.isdir(baseline_dir):
+            failures.append(f"前の撮影 {RC.rel_dir(baseline_dir)} が無い")
+            continue
+        baseline = {"views": {}}
+        for view in views or sorted((inputs.get("views") or {}).keys()):
+            baseline["views"][view] = check_view(RC, baseline_dir, reference_dir, inputs, view, regions, name, trial)
+        before_layers = sky_layers(baseline)
+        after_layers = sky_layers(entry)
+        controls = set()
+        for key, after in sorted(after_layers.items()):
+            view, region, stratum = key
+            before = before_layers.get(key)
+            if before is None:
+                failures.append(f"{name}/{view} の層 {region} {stratum} が前の撮影で測れない")
+                continue
+            ratio_before = float(before["engine_over_cycles"])
+            ratio_after = float(after["engine_over_cycles"])
+            is_target = (name, view, region, stratum) in targets
+            measured = after["region_pixels"] >= min_region and after["control_pixels"] >= min_control
+            row = {"set": name, "view": view, "region": region, "stratum": stratum, "target": is_target,
+                   "pixels": [after["region_pixels"], after["control_pixels"]], "measured": measured,
+                   "before": ratio_before, "after": ratio_after}
+            if is_target:
+                seen_targets.add((name, view, region, stratum))
+                row["pass"] = low <= ratio_after <= high
+                if not row["pass"]:
+                    failures.append(f"{name}/{view} の決めた層 {region} {stratum} のエンジン ÷ Cycles {ratio_after:.4f} が "
+                                    f"{low}〜{high} の外（前 {ratio_before:.4f}）")
+            elif measured:
+                growth = abs(ratio_after - 1.0) - abs(ratio_before - 1.0)
+                row["pass"] = growth <= worse_tolerance * ratio_before
+                if not row["pass"]:
+                    failures.append(f"{name}/{view} の層 {region} {stratum} のエンジン ÷ Cycles が {ratio_before:.4f} → "
+                                    f"{ratio_after:.4f} で 1 から {growth:.4f} 離れた（許容 {worse_tolerance * ratio_before:.4f}）")
+            record["layers"].append(row)
+            # 対照は視点と層ごとに 1 つ（領域が違っても同じ画素）
+            if after["control_pixels"] >= min_control and (view, stratum) not in controls:
+                controls.add((view, stratum))
+                change = float(after["engine_y_control"]) / max(float(before["engine_y_control"]), 1e-30)
+                ok = abs(change - 1.0) <= control_tolerance
+                record["controls"].append({"set": name, "view": view, "stratum": stratum,
+                                           "pixels": after["control_pixels"], "before_y": before["engine_y_control"],
+                                           "after_y": after["engine_y_control"], "after_over_before": round(change, 4),
+                                           "pass": ok})
+                if not ok:
+                    failures.append(f"{name}/{view} の対照 {stratum} のエンジンの Y が前の {change:.4f} 倍で "
+                                    f"1 ± {control_tolerance} の外")
+    for missing in sorted(targets - seen_targets):
+        failures.append(f"決めた層 {'/'.join(missing)} が測れない")
+    return record, failures
+
+
+def print_expect(record):
+    """前後の比べを 1 行ずつ出す"""
+    for row in record["layers"]:
+        print(f"REFERENCE_CHECK occlusion expect set={row['set']} view={row['view']} region={row['region']} "
+              f"stratum={row['stratum']} target={int(row['target'])} measured={int(row['measured'])} "
+              f"pixels={row['pixels'][0]}/{row['pixels'][1]} before={row['before']} after={row['after']} "
+              f"pass={int(row['pass']) if 'pass' in row else '-'}", flush=True)
+    for row in record["controls"]:
+        print(f"REFERENCE_CHECK occlusion expect control set={row['set']} view={row['view']} stratum={row['stratum']} "
+              f"pixels={row['pixels']} before_y={row['before_y']:.3f} after_y={row['after_y']:.3f} "
+              f"after_over_before={row['after_over_before']} pass={int(row['pass'])}", flush=True)
+
+
+def run(RC, engine_root, reference_root, views, verify, trial, regions_path="", expect_path=None):
     regions = None
     if regions_path:
         import OcclusionMetric
@@ -453,6 +555,18 @@ def run(RC, engine_root, reference_root, views, verify, trial, regions_path=""):
         import OcclusionMetric
         measured = {(name, view) for name, entry in report["sets"].items() for view in entry["views"]}
         failures.extend(OcclusionMetric.missing_required(regions, measured))
+    if expect_path:
+        if regions is None:
+            failures.append("--expect は --regions と一緒に使う")
+        elif not os.path.isfile(expect_path):
+            failures.append(f"--expect の定義 {expect_path} が無い")
+        else:
+            report["expect"], expect_failures = check_expect(RC, read_json(expect_path), regions, report,
+                                                             reference_root, views, trial)
+            print_expect(report["expect"])
+            failures.extend(f"前後の比べ: {reason}" for reason in expect_failures)
+            with open(os.path.join(engine_root, "occlusion_expect.json"), "w", encoding="utf-8") as f:
+                json.dump(report["expect"], f, indent=2, ensure_ascii=False)
     report["failures"] = failures
     for reason in failures:
         print(f"REFERENCE_CHECK occlusion failure: {reason}")

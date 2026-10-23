@@ -1,0 +1,11 @@
+{
+  "description": "SCN-WL-OCCLUSION-FIX: RTGI の拡散の光線を影を落とさない崖錐の岩にも当てる直しの合否。直しの前の撮影（SCN-WLR-OCCLUSION-SETS）と同じ参照・同じ領域の画素で前後を比べる（OcclusionCompare.check_expect）。決めた層は岩塊の接する帯の 2 層（WastelandOcclusion.md の「直す原因」）",
+  "baseline_engine_root": ".harness/runs/scene-capture/SCN-WLR-OCCLUSION-SETS",
+  "targets": [
+    {"set": "rocks-sky", "view": "contact_near", "region": "contact", "stratum": "slope0-30_d0-10"},
+    {"set": "rocks-sky", "view": "contact_near", "region": "contact", "stratum": "slope30-60_d10-50"}
+  ],
+  "target_range": [0.85, 1.15],
+  "worse_tolerance": 0.03,
+  "control_y_tolerance": 0.03
+}

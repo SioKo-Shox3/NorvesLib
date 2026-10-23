@@ -359,6 +359,15 @@ namespace NorvesLib::Core::Rendering
         bool IsRTGIEnabled() const { return m_bRTGIEnabled; }
 
         /**
+         * @brief RTGIの拡散の光線が影を落とさない不透明物体にも当たるかを次のFramePacketへ公開する（既定は切）
+         *
+         * 影を落とすか（直接光の影・光源への影の光線）は変えず、拡散の間接光の遮りと照り返しだけに効く。
+         * 影を落とさない小物を多く散らすシーンが、小物の根元の空の光の遮りを光線で得るために入れる。
+         */
+        void SetRTGINonShadowCasterOcclusion(bool bEnabled);
+        bool IsRTGINonShadowCasterOcclusion() const { return m_bRTGINonShadowCasterOcclusion; }
+
+        /**
          * @brief 高さフォグ設定を次のFramePacketへ公開する
          * @param parameters GameThread側で保持する高さフォグ設定
          */
@@ -647,6 +656,7 @@ namespace NorvesLib::Core::Rendering
         CloudLayerParameters m_CloudLayer;
         FoliageScene m_Foliage;
         bool m_bRTGIEnabled = true;
+        bool m_bRTGINonShadowCasterOcclusion = false;
         uint64_t m_SceneRevision = 1u;
         uint64_t m_LightRevision = 1u;
         uint64_t m_LastSceneRevisionHash = 0u;

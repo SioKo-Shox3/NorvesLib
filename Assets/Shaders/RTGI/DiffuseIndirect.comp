@@ -19,7 +19,8 @@ layout(set = 0, binding = 1, std140) uniform RTGIComputeParameters
     // w=当たりの統計（開発ビルドだけ。0は数えない。それ以外はMegaGeometryの先頭のcustom index + 1）
     uvec4 sampleState;
     vec4 previousCameraPosition; // xyz=履歴を書いた前フレームのカメラ位置、w=履歴に掛ける露出の比
-    // x=静的HDR環境の放射輝度の上限（倍率を掛ける前。0は上限なし）、y=当たりの色に掛ける倍率（照り返しを切ると 0）
+    // x=静的HDR環境の放射輝度の上限（倍率を掛ける前。0は上限なし）、y=当たりの色に掛ける倍率（照り返しを切ると 0）、
+    // z=遮蔽の診断（1/0）、w=拡散の光線が影を落とさない不透明物体にも当たるか（1/0）
     vec4 environmentParameters;
     // 地形の当たりの色（LightingPass.cpp の RTGIComputeParameters と同じ並び）
     vec4 terrainMask;    // x,y=地表の分類の地図の外縁の X・Z の最小、z,w=X・Z の広さの逆数（z が 0 なら地図なし）
@@ -1117,12 +1118,17 @@ vec3 TraceDiffuseRay(vec3 rayOrigin,
     float hitDistance = 0.0;
     RTGIInstanceData hitInstance;
     vec3 triangleNormal;
+    // 拡散の光線は影を落とす物体を調べ、シーンが頼めば影を落とさない不透明物体（散らした小物）にも当てて、その根元の空の光を遮る。
+    // 光源への影の光線（IsOccluded・IsEmitterSegmentOccluded）は直接光の影と揃えるため影を落とす物体だけのまま
+    uint diffuseRayMask = parameters.environmentParameters.w > 0.5
+        ? (RayTracingInstanceMaskShadowCaster | RayTracingInstanceMaskNonShadowCaster)
+        : RayTracingInstanceMaskShadowCaster;
     for (uint attempt = 0u; attempt <= RTGI_PROXY_SELF_HIT_SKIPS; ++attempt)
     {
         rayQueryInitializeEXT(query,
                               sceneTopLevel,
                               gl_RayFlagsOpaqueEXT,
-                              RayTracingInstanceMaskShadowCaster,
+                              diffuseRayMask,
                               rayOrigin,
                               rayMinimum,
                               rayDirection,

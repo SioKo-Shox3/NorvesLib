@@ -132,7 +132,8 @@
 #       BlenderOcclusionReference.py の Cycles の参照の組ごとに照らし、同じ面を見ている画素の割合（輪郭を除く）を測る
 #       （本体は OcclusionCompare.py。結果は <参照の組>/occlusion_check.json と occlusion_preview/<視点>.png）。
 #       --regions <定義> で、空だけの組の層ごとのくぼみの比と太陽だけの組の影の一致・縁・漏れも測る（OcclusionMetric.py。
-#       重ね画像は <参照の組>/occlusion_regions/<視点>.png）。
+#       重ね画像は <参照の組>/occlusion_regions/<視点>.png）。--expect <定義>（ExpectSpecs/occlusion-fix.json）で、定義の直しの前の
+#       撮影を同じ画素で測り直し、決めた層の範囲・ほかの層が悪くならないこと・対照の Y が変わらないことを確かめる。
 #
 #   python Scripts/Terrain/ReferenceCheck.py --cloud-far --engine <撮影先> [--views ref_far_01,ref_far_02] [--verify]
 #       [--expect Scripts/Terrain/ExpectSpecs/cloud-far-composite.json] [--flicker]
@@ -6708,9 +6709,9 @@ def main():
         return ExpectSpec.run_selftest(sys.modules[__name__], args.verify)
     expect = os.path.normpath(args.expect if os.path.isabs(args.expect) else os.path.join(REPO_ROOT, args.expect))         if args.expect else None
     if expect and not (args.gray or args.lit or args.blur_static or args.blur_motion or args.bounce or args.atmos_ref or
-                       args.building or args.plant or args.cloud_far):
+                       args.building or args.plant or args.cloud_far or args.occlusion):
         print("REFERENCE_CHECK result=fail reason=expect_unsupported（--expect は --gray・--lit・--blur-static・--blur-motion・"
-              "--bounce・--atmos-ref・--building・--plant・--cloud-far と使う）")
+              "--bounce・--atmos-ref・--building・--plant・--cloud-far・--occlusion と使う）")
         return 1
     if args.require_judged is not None and not args.lit:
         print("REFERENCE_CHECK result=fail reason=require_judged_unsupported（--require-judged は --lit と使う）")
@@ -6801,7 +6802,7 @@ def main():
         views = [v.strip() for v in args.views.split(",") if v.strip()]
         return OcclusionCompare.run(sys.modules[__name__], absolute(args.engine_root) if args.engine_root else "",
                                     absolute(args.reference) if args.reference else "", views, args.verify, args.trial,
-                                    absolute(args.regions) if args.regions else "")
+                                    absolute(args.regions) if args.regions else "", expect)
     if args.cloud_far:
         import CloudFarCause
         capture = args.capture or (args.engine[0] if args.engine else "")

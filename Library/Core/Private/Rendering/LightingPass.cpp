@@ -824,7 +824,8 @@ namespace NorvesLib::Core::Rendering
         /// xyz=履歴を書いた前フレームのカメラ位置、w=履歴に掛ける露出の比（今のフレーム/履歴）。
         float previousCameraPosition[4] = {};
         /// x=静的HDR環境の放射輝度の上限（倍率を掛ける前。0は上限なし）、y=当たりの色に掛ける倍率
-        /// （1。開発ビルドの --rtgi-bounce=off は 0 で、照り返しだけを切り空から直接届く光を残す）。
+        /// （1。開発ビルドの --rtgi-bounce=off は 0 で、照り返しだけを切り空から直接届く光を残す）、z=遮蔽の診断（1/0）、
+        /// w=拡散の光線が影を落とさない不透明物体にも当たるか（1/0。ViewRenderContext::bRTGINonShadowCasterOcclusion）。
         float environmentParameters[4] = {};
         /// 地形の当たりの色（RayTracingTerrainBlendSnapshot）。terrainMask = 地図の外縁の X・Z の最小・X・Z の広さの逆数
         /// （z が 0 なら地図なし）、terrainMaskMix = 礫を土へ回す割合・外縁の帯の幅（m）・アルベドを sRGB から戻すビット
@@ -4063,6 +4064,7 @@ namespace NorvesLib::Core::Rendering
                 : 0.0f;
         parameters.environmentParameters[1] = ResolveRTGIBounceScale();
         parameters.environmentParameters[2] = IsRTGIOcclusionDiagnosticRequested() ? 1.0f : 0.0f;
+        parameters.environmentParameters[3] = context.bRTGINonShadowCasterOcclusion ? 1.0f : 0.0f;
         RHI::TexturePtr terrainTextures[4];
         ResolveRTGITerrainBlend(context.SnapshotRayTracingScene->TerrainBlend, context.Resources.Textures,
                                 m_DefaultBlackTexture, parameters, terrainTextures);

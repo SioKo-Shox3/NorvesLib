@@ -4542,6 +4542,7 @@ namespace NorvesLib::Core::Rendering
         packet.Scene.CloudLayer = m_CloudLayer;
         packet.Scene.Foliage = m_Foliage;
         packet.bRTGIEnabled = m_bRTGIEnabled;
+        packet.bRTGINonShadowCasterOcclusion = m_bRTGINonShadowCasterOcclusion;
     }
 
     void RenderingCoordinator::BuildSceneProxyDeltas(FramePacket& packet)
@@ -5745,6 +5746,7 @@ namespace NorvesLib::Core::Rendering
         viewContext.SceneRevision = packet->SceneRevision;
         viewContext.LightRevision = packet->LightRevision;
         viewContext.bRTGIEnabled = packet->bRTGIEnabled;
+        viewContext.bRTGINonShadowCasterOcclusion = packet->bRTGINonShadowCasterOcclusion;
         // RTGIの光線は影を落とす物体だけを調べる。影を落とす物体がなければ従来どおりfallbackする。
         viewContext.bRTGITLASAvailable = packet->HasCompleteRayTracingScene() &&
                                          packet->RayTracingScene.HasShadowCasters();
@@ -6471,6 +6473,11 @@ namespace NorvesLib::Core::Rendering
     void RenderingCoordinator::SetRTGIEnabled(bool bEnabled)
     {
         m_bRTGIEnabled = bEnabled;
+    }
+
+    void RenderingCoordinator::SetRTGINonShadowCasterOcclusion(bool bEnabled)
+    {
+        m_bRTGINonShadowCasterOcclusion = bEnabled;
     }
 
     void RenderingCoordinator::SetVolumetricFogParameters(
