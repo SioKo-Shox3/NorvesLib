@@ -7413,3 +7413,9 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 開いた画: `scene-capture/SCN-WLR-OCCLUSION-SETS/cycles/plant-sky/occlusion_preview/plant_near.png`（エンジンの株の根元に Cycles と同じ大きさの柔らかな暗がり）
 - Next: SCN-WL-OCCLUSION-ACCEPT（todo）で受け入れを回し直す
 - Notes: 光学的な厚さの試しの 1.5 は plant_root のエンジンの比 0.645（÷ Cycles 0.824）で暗すぎた（`aux-SCN-WL-PLANT-ROOT-OCCLUSION-try1-*.txt`、株の組だけ撮り直してほかの 7 組は受け入れの撮影を写した置き場）。冠の中の葉の照り返しは数えず、光学的な厚さに含めた。基準画像の検査は回していない（検証アプリは散らした小物の遮りが切で冠の数 0）。新しい試験は足していない
+
+## 2026-10-23 SCN-WL-PLANT-ROOT-OCCLUSION（run 20261023-124311 の反復 10、閉じた）
+- Done: 反復 9 の再検証の時間切れ（撮影 7 組を 1 コマンドに入れて 10 分を超えた）を受け、1 組 1 行に分けた verify（a76fe962）を全部回し直した。実装は 07c4453d から変えていない
+- 証拠（`.harness/runs/20261023-124311/`）: `verify-SCN-WL-PLANT-ROOT-OCCLUSION-7.txt`（Debug の Game のビルド EXIT=0）・`-8.txt`〜`-15.txt`（8 組の撮影、各 94〜144 秒、EXIT=0）・`-16.txt`（`--occlusion --expect plant-root.json --verify` result=pass。plant_root 0.9814〔エンジンの比 0.7681・Cycles 0.7826〕、太陽の 4 組は内で plant-sun IoU 0.9245）・`-17.txt`（ref_cliff_01 の GPU 中央値 16.127 ms、予算 33.3 ms の内）・`-18.txt`（回帰の after result=pass、4 シーン）
+- Next: SCN-WL-OCCLUSION-ACCEPT を todo に戻して受け入れを回し直す（親の判断）
+- Notes: 回帰の before は反復 9 の `aux-SCN-WL-PLANT-ROOT-OCCLUSION-regression-before.txt` を使った（実装が変わらないので撮り直していない）。判定のコマンドは 479 秒で 10 分の上限に近い。GPU 中央値は反復 9 の 15.288 ms から 16.127 ms（LightingPass 1.883 → 1.892 ms で、差はほかの段の揺れ）。Git Bash から `/m:1` を渡すとパスに書き換わって MSBuild が MSB1008 で落ちるので、ビルドは PowerShell で回した。新しい試験は足していない
