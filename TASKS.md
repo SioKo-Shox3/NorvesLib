@@ -2610,7 +2610,7 @@
 - notes: 危険地帯（RTGI・TLAS・描画の既定）。2026-10-23 SCN-WL-OCCLUSION-ACCEPT の反復 8 が、届かない層の残りの原因を直す項目として足した（ACCEPT の done-when の定め）。`ReferenceCheck.py --occlusion` は参照の 8 組の全部の撮影を求めるので、verify は 8 組を撮る（1 組だけの置き場は「エンジンの撮影が無い」で落ちる）。撒いた株は 4 万を超える（SCN-WL-PLANT-SHADOW の記録）ので、TLAS に入れるなら RT の範囲と数の上限を決め、GPU 時間と VRAM を記録する。終わったら SCN-WL-OCCLUSION-ACCEPT を todo に戻して受け入れを回し直す。時間の見積もり: 回帰の before・after 各 7〜9 分、ビルド 3〜6 分、全組の撮影 約 20 分、計測 約 3 分。壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える（未達のまま DONE にしない）。 2026-10-23（親）: 反復 9 の再検証は、verify の撮影の 3 本目（7 組を 1 行）が 1 コマンド 10 分の上限を超えて落ちた。組ごとの行に分けた（撮影の中身は同じ）。次の反復は verify を回し直して閉じる（直しの中身 07c4453d は変えない）。
 
 ## SCN-WL-OCCLUSION-ACCEPT: 遮蔽と影の直しの受け入れ（全層の範囲と、前の直しを壊していないこと）
-- status: todo
+- status: done
 - after: SCN-WL-SUN-SHADOW-FIX, SCN-WL-PLANT-ROOT-OCCLUSION
 - done-when: 空の遮蔽と太陽の影の直しの後に、同じ exe で全組と共通の照明の組を撮り直して受け入れる。合否: (1) `--occlusion --expect`（`occlusion-accept.json`）で必須の全層のくぼみの比のエンジン ÷ Cycles が 0.85〜1.15、太陽の影が SCN-WL-SUN-SHADOW-FIX で確定した許容の中、(2) SCN-WL-LIGHT-FINAL の組（灰色の両方・太陽だけ・空だけ、実材質、照り返しの切）を撮り直し、`--light-final --verify` が通る（前の直しを壊していない）、(3) 既定の荒野の 6 視点を撮って写真と並べて開き、溝の奥・岩の下・株の根元の暗がりと棚の影を所見に書く。(1) に届かない層が残れば、残りの原因を直す項目を TASKS.md に足し、この項目は BLOCKED にする。
 - verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-WL-OCCLUSION-ACCEPT --sets terrain-sky --build`

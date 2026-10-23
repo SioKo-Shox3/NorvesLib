@@ -7419,3 +7419,9 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 証拠（`.harness/runs/20261023-124311/`）: `verify-SCN-WL-PLANT-ROOT-OCCLUSION-7.txt`（Debug の Game のビルド EXIT=0）・`-8.txt`〜`-15.txt`（8 組の撮影、各 94〜144 秒、EXIT=0）・`-16.txt`（`--occlusion --expect plant-root.json --verify` result=pass。plant_root 0.9814〔エンジンの比 0.7681・Cycles 0.7826〕、太陽の 4 組は内で plant-sun IoU 0.9245）・`-17.txt`（ref_cliff_01 の GPU 中央値 16.127 ms、予算 33.3 ms の内）・`-18.txt`（回帰の after result=pass、4 シーン）
 - Next: SCN-WL-OCCLUSION-ACCEPT を todo に戻して受け入れを回し直す（親の判断）
 - Notes: 回帰の before は反復 9 の `aux-SCN-WL-PLANT-ROOT-OCCLUSION-regression-before.txt` を使った（実装が変わらないので撮り直していない）。判定のコマンドは 479 秒で 10 分の上限に近い。GPU 中央値は反復 9 の 15.288 ms から 16.127 ms（LightingPass 1.883 → 1.892 ms で、差はほかの段の揺れ）。Git Bash から `/m:1` を渡すとパスに書き換わって MSBuild が MSB1008 で落ちるので、ビルドは PowerShell で回した。新しい試験は足していない
+
+## 2026-10-23 SCN-WL-OCCLUSION-ACCEPT（run 20261023-124311 の反復 11、閉じた）
+- Done: 株の根元を直した Game.exe（RelWithDebInfo、1c3d832d…。最初の組の `--build` で変更なし）で全 8 組・共通の照明の組・既定の荒野の 6 視点を撮り直した。(1) `--occlusion --expect occlusion-accept.json --verify` result=pass（必須の 4 層 groove 1.0927・contact 1.0117・1.0024・plant_root 0.9814、太陽の 4 組は許容の内、対照の Y は plant_near 0.997 倍・ほか 1.000 倍）。(2) `--light-final --verify` result=pass specs=5/5。(3) 6 視点の写真との並べた画を開き、溝の奥・岩の下・株の根元・棚の影の所見を `WastelandOcclusion.md` の「回し直し」「既定の荒野の 6 視点の所見」に書いた
+- 証拠（`.harness/runs/20261023-124311/`）: `verify-SCN-WL-OCCLUSION-ACCEPT-10.txt`（terrain-sky とビルド）〜`-17.txt`（8 組の撮影、各 EXIT=0）・`-18.txt`（遮蔽の判定 pass）・`-19.txt`〜`-23.txt`（共通の照明の組の撮影 EXIT=0）・`-24.txt`（`--light-final` pass）・`-25.txt`（6 視点の撮影 pass）・`-26.txt`（`CompareReference.py --verify` pass、photos=6）。反復 8 の `-1.txt`〜`-9.txt` は前の Game.exe の記録
+- Next: TASKS.md の次の項目（SCN-WL-OCCLUSION-ACCEPT の後に回す項目）
+- Notes: 6 視点で、冠の遮りの範囲（40 m・64 個）の外の中景の株（ref_ground_02）は根元の暗がりが無い。崖の溝の奥と崖錐の段の影の帯は写真より浅い。地面と崖が写真より明るく彩度が高いのは前からの差。どれも必須の層の判定の外なので記録だけにした。新しい試験は足していない

@@ -537,6 +537,40 @@ Cycles の 4k のスキャンの形の差の見込み。SCN-WL-ROCK-LOD-SHADOW �
   直しは SCN-WL-PLANT-ROOT-OCCLUSION に分けた
 - 共通の照明の組の撮り直し（`--light-final --verify`）と既定の荒野の 6 視点の所見は、株の根元を直した後の受け入れの回し直しで撮る
 
+### 回し直し（株の根元を直した後）
+
+株の根元を直した Game.exe（RelWithDebInfo、`1c3d832d…`。最初の組の `--build` で変更なし、全 8 組で同じ）で全 8 組を撮り直し、同じ判定
+（`occlusion-accept.json`、前の撮影は SCN-WL-SUN-SHADOW-FIX）が `result=pass` になった。
+
+| 組 / 視点 | 領域・層 | エンジン ÷ Cycles（または太陽の量） | 判定 |
+|---|---|---|---|
+| terrain-sky / ref_cliff_01 | groove 60° 以上・500 m 以上 | 1.0927 | 内 |
+| rocks-sky / contact_near | contact 0〜30°・0〜10 m | 1.0117 | 内 |
+| rocks-sky / contact_near | contact 30〜60°・10〜50 m | 1.0024 | 内 |
+| plant-sky / plant_near | plant_root 0〜30°・0〜10 m | 0.9814（エンジンの比 0.768・Cycles 0.783） | 内 |
+| terrain-sun・rocks-cliff-sun / ref_cliff_01 | 太陽 | IoU 0.930・漏れ 0.89 %・縁の比 1.10 | 内 |
+| rocks-sun / contact_near | 太陽 | 地面の IoU 0.954（全体 0.880）・漏れ 0.89 %・縁の比 1.01 | 内 |
+| plant-sun / plant_near | 太陽 | IoU 0.9245・漏れ 0 %・縁の比 0.96 | 内 |
+
+- 対照の Y（同じ画素）: plant-sky / plant_near が前の 0.997 倍（株の冠の遮り）、ほかは 1.000 倍。決めていない層は前と同じ値
+- 決めていない層のうち rocks-cliff-sky / ref_cliff_01 の contact 60° 以上・500 m 以上（57 画素）は 1.238 で外だが、画素が少なく必須の層ではない（前も 1.2376）
+- 共通の照明の組（灰色の両方・太陽だけ・空だけ、実材質、照り返しの切）を同じ Game.exe で撮り直し（`.harness/runs/scene-capture/SCN-WL-OCCLUSION-ACCEPT/light-final`）、
+  `ReferenceCheck.py --light-final --verify` が `result=pass specs=5/5`（rt-tlas-range・shadow-leak・shadow-pages・material-ao・rtgi-color）。前の直しを壊していない
+
+### 既定の荒野の 6 視点の所見
+
+既定の荒野（RelWithDebInfo、1920×1080）の 6 視点を撮り（`.harness/runs/scene-capture/SCN-WL-OCCLUSION-ACCEPT/views`）、`CompareReference.py --verify`
+（`result=pass photos=6`）が書いた写真との並べた画 `reference_*.png` を開いた。
+
+- 溝の奥: ref_cliff_01 の崖の縦の溝の奥は暗くなり、溝と稜の明暗が読める。写真より溝の奥の暗さが浅く、崖錐の斜面は段ごとの影の帯が弱く一様に明るい。
+  ref_far_02 の右の台地も段の下の暗がりが写真より弱い
+- 岩の下: ref_cliff_01 の崖錐の岩塊と、ref_ground_01・ref_far_02 の地面の礫の下に接地の暗がりと短い影が出て、浮いて見えない。写真より礫の影の濃さは弱い
+- 株の根元: ref_ground_01・ref_far_01・ref_far_02 の手前の株は根元に暗がりと太陽の影が出る。冠の遮りは 40 m 以内の 64 個までなので、
+  ref_ground_02 の中景〜遠景の株は根元の暗がりが無く、太陽の影だけで地面に載る
+- 棚の影: ref_cliff_02 は尖塔の影が左の平地へ長く落ち、右手前の崖の影の縁も柔らかく続く。ref_cliff_01 の上段の棚の下に影の帯が出る
+- 遮蔽と別の差（前から）: 地面と崖が写真より明るく彩度が高い（ref_ground_01 の地面 Y 0.243・写真 0.097、ref_far_01 の崖 Y 0.353・写真 0.240）。
+  写真の加工とホワイトバランスが分からないので、差の向きだけを記録する
+
 ## 株の根元の空の遮蔽（SCN-WL-PLANT-ROOT-OCCLUSION）
 
 最初の編集の前に直し方を 1 つに決めた記録。判定日: 2026-10-23。
