@@ -7395,3 +7395,9 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - Done: 親が直した verify（検査の実行ファイル `RenderingGoldenImageTest` だけの Debug のビルド）を HEAD（ad155fdb）で回し、ビルド EXIT=0（`.harness/runs/20261023-124311/verify-SCN-GOLDEN-REVERIFY-6.txt`）、基準画像の検査 RenderingGoldenIndoorVulkanTest・RenderingGoldenOutdoorVulkanTest は両方 Passed・EXIT=0（`-7.txt`）。再承認は 8d5ca7c9 のまま（原因の特定と根拠は反復 4 の記録と R1Acceptance.md）
 - Next: TASKS.md の次の未完
 - Notes: ad155fdb は判定の Python だけの変更で描画を変えておらず、検査は 8d5ca7c9 の基準画像のまま通った。新しい試験は足していない
+
+## 2026-10-23 SCN-WL-OCCLUSION-ACCEPT（run 20261023-124311 の反復 8、BLOCKED）
+- Done: 受け入れの判定 `Scripts/Terrain/ExpectSpecs/occlusion-accept.json` を足した（必須の 4 層の全部を決めた層、太陽だけの 4 組の全視点を `sun-shadow.json` の許容で決めた視点、前の撮影は SCN-WL-SUN-SHADOW-FIX）。全 8 組を同じ Game.exe（7baa3e3d…）で撮り直して判定し、株の根元 plant_root（plant-sky / plant_near、0〜30°・0〜10 m）だけがエンジン ÷ Cycles 1.2504 で外。ほかの必須の 3 層（1.0927・1.0117・1.0024）と太陽の 4 組は内、前の撮影からの変化は層の比 0.0001 以内・対照の Y 1.000 倍。並べた画 `cycles/plant-sky/occlusion_preview/plant_near.png` を開き、Cycles だけが株の根元を暗くすることを確かめた。done-when の定めどおり、残りの原因（株が RT のシーンに無い）を直す SCN-WL-PLANT-ROOT-OCCLUSION を TASKS.md に足した。記録は `WastelandOcclusion.md` の「受け入れ」
+- 証拠（`.harness/runs/20261023-124311/`）: `verify-SCN-WL-OCCLUSION-ACCEPT-1.txt`（terrain-sky と RelWithDebInfo のビルド pass）・`-2.txt`〜`-8.txt`（ほかの 7 組 EXIT=0）・`-9.txt`（判定 result=fail、失敗は plant_root の 1 行だけ）
+- Next: BLOCKED（`blocked/SCN-WL-OCCLUSION-ACCEPT.md`）。SCN-WL-PLANT-ROOT-OCCLUSION の後に todo へ戻して verify を全部回し直す
+- Notes: 共通の照明の組（`--light-final`）と既定の荒野の 6 視点は撮っていない。撮影をまとめて流す台本の誤り（順序つき辞書を整数で引いて位置の番号になった）で 2〜9 本目が 1 本ずつ前の番号のファイルに入り、terrain-sky とビルドが抜けた。ファイルを先頭の CMD 行どおりの番号へ付け替え、terrain-sky の抜けた判定は `aux-SCN-WL-OCCLUSION-ACCEPT-check-without-terrain-sky.txt` に残した。回し直した後は壁時計の残りが 30 分を切り、約 30 分の共通の照明の組を途中で止めた（途中の出力は消した）。新しい試験は足していない

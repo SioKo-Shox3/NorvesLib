@@ -512,3 +512,27 @@ Cycles の 4k のスキャンの形の差の見込み。SCN-WL-ROCK-LOD-SHADOW �
 | terrain-sun・rocks-cliff-sun / ref_cliff_01 | 0.930・0.89 %・1.10 |
 | 既定の荒野 ref_cliff_01 の GPU 時間の中央値（RelWithDebInfo、300 フレーム） | 15.502 ms（CPU の中央値 27.16 ms。予算 33.3 ms の内） |
 | 回帰の 4 シーン（before・after） | pass（差 0.000） |
+
+## 受け入れ（SCN-WL-OCCLUSION-ACCEPT）
+
+空の遮蔽と太陽の影の直しの後の Game.exe（RelWithDebInfo、`7baa3e3d…`。最初の組で `-Build` し、全 8 組で同じ）で全 8 組を撮り直し
+（`.harness/runs/scene-capture/SCN-WL-OCCLUSION-ACCEPT`）、`ReferenceCheck.py --occlusion ... --expect Scripts/Terrain/ExpectSpecs/occlusion-accept.json --verify`
+で照らした。`occlusion-accept.json` は、必須の 4 層の全部を決めた層（エンジン ÷ Cycles が 0.85〜1.15）に、太陽だけの 4 組の全視点を決めた視点
+（`sun-shadow.json` の許容。rocks-sun は地面の受け手の IoU）にし、直しの後の撮影（SCN-WL-SUN-SHADOW-FIX）と同じ画素で前後を比べる。
+
+| 組 / 視点 | 領域・層 | エンジン ÷ Cycles（または太陽の量） | 判定 |
+|---|---|---|---|
+| terrain-sky / ref_cliff_01 | groove 60° 以上・500 m 以上 | 1.0927 | 内 |
+| rocks-sky / contact_near | contact 0〜30°・0〜10 m | 1.0117 | 内 |
+| rocks-sky / contact_near | contact 30〜60°・10〜50 m | 1.0024 | 内 |
+| plant-sky / plant_near | plant_root 0〜30°・0〜10 m | **1.2504**（エンジンの比 0.979・Cycles 0.783） | **外** |
+| terrain-sun・rocks-cliff-sun / ref_cliff_01 | 太陽 | IoU 0.930・漏れ 0.89 %・縁の比 1.10 | 内 |
+| rocks-sun / contact_near | 太陽 | 地面の IoU 0.954（全体 0.880）・漏れ 0.89 %・縁の比 1.01 | 内 |
+| plant-sun / plant_near | 太陽 | IoU 0.923・漏れ 0 %・縁の比 0.95 | 内 |
+
+- 前の撮影（SCN-WL-SUN-SHADOW-FIX）との差: 対照の Y は全視点で 1.000 倍、層の比の変化は 0.0001 以内、太陽の IoU の変化は plant-sun の −0.0015 だけ。
+  前後で Cycles と同じ面の画素の差は terrain-sky 10・rocks-cliff-sky 9・terrain-sun 11・rocks-cliff-sun 16 画素
+- 届かない層は株の根元だけ。並べた画 `cycles/plant-sky/occlusion_preview/plant_near.png` で、Cycles は株の根元の地面に冠の大きさの柔らかな暗がりが
+  出るが、エンジンには出ない。原因は上の「RT のシーン」のとおり株が RTGI の光線の形に無いことで、SCN-WL-OCCLUSION-FIX では直していない。
+  直しは SCN-WL-PLANT-ROOT-OCCLUSION に分けた
+- 共通の照明の組の撮り直し（`--light-final --verify`）と既定の荒野の 6 視点の所見は、株の根元を直した後の受け入れの回し直しで撮る

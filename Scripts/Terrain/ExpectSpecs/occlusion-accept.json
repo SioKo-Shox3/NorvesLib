@@ -1,0 +1,24 @@
+{
+  "description": "SCN-WL-OCCLUSION-ACCEPT: 空の遮蔽（SCN-WL-OCCLUSION-FIX）と太陽の影（SCN-WL-SUN-SHADOW-FIX）の直しの受け入れ。直しの後の撮影（SCN-WL-SUN-SHADOW-FIX）と同じ参照・同じ画素で前後を比べる（OcclusionCompare.check_expect）。決めた層は occlusion-regions.json の必須の全層で、エンジン ÷ Cycles が target_range の内。ほかの層と対照は前の撮影から悪くならない。太陽は sun-shadow.json の許容のまま、太陽だけの組の全視点を決めた視点にする（rocks-sun は地面の受け手の IoU）",
+  "baseline_engine_root": ".harness/runs/scene-capture/SCN-WL-SUN-SHADOW-FIX",
+  "targets": [
+    {"set": "terrain-sky", "view": "ref_cliff_01", "region": "groove", "stratum": "slope60-180_d500-100000"},
+    {"set": "rocks-sky", "view": "contact_near", "region": "contact", "stratum": "slope0-30_d0-10"},
+    {"set": "rocks-sky", "view": "contact_near", "region": "contact", "stratum": "slope30-60_d10-50"},
+    {"set": "plant-sky", "view": "plant_near", "region": "plant_root", "stratum": "slope0-30_d0-10"}
+  ],
+  "target_range": [0.85, 1.15],
+  "worse_tolerance": 0.03,
+  "control_y_tolerance": 0.03,
+  "sun": {
+    "iou_min": 0.9,
+    "leak_max": 0.02,
+    "edge_ratio_range": [0.5, 1.5],
+    "targets": [
+      {"set": "terrain-sun", "view": "ref_cliff_01"},
+      {"set": "rocks-sun", "view": "contact_near", "iou_receiver": "terrain"},
+      {"set": "rocks-cliff-sun", "view": "ref_cliff_01"},
+      {"set": "plant-sun", "view": "plant_near"}
+    ]
+  }
+}
