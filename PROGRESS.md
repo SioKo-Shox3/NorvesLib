@@ -7300,3 +7300,10 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 開いた画: `cycles/rocks-sky/occlusion_preview/contact_near.png`（岩の根元が暗くなり Cycles に寄る）、`regression/SCN-WL-OCCLUSION-FIX/after/night-village-diff.png`（灯りの周りのまばらな点だけ）
 - Next: TASKS.md の次の未完
 - Notes: ref_cliff_01 の GPU 時間の直す前の値は撮っていない（反復の最初に撮らなかった。後で撮るとエンジンの撮影の入力のハッシュが合わなくなる）。基準画像の検査（Indoor 8929 画素・Outdoor 20356 画素）は 10-22 の SCN-WL-LIGHT-FINAL の後のどこかで落ち始めた前からの差で、原因は追っていない（NEXT_FINDINGS に記録）。株の根元（1.250）は株が RT のシーンに無い別の原因で残る。Git Bash から `cmake --build ... -- /m:1` を回すと `/m:1` がパスに変わって MSBuild が落ちるので `MSYS_NO_PATHCONV=1` を付けた。新しい試験は足していない（verify の照合が確かめる）
+
+## 2026-10-23 SCN-WL-OCCLUSION-FIX（run 20261022-173753 の反復 37、途中）
+- Done: 差し戻しの 2 点を直した。(1) `OcclusionCompare.check_expect` が視点ごとに前後どちらの撮影でも Cycles と同じ面の画素の積だけで前後の両方を測り直す形にし（前後の画素の数が違えば不合格）、測り直しは並べた画・重ね画像を書かない（`OcclusionMetric.measure_view` の `write_images`）。(2) 起動引数 `--wasteland-rtgi-non-caster-occlusion=off`（開発ビルドだけ）で直す前の印に戻せるようにし、同じビルドで GPU 時間の前後を測れるようにした
+- 見つけた欠陥: 反復 36 の直しの撮影は、影を落とさない崖錐の岩の面に黒い斑が出ていた（地形の画素だけを測る判定には出ない）。岩の光線の形（最も粗い段）に岩の 1 次面からの光線が当たる自分への当たり。`rayProxy.z` に影を落とさない物体の印を足し、道のりが `max(rayProxy.x, proxyHeightLimit)` より近い当たりを読み飛ばす形にした（`DiffuseIndirect.comp`・`LightingPass.cpp`）。rocks-sky だけの試しで斑の画素 約 9 万 → 7823、決めた 2 層 1.049・1.036（`aux-SCN-WL-OCCLUSION-FIX-try-distance2*.txt`、並べた画を開いて確かめた）。記録は `WastelandOcclusion.md` の「岩の面の黒い斑と自分への当たりの読み飛ばし」
+- 証拠（`.harness/runs/20261022-173753/`）: `verify-SCN-WL-OCCLUSION-FIX-10.txt`・`-11.txt`・`aux-...-timing-before.txt` は斑のある版の結果（共通の画素の比べ: xor terrain-sky 10・rocks-cliff-sky 13 画素で result=pass、GPU 中央値は切 15.604 ms・入 15.380 ms、LightingPass 1.511 / 1.507 ms）。`verify-...-1〜4.txt` は途中の版。どれも今の版の合否には使えない
+- Next: この項目（doing のまま）。今の版で verify を全部回し直す（Debug ビルド → 全 8 組の撮影 → `--expect` → GPU 時間の前（`-GameArgs '--wasteland-rtgi-non-caster-occlusion=off'`、`timing-before`）と後 → 回帰の after）。回帰の before は反復 36 のもの（直す前）を使う
+- Notes: 壁時計の残りが 25 分を切ったので全体の撮り直しは始めずに終えた。GPU 時間の計測は CPU の重い処理（`--occlusion` の判定）と重ねると数 % 揺れるので、単独で回す。シェーダーは起動時に Assets から作るので、撮影の途中でシェーダーを書き換えない。新しい試験は足していない

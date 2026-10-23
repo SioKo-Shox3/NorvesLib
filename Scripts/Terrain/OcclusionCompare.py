@@ -33,7 +33,8 @@
 # 書くもの: <参照の組>/occlusion_check.json と、並べた画 <参照の組>/occlusion_preview/<視点>.png
 #   （上: エンジンの HDR と Cycles の HDR を同じ露出で、下: 同じ面の判定〔緑 一致、赤 不一致、灰 輪郭、黒 空〕と物体の識別）。
 # --expect <定義>（--regions と一緒に。例 ExpectSpecs/occlusion-fix.json）: 定義の baseline_engine_root（直しの前のエンジンの撮影）を
-#   同じ参照・同じ領域で測り直し、同じ画素で前後を比べる。空だけの組の層のうち、targets の層はエンジン ÷ Cycles が target_range の内、
+#   同じ参照・同じ領域で測り直し、同じ画素で前後を比べる（視点ごとに、前と後のどちらの撮影でも Cycles と同じ面の画素だけで
+#   前後の両方を測る。前後の測り直しは並べた画・重ね画像を書かない）。空だけの組の層のうち、targets の層はエンジン ÷ Cycles が target_range の内、
 #   ほかの層（くぼみ・対照の画素が領域の定義の下限以上）は 1 からの離れが前の値の worse_tolerance 倍を越えて増えない、対照の
 #   エンジンの Y の平均が前の 1 ± control_y_tolerance の内。結果は <エンジンの置き場>/occlusion_expect.json。
 import json
@@ -256,7 +257,27 @@ def write_preview(path, engine_hdr, cycles_hdr, domain, same, edge, object_index
     image.resize((image.width // 2, image.height // 2), Image.BILINEAR).save(path)
 
 
-def check_view(RC, engine_dir, reference_dir, record, view, regions=None, set_name="", trial=False):
+def engine_same_mask(RC, engine_dir, reference_dir, view):
+    """エンジンの撮影が Cycles と同じ面を見ている画素（輪郭を除く）。ファイルが無ければ None"""
+    aov_path = os.path.join(engine_dir, f"{view}.aov.json")
+    prefix = os.path.join(reference_dir, view)
+    if not (os.path.isfile(aov_path) and os.path.isfile(prefix + ".aux.depth.pfm") and
+            os.path.isfile(prefix + ".aux.normal.pfm")):
+        return None
+    aov = read_json(aov_path)
+    engine_depth = RC.read_pfm_any(os.path.join(engine_dir, aov["depth"]["file"]))[..., 0].astype(np.float64)
+    engine_normal = RC.read_pfm_any(os.path.join(engine_dir, aov["normal"]["file"]))[..., :3].astype(np.float64)
+    cycles_depth = RC.read_pfm_any(prefix + ".aux.depth.pfm")[..., 0].astype(np.float64)
+    cycles_normal = RC.read_pfm_any(prefix + ".aux.normal.pfm")[..., :3].astype(np.float64)
+    if engine_depth.shape != cycles_depth.shape:
+        return None
+    engine_depth = np.where(np.isfinite(engine_depth) & (engine_depth > 0.0), engine_depth, np.inf)
+    return same_surface_masks(engine_depth, engine_normal, cycles_depth, cycles_normal)[1]
+
+
+def check_view(RC, engine_dir, reference_dir, record, view, regions=None, set_name="", trial=False, same_mask=None,
+               write_images=True):
+    """same_mask があれば、測り（regions）の同じ面の画素をそれとの積に絞る。write_images が偽なら並べた画・重ね画像を書かない"""
     result = {"view": view, "pass": False, "failures": []}
     failures = result["failures"]
     aov_path = os.path.join(engine_dir, f"{view}.aov.json")
@@ -344,15 +365,17 @@ def check_view(RC, engine_dir, reference_dir, record, view, regions=None, set_na
     failures.extend(geometric_failures)
     if fraction < MIN_SAME_SURFACE_FRACTION:
         failures.append(f"同じ面の画素の割合 {fraction:.4f} が {MIN_SAME_SURFACE_FRACTION} に届かない")
-    preview = os.path.join(reference_dir, PREVIEW_DIR, f"{view}.png")
-    write_preview(preview, engine_hdr, cycles_hdr, domain, same, edge, object_index)
-    result["preview"] = RC.rel_dir(preview)
+    if write_images:
+        preview = os.path.join(reference_dir, PREVIEW_DIR, f"{view}.png")
+        write_preview(preview, engine_hdr, cycles_hdr, domain, same, edge, object_index)
+        result["preview"] = RC.rel_dir(preview)
     if regions is not None:
         import OcclusionMetric
-        data = {"aov": aov, "same": same, "object_index": object_index, "engine_hdr": engine_hdr, "cycles_hdr": cycles_hdr,
+        metric_same = same if same_mask is None else same & same_mask
+        data = {"aov": aov, "same": metric_same, "object_index": object_index, "engine_hdr": engine_hdr, "cycles_hdr": cycles_hdr,
                 "cycles_depth": cycles_depth, "cycles_normal": cycles_normal, "cycles_geometric_normal": geometric_normal}
         result["metric"], metric_failures = OcclusionMetric.measure_view(
-            RC, regions, set_name, record, engine_dir, reference_dir, view, data, trial)
+            RC, regions, set_name, record, engine_dir, reference_dir, view, data, trial, write_images)
         failures.extend(f"測り: {reason}" for reason in metric_failures)
     result["pass"] = not failures
     return result
@@ -422,7 +445,8 @@ def check_expect(RC, expect, regions, report, reference_root, views, trial):
     min_control = int(regions["limits"]["min_control_pixels"])
     targets = {(t["set"], t["view"], t["region"], t["stratum"]) for t in expect["targets"]}
     record = {"baseline_engine_root": RC.rel_dir(baseline_root), "target_range": [low, high],
-              "worse_tolerance": worse_tolerance, "control_y_tolerance": control_tolerance, "layers": [], "controls": []}
+              "worse_tolerance": worse_tolerance, "control_y_tolerance": control_tolerance, "masks": [], "layers": [],
+              "controls": []}
     seen_targets = set()
     for name, entry in report["sets"].items():
         reference_dir = os.path.join(reference_root, name)
@@ -433,11 +457,26 @@ def check_expect(RC, expect, regions, report, reference_root, views, trial):
         if not os.path.isdir(baseline_dir):
             failures.append(f"前の撮影 {RC.rel_dir(baseline_dir)} が無い")
             continue
+        engine_dir = os.path.join(RC.REPO_ROOT, entry["engine"])
         baseline = {"views": {}}
+        current = {"views": {}}
         for view in views or sorted((inputs.get("views") or {}).keys()):
-            baseline["views"][view] = check_view(RC, baseline_dir, reference_dir, inputs, view, regions, name, trial)
+            # 前後の両方で Cycles と同じ面の画素（共通の画素）だけで、前後を測り直す
+            same_before = engine_same_mask(RC, baseline_dir, reference_dir, view)
+            same_after = engine_same_mask(RC, engine_dir, reference_dir, view)
+            if same_before is None or same_after is None:
+                failures.append(f"{name}/{view} の前後の同じ面の画素を求められない（撮影のファイルが無い）")
+                continue
+            common = same_before & same_after
+            record["masks"].append({"set": name, "view": view, "before_pixels": int(same_before.sum()),
+                                    "after_pixels": int(same_after.sum()), "xor_pixels": int((same_before ^ same_after).sum()),
+                                    "common_pixels": int(common.sum())})
+            baseline["views"][view] = check_view(RC, baseline_dir, reference_dir, inputs, view, regions, name, trial,
+                                                 common, write_images=False)
+            current["views"][view] = check_view(RC, engine_dir, reference_dir, inputs, view, regions, name, trial,
+                                                common, write_images=False)
         before_layers = sky_layers(baseline)
-        after_layers = sky_layers(entry)
+        after_layers = sky_layers(current)
         controls = set()
         for key, after in sorted(after_layers.items()):
             view, region, stratum = key
@@ -445,6 +484,10 @@ def check_expect(RC, expect, regions, report, reference_root, views, trial):
             if before is None:
                 failures.append(f"{name}/{view} の層 {region} {stratum} が前の撮影で測れない")
                 continue
+            if [before["region_pixels"], before["control_pixels"]] != [after["region_pixels"], after["control_pixels"]]:
+                failures.append(f"{name}/{view} の層 {region} {stratum} の前後の画素の数が違う（前 "
+                                f"{before['region_pixels']}/{before['control_pixels']}、後 "
+                                f"{after['region_pixels']}/{after['control_pixels']}）")
             ratio_before = float(before["engine_over_cycles"])
             ratio_after = float(after["engine_over_cycles"])
             is_target = (name, view, region, stratum) in targets
@@ -484,6 +527,9 @@ def check_expect(RC, expect, regions, report, reference_root, views, trial):
 
 def print_expect(record):
     """前後の比べを 1 行ずつ出す"""
+    for row in record["masks"]:
+        print(f"REFERENCE_CHECK occlusion expect mask set={row['set']} view={row['view']} before={row['before_pixels']} "
+              f"after={row['after_pixels']} xor={row['xor_pixels']} common={row['common_pixels']}", flush=True)
     for row in record["layers"]:
         print(f"REFERENCE_CHECK occlusion expect set={row['set']} view={row['view']} region={row['region']} "
               f"stratum={row['stratum']} target={int(row['target'])} measured={int(row['measured'])} "

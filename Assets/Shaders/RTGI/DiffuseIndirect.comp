@@ -45,7 +45,8 @@ struct RTGIInstanceData
     vec4 transform0;
     vec4 transform1;
     vec4 transform2;
-    vec4 rayProxy; // x=光線に見せる形のずれの上限（世界の長さ。MegaGeometry の影の段がラスタより粗い分）
+    vec4 rayProxy; // x=光線に見せる形のずれの上限（世界の長さ。MegaGeometry の影の段がラスタより粗い分）、
+                   // y=地形の混ぜ合わせの材質（1/0）、z=影を落とさない不透明物体（1/0）
 };
 
 struct LightData
@@ -1160,6 +1161,15 @@ vec3 TraceDiffuseRay(vec3 rayOrigin,
             !TryGetWorldTriangleNormal(query, primitiveIndex, hitInstance, triangleNormal))
         {
             return vec3(0.0);
+        }
+        // 影を落とさない物体（崖錐の岩）の光線の形は最も粗い段でラスタとのずれが大きく、その物体の 1 次面から出た光線は
+        // すぐ近くで自分の光線の形に当たる（岩の面の黒い斑）。光線の形のずれ（rayProxy.x）と 1 次面の読み飛ばしの高さの
+        // 上限（proxyHeightLimit）の大きい方より近い当たりは読み飛ばす。岩の根元の地面からの光線は岩までの道のりが長いので、遮りは残る
+        if (hitInstance.rayProxy.z > 0.5 && hitDistance < max(hitInstance.rayProxy.x, proxyHeightLimit) &&
+            attempt < RTGI_PROXY_SELF_HIT_SKIPS)
+        {
+            rayMinimum = hitDistance + RAY_ORIGIN_OFFSET;
+            continue;
         }
         float hitHeight = RAY_ORIGIN_OFFSET + hitDistance * dot(rayDirection, surfaceNormal);
         // 光線の形の面を 1 次面の側へ向けた法線に対して光線が入っていく当たり（起伏の上の点から隣の地面へ向かう光線）は、

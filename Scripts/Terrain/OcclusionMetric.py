@@ -495,8 +495,9 @@ def write_sun_overlay(path, overlay):
     save_grid(path, [gray_rgb(overlay["cycles_v"]), gray_rgb(overlay["engine_v"]), judge, edges])
 
 
-def measure_view(RC, spec, set_name, record, engine_dir, reference_dir, view, data, trial):
-    """1 視点の測り。(結果, 失敗の一覧)。data は OcclusionCompare.check_view が読んだ画と同じ面の画素"""
+def measure_view(RC, spec, set_name, record, engine_dir, reference_dir, view, data, trial, write_images=True):
+    """1 視点の測り。(結果, 失敗の一覧)。data は OcclusionCompare.check_view が読んだ画と同じ面の画素。
+    write_images が偽なら重ね画像を書かない（直しの前後の測り直しが、今の撮影の重ね画像を上書きしないため）"""
     case = (record.get("lighting") or {}).get("case")
     set_kind = record.get("set_kind") or "rocks"
     camera = record["views"][view]["camera"]
@@ -519,7 +520,7 @@ def measure_view(RC, spec, set_name, record, engine_dir, reference_dir, view, da
         result, failures, overlay = sun_metric(spec, engine_dir, view, ctx)
         failures = seed_failures + failures
         result["kind"] = "sun"
-        if overlay is not None:
+        if overlay is not None and write_images:
             write_sun_overlay(overlay_path, overlay)
             result["overlay"] = RC.rel_dir(overlay_path)
         return result, failures
@@ -538,8 +539,9 @@ def measure_view(RC, spec, set_name, record, engine_dir, reference_dir, view, da
         # 試しの描画でも、種の間の差を測れない描画は通さない
         seed_failures.append(f"今回の描画の記録に合う Cycles の種が {len(seed_files)} 個で {min_seeds} 個に届かない")
     failures = seed_failures + required_failures(spec, set_name, view, result, trial)
-    write_sky_overlay(overlay_path, ctx, masks)
-    result["overlay"] = RC.rel_dir(overlay_path)
+    if write_images:
+        write_sky_overlay(overlay_path, ctx, masks)
+        result["overlay"] = RC.rel_dir(overlay_path)
     return result, failures
 
 

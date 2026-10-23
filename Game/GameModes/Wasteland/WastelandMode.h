@@ -173,6 +173,8 @@ namespace Game::GameModes
         /// （--wasteland-render-scale。0.5〜1、1 なら替えない。Leave で 1 に戻す）
         WastelandAntiAliasing m_AntiAliasing = WastelandAntiAliasing::Default;
         float m_RenderScale = 1.0f;
+        /// RTGI の拡散の光線を影を落とさない崖錐の岩にも当てるか（--wasteland-rtgi-non-caster-occlusion。開発ビルドだけ off にできる）
+        bool m_bRTGINonCasterOcclusion = true;
     };
 
     class WastelandRoutine

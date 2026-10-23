@@ -849,7 +849,8 @@ namespace NorvesLib::Core::Rendering
         uint32_t CustomIndex = UINT32_MAX;
         float Transform[12] = {};
         /// x=光線に見せる形のずれの上限（世界の長さ、RayTracingSceneInstanceSnapshot::RayProxyErrorMeters）、
-        /// y=地形の 3 層の混ぜ合わせの材質（1/0。当たりの色を地形の値から決める）。zw は未使用
+        /// y=地形の 3 層の混ぜ合わせの材質（1/0。当たりの色を地形の値から決める）、z=影を落とさない不透明物体（1/0。
+        /// 拡散の光線が中から出る当たりを読み飛ばす）。w は未使用
         float RayProxy[4] = {};
     };
 
@@ -1172,6 +1173,7 @@ namespace NorvesLib::Core::Rendering
             bValidValues = bValidValues && IsFiniteNonNegativeRTGI(snapshot.RayProxyErrorMeters);
             instanceData.RayProxy[0] = snapshot.RayProxyErrorMeters;
             instanceData.RayProxy[1] = snapshot.bTerrainBlend ? 1.0f : 0.0f;
+            instanceData.RayProxy[2] = (snapshot.Instance.mask & RayTracingInstanceMaskShadowCaster) == 0u ? 1.0f : 0.0f;
             if (!bValidValues)
             {
                 return false;

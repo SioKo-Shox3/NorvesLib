@@ -1938,7 +1938,8 @@ namespace Game::GameModes
         ApplyViewEnvironment(ctx, data);
         // 崖錐の岩の大半は影を落とさない（VSM の投影物にしない）が、RT のシーンには入る。RTGI の拡散の光線を当てて、
         // 岩の根元と岩の間の地面の空の光を遮る（WastelandOcclusion.md の「直す原因」）
-        ctx.EngineRef.GetRenderWorld().GetRenderingCoordinator().SetRTGINonShadowCasterOcclusion(true);
+        ctx.EngineRef.GetRenderWorld().GetRenderingCoordinator().SetRTGINonShadowCasterOcclusion(
+            data.m_bRTGINonCasterOcclusion);
 
         // 地形の区画を読み、材質のテクスチャの読み込みを始める。無いときは空と太陽だけで組み立てを終える
         TSharedPtr<const Asset::AssetSystem> assetSystem;

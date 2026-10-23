@@ -296,6 +296,10 @@ namespace Game
         // 外れた光線の空の光は残す（RTGI を切ると IBL・DDGI へ替わるので、照り返しの量は入・切の差で測る。
         // Scripts/Terrain/ReferenceCheck.py --bounce）。環境変数 NORVES_RTGI_BOUNCE で描画側（LightingPass）へ渡す
         constexpr const TCHAR *kRTGIBounceOption = TEXT("--rtgi-bounce=");
+        // --wasteland-rtgi-non-caster-occlusion=on|off: 荒野で RTGI の拡散の光線を影を落とさない崖錐の岩にも当てるか（開発ビルドだけ。
+        // 既定 on。off は直す前の印で描き、GPU 時間の前後を同じビルドで測る。WastelandOcclusion.md の「直す原因」）
+        constexpr const TCHAR *kWastelandRTGINonCasterOcclusionOption = TEXT("--wasteland-rtgi-non-caster-occlusion=");
+        bool s_bWastelandRTGINonCasterOcclusion = true;
         // --taa-current-weight=<0.01〜1>・--taa-clip-gamma=<0.25〜8>・--taa-sharpen=<0〜1>: TAA の現在の色の割合・履歴をクリップする箱の
         // 半幅・書き戻しのシャープ化の強さ（開発ビルドだけ。遠景のエイリアスの撮り比べ。環境変数 NORVES_TAA_CURRENT_WEIGHT・
         // NORVES_TAA_CLIP_GAMMA・NORVES_TAA_SHARPEN で描画側へ渡す。Rendering/TemporalAAParamOverride.h）。
@@ -748,6 +752,7 @@ namespace Game
         s_WastelandCaptureDir.clear();
         s_WastelandAntiAliasing = Game::GameModes::WastelandAntiAliasing::Default;
         s_WastelandRenderScale = 1.0f;
+        s_bWastelandRTGINonCasterOcclusion = true;
         m_StressStreamCellMeters = 0.0f;
         m_bStressStreamCellSet = false;
         m_StressStreamPeriod = Game::GameModes::kDefaultStressStreamPeriod;
@@ -1627,6 +1632,20 @@ namespace Game
                 _putenv_s("NORVES_RTGI_BOUNCE", sceneValue == TEXT("off") ? "0" : "1");
 #else
                 LOG_WARNING("--rtgi-bounce は開発ビルドだけで使えます。無視します");
+#endif
+                continue;
+            }
+            if (TryStripPrefix(args[i], kWastelandRTGINonCasterOcclusionOption, sceneValue))
+            {
+#if NORVES_BUILD_DEVELOPMENT
+                if (sceneValue != TEXT("on") && sceneValue != TEXT("off"))
+                {
+                    LOG_ERROR("--wasteland-rtgi-non-caster-occlusion は on か off で指定してください");
+                    return false;
+                }
+                s_bWastelandRTGINonCasterOcclusion = sceneValue == TEXT("on");
+#else
+                LOG_WARNING("--wasteland-rtgi-non-caster-occlusion は開発ビルドだけで使えます。無視します");
 #endif
                 continue;
             }
@@ -3869,6 +3888,7 @@ namespace Game
                 mode->GetData().m_CaptureDirectory = s_WastelandCaptureDir;
                 mode->GetData().m_AntiAliasing = s_WastelandAntiAliasing;
                 mode->GetData().m_RenderScale = s_WastelandRenderScale;
+                mode->GetData().m_bRTGINonCasterOcclusion = s_bWastelandRTGINonCasterOcclusion;
                 if (!s_WastelandCommonLight.bEnabled && s_WastelandCommonLight.bGrayPlate)
                 {
                     LOG_WARNING("--wasteland-gray-plate は --wasteland-common-light と一緒に使います（板は置き、照明は既定のまま）");
