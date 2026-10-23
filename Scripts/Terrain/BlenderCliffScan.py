@@ -65,7 +65,7 @@ ASSETS = {
         "normal": f"Assets/Models/PolyHaven/{asset_id}/cooked/{asset_id}_normal",
         "orm": f"Assets/Models/PolyHaven/{asset_id}/cooked/{asset_id}_orm",
     }
-    for asset_id in ("rock_face_01", "rock_face_02")
+    for asset_id in ("rock_face_01", "rock_face_02", "boulder_01", "rock_09")
 }
 
 # 置く塊の案（エンジンの座標）。target は狙いの点（崖の手前の x・塊の中心を置く高さ y・崖に沿う z）、toward は撃つ水平の向き、
@@ -81,6 +81,148 @@ PLAN = (
     {"name": "battleship_west_03", "asset": "rock_face_01", "target": (-1700.0, 145.0, -822.0), "toward": (1.0, 0.0, 0.0),
      "scale": 3.0, "turn_degrees": 0.0},
 )
+# 棚に沿って半分埋める閉じた岩塊の狙い（SCN-WL-CLIFF-SCAN-NEAR）。Battleship Rock の北西の壁（ref_cliff_01 の正面、550〜900 m）の
+# 写真の注釈の棚（cliff_01 の 4 本）の線を、置く前の撮影（SCN-WL-SHAPE-CAUSE の lod-default、注釈のずらし 0, −7 画素）の深度で
+# 世界へ戻し、11 m 以上離れた点を選んだもの。(棚の番号, 壁の点, カメラから壁の点への水平の向き (x, z))。殻（rock_face）は
+# この壁では縁を 0.5 m に収める向きが無いか埋もれ過ぎる（壁の崖の細部の溝の起伏が殻の厚みより大きい）ので、閉じた岩塊を使う
+SHELF_POINTS = (
+    (0, (-1909.7, 141.6, -1274.3), (0.928, 0.373)),
+    (0, (-1926.2, 139.7, -1278.4), (0.926, 0.376)),
+    (0, (-1940.4, 137.7, -1283.0), (0.926, 0.378)),
+    (0, (-1951.0, 136.3, -1286.0), (0.925, 0.379)),
+    (0, (-1962.2, 134.8, -1288.2), (0.924, 0.382)),
+    (0, (-1974.3, 133.7, -1287.9), (0.921, 0.389)),
+    (0, (-1985.4, 132.7, -1285.1), (0.917, 0.399)),
+    (0, (-1996.4, 131.7, -1283.7), (0.914, 0.406)),
+    (0, (-2008.2, 130.6, -1282.4), (0.91, 0.415)),
+    (0, (-2022.8, 128.6, -1286.5), (0.908, 0.418)),
+    (0, (-2033.7, 127.7, -1284.6), (0.904, 0.427)),
+    (0, (-2045.8, 126.5, -1283.7), (0.9, 0.436)),
+    (0, (-2056.7, 125.5, -1281.1), (0.895, 0.447)),
+    (0, (-2067.8, 124.5, -1279.3), (0.89, 0.457)),
+    (0, (-2078.5, 123.2, -1282.2), (0.888, 0.46)),
+    (0, (-2088.0, 122.7, -1276.4), (0.88, 0.475)),
+    (0, (-2092.1, 123.2, -1266.2), (0.871, 0.492)),
+    (0, (-2088.1, 124.7, -1255.2), (0.864, 0.503)),
+    (0, (-2081.9, 126.1, -1245.8), (0.86, 0.51)),
+    (0, (-2073.2, 127.8, -1238.9), (0.859, 0.512)),
+    (0, (-2083.5, 126.3, -1242.8), (0.857, 0.515)),
+    (0, (-2064.0, 129.5, -1229.8), (0.856, 0.516)),
+    (1, (-1969.7, 115.5, -1302.4), (0.93, 0.368)),
+    (1, (-1982.1, 114.2, -1304.8), (0.928, 0.371)),
+    (1, (-1995.1, 113.0, -1304.6), (0.926, 0.379)),
+    (1, (-2008.9, 111.6, -1306.2), (0.923, 0.384)),
+    (1, (-2020.4, 110.5, -1306.4), (0.921, 0.39)),
+    (1, (-2031.2, 109.7, -1303.4), (0.916, 0.401)),
+    (1, (-2042.5, 108.6, -1303.4), (0.913, 0.408)),
+    (1, (-2057.1, 107.2, -1304.9), (0.91, 0.415)),
+    (1, (-2068.3, 105.9, -1308.9), (0.909, 0.416)),
+    (1, (-2079.4, 104.9, -1309.1), (0.906, 0.423)),
+    (1, (-2090.6, 103.9, -1308.6), (0.902, 0.432)),
+    (1, (-2099.8, 103.3, -1302.6), (0.895, 0.447)),
+    (1, (-2107.6, 103.0, -1294.5), (0.886, 0.464)),
+    (1, (-2113.4, 102.9, -1284.9), (0.876, 0.482)),
+    (1, (-2122.0, 102.5, -1277.5), (0.866, 0.499)),
+    (1, (-2125.1, 102.8, -1266.5), (0.856, 0.517)),
+    (1, (-2122.4, 103.6, -1255.8), (0.849, 0.529)),
+    (1, (-2121.0, 104.3, -1244.4), (0.84, 0.542)),
+    (1, (-2107.3, 106.3, -1230.2), (0.836, 0.548)),
+    (1, (-2074.9, 110.5, -1207.6), (0.835, 0.55)),
+    (2, (-2099.5, 82.5, -1333.6), (0.916, 0.4)),
+    (2, (-2110.6, 81.9, -1331.4), (0.911, 0.411)),
+    (2, (-2116.2, 81.9, -1321.6), (0.903, 0.431)),
+    (2, (-2124.9, 81.6, -1314.8), (0.894, 0.447)),
+    (2, (-2128.5, 81.7, -1304.1), (0.885, 0.466)),
+    (2, (-2135.3, 81.6, -1295.3), (0.875, 0.485)),
+    (2, (-2143.4, 81.3, -1287.9), (0.865, 0.502)),
+    (2, (-2149.8, 81.3, -1278.8), (0.854, 0.52)),
+    (2, (-2149.2, 81.7, -1266.9), (0.844, 0.536)),
+    (2, (-2144.0, 82.3, -1257.0), (0.839, 0.545)),
+    (2, (-2140.1, 83.0, -1246.1), (0.832, 0.555)),
+    (2, (-2138.5, 83.4, -1235.2), (0.823, 0.568)),
+    (2, (-2135.8, 84.0, -1224.3), (0.816, 0.579)),
+    (2, (-2129.6, 84.7, -1213.5), (0.81, 0.586)),
+    (2, (-2120.7, 85.5, -1206.2), (0.81, 0.587)),
+    (2, (-2087.6, 88.5, -1179.7), (0.808, 0.589)),
+    (2, (-2086.8, 88.9, -1168.8), (0.8, 0.6)),
+    (3, (-1759.5, 131.0, -1249.6), (0.941, 0.338)),
+    (3, (-1792.0, 127.9, -1260.5), (0.941, 0.339)),
+    (3, (-1802.9, 128.1, -1257.9), (0.938, 0.346)),
+    (3, (-1932.0, 114.7, -1304.6), (0.938, 0.347)),
+    (3, (-1880.4, 120.4, -1284.8), (0.938, 0.348)),
+    (3, (-1926.6, 115.5, -1301.3), (0.937, 0.349)),
+    (3, (-1939.0, 114.8, -1303.5), (0.936, 0.352)),
+    (3, (-1954.3, 113.4, -1308.6), (0.936, 0.353)),
+    (3, (-1944.1, 114.7, -1303.3), (0.935, 0.354)),
+    (3, (-1969.8, 112.2, -1311.9), (0.935, 0.356)),
+    (3, (-1962.0, 114.3, -1303.9), (0.932, 0.362)),
+    (3, (-1979.4, 112.9, -1308.1), (0.931, 0.366)),
+)
+# 岩塊の素材と拡大率と鉛直の軸まわりの振り[°]と壁に沿う軸まわりの傾き[°]の巡回（繰り返しを崩す。boulder_01 は 1.27 × 1.83 ×
+# 高さ 1.0 m なので拡大率 ≈ 高さ[m]、rock_09 は 0.07 × 0.15 × 厚さ 0.03 m の板で、拡大率 100 で 7 × 15 × 3 m）
+SHELF_VARIANTS = (
+    ("boulder_01", 9.0, 0.0, 0.0),
+    ("rock_09", 110.0, 8.0, -4.0),
+    ("boulder_01", 7.5, -12.0, 3.0),
+    ("rock_09", 90.0, -6.0, 5.0),
+    ("boulder_01", 10.5, 15.0, -3.0),
+    ("rock_09", 125.0, 3.0, 2.0),
+    ("boulder_01", 8.0, -4.0, 6.0),
+)
+# 岩塊の体積の標本のうち壁の外に出す割合（写真の棚の 1〜3 m の張り出しと、影を落とす立体に見える深さ）
+EMBED_VISIBLE = 0.45
+# 二分の後の割合がこの範囲を外れる狙い（壁が平らでなく、押し出しで割合が決まらない所）は置かずに飛ばす
+EMBED_VISIBLE_RANGE = (0.25, 0.7)
+# 素材の高さ[m]（拡大率 1 の glTF の上下の幅）。棚の塊は上端を棚の線に揃える（中心を線から高さの半分下げる）。中心を線に置くと
+# 上端と下端の折れが線から 20〜25 画素離れ、線の上には折れが来ない
+ASSET_HEIGHT_M = {"boulder_01": 1.004, "rock_09": 0.0329}
+PLAN = PLAN + tuple(
+    {"name": f"battleship_shelf_{index:02d}", "kind": "embed", "asset": SHELF_VARIANTS[index % len(SHELF_VARIANTS)][0],
+     "target": (wall[0] - toward[0] * 60.0,
+                wall[1] - 0.5 * ASSET_HEIGHT_M[SHELF_VARIANTS[index % len(SHELF_VARIANTS)][0]] * SHELF_VARIANTS[index % len(SHELF_VARIANTS)][1],
+                wall[2] - toward[1] * 60.0), "toward": (toward[0], 0.0, toward[1]),
+     "scale": SHELF_VARIANTS[index % len(SHELF_VARIANTS)][1], "turn_degrees": SHELF_VARIANTS[index % len(SHELF_VARIANTS)][2],
+     "tilt_degrees": SHELF_VARIANTS[index % len(SHELF_VARIANTS)][3], "visible": EMBED_VISIBLE}
+    for index, (_, wall, toward) in enumerate(SHELF_POINTS)
+)
+# 外形を写真へ上げる尾根の上の岩塊（cap）。ref_cliff_01 の列ごとに、撮影の最も上の崖の画素（深度 1000 m 以内）が写真の注釈の
+# 外形より 10 画素以上低い所の尾根の点と、写真の外形の高さを深度で m に直した上端の高さ Y。(尾根の点, 上端の Y, 鉛直の軸の振り[°])。
+# 右の段（写真の x 0.6〜0.83）は写真が平らな段の壁で、撮影は滑らかな斜面のため 12〜30 m 低い。左の上の縁は 2.5〜4.4 m 低い
+# 岩塊は長い軸（boulder_01 の 1.83 m）を鉛直に立てた柱にする（写真の段の壁は縦の節理で割れた平らな頂の柱で、寝かせた岩塊は
+# 丸い塊の山に見え、幅が写真の外形の右へはみ出した）。右端の段（写真の x 0.8 より右）は柱の幅で外形の外へ出るので置かない
+CAP_POINTS = (
+    ((-2059.7, 120.2, -1212.6), 127.0, 0.0),
+    ((-2076.5, 109.1, -1204.9), 125.0, 25.0),
+    ((-2082.0, 102.4, -1195.3), 125.0, -15.0),
+    ((-2083.0, 92.4, -1182.7), 122.0, 40.0),
+    ((-2086.5, 89.8, -1174.3), 103.0, 10.0),
+    ((-2092.5, 84.9, -1165.1), 101.0, -30.0),
+    ((-2124.9, 72.1, -1179.7), 96.0, 20.0),
+    ((-1845.5, 167.3, -1259.0), 171.7, 30.0),
+    ((-1880.8, 167.4, -1266.0), 171.6, -20.0),
+    ((-1914.0, 167.0, -1262.0), 170.0, 5.0),
+    # 左の縁（写真の x 0.19〜0.27）: 手前の肩の縦の壁と、奥の壁の上の縁
+    ((-1948.6, 99.7, -1329.0), 124.0, 10.0),
+    ((-1684.5, 160.2, -1226.5), 166.0, -10.0),
+    ((-1697.5, 156.0, -1225.1), 165.5, 35.0),
+    ((-1778.8, 149.3, -1249.1), 176.8, 0.0),
+    ((-1801.7, 167.4, -1254.8), 174.7, -25.0),
+    ((-1827.8, 164.5, -1258.3), 172.5, 15.0),
+)
+# 立てた柱の高さ[m]（boulder_01 の拡大率 1 の長い軸）
+CAP_UPRIGHT_HEIGHT_M = 1.83
+# 岩塊の高さのうち尾根より下へ埋める割合（尾根の両側の斜面に足を入れて浮かせない）
+CAP_BURIED = 0.45
+# 尾根の岩塊を配置表へ書くか。立てた boulder_01 は頂が尖った単独の針に、逆さにすると丸い巨岩の山に見え、写真の平らな頂の段と
+# 角にならない（外形の距離は基準に入るが角の一致は上がらない。WastelandCliffScan.md の「Battleship Rock の壁を覆う試し」）ので、
+# 平らな頂の素材が揃うまで既定の景色には置かない
+CAP_ENABLED = False
+PLAN = PLAN + (() if not CAP_ENABLED else tuple(
+    {"name": f"battleship_cap_{index:02d}", "kind": "cap", "asset": "boulder_01", "ridge": ridge, "top_y": top_y,
+     "scale": max(4.0, (top_y - ridge[1]) / (1.0 - CAP_BURIED) / CAP_UPRIGHT_HEIGHT_M), "turn_degrees": turn,
+     "target": ridge}
+    for index, (ridge, top_y, turn) in enumerate(CAP_POINTS)
+))
 # 置く範囲の地形を読む箱の余白[m]（狙いの点の箱から広げる）
 PLACE_REGION_MARGIN_M = 90.0
 # 崖の面の向きを求める当たりの格子（塊の幅・高さに対する広がりの割合と、1 辺の本数）
@@ -524,6 +666,110 @@ def solve_block(plan, geometry, bvh):
     return matrix, check
 
 
+def solve_cap(plan, geometry, bvh):
+    """尾根の上に載せる岩塊の matrix_world と検査の値。局所の y（長い軸）を鉛直に立て、鉛直の軸まわりに plan の角だけ回し、
+    上端を plan["top_y"]、水平の中心を尾根の点に置く（下の CAP_BURIED の割合は尾根の中）"""
+    scale = float(plan["scale"])
+    yaw = math.radians(float(plan.get("turn_degrees", 0.0)))
+    cz, sz = math.cos(yaw), math.sin(yaw)
+    upright = np.array([[1.0, 0.0, 0.0], [0.0, 0.0, -1.0], [0.0, 1.0, 0.0]])
+    rotation = np.array([[cz, -sz, 0.0], [sz, cz, 0.0], [0.0, 0.0, 1.0]]) @ upright
+    vertices = geometry["vertices"] * scale @ rotation.T
+    lo_v, hi_v = vertices.min(axis=0), vertices.max(axis=0)
+    top_b = np.asarray(BR.engine_to_blender((plan["ridge"][0], plan["top_y"], plan["ridge"][2])), dtype=np.float64)
+    # 頂点の上端が top_b の高さ、水平の範囲の中心が尾根の点
+    shift = np.array([top_b[0] - 0.5 * (lo_v[0] + hi_v[0]), top_b[1] - 0.5 * (lo_v[1] + hi_v[1]), top_b[2] - hi_v[2]])
+    world = vertices + shift
+    rng = np.random.default_rng(0)
+    areas = geometry["areas"]
+    picked = rng.choice(len(areas), size=min(VISIBLE_SAMPLES, len(areas)), replace=False, p=areas / areas.sum())
+    surface_visible = float(np.mean(signed_distances(bvh, geometry["centroids"][picked] * scale @ rotation.T + shift) > 0.0))
+    heights = height_grid(bvh, top_b[:2], float(np.linalg.norm(hi_v - lo_v)) + 4.0, HEIGHT_GRID_STEP_M)
+    below_top = float(np.mean(world[:, 2] < sample_height(heights, world[:, :2])))
+    matrix = np.eye(4)
+    matrix[:3, :3] = rotation * scale
+    matrix[:3, 3] = shift
+    check = {
+        "kind": "cap",
+        "ridge_engine": [round(float(v), 3) for v in plan["ridge"]],
+        "top_y": round(float(plan["top_y"]), 3),
+        "visible_surface_fraction": round(surface_visible, 4),
+        "vertex_below_top_surface_fraction": round(below_top, 4),
+        "size_m": [round(float(v), 2) for v in hi_v - lo_v],
+    }
+    print(f"CLIFF_SCAN_CAP name={plan['name']} scale={scale:.1f} top_y={plan['top_y']:.1f} visible_surface={surface_visible:.3f} "
+          f"below_top={below_top:.3f}", flush=True)
+    return matrix, check
+
+
+def solve_embed(plan, geometry, bvh):
+    """閉じた岩塊を壁に半分埋める matrix_world と検査の値。長い水平の軸を壁に沿わせ（振りと傾きは plan の角）、体積の標本
+    （面の重心を中心へ寄せた点）のうち壁の外に出る割合が plan["visible"] になる面の法線の向きの押し出しを二分で求める"""
+    scale = float(plan["scale"])
+    size = (geometry["max"] - geometry["min"]) * scale
+    origin_b = BR.engine_to_blender(plan["target"])
+    toward_b = BR.engine_to_blender(plan["toward"])
+    anchor, face_normal, face_tilt = fit_face(bvh, origin_b, toward_b, max(size[0], size[1]), size[2])
+    normal = np.array([face_normal[0], face_normal[1], 0.0])
+    normal /= np.linalg.norm(normal)
+    tangent = np.cross(np.array([0.0, 0.0, 1.0]), normal)
+    # 局所の長い水平の軸（x と y の長い方）を壁に沿う向きへ、上（z）を鉛直へ
+    long_axis_angle = 0.0 if size[0] >= size[1] else 0.5 * math.pi
+    yaw = math.atan2(tangent[1], tangent[0]) - long_axis_angle + math.radians(float(plan.get("turn_degrees", 0.0)))
+    cz, sz = math.cos(yaw), math.sin(yaw)
+    rot_z = np.array([[cz, -sz, 0.0], [sz, cz, 0.0], [0.0, 0.0, 1.0]])
+    tilt = math.radians(float(plan.get("tilt_degrees", 0.0)))
+    k = np.array([[0.0, -tangent[2], tangent[1]], [tangent[2], 0.0, -tangent[0]], [-tangent[1], tangent[0], 0.0]])
+    rotation = (np.eye(3) + math.sin(tilt) * k + (1.0 - math.cos(tilt)) * (k @ k)) @ rot_z
+    vertices = geometry["vertices"] * scale @ rotation.T
+    center = 0.5 * (vertices.min(axis=0) + vertices.max(axis=0))
+    rng = np.random.default_rng(0)
+    areas = geometry["areas"]
+    picked = rng.choice(len(areas), size=min(VISIBLE_SAMPLES, len(areas)), replace=False, p=areas / areas.sum())
+    surface = geometry["centroids"][picked] * scale @ rotation.T - center
+    # 面の重心を中心へ 0〜0.9 の割合で寄せた点を体積の標本にする
+    volume = surface * (1.0 - rng.uniform(0.0, 0.9, size=len(picked))[:, None])
+    spread = float(np.ptp(vertices @ normal))
+
+    def visible_at(t):
+        return float(np.mean(signed_distances(bvh, volume + anchor + normal * t) > 0.0))
+
+    lo, hi = -spread, spread
+    for _ in range(SEARCH_BISECTIONS):
+        mid = 0.5 * (lo + hi)
+        if visible_at(mid) < float(plan["visible"]):
+            lo = mid
+        else:
+            hi = mid
+    t = 0.5 * (lo + hi)
+    origin = anchor + normal * t
+    visible = visible_at(t)
+    surface_visible = float(np.mean(signed_distances(bvh, surface + origin) > 0.0))
+    world = vertices - center + origin
+    heights = height_grid(bvh, anchor[:2], float(np.linalg.norm(size)) + 4.0, HEIGHT_GRID_STEP_M)
+    below_top = float(np.mean(world[:, 2] < sample_height(heights, world[:, :2])))
+    matrix = np.eye(4)
+    matrix[:3, :3] = rotation * scale
+    matrix[:3, 3] = origin - center
+    to_engine = np.asarray(BR.ENGINE_TO_BLENDER).T
+    check = {
+        "kind": "embed",
+        "anchor_engine": [round(float(v), 3) for v in to_engine @ anchor],
+        "face_normal_engine": [round(float(v), 4) for v in to_engine @ face_normal],
+        "face_tilt_degrees": round(face_tilt, 1),
+        "offset_along_normal_m": round(float(t), 3),
+        "visible_volume_fraction": round(visible, 4),
+        "visible_surface_fraction": round(surface_visible, 4),
+        "vertex_below_top_surface_fraction": round(below_top, 4),
+        "size_m": [round(float(v), 2) for v in size],
+    }
+    print(f"CLIFF_SCAN_EMBED name={plan['name']} asset={plan['asset']} scale={scale} offset={t:.2f} visible_volume={visible:.3f} "
+          f"visible_surface={surface_visible:.3f} face_tilt={face_tilt:.1f}", flush=True)
+    if not EMBED_VISIBLE_RANGE[0] <= visible <= EMBED_VISIBLE_RANGE[1]:
+        raise RuntimeError(f"{plan['name']}: 壁の外の体積の割合 {visible:.3f} が {EMBED_VISIBLE_RANGE} に入らない")
+    return matrix, check
+
+
 def import_block(scene, asset_id, name, matrix_world, pass_index=0):
     """塊の glTF を読み、配置の印の付いた空の物体の子にして置く。空の物体を返す"""
     import bpy
@@ -576,7 +822,16 @@ def run_place_job(job):
     roots = []
     for plan in PLAN:
         geometry = asset_geometry(plan["asset"])
-        matrix, check = solve_block(plan, geometry, bvh)
+        if plan.get("kind") == "embed":
+            try:
+                matrix, check = solve_embed(plan, geometry, bvh)
+            except RuntimeError as error:
+                print(f"CLIFF_SCAN_SKIP name={plan['name']} reason={error}", flush=True)
+                continue
+        elif plan.get("kind") == "cap":
+            matrix, check = solve_cap(plan, geometry, bvh)
+        else:
+            matrix, check = solve_block(plan, geometry, bvh)
         root, meshes = import_block(scene, plan["asset"], plan["name"], matrix)
         check["import_bounds_error_m"] = round(check_import_matches(meshes, root, geometry), 6)
         checks[plan["name"]] = check
