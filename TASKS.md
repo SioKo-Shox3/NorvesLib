@@ -2645,14 +2645,36 @@
 - paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Scripts, Docs/RenderingValidation, TASKS.md, PROGRESS.md
 - notes: 危険地帯（MegaGeometry の LOD・VSM・VRAM）。2026-10-23 親が SCN-WL-SUN-SHADOW-FIX の反復 3 の BLOCKED（推奨の案 3）から足した。verify は組を 1 つに絞る（ほかの組の非悪化は撮り直した組の記録で確かめ、足りなければ組ごとの行を足す）。時間の見積もり: 回帰の before・after 各 7〜9 分、ビルド 3〜6 分、1 組の撮影 約 3 分、試し 1 回 約 5 分 × 3 前後。壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える。
 
+## SCN-WL-SHAPE-CAUSE: 地形が丸く粗く見える原因を、LOD・崖の生成・格子の段・材質の陰影に切り分ける
+- status: todo
+- after: SCN-WL-OCCLUSION-ACCEPT
+- done-when: ユーザーの所見（確認 2、2026-10-22）「地形の造形が荒い」（崖も斜面も粘土のように丸く、棚・割れ目・角が無い）の原因を、直す前に切り分ける。今の地形は単純な 1 m の格子ではない: `Tools/AssetCook/TerrainCliffDetail.cpp` の崖の生成は一部を 0.25 m 相当まで細分化し、棚・割れ目・最大 2.5 m の押し出しを足す。far_01 の主役の崖には遠景の 2 m の格子の段も使われる。手本の 5 視点（ref_far_01,ref_far_02,ref_cliff_01,ref_cliff_02,ref_ground_02）を同じ条件（共通の照明・灰色の材質・岩は残す）で、(a) 通常の LOD、(b) 最も細かい LOD（`wasteland-finest-lod`）、(c) 崖の手続きの変形を切った版（開発ビルドの起動引数、この項目で足す。既定は変えない）で撮り、深度と幾何の法線の AOV（無ければこの項目で足す。描画と読み戻しの変更なので危険地帯）で、丸く見える所ごとに原因（DEM の高さの格子の限界・LOD の簡略化・崖の生成の設定・遠景の格子の段・材質の陰影）を分ける。写真と並べて、効き目の大きい直し（上端の角・連続する水平の棚・壁から崖錐へ移る大きな塊・谷床の流路・細かな凹凸）を、場所（崖の名前と世界座標の範囲）ごとに所見に書く。値は変えない。結果を `Docs/RenderingValidation/WastelandShape.md`（新規）に書き、重ね画像と並べた画を開いて確かめる。合否は `ReferenceCheck.py --shape-cause --verify`（この項目で作る。3 組の撮影がそろい同じ exe で撮られ、所見の表が文書にあること）。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Hdr -Aov -Views ref_far_01,ref_far_02,ref_cliff_01,ref_cliff_02,ref_ground_02 -GameArgs wasteland-common-light,wasteland-hide=clouds+foliage+gravel+buildings+aerial+fog,wasteland-gray-material,wasteland-aa=fxaa -OutDir .harness/runs/scene-capture/SCN-WL-SHAPE-CAUSE/lod-default`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Hdr -Aov -Views ref_far_01,ref_far_02,ref_cliff_01,ref_cliff_02,ref_ground_02 -GameArgs wasteland-common-light,wasteland-hide=clouds+foliage+gravel+buildings+aerial+fog,wasteland-gray-material,wasteland-aa=fxaa,wasteland-finest-lod -OutDir .harness/runs/scene-capture/SCN-WL-SHAPE-CAUSE/lod-finest`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Hdr -Aov -Views ref_far_01,ref_far_02,ref_cliff_01,ref_cliff_02,ref_ground_02 -GameArgs wasteland-common-light,wasteland-hide=clouds+foliage+gravel+buildings+aerial+fog,wasteland-gray-material,wasteland-aa=fxaa,wasteland-finest-lod,wasteland-cliff-detail=off -OutDir .harness/runs/scene-capture/SCN-WL-SHAPE-CAUSE/cliff-detail-off`
+- verify: `python Scripts/Terrain/ReferenceCheck.py --shape-cause --capture-root .harness/runs/scene-capture/SCN-WL-SHAPE-CAUSE --verify`
+- paths: Tools/AssetCook, Game, Library/Core/Private/Rendering, Library/Core/Public/Rendering, Assets/Shaders, Scripts, Docs/RenderingValidation, TASKS.md, PROGRESS.md
+- notes: 2026-10-23 親が確認 2 の後の計画の後半の頭として足した（ユーザーの順: 地形の形 → 植物 → 地面 → 建物）。後半の下書き 25 項目への Sol の批評（地形の原因を先に切り分ける・形は輝度の段でなく深度と幾何の法線で測る・CompareReference の拡張を先に・ビルドと撮影を別の行に）を受け、地形の形の原因と測り方を先に立てる。残りの後半はこの 2 項目の結果を見てから組む。 起動引数 `wasteland-cliff-detail=off` の名前は変えてよいが verify も合わせる。崖の生成の切り替えがクックの段で掛かるなら、切った版のクックを別の出力先に作る（既定のクックの結果を上書きしない）。時間の見積もり: ビルド 2 構成 6〜12 分、撮影 3 組 × 約 8 分、切り分けと所見 20〜30 分。1 反復で閉じなければ、撮影の組 → 所見 に分ける。壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える（未達のまま DONE にしない）。verify は 1 行 10 分未満（RelWithDebInfo のビルドは別の行、撮影は視点か組で分ける）。
+
+## SCN-WL-SHAPE-MEASURE: 崖の棚・角・外形を、写真の注釈とエンジンの深度と幾何の法線で測る物差しを作る
+- status: todo
+- after: SCN-WL-SHAPE-CAUSE
+- done-when: 形を測る `CompareReference.py --shape`（この項目で作る）を足す。注釈の形式（`Scripts/Terrain/ShapeAnnotations.json`）: 写真ごと（far_01・far_02・cliff_01・cliff_02・ground_02）に、棚は線分、角は点、外形は輪郭の多角形で置き、どの崖（名前）かを書く。撮影の側は、エンジンの深度と幾何の法線から棚の線（法線の向きの変化 30° 以上か深度の段）・角・外形の折れを取り出し、写真の注釈と画像の座標で対応づける。輝度の段は使わない（材質の縞・影・露出で作れ、照明の向きで正しい棚にも陰が出ないため）。写真と撮影の位置の許容は、今の撮影で写真の注釈の外形と撮影の外形の距離を測って先に固定し、文書に書く。量: 棚の線分のうち撮影にも折れがある長さの割合、角の点の一致の割合、外形の輪郭の距離の中央値。あわせて (1) `CompareReference.py --look` が `--photos` で絞った後の `--verify` で全 6 枚を要求する不具合（`LookMeasure.py`）を直し、(2) `--look`・`--shape` に `--expect`（量の行の合否。未知の写真の ID・空の選択・注釈の欠けは落とす）を足す。今の撮影（SCN-WL-SHAPE-CAUSE の lod-default）の値を記録する（値は変えない）。後の形の直しの項目は、この量の絶対の基準（例: 棚の一致の割合 0.6 以上）と前からの改善を分けて合否に使う（基準は今の値を見て文書で決める）。注釈の重ね画像（写真と撮影）を開いて確かめる。
+- verify: `python Scripts/Terrain/CompareReference.py --capture .harness/runs/scene-capture/SCN-WL-SHAPE-CAUSE/lod-default --photos far_01,far_02,cliff_01,cliff_02,ground_02 --shape --verify`
+- verify: `python Scripts/Terrain/CompareReference.py --capture .harness/runs/scene-capture/SCN-WL-SHAPE-CAUSE/lod-default --photos far_02 --look --verify`
+- paths: Scripts, Docs/RenderingValidation, TASKS.md, PROGRESS.md
+- notes: 2026-10-23 親が確認 2 の後の計画の後半の頭として足した（ユーザーの順: 地形の形 → 植物 → 地面 → 建物）。後半の下書き 25 項目への Sol の批評（地形の原因を先に切り分ける・形は輝度の段でなく深度と幾何の法線で測る・CompareReference の拡張を先に・ビルドと撮影を別の行に）を受け、地形の形の原因と測り方を先に立てる。残りの後半はこの 2 項目の結果を見てから組む。 撮影は SCN-WL-SHAPE-CAUSE の lod-default（灰色の材質・深度・幾何の法線つき）を読む。時間の見積もり: 注釈 5 枚 30〜40 分、測りの台本 20〜30 分。壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える（未達のまま DONE にしない）。verify は 1 行 10 分未満（RelWithDebInfo のビルドは別の行、撮影は視点か組で分ける）。
+
 ## SCN-WL-CLIFF-SCAN-NEAR: 主役の崖の表面をスキャンの崖で作り、手本の写真に合わせる
 - status: todo
-- after: SCN-WL-CLIFF-SCAN-PLACE, SCN-WL-OCCLUSION-ACCEPT
+- after: SCN-WL-CLIFF-SCAN-PLACE, SCN-WL-OCCLUSION-ACCEPT, SCN-WL-SHAPE-MEASURE
 - done-when: Blender の台本で、Battleship Rock と Franklin Butte の尖塔の台座の急な面をスキャンの崖の塊で覆い、写真の崖の層の段・縦の割れ目・板状の剥離・崖錐の岩の散らばりに合わせる（塊の繰り返しが見えないよう、回転・大きさ・素材を混ぜる）。材質の色は砂岩の実測の明るさの範囲に合わせ、地形の崖の色と継ぎ目なく馴染ませる。ref_cliff_01・ref_cliff_02・cliff の比較画像（写真｜撮影、1920×1080）を開き、崖の面が丸い面の筋ではなく、影を落とす本物の岩の立体に見えることを確かめる。三角形の数と読み込みの時間を記録する（溢れ 0）。式の焼き込み（`TerrainCliffDetail.cpp`）は、覆った崖の下地として残すか外すかを撮影で決める。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -Build -RequireAssets -Width 1920 -Height 1080 -Views cliff,ref_cliff_01,ref_cliff_02 -OutDir .harness/runs/scene-capture/SCN-WL-CLIFF-SCAN-NEAR`
 - paths: Scripts/Terrain, Scripts, Assets/AssetSets, Game/GameModes/Wasteland, Assets/Shaders, Tools/AssetCook, Docs/RenderingValidation, TASKS.md, PROGRESS.md
-- notes: 1 反復で閉じなければ Battleship Rock だけで閉じ、尖塔の台座を後ろの項目に分ける。
+- notes: 1 反復で閉じなければ Battleship Rock だけで閉じ、尖塔の台座を後ろの項目に分ける。 2026-10-23（親）: SCN-WL-SHAPE-CAUSE（丸さの原因の切り分け）と SCN-WL-SHAPE-MEASURE（形の物差し）の後に回す。合否に `--shape --expect` の棚・角・外形の量を足し、SCN-WL-SHAPE-CAUSE の所見で効き目の大きい直し（上端の角・連続する水平の棚・壁から崖錐へ移る大きな塊）を場所ごとに選ぶ。担当の場所は Battleship Rock と Franklin Butte（世界座標の範囲を文書に書き、後の中景の崖の項目と重ねない）。
 
 ## SCN-CLOUDS-TEMPORAL: 雲を低解像度と時間方向の蓄積で軽くする
 - status: backlog
