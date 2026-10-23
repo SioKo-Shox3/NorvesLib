@@ -333,6 +333,16 @@
       "entry_name": "Assets/Models/PolyHaven/rock_09/rock_09_4k.nvmesh"
     },
     {
+      "logical_path": "Assets/Models/PolyHaven/rock_09/rock_09_block_4k.gltf",
+      "source_path": "Assets/Models/PolyHaven/rock_09/rock_09_block_4k.gltf",
+      "extra_sources": [
+        "Assets/Models/PolyHaven/rock_09/rock_09_block.bin"
+      ],
+      "fallback_min_triangles": 32768,
+      "package_name": "Wasteland/rock_09_block.nvpkg",
+      "entry_name": "Assets/Models/PolyHaven/rock_09/rock_09_block_4k.nvmesh"
+    },
+    {
       "logical_path": "Assets/Models/PolyHaven/rock_face_01/rock_face_01_4k.gltf",
       "source_path": "Assets/Models/PolyHaven/rock_face_01/rock_face_01_4k.gltf",
       "extra_sources": [

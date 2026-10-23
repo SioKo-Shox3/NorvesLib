@@ -67,6 +67,8 @@ ASSETS = {
     }
     for asset_id in ("rock_face_01", "rock_face_02", "boulder_01", "rock_09")
 }
+# 尾根の段の厚い節理の塊（rock_09 を厚みの方向へ伸ばした派生。Scripts/Terrain/MakeJointBlock.py が書く）。テクスチャは rock_09 のもの
+ASSETS["rock_09_block"] = dict(ASSETS["rock_09"], id="rock_09_block", mesh="Assets/Models/PolyHaven/rock_09/rock_09_block_4k.gltf")
 
 # 置く塊の案（エンジンの座標）。target は狙いの点（崖の手前の x・塊の中心を置く高さ y・崖に沿う z）、toward は撃つ水平の向き、
 # scale は一様な拡大率、turn_degrees は向きを探す中心を面の法線から鉛直の軸まわりに振る角（繰り返しを崩す）。
@@ -191,7 +193,7 @@ EMBED_VISIBLE = 0.45
 EMBED_VISIBLE_RANGE = (0.25, 0.7)
 # 素材の高さ[m]（拡大率 1 の glTF の上下の幅）。棚の塊は上端を棚の線に揃える（中心を線から高さの半分下げる）。中心を線に置くと
 # 上端と下端の折れが線から 20〜25 画素離れ、線の上には折れが来ない
-ASSET_HEIGHT_M = {"boulder_01": 1.004, "rock_09": 0.0329}
+ASSET_HEIGHT_M = {"boulder_01": 1.004, "rock_09": 0.0329, "rock_09_block": 0.1118}
 PLAN = PLAN + tuple(
     {"name": f"battleship_shelf_{index:02d}", "kind": "embed", "asset": SHELF_VARIANTS[index % len(SHELF_VARIANTS)][0],
      "target": (wall[0] - toward[0] * 60.0,
@@ -245,11 +247,22 @@ PLAN = PLAN + (() if not CAP_ENABLED else tuple(
 # 段と角の板を配置表へ書くか。外形・棚は基準に入り角は 3/7 まで上がるが、既定の撮影で薄い板を積んだ塔に見え（右の段の塔に
 # 白っぽい細かな横縞も出る）、写真の厚い砂岩の段にならないので、厚い板の素材が揃うまで既定の景色には置かない
 # （WastelandCliffScan.md の「Battleship Rock の壁を覆う試し」）
+# 厚い節理の塊（rock_09_block）に替えても、外形は基準に入るが角の一致 3/7・棚の一致 0.54〜0.59 で基準に届かず、棚の一致は
+# 置かない配置表の 0.604 より下がるので、既定の景色には置かない（WastelandCliffScan.md の「Battleship Rock の壁を覆う試し」）
 STACK_ENABLED = False
+# 段と角に積む素材。rock_09 の薄い板（厚さ 3〜7 m）は積み目が細かな横縞の塔に見えたので、厚みの方向へ 4 倍に伸ばした
+# 厚い節理の塊（1 つで段の高さ 13〜26 m、頂と側面を平らな面へ寄せた素材）にする
+STACK_ASSET = "rock_09_block"
+# 素材の拡大率 1 の水平の幅（局所の z の長い辺, 局所の x の短い辺）[m]
+STACK_FOOTPRINT_M = {"rock_09": (0.15, 0.07), "rock_09_block": (0.110, 0.056)}
+# 段と角の拡大率の倍率。rock_09_block は側面を寄せて幅が板より 24 % 細く、右の段の外形が写真より約 10 画素内側に写るが、
+# 1.25 倍に広げると外形の位置合わせのずらしが (−16, −3) → (−18, −5) へさらに動き、角の一致は 3/7 のままだったので広げない
+STACK_WIDEN = 1.0
 STACK_SCALES = (200.0, 230.0, 185.0, 215.0)
 STACK_LAYER_STEP = 0.5
-# 板の上面は丸く、箱の上端より撮影の外形が 4〜6 画素（約 1.2 m）低く写るので、段と角の上端をこの分だけ上げる
-STACK_TOP_LIFT_M = 1.2
+# 板の上面は丸く、箱の上端より撮影の外形が 4〜6 画素（約 1.2 m）低く写ったので、段と角の上端をこの分だけ上げる
+# （頂を平らな面へ寄せた rock_09_block は上げない）
+STACK_TOP_LIFT_M = 1.2 if STACK_ASSET == "rock_09" else 0.0
 STACK_BURIED = 0.5
 STACK_JITTER_M = ((0.0, 0.0), (1.8, -1.2), (-1.5, 1.6), (1.1, 1.9))
 # CAP_POINTS ごとの段の合わせ（最下層の振り[°]、層のずらしの倍率、拡大率の倍率、尾根の点からの水平のずらし (x, z) [m]）。
@@ -290,9 +303,10 @@ CORNER_STACKS = (
     ((-1945.62, 104.8, -1338.68), "ul", 97.6),
     ((-1799.29, 175.5, -1260.22), "ul", 162.5),
 )
-CORNER_SCALE = 120.0
-# 板の縁は丸く、箱の角より撮影の角が内側へ約 9 画素（1.7 m）入るので、角の点を岩の外側へこの分だけ出す
-CORNER_OUT_M = 1.7
+CORNER_SCALE = 120.0 * STACK_WIDEN
+# 板の縁は丸く、箱の角より撮影の角が内側へ約 9 画素（1.7 m）入ったので、角の点を岩の外側へこの分だけ出す
+# （側面を縦の面へ寄せた rock_09_block は縁が鋭いので出さない）
+CORNER_OUT_M = 1.7 if STACK_ASSET == "rock_09" else 0.0
 CORNER_YAW_DEGREES = 151.5
 # ref_cliff_01 のカメラの右と前の水平の向き（エンジンの x, z）
 CAMERA_RIGHT_XZ = (-0.4772, 0.8788)
@@ -300,9 +314,9 @@ CAMERA_FORWARD_XZ = (0.8788, 0.4772)
 
 
 def corner_layers(point, side, ridge_y):
-    width = 0.15 * CORNER_SCALE
-    depth = 0.07 * CORNER_SCALE
-    thickness = ASSET_HEIGHT_M["rock_09"] * CORNER_SCALE
+    width = STACK_FOOTPRINT_M[STACK_ASSET][0] * CORNER_SCALE
+    depth = STACK_FOOTPRINT_M[STACK_ASSET][1] * CORNER_SCALE
+    thickness = ASSET_HEIGHT_M[STACK_ASSET] * CORNER_SCALE
     lateral = (-0.5 * width + CORNER_OUT_M) if side == "ur" else (0.5 * width - CORNER_OUT_M)
     center = (point[0] + CAMERA_RIGHT_XZ[0] * lateral + CAMERA_FORWARD_XZ[0] * 0.5 * depth, ridge_y,
               point[2] + CAMERA_RIGHT_XZ[1] * lateral + CAMERA_FORWARD_XZ[1] * 0.5 * depth)
@@ -318,8 +332,8 @@ def stack_layers(ridge, top_y, turn, factor=1.0, jitter=1.0):
     layers = []
     while True:
         k = len(layers)
-        scale = STACK_SCALES[k % len(STACK_SCALES)] * factor
-        thickness = ASSET_HEIGHT_M["rock_09"] * scale
+        scale = STACK_SCALES[k % len(STACK_SCALES)] * factor * STACK_WIDEN
+        thickness = ASSET_HEIGHT_M[STACK_ASSET] * scale
         layer_top = top_y - k * STACK_LAYER_STEP * thickness
         dx, dz = STACK_JITTER_M[k % len(STACK_JITTER_M)]
         layers.append((scale, layer_top, turn + 23.0 * k, (ridge[0] + dx * jitter, ridge[1], ridge[2] + dz * jitter)))
@@ -328,13 +342,13 @@ def stack_layers(ridge, top_y, turn, factor=1.0, jitter=1.0):
 
 
 PLAN = PLAN + (() if not STACK_ENABLED else tuple(
-    {"name": f"battleship_stack_{index:02d}_{k}", "kind": "cap", "asset": "rock_09", "upright": False, "ridge": center,
+    {"name": f"battleship_stack_{index:02d}_{k}", "kind": "cap", "asset": STACK_ASSET, "upright": False, "ridge": center,
      "top_y": layer_top, "scale": round(scale, 2), "turn_degrees": yaw, "target": center}
     for index, ((ridge, top_y, _), (turn, jitter, factor, (sx, sz))) in enumerate(zip(CAP_POINTS, STACK_FIT))
     for k, (scale, layer_top, yaw, center) in enumerate(
         stack_layers((ridge[0] + sx, ridge[1], ridge[2] + sz), top_y + STACK_TOP_LIFT_M, turn, factor, jitter))
 ) + tuple(
-    {"name": f"battleship_corner_{index:02d}_{k}", "kind": "cap", "asset": "rock_09", "upright": False, "ridge": center,
+    {"name": f"battleship_corner_{index:02d}_{k}", "kind": "cap", "asset": STACK_ASSET, "upright": False, "ridge": center,
      "top_y": layer_top, "scale": scale, "turn_degrees": yaw, "target": center}
     for index, (point, side, ridge_y) in enumerate(CORNER_STACKS)
     for k, (scale, layer_top, yaw, center) in enumerate(corner_layers(point, side, ridge_y))
