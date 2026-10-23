@@ -2703,14 +2703,48 @@
 - paths: Assets/AssetSets, Scripts, Tools/ComfyWorkflows, TASKS.md, PROGRESS.md
 - notes: SCN-GEN-BUILDINGS-1 の notes の上限時間とやり直しを使う。
 
+## SCN-RENDER-SPEC-OCCLUSION: 鏡面の環境光（IBL・空の前計算の鏡面）を、見えない空の分だけ遮る
+- status: todo
+- after: SCN-WL-OCCLUSION-ACCEPT
+- done-when: SCN-INTERIOR-ROOM の反復 39 の比べ（`.harness/runs/scene-capture/SCN-INTERIOR-ROOM-ref/compare/`、`Docs/RenderingValidation/InteriorLightReference.md`）: 日陰の床の輝度がエンジン ÷ Cycles で 2.5 倍（overview）〜16 倍（window）、青 ÷ 緑 1.23 / 0.71。`lighting.frag` の IBL・RTGI の鏡面が空の前計算をそのまま足し、室内でも遮られない（RTGI の床の空の見え方は 2〜3 %）。鏡面の環境光を、見えない空の分だけ遮る（候補: RTGI の空の見え方・曲げた法線から鏡面の遮りを作る）。材質の AO と二重に数えない（SCN-WL-MATERIAL-AO-SHADING の結論）。`InteriorLightReference.py --compare` に正解の置き場を指す `--reference` と、領域の比を判定する `--expect` を足す（この項目で）。合否（`interior-spec-occlusion.json`）: 3 視点の日陰の床の輝度のエンジン ÷ Cycles が 0.8〜1.25、青 ÷ 緑の比が ±10 %。窓の日だまりの形・位置は前と同じ。荒野の遮蔽と共通の照明の値が悪くならない（notes）。回帰の 4 シーンと material-gallery・interior-light を撮って開き、基準画像（golden）の検査を回し、変わるなら SCN-WL-GOLDEN-REAPPROVE と同じ手順で再承認する。GPU 時間（1 視点、300 フレーム）を前後で記録。反復の最初に回帰の撮影の `before` を撮る。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene interior-light -Configuration RelWithDebInfo -Build -RequireAssets -Width 1920 -Height 1080 -Hdr -Aov -OutDir .harness/runs/scene-capture/SCN-RENDER-SPEC-OCCLUSION/interior`
+- verify: `python Scripts/InteriorLightReference.py --compare --capture .harness/runs/scene-capture/SCN-RENDER-SPEC-OCCLUSION/interior --reference .harness/runs/scene-capture/SCN-INTERIOR-ROOM-ref --expect Scripts/Terrain/ExpectSpecs/interior-spec-occlusion.json`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Terrain/CaptureRegression.ps1 -Item SCN-RENDER-SPEC-OCCLUSION -Phase after`
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Scripts, Docs/RenderingValidation, Test/Core/Rendering/Baselines, TASKS.md, PROGRESS.md
+- notes: 危険地帯（描画の既定。全シーンに効く）。2026-10-23 親が SCN-INTERIOR-ROOM の反復 39 の BLOCKED（推奨の案 1）から足した。荒野の遮蔽の受け入れ（SCN-WL-OCCLUSION-ACCEPT）の後に回し、荒野の遮蔽と共通の照明の値が悪くならないことを確かめる（`OcclusionSets.py --capture --sets <組>` を組ごとの行で撮り、`--occlusion --expect occlusion-accept.json` と、共通の照明の組の撮り直しで `--light-final` を通す。verify の行はこの項目で足してよい。1 行 10 分未満）。壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える。 時間の見積もり: 回帰の before・after 各 7〜9 分、ビルド 3〜6 分、室内の撮影 約 3 分、荒野の組の撮り直し 約 25 分。
+
+## SCN-RENDER-RTGI-HIT-ALBEDO: RTGI の当たりの反射率を、テクスチャの粗いミップの平均から引く
+- status: todo
+- after: SCN-RENDER-SPEC-OCCLUSION
+- done-when: SCN-INTERIOR-ROOM の反復 39 の比べ: 日陰の壁がエンジン ÷ Cycles 1.25〜1.50 倍、天井 1.55〜2.00 倍。RTGI の当たりの反射率がテクスチャを引かず、instance の色（単位のアルベドの 99 百分位の倍率）だけになっている（`LightingPass.cpp` の RTGIInstanceData・`DiffuseIndirect.comp`）。地形の 3 層の当たりと同じように、当たりの材質のアルベドのテクスチャの最も粗いミップの平均（または当たりの UV で引く低いミップ）を反射率にする。室内の単位のアルベドの回避（`Scripts/MakeInteriorLightAlbedo.py`）が要らなくなるなら元のアルベドに戻す。合否（`interior-hit-albedo.json`）: 3 視点の日陰の壁・天井・隅の輝度のエンジン ÷ Cycles が 0.85〜1.15。荒野の遮蔽と共通の照明の値が悪くならない（notes）、灰色の材質の撮影（`wasteland-gray-material`）の当たりは灰色のまま。回帰の 4 シーンと material-gallery・interior-light を撮って開き、golden の検査、変わるなら再承認。GPU 時間（1 視点、300 フレーム）を前後で記録。反復の最初に回帰の撮影の `before` を撮る。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene interior-light -Configuration RelWithDebInfo -Build -RequireAssets -Width 1920 -Height 1080 -Hdr -Aov -OutDir .harness/runs/scene-capture/SCN-RENDER-RTGI-HIT-ALBEDO/interior`
+- verify: `python Scripts/InteriorLightReference.py --compare --capture .harness/runs/scene-capture/SCN-RENDER-RTGI-HIT-ALBEDO/interior --reference .harness/runs/scene-capture/SCN-INTERIOR-ROOM-ref --expect Scripts/Terrain/ExpectSpecs/interior-hit-albedo.json`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Terrain/CaptureRegression.ps1 -Item SCN-RENDER-RTGI-HIT-ALBEDO -Phase after`
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Scripts, Docs/RenderingValidation, Test/Core/Rendering/Baselines, TASKS.md, PROGRESS.md, Assets/AssetSets, Tools/AssetCook
+- notes: 危険地帯（描画の既定。全シーンに効く）。2026-10-23 親が SCN-INTERIOR-ROOM の反復 39 の BLOCKED（推奨の案 1）から足した。荒野の遮蔽の受け入れ（SCN-WL-OCCLUSION-ACCEPT）の後に回し、荒野の遮蔽と共通の照明の値が悪くならないことを確かめる（`OcclusionSets.py --capture --sets <組>` を組ごとの行で撮り、`--occlusion --expect occlusion-accept.json` と、共通の照明の組の撮り直しで `--light-final` を通す。verify の行はこの項目で足してよい。1 行 10 分未満）。壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える。 時間の見積もり: 回帰の before・after 各 7〜9 分、ビルド 3〜6 分、室内の撮影 約 3 分、荒野の組の撮り直し 約 25 分。
+
+## SCN-RENDER-RTGI-TEMPORAL: RTGI の時間の蓄積を、60 フレームの撮影で壁の粒が目立たない所まで上げる
+- status: todo
+- after: SCN-RENDER-RTGI-HIT-ALBEDO
+- done-when: SCN-INTERIOR-ROOM の反復 39: 漆喰の壁と天井の粗い粒が 60 フレームの撮影で残る（300 フレームで大きく減る）。RTGI の時間の蓄積とデノイズを、動きの残像を増やさずに収束を早める形で直す（候補: 履歴の長さの上限・分散で導くデノイズ・空間の再利用）。量: 平らな壁・天井の領域の高い周波数の輝度の標準偏差 ÷ 平均（`--compare` に足す）。合否（`interior-temporal.json`）: 60 フレームの撮影の粒の量が、今の 300 フレームの撮影の量の 1.5 倍以内。動きの撮影（荒野の `camera-script` か回帰の -Motion）で残像・ちらつきが増えない（前後を開いて確かめ、数があれば記録）。荒野の遮蔽と共通の照明の値が悪くならない（notes）。回帰の 4 シーンと material-gallery・interior-light を撮って開き、golden の検査、変わるなら再承認。GPU 時間（1 視点、300 フレーム）を前後で記録。反復の最初に回帰の撮影の `before` を撮る。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene interior-light -Configuration RelWithDebInfo -Build -RequireAssets -Width 1920 -Height 1080 -Hdr -Aov -OutDir .harness/runs/scene-capture/SCN-RENDER-RTGI-TEMPORAL/interior`
+- verify: `python Scripts/InteriorLightReference.py --compare --capture .harness/runs/scene-capture/SCN-RENDER-RTGI-TEMPORAL/interior --reference .harness/runs/scene-capture/SCN-INTERIOR-ROOM-ref --expect Scripts/Terrain/ExpectSpecs/interior-temporal.json`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Terrain/CaptureRegression.ps1 -Item SCN-RENDER-RTGI-TEMPORAL -Phase after -Motion`
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Scripts, Docs/RenderingValidation, Test/Core/Rendering/Baselines, TASKS.md, PROGRESS.md
+- notes: 危険地帯（描画の既定。全シーンに効く）。2026-10-23 親が SCN-INTERIOR-ROOM の反復 39 の BLOCKED（推奨の案 1）から足した。荒野の遮蔽の受け入れ（SCN-WL-OCCLUSION-ACCEPT）の後に回し、荒野の遮蔽と共通の照明の値が悪くならないことを確かめる（`OcclusionSets.py --capture --sets <組>` を組ごとの行で撮り、`--occlusion --expect occlusion-accept.json` と、共通の照明の組の撮り直しで `--light-final` を通す。verify の行はこの項目で足してよい。1 行 10 分未満）。壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える。 時間の見積もり: 回帰の before・after 各 7〜9 分、ビルド 3〜6 分、室内の撮影 約 3 分、荒野の組の撮り直し 約 25 分。
+
 ## SCN-INTERIOR-ROOM: 室内の光のシーンを組む
-- status: doing
+- status: todo
+- after: SCN-RENDER-SPEC-OCCLUSION, SCN-RENDER-RTGI-HIT-ALBEDO, SCN-RENDER-RTGI-TEMPORAL
 - done-when: `interior-light` シーン: 約 12×8×5 m の部屋（床は木の板、壁は漆喰かレンガ、天井の梁。手続きの箱と Poly Haven のテクスチャ）の一面に大きな窓（開口）を開け、低い夕日が差し込む。生成した家具を置き、赤いラグか色の強い壁で色移り（RTGI）が分かる配置にする。床は少し艶があり反射（SSR）が見える。窓の外に地面と空が見える。名前付き視点 `overview`・`window`（窓へ向かう逆光）・`corner`（奥の隅）。撮影を開いて、窓から入る光と影の形、奥の隅の照り返し、白飛び・黒つぶれを確かめる。`interior-light` の cycle smoke 2 周（RelWithDebInfo。1 シーンの最小。1 コマンド 10 分に収めるため 2026-10-19 に 3 周から変えた）が pass。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene interior-light -Configuration RelWithDebInfo -Build -RequireAssets -OutDir .harness/runs/scene-capture/SCN-INTERIOR-ROOM`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Scenes interior-light -Cycles 2 -Configuration RelWithDebInfo`
 - paths: Game, Assets/AssetSets, Scripts, Test/Game/Bridge/CMakeLists.txt, Test/Core/Rendering/CMakeLists.txt, TASKS.md, PROGRESS.md
-- notes: 2026-10-15 ユーザー: 室内の光は「ほぼ実写」の美しさを見るシーン。SCN-INT-REFERENCE-SELECT の写真と並べた比較画像（1920×1080）と、同じ視点のパストレースの正解で判断する。速さの条件は無い。 2026-10-19 親: verify を RelWithDebInfo に揃え、周回の試験を 1 コマンド 10 分に収まる形にした（Debug の撮影は約 11 分、3 周は 928 秒の実測）。
+- notes: 2026-10-15 ユーザー: 室内の光は「ほぼ実写」の美しさを見るシーン。SCN-INT-REFERENCE-SELECT の写真と並べた比較画像（1920×1080）と、同じ視点のパストレースの正解で判断する。速さの条件は無い。 2026-10-19 親: verify を RelWithDebInfo に揃え、周回の試験を 1 コマンド 10 分に収まる形にした（Debug の撮影は約 11 分、3 周は 928 秒の実測）。 2026-10-23（親）: 反復 39 の BLOCKED（ほぼ実写の差の 3 つがエンジン側）を推奨の案 1 で解いた。鏡面の環境光の遮り・RTGI の当たりの反射率・RTGI の時間の蓄積を SCN-RENDER-SPEC-OCCLUSION・SCN-RENDER-RTGI-HIT-ALBEDO・SCN-RENDER-RTGI-TEMPORAL として先に立て、この項目はその後に `InteriorLightReference.py --compare --reference .harness/runs/scene-capture/SCN-INTERIOR-ROOM-ref` で同じ比較画像を作り直し、残る差を記録して閉じる（Cycles の正解は描き直さない。部屋・家具・視点・周回は反復 38・39 のまま）。
 
 ## SCN-INTERIOR-SHAFTS: 窓から入る光の筋を出す
 - status: todo
