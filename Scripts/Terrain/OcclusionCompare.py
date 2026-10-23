@@ -469,7 +469,10 @@ def check_expect(RC, expect, regions, report, reference_root, views, trial):
     control_tolerance = float(expect["control_y_tolerance"])
     min_region = int(regions["limits"]["min_region_pixels"])
     min_control = int(regions["limits"]["min_control_pixels"])
-    targets = {(t["set"], t["view"], t["region"], t["stratum"]) for t in expect["targets"] if t["set"] in report["sets"]}
+    # --sets で絞ったときだけ、絞った組の分に限る（無指定では全部の決めた層・視点を求める）
+    selected = report.get("only_sets")
+    targets = {(t["set"], t["view"], t["region"], t["stratum"]) for t in expect["targets"]
+               if selected is None or t["set"] in selected}
     record = {"baseline_engine_root": RC.rel_dir(baseline_root), "target_range": [low, high],
               "worse_tolerance": worse_tolerance, "control_y_tolerance": control_tolerance, "masks": [], "layers": [],
               "controls": []}
@@ -557,7 +560,7 @@ def check_expect(RC, expect, regions, report, reference_root, views, trial):
     if sun is not None:
         measured_sun = {(row["set"], row["view"]) for row in record["sun"]}
         for target in sun["targets"]:
-            if target["set"] in report["sets"] and (target["set"], target["view"]) not in measured_sun:
+            if (selected is None or target["set"] in selected) and (target["set"], target["view"]) not in measured_sun:
                 failures.append(f"太陽の決めた視点 {target['set']}/{target['view']} が測れない")
     return record, failures
 
@@ -728,7 +731,8 @@ def run(RC, engine_root, reference_root, views, verify, trial, regions_path="", 
     if regions is not None:
         import OcclusionMetric
         measured = {(name, view) for name, entry in report["sets"].items() for view in entry["views"]}
-        required = {"required": [item for item in regions["required"] if item["set"] in sets]}
+        # 必須の層は --sets で絞ったときだけ絞った組の分に限る（無指定では参照の有無に関わらず全部を求める）
+        required = {"required": [item for item in regions["required"] if item["set"] in sets]} if only_sets else regions
         failures.extend(OcclusionMetric.missing_required(required, measured))
     if expect_path:
         if regions is None:

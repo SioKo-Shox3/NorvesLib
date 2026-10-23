@@ -2645,7 +2645,7 @@
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Views ref_cliff_01 -GpuTimingFrames 300 -GpuFrameBudgetMs 33.3 -OutDir .harness/runs/scene-capture/SCN-WL-ROCK-LOD-SHADOW/timing`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Terrain/CaptureRegression.ps1 -Item SCN-WL-ROCK-LOD-SHADOW -Phase after`
 - paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Scripts, Docs/RenderingValidation, TASKS.md, PROGRESS.md
-- notes: 危険地帯（MegaGeometry の LOD・VSM・VRAM）。2026-10-23 親が SCN-WL-SUN-SHADOW-FIX の反復 3 の BLOCKED（推奨の案 3）から足した。verify は組を 1 つに絞る（ほかの組の非悪化は撮り直した組の記録で確かめ、足りなければ組ごとの行を足す）。時間の見積もり: 回帰の before・after 各 7〜9 分、ビルド 3〜6 分、1 組の撮影 約 3 分、試し 1 回 約 5 分 × 3 前後。壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える。
+- notes: 危険地帯（MegaGeometry の LOD・VSM・VRAM）。2026-10-23 親が SCN-WL-SUN-SHADOW-FIX の反復 3 の BLOCKED（推奨の案 3）から足した。verify は組を 1 つに絞る（ほかの組の非悪化は撮り直した組の記録で確かめ、足りなければ組ごとの行を足す）。時間の見積もり: 回帰の before・after 各 7〜9 分、ビルド 3〜6 分、1 組の撮影 約 3 分、試し 1 回 約 5 分 × 3 前後。壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える。 2026-10-24（親）: 評価の 2 周目（反復 14）は描画の直し（既定の描画の岩の影の LOD・全体の IoU 0.9084・GPU 中央値 18.404 ms・VRAM 9,715 MB・回帰の 4 シーン）を認め、`--sets` 無指定でも必須の層と太陽の決めた視点を参照の有無で絞る判定の退行だけを指摘した。親が `OcclusionCompare.py` を `--sets` を指定したときだけ絞る形に直し、参照の置き場が terrain-sun だけの再現で無指定の判定が必須の層 4 件・太陽の視点 2 件の欠けで exit=1 になること、`--sets` の 3 本のうち 2 本が exit=0（太陽 4 組 94 秒・空 2 組 249 秒）で、rocks-cliff-sky,terrain-sky は走行中の反復の未コミットの `Tools/AssetCook/MeshCooker.cpp` の書き換えによる参照の古さの 2 件だけで落ち、画素の判定は合格なことを確かめて done にした。
 
 ## SCN-WL-SHAPE-CAUSE: 地形が丸く粗く見える原因を、LOD・崖の生成・格子の段・材質の陰影に切り分ける
 - status: todo
