@@ -355,6 +355,16 @@ cloud_sky は定義の 11 行すべてで通る。ref_far_01 は地平線の方�
 ### 確かめたこと
 
 `.harness/runs/20261023-124311/` の `verify-SCN-WL-CLOUD-SHAPE-TUNE-1.txt`（Debug のビルド EXIT=0）・`-2.txt`（RelWithDebInfo のビルド EXIT=0）・
-`-3.txt`（撮影 result=pass）・`-6.txt`（`--cloud-dump --verify` result=pass、空の視線の透過率の差の最大 cloud_sky 0.0022・ref_far_01 0.0073、
-ref_far_01 の空でない視線 73 本の差の最大 0.031 は記録）・`-7.txt`（`--cloud-shape --expect cloud-shape.json --verify` result=pass）。
-`-4.txt` は照合の台本を直す前の `--cloud-dump` の結果（ref_far_01 で空でない視線と、画素から求めた向きで進めた遠い視線の透過率の差 0.060 で fail）。
+`-3.txt`（撮影 result=pass）・`-7.txt`（`--cloud-shape --expect cloud-shape.json --verify` result=pass）。
+照合の台本を直した後に撮り直した結果は `-8.txt`（Debug のビルド EXIT=0）・`-9.txt`（RelWithDebInfo のビルド EXIT=0）・`-10.txt`（撮影 result=pass）・
+`-11.txt`（`--cloud-dump --verify` result=pass、全部の視線の透過率の差の最大は下の「照合の直し」）・`-12.txt`（`--cloud-shape --expect cloud-shape.json --verify`
+result=pass、量は上の表と同じ）。`-4.txt` は照合の台本を直す前の結果（ref_far_01 で空でない視線と、画素から求めた向きで進めた遠い視線の透過率の差
+0.060 で fail）。
+
+### 照合の直し
+
+`--cloud-dump` の透過率の照合は、地形の入る視点の空でない画素の視線も含めて全部の視線で 0.01 以内を求める。倍精度で歩の位置と高度を
+求めると、ref_far_01 の地平線の近くを長く進む視線（画素 (780.5, 780.5) など）は単精度の高度の丸め（惑星の中心から 6.36e6 m で 0.5 m）の差で
+縁の締まった雲を別の所へ抜け、差が 0.031 になる。歩の位置を GPU の書き出した区間に固定し、位置・高度を GPU と同じ単精度で求めると、
+同じ撮影で全部の視線の差の最大は cloud_sky 0.0018・ref_far_01 0.0019（空でない視線 73 本では 0.0003、画素 (780.5, 780.5) は 0.0002）。
+区間・歩数・1 歩の長さは自分で求めた値で GPU と照らす（相対差の最大 cloud_sky 2.7e-4・ref_far_01 1.1e-4）。

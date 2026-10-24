@@ -17,7 +17,8 @@
 #   3. 視線がすべて空の画素で、雲のある視線（不透明度 CLOUD_OPACITY 以上）が MIN_CLOUD_RAYS 本以上、厚い視線（THICK_OPACITY
 #      以上）が MIN_THICK_RAYS 本以上ある（検査が成り立つ）。
 #   4. 視線ごとに、画素から求め直した向き・歩の端数・雲の層の区間・歩数・1 歩の長さが GPU の値と合う。
-#   5. 雲の透過率の差の絶対値が全部の視線で TRANSMITTANCE_TOLERANCE（1 %）以内。
+#   5. 雲の透過率の差の絶対値が全部の視線（地形の入る視点の空でない画素の視線も）で TRANSMITTANCE_TOLERANCE（1 %）以内。
+#      歩の位置は GPU の区間に固定し、位置・高度を GPU と同じ単精度で求める（区間は 4 で自分の値と照らす）。
 # 記録（合否に使わない）: 光学的深さの差、散乱光・雲の放射輝度・上の空の平均・雲の後ろの空の相対差（同じ式の写しの照明）。
 import json
 import os
@@ -315,8 +316,10 @@ class CloudModel:
         root = np.sqrt(discriminant)
         return -b - root, -b + root
 
-    def march(self, direction, jitter, with_light=True, flags=0):
-        """flags は診断の切り替え（DIAGNOSTIC_*。GLSL の MarchCloudLayerWithDiagnostics と ComposeCloudRadianceWithDiagnostics）"""
+    def march(self, direction, jitter, with_light=True, flags=0, gpu_segment=None):
+        """flags は診断の切り替え（DIAGNOSTIC_*。GLSL の MarchCloudLayerWithDiagnostics と ComposeCloudRadianceWithDiagnostics）。
+        gpu_segment は GPU が書き出した区間（始まり・終わり・歩数・1 歩の長さ）。渡すと区間をそれに固定し、歩の位置・高度を
+        GPU と同じ単精度で求める（区間そのものの照合は呼ぶ側が別に行う）"""
         result = {"marched": False, "transmittance": 1.0, "optical_depth": 0.0, "steps_taken": 0}
         camera = self.camera
         origin_y = self.planet_radius + max(camera[1], 1.0)
@@ -347,13 +350,35 @@ class CloudModel:
         step_length = segment / step_count
 
         thickness = self.top - self.bottom
-        indices = np.arange(step_count, dtype=np.float64)
-        distances = start + (indices + jitter) * step_length
-        positions = camera[None, :] + direction[None, :] * distances[:, None]
-        from_center = np.stack([positions[:, 0] - camera[0], origin_y + direction[1] * distances,
-                                positions[:, 2] - camera[2]], axis=-1)
-        altitudes = np.linalg.norm(from_center, axis=-1) - self.planet_radius
-        heights = (altitudes - self.bottom) / thickness
+        # 結果の区間は自分で求めた値（GPU の区間に固定しても、区間の照合は自分の値で行う）
+        own_segment = (start, end, step_count, step_length)
+        if gpu_segment is None:
+            indices = np.arange(step_count, dtype=np.float64)
+            distances = start + (indices + jitter) * step_length
+            positions = camera[None, :] + direction[None, :] * distances[:, None]
+            from_center = np.stack([positions[:, 0] - camera[0], origin_y + direction[1] * distances,
+                                    positions[:, 2] - camera[2]], axis=-1)
+            altitudes = np.linalg.norm(from_center, axis=-1) - self.planet_radius
+            heights = (altitudes - self.bottom) / thickness
+        else:
+            # 惑星の中心からの距離（6.36e6 m）の単精度の丸めは 0.5 m で、地平線の近くを長く進む視線は高度の差で雲の縁を
+            # 別の所へ抜ける。GPU と同じ区間・同じ単精度の演算の順で歩の位置と高度を求める
+            f32 = np.float32
+            start, end, step_count, step_length = (float(gpu_segment[0]), float(gpu_segment[1]), int(gpu_segment[2]),
+                                                   float(gpu_segment[3]))
+            camera32 = camera.astype(f32)
+            direction32 = np.asarray(direction, dtype=f32)
+            indices = np.arange(step_count, dtype=f32)
+            distances32 = f32(start) + (indices + f32(jitter)) * f32(step_length)
+            positions32 = camera32[None, :] + direction32[None, :] * distances32[:, None]
+            from_center = np.stack([positions32[:, 0] - camera32[0], f32(origin_y) + direction32[1] * distances32,
+                                    positions32[:, 2] - camera32[2]], axis=-1)
+            altitudes32 = np.sqrt(np.sum(from_center * from_center, axis=-1, dtype=f32)) - f32(self.planet_radius)
+            heights32 = (altitudes32 - f32(self.bottom)) / (f32(self.top) - f32(self.bottom))
+            distances = distances32.astype(np.float64)
+            positions = positions32.astype(np.float64)
+            altitudes = altitudes32.astype(np.float64)
+            heights = heights32.astype(np.float64)
         inside = (heights >= 0.0) & (heights <= 1.0)
         noise_positions = np.stack([positions[:, 0], altitudes, positions[:, 2]], axis=-1)
         densities = np.zeros(step_count)
@@ -405,8 +430,8 @@ class CloudModel:
         fade = 1.0
         radiance = scattered * aerial_transmittance + aerial_scattering * opacity
         result.update({
-            "marched": True, "start_distance": start, "end_distance": end, "step_count": step_count,
-            "step_length": step_length, "steps_taken": steps_taken, "transmittance": transmittance,
+            "marched": True, "start_distance": own_segment[0], "end_distance": own_segment[1], "step_count": own_segment[2],
+            "step_length": own_segment[3], "steps_taken": steps_taken, "transmittance": transmittance,
             "optical_depth": optical_depth, "scattered": scattered, "cloud_distance": cloud_distance,
             "sky_above": sky_above, "ground_radiance": ground, "radiance": radiance, "fade": fade, "haze": haze,
             "aerial_transmittance": aerial_transmittance, "aerial_scattering": aerial_scattering,
@@ -617,7 +642,7 @@ def check_view(rc, capture_dir, view, game_args):
                        aerial_profile)
     target = (int(meta["target"]["width"]), int(meta["target"]["height"]))
     rays = []
-    worst = {"transmittance_abs": 0.0, "transmittance_abs_non_sky": 0.0, "direction": 0.0, "jitter": 0.0, "distance_rel": 0.0, "optical_depth_rel": 0.0,
+    worst = {"transmittance_abs": 0.0, "direction": 0.0, "jitter": 0.0, "distance_rel": 0.0, "optical_depth_rel": 0.0,
              "scattered_rel": 0.0, "radiance_rel": 0.0, "sky_above_rel": 0.0, "ground_rel": 0.0, "background_rel": 0.0}
     cloud_rays = 0
     thick_rays = 0
@@ -639,21 +664,19 @@ def check_view(rc, capture_dir, view, game_args):
         gpu_direction = np.asarray(gpu["direction"], dtype=np.float64)
         gpu_length = float(np.linalg.norm(gpu_direction))
         march_direction = gpu_direction / gpu_length if np.isfinite(gpu_length) and gpu_length > 0.5 else direction
-        march = model.march(march_direction, jitter)
         sky_pixel = not (np.isfinite(gpu["depth"]) and gpu["depth"] < 0.999999)
         if not sky_pixel:
             non_sky += 1
         gpu_marched = bool(gpu["flags"] & 1)
+        # 歩の位置は GPU の区間に固定して単精度で求める（区間・歩数・1 歩の長さが GPU と合うかは下で自分の値で照らす）
+        gpu_segment = ((gpu["start"], gpu["end"], gpu["step_count"], gpu["step_length"])
+                       if gpu_marched and gpu["step_count"] > 0 else None)
+        march = model.march(march_direction, jitter, gpu_segment=gpu_segment)
         opacity = float(np.clip(1.0 - gpu["transmittance"], 0.0, 1.0))
         cloud_rays += int(opacity >= CLOUD_OPACITY)
         thick_rays += int(opacity >= THICK_OPACITY)
         transmittance_error = abs(float(march["transmittance"]) - float(gpu["transmittance"]))
-        # 地形の入る視点の空でない画素の雲は地形の後ろで画に出ないので、透過率の差は記録だけにする（120 km 先の地平線の
-        # 視線は 1e-5 rad の向きの差で透過率が 0.1 変わり、単精度の向きでは照らせない）
-        if sky_pixel:
-            worst["transmittance_abs"] = max(worst["transmittance_abs"], transmittance_error)
-        else:
-            worst["transmittance_abs_non_sky"] = max(worst["transmittance_abs_non_sky"], transmittance_error)
+        worst["transmittance_abs"] = max(worst["transmittance_abs"], transmittance_error)
         worst["direction"] = max(worst["direction"], float(np.max(np.abs(direction - gpu["direction"]))))
         worst["jitter"] = max(worst["jitter"], abs(jitter - float(gpu["jitter"])))
         entry = {"pixel": pixel, "sky_pixel": sky_pixel, "gpu_transmittance": float(gpu["transmittance"]),
