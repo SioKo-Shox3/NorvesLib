@@ -57,6 +57,11 @@ const float kCoverageEdgeBelow = 0.03;
 const float kCoverageEdgeAbove = 0.08;
 // 形のノイズの密度の倍率（1 で頭打ち）。塊の本体を光学的に厚くし、縁の薄い所だけを半透明に残す
 const float kCloudDensityGain = 3.0;
+// 天気の模様を引く水平の位置を、高さでも変わる 3D の歪みでずらす幅(m)。天気の模様は x・z だけで決まるので、
+// ずらさないと塊の側面が鉛直に押し出した壁になり、横から見ると縦にまっすぐな縁になる
+const float kWeatherWarpMeters = 400.0;
+// 歪みを引く形のノイズのテクスチャ座標のずれ（同じ点の形と別の模様にする）
+const vec3 kWeatherWarpPhase = vec3(0.37, 0.53, 0.19);
 
 // 遠い雲の消える原因を分ける診断の切り替え（撮影の雲の書き出しの CloudProbePass が視線ごとに立てる。開発ビルドだけ。
 // 描画の cloud_layer.frag は常に 0 で、既定の描画は変わらない）
@@ -126,10 +131,21 @@ vec2 IntersectSphere(float originY, vec3 direction, float radius)
 // 雲の密度（0〜1）。heightFraction は雲の層の中の高さの割合（0=底, 1=頂）
 float SampleCloudDensity(vec3 position, float heightFraction, bool bDetail)
 {
+    // 形のノイズの格子を世界の軸から傾けて回す。格子が世界の軸に沿うと、Perlin-Worley の格子の面が
+    // 雲の縦にまっすぐな縁と四角い角になる。四元数 (4, 1, 2, 2) の回転で成分が 1/25 の整数倍なので、
+    // 風のずれを形の大きさの 25 倍で折り返すと回した後の座標は整数だけずれ、見た目は飛ばない（CloudLayerPass.inl）
+    const mat3 shapeRotation = mat3(9.0, 20.0, -12.0,
+                                    -12.0, 15.0, 16.0,
+                                    20.0, 0.0, 15.0) / 25.0;
+    vec3 shapePosition = position + vec3(params.shapeAndWeatherOffset.x, 0.0, params.shapeAndWeatherOffset.y);
+    vec3 shapeCoordinate = shapeRotation * (shapePosition * params.extinctionAndInverseScales.y);
+
     // 天気の模様: どこに雲があるか。基本の形のノイズを、別の大きさ・向きで水平に 2 つ引いて重ねる
     // 風のずれは回転・倍率の後のテクスチャ座標で CPU が折り返して渡す（CloudLayerPass.inl と同じ回転・倍率・位相）
+    // 引く位置は形のノイズの別の模様で高さごとに水平にずらし、塊の側面を鉛直の壁にしない
+    vec2 weatherWarp = (textureLod(shapeNoise, shapeCoordinate + kWeatherWarpPhase, 0.0).gb - 0.5) * (2.0 * kWeatherWarpMeters);
     const mat2 weatherRotation = mat2(0.7986, 0.6018, -0.6018, 0.7986);
-    vec2 weatherUV = weatherRotation * position.xz * params.extinctionAndInverseScales.w;
+    vec2 weatherUV = weatherRotation * (position.xz + weatherWarp) * params.extinctionAndInverseScales.w;
     vec4 weatherLow = textureLod(shapeNoise,
                                  vec3(weatherUV.x + params.shapeAndWeatherOffset.z, 0.37,
                                       weatherUV.y + params.shapeAndWeatherOffset.w),
@@ -156,8 +172,7 @@ float SampleCloudDensity(vec3 position, float heightFraction, bool bDetail)
         return 0.0;
     }
 
-    vec3 shapePosition = position + vec3(params.shapeAndWeatherOffset.x, 0.0, params.shapeAndWeatherOffset.y);
-    vec4 shape = textureLod(shapeNoise, shapePosition * params.extinctionAndInverseScales.y, 0.0);
+    vec4 shape = textureLod(shapeNoise, shapeCoordinate, 0.0);
     float lowFrequencyFbm = shape.g * 0.625 + shape.b * 0.25 + shape.a * 0.125;
     float base = clamp(Remap(shape.r, lowFrequencyFbm - 1.0, 1.0, 0.0, 1.0), 0.0, 1.0);
     base = clamp(Remap(base * profile, 1.0 - coverageMask, 1.0, 0.0, 1.0) * coverageMask * kCloudDensityGain, 0.0, 1.0);

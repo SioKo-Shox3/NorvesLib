@@ -22,6 +22,8 @@
 #   edge_width_median_px・edge_measured_fraction（縁の幅。下の measure_edges）、
 #   straight_edge_fraction（画面の縦か横に沿って STRAIGHT_MIN_PX 以上まっすぐ続く縁の長さ ÷ 測れた縁の長さ。下の
 #   measure_straight_edges。SCN-WL-CLOUD-CONTOUR-FIX で足した記録の量で、cloud-shape.json の行には無い）。
+#   その横（行の間の縁）と縦（列の間の縁）の内訳を cloud_shape_straight の行と JSON の straight_edge_split に書く
+#   （SCN-WL-CLOUD-SHAPE-NOISE。記録の量）。
 import glob
 import json
 import math
@@ -249,6 +251,16 @@ def measure_straight_edges(opacity, sky):
     return (straight_horizontal + straight_vertical) / edge_length, detail
 
 
+def straight_edge_split(detail):
+    """measure_straight_edges の内訳を、画面の横に沿う縁（行の間）と縦に沿う縁（列の間）の割合に分ける（記録の量）"""
+    if not detail or not detail.get("edge_length_px"):
+        return None
+    length = detail["edge_length_px"]
+    return {"horizontal_px": detail["straight_horizontal_px"], "vertical_px": detail["straight_vertical_px"],
+            "edge_length_px": length, "horizontal_fraction": detail["straight_horizontal_px"] / length,
+            "vertical_fraction": detail["straight_vertical_px"] / length}
+
+
 def measure(opacity, sky, edges=True):
     """空の画素（sky が真）の不透明度から量を測る。値の求まらない量は None"""
     opacity = np.where(sky, np.nan_to_num(opacity.astype(np.float64), nan=0.0), 0.0)
@@ -473,6 +485,13 @@ def run(rc, capture_dir, views, verify, expect_path):
             failures.extend(f"{view}: {f}" for f in row_failures)
         print(f"REFERENCE_CHECK cloud_shape view={view} sky_pixels={detail['sky_pixels']} {summarize(values)} "
               f"preview={os.path.basename(preview)}")
+        straight = straight_edge_split(detail.get("straight_edges"))
+        if straight is not None:
+            result["straight_edge_split"] = straight
+            print(f"REFERENCE_CHECK cloud_shape_straight view={view} "
+                  f"horizontal_fraction={straight['horizontal_fraction']:.6g} vertical_fraction={straight['vertical_fraction']:.6g} "
+                  f"horizontal_px={straight['horizontal_px']} vertical_px={straight['vertical_px']} "
+                  f"edge_length_px={straight['edge_length_px']}")
         results.append(result)
     report = {
         "mode": "cloud_shape", "verify": bool(verify), "inputs_current": inputs_ok, "inputs_record": record,

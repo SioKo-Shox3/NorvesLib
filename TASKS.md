@@ -2775,7 +2775,7 @@
 - notes: 危険地帯（共有の GLSL・既定の見た目）。2026-10-24 親が SCN-WL-CLOUD-SHAPE-TUNE の撮影を開いて足した。SCN-WL-CLOUD-SHAPE-ACCEPT（遠景の積分・ちらつき・段・回帰）はこの項目の後に回す。`--cloud-shape` の新しい量は `cloud-shape.json` の行には足さない（固定した定義を変えない。この項目の合否は verify の文書の値と画で示す）。直線の縁の量の比べの前の値は、反復の最初に今の撮影で測って文書に書く。時間の見積もり: 切り分けの撮影 5〜6 回 各 約 3 分、直し 20〜30 分、ビルド 2 構成 6〜12 分、撮影 2 組 約 5 分。壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える（未達のまま DONE にしない）。verify は 1 行 10 分未満。 2026-10-24（親）: 走行 20261024-183517 の反復 2 の BLOCKED（段の直し〔太陽への光の歩の点を画素ごとの端数で散らす、c6e13d17〕で (a)(c)(d) は合格。直線の縁は形のノイズ〔世界の軸に沿った格子の Perlin-Worley〕と平らな雲の底が作り、直すと外形が動いて (a) の局所の平均の差 0.5 段と両立しない）を推奨の案 1 で解いた: この項目は段の直しで閉じ（次の反復は verify を回し直して閉じる。新しい直しは足さない）、直線の縁の直しは SCN-WL-CLOUD-SHAPE-NOISE に分けた。
 
 ## SCN-WL-CLOUD-SHAPE-NOISE: 雲の形のノイズを作り直し、雲の四角い縁と縦にまっすぐな縁を消す
-- status: todo
+- status: done
 - after: SCN-WL-CLOUD-CONTOUR-FIX
 - done-when: SCN-WL-CLOUD-CONTOUR-FIX の切り分け（`Docs/RenderingValidation/WastelandCloudShape.md`）: cloud_sky の目に見える直線（中央の雲の四角い下端・右の大きな雲の左の縁）は、形のノイズ（世界の軸に沿った 4 格子の Perlin-Worley）が決めている。形のノイズを、軸に沿った縁を作らない形に作り直す（例: 格子の向きを回す・領域を歪める・周波数ごとに向きを変える。どれにするかは試して決め、理由を文書に書く）。遠景の雲の底が平らにそろうのは積雲の実際の姿（凝結高度で底がそろう）なので、横の直線（雲の底）は直す対象にしない。合否: (1) `--cloud-shape` の直線の縁の量を縦と横に分けて出し、cloud_sky の縦横の合計が今の値（0.0090）の半分以下、ref_far_01 の縦の直線の縁が今の値の半分以下（横は記録だけ）、(2) 固定した `cloud-shape.json` が通ったまま（定義は変えない）、(3) 密度の式（GLSL）を変えるので、雲の書き出しの照合の写し（`CloudDumpCheck.py`・`CloudBreakdown.py`）も同じ変更で直し、`--cloud-dump --verify` が既存の許容で通る、(4) ref_far_01 の平らな帯の長さの平均と 95 % 点が前（SCN-WL-CLOUD-CONTOUR-FIX の後）の 1.1 倍以内（`BandingCheck.py` に、局所の平均の差は見ずに帯の長さだけを前と比べる `--no-worse-bands` をこの項目で足す。外形が変わるのは直しの目的なので局所の平均は求めない）、(5) cloud_sky と ref_far_01 の画を前と並べて開き、四角い縁が消え、雲が積雲の塊に見えることを確かめる。GPU 時間（ref_far_01）を前後で記録。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`

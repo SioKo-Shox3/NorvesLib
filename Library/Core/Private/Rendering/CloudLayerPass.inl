@@ -65,6 +65,8 @@ namespace NorvesLib::Core::Rendering
         // 細部の周期・天気の模様の周期の、基本の形の周期に対する比。互いに割り切れない比にして、重ねた模様の繰り返しを長くする
         constexpr float DetailScaleRatio = 1.0f / 8.3f;
         constexpr float WeatherScaleRatio = 3.7f;
+        // 基本の形の格子の回転（CloudLayerCommon.glsl の shapeRotation）の成分の分母。風のずれはこの数の周期で折り返す
+        constexpr double ShapeRotationWrapPeriods = 25.0;
         // 細部は風より少し速く流し、形が崩れながら進むように見せる
         constexpr float DetailWindRatio = 1.6f;
         // 天気の模様の向きの回転（cos, sin）と、細かい方の模様の倍率・位相。cloud_layer.frag と同じ値にする
@@ -426,8 +428,10 @@ namespace NorvesLib::Core::Rendering
             const double timeSeconds = std::isfinite(context.TotalTime) ? context.TotalTime : 0.0;
             const double windX = cloudLayer.WindVelocityX;
             const double windZ = cloudLayer.WindVelocityZ;
-            params.ShapeAndWeatherOffset[0] = WrapWindOffset(windX, timeSeconds, shapeScale);
-            params.ShapeAndWeatherOffset[1] = WrapWindOffset(windZ, timeSeconds, shapeScale);
+            // 基本の形は回した格子で引く（CloudLayerCommon.glsl の shapeRotation、成分が 1/25 の整数倍）。
+            // 形の周期の 25 倍で折り返すと、回した後のテクスチャ座標が整数だけずれ、折り返した瞬間に雲が飛ばない
+            params.ShapeAndWeatherOffset[0] = WrapWindOffset(windX, timeSeconds, shapeScale * ShapeRotationWrapPeriods);
+            params.ShapeAndWeatherOffset[1] = WrapWindOffset(windZ, timeSeconds, shapeScale * ShapeRotationWrapPeriods);
             // 天気の模様は回転と倍率を掛けた後のテクスチャ座標で折り返す。世界の軸の距離で折り返すと、
             // 回転・倍率の後では 1 の整数倍にならず、折り返した瞬間に雲の分布が飛ぶ
             const double weatherOffsetX = std::isfinite(windX * timeSeconds) ? windX * timeSeconds : 0.0;

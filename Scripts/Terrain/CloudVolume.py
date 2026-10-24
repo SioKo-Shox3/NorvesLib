@@ -226,16 +226,10 @@ def bake_density(model, grid):
     for start in range(0, ni, BAKE_CHUNK):
         rows_i = np.arange(start, min(ni, start + BAKE_CHUNK), dtype=np.float64)
         columns = origin[None, None, :] + rows_i[:, None, None] * axis_i + rows_j[None, :, None] * axis_j
-        # 覆いの印は雲の座標の x・z だけで決まるので列ごとに 1 回求め、印の無い列は飛ばす
-        mask = model.coverage_mask(model.camera[0] + columns[..., 0].ravel(),
-                                   model.camera[2] + columns[..., 2].ravel()).reshape(columns.shape[:2])
-        live_i, live_j = np.nonzero(mask > CD.DENSITY_THRESHOLD)
-        if live_i.size == 0:
-            continue
-        points = columns[live_i, live_j][:, None, :] + levels[None, :, None] * axis_k
-        column_mask = np.repeat(mask[live_i, live_j], nk)
-        values = frame_density(model, points.reshape(-1, 3), column_mask).reshape(live_i.size, nk)
-        out[start + live_i, live_j, :] = values.astype(np.float32)
+        # 覆いの印は高さで変わる歪み（CloudDumpCheck.CloudModel.weather_warp）を通すので、点ごとに求める
+        points = columns[:, :, None, :] + levels[None, None, :, None] * axis_k
+        values = frame_density(model, points.reshape(-1, 3)).reshape(columns.shape[0], nj, nk)
+        out[start:start + columns.shape[0], :, :] = values.astype(np.float32)
     return out
 
 

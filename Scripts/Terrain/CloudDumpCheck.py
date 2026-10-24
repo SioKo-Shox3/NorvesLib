@@ -67,6 +67,12 @@ DENSITY_THRESHOLD = 0.001
 COVERAGE_EDGE_BELOW = 0.03
 COVERAGE_EDGE_ABOVE = 0.08
 DENSITY_GAIN = 3.0
+# 基本の形の格子の回転（GLSL の shapeRotation。四元数 (4, 1, 2, 2)、成分は 1/25 の整数倍）と、風のずれの折り返しの周期の数
+SHAPE_ROTATION = np.array([[9.0, -12.0, 20.0], [20.0, 15.0, 0.0], [-12.0, 16.0, 15.0]]) / 25.0
+SHAPE_ROTATION_WRAP_PERIODS = 25.0
+# 天気の模様を引く位置の歪みの幅(m)と、歪みを引く形の格子の座標のずれ（kWeatherWarpMeters・kWeatherWarpPhase）
+WEATHER_WARP_M = 400.0
+WEATHER_WARP_PHASE = np.array([0.37, 0.53, 0.19])
 # 遠い雲の消える原因を分ける診断の切り替え（GLSL の kCloudDiagnostic*）。書き出しの反実仮想の列（SCN-WL-CLOUD-FAR-CAUSE）が
 # 視線の値の 7 行目の w の 4 の位より上に持つ
 # 細かい歩で積む（歩数の上限を DIAGNOSTIC_MAX_PRIMARY_STEPS へ上げる。SCN-WL-CLOUD-FAR-RANGE の前は 45 km の打ち切りを外す切り替え）
@@ -251,10 +257,22 @@ class CloudModel:
         return transmittance, np.maximum(scattering, 0.0)
 
     # ---- 密度（SampleCloudDensity） ----
-    def coverage_mask(self, x, z):
-        """天気の模様の覆いの印（雲の座標の x・z だけで決まる）"""
+    def shape_coordinate(self, position):
+        """基本の形の格子のテクスチャ座標（GLSL の shapeCoordinate。風のずれを足して周期で割り、回した格子で引く）"""
+        return ((np.atleast_2d(position) + self.shape_offset) * self.inverse_shape) @ SHAPE_ROTATION.T
+
+    def weather_warp(self, position):
+        """天気の模様を引く水平の位置の歪み（m、x・z。GLSL の weatherWarp）"""
+        warp = sample_trilinear(self.shape_noise, self.shape_coordinate(position) + WEATHER_WARP_PHASE)
+        return (warp[:, 1:3] - 0.5) * (2.0 * WEATHER_WARP_M)
+
+    def coverage_mask(self, x, z, warp=None):
+        """天気の模様の覆いの印。warp は weather_warp の値（雲の位置ごとの水平の歪み。省くと歪みなし）"""
         x = np.atleast_1d(x).astype(np.float64)
         z = np.atleast_1d(z).astype(np.float64)
+        if warp is not None:
+            x = x + warp[:, 0]
+            z = z + warp[:, 1]
         weather_u = (self.rotation_cos * x - self.rotation_sin * z) * self.inverse_weather
         weather_v = (self.rotation_sin * x + self.rotation_cos * z) * self.inverse_weather
         low = sample_trilinear(self.shape_noise, np.stack(
@@ -271,11 +289,11 @@ class CloudModel:
         height_fraction = np.atleast_1d(height_fraction).astype(np.float64)
         detail_mask = np.broadcast_to(np.atleast_1d(detail_mask), height_fraction.shape)
         if mask is None:
-            mask = self.coverage_mask(position[:, 0], position[:, 2])
+            mask = self.coverage_mask(position[:, 0], position[:, 2], self.weather_warp(position))
         top_limit = mix(0.35, 1.0, mask)
         profile = (clamp01(remap(height_fraction, 0.0, 0.07, 0.0, 1.0)) *
                    clamp01(remap(height_fraction, top_limit * 0.55, top_limit, 1.0, 0.0)))
-        shape = sample_trilinear(self.shape_noise, (position + self.shape_offset) * self.inverse_shape)
+        shape = sample_trilinear(self.shape_noise, self.shape_coordinate(position))
         low_fbm = shape[:, 1] * 0.625 + shape[:, 2] * 0.25 + shape[:, 3] * 0.125
         base = clamp01(remap(shape[:, 0], low_fbm - 1.0, 1.0, 0.0, 1.0))
         base = clamp01(remap(base * profile, 1.0 - mask, 1.0, 0.0, 1.0) * mask * DENSITY_GAIN)
@@ -523,7 +541,8 @@ def expected_constants(meta):
     weather_v = (rotation_sin * wind_x * time + rotation_cos * wind_z * time) / weather_scale
     return {
         "inverse_scales": [1.0 / shape_scale, 1.0 / detail_scale, 1.0 / weather_scale],
-        "shape_offset": [wrap_wind(wind_x, shape_scale), wrap_wind(wind_z, shape_scale)],
+        "shape_offset": [wrap_wind(wind_x, shape_scale * SHAPE_ROTATION_WRAP_PERIODS),
+                         wrap_wind(wind_z, shape_scale * SHAPE_ROTATION_WRAP_PERIODS)],
         "weather_offset": [wrap_unit(weather_u), wrap_unit(weather_v)],
         "weather_high_offset": [wrap_unit(weather_v * high_scale + phase_u), wrap_unit(weather_u * high_scale + phase_w)],
         "detail_offset": [wrap_wind(wind_x * ratio, detail_scale), wrap_wind(float(wind["detail_rise_velocity_m_s"]), detail_scale),

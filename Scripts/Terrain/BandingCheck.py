@@ -2,7 +2,7 @@
 #
 # 使い方:
 #   python Scripts/Terrain/BandingCheck.py --before <前の PNG> --after <後の PNG> --rows 0:450 [--min-g 150]
-#       [--hdr <後の .hdr.pfm>] [--out <出力先>] [--verify]
+#       [--hdr <後の .hdr.pfm>] [--out <出力先>] [--verify | --no-worse-bands]
 # 量（G の 8 bit の値。縦の列を 4 画素おきに見る。--min-g 以上の画素だけ。空や雲の明るい所を選ぶため）:
 #   - 平らな帯の長さ: 縦に同じ値が続く区間の長さの平均・95 % 点・最大（段が等高線に見えるのは長い帯の縁）
 #   - 隣の差: 縦に隣り合う画素の差の絶対値が 1 段以下の割合と最大
@@ -10,7 +10,9 @@
 #   - --hdr を与えると、HDR の縦の隣の相対差が 0 の割合（描画の段がシーンカラーにあるか）も書く
 # --out には前後の同じ所（前の平らな帯が最も長い所）を拡大し、G の値の幅を引き伸ばした見比べの PNG（banding_zoom.png）と banding.json を書く。
 # --verify: 後の平らな帯の長さの平均と 95 % 点が前より短く、局所の平均の差の平均が 0.5 段以下なら result=pass。
-# 終了コード: 合格・書けたら 0、--verify で不合格なら 1、入力が無ければ 2。
+# --no-worse-bands: 後の平らな帯の長さの平均と 95 % 点が前の NO_WORSE_RATIO 倍以内なら result=pass（局所の平均の差は
+#   書くだけで合否に使わない。雲の外形を変える直しで、段が増えていないことだけを見る。SCN-WL-CLOUD-SHAPE-NOISE）。
+# 終了コード: 合格・書けたら 0、--verify・--no-worse-bands で不合格なら 1、入力が無ければ 2。
 import argparse
 import json
 import os
@@ -22,6 +24,7 @@ from PIL import Image
 COLUMN_STEP = 4
 BLOCK = 9
 MEAN_DIFF_LIMIT = 0.5
+NO_WORSE_RATIO = 1.1
 
 
 def load_png(path):
@@ -121,6 +124,7 @@ def main():
     parser.add_argument('--hdr')
     parser.add_argument('--out')
     parser.add_argument('--verify', action='store_true')
+    parser.add_argument('--no-worse-bands', action='store_true')
     args = parser.parse_args()
 
     for path in (args.before, args.after):
@@ -159,6 +163,14 @@ def main():
     if 'hdr_zero_step_ratio' in result:
         print(f"BANDING_CHECK hdr zero_step_ratio={result['hdr_zero_step_ratio']} "
               f"median_relative_step={result['hdr_median_relative_step']}")
+    if args.no_worse_bands:
+        passed = (result['after']['flat_run_mean'] <= result['before']['flat_run_mean'] * NO_WORSE_RATIO and
+                  result['after']['flat_run_p95'] <= result['before']['flat_run_p95'] * NO_WORSE_RATIO)
+        print(f"BANDING_CHECK no_worse_bands ratio={NO_WORSE_RATIO} "
+              f"flat_run_mean_limit={round(result['before']['flat_run_mean'] * NO_WORSE_RATIO, 4)} "
+              f"flat_run_p95_limit={round(result['before']['flat_run_p95'] * NO_WORSE_RATIO, 4)}")
+        print(f"BANDING_CHECK result={'pass' if passed else 'fail'}")
+        return 0 if passed else 1
     if not args.verify:
         return 0
     passed = (result['after']['flat_run_mean'] < result['before']['flat_run_mean'] and
