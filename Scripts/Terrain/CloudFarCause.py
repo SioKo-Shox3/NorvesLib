@@ -274,9 +274,24 @@ def check_probe(model, probe, pixels, target, failures):
         for index in columns:
             pixel = pixels[index]
             direction = model.ray_direction(pixel, target)
-            march = model.march(direction, model.jitter(pixel), flags=flags)
+            jitter = model.jitter(pixel)
             gpu_t = float(probe[0, index, 0])
             gpu_marched = bool(int(round(probe[7, index, 3])) & 1)
+            # 区間と歩数は画素から求めた向きで自分で求めて GPU と照らす
+            own = model.march(direction, jitter, with_light=False, flags=flags)
+            # 透過率と放射輝度は --cloud-dump の照合と同じく、GPU が進めた単精度の視線の向きと区間で求め直す
+            # （縁の締まった遠い雲は、1e-4 rad の向きの差や倍精度の歩の位置の差で別の所へ抜け、透過率が 0.02 変わる）
+            march_direction = direction
+            gpu_direction = np.asarray(probe[3, index, :3], dtype=np.float64)
+            gpu_length = float(np.linalg.norm(gpu_direction))
+            if np.isfinite(gpu_length) and gpu_length > 0.5:
+                march_direction = gpu_direction / gpu_length
+            gpu_step_count = int(round(probe[7, index, 1]))
+            gpu_segment = ((probe[4, index, 3], probe[5, index, 3], gpu_step_count, probe[7, index, 2])
+                           if gpu_marched and gpu_step_count > 0 else None)
+            march = model.march(march_direction, jitter, flags=flags, gpu_segment=gpu_segment)
+            march["marched"] = own["marched"]
+            march["step_count"] = own.get("step_count", march.get("step_count"))
             if gpu_marched != march["marched"]:
                 marched_mismatch += 1
                 continue
