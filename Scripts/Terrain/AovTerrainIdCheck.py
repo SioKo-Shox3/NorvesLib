@@ -2,12 +2,13 @@
 # 単独では動かさない）。
 #
 # 入力: CaptureScene.ps1 -Aov で 2 視点以上を 1 回の起動（--capture-views）で撮った出力先（--engine）と、同じ視点・同じ起動引数を
-# -Aov なしで撮った出力先（--plain）。
+# -Aov なしで別々の起動で 2 回撮った出力先（--plain・--plain2）。
 #   落ちる: 印の画像・記録が無い、値が 0・1・255 以外、描いた画素（深度が有限）に書かれていない画素（255）がある、空の画素が 0 でない、
 #           印の記録のフレームの番号・印が深度・面の法線の記録と違う、面の法線が書かれた画素と印が書かれた画素が食い違う、
 #           同じ起動の視点どうしでフレームの番号か印が同じ（前の視点の値が残っても見分けられない）、
-#           -Aov の有無の PNG の差が 1 段以内の画素が 99.9 % に届かない、--verify で入力のハッシュが撮影の後に変わった
-#   記録する: 視点ごとの地形・ほかの物・空の画素数、フレームの番号と印、PNG の差の割合と最大
+#           -Aov の有無の PNG の差が 1 段以内の画素の割合が、-Aov なしどうし（起動ごとの描画の揺れ）の割合 − 0.002 に届かない、
+#           --verify で入力のハッシュが撮影の後に変わった
+#   記録する: 視点ごとの地形・ほかの物・空の画素数、フレームの番号と印、-Aov の有無と -Aov なしどうしの PNG の差の割合と最大
 # 印の画（<engine>/terrain_id_<視点>.png）: 地形 = 緑、ほかの物 = 橙、空 = 灰の PNG のまま、書かれていない画素 = 赤紫を PNG に重ねる。
 # 結果は <engine>/aov_terrain_id_check.json に書く。
 import json
@@ -21,9 +22,10 @@ REPORT = "aov_terrain_id_check.json"
 ID_OTHER = 0.0
 ID_TERRAIN = 1.0
 ID_UNWRITTEN = 255.0
-# -Aov の有無で通常の描画が変わらないことの基準: 8 bit の差が 1 段以内の画素の割合
+# -Aov の有無で通常の描画が変わらないことの基準: 8 bit の差が 1 段以内の画素の割合が、-Aov なしの別々の起動どうしの割合
+# （RT・GI の時間方向の積み重ねとストリーミングの間合いによる起動ごとの揺れ）から許す幅より下がらない
 PLAIN_MAX_STEP = 1
-PLAIN_MIN_FRACTION = 0.999
+PLAIN_NOISE_MARGIN = 0.002
 # 面の法線と同じ印の作り方（VisibilityResolvePass::GetGeometricNormalTag）
 TAG_PERIOD = 2048
 
@@ -59,7 +61,13 @@ def write_overlay(path, png, terrain_id, drawn):
     Image.fromarray(np.clip(out + 0.5, 0, 255).astype(np.uint8)).save(path)
 
 
-def check_view(rc, engine_dir, plain_dir, view):
+def within_fraction(a, b):
+    """8 bit の差が PLAIN_MAX_STEP 段以内の画素の割合と、差の最大"""
+    step = np.abs(a - b).max(axis=2)
+    return float(np.count_nonzero(step <= PLAIN_MAX_STEP)) / float(step.size), int(step.max())
+
+
+def check_view(rc, engine_dir, plain_dir, plain2_dir, view):
     result = {"view": view, "failures": []}
     failures = result["failures"]
     meta_path = os.path.join(engine_dir, f"{view}.aov.json")
@@ -128,23 +136,30 @@ def check_view(rc, engine_dir, plain_dir, view):
     else:
         failures.append("AOV の記録に面の法線が無い")
 
-    # 通常の描画に影響しない: 同じ視点の -Aov ありと無しの PNG の差
+    # 通常の描画に影響しない: 同じ視点の -Aov ありと無しの PNG の差を、-Aov なしの別々の起動どうしの差と比べる
     png_path = os.path.join(engine_dir, f"{view}.png")
     plain_path = os.path.join(plain_dir, f"{view}.png") if plain_dir else ""
-    if not os.path.isfile(png_path) or not plain_path or not os.path.isfile(plain_path):
-        failures.append("-Aov の有無の PNG のどちらかが無い")
+    plain2_path = os.path.join(plain2_dir, f"{view}.png") if plain2_dir else ""
+    if not all(path and os.path.isfile(path) for path in (png_path, plain_path, plain2_path)):
+        failures.append("-Aov ありと -Aov なし 2 回の PNG のどれかが無い")
         return result
     png = load_png(png_path)
     plain = load_png(plain_path)
-    if png.shape != plain.shape:
-        failures.append(f"-Aov の有無の PNG の大きさが違う（{png.shape}・{plain.shape}）")
+    plain2 = load_png(plain2_path)
+    if png.shape != plain.shape or plain.shape != plain2.shape:
+        failures.append(f"-Aov ありと無しの PNG の大きさが違う（{png.shape}・{plain.shape}・{plain2.shape}）")
         return result
-    step = np.abs(png - plain).max(axis=2)
-    within = float(np.count_nonzero(step <= PLAIN_MAX_STEP)) / float(step.size)
+    within, max_step = within_fraction(png, plain)
+    noise_within, noise_max_step = within_fraction(plain, plain2)
+    required = noise_within - PLAIN_NOISE_MARGIN
     result["plain_within_fraction"] = within
-    result["plain_max_step"] = int(step.max())
-    if within < PLAIN_MIN_FRACTION:
-        failures.append(f"-Aov の有無の PNG の差が {PLAIN_MAX_STEP} 段以内の画素が {within:.5f}（基準 {PLAIN_MIN_FRACTION}）")
+    result["plain_max_step"] = max_step
+    result["plain_noise_within_fraction"] = noise_within
+    result["plain_noise_max_step"] = noise_max_step
+    result["plain_required_fraction"] = required
+    if within < required:
+        failures.append(f"-Aov の有無の PNG の差が {PLAIN_MAX_STEP} 段以内の画素が {within:.5f}"
+                        f"（-Aov なしどうし {noise_within:.5f} − {PLAIN_NOISE_MARGIN} = {required:.5f} に届かない）")
     if png.shape[:2] == terrain_id.shape:
         overlay = os.path.join(engine_dir, f"terrain_id_{view}.png")
         write_overlay(overlay, png, terrain_id, drawn)
@@ -152,22 +167,25 @@ def check_view(rc, engine_dir, plain_dir, view):
     return result
 
 
-def run(rc, engine_dir, plain_dir, views, verify):
+def run(rc, engine_dir, plain_dir, plain2_dir, views, verify):
     failures = []
     report = {"mode": "aov_terrain_id", "verify": bool(verify),
               "engine": os.path.relpath(engine_dir, rc.REPO_ROOT) if engine_dir else "",
               "plain": os.path.relpath(plain_dir, rc.REPO_ROOT) if plain_dir else "",
+              "plain2": os.path.relpath(plain2_dir, rc.REPO_ROOT) if plain2_dir else "",
               "criteria": {"values": [ID_OTHER, ID_TERRAIN, ID_UNWRITTEN], "plain_max_step": PLAIN_MAX_STEP,
-                           "plain_min_fraction": PLAIN_MIN_FRACTION},
+                           "plain_noise_margin": PLAIN_NOISE_MARGIN},
               "views": []}
     if not engine_dir or not os.path.isdir(engine_dir):
         print(f"REFERENCE_CHECK result=fail reason=engine_dir_missing（--engine に -Aov の撮影先を指定する） path={engine_dir}")
         return 1
-    if not plain_dir or not os.path.isdir(plain_dir):
-        print(f"REFERENCE_CHECK result=fail reason=plain_dir_missing（--plain に -Aov なしの撮影先を指定する） path={plain_dir}")
-        return 1
+    for flag, directory in (("--plain", plain_dir), ("--plain2", plain2_dir)):
+        if not directory or not os.path.isdir(directory):
+            print(f"REFERENCE_CHECK result=fail reason=plain_dir_missing（{flag} に -Aov なしの撮影先を指定する） path={directory}")
+            return 1
     metric_views = rc.views_from_metrics(engine_dir) or []
     plain_views = rc.views_from_metrics(plain_dir) or []
+    plain2_views = rc.views_from_metrics(plain2_dir) or []
     views = list(views) or list(metric_views)
     if not views:
         failures.append("検査する視点が無い（metrics.json に視点が無い）")
@@ -175,15 +193,17 @@ def run(rc, engine_dir, plain_dir, views, verify):
         if view not in metric_views:
             failures.append(f"{view}: -Aov の撮影に無い視点")
         if view not in plain_views:
-            failures.append(f"{view}: -Aov なしの撮影に無い視点")
-    for name, directory in (("engine", engine_dir), ("plain", plain_dir)):
+            failures.append(f"{view}: -Aov なしの撮影（--plain）に無い視点")
+        if view not in plain2_views:
+            failures.append(f"{view}: -Aov なしの 2 回目の撮影（--plain2）に無い視点")
+    for name, directory in (("engine", engine_dir), ("plain", plain_dir), ("plain2", plain2_dir)):
         inputs_ok, input_failures, _ = rc.check_inputs(directory)
         report[f"inputs_current_{name}"] = inputs_ok
         if verify:
             failures.extend(f"{name}: {f}" for f in input_failures)
     targets = [v for v in views if v in metric_views]
     for view in targets:
-        result = check_view(rc, engine_dir, plain_dir, view)
+        result = check_view(rc, engine_dir, plain_dir, plain2_dir, view)
         report["views"].append(result)
         print(f"REFERENCE_CHECK aov_terrain_id view={view} pass={int(not result['failures'])} "
               f"frame={result.get('frame_number')} tag={result.get('frame_tag')} "
@@ -191,7 +211,10 @@ def run(rc, engine_dir, plain_dir, views, verify):
               f"unwritten_drawn={result.get('unwritten_drawn_pixels')} sky_nonzero={result.get('sky_nonzero_pixels')} "
               f"normal_mismatch={result.get('normal_id_mismatch_pixels')} values={result.get('values')} "
               f"plain_within={result.get('plain_within_fraction', float('nan')):.6f} "
-              f"plain_max_step={result.get('plain_max_step')}")
+              f"plain_max_step={result.get('plain_max_step')} "
+              f"plain_noise_within={result.get('plain_noise_within_fraction', float('nan')):.6f} "
+              f"plain_noise_max_step={result.get('plain_noise_max_step')} "
+              f"plain_required={result.get('plain_required_fraction', float('nan')):.6f}")
         failures.extend(f"{view}: {f}" for f in result["failures"])
     # 同じ起動の視点どうしは別のフレームの印で書かれる（資源を使い回しても、前の視点の印は今の印と合わず読まれない）
     stamped = [(r["view"], r.get("frame_number"), r.get("frame_tag")) for r in report["views"] if r.get("frame_number") is not None]
@@ -210,6 +233,6 @@ def run(rc, engine_dir, plain_dir, views, verify):
     for failure in failures:
         print(f"REFERENCE_CHECK failure: {failure}")
     print(f"REFERENCE_CHECK result={'pass' if not failures else 'fail'} mode=aov_terrain_id views={len(targets)} "
-          f"inputs_current={int(bool(report.get('inputs_current_engine')) and bool(report.get('inputs_current_plain')))} "
+          f"inputs_current={int(all(bool(report.get(f'inputs_current_{n}')) for n in ('engine', 'plain', 'plain2')))} "
           f"report={report_path}")
     return 0 if not failures else 1

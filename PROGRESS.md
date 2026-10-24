@@ -7614,3 +7614,11 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 証拠（`.harness/runs/20261024-183517/`）: `verify-SCN-WL-SHAPE-TERRAIN-AOV-1.txt`（Debug EXIT=0）・`-2.txt`（RelWithDebInfo EXIT=0）・`-3.txt`（-Aov の撮影 result=pass）・`-4.txt`（-Aov なしの撮影 result=pass）・`-5.txt`（`--aov-terrain-id --verify` result=pass inputs_current=1）。開いた画: `scene-capture/SCN-WL-SHAPE-TERRAIN-AOV/aov/terrain_id_ref_cliff_01.png`（棚の岩塊・崖錐の岩が橙、刻んだ壁と斜面が緑）・`terrain_id_ref_far_02.png`（崖錐の岩だけ橙）
 - Next: TASKS.md の次の未完（SCN-WL-SHAPE-METRIC-HARDEN の `--terrain-only` はこの印を読む）
 - Notes: 印は材質の表の印で決める（タイルの形・直接 dispatch・デバッグの表示のどれでも同じ値）。-Aov の有無の PNG の差の画素は岩と輪郭に散った点で、別の起動どうしの差か AOV の有無の差かは切り分けていない。新しい試験は足していない（検査は verify が名指しした `--aov-terrain-id` だけ）
+
+## 2026-10-24 SCN-WL-SHAPE-TERRAIN-AOV（run 20261024-183517 の反復 4、再検証の差し戻しを直して閉じた）
+- Done: 再検証で ref_cliff_01 の `-Aov` の有無の PNG の差が 1 段以内 0.98042 で落ちた件を直した。親の判断（STEER）どおり、通常の描画に影響しないことの合否を起動ごとの揺れと比べる形にした: `-Aov` なしをもう 1 回別の起動で撮る行（`plain2`）を verify に足し、`AovTerrainIdCheck.py` は「`-Aov` の有無の割合 ≥ `-Aov` なしどうしの割合 − 0.002」で合否を決め、なしどうしの値と下限を記録に書く（`ReferenceCheck.py --plain2`）。TASKS.md の done-when の該当の文と verify、`WastelandShape.md` の検査の説明と値の表を書き換えた。描画のコードは変えていない
+- 切り分け: 落ちた起動の差は崖錐の岩の面（差の画素の 85 %、暗い側に寄る）。岩の配置の書き出しは起動どうしで同じ。同じ Game.exe で `-Aov` をもう 1 回撮ると `-Aov` なしと 0.99987、`-Aov` なしどうしは 0.99985 で揃ったので、`-Aov` が描画を変えたのでなく起動ごとの揺れ（撮影の時点の影の仮想ページは全部キャッシュで、再描画 0）
+- 値: ref_cliff_01 フレーム 380（印 381）地形 680990・ほか 143617・255 は 0・-Aov の有無 0.99832・なしどうし 0.99985（下限 0.99785）。ref_far_02 フレーム 583（印 584）地形 1280296・ほか 13203・0.99996・なしどうし 0.99995
+- 証拠（`.harness/runs/20261024-183517/`）: `verify-SCN-WL-SHAPE-TERRAIN-AOV-1.txt`（Debug EXIT=0）・`-2.txt`（RelWithDebInfo EXIT=0）・`-3.txt`（-Aov の撮影 result=pass）・`-4.txt`（-Aov なしの撮影 result=pass）・`-5.txt`（-Aov なしの 2 回目 result=pass）・`-6.txt`（`--aov-terrain-id --verify` result=pass inputs_current=1）。開いた画: `scene-capture/SCN-WL-SHAPE-TERRAIN-AOV/aov/terrain_id_ref_cliff_01.png`（刻んだ壁と斜面が緑、棚の岩塊・崖錐の岩が橙、空は灰）
+- Next: TASKS.md の次の未完（SCN-WL-SHAPE-METRIC-HARDEN）
+- Notes: 起動ごとの崖錐の岩の影の揺れは、大きく出る起動（ref_cliff_01 で 0.98）がある。そのような起動が verify の 3 回のどれかに当たると、この検査は描画の変更なしで落ちうる。原因は影の仮想ページのキャッシュの中身がストリーミングの届く間合いで変わる見込みだが確かめていない。要起票: 崖錐の岩の影が起動ごとに変わる原因（VSM のキャッシュとジオメトリのページの常駐の無効化の間合い）を調べる。Git Bash から `cmake --build ... -- /m:1` を回すと `/m:1` が `m:1` に書き換えられて MSBuild が MSB1008 で落ちる（PowerShell で回す）

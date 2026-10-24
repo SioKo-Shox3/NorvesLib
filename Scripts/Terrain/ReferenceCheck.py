@@ -6733,8 +6733,10 @@ def main():
     parser.add_argument("--capture-root", default="", help="--shape-cause: 3 組の撮影の置き場")
     parser.add_argument("--aov-terrain-id", action="store_true",
                         help="撮影の AOV の地形の印（terrain_id）を、深度・面の法線と -Aov なしの撮影と照らす（AovTerrainIdCheck.py。"
-                             "--engine に -Aov の撮影先、--plain に -Aov なしの撮影先）")
+                             "--engine に -Aov の撮影先、--plain・--plain2 に -Aov なしの別々の起動の撮影先）")
     parser.add_argument("--plain", default="", help="--aov-terrain-id: 同じ視点・同じ起動引数を -Aov なしで撮った撮影先")
+    parser.add_argument("--plain2", default="",
+                        help="--aov-terrain-id: --plain と同じ撮影を別の起動でもう 1 回撮った撮影先（起動ごとの描画の揺れの基準）")
     parser.add_argument("--selftest", action="store_true",
                         help="--cloud: --expect の判定を合成の結果で確かめる（仕様を省くと ExpectSpecs/cloud-ref.json）")
     parser.add_argument("--verify", action="store_true", help="入力のハッシュを今のファイルと照らし、古い結果を拒否する")
@@ -6795,7 +6797,8 @@ def main():
         absolute = lambda d: os.path.normpath(d if os.path.isabs(d) else os.path.join(REPO_ROOT, d))
         views = [v.strip() for v in args.views.split(",") if v.strip()]
         return AovTerrainIdCheck.run(sys.modules[__name__], absolute(args.engine[0]) if args.engine else "",
-                                     absolute(args.plain) if args.plain else "", views, args.verify)
+                                     absolute(args.plain) if args.plain else "",
+                                     absolute(args.plain2) if args.plain2 else "", views, args.verify)
     if args.shape_cause:
         import ShapeCause
         root = args.capture_root
