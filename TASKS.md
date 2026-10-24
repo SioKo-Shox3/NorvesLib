@@ -2789,7 +2789,7 @@
 - notes: 危険地帯（共有の GLSL・既定の見た目）。2026-10-24 親が SCN-WL-CLOUD-CONTOUR-FIX の BLOCKED（推奨の案 1）から分けた。直線の縁の量の前の値は SCN-WL-CLOUD-CONTOUR-FIX の記録。密度場が変わるので、雲の Cycles の正解の描き直しは SCN-WLR-CLOUD-REF-REFRESH で行う。時間の見積もり: ノイズの作り直し 25〜35 分、ビルド 2 構成 6〜12 分、撮影 2 組 約 5 分、照合の写しの直し 10 分。壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える（未達のまま DONE にしない）。verify は 1 行 10 分未満。
 
 ## SCN-WL-CLOUD-FAR-DETAIL: 遠い雲の細部の打ち切りを距離で溶かし、遠景の雲のちらつきを消して縁をはっきりさせる
-- status: done
+- status: doing
 - after: SCN-WL-CLOUD-SHAPE-NOISE
 - done-when: SCN-WL-CLOUD-SHAPE-ACCEPT の反復 7 の測り（`Docs/RenderingValidation/WastelandCloudShape.md` の「受け入れ」）: ref_far_01 のちらつきの連番（8 枚）で、8 bit の G が 2 段以上揺れる画素が形を変える前の 0 % から 11.9 %（最大 7 段）に増えた（HDR のちらつきの比 0.00079 → 0.00671。フレームの差は隣の画素と相関しない画素ごとの時間の雑音で、雲の縁で強い）。18 km より遠い歩は細部のノイズで縁を削らない（`CloudLayerCommon.glsl` の `kDetailMaxDistance = 18000`）。ref_far_01 の雲の入る距離の中央値は 20.3 km で、遠い雲の縁がぼやけて写真の積雲の細かな縁にならず、歩の端数が 18 km の前後を行き来する画素で細部の有無が切り替わる見込み。直し: 細部の打ち切りを距離で溶かす形か、遠いほど粗いミップで細部を引く形にし、密度 3 倍で大きくなった歩の端数による標本の揺れを TAA が均せる大きさにする（どれが効くかは 1 つずつ外して撮って確かめ、文書に書く）。合否（`Scripts/Terrain/ExpectSpecs/cloud-far-accept.json`、この項目で作る。`cloud-far-range.json` から、一様な膜のときの値だったコントラストの下限 0.7007 の行を外し、ちらつきの行を次に替える）: (1) ref_far_01 のちらつきの連番で 8 bit の G が 2 段以上揺れる画素が 1 % 以下（HDR のちらつきの比は記録する）、(2) 細かい歩との差の行は今のまま、(3) 固定した `cloud-shape.json` が通ったまま、(4) `--cloud-dump --verify` が既存の許容で通る（密度の式を変えるなら照合の写しも直す）、(5) far_01 の空を拡大して写真と並べ、遠い雲の縁が前よりはっきりしたことを開いて確かめる（写真の露出は明るいので明るさは診断）。GPU 時間（ref_far_01）を前後で記録。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
