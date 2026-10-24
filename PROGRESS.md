@@ -7772,3 +7772,10 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 証拠（`.harness/runs/20261024-183517/`）: `verify-SCN-WLR-CLOUD-REF-REFRESH-1.txt`（RelWithDebInfo のビルド EXIT=0）・`-2.txt`（`--cloud --expect cloud-ref.json --verify` の 8 行とも pass、result=pass、inputs_current=1、EXIT=0）・`aux-SCN-WLR-CLOUD-REF-REFRESH-dump.txt`（書き出しの撮影 result=pass）・`-blender.txt`（Cycles の生成 EXIT=0）・`-membership.txt`（領域の視線の入れ替わり）。開いた画: `scene-capture/SCN-WLR-CLOUD-REF-REFRESH/cycles/cloud_cloud_sky.png`（雲の形と位置は両方で同じ）
 - Next: TASKS.md の次の未完
 - Notes: 書き出しは SCN-WL-CLOUD-SHADOW-LIGHT の `dump` と 6 ファイルともハッシュが同じで、その `cycles` と 5 領域の Cycles の Y の相対差は 2 × 10⁻⁸ 以下（同じ書き出しからの描き直しで同じ値）。GPU 時間は測っていない（描画のコードを変えていない）。新しい試験は足していない
+
+## 2026-10-25 SCN-WL-CLIFF-CARVE-CONTINUITY（run 20261024-183517 の反復 26、DONE）
+- Done: 反復 24 の直し（刻みの割合の全域で同じ 2 式から混ぜる・割合 1 の範囲を 4 m 広げる、刻みの版 8）の上で、地形の 214 項目を 12 の作業者で重い順に焼き直し（1318 秒、失敗 0）、`build/CookedAssets` へ移した。範囲の外のパッケージの比べ・撮影 2 組・外形の行を測り、`WastelandCliffScan.md` の「刻みの割合の境で高さが跳ぶ不具合を直す」に書いた。コードは変えていない
+- 値: 検査 境の線 844 本・差の最大 0.210 m・例の 2 点 0.021 m（result=pass）。パッケージは dem:0,2・dem:1,2 の 2 つだけ変わり 212 個は同じ。外形 ずらす前・後 1.0 画素（版 7 と同じ）、棚 0.391 → 0.395、角 0.286 のまま（棚・角は保留の既知の限界）
+- 証拠（`.harness/runs/20261024-183517/`）: `verify-SCN-WL-CLIFF-CARVE-CONTINUITY-5.txt`（AssetCook EXIT=0）・`-6.txt`（Game EXIT=0）・`-7.txt`（`CheckCarveContinuity.py --verify` result=pass）・`-8.txt`（クック cooked=0 skipped=214 EXIT=0）・`-9.txt`（灰色の材質の撮影 result=pass）・`-10.txt`（既定の撮影 result=pass）、`aux-SCN-WL-CLIFF-CARVE-CONTINUITY-parallel-cook-2.txt`（焼きとハッシュの比べ same=212 changed=2）・`aux-...-packages-before.json`・`aux-...-shape-expect.txt`。開いた画: `scene-capture/SCN-WL-CLIFF-CARVE-CONTINUITY/shape/crop_wall_before_after.png`・`look/before_after_cliff.png`・`look/before_after_cliff_diff8.png`（境の壁・尖りなし）
+- Next: TASKS.md の次の未完（SCN-WL-CLIFF-SCAN-FRANKLIN が同じ刻みの経路を使う）
+- Notes: 灰色の材質の cliff の視点は版 7 の撮影が無いので、既定の材質の cliff だけ前と並べた。並列の焼きは組を固定せず、作業者ごとの置き場（`manifest.json` の写し）で 1 項目ずつ `CookAssets.ps1 -RuntimeRoot <置き場> -OnlyLogicalPath <項目>` を呼び、前のパッケージの大きい順に配ると 22 分で終わる（dem_2_3 が最後）。傾きの折れ（0.25 m の差が 0.5 m を超え内側は超えない線 12 本）は撮影で線に見えないので記録だけにした。新しい試験は足していない

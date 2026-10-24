@@ -172,7 +172,7 @@ cliff と ref_cliff_01 の両方から見える崖の面を、両方の撮影の
 - 見た目（`look/reference_cliff_01.png`）: 輪郭は写真の段（左の低い段・頂・右の 2 段）に重なる。崖錐の岩塊は浮かず、埋もれ過ぎも見えない。右の低い段と左の縁の壁は縦の筋の平らな板のまま（SCN-WL-CLIFF-SCAN-NEAR-WALLS で扱う）
 - 記録: 読み込み（Game の起動から SCENE_READY）99 秒、VRAM の使用 9783 MB（予算 12009 MB）・ジオメトリのプールの使用 2511 MB（既定の撮影の 2 視点の後）、`MEGA_CAPACITY` の 51 行で溢れ・取りこぼし 0
 
-### 刻みの割合の境で高さが跳ぶ不具合を直す（SCN-WL-CLIFF-CARVE-CONTINUITY、run 20261024-183517 の反復 24、途中）
+### 刻みの割合の境で高さが跳ぶ不具合を直す（SCN-WL-CLIFF-CARVE-CONTINUITY、run 20261024-183517 の反復 24・26）
 
 - 不具合: 刻みの版 7 の `BaseHeight` は、刻みの割合が 1 なら細分の点の刻む前の双線形に刻みを直接掛け、1 未満なら刻んだ格子の点の双線形と Catmull-Rom を混ぜていた。2 つの式の高さが合わず、割合の境で面が跳んでいた（X −1875.25・Z −1245.1875 で割合 1.000000・高さ 170.035 m、Z −1245.1250 で割合 0.998152・高さ 149.741 m）
 - 変更 1: 割合の全域（0〜1）で、Catmull-Rom の滑らかな面と、刻む前の双線形に刻みを直接掛けた高さ（`CarvedHeight`）を割合で混ぜる（`TerrainCliffDetail.cpp` の `BaseHeight`）。格子の点ではどちらも格子の高さなので、格子の点の値は変わらない
@@ -180,4 +180,7 @@ cliff と ref_cliff_01 の両方から見える崖の面を、両方の撮影の
 - 問い合わせ: `AssetCook --sample-terrain-cliff-surface <points-file>` は、クックと同じ高さ場（前哨地の造成を掛ける）を焼きが頂点に使うのと同じ式（`SampleTerrainCliffSurface`）で引き、点ごとの割合・押し出す前の高さ・押し出した後の位置を出す
 - 検査（`Scripts/Terrain/CheckCarveContinuity.py --verify`、`.harness/runs/20261024-183517/verify-SCN-WL-CLIFF-CARVE-CONTINUITY-4.txt`）: 刻みの範囲の中心から 360 本の放射で割合が 1 から 1 未満へ変わる境を探し、境ごとに ±0.75 m の線を 1/64 m の間隔で引いた。線 844 本で、割合 0.99 以上 1 未満の点と隣のマスク 1 の点の差は最大 0.210 m・中央値 0.0095 m（押し出した後 0.211 m）。例の 2 点は 170.035 / 170.014 m で差 0.021 m（どちらも新しい範囲で割合 1）。result=pass
 - 測り方: 自然の急な崖（1 m あたり 10 m を超える）では、0.25 m や 6.25 cm の間の差も 0.5 m を超える（変更 2 の後、6.25 cm の間隔で最大 0.845 m。X −1878.47 の線は割合 0.76〜1 の全体で 1 m あたり約 10 m の一様な斜面）。式の切り替わりの段は間隔を細かくしても残るので、1/64 m の隣の標本どうしで判定し、参考に 0.25 m 離れた点との差（最大 3.25 m、内側の同じ幅の差 2.55 m）を出す
-- 未了: 地形の 214 項目の 12 組の並列の焼きは、組の台本の誤り（Windows PowerShell 5 で `$ErrorActionPreference = "Stop"` のまま `*>` で AssetCook の標準エラーを受け、1 項目目の後で止まった）で 12 項目しか焼けていない（`aux-SCN-WL-CLIFF-CARVE-CONTINUITY-parallel-cook.txt`）。`build/CookedAssets` は版 7 のまま。範囲の外のパッケージの比べ・灰色の材質と既定の撮影・外形の行はまだ測っていない
+- 焼き: 地形の 214 項目を 12 の作業者で重い順に焼いた（1318 秒、失敗 0。`aux-SCN-WL-CLIFF-CARVE-CONTINUITY-parallel-cook-2.txt`）。版 7 のパッケージと SHA-256 を比べ、変わったのは `WastelandDem_0_2.nvpkg`・`WastelandDem_1_2.nvpkg` の 2 つだけで、ほかの 212 個は同じ（前のハッシュは `aux-...-packages-before.json`）。焼いた後のクック（`-OnlyLogicalPath 'Assets/Models/WastelandTerrain/*'`）は cooked=0 skipped=214
+- 撮影: 灰色の材質（`scene-capture/SCN-WL-CLIFF-CARVE-CONTINUITY/shape`）と既定（`.../look`）の ref_cliff_01・cliff を、版 7 の撮影（`scene-capture/SCN-WL-CLIFF-SCAN-NEAR/shape`・`look`）と上下に並べて開いた（`shape/before_after_ref_cliff_01.png`・`shape/crop_wall_before_after.png`・`look/before_after_ref_cliff_01.png`・`look/before_after_cliff.png`）。割合の境に新しい壁・尖り・裂け目は無く、崖の外形・段の並びは前と同じ。差は壁の面の細かな縦の溝と岩の陰の位置だけ。cliff の視点で差が出るのは左奥の Battleship Rock の壁だけ（`look/before_after_cliff_diff8.png`）
+- 外形（`CompareReference.py --shape --expect shape-scan-battleship.json`、`aux-SCN-WL-CLIFF-CARVE-CONTINUITY-shape-expect.txt`）: 外形 ずらす前 1.0・ずらした後 1.0 画素で版 7 と同じ（合格）。棚 0.391 → 0.395・角 0.286 → 0.286 で、2 行は保留の SCN-WL-CLIFF-SCAN-NEAR の既知の限界のまま不合格
+- 既知の限界: 面は割合の境で続くが、傾きは境で変わりうる。0.25 m 離れたマスク 1 の点との差が 0.5 m を超え、内側の同じ幅の差が 0.5 m 以内の線が 672 本中 12 本ある（傾きの折れ。撮影では線として見えない）
