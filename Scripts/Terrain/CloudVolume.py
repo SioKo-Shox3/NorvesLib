@@ -18,7 +18,8 @@
 #   cloud_body（厚い雲）: 不透明度 ≥ THICK_OPACITY。
 #   cloud_edge（縁）: CLOUD_OPACITY ≤ 不透明度 < THICK_OPACITY で、太陽との角 ≥ EDGE_MIN_SUN_ANGLE_DEG（銀の縁を除く）。
 #   silver_lining（銀の縁）: CLOUD_OPACITY ≤ 不透明度 < THICK_OPACITY で、太陽との角 ≤ SILVER_MAX_SUN_ANGLE_DEG（前への散乱）。
-#   body_sunlit（日の当たる側）: 厚い雲で、太陽の透過率 ≥ SUNLIT_MIN_SUN_T。
+#   body_sunlit（日の当たる側）: 厚い雲で、太陽の透過率 ≥ SUNLIT_MIN_SUN_T（密度 3 倍の後は 0.7 以上の視線が 1 本しか無いので 0.3。
+#   0.3〜0.5 の視線は影の側にも入る）。
 #   body_shadow（影の側）: 厚い雲で、太陽の透過率 ≤ SHADOW_MAX_SUN_T（太陽の光の半分以上を雲自身が遮る）。
 #   各領域に MIN_REGION_RAYS 本以上の視線が要る（足りなければ未判定）。
 # Cycles の値: 視線の画素を中心とする (2 WINDOW_RADIUS_PX + 1)² 画素の平均（画素の中の標本はフィルタの幅で画素の中心に寄せる）。
@@ -50,7 +51,7 @@ CLOUD_OPACITY = CD.CLOUD_OPACITY
 THICK_OPACITY = CD.THICK_OPACITY
 SILVER_MAX_SUN_ANGLE_DEG = 20.0
 EDGE_MIN_SUN_ANGLE_DEG = 40.0
-SUNLIT_MIN_SUN_T = 0.7
+SUNLIT_MIN_SUN_T = 0.3
 SHADOW_MAX_SUN_T = 0.5
 MIN_REGION_RAYS = 3
 WINDOW_RADIUS_PX = 1

@@ -35,8 +35,10 @@
 #
 # 比の悪化の合否（--expect <仕様>。SCN-WL-CLOUD-CHECK-EXPECT）: 仕様の JSON は {"description": ..., "rows": [<行>, ...]}。行の鍵
 #   （ほかの鍵は書き間違いとして拒む）: view（視点）、region（CloudVolume.REGIONS の領域）か quantity（QUANTITIES の量）のどちらか
-#   1 つ、base_ratio（基準の組のエンジン ÷ Cycles。量は エンジンの量 ÷ Cycles の量）、tolerance（e の許容）、note（説明）。
-#   誤差は e = |ln(比)|（1.48→1.60 も 0.72→0.60 も e が増える）で、e > |ln(base_ratio)| ＋ tolerance なら落ちる。
+#   1 つ、base_ratio（基準の組のエンジン ÷ Cycles。量は エンジンの量 ÷ Cycles の量）、tolerance（e の許容）、max_error（省略可。
+#   e の絶対の上限）、note（説明）。
+#   誤差は e = |ln(比)|（1.48→1.60 も 0.72→0.60 も e が増える）で、e > |ln(base_ratio)| ＋ tolerance なら落ちる。max_error が
+#   あれば e > max_error でも落ちる。
 #   未知の領域・量、基準の欠け（判定した視点の領域・量に行が無い、base_ratio が正の有限でない）、収束していない領域（量は
 #   使う 2 領域）、値が求まらない行、重なった行、結果の無い視点の行も落ちる。--trial でも収束は求める。
 #   --selftest（run_selftest）は合成の結果でこの判定を確かめる。
@@ -60,7 +62,8 @@ MIN_SPP_PER_SEED = 512
 SKY_TOLERANCE = 0.01
 # 透過率の差の上限（透過率の画は吸収だけの体積を光線の歩で積むので、標本の揺らぎはほとんど無い）: 16 m の格子で書き出しの視線の
 # 透過率が式から最大 0.004 ずれる（CloudVolume の説明）。密度・消散係数が 5 % 違うと光学的深さ 1 前後の視線で 0.02 近く違う
-TRANSMITTANCE_TOLERANCE = 0.01
+# 密度 3 倍の後は締まった塊の縁の薄い視線で、16 m の格子が縁を均す分だけ最大 0.0165 ずれる（144 本中 4 本。WastelandCloudShape.md）
+TRANSMITTANCE_TOLERANCE = 0.02
 # 対称な透視の投影の視線と書き出しの視線の差の上限[画素]（逆の視線行列の単精度の丸めで 0.2 画素ほどずれる）
 PROJECTION_TOLERANCE_PX = 0.5
 # 記録のカメラ・格子と求め直した値の差の上限（同じ計算なので丸めだけ）
@@ -77,7 +80,7 @@ QUANTITIES = {
 }
 # --cloud --selftest が仕様を省いたときに読む仕様（リポジトリの根からの道）
 DEFAULT_EXPECT = "Scripts/Terrain/ExpectSpecs/cloud-ref.json"
-EXPECT_ROW_KEYS = ("view", "region", "quantity", "base_ratio", "tolerance", "note")
+EXPECT_ROW_KEYS = ("view", "region", "quantity", "base_ratio", "tolerance", "max_error", "note")
 
 
 def read_json(path):
@@ -409,6 +412,10 @@ def evaluate_expect(spec_path, results, quiet=False):
         if not positive_finite(base):
             failures.append(f"{label}（{where}）の基準の比 base_ratio が欠けているか正の有限でない（{base}）")
             continue
+        max_error = row.get("max_error")
+        if max_error is not None and not positive_finite(max_error):
+            failures.append(f"{label}（{where}）の上限 max_error が正の有限でない（{max_error}）")
+            continue
         if not (positive_finite(tolerance) or tolerance == 0):
             failures.append(f"{label}（{where}）の許容 tolerance が欠けているか 0 以上の有限でない（{tolerance}）")
             continue
@@ -442,14 +449,16 @@ def evaluate_expect(spec_path, results, quiet=False):
         error = abs(math.log(value))
         base_error = abs(math.log(base))
         limit = base_error + tolerance
+        if max_error is not None:
+            limit = min(limit, max_error)
         entry.update({"error": error, "base_error": base_error, "limit": limit, "pass": error <= limit})
         if not quiet:
             print(f"REFERENCE_CHECK cloud expect {where} ratio={value:.4f} error={error:.4f} base_ratio={base} "
                   f"base_error={base_error:.4f} tolerance={tolerance} limit={limit:.4f} "
                   f"result={'pass' if entry['pass'] else 'fail'}")
         if not entry["pass"]:
-            failures.append(f"{label}（{where}）の比 {value:.4f} の隔たり {error:.4f} が基準 {base} の隔たり {base_error:.4f} ＋ "
-                            f"許容 {tolerance} を超えた（悪化）")
+            failures.append(f"{label}（{where}）の比 {value:.4f} の隔たり {error:.4f} が上限 {limit:.4f}（基準 {base} の隔たり "
+                            f"{base_error:.4f} ＋ 許容 {tolerance}、絶対の上限 {max_error}）を超えた（悪化）")
     # 判定した視点の領域・量に行が無ければ基準の欠け
     for result in results:
         for kind, names in (("region", CV.REGIONS), ("quantity", tuple(QUANTITIES))):
@@ -495,6 +504,8 @@ def run_selftest(spec_path):
         print("REFERENCE_CHECK result=fail mode=cloud_selftest cases=0")
         return 1
     view = views[0]
+    # 合成の結果は基準の比をそのまま持つので、絶対の上限（max_error）は外して基準との比べだけを確かめ、上限は別の場合で確かめる
+    rows = [{key: value for key, value in row.items() if key != "max_error"} for row in rows]
     base = synthetic_result(rows, view)
     cases = []
 
@@ -502,6 +513,8 @@ def run_selftest(spec_path):
         """1 つの場合を判定する。case_rows があれば仕様を書き換えた写しで判定する"""
         path = spec_path
         temp = None
+        if case_rows is None:
+            case_rows = rows
         if case_rows is not None:
             temp = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8")
             json.dump({"rows": case_rows}, temp, ensure_ascii=False)
@@ -552,6 +565,12 @@ def run_selftest(spec_path):
         example = copy(base)
         set_ratio(example, "region", name, value)
         case(f"{name}-example-{value}", False, example, must_name=f"region={name}")
+    # 絶対の上限: 基準の隔たりの内でも max_error を超えれば落ち、内なら通る
+    first_away = next(r for r in rows if "region" in r and abs(math.log(r["base_ratio"])) > 0.02)
+    capped = [dict(r, max_error=0.5 * abs(math.log(r["base_ratio"]))) if r is first_away else r for r in rows]
+    case("max-error-exceeded", False, base, capped, must_name=f"region={first_away['region']}")
+    roomy = [dict(r, max_error=2.0 * abs(math.log(r["base_ratio"]))) if r is first_away else r for r in rows]
+    case("max-error-inside", True, base, roomy)
     # 未知の領域・量
     case("unknown-region", False, base,
          rows + [{"view": view, "region": "cloud_top", "base_ratio": 1.0, "tolerance": 0.01}], must_name="未知")

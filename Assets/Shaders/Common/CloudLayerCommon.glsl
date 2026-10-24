@@ -65,6 +65,16 @@ const float kCloudDensityGain = 3.0;
 // 天気の模様を引く水平の位置を、高さでも変わる 3D の歪みでずらす幅(m)。天気の模様は x・z だけで決まるので、
 // ずらさないと塊の側面が鉛直に押し出した壁になり、横から見ると縦にまっすぐな縁になる
 const float kWeatherWarpMeters = 400.0;
+// 多重散乱の近似の回数と、1 回ごとに掛ける太陽の光学的深さ・寄与・位相の偏りの倍率。2 回目からの項は、雲の中へ入った深さ
+// （太陽への光学的深さ ＋ 視線の光学的深さ）が浅いほど散乱が育たないので 1 − exp(−kMultiScatterGrowth × 深さ) を掛ける。
+// 環境光は厚い雲の中で多重に散乱して返る分を kAmbientMultiScatter 倍で数える。値は cloud_sky の書き出しから描いた Cycles の正解の
+// 視線（影の側・縁・銀の縁・厚い雲）に合わせた（Docs/RenderingValidation/WastelandCloudShape.md）
+const int kMultiScatterOctaves = 5;
+const float kMultiScatterAttenuation = 0.15;
+const float kMultiScatterContribution = 0.5;
+const float kMultiScatterPhaseScale = 0.8;
+const float kMultiScatterGrowth = 0.3;
+const float kAmbientMultiScatter = 1.4;
 // 歪みを引く形のノイズのテクスチャ座標のずれ（同じ点の形と別の模様にする）
 const vec3 kWeatherWarpPhase = vec3(0.37, 0.53, 0.19);
 
@@ -336,10 +346,10 @@ CloudRayResult MarchCloudLayerWithDiagnostics(vec3 rayDirection, float jitter, u
                           (sunIlluminance * max(sunDirection.y, 0.0) / PI + skyAbove);
 
     // 位相: 太陽の側を明るくする前方の山と、太陽を背にした面を少し明るくする後方の山を混ぜる
-    float phases[3];
-    for (int octave = 0; octave < 3; ++octave)
+    float phases[kMultiScatterOctaves];
+    for (int octave = 0; octave < kMultiScatterOctaves; ++octave)
     {
-        float scale = pow(0.5, float(octave));
+        float scale = pow(kMultiScatterPhaseScale, float(octave));
         phases[octave] = mix(HenyeyGreenstein(sunCosine, 0.8 * scale),
                              HenyeyGreenstein(sunCosine, -0.3 * scale),
                              0.3);
@@ -403,23 +413,25 @@ CloudRayResult MarchCloudLayerWithDiagnostics(vec3 rayDirection, float jitter, u
         }
         lightOpticalDepth *= extinction;
 
-        // 多重散乱の近似: 消散・寄与・位相の偏りを 0.5 倍ずつにした 3 回分を足す
-        float sunTerm = 0.0;
+        float sigma = density * extinction;
+
+        // 多重散乱の近似: 1 回目は単一散乱、2 回目からは消散・寄与・位相の偏りを倍率ずつ縮めた項を、雲の中へ入った深さで育てて足す
+        float growth = 1.0 - exp(-kMultiScatterGrowth * (lightOpticalDepth + opticalDepth + 0.5 * sigma * stepLength));
+        float sunTerm = exp(-lightOpticalDepth) * phases[0];
         float contribution = 1.0;
         float attenuation = 1.0;
-        for (int octave = 0; octave < 3; ++octave)
+        for (int octave = 1; octave < kMultiScatterOctaves; ++octave)
         {
-            sunTerm += contribution * exp(-lightOpticalDepth * attenuation) * phases[octave];
-            contribution *= 0.5;
-            attenuation *= 0.5;
+            contribution *= kMultiScatterContribution;
+            attenuation *= kMultiScatterAttenuation;
+            sunTerm += growth * contribution * exp(-lightOpticalDepth * attenuation) * phases[octave];
         }
 
         // 環境光: 厚い雲は多重散乱で受けた空の光をほぼ返すので、上の空の平均の放射輝度を頂でそのまま、
         // 底で 6 割受ける。地面の照り返しは底ほど届く
-        vec3 ambient = skyAbove * mix(0.6, 1.0, heightFraction) +
-                       0.5 * groundRadiance * mix(1.0, 0.3, heightFraction);
+        vec3 ambient = (skyAbove * mix(0.6, 1.0, heightFraction) +
+                        0.5 * groundRadiance * mix(1.0, 0.3, heightFraction)) * kAmbientMultiScatter;
 
-        float sigma = density * extinction;
         vec3 source = sigma * (sunIlluminance * sunTerm + ambient);
         float stepTransmittance = exp(-sigma * stepLength);
         // 1 歩の中で散乱光が透過率で減る分を解析的に積分する

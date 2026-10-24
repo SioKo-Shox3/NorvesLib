@@ -67,6 +67,14 @@ DETAIL_FADE_END = 60000.0
 AERIAL_STEPS = 32
 MIN_TRANSMITTANCE = 0.01
 DENSITY_THRESHOLD = 0.001
+# 多重散乱の近似（kMultiScatterOctaves・kMultiScatterAttenuation・kMultiScatterContribution・kMultiScatterPhaseScale・
+# kMultiScatterGrowth）と環境光の多重散乱の倍率（kAmbientMultiScatter）
+MULTI_SCATTER_OCTAVES = 5
+MULTI_SCATTER_ATTENUATION = 0.15
+MULTI_SCATTER_CONTRIBUTION = 0.5
+MULTI_SCATTER_PHASE_SCALE = 0.8
+MULTI_SCATTER_GROWTH = 0.3
+AMBIENT_MULTI_SCATTER = 1.4
 # 天気の模様の覆いの閾値の下と上の幅と、形のノイズの密度の倍率（kCoverageEdgeBelow・kCoverageEdgeAbove・kCloudDensityGain）
 COVERAGE_EDGE_BELOW = 0.03
 COVERAGE_EDGE_ABOVE = 0.08
@@ -416,14 +424,19 @@ class CloudModel:
                                              detail_weight(distances[inside]))
         active = inside & (densities > DENSITY_THRESHOLD)
 
-        sun_terms = np.zeros(step_count)
+        sun_singles = np.zeros(step_count)
+        sun_multis = np.zeros(step_count)
+        light_depths = np.zeros(step_count)
         sky_above = (sample_sky(self.sky_lut, (0.0, 1.0, 0.0)) * 0.2 +
                      (sample_sky(self.sky_lut, (0.866, 0.5, 0.0)) + sample_sky(self.sky_lut, (-0.866, 0.5, 0.0)) +
                       sample_sky(self.sky_lut, (0.0, 0.5, 0.866)) + sample_sky(self.sky_lut, (0.0, 0.5, -0.866))) * 0.2)
         ground = self.ground_albedo * (self.sun_illuminance * max(self.sun_direction[1], 0.0) / PI + sky_above)
         if with_light and np.any(active):
             light_jitter = np.mod(jitter + np.arange(step_count, dtype=np.float64) * LIGHT_JITTER_ADVANCE, 1.0)
-            sun_terms[active] = self.sun_term(noise_positions[active], direction, light_jitter[active])
+            single, multi, depth = self.sun_term_parts(noise_positions[active], direction, light_jitter[active])
+            sun_singles[active] = single
+            sun_multis[active] = multi
+            light_depths[active] = depth
 
         transmittance = 1.0
         optical_depth = 0.0
@@ -440,8 +453,11 @@ class CloudModel:
             sigma = densities[index] * self.extinction
             step_transmittance = np.exp(-sigma * step_length)
             height = heights[index]
-            ambient = sky_above * mix(0.6, 1.0, height) + 0.5 * ground * mix(1.0, 0.3, height)
-            source = sigma * (self.sun_illuminance * sun_terms[index] + ambient)
+            ambient = (sky_above * mix(0.6, 1.0, height) + 0.5 * ground * mix(1.0, 0.3, height)) * AMBIENT_MULTI_SCATTER
+            # 2 回目からの多重散乱の項は雲の中へ入った深さ（太陽への光学的深さ ＋ 視線の光学的深さ）で育てる
+            growth = 1.0 - np.exp(-MULTI_SCATTER_GROWTH * (light_depths[index] + optical_depth + 0.5 * sigma * step_length))
+            sun_term = sun_singles[index] + growth * sun_multis[index]
+            source = sigma * (self.sun_illuminance * sun_term + ambient)
             integrated = (source - source * step_transmittance) / max(sigma, 1.0e-7)
             absorbed = transmittance * (1.0 - step_transmittance)
             scattered = scattered + transmittance * integrated
@@ -475,10 +491,17 @@ class CloudModel:
             g2 = g * g
             denominator = max(1.0 + g2 - 2.0 * g * cosine, 1.0e-4)
             return (1.0 - g2) / (4.0 * PI * denominator * np.sqrt(denominator))
-        return [mix(henyey_greenstein(0.8 * 0.5 ** octave), henyey_greenstein(-0.3 * 0.5 ** octave), 0.3)
-                for octave in range(3)]
+        return [mix(henyey_greenstein(0.8 * MULTI_SCATTER_PHASE_SCALE ** octave),
+                    henyey_greenstein(-0.3 * MULTI_SCATTER_PHASE_SCALE ** octave), 0.3)
+                for octave in range(MULTI_SCATTER_OCTAVES)]
 
-    def sun_term(self, noise_positions, direction, jitter=0.5):
+    def sun_term(self, noise_positions, direction, jitter=0.5, view_depth=None):
+        """太陽の項（単一散乱 ＋ 育ちを掛けた 2 回目からの多重散乱）。view_depth は点までの視線の光学的深さ（None なら 0）"""
+        single, multi, light_depth = self.sun_term_parts(noise_positions, direction, jitter)
+        depth = light_depth + (0.0 if view_depth is None else np.asarray(view_depth, dtype=np.float64))
+        return single + (1.0 - np.exp(-MULTI_SCATTER_GROWTH * depth)) * multi
+
+    def sun_term_parts(self, noise_positions, direction, jitter=0.5):
         """太陽へ向かう光学的深さ（6 回、歩幅は 1.8 倍ずつ。各回の点は区間の中の端数 jitter の位置。jitter は点ごとの配列でもよい）と
         多重散乱の近似の和"""
         thickness = self.top - self.bottom
@@ -499,14 +522,15 @@ class CloudModel:
             light_step *= LIGHT_STEP_GROWTH
         light_depth *= self.extinction
         phases = self.phases(float(np.dot(direction, self.sun_direction)))
-        term = np.zeros(count)
+        single = np.exp(-light_depth) * phases[0]
+        multi = np.zeros(count)
         contribution = 1.0
         attenuation = 1.0
-        for octave in range(3):
-            term += contribution * np.exp(-light_depth * attenuation) * phases[octave]
-            contribution *= 0.5
-            attenuation *= 0.5
-        return term
+        for octave in range(1, MULTI_SCATTER_OCTAVES):
+            contribution *= MULTI_SCATTER_CONTRIBUTION
+            attenuation *= MULTI_SCATTER_ATTENUATION
+            multi += contribution * np.exp(-light_depth * attenuation) * phases[octave]
+        return single, multi, light_depth
 
 
 def read_array(capture_dir, entry, dtype, failures, label):

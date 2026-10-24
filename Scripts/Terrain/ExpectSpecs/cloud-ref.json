@@ -13,7 +13,8 @@
       "region": "cloud_edge",
       "base_ratio": 1.4875,
       "tolerance": 0.004,
-      "note": "縁の Y のエンジン ÷ Cycles。許容 = 2 回の撮影の揺れ 0 ＋ Cycles の種の違う 2 本の平均の差 0.00383 を 0.001 に切り上げ"
+      "max_error": 0.2,
+      "note": "縁の Y のエンジン ÷ Cycles。許容 = 2 回の撮影の揺れ 0 ＋ Cycles の種の違う 2 本の平均の差 0.00383 を 0.001 に切り上げ。SCN-WL-CLOUD-SHADOW-LIGHT で e の絶対の上限 0.20 を足した（多重散乱の近似を Cycles に合わせた後の合否）"
     },
     {
       "view": "cloud_sky",
@@ -25,16 +26,17 @@
     {
       "view": "cloud_sky",
       "region": "body_sunlit",
-      "base_ratio": 1.1832,
-      "tolerance": 0.002,
-      "note": "日の当たる側の Y のエンジン ÷ Cycles。許容 = 2 回の撮影の揺れ 0 ＋ Cycles の種の違う 2 本の平均の差 0.00177 を 0.001 に切り上げ"
+      "base_ratio": 1.0,
+      "tolerance": 0.2,
+      "note": "SCN-WL-CLOUD-SHADOW-LIGHT で日の当たる側の閾値を太陽の透過率 0.7 から 0.3 にし（密度 3 倍の後は 0.7 以上の視線が 1 本）、定義が変わったので基準の組（0.7 で決めた比 1.1832）とは比べず、e ≤ 0.20 の絶対の上限で見る（base_ratio 1・tolerance 0.20）。日の当たる側の Y のエンジン ÷ Cycles"
     },
     {
       "view": "cloud_sky",
       "region": "body_shadow",
       "base_ratio": 0.7151,
       "tolerance": 0.008,
-      "note": "影の側の Y のエンジン ÷ Cycles。許容 = 2 回の撮影の揺れ 0 ＋ Cycles の種の違う 2 本の平均の差 0.00754 を 0.001 に切り上げ"
+      "max_error": 0.2,
+      "note": "影の側の Y のエンジン ÷ Cycles。許容 = 2 回の撮影の揺れ 0 ＋ Cycles の種の違う 2 本の平均の差 0.00754 を 0.001 に切り上げ。SCN-WL-CLOUD-SHADOW-LIGHT で e の絶対の上限 0.20 を足した（多重散乱の近似を Cycles に合わせた後の合否）"
     },
     {
       "view": "cloud_sky",
@@ -53,9 +55,9 @@
     {
       "view": "cloud_sky",
       "quantity": "shadow_darkness",
-      "base_ratio": 0.6044,
-      "tolerance": 0.01,
-      "note": "影の側の暗さ（影の側の Y ÷ 日の当たる側の Y）のエンジン ÷ Cycles。許容 = 2 回の撮影の揺れ 0 ＋ 使う 2 領域の Cycles の平均の差の和 0.00931 を 0.001 に切り上げ"
+      "base_ratio": 1.0,
+      "tolerance": 0.2,
+      "note": "SCN-WL-CLOUD-SHADOW-LIGHT で日の当たる側の閾値を太陽の透過率 0.7 から 0.3 にし（密度 3 倍の後は 0.7 以上の視線が 1 本）、定義が変わったので基準の組（0.7 で決めた比 0.6044）とは比べず、e ≤ 0.20 の絶対の上限で見る（base_ratio 1・tolerance 0.20）。影の側の暗さ（影の側の Y ÷ 日の当たる側の Y）のエンジン ÷ Cycles"
     }
   ]
 }

@@ -60,6 +60,13 @@ class VariantModel(CD.CloudModel):
                 depth[use] += self.density(positions[use], heights[use], np.ones(int(use.sum()), dtype=bool)) * SUN_STEP_M
         return depth * self.extinction
 
+    def sun_term_parts(self, noise_positions, direction, jitter=0.5):
+        # march は単一散乱と多重散乱の項を分けて引く。エンジン以外の版は差し替えた太陽の項をそのまま単一散乱の側に置く
+        if self.variant == "engine":
+            return super().sun_term_parts(noise_positions, direction, jitter)
+        zeros = np.zeros(noise_positions.shape[0])
+        return self.sun_term(noise_positions, direction, jitter), zeros, zeros
+
     def sun_term(self, noise_positions, direction, jitter=0.5):
         if self.variant == "engine":
             return super().sun_term(noise_positions, direction, jitter)
