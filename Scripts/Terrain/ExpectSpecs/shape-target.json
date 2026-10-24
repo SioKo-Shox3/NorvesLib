@@ -1,5 +1,6 @@
 ﻿{
-  "description": "崖の形の絶対の基準（CompareReference.py --shape --expect。WastelandShape.md の「形の物差し」）。棚の一致 0.6 以上・角の一致 0.5 以上・ずらした後の外形の距離の中央値 8 画素（位置の許容）以下。今の撮影（SCN-WL-SHAPE-CAUSE の lod-default）は全部の写真で棚と角の行が落ちる。形の直しの項目は、担当の写真の行をこの仕様から写して使う",
+  "description": "崖の形の絶対の基準（CompareReference.py --shape --expect。WastelandShape.md の「形の物差し」）。棚の一致 0.6 以上・角の一致 0.5 以上・ずらした後の外形の距離の中央値 8 画素（位置の許容）以下。今の撮影（SCN-WL-SHAPE-CAUSE の lod-default）は全部の写真で棚と角の行が落ちる。annotations_sha256 は書いた時の注釈の版（違えば落ちる）。形の直しの項目は、担当の写真の行をこの仕様から写して使う",
+  "annotations_sha256": "9db8b9b5afac738e970f4fb0ea925ac9d48ea8f94c4afd2e6e09c4359f5c72a2",
   "rows": [
     {"photo": "far_01", "quantity": "shelf_match", "min": 0.6},
     {"photo": "far_01", "quantity": "corner_match", "min": 0.5},

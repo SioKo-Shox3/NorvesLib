@@ -8,8 +8,11 @@
 #       写りの差を写真ごとの固定の領域で診断する（LookMeasure.py。注釈は LookRegions.json）
 #   python Scripts/Terrain/CompareReference.py --capture <--display-check=scene -Hdr の撮影> --look-select <-Hdr の撮影> [--verify]
 #       昼の表示の変換の候補を --look-select の HDR にオフラインで掛けて並べ、選んだ候補を --capture の撮影と照らす（LookSelect.py）
-#   python Scripts/Terrain/CompareReference.py --capture <-Aov の撮影の OutDir> --shape [--photos ...] [--expect <仕様>] [--verify]
-#       崖の棚・角・外形を写真の注釈（ShapeAnnotations.json）と撮影の深度と幾何の法線で測る（ShapeMeasure.py）
+#   python Scripts/Terrain/CompareReference.py --capture <-Aov の撮影の OutDir> --shape [--photos ...] [--terrain-only] [--expect <仕様>] [--verify]
+#       崖の棚・角・外形を写真の注釈（ShapeAnnotations.json）と撮影の深度と幾何の法線で測る（ShapeMeasure.py）。
+#       --terrain-only は地形の印（<視点>.aov.terrain_id.pfm）の地形の画素の折れだけを数える
+#   python Scripts/Terrain/CompareReference.py --shape --selftest [--out <出力先>]
+#       合成の深度と法線で --shape の量を求め、正しい形が通りノイズ・欠けた形が落ちることを確かめる（ShapeMeasure.py）
 #   --expect は --look・--shape の量の行の合否（PhotoExpect.py）。--photos の未知の写真の ID は落とす
 # 写真ごとに <出力先>/reference_<写真>.png と <出力先>/reference_metrics.json を書き、数値を 1 行ずつ出す。
 # 並べた写真をすべて縦に積んだ一覧（左に写真、右に撮影。輪郭と枠は重ねない）を <出力先>/reference_overview.png に書く
@@ -273,7 +276,7 @@ def resolve_note(out_dir, note_arg):
 
 def main():
     parser = argparse.ArgumentParser(description="荒野の手本の写真と、同じ構図に寄せた視点の撮影を並べて比べる")
-    parser.add_argument("--capture", required=True, help="CaptureScene.ps1 の OutDir（<視点>.png がある）")
+    parser.add_argument("--capture", default="", help="CaptureScene.ps1 の OutDir（<視点>.png がある。--shape --selftest のほかは要る）")
     parser.add_argument("--photos", default="", help="比べる写真の ID（カンマ区切り。省くとすべて）")
     parser.add_argument("--out", default="", help="出力先（省くと --capture）")
     parser.add_argument("--verify", action="store_true", help="写真・撮影がそろい、撮影が 1920×1080 以上かを確かめる")
@@ -291,8 +294,26 @@ def main():
         "--shape", action="store_true", help="崖の棚・角・外形を写真の注釈（ShapeAnnotations.json）と撮影の深度と幾何の法線で測る（ShapeMeasure.py。撮影は -Aov）"
     )
     parser.add_argument("--expect", default="", help="--look・--shape の量の行の合否の仕様（PhotoExpect.py）")
+    parser.add_argument("--terrain-only", action="store_true", help="--shape で地形の印（-Aov の terrain_id）の地形の画素の折れだけを数える")
+    parser.add_argument("--selftest", action="store_true", help="--shape の量を合成の深度と法線で確かめる（撮影は読まない）")
     args = parser.parse_args()
 
+    if args.selftest:
+        if not args.shape:
+            print("COMPARE_REFERENCE failure=--selftest は --shape と使う")
+            print("COMPARE_REFERENCE result=fail failures=1")
+            return 1
+        from ShapeMeasure import SELFTEST_DEFAULT_OUT, run_selftest
+
+        return run_selftest(args.out or os.path.join(REPO_ROOT, SELFTEST_DEFAULT_OUT))
+    if not args.capture:
+        print("COMPARE_REFERENCE failure=--capture が無い")
+        print("COMPARE_REFERENCE result=fail failures=1")
+        return 1
+    if args.terrain_only and not args.shape:
+        print("COMPARE_REFERENCE failure=--terrain-only は --shape と使う")
+        print("COMPARE_REFERENCE result=fail failures=1")
+        return 1
     wanted = [p for p in args.photos.split(",") if p]
     unknown = [p for p in wanted if p not in {entry["id"] for entry in PHOTOS}]
     if unknown:
@@ -309,7 +330,7 @@ def main():
     if args.shape:
         from ShapeMeasure import run_shape
 
-        return run_shape(args.capture, out_dir, wanted, args.verify, args.expect)
+        return run_shape(args.capture, out_dir, wanted, args.verify, args.expect, args.terrain_only)
     if args.look:
         from LookMeasure import run_look
 
