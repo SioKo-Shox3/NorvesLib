@@ -1,21 +1,21 @@
 ﻿{
-  "description": "崖の形の今の値から悪くならないこと（CompareReference.py --shape --expect。WastelandShape.md の「形の物差し」の「今の値」）。今の撮影（SCN-WL-SHAPE-CAUSE の lod-default）を向き・続き・角の二辺で測った値（SCN-WL-SHAPE-METRIC-HARDEN）から、棚の一致は 0.03、角の一致は 0、外形の距離の中央値は 1 画素の揺れを許す。形の直しの項目の前からの改善は、担当の写真の行の min をこの値より上げて書く。annotations_sha256 は書いた時の注釈の版（違えば落ちる）",
+  "description": "崖の形の今の値から悪くならないこと（CompareReference.py --shape --expect。WastelandShape.md の「形の物差し」の「今の値」）。今の撮影（SCN-WL-SHAPE-CAUSE の lod-default）を向き・続き・角の二辺で測り、棚に丸まった段の縁・角に空との縁の向きを足した量（SCN-WL-SHAPE-METRIC-SILHOUETTE）の値から、棚の一致は 0.03、角の一致は 0、外形の距離の中央値は 1 画素の揺れを許す。形の直しの項目の前からの改善は、担当の写真の行の min をこの値より上げて書く。annotations_sha256 は書いた時の注釈の版（違えば落ちる）",
   "annotations_sha256": "9db8b9b5afac738e970f4fb0ea925ac9d48ea8f94c4afd2e6e09c4359f5c72a2",
   "rows": [
-    {"photo": "far_01", "quantity": "shelf_match", "min": 0.2, "note": "今 0.236"},
+    {"photo": "far_01", "quantity": "shelf_match", "min": 0.24, "note": "今 0.279（丸まった段の縁を足す前は 0.236）"},
     {"photo": "far_01", "quantity": "corner_match", "min": 0.0, "note": "今 0.000"},
     {"photo": "far_01", "quantity": "outline_distance_median_px", "max": 9.0, "note": "今 8.0"},
-    {"photo": "far_02", "quantity": "shelf_match", "min": 0.14, "note": "今 0.179"},
+    {"photo": "far_02", "quantity": "shelf_match", "min": 0.17, "note": "今 0.200（丸まった段の縁を足す前は 0.179）"},
     {"photo": "far_02", "quantity": "corner_match", "min": 0.11, "note": "今 0.111（角の半直線を交点を中心に判定する前は 0.222）"},
     {"photo": "far_02", "quantity": "outline_distance_median_px", "max": 49.0, "note": "今 48.0（構図のずれ。ずらした後 10.0）"},
-    {"photo": "cliff_01", "quantity": "shelf_match", "min": 0.01, "note": "今 0.042"},
+    {"photo": "cliff_01", "quantity": "shelf_match", "min": 0.05, "note": "今 0.089（丸まった段の縁を足す前は 0.042）"},
     {"photo": "cliff_01", "quantity": "corner_match", "min": 0.0, "note": "今 0.000"},
     {"photo": "cliff_01", "quantity": "outline_distance_median_px", "max": 12.4, "note": "今 11.4"},
-    {"photo": "cliff_02", "quantity": "shelf_match", "min": 0.21, "note": "今 0.245"},
+    {"photo": "cliff_02", "quantity": "shelf_match", "min": 0.26, "note": "今 0.292（丸まった段の縁を足す前は 0.245）"},
     {"photo": "cliff_02", "quantity": "corner_match", "min": 0.0, "note": "今 0.000"},
     {"photo": "cliff_02", "quantity": "outline_distance_median_px", "max": 16.5, "note": "今 15.5"},
-    {"photo": "ground_02", "quantity": "shelf_match", "min": 0.19, "note": "今 0.225"},
-    {"photo": "ground_02", "quantity": "corner_match", "min": 0.14, "note": "今 0.143"},
+    {"photo": "ground_02", "quantity": "shelf_match", "min": 0.22, "note": "今 0.255（丸まった段の縁を足す前は 0.225）"},
+    {"photo": "ground_02", "quantity": "corner_match", "min": 0.42, "note": "今 0.429（空との縁の向きを足す前は 0.143。Rooster Butte の 3 点が空との縁で通る）"},
     {"photo": "ground_02", "quantity": "outline_distance_median_px", "max": 32.8, "note": "今 31.8（構図のずれ。ずらした後 5.4）"}
   ]
 }

@@ -13,6 +13,12 @@
 # 折れの向き: 面の法線・地形の印・深度の対数の Sobel の勾配の構造テンソルを kTensorRadius の箱で均し、主の向きに直交する向きを
 #   折れの線の向き（0〜180°）とする。向きのまとまり（coherence）が kCoherenceMin 未満の画素（交わり・点の集まり）は向きを持たない。
 #   さらに線の向きに ±kLineHalfPx の点のうち kLineMinHits 以上が向きを持つ折れの画素だけを「折れの線」に残す（点の雑音を外す）。
+# 棚の折れ: 折れの線に、遠くで数画素の斜面に丸まる段の縁を足す（rounded_folds）。4 つの向きの ±kShelfSpanHalfPx（区間 6 画素）の
+#   両端の法線の角が kFoldDegrees 以上か両端の深度の段で、区間を広げた両端の差の積み上げが向きに沿って前後以上の画素（曲がりの中心）。
+#   向きと点の雑音の外し方は折れの線と同じ。棚の一致・局所の欠け・余分な折れはこの棚の折れで数える。
+# 角の折れ: 折れの線に、空との縁（外形の輪郭。地形の画素で 4 近傍に空がある画素）を足す（contour_orientation）。輪郭の画素の向きは
+#   法線や深度の勾配でなく、半径 kContourRadiusPx の箱の輪郭の画素の位置の主成分の軸（1 m の格子の段で輪郭が細かく折れても、
+#   輪郭が角の点の近くで注釈の二辺の向きに曲がればその辺を支える）。角の一致はこの角の折れで数える。
 # 写真と撮影の対応: 崖ごとに、写真の外形（多角形の列ごとの上の縁）と撮影の外形（列ごとに深度 depth_max_m 以下の最も上の画素）の
 #   距離の中央値が最小になる平行移動を ±kSearchFraction（注釈の search_fraction で崖ごとに広げられる）の内で探し、棚と角の注釈をその分ずらして撮影に置く。
 # 量（距離と長さは撮影の 1920 幅の画素に直す）:
@@ -34,8 +40,9 @@
 # --expect の仕様（PhotoExpect.py）は注釈の版 annotations_sha256（ShapeAnnotations.json を読んで鍵を並べた正規の JSON の sha256。
 #   annotations_hash() が求める）を持ち、無いか今の注釈と違えば落ちる。
 # --selftest: 合成の深度と法線（1920×1080 の正面の壁、棚 3 本、上の 2 つの角）で量を求め、SELFTEST_ROWS で判定する。
-#   正しい形を許容の内でずらしたものは通り、壁一面の鋸歯・格子・棚を 1 本消した形・角の点で縦の溝と横の折れが十字に交わる形は落ちる。
-#   角の判定だけの例（CORNER_PROBE_CASES）で、角の点から左上へずれた十字は角に数えず、同じだけずれた正しい角は数えることも確かめる。
+#   正しい形を許容の内でずらしたものと 5 画素の幅で丸まった段の縁は通り、壁一面の鋸歯・格子・棚を 1 本消した形・角の点で縦の溝と
+#   横の折れが十字に交わる形・滑らかな斜面・平らな面は落ちる。角の判定だけの例（CORNER_PROBE_CASES）で、角の点から左上へずれた十字と
+#   まっすぐな空との縁は角に数えず、同じだけずれた正しい角と、細かく段になった空との縁で曲がる角は数えることも確かめる。
 # 落ちる: 注釈が無い・崖に外形・棚・角（二辺の向き）が無い・撮影の PNG・深度・幾何の法線（--terrain-only は地形の印）が無いか
 #   1920×1080 未満・地形の印に描いた画素の 255 がある・撮影の外形が取れない・崖の外形の中で幾何の法線の読める画素が
 #   kGeometricCoverage 未満・--verify で所見の文書に「形の物差し」の節が無い・--expect の仕様の注釈の版が無いか違う。
@@ -86,6 +93,10 @@ kCornerRaySlackPx = 2.0
 # 平行移動を探す範囲（幅・高さに対する割合）。構図の違いが大きい崖は注釈の search_fraction で広げる
 kSearchFraction = (0.06, 0.08)
 kGeometricCoverage = 0.95
+# 棚の折れに足す丸まった段の縁の区間の半分[画素]（区間 6 画素。540 m 先の 1 m の格子で 1 升目の斜面に丸まる 2.5 m の段の縁は約 5 画素）
+kShelfSpanHalfPx = 3
+# 空との縁の向きを決める輪郭の画素の箱の半径[画素]
+kContourRadiusPx = 4
 DIRECTIONS = {"x": (1, 0), "y": (0, 1), "d1": (1, 1), "d2": (1, -1)}
 # --photos を省いたときに測る写真（注釈はこの全部に要る）
 SHAPE_PHOTOS = ("far_01", "far_02", "cliff_01", "cliff_02", "ground_02")
@@ -216,9 +227,18 @@ def fold_field(depth, normal, readable, ground=None):
     coherence = np.sqrt((j11 - j22) ** 2 + 4.0 * j12 * j12) / np.maximum(trace, 1e-12)
     crossing = 0.5 * np.degrees(np.arctan2(2.0 * j12, j11 - j22))
     angle = (crossing + 90.0) % 180.0
-    oriented = raw & (coherence >= kCoherenceMin) & (trace > 1e-9)
-    # 線の向きに ±kLineHalfPx の点が折れで続く画素だけを残す
-    height, width = depth.shape
+    coherent = (coherence >= kCoherenceMin) & (trace > 1e-9)
+    fold = line_pixels(raw & coherent, angle)
+    soft = rounded_folds(terrain, surface, safe, normal, readable)
+    contour, contour_angle = contour_orientation(surface, sky)
+    return {"fold": fold, "angle": angle, "raw": raw,
+            "shelf_fold": fold | line_pixels((raw | soft) & coherent, angle),
+            "corner_fold": fold | contour, "corner_angle": np.where(contour, contour_angle, angle)}
+
+
+def line_pixels(oriented, angle):
+    """線の向きに ±kLineHalfPx の点のうち kLineMinHits 以上が向きを持つ折れの画素だけを残す"""
+    height, width = oriented.shape
     ys, xs = np.nonzero(oriented)
     radians = np.radians(angle[ys, xs])
     hits = np.zeros(len(ys), dtype=np.int32)
@@ -229,10 +249,60 @@ def fold_field(depth, normal, readable, ground=None):
         hit = np.zeros(len(ys), dtype=bool)
         hit[inside] = oriented[sy[inside], sx[inside]]
         hits += hit
-    fold = np.zeros(depth.shape, dtype=bool)
+    result = np.zeros(oriented.shape, dtype=bool)
     keep = hits >= kLineMinHits
-    fold[ys[keep], xs[keep]] = True
-    return {"fold": fold, "angle": angle, "raw": raw}
+    result[ys[keep], xs[keep]] = True
+    return result
+
+
+def rounded_folds(terrain, surface, safe, normal, readable):
+    """遠くで数画素の斜面に丸まる段の縁（棚の折れに足す）。4 つの向きの短い区間（±kShelfSpanHalfPx）の両端の法線の角が
+    kFoldDegrees 以上か、両端の深度の段（depth_step）の画素のうち、区間を 1〜kShelfSpanHalfPx 画素に広げた両端の差の
+    積み上げ（法線は 1 − 内積、深度は対数の比）が向きに沿って前後の画素以上の所だけを残す（曲がりの中心の 1〜2 画素の線にする）"""
+    cos_limit = np.cos(np.radians(kFoldDegrees))
+    span = kShelfSpanHalfPx
+    log_depth = np.log(np.maximum(safe, 1e-6))
+    soft = np.zeros(safe.shape, dtype=bool)
+    for ux, uy in DIRECTIONS.values():
+        bend_score = np.zeros(safe.shape)
+        depth_score = np.zeros(safe.shape)
+        for k in range(1, span + 1):
+            usable = surface & shifted(surface, k * ux, k * uy, False) & shifted(surface, -k * ux, -k * uy, False)
+            read = usable & shifted(readable, k * ux, k * uy, False) & shifted(readable, -k * ux, -k * uy, False)
+            dot = np.sum(shifted(normal, k * ux, k * uy, 0.0) * shifted(normal, -k * ux, -k * uy, 0.0), axis=2)
+            bend_score += np.where(read, 1.0 - dot, 0.0)
+            depth_score += np.where(usable, np.abs(shifted(log_depth, k * ux, k * uy, 0.0) - shifted(log_depth, -k * ux, -k * uy, 0.0)), 0.0)
+        ends = surface & shifted(surface, span * ux, span * uy, False) & shifted(surface, -span * ux, -span * uy, False)
+        read = ends & shifted(readable, span * ux, span * uy, False) & shifted(readable, -span * ux, -span * uy, False)
+        dot = np.sum(shifted(normal, span * ux, span * uy, 0.0) * shifted(normal, -span * ux, -span * uy, 0.0), axis=2)
+        bend = read & (dot <= cos_limit)
+        step = ends & depth_step(terrain, safe, span * ux, span * uy, shifted(safe, span * ux, span * uy, 0.0),
+                                 shifted(safe, -span * ux, -span * uy, 0.0))
+        for flags, score in ((bend, bend_score), (step, depth_score)):
+            peak = (score >= shifted(score, ux, uy, 0.0)) & (score >= shifted(score, -ux, -uy, 0.0))
+            soft |= flags & peak
+    return soft
+
+
+def contour_orientation(surface, sky):
+    """空との縁（外形の輪郭）の画素と、その向き[°、0〜180]。向きは輪郭の画素の位置を半径 kContourRadiusPx の箱で
+    主成分に分けた主の軸（法線の折れと違い、1 m の格子の段で輪郭が細かく折れても位置の並びで決まる）。位置のまとまりが
+    kCoherenceMin 未満の画素（角の頂・点の集まり）は向きを持たないので数えない"""
+    contour = surface & (shifted(sky, 1, 0, False) | shifted(sky, -1, 0, False) | shifted(sky, 0, 1, False) | shifted(sky, 0, -1, False))
+    height, width = contour.shape
+    mask = contour.astype(np.float64)
+    count = box_mean(mask, kContourRadiusPx)
+    xs = np.arange(width, dtype=np.float64)[None, :] * np.ones((height, 1))
+    ys = np.arange(height, dtype=np.float64)[:, None] * np.ones((1, width))
+    safe = np.maximum(count, 1e-12)
+    mx, my = box_mean(mask * xs, kContourRadiusPx) / safe, box_mean(mask * ys, kContourRadiusPx) / safe
+    cxx = box_mean(mask * xs * xs, kContourRadiusPx) / safe - mx * mx
+    cxy = box_mean(mask * xs * ys, kContourRadiusPx) / safe - mx * my
+    cyy = box_mean(mask * ys * ys, kContourRadiusPx) / safe - my * my
+    trace = cxx + cyy
+    coherence = np.sqrt((cxx - cyy) ** 2 + 4.0 * cxy * cxy) / np.maximum(trace, 1e-12)
+    angle = (0.5 * np.degrees(np.arctan2(2.0 * cxy, cxx - cyy))) % 180.0
+    return contour & (coherence >= kCoherenceMin) & (trace > 1e-9), angle
 
 
 def angle_difference(a, b):
@@ -327,7 +397,7 @@ def match_segment(field, start, end, radius, run_min):
     samples = start[None, :] + (end - start)[None, :] * np.linspace(0.0, 1.0, count)[:, None]
     direction = (end - start) / max(length, 1e-6)
     normal = np.array([-direction[1], direction[0]])
-    fold, angle = field["fold"], field["angle"]
+    fold, angle = field["shelf_fold"], field["angle"]
     height, width = fold.shape
     offsets = np.arange(-radius, radius + 1)
     points = samples[:, None, :] + offsets[None, :, None] * normal[None, None, :]
@@ -371,7 +441,7 @@ def line_coordinates(xs, ys, start, end):
 def extra_folds(field, start, end, radius, all_lines):
     """棚の線分の周りの帯の、どの注釈の線とも対応しない折れの線の長さ[撮影の画素]"""
     band = kExtraBandFactor * radius
-    fold, angle = field["fold"], field["angle"]
+    fold, angle = field["shelf_fold"], field["angle"]
     height, width = fold.shape
     x0 = int(max(0, np.floor(min(start[0], end[0]) - band)))
     x1 = int(min(width, np.ceil(max(start[0], end[0]) + band) + 1))
@@ -396,7 +466,7 @@ def extra_folds(field, start, end, radius, all_lines):
 def match_corner(field, corner, size, shift, radius):
     """角の一致: 二辺の向きの折れの線が角の点の近くで交わる二本の半直線になっているか"""
     at = np.asarray(to_pixels([corner["at"]], size, shift)[0])
-    fold, angle = field["fold"], field["angle"]
+    fold, angle = field["corner_fold"], field["corner_angle"]
     height, width = fold.shape
     search = kCornerSearchFactor * radius
     x0, x1 = int(max(0, at[0] - search)), int(min(width, at[0] + search + 1))
@@ -586,7 +656,7 @@ def draw_sheet(photo_panel, capture, field, annotation, drawings, size, lines, f
         x, y = to_pixels([cliff["outline"][1]], PANEL_SIZE)[0]
         draw.text((x + 4, y - 24), cliff["name"], fill=(0, 230, 255), font=font)
     base = np.asarray(capture, dtype=np.float32) * 0.55
-    folds = field["fold"]
+    folds = field["shelf_fold"] | field["corner_fold"]
     base[folds] = base[folds] * 0.3 + np.array([255.0, 40.0, 40.0]) * 0.7
     capture_image = Image.fromarray(base.astype(np.uint8)).resize(PANEL_SIZE, Image.BILINEAR)
     draw = ImageDraw.Draw(capture_image)
@@ -739,7 +809,8 @@ def run_shape(capture_dir, out_dir, wanted, verify, expect_path, terrain_only=Fa
                          f"{fmt_display(record['shelf_gap_max_px'], 0)} 画素、余分な折れ {fmt_display(record['shelf_extra_ratio'])}）　"
                          f"角の一致 {fmt_display(record['corner_match'])}（{record['corners']} 点）　外形の距離の中央値 "
                          f"{record['outline_distance_median_px']:.1f}（ずらした後 {record['outline_residual_median_px']:.1f}）")
-        lines.append(f"折れ: 面の法線の角 {kFoldDegrees:.0f}° 以上か深度の段 {kDepthStepRatio * 100:.0f} % 以上（1 画素の前後）。"
+        lines.append(f"折れ: 面の法線の角 {kFoldDegrees:.0f}° 以上か深度の段 {kDepthStepRatio * 100:.0f} % 以上（1 画素の前後。棚は "
+                     f"{2 * kShelfSpanHalfPx} 画素の区間の丸まった縁も、角は空との縁の向きも数える）。"
                      f"許容 {kMatchRadiusPx} 画素・向き {kOrientationDegrees:.0f}°・続き {kRunMinPx} 画素（1920 幅）。輝度は使わない")
         draw_sheet(photo_panel, capture, field, annotation, drawings, size, lines, font).save(
             os.path.join(out_dir, f"shape_{photo_id}.png"))
@@ -783,6 +854,14 @@ kSelftestShelfSpan = (650, 1270)
 # 正しい形の棚: 注釈の線より kSelftestShelfOffset 画素下から 4 画素の踏み面（上へ 40° 傾けた法線）。折れは +3 と +7 画素で許容 8 の内
 kSelftestShelfOffset = 3
 kSelftestTreadPx = 4
+# 丸まった段の縁: 注釈の線の kSelftestRoundStart 画素上から、法線が 1 画素に 9° ずつ 45° まで上へ傾き（5 画素）、また 0° へ戻る
+# （5 画素）。1 画素の前後の差は 18° で、前の折れの判定（kFoldDegrees）では折れにならない
+kSelftestRoundStart = 4
+kSelftestRoundAngles = (9.0, 18.0, 27.0, 36.0, 45.0, 36.0, 27.0, 18.0, 9.0)
+# 滑らかな斜面: 法線の上下の傾きが周期 kSelftestSlopePeriod 画素・振幅 kSelftestSlopeDegrees の正弦で変わる（6 画素の区間の
+# 両端の差は最大 19°）
+kSelftestSlopePeriod = 48
+kSelftestSlopeDegrees = 25.0
 
 
 def selftest_annotation():
@@ -822,6 +901,14 @@ def selftest_scene(kind):
             first = y + kSelftestShelfOffset
             tread = inner & (rows >= first) & (rows < first + kSelftestTreadPx)
             normal[tread] = tilted(40.0)
+    if kind == "rounded_shelf":
+        for y in kSelftestShelves:
+            for step, degrees in enumerate(kSelftestRoundAngles):
+                normal[inner & (rows == y - kSelftestRoundStart + step)] = tilted(degrees)
+    if kind == "smooth_slope":
+        waves = kSelftestSlopeDegrees * np.sin(2.0 * np.pi * (rows - top) / kSelftestSlopePeriod)
+        radians = np.radians(waves)
+        normal[wall] = np.stack([np.zeros_like(radians), -np.sin(radians), np.cos(radians)], axis=2)[wall]
     if kind == "sawtooth":
         # 壁一面の鋸歯: 4 画素ごとに上と下へ 20° 傾いた面が交互に並ぶ（水平の折れが 4 画素おき）
         teeth = wall & (rows >= top + 8)
@@ -852,6 +939,9 @@ SELFTEST_CASES = (
     ("grid", "格子（12 画素おきの縦と横の溝）", False),
     ("missing_shelf", "正しい形から棚を 1 本消した形（局所の欠け）", False),
     ("cross_corner", "角の点で縦の溝と横の折れが十字に交わる形（上の縁は外形でない）", False),
+    ("rounded_shelf", "5 画素の幅で丸まった段の縁（1 画素の前後では 18° で前の折れの判定に掛からない）", True),
+    ("smooth_slope", "滑らかな斜面（法線の傾きが周期 48 画素で ±25° に波打つ。棚が出ない）", False),
+    ("flat_face", "平らな面（棚が出ない）", False),
 )
 
 
@@ -862,7 +952,12 @@ kCornerProbeOffset = 6
 CORNER_PROBE_CASES = (
     ("cross_offset", "左上へずれた十字（縦の溝と、その上が奥の深度の段）", False),
     ("corner_offset", "左上へずれた正しい角（右へ続く棚と下へ続く溝の二本の半直線）", True),
+    ("sky_corner", "左上へずれた、空との縁で曲がる角（縁は 2〜4 画素の段で細かく折れ、面の法線の折れは無い。前の折れの向きでは数えない）", True),
+    ("straight_sky", "まっすぐな空との縁（注釈の角の下の辺に折れも縁も無い）", False),
 )
+# 空との縁の段の高さ（列・行ごとに 0〜kCornerProbeJagPx 画素。決まった並び）
+kCornerProbeJagPx = 4
+kCornerProbeJag = (0, 2, 4, 2, 0, 0, 4, 4, 2, 0, 2, 4, 0, 2, 2, 4)
 
 
 def corner_probe(kind):
@@ -876,10 +971,20 @@ def corner_probe(kind):
     if kind == "cross_offset":
         depth[:at, :] = 2000.0
         normal[:, at - 1:at + 1] = side
-    else:
+    elif kind == "corner_offset":
         normal[at - 1:at + 1, at - 1:] = tilted(40.0)
         normal[at - 1:, at - 1:at + 1] = side
-    field = fold_field(depth, normal, np.ones((size, size), dtype=bool))
+    elif kind == "sky_corner":
+        # 右下の壁（面の法線は一様）。上の縁は列ごとに、左の縁は行ごとに段の高さだけ壁の側へ下がる
+        jag = np.asarray(kCornerProbeJag)
+        index = np.arange(size)
+        top = at + jag[(index // 2) % len(jag)]
+        left = at + jag[(index // 3 + 5) % len(jag)]
+        wall = (index[:, None] >= top[None, :]) & (index[None, :] >= left[:, None]) & (index[None, :] >= at) & (index[:, None] >= at)
+        depth[~wall] = np.inf
+    else:
+        depth[:size // 2, :] = np.inf
+    field = fold_field(depth, normal, np.isfinite(depth))
     corner = {"at": [0.5, 0.5], "edges": [[0.8, 0.5], [0.5, 0.8]]}
     matched, meet = match_corner(field, corner, (size, size), (0.0, 0.0), kMatchRadiusPx)
     return matched, meet

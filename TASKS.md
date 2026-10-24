@@ -2670,7 +2670,7 @@
 - notes: 2026-10-23 親が確認 2 の後の計画の後半の頭として足した（ユーザーの順: 地形の形 → 植物 → 地面 → 建物）。後半の下書き 25 項目への Sol の批評（地形の原因を先に切り分ける・形は輝度の段でなく深度と幾何の法線で測る・CompareReference の拡張を先に・ビルドと撮影を別の行に）を受け、地形の形の原因と測り方を先に立てる。残りの後半はこの 2 項目の結果を見てから組む。 撮影は SCN-WL-SHAPE-CAUSE の lod-default（灰色の材質・深度・幾何の法線つき）を読む。時間の見積もり: 注釈 5 枚 30〜40 分、測りの台本 20〜30 分。壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える（未達のまま DONE にしない）。verify は 1 行 10 分未満（RelWithDebInfo のビルドは別の行、撮影は視点か組で分ける）。
 
 ## SCN-WL-SHAPE-METRIC-SILHOUETTE: 形の量の角に空との縁の向きの変わり目を、棚に遠くで丸まる段の縁を数える形を足す
-- status: todo
+- status: done
 - after: SCN-WL-SHAPE-METRIC-HARDEN
 - done-when: SCN-WL-CLIFF-SCAN-NEAR の反復 13（走行 20261024-183517）の角の点ごとの切り分け（`.harness/runs/20261024-183517/aux-SCN-WL-CLIFF-SCAN-NEAR-corner-diag.*`）: ref_cliff_01 の写真の角 7 点のうち 6 点は、縦の辺は取れて横の辺が角の内に無い。横の辺の一部は空との縁（崖の外形の上端）か段の踏み面の縁で、今の角の判定（法線の向きの変化か深度の段の折れの線の二辺）では折れとして数えない。棚の判定（法線の角 30° 以上の折れが水平に続く）は、540 m 先の 1 m の格子で 1 升目の斜面に丸まる 2.5 m の段の縁（約 5 画素）を取れない。量の定義を次のように直す（閾値の `shape-target.json` は変えない）: (1) 角の辺を、法線と深度の折れに加えて、空との縁（外形の輪郭）の向きでも支える（輪郭が角の点の近くで注釈の二辺の向きに曲がるなら、その辺を支えるとする）、(2) 棚の折れに、棚の向きに垂直な短い区間（例 6 画素）での法線の曲がりの積み上げが 30° 以上か、深度の相対の段で取れる縁を足す（向き・続き・余分な折れ・局所の欠けの判定は SCN-WL-SHAPE-METRIC-HARDEN のまま）。`--selftest` に、次の合成の形を足して確かめる: 落ちる形 — 壁一面の鋸歯・格子状のノイズ・ずれた十字・滑らかな斜面と平らな面（棚が出ない）・まっすぐな空との縁（角が出ない）。通る形 — 5 画素の幅で丸まった段の縁・空との縁で曲がる角。新しい定義を全部の写真に同じに使い、置く前の撮影（SCN-WL-SHAPE-CAUSE の lod-default）で `shape-scan-battleship.json` などの仕様の前の値を測り直して書き直す（閾値は変えない。書き直しの前後の値を `Docs/RenderingValidation/WastelandShape.md` に書く）。今の Battleship Rock の撮影（`.harness/runs/scene-capture/SCN-WL-CLIFF-SCAN-NEAR/shape`）も新しい定義で測って記録する（合否は NEAR が判定する）。
 - verify: `python Scripts/Terrain/CompareReference.py --shape --selftest`
