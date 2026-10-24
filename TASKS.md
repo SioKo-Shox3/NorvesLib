@@ -2695,7 +2695,7 @@
 
 ## SCN-WL-CLIFF-SCAN-NEAR-WALLS: Battleship Rock の刻んだ壁を、横に割れた砂岩の塊のスキャンで覆う
 - status: todo
-- after: SCN-WL-CLIFF-SCAN-FRANKLIN
+- after: SCN-WL-SCAN-MATERIAL-MATCH
 - done-when: SCN-WL-CLIFF-SCAN-NEAR で外形は写真に合った（ずらす前 2.0 画素）が、主の壁は縦の溝の柱、右の低い段と左の縁の壁は縦の細い筋の平らな板に見え、写真の横に割れた丸みのある厚い砂岩の塊にならない（`.harness/runs/scene-capture/SCN-WL-CLIFF-SCAN-NEAR/shape/crop_wall.png`・`look/reference_cliff_01.png`）。刻んだ壁の面の前に、横に割れた砂岩の塊（Poly Haven の CC0 のスキャン、または rock_09・boulder_01 の派生）を配置表で並べ、縦の筋の板を隠す。反復 20・23 で塊を置いたときに起きた外形と色の崩れ（尖った針・丸い山・桃色の斑）を避ける: 塊は壁の面に沿って半ば埋め、外形の行（`shape-scan-battleship.json`）を悪くしない、色は地形の崖の材質に合わせる。合否: 外形と角の行が悪くならない、拡大した壁を写真と並べて開いて横に割れた塊に見えることを確かめる、置いた物の浮き・埋もれの検査が通る、三角形・VRAM を記録。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Hdr -Aov -Views ref_cliff_01 -GameArgs wasteland-common-light,wasteland-hide=clouds+foliage+gravel+buildings+aerial+fog,wasteland-gray-material,wasteland-aa=fxaa,wasteland-talus-limit=off -OutDir .harness/runs/scene-capture/SCN-WL-CLIFF-SCAN-NEAR-WALLS/shape`
@@ -2730,7 +2730,7 @@
 - notes: 危険地帯（地形のクック）。2026-10-25 親が、保留にした SCN-WL-CLIFF-SCAN-NEAR の既定に残った変更を Sol に評価させて見つかった不具合として足した（ほかの観点〔範囲の外への効き・岩塊の浮き・試しの漏れ・規則〕に重い指摘は無かった）。Franklin Butte（SCN-WL-CLIFF-SCAN-FRANKLIN）が同じ刻みの経路を使うので、その前に直す。AssetCook を変えたら地形の全項目を 12 組の並列で先に焼き、verify のクックの行は印が同じで飛ばされる形にする。時間の見積もり: 直し 20 分、ビルド 2 構成 6〜12 分、並列の焼き 約 16 分、検査 15 分、撮影 2 組 約 5 分。壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える（未達のまま DONE にしない）。verify は 1 行 10 分未満。
 
 ## SCN-WL-CLIFF-SCAN-FRANKLIN: Franklin Butte の尖塔の台座の表面をスキャンの崖で作り、手本の写真に合わせる
-- status: doing
+- status: todo
 - after: SCN-WL-SHAPE-METRIC-SILHOUETTE, SCN-WL-CLIFF-CARVE-CONTINUITY
 - done-when: Blender の台本で、Franklin Butte の尖塔の台座（ref_cliff_02・ref_ground_02 に写る）の急な面をスキャンの崖の塊で覆い、写真の崖の層の段・縦の割れ目・板状の剥離・上端の角・壁から崖錐へ移る塊に合わせる（塊の繰り返しが見えないよう、回転・大きさ・素材を混ぜる）。材質の色は砂岩の実測の明るさの範囲に合わせ、地形の崖の色と継ぎ目なく馴染ませる。担当の世界座標の範囲を `Docs/RenderingValidation/WastelandShape.md` に書き、崖の生成の項目（Rooster Butte・Setting Hen Butte・castle の段）と重ねない。合否: (1) `CompareReference.py --shape --expect shape-scan-franklin.json`（cliff_02,ground_02 の写真の注釈の棚・角・外形のうちこの崖の分）が、SCN-WL-SHAPE-MEASURE の文書の絶対の基準を満たす（今の値が基準より低い量は基準まで上げ、ほかの量は悪くならない）、(2) 灰色の材質の撮影（形）と既定の撮影（見た目）の比較画像（写真｜撮影、1920×1080）を開き、崖の面が丸い面の筋ではなく、影を落とす岩の立体に見え、塊が地形から浮かず埋もれ過ぎないことを確かめる、(3) 三角形の数・読み込みの時間・VRAM・溢れ 0 を記録する。式の焼き込み（`TerrainCliffDetail.cpp`）を覆った崖の下地として残すか外すかを撮影で決める（外すならクックの行を verify に足し、Cycles の参照が古くなる一覧を文書に書く）。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
@@ -2740,7 +2740,30 @@
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Views ref_cliff_02,ref_ground_02 -OutDir .harness/runs/scene-capture/SCN-WL-CLIFF-SCAN-FRANKLIN/look`
 - verify: `python Scripts/Terrain/CompareReference.py --capture .harness/runs/scene-capture/SCN-WL-CLIFF-SCAN-FRANKLIN/look --photos cliff_02,ground_02 --verify`
 - paths: Scripts/Terrain, Scripts, Assets/AssetSets, Game/GameModes/Wasteland, Assets/Shaders, Tools/AssetCook, Docs/RenderingValidation, TASKS.md, PROGRESS.md
-- notes: 2026-10-24（親）: SCN-WL-CLIFF-SCAN-NEAR から分けた（台本と配置表の経路は NEAR のものを使う）。2026-10-24（親）: 後半の地形の計画への Sol の批評（`Docs/Plans/WastelandRebuild-SolCritique-Terrain2-20261024.txt` の 9: 2 地点を 1 項目で抱えている・verify に形の合否が無い・撮影の行にビルドが入っている）で、Battleship Rock（この項目）と Franklin Butte の尖塔の台座（SCN-WL-CLIFF-SCAN-FRANKLIN）に分け、形の合否と分けたビルドの行を足した。 壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える（未達のまま DONE にしない）。verify は 1 行 10 分未満（RelWithDebInfo のビルドは別の行）。合否の定義（`--shape --expect` の仕様）は、スキャンを置く前に今の撮影の値と SCN-WL-SHAPE-MEASURE の文書の絶対の基準から書いてコミットし、置いた後に変えない。 2026-10-25（親）: SCN-WL-CLIFF-SCAN-NEAR を backlog に移したので、after を形の量の定義の直し（SCN-WL-SHAPE-METRIC-SILHOUETTE）に替えた。Battleship Rock の試しの教訓: 地形の刻み（`MakeBattleshipCarve.py`・写真の列ごとの方位）で外形は合うが、見上げる視点の角と斜面の棚は 1 m の格子で丸まり届きにくい。刻みを使うなら、写真の角の点の列を壁の列の切れ目に入れ、尾根の点の距離を列の間で均す。同じ試しを 3 回続けて届かなければ、値と理由を書いて BLOCKED にする。
+- notes: 2026-10-24（親）: SCN-WL-CLIFF-SCAN-NEAR から分けた（台本と配置表の経路は NEAR のものを使う）。2026-10-24（親）: 後半の地形の計画への Sol の批評（`Docs/Plans/WastelandRebuild-SolCritique-Terrain2-20261024.txt` の 9: 2 地点を 1 項目で抱えている・verify に形の合否が無い・撮影の行にビルドが入っている）で、Battleship Rock（この項目）と Franklin Butte の尖塔の台座（SCN-WL-CLIFF-SCAN-FRANKLIN）に分け、形の合否と分けたビルドの行を足した。 壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える（未達のまま DONE にしない）。verify は 1 行 10 分未満（RelWithDebInfo のビルドは別の行）。合否の定義（`--shape --expect` の仕様）は、スキャンを置く前に今の撮影の値と SCN-WL-SHAPE-MEASURE の文書の絶対の基準から書いてコミットし、置いた後に変えない。 2026-10-25（親）: SCN-WL-CLIFF-SCAN-NEAR を backlog に移したので、after を形の量の定義の直し（SCN-WL-SHAPE-METRIC-SILHOUETTE）に替えた。Battleship Rock の試しの教訓: 地形の刻み（`MakeBattleshipCarve.py`・写真の列ごとの方位）で外形は合うが、見上げる視点の角と斜面の棚は 1 m の格子で丸まり届きにくい。刻みを使うなら、写真の角の点の列を壁の列の切れ目に入れ、尾根の点の距離を列の間で均す。同じ試しを 3 回続けて届かなければ、値と理由を書いて BLOCKED にする。 2026-10-25（親）: 反復 28 の BLOCKED（棚 cliff_02 0.788・ground_02 0.801 と外形の 4 行は合格。角 cliff_02 0.000・ground_02 0.250。写真の角 4 点のうち 3 点は尖塔にあり、撮影の尖塔は写真より細く頂の帽岩と右の肩の段が無い。板の色は周りの崖の日の当たる面の 0.82〜0.84 倍の明るさで赤みが弱い）を推奨の案 2 で解いた: 角の 2 行は尖塔の形の項目 SCN-WL-CLIFF-SPIRE-FRANKLIN の仕様 `shape-scan-franklin-spire.json` へ移し（閾値 0.5 は変えない）、この項目は棚・外形・見た目・費用の記録で閉じる（次の反復は `shape-scan-franklin.json` から角の行を移して verify を回し直す。今の板の帯は既定に残す）。色の馴染みは SCN-WL-SCAN-MATERIAL-MATCH で直す。
+
+## SCN-WL-SCAN-MATERIAL-MATCH: スキャンの崖の塊（rock_09 の板の帯・岩塊）の色と明るさを、周りの地形の崖に合わせる
+- status: todo
+- after: SCN-WL-CLIFF-SCAN-FRANKLIN
+- done-when: SCN-WL-CLIFF-SCAN-FRANKLIN の反復 28（`aux-SCN-WL-CLIFF-SCAN-FRANKLIN-plate-color.txt`）: 尖塔の台座に置いた rock_09 の板の帯は、日の当たる面どうしで周りの地形の崖の 0.82〜0.84 倍の明るさで、赤みも弱く、継ぎ目が色で見える。Battleship Rock の棚の岩塊（SCN-WL-CLIFF-SCAN-NEAR の配置）も同じ素材。素材の較正（アルベドの明るさと色度。照明なしのアルベドで比べる）を、地形の崖の材質の同じ層の値に合わせる（写真との比は撮影時の処理を含むので診断）。合否: (1) アルベドの AOV で、塊の日の当たる面と隣の地形の崖の面の明るさの比が 0.95〜1.05、色度（R÷G・B÷R）の差が 5 % 以内（Franklin Butte の台座と Battleship Rock の棚の両方。測る領域は文書に書く）、(2) 既定の撮影（ref_cliff_01・ref_cliff_02・ref_ground_02）を前と並べて開き、塊と崖の継ぎ目が色で目立たないことを確かめる、(3) 形の行（`shape-scan-battleship.json`・`shape-scan-franklin.json`）が変わらない。
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Hdr -Aov -Views ref_cliff_01,ref_cliff_02,ref_ground_02 -OutDir .harness/runs/scene-capture/SCN-WL-SCAN-MATERIAL-MATCH`
+- verify: `python Scripts/Terrain/CompareReference.py --capture .harness/runs/scene-capture/SCN-WL-SCAN-MATERIAL-MATCH --photos cliff_01,cliff_02,ground_02 --verify`
+- paths: Scripts, Assets/AssetSets, Game/GameModes/Wasteland, Docs/RenderingValidation, TASKS.md, PROGRESS.md
+- notes: 2026-10-25 親が SCN-WL-CLIFF-SCAN-FRANKLIN の BLOCKED（推奨の案 2）から分けた。素材の焼き直しはその素材だけ（`CookAssets.ps1 -OnlyLogicalPath` で絞る）。明るさと色度の比を測る台本はこの項目で作るか既存の `--albedo` を使う（verify に足してよい）。壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える（未達のまま DONE にしない）。verify は 1 行 10 分未満。
+
+## SCN-WL-CLIFF-SPIRE-FRANKLIN: Franklin Butte の尖塔を、地形の刻みで写真の帽岩と肩の段のある形にする
+- status: backlog
+- after: SCN-WL-SCAN-MATERIAL-MATCH
+- done-when: SCN-WL-CLIFF-SCAN-FRANKLIN の反復 28: 写真の角 4 点のうち 3 点（尖塔の頂の左・尖塔の根元の左右の肩）は尖塔にあり、撮影の尖塔は写真より細く（3〜4 m）、頂の帽岩と右の肩の段が無い。`Tools/AssetCook/TerrainCliffDetail.cpp` の Franklin Butte の範囲（kNearRegions[1]）で、尖塔を写真の帽岩・右の肩の段・左の縦の縁へ刻む（Battleship Rock の刻みの経路と、刻みの境を連続に混ぜる直し〔SCN-WL-CLIFF-CARVE-CONTINUITY〕を使う）。合否: `shape-scan-franklin-spire.json`（cliff_02・ground_02 の角の行。閾値 0.5）、`shape-scan-franklin.json` の棚と外形が悪くならない、刻みの境の連続（`CheckCarveContinuity.py` を Franklin Butte の範囲にも広げる）、範囲の外の区画のパッケージが変わらない。
+- verify: `cmake --build build --config RelWithDebInfo --target AssetCook -- /m:1`
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CookAssets.ps1 -AssetCookExe build/Tools/AssetCook/RelWithDebInfo/AssetCook.exe -OnlyLogicalPath 'Assets/Models/WastelandTerrain/*'`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Hdr -Aov -Views ref_cliff_02,ref_ground_02 -GameArgs wasteland-common-light,wasteland-hide=clouds+foliage+gravel+buildings+aerial+fog,wasteland-gray-material,wasteland-aa=fxaa,wasteland-talus-limit=off -OutDir .harness/runs/scene-capture/SCN-WL-CLIFF-SPIRE-FRANKLIN/shape`
+- verify: `python Scripts/Terrain/CompareReference.py --capture .harness/runs/scene-capture/SCN-WL-CLIFF-SPIRE-FRANKLIN/shape --photos cliff_02,ground_02 --shape --expect Scripts/Terrain/ExpectSpecs/shape-scan-franklin-spire.json --verify`
+- verify: `python Scripts/Terrain/CompareReference.py --capture .harness/runs/scene-capture/SCN-WL-CLIFF-SPIRE-FRANKLIN/shape --photos cliff_02,ground_02 --shape --expect Scripts/Terrain/ExpectSpecs/shape-scan-franklin.json --verify`
+- paths: Tools/AssetCook, Scripts, Docs/RenderingValidation, TASKS.md, PROGRESS.md
+- notes: 危険地帯（地形のクック）。2026-10-25 親が SCN-WL-CLIFF-SCAN-FRANKLIN の BLOCKED（推奨の案 2）から分けた。地形の焼き直しを伴う重い作業なので backlog に置き、地形の 2 段目を組むときに順を決めて todo にする。Battleship Rock の教訓（見上げる視点の角は 1 m の格子で丸まる・塊を角の点に積む試しは外形の位置合わせのずらしで外れる）を踏まえ、同じ試しを 3 回続けて届かなければ値と理由を書いて BLOCKED にする。AssetCook を変えたら地形の全項目を 12 組の並列で先に焼く。壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える（未達のまま DONE にしない）。verify は 1 行 10 分未満。
 ## SCN-WLR-CLOUD-REF-CURRENT: 今の雲の式と密度場で雲の書き出しと Cycles の正解を撮り直し、雲の比べの基準を今の値にする
 - status: done
 - after: SCN-WL-OCCLUSION-ACCEPT
