@@ -2716,9 +2716,22 @@
 - verify: `python Scripts/Terrain/CompareReference.py --capture .harness/runs/scene-capture/SCN-WL-CLIFF-SCAN-NEAR-SHELVES/shape --photos cliff_01 --shape --expect Scripts/Terrain/ExpectSpecs/shape-scan-battleship.json --verify`
 - paths: Tools/AssetCook, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Assets/AssetSets, Game, Scripts, Docs/RenderingValidation, TASKS.md, PROGRESS.md
 - notes: 危険地帯（地形のクック）。2026-10-25 親が SCN-WL-CLIFF-SCAN-NEAR の反復 17 の BLOCKED の区切りとして足した。地形の 2 段目の細かな高さの項目を TASKS.md に入れるときに、その項目を after に足して todo にする（それまでは backlog）。AssetCook を変えたら地形の全項目を 12 組の並列で先に焼く。壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える（未達のまま DONE にしない）。verify は 1 行 10 分未満。 2026-10-25（親）: NEAR を backlog に移したので、after を壁の見た目の項目に替えた（地形の 2 段目の細かな高さを入れるときに、その項目を after に足して todo にする）。
-## SCN-WL-CLIFF-SCAN-FRANKLIN: Franklin Butte の尖塔の台座の表面をスキャンの崖で作り、手本の写真に合わせる
+## SCN-WL-CLIFF-CARVE-CONTINUITY: Battleship Rock の刻みの抑えのマスクの境で高さが跳ぶ不具合を直す
 - status: todo
 - after: SCN-WL-SHAPE-METRIC-SILHOUETTE
+- done-when: 保留にした SCN-WL-CLIFF-SCAN-NEAR の既定に残った刻みを親が別の評価者（Sol）に通した結果（2026-10-25、NEEDS_WORK）: `Tools/AssetCook/TerrainCliffDetail.cpp` の 1192 行の辺りは、`carve >= 1` なら細分の点へ直接刻みを掛け、1 未満なら刻んだ格子の補間へ切り替えるので、両者の高さが一致せず、マスクの境で式が不連続に切り替わる（例: 世界座標 X −1875.25・Z −1245.1875 でマスク 1.000000・高さ 170.035 m、Z −1245.1250 でマスク 0.998152・高さ 149.741 m。水平 6.25 cm の間に約 20.29 m の段差）。意図しない壁や尖りを既定の地形に作る。近景の高さを `carve` の全域で同じ 2 つの式から連続に混ぜる形にする（例: 滑らかな高さと、刻む前の双線形の高さへ直接刻んだ高さを `carve` で混ぜる）。刻みの版を上げ、地形の全項目を 12 組の並列で先に焼き直す（変わるのは dem:0,2・dem:1,2 だけのはず）。合否: (1) 検査（`Scripts/Terrain/CheckCarveContinuity.py`、この項目で作る。AssetCook の問い合わせで焼いた後の面を読む。Python で式を写さない）: Battleship Rock の範囲でマスクの境を横切る線を 200 本以上取り、マスク 0.99 以上 1.0 未満の点と隣の 1.0 の点（水平 0.25 m 以内）の高さの差が 0.5 m 以下、上の例の 2 点の差が 0.5 m 以下、(2) 範囲の外の区画のパッケージが前と同じ（クックの出力のハッシュで示す）、(3) 灰色の材質の撮影（ref_cliff_01・cliff）を前と並べて開き、マスクの境の壁や尖りが無いことを確かめる、(4) Battleship Rock の外形の行（`shape-scan-battleship.json` の外形）が悪くならない（角と棚は保留の既知の限界のまま記録）。
+- verify: `cmake --build build --config RelWithDebInfo --target AssetCook -- /m:1`
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CookAssets.ps1 -AssetCookExe build/Tools/AssetCook/RelWithDebInfo/AssetCook.exe -OnlyLogicalPath 'Assets/Models/WastelandTerrain/*'`
+- verify: `python Scripts/Terrain/CheckCarveContinuity.py --asset-cook build/Tools/AssetCook/RelWithDebInfo/AssetCook.exe --verify`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Hdr -Aov -Views ref_cliff_01,cliff -GameArgs wasteland-common-light,wasteland-hide=clouds+foliage+gravel+buildings+aerial+fog,wasteland-gray-material,wasteland-aa=fxaa,wasteland-talus-limit=off -OutDir .harness/runs/scene-capture/SCN-WL-CLIFF-CARVE-CONTINUITY/shape`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Views ref_cliff_01,cliff -OutDir .harness/runs/scene-capture/SCN-WL-CLIFF-CARVE-CONTINUITY/look`
+- paths: Tools/AssetCook, Scripts, Docs/RenderingValidation, TASKS.md, PROGRESS.md
+- notes: 危険地帯（地形のクック）。2026-10-25 親が、保留にした SCN-WL-CLIFF-SCAN-NEAR の既定に残った変更を Sol に評価させて見つかった不具合として足した（ほかの観点〔範囲の外への効き・岩塊の浮き・試しの漏れ・規則〕に重い指摘は無かった）。Franklin Butte（SCN-WL-CLIFF-SCAN-FRANKLIN）が同じ刻みの経路を使うので、その前に直す。AssetCook を変えたら地形の全項目を 12 組の並列で先に焼き、verify のクックの行は印が同じで飛ばされる形にする。時間の見積もり: 直し 20 分、ビルド 2 構成 6〜12 分、並列の焼き 約 16 分、検査 15 分、撮影 2 組 約 5 分。壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える（未達のまま DONE にしない）。verify は 1 行 10 分未満。
+
+## SCN-WL-CLIFF-SCAN-FRANKLIN: Franklin Butte の尖塔の台座の表面をスキャンの崖で作り、手本の写真に合わせる
+- status: todo
+- after: SCN-WL-SHAPE-METRIC-SILHOUETTE, SCN-WL-CLIFF-CARVE-CONTINUITY
 - done-when: Blender の台本で、Franklin Butte の尖塔の台座（ref_cliff_02・ref_ground_02 に写る）の急な面をスキャンの崖の塊で覆い、写真の崖の層の段・縦の割れ目・板状の剥離・上端の角・壁から崖錐へ移る塊に合わせる（塊の繰り返しが見えないよう、回転・大きさ・素材を混ぜる）。材質の色は砂岩の実測の明るさの範囲に合わせ、地形の崖の色と継ぎ目なく馴染ませる。担当の世界座標の範囲を `Docs/RenderingValidation/WastelandShape.md` に書き、崖の生成の項目（Rooster Butte・Setting Hen Butte・castle の段）と重ねない。合否: (1) `CompareReference.py --shape --expect shape-scan-franklin.json`（cliff_02,ground_02 の写真の注釈の棚・角・外形のうちこの崖の分）が、SCN-WL-SHAPE-MEASURE の文書の絶対の基準を満たす（今の値が基準より低い量は基準まで上げ、ほかの量は悪くならない）、(2) 灰色の材質の撮影（形）と既定の撮影（見た目）の比較画像（写真｜撮影、1920×1080）を開き、崖の面が丸い面の筋ではなく、影を落とす岩の立体に見え、塊が地形から浮かず埋もれ過ぎないことを確かめる、(3) 三角形の数・読み込みの時間・VRAM・溢れ 0 を記録する。式の焼き込み（`TerrainCliffDetail.cpp`）を覆った崖の下地として残すか外すかを撮影で決める（外すならクックの行を verify に足し、Cycles の参照が古くなる一覧を文書に書く）。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
