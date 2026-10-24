@@ -2748,7 +2748,7 @@
 - notes: 2026-10-24 親が確認 2 の後の計画の後半の頭（雲の形）として足した。親の所見（2026-10-23、SCN-WL-OCCLUSION-ACCEPT の 6 視点）: 遠い雲が見えるようになった代わりに、雲の層がどの視点でも空を一様に薄く覆い、晴れの写真（ground_02・cliff_01）の視点でも白い曇り空に見える。Sol の批評 2 回（`Docs/Plans/WastelandRebuild-SolCritique-TerrainCloud-20261024.txt` の 8〜11・17 と、雲の組み直しへの再批評: 正式な正解は今の書き出しとハッシュが合わない・比の悪化は 1 からの隔たりで測る・全画素の不透明度は今の画面のアルファからは取れない・形の閾値は粗い斑点や穴の開いた膜で通らないよう調整の前に独立の見本で固定する・遠景のちらつきと段の検査・Cycles の生成は反復の中で同期・75 分に収まるよう前の撮影と調整と受け入れを分ける）を反映した。 撮るだけの項目。時間の見積もり: ビルド 3〜6 分、連番 約 3 分、段 約 2 分、6 視点 約 4 分、計測 約 3 分、回帰 7〜9 分。 壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える（未達のまま DONE にしない）。verify は 1 行 10 分未満（RelWithDebInfo のビルドは別の行）。GPU 時間（`-GpuTimingFrames 300`）は中央値を記録し合否にしない（33.3 ms を超えたら支配する処理を書く）。
 
 ## SCN-WL-CLOUD-SHAPE-TUNE: 雲を一様な薄い層から、青空の切れ間のある積雲の塊にする
-- status: doing
+- status: done
 - after: SCN-WL-CLOUD-SHAPE-BEFORE
 - done-when: `WastelandRoutine.cpp` の雲の層（被覆 0.43・形の大きさ 4.5 km・底 2500 m・頂 3600 m）と `CloudLayerCommon.glsl` の形のノイズ（被覆の閾値・低い周波の重み・遠くの細部のミップ）で、はっきりした縁と切れ間のある積雲の塊にする。天気は far_01 の写真の部分曇りに合わせる（美術上の判断として文書に書く。晴れの写真 ground_02・cliff_01 との違いは天気の違いとして記録する）。密度の式（GLSL）を変えるなら、書き出しの検査と内訳の台本が持つ雲の式の写し（`CloudBreakdown.py`・`--cloud-dump` の照合）も同じ変更で直し、`--cloud-dump --verify` を通す。合否: SCN-WL-CLOUD-SHAPE-METRIC で固定した `cloud-shape.json`（cloud_sky）が通る（定義は変えない）。ref_far_01 は値を記録し写真 far_01 と並べて開く。cloud_sky と ref_far_01 の画を開いて、斑点やノイズでなく積雲の塊に見えることを確かめる。遠景・段・回帰・GPU 時間の受け入れは SCN-WL-CLOUD-SHAPE-ACCEPT。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`

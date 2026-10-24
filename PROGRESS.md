@@ -7593,3 +7593,10 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 証拠（`.harness/runs/20261023-124311/`）: `verify-SCN-WL-CLOUD-SHAPE-TUNE-8.txt`（Debug EXIT=0）・`-9.txt`（RelWithDebInfo EXIT=0）・`-10.txt`（撮影 result=pass）・`-11.txt`（`--cloud-dump --verify` result=pass）・`-12.txt`（`--cloud-shape --expect --verify` result=pass）。開いた画: `scene-capture/SCN-WL-CLOUD-SHAPE-TUNE/cloud_sky.png`（青空に大小の積雲の塊）・`ref_far_01.png` と `far_01.jpg`（地平線の上に積雲の列。遠い雲の平らな段と等高線のような縁は 2e9cfeb1 で足された項目の対象）
 - Next: TASKS.md の次の未完
 - Notes: `CloudBreakdown.py`・`CloudFarCause.py` の `march` の呼び出しは `gpu_segment` を渡さないので前と同じ倍精度の求め方のまま。新しい試験は足していない
+
+## 2026-10-24 SCN-WL-CLOUD-SHAPE-TUNE（run 20261024-183517 の反復 1、中断した評価のための verify の回し直し）
+- Done: 中身は 5287c0b4 のまま（新しい直しは足していない）で verify の 5 行を回し直し、すべて合格した。評価者の 2 周目（反復 31 の指摘への対応 5287c0b4）を受けるため done に戻す
+- 値: `--cloud-dump` の透過率の差の最大 cloud_sky 0.0018・ref_far_01 0.0019（全部の視線）。cloud_sky 切れ間 0.730・薄い膜 0.035・塊 17・面積の比 13.45・厚い部分 0.820・縁の幅 8.87 画素（定義の全行合格）。ref_far_01（記録）切れ間 0.132・塊 2・縁の幅 9.17 画素
+- 証拠（`.harness/runs/20261024-183517/`）: `verify-SCN-WL-CLOUD-SHAPE-TUNE-1.txt`（Debug EXIT=0）・`-2.txt`（RelWithDebInfo EXIT=0）・`-3.txt`（撮影 result=pass、Game.exe ff4fbd2a…）・`-4.txt`（`--cloud-dump --verify` result=pass）・`-5.txt`（`--cloud-shape --expect --verify` result=pass）。開いた画: `scene-capture/SCN-WL-CLOUD-SHAPE-TUNE/cloud_sky.png`（青空に大小の積雲の塊。右上の大きな塊の外形に直線的な部分が残る）・`ref_far_01.png` と `far_01.jpg`（地平線の上に積雲の列、上は青空。遠い雲の平らな段と等高線のような縁は SCN-WL-CLOUD-CONTOUR-FIX の対象）
+- Next: TASKS.md の次の未完
+- Notes: Git Bash から `cmake --build ... -- /m:1` を呼ぶとスイッチがパスに変換されて MSBuild が落ちるので、ビルドの verify は PowerShell で回した。新しい試験は足していない
