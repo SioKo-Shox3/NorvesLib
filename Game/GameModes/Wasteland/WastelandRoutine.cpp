@@ -240,15 +240,16 @@ namespace Game::GameModes
         // 円盤の立体角（6.87e-5 sr）で割った 1.95e9 にする。既定の 1.6e9（約 110 klx）は地表で測った値に近く、透過率を二重に
         // 掛けて空・雲・日向がそろって 2 割ほど暗くなる
         constexpr float kSunLuminanceNits = 1.95e9f;
-        // 雲の層: 写真の晴天の積雲（底の平らな雲が空の半分ほど）。乾いた高原で雲底が高いので高度 2.5〜3.6 km の層にし、
-        // 西寄りの風でゆっくり流す。形の大きさを既定（9 km）の半分にして、青空の隙間を挟んだ塊に分ける（既定の大きさでは薄く
-        // 広がった層が空全体に掛かり、灰色の曇り空に見える）。消散係数は既定（0.01 /m）の 6 割で、塊の縁が白く締まり、底も
-        // 灰色に沈まない。被覆は 0.4 で空の 2 割に満たず、0.5 で一面の曇りにつながるので、写真の半分ほどに合う 0.43 にする
+        // 雲の層: 写真 far_01 の部分曇りの積雲（底の平らな塊が青空の切れ間を挟んで並ぶ）。乾いた高原で雲底が高いので
+        // 高度 2.5〜3.6 km の層にし、西寄りの風でゆっくり流す。形の大きさは 2.5 km（天気の模様の周期 9.25 km）で、cloud_sky の
+        // 画角に大小 15 前後の塊が入る（4.5 km では塊が空の半分を覆う 6 つの大きな膜につながった）。消散係数は既定（0.01 /m）の
+        // 6 割で、塊の縁が白く締まり、底も灰色に沈まない。被覆は CloudLayerCommon.glsl の狭い覆いの閾値と組で、0.35 で切れ間が
+        // 空の 7 割強、0.37 で 5 割を切るので 0.35 にする（根拠と量は Docs/RenderingValidation/WastelandCloudShape.md）
         constexpr float kCloudBottomAltitude = 2500.0f;
         constexpr float kCloudTopAltitude = 3600.0f;
-        constexpr float kCloudCoverage = 0.43f;
+        constexpr float kCloudCoverage = 0.35f;
         constexpr float kCloudExtinctionPerMeter = 0.006f;
-        constexpr float kCloudShapeScale = 4500.0f;
+        constexpr float kCloudShapeScale = 2500.0f;
         constexpr float kCloudWindVelocity[2] = {8.0f, 3.0f};
         // カメラの遠方面[m]。遠景は 1/3 秒角の DEM 2 枚（西経 109〜110°・北緯 36〜38°）まで覆い、どの視点からも地形の最も遠い点は
         // 約 160 km（Scripts/Terrain/HorizonSkyline.py の TRACE_M）。体積フォグ・雲・RT の影などのパスは深度 0.999999 以上を空と

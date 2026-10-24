@@ -294,3 +294,67 @@ GPU 時間（ref_far_01、300 フレーム、記録だけで合否にしない�
 `.harness/runs/20261023-124311/` の `verify-SCN-WL-CLOUD-SHAPE-BEFORE-1.txt`（RelWithDebInfo のビルド EXIT=0）・`-2.txt`（連番 result=pass、
 台本の capture 8 個と PNG 8 枚が一致）・`-3.txt`（段 result=pass）・`-4.txt`（6 視点 result=pass）・`-5.txt`（GPU 時間 result=pass、
 within_budget=True）・`-6.txt`（回帰 result=pass、482 秒）。
+
+## 形の調整（SCN-WL-CLOUD-SHAPE-TUNE）
+
+一様な薄い層を、はっきりした縁と青空の切れ間のある積雲の塊にした。合否は「塊・切れ間・縁の量」の定義（`cloud-shape.json`、変えていない）。
+
+### 美術上の判断: 天気は far_01 の部分曇り
+
+荒野の天気は写真 `Assets/Reference/ValleyOfTheGods/far_01.jpg` の部分曇りに合わせる。底の平らな積雲が地平線の上に列になって重なり、
+上の空は青く開き、塊の間から青空がのぞく。晴れの写真 ground_02・cliff_01 は雲の少ない別の日の天気で、雲の量の違いは天気の違いとして扱い、
+雲の形の合否には使わない（両方に同時に合わせる値は無い）。
+
+### 変えたもの
+
+| 場所 | 前 | 後 | 理由 |
+|---|---|---|---|
+| `WastelandRoutine.cpp` の被覆 `kCloudCoverage` | 0.43 | 0.35 | 狭い覆いの閾値と組で、切れ間を空の 7 割強にする（0.37 では 5 割を切る） |
+| `WastelandRoutine.cpp` の形の大きさ `kCloudShapeScale` | 4500 m | 2500 m | 天気の模様の周期 16.7 km → 9.25 km。cloud_sky の画角に大小の塊が 15 前後入る（前は空の半分を覆う大きな膜 6 つ） |
+| `CloudLayerCommon.glsl` の覆いの閾値の幅 | 1 − 被覆 −0.08〜+0.22 | −0.03〜+0.08（`kCoverageEdgeBelow`・`kCoverageEdgeAbove`） | 塊の外形を天気の模様の等値線で締め、外側の薄い膜を空の 1 割未満にする |
+| `CloudLayerCommon.glsl` の密度の倍率 | なし | 3（`kCloudDensityGain`、1 で頭打ち） | 塊の本体を光学的に厚くし、縁の薄い所だけを半透明に残す |
+
+雲の底 2500 m・頂 3600 m・消散係数・細部と天気の比・遠くの細部のミップは変えていない。密度の式の写し（`CloudDumpCheck.py` の `CloudModel`。
+`CloudBreakdown.py`・`CloudVolume.py` はそれを使う）と書き出しの契約（`WastelandCloudDump.md`）を同じ変更で直した。
+
+値は、SCN-WL-CLOUD-OPACITY-AOV の cloud_sky の書き出し（格子・定数）から 1/4 の解像度で不透明度を求め直す試算（今の式で撮影との
+平均の差 0.003）で被覆・閾値・倍率・大きさを振って決め、撮影で確かめた。
+
+### 結果（`.harness/runs/scene-capture/SCN-WL-CLOUD-SHAPE-TUNE`）
+
+撮った Game.exe（RelWithDebInfo、コミット 320fbe2c にこの変更を載せた作業ツリー）の SHA-256 `ff4fbd2a3d073b632e6d9a63b753383f158d6481c0b12375c48ccbddca890646`、
+`CloudLayerCommon.glsl` の SHA-256 `692308d36b8673b81ea7a8215adbf95bde2d900f0a9057adff57713378b70a17`（`cloud_layer.frag` は前と同じ 39793e56…）。
+
+| 量 | cloud_sky（前） | cloud_sky（後） | 定義 | ref_far_01（後、記録） |
+|---|---|---|---|---|
+| 切れ間の割合 | 0.4804 | 0.7302 | 0.4966〜0.8359 | 0.1316 |
+| 薄い膜の割合 | 0.1428 | 0.0353 | 〜0.10 | 0.0453 |
+| 塊の数 | 6 | 17 | 3〜22 | 2 |
+| 面積の中央値 | 0.05205 | 0.003198 | 0.000737〜0.051 | 0.4115 |
+| 面積の 90 百分位 | 0.1214 | 0.04301 | 0.0262〜0.2 | 0.7346 |
+| 90 百分位 ÷ 中央値 | 2.333 | 13.45 | 2.79〜84.07 | 1.785 |
+| 最大の塊の割合 | 0.3349 | 0.3512 | 0.224〜0.8423 | 0.9905 |
+| 厚い部分の割合 | 0.4993 | 0.8196 | 0.5〜0.95 | 0.9183 |
+| 塊の中の揺れ | 0.1553 | 0.164 | 0.08〜0.30 | 0.1848 |
+| 縁の幅の中央値 | 49.39 画素 | 8.87 画素（10・90 百分位 4.2・24.3） | 1.5〜12 | 9.17 画素 |
+| 測れた縁の割合 | 0.469 | 0.829 | 0.25〜 | 0.642 |
+
+cloud_sky は定義の 11 行すべてで通る。ref_far_01 は地平線の方向へ積雲の列が重なって 1 つの大きな塊につながる（記録だけ）。切れ間は前の 0.008 から 0.13 になった。
+
+### 開いた画
+
+- `cloud_sky.png`: 青空に大小の積雲の塊が散らばり、縁は白く締まり、斑点や細かなノイズには見えない。右上の大きな塊の一部に縦の直線の縁が
+  ある。不透明度の画では、塊の外形のところどころが角張った折れ線になる（閾値を狭めて、天気の模様の格子の線形補間の折れ目が縁に出る見込み。
+  原因は確かめていない）。
+- `ref_far_01.png` と写真 `far_01.jpg`: 地平線の上に底の平らな積雲が列になって重なり、上の空は青く開く。写真の部分曇りと雲の量・並びが近い。
+  前の撮影（空のほぼ全部が白い薄い膜）の曇り空ではなくなった。
+- 量の画 `cloud_shape_cloud_sky.png`・`cloud_shape_ref_far_01.png`: 塊の外周に薄い膜の灰の帯がほとんど無く、測れた縁の点が塊の外周に並ぶ。
+
+遠景のちらつき・段・6 視点・回帰・GPU 時間の受け入れは SCN-WL-CLOUD-SHAPE-ACCEPT で、比べる元は「形を変える前の撮影」の置き場。
+
+### 確かめたこと
+
+`.harness/runs/20261023-124311/` の `verify-SCN-WL-CLOUD-SHAPE-TUNE-1.txt`（Debug のビルド EXIT=0）・`-2.txt`（RelWithDebInfo のビルド EXIT=0）・
+`-3.txt`（撮影 result=pass）・`-6.txt`（`--cloud-dump --verify` result=pass、空の視線の透過率の差の最大 cloud_sky 0.0022・ref_far_01 0.0073、
+ref_far_01 の空でない視線 73 本の差の最大 0.031 は記録）・`-7.txt`（`--cloud-shape --expect cloud-shape.json --verify` result=pass）。
+`-4.txt` は照合の台本を直す前の `--cloud-dump` の結果（ref_far_01 で空でない視線と、画素から求めた向きで進めた遠い視線の透過率の差 0.060 で fail）。

@@ -52,6 +52,11 @@ const float kDetailMaxDistance = 18000.0;
 const int kCloudAerialSteps = 32;
 // 透過率がこれを下回ったら進むのをやめる
 const float kMinTransmittance = 0.01;
+// 天気の模様の覆いの閾値（1 - 被覆）の下と上の幅。塊の縁の薄い膜の広がりを決める
+const float kCoverageEdgeBelow = 0.03;
+const float kCoverageEdgeAbove = 0.08;
+// 形のノイズの密度の倍率（1 で頭打ち）。塊の本体を光学的に厚くし、縁の薄い所だけを半透明に残す
+const float kCloudDensityGain = 3.0;
 
 // 遠い雲の消える原因を分ける診断の切り替え（撮影の雲の書き出しの CloudProbePass が視線ごとに立てる。開発ビルドだけ。
 // 描画の cloud_layer.frag は常に 0 で、既定の描画は変わらない）
@@ -135,7 +140,8 @@ float SampleCloudDensity(vec3 position, float heightFraction, bool bDetail)
                                   0.0);
     float weather = clamp(weatherLow.r * 0.55 + weatherLow.g * 0.2 + weatherHigh.r * 0.25, 0.0, 1.0);
     float coverage = params.layerAltitudesAndCoverage.w;
-    float coverageMask = smoothstep(1.0 - coverage - 0.08, 1.0 - coverage + 0.22, weather);
+    // 覆いの閾値の幅は狭く取り、塊の外形を天気の模様の等値線で締める（幅 0.30 では塊の外側に空の 1 割を超える薄い膜が広がった）
+    float coverageMask = smoothstep(1.0 - coverage - kCoverageEdgeBelow, 1.0 - coverage + kCoverageEdgeAbove, weather);
     if (coverageMask <= 0.001)
     {
         return 0.0;
@@ -154,7 +160,7 @@ float SampleCloudDensity(vec3 position, float heightFraction, bool bDetail)
     vec4 shape = textureLod(shapeNoise, shapePosition * params.extinctionAndInverseScales.y, 0.0);
     float lowFrequencyFbm = shape.g * 0.625 + shape.b * 0.25 + shape.a * 0.125;
     float base = clamp(Remap(shape.r, lowFrequencyFbm - 1.0, 1.0, 0.0, 1.0), 0.0, 1.0);
-    base = clamp(Remap(base * profile, 1.0 - coverageMask, 1.0, 0.0, 1.0), 0.0, 1.0) * coverageMask;
+    base = clamp(Remap(base * profile, 1.0 - coverageMask, 1.0, 0.0, 1.0) * coverageMask * kCloudDensityGain, 0.0, 1.0);
     if (base <= 0.0 || !bDetail)
     {
         return base;

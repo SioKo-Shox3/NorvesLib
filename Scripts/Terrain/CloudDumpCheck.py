@@ -62,6 +62,10 @@ DETAIL_MAX_DISTANCE = 18000.0
 AERIAL_STEPS = 32
 MIN_TRANSMITTANCE = 0.01
 DENSITY_THRESHOLD = 0.001
+# 天気の模様の覆いの閾値の下と上の幅と、形のノイズの密度の倍率（kCoverageEdgeBelow・kCoverageEdgeAbove・kCloudDensityGain）
+COVERAGE_EDGE_BELOW = 0.03
+COVERAGE_EDGE_ABOVE = 0.08
+DENSITY_GAIN = 3.0
 # 遠い雲の消える原因を分ける診断の切り替え（GLSL の kCloudDiagnostic*）。書き出しの反実仮想の列（SCN-WL-CLOUD-FAR-CAUSE）が
 # 視線の値の 7 行目の w の 4 の位より上に持つ
 # 細かい歩で積む（歩数の上限を DIAGNOSTIC_MAX_PRIMARY_STEPS へ上げる。SCN-WL-CLOUD-FAR-RANGE の前は 45 km の打ち切りを外す切り替え）
@@ -258,7 +262,7 @@ class CloudModel:
             [weather_v * self.high_scale + self.weather_high_offset[0], np.full_like(weather_u, 0.71),
              weather_u * self.high_scale + self.weather_high_offset[1]], axis=-1))
         weather_value = clamp01(low[:, 0] * 0.55 + low[:, 1] * 0.2 + high[:, 0] * 0.25)
-        return smoothstep(1.0 - self.coverage - 0.08, 1.0 - self.coverage + 0.22, weather_value)
+        return smoothstep(1.0 - self.coverage - COVERAGE_EDGE_BELOW, 1.0 - self.coverage + COVERAGE_EDGE_ABOVE, weather_value)
 
     def density(self, position, height_fraction, detail_mask, mask=None):
         """mask は coverage_mask の値（省くと位置から求める）"""
@@ -273,7 +277,7 @@ class CloudModel:
         shape = sample_trilinear(self.shape_noise, (position + self.shape_offset) * self.inverse_shape)
         low_fbm = shape[:, 1] * 0.625 + shape[:, 2] * 0.25 + shape[:, 3] * 0.125
         base = clamp01(remap(shape[:, 0], low_fbm - 1.0, 1.0, 0.0, 1.0))
-        base = clamp01(remap(base * profile, 1.0 - mask, 1.0, 0.0, 1.0)) * mask
+        base = clamp01(remap(base * profile, 1.0 - mask, 1.0, 0.0, 1.0) * mask * DENSITY_GAIN)
         detail = sample_trilinear(self.detail_noise, (position + self.detail_offset) * self.inverse_detail)
         detail_fbm = detail[:, 0] * 0.625 + detail[:, 1] * 0.25 + detail[:, 2] * 0.125
         modifier = mix(detail_fbm, 1.0 - detail_fbm, clamp01(height_fraction * 4.0))
@@ -613,7 +617,7 @@ def check_view(rc, capture_dir, view, game_args):
                        aerial_profile)
     target = (int(meta["target"]["width"]), int(meta["target"]["height"]))
     rays = []
-    worst = {"transmittance_abs": 0.0, "direction": 0.0, "jitter": 0.0, "distance_rel": 0.0, "optical_depth_rel": 0.0,
+    worst = {"transmittance_abs": 0.0, "transmittance_abs_non_sky": 0.0, "direction": 0.0, "jitter": 0.0, "distance_rel": 0.0, "optical_depth_rel": 0.0,
              "scattered_rel": 0.0, "radiance_rel": 0.0, "sky_above_rel": 0.0, "ground_rel": 0.0, "background_rel": 0.0}
     cloud_rays = 0
     thick_rays = 0
@@ -630,7 +634,12 @@ def check_view(rc, capture_dir, view, game_args):
                "step_length": probe[7, index, 2], "flags": int(round(probe[7, index, 3]))}
         direction = model.ray_direction(pixel, target)
         jitter = model.jitter(pixel)
-        march = model.march(direction, jitter)
+        # 雲の式は GPU が実際に進めた単精度の視線の向きで求め直す（画素から求めた向きとの差は下の direction で別に照らす）。
+        # 地平線へ 15 km 以上進む視線は、縁の締まった雲を 1e-4 rad の向きの差で別の所へ抜け、透過率が 0.03 変わる
+        gpu_direction = np.asarray(gpu["direction"], dtype=np.float64)
+        gpu_length = float(np.linalg.norm(gpu_direction))
+        march_direction = gpu_direction / gpu_length if np.isfinite(gpu_length) and gpu_length > 0.5 else direction
+        march = model.march(march_direction, jitter)
         sky_pixel = not (np.isfinite(gpu["depth"]) and gpu["depth"] < 0.999999)
         if not sky_pixel:
             non_sky += 1
@@ -639,7 +648,12 @@ def check_view(rc, capture_dir, view, game_args):
         cloud_rays += int(opacity >= CLOUD_OPACITY)
         thick_rays += int(opacity >= THICK_OPACITY)
         transmittance_error = abs(float(march["transmittance"]) - float(gpu["transmittance"]))
-        worst["transmittance_abs"] = max(worst["transmittance_abs"], transmittance_error)
+        # 地形の入る視点の空でない画素の雲は地形の後ろで画に出ないので、透過率の差は記録だけにする（120 km 先の地平線の
+        # 視線は 1e-5 rad の向きの差で透過率が 0.1 変わり、単精度の向きでは照らせない）
+        if sky_pixel:
+            worst["transmittance_abs"] = max(worst["transmittance_abs"], transmittance_error)
+        else:
+            worst["transmittance_abs_non_sky"] = max(worst["transmittance_abs_non_sky"], transmittance_error)
         worst["direction"] = max(worst["direction"], float(np.max(np.abs(direction - gpu["direction"]))))
         worst["jitter"] = max(worst["jitter"], abs(jitter - float(gpu["jitter"])))
         entry = {"pixel": pixel, "sky_pixel": sky_pixel, "gpu_transmittance": float(gpu["transmittance"]),
@@ -672,7 +686,9 @@ def check_view(rc, capture_dir, view, game_args):
                                       relative_error(sample_sky(model.sky_lut, direction), gpu["background"], RADIANCE_FLOOR))
         rays.append(entry)
 
-    if non_sky:
+    # 空だけを写すことを求めるのは既定の視点（cloud_sky）だけ。地形の入る視点（ref_far_01 など）は空でない視線の数を記録する
+    result["non_sky_rays"] = non_sky
+    if non_sky and view == DEFAULT_VIEW:
         failures.append(f"空でない画素の視線が {non_sky} 本ある（空だけを写す視点でない）")
     if cloud_rays < MIN_CLOUD_RAYS or thick_rays < MIN_THICK_RAYS:
         failures.append(f"雲のある視線が足りない（不透明度 {CLOUD_OPACITY} 以上 {cloud_rays} 本 / 下限 {MIN_CLOUD_RAYS}、"
