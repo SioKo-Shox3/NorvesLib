@@ -136,7 +136,31 @@ def flicker_metric(sequence_dir, view, pixels):
         return None, f"連番の大きさ {stack.shape[2]}x{stack.shape[1]} が書き出しの画素と合わない"
     values = stack[:, ys, xs]
     ratio = values.std(axis=0) / np.maximum(values.mean(axis=0), 1e-6)
-    return {"mean": float(np.mean(ratio)), "p95": float(np.percentile(ratio, 95)), "frames": FLICKER_FRAMES}, None
+    result = {"mean": float(np.mean(ratio)), "p95": float(np.percentile(ratio, 95)), "frames": FLICKER_FRAMES}
+    # 見える揺れ: 8 bit の PNG（トーンマップの後）の G の連番の中の幅（最大 − 最小）が 2 段以上・3 段以上の画素の割合と最大
+    greens = []
+    for k in range(FLICKER_FRAMES):
+        path = os.path.join(sequence_dir, f"{view}.seq-{k}.png")
+        if not os.path.isfile(path):
+            return None, f"連番の PNG が無い {path}"
+        greens.append(np.asarray(Image.open(path).convert("RGB"), dtype=np.int32)[:, :, 1])
+    green = np.stack(greens)
+    if green.shape[1:] != stack.shape[1:]:
+        return None, f"連番の PNG の大きさ {green.shape[2]}x{green.shape[1]} が HDR と合わない"
+    samples = green[:, ys, xs].astype(np.float64)
+    spread = samples.max(axis=0) - samples.min(axis=0)
+    result["g8_range2_fraction"] = float(np.mean(spread >= 2))
+    result["g8_range3_fraction"] = float(np.mean(spread >= 3))
+    result["g8_range_max"] = int(spread.max())
+    # 風で雲が動いた分（画素ごとの連番の直線の傾き）を除いた残りの幅。歩の端数を全部止めて撮っても、縁の締まった雲が 56 フレームで
+    # 動く分だけで素の幅が 2 段以上の画素が出るので、ちらつきはこちらで数える
+    t = np.arange(FLICKER_FRAMES, dtype=np.float64) - 0.5 * (FLICKER_FRAMES - 1)
+    slope = (samples * t[:, None]).sum(axis=0) / float((t * t).sum())
+    residual = samples - samples.mean(axis=0) - slope[None, :] * t[:, None]
+    detrended = residual.max(axis=0) - residual.min(axis=0)
+    result["g8_detrended_range2_fraction"] = float(np.mean(detrended >= 2.0))
+    result["g8_detrended_range_max"] = float(detrended.max())
+    return result, None
 
 
 def measure_flicker(capture_dir, view, pixels, cloudy, failures):
@@ -551,6 +575,13 @@ def run(rc, capture_dir, views, verify, expect=None, flicker=False):
             print(f"REFERENCE_CHECK cloud_far view={view} flicker pixels={flick['pixels']} "
                   f"before_mean={flick['before']['mean']:.5f} after_mean={flick['after']['mean']:.5f} "
                   f"before_p95={flick['before']['p95']:.5f} after_p95={flick['after']['p95']:.5f} ratio={flick['ratio']:.4f}")
+            print(f"REFERENCE_CHECK cloud_far view={view} flicker_g8 "
+                  f"before_range2={flick['before']['g8_range2_fraction']:.4f} after_range2={flick['after']['g8_range2_fraction']:.4f} "
+                  f"before_range3={flick['before']['g8_range3_fraction']:.4f} after_range3={flick['after']['g8_range3_fraction']:.4f} "
+                  f"before_max={flick['before']['g8_range_max']} after_max={flick['after']['g8_range_max']} "
+                  f"before_detrended_range2={flick['before']['g8_detrended_range2_fraction']:.4f} "
+                  f"after_detrended_range2={flick['after']['g8_detrended_range2_fraction']:.4f} "
+                  f"after_detrended_max={flick['after']['g8_detrended_range_max']:.2f}")
         attribution = result["attribution"]
         print(f"REFERENCE_CHECK cloud_far view={view} attribution " +
               " ".join(f"{key}={value:.3f}" for key, value in attribution.items()))

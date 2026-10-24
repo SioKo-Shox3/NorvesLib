@@ -8,8 +8,8 @@
 #   (カメラの x + p.x, |p − 中心| − 惑星の半径, カメラの z + p.z) で、エンジンが視線の歩の位置から雲の座標を求めるのと同じ。
 # 格子: カメラの水平の右・前と上を軸とする VOXEL_SIZE_M の格子の点（OpenVDB と同じく値を格子の点に置く）で密度を評価する。
 #   範囲は、画面の縁の視線が雲の層の底と頂の球殻と交わる点の水平の外接箱を MARGIN_M 広げた箱（太陽への影と横への散乱の分。
-#   箱の外の雲は無いものとする）、高さは雲の層の全体（箱の隅までの地球の丸みの分を下へ足す）。細部で縁を削るのは、エンジンの
-#   視線と同じくカメラから DETAIL_MAX_DISTANCE 以内の点。格子の大きさ 16 m は細部の 3D ノイズの texel（約 17 m）より細かく、
+#   箱の外の雲は無いものとする）、高さは雲の層の全体（箱の隅までの地球の丸みの分を下へ足す）。細部で縁を削る強さは、エンジンの
+#   視線と同じくカメラからの距離で決める（CD.detail_weight）。格子の大きさ 16 m は細部の 3D ノイズの texel（約 17 m）より細かく、
 #   書き出しの視線で、格子を通した透過率と式を 4 m ごとに積んだ透過率の差は最大 0.004（12 m で 0.0026、8 m で 0.0013）。
 #
 # 視線の領域（画面の決めた画素の視線の分け方。エンジンの書き出しの値で決め、両方の描画に同じ分け方を使う）:
@@ -207,7 +207,7 @@ def frame_density(model, points, mask=None):
         distance = np.linalg.norm(points[inside] - np.array([0.0, h0, 0.0]), axis=-1)
         noise = np.stack([model.camera[0] + points[inside, 0], altitude[inside], model.camera[2] + points[inside, 2]],
                          axis=-1)
-        values[inside] = model.density(noise, heights[inside], distance < CD.DETAIL_MAX_DISTANCE,
+        values[inside] = model.density(noise, heights[inside], CD.detail_weight(distance),
                                        None if mask is None else mask[inside])
     return values
 

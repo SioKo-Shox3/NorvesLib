@@ -46,8 +46,13 @@ const float kPrimaryStepTarget = 90.0;
 // 太陽へ向かう光学的深さを数える回数と最初の歩幅(m)。歩幅は 1 回ごとに 1.8 倍
 const int kLightSteps = 6;
 const float kLightFirstStep = 70.0;
-// 細部で縁を削るのはこの距離までにする（遠い雲は画面で小さく、細部は見えない）
-const float kDetailMaxDistance = 18000.0;
+// 主の歩ごとに光の点の端数をずらす量（黄金比の端数）
+const float kLightJitterAdvance = 0.61803398875;
+// 細部で縁を削る強さを、視線の距離 kDetailFadeStart から kDetailFadeEnd までで 1 から 0 へ滑らかに下げる。細部の周期（形の大きさの
+// 1/8.3、約 300 m）は 30 km 先でも画面で十数画素あり、遠い雲の縁の細かな盛り上がりになる。距離で切ると、歩の端数でその距離の前後を
+// 行き来する歩の細部の有無がフレームごとに切り替わり、雲の縁が画素ごとにちらつく
+const float kDetailFadeStart = 30000.0;
+const float kDetailFadeEnd = 60000.0;
 // 雲までの区間の空気遠近を積む歩数（VolumetricsCommon.glsl の kAtmosphereSteps と同じ中点則）
 const int kCloudAerialSteps = 32;
 // 透過率がこれを下回ったら進むのをやめる
@@ -113,6 +118,14 @@ float InterleavedGradientNoise(vec2 pixel, float frameIndex)
     return fract(52.9829189 * fract(dot(pixel, vec2(0.06711056, 0.00583715))));
 }
 
+// 視線の歩の端数（0〜1）。画面の位置は interleaved gradient noise で散らし、フレームごとに黄金比の端数だけ進める。
+// IGN の位相をフレームでずらす形では 1 画素の時間の並びが偏り、縁の締まった雲の半透明の縁で時間の蓄積が均しきれずにちらつく。
+// 黄金比で進めると 1 画素の端数の並びが偏りの小さい列になり、少ないフレームで区間の平均に近づく
+float CloudMarchJitter(vec2 pixel, float frameIndex)
+{
+    return fract(InterleavedGradientNoise(pixel, 0.0) + frameIndex * 0.61803398875);
+}
+
 // 惑星の中心を原点に、高さ originY の点から direction へ進む光線と半径 radius の球の交点の距離（遠い方・近い方）
 // 交わらなければ x > y を返す
 vec2 IntersectSphere(float originY, vec3 direction, float radius)
@@ -128,8 +141,14 @@ vec2 IntersectSphere(float originY, vec3 direction, float radius)
     return vec2(-b - root, -b + root);
 }
 
-// 雲の密度（0〜1）。heightFraction は雲の層の中の高さの割合（0=底, 1=頂）
-float SampleCloudDensity(vec3 position, float heightFraction, bool bDetail)
+// 視線の距離 distance(m) の歩で細部が縁を削る強さ（0〜1）
+float CloudDetailWeight(float distance)
+{
+    return 1.0 - smoothstep(kDetailFadeStart, kDetailFadeEnd, distance);
+}
+
+// 雲の密度（0〜1）。heightFraction は雲の層の中の高さの割合（0=底, 1=頂）、detailWeight は細部で縁を削る強さ（0〜1）
+float SampleCloudDensity(vec3 position, float heightFraction, float detailWeight)
 {
     // 形のノイズの格子を世界の軸から傾けて回す。格子が世界の軸に沿うと、Perlin-Worley の格子の面が
     // 雲の縦にまっすぐな縁と四角い角になる。四元数 (4, 1, 2, 2) の回転で成分が 1/25 の整数倍なので、
@@ -176,7 +195,7 @@ float SampleCloudDensity(vec3 position, float heightFraction, bool bDetail)
     float lowFrequencyFbm = shape.g * 0.625 + shape.b * 0.25 + shape.a * 0.125;
     float base = clamp(Remap(shape.r, lowFrequencyFbm - 1.0, 1.0, 0.0, 1.0), 0.0, 1.0);
     base = clamp(Remap(base * profile, 1.0 - coverageMask, 1.0, 0.0, 1.0) * coverageMask * kCloudDensityGain, 0.0, 1.0);
-    if (base <= 0.0 || !bDetail)
+    if (base <= 0.0 || detailWeight <= 0.0)
     {
         return base;
     }
@@ -187,7 +206,7 @@ float SampleCloudDensity(vec3 position, float heightFraction, bool bDetail)
                              0.0).rgb;
     float detailFbm = detail.r * 0.625 + detail.g * 0.25 + detail.b * 0.125;
     float detailModifier = mix(detailFbm, 1.0 - detailFbm, clamp(heightFraction * 4.0, 0.0, 1.0));
-    return clamp(Remap(base, detailModifier * 0.35, 1.0, 0.0, 1.0), 0.0, 1.0);
+    return clamp(Remap(base, detailModifier * 0.35 * detailWeight, 1.0, 0.0, 1.0), 0.0, 1.0);
 }
 
 // 1 本の視線を雲の層で進めた結果
@@ -352,21 +371,23 @@ CloudRayResult MarchCloudLayerWithDiagnostics(vec3 rayDirection, float jitter, u
         }
         // ノイズは雲の層の中の高さで引く（球殻の曲がりに沿って同じ形が並ぶ）
         vec3 noisePosition = vec3(samplePosition.x, altitude, samplePosition.z);
-        float density = SampleCloudDensity(noisePosition, heightFraction, sampleDistance < kDetailMaxDistance);
+        float density = SampleCloudDensity(noisePosition, heightFraction, CloudDetailWeight(sampleDistance));
         if (density <= 0.001)
         {
             continue;
         }
 
         // 太陽へ向かう光学的深さ（後半の遠い点は細部を省く）。後半の歩は 1 点で数百 m〜1.3 km を代表するので、点を区間の
-        // 中点に固定すると、点が塊の急な縁をまたぐ所で光学的深さが跳び、陰が硬い縁の平らな段になる。点を主の歩と同じ
-        // 端数で区間の中に散らし、時間の蓄積で区間の平均に均す
+        // 中点に固定すると、点が塊の急な縁をまたぐ所で光学的深さが跳び、陰が硬い縁の平らな段になる。点を区間の中の端数の
+        // 位置へ散らし、時間の蓄積で区間の平均に均す。端数は主の歩ごとに黄金比でずらし、雲の中の歩どうしで光の点の
+        // 揺れが打ち消し合うようにする（全部の歩で同じ端数だと揺れが視線の全部の歩で揃い、画素ごとのちらつきになる）
+        float lightJitter = fract(jitter + float(stepIndex) * kLightJitterAdvance);
         float lightOpticalDepth = 0.0;
         float lightDistance = 0.0;
         float lightStep = kLightFirstStep;
         for (int lightIndex = 0; lightIndex < kLightSteps; ++lightIndex)
         {
-            float lightSampleDistance = lightDistance + lightStep * jitter;
+            float lightSampleDistance = lightDistance + lightStep * lightJitter;
             vec3 lightPosition = noisePosition + sunDirection * lightSampleDistance;
             float lightHeightFraction = (lightPosition.y - params.layerAltitudesAndCoverage.y) / layerThickness;
             if (lightHeightFraction > 1.0)
@@ -375,7 +396,7 @@ CloudRayResult MarchCloudLayerWithDiagnostics(vec3 rayDirection, float jitter, u
             }
             if (lightHeightFraction >= 0.0)
             {
-                lightOpticalDepth += SampleCloudDensity(lightPosition, lightHeightFraction, lightIndex < 3) * lightStep;
+                lightOpticalDepth += SampleCloudDensity(lightPosition, lightHeightFraction, lightIndex < 3 ? 1.0 : 0.0) * lightStep;
             }
             lightDistance += lightStep;
             lightStep *= 1.8;

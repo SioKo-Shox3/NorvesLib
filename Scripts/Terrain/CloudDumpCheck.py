@@ -58,7 +58,11 @@ PRIMARY_STEP_TARGET = 90.0
 LIGHT_STEPS = 6
 LIGHT_FIRST_STEP = 70.0
 LIGHT_STEP_GROWTH = 1.8
-DETAIL_MAX_DISTANCE = 18000.0
+# 主の歩ごとに光の点の端数をずらす量（kLightJitterAdvance）
+LIGHT_JITTER_ADVANCE = 0.61803398875
+# 細部で縁を削る強さを視線の距離で 1 から 0 へ下げる区間(m)（kDetailFadeStart・kDetailFadeEnd）
+DETAIL_FADE_START = 30000.0
+DETAIL_FADE_END = 60000.0
 # 雲までの区間の空気遠近を積む歩数（kCloudAerialSteps。VolumetricsCommon.glsl の kAtmosphereSteps と同じ中点則）
 AERIAL_STEPS = 32
 MIN_TRANSMITTANCE = 0.01
@@ -112,6 +116,11 @@ def smoothstep(edge0, edge1, value):
 
 def mix(a, b, t):
     return a * (1.0 - t) + b * t
+
+
+def detail_weight(distance):
+    """視線の距離 distance(m) の歩で細部が縁を削る強さ（CloudDetailWeight）"""
+    return 1.0 - smoothstep(DETAIL_FADE_START, DETAIL_FADE_END, np.asarray(distance, dtype=np.float64))
 
 
 def probe_diagnostic_flags(probe):
@@ -283,11 +292,11 @@ class CloudModel:
         weather_value = clamp01(low[:, 0] * 0.55 + low[:, 1] * 0.2 + high[:, 0] * 0.25)
         return smoothstep(1.0 - self.coverage - COVERAGE_EDGE_BELOW, 1.0 - self.coverage + COVERAGE_EDGE_ABOVE, weather_value)
 
-    def density(self, position, height_fraction, detail_mask, mask=None):
-        """mask は coverage_mask の値（省くと位置から求める）"""
+    def density(self, position, height_fraction, detail_weight, mask=None):
+        """detail_weight は細部で縁を削る強さ（0〜1。真偽は 1・0）、mask は coverage_mask の値（省くと位置から求める）"""
         position = np.atleast_2d(position)
         height_fraction = np.atleast_1d(height_fraction).astype(np.float64)
-        detail_mask = np.broadcast_to(np.atleast_1d(detail_mask), height_fraction.shape)
+        detail_weight = np.broadcast_to(np.atleast_1d(detail_weight).astype(np.float64), height_fraction.shape)
         if mask is None:
             mask = self.coverage_mask(position[:, 0], position[:, 2], self.weather_warp(position))
         top_limit = mix(0.35, 1.0, mask)
@@ -300,8 +309,8 @@ class CloudModel:
         detail = sample_trilinear(self.detail_noise, (position + self.detail_offset) * self.inverse_detail)
         detail_fbm = detail[:, 0] * 0.625 + detail[:, 1] * 0.25 + detail[:, 2] * 0.125
         modifier = mix(detail_fbm, 1.0 - detail_fbm, clamp01(height_fraction * 4.0))
-        eroded = clamp01(remap(base, modifier * 0.35, 1.0, 0.0, 1.0))
-        value = np.where(detail_mask & (base > 0.0), eroded, base)
+        eroded = clamp01(remap(base, modifier * 0.35 * detail_weight, 1.0, 0.0, 1.0))
+        value = np.where((detail_weight > 0.0) & (base > 0.0), eroded, base)
         value = np.where(profile <= 0.0, 0.0, value)
         return np.where(mask <= 0.001, 0.0, value)
 
@@ -314,14 +323,16 @@ class CloudModel:
         return direction / np.linalg.norm(direction)
 
     def jitter(self, pixel):
-        """InterleavedGradientNoise を単精度で（GPU と同じ順の演算）"""
+        """CloudMarchJitter を単精度で（GPU と同じ順の演算）: 位相 0 の InterleavedGradientNoise にフレームの黄金比の端数を足す"""
         f32 = np.float32
-        px = f32(pixel[0]) + f32(5.588238) * f32(self.frame_phase)
-        py = f32(pixel[1]) + f32(5.588238) * f32(self.frame_phase)
+        px = f32(pixel[0])
+        py = f32(pixel[1])
         dot = f32(px * f32(0.06711056)) + f32(py * f32(0.00583715))
         inner = f32(dot - np.floor(dot))
         product = f32(f32(52.9829189) * inner)
-        return float(product - np.floor(product))
+        noise = f32(product - np.floor(product))
+        value = f32(noise + f32(f32(self.frame_phase) * f32(0.61803398875)))
+        return float(value - np.floor(value))
 
     # ---- 視線を進める（MarchCloudLayer と ComposeCloudRadiance） ----
     @staticmethod
@@ -402,7 +413,7 @@ class CloudModel:
         densities = np.zeros(step_count)
         if np.any(inside):
             densities[inside] = self.density(noise_positions[inside], heights[inside],
-                                             distances[inside] < DETAIL_MAX_DISTANCE)
+                                             detail_weight(distances[inside]))
         active = inside & (densities > DENSITY_THRESHOLD)
 
         sun_terms = np.zeros(step_count)
@@ -411,7 +422,8 @@ class CloudModel:
                       sample_sky(self.sky_lut, (0.0, 0.5, 0.866)) + sample_sky(self.sky_lut, (0.0, 0.5, -0.866))) * 0.2)
         ground = self.ground_albedo * (self.sun_illuminance * max(self.sun_direction[1], 0.0) / PI + sky_above)
         if with_light and np.any(active):
-            sun_terms[active] = self.sun_term(noise_positions[active], direction, jitter)
+            light_jitter = np.mod(jitter + np.arange(step_count, dtype=np.float64) * LIGHT_JITTER_ADVANCE, 1.0)
+            sun_terms[active] = self.sun_term(noise_positions[active], direction, light_jitter[active])
 
         transmittance = 1.0
         optical_depth = 0.0
@@ -467,7 +479,8 @@ class CloudModel:
                 for octave in range(3)]
 
     def sun_term(self, noise_positions, direction, jitter=0.5):
-        """太陽へ向かう光学的深さ（6 回、歩幅は 1.8 倍ずつ。各回の点は区間の中の主の歩と同じ端数 jitter の位置）と多重散乱の近似の和"""
+        """太陽へ向かう光学的深さ（6 回、歩幅は 1.8 倍ずつ。各回の点は区間の中の端数 jitter の位置。jitter は点ごとの配列でもよい）と
+        多重散乱の近似の和"""
         thickness = self.top - self.bottom
         count = noise_positions.shape[0]
         light_depth = np.zeros(count)
@@ -475,8 +488,8 @@ class CloudModel:
         light_distance = 0.0
         light_step = LIGHT_FIRST_STEP
         for light_index in range(LIGHT_STEPS):
-            sample_distance = light_distance + light_step * jitter
-            positions = noise_positions + self.sun_direction[None, :] * sample_distance
+            sample_distance = light_distance + light_step * np.broadcast_to(np.asarray(jitter, dtype=np.float64), (count,))
+            positions = noise_positions + self.sun_direction[None, :] * sample_distance[:, None]
             heights = (positions[:, 1] - self.bottom) / thickness
             alive &= ~(heights > 1.0)
             use = alive & (heights >= 0.0)

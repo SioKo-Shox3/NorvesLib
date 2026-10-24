@@ -37,7 +37,7 @@ void main()
 
     vec3 rayDirection;
     bool bDirection = ComputeCloudRayDirection(uv, rayDirection);
-    float jitter = InterleavedGradientNoise(pixel, params.sunDirectionAndFrameIndex.w);
+    float jitter = CloudMarchJitter(pixel, params.sunDirectionAndFrameIndex.w);
     CloudRayResult ray = bDirection ? MarchCloudLayerWithDiagnostics(rayDirection, jitter, diagnosticFlags)
                                     : MakeEmptyCloudRayResult();
     float opacity = clamp(1.0 - ray.Transmittance, 0.0, 1.0);

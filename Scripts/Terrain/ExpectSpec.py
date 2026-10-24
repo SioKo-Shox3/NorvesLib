@@ -116,6 +116,9 @@ CLOUD_FAR_QUANTITIES = {"composite_max_rel": (("composite",), "max_rel"),
                         "fine_rays": (("fine",), "rays"),
                         "flicker_ratio": (("flicker",), "ratio"),
                         "flicker_pixels": (("flicker",), "pixels"),
+                        "flicker_after_mean": (("flicker", "after"), "mean"),
+                        "flicker_after_g8_range2": (("flicker", "after"), "g8_range2_fraction"),
+                        "flicker_after_g8_detrended_range2": (("flicker", "after"), "g8_detrended_range2_fraction"),
                         "contrast_mean": (("stages", "current"), "contrast_mean")}
 # building の量 → 視点の検査の結果の (節, 鍵)
 BUILDING_QUANTITIES = {"albedo_p5": ("albedo", "p5"), "albedo_median": ("albedo", "p50"), "albedo_p95": ("albedo", "p95"),

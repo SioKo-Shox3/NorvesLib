@@ -31,7 +31,7 @@ void main()
         return;
     }
 
-    float jitter = InterleavedGradientNoise(gl_FragCoord.xy, params.sunDirectionAndFrameIndex.w);
+    float jitter = CloudMarchJitter(gl_FragCoord.xy, params.sunDirectionAndFrameIndex.w);
     CloudRayResult ray = MarchCloudLayer(rayDirection, jitter);
     float opacity = clamp(1.0 - ray.Transmittance, 0.0, 1.0);
     if (!ray.bMarched || opacity <= 0.0)

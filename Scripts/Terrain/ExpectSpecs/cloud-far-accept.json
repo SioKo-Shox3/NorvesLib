@@ -1,0 +1,75 @@
+{
+  "description": "SCN-WL-CLOUD-FAR-DETAIL: 遠い雲の細部の打ち切りを距離で溶かし、雲の歩の端数をフレームごとに黄金比で進めて光の点の端数を主の歩ごとにずらし、遠景の雲のちらつきを消したことの合否。今の歩と細かい歩の写真と同じ画素の範囲の平均の差（SCN-WL-CLOUD-FAR-RANGE の行のまま）、ref_far_01 のちらつきの連番の 8 bit の見える揺れ、雲の合成の期待値を見る。一様な膜のときの値だった霞の後のコントラストの下限（0.7007）と、HDR のちらつきの前との比の行は外した（比と値は記録する）。",
+  "rows": [
+    {
+      "mode": "cloud_far",
+      "view": "ref_far_01",
+      "quantity": "fine_radiance_mean_rel",
+      "max": 0.05,
+      "note": "写真と同じ画素の範囲の視線の、霞の後の雲の放射輝度の Y の平均の、今の歩と細かい歩の相対差"
+    },
+    {
+      "mode": "cloud_far",
+      "view": "ref_far_01",
+      "quantity": "fine_opacity_mean_rel",
+      "max": 0.05,
+      "note": "同じ範囲の雲の不透明度の平均の、今の歩と細かい歩の相対差"
+    },
+    {
+      "mode": "cloud_far",
+      "view": "ref_far_01",
+      "quantity": "fine_rays",
+      "min": 100,
+      "note": "細かい歩と比べた視線の数（検査が成り立つこと）"
+    },
+    {
+      "mode": "cloud_far",
+      "view": "ref_far_02",
+      "quantity": "fine_radiance_mean_rel",
+      "max": 0.05,
+      "note": "写真と同じ画素の範囲の視線の、霞の後の雲の放射輝度の Y の平均の、今の歩と細かい歩の相対差"
+    },
+    {
+      "mode": "cloud_far",
+      "view": "ref_far_02",
+      "quantity": "fine_opacity_mean_rel",
+      "max": 0.05,
+      "note": "同じ範囲の雲の不透明度の平均の、今の歩と細かい歩の相対差"
+    },
+    {
+      "mode": "cloud_far",
+      "view": "ref_far_02",
+      "quantity": "fine_rays",
+      "min": 100,
+      "note": "細かい歩と比べた視線の数（検査が成り立つこと）"
+    },
+    {
+      "mode": "cloud_far",
+      "view": "ref_far_01",
+      "quantity": "flicker_after_g8_detrended_range2",
+      "max": 0.01,
+      "note": "雲の範囲の画素のうち、連番 8 枚（8 フレームおき）の 8 bit の PNG の G から画素ごとの直線の傾き（風で雲が動いた分）を除いた残りの幅が 2 段以上の画素の割合。歩の端数を全部止めて撮ると 0 で、素の幅の 2 段以上（約 2.7 %）は風の動きの分（WastelandCloudShape.md の「遠い雲の細部とちらつき」）。素の幅と HDR のちらつきの比は記録する"
+    },
+    {
+      "mode": "cloud_far",
+      "view": "ref_far_01",
+      "quantity": "flicker_pixels",
+      "min": 100,
+      "note": "ちらつきを数えた雲の範囲の画素の数（検査が成り立つこと）"
+    },
+    {
+      "mode": "cloud_far",
+      "view": "ref_far_01",
+      "quantity": "composite_max_rel",
+      "max": 0.05,
+      "note": "GPU の霞の後の雲の放射輝度と、同じ入力から雲までの区間の空気遠近を 256 歩で積み直した期待値の、RGB の相対差の最大"
+    },
+    {
+      "mode": "cloud_far",
+      "view": "ref_far_02",
+      "quantity": "composite_max_rel",
+      "max": 0.05,
+      "note": "GPU の霞の後の雲の放射輝度と、同じ入力から雲までの区間の空気遠近を 256 歩で積み直した期待値の、RGB の相対差の最大"
+    }
+  ]
+}
