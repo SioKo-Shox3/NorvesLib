@@ -534,6 +534,11 @@ namespace NorvesLib::Tools::AssetCook
         constexpr double kBattleshipShelfReach = 10.0;
         // 折れ線の線分を引く升目の一辺（m）
         constexpr double kCarveIndexCell = 4.0;
+        // 上げた壁の前の縁に置く段: 尾根の点から手前へこの奥行き（m）ごとに 1 段下げ、kBattleshipWallSteps 段で元の地面へ
+        // 下ろす（壁の面に横に割れた層の段を作る）。段の縁は kBattleshipWallJitter（m）だけ揺らして直線の筋にしない
+        constexpr double kBattleshipWallTread = 2.0;
+        constexpr int kBattleshipWallSteps = 2;
+        constexpr double kBattleshipWallJitter = 0.8;
 
         // 刻みの折れ線の点。尾根の刻みは目標の高さと向き（1 は上げる、-1 は下げる）、棚の段は棚の高さと効きの割合
         struct CarveNode
@@ -700,6 +705,39 @@ namespace NorvesLib::Tools::AssetCook
             return ridge;
         }
 
+        // 尾根の刻みの列の表（視点からの方位の順。方位で挟む隣の列を補間する）
+        struct CarveColumn
+        {
+            double Azimuth;
+            double CrestDistance;
+            float Height;
+            int Direction;
+            int Column;
+        };
+
+        const VariableArray<CarveColumn> &BattleshipRidgeColumns()
+        {
+            static const VariableArray<CarveColumn> columns = []
+            {
+                VariableArray<CarveColumn> result;
+                if (!kBattleshipCarveEnabled)
+                {
+                    return result;
+                }
+                for (const TerrainCliffCarveStamp &stamp : kBattleshipCarveStamps)
+                {
+                    const double dx = stamp.CrestX - kBattleshipCarveOriginX;
+                    const double dz = stamp.CrestZ - kBattleshipCarveOriginZ;
+                    result.push_back(CarveColumn{std::atan2(dz, dx), std::sqrt(dx * dx + dz * dz), stamp.Height, stamp.Direction,
+                                                 stamp.Column});
+                }
+                std::sort(result.begin(), result.end(),
+                          [](const CarveColumn &a, const CarveColumn &b) { return a.Azimuth < b.Azimuth; });
+                return result;
+            }();
+            return columns;
+        }
+
         // 崖錐の棚の段の折れ線（TerrainCliffShelfBattleship.h の並びごと）
         const CarvePolyline &BattleshipShelves()
         {
@@ -735,16 +773,17 @@ namespace NorvesLib::Tools::AssetCook
                         result.MaxZ = std::max(result.MaxZ, node.Z + reach);
                     }
                 };
-                include(BattleshipRidge(), kBattleshipCarveRadius);
+                include(BattleshipRidge(), kBattleshipCarveRadius + kBattleshipWallTread * kBattleshipWallSteps + kBattleshipWallJitter);
                 include(BattleshipShelves(), kBattleshipShelfReach);
                 return result;
             }();
             return bounds;
         }
 
-        // 刻んだ後の高さ。尾根の刻み: 点に最も近い線分が半径の内にあれば、両端の刻みの結果（目標の高さまで上げるか下げる）を
-        // 線分に沿って補間する。棚の段: 最も近い棚の線分が kBattleshipShelfReach の内にあり、高さが棚の高さから
-        // 蹴上げの高さまでの間なら、効きの割合だけ棚の高さへ削る
+        // 刻んだ後の高さ。尾根の刻み: 視点からの方位で点を挟む隣の列（列の間隔が kBattleshipCarveColumnStep 以下）があり、
+        // 点が尾根の点から奥へ 2 × 半径の帯の内なら、両方の列の刻みの結果（目標の高さまで上げるか下げる）を方位に沿って補間する
+        // （列の外へ丸い張り出しを出さない）。上げる列は尾根の点の手前に kBattleshipWallSteps 段の層の段を置く。棚の段: 最も近い
+        // 棚の線分が kBattleshipShelfReach の内にあり、高さが棚の高さから蹴上げの高さまでの間なら、効きの割合だけ棚の高さへ削る
         float CarveBattleshipHeight(double x, double z, float height)
         {
             const CarveBounds &bounds = BattleshipCarveBounds();
@@ -752,16 +791,56 @@ namespace NorvesLib::Tools::AssetCook
             {
                 return height;
             }
-            CarveHit hit;
-            const CarvePolyline &ridge = BattleshipRidge();
-            if (NearestCarveSegment(ridge, x, z, kBattleshipCarveRadius, hit))
+            const VariableArray<CarveColumn> &columns = BattleshipRidgeColumns();
+            if (columns.size() >= 2)
             {
-                const auto apply = [height](const CarveNode &node)
-                { return node.Value > 0.0f ? std::max(height, node.Height) : std::min(height, node.Height); };
-                const float a = apply(ridge.Nodes[hit.Segment]);
-                const float b = apply(ridge.Nodes[hit.Segment + 1]);
-                height = a + (b - a) * static_cast<float>(hit.U);
+                const double dx = x - kBattleshipCarveOriginX;
+                const double dz = z - kBattleshipCarveOriginZ;
+                const double azimuth = std::atan2(dz, dx);
+                const double distance = std::sqrt(dx * dx + dz * dz);
+                const auto upper = std::upper_bound(columns.begin(), columns.end(), azimuth,
+                                                    [](double value, const CarveColumn &column) { return value < column.Azimuth; });
+                if (upper != columns.begin() && upper != columns.end())
+                {
+                    const CarveColumn &a = *(upper - 1);
+                    const CarveColumn &b = *upper;
+                    if (std::abs(a.Column - b.Column) <= kBattleshipCarveColumnStep && b.Azimuth > a.Azimuth)
+                    {
+                        const double u = (azimuth - a.Azimuth) / (b.Azimuth - a.Azimuth);
+                        const double crest = a.CrestDistance + (b.CrestDistance - a.CrestDistance) * u;
+                        const double wallDepth = kBattleshipWallTread * kBattleshipWallSteps;
+                        const double jitter =
+                            (ValueNoise3(static_cast<float>(x * 0.21), 7.3f, static_cast<float>(z * 0.21)) - 0.5f) * (2.0 * kBattleshipWallJitter);
+                        const double front = crest - distance + jitter;
+                        if (front <= wallDepth && distance <= crest + 2.0 * kBattleshipCarveRadius)
+                        {
+                            const auto apply = [height, front](const CarveColumn &column)
+                            {
+                                if (column.Direction > 0)
+                                {
+                                    if (front <= 0.0)
+                                    {
+                                        return std::max(height, column.Height);
+                                    }
+                                    const int step = static_cast<int>(std::ceil(front / kBattleshipWallTread));
+                                    const float rise = std::max(0.0f, column.Height - height);
+                                    return std::max(height, column.Height - rise * static_cast<float>(step) /
+                                                                                 static_cast<float>(kBattleshipWallSteps + 1));
+                                }
+                                if (column.Direction < 0 && front <= 0.0)
+                                {
+                                    return std::min(height, column.Height);
+                                }
+                                return height;
+                            };
+                            const float ha = apply(a);
+                            const float hb = apply(b);
+                            height = ha + (hb - ha) * static_cast<float>(u);
+                        }
+                    }
+                }
             }
+            CarveHit hit;
             const CarvePolyline &shelves = BattleshipShelves();
             if (NearestCarveSegment(shelves, x, z, kBattleshipShelfReach, hit))
             {
@@ -779,7 +858,7 @@ namespace NorvesLib::Tools::AssetCook
             return height;
         }
 
-        // 刻んだ範囲の割合の升目（尾根の刻みの半径・棚の段の範囲の内 1、外へ kBattleshipCarveFadeMeters で 0）
+        // 刻んだ範囲の割合の升目（尾根の刻みの半径と壁の前の段・棚の段の範囲の内 1、外へ kBattleshipCarveFadeMeters で 0）
         struct CarveMask
         {
             double MinX = 0.0;
@@ -821,7 +900,7 @@ namespace NorvesLib::Tools::AssetCook
                     {
                         const double x = result.MinX + column * kBattleshipCarveMaskCell;
                         const double z = result.MinZ + row * kBattleshipCarveMaskCell;
-                        const double value = std::max(amount(BattleshipRidge(), x, z, kBattleshipCarveRadius),
+                        const double value = std::max(amount(BattleshipRidge(), x, z, kBattleshipCarveRadius + kBattleshipWallTread * kBattleshipWallSteps + kBattleshipWallJitter),
                                                       amount(BattleshipShelves(), x, z, kBattleshipShelfReach));
                         result.Values[static_cast<size_t>(row) * result.Columns + column] = static_cast<float>(value);
                     }

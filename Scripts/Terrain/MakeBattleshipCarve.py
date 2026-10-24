@@ -3,8 +3,9 @@
 # （Scripts/Terrain/ShapeAnnotations.json）から、列ごとに撮影の外形の最も上の画素の世界の位置（尾根の点）と、同じ水平の距離で
 # 写真の外形の行を通る視線の高さ（目標の高さ）を求める。尾根の点から視点の反対へ RADIUS 寄せた点を中心とする半径 RADIUS の
 # 円（前の縁が尾根の点を通る）を 1 つの刻みとし、目標が上なら高さを目標まで上げ（max）、下なら目標まで下げる（min）。
-# TerrainCliffDetail.cpp は中心を列の順に並べた折れ線（前後を均す）として扱い、格子の点は最も近い線分の両端の刻みを
-# 線分に沿って補間して受ける（円ごとの丸い柱と最も近い円の境の縦の段を作らない）。
+# TerrainCliffDetail.cpp は、格子の点を視点からの方位で挟む隣の列の刻みを方位に沿って補間し、尾根の点から奥へ 2 × RADIUS の
+# 帯に掛ける（列の外へ丸い張り出しを出さず、写真の壁の列で段を切る）。差の小さい列も向き 0（変えない）で書き、補間の
+# 隣を切らさない。中心の並びは刻んだ範囲の割合（割れ目を止める範囲）と区画の外接の箱に使う。
 # 表は Tools/AssetCook/TerrainCliffCarveBattleship.h に書き、TerrainCliffDetail.cpp が近景の範囲 0 の高さに掛ける。
 #
 # --shelves を付けると、写真の注釈の棚の線（ずらした量を足した位置）を撮影の深度で世界へ戻した点の並びを
@@ -164,16 +165,16 @@ def main():
             # 奥の尾根の代わりに置く列は、手前の距離で今の外形の行を通る視線の高さを今の高さにする
             crest_height = origin[1] + ray_top[1] * reach / np.hypot(ray_top[0], ray_top[2])
         delta = target - crest_height
-        if abs(delta) < MIN_DELTA:
-            continue
+        direction = 0 if abs(delta) < MIN_DELTA else (1 if delta > 0 else -1)
         center = crest_xz + horizontal * RADIUS
-        stamps.append((x, crest_xz[0], crest_xz[1], center[0], center[1], target, 1 if delta > 0 else -1, delta, reach))
+        stamps.append((x, crest_xz[0], crest_xz[1], center[0], center[1], target, direction, delta, reach))
 
     lines = [
         "﻿#pragma once",
         "",
         "// Battleship Rock の尾根を写真の段に削る刻みの表（Scripts/Terrain/MakeBattleshipCarve.py が書く。手で直さない）。",
-        "// 1 行が 1 つの刻み: 円の中心の X・Z（m）、目標の高さ（m）、向き（1 は上げる、-1 は下げる）。半径は kBattleshipCarveRadius",
+        "// 1 行が 1 つの列の刻み: 円の中心の X・Z（m）、目標の高さ（m）、向き（1 は上げる、-1 は下げる、0 は変えない）、",
+        "// 尾根の点の X・Z（m）、写真の列。半径は kBattleshipCarveRadius、視点は kBattleshipCarveOriginX・Z",
         "",
         "namespace NorvesLib::Tools::AssetCook",
         "{",
@@ -183,13 +184,19 @@ def main():
         "        double CenterZ;",
         "        float Height;",
         "        int Direction;",
+        "        double CrestX;",
+        "        double CrestZ;",
+        "        int Column;",
         "    };",
         "",
         f"    inline constexpr double kBattleshipCarveRadius = {RADIUS:.1f};",
+        f"    inline constexpr double kBattleshipCarveOriginX = {origin[0]:.3f};",
+        f"    inline constexpr double kBattleshipCarveOriginZ = {origin[2]:.3f};",
+        f"    inline constexpr int kBattleshipCarveColumnStep = {COLUMN_STEP};",
         "    inline constexpr TerrainCliffCarveStamp kBattleshipCarveStamps[] = {",
     ]
     for s in stamps:
-        lines.append(f"        {{{s[3]:.2f}, {s[4]:.2f}, {s[5]:.2f}f, {s[6]}}}, // 列 {s[0]}、差 {s[7]:+.1f} m、距離 {s[8]:.0f} m")
+        lines.append(f"        {{{s[3]:.2f}, {s[4]:.2f}, {s[5]:.2f}f, {s[6]}, {s[1]:.2f}, {s[2]:.2f}, {s[0]}}}, // 差 {s[7]:+.1f} m、距離 {s[8]:.0f} m")
     lines += ["    };", "} // namespace NorvesLib::Tools::AssetCook", ""]
     with open(OUTPUT, "w", encoding="utf-8", newline="\r\n") as f:
         f.write("\n".join(lines))
