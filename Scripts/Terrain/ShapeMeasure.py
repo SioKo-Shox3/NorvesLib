@@ -13,8 +13,8 @@
 # 折れの向き: 面の法線・地形の印・深度の対数の Sobel の勾配の構造テンソルを kTensorRadius の箱で均し、主の向きに直交する向きを
 #   折れの線の向き（0〜180°）とする。向きのまとまり（coherence）が kCoherenceMin 未満の画素（交わり・点の集まり）は向きを持たない。
 #   さらに線の向きに ±kLineHalfPx の点のうち kLineMinHits 以上が向きを持つ折れの画素だけを「折れの線」に残す（点の雑音を外す）。
-# 棚の折れ: 折れの線に、遠くで数画素の斜面に丸まる段の縁を足す（rounded_folds）。4 つの向きの ±kShelfSpanHalfPx（区間 6 画素）の
-#   両端の法線の角が kFoldDegrees 以上か両端の深度の段で、区間を広げた両端の差の積み上げが向きに沿って前後以上の画素（曲がりの中心）。
+# 棚の折れ: 折れの線に、遠くで数画素の斜面に丸まる段の縁を足す（rounded_folds）。4 つの向きの ±kShelfSpanHalfPx（区間 6 画素）で
+#   隣どうしの法線の角を積み上げた曲がりが kFoldDegrees 以上か両端の深度の段で、積み上げが向きに沿って前後以上の画素（曲がりの中心）。
 #   向きと点の雑音の外し方は折れの線と同じ。棚の一致・局所の欠け・余分な折れはこの棚の折れで数える。
 # 角の折れ: 折れの線に、空との縁（外形の輪郭。地形の画素で 4 近傍に空がある画素）を足す（contour_orientation）。輪郭の画素の向きは
 #   法線や深度の勾配でなく、半径 kContourRadiusPx の箱の輪郭の画素の位置の主成分の軸（1 m の格子の段で輪郭が細かく折れても、
@@ -40,7 +40,7 @@
 # --expect の仕様（PhotoExpect.py）は注釈の版 annotations_sha256（ShapeAnnotations.json を読んで鍵を並べた正規の JSON の sha256。
 #   annotations_hash() が求める）を持ち、無いか今の注釈と違えば落ちる。
 # --selftest: 合成の深度と法線（1920×1080 の正面の壁、棚 3 本、上の 2 つの角）で量を求め、SELFTEST_ROWS で判定する。
-#   正しい形を許容の内でずらしたものと 5 画素の幅で丸まった段の縁は通り、壁一面の鋸歯・格子・棚を 1 本消した形・角の点で縦の溝と
+#   正しい形を許容の内でずらしたものと 5 画素の幅で丸まった段の縁・両端の面が平行に戻る丸まった段は通り、壁一面の鋸歯・格子・棚を 1 本消した形・角の点で縦の溝と
 #   横の折れが十字に交わる形・滑らかな斜面・平らな面は落ちる。角の判定だけの例（CORNER_PROBE_CASES）で、角の点から左上へずれた十字と
 #   まっすぐな空との縁は角に数えず、同じだけずれた正しい角と、細かく段になった空との縁で曲がる角は数えることも確かめる。
 # 落ちる: 注釈が無い・崖に外形・棚・角（二辺の向き）が無い・撮影の PNG・深度・幾何の法線（--terrain-only は地形の印）が無いか
@@ -256,26 +256,29 @@ def line_pixels(oriented, angle):
 
 
 def rounded_folds(terrain, surface, safe, normal, readable):
-    """遠くで数画素の斜面に丸まる段の縁（棚の折れに足す）。4 つの向きの短い区間（±kShelfSpanHalfPx）の両端の法線の角が
-    kFoldDegrees 以上か、両端の深度の段（depth_step）の画素のうち、区間を 1〜kShelfSpanHalfPx 画素に広げた両端の差の
-    積み上げ（法線は 1 − 内積、深度は対数の比）が向きに沿って前後の画素以上の所だけを残す（曲がりの中心の 1〜2 画素の線にする）"""
-    cos_limit = np.cos(np.radians(kFoldDegrees))
+    """遠くで数画素の斜面に丸まる段の縁（棚の折れに足す）。4 つの向きの短い区間（±kShelfSpanHalfPx）で、隣どうしの画素の
+    法線の角を区間に沿って積み上げた曲がりが kFoldDegrees 以上（区間の全部の画素が読める所。両端が平行に戻る丸まった段も
+    数える）か、両端の深度の段（depth_step）の画素のうち、積み上げ（法線は曲がりの角、深度は区間を 1〜kShelfSpanHalfPx 画素に
+    広げた両端の対数の比の和）が向きに沿って前後の画素以上の所だけを残す（曲がりの中心の 1〜2 画素の線にする）"""
     span = kShelfSpanHalfPx
     log_depth = np.log(np.maximum(safe, 1e-6))
     soft = np.zeros(safe.shape, dtype=bool)
     for ux, uy in DIRECTIONS.values():
         bend_score = np.zeros(safe.shape)
         depth_score = np.zeros(safe.shape)
+        read = surface & readable
+        for k in range(-span, span):
+            read &= shifted(surface & readable, (k + 1) * ux, (k + 1) * uy, False)
+            if k == -span:
+                read &= shifted(surface & readable, k * ux, k * uy, False)
+            dot = np.sum(shifted(normal, k * ux, k * uy, 0.0) * shifted(normal, (k + 1) * ux, (k + 1) * uy, 0.0), axis=2)
+            bend_score += np.degrees(np.arccos(np.clip(dot, -1.0, 1.0)))
+        bend_score = np.where(read, bend_score, 0.0)
         for k in range(1, span + 1):
             usable = surface & shifted(surface, k * ux, k * uy, False) & shifted(surface, -k * ux, -k * uy, False)
-            read = usable & shifted(readable, k * ux, k * uy, False) & shifted(readable, -k * ux, -k * uy, False)
-            dot = np.sum(shifted(normal, k * ux, k * uy, 0.0) * shifted(normal, -k * ux, -k * uy, 0.0), axis=2)
-            bend_score += np.where(read, 1.0 - dot, 0.0)
             depth_score += np.where(usable, np.abs(shifted(log_depth, k * ux, k * uy, 0.0) - shifted(log_depth, -k * ux, -k * uy, 0.0)), 0.0)
         ends = surface & shifted(surface, span * ux, span * uy, False) & shifted(surface, -span * ux, -span * uy, False)
-        read = ends & shifted(readable, span * ux, span * uy, False) & shifted(readable, -span * ux, -span * uy, False)
-        dot = np.sum(shifted(normal, span * ux, span * uy, 0.0) * shifted(normal, -span * ux, -span * uy, 0.0), axis=2)
-        bend = read & (dot <= cos_limit)
+        bend = read & (bend_score >= kFoldDegrees)
         step = ends & depth_step(terrain, safe, span * ux, span * uy, shifted(safe, span * ux, span * uy, 0.0),
                                  shifted(safe, -span * ux, -span * uy, 0.0))
         for flags, score in ((bend, bend_score), (step, depth_score)):
@@ -858,8 +861,12 @@ kSelftestTreadPx = 4
 # （5 画素）。1 画素の前後の差は 18° で、前の折れの判定（kFoldDegrees）では折れにならない
 kSelftestRoundStart = 4
 kSelftestRoundAngles = (9.0, 18.0, 27.0, 36.0, 45.0, 36.0, 27.0, 18.0, 9.0)
+# 両端の面が平行に戻る丸まった段: 注釈の線の kSelftestStepStart 画素上から、法線が 1 画素に 8° ずつ 24° まで上へ傾き、また 0° へ
+# 戻る。6 画素の区間の両端の法線の角はどこでも 24° 以下で、隣どうしの角の積み上げは中心で 48°
+kSelftestStepStart = 2
+kSelftestStepAngles = (8.0, 16.0, 24.0, 16.0, 8.0)
 # 滑らかな斜面: 法線の上下の傾きが周期 kSelftestSlopePeriod 画素・振幅 kSelftestSlopeDegrees の正弦で変わる（6 画素の区間の
-# 両端の差は最大 19°）
+# 隣どうしの角の積み上げは最大 20°）
 kSelftestSlopePeriod = 48
 kSelftestSlopeDegrees = 25.0
 
@@ -905,6 +912,10 @@ def selftest_scene(kind):
         for y in kSelftestShelves:
             for step, degrees in enumerate(kSelftestRoundAngles):
                 normal[inner & (rows == y - kSelftestRoundStart + step)] = tilted(degrees)
+    if kind == "rounded_step":
+        for y in kSelftestShelves:
+            for step, degrees in enumerate(kSelftestStepAngles):
+                normal[inner & (rows == y - kSelftestStepStart + step)] = tilted(degrees)
     if kind == "smooth_slope":
         waves = kSelftestSlopeDegrees * np.sin(2.0 * np.pi * (rows - top) / kSelftestSlopePeriod)
         radians = np.radians(waves)
@@ -940,6 +951,7 @@ SELFTEST_CASES = (
     ("missing_shelf", "正しい形から棚を 1 本消した形（局所の欠け）", False),
     ("cross_corner", "角の点で縦の溝と横の折れが十字に交わる形（上の縁は外形でない）", False),
     ("rounded_shelf", "5 画素の幅で丸まった段の縁（1 画素の前後では 18° で前の折れの判定に掛からない）", True),
+    ("rounded_step", "両端の面が平行に戻る丸まった段（法線が 0・8・16・24・16・8・0°。区間の両端の角は 24° 以下で、積み上げは 48°）", True),
     ("smooth_slope", "滑らかな斜面（法線の傾きが周期 48 画素で ±25° に波打つ。棚が出ない）", False),
     ("flat_face", "平らな面（棚が出ない）", False),
 )

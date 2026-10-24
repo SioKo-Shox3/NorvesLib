@@ -2,7 +2,7 @@
   "description": "Battleship Rock の壁をスキャンの崖で覆う項目の形の合否（CompareReference.py --shape --photos cliff_01 --expect。WastelandShape.md の「形の物差し」）。cliff_01 の写真の崖は Battleship Rock だけ。棚の一致と角の一致とずらした後の外形の距離は絶対の基準（shape-target.json の cliff_01 の行）まで上げ、ずらす前の外形の距離は置く前の値から悪くならない（shape-baseline.json の cliff_01 の行）。閾値はスキャンを置く前に書き、置いた後に変えない。note の「置く前」は置く前の撮影（SCN-WL-SHAPE-CAUSE の lod-default）を、向き・続き・角の二辺の量に棚の丸まった段の縁と角の空との縁の向きを足した量（SCN-WL-SHAPE-METRIC-SILHOUETTE）で測り直した値（向き・続き・角の二辺の量〔SCN-WL-SHAPE-METRIC-HARDEN〕では棚 0.042・角 0.000、その前の量では棚 0.272・角 0.143。ずらした後の外形 10.8 画素・ずらす前 11.4 画素は量で変わらない。3 つとも基準に届かないのは同じ）。annotations_sha256 は書いた時の注釈の版（違えば落ちる）",
   "annotations_sha256": "9db8b9b5afac738e970f4fb0ea925ac9d48ea8f94c4afd2e6e09c4359f5c72a2",
   "rows": [
-    {"photo": "cliff_01", "cliff": "Battleship Rock", "quantity": "shelf_match", "min": 0.6, "note": "置く前 0.089（4 本。丸まった段の縁を足す前は 0.042）"},
+    {"photo": "cliff_01", "cliff": "Battleship Rock", "quantity": "shelf_match", "min": 0.6, "note": "置く前 0.150（4 本。丸まった段の縁を足す前は 0.042）"},
     {"photo": "cliff_01", "cliff": "Battleship Rock", "quantity": "corner_match", "min": 0.5, "note": "置く前 0.000（7 点）"},
     {"photo": "cliff_01", "cliff": "Battleship Rock", "quantity": "outline_residual_median_px", "max": 8.0, "note": "置く前 10.8"},
     {"photo": "cliff_01", "cliff": "Battleship Rock", "quantity": "outline_distance_median_px", "max": 12.4, "note": "置く前 11.4"}
