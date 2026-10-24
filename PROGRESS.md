@@ -7670,3 +7670,8 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 証拠（`.harness/runs/20261024-183517/`）: `verify-SCN-WL-CLOUD-FAR-DETAIL-1.txt`（Debug EXIT=0）・`-2.txt`（RelWithDebInfo EXIT=0）・`-3.txt`（遠景の撮影 result=pass）・`-4.txt`（ちらつきの連番 result=pass）・`-5.txt`（`--cloud-far --flicker --expect cloud-far-accept.json` 10 行合格 result=pass）・`-6.txt`（不透明度の撮影 result=pass）・`-7.txt`（`--cloud-dump --verify` result=pass）・`-8.txt`（`--cloud-shape` result=pass）、`aux-SCN-WL-CLOUD-FAR-DETAIL-timing.txt`。開いた画: `scene-capture/SCN-WL-CLOUD-FAR-DETAIL/far/far_01_sky_zoom_before_after_photo.png`（縁は少しはっきりしたが、写真のカリフラワー状の頂には届かない）、ちらつきの画素の位置の図（近い雲の青空との縁）
 - Next: TASKS.md の次の未完
 - Notes: ちらつきの合否は風を除いた幅で数えた（素の幅は風の動きで 1 % を切れないことを端数を全部固定した撮影で確かめた。素の幅と HDR の比は記録）。光の歩を 2 点にする形と雲へ入る歩を 4 つに分ける形は効きが小さく GPU を食うので採っていない。`CloudBreakdown.py` の光の歩の写しは 0.5 の固定の端数で使う診断なので変えていない。新しい試験は足していない
+## 2026-10-24 SCN-WL-CLOUD-FAR-DETAIL（run 20261024-183517 の反復 12）
+- 差し戻し（反復 11 の評価 NEEDS_WORK）: 合否の行を風を除いた幅に替えたのは仕様の変更で、素の 8 bit の G の 2 段以上は 6.17 %（上限 1 %）
+- 判断: 反復 11 の切り分けで、端数を全部固定した時間の雑音 0 の描画でも素の 2 段以上が 2.7 % 残り、うち約 2.2 % は風（8, 3 m/s）で縁の締まった雲が 0.93 秒に動いた分。描画の直しだけでは素の量の 1 % に届かないので、量と撮り方の選択を `blocked/SCN-WL-CLOUD-FAR-DETAIL.md` に書いた（推奨: 風を除いた幅を正式な合否にする。代案: ちらつきの撮影だけ風を止める引数を足して素の幅で測る）
+- 変更: コードと合否の json は変えていない（反復 11 のまま）。ビルド・撮影は回していない
+- Next: 判断待ち（`blocked/SCN-WL-CLOUD-FAR-DETAIL.md`）
