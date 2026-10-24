@@ -1,5 +1,6 @@
 ﻿#include "TerrainCliffDetail.h"
 #include "TerrainCliffCarveBattleship.h"
+#include "TerrainCliffShelfBattleship.h"
 
 #include <algorithm>
 #include <cmath>
@@ -507,7 +508,7 @@ namespace NorvesLib::Tools::AssetCook
             return std::clamp(displacement, -kMaxDisplacement, kMaxDisplacement);
         }
 
-        // Battleship Rock の尾根の刻み（TerrainCliffCarveBattleship.h）が届く範囲（m。刻みの円の外接の箱）
+        // Battleship Rock の刻み（尾根の刻みと崖錐の棚の段）が届く範囲（m。折れ線の周りの外接の箱）
         struct CarveBounds
         {
             double MinX = std::numeric_limits<double>::max();
@@ -516,35 +517,234 @@ namespace NorvesLib::Tools::AssetCook
             double MaxZ = std::numeric_limits<double>::lowest();
         };
 
-        // 尾根の刻みを掛けるか。刻んだ範囲では縦の割れ目と滑らかな面の行き過ぎを止め、層の縞だけを残す
+        // 尾根の刻みと棚の段を掛けるか。刻んだ範囲では縦の割れ目と滑らかな面の行き過ぎを止め、層の縞だけを残す
         // （WastelandCliffScan.md の「尾根を地形の焼き込みで段に刻む試し」）
         constexpr bool kBattleshipCarveEnabled = true;
+        constexpr bool kBattleshipShelfEnabled = true;
         // 刻んだ範囲の外へ割れ目と滑らかな面を戻す幅（m）と、その割合を引く升目の一辺（m）
         constexpr double kBattleshipCarveFadeMeters = 8.0;
         constexpr double kBattleshipCarveMaskCell = 2.0;
+        // 尾根の刻みの中心を列の順に並べた折れ線で、前後に均す刻みの数（中心の前後の揺れが丸い柱の列にならないように）
+        constexpr int kBattleshipRidgeSmooth = 4;
+        // 隣の刻みの中心がこれより離れていれば（m）、別の尾根として折れ線を切る
+        constexpr double kBattleshipRidgeBreak = 8.0;
+        // 棚の段: 棚の点の高さから上へこの高さ（m）までの斜面を棚の高さへ削り、平らな踏み面と縦の蹴上げにする。
+        // 棚の線からこの水平の距離（m）の内だけ削る
+        constexpr float kBattleshipShelfRiser = 2.5f;
+        constexpr double kBattleshipShelfReach = 10.0;
+        // 折れ線の線分を引く升目の一辺（m）
+        constexpr double kCarveIndexCell = 4.0;
+
+        // 刻みの折れ線の点。尾根の刻みは目標の高さと向き（1 は上げる、-1 は下げる）、棚の段は棚の高さと効きの割合
+        struct CarveNode
+        {
+            double X;
+            double Z;
+            float Height;
+            float Value;
+            uint32_t Group;
+        };
+
+        // 折れ線と、升目ごとの、問い合わせの半径の内に掛かる線分（始点の番号）の一覧
+        struct CarvePolyline
+        {
+            VariableArray<CarveNode> Nodes;
+            double MinX = 0.0;
+            double MinZ = 0.0;
+            int Columns = 0;
+            int Rows = 0;
+            VariableArray<uint32_t> CellStart;
+            VariableArray<uint32_t> Segments;
+        };
+
+        // 点 (x, z) に最も近い線分と、線分に沿った位置（0〜1）と水平の距離（m）
+        struct CarveHit
+        {
+            uint32_t Segment = 0;
+            double U = 0.0;
+            double Distance = std::numeric_limits<double>::max();
+        };
+
+        double SegmentDistance(const CarveNode &a, const CarveNode &b, double x, double z, double &outU)
+        {
+            const double ex = b.X - a.X;
+            const double ez = b.Z - a.Z;
+            const double length = ex * ex + ez * ez;
+            outU = length > 0.0 ? std::clamp(((x - a.X) * ex + (z - a.Z) * ez) / length, 0.0, 1.0) : 0.0;
+            const double dx = a.X + ex * outU - x;
+            const double dz = a.Z + ez * outU - z;
+            return std::sqrt(dx * dx + dz * dz);
+        }
+
+        // 同じ並びの隣り合う点を線分にし、半径 reach の問い合わせに掛かる線分を升目ごとに引いておく
+        void BuildCarveIndex(CarvePolyline &polyline, double reach)
+        {
+            if (polyline.Nodes.size() < 2)
+            {
+                return;
+            }
+            double minX = std::numeric_limits<double>::max();
+            double maxX = std::numeric_limits<double>::lowest();
+            double minZ = std::numeric_limits<double>::max();
+            double maxZ = std::numeric_limits<double>::lowest();
+            for (const CarveNode &node : polyline.Nodes)
+            {
+                minX = std::min(minX, node.X);
+                maxX = std::max(maxX, node.X);
+                minZ = std::min(minZ, node.Z);
+                maxZ = std::max(maxZ, node.Z);
+            }
+            polyline.MinX = minX - reach;
+            polyline.MinZ = minZ - reach;
+            polyline.Columns = static_cast<int>(std::ceil((maxX + reach - polyline.MinX) / kCarveIndexCell)) + 1;
+            polyline.Rows = static_cast<int>(std::ceil((maxZ + reach - polyline.MinZ) / kCarveIndexCell)) + 1;
+            const double cellReach = reach + kCarveIndexCell * 0.7072;
+            polyline.CellStart.assign(static_cast<size_t>(polyline.Columns) * polyline.Rows + 1, 0u);
+            for (int row = 0; row < polyline.Rows; ++row)
+            {
+                for (int column = 0; column < polyline.Columns; ++column)
+                {
+                    const double x = polyline.MinX + (column + 0.5) * kCarveIndexCell;
+                    const double z = polyline.MinZ + (row + 0.5) * kCarveIndexCell;
+                    for (size_t index = 0; index + 1 < polyline.Nodes.size(); ++index)
+                    {
+                        const CarveNode &a = polyline.Nodes[index];
+                        const CarveNode &b = polyline.Nodes[index + 1];
+                        double u = 0.0;
+                        if (a.Group == b.Group && SegmentDistance(a, b, x, z, u) <= cellReach)
+                        {
+                            polyline.Segments.push_back(static_cast<uint32_t>(index));
+                        }
+                    }
+                    polyline.CellStart[static_cast<size_t>(row) * polyline.Columns + column + 1] =
+                        static_cast<uint32_t>(polyline.Segments.size());
+                }
+            }
+        }
+
+        // 点 (x, z) から reach の内で最も近い線分。無ければ false
+        bool NearestCarveSegment(const CarvePolyline &polyline, double x, double z, double reach, CarveHit &outHit)
+        {
+            if (polyline.Columns == 0)
+            {
+                return false;
+            }
+            const int column = static_cast<int>(std::floor((x - polyline.MinX) / kCarveIndexCell));
+            const int row = static_cast<int>(std::floor((z - polyline.MinZ) / kCarveIndexCell));
+            if (column < 0 || row < 0 || column >= polyline.Columns || row >= polyline.Rows)
+            {
+                return false;
+            }
+            const size_t cell = static_cast<size_t>(row) * polyline.Columns + column;
+            outHit = CarveHit{};
+            for (uint32_t item = polyline.CellStart[cell]; item < polyline.CellStart[cell + 1]; ++item)
+            {
+                const uint32_t segment = polyline.Segments[item];
+                double u = 0.0;
+                const double distance =
+                    SegmentDistance(polyline.Nodes[segment], polyline.Nodes[segment + 1], x, z, u);
+                if (distance < outHit.Distance)
+                {
+                    outHit.Segment = segment;
+                    outHit.U = u;
+                    outHit.Distance = distance;
+                }
+            }
+            return outHit.Distance <= reach;
+        }
+
+        // 尾根の刻みの折れ線（TerrainCliffCarveBattleship.h の中心を列の順に並べ、跳びで並びを切り、並びの内で前後 kBattleshipRidgeSmooth 個で均す。
+        // 目標の高さと向きは刻みのまま）
+        const CarvePolyline &BattleshipRidge()
+        {
+            static const CarvePolyline ridge = []
+            {
+                CarvePolyline result;
+                if (!kBattleshipCarveEnabled)
+                {
+                    return result;
+                }
+                const int count = static_cast<int>(sizeof(kBattleshipCarveStamps) / sizeof(kBattleshipCarveStamps[0]));
+                // 隣の中心から kBattleshipRidgeBreak より離れた刻み（奥の別の尾根）で並びを切る
+                VariableArray<uint32_t> groups;
+                groups.assign(static_cast<size_t>(count), 0u);
+                for (int index = 1; index < count; ++index)
+                {
+                    const double dx = kBattleshipCarveStamps[index].CenterX - kBattleshipCarveStamps[index - 1].CenterX;
+                    const double dz = kBattleshipCarveStamps[index].CenterZ - kBattleshipCarveStamps[index - 1].CenterZ;
+                    groups[index] = groups[index - 1] + (dx * dx + dz * dz > kBattleshipRidgeBreak * kBattleshipRidgeBreak ? 1u : 0u);
+                }
+                for (int index = 0; index < count; ++index)
+                {
+                    double x = 0.0;
+                    double z = 0.0;
+                    int used = 0;
+                    for (int other = std::max(0, index - kBattleshipRidgeSmooth);
+                         other <= std::min(count - 1, index + kBattleshipRidgeSmooth); ++other)
+                    {
+                        if (groups[other] != groups[index])
+                        {
+                            continue;
+                        }
+                        x += kBattleshipCarveStamps[other].CenterX;
+                        z += kBattleshipCarveStamps[other].CenterZ;
+                        ++used;
+                    }
+                    const TerrainCliffCarveStamp &stamp = kBattleshipCarveStamps[index];
+                    result.Nodes.push_back(
+                        CarveNode{x / used, z / used, stamp.Height, static_cast<float>(stamp.Direction), groups[index]});
+                }
+                BuildCarveIndex(result, kBattleshipCarveRadius + kBattleshipCarveFadeMeters);
+                return result;
+            }();
+            return ridge;
+        }
+
+        // 崖錐の棚の段の折れ線（TerrainCliffShelfBattleship.h の並びごと）
+        const CarvePolyline &BattleshipShelves()
+        {
+            static const CarvePolyline shelves = []
+            {
+                CarvePolyline result;
+                if (!kBattleshipShelfEnabled)
+                {
+                    return result;
+                }
+                for (const TerrainCliffShelfPoint &point : kBattleshipShelfPoints)
+                {
+                    result.Nodes.push_back(CarveNode{point.X, point.Z, point.Height, point.Weight, point.Group});
+                }
+                BuildCarveIndex(result, kBattleshipShelfReach + kBattleshipCarveFadeMeters);
+                return result;
+            }();
+            return shelves;
+        }
 
         const CarveBounds &BattleshipCarveBounds()
         {
             static const CarveBounds bounds = []
             {
                 CarveBounds result;
-                if (!kBattleshipCarveEnabled)
+                const auto include = [&result](const CarvePolyline &polyline, double reach)
                 {
-                    return result;
-                }
-                for (const TerrainCliffCarveStamp &stamp : kBattleshipCarveStamps)
-                {
-                    result.MinX = std::min(result.MinX, stamp.CenterX - kBattleshipCarveRadius);
-                    result.MaxX = std::max(result.MaxX, stamp.CenterX + kBattleshipCarveRadius);
-                    result.MinZ = std::min(result.MinZ, stamp.CenterZ - kBattleshipCarveRadius);
-                    result.MaxZ = std::max(result.MaxZ, stamp.CenterZ + kBattleshipCarveRadius);
-                }
+                    for (const CarveNode &node : polyline.Nodes)
+                    {
+                        result.MinX = std::min(result.MinX, node.X - reach);
+                        result.MaxX = std::max(result.MaxX, node.X + reach);
+                        result.MinZ = std::min(result.MinZ, node.Z - reach);
+                        result.MaxZ = std::max(result.MaxZ, node.Z + reach);
+                    }
+                };
+                include(BattleshipRidge(), kBattleshipCarveRadius);
+                include(BattleshipShelves(), kBattleshipShelfReach);
                 return result;
             }();
             return bounds;
         }
 
-        // 刻んだ後の高さ。点に最も近い中心の刻みが半径の内にあれば、その刻みの目標の高さまで上げる（向き 1）か下げる（向き -1）
+        // 刻んだ後の高さ。尾根の刻み: 点に最も近い線分が半径の内にあれば、両端の刻みの結果（目標の高さまで上げるか下げる）を
+        // 線分に沿って補間する。棚の段: 最も近い棚の線分が kBattleshipShelfReach の内にあり、高さが棚の高さから
+        // 蹴上げの高さまでの間なら、効きの割合だけ棚の高さへ削る
         float CarveBattleshipHeight(double x, double z, float height)
         {
             const CarveBounds &bounds = BattleshipCarveBounds();
@@ -552,27 +752,34 @@ namespace NorvesLib::Tools::AssetCook
             {
                 return height;
             }
-            const TerrainCliffCarveStamp *nearest = nullptr;
-            double nearestDistance = kBattleshipCarveRadius * kBattleshipCarveRadius;
-            for (const TerrainCliffCarveStamp &stamp : kBattleshipCarveStamps)
+            CarveHit hit;
+            const CarvePolyline &ridge = BattleshipRidge();
+            if (NearestCarveSegment(ridge, x, z, kBattleshipCarveRadius, hit))
             {
-                const double dx = x - stamp.CenterX;
-                const double dz = z - stamp.CenterZ;
-                const double distance = dx * dx + dz * dz;
-                if (distance <= nearestDistance)
+                const auto apply = [height](const CarveNode &node)
+                { return node.Value > 0.0f ? std::max(height, node.Height) : std::min(height, node.Height); };
+                const float a = apply(ridge.Nodes[hit.Segment]);
+                const float b = apply(ridge.Nodes[hit.Segment + 1]);
+                height = a + (b - a) * static_cast<float>(hit.U);
+            }
+            const CarvePolyline &shelves = BattleshipShelves();
+            if (NearestCarveSegment(shelves, x, z, kBattleshipShelfReach, hit))
+            {
+                const CarveNode &a = shelves.Nodes[hit.Segment];
+                const CarveNode &b = shelves.Nodes[hit.Segment + 1];
+                const float u = static_cast<float>(hit.U);
+                const float shelf = a.Height + (b.Height - a.Height) * u;
+                const float weight = a.Value + (b.Value - a.Value) * u;
+                const float above = height - shelf;
+                if (above >= 0.0f && above <= kBattleshipShelfRiser)
                 {
-                    nearestDistance = distance;
-                    nearest = &stamp;
+                    height -= above * weight;
                 }
             }
-            if (nearest == nullptr)
-            {
-                return height;
-            }
-            return nearest->Direction > 0 ? std::max(height, nearest->Height) : std::min(height, nearest->Height);
+            return height;
         }
 
-        // 刻んだ範囲の割合の升目（刻みの円の内 1、外へ kBattleshipCarveFadeMeters で 0）
+        // 刻んだ範囲の割合の升目（尾根の刻みの半径・棚の段の範囲の内 1、外へ kBattleshipCarveFadeMeters で 0）
         struct CarveMask
         {
             double MinX = 0.0;
@@ -588,7 +795,7 @@ namespace NorvesLib::Tools::AssetCook
             {
                 CarveMask result;
                 const CarveBounds &bounds = BattleshipCarveBounds();
-                if (!kBattleshipCarveEnabled)
+                if (bounds.MinX > bounds.MaxX)
                 {
                     return result;
                 }
@@ -599,22 +806,24 @@ namespace NorvesLib::Tools::AssetCook
                 result.Rows = static_cast<int>(std::ceil((bounds.MaxZ + kBattleshipCarveFadeMeters - result.MinZ) /
                                                          kBattleshipCarveMaskCell)) + 1;
                 result.Values.assign(static_cast<size_t>(result.Columns) * result.Rows, 0.0f);
+                const auto amount = [](const CarvePolyline &polyline, double x, double z, double reach)
+                {
+                    CarveHit hit;
+                    if (!NearestCarveSegment(polyline, x, z, reach + kBattleshipCarveFadeMeters, hit))
+                    {
+                        return 0.0;
+                    }
+                    return 1.0 - std::clamp((hit.Distance - reach) / kBattleshipCarveFadeMeters, 0.0, 1.0);
+                };
                 for (int row = 0; row < result.Rows; ++row)
                 {
                     for (int column = 0; column < result.Columns; ++column)
                     {
                         const double x = result.MinX + column * kBattleshipCarveMaskCell;
                         const double z = result.MinZ + row * kBattleshipCarveMaskCell;
-                        double nearest = std::numeric_limits<double>::max();
-                        for (const TerrainCliffCarveStamp &stamp : kBattleshipCarveStamps)
-                        {
-                            const double dx = x - stamp.CenterX;
-                            const double dz = z - stamp.CenterZ;
-                            nearest = std::min(nearest, dx * dx + dz * dz);
-                        }
-                        const double distance = std::sqrt(nearest) - kBattleshipCarveRadius;
-                        result.Values[static_cast<size_t>(row) * result.Columns + column] =
-                            static_cast<float>(1.0 - std::clamp(distance / kBattleshipCarveFadeMeters, 0.0, 1.0));
+                        const double value = std::max(amount(BattleshipRidge(), x, z, kBattleshipCarveRadius),
+                                                      amount(BattleshipShelves(), x, z, kBattleshipShelfReach));
+                        result.Values[static_cast<size_t>(row) * result.Columns + column] = static_cast<float>(value);
                     }
                 }
                 return result;
