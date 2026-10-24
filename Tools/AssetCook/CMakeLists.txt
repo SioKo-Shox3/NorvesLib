@@ -112,6 +112,8 @@ add_library(AssetCookLib STATIC
     MeshCooker.cpp
     TerrainCliffDetail.cpp
     TerrainCliffDetail.h
+    CookedTerrainQuery.cpp
+    CookedTerrainQuery.h
     Sha256Digest.cpp
     Sha256Digest.h
     SkeletalBvhCook.cpp

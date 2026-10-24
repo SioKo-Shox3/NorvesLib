@@ -1,5 +1,6 @@
 ﻿#include "AssetCookLegacyOptions.h"
 #include "AssetCookOutput.h"
+#include "CookedTerrainQuery.h"
 #include "MeshCooker.h"
 #include "RigRetargetCook.h"
 #include "RigSplitFileCook.h"
@@ -662,6 +663,7 @@ int main(int argc, char **argv)
     if (RunTerrainGridSampleCommand(argc, argv, terrainExitCode)) return terrainExitCode;
     if (RunTerrainDemSeamCommand(argc, argv, terrainExitCode)) return terrainExitCode;
     if (RunTerrainCliffSurfaceSampleCommand(argc, argv, terrainExitCode)) return terrainExitCode;
+    if (NorvesLib::Tools::AssetCook::RunCookedTerrainSampleCommand(argc, argv, terrainExitCode)) return terrainExitCode;
     std::filesystem::path inspectPath;
     const char* inspectError=nullptr;
     const auto inspect=NorvesLib::Tools::AssetCook::ParseInspectCommandLine(argc,argv,inspectPath,inspectError);

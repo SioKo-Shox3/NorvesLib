@@ -2944,7 +2944,7 @@
 - notes: 2026-10-24 親が確認 2 の後の計画の後半（地形の形。ユーザーの順: 地形の形 → 植物 → 地面 → 建物）の 1 段目として足した。SCN-WL-SHAPE-CAUSE の所見（`Docs/RenderingValidation/WastelandShape.md`、e5e06e0d）: 丸さの原因は重い順に 近景の谷床の 1 m の格子の限界・崖の生成が縦の溝だけを足し水平の棚と上端の角と崖錐へ移る塊を作らないこと・遠い崖の陰影の頂点の法線・LOD（効き 1〜7 ポイントで小さいので項目にしない）・遠景の格子の段。Sol の批評 2 回（`Docs/Plans/WastelandRebuild-SolCritique-TerrainCloud-20261024.txt`・`WastelandRebuild-SolCritique-Terrain2-20261024.txt`）を反映した。1 段目は 形の測りの補強 → 地形の画素の印 → 範囲ごとの量と前の基準 → 焼いた面の問い合わせ → 置いた物の接地の検査 → 棚 → 上端の角 → 内部の折れ線の注釈 → 崩れた塊。2 段目（細かな高さの契約・涸れ川・遠い崖の陰影の法線・地形の Cycles の参照の描き直し）は 1 段目の結果を見て組む（設計の論点は `Docs/Plans/WastelandRebuild.md`）。 基準はスキャンの崖（SCN-WL-CLIFF-SCAN-NEAR・FRANKLIN）の後、崖の生成の前の地形。時間の見積もり: 台本 35〜45 分、撮影 約 4 分、範囲の重ね画と記録 15 分。 壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える（未達のまま DONE にしない）。verify は 1 行 10 分未満（ビルドは構成ごとに別の行、撮影は組か視点で分ける）。
 
 ## SCN-WL-CLIFF-SURFACE-QUERY: 焼いた地形の区画のメッシュへ鉛直の線を当て、全部の交点を返す問い合わせを AssetCook に足す
-- status: todo
+- status: done
 - after: SCN-WL-SHAPE-MEASURE
 - done-when: 崖の生成（`TerrainCliffDetail.cpp`）は面の法線の向きに押し出し X/Z も動かすので、焼いた面は「元の座標の DEM の高さ」ではない（張り出しでは同じ X/Z に面が複数ある）。置いた物の接地を焼いた面で測る土台として、AssetCook に `--sample-cooked-terrain --manifest build/CookedAssets/manifest.json --points <点の一覧の JSON>`（名前は変えてよいが verify も合わせる）を足す: 点ごとに、その X/Z を含む区画のクック済みのパッケージ（最も細かい段の三角形）を読み、鉛直の線と交わる全部の三角形の交点（高さ・面の法線・三角形の番号・区画）を返す。点の一覧はまとめて渡せる。区画のパッケージが無い・メッシュが壊れている・範囲の外は、決めた失敗の値を返す（黙って 0 を返さない）。検査（`Scripts/Terrain/CheckCookedTerrain.py`、この項目で作る。実装の写しにしない）: (1) 崖の生成の範囲の外の区画は DEM の格子のまま焼かれるので、格子の頂点の真上の点で返った高さが `height.json` の値と 1e-4 m 以内、(2) 崖の範囲の中の点で交点が 1 つ以上、張り出しの点で交点が 2 つ以上あり、上から順に並ぶ、(3) 無い区画・範囲の外が決めた失敗を返す。
 - verify: `cmake --build build --config RelWithDebInfo --target AssetCook -- /m:1`
