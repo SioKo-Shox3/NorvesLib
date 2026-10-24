@@ -185,3 +185,23 @@ cliff と ref_cliff_01 の両方から見える崖の面を、両方の撮影の
 - 灰色の材質の cliff（反復 27）: 版 7 の撮影が無かったので、版 7 の AssetCook（aeb9b657 の源）で `WastelandDem_0_2`・`WastelandDem_1_2` を別の置き場に焼き直し（SHA-256 が記録した版 7 の値 56a82779…・68c140d2… と一致）、`build/CookedAssets` の 2 区画とマニフェストの項目を一時的に差し替えて同じ引数で撮り、版 8 へ戻した（`scene-capture/SCN-WL-CLIFF-CARVE-CONTINUITY/shape-v7`、戻した後のハッシュの一致は `aux-SCN-WL-CLIFF-CARVE-CONTINUITY-v7-gray-capture.txt`）。版 7 と版 8 を上下に並べて開いた（`shape/before_after_gray_cliff.png`・`shape/crop_gray_cliff_before_after.png`・`shape/before_after_gray_ref_cliff_01.png`）。差（8 階調を超える画素）は cliff で左奥の Battleship Rock の壁（x 0〜1878・y 467〜691 の箱、ほぼ x 720 より左）だけで、外形・段の並びは同じ。割合の境に新しい壁・尖りは無く、版 8 は壁の面の細かな縦の溝が少しなめらか。ref_cliff_01 の両脇の縦に引き伸ばした壁は版 7 にもあり、保留の SCN-WL-CLIFF-SCAN-NEAR の既知の限界のまま
 - 外形（`CompareReference.py --shape --expect shape-scan-battleship.json`、`aux-SCN-WL-CLIFF-CARVE-CONTINUITY-shape-expect.txt`）: 外形 ずらす前 1.0・ずらした後 1.0 画素で版 7 と同じ（合格）。棚 0.391 → 0.395・角 0.286 → 0.286 で、2 行は保留の SCN-WL-CLIFF-SCAN-NEAR の既知の限界のまま不合格
 - 既知の限界: 面は割合の境で続くが、傾きは境で変わりうる。0.25 m 離れたマスク 1 の点との差が 0.5 m を超え、内側の同じ幅の差が 0.5 m 以内の線が 672 本中 12 本ある（傾きの折れ。撮影では線として見えない）
+
+## Franklin Butte の尖塔の台座を覆う試し（SCN-WL-CLIFF-SCAN-FRANKLIN、2026-10-25、途中）
+
+合否は `Scripts/Terrain/ExpectSpecs/shape-scan-franklin.json`（cliff_02・ground_02 の注釈のうち Franklin Butte の分。`WastelandShape.md` の「スキャンの崖の担当の範囲」、X −760〜−240・Z −660〜−140）。撮影はどれも同じ RelWithDebInfo の Game.exe、灰色の材質の形の撮影。配置は `BlenderCliffScan.py --place` が Battleship Rock と Franklin Butte の置き場（`site`）ごとに、その狙いの点の箱の地形だけを読んで置く（Battleship Rock の 83 個は前の配置表と同じ値）。地形は SCN-WLR-BLENDER-TERRAIN-mesh の書き出し（10 月 18 日。その後の地形の変更は Battleship Rock の刻みの区画 dem:0,2・dem:1,2 だけで、Franklin Butte の区画 dem:3,3〜4,4 は同じ）。
+
+| 試し | 置いたもの | 棚の一致 cliff_02／ground_02 | 角の一致 cliff_02／ground_02 | 外形 cliff_02（ずらした後／前） | 外形 ground_02（ずらした後／前） | 見え方 |
+|---|---|---|---|---|---|---|
+| 置く前（`before-shape`） | － | 0.370／0.351 | 0.000／0.000 | 7.0／15.5 | 6.3／26.9 | 丸い円錐の斜面に式の焼き込みの縦の溝。層の段の張り出しが無い |
+| 棚の線に巨岩と板を 10 m 間隔で半分埋める | boulder_01 66 ＋ rock_09 49 | 0.393／0.385 | 0.000／0.000 | 7.0／16.3 | 6.3／26.9 | 2.5 km 先で棚の線に沿った小さな塊の点の並びになり、折れが 14 画素続かない |
+| **配置表に残した形**: rock_09 の板の長い軸（13〜20 m）を壁に沿わせ 7 m 間隔で重ねる（4 つに 1 つは巨岩） | rock_09 114 ＋ boulder_01 40 | **0.788／0.801** | 0.000／0.250 | 6.4／16.1 | 6.3／25.5 | 層の段ごとに張り出した板の帯が続き、下に影を落とす。ground_02 は台座の上の左の角が一致 |
+| ＋尖塔の頂の左の角と台座の上の左の角に厚い節理の塊（rock_09_block、拡大率 90）を積む | ＋塊 8 | 0.803／0.793 | 0.000／0.250 | 6.0／16.1 | 6.0／25.5 | 尖塔の左の縁が cliff_02 で 939 → 927 画素、ground_02 で 1558 → 1547 画素に広がる。角の点（cliff_02 915 画素・ground_02 1555 画素）の内側 12 画素と外側 8 画素 |
+| ＋角の点を尖塔は左へ 2 m・上へ 1 m、台座は左へ 3 m・手前へ 2 m 出す | ＋塊 8 | 0.802／0.783 | 0.000／0.000 | 6.0／16.1 | 6.7／25.5 | 外形の位置合わせのずらしが ground_02 で (0, 40) → (−3, 38) に動き、台座の左の角も外れる |
+
+- 板の帯（`BlenderCliffScan.py` の `FRANKLIN_SHELF_POINTS`・`FRANKLIN_VARIANTS`）: 写真の注釈の棚（cliff_02 の 4 本・ground_02 の 3 本。高さ 66.7・56.2・45.4・35.0 m と 60.4・40.0・27.7 m）の線を、置く前の撮影の線の 4 画素下の深度で世界へ戻し、7 m 以上離れた 164 点を選んだ（`aux-SCN-WL-CLIFF-SCAN-FRANKLIN-shelf-world.txt`）。Battleship Rock と同じ `solve_embed` で、長い水平の軸を壁に沿わせ体積の 45 % を壁の外に出し、上端を棚の線の高さに揃える。壁の面が水平に近い 9 点と、外に出る割合が範囲に入らない 1 点は飛ばし、154 個を置いた（壁の外の体積の割合 0.442〜0.456）
+- 角: 写真の角は尖塔の頂の左・尖塔の根元の左右の肩・台座の上の左の 4 点。撮影の尖塔は写真より細く、左の縁が 8〜12 画素内側にある。塊を角の点へ積むと、塊の縁が丸く撮影の角が箱の角より約 12 画素（3 m）内側に写り、外へ出すと外形の位置合わせのずらしが動いてほかの角が外れる（Battleship Rock の反復 23 と同じ外れ方）。2 つの写真の同じ角を世界へ戻すと 5 m 離れ、片方に合わせると他方が外れる。塊の置き方（`FRANKLIN_CORNERS`）は台本に残し、配置表には入れていない（`FRANKLIN_CORNERS_ENABLED = False`）
+- 見た目（既定の撮影 `scene-capture/SCN-WL-CLIFF-SCAN-FRANKLIN/look/reference_cliff_02.png`・`reference_ground_02.png`）: 台座の層の段ごとに板の張り出しの帯が続き、帯の下に影が落ちて、置く前の丸い円錐の斜面より写真の層の段に近い。塊は地形から浮かず、埋もれ過ぎない。いちばん上の帯は同じ大きさの板が横に並び、繰り返しがやや見える。尖塔の形（写真の頂の帽岩と右の肩の段）は変えていない
+- 色（`aux-SCN-WL-CLIFF-SCAN-FRANKLIN-plate-color.txt`。塊の画素は置く前と置いた後の灰色の撮影の深度の差、周りの崖は塊から 3〜6 画素の輪）: 塊の平均の輝度は周りの崖の 0.69 倍（ref_cliff_02）・0.68 倍（ref_ground_02）で、帯の下の影を含む。明るい 1/4 の画素どうしでも 0.84 倍・0.82 倍で、塊の色は崖より赤みが弱い（RGB 0.436・0.220・0.172 に対し 0.550・0.259・0.147）。素材の較正は Battleship Rock と同じ（`Scripts/CalibrateScanRockAlbedo.py`）で、継ぎ目なく馴染ませるには板の素材（rock_09）の較正を崖の明るい面へ寄せる直しが残る
+- 費用（既定の撮影 `look/`）: Franklin Butte の塊の三角形 406 万（rock_09 12416 × 114、boulder_01 66122 × 40）。配置表 237 個（Battleship Rock 83 ＋ Franklin Butte 154）を全部置いた（`WASTELAND_CLIFF_SCAN placed=237 planned=237`）。起動から SCENE_READY まで 84 秒（同じ視点の SCN-WL-CLIFF-CARVE-CONTINUITY の撮影は 101 秒）。VRAM の使用の最大 9785 MB（予算 15280 MB）、ジオメトリのプールの使用 1724 MB。MEGA_CAPACITY の draw_dropped・bvh_overflow・visible_list_overflow は 0、GEOMETRY_PAGES の request_overflow 0・failed 0
+- 式の焼き込み（`TerrainCliffDetail.cpp`）は下地として残した。板の帯は棚の線の高さで壁に半分埋まるので、帯の間の壁に焼き込みの縦の割れ目が残り、写真の層の間の縦の節理に近く見える。外すと Franklin Butte の 4 区画の焼き直しと Cycles の参照の描き直しが要り、帯の間が丸い面に戻る
+- 余分な折れ: 板の帯の上下の縁と板の継ぎ目が注釈の棚の無い所にも折れを作り、余分な折れは cliff_02 1.79 → 4.10・ground_02 2.36 → 5.67 に増えた（合否の仕様の行には無い量）

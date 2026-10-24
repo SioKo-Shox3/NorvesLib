@@ -4194,6 +4194,7706 @@
         "rim_vertices": 888,
         "import_bounds_error_m": 0.0
       }
+    },
+    {
+      "name": "franklin_shelf_001",
+      "asset": "rock_09",
+      "position": [
+        -498.55673,
+        63.19916,
+        -375.76355
+      ],
+      "rotation_xyzw": [
+        -0.00589226,
+        -0.40239546,
+        -0.01642766,
+        0.91529959
+      ],
+      "scale": 105.0,
+      "world_bounds_min": [
+        -504.466,
+        63.159,
+        -381.389
+      ],
+      "world_bounds_max": [
+        -492.48,
+        66.586,
+        -368.252
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -498.273,
+          64.873,
+          -375.009
+        ],
+        "face_normal_engine": [
+          0.7258,
+          0.0,
+          -0.6879
+        ],
+        "face_tilt_degrees": 15.5,
+        "offset_along_normal_m": -0.275,
+        "visible_volume_fraction": 0.45,
+        "visible_surface_fraction": 0.487,
+        "vertex_below_top_surface_fraction": 0.4872,
+        "size_m": [
+          7.77,
+          15.19,
+          3.45
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_003",
+      "asset": "boulder_01",
+      "position": [
+        -522.74902,
+        62.10436,
+        -403.33234
+      ],
+      "rotation_xyzw": [
+        0.01679548,
+        -0.76479667,
+        0.02007846,
+        0.64373976
+      ],
+      "scale": 5.0,
+      "world_bounds_min": [
+        -527.26,
+        61.837,
+        -406.359
+      ],
+      "world_bounds_max": [
+        -518.554,
+        66.743,
+        -399.718
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -522.907,
+          64.29,
+          -403.11
+        ],
+        "face_normal_engine": [
+          0.0031,
+          0.0,
+          -1.0
+        ],
+        "face_tilt_degrees": 23.7,
+        "offset_along_normal_m": -0.071,
+        "visible_volume_fraction": 0.447,
+        "visible_surface_fraction": 0.504,
+        "vertex_below_top_surface_fraction": 0.3283,
+        "size_m": [
+          6.36,
+          9.15,
+          5.02
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_004",
+      "asset": "rock_09",
+      "position": [
+        -527.75732,
+        63.09869,
+        -395.44907
+      ],
+      "rotation_xyzw": [
+        0.00841928,
+        -0.97334522,
+        0.00229524,
+        0.22917904
+      ],
+      "scale": 114.999992,
+      "world_bounds_min": [
+        -532.977,
+        63.002,
+        -403.428
+      ],
+      "world_bounds_max": [
+        -521.167,
+        66.815,
+        -389.133
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -526.886,
+          64.908,
+          -396.179
+        ],
+        "face_normal_engine": [
+          -0.8788,
+          0.0,
+          -0.4771
+        ],
+        "face_tilt_degrees": 40.3,
+        "offset_along_normal_m": 0.212,
+        "visible_volume_fraction": 0.448,
+        "visible_surface_fraction": 0.385,
+        "vertex_below_top_surface_fraction": 0.57,
+        "size_m": [
+          8.51,
+          16.63,
+          3.78
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_005",
+      "asset": "rock_09",
+      "position": [
+        -531.73602,
+        62.7692,
+        -389.30853
+      ],
+      "rotation_xyzw": [
+        -0.00858187,
+        -0.96384054,
+        -0.00158235,
+        0.26633683
+      ],
+      "scale": 125.0,
+      "world_bounds_min": [
+        -537.651,
+        62.691,
+        -397.622
+      ],
+      "world_bounds_max": [
+        -524.047,
+        66.797,
+        -382.356
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -531.052,
+          64.744,
+          -390.087
+        ],
+        "face_normal_engine": [
+          -0.8996,
+          0.0,
+          -0.4367
+        ],
+        "face_tilt_degrees": 46.5,
+        "offset_along_normal_m": -0.226,
+        "visible_volume_fraction": 0.45,
+        "visible_surface_fraction": 0.455,
+        "vertex_below_top_surface_fraction": 0.5127,
+        "size_m": [
+          9.25,
+          18.08,
+          4.11
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_006",
+      "asset": "rock_09",
+      "position": [
+        -534.14716,
+        63.24583,
+        -382.70599
+      ],
+      "rotation_xyzw": [
+        -0.0,
+        -0.9844678,
+        -0.0,
+        0.17556524
+      ],
+      "scale": 110.000008,
+      "world_bounds_min": [
+        -538.769,
+        63.183,
+        -390.739
+      ],
+      "world_bounds_max": [
+        -528.552,
+        66.798,
+        -376.441
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -533.85,
+          64.991,
+          -383.683
+        ],
+        "face_normal_engine": [
+          -0.8971,
+          0.0,
+          -0.4419
+        ],
+        "face_tilt_degrees": 61.0,
+        "offset_along_normal_m": -0.211,
+        "visible_volume_fraction": 0.446,
+        "visible_surface_fraction": 0.435,
+        "vertex_below_top_surface_fraction": 0.5395,
+        "size_m": [
+          8.14,
+          15.91,
+          3.62
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_007",
+      "asset": "boulder_01",
+      "position": [
+        -537.3501,
+        63.10836,
+        -376.52515
+      ],
+      "rotation_xyzw": [
+        -0.03437628,
+        -0.95083398,
+        -0.00602045,
+        0.30772847
+      ],
+      "scale": 4.0,
+      "world_bounds_min": [
+        -540.341,
+        62.779,
+        -380.004
+      ],
+      "world_bounds_max": [
+        -534.386,
+        66.805,
+        -372.994
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -537.35,
+          64.792,
+          -376.492
+        ],
+        "face_normal_engine": [
+          -0.884,
+          0.0,
+          -0.4674
+        ],
+        "face_tilt_degrees": 65.2,
+        "offset_along_normal_m": 0.015,
+        "visible_volume_fraction": 0.451,
+        "visible_surface_fraction": 0.431,
+        "vertex_below_top_surface_fraction": 0.4762,
+        "size_m": [
+          5.09,
+          7.32,
+          4.02
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_008",
+      "asset": "rock_09",
+      "position": [
+        -539.93396,
+        62.82272,
+        -368.22073
+      ],
+      "rotation_xyzw": [
+        -0.0,
+        -0.99133325,
+        -0.0,
+        0.13137162
+      ],
+      "scale": 120.0,
+      "world_bounds_min": [
+        -544.832,
+        62.754,
+        -377.393
+      ],
+      "world_bounds_max": [
+        -534.511,
+        66.698,
+        -361.223
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -539.713,
+          64.726,
+          -369.319
+        ],
+        "face_normal_engine": [
+          -0.9655,
+          0.0,
+          -0.2605
+        ],
+        "face_tilt_degrees": 63.7,
+        "offset_along_normal_m": -0.043,
+        "visible_volume_fraction": 0.448,
+        "visible_surface_fraction": 0.394,
+        "vertex_below_top_surface_fraction": 0.5809,
+        "size_m": [
+          8.88,
+          17.35,
+          3.94
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_009",
+      "asset": "rock_09",
+      "position": [
+        -543.79865,
+        63.29916,
+        -361.34497
+      ],
+      "rotation_xyzw": [
+        -0.01606245,
+        -0.94525146,
+        -0.00682527,
+        0.32587588
+      ],
+      "scale": 105.0,
+      "world_bounds_min": [
+        -549.167,
+        63.259,
+        -367.749
+      ],
+      "world_bounds_max": [
+        -536.695,
+        66.686,
+        -355.437
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -542.902,
+          64.973,
+          -361.567
+        ],
+        "face_normal_engine": [
+          -0.7426,
+          0.0,
+          -0.6697
+        ],
+        "face_tilt_degrees": 51.7,
+        "offset_along_normal_m": 0.039,
+        "visible_volume_fraction": 0.45,
+        "visible_surface_fraction": 0.453,
+        "vertex_below_top_surface_fraction": 0.5205,
+        "size_m": [
+          7.77,
+          15.19,
+          3.45
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_010",
+      "asset": "rock_09",
+      "position": [
+        -548.50977,
+        62.53395,
+        -355.61673
+      ],
+      "rotation_xyzw": [
+        0.01702316,
+        -0.96238571,
+        0.00384687,
+        0.27112612
+      ],
+      "scale": 130.0,
+      "world_bounds_min": [
+        -554.814,
+        62.378,
+        -364.213
+      ],
+      "world_bounds_max": [
+        -540.461,
+        66.745,
+        -348.411
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -547.744,
+          64.562,
+          -356.37
+        ],
+        "face_normal_engine": [
+          -0.8791,
+          0.0,
+          -0.4767
+        ],
+        "face_tilt_degrees": 49.4,
+        "offset_along_normal_m": -0.121,
+        "visible_volume_fraction": 0.447,
+        "visible_surface_fraction": 0.446,
+        "vertex_below_top_surface_fraction": 0.5122,
+        "size_m": [
+          9.62,
+          18.8,
+          4.27
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_011",
+      "asset": "boulder_01",
+      "position": [
+        -551.73804,
+        62.00436,
+        -349.74908
+      ],
+      "rotation_xyzw": [
+        0.02244768,
+        -0.93351728,
+        0.01346603,
+        0.3575756
+      ],
+      "scale": 5.0,
+      "world_bounds_min": [
+        -555.601,
+        61.737,
+        -354.113
+      ],
+      "world_bounds_max": [
+        -548.068,
+        66.643,
+        -345.547
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -551.71,
+          64.19,
+          -349.672
+        ],
+        "face_normal_engine": [
+          -0.6168,
+          0.0,
+          -0.7871
+        ],
+        "face_tilt_degrees": 41.0,
+        "offset_along_normal_m": 0.201,
+        "visible_volume_fraction": 0.447,
+        "visible_surface_fraction": 0.36,
+        "vertex_below_top_surface_fraction": 0.5307,
+        "size_m": [
+          6.36,
+          9.15,
+          5.02
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_012",
+      "asset": "rock_09",
+      "position": [
+        -553.78119,
+        62.99869,
+        -340.6051
+      ],
+      "rotation_xyzw": [
+        0.00870175,
+        -0.99914312,
+        0.00065718,
+        0.04046099
+      ],
+      "scale": 115.000015,
+      "world_bounds_min": [
+        -558.187,
+        62.902,
+        -350.029
+      ],
+      "world_bounds_max": [
+        -549.642,
+        66.715,
+        -333.644
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -553.67,
+          64.808,
+          -341.808
+        ],
+        "face_normal_engine": [
+          -0.9933,
+          0.0,
+          -0.1156
+        ],
+        "face_tilt_degrees": 59.4,
+        "offset_along_normal_m": 0.246,
+        "visible_volume_fraction": 0.45,
+        "visible_surface_fraction": 0.379,
+        "vertex_below_top_surface_fraction": 0.5848,
+        "size_m": [
+          8.51,
+          16.63,
+          3.78
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_013",
+      "asset": "rock_09",
+      "position": [
+        -555.45532,
+        62.5692,
+        -333.31146
+      ],
+      "rotation_xyzw": [
+        -0.00870434,
+        -0.98741049,
+        -0.00062204,
+        0.15793853
+      ],
+      "scale": 125.0,
+      "world_bounds_min": [
+        -560.605,
+        62.491,
+        -342.606
+      ],
+      "world_bounds_max": [
+        -549.375,
+        66.597,
+        -326.118
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -554.735,
+          64.544,
+          -334.302
+        ],
+        "face_normal_engine": [
+          -0.9737,
+          0.0,
+          -0.2279
+        ],
+        "face_tilt_degrees": 57.5,
+        "offset_along_normal_m": 0.262,
+        "visible_volume_fraction": 0.449,
+        "visible_surface_fraction": 0.389,
+        "vertex_below_top_surface_fraction": 0.5774,
+        "size_m": [
+          9.25,
+          18.08,
+          4.11
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_014",
+      "asset": "rock_09",
+      "position": [
+        -557.40857,
+        63.04583,
+        -326.25693
+      ],
+      "rotation_xyzw": [
+        -0.0,
+        -0.99815804,
+        -0.0,
+        0.06066798
+      ],
+      "scale": 109.999992,
+      "world_bounds_min": [
+        -561.616,
+        62.983,
+        -335.161
+      ],
+      "world_bounds_max": [
+        -553.23,
+        66.598,
+        -319.641
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -557.398,
+          64.79,
+          -327.395
+        ],
+        "face_normal_engine": [
+          -0.9745,
+          0.0,
+          -0.2242
+        ],
+        "face_tilt_degrees": 61.2,
+        "offset_along_normal_m": 0.025,
+        "visible_volume_fraction": 0.448,
+        "visible_surface_fraction": 0.47,
+        "vertex_below_top_surface_fraction": 0.4965,
+        "size_m": [
+          8.14,
+          15.91,
+          3.62
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_015",
+      "asset": "boulder_01",
+      "position": [
+        -558.67169,
+        62.90837,
+        -320.09857
+      ],
+      "rotation_xyzw": [
+        -0.03485265,
+        -0.98112959,
+        -0.00180813,
+        0.19017576
+      ],
+      "scale": 4.0,
+      "world_bounds_min": [
+        -561.345,
+        62.579,
+        -323.692
+      ],
+      "world_bounds_max": [
+        -555.717,
+        66.605,
+        -316.298
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -558.576,
+          64.592,
+          -320.006
+        ],
+        "face_normal_engine": [
+          -0.9706,
+          0.0,
+          -0.2409
+        ],
+        "face_tilt_degrees": 67.2,
+        "offset_along_normal_m": -0.046,
+        "visible_volume_fraction": 0.451,
+        "visible_surface_fraction": 0.495,
+        "vertex_below_top_surface_fraction": 0.439,
+        "size_m": [
+          5.09,
+          7.32,
+          4.02
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_016",
+      "asset": "rock_09",
+      "position": [
+        -558.15765,
+        62.62273,
+        -312.24066
+      ],
+      "rotation_xyzw": [
+        0.0,
+        0.98358828,
+        0.0,
+        0.18042764
+      ],
+      "scale": 119.999992,
+      "world_bounds_min": [
+        -563.298,
+        62.554,
+        -322.435
+      ],
+      "world_bounds_max": [
+        -552.248,
+        66.498,
+        -304.834
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -557.943,
+          64.526,
+          -313.569
+        ],
+        "face_normal_engine": [
+          -0.9349,
+          0.0,
+          0.3549
+        ],
+        "face_tilt_degrees": 13.4,
+        "offset_along_normal_m": -0.182,
+        "visible_volume_fraction": 0.448,
+        "visible_surface_fraction": 0.559,
+        "vertex_below_top_surface_fraction": 0.4179,
+        "size_m": [
+          8.88,
+          17.35,
+          3.94
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_017",
+      "asset": "rock_09",
+      "position": [
+        -551.48193,
+        62.99916,
+        -298.81873
+      ],
+      "rotation_xyzw": [
+        0.01722627,
+        0.97329706,
+        -0.00280038,
+        0.22888504
+      ],
+      "scale": 105.000008,
+      "world_bounds_min": [
+        -556.195,
+        62.959,
+        -307.596
+      ],
+      "world_bounds_max": [
+        -546.017,
+        66.386,
+        -292.426
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -551.375,
+          64.673,
+          -299.9
+        ],
+        "face_normal_engine": [
+          -0.9241,
+          0.0,
+          0.3822
+        ],
+        "face_tilt_degrees": 48.1,
+        "offset_along_normal_m": -0.29,
+        "visible_volume_fraction": 0.454,
+        "visible_surface_fraction": 0.528,
+        "vertex_below_top_surface_fraction": 0.4576,
+        "size_m": [
+          7.77,
+          15.19,
+          3.45
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_018",
+      "asset": "rock_09",
+      "position": [
+        -548.13702,
+        62.23395,
+        -291.66104
+      ],
+      "rotation_xyzw": [
+        -0.01700741,
+        0.98475981,
+        0.00391592,
+        0.173042
+      ],
+      "scale": 130.0,
+      "world_bounds_min": [
+        -553.713,
+        62.078,
+        -302.716
+      ],
+      "world_bounds_max": [
+        -541.846,
+        66.445,
+        -283.61
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -548.08,
+          64.261,
+          -293.036
+        ],
+        "face_normal_engine": [
+          -0.921,
+          0.0,
+          0.3896
+        ],
+        "face_tilt_degrees": 54.3,
+        "offset_along_normal_m": -0.327,
+        "visible_volume_fraction": 0.452,
+        "visible_surface_fraction": 0.486,
+        "vertex_below_top_surface_fraction": 0.4964,
+        "size_m": [
+          9.62,
+          18.8,
+          4.27
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_019",
+      "asset": "boulder_01",
+      "position": [
+        -535.43939,
+        52.20436,
+        -475.80368
+      ],
+      "rotation_xyzw": [
+        0.01393506,
+        -0.6710217,
+        0.02215958,
+        0.7409755
+      ],
+      "scale": 5.0,
+      "world_bounds_min": [
+        -540.252,
+        51.937,
+        -478.459
+      ],
+      "world_bounds_max": [
+        -530.932,
+        56.843,
+        -472.229
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -535.39,
+          54.39,
+          -476.063
+        ],
+        "face_normal_engine": [
+          0.2701,
+          0.0,
+          -0.9628
+        ],
+        "face_tilt_degrees": 81.8,
+        "offset_along_normal_m": -0.746,
+        "visible_volume_fraction": 0.45,
+        "visible_surface_fraction": 0.655,
+        "vertex_below_top_surface_fraction": 0.2826,
+        "size_m": [
+          6.36,
+          9.15,
+          5.02
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_020",
+      "asset": "rock_09",
+      "position": [
+        -538.6507,
+        53.09869,
+        -467.41281
+      ],
+      "rotation_xyzw": [
+        -0.00871492,
+        0.99622244,
+        0.00045013,
+        0.08639991
+      ],
+      "scale": 115.0,
+      "world_bounds_min": [
+        -543.108,
+        53.002,
+        -477.24
+      ],
+      "world_bounds_max": [
+        -533.694,
+        56.815,
+        -460.27
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -538.745,
+          54.908,
+          -468.707
+        ],
+        "face_normal_engine": [
+          -0.9905,
+          0.0,
+          0.1377
+        ],
+        "face_tilt_degrees": 36.0,
+        "offset_along_normal_m": -0.348,
+        "visible_volume_fraction": 0.454,
+        "visible_surface_fraction": 0.576,
+        "vertex_below_top_surface_fraction": 0.3956,
+        "size_m": [
+          8.51,
+          16.63,
+          3.78
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_021",
+      "asset": "rock_09",
+      "position": [
+        -536.56732,
+        52.6692,
+        -460.5972
+      ],
+      "rotation_xyzw": [
+        0.00865493,
+        0.99912471,
+        -0.00111559,
+        0.04091074
+      ],
+      "scale": 125.0,
+      "world_bounds_min": [
+        -541.212,
+        52.591,
+        -471.195
+      ],
+      "world_bounds_max": [
+        -531.547,
+        56.697,
+        -452.88
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -536.335,
+          54.644,
+          -462.045
+        ],
+        "face_normal_engine": [
+          -0.9857,
+          0.0,
+          0.1683
+        ],
+        "face_tilt_degrees": 45.6,
+        "offset_along_normal_m": 0.045,
+        "visible_volume_fraction": 0.449,
+        "visible_surface_fraction": 0.393,
+        "vertex_below_top_surface_fraction": 0.5659,
+        "size_m": [
+          9.25,
+          18.08,
+          4.11
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_022",
+      "asset": "rock_09",
+      "position": [
+        -535.99896,
+        53.14583,
+        -451.56607
+      ],
+      "rotation_xyzw": [
+        0.0,
+        0.99454045,
+        0.0,
+        0.10435175
+      ],
+      "scale": 110.0,
+      "world_bounds_min": [
+        -540.298,
+        53.083,
+        -460.975
+      ],
+      "world_bounds_max": [
+        -531.094,
+        56.698,
+        -444.739
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -535.671,
+          54.89,
+          -452.859
+        ],
+        "face_normal_engine": [
+          -0.9946,
+          0.0,
+          0.1042
+        ],
+        "face_tilt_degrees": 43.0,
+        "offset_along_normal_m": 0.025,
+        "visible_volume_fraction": 0.451,
+        "visible_surface_fraction": 0.488,
+        "vertex_below_top_surface_fraction": 0.473,
+        "size_m": [
+          8.14,
+          15.91,
+          3.62
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_023",
+      "asset": "boulder_01",
+      "position": [
+        -535.59973,
+        52.90836,
+        -445.92267
+      ],
+      "rotation_xyzw": [
+        0.03421152,
+        0.99763662,
+        -0.00689533,
+        0.0591883
+      ],
+      "scale": 4.0,
+      "world_bounds_min": [
+        -537.825,
+        52.579,
+        -449.373
+      ],
+      "world_bounds_max": [
+        -532.48,
+        56.605,
+        -442.244
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -535.387,
+          54.592,
+          -445.746
+        ],
+        "face_normal_engine": [
+          -0.9669,
+          0.0,
+          0.2553
+        ],
+        "face_tilt_degrees": 52.0,
+        "offset_along_normal_m": -0.242,
+        "visible_volume_fraction": 0.449,
+        "visible_surface_fraction": 0.538,
+        "vertex_below_top_surface_fraction": 0.3488,
+        "size_m": [
+          5.09,
+          7.32,
+          4.02
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_024",
+      "asset": "rock_09",
+      "position": [
+        -532.87378,
+        52.62273,
+        -435.71292
+      ],
+      "rotation_xyzw": [
+        0.0,
+        0.99524045,
+        0.0,
+        0.09745017
+      ],
+      "scale": 120.000008,
+      "world_bounds_min": [
+        -537.533,
+        52.554,
+        -445.975
+      ],
+      "world_bounds_max": [
+        -527.58,
+        56.498,
+        -428.263
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -532.786,
+          54.526,
+          -437.073
+        ],
+        "face_normal_engine": [
+          -0.981,
+          0.0,
+          0.194
+        ],
+        "face_tilt_degrees": 44.2,
+        "offset_along_normal_m": -0.234,
+        "visible_volume_fraction": 0.447,
+        "visible_surface_fraction": 0.482,
+        "vertex_below_top_surface_fraction": 0.494,
+        "size_m": [
+          8.88,
+          17.35,
+          3.94
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_025",
+      "asset": "rock_09",
+      "position": [
+        -532.55609,
+        52.99916,
+        -425.10272
+      ],
+      "rotation_xyzw": [
+        -0.01721402,
+        -0.99527663,
+        -0.00287472,
+        0.09549838
+      ],
+      "scale": 105.000008,
+      "world_bounds_min": [
+        -536.635,
+        52.959,
+        -433.388
+      ],
+      "world_bounds_max": [
+        -528.207,
+        56.386,
+        -418.872
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -532.262,
+          54.673,
+          -426.088
+        ],
+        "face_normal_engine": [
+          -0.9661,
+          0.0,
+          -0.2582
+        ],
+        "face_tilt_degrees": 36.3,
+        "offset_along_normal_m": 0.165,
+        "visible_volume_fraction": 0.45,
+        "visible_surface_fraction": 0.37,
+        "vertex_below_top_surface_fraction": 0.6017,
+        "size_m": [
+          7.77,
+          15.19,
+          3.45
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_026",
+      "asset": "rock_09",
+      "position": [
+        -536.164,
+        52.23396,
+        -418.42874
+      ],
+      "rotation_xyzw": [
+        0.01734835,
+        -0.98681873,
+        0.00190294,
+        0.16088599
+      ],
+      "scale": 130.0,
+      "world_bounds_min": [
+        -541.672,
+        52.078,
+        -428.07
+      ],
+      "world_bounds_max": [
+        -529.807,
+        56.445,
+        -410.967
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -536.126,
+          54.262,
+          -419.626
+        ],
+        "face_normal_engine": [
+          -0.9635,
+          0.0,
+          -0.2676
+        ],
+        "face_tilt_degrees": 45.5,
+        "offset_along_normal_m": -0.401,
+        "visible_volume_fraction": 0.45,
+        "visible_surface_fraction": 0.521,
+        "vertex_below_top_surface_fraction": 0.4479,
+        "size_m": [
+          9.62,
+          18.8,
+          4.27
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_027",
+      "asset": "boulder_01",
+      "position": [
+        -537.02502,
+        51.60436,
+        -411.88171
+      ],
+      "rotation_xyzw": [
+        -0.02578405,
+        0.9996568,
+        -0.00451833,
+        0.00105659
+      ],
+      "scale": 5.0,
+      "world_bounds_min": [
+        -539.7,
+        51.337,
+        -416.308
+      ],
+      "world_bounds_max": [
+        -533.406,
+        56.243,
+        -407.141
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -536.547,
+          53.79,
+          -411.724
+        ],
+        "face_normal_engine": [
+          -0.9852,
+          0.0,
+          -0.1716
+        ],
+        "face_tilt_degrees": 51.6,
+        "offset_along_normal_m": 0.006,
+        "visible_volume_fraction": 0.45,
+        "visible_surface_fraction": 0.424,
+        "vertex_below_top_surface_fraction": 0.4835,
+        "size_m": [
+          6.36,
+          9.15,
+          5.02
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_028",
+      "asset": "rock_09",
+      "position": [
+        -540.04102,
+        52.59869,
+        -404.58185
+      ],
+      "rotation_xyzw": [
+        0.00836538,
+        -0.96792907,
+        0.00248453,
+        0.25107199
+      ],
+      "scale": 114.999992,
+      "world_bounds_min": [
+        -545.434,
+        52.502,
+        -412.373
+      ],
+      "world_bounds_max": [
+        -533.166,
+        56.315,
+        -398.229
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -539.249,
+          54.408,
+          -405.271
+        ],
+        "face_normal_engine": [
+          -0.8564,
+          0.0,
+          -0.5163
+        ],
+        "face_tilt_degrees": 51.4,
+        "offset_along_normal_m": 0.059,
+        "visible_volume_fraction": 0.452,
+        "visible_surface_fraction": 0.432,
+        "vertex_below_top_surface_fraction": 0.527,
+        "size_m": [
+          8.51,
+          16.63,
+          3.78
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_029",
+      "asset": "rock_09",
+      "position": [
+        -543.60297,
+        52.2692,
+        -397.77454
+      ],
+      "rotation_xyzw": [
+        -0.00865135,
+        -0.9761579,
+        -0.00114308,
+        0.21688658
+      ],
+      "scale": 124.999992,
+      "world_bounds_min": [
+        -549.091,
+        52.191,
+        -406.553
+      ],
+      "world_bounds_max": [
+        -536.61,
+        56.297,
+        -390.849
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -543.113,
+          54.244,
+          -398.797
+        ],
+        "face_normal_engine": [
+          -0.9394,
+          0.0,
+          -0.3429
+        ],
+        "face_tilt_degrees": 48.8,
+        "offset_along_normal_m": -0.28,
+        "visible_volume_fraction": 0.45,
+        "visible_surface_fraction": 0.496,
+        "vertex_below_top_surface_fraction": 0.4765,
+        "size_m": [
+          9.25,
+          18.08,
+          4.11
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_030",
+      "asset": "rock_09",
+      "position": [
+        -545.92499,
+        52.64583,
+        -390.60464
+      ],
+      "rotation_xyzw": [
+        -0.0,
+        -0.97580034,
+        -0.0,
+        0.21866344
+      ],
+      "scale": 109.999992,
+      "world_bounds_min": [
+        -550.803,
+        52.583,
+        -398.317
+      ],
+      "world_bounds_max": [
+        -539.752,
+        56.198,
+        -384.519
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -545.155,
+          54.39,
+          -391.344
+        ],
+        "face_normal_engine": [
+          -0.8548,
+          0.0,
+          -0.5189
+        ],
+        "face_tilt_degrees": 46.8,
+        "offset_along_normal_m": 0.143,
+        "visible_volume_fraction": 0.448,
+        "visible_surface_fraction": 0.393,
+        "vertex_below_top_surface_fraction": 0.5772,
+        "size_m": [
+          8.14,
+          15.91,
+          3.62
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_031",
+      "asset": "boulder_01",
+      "position": [
+        -549.9364,
+        52.50837,
+        -385.66589
+      ],
+      "rotation_xyzw": [
+        -0.03461487,
+        -0.96386653,
+        -0.00444805,
+        0.26408988
+      ],
+      "scale": 4.0,
+      "world_bounds_min": [
+        -552.828,
+        52.179,
+        -389.208
+      ],
+      "world_bounds_max": [
+        -547.077,
+        56.205,
+        -382.011
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -549.976,
+          54.192,
+          -385.62
+        ],
+        "face_normal_engine": [
+          -0.9229,
+          0.0,
+          -0.385
+        ],
+        "face_tilt_degrees": 60.4,
+        "offset_along_normal_m": -0.026,
+        "visible_volume_fraction": 0.445,
+        "visible_surface_fraction": 0.482,
+        "vertex_below_top_surface_fraction": 0.4232,
+        "size_m": [
+          5.09,
+          7.32,
+          4.02
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_032",
+      "asset": "rock_09",
+      "position": [
+        -554.08435,
+        52.32273,
+        -378.04373
+      ],
+      "rotation_xyzw": [
+        -0.0,
+        -0.98186952,
+        -0.0,
+        0.18955831
+      ],
+      "scale": 119.999992,
+      "world_bounds_min": [
+        -559.163,
+        52.254,
+        -386.68
+      ],
+      "world_bounds_max": [
+        -547.771,
+        56.198,
+        -371.27
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -554.039,
+          54.226,
+          -379.204
+        ],
+        "face_normal_engine": [
+          -0.9281,
+          0.0,
+          -0.3722
+        ],
+        "face_tilt_degrees": 46.7,
+        "offset_along_normal_m": -0.616,
+        "visible_volume_fraction": 0.452,
+        "visible_surface_fraction": 0.479,
+        "vertex_below_top_surface_fraction": 0.4979,
+        "size_m": [
+          8.88,
+          17.35,
+          3.94
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_033",
+      "asset": "rock_09",
+      "position": [
+        -557.47241,
+        52.69916,
+        -372.36108
+      ],
+      "rotation_xyzw": [
+        -0.01539951,
+        -0.91290718,
+        -0.0082123,
+        0.40779427
+      ],
+      "scale": 105.0,
+      "world_bounds_min": [
+        -563.369,
+        52.659,
+        -378.007
+      ],
+      "world_bounds_max": [
+        -549.516,
+        56.086,
+        -366.495
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -556.38,
+          54.373,
+          -372.17
+        ],
+        "face_normal_engine": [
+          -0.6137,
+          0.0,
+          -0.7895
+        ],
+        "face_tilt_degrees": 32.0,
+        "offset_along_normal_m": 0.102,
+        "visible_volume_fraction": 0.452,
+        "visible_surface_fraction": 0.434,
+        "vertex_below_top_surface_fraction": 0.5361,
+        "size_m": [
+          7.77,
+          15.19,
+          3.45
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_034",
+      "asset": "rock_09",
+      "position": [
+        -562.9707,
+        51.93395,
+        -367.66968
+      ],
+      "rotation_xyzw": [
+        0.01659259,
+        -0.93306363,
+        0.00541042,
+        0.35928801
+      ],
+      "scale": 130.0,
+      "world_bounds_min": [
+        -569.993,
+        51.778,
+        -375.242
+      ],
+      "world_bounds_max": [
+        -553.736,
+        56.145,
+        -360.423
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -561.785,
+          53.961,
+          -367.768
+        ],
+        "face_normal_engine": [
+          -0.7758,
+          0.0,
+          -0.6309
+        ],
+        "face_tilt_degrees": 28.8,
+        "offset_along_normal_m": 0.103,
+        "visible_volume_fraction": 0.451,
+        "visible_surface_fraction": 0.505,
+        "vertex_below_top_surface_fraction": 0.4446,
+        "size_m": [
+          9.62,
+          18.8,
+          4.27
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_035",
+      "asset": "boulder_01",
+      "position": [
+        -566.59204,
+        51.40436,
+        -362.19199
+      ],
+      "rotation_xyzw": [
+        0.02500995,
+        -0.99183434,
+        0.00772882,
+        0.12481761
+      ],
+      "scale": 5.0,
+      "world_bounds_min": [
+        -569.655,
+        51.137,
+        -366.753
+      ],
+      "world_bounds_max": [
+        -563.099,
+        56.043,
+        -357.363
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -566.323,
+          53.59,
+          -362.034
+        ],
+        "face_normal_engine": [
+          -0.9111,
+          0.0,
+          -0.4122
+        ],
+        "face_tilt_degrees": 32.6,
+        "offset_along_normal_m": 0.058,
+        "visible_volume_fraction": 0.449,
+        "visible_surface_fraction": 0.424,
+        "vertex_below_top_surface_fraction": 0.4474,
+        "size_m": [
+          6.36,
+          9.15,
+          5.02
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_036",
+      "asset": "rock_09",
+      "position": [
+        -571.20667,
+        52.39869,
+        -355.17563
+      ],
+      "rotation_xyzw": [
+        0.00814337,
+        -0.94511306,
+        0.00313654,
+        0.32662699
+      ],
+      "scale": 115.0,
+      "world_bounds_min": [
+        -577.151,
+        52.302,
+        -362.186
+      ],
+      "world_bounds_max": [
+        -563.431,
+        56.115,
+        -348.75
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -570.337,
+          54.208,
+          -355.506
+        ],
+        "face_normal_engine": [
+          -0.7646,
+          0.0,
+          -0.6445
+        ],
+        "face_tilt_degrees": 44.2,
+        "offset_along_normal_m": -0.059,
+        "visible_volume_fraction": 0.45,
+        "visible_surface_fraction": 0.456,
+        "vertex_below_top_surface_fraction": 0.5116,
+        "size_m": [
+          8.51,
+          16.63,
+          3.78
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_037",
+      "asset": "rock_09",
+      "position": [
+        -574.56024,
+        51.9692,
+        -348.8757
+      ],
+      "rotation_xyzw": [
+        -0.00870835,
+        -0.9997046,
+        0.00056313,
+        0.02268799
+      ],
+      "scale": 124.999985,
+      "world_bounds_min": [
+        -579.212,
+        51.891,
+        -359.215
+      ],
+      "world_bounds_max": [
+        -570.106,
+        55.997,
+        -341.273
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -575.245,
+          53.944,
+          -350.22
+        ],
+        "face_normal_engine": [
+          -0.9991,
+          0.0,
+          0.0419
+        ],
+        "face_tilt_degrees": 22.1,
+        "offset_along_normal_m": -0.587,
+        "visible_volume_fraction": 0.446,
+        "visible_surface_fraction": 0.573,
+        "vertex_below_top_surface_fraction": 0.3795,
+        "size_m": [
+          9.25,
+          18.08,
+          4.11
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_038",
+      "asset": "rock_09",
+      "position": [
+        -572.24237,
+        52.44583,
+        -340.28339
+      ],
+      "rotation_xyzw": [
+        0.0,
+        0.99494982,
+        0.0,
+        0.10037378
+      ],
+      "scale": 110.000008,
+      "world_bounds_min": [
+        -576.525,
+        52.383,
+        -349.691
+      ],
+      "world_bounds_max": [
+        -567.367,
+        55.998,
+        -333.455
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -571.854,
+          54.19,
+          -341.582
+        ],
+        "face_normal_engine": [
+          -0.9954,
+          0.0,
+          0.0962
+        ],
+        "face_tilt_degrees": 30.3,
+        "offset_along_normal_m": 0.093,
+        "visible_volume_fraction": 0.45,
+        "visible_surface_fraction": 0.404,
+        "vertex_below_top_surface_fraction": 0.575,
+        "size_m": [
+          8.14,
+          15.91,
+          3.62
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_039",
+      "asset": "boulder_01",
+      "position": [
+        -573.13397,
+        52.20836,
+        -333.87936
+      ],
+      "rotation_xyzw": [
+        -0.03422981,
+        -0.94355714,
+        -0.00680406,
+        0.32936612
+      ],
+      "scale": 4.0,
+      "world_bounds_min": [
+        -576.166,
+        51.879,
+        -337.326
+      ],
+      "world_bounds_max": [
+        -570.127,
+        55.905,
+        -330.421
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -573.16,
+          53.892,
+          -333.882
+        ],
+        "face_normal_engine": [
+          -0.8618,
+          0.0,
+          -0.5073
+        ],
+        "face_tilt_degrees": 45.6,
+        "offset_along_normal_m": -0.015,
+        "visible_volume_fraction": 0.447,
+        "visible_surface_fraction": 0.429,
+        "vertex_below_top_surface_fraction": 0.4585,
+        "size_m": [
+          5.09,
+          7.32,
+          4.02
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_040",
+      "asset": "rock_09",
+      "position": [
+        -574.49353,
+        51.92273,
+        -327.89597
+      ],
+      "rotation_xyzw": [
+        0.0,
+        0.99983728,
+        0.0,
+        0.01804202
+      ],
+      "scale": 119.999992,
+      "world_bounds_min": [
+        -578.973,
+        51.854,
+        -337.996
+      ],
+      "world_bounds_max": [
+        -569.921,
+        55.798,
+        -320.525
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -574.803,
+          53.826,
+          -329.248
+        ],
+        "face_normal_engine": [
+          -0.9993,
+          0.0,
+          0.0361
+        ],
+        "face_tilt_degrees": 30.3,
+        "offset_along_normal_m": -0.356,
+        "visible_volume_fraction": 0.451,
+        "visible_surface_fraction": 0.58,
+        "vertex_below_top_surface_fraction": 0.3908,
+        "size_m": [
+          8.88,
+          17.35,
+          3.94
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_041",
+      "asset": "rock_09",
+      "position": [
+        -572.53705,
+        52.39916,
+        -316.59271
+      ],
+      "rotation_xyzw": [
+        0.0174523,
+        0.99716353,
+        -6.07e-05,
+        0.0732144
+      ],
+      "scale": 105.000008,
+      "world_bounds_min": [
+        -576.437,
+        52.359,
+        -325.553
+      ],
+      "world_bounds_max": [
+        -568.039,
+        55.786,
+        -310.081
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -572.183,
+          54.073,
+          -317.821
+        ],
+        "face_normal_engine": [
+          -0.9971,
+          0.0,
+          0.0767
+        ],
+        "face_tilt_degrees": 41.4,
+        "offset_along_normal_m": 0.055,
+        "visible_volume_fraction": 0.451,
+        "visible_surface_fraction": 0.428,
+        "vertex_below_top_surface_fraction": 0.5347,
+        "size_m": [
+          7.77,
+          15.19,
+          3.45
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_043",
+      "asset": "boulder_01",
+      "position": [
+        -572.96344,
+        50.80436,
+        -306.50858
+      ],
+      "rotation_xyzw": [
+        -0.0258933,
+        0.94831729,
+        0.00384316,
+        0.31624216
+      ],
+      "scale": 5.0,
+      "world_bounds_min": [
+        -577.044,
+        50.537,
+        -310.366
+      ],
+      "world_bounds_max": [
+        -569.174,
+        55.443,
+        -302.568
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -573.219,
+          52.99,
+          -306.411
+        ],
+        "face_normal_engine": [
+          -0.8919,
+          0.0,
+          0.4522
+        ],
+        "face_tilt_degrees": 52.0,
+        "offset_along_normal_m": -0.123,
+        "visible_volume_fraction": 0.445,
+        "visible_surface_fraction": 0.464,
+        "vertex_below_top_surface_fraction": 0.4374,
+        "size_m": [
+          6.36,
+          9.15,
+          5.02
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_044",
+      "asset": "rock_09",
+      "position": [
+        -537.81372,
+        42.59869,
+        -477.11819
+      ],
+      "rotation_xyzw": [
+        0.00607545,
+        -0.72080475,
+        0.00626429,
+        0.69308329
+      ],
+      "scale": 115.0,
+      "world_bounds_min": [
+        -544.881,
+        42.502,
+        -481.46
+      ],
+      "world_bounds_max": [
+        -528.129,
+        46.315,
+        -472.749
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -536.507,
+          44.408,
+          -477.571
+        ],
+        "face_normal_engine": [
+          -0.0043,
+          0.0,
+          -1.0
+        ],
+        "face_tilt_degrees": 18.9,
+        "offset_along_normal_m": -0.467,
+        "visible_volume_fraction": 0.453,
+        "visible_surface_fraction": 0.657,
+        "vertex_below_top_surface_fraction": 0.3449,
+        "size_m": [
+          8.51,
+          16.63,
+          3.78
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_045",
+      "asset": "rock_09",
+      "position": [
+        -542.30103,
+        42.2692,
+        -471.16498
+      ],
+      "rotation_xyzw": [
+        -0.00871784,
+        -0.99127692,
+        -0.00038931,
+        0.13150631
+      ],
+      "scale": 125.000008,
+      "world_bounds_min": [
+        -547.356,
+        42.191,
+        -480.718
+      ],
+      "world_bounds_max": [
+        -536.644,
+        46.297,
+        -463.873
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -542.222,
+          44.244,
+          -472.335
+        ],
+        "face_normal_engine": [
+          -0.9845,
+          0.0,
+          -0.1756
+        ],
+        "face_tilt_degrees": 48.6,
+        "offset_along_normal_m": -0.226,
+        "visible_volume_fraction": 0.446,
+        "visible_surface_fraction": 0.57,
+        "vertex_below_top_surface_fraction": 0.3991,
+        "size_m": [
+          9.25,
+          18.08,
+          4.11
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_046",
+      "asset": "rock_09",
+      "position": [
+        -542.22955,
+        42.64583,
+        -464.35501
+      ],
+      "rotation_xyzw": [
+        0.0,
+        0.99782127,
+        0.0,
+        0.06597498
+      ],
+      "scale": 110.000008,
+      "world_bounds_min": [
+        -546.391,
+        42.583,
+        -473.731
+      ],
+      "world_bounds_max": [
+        -537.625,
+        46.198,
+        -457.534
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -542.134,
+          44.39,
+          -465.629
+        ],
+        "face_normal_engine": [
+          -0.9996,
+          0.0,
+          0.0273
+        ],
+        "face_tilt_degrees": 74.7,
+        "offset_along_normal_m": -0.127,
+        "visible_volume_fraction": 0.45,
+        "visible_surface_fraction": 0.489,
+        "vertex_below_top_surface_fraction": 0.4937,
+        "size_m": [
+          8.14,
+          15.91,
+          3.62
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_047",
+      "asset": "boulder_01",
+      "position": [
+        -542.22583,
+        42.40836,
+        -458.73438
+      ],
+      "rotation_xyzw": [
+        0.03450286,
+        0.9993273,
+        -0.00524669,
+        0.0112757
+      ],
+      "scale": 4.0,
+      "world_bounds_min": [
+        -544.288,
+        42.079,
+        -462.264
+      ],
+      "world_bounds_max": [
+        -539.107,
+        46.105,
+        -454.958
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -541.886,
+          44.092,
+          -458.58
+        ],
+        "face_normal_engine": [
+          -0.9869,
+          0.0,
+          0.1615
+        ],
+        "face_tilt_degrees": 77.8,
+        "offset_along_normal_m": -0.191,
+        "visible_volume_fraction": 0.448,
+        "visible_surface_fraction": 0.542,
+        "vertex_below_top_surface_fraction": 0.4598,
+        "size_m": [
+          5.09,
+          7.32,
+          4.02
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_048",
+      "asset": "rock_09",
+      "position": [
+        -541.08643,
+        42.12273,
+        -450.95654
+      ],
+      "rotation_xyzw": [
+        0.0,
+        0.99764925,
+        0.0,
+        0.06852779
+      ],
+      "scale": 119.999992,
+      "world_bounds_min": [
+        -545.628,
+        42.054,
+        -461.189
+      ],
+      "world_bounds_max": [
+        -536.041,
+        45.998,
+        -443.513
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -541.29,
+          44.026,
+          -452.289
+        ],
+        "face_normal_engine": [
+          -0.9906,
+          0.0,
+          0.1367
+        ],
+        "face_tilt_degrees": 80.6,
+        "offset_along_normal_m": -0.46,
+        "visible_volume_fraction": 0.455,
+        "visible_surface_fraction": 0.522,
+        "vertex_below_top_surface_fraction": 0.4771,
+        "size_m": [
+          8.88,
+          17.35,
+          3.94
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_049",
+      "asset": "rock_09",
+      "position": [
+        -539.76349,
+        42.49916,
+        -442.20483
+      ],
+      "rotation_xyzw": [
+        0.01745231,
+        0.99716973,
+        -5.923e-05,
+        0.07313025
+      ],
+      "scale": 105.000008,
+      "world_bounds_min": [
+        -543.663,
+        42.459,
+        -451.165
+      ],
+      "world_bounds_max": [
+        -535.266,
+        45.886,
+        -435.693
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -539.707,
+          44.173,
+          -443.41
+        ],
+        "face_normal_engine": [
+          -0.9971,
+          0.0,
+          0.0765
+        ],
+        "face_tilt_degrees": 73.2,
+        "offset_along_normal_m": -0.243,
+        "visible_volume_fraction": 0.448,
+        "visible_surface_fraction": 0.476,
+        "vertex_below_top_surface_fraction": 0.5192,
+        "size_m": [
+          7.77,
+          15.19,
+          3.45
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_050",
+      "asset": "rock_09",
+      "position": [
+        -539.5965,
+        41.63395,
+        -434.05624
+      ],
+      "rotation_xyzw": [
+        0.01744486,
+        -0.9995845,
+        -0.00051324,
+        0.02294204
+      ],
+      "scale": 130.0,
+      "world_bounds_min": [
+        -544.589,
+        41.478,
+        -444.807
+      ],
+      "world_bounds_max": [
+        -535.018,
+        45.845,
+        -426.149
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -540.037,
+          43.661,
+          -435.477
+        ],
+        "face_normal_engine": [
+          -1.0,
+          0.0,
+          0.0065
+        ],
+        "face_tilt_degrees": 84.4,
+        "offset_along_normal_m": -0.233,
+        "visible_volume_fraction": 0.451,
+        "visible_surface_fraction": 0.485,
+        "vertex_below_top_surface_fraction": 0.5003,
+        "size_m": [
+          9.62,
+          18.8,
+          4.27
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_051",
+      "asset": "boulder_01",
+      "position": [
+        -539.74359,
+        41.00436,
+        -426.5495
+      ],
+      "rotation_xyzw": [
+        -0.02591115,
+        0.99914861,
+        -0.00372091,
+        0.03188912
+      ],
+      "scale": 5.0,
+      "world_bounds_min": [
+        -542.531,
+        40.737,
+        -430.905
+      ],
+      "world_bounds_max": [
+        -536.115,
+        45.643,
+        -421.877
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -539.613,
+          43.19,
+          -426.423
+        ],
+        "face_normal_engine": [
+          -0.9939,
+          0.0,
+          -0.1105
+        ],
+        "face_tilt_degrees": 85.5,
+        "offset_along_normal_m": -0.292,
+        "visible_volume_fraction": 0.444,
+        "visible_surface_fraction": 0.543,
+        "vertex_below_top_surface_fraction": 0.4421,
+        "size_m": [
+          6.36,
+          9.15,
+          5.02
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_052",
+      "asset": "rock_09",
+      "position": [
+        -541.75702,
+        41.99869,
+        -417.7681
+      ],
+      "rotation_xyzw": [
+        0.00859259,
+        -0.99010432,
+        0.00152311,
+        0.14006186
+      ],
+      "scale": 115.000015,
+      "world_bounds_min": [
+        -546.522,
+        41.902,
+        -426.483
+      ],
+      "world_bounds_max": [
+        -536.441,
+        45.715,
+        -411.096
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -541.457,
+          43.808,
+          -418.782
+        ],
+        "face_normal_engine": [
+          -0.9505,
+          0.0,
+          -0.3107
+        ],
+        "face_tilt_degrees": 90.0,
+        "offset_along_normal_m": 0.025,
+        "visible_volume_fraction": 0.45,
+        "visible_surface_fraction": 0.451,
+        "vertex_below_top_surface_fraction": 0.5282,
+        "size_m": [
+          8.51,
+          16.63,
+          3.78
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_053",
+      "asset": "rock_09",
+      "position": [
+        -544.47772,
+        41.5692,
+        -411.08597
+      ],
+      "rotation_xyzw": [
+        -0.00864887,
+        -0.97568959,
+        -0.00116166,
+        0.21898338
+      ],
+      "scale": 124.999992,
+      "world_bounds_min": [
+        -549.985,
+        41.491,
+        -419.847
+      ],
+      "world_bounds_max": [
+        -537.454,
+        45.597,
+        -404.169
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -544.016,
+          43.544,
+          -412.118
+        ],
+        "face_normal_engine": [
+          -0.9379,
+          0.0,
+          -0.3469
+        ],
+        "face_tilt_degrees": 87.3,
+        "offset_along_normal_m": -0.316,
+        "visible_volume_fraction": 0.445,
+        "visible_surface_fraction": 0.477,
+        "vertex_below_top_surface_fraction": 0.5145,
+        "size_m": [
+          9.25,
+          18.08,
+          4.11
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_054",
+      "asset": "rock_09",
+      "position": [
+        -547.32758,
+        41.94583,
+        -404.74457
+      ],
+      "rotation_xyzw": [
+        -0.0,
+        -0.9723407,
+        -0.0,
+        0.2335674
+      ],
+      "scale": 110.0,
+      "world_bounds_min": [
+        -552.323,
+        41.883,
+        -412.342
+      ],
+      "world_bounds_max": [
+        -540.964,
+        45.498,
+        -398.688
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -546.651,
+          43.69,
+          -405.519
+        ],
+        "face_normal_engine": [
+          -0.8385,
+          0.0,
+          -0.5448
+        ],
+        "face_tilt_degrees": 85.5,
+        "offset_along_normal_m": -0.008,
+        "visible_volume_fraction": 0.449,
+        "visible_surface_fraction": 0.45,
+        "vertex_below_top_surface_fraction": 0.5234,
+        "size_m": [
+          8.14,
+          15.91,
+          3.62
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_055",
+      "asset": "boulder_01",
+      "position": [
+        -550.46051,
+        41.80836,
+        -398.89255
+      ],
+      "rotation_xyzw": [
+        -0.03471146,
+        -0.9699136,
+        -0.00361794,
+        0.24093503
+      ],
+      "scale": 4.0,
+      "world_bounds_min": [
+        -553.29,
+        41.479,
+        -402.46
+      ],
+      "world_bounds_max": [
+        -547.596,
+        45.505,
+        -395.184
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -550.38,
+          43.492,
+          -398.799
+        ],
+        "face_normal_engine": [
+          -0.9403,
+          0.0,
+          -0.3404
+        ],
+        "face_tilt_degrees": 86.7,
+        "offset_along_normal_m": 0.067,
+        "visible_volume_fraction": 0.446,
+        "visible_surface_fraction": 0.422,
+        "vertex_below_top_surface_fraction": 0.5931,
+        "size_m": [
+          5.09,
+          7.32,
+          4.02
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_056",
+      "asset": "rock_09",
+      "position": [
+        -555.39008,
+        41.62273,
+        -392.43994
+      ],
+      "rotation_xyzw": [
+        -0.0,
+        -0.9545697,
+        -0.0,
+        0.29798782
+      ],
+      "scale": 120.0,
+      "world_bounds_min": [
+        -561.338,
+        41.554,
+        -400.088
+      ],
+      "world_bounds_max": [
+        -547.62,
+        45.498,
+        -385.733
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -554.871,
+          43.526,
+          -393.182
+        ],
+        "face_normal_engine": [
+          -0.8224,
+          0.0,
+          -0.5689
+        ],
+        "face_tilt_degrees": 89.7,
+        "offset_along_normal_m": -0.477,
+        "visible_volume_fraction": 0.446,
+        "visible_surface_fraction": 0.524,
+        "vertex_below_top_surface_fraction": 0.4771,
+        "size_m": [
+          8.88,
+          17.35,
+          3.94
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_057",
+      "asset": "rock_09",
+      "position": [
+        -558.69141,
+        41.99916,
+        -386.47821
+      ],
+      "rotation_xyzw": [
+        -0.01666105,
+        -0.9729501,
+        -0.00519574,
+        0.23035526
+      ],
+      "scale": 105.000015,
+      "world_bounds_min": [
+        -563.375,
+        41.959,
+        -393.752
+      ],
+      "world_bounds_max": [
+        -552.65,
+        45.386,
+        -380.686
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -558.006,
+          43.673,
+          -387.215
+        ],
+        "face_normal_engine": [
+          -0.8604,
+          0.0,
+          -0.5096
+        ],
+        "face_tilt_degrees": 88.8,
+        "offset_along_normal_m": 0.008,
+        "visible_volume_fraction": 0.446,
+        "visible_surface_fraction": 0.406,
+        "vertex_below_top_surface_fraction": 0.576,
+        "size_m": [
+          7.77,
+          15.19,
+          3.45
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_058",
+      "asset": "rock_09",
+      "position": [
+        -562.91925,
+        41.23396,
+        -380.77206
+      ],
+      "rotation_xyzw": [
+        0.0170321,
+        -0.96301603,
+        0.00380711,
+        0.26887834
+      ],
+      "scale": 130.0,
+      "world_bounds_min": [
+        -569.205,
+        41.078,
+        -389.393
+      ],
+      "world_bounds_max": [
+        -554.902,
+        45.445,
+        -373.571
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -562.522,
+          43.262,
+          -381.733
+        ],
+        "face_normal_engine": [
+          -0.8813,
+          0.0,
+          -0.4725
+        ],
+        "face_tilt_degrees": 70.7,
+        "offset_along_normal_m": -0.532,
+        "visible_volume_fraction": 0.447,
+        "visible_surface_fraction": 0.507,
+        "vertex_below_top_surface_fraction": 0.4914,
+        "size_m": [
+          9.62,
+          18.8,
+          4.27
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_059",
+      "asset": "boulder_01",
+      "position": [
+        -566.67603,
+        40.60436,
+        -375.33386
+      ],
+      "rotation_xyzw": [
+        0.02000964,
+        -0.86444855,
+        0.01687741,
+        0.50203931
+      ],
+      "scale": 5.0,
+      "world_bounds_min": [
+        -570.627,
+        40.337,
+        -379.152
+      ],
+      "world_bounds_max": [
+        -562.769,
+        45.243,
+        -371.592
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -566.722,
+          42.79,
+          -375.439
+        ],
+        "face_normal_engine": [
+          -0.3372,
+          0.0,
+          -0.9414
+        ],
+        "face_tilt_degrees": 76.7,
+        "offset_along_normal_m": -0.071,
+        "visible_volume_fraction": 0.448,
+        "visible_surface_fraction": 0.483,
+        "vertex_below_top_surface_fraction": 0.4768,
+        "size_m": [
+          6.36,
+          9.15,
+          5.02
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_060",
+      "asset": "rock_09",
+      "position": [
+        -573.21313,
+        41.59869,
+        -369.32645
+      ],
+      "rotation_xyzw": [
+        0.00824007,
+        -0.95513189,
+        0.00287293,
+        0.29605234
+      ],
+      "scale": 115.0,
+      "world_bounds_min": [
+        -578.93,
+        41.502,
+        -376.677
+      ],
+      "world_bounds_max": [
+        -565.793,
+        45.315,
+        -362.914
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -572.491,
+          43.408,
+          -369.891
+        ],
+        "face_normal_engine": [
+          -0.8045,
+          0.0,
+          -0.594
+        ],
+        "face_tilt_degrees": 80.1,
+        "offset_along_normal_m": -0.161,
+        "visible_volume_fraction": 0.449,
+        "visible_surface_fraction": 0.492,
+        "vertex_below_top_surface_fraction": 0.4701,
+        "size_m": [
+          8.51,
+          16.63,
+          3.78
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_061",
+      "asset": "rock_09",
+      "position": [
+        -577.84564,
+        41.2692,
+        -363.62198
+      ],
+      "rotation_xyzw": [
+        -0.00822243,
+        -0.90941978,
+        -0.00292302,
+        0.41578788
+      ],
+      "scale": 125.0,
+      "world_bounds_min": [
+        -584.931,
+        41.191,
+        -370.251
+      ],
+      "world_bounds_max": [
+        -568.291,
+        45.297,
+        -356.679
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -576.514,
+          43.244,
+          -363.371
+        ],
+        "face_normal_engine": [
+          -0.7176,
+          0.0,
+          -0.6964
+        ],
+        "face_tilt_degrees": 43.8,
+        "offset_along_normal_m": 0.135,
+        "visible_volume_fraction": 0.449,
+        "visible_surface_fraction": 0.401,
+        "vertex_below_top_surface_fraction": 0.5759,
+        "size_m": [
+          9.25,
+          18.08,
+          4.11
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_062",
+      "asset": "rock_09",
+      "position": [
+        -583.36481,
+        41.74583,
+        -359.77957
+      ],
+      "rotation_xyzw": [
+        -0.0,
+        -0.91222376,
+        -0.0,
+        0.40969238
+      ],
+      "scale": 110.0,
+      "world_bounds_min": [
+        -589.584,
+        41.683,
+        -365.68
+      ],
+      "world_bounds_max": [
+        -575.018,
+        45.298,
+        -353.676
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -582.581,
+          43.491,
+          -360.069
+        ],
+        "face_normal_engine": [
+          -0.5825,
+          0.0,
+          -0.8128
+        ],
+        "face_tilt_degrees": 48.9,
+        "offset_along_normal_m": -0.481,
+        "visible_volume_fraction": 0.448,
+        "visible_surface_fraction": 0.586,
+        "vertex_below_top_surface_fraction": 0.3974,
+        "size_m": [
+          8.14,
+          15.91,
+          3.62
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_063",
+      "asset": "boulder_01",
+      "position": [
+        -587.10193,
+        41.50837,
+        -354.17554
+      ],
+      "rotation_xyzw": [
+        -0.03409288,
+        -0.93706059,
+        -0.0074599,
+        0.34741831
+      ],
+      "scale": 4.0,
+      "world_bounds_min": [
+        -590.163,
+        41.179,
+        -357.591
+      ],
+      "world_bounds_max": [
+        -584.063,
+        45.205,
+        -350.785
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -586.953,
+          43.192,
+          -354.085
+        ],
+        "face_normal_engine": [
+          -0.8417,
+          0.0,
+          -0.54
+        ],
+        "face_tilt_degrees": 54.3,
+        "offset_along_normal_m": 0.191,
+        "visible_volume_fraction": 0.449,
+        "visible_surface_fraction": 0.442,
+        "vertex_below_top_surface_fraction": 0.4629,
+        "size_m": [
+          5.09,
+          7.32,
+          4.02
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_064",
+      "asset": "rock_09",
+      "position": [
+        -585.83398,
+        41.12273,
+        -344.83704
+      ],
+      "rotation_xyzw": [
+        0.0,
+        0.99564725,
+        0.0,
+        0.09320191
+      ],
+      "scale": 120.0,
+      "world_bounds_min": [
+        -590.474,
+        41.054,
+        -355.097
+      ],
+      "world_bounds_max": [
+        -580.575,
+        44.998,
+        -337.386
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -586.454,
+          43.026,
+          -346.066
+        ],
+        "face_normal_engine": [
+          -0.9826,
+          0.0,
+          0.1856
+        ],
+        "face_tilt_degrees": 23.1,
+        "offset_along_normal_m": -0.945,
+        "visible_volume_fraction": 0.448,
+        "visible_surface_fraction": 0.503,
+        "vertex_below_top_surface_fraction": 0.4875,
+        "size_m": [
+          8.88,
+          17.35,
+          3.94
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_065",
+      "asset": "rock_09",
+      "position": [
+        -583.98895,
+        41.59916,
+        -330.15561
+      ],
+      "rotation_xyzw": [
+        0.01745205,
+        0.99694806,
+        -0.00011109,
+        0.07609341
+      ],
+      "scale": 105.000008,
+      "world_bounds_min": [
+        -587.901,
+        41.559,
+        -339.12
+      ],
+      "world_bounds_max": [
+        -579.469,
+        44.986,
+        -323.643
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -583.943,
+          43.273,
+          -331.36
+        ],
+        "face_normal_engine": [
+          -0.9966,
+          0.0,
+          0.0825
+        ],
+        "face_tilt_degrees": 16.2,
+        "offset_along_normal_m": -0.259,
+        "visible_volume_fraction": 0.449,
+        "visible_surface_fraction": 0.576,
+        "vertex_below_top_surface_fraction": 0.411,
+        "size_m": [
+          7.77,
+          15.19,
+          3.45
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_066",
+      "asset": "rock_09",
+      "position": [
+        -582.03119,
+        40.73396,
+        -321.50797
+      ],
+      "rotation_xyzw": [
+        -0.01737815,
+        0.99905103,
+        0.00160829,
+        0.03990737
+      ],
+      "scale": 130.0,
+      "world_bounds_min": [
+        -587.013,
+        40.578,
+        -332.524
+      ],
+      "world_bounds_max": [
+        -576.913,
+        44.945,
+        -313.472
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -582.194,
+          42.762,
+          -322.967
+        ],
+        "face_normal_engine": [
+          -0.9913,
+          0.0,
+          0.1318
+        ],
+        "face_tilt_degrees": 74.5,
+        "offset_along_normal_m": -0.233,
+        "visible_volume_fraction": 0.452,
+        "visible_surface_fraction": 0.443,
+        "vertex_below_top_surface_fraction": 0.549,
+        "size_m": [
+          9.62,
+          18.8,
+          4.27
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_067",
+      "asset": "boulder_01",
+      "position": [
+        -581.22498,
+        40.00436,
+        -314.6456
+      ],
+      "rotation_xyzw": [
+        -0.02613449,
+        0.99275672,
+        -0.00149038,
+        0.1172565
+      ],
+      "scale": 5.0,
+      "world_bounds_min": [
+        -584.381,
+        39.737,
+        -318.724
+      ],
+      "world_bounds_max": [
+        -577.621,
+        44.643,
+        -310.252
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -581.384,
+          42.19,
+          -314.465
+        ],
+        "face_normal_engine": [
+          -0.9982,
+          0.0,
+          0.0606
+        ],
+        "face_tilt_degrees": 79.5,
+        "offset_along_normal_m": -0.383,
+        "visible_volume_fraction": 0.453,
+        "visible_surface_fraction": 0.579,
+        "vertex_below_top_surface_fraction": 0.4229,
+        "size_m": [
+          6.36,
+          9.15,
+          5.02
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_068",
+      "asset": "rock_09",
+      "position": [
+        -580.35382,
+        40.89869,
+        -305.71835
+      ],
+      "rotation_xyzw": [
+        -0.00869972,
+        0.99354887,
+        0.00068354,
+        0.11306898
+      ],
+      "scale": 115.000008,
+      "world_bounds_min": [
+        -584.924,
+        40.802,
+        -315.553
+      ],
+      "world_bounds_max": [
+        -575.186,
+        44.615,
+        -298.58
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -580.196,
+          42.708,
+          -307.039
+        ],
+        "face_normal_engine": [
+          -0.9817,
+          0.0,
+          0.1906
+        ],
+        "face_tilt_degrees": 18.4,
+        "offset_along_normal_m": -0.144,
+        "visible_volume_fraction": 0.455,
+        "visible_surface_fraction": 0.503,
+        "vertex_below_top_surface_fraction": 0.4896,
+        "size_m": [
+          8.51,
+          16.63,
+          3.78
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_069",
+      "asset": "rock_09",
+      "position": [
+        -579.80115,
+        40.4692,
+        -299.50784
+      ],
+      "rotation_xyzw": [
+        0.00858324,
+        0.99552768,
+        -0.00157498,
+        0.0940667
+      ],
+      "scale": 125.0,
+      "world_bounds_min": [
+        -584.595,
+        40.391,
+        -310.197
+      ],
+      "world_bounds_max": [
+        -574.288,
+        44.497,
+        -291.754
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -579.78,
+          42.444,
+          -300.879
+        ],
+        "face_normal_engine": [
+          -0.9622,
+          0.0,
+          0.2722
+        ],
+        "face_tilt_degrees": 42.4,
+        "offset_along_normal_m": -0.352,
+        "visible_volume_fraction": 0.449,
+        "visible_surface_fraction": 0.546,
+        "vertex_below_top_surface_fraction": 0.4321,
+        "size_m": [
+          9.25,
+          18.08,
+          4.11
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_070",
+      "asset": "rock_09",
+      "position": [
+        -573.79675,
+        40.74583,
+        -286.27612
+      ],
+      "rotation_xyzw": [
+        0.0,
+        0.97608644,
+        0.0,
+        0.21738297
+      ],
+      "scale": 110.000008,
+      "world_bounds_min": [
+        -578.7,
+        40.683,
+        -295.512
+      ],
+      "world_bounds_max": [
+        -568.175,
+        44.298,
+        -279.537
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -573.636,
+          42.491,
+          -287.456
+        ],
+        "face_normal_engine": [
+          -0.9449,
+          0.0,
+          0.3274
+        ],
+        "face_tilt_degrees": 33.8,
+        "offset_along_normal_m": -0.211,
+        "visible_volume_fraction": 0.446,
+        "visible_surface_fraction": 0.52,
+        "vertex_below_top_surface_fraction": 0.4476,
+        "size_m": [
+          8.14,
+          15.91,
+          3.62
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_071",
+      "asset": "boulder_01",
+      "position": [
+        -546.89215,
+        32.50837,
+        -492.38785
+      ],
+      "rotation_xyzw": [
+        -0.02876376,
+        -0.7369023,
+        -0.01976414,
+        0.67509788
+      ],
+      "scale": 4.0,
+      "world_bounds_min": [
+        -550.606,
+        32.179,
+        -494.557
+      ],
+      "world_bounds_max": [
+        -543.414,
+        36.205,
+        -489.266
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -547.081,
+          34.192,
+          -492.217
+        ],
+        "face_normal_engine": [
+          -0.2252,
+          0.0,
+          -0.9743
+        ],
+        "face_tilt_degrees": 29.7,
+        "offset_along_normal_m": -0.314,
+        "visible_volume_fraction": 0.447,
+        "visible_surface_fraction": 0.536,
+        "vertex_below_top_surface_fraction": 0.3188,
+        "size_m": [
+          5.09,
+          7.32,
+          4.02
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_073",
+      "asset": "rock_09",
+      "position": [
+        -553.50281,
+        32.69916,
+        -478.12881
+      ],
+      "rotation_xyzw": [
+        0.0172771,
+        0.97753245,
+        -0.00246746,
+        0.21006177
+      ],
+      "scale": 105.000008,
+      "world_bounds_min": [
+        -558.099,
+        32.659,
+        -486.973
+      ],
+      "world_bounds_max": [
+        -548.129,
+        36.086,
+        -471.699
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -553.387,
+          34.373,
+          -479.235
+        ],
+        "face_normal_engine": [
+          -0.9382,
+          0.0,
+          0.3462
+        ],
+        "face_tilt_degrees": 18.9,
+        "offset_along_normal_m": -0.29,
+        "visible_volume_fraction": 0.447,
+        "visible_surface_fraction": 0.503,
+        "vertex_below_top_surface_fraction": 0.463,
+        "size_m": [
+          7.77,
+          15.19,
+          3.45
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_074",
+      "asset": "rock_09",
+      "position": [
+        -554.89465,
+        31.63396,
+        -478.26364
+      ],
+      "rotation_xyzw": [
+        -0.01714864,
+        0.99081898,
+        0.00324203,
+        0.13406423
+      ],
+      "scale": 130.0,
+      "world_bounds_min": [
+        -560.206,
+        31.478,
+        -489.374
+      ],
+      "world_bounds_max": [
+        -548.906,
+        35.845,
+        -470.205
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -554.848,
+          33.661,
+          -479.692
+        ],
+        "face_normal_engine": [
+          -0.9488,
+          0.0,
+          0.3158
+        ],
+        "face_tilt_degrees": 18.7,
+        "offset_along_normal_m": -0.308,
+        "visible_volume_fraction": 0.45,
+        "visible_surface_fraction": 0.536,
+        "vertex_below_top_surface_fraction": 0.4149,
+        "size_m": [
+          9.62,
+          18.8,
+          4.27
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_075",
+      "asset": "boulder_01",
+      "position": [
+        -544.95392,
+        31.00436,
+        -455.83493
+      ],
+      "rotation_xyzw": [
+        -0.0260173,
+        0.95932436,
+        0.00288659,
+        0.28108993
+      ],
+      "scale": 5.0,
+      "world_bounds_min": [
+        -548.888,
+        30.737,
+        -459.728
+      ],
+      "world_bounds_max": [
+        -541.185,
+        35.643,
+        -451.898
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -543.09,
+          33.19,
+          -456.626
+        ],
+        "face_normal_engine": [
+          -0.9228,
+          0.0,
+          0.3853
+        ],
+        "face_tilt_degrees": 25.6,
+        "offset_along_normal_m": 2.11,
+        "visible_volume_fraction": 0.448,
+        "visible_surface_fraction": 0.449,
+        "vertex_below_top_surface_fraction": 0.4022,
+        "size_m": [
+          6.36,
+          9.15,
+          5.02
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_076",
+      "asset": "rock_09",
+      "position": [
+        -544.06696,
+        31.89869,
+        -449.24121
+      ],
+      "rotation_xyzw": [
+        -0.00871251,
+        0.99576843,
+        0.0004946,
+        0.09148295
+      ],
+      "scale": 115.000015,
+      "world_bounds_min": [
+        -548.547,
+        31.802,
+        -459.072
+      ],
+      "world_bounds_max": [
+        -539.069,
+        35.615,
+        -442.097
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -543.631,
+          33.708,
+          -450.611
+        ],
+        "face_normal_engine": [
+          -0.989,
+          0.0,
+          0.1478
+        ],
+        "face_tilt_degrees": 15.7,
+        "offset_along_normal_m": 0.178,
+        "visible_volume_fraction": 0.448,
+        "visible_surface_fraction": 0.501,
+        "vertex_below_top_surface_fraction": 0.4756,
+        "size_m": [
+          8.51,
+          16.63,
+          3.78
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_077",
+      "asset": "rock_09",
+      "position": [
+        -543.25195,
+        31.6692,
+        -441.87167
+      ],
+      "rotation_xyzw": [
+        -0.00870923,
+        -0.99966717,
+        0.00054928,
+        0.02427761
+      ],
+      "scale": 124.999992,
+      "world_bounds_min": [
+        -547.907,
+        31.591,
+        -452.203
+      ],
+      "world_bounds_max": [
+        -538.809,
+        35.697,
+        -434.272
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -543.133,
+          33.644,
+          -443.246
+        ],
+        "face_normal_engine": [
+          -0.9993,
+          0.0,
+          0.0387
+        ],
+        "face_tilt_degrees": 26.8,
+        "offset_along_normal_m": 0.226,
+        "visible_volume_fraction": 0.448,
+        "visible_surface_fraction": 0.385,
+        "vertex_below_top_surface_fraction": 0.5846,
+        "size_m": [
+          9.25,
+          18.08,
+          4.11
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_078",
+      "asset": "rock_09",
+      "position": [
+        -543.23608,
+        31.84583,
+        -440.04068
+      ],
+      "rotation_xyzw": [
+        0.0,
+        0.99732804,
+        0.0,
+        0.0730535
+      ],
+      "scale": 109.999992,
+      "world_bounds_min": [
+        -547.404,
+        31.783,
+        -449.427
+      ],
+      "world_bounds_max": [
+        -538.574,
+        35.398,
+        -433.215
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -542.981,
+          33.59,
+          -441.322
+        ],
+        "face_normal_engine": [
+          -0.9991,
+          0.0,
+          0.0415
+        ],
+        "face_tilt_degrees": 24.8,
+        "offset_along_normal_m": 0.008,
+        "visible_volume_fraction": 0.45,
+        "visible_surface_fraction": 0.412,
+        "vertex_below_top_surface_fraction": 0.5742,
+        "size_m": [
+          8.14,
+          15.91,
+          3.62
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_079",
+      "asset": "boulder_01",
+      "position": [
+        -545.3512,
+        31.60836,
+        -432.60928
+      ],
+      "rotation_xyzw": [
+        -0.03326813,
+        -0.90137541,
+        -0.01054545,
+        0.43162993
+      ],
+      "scale": 4.0,
+      "world_bounds_min": [
+        -548.489,
+        31.279,
+        -435.811
+      ],
+      "world_bounds_max": [
+        -542.176,
+        35.305,
+        -429.55
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -545.141,
+          33.292,
+          -432.501
+        ],
+        "face_normal_engine": [
+          -0.7293,
+          0.0,
+          -0.6842
+        ],
+        "face_tilt_degrees": 29.7,
+        "offset_along_normal_m": 0.263,
+        "visible_volume_fraction": 0.451,
+        "visible_surface_fraction": 0.364,
+        "vertex_below_top_surface_fraction": 0.5089,
+        "size_m": [
+          5.09,
+          7.32,
+          4.02
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_080",
+      "asset": "rock_09",
+      "position": [
+        -549.8692,
+        31.42273,
+        -425.49933
+      ],
+      "rotation_xyzw": [
+        -0.0,
+        -0.9810468,
+        -0.0,
+        0.19377108
+      ],
+      "scale": 120.0,
+      "world_bounds_min": [
+        -554.967,
+        31.354,
+        -434.105
+      ],
+      "world_bounds_max": [
+        -543.494,
+        35.298,
+        -418.745
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -549.254,
+          33.326,
+          -426.435
+        ],
+        "face_normal_engine": [
+          -0.9249,
+          0.0,
+          -0.3802
+        ],
+        "face_tilt_degrees": 36.5,
+        "offset_along_normal_m": -0.026,
+        "visible_volume_fraction": 0.45,
+        "visible_surface_fraction": 0.467,
+        "vertex_below_top_surface_fraction": 0.4998,
+        "size_m": [
+          8.88,
+          17.35,
+          3.94
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_081",
+      "asset": "rock_09",
+      "position": [
+        -551.92297,
+        31.79916,
+        -418.16434
+      ],
+      "rotation_xyzw": [
+        -0.01703294,
+        -0.98863924,
+        -0.00380331,
+        0.14929132
+      ],
+      "scale": 105.000008,
+      "world_bounds_min": [
+        -556.187,
+        31.759,
+        -426.041
+      ],
+      "world_bounds_max": [
+        -546.931,
+        35.186,
+        -412.087
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -551.171,
+          33.473,
+          -418.914
+        ],
+        "face_normal_engine": [
+          -0.9325,
+          0.0,
+          -0.3612
+        ],
+        "face_tilt_degrees": 33.5,
+        "offset_along_normal_m": 0.416,
+        "visible_volume_fraction": 0.448,
+        "visible_surface_fraction": 0.381,
+        "vertex_below_top_surface_fraction": 0.5852,
+        "size_m": [
+          7.77,
+          15.19,
+          3.45
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_082",
+      "asset": "rock_09",
+      "position": [
+        -556.9884,
+        31.03396,
+        -413.22815
+      ],
+      "rotation_xyzw": [
+        0.01651545,
+        -0.92795831,
+        0.00564147,
+        0.37227514
+      ],
+      "scale": 130.0,
+      "world_bounds_min": [
+        -564.113,
+        30.878,
+        -420.657
+      ],
+      "world_bounds_max": [
+        -547.585,
+        35.245,
+        -405.993
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -555.941,
+          33.062,
+          -413.404
+        ],
+        "face_normal_engine": [
+          -0.7579,
+          0.0,
+          -0.6523
+        ],
+        "face_tilt_degrees": 32.3,
+        "offset_along_normal_m": -0.121,
+        "visible_volume_fraction": 0.449,
+        "visible_surface_fraction": 0.484,
+        "vertex_below_top_surface_fraction": 0.4606,
+        "size_m": [
+          9.62,
+          18.8,
+          4.27
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_083",
+      "asset": "boulder_01",
+      "position": [
+        -560.88623,
+        30.40436,
+        -408.24496
+      ],
+      "rotation_xyzw": [
+        0.02563717,
+        -0.99924004,
+        0.00528849,
+        0.0288818
+      ],
+      "scale": 5.0,
+      "world_bounds_min": [
+        -563.455,
+        30.137,
+        -412.725
+      ],
+      "world_bounds_max": [
+        -557.289,
+        35.043,
+        -403.456
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -560.694,
+          32.59,
+          -408.167
+        ],
+        "face_normal_engine": [
+          -0.9731,
+          0.0,
+          -0.2302
+        ],
+        "face_tilt_degrees": 34.6,
+        "offset_along_normal_m": -0.331,
+        "visible_volume_fraction": 0.45,
+        "visible_surface_fraction": 0.513,
+        "vertex_below_top_surface_fraction": 0.3229,
+        "size_m": [
+          6.36,
+          9.15,
+          5.02
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_084",
+      "asset": "rock_09",
+      "position": [
+        -565.06531,
+        31.39869,
+        -399.52002
+      ],
+      "rotation_xyzw": [
+        0.00841868,
+        -0.97328496,
+        0.00229745,
+        0.22943461
+      ],
+      "scale": 115.0,
+      "world_bounds_min": [
+        -570.287,
+        31.302,
+        -407.497
+      ],
+      "world_bounds_max": [
+        -558.472,
+        35.115,
+        -393.203
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -565.088,
+          33.208,
+          -400.735
+        ],
+        "face_normal_engine": [
+          -0.8786,
+          0.0,
+          -0.4776
+        ],
+        "face_tilt_degrees": 21.6,
+        "offset_along_normal_m": -0.806,
+        "visible_volume_fraction": 0.448,
+        "visible_surface_fraction": 0.562,
+        "vertex_below_top_surface_fraction": 0.3992,
+        "size_m": [
+          8.51,
+          16.63,
+          3.78
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_085",
+      "asset": "rock_09",
+      "position": [
+        -567.63623,
+        30.9692,
+        -393.07227
+      ],
+      "rotation_xyzw": [
+        -0.00859472,
+        -0.96601921,
+        -0.00151102,
+        0.25832298
+      ],
+      "scale": 124.999992,
+      "world_bounds_min": [
+        -573.486,
+        30.891,
+        -401.467
+      ],
+      "world_bounds_max": [
+        -560.055,
+        34.997,
+        -386.134
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -566.042,
+          32.944,
+          -393.462
+        ],
+        "face_normal_engine": [
+          -0.9067,
+          0.0,
+          -0.4217
+        ],
+        "face_tilt_degrees": 25.2,
+        "offset_along_normal_m": 0.803,
+        "visible_volume_fraction": 0.45,
+        "visible_surface_fraction": 0.36,
+        "vertex_below_top_surface_fraction": 0.6038,
+        "size_m": [
+          9.25,
+          18.08,
+          4.11
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_086",
+      "asset": "rock_09",
+      "position": [
+        -571.48364,
+        31.34583,
+        -387.50192
+      ],
+      "rotation_xyzw": [
+        -0.0,
+        -0.97460341,
+        -0.0,
+        0.22393787
+      ],
+      "scale": 110.0,
+      "world_bounds_min": [
+        -576.404,
+        31.283,
+        -395.174
+      ],
+      "world_bounds_max": [
+        -565.243,
+        34.898,
+        -381.437
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -570.902,
+          33.09,
+          -388.355
+        ],
+        "face_normal_engine": [
+          -0.8491,
+          0.0,
+          -0.5282
+        ],
+        "face_tilt_degrees": 32.9,
+        "offset_along_normal_m": -0.093,
+        "visible_volume_fraction": 0.45,
+        "visible_surface_fraction": 0.448,
+        "vertex_below_top_surface_fraction": 0.5121,
+        "size_m": [
+          8.14,
+          15.91,
+          3.62
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_087",
+      "asset": "boulder_01",
+      "position": [
+        -575.26868,
+        31.20836,
+        -382.88672
+      ],
+      "rotation_xyzw": [
+        -0.03051378,
+        -0.79779357,
+        -0.01693763,
+        0.60191983
+      ],
+      "scale": 4.0,
+      "world_bounds_min": [
+        -578.719,
+        30.879,
+        -385.378
+      ],
+      "world_bounds_max": [
+        -572.015,
+        34.905,
+        -379.822
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -575.361,
+          32.892,
+          -382.586
+        ],
+        "face_normal_engine": [
+          -0.4057,
+          0.0,
+          -0.914
+        ],
+        "face_tilt_degrees": 33.5,
+        "offset_along_normal_m": 0.015,
+        "visible_volume_fraction": 0.45,
+        "visible_surface_fraction": 0.412,
+        "vertex_below_top_surface_fraction": 0.4495,
+        "size_m": [
+          5.09,
+          7.32,
+          4.02
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_088",
+      "asset": "rock_09",
+      "position": [
+        -581.04041,
+        30.92273,
+        -376.51001
+      ],
+      "rotation_xyzw": [
+        -0.0,
+        -0.95389539,
+        -0.0,
+        0.30013928
+      ],
+      "scale": 120.0,
+      "world_bounds_min": [
+        -587.003,
+        30.854,
+        -384.134
+      ],
+      "world_bounds_max": [
+        -573.245,
+        34.798,
+        -369.801
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -579.79,
+          32.826,
+          -376.734
+        ],
+        "face_normal_engine": [
+          -0.8198,
+          0.0,
+          -0.5726
+        ],
+        "face_tilt_degrees": 27.4,
+        "offset_along_normal_m": 0.408,
+        "visible_volume_fraction": 0.448,
+        "visible_surface_fraction": 0.342,
+        "vertex_below_top_surface_fraction": 0.6305,
+        "size_m": [
+          8.88,
+          17.35,
+          3.94
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_089",
+      "asset": "rock_09",
+      "position": [
+        -587.36749,
+        31.39916,
+        -373.82233
+      ],
+      "rotation_xyzw": [
+        -0.01232523,
+        -0.75377166,
+        -0.01235618,
+        0.65690464
+      ],
+      "scale": 105.000008,
+      "world_bounds_min": [
+        -593.877,
+        31.359,
+        -377.71
+      ],
+      "world_bounds_max": [
+        -578.413,
+        34.786,
+        -369.361
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -586.141,
+          33.073,
+          -373.465
+        ],
+        "face_normal_engine": [
+          -0.0673,
+          0.0,
+          -0.9977
+        ],
+        "face_tilt_degrees": 34.3,
+        "offset_along_normal_m": 0.071,
+        "visible_volume_fraction": 0.445,
+        "visible_surface_fraction": 0.433,
+        "vertex_below_top_surface_fraction": 0.5267,
+        "size_m": [
+          7.77,
+          15.19,
+          3.45
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_090",
+      "asset": "rock_09",
+      "position": [
+        -593.09723,
+        30.73396,
+        -372.05127
+      ],
+      "rotation_xyzw": [
+        0.01661784,
+        -0.93474269,
+        0.00533234,
+        0.35489678
+      ],
+      "scale": 130.0,
+      "world_bounds_min": [
+        -600.084,
+        30.578,
+        -379.67
+      ],
+      "world_bounds_max": [
+        -583.921,
+        34.945,
+        -364.802
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -592.973,
+          32.762,
+          -373.01
+        ],
+        "face_normal_engine": [
+          -0.7817,
+          0.0,
+          -0.6236
+        ],
+        "face_tilt_degrees": 16.9,
+        "offset_along_normal_m": -1.241,
+        "visible_volume_fraction": 0.449,
+        "visible_surface_fraction": 0.65,
+        "vertex_below_top_surface_fraction": 0.3073,
+        "size_m": [
+          9.62,
+          18.8,
+          4.27
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_091",
+      "asset": "boulder_01",
+      "position": [
+        -594.81787,
+        30.10436,
+        -366.47342
+      ],
+      "rotation_xyzw": [
+        0.02565647,
+        -0.99933958,
+        0.00519406,
+        0.0252024
+      ],
+      "scale": 5.0,
+      "world_bounds_min": [
+        -597.4,
+        29.837,
+        -370.948
+      ],
+      "world_bounds_max": [
+        -591.217,
+        34.743,
+        -361.689
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -594.416,
+          32.29,
+          -366.343
+        ],
+        "face_normal_engine": [
+          -0.9748,
+          0.0,
+          -0.2231
+        ],
+        "face_tilt_degrees": 38.7,
+        "offset_along_normal_m": -0.11,
+        "visible_volume_fraction": 0.45,
+        "visible_surface_fraction": 0.455,
+        "vertex_below_top_surface_fraction": 0.4303,
+        "size_m": [
+          6.36,
+          9.15,
+          5.02
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_092",
+      "asset": "rock_09",
+      "position": [
+        -599.08759,
+        31.09869,
+        -357.52472
+      ],
+      "rotation_xyzw": [
+        0.00850054,
+        -0.9813624,
+        0.00197314,
+        0.1919679
+      ],
+      "scale": 115.0,
+      "world_bounds_min": [
+        -604.0,
+        31.002,
+        -365.785
+      ],
+      "world_bounds_max": [
+        -593.008,
+        34.815,
+        -351.048
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -598.698,
+          32.908,
+          -358.503
+        ],
+        "face_normal_engine": [
+          -0.9126,
+          0.0,
+          -0.4089
+        ],
+        "face_tilt_degrees": 52.4,
+        "offset_along_normal_m": -0.212,
+        "visible_volume_fraction": 0.449,
+        "visible_surface_fraction": 0.522,
+        "vertex_below_top_surface_fraction": 0.4528,
+        "size_m": [
+          8.51,
+          16.63,
+          3.78
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_094",
+      "asset": "rock_09",
+      "position": [
+        -595.06598,
+        30.84583,
+        -332.90176
+      ],
+      "rotation_xyzw": [
+        0.0,
+        0.98705256,
+        0.0,
+        0.16039714
+      ],
+      "scale": 109.999992,
+      "world_bounds_min": [
+        -599.664,
+        30.783,
+        -342.283
+      ],
+      "world_bounds_max": [
+        -589.772,
+        34.398,
+        -326.101
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -594.759,
+          32.59,
+          -334.183
+        ],
+        "face_normal_engine": [
+          -0.9764,
+          0.0,
+          0.2158
+        ],
+        "face_tilt_degrees": 21.9,
+        "offset_along_normal_m": -0.042,
+        "visible_volume_fraction": 0.449,
+        "visible_surface_fraction": 0.394,
+        "vertex_below_top_surface_fraction": 0.5809,
+        "size_m": [
+          8.14,
+          15.91,
+          3.62
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_095",
+      "asset": "boulder_01",
+      "position": [
+        -597.24634,
+        30.40836,
+        -327.1019
+      ],
+      "rotation_xyzw": [
+        0.03369154,
+        0.99168706,
+        -0.0091025,
+        0.1238508
+      ],
+      "scale": 4.0,
+      "world_bounds_min": [
+        -599.693,
+        30.079,
+        -330.397
+      ],
+      "world_bounds_max": [
+        -594.171,
+        34.105,
+        -323.604
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -597.175,
+          32.092,
+          -326.901
+        ],
+        "face_normal_engine": [
+          -0.9256,
+          0.0,
+          0.3784
+        ],
+        "face_tilt_degrees": 39.7,
+        "offset_along_normal_m": -0.263,
+        "visible_volume_fraction": 0.449,
+        "visible_surface_fraction": 0.573,
+        "vertex_below_top_surface_fraction": 0.3454,
+        "size_m": [
+          5.09,
+          7.32,
+          4.02
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_096",
+      "asset": "rock_09",
+      "position": [
+        -590.06976,
+        30.02273,
+        -310.86649
+      ],
+      "rotation_xyzw": [
+        0.0,
+        0.99154198,
+        0.0,
+        0.12978719
+      ],
+      "scale": 119.999992,
+      "world_bounds_min": [
+        -594.886,
+        29.954,
+        -321.128
+      ],
+      "world_bounds_max": [
+        -584.518,
+        33.898,
+        -303.438
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -590.045,
+          31.926,
+          -312.192
+        ],
+        "face_normal_engine": [
+          -0.9663,
+          0.0,
+          0.2574
+        ],
+        "face_tilt_degrees": 19.2,
+        "offset_along_normal_m": -0.356,
+        "visible_volume_fraction": 0.455,
+        "visible_surface_fraction": 0.457,
+        "vertex_below_top_surface_fraction": 0.516,
+        "size_m": [
+          8.88,
+          17.35,
+          3.94
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_097",
+      "asset": "rock_09",
+      "position": [
+        -590.2077,
+        30.39916,
+        -301.45749
+      ],
+      "rotation_xyzw": [
+        -0.01734425,
+        -0.9989838,
+        -0.00193994,
+        0.04155457
+      ],
+      "scale": 105.0,
+      "world_bounds_min": [
+        -594.105,
+        30.359,
+        -310.056
+      ],
+      "world_bounds_max": [
+        -586.403,
+        33.786,
+        -295.098
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -590.2,
+          32.073,
+          -302.568
+        ],
+        "face_normal_engine": [
+          -0.9883,
+          0.0,
+          -0.1524
+        ],
+        "face_tilt_degrees": 26.2,
+        "offset_along_normal_m": 0.055,
+        "visible_volume_fraction": 0.45,
+        "visible_surface_fraction": 0.431,
+        "vertex_below_top_surface_fraction": 0.532,
+        "size_m": [
+          7.77,
+          15.19,
+          3.45
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_099",
+      "asset": "boulder_01",
+      "position": [
+        -497.75275,
+        56.10436,
+        -389.34207
+      ],
+      "rotation_xyzw": [
+        0.00586451,
+        -0.38973063,
+        0.02551157,
+        0.92055678
+      ],
+      "scale": 5.0,
+      "world_bounds_min": [
+        -501.863,
+        55.837,
+        -393.232
+      ],
+      "world_bounds_max": [
+        -493.431,
+        60.743,
+        -385.628
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -497.6,
+          58.29,
+          -389.464
+        ],
+        "face_normal_engine": [
+          0.8101,
+          0.0,
+          -0.5863
+        ],
+        "face_tilt_degrees": 31.9,
+        "offset_along_normal_m": -0.058,
+        "visible_volume_fraction": 0.449,
+        "visible_surface_fraction": 0.446,
+        "vertex_below_top_surface_fraction": 0.398,
+        "size_m": [
+          6.36,
+          9.15,
+          5.02
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_100",
+      "asset": "rock_09",
+      "position": [
+        -507.06427,
+        56.69869,
+        -403.33719
+      ],
+      "rotation_xyzw": [
+        0.00261625,
+        -0.33290341,
+        0.00832512,
+        0.94292057
+      ],
+      "scale": 115.000008,
+      "world_bounds_min": [
+        -513.375,
+        56.602,
+        -409.974
+      ],
+      "world_bounds_max": [
+        -501.127,
+        60.415,
+        -394.408
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -507.027,
+          58.508,
+          -402.359
+        ],
+        "face_normal_engine": [
+          0.7998,
+          0.0,
+          -0.6003
+        ],
+        "face_tilt_degrees": 24.5,
+        "offset_along_normal_m": -0.28,
+        "visible_volume_fraction": 0.448,
+        "visible_surface_fraction": 0.491,
+        "vertex_below_top_surface_fraction": 0.47,
+        "size_m": [
+          8.51,
+          16.63,
+          3.78
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_101",
+      "asset": "rock_09",
+      "position": [
+        -511.75491,
+        56.1692,
+        -410.2677
+      ],
+      "rotation_xyzw": [
+        -0.00322383,
+        -0.28702107,
+        -0.00810921,
+        0.95788455
+      ],
+      "scale": 125.0,
+      "world_bounds_min": [
+        -518.509,
+        56.091,
+        -417.679
+      ],
+      "world_bounds_max": [
+        -505.737,
+        60.197,
+        -400.168
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -511.833,
+          58.144,
+          -409.153
+        ],
+        "face_normal_engine": [
+          0.7841,
+          0.0,
+          -0.6206
+        ],
+        "face_tilt_degrees": 22.1,
+        "offset_along_normal_m": -0.37,
+        "visible_volume_fraction": 0.448,
+        "visible_surface_fraction": 0.491,
+        "vertex_below_top_surface_fraction": 0.4671,
+        "size_m": [
+          9.25,
+          18.08,
+          4.11
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_102",
+      "asset": "rock_09",
+      "position": [
+        -521.7522,
+        56.24583,
+        -422.98074
+      ],
+      "rotation_xyzw": [
+        -0.0,
+        -0.41328865,
+        -0.0,
+        0.91060019
+      ],
+      "scale": 109.999992,
+      "world_bounds_min": [
+        -527.916,
+        56.183,
+        -428.832
+      ],
+      "world_bounds_max": [
+        -515.28,
+        59.798,
+        -415.243
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -521.295,
+          57.991,
+          -422.319
+        ],
+        "face_normal_engine": [
+          0.7335,
+          0.0,
+          -0.6797
+        ],
+        "face_tilt_degrees": 14.2,
+        "offset_along_normal_m": -0.413,
+        "visible_volume_fraction": 0.45,
+        "visible_surface_fraction": 0.516,
+        "vertex_below_top_surface_fraction": 0.444,
+        "size_m": [
+          8.14,
+          15.91,
+          3.62
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_104",
+      "asset": "rock_09",
+      "position": [
+        -531.65363,
+        55.82273,
+        -418.3779
+      ],
+      "rotation_xyzw": [
+        -0.0,
+        -0.97961235,
+        -0.0,
+        0.20089753
+      ],
+      "scale": 120.0,
+      "world_bounds_min": [
+        -536.816,
+        55.754,
+        -426.931
+      ],
+      "world_bounds_max": [
+        -525.174,
+        59.698,
+        -411.657
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -531.242,
+          57.726,
+          -419.4
+        ],
+        "face_normal_engine": [
+          -0.9193,
+          0.0,
+          -0.3936
+        ],
+        "face_tilt_degrees": 18.7,
+        "offset_along_normal_m": -0.269,
+        "visible_volume_fraction": 0.449,
+        "visible_surface_fraction": 0.496,
+        "vertex_below_top_surface_fraction": 0.4701,
+        "size_m": [
+          8.88,
+          17.35,
+          3.94
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_105",
+      "asset": "rock_09",
+      "position": [
+        -533.29224,
+        56.39916,
+        -409.1474
+      ],
+      "rotation_xyzw": [
+        -0.01711559,
+        -0.99179924,
+        -0.0034122,
+        0.12660852
+      ],
+      "scale": 105.000008,
+      "world_bounds_min": [
+        -537.484,
+        56.359,
+        -417.208
+      ],
+      "world_bounds_max": [
+        -528.59,
+        59.786,
+        -403.002
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -532.657,
+          58.073,
+          -409.978
+        ],
+        "face_normal_engine": [
+          -0.948,
+          0.0,
+          -0.3181
+        ],
+        "face_tilt_degrees": 24.5,
+        "offset_along_normal_m": 0.4,
+        "visible_volume_fraction": 0.452,
+        "visible_surface_fraction": 0.364,
+        "vertex_below_top_surface_fraction": 0.5999,
+        "size_m": [
+          7.77,
+          15.19,
+          3.45
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_106",
+      "asset": "rock_09",
+      "position": [
+        -537.83649,
+        55.73396,
+        -402.22101
+      ],
+      "rotation_xyzw": [
+        0.01707142,
+        -0.96580631,
+        0.00362674,
+        0.25867665
+      ],
+      "scale": 130.0,
+      "world_bounds_min": [
+        -544.037,
+        55.578,
+        -410.951
+      ],
+      "world_bounds_max": [
+        -529.962,
+        59.945,
+        -395.035
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -537.008,
+          57.762,
+          -402.997
+        ],
+        "face_normal_engine": [
+          -0.8911,
+          0.0,
+          -0.4538
+        ],
+        "face_tilt_degrees": 31.4,
+        "offset_along_normal_m": -0.009,
+        "visible_volume_fraction": 0.448,
+        "visible_surface_fraction": 0.504,
+        "vertex_below_top_surface_fraction": 0.4519,
+        "size_m": [
+          9.62,
+          18.8,
+          4.27
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_107",
+      "asset": "boulder_01",
+      "position": [
+        -540.59863,
+        55.30436,
+        -397.41818
+      ],
+      "rotation_xyzw": [
+        0.02533825,
+        -0.99651694,
+        0.00657309,
+        0.07917578
+      ],
+      "scale": 5.0,
+      "world_bounds_min": [
+        -543.421,
+        55.037,
+        -401.953
+      ],
+      "world_bounds_max": [
+        -537.049,
+        59.943,
+        -392.586
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -540.425,
+          57.49,
+          -397.335
+        ],
+        "face_normal_engine": [
+          -0.945,
+          0.0,
+          -0.327
+        ],
+        "face_tilt_degrees": 34.6,
+        "offset_along_normal_m": -0.201,
+        "visible_volume_fraction": 0.449,
+        "visible_surface_fraction": 0.545,
+        "vertex_below_top_surface_fraction": 0.3109,
+        "size_m": [
+          6.36,
+          9.15,
+          5.02
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_108",
+      "asset": "rock_09",
+      "position": [
+        -543.29126,
+        56.39869,
+        -387.40381
+      ],
+      "rotation_xyzw": [
+        0.00840329,
+        -0.97174561,
+        0.0023531,
+        0.23586927
+      ],
+      "scale": 115.000008,
+      "world_bounds_min": [
+        -548.565,
+        56.302,
+        -395.328
+      ],
+      "world_bounds_max": [
+        -536.613,
+        60.115,
+        -381.077
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -542.049,
+          58.208,
+          -387.899
+        ],
+        "face_normal_engine": [
+          -0.8722,
+          0.0,
+          -0.4892
+        ],
+        "face_tilt_degrees": 26.7,
+        "offset_along_normal_m": 0.619,
+        "visible_volume_fraction": 0.453,
+        "visible_surface_fraction": 0.406,
+        "vertex_below_top_surface_fraction": 0.5522,
+        "size_m": [
+          8.51,
+          16.63,
+          3.78
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_109",
+      "asset": "rock_09",
+      "position": [
+        -546.87531,
+        56.1692,
+        -382.97205
+      ],
+      "rotation_xyzw": [
+        -0.00854431,
+        -0.95763814,
+        -0.00177402,
+        0.28784204
+      ],
+      "scale": 125.0,
+      "world_bounds_min": [
+        -552.959,
+        56.091,
+        -391.053
+      ],
+      "world_bounds_max": [
+        -538.905,
+        60.197,
+        -375.986
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -546.289,
+          58.144,
+          -383.713
+        ],
+        "face_normal_engine": [
+          -0.8792,
+          0.0,
+          -0.4765
+        ],
+        "face_tilt_degrees": 24.1,
+        "offset_along_normal_m": -0.406,
+        "visible_volume_fraction": 0.45,
+        "visible_surface_fraction": 0.488,
+        "vertex_below_top_surface_fraction": 0.4573,
+        "size_m": [
+          9.25,
+          18.08,
+          4.11
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_110",
+      "asset": "rock_09",
+      "position": [
+        -548.91913,
+        56.74583,
+        -374.13376
+      ],
+      "rotation_xyzw": [
+        -0.0,
+        -0.98956299,
+        -0.0,
+        0.14410095
+      ],
+      "scale": 110.0,
+      "world_bounds_min": [
+        -553.45,
+        56.683,
+        -382.434
+      ],
+      "world_bounds_max": [
+        -543.771,
+        60.298,
+        -367.76
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -548.447,
+          58.491,
+          -375.029
+        ],
+        "face_normal_engine": [
+          -0.9234,
+          0.0,
+          -0.3838
+        ],
+        "face_tilt_degrees": 24.9,
+        "offset_along_normal_m": 0.177,
+        "visible_volume_fraction": 0.451,
+        "visible_surface_fraction": 0.401,
+        "vertex_below_top_surface_fraction": 0.5772,
+        "size_m": [
+          8.14,
+          15.91,
+          3.62
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_111",
+      "asset": "boulder_01",
+      "position": [
+        -553.07629,
+        56.70836,
+        -368.89993
+      ],
+      "rotation_xyzw": [
+        -0.03250038,
+        -0.87095249,
+        -0.01271616,
+        0.49012634
+      ],
+      "scale": 4.0,
+      "world_bounds_min": [
+        -556.221,
+        56.379,
+        -371.883
+      ],
+      "world_bounds_max": [
+        -549.865,
+        60.405,
+        -365.866
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -552.988,
+          58.392,
+          -368.807
+        ],
+        "face_normal_engine": [
+          -0.6329,
+          0.0,
+          -0.7742
+        ],
+        "face_tilt_degrees": 25.8,
+        "offset_along_normal_m": 0.088,
+        "visible_volume_fraction": 0.45,
+        "visible_surface_fraction": 0.451,
+        "vertex_below_top_surface_fraction": 0.3972,
+        "size_m": [
+          5.09,
+          7.32,
+          4.02
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_112",
+      "asset": "rock_09",
+      "position": [
+        -558.43701,
+        56.52272,
+        -361.71994
+      ],
+      "rotation_xyzw": [
+        -0.0,
+        -0.96459281,
+        -0.0,
+        0.26374364
+      ],
+      "scale": 119.999985,
+      "world_bounds_min": [
+        -564.131,
+        56.454,
+        -369.727
+      ],
+      "world_bounds_max": [
+        -551.093,
+        60.398,
+        -355.059
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -557.829,
+          58.426,
+          -362.521
+        ],
+        "face_normal_engine": [
+          -0.8609,
+          0.0,
+          -0.5088
+        ],
+        "face_tilt_degrees": 28.6,
+        "offset_along_normal_m": -0.252,
+        "visible_volume_fraction": 0.448,
+        "visible_surface_fraction": 0.46,
+        "vertex_below_top_surface_fraction": 0.5033,
+        "size_m": [
+          8.88,
+          17.35,
+          3.94
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_113",
+      "asset": "rock_09",
+      "position": [
+        -561.67334,
+        57.09916,
+        -355.32071
+      ],
+      "rotation_xyzw": [
+        -0.01636464,
+        -0.95948386,
+        -0.00606507,
+        0.28122255
+      ],
+      "scale": 105.000008,
+      "world_bounds_min": [
+        -566.716,
+        57.059,
+        -362.169
+      ],
+      "world_bounds_max": [
+        -555.047,
+        60.486,
+        -349.446
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -561.001,
+          58.773,
+          -355.897
+        ],
+        "face_normal_engine": [
+          -0.8021,
+          0.0,
+          -0.5972
+        ],
+        "face_tilt_degrees": 23.5,
+        "offset_along_normal_m": -0.149,
+        "visible_volume_fraction": 0.45,
+        "visible_surface_fraction": 0.422,
+        "vertex_below_top_surface_fraction": 0.5441,
+        "size_m": [
+          7.77,
+          15.19,
+          3.45
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_114",
+      "asset": "rock_09",
+      "position": [
+        -566.01093,
+        56.43395,
+        -350.16193
+      ],
+      "rotation_xyzw": [
+        0.01741288,
+        -0.99269599,
+        0.00117398,
+        0.1193745
+      ],
+      "scale": 130.0,
+      "world_bounds_min": [
+        -571.363,
+        56.278,
+        -360.215
+      ],
+      "world_bounds_max": [
+        -560.319,
+        60.645,
+        -342.547
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -566.51,
+          58.461,
+          -351.508
+        ],
+        "face_normal_engine": [
+          -0.9826,
+          0.0,
+          -0.1859
+        ],
+        "face_tilt_degrees": 17.0,
+        "offset_along_normal_m": -0.681,
+        "visible_volume_fraction": 0.449,
+        "visible_surface_fraction": 0.544,
+        "vertex_below_top_surface_fraction": 0.3911,
+        "size_m": [
+          9.62,
+          18.8,
+          4.27
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_115",
+      "asset": "boulder_01",
+      "position": [
+        -567.64929,
+        56.10436,
+        -348.3728
+      ],
+      "rotation_xyzw": [
+        -0.02603292,
+        0.99723822,
+        -0.00274221,
+        0.06950372
+      ],
+      "scale": 5.0,
+      "world_bounds_min": [
+        -570.608,
+        55.837,
+        -352.621
+      ],
+      "world_bounds_max": [
+        -564.027,
+        60.743,
+        -343.807
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -567.518,
+          58.29,
+          -348.221
+        ],
+        "face_normal_engine": [
+          -0.9994,
+          0.0,
+          -0.0354
+        ],
+        "face_tilt_degrees": 21.2,
+        "offset_along_normal_m": -0.201,
+        "visible_volume_fraction": 0.449,
+        "visible_surface_fraction": 0.508,
+        "vertex_below_top_surface_fraction": 0.3237,
+        "size_m": [
+          6.36,
+          9.15,
+          5.02
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_116",
+      "asset": "rock_09",
+      "position": [
+        -566.02716,
+        57.19869,
+        -329.72379
+      ],
+      "rotation_xyzw": [
+        0.00871424,
+        -0.99979681,
+        0.00046299,
+        0.01817235
+      ],
+      "scale": 114.999985,
+      "world_bounds_min": [
+        -570.389,
+        57.102,
+        -339.256
+      ],
+      "world_bounds_max": [
+        -561.93,
+        60.915,
+        -322.724
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -565.779,
+          59.008,
+          -330.963
+        ],
+        "face_normal_engine": [
+          -0.9975,
+          0.0,
+          -0.0712
+        ],
+        "face_tilt_degrees": 21.1,
+        "offset_along_normal_m": 0.382,
+        "visible_volume_fraction": 0.448,
+        "visible_surface_fraction": 0.432,
+        "vertex_below_top_surface_fraction": 0.5261,
+        "size_m": [
+          8.51,
+          16.63,
+          3.78
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_117",
+      "asset": "rock_09",
+      "position": [
+        -566.57727,
+        57.1692,
+        -323.6618
+      ],
+      "rotation_xyzw": [
+        -0.00871777,
+        -0.99906135,
+        0.00039101,
+        0.04242952
+      ],
+      "scale": 125.0,
+      "world_bounds_min": [
+        -571.27,
+        57.091,
+        -333.893
+      ],
+      "world_bounds_max": [
+        -562.042,
+        61.197,
+        -316.098
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -566.882,
+          59.144,
+          -324.995
+        ],
+        "face_normal_engine": [
+          -1.0,
+          0.0,
+          0.0024
+        ],
+        "face_tilt_degrees": 25.9,
+        "offset_along_normal_m": -0.226,
+        "visible_volume_fraction": 0.449,
+        "visible_surface_fraction": 0.501,
+        "vertex_below_top_surface_fraction": 0.4555,
+        "size_m": [
+          9.25,
+          18.08,
+          4.11
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_118",
+      "asset": "rock_09",
+      "position": [
+        -476.90128,
+        36.94583,
+        -391.16739
+      ],
+      "rotation_xyzw": [
+        -0.0,
+        -0.40985024,
+        -0.0,
+        0.91215283
+      ],
+      "scale": 110.0,
+      "world_bounds_min": [
+        -483.064,
+        36.883,
+        -397.043
+      ],
+      "world_bounds_max": [
+        -470.46,
+        40.498,
+        -383.39
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -476.482,
+          38.69,
+          -390.472
+        ],
+        "face_normal_engine": [
+          0.7386,
+          0.0,
+          -0.6742
+        ],
+        "face_tilt_degrees": 35.9,
+        "offset_along_normal_m": -0.38,
+        "visible_volume_fraction": 0.45,
+        "visible_surface_fraction": 0.481,
+        "vertex_below_top_surface_fraction": 0.5044,
+        "size_m": [
+          8.14,
+          15.91,
+          3.62
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_119",
+      "asset": "boulder_01",
+      "position": [
+        -482.53641,
+        36.70836,
+        -397.21643
+      ],
+      "rotation_xyzw": [
+        -0.01525366,
+        -0.30745697,
+        -0.0313895,
+        0.95092183
+      ],
+      "scale": 4.0,
+      "world_bounds_min": [
+        -485.592,
+        36.379,
+        -400.357
+      ],
+      "world_bounds_max": [
+        -479.415,
+        40.405,
+        -394.021
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -482.656,
+          38.392,
+          -397.043
+        ],
+        "face_normal_engine": [
+          0.7213,
+          0.0,
+          -0.6926
+        ],
+        "face_tilt_degrees": 46.4,
+        "offset_along_normal_m": 0.211,
+        "visible_volume_fraction": 0.447,
+        "visible_surface_fraction": 0.41,
+        "vertex_below_top_surface_fraction": 0.521,
+        "size_m": [
+          5.09,
+          7.32,
+          4.02
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_122",
+      "asset": "rock_09",
+      "position": [
+        -544.28229,
+        35.13395,
+        -487.55228
+      ],
+      "rotation_xyzw": [
+        0.01219777,
+        -0.66042691,
+        0.01248203,
+        0.75068754
+      ],
+      "scale": 130.0,
+      "world_bounds_min": [
+        -552.089,
+        34.978,
+        -492.638
+      ],
+      "world_bounds_max": [
+        -533.78,
+        39.345,
+        -482.593
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -542.911,
+          37.161,
+          -487.923
+        ],
+        "face_normal_engine": [
+          0.0753,
+          0.0,
+          -0.9972
+        ],
+        "face_tilt_degrees": 13.1,
+        "offset_along_normal_m": -0.308,
+        "visible_volume_fraction": 0.448,
+        "visible_surface_fraction": 0.56,
+        "vertex_below_top_surface_fraction": 0.4099,
+        "size_m": [
+          9.62,
+          18.8,
+          4.27
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_123",
+      "asset": "boulder_01",
+      "position": [
+        -548.98926,
+        34.60436,
+        -483.32376
+      ],
+      "rotation_xyzw": [
+        -0.02613977,
+        0.9923206,
+        -0.00139467,
+        0.12089105
+      ],
+      "scale": 5.0,
+      "world_bounds_min": [
+        -552.16,
+        34.337,
+        -487.388
+      ],
+      "world_bounds_max": [
+        -545.387,
+        39.243,
+        -478.945
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -548.91,
+          36.79,
+          -483.157
+        ],
+        "face_normal_engine": [
+          -0.9977,
+          0.0,
+          0.0679
+        ],
+        "face_tilt_degrees": 23.2,
+        "offset_along_normal_m": -0.136,
+        "visible_volume_fraction": 0.451,
+        "visible_surface_fraction": 0.48,
+        "vertex_below_top_surface_fraction": 0.389,
+        "size_m": [
+          6.36,
+          9.15,
+          5.02
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_124",
+      "asset": "rock_09",
+      "position": [
+        -542.84875,
+        35.69869,
+        -464.96201
+      ],
+      "rotation_xyzw": [
+        -0.00869837,
+        0.99332607,
+        0.00070054,
+        0.11501048
+      ],
+      "scale": 115.0,
+      "world_bounds_min": [
+        -547.427,
+        35.602,
+        -474.796
+      ],
+      "world_bounds_max": [
+        -537.666,
+        39.415,
+        -457.825
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -542.471,
+          37.508,
+          -466.326
+        ],
+        "face_normal_engine": [
+          -0.9809,
+          0.0,
+          0.1944
+        ],
+        "face_tilt_degrees": 28.4,
+        "offset_along_normal_m": 0.076,
+        "visible_volume_fraction": 0.452,
+        "visible_surface_fraction": 0.429,
+        "vertex_below_top_surface_fraction": 0.5486,
+        "size_m": [
+          8.51,
+          16.63,
+          3.78
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_125",
+      "asset": "rock_09",
+      "position": [
+        -542.10931,
+        35.4692,
+        -454.87982
+      ],
+      "rotation_xyzw": [
+        0.00864233,
+        0.99862224,
+        -0.00120939,
+        0.05174418
+      ],
+      "scale": 124.999985,
+      "world_bounds_min": [
+        -546.77,
+        35.391,
+        -465.506
+      ],
+      "world_bounds_max": [
+        -536.984,
+        39.497,
+        -447.148
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -542.187,
+          37.444,
+          -456.267
+        ],
+        "face_normal_engine": [
+          -0.9819,
+          0.0,
+          0.1896
+        ],
+        "face_tilt_degrees": 40.8,
+        "offset_along_normal_m": -0.316,
+        "visible_volume_fraction": 0.447,
+        "visible_surface_fraction": 0.475,
+        "vertex_below_top_surface_fraction": 0.5029,
+        "size_m": [
+          9.25,
+          18.08,
+          4.11
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_126",
+      "asset": "rock_09",
+      "position": [
+        -541.21033,
+        36.04583,
+        -448.5538
+      ],
+      "rotation_xyzw": [
+        0.0,
+        0.99455905,
+        0.0,
+        0.10417474
+      ],
+      "scale": 110.000008,
+      "world_bounds_min": [
+        -545.509,
+        35.983,
+        -457.962
+      ],
+      "world_bounds_max": [
+        -536.307,
+        39.598,
+        -441.726
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -541.218,
+          37.791,
+          -449.812
+        ],
+        "face_normal_engine": [
+          -0.9946,
+          0.0,
+          0.1038
+        ],
+        "face_tilt_degrees": 78.7,
+        "offset_along_normal_m": -0.312,
+        "visible_volume_fraction": 0.45,
+        "visible_surface_fraction": 0.493,
+        "vertex_below_top_surface_fraction": 0.4861,
+        "size_m": [
+          8.14,
+          15.91,
+          3.62
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_127",
+      "asset": "boulder_01",
+      "position": [
+        -540.38165,
+        36.00837,
+        -440.37915
+      ],
+      "rotation_xyzw": [
+        -0.03481778,
+        -0.99685991,
+        0.00238672,
+        0.0710811
+      ],
+      "scale": 4.0,
+      "world_bounds_min": [
+        -542.587,
+        35.679,
+        -443.974
+      ],
+      "world_bounds_max": [
+        -537.306,
+        39.705,
+        -436.517
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -540.075,
+          37.692,
+          -440.246
+        ],
+        "face_normal_engine": [
+          -1.0,
+          0.0,
+          -0.0027
+        ],
+        "face_tilt_degrees": 74.7,
+        "offset_along_normal_m": -0.129,
+        "visible_volume_fraction": 0.456,
+        "visible_surface_fraction": 0.482,
+        "vertex_below_top_surface_fraction": 0.492,
+        "size_m": [
+          5.09,
+          7.32,
+          4.02
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_128",
+      "asset": "rock_09",
+      "position": [
+        -540.46765,
+        35.92273,
+        -429.90204
+      ],
+      "rotation_xyzw": [
+        -0.0,
+        -0.99865144,
+        -0.0,
+        0.05191633
+      ],
+      "scale": 120.0,
+      "world_bounds_min": [
+        -545.037,
+        35.854,
+        -439.669
+      ],
+      "world_bounds_max": [
+        -536.012,
+        39.798,
+        -422.662
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -540.275,
+          37.826,
+          -431.14
+        ],
+        "face_normal_engine": [
+          -0.9946,
+          0.0,
+          -0.1037
+        ],
+        "face_tilt_degrees": 45.4,
+        "offset_along_normal_m": 0.252,
+        "visible_volume_fraction": 0.451,
+        "visible_surface_fraction": 0.345,
+        "vertex_below_top_surface_fraction": 0.6385,
+        "size_m": [
+          8.88,
+          17.35,
+          3.94
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_129",
+      "asset": "rock_09",
+      "position": [
+        -542.51038,
+        36.39916,
+        -423.68427
+      ],
+      "rotation_xyzw": [
+        -0.01703092,
+        -0.98855942,
+        -0.0038124,
+        0.14981879
+      ],
+      "scale": 105.000015,
+      "world_bounds_min": [
+        -546.775,
+        36.359,
+        -431.556
+      ],
+      "world_bounds_max": [
+        -537.511,
+        39.786,
+        -417.609
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -541.975,
+          38.073,
+          -424.517
+        ],
+        "face_normal_engine": [
+          -0.9321,
+          0.0,
+          -0.3622
+        ],
+        "face_tilt_degrees": 26.1,
+        "offset_along_normal_m": 0.181,
+        "visible_volume_fraction": 0.45,
+        "visible_surface_fraction": 0.404,
+        "vertex_below_top_surface_fraction": 0.5634,
+        "size_m": [
+          7.77,
+          15.19,
+          3.45
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_130",
+      "asset": "rock_09",
+      "position": [
+        -545.28467,
+        35.73396,
+        -416.70258
+      ],
+      "rotation_xyzw": [
+        0.01728811,
+        -0.98191434,
+        0.00238911,
+        0.18851966
+      ],
+      "scale": 130.0,
+      "world_bounds_min": [
+        -550.876,
+        35.578,
+        -426.067
+      ],
+      "world_bounds_max": [
+        -538.474,
+        39.945,
+        -409.366
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -544.737,
+          37.762,
+          -417.738
+        ],
+        "face_normal_engine": [
+          -0.947,
+          0.0,
+          -0.3212
+        ],
+        "face_tilt_degrees": 27.6,
+        "offset_along_normal_m": -0.065,
+        "visible_volume_fraction": 0.45,
+        "visible_surface_fraction": 0.386,
+        "vertex_below_top_surface_fraction": 0.5809,
+        "size_m": [
+          9.62,
+          18.8,
+          4.27
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_131",
+      "asset": "boulder_01",
+      "position": [
+        -549.08032,
+        35.20436,
+        -410.8364
+      ],
+      "rotation_xyzw": [
+        0.02279404,
+        -0.94259775,
+        0.01287106,
+        0.33290318
+      ],
+      "scale": 5.0,
+      "world_bounds_min": [
+        -552.897,
+        34.937,
+        -415.249
+      ],
+      "world_bounds_max": [
+        -545.474,
+        39.843,
+        -406.517
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -549.087,
+          37.39,
+          -410.77
+        ],
+        "face_normal_engine": [
+          -0.6573,
+          0.0,
+          -0.7536
+        ],
+        "face_tilt_degrees": 29.1,
+        "offset_along_normal_m": 0.149,
+        "visible_volume_fraction": 0.45,
+        "visible_surface_fraction": 0.432,
+        "vertex_below_top_surface_fraction": 0.4223,
+        "size_m": [
+          6.36,
+          9.15,
+          5.02
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_132",
+      "asset": "rock_09",
+      "position": [
+        -552.16907,
+        36.29869,
+        -402.68381
+      ],
+      "rotation_xyzw": [
+        0.00853576,
+        -0.98476255,
+        0.00181473,
+        0.17368545
+      ],
+      "scale": 114.999992,
+      "world_bounds_min": [
+        -557.036,
+        36.202,
+        -411.1
+      ],
+      "world_bounds_max": [
+        -546.352,
+        40.015,
+        -396.13
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -551.828,
+          38.108,
+          -403.669
+        ],
+        "face_normal_engine": [
+          -0.9272,
+          0.0,
+          -0.3747
+        ],
+        "face_tilt_degrees": 26.4,
+        "offset_along_normal_m": -0.144,
+        "visible_volume_fraction": 0.445,
+        "visible_surface_fraction": 0.406,
+        "vertex_below_top_surface_fraction": 0.5626,
+        "size_m": [
+          8.51,
+          16.63,
+          3.78
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_133",
+      "asset": "rock_09",
+      "position": [
+        -556.66925,
+        35.9692,
+        -395.82971
+      ],
+      "rotation_xyzw": [
+        -0.00844605,
+        -0.94221967,
+        -0.0021947,
+        0.33488199
+      ],
+      "scale": 125.0,
+      "world_bounds_min": [
+        -563.156,
+        35.891,
+        -403.347
+      ],
+      "world_bounds_max": [
+        -548.094,
+        39.997,
+        -388.811
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -555.483,
+          37.944,
+          -395.983
+        ],
+        "face_normal_engine": [
+          -0.8277,
+          0.0,
+          -0.5611
+        ],
+        "face_tilt_degrees": 24.0,
+        "offset_along_normal_m": 0.172,
+        "visible_volume_fraction": 0.447,
+        "visible_surface_fraction": 0.444,
+        "vertex_below_top_surface_fraction": 0.5169,
+        "size_m": [
+          9.25,
+          18.08,
+          4.11
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_134",
+      "asset": "rock_09",
+      "position": [
+        -560.54138,
+        36.44583,
+        -387.9826
+      ],
+      "rotation_xyzw": [
+        -0.0,
+        -0.97545594,
+        -0.0,
+        0.22019501
+      ],
+      "scale": 110.000008,
+      "world_bounds_min": [
+        -565.432,
+        36.383,
+        -395.684
+      ],
+      "world_bounds_max": [
+        -554.349,
+        39.998,
+        -381.903
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -559.25,
+          38.19,
+          -388.402
+        ],
+        "face_normal_engine": [
+          -0.8532,
+          0.0,
+          -0.5216
+        ],
+        "face_tilt_degrees": 32.3,
+        "offset_along_normal_m": 0.751,
+        "visible_volume_fraction": 0.45,
+        "visible_surface_fraction": 0.329,
+        "vertex_below_top_surface_fraction": 0.6346,
+        "size_m": [
+          8.14,
+          15.91,
+          3.62
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_135",
+      "asset": "boulder_01",
+      "position": [
+        -564.45441,
+        36.40836,
+        -383.75314
+      ],
+      "rotation_xyzw": [
+        -0.03464813,
+        -0.96587324,
+        -0.00418114,
+        0.25665334
+      ],
+      "scale": 4.0,
+      "world_bounds_min": [
+        -567.327,
+        36.079,
+        -387.305
+      ],
+      "world_bounds_max": [
+        -561.609,
+        40.105,
+        -380.08
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -564.54,
+          38.092,
+          -383.721
+        ],
+        "face_normal_engine": [
+          -0.9287,
+          0.0,
+          -0.3707
+        ],
+        "face_tilt_degrees": 34.5,
+        "offset_along_normal_m": -0.077,
+        "visible_volume_fraction": 0.45,
+        "visible_surface_fraction": 0.462,
+        "vertex_below_top_surface_fraction": 0.4006,
+        "size_m": [
+          5.09,
+          7.32,
+          4.02
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_136",
+      "asset": "rock_09",
+      "position": [
+        -570.38519,
+        36.22272,
+        -378.19772
+      ],
+      "rotation_xyzw": [
+        -0.0,
+        -0.90457082,
+        -0.0,
+        0.42632341
+      ],
+      "scale": 120.0,
+      "world_bounds_min": [
+        -577.267,
+        36.154,
+        -384.447
+      ],
+      "world_bounds_max": [
+        -561.113,
+        40.098,
+        -371.576
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -569.306,
+          38.126,
+          -378.152
+        ],
+        "face_normal_engine": [
+          -0.6365,
+          0.0,
+          -0.7713
+        ],
+        "face_tilt_degrees": 28.3,
+        "offset_along_normal_m": -0.182,
+        "visible_volume_fraction": 0.453,
+        "visible_surface_fraction": 0.522,
+        "vertex_below_top_surface_fraction": 0.4341,
+        "size_m": [
+          8.88,
+          17.35,
+          3.94
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_137",
+      "asset": "rock_09",
+      "position": [
+        -574.57916,
+        36.59916,
+        -371.08676
+      ],
+      "rotation_xyzw": [
+        -0.01642814,
+        -0.96241695,
+        -0.0058909,
+        0.27101484
+      ],
+      "scale": 105.0,
+      "world_bounds_min": [
+        -579.553,
+        36.559,
+        -378.027
+      ],
+      "world_bounds_max": [
+        -568.065,
+        39.986,
+        -365.226
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -573.675,
+          38.273,
+          -371.531
+        ],
+        "face_normal_engine": [
+          -0.8146,
+          0.0,
+          -0.5801
+        ],
+        "face_tilt_degrees": 33.3,
+        "offset_along_normal_m": 0.165,
+        "visible_volume_fraction": 0.45,
+        "visible_surface_fraction": 0.336,
+        "vertex_below_top_surface_fraction": 0.6436,
+        "size_m": [
+          7.77,
+          15.19,
+          3.45
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_138",
+      "asset": "rock_09",
+      "position": [
+        -576.10181,
+        35.93395,
+        -370.7493
+      ],
+      "rotation_xyzw": [
+        0.01651173,
+        -0.92771167,
+        0.0056524,
+        0.3728894
+      ],
+      "scale": 130.0,
+      "world_bounds_min": [
+        -583.231,
+        35.778,
+        -378.171
+      ],
+      "world_bounds_max": [
+        -566.69,
+        40.145,
+        -363.514
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -574.417,
+          37.961,
+          -370.373
+        ],
+        "face_normal_engine": [
+          -0.7571,
+          0.0,
+          -0.6534
+        ],
+        "face_tilt_degrees": 29.5,
+        "offset_along_normal_m": 0.718,
+        "visible_volume_fraction": 0.449,
+        "visible_surface_fraction": 0.361,
+        "vertex_below_top_surface_fraction": 0.6147,
+        "size_m": [
+          9.62,
+          18.8,
+          4.27
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_139",
+      "asset": "boulder_01",
+      "position": [
+        -581.70941,
+        35.40436,
+        -367.6694
+      ],
+      "rotation_xyzw": [
+        0.01930121,
+        -0.84314895,
+        0.01768322,
+        0.5370425
+      ],
+      "scale": 5.0,
+      "world_bounds_min": [
+        -585.751,
+        35.137,
+        -371.289
+      ],
+      "world_bounds_max": [
+        -577.802,
+        40.043,
+        -363.991
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -581.731,
+          37.59,
+          -367.47
+        ],
+        "face_normal_engine": [
+          -0.259,
+          0.0,
+          -0.9659
+        ],
+        "face_tilt_degrees": 34.4,
+        "offset_along_normal_m": 0.175,
+        "visible_volume_fraction": 0.452,
+        "visible_surface_fraction": 0.415,
+        "vertex_below_top_surface_fraction": 0.4661,
+        "size_m": [
+          6.36,
+          9.15,
+          5.02
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_140",
+      "asset": "rock_09",
+      "position": [
+        -588.79944,
+        36.39869,
+        -361.84894
+      ],
+      "rotation_xyzw": [
+        0.00830882,
+        -0.96218431,
+        0.00266757,
+        0.27225944
+      ],
+      "scale": 115.000008,
+      "world_bounds_min": [
+        -594.351,
+        36.302,
+        -369.442
+      ],
+      "world_bounds_max": [
+        -581.661,
+        40.115,
+        -355.464
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -588.196,
+          38.208,
+          -362.58
+        ],
+        "face_normal_engine": [
+          -0.8329,
+          0.0,
+          -0.5534
+        ],
+        "face_tilt_degrees": 31.4,
+        "offset_along_normal_m": -0.229,
+        "visible_volume_fraction": 0.451,
+        "visible_surface_fraction": 0.499,
+        "vertex_below_top_surface_fraction": 0.4421,
+        "size_m": [
+          8.51,
+          16.63,
+          3.78
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_142",
+      "asset": "rock_09",
+      "position": [
+        -592.87244,
+        36.84583,
+        -350.33698
+      ],
+      "rotation_xyzw": [
+        0.0,
+        0.98901975,
+        0.0,
+        0.14778365
+      ],
+      "scale": 110.0,
+      "world_bounds_min": [
+        -597.395,
+        36.783,
+        -359.733
+      ],
+      "world_bounds_max": [
+        -587.661,
+        40.398,
+        -343.535
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -593.016,
+          38.59,
+          -351.539
+        ],
+        "face_normal_engine": [
+          -0.9816,
+          0.0,
+          0.1908
+        ],
+        "face_tilt_degrees": 18.6,
+        "offset_along_normal_m": -0.498,
+        "visible_volume_fraction": 0.45,
+        "visible_surface_fraction": 0.583,
+        "vertex_below_top_surface_fraction": 0.3736,
+        "size_m": [
+          8.14,
+          15.91,
+          3.62
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_143",
+      "asset": "boulder_01",
+      "position": [
+        -588.17102,
+        36.90836,
+        -332.47192
+      ],
+      "rotation_xyzw": [
+        0.03417703,
+        0.99733192,
+        -0.00706433,
+        0.06411806
+      ],
+      "scale": 4.0,
+      "world_bounds_min": [
+        -590.415,
+        36.579,
+        -335.912
+      ],
+      "world_bounds_max": [
+        -585.053,
+        40.605,
+        -328.805
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -588.096,
+          38.592,
+          -332.259
+        ],
+        "face_normal_engine": [
+          -0.9643,
+          0.0,
+          0.2648
+        ],
+        "face_tilt_degrees": 31.7,
+        "offset_along_normal_m": -0.376,
+        "visible_volume_fraction": 0.442,
+        "visible_surface_fraction": 0.587,
+        "vertex_below_top_surface_fraction": 0.2771,
+        "size_m": [
+          5.09,
+          7.32,
+          4.02
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_144",
+      "asset": "rock_09",
+      "position": [
+        -581.25018,
+        36.82273,
+        -306.55533
+      ],
+      "rotation_xyzw": [
+        0.0,
+        0.99440438,
+        0.0,
+        0.10564055
+      ],
+      "scale": 120.000008,
+      "world_bounds_min": [
+        -585.946,
+        36.754,
+        -316.819
+      ],
+      "world_bounds_max": [
+        -575.889,
+        40.698,
+        -299.108
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -580.909,
+          38.726,
+          -307.965
+        ],
+        "face_normal_engine": [
+          -0.9777,
+          0.0,
+          0.2101
+        ],
+        "face_tilt_degrees": 24.0,
+        "offset_along_normal_m": 0.009,
+        "visible_volume_fraction": 0.447,
+        "visible_surface_fraction": 0.437,
+        "vertex_below_top_surface_fraction": 0.5267,
+        "size_m": [
+          8.88,
+          17.35,
+          3.94
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_145",
+      "asset": "rock_09",
+      "position": [
+        -580.97406,
+        37.29916,
+        -297.70557
+      ],
+      "rotation_xyzw": [
+        0.0174524,
+        0.9974401,
+        7.01e-06,
+        0.06934497
+      ],
+      "scale": 105.000008,
+      "world_bounds_min": [
+        -584.862,
+        37.259,
+        -306.661
+      ],
+      "world_bounds_max": [
+        -576.506,
+        40.686,
+        -291.195
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -580.723,
+          38.973,
+          -298.925
+        ],
+        "face_normal_engine": [
+          -0.9976,
+          0.0,
+          0.069
+        ],
+        "face_tilt_degrees": 69.0,
+        "offset_along_normal_m": -0.039,
+        "visible_volume_fraction": 0.453,
+        "visible_surface_fraction": 0.51,
+        "vertex_below_top_surface_fraction": 0.4605,
+        "size_m": [
+          7.77,
+          15.19,
+          3.45
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_146",
+      "asset": "rock_09",
+      "position": [
+        -537.12,
+        23.43396,
+        -500.66559
+      ],
+      "rotation_xyzw": [
+        0.01116245,
+        -0.59839451,
+        0.0134159,
+        0.8010115
+      ],
+      "scale": 130.0,
+      "world_bounds_min": [
+        -544.648,
+        23.278,
+        -506.112
+      ],
+      "world_bounds_max": [
+        -527.3,
+        27.645,
+        -494.608
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -536.003,
+          25.462,
+          -500.242
+        ],
+        "face_normal_engine": [
+          0.2331,
+          0.0,
+          -0.9725
+        ],
+        "face_tilt_degrees": 40.7,
+        "offset_along_normal_m": 0.121,
+        "visible_volume_fraction": 0.451,
+        "visible_surface_fraction": 0.446,
+        "vertex_below_top_surface_fraction": 0.5223,
+        "size_m": [
+          9.62,
+          18.8,
+          4.27
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_147",
+      "asset": "boulder_01",
+      "position": [
+        -542.53571,
+        22.90436,
+        -501.52451
+      ],
+      "rotation_xyzw": [
+        0.01559643,
+        -0.72596878,
+        0.02102342,
+        0.68722934
+      ],
+      "scale": 5.0,
+      "world_bounds_min": [
+        -547.219,
+        22.637,
+        -504.291
+      ],
+      "world_bounds_max": [
+        -538.169,
+        27.543,
+        -497.896
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -542.676,
+          25.09,
+          -501.242
+        ],
+        "face_normal_engine": [
+          0.1194,
+          0.0,
+          -0.9928
+        ],
+        "face_tilt_degrees": 49.5,
+        "offset_along_normal_m": -0.149,
+        "visible_volume_fraction": 0.45,
+        "visible_surface_fraction": 0.432,
+        "vertex_below_top_surface_fraction": 0.4639,
+        "size_m": [
+          6.36,
+          9.15,
+          5.02
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_148",
+      "asset": "rock_09",
+      "position": [
+        -550.98047,
+        23.89869,
+        -501.55334
+      ],
+      "rotation_xyzw": [
+        0.00550815,
+        -0.65785527,
+        0.00676851,
+        0.75309384
+      ],
+      "scale": 114.999992,
+      "world_bounds_min": [
+        -557.876,
+        23.802,
+        -506.027
+      ],
+      "world_bounds_max": [
+        -541.712,
+        27.615,
+        -497.118
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -549.873,
+          25.708,
+          -501.112
+        ],
+        "face_normal_engine": [
+          0.1689,
+          0.0,
+          -0.9856
+        ],
+        "face_tilt_degrees": 46.2,
+        "offset_along_normal_m": 0.467,
+        "visible_volume_fraction": 0.447,
+        "visible_surface_fraction": 0.359,
+        "vertex_below_top_surface_fraction": 0.6053,
+        "size_m": [
+          8.51,
+          16.63,
+          3.78
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_149",
+      "asset": "rock_09",
+      "position": [
+        -558.43713,
+        23.4692,
+        -502.62042
+      ],
+      "rotation_xyzw": [
+        -0.00706508,
+        -0.75534195,
+        -0.00512221,
+        0.6552729
+      ],
+      "scale": 125.000008,
+      "world_bounds_min": [
+        -566.186,
+        23.391,
+        -507.304
+      ],
+      "world_bounds_max": [
+        -547.773,
+        27.497,
+        -497.316
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -557.08,
+          25.444,
+          -502.741
+        ],
+        "face_normal_engine": [
+          -0.2269,
+          0.0,
+          -0.9739
+        ],
+        "face_tilt_degrees": 20.1,
+        "offset_along_normal_m": -0.442,
+        "visible_volume_fraction": 0.452,
+        "visible_surface_fraction": 0.604,
+        "vertex_below_top_surface_fraction": 0.3721,
+        "size_m": [
+          9.25,
+          18.08,
+          4.11
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_150",
+      "asset": "rock_09",
+      "position": [
+        -561.09802,
+        24.04583,
+        -492.4566
+      ],
+      "rotation_xyzw": [
+        -0.0,
+        -0.99917412,
+        -0.0,
+        0.04063581
+      ],
+      "scale": 109.999992,
+      "world_bounds_min": [
+        -565.269,
+        23.983,
+        -501.469
+      ],
+      "world_bounds_max": [
+        -557.131,
+        27.598,
+        -485.797
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -560.728,
+          25.791,
+          -493.544
+        ],
+        "face_normal_engine": [
+          -0.9827,
+          0.0,
+          -0.1849
+        ],
+        "face_tilt_degrees": 55.2,
+        "offset_along_normal_m": 0.481,
+        "visible_volume_fraction": 0.449,
+        "visible_surface_fraction": 0.32,
+        "vertex_below_top_surface_fraction": 0.6429,
+        "size_m": [
+          8.14,
+          15.91,
+          3.62
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_151",
+      "asset": "boulder_01",
+      "position": [
+        -563.24994,
+        23.90836,
+        -486.70526
+      ],
+      "rotation_xyzw": [
+        -0.03474432,
+        -0.97216308,
+        -0.00328736,
+        0.23169151
+      ],
+      "scale": 4.0,
+      "world_bounds_min": [
+        -566.053,
+        23.579,
+        -490.28
+      ],
+      "world_bounds_max": [
+        -560.369,
+        27.605,
+        -482.978
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -563.099,
+          25.592,
+          -486.591
+        ],
+        "face_normal_engine": [
+          -0.9466,
+          0.0,
+          -0.3224
+        ],
+        "face_tilt_degrees": 55.8,
+        "offset_along_normal_m": 0.118,
+        "visible_volume_fraction": 0.452,
+        "visible_surface_fraction": 0.382,
+        "vertex_below_top_surface_fraction": 0.5308,
+        "size_m": [
+          5.09,
+          7.32,
+          4.02
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_152",
+      "asset": "rock_09",
+      "position": [
+        -564.1665,
+        23.72273,
+        -481.08527
+      ],
+      "rotation_xyzw": [
+        0.0,
+        0.99631429,
+        0.0,
+        0.08577814
+      ],
+      "scale": 119.999992,
+      "world_bounds_min": [
+        -568.773,
+        23.654,
+        -491.34
+      ],
+      "world_bounds_max": [
+        -558.971,
+        27.598,
+        -473.635
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -564.495,
+          25.626,
+          -482.379
+        ],
+        "face_normal_engine": [
+          -0.9853,
+          0.0,
+          0.1709
+        ],
+        "face_tilt_degrees": 20.8,
+        "offset_along_normal_m": -0.633,
+        "visible_volume_fraction": 0.447,
+        "visible_surface_fraction": 0.549,
+        "vertex_below_top_surface_fraction": 0.4199,
+        "size_m": [
+          8.88,
+          17.35,
+          3.94
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_153",
+      "asset": "rock_09",
+      "position": [
+        -562.39453,
+        24.19916,
+        -474.6731
+      ],
+      "rotation_xyzw": [
+        0.01740183,
+        0.98921561,
+        -0.00132772,
+        0.14542373
+      ],
+      "scale": 105.000008,
+      "world_bounds_min": [
+        -566.647,
+        24.159,
+        -483.646
+      ],
+      "world_bounds_max": [
+        -557.389,
+        27.586,
+        -468.19
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -562.393,
+          25.873,
+          -475.833
+        ],
+        "face_normal_engine": [
+          -0.9754,
+          0.0,
+          0.2203
+        ],
+        "face_tilt_degrees": 29.9,
+        "offset_along_normal_m": -0.385,
+        "visible_volume_fraction": 0.451,
+        "visible_surface_fraction": 0.485,
+        "vertex_below_top_surface_fraction": 0.4899,
+        "size_m": [
+          7.77,
+          15.19,
+          3.45
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_154",
+      "asset": "rock_09",
+      "position": [
+        -561.53644,
+        23.53396,
+        -470.36484
+      ],
+      "rotation_xyzw": [
+        -0.01731966,
+        0.99732441,
+        0.00214851,
+        0.07098926
+      ],
+      "scale": 130.0,
+      "world_bounds_min": [
+        -566.559,
+        23.378,
+        -481.453
+      ],
+      "world_bounds_max": [
+        -556.109,
+        27.745,
+        -462.29
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -561.472,
+          25.562,
+          -471.844
+        ],
+        "face_normal_engine": [
+          -0.9811,
+          0.0,
+          0.1933
+        ],
+        "face_tilt_degrees": 29.3,
+        "offset_along_normal_m": -0.14,
+        "visible_volume_fraction": 0.446,
+        "visible_surface_fraction": 0.461,
+        "vertex_below_top_surface_fraction": 0.4922,
+        "size_m": [
+          9.62,
+          18.8,
+          4.27
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_155",
+      "asset": "boulder_01",
+      "position": [
+        -557.31708,
+        23.00436,
+        -454.1236
+      ],
+      "rotation_xyzw": [
+        -0.02616818,
+        0.97964531,
+        0.00067782,
+        0.19902214
+      ],
+      "scale": 5.0,
+      "world_bounds_min": [
+        -560.849,
+        22.737,
+        -458.024
+      ],
+      "world_bounds_max": [
+        -553.673,
+        27.643,
+        -450.027
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -557.268,
+          25.19,
+          -454.024
+        ],
+        "face_normal_engine": [
+          -0.9745,
+          0.0,
+          0.2244
+        ],
+        "face_tilt_degrees": 34.3,
+        "offset_along_normal_m": -0.006,
+        "visible_volume_fraction": 0.448,
+        "visible_surface_fraction": 0.449,
+        "vertex_below_top_surface_fraction": 0.4512,
+        "size_m": [
+          6.36,
+          9.15,
+          5.02
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_156",
+      "asset": "rock_09",
+      "position": [
+        -554.97406,
+        23.99869,
+        -443.10104
+      ],
+      "rotation_xyzw": [
+        -0.00872098,
+        0.99747062,
+        0.00031146,
+        0.07054354
+      ],
+      "scale": 115.0,
+      "world_bounds_min": [
+        -559.374,
+        23.902,
+        -452.91
+      ],
+      "world_bounds_max": [
+        -550.149,
+        27.715,
+        -435.964
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -554.787,
+          25.808,
+          -444.435
+        ],
+        "face_normal_engine": [
+          -0.9944,
+          0.0,
+          0.1061
+        ],
+        "face_tilt_degrees": 23.6,
+        "offset_along_normal_m": -0.025,
+        "visible_volume_fraction": 0.453,
+        "visible_surface_fraction": 0.406,
+        "vertex_below_top_surface_fraction": 0.5708,
+        "size_m": [
+          8.51,
+          16.63,
+          3.78
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_157",
+      "asset": "rock_09",
+      "position": [
+        -556.26392,
+        23.6692,
+        -434.72711
+      ],
+      "rotation_xyzw": [
+        -0.00872586,
+        -0.99499398,
+        -0.0001087,
+        0.09955424
+      ],
+      "scale": 125.0,
+      "world_bounds_min": [
+        -561.185,
+        23.591,
+        -444.56
+      ],
+      "world_bounds_max": [
+        -551.036,
+        27.697,
+        -427.33
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -555.438,
+          25.644,
+          -435.869
+        ],
+        "face_normal_engine": [
+          -0.9937,
+          0.0,
+          -0.1119
+        ],
+        "face_tilt_degrees": 15.6,
+        "offset_along_normal_m": 0.677,
+        "visible_volume_fraction": 0.45,
+        "visible_surface_fraction": 0.311,
+        "vertex_below_top_surface_fraction": 0.6556,
+        "size_m": [
+          9.25,
+          18.08,
+          4.11
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_158",
+      "asset": "rock_09",
+      "position": [
+        -560.28625,
+        24.24583,
+        -428.61307
+      ],
+      "rotation_xyzw": [
+        -0.0,
+        -0.97728086,
+        -0.0,
+        0.21194848
+      ],
+      "scale": 110.000008,
+      "world_bounds_min": [
+        -565.11,
+        24.183,
+        -436.375
+      ],
+      "world_bounds_max": [
+        -554.201,
+        27.798,
+        -422.502
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -559.604,
+          25.99,
+          -429.409
+        ],
+        "face_normal_engine": [
+          -0.8619,
+          0.0,
+          -0.5071
+        ],
+        "face_tilt_degrees": 28.0,
+        "offset_along_normal_m": 0.059,
+        "visible_volume_fraction": 0.449,
+        "visible_surface_fraction": 0.455,
+        "vertex_below_top_surface_fraction": 0.5112,
+        "size_m": [
+          8.14,
+          15.91,
+          3.62
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_159",
+      "asset": "boulder_01",
+      "position": [
+        -563.29474,
+        24.10836,
+        -423.64026
+      ],
+      "rotation_xyzw": [
+        -0.03332477,
+        -0.90370053,
+        -0.01036507,
+        0.42674074
+      ],
+      "scale": 4.0,
+      "world_bounds_min": [
+        -566.431,
+        23.779,
+        -426.858
+      ],
+      "world_bounds_max": [
+        -560.125,
+        27.805,
+        -420.581
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -563.229,
+          25.792,
+          -423.674
+        ],
+        "face_normal_engine": [
+          -0.7366,
+          0.0,
+          -0.6763
+        ],
+        "face_tilt_degrees": 24.7,
+        "offset_along_normal_m": 0.067,
+        "visible_volume_fraction": 0.452,
+        "visible_surface_fraction": 0.432,
+        "vertex_below_top_surface_fraction": 0.402,
+        "size_m": [
+          5.09,
+          7.32,
+          4.02
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_160",
+      "asset": "rock_09",
+      "position": [
+        -567.70996,
+        23.92273,
+        -415.7569
+      ],
+      "rotation_xyzw": [
+        -0.0,
+        -0.96777624,
+        -0.0,
+        0.25181216
+      ],
+      "scale": 120.0,
+      "world_bounds_min": [
+        -573.31,
+        23.854,
+        -423.879
+      ],
+      "world_bounds_max": [
+        -560.522,
+        27.798,
+        -409.116
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -567.151,
+          25.826,
+          -416.628
+        ],
+        "face_normal_engine": [
+          -0.8732,
+          0.0,
+          -0.4874
+        ],
+        "face_tilt_degrees": 24.8,
+        "offset_along_normal_m": -0.269,
+        "visible_volume_fraction": 0.449,
+        "visible_surface_fraction": 0.392,
+        "vertex_below_top_surface_fraction": 0.5782,
+        "size_m": [
+          8.88,
+          17.35,
+          3.94
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_161",
+      "asset": "rock_09",
+      "position": [
+        -572.99359,
+        24.39916,
+        -409.43503
+      ],
+      "rotation_xyzw": [
+        -0.01654962,
+        -0.96795905,
+        -0.00554045,
+        0.25050104
+      ],
+      "scale": 105.0,
+      "world_bounds_min": [
+        -577.825,
+        24.359,
+        -416.55
+      ],
+      "world_bounds_max": [
+        -566.713,
+        27.786,
+        -403.608
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -572.657,
+          26.073,
+          -410.331
+        ],
+        "face_normal_engine": [
+          -0.8385,
+          0.0,
+          -0.5449
+        ],
+        "face_tilt_degrees": 17.0,
+        "offset_along_normal_m": -0.463,
+        "visible_volume_fraction": 0.448,
+        "visible_surface_fraction": 0.574,
+        "vertex_below_top_surface_fraction": 0.3816,
+        "size_m": [
+          7.77,
+          15.19,
+          3.45
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_162",
+      "asset": "rock_09",
+      "position": [
+        -575.83466,
+        23.63396,
+        -403.20157
+      ],
+      "rotation_xyzw": [
+        0.01694019,
+        -0.95658851,
+        0.00419718,
+        0.29091895
+      ],
+      "scale": 130.0,
+      "world_bounds_min": [
+        -582.296,
+        23.478,
+        -411.573
+      ],
+      "world_bounds_max": [
+        -567.519,
+        27.845,
+        -395.969
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -574.275,
+          25.662,
+          -403.393
+        ],
+        "face_normal_engine": [
+          -0.8587,
+          0.0,
+          -0.5125
+        ],
+        "face_tilt_degrees": 25.0,
+        "offset_along_normal_m": 0.737,
+        "visible_volume_fraction": 0.447,
+        "visible_surface_fraction": 0.301,
+        "vertex_below_top_surface_fraction": 0.6675,
+        "size_m": [
+          9.62,
+          18.8,
+          4.27
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "franklin_shelf_163",
+      "asset": "boulder_01",
+      "position": [
+        -581.30359,
+        23.10436,
+        -400.26749
+      ],
+      "rotation_xyzw": [
+        0.02481486,
+        -0.98851013,
+        0.00833398,
+        0.14887077
+      ],
+      "scale": 5.0,
+      "world_bounds_min": [
+        -584.483,
+        22.837,
+        -404.833
+      ],
+      "world_bounds_max": [
+        -577.841,
+        27.743,
+        -395.457
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -581.341,
+          25.29,
+          -400.237
+        ],
+        "face_normal_engine": [
+          -0.89,
+          0.0,
+          -0.456
+        ],
+        "face_tilt_degrees": 31.3,
+        "offset_along_normal_m": -0.201,
+        "visible_volume_fraction": 0.446,
+        "visible_surface_fraction": 0.501,
+        "vertex_below_top_surface_fraction": 0.3759,
+        "size_m": [
+          6.36,
+          9.15,
+          5.02
+        ],
+        "import_bounds_error_m": 0.0
+      }
     }
   ]
 }
