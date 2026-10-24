@@ -180,7 +180,7 @@ cliff_01 は棚の一致の大半が棚の岩塊の縁から来ていて、地�
 | SCN-WL-CLIFF-SCAN-FRANKLIN | Franklin Butte の尖塔の台座 | X −760〜−240・Z −660〜−140（崖の細部の近景の範囲と同じ） | `shape-scan-franklin.json`（cliff_02・ground_02） |
 | 崖の生成の項目 | Rooster Butte・Setting Hen Butte・castle の段 | Rooster Butte X 640〜1160・Z 560〜1160、Setting Hen Butte X 960〜1460・Z 1140〜1960、castle の段（`kCastleRegions`。Z −4038 より北） | 担当の写真の行 |
 
-Battleship Rock の尾根の刻み（`Tools/AssetCook/TerrainCliffCarveBattleship.h`。`Scripts/Terrain/MakeBattleshipCarve.py` が削る前の ref_cliff_01 の撮影と写真の注釈の外形から書く）は、崖の生成の近景の範囲 0 の内側の X −2132〜−1648・Z −1346〜−1133 だけに掛かり、上の担当の範囲（SCN-WL-CLIFF-SCAN-NEAR）に収まる。刻みが届く DEM の区画は dem:0,2 と dem:1,2 だけで、ほかの区画の焼きの結果は変わらない。刻みは既定では掛けない（`kBattleshipCarveEnabled`。試しの値と画は WastelandCliffScan.md）。
+Battleship Rock の尾根の刻み（`Tools/AssetCook/TerrainCliffCarveBattleship.h`。`Scripts/Terrain/MakeBattleshipCarve.py` が削る前の ref_cliff_01 の撮影と写真の注釈の外形から書く）は、崖の生成の近景の範囲 0 の内側の X −2132〜−1648・Z −1346〜−1133 だけに掛かり、上の担当の範囲（SCN-WL-CLIFF-SCAN-NEAR）に収まる。刻みが届く DEM の区画は dem:0,2 と dem:1,2 だけで、ほかの区画の焼きの結果は変わらない。刻みは既定で掛ける（`kBattleshipCarveEnabled`。刻んだ範囲と外へ 8 m の帯では崖の細部の縦の割れ目と Catmull-Rom の滑らかな面を止める。試しの値と画は WastelandCliffScan.md）。刻みの版（`kTerrainCliffCarveVersion`）は 2。
 
 `shape-scan-battleship.json` は、スキャンを置く前の撮影（SCN-WL-SHAPE-CAUSE の lod-default）の値と絶対の基準から書いた: 棚の一致 0.6 以上・角の一致 0.5 以上・ずらした後の外形の距離 8 画素以下・ずらす前の外形の距離 12.4 画素以下（悪くならない）。置く前の値は、補強の前の量で棚 0.272・角 0.143・ずらした後 10.8・ずらす前 11.4 画素、補強した量（SCN-WL-SHAPE-METRIC-HARDEN で書き直した）で棚 0.042・角 0.000・ずらした後 10.8・ずらす前 11.4 画素。閾値は変えていない（棚と角はどちらの量でも届かない）
 

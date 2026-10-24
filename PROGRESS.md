@@ -7656,3 +7656,10 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 証拠（`.harness/runs/20261024-183517/`）: `verify-SCN-WL-SHAPE-METRIC-HARDEN-3.txt`（selftest 7 例 result=pass EXIT=0。cross_offset は交点まで 9.13 画素で数えない・corner_offset は 9.55 画素で数える）・`-4.txt`（lod-default `--shape --verify` result=pass EXIT=0）・`aux-SCN-WL-SHAPE-METRIC-HARDEN-9-expect.txt`（基準の仕様 全 15 行合格、Battleship の仕様は設計どおり 3 行不合格）・`-9-remeasure.txt`（地形だけ・全部・今の配置の測り直し）。開いた画: 外れた角の拡大（尖塔の右の面の縁が手前の塊の縁の T に当たる）
 - Next: TASKS.md の次の未完
 - Notes: 足した試験は差し戻しが求めた位置ずれの十字の例と、その対の正しい角の例（直しが正しい角まで落とさないことの確かめ）だけ
+## 2026-10-24 SCN-WL-CLIFF-SCAN-NEAR（run 20261024-183517 の反復 10、BLOCKED）
+- Done: 親の判断どおり Battleship Rock の尾根の刻みを既定にした（`kBattleshipCarveEnabled = true`、刻みの版 2）。刻みの円から外へ 8 m で 0 になる割合（`BattleshipCarveAmount`、2 m の升目）で、崖の細部の縦の割れ目を止め、近景の格子の Catmull-Rom の面を双線形へ寄せた（`TerrainCliffDetail.cpp`）。地形の 214 項目を 12 組の並列で焼き（948 秒）、verify のクックの行は cooked=0 skipped=214。変わったパッケージは dem:0,2・dem:1,2 だけ（ほかは刻む前の SHA-256 と一致）。値と画を `WastelandCliffScan.md` の「刻みを既定にし、…」、範囲の文を `WastelandShape.md` に書いた
+- 未達: `--shape --expect` は棚 0.323（基準 0.6）・角 0.000（基準 0.5）で不合格。外形 ずらした後 6.1・ずらす前 7.0 画素は合格。見た目は板の櫛と上端の尖りが消え平らな頂の縦の壁になったが、刻みの円の境ごとに丸い縦の柱が並ぶ。判断は `blocked/SCN-WL-CLIFF-SCAN-NEAR.md`（推奨: 斜面の 3 本の棚を刻みで段にし、尾根の刻みを尾根に沿った補間にして柱を均す）
+- 記録: 三角形 dem:1,2 857 万・dem:0,2 111 万、読み込み 86 秒、VRAM 9761／12418 MB（ジオメトリのプール 2486／4038 MB）、MEGA_CAPACITY の溢れ 0
+- 証拠（`.harness/runs/20261024-183517/`）: `verify-SCN-WL-CLIFF-SCAN-NEAR-1.txt`（Debug EXIT=0）・`-2.txt`（RelWithDebInfo の Game EXIT=0）・`-3.txt`（AssetCook EXIT=0）・`-4.txt`（地形のクック cooked=0 skipped=214 EXIT=0）・`-5.txt`（形の撮影 result=pass）・`-6.txt`（`--shape --expect` result=fail failures=2）・`-7.txt`（既定の撮影 result=pass）・`-8.txt`（`CompareReference.py --verify` result=pass）、`aux-SCN-WL-CLIFF-SCAN-NEAR-parallel-cook.txt`・`aux-SCN-WL-CLIFF-SCAN-NEAR-packages-vs-before.txt`。開いた画: `scene-capture/SCN-WL-CLIFF-SCAN-NEAR/shape/shape_cliff_01.png`・`look/reference_cliff_01.png`・`look/cliff.png`・`look/crop_wall_ref_cliff_01.png`
+- Next: 判断待ち（`blocked/SCN-WL-CLIFF-SCAN-NEAR.md`）
+- Notes: 棚の岩塊の配置表は変えていない（刻みの円の内の 6 個は上げた壁の内に入る見込みで、既定の撮影では浮き・目立つ埋もれは見えない）。新しい試験は足していない

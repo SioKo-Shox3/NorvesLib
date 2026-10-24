@@ -427,6 +427,8 @@ namespace NorvesLib::Tools::AssetCook
             return result;
         }
 
+        float BattleshipCarveAmount(double x, double z);
+
         // 面の法線 (nx, ny, nz) の点 (x, y, z) を外へ押し出す量（m）。y は基準面からの高さ
         float CliffDisplacement(float x, float y, float z, float nx, float ny, float nz)
         {
@@ -473,10 +475,13 @@ namespace NorvesLib::Tools::AssetCook
                 displacement += upper * unitBlend;
             }
 
-            // 縦の割れ目（垂直に近い面だけ）。上の単位はセットを貫く大きな割れ目と塊、下の単位は層ごとにずれる細い割れ目
-            if (point.Cliff > 0.0f)
+            // 縦の割れ目（垂直に近い面だけ）。上の単位はセットを貫く大きな割れ目と塊、下の単位は層ごとにずれる細い割れ目。
+            // Battleship Rock の刻んだ壁では割れ目が薄い板の櫛に見えるので掛けない
+            const float jointScale = 1.0f - BattleshipCarveAmount(x, z);
+            if (point.Cliff > 0.0f && jointScale > 0.0f)
             {
                 const float presence =
+                    jointScale *
                     Mix(0.35f, 1.0f, SmoothStep(0.3f, 0.65f, ValueNoise(x * (1.0f / 30.0f) + 5.3f, z * (1.0f / 30.0f) - 2.1f)));
                 if (unitBlend > 0.0f)
                 {
@@ -511,9 +516,12 @@ namespace NorvesLib::Tools::AssetCook
             double MaxZ = std::numeric_limits<double>::lowest();
         };
 
-        // 尾根の刻みを掛けるか。刻むと外形は写真に合うが、上げた壁が薄い縦の板の並びに見え上端が尖るので、既定では掛けない
+        // 尾根の刻みを掛けるか。刻んだ範囲では縦の割れ目と滑らかな面の行き過ぎを止め、層の縞だけを残す
         // （WastelandCliffScan.md の「尾根を地形の焼き込みで段に刻む試し」）
-        constexpr bool kBattleshipCarveEnabled = false;
+        constexpr bool kBattleshipCarveEnabled = true;
+        // 刻んだ範囲の外へ割れ目と滑らかな面を戻す幅（m）と、その割合を引く升目の一辺（m）
+        constexpr double kBattleshipCarveFadeMeters = 8.0;
+        constexpr double kBattleshipCarveMaskCell = 2.0;
 
         const CarveBounds &BattleshipCarveBounds()
         {
@@ -562,6 +570,79 @@ namespace NorvesLib::Tools::AssetCook
                 return height;
             }
             return nearest->Direction > 0 ? std::max(height, nearest->Height) : std::min(height, nearest->Height);
+        }
+
+        // 刻んだ範囲の割合の升目（刻みの円の内 1、外へ kBattleshipCarveFadeMeters で 0）
+        struct CarveMask
+        {
+            double MinX = 0.0;
+            double MinZ = 0.0;
+            int Columns = 0;
+            int Rows = 0;
+            VariableArray<float> Values;
+        };
+
+        const CarveMask &BattleshipCarveMask()
+        {
+            static const CarveMask mask = []
+            {
+                CarveMask result;
+                const CarveBounds &bounds = BattleshipCarveBounds();
+                if (!kBattleshipCarveEnabled)
+                {
+                    return result;
+                }
+                result.MinX = bounds.MinX - kBattleshipCarveFadeMeters;
+                result.MinZ = bounds.MinZ - kBattleshipCarveFadeMeters;
+                result.Columns = static_cast<int>(std::ceil((bounds.MaxX + kBattleshipCarveFadeMeters - result.MinX) /
+                                                            kBattleshipCarveMaskCell)) + 1;
+                result.Rows = static_cast<int>(std::ceil((bounds.MaxZ + kBattleshipCarveFadeMeters - result.MinZ) /
+                                                         kBattleshipCarveMaskCell)) + 1;
+                result.Values.assign(static_cast<size_t>(result.Columns) * result.Rows, 0.0f);
+                for (int row = 0; row < result.Rows; ++row)
+                {
+                    for (int column = 0; column < result.Columns; ++column)
+                    {
+                        const double x = result.MinX + column * kBattleshipCarveMaskCell;
+                        const double z = result.MinZ + row * kBattleshipCarveMaskCell;
+                        double nearest = std::numeric_limits<double>::max();
+                        for (const TerrainCliffCarveStamp &stamp : kBattleshipCarveStamps)
+                        {
+                            const double dx = x - stamp.CenterX;
+                            const double dz = z - stamp.CenterZ;
+                            nearest = std::min(nearest, dx * dx + dz * dz);
+                        }
+                        const double distance = std::sqrt(nearest) - kBattleshipCarveRadius;
+                        result.Values[static_cast<size_t>(row) * result.Columns + column] =
+                            static_cast<float>(1.0 - std::clamp(distance / kBattleshipCarveFadeMeters, 0.0, 1.0));
+                    }
+                }
+                return result;
+            }();
+            return mask;
+        }
+
+        // 点 (x, z) の刻んだ範囲の割合（升目の双線形の補間）
+        float BattleshipCarveAmount(double x, double z)
+        {
+            const CarveMask &mask = BattleshipCarveMask();
+            if (mask.Columns < 2 || mask.Rows < 2)
+            {
+                return 0.0f;
+            }
+            const double gx = (x - mask.MinX) / kBattleshipCarveMaskCell;
+            const double gz = (z - mask.MinZ) / kBattleshipCarveMaskCell;
+            if (gx < 0.0 || gz < 0.0 || gx >= mask.Columns - 1 || gz >= mask.Rows - 1)
+            {
+                return 0.0f;
+            }
+            const int ix = static_cast<int>(gx);
+            const int iz = static_cast<int>(gz);
+            const float tx = static_cast<float>(gx - ix);
+            const float tz = static_cast<float>(gz - iz);
+            const auto value = [&mask](int column, int row)
+            { return mask.Values[static_cast<size_t>(row) * mask.Columns + column]; };
+            return Mix(Mix(value(ix, iz), value(ix + 1, iz), tx), Mix(value(ix, iz + 1), value(ix + 1, iz + 1), tx), tz);
         }
 
         // 焼く格子: 近景の高さ場か、遠景の段の高さの並びと、その格子に掛ける範囲。近景は Battleship Rock の尾根の刻みを掛けた高さ
@@ -789,8 +870,20 @@ namespace NorvesLib::Tools::AssetCook
             }
 
             // 格子の座標 (gx, gz)（列・行の番号の実数）の、格子の高さを Catmull-Rom で補間した滑らかな面の高さ。
-            // 格子の頂点では格子の高さそのものになる
+            // 格子の頂点では格子の高さそのものになる。Battleship Rock の刻んだ段では Catmull-Rom が段の縁で上へ行き過ぎて
+            // 尖るので、双線形の補間へ寄せる
             double BaseHeight(double gx, double gz) const
+            {
+                const float carve = BattleshipCarveAmount(WorldX(gx), WorldZ(gz));
+                if (carve >= 1.0f)
+                {
+                    return BilinearHeight(gx, gz);
+                }
+                const double smooth = CatmullRomHeight(gx, gz);
+                return carve > 0.0f ? smooth + (BilinearHeight(gx, gz) - smooth) * carve : smooth;
+            }
+
+            double CatmullRomHeight(double gx, double gz) const
             {
                 const double fx = std::floor(gx);
                 const double fz = std::floor(gz);
@@ -1580,8 +1673,8 @@ namespace NorvesLib::Tools::AssetCook
     bool TerrainCliffCarveTouches(const Core::Rendering::Terrain::TerrainGridLayout &layout, uint32_t firstColumn,
                                   uint32_t cellsX, uint32_t firstRow, uint32_t cellsZ)
     {
-        // 法線の差分と細分の周りの升目の分だけ余白を足す
-        const double margin = static_cast<double>(kWindowMargin + 2) * layout.Spacing;
+        // 法線の差分と細分の周りの升目と、割れ目と滑らかな面を戻す幅の分だけ余白を足す
+        const double margin = static_cast<double>(kWindowMargin + 2) * layout.Spacing + kBattleshipCarveFadeMeters;
         const CarveBounds &bounds = BattleshipCarveBounds();
         const double minX = layout.FirstX + static_cast<double>(firstColumn) * layout.Spacing;
         const double maxX = layout.FirstX + static_cast<double>(firstColumn + cellsX) * layout.Spacing;
