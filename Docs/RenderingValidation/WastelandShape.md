@@ -214,6 +214,8 @@ Battleship Rock の尾根の刻み（`Tools/AssetCook/TerrainCliffCarveBattleshi
 
 `shape-scan-battleship.json` は、スキャンを置く前の撮影（SCN-WL-SHAPE-CAUSE の lod-default）の値と絶対の基準から書いた: 棚の一致 0.6 以上・角の一致 0.5 以上・ずらした後の外形の距離 8 画素以下・ずらす前の外形の距離 12.4 画素以下（悪くならない）。置く前の値は、補強の前の量で棚 0.272・角 0.143・ずらした後 10.8・ずらす前 11.4 画素、補強した量（SCN-WL-SHAPE-METRIC-HARDEN で書き直した）で棚 0.042・角 0.000・ずらした後 10.8・ずらす前 11.4 画素。閾値は変えていない（棚と角はどちらの量でも届かない）
 
+`shape-scan-franklin.json` は、スキャンを置く前の灰色の材質の形の撮影（`.harness/runs/scene-capture/SCN-WL-CLIFF-SCAN-FRANKLIN/before-shape`、SCN-WL-SHAPE-METRIC-SILHOUETTE の量）の値と絶対の基準から書いた。行は cliff_02・ground_02 の注釈のうち Franklin Butte の分だけ（ground_02 の Rooster Butte は崖の生成の項目の担当）。棚の一致 0.6 以上・角の一致 0.5 以上、置く前から基準を満たす外形の距離は置く前の値 ＋ 1 画素以下（cliff_02 ずらした後 8.0・ずらす前 16.5 画素、ground_02 ずらした後 7.3・ずらす前 27.9 画素）。置く前の値は cliff_02 で棚 0.370（4 本）・角 0.000（4 点）・ずらした後 7.0・ずらす前 15.5 画素（ずらし −30, −13）、ground_02 で棚 0.351（3 本）・角 0.000（4 点）・ずらした後 6.3・ずらす前 26.9 画素（ずらし −1, 42）。
+
 ## 地形の画素の印（撮影の AOV）
 
 形の量（`ShapeCause.py`・`CompareReference.py --shape`）を地形の画素だけで数えるために、撮影の AOV（`CaptureScene.ps1 -Aov`）は `<視点>.aov.terrain_id.pfm` を書く。開発ビルド（Debug・RelWithDebInfo）の撮影だけの機能で、Release には AOV のパスが無い。
