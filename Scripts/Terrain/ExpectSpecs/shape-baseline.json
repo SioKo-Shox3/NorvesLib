@@ -6,7 +6,7 @@
     {"photo": "far_01", "quantity": "corner_match", "min": 0.0, "note": "今 0.000"},
     {"photo": "far_01", "quantity": "outline_distance_median_px", "max": 9.0, "note": "今 8.0"},
     {"photo": "far_02", "quantity": "shelf_match", "min": 0.14, "note": "今 0.179"},
-    {"photo": "far_02", "quantity": "corner_match", "min": 0.22, "note": "今 0.222"},
+    {"photo": "far_02", "quantity": "corner_match", "min": 0.11, "note": "今 0.111（角の半直線を交点を中心に判定する前は 0.222）"},
     {"photo": "far_02", "quantity": "outline_distance_median_px", "max": 49.0, "note": "今 48.0（構図のずれ。ずらした後 10.0）"},
     {"photo": "cliff_01", "quantity": "shelf_match", "min": 0.01, "note": "今 0.042"},
     {"photo": "cliff_01", "quantity": "corner_match", "min": 0.0, "note": "今 0.000"},

@@ -7649,3 +7649,10 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 証拠（`.harness/runs/20261024-183517/`）: `verify-SCN-WL-SHAPE-METRIC-HARDEN-1.txt`（selftest result=pass EXIT=0）・`-2.txt`（lod-default `--shape --verify` result=pass EXIT=0）。開いた画: `scene-capture/SCN-WL-SHAPE-METRIC-HARDEN/lod-default/shape_cliff_01.png`（折れの線は壁の縦の溝に集まり、写真の 4 本の棚に沿う水平の線はほぼ無い）。仕様の照合: 基準の仕様は lod-default で全 15 行合格、版を書き換えた写しは版の違いで落ちる
 - Next: TASKS.md の次の未完
 - Notes: 平行移動は外形の距離の中央値が同じなら平均の小さい方を採る形にした（真っ直ぐな縁で縁に沿ったずれが決まらず、合成の壁で 100 画素ずれた）。far_01 の Castle Butte・Cedar Mesa の縁のずらした量が少し変わった。角の注釈 35 点のうち 28 点は外形の最も近い頂点（30 画素以内）へ寄せてその前後の頂点を二辺にし、ほぼ一直線になる 7 点は写真を見て二辺を置いた（Setting Hen Butte の左上・cliff_02 の尖塔の頂は点を写真の角へ寄せた）。verify の 2 行目は出力先を省くので lod-default の置き場の `shape_metrics.json`・`shape_*.png` を新しい量で上書きする。補強の後の量で崖の変形なし・最も細かい LOD の組は測り直していない。新しい試験は done-when が名指しした `--selftest` だけ（十字の角の例は角の判定の替えを確かめるために足した）
+
+## 2026-10-24 SCN-WL-SHAPE-METRIC-HARDEN（run 20261024-183517 の反復 9、差し戻しの直し）
+- Done: 反復 8 の評価者の指摘（角の点から交点がずれた十字が角に数えられる）を直した。`ShapeMeasure.match_corner` の半直線の判定（二辺の向きの画素の 75 % 以上が交点から注釈の辺の側）を、角の点でなく交点を中心とした同じ半径の円の画素で行う形にした。`--selftest` に角の判定だけの例（`CORNER_PROBE_CASES`。128 × 128、交わりを角の点から左上へ 6 画素ずらす）を 2 件足した: 十字は数えない・同じだけずれた正しい角は数える。直す前の版では両方とも数えていた（評価者の最小再現も直す前 True・直した後 False）
+- 値: lod-default の far_02 の角の一致 0.222 → 0.111（Setting Hen Butte の右の角が外れた。撮影では手前の塊の上の縁の深度の段が交点の先へまっすぐ続く T の字の交わりで、二本の半直線でない）。ほかの写真・崖の値は変わらない。`--terrain-only` の far_02 の角 0.11 → 0.00、全部の画素 0.22 → 0.11。Battleship Rock は置く前・今の配置とも角 0.000 のまま。`shape-baseline.json` の far_02 の角の下限を 0.22 → 0.11 に書き直した（`shape-target.json`・`shape-scan-battleship.json` の閾値は変えない）。`WastelandShape.md` の値の表と角の判定の説明を直した
+- 証拠（`.harness/runs/20261024-183517/`）: `verify-SCN-WL-SHAPE-METRIC-HARDEN-3.txt`（selftest 7 例 result=pass EXIT=0。cross_offset は交点まで 9.13 画素で数えない・corner_offset は 9.55 画素で数える）・`-4.txt`（lod-default `--shape --verify` result=pass EXIT=0）・`aux-SCN-WL-SHAPE-METRIC-HARDEN-9-expect.txt`（基準の仕様 全 15 行合格、Battleship の仕様は設計どおり 3 行不合格）・`-9-remeasure.txt`（地形だけ・全部・今の配置の測り直し）。開いた画: 外れた角の拡大（尖塔の右の面の縁が手前の塊の縁の T に当たる）
+- Next: TASKS.md の次の未完
+- Notes: 足した試験は差し戻しが求めた位置ずれの十字の例と、その対の正しい角の例（直しが正しい角まで落とさないことの確かめ）だけ

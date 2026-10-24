@@ -24,7 +24,8 @@
 #     長さは画素の数 ÷ 折れの線の幅（kFoldThicknessPx）
 #   corner_match: 角のうち、角の点から半径 kCornerSearchFactor × 許容の内で、注釈の二辺の向きとそれぞれ kOrientationDegrees 以内の
 #     折れの線が kCornerEdgeMinPixels 画素以上あり、二辺の線（画素の重心と主の向き）の交点が角の点から kCornerMeetFactor × 許容の内で、
-#     二辺の画素の kCornerRayFraction 以上が交点から注釈の辺の側にある（角は二本の半直線。縦の溝と横の折れが交わる十字は通らない）割合
+#     交点を中心とした同じ半径の円の内で、二辺の向きの画素のそれぞれ kCornerRayFraction 以上が交点から注釈の辺の側にある
+#     （角は二本の半直線。縦の溝と横の折れが交わる十字は、交点が角の点からずれていても通らない）割合
 #   outline_distance_median_px: 写真の外形の点から撮影の外形への距離の中央値（ずらす前）。
 #     outline_residual_median_px（ずらした後）・shift_px（ずらした量）も書く
 # 写真ごとの値は崖をまとめた値（棚は長さ、角は点の数、外形は点の数で重み付け。局所の欠けは最大）。崖ごとの値は cliffs.<名前>。
@@ -34,6 +35,7 @@
 #   annotations_hash() が求める）を持ち、無いか今の注釈と違えば落ちる。
 # --selftest: 合成の深度と法線（1920×1080 の正面の壁、棚 3 本、上の 2 つの角）で量を求め、SELFTEST_ROWS で判定する。
 #   正しい形を許容の内でずらしたものは通り、壁一面の鋸歯・格子・棚を 1 本消した形・角の点で縦の溝と横の折れが十字に交わる形は落ちる。
+#   角の判定だけの例（CORNER_PROBE_CASES）で、角の点から左上へずれた十字は角に数えず、同じだけずれた正しい角は数えることも確かめる。
 # 落ちる: 注釈が無い・崖に外形・棚・角（二辺の向き）が無い・撮影の PNG・深度・幾何の法線（--terrain-only は地形の印）が無いか
 #   1920×1080 未満・地形の印に描いた画素の 255 がある・撮影の外形が取れない・崖の外形の中で幾何の法線の読める画素が
 #   kGeometricCoverage 未満・--verify で所見の文書に「形の物差し」の節が無い・--expect の仕様の注釈の版が無いか違う。
@@ -417,8 +419,8 @@ def match_corner(field, corner, size, shift, radius):
         center = coords.mean(axis=0)
         _, _, vectors = np.linalg.svd(coords - center, full_matrices=False)
         principal = vectors[0] if np.count_nonzero(pick) >= 2 else outward
-        edges.append((center, principal, outward, coords))
-    (c1, v1, _, _), (c2, v2, _, _) = edges
+        edges.append((center, principal, outward))
+    (c1, v1, _), (c2, v2, _) = edges
     cross = v1[0] * v2[1] - v1[1] * v2[0]
     if abs(cross) < np.sin(np.radians(kOrientationDegrees)):
         return False, at
@@ -427,7 +429,21 @@ def match_corner(field, corner, size, shift, radius):
     meet = c1 + s * v1
     if np.linalg.norm(meet - at) > kCornerMeetFactor * radius:
         return False, meet
-    for _, _, outward, coords in edges:
+    # 半直線の判定は交点を中心とした円で行う（角の点を中心にすると、交点がずれた十字の片側だけが多く入って通る）
+    x0, x1 = int(max(0, np.floor(meet[0] - search))), int(min(width, np.ceil(meet[0] + search) + 1))
+    y0, y1 = int(max(0, np.floor(meet[1] - search))), int(min(height, np.ceil(meet[1] + search) + 1))
+    if x0 >= x1 or y0 >= y1:
+        return False, meet
+    ys, xs = np.nonzero(fold[y0:y1, x0:x1])
+    xs, ys = (xs + x0).astype(np.float64), (ys + y0).astype(np.float64)
+    disk = (xs - meet[0]) ** 2 + (ys - meet[1]) ** 2 <= search * search
+    xs, ys = xs[disk], ys[disk]
+    angles = angle[ys.astype(np.int64), xs.astype(np.int64)]
+    for _, _, outward in edges:
+        pick = angle_difference(angles, line_angle(meet, meet + outward)) <= kOrientationDegrees
+        if np.count_nonzero(pick) < kCornerEdgeMinPixels:
+            return False, meet
+        coords = np.stack([xs[pick], ys[pick]], axis=1)
         ahead = (coords - meet) @ outward >= -kCornerRaySlackPx
         if np.count_nonzero(ahead) < kCornerRayFraction * len(coords):
             return False, meet
@@ -839,6 +855,36 @@ SELFTEST_CASES = (
 )
 
 
+# 角の判定だけを小さな合成の場（kCornerProbeSize 四方、深度 500 m・正面の法線）で確かめる例。注釈の角は中央で二辺は右と下。
+# 折れの交わりは角の点から左上へ kCornerProbeOffset 画素ずらす（交点は許容 kMatchRadiusPx × kCornerMeetFactor の内）
+kCornerProbeSize = 128
+kCornerProbeOffset = 6
+CORNER_PROBE_CASES = (
+    ("cross_offset", "左上へずれた十字（縦の溝と、その上が奥の深度の段）", False),
+    ("corner_offset", "左上へずれた正しい角（右へ続く棚と下へ続く溝の二本の半直線）", True),
+)
+
+
+def corner_probe(kind):
+    """角の判定の例ひとつ。(一致したか, 交点)"""
+    size = kCornerProbeSize
+    at = size // 2 - kCornerProbeOffset
+    depth = np.full((size, size), 500.0)
+    normal = np.zeros((size, size, 3))
+    normal[:] = (0.0, 0.0, 1.0)
+    side = (np.sin(np.radians(35.0)), 0.0, np.cos(np.radians(35.0)))
+    if kind == "cross_offset":
+        depth[:at, :] = 2000.0
+        normal[:, at - 1:at + 1] = side
+    else:
+        normal[at - 1:at + 1, at - 1:] = tilted(40.0)
+        normal[at - 1:, at - 1:at + 1] = side
+    field = fold_field(depth, normal, np.ones((size, size), dtype=bool))
+    corner = {"at": [0.5, 0.5], "edges": [[0.8, 0.5], [0.5, 0.8]]}
+    matched, meet = match_corner(field, corner, (size, size), (0.0, 0.0), kMatchRadiusPx)
+    return matched, meet
+
+
 def selftest_rows(record):
     """SELFTEST_ROWS の判定。(全部の行が通ったか, 落ちた行の量の一覧, 行ごとの文字)"""
     failed, texts = [], []
@@ -878,12 +924,25 @@ def run_selftest(out_dir):
         draw_sheet(capture.resize(PANEL_SIZE), capture, field, annotation, drawings, kSelftestSize,
                    [f"{kind}: {label}　期待 {'通る' if should_pass else '落ちる'}", " ".join(texts)], font).save(
             os.path.join(out_dir, f"shape_selftest_{kind}.png"))
+    corner_report = {}
+    for kind, label, should_match in CORNER_PROBE_CASES:
+        matched, meet = corner_probe(kind)
+        center = kCornerProbeSize / 2
+        distance = float(np.hypot(meet[0] - center, meet[1] - center))
+        corner_report[kind] = {"label": label, "expected_match": should_match, "matched": bool(matched),
+                               "meet_px": [float(meet[0]), float(meet[1])], "meet_distance_px": distance}
+        result = "pass" if matched == should_match else "fail"
+        print(f"SHAPE_SELFTEST corner_case={kind} expected={'match' if should_match else 'no-match'} "
+              f"measured={'match' if matched else 'no-match'} meet_distance_px={distance:.2f} result={result}")
+        if matched != should_match:
+            failures.append(f"{kind}（{label}）は角に{'数える' if should_match else '数えない'}はずが{'数えた' if matched else '数えなかった'}")
     with open(os.path.join(out_dir, "shape_selftest.json"), "w", encoding="utf-8") as file:
-        json.dump({"rows": [list(row) for row in SELFTEST_ROWS], "cases": report, "failures": failures}, file, ensure_ascii=False, indent=2)
+        json.dump({"rows": [list(row) for row in SELFTEST_ROWS], "cases": report, "corner_cases": corner_report,
+                   "failures": failures}, file, ensure_ascii=False, indent=2)
     if failures:
         for failure in failures:
             print(f"SHAPE_SELFTEST failure={failure}")
         print(f"SHAPE_SELFTEST result=fail failures={len(failures)}")
         return 1
-    print(f"SHAPE_SELFTEST result=pass cases={len(SELFTEST_CASES)} out={out_dir}")
+    print(f"SHAPE_SELFTEST result=pass cases={len(SELFTEST_CASES) + len(CORNER_PROBE_CASES)} out={out_dir}")
     return 0
