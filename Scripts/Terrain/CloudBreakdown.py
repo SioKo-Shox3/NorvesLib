@@ -60,9 +60,9 @@ class VariantModel(CD.CloudModel):
                 depth[use] += self.density(positions[use], heights[use], np.ones(int(use.sum()), dtype=bool)) * SUN_STEP_M
         return depth * self.extinction
 
-    def sun_term(self, noise_positions, direction):
+    def sun_term(self, noise_positions, direction, jitter=0.5):
         if self.variant == "engine":
-            return super().sun_term(noise_positions, direction)
+            return super().sun_term(noise_positions, direction, jitter)
         if self.variant == "ambient":
             return np.zeros(noise_positions.shape[0])
         phases = self.phases(float(np.dot(direction, self.sun_direction)))

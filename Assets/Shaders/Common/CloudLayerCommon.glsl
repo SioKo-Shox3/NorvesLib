@@ -343,13 +343,15 @@ CloudRayResult MarchCloudLayerWithDiagnostics(vec3 rayDirection, float jitter, u
             continue;
         }
 
-        // 太陽へ向かう光学的深さ（後半の遠い点は細部を省く）
+        // 太陽へ向かう光学的深さ（後半の遠い点は細部を省く）。後半の歩は 1 点で数百 m〜1.3 km を代表するので、点を区間の
+        // 中点に固定すると、点が塊の急な縁をまたぐ所で光学的深さが跳び、陰が硬い縁の平らな段になる。点を主の歩と同じ
+        // 端数で区間の中に散らし、時間の蓄積で区間の平均に均す
         float lightOpticalDepth = 0.0;
         float lightDistance = 0.0;
         float lightStep = kLightFirstStep;
         for (int lightIndex = 0; lightIndex < kLightSteps; ++lightIndex)
         {
-            float lightSampleDistance = lightDistance + lightStep * 0.5;
+            float lightSampleDistance = lightDistance + lightStep * jitter;
             vec3 lightPosition = noisePosition + sunDirection * lightSampleDistance;
             float lightHeightFraction = (lightPosition.y - params.layerAltitudesAndCoverage.y) / layerThickness;
             if (lightHeightFraction > 1.0)

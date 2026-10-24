@@ -393,7 +393,7 @@ class CloudModel:
                       sample_sky(self.sky_lut, (0.0, 0.5, 0.866)) + sample_sky(self.sky_lut, (0.0, 0.5, -0.866))) * 0.2)
         ground = self.ground_albedo * (self.sun_illuminance * max(self.sun_direction[1], 0.0) / PI + sky_above)
         if with_light and np.any(active):
-            sun_terms[active] = self.sun_term(noise_positions[active], direction)
+            sun_terms[active] = self.sun_term(noise_positions[active], direction, jitter)
 
         transmittance = 1.0
         optical_depth = 0.0
@@ -448,8 +448,8 @@ class CloudModel:
         return [mix(henyey_greenstein(0.8 * 0.5 ** octave), henyey_greenstein(-0.3 * 0.5 ** octave), 0.3)
                 for octave in range(3)]
 
-    def sun_term(self, noise_positions, direction):
-        """太陽へ向かう光学的深さ（6 回、歩幅は 1.8 倍ずつ）と多重散乱の近似の和"""
+    def sun_term(self, noise_positions, direction, jitter=0.5):
+        """太陽へ向かう光学的深さ（6 回、歩幅は 1.8 倍ずつ。各回の点は区間の中の主の歩と同じ端数 jitter の位置）と多重散乱の近似の和"""
         thickness = self.top - self.bottom
         count = noise_positions.shape[0]
         light_depth = np.zeros(count)
@@ -457,7 +457,7 @@ class CloudModel:
         light_distance = 0.0
         light_step = LIGHT_FIRST_STEP
         for light_index in range(LIGHT_STEPS):
-            sample_distance = light_distance + light_step * 0.5
+            sample_distance = light_distance + light_step * jitter
             positions = noise_positions + self.sun_direction[None, :] * sample_distance
             heights = (positions[:, 1] - self.bottom) / thickness
             alive &= ~(heights > 1.0)

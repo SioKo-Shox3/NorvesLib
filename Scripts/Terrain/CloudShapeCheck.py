@@ -19,7 +19,9 @@
 #   blob_count、blob_area_median・blob_area_p90（空の画素に対する割合）とその比 blob_area_p90_over_median、
 #   largest_blob_share（最大の塊 ÷ 0.3 以上の画素の全部）、edge_blobs（画面の端に触れる塊の数）、
 #   thick_share（0.6 以上 ÷ 0.3 以上）、blob_opacity_std_median（塊ごとの不透明度の標準偏差の中央値）、
-#   edge_width_median_px・edge_measured_fraction（縁の幅。下の measure_edges）。
+#   edge_width_median_px・edge_measured_fraction（縁の幅。下の measure_edges）、
+#   straight_edge_fraction（画面の縦か横に沿って STRAIGHT_MIN_PX 以上まっすぐ続く縁の長さ ÷ 測れた縁の長さ。下の
+#   measure_straight_edges。SCN-WL-CLOUD-CONTOUR-FIX で足した記録の量で、cloud-shape.json の行には無い）。
 import glob
 import json
 import math
@@ -44,6 +46,11 @@ EDGE_STEP_PX = 0.25
 EDGE_REACH_PX = 64.0
 # 縁を測る外周の画素の数の上限（超えたら等間隔に間引く）
 EDGE_MAX_PIXELS = 12000
+# まっすぐな縁: 不透明度 BLOB_OPACITY の等値線を、ぼかした（σ = STRAIGHT_BLUR_PX）画で画素の間の位置まで求め、
+# 同じ行（列）に STRAIGHT_MIN_PX 以上続き、位置の幅が STRAIGHT_TOLERANCE_PX 以内の区間をまっすぐな縁とする
+STRAIGHT_BLUR_PX = 1.5
+STRAIGHT_MIN_PX = 20
+STRAIGHT_TOLERANCE_PX = 0.5
 # 見本のマスク: 赤 ÷ 青がこれより大きい画素を雲とする
 SAMPLE_RB_THRESHOLD = 0.6
 # 見本の太陽の周り（この角度より内）を測る画素から除く
@@ -57,7 +64,7 @@ MASK_QUANTITIES = ("gap_fraction", "blob_count", "blob_area_median", "blob_area_
                    "largest_blob_share")
 QUANTITIES = ("gap_fraction", "film_fraction", "blob_count", "blob_area_median", "blob_area_p90",
               "blob_area_p90_over_median", "largest_blob_share", "edge_blobs", "thick_share", "blob_opacity_std_median",
-              "edge_width_median_px", "edge_measured_fraction")
+              "edge_width_median_px", "edge_measured_fraction", "straight_edge_fraction")
 EDGE_REASONS = ("other_blob", "screen_edge", "outside_sky", "no_upper", "no_lower", "no_gradient")
 
 
@@ -184,6 +191,64 @@ def measure_edges(opacity, sky, labels, counted, upper):
             "widths": widths, "points": points, "reasons": reasons}
 
 
+def straight_runs(crossings, offsets):
+    """crossings[i, j] が真の所を j の向きに続く区間に分け、offsets の幅が STRAIGHT_TOLERANCE_PX を超えたら区間を切る。
+    STRAIGHT_MIN_PX 以上の区間の長さの和を返す"""
+    total = 0
+    for row, offset_row in zip(crossings, offsets):
+        columns = np.nonzero(row)[0]
+        if columns.size < STRAIGHT_MIN_PX:
+            continue
+        length = 0
+        previous = -2
+        low = high = 0.0
+        for column in columns:
+            value = offset_row[column]
+            if column == previous + 1 and max(high, value) - min(low, value) <= STRAIGHT_TOLERANCE_PX:
+                length += 1
+                low, high = min(low, value), max(high, value)
+            else:
+                if length >= STRAIGHT_MIN_PX:
+                    total += length
+                length = 1
+                low = high = value
+            previous = column
+        if length >= STRAIGHT_MIN_PX:
+            total += length
+    return total
+
+
+def measure_straight_edges(opacity, sky):
+    """画面の縦か横に沿ってまっすぐ続く縁の長さの割合。
+
+    ぼかした不透明度の BLOB_OPACITY の等値線が、縦に隣り合う 2 画素（ともに空）の間を横切る所を横向きの縁の 1 画素、
+    横に隣り合う 2 画素の間を横切る所を縦向きの縁の 1 画素とする（勾配の大きい方の向きの横切りだけを数え、斜めの縁を
+    2 重に数えない）。測れた縁の長さ = 数えた横切りの数、まっすぐな縁 = straight_runs の区間の長さの和。
+    """
+    blurred = cv2.GaussianBlur(np.where(sky, opacity, 0.0).astype(np.float64), (0, 0), STRAIGHT_BLUR_PX)
+    gx = cv2.Sobel(blurred, cv2.CV_64F, 1, 0, ksize=3)
+    gy = cv2.Sobel(blurred, cv2.CV_64F, 0, 1, ksize=3)
+    above = blurred - BLOB_OPACITY
+    # 横向きの縁: 行 y と y + 1 の間
+    a, b = above[:-1, :], above[1:, :]
+    pair_sky = sky[:-1, :] & sky[1:, :]
+    horizontal = pair_sky & (a * b < 0.0) & (np.abs(gy[:-1, :] + gy[1:, :]) >= np.abs(gx[:-1, :] + gx[1:, :]))
+    horizontal_offset = np.where(horizontal, a / np.where(a - b != 0.0, a - b, 1.0), 0.0)
+    # 縦向きの縁: 列 x と x + 1 の間
+    a, b = above[:, :-1], above[:, 1:]
+    pair_sky = sky[:, :-1] & sky[:, 1:]
+    vertical = pair_sky & (a * b < 0.0) & (np.abs(gx[:, :-1] + gx[:, 1:]) > np.abs(gy[:, :-1] + gy[:, 1:]))
+    vertical_offset = np.where(vertical, a / np.where(a - b != 0.0, a - b, 1.0), 0.0)
+    edge_length = int(np.count_nonzero(horizontal) + np.count_nonzero(vertical))
+    straight_horizontal = straight_runs(horizontal, horizontal_offset)
+    straight_vertical = straight_runs(vertical.T, vertical_offset.T)
+    detail = {"edge_length_px": edge_length, "straight_horizontal_px": straight_horizontal,
+              "straight_vertical_px": straight_vertical}
+    if edge_length == 0:
+        return None, detail
+    return (straight_horizontal + straight_vertical) / edge_length, detail
+
+
 def measure(opacity, sky, edges=True):
     """空の画素（sky が真）の不透明度から量を測る。値の求まらない量は None"""
     opacity = np.where(sky, np.nan_to_num(opacity.astype(np.float64), nan=0.0), 0.0)
@@ -240,6 +305,8 @@ def measure(opacity, sky, edges=True):
         if edge["measured"]:
             detail["edges"]["width_percentiles_px"] = {str(p): float(np.percentile(edge["widths"], p))
                                                        for p in (10, 25, 50, 75, 90)}
+    if edges:
+        values["straight_edge_fraction"], detail["straight_edges"] = measure_straight_edges(opacity, sky)
     return values, detail, (labels, counted, edge)
 
 
@@ -466,11 +533,32 @@ def known_edge_case():
     return opacity, 0.4 * ramp
 
 
+def straight_edge_cases():
+    """(名前, 不透明度, まっすぐな縁の割合の下限, 上限)。四角い雲（画面の縦横に沿った正方形）と丸い雲（円盤）で、
+    縁は 12 画素で 0 から 0.9 まで直線で上がる"""
+    height, width = SELFTEST_SIZE
+    ys, xs = np.mgrid[0:height, 0:width]
+    centers = [(220 + 370 * (i % 5), 270 + 540 * (i // 5)) for i in range(10)]
+    square = np.full((height, width), np.inf)
+    for cx, cy in centers:
+        square = np.minimum(square, np.maximum(np.abs(xs + 0.5 - cx), np.abs(ys + 0.5 - cy)))
+    squares = np.clip((110.0 - square) / 12.0, 0.0, 1.0) * 0.9
+    disks = np.clip((60.0 - disk_distance(height, width, centers)) / 12.0, 0.0, 1.0) * 0.9
+    return [("四角い雲", squares, 0.8, None), ("丸い雲", disks, None, 0.05)]
+
+
 def run_selftest(rc, repo_root, expect_path):
     failures = []
     spec = load_json(expect_path)
     height, width = SELFTEST_SIZE
     sky = np.ones((height, width), dtype=bool)
+    for name, opacity, low, high in straight_edge_cases():
+        fraction, detail = measure_straight_edges(opacity, sky)
+        ok = fraction is not None and (low is None or fraction >= low) and (high is None or fraction <= high)
+        print(f"REFERENCE_CHECK cloud_shape_selftest case={name} straight_edge_fraction={fraction} "
+              f"min={low} max={high} edge_length_px={detail['edge_length_px']} pass={int(ok)}")
+        if not ok:
+            failures.append(f"{name}: まっすぐな縁の割合 {fraction}（下限 {low}・上限 {high}）")
     for name, opacity, should_fail in synthetic_cases():
         values, _, _ = measure(opacity, sky)
         _, row_failures = evaluate_expect(values, spec)
