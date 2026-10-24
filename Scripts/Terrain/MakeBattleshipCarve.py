@@ -39,6 +39,10 @@ MIN_DELTA = 0.5
 # 尾根の点が隣の列より遠い（奥の尾根が外形を作る）列は、前後 NEIGHBOR 列の最も近い水平の距離に置き換える
 NEIGHBOR = 30
 FAR_JUMP = 60.0
+# 尾根の点の距離を前後 SMOOTH 個の刻みの中央値で均す（列ごとの距離の揺れが壁の前の縁を前後させて縦の溝になるのを消す）。
+# 写真の外形の行が隣の刻みとの間で WALL_ROWS 画素より跳ぶ列（写真の縦の壁）で並びを切り、壁の段は均さない
+SMOOTH = 5
+WALL_ROWS = 6
 SHELF_OUTPUT = os.path.join(REPO_ROOT, "Tools", "AssetCook", "TerrainCliffShelfBattleship.h")
 # 棚の線を世界へ戻す画素の間隔と、続いた点の並びを切る水平の跳び（m）と、残す並びの最小の点の数
 SHELF_STEP = 2
@@ -149,20 +153,34 @@ def main():
                 crest[x] = point
     distance = {x: float(np.hypot(p[0] - origin[0], p[2] - origin[2])) for x, p in crest.items()}
 
-    stamps = []
+    picked = []
     for x in range(first, last + 1, COLUMN_STEP):
         if x not in photo or x not in crest:
             continue
         near = min(distance[n] for n in range(x - NEIGHBOR, x + NEIGHBOR + 1) if n in distance)
+        picked.append((x, distance[x] if distance[x] - near <= FAR_JUMP else near))
+    # 写真の縦の壁と列の跳びで並びを切り、並びの内で距離の中央値を取る
+    runs = [0]
+    for index in range(1, len(picked)):
+        (xa, _), (xb, _) = picked[index - 1], picked[index]
+        cut = xb - xa > COLUMN_STEP or abs(photo[xb] - photo[xa]) > WALL_ROWS
+        runs.append(runs[-1] + (1 if cut else 0))
+    smoothed = []
+    for index, (x, _) in enumerate(picked):
+        window = [picked[other][1] for other in range(max(0, index - SMOOTH), min(len(picked), index + SMOOTH + 1))
+                  if runs[other] == runs[index]]
+        smoothed.append((x, float(np.median(window))))
+
+    stamps = []
+    for x, reach in smoothed:
         ray_top = rays[engine[x] + 1, x]
         horizontal = np.array([ray_top[0], ray_top[2]]) / np.hypot(ray_top[0], ray_top[2])
-        reach = distance[x] if distance[x] - near <= FAR_JUMP else near
         crest_xz = origin[[0, 2]] + horizontal * reach
-        crest_height = crest[x][1] if reach == distance[x] else None
+        crest_height = crest[x][1] if abs(reach - distance[x]) < 0.05 else None
         ray = rays[photo[x], x]
         target = origin[1] + ray[1] * reach / np.hypot(ray[0], ray[2])
         if crest_height is None:
-            # 奥の尾根の代わりに置く列は、手前の距離で今の外形の行を通る視線の高さを今の高さにする
+            # 奥の尾根の代わりに置く列と距離を均した列は、その距離で今の外形の行を通る視線の高さを今の高さにする
             crest_height = origin[1] + ray_top[1] * reach / np.hypot(ray_top[0], ray_top[2])
         delta = target - crest_height
         direction = 0 if abs(delta) < MIN_DELTA else (1 if delta > 0 else -1)
@@ -202,7 +220,7 @@ def main():
         f.write("\n".join(lines))
     raises = [s for s in stamps if s[6] > 0]
     lowers = [s for s in stamps if s[6] < 0]
-    print(f"BATTLESHIP_CARVE stamps={len(stamps)} raise={len(raises)} lower={len(lowers)} "
+    print(f"BATTLESHIP_CARVE stamps={len(stamps)} runs={runs[-1] + 1 if runs else 0} raise={len(raises)} lower={len(lowers)} "
           f"max_raise_m={max((s[7] for s in raises), default=0):.1f} max_lower_m={min((s[7] for s in lowers), default=0):.1f}")
 
 

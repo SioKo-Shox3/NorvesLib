@@ -7715,3 +7715,12 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 証拠（`.harness/runs/20261024-183517/`）: `aux-SCN-WL-CLOUD-SHADOW-LIGHT-blender-before.txt`（Cycles の生成 EXIT=0）・`aux-SCN-WL-CLOUD-SHADOW-LIGHT-check-before.txt`（`--cloud --expect --verify` result=fail EXIT=1）・`aux-SCN-WL-CLOUD-SHADOW-LIGHT-ms-tune.{py,txt}`・`-ms-sweep.py`（写しの Y は書き出しの GPU の値と 0.3〜0.8 % で一致）
 - Next: 判断待ち（`blocked/SCN-WL-CLOUD-SHADOW-LIGHT.md`。推奨: 日の当たる側を太陽の透過率 ≥ 0.3 に、透過率の照合の上限を 0.02 にし、見つけた係数を GLSL と写しに入れる）
 - Notes: シェーダー・照合・合否の json は変えていない。Cycles は今の密度場で約 17 分かかる（notes の見積もり 5〜8 分より長い）。係数は 1 視点 65 本の視線に合わせた値で、遠景のコントラスト・ちらつきは描画を変えた後に撮って確かめる。新しい試験は足していない
+
+## 2026-10-25 SCN-WL-CLIFF-SCAN-NEAR（run 20261024-183517 の反復 19、BLOCKED）
+
+- Done: 親の案 1 を実装した。`MakeBattleshipCarve.py` で尾根の点の距離を写真の縦の壁の列で切った並びの内で前後 5 個の中央値に均し（刻みの表を書き直した）、壁の前の段と縁の揺らしを外し、刻んだ範囲の細分の点に刻みを直接掛ける形にした（刻みの版 6）。地形の 214 項目を 12 組の並列で 2 回焼いた（変わったのは dem:0,2・dem:1,2 だけ）
+- 未達: `--shape --expect` は棚 0.380（基準 0.6）・角 0.000（基準 0.5）で不合格。外形 ずらす前 2.0・ずらした後 2.0 画素は合格。右の低い段の上端の角は鋭くなったが、点 3 は段の壁が写真の点の 17 画素左、点 2・5 は斜めの壁が上の辺と 1 本の弧につながり、点 0 は縦の溝で交点が 17.6 画素ずれる。点 1・4・6 は横の辺の画素が 0〜4。右の低い段と左の縁の壁は縦の筋の平らな板のまま。判断は `blocked/SCN-WL-CLIFF-SCAN-NEAR.md`（推奨: 写真の角の点の列で壁の並びを切り、斜めの壁を 1 本の距離でつなぐ）
+- 記録: 読み込み 82 秒、VRAM の使用 9784 MB（予算 12412 MB）・ジオメトリのプール 746 MB、`MEGA_CAPACITY` の 50 行で溢れ 0、DAG 全段の三角形 dem:1,2 2019 万・dem:0,2 256 万
+- 証拠（`.harness/runs/20261024-183517/`）: `verify-SCN-WL-CLIFF-SCAN-NEAR-32.txt`（Debug の Game EXIT=0）・`-33.txt`（RelWithDebInfo の Game EXIT=0）・`-37.txt`（AssetCook EXIT=0）・`-38.txt`（地形のクック cooked=0 skipped=214 EXIT=0）・`-39.txt`（形の撮影 result=pass）・`-40.txt`（`--shape --expect` result=fail failures=2）・`-41.txt`（既定の撮影 result=pass）・`-42.txt`（`CompareReference.py --verify` result=pass）、1 回目の焼きの `-31`・`-34`〜`-36`、`aux-SCN-WL-CLIFF-SCAN-NEAR-parallel-cook-5.txt`・`-6.txt`・`aux-...-packages-vs-before-5.txt`・`-6.txt`・`aux-...-corner-diag-5.{txt,png}`・`-6.{txt,png}`。開いた画: `scene-capture/SCN-WL-CLIFF-SCAN-NEAR/shape/crop_wall.png`・`trial-median/crop_wall.png`・`look/reference_cliff_01.png`・角の重ね画
+- Next: 判断待ち（`blocked/SCN-WL-CLIFF-SCAN-NEAR.md`）
+- Notes: 棚は 0.387 → 0.380（−0.007）で、ほかの量は悪くなっていない。新しい試験は足していない

@@ -535,10 +535,12 @@ namespace NorvesLib::Tools::AssetCook
         // 折れ線の線分を引く升目の一辺（m）
         constexpr double kCarveIndexCell = 4.0;
         // 上げた壁の前の縁に置く段: 尾根の点から手前へこの奥行き（m）ごとに 1 段下げ、kBattleshipWallSteps 段で元の地面へ
-        // 下ろす（壁の面に横に割れた層の段を作る）。段の縁は kBattleshipWallJitter（m）だけ揺らして直線の筋にしない
+        // 下ろす（壁の面に横に割れた層の段を作る）。段の縁は kBattleshipWallJitter（m）だけ揺らして直線の筋にしない。
+        // 段は見上げる視点で上端の角を 10〜15 画素の弧に丸め、揺らしは壁の面の縦の溝になるので、どちらも 0 にして
+        // 尾根の点で切り立つ壁にする（WastelandCliffScan.md の「尾根の点の距離を均し、…」）
         constexpr double kBattleshipWallTread = 2.0;
-        constexpr int kBattleshipWallSteps = 2;
-        constexpr double kBattleshipWallJitter = 0.8;
+        constexpr int kBattleshipWallSteps = 0;
+        constexpr double kBattleshipWallJitter = 0.0;
 
         // 刻みの折れ線の点。尾根の刻みは目標の高さと向き（1 は上げる、-1 は下げる）、棚の段は棚の高さと効きの割合
         struct CarveNode
@@ -953,6 +955,16 @@ namespace NorvesLib::Tools::AssetCook
                                              Field->GetGridVertexHeight(column, row));
             }
 
+            // 刻む前の高さ場の格子の高さ（遠景の段の格子では格子の高さのまま）
+            float RawHeight(uint32_t column, uint32_t row) const
+            {
+                if (Heights != nullptr)
+                {
+                    return Heights[static_cast<size_t>(row) * Layout.Columns + column];
+                }
+                return Field->GetGridVertexHeight(column, row);
+            }
+
             // 近景の点 (x, z) の法線。刻みの届く範囲では刻んだ格子の高さの差分から、外は高さ場の法線のまま
             Terrain::TerrainNormal NearNormal(float x, float z, float sampleSpacing) const
             {
@@ -1165,6 +1177,13 @@ namespace NorvesLib::Tools::AssetCook
                 const float carve = BattleshipCarveAmount(WorldX(gx), WorldZ(gz));
                 if (carve >= 1.0f)
                 {
+                    if (m_Grid.Heights == nullptr)
+                    {
+                        // 刻みは細分の点ごとに刻む前の高さへ掛ける（格子の点だけで刻むと、段の上端の角と壁の列の境が
+                        // 格子の 1 m の双線形で 2〜3 m の弧に丸まる。格子の点では格子の高さと同じ値になる）
+                        return static_cast<double>(
+                            CarveBattleshipHeight(WorldX(gx), WorldZ(gz), static_cast<float>(RawBilinearHeight(gx, gz))));
+                    }
                     return BilinearHeight(gx, gz);
                 }
                 const double smooth = CatmullRomHeight(gx, gz);
@@ -1212,6 +1231,24 @@ namespace NorvesLib::Tools::AssetCook
                 const double tz = gz - fz;
                 const double h0 = GridHeight(ix, iz) + (GridHeight(ix + 1, iz) - GridHeight(ix, iz)) * tx;
                 const double h1 = GridHeight(ix, iz + 1) + (GridHeight(ix + 1, iz + 1) - GridHeight(ix, iz + 1)) * tx;
+                return h0 + (h1 - h0) * tz;
+            }
+
+            // 刻む前の格子の高さの双線形の補間
+            double RawBilinearHeight(double gx, double gz) const
+            {
+                const int ix = static_cast<int>(std::floor(gx));
+                const int iz = static_cast<int>(std::floor(gz));
+                const double tx = gx - ix;
+                const double tz = gz - iz;
+                const auto raw = [this](int column, int row)
+                {
+                    column = std::clamp(column, 0, static_cast<int>(m_Layout.Columns) - 1);
+                    row = std::clamp(row, 0, static_cast<int>(m_Layout.Rows) - 1);
+                    return static_cast<double>(m_Grid.RawHeight(static_cast<uint32_t>(column), static_cast<uint32_t>(row)));
+                };
+                const double h0 = raw(ix, iz) + (raw(ix + 1, iz) - raw(ix, iz)) * tx;
+                const double h1 = raw(ix, iz + 1) + (raw(ix + 1, iz + 1) - raw(ix, iz + 1)) * tx;
                 return h0 + (h1 - h0) * tz;
             }
 
