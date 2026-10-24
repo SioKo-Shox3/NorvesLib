@@ -7,6 +7,7 @@
 #include "Rendering/FrameCaptureTypes.h"
 #include "Rendering/SkyAtmosphere.h"
 #include "Rendering/SkyAtmospherePass.h"
+#include "Rendering/VisibilityResolvePass.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdarg>
@@ -366,11 +367,12 @@ namespace NorvesLib::Core::Rendering
         const CapturedAov& aov = frame.Aov;
         if (!frame.IsSuccess() || !aov.bValid || !aov.Camera.bValid || aov.Surface.Width != aov.Geometry.Width ||
             aov.Surface.Height != aov.Geometry.Height || aov.Surface.Width != aov.Lighting.Width ||
-            aov.Surface.Height != aov.Lighting.Height)
+            aov.Surface.Height != aov.Lighting.Height || aov.Surface.Width != aov.Ids.Width ||
+            aov.Surface.Height != aov.Ids.Height)
         {
             return false;
         }
-        // 表面 = アルベド（rgb）+ 粗さ（a）、幾何 = 法線（xyz）+ 視線方向の深度（w）、照明 = 太陽の可視率（r）
+        // 表面 = アルベド（rgb）+ 粗さ（a）、幾何 = 法線（xyz）+ 視線方向の深度（w）、照明 = 太陽の可視率（r）、印 = 地形の印（r）
         struct AovImage
         {
             const CapturedImage* Source;
@@ -387,6 +389,7 @@ namespace NorvesLib::Core::Rendering
             {&aov.Lighting, {1u, 0u, 0u}, 1u, TEXT(".aov.rtgi_temporal_code.pfm")},
             {&aov.Lighting, {2u, 0u, 0u}, 1u, TEXT(".aov.rtgi_filtered_sky.pfm")},
             {&aov.Lighting, {3u, 0u, 0u}, 1u, TEXT(".aov.geometric_normal.pfm")},
+            {&aov.Ids, {0u, 0u, 0u}, 1u, TEXT(".aov.terrain_id.pfm")},
         };
         constexpr uint32_t ImageCount = static_cast<uint32_t>(sizeof(images) / sizeof(images[0]));
         const String basePath = RemoveExtension(pngPath);
@@ -408,6 +411,8 @@ namespace NorvesLib::Core::Rendering
 
         const VariableArray<char> pngName = ToAsciiFileName(pngPath);
         const FrameCaptureAovCamera& camera = aov.Camera;
+        // 解決が面の法線と地形の印に書いたフレームの印（GBufferAovPass が同じフレームの番号から作って照らした値）
+        const double frameTag = static_cast<double>(VisibilityResolvePass::GetGeometricNormalTag(frame.FrameNumber));
         char json[8192] = {};
         const int jsonLength = std::snprintf(
             json,
@@ -427,7 +432,8 @@ namespace NorvesLib::Core::Rendering
             "  \"sun_visibility\": {\"file\": \"%s\", \"channels\": 1, \"meaning\": \"sun_shadow_visibility\", \"source\": \"lighting\", \"sky_value\": 0, \"unavailable_value\": -1},\n"
             "  \"rtgi_temporal_code\": {\"file\": \"%s\", \"channels\": 1, \"meaning\": \"rtgi_occlusion_diag_2xcode_plus_temporal_sky\", \"code\": \"raw_sky_plus_2x_skip_class\", \"skip_class_heights_m\": [0.1, 2.0], \"source\": \"rtgi_temporal\", \"sky_value\": 0, \"unavailable_value\": -1},\n"
             "  \"rtgi_filtered_sky\": {\"file\": \"%s\", \"channels\": 1, \"meaning\": \"rtgi_occlusion_diag_filtered_sky\", \"source\": \"rtgi_denoised\", \"sky_value\": 0, \"unavailable_value\": -1},\n"
-            "  \"geometric_normal\": {\"file\": \"%s\", \"channels\": 1, \"meaning\": \"triangle_face_normal_world_y_up\", \"encoding\": \"octahedral_12_12_plus_1\", \"source\": \"visibility_resolve\", \"sky_value\": 0, \"unavailable_value\": -1},\n"
+            "  \"geometric_normal\": {\"file\": \"%s\", \"channels\": 1, \"meaning\": \"triangle_face_normal_world_y_up\", \"encoding\": \"octahedral_12_12_plus_1\", \"source\": \"visibility_resolve\", \"frame_number\": %llu, \"frame_tag\": %.9g, \"sky_value\": 0, \"unavailable_value\": -1},\n"
+            "  \"terrain_id\": {\"file\": \"%s\", \"channels\": 1, \"meaning\": \"triangle_material_is_terrain_surface\", \"values\": {\"other\": 0, \"terrain\": 1}, \"source\": \"visibility_resolve\", \"frame_number\": %llu, \"frame_tag\": %.9g, \"sky_value\": 0, \"unwritten_value\": 255},\n"
             "  \"camera\": {\n"
             "    \"position\": [%.9g, %.9g, %.9g],\n"
             "    \"forward\": [%.9g, %.9g, %.9g],\n"
@@ -452,6 +458,11 @@ namespace NorvesLib::Core::Rendering
             fileNames[5].data(),
             fileNames[6].data(),
             fileNames[7].data(),
+            static_cast<unsigned long long>(frame.FrameNumber),
+            frameTag,
+            fileNames[8].data(),
+            static_cast<unsigned long long>(frame.FrameNumber),
+            frameTag,
             static_cast<double>(camera.Position[0]),
             static_cast<double>(camera.Position[1]),
             static_cast<double>(camera.Position[2]),

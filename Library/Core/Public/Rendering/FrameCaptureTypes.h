@@ -380,6 +380,8 @@ namespace NorvesLib::Core::Rendering
         FrameCaptureSource AovGeometry;
         /** @brief GBufferAovPass の 3 枚目（RGBA32F）。r = 太陽の可視率（照明の影の結果。空の画素は 0） */
         FrameCaptureSource AovLighting;
+        /** @brief GBufferAovPass の 4 枚目（RGBA32F）。r = 地形の印（地形 1・ほか 0・空 0・解決が書いていない画素 255） */
+        FrameCaptureSource AovIds;
         FrameCaptureAovCamera AovCamera;
         /**
          * @brief AtmosphereProbePass の出力（RGBA32F。横 = 視線、縦 = FrameCaptureAtmosphereProbeRows の値の種類）
@@ -440,6 +442,7 @@ namespace NorvesLib::Core::Rendering
             AovSurface = FrameCaptureSource{};
             AovGeometry = FrameCaptureSource{};
             AovLighting = FrameCaptureSource{};
+            AovIds = FrameCaptureSource{};
             AovCamera = FrameCaptureAovCamera{};
             AtmosphereProbe = FrameCaptureSource{};
             AtmosphereInfo = FrameCaptureAtmosphereInfo{};
@@ -494,6 +497,11 @@ namespace NorvesLib::Core::Rendering
          * g = RTGI の遮蔽の診断の時間の蓄積の後の出力の a（2 × 符号 + 空の分）、b = 空間のフィルタの後の空の分（RTGI が無ければ -1）
          */
         CapturedImage Lighting;
+        /**
+         * @brief RGBA32F。r = 画素の三角形が地形の面の材質なら 1、ほかの物なら 0（可視バッファの解決が面の法線と同じフレームに書いた値）。
+         * 空の画素は 0、このフレームに解決が書いていない画素は 255。g・b・a は 0
+         */
+        CapturedImage Ids;
         FrameCaptureAovCamera Camera;
     };
 

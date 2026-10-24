@@ -56,7 +56,7 @@ namespace NorvesLib::Core::Rendering
         /** @brief ResolveParams::Screen[2] のビット（シェーダーの RESOLVE_FLAG_*
          * と同じ） */
         constexpr uint32_t FLAG_PREVIOUS_VALID = 1u;
-        /** @brief 三角形の面の幾何の法線を VisibilityResolveDispatch::GeometricNormal へ書く（w = Frame[2] の印） */
+        /** @brief 三角形の面の幾何の法線を VisibilityResolveDispatch::GeometricNormal へ書く（w = ±Frame[2] の印。負は地形の面の材質） */
         constexpr uint32_t FLAG_GEOMETRIC_NORMAL = 2u;
         /** @brief 材質ごとの形の dispatch
          * の定数（ResolveTileParams::tile.z）のビット（シェーダーの VIS_TILE_FLAG_*
@@ -546,8 +546,9 @@ namespace NorvesLib::Core::Rendering
         /**
          * @brief 撮影の AOV（--capture-aov）のために、三角形の面の幾何の法線を VisResolve.GeometricNormal へ書くか
          *
-         * 書くフレームは w に印（フレームの番号から作る値。GetGeometricNormalTag）を入れる。GBufferAovPass は印が合う画素だけを
-         * 幾何の法線として読み、可視バッファで解決しなかった画素（ラスタの GBuffer の物）は読めない値にする
+         * 書くフレームは w に印（フレームの番号から作る値。GetGeometricNormalTag）を入れ、地形の面の材質
+         * （MATERIAL_FLAG_TERRAIN_SURFACE）の画素は符号を負にする。GBufferAovPass は印の絶対値が合う画素だけを
+         * 幾何の法線と地形の印として読み、可視バッファで解決しなかった画素（ラスタの GBuffer の物）は読めない値にする
          */
         void SetWriteGeometricNormal(bool bWrite) { m_bWriteGeometricNormal = bWrite; }
         /** @brief フレームの番号から作る幾何の法線の印（RGBA16F の w に正確に入る 1〜2048 の整数） */

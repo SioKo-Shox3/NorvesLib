@@ -75,6 +75,10 @@ namespace NorvesLib::Core::Rendering
                     result.CaptureSources.AovLighting,
                     primarySceneView->GetFrameAovTexture(2),
                     request.Packet->FrameNumber);
+                SetFrameCaptureSource(
+                    result.CaptureSources.AovIds,
+                    primarySceneView->GetFrameAovTexture(3),
+                    request.Packet->FrameNumber);
                 result.CaptureSources.AovCamera = primarySceneView->GetFrameAovCamera();
             }
             // 撮影の大気の書き出し（--atmosphere-dump）。AtmosphereProbePass がこのフレームに書いたときだけ入る

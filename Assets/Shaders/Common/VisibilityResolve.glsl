@@ -144,7 +144,8 @@ layout(set = 0, binding = 7, rgba16f) writeonly uniform image2D normalImage;
 layout(set = 0, binding = 8, rg16f) writeonly uniform image2D velocityImage;
 layout(set = 0, binding = 9, rgba8) writeonly uniform image2D materialImage;
 layout(set = 0, binding = 10, rgba16f) writeonly uniform image2D emissiveImage;
-// 三角形の面の幾何の法線（xyz。頂点の法線の側へ向ける）と、w = params.frame.z（このフレームに書いた印）。
+// 三角形の面の幾何の法線（xyz。頂点の法線の側へ向ける）と、w = ±params.frame.z（このフレームに書いた印。
+// 地形の面〔VIS_MATERIAL_FLAG_TERRAIN_SURFACE の材質〕の画素は負）。
 // RESOLVE_FLAG_GEOMETRIC_NORMAL が無いフレームは書かない（束縛は GBuffer.Normal の代わりでよい）
 layout(set = 0, binding = 31, rgba16f) writeonly uniform image2D geometricNormalImage;
 
@@ -241,6 +242,8 @@ const uint VIS_MATERIAL_FLAG_HAS_HEIGHT = 2u;
 const uint VIS_MATERIAL_FLAG_MEGA_GEOMETRY = 4u;
 // 鏡面の無い純ランバートの材質。GBuffer の材質の A に 1 を書く（gbuffer.frag と同じ印）
 const uint VIS_MATERIAL_FLAG_DIFFUSE_ONLY = 16u;
+// 地形の面の材質（MegaTerrainBlend::IsTerrainSurface。混ぜ合わせの無い灰色の地形も含む）。撮影の AOV の地形の印に使う
+const uint VIS_MATERIAL_FLAG_TERRAIN_SURFACE = 32u;
 
 // ========================================
 // 頂点の読み出し（デバイスアドレスから。頂点・インデックスの読み出しは Common/VisibilityTriangleFetch.glsl と共有）
@@ -847,7 +850,11 @@ void main()
         {
             faceNormal = -faceNormal;
         }
-        imageStore(geometricNormalImage, ivec2(pixel), vec4(faceNormal, params.frame.z));
+        // 撮影の AOV の地形の印は、印の符号に載せる（同じ画素・同じフレームの値として面の法線と一緒に読まれる）。
+        // 材質の表の印で決め、タイルの形・直接 dispatch・デバッグの表示のどれでも同じ値にする
+        const bool bTerrainSurface = bHasMaterial && (materialEntry.header.x & VIS_MATERIAL_FLAG_TERRAIN_SURFACE) != 0u;
+        const float tag = bTerrainSurface ? -params.frame.z : params.frame.z;
+        imageStore(geometricNormalImage, ivec2(pixel), vec4(faceNormal, tag));
     }
 
 #ifdef NORVES_VISRESOLVE_DUMP

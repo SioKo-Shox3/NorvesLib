@@ -103,9 +103,9 @@ namespace NorvesLib::Core::Rendering
             uint64_t ByteCount = 0;
         };
 
-        /** @brief AOV の枚数（表面・幾何・照明） */
-        static constexpr uint32_t AovImageCount = 3;
-        /** @brief bIncludeAov の要求で、同じフレームの GBuffer の生の値と照明の結果（表面・幾何・照明の 3 枚）を写した読み出し */
+        /** @brief AOV の枚数（表面・幾何・照明・印） */
+        static constexpr uint32_t AovImageCount = 4;
+        /** @brief bIncludeAov の要求で、同じフレームの GBuffer の生の値と照明の結果（表面・幾何・照明・印の 4 枚）を写した読み出し */
         struct PendingAovReadback
         {
             bool bRecorded = false;

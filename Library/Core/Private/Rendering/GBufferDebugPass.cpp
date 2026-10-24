@@ -59,8 +59,8 @@ namespace NorvesLib::Core::Rendering
         // gbuffer_aov.frag の AovParams（mat4 の逆ビュー投影・カメラの位置・前方向・照明の出力の有無）
         constexpr uint32_t AovParamsBytes = 64 + 16 + 16 + 16;
         constexpr RHI::Format AovFormat = RHI::Format::R32G32B32A32_FLOAT;
-        // 書く枚数（表面・幾何・照明）
-        constexpr uint32_t AovTargetCount = 3;
+        // 書く枚数（表面・幾何・照明・印）
+        constexpr uint32_t AovTargetCount = 4;
 
         // gbuffer_aov.frag の binding 0〜7（アルベド・法線・材質・深度・パラメータ・照明の鏡面の反射率・
         // RTGI の時間の蓄積の後・空間のフィルタの後）
@@ -461,6 +461,7 @@ namespace NorvesLib::Core::Rendering
         m_SurfaceHandle = {};
         m_GeometryHandle = {};
         m_LightingHandle = {};
+        m_IdsHandle = {};
         m_ReflectanceHandle = {};
         m_RTGITemporalHandle = {};
         m_GeometricNormalHandle = {};
@@ -487,6 +488,7 @@ namespace NorvesLib::Core::Rendering
         m_SurfaceHandle = {};
         m_GeometryHandle = {};
         m_LightingHandle = {};
+        m_IdsHandle = {};
         m_ReflectanceHandle = {};
         m_RTGITemporalHandle = {};
         m_GeometricNormalHandle = {};
@@ -553,8 +555,10 @@ namespace NorvesLib::Core::Rendering
         }
         const Identity targetNames[AovTargetCount] = {RenderGraphResourceNames::CaptureAovSurface,
                                                       RenderGraphResourceNames::CaptureAovGeometry,
-                                                      RenderGraphResourceNames::CaptureAovLighting};
-        const char* targetDebugNames[AovTargetCount] = {"Capture_AovSurface", "Capture_AovGeometry", "Capture_AovLighting"};
+                                                      RenderGraphResourceNames::CaptureAovLighting,
+                                                      RenderGraphResourceNames::CaptureAovIds};
+        const char* targetDebugNames[AovTargetCount] = {"Capture_AovSurface", "Capture_AovGeometry", "Capture_AovLighting",
+                                                        "Capture_AovIds"};
         RGResourceHandle targets[AovTargetCount];
         for (uint32_t target = 0; target < AovTargetCount; ++target)
         {
@@ -579,6 +583,7 @@ namespace NorvesLib::Core::Rendering
         m_SurfaceHandle = targets[0];
         m_GeometryHandle = targets[1];
         m_LightingHandle = targets[2];
+        m_IdsHandle = targets[3];
         m_ReflectanceHandle = reflectance;
         m_RTGITemporalHandle = rtgiTemporal;
         m_GeometricNormalHandle = geometricNormal;
@@ -598,23 +603,25 @@ namespace NorvesLib::Core::Rendering
         }
         const CameraProxy* camera = context.GetActiveCamera();
         if (!context.CommandList || !m_Device || !m_Pipeline || !camera || !m_SurfaceHandle.IsValid() ||
-            !m_GeometryHandle.IsValid() || !m_LightingHandle.IsValid() || !m_AlbedoHandle.IsValid() ||
-            !m_NormalHandle.IsValid() || !m_MaterialHandle.IsValid() || !m_DepthHandle.IsValid())
+            !m_GeometryHandle.IsValid() || !m_LightingHandle.IsValid() || !m_IdsHandle.IsValid() ||
+            !m_AlbedoHandle.IsValid() || !m_NormalHandle.IsValid() || !m_MaterialHandle.IsValid() ||
+            !m_DepthHandle.IsValid())
         {
             return;
         }
 
         const RHI::TexturePtr targets[AovTargetCount] = {resources.GetTexture(m_SurfaceHandle),
                                                          resources.GetTexture(m_GeometryHandle),
-                                                         resources.GetTexture(m_LightingHandle)};
+                                                         resources.GetTexture(m_LightingHandle),
+                                                         resources.GetTexture(m_IdsHandle)};
         const RHI::TexturePtr albedoTexture = resources.GetTexture(m_AlbedoHandle);
         const RHI::TexturePtr normalTexture = resources.GetTexture(m_NormalHandle);
         const RHI::TexturePtr materialTexture = resources.GetTexture(m_MaterialHandle);
         const RHI::TexturePtr depthTexture = resources.GetTexture(m_DepthHandle);
         const RHI::TexturePtr reflectanceTexture =
             m_ReflectanceHandle.IsValid() ? resources.GetTexture(m_ReflectanceHandle) : RHI::TexturePtr{};
-        if (!targets[0] || !targets[1] || !targets[2] || !albedoTexture || !normalTexture || !materialTexture ||
-            !depthTexture)
+        if (!targets[0] || !targets[1] || !targets[2] || !targets[3] || !albedoTexture || !normalTexture ||
+            !materialTexture || !depthTexture)
         {
             return;
         }
@@ -692,7 +699,8 @@ namespace NorvesLib::Core::Rendering
                                     rtgiResult.Width == rtgiTemporalTexture->GetWidth() &&
                                     rtgiResult.Height == rtgiTemporalTexture->GetHeight();
         params[25] = bRTGIAvailable ? 1.0f : 0.0f;
-        // z: binding 8 の幾何の法線のうち、w がこの値の画素だけがこのフレームに解決が書いた面の法線（0 なら幾何の法線は無い）
+        // z: binding 8 の幾何の法線のうち、w の絶対値がこの値の画素だけがこのフレームに解決が書いた面の法線（w が負なら地形の面。
+        // 0 なら幾何の法線と印は無い）
         const RHI::TexturePtr geometricNormalTexture =
             m_GeometricNormalHandle.IsValid() ? resources.GetTexture(m_GeometricNormalHandle) : RHI::TexturePtr{};
         params[26] = geometricNormalTexture ? VisibilityResolvePass::GetGeometricNormalTag(context.FrameNumber) : 0.0f;

@@ -18,6 +18,8 @@ namespace NorvesLib::Core::Rendering::RenderGraphResourceNames
     // 撮影の AOV の 3 枚目: 照明の結果（r = 太陽の可視率。LightingPass が Lighting.SpecularReflectance の a に書いた値）
     inline constexpr Identity CaptureAovLighting =
         Identity::Literal("Capture.AovLighting", sizeof("Capture.AovLighting") - 1);
+    // 撮影の AOV の 4 枚目: 画素の印（r = 地形の三角形か。可視バッファの解決が面の法線と同じフレームに書いた値）
+    inline constexpr Identity CaptureAovIds = Identity::Literal("Capture.AovIds", sizeof("Capture.AovIds") - 1);
     // 撮影の AOV のために可視バッファの解決が書く、三角形の面の幾何の法線（xyz）と書いたフレームの印（w）
     inline constexpr Identity VisResolveGeometricNormal =
         Identity::Literal("VisResolve.GeometricNormal", sizeof("VisResolve.GeometricNormal") - 1);

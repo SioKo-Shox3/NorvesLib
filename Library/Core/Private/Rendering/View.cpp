@@ -393,13 +393,16 @@ namespace NorvesLib::Core::Rendering
             RHI::TexturePtr aovSurface;
             RHI::TexturePtr aovGeometry;
             RHI::TexturePtr aovLighting;
+            RHI::TexturePtr aovIds;
             if (camera.bValid && lastResult.TryGetTexture(RenderGraphResourceNames::CaptureAovSurface, aovSurface) &&
                 lastResult.TryGetTexture(RenderGraphResourceNames::CaptureAovGeometry, aovGeometry) &&
-                lastResult.TryGetTexture(RenderGraphResourceNames::CaptureAovLighting, aovLighting))
+                lastResult.TryGetTexture(RenderGraphResourceNames::CaptureAovLighting, aovLighting) &&
+                lastResult.TryGetTexture(RenderGraphResourceNames::CaptureAovIds, aovIds))
             {
                 m_FrameAovTextures[0] = aovSurface;
                 m_FrameAovTextures[1] = aovGeometry;
                 m_FrameAovTextures[2] = aovLighting;
+                m_FrameAovTextures[3] = aovIds;
                 m_FrameAovCamera = camera;
             }
         }

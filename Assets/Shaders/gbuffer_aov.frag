@@ -13,8 +13,10 @@
 //                   RTGI が無い構成（params.lighting.y = 0）は g・b とも -1
 //                   a = 可視バッファの解決が書いた三角形の面の幾何の法線を八面体の 12 + 12 ビットに詰めた整数 + 1
 //                   （1 + u × 4096 + v。float32 で正確に表せる 2^24 以下）。このフレームに解決が書かなかった画素
-//                   （w が params.lighting.z と違う・ラスタの GBuffer の物）と、幾何の法線の無い構成（lighting.z = 0）は -1
-//   空の画素（照明と同じ判定: アルベドの a < 0.01）は表面 0・法線 0・深度 +∞・可視率 0
+//                   （|w| が params.lighting.z と違う・ラスタの GBuffer の物）と、幾何の法線の無い構成（lighting.z = 0）は -1
+//   出力 3（印）: r = 画素の三角形が地形の面なら 1、ほかの物なら 0（解決が面の法線と同じフレームに w の符号へ書いた値。負 = 地形）。
+//                 このフレームに解決が書かなかった画素と、幾何の法線の無い構成は 255。g・b・a は 0
+//   空の画素（照明と同じ判定: アルベドの a < 0.01）は表面 0・法線 0・深度 +∞・可視率 0・印 0
 // 後処理を通さないので、書いた値がそのまま撮影の読み出しに渡る。
 // ========================================
 
@@ -22,6 +24,12 @@ layout(location = 0) in vec2 fragUV;
 layout(location = 0) out vec4 outSurface;
 layout(location = 1) out vec4 outGeometry;
 layout(location = 2) out vec4 outLighting;
+layout(location = 3) out vec4 outIds;
+
+// 印の値（FrameCaptureHdrWriter の terrain_id と同じ）
+const float AOV_ID_OTHER = 0.0;
+const float AOV_ID_TERRAIN = 1.0;
+const float AOV_ID_UNWRITTEN = 255.0;
 
 layout(set = 0, binding = 0) uniform sampler2D gbufferAlbedo;
 layout(set = 0, binding = 1) uniform sampler2D gbufferNormal;
@@ -37,7 +45,7 @@ layout(std140, set = 0, binding = 4) uniform AovParams
     // xyz = カメラの前方向（単位ベクトル）
     vec4 cameraForward;
     // x = 1 なら lightingReflectance が照明の出力（a = 太陽の可視率）、y = 1 なら rtgiTemporal・rtgiFiltered が同じフレームの RTGI、
-    // z = geometricNormal の w がこの値の画素だけが、このフレームに解決が書いた面の法線（0 なら無い）
+    // z = geometricNormal の w の絶対値がこの値の画素だけが、このフレームに解決が書いた面の法線（w が負なら地形の面。0 なら無い）
     vec4 lighting;
 } params;
 layout(set = 0, binding = 5) uniform sampler2D lightingReflectance;
@@ -72,6 +80,7 @@ void main()
         outSurface = vec4(0.0);
         outGeometry = vec4(0.0, 0.0, 0.0, uintBitsToFloat(0x7F800000u));
         outLighting = vec4(0.0);
+        outIds = vec4(AOV_ID_OTHER, 0.0, 0.0, 0.0);
         return;
     }
     const vec3 normal = texelFetch(gbufferNormal, pixel, 0).xyz;
@@ -88,13 +97,16 @@ void main()
     const float rtgiTemporalCode = bRTGI ? texelFetch(rtgiTemporal, pixel, 0).a : -1.0;
     const float rtgiFilteredSky = bRTGI ? texelFetch(rtgiFiltered, pixel, 0).a : -1.0;
     float packedGeometricNormal = -1.0;
+    float terrainId = AOV_ID_UNWRITTEN;
     if (params.lighting.z > 0.5)
     {
         const vec4 geometric = texelFetch(geometricNormal, pixel, 0);
-        if (geometric.w == params.lighting.z)
+        if (abs(geometric.w) == params.lighting.z)
         {
             packedGeometricNormal = PackGeometricNormal(geometric.xyz);
+            terrainId = geometric.w < 0.0 ? AOV_ID_TERRAIN : AOV_ID_OTHER;
         }
     }
     outLighting = vec4(sunVisibility, rtgiTemporalCode, rtgiFilteredSky, packedGeometricNormal);
+    outIds = vec4(terrainId, 0.0, 0.0, 0.0);
 }
