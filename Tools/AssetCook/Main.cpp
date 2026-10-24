@@ -7,10 +7,12 @@
 #include "SkeletalRoleFileCli.h"
 #include "TextureAssetSetCook.h"
 #include "TextureCooker.h"
+#include "TerrainCliffDetail.h"
 #include "Rendering/Terrain/TerrainHeightField.h"
 #include <charconv>
 #include <cmath>
 #include <cstdlib>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <string_view>
@@ -412,6 +414,72 @@ namespace
         return true;
     }
 
+    // --sample-terrain-cliff-surface <points-file>: 荒野の近景の高さ場（前哨地の造成を掛けた、クックと同じ高さ場）を、
+    // 崖の細部の焼きが頂点に使うのと同じ式で標本する。点の一覧は 1 行に「x z」。Battleship Rock の刻みが届く範囲と、
+    // 点ごとの刻みの割合・押し出す前の面の高さ・押し出した後の位置を出す。Scripts/Terrain/CheckCarveContinuity.py が読む
+    bool RunTerrainCliffSurfaceSampleCommand(int argc, char **argv, int &outExitCode)
+    {
+        namespace Terrain = NorvesLib::Core::Rendering::Terrain;
+        if (argc < 2 || std::string_view(argv[1]) != "--sample-terrain-cliff-surface")
+        {
+            return false;
+        }
+        outExitCode = 1;
+        if (argc != 3)
+        {
+            std::cerr << "AssetCook error: --sample-terrain-cliff-surface には点の一覧のファイルを 1 つ渡してください\n";
+            return true;
+        }
+        std::ifstream points(argv[2]);
+        if (!points)
+        {
+            std::cerr << "AssetCook error: 点の一覧のファイルを開けません: " << argv[2] << "\n";
+            return true;
+        }
+
+        NorvesLib::Core::Container::AnsiString loadError;
+        const auto field = Terrain::WastelandTerrain::LoadDemGrid(loadError);
+        if (!field)
+        {
+            std::cerr << "AssetCook error: " << loadError.c_str() << "\n";
+            return true;
+        }
+
+        double minX = 0.0;
+        double maxX = 0.0;
+        double minZ = 0.0;
+        double maxZ = 0.0;
+        NorvesLib::Tools::AssetCook::TerrainCliffCarveExtent(minX, maxX, minZ, maxZ);
+        std::cout << std::setprecision(10) << "carve_extent=" << minX << "," << maxX << "," << minZ << "," << maxZ << "\n";
+        double x = 0.0;
+        double z = 0.0;
+        size_t count = 0;
+        while (points >> x >> z)
+        {
+            NorvesLib::Tools::AssetCook::TerrainCliffSurfaceSample sample;
+            std::cout << "point=" << x << "," << z << ",";
+            if (!NorvesLib::Tools::AssetCook::SampleTerrainCliffSurface(*field, x, z, sample))
+            {
+                std::cout << "out_of_range\n";
+            }
+            else
+            {
+                std::cout << sample.CarveAmount << "," << sample.BaseHeight << "," << sample.Position[0] << ","
+                          << sample.Position[1] << "," << sample.Position[2] << "," << (sample.bDisplaced ? 1 : 0)
+                          << "\n";
+            }
+            ++count;
+        }
+        if (!points.eof())
+        {
+            std::cerr << "AssetCook error: 点の一覧のファイルの " << (count + 1) << " 行目を読めません\n";
+            return true;
+        }
+        std::cout << "point_count=" << count << "\n";
+        outExitCode = 0;
+        return true;
+    }
+
     // --check-terrain-dem-seam <ax>,<az> <bx>,<bz>: DEM の隣り合う 2 区画（B は A の東か南の隣）を、クックと同じ引数で
     // LOD の階層まで焼いて、境の頂点が両区画で同じで、どの段でも境が固定されているかを確かめる。合格なら 0
     bool RunTerrainDemSeamCommand(int argc, char **argv, int &outExitCode)
@@ -593,6 +661,7 @@ int main(int argc, char **argv)
     int terrainExitCode = 0;
     if (RunTerrainGridSampleCommand(argc, argv, terrainExitCode)) return terrainExitCode;
     if (RunTerrainDemSeamCommand(argc, argv, terrainExitCode)) return terrainExitCode;
+    if (RunTerrainCliffSurfaceSampleCommand(argc, argv, terrainExitCode)) return terrainExitCode;
     std::filesystem::path inspectPath;
     const char* inspectError=nullptr;
     const auto inspect=NorvesLib::Tools::AssetCook::ParseInspectCommandLine(argc,argv,inspectPath,inspectError);

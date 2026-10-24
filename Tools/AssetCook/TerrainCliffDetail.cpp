@@ -524,6 +524,10 @@ namespace NorvesLib::Tools::AssetCook
         // 刻んだ範囲の外へ割れ目と滑らかな面を戻す幅（m）と、その割合を引く升目の一辺（m）
         constexpr double kBattleshipCarveFadeMeters = 8.0;
         constexpr double kBattleshipCarveMaskCell = 2.0;
+        // 尾根の刻みの割合を 1 にする範囲を、刻みの届く半径（と壁の前の段）よりこの幅（m）だけ外へ広げる。刻みの縁
+        // （尾根の点の壁・奥の打ち切り・棚の届く端）が割合の 1 の境に重なると、割合の升目の 2 m の双線形で縁の内外に割合が揺れ、
+        // 混ぜ方の境と刻みの段差が同じ所に出るので、縁を割合 1 の内側に置く
+        constexpr double kBattleshipCarveMaskMargin = 4.0;
         // 尾根の刻みの中心を列の順に並べた折れ線で、前後に均す刻みの数（中心の前後の揺れが丸い柱の列にならないように）
         constexpr int kBattleshipRidgeSmooth = 4;
         // 隣の刻みの中心がこれより離れていれば（m）、別の尾根として折れ線を切る
@@ -780,7 +784,7 @@ namespace NorvesLib::Tools::AssetCook
                 };
                 include(BattleshipRidge(), kBattleshipCarveRadius + std::max(kBattleshipWallTread * kBattleshipWallSteps, kBattleshipLowerFront) +
                                                kBattleshipWallJitter);
-                include(BattleshipShelves(), kBattleshipShelfReach);
+                include(BattleshipShelves(), kBattleshipShelfReach + kBattleshipCarveMaskMargin);
                 return result;
             }();
             return bounds;
@@ -875,7 +879,8 @@ namespace NorvesLib::Tools::AssetCook
             return height;
         }
 
-        // 刻んだ範囲の割合の升目（尾根の刻みの半径と壁の前の段・棚の段の範囲の内 1、外へ kBattleshipCarveFadeMeters で 0）
+        // 刻んだ範囲の割合の升目（尾根の刻みの半径と壁の前の段・棚の段の範囲に kBattleshipCarveMaskMargin を足した範囲の内 1、
+        // 外へ kBattleshipCarveFadeMeters で 0）
         struct CarveMask
         {
             double MinX = 0.0;
@@ -917,8 +922,9 @@ namespace NorvesLib::Tools::AssetCook
                     {
                         const double x = result.MinX + column * kBattleshipCarveMaskCell;
                         const double z = result.MinZ + row * kBattleshipCarveMaskCell;
-                        const double value = std::max(amount(BattleshipRidge(), x, z, kBattleshipCarveRadius + kBattleshipWallTread * kBattleshipWallSteps + kBattleshipWallJitter),
-                                                      amount(BattleshipShelves(), x, z, kBattleshipShelfReach));
+                        const double value = std::max(amount(BattleshipRidge(), x, z, kBattleshipCarveRadius + kBattleshipWallTread * kBattleshipWallSteps + kBattleshipWallJitter +
+                                                                                   kBattleshipCarveMaskMargin),
+                                                      amount(BattleshipShelves(), x, z, kBattleshipShelfReach + kBattleshipCarveMaskMargin));
                         result.Values[static_cast<size_t>(row) * result.Columns + column] = static_cast<float>(value);
                     }
                 }
@@ -1186,23 +1192,34 @@ namespace NorvesLib::Tools::AssetCook
 
             // 格子の座標 (gx, gz)（列・行の番号の実数）の、格子の高さを Catmull-Rom で補間した滑らかな面の高さ。
             // 格子の頂点では格子の高さそのものになる。Battleship Rock の刻んだ段では Catmull-Rom が段の縁で上へ行き過ぎて
-            // 尖るので、双線形の補間へ寄せる
+            // 尖るので、刻みの割合で刻んだ高さへ寄せる。割合の全域（0〜1）で同じ 2 つの式を混ぜ、割合の境で式を切り替えない
             double BaseHeight(double gx, double gz) const
             {
                 const float carve = BattleshipCarveAmount(WorldX(gx), WorldZ(gz));
+                if (carve <= 0.0f)
+                {
+                    return CatmullRomHeight(gx, gz);
+                }
+                const double carved = CarvedHeight(gx, gz);
                 if (carve >= 1.0f)
                 {
-                    if (m_Grid.Heights == nullptr)
-                    {
-                        // 刻みは細分の点ごとに刻む前の高さへ掛ける（格子の点だけで刻むと、段の上端の角と壁の列の境が
-                        // 格子の 1 m の双線形で 2〜3 m の弧に丸まる。格子の点では格子の高さと同じ値になる）
-                        return static_cast<double>(
-                            CarveBattleshipHeight(WorldX(gx), WorldZ(gz), static_cast<float>(RawBilinearHeight(gx, gz))));
-                    }
-                    return BilinearHeight(gx, gz);
+                    return carved;
                 }
                 const double smooth = CatmullRomHeight(gx, gz);
-                return carve > 0.0f ? smooth + (BilinearHeight(gx, gz) - smooth) * carve : smooth;
+                return smooth + (carved - smooth) * carve;
+            }
+
+            // 刻んだ高さ。近景では刻みを細分の点ごとに刻む前の高さの双線形へ掛ける（格子の点だけで刻むと、段の上端の角と
+            // 壁の列の境が格子の 1 m の双線形で 2〜3 m の弧に丸まる。格子の点では格子の高さと同じ値になる）。
+            // 遠景の段の格子は刻まないので、格子の高さの双線形
+            double CarvedHeight(double gx, double gz) const
+            {
+                if (m_Grid.Heights == nullptr)
+                {
+                    return static_cast<double>(
+                        CarveBattleshipHeight(WorldX(gx), WorldZ(gz), static_cast<float>(RawBilinearHeight(gx, gz))));
+                }
+                return BilinearHeight(gx, gz);
             }
 
             double CatmullRomHeight(double gx, double gz) const
@@ -2032,6 +2049,37 @@ namespace NorvesLib::Tools::AssetCook
         VariableArray<uint8_t> changedCells;
         return BuildCliffCells(MakeNearGrid(field), firstColumn, cellsX, firstRow, cellsZ, textureTileMeters, outVertices,
                                outIndices, changedCells, outStats, outError);
+    }
+
+    bool SampleTerrainCliffSurface(const Core::Rendering::Terrain::TerrainHeightField &field, double x, double z,
+                                   TerrainCliffSurfaceSample &outSample)
+    {
+        const CliffGrid grid = MakeNearGrid(field);
+        const Terrain::TerrainGridLayout &layout = grid.Layout;
+        const double gx = (x - layout.FirstX) / layout.Spacing;
+        const double gz = (z - layout.FirstZ) / layout.Spacing;
+        if (!(gx >= 0.0) || !(gz >= 0.0) || gx > static_cast<double>(layout.Columns - 1) ||
+            gz > static_cast<double>(layout.Rows - 1))
+        {
+            return false;
+        }
+        // 点を含む 1 升目を区画として面を作る（細分の印は窓の余白の分まで求まるので、広い区画で焼いたときと同じ）
+        const uint32_t column = std::min(static_cast<uint32_t>(gx), layout.Columns - 2);
+        const uint32_t row = std::min(static_cast<uint32_t>(gz), layout.Rows - 2);
+        const CliffSurface surface(grid, column, 1u, row, 1u);
+        outSample.CarveAmount = BattleshipCarveAmount(x, z);
+        outSample.BaseHeight = surface.BaseHeight(gx, gz);
+        surface.Position(gx, gz, outSample.Position, outSample.bDisplaced);
+        return true;
+    }
+
+    void TerrainCliffCarveExtent(double &outMinX, double &outMaxX, double &outMinZ, double &outMaxZ)
+    {
+        const CarveBounds &bounds = BattleshipCarveBounds();
+        outMinX = bounds.MinX - kBattleshipCarveFadeMeters;
+        outMaxX = bounds.MaxX + kBattleshipCarveFadeMeters;
+        outMinZ = bounds.MinZ - kBattleshipCarveFadeMeters;
+        outMaxZ = bounds.MaxZ + kBattleshipCarveFadeMeters;
     }
 
     bool TerrainCliffHorizonTileIntersects(const TerrainCliffHorizonGrid &grid, uint32_t firstColumn, uint32_t cellsX,

@@ -31,7 +31,7 @@ namespace NorvesLib::Tools::AssetCook
 
     /// Battleship Rock の尾根の刻み（TerrainCliffCarveBattleship.h）と崖錐の棚の段（TerrainCliffShelfBattleship.h）の版。刻みの表か掛け方を変えたら上げる（刻みが届く区画だけ
     /// クックの元のハッシュに入る。ほかの区画の焼きの結果は変わらない）
-    inline constexpr uint32_t kTerrainCliffCarveVersion = 7u;
+    inline constexpr uint32_t kTerrainCliffCarveVersion = 8u;
 
     /// 焼いた頂点（位置・法線・UV。メッシュの頂点の記録と同じ並び）
     struct TerrainCliffVertex
@@ -71,6 +71,25 @@ namespace NorvesLib::Tools::AssetCook
                                Core::Container::VariableArray<TerrainCliffVertex> &outVertices,
                                Core::Container::VariableArray<uint32_t> &outIndices, TerrainCliffTileStats &outStats,
                                Core::Container::AnsiString &outError);
+
+    /// 近景の面の 1 点の標本（焼きが頂点に使うのと同じ式で求める）
+    struct TerrainCliffSurfaceSample
+    {
+        /// Battleship Rock の刻みの割合（0〜1）
+        float CarveAmount = 0.0f;
+        /// 押し出す前の面の高さ（m。刻みを掛けた高さ）
+        double BaseHeight = 0.0;
+        /// 地層の凹凸を押し出した後の位置（m）
+        double Position[3] = {};
+        bool bDisplaced = false;
+    };
+
+    /// 近景の高さ場の点 (x, z) を、崖の細部の焼きと同じ式で標本する。点が格子の外なら false
+    bool SampleTerrainCliffSurface(const Core::Rendering::Terrain::TerrainHeightField &field, double x, double z,
+                                   TerrainCliffSurfaceSample &outSample);
+
+    /// Battleship Rock の刻みが届く範囲（m。刻みの割合が 0 より大きい点はすべてこの内側）
+    void TerrainCliffCarveExtent(double &outMinX, double &outMaxX, double &outMinZ, double &outMaxZ);
 
     /// 遠景の段の区画が、崖の細部を焼く範囲に掛かるか
     bool TerrainCliffHorizonTileIntersects(const TerrainCliffHorizonGrid &grid, uint32_t firstColumn, uint32_t cellsX,
