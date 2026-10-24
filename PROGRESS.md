@@ -7732,3 +7732,12 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 証拠（`.harness/runs/20261024-183517/`）: `verify-SCN-WL-CLOUD-SHADOW-LIGHT-1.txt`（Debug EXIT=0）・`-2.txt`（RelWithDebInfo EXIT=0）・`-3.txt`（`--cloud --expect cloud-ref.json --verify` result=pass）・`-4.txt`（遠景の撮影 result=pass）・`-5.txt`（ちらつきの連番 result=pass）・`-6.txt`（`--cloud-far --flicker --expect cloud-far-accept.json --verify` 10 行合格 result=pass）、`aux-SCN-WL-CLOUD-SHADOW-LIGHT-dump.txt`（書き出しの撮影）・`-blender.txt`（Cycles EXIT=0）・`-check-preview.txt`（直す前の Cycles との比べ）・`-timing.txt`。開いた画: `scene-capture/SCN-WL-CLOUD-SHADOW-LIGHT/cycles/cloud_cloud_sky.png`（陰の灰色の濃さと縁の明るさが Cycles と揃った）・`far/ref_far_01.png`（塊の底の陰が直す前より灰色に締まる）
 - Next: 遠景の雲の手本の写真との明るさの差（HDR の Y の 5 % 点が写真から離れた）は Cycles の正解の無い遠い雲の話で、直す項目に足すかは計画が決める
 - Notes: Cycles の正解は近い雲の 1 視点だけ。日の当たる側は 0.3〜0.5 の視線が影の側と重なる。`CloudBreakdown.py` は march が単一散乱と多重散乱を分けて引くようになったので、差し替えの版が効くよう `sun_term_parts` を足した。Git Bash では `/m:1` がパスに変わるので、ビルドの verify は PowerShell で回した。新しい試験は足していない（`CloudCheck` の自己検査の 2 例は `max_error` の鍵の確認）
+
+## 2026-10-25 SCN-WL-CLIFF-SCAN-NEAR（run 20261024-183517 の反復 21、BLOCKED）
+
+- Done: 親の最後の試しを実装した。`MakeBattleshipCarve.py` で写真の注釈の角のうち縦の辺を持つ 5 点の列に 1 画素ごとの刻みを置いて角の列で並びを切り、点 2・5 の斜めの壁の列を角の列の距離に揃えた（454 列・51 本）。下げる列は尾根の点の手前 12 m の内も写真の外形の行を通る視線まで削る（`TerrainCliffDetail.cpp`、刻みの版 7）。地形の 214 項目を 12 組の並列で焼いた（変わったのは dem:0,2・dem:1,2 だけ）。値・角の点ごとの理由・画を `WastelandCliffScan.md` の「写真の角の列で壁の並びを切り、…」、掛け方と版を `WastelandShape.md` に書いた
+- 未達: `--shape --expect` は棚 0.391（基準 0.6）・角 0.286（基準 0.5。点 2・5 が通る）で不合格。外形 ずらす前 1.0・ずらした後 1.0 画素は合格（前 2.0／2.0）。点 0 は角が 3〜4 列の弧に丸まり交点 12.8 画素（許容 12）、点 1・3 は角の丸みで二辺の主の軸がほぼ平行、点 4・6 は横の辺の画素が 4・0（要る 6）。判断は `blocked/SCN-WL-CLIFF-SCAN-NEAR.md`（推奨: 親の決めたとおり backlog に移し、今の形を既定のまま残す）
+- 記録: 読み込み 99 秒、VRAM の使用 9783 MB（予算 12009 MB）、`MEGA_CAPACITY` の 51 行で溢れ 0、DAG 全段の三角形 dem:1,2 2006 万・dem:0,2 257 万
+- 証拠（`.harness/runs/20261024-183517/`）: `verify-SCN-WL-CLIFF-SCAN-NEAR-43.txt`（Debug の Game EXIT=0）・`-44.txt`（RelWithDebInfo の Game EXIT=0）・`-45.txt`（AssetCook EXIT=0）・`-46.txt`（地形のクック cooked=0 skipped=214 EXIT=0）・`-47.txt`（形の撮影 result=pass）・`-48.txt`（`--shape --expect` result=fail failures=2）・`-49.txt`（既定の撮影 result=pass）・`-50.txt`（`CompareReference.py --verify` result=pass）、`aux-SCN-WL-CLIFF-SCAN-NEAR-parallel-cook-7.txt`・`aux-...-packages-vs-before-7.txt`・`aux-...-corner-diag-7.{txt,png}`。開いた画: `scene-capture/SCN-WL-CLIFF-SCAN-NEAR/look/reference_cliff_01.png`・角の重ね画
+- Next: 判断待ち（`blocked/SCN-WL-CLIFF-SCAN-NEAR.md`）
+- Notes: 棚・角・外形のどれも前より悪くなっていない。最も細かい LOD での診断の撮影は読み込みが撮影の時間の内に終わらず撮れなかった（丸みが LOD によるかは未確認）。新しい試験は足していない

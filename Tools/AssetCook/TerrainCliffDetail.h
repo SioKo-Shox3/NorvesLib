@@ -31,7 +31,7 @@ namespace NorvesLib::Tools::AssetCook
 
     /// Battleship Rock の尾根の刻み（TerrainCliffCarveBattleship.h）と崖錐の棚の段（TerrainCliffShelfBattleship.h）の版。刻みの表か掛け方を変えたら上げる（刻みが届く区画だけ
     /// クックの元のハッシュに入る。ほかの区画の焼きの結果は変わらない）
-    inline constexpr uint32_t kTerrainCliffCarveVersion = 6u;
+    inline constexpr uint32_t kTerrainCliffCarveVersion = 7u;
 
     /// 焼いた頂点（位置・法線・UV。メッシュの頂点の記録と同じ並び）
     struct TerrainCliffVertex

@@ -541,6 +541,9 @@ namespace NorvesLib::Tools::AssetCook
         constexpr double kBattleshipWallTread = 2.0;
         constexpr int kBattleshipWallSteps = 0;
         constexpr double kBattleshipWallJitter = 0.0;
+        // 下げる列は、尾根の点から手前へこの奥行き（m）の内でも、写真の外形の行を通る視線より上の地形を視線まで削る
+        // （尾根の点のすぐ手前の高い地面が下げた尾根の上に出て、写真の斜めの壁を丸い弧にしないように）
+        constexpr double kBattleshipLowerFront = 12.0;
 
         // 刻みの折れ線の点。尾根の刻みは目標の高さと向き（1 は上げる、-1 は下げる）、棚の段は棚の高さと効きの割合
         struct CarveNode
@@ -775,7 +778,8 @@ namespace NorvesLib::Tools::AssetCook
                         result.MaxZ = std::max(result.MaxZ, node.Z + reach);
                     }
                 };
-                include(BattleshipRidge(), kBattleshipCarveRadius + kBattleshipWallTread * kBattleshipWallSteps + kBattleshipWallJitter);
+                include(BattleshipRidge(), kBattleshipCarveRadius + std::max(kBattleshipWallTread * kBattleshipWallSteps, kBattleshipLowerFront) +
+                                               kBattleshipWallJitter);
                 include(BattleshipShelves(), kBattleshipShelfReach);
                 return result;
             }();
@@ -784,7 +788,8 @@ namespace NorvesLib::Tools::AssetCook
 
         // 刻んだ後の高さ。尾根の刻み: 視点からの方位で点を挟む隣の列（列の間隔が kBattleshipCarveColumnStep 以下）があり、
         // 点が尾根の点から奥へ 2 × 半径の帯の内なら、両方の列の刻みの結果（目標の高さまで上げるか下げる）を方位に沿って補間する
-        // （列の外へ丸い張り出しを出さない）。上げる列は尾根の点の手前に kBattleshipWallSteps 段の層の段を置く。棚の段: 最も近い
+        // （列の外へ丸い張り出しを出さない）。上げる列は尾根の点の手前に kBattleshipWallSteps 段の層の段を置き、下げる列は手前
+        // kBattleshipLowerFront の内を写真の外形の行を通る視線まで削る。棚の段: 最も近い
         // 棚の線分が kBattleshipShelfReach の内にあり、高さが棚の高さから蹴上げの高さまでの間なら、効きの割合だけ棚の高さへ削る
         float CarveBattleshipHeight(double x, double z, float height)
         {
@@ -814,12 +819,16 @@ namespace NorvesLib::Tools::AssetCook
                         const double jitter =
                             (ValueNoise3(static_cast<float>(x * 0.21), 7.3f, static_cast<float>(z * 0.21)) - 0.5f) * (2.0 * kBattleshipWallJitter);
                         const double front = crest - distance + jitter;
-                        if (front <= wallDepth && distance <= crest + 2.0 * kBattleshipCarveRadius)
+                        if (front <= std::max(wallDepth, kBattleshipLowerFront) && distance <= crest + 2.0 * kBattleshipCarveRadius)
                         {
-                            const auto apply = [height, front](const CarveColumn &column)
+                            const auto apply = [height, front, distance, wallDepth](const CarveColumn &column)
                             {
                                 if (column.Direction > 0)
                                 {
+                                    if (front > wallDepth)
+                                    {
+                                        return height;
+                                    }
                                     if (front <= 0.0)
                                     {
                                         return std::max(height, column.Height);
@@ -832,6 +841,12 @@ namespace NorvesLib::Tools::AssetCook
                                 if (column.Direction < 0 && front <= 0.0)
                                 {
                                     return std::min(height, column.Height);
+                                }
+                                if (column.Direction < 0)
+                                {
+                                    const double sight = kBattleshipCarveOriginY +
+                                                         (column.Height - kBattleshipCarveOriginY) * distance / column.CrestDistance;
+                                    return std::min(height, static_cast<float>(sight));
                                 }
                                 return height;
                             };

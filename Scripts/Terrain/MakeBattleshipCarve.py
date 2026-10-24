@@ -5,7 +5,7 @@
 # 円（前の縁が尾根の点を通る）を 1 つの刻みとし、目標が上なら高さを目標まで上げ（max）、下なら目標まで下げる（min）。
 # TerrainCliffDetail.cpp は、格子の点を視点からの方位で挟む隣の列の刻みを方位に沿って補間し、尾根の点から奥へ 2 × RADIUS の
 # 帯に掛ける（列の外へ丸い張り出しを出さず、写真の壁の列で段を切る）。差の小さい列も向き 0（変えない）で書き、補間の
-# 隣を切らさない。中心の並びは刻んだ範囲の割合（割れ目を止める範囲）と区画の外接の箱に使う。
+# 隣を切らさない。写真の角の列の近くは 1 画素ごとに刻みを置き、角の列で並びを切る。中心の並びは刻んだ範囲の割合（割れ目を止める範囲）と区画の外接の箱に使う。
 # 表は Tools/AssetCook/TerrainCliffCarveBattleship.h に書き、TerrainCliffDetail.cpp が近景の範囲 0 の高さに掛ける。
 #
 # --shelves を付けると、写真の注釈の棚の線（ずらした量を足した位置）を撮影の深度で世界へ戻した点の並びを
@@ -43,6 +43,12 @@ FAR_JUMP = 60.0
 # 写真の外形の行が隣の刻みとの間で WALL_ROWS 画素より跳ぶ列（写真の縦の壁）で並びを切り、壁の段は均さない
 SMOOTH = 5
 WALL_ROWS = 6
+# 写真の注釈の角のうち縦の辺（向きが縦から CORNER_VERTICAL_DEGREES 以内）を持つ点は、角の列と縦の辺の列の前後 CORNER_SPAN 画素に
+# 1 画素ごとに刻みを置き、角の列で並びを切る（壁の段を列の間の補間で斜めにしない）。縦の辺が角から横へ CORNER_SLANT 画素以上
+# 伸びる写真の斜めの壁の列は、角の列（上端）の距離に揃えて同じ奥行きの縦の壁にする
+CORNER_SPAN = 4
+CORNER_VERTICAL_DEGREES = 10.0
+CORNER_SLANT = 3
 SHELF_OUTPUT = os.path.join(REPO_ROOT, "Tools", "AssetCook", "TerrainCliffShelfBattleship.h")
 # 棚の線を世界へ戻す画素の間隔と、続いた点の並びを切る水平の跳び（m）と、残す並びの最小の点の数
 SHELF_STEP = 2
@@ -124,6 +130,33 @@ def write_shelves(capture):
     print(f"BATTLESHIP_SHELVES lines={len(groups)} points={total} shift_px={shift[0]:.0f},{shift[1]:.0f}")
 
 
+def corner_columns(cliff):
+    """角の列の刻み: 1 画素ごとに刻みを置く列の集合、並びを切る列（その列の前で切る）の集合、斜めの壁の列から上端の列への対応"""
+    dense, cuts, slant = set(), set(), {}
+    for corner in cliff["corners"]:
+        at = SM.to_pixels([corner["at"]], SIZE)[0]
+        edges = SM.to_pixels(corner["edges"], SIZE)
+        angles = [np.degrees(np.arctan2(e[1] - at[1], e[0] - at[0])) for e in edges]
+        vertical = [k for k, a in enumerate(angles) if abs(abs(a) - 90.0) <= CORNER_VERTICAL_DEGREES]
+        if len(vertical) != 1:
+            continue
+        wall, other = edges[vertical[0]], edges[1 - vertical[0]]
+        cx, wx = int(round(at[0])), int(round(wall[0]))
+        other_right = other[0] > at[0]
+        if wall[1] > at[1]:
+            # 上端の角: 上端は他方の辺の側、壁の段はその反対の側
+            cuts.add(cx if other_right else cx + 1)
+        else:
+            # 下端の角: 角の列は上の段（他方の辺の反対の側）に属し、段は他方の辺の側
+            cuts.add(cx + 1 if other_right else cx)
+        dense.update(range(min(cx, wx) - CORNER_SPAN, max(cx, wx) + CORNER_SPAN + 1))
+        if wall[1] > at[1] and abs(wx - cx) >= CORNER_SLANT:
+            step = 1 if wx > cx else -1
+            for x in range(cx + step, wx + step, step):
+                slant[x] = cx
+    return dense, cuts, slant
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--capture", required=True)
@@ -153,8 +186,9 @@ def main():
                 crest[x] = point
     distance = {x: float(np.hypot(p[0] - origin[0], p[2] - origin[2])) for x, p in crest.items()}
 
+    dense, cuts, slant = corner_columns(cliff)
     picked = []
-    for x in range(first, last + 1, COLUMN_STEP):
+    for x in sorted(set(range(first, last + 1, COLUMN_STEP)) | {x for x in dense if first <= x <= last}):
         if x not in photo or x not in crest:
             continue
         near = min(distance[n] for n in range(x - NEIGHBOR, x + NEIGHBOR + 1) if n in distance)
@@ -163,13 +197,15 @@ def main():
     runs = [0]
     for index in range(1, len(picked)):
         (xa, _), (xb, _) = picked[index - 1], picked[index]
-        cut = xb - xa > COLUMN_STEP or abs(photo[xb] - photo[xa]) > WALL_ROWS
+        cut = xb - xa > COLUMN_STEP or abs(photo[xb] - photo[xa]) > WALL_ROWS or xb in cuts
         runs.append(runs[-1] + (1 if cut else 0))
     smoothed = []
     for index, (x, _) in enumerate(picked):
         window = [picked[other][1] for other in range(max(0, index - SMOOTH), min(len(picked), index + SMOOTH + 1))
                   if runs[other] == runs[index]]
         smoothed.append((x, float(np.median(window))))
+    reach_of = dict(smoothed)
+    smoothed = [(x, reach_of[slant[x]] if slant.get(x) in reach_of else reach) for x, reach in smoothed]
 
     stamps = []
     for x, reach in smoothed:
@@ -192,7 +228,7 @@ def main():
         "",
         "// Battleship Rock の尾根を写真の段に削る刻みの表（Scripts/Terrain/MakeBattleshipCarve.py が書く。手で直さない）。",
         "// 1 行が 1 つの列の刻み: 円の中心の X・Z（m）、目標の高さ（m）、向き（1 は上げる、-1 は下げる、0 は変えない）、",
-        "// 尾根の点の X・Z（m）、写真の列。半径は kBattleshipCarveRadius、視点は kBattleshipCarveOriginX・Z",
+        "// 尾根の点の X・Z（m）、写真の列。半径は kBattleshipCarveRadius、視点は kBattleshipCarveOriginX・Y・Z",
         "",
         "namespace NorvesLib::Tools::AssetCook",
         "{",
@@ -210,6 +246,7 @@ def main():
         f"    inline constexpr double kBattleshipCarveRadius = {RADIUS:.1f};",
         f"    inline constexpr double kBattleshipCarveOriginX = {origin[0]:.3f};",
         f"    inline constexpr double kBattleshipCarveOriginZ = {origin[2]:.3f};",
+        f"    inline constexpr double kBattleshipCarveOriginY = {origin[1]:.3f};",
         f"    inline constexpr int kBattleshipCarveColumnStep = {COLUMN_STEP};",
         "    inline constexpr TerrainCliffCarveStamp kBattleshipCarveStamps[] = {",
     ]
