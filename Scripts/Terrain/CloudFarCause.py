@@ -7,6 +7,9 @@
 #       結果を <撮影先>/cloud_far_check.json に書く。--verify は入力のハッシュ（inputs.json）を今のファイルと照らす。
 #       --expect は雲の合成（雲までの区間の空気遠近。SCN-WL-CLOUD-FAR-COMPOSITE）の期待値の行を仕様の閾値で判定する
 #       （ExpectSpec.py の cloud_far）。
+#   python Scripts/Terrain/ReferenceCheck.py --cloud-far --flicker --selftest
+#       ちらつきの 8 bit の G の幅の量を合成の連番で確かめる: 一定の速さの変化（風）は風を除いた幅で数えず、ランダムな ±2 段の
+#       揺れは数え、半分の画素に揺れを重ねた風の連番では揺れを足した画素だけを数える。
 #
 # 同じ密度場・時刻・視線（画素と歩の端数）のまま、雲の式（Common/CloudLayerCommon.glsl）の診断の切り替えを段ごとに足す:
 #   段 0 = 今の描画、段 1 = 45 km の打ち切りを外す、段 2 = さらに 30〜45 km の距離の溶かしを外す、
@@ -147,20 +150,72 @@ def flicker_metric(sequence_dir, view, pixels):
     green = np.stack(greens)
     if green.shape[1:] != stack.shape[1:]:
         return None, f"連番の PNG の大きさ {green.shape[2]}x{green.shape[1]} が HDR と合わない"
-    samples = green[:, ys, xs].astype(np.float64)
+    result.update(g8_spread(green[:, ys, xs]))
+    return result, None
+
+
+def g8_spread(samples):
+    """8 bit の G の連番 (フレーム, 画素) の、素の幅と、画素ごとの直線の傾きを除いた残りの幅の量"""
+    samples = np.asarray(samples, dtype=np.float64)
     spread = samples.max(axis=0) - samples.min(axis=0)
-    result["g8_range2_fraction"] = float(np.mean(spread >= 2))
-    result["g8_range3_fraction"] = float(np.mean(spread >= 3))
-    result["g8_range_max"] = int(spread.max())
+    result = {"g8_range2_fraction": float(np.mean(spread >= 2)), "g8_range3_fraction": float(np.mean(spread >= 3)),
+              "g8_range_max": int(spread.max())}
     # 風で雲が動いた分（画素ごとの連番の直線の傾き）を除いた残りの幅。歩の端数を全部止めて撮っても、縁の締まった雲が 56 フレームで
     # 動く分だけで素の幅が 2 段以上の画素が出るので、ちらつきはこちらで数える
-    t = np.arange(FLICKER_FRAMES, dtype=np.float64) - 0.5 * (FLICKER_FRAMES - 1)
+    t = np.arange(samples.shape[0], dtype=np.float64) - 0.5 * (samples.shape[0] - 1)
     slope = (samples * t[:, None]).sum(axis=0) / float((t * t).sum())
     residual = samples - samples.mean(axis=0) - slope[None, :] * t[:, None]
     detrended = residual.max(axis=0) - residual.min(axis=0)
     result["g8_detrended_range2_fraction"] = float(np.mean(detrended >= 2.0))
     result["g8_detrended_range_max"] = float(detrended.max())
-    return result, None
+    return result
+
+
+def run_flicker_selftest():
+    """合成の 8 bit の G の連番で、風を除いた幅の量が一定の速さの変化（風）を数えず、ランダムな ±2 段の揺れを数え、
+    両方を重ねた連番では揺れの分だけを数えることを確かめる"""
+    rng = np.random.default_rng(20261025)
+    pixels = 4000
+    frames = np.arange(FLICKER_FRAMES, dtype=np.float64)[:, None]
+    # 風: 画素ごとに 0〜3 段／フレームの一定の速さ（向きも両方）で動き、8 bit に丸める。素の幅は大半の画素で 2 段以上になる
+    rates = rng.uniform(0.3, 3.0, pixels) * rng.choice((-1.0, 1.0), pixels)
+    wind = np.rint(100.0 + rng.uniform(0.0, 1.0, pixels) + rates * frames)
+    # 揺れ: フレームごとにランダムに ±2 段（両方の符号を必ず含む）
+    signs = rng.choice((-1.0, 1.0), (FLICKER_FRAMES, pixels))
+    signs[0], signs[1] = 1.0, -1.0
+    jitter = 2.0 * signs
+    # 重ね: 半分の画素だけに揺れを足した風
+    shaken = np.arange(pixels) < pixels // 2
+    mixed = wind + jitter * shaken[None, :]
+    cases = [
+        ("wind", wind, {"g8_detrended_range2_fraction": (0.0, 0.0), "g8_range2_fraction": (0.9, 1.0)}),
+        ("jitter", 128.0 + jitter, {"g8_detrended_range2_fraction": (1.0, 1.0), "g8_range2_fraction": (1.0, 1.0)}),
+        ("still", np.full((FLICKER_FRAMES, pixels), 128.0),
+         {"g8_detrended_range2_fraction": (0.0, 0.0), "g8_range2_fraction": (0.0, 0.0)}),
+        ("wind_plus_half_jitter", mixed, {"g8_detrended_range2_fraction": (0.5, 0.5)}),
+    ]
+    failures = []
+    for name, samples, expected in cases:
+        value = g8_spread(samples)
+        for key, (low, high) in expected.items():
+            ok = low - 1e-9 <= value[key] <= high + 1e-9
+            print(f"REFERENCE_CHECK cloud_far flicker_selftest case={name} {key}={value[key]:.4f} "
+                  f"expect=[{low:.2f},{high:.2f}] {'ok' if ok else 'NG'}")
+            if not ok:
+                failures.append(f"{name}: {key}={value[key]:.4f} が [{low}, {high}] の外")
+    # 重ねた連番で数えた画素が揺れを足した画素と同じであること（割合が合うだけでなく）
+    residual_counted = np.array([g8_spread(mixed[:, i:i + 1])["g8_detrended_range2_fraction"] >= 1.0
+                                 for i in range(pixels)])
+    mismatch = int(np.sum(residual_counted != shaken))
+    print(f"REFERENCE_CHECK cloud_far flicker_selftest case=wind_plus_half_jitter counted_mismatch={mismatch} "
+          f"{'ok' if mismatch == 0 else 'NG'}")
+    if mismatch:
+        failures.append(f"wind_plus_half_jitter: 揺れを足した画素と数えた画素が {mismatch} 画素で食い違う")
+    for failure in failures:
+        print(f"REFERENCE_CHECK failure: {failure}")
+    print(f"REFERENCE_CHECK result={'pass' if not failures else 'fail'} mode=cloud_far_flicker_selftest "
+          f"cases={len(cases)} pixels={pixels}")
+    return 0 if not failures else 1
 
 
 def measure_flicker(capture_dir, view, pixels, cloudy, failures):

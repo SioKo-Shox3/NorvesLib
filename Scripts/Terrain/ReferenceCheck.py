@@ -155,6 +155,8 @@
 #       CaptureScene.ps1 -GameArgs cloud-dump の手本の視点の撮影で、遠い雲が消える原因（中身・45 km の打ち切り・距離の溶かし・
 #       独自の 22 km の霞）を、書き出しの反実仮想の列と写真と同じ画素の範囲の視線で量に分け、<撮影先>/cloud_far_check.json に書く
 #       （本体は CloudFarCause.py）。
+#   python Scripts/Terrain/ReferenceCheck.py --cloud-far --flicker --selftest
+#       ちらつきの 8 bit の G の幅の量を合成の連番で確かめる（風の一定の速さの変化は数えず、±2 段の揺れは数え、重ねたら揺れだけ）。
 #   python Scripts/Terrain/ReferenceCheck.py --cloud --engine <雲の書き出しの撮影> --reference <Cycles の書き先>
 #                                            [--views cloud_sky] [--trial] [--verify]
 #                                            [--expect Scripts/Terrain/ExpectSpecs/cloud-ref.json]
@@ -6755,8 +6757,12 @@ def main():
             import CloudShapeCheck
             return CloudShapeCheck.run_selftest(sys.modules[__name__], REPO_ROOT,
                                                 expect or os.path.join(REPO_ROOT, CloudShapeCheck.DEFAULT_EXPECT))
+        if args.cloud_far and args.flicker:
+            import CloudFarCause
+            return CloudFarCause.run_flicker_selftest()
         if not args.cloud:
-            print("REFERENCE_CHECK result=fail reason=selftest_unsupported（--selftest は --cloud か --cloud-shape と使う）")
+            print("REFERENCE_CHECK result=fail reason=selftest_unsupported（--selftest は --cloud・--cloud-shape・"
+                  "--cloud-far --flicker と使う）")
             return 1
         import CloudCheck
         return CloudCheck.run_selftest(expect or os.path.join(REPO_ROOT, CloudCheck.DEFAULT_EXPECT))
