@@ -7748,3 +7748,11 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 判断: far_01 の遠い雲の縁の柔らかさと頂の暗さは、歩の数（細かい歩との差 0）・ミップ（全部 textureLod 0）・細部の打ち切り（雲は 20 km 前後で細部が全部効く）の欠陥ではなく、写真の露出と雲の形の作り方（平面の天気の模様 ＋ 高さの輪郭で頂の塔を作らない）の差として記録して閉じた
 - Next: TASKS.md の次の未完
 - Notes: 要起票: 遠い積雲の頂のカリフラワー状の盛り上がり（km 規模で上へ伸びる塔の形）が無く、far_01 の写真と並べると頂が平たく灰色に見える（`far/far_01_sky_zoom.png`）。要起票: ref_cliff_02 の低い視線の空は前も後も写真の層積雲の濃淡（空の Y の変動係数 0.152）に届かず、後は 0.026 の白い面（`views/cliff_02_sky_stretch.png`）。ref_cliff_01 の壁の右の縦の板の並びは崖の刻み（SCN-WL-CLIFF-SCAN-NEAR）の変化で、この項目の対象外。新しい試験は足していない
+
+## 2026-10-25 SCN-WL-CLOUD-SHAPE-ACCEPT（run 20261024-183517 の反復 23、評価の差し戻しの直し）
+- Done: 反復 22 の NEEDS_WORK（回帰の差の画が `CaptureRegression.ps1` の撮り直しで `after` ごと消え、文書の参照先が無い）を直した。今の回帰の前・後の `overview.png` から差の 64 倍の画と前・後・差を並べた画を作り直し、前・後の PNG の写しと一緒に回帰の置き場の外の `.harness/runs/scene-capture/SCN-WL-CLOUD-SHAPE-ACCEPT/regression-diff/` に置いて、`WastelandCloudShape.md` の回帰の節の参照と値を差し替えた。反復 7 の節の消えた差の画の参照も書き換えた。non-blocking の GPU 時間の撮り直し（中央値 22.36 ms・最大 49.19 ms・within_budget=false、FoliagePass 6.98 ms が支配）も同じ文書に記録した
+- 値: night-village 差 83101 画素・2 段超 5715・最大 37 段、空の行（0〜180）で 2 段超 1。mega-bananas 376・116・102 段、空の行（0〜165）で差 0。rendering3dtest 5・0・1 段。sandbox 0（PNG 同一）
+- 証拠（`.harness/runs/20261024-183517/`）: `verify-SCN-WL-CLOUD-SHAPE-ACCEPT-23.txt`（RelWithDebInfo EXIT=0）・`-24.txt`（--cloud-far result=pass 10 行）・`-25.txt`（BandingCheck result=pass）・`-26.txt`（CompareReference result=pass）、`aux-SCN-WL-CLOUD-SHAPE-ACCEPT-regression-diff-2.txt`・`aux-SCN-WL-CLOUD-SHAPE-ACCEPT-timing-reverify-metrics.json`。開いた画: `regression-diff/night-village_before_after_diff.png`（差は街灯の光の溜まりと建物の縁、夜空に変化なし）・`regression-diff/mega-bananas_before_after_diff.png`（バナナの縁の点だけ）
+- 判断: コードに変更が無いので、撮影の verify 行（遠景・連番・段・6 視点・GPU 時間・回帰）は撮り直さず、保存済みの撮影に対する判定 3 本とビルドだけ回し直した
+- Next: TASKS.md の次の未完
+- Notes: GPU 時間の撮り直しの伸びは雲に限らずどのパスにも出て CPU のフレームも 24.2 → 32.2 ms に伸びたので、機械の負荷の差と見て記録だけにした

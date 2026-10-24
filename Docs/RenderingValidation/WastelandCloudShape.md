@@ -542,7 +542,7 @@ SCN-WL-CLOUD-SHAPE-NOISE の 14.16 ms）。
 
 ### 回帰
 
-4 シーンとも荒野の雲の層を使わず、前と後の差は mega-bananas の 399 画素（最大 97 段、`regression/SCN-WL-CLOUD-SHAPE-ACCEPT/after/mega-bananas_diff_x64.png`）・
+4 シーンとも荒野の雲の層を使わず、前と後の差は mega-bananas の 399 画素（最大 97 段。この時の差の画は回し直しで `after` ごと撮り直されて残っていない）・
 night-village の 106 画素・rendering3dtest の 6 画素（最大 1 段）。mega-bananas の差は草原の株の縁に散った点で空には無く、起動ごとの揺れ。雲が写るシーンの変化は無い。
 
 ### 検査の写しの直し
@@ -728,13 +728,25 @@ Game.exe（RelWithDebInfo、1a8b4327…、commit e0ff0739）で、上の「受�
 天気の模様（平面）と高さの輪郭で塊の外形を決め、形の大きさ 2500 m のノイズで削るので、km 規模で上へ伸びる塔や頂の細かな盛り上がりを作らない。
 標本の不足ではなく雲の形の作り方の限界で、この項目の合否（悪くならないこと）の外の差として記録する。
 
-### 回帰（`.harness/runs/regression/SCN-WL-CLOUD-SHAPE-ACCEPT/after/*_diff_x64.png`、差を 64 倍）
+### 回帰（`.harness/runs/scene-capture/SCN-WL-CLOUD-SHAPE-ACCEPT/regression-diff/`、差を 64 倍）
 
-| シーン | 差のある画素 | 2 段を超える画素 | 最大 | 見たこと |
-|---|---|---|---|---|
-| night-village | 83097 | 5712 | 37 段 | 差は街灯の当たる地面の光の溜まりと建物の縁。画面の上半分（夜空）で 2 段を超える画素は 151。太陽が沈んだ夜で雲の変化は見えない |
-| mega-bananas | 389 | 119 | 78 段 | 株の縁に散った点で空には無い（起動ごとの揺れ） |
-| rendering3dtest | 13 | 0 | 1 段 | 見た目の差なし |
-| sandbox | 0 | 0 | 0 | 同一 |
+`CaptureRegression.ps1` は撮り直すたびに `after` を消すので、差の画は回帰の置き場の外に置く。置き場には前と後の `overview.png` の写し
+（`<シーン>_before.png`・`<シーン>_after.png`）、差を 64 倍した画（`<シーン>_diff_x64.png`）、左から前・後・差を並べた画（`<シーン>_before_after_diff.png`）がある。
+差は RGB の各画素の最大の差（8 bit の段）。後は 2026-10-25 05:14 の撮り直し（前・後の PNG の SHA-256 の頭と値は
+`.harness/runs/20261024-183517/aux-SCN-WL-CLOUD-SHAPE-ACCEPT-regression-diff-2.txt`）。空の行は地平線と台地の頂より上（mega-bananas 0〜165 行・night-village 0〜180 行、1280×720）。
+
+| シーン | 差のある画素 | 2 段を超える画素 | 最大 | 空の行で 2 段を超える画素 | 見たこと |
+|---|---|---|---|---|---|
+| night-village | 83101 | 5715 | 37 段 | 1（最大 9 段） | 差は街灯の当たる地面の光の溜まりと建物の縁に集まる。太陽が沈んだ夜で、夜空に雲の変化は見えない |
+| mega-bananas | 376 | 116 | 102 段 | 0（差 0） | バナナの縁に散った点だけで空には無い（起動ごとの揺れ） |
+| rendering3dtest | 5 | 0 | 1 段 | — | 見た目の差なし |
+| sandbox | 0 | 0 | 0 | — | 同一（PNG のハッシュも同じ） |
 
 雲の層のパスは night-village でも作られるが、4 シーンとも雲が写る空の変化は無い。
+
+### GPU 時間の撮り直し（記録）
+
+同じ verify の行を 2026-10-25 05:12 に撮り直すと、ref_far_01 の 300 フレームの中央値 22.36 ms・95 % 点 32.99 ms・最大 49.19 ms で、
+予算 33.3 ms の判定（`within_budget`）は false になった（`.harness/runs/20261024-183517/aux-SCN-WL-CLOUD-SHAPE-ACCEPT-timing-reverify-metrics.json`）。
+パスの中央値は FoliagePass 3.51 → 6.98 ms・CloudLayerPass 3.70 → 4.37 ms・LightingPass 2.93 → 3.72 ms で、支配するのは FoliagePass。
+雲に限らずどのパスも伸び、CPU のフレームの中央値も 24.2 → 32.2 ms に伸びたので、同じ Game.exe で雲の形の変更でなく撮影時の機械の負荷の差と見る。GPU 時間は合否にしない。
