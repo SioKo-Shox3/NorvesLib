@@ -1891,6 +1891,16 @@ namespace NorvesLib::Core::Rendering
         vsmPointSampleBinding.stages = RHI::ShaderStage::Pixel;
         dsDesc.bindings.push_back(vsmPointSampleBinding);
 
+        // RTGI の鏡面の光線の時間の蓄積（このフレームが書いた履歴の距離の gba = 当たった面の光、法線の a = 空へ抜けた割合）
+        for (uint32_t binding = 27u; binding <= 28u; ++binding)
+        {
+            RHI::DescriptorBinding rtgiSpecularBinding;
+            rtgiSpecularBinding.binding = binding;
+            rtgiSpecularBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+            rtgiSpecularBinding.stages = RHI::ShaderStage::Pixel;
+            dsDesc.bindings.push_back(rtgiSpecularBinding);
+        }
+
         return dsDesc;
     }
 
@@ -4987,6 +4997,23 @@ namespace NorvesLib::Core::Rendering
                                                   vsmPointSampleUpload.Buffer,
                                                   vsmPointSampleUpload.GetOffset32(),
                                                   vsmPointSampleUpload.GetSize32());
+
+        // RTGI の鏡面の光線の蓄積は、このフレームの RTGI が書いた履歴の組を読む（書いた後に ShaderResource へ移してある）
+        const bool bRTGISpecularReadable = bUseRTGILighting &&
+            context.PhysicalLighting.RTGI.Result.DiffuseIndirectRadiance && m_bRTGIHistoryValid &&
+            m_bRTGIHistoryFrameNumberValid && m_RTGIHistoryFrameNumber == context.FrameNumber &&
+            m_RTGIHistoryWriteIndex < 2u &&
+            m_RTGIHistorySlotState[m_RTGIHistoryWriteIndex] == RHI::ResourceState::ShaderResource &&
+            m_RTGIHistoryTextures[m_RTGIHistoryWriteIndex].Depth &&
+            m_RTGIHistoryTextures[m_RTGIHistoryWriteIndex].Normal;
+        lightingDescriptorSet->BindTexture(
+            27,
+            bRTGISpecularReadable ? m_RTGIHistoryTextures[m_RTGIHistoryWriteIndex].Depth : m_DefaultBlackTexture);
+        lightingDescriptorSet->BindSampler(27, m_GBufferSampler);
+        lightingDescriptorSet->BindTexture(
+            28,
+            bRTGISpecularReadable ? m_RTGIHistoryTextures[m_RTGIHistoryWriteIndex].Normal : m_DefaultBlackTexture);
+        lightingDescriptorSet->BindSampler(28, m_GBufferSampler);
 
         lightingDescriptorSet->Update();
 

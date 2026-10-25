@@ -75,6 +75,10 @@ layout(set = 0, binding = 16) uniform sampler2D rayTracingShadowVisibility;
 layout(set = 0, binding = 17) uniform sampler2DArray ddgiIrradianceAtlas;
 layout(set = 0, binding = 18) uniform sampler2DArray ddgiDistanceAtlas;
 layout(set = 0, binding = 19) uniform sampler2D rtgiDiffuseIndirect;
+// RTGI の鏡面の光線の時間の蓄積（RTGI/DiffuseIndirect.comp の StoreTemporalSample。このフレームが書いた履歴）。
+// rtgiSpecularHit の gba = 当たった面が返す光の平均（露出後、空へ抜けた標本は 0）、rtgiSpecularSky の a = 空へ抜けた割合
+layout(set = 0, binding = 27) uniform sampler2D rtgiSpecularHit;
+layout(set = 0, binding = 28) uniform sampler2D rtgiSpecularSky;
 // 点光源のキューブシャドウ（キューブiに光源からの距離/範囲を格納。無いフレームは距離1の既定値）
 layout(set = 0, binding = 20) uniform samplerCubeArray pointShadowCubes;
 
@@ -688,20 +692,19 @@ vec3 EvaluateIblEndpoint(vec3 albedo,
     return (diffuseIBL * diffuseAO + specularIBL * specularAO) * iblIntensity;
 }
 
-// RTGI のときの鏡面の環境光（露出前）。空の前計算は RTGI が光線で求めた空の見え方（コサインの重みの割合）から作る
-// 鏡面の遮り（Lagarde 2014 の視線とラフネスの近似）の分だけ足し、遮られた向きは周りの面の光で埋める。周りの面の光は、
-// RTGI の照り返し（入射の放射輝度 × 反射率 × 拡散の重み）を反射率と拡散の重みで割った入射の平均で近似する。
-// 材質の AO・画面空間 AO の遮り（specularAO）とは掛け合わせず、遮りの大きい方を採る（二重に数えない）
+// RTGI のときの鏡面の環境光（露出前）。RTGI が反射の向きの周り（GGX のローブ）へ引いた光線のうち、空へ抜けた割合
+// （skySpecularOcclusion）だけ空の前計算を足し、面に当たった向きは当たった面が返す光の平均（hitRadiance。空へ抜けた
+// 標本は 0 として平均してあるので、割合を掛けずに足す）で埋める。材質の AO・画面空間 AO の遮り（specularAO）とは
+// 掛け合わせず、空の遮りは大きい方を採る（二重に数えない）。当たった面の光は光線が遮りを解いているので AO を掛けない
 vec3 EvaluateRTGIEnvironmentSpecular(vec3 prefilteredColor,
                                      vec3 reflectance,
                                      float specularAO,
                                      float skySpecularOcclusion,
-                                     vec3 surroundRadiance,
+                                     vec3 hitRadiance,
                                      float iblIntensity)
 {
     float skyOcclusion = min(specularAO, skySpecularOcclusion);
-    return reflectance * (prefilteredColor * skyOcclusion * iblIntensity +
-                          surroundRadiance * (specularAO - skyOcclusion));
+    return reflectance * (prefilteredColor * skyOcclusion * iblIntensity + hitRadiance);
 }
 
 vec3 EvaluateRTGIEndpoint(vec3 albedo,
@@ -714,7 +717,7 @@ vec3 EvaluateRTGIEndpoint(vec3 albedo,
                           vec2 brdf,
                           vec3 rtgiDiffuseRadiance,
                           float skySpecularOcclusion,
-                          vec3 surroundRadiance)
+                          vec3 specularHitRadiance)
 {
     // 拡散は光線で遮蔽を解いた照り返しをそのまま使う（材質の AO を重ねない。呼び出し側の説明を参照）
     vec3 diffuse = max(rtgiDiffuseRadiance, vec3(0.0));
@@ -727,7 +730,7 @@ vec3 EvaluateRTGIEndpoint(vec3 albedo,
                                                    EvaluateSpecularReflectance(albedo, metallic, brdf),
                                                    specularAO,
                                                    skySpecularOcclusion,
-                                                   surroundRadiance,
+                                                   specularHitRadiance,
                                                    iblIntensity);
     }
     return diffuse + specular;
@@ -1355,15 +1358,9 @@ void main()
             TrySampleDDGIIrradiance(worldPos, N, ddgiIrradiance);
         bool bRTGIAvailable = !bDDGIValidationMode && params.ddgiInfo.y != 0u;
         vec3 rtgiDiffuseRadiance = vec3(0.0);
-        // RTGI の空の見え方（コサインの重みで空へ抜ける割合。a = 2 × 診断の符号 + 空の分）
-        float rtgiSkyVisibility = 1.0;
         if (bRTGIAvailable)
         {
             vec4 rtgiSample = texture(rtgiDiffuseIndirect, fragUV);
-            if (!isnan(rtgiSample.a) && !isinf(rtgiSample.a) && rtgiSample.a >= 0.0)
-            {
-                rtgiSkyVisibility = clamp(rtgiSample.a - 2.0 * floor(rtgiSample.a * 0.5), 0.0, 1.0);
-            }
             rtgiDiffuseRadiance = rtgiSample.rgb /
                                   max(params.preExposure, 1.0e-6);
             if (any(isnan(rtgiDiffuseRadiance)) || any(isinf(rtgiDiffuseRadiance)))
@@ -1380,15 +1377,23 @@ void main()
 
         // スペキュラAO（Lagarde 2014: 視線角度とラフネスに基づく遮蔽近似）
         specularAO = ComputeSpecularAO(NdotV, ao, roughness);
-        // RTGI の空の見え方からの鏡面の遮りと、遮られた向きを埋める周りの面の光（EvaluateRTGIEnvironmentSpecular）
+        // RTGI の鏡面の光線が空へ抜けた割合と、当たった面が返す光（EvaluateRTGIEnvironmentSpecular）
         float rtgiSkySpecularOcclusion = 1.0;
-        vec3 rtgiSurroundRadiance = vec3(0.0);
+        vec3 rtgiSpecularHitRadiance = vec3(0.0);
         if (bRTGIAvailable)
         {
-            rtgiSkySpecularOcclusion = ComputeSpecularAO(NdotV, rtgiSkyVisibility, roughness);
-            // 反射率 × 拡散の重みが小さい面（濃い色・金属）は入射を推定できないので、下限で割って小さめに見積もる
-            vec3 rtgiReceiverWeight = max(iblAlbedo * EvaluateDiffuseMaterialWeight(metallic), vec3(0.05));
-            rtgiSurroundRadiance = rtgiDiffuseRadiance / rtgiReceiverWeight;
+            ivec2 specularSize = textureSize(rtgiSpecularSky, 0);
+            ivec2 specularTexel = clamp(ivec2(fragUV * vec2(specularSize)), ivec2(0), specularSize - ivec2(1));
+            float specularSky = texelFetch(rtgiSpecularSky, specularTexel, 0).a;
+            vec3 specularHit = texelFetch(rtgiSpecularHit, specularTexel, 0).gba / max(params.preExposure, 1.0e-6);
+            if (!isnan(specularSky) && !isinf(specularSky))
+            {
+                rtgiSkySpecularOcclusion = clamp(specularSky, 0.0, 1.0);
+            }
+            if (!any(isnan(specularHit)) && !any(isinf(specularHit)))
+            {
+                rtgiSpecularHitRadiance = min(max(specularHit, vec3(0.0)), vec3(65504.0));
+            }
         }
 
         if (params.bIBLEnabled != 0u)
@@ -1415,7 +1420,7 @@ void main()
                                        brdf,
                                        rtgiDiffuseRadiance,
                                        rtgiSkySpecularOcclusion,
-                                       rtgiSurroundRadiance)
+                                       rtgiSpecularHitRadiance)
                 : EvaluateIblEndpoint(iblAlbedo,
                                        metallic,
                                        iblRoughness,
@@ -1435,7 +1440,7 @@ void main()
                                                   iblSpecularReflectance,
                                                   specularAO,
                                                   rtgiSkySpecularOcclusion,
-                                                  rtgiSurroundRadiance,
+                                                  rtgiSpecularHitRadiance,
                                                   iblIntensity)
                 : SamplePrefilteredSpecular(reflect(-V, N), iblRoughness) *
                       indirectSpecularReflectance * iblIntensity;

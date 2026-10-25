@@ -122,6 +122,9 @@ layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer RTG
 #include "Common/PbrMaterialEvaluation.glsl"
 #include "Common/RayTracingInstanceMask.glsl"
 const float RAY_ORIGIN_OFFSET = 0.002;
+// 鏡面の光線の当たりを画面の面と同じと見なす位置の差（m と、カメラからの距離に対する割合の大きい方）
+const float RTGI_SCREEN_INDIRECT_POSITION_TOLERANCE = 0.05;
+const float RTGI_SCREEN_INDIRECT_RELATIVE_TOLERANCE = 0.01;
 // 1 次面からの光線が、当てた instance の光線の形のずれ（rayProxy.x）より低い所で当たったときに読み飛ばす回数の上限
 const uint RTGI_PROXY_SELF_HIT_SKIPS = 4u;
 // 読み飛ばす高さの上限（近く）。遠くの大きな区画のフォールバックは誤差が数百 m になり、そのまま使うと本物の遮りまで抜ける
@@ -786,9 +789,13 @@ bool TryReadReprojectedHistory(vec2 currentUV,
                                out vec3 previousRadiance,
                                out float previousAge,
                                out float previousConfidence,
-                               out float previousSkyVisibility)
+                               out float previousSkyVisibility,
+                               out vec3 previousSpecularHit,
+                               out float previousSpecularSky)
 {
     previousSkyVisibility = 1.0;
+    previousSpecularHit = vec3(0.0);
+    previousSpecularSky = 1.0;
     if (parameters.temporalState.x == 0u)
     {
         return false;
@@ -817,6 +824,8 @@ bool TryReadReprojectedHistory(vec2 currentUV,
     vec2 fraction = texelPosition - vec2(baseTexel);
     vec3 radianceSum = vec3(0.0);
     float skyVisibilitySum = 0.0;
+    vec3 specularHitSum = vec3(0.0);
+    float specularSkySum = 0.0;
     float ageSum = 0.0;
     float confidenceSum = 0.0;
     float weightSum = 0.0;
@@ -839,8 +848,11 @@ bool TryReadReprojectedHistory(vec2 currentUV,
             continue;
         }
 
-        float sampledDistance = texelFetch(historyDepth, texel, 0).r;
-        vec3 sampledNormal = texelFetch(historyNormal, texel, 0).xyz;
+        // 距離の gba = 鏡面の光線の当たった面の光、法線の a = 鏡面の光線が空へ抜けた割合（StoreTemporalSample）
+        vec4 sampledDepthSample = texelFetch(historyDepth, texel, 0);
+        vec4 sampledNormalSample = texelFetch(historyNormal, texel, 0);
+        float sampledDistance = sampledDepthSample.r;
+        vec3 sampledNormal = sampledNormalSample.xyz;
         vec3 sampledMaterial = texelFetch(historyMaterial, texel, 0).rgb;
         vec4 sampledHistory = texelFetch(historyRadiance, texel, 0);
         vec3 sampledRadiance = sampledHistory.rgb;
@@ -887,6 +899,10 @@ bool TryReadReprojectedHistory(vec2 currentUV,
         radianceSum += sampledRadiance * bilinearWeight;
         skyVisibilitySum += (IsFiniteScalar(sampledHistory.a) ? clamp(sampledHistory.a, 0.0, 1.0) : 1.0) *
                             bilinearWeight;
+        specularHitSum += (IsFiniteVector(sampledDepthSample.gba) ? max(sampledDepthSample.gba, vec3(0.0)) : vec3(0.0)) *
+                          bilinearWeight;
+        specularSkySum += (IsFiniteScalar(sampledNormalSample.a) ? clamp(sampledNormalSample.a, 0.0, 1.0) : 1.0) *
+                          bilinearWeight;
         ageSum += sampledAge * bilinearWeight;
         confidenceSum += sampledConfidence * bilinearWeight;
         weightSum += bilinearWeight;
@@ -898,6 +914,8 @@ bool TryReadReprojectedHistory(vec2 currentUV,
     }
     previousRadiance = radianceSum / weightSum;
     previousSkyVisibility = skyVisibilitySum / weightSum;
+    previousSpecularHit = specularHitSum / weightSum;
+    previousSpecularSky = specularSkySum / weightSum;
     previousAge = ageSum / weightSum;
     previousConfidence = confidenceSum / weightSum;
 
@@ -911,8 +929,10 @@ bool TryReadReprojectedHistory(vec2 currentUV,
     if (IsFiniteScalar(historyExposureScale) && historyExposureScale > 0.0)
     {
         previousRadiance *= historyExposureScale;
+        previousSpecularHit *= historyExposureScale;
     }
     previousRadiance = SanitizeRadiance(previousRadiance);
+    previousSpecularHit = SanitizeRadiance(previousSpecularHit);
     return true;
 }
 
@@ -945,7 +965,9 @@ void StoreTemporalSample(uvec2 pixel,
                          vec3 normal,
                          vec4 material,
                          float skyVisibility,
-                         float diagnosticCode)
+                         float diagnosticCode,
+                         vec3 specularHit,
+                         float specularSky)
 {
     vec3 safeRadiance = SanitizeRadiance(radiance);
     // 履歴の a = 時間の蓄積の後の空の分、出力の a = 2 × 符号 + 空の分（空間のフィルタが空の分を取り出して均し、照明が
@@ -983,12 +1005,19 @@ void StoreTemporalSample(uvec2 pixel,
     imageStore(historyConfidenceOutput,
                ivec2(pixel),
                vec4(safeConfidence, 0.0, 0.0, 0.0));
+    // 鏡面の光線の蓄積は距離の gba と法線の a に置く（照明が鏡面の環境光に読む）。当たった面の光も確率的に丸める
+    vec3 safeSpecularHit = SanitizeRadiance(specularHit);
+    vec3 roundedSpecularHit = vec3(
+        StochasticRoundToHalf(safeSpecularHit.r, EmitterRandom(pixel, frameIndex, 28u)),
+        StochasticRoundToHalf(safeSpecularHit.g, EmitterRandom(pixel, frameIndex, 29u)),
+        StochasticRoundToHalf(safeSpecularHit.b, EmitterRandom(pixel, frameIndex, 30u)));
+    float safeSpecularSky = IsFiniteScalar(specularSky) ? clamp(specularSky, 0.0, 1.0) : 1.0;
     imageStore(historyDepthOutput,
                ivec2(pixel),
-               vec4(safeDistance, 0.0, 0.0, 0.0));
+               vec4(safeDistance, roundedSpecularHit));
     imageStore(historyNormalOutput,
                ivec2(pixel),
-               vec4(safeNormal, 1.0));
+               vec4(safeNormal, safeSpecularSky));
     imageStore(historyMaterialOutput, ivec2(pixel), safeMaterial);
 }
 
@@ -1259,6 +1288,189 @@ vec3 TraceDiffuseRay(vec3 rayOrigin,
            FoliageCrownTransmittance(rayOrigin, rayDirection, hitDistance);
 }
 
+// 1 本目の光線が当たった面が、空と周りの面からもう 1 本のコサイン標本で受けて光線の始点へ返す光（2 回目のバウンス）。
+// rayDirection は 1 本目の光線の向き、directionDimension・emitterDimension は乱数の次元
+vec3 TraceSecondBounce(vec3 rayDirection,
+                       vec3 bounceHitPosition,
+                       vec3 bounceHitNormal,
+                       vec3 bounceHitBaseColor,
+                       float bounceHitSpecularWeight,
+                       uvec2 pixel,
+                       uint directionDimension,
+                       uint emitterDimension)
+{
+    // 方向の乱数は 1 本目の R2 列と独立にする（同じ列の位相だと画素ごとに 2 本の方向が固定の組になる）
+    uint frameIndex = parameters.sampleState.x;
+    vec3 secondDirection = CosineWeightedDirectionFromUnit(
+        bounceHitNormal,
+        vec2(EmitterRandom(pixel, frameIndex, directionDimension),
+             EmitterRandom(pixel, frameIndex, directionDimension + 1u)));
+    bool bSecondHit;
+    vec3 secondHitPosition;
+    vec3 secondHitNormal;
+    vec3 secondHitBaseColor;
+    float secondHitSpecularWeight;
+    uint secondHitCustomIndex;
+    vec3 secondIncoming = TraceDiffuseRay(
+        bounceHitPosition + bounceHitNormal * RAY_ORIGIN_OFFSET,
+        secondDirection, bounceHitNormal, -1.0, pixel, emitterDimension,
+        bSecondHit, secondHitPosition, secondHitNormal, secondHitBaseColor,
+        secondHitSpecularWeight, secondHitCustomIndex);
+    // 拡散面の出る放射輝度は反射率/π×照度で、コサイン標本の照度の推定はπ×入射放射輝度。
+    // 鏡面のある当たり（地形）は、同じ標本で鏡面の映り込み（空の光と周りの面の光）も返す。コサイン標本の
+    // 重みは π×BRDF。拡散は命中面の直接光と同じく鏡面が返す分だけ減る。これが無いと、色の濃い砂の
+    // 照り返しに混ざる色の付かない空の映り込みが抜け、照り返しが Cycles より赤くなる
+    vec3 secondReflectance = bounceHitBaseColor;
+    float bounceViewCosine = dot(bounceHitNormal, -rayDirection);
+    if (bounceHitSpecularWeight > 0.0 && bounceViewCosine > 1.0e-4)
+    {
+        secondReflectance *= 1.0 - bounceHitSpecularWeight *
+                                       TerrainHitSpecularAlbedo(bounceViewCosine);
+        float secondCosine = dot(bounceHitNormal, secondDirection);
+        if (secondCosine > 1.0e-4)
+        {
+            secondReflectance += bounceHitSpecularWeight * PI *
+                EvaluateTerrainHitSpecularBRDF(bounceHitNormal, -rayDirection, secondDirection,
+                                               bounceViewCosine, secondCosine);
+        }
+    }
+    return secondReflectance * SanitizeUnexposedRadiance(secondIncoming);
+}
+
+// GGX の見える法線の分布（Heitz 2018）から半ベクトルを引く。viewTangent は接空間（z = 法線）の視線、alpha = ラフネスの 2 乗
+vec3 SampleGGXVisibleNormal(vec3 viewTangent, float alpha, vec2 xi)
+{
+    vec3 stretchedView = normalize(vec3(alpha * viewTangent.x, alpha * viewTangent.y, viewTangent.z));
+    float lengthSquared = dot(stretchedView.xy, stretchedView.xy);
+    vec3 axis1 = lengthSquared > 1.0e-8 ? vec3(-stretchedView.y, stretchedView.x, 0.0) * inversesqrt(lengthSquared)
+                                        : vec3(1.0, 0.0, 0.0);
+    vec3 axis2 = cross(stretchedView, axis1);
+    float radius = sqrt(xi.x);
+    float angle = 2.0 * PI * xi.y;
+    float t1 = radius * cos(angle);
+    float t2 = radius * sin(angle);
+    float blend = 0.5 * (1.0 + stretchedView.z);
+    t2 = (1.0 - blend) * sqrt(max(0.0, 1.0 - t1 * t1)) + blend * t2;
+    vec3 stretchedNormal = t1 * axis1 + t2 * axis2 +
+                           sqrt(max(0.0, 1.0 - t1 * t1 - t2 * t2)) * stretchedView;
+    return normalize(vec3(alpha * stretchedNormal.x, alpha * stretchedNormal.y, max(stretchedNormal.z, 0.0)));
+}
+
+// 鏡面の光線が当たった点が画面に見えている面なら、その面の拡散の照り返し（前フレームの履歴。露出前に戻す）を返す。
+// 履歴はその面の GBuffer のアルベドで照り返しを数え、前のフレームまでの照り返しを含むので、光線の 2 回目のバウンスより
+// 多くのバウンスを含む（室内の日陰の壁のように照り返しだけで照らされる面の映り込みが暗くならない）
+bool TryReadScreenIndirect(vec3 hitPosition, out vec3 radiance)
+{
+    radiance = vec3(0.0);
+    if (parameters.temporalState.x == 0u)
+    {
+        return false;
+    }
+    vec4 clipPosition = inverse(parameters.invViewProjection) * vec4(hitPosition, 1.0);
+    if (!IsFiniteScalar(clipPosition.w) || clipPosition.w <= 1.0e-6)
+    {
+        return false;
+    }
+    vec2 uv = clipPosition.xy / clipPosition.w * 0.5 + 0.5;
+    if (!IsFiniteVector(vec3(uv, 0.0)) || any(lessThan(uv, vec2(0.0))) || any(greaterThanEqual(uv, vec2(1.0))))
+    {
+        return false;
+    }
+    float visibleDepth = textureLod(gbufferDepth, uv, 0.0).r;
+    if (!IsFiniteScalar(visibleDepth) || visibleDepth >= 0.999999)
+    {
+        return false;
+    }
+    // 画面に見えている面が当たった点と同じか（手前の物に隠れていないか）を位置の差で確かめる
+    vec3 visiblePosition = ReconstructWorldPosition(uv, visibleDepth);
+    float hitDistance = length(hitPosition - parameters.cameraPosition.xyz);
+    if (!IsFiniteVector(visiblePosition) ||
+        length(visiblePosition - hitPosition) > max(RTGI_SCREEN_INDIRECT_POSITION_TOLERANCE,
+                                                    RTGI_SCREEN_INDIRECT_RELATIVE_TOLERANCE * hitDistance))
+    {
+        return false;
+    }
+    vec2 velocity = textureLod(gbufferVelocity, uv, 0.0).rg;
+    vec2 previousUV = uv - velocity;
+    if (!IsFiniteVector(vec3(previousUV, 0.0)) || any(lessThan(previousUV, vec2(0.0))) ||
+        any(greaterThanEqual(previousUV, vec2(1.0))))
+    {
+        return false;
+    }
+    ivec2 historySize = textureSize(historyRadiance, 0);
+    ivec2 historyTexel = clamp(ivec2(previousUV * vec2(historySize)), ivec2(0), historySize - ivec2(1));
+    vec3 historyValue = texelFetch(historyRadiance, historyTexel, 0).rgb;
+    float historyExposureScale = parameters.previousCameraPosition.w;
+    float preExposure = IsFiniteScalar(parameters.rayLimits.z) && parameters.rayLimits.z > 0.0
+        ? clamp(parameters.rayLimits.z, 1.0e-6, 1.0e6)
+        : 1.0;
+    if (!IsFiniteVector(historyValue) || !IsFiniteScalar(historyExposureScale) || !(historyExposureScale > 0.0))
+    {
+        return false;
+    }
+    radiance = SanitizeUnexposedRadiance(max(historyValue, vec3(0.0)) * historyExposureScale / preExposure);
+    return true;
+}
+
+// 鏡面の光線: 反射の向きの周り（GGX のローブ）へ 1 本引き、空へ抜けたか（bSky）と当たった面が返す光（露出前、
+// 直接光・発光・2 回目のバウンス）を返す。空へ抜けた向きの光は照明が空の前計算から足すので、ここでは数えない
+vec3 TraceSpecularRay(vec3 worldPosition,
+                      vec3 worldNormal,
+                      float roughness,
+                      float viewDistance,
+                      uvec2 pixel,
+                      out bool bSky)
+{
+    bSky = true;
+    vec3 viewDirection = normalize(parameters.cameraPosition.xyz - worldPosition);
+    vec3 tangent;
+    vec3 bitangent;
+    BuildOrthonormalBasis(worldNormal, tangent, bitangent);
+    vec3 viewTangent = vec3(dot(viewDirection, tangent), dot(viewDirection, bitangent), dot(viewDirection, worldNormal));
+    if (!(viewTangent.z > 1.0e-4))
+    {
+        return vec3(0.0);
+    }
+    uint frameIndex = parameters.sampleState.x;
+    float alpha = max(roughness * roughness, 1.0e-3);
+    vec3 halfTangent = SampleGGXVisibleNormal(viewTangent, alpha,
+                                              vec2(EmitterRandom(pixel, frameIndex, 14u),
+                                                   EmitterRandom(pixel, frameIndex, 15u)));
+    vec3 halfVector = normalize(tangent * halfTangent.x + bitangent * halfTangent.y + worldNormal * halfTangent.z);
+    vec3 rayDirection = reflect(-viewDirection, halfVector);
+    if (!(dot(rayDirection, worldNormal) > 1.0e-4))
+    {
+        // 地平の下へ向いた標本は鏡の向きに寄せる
+        rayDirection = reflect(-viewDirection, worldNormal);
+    }
+    bool bHit;
+    vec3 hitPosition;
+    vec3 hitNormal;
+    vec3 hitBaseColor;
+    float hitSpecularWeight;
+    uint hitCustomIndex;
+    vec3 hitRadiance = TraceDiffuseRay(worldPosition + worldNormal * RAY_ORIGIN_OFFSET, rayDirection, worldNormal,
+                                       ProxySelfHitHeightLimit(viewDistance), pixel, 22u,
+                                       bHit, hitPosition, hitNormal, hitBaseColor, hitSpecularWeight,
+                                       hitCustomIndex);
+    if (hitCustomIndex == RTGI_NO_HIT)
+    {
+        return vec3(0.0);
+    }
+    bSky = false;
+    if (!bHit)
+    {
+        return vec3(0.0);
+    }
+    vec3 screenIndirect;
+    hitRadiance = SanitizeUnexposedRadiance(hitRadiance) +
+                  (TryReadScreenIndirect(hitPosition, screenIndirect)
+                       ? screenIndirect
+                       : TraceSecondBounce(rayDirection, hitPosition, hitNormal, hitBaseColor, hitSpecularWeight,
+                                           pixel, 16u, 25u));
+    return SanitizeUnexposedRadiance(hitRadiance);
+}
+
 // 1画素の拡散の間接光を求めて書く。firstHitCustomIndexは1回目の拡散光線が当たったinstanceのcustom index
 // （光線を引かなければRTGI_NO_HIT、外れればRTGI_NO_HIT）で、bRayTracedは光線を引いたか。
 void ShadeDiffuseIndirect(uvec2 pixel, out bool bRayTraced, out uint firstHitCustomIndex)
@@ -1297,6 +1509,9 @@ void ShadeDiffuseIndirect(uvec2 pixel, out bool bRayTraced, out uint firstHitCus
     // 遮蔽の診断: この画の 1 本目の光線が空へ抜けたか（コサイン標本なので画素の平均が空の見える割合）と読み飛ばしの分類
     float rawSkyVisibility = 1.0;
     float diagnosticCode = 0.0;
+    // 鏡面の光線: 空へ抜けたか（1 / 0）と、当たった面が返す光（露出後）。光線を引かない画素は空へ抜けた扱い
+    float rawSpecularSky = 1.0;
+    vec3 rawSpecularHit = vec3(0.0);
 
     if (bSurfaceValid)
     {
@@ -1342,43 +1557,22 @@ void ShadeDiffuseIndirect(uvec2 pixel, out bool bRayTraced, out uint firstHitCus
             if (bBounceHit)
             {
                 // 2回目の拡散バウンス: 命中面が空と周りの面から受ける光（影の中の地面を照らす、物体の
-                // 下側の光など）を、命中点からもう1本のコサイン標本でたどって加える。方向の乱数は
-                // 1本目のR2列と独立にする（同じ列の位相だと画素ごとに2本の方向が固定の組になる）。
-                uint frameIndex = parameters.sampleState.x;
-                vec3 secondDirection = CosineWeightedDirectionFromUnit(
-                    bounceHitNormal,
-                    vec2(EmitterRandom(pixel, frameIndex, 9u),
-                         EmitterRandom(pixel, frameIndex, 10u)));
-                bool bSecondHit;
-                vec3 secondHitPosition;
-                vec3 secondHitNormal;
-                vec3 secondHitBaseColor;
-                float secondHitSpecularWeight;
-                uint secondHitCustomIndex;
-                vec3 secondIncoming = TraceDiffuseRay(
-                    bounceHitPosition + bounceHitNormal * RAY_ORIGIN_OFFSET,
-                    secondDirection, bounceHitNormal, -1.0, pixel, 6u,
-                    bSecondHit, secondHitPosition, secondHitNormal, secondHitBaseColor,
-                    secondHitSpecularWeight, secondHitCustomIndex);
-                // 拡散面の出る放射輝度は反射率/π×照度で、コサイン標本の照度の推定はπ×入射放射輝度。
-                // 鏡面のある当たり（地形）は、同じ標本で鏡面の映り込み（空の光と周りの面の光）も返す。コサイン標本の
-                // 重みは π×BRDF。拡散は命中面の直接光と同じく鏡面が返す分だけ減る。これが無いと、色の濃い砂の
-                // 照り返しに混ざる色の付かない空の映り込みが抜け、照り返しが Cycles より赤くなる
-                vec3 secondReflectance = bounceHitBaseColor;
-                float bounceViewCosine = dot(bounceHitNormal, -rayDirection);
-                if (bounceHitSpecularWeight > 0.0 && bounceViewCosine > 1.0e-4)
-                {
-                    secondReflectance *= 1.0 - bounceHitSpecularWeight *
-                                                   TerrainHitSpecularAlbedo(bounceViewCosine);
-                    float secondCosine = dot(bounceHitNormal, secondDirection);
-                    if (secondCosine > 1.0e-4)
-                    {
-                        secondReflectance += bounceHitSpecularWeight * PI *
-                            EvaluateTerrainHitSpecularBRDF(bounceHitNormal, -rayDirection, secondDirection,
-                                                           bounceViewCosine, secondCosine);
-                    }
-                }
-                incomingRadiance += secondReflectance * SanitizeUnexposedRadiance(secondIncoming);
+                // 下側の光など）を、命中点からもう1本のコサイン標本でたどって加える。
+                incomingRadiance += TraceSecondBounce(rayDirection, bounceHitPosition, bounceHitNormal,
+                                                      bounceHitBaseColor, bounceHitSpecularWeight, pixel, 9u, 6u);
+            }
+
+            // 鏡面の光線（鏡面の無い材質は引かない。GBuffer の材質の a が 0.5 より大きい）
+            if (material.a <= 0.5)
+            {
+                bool bSpecularSky;
+                vec3 specularHit = TraceSpecularRay(worldPosition, worldNormal, material.g, viewDistance, pixel,
+                                                    bSpecularSky);
+                rawSpecularSky = bSpecularSky ? 1.0 : 0.0;
+                float specularPreExposure = IsFiniteScalar(parameters.rayLimits.z) && parameters.rayLimits.z > 0.0
+                    ? clamp(parameters.rayLimits.z, 1.0e-6, 1.0e6)
+                    : 1.0;
+                rawSpecularHit = SanitizeRadiance(specularHit * specularPreExposure);
             }
 
             // 1次面を照らす発光三角形の直接光（反射率を掛ける前の単位でコサイン標本に加える）。
@@ -1399,6 +1593,8 @@ void ShadeDiffuseIndirect(uvec2 pixel, out bool bRayTraced, out uint firstHitCus
     float previousAge = 0.0;
     float previousConfidence = 0.0;
     float previousSkyVisibility = 1.0;
+    vec3 previousSpecularHit = vec3(0.0);
+    float previousSpecularSky = 1.0;
     float normalSpread = 0.0;
     float materialSpread = 0.0;
     // 静止が続いているフレームの履歴は法線・材質で棄却しないため、近傍のばらつきは要らない。
@@ -1417,9 +1613,13 @@ void ShadeDiffuseIndirect(uvec2 pixel, out bool bRayTraced, out uint firstHitCus
                                   previousRadiance,
                                   previousAge,
                                   previousConfidence,
-                                  previousSkyVisibility);
+                                  previousSkyVisibility,
+                                  previousSpecularHit,
+                                  previousSpecularSky);
     float historyWeight = 0.0;
     float outputSkyVisibility = rawSkyVisibility;
+    vec3 outputSpecularHit = rawSpecularHit;
+    float outputSpecularSky = rawSpecularSky;
     float outputAge = 0.0;
     float outputConfidence = bSurfaceValid ? RTGI_HISTORY_INITIAL_CONFIDENCE : 0.0;
     if (bHistoryAccepted)
@@ -1435,6 +1635,8 @@ void ShadeDiffuseIndirect(uvec2 pixel, out bool bRayTraced, out uint firstHitCus
         historyWeight = clamp(historyWeight, 0.0, RTGI_HISTORY_MAXIMUM_WEIGHT);
         outputRadiance = mix(outputRadiance, previousRadiance, historyWeight);
         outputSkyVisibility = mix(rawSkyVisibility, previousSkyVisibility, historyWeight);
+        outputSpecularHit = mix(rawSpecularHit, previousSpecularHit, historyWeight);
+        outputSpecularSky = mix(rawSpecularSky, previousSpecularSky, historyWeight);
         outputAge = min(previousAge + 1.0,
                         min(float(parameters.temporalState.w),
                             float(RTGI_HISTORY_MAXIMUM_AGE)));
@@ -1449,7 +1651,9 @@ void ShadeDiffuseIndirect(uvec2 pixel, out bool bRayTraced, out uint firstHitCus
                         worldNormal,
                         material,
                         outputSkyVisibility,
-                        diagnosticCode);
+                        diagnosticCode,
+                        outputSpecularHit,
+                        outputSpecularSky);
 }
 
 void main()
