@@ -22,6 +22,10 @@
 #         平行光（円盤の視直径も同じ）。
 #   空:   Blender の空のテクスチャ（多重散乱の式、太陽の円盤なし）を、エンジンの撮影で窓の外に見える空の画素の輝度に
 #         合わせて一様に倍する（倍率は空の画素の輝度の比の中央値。Cycles の試しの描画で測る）。空の明るさの分布の差は残る。
+#         --engine-sky <撮影> を付けると、Blender の空の式の代わりに、エンジンが -GameArgs atmosphere-dump で書いた空の放射輝度の
+#         LUT（<視点>.atmos.radiance_lut.f32、正距円筒・cd/m²）を荒野の正解（Scripts/Terrain/BlenderReference.py の
+#         make_lut_world）と同じ引き方で World に張る。太陽の円盤の texel は周りの空の平均で埋め、円盤は平行光だけが受け持つ。
+#         倍率と方位の合わせは要らない（空の明るさの分布も色もエンジンと同じ）。
 import argparse
 import json
 import math
@@ -557,8 +561,15 @@ def blender_main(job_path):
     sun.rotation_euler = sun_blender.to_track_quat("Z", "Y").to_euler()
     scene.collection.objects.link(sun)
 
-    world, background, sky, sky_type = blender_sky_world(tuple(sun_blender))
-    rotation, contrast = blender_sky_rotation(scene, sky, tuple(sun_blender), device)
+    if job.get("sky_lut"):
+        # エンジンの空の LUT をそのまま張る（倍率と方位の合わせをしない）
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "Terrain"))
+        import BlenderReference as BR
+        BR.make_lut_world(scene, np.load(job["sky_lut"]))
+        sky_type, rotation, contrast = "ENGINE_LUT", 0.0, None
+    else:
+        world, background, sky, sky_type = blender_sky_world(tuple(sun_blender))
+        rotation, contrast = blender_sky_rotation(scene, sky, tuple(sun_blender), device)
 
     camera_data = bpy.data.cameras.new("view")
     camera_data.clip_start = 0.05
@@ -581,9 +592,9 @@ def blender_main(job_path):
         scene.render.resolution_percentage = 100
 
     # 空の倍率: エンジンと Cycles のどちらでも空（深度が無限）の画素の、輝度の比の中央値
-    background.inputs["Strength"].default_value = 1.0
     ratios = []
-    for view in job["views"]:
+    for view in ([] if job.get("sky_lut") else job["views"]):
+        background.inputs["Strength"].default_value = 1.0
         engine_hdr = read_pfm_any(view["engine_hdr"])
         engine_depth = read_pfm_any(view["engine_depth"])
         set_view(view)
@@ -596,10 +607,13 @@ def blender_main(job_path):
         if keep.sum() > 0:
             ratios.append(engine_y[keep] / cycles_y[keep])
         print(f"INTERIOR_REFERENCE calibration view={view['name']} sky_pixels={int(keep.sum())}", flush=True)
-    if not ratios:
+    if job.get("sky_lut"):
+        sky_scale = 1.0
+    elif not ratios:
         raise RuntimeError("空の画素がどの視点にも無いので空の倍率を決められない")
-    sky_scale = float(np.median(np.concatenate(ratios)))
-    background.inputs["Strength"].default_value = sky_scale
+    else:
+        sky_scale = float(np.median(np.concatenate(ratios)))
+        background.inputs["Strength"].default_value = sky_scale
     print(f"INTERIOR_REFERENCE sky_scale={sky_scale:.6g} sky_type={sky_type} rotation={math.degrees(rotation):.2f}",
           flush=True)
 
@@ -623,6 +637,32 @@ def blender_main(job_path):
 # 外（システムの Python）
 # ---------------------------------------------------------------------------------------------------------------------
 
+def write_engine_sky_lut(sky_capture, view, out_dir):
+    """エンジンの空の放射輝度 LUT（<視点>.atmos.radiance_lut.f32）を読み、太陽の円盤の texel（a = 1）を周りの空の平均で
+    埋めて <out_dir>/engine_sky_lut.npy に書く。返り値はそのパス"""
+    with open(os.path.join(sky_capture, f"{view}.atmos.json"), encoding="utf-8-sig") as f:
+        entry = json.load(f)["radiance_lut"]
+    lut = np.fromfile(os.path.join(sky_capture, entry["file"]), dtype="<f4").reshape(entry["shape"]).copy()
+    disk = lut[..., 3] > 0.5
+    rows, columns = np.nonzero(disk)
+    height, width = disk.shape
+    for row, column in zip(rows, columns):
+        r0, r1 = max(row - 4, 0), min(row + 5, height)
+        window_columns = np.arange(column - 4, column + 5) % width
+        block = lut[r0:r1][:, window_columns]
+        outside = block[..., 3] <= 0.5
+        if outside.any():
+            lut[row, column, :3] = block[outside][:, :3].mean(axis=0)
+    lut[..., 3] = 1.0
+    if not np.isfinite(lut).all():
+        raise RuntimeError("空の LUT に有限でない値がある")
+    path = os.path.join(out_dir, "engine_sky_lut.npy")
+    np.save(path, lut.astype(np.float32))
+    print(f"INTERIOR_REFERENCE engine_sky lut={entry['shape']} disk_texels={int(disk.sum())} "
+          f"zenith_rgb={[round(float(v), 1) for v in lut[0].mean(axis=0)[:3]]}", flush=True)
+    return path
+
+
 def run_render(args):
     capture = os.path.abspath(args.capture)
     out_dir = os.path.join(capture, RESULT_DIR)
@@ -638,6 +678,8 @@ def run_render(args):
     job = {"views": views, "out_dir": out_dir, "samples": args.samples,
            "sun_direction_engine": engine_sun_direction(SUN_ALTITUDE_DEGREES, SUN_AZIMUTH_DEGREES),
            "sun_illuminance_lux": illuminance, "sun_angle_degrees": angle}
+    if args.engine_sky:
+        job["sky_lut"] = write_engine_sky_lut(os.path.abspath(args.engine_sky), views[0]["name"], out_dir)
     job_path = os.path.join(out_dir, "job.json")
     with open(job_path, "w", encoding="utf-8") as f:
         json.dump(job, f, ensure_ascii=False, indent=2)
@@ -884,6 +926,7 @@ def main():
     parser.add_argument("--views", default=",".join(DEFAULT_VIEWS), help="視点（カンマ区切り）")
     parser.add_argument("--samples", type=int, default=DEFAULT_SAMPLES, help="Cycles の標本数")
     parser.add_argument("--blender", default=DEFAULT_BLENDER, help="blender.exe")
+    parser.add_argument("--engine-sky", help="--render: 空をエンジンの空の LUT で描く。-GameArgs atmosphere-dump で撮った置き場")
     parser.add_argument("--reference", help="--compare: Cycles の絵（cycles/）を描いた撮影のフォルダ（既定は --capture）")
     parser.add_argument("--expect", help="--compare: 判定の仕様（領域の比の範囲。Scripts/Terrain/ExpectSpecs/interior-*.json）")
     args = parser.parse_args()

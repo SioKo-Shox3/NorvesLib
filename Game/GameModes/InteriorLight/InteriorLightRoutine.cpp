@@ -25,6 +25,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <limits>
 
 using namespace NorvesLib::Core;
@@ -635,6 +636,19 @@ namespace Game::GameModes
             ctx.EngineRef.GetRenderWorld().SetVolumetricFogParameters(MakeDefaultVolumetricFogParameters());
             ctx.EngineRef.GetRenderWorld().SetStaticEnvironmentIntensityScale(1.0f);
             ctx.EngineRef.GetRenderWorld().SetStaticEnvironmentMaxRadiance(0.0f);
+            // 大気の書き出し（--atmosphere-dump）は霞か空気遠近が有効なときだけ書かれるので、そのときだけ空気遠近を有効にする。
+            // 部屋は 12 m 四方で霞はほぼ無く、正解の絵（Scripts/InteriorLightReference.py --engine-sky）が使うのは空の LUT だけ
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4996)
+#endif
+            const char *atmosphereDump = std::getenv("NORVES_ATMOSPHERE_DUMP");
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
+            AerialPerspectiveParameters aerial;
+            aerial.bEnabled = atmosphereDump != nullptr && atmosphereDump[0] == '1';
+            ctx.EngineRef.GetRenderWorld().SetAerialPerspective(aerial);
         }
 
         /// 空の設定を、ほかのモードへ持ち越さないよう既定へ戻す
@@ -644,6 +658,7 @@ namespace Game::GameModes
             ctx.EngineRef.GetRenderWorld().SetVolumetricFogParameters(MakeDefaultVolumetricFogParameters());
             ctx.EngineRef.GetRenderWorld().SetStaticEnvironmentIntensityScale(1.0f);
             ctx.EngineRef.GetRenderWorld().SetStaticEnvironmentMaxRadiance(0.0f);
+            ctx.EngineRef.GetRenderWorld().SetAerialPerspective(AerialPerspectiveParameters{});
         }
 
         /// 届いていない読み込みの結果を捨てる印を立てる
