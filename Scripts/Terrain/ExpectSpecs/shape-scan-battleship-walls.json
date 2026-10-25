@@ -1,0 +1,10 @@
+﻿{
+  "description": "Battleship Rock の刻んだ壁を横に割れた砂岩の塊で覆う項目（SCN-WL-CLIFF-SCAN-NEAR-WALLS）の形の合否（CompareReference.py --shape --photos cliff_01 --expect。WastelandShape.md の「形の物差し」）。壁の塊は外形と角の行を悪くしないことだけを求めるので、行は壁の塊を置く前の値（刻んだ後の撮影を今の量で測った値: 棚 0.395・角 0.286・ずらした後の外形 1.0 画素・ずらす前の外形 1.0 画素）から、形の物差しの揺れの決まり（shape-baseline.json と同じ: 棚 −0.03・外形 +1 画素。角は点の数で量子化されるので揺れを足さない）で書いた。shape-scan-battleship.json の絶対の基準（棚 0.6・角 0.5）は SCN-WL-CLIFF-SCAN-NEAR・SHELVES の仕様として弱めずに残す。annotations_sha256 は書いた時の注釈の版（違えば落ちる）",
+  "annotations_sha256": "9db8b9b5afac738e970f4fb0ea925ac9d48ea8f94c4afd2e6e09c4359f5c72a2",
+  "rows": [
+    {"photo": "cliff_01", "cliff": "Battleship Rock", "quantity": "shelf_match", "min": 0.365, "note": "置く前 0.395"},
+    {"photo": "cliff_01", "cliff": "Battleship Rock", "quantity": "corner_match", "min": 0.285, "note": "置く前 0.2857（2/7 点）。下限は 2/7 を 3 桁に切り下げた値で、2 点を求め 1 点（0.143）で落ちる"},
+    {"photo": "cliff_01", "cliff": "Battleship Rock", "quantity": "outline_residual_median_px", "max": 2.0, "note": "置く前 1.0"},
+    {"photo": "cliff_01", "cliff": "Battleship Rock", "quantity": "outline_distance_median_px", "max": 2.0, "note": "置く前 1.0"}
+  ]
+}

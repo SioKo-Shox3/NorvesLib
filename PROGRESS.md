@@ -7865,3 +7865,13 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 確かめ: 1 組の基準の値は前の反復と同じ（13 の範囲と視点、mismatched=0）
 - 証拠（`.harness/runs/20261024-183517/`）: `verify-SCN-WL-SHAPE-REGION-METRIC-9.txt`（ビルド EXIT=0）・`-10.txt`（撮影 result=pass EXIT=0）・`-11.txt`（`--selftest` 4 件 pass）・`-12.txt`（基準の検査 result=pass）
 - Next: TASKS.md の次の未完
+
+## 2026-10-25 SCN-WL-CLIFF-SCAN-NEAR-WALLS（run 20261024-183517 の反復 38、DONE）
+- Done: 形の合否の相対の仕様 `Scripts/Terrain/ExpectSpecs/shape-scan-battleship-walls.json` を書き（壁の塊を置く前の値 棚 0.395・角 2/7・外形 1.0／1.0 画素から、`shape-baseline.json` と同じ揺れの決まりで 棚 ≥ 0.365・角 ≥ 0.285・外形 ≤ 2.0／2.0 画素）、verify を全行回した。壁の塊の配置（217d2f12）は変えていない（配置表・台本・Game の差分なし）。`WastelandCliffScan.md` に合否の仕様を書き足した
+- 値: 棚 0.450・角 0.286（2/7）・ずらした後の外形 1.0・ずらす前の外形 1.0 画素で 4 行とも pass。`shape-scan-battleship.json` の絶対の基準（棚 0.6・角 0.5）は弱めずに残した
+- 見た目: 今回の撮影から写真と並べた壁の拡大（`scene-capture/SCN-WL-CLIFF-SCAN-NEAR-WALLS/look/crop_wall_photo_iter38.png`）と全体の見比べ（`look/reference_cliff_01.png`）を開いた。主の壁は層ごとに横に割れて張り出す塊の積み重ね、左の縁は丸みのある塊の段で、色は崖と同じ橙、外形に針・丸い山・桃色の斑は無い
+- 浮き・埋もれ: 配置は反復 33 の検査のときと同じで、壁の外の体積の割合 0.444〜0.670（許容 0.25〜0.7、外れ 0）、136/141 個が地形の中・5 個は段の上面（`aux-SCN-WL-CLIFF-SCAN-NEAR-WALLS-placement-check.txt`・`-embed-query.txt`）
+- 費用: 壁の塊の三角形 401 万（反復 33）、`WASTELAND_CLIFF_SCAN placed=378 planned=378`、VRAM の使用の最大 9826 MB（予算 15280 MB）、警告は地形のページ常駐と起動時のいつもの 2 行だけ、ERROR なし（`look/views.Game.log`）
+- 証拠（`.harness/runs/20261024-183517/`）: `verify-SCN-WL-CLIFF-SCAN-NEAR-WALLS-10.txt`（RelWithDebInfo の Game EXIT=0）・`-11.txt`（形の撮影 result=pass）・`-12.txt`（`--shape --expect shape-scan-battleship-walls.json` 4 行 pass、result=pass）・`-13.txt`（既定の撮影 result=pass）・`-14.txt`（`CompareReference.py --verify` result=pass）
+- Next: TASKS.md の次の未完
+- Notes: 親の注記の角の下限 0.286 は 2/7 = 0.2857 の丸めで生の比較では 2 点でも落ちるため、0.285（2 点を求め 1 点 0.143 で落ちる）にした。右の低い段の左の暗い側面と最も右の段の正面は縦の筋の板のまま（反復 33 からの既知の限界。`WastelandCliffScan.md` に記録済み）。新しい試験は足していない
