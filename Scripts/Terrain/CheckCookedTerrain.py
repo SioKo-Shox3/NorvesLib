@@ -14,6 +14,8 @@
 #    （同じ X/Z に面が 2 枚以上あれば、どれかは下を向く）。決めた張り出しの点（OVERHANG_POINTS）は交点が 2 つ以上
 # 3. 範囲の外の点は out_of_range、区画がマニフェストに無い・パッケージのファイルが無いと package_missing、
 #    パッケージが壊れている（中ほどのバイトを反転・半分で切る）と mesh_invalid を返し、どれも交点を返さない。
+#    パッケージとしては正しくメッシュの本体だけが切れている組（mesh_short）は、メッシュの解析の失敗として mesh_invalid を返す。
+#    失敗の区画は理由を持ち、結果の JSON は全体を UTF-8 として厳密に読めること（読めないバイトを置き換えない）
 #    同じ置き方の正しい写しは ok で DEM の値を返す（失敗が置き方のせいでないことの対照）
 # 終了コード: --verify で合格なら 0、不合格なら 1。--verify なしは値を出すだけで 0。
 import argparse
@@ -56,6 +58,8 @@ MIN_HIT_GAP_M = 1.0e-4
 # 3. 範囲の外の点（格子の西・東・北・南の外と、遠い点）と、壊したパッケージを置く区画
 OUT_OF_RANGE_POINTS = [(-2600.5, 0.0), (2099.5, 0.0), (0.0, -2499.5), (0.0, 2100.5), (1.0e6, -1.0e6)]
 BROKEN_TILE = (9, 9)
+# 3. パッケージは正しくメッシュだけが切れた組で、メッシュの項目に残すバイト数（メッシュの見出しより長く本体より短い）
+SHORT_MESH_BYTES = 4096
 
 
 class Dem:
@@ -96,12 +100,15 @@ def query(asset_cook, manifest, points):
         path = handle.name
     try:
         result = subprocess.run([asset_cook, "--sample-cooked-terrain", "--manifest", manifest, "--points", path],
-                                capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=REPO_ROOT)
+                                capture_output=True, cwd=REPO_ROOT)
     finally:
         os.remove(path)
     if result.returncode != 0:
-        raise RuntimeError(f"AssetCook が失敗しました（{result.returncode}）: {result.stderr.strip()}")
-    data = json.loads(result.stdout)
+        # 標準エラーは人が読む文言（コンソールのコードページ）なので、読めない字は置き換えて見せるだけにする
+        raise RuntimeError(f"AssetCook が失敗しました（{result.returncode}）: "
+                           f"{result.stderr.decode('mbcs', errors='replace').strip()}")
+    # 結果の JSON は UTF-8 の約束なので、読めないバイトは置き換えずに失敗にする
+    data = json.loads(result.stdout.decode("utf-8", errors="strict"))
     if data.get("format") != "cooked_terrain_samples.v1" or len(data["points"]) != len(points):
         raise RuntimeError("問い合わせの結果の形が違います")
     return data
@@ -193,6 +200,34 @@ def check_cliff(asset_cook, manifest, failures):
             "unordered": len(unordered), "examples": examples}
 
 
+def fnv1a64(data):
+    """FNV-1a 64 ビット（パッケージの項目とマニフェストの cooked_hash が使うハッシュ）"""
+    value = 14695981039346656037
+    for byte in data:
+        value = ((value ^ byte) * 1099511628211) & 0xFFFFFFFFFFFFFFFF
+    return value
+
+
+def shorten_mesh_entry(package, payload_hash):
+    """パッケージの中のメッシュの項目を先頭 SHORT_MESH_BYTES に縮め、項目の格納長とハッシュを合わせ直す。
+    パッケージの検証は通り、メッシュの本体だけが途中で切れた形になる。返り値は (パッケージのバイト, 新しいハッシュ)。
+    配置は Library/Core/Public/Asset/AssetPackageFormat.h の AssetPackageFormatV1（見出し・項目の表の位置）に従う"""
+    entry_count = struct.unpack_from("<I", package, 32)[0]
+    entry_table = struct.unpack_from("<Q", package, 40)[0]
+    for index in range(entry_count):
+        record = entry_table + index * 64
+        data_offset, stored_size, _, stored_hash = struct.unpack_from("<QQQQ", package, record + 24)
+        if stored_hash != payload_hash:
+            continue
+        if stored_size <= SHORT_MESH_BYTES:
+            raise RuntimeError("メッシュの項目が短すぎて縮められません")
+        new_hash = fnv1a64(package[data_offset:data_offset + SHORT_MESH_BYTES])
+        patched = bytearray(package)
+        struct.pack_into("<QQQ", patched, record + 32, SHORT_MESH_BYTES, SHORT_MESH_BYTES, new_hash)
+        return bytes(patched), f"{new_hash:016x}"
+    raise RuntimeError("パッケージにマニフェストのハッシュの項目がありません")
+
+
 def check_failures(asset_cook, manifest, dem, failures):
     report = {}
     data = query(asset_cook, manifest, OUT_OF_RANGE_POINTS)
@@ -215,35 +250,46 @@ def check_failures(asset_cook, manifest, dem, failures):
     flipped = bytearray(original)
     for index in range(len(flipped) // 2, len(flipped) // 2 + 4096):
         flipped[index] ^= 0xFF
-    # (名前, マニフェストに項目を置くか, パッケージのバイト（None は置かない）, 期待する状態)
+    short_mesh = shorten_mesh_entry(original, int(entry["cooked_hash"], 16))
+    # (名前, マニフェストに項目を置くか, パッケージのバイト（None は置かない）, 期待する状態, マニフェストの cooked_hash)
     cases = [
-        ("control", True, original, "ok"),
-        ("entry_missing", False, original, "package_missing"),
-        ("file_missing", True, None, "package_missing"),
-        ("flipped", True, bytes(flipped), "mesh_invalid"),
-        ("truncated", True, original[:len(original) // 2], "mesh_invalid"),
+        ("control", True, original, "ok", None),
+        ("entry_missing", False, original, "package_missing", None),
+        ("file_missing", True, None, "package_missing", None),
+        ("flipped", True, bytes(flipped), "mesh_invalid", None),
+        ("truncated", True, original[:len(original) // 2], "mesh_invalid", None),
+        # パッケージとしては正しく（項目のハッシュも合う）、メッシュの本体だけが途中で切れている
+        ("mesh_short", True, short_mesh[0], "mesh_invalid", short_mesh[1]),
     ]
     root = tempfile.mkdtemp(prefix="cooked_terrain_check_")
     try:
-        for name, with_entry, payload, expected_status in cases:
+        for name, with_entry, payload, expected_status, cooked_hash in cases:
             directory = os.path.join(root, name)
             os.makedirs(os.path.join(directory, os.path.dirname(entry["cooked_package"])), exist_ok=True)
             if payload is not None:
                 with open(os.path.join(directory, entry["cooked_package"]), "wb") as handle:
                     handle.write(payload)
             case_manifest = os.path.join(directory, "manifest.json")
+            case_entry = dict(entry, cooked_hash=cooked_hash) if cooked_hash else entry
             with open(case_manifest, "w", encoding="utf-8") as handle:
-                json.dump({"version": source["version"], "assets": [entry] if with_entry else []}, handle)
-            result = query(asset_cook, case_manifest, [point])["points"][0]
+                json.dump({"version": source["version"], "assets": [case_entry] if with_entry else []}, handle)
+            data = query(asset_cook, case_manifest, [point])
+            result = data["points"][0]
+            reason = next((t["reason"] for t in data["tiles"] if t["tile"] == list(BROKEN_TILE)), None)
             ok = result["status"] == expected_status
             if expected_status == "ok":
                 ok = ok and len(result["hits"]) == 1 and abs(result["hits"][0]["height"] - expected) <= MAX_FLAT_ERROR_M
             else:
-                ok = ok and not result["hits"]
+                # 失敗の区画は理由を必ず持つ（JSON は query で UTF-8 として厳密に読んでいる）
+                ok = ok and not result["hits"] and bool(reason)
+            if name == "mesh_short":
+                # パッケージの検証を通り、メッシュの解析で落ちた（解析の失敗の理由が読める字で届く）
+                ok = ok and reason.startswith("メッシュを解析できません status=")
             if not ok:
-                failures.append(f"failure: {name} が {expected_status} を返しません（{result}）")
-            report[name] = result["status"]
-            print(f"failure: {name} status={result['status']} hits={len(result['hits'])} expected={expected_status}")
+                failures.append(f"failure: {name} が {expected_status} を返しません（{result}、理由 {reason!r}）")
+            report[name] = {"status": result["status"], "reason": reason}
+            print(f"failure: {name} status={result['status']} hits={len(result['hits'])} expected={expected_status}"
+                  f" reason={reason!r}")
     finally:
         shutil.rmtree(root, ignore_errors=True)
     print(f"failure: out_of_range={report['out_of_range']}")

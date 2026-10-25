@@ -7801,3 +7801,10 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 証拠（`.harness/runs/20261024-183517/`）: `verify-SCN-WL-CLIFF-SURFACE-QUERY-1.txt`（AssetCook EXIT=0）・`-2.txt`（`CheckCookedTerrain.py --verify` result=pass EXIT=0）、`aux-SCN-WL-CLIFF-SURFACE-QUERY-build-1〜4.txt`（途中のビルド）、報告 `.harness/runs/scene-capture/SCN-WL-CLIFF-SURFACE-QUERY/cooked_terrain.json`
 - Next: TASKS.md の次の未完（置いた物の接地の検査がこの問い合わせを使う）
 - Notes: 張り出しの点のうち 113 点は法線の向きが交互に並ばない（一番上の交点が下を向く 45 点など）。崖の生成の押し出しが面を折り返している所で、接地の検査では一番上の交点だけでなく法線の向きも見る。AssetCook を作り直したので、焼きの印（AssetCook の SHA-256）が変わり、次にクックを回す項目は地形の全項目を焼き直す見込み（12 の作業者の並列で約 22 分）。Git Bash から `cmake --build ... -- /m:1` を呼ぶと `/m:1` がパスに変換されて MSBuild が落ちるので PowerShell から呼ぶ。新しい試験は足していない（`CheckCookedTerrain.py` は done-when が名指しした検査）
+
+## 2026-10-25 SCN-WL-CLIFF-SURFACE-QUERY（run 20261024-183517 の反復 30、差し戻しの直し、DONE）
+- Done: 反復 29 の差し戻し（メッシュの解析の失敗の理由が CP932 のまま JSON に出て UTF-8 で読めない）を直した。`CookedTerrainQuery.cpp` の `WriteJsonString` が文字列を実行文字コード（ANSI のコードページ）→ UTF-8 の順で UTF-16 に読み直し、ASCII の外を `\uXXXX` で書くので、結果の JSON は常に ASCII（どちらの由来の理由も読める。読めないバイトは U+FFFD）。検査 `CheckCookedTerrain.py` は標準出力を `errors="strict"` の UTF-8 で読み、失敗の区画が理由を持つことを見る。パッケージとしては正しくメッシュの項目だけを先頭 4096 バイトに縮めた組（`mesh_short`。項目の格納長と FNV-1a のハッシュ・マニフェストの `cooked_hash` を合わせ直す）を足し、パッケージの検証を通ってメッシュの解析で落ちる分岐に届かせた。`WastelandShape.md` の「焼いた面の問い合わせ」を更新
+- 値: `mesh_short` は `mesh_invalid`・理由 `メッシュを解析できません status=9`（厳密な UTF-8 で読めた）。(1) 320 点・差の最大 4.87e-9 m、(2) 95636 点・交点なし 0・順の乱れ 0・張り出し 1271 点、(3) ほかの失敗の組は前と同じ
+- 証拠（`.harness/runs/20261024-183517/`）: `verify-SCN-WL-CLIFF-SURFACE-QUERY-3.txt`（AssetCook EXIT=0）・`-4.txt`（`CheckCookedTerrain.py --verify` result=pass EXIT=0）、`aux-SCN-WL-CLIFF-SURFACE-QUERY-build-5.txt`・`aux-SCN-WL-CLIFF-SURFACE-QUERY-check-30.txt`
+- Next: TASKS.md の次の未完（置いた物の接地の検査）
+- Notes: 標準エラーの文言は人が読むもの（コンソールのコードページ）なので変えていない。AssetCook を作り直したので焼きの印がまた変わる（次にクックを回す項目は地形を焼き直す見込み）

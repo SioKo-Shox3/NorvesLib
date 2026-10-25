@@ -18,6 +18,12 @@
 #include <iostream>
 #include <limits>
 #include <string_view>
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <Windows.h>
+#endif
 
 namespace NorvesLib::Tools::AssetCook
 {
@@ -398,25 +404,70 @@ namespace NorvesLib::Tools::AssetCook
             return true;
         }
 
+        /// 文字列を UTF-16 の符号単位へ直す。この実行ファイルの narrow な文字列（リテラル・argv・Core の理由）は
+        /// 実行文字コード（ANSI のコードページ）なので先にそれで読み、読めなければ UTF-8（マニフェスト由来）で読む。
+        /// どちらでも読めなければ false
+        bool DecodeNarrowText(std::string_view text, Container::VariableArray<wchar_t> &outUnits)
+        {
+            outUnits.clear();
+            if (text.empty())
+            {
+                return true;
+            }
+#if defined(_WIN32)
+            for (const UINT codePage : {static_cast<UINT>(CP_ACP), static_cast<UINT>(CP_UTF8)})
+            {
+                const int length = MultiByteToWideChar(codePage, MB_ERR_INVALID_CHARS, text.data(),
+                                                       static_cast<int>(text.size()), nullptr, 0);
+                if (length <= 0)
+                {
+                    continue;
+                }
+                outUnits.resize(static_cast<size_t>(length));
+                if (MultiByteToWideChar(codePage, MB_ERR_INVALID_CHARS, text.data(), static_cast<int>(text.size()),
+                                        outUnits.data(), length) == length)
+                {
+                    return true;
+                }
+            }
+            outUnits.clear();
+#endif
+            return false;
+        }
+
+        /// JSON の文字列を書く。ASCII の外は \uXXXX にし、出力を常に ASCII（したがって正しい UTF-8）に保つ
         void WriteJsonString(std::string_view text)
         {
-            std::cout << '"';
-            for (const char character : text)
+            const auto writeEscaped = [](unsigned int code)
             {
-                const unsigned char code = static_cast<unsigned char>(character);
-                if (character == '"' || character == '\\')
+                char escaped[8] = {};
+                std::snprintf(escaped, sizeof(escaped), "\\u%04x", code);
+                std::cout << escaped;
+            };
+            Container::VariableArray<wchar_t> units;
+            const bool bDecoded = DecodeNarrowText(text, units);
+            std::cout << '"';
+            const size_t count = bDecoded ? units.size() : text.size();
+            for (size_t index = 0; index < count; ++index)
+            {
+                // 読めない文字列は ASCII の外の 1 バイトごとに置換文字（U+FFFD）にする
+                const unsigned int code = bDecoded ? static_cast<unsigned int>(units[index])
+                                                   : static_cast<unsigned char>(text[index]);
+                if (code == '"' || code == '\\')
                 {
-                    std::cout << '\\' << character;
+                    std::cout << '\\' << static_cast<char>(code);
                 }
                 else if (code < 0x20u)
                 {
-                    char escaped[8] = {};
-                    std::snprintf(escaped, sizeof(escaped), "\\u%04x", static_cast<unsigned int>(code));
-                    std::cout << escaped;
+                    writeEscaped(code);
+                }
+                else if (code >= 0x80u)
+                {
+                    writeEscaped(bDecoded ? code : 0xFFFDu);
                 }
                 else
                 {
-                    std::cout << character;
+                    std::cout << static_cast<char>(code);
                 }
             }
             std::cout << '"';
