@@ -1,0 +1,214 @@
+﻿{
+  "description": "地形の形の量を測る世界座標の範囲（エンジンの m、X 東・Z 南、両端を含む）。崖の生成の 7 範囲は Tools/AssetCook/TerrainCliffDetail.cpp と同じ座標と ID、スキャンの担当の 2 範囲と近景の谷床の 3 範囲は Docs/RenderingValidation/WastelandShape.md から。views は範囲を測る視点と、その視点の地形の画素の最低の数（SCN-WL-SHAPE-BASELINE の撮影の数の半分を 2 桁に切り下げた値。基準の撮影で 1000 画素に満たない視点は測らない）。ReferenceCheck.py --shape-cause --regions（ShapeRegionMetric.py）が読む",
+  "regions": [
+    {
+      "id": "cliff_near_2_rooster_butte",
+      "name": "Rooster Butte",
+      "owner": "cliff_generation",
+      "source": "Tools/AssetCook/TerrainCliffDetail.cpp kNearRegions[2]",
+      "x": [
+        640,
+        1160
+      ],
+      "z": [
+        560,
+        1160
+      ],
+      "views": {
+        "ref_far_02": 23000,
+        "ref_ground_02": 10000
+      }
+    },
+    {
+      "id": "cliff_near_3_setting_hen_butte",
+      "name": "Setting Hen Butte と南の小さな崖",
+      "owner": "cliff_generation",
+      "source": "Tools/AssetCook/TerrainCliffDetail.cpp kNearRegions[3]",
+      "x": [
+        960,
+        1460
+      ],
+      "z": [
+        1140,
+        1960
+      ],
+      "views": {
+        "ref_far_02": 77000
+      }
+    },
+    {
+      "id": "cliff_castle_0_main_butte",
+      "name": "ref_far_01 の主役のビュートと左のメサ",
+      "owner": "cliff_generation",
+      "source": "Tools/AssetCook/TerrainCliffDetail.cpp kCastleRegions[0]",
+      "x": [
+        -3450,
+        -2100
+      ],
+      "z": [
+        -4450,
+        -3950
+      ],
+      "views": {
+        "ref_far_01": 23000
+      }
+    },
+    {
+      "id": "cliff_castle_1_far_cliffs",
+      "name": "ref_far_01 の奥の左右の崖",
+      "owner": "cliff_generation",
+      "source": "Tools/AssetCook/TerrainCliffDetail.cpp kCastleRegions[1]",
+      "x": [
+        -3650,
+        -1900
+      ],
+      "z": [
+        -6340,
+        -4650
+      ],
+      "views": {
+        "ref_far_01": 110000
+      }
+    },
+    {
+      "id": "cliff_castle_2_left_7_9km",
+      "name": "ref_far_01 の画面の左端から 380 画素までの崖（7〜9 km）",
+      "owner": "cliff_generation",
+      "source": "Tools/AssetCook/TerrainCliffDetail.cpp kCastleRegions[2]",
+      "x": [
+        -6250,
+        -5150
+      ],
+      "z": [
+        -8250,
+        -6250
+      ],
+      "views": {
+        "ref_far_01": 18000
+      },
+      "note": "kCastleRegions[3]・[4] と 100 m 以上重なる（崖の生成の範囲と同じ座標）。重なりの画素は両方に数える"
+    },
+    {
+      "id": "cliff_castle_3_left_5_7km",
+      "name": "ref_far_01 の画面の 30〜570 画素の手前の崖（5〜7 km）",
+      "owner": "cliff_generation",
+      "source": "Tools/AssetCook/TerrainCliffDetail.cpp kCastleRegions[3]",
+      "x": [
+        -5350,
+        -4250
+      ],
+      "z": [
+        -7000,
+        -5500
+      ],
+      "views": {
+        "ref_far_01": 20000
+      },
+      "note": "kCastleRegions[2] と重なる"
+    },
+    {
+      "id": "cliff_castle_4_left_edge_9km",
+      "name": "ref_far_01 の画面の左端の奥の崖（9 km）",
+      "owner": "cliff_generation",
+      "source": "Tools/AssetCook/TerrainCliffDetail.cpp kCastleRegions[4]",
+      "x": [
+        -6875,
+        -6150
+      ],
+      "z": [
+        -8625,
+        -7875
+      ],
+      "views": {
+        "ref_far_01": 530
+      },
+      "note": "kCastleRegions[2] と重なる"
+    },
+    {
+      "id": "scan_battleship_rock",
+      "name": "Battleship Rock の壁と崖錐",
+      "owner": "scan",
+      "source": "Docs/RenderingValidation/WastelandShape.md のスキャンの崖の担当の範囲（SCN-WL-CLIFF-SCAN-NEAR）",
+      "x": [
+        -2350,
+        -1300
+      ],
+      "z": [
+        -1650,
+        -420
+      ],
+      "views": {
+        "ref_cliff_01": 260000
+      },
+      "note": "ref_cliff_01 の地形の画素はすべてこの範囲に入る（手前の崖錐の斜面を含む）"
+    },
+    {
+      "id": "scan_franklin_butte_base",
+      "name": "Franklin Butte の尖塔の台座",
+      "owner": "scan",
+      "source": "Tools/AssetCook/TerrainCliffDetail.cpp kNearRegions[1]（SCN-WL-CLIFF-SCAN-FRANKLIN）",
+      "x": [
+        -760,
+        -240
+      ],
+      "z": [
+        -660,
+        -140
+      ],
+      "views": {
+        "ref_ground_02": 25000
+      }
+    },
+    {
+      "id": "valley_ref_far_01",
+      "name": "ref_far_01 の近景の谷床",
+      "owner": "valley_floor",
+      "source": "WastelandShape.md の所見の表（X −1520〜−910・Z −2359〜−1624）を、Battleship Rock と ref_ground_02 の谷床と重ならない X −1040 より東に切った",
+      "x": [
+        -1040,
+        -890
+      ],
+      "z": [
+        -2370,
+        -1600
+      ],
+      "views": {
+        "ref_far_01": 310000
+      }
+    },
+    {
+      "id": "valley_ref_far_02",
+      "name": "ref_far_02 の近景の谷床",
+      "owner": "valley_floor",
+      "source": "WastelandShape.md の所見の表（X 1094〜1107・Z 1980〜1995）を撮影の 30 m 以内の地形の画素（X 1093〜1112・Z 1972〜1994）まで広げ、Setting Hen Butte の範囲（Z 1960 まで）と重ねない",
+      "x": [
+        1080,
+        1125
+      ],
+      "z": [
+        1965,
+        2010
+      ],
+      "views": {
+        "ref_far_02": 450000
+      }
+    },
+    {
+      "id": "valley_ref_ground_02",
+      "name": "ref_ground_02 の近景の谷床",
+      "owner": "valley_floor",
+      "source": "WastelandShape.md の所見の表（X −1270〜−1053・Z −1863〜−1372）を、Battleship Rock の範囲（X −1300 まで）と ref_far_01 の谷床（X −1040 から）と重ならないように切った",
+      "x": [
+        -1295,
+        -1041
+      ],
+      "z": [
+        -1870,
+        -1365
+      ],
+      "views": {
+        "ref_ground_02": 290000
+      }
+    }
+  ]
+}

@@ -7841,3 +7841,12 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 判断待ち: 仕様は親の SCN-WL-CLIFF-SCAN-NEAR の絶対の基準で、done-when の「悪くならない」と食い違う。閾値を下げるのは試験を弱めるので触らず、verify を相対の仕様（置く前の値の 4 行）へ差し替える案を推奨として `blocked/SCN-WL-CLIFF-SCAN-NEAR-WALLS.md` に書いた
 - 開始時の RelWithDebInfo の Game のビルドは EXIT=0（`.harness/runs/20261024-183517/aux-SCN-WL-CLIFF-SCAN-NEAR-WALLS-iter34-build.txt`）。コードと配置表は変えていない
 - Next: 親が verify の仕様を決めたら todo に戻し、次の反復が verify を全行回して閉じる
+
+## 2026-10-25 SCN-WL-SHAPE-REGION-METRIC（run 20261024-183517 の反復 35、DONE）
+- Done: `ReferenceCheck.py --shape-cause --regions` に、世界座標で固定した範囲ごとに地形の印の画素だけで形の量を測る `Scripts/Terrain/ShapeRegionMetric.py` を足した。範囲は `Scripts/Terrain/ShapeRegions.json` の 12 個（崖の生成の 7 範囲〔`TerrainCliffDetail.cpp` と同じ座標、ID は `cliff_near_2_rooster_butte` など〕・スキャンの担当 2・近景の谷床 3）で、視点ごとの最低の地形の画素数を持つ。組は 1〜3 組、`--views`・`--expect`（未知の範囲・視点、範囲の視点に無い視点、値の無い量、画素の不足、空の選択で落ちる）・32 × 32 画素の区画の局所の値・`--baseline`（範囲ごとの差と 10 ポイント以上下がった区画の割合）・`--baseline-record`・`--baseline-integrity`（撮影の出力のハッシュと当時の入力の記録だけを照らす）・`--selftest` を足した。地形を変える前の基準を `.harness/runs/scene-capture/SCN-WL-SHAPE-BASELINE/lod-default` に撮り、基準の記録（72 ファイル、HEAD 95d5657b、Game.exe 1a8b4327…）を書いた。値と見方は `WastelandShape.md` の「範囲ごとの量と前の基準」
+- 値（通常の LOD の折れ目）: castle の 5 範囲 47.0〜67.9 %、Rooster Butte 50.2 %（ref_far_02）・58.7 %（ref_ground_02）、Setting Hen Butte 33.4 %、Battleship Rock 14.3 %（岩などの画素 236284 を外した）、Franklin Butte の台座 47.8 %、谷床 3 つ 0.0〜0.7 %（格子の限界 100 %）
+- 見た目: 範囲の重ね画 4 枚（`SCN-WL-SHAPE-BASELINE/shape_regions/<視点>.png`）を開き、範囲が狙った崖と谷床に乗ることを確かめた。Setting Hen Butte と Battleship Rock の範囲は手前の平らな地面も含む（崖の生成と同じ矩形のため。既知の限界に記録）
+- 確かめ: 自分の基準との比べで局所の退行 0・差 0、`--expect` の失敗の 5 種と空の選択・未知の視点で落ちる、改ざんした写し（1 バイト足す・ファイルを足す）で基準の検査が 2 件落ちる（`aux-SCN-WL-SHAPE-REGION-METRIC-tamper.txt`）
+- 証拠（`.harness/runs/20261024-183517/`）: `verify-SCN-WL-SHAPE-REGION-METRIC-1.txt`（RelWithDebInfo の Game EXIT=0）・`-2.txt`（基準の撮影 result=pass EXIT=0）・`-3.txt`（`--selftest` 3 件 pass）・`-4.txt`（`--baseline-integrity --verify` result=pass、13 の範囲と視点）、`aux-SCN-WL-SHAPE-REGION-METRIC-baseline-record.txt`
+- Next: TASKS.md の次の未完
+- Notes: 2 組・3 組の経路（LOD の差・崖の生成の差）は地形の印のある複数の組の撮影がまだ無いので実際の撮影では回していない。範囲の最低の画素数は基準の数の半分を 2 桁に切り下げた内部の値（基準で 1000 画素に満たない ref_ground_02 の Setting Hen Butte は測らない）。新しい試験の実行ファイルは足していない（`--selftest` は done-when が名指しした確かめ）

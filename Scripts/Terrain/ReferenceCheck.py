@@ -6690,7 +6690,8 @@ def main():
                         help="低木 1 株の遠くでの見え方を、2 倍の解像度の正解とアルファの縁・株・近くの地面の帯域ごとの差で比べる"
                              "（PlantFarCheck.py。--capture）")
     parser.add_argument("--regions", default="",
-                        help="--occlusion: 小さな遮蔽と太陽の影の測りの定義（ExpectSpecs/occlusion-regions.json。OcclusionMetric.py）")
+                        help="--occlusion: 小さな遮蔽と太陽の影の測りの定義（ExpectSpecs/occlusion-regions.json。OcclusionMetric.py）。"
+                             "--shape-cause: 世界座標の範囲（Scripts/Terrain/ShapeRegions.json。ShapeRegionMetric.py）")
     parser.add_argument("--trial", action="store_true",
                         help="--building・--plant・--cloud: Cycles の収束の条件だけを外す（試しの描画）")
     parser.add_argument("--grading", action="store_true",
@@ -6733,6 +6734,13 @@ def main():
                         help="地形の形の切り分けの 3 組（通常の LOD・最も細かい LOD・崖の変形なし）を深度と幾何の法線で測る"
                              "（ShapeCause.py）")
     parser.add_argument("--capture-root", default="", help="--shape-cause: 3 組の撮影の置き場")
+    parser.add_argument("--baseline", default="",
+                        help="--shape-cause --regions: 前の基準の置き場（基準の記録を照らしてから範囲ごとに比べる）")
+    parser.add_argument("--baseline-integrity", action="store_true",
+                        help="--shape-cause --regions: --capture-root の基準の記録（撮影の出力のハッシュと当時の入力）だけを照らして"
+                             "範囲を測る（今の実装との一致は求めない）")
+    parser.add_argument("--baseline-record", action="store_true",
+                        help="--shape-cause: --capture-root に基準の記録（baseline_manifest.json）を書く（既にあれば書き換えない）")
     parser.add_argument("--aov-terrain-id", action="store_true",
                         help="撮影の AOV の地形の印（terrain_id）を、深度・面の法線と -Aov なしの撮影と照らす（AovTerrainIdCheck.py。"
                              "--engine に -Aov の撮影先、--plain・--plain2 に -Aov なしの別々の起動の撮影先）")
@@ -6748,11 +6756,15 @@ def main():
         return ExpectSpec.run_selftest(sys.modules[__name__], args.verify)
     expect = os.path.normpath(args.expect if os.path.isabs(args.expect) else os.path.join(REPO_ROOT, args.expect))         if args.expect else None
     if expect and not (args.gray or args.lit or args.blur_static or args.blur_motion or args.bounce or args.atmos_ref or
-                       args.building or args.plant or args.cloud_far or args.occlusion or args.cloud or args.cloud_shape):
+                       args.building or args.plant or args.cloud_far or args.occlusion or args.cloud or args.cloud_shape or
+                       args.shape_cause):
         print("REFERENCE_CHECK result=fail reason=expect_unsupported（--expect は --gray・--lit・--blur-static・--blur-motion・"
-              "--bounce・--atmos-ref・--building・--plant・--cloud-far・--occlusion・--cloud・--cloud-shape と使う）")
+              "--bounce・--atmos-ref・--building・--plant・--cloud-far・--occlusion・--cloud・--cloud-shape・--shape-cause と使う）")
         return 1
     if args.selftest:
+        if args.shape_cause:
+            import ShapeRegionMetric
+            return ShapeRegionMetric.run_selftest()
         if args.cloud_shape:
             import CloudShapeCheck
             return CloudShapeCheck.run_selftest(sys.modules[__name__], REPO_ROOT,
@@ -6805,6 +6817,15 @@ def main():
         return AovTerrainIdCheck.run(sys.modules[__name__], absolute(args.engine[0]) if args.engine else "",
                                      absolute(args.plain) if args.plain else "",
                                      absolute(args.plain2) if args.plain2 else "", views, args.verify)
+    if args.shape_cause and (args.regions or args.baseline or args.baseline_integrity or args.baseline_record):
+        import ShapeRegionMetric
+        absolute = lambda d: os.path.normpath(d if os.path.isabs(d) else os.path.join(REPO_ROOT, d))
+        root = absolute(args.capture_root) if args.capture_root else ""
+        if args.baseline_record:
+            return ShapeRegionMetric.record_baseline(sys.modules[__name__], root)
+        return ShapeRegionMetric.run(sys.modules[__name__], root, absolute(args.regions) if args.regions else "",
+                                     args.views, args.verify, expect, absolute(args.baseline) if args.baseline else "",
+                                     args.baseline_integrity)
     if args.shape_cause:
         import ShapeCause
         root = args.capture_root
