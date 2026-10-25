@@ -76,6 +76,11 @@ namespace NorvesLib::Tools::AssetCook
             // 区画のメッシュのインデックスの列での三角形の番号（インデックスの位置 ÷ 3）
             uint64_t Triangle = 0;
             uint32_t Cluster = 0;
+            // 交点を持つ三角形の区画（継ぎ目の近くの点は隣の区画の三角形とも交わる）
+            uint32_t TileX = 0;
+            uint32_t TileZ = 0;
+            // ほかの区画の三角形の交点も同じ高さとしてまとめたか（両側の区画が共有する境の上の点）
+            bool bShared = false;
         };
 
         struct QueryPoint
@@ -106,6 +111,8 @@ namespace NorvesLib::Tools::AssetCook
         constexpr double kMergeTolerance = 1.0e-4;
         /// 三角形の内外の判定の重心座標の許容（辺・頂点の上の点を落とさない）
         constexpr double kBarycentricTolerance = 1.0e-7;
+        /// 区画の境から隣の区画のメッシュも調べる幅（m）。崖の細部の押し出しが頂点を水平へ動かす量（境の上で最大 0.77 m）より広く取る
+        constexpr double kSeamReachMeters = 2.0;
 
         bool ReadFileBytes(const char *path, Container::VariableArray<uint8_t> &outBytes)
         {
@@ -373,35 +380,55 @@ namespace NorvesLib::Tools::AssetCook
                         }
                         hit.Triangle = (static_cast<uint64_t>(cluster.IndexOffset) + i) / 3u;
                         hit.Cluster = box.Cluster;
+                        hit.TileX = report.TileX;
+                        hit.TileZ = report.TileZ;
                         point.Hits.push_back(hit);
                     }
                 }
-
-                // 上から順に並べ、共有する辺・頂点の上で重なった同じ高さの交点を 1 つにまとめる（番号の小さい三角形を残す）
-                std::sort(point.Hits.begin(), point.Hits.end(),
-                          [](const SurfaceHit &lhs, const SurfaceHit &rhs)
-                          {
-                              return lhs.Height != rhs.Height ? lhs.Height > rhs.Height : lhs.Triangle < rhs.Triangle;
-                          });
-                Container::VariableArray<SurfaceHit> merged;
-                for (const SurfaceHit &hit : point.Hits)
-                {
-                    if (!merged.empty() && merged.back().Height - hit.Height <= kMergeTolerance)
-                    {
-                        if (hit.Triangle < merged.back().Triangle)
-                        {
-                            const double height = merged.back().Height;
-                            merged.back() = hit;
-                            merged.back().Height = height;
-                        }
-                        continue;
-                    }
-                    merged.push_back(hit);
-                }
-                point.Hits = std::move(merged);
-                point.Status = point.Hits.empty() ? SampleStatus::NoHit : SampleStatus::Ok;
             }
             return true;
+        }
+
+        /// 点の交点を上から順に並べ、共有する辺・頂点の上で重なった同じ高さの交点を 1 つにまとめる
+        /// （点を含む区画の三角形を先に、同じ区画なら番号の小さい三角形を残す）
+        void MergeHits(QueryPoint &point)
+        {
+            const auto rank = [&point](const SurfaceHit &hit)
+            { return hit.TileX == point.TileX && hit.TileZ == point.TileZ ? 0u : 1u; };
+            const auto before = [&rank](const SurfaceHit &lhs, const SurfaceHit &rhs)
+            {
+                if (rank(lhs) != rank(rhs))
+                {
+                    return rank(lhs) < rank(rhs);
+                }
+                if (lhs.TileZ != rhs.TileZ || lhs.TileX != rhs.TileX)
+                {
+                    return lhs.TileZ != rhs.TileZ ? lhs.TileZ < rhs.TileZ : lhs.TileX < rhs.TileX;
+                }
+                return lhs.Triangle < rhs.Triangle;
+            };
+            std::sort(point.Hits.begin(), point.Hits.end(),
+                      [&before](const SurfaceHit &lhs, const SurfaceHit &rhs)
+                      { return lhs.Height != rhs.Height ? lhs.Height > rhs.Height : before(lhs, rhs); });
+            Container::VariableArray<SurfaceHit> merged;
+            for (const SurfaceHit &hit : point.Hits)
+            {
+                if (!merged.empty() && merged.back().Height - hit.Height <= kMergeTolerance)
+                {
+                    const bool bShared =
+                        merged.back().bShared || hit.TileX != merged.back().TileX || hit.TileZ != merged.back().TileZ;
+                    if (before(hit, merged.back()))
+                    {
+                        const double height = merged.back().Height;
+                        merged.back() = hit;
+                        merged.back().Height = height;
+                    }
+                    merged.back().bShared = bShared;
+                    continue;
+                }
+                merged.push_back(hit);
+            }
+            point.Hits = std::move(merged);
         }
 
         /// 文字列を UTF-16 の符号単位へ直す。この実行ファイルの narrow な文字列（リテラル・argv・Core の理由）は
@@ -490,12 +517,19 @@ namespace NorvesLib::Tools::AssetCook
         outExitCode = 1;
         const char *manifestPath = nullptr;
         const char *pointsPath = nullptr;
+        // 遠景の段の名前（例: castle）。渡すと DEM の区画の代わりに、その段の区画を読む
+        const char *horizonLevel = nullptr;
         for (int index = 2; index < argc; ++index)
         {
             const std::string_view option(argv[index]);
             if ((option == "--manifest" || option == "--points") && index + 1 < argc)
             {
                 (option == "--manifest" ? manifestPath : pointsPath) = argv[++index];
+                continue;
+            }
+            if (option == "--horizon-level" && index + 1 < argc)
+            {
+                horizonLevel = argv[++index];
                 continue;
             }
             std::cerr << "AssetCook error: --sample-cooked-terrain の引数が不正です: " << argv[index] << "\n";
@@ -553,18 +587,113 @@ namespace NorvesLib::Tools::AssetCook
         for (size_t index = 0; index < points.size(); ++index)
         {
             QueryPoint &point = points[index];
-            if (FindTile(layout, point.X, point.Z, point.TileX, point.TileZ))
-            {
-                tilePoints[static_cast<size_t>(point.TileZ) * tilesX + point.TileX].push_back(index);
-            }
-            else
+            if (!FindTile(layout, point.X, point.Z, point.TileX, point.TileZ))
             {
                 point.Status = SampleStatus::OutOfRange;
+                continue;
+            }
+            point.Status = SampleStatus::NoHit;
+            tilePoints[static_cast<size_t>(point.TileZ) * tilesX + point.TileX].push_back(index);
+            // 崖の細部の押し出しは区画の境の頂点も X/Z へ動かす（境の頂点は両側の区画で同じ位置）。境が隣へずれた所の面は
+            // 隣の区画のメッシュにあるので、境から kSeamReachMeters 以内の点は隣の区画の三角形とも交わりを調べる
+            for (uint32_t tileZ = point.TileZ > 0u ? point.TileZ - 1u : 0u; tileZ <= std::min(point.TileZ + 1u, tilesZ - 1u);
+                 ++tileZ)
+            {
+                for (uint32_t tileX = point.TileX > 0u ? point.TileX - 1u : 0u;
+                     tileX <= std::min(point.TileX + 1u, tilesX - 1u); ++tileX)
+                {
+                    if (tileX == point.TileX && tileZ == point.TileZ)
+                    {
+                        continue;
+                    }
+                    uint32_t firstColumn = 0;
+                    uint32_t cellsX = 0;
+                    uint32_t firstRow = 0;
+                    uint32_t cellsZ = 0;
+                    Terrain::WastelandTerrain::DemTileCellRange(tileX, layout.Columns, firstColumn, cellsX);
+                    Terrain::WastelandTerrain::DemTileCellRange(tileZ, layout.Rows, firstRow, cellsZ);
+                    const double minX = layout.FirstX + static_cast<double>(firstColumn) * layout.Spacing;
+                    const double maxX = layout.FirstX + static_cast<double>(firstColumn + cellsX) * layout.Spacing;
+                    const double minZ = layout.FirstZ + static_cast<double>(firstRow) * layout.Spacing;
+                    const double maxZ = layout.FirstZ + static_cast<double>(firstRow + cellsZ) * layout.Spacing;
+                    if (point.X >= minX - kSeamReachMeters && point.X <= maxX + kSeamReachMeters &&
+                        point.Z >= minZ - kSeamReachMeters && point.Z <= maxZ + kSeamReachMeters)
+                    {
+                        tilePoints[static_cast<size_t>(tileZ) * tilesX + tileX].push_back(index);
+                    }
+                }
             }
         }
 
+        // 区画のパッケージを読み、指した点の交点を集める。失敗の種類を返す
+        const auto intersectPackage = [&](TileReport &report, const Container::VariableArray<size_t> &indices)
+        {
+            const Asset::AssetResolveResult resolved =
+                system.ResolveAsset(report.LogicalPath.c_str(), Asset::AssetKind::Model);
+            if (!resolved.Succeeded() || !resolved.UsedCooked())
+            {
+                report.Reason = resolved.Reason;
+                return resolved.Status == Asset::AssetResolveStatus::CookedPackageParseFailed ? SampleStatus::MeshInvalid
+                                                                                                : SampleStatus::PackageMissing;
+            }
+            const Asset::CookedMeshParseResult parsed = Asset::ParseCookedMesh(resolved.Blob);
+            if (!parsed.Succeeded())
+            {
+                char reason[64] = {};
+                std::snprintf(reason, sizeof(reason), "メッシュを解析できません status=%u",
+                              static_cast<unsigned int>(parsed.Status));
+                report.Reason = reason;
+                return SampleStatus::MeshInvalid;
+            }
+            return IntersectTile(parsed.Mesh, points, indices, report) ? SampleStatus::Ok : SampleStatus::MeshInvalid;
+        };
+
         Container::VariableArray<TileReport> tiles;
-        for (uint32_t tileZ = 0; tileZ < tilesZ; ++tileZ)
+        if (horizonLevel != nullptr)
+        {
+            // 遠景の段: 段の名前で始まる区画（<段>_<x>_<z>）のすべてで全部の点の交点を調べる。区画は X/Z の範囲を格子で
+            // 割らないので、点の区画は決めない（区画の失敗はその区画の交点が無いだけで、区画の状態に書く）
+            Container::VariableArray<Terrain::TerrainHorizonMesh> meshes;
+            if (!Terrain::LoadTerrainHorizonMeshes(Terrain::WastelandTerrain::kHorizonDescriptorPath, meshes, loadError))
+            {
+                std::cerr << "AssetCook error: " << loadError.c_str() << "\n";
+                return true;
+            }
+            Container::VariableArray<size_t> all;
+            for (size_t index = 0; index < points.size(); ++index)
+            {
+                points[index].Status = SampleStatus::NoHit;
+                points[index].TileX = UINT32_MAX;
+                points[index].TileZ = UINT32_MAX;
+                all.push_back(index);
+            }
+            const std::string_view prefix(horizonLevel);
+            for (const Terrain::TerrainHorizonMesh &entry : meshes)
+            {
+                const std::string_view name(entry.Name.c_str(), entry.Name.size());
+                unsigned int tileX = 0;
+                unsigned int tileZ = 0;
+                if (name.size() <= prefix.size() + 1u || name.substr(0, prefix.size()) != prefix ||
+                    name[prefix.size()] != '_' ||
+                    std::sscanf(entry.Name.c_str() + prefix.size() + 1u, "%u_%u", &tileX, &tileZ) != 2)
+                {
+                    continue;
+                }
+                TileReport report;
+                report.TileX = tileX;
+                report.TileZ = tileZ;
+                report.LogicalPath = Container::AnsiString(Terrain::WastelandTerrain::kHorizonCookedMeshLogicalPathPrefix) +
+                                     entry.Name + Container::AnsiString(".generated");
+                report.Status = intersectPackage(report, all);
+                tiles.push_back(std::move(report));
+            }
+            if (tiles.empty())
+            {
+                std::cerr << "AssetCook error: 遠景の段 " << horizonLevel << " の区画が記述にありません\n";
+                return true;
+            }
+        }
+        for (uint32_t tileZ = 0; tileZ < (horizonLevel != nullptr ? 0u : tilesZ); ++tileZ)
         {
             for (uint32_t tileX = 0; tileX < tilesX; ++tileX)
             {
@@ -589,43 +718,31 @@ namespace NorvesLib::Tools::AssetCook
                 report.bCliffDetail = TerrainCliffTileIntersects(layout, firstColumn, cellsX, firstRow, cellsZ);
                 report.bCarve = TerrainCliffCarveTouches(layout, firstColumn, cellsX, firstRow, cellsZ);
 
-                SampleStatus failure = SampleStatus::Ok;
-                const Asset::AssetResolveResult resolved =
-                    system.ResolveAsset(report.LogicalPath.c_str(), Asset::AssetKind::Model);
-                if (!resolved.Succeeded() || !resolved.UsedCooked())
-                {
-                    failure = resolved.Status == Asset::AssetResolveStatus::CookedPackageParseFailed
-                                  ? SampleStatus::MeshInvalid
-                                  : SampleStatus::PackageMissing;
-                    report.Reason = resolved.Reason;
-                }
-                else
-                {
-                    const Asset::CookedMeshParseResult parsed = Asset::ParseCookedMesh(resolved.Blob);
-                    if (!parsed.Succeeded())
-                    {
-                        failure = SampleStatus::MeshInvalid;
-                        char reason[64] = {};
-                        std::snprintf(reason, sizeof(reason), "メッシュを解析できません status=%u",
-                                      static_cast<unsigned int>(parsed.Status));
-                        report.Reason = reason;
-                    }
-                    else if (!IntersectTile(parsed.Mesh, points, indices, report))
-                    {
-                        failure = SampleStatus::MeshInvalid;
-                    }
-                }
+                const SampleStatus failure = intersectPackage(report, indices);
                 if (failure != SampleStatus::Ok)
                 {
+                    // 失敗は点を含む区画のときだけ点の状態にする（隣の区画の失敗は、その区画の交点が無いだけ）
                     report.Status = failure;
                     for (const size_t index : indices)
                     {
-                        points[index].Status = failure;
-                        points[index].Hits.clear();
+                        if (points[index].TileX == tileX && points[index].TileZ == tileZ)
+                        {
+                            points[index].Status = failure;
+                        }
                     }
                 }
                 tiles.push_back(std::move(report));
             }
+        }
+        for (QueryPoint &point : points)
+        {
+            if (point.Status != SampleStatus::NoHit)
+            {
+                point.Hits.clear();
+                continue;
+            }
+            MergeHits(point);
+            point.Status = point.Hits.empty() ? SampleStatus::NoHit : SampleStatus::Ok;
         }
 
         // 結果（機械が照合する JSON。高さ・位置は m、エンジンのワールド座標）
@@ -654,7 +771,7 @@ namespace NorvesLib::Tools::AssetCook
             std::cout << ", \"z\": ";
             WriteNumber(point.Z);
             std::cout << ", \"status\": \"" << StatusText(point.Status) << "\"";
-            if (point.Status != SampleStatus::OutOfRange)
+            if (point.Status != SampleStatus::OutOfRange && point.TileX != UINT32_MAX)
             {
                 std::cout << ", \"tile\": [" << point.TileX << ", " << point.TileZ << "]";
             }
@@ -670,7 +787,8 @@ namespace NorvesLib::Tools::AssetCook
                 WriteNumber(hit.Normal[1]);
                 std::cout << ", ";
                 WriteNumber(hit.Normal[2]);
-                std::cout << "], \"triangle\": " << hit.Triangle << ", \"cluster\": " << hit.Cluster << "}";
+                std::cout << "], \"triangle\": " << hit.Triangle << ", \"cluster\": " << hit.Cluster << ", \"hit_tile\": ["
+                          << hit.TileX << ", " << hit.TileZ << "], \"shared\": " << (hit.bShared ? "true" : "false") << "}";
             }
             std::cout << "]}";
         }

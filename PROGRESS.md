@@ -7926,3 +7926,11 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 証拠（`.harness/runs/20261025-120217/`）: `verify-SCN-WL-SHAPE-INTERNAL-FOLDS-1.txt`・`-2.txt`（verify result=pass EXIT=0、`SHAPE_MEASURE_FOLD` 21 行）
 - Next: TASKS.md の次の未完（崩れた塊の項目は `fold_annotations_sha256` つきの `--expect` の行でこの基準を使う）
 - Notes: 判断: Setting Hen Butte の層の壁の足は棚 0.495 とほぼ同じ高さなので置かず、崖錐の中の崩れた下の段の稜線を塊の稜線として置いた。ground_02 の Rooster Butte の線（0.74・0.79）は短く、構図が 188 画素ずれた崖の棚と外形の近くにあるので、改善の基準には far_02 を使うと文書に書いた。新しい試験は足していない（折れ線の測りは棚の自己検査で確かめた match_segment・extra_folds と同じ判定を使う）。折れ線の合成の自己検査は足していない（要るかは計画が決める）
+
+## 2026-10-25 SCN-WL-TERRAIN-SEAM-FIX（run 20261025-120217 の反復 5、DONE）
+- Done: 継ぎ目の「割れ目」は焼きの欠けではなく問い合わせの区画の選び方だった。区画の境の頂点は押し出しも刻みも全体の格子の番号だけから決まり両側で同じ位置（面は閉じている）で、押し出しが境の頂点を水平へ最大 0.77 m（castle 1.25 m）動かすため、点の X/Z で区画を 1 つだけ読む問い合わせが隣の区画にある面を拾えなかった。`CookedTerrainQuery.cpp` を、境から 2 m 以内の点は隣の区画の三角形とも交わりを調べる形に直し、交点に `hit_tile`・`shared` を足し、遠景の段を読む `--horizon-level castle` を足した。焼きは変えていない（縁の頂点を止める形は崖の壁に区画の境の直線が出るので採らない）。`CheckCookedTerrain.py --seams` を足し、値と読み方を `WastelandShape.md` の「区画の継ぎ目」に書いた
+- 値: 継ぎ目 24 本（近景 12・castle 12）の帯の点 1239 万で面に交わらない点 0、境の動く幅の最大 近景 0.80 m・castle 1.25 m、近景の境の頂点 10932 点が全部両側の区画で共有（高さの差 0）。前に測れなかった石 (−1600.01, −1172.29) は区画 (2,2) の交点 3 つ。焼き直した 214 項目は全パッケージ前と SHA-256 が同じ（マニフェストの項目も同じ）。形の 4 行 棚 0.482・角 0.286・外形 1.0／1.0 で pass
+- 見た目: ref_cliff_01・cliff を灰色の材質で前と後に撮って並べた画（`scene-capture/SCN-WL-TERRAIN-SEAM-FIX/seam_before_after_*.png`・`seam_diff_crop_ref_cliff_01.png`）を開き、透ける線が無く、差は散らばった 1 画素の点だけと確かめた
+- 証拠（`.harness/runs/20261025-120217/`）: `verify-SCN-WL-TERRAIN-SEAM-FIX-1.txt`（AssetCook EXIT=0）・`-2.txt`（Game EXIT=0）・`-3.txt`（クック cooked=0 skipped=214）・`-7.txt`（`--seams --verify` result=pass）・`-6.txt`（撮影 result=pass）・`-8.txt`（`--shape --expect shape-scan-battleship-walls.json` 4 行 pass）。途中の `-4`・`-5.txt`（castle の帯の幅が足りず fail）、`aux-SCN-WL-TERRAIN-SEAM-FIX-parallel-cook.txt`・`-packages-vs-before.txt`・`-capture-before.txt`・`-default-check.txt`（既存の `--verify` は pass のまま）
+- Next: SCN-WL-CLIFF-PLACEMENT-CHECK を verify だけ回し直して閉じる（問い合わせが変わったので測り切れない 1 個は消える見込み）
+- Notes: 判断: done-when の「押し出しと刻みを世界座標だけで決まる形にする」は既にそうなっていたので焼きは変えず、問い合わせを直した（クックの出力のハッシュは全部同じ）。継ぎ目の線の上で両側の区画の交点の差は張り出しの別の層を拾う（最大 27 m）ので判定に使わず、(2) は境の頂点で測った。castle の段は焼きと同じ式の標本の命令が無いので境の頂点の差は測っていない（面に交わらない点 0 と帯の量だけ）。Franklin Butte の形の行は、焼いた面が同じなので撮影を回していない。`--seams --verify` は約 8 分で 10 分に近い。新しい試験の実行ファイルは足していない
