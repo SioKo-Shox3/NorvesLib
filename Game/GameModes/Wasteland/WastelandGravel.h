@@ -71,6 +71,10 @@ namespace Game::GameModes::WastelandGravel
         void CollectCellAt(uint32_t tier, float x, float z,
                            NorvesLib::Core::Container::VariableArray<NorvesLib::Core::Rendering::FoliageInstance> (
                                &outInstances)[kKindsPerTier]) const;
+        /// 段 tier の区画の一辺[m]（書き出しが区画を数えるのに使う）
+        static float GetCellSize(uint32_t tier);
+        /// 段 tier の名前（pebble・stone・cobble）
+        static const char *GetTierName(uint32_t tier);
         /// 段 tier・種類 kind の束のひな形（メッシュと名前。インスタンスは空）
         const NorvesLib::Core::Rendering::FoliageBatch &GetTemplate(uint32_t tier, uint32_t kind) const
         {

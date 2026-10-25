@@ -2,10 +2,12 @@
 # 置き方（Game/GameModes/Wasteland の WastelandTalus.cpp・WastelandFoliage.cpp・WastelandGravel.cpp）は 1 m の格子の高さ
 # （TerrainHeightField::SampleHeight）を読むので、崖の生成が面を押し出した範囲では焼いた面とずれうる。
 #
-# 入力: Game の --wasteland-export-placement=<path> が書く配置の JSON（WastelandPlacementExport.h）。崖錐の岩は置いた全部、
-# 草と低木・石と礫は書き出しの sampling が示す範囲の物。
+# 入力: Game の --wasteland-export-placement=<path> が書く配置（WastelandPlacementExport.h）。JSON に形の表と標本の取り方、
+# 隣の objects_file（float32 の 12 列）に物の行。崖錐の岩・草と低木・大きな石（cobble）は全部、石（stone）と小礫（pebble）は
+# 格子の点を含む区画を丸ごと書いた標本（sampling.cell_sampled）。合否は書き出した物の全部で決める。
+# 物の組（category）は形の tier（talus・plant・pebble・stone・cobble）。規則は type（talus か、草と石か）で決める。
 # 足元の点（どれも回転・拡大率を掛けたワールドの位置）:
-#   - 岩: 書き出したメッシュの頂点を置いた向きに回し、高さの下 5 % の帯に入る頂点の全部
+#   - 岩: 書き出したメッシュの頂点（置き方と同じ標本）を置いた向きに回し、高さの下 5 % の帯に入る頂点の全部
 #   - 草と低木・石: 根元の高さ（置き方が地面と見なした高さ）の水平の円の 6 点。半径はメッシュの根元の円の半径 × 横の拡大率
 # 支持面: 足元の点ごとに、焼いた面の問い合わせ（AssetCook --sample-cooked-terrain）の交点のうち上を向く面（法線の上の成分
 # SUPPORT_MIN_NORMAL_Y 以上。張り出しの下面は支持面にしない）で、足元の高さとの差が max(0.5 m, 物の高さの 20 %) 以内で
@@ -15,16 +17,16 @@
 # 「窓より高く浮く」「上を向く面が無い」に分けて数える。分けるのは最も悪い点。埋まる > 浮く > 面が無い の順）。
 # 規則: 岩は浮き < 0.05 m・埋もれ ≤ 物の高さの 50 %。草と低木・石は浮き ≤ 0.05 m・埋もれ ≤ 0.1 m。
 # 落とす（測り切れない）もの: 足元の点の問い合わせが ok でない物（DEM の格子の外・区画が無い・メッシュが壊れている・
-# 交点が無い）、種類ごとの物が 0 個、形の欠け（岩の頂点が無い・下の帯に頂点が無い・草と石のメッシュの頂点が 0）。
+# 交点が無い）、組ごとの物が 0 個、形の欠け（岩の頂点が無い・下の帯に頂点が無い・草と石のメッシュの頂点が 0）。
 #
 # 使い方:
 #   python Scripts/Terrain/CheckPlacement.py --placement <placement.json> [--asset-cook <AssetCook.exe>]
 #       [--manifest <manifest.json>] --regions Scripts/Terrain/ShapeRegions.json (--record | --require-compliant)
 #       [--removed <removed.json>] [--out <report.json>] [--workers N] [--verify]
-#   --record: 全部の物を測り切れたら通る（違反の数は範囲ごとに書くだけ）
-#   --require-compliant: 加えて違反 0。物を消して通すなら、消した物の一覧（--removed。{"removed": [{"type", "x", "z"}, ...]}）を
-#     渡し、範囲ごと（名前の付いた範囲・どの範囲にも入らない所・全体）に消した数が、その範囲の物（残した物 + 消した物）の
-#     REMOVED_MAX_SHARE 以下
+#   --record: 書き出した物の全部を測り切れたら通る（違反の数は範囲ごとに書くだけ）
+#   --require-compliant: 加えて違反 0。物を消して通すなら、消した物の一覧（--removed。{"removed": [{"type", "x", "z"}, ...]}。
+#     type は物の組の名前）を渡し、範囲ごと（名前の付いた範囲・どの範囲にも入らない所・全体）に消した数が、その範囲の物
+#     （残した物 + 消した物）の REMOVED_MAX_SHARE 以下
 # 終了コード: --verify で合格なら 0、不合格なら 1。--verify なしは値を出すだけで 0。
 import argparse
 import concurrent.futures
@@ -34,6 +36,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 
 import numpy as np
 
@@ -44,7 +47,7 @@ DEM_DESCRIPTOR = os.path.join(REPO_ROOT, "Assets", "Terrain", "ValleyOfTheGods",
 # DEM の区画の一辺の升目の数（TerrainHeightField.h の kDemTileCells）。問い合わせを区画ごとにまとめるのに使う
 DEM_TILE_CELLS = 500
 
-TYPES = ("talus", "plant", "gravel")
+OBJECT_COLUMNS = 12
 ROCK_BOTTOM_BAND = 0.05
 ROOT_RING_POINTS = 6
 SUPPORT_MIN_NORMAL_Y = 0.3
@@ -55,20 +58,35 @@ ROCK_MAX_BURIAL_SHARE = 0.5
 SCATTER_MAX_FLOAT_M = 0.05
 SCATTER_MAX_BURIAL_M = 0.1
 REMOVED_MAX_SHARE = 0.02
-# 問い合わせ 1 回の点の数の上限と、並べて走らせる AssetCook の数
+# 問い合わせ 1 回の点の数の上限と、並べて走らせる問い合わせ（AssetCook と結果の解析）の数
 QUERY_CHUNK_POINTS = 300000
-DEFAULT_WORKERS = 8
+DEFAULT_WORKERS = max(1, min(16, (os.cpu_count() or 2) // 2))
 # 範囲ごとに書く値の悪い物の数と、報告に書く測り切れない物の数
 WORST_PER_REGION = 10
 UNMEASURED_LISTED = 200
 ROCK_CHUNK = 4000
 # 足元の点の支持面なしの分類（大きいほど悪い。物ごとに最も悪い点で分ける）
 NO_SUPPORT_NONE, NO_SUPPORT_NO_UPWARD, NO_SUPPORT_FLOATING, NO_SUPPORT_BURIED = 0, 1, 2, 3
+# 問い合わせの状態（AssetCook の CookedTerrainQuery.cpp の StatusText）。知らない状態は最後の "unknown"
+STATUS_NAMES = ("ok", "out_of_range", "package_missing", "mesh_invalid", "no_hit", "unknown")
+STATUS_CODES = {name: code for code, name in enumerate(STATUS_NAMES)}
 
 
 def load_json(path):
     with open(path, encoding="utf-8-sig") as handle:
         return json.load(handle)
+
+
+def load_objects(placement, placement_path):
+    """物の行（N, 12）。objects_file（float32）か、前の形の JSON の objects"""
+    if "objects_file" in placement:
+        path = os.path.join(os.path.dirname(os.path.abspath(placement_path)), placement["objects_file"])
+        columns = int(placement.get("object_columns", OBJECT_COLUMNS))
+        objects = np.fromfile(path, dtype="<f4").astype(np.float64)
+        if columns != OBJECT_COLUMNS or len(objects) != int(placement["object_count"]) * columns:
+            raise RuntimeError(f"物の行の数が JSON の object_count と合いません: {path}")
+        return objects.reshape(-1, OBJECT_COLUMNS)
+    return np.array(placement["objects"], dtype=np.float64).reshape(-1, OBJECT_COLUMNS)
 
 
 def rotate_conjugate(q, v):
@@ -123,6 +141,29 @@ def run_query(asset_cook, manifest, xz):
     return data["points"]
 
 
+def query_worker(job):
+    """別のプロセスで 1 回の問い合わせを走らせ、点ごとの最も近い上を向く面との差（無ければ NaN）と状態の番号を返す"""
+    asset_cook, manifest, xz, foot_y = job
+    nearest = np.full(len(xz), np.nan)
+    status = np.zeros(len(xz), dtype=np.int8)
+    for local, point in enumerate(run_query(asset_cook, manifest, xz)):
+        code = STATUS_CODES.get(point["status"], STATUS_CODES["unknown"])
+        status[local] = code
+        if code != 0:
+            continue
+        y = foot_y[local]
+        best = None
+        for hit in point["hits"]:
+            if hit["normal"][1] < SUPPORT_MIN_NORMAL_Y:
+                continue
+            d = hit["height"] - y
+            if best is None or abs(d) < abs(best):
+                best = d
+        if best is not None:
+            nearest[local] = best
+    return nearest, status
+
+
 def query_chunks(foot):
     """問い合わせを DEM の区画ごとにまとめた点の番号の組"""
     dem = load_json(DEM_DESCRIPTOR)
@@ -148,32 +189,17 @@ def query_chunks(foot):
 
 def query_support(asset_cook, manifest, foot, window, workers):
     """足元の点（P, 3）と窓（P）から、点ごとの差 d（窓の内の支持面。無ければ NaN）・窓を外した最も近い上を向く面との差
-    （上を向く面が無ければ NaN）・問い合わせの状態（P。文字列）を返す"""
-    diff = np.full(len(foot), np.nan)
+    （上を向く面が無ければ NaN）・問い合わせの状態の番号（P。STATUS_NAMES の番号）を返す"""
     nearest = np.full(len(foot), np.nan)
-    status = np.empty(len(foot), dtype=object)
-
-    def work(index):
-        return index, run_query(asset_cook, manifest, foot[index][:, [0, 2]])
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
-        for index, points in pool.map(work, query_chunks(foot)):
-            for local, point in enumerate(points):
-                row = index[local]
-                status[row] = point["status"]
-                if point["status"] != "ok":
-                    continue
-                best = None
-                for hit in point["hits"]:
-                    if hit["normal"][1] < SUPPORT_MIN_NORMAL_Y:
-                        continue
-                    d = hit["height"] - foot[row, 1]
-                    if best is None or abs(d) < abs(best):
-                        best = d
-                if best is not None:
-                    nearest[row] = best
-                    if abs(best) <= window[row]:
-                        diff[row] = best
+    status = np.full(len(foot), STATUS_CODES["unknown"], dtype=np.int8)
+    chunks = query_chunks(foot)
+    jobs = ((asset_cook, manifest, foot[index][:, [0, 2]], foot[index, 1]) for index in chunks)
+    with concurrent.futures.ProcessPoolExecutor(max_workers=workers) as pool:
+        for index, (part_nearest, part_status) in zip(chunks, pool.map(query_worker, jobs)):
+            nearest[index] = part_nearest
+            status[index] = part_status
+    with np.errstate(invalid="ignore"):
+        diff = np.where(np.abs(nearest) <= window, nearest, np.nan)
     return diff, nearest, status
 
 
@@ -185,32 +211,28 @@ def percentiles(values):
             "max": round(float(np.max(values)), 4)}
 
 
-def collect_foot_points(objects, meshes, obj_type, failures):
+def collect_foot_points(objects, meshes, is_rock, failures):
     """足元の点（P, 3）・持ち主の物の番号（P）・物の高さ（物の数）"""
     foot_list, owner_list = [], []
     obj_height = np.zeros(len(objects))
-    for i, t in enumerate(TYPES):
-        rows = np.nonzero(obj_type == i)[0]
-        if len(rows) == 0:
-            continue
-        if t == "talus":
-            for start in range(0, len(rows), ROCK_CHUNK):
-                part = rows[start:start + ROCK_CHUNK]
-                for mesh_index in np.unique(objects[part, 0].astype(np.int64)):
-                    sub = part[objects[part, 0].astype(np.int64) == mesh_index]
-                    points = np.array(meshes[mesh_index].get("points") or [], dtype=np.float64).reshape(-1, 3)
-                    if len(points) == 0:
-                        continue
-                    foot, local, height = rock_foot_points(points, objects[sub, 4:8], objects[sub, 8:11],
-                                                           objects[sub, 1:4])
-                    foot_list.append(foot)
-                    owner_list.append(sub[local])
-                    obj_height[sub] = height
-        else:
-            foot, height = ring_points(objects[rows], meshes)
-            foot_list.append(foot.reshape(-1, 3))
-            owner_list.append(np.repeat(rows, ROOT_RING_POINTS))
-            obj_height[rows] = height
+    rows = np.nonzero(is_rock)[0]
+    for start in range(0, len(rows), ROCK_CHUNK):
+        part = rows[start:start + ROCK_CHUNK]
+        for mesh_index in np.unique(objects[part, 0].astype(np.int64)):
+            sub = part[objects[part, 0].astype(np.int64) == mesh_index]
+            points = np.array(meshes[mesh_index].get("points") or [], dtype=np.float64).reshape(-1, 3)
+            if len(points) == 0:
+                continue
+            foot, local, height = rock_foot_points(points, objects[sub, 4:8], objects[sub, 8:11], objects[sub, 1:4])
+            foot_list.append(foot)
+            owner_list.append(sub[local])
+            obj_height[sub] = height
+    rows = np.nonzero(~is_rock)[0]
+    if len(rows):
+        foot, height = ring_points(objects[rows], meshes)
+        foot_list.append(foot.reshape(-1, 3))
+        owner_list.append(np.repeat(rows, ROOT_RING_POINTS))
+        obj_height[rows] = height
     if not foot_list:
         return np.zeros((0, 3)), np.zeros(0, dtype=np.int64), obj_height
     foot = np.concatenate(foot_list)
@@ -268,13 +290,19 @@ def main():
     parser.add_argument("--verify", action="store_true")
     args = parser.parse_args()
 
+    started = time.time()
     failures = []
     placement = load_json(args.placement)
     meshes = placement["meshes"]
-    objects = np.array(placement["objects"], dtype=np.float64).reshape(-1, 12)
+    objects = load_objects(placement, args.placement)
     regions = load_json(args.regions)["regions"]
-    mesh_type = np.array([TYPES.index(m["type"]) for m in meshes])
-    obj_type = mesh_type[objects[:, 0].astype(np.int64)] if len(objects) else np.zeros(0, dtype=np.int64)
+    # 物の組（形の tier。前の形の書き出しは type）と、組ごとの規則（岩か、草と石か）
+    mesh_category = [m.get("tier") or m["type"] for m in meshes]
+    categories = list(dict.fromkeys(mesh_category))
+    mesh_cat_index = np.array([categories.index(c) for c in mesh_category])
+    category_is_rock = {c: any(m["type"] == "talus" for m, mc in zip(meshes, mesh_category) if mc == c) for c in categories}
+    obj_cat = mesh_cat_index[objects[:, 0].astype(np.int64)] if len(objects) else np.zeros(0, dtype=np.int64)
+    is_rock = np.array([category_is_rock[c] for c in categories])[obj_cat] if len(objects) else np.zeros(0, dtype=bool)
 
     # 形の欠けと物の数
     for mesh in meshes:
@@ -283,23 +311,24 @@ def main():
                 failures.append(f"岩の形 {mesh['name']} の頂点がありません")
         elif mesh.get("vertices", 0) == 0 or mesh.get("height", 0.0) <= 0.0:
             failures.append(f"形 {mesh['name']}（{mesh['type']}）のメッシュがありません")
-    counts = {t: int((obj_type == i).sum()) for i, t in enumerate(TYPES)}
+    counts = {c: int((obj_cat == i).sum()) for i, c in enumerate(categories)}
     for name, count in counts.items():
         if count == 0:
             failures.append(f"{name} の物が 0 個です")
 
     # 足元の点と問い合わせ
-    foot, owner, obj_height = collect_foot_points(objects, meshes, obj_type, failures)
+    foot, owner, obj_height = collect_foot_points(objects, meshes, is_rock, failures)
     if len(foot) == 0:
         failures.append("足元の点がありません")
-        return finish(args, failures, {"objects": counts}, None)
+        return finish(args, failures, {"objects": counts, "sampling": placement.get("sampling")}, None)
     window = np.maximum(SUPPORT_WINDOW_MIN_M, SUPPORT_WINDOW_SHARE * obj_height[owner])
+    query_started = time.time()
     diff, nearest, status = query_support(os.path.abspath(args.asset_cook), os.path.abspath(args.manifest), foot, window,
                                           args.workers)
-    statuses = {}
-    for value in status:
-        statuses[value] = statuses.get(value, 0) + 1
-    point_ok = status == "ok"
+    query_seconds = time.time() - query_started
+    status_counts = np.bincount(status.astype(np.int64), minlength=len(STATUS_NAMES))
+    statuses = {STATUS_NAMES[code]: int(value) for code, value in enumerate(status_counts) if value}
+    point_ok = status == STATUS_CODES["ok"]
 
     # 物ごとの値（足元の点ごとの量の最大）
     n = len(objects)
@@ -309,13 +338,12 @@ def main():
     burial_m = per_object_max(owner, np.maximum(0.0, diff), n)
     point_class = np.where(~point_ok | ~np.isnan(diff), NO_SUPPORT_NONE,
                            np.where(np.isnan(nearest), NO_SUPPORT_NO_UPWARD,
-                                    np.where(nearest > 0, NO_SUPPORT_BURIED, NO_SUPPORT_FLOATING)))
-    obj_class = np.zeros(n, dtype=np.int64)
+                                    np.where(nearest > 0, NO_SUPPORT_BURIED, NO_SUPPORT_FLOATING))).astype(np.int8)
+    obj_class = np.zeros(n, dtype=np.int8)
     np.maximum.at(obj_class, owner, point_class)
     center_x = np.bincount(owner, weights=foot[:, 0], minlength=n) / np.maximum(point_count, 1)
     center_z = np.bincount(owner, weights=foot[:, 2], minlength=n) / np.maximum(point_count, 1)
 
-    is_rock = obj_type == 0
     burial_limit = np.where(is_rock, ROCK_MAX_BURIAL_SHARE * obj_height, SCATTER_MAX_BURIAL_M)
     with np.errstate(invalid="ignore"):
         v_float = measured & np.where(is_rock, float_m >= ROCK_MAX_FLOAT_M, float_m > SCATTER_MAX_FLOAT_M)
@@ -325,26 +353,29 @@ def main():
     v_support_floating = v_support & (obj_class == NO_SUPPORT_FLOATING)
     v_support_none = v_support & (obj_class == NO_SUPPORT_NO_UPWARD)
     violation = v_float | v_burial | v_support
+    with np.errstate(invalid="ignore"):
+        score_all = np.nan_to_num(np.fmax(float_m, burial_m - burial_limit), nan=0.0) + v_support * 1e9
 
     # 測り切れない物（足元の点の問い合わせが ok でない物）は落とす
     unmeasured_rows = np.nonzero(~measured)[0]
-    unmeasured_statuses = {}
-    for value in status[~point_ok]:
-        unmeasured_statuses[value] = unmeasured_statuses.get(value, 0) + 1
+    bad_points = np.nonzero(~point_ok)[0]
+    unmeasured_statuses = {STATUS_NAMES[code]: int(value)
+                           for code, value in enumerate(np.bincount(status[bad_points].astype(np.int64),
+                                                                    minlength=len(STATUS_NAMES))) if value}
     if len(unmeasured_rows):
         failures.append(f"測り切れない物が {len(unmeasured_rows)} 個あります（ok でない足元の点の状態 {unmeasured_statuses}）")
-    bad_status = {}
-    for row, value in zip(owner[~point_ok], status[~point_ok]):
-        bad_status.setdefault(int(row), value)
-    unmeasured_list = [{"index": int(row), "type": TYPES[int(obj_type[row])], "x": round(float(objects[row, 1]), 2),
-                        "z": round(float(objects[row, 3]), 2), "status": bad_status.get(int(row), "no_foot_points")}
+    obj_bad_status = np.full(n, -1, dtype=np.int64)
+    obj_bad_status[owner[bad_points]] = status[bad_points]
+    unmeasured_list = [{"index": int(row), "type": categories[int(obj_cat[row])], "x": round(float(objects[row, 1]), 2),
+                        "z": round(float(objects[row, 3]), 2),
+                        "status": STATUS_NAMES[obj_bad_status[row]] if obj_bad_status[row] >= 0 else "no_foot_points"}
                        for row in unmeasured_rows[:UNMEASURED_LISTED]]
 
     # 範囲ごとの値と消した物
     removed = load_json(args.removed)["removed"] if args.removed else []
     for item in removed:
-        if item.get("type") not in TYPES:
-            failures.append(f"消した物の種類 {item.get('type')} が分かりません")
+        if item.get("type") not in categories:
+            failures.append(f"消した物の組 {item.get('type')} が分かりません（{categories} のどれか）")
     removed_x = np.array([float(r["x"]) for r in removed])
     removed_z = np.array([float(r["z"]) for r in removed])
     removed_type = np.array([r.get("type") for r in removed], dtype=object)
@@ -352,28 +383,24 @@ def main():
     for region_id, inside, removed_inside in region_masks(regions, center_x, center_z, n):
         removed_sel = removed_inside(removed_x, removed_z) if len(removed) else np.zeros(0, dtype=bool)
         entry = {}
-        for i, t in enumerate(TYPES):
-            sel = inside & (obj_type == i)
+        for i, c in enumerate(categories):
+            sel = inside & (obj_cat == i)
             sel_m = sel & measured & (obj_class == NO_SUPPORT_NONE)
+            bad_rows = np.nonzero(sel & violation)[0]
             worst = []
-            with np.errstate(invalid="ignore"):
-                score = np.where(sel & violation,
-                                 np.nan_to_num(np.fmax(float_m, burial_m - burial_limit), nan=0.0) + v_support * 1e9, -1.0)
-            for row in np.argsort(-score)[:WORST_PER_REGION]:
-                if score[row] < 0:
-                    break
+            for row in bad_rows[np.argsort(-score_all[bad_rows])[:WORST_PER_REGION]]:
                 worst.append({"index": int(row), "mesh": meshes[int(objects[row, 0])]["name"],
                               "x": round(float(center_x[row]), 2), "z": round(float(center_z[row]), 2),
                               "y": round(float(objects[row, 2]), 2), "height_m": round(float(obj_height[row]), 3),
                               "float_m": None if np.isnan(float_m[row]) else round(float(float_m[row]), 3),
                               "burial_m": None if np.isnan(burial_m[row]) else round(float(burial_m[row]), 3),
                               "no_support": bool(v_support[row])})
-            gone = int((removed_sel & (removed_type == t)).sum()) if len(removed) else 0
+            gone = int((removed_sel & (removed_type == c)).sum()) if len(removed) else 0
             item = {
                 "objects": int(sel.sum()),
                 "measured": int((sel & measured).sum()),
                 "unmeasured": int((sel & ~measured).sum()),
-                "violations": int((sel & violation).sum()),
+                "violations": int(len(bad_rows)),
                 "float_violations": int((sel & v_float).sum()),
                 "burial_violations": int((sel & v_burial).sum()),
                 "no_support": int((sel & v_support).sum()),
@@ -385,15 +412,15 @@ def main():
                 "removed": gone,
                 "worst": worst,
             }
-            if t == "talus":
+            if category_is_rock[c]:
                 item["foot_points"] = percentiles(point_count[sel].astype(np.float64))
                 item["burial_share"] = percentiles(burial_m[sel_m] / np.maximum(obj_height[sel_m], 1e-6))
             total = item["objects"] + gone
             item["removed_share"] = round(gone / total, 5) if total else 0.0
             if args.require_compliant and gone > REMOVED_MAX_SHARE * total:
-                failures.append(f"{region_id} の {t} は消した物 {gone} 個が範囲の物 {total} 個の "
+                failures.append(f"{region_id} の {c} は消した物 {gone} 個が範囲の物 {total} 個の "
                                 f"{REMOVED_MAX_SHARE:.0%} を超えます")
-            entry[t] = item
+            entry[c] = item
         report_regions[region_id] = entry
 
     total_violations = int(violation.sum())
@@ -405,9 +432,13 @@ def main():
         "query_statuses": statuses,
         "sampling": placement.get("sampling"),
         "violations": total_violations,
+        "violations_by_category": {c: int((violation & (obj_cat == i)).sum()) for i, c in enumerate(categories)},
         "unmeasured": int(len(unmeasured_rows)),
         "unmeasured_objects": unmeasured_list,
         "removed": len(removed),
+        "workers": args.workers,
+        "query_seconds": round(query_seconds, 1),
+        "total_seconds": round(time.time() - started, 1),
     }
     return finish(args, failures, summary, report_regions)
 
@@ -415,11 +446,11 @@ def main():
 def finish(args, failures, summary, regions):
     mode = "record" if args.record else "require_compliant"
     report = {
-        "format": "placement_check.v2",
+        "format": "placement_check.v3",
         "mode": mode,
         "placement": os.path.abspath(args.placement),
         "rules": {
-            "rock_bottom_band": ROCK_BOTTOM_BAND, "rock_foot_points": "all vertices in the bottom band",
+            "rock_bottom_band": ROCK_BOTTOM_BAND, "rock_foot_points": "all exported sample vertices in the bottom band",
             "root_ring_points": ROOT_RING_POINTS, "support_min_normal_y": SUPPORT_MIN_NORMAL_Y,
             "support_window": f"max({SUPPORT_WINDOW_MIN_M} m, {SUPPORT_WINDOW_SHARE} * height)",
             "per_object": "max over foot points", "unsupported_point": "violation",
@@ -438,10 +469,10 @@ def finish(args, failures, summary, regions):
     print(f"report={out}")
     print(f"summary={json.dumps({k: v for k, v in summary.items() if k != 'unmeasured_objects'}, ensure_ascii=False)}")
     for region_id, entry in (regions or {}).items():
-        for t, item in entry.items():
+        for c, item in entry.items():
             if item["objects"] == 0 and item["removed"] == 0:
                 continue
-            print(f"region={region_id} type={t} objects={item['objects']} measured={item['measured']} "
+            print(f"region={region_id} type={c} objects={item['objects']} measured={item['measured']} "
                   f"unmeasured={item['unmeasured']} violations={item['violations']} float={item['float_violations']} "
                   f"burial={item['burial_violations']} no_support={item['no_support']}(buried={item['no_support_buried']} "
                   f"floating={item['no_support_floating']} no_upward={item['no_support_no_upward']}) "

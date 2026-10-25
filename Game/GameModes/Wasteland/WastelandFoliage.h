@@ -79,6 +79,8 @@ namespace Game::GameModes::WastelandFoliage
         void CollectCellAt(float x, float z,
                            NorvesLib::Core::Container::VariableArray<NorvesLib::Core::Rendering::FoliageInstance> (
                                &outInstances)[kPlantKindCount]);
+        /// 区画の一辺[m]（書き出しが全域の区画を数えるのに使う）
+        static float GetCellSize();
         /// 種類 kind の束のひな形（メッシュと名前。インスタンスは空）
         const NorvesLib::Core::Rendering::FoliageBatch &GetTemplate(uint32_t kind) const
         {

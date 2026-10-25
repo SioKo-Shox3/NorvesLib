@@ -1,13 +1,16 @@
 ﻿#include "GameModes/Wasteland/WastelandPlacementExport.h"
 
+#include "Core/Public/Container/Span.h"
 #include "Core/Public/FileStream/FileStream.h"
 #include "Core/Public/Logging/LogMacros.h"
+#include "Core/Public/Text/JsonDocument.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
+#include <fstream>
 
 using namespace NorvesLib::Core;
 using namespace NorvesLib::Core::Container;
@@ -23,8 +26,21 @@ namespace Game::GameModes::WastelandPlacementExport
         constexpr const char *kTypeTalus = "talus";
         constexpr const char *kTypePlant = "plant";
         constexpr const char *kTypeGravel = "gravel";
+        /// 全域の全部を書く石の段（ほかの段は格子の区画の標本）
+        constexpr const char *kFullGravelTier = "cobble";
         /// 根元の円の半径を引く、メッシュの下の帯の割合
         constexpr float kRootBand = 0.05f;
+        /// 形の範囲の表（リポジトリの根から）
+        constexpr const char *kRegionsRelativePath = "Scripts/Terrain/ShapeRegions.json";
+
+        /// 形の範囲の四角（両端を含む）
+        struct RegionBox
+        {
+            float MinX = 0.0f;
+            float MaxX = 0.0f;
+            float MinZ = 0.0f;
+            float MaxZ = 0.0f;
+        };
 
         void AppendFormat(VariableArray<char> &text, const char *pFormat, ...)
         {
@@ -66,7 +82,7 @@ namespace Game::GameModes::WastelandPlacementExport
             return bGravel ? radius * 0.5f : radius;
         }
 
-        /// 書き出すパス。作業ディレクトリは実行ファイルのディレクトリになるので、相対パスはリポジトリの根を基準にする
+        /// リポジトリの根を基準にしたパス。作業ディレクトリは実行ファイルのディレクトリになるので、相対パスはリポジトリの根から
         String ResolvePath(const String &path)
         {
             const bool bAbsolute = (path.size() >= 2 && path[1] == ':') || (!path.empty() && (path[0] == '/' || path[0] == '\\'));
@@ -80,50 +96,326 @@ namespace Game::GameModes::WastelandPlacementExport
             return path;
         }
 
+        /// path の最後の区切りの後ろ（ファイルの名前）
+        String FileName(const String &path)
+        {
+            size_t start = 0;
+            for (size_t index = 0; index < path.size(); ++index)
+            {
+                if (path[index] == '/' || path[index] == '\\')
+                {
+                    start = index + 1;
+                }
+            }
+            return String(path.c_str() + start);
+        }
+
+        /// 物の行の置き場のパス（.json を除いた名前 + .objects.bin）
+        String ObjectsPath(const String &path)
+        {
+            const size_t length = path.size();
+            if (length >= 5 && std::strcmp(path.c_str() + length - 5, ".json") == 0)
+            {
+                return path.substr(0, length - 5) + ".objects.bin";
+            }
+            return path + ".objects.bin";
+        }
+
+        /// 形の範囲の表を読む。読めなければ理由を outError に入れて false
+        bool LoadRegions(VariableArray<RegionBox> &outRegions, String &outError)
+        {
+            const String path = ResolvePath(String(kRegionsRelativePath));
+            std::ifstream stream(path.c_str(), std::ios::binary | std::ios::ate);
+            const std::streamoff size = stream ? static_cast<std::streamoff>(stream.tellg()) : 0;
+            if (size <= 0)
+            {
+                outError = String("読めません: ") + path;
+                return false;
+            }
+            VariableArray<uint8_t> bytes(static_cast<size_t>(size));
+            stream.seekg(0, std::ios::beg);
+            stream.read(reinterpret_cast<char *>(bytes.data()), size);
+            size_t start = 0;
+            if (bytes.size() >= 3 && bytes[0] == 0xEFu && bytes[1] == 0xBBu && bytes[2] == 0xBFu)
+            {
+                start = 3;
+            }
+            JsonDocument document;
+            String parseError;
+            if (!JsonDocument::TryParseUtf8(Span<const uint8_t>(bytes.data() + start, bytes.size() - start), document,
+                                            &parseError))
+            {
+                outError = path + ": " + parseError;
+                return false;
+            }
+            const JsonValue regions = document.GetRoot().FindMember("regions");
+            if (!regions.IsArray() || regions.GetArraySize() == 0)
+            {
+                outError = path + ": regions の配列がありません";
+                return false;
+            }
+            for (size_t index = 0; index < regions.GetArraySize(); ++index)
+            {
+                const JsonValue x = regions.GetArrayElement(index).FindMember("x");
+                const JsonValue z = regions.GetArrayElement(index).FindMember("z");
+                if (!x.IsArray() || x.GetArraySize() != 2 || !z.IsArray() || z.GetArraySize() != 2)
+                {
+                    outError = path + ": 範囲の x・z が 2 つの数の配列でありません";
+                    return false;
+                }
+                RegionBox box;
+                box.MinX = static_cast<float>(x.GetArrayElement(0).AsNumber());
+                box.MaxX = static_cast<float>(x.GetArrayElement(1).AsNumber());
+                box.MinZ = static_cast<float>(z.GetArrayElement(0).AsNumber());
+                box.MaxZ = static_cast<float>(z.GetArrayElement(1).AsNumber());
+                outRegions.push_back(box);
+            }
+            return true;
+        }
+
+        bool InsideAnyRegion(const VariableArray<RegionBox> &regions, float x, float z)
+        {
+            for (const RegionBox &box : regions)
+            {
+                if (x >= box.MinX && x <= box.MaxX && z >= box.MinZ && z <= box.MaxZ)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /// 物の行を足す
+        void AppendRow(VariableArray<float> &rows, const float (&values)[kObjectColumns])
+        {
+            rows.insert(rows.end(), values, values + kObjectColumns);
+        }
+
         /// 草と石の物 1 つの行
-        void AppendScatterObject(VariableArray<char> &text, uint32_t meshIndex, const FoliageInstance &instance, float rootY,
-                                 bool &bFirstObject)
+        void AppendScatterObject(VariableArray<float> &rows, uint32_t meshIndex, const FoliageInstance &instance, float rootY)
         {
             // foliage.vert の Yaw の回転（ワールドで Y 軸まわり）を、崖錐の岩と同じ「共役を掛ける」規約の四元数にする
             const float halfYaw = 0.5f * instance.Yaw;
-            AppendFormat(text, "%s\n[%u,%.4f,%.4f,%.4f,0,%.7f,0,%.7f,%.5f,%.5f,%.5f,%.4f]", bFirstObject ? "" : ",", meshIndex,
-                         static_cast<double>(instance.Position[0]), static_cast<double>(instance.Position[1]),
-                         static_cast<double>(instance.Position[2]), static_cast<double>(-std::sin(halfYaw)),
-                         static_cast<double>(std::cos(halfYaw)), static_cast<double>(instance.WidthScale),
-                         static_cast<double>(instance.HeightScale), static_cast<double>(instance.WidthScale),
-                         static_cast<double>(rootY));
-            bFirstObject = false;
+            const float values[kObjectColumns] = {static_cast<float>(meshIndex), instance.Position[0], instance.Position[1],
+                                                  instance.Position[2], 0.0f, -std::sin(halfYaw), 0.0f, std::cos(halfYaw),
+                                                  instance.WidthScale, instance.HeightScale, instance.WidthScale, rootY};
+            AppendRow(rows, values);
         }
 
-        void AppendScatterMesh(VariableArray<char> &text, const FoliageBatch &batch, const char *pType, bool bGravel)
+        void AppendScatterMesh(VariableArray<char> &text, const FoliageBatch &batch, const char *pType, const char *pTier,
+                               bool bGravel)
         {
             const float height = batch.Mesh ? batch.Mesh->Height : 0.0f;
             const float radius = batch.Mesh ? RootRadius(*batch.Mesh, bGravel) : 0.0f;
-            AppendFormat(text, ",\n{\"name\":\"%s\",\"type\":\"%s\",\"height\":%.5f,\"root_radius\":%.5f,\"vertices\":%zu}",
-                         batch.DebugName, pType, static_cast<double>(height), static_cast<double>(radius),
+            AppendFormat(text,
+                         ",\n{\"name\":\"%s\",\"type\":\"%s\",\"tier\":\"%s\",\"height\":%.5f,\"root_radius\":%.5f,"
+                         "\"vertices\":%zu}",
+                         batch.DebugName, pType, pTier, static_cast<double>(height), static_cast<double>(radius),
                          batch.Mesh ? batch.Mesh->Vertices.size() : 0u);
+        }
+
+        /// 区画の番号の範囲（[first, last]）。DEM の格子の [lo, hi] に掛かる区画
+        void CellRange(double lo, double hi, double cellSize, int32_t &outFirst, int32_t &outLast)
+        {
+            outFirst = static_cast<int32_t>(std::floor(lo / cellSize));
+            outLast = static_cast<int32_t>(std::floor(hi / cellSize));
+        }
+
+        bool WriteBytes(const String &path, const void *pData, size_t size)
+        {
+            NorvesLib::FileStream::FileStreamUniquePtr stream = NorvesLib::FileStream::FileStream::CreateUnique(
+                path, NorvesLib::FileStream::FileMode::Write, NorvesLib::FileStream::FileAccess::Write,
+                NorvesLib::FileStream::FileShare::None);
+            if (!stream || stream->Write(pData, size) != size)
+            {
+                return false;
+            }
+            stream->Flush();
+            return true;
         }
     } // namespace
 
     bool Write(const String &path, const Rendering::Terrain::TerrainHeightField &field, const TalusInput &talus,
                WastelandFoliage::FoliageScatter &foliage, const WastelandGravel::GravelScatter &gravel)
     {
-        VariableArray<char> text;
-        text.reserve(64u << 20u);
+        VariableArray<RegionBox> regions;
+        String regionError;
+        if (!LoadRegions(regions, regionError))
+        {
+            LOG_ERROR_F("WASTELAND_PLACEMENT_EXPORT_FAILED 形の範囲を読めませんでした: %s", regionError.c_str());
+            return false;
+        }
+
         const Rendering::Terrain::TerrainGridLayout layout = field.GetGridLayout();
+        const double firstX = layout.FirstX;
+        const double firstZ = layout.FirstZ;
+        const double lastX = layout.FirstX + layout.Spacing * static_cast<double>(layout.Columns > 0 ? layout.Columns - 1 : 0);
+        const double lastZ = layout.FirstZ + layout.Spacing * static_cast<double>(layout.Rows > 0 ? layout.Rows - 1 : 0);
+        const uint32_t plantBase = WastelandTalus::kTalusMeshCount;
+        const uint32_t gravelBase = plantBase + WastelandFoliage::kPlantKindCount;
+
+        VariableArray<float> rows;
+        rows.reserve(static_cast<size_t>(8u) << 20u);
+
+        // 崖錐の岩: 置いた全部
+        for (const Component::MegaScatterInstance &instance : talus.Instances)
+        {
+            const uint32_t meshIndex = instance.MeshIndex < WastelandTalus::kTalusMeshCount ? instance.MeshIndex : 0u;
+            const float values[kObjectColumns] = {static_cast<float>(meshIndex), instance.Position.x, instance.Position.y,
+                                                  instance.Position.z, instance.Rotation.x, instance.Rotation.y,
+                                                  instance.Rotation.z, instance.Rotation.w, instance.Scale.x,
+                                                  instance.Scale.y, instance.Scale.z, instance.Position.y};
+            AppendRow(rows, values);
+        }
+
+        // 草と低木: DEM の格子に掛かる全部の区画
+        size_t plants = 0;
+        size_t plantCells = 0;
+        {
+            const double cellSize = WastelandFoliage::FoliageScatter::GetCellSize();
+            int32_t firstCellX = 0, lastCellX = 0, firstCellZ = 0, lastCellZ = 0;
+            CellRange(firstX, lastX, cellSize, firstCellX, lastCellX);
+            CellRange(firstZ, lastZ, cellSize, firstCellZ, lastCellZ);
+            for (int32_t cellZ = firstCellZ; cellZ <= lastCellZ; ++cellZ)
+            {
+                for (int32_t cellX = firstCellX; cellX <= lastCellX; ++cellX)
+                {
+                    VariableArray<FoliageInstance> plantCell[WastelandFoliage::kPlantKindCount];
+                    foliage.CollectCellAt(static_cast<float>((cellX + 0.5) * cellSize),
+                                          static_cast<float>((cellZ + 0.5) * cellSize), plantCell);
+                    ++plantCells;
+                    for (uint32_t kind = 0; kind < WastelandFoliage::kPlantKindCount; ++kind)
+                    {
+                        for (const FoliageInstance &instance : plantCell[kind])
+                        {
+                            AppendScatterObject(rows, plantBase + kind, instance, instance.Position[1]);
+                            ++plants;
+                        }
+                    }
+                }
+            }
+        }
+
+        // 石と礫の区画 1 つを書く
+        size_t stoneCounts[WastelandGravel::kTierCount] = {};
+        size_t stoneCells[WastelandGravel::kTierCount] = {};
+        auto appendGravelCell = [&](uint32_t tier, float x, float z)
+        {
+            VariableArray<FoliageInstance> stoneCell[WastelandGravel::kKindsPerTier];
+            gravel.CollectCellAt(tier, x, z, stoneCell);
+            ++stoneCells[tier];
+            for (uint32_t kind = 0; kind < WastelandGravel::kKindsPerTier; ++kind)
+            {
+                for (const FoliageInstance &instance : stoneCell[kind])
+                {
+                    const float groundY = field.SampleHeight(instance.Position[0], instance.Position[2]);
+                    AppendScatterObject(rows, gravelBase + tier * WastelandGravel::kKindsPerTier + kind, instance, groundY);
+                    ++stoneCounts[tier];
+                }
+            }
+        };
+
+        // 大きな石: 全部の区画。石と小礫: 格子の点を含む区画を丸ごと（形の範囲の中は 48 m おき、外は 192 m おき）
+        size_t latticeInside = 0;
+        size_t latticeOutside = 0;
+        for (uint32_t tier = 0; tier < WastelandGravel::kTierCount; ++tier)
+        {
+            if (std::strcmp(WastelandGravel::GravelScatter::GetTierName(tier), kFullGravelTier) != 0)
+            {
+                continue;
+            }
+            const double cellSize = WastelandGravel::GravelScatter::GetCellSize(tier);
+            int32_t firstCellX = 0, lastCellX = 0, firstCellZ = 0, lastCellZ = 0;
+            CellRange(firstX, lastX, cellSize, firstCellX, lastCellX);
+            CellRange(firstZ, lastZ, cellSize, firstCellZ, lastCellZ);
+            for (int32_t cellZ = firstCellZ; cellZ <= lastCellZ; ++cellZ)
+            {
+                for (int32_t cellX = firstCellX; cellX <= lastCellX; ++cellX)
+                {
+                    appendGravelCell(tier, static_cast<float>((cellX + 0.5) * cellSize),
+                                     static_cast<float>((cellZ + 0.5) * cellSize));
+                }
+            }
+        }
+        {
+            const int32_t firstPointX = static_cast<int32_t>(std::ceil(firstX / kSampleLatticeMeters));
+            const int32_t lastPointX = static_cast<int32_t>(std::floor(lastX / kSampleLatticeMeters));
+            const int32_t firstPointZ = static_cast<int32_t>(std::ceil(firstZ / kSampleLatticeMeters));
+            const int32_t lastPointZ = static_cast<int32_t>(std::floor(lastZ / kSampleLatticeMeters));
+            const auto onCoarse = [](int32_t index)
+            { return ((index % kSampleCoarseStride) + kSampleCoarseStride) % kSampleCoarseStride == 0; };
+            for (int32_t pointZ = firstPointZ; pointZ <= lastPointZ; ++pointZ)
+            {
+                for (int32_t pointX = firstPointX; pointX <= lastPointX; ++pointX)
+                {
+                    const float x = static_cast<float>(pointX) * kSampleLatticeMeters;
+                    const float z = static_cast<float>(pointZ) * kSampleLatticeMeters;
+                    const bool bInside = InsideAnyRegion(regions, x, z);
+                    if (!bInside && !(onCoarse(pointX) && onCoarse(pointZ)))
+                    {
+                        continue;
+                    }
+                    ++(bInside ? latticeInside : latticeOutside);
+                    for (uint32_t tier = 0; tier < WastelandGravel::kTierCount; ++tier)
+                    {
+                        if (std::strcmp(WastelandGravel::GravelScatter::GetTierName(tier), kFullGravelTier) != 0)
+                        {
+                            appendGravelCell(tier, x, z);
+                        }
+                    }
+                }
+            }
+        }
+
+        const String resolvedPath = ResolvePath(path);
+        const String objectsPath = ObjectsPath(resolvedPath);
+        const size_t objectCount = rows.size() / kObjectColumns;
+
+        VariableArray<char> text;
+        text.reserve(4u << 20u);
         AppendFormat(text,
-                     "{\n\"version\":1,\n\"description\":\"WastelandPlacementExport.h\",\n\"rotation\":\"conjugate\",\n"
-                     "\"grid\":{\"first_x\":%.3f,\"first_z\":%.3f,\"columns\":%u,\"rows\":%u,\"spacing\":%.4f},\n"
-                     "\"sampling\":{\"lattice_m\":%.1f,\"max_per_cell\":%zu},\n\"meshes\":[",
-                     layout.FirstX, layout.FirstZ, layout.Columns, layout.Rows, layout.Spacing,
-                     static_cast<double>(kSampleLatticeMeters), kMaxScatterPerCell);
+                     "{\n\"version\":2,\n\"description\":\"WastelandPlacementExport.h\",\n\"rotation\":\"conjugate\",\n"
+                     "\"grid\":{\"first_x\":%.3f,\"first_z\":%.3f,\"columns\":%u,\"rows\":%u,\"spacing\":%.4f},\n",
+                     layout.FirstX, layout.FirstZ, layout.Columns, layout.Rows, layout.Spacing);
+        AppendFormat(text,
+                     "\"sampling\":{\"full\":[\"talus\",\"plant\",\"%s\"],\"cell_sampled\":[",
+                     kFullGravelTier);
+        bool bFirstTier = true;
+        for (uint32_t tier = 0; tier < WastelandGravel::kTierCount; ++tier)
+        {
+            const char *pName = WastelandGravel::GravelScatter::GetTierName(tier);
+            if (std::strcmp(pName, kFullGravelTier) != 0)
+            {
+                AppendFormat(text, "%s\"%s\"", bFirstTier ? "" : ",", pName);
+                bFirstTier = false;
+            }
+        }
+        AppendFormat(text,
+                     "],\"regions\":\"%s\",\"lattice_inside_m\":%.1f,\"lattice_outside_m\":%.1f,"
+                     "\"lattice_points_inside\":%zu,\"lattice_points_outside\":%zu,\"cell_size_m\":{\"plant\":%.4f",
+                     kRegionsRelativePath, static_cast<double>(kSampleLatticeMeters),
+                     static_cast<double>(kSampleLatticeMeters * kSampleCoarseStride), latticeInside, latticeOutside,
+                     static_cast<double>(WastelandFoliage::FoliageScatter::GetCellSize()));
+        for (uint32_t tier = 0; tier < WastelandGravel::kTierCount; ++tier)
+        {
+            AppendFormat(text, ",\"%s\":%.4f", WastelandGravel::GravelScatter::GetTierName(tier),
+                         static_cast<double>(WastelandGravel::GravelScatter::GetCellSize(tier)));
+        }
+        AppendFormat(text, "},\"cells\":{\"plant\":%zu", plantCells);
+        for (uint32_t tier = 0; tier < WastelandGravel::kTierCount; ++tier)
+        {
+            AppendFormat(text, ",\"%s\":%zu", WastelandGravel::GravelScatter::GetTierName(tier), stoneCells[tier]);
+        }
+        AppendFormat(text, "}},\n\"objects_file\":\"%s\",\n\"object_count\":%zu,\n\"object_columns\":%zu,\n"
+                           "\"object_format\":\"float32 little-endian, row-major\",\n\"meshes\":[",
+                     FileName(objectsPath).c_str(), objectCount, kObjectColumns);
 
         // 形の表: 崖錐の岩 2・草と低木 5・石 3 段 × 4
         for (uint32_t mesh = 0; mesh < WastelandTalus::kTalusMeshCount; ++mesh)
         {
             const WastelandTalus::TalusMeshShape &shape = talus.Shapes[mesh];
-            AppendFormat(text, "%s\n{\"name\":\"%s\",\"type\":\"%s\",\"available\":%s,\"points\":[", mesh == 0 ? "" : ",",
-                         talus.MeshNames[mesh].c_str(), kTypeTalus, shape.bAvailable ? "true" : "false");
+            AppendFormat(text, "%s\n{\"name\":\"%s\",\"type\":\"%s\",\"tier\":\"talus\",\"available\":%s,\"points\":[",
+                         mesh == 0 ? "" : ",", talus.MeshNames[mesh].c_str(), kTypeTalus, shape.bAvailable ? "true" : "false");
             for (size_t index = 0; index < shape.Points.size(); ++index)
             {
                 const NorvesLib::Math::Vector3 &point = shape.Points[index];
@@ -132,106 +424,30 @@ namespace Game::GameModes::WastelandPlacementExport
             }
             AppendFormat(text, "]}");
         }
-        const uint32_t plantBase = WastelandTalus::kTalusMeshCount;
         for (uint32_t kind = 0; kind < WastelandFoliage::kPlantKindCount; ++kind)
         {
-            AppendScatterMesh(text, foliage.GetTemplate(kind), kTypePlant, false);
+            AppendScatterMesh(text, foliage.GetTemplate(kind), kTypePlant, kTypePlant, false);
         }
-        const uint32_t gravelBase = plantBase + WastelandFoliage::kPlantKindCount;
         for (uint32_t tier = 0; tier < WastelandGravel::kTierCount; ++tier)
         {
             for (uint32_t kind = 0; kind < WastelandGravel::kKindsPerTier; ++kind)
             {
-                AppendScatterMesh(text, gravel.GetTemplate(tier, kind), kTypeGravel, true);
-            }
-        }
-        AppendFormat(text, "\n],\n\"objects\":[");
-
-        bool bFirstObject = true;
-        for (const Component::MegaScatterInstance &instance : talus.Instances)
-        {
-            const uint32_t meshIndex = instance.MeshIndex < WastelandTalus::kTalusMeshCount ? instance.MeshIndex : 0u;
-            AppendFormat(text, "%s\n[%u,%.4f,%.4f,%.4f,%.7f,%.7f,%.7f,%.7f,%.5f,%.5f,%.5f,%.4f]", bFirstObject ? "" : ",",
-                         meshIndex, static_cast<double>(instance.Position.x), static_cast<double>(instance.Position.y),
-                         static_cast<double>(instance.Position.z), static_cast<double>(instance.Rotation.x),
-                         static_cast<double>(instance.Rotation.y), static_cast<double>(instance.Rotation.z),
-                         static_cast<double>(instance.Rotation.w), static_cast<double>(instance.Scale.x),
-                         static_cast<double>(instance.Scale.y), static_cast<double>(instance.Scale.z),
-                         static_cast<double>(instance.Position.y));
-            bFirstObject = false;
-        }
-
-        // 草と石: 全域の格子の点ごとに、その点を含む区画を段ごとに作る
-        size_t latticePoints = 0;
-        size_t plants = 0;
-        size_t stones = 0;
-        size_t thinnedCells = 0;
-        const double lastX = layout.FirstX + layout.Spacing * static_cast<double>(layout.Columns > 0 ? layout.Columns - 1 : 0);
-        const double lastZ = layout.FirstZ + layout.Spacing * static_cast<double>(layout.Rows > 0 ? layout.Rows - 1 : 0);
-        const double firstX = std::ceil(layout.FirstX / kSampleLatticeMeters) * kSampleLatticeMeters;
-        const double firstZ = std::ceil(layout.FirstZ / kSampleLatticeMeters) * kSampleLatticeMeters;
-        for (double z = firstZ; z <= lastZ; z += kSampleLatticeMeters)
-        {
-            for (double x = firstX; x <= lastX; x += kSampleLatticeMeters)
-            {
-                const float px = static_cast<float>(x);
-                const float pz = static_cast<float>(z);
-                ++latticePoints;
-                VariableArray<FoliageInstance> plantCell[WastelandFoliage::kPlantKindCount];
-                foliage.CollectCellAt(px, pz, plantCell);
-                for (uint32_t kind = 0; kind < WastelandFoliage::kPlantKindCount; ++kind)
-                {
-                    for (const FoliageInstance &instance : plantCell[kind])
-                    {
-                        AppendScatterObject(text, plantBase + kind, instance, instance.Position[1], bFirstObject);
-                        ++plants;
-                    }
-                }
-                for (uint32_t tier = 0; tier < WastelandGravel::kTierCount; ++tier)
-                {
-                    VariableArray<FoliageInstance> stoneCell[WastelandGravel::kKindsPerTier];
-                    gravel.CollectCellAt(tier, px, pz, stoneCell);
-                    size_t cellCount = 0;
-                    for (const VariableArray<FoliageInstance> &instances : stoneCell)
-                    {
-                        cellCount += instances.size();
-                    }
-                    const size_t stride = std::max<size_t>(1, (cellCount + kMaxScatterPerCell - 1) / kMaxScatterPerCell);
-                    thinnedCells += stride > 1 ? 1u : 0u;
-                    size_t ordinal = 0;
-                    for (uint32_t kind = 0; kind < WastelandGravel::kKindsPerTier; ++kind)
-                    {
-                        for (const FoliageInstance &instance : stoneCell[kind])
-                        {
-                            if ((ordinal++ % stride) != 0)
-                            {
-                                continue;
-                            }
-                            const float groundY = field.SampleHeight(instance.Position[0], instance.Position[2]);
-                            AppendScatterObject(text, gravelBase + tier * WastelandGravel::kKindsPerTier + kind, instance,
-                                                groundY, bFirstObject);
-                            ++stones;
-                        }
-                    }
-                }
+                AppendScatterMesh(text, gravel.GetTemplate(tier, kind), kTypeGravel,
+                                  WastelandGravel::GravelScatter::GetTierName(tier), true);
             }
         }
         AppendFormat(text, "\n]\n}\n");
 
-        const String resolvedPath = ResolvePath(path);
-        NorvesLib::FileStream::FileStreamUniquePtr stream = NorvesLib::FileStream::FileStream::CreateUnique(
-            resolvedPath, NorvesLib::FileStream::FileMode::Write, NorvesLib::FileStream::FileAccess::Write,
-            NorvesLib::FileStream::FileShare::None);
-        if (!stream || stream->Write(text.data(), text.size()) != text.size())
+        if (!WriteBytes(objectsPath, rows.data(), rows.size() * sizeof(float)) ||
+            !WriteBytes(resolvedPath, text.data(), text.size()))
         {
             LOG_ERROR_F("WASTELAND_PLACEMENT_EXPORT_FAILED path=%s 配置を書けませんでした", resolvedPath.c_str());
             return false;
         }
-        stream->Flush();
-        LOG_INFO_F("WASTELAND_PLACEMENT_EXPORT path=%s talus=%zu plants=%zu stones=%zu lattice_points=%zu lattice_m=%.0f "
-                   "thinned_cells=%zu bytes=%zu",
-                   resolvedPath.c_str(), talus.Instances.size(), plants, stones, latticePoints,
-                   static_cast<double>(kSampleLatticeMeters), thinnedCells, text.size());
+        LOG_INFO_F("WASTELAND_PLACEMENT_EXPORT path=%s talus=%zu plants=%zu pebbles=%zu stones=%zu cobbles=%zu "
+                   "plant_cells=%zu cobble_cells=%zu lattice_inside=%zu lattice_outside=%zu objects=%zu bytes=%zu",
+                   resolvedPath.c_str(), talus.Instances.size(), plants, stoneCounts[0], stoneCounts[1], stoneCounts[2],
+                   plantCells, stoneCells[2], latticeInside, latticeOutside, objectCount, rows.size() * sizeof(float));
         return true;
     }
 } // namespace Game::GameModes::WastelandPlacementExport

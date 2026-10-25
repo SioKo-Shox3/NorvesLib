@@ -2,10 +2,14 @@
 
 // 置いた物（崖錐の岩・草と低木・石と礫）の配置の書き出し（--wasteland-export-placement=<path>。開発ビルドだけ）。
 // 置き方は 1 m の格子の高さ（TerrainHeightField::SampleHeight）を読むので、焼いた地形の面とのずれを
-// Scripts/Terrain/CheckPlacement.py が焼いた面の問い合わせ（AssetCook --sample-cooked-terrain）で測る。その入力を JSON で書く。
+// Scripts/Terrain/CheckPlacement.py が焼いた面の問い合わせ（AssetCook --sample-cooked-terrain）で測る。その入力を書く。
 //   - 崖錐の岩: 置いた全部（影を落とす岩と小片）。形はメッシュの頂点の間引いた標本（ローカルの座標。WastelandTalus と同じ点）
-//   - 草と低木・石と礫: カメラの周りだけ撒く散布で全域の数は数億になるので、地形の全域に kSampleLatticeMeters おきの格子の点を
-//     取り、各点を含む区画（段ごと）を描画と同じ規則で作って全部書く（区画の石が kMaxScatterPerCell を超える段は等間隔に間引く）
+//   - 草と低木・大きな石（cobble）: DEM の格子に掛かる全部の区画を描画と同じ規則で作って全部書く
+//   - 石（stone）・小礫（pebble）: 全域で数億個になるので標本にする。kSampleLatticeMeters おきの格子の点のうち、
+//     形の範囲（Scripts/Terrain/ShapeRegions.json）の中の点と、kSampleCoarseStride 個おきの点（範囲の外の粗い格子）を取り、
+//     各点を含む区画を間引かずに丸ごと書く
+// path の JSON には格子・標本の取り方・形の表を書き、物の行は隣のバイナリ（<path から .json を除いた名前>.objects.bin。
+// float32 のリトルエンディアン、1 行 kObjectColumns 個）に書く。
 // 物の行は [形の番号, 位置 xyz, 四元数 xyzw, 拡大率 xyz, 根元の高さ]。ワールドの位置 = 位置 + (四元数の共役の回転)(拡大率 ⊙ ローカル)
 // （崖錐の岩の散布と同じ写し方。草と石は Yaw を同じ規約の四元数にする）。根元の高さは置き方が地面と見なした高さで、
 // 草と低木は株の根元（SampleHeight − 沈め）、石は地面の線（SampleHeight。石の底はそこから沈める）、岩は位置の y。
@@ -18,10 +22,12 @@
 
 namespace Game::GameModes::WastelandPlacementExport
 {
-    /// 草と低木・石と礫の区画を取る格子の間隔[m]
-    inline constexpr float kSampleLatticeMeters = 192.0f;
-    /// 書き出す区画 1 つの物の数の上限（超えた区画は等間隔に間引く）
-    inline constexpr size_t kMaxScatterPerCell = 128;
+    /// 石と小礫の標本の区画を取る格子の間隔[m]（形の範囲の中）
+    inline constexpr float kSampleLatticeMeters = 48.0f;
+    /// 形の範囲の外では格子の点をこの数おきに取る（48 m × 4 = 192 m おき）
+    inline constexpr int32_t kSampleCoarseStride = 4;
+    /// 物の行の数の個数
+    inline constexpr size_t kObjectColumns = 12;
 
     /// 崖錐の岩の入力（形の名前は WastelandPropExport::MeshNameFromLogicalPath と同じ）
     struct TalusInput

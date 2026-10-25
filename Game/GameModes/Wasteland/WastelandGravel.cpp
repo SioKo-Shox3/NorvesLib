@@ -55,6 +55,8 @@ namespace Game::GameModes::WastelandGravel
 
         // 置かない傾斜[度]（崖と急な崖錐の面）
         constexpr float kMaxSlopeDegrees = 38.0f;
+        // DEM の格子の縁から置かない幅[m]（石の根元の円が格子の外へはみ出さない）
+        constexpr float kGridEdgeMargin = 1.0f;
         // 区画の箱を石の底の高さの範囲から広げる量[m]（横は石の半径、上は最も高い石）
         constexpr float kCellBoundsSideMargin = 0.3f;
         constexpr float kCellBoundsTopMargin = 0.4f;
@@ -527,7 +529,8 @@ namespace Game::GameModes::WastelandGravel
                 const int32_t gz = cell.Z * desc.CandidatesPerCell + j;
                 const float x = (static_cast<float>(gx) + Hash2(gx, gz, tierSalt + 1u)) * desc.CandidateSpacing;
                 const float z = (static_cast<float>(gz) + Hash2(gx, gz, tierSalt + 2u)) * desc.CandidateSpacing;
-                if (!field.Contains(x, z) || IsExcluded(x, z, tier == kTierCount - 1))
+                if (!field.Contains(x - kGridEdgeMargin, z - kGridEdgeMargin) ||
+                    !field.Contains(x + kGridEdgeMargin, z + kGridEdgeMargin) || IsExcluded(x, z, tier == kTierCount - 1))
                 {
                     continue;
                 }
@@ -600,6 +603,16 @@ namespace Game::GameModes::WastelandGravel
             std::sort(instances.begin(), instances.end(),
                       [](const FoliageInstance &a, const FoliageInstance &b) { return a.FadeThreshold < b.FadeThreshold; });
         }
+    }
+
+    float GravelScatter::GetCellSize(uint32_t tier)
+    {
+        return tier < kTierCount ? CellSize(tier) : 0.0f;
+    }
+
+    const char *GravelScatter::GetTierName(uint32_t tier)
+    {
+        return tier < kTierCount ? kTiers[tier].Name : "";
     }
 
     void GravelScatter::CollectCellAt(uint32_t tier, float x, float z,

@@ -45,6 +45,8 @@ namespace Game::GameModes::WastelandTalus
         constexpr float kToeChance = 0.05f;
         // 岩を置かない傾斜（崖）
         constexpr float kMaxSlopeDegrees = 42.0f;
+        // DEM の格子の縁から置かない幅[m]（最も大きい岩〔拡大率 4.5・水平の半径約 5.6 m〕の足元が格子の外へはみ出さない）
+        constexpr float kGridEdgeMargin = 6.0f;
 
         // ---- 群れ ----
         // 大岩の無い群れ（小片だけ）の割合
@@ -271,10 +273,11 @@ namespace Game::GameModes::WastelandTalus
                 return false;
             }
 
-            /// (x,z) に置けるか（格子の中・崖でない・除外の外）。置けるなら法線を返す
+            /// (x,z) に置けるか（格子の縁から kGridEdgeMargin の内・崖でない・除外の外）。置けるなら法線を返す
             bool CanPlace(float x, float z, TerrainNormal &outNormal) const
             {
-                if (!Field.Contains(x, z) || IsExcluded(x, z))
+                if (!Field.Contains(x - kGridEdgeMargin, z - kGridEdgeMargin) ||
+                    !Field.Contains(x + kGridEdgeMargin, z + kGridEdgeMargin) || IsExcluded(x, z))
                 {
                     return false;
                 }

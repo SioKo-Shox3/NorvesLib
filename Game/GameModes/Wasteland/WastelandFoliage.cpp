@@ -33,6 +33,8 @@ namespace Game::GameModes::WastelandFoliage
         constexpr float kKeepRadius = kGenerateRadius + kCellSize;
         // 置かない傾斜[度]（崩れた沢の岸・急な斜面）
         constexpr float kMaxSlopeDegrees = 28.0f;
+        // DEM の格子の縁から置かない幅[m]（株の根元の円が格子の外へはみ出さない）
+        constexpr float kGridEdgeMargin = 1.0f;
         // 根元を地面へ埋める深さ[m]（地形の三角形の折れ目で浮かない）
         constexpr float kRootSink = 0.03f;
         // 区画の箱を株の根元の範囲から広げる量[m]（横は樹冠の半径と風のずれ、上は最も高い株の高さ）
@@ -343,7 +345,8 @@ namespace Game::GameModes::WastelandFoliage
                     const uint32_t salt = slot * 32u;
                     const float x = (static_cast<float>(gx) + Hash2(gx, gz, salt + 1u)) * kCandidateSpacing;
                     const float z = (static_cast<float>(gz) + Hash2(gx, gz, salt + 2u)) * kCandidateSpacing;
-                    if (!field.Contains(x, z) || IsExcluded(x, z))
+                    if (!field.Contains(x - kGridEdgeMargin, z - kGridEdgeMargin) ||
+                        !field.Contains(x + kGridEdgeMargin, z + kGridEdgeMargin) || IsExcluded(x, z))
                     {
                         continue;
                     }
@@ -420,6 +423,11 @@ namespace Game::GameModes::WastelandFoliage
             std::sort(instances.begin(), instances.end(),
                       [](const FoliageInstance &a, const FoliageInstance &b) { return a.FadeThreshold < b.FadeThreshold; });
         }
+    }
+
+    float FoliageScatter::GetCellSize()
+    {
+        return kCellSize;
     }
 
     void FoliageScatter::CollectCellAt(float x, float z, VariableArray<FoliageInstance> (&outInstances)[kPlantKindCount])
