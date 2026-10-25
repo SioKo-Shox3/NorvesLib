@@ -11,6 +11,21 @@
       "generator": "Scripts/Terrain/BlenderCliffScan.py --place",
       "terrain_mesh_manifest_sha256": "f036d9befdd02cf47ad57ca516a450e3e6cf5895aaacc9f146f456a72c31e38d",
       "blender": "5.2.2 LTS"
+    },
+    "only_battleship_wallside": {
+      "generator": "Scripts/Terrain/BlenderCliffScan.py --place",
+      "terrain_mesh_manifest_sha256": "f036d9befdd02cf47ad57ca516a450e3e6cf5895aaacc9f146f456a72c31e38d",
+      "blender": "5.2.2 LTS"
+    },
+    "only_battleship_wallsmall": {
+      "generator": "Scripts/Terrain/BlenderCliffScan.py --place",
+      "terrain_mesh_manifest_sha256": "f036d9befdd02cf47ad57ca516a450e3e6cf5895aaacc9f146f456a72c31e38d",
+      "blender": "5.2.2 LTS"
+    },
+    "only_battleship_wallfin": {
+      "generator": "Scripts/Terrain/BlenderCliffScan.py --place",
+      "terrain_mesh_manifest_sha256": "f036d9befdd02cf47ad57ca516a450e3e6cf5895aaacc9f146f456a72c31e38d",
+      "blender": "5.2.2 LTS"
     }
   },
   "assets": [
@@ -11090,6 +11105,2206 @@
           6.22,
           8.95,
           4.91
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "battleship_wallfin_000",
+      "asset": "boulder_01",
+      "position": [
+        -2124.51147,
+        90.57278,
+        -1229.50317
+      ],
+      "rotation_xyzw": [
+        0.0,
+        0.99719006,
+        0.0,
+        0.07491474
+      ],
+      "scale": 4.5,
+      "world_bounds_min": [
+        -2127.147,
+        90.241,
+        -1233.308
+      ],
+      "world_bounds_max": [
+        -2121.141,
+        94.759,
+        -1225.41
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -2124.017,
+          92.5,
+          -1229.379
+        ],
+        "face_normal_engine": [
+          -0.9888,
+          0.0,
+          0.1494
+        ],
+        "face_tilt_degrees": 46.7,
+        "offset_along_normal_m": 0.129,
+        "visible_volume_fraction": 0.45,
+        "visible_surface_fraction": 0.475,
+        "vertex_below_top_surface_fraction": 0.4529,
+        "size_m": [
+          5.72,
+          8.24,
+          4.52
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "battleship_wallfin_001",
+      "asset": "boulder_01",
+      "position": [
+        -2115.70752,
+        90.57278,
+        -1215.19006
+      ],
+      "rotation_xyzw": [
+        0.0,
+        0.94137746,
+        0.0,
+        0.33735514
+      ],
+      "scale": 4.5,
+      "world_bounds_min": [
+        -2119.392,
+        90.241,
+        -1218.676
+      ],
+      "world_bounds_max": [
+        -2112.276,
+        94.759,
+        -1211.65
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -2115.782,
+          92.5,
+          -1215.199
+        ],
+        "face_normal_engine": [
+          -0.8248,
+          0.0,
+          0.5654
+        ],
+        "face_tilt_degrees": 29.9,
+        "offset_along_normal_m": 0.063,
+        "visible_volume_fraction": 0.45,
+        "visible_surface_fraction": 0.444,
+        "vertex_below_top_surface_fraction": 0.41,
+        "size_m": [
+          5.72,
+          8.24,
+          4.52
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "battleship_wallfin_003",
+      "asset": "boulder_01",
+      "position": [
+        -2123.97729,
+        95.57278,
+        -1229.67896
+      ],
+      "rotation_xyzw": [
+        0.0,
+        0.99777138,
+        0.0,
+        0.06672554
+      ],
+      "scale": 4.5,
+      "world_bounds_min": [
+        -2126.581,
+        95.241,
+        -1233.506
+      ],
+      "world_bounds_max": [
+        -2120.604,
+        99.759,
+        -1225.562
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -2123.919,
+          97.5,
+          -1229.559
+        ],
+        "face_normal_engine": [
+          -0.9971,
+          0.0,
+          -0.0758
+        ],
+        "face_tilt_degrees": 85.7,
+        "offset_along_normal_m": -0.328,
+        "visible_volume_fraction": 0.45,
+        "visible_surface_fraction": 0.616,
+        "vertex_below_top_surface_fraction": 0.3952,
+        "size_m": [
+          5.72,
+          8.24,
+          4.52
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "battleship_wallfin_004",
+      "asset": "boulder_01",
+      "position": [
+        -2112.31982,
+        95.57278,
+        -1221.64062
+      ],
+      "rotation_xyzw": [
+        0.0,
+        0.89868146,
+        0.0,
+        0.43860194
+      ],
+      "scale": 4.5,
+      "world_bounds_min": [
+        -2116.252,
+        95.241,
+        -1224.925
+      ],
+      "world_bounds_max": [
+        -2108.406,
+        99.759,
+        -1218.224
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -2112.311,
+          97.5,
+          -1221.596
+        ],
+        "face_normal_engine": [
+          -0.6557,
+          0.0,
+          0.755
+        ],
+        "face_tilt_degrees": 79.4,
+        "offset_along_normal_m": 0.028,
+        "visible_volume_fraction": 0.452,
+        "visible_surface_fraction": 0.422,
+        "vertex_below_top_surface_fraction": 0.5793,
+        "size_m": [
+          5.72,
+          8.24,
+          4.52
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "battleship_wallfin_005",
+      "asset": "boulder_01",
+      "position": [
+        -2101.21777,
+        95.57278,
+        -1212.80017
+      ],
+      "rotation_xyzw": [
+        0.0,
+        0.89934415,
+        0.0,
+        0.43724149
+      ],
+      "scale": 4.5,
+      "world_bounds_min": [
+        -2105.148,
+        95.241,
+        -1216.087
+      ],
+      "world_bounds_max": [
+        -2097.31,
+        99.759,
+        -1209.381
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -2101.101,
+          97.5,
+          -1212.897
+        ],
+        "face_normal_engine": [
+          -0.6176,
+          0.0,
+          0.7865
+        ],
+        "face_tilt_degrees": 51.2,
+        "offset_along_normal_m": 0.207,
+        "visible_volume_fraction": 0.449,
+        "visible_surface_fraction": 0.378,
+        "vertex_below_top_surface_fraction": 0.5295,
+        "size_m": [
+          5.72,
+          8.24,
+          4.52
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "battleship_wallfin_006",
+      "asset": "boulder_01",
+      "position": [
+        -2124.0083,
+        100.57278,
+        -1229.64587
+      ],
+      "rotation_xyzw": [
+        -0.0,
+        -0.99701959,
+        -0.0,
+        0.0771489
+      ],
+      "scale": 4.5,
+      "world_bounds_min": [
+        -2126.534,
+        100.241,
+        -1233.693
+      ],
+      "world_bounds_max": [
+        -2120.702,
+        104.759,
+        -1225.298
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -2123.914,
+          102.5,
+          -1229.568
+        ],
+        "face_normal_engine": [
+          -0.9709,
+          0.0,
+          -0.2394
+        ],
+        "face_tilt_degrees": 59.7,
+        "offset_along_normal_m": -0.305,
+        "visible_volume_fraction": 0.449,
+        "visible_surface_fraction": 0.567,
+        "vertex_below_top_surface_fraction": 0.4436,
+        "size_m": [
+          5.72,
+          8.24,
+          4.52
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "battleship_wallfin_007",
+      "asset": "boulder_01",
+      "position": [
+        -2112.25537,
+        100.57278,
+        -1221.6814
+      ],
+      "rotation_xyzw": [
+        0.0,
+        0.90946805,
+        0.0,
+        0.41577384
+      ],
+      "scale": 4.5,
+      "world_bounds_min": [
+        -2116.147,
+        100.241,
+        -1225.016
+      ],
+      "world_bounds_max": [
+        -2108.44,
+        104.759,
+        -1218.222
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -2112.31,
+          102.5,
+          -1221.597
+        ],
+        "face_normal_engine": [
+          -0.5999,
+          0.0,
+          0.8001
+        ],
+        "face_tilt_degrees": 89.7,
+        "offset_along_normal_m": -0.028,
+        "visible_volume_fraction": 0.448,
+        "visible_surface_fraction": 0.473,
+        "vertex_below_top_surface_fraction": 0.558,
+        "size_m": [
+          5.72,
+          8.24,
+          4.52
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "battleship_wallfin_008",
+      "asset": "boulder_01",
+      "position": [
+        -2100.90918,
+        100.57278,
+        -1213.33496
+      ],
+      "rotation_xyzw": [
+        0.0,
+        0.8316294,
+        0.0,
+        0.55533105
+      ],
+      "scale": 4.5,
+      "world_bounds_min": [
+        -2104.979,
+        100.241,
+        -1216.491
+      ],
+      "world_bounds_max": [
+        -2096.641,
+        104.759,
+        -1210.293
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -2100.915,
+          102.5,
+          -1213.24
+        ],
+        "face_normal_engine": [
+          -0.5669,
+          0.0,
+          0.8238
+        ],
+        "face_tilt_degrees": 89.1,
+        "offset_along_normal_m": -0.185,
+        "visible_volume_fraction": 0.451,
+        "visible_surface_fraction": 0.515,
+        "vertex_below_top_surface_fraction": 0.4919,
+        "size_m": [
+          5.72,
+          8.24,
+          4.52
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "battleship_wallfin_009",
+      "asset": "boulder_01",
+      "position": [
+        -2123.90942,
+        105.57278,
+        -1229.65186
+      ],
+      "rotation_xyzw": [
+        -0.0,
+        -0.98973012,
+        -0.0,
+        0.14294858
+      ],
+      "scale": 4.5,
+      "world_bounds_min": [
+        -2126.741,
+        105.241,
+        -1233.719
+      ],
+      "world_bounds_max": [
+        -2120.67,
+        109.759,
+        -1225.318
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -2123.903,
+          107.5,
+          -1229.588
+        ],
+        "face_normal_engine": [
+          -0.943,
+          0.0,
+          -0.3328
+        ],
+        "face_tilt_degrees": 65.6,
+        "offset_along_normal_m": -0.21,
+        "visible_volume_fraction": 0.449,
+        "visible_surface_fraction": 0.526,
+        "vertex_below_top_surface_fraction": 0.4702,
+        "size_m": [
+          5.72,
+          8.24,
+          4.52
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "battleship_wallfin_010",
+      "asset": "boulder_01",
+      "position": [
+        -2112.28076,
+        105.57278,
+        -1221.71545
+      ],
+      "rotation_xyzw": [
+        0.0,
+        0.89157522,
+        0.0,
+        0.45287266
+      ],
+      "scale": 4.5,
+      "world_bounds_min": [
+        -2116.236,
+        105.241,
+        -1224.964
+      ],
+      "world_bounds_max": [
+        -2108.31,
+        109.759,
+        -1218.331
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -2112.31,
+          107.5,
+          -1221.598
+        ],
+        "face_normal_engine": [
+          -0.5898,
+          0.0,
+          0.8075
+        ],
+        "face_tilt_degrees": 89.7,
+        "offset_along_normal_m": -0.061,
+        "visible_volume_fraction": 0.453,
+        "visible_surface_fraction": 0.494,
+        "vertex_below_top_surface_fraction": 0.5345,
+        "size_m": [
+          5.72,
+          8.24,
+          4.52
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "battleship_wallfin_011",
+      "asset": "boulder_01",
+      "position": [
+        -2100.83936,
+        105.57278,
+        -1213.51135
+      ],
+      "rotation_xyzw": [
+        0.0,
+        0.86585826,
+        0.0,
+        0.50028956
+      ],
+      "scale": 4.5,
+      "world_bounds_min": [
+        -2104.875,
+        105.241,
+        -1216.614
+      ],
+      "world_bounds_max": [
+        -2096.707,
+        109.759,
+        -1210.26
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -2100.867,
+          107.5,
+          -1213.329
+        ],
+        "face_normal_engine": [
+          -0.573,
+          0.0,
+          0.8195
+        ],
+        "face_tilt_degrees": 89.1,
+        "offset_along_normal_m": -0.132,
+        "visible_volume_fraction": 0.444,
+        "visible_surface_fraction": 0.498,
+        "vertex_below_top_surface_fraction": 0.5166,
+        "size_m": [
+          5.72,
+          8.24,
+          4.52
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "battleship_wallfin_012",
+      "asset": "boulder_01",
+      "position": [
+        -2123.8269,
+        107.57278,
+        -1229.6499
+      ],
+      "rotation_xyzw": [
+        -0.0,
+        -0.9758389,
+        -0.0,
+        0.21849135
+      ],
+      "scale": 4.5,
+      "world_bounds_min": [
+        -2126.951,
+        107.241,
+        -1233.715
+      ],
+      "world_bounds_max": [
+        -2120.713,
+        111.759,
+        -1225.425
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -2123.899,
+          109.5,
+          -1229.596
+        ],
+        "face_normal_engine": [
+          -0.9321,
+          0.0,
+          -0.3623
+        ],
+        "face_tilt_degrees": 57.4,
+        "offset_along_normal_m": -0.072,
+        "visible_volume_fraction": 0.448,
+        "visible_surface_fraction": 0.509,
+        "vertex_below_top_surface_fraction": 0.4906,
+        "size_m": [
+          5.72,
+          8.24,
+          4.52
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "battleship_wallfin_013",
+      "asset": "boulder_01",
+      "position": [
+        -2112.31812,
+        107.57278,
+        -1221.68274
+      ],
+      "rotation_xyzw": [
+        0.0,
+        0.83807498,
+        0.0,
+        0.54555506
+      ],
+      "scale": 4.5,
+      "world_bounds_min": [
+        -2116.387,
+        107.241,
+        -1224.819
+      ],
+      "world_bounds_max": [
+        -2108.071,
+        111.759,
+        -1218.599
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -2112.309,
+          109.5,
+          -1221.598
+        ],
+        "face_normal_engine": [
+          -0.586,
+          0.0,
+          0.8103
+        ],
+        "face_tilt_degrees": 89.7,
+        "offset_along_normal_m": -0.137,
+        "visible_volume_fraction": 0.445,
+        "visible_surface_fraction": 0.517,
+        "vertex_below_top_surface_fraction": 0.5054,
+        "size_m": [
+          5.72,
+          8.24,
+          4.52
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "battleship_wallfin_014",
+      "asset": "boulder_01",
+      "position": [
+        -2100.81665,
+        107.57278,
+        -1213.52795
+      ],
+      "rotation_xyzw": [
+        0.0,
+        0.87495857,
+        0.0,
+        0.48419777
+      ],
+      "scale": 4.5,
+      "world_bounds_min": [
+        -2104.83,
+        107.241,
+        -1216.685
+      ],
+      "world_bounds_max": [
+        -2096.734,
+        111.759,
+        -1210.227
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -2100.851,
+          109.5,
+          -1213.358
+        ],
+        "face_normal_engine": [
+          -0.5747,
+          0.0,
+          0.8183
+        ],
+        "face_tilt_degrees": 89.3,
+        "offset_along_normal_m": -0.119,
+        "visible_volume_fraction": 0.453,
+        "visible_surface_fraction": 0.495,
+        "vertex_below_top_surface_fraction": 0.5169,
+        "size_m": [
+          5.72,
+          8.24,
+          4.52
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "battleship_wallside_000",
+      "asset": "rock_09",
+      "position": [
+        -2137.16235,
+        70.85533,
+        -1217.79517
+      ],
+      "rotation_xyzw": [
+        0.0,
+        0.96952605,
+        0.0,
+        0.24498829
+      ],
+      "scale": 110.0,
+      "world_bounds_min": [
+        -2142.223,
+        70.792,
+        -1226.915
+      ],
+      "world_bounds_max": [
+        -2131.407,
+        74.408,
+        -1211.12
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -2136.948,
+          72.6,
+          -1218.946
+        ],
+        "face_normal_engine": [
+          -0.88,
+          0.0,
+          0.475
+        ],
+        "face_tilt_degrees": 43.6,
+        "offset_along_normal_m": -0.151,
+        "visible_volume_fraction": 0.453,
+        "visible_surface_fraction": 0.447,
+        "vertex_below_top_surface_fraction": 0.5229,
+        "size_m": [
+          8.14,
+          15.91,
+          3.62
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "battleship_wallside_001",
+      "asset": "rock_09",
+      "position": [
+        -2136.72095,
+        75.50414,
+        -1219.77441
+      ],
+      "rotation_xyzw": [
+        0.01731746,
+        0.97752619,
+        -0.00216607,
+        0.2100904
+      ],
+      "scale": 124.999992,
+      "world_bounds_min": [
+        -2142.193,
+        75.462,
+        -1230.303
+      ],
+      "world_bounds_max": [
+        -2130.323,
+        79.538,
+        -1212.119
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -2136.659,
+          77.5,
+          -1221.071
+        ],
+        "face_normal_engine": [
+          -0.944,
+          0.0,
+          0.3298
+        ],
+        "face_tilt_degrees": 75.3,
+        "offset_along_normal_m": -0.425,
+        "visible_volume_fraction": 0.447,
+        "visible_surface_fraction": 0.588,
+        "vertex_below_top_surface_fraction": 0.4084,
+        "size_m": [
+          9.25,
+          18.08,
+          4.11
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "battleship_wallside_002",
+      "asset": "rock_09",
+      "position": [
+        -2126.15283,
+        76.01775,
+        -1202.72961
+      ],
+      "rotation_xyzw": [
+        -0.01669596,
+        0.97449231,
+        0.00508245,
+        0.22374137
+      ],
+      "scale": 94.999992,
+      "world_bounds_min": [
+        -2130.451,
+        75.903,
+        -1210.679
+      ],
+      "world_bounds_max": [
+        -2121.31,
+        79.097,
+        -1196.902
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -2125.898,
+          77.5,
+          -1203.78
+        ],
+        "face_normal_engine": [
+          -0.8672,
+          0.0,
+          0.4979
+        ],
+        "face_tilt_degrees": 46.1,
+        "offset_along_normal_m": -0.021,
+        "visible_volume_fraction": 0.447,
+        "visible_surface_fraction": 0.462,
+        "vertex_below_top_surface_fraction": 0.5152,
+        "size_m": [
+          7.03,
+          13.74,
+          3.12
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "battleship_wallside_003",
+      "asset": "boulder_01",
+      "position": [
+        -2121.74829,
+        73.97382,
+        -1180.72791
+      ],
+      "rotation_xyzw": [
+        -0.0,
+        -0.76400208,
+        -0.0,
+        0.64521378
+      ],
+      "scale": 8.0,
+      "world_bounds_min": [
+        -2128.976,
+        73.385,
+        -1185.477
+      ],
+      "world_bounds_max": [
+        -2115.028,
+        81.415,
+        -1174.744
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -2121.916,
+          77.4,
+          -1182.196
+        ],
+        "face_normal_engine": [
+          0.0412,
+          0.0,
+          -0.9991
+        ],
+        "face_tilt_degrees": 17.0,
+        "offset_along_normal_m": -2.087,
+        "visible_volume_fraction": 0.45,
+        "visible_surface_fraction": 0.68,
+        "vertex_below_top_surface_fraction": 0.2586,
+        "size_m": [
+          10.18,
+          14.64,
+          8.03
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "battleship_wallside_005",
+      "asset": "boulder_01",
+      "position": [
+        -2123.271,
+        79.56634,
+        -1175.44128
+      ],
+      "rotation_xyzw": [
+        -0.0,
+        -0.99990565,
+        -0.0,
+        0.01373816
+      ],
+      "scale": 6.849999,
+      "world_bounds_min": [
+        -2126.794,
+        79.062,
+        -1181.514
+      ],
+      "world_bounds_max": [
+        -2118.159,
+        85.938,
+        -1168.911
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -2122.723,
+          82.5,
+          -1175.219
+        ],
+        "face_normal_engine": [
+          -0.9996,
+          0.0,
+          -0.0275
+        ],
+        "face_tilt_degrees": 89.7,
+        "offset_along_normal_m": -0.247,
+        "visible_volume_fraction": 0.447,
+        "visible_surface_fraction": 0.46,
+        "vertex_below_top_surface_fraction": 0.5501,
+        "size_m": [
+          8.71,
+          12.54,
+          6.88
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "battleship_wallside_006",
+      "asset": "rock_09",
+      "position": [
+        -2088.07837,
+        86.80415,
+        -1179.56604
+      ],
+      "rotation_xyzw": [
+        0.01718074,
+        0.96522272,
+        -0.00306735,
+        0.26084575
+      ],
+      "scale": 125.0,
+      "world_bounds_min": [
+        -2093.915,
+        86.762,
+        -1189.843
+      ],
+      "world_bounds_max": [
+        -2081.41,
+        90.838,
+        -1172.056
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -2087.636,
+          88.8,
+          -1180.961
+        ],
+        "face_normal_engine": [
+          -0.9045,
+          0.0,
+          0.4265
+        ],
+        "face_tilt_degrees": 34.7,
+        "offset_along_normal_m": 0.028,
+        "visible_volume_fraction": 0.449,
+        "visible_surface_fraction": 0.412,
+        "vertex_below_top_surface_fraction": 0.5607,
+        "size_m": [
+          9.25,
+          18.08,
+          4.11
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "battleship_wallside_008",
+      "asset": "boulder_01",
+      "position": [
+        -2122.91846,
+        84.84471,
+        -1175.46887
+      ],
+      "rotation_xyzw": [
+        0.0,
+        0.99512362,
+        0.0,
+        0.09863601
+      ],
+      "scale": 6.2,
+      "world_bounds_min": [
+        -2126.676,
+        84.388,
+        -1180.617
+      ],
+      "world_bounds_max": [
+        -2118.295,
+        90.612,
+        -1169.933
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -2122.641,
+          87.5,
+          -1175.277
+        ],
+        "face_normal_engine": [
+          -0.9999,
+          0.0,
+          -0.0118
+        ],
+        "face_tilt_degrees": 89.5,
+        "offset_along_normal_m": -0.156,
+        "visible_volume_fraction": 0.449,
+        "visible_surface_fraction": 0.449,
+        "vertex_below_top_surface_fraction": 0.5485,
+        "size_m": [
+          7.89,
+          11.35,
+          6.22
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "battleship_wallside_009",
+      "asset": "rock_09",
+      "position": [
+        -2135.4751,
+        90.37609,
+        -1261.64307
+      ],
+      "rotation_xyzw": [
+        -0.00860844,
+        0.97649646,
+        0.00143082,
+        0.21535686
+      ],
+      "scale": 135.0,
+      "world_bounds_min": [
+        -2141.51,
+        90.263,
+        -1272.984
+      ],
+      "world_bounds_max": [
+        -2128.618,
+        94.737,
+        -1253.358
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -2135.316,
+          92.5,
+          -1263.07
+        ],
+        "face_normal_engine": [
+          -0.928,
+          0.0,
+          0.3726
+        ],
+        "face_tilt_degrees": 41.7,
+        "offset_along_normal_m": -0.272,
+        "visible_volume_fraction": 0.447,
+        "visible_surface_fraction": 0.468,
+        "vertex_below_top_surface_fraction": 0.4989,
+        "size_m": [
+          9.99,
+          19.52,
+          4.44
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "battleship_wallside_010",
+      "asset": "rock_09",
+      "position": [
+        -2133.90063,
+        90.75533,
+        -1254.4248
+      ],
+      "rotation_xyzw": [
+        0.0,
+        0.98497832,
+        0.0,
+        0.17267808
+      ],
+      "scale": 110.000008,
+      "world_bounds_min": [
+        -2138.569,
+        90.692,
+        -1263.785
+      ],
+      "world_bounds_max": [
+        -2128.53,
+        94.308,
+        -1247.629
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -2134.036,
+          92.5,
+          -1255.531
+        ],
+        "face_normal_engine": [
+          -0.9404,
+          0.0,
+          0.3402
+        ],
+        "face_tilt_degrees": 43.3,
+        "offset_along_normal_m": -0.517,
+        "visible_volume_fraction": 0.45,
+        "visible_surface_fraction": 0.593,
+        "vertex_below_top_surface_fraction": 0.3977,
+        "size_m": [
+          8.14,
+          15.91,
+          3.62
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "battleship_wallside_011",
+      "asset": "rock_09",
+      "position": [
+        -2129.27295,
+        90.40414,
+        -1244.51794
+      ],
+      "rotation_xyzw": [
+        0.01731366,
+        0.97715831,
+        -0.00219627,
+        0.21179491
+      ],
+      "scale": 125.0,
+      "world_bounds_min": [
+        -2134.755,
+        90.362,
+        -1255.04
+      ],
+      "world_bounds_max": [
+        -2122.865,
+        94.438,
+        -1236.866
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -2129.085,
+          92.4,
+          -1245.855
+        ],
+        "face_normal_engine": [
+          -0.9429,
+          0.0,
+          0.3331
+        ],
+        "face_tilt_degrees": 44.0,
+        "offset_along_normal_m": -0.293,
+        "visible_volume_fraction": 0.448,
+        "visible_surface_fraction": 0.501,
+        "vertex_below_top_surface_fraction": 0.4731,
+        "size_m": [
+          9.25,
+          18.08,
+          4.11
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "battleship_wallside_013",
+      "asset": "boulder_01",
+      "position": [
+        -2120.54956,
+        94.17382,
+        -1235.99548
+      ],
+      "rotation_xyzw": [
+        0.0,
+        0.8739062,
+        0.0,
+        0.48609459
+      ],
+      "scale": 8.0,
+      "world_bounds_min": [
+        -2127.69,
+        93.585,
+        -1241.597
+      ],
+      "world_bounds_max": [
+        -2113.281,
+        101.615,
+        -1230.137
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -2124.983,
+          97.6,
+          -1231.182
+        ],
+        "face_normal_engine": [
+          -0.6925,
+          0.0,
+          0.7214
+        ],
+        "face_tilt_degrees": 56.2,
+        "offset_along_normal_m": -6.494,
+        "visible_volume_fraction": 0.452,
+        "visible_surface_fraction": 0.502,
+        "vertex_below_top_surface_fraction": 0.464,
+        "size_m": [
+          10.18,
+          14.64,
+          8.03
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "battleship_wallside_014",
+      "asset": "rock_09",
+      "position": [
+        -2087.30518,
+        95.57609,
+        -1198.55029
+      ],
+      "rotation_xyzw": [
+        -0.00821913,
+        0.92294347,
+        0.00293228,
+        0.38483658
+      ],
+      "scale": 135.0,
+      "world_bounds_min": [
+        -2094.92,
+        95.463,
+        -1208.43
+      ],
+      "world_bounds_max": [
+        -2079.784,
+        99.937,
+        -1191.111
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -2087.434,
+          97.7,
+          -1199.696
+        ],
+        "face_normal_engine": [
+          -0.74,
+          0.0,
+          0.6726
+        ],
+        "face_tilt_degrees": 43.6,
+        "offset_along_normal_m": -0.111,
+        "visible_volume_fraction": 0.452,
+        "visible_surface_fraction": 0.474,
+        "vertex_below_top_surface_fraction": 0.4992,
+        "size_m": [
+          9.99,
+          19.52,
+          4.44
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "battleship_wallside_015",
+      "asset": "rock_09",
+      "position": [
+        -2086.44165,
+        95.85533,
+        -1170.2323
+      ],
+      "rotation_xyzw": [
+        -0.0,
+        -0.99924028,
+        -0.0,
+        0.03897319
+      ],
+      "scale": 110.0,
+      "world_bounds_min": [
+        -2090.61,
+        95.792,
+        -1179.253
+      ],
+      "world_bounds_max": [
+        -2082.492,
+        99.408,
+        -1163.569
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -2086.955,
+          97.6,
+          -1171.443
+        ],
+        "face_normal_engine": [
+          -0.997,
+          0.0,
+          -0.0779
+        ],
+        "face_tilt_degrees": 89.1,
+        "offset_along_normal_m": -0.405,
+        "visible_volume_fraction": 0.453,
+        "visible_surface_fraction": 0.437,
+        "vertex_below_top_surface_fraction": 0.5626,
+        "size_m": [
+          8.14,
+          15.91,
+          3.62
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "battleship_wallside_016",
+      "asset": "rock_09",
+      "position": [
+        -2120.99585,
+        101.00414,
+        -1244.84143
+      ],
+      "rotation_xyzw": [
+        0.01745185,
+        0.99532378,
+        -0.00013782,
+        0.09500559
+      ],
+      "scale": 125.000008,
+      "world_bounds_min": [
+        -2125.746,
+        100.962,
+        -1255.531
+      ],
+      "world_bounds_max": [
+        -2115.447,
+        105.038,
+        -1237.086
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -2122.034,
+          103.0,
+          -1246.16
+        ],
+        "face_normal_engine": [
+          -0.9947,
+          0.0,
+          0.1029
+        ],
+        "face_tilt_degrees": 45.9,
+        "offset_along_normal_m": -1.445,
+        "visible_volume_fraction": 0.448,
+        "visible_surface_fraction": 0.589,
+        "vertex_below_top_surface_fraction": 0.4027,
+        "size_m": [
+          9.25,
+          18.08,
+          4.11
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "battleship_wallside_018",
+      "asset": "boulder_01",
+      "position": [
+        -2091.61865,
+        99.17382,
+        -1209.79919
+      ],
+      "rotation_xyzw": [
+        0.0,
+        0.83620155,
+        0.0,
+        0.54842222
+      ],
+      "scale": 8.0,
+      "world_bounds_min": [
+        -2098.853,
+        98.585,
+        -1215.385
+      ],
+      "world_bounds_max": [
+        -2084.057,
+        106.615,
+        -1204.339
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -2092.937,
+          102.6,
+          -1207.783
+        ],
+        "face_normal_engine": [
+          -0.5805,
+          0.0,
+          0.8143
+        ],
+        "face_tilt_degrees": 86.8,
+        "offset_along_normal_m": -2.553,
+        "visible_volume_fraction": 0.449,
+        "visible_surface_fraction": 0.424,
+        "vertex_below_top_surface_fraction": 0.6024,
+        "size_m": [
+          10.18,
+          14.64,
+          8.03
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "battleship_wallside_020",
+      "asset": "rock_09",
+      "position": [
+        -2076.71436,
+        105.75533,
+        -1188.24731
+      ],
+      "rotation_xyzw": [
+        0.0,
+        0.97766465,
+        0.0,
+        0.210171
+      ],
+      "scale": 109.999992,
+      "world_bounds_min": [
+        -2081.582,
+        105.692,
+        -1197.509
+      ],
+      "world_bounds_max": [
+        -2071.13,
+        109.308,
+        -1181.495
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -2075.928,
+          107.5,
+          -1189.695
+        ],
+        "face_normal_engine": [
+          -0.9117,
+          0.0,
+          0.411
+        ],
+        "face_tilt_degrees": 89.7,
+        "offset_along_normal_m": 0.469,
+        "visible_volume_fraction": 0.449,
+        "visible_surface_fraction": 0.298,
+        "vertex_below_top_surface_fraction": 0.7222,
+        "size_m": [
+          8.14,
+          15.91,
+          3.62
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "battleship_wallside_023",
+      "asset": "boulder_01",
+      "position": [
+        -2097.75317,
+        114.07382,
+        -1227.46143
+      ],
+      "rotation_xyzw": [
+        -0.0,
+        -0.66408539,
+        -0.0,
+        0.74765676
+      ],
+      "scale": 8.0,
+      "world_bounds_min": [
+        -2105.466,
+        113.485,
+        -1231.791
+      ],
+      "world_bounds_max": [
+        -2090.576,
+        121.515,
+        -1221.558
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -2097.786,
+          117.5,
+          -1227.367
+        ],
+        "face_normal_engine": [
+          0.3219,
+          0.0,
+          -0.9468
+        ],
+        "face_tilt_degrees": 13.2,
+        "offset_along_normal_m": -0.731,
+        "visible_volume_fraction": 0.448,
+        "visible_surface_fraction": 0.602,
+        "vertex_below_top_surface_fraction": 0.3296,
+        "size_m": [
+          10.18,
+          14.64,
+          8.03
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "battleship_wallside_026",
+      "asset": "rock_09",
+      "position": [
+        -2077.87451,
+        115.40414,
+        -1189.88
+      ],
+      "rotation_xyzw": [
+        0.01718288,
+        0.96540499,
+        -0.00305533,
+        0.2601704
+      ],
+      "scale": 125.000008,
+      "world_bounds_min": [
+        -2083.706,
+        115.362,
+        -1200.161
+      ],
+      "world_bounds_max": [
+        -2071.209,
+        119.438,
+        -1182.367
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -2077.637,
+          117.4,
+          -1191.18
+        ],
+        "face_normal_engine": [
+          -0.9051,
+          0.0,
+          0.4252
+        ],
+        "face_tilt_degrees": 89.8,
+        "offset_along_normal_m": -0.198,
+        "visible_volume_fraction": 0.448,
+        "visible_surface_fraction": 0.403,
+        "vertex_below_top_surface_fraction": 0.5991,
+        "size_m": [
+          9.25,
+          18.08,
+          4.11
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "battleship_wallsmall_000",
+      "asset": "boulder_01",
+      "position": [
+        -2130.6394,
+        74.37278,
+        -1209.20667
+      ],
+      "rotation_xyzw": [
+        0.0,
+        0.99123865,
+        0.0,
+        0.1320831
+      ],
+      "scale": 4.5,
+      "world_bounds_min": [
+        -2133.486,
+        74.041,
+        -1212.834
+      ],
+      "world_bounds_max": [
+        -2127.301,
+        78.559,
+        -1205.305
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -2130.377,
+          76.3,
+          -1209.074
+        ],
+        "face_normal_engine": [
+          -0.9651,
+          0.0,
+          0.2619
+        ],
+        "face_tilt_degrees": 47.3,
+        "offset_along_normal_m": 0.017,
+        "visible_volume_fraction": 0.446,
+        "visible_surface_fraction": 0.419,
+        "vertex_below_top_surface_fraction": 0.4992,
+        "size_m": [
+          5.72,
+          8.24,
+          4.52
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "battleship_wallsmall_001",
+      "asset": "boulder_01",
+      "position": [
+        -2121.91382,
+        80.67278,
+        -1181.42322
+      ],
+      "rotation_xyzw": [
+        -0.0,
+        -0.5619421,
+        -0.0,
+        0.82717663
+      ],
+      "scale": 4.5,
+      "world_bounds_min": [
+        -2126.195,
+        80.341,
+        -1184.435
+      ],
+      "world_bounds_max": [
+        -2117.845,
+        84.859,
+        -1178.254
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -2121.636,
+          82.6,
+          -1182.111
+        ],
+        "face_normal_engine": [
+          0.4481,
+          0.0,
+          -0.894
+        ],
+        "face_tilt_degrees": 89.6,
+        "offset_along_normal_m": -0.857,
+        "visible_volume_fraction": 0.448,
+        "visible_surface_fraction": 0.706,
+        "vertex_below_top_surface_fraction": 0.3242,
+        "size_m": [
+          5.72,
+          8.24,
+          4.52
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "battleship_wallsmall_002",
+      "asset": "boulder_01",
+      "position": [
+        -2097.90405,
+        81.27277,
+        -1164.00781
+      ],
+      "rotation_xyzw": [
+        -0.0,
+        -0.45755118,
+        -0.0,
+        0.88918328
+      ],
+      "scale": 4.5,
+      "world_bounds_min": [
+        -2101.892,
+        80.941,
+        -1167.381
+      ],
+      "world_bounds_max": [
+        -2093.939,
+        85.459,
+        -1160.772
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -2097.803,
+          83.2,
+          -1164.26
+        ],
+        "face_normal_engine": [
+          0.5231,
+          0.0,
+          -0.8523
+        ],
+        "face_tilt_degrees": 82.0,
+        "offset_along_normal_m": -0.215,
+        "visible_volume_fraction": 0.447,
+        "visible_surface_fraction": 0.379,
+        "vertex_below_top_surface_fraction": 0.6743,
+        "size_m": [
+          5.72,
+          8.24,
+          4.52
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "battleship_wallsmall_003",
+      "asset": "boulder_01",
+      "position": [
+        -2122.40991,
+        85.57278,
+        -1181.16113
+      ],
+      "rotation_xyzw": [
+        -0.0,
+        -0.62728083,
+        -0.0,
+        0.77879316
+      ],
+      "scale": 4.5,
+      "world_bounds_min": [
+        -2126.761,
+        85.241,
+        -1183.831
+      ],
+      "world_bounds_max": [
+        -2118.349,
+        89.759,
+        -1177.882
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -2121.984,
+          87.5,
+          -1182.122
+        ],
+        "face_normal_engine": [
+          0.4115,
+          0.0,
+          -0.9114
+        ],
+        "face_tilt_degrees": 89.1,
+        "offset_along_normal_m": -1.388,
+        "visible_volume_fraction": 0.451,
+        "visible_surface_fraction": 0.677,
+        "vertex_below_top_surface_fraction": 0.3343,
+        "size_m": [
+          5.72,
+          8.24,
+          4.52
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "battleship_wallsmall_004",
+      "asset": "boulder_01",
+      "position": [
+        -2094.61206,
+        85.57278,
+        -1163.30261
+      ],
+      "rotation_xyzw": [
+        -0.0,
+        -0.59639889,
+        -0.0,
+        0.80268836
+      ],
+      "scale": 4.5,
+      "world_bounds_min": [
+        -2098.944,
+        85.241,
+        -1166.146
+      ],
+      "world_bounds_max": [
+        -2090.545,
+        89.759,
+        -1160.067
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -2094.927,
+          87.5,
+          -1162.599
+        ],
+        "face_normal_engine": [
+          0.3383,
+          0.0,
+          -0.941
+        ],
+        "face_tilt_degrees": 89.5,
+        "offset_along_normal_m": 0.539,
+        "visible_volume_fraction": 0.45,
+        "visible_surface_fraction": 0.324,
+        "vertex_below_top_surface_fraction": 0.7277,
+        "size_m": [
+          5.72,
+          8.24,
+          4.52
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "battleship_wallsmall_006",
+      "asset": "boulder_01",
+      "position": [
+        -2122.34961,
+        90.47278,
+        -1181.19788
+      ],
+      "rotation_xyzw": [
+        -0.0,
+        -0.56483865,
+        -0.0,
+        0.82520139
+      ],
+      "scale": 4.5,
+      "world_bounds_min": [
+        -2126.636,
+        90.141,
+        -1184.197
+      ],
+      "world_bounds_max": [
+        -2118.281,
+        94.659,
+        -1178.023
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -2121.892,
+          92.4,
+          -1182.26
+        ],
+        "face_normal_engine": [
+          0.4418,
+          0.0,
+          -0.8971
+        ],
+        "face_tilt_degrees": 89.2,
+        "offset_along_normal_m": -1.282,
+        "visible_volume_fraction": 0.449,
+        "visible_surface_fraction": 0.646,
+        "vertex_below_top_surface_fraction": 0.3407,
+        "size_m": [
+          5.72,
+          8.24,
+          4.52
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "battleship_wallsmall_008",
+      "asset": "boulder_01",
+      "position": [
+        -2120.49292,
+        101.57278,
+        -1253.85034
+      ],
+      "rotation_xyzw": [
+        0.0,
+        0.94850218,
+        0.0,
+        0.31677064
+      ],
+      "scale": 4.5,
+      "world_bounds_min": [
+        -2124.107,
+        101.241,
+        -1257.361
+      ],
+      "world_bounds_max": [
+        -2117.064,
+        105.759,
+        -1250.306
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -2120.688,
+          103.5,
+          -1253.786
+        ],
+        "face_normal_engine": [
+          -0.9068,
+          0.0,
+          0.4216
+        ],
+        "face_tilt_degrees": 52.4,
+        "offset_along_normal_m": -0.113,
+        "visible_volume_fraction": 0.446,
+        "visible_surface_fraction": 0.478,
+        "vertex_below_top_surface_fraction": 0.4732,
+        "size_m": [
+          5.72,
+          8.24,
+          4.52
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "battleship_wallsmall_010",
+      "asset": "boulder_01",
+      "position": [
+        -2085.90283,
+        98.77277,
+        -1201.03027
+      ],
+      "rotation_xyzw": [
+        0.0,
+        0.97536349,
+        0.0,
+        0.22060429
+      ],
+      "scale": 4.5,
+      "world_bounds_min": [
+        -2089.116,
+        98.441,
+        -1204.572
+      ],
+      "world_bounds_max": [
+        -2082.565,
+        102.959,
+        -1197.406
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -2086.048,
+          100.7,
+          -1200.89
+        ],
+        "face_normal_engine": [
+          -0.9027,
+          0.0,
+          0.4303
+        ],
+        "face_tilt_degrees": 55.5,
+        "offset_along_normal_m": -0.229,
+        "visible_volume_fraction": 0.447,
+        "visible_surface_fraction": 0.504,
+        "vertex_below_top_surface_fraction": 0.4707,
+        "size_m": [
+          5.72,
+          8.24,
+          4.52
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "battleship_wallsmall_012",
+      "asset": "boulder_01",
+      "position": [
+        -2080.05322,
+        105.57278,
+        -1193.27258
+      ],
+      "rotation_xyzw": [
+        0.0,
+        0.93817765,
+        0.0,
+        0.34615421
+      ],
+      "scale": 4.5,
+      "world_bounds_min": [
+        -2083.766,
+        105.241,
+        -1196.746
+      ],
+      "world_bounds_max": [
+        -2076.588,
+        109.759,
+        -1189.737
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -2080.251,
+          107.5,
+          -1193.168
+        ],
+        "face_normal_engine": [
+          -0.7132,
+          0.0,
+          0.701
+        ],
+        "face_tilt_degrees": 89.7,
+        "offset_along_normal_m": -0.105,
+        "visible_volume_fraction": 0.451,
+        "visible_surface_fraction": 0.575,
+        "vertex_below_top_surface_fraction": 0.438,
+        "size_m": [
+          5.72,
+          8.24,
+          4.52
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "battleship_wallsmall_015",
+      "asset": "boulder_01",
+      "position": [
+        -2102.30615,
+        112.67278,
+        -1229.97913
+      ],
+      "rotation_xyzw": [
+        -0.0,
+        -0.47046274,
+        -0.0,
+        0.88241988
+      ],
+      "scale": 4.5,
+      "world_bounds_min": [
+        -2106.342,
+        112.341,
+        -1233.319
+      ],
+      "world_bounds_max": [
+        -2098.316,
+        116.859,
+        -1226.78
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -2102.263,
+          114.6,
+          -1230.147
+        ],
+        "face_normal_engine": [
+          0.5573,
+          0.0,
+          -0.8303
+        ],
+        "face_tilt_degrees": 28.8,
+        "offset_along_normal_m": -0.117,
+        "visible_volume_fraction": 0.45,
+        "visible_surface_fraction": 0.475,
+        "vertex_below_top_surface_fraction": 0.5235,
+        "size_m": [
+          5.72,
+          8.24,
+          4.52
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "battleship_wallsmall_018",
+      "asset": "boulder_01",
+      "position": [
+        -2062.77148,
+        117.57278,
+        -1215.66687
+      ],
+      "rotation_xyzw": [
+        0.0,
+        0.9247452,
+        0.0,
+        0.3805868
+      ],
+      "scale": 4.5,
+      "world_bounds_min": [
+        -2066.582,
+        117.241,
+        -1219.079
+      ],
+      "world_bounds_max": [
+        -2059.124,
+        121.759,
+        -1212.158
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -2062.898,
+          119.5,
+          -1215.59
+        ],
+        "face_normal_engine": [
+          -0.8411,
+          0.0,
+          0.5408
+        ],
+        "face_tilt_degrees": 42.3,
+        "offset_along_normal_m": -0.054,
+        "visible_volume_fraction": 0.448,
+        "visible_surface_fraction": 0.469,
+        "vertex_below_top_surface_fraction": 0.4389,
+        "size_m": [
+          5.72,
+          8.24,
+          4.52
+        ],
+        "import_bounds_error_m": 0.0
+      }
+    },
+    {
+      "name": "battleship_wallsmall_020",
+      "asset": "boulder_01",
+      "position": [
+        -2075.78906,
+        117.47278,
+        -1189.05542
+      ],
+      "rotation_xyzw": [
+        0.0,
+        0.96753061,
+        0.0,
+        0.25275394
+      ],
+      "scale": 4.5,
+      "world_bounds_min": [
+        -2079.147,
+        117.141,
+        -1192.602
+      ],
+      "world_bounds_max": [
+        -2072.406,
+        121.659,
+        -1185.5
+      ],
+      "blender_check": {
+        "kind": "embed",
+        "anchor_engine": [
+          -2075.343,
+          119.4,
+          -1189.294
+        ],
+        "face_normal_engine": [
+          -0.8722,
+          0.0,
+          0.4891
+        ],
+        "face_tilt_degrees": 89.4,
+        "offset_along_normal_m": 0.498,
+        "visible_volume_fraction": 0.448,
+        "visible_surface_fraction": 0.298,
+        "vertex_below_top_surface_fraction": 0.6892,
+        "size_m": [
+          5.72,
+          8.24,
+          4.52
         ],
         "import_bounds_error_m": 0.0
       }

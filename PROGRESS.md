@@ -7875,3 +7875,13 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 証拠（`.harness/runs/20261024-183517/`）: `verify-SCN-WL-CLIFF-SCAN-NEAR-WALLS-10.txt`（RelWithDebInfo の Game EXIT=0）・`-11.txt`（形の撮影 result=pass）・`-12.txt`（`--shape --expect shape-scan-battleship-walls.json` 4 行 pass、result=pass）・`-13.txt`（既定の撮影 result=pass）・`-14.txt`（`CompareReference.py --verify` result=pass）
 - Next: TASKS.md の次の未完
 - Notes: 親の注記の角の下限 0.286 は 2/7 = 0.2857 の丸めで生の比較では 2 点でも落ちるため、0.285（2 点を求め 1 点 0.143 で落ちる）にした。右の低い段の左の暗い側面と最も右の段の正面は縦の筋の板のまま（反復 33 からの既知の限界。`WastelandCliffScan.md` に記録済み）。新しい試験は足していない
+
+## 2026-10-25 SCN-WL-CLIFF-SCAN-NEAR-WALLS（run 20261024-183517 の反復 39、DONE）
+- Done: 評価者の差し戻し（右の低い段の左の側面と最も右の段の正面に縦の筋の平板が残る）を直した。壁の塊を置いた後の灰色の撮影で地形のまま見える急な壁の画素から点を拾い直し、3 組 44 個を足した（`BlenderCliffScan.py` の `WALL_SIDE_POINTS`・`WALL_SMALL_POINTS`・`WALL_FIN_POINTS`、配置表の `battleship_wallside_*` 18・`battleship_wallsmall_*` 12・`battleship_wallfin_*` 14）。前の 378 個は配置表で同一（`aux-SCN-WL-CLIFF-SCAN-NEAR-WALLS-kept-unchanged-iter39.txt`）。右の低い段の柱は視線にほぼ平行な側面を斜めに見たもので、面の法線の逆から撃って置いた。値・見た目・費用・既知の限界は `WastelandCliffScan.md` の「残った側面と柱」
+- 値: 棚 0.479・角 0.286・外形 ずらした後 1.0・ずらす前 1.0 画素で 4 行とも pass（反復 38 は 0.450・0.286・1.0／1.0）
+- 見た目: `look/crop_wall_photo_iter39.png`（写真・反復 38・今回）と `look/crop_wall_side_before_after_iter39.png`（右の 2 面の拡大）を開いた。最も右の低い段の正面は丸みのある塊の積み重ね、右の低い段の柱は右の半分が段ごとの塊で覆われた。外形に針・丸い山・桃色の斑は無い
+- 浮き・埋もれ: 足した 44 個の壁の外の体積の割合 0.444〜0.453（許容 0.25〜0.7、外れ 0）。焼いた地形への問い合わせで壁の塊 185 個のうち 178 個が地形の中、足した組の外れは 2 個（段の上面に載る 1 個・柱の側面で高さの交点が無い 1 個）
+- 費用: 足した塊の三角形 226 万、壁の塊の全部 627 万、`WASTELAND_CLIFF_SCAN placed=422 planned=422`、SCENE_READY まで 83 秒、VRAM の使用の最大 9826 MB（予算 15280 MB）、溢れ 0、ERROR なし
+- 証拠（`.harness/runs/20261024-183517/`）: `verify-SCN-WL-CLIFF-SCAN-NEAR-WALLS-15.txt`（RelWithDebInfo の Game EXIT=0）・`-24.txt`（形の撮影 result=pass）・`-25.txt`（`--shape --expect shape-scan-battleship-walls.json` 4 行 pass）・`-26.txt`（既定の撮影 result=pass）・`-27.txt`（`CompareReference.py --verify` result=pass）、途中の試しの `-16`〜`-23.txt`、`aux-SCN-WL-CLIFF-SCAN-NEAR-WALLS-side-points*.{py,txt}`・`-place-side-1.txt`・`-place-small-1.txt`・`-place-fin-1.txt`・`-placement-check-iter39.txt`・`-embed-query-iter39.txt`・`-placements-before-iter39.json`
+- Next: TASKS.md の次の未完
+- Notes: 親の注記の「壁の塊の配置 217d2f12 は変えない」は反復 38（仕様を書いて閉じる反復）への指示と読み、前の 141 個は動かさず、done-when の「縦の筋の板を隠す」のための塊だけを別の名前の組で足した（合否の仕様は置く前の値のまま）。縦の筋は外形の縁に沿った幅 10〜15 画素の帯に残る（既知の限界）。新しい試験は足していない
