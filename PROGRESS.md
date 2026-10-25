@@ -8030,3 +8030,9 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 開いた画: `scene-capture/SCN-RENDER-SPEC-OCCLUSION/interior/compare/window.compare.png`（日だまりの形・位置は同じ、床に空の余分な映り込み無し）、`material-gallery-i2/spheres.png`（粗さの段で滑らかに変わり、欠け・粒は無い）
 - Next: この項目の続き。(1) 遠い急な崖（灰色・粗さ 1 で広いローブの重みつきの光線だけで数える面）の対照の −0.023〜−0.024 を直す（off と今の形の ref_cliff_01 の HDR・AOV を並べ、空へ抜けた光線の空の光と Ess の割り方のどちらで暗くなるかを確かめる）。(2) 直した版で 8 組と共通の照明の組（今の形と off）を撮り、`--light-final` の表を書く。(3) 回帰の after・golden・GPU 時間・material-gallery を最終の版で回す
 - Notes: 共通の照明の組は壁時計に収まらないので撮っていない（途中で止めた `light-final-i2-on` の置き場は不完全）。遮蔽の判定（`ReferenceCheck.py --occlusion`）は 1 回 6 分かかる。新しい試験は足していない
+## 2026-10-26 SCN-RENDER-SPEC-OCCLUSION（run 20261026-002702 の反復 3、BLOCKED）
+- Done: 荒野の遮蔽の遠い急な崖の対照（`ref_cliff_01` の slope60-180_d500-100000、今の形 0.9513・0.9622）の暗さを切り分けた。HEAD のシェーダーを 1 か所ずつ一時的に書き換えた 4 つの試し（当たりを無視して空の光で数える・光線の形へ外から入る近い当たりを読み飛ばす・当たりの光にいつも 2 回目のバウンスを使う・当たりの面を鏡面つきで数える）を同じ焼いた地形で terrain-sky だけ撮り、Cycles の同じ面の画素をくぼみの帯ごとに並べた。表は `Docs/RenderingValidation/InteriorLightReference.md` の「遠い急な崖の対照の暗さの切り分け」。シェーダーは HEAD のまま（試しはコミットしていない）
+- 値: 暗さは光線が地形に当たった向きからだけ来る（当たりを無視すると off より +0.9 %、ほかの 3 つの試しは 0.1 % 未満）。粗さ 1 の急な面のローブの下半分が谷底へ向く遮りそのもの。今の形 ÷ off は 0.9752・0.9772、対照のエンジン ÷ Cycles は off 0.995・1.004、今の形 0.970・0.981。開けた急な面（くぼみ 0.05 以下）は off でも Cycles より 2.5 % 暗い
+- 証拠（`.harness/runs/20261026-002702/`）: `aux-SCN-RENDER-SPEC-OCCLUSION-i3-exp-v{2,3,4,5}.txt`（試しの撮影、v2 の 1 回目は下の Notes の理由で撮り直した）、`aux-...-i3-cavity-bins.txt`（くぼみの帯ごとのエンジン ÷ Cycles）。撮影は `scene-capture/SCN-RENDER-SPEC-OCCLUSION/exp-v{2,3,4,5}/terrain-sky/`
+- Next: 判断待ち（`blocked/SCN-RENDER-SPEC-OCCLUSION.md`）。推奨は、この 2 行を同じ版の off との比（1 ± 0.03）で判定し、開けた急な面が off でも Cycles より暗い分を新しい項目へ移す案。決まったら今のシェーダーのまま、8 組と共通の照明の組を off と今の形で同じ最終の版で撮り、回帰の after・golden・GPU 時間・material-gallery を回して閉じる
+- Notes: 前の反復の撮影の待ち行列（共通の照明の組 `light-final-i2-on`）が反復の後も裏で走り続け、この反復の最初の試しの撮影と同時に Game を起動していた（試しの 1 回目は SCENE_READY が出ずに fail）。待ち行列と残っていた tail を止めた。`light-final-i2-on` には試しのシェーダーで撮った組が混ざるので使わない。新しい試験は足していない
