@@ -6730,6 +6730,11 @@ def main():
                              f"{LIT_CROP_DIR} の切り出しの参照で判定する")
     parser.add_argument("--views", default="", help="検査する視点（カンマ区切り。省くと metrics.json の全視点）")
     parser.add_argument("--sets", default="", help="--occlusion: 判定する組（カンマ区切り。省くと参照の置き場の全組）")
+    parser.add_argument("--cook-coverage", action="store_true",
+                        help="崖の生成の範囲に掛かる地形の区画が今の AssetCook で焼かれているか（CookCoverage.py。--manifest・"
+                             "--regions・--range-group）")
+    parser.add_argument("--manifest", default="", help="--cook-coverage: クックのマニフェスト（build/CookedAssets/manifest.json）")
+    parser.add_argument("--range-group", default="", help="--cook-coverage: --regions の range_groups の組")
     parser.add_argument("--shape-cause", action="store_true",
                         help="地形の形の切り分けの 3 組（通常の LOD・最も細かい LOD・崖の変形なし）を深度と幾何の法線で測る"
                              "（ShapeCause.py）")
@@ -6752,6 +6757,12 @@ def main():
                         help="--cloud: --expect の判定を合成の結果で確かめる（仕様を省くと ExpectSpecs/cloud-ref.json）")
     parser.add_argument("--verify", action="store_true", help="入力のハッシュを今のファイルと照らし、古い結果を拒否する")
     args = parser.parse_args()
+    if args.cook_coverage:
+        import CookCoverage
+        absolute_path = lambda path: os.path.normpath(path if os.path.isabs(path) else os.path.join(REPO_ROOT, path))
+        return CookCoverage.run(sys.modules[__name__], absolute_path(args.manifest or os.path.join("build", "CookedAssets", "manifest.json")),
+                                absolute_path(args.regions or os.path.join("Scripts", "Terrain", "ShapeRegions.json")),
+                                args.range_group, args.verify)
     if args.expect_selftest:
         import ExpectSpec
         return ExpectSpec.run_selftest(sys.modules[__name__], args.verify)

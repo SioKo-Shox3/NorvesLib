@@ -1,5 +1,17 @@
 ﻿{
   "description": "地形の形の量を測る世界座標の範囲（エンジンの m、X 東・Z 南、両端を含む）。崖の生成の 7 範囲は Tools/AssetCook/TerrainCliffDetail.cpp と同じ座標と ID、スキャンの担当の 2 範囲と近景の谷床の 3 範囲は Docs/RenderingValidation/WastelandShape.md から。views は範囲を測る視点と、その視点の地形の画素の最低の数（SCN-WL-SHAPE-BASELINE の撮影の数の半分を 2 桁に切り下げた値。基準の撮影で 1000 画素に満たない視点は測らない）。ReferenceCheck.py --shape-cause --regions（ShapeRegionMetric.py）が読む",
+  "_range_groups_comment": "範囲の組（CheckPlacement.py・ReferenceCheck.py --cook-coverage の --range-group）。cliff-gen は崖の生成の担当の 7 範囲（TerrainCliffDetail.cpp の kNearRegions[2]・[3] と kCastleRegions[0]〜[4]）",
+  "range_groups": {
+    "cliff-gen": [
+      "cliff_near_2_rooster_butte",
+      "cliff_near_3_setting_hen_butte",
+      "cliff_castle_0_main_butte",
+      "cliff_castle_1_far_cliffs",
+      "cliff_castle_2_left_7_9km",
+      "cliff_castle_3_left_5_7km",
+      "cliff_castle_4_left_edge_9km"
+    ]
+  },
   "regions": [
     {
       "id": "cliff_near_2_rooster_butte",

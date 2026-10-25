@@ -21,6 +21,10 @@
 # AssetCook の実行ファイルが変わって全項目の印が変わっていても、対象外は焼き直されない。既存のマニフェストに無い項目があれば失敗する
 # （先に全体をクックする）。
 #
+# 印だけ照らす: -CheckStamps は焼かず、-OnlyLogicalPath に合う項目ごとに今の入力から印を求めて状態の印と比べ、
+# "COOK_STAMP logical=<論理パス> package=<パッケージ> status=<match|stale|state_missing|state_invalid|package_missing>" を出す
+# （マニフェストもパッケージも状態も書かない。-OnlyLogicalPath が要る）。
+#
 # 出力: <RuntimeRoot>/manifest.json（全項目を集めたマニフェスト）と、一覧の package_root 以下の .nvpkg。
 # 標準出力の最後の行: COOK_ASSETS cooked=<焼いた数> skipped=<前回のまま使った数>
 # 終了コード: クックまで通れば0、一覧の誤り・AssetCook の失敗は1。
@@ -42,7 +46,10 @@ param(
     [string[]]$OnlyLogicalPath = @(),
 
     # 印が同じでも対象の項目を焼き直す（-OnlyLogicalPath と併せて使う）
-    [switch]$Force
+    [switch]$Force,
+
+    # 焼かずに、対象の項目の印を今の入力と照らして出す（-OnlyLogicalPath と併せて使う）
+    [switch]$CheckStamps
 )
 
 Set-StrictMode -Version Latest
@@ -234,6 +241,32 @@ function Invoke-CookEntry {
     }
     $stamp = Get-TextSha256 $stampSource.ToString()
 
+    if ($script:CheckStampsOnly) {
+        $stampStatus = "match"
+        if (-not (Test-Path -LiteralPath $packagePath -PathType Leaf)) {
+            $stampStatus = "package_missing"
+        }
+        elseif (-not (Test-Path -LiteralPath $statePath -PathType Leaf)) {
+            $stampStatus = "state_missing"
+        }
+        else {
+            try {
+                $state = Get-Content -LiteralPath $statePath -Raw -Encoding UTF8 | ConvertFrom-Json
+                if ($state.stamp -ne $stamp) {
+                    $stampStatus = "stale"
+                }
+            }
+            catch {
+                $stampStatus = "state_invalid"
+            }
+        }
+        Write-Host "COOK_STAMP logical=$LogicalPath package=$CookedPackage status=$stampStatus"
+        $script:untouchedCount++
+        return @($script:PreviousAssets | Where-Object {
+                ($_.cooked_package -eq $CookedPackage) -or $_.cooked_package.StartsWith("$CookedPackage.")
+            })
+    }
+
     if ((-not $script:ForceCook) -and (Test-Path -LiteralPath $statePath -PathType Leaf) -and (Test-Path -LiteralPath $packagePath -PathType Leaf)) {
         try {
             $state = Get-Content -LiteralPath $statePath -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -318,8 +351,12 @@ $cookedCount = 0
 $skippedCount = 0
 $untouchedCount = 0
 $ForceCook = $Force.IsPresent
+$CheckStampsOnly = $CheckStamps.IsPresent
 $OnlyPatterns = @($OnlyLogicalPath | ForEach-Object { ConvertTo-LogicalPath -Path $_ -Name "OnlyLogicalPath" })
 $PreviousAssets = @()
+if ($CheckStampsOnly -and ($OnlyPatterns.Count -eq 0)) {
+    throw "-CheckStamps には -OnlyLogicalPath が要ります"
+}
 if ($OnlyPatterns.Count -gt 0) {
     if (-not (Test-Path -LiteralPath $AggregateManifestPath -PathType Leaf)) {
         throw "対象を絞るには既存の manifest.json が要ります（先に全体をクックしてください）: $AggregateManifestPath"
@@ -536,6 +573,11 @@ foreach ($specFile in $specFiles) {
             $aggregateAssets += $asset
         }
     }
+}
+
+if ($CheckStampsOnly) {
+    Write-Output "COOK_ASSETS check_stamps=$untouchedCount"
+    exit 0
 }
 
 $aggregateJson = [ordered]@{ version = 1; assets = @($aggregateAssets) } | ConvertTo-Json -Depth 16

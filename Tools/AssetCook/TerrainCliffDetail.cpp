@@ -110,6 +110,15 @@ namespace NorvesLib::Tools::AssetCook
         constexpr float kLowerJointWidth = 0.2f;
         constexpr float kLowerJointDepthMin = 0.1f;
         constexpr float kLowerJointDepthMax = 0.3f;
+        // 地層の棚: 上の単位のセットの底の柔らかい帯を奥へ引き、その上の砂岩を張り出させる段。段の高さ（引っ込みと
+        // 張り出しの和、m）の範囲・底の帯の厚さ（m）・段の縁の幅（m）・横方向の強さの揺れの波長（m）
+        constexpr float kLedgeStepMin = 1.0f;
+        constexpr float kLedgeStepMax = 2.4f;
+        constexpr float kLedgeRecessShare = 0.55f;
+        constexpr float kLedgeBandMin = 0.6f;
+        constexpr float kLedgeBandMax = 1.4f;
+        constexpr float kLedgeEdgeMeters = 0.15f;
+        constexpr float kLedgeContinuityWavelength = 110.0f;
         // 細かな凹凸の振幅（m）
         constexpr float kRoughnessCoarse = 0.12f;
         constexpr float kRoughnessFine = 0.05f;
@@ -318,6 +327,42 @@ namespace NorvesLib::Tools::AssetCook
             return (ledge + terrace) * integrity + partingCut;
         }
 
+        // 地層の棚の段の高さ（m）。セットごとの強さに、横方向に長い波長でゆっくり変わる強さを掛ける（数 m の塊で
+        // 途切れさせず、棚を水平に続ける）
+        float LedgeStepHeight(int index, float x, float z)
+        {
+            const float continuity =
+                Mix(0.55f, 1.0f,
+                    SmoothStep(0.25f, 0.6f,
+                               ValueNoise(x * (1.0f / kLedgeContinuityWavelength) + static_cast<float>(index) * 1.371f,
+                                          z * (1.0f / kLedgeContinuityWavelength) - static_cast<float>(index) * 0.913f)));
+            return Mix(kLedgeStepMin, kLedgeStepMax, LatticeHash(index, 709)) * continuity;
+        }
+
+        // 上の単位のセット set の、高さ y での棚の押し出し（m）。底の帯は奥へ引き、帯の上の砂岩は張り出す。帯の上の縁
+        // （張り出した砂岩の下面）とセットの境（下のセットの砂岩の踏み面）が水平の段になる。境では下のセットの張り出しと
+        // 上のセットの引っ込みを縁の幅で移す（境のどちらの側から求めても同じ値）
+        float UpperLedgeOffset(const StrataBed &set, float y, float x, float z)
+        {
+            const auto recess = [&](int index) { return -kLedgeRecessShare * LedgeStepHeight(index, x, z); };
+            const auto protrude = [&](int index) { return (1.0f - kLedgeRecessShare) * LedgeStepHeight(index, x, z); };
+            const float band = Mix(kLedgeBandMin, kLedgeBandMax, LatticeHash(set.Index, 701));
+            const float bandTop = std::min(set.Bottom + band, 0.5f * (set.Bottom + set.Top));
+            float value = Mix(recess(set.Index), protrude(set.Index),
+                              SmoothStep(bandTop - kLedgeEdgeMeters, bandTop + kLedgeEdgeMeters, y));
+            if (y < set.Bottom + kLedgeEdgeMeters)
+            {
+                value = Mix(protrude(set.Index - 1), value,
+                            SmoothStep(set.Bottom - kLedgeEdgeMeters, set.Bottom + kLedgeEdgeMeters, y));
+            }
+            else if (y > set.Top - kLedgeEdgeMeters)
+            {
+                value = Mix(value, recess(set.Index + 1),
+                            SmoothStep(set.Top - kLedgeEdgeMeters, set.Top + kLedgeEdgeMeters, y));
+            }
+            return value;
+        }
+
         // 単位の層の押し出しを、層の境で隣の層へ滑らかに移す（境の上下の幅 blend の中で混ぜる。境のどちらの側から
         // 求めても同じ値になる）
         template <typename Profile>
@@ -430,6 +475,21 @@ namespace NorvesLib::Tools::AssetCook
 
         float BattleshipCarveAmount(double x, double z);
 
+        // 地層の棚を掛けない範囲か。Battleship Rock と Franklin Butte の尖塔の台座（kNearRegions[0]・[1]）はスキャンの崖の
+        // 担当で、棚を足さない（範囲の縁は押し出しが 0 なので、矩形で切っても面は続く）
+        bool IsScanOwnedRegion(float x, float z)
+        {
+            for (int index = 0; index < 2; ++index)
+            {
+                const CliffRegion &region = kNearRegions[index];
+                if (x >= region.MinX && x <= region.MaxX && z >= region.MinZ && z <= region.MaxZ)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
         // 面の法線 (nx, ny, nz) の点 (x, y, z) を外へ押し出す量（m）。y は基準面からの高さ
         float CliffDisplacement(float x, float y, float z, float nx, float ny, float nz)
         {
@@ -474,6 +534,13 @@ namespace NorvesLib::Tools::AssetCook
                 const float upper = BlendedStrataOffset(strataY, contact, kStrataUpperSetMeters, 2, kUpperBoundaryBlend,
                                                         point, UpperSetOffset);
                 displacement += upper * unitBlend;
+                // 地層の棚（急な面だけ。緩い斜面は上の段の押し出しで棚になる。スキャンの崖の担当の範囲には掛けない）
+                if (!IsScanOwnedRegion(x, z))
+                {
+                    const StrataBed set = FindStrataBed(strataY, x, z, contact, kStrataUpperSetMeters, 2);
+                    displacement +=
+                        UpperLedgeOffset(set, strataY, x, z) * unitBlend * SmoothStep(0.70f, 0.87f, horizontal);
+                }
             }
 
             // 縦の割れ目（垂直に近い面だけ）。上の単位はセットを貫く大きな割れ目と塊、下の単位は層ごとにずれる細い割れ目。

@@ -21,12 +21,17 @@
 #
 # 使い方:
 #   python Scripts/Terrain/CheckPlacement.py --placement <placement.json> [--asset-cook <AssetCook.exe>]
-#       [--manifest <manifest.json>] --regions Scripts/Terrain/ShapeRegions.json (--record | --require-compliant)
+#       [--manifest <manifest.json>] --regions Scripts/Terrain/ShapeRegions.json
+#       (--record | --require-compliant | --baseline <前の記録.json>) [--range-group <組>]
 #       [--removed <removed.json>] [--out <report.json>] [--workers N] [--verify]
 #   --record: 書き出した物の全部を測り切れたら通る（違反の数は範囲ごとに書くだけ）
 #   --require-compliant: 加えて違反 0。物を消して通すなら、消した物の一覧（--removed。{"removed": [{"type", "x", "z"}, ...]}。
 #     type は物の組の名前）を渡し、範囲ごと（名前の付いた範囲・どの範囲にも入らない所・全体）に消した数が、その範囲の物
 #     （残した物 + 消した物）の REMOVED_MAX_SHARE 以下
+#   --baseline: 書き出した物の全部を測り切れ、--range-group の範囲（ShapeRegions.json の range_groups。省くと全部の名前の
+#     付いた範囲）の物の組ごとに、前の記録（同じ規則の --record の報告）より悪くならない。違反の数は前の記録の数 +
+#     今の物の数の BASELINE_SLACK_SHARE まで。浮き・埋もれは、前の記録の 99 百分位を超える物が今の測れた物の
+#     1 % + BASELINE_SLACK_SHARE まで（前の 99 百分位を物の数の 0.5 % を超えて上回らない）。全域の違反 0 は求めない
 # 終了コード: --verify で合格なら 0、不合格なら 1。--verify なしは値を出すだけで 0。
 import argparse
 import concurrent.futures
@@ -58,6 +63,8 @@ ROCK_MAX_BURIAL_SHARE = 0.5
 SCATTER_MAX_FLOAT_M = 0.05
 SCATTER_MAX_BURIAL_M = 0.1
 REMOVED_MAX_SHARE = 0.02
+# --baseline の前の記録からの揺れ（物の数に対する割合）
+BASELINE_SLACK_SHARE = 0.005
 # 問い合わせ 1 回の点の数の上限と、並べて走らせる問い合わせ（AssetCook と結果の解析）の数
 QUERY_CHUNK_POINTS = 300000
 DEFAULT_WORKERS = max(1, min(16, (os.cpu_count() or 2) // 2))
@@ -284,6 +291,8 @@ def main():
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--record", action="store_true")
     mode.add_argument("--require-compliant", action="store_true")
+    mode.add_argument("--baseline")
+    parser.add_argument("--range-group")
     parser.add_argument("--removed")
     parser.add_argument("--out")
     parser.add_argument("--workers", type=int, default=DEFAULT_WORKERS)
@@ -295,7 +304,21 @@ def main():
     placement = load_json(args.placement)
     meshes = placement["meshes"]
     objects = load_objects(placement, args.placement)
-    regions = load_json(args.regions)["regions"]
+    region_document = load_json(args.regions)
+    regions = region_document["regions"]
+    baseline = load_json(args.baseline) if args.baseline else None
+    if args.range_group:
+        group = (region_document.get("range_groups") or {}).get(args.range_group)
+        known = {region["id"] for region in regions}
+        if not group:
+            failures.append(f"範囲の組 {args.range_group} が {args.regions} の range_groups にありません")
+            group = []
+        unknown = [region_id for region_id in group if region_id not in known]
+        if unknown:
+            failures.append(f"範囲の組 {args.range_group} の範囲 {unknown} が regions にありません")
+        judged_regions = [region_id for region_id in group if region_id in known]
+    else:
+        judged_regions = [region["id"] for region in regions]
     # 物の組（形の tier。前の形の書き出しは type）と、組ごとの規則（岩か、草と石か）
     mesh_category = [m.get("tier") or m["type"] for m in meshes]
     categories = list(dict.fromkeys(mesh_category))
@@ -417,16 +440,33 @@ def main():
                 item["burial_share"] = percentiles(burial_m[sel_m] / np.maximum(obj_height[sel_m], 1e-6))
             total = item["objects"] + gone
             item["removed_share"] = round(gone / total, 5) if total else 0.0
+            if baseline is not None and region_id in judged_regions:
+                before = ((baseline.get("regions") or {}).get(region_id) or {}).get(c)
+                if before is None:
+                    failures.append(f"{region_id} の {c} が前の記録にありません")
+                else:
+                    item["baseline"] = compare_with_baseline(region_id, c, item, before, float_m[sel_m], burial_m[sel_m],
+                                                             failures)
             if args.require_compliant and gone > REMOVED_MAX_SHARE * total:
                 failures.append(f"{region_id} の {c} は消した物 {gone} 個が範囲の物 {total} 個の "
                                 f"{REMOVED_MAX_SHARE:.0%} を超えます")
             entry[c] = item
         report_regions[region_id] = entry
 
+    if baseline is not None:
+        if baseline.get("mode") != "record" or baseline.get("format") != "placement_check.v3":
+            failures.append(f"前の記録 {args.baseline} が --record の報告（placement_check.v3）ではありません")
+        if baseline.get("rules") != current_rules():
+            failures.append(f"前の記録の規則 {baseline.get('rules')} が今の規則と違います")
+        if baseline.get("result") != "pass":
+            failures.append(f"前の記録 {args.baseline} が通っていません")
     total_violations = int(violation.sum())
     if args.require_compliant and total_violations:
         failures.append(f"違反が {total_violations} 個あります（遵守の形は違反 0 を求めます）")
     summary = {
+        "range_group": args.range_group,
+        "judged_regions": judged_regions if baseline is not None else None,
+        "baseline": os.path.abspath(args.baseline) if args.baseline else None,
         "objects": counts,
         "foot_points": int(len(foot)),
         "query_statuses": statuses,
@@ -443,21 +483,50 @@ def main():
     return finish(args, failures, summary, report_regions)
 
 
+def compare_with_baseline(region_id, category, item, before, float_values, burial_values, failures):
+    """範囲 region_id の物の組 category の今の値 item を前の記録 before と比べる。比べの記録（落ちた理由は failures へ）"""
+    slack = BASELINE_SLACK_SHARE * item["objects"]
+    result = {"violations_before": before["violations"], "violations_max": round(before["violations"] + slack, 1)}
+    if item["violations"] > before["violations"] + slack:
+        failures.append(f"{region_id} の {category} の違反 {item['violations']} 個が前の記録 {before['violations']} 個 + "
+                        f"物 {item['objects']} 個の {BASELINE_SLACK_SHARE:.1%} を超えます")
+    measured = len(float_values)
+    allowed = (0.01 + BASELINE_SLACK_SHARE) * measured
+    for name, values in (("float_m", float_values), ("burial_m", burial_values)):
+        limit = (before.get(name) or {}).get("p99")
+        if limit is None:
+            if measured:
+                failures.append(f"{region_id} の {category} の前の記録に {name} の 99 百分位がありません")
+            continue
+        over = int(np.count_nonzero(values > limit + 1e-6))
+        result[f"{name}_p99_before"] = limit
+        result[f"{name}_over_p99_before"] = over
+        result[f"{name}_over_allowed"] = round(allowed, 1)
+        if over > allowed:
+            failures.append(f"{region_id} の {category} の {name} が前の記録の 99 百分位 {limit} m を超える物 {over} 個が、"
+                            f"測れた物 {measured} 個の 1 % + {BASELINE_SLACK_SHARE:.1%}（{allowed:.1f} 個）を超えます")
+    return result
+
+
+def current_rules():
+    return {
+        "rock_bottom_band": ROCK_BOTTOM_BAND, "rock_foot_points": "all exported sample vertices in the bottom band",
+        "root_ring_points": ROOT_RING_POINTS, "support_min_normal_y": SUPPORT_MIN_NORMAL_Y,
+        "support_window": f"max({SUPPORT_WINDOW_MIN_M} m, {SUPPORT_WINDOW_SHARE} * height)",
+        "per_object": "max over foot points", "unsupported_point": "violation",
+        "rock_max_float_m": ROCK_MAX_FLOAT_M, "rock_max_burial_share": ROCK_MAX_BURIAL_SHARE,
+        "scatter_max_float_m": SCATTER_MAX_FLOAT_M, "scatter_max_burial_m": SCATTER_MAX_BURIAL_M,
+        "removed_max_share": REMOVED_MAX_SHARE,
+    }
+
+
 def finish(args, failures, summary, regions):
-    mode = "record" if args.record else "require_compliant"
+    mode = "record" if args.record else ("baseline" if args.baseline else "require_compliant")
     report = {
         "format": "placement_check.v3",
         "mode": mode,
         "placement": os.path.abspath(args.placement),
-        "rules": {
-            "rock_bottom_band": ROCK_BOTTOM_BAND, "rock_foot_points": "all exported sample vertices in the bottom band",
-            "root_ring_points": ROOT_RING_POINTS, "support_min_normal_y": SUPPORT_MIN_NORMAL_Y,
-            "support_window": f"max({SUPPORT_WINDOW_MIN_M} m, {SUPPORT_WINDOW_SHARE} * height)",
-            "per_object": "max over foot points", "unsupported_point": "violation",
-            "rock_max_float_m": ROCK_MAX_FLOAT_M, "rock_max_burial_share": ROCK_MAX_BURIAL_SHARE,
-            "scatter_max_float_m": SCATTER_MAX_FLOAT_M, "scatter_max_burial_m": SCATTER_MAX_BURIAL_M,
-            "removed_max_share": REMOVED_MAX_SHARE,
-        },
+        "rules": current_rules(),
         "summary": summary,
         "regions": regions,
         "failures": failures,
@@ -477,7 +546,8 @@ def finish(args, failures, summary, regions):
                   f"burial={item['burial_violations']} no_support={item['no_support']}(buried={item['no_support_buried']} "
                   f"floating={item['no_support_floating']} no_upward={item['no_support_no_upward']}) "
                   f"removed={item['removed']}({item['removed_share']}) float_m={item['float_m']} "
-                  f"burial_m={item['burial_m']}" + (f" burial_share={item['burial_share']}" if "burial_share" in item else ""))
+                  f"burial_m={item['burial_m']}" + (f" burial_share={item['burial_share']}" if "burial_share" in item else "")
+                  + (f" baseline={json.dumps(item['baseline'], ensure_ascii=False)}" if "baseline" in item else ""))
     for failure in failures:
         print(f"FAIL {failure}")
     print(f"result={report['result']} mode={mode} failures={len(failures)}")
