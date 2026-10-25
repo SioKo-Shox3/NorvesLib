@@ -10,7 +10,8 @@
 # 置き場の組は ShapeCause.SETS の 1〜3 組のどれでも（lod-default・lod-finest・cliff-detail-off。どれも -Hdr -Aov）。組ごとに
 # 折れ目の密度・材質の陰影の差・格子の限界を測り、通常の LOD と最も細かい LOD の組があれば LOD の差、最も細かい LOD と崖の変形なしの
 # 組があれば崖の生成の差も測る。範囲（ShapeRegions.json）は世界座標の X・Z の矩形で、範囲に入る画素のうち地形の印
-# （<視点>.aov.terrain_id.pfm が 1）の画素だけを数える。折れ目は隣の画素も地形の印のときだけ比べる（岩の縁を地形の折れに数えない）。
+# （<視点>.aov.terrain_id.pfm が 1）の画素だけを数える。範囲と有効画素数と最低の数の判定は組ごとに、その組の位置と地形の印で行い、
+# 組の差は両方の組で範囲に入る地形の画素だけで比べる。折れ目は隣の画素も地形の印のときだけ比べる（岩の縁を地形の折れに数えない）。
 # 範囲の中は 32 × 32 画素の区画に分け、主の組（lod-default が無ければ並びの最初の組）の折れ目を区画ごとに記録する。
 # --baseline を付けると、前の基準の置き場（基準の記録が合うことを先に確かめる）を同じ範囲で測り、範囲ごとの差と、折れ目が
 # 前の基準より kLocalDropPoints 以上下がった区画の割合（局所の退行）を出す。
@@ -172,7 +173,7 @@ def measure_regions(levels, view, regions, data):
         if first in data and second in data:
             common = terrain_valid[first] & terrain_valid[second]
             pair_diffs[key] = (common & (ShapeCause.angle_degrees(data[first]["geometric"], data[second]["geometric"])
-                                         > ShapeCause.kDiffDegrees), common)
+                                         > ShapeCause.kDiffDegrees), common, first, second)
     drawn = base["valid"]
     camera_position = np.asarray(base["camera"]["position"], dtype=np.float64)
     records = {}
@@ -181,19 +182,28 @@ def measure_regions(levels, view, regions, data):
         minimum = region["views"].get(view)
         if minimum is None:
             continue
-        rect = region_rect(position, region)
-        inside = rect & terrain_valid[primary]
-        count = int(np.count_nonzero(inside))
+        # 範囲は組ごとに自分の世界座標と地形の印で切る（主の組の位置を他の組に流用すると、別の組の範囲外の地形を数える）
+        rects = {name: region_rect(data[name]["position"], region) for name in names}
+        insides = {name: rects[name] & terrain_valid[name] for name in names}
+        counts = {name: int(np.count_nonzero(insides[name])) for name in names}
+        rect = rects[primary]
+        inside = insides[primary]
+        count = counts[primary]
         record = {
             "terrain_pixels": count,
+            "terrain_pixels_by_set": counts,
             "min_pixels": minimum,
             "other_pixels": int(np.count_nonzero(rect & drawn & ~base["terrain"])),
             "primary_set": primary,
         }
         records[region["id"]] = record
-        if count < minimum:
+        short = [name for name in names if counts[name] < minimum]
+        if short:
             record["insufficient"] = True
-            failures.append(f"範囲 {region['id']} の視点 {view} の地形の画素 {count} が最低の {minimum} に足りない")
+            record["insufficient_sets"] = short
+            for name in short:
+                failures.append(f"範囲 {region['id']} の視点 {view} の組 {name} の地形の画素 {counts[name]} が"
+                                f"最低の {minimum} に足りない")
             continue
         xs = position[:, :, 0][inside]
         zs = position[:, :, 2][inside]
@@ -202,12 +212,13 @@ def measure_regions(levels, view, regions, data):
             "world_z": [round(float(np.percentile(zs, 5)), 1), round(float(np.percentile(zs, 95)), 1)],
             "distance_median_m": round(float(np.median(np.linalg.norm(position[inside] - camera_position[None, :],
                                                                       axis=1))), 1),
-            "crease": {name: fraction(creases[name][0], rect & terrain_valid[name] & creases[name][1]) for name in names},
+            "crease": {name: fraction(creases[name][0], insides[name] & creases[name][1]) for name in names},
             "shading_diff": fraction(shading_diff, inside),
             "grid_limited": fraction(grid_limited, inside),
         })
-        for key, (mask, common) in pair_diffs.items():
-            record[key] = fraction(mask, rect & common)
+        # 組の差は、両方の組で範囲に入る地形の画素だけで比べる
+        for key, (mask, common, first, second) in pair_diffs.items():
+            record[key] = fraction(mask, rects[first] & rects[second] & common)
         # 32 × 32 画素の区画ごとの主の組の折れ目
         crease, pairs = creases[primary]
         block_inside = block_sums(inside)
@@ -676,7 +687,32 @@ def run_selftest():
           f"short_failures={len(short_failures)} result={'pass' if ok_short else 'fail'}")
     if not ok_short:
         failures.append("範囲の地形の画素の不足で落ちない（か、ちょうどで落ちる）")
+    # (4) 2 組: 範囲と画素数は組ごとの位置と地形の印で数える。lod-finest の位置を範囲の外へずらすと、その組の不足で落ちる
+    #     （主の組の位置を流用すると範囲外の地形を数えて通ってしまう）。lod-finest の地形の印を全部外しても同じく落ちる
+    default = synthetic_entry(size, terrain, sawtooth(size, terrain))
+    shifted = synthetic_entry(size, terrain, sawtooth(size, terrain))
+    shifted["position"] = shifted["position"].copy()
+    shifted["position"][:, :, 0] += 1000.0
+    unmarked = synthetic_entry(size, np.zeros((size, size), dtype=bool), sawtooth(size, terrain))
+    paired = {}
+    for case, finest in (("shifted", shifted), ("unmarked", unmarked),
+                         ("aligned", synthetic_entry(size, terrain, sawtooth(size, terrain)))):
+        records, case_failures = measure_regions(levels, "ref_cliff_01", [region],
+                                                 {"lod-default": default, "lod-finest": finest})
+        paired[case] = (records["selftest"], case_failures)
+    ok_sets = all(record.get("insufficient_sets") == ["lod-finest"] and len(case_failures) == 1 and
+                  "lod-finest" in case_failures[0] for record, case_failures in (paired["shifted"], paired["unmarked"]))
+    aligned_record, aligned_failures = paired["aligned"]
+    ok_sets = ok_sets and not aligned_failures and aligned_record.get("lod_diff") == 0.0
+    print(f"SHAPE_REGION_SELFTEST case=per_set_region_pixels "
+          f"shifted_finest={paired['shifted'][0]['terrain_pixels_by_set'].get('lod-finest')} "
+          f"unmarked_finest={paired['unmarked'][0]['terrain_pixels_by_set'].get('lod-finest')} "
+          f"shifted_failures={len(paired['shifted'][1])} unmarked_failures={len(paired['unmarked'][1])} "
+          f"aligned_failures={len(aligned_failures)} aligned_lod_diff={aligned_record.get('lod_diff')} "
+          f"result={'pass' if ok_sets else 'fail'}")
+    if not ok_sets:
+        failures.append("2 組で、範囲の外へずれた組か地形の印の無い組の画素の不足で落ちない")
     for failure in failures:
         print("FAIL " + failure)
-    print(f"REFERENCE_CHECK shape_regions_selftest cases=3 result={'pass' if not failures else 'fail'}")
+    print(f"REFERENCE_CHECK shape_regions_selftest cases=4 result={'pass' if not failures else 'fail'}")
     return 0 if not failures else 1

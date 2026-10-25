@@ -7858,3 +7858,10 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 証拠（`.harness/runs/20261024-183517/`）: `verify-SCN-WL-SHAPE-REGION-METRIC-5.txt`（ビルド EXIT=0）・`-6.txt`（撮影 result=pass EXIT=0）・`-7.txt`（`--selftest` 3 件 pass）・`-8.txt`（基準の検査 result=pass、13 の範囲と視点、mismatched=0）、`aux-SCN-WL-SHAPE-REGION-METRIC-baseline-record-sealed.txt`
 - Next: TASKS.md の次の未完
 - Notes: `SCN-WL-SHAPE-BASELINE/lod-default` は撮り直しの置き場になった（基準は `sealed/lod-default`）。内部の折れ線の注釈の項目の verify（`CompareReference.py --capture .../SCN-WL-SHAPE-BASELINE/lod-default`）は同じ地形の撮り直しを読むので動くが、封じた基準を読ませたいなら `sealed/lod-default` へ替える
+
+## 2026-10-25 SCN-WL-SHAPE-REGION-METRIC（run 20261024-183517 の反復 37、DONE）
+- 差し戻し: 複数の組で、主の組の世界座標で作った範囲のマスクを他の組にも使い、最低の画素数も主の組だけで判定していた（別の組の範囲外の地形を数える）
+- Done: `ShapeRegionMetric.measure_regions` は範囲・地形の画素の数・最低の数の判定を組ごとに、その組の位置と地形の印で行う形にした（1 組でも足りなければ組の名前つきで落ち、数は `terrain_pixels_by_set`）。LOD の差・崖の生成の差は両方の組で範囲に入る地形の画素だけで比べる。`--selftest` に 2 組の場合（`lod-finest` の X を 1000 m ずらす・地形の印を全部外すと落ち、揃えた 2 組は通って LOD の差 0）を足した。`WastelandShape.md` の量と自己検査の段を直した
+- 確かめ: 1 組の基準の値は前の反復と同じ（13 の範囲と視点、mismatched=0）
+- 証拠（`.harness/runs/20261024-183517/`）: `verify-SCN-WL-SHAPE-REGION-METRIC-9.txt`（ビルド EXIT=0）・`-10.txt`（撮影 result=pass EXIT=0）・`-11.txt`（`--selftest` 4 件 pass）・`-12.txt`（基準の検査 result=pass）
+- Next: TASKS.md の次の未完
