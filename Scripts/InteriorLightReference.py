@@ -9,9 +9,12 @@
 #          -Width 1920 -Height 1080 -Hdr -Aov -OutDir <撮影>
 #   2. python Scripts/InteriorLightReference.py --render --capture <撮影> [--samples 1024] [--blender <blender.exe>]
 #      全視点を 1 回の Blender で描き、<撮影>/cycles/<視点>.cycles.pfm（放射輝度 cd/m²、線形の Rec.709）と記録 cycles.json を書く。
-#   3. python Scripts/InteriorLightReference.py --compare --capture <撮影>
+#   3. python Scripts/InteriorLightReference.py --compare --capture <撮影> [--reference <正解の置き場>] [--expect <仕様>]
 #      <撮影>/compare/<視点>.compare.png（左上 エンジン・右上 Cycles・下 2 枚が手本の写真）と、領域ごとの明るさと色の比
-#      compare.json を書く。
+#      compare.json を書く。--reference は Cycles の絵（<置き場>/cycles/）を描いた撮影のフォルダ（既定は --capture）で、
+#      カメラが今の撮影と同じことを確かめる。--expect は判定の仕様（Scripts/Terrain/ExpectSpecs/interior-*.json）で、
+#      行ごとに視点・領域・量（luminance_ratio = 輝度の中央値のエンジン ÷ Cycles、chroma_bg_ratio = 青 ÷ 緑の比の
+#      エンジン ÷ Cycles、sunlit_iou = 領域の印と正解の置き場の撮影の印の IoU）と min・max を持ち、外れたら fail にする。
 #
 # 光の決め方（エンジンと同じ物理の単位。Blender の放射の量をそのまま cd/m²・lux として扱う）:
 #   太陽: 高さ 15°・方位 240°。大気の外の照度（SkyAtmosphereParameters の既定の太陽の輝度 × 円盤の立体角）に、
@@ -714,12 +717,63 @@ def draw_caption(draw, font, xy, text):
     draw.text((x, y), text, font=font, fill=(255, 255, 255))
 
 
+def camera_mismatch(capture, reference, view):
+    """今の撮影と正解の置き場の撮影のカメラの違い（位置 1 mm・向き 1e-4・画角 0.01° を超える項目の名前。同じなら空）"""
+    cameras = []
+    for folder in (capture, reference):
+        with open(os.path.join(folder, f"{view}.aov.json"), encoding="utf-8-sig") as f:
+            cameras.append(json.load(f)["camera"])
+    differs = []
+    for key, tolerance in (("position", 1e-3), ("forward", 1e-4), ("up", 1e-4)):
+        if max(abs(a - b) for a, b in zip(cameras[0][key], cameras[1][key])) > tolerance:
+            differs.append(key)
+    if abs(cameras[0]["vertical_fov_degrees"] - cameras[1]["vertical_fov_degrees"]) > 0.01:
+        differs.append("vertical_fov_degrees")
+    return differs
+
+
+def evaluate_expect(spec, results, sunlit_iou):
+    """判定の仕様の行を compare の結果に当てる。返すのは（行ごとの記録, 外れの説明の並び）"""
+    rows = []
+    failures = []
+    for row in spec["rows"]:
+        view, region, quantity = row["view"], row["region"], row["quantity"]
+        value = None
+        entry = results.get(view, {}).get("regions", {}).get(region)
+        if quantity == "luminance_ratio" and entry:
+            value = entry["luminance_ratio"]
+        elif quantity == "chroma_bg_ratio" and entry:
+            value = entry["engine"]["chroma_bg"] / max(entry["cycles"]["chroma_bg"], 1e-9)
+        elif quantity == "sunlit_iou":
+            value = sunlit_iou.get((view, region))
+        record = {"view": view, "region": region, "quantity": quantity, "value": value,
+                  "min": row.get("min"), "max": row.get("max")}
+        if value is None:
+            record["pass"] = False
+            failures.append(f"{view}/{region}/{quantity}: 測れない（領域の画素が足りないか量の名前が違う）")
+        else:
+            ok = (row.get("min") is None or value >= row["min"]) and (row.get("max") is None or value <= row["max"])
+            record["pass"] = bool(ok)
+            if not ok:
+                failures.append(f"{view}/{region}/{quantity}={value:.4f} が範囲 [{row.get('min')}, {row.get('max')}] の外")
+        rows.append(record)
+        print(f"INTERIOR_EXPECT view={view} region={region} quantity={quantity} "
+              f"value={'n/a' if value is None else f'{value:.4f}'} min={row.get('min')} max={row.get('max')} "
+              f"result={'pass' if record['pass'] else 'fail'}")
+    return rows, failures
+
+
 def run_compare(args):
     sys.path.insert(0, os.path.join(REPO_ROOT, "Scripts", "Terrain"))
     import DisplayTransform
     from PIL import Image, ImageDraw, ImageFont
     capture = os.path.abspath(args.capture)
-    cycles_dir = os.path.join(capture, RESULT_DIR)
+    reference = os.path.abspath(args.reference) if args.reference else capture
+    cycles_dir = os.path.join(reference, RESULT_DIR)
+    spec = None
+    if args.expect:
+        with open(args.expect, encoding="utf-8-sig") as f:
+            spec = json.load(f)
     out_dir = os.path.join(capture, COMPARE_DIR)
     os.makedirs(out_dir, exist_ok=True)
     with open(os.path.join(cycles_dir, "cycles.json"), encoding="utf-8") as f:
@@ -731,7 +785,13 @@ def run_compare(args):
     half_w, half_h = COMPARE_WIDTH // 2, COMPARE_HEIGHT // 2
     results = {}
     failures = []
+    sunlit_iou = {}
     for view in args.views.split(","):
+        if reference != capture:
+            differs = camera_mismatch(capture, reference, view)
+            if differs:
+                failures.append(f"{view}: カメラが正解の置き場の撮影と違う（{', '.join(differs)}）")
+                continue
         with open(os.path.join(capture, f"{view}.hdr.json"), encoding="utf-8") as f:
             meta = json.load(f)
         params = DisplayTransform.params_from_capture(meta)
@@ -747,6 +807,12 @@ def run_compare(args):
         Image.fromarray(cycles_png, "RGB").save(os.path.join(out_dir, f"{view}.cycles.png"))
 
         masks = region_masks(capture, view)
+        if reference != capture:
+            # 正解の置き場の撮影の印と重ねる（窓の日だまりの形・位置が正解を描いたときと同じか）
+            reference_masks = region_masks(reference, view)
+            for name in ("floor_sunlit", "floor_shade"):
+                union = (masks[name] | reference_masks[name]).sum()
+                sunlit_iou[(view, name)] = float((masks[name] & reference_masks[name]).sum() / union) if union else None
         regions = {}
         for name, mask in masks.items():
             e = region_stats(engine, mask)
@@ -759,7 +825,8 @@ def run_compare(args):
                 "engine_black": float((engine_png.max(axis=-1) <= 2).mean()),
                 "cycles_white": float((cycles_png.min(axis=-1) >= 254).mean()),
                 "cycles_black": float((cycles_png.max(axis=-1) <= 2).mean())}
-        results[view] = {"pre_exposure": pre_exposure, "regions": regions, "clip": clip}
+        results[view] = {"pre_exposure": pre_exposure, "regions": regions, "clip": clip,
+                         "mask_iou": {name: value for (v, name), value in sunlit_iou.items() if v == view}}
 
         canvas = Image.new("RGB", (COMPARE_WIDTH, COMPARE_HEIGHT), (0, 0, 0))
         canvas.paste(Image.fromarray(engine_png, "RGB").resize((half_w, half_h), Image.LANCZOS), (0, 0))
@@ -787,8 +854,16 @@ def run_compare(args):
         print(f"INTERIOR_COMPARE view={view} clip engine_white={clip['engine_white']:.4f} "
               f"engine_black={clip['engine_black']:.4f} cycles_white={clip['cycles_white']:.4f} "
               f"cycles_black={clip['cycles_black']:.4f}")
+    expect_rows = None
+    if spec is not None:
+        expect_rows, expect_failures = evaluate_expect(spec, results, sunlit_iou)
+        failures.extend(expect_failures)
+        with open(os.path.join(out_dir, "expect.json"), "w", encoding="utf-8") as f:
+            json.dump({"expect": os.path.relpath(os.path.abspath(args.expect), REPO_ROOT), "reference": reference,
+                       "rows": expect_rows, "failures": expect_failures}, f, ensure_ascii=False, indent=2)
     with open(os.path.join(out_dir, "compare.json"), "w", encoding="utf-8") as f:
-        json.dump({"cycles": cycles_record, "views": results, "failures": failures}, f, ensure_ascii=False, indent=2)
+        json.dump({"cycles": cycles_record, "reference": reference, "views": results, "expect": expect_rows,
+                   "failures": failures}, f, ensure_ascii=False, indent=2)
     for failure in failures:
         print(f"INTERIOR_COMPARE failure: {failure}")
     print(f"INTERIOR_COMPARE result={'fail' if failures else 'pass'} views={len(results)}")
@@ -809,6 +884,8 @@ def main():
     parser.add_argument("--views", default=",".join(DEFAULT_VIEWS), help="視点（カンマ区切り）")
     parser.add_argument("--samples", type=int, default=DEFAULT_SAMPLES, help="Cycles の標本数")
     parser.add_argument("--blender", default=DEFAULT_BLENDER, help="blender.exe")
+    parser.add_argument("--reference", help="--compare: Cycles の絵（cycles/）を描いた撮影のフォルダ（既定は --capture）")
+    parser.add_argument("--expect", help="--compare: 判定の仕様（領域の比の範囲。Scripts/Terrain/ExpectSpecs/interior-*.json）")
     args = parser.parse_args()
     return run_render(args) if args.render else run_compare(args)
 

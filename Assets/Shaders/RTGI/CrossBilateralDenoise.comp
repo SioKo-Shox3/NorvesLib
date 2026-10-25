@@ -43,8 +43,8 @@ bool IsFiniteVector(vec3 value)
            !any(isinf(value));
 }
 
-// 遮蔽の診断（DiffuseIndirect.comp の StoreTemporalSample）: 入力の a = 2 × 符号 + 時間の蓄積の後の空の分。
-// 符号を除いた空の分を放射輝度と同じ重みで均して出力の a へ書く。診断しないときは入力の a が 1 なので出力の a も 1
+// DiffuseIndirect.comp の StoreTemporalSample: 入力の a = 2 × 符号 + 時間の蓄積の後の空の分（符号は遮蔽の診断のときだけ）。
+// 符号を除いた空の分を放射輝度と同じ重みで均して出力の a へ書く（照明が鏡面の環境光の遮りに読む）
 float DecodeSkyVisibility(float encoded)
 {
     if (!IsFiniteScalar(encoded) || encoded < 0.0)

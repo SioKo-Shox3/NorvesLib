@@ -1,0 +1,74 @@
+{
+  "description": "SCN-RENDER-SPEC-OCCLUSION: 鏡面の環境光を RTGI の空の見え方で遮った後の interior-light を、SCN-INTERIOR-ROOM の Cycles の正解（--reference）と比べる（InteriorLightReference.py --compare --expect）。3 視点の日陰の床の輝度がエンジン ÷ Cycles で 0.8〜1.25、青 ÷ 緑の比が Cycles の ±10 %、窓の日だまりの形・位置が正解の撮影と同じ（印の IoU 0.95 以上）。",
+  "rows": [
+    {
+      "view": "default",
+      "region": "floor_shade",
+      "quantity": "luminance_ratio",
+      "min": 0.8,
+      "max": 1.25,
+      "note": "overview の日陰の床の輝度の中央値（エンジン ÷ Cycles）"
+    },
+    {
+      "view": "default",
+      "region": "floor_shade",
+      "quantity": "chroma_bg_ratio",
+      "min": 0.9,
+      "max": 1.1,
+      "note": "overview の日陰の床の青 ÷ 緑の比（エンジン ÷ Cycles、±10 %）"
+    },
+    {
+      "view": "default",
+      "region": "floor_sunlit",
+      "quantity": "sunlit_iou",
+      "min": 0.95,
+      "note": "overview の窓の日だまりの印（太陽の可視率の AOV）が正解の置き場の撮影の印と重なる割合"
+    },
+    {
+      "view": "window",
+      "region": "floor_shade",
+      "quantity": "luminance_ratio",
+      "min": 0.8,
+      "max": 1.25,
+      "note": "window の日陰の床の輝度の中央値（エンジン ÷ Cycles）"
+    },
+    {
+      "view": "window",
+      "region": "floor_shade",
+      "quantity": "chroma_bg_ratio",
+      "min": 0.9,
+      "max": 1.1,
+      "note": "window の日陰の床の青 ÷ 緑の比（エンジン ÷ Cycles、±10 %）"
+    },
+    {
+      "view": "window",
+      "region": "floor_sunlit",
+      "quantity": "sunlit_iou",
+      "min": 0.95,
+      "note": "window の窓の日だまりの印（太陽の可視率の AOV）が正解の置き場の撮影の印と重なる割合"
+    },
+    {
+      "view": "corner",
+      "region": "floor_shade",
+      "quantity": "luminance_ratio",
+      "min": 0.8,
+      "max": 1.25,
+      "note": "corner の日陰の床の輝度の中央値（エンジン ÷ Cycles）"
+    },
+    {
+      "view": "corner",
+      "region": "floor_shade",
+      "quantity": "chroma_bg_ratio",
+      "min": 0.9,
+      "max": 1.1,
+      "note": "corner の日陰の床の青 ÷ 緑の比（エンジン ÷ Cycles、±10 %）"
+    },
+    {
+      "view": "corner",
+      "region": "floor_sunlit",
+      "quantity": "sunlit_iou",
+      "min": 0.95,
+      "note": "corner の窓の日だまりの印（太陽の可視率の AOV）が正解の置き場の撮影の印と重なる割合"
+    }
+  ]
+}

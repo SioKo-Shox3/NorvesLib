@@ -948,11 +948,11 @@ void StoreTemporalSample(uvec2 pixel,
                          float diagnosticCode)
 {
     vec3 safeRadiance = SanitizeRadiance(radiance);
-    // 遮蔽の診断: 履歴の a = 時間の蓄積の後の空の分、出力の a = 2 × 符号 + 空の分（符号 = 生の空 + 2 × 読み飛ばしの分類、
-    // 空間のフィルタが空の分を取り出して均す）。診断しないときはどちらも 1（照明は rgb だけを読む）
+    // 履歴の a = 時間の蓄積の後の空の分、出力の a = 2 × 符号 + 空の分（空間のフィルタが空の分を取り出して均し、照明が
+    // 鏡面の環境光の遮りに使う）。符号は遮蔽の診断のときだけ生の空 + 2 × 読み飛ばしの分類で、診断しないときは 0
     float safeSkyVisibility = IsFiniteScalar(skyVisibility) ? clamp(skyVisibility, 0.0, 1.0) : 1.0;
-    float outputAlpha = IsOcclusionDiagnosticEnabled() ? 2.0 * diagnosticCode + safeSkyVisibility : 1.0;
-    float historyAlpha = IsOcclusionDiagnosticEnabled() ? safeSkyVisibility : 1.0;
+    float outputAlpha = IsOcclusionDiagnosticEnabled() ? 2.0 * diagnosticCode + safeSkyVisibility : safeSkyVisibility;
+    float historyAlpha = safeSkyVisibility;
     float safeAge = IsFiniteScalar(age)
         ? clamp(age,
                 0.0,

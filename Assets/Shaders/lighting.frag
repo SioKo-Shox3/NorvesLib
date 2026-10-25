@@ -688,6 +688,22 @@ vec3 EvaluateIblEndpoint(vec3 albedo,
     return (diffuseIBL * diffuseAO + specularIBL * specularAO) * iblIntensity;
 }
 
+// RTGI のときの鏡面の環境光（露出前）。空の前計算は RTGI が光線で求めた空の見え方（コサインの重みの割合）から作る
+// 鏡面の遮り（Lagarde 2014 の視線とラフネスの近似）の分だけ足し、遮られた向きは周りの面の光で埋める。周りの面の光は、
+// RTGI の照り返し（入射の放射輝度 × 反射率 × 拡散の重み）を反射率と拡散の重みで割った入射の平均で近似する。
+// 材質の AO・画面空間 AO の遮り（specularAO）とは掛け合わせず、遮りの大きい方を採る（二重に数えない）
+vec3 EvaluateRTGIEnvironmentSpecular(vec3 prefilteredColor,
+                                     vec3 reflectance,
+                                     float specularAO,
+                                     float skySpecularOcclusion,
+                                     vec3 surroundRadiance,
+                                     float iblIntensity)
+{
+    float skyOcclusion = min(specularAO, skySpecularOcclusion);
+    return reflectance * (prefilteredColor * skyOcclusion * iblIntensity +
+                          surroundRadiance * (specularAO - skyOcclusion));
+}
+
 vec3 EvaluateRTGIEndpoint(vec3 albedo,
                           float metallic,
                           float roughness,
@@ -696,7 +712,9 @@ vec3 EvaluateRTGIEndpoint(vec3 albedo,
                           float specularAO,
                           float iblIntensity,
                           vec2 brdf,
-                          vec3 rtgiDiffuseRadiance)
+                          vec3 rtgiDiffuseRadiance,
+                          float skySpecularOcclusion,
+                          vec3 surroundRadiance)
 {
     // 拡散は光線で遮蔽を解いた照り返しをそのまま使う（材質の AO を重ねない。呼び出し側の説明を参照）
     vec3 diffuse = max(rtgiDiffuseRadiance, vec3(0.0));
@@ -705,9 +723,12 @@ vec3 EvaluateRTGIEndpoint(vec3 albedo,
     {
         vec3 R = reflect(-V, N);
         vec3 prefilteredColor = SamplePrefilteredSpecular(R, roughness);
-        specular = prefilteredColor *
-                   EvaluateSpecularReflectance(albedo, metallic, brdf) *
-                   specularAO * iblIntensity;
+        specular = EvaluateRTGIEnvironmentSpecular(prefilteredColor,
+                                                   EvaluateSpecularReflectance(albedo, metallic, brdf),
+                                                   specularAO,
+                                                   skySpecularOcclusion,
+                                                   surroundRadiance,
+                                                   iblIntensity);
     }
     return diffuse + specular;
 }
@@ -1334,9 +1355,16 @@ void main()
             TrySampleDDGIIrradiance(worldPos, N, ddgiIrradiance);
         bool bRTGIAvailable = !bDDGIValidationMode && params.ddgiInfo.y != 0u;
         vec3 rtgiDiffuseRadiance = vec3(0.0);
+        // RTGI の空の見え方（コサインの重みで空へ抜ける割合。a = 2 × 診断の符号 + 空の分）
+        float rtgiSkyVisibility = 1.0;
         if (bRTGIAvailable)
         {
-            rtgiDiffuseRadiance = texture(rtgiDiffuseIndirect, fragUV).rgb /
+            vec4 rtgiSample = texture(rtgiDiffuseIndirect, fragUV);
+            if (!isnan(rtgiSample.a) && !isinf(rtgiSample.a) && rtgiSample.a >= 0.0)
+            {
+                rtgiSkyVisibility = clamp(rtgiSample.a - 2.0 * floor(rtgiSample.a * 0.5), 0.0, 1.0);
+            }
+            rtgiDiffuseRadiance = rtgiSample.rgb /
                                   max(params.preExposure, 1.0e-6);
             if (any(isnan(rtgiDiffuseRadiance)) || any(isinf(rtgiDiffuseRadiance)))
             {
@@ -1352,6 +1380,16 @@ void main()
 
         // スペキュラAO（Lagarde 2014: 視線角度とラフネスに基づく遮蔽近似）
         specularAO = ComputeSpecularAO(NdotV, ao, roughness);
+        // RTGI の空の見え方からの鏡面の遮りと、遮られた向きを埋める周りの面の光（EvaluateRTGIEnvironmentSpecular）
+        float rtgiSkySpecularOcclusion = 1.0;
+        vec3 rtgiSurroundRadiance = vec3(0.0);
+        if (bRTGIAvailable)
+        {
+            rtgiSkySpecularOcclusion = ComputeSpecularAO(NdotV, rtgiSkyVisibility, roughness);
+            // 反射率 × 拡散の重みが小さい面（濃い色・金属）は入射を推定できないので、下限で割って小さめに見積もる
+            vec3 rtgiReceiverWeight = max(iblAlbedo * EvaluateDiffuseMaterialWeight(metallic), vec3(0.05));
+            rtgiSurroundRadiance = rtgiDiffuseRadiance / rtgiReceiverWeight;
+        }
 
         if (params.bIBLEnabled != 0u)
         {
@@ -1375,7 +1413,9 @@ void main()
                                        specularAO,
                                        iblIntensity,
                                        brdf,
-                                       rtgiDiffuseRadiance)
+                                       rtgiDiffuseRadiance,
+                                       rtgiSkySpecularOcclusion,
+                                       rtgiSurroundRadiance)
                 : EvaluateIblEndpoint(iblAlbedo,
                                        metallic,
                                        iblRoughness,
@@ -1388,10 +1428,17 @@ void main()
                                        bDDGIAvailable,
                                        ddgiIrradiance);
             // EvaluateIblEndpoint・EvaluateRTGIEndpoint の鏡面の項と同じ値（どちらも遮蔽と強度を掛ける）
-            indirectSpecularReflectance =
-                EvaluateSpecularReflectance(iblAlbedo, metallic, brdf) * specularAO;
-            indirectSpecular = SamplePrefilteredSpecular(reflect(-V, N), iblRoughness) *
-                               indirectSpecularReflectance * iblIntensity;
+            vec3 iblSpecularReflectance = EvaluateSpecularReflectance(iblAlbedo, metallic, brdf);
+            indirectSpecularReflectance = iblSpecularReflectance * specularAO;
+            indirectSpecular = bRTGIAvailable
+                ? EvaluateRTGIEnvironmentSpecular(SamplePrefilteredSpecular(reflect(-V, N), iblRoughness),
+                                                  iblSpecularReflectance,
+                                                  specularAO,
+                                                  rtgiSkySpecularOcclusion,
+                                                  rtgiSurroundRadiance,
+                                                  iblIntensity)
+                : SamplePrefilteredSpecular(reflect(-V, N), iblRoughness) *
+                      indirectSpecularReflectance * iblIntensity;
             if (bDiffuseOnlyMaterial && !bRTGIAvailable)
             {
                 // 鏡面の無い材質: 放射照度 × アルベド/π だけ（(1 - Ed) の減りと鏡面の項を掛けない。SSR も足さない）
@@ -1431,7 +1478,9 @@ void main()
                                                specularAO,
                                                0.0,
                                                rtgiBrdf,
-                                               rtgiDiffuseRadiance);
+                                               rtgiDiffuseRadiance,
+                                               1.0,
+                                               vec3(0.0));
             }
             else if (bDDGIAvailable)
             {
