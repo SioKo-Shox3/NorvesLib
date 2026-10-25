@@ -434,3 +434,30 @@ Cycles の同じ面の画素（地形、距離 500 m 以上）で、`occlusion-r
 terrain_mesh.inputs_sha256」（Cycles の参照を描いた後の地形の変更）、ref_cliff_01 の空と表面の分かれ方の食い違い 0.0147（上限 0.005、
 参照と今の地形の差）、shadow_cliff の visibility_mismatch 0.0866。off で範囲内・今の形で外れる行は無い。今の形は off より 3 行で Cycles に近づき
 （空の比 2 行・日向の地面 2 行）、悪くなった行は無い。荒野の遮蔽の 8 組の版 14 での撮り直しは、この反復ではしていない。
+
+### 同じ最終の版で変更前の経路と並べた荒野の遮蔽の 8 組（SCN-RENDER-SPEC-OCC-VERIFY-OCC）
+
+同じ Game.exe（38cf602d、HEAD のシェーダー）・同じ焼いた地形（崖の細部の版 15）で、荒野の遮蔽の 8 組を今の形と `--rtgi-specular=off`
+（変更前の鏡面の経路）で撮った（`scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC/{on,off}`、16 本とも撮影 pass）。判定は
+`ReferenceCheck.py --occlusion --off-root`（`OcclusionCompare.compare_off`）で、off も同じ参照・同じ `occlusion-accept.json` で測り、
+今の形で範囲の外の行は off でも外れて今の形が off から 0.005 を超えて悪くならないときだけ「参照が古い分」として通す。off で範囲内・
+今の形で外れる行と、一時の下限の行が外れたときは fail。両方の撮影の Game.exe・実装・小物の配置が同じで、起動引数の違いが
+`rtgi-specular=off` だけであることも確かめる。結果は pass（`.harness/runs/20261026-002702/verify-SCN-RENDER-SPEC-OCC-VERIFY-OCC-18.txt`、
+並べの記録は `scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC/on/occlusion_off_compare.json`）。
+
+| 行（`occlusion-accept.json`） | 範囲 | 今の形 ÷ off | エンジン ÷ Cycles（off） | エンジン ÷ Cycles（今の形） | 判定 |
+|---|---|---|---|---|---|
+| terrain-sky の対照 slope60-180_d500-100000（前の記録との比 off 0.9755 → 今の形 0.9513） | 一時の下限 0.946〜1.03 | 0.9752 | 0.9947 | 0.9700 | 内 |
+| rocks-cliff-sky の対照 slope60-180_d500-100000（同 0.9847 → 0.9622） | 一時の下限 0.957〜1.03 | 0.9771 | 1.0042 | 0.9813 | 内 |
+| terrain-sun の太陽の影（ref_cliff_01）。IoU・漏れ・縁の幅の比 | IoU 0.9 以上・漏れ 0.02 以下 | IoU 1.0000 | IoU 0.8535・漏れ 0.0265・縁 1.129 | 同じ | 両方で外（参照が古い分、差 0） |
+| rocks-cliff-sun の太陽の影（ref_cliff_01） | 同上 | IoU 0.9998 | IoU 0.5657・漏れ 0.0169・縁 0.942 | IoU 0.5656・漏れ 0.0168・縁 0.942 | 両方で外（差 0.0001） |
+| rocks-sun の太陽の影（contact_near、地形の受け手の IoU） | 同上 | IoU 1.0000 | IoU 0.8521・漏れ 0.0054・縁 1.076 | 同じ | 両方で外（差 0） |
+
+- 決めた層（エンジン ÷ Cycles、範囲 0.85〜1.15）は両方で内: off / 今の形で groove（terrain-sky）1.0966 / 1.0950、contact 1.0127 / 1.0017・
+  1.0050 / 0.9854、plant_root 0.9814 / 0.9733。ほかの対照 5 行・plant-sun の太陽の影（IoU 0.923 / 0.9235）も両方で内。
+  off で範囲内・今の形で外れる行は無い。
+- 行の外の失敗は off と今の形で同じで、どれも Cycles の参照を描いた後の地形と小物の変更による: 8 組の「地形のメッシュの元の入力が描いた後に
+  変わった」、岩塊の 4 組の小物の配置・形の一覧の違い、ref_cliff_01 の同じ面の画素の割合（terrain 0.8585、rocks-cliff 0.7097〜0.7098、
+  下限 0.9）。同じ面の割合は on と off の撮影の間で 0.0001 揺れるので、数の差が 0.005 以内の同じ文を同じ失敗と見る。
+- 値は版 11 で撮った反復 2 の撮影と同じ（ref_cliff_01・contact_near・plant_near の画は崖の細部の版 12〜15 の範囲の外）。遠い急な崖の
+  対照の 2 行は一時の下限の内で、off との差（−2.3〜−2.5 %）は SCN-RENDER-ROUGH-STEEP-ENERGY で扱う。

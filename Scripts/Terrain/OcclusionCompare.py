@@ -44,9 +44,15 @@
 # --sets <組,...>: 判定する組を絞る（1 コマンドの時間を分けるため）。参照の置き場に無い名前は fail。必須の層・決めた層・
 #   太陽の決めた視点は、絞った組の分だけ求める。組の一覧（occlusion_sets.json）の参照の有無と、撮影の Game.exe と実装の
 #   揃いは全組で見る。
+# --off-root <置き場>（--expect と一緒に。OcclusionSets.py --variant-args rtgi-specular=off で同じ Game.exe・同じ焼いた地形で
+#   撮った変更前の鏡面の経路）: off も同じ参照・同じ定義で測り、今の形の行と並べる（compare_off）。今の形で外れた行は、off でも
+#   外れて今の形が off から OFF_WORSE_TOLERANCE を超えて悪くならなければ参照が古い分として通す。off で範囲内・今の形で外れる行と
+#   一時の下限（control_overrides）の行が外れたときは fail。結果は <エンジンの置き場>/occlusion_off_compare.json。
+import hashlib
 import json
 import math
 import os
+import re
 
 import numpy as np
 from PIL import Image
@@ -82,6 +88,9 @@ REQUIRED_OBJECTS = {
 SETS_FILE = "occlusion_sets.json"
 PLANT_PLY = "reference_plant.ply"
 PREVIEW_DIR = "occlusion_preview"
+# --off-root: 今の形の行が同じ版の off（変更前の鏡面の経路）より悪くてよい量と、off の撮影だけに足す起動引数
+OFF_WORSE_TOLERANCE = 0.005
+OFF_VARIANT_ARG = "rtgi-specular=off"
 
 
 def read_json(path):
@@ -535,14 +544,16 @@ def check_expect(RC, expect, regions, report, reference_root, views, trial):
                 seen_targets.add((name, view, region, stratum))
                 row["pass"] = low <= ratio_after <= high
                 if not row["pass"]:
-                    failures.append(f"{name}/{view} の決めた層 {region} {stratum} のエンジン ÷ Cycles {ratio_after:.4f} が "
-                                    f"{low}〜{high} の外（前 {ratio_before:.4f}）")
+                    row["failure"] = (f"{name}/{view} の決めた層 {region} {stratum} のエンジン ÷ Cycles {ratio_after:.4f} が "
+                                      f"{low}〜{high} の外（前 {ratio_before:.4f}）")
             elif measured:
                 growth = abs(ratio_after - 1.0) - abs(ratio_before - 1.0)
                 row["pass"] = growth <= worse_tolerance * ratio_before
                 if not row["pass"]:
-                    failures.append(f"{name}/{view} の層 {region} {stratum} のエンジン ÷ Cycles が {ratio_before:.4f} → "
-                                    f"{ratio_after:.4f} で 1 から {growth:.4f} 離れた（許容 {worse_tolerance * ratio_before:.4f}）")
+                    row["failure"] = (f"{name}/{view} の層 {region} {stratum} のエンジン ÷ Cycles が {ratio_before:.4f} → "
+                                      f"{ratio_after:.4f} で 1 から {growth:.4f} 離れた（許容 {worse_tolerance * ratio_before:.4f}）")
+            if "failure" in row:
+                failures.append(row["failure"])
             record["layers"].append(row)
             # 対照は視点と層ごとに 1 つ（領域が違っても同じ画素）
             if after["control_pixels"] >= min_control and (view, stratum) not in controls:
@@ -556,12 +567,16 @@ def check_expect(RC, expect, regions, report, reference_root, views, trial):
                        "pixels": after["control_pixels"], "before_y": before["engine_y_control"],
                        "after_y": after["engine_y_control"], "after_over_before": round(change, 4),
                        "range": [control_low, 1.0 + control_tolerance], "pass": ok}
+                if "cycles_y_control" in after:
+                    row["engine_over_cycles"] = round(float(after["engine_y_control"]) /
+                                                      max(float(after["cycles_y_control"]), 1e-30), 4)
                 if override:
                     row["override_note"] = override.get("note", "")
-                record["controls"].append(row)
                 if not ok:
-                    failures.append(f"{name}/{view} の対照 {stratum} のエンジンの Y が前の {change:.4f} 倍で "
-                                    f"{control_low:.4f}〜{1.0 + control_tolerance} の外")
+                    row["failure"] = (f"{name}/{view} の対照 {stratum} のエンジンの Y が前の {change:.4f} 倍で "
+                                      f"{control_low:.4f}〜{1.0 + control_tolerance} の外")
+                    failures.append(row["failure"])
+                record["controls"].append(row)
     for missing in sorted(targets - seen_targets):
         failures.append(f"決めた層 {'/'.join(missing)} が測れない")
     if sun is not None:
@@ -630,15 +645,18 @@ def check_expect_sun(RC, sun, regions, entry, name, inputs, baseline_root, refer
         if is_target or before_ok:
             row["pass"] = after_ok
             if not after_ok:
-                failures.append(f"{name}/{view} の太陽の影が許容の外（{'・'.join(outside)}。IoU {sun_iou(after, receiver):.4f}"
-                                f"{'（' + receiver + ' の受け手）' if receiver else ''}・"
-                                f"漏れ {after['leak_fraction']}・縁の比 {after_ratio:.3f}）")
+                row["failure"] = (f"{name}/{view} の太陽の影が許容の外（{'・'.join(outside)}。IoU {sun_iou(after, receiver):.4f}"
+                                  f"{'（' + receiver + ' の受け手）' if receiver else ''}・"
+                                  f"漏れ {after['leak_fraction']}・縁の比 {after_ratio:.3f}）")
         else:
             row["pass"] = (float(after["shadow_iou"]) >= float(before["shadow_iou"]) and
                            float(after["leak_fraction"]) <= float(before["leak_fraction"]))
             if not row["pass"]:
-                failures.append(f"{name}/{view} の太陽の影が前より悪い（IoU {before['shadow_iou']} → {after['shadow_iou']}・"
-                                f"漏れ {before['leak_fraction']} → {after['leak_fraction']}）")
+                row["failure"] = (f"{name}/{view} の太陽の影が前より悪い（IoU {before['shadow_iou']} → {after['shadow_iou']}・"
+                                  f"漏れ {before['leak_fraction']} → {after['leak_fraction']}）")
+        if "failure" in row:
+            failures.append(row["failure"])
+        row["judged_iou"] = sun_iou(after, receiver)
         record["sun"].append(row)
     return failures
 
@@ -672,13 +690,9 @@ def print_expect(record):
               f"outside={','.join(row['outside']) or '-'} pass={int(row['pass'])}", flush=True)
 
 
-def run(RC, engine_root, reference_root, views, verify, trial, regions_path="", expect_path=None, only_sets=None):
-    regions = None
-    if regions_path:
-        import OcclusionMetric
-        regions = OcclusionMetric.load_spec(regions_path)
+def evaluate(RC, engine_root, reference_root, views, verify, trial, regions, expect, only_sets):
+    """1 つのエンジンの置き場を参照の全組（--sets で絞った組）と照らす。(記録, 前後の比べの外の失敗, 前後の比べの失敗)"""
     report = {"mode": "occlusion", "verify": bool(verify), "trial": bool(trial),
-              "regions": RC.rel_dir(regions_path) if regions_path else "",
               "engine_root": RC.rel_dir(engine_root) if engine_root else "",
               "reference_root": RC.rel_dir(reference_root) if reference_root else "", "sets": {}}
     failures = []
@@ -741,21 +755,229 @@ def run(RC, engine_root, reference_root, views, verify, trial, regions_path="", 
         # 必須の層は --sets で絞ったときだけ絞った組の分に限る（無指定では参照の有無に関わらず全部を求める）
         required = {"required": [item for item in regions["required"] if item["set"] in sets]} if only_sets else regions
         failures.extend(OcclusionMetric.missing_required(required, measured))
+    expect_failures = []
+    if expect is not None:
+        report["expect"], expect_failures = check_expect(RC, expect, regions, report, reference_root, views, trial)
+        print_expect(report["expect"])
+    if expect is not None and os.path.isdir(engine_root):
+        with open(os.path.join(engine_root, "occlusion_expect.json"), "w", encoding="utf-8") as f:
+            json.dump(report["expect"], f, indent=2, ensure_ascii=False)
+    return report, failures, expect_failures
+
+
+def range_distance(value, low, high):
+    """範囲の外へ出た量（内なら 0）"""
+    return max(float(low) - float(value), float(value) - float(high), 0.0)
+
+
+def expect_rows(record):
+    """前後の比べの記録から合否を持つ行を {(種類, 組, 視点, 領域, 層): 行} にする（対照と太陽は領域が空、太陽は層も空）"""
+    rows = {}
+    for row in record.get("layers") or []:
+        if "pass" in row:
+            rows[("layer", row["set"], row["view"], row["region"], row["stratum"])] = row
+    for row in record.get("controls") or []:
+        rows[("control", row["set"], row["view"], "", row["stratum"])] = row
+    for row in record.get("sun") or []:
+        rows[("sun", row["set"], row["view"], "", "")] = row
+    return rows
+
+
+def row_worse(kind, on, off, record, sun):
+    """今の形の行が off の行より悪い量（OFF_WORSE_TOLERANCE と比べる。正が悪い）"""
+    if kind == "layer":
+        if on["target"]:
+            low, high = record["target_range"]
+            return range_distance(on["after"], low, high) - range_distance(off["after"], low, high)
+        return abs(float(on["after"]) - 1.0) - abs(float(off["after"]) - 1.0)
+    if kind == "control":
+        return range_distance(on["after_over_before"], *on["range"]) - range_distance(off["after_over_before"], *off["range"])
+    low, high = sun["edge_ratio_range"]
+    return max(float(off["judged_iou"]) - float(on["judged_iou"]),
+               float(on["leak"][1]) - float(off["leak"][1]),
+               range_distance(on["edge_ratio"][1], low, high) - range_distance(off["edge_ratio"][1], low, high))
+
+
+def row_values(kind, row):
+    """表に出す値（層はエンジン ÷ Cycles、対照は前の撮影に対する比とエンジン ÷ Cycles、太陽は IoU・漏れ・縁の比）"""
+    if row is None:
+        return None
+    if kind == "layer":
+        return {"engine_over_cycles": row["after"]}
+    if kind == "control":
+        return {"after_over_before": row["after_over_before"], "engine_y": row["after_y"],
+                "engine_over_cycles": row.get("engine_over_cycles")}
+    return {"iou": row["judged_iou"], "leak": row["leak"][1], "edge_ratio": row["edge_ratio"][1]}
+
+
+def on_over_off(kind, on, off):
+    """今の形 ÷ off（層はエンジン ÷ Cycles の比、対照はエンジンの Y の比、太陽は IoU の比）"""
+    if kind == "layer":
+        return round(float(on["after"]) / max(float(off["after"]), 1e-30), 4)
+    if kind == "control":
+        return round(float(on["after_y"]) / max(float(off["after_y"]), 1e-30), 4)
+    return round(float(on["judged_iou"]) / max(float(off["judged_iou"]), 1e-30), 4)
+
+
+def file_sha256(path):
+    if not os.path.isfile(path):
+        return None
+    with open(path, "rb") as f:
+        return hashlib.sha256(f.read()).hexdigest()
+
+
+def same_build_failures(engine_root, off_root, sets):
+    """今の形と off の撮影が同じ Game.exe・同じ実装・同じ小物の配置で、起動引数の違いが off の変更前の経路の引数だけであること。失敗の一覧"""
+    failures = []
+    for name in sets:
+        on_dir, off_dir = os.path.join(engine_root, name), os.path.join(off_root, name)
+        paths = [os.path.join(d, f) for d in (on_dir, off_dir) for f in ("inputs.json", "metrics.json")]
+        if not all(os.path.isfile(path) for path in paths):
+            failures.append(f"{name}: 今の形か off の撮影（inputs.json・metrics.json）が無い")
+            continue
+        on_inputs, off_inputs = read_json(paths[0]), read_json(paths[2])
+        for key in ("game_exe_sha256", "files_sha256"):
+            if on_inputs.get(key) != off_inputs.get(key):
+                failures.append(f"{name}: 今の形と off の撮影の {key} が違う")
+        if file_sha256(os.path.join(on_dir, PROPS_PLACEMENTS)) != file_sha256(os.path.join(off_dir, PROPS_PLACEMENTS)):
+            failures.append(f"{name}: 今の形と off の小物の配置（{PROPS_PLACEMENTS}）が違う")
+        on_args = {arg.lstrip("-") for arg in read_json(paths[1]).get("game_args") or []}
+        off_args = {arg.lstrip("-") for arg in read_json(paths[3]).get("game_args") or []}
+        if on_args - off_args or off_args - on_args != {OFF_VARIANT_ARG}:
+            failures.append(f"{name}: 今の形と off の起動引数の違いが {OFF_VARIANT_ARG} だけでない"
+                            f"（今の形だけ {sorted(on_args - off_args)}・off だけ {sorted(off_args - on_args)}）")
+    return failures
+
+
+def compare_off(RC, expect, on, off, engine_root, off_root):
+    """今の形の判定を同じ版の off の判定と並べる。(記録, 失敗の一覧)
+
+    行（前後の比べの記録の合否を持つ行）: 今の形で合格ならそのまま合格。今の形で外れた行は、off でも外れ、今の形が off より
+    OFF_WORSE_TOLERANCE を超えて悪くならなければ「参照が古い分」として合格にする。off で合格・今の形で外れる行と、一時の下限
+    （control_overrides）の行が外れたときは失敗。
+    行の外の失敗（入力の照合・同じ面の割合・必須の層・前後の比べの画素の揃いなど）: off にも同じ失敗（matching_failure）があれば「参照が古い分」、
+    今の形だけにあれば失敗。
+    """
+    on_report, on_general, on_expect_failures = on
+    off_report, off_general, off_expect_failures = off
+    failures = same_build_failures(engine_root, off_root, list(on_report["sets"]))
+    on_record, off_record = on_report.get("expect") or {}, off_report.get("expect") or {}
+    on_rows, off_rows = expect_rows(on_record), expect_rows(off_record)
+    sun = expect.get("sun") or {}
+    record = {"off_root": RC.rel_dir(off_root), "worse_tolerance": OFF_WORSE_TOLERANCE, "rows": [], "stale_failures": []}
+    for key, row in sorted(on_rows.items()):
+        kind = key[0]
+        off_row = off_rows.get(key)
+        entry = {"kind": kind, "set": key[1], "view": key[2], "region": key[3], "stratum": key[4],
+                 "on": row_values(kind, row), "off": row_values(kind, off_row), "on_pass": bool(row["pass"]),
+                 "off_pass": None if off_row is None else bool(off_row["pass"])}
+        if off_row is not None:
+            entry["on_over_off"] = on_over_off(kind, row, off_row)
+        if kind == "control" and "override_note" in row:
+            entry["override"] = row["range"][0]
+        if row["pass"]:
+            entry["verdict"] = "pass"
+        elif off_row is None:
+            entry["verdict"] = "fail"
+            failures.append(f"{row['failure']}（off の撮影で同じ行を測れない）")
+        elif off_row["pass"]:
+            entry["verdict"] = "fail"
+            failures.append(f"{row['failure']}（off では範囲内）")
+        elif "override" in entry:
+            entry["verdict"] = "fail"
+            failures.append(f"{row['failure']}（一時の下限の行）")
+        else:
+            entry["worse"] = round(row_worse(kind, row, off_row, on_record, sun), 4)
+            entry["verdict"] = "stale" if entry["worse"] <= OFF_WORSE_TOLERANCE else "fail"
+            if entry["verdict"] == "fail":
+                failures.append(f"{row['failure']}（off でも外れるが、off より {entry['worse']:.4f} 悪い。許容 {OFF_WORSE_TOLERANCE}）")
+        record["rows"].append(entry)
+    on_row_failures = {row["failure"] for row in on_rows.values() if "failure" in row}
+    off_row_failures = {row["failure"] for row in off_rows.values() if "failure" in row}
+    on_other = on_general + [f"前後の比べ: {reason}" for reason in on_expect_failures if reason not in on_row_failures]
+    off_other = set(off_general + [f"前後の比べ: {reason}" for reason in off_expect_failures if reason not in off_row_failures])
+    for reason in on_other:
+        match = matching_failure(reason, off_other)
+        if match is not None:
+            record["stale_failures"].append(reason if match == reason else f"{reason}（off: {match}）")
+        else:
+            failures.append(f"{reason}（off には無い）")
+    return record, failures
+
+
+NUMBER = re.compile(r"-?\d+(?:\.\d+)?")
+
+
+def matching_failure(reason, others):
+    """reason と同じ失敗の文を others から探す（数を除いて同じ文で、数の差がどれも OFF_WORSE_TOLERANCE（1 より大きい数は
+    その倍率）以内。撮影ごとの同じ面の割合の 0.0001 ほどの揺れを同じ失敗と見る）。無ければ None"""
+    if reason in others:
+        return reason
+    template = NUMBER.sub("#", reason)
+    numbers = [float(v) for v in NUMBER.findall(reason)]
+    for other in sorted(others):
+        if NUMBER.sub("#", other) != template:
+            continue
+        values = [float(v) for v in NUMBER.findall(other)]
+        if all(abs(a - b) <= OFF_WORSE_TOLERANCE * max(1.0, abs(a), abs(b)) for a, b in zip(numbers, values)):
+            return other
+    return None
+
+
+def print_off_compare(record):
+    """off との並べを 1 行ずつ出す"""
+    for row in record["rows"]:
+        print(f"REFERENCE_CHECK occlusion off kind={row['kind']} set={row['set']} view={row['view']} region={row['region'] or '-'} "
+              f"stratum={row['stratum'] or '-'} on={json.dumps(row['on'])} off={json.dumps(row['off'])} "
+              f"on_over_off={row.get('on_over_off')} on_pass={int(row['on_pass'])} "
+              f"off_pass={'-' if row['off_pass'] is None else int(row['off_pass'])} worse={row.get('worse', '-')} "
+              f"override={row.get('override', '-')} verdict={row['verdict']}", flush=True)
+    for reason in record["stale_failures"]:
+        print(f"REFERENCE_CHECK occlusion off stale: {reason}（off でも同じ。参照が古い分）", flush=True)
+
+
+def run(RC, engine_root, reference_root, views, verify, trial, regions_path="", expect_path=None, only_sets=None,
+        off_root=""):
+    regions = None
+    if regions_path:
+        import OcclusionMetric
+        regions = OcclusionMetric.load_spec(regions_path)
+    failures = []
+    expect = None
     if expect_path:
         if regions is None:
             failures.append("--expect は --regions と一緒に使う")
         elif not os.path.isfile(expect_path):
             failures.append(f"--expect の定義 {expect_path} が無い")
         else:
-            report["expect"], expect_failures = check_expect(RC, read_json(expect_path), regions, report,
-                                                             reference_root, views, trial)
-            print_expect(report["expect"])
-            failures.extend(f"前後の比べ: {reason}" for reason in expect_failures)
-            with open(os.path.join(engine_root, "occlusion_expect.json"), "w", encoding="utf-8") as f:
-                json.dump(report["expect"], f, indent=2, ensure_ascii=False)
+            expect = read_json(expect_path)
+    off = None
+    if off_root:
+        if expect is None:
+            failures.append("--off-root は --regions・--expect と一緒に使う")
+        elif not os.path.isdir(off_root):
+            failures.append(f"--off-root の置き場 {RC.rel_dir(off_root)} が無い")
+        else:
+            # off を先に測り、参照の組へ書く並べた画と occlusion_check.json は後の今の形の判定で上書きする
+            print(f"REFERENCE_CHECK occlusion pass=off root={RC.rel_dir(off_root)}", flush=True)
+            off = evaluate(RC, off_root, reference_root, views, verify, trial, regions, expect, only_sets)
+            print(f"REFERENCE_CHECK occlusion pass=on root={RC.rel_dir(engine_root) if engine_root else ''}", flush=True)
+    on = evaluate(RC, engine_root, reference_root, views, verify, trial, regions, expect, only_sets)
+    report, general, expect_failures = on
+    report["regions"] = RC.rel_dir(regions_path) if regions_path else ""
+    if off is None:
+        failures.extend(general)
+        failures.extend(f"前後の比べ: {reason}" for reason in expect_failures)
+    else:
+        report["off_compare"], compare_failures = compare_off(RC, expect, on, off, engine_root, off_root)
+        print_off_compare(report["off_compare"])
+        failures.extend(compare_failures)
+        with open(os.path.join(engine_root, "occlusion_off_compare.json"), "w", encoding="utf-8") as f:
+            json.dump(report["off_compare"], f, indent=2, ensure_ascii=False)
     report["failures"] = failures
     for reason in failures:
         print(f"REFERENCE_CHECK occlusion failure: {reason}")
     ok = not failures
-    print(f"REFERENCE_CHECK mode=occlusion sets={len(sets)} result={'pass' if ok else 'fail'}")
+    print(f"REFERENCE_CHECK mode=occlusion sets={len(report['sets'])} off={int(off is not None)} "
+          f"result={'pass' if ok else 'fail'}")
     return 0 if ok else 1

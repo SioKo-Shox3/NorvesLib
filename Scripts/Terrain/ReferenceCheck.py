@@ -149,6 +149,8 @@
 #       重ね画像は <参照の組>/occlusion_regions/<視点>.png）。--expect <定義>（ExpectSpecs/occlusion-fix.json）で、定義の直しの前の
 #       撮影を同じ画素で測り直し、決めた層の範囲・ほかの層が悪くならないこと・対照の Y が変わらないことを確かめる。
 #       --sets で判定する組を絞る（1 コマンドの時間を分けるため。名前の無い組は fail。必須の層・決めた層はその組の分だけ求める）。
+#       --off-root <置き場> で、同じ版の変更前の鏡面の経路（rtgi-specular=off）の撮影も測り、範囲の外の行を off と比べて判定する
+#       （off でも外れ、今の形が off から 0.005 を超えて悪くならない行は参照が古い分として通す。OcclusionCompare.compare_off）。
 #
 #   python Scripts/Terrain/ReferenceCheck.py --cloud-far --engine <撮影先> [--views ref_far_01,ref_far_02] [--verify]
 #       [--expect Scripts/Terrain/ExpectSpecs/cloud-far-composite.json] [--flicker]
@@ -6730,6 +6732,8 @@ def main():
                              f"{LIT_CROP_DIR} の切り出しの参照で判定する")
     parser.add_argument("--views", default="", help="検査する視点（カンマ区切り。省くと metrics.json の全視点）")
     parser.add_argument("--sets", default="", help="--occlusion: 判定する組（カンマ区切り。省くと参照の置き場の全組）")
+    parser.add_argument("--off-root", default="",
+                        help="--occlusion: 同じ版の変更前の鏡面の経路（rtgi-specular=off）の撮影の置き場。範囲の外の行を off と比べる")
     parser.add_argument("--cook-coverage", action="store_true",
                         help="崖の生成の範囲に掛かる地形の区画が今の AssetCook で焼かれているか（CookCoverage.py。--manifest・"
                              "--regions・--range-group）")
@@ -6902,7 +6906,8 @@ def main():
         return OcclusionCompare.run(sys.modules[__name__], absolute(args.engine_root) if args.engine_root else "",
                                     absolute(args.reference) if args.reference else "", views, args.verify, args.trial,
                                     absolute(args.regions) if args.regions else "", expect,
-                                    [s.strip() for s in args.sets.split(",") if s.strip()])
+                                    [s.strip() for s in args.sets.split(",") if s.strip()],
+                                    absolute(args.off_root) if args.off_root else "")
     if args.cloud_far:
         import CloudFarCause
         capture = args.capture or (args.engine[0] if args.engine else "")

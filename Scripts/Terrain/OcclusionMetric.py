@@ -195,7 +195,9 @@ def sky_metric(spec, set_name, set_kind, record, view, ctx, trial):
                           "control_cycles_y_fraction": round(control_cycles / max(reference_level, 1e-30), 4),
                           # 直しの前後を同じ画素で比べるためのエンジンの Y の平均（OcclusionCompare.check_expect）
                           "engine_y_region": float(engine_y[region_pixels].mean()),
-                          "engine_y_control": float(engine_y[control_pixels].mean())})
+                          "engine_y_control": float(engine_y[control_pixels].mean()),
+                          # 対照のエンジン ÷ Cycles（OcclusionCompare の off との並べの表）
+                          "cycles_y_control": control_cycles})
             seed_ratios = [ratio_cycles] + [float(y[region_pixels].mean()) / max(float(y[control_pixels].mean()), 1e-30)
                                             for y in seed_y]
             if len(seed_ratios) > 1:
@@ -503,6 +505,24 @@ def write_sun_overlay(path, overlay):
     save_grid(path, [gray_rgb(overlay["cycles_v"]), gray_rgb(overlay["engine_v"]), judge, edges])
 
 
+_REFERENCE_GEOMETRY = {}
+
+
+def reference_geometry(spec, camera, depth, normal, positions, focal, object_index):
+    """Cycles の深度・法線・物体の識別だけで決まるくぼみと物体からの距離。同じ参照の画素では、今の撮影・直しの前の撮影・
+    off の撮影の測りで同じ値になるので、入力の中身のハッシュで 1 回だけ求める"""
+    digest = hashlib.sha256()
+    for part in (depth, normal, object_index):
+        digest.update(np.ascontiguousarray(part).tobytes())
+    digest.update(json.dumps([spec["cavity"], spec["object_distance"], camera], sort_keys=True).encode("utf-8"))
+    key = digest.hexdigest()
+    if key not in _REFERENCE_GEOMETRY:
+        non_terrain = np.isfinite(depth) & (object_index > OBJECT_IDS["terrain"])
+        _REFERENCE_GEOMETRY[key] = (cavity_map(spec, depth, normal, positions, focal),
+                                    object_distance(spec, depth, positions, focal, non_terrain))
+    return _REFERENCE_GEOMETRY[key]
+
+
 def measure_view(RC, spec, set_name, record, engine_dir, reference_dir, view, data, trial, write_images=True):
     """1 視点の測り。(結果, 失敗の一覧)。data は OcclusionCompare.check_view が読んだ画と同じ面の画素。
     write_images が偽なら重ね画像を書かない（直しの前後の測り直しが、今の撮影の重ね画像を上書きしないため）"""
@@ -534,9 +554,7 @@ def measure_view(RC, spec, set_name, record, engine_dir, reference_dir, view, da
         return result, failures
     slope = np.degrees(np.arccos(np.clip(normal[..., 1], -1.0, 1.0)))
     ctx["slope"] = slope
-    ctx["cavity"] = cavity_map(spec, depth, normal, positions, focal)
-    non_terrain = np.isfinite(depth) & (data["object_index"] > OBJECT_IDS["terrain"])
-    ctx["near_object"] = object_distance(spec, depth, positions, focal, non_terrain)
+    ctx["cavity"], ctx["near_object"] = reference_geometry(spec, camera, depth, normal, positions, focal, data["object_index"])
     ctx["strata"] = strata(spec, normal, depth)
     seed_files, seed_failures = recorded_seed_files(record, reference_dir, view, "hdr")
     ctx["cycles_seed_hdr"] = [RC.read_pfm_any(path)[..., :3] for path in seed_files[1:]]

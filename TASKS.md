@@ -3178,7 +3178,7 @@
 - notes: SCN-GEN-BUILDINGS-1 の notes の上限時間とやり直しを使う。
 
 ## SCN-RENDER-SPEC-OCC-VERIFY-OCC: 鏡面の遮りの荒野の遮蔽の 8 組を、同じ最終の版と同じ焼いた地形で変更前の鏡面の経路と並べて判定する
-- status: todo
+- status: done
 - after: SCN-WL-OCCLUSION-ACCEPT
 - done-when: SCN-RENDER-SPEC-OCCLUSION の確かめの残り（run 20261026-002702 の反復 7 の評価の 1 件目）: 同じ Game.exe（HEAD のシェーダー）・同じ焼いた地形で、荒野の遮蔽の 8 組を `--rtgi-specular=off`（変更前の鏡面の経路）と今の形で撮り、`occlusion-accept.json` の全部の行を判定する。合格: 今の形の全部の行が範囲内か、範囲の外の行は off でも範囲の外で今の形が off から 0.005 を超えて悪くならない（地形の変更で古くなった参照の分）。親が一時的に下げた遠い急な崖の対照の 2 行は一時の下限（0.946・0.957）で通る。off で範囲内・今の形で外れる行がほかにあれば、値を付けて BLOCKED。`InteriorLightReference.md` に、範囲の外の行と遠い急な崖の対照の 2 行の 今の形 ÷ off・エンジン ÷ Cycles（off と今の形）を表で書く。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
