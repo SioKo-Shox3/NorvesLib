@@ -7948,3 +7948,8 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 証拠（`.harness/runs/20261025-120217/`）: `verify-SCN-WL-CLIFF-PLACEMENT-CHECK-6.txt`（Debug の Game EXIT=0）・`-7.txt`（RelWithDebInfo の Game EXIT=0）・`-8.txt`（AssetCook EXIT=0）・`-9.txt`（撮影 result=pass EXIT=0、ログ `WASTELAND_PLACEMENT_EXPORT ... objects=15035824`）・`-10.txt`（`CheckPlacement.py --record --verify` result=pass failures=0 EXIT=0）。報告 `.harness/runs/scene-capture/SCN-WL-CLIFF-PLACEMENT-CHECK/placement_check.record.json`
 - Next: TASKS.md の次の未完（崖の生成の項目は `--require-compliant` で接地を見る）
 - Notes: verify のビルドの行は Git Bash だと `/m:1` がパスに変換されて MSBuild が引数を拒むので、cmd で回した。岩の埋もれの規則（最も深い足元が高さの 50 % 以下）は斜面の岩の約半分を違反にするので、崖の生成の項目で `--require-compliant` を使う前に規則の見直しが要る（反復 40 の Notes と同じ。判断は計画）。新しい試験は足していない
+
+## 2026-10-25 SCN-WL-CLIFF-GEN-LEDGES（run 20261025-120217 の反復 8、BLOCKED）
+- Done: なし（コードは変えていない）。done-when の (C)「`CheckPlacement.py --require-compliant` が通る」は全域の違反 0 を求めるが、今の記録（SCN-WL-CLIFF-PLACEMENT-CHECK の反復 7）は違反 364918 個で、そのうち崖の生成が面を変えない範囲の外だけで 24 万個（岩 99569・草と低木 118790・大きな石 24677）。岩の違反は範囲の内でも外でも 53〜55 % で、置き方と規則の組み合わせによるので、棚の生成では 0 にできない
+- Next: 判断待ち（`blocked/SCN-WL-CLIFF-GEN-LEDGES.md`）。推奨は崖の生成の 3 項目（LEDGES・CAPROCK・TALUS）の (C) を「担当の 7 範囲で前の記録より悪くならない」（`CheckPlacement.py --baseline`）に読み替え、全域の違反 0 は置き方を直す別の項目に分ける。決まったら、合否の定義（`shape-cliff-ledges.json`）を地形を変える前に書いてから棚を作る
+- Notes: 合否の定義を決める前に地形を変えない（notes の「`--expect` の仕様は地形を変える前に書いてコミット」）ため、棚の生成・`--cook-coverage` は未着手。新しい試験は足していない
