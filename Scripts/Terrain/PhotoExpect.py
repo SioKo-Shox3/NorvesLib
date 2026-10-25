@@ -9,12 +9,14 @@
 #   min・max: 下限・上限（両端を含む。どちらか一方は要る）。note: 行の説明（判定には使わない）
 #   group: 組の名前（省いてよい）。組の行は 1 行ずつでは落ちず、仕様の "groups": {"<名前>": {"min_pass": <数>}} の
 #     数以上の行が範囲の内なら組が合格（「5 つの崖のうち 3 つ以上で」のような行）。groups に無い組の名前は落ちる
+#   moved_to: 合否を移した先の項目の ID（省いてよい）。印の付いた行は値と範囲を result=moved で出すだけで、合否と組に
+#     数えない（項目を閉じるときに残った行を、値を変えずに後の項目へ移す）
 # 落ちる: 仕様が読めない・行が無い・知らない鍵・未知の写真の ID・min と max が無い・値が求まらない（道が無い・数でない）・
 #   選んだ写真の行が 1 つも無い（空の選択）・値が範囲の外。
 import json
 import os
 
-ROW_KEYS = ("photo", "cliff", "quantity", "min", "max", "note", "group")
+ROW_KEYS = ("photo", "cliff", "quantity", "min", "max", "note", "group", "moved_to")
 
 
 def load_spec(path):
@@ -94,6 +96,10 @@ def evaluate(spec_path, photos_report, selected, known, prefix, cliff_allowed):
             continue
         low, high = row.get("min"), row.get("max")
         ok = (low is None or value >= low) and (high is None or value <= high)
+        if row.get("moved_to"):
+            print(f"{prefix} {where} value={value:.4f} min={low} max={high} result=moved"
+                  f" moved_to={row['moved_to']} in_range={'yes' if ok else 'no'}")
+            continue
         if group is not None:
             counts = group_counts.setdefault(group, [0, 0])
             counts[0] += int(ok)

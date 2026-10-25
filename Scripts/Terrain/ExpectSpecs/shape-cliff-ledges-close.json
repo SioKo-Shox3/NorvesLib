@@ -114,7 +114,8 @@
       "cliff": "Rooster Butte",
       "quantity": "shelf_extra_ratio",
       "max": 2.16,
-      "note": "前の基準 2.06 + 0.1 以下"
+      "note": "前の基準 2.06 + 0.1 以下",
+      "moved_to": "SCN-WL-CLIFF-SHAPE-ABSOLUTE"
     },
     {
       "photo": "far_02",

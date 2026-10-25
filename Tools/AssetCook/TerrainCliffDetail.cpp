@@ -125,22 +125,24 @@ namespace NorvesLib::Tools::AssetCook
         constexpr float kStrataLedgeDipZ = -11.5e-3f;
         // 境ごとの高さと、境を支える棚の線の崖。2 つ以上の崖の線で支えられる境（Shared）は谷の全体へ広げる。1 つの崖の
         // 線だけで支えられる境は、その線の位置（AnchorX・AnchorZ。表の lines の x・z）から kLocalLedgeFullMeters までは
-        // そのまま置き、kLocalLedgeZeroMeters で 0 になるまで弱める（ほかの崖の壁へ写真に無い折れを移さない）
+        // そのまま置き、kLocalLedgeZeroMeters で 0 になるまで弱める（ほかの崖の壁へ写真に無い折れを移さない）。
+        // RoosterLine は Rooster Butte の写真の棚の線（far_02 の線 0・1、ground_02 の線 0）が支える境
         struct StrataLedge
         {
             float Height;
             bool Shared;
             float AnchorX;
             float AnchorZ;
+            bool RoosterLine = false;
         };
         constexpr StrataLedge kStrataLedges[] = {
             {31.25f, true, 0.0f, 0.0f},
             // cliff_02 の Franklin Butte の線 3
             {39.78f, false, -579.7f, -374.9f},
             {44.27f, true, 0.0f, 0.0f},
-            {50.68f, true, 0.0f, 0.0f},
-            {64.39f, true, 0.0f, 0.0f},
-            {72.88f, true, 0.0f, 0.0f},
+            {50.68f, true, 0.0f, 0.0f, true},
+            {64.39f, true, 0.0f, 0.0f, true},
+            {72.88f, true, 0.0f, 0.0f, true},
             {79.37f, true, 0.0f, 0.0f},
             {103.42f, true, 0.0f, 0.0f},
             // cliff_01 の Battleship Rock の線 0
@@ -153,6 +155,10 @@ namespace NorvesLib::Tools::AssetCook
         };
         constexpr float kLocalLedgeFullMeters = 250.0f;
         constexpr float kLocalLedgeZeroMeters = 600.0f;
+        // Rooster Butte の範囲（kNearRegions[kRoosterLedgeRegionIndex]）では、Rooster Butte の写真の棚の線に当たらない境の段を
+        // この倍率まで弱める（写真に無い高さの横の長い折れになる。WastelandShape.md の版 11）
+        constexpr int kRoosterLedgeRegionIndex = 2;
+        constexpr float kRoosterOffLineLedgeScale = 0.3f;
         // 下の単位の棚（Setting Hen Butte の範囲 kNearRegions[3] だけ）: 層（1.2 m）のうち強い層（kLowerLedgeStrongShare の
         // 割合）の底を引き、その上を張り出させる段（m）。表の境の段と重ねないよう、境から kLedgeRampMeters の内側では
         // 弱め、全体を kLowerLedgeWeight 倍にする
@@ -167,9 +173,10 @@ namespace NorvesLib::Tools::AssetCook
         constexpr int kLowerLedgeRegionIndex = 3;
         // 地層の棚を掛ける範囲（崖の生成の担当の 7 範囲）の急な面で、表の棚の間の壁に掛ける縦の割れ目（溝と塊の出入り）の
         // 倍率と、地層の層ごとの段（下の単位の層・上の単位のセットの張り出しと面の立ち上げ）の倍率。縦の溝は写真に無い
-        // 縦の折れになり、層ごとの段は表の境でない高さに横の長い折れを作る（WastelandShape.md の版 11）
+        // 縦の折れになる。層ごとの段は崖の面の折れ目の密度の大半を担うので弱めない（外した版 11 は縦の折れが増え、横の
+        // 長い折れも減らなかった。WastelandShape.md の版 11）
         constexpr float kLedgeRangeJointScale = 0.35f;
-        constexpr float kLedgeRangeStrataStepScale = 0.0f;
+        constexpr float kLedgeRangeStrataStepScale = 1.0f;
         // 細かな凹凸の振幅（m）
         constexpr float kRoughnessCoarse = 0.12f;
         constexpr float kRoughnessFine = 0.05f;
@@ -380,12 +387,21 @@ namespace NorvesLib::Tools::AssetCook
             return (ledge + terrace) * integrity * point.StrataStepScale + partingCut;
         }
 
+        // 近景の範囲 kNearRegions[regionIndex] の内側への距離で kRegionFadeMeters の幅で上げる重み（0〜1）
+        float NearRegionInteriorWeight(int regionIndex, float x, float z)
+        {
+            const CliffRegion &region = kNearRegions[regionIndex];
+            const double inside = std::min(std::min(x - region.MinX, region.MaxX - x), std::min(z - region.MinZ, region.MaxZ - z));
+            return static_cast<float>(std::clamp(inside / kRegionFadeMeters, 0.0, 1.0));
+        }
+
         // 地層の棚の押し出し（m）。表の境ごとに、境の直下の層が張り出して境の高さで水平の踏み面になり、下へ
         // kLedgeRampMeters で壁へ滑らかに戻る。境の上は押し出さないので、水平の折れは境の高さにだけ出る。張り出しの
         // 強さは横方向に長い波長でゆっくり変える（数 m の塊で途切れさせず、棚を水平に続ける）
         float LedgeOffset(float y, float x, float z)
         {
             const float tilt = kStrataLedgeDipX * (x - kStrataLedgeOriginX) + kStrataLedgeDipZ * (z - kStrataLedgeOriginZ);
+            const float offLineScale = Mix(1.0f, kRoosterOffLineLedgeScale, NearRegionInteriorWeight(kRoosterLedgeRegionIndex, x, z));
             float value = 0.0f;
             for (int index = 0; index < static_cast<int>(sizeof(kStrataLedges) / sizeof(kStrataLedges[0])); ++index)
             {
@@ -395,11 +411,11 @@ namespace NorvesLib::Tools::AssetCook
                 {
                     continue;
                 }
-                float reach = 1.0f;
+                float reach = ledge.RoosterLine ? 1.0f : offLineScale;
                 if (!ledge.Shared)
                 {
                     const float distance = std::hypot(x - ledge.AnchorX, z - ledge.AnchorZ);
-                    reach = 1.0f - SmoothStep(kLocalLedgeFullMeters, kLocalLedgeZeroMeters, distance);
+                    reach *= 1.0f - SmoothStep(kLocalLedgeFullMeters, kLocalLedgeZeroMeters, distance);
                     if (reach <= 0.0f)
                     {
                         continue;
@@ -603,9 +619,7 @@ namespace NorvesLib::Tools::AssetCook
         // kRegionFadeMeters の幅で上げる
         float LowerLedgeRegionWeight(float x, float z)
         {
-            const CliffRegion &region = kNearRegions[kLowerLedgeRegionIndex];
-            const double inside = std::min(std::min(x - region.MinX, region.MaxX - x), std::min(z - region.MinZ, region.MaxZ - z));
-            return static_cast<float>(std::clamp(inside / kRegionFadeMeters, 0.0, 1.0));
+            return NearRegionInteriorWeight(kLowerLedgeRegionIndex, x, z);
         }
 
         // 面の法線 (nx, ny, nz) の点 (x, y, z) を外へ押し出す量（m）。y は基準面からの高さ
