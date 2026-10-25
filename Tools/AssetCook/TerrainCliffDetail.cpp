@@ -184,8 +184,10 @@ namespace NorvesLib::Tools::AssetCook
         // 重みを 1〜0 に下げ、登り続ける斜面の途中では掛けない）。頂の高さと重みは、面の内側の向きと左右へ kCapRayDegrees
         // 振った 3 本のたどりの重み付きの平均にして、縁に沿って切れずに続ける（1 本で判定を切り替えると縁が数 m ごとに欠ける）。
         // 持ち上げは谷床の小石の置き方（斜面 38 度まで）と重ならないよう、急な面（kCapSinLow〜kCapSinHigh）だけに掛ける。
-        // 持ち上げは高さについて単調なので面は折り返さない
+        // 持ち上げと張り出しは最上の棚の境（頂より下の表の境）より上だけに掛け、境の踏み面の縁から kCapLedgeClearanceMeters
+        // で上げる（下の棚の段を動かさない）。持ち上げは高さについて単調なので面は折り返さない
         constexpr double kCapSearchMeters = 24.0;
+        constexpr float kCapLedgeClearanceMeters = 0.8f;
         constexpr double kCapPlateauSlopeLow = 0.2;
         constexpr double kCapPlateauSlopeHigh = 0.5;
         constexpr double kCapRayDegrees = 30.0;
@@ -469,6 +471,38 @@ namespace NorvesLib::Tools::AssetCook
             return nearest;
         }
 
+        // 帽岩の持ち上げと張り出しを掛ける重み（0〜1）。頂（capTop）より下にある表の境（その点に届く境）ごとに、境の
+        // 踏み面の縁から kCapLedgeClearanceMeters の上までで 0 から 1 へ上げ、境の下では 0 にする（最上の棚の境より下の
+        // 棚の段を持ち上げで動かさず、張り出しを棚へ重ねない）。境が頂の下にあるかを頂の高さで滑らかに数えるので、
+        // 頂の高さが境をまたいでも重みは切れない。高さ y について単調に増える
+        float CapLedgeClearance(float y, float capTop, float x, float z)
+        {
+            const float tilt = kStrataLedgeDipX * (x - kStrataLedgeOriginX) + kStrataLedgeDipZ * (z - kStrataLedgeOriginZ);
+            float weight = 1.0f;
+            for (const StrataLedge &ledge : kStrataLedges)
+            {
+                float reach = 1.0f;
+                if (!ledge.Shared)
+                {
+                    const float distance = std::hypot(x - ledge.AnchorX, z - ledge.AnchorZ);
+                    reach = 1.0f - SmoothStep(kLocalLedgeFullMeters, kLocalLedgeZeroMeters, distance);
+                    if (reach <= 0.0f)
+                    {
+                        continue;
+                    }
+                }
+                const float lower = ledge.Height + tilt + kLedgeEdgeMeters;
+                const float upper = lower + kCapLedgeClearanceMeters;
+                const float present = reach * SmoothStep(lower, upper, capTop);
+                if (present <= 0.0f)
+                {
+                    continue;
+                }
+                weight *= 1.0f - present * (1.0f - SmoothStep(lower, upper, y));
+            }
+            return weight;
+        }
+
         // 下の単位の層の段の高さ（m）。強い層だけに段を付け、横方向に長い波長でゆっくり変わる強さを掛ける
         float LowerLedgeStepHeight(int index, float x, float z)
         {
@@ -714,7 +748,8 @@ namespace NorvesLib::Tools::AssetCook
                                        ValueNoise(x * (1.0f / kCapOverhangWavelength) + 9.17f,
                                                   z * (1.0f / kCapOverhangWavelength) - 4.31f)));
                     displacement += kCapOverhangMeters * along * capWeight * ledgeWeight *
-                                    SmoothStep(capBottom - kCapOverhangEdge, capBottom + kCapOverhangEdge, y);
+                                    SmoothStep(capBottom - kCapOverhangEdge, capBottom + kCapOverhangEdge, y) *
+                                    CapLedgeClearance(y, capTop, x, z);
                 }
             }
 
@@ -1678,7 +1713,9 @@ namespace NorvesLib::Tools::AssetCook
                 outCapWeight = plateau * slope * interior * static_cast<float>(fade);
                 const float lift = SmoothStep(static_cast<float>(top) - kCapRiseLow * kCapThickness,
                                               static_cast<float>(top) - kCapRiseHigh * kCapThickness,
-                                              static_cast<float>(base));
+                                              static_cast<float>(base)) *
+                                   CapLedgeClearance(static_cast<float>(base), static_cast<float>(top),
+                                                     static_cast<float>(x), static_cast<float>(z));
                 return std::max(top - base, 0.0) * static_cast<double>(lift * plateau * slope * interior) * fade;
             }
 
