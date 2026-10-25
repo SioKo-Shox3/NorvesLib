@@ -7825,3 +7825,13 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 証拠（`.harness/runs/20261024-183517/`）: `verify-SCN-WL-SCAN-MATERIAL-MATCH-1.txt`（RelWithDebInfo の Game EXIT=0）・`-5.txt`（撮影 result=pass）・`-6.txt`（`CompareReference.py --verify` result=pass）・`-7.txt`（`ScanMaterialMatch.py --verify` result=pass）、1 回目の試しの `-2.txt`・`-4.txt`（result=fail failures=2）、`aux-SCN-WL-SCAN-MATERIAL-MATCH-before-capture.txt`（前の撮影 `scene-capture/SCN-WL-SCAN-MATERIAL-MATCH-before`）・`-calibrate-1.txt`・`-calibrate-2.txt`・`-cook-1.txt`・`-cook-2.txt`
 - Next: TASKS.md の次の未完
 - Notes: rock_face_01・02（Battleship Rock の 3 個）は落石の目標の色のまま（比べの対象外）。素材ごとの輝度の目標（boulder_01 0.157・rock_09 0.170）は画面の上の平均とテクスチャの平均のずれから決めた内部の値。`CookAssets.ps1` を `powershell -File` で呼ぶと `-OnlyLogicalPath` の配列が 1 つの文字列になるので、ワイルドカード 1 つで絞った。新しい試験は足していない（`ScanMaterialMatch.py` は done-when の合否 (1) の測り方）
+
+## 2026-10-25 SCN-WL-CLIFF-SCAN-NEAR-WALLS（run 20261024-183517 の反復 33、DONE）
+- Done: Battleship Rock の刻んだ壁（主の壁・左の縁・右の低い段）の面に、rock_09 の板と boulder_01 の塊 141 個を長い軸を壁に沿わせて半分埋めて並べた（配置表の `battleship_wall_*`）。壁の点は刻んだ後の灰色の撮影の深度・法線・地形の印から世界へ戻した 169 点（`BlenderCliffScan.py` の `WALL_POINTS`）。台本に `--place --only <名前の頭>`（その塊だけ置き直し、ほかの 237 個は前の配置表のまま）と、壁の板の面の向きを当てる格子の高さ（`fit_height_m`）を足した。刻んだ後の地形を書き出して置いた（`scene-capture/SCN-WL-CLIFF-SCAN-NEAR-WALLS/terrain-mesh`）。値・見た目・費用・既知の限界は `WastelandCliffScan.md` の「Battleship Rock の刻んだ壁を横に割れた塊で覆う」
+- 値: 外形 ずらした後 1.0・ずらす前 1.0 画素、角 0.286（どちらも前と同じ）、棚 0.395 → 0.451（棚と角の 2 行は前からの未達で `--shape --expect` は result=fail failures=2）。前の 237 個は配置表で同一（`aux-SCN-WL-CLIFF-SCAN-NEAR-WALLS-kept-unchanged.txt`）
+- 見た目: 写真｜前｜後の拡大（`look/crop_wall_photo_before_after.png`）と灰色の前後（`shape/crop_wall_before_after.png`）を開いた。主の壁の縦の溝の柱は層ごとに横に割れて張り出す塊の積み重ねになり、左の縁と右の低い段の正面も丸みのある塊の段になった。色は崖と同じ橙、外形に針・丸い山は無い
+- 浮き・埋もれ: 壁の外の体積の割合 0.444〜0.670（許容 0.25〜0.7、外れ 0）。焼いた地形へ当たりから壁の内へ 1.5 m の線を問い合わせて 136/141 個が地形の中、5 個は段の上面に載る（`aux-SCN-WL-CLIFF-SCAN-NEAR-WALLS-embed-query.{py,txt}`・`-placement-check.txt`）
+- 費用: 壁の塊の三角形 401 万、`WASTELAND_CLIFF_SCAN placed=378 planned=378`、起動から SCENE_READY まで 81 秒、VRAM の使用の最大 10082 MB（予算 15280 MB）、溢れ・取りこぼし 0、WARNING・ERROR なし
+- 証拠（`.harness/runs/20261024-183517/`）: `verify-SCN-WL-CLIFF-SCAN-NEAR-WALLS-1.txt`（RelWithDebInfo の Game EXIT=0）・`-6.txt`（形の撮影 result=pass）・`-7.txt`（`--shape --expect` 外形 2 行 pass・棚と角 fail）・`-8.txt`（既定の撮影 result=pass）・`-9.txt`（`CompareReference.py --verify` result=pass）、途中の試しの `-2`〜`-5.txt`、`aux-SCN-WL-CLIFF-SCAN-NEAR-WALLS-wall-points*.{py,txt,png}`・`-place-1〜4.txt`・`-placements-before.json`
+- Next: TASKS.md の次の未完
+- Notes: 右の低い段の左の側面（暗い面）と最も右の段の正面の一部は縦の筋の板のまま（拾える地形の画素が少ない。既知の限界として文書に記録）。エンジンの `inside=` は刻む前の高さ場で測るので壁の塊には当てはまらない（焼いた面で測る検査は SCN-WL-CLIFF-PLACEMENT-CHECK）。新しい試験は足していない
