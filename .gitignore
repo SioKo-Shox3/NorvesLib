@@ -152,3 +152,6 @@ InputBindings.json.tmp.*
 # Scripts/Terrain/ReferencePhotos.py が落とす手本の写真と、地形データ（DEM とその切り出し。git に入れない）
 /Assets/Reference/
 /Assets/Terrain/
+# Python の実行時の生成物と、Blender の配置の仕事の一時ファイル
+__pycache__/
+Scripts/Terrain/blender-jobs/
