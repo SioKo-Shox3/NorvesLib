@@ -10,6 +10,8 @@
 #include "Text/JsonDocument.h"
 
 #include <algorithm>
+#include <bit>
+#include <compare>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -93,6 +95,12 @@ namespace NorvesLib::Tools::AssetCook
             Container::VariableArray<SurfaceHit> Hits;
         };
 
+        /// 開いた縁の辺の両端の位置（X0, Y0, Z0, X1, Y1, Z1）
+        struct BoundaryEdge
+        {
+            float Ends[6] = {};
+        };
+
         struct TileReport
         {
             uint32_t TileX = 0;
@@ -105,6 +113,8 @@ namespace NorvesLib::Tools::AssetCook
             uint32_t FinestLod = 0;
             uint32_t FinestClusters = 0;
             uint64_t FinestTriangles = 0;
+            // 最も細かい段の開いた縁の辺（1 つの三角形だけが使う辺）の両端の位置。--boundary-edges のときだけ集める
+            Container::VariableArray<BoundaryEdge> BoundaryEdges;
         };
 
         /// 同じ高さの交点（三角形の共有する辺・頂点の上を線が通る）を 1 つにまとめる差（m）
@@ -389,6 +399,74 @@ namespace NorvesLib::Tools::AssetCook
             return true;
         }
 
+        /// 最も細かい段の三角形の辺のうち、1 つの三角形だけが使う辺（区画の外周の縁）を集める。クラスタは頂点を別に持つので、
+        /// 辺は頂点の番号ではなく位置のビットで照らす（同じ元の頂点はクラスタをまたいでビット単位で同じ位置）
+        void CollectBoundaryEdges(const Asset::CookedMeshData &mesh, uint32_t finestLod,
+                                  Container::VariableArray<BoundaryEdge> &outEdges)
+        {
+            // 辺の両端の位置のビット（小さい端を先に）
+            struct EdgeKey
+            {
+                uint32_t Bits[6] = {};
+                auto operator<=>(const EdgeKey &) const = default;
+            };
+            const auto bitsOf = [&mesh](const Asset::CookedMeshCluster &cluster, uint32_t index, uint32_t *outBits)
+            {
+                const Asset::CookedMeshVertex &vertex = mesh.Vertices[cluster.VertexOffset + mesh.Indices[cluster.IndexOffset + index]];
+                outBits[0] = std::bit_cast<uint32_t>(vertex.Position.X);
+                outBits[1] = std::bit_cast<uint32_t>(vertex.Position.Y);
+                outBits[2] = std::bit_cast<uint32_t>(vertex.Position.Z);
+            };
+            Container::VariableArray<EdgeKey> edges;
+            for (const Asset::CookedMeshCluster &cluster : mesh.Clusters)
+            {
+                if (cluster.LODLevel != finestLod)
+                {
+                    continue;
+                }
+                for (uint32_t i = 0; i < cluster.IndexCount; i += 3u)
+                {
+                    uint32_t corners[3][3] = {};
+                    for (uint32_t k = 0; k < 3u; ++k)
+                    {
+                        bitsOf(cluster, i + k, corners[k]);
+                    }
+                    for (uint32_t k = 0; k < 3u; ++k)
+                    {
+                        const uint32_t *first = corners[k];
+                        const uint32_t *second = corners[(k + 1u) % 3u];
+                        if (std::lexicographical_compare(second, second + 3, first, first + 3))
+                        {
+                            std::swap(first, second);
+                        }
+                        EdgeKey key;
+                        std::copy(first, first + 3, key.Bits);
+                        std::copy(second, second + 3, key.Bits + 3);
+                        edges.push_back(key);
+                    }
+                }
+            }
+            std::sort(edges.begin(), edges.end());
+            for (size_t begin = 0; begin < edges.size();)
+            {
+                size_t end = begin + 1u;
+                while (end < edges.size() && edges[end] == edges[begin])
+                {
+                    ++end;
+                }
+                if (end - begin == 1u)
+                {
+                    BoundaryEdge edge;
+                    for (uint32_t k = 0; k < 6u; ++k)
+                    {
+                        edge.Ends[k] = std::bit_cast<float>(edges[begin].Bits[k]);
+                    }
+                    outEdges.push_back(edge);
+                }
+                begin = end;
+            }
+        }
+
         /// 点の交点を上から順に並べ、共有する辺・頂点の上で重なった同じ高さの交点を 1 つにまとめる
         /// （点を含む区画の三角形を先に、同じ区画なら番号の小さい三角形を残す）
         void MergeHits(QueryPoint &point)
@@ -519,9 +597,16 @@ namespace NorvesLib::Tools::AssetCook
         const char *pointsPath = nullptr;
         // 遠景の段の名前（例: castle）。渡すと DEM の区画の代わりに、その段の区画を読む
         const char *horizonLevel = nullptr;
+        // 読んだ区画ごとに最も細かい段の開いた縁の辺も書き出す（継ぎ目の両側の縁が同じ辺かを照らすため）
+        bool bBoundaryEdges = false;
         for (int index = 2; index < argc; ++index)
         {
             const std::string_view option(argv[index]);
+            if (option == "--boundary-edges")
+            {
+                bBoundaryEdges = true;
+                continue;
+            }
             if ((option == "--manifest" || option == "--points") && index + 1 < argc)
             {
                 (option == "--manifest" ? manifestPath : pointsPath) = argv[++index];
@@ -645,7 +730,15 @@ namespace NorvesLib::Tools::AssetCook
                 report.Reason = reason;
                 return SampleStatus::MeshInvalid;
             }
-            return IntersectTile(parsed.Mesh, points, indices, report) ? SampleStatus::Ok : SampleStatus::MeshInvalid;
+            if (!IntersectTile(parsed.Mesh, points, indices, report))
+            {
+                return SampleStatus::MeshInvalid;
+            }
+            if (bBoundaryEdges)
+            {
+                CollectBoundaryEdges(parsed.Mesh, report.FinestLod, report.BoundaryEdges);
+            }
+            return SampleStatus::Ok;
         };
 
         Container::VariableArray<TileReport> tiles;
@@ -760,6 +853,23 @@ namespace NorvesLib::Tools::AssetCook
                       << ", \"finest_lod\": " << tile.FinestLod << ", \"finest_clusters\": " << tile.FinestClusters
                       << ", \"finest_triangles\": " << tile.FinestTriangles << ", \"reason\": ";
             WriteJsonString(tile.Reason.c_str());
+            if (bBoundaryEdges)
+            {
+                std::cout << ", \"boundary_edges\": [";
+                for (size_t edgeIndex = 0; edgeIndex < tile.BoundaryEdges.size(); ++edgeIndex)
+                {
+                    std::cout << (edgeIndex == 0 ? "[" : ", [");
+                    for (uint32_t k = 0; k < 6u; ++k)
+                    {
+                        // float の位置をそのまま読み戻せる桁（9 桁）で書く
+                        char text[32] = {};
+                        std::snprintf(text, sizeof(text), "%.9g", static_cast<double>(tile.BoundaryEdges[edgeIndex].Ends[k]));
+                        std::cout << (k == 0 ? "" : ", ") << text;
+                    }
+                    std::cout << "]";
+                }
+                std::cout << "]";
+            }
             std::cout << "}";
         }
         std::cout << "\n  ],\n  \"points\": [";

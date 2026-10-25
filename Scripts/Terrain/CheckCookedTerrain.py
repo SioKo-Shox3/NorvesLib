@@ -28,6 +28,9 @@
 #    b. 近景の継ぎ目の上の格子の頂点（--sample-terrain-cliff-surface で押し出した位置）で、両側の区画の交点の高さの差が
 #       MAX_SEAM_STEP_M 以内（両側の区画の交点がそろわない頂点も落ちる）。継ぎ目の線の上の帯の点で両側の区画が交わる所の差は
 #       値を出すだけ（線が張り出しの別の層で両側の面を通ると、差は層の間の高さになる）
+#    c. 近景と castle の全部の継ぎ目で、焼いた区画の最も細かい段の開いた縁の辺（問い合わせの --boundary-edges）のうち継ぎ目から
+#       SEAM_EDGE_REACH_M 以内の辺が、どれもほかの区画に両端の X/Z が同じ辺を持ち（対応の欠け 0）、両端の高さの差が MAX_SEAM_STEP_M
+#       以内。継ぎ目の両側の区画に縁の辺があること（段の外周に近い端の SEAM_EDGE_REACH_M は外周の辺なので照らさない）
 # 終了コード: --verify で合格なら 0、不合格なら 1。--verify なしは値を出すだけで 0。
 import argparse
 import json
@@ -98,6 +101,11 @@ SEAM_COARSE_PAD_M = 0.3
 SEAM_WIDEN_PAD_M = 0.5
 SEAM_WIDEN_ROUNDS = 3
 MAX_SEAM_STEP_M = 0.05
+# c. 継ぎ目の縁の辺を照らす幅（m）。押し出しが境の頂点を水平へ動かす量（近景 0.80 m・castle 1.25 m）より広く取る
+SEAM_EDGE_REACH_M = 2.0
+# c. 近景の継ぎ目の両側の区画を読ませるために置く点の、継ぎ目に沿う間隔と継ぎ目からの距離（m）
+SEAM_EDGE_PROBE_STEP_M = 50.0
+SEAM_EDGE_PROBE_OFFSET_M = 1.0
 # 1 回の問い合わせに渡す点の数の上限（結果の JSON を読む記憶の量を抑える）
 SEAM_CHUNK_POINTS = 400000
 SEAM_WORKERS = 4
@@ -140,14 +148,17 @@ class Dem:
         return self.first_x + column * self.spacing, self.first_z + row * self.spacing
 
 
-def query(asset_cook, manifest, points, horizon_level=None):
-    """点の一覧を問い合わせ、結果の JSON を返す。horizon_level を渡すと遠景のその段の区画を読む"""
+def query(asset_cook, manifest, points, horizon_level=None, boundary_edges=False):
+    """点の一覧を問い合わせ、結果の JSON を返す。horizon_level を渡すと遠景のその段の区画を読む。
+    boundary_edges なら読んだ区画ごとの開いた縁の辺も返させる"""
     with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as handle:
         json.dump({"points": [[x, z] for x, z in points]}, handle)
         path = handle.name
     command = [asset_cook, "--sample-cooked-terrain", "--manifest", manifest, "--points", path]
     if horizon_level is not None:
         command += ["--horizon-level", horizon_level]
+    if boundary_edges:
+        command.append("--boundary-edges")
     try:
         result = subprocess.run(command, capture_output=True, cwd=REPO_ROOT)
     finally:
@@ -486,9 +497,73 @@ def scan_seams(asset_cook, manifest, centers, seams, bands, across_step, along_s
                              jobs))
 
 
+def level_extent(dem, level, axis):
+    """段の格子の、継ぎ目に沿う向き（axis が 'x' なら Z、'z' なら X）の範囲"""
+    if level is None:
+        if axis == "x":
+            return dem.first_z, dem.first_z + (dem.rows - 1) * dem.spacing
+        return dem.first_x, dem.first_x + (dem.columns - 1) * dem.spacing
+    bounds = castle_tile_bounds().values()
+    if axis == "x":
+        return min(b[2] for b in bounds), max(b[3] for b in bounds)
+    return min(b[0] for b in bounds), max(b[1] for b in bounds)
+
+
+def seam_boundary_edges(asset_cook, manifest, seams, level):
+    """段の継ぎ目の両側の区画の開いた縁の辺 {区画: [[x0, y0, z0, x1, y1, z1], ...]} と、読めない区画の一覧"""
+    if level is None:
+        points = []
+        for _, _, axis, coordinate, start, end in seams:
+            count = max(1, math.ceil((end - start) / SEAM_EDGE_PROBE_STEP_M))
+            for i in range(count + 1):
+                along = start + (end - start) * i / count
+                for offset in (-SEAM_EDGE_PROBE_OFFSET_M, SEAM_EDGE_PROBE_OFFSET_M):
+                    points.append((coordinate + offset, along) if axis == "x" else (along, coordinate + offset))
+    else:
+        # 遠景の段は 1 点でも段の全部の区画を読む
+        points = [(seams[0][3], seams[0][4]) if seams[0][2] == "x" else (seams[0][4], seams[0][3])]
+    data = query(asset_cook, manifest, points, level, boundary_edges=True)
+    edges = {tuple(t["tile"]): t.get("boundary_edges", []) for t in data["tiles"] if t["status"] == "ok"}
+    return edges, [t for t in data["tiles"] if t["status"] != "ok"]
+
+
+def match_seam_edges(edges, centers, seam, extent):
+    """継ぎ目から SEAM_EDGE_REACH_M 以内の縁の辺を、ほかの区画の両端の X/Z が同じ辺と照らす"""
+    _, _, axis, coordinate, start, end = seam
+    first = max(start, extent[0] + SEAM_EDGE_REACH_M)
+    last = min(end, extent[1] - SEAM_EDGE_REACH_M)
+    across = 0 if axis == "x" else 2
+    along = 2 if axis == "x" else 0
+    twins = {}
+    sides = set()
+    for tile, tile_edges in edges.items():
+        for edge in tile_edges:
+            if (abs(edge[across] - coordinate) > SEAM_EDGE_REACH_M or abs(edge[across + 3] - coordinate) > SEAM_EDGE_REACH_M
+                    or not first <= (edge[along] + edge[along + 3]) / 2 <= last):
+                continue
+            ends = sorted([(edge[0], edge[2], edge[1]), (edge[3], edge[5], edge[4])])
+            twins.setdefault((ends[0][:2], ends[1][:2]), []).append((tile, ends[0][2], ends[1][2]))
+            sides.add(side_of(centers[tile], axis, coordinate))
+    row = {"edges": 0, "vertices": len({key for pair in twins for key in pair}), "unmatched": [], "step_max_m": 0.0,
+           "both_sides": len(sides) == 2}
+    for key, owners in twins.items():
+        row["edges"] += len(owners)
+        if len({tile for tile, _, _ in owners}) < 2:
+            row["unmatched"] += [list(key[0]) + list(key[1])] * len(owners)
+            continue
+        for _, y0, y1 in owners:
+            row["step_max_m"] = max(row["step_max_m"], abs(y0 - owners[0][1]), abs(y1 - owners[0][2]))
+    return row
+
+
 def check_seams(asset_cook, manifest, dem, failures):
     centers = tile_centers(dem)
     seams = seam_lines(dem)
+    # 焼いた縁の辺の問い合わせ（段ごとに 1 回だけ区画を読む）は、帯の走査と並べて先に始める
+    levels = sorted({seam[1] for seam in seams}, key=lambda value: value or "")
+    edge_pool = ThreadPoolExecutor(max_workers=len(levels))
+    edge_jobs = {level: edge_pool.submit(seam_boundary_edges, asset_cook, manifest,
+                                         [seam for seam in seams if seam[1] == level], level) for level in levels}
     # 粗い帯で境の動く幅を測り、細かい帯の幅を決める
     coarse = {}
     for seam, chunk in scan_seams(asset_cook, manifest, centers, seams, {seam: SEAM_COARSE_BAND_M for seam in seams},
@@ -519,6 +594,14 @@ def check_seams(asset_cook, manifest, dem, failures):
             break
         for seam in pending:
             bands[seam] = round(rows[seam]["cross_max_m"] + SEAM_WIDEN_PAD_M, 4)
+    # 焼いた縁の辺を両側の区画で照らす
+    edge_rows = {}
+    for level, job in edge_jobs.items():
+        edges, tiles_bad = job.result()
+        for seam in [seam for seam in seams if seam[1] == level]:
+            edge_rows[seam] = match_seam_edges(edges, centers[level], seam, level_extent(dem, level, seam[2]))
+            edge_rows[seam]["tiles_bad"] = tiles_bad
+    edge_pool.shutdown()
 
     report = []
     for seam, row in rows.items():
@@ -543,7 +626,23 @@ def check_seams(asset_cook, manifest, dem, failures):
         if row["cross_max_m"] > band - SEAM_BAND_MARGIN_M:
             failures.append(f"seams: {label} で隣の区画の面だけに交わる点が継ぎ目から {row['cross_max_m']} m にあり、"
                             f"帯（{band} m）が狭すぎます")
-        vertex = ""
+        edge = edge_rows[seam]
+        entry["edge_count"] = edge["edges"]
+        entry["edge_vertices"] = edge["vertices"]
+        entry["edge_unmatched"] = len(edge["unmatched"])
+        entry["edge_unmatched_examples"] = edge["unmatched"][:5]
+        entry["edge_step_max_m"] = edge["step_max_m"]
+        if edge["tiles_bad"]:
+            failures.append(f"seams: {label} の縁の辺を読む区画が読めません（{edge['tiles_bad'][:2]}）")
+        if not edge["edges"] or not edge["both_sides"]:
+            failures.append(f"seams: {label} の両側の区画に縁の辺がありません（辺 {edge['edges']}）")
+        if edge["unmatched"]:
+            failures.append(f"seams: {label} の縁の辺 {len(edge['unmatched'])}/{edge['edges']} 本がほかの区画の辺と"
+                            f"対応しません（例 {edge['unmatched'][:2]}）")
+        if edge["step_max_m"] > MAX_SEAM_STEP_M:
+            failures.append(f"seams: {label} の縁の辺で両側の区画の高さの差が {edge['step_max_m']:.4f} m あります")
+        vertex = (f" edges={edge['edges']} edge_vertices={edge['vertices']} edge_unmatched={len(edge['unmatched'])} "
+                  f"edge_step_max_m={edge['step_max_m']}")
         if level is None:
             probes = seam_vertex_probes(asset_cook, axis, coordinate, start, end, dem)
             data = query(asset_cook, manifest, [point for candidates in probes for point in candidates])
@@ -566,7 +665,7 @@ def check_seams(asset_cook, manifest, dem, failures):
                                 f"そろいません（例 {unmatched[:3]}）")
             if steps and max(steps) > MAX_SEAM_STEP_M:
                 failures.append(f"seams: {label} の境の頂点で両側の区画の高さの差が {max(steps):.4f} m あります")
-            vertex = (f" vertex_probes={len(probes)} vertex_unmatched={len(unmatched)} "
+            vertex += (f" vertex_probes={len(probes)} vertex_unmatched={len(unmatched)} "
                       f"vertex_step_max_m={entry['vertex_step_max_m']}")
         print(f"SEAM {label} coarse_cross_max_m={coarse[seam]['cross_max_m']:.2f} coarse_no_hit={coarse[seam]['no_hit']} "
               f"band_m={band:.2f} points={row['points']} no_hit={len(row['bad'])} cross_max_m={row['cross_max_m']:.2f} "

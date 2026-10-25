@@ -13,7 +13,9 @@
 namespace NorvesLib::Tools::AssetCook
 {
     /// AssetCook --sample-cooked-terrain --manifest <manifest.json> --points <点の一覧の JSON> [--horizon-level <段>]
+    ///                       [--boundary-edges]
     /// --horizon-level を渡すと、DEM の区画の代わりに遠景のその段（例: castle）の区画のすべてで交点を調べる
+    /// --boundary-edges を渡すと、読んだ区画ごとに最も細かい段の開いた縁の辺（1 つの三角形だけが使う辺）の両端の位置も書く
     /// argv[1] が --sample-cooked-terrain でなければ false を返して何もしない。結果の JSON は標準出力へ書く
     bool RunCookedTerrainSampleCommand(int argc, char **argv, int &outExitCode);
 } // namespace NorvesLib::Tools::AssetCook
