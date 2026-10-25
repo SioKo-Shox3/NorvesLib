@@ -7899,3 +7899,13 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 確かめ: 問い合わせを差し替えた最小再現（1 点だけ 0.2 m 浮く岩・1 点だけ窓の外へ 1 m 埋もれる岩 → 違反 1、下端 9 頂点 → 9 点を問い合わせ、全点が範囲外 → 両方の形で exit=1、範囲の外の岩を 99 個消す → exit=1、対照は exit=0）。前回の書き出しを測り直すと足元の点 1243 万・132 秒、違反 岩 150288・草と低木 2099・石 671、測り切れない物 74（地形の縁、out_of_range）で `--record` は fail（`.harness/runs/20261025-120217/aux-SCN-WL-CLIFF-PLACEMENT-CHECK-record-old-export.{txt,json}`）
 - Next: 差し戻し 2（草と石を全域の全部書く）は、小礫と石だけで 2 億個より多く（JSON 20 GB 超・問い合わせ 3.5 時間超）回らないので、標本へ仕様を変えるかをユーザーの判断に戻した（`blocked/SCN-WL-CLIFF-PLACEMENT-CHECK.md`。推奨は 草と低木・大きな石・岩は全部、石と小礫は範囲の中を細かくした区画の丸ごとの標本）。差し戻し 3 の書き出し側（岩のメッシュの全頂点か、置き方と同じ 2048 頂点の標本か）も同じ文書で判断待ち。決まったら書き出しを直し、地形の縁の 74 個の扱いを決めて撮影と `--record` を取り直す
 - Notes: verify は書き出しの範囲が決まるまで回していない（ビルドと撮影は前回の版のまま）。新しい試験は足していない
+
+## 2026-10-25 SCN-WL-CLIFF-SCAN-NEAR-WALLS（run 20261025-120217 の反復 2、DONE）
+- Done: 評価の差し戻し（右の低い段の柱の左側に幅 10〜15 画素の縦の筋の板が残る）を、親が許した配置の変更で直した。前の 422 個は配置表で同一のまま、小さい丸みのある塊（boulder_01、拡大率 1.2〜2.4）を 2 組 162 個足した（`BlenderCliffScan.py` の `battleship_walledge_*` 142・`battleship_wallpillar_*` 20）。点は灰色の形の撮影で地形のまま残る急な壁の画素を、置くたびに撮り直して 4 回拾い直した。柱の帯は視線にほぼ平行な左の側面をかすめて見たもので、側面へまっすぐ撃ち、手前の角の近くに置いた。値・見た目・費用・既知の限界は `WastelandCliffScan.md` の「縁の帯と柱の側面」
+- 値: 棚 0.478・角 0.286・外形 ずらした後 1.0・ずらす前 1.0 画素で 4 行とも pass。残りの帯（行ごとの地形の連なり）の幅の中央は 柱 21 → 3・上の段の右の縁 12 → 0・最も右の段 16 → 3 画素
+- 見た目: `look/crop_wall_pillar_zoom5.png`・`crop_wall_edge_zoom4.png`・`crop_wall_edge_before_after.png`（前と後）と `reference_cliff_01.png`（写真と並べた全体）を開いた。柱の左側と最も右の段の正面は横に割れた塊の積み重ねになり、縦の筋の板は柱の角の 1〜2 画素の継ぎ目と 5 画素前後の隙間だけ。針・丸い山・桃色の斑は無い
+- 浮き・埋もれ: 足した 162 個の壁の外の体積の割合 0.438〜0.598（外れ 0）、焼いた地形への問い合わせで壁の塊 347 個のうち 334 個が地形の中（足した組の外れ 6 個は段の上面や柱の根元の近く）
+- 費用: 足した三角形 1071 万（壁の塊の全部 1698 万）、`placed=584 planned=584`、SCENE_READY まで 81 秒、VRAM の使用の最大 9826 MB（予算 15280 MB）、溢れ 0、ERROR なし
+- 証拠（`.harness/runs/20261025-120217/`）: `verify-SCN-WL-CLIFF-SCAN-NEAR-WALLS-14.txt`（RelWithDebInfo の Game EXIT=0）・`-15.txt`（形の撮影 result=pass）・`-16.txt`（`--shape --expect shape-scan-battleship-walls.json` 4 行 pass）・`-17.txt`（既定の撮影 result=pass）・`-18.txt`（`CompareReference.py --verify` result=pass）、途中の試しの `-1`〜`-13.txt`、`aux-SCN-WL-CLIFF-SCAN-NEAR-WALLS-edge-points*.{py,txt}`・`-place-edge-1〜4.txt`・`-place-pillar-1〜2.txt`・`-overlay-*.png`・`-band-width.{py,txt}`・`-placement-check.txt`・`-embed-query.txt`・`-placements-before-edge.json`
+- Next: TASKS.md の次の未完
+- Notes: 判断: 縁の塊の拡大率は余地 − 0.5 m に半分の長さが収まる所まで下げ（最小 1.0）、外形の行を悪くしないことを優先した。小さい塊の積み重ねは近くで瓦礫に近く見え、壁の三角形は前の 2.7 倍（既知の限界として文書に記録）。新しい試験は足していない
