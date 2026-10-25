@@ -284,7 +284,8 @@ def evaluate_expect(spec_path, report_views, regions, selected_views, views_know
             spec = json.load(f)
     except (OSError, ValueError) as error:
         return [f"仕様 {spec_path} が読めない: {error}"]
-    rows = spec.get("rows") if isinstance(spec, dict) else spec
+    # 写真の行（CompareReference.py --shape の rows）と同じ仕様に書くときは、範囲の行を region_rows に置く
+    rows = (spec.get("region_rows", spec.get("rows")) if isinstance(spec, dict) else spec)
     if not isinstance(rows, list) or not rows:
         return [f"仕様 {spec_path} に行が無い"]
     by_id = {region["id"]: region for region in regions}
@@ -334,8 +335,25 @@ def evaluate_expect(spec_path, report_views, regions, selected_views, views_know
     return failures
 
 
+def set_path(root, name):
+    """組 name の撮影の置き場。<置き場>/<組> が無く、置き場そのものが組の起動引数で撮った 1 組の撮影なら置き場を返す"""
+    nested = os.path.join(root, name)
+    if os.path.isfile(os.path.join(nested, "metrics.json")):
+        return nested
+    metrics_path = os.path.join(root, "metrics.json")
+    if os.path.isfile(metrics_path):
+        try:
+            with open(metrics_path, encoding="utf-8-sig") as f:
+                game_args = json.load(f).get("game_args") or []
+        except (OSError, ValueError):
+            return nested
+        if sorted(game_args) == sorted(ShapeCause.SETS[name]):
+            return root
+    return nested
+
+
 def capture_sets(root):
-    return [name for name in ShapeCause.SETS if os.path.isfile(os.path.join(root, name, "metrics.json"))]
+    return [name for name in ShapeCause.SETS if os.path.isfile(os.path.join(set_path(root, name), "metrics.json"))]
 
 
 def manifest_files(set_dir):
@@ -432,7 +450,7 @@ def check_sets(RC, root, sets, verify):
     failures = []
     records = {}
     for name in sets:
-        set_dir = os.path.join(root, name)
+        set_dir = set_path(root, name)
         inputs_path = os.path.join(set_dir, "inputs.json")
         if not os.path.isfile(inputs_path):
             failures.append(f"組 {name} の inputs.json が無い")
@@ -477,7 +495,7 @@ def measure_root(RC, levels, root, regions, views):
     for view in views:
         data = {}
         for name in sets:
-            entry, reason = load_set_view(RC, os.path.join(root, name), view)
+            entry, reason = load_set_view(RC, set_path(root, name), view)
             if entry is None:
                 failures.append(f"{RC.rel_dir(root)} の組 {name} の視点 {view}: {reason}")
                 continue
@@ -491,7 +509,7 @@ def measure_root(RC, levels, root, regions, views):
         records, view_failures = measure_regions(levels, view, regions, data)
         failures.extend(view_failures)
         report[view] = records
-        previews[view] = (os.path.join(root, primary_set([n for n in ShapeCause.SETS if n in data]), f"{view}.png"),
+        previews[view] = (os.path.join(set_path(root, primary_set([n for n in ShapeCause.SETS if n in data])), f"{view}.png"),
                           data[primary_set([n for n in ShapeCause.SETS if n in data])])
     return report, previews, failures
 
