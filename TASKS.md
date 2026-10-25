@@ -2967,7 +2967,7 @@
 - notes: 危険地帯（地形のクック）。2026-10-25 親が SCN-WL-CLIFF-PLACEMENT-CHECK の反復 3 の BLOCKED（推奨の案 A）から足した。崖の生成の項目（SCN-WL-CLIFF-GEN-*）より前に直す（崖の生成は区画の縁の頂点をさらに動かすので、この直しの形を使う）。AssetCook を変えたら地形の全項目を 12 組の並列で先に焼き、verify のクックの行は印が同じで飛ばされる形にする。継ぎ目の検査の点の数が多く 10 分を超えるなら、範囲ごとの行に分ける。壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える（未達のまま DONE にしない）。verify は 1 行 10 分未満。
 
 ## SCN-WL-CLIFF-PLACEMENT-CHECK: 置いた物（崖錐の岩・株・砂利）の浮きと埋もれを、焼いた面の支持面で測る検査を作り、今の値を記録する
-- status: todo
+- status: done
 - after: SCN-WL-CLIFF-SURFACE-QUERY, SCN-WL-TERRAIN-SEAM-FIX
 - done-when: 置き方（`WastelandTalus.cpp`・`WastelandFoliage.cpp`・`WastelandGravel.cpp`）は 1 m の格子の `SampleHeight` を読むので、崖の範囲では焼いた面とずれうる。(1) Game に開発ビルドの起動引数 `wasteland-export-placement=<path>`（名前は変えてよいが verify も合わせる）を足し、置いた物の 種類・位置・回転・拡大率・メッシュの名前 を書き出す（Release では作らない）。(2) `Scripts/Terrain/CheckPlacement.py`（この項目で作る）: 物ごとに足元の点の組（岩はメッシュの下 5 % の頂点、株と砂利は根元の円の 6 点。どれも回転・拡大率を掛けた位置）で SCN-WL-CLIFF-SURFACE-QUERY の問い合わせを引き、支持面を選ぶ規則（上向きの面〔法線の上の成分 0.3 以上〕のうち、足元の高さとの差が max(0.5 m, 物の高さの 20 %) 以内で最も近い面。下向きの面〔張り出しの下面〕は支持面にしない）で浮きと埋もれを出す。規則: 岩は足元の点が面より 0.05 m 以上上に浮かず、埋もれは物の高さの 50 % 以下。株と砂利は根元の点の浮き 0.05 m 以内・埋もれ 0.1 m 以内。交点が無い・物が 0 個・メッシュの欠けは落とす。(3) 2 つの合否の形: 記録（`--record`。全部の物を測り切れたら通り、違反の数を範囲ごとに書く）と遵守（`--require-compliant`。違反 0。物を消して通すなら、消した物の一覧と範囲ごとの数を書き、範囲の物の 2 % 以下）。今の値（範囲ごとの物の数・浮きと埋もれの分布・違反の数）を `--record` で記録し、違反の多い所を撮影で開いて確かめる。崖の生成の項目は `--require-compliant` を使う。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`

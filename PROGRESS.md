@@ -7941,3 +7941,10 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 証拠（`.harness/runs/20261025-120217/`）: `verify-SCN-WL-TERRAIN-SEAM-FIX-6-1.txt`（AssetCook EXIT=0）・`6-2`（Game EXIT=0）・`6-3`（クック cooked=0 skipped=214）・`6-4`（`--seams --verify` result=pass、483 秒）・`6-5`（撮影 result=pass）・`6-6`（形の 4 行 pass）、`aux-SCN-WL-TERRAIN-SEAM-FIX-6-edges-control.txt`（負の対照）・`-6-parallel-cook.txt`・`-6-packages-vs-before.txt`
 - Next: SCN-WL-CLIFF-PLACEMENT-CHECK を verify だけ回し直して閉じる
 - Notes: 判断: 親が同じ時刻に他の項目のクックの行を二重引用符に揃えた（3f821ae2）が、この項目の行は引用符なしのまま残した（空白を含まないので引用符が要らず、シェルを通さず語で分けて渡しても値に引用符が残らない）。縁の辺は区画の四隅の近くで継ぎ目に直交する辺も拾うが、同じ側の隣の区画の辺と対応するので「ほかの区画」との照合にした。段の外周に近い端の 2 m は外周の辺なので照らさない。新しい試験の実行ファイルは足していない
+## 2026-10-25 SCN-WL-CLIFF-PLACEMENT-CHECK（run 20261025-120217 の反復 7、DONE）
+- Done: コードは変えず、SCN-WL-TERRAIN-SEAM-FIX で直した問い合わせの上で verify を回し直した。評価者の差し戻し（反復 40）の 1・3・4・5 は反復 1 で直し、2 は親の案 A（石と小礫は区画の標本）で解いている。`WastelandShape.md` の「置いた物の接地」の今の値を pass の記録に直した
+- 値（`--record`）: 物 15035824（岩 273616・草と低木 5855831・大きな石 1562191・石 1563543・小礫 5780643）、足元の点 99513717 が全部 ok で測り切れない物 0、result=pass。違反 岩 149522・草と低木 138728・大きな石 38619・石 10456・小礫 27593（前に測れなかった大きな石 1 個は支持面なし〔深く埋まる〕の違反として数えられ、大きな石が 1 増えた。ほかは反復 3 と同じ）
+- 見た目: 違反の最も多い Battleship Rock（scan_battleship_rock の岩 40229）を写す ref_cliff_01 の撮影を開き、崖錐の岩は斜面に埋まって見え、目に付く浮きは無いことを確かめた
+- 証拠（`.harness/runs/20261025-120217/`）: `verify-SCN-WL-CLIFF-PLACEMENT-CHECK-6.txt`（Debug の Game EXIT=0）・`-7.txt`（RelWithDebInfo の Game EXIT=0）・`-8.txt`（AssetCook EXIT=0）・`-9.txt`（撮影 result=pass EXIT=0、ログ `WASTELAND_PLACEMENT_EXPORT ... objects=15035824`）・`-10.txt`（`CheckPlacement.py --record --verify` result=pass failures=0 EXIT=0）。報告 `.harness/runs/scene-capture/SCN-WL-CLIFF-PLACEMENT-CHECK/placement_check.record.json`
+- Next: TASKS.md の次の未完（崖の生成の項目は `--require-compliant` で接地を見る）
+- Notes: verify のビルドの行は Git Bash だと `/m:1` がパスに変換されて MSBuild が引数を拒むので、cmd で回した。岩の埋もれの規則（最も深い足元が高さの 50 % 以下）は斜面の岩の約半分を違反にするので、崖の生成の項目で `--require-compliant` を使う前に規則の見直しが要る（反復 40 の Notes と同じ。判断は計画）。新しい試験は足していない
