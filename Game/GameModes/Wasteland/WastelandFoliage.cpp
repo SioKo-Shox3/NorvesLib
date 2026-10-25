@@ -422,6 +422,25 @@ namespace Game::GameModes::WastelandFoliage
         }
     }
 
+    void FoliageScatter::CollectCellAt(float x, float z, VariableArray<FoliageInstance> (&outInstances)[kPlantKindCount])
+    {
+        if (!m_pField)
+        {
+            return;
+        }
+        // 地図で外した候補の数は Update のログのものなので、書き出しの区画では数えたまま戻す
+        const uint32_t savedRejected = m_MaskRejectedCandidates;
+        Cell cell;
+        cell.X = static_cast<int32_t>(std::floor(x / kCellSize));
+        cell.Z = static_cast<int32_t>(std::floor(z / kCellSize));
+        BuildCell(cell);
+        m_MaskRejectedCandidates = savedRejected;
+        for (uint32_t kind = 0; kind < kPlantKindCount; ++kind)
+        {
+            outInstances[kind].insert(outInstances[kind].end(), cell.Instances[kind].begin(), cell.Instances[kind].end());
+        }
+    }
+
     bool FoliageScatter::Update(float cameraX, float cameraZ, FoliageScene &inOutScene)
     {
         if (!m_pField || !std::isfinite(cameraX) || !std::isfinite(cameraZ))

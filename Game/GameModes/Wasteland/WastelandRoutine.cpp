@@ -29,6 +29,7 @@
 #include "GameModes/Wasteland/WastelandFoliage.h"
 #include "GameModes/Wasteland/WastelandNightLights.h"
 #include "GameModes/Wasteland/WastelandTalus.h"
+#include "GameModes/Wasteland/WastelandPlacementExport.h"
 #include "GameModes/Wasteland/WastelandPropExport.h"
 #include "GameModes/Wasteland/WastelandTerrainExport.h"
 #include "Scenes/SceneCatalog.h"
@@ -82,6 +83,10 @@ namespace Game::GameModes
         /// 小物の形と配置の書き出し（--wasteland-gray-material で撮影の保存先があるときだけ。小さな遮蔽の比べの Cycles の正解
         /// Scripts/Terrain/BlenderOcclusionReference.py が同じ形を同じ配置で置く。Directory が空なら何もしない）
         WastelandPropExport::State PropExport;
+        /// 置いた物の配置の書き出し（--wasteland-export-placement のときだけ。空なら書かない）と、書き出す崖錐の岩の写し
+        String PlacementExportPath;
+        VariableArray<Component::MegaScatterInstance> PlacementTalus;
+        bool bPlacementExported = false;
         /// 灰色の材質の撮影で、崖錐の岩を視点（TalusCenterX・TalusCenterZ）から kGrayTalusRadius 以内に限るか
         bool bLimitTalus = false;
         float TalusCenterX = 0.0f;
@@ -1428,6 +1433,18 @@ namespace Game::GameModes
             // 小片も影を落とす（地面と岩に落ちる小片の影が無いと、太陽の影が Cycles より大きく欠ける）。
             // CSM はフォグだけが読む間、大きい順の上限までしか描かない（ShadowMapPass の CsmFogMegaCasterBudget）
             const uint32_t placedFragments = spawnScatter(fragments, true, fragmentRanges);
+            if (!assembly.PlacementExportPath.empty())
+            {
+                assembly.PlacementTalus.clear();
+                if (placedCasters != 0)
+                {
+                    assembly.PlacementTalus.insert(assembly.PlacementTalus.end(), casters.begin(), casters.end());
+                }
+                if (placedFragments != 0)
+                {
+                    assembly.PlacementTalus.insert(assembly.PlacementTalus.end(), fragments.begin(), fragments.end());
+                }
+            }
             if (assembly.PropExport.IsEnabled())
             {
                 const String meshNames[WastelandTalus::kTalusMeshCount] = {
@@ -2009,6 +2026,7 @@ namespace Game::GameModes
             auto assembly = MakeShared<WastelandAssembly>();
             assembly->AssetSystem = assetSystem;
             assembly->TerrainExport.Directory = data.m_TerrainExportDir;
+            assembly->PlacementExportPath = data.m_PlacementExportPath;
             assembly->bTightSunShadow = !data.m_bNightVillage;
             // 灰色の材質の値は、共通の照明の Enter が読んだ CommonLight.json の gray_material から引く
             if (data.m_CommonLight.Opts.bGrayMaterial && data.m_CommonLight.bLoaded)
@@ -2263,6 +2281,22 @@ namespace Game::GameModes
                         ApplyFoliageExclusions(data, &assembly);
                         const NorvesLib::Math::Vector3 cameraPosition = data.m_Rig.GetController().GetPosition();
                         UpdateFoliage(ctx, data, cameraPosition.x, cameraPosition.z, false);
+                    }
+                    // 置いた物の配置を書く（撒かない範囲をそろえた後。草と石は全域の格子の区画を描画と同じ規則で作る）
+                    if (!assembly.PlacementExportPath.empty() && !assembly.bPlacementExported)
+                    {
+                        WastelandPlacementExport::TalusInput talus;
+                        talus.Shapes = assembly.TalusShapes;
+                        talus.MeshNames[static_cast<uint32_t>(WastelandTalus::TalusMesh::Crag)] =
+                            WastelandPropExport::MeshNameFromLogicalPath(
+                                String(Layout::GetPropKindSpec(Layout::PropKind::TalusCrag).MeshPath));
+                        talus.MeshNames[static_cast<uint32_t>(WastelandTalus::TalusMesh::Slab)] =
+                            WastelandPropExport::MeshNameFromLogicalPath(
+                                String(Layout::GetPropKindSpec(Layout::PropKind::TalusSlab).MeshPath));
+                        talus.Instances = std::move(assembly.PlacementTalus);
+                        WastelandPlacementExport::Write(assembly.PlacementExportPath, *data.m_pHeightField, talus,
+                                                        data.m_FoliageScatter, data.m_GravelScatter);
+                        assembly.bPlacementExported = true;
                     }
                 }
                 // 崖錐の岩の行を作り終えるまで待つ（行が揃う前に撮影を始めない）

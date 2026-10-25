@@ -602,6 +602,24 @@ namespace Game::GameModes::WastelandGravel
         }
     }
 
+    void GravelScatter::CollectCellAt(uint32_t tier, float x, float z,
+                                      VariableArray<FoliageInstance> (&outInstances)[kKindsPerTier]) const
+    {
+        if (!IsInitialized() || tier >= kTierCount)
+        {
+            return;
+        }
+        const float cellSize = CellSize(tier);
+        Cell cell;
+        cell.X = static_cast<int32_t>(std::floor(x / cellSize));
+        cell.Z = static_cast<int32_t>(std::floor(z / cellSize));
+        BuildCell(tier, cell);
+        for (uint32_t kind = 0; kind < kKindsPerTier; ++kind)
+        {
+            outInstances[kind].insert(outInstances[kind].end(), cell.Instances[kind].begin(), cell.Instances[kind].end());
+        }
+    }
+
     bool GravelScatter::Update(float cameraX, float cameraZ, VariableArray<FoliageBatch> &outBatches)
     {
         if (!IsInitialized() || !std::isfinite(cameraX) || !std::isfinite(cameraZ))

@@ -74,6 +74,16 @@ namespace Game::GameModes::WastelandFoliage
         /// カメラの (x,z) の周りの区画をそろえる。区画の組が変わったら true を返し、inOutScene の束を作り直す
         /// （風の値はそのまま残す）。変わらなければ false で inOutScene に触らない
         bool Update(float cameraX, float cameraZ, NorvesLib::Core::Rendering::FoliageScene &inOutScene);
+        /// 置いた物の書き出し（WastelandPlacementExport）: (x, z) を含む区画の株を Update と同じ規則で作り、種類ごとに
+        /// outInstances へ足す。持っている区画と束の一覧は変えない
+        void CollectCellAt(float x, float z,
+                           NorvesLib::Core::Container::VariableArray<NorvesLib::Core::Rendering::FoliageInstance> (
+                               &outInstances)[kPlantKindCount]);
+        /// 種類 kind の束のひな形（メッシュと名前。インスタンスは空）
+        const NorvesLib::Core::Rendering::FoliageBatch &GetTemplate(uint32_t kind) const
+        {
+            return m_Templates[kind];
+        }
 
     private:
         /// 1 つの区画の株（種類ごと。FadeThreshold の小さい順）

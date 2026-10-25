@@ -168,6 +168,9 @@ namespace Game::GameModes
         /// 地形の区画の LOD 0 を PLY で書き出すフォルダ（--wasteland-export-terrain。開発ビルドだけ。空なら書かない。
         /// WastelandTerrainExport.h）
         NorvesLib::Core::Container::String m_TerrainExportDir;
+        /// 置いた物（崖錐の岩・草と低木・石と礫）の配置を書き出す JSON のパス（--wasteland-export-placement。開発ビルドだけ。
+        /// 空なら書かない。WastelandPlacementExport.h）
+        NorvesLib::Core::Container::String m_PlacementExportPath;
         /// 撮影の保存先のフォルダ（--capture-png のパスのフォルダ。開発ビルドだけ。空なら無い）。低木 1 株の撮影
         /// （--wasteland-hide=all-but-plant）が、比べる株のメッシュを <フォルダ>/reference_plant.ply に書く
         NorvesLib::Core::Container::String m_CaptureDirectory;

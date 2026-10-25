@@ -66,6 +66,16 @@ namespace Game::GameModes::WastelandGravel
         /// 変わらなければ false で outBatches に触らない
         bool Update(float cameraX, float cameraZ,
                     NorvesLib::Core::Container::VariableArray<NorvesLib::Core::Rendering::FoliageBatch> &outBatches);
+        /// 置いた物の書き出し（WastelandPlacementExport）: 段 tier の (x, z) を含む区画の石を Update と同じ規則で作り、
+        /// 種類ごとに outInstances へ足す。持っている区画と束の一覧は変えない
+        void CollectCellAt(uint32_t tier, float x, float z,
+                           NorvesLib::Core::Container::VariableArray<NorvesLib::Core::Rendering::FoliageInstance> (
+                               &outInstances)[kKindsPerTier]) const;
+        /// 段 tier・種類 kind の束のひな形（メッシュと名前。インスタンスは空）
+        const NorvesLib::Core::Rendering::FoliageBatch &GetTemplate(uint32_t tier, uint32_t kind) const
+        {
+            return m_Templates[tier][kind];
+        }
 
     private:
         /// 1 つの区画の石（種類ごと。FadeThreshold の小さい順）

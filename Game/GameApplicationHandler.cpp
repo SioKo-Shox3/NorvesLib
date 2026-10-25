@@ -294,6 +294,10 @@ namespace Game
         constexpr const TCHAR *kWastelandTalusLimitOption = TEXT("--wasteland-talus-limit=");
         bool s_bWastelandTalusLimitOff = false;
         String s_WastelandExportTerrainDir;
+        // --wasteland-export-placement=<path>: 置いた物（崖錐の岩・草と低木・石と礫）の配置を JSON で書く（開発ビルドだけ。
+        // WastelandPlacementExport.h）
+        constexpr const TCHAR *kWastelandExportPlacementOption = TEXT("--wasteland-export-placement=");
+        String s_WastelandExportPlacementPath;
         // --capture-png のパスのフォルダ（開発ビルドだけ）。低木 1 株の撮影（--wasteland-hide=all-but-plant）が比べる株のメッシュを
         // そこへ書く（Game/GameModes/Wasteland/WastelandMode.h の m_CaptureDirectory）
         String s_WastelandCaptureDir;
@@ -765,6 +769,7 @@ namespace Game
         s_bWastelandCliffDetailOff = false;
         s_bWastelandTalusLimitOff = false;
         s_WastelandExportTerrainDir.clear();
+        s_WastelandExportPlacementPath.clear();
         s_WastelandCaptureDir.clear();
         s_WastelandAntiAliasing = Game::GameModes::WastelandAntiAliasing::Default;
         s_WastelandRenderScale = 1.0f;
@@ -1588,6 +1593,20 @@ namespace Game
                 s_WastelandExportTerrainDir = sceneValue;
 #else
                 LOG_WARNING("--wasteland-export-terrain は開発ビルドだけで使えます。無視します");
+#endif
+                continue;
+            }
+            if (TryStripPrefix(args[i], kWastelandExportPlacementOption, sceneValue))
+            {
+#if NORVES_BUILD_DEVELOPMENT
+                if (sceneValue.empty())
+                {
+                    LOG_ERROR("--wasteland-export-placement には書き出す JSON のパスを指定してください");
+                    return false;
+                }
+                s_WastelandExportPlacementPath = sceneValue;
+#else
+                LOG_WARNING("--wasteland-export-placement は開発ビルドだけで使えます。無視します");
 #endif
                 continue;
             }
@@ -3952,6 +3971,7 @@ namespace Game
                 mode->GetData().m_bCliffDetailOff = s_bWastelandCliffDetailOff;
                 mode->GetData().m_bTalusLimitOff = s_bWastelandTalusLimitOff;
                 mode->GetData().m_TerrainExportDir = s_WastelandExportTerrainDir;
+                mode->GetData().m_PlacementExportPath = s_WastelandExportPlacementPath;
                 mode->GetData().m_CaptureDirectory = s_WastelandCaptureDir;
                 mode->GetData().m_AntiAliasing = s_WastelandAntiAliasing;
                 mode->GetData().m_RenderScale = s_WastelandRenderScale;
