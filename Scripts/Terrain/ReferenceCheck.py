@@ -6737,10 +6737,11 @@ def main():
     parser.add_argument("--baseline", default="",
                         help="--shape-cause --regions: 前の基準の置き場（基準の記録を照らしてから範囲ごとに比べる）")
     parser.add_argument("--baseline-integrity", action="store_true",
-                        help="--shape-cause --regions: --capture-root の基準の記録（撮影の出力のハッシュと当時の入力）だけを照らして"
-                             "範囲を測る（今の実装との一致は求めない）")
+                        help="--shape-cause --regions: --capture-root の基準の記録（封じた撮影の出力のハッシュと当時の入力）だけを照らして"
+                             "封じた写しの範囲を測る（今の実装との一致は求めない）")
     parser.add_argument("--baseline-record", action="store_true",
-                        help="--shape-cause: --capture-root に基準の記録（baseline_manifest.json）を書く（既にあれば書き換えない）")
+                        help="--shape-cause: --capture-root の組の撮影を sealed/ へ移して封じ、基準の記録（baseline_manifest.json）を"
+                             "書く（既にあれば書き換えない）")
     parser.add_argument("--aov-terrain-id", action="store_true",
                         help="撮影の AOV の地形の印（terrain_id）を、深度・面の法線と -Aov なしの撮影と照らす（AovTerrainIdCheck.py。"
                              "--engine に -Aov の撮影先、--plain・--plain2 に -Aov なしの別々の起動の撮影先）")

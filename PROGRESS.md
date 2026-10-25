@@ -7850,3 +7850,11 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 証拠（`.harness/runs/20261024-183517/`）: `verify-SCN-WL-SHAPE-REGION-METRIC-1.txt`（RelWithDebInfo の Game EXIT=0）・`-2.txt`（基準の撮影 result=pass EXIT=0）・`-3.txt`（`--selftest` 3 件 pass）・`-4.txt`（`--baseline-integrity --verify` result=pass、13 の範囲と視点）、`aux-SCN-WL-SHAPE-REGION-METRIC-baseline-record.txt`
 - Next: TASKS.md の次の未完
 - Notes: 2 組・3 組の経路（LOD の差・崖の生成の差）は地形の印のある複数の組の撮影がまだ無いので実際の撮影では回していない。範囲の最低の画素数は基準の数の半分を 2 桁に切り下げた内部の値（基準で 1000 画素に満たない ref_ground_02 の Setting Hen Butte は測らない）。新しい試験の実行ファイルは足していない（`--selftest` は done-when が名指しした確かめ）
+
+## 2026-10-25 SCN-WL-SHAPE-REGION-METRIC（run 20261024-183517 の反復 36、DONE）
+- 差し戻し: 再検証で `--baseline-integrity --verify` が終了コード 1。verify の撮影の行が基準の置き場 `SCN-WL-SHAPE-BASELINE/lod-default` へ撮り直し、記録したハッシュと合わなくなった（描画のざらつきで出力が毎回変わる）
+- Done: `--baseline-record` は組の撮影の出力を `<置き場>/sealed/<組>` へ移して封じてから記録する形にし（記録の形式 v2）、`--baseline-integrity` と `--baseline` は封じた写しだけを照らして測る。上書きされた初めの記録は `baseline_manifest.v1-overwritten-20261025.json` へ退け、地形と Game.exe（1a8b4327…）が同じ撮り直しを封じて記録し直した（72 ファイル、HEAD 4f0fba3b）。`WastelandShape.md` の基準の段を直した
+- 確かめ: 記録の後に verify の撮影の行で `lod-default` へ撮り直しても基準の検査は pass。封じた写しに 1 バイト足すと落ちる（`aux-SCN-WL-SHAPE-REGION-METRIC-tamper-sealed.txt`）。撮り直しを封じた基準と比べると局所の退行は全部 0 %（`aux-SCN-WL-SHAPE-REGION-METRIC-recapture-vs-sealed.txt`）。範囲の重ね画 ref_ground_02 を開き、範囲が Rooster Butte・Franklin Butte の台座・谷床に乗ることを確かめた
+- 証拠（`.harness/runs/20261024-183517/`）: `verify-SCN-WL-SHAPE-REGION-METRIC-5.txt`（ビルド EXIT=0）・`-6.txt`（撮影 result=pass EXIT=0）・`-7.txt`（`--selftest` 3 件 pass）・`-8.txt`（基準の検査 result=pass、13 の範囲と視点、mismatched=0）、`aux-SCN-WL-SHAPE-REGION-METRIC-baseline-record-sealed.txt`
+- Next: TASKS.md の次の未完
+- Notes: `SCN-WL-SHAPE-BASELINE/lod-default` は撮り直しの置き場になった（基準は `sealed/lod-default`）。内部の折れ線の注釈の項目の verify（`CompareReference.py --capture .../SCN-WL-SHAPE-BASELINE/lod-default`）は同じ地形の撮り直しを読むので動くが、封じた基準を読ませたいなら `sealed/lod-default` へ替える

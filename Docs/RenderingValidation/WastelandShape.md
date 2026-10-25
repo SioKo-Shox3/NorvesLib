@@ -266,11 +266,11 @@ Battleship Rock の尾根の刻み（`Tools/AssetCook/TerrainCliffCarveBattleshi
 - 局所の値: 範囲の中を 32 × 32 画素の区画に分け、範囲の地形の画素が区画の 25 % 以上ある区画ごとに、主の組（`lod-default`。無ければ並びの最初の組）の折れ目を記録する
 - `--baseline <置き場>`: 前の基準の置き場の基準の記録を照らしてから同じ範囲で測り、範囲ごとの差（`baseline.delta.<量>`）と、折れ目が前の基準より 10 ポイント以上下がった区画の割合（`baseline.local_regression`）を出す
 - `--expect <仕様>`: 行は `region`・`view`・`quantity`（範囲の記録の中の . 区切りの道。`crease.lod-default`・`shading_diff`・`baseline.local_regression`・`baseline.delta.crease.lod-default` など）・`min`・`max`。未知の範囲・未知の視点・範囲の視点に無い視点・値の無い量・画素の不足・選んだ視点の行が無い仕様は落ちる
-- 基準の記録（`<置き場>/baseline_manifest.json`。`--baseline-record` が 1 回だけ書き、既にあれば書き換えない）: 組ごとに撮影の出力の全ファイルの sha256 と当時の入力の記録（`inputs.json` の中身。Game.exe と台本・シェーダーのハッシュ）、記録した時の HEAD。`--baseline-integrity` はこの記録とファイルだけを照らし（ハッシュの違い・欠け・記録の無いファイルで落ちる）、今の実装との一致は求めない。改ざんした写し（1 ファイルに 1 バイト足し、1 ファイル足す）で 2 件とも落ちることを確かめた（`.harness/runs/20261024-183517/aux-SCN-WL-SHAPE-REGION-METRIC-tamper.txt`）
+- 基準の記録（`<置き場>/baseline_manifest.json`。`--baseline-record` が 1 回だけ書き、既にあれば書き換えない）: 記録の時に組の撮影の出力を `<置き場>/sealed/<組>` へ移して封じる（同じ置き場の `<組>` への撮り直しは封じた写しに触らない）。組ごとに封じた撮影の出力の全ファイルの sha256 と当時の入力の記録（`inputs.json` の中身。Game.exe と台本・シェーダーのハッシュ）、記録した時の HEAD。`--baseline-integrity` はこの記録と封じた写しのファイルだけを照らして封じた写しを測り（ハッシュの違い・欠け・記録の無いファイルで落ちる）、今の実装との一致は求めない。`--baseline` も封じた写しを測る。改ざんした写し（1 ファイルに 1 バイト足し、1 ファイル足す）で 2 件とも落ちること（`.harness/runs/20261024-183517/aux-SCN-WL-SHAPE-REGION-METRIC-tamper.txt`）、封じた写しの 1 ファイルに 1 バイト足すと落ちること（`aux-SCN-WL-SHAPE-REGION-METRIC-tamper-sealed.txt`）を確かめた
 - `--selftest`: 合成の配列で、地形でない画素だけを鋸歯の折れにしても範囲の折れ目が 0 で画素数が地形の印の数だけになること、対照として地形の画素を鋸歯にすると折れ目が出ること（0.937）、最低の画素数がちょうどなら通り 1 画素多いと落ちることを確かめる
 - 出力: `<置き場>/shape_regions.json` と範囲の重ね画 `<置き場>/shape_regions/<視点>.png`（範囲の地形の画素を範囲の色で塗り、範囲の中の地形でない画素を暗くする）
 
-地形を変える前の基準は `.harness/runs/scene-capture/SCN-WL-SHAPE-BASELINE/lod-default`（灰色の材質・`wasteland-talus-limit=off`・FXAA・`-Hdr -Aov`、ref_far_01・ref_far_02・ref_cliff_01・ref_ground_02、Game.exe 1a8b4327…）。基準の記録は 72 ファイル（HEAD 95d5657b、記録の sha256 27d6effc…）。崖の生成・谷床の項目は `--baseline .harness/runs/scene-capture/SCN-WL-SHAPE-BASELINE` で比べ、基準は撮り直さない。基準の値（通常の LOD の 1 組）:
+地形を変える前の基準は `.harness/runs/scene-capture/SCN-WL-SHAPE-BASELINE/sealed/lod-default`（灰色の材質・`wasteland-talus-limit=off`・FXAA・`-Hdr -Aov`、ref_far_01・ref_far_02・ref_cliff_01・ref_ground_02、Game.exe 1a8b4327…）。基準の記録は 72 ファイル（HEAD 4f0fba3b、記録の sha256 d57f4086…）。初めの記録（HEAD 95d5657b）は封じる前の形で、同じ置き場への撮り直しで撮影の出力が上書きされたため、地形と Game.exe（1a8b4327…）が変わっていない撮り直しを封じて記録し直した（前の記録は `baseline_manifest.v1-overwritten-20261025.json`）。範囲の値は前の記録と同じ（ref_ground_02 の Rooster Butte の折れ目だけ 58.7 → 58.6 %）。`SCN-WL-SHAPE-BASELINE/lod-default` は撮り直しの置き場で、基準ではない。撮り直した撮影を封じた基準と比べると局所の退行は 13 の範囲と視点の全部で 0 %（`aux-SCN-WL-SHAPE-REGION-METRIC-recapture-vs-sealed.txt`）。崖の生成・谷床の項目は `--baseline .harness/runs/scene-capture/SCN-WL-SHAPE-BASELINE` で比べ、基準は撮り直さない。基準の値（通常の LOD の 1 組）:
 
 | 視点 | 範囲 | 地形の画素（最低） | 岩などの画素 | 区画 | 折れ目 | 材質の陰影 | 格子の限界 |
 |---|---|---|---|---|---|---|---|
@@ -284,7 +284,7 @@ Battleship Rock の尾根の刻み（`Tools/AssetCook/TerrainCliffCarveBattleshi
 | ref_far_02 | cliff_near_3_setting_hen_butte | 155711（77000） | 9355 | 201 | 33.4 % | 13.1 % | 37.4 % |
 | ref_far_02 | valley_ref_far_02 | 903074（450000） | 0 | 892 | 0.0 % | 0.0 % | 100.0 % |
 | ref_cliff_01 | scan_battleship_rock | 534088（260000） | 236284 | 652 | 14.3 % | 5.6 % | 99.2 % |
-| ref_ground_02 | cliff_near_2_rooster_butte | 21664（10000） | 844 | 26 | 58.7 % | 22.0 % | 0.0 % |
+| ref_ground_02 | cliff_near_2_rooster_butte | 21664（10000） | 844 | 26 | 58.6 % | 22.0 % | 0.0 % |
 | ref_ground_02 | scan_franklin_butte_base | 51469（25000） | 33611 | 84 | 47.8 % | 20.0 % | 0.0 % |
 | ref_ground_02 | valley_ref_ground_02 | 591513（290000） | 0 | 644 | 0.7 % | 0.4 % | 100.0 % |
 

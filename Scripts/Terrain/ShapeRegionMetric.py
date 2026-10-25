@@ -15,7 +15,8 @@
 # --baseline を付けると、前の基準の置き場（基準の記録が合うことを先に確かめる）を同じ範囲で測り、範囲ごとの差と、折れ目が
 # 前の基準より kLocalDropPoints 以上下がった区画の割合（局所の退行）を出す。
 # 基準の記録（<置き場>/baseline_manifest.json）は、撮影の出力のファイルごとのハッシュと当時の入力の記録（inputs.json）を持つ。
-# --baseline-integrity はこの記録とファイルだけを照らし、今の実装（Game.exe・シェーダー・台本）との一致は求めない。
+# --baseline-record は組の撮影の出力を <置き場>/sealed/<組> へ移してから記録する（同じ置き場への撮り直しが基準を上書きしない）。
+# --baseline-integrity・--baseline は封じた写しだけを照らして測り、今の実装（Game.exe・シェーダー・台本）との一致は求めない。
 # 結果は <置き場>/shape_regions.json、範囲の重ね画は <置き場>/shape_regions/<視点>.png。
 # 落ちる: 範囲の定義の誤り・未知の視点・空の選択・組の撮影や AOV の欠け・起動引数が組の条件と違う・描いた画素に地形の印が
 #   書かれていない（255）・幾何の法線の被覆の不足・範囲の地形の画素が最低の数に足りない・組の Game.exe が揃わない・
@@ -24,6 +25,7 @@
 import datetime
 import json
 import os
+import shutil
 import subprocess
 
 import numpy as np
@@ -34,7 +36,9 @@ import ShapeCause
 REPORT = "shape_regions.json"
 PREVIEW_DIR = "shape_regions"
 MANIFEST = "baseline_manifest.json"
-MANIFEST_FORMAT = "shape_baseline_manifest.v1"
+MANIFEST_FORMAT = "shape_baseline_manifest.v2"
+# 基準の記録が組の撮影の出力を移して封じる置き場（<置き場>/sealed/<組>）。撮影の組の名前（ShapeCause.SETS）と重ならない
+SEALED_DIR = "sealed"
 ID_TERRAIN = 1
 ID_UNWRITTEN = 255
 # 局所の値の区画（画素）と、区画の画素のうち範囲の地形の画素がこの割合に満たない区画は局所の値を出さない
@@ -332,12 +336,20 @@ def manifest_files(set_dir):
     return files
 
 
+def sealed_root(root):
+    return os.path.join(root, SEALED_DIR)
+
+
 def record_baseline(RC, root):
-    """基準の記録を書く（既にあれば書き換えない）"""
+    """組の撮影の出力を封じた置き場へ移し、基準の記録を書く（既にあれば書き換えない）"""
     path = os.path.join(root, MANIFEST)
     if os.path.isfile(path):
         print(f"REFERENCE_CHECK result=fail reason=baseline_manifest_exists path={RC.rel_dir(path)}"
               "（基準は撮り直さない。撮り直すときは置き場ごと替える）")
+        return 1
+    sealed = sealed_root(root)
+    if os.path.exists(sealed):
+        print(f"REFERENCE_CHECK result=fail reason=sealed_dir_exists path={RC.rel_dir(sealed)}")
         return 1
     sets = capture_sets(root)
     if not sets:
@@ -349,14 +361,17 @@ def record_baseline(RC, root):
     except (OSError, subprocess.CalledProcessError):
         head = None
     manifest = {"format": MANIFEST_FORMAT, "recorded_at": datetime.datetime.now().isoformat(timespec="seconds"),
-                "git_head": head, "sets": {}}
+                "git_head": head, "sealed_dir": SEALED_DIR, "sets": {}}
+    os.makedirs(sealed)
     for name in sets:
-        set_dir = os.path.join(root, name)
+        set_dir = os.path.join(sealed, name)
+        shutil.move(os.path.join(root, name), set_dir)
         with open(os.path.join(set_dir, "inputs.json"), encoding="utf-8") as f:
             inputs = json.load(f)
         files = {rel: RC.sha256_file(full) for rel, full in sorted(manifest_files(set_dir).items())}
         manifest["sets"][name] = {"files": files, "inputs": inputs}
-        print(f"SHAPE_BASELINE_RECORD set={name} files={len(files)} game_exe_sha256={inputs.get('game_exe_sha256')}")
+        print(f"SHAPE_BASELINE_RECORD set={name} sealed={RC.rel_dir(set_dir)} files={len(files)} "
+              f"game_exe_sha256={inputs.get('game_exe_sha256')}")
     with open(path, "w", encoding="utf-8") as f:
         json.dump(manifest, f, indent=2, ensure_ascii=False)
     print(f"REFERENCE_CHECK shape_baseline_record result=pass manifest={RC.rel_dir(path)}")
@@ -364,7 +379,7 @@ def record_baseline(RC, root):
 
 
 def check_baseline(RC, root):
-    """基準の記録とファイルを照らす。(組の一覧, 失敗の一覧)"""
+    """基準の記録と封じた写しのファイルを照らす。(組の一覧, 失敗の一覧)"""
     path = os.path.join(root, MANIFEST)
     if not os.path.isfile(path):
         return [], [f"基準の記録 {RC.rel_dir(path)} が無い（--baseline-record で書く）"]
@@ -372,13 +387,15 @@ def check_baseline(RC, root):
         manifest = json.load(f)
     if manifest.get("format") != MANIFEST_FORMAT:
         return [], [f"基準の記録の形式 {manifest.get('format')} を知らない"]
+    if manifest.get("sealed_dir") != SEALED_DIR:
+        return [], [f"基準の記録の封じた置き場 {manifest.get('sealed_dir')} が {SEALED_DIR} でない"]
     failures = []
     sets = list((manifest.get("sets") or {}).keys())
     if not sets:
         failures.append("基準の記録に組が無い")
     for name in sets:
         entry = manifest["sets"][name]
-        set_dir = os.path.join(root, name)
+        set_dir = os.path.join(sealed_root(root), name)
         present = manifest_files(set_dir) if os.path.isdir(set_dir) else {}
         recorded = entry.get("files") or {}
         mismatched = [rel for rel, digest in recorded.items()
@@ -527,30 +544,34 @@ def run(RC, root, regions_path, views_arg, verify, expect, baseline, integrity):
               "thresholds": {"block_pixels": kBlockPixels, "block_min_share": kBlockMinShare,
                              "local_drop_points": kLocalDropPoints, "crease_degrees": ShapeCause.kCreaseDegrees,
                              "diff_degrees": ShapeCause.kDiffDegrees, "shading_degrees": ShapeCause.kShadingDegrees}}
+    # 基準の検査は封じた写しを測る（置き場の組の撮影は撮り直しで変わるので見ない）
+    measured = sealed_root(root) if integrity else root
+    report["measured_root"] = RC.rel_dir(measured)
     if integrity:
         sets, integrity_failures = check_baseline(RC, root)
         failures.extend(integrity_failures)
         report["baseline_integrity"] = {"sets": sets, "pass": not integrity_failures}
         # 基準の検査は今の実装との一致を求めないので、入力のハッシュ（inputs.json と今のファイル）は照らさない
-        set_records, set_failures = check_sets(RC, root, capture_sets(root), False)
+        set_records, set_failures = check_sets(RC, measured, capture_sets(measured), False)
     else:
-        set_records, set_failures = check_sets(RC, root, capture_sets(root), verify)
+        set_records, set_failures = check_sets(RC, measured, capture_sets(measured), verify)
     failures.extend(set_failures)
     report["sets"] = set_records
     if not set_records:
-        failures.append(f"置き場 {RC.rel_dir(root)} に組（{', '.join(ShapeCause.SETS)}）の撮影が無い")
+        failures.append(f"置き場 {RC.rel_dir(measured)} に組（{', '.join(ShapeCause.SETS)}）の撮影が無い")
     baseline_report = None
     if baseline:
         _, baseline_failures = check_baseline(RC, baseline)
         failures.extend(f"前の基準: {failure}" for failure in baseline_failures)
-        baseline_sets, baseline_set_failures = check_sets(RC, baseline, capture_sets(baseline), False)
+        baseline_sealed = sealed_root(baseline)
+        baseline_sets, baseline_set_failures = check_sets(RC, baseline_sealed, capture_sets(baseline_sealed), False)
         failures.extend(f"前の基準: {failure}" for failure in baseline_set_failures)
         if not baseline_failures:
-            baseline_report, _, measure_failures = measure_root(RC, levels, baseline, regions, views)
+            baseline_report, _, measure_failures = measure_root(RC, levels, baseline_sealed, regions, views)
             failures.extend(f"前の基準: {failure}" for failure in measure_failures)
         report["baseline"] = {"root": RC.rel_dir(baseline), "sets": baseline_sets}
     if not failures or (set_records and views):
-        current, previews, measure_failures = measure_root(RC, levels, root, regions, views)
+        current, previews, measure_failures = measure_root(RC, levels, measured, regions, views)
         failures.extend(measure_failures)
         os.makedirs(os.path.join(root, PREVIEW_DIR), exist_ok=True)
         for view, records in current.items():
