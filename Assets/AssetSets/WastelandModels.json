@@ -167,6 +167,13 @@
       "entry_name": "Assets/Models/PolyHaven/boulder_01/textures/boulder_01_diff_lin_4k.nvtex"
     },
     {
+      "logical_path": "Assets/Models/PolyHaven/boulder_01/cooked/boulder_01_cliff_albedo",
+      "cook_usage": "orm",
+      "source_path": "Assets/Models/PolyHaven/boulder_01/textures/boulder_01_diff_cliff_lin_4k.png",
+      "package_name": "Wasteland/boulder_01_cliff_diff.nvpkg",
+      "entry_name": "Assets/Models/PolyHaven/boulder_01/textures/boulder_01_diff_cliff_lin_4k.nvtex"
+    },
+    {
       "logical_path": "Assets/Models/PolyHaven/boulder_01/cooked/boulder_01_normal",
       "cook_usage": "normal",
       "flip_normal_y": true,
@@ -187,6 +194,13 @@
       "source_path": "Assets/Models/PolyHaven/rock_09/textures/rock_09_diff_lin_4k.png",
       "package_name": "Wasteland/rock_09_diff.nvpkg",
       "entry_name": "Assets/Models/PolyHaven/rock_09/textures/rock_09_diff_lin_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Models/PolyHaven/rock_09/cooked/rock_09_cliff_albedo",
+      "cook_usage": "orm",
+      "source_path": "Assets/Models/PolyHaven/rock_09/textures/rock_09_diff_cliff_lin_4k.png",
+      "package_name": "Wasteland/rock_09_cliff_diff.nvpkg",
+      "entry_name": "Assets/Models/PolyHaven/rock_09/textures/rock_09_diff_cliff_lin_4k.nvtex"
     },
     {
       "logical_path": "Assets/Models/PolyHaven/rock_09/cooked/rock_09_normal",

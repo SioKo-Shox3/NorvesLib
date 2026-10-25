@@ -206,3 +206,21 @@ cliff と ref_cliff_01 の両方から見える崖の面を、両方の撮影の
 - 式の焼き込み（`TerrainCliffDetail.cpp`）は下地として残した。板の帯は棚の線の高さで壁に半分埋まるので、帯の間の壁に焼き込みの縦の割れ目が残り、写真の層の間の縦の節理に近く見える。外すと Franklin Butte の 4 区画の焼き直しと Cycles の参照の描き直しが要り、帯の間が丸い面に戻る
 - 余分な折れ: 板の帯の上下の縁と板の継ぎ目が注釈の棚の無い所にも折れを作り、余分な折れは cliff_02 1.79 → 4.10・ground_02 2.36 → 5.67 に増えた（合否の仕様の行には無い量）
 - 閉じ方: 写真の角 4 点のうち 3 点は尖塔にあり、台座の塊では届かないので、角の一致の 2 行（閾値 0.5）は尖塔の形を刻む項目（SCN-WL-CLIFF-SPIRE-FRANKLIN）の仕様 `shape-scan-franklin-spire.json` へ移した。台座の項目は `shape-scan-franklin.json` の棚と外形の 6 行・見た目・費用で閉じた。配置表に残した形のままの撮影（`shape/`・`look/`）で、棚 0.788／0.800、外形 cliff_02 6.4／16.1・ground_02 6.3／25.5 画素で 6 行とも合格。塊の色の馴染み（明るさ 0.82〜0.84 倍・赤みが弱い）は SCN-WL-SCAN-MATERIAL-MATCH で直す
+
+## スキャンの塊の色を隣の地形の崖に合わせる（SCN-WL-SCAN-MATERIAL-MATCH、2026-10-25）
+
+Battleship Rock の棚の岩塊と Franklin Butte の台座の板の帯（配置表の boulder_01・rock_09）は、崖錐の落石と同じ較正（写真の落石の色、線形の輝度 0.17・R ÷ G 2.1・G ÷ B 1.5）のアルベドを張っていて、地形の崖の面より青みが強く赤みが弱かった。落石の見た目は変えず、崖の面の塊にだけ崖の色の版のアルベドを張る。
+
+- 経路: `Scripts/CalibrateScanRockAlbedo.py` が、落石の版と同じ較正を目標の色だけ替えて `<id>_diff_cliff_lin_4k.png` に書く（`CLIFF_TARGETS`。boulder_01 は輝度 0.157、rock_09 は 0.170、どちらも R ÷ G 2.53・G ÷ B 2.82）。`Assets/AssetSets/WastelandModels.json` の `<id>_cliff_albedo` がそれを焼き、配置表（`BlenderCliffScan.py` の `CLIFF_ALBEDO_IDS` と `CliffScanPlacements.json` の assets の albedo）が張る。落石の版・ORM・法線と、塊の位置・向き・大きさは変えていない。焼き直したのは新しい 2 項目だけ（`CookAssets.ps1 -OnlyLogicalPath 'Models/PolyHaven/*/cooked/*_cliff_albedo'`、cooked=2・untouched=568）
+- 測り方（`Scripts/Terrain/ScanMaterialMatch.py`）: 照明を含まない GBuffer のアルベド（`-Aov` の `.aov.albedo.pfm`）で比べる。塊は地形の印（`.aov.terrain_id.pfm`）が「ほかの物」で、深度から戻した位置がその置き場の boulder_01・rock_09 の塊の範囲（配置表の world_bounds を 0.3 m 広げる）のどれかの中にある、日の当たる（太陽の可視率 0.9 以上）画素。隣の崖は地形の印が「地形」で、塊の画素から画面の上で 3 画素より遠く 12 画素以内、日の当たる、法線の上向きの成分 0.75 以下の面で、位置が置き場の塊の範囲の和を 25 m 広げた箱の中の画素。組は ref_cliff_01 の Battleship Rock、ref_cliff_02・ref_ground_02 の Franklin Butte。領域の重ね画は撮影の出力先の `scan_material_<視点>_<置き場>.png`（塊 = 橙、崖 = 水色）
+- 目標の決め方: 前の撮影（`scene-capture/SCN-WL-SCAN-MATERIAL-MATCH-before`）で、地形の崖の面は RGB 0.320〜0.329・0.128〜0.130・0.049〜0.050（輝度 0.165、R ÷ G 2.46〜2.55、B ÷ R 0.150〜0.157）。画面の上の塊の平均はテクスチャの平均から素材ごとにずれる（輝度は boulder_01 が 1.05 倍・rock_09 が 0.97 倍）ので、輝度の目標は素材ごとに置いた。B ÷ R は目標の比どおりには下がらず、G ÷ B 2.64 の 1 回目の試しは Franklin Butte で +8〜10 % だったので 2.82 にした
+
+| 組 | 前 輝度の比 | 前 R÷G の差 | 前 B÷R の差 | 後 輝度の比 | 後 R÷G の差 | 後 B÷R の差 |
+|---|---|---|---|---|---|---|
+| ref_cliff_01 Battleship Rock（塊 51099・崖 20557 画素） | 1.056 | −14.9 % | +101.7 % | 0.998 | +1.4 % | −3.0 % |
+| ref_cliff_02 Franklin Butte（塊 40613・崖 11457 画素） | 0.989 | −17.7 % | +117.1 % | 0.980 | −1.4 % | +1.6 % |
+| ref_ground_02 Franklin Butte（塊 21323・崖 7386 画素） | 1.022 | −18.8 % | +121.7 % | 1.014 | −2.6 % | +3.0 % |
+
+- 見た目（前と後を並べた `scene-capture/SCN-WL-SCAN-MATERIAL-MATCH/crop_before_after_<視点>.png`。上が前）: 前は塊が桃色がかった灰色で、崖の橙の地の上に帯と岩塊の並びが色で浮いていた。後は Battleship Rock の棚の岩塊も Franklin Butte の層の段の板の帯も崖と同じ橙の赤褐色で、継ぎ目は色では目立たず、形の陰影（帯の下の影、岩塊の割れ目）で見える。斜面に散らばる小さな桃色の岩は崖錐の落石で、写真の落石の色のまま
+- 写真との比（`CompareReference.py --verify`）は撮影時の処理を含むので合否に使わず、診断として出力先の一覧に残した
+- 既知の限界: rock_face_01・02（Battleship Rock の 3 個）は落石の目標の色のまま（この比べに含めていない）。塊の明暗の模様（`LUMINANCE_CONTRAST`）と崖の層の縞の模様は別のもので、近くで見ると肌理は違う

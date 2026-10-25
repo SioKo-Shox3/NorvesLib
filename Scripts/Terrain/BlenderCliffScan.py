@@ -56,12 +56,15 @@ TABLE_PATH = "Scripts/Terrain/CliffScanPlacements.json"
 
 # 素材（Poly Haven の CC0 のスキャン。選んだ理由は Docs/RenderingValidation/WastelandReference.md の
 # 「近くの崖のスキャンの素材」）。アルベドと ORM は崖の砂岩へ寄せた較正の画像（Scripts/CalibrateScanRockAlbedo.py）を
-# Assets/AssetSets/WastelandModels.json が焼いたもの
+# Assets/AssetSets/WastelandModels.json が焼いたもの。boulder_01・rock_09 は崖錐の落石と同じ素材なので、アルベドは隣の地形の崖の
+# 面の色へ合わせた崖の版（<id>_cliff_albedo。落石の版とは目標の色だけが違う）を張る
+CLIFF_ALBEDO_IDS = ("boulder_01", "rock_09")
 ASSETS = {
     asset_id: {
         "id": asset_id,
         "mesh": f"Assets/Models/PolyHaven/{asset_id}/{asset_id}_4k.gltf",
-        "albedo": f"Assets/Models/PolyHaven/{asset_id}/cooked/{asset_id}_albedo",
+        "albedo": f"Assets/Models/PolyHaven/{asset_id}/cooked/{asset_id}"
+                  + ("_cliff_albedo" if asset_id in CLIFF_ALBEDO_IDS else "_albedo"),
         "normal": f"Assets/Models/PolyHaven/{asset_id}/cooked/{asset_id}_normal",
         "orm": f"Assets/Models/PolyHaven/{asset_id}/cooked/{asset_id}_orm",
     }

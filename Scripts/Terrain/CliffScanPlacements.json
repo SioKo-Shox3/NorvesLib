@@ -12,14 +12,14 @@
     {
       "id": "boulder_01",
       "mesh": "Assets/Models/PolyHaven/boulder_01/boulder_01_4k.gltf",
-      "albedo": "Assets/Models/PolyHaven/boulder_01/cooked/boulder_01_albedo",
+      "albedo": "Assets/Models/PolyHaven/boulder_01/cooked/boulder_01_cliff_albedo",
       "normal": "Assets/Models/PolyHaven/boulder_01/cooked/boulder_01_normal",
       "orm": "Assets/Models/PolyHaven/boulder_01/cooked/boulder_01_orm"
     },
     {
       "id": "rock_09",
       "mesh": "Assets/Models/PolyHaven/rock_09/rock_09_4k.gltf",
-      "albedo": "Assets/Models/PolyHaven/rock_09/cooked/rock_09_albedo",
+      "albedo": "Assets/Models/PolyHaven/rock_09/cooked/rock_09_cliff_albedo",
       "normal": "Assets/Models/PolyHaven/rock_09/cooked/rock_09_normal",
       "orm": "Assets/Models/PolyHaven/rock_09/cooked/rock_09_orm"
     },

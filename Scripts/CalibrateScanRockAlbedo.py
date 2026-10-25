@@ -1,6 +1,6 @@
 ﻿# 荒野の足元の落石と崖の面の塊に使う Poly Haven の岩のスキャン（boulder_01・rock_09・rock_face_01・rock_face_02）の
 # アルベドを崖の赤褐色の砂岩の色へ寄せた
-# PNG（<id>_diff_lin_4k.png）と、粗さを乾いた砂岩の値へ寄せた ARM の PNG（<id>_arm_cal_4k.png）を書く。
+# PNG（<id>_diff_lin_4k.png。崖の面に貼る塊には崖の色の版 <id>_diff_cliff_lin_4k.png も）と、粗さを乾いた砂岩の値へ寄せた ARM の PNG（<id>_arm_cal_4k.png）を書く。
 # Assets/AssetSets/WastelandModels.json がこの 2 枚をアルベドと ORM として焼く。
 #
 # アルベドの PNG は sRGB でなく線形の値のまま 8 bit で書き、一覧では色空間を変換しない用途（cook_usage "orm"、BC7 の線形）で焼く。
@@ -28,6 +28,16 @@
 #     R ÷ G 2.33・G ÷ B 2.71 は橙で、そのまま当てると落石が黄土色に写るので、色味は写真の落石に合わせる。
 #   - 輝度: 同じ写真の日向の赤い落石は砂の路面の 0.57 倍・土の 1.2 倍の明るさ。地形の較正（砂 0.18・土 0.16）に当てはめると
 #     0.10〜0.19 で、落石の面は割れ目と節理の影を自分で持つので上の側に置く。cliff_side の較正 0.22 より暗い
+#
+# 崖の面に貼る塊の版（<id>_diff_cliff_lin_4k.png。CLIFF_TARGETS の boulder_01・rock_09）: 落石の版と同じ較正を、
+# 崖の面の塊の目標の色で別に書く。Scripts/Terrain/CliffScanPlacements.json の塊（Battleship Rock の棚・Franklin Butte の台座）は
+# 地形の崖の面に半分埋まって並ぶので、継ぎ目が色で見えないよう、隣の地形の崖の面と同じアルベドにする。落石は写真の落石の色のまま。
+#   目標は撮影の GBuffer のアルベド（照明を含まない）で、塊の日の当たる面と隣の地形の崖の面を比べて決めた
+#   （Scripts/Terrain/ScanMaterialMatch.py。値と領域は Docs/RenderingValidation/WastelandCliffScan.md）。地形の崖の面は
+#   R ÷ G 2.46〜2.55・B ÷ R 0.150〜0.157・輝度 0.165。塊の画面の上の平均は素材ごとにテクスチャの平均とずれる
+#   （boulder_01 は 1.05 倍・rock_09 は 0.97 倍）ので、輝度の目標は素材ごとに置く
+#   色度は、画面の上の塊の B ÷ R がテクスチャの目標の比どおりには下がらない（G ÷ B 2.64 で塊 0.161〜0.164 に対し崖 0.150〜0.157）ので、
+#   G ÷ B を 2.82 に置いて塊の B ÷ R を Battleship Rock と Franklin Butte の崖の値の間に入れる
 #
 # 粗さ: rock_09 の ARM の粗さ（G）は平均 0.51 で、磨かれた石の値。乾いた砂岩の崖（cliff_side の粗さ 0.86）に
 # そろえ、明暗の模様は半分の振れ幅で残して平均を 0.86 にする（AO の R・金属の B はそのまま）。
@@ -65,6 +75,12 @@ ROUGHNESS_CONTRAST = 0.5
 ROUGHNESS_MIN = 0.6
 ROUGHNESS_TOLERANCE = 0.02
 
+# 崖の面に貼る塊の版の目標（輝度・R ÷ G・G ÷ B。上の「崖の面に貼る塊の版」）
+CLIFF_TARGETS = {
+    "boulder_01": (0.157, 2.53, 2.82),
+    "rock_09": (0.170, 2.53, 2.82),
+}
+
 # rock_face_01・02 は崖の面に貼る塊（Scripts/Terrain/CliffScanPlacements.json が置く）。色は落石と同じ目標へ寄せる
 ROCK_IDS = ["boulder_01", "rock_09", "rock_face_01", "rock_face_02"]
 
@@ -83,10 +99,14 @@ def mean_color(linear):
     return mean, float(mean @ LUMINANCE)
 
 
-def target_color():
+DEFAULT_TARGET = (TARGET_LUMINANCE, TARGET_RED_OVER_GREEN, TARGET_GREEN_OVER_BLUE)
+
+
+def target_color(target=DEFAULT_TARGET):
     # G を 1 とした色を、輝度が目標になるよう縮める
-    unit = numpy.array([TARGET_RED_OVER_GREEN, 1.0, 1.0 / TARGET_GREEN_OVER_BLUE])
-    return unit * (TARGET_LUMINANCE / float(unit @ LUMINANCE))
+    luminance, red_over_green, green_over_blue = target
+    unit = numpy.array([red_over_green, 1.0, 1.0 / green_over_blue])
+    return unit * (luminance / float(unit @ LUMINANCE))
 
 
 def limit_to_one(scaled):
@@ -101,6 +121,10 @@ def source_path(rock_id):
 
 def calibrated_path(rock_id):
     return os.path.join(MODEL_ROOT, rock_id, "textures", "%s_diff_lin_%s.png" % (rock_id, RESOLUTION))
+
+
+def cliff_calibrated_path(rock_id):
+    return os.path.join(MODEL_ROOT, rock_id, "textures", "%s_diff_cliff_lin_%s.png" % (rock_id, RESOLUTION))
 
 
 def load_linear_encoded(path):
@@ -142,14 +166,15 @@ def check_arm(rock_id, arm):
     return True
 
 
-def calibrate(linear, contrast=LUMINANCE_CONTRAST):
+def calibrate(linear, contrast=LUMINANCE_CONTRAST, target_spec=DEFAULT_TARGET):
     mean, _ = mean_color(linear)
     pixel_luminance = numpy.maximum(linear @ LUMINANCE.astype(numpy.float32), 1.0e-5)[..., None]
     # 色度（輝度で割った色）の、平均の色度に対する偏り
     mean_chroma = mean / float(mean @ LUMINANCE)
     deviation = numpy.clip((linear / pixel_luminance) / mean_chroma, 0.05, 20.0)
-    target = target_color()
-    target_chroma = target / TARGET_LUMINANCE
+    target_luminance = target_spec[0]
+    target = target_color(target_spec)
+    target_chroma = target / target_luminance
     chroma = target_chroma * numpy.power(deviation, CHROMA_KEEP)
     # 偏りを掛けた色度の輝度を 1 に戻し、画素の輝度の明暗は contrast の指数で縮めて残す
     chroma /= numpy.maximum(chroma @ LUMINANCE.astype(numpy.float32), 1.0e-5)[..., None]
@@ -157,10 +182,10 @@ def calibrate(linear, contrast=LUMINANCE_CONTRAST):
     shaped = chroma * (mean_luminance * numpy.power(pixel_luminance / mean_luminance, contrast))
     # 1 に収めた分だけ平均が下がるので、収めた後の平均が目標になるまで倍率を詰める
     _, shaped_luminance = mean_color(shaped)
-    scale = TARGET_LUMINANCE / shaped_luminance
+    scale = target_luminance / shaped_luminance
     for _ in range(4):
         _, limited_luminance = mean_color(limit_to_one(shaped * scale))
-        scale *= TARGET_LUMINANCE / limited_luminance
+        scale *= target_luminance / limited_luminance
     scaled = shaped * scale
     clipped = float(numpy.mean(numpy.max(scaled, axis=2) > 1.0))
     encoded = numpy.clip(limit_to_one(scaled) * 255.0 + 0.5, 0.0, 255.0).astype(numpy.uint8)
@@ -174,16 +199,17 @@ def describe(rock_id, label, linear):
     return mean, luminance
 
 
-def check(rock_id, linear):
-    mean, luminance = describe(rock_id, "calibrated", linear)
-    ok = abs(luminance / TARGET_LUMINANCE - 1.0) <= LUMINANCE_TOLERANCE
-    ok = ok and abs((mean[0] / mean[1]) / TARGET_RED_OVER_GREEN - 1.0) <= RATIO_TOLERANCE
-    ok = ok and abs((mean[1] / mean[2]) / TARGET_GREEN_OVER_BLUE - 1.0) <= RATIO_TOLERANCE
+def check(rock_id, linear, target_spec=DEFAULT_TARGET, label="calibrated"):
+    mean, luminance = describe(rock_id, label, linear)
+    target_luminance, red_over_green, green_over_blue = target_spec
+    ok = abs(luminance / target_luminance - 1.0) <= LUMINANCE_TOLERANCE
+    ok = ok and abs((mean[0] / mean[1]) / red_over_green - 1.0) <= RATIO_TOLERANCE
+    ok = ok and abs((mean[1] / mean[2]) / green_over_blue - 1.0) <= RATIO_TOLERANCE
     if not ok:
-        print("FAIL %s 較正した平均の色が目標（Y %.2f・R/G %.2f・G/B %.2f）を外れています" %
-              (rock_id, TARGET_LUMINANCE, TARGET_RED_OVER_GREEN, TARGET_GREEN_OVER_BLUE))
+        print("FAIL %s %s の平均の色が目標（Y %.3f・R/G %.2f・G/B %.2f）を外れています" %
+              (rock_id, label, target_luminance, red_over_green, green_over_blue))
     dark = float(numpy.percentile(linear @ LUMINANCE.astype(numpy.float32), 5.0)) / luminance
-    print("%s calibrated dark_p5_over_mean=%.2f" % (rock_id, dark))
+    print("%s %s dark_p5_over_mean=%.2f" % (rock_id, label, dark))
     if dark < DARK_PERCENTILE_MIN:
         print("FAIL %s 較正した輝度の 5 百分位が平均の %.2f 倍を下回り、暗い斑が残っています" % (rock_id, DARK_PERCENTILE_MIN))
         ok = False
@@ -203,6 +229,13 @@ def main():
                 ok = False
                 continue
             ok = check(rock_id, load_linear_encoded(path)) and ok
+            if rock_id in CLIFF_TARGETS:
+                cliff_path = cliff_calibrated_path(rock_id)
+                if not os.path.exists(cliff_path):
+                    print("FAIL %s がありません（--verify を付けずに先に書く）" % os.path.relpath(cliff_path, REPO_ROOT))
+                    ok = False
+                else:
+                    ok = check(rock_id, load_linear_encoded(cliff_path), CLIFF_TARGETS[rock_id], "cliff_calibrated") and ok
             arm_path = arm_calibrated_path(rock_id)
             if not os.path.exists(arm_path):
                 print("FAIL %s がありません（--verify を付けずに先に書く）" % os.path.relpath(arm_path, REPO_ROOT))
@@ -223,6 +256,13 @@ def main():
         Image.fromarray(encoded, "RGB").save(out_path)
         print("wrote %s clipped=%.4f" % (os.path.relpath(out_path, REPO_ROOT), clipped))
         ok = check(rock_id, encoded.astype(numpy.float32) / 255.0) and ok
+        if rock_id in CLIFF_TARGETS:
+            cliff_encoded, cliff_clipped = calibrate(linear, LUMINANCE_CONTRAST_BY_ID.get(rock_id, LUMINANCE_CONTRAST),
+                                                     CLIFF_TARGETS[rock_id])
+            cliff_out = cliff_calibrated_path(rock_id)
+            Image.fromarray(cliff_encoded, "RGB").save(cliff_out)
+            print("wrote %s clipped=%.4f" % (os.path.relpath(cliff_out, REPO_ROOT), cliff_clipped))
+            ok = check(rock_id, cliff_encoded.astype(numpy.float32) / 255.0, CLIFF_TARGETS[rock_id], "cliff_calibrated") and ok
         arm_path = arm_source_path(rock_id)
         if not os.path.exists(arm_path):
             print("FAIL %s がありません" % os.path.relpath(arm_path, REPO_ROOT))
