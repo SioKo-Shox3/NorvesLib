@@ -138,6 +138,30 @@ float GeometrySmithHeightCorrelated(float NdotV, float NdotL, float roughness)
     return 1.0 / (1.0 + lambdaV + lambdaL);
 }
 
+// GGX の見える法線の分布（Heitz 2018）で引いた鏡面の光線の BRDF の重み G2 ÷ G1(V)（フレネルを除く）。
+// 重みの平均は brdfLUT の A + B（Ess）になる
+float EvaluateGGXVisibleNormalSampleWeight(float NdotV, float NdotL, float roughness)
+{
+    if (NdotV <= 0.0 || NdotL <= 0.0)
+    {
+        return 0.0;
+    }
+    float a = roughness * roughness;
+    float cosV2 = max(NdotV * NdotV, 1.0e-8);
+    float lambdaV = (sqrt(1.0 + a * a * (1.0 - cosV2) / cosV2) - 1.0) * 0.5;
+    return GeometrySmithHeightCorrelated(NdotV, NdotL, roughness) * (1.0 + lambdaV);
+}
+
+// RTGI の鏡面の環境光で、細いローブの推定（空の前計算 × 空へ抜けた割合 ＋ 当たった面の光の平均）から広いローブの推定
+// （光線の BRDF の重みつきの平均で、空へ抜けた光線の空の光も当たった面の光も数え、Ess で割る）へ移る割合。
+// 空の前計算は球全体を畳み込むので、広いローブでは地平の下の地面の光をもう含み、光線が当たった地形の光と二重に数える。
+// 細いローブは地平の下へほとんど掛からず、1 本の光線の空の光より空の前計算の方が粒が少ない。
+// RTGI の鏡面の光線（DiffuseIndirect.comp）と照明（lighting.frag）で同じ値を使う
+float EvaluateWideSpecularLobeBlend(float roughness)
+{
+    return smoothstep(0.45, 0.8, roughness);
+}
+
 float ComputeSpecularAO(float NdotV, float ao, float roughness)
 {
     return clamp(pow(NdotV + ao, exp2(-16.0 * roughness - 1.0)) - 1.0 + ao,

@@ -695,16 +695,22 @@ vec3 EvaluateIblEndpoint(vec3 albedo,
 // RTGI のときの鏡面の環境光（露出前）。RTGI が反射の向きの周り（GGX のローブ）へ引いた光線のうち、空へ抜けた割合
 // （skySpecularOcclusion）だけ空の前計算を足し、面に当たった向きは当たった面が返す光の平均（hitRadiance。空へ抜けた
 // 標本は 0 として平均してあるので、割合を掛けずに足す）で埋める。材質の AO・画面空間 AO の遮り（specularAO）とは
-// 掛け合わせず、空の遮りは大きい方を採る（二重に数えない）。当たった面の光は光線が遮りを解いているので AO を掛けない
+// 掛け合わせず、空の遮りは大きい方を採る（二重に数えない）。当たった面の光は光線が遮りを解いているので AO を掛けない。
+// 粗い面（EvaluateWideSpecularLobeBlend）は空の前計算を使わず、光線の BRDF の重みつきの平均（空へ抜けた光線の空の光を含む）を
+// 重みの平均 Ess で割る（空の前計算が畳み込んだ地平の下の地面の光と、光線が当たった地形の光を二重に数えない）
 vec3 EvaluateRTGIEnvironmentSpecular(vec3 prefilteredColor,
                                      vec3 reflectance,
+                                     float roughness,
+                                     vec2 brdf,
                                      float specularAO,
                                      float skySpecularOcclusion,
                                      vec3 hitRadiance,
                                      float iblIntensity)
 {
-    float skyOcclusion = min(specularAO, skySpecularOcclusion);
-    return reflectance * (prefilteredColor * skyOcclusion * iblIntensity + hitRadiance);
+    float wideLobe = EvaluateWideSpecularLobeBlend(roughness);
+    float skyOcclusion = min(specularAO, skySpecularOcclusion) * (1.0 - wideLobe);
+    float hitNormalization = mix(1.0, max(brdf.x + brdf.y, 0.0001), wideLobe);
+    return reflectance * (prefilteredColor * skyOcclusion * iblIntensity + hitRadiance / hitNormalization);
 }
 
 vec3 EvaluateRTGIEndpoint(vec3 albedo,
@@ -728,6 +734,8 @@ vec3 EvaluateRTGIEndpoint(vec3 albedo,
         vec3 prefilteredColor = SamplePrefilteredSpecular(R, roughness);
         specular = EvaluateRTGIEnvironmentSpecular(prefilteredColor,
                                                    EvaluateSpecularReflectance(albedo, metallic, brdf),
+                                                   roughness,
+                                                   brdf,
                                                    specularAO,
                                                    skySpecularOcclusion,
                                                    specularHitRadiance,
@@ -1438,6 +1446,8 @@ void main()
             indirectSpecular = bRTGIAvailable
                 ? EvaluateRTGIEnvironmentSpecular(SamplePrefilteredSpecular(reflect(-V, N), iblRoughness),
                                                   iblSpecularReflectance,
+                                                  iblRoughness,
+                                                  brdf,
                                                   specularAO,
                                                   rtgiSkySpecularOcclusion,
                                                   rtgiSpecularHitRadiance,

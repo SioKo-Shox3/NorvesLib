@@ -1412,8 +1412,10 @@ bool TryReadScreenIndirect(vec3 hitPosition, out vec3 radiance)
     return true;
 }
 
-// 鏡面の光線: 反射の向きの周り（GGX のローブ）へ 1 本引き、空へ抜けたか（bSky）と当たった面が返す光（露出前、
-// 直接光・発光・2 回目のバウンス）を返す。空へ抜けた向きの光は照明が空の前計算から足すので、ここでは数えない
+// 鏡面の光線: 反射の向きの周り（GGX のローブ）へ 1 本引き、空へ抜けたか（bSky）と標本の光（露出前）を返す。
+// 標本の光は、細いローブの推定（当たった面が返す直接光・発光・2 回目のバウンス。空へ抜けた向きは照明が空の前計算から足す）と
+// 広いローブの推定（空へ抜けた光線の空の光も当たった面の光も BRDF の重み G2 ÷ G1(V) を掛けて数える）を
+// EvaluateWideSpecularLobeBlend の割合で混ぜたもの。照明は広いローブの分の重みの平均（Ess）を同じ割合で割り戻す
 vec3 TraceSpecularRay(vec3 worldPosition,
                       vec3 worldNormal,
                       float roughness,
@@ -1438,10 +1440,16 @@ vec3 TraceSpecularRay(vec3 worldPosition,
                                                    EmitterRandom(pixel, frameIndex, 15u)));
     vec3 halfVector = normalize(tangent * halfTangent.x + bitangent * halfTangent.y + worldNormal * halfTangent.z);
     vec3 rayDirection = reflect(-viewDirection, halfVector);
+    float wideLobe = EvaluateWideSpecularLobeBlend(roughness);
+    float wideWeight = 0.0;
     if (!(dot(rayDirection, worldNormal) > 1.0e-4))
     {
-        // 地平の下へ向いた標本は鏡の向きに寄せる
+        // 地平の下へ向いた標本は、細いローブの推定では鏡の向きに寄せ、広いローブの推定では重み 0 にする
         rayDirection = reflect(-viewDirection, worldNormal);
+    }
+    else
+    {
+        wideWeight = EvaluateGGXVisibleNormalSampleWeight(viewTangent.z, dot(rayDirection, worldNormal), roughness);
     }
     bool bHit;
     vec3 hitPosition;
@@ -1455,7 +1463,8 @@ vec3 TraceSpecularRay(vec3 worldPosition,
                                        hitCustomIndex);
     if (hitCustomIndex == RTGI_NO_HIT)
     {
-        return vec3(0.0);
+        // 空へ抜けた光線の空の光（TraceDiffuseRay が IBL の強度を掛けて返す）は広いローブの推定だけが数える
+        return SanitizeUnexposedRadiance(hitRadiance) * (wideLobe * wideWeight);
     }
     bSky = false;
     if (!bHit)
@@ -1468,7 +1477,7 @@ vec3 TraceSpecularRay(vec3 worldPosition,
                        ? screenIndirect
                        : TraceSecondBounce(rayDirection, hitPosition, hitNormal, hitBaseColor, hitSpecularWeight,
                                            pixel, 16u, 25u));
-    return SanitizeUnexposedRadiance(hitRadiance);
+    return SanitizeUnexposedRadiance(hitRadiance * mix(1.0, wideWeight, wideLobe));
 }
 
 // 1画素の拡散の間接光を求めて書く。firstHitCustomIndexは1回目の拡散光線が当たったinstanceのcustom index
