@@ -180,15 +180,20 @@ namespace NorvesLib::Tools::AssetCook
         // 帽岩（崖の上端の最上の硬い層。地層の棚と同じ担当の 7 範囲だけ）: 面の内側（上り）へ kCapSearchMeters まで
         // たどって頂の高さを求め、頂から kCapThickness の帯のうち上の部分（頂から kCapRiseLow〜kCapRiseHigh × 厚さ）を
         // 頂へ持ち上げて丸い上端を平らな頂と切り立った面の角にし、帯の底で面を kCapOverhangMeters 外へ出して
-        // 張り出しの下の面を作る。頂は、たどった高さの最大の所で上りが kCapPlateauSlope 未満に緩むときだけ認める
-        // （登り続ける斜面の途中では掛けない）。持ち上げは高さについて単調なので面は折り返さない
+        // 張り出しの下の面を作る。頂は、たどった高さの最大の所で上りが緩むほど強く認める（kCapPlateauSlopeLow〜High で
+        // 重みを 1〜0 に下げ、登り続ける斜面の途中では掛けない）。頂の高さと重みは、面の内側の向きと左右へ kCapRayDegrees
+        // 振った 3 本のたどりの重み付きの平均にして、縁に沿って切れずに続ける（1 本で判定を切り替えると縁が数 m ごとに欠ける）。
+        // 持ち上げは谷床の小石の置き方（斜面 38 度まで）と重ならないよう、急な面（kCapSinLow〜kCapSinHigh）だけに掛ける。
+        // 持ち上げは高さについて単調なので面は折り返さない
         constexpr double kCapSearchMeters = 24.0;
-        constexpr double kCapPlateauSlope = 0.3;
+        constexpr double kCapPlateauSlopeLow = 0.2;
+        constexpr double kCapPlateauSlopeHigh = 0.5;
+        constexpr double kCapRayDegrees = 30.0;
         constexpr float kCapThickness = 6.0f;
         constexpr float kCapRiseLow = 0.6f;
         constexpr float kCapRiseHigh = 0.15f;
-        constexpr float kCapSinLow = 0.25f;
-        constexpr float kCapSinHigh = 0.5f;
+        constexpr float kCapSinLow = 0.55f;
+        constexpr float kCapSinHigh = 0.75f;
         constexpr float kCapOverhangMeters = 1.2f;
         constexpr float kCapOverhangEdge = 0.2f;
         constexpr float kCapOverhangWavelength = 40.0f;
@@ -638,8 +643,8 @@ namespace NorvesLib::Tools::AssetCook
         }
 
         // 面の法線 (nx, ny, nz) の点 (x, y, z) を外へ押し出す量（m）。y は基準面からの高さ、capTop は帽岩の頂の高さ
-        // （頂が無い所は NaN）
-        float CliffDisplacement(float x, float y, float z, float nx, float ny, float nz, float capTop)
+        // （頂が無い所は NaN）、capWeight は頂の重み（0〜1）
+        float CliffDisplacement(float x, float y, float z, float nx, float ny, float nz, float capTop, float capWeight)
         {
             const float horizontal = std::sqrt(nx * nx + nz * nz);
             if (horizontal < 1.0e-3f)
@@ -708,7 +713,7 @@ namespace NorvesLib::Tools::AssetCook
                             SmoothStep(0.3f, 0.6f,
                                        ValueNoise(x * (1.0f / kCapOverhangWavelength) + 9.17f,
                                                   z * (1.0f / kCapOverhangWavelength) - 4.31f)));
-                    displacement += kCapOverhangMeters * along * ledgeWeight *
+                    displacement += kCapOverhangMeters * along * capWeight * ledgeWeight *
                                     SmoothStep(capBottom - kCapOverhangEdge, capBottom + kCapOverhangEdge, y);
                 }
             }
@@ -1605,9 +1610,11 @@ namespace NorvesLib::Tools::AssetCook
             }
 
             // 帽岩の上端を切り立たせる持ち上げ（m）と、帽岩の頂の高さ（頂が無い所は NaN）
-            double CapRise(double gx, double gz, double base, const float normal[3], float &outCapTop) const
+            double CapRise(double gx, double gz, double base, const float normal[3], float &outCapTop,
+                           float &outCapWeight) const
             {
                 outCapTop = std::numeric_limits<float>::quiet_NaN();
+                outCapWeight = 0.0f;
                 const double x = WorldX(gx);
                 const double z = WorldZ(gz);
                 const float horizontal = std::sqrt(normal[0] * normal[0] + normal[2] * normal[2]);
@@ -1626,32 +1633,53 @@ namespace NorvesLib::Tools::AssetCook
                 {
                     return 0.0;
                 }
-                // 面の内側（上り）へ格子の間隔ごとにたどり、最も高い所と、そこへ着く手前の 1 歩の上りを求める
-                const double inX = -static_cast<double>(normal[0]) / horizontal / m_Layout.Spacing;
-                const double inZ = -static_cast<double>(normal[2]) / horizontal / m_Layout.Spacing;
+                // 面の内側（上り）と左右へ振った向きへ格子の間隔ごとにたどり、最も高い所と、そこへ着く手前の 1 歩の上りから
+                // 頂の重みを求め、重み付きで頂の高さを平均する
+                const double inX = -static_cast<double>(normal[0]) / horizontal;
+                const double inZ = -static_cast<double>(normal[2]) / horizontal;
                 const int steps = std::max(4, static_cast<int>(kCapSearchMeters / m_Layout.Spacing));
-                double previous = BilinearHeight(gx, gz);
-                double top = previous;
-                double topRise = std::numeric_limits<double>::max();
-                for (int step = 1; step <= steps; ++step)
+                const double start = BilinearHeight(gx, gz);
+                double weightSum = 0.0;
+                double topSum = 0.0;
+                for (int ray = -1; ray <= 1; ++ray)
                 {
-                    const double height = BilinearHeight(gx + inX * step, gz + inZ * step);
-                    if (height > top)
+                    const double angle = static_cast<double>(ray) * kCapRayDegrees * (3.14159265358979323846 / 180.0);
+                    const double c = std::cos(angle);
+                    const double s = std::sin(angle);
+                    const double dirX = (inX * c - inZ * s) / m_Layout.Spacing;
+                    const double dirZ = (inX * s + inZ * c) / m_Layout.Spacing;
+                    double previous = start;
+                    double top = start;
+                    double topRise = std::numeric_limits<double>::max();
+                    for (int step = 1; step <= steps; ++step)
                     {
-                        top = height;
-                        topRise = (height - previous) / m_Layout.Spacing;
+                        const double height = BilinearHeight(gx + dirX * step, gz + dirZ * step);
+                        if (height > top)
+                        {
+                            top = height;
+                            topRise = (height - previous) / m_Layout.Spacing;
+                        }
+                        previous = height;
                     }
-                    previous = height;
+                    const double plateau =
+                        1.0 - static_cast<double>(SmoothStep(static_cast<float>(kCapPlateauSlopeLow),
+                                                             static_cast<float>(kCapPlateauSlopeHigh),
+                                                             static_cast<float>(std::min(topRise, 1.0e3))));
+                    weightSum += plateau;
+                    topSum += plateau * top;
                 }
-                if (!(topRise < kCapPlateauSlope) || top - base > static_cast<double>(kCapThickness) + 0.5)
+                if (weightSum <= 1.0e-6)
                 {
                     return 0.0;
                 }
+                const double top = topSum / weightSum;
+                const float plateau = static_cast<float>(weightSum / 3.0);
                 outCapTop = static_cast<float>(top);
+                outCapWeight = plateau * slope * interior * static_cast<float>(fade);
                 const float lift = SmoothStep(static_cast<float>(top) - kCapRiseLow * kCapThickness,
                                               static_cast<float>(top) - kCapRiseHigh * kCapThickness,
                                               static_cast<float>(base));
-                return std::max(top - base, 0.0) * static_cast<double>(lift * slope * interior) * fade;
+                return std::max(top - base, 0.0) * static_cast<double>(lift * plateau * slope * interior) * fade;
             }
 
             // 格子の座標 (gx, gz) の、押し出した後の位置（m）
@@ -1663,8 +1691,9 @@ namespace NorvesLib::Tools::AssetCook
                 SmoothedNormal(gx, gz, normal);
                 // 帽岩の上端を切り立たせる持ち上げは押し出しの前に高さへ足す
                 float capTop = 0.0f;
+                float capWeight = 0.0f;
                 const double carvedBase = BaseHeight(gx, gz);
-                const double rise = CapRise(gx, gz, carvedBase, normal, capTop);
+                const double rise = CapRise(gx, gz, carvedBase, normal, capTop, capWeight);
                 const double base = carvedBase + rise;
                 outPosition[0] = x;
                 outPosition[1] = base;
@@ -1679,10 +1708,12 @@ namespace NorvesLib::Tools::AssetCook
                 const float fz = static_cast<float>(z);
                 // 押し出しで高さが動いた分を 1 回だけ戻して、層の境をシェーダーが見る高さにそろえる
                 const float first =
-                    CliffDisplacement(fx, static_cast<float>(base), fz, normal[0], normal[1], normal[2], capTop);
+                    CliffDisplacement(fx, static_cast<float>(base), fz, normal[0], normal[1], normal[2], capTop,
+                                     capWeight);
                 const float movedY = static_cast<float>(base) + first * weight * normal[1];
                 const float displacement =
-                    CliffDisplacement(fx, movedY, fz, normal[0], normal[1], normal[2], capTop) * weight;
+                    CliffDisplacement(fx, movedY, fz, normal[0], normal[1], normal[2], capTop, capWeight) *
+                    weight;
                 outPosition[0] += static_cast<double>(normal[0] * displacement);
                 outPosition[1] += static_cast<double>(normal[1] * displacement);
                 outPosition[2] += static_cast<double>(normal[2] * displacement);

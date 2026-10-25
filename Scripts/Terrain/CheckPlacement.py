@@ -15,6 +15,8 @@
 # 物ごとの値は足元の点ごとの量の最大: 浮き = 点ごとの max(0, −d) の最大、埋もれ = 点ごとの max(0, d) の最大。
 # 支持面の無い足元の点が 1 つでもあれば「支持面なし」の違反（窓を外した最も近い上を向く面で「窓より深く埋まる」
 # 「窓より高く浮く」「上を向く面が無い」に分けて数える。分けるのは最も悪い点。埋まる > 浮く > 面が無い の順）。
+# 張り出しの所（同じ X/Z に下を向く面と上を向く面 2 つ以上がある足元の点）は、面の一覧と選んだ支持面を報告の summary.overhang
+# に書き、選んだ面が下を向く面か、上を向く面のうち足元に最も近い面でなければ落とす。
 # 規則: 岩は浮き < 0.05 m・埋もれ ≤ 物の高さの 50 %。草と低木・石は浮き ≤ 0.05 m・埋もれ ≤ 0.1 m。
 # 落とす（測り切れない）もの: 足元の点の問い合わせが ok でない物（DEM の格子の外・区画が無い・メッシュが壊れている・
 # 交点が無い）、組ごとの物が 0 個、形の欠け（岩の頂点が無い・下の帯に頂点が無い・草と石のメッシュの頂点が 0）。
@@ -71,6 +73,8 @@ DEFAULT_WORKERS = max(1, min(16, (os.cpu_count() or 2) // 2))
 # 範囲ごとに書く値の悪い物の数と、報告に書く測り切れない物の数
 WORST_PER_REGION = 10
 UNMEASURED_LISTED = 200
+# 報告に書く張り出しの所の足元の点の数
+OVERHANG_LISTED = 50
 ROCK_CHUNK = 4000
 # 足元の点の支持面なしの分類（大きいほど悪い。物ごとに最も悪い点で分ける）
 NO_SUPPORT_NONE, NO_SUPPORT_NO_UPWARD, NO_SUPPORT_FLOATING, NO_SUPPORT_BURIED = 0, 1, 2, 3
@@ -149,10 +153,12 @@ def run_query(asset_cook, manifest, xz):
 
 
 def query_worker(job):
-    """別のプロセスで 1 回の問い合わせを走らせ、点ごとの最も近い上を向く面との差（無ければ NaN）と状態の番号を返す"""
+    """別のプロセスで 1 回の問い合わせを走らせ、点ごとの最も近い上を向く面との差（無ければ NaN）・状態の番号・
+    張り出しの所の点（下を向く面と上を向く面 2 つ以上が同じ X/Z にある点）の番号・面の一覧・選んだ面の番号を返す"""
     asset_cook, manifest, xz, foot_y = job
     nearest = np.full(len(xz), np.nan)
     status = np.zeros(len(xz), dtype=np.int8)
+    overhang = []
     for local, point in enumerate(run_query(asset_cook, manifest, xz)):
         code = STATUS_CODES.get(point["status"], STATUS_CODES["unknown"])
         status[local] = code
@@ -160,15 +166,22 @@ def query_worker(job):
             continue
         y = foot_y[local]
         best = None
-        for hit in point["hits"]:
+        best_hit = None
+        for number, hit in enumerate(point["hits"]):
             if hit["normal"][1] < SUPPORT_MIN_NORMAL_Y:
                 continue
             d = hit["height"] - y
             if best is None or abs(d) < abs(best):
                 best = d
+                best_hit = number
         if best is not None:
             nearest[local] = best
-    return nearest, status
+        upward = sum(1 for hit in point["hits"] if hit["normal"][1] >= SUPPORT_MIN_NORMAL_Y)
+        if upward >= 2 and any(hit["normal"][1] <= -SUPPORT_MIN_NORMAL_Y for hit in point["hits"]):
+            faces = [{"height": round(float(hit["height"]), 3), "normal": [round(float(v), 3) for v in hit["normal"]]}
+                     for hit in point["hits"]]
+            overhang.append((local, faces, best_hit))
+    return nearest, status, overhang
 
 
 def query_chunks(foot):
@@ -196,18 +209,58 @@ def query_chunks(foot):
 
 def query_support(asset_cook, manifest, foot, window, workers):
     """足元の点（P, 3）と窓（P）から、点ごとの差 d（窓の内の支持面。無ければ NaN）・窓を外した最も近い上を向く面との差
-    （上を向く面が無ければ NaN）・問い合わせの状態の番号（P。STATUS_NAMES の番号）を返す"""
+    （上を向く面が無ければ NaN）・問い合わせの状態の番号（P。STATUS_NAMES の番号）・張り出しの所の点の一覧
+    （(足元の点の番号, 面の一覧, 選んだ面の番号)）を返す"""
     nearest = np.full(len(foot), np.nan)
     status = np.full(len(foot), STATUS_CODES["unknown"], dtype=np.int8)
+    overhang = []
     chunks = query_chunks(foot)
     jobs = ((asset_cook, manifest, foot[index][:, [0, 2]], foot[index, 1]) for index in chunks)
     with concurrent.futures.ProcessPoolExecutor(max_workers=workers) as pool:
-        for index, (part_nearest, part_status) in zip(chunks, pool.map(query_worker, jobs)):
+        for index, (part_nearest, part_status, part_overhang) in zip(chunks, pool.map(query_worker, jobs)):
             nearest[index] = part_nearest
             status[index] = part_status
+            overhang += [(int(index[local]), faces, selected) for local, faces, selected in part_overhang]
     with np.errstate(invalid="ignore"):
         diff = np.where(np.abs(nearest) <= window, nearest, np.nan)
-    return diff, nearest, status
+    return diff, nearest, status, overhang
+
+
+def overhang_record(overhang, foot, owner, objects, meshes, categories, obj_cat, failures):
+    """張り出しの所（同じ X/Z に下を向く面と上を向く面 2 つ以上がある）の足元の点の記録。選んだ支持面が上を向く面で、
+    上を向く面のうち足元に最も近い面であることを点ごとに確かめる（張り出しの下面を選んだ点は落とす）"""
+    underside_selected = 0
+    wrong_face = 0
+    picked = {"top": 0, "middle": 0, "floor": 0, "none": 0}
+    samples = []
+    for point, faces, selected in overhang:
+        y = float(foot[point, 1])
+        upward = [number for number, face in enumerate(faces) if face["normal"][1] >= SUPPORT_MIN_NORMAL_Y]
+        expected = min(upward, key=lambda number: abs(faces[number]["height"] - y))
+        if selected is None:
+            picked["none"] += 1
+        else:
+            if faces[selected]["normal"][1] < SUPPORT_MIN_NORMAL_Y:
+                underside_selected += 1
+            # 面の高さは 1 mm に丸めて書くので、同じ近さの面の入れ替わりは数えない
+            if abs(faces[selected]["height"] - y) > abs(faces[expected]["height"] - y) + 1.0e-3:
+                wrong_face += 1
+            ordered = sorted(upward, key=lambda number: faces[number]["height"])
+            picked["floor" if selected == ordered[0] else ("top" if selected == ordered[-1] else "middle")] += 1
+        if len(samples) < OVERHANG_LISTED:
+            row = int(owner[point])
+            samples.append({"object": row, "type": categories[int(obj_cat[row])],
+                            "mesh": meshes[int(objects[row, 0])]["name"],
+                            "x": round(float(foot[point, 0]), 2), "z": round(float(foot[point, 2]), 2),
+                            "foot_y": round(y, 3), "faces": faces, "selected": selected,
+                            "selected_face": faces[selected] if selected is not None else None})
+    if underside_selected:
+        failures.append(f"張り出しの所の足元の点 {underside_selected} 個で、下を向く面を支持面に選んでいます")
+    if wrong_face:
+        failures.append(f"張り出しの所の足元の点 {wrong_face} 個で、選んだ面が上を向く面のうち最も近い面ではありません")
+    return {"points": len(overhang), "objects": int(len({int(owner[point]) for point, _, _ in overhang})),
+            "underside_selected": underside_selected, "wrong_face": wrong_face, "selected_face": picked,
+            "samples": samples}
 
 
 def percentiles(values):
@@ -346,8 +399,8 @@ def main():
         return finish(args, failures, {"objects": counts, "sampling": placement.get("sampling")}, None)
     window = np.maximum(SUPPORT_WINDOW_MIN_M, SUPPORT_WINDOW_SHARE * obj_height[owner])
     query_started = time.time()
-    diff, nearest, status = query_support(os.path.abspath(args.asset_cook), os.path.abspath(args.manifest), foot, window,
-                                          args.workers)
+    diff, nearest, status, overhang = query_support(os.path.abspath(args.asset_cook), os.path.abspath(args.manifest), foot,
+                                                    window, args.workers)
     query_seconds = time.time() - query_started
     status_counts = np.bincount(status.astype(np.int64), minlength=len(STATUS_NAMES))
     statuses = {STATUS_NAMES[code]: int(value) for code, value in enumerate(status_counts) if value}
@@ -475,6 +528,7 @@ def main():
         "violations_by_category": {c: int((violation & (obj_cat == i)).sum()) for i, c in enumerate(categories)},
         "unmeasured": int(len(unmeasured_rows)),
         "unmeasured_objects": unmeasured_list,
+        "overhang": overhang_record(overhang, foot, owner, objects, meshes, categories, obj_cat, failures),
         "removed": len(removed),
         "workers": args.workers,
         "query_seconds": round(query_seconds, 1),
@@ -536,7 +590,9 @@ def finish(args, failures, summary, regions):
     with open(out, "w", encoding="utf-8") as handle:
         json.dump(report, handle, ensure_ascii=False, indent=1)
     print(f"report={out}")
-    print(f"summary={json.dumps({k: v for k, v in summary.items() if k != 'unmeasured_objects'}, ensure_ascii=False)}")
+    print(f"summary={json.dumps({k: v for k, v in summary.items() if k not in ('unmeasured_objects', 'overhang')}, ensure_ascii=False)}")
+    if summary.get("overhang") is not None:
+        print(f"overhang={json.dumps({k: v for k, v in summary['overhang'].items() if k != 'samples'}, ensure_ascii=False)}")
     for region_id, entry in (regions or {}).items():
         for c, item in entry.items():
             if item["objects"] == 0 and item["removed"] == 0:

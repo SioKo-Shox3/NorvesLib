@@ -27,7 +27,7 @@
 namespace NorvesLib::Tools::AssetCook
 {
     /// 崖の細部の焼き直しの版。形の関数や値を変えたら上げる（クックの元のハッシュに入る）
-    inline constexpr uint32_t kTerrainCliffDetailVersion = 13u;
+    inline constexpr uint32_t kTerrainCliffDetailVersion = 14u;
 
     /// Battleship Rock の尾根の刻み（TerrainCliffCarveBattleship.h）と崖錐の棚の段（TerrainCliffShelfBattleship.h）の版。刻みの表か掛け方を変えたら上げる（刻みが届く区画だけ
     /// クックの元のハッシュに入る。ほかの区画の焼きの結果は変わらない）
