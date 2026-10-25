@@ -7835,3 +7835,9 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 証拠（`.harness/runs/20261024-183517/`）: `verify-SCN-WL-CLIFF-SCAN-NEAR-WALLS-1.txt`（RelWithDebInfo の Game EXIT=0）・`-6.txt`（形の撮影 result=pass）・`-7.txt`（`--shape --expect` 外形 2 行 pass・棚と角 fail）・`-8.txt`（既定の撮影 result=pass）・`-9.txt`（`CompareReference.py --verify` result=pass）、途中の試しの `-2`〜`-5.txt`、`aux-SCN-WL-CLIFF-SCAN-NEAR-WALLS-wall-points*.{py,txt,png}`・`-place-1〜4.txt`・`-placements-before.json`
 - Next: TASKS.md の次の未完
 - Notes: 右の低い段の左の側面（暗い面）と最も右の段の正面の一部は縦の筋の板のまま（拾える地形の画素が少ない。既知の限界として文書に記録）。エンジンの `inside=` は刻む前の高さ場で測るので壁の塊には当てはまらない（焼いた面で測る検査は SCN-WL-CLIFF-PLACEMENT-CHECK）。新しい試験は足していない
+
+## 2026-10-25 SCN-WL-CLIFF-SCAN-NEAR-WALLS（run 20261024-183517 の反復 34、BLOCKED）
+- 差し戻し: 再検証で `--shape --expect shape-scan-battleship.json --verify` が終了コード 1（棚 0.450・角 0.286 が絶対の基準 0.6・0.5 の外。外形 2 行は 1.0 画素で pass）。値は反復 33 と同じで、壁の塊を置く前（棚 0.395・角 0.286・外形 1.0/1.0）から悪くなっていない
+- 判断待ち: 仕様は親の SCN-WL-CLIFF-SCAN-NEAR の絶対の基準で、done-when の「悪くならない」と食い違う。閾値を下げるのは試験を弱めるので触らず、verify を相対の仕様（置く前の値の 4 行）へ差し替える案を推奨として `blocked/SCN-WL-CLIFF-SCAN-NEAR-WALLS.md` に書いた
+- 開始時の RelWithDebInfo の Game のビルドは EXIT=0（`.harness/runs/20261024-183517/aux-SCN-WL-CLIFF-SCAN-NEAR-WALLS-iter34-build.txt`）。コードと配置表は変えていない
+- Next: 親が verify の仕様を決めたら todo に戻し、次の反復が verify を全行回して閉じる
