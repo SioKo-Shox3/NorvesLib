@@ -3171,7 +3171,7 @@
 - notes: SCN-GEN-BUILDINGS-1 の notes の上限時間とやり直しを使う。
 
 ## SCN-RENDER-SPEC-OCCLUSION: 鏡面の環境光（IBL・空の前計算の鏡面）を、見えない空の分だけ遮る
-- status: todo
+- status: doing
 - after: SCN-WL-OCCLUSION-ACCEPT
 - done-when: SCN-INTERIOR-ROOM の反復 39 の比べ（`.harness/runs/scene-capture/SCN-INTERIOR-ROOM-ref/compare/`、`Docs/RenderingValidation/InteriorLightReference.md`）: 日陰の床の輝度がエンジン ÷ Cycles で 2.5 倍（overview）〜16 倍（window）、青 ÷ 緑 1.23 / 0.71。`lighting.frag` の IBL・RTGI の鏡面が空の前計算をそのまま足し、室内でも遮られない（RTGI の床の空の見え方は 2〜3 %）。鏡面の環境光を、見えない空の分だけ遮る（候補: RTGI の空の見え方・曲げた法線から鏡面の遮りを作る）。材質の AO と二重に数えない（SCN-WL-MATERIAL-AO-SHADING の結論）。`InteriorLightReference.py --compare` に正解の置き場を指す `--reference` と、領域の比を判定する `--expect` を足す（この項目で）。合否（`interior-spec-occlusion.json`）: 3 視点の日陰の床の輝度のエンジン ÷ Cycles が 0.8〜1.25、青 ÷ 緑の比が ±10 %。窓の日だまりの形・位置は前と同じ。荒野の遮蔽と共通の照明の値が悪くならない（notes）。回帰の 4 シーンと material-gallery・interior-light を撮って開き、基準画像（golden）の検査を回し、変わるなら SCN-WL-GOLDEN-REAPPROVE と同じ手順で再承認する。GPU 時間（1 視点、300 フレーム）を前後で記録。反復の最初に回帰の撮影の `before` を撮る。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`

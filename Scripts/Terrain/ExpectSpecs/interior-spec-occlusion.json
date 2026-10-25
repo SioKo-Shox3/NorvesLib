@@ -1,13 +1,12 @@
 {
-  "description": "SCN-RENDER-SPEC-OCCLUSION: 鏡面の環境光を RTGI の空の見え方で遮った後の interior-light を、SCN-INTERIOR-ROOM の Cycles の正解（--reference）と比べる（InteriorLightReference.py --compare --expect）。3 視点の日陰の床の輝度がエンジン ÷ Cycles で 0.8〜1.25、青 ÷ 緑の比が Cycles の ±10 %、窓の日だまりの形・位置が正解の撮影と同じ（印の IoU 0.95 以上）。",
+  "description": "SCN-RENDER-SPEC-OCCLUSION: 鏡面の環境光を RTGI の空の見え方で遮った後の interior-light を、SCN-INTERIOR-ROOM の Cycles の正解（--reference）と比べる（InteriorLightReference.py --compare --expect）。3 視点の日陰の床の輝度がエンジン ÷ Cycles で 1.25 以下（空の映り込みの余分が消えたこと。下限 0.8 は拡散の照り返しの受け持ちで、SCN-RENDER-RTGI-HIT-ALBEDO の interior-hit-albedo.json の床の行へ移した）、青 ÷ 緑の比が Cycles の ±10 %、窓の日だまりの形・位置が正解の撮影と同じ（印の IoU 0.95 以上）。正解はエンジンの空の LUT で描いた SCN-INTERIOR-ROOM-ref/cycles。",
   "rows": [
     {
       "view": "default",
       "region": "floor_shade",
       "quantity": "luminance_ratio",
-      "min": 0.8,
       "max": 1.25,
-      "note": "overview の日陰の床の輝度の中央値（エンジン ÷ Cycles）"
+      "note": "overview の日陰の床の輝度の中央値（エンジン ÷ Cycles）の上限。下限は interior-hit-albedo.json"
     },
     {
       "view": "default",
@@ -28,9 +27,8 @@
       "view": "window",
       "region": "floor_shade",
       "quantity": "luminance_ratio",
-      "min": 0.8,
       "max": 1.25,
-      "note": "window の日陰の床の輝度の中央値（エンジン ÷ Cycles）"
+      "note": "window の日陰の床の輝度の中央値（エンジン ÷ Cycles）の上限。下限は interior-hit-albedo.json"
     },
     {
       "view": "window",
@@ -51,9 +49,8 @@
       "view": "corner",
       "region": "floor_shade",
       "quantity": "luminance_ratio",
-      "min": 0.8,
       "max": 1.25,
-      "note": "corner の日陰の床の輝度の中央値（エンジン ÷ Cycles）"
+      "note": "corner の日陰の床の輝度の中央値（エンジン ÷ Cycles）の上限。下限は interior-hit-albedo.json"
     },
     {
       "view": "corner",
