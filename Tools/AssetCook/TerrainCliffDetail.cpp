@@ -123,8 +123,48 @@ namespace NorvesLib::Tools::AssetCook
         constexpr float kStrataLedgeOriginZ = -842.1f;
         constexpr float kStrataLedgeDipX = -0.5e-3f;
         constexpr float kStrataLedgeDipZ = -11.5e-3f;
-        constexpr float kStrataLedges[] = {31.25f, 39.78f, 44.27f, 50.68f, 64.39f,  72.88f,
-                                           79.37f, 103.42f, 122.64f, 165.0f, 192.94f, 247.36f};
+        // 境ごとの高さと、境を支える棚の線の崖。2 つ以上の崖の線で支えられる境（Shared）は谷の全体へ広げる。1 つの崖の
+        // 線だけで支えられる境は、その線の位置（AnchorX・AnchorZ。表の lines の x・z）から kLocalLedgeFullMeters までは
+        // そのまま置き、kLocalLedgeZeroMeters で 0 になるまで弱める（ほかの崖の壁へ写真に無い折れを移さない）
+        struct StrataLedge
+        {
+            float Height;
+            bool Shared;
+            float AnchorX;
+            float AnchorZ;
+        };
+        constexpr StrataLedge kStrataLedges[] = {
+            {31.25f, true, 0.0f, 0.0f},
+            // cliff_02 の Franklin Butte の線 3
+            {39.78f, false, -579.7f, -374.9f},
+            {44.27f, true, 0.0f, 0.0f},
+            {50.68f, true, 0.0f, 0.0f},
+            {64.39f, true, 0.0f, 0.0f},
+            {72.88f, true, 0.0f, 0.0f},
+            {79.37f, true, 0.0f, 0.0f},
+            {103.42f, true, 0.0f, 0.0f},
+            // cliff_01 の Battleship Rock の線 0
+            {122.64f, false, -2029.5f, -1283.8f},
+            // far_01 の Castle Butte の線 0
+            {165.0f, false, -3125.6f, -4976.0f},
+            // far_01 の Cedar Mesa の縁（右）の線 1
+            {192.94f, false, -2620.8f, -5675.7f},
+            {247.36f, true, 0.0f, 0.0f},
+        };
+        constexpr float kLocalLedgeFullMeters = 250.0f;
+        constexpr float kLocalLedgeZeroMeters = 600.0f;
+        // 下の単位の棚（Setting Hen Butte の範囲 kNearRegions[3] だけ）: 層（1.2 m）のうち強い層（kLowerLedgeStrongShare の
+        // 割合）の底を引き、その上を張り出させる段（m）。表の境の段と重ねないよう、境から kLedgeRampMeters の内側では
+        // 弱め、全体を kLowerLedgeWeight 倍にする
+        constexpr float kLedgeRecessShare = 0.55f;
+        constexpr float kLowerLedgeStepMin = 0.8f;
+        constexpr float kLowerLedgeStepMax = 1.4f;
+        constexpr float kLowerLedgeStrongShare = 0.2f;
+        constexpr float kLowerLedgeBandMin = 0.3f;
+        constexpr float kLowerLedgeBandMax = 0.5f;
+        constexpr float kLowerLedgeEdgeMeters = 0.1f;
+        constexpr float kLowerLedgeWeight = 0.5f;
+        constexpr int kLowerLedgeRegionIndex = 3;
         // 細かな凹凸の振幅（m）
         constexpr float kRoughnessCoarse = 0.12f;
         constexpr float kRoughnessFine = 0.05f;
@@ -342,19 +382,85 @@ namespace NorvesLib::Tools::AssetCook
             float value = 0.0f;
             for (int index = 0; index < static_cast<int>(sizeof(kStrataLedges) / sizeof(kStrataLedges[0])); ++index)
             {
-                const float boundary = kStrataLedges[index] + tilt;
+                const StrataLedge &ledge = kStrataLedges[index];
+                const float boundary = ledge.Height + tilt;
                 if (y < boundary - kLedgeRampMeters || y > boundary + kLedgeEdgeMeters)
                 {
                     continue;
+                }
+                float reach = 1.0f;
+                if (!ledge.Shared)
+                {
+                    const float distance = std::hypot(x - ledge.AnchorX, z - ledge.AnchorZ);
+                    reach = 1.0f - SmoothStep(kLocalLedgeFullMeters, kLocalLedgeZeroMeters, distance);
+                    if (reach <= 0.0f)
+                    {
+                        continue;
+                    }
                 }
                 const float continuity =
                     Mix(0.55f, 1.0f,
                         SmoothStep(0.25f, 0.6f,
                                    ValueNoise(x * (1.0f / kLedgeContinuityWavelength) + static_cast<float>(index) * 1.371f,
                                               z * (1.0f / kLedgeContinuityWavelength) - static_cast<float>(index) * 0.913f)));
-                value += kLedgeStepMeters * continuity *
+                value += kLedgeStepMeters * continuity * reach *
                          SmoothStep(boundary - kLedgeRampMeters, boundary - 0.25f * kLedgeRampMeters, y) *
                          (1.0f - SmoothStep(boundary - kLedgeEdgeMeters, boundary + kLedgeEdgeMeters, y));
+            }
+            return value;
+        }
+
+        // 高さ y から最も近い表の境までの距離（m。全体へ広げる境と、その点に届く 1 つの崖の境だけを数える）
+        float NearestLedgeDistance(float y, float x, float z)
+        {
+            const float tilt = kStrataLedgeDipX * (x - kStrataLedgeOriginX) + kStrataLedgeDipZ * (z - kStrataLedgeOriginZ);
+            float nearest = 1.0e9f;
+            for (const StrataLedge &ledge : kStrataLedges)
+            {
+                if (!ledge.Shared && std::hypot(x - ledge.AnchorX, z - ledge.AnchorZ) >= kLocalLedgeZeroMeters)
+                {
+                    continue;
+                }
+                nearest = std::min(nearest, std::abs(y - (ledge.Height + tilt)));
+            }
+            return nearest;
+        }
+
+        // 下の単位の層の段の高さ（m）。強い層だけに段を付け、横方向に長い波長でゆっくり変わる強さを掛ける
+        float LowerLedgeStepHeight(int index, float x, float z)
+        {
+            constexpr int kSeed = 719;
+            if (LatticeHash(index, kSeed + 2) >= kLowerLedgeStrongShare)
+            {
+                return 0.0f;
+            }
+            const float continuity =
+                Mix(0.55f, 1.0f,
+                    SmoothStep(0.25f, 0.6f,
+                               ValueNoise(x * (1.0f / kLedgeContinuityWavelength) + static_cast<float>(index) * 1.371f,
+                                          z * (1.0f / kLedgeContinuityWavelength) - static_cast<float>(index) * 0.913f)));
+            return Mix(kLowerLedgeStepMin, kLowerLedgeStepMax, LatticeHash(index, kSeed)) * continuity;
+        }
+
+        // 下の単位の層 set の、高さ y での棚の押し出し（m）。底の帯は奥へ引き、帯の上の砂岩は張り出す。帯の上の縁と
+        // 層の境が水平の段になる。境では下の層の張り出しと上の層の引っ込みを縁の幅で移す（境のどちらの側から求めても
+        // 同じ値）
+        float LowerLedgeOffset(const StrataBed &set, float y, float x, float z)
+        {
+            constexpr int kSeed = 719;
+            const float edge = kLowerLedgeEdgeMeters;
+            const auto recess = [&](int index) { return -kLedgeRecessShare * LowerLedgeStepHeight(index, x, z); };
+            const auto protrude = [&](int index) { return (1.0f - kLedgeRecessShare) * LowerLedgeStepHeight(index, x, z); };
+            const float band = Mix(kLowerLedgeBandMin, kLowerLedgeBandMax, LatticeHash(set.Index, kSeed - 8));
+            const float bandTop = std::min(set.Bottom + band, 0.5f * (set.Bottom + set.Top));
+            float value = Mix(recess(set.Index), protrude(set.Index), SmoothStep(bandTop - edge, bandTop + edge, y));
+            if (y < set.Bottom + edge)
+            {
+                value = Mix(protrude(set.Index - 1), value, SmoothStep(set.Bottom - edge, set.Bottom + edge, y));
+            }
+            else if (y > set.Top - edge)
+            {
+                value = Mix(value, recess(set.Index + 1), SmoothStep(set.Top - edge, set.Top + edge, y));
             }
             return value;
         }
@@ -486,6 +592,15 @@ namespace NorvesLib::Tools::AssetCook
             return false;
         }
 
+        // 下の単位の棚を掛ける重み（0〜1）。Setting Hen Butte の範囲（kNearRegions[kLowerLedgeRegionIndex]）の内側への距離で
+        // kRegionFadeMeters の幅で上げる
+        float LowerLedgeRegionWeight(float x, float z)
+        {
+            const CliffRegion &region = kNearRegions[kLowerLedgeRegionIndex];
+            const double inside = std::min(std::min(x - region.MinX, region.MaxX - x), std::min(z - region.MinZ, region.MaxZ - z));
+            return static_cast<float>(std::clamp(inside / kRegionFadeMeters, 0.0, 1.0));
+        }
+
         // 面の法線 (nx, ny, nz) の点 (x, y, z) を外へ押し出す量（m）。y は基準面からの高さ
         float CliffDisplacement(float x, float y, float z, float nx, float ny, float nz)
         {
@@ -527,6 +642,14 @@ namespace NorvesLib::Tools::AssetCook
                 displacement += lower * (1.0f - unitBlend);
                 const StrataBed bed = FindStrataBed(strataY, x, z, contact, kStrataLowerBedMeters, 1);
                 lowerBedIndex = bed.Index;
+                // Setting Hen Butte の範囲だけ、表の境の間に下の単位の段を弱めて足す
+                const float lowerLedgeWeight = ledgeWeight > 0.0f ? ledgeWeight * LowerLedgeRegionWeight(x, z) : 0.0f;
+                if (lowerLedgeWeight > 0.0f)
+                {
+                    const float apart = SmoothStep(kLedgeRampMeters, kLedgeRampMeters + 2.0f, NearestLedgeDistance(y, x, z));
+                    displacement += LowerLedgeOffset(bed, strataY, x, z) * kLowerLedgeWeight * apart *
+                                    (1.0f - unitBlend) * lowerLedgeWeight;
+                }
             }
             if (unitBlend > 0.0f)
             {
