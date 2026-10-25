@@ -1,0 +1,439 @@
+﻿{
+  "origin_xz": [
+    -638.6,
+    -842.1
+  ],
+  "dip_m_per_km": [
+    -0.5,
+    -11.5
+  ],
+  "cluster_m": 3.0,
+  "captures": {
+    "far_01": ".harness/runs/scene-capture/SCN-WL-SHAPE-BASELINE/lod-default",
+    "far_02": ".harness/runs/scene-capture/SCN-WL-SHAPE-BASELINE/lod-default",
+    "ground_02": ".harness/runs/scene-capture/SCN-WL-SHAPE-BASELINE/lod-default",
+    "cliff_01": ".harness/runs/scene-capture/SCN-WL-SHAPE-BASELINE/lod-default",
+    "cliff_02": ".harness/runs/scene-capture/SCN-WL-CLIFF-SCAN-FRANKLIN/shape"
+  },
+  "boundaries": [
+    {
+      "height_m": 31.25,
+      "residual_max_m": 1.21,
+      "lines": [
+        "far_02/Setting Hen Butte/4",
+        "ground_02/Franklin Butte/2"
+      ]
+    },
+    {
+      "height_m": 39.78,
+      "residual_max_m": 0.0,
+      "lines": [
+        "cliff_02/Franklin Butte/3"
+      ]
+    },
+    {
+      "height_m": 44.27,
+      "residual_max_m": 0.92,
+      "lines": [
+        "far_02/Setting Hen Butte/3",
+        "ground_02/Franklin Butte/1"
+      ]
+    },
+    {
+      "height_m": 50.68,
+      "residual_max_m": 0.5,
+      "lines": [
+        "cliff_02/Franklin Butte/2",
+        "far_02/Rooster Butte/1"
+      ]
+    },
+    {
+      "height_m": 64.39,
+      "residual_max_m": 3.35,
+      "lines": [
+        "cliff_02/Franklin Butte/1",
+        "far_02/Setting Hen Butte/2",
+        "ground_02/Franklin Butte/0",
+        "ground_02/Rooster Butte/0"
+      ]
+    },
+    {
+      "height_m": 72.88,
+      "residual_max_m": 1.15,
+      "lines": [
+        "cliff_02/Franklin Butte/0",
+        "far_02/Rooster Butte/0"
+      ]
+    },
+    {
+      "height_m": 79.37,
+      "residual_max_m": 0.84,
+      "lines": [
+        "far_02/Setting Hen Butte/1",
+        "cliff_01/Battleship Rock/2"
+      ]
+    },
+    {
+      "height_m": 103.42,
+      "residual_max_m": 1.07,
+      "lines": [
+        "cliff_01/Battleship Rock/3",
+        "far_02/Setting Hen Butte/0",
+        "cliff_01/Battleship Rock/1"
+      ]
+    },
+    {
+      "height_m": 122.64,
+      "residual_max_m": 0.0,
+      "lines": [
+        "cliff_01/Battleship Rock/0"
+      ]
+    },
+    {
+      "height_m": 165.0,
+      "residual_max_m": 0.0,
+      "lines": [
+        "far_01/Castle Butte/0"
+      ]
+    },
+    {
+      "height_m": 192.94,
+      "residual_max_m": 0.0,
+      "lines": [
+        "far_01/Cedar Mesa の縁（右）/1"
+      ]
+    },
+    {
+      "height_m": 247.36,
+      "residual_max_m": 0.46,
+      "lines": [
+        "far_01/Cedar Mesa の縁（右）/0",
+        "far_01/Castle Butte/1"
+      ]
+    }
+  ],
+  "lines": [
+    {
+      "photo": "far_01",
+      "cliff": "Castle Butte",
+      "shelf": 0,
+      "points": 424,
+      "x": -3125.590461702053,
+      "z": -4976.04792641362,
+      "height_m": 213.77887607054745,
+      "height_iqr_m": 8.031815782793927,
+      "shift_px": [
+        -8.0,
+        7.0
+      ]
+    },
+    {
+      "photo": "far_01",
+      "cliff": "Castle Butte",
+      "shelf": 1,
+      "points": 386,
+      "x": -3187.1047377910736,
+      "z": -5036.737582039417,
+      "height_m": 297.3275556440856,
+      "height_iqr_m": 9.195239421199233,
+      "shift_px": [
+        -8.0,
+        7.0
+      ]
+    },
+    {
+      "photo": "far_01",
+      "cliff": "Cedar Mesa の縁（右）",
+      "shelf": 0,
+      "points": 458,
+      "x": -2616.188045081143,
+      "z": -5688.9520068538095,
+      "height_m": 303.6246310535122,
+      "height_iqr_m": 61.059354070047675,
+      "shift_px": [
+        99.0,
+        -48.0
+      ]
+    },
+    {
+      "photo": "far_01",
+      "cliff": "Cedar Mesa の縁（右）",
+      "shelf": 1,
+      "points": 477,
+      "x": -2620.846966812049,
+      "z": -5675.73570017764,
+      "height_m": 249.52217951524386,
+      "height_iqr_m": 42.78973361598662,
+      "shift_px": [
+        99.0,
+        -48.0
+      ]
+    },
+    {
+      "photo": "far_02",
+      "cliff": "Setting Hen Butte",
+      "shelf": 0,
+      "points": 218,
+      "x": 1269.8520331757932,
+      "z": 1369.807849704794,
+      "height_m": 77.39277208254597,
+      "height_iqr_m": 5.299763049329883,
+      "shift_px": [
+        -75.0,
+        -47.0
+      ]
+    },
+    {
+      "photo": "far_02",
+      "cliff": "Setting Hen Butte",
+      "shelf": 1,
+      "points": 368,
+      "x": 1256.400841263985,
+      "z": 1399.0175989192683,
+      "height_m": 51.8093193457429,
+      "height_iqr_m": 5.775704478010624,
+      "shift_px": [
+        -75.0,
+        -47.0
+      ]
+    },
+    {
+      "photo": "far_02",
+      "cliff": "Setting Hen Butte",
+      "shelf": 2,
+      "points": 473,
+      "x": 1251.6769472207836,
+      "z": 1411.820812280486,
+      "height_m": 36.48198960216435,
+      "height_iqr_m": 5.614197716976641,
+      "shift_px": [
+        -75.0,
+        -47.0
+      ]
+    },
+    {
+      "photo": "far_02",
+      "cliff": "Setting Hen Butte",
+      "shelf": 3,
+      "points": 435,
+      "x": 1255.7834512952743,
+      "z": 1452.7517717349328,
+      "height_m": 16.013218996559452,
+      "height_iqr_m": 3.3058446579411402,
+      "shift_px": [
+        -75.0,
+        -47.0
+      ]
+    },
+    {
+      "photo": "far_02",
+      "cliff": "Setting Hen Butte",
+      "shelf": 4,
+      "points": 537,
+      "x": 1234.4040229106345,
+      "z": 1492.769397336492,
+      "height_m": 2.248842631174224,
+      "height_iqr_m": 2.81309420201044,
+      "shift_px": [
+        -75.0,
+        -47.0
+      ]
+    },
+    {
+      "photo": "far_02",
+      "cliff": "Rooster Butte",
+      "shelf": 0,
+      "points": 239,
+      "x": 896.4604650877525,
+      "z": 875.3598820411855,
+      "height_m": 53.51082384241214,
+      "height_iqr_m": 0.594430482068141,
+      "shift_px": [
+        -2.0,
+        -65.0
+      ]
+    },
+    {
+      "photo": "far_02",
+      "cliff": "Rooster Butte",
+      "shelf": 1,
+      "points": 352,
+      "x": 921.349694113068,
+      "z": 904.0242652030068,
+      "height_m": 30.32177209725218,
+      "height_iqr_m": 0.6139362322733746,
+      "shift_px": [
+        -2.0,
+        -65.0
+      ]
+    },
+    {
+      "photo": "ground_02",
+      "cliff": "Franklin Butte",
+      "shelf": 0,
+      "points": 269,
+      "x": -542.1251579637336,
+      "z": -380.67484525655095,
+      "height_m": 60.25789298161598,
+      "height_iqr_m": 0.5324024997921555,
+      "shift_px": [
+        0.0,
+        42.0
+      ]
+    },
+    {
+      "photo": "ground_02",
+      "cliff": "Franklin Butte",
+      "shelf": 1,
+      "points": 409,
+      "x": -550.4482058245483,
+      "z": -396.8099642876366,
+      "height_m": 40.021149510717315,
+      "height_iqr_m": 0.370173124681088,
+      "shift_px": [
+        0.0,
+        42.0
+      ]
+    },
+    {
+      "photo": "ground_02",
+      "cliff": "Franklin Butte",
+      "shelf": 2,
+      "points": 485,
+      "x": -566.3211034411712,
+      "z": -435.24801738300107,
+      "height_m": 27.74400866350897,
+      "height_iqr_m": 0.24292266567779564,
+      "shift_px": [
+        0.0,
+        42.0
+      ]
+    },
+    {
+      "photo": "ground_02",
+      "cliff": "Rooster Butte",
+      "shelf": 0,
+      "points": 199,
+      "x": 850.96724457138,
+      "z": 803.5769693380566,
+      "height_m": 47.89431951909363,
+      "height_iqr_m": 0.25833193908190566,
+      "shift_px": [
+        188.0,
+        18.0
+      ]
+    },
+    {
+      "photo": "cliff_01",
+      "cliff": "Battleship Rock",
+      "shelf": 0,
+      "points": 23,
+      "x": -2029.466601424672,
+      "z": -1283.8412274605948,
+      "height_m": 128.4167873700434,
+      "height_iqr_m": 2.2509131936620577,
+      "shift_px": [
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "photo": "cliff_01",
+      "cliff": "Battleship Rock",
+      "shelf": 1,
+      "points": 74,
+      "x": -2081.4040635342553,
+      "z": -1197.2705777374683,
+      "height_m": 108.93013245143342,
+      "height_iqr_m": 6.528714132467272,
+      "shift_px": [
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "photo": "cliff_01",
+      "cliff": "Battleship Rock",
+      "shelf": 2,
+      "points": 86,
+      "x": -2122.6143616929885,
+      "z": -1179.5499972483233,
+      "height_m": 84.8329576501242,
+      "height_iqr_m": 5.765338371889214,
+      "shift_px": [
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "photo": "cliff_01",
+      "cliff": "Battleship Rock",
+      "shelf": 3,
+      "points": 18,
+      "x": -1950.268380675494,
+      "z": -1322.511634970414,
+      "height_m": 108.52314715801963,
+      "height_iqr_m": 4.962751141194957,
+      "shift_px": [
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "photo": "cliff_02",
+      "cliff": "Franklin Butte",
+      "shelf": 0,
+      "points": 109,
+      "x": -540.1687905636118,
+      "z": -367.1253620796706,
+      "height_m": 66.22144740344743,
+      "height_iqr_m": 0.11078185629298787,
+      "shift_px": [
+        -26.0,
+        -11.0
+      ]
+    },
+    {
+      "photo": "cliff_02",
+      "cliff": "Franklin Butte",
+      "shelf": 1,
+      "points": 156,
+      "x": -553.6014355505231,
+      "z": -376.29292293820026,
+      "height_m": 55.64694541757268,
+      "height_iqr_m": 0.3613298456181582,
+      "shift_px": [
+        -26.0,
+        -11.0
+      ]
+    },
+    {
+      "photo": "cliff_02",
+      "cliff": "Franklin Butte",
+      "shelf": 2,
+      "points": 206,
+      "x": -558.7691922509849,
+      "z": -386.78943711631723,
+      "height_m": 44.903606443027975,
+      "height_iqr_m": 0.4096669031402129,
+      "shift_px": [
+        -26.0,
+        -11.0
+      ]
+    },
+    {
+      "photo": "cliff_02",
+      "cliff": "Franklin Butte",
+      "shelf": 3,
+      "points": 210,
+      "x": -579.6811453871757,
+      "z": -374.88444530108814,
+      "height_m": 34.37935252886069,
+      "height_iqr_m": 0.5674691775085208,
+      "shift_px": [
+        -26.0,
+        -11.0
+      ]
+    }
+  ]
+}
