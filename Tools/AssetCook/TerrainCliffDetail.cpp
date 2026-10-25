@@ -111,14 +111,23 @@ namespace NorvesLib::Tools::AssetCook
         constexpr float kLowerJointDepthMin = 0.1f;
         constexpr float kLowerJointDepthMax = 0.3f;
         // 地層の棚: 上の単位のセットの底の柔らかい帯を奥へ引き、その上の砂岩を張り出させる段。段の高さ（引っ込みと
-        // 張り出しの和、m）の範囲・底の帯の厚さ（m）・段の縁の幅（m）・横方向の強さの揺れの波長（m）
-        constexpr float kLedgeStepMin = 1.0f;
-        constexpr float kLedgeStepMax = 2.4f;
+        // 張り出しの和、m）の範囲・底の帯の厚さ（m）・段の縁の幅（m）・横方向の強さの揺れの波長（m）。写真の数本の
+        // はっきりした棚に寄せ、段を付けるのは強いセット（kLedgeStrongShare の割合）だけにする
+        constexpr float kLedgeStepMin = 1.8f;
+        constexpr float kLedgeStepMax = 2.8f;
+        constexpr float kLedgeStrongShare = 0.3f;
         constexpr float kLedgeRecessShare = 0.55f;
         constexpr float kLedgeBandMin = 0.6f;
         constexpr float kLedgeBandMax = 1.4f;
         constexpr float kLedgeEdgeMeters = 0.15f;
         constexpr float kLedgeContinuityWavelength = 110.0f;
+        // 下の単位の棚: 層（1.2 m）のうち強い層（kLowerLedgeStrongShare の割合）の底を引き、その上を張り出させる段（m）
+        constexpr float kLowerLedgeStepMin = 0.8f;
+        constexpr float kLowerLedgeStepMax = 1.4f;
+        constexpr float kLowerLedgeStrongShare = 0.2f;
+        constexpr float kLowerLedgeBandMin = 0.3f;
+        constexpr float kLowerLedgeBandMax = 0.5f;
+        constexpr float kLowerLedgeEdgeMeters = 0.1f;
         // 細かな凹凸の振幅（m）
         constexpr float kRoughnessCoarse = 0.12f;
         constexpr float kRoughnessFine = 0.05f;
@@ -329,36 +338,64 @@ namespace NorvesLib::Tools::AssetCook
 
         // 地層の棚の段の高さ（m）。セットごとの強さに、横方向に長い波長でゆっくり変わる強さを掛ける（数 m の塊で
         // 途切れさせず、棚を水平に続ける）
-        float LedgeStepHeight(int index, float x, float z)
+        // 棚の形の値（上の単位と下の単位で別）
+        struct LedgeProfile
         {
+            int Seed = 0;
+            float StrongShare = 0.0f;
+            float StepMin = 0.0f;
+            float StepMax = 0.0f;
+            float BandMin = 0.0f;
+            float BandMax = 0.0f;
+            float Edge = 0.0f;
+        };
+
+        constexpr LedgeProfile kUpperLedge = {709,           kLedgeStrongShare, kLedgeStepMin,  kLedgeStepMax,
+                                              kLedgeBandMin, kLedgeBandMax,     kLedgeEdgeMeters};
+        constexpr LedgeProfile kLowerLedge = {719,
+                                              kLowerLedgeStrongShare,
+                                              kLowerLedgeStepMin,
+                                              kLowerLedgeStepMax,
+                                              kLowerLedgeBandMin,
+                                              kLowerLedgeBandMax,
+                                              kLowerLedgeEdgeMeters};
+
+        // 地層の棚の段の高さ（m）。強い層だけに段を付け、層ごとの強さに、横方向に長い波長でゆっくり変わる強さを掛ける
+        // （数 m の塊で途切れさせず、棚を水平に続ける）
+        float LedgeStepHeight(int index, float x, float z, const LedgeProfile &profile)
+        {
+            const float pick = LatticeHash(index, profile.Seed + 2);
+            if (pick >= profile.StrongShare)
+            {
+                return 0.0f;
+            }
             const float continuity =
                 Mix(0.55f, 1.0f,
                     SmoothStep(0.25f, 0.6f,
                                ValueNoise(x * (1.0f / kLedgeContinuityWavelength) + static_cast<float>(index) * 1.371f,
                                           z * (1.0f / kLedgeContinuityWavelength) - static_cast<float>(index) * 0.913f)));
-            return Mix(kLedgeStepMin, kLedgeStepMax, LatticeHash(index, 709)) * continuity;
+            return Mix(profile.StepMin, profile.StepMax, LatticeHash(index, profile.Seed)) * continuity;
         }
 
-        // 上の単位のセット set の、高さ y での棚の押し出し（m）。底の帯は奥へ引き、帯の上の砂岩は張り出す。帯の上の縁
-        // （張り出した砂岩の下面）とセットの境（下のセットの砂岩の踏み面）が水平の段になる。境では下のセットの張り出しと
-        // 上のセットの引っ込みを縁の幅で移す（境のどちらの側から求めても同じ値）
-        float UpperLedgeOffset(const StrataBed &set, float y, float x, float z)
+        // 層 set の、高さ y での棚の押し出し（m）。底の帯は奥へ引き、帯の上の砂岩は張り出す。帯の上の縁
+        // （張り出した砂岩の下面）と層の境（下の層の砂岩の踏み面）が水平の段になる。境では下の層の張り出しと
+        // 上の層の引っ込みを縁の幅で移す（境のどちらの側から求めても同じ値）
+        float LedgeOffset(const StrataBed &set, float y, float x, float z, const LedgeProfile &profile)
         {
-            const auto recess = [&](int index) { return -kLedgeRecessShare * LedgeStepHeight(index, x, z); };
-            const auto protrude = [&](int index) { return (1.0f - kLedgeRecessShare) * LedgeStepHeight(index, x, z); };
-            const float band = Mix(kLedgeBandMin, kLedgeBandMax, LatticeHash(set.Index, 701));
+            const float edge = profile.Edge;
+            const auto recess = [&](int index) { return -kLedgeRecessShare * LedgeStepHeight(index, x, z, profile); };
+            const auto protrude = [&](int index)
+            { return (1.0f - kLedgeRecessShare) * LedgeStepHeight(index, x, z, profile); };
+            const float band = Mix(profile.BandMin, profile.BandMax, LatticeHash(set.Index, profile.Seed - 8));
             const float bandTop = std::min(set.Bottom + band, 0.5f * (set.Bottom + set.Top));
-            float value = Mix(recess(set.Index), protrude(set.Index),
-                              SmoothStep(bandTop - kLedgeEdgeMeters, bandTop + kLedgeEdgeMeters, y));
-            if (y < set.Bottom + kLedgeEdgeMeters)
+            float value = Mix(recess(set.Index), protrude(set.Index), SmoothStep(bandTop - edge, bandTop + edge, y));
+            if (y < set.Bottom + edge)
             {
-                value = Mix(protrude(set.Index - 1), value,
-                            SmoothStep(set.Bottom - kLedgeEdgeMeters, set.Bottom + kLedgeEdgeMeters, y));
+                value = Mix(protrude(set.Index - 1), value, SmoothStep(set.Bottom - edge, set.Bottom + edge, y));
             }
-            else if (y > set.Top - kLedgeEdgeMeters)
+            else if (y > set.Top - edge)
             {
-                value = Mix(value, recess(set.Index + 1),
-                            SmoothStep(set.Top - kLedgeEdgeMeters, set.Top + kLedgeEdgeMeters, y));
+                value = Mix(value, recess(set.Index + 1), SmoothStep(set.Top - edge, set.Top + edge, y));
             }
             return value;
         }
@@ -522,24 +559,29 @@ namespace NorvesLib::Tools::AssetCook
 
             float displacement = 0.0f;
             int lowerBedIndex = 0;
+            // 地層の棚は急な面だけに掛ける（緩い斜面は段の押し出しで棚になる。スキャンの崖の担当の範囲には掛けない）
+            const float ledgeWeight = IsScanOwnedRegion(x, z) ? 0.0f : SmoothStep(0.70f, 0.87f, horizontal);
             if (unitBlend < 1.0f)
             {
                 const float lower = BlendedStrataOffset(strataY, contact, kStrataLowerBedMeters, 1, kLowerBoundaryBlend,
                                                         point, LowerBedOffset);
                 displacement += lower * (1.0f - unitBlend);
-                lowerBedIndex = FindStrataBed(strataY, x, z, contact, kStrataLowerBedMeters, 1).Index;
+                const StrataBed bed = FindStrataBed(strataY, x, z, contact, kStrataLowerBedMeters, 1);
+                lowerBedIndex = bed.Index;
+                if (ledgeWeight > 0.0f)
+                {
+                    displacement += LedgeOffset(bed, strataY, x, z, kLowerLedge) * (1.0f - unitBlend) * ledgeWeight;
+                }
             }
             if (unitBlend > 0.0f)
             {
                 const float upper = BlendedStrataOffset(strataY, contact, kStrataUpperSetMeters, 2, kUpperBoundaryBlend,
                                                         point, UpperSetOffset);
                 displacement += upper * unitBlend;
-                // 地層の棚（急な面だけ。緩い斜面は上の段の押し出しで棚になる。スキャンの崖の担当の範囲には掛けない）
-                if (!IsScanOwnedRegion(x, z))
+                if (ledgeWeight > 0.0f)
                 {
                     const StrataBed set = FindStrataBed(strataY, x, z, contact, kStrataUpperSetMeters, 2);
-                    displacement +=
-                        UpperLedgeOffset(set, strataY, x, z) * unitBlend * SmoothStep(0.70f, 0.87f, horizontal);
+                    displacement += LedgeOffset(set, strataY, x, z, kUpperLedge) * unitBlend * ledgeWeight;
                 }
             }
 
