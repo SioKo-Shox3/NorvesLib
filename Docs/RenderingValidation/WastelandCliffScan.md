@@ -186,7 +186,7 @@ cliff と ref_cliff_01 の両方から見える崖の面を、両方の撮影の
 - 外形（`CompareReference.py --shape --expect shape-scan-battleship.json`、`aux-SCN-WL-CLIFF-CARVE-CONTINUITY-shape-expect.txt`）: 外形 ずらす前 1.0・ずらした後 1.0 画素で版 7 と同じ（合格）。棚 0.391 → 0.395・角 0.286 → 0.286 で、2 行は保留の SCN-WL-CLIFF-SCAN-NEAR の既知の限界のまま不合格
 - 既知の限界: 面は割合の境で続くが、傾きは境で変わりうる。0.25 m 離れたマスク 1 の点との差が 0.5 m を超え、内側の同じ幅の差が 0.5 m 以内の線が 672 本中 12 本ある（傾きの折れ。撮影では線として見えない）
 
-## Franklin Butte の尖塔の台座を覆う試し（SCN-WL-CLIFF-SCAN-FRANKLIN、2026-10-25、途中）
+## Franklin Butte の尖塔の台座を覆う試し（SCN-WL-CLIFF-SCAN-FRANKLIN、2026-10-25）
 
 合否は `Scripts/Terrain/ExpectSpecs/shape-scan-franklin.json`（cliff_02・ground_02 の注釈のうち Franklin Butte の分。`WastelandShape.md` の「スキャンの崖の担当の範囲」、X −760〜−240・Z −660〜−140）。撮影はどれも同じ RelWithDebInfo の Game.exe、灰色の材質の形の撮影。配置は `BlenderCliffScan.py --place` が Battleship Rock と Franklin Butte の置き場（`site`）ごとに、その狙いの点の箱の地形だけを読んで置く（Battleship Rock の 83 個は前の配置表と同じ値）。地形は SCN-WLR-BLENDER-TERRAIN-mesh の書き出し（10 月 18 日。その後の地形の変更は Battleship Rock の刻みの区画 dem:0,2・dem:1,2 だけで、Franklin Butte の区画 dem:3,3〜4,4 は同じ）。
 
@@ -205,3 +205,4 @@ cliff と ref_cliff_01 の両方から見える崖の面を、両方の撮影の
 - 費用（既定の撮影 `look/`）: Franklin Butte の塊の三角形 406 万（rock_09 12416 × 114、boulder_01 66122 × 40）。配置表 237 個（Battleship Rock 83 ＋ Franklin Butte 154）を全部置いた（`WASTELAND_CLIFF_SCAN placed=237 planned=237`）。起動から SCENE_READY まで 84 秒（同じ視点の SCN-WL-CLIFF-CARVE-CONTINUITY の撮影は 101 秒）。VRAM の使用の最大 9785 MB（予算 15280 MB）、ジオメトリのプールの使用 1724 MB。MEGA_CAPACITY の draw_dropped・bvh_overflow・visible_list_overflow は 0、GEOMETRY_PAGES の request_overflow 0・failed 0
 - 式の焼き込み（`TerrainCliffDetail.cpp`）は下地として残した。板の帯は棚の線の高さで壁に半分埋まるので、帯の間の壁に焼き込みの縦の割れ目が残り、写真の層の間の縦の節理に近く見える。外すと Franklin Butte の 4 区画の焼き直しと Cycles の参照の描き直しが要り、帯の間が丸い面に戻る
 - 余分な折れ: 板の帯の上下の縁と板の継ぎ目が注釈の棚の無い所にも折れを作り、余分な折れは cliff_02 1.79 → 4.10・ground_02 2.36 → 5.67 に増えた（合否の仕様の行には無い量）
+- 閉じ方: 写真の角 4 点のうち 3 点は尖塔にあり、台座の塊では届かないので、角の一致の 2 行（閾値 0.5）は尖塔の形を刻む項目（SCN-WL-CLIFF-SPIRE-FRANKLIN）の仕様 `shape-scan-franklin-spire.json` へ移した。台座の項目は `shape-scan-franklin.json` の棚と外形の 6 行・見た目・費用で閉じた。配置表に残した形のままの撮影（`shape/`・`look/`）で、棚 0.788／0.800、外形 cliff_02 6.4／16.1・ground_02 6.3／25.5 画素で 6 行とも合格。塊の色の馴染み（明るさ 0.82〜0.84 倍・赤みが弱い）は SCN-WL-SCAN-MATERIAL-MATCH で直す

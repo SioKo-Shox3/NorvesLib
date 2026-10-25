@@ -7808,3 +7808,12 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 証拠（`.harness/runs/20261024-183517/`）: `verify-SCN-WL-CLIFF-SURFACE-QUERY-3.txt`（AssetCook EXIT=0）・`-4.txt`（`CheckCookedTerrain.py --verify` result=pass EXIT=0）、`aux-SCN-WL-CLIFF-SURFACE-QUERY-build-5.txt`・`aux-SCN-WL-CLIFF-SURFACE-QUERY-check-30.txt`
 - Next: TASKS.md の次の未完（置いた物の接地の検査）
 - Notes: 標準エラーの文言は人が読むもの（コンソールのコードページ）なので変えていない。AssetCook を作り直したので焼きの印がまた変わる（次にクックを回す項目は地形を焼き直す見込み）
+
+## 2026-10-25 SCN-WL-CLIFF-SCAN-FRANKLIN（run 20261024-183517 の反復 31、DONE）
+- Done: 親の判断（反復 28 の BLOCKED への推奨の案 2）どおり、`shape-scan-franklin.json` から角の一致の 2 行（閾値 0.5 は変えない）を尖塔の形の項目の仕様 `Scripts/Terrain/ExpectSpecs/shape-scan-franklin-spire.json`（注釈の版は同じ）へ移し、台座の項目を棚と外形の 6 行・見た目・費用で閉じた。配置表・台本・地形は反復 28 のまま（板の帯は既定に残す）。`WastelandShape.md`（担当の範囲の表と仕様の段落）と `WastelandCliffScan.md`（閉じ方）を更新
+- 値: 棚 cliff_02 0.788・ground_02 0.800（基準 0.6）、外形 cliff_02 ずらした後 6.4（8.0 以下）・ずらす前 16.1（16.5 以下）、ground_02 6.3（7.3 以下）・25.5（27.9 以下）画素で 6 行とも合格。移した角の行は cliff_02 0.000・ground_02 0.250（尖塔の項目の仕様で落ちたまま）
+- 見た目: 既定の撮影の台座を拡大して灰色の撮影と並べて開いた（`scene-capture/SCN-WL-CLIFF-SCAN-FRANKLIN/look/crop_cliff_02_look_shape.png`）。層の段ごとに板の帯が張り出して下へ影を落とし、壁に半分埋まって浮いていない。棚の間の上の斜面と尖塔は丸いまま（尖塔の項目の担当）。塊の色は周りの崖より暗く赤みが弱い（SCN-WL-SCAN-MATERIAL-MATCH の担当）
+- 費用: 塊の三角形 406 万（反復 28 と同じ配置表）、`WASTELAND_CLIFF_SCAN placed=237 planned=237`、起動から SCENE_READY まで 87 秒、VRAM の使用の最大 9785 MB（予算 15280 MB）・ジオメトリのプール 1724 MB、draw_dropped・bvh_overflow・visible_list_overflow・request_overflow・failed は 0（`look/views.Game.log`）
+- 証拠（`.harness/runs/20261024-183517/`）: `verify-SCN-WL-CLIFF-SCAN-FRANKLIN-7.txt`（Debug EXIT=0）・`-8.txt`（RelWithDebInfo EXIT=0）・`-9.txt`（形の撮影 result=pass）・`-10.txt`（`--shape --expect --verify` result=pass、6 行 pass）・`-11.txt`（既定の撮影 result=pass）・`-12.txt`（`CompareReference.py --verify` result=pass）。開いた画: `look/reference_cliff_02.png`・`reference_ground_02.png`・`shape/shape_cliff_02.png`・`look/crop_cliff_02_look_shape.png`
+- Next: TASKS.md の次の未完（SCN-WL-SCAN-MATERIAL-MATCH）
+- Notes: 式の焼き込みは反復 28 の判断どおり下地に残した（クックの行は足していない）。新しい試験は足していない

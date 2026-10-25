@@ -1,0 +1,8 @@
+﻿{
+  "description": "Franklin Butte の尖塔の形の項目（SCN-WL-CLIFF-SPIRE-FRANKLIN）の角の合否（CompareReference.py --shape --photos cliff_02,ground_02 --expect。WastelandShape.md の「形の物差し」と「スキャンの崖の担当の範囲」）。行は shape-scan-franklin.json から移した角の一致の 2 行で、閾値（絶対の基準 shape-target.json の 0.5）は変えていない。写真の角 4 点のうち 3 点（尖塔の頂の左・尖塔の根元の左右の肩）は尖塔にある。置く前の値は灰色の材質の形の撮影（scene-capture/SCN-WL-CLIFF-SCAN-FRANKLIN/before-shape）で測った。annotations_sha256 は書いた時の注釈の版（違えば落ちる）",
+  "annotations_sha256": "9db8b9b5afac738e970f4fb0ea925ac9d48ea8f94c4afd2e6e09c4359f5c72a2",
+  "rows": [
+    {"photo": "cliff_02", "cliff": "Franklin Butte", "quantity": "corner_match", "min": 0.5, "note": "置く前 0.000（4 点）"},
+    {"photo": "ground_02", "cliff": "Franklin Butte", "quantity": "corner_match", "min": 0.5, "note": "置く前 0.000（4 点）"}
+  ]
+}

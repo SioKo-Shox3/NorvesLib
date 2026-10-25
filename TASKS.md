@@ -2730,7 +2730,7 @@
 - notes: 危険地帯（地形のクック）。2026-10-25 親が、保留にした SCN-WL-CLIFF-SCAN-NEAR の既定に残った変更を Sol に評価させて見つかった不具合として足した（ほかの観点〔範囲の外への効き・岩塊の浮き・試しの漏れ・規則〕に重い指摘は無かった）。Franklin Butte（SCN-WL-CLIFF-SCAN-FRANKLIN）が同じ刻みの経路を使うので、その前に直す。AssetCook を変えたら地形の全項目を 12 組の並列で先に焼き、verify のクックの行は印が同じで飛ばされる形にする。時間の見積もり: 直し 20 分、ビルド 2 構成 6〜12 分、並列の焼き 約 16 分、検査 15 分、撮影 2 組 約 5 分。壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える（未達のまま DONE にしない）。verify は 1 行 10 分未満。
 
 ## SCN-WL-CLIFF-SCAN-FRANKLIN: Franklin Butte の尖塔の台座の表面をスキャンの崖で作り、手本の写真に合わせる
-- status: todo
+- status: done
 - after: SCN-WL-SHAPE-METRIC-SILHOUETTE, SCN-WL-CLIFF-CARVE-CONTINUITY
 - done-when: Blender の台本で、Franklin Butte の尖塔の台座（ref_cliff_02・ref_ground_02 に写る）の急な面をスキャンの崖の塊で覆い、写真の崖の層の段・縦の割れ目・板状の剥離・上端の角・壁から崖錐へ移る塊に合わせる（塊の繰り返しが見えないよう、回転・大きさ・素材を混ぜる）。材質の色は砂岩の実測の明るさの範囲に合わせ、地形の崖の色と継ぎ目なく馴染ませる。担当の世界座標の範囲を `Docs/RenderingValidation/WastelandShape.md` に書き、崖の生成の項目（Rooster Butte・Setting Hen Butte・castle の段）と重ねない。合否: (1) `CompareReference.py --shape --expect shape-scan-franklin.json`（cliff_02,ground_02 の写真の注釈の棚・角・外形のうちこの崖の分）が、SCN-WL-SHAPE-MEASURE の文書の絶対の基準を満たす（今の値が基準より低い量は基準まで上げ、ほかの量は悪くならない）、(2) 灰色の材質の撮影（形）と既定の撮影（見た目）の比較画像（写真｜撮影、1920×1080）を開き、崖の面が丸い面の筋ではなく、影を落とす岩の立体に見え、塊が地形から浮かず埋もれ過ぎないことを確かめる、(3) 三角形の数・読み込みの時間・VRAM・溢れ 0 を記録する。式の焼き込み（`TerrainCliffDetail.cpp`）を覆った崖の下地として残すか外すかを撮影で決める（外すならクックの行を verify に足し、Cycles の参照が古くなる一覧を文書に書く）。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`

@@ -1,13 +1,11 @@
 ﻿{
-  "description": "Franklin Butte の尖塔の台座をスキャンの崖で覆う項目の形の合否（CompareReference.py --shape --photos cliff_02,ground_02 --expect。WastelandShape.md の「形の物差し」と「スキャンの崖の担当の範囲」）。行は両方の写真の注釈の崖のうち Franklin Butte の分だけ（ground_02 の Rooster Butte は崖の生成の項目の担当）。棚の一致と角の一致は絶対の基準（shape-target.json）まで上げ、置く前から基準を満たすずらした後の外形の距離と、ずらす前の外形の距離は置く前の値 ＋ 1 画素（撮影ごとの揺れ）より悪くならない（ずらした後は 8 画素の基準も超えない）。置く前の値は灰色の材質の形の撮影（scene-capture/SCN-WL-CLIFF-SCAN-FRANKLIN/before-shape、SCN-WL-SHAPE-METRIC-SILHOUETTE の量）で測った。閾値はスキャンを置く前に書き、置いた後に変えない。annotations_sha256 は書いた時の注釈の版（違えば落ちる）",
+  "description": "Franklin Butte の尖塔の台座をスキャンの崖で覆う項目の形の合否（CompareReference.py --shape --photos cliff_02,ground_02 --expect。WastelandShape.md の「形の物差し」と「スキャンの崖の担当の範囲」）。行は両方の写真の注釈の崖のうち Franklin Butte の分だけ（ground_02 の Rooster Butte は崖の生成の項目の担当）。棚の一致は絶対の基準（shape-target.json）まで上げ、置く前から基準を満たすずらした後の外形の距離と、ずらす前の外形の距離は置く前の値 ＋ 1 画素（撮影ごとの揺れ）より悪くならない（ずらした後は 8 画素の基準も超えない）。置く前の値は灰色の材質の形の撮影（scene-capture/SCN-WL-CLIFF-SCAN-FRANKLIN/before-shape、SCN-WL-SHAPE-METRIC-SILHOUETTE の量）で測った。閾値はスキャンを置く前に書き、置いた後に変えない。annotations_sha256 は書いた時の注釈の版（違えば落ちる）。角の一致の 2 行（閾値 0.5）は、写真の角 4 点のうち 3 点が尖塔にあり台座の塊では届かないので、尖塔の形の項目の仕様 shape-scan-franklin-spire.json へ移した",
   "annotations_sha256": "9db8b9b5afac738e970f4fb0ea925ac9d48ea8f94c4afd2e6e09c4359f5c72a2",
   "rows": [
     {"photo": "cliff_02", "cliff": "Franklin Butte", "quantity": "shelf_match", "min": 0.6, "note": "置く前 0.370（4 本）"},
-    {"photo": "cliff_02", "cliff": "Franklin Butte", "quantity": "corner_match", "min": 0.5, "note": "置く前 0.000（4 点）"},
     {"photo": "cliff_02", "cliff": "Franklin Butte", "quantity": "outline_residual_median_px", "max": 8.0, "note": "置く前 7.0"},
     {"photo": "cliff_02", "cliff": "Franklin Butte", "quantity": "outline_distance_median_px", "max": 16.5, "note": "置く前 15.5"},
     {"photo": "ground_02", "cliff": "Franklin Butte", "quantity": "shelf_match", "min": 0.6, "note": "置く前 0.351（3 本）"},
-    {"photo": "ground_02", "cliff": "Franklin Butte", "quantity": "corner_match", "min": 0.5, "note": "置く前 0.000（4 点）"},
     {"photo": "ground_02", "cliff": "Franklin Butte", "quantity": "outline_residual_median_px", "max": 7.3, "note": "置く前 6.3"},
     {"photo": "ground_02", "cliff": "Franklin Butte", "quantity": "outline_distance_median_px", "max": 27.9, "note": "置く前 26.9（構図のずれ）"}
   ]
