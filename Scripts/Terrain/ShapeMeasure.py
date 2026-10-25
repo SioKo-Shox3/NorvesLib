@@ -34,18 +34,28 @@
 #     （角は二本の半直線。縦の溝と横の折れが交わる十字は、交点が角の点からずれていても通らない）割合
 #   outline_distance_median_px: 写真の外形の点から撮影の外形への距離の中央値（ずらす前）。
 #     outline_residual_median_px（ずらした後）・shift_px（ずらした量）も書く
+# 内部の折れ線（注釈の崖の folds。種類 kind は FOLD_KINDS の壁の足〔壁の足元から崖錐へ移る境〕と塊の稜線〔崩れた塊の稜線〕、
+#   region は ShapeRegions.json の崖の生成の担当の範囲の ID、points は折れ線の頂点）: 棚と同じ折れ（棚の折れ = 面の法線の向きの
+#   変化と深度の段）と同じ量で対応づける。fold_match（折れ線の 1 画素ごとの標本の一致を、頂点をまたいで続く kRunMinPx 以上の
+#   所だけ数えた長さの割合）・fold_gap_max_px（折れ線に沿った一致の欠けの最長）・fold_extra_ratio（折れ線の周りの帯の、どの
+#   注釈の線〔棚・外形の辺・角の二辺・内部の折れ線〕とも対応しない折れの線の長さ ÷ 折れ線の長さ。頂点で重なる帯の画素は 1 回）。
+#   崖・写真ごとの全部（fold_*）、種類ごと（fold_kinds.<種類>）、範囲ごと（写真の fold_regions.<ID>）、線ごと（崖の fold_lines）に書く。
+#   棚の余分な折れの対応の線には内部の折れ線を入れない（棚の量は内部の折れ線の注釈で変わらない）
 # 写真ごとの値は崖をまとめた値（棚は長さ、角は点の数、外形は点の数で重み付け。局所の欠けは最大）。崖ごとの値は cliffs.<名前>。
 # 出力: <出力先>/shape_<写真>.png（上: 写真と注釈、下: 撮影と折れの線〔赤〕・撮影の外形〔水色〕・ずらした注釈〔緑 = 一致、
 #   橙 = 不一致〕）、shape_metrics.json。
-# --expect の仕様（PhotoExpect.py）は注釈の版 annotations_sha256（ShapeAnnotations.json を読んで鍵を並べた正規の JSON の sha256。
-#   annotations_hash() が求める）を持ち、無いか今の注釈と違えば落ちる。
+# --expect の仕様（PhotoExpect.py）は注釈の版 annotations_sha256（ShapeAnnotations.json から内部の折れ線〔崖の folds と
+#   _folds_comment〕を除き、鍵を並べた正規の JSON の sha256。annotations_hash() が求める）を持ち、無いか今の注釈と違えば落ちる。
+#   内部の折れ線の量（fold_ で始まる量）の行を持つ仕様は、さらに折れ線の版 fold_annotations_sha256（folds_hash()）が要る。
 # --selftest: 合成の深度と法線（1920×1080 の正面の壁、棚 3 本、上の 2 つの角）で量を求め、SELFTEST_ROWS で判定する。
 #   正しい形を許容の内でずらしたものと 5 画素の幅で丸まった段の縁・両端の面が平行に戻る丸まった段は通り、壁一面の鋸歯・格子・棚を 1 本消した形・角の点で縦の溝と
 #   横の折れが十字に交わる形・滑らかな斜面・平らな面は落ちる。角の判定だけの例（CORNER_PROBE_CASES）で、角の点から左上へずれた十字と
 #   まっすぐな空との縁は角に数えず、同じだけずれた正しい角と、細かく段になった空との縁で曲がる角は数えることも確かめる。
 # 落ちる: 注釈が無い・崖に外形・棚・角（二辺の向き）が無い・撮影の PNG・深度・幾何の法線（--terrain-only は地形の印）が無いか
 #   1920×1080 未満・地形の印に描いた画素の 255 がある・撮影の外形が取れない・崖の外形の中で幾何の法線の読める画素が
-#   kGeometricCoverage 未満・--verify で所見の文書に「形の物差し」の節が無い・--expect の仕様の注釈の版が無いか違う。
+#   kGeometricCoverage 未満・--verify で所見の文書に「形の物差し」の節が無い・--expect の仕様の注釈の版が無いか違う・
+#   内部の折れ線の種類が FOLD_KINDS に無いか範囲が崖の生成の担当の範囲の ID でないか頂点が 2 つ未満・--verify で FOLD_PHOTOS の
+#   写真に内部の折れ線が無い。
 import hashlib
 import json
 import os
@@ -59,6 +69,15 @@ from ReferenceCheck import read_pfm_any
 from ShapeCause import decode_geometric_normal
 
 ANNOTATIONS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ShapeAnnotations.json")
+REGIONS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ShapeRegions.json")
+# 内部の折れ線の種類（壁の足: 壁の足元から崖錐へ移る境、塊の稜線: 崩れた塊の稜線）と、置く範囲の担当
+FOLD_KINDS = ("wall_foot", "block_ridge")
+FOLD_KIND_LABELS = {"wall_foot": "壁の足", "block_ridge": "塊の稜線"}
+# 重ね画の写真の側の内部の折れ線の色（壁の足 = 白、塊の稜線 = 薄い紫）
+FOLD_COLORS = {"wall_foot": (255, 255, 255), "block_ridge": (200, 160, 255)}
+FOLD_REGION_OWNER = "cliff_generation"
+# --verify で内部の折れ線の注釈が要る写真
+FOLD_PHOTOS = ("far_01", "far_02", "ground_02")
 DOC = os.path.join("Docs", "RenderingValidation", "WastelandShape.md")
 DOC_HEADING = "## 形の物差し"
 REPORT = "shape_metrics.json"
@@ -124,12 +143,56 @@ def load_annotations():
         return json.load(file)["photos"]
 
 
-def annotations_hash():
-    """注釈の版: ShapeAnnotations.json を読んで鍵を並べた正規の JSON の sha256（行末・字下げに依らない）"""
-    with open(ANNOTATIONS_PATH, encoding="utf-8-sig") as file:
-        data = json.load(file)
+def canonical_hash(data):
     canonical = json.dumps(data, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def annotations_hash():
+    """注釈の版: ShapeAnnotations.json から内部の折れ線（崖の folds と _folds_comment）を除き、鍵を並べた正規の JSON の
+    sha256（行末・字下げに依らない。外形・棚・角の注釈の仕様は折れ線の注釈を足しても版が変わらない）"""
+    with open(ANNOTATIONS_PATH, encoding="utf-8-sig") as file:
+        data = json.load(file)
+    data.pop("_folds_comment", None)
+    for photo in data["photos"].values():
+        for cliff in photo.get("cliffs", []):
+            cliff.pop("folds", None)
+    return canonical_hash(data)
+
+
+def folds_hash():
+    """内部の折れ線の版: 写真・崖の名前ごとの folds の正規の JSON の sha256"""
+    folds = {photo_id: {cliff["name"]: cliff["folds"] for cliff in photo.get("cliffs", []) if cliff.get("folds")}
+             for photo_id, photo in load_annotations().items()}
+    return canonical_hash({photo_id: entry for photo_id, entry in folds.items() if entry})
+
+
+def fold_regions():
+    """内部の折れ線を置ける範囲の ID（ShapeRegions.json の崖の生成の担当）"""
+    with open(REGIONS_PATH, encoding="utf-8-sig") as file:
+        regions = json.load(file)["regions"]
+    return {region["id"] for region in regions if region.get("owner") == FOLD_REGION_OWNER}
+
+
+def check_folds(annotation, photo_id, allowed_regions):
+    """注釈の内部の折れ線の形の確かめ（種類・範囲・頂点）。失敗の一覧"""
+    failures = []
+    for cliff in annotation["cliffs"]:
+        for index, fold in enumerate(cliff.get("folds", [])):
+            where = f"{photo_id} の {cliff.get('name', '?')} の内部の折れ線 {index}（{fold.get('label', '?') if isinstance(fold, dict) else '?'}）"
+            if not isinstance(fold, dict):
+                failures.append(f"{where} が辞書でない")
+                continue
+            if fold.get("kind") not in FOLD_KINDS:
+                failures.append(f"{where} の種類 {fold.get('kind')} が {list(FOLD_KINDS)} に無い")
+            if fold.get("region") not in allowed_regions:
+                failures.append(f"{where} の範囲 {fold.get('region')} が崖の生成の担当の範囲（ShapeRegions.json）に無い")
+            points = fold.get("points")
+            if not isinstance(points, list) or len(points) < 2 or not all(
+                    isinstance(p, list) and len(p) == 2 and all(isinstance(v, (int, float)) and 0.0 <= v <= 1.0 for v in p)
+                    for p in points):
+                failures.append(f"{where} の頂点が 2 つ未満か、0〜1 の [x, y] でない")
+    return failures
 
 
 def shifted(array, dx, dy, fill):
@@ -391,9 +454,8 @@ def runs_of(flags):
     return runs
 
 
-def match_segment(field, start, end, radius, run_min):
-    """棚の線分の 1 画素ごとの標本の一致（垂直に ±radius の内に、向きが kOrientationDegrees 以内の折れの線がある標本が
-    run_min 画素以上続く所）と、一致の欠けの最長[撮影の画素]"""
+def segment_hits(field, start, end, radius):
+    """線分の 1 画素ごとの標本と、垂直に ±radius の内に向きが kOrientationDegrees 以内の折れの線がある標本の印"""
     start, end = np.asarray(start, dtype=np.float64), np.asarray(end, dtype=np.float64)
     length = float(np.linalg.norm(end - start))
     count = max(2, int(length) + 1)
@@ -411,14 +473,46 @@ def match_segment(field, start, end, radius, run_min):
     aligned = fold[ys[inside], xs[inside]] & (angle_difference(angle[ys[inside], xs[inside]], line_angle(start, end))
                                              <= kOrientationDegrees)
     hit[inside] = aligned
-    raw_hit = hit.any(axis=1)
-    spacing = length / (count - 1)
-    kept = np.zeros(count, dtype=bool)
+    return samples, hit.any(axis=1), length
+
+
+def kept_runs(raw_hit, spacing, run_min):
+    """標本の一致の印のうち、続きの長さ（標本ごとの間隔 spacing の和）が run_min 以上の所と、一致の欠けの最長"""
+    kept = np.zeros(len(raw_hit), dtype=bool)
+    for begin, size, value in runs_of(raw_hit):
+        if value and float(spacing[begin:begin + size].sum()) >= run_min:
+            kept[begin:begin + size] = True
+    gap = max([float(spacing[begin:begin + size].sum()) for begin, size, value in runs_of(kept) if not value], default=0.0)
+    return kept, gap
+
+
+def match_segment(field, start, end, radius, run_min):
+    """棚の線分の 1 画素ごとの標本の一致（垂直に ±radius の内に、向きが kOrientationDegrees 以内の折れの線がある標本が
+    run_min 画素以上続く所）と、一致の欠けの最長[撮影の画素]"""
+    samples, raw_hit, length = segment_hits(field, start, end, radius)
+    spacing = length / (len(raw_hit) - 1)
+    kept = np.zeros(len(raw_hit), dtype=bool)
     for begin, size, value in runs_of(raw_hit):
         if value and size * spacing >= run_min:
             kept[begin:begin + size] = True
     gap = max([size * spacing for _, size, value in runs_of(kept) if not value], default=0.0)
     return samples, kept, length, gap
+
+
+def match_polyline(field, points, radius, run_min):
+    """内部の折れ線の一致。線分ごとの標本の印を頂点をまたいでつなぎ（頂点の重なる標本は後の線分の始点を外す）、続きと欠けを
+    折れ線に沿って数える。(標本, 一致, 長さ, 欠けの最長)"""
+    all_samples, all_hits, spacings, total = [], [], [], 0.0
+    for index, (start, end) in enumerate(zip(points[:-1], points[1:])):
+        samples, raw_hit, length = segment_hits(field, start, end, radius)
+        first = 0 if index == 0 else 1
+        all_samples.append(samples[first:])
+        all_hits.append(raw_hit[first:])
+        spacings.append(np.full(len(raw_hit) - first, length / (len(raw_hit) - 1)))
+        total += length
+    raw_hit = np.concatenate(all_hits)
+    kept, gap = kept_runs(raw_hit, np.concatenate(spacings), run_min)
+    return np.concatenate(all_samples), kept, total, gap
 
 
 def annotation_lines(cliff, size, shift):
@@ -443,6 +537,11 @@ def line_coordinates(xs, ys, start, end):
 
 def extra_folds(field, start, end, radius, all_lines):
     """棚の線分の周りの帯の、どの注釈の線とも対応しない折れの線の長さ[撮影の画素]"""
+    return float(len(extra_fold_pixels(field, start, end, radius, all_lines))) / kFoldThicknessPx
+
+
+def extra_fold_pixels(field, start, end, radius, all_lines):
+    """線分の周りの帯の、どの注釈の線とも対応しない折れの線の画素（行 × 幅 + 列 の並び）"""
     band = kExtraBandFactor * radius
     fold, angle = field["shelf_fold"], field["angle"]
     height, width = fold.shape
@@ -451,7 +550,7 @@ def extra_folds(field, start, end, radius, all_lines):
     y0 = int(max(0, np.floor(min(start[1], end[1]) - band)))
     y1 = int(min(height, np.ceil(max(start[1], end[1]) + band) + 1))
     if x0 >= x1 or y0 >= y1:
-        return 0.0
+        return np.zeros(0, dtype=np.int64)
     ys, xs = np.nonzero(fold[y0:y1, x0:x1])
     xs, ys = xs + x0, ys + y0
     along, across, length = line_coordinates(xs, ys, start, end)
@@ -463,7 +562,33 @@ def extra_folds(field, start, end, radius, all_lines):
         along, across, length = line_coordinates(xs, ys, line_start, line_end)
         near = (along >= -radius) & (along <= length + radius) & (across <= radius)
         matched |= near & (angle_difference(angles, line_angle(line_start, line_end)) <= kOrientationDegrees)
-    return float(np.count_nonzero(~matched)) / kFoldThicknessPx
+    return ys[~matched].astype(np.int64) * width + xs[~matched].astype(np.int64)
+
+
+def measure_fold(field, fold, size, shift, radius, run_min, fold_all_lines):
+    """内部の折れ線ひとつ。(一致の長さ, 長さ, 余分な折れの長さ, 欠けの最長, 標本, 一致)[撮影の画素]"""
+    points = to_pixels(fold["points"], size, shift)
+    samples, kept, length, gap = match_polyline(field, points, radius, run_min)
+    extra = np.unique(np.concatenate([extra_fold_pixels(field, a, b, radius, fold_all_lines)
+                                      for a, b in zip(points[:-1], points[1:])]))
+    return length * float(kept.mean()), length, float(len(extra)) / kFoldThicknessPx, gap, samples, kept
+
+
+def fold_record(matched, length, extra, gap, count, scale):
+    """内部の折れ線の量の記録（長さは撮影の画素、scale で 1920 幅に直す）"""
+    return {"fold_match": matched / length if length else None,
+            "fold_gap_max_px": gap * scale if length else None,
+            "fold_extra_ratio": extra / length if length else None,
+            "fold_length_px": length * scale, "folds": count}
+
+
+def add_fold_totals(totals, key, matched, length, extra, gap):
+    entry = totals.setdefault(key, [0.0, 0.0, 0.0, 0.0, 0])
+    entry[0] += matched
+    entry[1] += length
+    entry[2] += extra
+    entry[3] = max(entry[3], gap)
+    entry[4] += 1
 
 
 def match_corner(field, corner, size, shift, radius):
@@ -554,8 +679,8 @@ def align_cliff(cliff, depth, size):
             "capture_points": capture_points, "capture_outline": (columns, tops)}, None
 
 
-def measure_cliff(cliff, alignment, depth, field, readable, size, scale, all_lines):
-    """崖ひとつの記録と描画の材料"""
+def measure_cliff(cliff, alignment, depth, field, readable, size, scale, all_lines, fold_all_lines):
+    """崖ひとつの記録と描画の材料。棚の余分な折れは all_lines、内部の折れ線の余分な折れは fold_all_lines（内部の折れ線を足した線）で数える"""
     shift = alignment["shift"]
     radius = int(np.ceil(kMatchRadiusPx / scale))
     run_min = kRunMinPx / scale
@@ -571,6 +696,15 @@ def measure_cliff(cliff, alignment, depth, field, readable, size, scale, all_lin
         gap_max = max(gap_max, gap)
         extra_length += extra_folds(field, a, b, radius, all_lines)
     corners = [match_corner(field, corner, size, shift, radius) for corner in cliff["corners"]]
+    # 内部の折れ線: 全部（"all"）・種類（"kind:<種類>"）・範囲（"region:<ID>"）ごとの [一致の長さ, 長さ, 余分, 欠け, 本数]
+    fold_totals, fold_lines, fold_drawings = {}, [], []
+    for fold in cliff.get("folds", []):
+        matched, length, extra, gap, samples, kept = measure_fold(field, fold, size, shift, radius, run_min, fold_all_lines)
+        for key in ("all", "kind:" + fold["kind"], "region:" + fold["region"]):
+            add_fold_totals(fold_totals, key, matched, length, extra, gap)
+        fold_lines.append({"label": fold.get("label", ""), "kind": fold["kind"], "region": fold["region"],
+                           **fold_record(matched, length, extra, gap, 1, scale)})
+        fold_drawings.append((samples, kept))
     _, _, inside = polygon_top(to_pixels(cliff["outline"], size, shift), size)
     terrain = inside & np.isfinite(depth) & (depth > 0.0)
     coverage = float(np.count_nonzero(terrain & readable)) / max(1, int(np.count_nonzero(terrain)))
@@ -589,12 +723,27 @@ def measure_cliff(cliff, alignment, depth, field, readable, size, scale, all_lin
         "geometric_coverage": coverage,
         "depth_max_m": cliff["depth_max_m"],
     }
+    record.update(fold_records(fold_totals, scale))
+    if fold_lines:
+        record["fold_lines"] = fold_lines
     drawing = {"shelves": shelves, "corners": [(to_pixels([c["at"]], size, shift)[0], ok) for c, (ok, _) in zip(cliff["corners"], corners)],
-               "capture_outline": alignment["capture_outline"],
+               "capture_outline": alignment["capture_outline"], "folds": fold_drawings,
                "photo_outline_shifted": to_pixels(cliff["outline"], size, shift)}
     totals = {"matched": matched_length, "length": total_length, "extra": extra_length, "gap": gap_max,
-              "corners": len(corners), "corner_hits": sum(1 for ok, _ in corners if ok)}
+              "corners": len(corners), "corner_hits": sum(1 for ok, _ in corners if ok), "folds": fold_totals}
     return record, drawing, totals
+
+
+def fold_records(fold_totals, scale):
+    """内部の折れ線の合計から、全部（fold_*）・種類ごと（fold_kinds）・範囲ごと（fold_regions）の記録。折れ線が無ければ空"""
+    if "all" not in fold_totals:
+        return {}
+    result = fold_record(*fold_totals["all"][:4], fold_totals["all"][4], scale)
+    result["fold_kinds"] = {key[5:]: fold_record(*value[:4], value[4], scale)
+                            for key, value in fold_totals.items() if key.startswith("kind:")}
+    result["fold_regions"] = {key[7:]: fold_record(*value[:4], value[4], scale)
+                              for key, value in fold_totals.items() if key.startswith("region:")}
+    return result
 
 
 def measure_photo(annotation, depth, normal, readable, ground, size):
@@ -609,22 +758,35 @@ def measure_photo(annotation, depth, normal, readable, ground, size):
             failures.append(f"{cliff['name']}: {reason}")
             continue
         alignments[cliff["name"]] = alignment
-    all_lines = []
+    all_lines, fold_all_lines = [], []
     for cliff in annotation["cliffs"]:
         if cliff["name"] in alignments:
-            all_lines += annotation_lines(cliff, size, alignments[cliff["name"]]["shift"])
+            shift = alignments[cliff["name"]]["shift"]
+            all_lines += annotation_lines(cliff, size, shift)
+            for fold in cliff.get("folds", []):
+                points = to_pixels(fold["points"], size, shift)
+                fold_all_lines += list(zip(points[:-1], points[1:]))
+    fold_all_lines = all_lines + fold_all_lines
     cliffs, drawings, distances = {}, [], []
     totals = {"matched": 0.0, "length": 0.0, "extra": 0.0, "gap": 0.0, "corners": 0, "corner_hits": 0}
+    fold_totals = {}
     for cliff in annotation["cliffs"]:
         alignment = alignments.get(cliff["name"])
         if alignment is None:
             continue
-        record, drawing, cliff_totals = measure_cliff(cliff, alignment, depth, field, readable, size, scale, all_lines)
+        record, drawing, cliff_totals = measure_cliff(cliff, alignment, depth, field, readable, size, scale, all_lines, fold_all_lines)
         cliffs[cliff["name"]] = record
         drawings.append(drawing)
         for key in ("matched", "length", "extra", "corners", "corner_hits"):
             totals[key] += cliff_totals[key]
         totals["gap"] = max(totals["gap"], cliff_totals["gap"])
+        for key, (matched, length, extra, gap, count) in cliff_totals["folds"].items():
+            entry = fold_totals.setdefault(key, [0.0, 0.0, 0.0, 0.0, 0])
+            entry[0] += matched
+            entry[1] += length
+            entry[2] += extra
+            entry[3] = max(entry[3], gap)
+            entry[4] += count
         distances.append((nearest_distances(alignment["photo_points"], alignment["capture_points"]),
                           nearest_distances(alignment["photo_points"] + alignment["shift"], alignment["capture_points"])))
     if not cliffs:
@@ -639,6 +801,7 @@ def measure_photo(annotation, depth, normal, readable, ground, size):
         "outline_residual_median_px": float(np.median(np.concatenate([res for _, res in distances]))) * scale,
         "cliffs": cliffs,
     }
+    photo_record.update(fold_records(fold_totals, scale))
     return photo_record, cliffs, drawings, distances, failures, field
 
 
@@ -656,6 +819,10 @@ def draw_sheet(photo_panel, capture, field, annotation, drawings, size, lines, f
                 length = max(np.hypot(ex - x, ey - y), 1e-6)
                 draw.line((x, y, x + (ex - x) / length * 18, y + (ey - y) / length * 18), fill=(255, 0, 220), width=2)
             draw.ellipse((x - 6, y - 6, x + 6, y + 6), outline=(255, 0, 220), width=3)
+        for fold in cliff.get("folds", []):
+            points = to_pixels(fold["points"], PANEL_SIZE)
+            draw.line(points, fill=FOLD_COLORS[fold["kind"]], width=3)
+            draw.text((points[-1][0] + 4, points[-1][1] - 10), FOLD_KIND_LABELS[fold["kind"]], fill=FOLD_COLORS[fold["kind"]], font=font)
         x, y = to_pixels([cliff["outline"][1]], PANEL_SIZE)[0]
         draw.text((x + 4, y - 24), cliff["name"], fill=(0, 230, 255), font=font)
     base = np.asarray(capture, dtype=np.float32) * 0.55
@@ -675,6 +842,10 @@ def draw_sheet(photo_panel, capture, field, annotation, drawings, size, lines, f
         for (x, y), ok in drawing["corners"]:
             color = (0, 255, 90) if ok else (255, 150, 0)
             draw.ellipse((x * sx - 7, y * sy - 7, x * sx + 7, y * sy + 7), outline=color, width=3)
+        # 内部の折れ線の標本は丸（白 = 一致、紫 = 不一致）で棚の四角と分ける
+        for samples, hit in drawing.get("folds", []):
+            for (x, y), ok in list(zip(samples, hit))[::2]:
+                draw.ellipse((x * sx - 2, y * sy - 2, x * sx + 2, y * sy + 2), fill=(255, 255, 255) if ok else (190, 90, 255))
     text_height = 12 + 28 * len(lines)
     sheet = Image.new("RGB", (PANEL_SIZE[0], PANEL_SIZE[1] * 2 + text_height), (24, 24, 24))
     sheet.paste(photo_image, (0, 0))
@@ -710,12 +881,24 @@ def check_spec_version(expect_path):
     if version != current:
         return [f"仕様 {expect_path} の注釈の版 {version} が今の注釈 {current} と違う"]
     print(f"SHAPE_MEASURE_EXPECT annotations_sha256={current} result=pass")
+    rows = spec.get("rows", []) if isinstance(spec, dict) else []
+    if any(isinstance(row, dict) and str(row.get("quantity", "")).startswith("fold_") for row in rows):
+        fold_version = spec.get("fold_annotations_sha256")
+        fold_current = folds_hash()
+        if fold_version != fold_current:
+            return [f"仕様 {expect_path} の内部の折れ線の版 {fold_version} が今の折れ線 {fold_current} と違うか無い"]
+        print(f"SHAPE_MEASURE_EXPECT fold_annotations_sha256={fold_current} result=pass")
     return []
 
 
 def describe(record):
     return (f"shelf_match={fmt(record['shelf_match'])} shelf_gap_max_px={fmt(record['shelf_gap_max_px'], 1)} "
             f"shelf_extra_ratio={fmt(record['shelf_extra_ratio'])} corner_match={fmt(record['corner_match'])}")
+
+
+def describe_fold(record):
+    return (f"fold_match={fmt(record['fold_match'])} fold_gap_max_px={fmt(record['fold_gap_max_px'], 1)} "
+            f"fold_extra_ratio={fmt(record['fold_extra_ratio'])} fold_length_px={record['fold_length_px']:.0f} folds={record['folds']}")
 
 
 def run_shape(capture_dir, out_dir, wanted, verify, expect_path, terrain_only=False):
@@ -732,7 +915,8 @@ def run_shape(capture_dir, out_dir, wanted, verify, expect_path, terrain_only=Fa
                              "corner_edge_min_pixels": kCornerEdgeMinPixels, "corner_ray_fraction": kCornerRayFraction,
                              "search_fraction": list(kSearchFraction), "reference_width": kReferenceWidth},
               "capture": os.path.relpath(capture_dir, REPO_ROOT), "terrain_only": terrain_only,
-              "annotations_sha256": annotations_hash(), "photos": {}}
+              "annotations_sha256": annotations_hash(), "fold_annotations_sha256": folds_hash(), "photos": {}}
+    allowed_regions = fold_regions()
     # 既定の選択は注釈の有無と独立に決めた 5 枚（注釈が欠けた写真は下で落ちる）
     photos = [p for p in PHOTOS if p["id"] in (wanted or SHAPE_PHOTOS)]
     all_residuals = []
@@ -752,6 +936,12 @@ def run_shape(capture_dir, out_dir, wanted, verify, expect_path, terrain_only=Fa
         if not any(cliff["shelves"] for cliff in annotation["cliffs"]):
             failures.append(f"{photo_id} に棚の注釈が無い")
             continue
+        fold_failures = check_folds(annotation, photo_id, allowed_regions)
+        if fold_failures:
+            failures.extend(fold_failures)
+            continue
+        if verify and photo_id in FOLD_PHOTOS and not any(cliff.get("folds") for cliff in annotation["cliffs"]):
+            failures.append(f"{photo_id} に内部の折れ線（folds）の注釈が無い")
         paths = {
             "photo": os.path.join(PHOTO_DIR, photo_id + ".jpg"),
             "png": os.path.join(capture_dir, view + ".png"),
@@ -796,8 +986,15 @@ def run_shape(capture_dir, out_dir, wanted, verify, expect_path, terrain_only=Fa
                   f"outline_distance_median_px={record['outline_distance_median_px']:.1f} "
                   f"outline_residual_median_px={record['outline_residual_median_px']:.1f} "
                   f"shift_px={record['shift_px'][0]:.0f},{record['shift_px'][1]:.0f} coverage={record['geometric_coverage']:.3f}")
+            for line in record.get("fold_lines", []):
+                print(f"SHAPE_MEASURE_FOLD photo={photo_id} cliff=\"{name}\" kind={line['kind']} region={line['region']} "
+                      f"label=\"{line['label']}\" {describe_fold(line)}")
         if photo_record is None:
             continue
+        for kind, entry in photo_record.get("fold_kinds", {}).items():
+            print(f"SHAPE_MEASURE_FOLD photo={photo_id} kind={kind} {describe_fold(entry)}")
+        for region, entry in photo_record.get("fold_regions", {}).items():
+            print(f"SHAPE_MEASURE_FOLD photo={photo_id} region={region} {describe_fold(entry)}")
         photo_record["view"] = view
         all_residuals.extend(res * scale for _, res in distances)
         report["photos"][photo_id] = photo_record
@@ -812,6 +1009,12 @@ def run_shape(capture_dir, out_dir, wanted, verify, expect_path, terrain_only=Fa
                          f"{fmt_display(record['shelf_gap_max_px'], 0)} 画素、余分な折れ {fmt_display(record['shelf_extra_ratio'])}）　"
                          f"角の一致 {fmt_display(record['corner_match'])}（{record['corners']} 点）　外形の距離の中央値 "
                          f"{record['outline_distance_median_px']:.1f}（ずらした後 {record['outline_residual_median_px']:.1f}）")
+            if record.get("fold_lines"):
+                lines.append(f"{name} の内部の折れ線: 一致 {fmt_display(record['fold_match'])}（{record['folds']} 本、局所の欠け "
+                             f"{fmt_display(record['fold_gap_max_px'], 0)} 画素、余分な折れ {fmt_display(record['fold_extra_ratio'])}）　" + "　".join(
+                                 f"{FOLD_KIND_LABELS[kind]} {fmt_display(entry['fold_match'])}" for kind, entry in record["fold_kinds"].items()))
+        if any(record.get("fold_lines") for record in cliffs.values()):
+            lines.append("内部の折れ線: 写真の白 = 壁の足、薄い紫 = 塊の稜線。撮影の丸: 白 = 一致、紫 = 不一致（量は棚と同じ折れ・許容・向き・続き）")
         lines.append(f"折れ: 面の法線の角 {kFoldDegrees:.0f}° 以上か深度の段 {kDepthStepRatio * 100:.0f} % 以上（1 画素の前後。棚は "
                      f"{2 * kShelfSpanHalfPx} 画素の区間の丸まった縁も、角は空との縁の向きも数える）。"
                      f"許容 {kMatchRadiusPx} 画素・向き {kOrientationDegrees:.0f}°・続き {kRunMinPx} 画素（1920 幅）。輝度は使わない")

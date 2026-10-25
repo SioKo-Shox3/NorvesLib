@@ -335,6 +335,52 @@ Battleship Rock の尾根の刻み（`Tools/AssetCook/TerrainCliffCarveBattleshi
 
 焼いた面の区画の継ぎ目の割れ目: 測り切れない 1 個の足元は、DEM の区画 (1,2) と (2,2) の継ぎ目 x = −1600 に開いた幅 0.2〜0.75 m の穴（交点なし）に落ちる。Battleship Rock の周りの継ぎ目を 0.05 m × 0.1 m おきに引くと、穴の点は x = −1600（z −1290〜−1075）1208・z = −999（x −1718〜−1295）1491・x = −2100（z −1339〜−1142）561・z = −1499（x −1419〜−1414）111 あった（`.harness/runs/20261025-120217/aux-SCN-WL-CLIFF-PLACEMENT-CHECK-seam-scan.txt`）。崖の細部の押し出しが区画の縁の頂点を区画ごとに別に動かしている見込みで、直すのはクック（`Tools/AssetCook/TerrainCliffDetail.cpp`）の側。
 
+## 内部の折れ線（壁の足・塊の稜線）
+
+棚・角・外形は、壁の足元から崖錐へ移る境や崩れた塊の稜線のような地形の内部の折れを測れない（SCN-WL-SHAPE-INTERNAL-FOLDS）。写真の内部の折れの線を折れ線で注釈し、`--shape` で撮影の折れと対応づける。
+
+```
+python Scripts/Terrain/CompareReference.py --capture .harness/runs/scene-capture/SCN-WL-SHAPE-BASELINE/lod-default --photos far_01,far_02,ground_02 --shape --verify
+```
+
+- 注釈: `ShapeAnnotations.json` の崖の `folds`。1 本ごとに 種類（`kind`: `wall_foot` = 壁の足〔壁の足元から崖錐・崩れた段へ移る境〕、`block_ridge` = 塊の稜線〔崩れた塊・崩れた段の稜線〕）・範囲（`region`: `ShapeRegions.json` の崖の生成の担当の範囲の ID）・名前（`label`）・頂点（`points`、外形と同じ写真の割合）を持つ。far_01・far_02・ground_02 の崖の生成の担当の崖に 11 本置いた。範囲は SCN-WL-SHAPE-BASELINE の範囲の重ね画（`shape_regions/ref_far_01.png`）で決め、far_01 の Castle Butte と Cedar Mesa の縁は `cliff_castle_1_far_cliffs`、2 本の尖塔は `cliff_castle_0_main_butte`、far_02・ground_02 の Rooster Butte は `cliff_near_2_rooster_butte`、Setting Hen Butte は `cliff_near_3_setting_hen_butte`。Setting Hen Butte の層の壁の足は棚（0.495）とほぼ同じ高さで棚と重なるので置いていない
+- 置いた線: far_01 は Castle Butte の壁の足・2 本の尖塔の足・Cedar Mesa の縁の下の壁の足（3 本とも壁の足）。far_02 は Setting Hen Butte の上の塔の足（壁の足）と崖錐の中の崩れた下の段の稜線（塊の稜線）、Rooster Butte の尖塔の足・下の段の壁の足（壁の足）と崖錐の中の崩れた段の稜線（塊の稜線）。ground_02 は Rooster Butte の尖塔の足・肩の塊の足（壁の足）と崩れた段の縁の稜線（塊の稜線）
+- 撮影の側の折れ: 棚と同じ棚の折れ（幾何の法線の AOV の向きの変化 30° 以上・深度の段・6 画素の区間の丸まった縁）と、向きの場（構造テンソル）。輝度は使わない
+- 量（SCN-WL-SHAPE-METRIC-HARDEN と同じ許容 8 画素・向き 20°・続き 8 画素・余分な折れの帯 ±24 画素）: `fold_match`（折れ線の 1 画素ごとの標本のうち、垂直に ±8 画素の内に向きがその線分と 20° 以内の折れの線がある標本が、頂点をまたいで 8 画素以上続く所の長さの割合）、`fold_gap_max_px`（折れ線に沿った一致の欠けの最長）、`fold_extra_ratio`（折れ線の周りの帯の、どの注釈の線〔棚・外形の辺・角の二辺・内部の折れ線〕とも対応しない折れの線の長さ ÷ 折れ線の長さ。頂点で重なる帯の画素は 1 回）。崖ごと・写真ごと（`fold_*`）、種類ごと（`fold_kinds.<種類>`）、範囲ごと（写真の `fold_regions.<ID>`）、線ごと（崖の `fold_lines`）に `shape_metrics.json` へ書く
+- 棚・角・外形の値は変わらない: 棚の余分な折れの対応の線には内部の折れ線を入れず、注釈の版 `annotations_sha256` は `folds` と `_folds_comment` を除いて求める（今の版 `9db8b9b5…` のまま。今ある `--expect` の仕様はそのまま通る）。内部の折れ線の版は `fold_annotations_sha256`（今 `36a0a538…`）で、`fold_` で始まる量の行を持つ仕様はこの版が要る。注釈を足す前と後の同じ撮影の測りで、写真と崖の棚・角・外形の 74 の値は全部同じ（`.harness/runs/20261025-120217/aux-SCN-WL-SHAPE-INTERNAL-FOLDS-unchanged.txt`）
+- 落ちる: 種類が `wall_foot`・`block_ridge` でない・範囲が崖の生成の担当の ID でない（スキャンの担当や谷床も落とす）・頂点が 2 つ未満か 0〜1 の外・`--verify` で far_01・far_02・ground_02 に内部の折れ線が無い（確かめ `aux-SCN-WL-SHAPE-INTERNAL-FOLDS-reject.txt`）
+- 重ね画: `shape_<写真>.png` の上の写真に内部の折れ線（白 = 壁の足、薄い紫 = 塊の稜線）、下の撮影にずらした折れ線の標本の丸（白 = 一致、紫 = 不一致）
+
+### 今の値と基準
+
+SCN-WL-SHAPE-BASELINE の撮り直しの置き場（`scene-capture/SCN-WL-SHAPE-BASELINE/lod-default`。地形を変える前の通常の LOD、崖の生成と岩を置いた撮影）で測った値。長さ・欠けは 1920 幅の画素。地形の形を直す項目は、この値を前の基準として、担当の写真・範囲の `fold_match` を上げ、`fold_gap_max_px`・`fold_extra_ratio` を悪くしないことを `--expect` の行（`fold_annotations_sha256` つき）で求める。値は変えていない（新しい閾値の仕様は書いていない）。
+
+| 写真 | 範囲・種類・線 | 本数 | 一致 | 局所の欠けの最長 | 余分な折れ | 長さ |
+|---|---|---|---|---|---|---|
+| far_01 | （写真全体） | 3 | 0.22 | 287 | 2.60 | 1121 |
+| far_01 | 範囲 `cliff_castle_1_far_cliffs` | 2 | 0.24 | 287 | 2.64 | 1023 |
+| far_01 | 範囲 `cliff_castle_0_main_butte` | 1 | 0.00 | 99 | 2.26 | 98 |
+| far_01 | Castle Butte の壁の足 | 1 | 0.38 | 115 | 2.67 | 438 |
+| far_01 | 2 本の尖塔の足（壁の足） | 1 | 0.00 | 99 | 2.26 | 98 |
+| far_01 | Cedar Mesa の縁の下の壁の足 | 1 | 0.14 | 287 | 2.61 | 586 |
+| far_02 | （写真全体） | 5 | 0.20 | 595 | 2.05 | 2040 |
+| far_02 | 種類 壁の足 | 3 | 0.11 | 360 | 1.92 | 695 |
+| far_02 | 種類 塊の稜線 | 2 | 0.25 | 595 | 2.12 | 1345 |
+| far_02 | 範囲 `cliff_near_3_setting_hen_butte` | 2 | 0.27 | 595 | 1.41 | 1102 |
+| far_02 | 範囲 `cliff_near_2_rooster_butte` | 3 | 0.13 | 360 | 2.81 | 938 |
+| far_02 | Setting Hen Butte の上の塔の足（壁の足） | 1 | 0.26 | 116 | 1.77 | 276 |
+| far_02 | Setting Hen Butte の崩れた下の段の稜線（塊の稜線） | 1 | 0.27 | 595 | 1.29 | 826 |
+| far_02 | Rooster Butte の尖塔の足（壁の足） | 1 | 0.00 | 61 | 3.09 | 60 |
+| far_02 | Rooster Butte の下の段の壁の足 | 1 | 0.00 | 360 | 1.84 | 359 |
+| far_02 | Rooster Butte の崩れた段の稜線（塊の稜線） | 1 | 0.23 | 193 | 3.44 | 519 |
+| ground_02 | （写真全体、範囲 `cliff_near_2_rooster_butte`） | 3 | 0.62 | 59 | 1.20 | 275 |
+| ground_02 | 種類 壁の足 | 2 | 0.28 | 59 | 1.74 | 92 |
+| ground_02 | Rooster Butte の尖塔の足（壁の足） | 1 | 0.00 | 59 | 1.95 | 58 |
+| ground_02 | Rooster Butte の肩の塊の足（壁の足） | 1 | 0.74 | 9 | 1.38 | 35 |
+| ground_02 | Rooster Butte の崩れた段の縁の稜線（塊の稜線） | 1 | 0.79 | 20 | 0.93 | 183 |
+
+読み方: 壁の足は 3 枚とも低い（far_02 0.11、far_01 0.22、ground_02 の尖塔の足 0.00）。尖塔の足は 3 本とも 0.00 で、撮影の尖塔は根元で崖錐へ滑らかにつながり、足元に水平の折れが無い（重ね画の紫の丸）。far_02 の Rooster Butte の下の段の壁の足も 0.00 で、SCN-WL-SHAPE-CAUSE の所見（崖の生成は縦の溝を足すだけで崖錐へ移る塊を作らない）と同じ。塊の稜線は far_02 で 0.25 だが、局所の欠けが Setting Hen Butte で 595 画素（線の 7 割）あり、一致は線の端の短い区間に寄る。余分な折れは 0.9〜3.4 で、壁の縦の溝と 1 m の格子の継ぎ目が帯に入る。ground_02 の Rooster Butte の崩れた段の縁の稜線（0.79）と肩の塊の足（0.74）は、撮影の構図が幅の 1 割ずれた崖（ずらした量 188 画素）で、線が棚（0.575）と外形の辺の近くにあり、外形の段の折れでも一致に数える（線が短く、改善の基準には崖の大きい far_02 を使う）。
+
 ## 既知の限界
 
 - 折れ目と差の画素は面の法線から測るので、1 画素に複数の三角形が入る遠景（最も細かい LOD の 0.5 m/画素より遠い崖）では、画素が拾う三角形で値が揺れる。値は 3 組の比べにだけ使う（絶対の目標にしない）。
@@ -345,4 +391,5 @@ Battleship Rock の尾根の刻み（`Tools/AssetCook/TerrainCliffCarveBattleshi
 - 形の物差しの位置の対応は外形だけで平行移動を決めるので、外形の形が写真と違う崖では別の所に合うことがある（far_01 の Cedar Mesa の縁は 127 画素右にずれて合い、棚と角の置き場所が粗い。far_02 の Setting Hen Butte はずらした後も 13.5 画素で、大きさと肩の高さが写真と違う）。拡大と縮小は探さない
 - 形の物差しの棚の一致は、`--terrain-only` を付けなければ崖錐の岩の縁やスキャンの崖の塊の縁でも、向きと続きが合えば一致に数える。地層の材質の継ぎ目は輝度を使わないので数えない。余分な折れの長さは画素の数 ÷ 2 で、斜めの線や太い線では長さを多めに見積もる。余分な折れは棚の線分の周りの帯だけで数え、壁の面の全体の雑音は数えない
 - 範囲は崖の生成の範囲と同じ矩形なので、崖の手前の平らな地面も入る（ref_far_02 の Setting Hen Butte、ref_cliff_01 の Battleship Rock）。範囲の量は崖だけの量ではなく、同じ範囲の前後の比べに使う。castle の段の範囲 2・3・4 は崖の生成と同じく互いに 100 m 以上重なり、重なりの画素は両方に数える
+- 内部の折れ線は写真で目で置いた線で、1920 幅で数画素の位置の誤差がある（許容 8 画素の内に収まるよう写真を拡大して置いた）。崖の位置の対応は外形の平行移動だけなので、外形の形が写真と違う崖では折れ線も別の所に置かれうる。地形の印で地形の画素に限っていない（`--terrain-only` を付ければ限れる）ので、崖錐の岩の縁も向きと続きが合えば一致に数える
 - 範囲ごとの量の 2 組・3 組の経路（LOD の差・崖の生成の差）は、地形の印のある 2 組以上の撮影がまだ無いので、実際の撮影では回していない（1 組の基準だけ）
