@@ -10,6 +10,8 @@
 #   gray/（灰色の材質の太陽と空の両方。engine-sun/・engine-sky/ に太陽だけ・空だけ）: ref_cliff_01・ref_far_01
 #   lit/（実材質。照り返しの入を兼ねる）: ref_cliff_01・ref_cliff_02・ref_ground_01・ref_far_01
 #   bounce-off/（実材質で --rtgi-bounce=off）: ref_cliff_01
+# 描画の経路を前の形へ戻す開発ビルドの起動引数（VARIANT_ARGS。例 --rtgi-specular=off）は、全部の組に同じものが付いていれば
+#   組の条件に足して受け入れる（同じ Game.exe・同じ焼いた地形で変更の前後を比べる。まとめの variant_args に書く）。
 # 落ちる: 組の撮影が無い・起動引数が組の条件と違う・組ごとの Game.exe とエンジンの実装が揃っていない・仕様の視点が組に無い・
 #   仕様ごとの比べ方（--verify なら入力の照合を含む）のどれかが落ちる。
 # 仕様ごとの比べ方の報告は <置き場>/check-<仕様>/（--gray・--lit）と <置き場>/lit/bounce_check.json（--bounce）、
@@ -34,6 +36,8 @@ SETS = {
     "lit": (BASE_ARGS, ("ref_cliff_01", "ref_cliff_02", "ref_ground_01", "ref_far_01")),
     "bounce-off": (BASE_ARGS + ["--rtgi-bounce=off"], ("ref_cliff_01",)),
 }
+# 全部の組に同じものが付いていれば受け入れる起動引数（描画の経路を前の形へ戻す開発ビルドの引数）
+VARIANT_ARGS = ("--rtgi-specular=off",)
 # 仕様 → (比べ方, 使う組〔--bounce は入・切の順〕, 参照)。視点は仕様の行から取る
 CHECKS = (
     ("rt-tlas-range", "gray", ("gray",), GRAY_REFERENCE),
@@ -63,7 +67,10 @@ def check_sets(root):
             inputs = json.load(f)
         entry.update({"game_args": metrics.get("game_args"), "game_exe_sha256": inputs.get("game_exe_sha256"),
                       "files_sha256": inputs.get("files_sha256"), "git_commit": inputs.get("git_commit")})
-        if sorted(metrics.get("game_args") or []) != sorted(game_args):
+        recorded = metrics.get("game_args") or []
+        variant = sorted(arg for arg in recorded if arg in VARIANT_ARGS and arg not in game_args)
+        entry["variant_args"] = variant
+        if sorted(recorded) != sorted(game_args + variant):
             failures.append(f"組 {name} の起動引数 {metrics.get('game_args')} が組の条件 {game_args} と違う")
         if metrics.get("failures"):
             failures.append(f"組 {name} の撮影に失敗の記録がある")
@@ -74,6 +81,9 @@ def check_sets(root):
         values = {entry.get(key) for entry in records.values() if "game_args" in entry}
         if len(values) > 1:
             failures.append(f"組ごとの {key} が揃っていない（{len(values)} 通り）")
+    variants = {tuple(entry.get("variant_args") or ()) for entry in records.values() if "game_args" in entry}
+    if len(variants) > 1:
+        failures.append(f"組ごとの前の形へ戻す起動引数が揃っていない（{sorted(variants)}）")
     return records, failures
 
 

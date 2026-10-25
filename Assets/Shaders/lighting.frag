@@ -34,7 +34,7 @@ layout(std140, set = 0, binding = 4) uniform LightingParams
     vec4 ddgiVolumeOrigin; // xyz=DDGI volume原点
     vec4 ddgiProbeSpacing; // xyz=DDGI probe間隔
     uvec4 ddgiProbeCounts; // xyz=格子数, w=probe総数
-    uvec4 ddgiInfo; // x=DDGI有効フラグ
+    uvec4 ddgiInfo; // x=DDGI有効フラグ、y=RTGI有効、z=RTGI の鏡面の環境光を変更前の経路で描く（開発ビルドの --rtgi-specular=off）
     mat4 viewProjection; // 接触影のレイを画面へ写すViewProjection（TAAのジッタ込み）
     vec4 contactShadowParams; // x=レイの長さ(m、0で無効), y=雑音の時間のずらし, z=遮る物体の厚さの下限(m)
     mat4 invViewProjectionCameraRelative; // カメラの位置を原点にした逆ViewProjection（深度から位置を戻すときの画素の向き）
@@ -707,6 +707,11 @@ vec3 EvaluateRTGIEnvironmentSpecular(vec3 prefilteredColor,
                                      vec3 hitRadiance,
                                      float iblIntensity)
 {
+    if (params.ddgiInfo.z != 0u)
+    {
+        // 変更前の経路（開発ビルドの --rtgi-specular=off。同じ地形で鏡面の遮りの前後を撮り比べる）
+        return prefilteredColor * reflectance * specularAO * iblIntensity;
+    }
     float wideLobe = EvaluateWideSpecularLobeBlend(roughness);
     float skyOcclusion = min(specularAO, skySpecularOcclusion) * (1.0 - wideLobe);
     float hitNormalization = mix(1.0, max(brdf.x + brdf.y, 0.0001), wideLobe);

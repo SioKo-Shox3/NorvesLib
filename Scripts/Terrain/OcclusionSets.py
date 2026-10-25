@@ -8,6 +8,8 @@
 #       1 組の撮影は約 2 分なので、verify では 1 行 10 分の上限に収まるよう --sets <組> で 1 組ずつ撮る。--sets で組を
 #       絞ったときは撮った組だけを確かめ、全組の揃い（ハッシュ・撮っていない組）は記録だけにする（揃いの合否は
 #       最後の ReferenceCheck.py --occlusion が全組の撮影で見る）。
+#       --variant-args rtgi-specular=off のように、描画の経路を前の形へ戻す開発ビルドの起動引数を全組へ足して撮れる（同じ
+#       Game.exe・同じ焼いた地形で変更の前後を比べる。組の起動引数の確かめはこの引数を含めて行う）。
 #   python Scripts/Terrain/OcclusionSets.py --cycles --out <置き場> [--trial] [--sets ...] [--mesh <地形の書き出し>]
 #       組ごとに BlenderOcclusionReference.py で Cycles の参照を <置き場>/cycles/<組> へ描く（--trial は低いサンプル数）。
 #       --seeds N で種を N 個描く（測りの収束の確かめ。OcclusionMetric.py）。
@@ -217,6 +219,8 @@ def main():
     parser.add_argument("--build", action="store_true", help="最初の組の撮影の前に Game をビルドする")
     parser.add_argument("--trial", action="store_true", help="Cycles を低いサンプル数で試しに描く")
     parser.add_argument("--sets", default="", help="組を絞る（コンマ区切り）")
+    parser.add_argument("--variant-args", default="",
+                        help="全組へ足す起動引数（コンマ区切り・先頭の -- なし。例 rtgi-specular=off）。--capture だけ")
     parser.add_argument("--seeds", type=int, default=1,
                         help="Cycles の本描画の種の数（収束の確かめは 2 つ以上。occlusion-regions.json の convergence）")
     parser.add_argument("--mesh", default=DEFAULT_MESH, help="地形の書き出しのフォルダ（--wasteland-export-terrain）")
@@ -224,6 +228,9 @@ def main():
     if args.capture == args.cycles:
         parser.error("--capture か --cycles のどちらか 1 つを指定する")
     sets = selected_sets(args)
+    variant = [arg.strip() for arg in args.variant_args.split(",") if arg.strip()]
+    for definition in sets.values():
+        definition["game_args"] = list(definition["game_args"]) + variant
     root = absolute(args.out)
     os.makedirs(root, exist_ok=True)
     return run_capture(args, sets, root) if args.capture else run_cycles(args, sets, root)

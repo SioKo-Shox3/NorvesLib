@@ -342,3 +342,21 @@ HEAD のシェーダーと比べる切り分けがまだ（記録 `.harness/runs
 共通の照明の組（`--light-final --verify`、`light-final-r16`）は shadow-pages・material-ao・rt-tlas-range の判定の行が合格し、shadow-leak の
 shadow_cliff 0.0866 は反復 9 と同じ値（古い参照の地形）。新しい差は rtgi-color の bounce/ref_cliff_01/shadow_ground の色の差 0.0346
 （上限 0.02、反復 9 の版 0.0036）で、反射の向きの光線（反復 11）・この形・地形の変更のどれによるかは切り分けていない。
+
+### 変更前の経路との撮り比べと、照り返しの切の受け持ち（反復 18）
+
+- 開発ビルドだけの起動引数 `--rtgi-specular=off`（`Game/GameApplicationHandler.cpp` → 環境変数 `NORVES_RTGI_SPECULAR=0` → `LightingPass` の
+  照明の定数 `ddgiInfo.z`、ログ `RTGI_SPECULAR off source=env`）を足した。照明の `EvaluateRTGIEnvironmentSpecular` が変更前の形
+  （空の前計算 × 反射率 × 画面空間の鏡面 AO）を返す。RTGI の鏡面の光線は引いたままで、拡散の照り返しは変わらない。同じ Game.exe・
+  同じ焼いた地形で、鏡面の遮りの前後を撮り比べるために使う（Release では使えない。`--rtgi-bounce` と同じ形）。
+  `OcclusionSets.py --capture --variant-args rtgi-specular=off` で全組へ足して撮れ、`LightFinal.py` は全部の組に同じものが付いていれば受け入れる。
+- 照り返しの切（`--rtgi-bounce=off`）は、拡散の光線の当たりの色だけを 0 にし、鏡面の光線の当たりは切らないようにした
+  （`DiffuseIndirect.comp` の `TraceDiffuseRay`・`TraceSecondBounce` の `hitColorScale`。鏡面の光線は 1）。`RtgiBounce.py` は入 − 切の差を
+  Cycles の拡散の間接光（`indirect_diffuse`）と比べるが、反復 11 から切が鏡面の光線の当たりの光（日向の崖の赤い光の映り込み）まで消していたので、
+  差に鏡面の照り返しが混ざり、日陰の地面の照り返しの色が Cycles からずれていた。変更前の経路では鏡面の項は入・切で同じ（空の前計算）で、
+  差は拡散の照り返しだけだった。
+
+| 測り（`light-final-r18`、同じ Game.exe） | 反復 9 の版 | 反復 16 | この版 |
+|---|---|---|---|
+| rtgi-color の bounce/ref_cliff_01/shadow_ground の色の差（上限 0.02） | 0.0036 | 0.0346 | 0.0034 |
+| rtgi-color の bounce/ref_cliff_01/shadow_cliff の色の差（上限 0.02） | — | 0.0063 | 0.0094 |

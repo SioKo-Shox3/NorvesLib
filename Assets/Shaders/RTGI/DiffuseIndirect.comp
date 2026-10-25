@@ -1177,6 +1177,7 @@ vec3 TraceDiffuseRay(vec3 rayOrigin,
                      float proxyHeightLimit,
                      uvec2 pixel,
                      uint emitterDimension,
+                     float hitColorScale,
                      out bool bSurfaceHit,
                      out vec3 hitPosition,
                      out vec3 hitNormal,
@@ -1279,9 +1280,10 @@ vec3 TraceDiffuseRay(vec3 rayOrigin,
         hitBaseColor *= TerrainBounceAlbedo(hitPosition, triangleNormal);
         hitSpecularWeight = 1.0;
     }
-    // 照り返しを切る撮影（--rtgi-bounce=off）は当たりの色と鏡面を 0 にする（外れた光線の空の光だけが残る）
-    hitBaseColor *= parameters.environmentParameters.y;
-    hitSpecularWeight *= parameters.environmentParameters.y;
+    // 照り返しを切る撮影（--rtgi-bounce=off）は拡散の光線の当たりの色と鏡面を 0 にする（外れた光線の空の光だけが残る）。
+    // 鏡面の光線は hitColorScale = 1 で切らない（入 − 切の差を拡散の照り返しだけにする。RtgiBounce.py は Cycles の拡散の間接光と比べる）
+    hitBaseColor *= hitColorScale;
+    hitSpecularWeight *= hitColorScale;
     return LimitRayRadiance(ComputeDirectRadiance(hitPosition, hitNormal, hitBaseColor, -rayDirection,
                                                   hitSpecularWeight) +
                            hitBaseColor * SampleEmitterIrradiance(hitPosition, hitNormal, pixel, emitterDimension)) *
@@ -1297,7 +1299,8 @@ vec3 TraceSecondBounce(vec3 rayDirection,
                        float bounceHitSpecularWeight,
                        uvec2 pixel,
                        uint directionDimension,
-                       uint emitterDimension)
+                       uint emitterDimension,
+                       float hitColorScale)
 {
     // 方向の乱数は 1 本目の R2 列と独立にする（同じ列の位相だと画素ごとに 2 本の方向が固定の組になる）
     uint frameIndex = parameters.sampleState.x;
@@ -1313,7 +1316,7 @@ vec3 TraceSecondBounce(vec3 rayDirection,
     uint secondHitCustomIndex;
     vec3 secondIncoming = TraceDiffuseRay(
         bounceHitPosition + bounceHitNormal * RAY_ORIGIN_OFFSET,
-        secondDirection, bounceHitNormal, -1.0, pixel, emitterDimension,
+        secondDirection, bounceHitNormal, -1.0, pixel, emitterDimension, hitColorScale,
         bSecondHit, secondHitPosition, secondHitNormal, secondHitBaseColor,
         secondHitSpecularWeight, secondHitCustomIndex);
     // 拡散面の出る放射輝度は反射率/π×照度で、コサイン標本の照度の推定はπ×入射放射輝度。
@@ -1458,7 +1461,7 @@ vec3 TraceSpecularRay(vec3 worldPosition,
     float hitSpecularWeight;
     uint hitCustomIndex;
     vec3 hitRadiance = TraceDiffuseRay(worldPosition + worldNormal * RAY_ORIGIN_OFFSET, rayDirection, worldNormal,
-                                       ProxySelfHitHeightLimit(viewDistance), pixel, 22u,
+                                       ProxySelfHitHeightLimit(viewDistance), pixel, 22u, 1.0,
                                        bHit, hitPosition, hitNormal, hitBaseColor, hitSpecularWeight,
                                        hitCustomIndex);
     if (hitCustomIndex == RTGI_NO_HIT)
@@ -1476,7 +1479,7 @@ vec3 TraceSpecularRay(vec3 worldPosition,
                   (TryReadScreenIndirect(hitPosition, screenIndirect)
                        ? screenIndirect
                        : TraceSecondBounce(rayDirection, hitPosition, hitNormal, hitBaseColor, hitSpecularWeight,
-                                           pixel, 16u, 25u));
+                                           pixel, 16u, 25u, 1.0));
     return SanitizeUnexposedRadiance(hitRadiance * mix(1.0, wideWeight, wideLobe));
 }
 
@@ -1554,6 +1557,7 @@ void ShadeDiffuseIndirect(uvec2 pixel, out bool bRayTraced, out uint firstHitCus
             bRayTraced = true;
             vec3 incomingRadiance = TraceDiffuseRay(rayOrigin, rayDirection, worldNormal,
                                                     ProxySelfHitHeightLimit(viewDistance), pixel, 3u,
+                                                    parameters.environmentParameters.y,
                                                     bBounceHit, bounceHitPosition,
                                                     bounceHitNormal, bounceHitBaseColor,
                                                     bounceHitSpecularWeight, firstHitCustomIndex);
@@ -1568,7 +1572,8 @@ void ShadeDiffuseIndirect(uvec2 pixel, out bool bRayTraced, out uint firstHitCus
                 // 2回目の拡散バウンス: 命中面が空と周りの面から受ける光（影の中の地面を照らす、物体の
                 // 下側の光など）を、命中点からもう1本のコサイン標本でたどって加える。
                 incomingRadiance += TraceSecondBounce(rayDirection, bounceHitPosition, bounceHitNormal,
-                                                      bounceHitBaseColor, bounceHitSpecularWeight, pixel, 9u, 6u);
+                                                      bounceHitBaseColor, bounceHitSpecularWeight, pixel, 9u, 6u,
+                                                      parameters.environmentParameters.y);
             }
 
             // 鏡面の光線（鏡面の無い材質は引かない。GBuffer の材質の a が 0.5 より大きい）

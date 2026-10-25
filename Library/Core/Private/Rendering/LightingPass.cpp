@@ -1450,6 +1450,35 @@ namespace NorvesLib::Core::Rendering
 #endif
     }
 
+    // 鏡面の環境光を RTGI の光線で遮らない変更前の経路（空の前計算 × 反射率 × 画面空間の鏡面 AO）で描くか
+    // （開発ビルドだけ。Game の --rtgi-specular=off が環境変数 NORVES_RTGI_SPECULAR=0 で頼む）。同じ Game.exe・同じ焼いた地形で
+    // 鏡面の遮りの前後を撮り比べる（InteriorLightReference.md）。プロセスの間は変わらないので、最初の 1 回だけ読む
+    static bool IsRTGILegacySpecularRequested()
+    {
+#if NORVES_BUILD_DEVELOPMENT
+        static const bool bRequested = []
+        {
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4996)
+#endif
+            const char* value = std::getenv("NORVES_RTGI_SPECULAR");
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
+            const bool bOff = value != nullptr && value[0] == '0' && value[1] == '\0';
+            if (bOff)
+            {
+                LOG_INFO("RTGI_SPECULAR off source=env");
+            }
+            return bOff;
+        }();
+        return bRequested;
+#else
+        return false;
+#endif
+    }
+
     /**
      * @brief 地形の当たりの色の値（RTGIComputeParameters の terrain*）と、束ねるテクスチャ（地図・砂・土・岩肌）を求める
      *
@@ -4682,6 +4711,7 @@ namespace NorvesLib::Core::Rendering
         if (bUseRTGILighting)
         {
             ddgiParameters.info[1] = 1u;
+            ddgiParameters.info[2] = IsRTGILegacySpecularRequested() ? 1u : 0u;
         }
         lightingParams.ddgi = ddgiParameters;
         const ExecuteUpload lightingParamsUpload = BorrowUpload(context,

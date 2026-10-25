@@ -314,6 +314,10 @@ namespace Game
         // 外れた光線の空の光は残す（RTGI を切ると IBL・DDGI へ替わるので、照り返しの量は入・切の差で測る。
         // Scripts/Terrain/ReferenceCheck.py --bounce）。環境変数 NORVES_RTGI_BOUNCE で描画側（LightingPass）へ渡す
         constexpr const TCHAR *kRTGIBounceOption = TEXT("--rtgi-bounce=");
+        // --rtgi-specular=on|off: off は鏡面の環境光を RTGI の光線で遮らない変更前の経路（空の前計算 × 反射率 × 画面空間の鏡面 AO）で
+        // 描く（開発ビルドだけ。同じ Game.exe・同じ焼いた地形で鏡面の遮りの前後を撮り比べる。InteriorLightReference.md）。
+        // 環境変数 NORVES_RTGI_SPECULAR で描画側（LightingPass）へ渡す
+        constexpr const TCHAR *kRTGISpecularOption = TEXT("--rtgi-specular=");
         // --wasteland-rtgi-non-caster-occlusion=on|off: 荒野で RTGI の拡散の光線を影を落とさない崖錐の岩にも当てるか（開発ビルドだけ。
         // 既定 on。off は直す前の印で描き、GPU 時間の前後を同じビルドで測る。WastelandOcclusion.md の「直す原因」）
         constexpr const TCHAR *kWastelandRTGINonCasterOcclusionOption = TEXT("--wasteland-rtgi-non-caster-occlusion=");
@@ -1695,6 +1699,21 @@ namespace Game
                 _putenv_s("NORVES_RTGI_BOUNCE", sceneValue == TEXT("off") ? "0" : "1");
 #else
                 LOG_WARNING("--rtgi-bounce は開発ビルドだけで使えます。無視します");
+#endif
+                continue;
+            }
+            if (TryStripPrefix(args[i], kRTGISpecularOption, sceneValue))
+            {
+#if NORVES_BUILD_DEVELOPMENT
+                // 照明が最初に定数を作る前に環境変数へ渡す
+                if (sceneValue != TEXT("on") && sceneValue != TEXT("off"))
+                {
+                    LOG_ERROR("--rtgi-specular は on か off で指定してください");
+                    return false;
+                }
+                _putenv_s("NORVES_RTGI_SPECULAR", sceneValue == TEXT("off") ? "0" : "1");
+#else
+                LOG_WARNING("--rtgi-specular は開発ビルドだけで使えます。無視します");
 #endif
                 continue;
             }
