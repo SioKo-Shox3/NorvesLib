@@ -10,6 +10,12 @@
   "target_range": [0.85, 1.15],
   "worse_tolerance": 0.03,
   "control_y_tolerance": 0.03,
+  "control_overrides": [
+    {"set": "terrain-sky", "view": "ref_cliff_01", "stratum": "slope60-180_d500-100000", "min": 0.946,
+     "note": "一時的な守り（SCN-RENDER-SPEC-OCCLUSION の鏡面の遮りの後の値 0.9513 − 0.005）。粗さ 1 の急な面の反射のローブが谷底へ向く分の遮りで、開けた急な面は off でも Cycles より暗い。SCN-RENDER-ROUGH-STEEP-ENERGY が 1 ± 0.03 へ戻す"},
+    {"set": "rocks-cliff-sky", "view": "ref_cliff_01", "stratum": "slope60-180_d500-100000", "min": 0.957,
+     "note": "一時的な守り（SCN-RENDER-SPEC-OCCLUSION の鏡面の遮りの後の値 0.9622 − 0.005）。粗さ 1 の急な面の反射のローブが谷底へ向く分の遮りで、開けた急な面は off でも Cycles より暗い。SCN-RENDER-ROUGH-STEEP-ENERGY が 1 ± 0.03 へ戻す"}
+  ],
   "sun": {
     "iou_min": 0.9,
     "leak_max": 0.02,

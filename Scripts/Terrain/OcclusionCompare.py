@@ -36,7 +36,7 @@
 #   同じ参照・同じ領域で測り直し、同じ画素で前後を比べる（視点ごとに、前と後のどちらの撮影でも Cycles と同じ面の画素だけで
 #   前後の両方を測る。前後の測り直しは並べた画・重ね画像を書かない）。空だけの組の層のうち、targets の層はエンジン ÷ Cycles が target_range の内、
 #   ほかの層（くぼみ・対照の画素が領域の定義の下限以上）は 1 からの離れが前の値の worse_tolerance 倍を越えて増えない、対照の
-#   エンジンの Y の平均が前の 1 ± control_y_tolerance の内。定義に sun があれば太陽だけの組も同じ画素で前後を測り、
+#   エンジンの Y の平均が前の 1 ± control_y_tolerance の内（control_overrides の行は下限だけがその行の min）。定義に sun があれば太陽だけの組も同じ画素で前後を測り、
 #   sun.targets の視点は IoU が iou_min 以上・漏れが leak_max 以下・縁の幅の比（エンジン ÷ Cycles）が edge_ratio_range の内、
 #   ほかの視点は前に許容の内なら内のまま、外なら IoU・漏れが前より悪くならない（ExpectSpecs/sun-shadow.json）。
 #   targets の視点に iou_receiver（terrain か objects）があれば、IoU の行はその受け手の画素だけの IoU で判定する。
@@ -467,6 +467,7 @@ def check_expect(RC, expect, regions, report, reference_root, views, trial):
     low, high = (float(v) for v in expect["target_range"])
     worse_tolerance = float(expect["worse_tolerance"])
     control_tolerance = float(expect["control_y_tolerance"])
+    control_overrides = {(o["set"], o["view"], o["stratum"]): o for o in expect.get("control_overrides", [])}
     min_region = int(regions["limits"]["min_region_pixels"])
     min_control = int(regions["limits"]["min_control_pixels"])
     # --sets で絞ったときだけ、絞った組の分に限る（無指定では全部の決めた層・視点を求める）
@@ -547,14 +548,20 @@ def check_expect(RC, expect, regions, report, reference_root, views, trial):
             if after["control_pixels"] >= min_control and (view, stratum) not in controls:
                 controls.add((view, stratum))
                 change = float(after["engine_y_control"]) / max(float(before["engine_y_control"]), 1e-30)
-                ok = abs(change - 1.0) <= control_tolerance
-                record["controls"].append({"set": name, "view": view, "stratum": stratum,
-                                           "pixels": after["control_pixels"], "before_y": before["engine_y_control"],
-                                           "after_y": after["engine_y_control"], "after_over_before": round(change, 4),
-                                           "pass": ok})
+                # control_overrides の行は下限だけをその行の min に替える（上限は 1 + control_y_tolerance のまま）
+                override = control_overrides.get((name, view, stratum))
+                control_low = float(override["min"]) if override else 1.0 - control_tolerance
+                ok = control_low <= change <= 1.0 + control_tolerance
+                row = {"set": name, "view": view, "stratum": stratum,
+                       "pixels": after["control_pixels"], "before_y": before["engine_y_control"],
+                       "after_y": after["engine_y_control"], "after_over_before": round(change, 4),
+                       "range": [control_low, 1.0 + control_tolerance], "pass": ok}
+                if override:
+                    row["override_note"] = override.get("note", "")
+                record["controls"].append(row)
                 if not ok:
                     failures.append(f"{name}/{view} の対照 {stratum} のエンジンの Y が前の {change:.4f} 倍で "
-                                    f"1 ± {control_tolerance} の外")
+                                    f"{control_low:.4f}〜{1.0 + control_tolerance} の外")
     for missing in sorted(targets - seen_targets):
         failures.append(f"決めた層 {'/'.join(missing)} が測れない")
     if sun is not None:

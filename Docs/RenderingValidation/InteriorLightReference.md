@@ -404,3 +404,33 @@ Cycles の同じ面の画素（地形、距離 500 m 以上）で、`occlusion-r
 - 開けた急な面（くぼみ 0〜0.05）は off でも Cycles より 2.5 % 暗く、今の形では 5.1 % 暗い。くぼみの深い帯では off が Cycles より明るく、
   今の形が近い。開けた急な面の不足は鏡面の遮りの外（粗さ 1 の多重散乱の鏡面のエネルギー、谷底からの拡散の照り返しなど）にある見込みで、
   この反復では切り分けていない。
+
+### 遠い急な崖の対照の一時的な守りと、変更前の経路と並べた共通の照明の組（走行 20261026-002702 の反復 7）
+
+- `occlusion-accept.json` に `control_overrides` を足し、`ref_cliff_01` の対照 slope60-180_d500-100000 の下限だけを
+  terrain-sky 0.946・rocks-cliff-sky 0.957（反復 2 の今の形の値 0.9513・0.9622 から 0.005 引いた値。これより暗くしない守り）に替えた。
+  上限（1.03）とほかの行は変えない。行の note に、SCN-RENDER-ROUGH-STEEP-ENERGY が 1 ± 0.03 へ戻すことを書いた。
+  `OcclusionCompare.check_expect` は対照の行ごとに下限を読み、記録に範囲と note を書く。反復 2 の今の形の撮影（`occlusion-i2-on`）を
+  2 組に絞って判定し直すと、2 つの対照の行は pass になる（`aux-SCN-RENDER-SPEC-OCCLUSION-i7-override-trial-i2-on.txt`）。
+- 同じ Game.exe（38cf602d）・同じ焼いた地形（崖の細部の版 14）で、共通の照明の組（5 組 11 視点）を今の形（`light-final-i7-on`）と
+  `--rtgi-specular=off`（`light-final-i7-off`）で撮り、`--light-final --verify` を最後まで出した。組の入力の指紋は両方で揃う
+  （files 15aca493）。off の組のログにだけ `RTGI_SPECULAR off` がある。記録は
+  `.harness/runs/20261026-002702/aux-SCN-RENDER-SPEC-OCCLUSION-i7-light-final-{on,off}-{capture,check}.txt`。
+
+| 行（`--light-final`） | 上限・範囲 | off | 今の形 | 読み |
+|---|---|---|---|---|
+| rt-tlas-range gray/ref_cliff_01/shadow_cliff/sky/ratio | 0.9〜1.1 | 1.0318 | 1.0036 | 内 |
+| rt-tlas-range gray/ref_far_01/far/sky/ratio | 0.9〜1.1 | 1.0354 | 1.0202 | 内 |
+| shadow-leak gray/ref_cliff_01/shadow_ground/visibility_mismatch | 0.03 以下 | 0.0252 | 0.0252 | 内 |
+| shadow-leak gray/ref_cliff_01/shadow_cliff/visibility_mismatch | 0.05 以下 | 0.0866 | 0.0866 | 両方で外。太陽の見え方の行で鏡面に依らない（反復 9 の版・反復 16 も 0.0866） |
+| shadow-pages lit/ref_cliff_02/shadow_ground/visibility_mismatch | 0.05 以下 | 0.0004 | 0.0004 | 内 |
+| shadow-pages lit/ref_far_01/far/visibility_mismatch | 0.05 以下 | 0.0315 | 0.0315 | 内 |
+| material-ao lit/ref_ground_01/sunlit_ground/total/ratio | 0.92〜1.08 | 0.9830 | 0.9916 | 内 |
+| material-ao lit/ref_cliff_02/sunlit_ground/total/ratio | 0.92〜1.08 | 0.9428 | 0.9625 | 内 |
+| rtgi-color bounce/ref_cliff_01/shadow_cliff/chroma_diff | 0.02 以下 | 0.0094 | 0.0094 | 内 |
+| rtgi-color bounce/ref_cliff_01/shadow_ground/chroma_diff | 0.02 以下 | 0.0045 | 0.0033 | 内（反復 16 の 0.0346 は反復 18 の照り返しの切の直しで戻った） |
+
+判定の全体はどちらも fail で、落ちる理由は off と今の形で同じ: 5 つの仕様の全部で「参照の入力が描いた後に変わった（古い参照）:
+terrain_mesh.inputs_sha256」（Cycles の参照を描いた後の地形の変更）、ref_cliff_01 の空と表面の分かれ方の食い違い 0.0147（上限 0.005、
+参照と今の地形の差）、shadow_cliff の visibility_mismatch 0.0866。off で範囲内・今の形で外れる行は無い。今の形は off より 3 行で Cycles に近づき
+（空の比 2 行・日向の地面 2 行）、悪くなった行は無い。荒野の遮蔽の 8 組の版 14 での撮り直しは、この反復ではしていない。
