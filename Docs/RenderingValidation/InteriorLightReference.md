@@ -360,3 +360,21 @@ shadow_cliff 0.0866 は反復 9 と同じ値（古い参照の地形）。新し
 |---|---|---|---|
 | rtgi-color の bounce/ref_cliff_01/shadow_ground の色の差（上限 0.02） | 0.0036 | 0.0346 | 0.0034 |
 | rtgi-color の bounce/ref_cliff_01/shadow_cliff の色の差（上限 0.02） | — | 0.0063 | 0.0094 |
+
+### 変更前の経路と並べた荒野の遮蔽の 8 組（走行 20261026-002702 の反復 2）
+
+同じ Game.exe（38cf602d）・同じ焼いた地形（崖の細部の版 11）で、荒野の遮蔽の 8 組を今の形（`occlusion-i2-on`）と `--rtgi-specular=off`
+（`occlusion-i2-off`）で撮った。8 組の入力の指紋は両方とも揃う（Game.exe 38cf602d・files 15aca493）。off の撮影のログにだけ
+`RTGI_SPECULAR off source=env` がある。記録は `.harness/runs/20261026-002702/aux-SCN-RENDER-SPEC-OCCLUSION-i2-occlusion-{on,off}-*.txt`。
+
+| 範囲の外の行（`occlusion-accept.json`） | off | 今の形 | 読み |
+|---|---|---|---|
+| terrain-sky の対照 slope60-180_d500-100000（前の記録との比、下限 0.97） | 0.9756 | 0.9513 | off は範囲内。この変更の差（−0.024）で直す |
+| rocks-cliff-sky の対照 slope60-180_d500-100000（同） | 0.9847 | 0.9622 | off は範囲内。この変更の差（−0.023）で直す |
+| terrain-sun の太陽の影の IoU（ref_cliff_01） | 0.8535 | 0.8535 | 両方で外。正解を描いた後の地形の変更（同じ面の割合 0.86） |
+| rocks-cliff-sun の太陽の影の IoU（ref_cliff_01） | 0.5656 | 0.5656 | 両方で外。同上（同じ面の割合 0.71） |
+| rocks-sun の太陽の影の IoU（contact_near、地形の受け手 0.852） | 0.8868 | 0.8868 | 両方で外。同上 |
+
+必須の比は両方で範囲内（off / 今の形: plant_root 0.981 / 0.973、contact 1.013 / 1.002・1.005 / 0.985、groove 1.097 / 1.095）。
+遠い急な崖の対照の暗さは前の反復の読み（地形の変更による古い参照）ではなく、この変更の分だった。遠い急な崖は灰色の材質（粗さ 1）で
+広いローブの重みつきの光線だけで数える面なので、その面の空の光の数え方を次の反復で直す。
