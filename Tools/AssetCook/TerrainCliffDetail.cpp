@@ -165,6 +165,11 @@ namespace NorvesLib::Tools::AssetCook
         constexpr float kLowerLedgeEdgeMeters = 0.1f;
         constexpr float kLowerLedgeWeight = 0.5f;
         constexpr int kLowerLedgeRegionIndex = 3;
+        // 地層の棚を掛ける範囲（崖の生成の担当の 7 範囲）の急な面で、表の棚の間の壁に掛ける縦の割れ目（溝と塊の出入り）の
+        // 倍率と、地層の層ごとの段（下の単位の層・上の単位のセットの張り出しと面の立ち上げ）の倍率。縦の溝は写真に無い
+        // 縦の折れになり、層ごとの段は表の境でない高さに横の長い折れを作る（WastelandShape.md の版 11）
+        constexpr float kLedgeRangeJointScale = 0.35f;
+        constexpr float kLedgeRangeStrataStepScale = 0.0f;
         // 細かな凹凸の振幅（m）
         constexpr float kRoughnessCoarse = 0.12f;
         constexpr float kRoughnessFine = 0.05f;
@@ -319,6 +324,8 @@ namespace NorvesLib::Tools::AssetCook
             float FaceZ = 0.0f;
             // 垂直に近い面か（0〜1。割れ目を入れる）
             float Cliff = 0.0f;
+            // 層ごとの段（張り出しと面の立ち上げ）に掛ける倍率
+            float StrataStepScale = 1.0f;
         };
 
         // 下の単位の層 bed の、高さ y での押し出し（m）。硬い層は張り出し、面が立ち、柔らかい層はくぼむ
@@ -341,7 +348,7 @@ namespace NorvesLib::Tools::AssetCook
             const float terrace =
                 std::clamp(point.TerraceSlope * kLowerTerraceStrength * hardness * ((y - bed.Bottom) - 0.5f * thickness),
                            -kLowerTerraceLimit, kLowerTerraceLimit);
-            return (ledge + terrace) * integrity - kLowerSoftRecess * (1.0f - hardness);
+            return (ledge + terrace) * integrity * point.StrataStepScale - kLowerSoftRecess * (1.0f - hardness);
         }
 
         // 上の単位のセット bed の、高さ y での押し出し（m）。セットの底の赤い薄層はくぼみ、その上の砂岩は面が立って張り出す
@@ -370,7 +377,7 @@ namespace NorvesLib::Tools::AssetCook
                                              -kUpperTerraceLimit, kUpperTerraceLimit);
             const float partingCut =
                 -kPartingRecess * partingPresence * (1.0f - SmoothStep(sandBottom - 0.1f, sandBottom + 0.2f, y));
-            return (ledge + terrace) * integrity + partingCut;
+            return (ledge + terrace) * integrity * point.StrataStepScale + partingCut;
         }
 
         // 地層の棚の押し出し（m）。表の境ごとに、境の直下の層が張り出して境の高さで水平の踏み面になり、下へ
@@ -617,6 +624,9 @@ namespace NorvesLib::Tools::AssetCook
             point.TerraceSlope = std::min(ny / std::max(horizontal * horizontal, 1.0e-3f), 1.0f) *
                                  SmoothStep(0.70f, 0.87f, horizontal);
             point.Cliff = SmoothStep(0.75f, 0.92f, horizontal);
+            // 地層の棚は急な面だけに掛ける（緩い斜面は段の押し出しで棚になる。スキャンの崖の担当の範囲には掛けない）
+            const float ledgeWeight = IsScanOwnedRegion(x, z) ? 0.0f : SmoothStep(0.70f, 0.87f, horizontal);
+            point.StrataStepScale = Mix(1.0f, kLedgeRangeStrataStepScale, ledgeWeight);
 
             // シェーダーと同じ地層全体のうねりと、単位の境の高さ
             const float warp = (ValueNoise(x * (1.0f / kStrataWarpWavelength) + 3.71f,
@@ -633,8 +643,6 @@ namespace NorvesLib::Tools::AssetCook
 
             float displacement = 0.0f;
             int lowerBedIndex = 0;
-            // 地層の棚は急な面だけに掛ける（緩い斜面は段の押し出しで棚になる。スキャンの崖の担当の範囲には掛けない）
-            const float ledgeWeight = IsScanOwnedRegion(x, z) ? 0.0f : SmoothStep(0.70f, 0.87f, horizontal);
             if (unitBlend < 1.0f)
             {
                 const float lower = BlendedStrataOffset(strataY, contact, kStrataLowerBedMeters, 1, kLowerBoundaryBlend,
@@ -668,8 +676,9 @@ namespace NorvesLib::Tools::AssetCook
             const float jointScale = 1.0f - BattleshipCarveAmount(x, z);
             if (point.Cliff > 0.0f && jointScale > 0.0f)
             {
+                // 地層の棚を掛ける範囲では表の棚の間の壁の溝を弱める
                 const float presence =
-                    jointScale *
+                    jointScale * Mix(1.0f, kLedgeRangeJointScale, ledgeWeight) *
                     Mix(0.35f, 1.0f, SmoothStep(0.3f, 0.65f, ValueNoise(x * (1.0f / 30.0f) + 5.3f, z * (1.0f / 30.0f) - 2.1f)));
                 if (unitBlend > 0.0f)
                 {

@@ -1,0 +1,282 @@
+﻿{
+  "description": "崖の生成に地層に沿って水平に続く棚を足す項目（SCN-WL-CLIFF-GEN-LEDGES）を閉じる相対の行。rows は CompareReference.py --shape --terrain-only --expect が読む写真の崖ごとの行で、写真の 5 つの崖（far_01 の Castle Butte・Cedar Mesa の縁、far_02 の Setting Hen Butte・Rooster Butte、ground_02 の Rooster Butte）の全部で、棚の一致が前の基準以上、うち 3 つ以上（組 shelf_gain）で前の基準 + 0.05 以上、余分な折れが前の基準 + 0.1 以下、局所の欠けの最長が前の基準以下。前の基準は shape-cliff-ledges.json の note の「前」の値（SCN-WL-SHAPE-BASELINE の撮影を今の量で測り直した値）。角の一致と外形の距離の行は shape-cliff-ledges.json の行のまま。絶対の棚の行（棚の一致 0.6 以上・余分な折れ 1.0 以下・局所の欠け 24 画素以下）は shape-cliff-ledges.json に弱めずに残し、SCN-WL-CLIFF-SHAPE-ABSOLUTE の合否へ移す。閾値は地形を変える前に書き、変えた後に変えない。",
+  "annotations_sha256": "9db8b9b5afac738e970f4fb0ea925ac9d48ea8f94c4afd2e6e09c4359f5c72a2",
+  "groups": {
+    "shelf_gain": {
+      "min_pass": 3
+    }
+  },
+  "rows": [
+    {
+      "photo": "far_01",
+      "cliff": "Castle Butte",
+      "quantity": "shelf_match",
+      "min": 0.417,
+      "note": "前の基準 0.417 以上"
+    },
+    {
+      "photo": "far_01",
+      "cliff": "Castle Butte",
+      "quantity": "shelf_match",
+      "min": 0.467,
+      "group": "shelf_gain",
+      "note": "前の基準 0.417 + 0.05（5 つの崖のうち 3 つ以上）"
+    },
+    {
+      "photo": "far_01",
+      "cliff": "Castle Butte",
+      "quantity": "shelf_extra_ratio",
+      "max": 4.04,
+      "note": "前の基準 3.94 + 0.1 以下"
+    },
+    {
+      "photo": "far_01",
+      "cliff": "Castle Butte",
+      "quantity": "shelf_gap_max_px",
+      "max": 78.0,
+      "note": "前の基準 78.0 画素以下"
+    },
+    {
+      "photo": "far_01",
+      "cliff": "Cedar Mesa の縁（右）",
+      "quantity": "shelf_match",
+      "min": 0.313,
+      "note": "前の基準 0.313 以上"
+    },
+    {
+      "photo": "far_01",
+      "cliff": "Cedar Mesa の縁（右）",
+      "quantity": "shelf_match",
+      "min": 0.363,
+      "group": "shelf_gain",
+      "note": "前の基準 0.313 + 0.05（5 つの崖のうち 3 つ以上）"
+    },
+    {
+      "photo": "far_01",
+      "cliff": "Cedar Mesa の縁（右）",
+      "quantity": "shelf_extra_ratio",
+      "max": 2.74,
+      "note": "前の基準 2.64 + 0.1 以下"
+    },
+    {
+      "photo": "far_01",
+      "cliff": "Cedar Mesa の縁（右）",
+      "quantity": "shelf_gap_max_px",
+      "max": 271.4,
+      "note": "前の基準 271.4 画素以下"
+    },
+    {
+      "photo": "far_02",
+      "cliff": "Setting Hen Butte",
+      "quantity": "shelf_match",
+      "min": 0.274,
+      "note": "前の基準 0.274 以上"
+    },
+    {
+      "photo": "far_02",
+      "cliff": "Setting Hen Butte",
+      "quantity": "shelf_match",
+      "min": 0.324,
+      "group": "shelf_gain",
+      "note": "前の基準 0.274 + 0.05（5 つの崖のうち 3 つ以上）"
+    },
+    {
+      "photo": "far_02",
+      "cliff": "Setting Hen Butte",
+      "quantity": "shelf_extra_ratio",
+      "max": 2.1,
+      "note": "前の基準 2.00 + 0.1 以下"
+    },
+    {
+      "photo": "far_02",
+      "cliff": "Setting Hen Butte",
+      "quantity": "shelf_gap_max_px",
+      "max": 292.5,
+      "note": "前の基準 292.5 画素以下"
+    },
+    {
+      "photo": "far_02",
+      "cliff": "Rooster Butte",
+      "quantity": "shelf_match",
+      "min": 0.273,
+      "note": "前の基準 0.273 以上"
+    },
+    {
+      "photo": "far_02",
+      "cliff": "Rooster Butte",
+      "quantity": "shelf_match",
+      "min": 0.323,
+      "group": "shelf_gain",
+      "note": "前の基準 0.273 + 0.05（5 つの崖のうち 3 つ以上）"
+    },
+    {
+      "photo": "far_02",
+      "cliff": "Rooster Butte",
+      "quantity": "shelf_extra_ratio",
+      "max": 2.16,
+      "note": "前の基準 2.06 + 0.1 以下"
+    },
+    {
+      "photo": "far_02",
+      "cliff": "Rooster Butte",
+      "quantity": "shelf_gap_max_px",
+      "max": 149.1,
+      "note": "前の基準 149.1 画素以下"
+    },
+    {
+      "photo": "ground_02",
+      "cliff": "Rooster Butte",
+      "quantity": "shelf_match",
+      "min": 0.349,
+      "note": "前の基準 0.349 以上"
+    },
+    {
+      "photo": "ground_02",
+      "cliff": "Rooster Butte",
+      "quantity": "shelf_match",
+      "min": 0.399,
+      "group": "shelf_gain",
+      "note": "前の基準 0.349 + 0.05（5 つの崖のうち 3 つ以上）"
+    },
+    {
+      "photo": "ground_02",
+      "cliff": "Rooster Butte",
+      "quantity": "shelf_extra_ratio",
+      "max": 2.13,
+      "note": "前の基準 2.03 + 0.1 以下"
+    },
+    {
+      "photo": "ground_02",
+      "cliff": "Rooster Butte",
+      "quantity": "shelf_gap_max_px",
+      "max": 91.1,
+      "note": "前の基準 91.1 画素以下"
+    },
+    {
+      "photo": "far_01",
+      "cliff": "Castle Butte",
+      "quantity": "corner_match",
+      "min": 0.0,
+      "note": "前 0.0000（0/3 点）"
+    },
+    {
+      "photo": "far_01",
+      "cliff": "Castle Butte",
+      "quantity": "outline_residual_median_px",
+      "max": 3.9,
+      "note": "前 2.83"
+    },
+    {
+      "photo": "far_01",
+      "cliff": "Castle Butte",
+      "quantity": "outline_distance_median_px",
+      "max": 8.3,
+      "note": "前 7.28"
+    },
+    {
+      "photo": "far_01",
+      "cliff": "2 本の尖塔",
+      "quantity": "corner_match",
+      "min": 0.0,
+      "note": "前 0.0000（0/3 点）"
+    },
+    {
+      "photo": "far_01",
+      "cliff": "2 本の尖塔",
+      "quantity": "outline_residual_median_px",
+      "max": 3.9,
+      "note": "前 2.83"
+    },
+    {
+      "photo": "far_01",
+      "cliff": "2 本の尖塔",
+      "quantity": "outline_distance_median_px",
+      "max": 7.0,
+      "note": "前 6.00"
+    },
+    {
+      "photo": "far_01",
+      "cliff": "Cedar Mesa の縁（右）",
+      "quantity": "corner_match",
+      "min": 0.0,
+      "note": "前 0.0000（0/2 点）"
+    },
+    {
+      "photo": "far_01",
+      "cliff": "Cedar Mesa の縁（右）",
+      "quantity": "outline_residual_median_px",
+      "max": 6.0,
+      "note": "前 5.00"
+    },
+    {
+      "photo": "far_01",
+      "cliff": "Cedar Mesa の縁（右）",
+      "quantity": "outline_distance_median_px",
+      "max": 21.1,
+      "note": "前 20.10"
+    },
+    {
+      "photo": "far_02",
+      "cliff": "Setting Hen Butte",
+      "quantity": "corner_match",
+      "min": 0.0,
+      "note": "前 0.0000（0/6 点）"
+    },
+    {
+      "photo": "far_02",
+      "cliff": "Setting Hen Butte",
+      "quantity": "outline_residual_median_px",
+      "max": 14.5,
+      "note": "前 13.45"
+    },
+    {
+      "photo": "far_02",
+      "cliff": "Setting Hen Butte",
+      "quantity": "outline_distance_median_px",
+      "max": 48.5,
+      "note": "前 47.42"
+    },
+    {
+      "photo": "far_02",
+      "cliff": "Rooster Butte",
+      "quantity": "corner_match",
+      "min": 0.0,
+      "note": "前 0.0000（0/3 点）"
+    },
+    {
+      "photo": "far_02",
+      "cliff": "Rooster Butte",
+      "quantity": "outline_residual_median_px",
+      "max": 6.1,
+      "note": "前 5.10"
+    },
+    {
+      "photo": "far_02",
+      "cliff": "Rooster Butte",
+      "quantity": "outline_distance_median_px",
+      "max": 50.8,
+      "note": "前 49.71"
+    },
+    {
+      "photo": "ground_02",
+      "cliff": "Rooster Butte",
+      "quantity": "corner_match",
+      "min": 0.666,
+      "note": "前 0.6667（2/3 点）"
+    },
+    {
+      "photo": "ground_02",
+      "cliff": "Rooster Butte",
+      "quantity": "outline_residual_median_px",
+      "max": 4.2,
+      "note": "前 3.16"
+    },
+    {
+      "photo": "ground_02",
+      "cliff": "Rooster Butte",
+      "quantity": "outline_distance_median_px",
+      "max": 73.7,
+      "note": "前 72.69"
+    }
+  ]
+}

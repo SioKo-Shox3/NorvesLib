@@ -7,19 +7,26 @@
 #     値への . 区切りの道（--look は regions.ground.png.luminance・derived.png.ground_over_blue_sky など、--shape は
 #     shelf_match・corner_match・outline_distance_median_px など）
 #   min・max: 下限・上限（両端を含む。どちらか一方は要る）。note: 行の説明（判定には使わない）
+#   group: 組の名前（省いてよい）。組の行は 1 行ずつでは落ちず、仕様の "groups": {"<名前>": {"min_pass": <数>}} の
+#     数以上の行が範囲の内なら組が合格（「5 つの崖のうち 3 つ以上で」のような行）。groups に無い組の名前は落ちる
 # 落ちる: 仕様が読めない・行が無い・知らない鍵・未知の写真の ID・min と max が無い・値が求まらない（道が無い・数でない）・
 #   選んだ写真の行が 1 つも無い（空の選択）・値が範囲の外。
 import json
 import os
 
-ROW_KEYS = ("photo", "cliff", "quantity", "min", "max", "note")
+ROW_KEYS = ("photo", "cliff", "quantity", "min", "max", "note", "group")
 
 
-def load_rows(path):
+def load_spec(path):
     with open(path, encoding="utf-8-sig") as file:
         spec = json.load(file)
     rows = spec.get("rows") if isinstance(spec, dict) else spec
-    return rows if isinstance(rows, list) else None
+    groups = spec.get("groups", {}) if isinstance(spec, dict) else {}
+    return (rows if isinstance(rows, list) else None), (groups if isinstance(groups, dict) else None)
+
+
+def load_rows(path):
+    return load_spec(path)[0]
 
 
 def lookup(entry, path):
@@ -36,13 +43,17 @@ def evaluate(spec_path, photos_report, selected, known, prefix, cliff_allowed):
     if not os.path.isfile(spec_path):
         return [f"仕様 {spec_path} が無い"]
     try:
-        rows = load_rows(spec_path)
+        rows, groups = load_spec(spec_path)
     except (OSError, ValueError) as error:
         return [f"仕様 {spec_path} が読めない: {error}"]
     if not rows:
         return [f"仕様 {spec_path} に行が無い"]
+    if groups is None:
+        return [f"仕様 {spec_path} の groups がオブジェクトでない"]
     failures = []
     evaluated = 0
+    # 組ごとの [範囲の内の行の数, 判定した行の数]
+    group_counts = {}
     for index, row in enumerate(rows):
         label = f"行 {index + 1}"
         if not isinstance(row, dict):
@@ -60,6 +71,10 @@ def evaluate(spec_path, photos_report, selected, known, prefix, cliff_allowed):
         if not quantity:
             failures.append(f"{label} に quantity が無い")
             continue
+        group = row.get("group")
+        if group is not None and not isinstance((groups.get(group) or {}).get("min_pass"), int):
+            failures.append(f"{label} の組 {group} が groups に無いか min_pass が整数でない")
+            continue
         if "min" not in row and "max" not in row:
             failures.append(f"{label} に min も max も無い")
             continue
@@ -71,16 +86,29 @@ def evaluate(spec_path, photos_report, selected, known, prefix, cliff_allowed):
         if entry is not None and row.get("cliff"):
             entry = entry.get("cliffs", {}).get(row["cliff"])
         value = lookup(entry, quantity) if entry is not None else None
-        where = f"photo={photo}" + (f" cliff={row['cliff']}" if row.get("cliff") else "") + f" quantity={quantity}"
+        where = (f"photo={photo}" + (f" cliff={row['cliff']}" if row.get("cliff") else "") + f" quantity={quantity}"
+                 + (f" group={group}" if group is not None else ""))
         if value is None:
             failures.append(f"{label}（{where}）の値が求まらない")
             print(f"{prefix} {where} value=undetermined result=fail")
             continue
         low, high = row.get("min"), row.get("max")
         ok = (low is None or value >= low) and (high is None or value <= high)
+        if group is not None:
+            counts = group_counts.setdefault(group, [0, 0])
+            counts[0] += int(ok)
+            counts[1] += 1
+            print(f"{prefix} {where} value={value:.4f} min={low} max={high} result={'in' if ok else 'out'}")
+            continue
         print(f"{prefix} {where} value={value:.4f} min={low} max={high} result={'pass' if ok else 'fail'}")
         if not ok:
             failures.append(f"{label}（{where}）の値 {value:.4f} が範囲 [{low}, {high}] の外")
+    for group, (inside, judged) in group_counts.items():
+        need = groups[group]["min_pass"]
+        ok = inside >= need
+        print(f"{prefix} group={group} inside={inside} judged={judged} min_pass={need} result={'pass' if ok else 'fail'}")
+        if not ok:
+            failures.append(f"組 {group} で範囲の内の行が {inside} / {judged}（{need} 以上が要る）")
     if evaluated == 0:
         failures.append(f"仕様 {spec_path} に選んだ写真の行が無い（空の選択）")
     return failures
