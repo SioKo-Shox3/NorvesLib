@@ -413,6 +413,15 @@ namespace Game::GameModes::WastelandGravel
         }
     } // namespace
 
+    bool StoneGroundLine(const Terrain::TerrainHeightField &field, float x, float z, float radius, float yaw, float &outY)
+    {
+        float ringMinY = 0.0f;
+        float ringMaxY = 0.0f;
+        WastelandFoliage::SampleRootRing(field, x, z, radius, yaw, ringMinY, ringMaxY);
+        outY = std::min(field.SampleHeight(x, z), ringMinY + WastelandFoliage::kRootRingFloatAllowance);
+        return outY >= ringMaxY - WastelandFoliage::kRootRingBurialAllowance;
+    }
+
     void GravelScatter::Initialize(TSharedPtr<const Terrain::TerrainHeightField> field,
                                    TSharedPtr<const Terrain::TerrainSurfaceMask> mask)
     {
@@ -430,6 +439,7 @@ namespace Game::GameModes::WastelandGravel
             {
                 m_Templates[tier][kind] = MakeBatch(tier, kind);
                 const FoliageBatch &batch = m_Templates[tier][kind];
+                m_RootRadius[tier][kind] = batch.Mesh ? WastelandFoliage::ComputeRootRadius(*batch.Mesh, true) : 0.0f;
                 LOG_INFO_F("WASTELAND_GRAVEL_KIND id=%s vertices=%zu triangles=%zu height=%.2f size=[%.2f,%.2f] fade=[%.1f,%.1f] "
                            "cell=%.1f",
                            batch.DebugName, batch.Mesh->Vertices.size(), batch.Mesh->Indices.size() / 3u,
@@ -570,10 +580,28 @@ namespace Game::GameModes::WastelandGravel
                 // 大きさ: 小さい石を多く（u^2.5）。高さの倍率は平たい板から厚い塊まで振る
                 const float sizeU = Hash2(gx, gz, tierSalt + 7u);
                 const float sizeT = sizeU * sizeU * std::sqrt(sizeU);
-                const float size = desc.SizeRange[0] + (desc.SizeRange[1] - desc.SizeRange[0]) * sizeT;
+                float size = desc.SizeRange[0] + (desc.SizeRange[1] - desc.SizeRange[0]) * sizeT;
+                const float yaw = Hash2(gx, gz, tierSalt + 9u) * 2.0f * kPi;
+                // 地面の線: 根元の円の最も低い点より浮かない高さ。円の高低差が許しを超える（斜面に対して石が大きい）ときは、
+                // 高低差が許しの 9 割に収まるまで石を縮め、段の最小の大きさを下回るなら置かない
+                float groundY = 0.0f;
+                if (!StoneGroundLine(field, x, z, m_RootRadius[tier][kind] * size, yaw, groundY))
+                {
+                    float ringMinY = 0.0f;
+                    float ringMaxY = 0.0f;
+                    WastelandFoliage::SampleRootRing(field, x, z, m_RootRadius[tier][kind] * size, yaw, ringMinY, ringMaxY);
+                    const float allowance = WastelandFoliage::kRootRingFloatAllowance + WastelandFoliage::kRootRingBurialAllowance;
+                    size *= 0.9f * allowance / std::max(ringMaxY - ringMinY, allowance);
+                    if (size < desc.SizeRange[0] ||
+                        !StoneGroundLine(field, x, z, m_RootRadius[tier][kind] * size, yaw, groundY))
+                    {
+                        continue;
+                    }
+                }
                 const float heightScale = size * (0.6f + 0.7f * Hash2(gx, gz, tierSalt + 8u));
                 const float stoneHeight = batch.Mesh->Height * heightScale;
-                // 埋める深さ: 石ごとの高さの割合と、斜面で下り側が浮かない分（半径 × 傾きの正接）
+                // 埋める深さ: 石ごとの高さの割合と、斜面で下り側が浮かない分（半径 × 傾きの正接）。地面の線から石ごとの割合だけ
+                // 埋めた高さより浅くはしない
                 const float slopeTangent = std::sqrt(std::max(0.0f, 1.0f - normal.Y * normal.Y)) / std::max(normal.Y, 0.2f);
                 const float (&sinkRange)[2] = bAngular ? kAngularSink : kRoundedSink;
                 const float sinkShare = sinkRange[0] + (sinkRange[1] - sinkRange[0]) * Hash2(gx, gz, tierSalt + 13u);
@@ -581,9 +609,9 @@ namespace Game::GameModes::WastelandGravel
 
                 FoliageInstance instance;
                 instance.Position[0] = x;
-                instance.Position[1] = field.SampleHeight(x, z) - sink;
+                instance.Position[1] = std::min(field.SampleHeight(x, z) - sink, groundY - stoneHeight * sinkShare);
                 instance.Position[2] = z;
-                instance.Yaw = Hash2(gx, gz, tierSalt + 9u) * 2.0f * kPi;
+                instance.Yaw = yaw;
                 instance.WidthScale = size;
                 instance.HeightScale = heightScale;
                 instance.ColorVariation = Hash2(gx, gz, tierSalt + 10u);

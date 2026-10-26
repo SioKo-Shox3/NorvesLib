@@ -36,6 +36,12 @@ namespace Game::GameModes::WastelandGravel
     /// 段ごとの石の種類の数（赤褐色の角張った破片の形と色の変種 3 つ・淡い丸い石 1 つ）
     inline constexpr uint32_t kKindsPerTier = 4;
 
+    /// 石の地面の線の高さ[m]を outY に書く: 中心の地面の高さを、根元の円（半径 radius・向き yaw）の最も低い点より
+    /// WastelandFoliage::kRootRingFloatAllowance を超えて浮かない所まで下げた高さ。置き方と置いた物の書き出しが同じ値を使う。
+    /// 円の最も高い点が地面の線より WastelandFoliage::kRootRingBurialAllowance を超えて高い（斜面に対して石が大きい）ときは false
+    bool StoneGroundLine(const NorvesLib::Core::Rendering::Terrain::TerrainHeightField &field, float x, float z, float radius,
+                         float yaw, float &outY);
+
     /**
      * @brief カメラの周りの区画へ石と礫を置き、束の一覧を作る
      *
@@ -113,6 +119,8 @@ namespace Game::GameModes::WastelandGravel
         NorvesLib::Core::Container::TSharedPtr<const NorvesLib::Core::Rendering::Terrain::TerrainSurfaceMask> m_pMask;
         /// 段・種類ごとの束のひな形（メッシュ・色・間引きの距離。インスタンスと区画は空）
         NorvesLib::Core::Rendering::FoliageBatch m_Templates[kTierCount][kKindsPerTier];
+        /// 段・種類ごとのメッシュの地面の線の円の半径（ローカル。WastelandFoliage::ComputeRootRadius）
+        float m_RootRadius[kTierCount][kKindsPerTier] = {};
         TierState m_Tiers[kTierCount];
         NorvesLib::Core::Container::VariableArray<WastelandFoliage::ExclusionCircle> m_ExclusionCircles;
         NorvesLib::Core::Container::VariableArray<WastelandFoliage::ExclusionRect> m_ExclusionRects;

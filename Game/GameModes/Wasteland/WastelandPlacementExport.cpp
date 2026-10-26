@@ -28,8 +28,6 @@ namespace Game::GameModes::WastelandPlacementExport
         constexpr const char *kTypeGravel = "gravel";
         /// 全域の全部を書く石の段（ほかの段は格子の区画の標本）
         constexpr const char *kFullGravelTier = "cobble";
-        /// 根元の円の半径を引く、メッシュの下の帯の割合
-        constexpr float kRootBand = 0.05f;
         /// 形の範囲の表（リポジトリの根から）
         constexpr const char *kRegionsRelativePath = "Scripts/Terrain/ShapeRegions.json";
 
@@ -53,33 +51,6 @@ namespace Game::GameModes::WastelandPlacementExport
             {
                 text.insert(text.end(), buffer, buffer + std::min<size_t>(static_cast<size_t>(written), sizeof(buffer) - 1));
             }
-        }
-
-        /// 草・石のメッシュの根元の円の半径（ローカル）。草と低木は下の帯の頂点の水平の最大の距離、石は地面の線の円として
-        /// 水平の最大の距離の半分
-        float RootRadius(const FoliageMeshData &mesh, bool bGravel)
-        {
-            float minY = 0.0f;
-            float maxY = 0.0f;
-            bool bFirst = true;
-            for (const Rendering::FoliageVertex &vertex : mesh.Vertices)
-            {
-                minY = bFirst ? vertex.Position[1] : std::min(minY, vertex.Position[1]);
-                maxY = bFirst ? vertex.Position[1] : std::max(maxY, vertex.Position[1]);
-                bFirst = false;
-            }
-            const float bandTop = minY + (maxY - minY) * kRootBand;
-            float radius = 0.0f;
-            for (const Rendering::FoliageVertex &vertex : mesh.Vertices)
-            {
-                if (!bGravel && vertex.Position[1] > bandTop)
-                {
-                    continue;
-                }
-                radius = std::max(radius, std::sqrt(vertex.Position[0] * vertex.Position[0] +
-                                                    vertex.Position[2] * vertex.Position[2]));
-            }
-            return bGravel ? radius * 0.5f : radius;
         }
 
         /// リポジトリの根を基準にしたパス。作業ディレクトリは実行ファイルのディレクトリになるので、相対パスはリポジトリの根から
@@ -206,7 +177,7 @@ namespace Game::GameModes::WastelandPlacementExport
                                bool bGravel)
         {
             const float height = batch.Mesh ? batch.Mesh->Height : 0.0f;
-            const float radius = batch.Mesh ? RootRadius(*batch.Mesh, bGravel) : 0.0f;
+            const float radius = batch.Mesh ? WastelandFoliage::ComputeRootRadius(*batch.Mesh, bGravel) : 0.0f;
             AppendFormat(text,
                          ",\n{\"name\":\"%s\",\"type\":\"%s\",\"tier\":\"%s\",\"height\":%.5f,\"root_radius\":%.5f,"
                          "\"vertices\":%zu}",
@@ -296,6 +267,17 @@ namespace Game::GameModes::WastelandPlacementExport
             }
         }
 
+        // 段・種類ごとの石の地面の線の円の半径（ローカル）
+        float gravelRootRadius[WastelandGravel::kTierCount][WastelandGravel::kKindsPerTier] = {};
+        for (uint32_t tier = 0; tier < WastelandGravel::kTierCount; ++tier)
+        {
+            for (uint32_t kind = 0; kind < WastelandGravel::kKindsPerTier; ++kind)
+            {
+                const FoliageBatch &batch = gravel.GetTemplate(tier, kind);
+                gravelRootRadius[tier][kind] = batch.Mesh ? WastelandFoliage::ComputeRootRadius(*batch.Mesh, true) : 0.0f;
+            }
+        }
+
         // 石と礫の区画 1 つを書く
         size_t stoneCounts[WastelandGravel::kTierCount] = {};
         size_t stoneCells[WastelandGravel::kTierCount] = {};
@@ -308,7 +290,10 @@ namespace Game::GameModes::WastelandPlacementExport
             {
                 for (const FoliageInstance &instance : stoneCell[kind])
                 {
-                    const float groundY = field.SampleHeight(instance.Position[0], instance.Position[2]);
+                    // 地面の線は置き方（WastelandGravel::StoneGroundLine）と同じ高さ
+                    float groundY = 0.0f;
+                    WastelandGravel::StoneGroundLine(field, instance.Position[0], instance.Position[2],
+                                                     gravelRootRadius[tier][kind] * instance.WidthScale, instance.Yaw, groundY);
                     AppendScatterObject(rows, gravelBase + tier * WastelandGravel::kKindsPerTier + kind, instance, groundY);
                     ++stoneCounts[tier];
                 }

@@ -252,6 +252,46 @@ namespace Game::GameModes::WastelandFoliage
         }
     } // namespace
 
+    float ComputeRootRadius(const FoliageMeshData &mesh, bool bGravel)
+    {
+        // 根元の円を引く、メッシュの下の帯の割合
+        constexpr float kRootBand = 0.05f;
+        float minY = 0.0f;
+        float maxY = 0.0f;
+        bool bFirst = true;
+        for (const FoliageVertex &vertex : mesh.Vertices)
+        {
+            minY = bFirst ? vertex.Position[1] : std::min(minY, vertex.Position[1]);
+            maxY = bFirst ? vertex.Position[1] : std::max(maxY, vertex.Position[1]);
+            bFirst = false;
+        }
+        const float bandTop = minY + (maxY - minY) * kRootBand;
+        float radius = 0.0f;
+        for (const FoliageVertex &vertex : mesh.Vertices)
+        {
+            if (!bGravel && vertex.Position[1] > bandTop)
+            {
+                continue;
+            }
+            radius = std::max(radius, std::sqrt(vertex.Position[0] * vertex.Position[0] + vertex.Position[2] * vertex.Position[2]));
+        }
+        return bGravel ? radius * 0.5f : radius;
+    }
+
+    void SampleRootRing(const Terrain::TerrainHeightField &field, float x, float z, float radius, float yaw, float &outMinY,
+                        float &outMaxY)
+    {
+        outMinY = 0.0f;
+        outMaxY = 0.0f;
+        for (uint32_t point = 0; point < kRootRingPoints; ++point)
+        {
+            const float angle = yaw + static_cast<float>(point) * (2.0f * kPi / static_cast<float>(kRootRingPoints));
+            const float height = field.SampleHeight(x + radius * std::cos(angle), z + radius * std::sin(angle));
+            outMinY = point == 0u ? height : std::min(outMinY, height);
+            outMaxY = point == 0u ? height : std::max(outMaxY, height);
+        }
+    }
+
     void FoliageScatter::Initialize(TSharedPtr<const Terrain::TerrainHeightField> field,
                                     TSharedPtr<const Terrain::TerrainSurfaceMask> mask)
     {
@@ -262,6 +302,7 @@ namespace Game::GameModes::WastelandFoliage
         {
             m_Templates[kindIndex] = MakeBatch(static_cast<PlantKind>(kindIndex));
             const FoliageBatch &batch = m_Templates[kindIndex];
+            m_RootRadius[kindIndex] = batch.Mesh ? ComputeRootRadius(*batch.Mesh, false) : 0.0f;
             LOG_INFO_F("WASTELAND_FOLIAGE_KIND id=%s vertices=%zu triangles=%zu height=%.2f fade=[%.0f,%.0f] shadow_distance=%.0f "
                        "shadow_lod_triangles=%zu/%zu",
                        batch.DebugName, batch.Mesh ? batch.Mesh->Vertices.size() : 0u,
@@ -399,7 +440,6 @@ namespace Game::GameModes::WastelandFoliage
 
                     FoliageInstance instance;
                     instance.Position[0] = x;
-                    instance.Position[1] = field.SampleHeight(x, z) - kRootSink;
                     instance.Position[2] = z;
                     instance.Yaw = Hash2(gx, gz, salt + 10u) * 2.0f * kPi;
                     // 大きさ: 低木は高さ 0.35〜0.95 m（メッシュの 0.6〜0.7 m の倍率）、草は 0.7〜1.3 倍
@@ -407,6 +447,33 @@ namespace Game::GameModes::WastelandFoliage
                     const float heightScale = bShrub ? 0.6f + 0.75f * size * size + 0.15f * density : 0.7f + 0.6f * size;
                     instance.HeightScale = heightScale;
                     instance.WidthScale = heightScale * (0.85f + 0.35f * Hash2(gx, gz, salt + 12u));
+                    // 根元: 中心の高さから埋めた高さを、根元の円の最も低い点より浮かない所まで下げる（斜面で円の下手が浮かない）。
+                    // 円の最も高い点が根元より埋もれの許しを超えて高い（根元の円の広い株が傾いた所にある）ときは、根元の枝が地面に
+                    // 沿う低木 B を根元の細い低木 A に替え、それでも収まらなければ置かない
+                    float rootY = 0.0f;
+                    bool bGrounded = false;
+                    for (uint32_t attempt = 0; attempt < 2u && !bGrounded; ++attempt)
+                    {
+                        if (attempt == 1u)
+                        {
+                            if (kind != PlantKind::BlackbrushB)
+                            {
+                                break;
+                            }
+                            kind = PlantKind::BlackbrushA;
+                        }
+                        float ringMinY = 0.0f;
+                        float ringMaxY = 0.0f;
+                        SampleRootRing(field, x, z, m_RootRadius[static_cast<uint32_t>(kind)] * instance.WidthScale,
+                                       instance.Yaw, ringMinY, ringMaxY);
+                        rootY = std::min(field.SampleHeight(x, z) - kRootSink, ringMinY + kRootRingFloatAllowance);
+                        bGrounded = rootY >= ringMaxY - kRootRingBurialAllowance;
+                    }
+                    if (!bGrounded)
+                    {
+                        continue;
+                    }
+                    instance.Position[1] = rootY;
                     instance.ColorVariation = Hash2(gx, gz, salt + 13u);
                     instance.WindPhase = Hash2(gx, gz, salt + 14u);
                     instance.FadeThreshold = Hash2(gx, gz, salt + 15u);

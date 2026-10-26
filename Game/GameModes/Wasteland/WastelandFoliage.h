@@ -46,6 +46,22 @@ namespace Game::GameModes::WastelandFoliage
     /// 種類の数（束の並び。WastelandFoliage.cpp の PlantKind）
     inline constexpr uint32_t kPlantKindCount = 5;
 
+    /// 根元の円の点の数（置き方と、置いた物の検査 Scripts/Terrain/CheckPlacement.py が同じ点を使う）
+    inline constexpr uint32_t kRootRingPoints = 6;
+    /// 根元の高さを根元の円の最も低い点から上げてよい量[m]（検査の浮きの上限 0.05 m から、DEM の格子と焼いた面の差の分を引く）
+    inline constexpr float kRootRingFloatAllowance = 0.02f;
+    /// 根元の高さを根元の円の最も高い点から下げてよい量[m]（検査の埋もれの上限 0.1 m から、同じ差の分を引く）
+    inline constexpr float kRootRingBurialAllowance = 0.07f;
+
+    /// メッシュの根元の円の半径（ローカル）。草と低木は下の 5 % の帯の頂点の水平の最大の距離、石は地面の線の円として
+    /// 水平の最大の距離の半分
+    float ComputeRootRadius(const NorvesLib::Core::Rendering::FoliageMeshData &mesh, bool bGravel);
+
+    /// (x, z) を中心とする半径 radius・向き yaw の根元の円の点（yaw から 60° おき。X は cos、Z は sin）の地面の高さの
+    /// 最小と最大
+    void SampleRootRing(const NorvesLib::Core::Rendering::Terrain::TerrainHeightField &field, float x, float z, float radius,
+                        float yaw, float &outMinY, float &outMaxY);
+
     /**
      * @brief カメラの周りの区画へ草・低木を撒き、束の一覧を作る
      *
@@ -110,6 +126,8 @@ namespace Game::GameModes::WastelandFoliage
         NorvesLib::Core::Container::TSharedPtr<const NorvesLib::Core::Rendering::Terrain::TerrainSurfaceMask> m_pMask;
         /// 種類ごとの束のひな形（メッシュ・色・風・間引きの距離。インスタンスと区画は空）
         NorvesLib::Core::Rendering::FoliageBatch m_Templates[kPlantKindCount];
+        /// 種類ごとのメッシュの根元の円の半径（ローカル。ComputeRootRadius）
+        float m_RootRadius[kPlantKindCount] = {};
         NorvesLib::Core::Container::VariableArray<Cell> m_Cells;
         NorvesLib::Core::Container::VariableArray<ExclusionCircle> m_ExclusionCircles;
         NorvesLib::Core::Container::VariableArray<ExclusionRect> m_ExclusionRects;
