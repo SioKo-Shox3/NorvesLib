@@ -1,0 +1,427 @@
+﻿{
+  "description": "崖の生成に壁から崖錐へ移る崩れた大きな塊を足す項目（SCN-WL-CLIFF-GEN-TALUS）の形の合否。棚・角・外形の行と region_rows は shape-cliff-caprock.json と同じ（移した行の moved_to と撮り直しの揺れの retake_jitter もそのまま）。内部の折れ線の行は写真の崖の生成の担当の範囲ごと（fold_regions.<範囲の ID>）の 5 組で、SCN-WL-SHAPE-INTERNAL-FOLDS の基準（WastelandShape.md の「内部の折れ線」の前の基準 SCN-WL-SHAPE-BASELINE の値）から: 一致は前の基準以上、局所の欠けの最長は + 2 画素まで、余分な折れは前の基準以下。塊が折れを足したことは組 fold_gain（版 15〔崖の細部の版 15、scene-capture/SCN-WL-CLIFF-GEN-CAPROCK/shape〕の一致 + 0.03 以上が 5 組のうち 3 組以上）で求める。閾値は地形を変える前に書き、変えた後に変えない",
+  "annotations_sha256": "9db8b9b5afac738e970f4fb0ea925ac9d48ea8f94c4afd2e6e09c4359f5c72a2",
+  "fold_annotations_sha256": "36a0a53890a6f32558289aec25368e7657fee0aee2f25043d0643db58d26914c",
+  "rows": [
+    {
+      "photo": "far_01",
+      "cliff": "Castle Butte",
+      "quantity": "corner_match",
+      "min": 0.5,
+      "note": "版 12 0.333。絶対の基準。版 12〜14 で帽岩に反応しない崖の外形の差（WastelandShape.md の「崖の上端の帽岩」）",
+      "moved_to": "SCN-WL-CLIFF-SHAPE-ABSOLUTE"
+    },
+    {
+      "photo": "far_01",
+      "cliff": "Castle Butte",
+      "quantity": "outline_residual_median_px",
+      "max": 8.0,
+      "note": "版 12 2.8。絶対の基準"
+    },
+    {
+      "photo": "far_01",
+      "cliff": "Castle Butte",
+      "quantity": "shelf_match",
+      "min": 0.566,
+      "note": "版 12 0.596 − 揺れ 0.03。版 15 は同じ焼きの 4 回の撮影で 0.521〜0.531（撮り直しの揺れ 0.010）で版 12 との差が揺れの外。ずらしの量は版 12 と同じ（WastelandShape.md の「崖の上端の帽岩」）",
+      "moved_to": "SCN-WL-CLIFF-SHAPE-ABSOLUTE"
+    },
+    {
+      "photo": "far_01",
+      "cliff": "Castle Butte",
+      "quantity": "shelf_extra_ratio",
+      "max": 3.489,
+      "note": "版 12 3.389 + 0.1"
+    },
+    {
+      "photo": "far_01",
+      "cliff": "Castle Butte",
+      "quantity": "shelf_gap_max_px",
+      "max": 77.1,
+      "note": "版 12 75.1 + 2 画素"
+    },
+    {
+      "photo": "far_01",
+      "cliff": "2 本の尖塔",
+      "quantity": "corner_match",
+      "min": 0.5,
+      "note": "版 12 0.333。絶対の基準。版 12〜14 で帽岩に反応しない崖の外形の差（WastelandShape.md の「崖の上端の帽岩」）",
+      "moved_to": "SCN-WL-CLIFF-SHAPE-ABSOLUTE"
+    },
+    {
+      "photo": "far_01",
+      "cliff": "2 本の尖塔",
+      "quantity": "outline_residual_median_px",
+      "max": 8.0,
+      "note": "版 12 2.8。絶対の基準"
+    },
+    {
+      "photo": "far_01",
+      "cliff": "Cedar Mesa の縁（右）",
+      "quantity": "corner_match",
+      "min": 0.5,
+      "note": "版 12 0.000。絶対の基準。版 12〜14 で帽岩に反応しない崖の外形の差（WastelandShape.md の「崖の上端の帽岩」）",
+      "moved_to": "SCN-WL-CLIFF-SHAPE-ABSOLUTE"
+    },
+    {
+      "photo": "far_01",
+      "cliff": "Cedar Mesa の縁（右）",
+      "quantity": "outline_residual_median_px",
+      "max": 8.0,
+      "note": "版 12 5.0。絶対の基準"
+    },
+    {
+      "photo": "far_01",
+      "cliff": "Cedar Mesa の縁（右）",
+      "quantity": "shelf_match",
+      "min": 0.39,
+      "note": "版 12 0.420 − 揺れ 0.03"
+    },
+    {
+      "photo": "far_01",
+      "cliff": "Cedar Mesa の縁（右）",
+      "quantity": "shelf_extra_ratio",
+      "max": 2.653,
+      "note": "版 12 2.553 + 0.1"
+    },
+    {
+      "photo": "far_01",
+      "cliff": "Cedar Mesa の縁（右）",
+      "quantity": "shelf_gap_max_px",
+      "max": 171.2,
+      "note": "版 12 169.2 + 2 画素"
+    },
+    {
+      "photo": "far_02",
+      "cliff": "Setting Hen Butte",
+      "quantity": "corner_match",
+      "min": 0.5,
+      "note": "版 12 0.000。絶対の基準。版 12〜14 で帽岩に反応しない崖の外形の差（WastelandShape.md の「崖の上端の帽岩」）",
+      "moved_to": "SCN-WL-CLIFF-SHAPE-ABSOLUTE"
+    },
+    {
+      "photo": "far_02",
+      "cliff": "Setting Hen Butte",
+      "quantity": "outline_residual_median_px",
+      "max": 8.0,
+      "note": "版 12 13.4。絶対の基準。版 12〜14 で帽岩に反応しない崖の外形の差（WastelandShape.md の「崖の上端の帽岩」）",
+      "moved_to": "SCN-WL-CLIFF-SHAPE-ABSOLUTE"
+    },
+    {
+      "photo": "far_02",
+      "cliff": "Setting Hen Butte",
+      "quantity": "shelf_match",
+      "min": 0.314,
+      "note": "版 12 0.344 − 揺れ 0.03。版 15 は同じ焼きの 4 回の撮影で 0.310（揺れ 0）で版 12 との差が揺れの外。ずらしの量を版 12 に固定すると 0.360（WastelandShape.md の「崖の上端の帽岩」）",
+      "moved_to": "SCN-WL-CLIFF-SHAPE-ABSOLUTE"
+    },
+    {
+      "photo": "far_02",
+      "cliff": "Setting Hen Butte",
+      "quantity": "shelf_extra_ratio",
+      "max": 1.985,
+      "note": "版 12 1.885 + 0.1"
+    },
+    {
+      "photo": "far_02",
+      "cliff": "Setting Hen Butte",
+      "quantity": "shelf_gap_max_px",
+      "max": 167.0,
+      "note": "版 12 165.0 + 2 画素。版 15 は同じ焼きの 4 回の撮影で 185.0（揺れ 0）で版 12 との差が揺れの外。ずらしの量を版 12 に固定すると 302.0（WastelandShape.md の「崖の上端の帽岩」）",
+      "moved_to": "SCN-WL-CLIFF-SHAPE-ABSOLUTE"
+    },
+    {
+      "photo": "far_02",
+      "cliff": "Rooster Butte",
+      "quantity": "corner_match",
+      "min": 0.5,
+      "note": "版 12 0.000。絶対の基準。版 12〜14 で帽岩に反応しない崖の外形の差（WastelandShape.md の「崖の上端の帽岩」）",
+      "moved_to": "SCN-WL-CLIFF-SHAPE-ABSOLUTE"
+    },
+    {
+      "photo": "far_02",
+      "cliff": "Rooster Butte",
+      "quantity": "outline_residual_median_px",
+      "max": 8.0,
+      "note": "版 12 5.1。絶対の基準"
+    },
+    {
+      "photo": "far_02",
+      "cliff": "Rooster Butte",
+      "quantity": "shelf_match",
+      "min": 0.369,
+      "note": "版 12 0.399 − 揺れ 0.03"
+    },
+    {
+      "photo": "far_02",
+      "cliff": "Rooster Butte",
+      "quantity": "shelf_extra_ratio",
+      "max": 2.454,
+      "note": "版 12 2.354 + 0.1"
+    },
+    {
+      "photo": "far_02",
+      "cliff": "Rooster Butte",
+      "quantity": "shelf_gap_max_px",
+      "max": 151.1,
+      "note": "版 12 149.1 + 2 画素。版 15 は同じ焼きの 4 回の撮影で 181.1（揺れ 0）で版 12 との差が揺れの外。ずらしの量を版 12 に固定しても 181.1（WastelandShape.md の「崖の上端の帽岩」）",
+      "moved_to": "SCN-WL-CLIFF-SHAPE-ABSOLUTE"
+    },
+    {
+      "photo": "ground_02",
+      "cliff": "Rooster Butte",
+      "quantity": "corner_match",
+      "min": 0.5,
+      "note": "版 12 0.667。絶対の基準。版 15 は同じ焼きの 4 回の撮影で 0.333・0.667・0.667・0.667（3 つの角の 1 点が撮影ごとに入れ替わる。撮り直しの揺れ 0.333）で、版 12 との差が揺れの内（WastelandShape.md の「崖の上端の帽岩」）",
+      "retake_jitter": 0.3333
+    },
+    {
+      "photo": "ground_02",
+      "cliff": "Rooster Butte",
+      "quantity": "outline_residual_median_px",
+      "max": 8.0,
+      "note": "版 12 3.2。絶対の基準"
+    },
+    {
+      "photo": "ground_02",
+      "cliff": "Rooster Butte",
+      "quantity": "shelf_match",
+      "min": 0.701,
+      "note": "版 12 0.731 − 揺れ 0.03"
+    },
+    {
+      "photo": "ground_02",
+      "cliff": "Rooster Butte",
+      "quantity": "shelf_extra_ratio",
+      "max": 2.098,
+      "note": "版 12 1.998 + 0.1"
+    },
+    {
+      "photo": "ground_02",
+      "cliff": "Rooster Butte",
+      "quantity": "shelf_gap_max_px",
+      "max": 28.0,
+      "note": "版 12 26.0 + 2 画素"
+    },
+    {
+      "photo": "far_01",
+      "quantity": "fold_regions.cliff_castle_1_far_cliffs.fold_match",
+      "min": 0.243,
+      "note": "前の基準 0.243 以上（SCN-WL-SHAPE-BASELINE）。版 15 0.353"
+    },
+    {
+      "photo": "far_01",
+      "quantity": "fold_regions.cliff_castle_1_far_cliffs.fold_match",
+      "min": 0.383,
+      "group": "fold_gain",
+      "note": "版 15 0.353 + 0.03（撮り直しの揺れ 0.012 より大きい上げ）"
+    },
+    {
+      "photo": "far_01",
+      "quantity": "fold_regions.cliff_castle_1_far_cliffs.fold_gap_max_px",
+      "max": 288.9,
+      "note": "前の基準 286.9 + 2 画素。版 15 163.5"
+    },
+    {
+      "photo": "far_01",
+      "quantity": "fold_regions.cliff_castle_1_far_cliffs.fold_extra_ratio",
+      "max": 2.638,
+      "note": "前の基準 2.638 以下。版 15 2.025"
+    },
+    {
+      "photo": "far_01",
+      "quantity": "fold_regions.cliff_castle_0_main_butte.fold_match",
+      "min": 0.0,
+      "note": "前の基準 0.000 以上（SCN-WL-SHAPE-BASELINE）。版 15 0.133"
+    },
+    {
+      "photo": "far_01",
+      "quantity": "fold_regions.cliff_castle_0_main_butte.fold_match",
+      "min": 0.163,
+      "group": "fold_gain",
+      "note": "版 15 0.133 + 0.03（撮り直しの揺れ 0.012 より大きい上げ）"
+    },
+    {
+      "photo": "far_01",
+      "quantity": "fold_regions.cliff_castle_0_main_butte.fold_gap_max_px",
+      "max": 100.9,
+      "note": "前の基準 98.9 + 2 画素。版 15 68.6"
+    },
+    {
+      "photo": "far_01",
+      "quantity": "fold_regions.cliff_castle_0_main_butte.fold_extra_ratio",
+      "max": 2.257,
+      "note": "前の基準 2.257 以下。版 15 2.037"
+    },
+    {
+      "photo": "far_02",
+      "quantity": "fold_regions.cliff_near_3_setting_hen_butte.fold_match",
+      "min": 0.268,
+      "note": "前の基準 0.268 以上（SCN-WL-SHAPE-BASELINE）。版 15 0.282"
+    },
+    {
+      "photo": "far_02",
+      "quantity": "fold_regions.cliff_near_3_setting_hen_butte.fold_match",
+      "min": 0.312,
+      "group": "fold_gain",
+      "note": "版 15 0.282 + 0.03（撮り直しの揺れ 0.012 より大きい上げ）"
+    },
+    {
+      "photo": "far_02",
+      "quantity": "fold_regions.cliff_near_3_setting_hen_butte.fold_gap_max_px",
+      "max": 597.5,
+      "note": "前の基準 595.5 + 2 画素。版 15 563.4"
+    },
+    {
+      "photo": "far_02",
+      "quantity": "fold_regions.cliff_near_3_setting_hen_butte.fold_extra_ratio",
+      "max": 1.413,
+      "note": "前の基準 1.413 以下。版 15 1.275"
+    },
+    {
+      "photo": "far_02",
+      "quantity": "fold_regions.cliff_near_2_rooster_butte.fold_match",
+      "min": 0.127,
+      "note": "前の基準 0.127 以上（SCN-WL-SHAPE-BASELINE）。版 15 0.199"
+    },
+    {
+      "photo": "far_02",
+      "quantity": "fold_regions.cliff_near_2_rooster_butte.fold_match",
+      "min": 0.229,
+      "group": "fold_gain",
+      "note": "版 15 0.199 + 0.03（撮り直しの揺れ 0.012 より大きい上げ）"
+    },
+    {
+      "photo": "far_02",
+      "quantity": "fold_regions.cliff_near_2_rooster_butte.fold_gap_max_px",
+      "max": 362.2,
+      "note": "前の基準 360.2 + 2 画素。版 15 265.9"
+    },
+    {
+      "photo": "far_02",
+      "quantity": "fold_regions.cliff_near_2_rooster_butte.fold_extra_ratio",
+      "max": 2.809,
+      "note": "前の基準 2.809 以下。版 15 2.451"
+    },
+    {
+      "photo": "ground_02",
+      "quantity": "fold_regions.cliff_near_2_rooster_butte.fold_match",
+      "min": 0.62,
+      "note": "前の基準 0.620 以上（SCN-WL-SHAPE-BASELINE）。版 15 0.624"
+    },
+    {
+      "photo": "ground_02",
+      "quantity": "fold_regions.cliff_near_2_rooster_butte.fold_match",
+      "min": 0.654,
+      "group": "fold_gain",
+      "note": "版 15 0.624 + 0.03（撮り直しの揺れ 0.012 より大きい上げ）"
+    },
+    {
+      "photo": "ground_02",
+      "quantity": "fold_regions.cliff_near_2_rooster_butte.fold_gap_max_px",
+      "max": 60.6,
+      "note": "前の基準 58.6 + 2 画素。版 15 58.6"
+    },
+    {
+      "photo": "ground_02",
+      "quantity": "fold_regions.cliff_near_2_rooster_butte.fold_extra_ratio",
+      "max": 1.202,
+      "note": "前の基準 1.202 以下。版 15 0.955"
+    }
+  ],
+  "groups": {
+    "fold_gain": {
+      "min_pass": 3
+    }
+  },
+  "region_rows": [
+    {
+      "region": "cliff_near_2_rooster_butte",
+      "view": "ref_far_02",
+      "quantity": "baseline.local_regression",
+      "max": 0.05,
+      "note": "担当の範囲。前の基準より 10 ポイント以上下がった区画の割合"
+    },
+    {
+      "region": "cliff_near_2_rooster_butte",
+      "view": "ref_ground_02",
+      "quantity": "baseline.local_regression",
+      "max": 0.05,
+      "note": "担当の範囲。前の基準より 10 ポイント以上下がった区画の割合"
+    },
+    {
+      "region": "cliff_near_3_setting_hen_butte",
+      "view": "ref_far_02",
+      "quantity": "baseline.local_regression",
+      "max": 0.05,
+      "note": "担当の範囲。前の基準より 10 ポイント以上下がった区画の割合"
+    },
+    {
+      "region": "cliff_castle_0_main_butte",
+      "view": "ref_far_01",
+      "quantity": "baseline.local_regression",
+      "max": 0.05,
+      "note": "担当の範囲。前の基準より 10 ポイント以上下がった区画の割合"
+    },
+    {
+      "region": "cliff_castle_1_far_cliffs",
+      "view": "ref_far_01",
+      "quantity": "baseline.local_regression",
+      "max": 0.05,
+      "note": "担当の範囲。前の基準より 10 ポイント以上下がった区画の割合"
+    },
+    {
+      "region": "cliff_castle_2_left_7_9km",
+      "view": "ref_far_01",
+      "quantity": "baseline.local_regression",
+      "max": 0.05,
+      "note": "担当の範囲。前の基準より 10 ポイント以上下がった区画の割合"
+    },
+    {
+      "region": "cliff_castle_3_left_5_7km",
+      "view": "ref_far_01",
+      "quantity": "baseline.local_regression",
+      "max": 0.05,
+      "note": "担当の範囲。前の基準より 10 ポイント以上下がった区画の割合"
+    },
+    {
+      "region": "cliff_castle_4_left_edge_9km",
+      "view": "ref_far_01",
+      "quantity": "baseline.local_regression",
+      "max": 0.05,
+      "note": "担当の範囲。前の基準より 10 ポイント以上下がった区画の割合"
+    },
+    {
+      "region": "scan_franklin_butte_base",
+      "view": "ref_ground_02",
+      "quantity": "baseline.delta.crease.lod-default",
+      "min": -0.02,
+      "max": 0.02,
+      "note": "担当の外の範囲。前の基準との折れ目の密度の差"
+    },
+    {
+      "region": "valley_ref_far_01",
+      "view": "ref_far_01",
+      "quantity": "baseline.delta.crease.lod-default",
+      "min": -0.02,
+      "max": 0.02,
+      "note": "担当の外の範囲。前の基準との折れ目の密度の差"
+    },
+    {
+      "region": "valley_ref_far_02",
+      "view": "ref_far_02",
+      "quantity": "baseline.delta.crease.lod-default",
+      "min": -0.02,
+      "max": 0.02,
+      "note": "担当の外の範囲。前の基準との折れ目の密度の差"
+    },
+    {
+      "region": "valley_ref_ground_02",
+      "view": "ref_ground_02",
+      "quantity": "baseline.delta.crease.lod-default",
+      "min": -0.02,
+      "max": 0.02,
+      "note": "担当の外の範囲。前の基準との折れ目の密度の差"
+    }
+  ]
+}
