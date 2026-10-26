@@ -8077,3 +8077,9 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 証拠（`.harness/runs/20261026-002702/`）: `verify-SCN-RENDER-SPEC-OCC-VERIFY-OCC-1.txt`（Game EXIT=0）・`-2.txt`〜`-17.txt`（16 本の撮影 result=pass EXIT=0）・`-18.txt`（判定 result=pass EXIT=0）。文の完全一致で照らした 1 回目の判定（同じ面の割合の 0.0001 の揺れで fail）は `aux-SCN-RENDER-SPEC-OCC-VERIFY-OCC-check-exact-match.txt`、撮影途中の 4 組の判定は `aux-...-partial-4sets.txt`
 - Next: SCN-RENDER-SPEC-OCCLUSION の残りの確かめ（回帰・golden・GPU 時間の項目）
 - Notes: 判定の 1 回は 8 組の on と off で約 8 分（verify の 1 行 10 分の上限に近い）。3 視点の値は反復 2（版 11）と同じで、崖の細部の版 12〜15 の範囲はこの 3 視点の画に入らない。新しい試験は足していない
+## 2026-10-26 SCN-RENDER-SPEC-OCC-VERIFY-OCC（run 20261026-002702 の反復 10、DONE）
+- Done: 反復 9 の評価の差し戻しを直した。`OcclusionCompare.compare_off` は行の外の失敗を off と同じなら全部「参照が古い分」にしていたので、通すのを地形の焼き直しで参照が古くなった分（`stale_reference_failure`: 地形のメッシュの元の入力の変更と、同じ組にその変更があるときの小物の配置・形の一覧の違いと同じ面の割合）だけにした。必須の層・視点の未測定、撮影やファイルの不足、今の実装との入力の不一致は off に同じ失敗があっても fail。評価者の再現（実際の定義と空の組で `check_expect` → 両側を `compare_off`）は rows=0・失敗 8・stale 0 になり、反復 9 の判定の stale 20 件は全部が今の分類でも参照が古い分。同じ Game.exe・同じ焼いた地形（崖の細部の版 15）で 8 組を今の形と off で撮り直して判定は pass。`InteriorLightReference.md` に通す失敗の範囲を書いた
+- 値: 反復 9 と同じ。遠い急な崖の対照 terrain-sky 0.9513（一時の下限 0.946）・rocks-cliff-sky 0.9622（0.957）、今の形 ÷ off 0.9752・0.9771。範囲の外は太陽の影の 3 行（terrain-sun IoU 0.8535・rocks-cliff-sun 0.5656・rocks-sun 0.8521）で off と差 0。off で範囲内・今の形で外れる行は無い
+- 証拠（`.harness/runs/20261026-002702/`）: `verify-SCN-RENDER-SPEC-OCC-VERIFY-OCC-1.txt`（Game EXIT=0）・`-2.txt`〜`-17.txt`（16 本の撮影 result=pass EXIT=0）・`-18.txt`（判定 result=pass EXIT=0、off stale 20 件はすべて地形の焼き直しの分）。反復 9 の出力は `aux-SCN-RENDER-SPEC-OCC-VERIFY-OCC-i9-verify-<n>.txt` に名前を替えて残した
+- Next: SCN-RENDER-SPEC-OCCLUSION の残りの確かめ（回帰・golden・GPU 時間の項目）
+- Notes: verify の 1 行目（`cmake ... -- /m:1`）は Git Bash で回すと `/m:1` がパスに書き換わって MSB1008 で落ちる。PowerShell で回した。新しい試験は足していない

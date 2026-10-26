@@ -47,7 +47,8 @@
 # --off-root <置き場>（--expect と一緒に。OcclusionSets.py --variant-args rtgi-specular=off で同じ Game.exe・同じ焼いた地形で
 #   撮った変更前の鏡面の経路）: off も同じ参照・同じ定義で測り、今の形の行と並べる（compare_off）。今の形で外れた行は、off でも
 #   外れて今の形が off から OFF_WORSE_TOLERANCE を超えて悪くならなければ参照が古い分として通す。off で範囲内・今の形で外れる行と
-#   一時の下限（control_overrides）の行が外れたときは fail。結果は <エンジンの置き場>/occlusion_off_compare.json。
+#   一時の下限（control_overrides）の行が外れたときは fail。行の外の失敗で off と同じでも通すのは、地形の焼き直しで参照が古くなった分
+#   （地形のメッシュの入力の変更と、同じ組のそれに伴う小物の配置・一覧と同じ面の割合）だけ。結果は <エンジンの置き場>/occlusion_off_compare.json。
 import hashlib
 import json
 import math
@@ -855,8 +856,8 @@ def compare_off(RC, expect, on, off, engine_root, off_root):
     行（前後の比べの記録の合否を持つ行）: 今の形で合格ならそのまま合格。今の形で外れた行は、off でも外れ、今の形が off より
     OFF_WORSE_TOLERANCE を超えて悪くならなければ「参照が古い分」として合格にする。off で合格・今の形で外れる行と、一時の下限
     （control_overrides）の行が外れたときは失敗。
-    行の外の失敗（入力の照合・同じ面の割合・必須の層・前後の比べの画素の揃いなど）: off にも同じ失敗（matching_failure）があれば「参照が古い分」、
-    今の形だけにあれば失敗。
+    行の外の失敗: 地形の焼き直しで参照が古くなった分（stale_reference_failure）だけ、off にも同じ失敗（matching_failure）があれば
+    「参照が古い分」にする。必須の層・視点の未測定、撮影やファイルの不足、今の実装との入力の不一致などは off と同じでも失敗。
     """
     on_report, on_general, on_expect_failures = on
     off_report, off_general, off_expect_failures = off
@@ -898,11 +899,36 @@ def compare_off(RC, expect, on, off, engine_root, off_root):
     off_other = set(off_general + [f"前後の比べ: {reason}" for reason in off_expect_failures if reason not in off_row_failures])
     for reason in on_other:
         match = matching_failure(reason, off_other)
-        if match is not None:
-            record["stale_failures"].append(reason if match == reason else f"{reason}（off: {match}）")
-        else:
+        if match is None:
             failures.append(f"{reason}（off には無い）")
+        elif not stale_reference_failure(reason, on_other) or not stale_reference_failure(match, off_other):
+            failures.append(f"{reason}（off にも同じ失敗があるが、地形の焼き直しで参照が古くなった分ではない）")
+        else:
+            record["stale_failures"].append(reason if match == reason else f"{reason}（off: {match}）")
     return record, failures
+
+
+# 参照を描いた後の地形の焼き直しで出る行の外の失敗。組の名前（視点の失敗は 組/視点）を先頭に持つ
+TERRAIN_STALE = re.compile(r"^([^/:]+): 地形のメッシュの元の入力が描いた後に変わった（古い結果）: ")
+# 地形の焼き直しに伴って出る失敗（小物は焼いた地形の上に置き直され、地形の形が変わると同じ面の画素が減る）。
+# 同じ組に TERRAIN_STALE があるときだけ参照が古い分と見る
+TERRAIN_FOLLOWING = (
+    re.compile(r"^([^/:]+): 小物の配置（placements\.csv）が参照の描いたものと違う$"),
+    re.compile(r"^([^/:]+): 小物の形の一覧（manifest）が参照の描いたものと違う$"),
+    re.compile(r"^([^/:]+)/[^/:]+: 同じ面の画素の割合 \d+(?:\.\d+)? が \d+(?:\.\d+)? に届かない$"),
+)
+
+
+def stale_reference_failure(reason, reasons):
+    """reason が地形の焼き直しで参照が古くなった分の失敗か（reasons は同じ判定の行の外の失敗の全部）"""
+    if TERRAIN_STALE.match(reason):
+        return True
+    stale_sets = {m.group(1) for m in map(TERRAIN_STALE.match, reasons) if m}
+    for pattern in TERRAIN_FOLLOWING:
+        m = pattern.match(reason)
+        if m:
+            return m.group(1) in stale_sets
+    return False
 
 
 NUMBER = re.compile(r"-?\d+(?:\.\d+)?")
