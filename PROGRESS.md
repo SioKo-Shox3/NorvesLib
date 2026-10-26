@@ -8097,3 +8097,8 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 開いた画: 版 15・16・17 の `shape/ref_ground_02.png` の Rooster Butte の切り出しの並べ（版 16 は棚が細かな段に刻まれ、版 17 は版 15 に近く足元に小さな塊。継ぎ目・穴・区画の境の段は無い）
 - Next: 判断待ち（`blocked/SCN-WL-CLIFF-GEN-TALUS.md`）。塊を崖錐の側（38 度より緩い升目）に立てるには細分の印を足の帯へ広げ、置いた物を焼いた面に合わせる（SCN-WL-PLACEMENT-GROUNDING-FIX）のが先に要る
 - Notes: コードと `build/CookedAssets` は版 17（測った状態）。Game のコードは変えていないので Debug のビルドは回していない。新しい試験は足していない。壁時計の残りが 25 分を切ったので 3 つ目の版は焼いていない
+
+## 2026-10-26 SCN-WL-CLIFF-GEN-TALUS（run 20261026-002702 の反復 13、前提待ち）
+- Done: 判断（`blocked/resolved/SCN-WL-CLIFF-GEN-TALUS.md`）の手順 1・2 に従い、`TASKS.md` の並びだけを変えた。SCN-WL-PLACEMENT-GROUNDING-FIX の `after` を SCN-WL-SHAPE-INTERNAL-FOLDS（done）に替え、paths に `Tools/AssetCook`・`Library/Core/{Public,Private}/Rendering/Terrain` を足し、notes に「崖の生成の範囲では置いた物の根元の高さを焼いた面と同じ高さから取る」条件を書いた。TALUS の `after` に GROUNDING-FIX を足し、notes に戻ったときの手順（版 17 の壁の側の形を外し崖錐の側に立てる・細分の印を足の帯 10〜20 m へ広げる・(A) と (E) を先に見る・届かなければ BLOCKED）を残した。両項目とも done-when と verify は変えていない。コードの変更なし（Game の RelWithDebInfo のビルド EXIT=0）。
+- Next: SCN-WL-PLACEMENT-GROUNDING-FIX。それが done になったら SCN-WL-CLIFF-GEN-TALUS に戻る。
+- Notes: TALUS の verify はこの反復では回していない（前提の GROUNDING-FIX が未完のため）。
