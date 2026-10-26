@@ -11,12 +11,15 @@
 #     数以上の行が範囲の内なら組が合格（「5 つの崖のうち 3 つ以上で」のような行）。groups に無い組の名前は落ちる
 #   moved_to: 合否を移した先の項目の ID（省いてよい）。印の付いた行は値と範囲を result=moved で出すだけで、合否と組に
 #     数えない（項目を閉じるときに残った行を、値を変えずに後の項目へ移す）
+#   retake_jitter: 同じ焼きの撮り直しの揺れ（撮り直しの値の最大と最小の差。省いてよい）。印の付いた行は範囲の両端を
+#     揺れの分だけ外へ広げて判定し、元の範囲の外で広げた範囲の内なら result=pass_jitter（前の基準との差が撮り直しの
+#     揺れの内に収まる行。揺れと前の基準の値は note に書く）
 # 落ちる: 仕様が読めない・行が無い・知らない鍵・未知の写真の ID・min と max が無い・値が求まらない（道が無い・数でない）・
 #   選んだ写真の行が 1 つも無い（空の選択）・値が範囲の外。
 import json
 import os
 
-ROW_KEYS = ("photo", "cliff", "quantity", "min", "max", "note", "group", "moved_to")
+ROW_KEYS = ("photo", "cliff", "quantity", "min", "max", "note", "group", "moved_to", "retake_jitter")
 
 
 def load_spec(path):
@@ -100,6 +103,18 @@ def evaluate(spec_path, photos_report, selected, known, prefix, cliff_allowed):
             print(f"{prefix} {where} value={value:.4f} min={low} max={high} result=moved"
                   f" moved_to={row['moved_to']} in_range={'yes' if ok else 'no'}")
             continue
+        jitter = row.get("retake_jitter")
+        if jitter is not None:
+            if not isinstance(jitter, (int, float)) or isinstance(jitter, bool) or jitter < 0:
+                failures.append(f"{label}（{where}）の retake_jitter {jitter} が 0 以上の数でない")
+                continue
+            if not ok:
+                ok = (low is None or value >= low - jitter) and (high is None or value <= high + jitter)
+                print(f"{prefix} {where} value={value:.4f} min={low} max={high} retake_jitter={jitter}"
+                      f" result={'pass_jitter' if ok else 'fail'}")
+                if not ok:
+                    failures.append(f"{label}（{where}）の値 {value:.4f} が範囲 [{low}, {high}] を揺れ {jitter} だけ広げた外")
+                continue
         if group is not None:
             counts = group_counts.setdefault(group, [0, 0])
             counts[0] += int(ok)

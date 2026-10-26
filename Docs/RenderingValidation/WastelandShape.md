@@ -500,6 +500,19 @@ SCN-WL-SHAPE-BASELINE の撮り直しの置き場（`scene-capture/SCN-WL-SHAPE-
 - 版 15 の値（版 14 → 版 15、合否に残る行）: 棚の一致 Castle Butte 0.584 → 0.521（下限 0.566）・Cedar Mesa の縁 0.384 → 0.404（下限 0.39）・Setting Hen Butte 0.340 → 0.310（下限 0.314）・far_02 の Rooster Butte 0.433 → 0.394・ground_02 の Rooster Butte 0.745 → 0.816。局所の欠けの最長 Castle Butte 66 → 69・Cedar Mesa の縁 140 → 167・Setting Hen Butte 230 → 185（上限 167）・far_02 の Rooster Butte 149 → 181（上限 151.1）・ground_02 の Rooster Butte 26 → 27。ground_02 の Rooster Butte の角の一致 0.667 → 0.333（3 点のうち 1 点が落ちた。下限 0.5）。仕様の不合格は 5 行（`.harness/runs/20261026-002702/verify-SCN-WL-CLIFF-GEN-CAPROCK-6.txt`）
 - 版 15 の範囲ごとの量（`--shape-cause --baseline`）は合格: 担当の局所の退行は最大 3.6 %（castle の段の範囲 1）、castle の段の範囲 0 は 5.56 % → 0 %、担当の外の折れ目の密度の差は 0.0001 以内。置いた物の接地は合格（failures 0）、張り出しの所 6586 点・物 1078 個で下を向く面を選んだ点 0・最も近い上を向く面でない点 0。クックの対象 27 区画は版 15、ページの要求の溢れ・失敗 0、VRAM の使用 9833 / 予算 13029 MB（75 %）。見た目（`look/ref_far_02.png`）は版 14 と同じく Setting Hen Butte の上端が一続きの切り立った縁で、継ぎ目・穴・区画の境の段は見えない
 - 読み: 版 15 は最上の棚の境より上だけを変える形なのに、帽岩の帯に棚の境の無い Castle Butte・far_02 の Rooster Butte の棚の行と ground_02 の Rooster Butte の角の行が版 14 から動いた（棚の一致 −0.06・−0.04、局所の欠け +32 画素）。版 13・14・15 の棚の行は版ごとに上下に振れ、どの行も一方向に動かない。棚の量は撮影の画素の折れの検出なので、焼きの小さな差でも閾値（揺れ 0.03・+2 画素）を超えて振れている見込みで、同じ焼きを撮り直した揺れはまだ測っていない
+- 同じ焼きの撮り直しの揺れ（版 15。焼き直し無しで shape の組を 3 回撮り直し〔`.harness/runs/scene-capture/SCN-WL-CLIFF-GEN-CAPROCK/shape-retake-1`〜`-3`、判定 `.harness/runs/20261026-002702/aux-SCN-WL-CLIFF-GEN-CAPROCK-v15-retake-<n>-shape.txt`〕、反復 8 の撮影と合わせた 4 回の最大と最小の差）と、外形のずらしの量を版 12 の値に固定した診断（合否にしない。`aux-SCN-WL-CLIFF-GEN-CAPROCK-v15-fixed-shift.py`、出力 `-fixed-shift-0.txt`〜`-3.txt`）。ずらしの量は 4 回とも同じで、版 12 と違うのは far_02 の Setting Hen Butte（版 12 −74,−47 → 版 15 −74,−51）と Rooster Butte（−2,−65 → −3,−64）だけ
+
+| 行 | 版 12 | 版 15 の 4 回 | 撮り直しの揺れ | 版 12 のずらしで測った版 15 | 扱い |
+|---|---|---|---|---|---|
+| far_01 Castle Butte 棚の一致（下限 0.566） | 0.596 | 0.521・0.521・0.531・0.531 | 0.010 | 0.521〜0.531（ずらしは版 12 と同じ） | 揺れの外 → SCN-WL-CLIFF-SHAPE-ABSOLUTE |
+| far_02 Setting Hen Butte 棚の一致（下限 0.314） | 0.344 | 0.310 × 4 | 0 | 0.360 | 揺れの外 → SCN-WL-CLIFF-SHAPE-ABSOLUTE |
+| far_02 Setting Hen Butte 局所の欠け（上限 167） | 165.0 | 185.0 × 4 | 0 | 302.0 | 揺れの外 → SCN-WL-CLIFF-SHAPE-ABSOLUTE |
+| far_02 Rooster Butte 局所の欠け（上限 151.1） | 149.1 | 181.1 × 4 | 0 | 181.1 | 揺れの外 → SCN-WL-CLIFF-SHAPE-ABSOLUTE |
+| ground_02 Rooster Butte 角の一致（下限 0.5） | 0.667 | 0.333・0.667・0.667・0.667 | 0.333 | 0.333〜0.667 | 揺れの内 → 版 15 で合格（`retake_jitter`） |
+
+- 合格のままの行の撮り直しの揺れ（後の崖の項目の閾値の決め方に使う）: far_01 の Cedar Mesa の縁は棚の一致 0.403〜0.420（0.017）・局所の欠け 128.2 と 167.2 の 2 値（39 画素。欠けの最長が 2 つの欠けのつながりで入れ替わる）・余分な折れ 0.014、Castle Butte の余分な折れ 0.025、far_02 の Rooster Butte の棚の一致 0.002、Setting Hen Butte の余分な折れ 0.002。ground_02 の棚の量・far_02 の局所の欠け・全部の外形の距離は揺れ 0
+- 読み: 撮り直しの揺れは far_02 で 0、far_01 で棚の一致 0.02 以下なので、版 13〜15 の棚の行の振れ（0.04〜0.07、欠けの +20〜+32 画素）は撮影の揺れでなく焼きの差による。Setting Hen Butte は帽岩で上端の外形が上がり、ずらしの量が縦に 4 画素変わって注釈の棚の帯ごと動いた（版 12 のずらしでは棚の一致 0.360 で下限の内に戻るが、欠けは 302 画素に延びる）。Castle Butte と far_02 の Rooster Butte はずらしの量が変わらない（または 1 画素）のに動くので、最上の棚の境より上だけを変えた版 15 でも、棚の帯の折れの線が焼きの差で切れたりつながったりしている。どちらも崖の外形と棚の線の位置を写真に合わせないと閾値の内に戻せないので、4 行は崖の外形の項目で扱う。棚の行の閾値は、撮り直しの揺れ（far_01 で 0.02、Cedar Mesa の欠けは 39 画素）を下回らない値にする必要がある
+- 閉じた形（版 15、run 20261026-002702 の反復 11）: 合否に残る行は全部合格（ground_02 の Rooster Butte の角は撮り直しの揺れの内で合格）。(B)〜(F) と張り出しの所の支持面は版 15 のまま verify で通した（値は `.harness/runs/20261026-002702/verify-SCN-WL-CLIFF-GEN-CAPROCK-<n>.txt`）
 
 ## 既知の限界
 
