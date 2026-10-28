@@ -8110,3 +8110,12 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 開いた画: `scene-capture/SCN-WL-PLACEMENT-GROUNDING-FIX/compare/ref_far_01_diff.png`・`ref_ground_02_diff.png`・`ref_far_01_shrubs_crop.png`（前と後の切り出し）。差は低木の株だけで、近景の低木 B が低木 A（葉の付いた株）に替わる
 - Next: 同じ項目を続ける。(1) 低木 B の 37.8 % が A に移った種の割合の変化をどう戻すか（傾きで振り分けて全体の割合を保つ、B の根元の枝を直す）を決める。(2) 刻みの範囲（Battleship Rock）と崖の生成の 2 範囲の石と小礫は置き方の地面と焼いた面のずれなので、焼いた面の高さから取る形（作業一覧の条件。読み込みに触るならアセットロードの危険地帯）。(3) 岩の据え直し（73820 個は最も深い足元が窓 max(0.5 m, 高さの 20 %) より深い。規則を見直すなら写真の崖錐の岩を根拠に）。閉じなければ (2) と (3) を別の項目に分ける
 - Notes: GPU 時間（ref_ground_01）は測っていない（前の Game.exe を作り直す時間を取らなかった。次の反復で前後を測る）。許しの 0.02 m・0.07 m は検査の 0.05 m・0.1 m から DEM の格子と焼いた面の差の分 0.03 m を引いた値（推奨を採った判断）。新しい試験は足していない
+
+- U1 マスクのある敷き詰めで位置の無い区画を空いた升に絞って引き直し、1M 混在で指定の本数どおりに置く: 着地(直し 0 回)
+
+## 2026-10-29 SCN-MEGA-FIX-MIXED-DEFICIT（run 20261029-040922 の反復 1、完了）
+- Done: マスクのある敷き詰め（mega-stress）で、締めた上限でも位置が無い区画は、密度が正でマスクの空いた升に絞り、その升の密度の最大で上限を締めてもう一巡引く（最後の 1 回は空いた升の中心を採る）。最後の区画に残った本数は、空いた升のある済んだ区画へ戻して置く。マスクなし（mega-bananas）の乱数の並びは変えない（`BananaLayout.cpp`）
+- 不足の原因: 最後の区画 grid=(5,38) に密度が正で空いた升の中心が無く、繰り越しの 1 本が捨てられていた。空いた升に絞る巡だけでは 999999 のまま（診断の撮影）で、済んだ区画への戻しで埋まった
+- 証拠（`.harness/runs/20261029-040922/verify-SCN-MEGA-FIX-MIXED-DEFICIT-U1.txt`）: タスクの verify（ビルド込み、1M + 5 万・1% 移動）が `result=pass`・EXIT=0、metrics.json に `placed_bananas=1000000`・`placed_entities=50000`、`MEGA_STRESS_BANANAS count=1000000 requested=1000000 pile=780 field=999220`、`[ERROR]` 0（撮影 `scene-capture/SCN-MEGA-FIX-MIXED-DEFICIT/`）。overview の PNG を開いて確認（Entity の足元は空き、破綻なし）。mega-bananas 1M horizon（`scene-capture/SCN-MEGA-FIX-MIXED-DEFICIT-unmasked-after/`）は `MEGA_BANANAS_PLACED`・`MEGA_BANANAS_LAYOUT` が基準（`-unmasked-before`）と build_ms・steps 以外で一致、山の記録 20000 行の sha256 も一致
+- Next: TASKS.md の次の未完
+- Notes: 試験は足していない。要起票: 単位の作業ツリーへハーネスを配る deploy の検証（言語の錨のフックの実走）が、指揮役から継いだ `LOOP_RUNNER` でフックが黙るため「言語の錨出力が不正」で落ちる（`units.mjs run` を `LOOP_RUNNER` を外して起動して回避した）
