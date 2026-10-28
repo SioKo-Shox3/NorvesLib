@@ -409,6 +409,8 @@ namespace Game::GameModes
         uint32_t TilePlaced = 0;
         /// 置けずに次の区画へ回す本数
         uint32_t Carry = 0;
+        /// 最後に残った本数を、処理済みの区画へ戻して置いている
+        bool bBackfillTile = false;
         PlacementRandom TileRandom;
 
         // ---- 処理中の区画と、その周り 1 升の近傍の格子（升の一辺は 2 本の包む半径の和の最大） ----
@@ -563,6 +565,11 @@ namespace Game::GameModes
             const uint32_t gridIndex =
                 static_cast<uint32_t>(tile.GridZ) * static_cast<uint32_t>(state.GridSize) + static_cast<uint32_t>(tile.GridX);
             state.TileRandom.Counter = HashIndex(gridIndex * 0x9E3779B1u + 0x2545F491u);
+            if (state.bBackfillTile)
+            {
+                // 同じ区画に最初に置いた位置の並びを繰り返さない。
+                state.TileRandom.Counter = HashIndex(state.TileRandom.Counter ^ 0xA511E9B3u);
+            }
             tile.First = static_cast<uint32_t>(state.Instances.size());
             tile.Count = 0;
 
@@ -580,7 +587,8 @@ namespace Game::GameModes
                 {
                     const int gridX = tile.GridX + dx;
                     const int gridZ = tile.GridZ + dz;
-                    if ((dx == 0 && dz == 0) || gridX < 0 || gridX >= state.GridSize || gridZ < 0 || gridZ >= state.GridSize)
+                    if ((dx == 0 && dz == 0 && !state.bBackfillTile) ||
+                        gridX < 0 || gridX >= state.GridSize || gridZ < 0 || gridZ >= state.GridSize)
                     {
                         continue;
                     }
@@ -691,8 +699,10 @@ namespace Game::GameModes
                     x = tile.MinX + kSeaTileMeters * random.Next();
                     z = tile.MinZ + kSeaTileMeters * random.Next();
                 }
-                // 最後まで引けなければ、空いていると確かめた升の中心を使う。
-                if (random.Next() * (bUseCellCenter ? 0.0f : maxDensity) >= SeaDensityAt(x, z, radius, state.Mounds))
+                // 最後の候補は密度が正で空いている升の中心なので、密度による棄却は行わない。
+                const float densityDraw = random.Next();
+                const float density = SeaDensityAt(x, z, radius, state.Mounds);
+                if (density <= 0.0f || (!bUseCellCenter && densityDraw * maxDensity >= density))
                 {
                     continue;
                 }
@@ -754,6 +764,38 @@ namespace Game::GameModes
             }
             stats.MaxLift = std::max(stats.MaxLift, lift);
             return true;
+        }
+
+        /// 最後に残った本数を、密度が正でマスクも空いている升を持つ処理済みの区画へ戻す。
+        /// 入力の連続した範囲は元の区画と分け、追加分を末尾の区画として記録する。
+        bool ReopenTileForCarry(BuilderState &state)
+        {
+            const float sampleStep = kSeaTileMeters / static_cast<float>(kSeaTileIntegrationSteps);
+            for (size_t index = state.Tiles.size(); index > 0; --index)
+            {
+                const BuilderState::Tile &tile = state.Tiles[index - 1];
+                for (int sz = 0; sz < kSeaTileIntegrationSteps; ++sz)
+                {
+                    for (int sx = 0; sx < kSeaTileIntegrationSteps; ++sx)
+                    {
+                        const float x = tile.MinX + (static_cast<float>(sx) + 0.5f) * sampleStep;
+                        const float z = tile.MinZ + (static_cast<float>(sz) + 0.5f) * sampleStep;
+                        if (SeaDensityAt(x, z, state.Stats.Radius, state.Mounds) <= 0.0f || state.pMask->IsBlocked(x, z))
+                        {
+                            continue;
+                        }
+                        BuilderState::Tile retry = tile;
+                        retry.Quota = 0;
+                        retry.First = 0;
+                        retry.Count = 0;
+                        retry.bDone = false;
+                        state.Tiles.push_back(retry);
+                        state.bBackfillTile = true;
+                        return true;
+                    }
+                }
+            }
+            return false;
         }
 
         /// 円盤に掛かる区画を作り、中心に近い順に並べ、密度の積分に比例して本数を配る（合計がちょうど fieldCount）
@@ -1458,6 +1500,10 @@ namespace Game::GameModes
             }
             CloseTile(state);
             state.bTileOpen = false;
+            if (state.CurrentTile == state.Tiles.size() && state.pMask != nullptr && state.Carry > 0 && !state.bBackfillTile)
+            {
+                ReopenTileForCarry(state);
+            }
             if (budgetSeconds > 0.0 && state.CurrentTile < state.Tiles.size() && elapsedSeconds() >= budgetSeconds)
             {
                 finishStep();
