@@ -8135,3 +8135,10 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 証拠（`.harness/runs/20261029-040919/`）: `verify-SCN-BUILD-ALL-TESTS-targets.txt`（5 本とも EXIT=0、温まったビルドで各 2〜5 秒）。全体の EXIT=0 は反復 2 の `verify-SCN-BUILD-ALL-TESTS-debug-all.txt`
 - Next: なし
 - Notes: 冷えたビルドでは Game のソースを組み込む 2 つの試験がそれぞれ数分かかる（この枠では Game の後の AssetManifestReloadBridgeLoopbackTest が約 3 分）。libwebsockets のカスタムビルドで MSB8065（出力が作られず差分ビルドが効かない恐れ）の警告が出る
+
+## 2026-10-29 SCN-BUILD-ALL-TESTS（run 20261029-040919 の反復 4、DONE）
+
+- Done: 統合ブランチの取り込みの後の再検証の落ち（`WorldCameraSyncTest` の C1041。同じ `vc143.pdb` を開けない）を確かめた。対象だけを依存なしで再コンパイルすると通り（`worldcamerasync-rebuild.txt`、EXIT=0）、落ちた直後にその対象の obj と pdb が書かれていたので、別のプロセスが同じ PDB を同時に書いた一過性の衝突と判断した。コードの変更なし
+- 証拠（`.harness/runs/20261029-040919/`）: `verify-full-debug.txt`（`cmake --build build --config Debug -- -m:1` の全体、EXIT=0・エラー行 0・16 秒の差分ビルド）
+- Next: なし
+- Notes: 取り込みで TASKS.md の verify が全体のビルドに戻った（冷えたビルドでは約 22 分で、再検証の 1 コマンドの上限に当たる恐れがある）。同じ build を 2 つのビルドが同時に使うと C1041 で落ちる
