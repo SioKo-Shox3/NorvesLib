@@ -312,7 +312,8 @@ Battleship Rock の尾根の刻み（`Tools/AssetCook/TerrainCliffCarveBattleshi
 
 ## 置いた物の接地（`CheckPlacement.py`）
 
-崖錐の岩・草と低木・石と礫の置き方は 1 m の格子の高さ（`SampleHeight`）を読むので、崖の生成が面を押し出した範囲では焼いた面とずれうる。置いた物の足元を焼いた面の問い合わせ（上の節）で測る。
+崖錐の岩・草と低木・石と礫は、崖の細部・刻みの区画では焼いた面の接地用の格子から高さを引き、
+塊の外では DEM の高さを使う。置いた物の足元を焼いた面の問い合わせ（上の節）で測る。
 
 - 書き出し: Game の開発ビルドの起動引数 `--wasteland-export-placement=<path>`（`Game/GameModes/Wasteland/WastelandPlacementExport.h`。Release では作らない。相対パスはリポジトリの根から）。視点に関わらず荒野の物を書く。崖錐の岩は置いた全部（形はメッシュの頂点の間引いた標本）。草と低木・大きな石（cobble）は DEM の格子に掛かる全部の区画を描画と同じ規則（撒かない範囲を含む）で作って全部書く。石（stone）と小礫（pebble）は全域で数億個になるので標本にする: 48 m おきの格子の点のうち `ShapeRegions.json` の範囲の中の点と、範囲の外の 192 m おきの点を取り、各点を含む区画を間引かずに丸ごと書く。JSON には格子・標本の取り方（`sampling`）・形の表を書き、物の行は隣の `<名前>.objects.bin`（float32、1 行 12 個: 形の番号・位置・四元数〔共役を掛ける規約〕・拡大率・根元の高さ。根元は草と低木は株の根元、石は地面の線、岩は位置の y）に書く
 - 置き方の縁: 崖錐の岩は DEM の格子の縁から 6 m、草と低木・石は 1 m の内だけに置く（前は中心だけを格子の内で確かめ、北の縁 z ≈ −2499 の岩 49 個・石 25 個の足元が格子の外へはみ出して測れなかった）。縁は撮影の視点から 300 m より遠い
@@ -322,7 +323,7 @@ Battleship Rock の尾根の刻み（`Tools/AssetCook/TerrainCliffCarveBattleshi
 - 合否の形: `--record`（書き出した物の全部を測り切れたら通る。違反の数は範囲〔`ShapeRegions.json` の 12 範囲・範囲の外・全体〕と物の組〔talus・plant・pebble・stone・cobble〕ごとに書く）と `--require-compliant`（加えて違反 0。物を消して通すなら `--removed` に消した物の一覧〔type は物の組の名前〕を渡し、名前の付いた範囲・範囲の外・全体のそれぞれで、消した数がその範囲の物〔残した物 + 消した物〕の 2 % 以下）。物が 0 個の組・形の欠け・足元の点の問い合わせが ok でない物（DEM の格子の外・区画なし・メッシュの破損・交点なし）が 1 つでもあれば落ちる（測り切れない物は数と一覧を書く）。崖の生成の項目は `--require-compliant` を使う
 - 速さ: 物 1504 万・足元の点 9951 万で約 3 分 45 秒（問い合わせ 153 秒。AssetCook と結果の解析を 16 のプロセスで並べる）
 
-今の値（`--record`。書き出し `.harness/runs/scene-capture/SCN-WL-CLIFF-PLACEMENT-CHECK/placement.json`、報告 `placement_check.record.json`）。物 15035824（岩 273616・草と低木 5855831・大きな石 1562191 は全部、石 1563543・小礫 5780643 は区画 1594 か所〔範囲の中 1091・外 503〕の標本）、足元の点 99513717 は全部 `ok` で測り切れ、記録は pass（測り切れない物 0。SCN-WL-TERRAIN-SEAM-FIX で問い合わせを直す前は継ぎ目の割れ目の 1 点が `no_hit` で、その大きな石 1 個〔−1600.01, −1172.29〕が測れなかった。その石は今は支持面なし〔深く埋まる〕の違反）:
+項目の前の記録（SCN-WL-CLIFF-PLACEMENT-CHECK、`--record`。書き出し `.harness/runs/scene-capture/SCN-WL-CLIFF-PLACEMENT-CHECK/placement.json`、報告 `.harness/runs/scene-capture/SCN-WL-CLIFF-PLACEMENT-CHECK/placement_check.record.json`）。物 15035824（岩 273616・草と低木 5855831・大きな石 1562191 は全部、石 1563543・小礫 5780643 は区画 1594 か所〔範囲の中 1091・外 503〕の標本）、足元の点 99513717 は全部 `ok` で測り切れ、記録は pass（測り切れない物 0。SCN-WL-TERRAIN-SEAM-FIX で問い合わせを直す前は継ぎ目の割れ目の 1 点が `no_hit` で、その大きな石 1 個〔−1600.01, −1172.29〕が測れなかった。その石は今は支持面なし〔深く埋まる〕の違反）:
 
 | 範囲 | 組 | 物 | 違反 | 浮き | 埋もれ | 支持面なし（深く埋まる / 浮く） |
 |---|---|---|---|---|---|---|
@@ -347,7 +348,7 @@ Battleship Rock の尾根の刻み（`Tools/AssetCook/TerrainCliffCarveBattleshi
 
 分布（全体、支持面のある物）: 岩の埋もれは高さの p50 0.454・p90 0.658・p99 0.913、浮きは p99 0。草と低木の浮きは p99 0.075 m・埋もれは p50 0.036・p90 0.055・p99 0.135 m。大きな石の浮き・埋もれは p50 0.006・p90 0.027・p99 0.063 m、石は p90 0.011 m、小礫は p90 0.004 m。範囲ごとの全部の値と悪い物の一覧は報告にある。
 
-読み方:
+項目の前の記録の読み方:
 - 岩の埋もれの違反と支持面なし（窓より深く埋まる）は、斜面の上手の足元の点が深く入る形によるもので、範囲の内と外で違反の割合がほぼ同じ（50〜57 %）なので焼いた面と格子のずれではない。置き方の沈め（岩塊は高さの 12 % + 3 cm、板は 25 %）は最も浅い足元に掛かり、埋もれの量は最も深い足元で測るため
 - 草と低木・大きな石の違反（2.4 %・2.5 %）は大半が範囲の外（崖の生成の無い所）にあり、根元の高さが円の中心の 1 点で決まるので、斜面で円の下手の点が浮き、上手の点が埋まる形による（傾斜 28° で半径 0.65 m の株は ±0.35 m）
 - 焼いた面とのずれは Battleship Rock の刻みの範囲に寄る: 石と小礫の違反の 74〜75 %、支持面なしの浮く物（窓より 0.5 m 以上高い）の大半がここにある。悪い物は刻んだ壁の根元（x −1850〜−2070・z −1250〜−1310）で、窓の端の 0.45〜0.5 m 浮く草・石・岩が並ぶ
@@ -361,7 +362,7 @@ Battleship Rock の尾根の刻み（`Tools/AssetCook/TerrainCliffCarveBattleshi
 - 石と礫: 地面の線 = min(中心の高さ, 円の最も低い点 + 0.02 m)（`WastelandGravel::StoneGroundLine`。書き出しも同じ関数で地面の線を書く）。円の高低差が 0.09 m を超える所では、高低差が 0.081 m に収まるまで石を縮め、段の最小を下回るなら置かない。石の位置は前の沈め（中心から高さの割合 + 半径 × 傾き）と、地面の線から高さの割合だけ埋めた高さの低い方
 - 0.02 m と 0.07 m は検査の浮き 0.05 m・埋もれ 0.1 m から、DEM の 1 m の格子の双線形と焼いた面の三角形の差の分（0.03 m）を引いた値
 
-値（`CheckPlacement.py --require-compliant`、報告 `.harness/runs/scene-capture/SCN-WL-PLACEMENT-GROUNDING-FIX/placement_check.json`。前は SCN-WL-CLIFF-PLACEMENT-CHECK の記録。崖の細部は前が版 10 より前・今が版 17 なので、刻みと崖の生成の範囲の石と小礫は版の差も含む）:
+根元の円で置いた後の値（`CheckPlacement.py --require-compliant`、報告 `.harness/runs/scene-capture/SCN-WL-PLACEMENT-GROUNDING-FIX/placement_check.json`。前は SCN-WL-CLIFF-PLACEMENT-CHECK の記録。崖の細部は前が版 10 より前・今が版 17 なので、刻みと崖の生成の範囲の石と小礫は版の差も含む）:
 
 | 範囲 | 組 | 物（前 → 今） | 違反（前 → 今） | 今の浮き / 埋もれ / 支持面なし |
 |---|---|---|---|---|
@@ -380,12 +381,201 @@ Battleship Rock の尾根の刻み（`Tools/AssetCook/TerrainCliffCarveBattleshi
 
 減った物: 草と低木 14556 個（0.25 %。範囲ごとに 0〜0.6 %、最も多いのは Setting Hen Butte の 562 個 0.53 % と Rooster Butte の 422 個 0.55 %）は、低木 A に替えても根元の円が傾きに収まらない所の株。大きな石 215 個（0.01 %）は縮めると段の最小を下回る石。草と低木の浮きの p99 は 0.075 → 0.006 m、埋もれの p99 は 0.135 → 0.065 m。
 
-見た目の変化: 低木 B を低木 A に替える規則で、B は 736606 → 458271（−37.8 %）、A は 739387 → 1017720 に移り、B と A の割合が 50:50 から 31:69 になった。ref_far_01 の近景の 4 株（谷床のゆるい斜面）は葉の無い枝の株から葉の付いた株に替わる（前と後の切り出し `.harness/runs/scene-capture/SCN-WL-PLACEMENT-GROUNDING-FIX/compare/ref_far_01_shrubs_crop.png`）。B の根元の円 0.37（下の 5 % の帯に地面へ広がる枝の先が入る）は傾き 5° ほどで埋もれの許しを超えるため。種の割合を戻す形（傾きで A と B を振り分けて全体の割合を保つ、B の根元の枝の形を直す）は決めていない。ref_ground_02 でも近景と中景の低木 11 株が同じ理由で替わる（差の画 `compare/ref_ground_02_diff.png`）。前と後で 16 階調を超えて変わった画素は ref_far_01 86273・ref_ground_02 20461・ref_far_02 11175・ref_ground_01 616・ref_cliff_02 313・ref_cliff_01 66（差の画 `compare/<視点>_diff.png`）
+見た目の変化: 低木 B を低木 A に替える規則で、B は 736606 → 458271（−37.8 %）、A は 739387 → 1017720 に移り、B と A の割合が 50:50 から 31:69 になった。ref_far_01 の近景の 4 株（谷床のゆるい斜面）は葉の無い枝の株から葉の付いた株に替わる（前と後の切り出し `.harness/runs/scene-capture/SCN-WL-PLACEMENT-GROUNDING-FIX/compare/ref_far_01_shrubs_crop.png`）。B の根元の円 0.37（下の 5 % の帯に地面へ広がる枝の先が入る）は傾き 5° ほどで埋もれの許しを超えるため。種の割合を戻す形（傾きで A と B を振り分けて全体の割合を保つ、B の根元の枝の形を直す）は決めていない。ref_ground_02 でも近景と中景の低木 11 株が同じ理由で替わる（差の画 `.harness/runs/scene-capture/SCN-WL-PLACEMENT-GROUNDING-FIX/compare/ref_ground_02_diff.png`）。前と後で 16 階調を超えて変わった画素は ref_far_01 86273・ref_ground_02 20461・ref_far_02 11175・ref_ground_01 616・ref_cliff_02 313・ref_cliff_01 66（差の画 `.harness/runs/scene-capture/SCN-WL-PLACEMENT-GROUNDING-FIX/compare/<視点>_diff.png`）
 
-読み方と残り:
-- 範囲の外の草と低木・大きな石の違反はほぼ無くなった（残りの 170・1026 個は、格子の双線形と焼いた面の三角形の差が 0.03 m を超える所の見込み。確かめていない）
-- 刻みの範囲（Battleship Rock）と崖の生成の 2 範囲の石と小礫は、置き方の地面（DEM の格子）と焼いた面がずれる所で、根元の円で置いても違反が減らない。ここは焼いた面の高さから取る形（作業一覧の条件）が要る
-- 岩は置き方を変えていない（違反の数は前と同じ）。最も深い足元が窓（max(0.5 m, 高さの 20 %)）より深い物が 73820 個あり、高さの 50 % の規則の前に窓が効く
+根元の円で置いた後の読み方と、その後の接地:
+
+- 範囲の外に残った草と低木 170・大きな石 1026 個の違反は、下の接地用の格子と DEM の支持面の扱いを含む最終の置き方で 0 になった
+- 刻みの範囲（Battleship Rock）と崖の生成の 2 範囲の石と小礫は、根元の円だけでは焼いた面とのずれを解けなかった。下の「焼いた面の接地用の格子」で解いた
+- 岩はこの時点では据え方を変えておらず、最も深い足元が窓（max(0.5 m, 高さの 20 %)）を超える物が 73820 個あった。下の「足元の帯で据える」で窓と高さの 50 % の両方に収め、接地用の格子を使った最終の違反は 0 になった
+
+### 足元の帯で据える（崖錐の岩）
+
+検査と同じ頂点の標本を向きへ回し、高さの下 5 % の足元の帯を全部使う。
+足元が最も浮く点を 0.02 m 以内、最も深い点を min(高さの 50 %, 窓) − 0.03 m 以内に収める。
+窓は max(0.5 m, 高さの 20 %)。前の沈めの高さを、この上下の間へ収める。
+
+- 収まらない岩だけ、元の乱数の向きを保ちながら法線へ 4 段で寄せる。最後は傾きのばらつきも取り除く
+- それでも収まらなければ 0.75 倍ずつ縮める。板・岩塊の小片の最小の拡大率までで、収まらなければ置かない
+- 岩の検査の埋もれの規則は高さの 50 % のまま。許しは広げていない
+- 岩の違反は根元の円で置いた後の 149533 → 据え直しの後 2490 → 接地用の格子を使った最終 0。
+  据え直しの記録は `.harness/runs/scene-capture/SCN-WL-PLACEMENT-GROUNDING-FIX/iter-20261029/rocks/u1-summary.json`
+
+### 焼いた面の接地用の格子
+
+AssetCook の `--write-placement-ground` で、焼いた面の支持面の高さを 8 m の塊・0.25 m おきに書く。
+升目ごとの信頼の印は、中心と 4 辺の中点で、補間した高さと焼いた面との差が 0.02 m 以内かで決める。
+急な升目は四分点も確かめる。支持面の無い点を含む升目は使わない。
+
+- `Terrain/WastelandPlacementGround.bin` は版 2、10650 塊・47847084 バイト（約 48 MB）。書き出し約 547 秒
+- `CookAssets.ps1` は `--skip-if-current` を付けて書く。元の焼いた面の `cooked_hash` で古さを判定する
+- 格子が無い・古いときは `COOKED_MODEL_MISSING` を出し、DEM の置き方に戻る。
+  今回の起動は `blocks=10650 sources=56 current=1` で格子を読んだ
+- 信頼できない升目には置かない。塊の外は DEM を使うが、支持面の無い DEM の三角形にも置かない
+- 格子と焼いた面の答え合わせは同じ 5000 点で、比べられた 4480 点の差が p50 0.000444 m・p99 0.0157 m、
+  3 cm 超は 8 点（0.18 %）。信頼できない点 519・格子の点で上向きの面なし 1 を除く。
+  最大差は 0.0952 m で、格子の差だけから接地の合格とはしない。
+  出所は `.harness/runs/scene-capture/SCN-WL-PLACEMENT-GROUNDING-FIX/iter-20261029/ground/comparison-summary-v2.json`
+
+最終の値（2026-10-29）:
+
+- 書き出し `.harness/runs/scene-capture/SCN-WL-PLACEMENT-GROUNDING-FIX/placement/placement.json`。
+  物 15008255、足元の点 99166309 は全部 `ok`。石と小礫は従来と同じ 1594 区画の標本
+- 報告は同じ `.harness/runs/scene-capture/SCN-WL-PLACEMENT-GROUNDING-FIX/placement/placement_check.require_compliant.json`。
+  `result=pass mode=require_compliant`、違反 0・測り切れない物 0、問い合わせ 211.4 秒・全体 282.1 秒。
+  全体の違反は項目の前 364918 → 根元の円で置いた後の 195191 → 今 0
+- 岩の埋もれの高さの割合は p50 0.3199・p99 0.4612・最大 0.4802。浮きの最大は 0.0300 m。
+  草と低木の浮き / 埋もれの最大は 0.0233 / 0.0825 m、大きな石 0.0453 / 0.0840 m、
+  石 0.0459 / 0.0870 m、小礫 0.0360 / 0.0544 m
+- 前は上の SCN-WL-CLIFF-PLACEMENT-CHECK の `.harness/runs/scene-capture/SCN-WL-CLIFF-PLACEMENT-CHECK/placement_check.record.json`、
+  根元の円で置いた後は `.harness/runs/scene-capture/SCN-WL-PLACEMENT-GROUNDING-FIX/placement_check.json`。
+  範囲の ID は `ShapeRegions.json` と同じ。物の無い castle の 5 範囲は全組 0 のままなので省く
+- 前は崖の細部が版 10 より前、根元の円で置いた後と最終は版 17。
+  刻み・崖の生成の範囲の増減は、この版の差も含む。減った割合の分母は項目の前の物の数
+
+| 範囲 | 組 | 物（項目の前 → 今） | 減った数（割合） | 違反（項目の前 → 根元の円 → 今） |
+|---|---|---|---|---|
+| 全体 | 岩 | 273616 → 271748 | 1868（0.683 %） | 149522 → 149533 → 0 |
+| 全体 | 草と低木 | 5855831 → 5841060 | 14771（0.252 %） | 138728 → 1064 → 0 |
+| 全体 | 大きな石 | 1562191 → 1560847 | 1344（0.086 %） | 38619 → 5480 → 0 |
+| 全体 | 石（標本） | 1563543 → 1560408 | 3135（0.201 %） | 10456 → 10300 → 0 |
+| 全体 | 小礫（標本） | 5780643 → 5774192 | 6451（0.112 %） | 27593 → 28814 → 0 |
+| cliff_near_2_rooster_butte | 岩 | 3852 → 3758 | 94（2.440 %） | 2049 → 2053 → 0 |
+| cliff_near_2_rooster_butte | 草と低木 | 77018 → 76578 | 440（0.571 %） | 2663 → 106 → 0 |
+| cliff_near_2_rooster_butte | 大きな石 | 19515 → 19438 | 77（0.395 %） | 1324 → 389 → 0 |
+| cliff_near_2_rooster_butte | 石（標本） | 133945 → 133362 | 583（0.435 %） | 1424 → 1485 → 0 |
+| cliff_near_2_rooster_butte | 小礫（標本） | 522704 → 520940 | 1764（0.337 %） | 4436 → 5137 → 0 |
+| cliff_near_3_setting_hen_butte | 岩 | 5218 → 5136 | 82（1.571 %） | 2709 → 2716 → 0 |
+| cliff_near_3_setting_hen_butte | 草と低木 | 105394 → 104819 | 575（0.546 %） | 3865 → 83 → 0 |
+| cliff_near_3_setting_hen_butte | 大きな石 | 27237 → 27162 | 75（0.275 %） | 1251 → 277 → 0 |
+| cliff_near_3_setting_hen_butte | 石（標本） | 187778 → 187589 | 189（0.101 %） | 610 → 706 → 0 |
+| cliff_near_3_setting_hen_butte | 小礫（標本） | 685817 → 685116 | 701（0.102 %） | 1527 → 2050 → 0 |
+| scan_battleship_rock | 岩 | 70927 → 69639 | 1288（1.816 %） | 40229 → 40229 → 0 |
+| scan_battleship_rock | 草と低木 | 278369 → 277058 | 1311（0.471 %） | 10316 → 680 → 0 |
+| scan_battleship_rock | 大きな石 | 108558 → 107699 | 859（0.791 %） | 10125 → 3486 → 0 |
+| scan_battleship_rock | 石（標本） | 536716 → 534430 | 2286（0.426 %） | 7781 → 7515 → 0 |
+| scan_battleship_rock | 小礫（標本） | 1943499 → 1939634 | 3865（0.199 %） | 20448 → 20445 → 0 |
+| scan_franklin_butte_base | 岩 | 8329 → 8308 | 21（0.252 %） | 4123 → 4123 → 0 |
+| scan_franklin_butte_base | 草と低木 | 66758 → 66650 | 108（0.162 %） | 1433 → 17 → 0 |
+| scan_franklin_butte_base | 大きな石 | 18520 → 18482 | 38（0.205 %） | 963 → 256 → 0 |
+| scan_franklin_butte_base | 石（標本） | 116460 → 116385 | 75（0.064 %） | 594 → 557 → 0 |
+| scan_franklin_butte_base | 小礫（標本） | 401101 → 400986 | 115（0.029 %） | 1059 → 1059 → 0 |
+| valley_ref_far_01 | 岩 | 1681 → 1681 | 0（0.000 %） | 843 → 843 → 0 |
+| valley_ref_far_01 | 草と低木 | 31892 → 31784 | 108（0.339 %） | 1079 → 3 → 0 |
+| valley_ref_far_01 | 大きな石 | 7438 → 7436 | 2（0.027 %） | 201 → 1 → 0 |
+| valley_ref_far_01 | 石（標本） | 50624 → 50624 | 0（0.000 %） | 0 → 0 → 0 |
+| valley_ref_far_01 | 小礫（標本） | 187209 → 187209 | 0（0.000 %） | 0 → 0 → 0 |
+| valley_ref_far_02 | 岩 | 0 → 0 | 0（－） | 0 → 0 → 0 |
+| valley_ref_far_02 | 草と低木 | 570 → 570 | 0（0.000 %） | 2 → 0 → 0 |
+| valley_ref_far_02 | 大きな石 | 97 → 97 | 0（0.000 %） | 0 → 0 → 0 |
+| valley_ref_far_02 | 石（標本） | 884 → 884 | 0（0.000 %） | 0 → 0 → 0 |
+| valley_ref_far_02 | 小礫（標本） | 3466 → 3466 | 0（0.000 %） | 0 → 0 → 0 |
+| valley_ref_ground_02 | 岩 | 0 → 0 | 0（－） | 0 → 0 → 0 |
+| valley_ref_ground_02 | 草と低木 | 35152 → 35101 | 51（0.145 %） | 629 → 6 → 0 |
+| valley_ref_ground_02 | 大きな石 | 14633 → 14625 | 8（0.055 %） | 91 → 45 → 0 |
+| valley_ref_ground_02 | 石（標本） | 46845 → 46845 | 0（0.000 %） | 0 → 0 → 0 |
+| valley_ref_ground_02 | 小礫（標本） | 190971 → 190971 | 0（0.000 %） | 0 → 0 → 0 |
+| 範囲の外 | 岩 | 183609 → 183226 | 383（0.209 %） | 99569 → 99569 → 0 |
+| 範囲の外 | 草と低木 | 5261687 → 5249502 | 12185（0.232 %） | 118790 → 170 → 0 |
+| 範囲の外 | 大きな石 | 1366446 → 1366161 | 285（0.021 %） | 24677 → 1026 → 0 |
+| 範囲の外 | 石（標本） | 495573 → 495571 | 2（0.000 %） | 47 → 37 → 0 |
+| 範囲の外 | 小礫（標本） | 1859040 → 1859034 | 6（0.000 %） | 123 → 123 → 0 |
+
+2 % を超えたのは `cliff_near_2_rooster_butte` の岩 94 個（2.440 %）だけ。
+この 94 個の理由別の内訳は数えていないため、据え直し・信頼できない升目・崖の細部の版の差の寄与は分けていない。
+ほかの範囲・組は 2 % 以内で、全体の最大は岩の 0.683 %。
+今回の検査は `--removed` を渡さず、報告の `removed=0`。
+この増減の比較は検査の削除一覧の 2 % 判定とは別で、Rooster Butte の岩が 2 % 以内だったとは扱わない。
+
+減った物の理由（数は項目の前との差で、理由別の内訳を数えた値ではない）:
+
+- 岩: 足元の帯が上下の許しに収まらない岩と、信頼できない升目・支持面の無い DEM の三角形の所
+- 草と低木: 低木 A に替えても根元の円が収まらない株と、信頼できない升目の所
+- 大きな石: 根元の円を収めるために縮めると段の最小を下回る石と、信頼できない升目の所
+- 石: 縮めると段の最小を下回る石と、信頼できない升目の所。刻み・崖の細部の版の差も含む
+- 小礫: 信頼できない升目と、縮めると段の最小を下回る所。刻み・崖の細部の版の差も含む
+
+GPU 時間（RelWithDebInfo、1920×1080、ref_ground_01、300 フレーム。単位 ms、median / p95）:
+
+| 置き方 | GPU | ゲームスレッド | 描画スレッド |
+|---|---|---|---|
+| 項目の前（b853c671） | 17.291 / 17.875 | 23.058 / 25.780 | 23.115 / 25.874 |
+| 前の先頭（38983820） | 17.297 / 18.083 | 24.073 / 32.554 | 24.157 / 32.572 |
+| 岩の据え直しの後 | 16.779 / 17.140 | 22.112 / 23.327 | 22.173 / 23.413 |
+| 最終（焼いた面の格子） | 16.832 / 17.075 | 21.422 / 23.044 | 21.452 / 23.098 |
+
+前の 2 行はほかのビルドが同時に走っていた。最終はほかのビルド・撮影の無いときに測った。
+最終のスクリプトの既定予算 16.6 ms に対する `within_budget` は false（撮影の終了コードは 0）。
+前の 3 行の出所は
+`.harness/runs/scene-capture/SCN-WL-PLACEMENT-GROUNDING-FIX/iter-20261029/rocks/u1-summary.json` と
+`.harness/runs/scene-capture/SCN-WL-PLACEMENT-GROUNDING-FIX/iter-20261029/rocks/gpu/<before-task|before-head|after>/metrics.json`、
+最終は `.harness/runs/scene-capture/SCN-WL-PLACEMENT-GROUNDING-FIX/gpu-final/metrics.json`。
+
+6 視点の見比べ（項目の前の `.harness/runs/scene-capture/SCN-WL-PLACEMENT-GROUNDING-FIX/views-before/` → 最終の `.harness/runs/scene-capture/SCN-WL-PLACEMENT-GROUNDING-FIX/views/`）:
+
+各画素の RGB の差の絶対値の最大が 16 を超えた画素を数え、差の画では桃色で示した（1920×1080）。
+`.harness/runs/scene-capture/SCN-WL-PLACEMENT-GROUNDING-FIX/compare-final/<視点>_before_after_photo.png` は左から前・後・写真。
+`.harness/runs/scene-capture/SCN-WL-PLACEMENT-GROUNDING-FIX/compare-final/<視点>_diff.png` は差。
+4 つの近景は
+`.harness/runs/scene-capture/SCN-WL-PLACEMENT-GROUNDING-FIX/compare-final/<視点>_talus_crop.png` と
+`.harness/runs/scene-capture/SCN-WL-PLACEMENT-GROUNDING-FIX/compare-final/<視点>_valley_crop.png` を 2 倍に拡大して開いた。
+写真は `Assets/Reference/ValleyOfTheGods/` の 6 枚を使った。
+
+| 視点 | 16 階調超の画素 | 変わった所と理由 |
+|---|---|---|
+| ref_far_01 | 86271 | 近景の 4 株とその影が中心。根元の広い低木 B を A に替える規則による葉と枝の形の差。崖と空の大きな形は保つ |
+| ref_far_02 | 21450 | 左右の崖錐の岩の輪郭・影と中景の低木。足元の帯による岩の据え直しと B→A に対応する |
+| ref_cliff_01 | 60103 | 崖錐の岩の帯に広く差が出る。岩の高さ・向き・大きさと影が変わり、焼いた面へ据わる。壁・空の大きな形は保つ |
+| ref_cliff_02 | 9187 | 尖塔の下の斜面・段の岩と右端の崖の岩。足元の帯と格子による据え直し。谷床の広い帯はほぼ同じ |
+| ref_ground_01 | 616 | 左奥の小さな株と近景の石の縁の小さな差。根元の円の高さの差で、近景の株と礫の分布はほぼ同じ |
+| ref_ground_02 | 24855 | 両側の崖錐の岩と近景・中景の低木。岩の据え直しと B→A の形・影の差。谷の大きな形は保つ |
+
+6 枚の前・後・写真の並びと差の画、4 視点の崖錐・谷床の拡大を開いた。
+最終の画で、目立つ浮いた株・石と、高さの半分を超えて埋もれたと見える崖錐の岩は見つからなかった。
+ref_ground_01 の talus_crop は崖錐が写らないため礫の斜面を見た。cliff_02 の谷床は株や石を見分けられる近さではない。
+画像で 0.05 m を測ることはできないので、接地の規則の判定は上の足元の点の検査による。
+写真に対する株の密度・地表の色・壁の形の差は残るが、この接地の記録では一致の判定をしていない。
+
+残り:
+
+- 低木 B は 736606 → 458281（−37.78 %）、A は 739387 → 1017573。
+  今の B:A は 31.05:68.95（1475854 株の内訳）。
+  `.harness/runs/scene-capture/SCN-WL-PLACEMENT-GROUNDING-FIX/placement/placement.json` の形の表と、
+  `.harness/runs/scene-capture/SCN-WL-PLACEMENT-GROUNDING-FIX/placement/placement.objects.bin` の先頭の形の番号を数えた。
+  種の割合を戻す形は決めていない
+- 格子の版 2 のまま升目の判定を強めているため、別の機械の古い版 2 の格子は `--skip-if-current` なしで作り直す。
+  `cooked_hash` と版だけではこの判定の差を見分けられない
+- 石と小礫は区画の標本であり、全域の全個体の合格を示すものではない
+
+植物の Cycles の参照の古さ（`Scripts/` と `Docs/RenderingValidation/` の検索と配置関数の読み取り）:
+
+| 参照 | 配置・形の持ち方 | 今回の撒いた株の配置変更による古さ |
+|---|---|---|
+| SCN-WLR-PLANT-REF-BASE / SCN-WLR-PLANT-REF（NEAR、cycles-trial を含む） | `reference_plant.ply` と `WASTELAND_PLANT_PLACEMENT reference=1` を保存 | なし。撒いた株でなく固定の低木 A 1 株 |
+| SCN-WLR-PLANT-REF-FAR（ref2x・base・aa-none・aa-fxaa） | 同じ固定株を 30 m から撮る。正解はエンジンの ref2x で、Cycles ではない | なし。撒いた株の位置・形の番号を持たない |
+| plant-sky / plant-sun（SCN-WLR-OCCLUSION-SETS・CYCLES と、それを使う遮蔽・根元・太陽の影の比較） | `BlenderOcclusionReference.py` の `plant_placement` と同じ株の PLY | なし。同じ固定株 |
+
+`PlantRegions.py::parse_placement` と `BlenderReference.py::run_plant` は撮影時の配置と PLY を保存するが、
+元は `WastelandFoliage::MakeReferencePlant` の固定株（BlackbrushA、X/Z = 360/1965、倍率 1.2、DEM の高さ − 0.03 m）。
+根元の円や接地用の格子で撒く経路を通らず、今回の置き方だけで古くなる植物の参照は見つからなかった。
+検索の記録は `.harness/runs/scene-capture/SCN-WL-PLACEMENT-GROUNDING-FIX/compare-final/plant-reference-audit.txt`。参照の描き直しと照合の再実行はしていない。
+
+検証の記録:
+
+- Debug の Game、RelWithDebInfo の Game・AssetCook のビルドはすべて終了コード 0
+- 配置の書き出し・接地検査・6 視点の撮影は終了コード 0
+- `CompareReference.py --verify` は終了コード 0（`result=pass photos=6 verify=1`）。
+  6 枚の写真との比較画像と一覧を生成した。写真と形・色が一致したことの判定ではない。
+  アルベドの線形輝度は赤茶の土 0.170・礫の舗石 0.160・皮膜 0.110・砂岩 0.220。
+  報告は `.harness/runs/scene-capture/SCN-WL-PLACEMENT-GROUNDING-FIX/views/reference_metrics.json`
+- `CaptureRegression.ps1 -Phase after` は終了コード 0（`result=pass`、389 秒）。
+  `ReferenceCheck.py` も `result=pass mode=regression scenes=4`。
+  rendering3dtest・mega-bananas・sandbox・night-village の全 4 シーンで撮影の終了コード 0、検証レイヤーのエラー 0。
+  2026-10-28 の before に対し、rendering3dtest は PSNR 99.53 dB、
+  mega-bananas は 63.32 dB、sandbox は画素一致。
+  night-village は before の PNG が無いため前後の比べの値は無く（`before: null`）、この比較は合否に使わない。
+  報告は `.harness/runs/regression/SCN-WL-PLACEMENT-GROUNDING-FIX/after/regression_check.json`
+- verify の全出力と終了コード、GPU 計測、行末の差の数は `.harness/unit-verify.txt`
 
 焼いた面の区画の継ぎ目の割れ目（SCN-WL-TERRAIN-SEAM-FIX で解いた）: 測り切れなかった 1 個の足元は、DEM の区画 (1,2) と (2,2) の継ぎ目 x = −1600 の近くの「交点なし」の点に落ちていた。Battleship Rock の周りの継ぎ目を 0.05 m × 0.1 m おきに引くと、交点なしの点は x = −1600（z −1290〜−1075）1208・z = −999（x −1718〜−1295）1491・x = −2100（z −1339〜−1142）561・z = −1499（x −1419〜−1414）111 あった（`.harness/runs/20261025-120217/aux-SCN-WL-CLIFF-PLACEMENT-CHECK-seam-scan.txt`）。原因は焼きの割れ目ではなく問い合わせだった。区画の境の頂点は押し出しも刻みも全体の格子の番号だけから求めるので両側の区画でビット単位で同じ位置にあり（面は閉じている）、押し出しは境の頂点を水平へ最大 0.77 m（castle の段で 1.25 m）動かす。問い合わせは点の X/Z で区画を 1 つだけ選んでいたので、境が隣へずれた所の面（隣の区画のメッシュにある）を読めなかった。問い合わせを、境から 2 m 以内の点は隣の区画の三角形とも交わりを調べる形に直した（上の「焼いた面の問い合わせ」。焼きは変えないので縁の頂点を動かさない形にはしない: 境で押し出しを止めると崖の壁に区画の境の直線が出る）。直した後の継ぎ目の値は下の「区画の継ぎ目」。
 
