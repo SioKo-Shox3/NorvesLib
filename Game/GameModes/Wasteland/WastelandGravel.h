@@ -40,7 +40,9 @@ namespace Game::GameModes::WastelandGravel
     /// WastelandFoliage::kRootRingFloatAllowance を超えて浮かない所まで下げた高さ。置き方と置いた物の書き出しが同じ値を使う。
     /// 円の最も高い点が地面の線より WastelandFoliage::kRootRingBurialAllowance を超えて高い（斜面に対して石が大きい）ときは false
     bool StoneGroundLine(const NorvesLib::Core::Rendering::Terrain::TerrainHeightField &field, float x, float z, float radius,
-                         float yaw, float &outY);
+                         float yaw, float &outY,
+                         const NorvesLib::Core::Rendering::Terrain::TerrainPlacementGround *ground = nullptr,
+                         bool *unreliable = nullptr);
 
     /**
      * @brief カメラの周りの区画へ石と礫を置き、束の一覧を作る
@@ -53,7 +55,8 @@ namespace Game::GameModes::WastelandGravel
     public:
         /// 石のメッシュ・色・間引きの距離を作り、高さ場と地図を持つ。地図が無い（読めない）ときは置かない
         void Initialize(NorvesLib::Core::Container::TSharedPtr<const NorvesLib::Core::Rendering::Terrain::TerrainHeightField> field,
-                        NorvesLib::Core::Container::TSharedPtr<const NorvesLib::Core::Rendering::Terrain::TerrainSurfaceMask> mask);
+                        NorvesLib::Core::Container::TSharedPtr<const NorvesLib::Core::Rendering::Terrain::TerrainSurfaceMask> mask,
+                        NorvesLib::Core::Container::TSharedPtr<const NorvesLib::Core::Rendering::Terrain::TerrainPlacementGround> ground);
 
         /// 持っているものを全部手放す
         void Reset();
@@ -76,7 +79,8 @@ namespace Game::GameModes::WastelandGravel
         /// 種類ごとに outInstances へ足す。持っている区画と束の一覧は変えない
         void CollectCellAt(uint32_t tier, float x, float z,
                            NorvesLib::Core::Container::VariableArray<NorvesLib::Core::Rendering::FoliageInstance> (
-                               &outInstances)[kKindsPerTier]) const;
+                               &outInstances)[kKindsPerTier],
+                           NorvesLib::Core::Container::VariableArray<WastelandFoliage::GroundRejection> *rejected = nullptr) const;
         /// 段 tier の区画の一辺[m]（書き出しが区画を数えるのに使う）
         static float GetCellSize(uint32_t tier);
         /// 段 tier の名前（pebble・stone・cobble）
@@ -97,6 +101,7 @@ namespace Game::GameModes::WastelandGravel
             /// 石の底の高さの範囲[m]
             float MinRootY = 0.0f;
             float MaxRootY = 0.0f;
+            uint32_t Unreliable[kKindsPerTier] = {};
         };
 
         /// 1 つの段の区画の組
@@ -109,13 +114,15 @@ namespace Game::GameModes::WastelandGravel
         };
 
         /// 段 tier の区画 cell の石を作る
-        void BuildCell(uint32_t tier, Cell &cell) const;
+        void BuildCell(uint32_t tier, Cell &cell,
+                       NorvesLib::Core::Container::VariableArray<WastelandFoliage::GroundRejection> *rejected = nullptr) const;
         /// (x,z) が置かない範囲か（bLarge なら視点の足元も外す）
         bool IsExcluded(float x, float z, bool bLarge) const;
         /// 持っている区画から束の一覧を作り直す
         void RebuildBatches(NorvesLib::Core::Container::VariableArray<NorvesLib::Core::Rendering::FoliageBatch> &outBatches) const;
 
         NorvesLib::Core::Container::TSharedPtr<const NorvesLib::Core::Rendering::Terrain::TerrainHeightField> m_pField;
+        NorvesLib::Core::Container::TSharedPtr<const NorvesLib::Core::Rendering::Terrain::TerrainPlacementGround> m_pGround;
         NorvesLib::Core::Container::TSharedPtr<const NorvesLib::Core::Rendering::Terrain::TerrainSurfaceMask> m_pMask;
         /// 段・種類ごとの束のひな形（メッシュ・色・間引きの距離。インスタンスと区画は空）
         NorvesLib::Core::Rendering::FoliageBatch m_Templates[kTierCount][kKindsPerTier];

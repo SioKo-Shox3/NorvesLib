@@ -21,6 +21,7 @@
 #include "Core/Public/Container/VariableArray.h"
 #include "Core/Public/Math/Vector3.h"
 #include "Core/Public/Rendering/Terrain/TerrainHeightField.h"
+#include "Core/Public/Rendering/Terrain/TerrainPlacementGround.h"
 
 #include <cstdint>
 
@@ -57,6 +58,14 @@ namespace Game::GameModes::WastelandTalus
         float Radius = 0.0f;
     };
 
+    /// 信頼できない地面のため見送った岩の候補。
+    struct TalusGroundRejection
+    {
+        float X = 0.0f;
+        float Z = 0.0f;
+        uint32_t Mesh = 0;
+    };
+
     /// 配置の内訳（ログ用）
     struct TalusStats
     {
@@ -71,6 +80,10 @@ namespace Game::GameModes::WastelandTalus
         uint32_t Shrunk = 0;
         /// 寄せ直しと縮小でも足元の許容区間に収まらず置かなかった数
         uint32_t Unplaced = 0;
+        uint32_t Unreliable[kTalusMeshCount] = {};
+        /// 塊の外で、DEM の三角形が支持面の向きを満たさず見送った数（Unreliable の内数）。
+        uint32_t NoBlockUnsupported[kTalusMeshCount] = {};
+        NorvesLib::Core::Container::VariableArray<TalusGroundRejection> GroundRejections;
         uint32_t PerMesh[kTalusMeshCount] = {};
         float MaxBoulderHeight = 0.0f;
         /// 影を落とす候補（大岩・転がり出た岩）の数と、影を落とす岩のうち最も小さい高さ[m]
@@ -89,6 +102,7 @@ namespace Game::GameModes::WastelandTalus
      */
     void BuildTalusRocks(const NorvesLib::Core::Rendering::Terrain::TerrainHeightField &field,
                          const NorvesLib::Core::Rendering::Terrain::TerrainSurfaceMask &mask,
+                         const NorvesLib::Core::Rendering::Terrain::TerrainPlacementGround *ground,
                          const TalusMeshShape (&shapes)[kTalusMeshCount],
                          const NorvesLib::Core::Container::VariableArray<TalusExclusion> &exclusions,
                          NorvesLib::Core::Container::VariableArray<NorvesLib::Core::Component::MegaScatterInstance> &outCasters,

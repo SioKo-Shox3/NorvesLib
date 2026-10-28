@@ -413,17 +413,32 @@ namespace Game::GameModes::WastelandGravel
         }
     } // namespace
 
-    bool StoneGroundLine(const Terrain::TerrainHeightField &field, float x, float z, float radius, float yaw, float &outY)
+    bool StoneGroundLine(const Terrain::TerrainHeightField &field, float x, float z, float radius, float yaw, float &outY,
+                         const Terrain::TerrainPlacementGround *ground, bool *unreliable)
     {
+        if (unreliable != nullptr)
+        {
+            *unreliable = false;
+        }
         float ringMinY = 0.0f;
         float ringMaxY = 0.0f;
-        WastelandFoliage::SampleRootRing(field, x, z, radius, yaw, ringMinY, ringMaxY);
-        outY = std::min(field.SampleHeight(x, z), ringMinY + WastelandFoliage::kRootRingFloatAllowance);
+        float centerY = 0.0f;
+        if (!WastelandFoliage::SamplePlacementGround(field, ground, x, z, centerY) ||
+            !WastelandFoliage::SampleRootRing(field, x, z, radius, yaw, ringMinY, ringMaxY, ground))
+        {
+            if (unreliable != nullptr)
+            {
+                *unreliable = true;
+            }
+            return false;
+        }
+        outY = std::min(centerY, ringMinY + WastelandFoliage::kRootRingFloatAllowance);
         return outY >= ringMaxY - WastelandFoliage::kRootRingBurialAllowance;
     }
 
     void GravelScatter::Initialize(TSharedPtr<const Terrain::TerrainHeightField> field,
-                                   TSharedPtr<const Terrain::TerrainSurfaceMask> mask)
+                                   TSharedPtr<const Terrain::TerrainSurfaceMask> mask,
+                                   TSharedPtr<const Terrain::TerrainPlacementGround> ground)
     {
         Reset();
         if (!field || !mask)
@@ -433,6 +448,7 @@ namespace Game::GameModes::WastelandGravel
         }
         m_pField = std::move(field);
         m_pMask = std::move(mask);
+        m_pGround = std::move(ground);
         for (uint32_t tier = 0; tier < kTierCount; ++tier)
         {
             for (uint32_t kind = 0; kind < kKindsPerTier; ++kind)
@@ -454,6 +470,7 @@ namespace Game::GameModes::WastelandGravel
     {
         m_pField.reset();
         m_pMask.reset();
+        m_pGround.reset();
         for (auto &tierTemplates : m_Templates)
         {
             for (FoliageBatch &batch : tierTemplates)
@@ -521,7 +538,8 @@ namespace Game::GameModes::WastelandGravel
         return false;
     }
 
-    void GravelScatter::BuildCell(uint32_t tier, Cell &cell) const
+    void GravelScatter::BuildCell(uint32_t tier, Cell &cell,
+                                  VariableArray<WastelandFoliage::GroundRejection> *rejected) const
     {
         const TierDesc &desc = kTiers[tier];
         const Terrain::TerrainHeightField &field = *m_pField;
@@ -585,18 +603,43 @@ namespace Game::GameModes::WastelandGravel
                 // 地面の線: 根元の円の最も低い点より浮かない高さ。円の高低差が許しを超える（斜面に対して石が大きい）ときは、
                 // 高低差が許しの 9 割に収まるまで石を縮め、段の最小の大きさを下回るなら置かない
                 float groundY = 0.0f;
-                if (!StoneGroundLine(field, x, z, m_RootRadius[tier][kind] * size, yaw, groundY))
+                bool unreliable = false;
+                const auto rejectUnreliable = [&]()
                 {
+                    ++cell.Unreliable[kind];
+                    if (rejected != nullptr)
+                    {
+                        rejected->push_back({x, z, kind});
+                    }
+                };
+                if (!StoneGroundLine(field, x, z, m_RootRadius[tier][kind] * size, yaw, groundY, m_pGround.get(), &unreliable))
+                {
+                    if (unreliable)
+                    {
+                        rejectUnreliable();
+                        continue;
+                    }
                     float ringMinY = 0.0f;
                     float ringMaxY = 0.0f;
-                    WastelandFoliage::SampleRootRing(field, x, z, m_RootRadius[tier][kind] * size, yaw, ringMinY, ringMaxY);
+                    WastelandFoliage::SampleRootRing(field, x, z, m_RootRadius[tier][kind] * size, yaw, ringMinY, ringMaxY,
+                                                    m_pGround.get());
                     const float allowance = WastelandFoliage::kRootRingFloatAllowance + WastelandFoliage::kRootRingBurialAllowance;
                     size *= 0.9f * allowance / std::max(ringMaxY - ringMinY, allowance);
                     if (size < desc.SizeRange[0] ||
-                        !StoneGroundLine(field, x, z, m_RootRadius[tier][kind] * size, yaw, groundY))
+                        !StoneGroundLine(field, x, z, m_RootRadius[tier][kind] * size, yaw, groundY, m_pGround.get(), &unreliable))
                     {
+                        if (unreliable)
+                        {
+                            rejectUnreliable();
+                        }
                         continue;
                     }
+                }
+                float centerY = 0.0f;
+                if (!WastelandFoliage::SamplePlacementGround(field, m_pGround.get(), x, z, centerY))
+                {
+                    rejectUnreliable();
+                    continue;
                 }
                 const float heightScale = size * (0.6f + 0.7f * Hash2(gx, gz, tierSalt + 8u));
                 const float stoneHeight = batch.Mesh->Height * heightScale;
@@ -609,7 +652,7 @@ namespace Game::GameModes::WastelandGravel
 
                 FoliageInstance instance;
                 instance.Position[0] = x;
-                instance.Position[1] = std::min(field.SampleHeight(x, z) - sink, groundY - stoneHeight * sinkShare);
+                instance.Position[1] = std::min(centerY - sink, groundY - stoneHeight * sinkShare);
                 instance.Position[2] = z;
                 instance.Yaw = yaw;
                 instance.WidthScale = size;
@@ -644,7 +687,8 @@ namespace Game::GameModes::WastelandGravel
     }
 
     void GravelScatter::CollectCellAt(uint32_t tier, float x, float z,
-                                      VariableArray<FoliageInstance> (&outInstances)[kKindsPerTier]) const
+                                      VariableArray<FoliageInstance> (&outInstances)[kKindsPerTier],
+                                      VariableArray<WastelandFoliage::GroundRejection> *rejected) const
     {
         if (!IsInitialized() || tier >= kTierCount)
         {
@@ -654,7 +698,7 @@ namespace Game::GameModes::WastelandGravel
         Cell cell;
         cell.X = static_cast<int32_t>(std::floor(x / cellSize));
         cell.Z = static_cast<int32_t>(std::floor(z / cellSize));
-        BuildCell(tier, cell);
+        BuildCell(tier, cell, rejected);
         for (uint32_t kind = 0; kind < kKindsPerTier; ++kind)
         {
             outInstances[kind].insert(outInstances[kind].end(), cell.Instances[kind].begin(), cell.Instances[kind].end());
@@ -744,10 +788,23 @@ namespace Game::GameModes::WastelandGravel
                    static_cast<double>(cameraX), static_cast<double>(cameraZ), static_cast<double>(here.Rock),
                    static_cast<double>(here.Talus), static_cast<double>(here.Fine), static_cast<double>(here.Gravel),
                    static_cast<double>(here.Sand));
-        LOG_INFO_F("WASTELAND_GRAVEL camera=(%.1f,%.1f) cells=%zu/%zu/%zu stones=%zu/%zu/%zu created=%u dropped=%zu batches=%zu",
+        uint64_t unreliable[kTierCount] = {};
+        for (uint32_t tier = 0; tier < kTierCount; ++tier)
+        {
+            for (const Cell &cell : m_Tiers[tier].Cells)
+            {
+                for (uint32_t kind = 0; kind < kKindsPerTier; ++kind)
+                {
+                    unreliable[tier] += cell.Unreliable[kind];
+                }
+            }
+        }
+        LOG_INFO_F("WASTELAND_GRAVEL camera=(%.1f,%.1f) cells=%zu/%zu/%zu stones=%zu/%zu/%zu created=%u dropped=%zu batches=%zu "
+                   "unreliable=%llu/%llu/%llu",
                    static_cast<double>(cameraX), static_cast<double>(cameraZ), m_Tiers[0].Cells.size(),
                    m_Tiers[1].Cells.size(), m_Tiers[2].Cells.size(), stones[0], stones[1], stones[2], created, dropped,
-                   outBatches.size());
+                   outBatches.size(), static_cast<unsigned long long>(unreliable[0]),
+                   static_cast<unsigned long long>(unreliable[1]), static_cast<unsigned long long>(unreliable[2]));
         return true;
     }
 

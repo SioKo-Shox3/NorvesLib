@@ -67,6 +67,13 @@ namespace NorvesLib::Core::Rendering::Terrain
     Container::TSharedPtr<const TerrainPlacementGround> TerrainPlacementGround::Load(Container::AnsiStringView path,
                                                                                      Container::AnsiString &outError)
     {
+        return Load(path, Asset::AssetFileReader(), outError);
+    }
+
+    Container::TSharedPtr<const TerrainPlacementGround> TerrainPlacementGround::Load(Container::AnsiStringView path,
+                                                                                     const Asset::AssetFileReader &fileReader,
+                                                                                     Container::AnsiString &outError)
+    {
         outError.clear();
         try
         {
@@ -75,7 +82,7 @@ namespace NorvesLib::Core::Rendering::Terrain
                 outError = reason;
                 return {};
             };
-            const Asset::AssetReadResult file = Asset::AssetFileReader().Read(path);
+            const Asset::AssetReadResult file = fileReader.Read(path);
             if (!file.Succeeded())
             {
                 outError = "接地用の高さ格子を読めません: ";

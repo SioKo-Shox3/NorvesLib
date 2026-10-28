@@ -1,4 +1,5 @@
 ﻿#include "GameModes/Wasteland/WastelandTalus.h"
+#include "GameModes/Wasteland/WastelandFoliage.h"
 
 #include "Core/Public/Logging/LogMacros.h"
 #include "Core/Public/Math/Quaternion.h"
@@ -15,6 +16,7 @@ using NorvesLib::Core::Rendering::Terrain::TerrainSurfaceMask;
 using NorvesLib::Core::Rendering::Terrain::TerrainSurfaceWeights;
 using NorvesLib::Math::Quaternion;
 using NorvesLib::Math::Vector3;
+namespace Terrain = NorvesLib::Core::Rendering::Terrain;
 
 namespace Game::GameModes::WastelandTalus
 {
@@ -81,7 +83,7 @@ namespace Game::GameModes::WastelandTalus
         constexpr float kCragTiltJitterDegrees = 10.0f;
         constexpr float kSlabTiltJitterDegrees = 12.0f;
         // 底の頂点とみなす、回した高さの下からの割合
-        constexpr float kBottomBand = 0.05f;
+        constexpr double kBottomBand = 0.05;
         // 検査の支持窓と埋もれの上限に対し、DEM の双線形と焼いた面の三角形の差を見込む[m]
         constexpr float kSupportMargin = 0.03f;
         constexpr float kFloatAllowance = 0.02f;
@@ -201,6 +203,48 @@ namespace Game::GameModes::WastelandTalus
             }
         }
 
+        /// 塊の外は DEM の三角形をそのまま描く。その面が検査の支持面の向きを満たすかを調べる。
+        bool DemTriangleHasSupport(const TerrainHeightField &field, float x, float z)
+        {
+            if (!field.IsGrid())
+            {
+                return true;
+            }
+            const Terrain::TerrainGridLayout layout = field.GetGridLayout();
+            if (layout.Columns < 2u || layout.Rows < 2u || layout.Spacing <= 0.0 || !field.Contains(x, z))
+            {
+                return false;
+            }
+            const double u = (static_cast<double>(x) - layout.FirstX) / layout.Spacing;
+            const double v = (static_cast<double>(z) - layout.FirstZ) / layout.Spacing;
+            const uint32_t column = std::min(static_cast<uint32_t>(u), layout.Columns - 2u);
+            const uint32_t row = std::min(static_cast<uint32_t>(v), layout.Rows - 2u);
+            const double fu = u - column;
+            const double fv = v - row;
+            const double h00 = field.GetGridVertexHeight(column, row);
+            const double h10 = field.GetGridVertexHeight(column + 1u, row);
+            const double h01 = field.GetGridVertexHeight(column, row + 1u);
+            const double h11 = field.GetGridVertexHeight(column + 1u, row + 1u);
+            double dx = 0.0;
+            double dz = 0.0;
+            if (Terrain::UsesMainDiagonal(column, row))
+            {
+                dx = fu >= fv ? h10 - h00 : h11 - h01;
+                dz = fu >= fv ? h11 - h10 : h01 - h00;
+            }
+            else
+            {
+                dx = fu + fv <= 1.0 ? h10 - h00 : h11 - h01;
+                dz = fu + fv <= 1.0 ? h01 - h00 : h11 - h10;
+            }
+            dx /= layout.Spacing;
+            dz /= layout.Spacing;
+            // CheckPlacement.py と接地格子の交点探索が使う上向きの面の下限。
+            constexpr double kMinSupportNormalY = 0.3;
+            return std::isfinite(dx) && std::isfinite(dz) &&
+                   1.0 / std::sqrt(1.0 + dx * dx + dz * dz) >= kMinSupportNormalY;
+        }
+
         /// 影を落とす候補（大岩・転がり出た岩）。大きい順に kCasterBudget までを影を落とす散布へ回す
         struct CasterCandidate
         {
@@ -212,6 +256,7 @@ namespace Game::GameModes::WastelandTalus
         {
             const TerrainHeightField &Field;
             const TerrainSurfaceMask &Mask;
+            const NorvesLib::Core::Rendering::Terrain::TerrainPlacementGround *Ground;
             const TalusMeshShape (&Shapes)[kTalusMeshCount];
             const VariableArray<TalusExclusion> &Exclusions;
             /// 影を落とさない岩（小片と、影の上限から溢れた候補）
@@ -222,6 +267,8 @@ namespace Game::GameModes::WastelandTalus
             VariableArray<CasterCandidate> Candidates;
             /// 回した全標本の座標（足元の帯と高さを同じ標本から求める）
             VariableArray<Vector3> RotatedPoints;
+            /// 書き出した四元数と頂点を検査と同じ精度で回した、高さだけの列。
+            VariableArray<double> RotatedBandY;
 
             bool IsExcluded(float x, float z) const
             {
@@ -251,8 +298,10 @@ namespace Game::GameModes::WastelandTalus
 
             /// 検査と同じ全標本の下 5 % を足元とし、浮きと埋もれの両方に収まる高さを求める
             bool FitRock(TalusMesh mesh, const Quaternion &worldRotation, float scale, float x, float z,
-                         MegaScatterInstance &outInstance, float &outHeight)
+                         MegaScatterInstance &outInstance, float &outHeight, bool &unreliable, bool &noBlockUnsupported)
             {
+                unreliable = false;
+                noBlockUnsupported = false;
                 const TalusMeshShape &shape = Shapes[static_cast<uint32_t>(mesh)];
                 const VariableArray<Vector3> &points = shape.Points;
                 if (points.empty())
@@ -264,10 +313,20 @@ namespace Game::GameModes::WastelandTalus
                 const Vector3 centerOffset = worldRotation * Vector3(center.x * scale, center.y * scale, center.z * scale);
                 const float originX = x - centerOffset.x;
                 const float originZ = z - centerOffset.z;
+                // 見送った候補も、配置時と同じ原点で範囲別に数える。
+                outInstance.Position.x = originX;
+                outInstance.Position.z = originZ;
 
                 RotatedPoints.resize(points.size());
+                RotatedBandY.resize(points.size());
                 float minY = std::numeric_limits<float>::max();
                 float maxY = std::numeric_limits<float>::lowest();
+                double minBandY = std::numeric_limits<double>::max();
+                double maxBandY = std::numeric_limits<double>::lowest();
+                const double ux = worldRotation.x;
+                const double uy = worldRotation.y;
+                const double uz = worldRotation.z;
+                const double w = worldRotation.w;
                 for (size_t index = 0; index < points.size(); ++index)
                 {
                     const Vector3 &point = points[index];
@@ -275,18 +334,49 @@ namespace Game::GameModes::WastelandTalus
                     RotatedPoints[index] = offset;
                     minY = std::min(minY, offset.y);
                     maxY = std::max(maxY, offset.y);
+                    // 足元の帯は検査と同じ四元数の式・倍精度で選ぶ。高さの許しと帯の割合は変えない。
+                    const double vx = static_cast<double>(point.x) * scale;
+                    const double vy = static_cast<double>(point.y) * scale;
+                    const double vz = static_cast<double>(point.z) * scale;
+                    const double tx = 2.0 * (uy * vz - uz * vy);
+                    const double ty = 2.0 * (uz * vx - ux * vz);
+                    const double tz = 2.0 * (ux * vy - uy * vx);
+                    const double bandY = vy + w * ty + (uz * tx - ux * tz);
+                    RotatedBandY[index] = bandY;
+                    minBandY = std::min(minBandY, bandY);
+                    maxBandY = std::max(maxBandY, bandY);
                 }
                 outHeight = maxY - minY;
-                const float bottomLimit = minY + outHeight * kBottomBand;
+                // 接地格子が無いときは、従来の float の帯の選び方を保つ。
+                const double bottomLimit = Ground != nullptr
+                                               ? minBandY + (maxBandY - minBandY) * kBottomBand
+                                               : static_cast<double>(minY + outHeight * static_cast<float>(kBottomBand));
                 float lowest = std::numeric_limits<float>::max();
                 float highest = std::numeric_limits<float>::lowest();
-                for (const Vector3 &offset : RotatedPoints)
+                for (size_t index = 0; index < RotatedPoints.size(); ++index)
                 {
-                    if (offset.y > bottomLimit)
+                    const Vector3 &offset = RotatedPoints[index];
+                    const double bandY = Ground != nullptr ? RotatedBandY[index] : static_cast<double>(offset.y);
+                    if (bandY > bottomLimit)
                     {
                         continue;
                     }
-                    const float contact = Field.SampleHeight(originX + offset.x, originZ + offset.z) - offset.y;
+                    const float sampleX = originX + offset.x;
+                    const float sampleZ = originZ + offset.z;
+                    float groundY = 0.0f;
+                    if (Ground != nullptr && Ground->Sample(sampleX, sampleZ, groundY) == Terrain::PlacementGroundSample::NoBlock &&
+                        !DemTriangleHasSupport(Field, sampleX, sampleZ))
+                    {
+                        unreliable = true;
+                        noBlockUnsupported = true;
+                        return false;
+                    }
+                    if (!WastelandFoliage::SamplePlacementGround(Field, Ground, sampleX, sampleZ, groundY))
+                    {
+                        unreliable = true;
+                        return false;
+                    }
+                    const float contact = groundY - offset.y;
                     lowest = std::min(lowest, contact);
                     highest = std::max(highest, contact);
                 }
@@ -323,6 +413,8 @@ namespace Game::GameModes::WastelandTalus
                 float height = 0.0f;
                 bool bFits = false;
                 bool bRealigned = false;
+                bool unreliable = false;
+                bool noBlockUnsupported = false;
                 for (uint32_t step = 0; step <= kAlignmentSteps; ++step)
                 {
                     const float t = static_cast<float>(step) / static_cast<float>(kAlignmentSteps);
@@ -334,25 +426,38 @@ namespace Game::GameModes::WastelandTalus
                     {
                         rotation = rotation * face;
                     }
-                    if (FitRock(mesh, rotation, scale, x, z, instance, height))
+                    if (FitRock(mesh, rotation, scale, x, z, instance, height, unreliable, noBlockUnsupported))
                     {
                         bFits = true;
                         bRealigned = step > 0;
+                        break;
+                    }
+                    if (unreliable)
+                    {
                         break;
                     }
                 }
                 const float initialScale = scale;
                 // 岩塊・板とも、既存の小片の最小拡大率までに留め、群れの位置と数の乱数は変えない
                 const float minScale = bSlab ? kSlabScale[0] : kFragmentCragScale[0];
-                while (!bFits && scale > minScale)
+                while (!bFits && !unreliable && scale > minScale)
                 {
                     scale = std::max(minScale, scale * kShrinkFactor);
-                    bFits = FitRock(mesh, rotation, scale, x, z, instance, height);
+                    bFits = FitRock(mesh, rotation, scale, x, z, instance, height, unreliable, noBlockUnsupported);
                     bRealigned = true;
                 }
                 if (!bFits)
                 {
                     ++Stats.Unplaced;
+                    if (unreliable)
+                    {
+                        ++Stats.Unreliable[static_cast<uint32_t>(mesh)];
+                        if (noBlockUnsupported)
+                        {
+                            ++Stats.NoBlockUnsupported[static_cast<uint32_t>(mesh)];
+                        }
+                        Stats.GroundRejections.push_back({instance.Position.x, instance.Position.z, static_cast<uint32_t>(mesh)});
+                    }
                     return 0.0f;
                 }
                 if (bRealigned)
@@ -466,6 +571,7 @@ namespace Game::GameModes::WastelandTalus
     } // namespace
 
     void BuildTalusRocks(const TerrainHeightField &field, const TerrainSurfaceMask &mask,
+                         const NorvesLib::Core::Rendering::Terrain::TerrainPlacementGround *ground,
                          const TalusMeshShape (&shapes)[kTalusMeshCount], const VariableArray<TalusExclusion> &exclusions,
                          VariableArray<MegaScatterInstance> &outCasters, VariableArray<MegaScatterInstance> &outFragments,
                          TalusStats &outStats)
@@ -478,7 +584,7 @@ namespace Game::GameModes::WastelandTalus
         {
             return;
         }
-        Builder builder{field, mask, shapes, exclusions, outFragments, outStats};
+        Builder builder{field, mask, ground, shapes, exclusions, outFragments, outStats};
         const auto &layout = mask.GetLayout();
         const int32_t cellsX = static_cast<int32_t>(std::floor((layout.MaxX - layout.MinX) / kClusterCellMeters));
         const int32_t cellsZ = static_cast<int32_t>(std::floor((layout.MaxZ - layout.MinZ) / kClusterCellMeters));
@@ -551,8 +657,9 @@ namespace Game::GameModes::WastelandTalus
         }
         outStats.SupportPoints[0] = static_cast<uint32_t>(shapes[0].Points.size());
         outStats.SupportPoints[1] = static_cast<uint32_t>(shapes[1].Points.size());
-        LOG_INFO("WASTELAND_TALUS_FIT realigned=%u shrunk=%u unplaced=%u", outStats.Realigned, outStats.Shrunk,
-                 outStats.Unplaced);
+        LOG_INFO("WASTELAND_TALUS_FIT realigned=%u shrunk=%u unplaced=%u unreliable=%u/%u no_block_unsupported=%u/%u",
+                 outStats.Realigned, outStats.Shrunk, outStats.Unplaced, outStats.Unreliable[0], outStats.Unreliable[1],
+                 outStats.NoBlockUnsupported[0], outStats.NoBlockUnsupported[1]);
     }
 
 } // namespace Game::GameModes::WastelandTalus

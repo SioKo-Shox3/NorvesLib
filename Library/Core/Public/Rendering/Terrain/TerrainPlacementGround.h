@@ -8,6 +8,11 @@
 
 #include <cstdint>
 
+namespace NorvesLib::Core::Asset
+{
+    class AssetFileReader;
+}
+
 namespace NorvesLib::Core::Rendering::Terrain
 {
     class TerrainHeightField;
@@ -57,13 +62,21 @@ namespace NorvesLib::Core::Rendering::Terrain
         /// path はアセットの根からの相対パス、または絶対パス。壊れた見出し・大きさ・塊を拒否する。
         static Container::TSharedPtr<const TerrainPlacementGround> Load(Container::AnsiStringView path,
                                                                         Container::AnsiString &outError);
+        /// クック済み資産の根を持つ読み込み器から読む。
+        static Container::TSharedPtr<const TerrainPlacementGround> Load(Container::AnsiStringView path,
+                                                                        const Asset::AssetFileReader &reader,
+                                                                        Container::AnsiString &outError);
 
         /// 可の升目だけ双線形補間する。不可では outY を変えず、塊の欠落・範囲の外は NoBlock。
         PlacementGroundSample Sample(float x, float z, float &outY) const;
-        /// 不可の升目は false。可なら焼いた面、塊が無ければ DEM を outY へ書いて true。
+        /// 不可の升目は false。可なら焼いた面、塊が無ければ高さ場の高さを返す。
         bool SampleGround(const TerrainHeightField &field, float x, float z, float &outY) const;
         /// 順番に依存せず論理名と cooked_hash の組を照合する。CookedPackage は照合しない。
         bool IsCurrent(Container::Span<const TerrainPlacementGroundSource> sources) const;
+        size_t GetBlockCount() const
+        {
+            return m_Blocks.size();
+        }
         Container::Span<const TerrainPlacementGroundSource> GetSources() const
         {
             return {m_Sources.data(), m_Sources.size()};

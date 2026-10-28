@@ -34,6 +34,7 @@ namespace Game::GameModes::WastelandPlacementExport
         /// 形の範囲の四角（両端を含む）
         struct RegionBox
         {
+            String Id;
             float MinX = 0.0f;
             float MaxX = 0.0f;
             float MinZ = 0.0f;
@@ -135,6 +136,7 @@ namespace Game::GameModes::WastelandPlacementExport
                     return false;
                 }
                 RegionBox box;
+                box.Id = regions.GetArrayElement(index).FindMember("id").AsString();
                 box.MinX = static_cast<float>(x.GetArrayElement(0).AsNumber());
                 box.MaxX = static_cast<float>(x.GetArrayElement(1).AsNumber());
                 box.MinZ = static_cast<float>(z.GetArrayElement(0).AsNumber());
@@ -206,7 +208,8 @@ namespace Game::GameModes::WastelandPlacementExport
         }
     } // namespace
 
-    bool Write(const String &path, const Rendering::Terrain::TerrainHeightField &field, const TalusInput &talus,
+    bool Write(const String &path, const Rendering::Terrain::TerrainHeightField &field,
+               const Rendering::Terrain::TerrainPlacementGround *ground, const TalusInput &talus,
                WastelandFoliage::FoliageScatter &foliage, const WastelandGravel::GravelScatter &gravel)
     {
         VariableArray<RegionBox> regions;
@@ -215,6 +218,39 @@ namespace Game::GameModes::WastelandPlacementExport
         {
             LOG_ERROR_F("WASTELAND_PLACEMENT_EXPORT_FAILED 形の範囲を読めませんでした: %s", regionError.c_str());
             return false;
+        }
+
+        // 各範囲は重なりを含めて別々に数え、どれにも入らない候補は最後に数える。
+        constexpr uint32_t kRejectionGroups = WastelandFoliage::kPlantKindCount + WastelandGravel::kTierCount +
+                                               WastelandTalus::kTalusMeshCount;
+        struct RejectionCounts
+        {
+            uint64_t Values[kRejectionGroups] = {};
+        };
+        RejectionCounts rejectedAll;
+        VariableArray<RejectionCounts> rejectedRegions(regions.size() + 1u);
+        const auto countRejection = [&](float x, float z, uint32_t group)
+        {
+            ++rejectedAll.Values[group];
+            bool inside = false;
+            for (size_t i = 0; i < regions.size(); ++i)
+            {
+                const RegionBox &box = regions[i];
+                if (x >= box.MinX && x <= box.MaxX && z >= box.MinZ && z <= box.MaxZ)
+                {
+                    ++rejectedRegions[i].Values[group];
+                    inside = true;
+                }
+            }
+            if (!inside)
+            {
+                ++rejectedRegions[regions.size()].Values[group];
+            }
+        };
+        for (const auto &rejected : talus.GroundRejections)
+        {
+            countRejection(rejected.X, rejected.Z,
+                           WastelandFoliage::kPlantKindCount + WastelandGravel::kTierCount + rejected.Mesh);
         }
 
         const Rendering::Terrain::TerrainGridLayout layout = field.GetGridLayout();
@@ -252,8 +288,13 @@ namespace Game::GameModes::WastelandPlacementExport
                 for (int32_t cellX = firstCellX; cellX <= lastCellX; ++cellX)
                 {
                     VariableArray<FoliageInstance> plantCell[WastelandFoliage::kPlantKindCount];
+                    VariableArray<WastelandFoliage::GroundRejection> rejected;
                     foliage.CollectCellAt(static_cast<float>((cellX + 0.5) * cellSize),
-                                          static_cast<float>((cellZ + 0.5) * cellSize), plantCell);
+                                          static_cast<float>((cellZ + 0.5) * cellSize), plantCell, &rejected);
+                    for (const auto &item : rejected)
+                    {
+                        countRejection(item.X, item.Z, item.Kind);
+                    }
                     ++plantCells;
                     for (uint32_t kind = 0; kind < WastelandFoliage::kPlantKindCount; ++kind)
                     {
@@ -279,12 +320,18 @@ namespace Game::GameModes::WastelandPlacementExport
         }
 
         // 石と礫の区画 1 つを書く
+        bool bGravelGroundError = false;
         size_t stoneCounts[WastelandGravel::kTierCount] = {};
         size_t stoneCells[WastelandGravel::kTierCount] = {};
         auto appendGravelCell = [&](uint32_t tier, float x, float z)
         {
             VariableArray<FoliageInstance> stoneCell[WastelandGravel::kKindsPerTier];
-            gravel.CollectCellAt(tier, x, z, stoneCell);
+            VariableArray<WastelandFoliage::GroundRejection> rejected;
+            gravel.CollectCellAt(tier, x, z, stoneCell, &rejected);
+            for (const auto &item : rejected)
+            {
+                countRejection(item.X, item.Z, WastelandFoliage::kPlantKindCount + tier);
+            }
             ++stoneCells[tier];
             for (uint32_t kind = 0; kind < WastelandGravel::kKindsPerTier; ++kind)
             {
@@ -292,8 +339,15 @@ namespace Game::GameModes::WastelandPlacementExport
                 {
                     // 地面の線は置き方（WastelandGravel::StoneGroundLine）と同じ高さ
                     float groundY = 0.0f;
-                    WastelandGravel::StoneGroundLine(field, instance.Position[0], instance.Position[2],
-                                                     gravelRootRadius[tier][kind] * instance.WidthScale, instance.Yaw, groundY);
+                    if (!WastelandGravel::StoneGroundLine(field, instance.Position[0], instance.Position[2],
+                                                          gravelRootRadius[tier][kind] * instance.WidthScale, instance.Yaw,
+                                                          groundY, ground))
+                    {
+                        bGravelGroundError = true;
+                        LOG_ERROR_F("WASTELAND_PLACEMENT_EXPORT_FAILED 石の地面の線を再現できません x=%.3f z=%.3f",
+                                    static_cast<double>(instance.Position[0]), static_cast<double>(instance.Position[2]));
+                        return;
+                    }
                     AppendScatterObject(rows, gravelBase + tier * WastelandGravel::kKindsPerTier + kind, instance, groundY);
                     ++stoneCounts[tier];
                 }
@@ -352,6 +406,10 @@ namespace Game::GameModes::WastelandPlacementExport
             }
         }
 
+        if (bGravelGroundError)
+        {
+            return false;
+        }
         const String resolvedPath = ResolvePath(path);
         const String objectsPath = ObjectsPath(resolvedPath);
         const size_t objectCount = rows.size() / kObjectColumns;
@@ -404,7 +462,8 @@ namespace Game::GameModes::WastelandPlacementExport
             for (size_t index = 0; index < shape.Points.size(); ++index)
             {
                 const NorvesLib::Math::Vector3 &point = shape.Points[index];
-                AppendFormat(text, "%s[%.5f,%.5f,%.5f]", index == 0 ? "" : ",", static_cast<double>(point.x),
+                // float の頂点を丸めずに復元し、足元の帯の判定を置き方とそろえる。
+                AppendFormat(text, "%s[%.9g,%.9g,%.9g]", index == 0 ? "" : ",", static_cast<double>(point.x),
                              static_cast<double>(point.y), static_cast<double>(point.z));
             }
             AppendFormat(text, "]}");
@@ -429,6 +488,23 @@ namespace Game::GameModes::WastelandPlacementExport
             LOG_ERROR_F("WASTELAND_PLACEMENT_EXPORT_FAILED path=%s 配置を書けませんでした", resolvedPath.c_str());
             return false;
         }
+        const auto logRejected = [](const char *region, const RejectionCounts &counts)
+        {
+            LOG_INFO_F("WASTELAND_PLACEMENT_UNRELIABLE region=%s plant=%llu/%llu/%llu/%llu/%llu "
+                       "pebble=%llu stone=%llu cobble=%llu talus=%llu/%llu",
+                       region, static_cast<unsigned long long>(counts.Values[0]),
+                       static_cast<unsigned long long>(counts.Values[1]), static_cast<unsigned long long>(counts.Values[2]),
+                       static_cast<unsigned long long>(counts.Values[3]), static_cast<unsigned long long>(counts.Values[4]),
+                       static_cast<unsigned long long>(counts.Values[5]), static_cast<unsigned long long>(counts.Values[6]),
+                       static_cast<unsigned long long>(counts.Values[7]), static_cast<unsigned long long>(counts.Values[8]),
+                       static_cast<unsigned long long>(counts.Values[9]));
+        };
+        logRejected("all", rejectedAll);
+        for (size_t i = 0; i < regions.size(); ++i)
+        {
+            logRejected(regions[i].Id.c_str(), rejectedRegions[i]);
+        }
+        logRejected("outside_regions", rejectedRegions[regions.size()]);
         LOG_INFO_F("WASTELAND_PLACEMENT_EXPORT path=%s talus=%zu plants=%zu pebbles=%zu stones=%zu cobbles=%zu "
                    "plant_cells=%zu cobble_cells=%zu lattice_inside=%zu lattice_outside=%zu objects=%zu bytes=%zu",
                    resolvedPath.c_str(), talus.Instances.size(), plants, stoneCounts[0], stoneCounts[1], stoneCounts[2],

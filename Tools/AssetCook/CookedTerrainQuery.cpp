@@ -1225,6 +1225,9 @@ namespace NorvesLib::Tools::AssetCook
             uint64_t sampledCount = 0;
             uint64_t unreliableCells = 0;
             uint64_t centerQueryCells = 0;
+            uint64_t confidenceQueryPoints = 0;
+            uint64_t confidenceProbeSamples = 0;
+            uint64_t quarterQueryCells = 0;
             float confidenceMs = 0.0f;
             for (size_t owner = 0; owner < batches.size(); ++owner)
             {
@@ -1292,60 +1295,113 @@ namespace NorvesLib::Tools::AssetCook
                     written.push_back(block);
                     ++tiles[owner].Blocks;
                 }
-                // 四隅の探索で使った大きい列は中心の探索の前に手放す。
+                // 四隅の探索で使った大きい列は信頼判定の探索の前に手放す。
                 Container::VariableArray<QueryPoint>().swap(points);
                 NORVES_STAT_TIME_START(PlacementConfidence);
-                struct CenterCell
+                struct CellProbes
                 {
                     size_t Block = 0;
                     uint32_t Cell = 0;
+                    size_t Points[9] = {};
+                    uint32_t PointCount = 5u;
                 };
-                Container::VariableArray<CenterCell> centerCells;
-                Container::VariableArray<QueryPoint> centers;
+                Container::VariableArray<CellProbes> cells;
+                Container::VariableArray<QueryPoint> probes;
                 for (size_t blockIndex = firstWritten; blockIndex < written.size(); ++blockIndex)
                 {
                     auto &block = written[blockIndex];
+                    // 隣り合う升目の辺の中点は同じ高さ・同じ交点なので、塊の中では一度だけ問い合わせる。
+                    size_t horizontal[kSide * kCellSide];
+                    size_t vertical[kSide * kCellSide];
+                    const size_t missing = std::numeric_limits<size_t>::max();
+                    std::fill(horizontal, horizontal + kSide * kCellSide, missing);
+                    std::fill(vertical, vertical + kSide * kCellSide, missing);
+                    const auto appendProbe = [&](double x, double z, double height)
+                    {
+                        const size_t index = probes.size();
+                        QueryPoint point;
+                        point.X = x;
+                        point.Z = z;
+                        point.DemHeight = height;
+                        probes.push_back(std::move(point));
+                        return index;
+                    };
+                    const auto edgeProbe = [&](size_t &index, double x, double z, double height)
+                    {
+                        if (index == missing)
+                        {
+                            index = appendProbe(x, z, height);
+                        }
+                        return index;
+                    };
                     for (uint32_t cell = 0; cell < kCells; ++cell)
                     {
                         const uint32_t ix = cell % kCellSide;
                         const uint32_t iz = cell / kCellSide;
                         const uint32_t i = iz * kSide + ix;
-                        const float a = block.Heights[i];
-                        const float b = block.Heights[i + 1u];
-                        const float c = block.Heights[i + kSide];
-                        const float d = block.Heights[i + kSide + 1u];
+                        const double a = block.Heights[i];
+                        const double b = block.Heights[i + 1u];
+                        const double c = block.Heights[i + kSide];
+                        const double d = block.Heights[i + kSide + 1u];
                         if (!std::isfinite(a) || !std::isfinite(b) || !std::isfinite(c) || !std::isfinite(d))
                         {
                             ++unreliableCells;
                             continue;
                         }
-                        if (static_cast<double>(std::max({a, b, c, d})) - std::min({a, b, c, d}) <= 0.05)
+                        const double x0 = layout.FirstX + block.X * kBlockMeters + ix * kSpacing;
+                        const double z0 = layout.FirstZ + block.Z * kBlockMeters + iz * kSpacing;
+                        const double half = 0.5 * kSpacing;
+                        CellProbes entry;
+                        entry.Block = blockIndex;
+                        entry.Cell = cell;
+                        entry.Points[0] = appendProbe(x0 + half, z0 + half, (a + b + c + d) * 0.25);
+                        entry.Points[1] = edgeProbe(horizontal[iz * kCellSide + ix], x0 + half, z0, (a + b) * 0.5);
+                        entry.Points[2] = edgeProbe(horizontal[(iz + 1u) * kCellSide + ix], x0 + half,
+                                                    z0 + kSpacing, (c + d) * 0.5);
+                        entry.Points[3] = edgeProbe(vertical[iz * kSide + ix], x0, z0 + half, (a + c) * 0.5);
+                        entry.Points[4] = edgeProbe(vertical[iz * kSide + ix + 1u], x0 + kSpacing,
+                                                    z0 + half, (b + d) * 0.5);
+                        // 傾きの大きい升目では、中央と辺の中点の間に細い段がある例を確認した。
+                        if (std::max({a, b, c, d}) - std::min({a, b, c, d}) > 0.1)
                         {
-                            block.ReliableCells[cell / 8u] |= static_cast<uint8_t>(1u << (cell % 8u));
-                            continue;
+                            const auto quarterProbe = [&](double u, double v)
+                            {
+                                const double value = (1.0 - v) * ((1.0 - u) * a + u * b) +
+                                                     v * ((1.0 - u) * c + u * d);
+                                return appendProbe(x0 + u * kSpacing, z0 + v * kSpacing, value);
+                            };
+                            entry.Points[5] = quarterProbe(0.25, 0.25);
+                            entry.Points[6] = quarterProbe(0.75, 0.25);
+                            entry.Points[7] = quarterProbe(0.25, 0.75);
+                            entry.Points[8] = quarterProbe(0.75, 0.75);
+                            entry.PointCount = 9u;
+                            ++quarterQueryCells;
                         }
-                        QueryPoint center;
-                        center.X = layout.FirstX + block.X * kBlockMeters + (ix + 0.5) * kSpacing;
-                        center.Z = layout.FirstZ + block.Z * kBlockMeters + (iz + 0.5) * kSpacing;
-                        // 上向きの面のうち、中心の双線形の値に最も近い面を既存の探索で選ぶ。
-                        center.DemHeight = (static_cast<double>(a) + b + c + d) * 0.25;
-                        centers.push_back(std::move(center));
-                        centerCells.push_back({blockIndex, cell});
+                        confidenceProbeSamples += entry.PointCount;
+                        cells.push_back(entry);
                     }
                 }
-                centerQueryCells += centers.size();
-                if (!intersectPoints(centers))
+                centerQueryCells += cells.size();
+                confidenceQueryPoints += probes.size();
+                if (!intersectPoints(probes))
                 {
                     return false;
                 }
-                for (size_t index = 0; index < centers.size(); ++index)
+                for (const CellProbes &cell : cells)
                 {
-                    const auto &center = centers[index];
-                    const auto &location = centerCells[index];
-                    if (!center.Hits.empty() && std::fabs(center.Hits[0].Height - center.DemHeight) <= 0.02)
+                    bool reliable = true;
+                    for (uint32_t probe = 0; probe < cell.PointCount; ++probe)
                     {
-                        written[location.Block].ReliableCells[location.Cell / 8u] |=
-                            static_cast<uint8_t>(1u << (location.Cell % 8u));
+                        const QueryPoint &point = probes[cell.Points[probe]];
+                        if (point.Hits.empty() || std::fabs(point.Hits[0].Height - point.DemHeight) > 0.02)
+                        {
+                            reliable = false;
+                            break;
+                        }
+                    }
+                    if (reliable)
+                    {
+                        written[cell.Block].ReliableCells[cell.Cell / 8u] |= static_cast<uint8_t>(1u << (cell.Cell % 8u));
                     }
                     else
                     {
@@ -1435,7 +1491,10 @@ namespace NorvesLib::Tools::AssetCook
 #endif
             std::cout << ",\"unreliable_cell_count\":" << unreliableCells << ",\"unreliable_cell_ratio\":";
             WriteNumber(written.empty() ? 0.0 : static_cast<double>(unreliableCells) / (written.size() * kCells));
-            std::cout << ",\"center_query_cell_count\":" << centerQueryCells << ",\"confidence_seconds\":";
+            std::cout << ",\"center_query_cell_count\":" << centerQueryCells
+                      << ",\"quarter_query_cell_count\":" << quarterQueryCells
+                      << ",\"confidence_probe_sample_count\":" << confidenceProbeSamples
+                      << ",\"confidence_query_point_count\":" << confidenceQueryPoints << ",\"confidence_seconds\":";
 #if NORVES_ENABLE_STATS
             WriteNumber(confidenceMs / 1000.0);
 #else
