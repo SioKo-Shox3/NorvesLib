@@ -3359,7 +3359,7 @@
 - notes: 2026-10-14 SCN-MEGA-ACCEPT-1M の診断から。危険地帯（RenderThread）なので評価者を通す。
 
 ## SCN-MEGA-FIX-MIXED-DEFICIT: 混在の負荷でバナナを指定の本数どおりに置く
-- status: todo
+- status: done
 - done-when: mega-stress の `banana-count=1000000,stress-entities=50000` で `MEGA_STRESS_BANANAS count=999999 requested=1000000` になり、撮影が「置いたバナナの本数 999999 が指定（banana-count=1000000）と違う」で失敗する。Entity の足元と動く範囲を空けるマスクのある敷き詰めでも、SCN-MEGA-LAYOUT-MOUNDS の「位置が 1 つも無い区画だけ上限を締めてもう一巡引く」と同じ形で不足を埋める。mega-bananas（マスクなし）の配置は変えない（1M の `MEGA_BANANAS_PLACED`・`MEGA_BANANAS_LAYOUT` の行が今と同じ）。完了の条件: 1% 移動の負荷の撮影で `placed_bananas=1000000`・`result=pass`。
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -Views overview -Build -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -TimeoutSeconds 2400 -GameArgs banana-count=1000000,stress-entities=50000,stress-moving-percent=1 -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-MIXED-DEFICIT`
 - paths: Game/GameModes/MegaBananas, Game/GameModes/MegaStress, TASKS.md, PROGRESS.md
