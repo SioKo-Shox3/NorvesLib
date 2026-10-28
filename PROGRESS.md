@@ -8119,3 +8119,19 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 証拠（`.harness/runs/20261029-040922/verify-SCN-MEGA-FIX-MIXED-DEFICIT-U1.txt`）: タスクの verify（ビルド込み、1M + 5 万・1% 移動）が `result=pass`・EXIT=0、metrics.json に `placed_bananas=1000000`・`placed_entities=50000`、`MEGA_STRESS_BANANAS count=1000000 requested=1000000 pile=780 field=999220`、`[ERROR]` 0（撮影 `scene-capture/SCN-MEGA-FIX-MIXED-DEFICIT/`）。overview の PNG を開いて確認（Entity の足元は空き、破綻なし）。mega-bananas 1M horizon（`scene-capture/SCN-MEGA-FIX-MIXED-DEFICIT-unmasked-after/`）は `MEGA_BANANAS_PLACED`・`MEGA_BANANAS_LAYOUT` が基準（`-unmasked-before`）と build_ms・steps 以外で一致、山の記録 20000 行の sha256 も一致
 - Next: TASKS.md の次の未完
 - Notes: 試験は足していない。要起票: 単位の作業ツリーへハーネスを配る deploy の検証（言語の錨のフックの実走）が、指揮役から継いだ `LOOP_RUNNER` でフックが黙るため「言語の錨出力が不正」で落ちる（`units.mjs run` を `LOOP_RUNNER` を外して起動して回避した）
+
+- U2 RenderGraphCompileTest の LightingPass::OnFrameReadback の未解決を直す: 着地(直し 1 回)
+
+## 2026-10-29 SCN-BUILD-ALL-TESTS（run 20261029-040919 の反復 2、DONE）
+- Done: Debug の全体のビルドを通した。Game の起動の入口（`Game/Boot/`）を除くソース・include の道・定義・リンクを INTERFACE の対象 `NorvesGameSources` にまとめ、Game と、Game を組み込む 2 つの試験の対象（`AssetManifestReloadBridgeLoopbackTest`・`NorvesLibBridgeAdapterScriptComponentTest`）がそれをリンクする形にした（試験側に Game のソースの一覧を二重に持たない）。`RenderGraphCompileTest` は `RenderGraphTextureUsageContractTest.cpp` が `#define private public` の後に `LightingPass.h` を読んで private の仮想関数の装飾名が Core と合わなかったので、ヘッダを先に読む形にした。`RenderingDDGILightingContractTest` は今の `DDGIProbePass::ViewResources` に合わせた
+- 試験ごとの判断: 4 つとも消さずに直した。2 つの Bridge の試験は Bridge のアダプタとスクリプトの部品の公開境界の検査で、壊れたのは一覧の更新漏れだけ。DDGI の試験（実行の失敗で古い atlas を無効にする）は失敗が黙って起きる契約の検査で、型の名前の追従だけで直る。RenderGraphCompileTest の実行ファイルは名前ごとの add_test で別の検査（RenderGraphTextureUsageContractTest など）も載せているので、リンクを通す形にした。試験は足していない・消していない
+- 証拠（`.harness/runs/20261029-040919/`）: `verify-SCN-BUILD-ALL-TESTS-debug-all.txt`（`cmake --build build --config Debug -- -m:1` の全体、EXIT=0・エラー行 0・1333 秒。4 つの対象のリンク行あり）
+- Next: なし
+- Notes: ctest は回していない（完了条件どおり）。要起票: ctest で有効な `RenderGraphTextureUsageContractTest`（`RenderGraphCompileTest --test=...`）が `RenderGraphTextureUsageContractTest.cpp:1462` の VisibilityResolve の `constantCount == 3` の assertion で落ちて終わらない（`.harness/runs/20261029-040919/aux-SCN-BUILD-ALL-TESTS-rendergraph-run.txt`。この項目の前から）。INTERFACE のソースは試験の対象ごとにコンパイルし直すので、Game のソースを組み込む 2 つの試験のビルドが重い
+
+## 2026-10-29 SCN-BUILD-ALL-TESTS（run 20261029-040919 の反復 3、DONE）
+
+- Done: 全体のビルド（約 22 分）が再検証の 1 コマンド 10 分の上限を超えたので、verify を Game と落ちていた 4 つの試験の対象（AssetManifestReloadBridgeLoopbackTest・NorvesLibBridgeAdapterScriptComponentTest・RenderGraphCompileTest・RenderingDDGILightingContractTest）ごとの Debug ビルド 5 本に分けた。コードの変更なし
+- 証拠（`.harness/runs/20261029-040919/`）: `verify-SCN-BUILD-ALL-TESTS-targets.txt`（5 本とも EXIT=0、温まったビルドで各 2〜5 秒）。全体の EXIT=0 は反復 2 の `verify-SCN-BUILD-ALL-TESTS-debug-all.txt`
+- Next: なし
+- Notes: 冷えたビルドでは Game のソースを組み込む 2 つの試験がそれぞれ数分かかる（この枠では Game の後の AssetManifestReloadBridgeLoopbackTest が約 3 分）。libwebsockets のカスタムビルドで MSB8065（出力が作られず差分ビルドが効かない恐れ）の警告が出る
