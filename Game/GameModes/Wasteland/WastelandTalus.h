@@ -58,12 +58,14 @@ namespace Game::GameModes::WastelandTalus
         float Radius = 0.0f;
     };
 
-    /// 信頼できない地面のため見送った岩の候補。
+    /// 接地が収まらず見送った岩の候補と理由。
     struct TalusGroundRejection
     {
         float X = 0.0f;
         float Z = 0.0f;
         uint32_t Mesh = 0;
+        /// 信頼できない升目なら真、支持窓・埋もれ・浮きの許容区間に収まらなければ偽。
+        bool Unreliable = true;
     };
 
     /// 配置の内訳（ログ用）
@@ -78,7 +80,12 @@ namespace Game::GameModes::WastelandTalus
         /// 置いた岩のうち向きを寄せ直した数と、さらに縮めた数（Shrunk は Realigned の内数）
         uint32_t Realigned = 0;
         uint32_t Shrunk = 0;
-        /// 寄せ直しと縮小でも足元の許容区間に収まらず置かなかった数
+        /// 元の中心で収まらず、小さくずらして置いた数（Realigned・Shrunk と重複する）。
+        uint32_t Shifted = 0;
+        /// 信頼できない升目に掛かった後、中心をずらさず寄せ直しだけ・縮小で置けた数。
+        uint32_t RecoveredRealigned = 0;
+        uint32_t RecoveredShrunk = 0;
+        /// 寄せ直し・縮小・ずらしでも接地が収まらず置かなかった数
         uint32_t Unplaced = 0;
         uint32_t Unreliable[kTalusMeshCount] = {};
         /// 塊の外で、DEM の三角形が支持面の向きを満たさず見送った数（Unreliable の内数）。

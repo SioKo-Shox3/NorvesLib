@@ -89,6 +89,9 @@ namespace Game::GameModes::WastelandTalus
         constexpr float kFloatAllowance = 0.02f;
         constexpr uint32_t kAlignmentSteps = 4;
         constexpr float kShrinkFactor = 0.75f;
+        // 元の中心から最大 1 m、内外の輪に 4 点ずつ試す。
+        constexpr uint32_t kShiftSteps = 8;
+        constexpr float kShiftDistances[2] = {0.5f, 1.0f};
         // 埋める深さ（回した高さに対する割合と、足す深さ[m]）
         constexpr float kCragSinkFraction = 0.12f;
         constexpr float kCragSinkMeters = 0.03f;
@@ -298,7 +301,8 @@ namespace Game::GameModes::WastelandTalus
 
             /// 検査と同じ全標本の下 5 % を足元とし、浮きと埋もれの両方に収まる高さを求める
             bool FitRock(TalusMesh mesh, const Quaternion &worldRotation, float scale, float x, float z,
-                         MegaScatterInstance &outInstance, float &outHeight, bool &unreliable, bool &noBlockUnsupported)
+                         MegaScatterInstance &outInstance, float &outHeight, bool &unreliable, bool &noBlockUnsupported,
+                         bool bCheckNeighborhood)
             {
                 unreliable = false;
                 noBlockUnsupported = false;
@@ -347,7 +351,8 @@ namespace Game::GameModes::WastelandTalus
                     maxBandY = std::max(maxBandY, bandY);
                 }
                 outHeight = maxY - minY;
-                // 接地格子が無いときは、従来の float の帯の選び方を保つ。
+                // 全標本の回転後の高さの下 kBottomBand を足元にする。
+                // 接地格子があるときは倍精度、無いときは float で帯を選ぶ。
                 const double bottomLimit = Ground != nullptr
                                                ? minBandY + (maxBandY - minBandY) * kBottomBand
                                                : static_cast<double>(minY + outHeight * static_cast<float>(kBottomBand));
@@ -375,6 +380,37 @@ namespace Game::GameModes::WastelandTalus
                     {
                         unreliable = true;
                         return false;
+                    }
+                    if (bCheckNeighborhood && Ground != nullptr)
+                    {
+                        // 救済時は補間可否の境に残る細い段を避け、足元の周囲半升目も確かめる。
+                        constexpr float kProbeOffset = Terrain::PlacementGroundFormat::kSpacing * 0.5f;
+                        for (int dz = -1; dz <= 1; ++dz)
+                        {
+                            for (int dx = -1; dx <= 1; ++dx)
+                            {
+                                if (dx == 0 && dz == 0)
+                                {
+                                    continue;
+                                }
+                                float nearbyY = 0.0f;
+                                const float nearbyX = sampleX + static_cast<float>(dx) * kProbeOffset;
+                                const float nearbyZ = sampleZ + static_cast<float>(dz) * kProbeOffset;
+                                const auto nearby = Ground->Sample(nearbyX, nearbyZ, nearbyY);
+                                if (nearby == Terrain::PlacementGroundSample::NoBlock &&
+                                    !DemTriangleHasSupport(Field, nearbyX, nearbyZ))
+                                {
+                                    unreliable = true;
+                                    noBlockUnsupported = true;
+                                    return false;
+                                }
+                                if (nearby == Terrain::PlacementGroundSample::Unreliable)
+                                {
+                                    unreliable = true;
+                                    return false;
+                                }
+                            }
+                        }
                     }
                     const float contact = groundY - offset.y;
                     lowest = std::min(lowest, contact);
@@ -408,47 +444,92 @@ namespace Game::GameModes::WastelandTalus
                 const float u1 = Random(cx, cz, stream + 1);
                 const Quaternion yaw(Vector3(0.0f, 1.0f, 0.0f), Random(cx, cz, stream + 2) * 2.0f * kPi);
                 const Quaternion face = bSlab ? Quaternion() : RestFace(Random(cx, cz, stream + 3));
-                Quaternion rotation;
                 MegaScatterInstance instance;
                 float height = 0.0f;
-                bool bFits = false;
                 bool bRealigned = false;
                 bool unreliable = false;
                 bool noBlockUnsupported = false;
-                for (uint32_t step = 0; step <= kAlignmentSteps; ++step)
+                bool bEncounteredUnreliable = false;
+                const float initialScale = scale;
+                // 岩塊・板とも、既存の小片の最小拡大率までに留める。
+                const float minScale = bSlab ? kSlabScale[0] : kFragmentCragScale[0];
+                const auto fitAt = [&](float fitX, float fitZ, const TerrainNormal &fitNormal, bool bShifted)
                 {
-                    const float t = static_cast<float>(step) / static_cast<float>(kAlignmentSteps);
-                    // 最後はばらつきも取り除いて法線に揃える。最初の試行は既存の回転と積の順序を保つ
-                    const Vector3 up = TiltedUp(normal, initialAlign + (1.0f - initialAlign) * t,
-                                                jitter * (1.0f - t), u0, u1);
-                    rotation = RotateUpTo(up) * yaw;
-                    if (!bSlab)
+                    Quaternion rotation;
+                    scale = initialScale;
+                    bRealigned = false;
+                    for (uint32_t step = 0; step <= kAlignmentSteps; ++step)
                     {
-                        rotation = rotation * face;
+                        const float t = static_cast<float>(step) / static_cast<float>(kAlignmentSteps);
+                        // 最後はばらつきも取り除いて法線に揃える。最初は乱数の回転と積の順序を保つ。
+                        const Vector3 up = TiltedUp(fitNormal, initialAlign + (1.0f - initialAlign) * t,
+                                                   jitter * (1.0f - t), u0, u1);
+                        rotation = RotateUpTo(up) * yaw;
+                        if (!bSlab)
+                        {
+                            rotation = rotation * face;
+                        }
+                        if (FitRock(mesh, rotation, scale, fitX, fitZ, instance, height, unreliable, noBlockUnsupported,
+                                    bShifted || bEncounteredUnreliable))
+                        {
+                            bRealigned = step > 0;
+                            return true;
+                        }
+                        bEncounteredUnreliable = bEncounteredUnreliable || unreliable;
                     }
-                    if (FitRock(mesh, rotation, scale, x, z, instance, height, unreliable, noBlockUnsupported))
+                    // 向きと大きさで足元の帯が変わるため、信頼できない升目でも次の試行を続ける。
+                    while (scale > minScale)
                     {
-                        bFits = true;
-                        bRealigned = step > 0;
-                        break;
+                        scale = std::max(minScale, scale * kShrinkFactor);
+                        bRealigned = true;
+                        if (FitRock(mesh, rotation, scale, fitX, fitZ, instance, height, unreliable, noBlockUnsupported,
+                                    bShifted || bEncounteredUnreliable))
+                        {
+                            return true;
+                        }
+                        bEncounteredUnreliable = bEncounteredUnreliable || unreliable;
                     }
-                    if (unreliable)
+                    return false;
+                };
+                bool bFits = fitAt(x, z, normal, false);
+                if (bFits && bEncounteredUnreliable)
+                {
+                    if (scale < initialScale)
                     {
-                        break;
+                        ++Stats.RecoveredShrunk;
+                    }
+                    else
+                    {
+                        ++Stats.RecoveredRealigned;
                     }
                 }
-                const float initialScale = scale;
-                // 岩塊・板とも、既存の小片の最小拡大率までに留め、群れの位置と数の乱数は変えない
-                const float minScale = bSlab ? kSlabScale[0] : kFragmentCragScale[0];
-                while (!bFits && !unreliable && scale > minScale)
+                // 見送りの集計は、ずらす前の最終試行と同じ配置原点に残す。
+                const float rejectionX = instance.Position.x;
+                const float rejectionZ = instance.Position.z;
+                if (!bFits)
                 {
-                    scale = std::max(minScale, scale * kShrinkFactor);
-                    bFits = FitRock(mesh, rotation, scale, x, z, instance, height, unreliable, noBlockUnsupported);
-                    bRealigned = true;
+                    // 系列 +4 は各岩の未使用枠。群れの生成は配置結果を参照せず、予定の中心と大きさを使う。
+                    const float shiftAngle = Random(cx, cz, stream + 4) * 2.0f * kPi;
+                    for (uint32_t step = 0; step < kShiftSteps; ++step)
+                    {
+                        const float angle = shiftAngle + static_cast<float>(step % 4) * (0.5f * kPi);
+                        const float distance = kShiftDistances[step / 4];
+                        const float shiftedX = x + distance * std::cos(angle);
+                        const float shiftedZ = z + distance * std::sin(angle);
+                        TerrainNormal shiftedNormal;
+                        if (CanPlace(shiftedX, shiftedZ, shiftedNormal) && fitAt(shiftedX, shiftedZ, shiftedNormal, true))
+                        {
+                            bFits = true;
+                            ++Stats.Shifted;
+                            break;
+                        }
+                    }
                 }
                 if (!bFits)
                 {
                     ++Stats.Unplaced;
+                    // 理由は最後に接地を試した結果で分類し、位置はずらす前の原点を使う。
+                    Stats.GroundRejections.push_back({rejectionX, rejectionZ, static_cast<uint32_t>(mesh), unreliable});
                     if (unreliable)
                     {
                         ++Stats.Unreliable[static_cast<uint32_t>(mesh)];
@@ -456,7 +537,6 @@ namespace Game::GameModes::WastelandTalus
                         {
                             ++Stats.NoBlockUnsupported[static_cast<uint32_t>(mesh)];
                         }
-                        Stats.GroundRejections.push_back({instance.Position.x, instance.Position.z, static_cast<uint32_t>(mesh)});
                     }
                     return 0.0f;
                 }
@@ -657,8 +737,10 @@ namespace Game::GameModes::WastelandTalus
         }
         outStats.SupportPoints[0] = static_cast<uint32_t>(shapes[0].Points.size());
         outStats.SupportPoints[1] = static_cast<uint32_t>(shapes[1].Points.size());
-        LOG_INFO("WASTELAND_TALUS_FIT realigned=%u shrunk=%u unplaced=%u unreliable=%u/%u no_block_unsupported=%u/%u",
-                 outStats.Realigned, outStats.Shrunk, outStats.Unplaced, outStats.Unreliable[0], outStats.Unreliable[1],
+        LOG_INFO("WASTELAND_TALUS_FIT realigned=%u shrunk=%u shifted=%u recovered_realigned=%u recovered_shrunk=%u "
+                 "unplaced=%u unreliable=%u/%u no_block_unsupported=%u/%u",
+                 outStats.Realigned, outStats.Shrunk, outStats.Shifted, outStats.RecoveredRealigned, outStats.RecoveredShrunk,
+                 outStats.Unplaced, outStats.Unreliable[0], outStats.Unreliable[1],
                  outStats.NoBlockUnsupported[0], outStats.NoBlockUnsupported[1]);
     }
 

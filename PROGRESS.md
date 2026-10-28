@@ -8129,3 +8129,4 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 証拠（作業ツリー `.harness/unit-verify.txt` の写し `.harness/runs/scene-capture/SCN-WL-PLACEMENT-GROUNDING-FIX/u4-unit-verify.txt`）: Debug・RelWithDebInfo の Game と AssetCook のビルド EXIT=0、書き出しの撮影 EXIT=0、`--require-compliant` EXIT=0、6 視点 EXIT=0、`CompareReference.py --verify` result=pass photos=6、回帰の after result=pass scenes=4（rendering3dtest 99.53 dB・mega-bananas 63.32 dB・sandbox 一致・night-village は before の PNG が無く比べの値なし）、`gpu-final/metrics.json`。見比べの画は `compare-final/`（ref_cliff_01 の崖錐と ref_ground_02 の谷床の切り出しを開き、浮いた株・石と埋もれすぎた岩が無いことを見た）
 - Next: SCN-WL-CLIFF-GEN-TALUS に戻る
 - Notes: 低木 B → A の割合（B 458281・A 1017573、31:69）は残課題で、種の割合を戻す形は決めていない。植物の Cycles の参照は固定の株を使うので、今回の置き方で古くなるものは無かった。回帰の before（2026-10-28）は night-village の PNG が欠けている
+- U5 信頼できない升目に掛かった岩も寄せ・縮め・小さなずらしを試し、見送った岩を全部理由つきで残す: 着地(直し 0 回)
