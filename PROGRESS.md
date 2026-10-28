@@ -8118,3 +8118,10 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 証拠（`.harness/runs/20261029-040919/`）: `verify-SCN-BUILD-ALL-TESTS-debug-all.txt`（`cmake --build build --config Debug -- -m:1` の全体、EXIT=0・エラー行 0・1333 秒。4 つの対象のリンク行あり）
 - Next: なし
 - Notes: ctest は回していない（完了条件どおり）。要起票: ctest で有効な `RenderGraphTextureUsageContractTest`（`RenderGraphCompileTest --test=...`）が `RenderGraphTextureUsageContractTest.cpp:1462` の VisibilityResolve の `constantCount == 3` の assertion で落ちて終わらない（`.harness/runs/20261029-040919/aux-SCN-BUILD-ALL-TESTS-rendergraph-run.txt`。この項目の前から）。INTERFACE のソースは試験の対象ごとにコンパイルし直すので、Game のソースを組み込む 2 つの試験のビルドが重い
+
+## 2026-10-29 SCN-BUILD-ALL-TESTS（run 20261029-040919 の反復 3、DONE）
+
+- Done: 全体のビルド（約 22 分）が再検証の 1 コマンド 10 分の上限を超えたので、verify を Game と落ちていた 4 つの試験の対象（AssetManifestReloadBridgeLoopbackTest・NorvesLibBridgeAdapterScriptComponentTest・RenderGraphCompileTest・RenderingDDGILightingContractTest）ごとの Debug ビルド 5 本に分けた。コードの変更なし
+- 証拠（`.harness/runs/20261029-040919/`）: `verify-SCN-BUILD-ALL-TESTS-targets.txt`（5 本とも EXIT=0、温まったビルドで各 2〜5 秒）。全体の EXIT=0 は反復 2 の `verify-SCN-BUILD-ALL-TESTS-debug-all.txt`
+- Next: なし
+- Notes: 冷えたビルドでは Game のソースを組み込む 2 つの試験がそれぞれ数分かかる（この枠では Game の後の AssetManifestReloadBridgeLoopbackTest が約 3 分）。libwebsockets のカスタムビルドで MSB8065（出力が作られず差分ビルドが効かない恐れ）の警告が出る
