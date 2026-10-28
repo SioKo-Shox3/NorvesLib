@@ -1,5 +1,6 @@
 ﻿#include "GameModes/Wasteland/WastelandTalus.h"
 
+#include "Core/Public/Logging/LogMacros.h"
 #include "Core/Public/Math/Quaternion.h"
 
 #include <algorithm>
@@ -80,15 +81,16 @@ namespace Game::GameModes::WastelandTalus
         constexpr float kCragTiltJitterDegrees = 10.0f;
         constexpr float kSlabTiltJitterDegrees = 12.0f;
         // 底の頂点とみなす、回した高さの下からの割合
-        constexpr float kBottomBand = 0.2f;
+        constexpr float kBottomBand = 0.05f;
+        // 検査の支持窓と埋もれの上限に対し、DEM の双線形と焼いた面の三角形の差を見込む[m]
+        constexpr float kSupportMargin = 0.03f;
+        constexpr float kFloatAllowance = 0.02f;
+        constexpr uint32_t kAlignmentSteps = 4;
+        constexpr float kShrinkFactor = 0.75f;
         // 埋める深さ（回した高さに対する割合と、足す深さ[m]）
         constexpr float kCragSinkFraction = 0.12f;
         constexpr float kCragSinkMeters = 0.03f;
         constexpr float kSlabSinkFraction = 0.25f;
-        // 底の高さを引く頂点: メッシュの標本から、この数の向きそれぞれで最も遠い頂点（凸包の頂点の近似）だけを残す。
-        // 地面に触れるのは凸包の頂点なので、岩の数が多くても 1 つあたりの高さの標本を数十に抑えられる
-        constexpr uint32_t kSupportDirections = 162;
-
         // ---- 影 ----
         // 影を落とす岩の上限（大きい順）。高さフォグが有効な間は CSM が投影物を 1 つずつ（カスケードの数だけ）描き、
         // 1 つあたり Debug の記録で約 0.5 ms かかるので、影が遠くから見える大岩だけに絞る。残りは影を落とさない散布へ回す
@@ -199,42 +201,6 @@ namespace Game::GameModes::WastelandTalus
             }
         }
 
-        /// 頂点の標本から、kSupportDirections の向き（球面の黄金角の螺旋）それぞれで最も遠い頂点を重複なく選ぶ
-        void SelectSupportPoints(const VariableArray<Vector3> &points, VariableArray<Vector3> &outSupport)
-        {
-            outSupport.clear();
-            if (points.empty())
-            {
-                return;
-            }
-            VariableArray<uint8_t> chosen(points.size(), 0);
-            const float goldenAngle = kPi * (3.0f - std::sqrt(5.0f));
-            for (uint32_t direction = 0; direction < kSupportDirections; ++direction)
-            {
-                const float y = 1.0f - 2.0f * (static_cast<float>(direction) + 0.5f) / static_cast<float>(kSupportDirections);
-                const float ring = std::sqrt(std::max(0.0f, 1.0f - y * y));
-                const float angle = goldenAngle * static_cast<float>(direction);
-                const Vector3 axis(ring * std::cos(angle), y, ring * std::sin(angle));
-                size_t best = 0;
-                float bestDot = std::numeric_limits<float>::lowest();
-                for (size_t index = 0; index < points.size(); ++index)
-                {
-                    const Vector3 &point = points[index];
-                    const float dot = point.x * axis.x + point.y * axis.y + point.z * axis.z;
-                    if (dot > bestDot)
-                    {
-                        bestDot = dot;
-                        best = index;
-                    }
-                }
-                if (chosen[best] == 0)
-                {
-                    chosen[best] = 1;
-                    outSupport.push_back(points[best]);
-                }
-            }
-        }
-
         /// 影を落とす候補（大岩・転がり出た岩）。大きい順に kCasterBudget までを影を落とす散布へ回す
         struct CasterCandidate
         {
@@ -254,10 +220,8 @@ namespace Game::GameModes::WastelandTalus
             float MinSlopeCosine = std::cos(kMaxSlopeDegrees * kDegToRad);
             /// 影を落とす候補
             VariableArray<CasterCandidate> Candidates;
-            /// メッシュごとの底の高さを引く頂点（SelectSupportPoints が選んだもの）
-            VariableArray<Vector3> Support[kTalusMeshCount];
-            /// 回した標本の y（AddRock の作業用）
-            VariableArray<float> RotatedY;
+            /// 回した全標本の座標（足元の帯と高さを同じ標本から求める）
+            VariableArray<Vector3> RotatedPoints;
 
             bool IsExcluded(float x, float z) const
             {
@@ -285,52 +249,120 @@ namespace Game::GameModes::WastelandTalus
                 return outNormal.Y >= MinSlopeCosine;
             }
 
-            /// メッシュ mesh を、ワールドの回転 worldRotation（Quaternion の * の向き）・拡大率 scale で、範囲の中心が (x,z) に
-            /// 来るように置き、底の頂点がどれも地面より下になる高さから埋める。置いた岩の回した高さ[m]を返す
-            float AddRock(TalusMesh mesh, const Quaternion &worldRotation, float scale, float x, float z, bool bCaster)
+            /// 検査と同じ全標本の下 5 % を足元とし、浮きと埋もれの両方に収まる高さを求める
+            bool FitRock(TalusMesh mesh, const Quaternion &worldRotation, float scale, float x, float z,
+                         MegaScatterInstance &outInstance, float &outHeight)
             {
                 const TalusMeshShape &shape = Shapes[static_cast<uint32_t>(mesh)];
-                const VariableArray<Vector3> &points = Support[static_cast<uint32_t>(mesh)];
+                const VariableArray<Vector3> &points = shape.Points;
+                if (points.empty())
+                {
+                    return false;
+                }
                 const Vector3 center((shape.Min.x + shape.Max.x) * 0.5f, (shape.Min.y + shape.Max.y) * 0.5f,
                                      (shape.Min.z + shape.Max.z) * 0.5f);
                 const Vector3 centerOffset = worldRotation * Vector3(center.x * scale, center.y * scale, center.z * scale);
                 const float originX = x - centerOffset.x;
                 const float originZ = z - centerOffset.z;
 
-                RotatedY.resize(points.size());
+                RotatedPoints.resize(points.size());
                 float minY = std::numeric_limits<float>::max();
                 float maxY = std::numeric_limits<float>::lowest();
                 for (size_t index = 0; index < points.size(); ++index)
                 {
                     const Vector3 &point = points[index];
-                    const float y = (worldRotation * Vector3(point.x * scale, point.y * scale, point.z * scale)).y;
-                    RotatedY[index] = y;
-                    minY = std::min(minY, y);
-                    maxY = std::max(maxY, y);
+                    const Vector3 offset = worldRotation * Vector3(point.x * scale, point.y * scale, point.z * scale);
+                    RotatedPoints[index] = offset;
+                    minY = std::min(minY, offset.y);
+                    maxY = std::max(maxY, offset.y);
                 }
-                const float height = maxY - minY;
-                const float bottomLimit = minY + height * kBottomBand;
+                outHeight = maxY - minY;
+                const float bottomLimit = minY + outHeight * kBottomBand;
                 float lowest = std::numeric_limits<float>::max();
-                for (size_t index = 0; index < points.size(); ++index)
+                float highest = std::numeric_limits<float>::lowest();
+                for (const Vector3 &offset : RotatedPoints)
                 {
-                    if (RotatedY[index] > bottomLimit)
+                    if (offset.y > bottomLimit)
                     {
                         continue;
                     }
-                    const Vector3 &point = points[index];
-                    const Vector3 offset = worldRotation * Vector3(point.x * scale, point.y * scale, point.z * scale);
-                    lowest = std::min(lowest, Field.SampleHeight(originX + offset.x, originZ + offset.z) - offset.y);
+                    const float contact = Field.SampleHeight(originX + offset.x, originZ + offset.z) - offset.y;
+                    lowest = std::min(lowest, contact);
+                    highest = std::max(highest, contact);
                 }
-                const float sink = mesh == TalusMesh::Slab ? height * kSlabSinkFraction
-                                                           : height * kCragSinkFraction + kCragSinkMeters;
+                const float limit = std::min(0.5f * outHeight, std::max(0.5f, 0.2f * outHeight)) - kSupportMargin;
+                const float lower = highest - limit;
+                const float upper = lowest + kFloatAllowance;
+                if (lower > upper)
+                {
+                    return false;
+                }
+                const float sink = mesh == TalusMesh::Slab ? outHeight * kSlabSinkFraction
+                                                           : outHeight * kCragSinkFraction + kCragSinkMeters;
+                outInstance.Position = Vector3(originX, std::clamp(lowest - sink, lower, upper), originZ);
+                // 描画の行ベクトルの規約に合わせ、ワールドの回転の共役を渡す
+                outInstance.Rotation = Conjugate(worldRotation);
+                outInstance.Scale = Vector3(scale, scale, scale);
+                outInstance.MeshIndex = static_cast<uint32_t>(mesh);
+                return true;
+            }
 
+            /// 同じ乱数の向きを保ち、収まらない岩だけ法線へ寄せ、それでも収まらなければ縮める
+            float AddRock(TalusMesh mesh, float x, float z, const TerrainNormal &normal, float scale, int32_t cx,
+                          int32_t cz, uint32_t stream, bool bCaster)
+            {
+                const bool bSlab = mesh == TalusMesh::Slab;
+                const float initialAlign = bSlab ? kSlabAlign : kCragAlign;
+                const float jitter = bSlab ? kSlabTiltJitterDegrees : kCragTiltJitterDegrees;
+                const float u0 = Random(cx, cz, stream);
+                const float u1 = Random(cx, cz, stream + 1);
+                const Quaternion yaw(Vector3(0.0f, 1.0f, 0.0f), Random(cx, cz, stream + 2) * 2.0f * kPi);
+                const Quaternion face = bSlab ? Quaternion() : RestFace(Random(cx, cz, stream + 3));
+                Quaternion rotation;
                 MegaScatterInstance instance;
-                instance.Position = Vector3(originX, lowest - sink, originZ);
-                // 描画の変換は行ベクトルの規約で、四元数の回転の逆を掛ける（WastelandLayout.cpp の RotateXZ と同じ向き）ので、
-                // ワールドで worldRotation になるよう共役を渡す
-                instance.Rotation = Conjugate(worldRotation);
-                instance.Scale = Vector3(scale, scale, scale);
-                instance.MeshIndex = static_cast<uint32_t>(mesh);
+                float height = 0.0f;
+                bool bFits = false;
+                bool bRealigned = false;
+                for (uint32_t step = 0; step <= kAlignmentSteps; ++step)
+                {
+                    const float t = static_cast<float>(step) / static_cast<float>(kAlignmentSteps);
+                    // 最後はばらつきも取り除いて法線に揃える。最初の試行は既存の回転と積の順序を保つ
+                    const Vector3 up = TiltedUp(normal, initialAlign + (1.0f - initialAlign) * t,
+                                                jitter * (1.0f - t), u0, u1);
+                    rotation = RotateUpTo(up) * yaw;
+                    if (!bSlab)
+                    {
+                        rotation = rotation * face;
+                    }
+                    if (FitRock(mesh, rotation, scale, x, z, instance, height))
+                    {
+                        bFits = true;
+                        bRealigned = step > 0;
+                        break;
+                    }
+                }
+                const float initialScale = scale;
+                // 岩塊・板とも、既存の小片の最小拡大率までに留め、群れの位置と数の乱数は変えない
+                const float minScale = bSlab ? kSlabScale[0] : kFragmentCragScale[0];
+                while (!bFits && scale > minScale)
+                {
+                    scale = std::max(minScale, scale * kShrinkFactor);
+                    bFits = FitRock(mesh, rotation, scale, x, z, instance, height);
+                    bRealigned = true;
+                }
+                if (!bFits)
+                {
+                    ++Stats.Unplaced;
+                    return 0.0f;
+                }
+                if (bRealigned)
+                {
+                    ++Stats.Realigned;
+                }
+                if (scale < initialScale)
+                {
+                    ++Stats.Shrunk;
+                }
                 if (bCaster)
                 {
                     Candidates.push_back({instance, height});
@@ -347,20 +379,13 @@ namespace Game::GameModes::WastelandTalus
             float AddCrag(float x, float z, const TerrainNormal &normal, float scale, int32_t cx, int32_t cz, uint32_t stream,
                           bool bCaster)
             {
-                const Vector3 up = TiltedUp(normal, kCragAlign, kCragTiltJitterDegrees, Random(cx, cz, stream),
-                                            Random(cx, cz, stream + 1));
-                const Quaternion yaw(Vector3(0.0f, 1.0f, 0.0f), Random(cx, cz, stream + 2) * 2.0f * kPi);
-                const Quaternion rotation = RotateUpTo(up) * yaw * RestFace(Random(cx, cz, stream + 3));
-                return AddRock(TalusMesh::Crag, rotation, scale, x, z, bCaster);
+                return AddRock(TalusMesh::Crag, x, z, normal, scale, cx, cz, stream, bCaster);
             }
 
-            /// 板を 1 つ置く（平たいまま斜面へ沿わせる）
-            void AddSlab(float x, float z, const TerrainNormal &normal, float scale, int32_t cx, int32_t cz, uint32_t stream)
+            /// 板を 1 つ置く（平たいまま斜面に沿わせる）。収まらず置けなければ偽を返す
+            bool AddSlab(float x, float z, const TerrainNormal &normal, float scale, int32_t cx, int32_t cz, uint32_t stream)
             {
-                const Vector3 up = TiltedUp(normal, kSlabAlign, kSlabTiltJitterDegrees, Random(cx, cz, stream),
-                                            Random(cx, cz, stream + 1));
-                const Quaternion yaw(Vector3(0.0f, 1.0f, 0.0f), Random(cx, cz, stream + 2) * 2.0f * kPi);
-                AddRock(TalusMesh::Slab, RotateUpTo(up) * yaw, scale, x, z, false);
+                return AddRock(TalusMesh::Slab, x, z, normal, scale, cx, cz, stream, false) > 0.0f;
             }
 
             /// 升目 (cx, cz) の中心 (x,z) に群れを置く
@@ -375,7 +400,10 @@ namespace Game::GameModes::WastelandTalus
                     mainScale = std::min(kMainScaleMax, Lerp(kMainScale, u * u) * (1.0f + kMainScaleBaseBoost * baseWeight));
                     const float height = AddCrag(x, z, normal, mainScale, cx, cz, 12, true);
                     Stats.MaxBoulderHeight = std::max(Stats.MaxBoulderHeight, height);
-                    ++Stats.MainBoulders;
+                    if (height > 0.0f)
+                    {
+                        ++Stats.MainBoulders;
+                    }
                 }
                 const uint32_t fragments =
                     bMain ? kFragmentBase + static_cast<uint32_t>(Random(cx, cz, 20) *
@@ -415,17 +443,23 @@ namespace Game::GameModes::WastelandTalus
                         ++Stats.Rejected;
                         continue;
                     }
+                    bool bPlaced = false;
                     if (Shapes[static_cast<uint32_t>(TalusMesh::Slab)].bAvailable &&
                         Random(cx, cz, stream + 3) < kSlabFraction)
                     {
-                        AddSlab(fx, fz, fragmentNormal, Lerp(kSlabScale, Random(cx, cz, stream + 4)), cx, cz, stream + 5);
+                        bPlaced = AddSlab(fx, fz, fragmentNormal, Lerp(kSlabScale, Random(cx, cz, stream + 4)), cx, cz,
+                                          stream + 5);
                     }
                     else
                     {
                         const float u = Random(cx, cz, stream + 4);
-                        AddCrag(fx, fz, fragmentNormal, Lerp(kFragmentCragScale, u * u), cx, cz, stream + 5, false);
+                        bPlaced = AddCrag(fx, fz, fragmentNormal, Lerp(kFragmentCragScale, u * u), cx, cz, stream + 5,
+                                          false) > 0.0f;
                     }
-                    ++Stats.Fragments;
+                    if (bPlaced)
+                    {
+                        ++Stats.Fragments;
+                    }
                 }
             }
         };
@@ -445,10 +479,6 @@ namespace Game::GameModes::WastelandTalus
             return;
         }
         Builder builder{field, mask, shapes, exclusions, outFragments, outStats};
-        for (uint32_t meshIndex = 0; meshIndex < kTalusMeshCount; ++meshIndex)
-        {
-            SelectSupportPoints(shapes[meshIndex].Points, builder.Support[meshIndex]);
-        }
         const auto &layout = mask.GetLayout();
         const int32_t cellsX = static_cast<int32_t>(std::floor((layout.MaxX - layout.MinX) / kClusterCellMeters));
         const int32_t cellsZ = static_cast<int32_t>(std::floor((layout.MaxZ - layout.MinZ) / kClusterCellMeters));
@@ -493,8 +523,10 @@ namespace Game::GameModes::WastelandTalus
                     if (builder.CanPlace(x, z, normal))
                     {
                         const float u = Random(cx, cz, 3);
-                        builder.AddCrag(x, z, normal, Lerp(kToeScale, u * u), cx, cz, 12, true);
-                        ++outStats.ToeRocks;
+                        if (builder.AddCrag(x, z, normal, Lerp(kToeScale, u * u), cx, cz, 12, true) > 0.0f)
+                        {
+                            ++outStats.ToeRocks;
+                        }
                     }
                 }
             }
@@ -517,8 +549,10 @@ namespace Game::GameModes::WastelandTalus
                 outFragments.push_back(candidates[index].Instance);
             }
         }
-        outStats.SupportPoints[0] = static_cast<uint32_t>(builder.Support[0].size());
-        outStats.SupportPoints[1] = static_cast<uint32_t>(builder.Support[1].size());
+        outStats.SupportPoints[0] = static_cast<uint32_t>(shapes[0].Points.size());
+        outStats.SupportPoints[1] = static_cast<uint32_t>(shapes[1].Points.size());
+        LOG_INFO("WASTELAND_TALUS_FIT realigned=%u shrunk=%u unplaced=%u", outStats.Realigned, outStats.Shrunk,
+                 outStats.Unplaced);
     }
 
 } // namespace Game::GameModes::WastelandTalus
