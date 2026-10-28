@@ -3307,12 +3307,16 @@
 - notes: 2026-10-14 SCN-MEGA-ACCEPT-1M の撮影で見つけた（前からある見た目の欠陥も直す方針）。描画を変える項目なので起動画面 default の比較を入れた。 2026-10-23 SCN-WL-CLOUD-BANDING の反復 22: 原因は同じ（表示の 8 bit の丸めにディザが無い。空の列が 1 段ずつの平らな帯）で、表示の Blit のディザで直した。同じ Game.exe で Blit だけを戻した前の撮影と比べ、mega-stress の overview の上 350 行の平らな帯の長さの平均 7.263 → 2.836・95 % 点 10 → 7、隣の差が 1 段以下の割合 1.000 → 0.999（最大 2。雑音で隣が逆の向きへ丸まった所）。記録は WastelandCloudRef.md の SCN-WL-CLOUD-BANDING の節。「隣の差が 1 段以下」をディザの 2 段の 0.1 % を許す形に読み替えて閉じるかは計画が決める。
 
 ## SCN-BUILD-ALL-TESTS: Debug の全体のビルドで落ちる試験の対象（Game のソースの一覧の更新漏れ）を直す
-- status: done
+- status: doing
 - after: SCN-GOLDEN-REVERIFY
 - done-when: `cmake --build build --config Debug -- /m:1`（全体）が、試験の対象の一部で落ちる（2026-10-23 の SCN-GOLDEN-REVERIFY の再検証 `.harness/runs/20261023-124311/recheck-SCN-GOLDEN-REVERIFY-4-1.txt`）: `Rendering3DTestRoutine.cpp` の `stb_image.h` が見つからない（C1083）、`GameApplicationHandler.obj` から CameraScriptCapture・GeometrySettleTrace・MultiViewCapture・WastelandHide::Parse・WastelandRoutine などが未解決（LNK2019）。Game のソースを個別に並べている試験の対象の一覧と include の道を、Game の今のソースに合わせる（同じ一覧を二重に持たない形にできるならそうする。試験を増やさない・消さない）。合否: Debug の全体のビルドが EXIT=0。ctest は回さない（落ちる対象のビルドが通ることだけを見る。ローカルの試験の全走は重いので、ユーザーの方針どおり関係の試験だけ）。
-- verify: `cmake --build build --config Debug -- /m:1`
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `cmake --build build --config Debug --target AssetManifestReloadBridgeLoopbackTest -- /m:1`
+- verify: `cmake --build build --config Debug --target NorvesLibBridgeAdapterScriptComponentTest -- /m:1`
+- verify: `cmake --build build --config Debug --target RenderGraphCompileTest -- /m:1`
+- verify: `cmake --build build --config Debug --target RenderingDDGILightingContractTest -- /m:1`
 - paths: Test, CMakeLists.txt, Game/CMakeLists.txt, cmake, TASKS.md, PROGRESS.md
-- notes: 2026-10-23 親が SCN-GOLDEN-REVERIFY の再検証の落ちから足した。全体のビルドは 10〜20 分かかる見込み（1 コマンド 10 分の再検証の上限に当たるなら、verify を落ちていた対象の名前を並べたビルドに分ける）。壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える。 2026-10-23（親）: SCN-GOLDEN-REVERIFY の反復 5 の調べ（`blocked/resolved/SCN-GOLDEN-REVERIFY-target.md`）: 落ちるのは 4 つの試験の対象だけ。AssetManifestReloadBridgeLoopbackTest（Rendering3DTestRoutine.cpp の stb_image.h の include の場所が無い）、NorvesLibBridgeAdapterScriptComponentTest（Game の WastelandRoutine・CameraScriptCapture・MultiViewCapture・BananaFieldBuilder などのソースが対象に無い、未解決 31 件）、RenderGraphCompileTest（LightingPass::OnFrameReadback が未解決。ctest では既に DISABLED）、RenderingDDGILightingContractTest（今は無い DDGIProbePass::FrameResources・m_FrameResources を参照、12 件）。直すか、実装の写しで意味の無い試験なら消すかを、ユーザーの方針（試験も意味を吟味する・写しの試験は直さず消す）に照らして試験ごとに決め、理由を記録する。
+- notes: 2026-10-29: 全体のビルド（約 22 分、EXIT=0）は再検証の 1 コマンド 10 分の上限を超えるので、下の注記どおり verify を落ちていた 4 つの試験の対象と Game の対象ごとのビルドに分けた（全体の EXIT=0 の証拠は反復 2 の出力）。 2026-10-23 親が SCN-GOLDEN-REVERIFY の再検証の落ちから足した。全体のビルドは 10〜20 分かかる見込み（1 コマンド 10 分の再検証の上限に当たるなら、verify を落ちていた対象の名前を並べたビルドに分ける）。壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える。 2026-10-23（親）: SCN-GOLDEN-REVERIFY の反復 5 の調べ（`blocked/resolved/SCN-GOLDEN-REVERIFY-target.md`）: 落ちるのは 4 つの試験の対象だけ。AssetManifestReloadBridgeLoopbackTest（Rendering3DTestRoutine.cpp の stb_image.h の include の場所が無い）、NorvesLibBridgeAdapterScriptComponentTest（Game の WastelandRoutine・CameraScriptCapture・MultiViewCapture・BananaFieldBuilder などのソースが対象に無い、未解決 31 件）、RenderGraphCompileTest（LightingPass::OnFrameReadback が未解決。ctest では既に DISABLED）、RenderingDDGILightingContractTest（今は無い DDGIProbePass::FrameResources・m_FrameResources を参照、12 件）。直すか、実装の写しで意味の無い試験なら消すかを、ユーザーの方針（試験も意味を吟味する・写しの試験は直さず消す）に照らして試験ごとに決め、理由を記録する。
 
 ## SCN-ACCEPT: ランチャーと全シーンの受入れを記録する
 - status: todo
