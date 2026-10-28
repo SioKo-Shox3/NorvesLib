@@ -1882,6 +1882,8 @@ namespace NorvesLib::Core::Rendering
 
         Container::VariableArray<BottomLevelCacheEntry> activeBottomLevels;
         Container::VariableArray<RHI::AccelerationStructureInstanceDesc> tlasInstances;
+        Container::VariableArray<TopLevelInstanceKey> instanceKeys;
+        instanceKeys.reserve(packet.RayTracingScene.Instances.size());
         // この回に新しく作った BLAS の数・三角形・同期の構築の時間（RT_BLAS に出す）
         uint32_t builtBottomLevels = 0;
         uint64_t builtTriangles = 0;
@@ -2021,6 +2023,7 @@ namespace NorvesLib::Core::Rendering
             RHI::AccelerationStructureInstanceDesc tlasInstance = instance.Instance;
             tlasInstance.bottomLevel = bottomLevel->Structure;
             tlasInstances.push_back(std::move(tlasInstance));
+            instanceKeys.push_back(TopLevelInstanceKey{instance.ObjectId, instance.ObjectInstanceIndex});
         }
 
         m_BottomLevelCache = std::move(activeBottomLevels);
@@ -2067,7 +2070,11 @@ namespace NorvesLib::Core::Rendering
         // Update を記録しない。パケットのスロットは GPU の完了を保証しない（RenderThread は提出の直後にパケットを Empty へ戻し、
         // 同じスロットを続けて描くことがある）。前の利用の GPU の読み書きとの順序はフレームの頭の全体のバリアで守り、
         // インスタンスの表と scratch は呼び出しごとの lease
-        if (cachedTopLevel.Structure && SameTopLevelInstances(cachedTopLevel.Instances, tlasInstances))
+        // 選んだ後は距離順でなく元の番号順（SelectNearest）なので、各席の鍵で顔ぶれを照合できる。
+        // 同じ BLAS と件数でも物体が替わると、refit だけでは木の空間的なまとまりを失う。
+        const bool bSameMembership = cachedTopLevel.Keys == instanceKeys;
+        if (cachedTopLevel.Structure && bSameMembership &&
+            SameTopLevelInstances(cachedTopLevel.Instances, tlasInstances, true))
         {
             ++m_TopLevelUpdateStats.Skipped;
             LogTopLevelUpdates(false);
@@ -2076,7 +2083,9 @@ namespace NorvesLib::Core::Rendering
         }
 
         RHI::AccelerationStructurePtr topLevel;
-        if (cachedTopLevel.Structure && cachedTopLevel.InstanceCount == instanceCount)
+        // Update は変換だけが変わったときに限る。顔ぶれ・並び・BLAS・属性の変更は Build にする。
+        if (cachedTopLevel.Structure && bSameMembership &&
+            SameTopLevelInstances(cachedTopLevel.Instances, tlasInstances, false))
         {
             RHI::AccelerationStructureBuildDesc tlasUpdate;
             tlasUpdate.type = RHI::AccelerationStructureType::TopLevel;
@@ -2122,7 +2131,7 @@ namespace NorvesLib::Core::Rendering
             }
 
             cachedTopLevel.Structure = topLevel;
-            cachedTopLevel.InstanceCount = instanceCount;
+            cachedTopLevel.Keys = std::move(instanceKeys);
             cachedTopLevel.Instances = std::move(tlasBuild.instances);
             ++m_TopLevelUpdateStats.Built;
         }
@@ -2134,7 +2143,8 @@ namespace NorvesLib::Core::Rendering
 
     bool RayTracingSceneSubsystem::SameTopLevelInstances(
         const Container::VariableArray<RHI::AccelerationStructureInstanceDesc>& lhs,
-        const Container::VariableArray<RHI::AccelerationStructureInstanceDesc>& rhs)
+        const Container::VariableArray<RHI::AccelerationStructureInstanceDesc>& rhs,
+        bool bCompareTransforms)
     {
         if (lhs.size() != rhs.size())
         {
@@ -2147,7 +2157,7 @@ namespace NorvesLib::Core::Rendering
             if (a.bottomLevel.get() != b.bottomLevel.get() || a.customIndex != b.customIndex || a.mask != b.mask ||
                 a.shaderBindingTableRecordOffset != b.shaderBindingTableRecordOffset ||
                 a.disableTriangleFacingCull != b.disableTriangleFacingCull ||
-                std::memcmp(a.transform, b.transform, sizeof(a.transform)) != 0)
+                (bCompareTransforms && std::memcmp(a.transform, b.transform, sizeof(a.transform)) != 0))
             {
                 return false;
             }
