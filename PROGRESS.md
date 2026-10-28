@@ -8122,3 +8122,10 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - Notes: 格子の信頼の判定を強めても形式の版は 2 のままなので、別の機械に前の判定の版 2 の格子があれば `--skip-if-current` なしで作り直す（今の機械の build/CookedAssets は作り直し済み、ほかの枠には格子がまだ無い）。岩の足元の帯は格子を使うときだけ倍精度で選ぶ（検査と帯の境の点が揃う）
 - 要起票: 指揮役の反復（LOOP_RUNNER=1）から `units.mjs run` を呼ぶと、単位の作業ツリーへのハーネスの展開の検証で言語の錨のフック（language-guard.mjs は LOOP_RUNNER があると何も出さない）が空になり「言語の錨出力が不正」で落ちる。今回は LOOP_RUNNER を外して呼んだ
 - U4 タスクの verify を全部回し、6 視点・写真・回帰・GPU 時間を撮って置いた物の接地の記録を書く: 着地(直し 1 回)
+
+## 2026-10-29 SCN-WL-PLACEMENT-GROUNDING-FIX（run 20261029-040916 の反復 2、完了）
+- Done: タスクの verify の全行を今の先頭で回し、`Docs/RenderingValidation/WastelandShape.md` の「置いた物の接地」に岩の据え直し（足元の帯）・焼いた面の接地用の格子・範囲と組ごとの物と違反の前後・GPU 時間・6 視点の見比べ・植物の Cycles の参照の古さ・残課題を書いた
+- 値: `CheckPlacement.py --require-compliant` は result=pass・違反 0・測り切れない物 0（物 15008255、項目の前の違反 364918 → 0）。物の減りは全体で岩 0.683 %・草と低木 0.252 %・大きな石 0.086 %・石 0.201 %・小礫 0.112 %、範囲ごとの最大は Rooster Butte の岩 94 個（2.440 %。ほかは 2 % 以内）。GPU 時間（ref_ground_01、300 フレームの median / p95）: 項目の前 17.291 / 17.875 ms → 最終 16.832 / 17.075 ms
+- 証拠（作業ツリー `.harness/unit-verify.txt` の写し `.harness/runs/scene-capture/SCN-WL-PLACEMENT-GROUNDING-FIX/u4-unit-verify.txt`）: Debug・RelWithDebInfo の Game と AssetCook のビルド EXIT=0、書き出しの撮影 EXIT=0、`--require-compliant` EXIT=0、6 視点 EXIT=0、`CompareReference.py --verify` result=pass photos=6、回帰の after result=pass scenes=4（rendering3dtest 99.53 dB・mega-bananas 63.32 dB・sandbox 一致・night-village は before の PNG が無く比べの値なし）、`gpu-final/metrics.json`。見比べの画は `compare-final/`（ref_cliff_01 の崖錐と ref_ground_02 の谷床の切り出しを開き、浮いた株・石と埋もれすぎた岩が無いことを見た）
+- Next: SCN-WL-CLIFF-GEN-TALUS に戻る
+- Notes: 低木 B → A の割合（B 458281・A 1017573、31:69）は残課題で、種の割合を戻す形は決めていない。植物の Cycles の参照は固定の株を使うので、今回の置き方で古くなるものは無かった。回帰の before（2026-10-28）は night-village の PNG が欠けている
