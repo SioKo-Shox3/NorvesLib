@@ -8111,3 +8111,10 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - Next: 同じ項目を続ける。(1) 低木 B の 37.8 % が A に移った種の割合の変化をどう戻すか（傾きで振り分けて全体の割合を保つ、B の根元の枝を直す）を決める。(2) 刻みの範囲（Battleship Rock）と崖の生成の 2 範囲の石と小礫は置き方の地面と焼いた面のずれなので、焼いた面の高さから取る形（作業一覧の条件。読み込みに触るならアセットロードの危険地帯）。(3) 岩の据え直し（73820 個は最も深い足元が窓 max(0.5 m, 高さの 20 %) より深い。規則を見直すなら写真の崖錐の岩を根拠に）。閉じなければ (2) と (3) を別の項目に分ける
 - Notes: GPU 時間（ref_ground_01）は測っていない（前の Game.exe を作り直す時間を取らなかった。次の反復で前後を測る）。許しの 0.02 m・0.07 m は検査の 0.05 m・0.1 m から DEM の格子と焼いた面の差の分 0.03 m を引いた値（推奨を採った判断）。新しい試験は足していない
 - U2 RenderGraphCompileTest の LightingPass::OnFrameReadback の未解決を直す: 着地(直し 1 回)
+
+## 2026-10-29 SCN-BUILD-ALL-TESTS（run 20261029-040919 の反復 2、DONE）
+- Done: Debug の全体のビルドを通した。Game の起動の入口（`Game/Boot/`）を除くソース・include の道・定義・リンクを INTERFACE の対象 `NorvesGameSources` にまとめ、Game と、Game を組み込む 2 つの試験の対象（`AssetManifestReloadBridgeLoopbackTest`・`NorvesLibBridgeAdapterScriptComponentTest`）がそれをリンクする形にした（試験側に Game のソースの一覧を二重に持たない）。`RenderGraphCompileTest` は `RenderGraphTextureUsageContractTest.cpp` が `#define private public` の後に `LightingPass.h` を読んで private の仮想関数の装飾名が Core と合わなかったので、ヘッダを先に読む形にした。`RenderingDDGILightingContractTest` は今の `DDGIProbePass::ViewResources` に合わせた
+- 試験ごとの判断: 4 つとも消さずに直した。2 つの Bridge の試験は Bridge のアダプタとスクリプトの部品の公開境界の検査で、壊れたのは一覧の更新漏れだけ。DDGI の試験（実行の失敗で古い atlas を無効にする）は失敗が黙って起きる契約の検査で、型の名前の追従だけで直る。RenderGraphCompileTest の実行ファイルは名前ごとの add_test で別の検査（RenderGraphTextureUsageContractTest など）も載せているので、リンクを通す形にした。試験は足していない・消していない
+- 証拠（`.harness/runs/20261029-040919/`）: `verify-SCN-BUILD-ALL-TESTS-debug-all.txt`（`cmake --build build --config Debug -- -m:1` の全体、EXIT=0・エラー行 0・1333 秒。4 つの対象のリンク行あり）
+- Next: なし
+- Notes: ctest は回していない（完了条件どおり）。要起票: ctest で有効な `RenderGraphTextureUsageContractTest`（`RenderGraphCompileTest --test=...`）が `RenderGraphTextureUsageContractTest.cpp:1462` の VisibilityResolve の `constantCount == 3` の assertion で落ちて終わらない（`.harness/runs/20261029-040919/aux-SCN-BUILD-ALL-TESTS-rendergraph-run.txt`。この項目の前から）。INTERFACE のソースは試験の対象ごとにコンパイルし直すので、Game のソースを組み込む 2 つの試験のビルドが重い
