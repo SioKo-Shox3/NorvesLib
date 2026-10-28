@@ -635,17 +635,64 @@ namespace Game::GameModes
             float bestZ = 0.0f;
             float bestYaw = 0.0f;
             float bestScale = 1.0f;
-            // 引く回数の上限までに位置が 1 つも無ければ、締めた上限でもう一巡引く（置けた配置の乱数の並びは変えない）
-            for (int draw = 0; draw < 2 * kSeaMaxDraws && candidates < kSeaCandidates; ++draw)
+            // 位置が 1 つも無いときだけ上限を締め、マスクがある場合は空いた升にも絞って再び引く。
+            // 通常の配置とマスクなしの乱数の並びは変えない。
+            uint32_t openCells[kSeaTileIntegrationSteps * kSeaTileIntegrationSteps];
+            uint32_t openCellCount = 0;
+            float maskedMaxDensity = 0.0f;
+            const float sampleStep = kSeaTileMeters / static_cast<float>(kSeaTileIntegrationSteps);
+            for (int draw = 0; draw < 3 * kSeaMaxDraws && candidates < kSeaCandidates; ++draw)
             {
                 if (draw >= kSeaMaxDraws && candidates > 0)
                 {
                     break;
                 }
-                const float maxDensity = draw < kSeaMaxDraws ? tile.MaxDensity : tile.TightMaxDensity;
-                const float x = tile.MinX + kSeaTileMeters * random.Next();
-                const float z = tile.MinZ + kSeaTileMeters * random.Next();
-                if (random.Next() * maxDensity >= SeaDensityAt(x, z, radius, state.Mounds))
+                if (draw == 2 * kSeaMaxDraws)
+                {
+                    if (state.pMask == nullptr)
+                    {
+                        break;
+                    }
+                    for (int sz = 0; sz < kSeaTileIntegrationSteps; ++sz)
+                    {
+                        for (int sx = 0; sx < kSeaTileIntegrationSteps; ++sx)
+                        {
+                            const float x = tile.MinX + (static_cast<float>(sx) + 0.5f) * sampleStep;
+                            const float z = tile.MinZ + (static_cast<float>(sz) + 0.5f) * sampleStep;
+                            const float density = SeaDensityAt(x, z, radius, state.Mounds);
+                            if (density > 0.0f && !state.pMask->IsBlocked(x, z))
+                            {
+                                openCells[openCellCount++] = static_cast<uint32_t>(sz * kSeaTileIntegrationSteps + sx);
+                                maskedMaxDensity = std::max(maskedMaxDensity, density);
+                            }
+                        }
+                    }
+                    if (openCellCount == 0)
+                    {
+                        break;
+                    }
+                    maskedMaxDensity = std::min(tile.TightMaxDensity, maskedMaxDensity * kSeaTileDensityMargin);
+                }
+                const bool bMaskedRetry = draw >= 2 * kSeaMaxDraws;
+                const float maxDensity = bMaskedRetry ? maskedMaxDensity : (draw < kSeaMaxDraws ? tile.MaxDensity : tile.TightMaxDensity);
+                float x = 0.0f;
+                float z = 0.0f;
+                const bool bUseCellCenter = bMaskedRetry && draw == 3 * kSeaMaxDraws - 1;
+                if (bMaskedRetry)
+                {
+                    const uint32_t cell = openCells[std::min(static_cast<uint32_t>(random.Next() * openCellCount), openCellCount - 1)];
+                    const float offsetX = random.Next();
+                    const float offsetZ = random.Next();
+                    x = tile.MinX + (static_cast<float>(cell % kSeaTileIntegrationSteps) + (bUseCellCenter ? 0.5f : offsetX)) * sampleStep;
+                    z = tile.MinZ + (static_cast<float>(cell / kSeaTileIntegrationSteps) + (bUseCellCenter ? 0.5f : offsetZ)) * sampleStep;
+                }
+                else
+                {
+                    x = tile.MinX + kSeaTileMeters * random.Next();
+                    z = tile.MinZ + kSeaTileMeters * random.Next();
+                }
+                // 最後まで引けなければ、空いていると確かめた升の中心を使う。
+                if (random.Next() * (bUseCellCenter ? 0.0f : maxDensity) >= SeaDensityAt(x, z, radius, state.Mounds))
                 {
                     continue;
                 }
