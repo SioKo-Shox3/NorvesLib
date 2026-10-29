@@ -49,7 +49,10 @@ param(
     [switch]$Force,
 
     # 焼かずに、対象の項目の印を今の入力と照らして出す（-OnlyLogicalPath と併せて使う）
-    [switch]$CheckStamps
+    [switch]$CheckStamps,
+
+    # 付けたときは DEM の区画を焼いても接地用の高さ格子を書かない（作業者ごとの置き場で並列に焼き、後で共有の置き場で 1 回書くとき）
+    [switch]$SkipPlacementGround
 )
 
 Set-StrictMode -Version Latest
@@ -598,8 +601,8 @@ if ($existingJson -ne $aggregateJson) {
 }
 
 # DEM の区画が今回の対象に含まれるときだけ、集約済みの参照から接地用の格子を更新する。
-# 地形以外だけの絞り込み・印だけの確認・元の DEM が欠けた実行では呼ばない。
-if ($placementGroundSelected) {
+# 地形以外だけの絞り込み・印だけの確認・元の DEM が欠けた実行・-SkipPlacementGround を付けた実行では呼ばない。
+if ($placementGroundSelected -and -not $SkipPlacementGround) {
     $placementGroundPath = Join-Path $ResolvedRuntimeRoot "Terrain/WastelandPlacementGround.bin"
     $placementArguments = @(
         "--write-placement-ground",
@@ -611,6 +614,8 @@ if ($placementGroundSelected) {
     if ($LASTEXITCODE -ne 0) {
         throw "接地用の高さ格子の書き出しが失敗しました（exit code $LASTEXITCODE）"
     }
+} elseif ($placementGroundSelected -and $SkipPlacementGround) {
+    Write-Output "COOK_ASSETS placement_ground=skipped"
 }
 
 if ($missingEntryCount -gt 0) {
