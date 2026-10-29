@@ -845,7 +845,7 @@ namespace NorvesLib::Core::Rendering
             Container::VariableArray<GPUMegaMesh> Meshes;
             // メッシュの表の行と同じ並びの、メッシュの区画の持ち主（MegaMeshGPUData::RegionOwner）
             Container::VariableArray<Container::TSharedPtr<void>> MeshOwners;
-            // 影の表（インスタンスの表と同じ並び）。影を落とすインスタンスだけが、影の判定のワークグループを持つ
+            // 影の表（インスタンスの表と同じ並び）。BVH の領域は一律、平らな行は投影物だけに割り当てる
             Container::VariableArray<MegaGeometryShadowInstance> ShadowInstances;
             uint64_t ShadowTotalGroups = 0;
             uint32_t ShadowCasterCount = 0;
@@ -853,6 +853,11 @@ namespace NorvesLib::Core::Rendering
             uint64_t TotalGroups = 0;
             // BVH のたどりの規模: BVH を持つインスタンスの数と、段ごとの節の数・葉の数のインスタンスの合計（列の大きさになる）
             uint32_t BvhInstanceCount = 0;
+            // BVH の直後に置く空行の数と、BVH の領域の 1 行あたりの影の割り当て
+            uint32_t BvhSpareCount = 0;
+            uint32_t BvhShadowGroups = 0;
+            // 空行だけが読む固定変換の席（実インスタンスの席とは共有しない）
+            uint32_t EmptySlot = 0;
             Container::VariableArray<uint64_t> BvhLevelCapacity;
             uint64_t BvhLeafCapacity = 0;
         };
@@ -1022,10 +1027,12 @@ namespace NorvesLib::Core::Rendering
          *
          * @param bCommit true なら差分更新の出所（席の行・メッシュ・載らなかったメッシュ）を覚える。
          * false なら何も変えずに作る（開発ビルドの照合）
+         * @param outRows インスタンスの位置ごとの表の行（載らなければ NoSceneRow）
          * @param outRecords m_Instances と同じ並びの、影の表へ載せた記録（載らなかったインスタンスは投影物でない記録）
          */
         void ComposeSceneTables(const MegaGeometryPassCommand &command, SceneTables &tables, bool bCommit,
-                                Container::VariableArray<ShadowInstanceRecord> &outRecords);
+                                Container::VariableArray<ShadowInstanceRecord> &outRecords,
+                                Container::VariableArray<uint32_t> &outRows);
         /**
          * @brief インスタンス 1 つの影の表の行（FirstGroup 以外）と記録を組む
          * @param ioEntry FirstGroup はそのまま残し、ほかを書く
@@ -1446,6 +1453,7 @@ namespace NorvesLib::Core::Rendering
         // 開発ビルドの照合 MEGA_TABLES: 全部を作り直した表の作業領域と、統計（mismatch・checks は通算、ほかは出す間隔の間）
         SceneTables m_SceneTablesCheck;
         Container::VariableArray<ShadowInstanceRecord> m_SceneTablesCheckRecords;
+        Container::VariableArray<uint32_t> m_SceneTablesCheckRows;
         struct SceneTablesStats
         {
             uint32_t SinceCheck = 0;
