@@ -868,6 +868,9 @@ namespace NorvesLib::Core::Rendering
         m_EntryCopyCount = 0;
         m_ShadowRowCopies.clear();
         m_ShadowRowCopyCount = 0;
+        m_SceneUploadRows.clear();
+        m_bSceneUploadAllRows = true;
+        m_bSceneUploadCopiesAreSceneTables = false;
         m_MeshCopies.clear();
         m_bMeshCopiesValid = false;
         m_bSceneRowsAllDirty = true;
@@ -1078,6 +1081,7 @@ namespace NorvesLib::Core::Rendering
             // 作り直したインスタンスは、席の表の番号を決め直し、全部の席の行を確かめる。前のフレームの HZB の契約では
             // 全量の再同期として数える（描いた番号が前のフレームと同じ席を指す保証が無い）
             ++m_SceneResyncCount;
+            m_bSceneUploadAllRows = true;
             m_bSceneRowsAllDirty = true;
             m_bSceneSlotsDirty = true;
             m_SceneDirtyPositions.clear();
@@ -1756,6 +1760,10 @@ namespace NorvesLib::Core::Rendering
     void MegaGeometryPass::ComposeSceneTables(const MegaGeometryPassCommand &command, SceneTables &tables, bool bCommit,
                                               VariableArray<ShadowInstanceRecord> &outRecords)
     {
+        if (bCommit && &tables == &m_SceneTables)
+        {
+            m_bSceneUploadAllRows = true;
+        }
         tables.Sections.clear();
         tables.Drawables.clear();
         tables.Entries.clear();
@@ -2048,6 +2056,10 @@ namespace NorvesLib::Core::Rendering
                 NoteShadowRecord(position, ShadowInstanceRecord{}, false);
                 continue;
             }
+            if (!m_bSceneUploadAllRows)
+            {
+                m_SceneUploadRows.push_back(row);
+            }
             const MegaGeometry::MegaMeshGPUData &gpuData = *tables.Drawables[row].GpuData;
             GPUMegaEntry &entry = tables.Entries[row];
             entry.Slot = instance.TableSlot;
@@ -2076,6 +2088,7 @@ namespace NorvesLib::Core::Rendering
         // 投影物かどうかが変わった: 影の判定のワークグループの先頭を数え直す（落とさない行は次の行と同じ値）
         if (bCasterChanged)
         {
+            m_bSceneUploadAllRows = true;
             tables.ShadowTotalGroups = 0;
             tables.ShadowCasterCount = 0;
             for (size_t row = 0; row < tables.ShadowInstances.size(); ++row)
@@ -4907,8 +4920,30 @@ namespace NorvesLib::Core::Rendering
                                                      RHI::ICommandList *commandList, uint64_t pageTableBytes)
     {
         NORVES_PROFILE_SCOPE("MegaGeometryPass.UpdateResidentSceneTables");
+        // 更新を完了できなかったら、写しを GPU の表に書いたものと見なさず、次の更新で送り直す
+        const auto invalidateCopies = [this]() -> void
+        {
+            for (uint8_t &state : m_SlotRowStates)
+            {
+                if (state == 1u)
+                {
+                    state = 2u;
+                }
+            }
+            m_bSceneRowsAllDirty = true;
+            m_EntryCopyCount = 0;
+            m_ShadowRowCopyCount = 0;
+            m_bSceneUploadAllRows = true;
+            m_bSceneUploadCopiesAreSceneTables = false;
+            m_bMeshCopiesValid = false;
+        };
+        if (&tables != &m_SceneTables)
+        {
+            m_bSceneUploadAllRows = true;
+        }
         if (!m_Device || !commandList || !m_SceneScatterPipeline)
         {
+            invalidateCopies();
             return false;
         }
 
@@ -4921,7 +4956,8 @@ namespace NorvesLib::Core::Rendering
         ++m_SceneUpdateStamp;
         if (m_SceneUpdateStamp == 0u)
         {
-            // 番号が一周したら、古い番号を今の番号と取り違えないよう消してから 1 に戻す
+            // 番号が一周したら、古い番号を今の番号と取り違えないよう消し、全行を比べてから 1 に戻す
+            m_bSceneUploadAllRows = true;
             std::fill(m_SlotRowChangedStamps.begin(), m_SlotRowChangedStamps.end(), 0u);
             m_SceneUpdateStamp = 1u;
         }
@@ -4932,7 +4968,37 @@ namespace NorvesLib::Core::Rendering
         // ----------------------------------------
         // 1. 席の表: 確かめる行（Setup が作り直したなら全部、直したなら直した位置）の中身を写しと比べる
         // ----------------------------------------
-        bool bAllRows = m_bSceneRowsAllDirty;
+        // 席の表が無いときは確保前に全席を数える。コピーできずに確保し直す場合も収まる大きさにする
+        bool bAllRows = m_bSceneRowsAllDirty || !m_SlotTableBuffer;
+        bool bCompareAllRows = m_bSceneUploadAllRows || bAllRows || !m_bSceneUploadCopiesAreSceneTables ||
+                               m_EntryCopyCount != entryCount || m_ShadowRowCopyCount != entryCount ||
+                               &tables != &m_SceneTables || m_SceneInstanceRows.size() != m_Instances.size();
+        Container::VariableArray<uint32_t> compareRows;
+        if (!bCompareAllRows)
+        {
+            // 表で直した行と席を確かめる位置に対応する行を、重複の無い昇順にする
+            compareRows.reserve(m_SceneUploadRows.size() + m_SceneDirtyPositions.size());
+            for (const uint32_t row : m_SceneUploadRows)
+            {
+                if (row < entryCount)
+                {
+                    compareRows.push_back(row);
+                }
+            }
+            for (const uint32_t position : m_SceneDirtyPositions)
+            {
+                if (position < m_SceneInstanceRows.size())
+                {
+                    const uint32_t row = m_SceneInstanceRows[position];
+                    if (row != NoSceneRow && row < entryCount)
+                    {
+                        compareRows.push_back(row);
+                    }
+                }
+            }
+            std::sort(compareRows.begin(), compareRows.end());
+            compareRows.erase(std::unique(compareRows.begin(), compareRows.end()), compareRows.end());
+        }
         uint32_t slotLimit = 0;
         if (bAllRows)
         {
@@ -4951,16 +5017,27 @@ namespace NorvesLib::Core::Rendering
                 }
             }
         }
-        // 描く順の行が指す席も収める（GPU が席の表の外を読まないように）
-        for (const GPUMegaEntry &entry : tables.Entries)
+        // 描く順の行が指す席も収める。差分以外の席は前の更新で既に収まっている
+        if (bCompareAllRows)
         {
-            slotLimit = std::max(slotLimit, entry.Slot + 1u);
+            for (const GPUMegaEntry &entry : tables.Entries)
+            {
+                slotLimit = std::max(slotLimit, entry.Slot + 1u);
+            }
+        }
+        else
+        {
+            for (const uint32_t row : compareRows)
+            {
+                slotLimit = std::max(slotLimit, tables.Entries[row].Slot + 1u);
+            }
         }
         bool bSlotTableGrown = false;
         bool bSlotTableCopied = false;
         if (!EnsureResidentTable(m_SlotTableBuffer, m_SlotTableCapacity, slotLimit, 1024u, sizeof(GPUMegaSlotRow),
                                  "MegaGeometry_SlotTable", commandList, bSlotTableGrown, bSlotTableCopied))
         {
+            invalidateCopies();
             return false;
         }
         bool bCopiedAnyTable = bSlotTableCopied;
@@ -4977,6 +5054,8 @@ namespace NorvesLib::Core::Rendering
                     }
                 }
                 bAllRows = true;
+                bCompareAllRows = true;
+                m_bSceneUploadAllRows = true;
             }
             // コピーしたときは、古い表にあった行は新しい表の同じ位置にあるので、写しの状態をそのまま引き継ぐ
             m_SlotRowCopies.resize(m_SlotTableCapacity);
@@ -5026,22 +5105,6 @@ namespace NorvesLib::Core::Rendering
         m_bSceneRowsAllDirty = false;
         m_SceneDirtyPositions.clear();
 
-        // ここから先で失敗したら、写しを GPU の表に書いたものと見なせないので、次の更新が全部を送り直すようにする
-        const auto invalidateCopies = [this]() -> void
-        {
-            for (uint8_t &state : m_SlotRowStates)
-            {
-                if (state == 1u)
-                {
-                    state = 2u;
-                }
-            }
-            m_bSceneRowsAllDirty = true;
-            m_EntryCopyCount = 0;
-            m_ShadowRowCopyCount = 0;
-            m_bMeshCopiesValid = false;
-        };
-
         // ----------------------------------------
         // 2. 描く順の表・影の表: 並びの出所が変わった行と、席の行の中身が変わった行
         // ----------------------------------------
@@ -5071,6 +5134,8 @@ namespace NorvesLib::Core::Rendering
             if (!bInstanceTableCopied)
             {
                 m_EntryCopyCount = 0;
+                m_bSceneUploadAllRows = true;
+                bCompareAllRows = true;
             }
             m_EntryCopies.resize(m_InstanceTableCapacity);
         }
@@ -5079,38 +5144,50 @@ namespace NorvesLib::Core::Rendering
             if (!bShadowTableCopied)
             {
                 m_ShadowRowCopyCount = 0;
+                m_bSceneUploadAllRows = true;
+                bCompareAllRows = true;
             }
             m_ShadowRowCopies.resize(m_InstanceTableCapacity);
         }
 
         Container::VariableArray<uint32_t> entryIndices;
-        for (uint32_t index = 0; index < entryCount; ++index)
+        Container::VariableArray<uint32_t> shadowIndices;
+        const auto compareRow = [&](uint32_t index) -> void
         {
             const GPUMegaEntry &entry = tables.Entries[index];
-            GPUMegaEntry &copy = m_EntryCopies[index];
-            const bool bSameEntry = index < m_EntryCopyCount && copy.Slot == entry.Slot && copy.MeshIndex == entry.MeshIndex &&
-                                    copy.FirstGroup == entry.FirstGroup;
-            if (bSameEntry && m_SlotRowChangedStamps[entry.Slot] != stamp)
+            GPUMegaEntry &entryCopy = m_EntryCopies[index];
+            const bool bSameEntry = index < m_EntryCopyCount && entryCopy.Slot == entry.Slot &&
+                                    entryCopy.MeshIndex == entry.MeshIndex && entryCopy.FirstGroup == entry.FirstGroup;
+            if (!bSameEntry || m_SlotRowChangedStamps[entry.Slot] == stamp)
             {
-                continue;
+                entryCopy = entry;
+                entryIndices.push_back(index);
             }
-            copy = entry;
-            entryIndices.push_back(index);
+
+            const MegaGeometryShadowInstance &shadow = tables.ShadowInstances[index];
+            MegaGeometryShadowInstance &shadowCopy = m_ShadowRowCopies[index];
+            if (index >= m_ShadowRowCopyCount ||
+                std::memcmp(&shadowCopy, &shadow, sizeof(MegaGeometryShadowInstance)) != 0)
+            {
+                shadowCopy = shadow;
+                shadowIndices.push_back(index);
+            }
+        };
+        if (bCompareAllRows)
+        {
+            for (uint32_t index = 0; index < entryCount; ++index)
+            {
+                compareRow(index);
+            }
+        }
+        else
+        {
+            for (const uint32_t index : compareRows)
+            {
+                compareRow(index);
+            }
         }
         m_EntryCopyCount = entryCount;
-
-        Container::VariableArray<uint32_t> shadowIndices;
-        for (uint32_t index = 0; index < entryCount; ++index)
-        {
-            const MegaGeometryShadowInstance &shadow = tables.ShadowInstances[index];
-            MegaGeometryShadowInstance &copy = m_ShadowRowCopies[index];
-            if (index < m_ShadowRowCopyCount && std::memcmp(&copy, &shadow, sizeof(MegaGeometryShadowInstance)) == 0)
-            {
-                continue;
-            }
-            copy = shadow;
-            shadowIndices.push_back(index);
-        }
         m_ShadowRowCopyCount = entryCount;
 
         // ----------------------------------------
@@ -5225,7 +5302,10 @@ namespace NorvesLib::Core::Rendering
             {
                 RecordSceneTableCheck(slot, commandList, entryCount, meshCount);
             }
-            NoteSceneUpload(pageTableBytes, 0u, 0u, 0u, 0u, pageTableBytes);
+            m_SceneUploadRows.clear();
+            m_bSceneUploadAllRows = false;
+            m_bSceneUploadCopiesAreSceneTables = &tables == &m_SceneTables;
+            NoteSceneUpload(pageTableBytes, 0u, 0u, 0u, 0u, pageTableBytes, tables);
             return true;
         }
 
@@ -5407,12 +5487,15 @@ namespace NorvesLib::Core::Rendering
             RecordSceneTableCheck(slot, commandList, entryCount, meshCount);
         }
 
-        NoteSceneUpload(uploadBytes + pageTableBytes, rowCount, entryRecords, shadowRecords, meshRecords, pageTableBytes);
+        m_SceneUploadRows.clear();
+        m_bSceneUploadAllRows = false;
+        m_bSceneUploadCopiesAreSceneTables = &tables == &m_SceneTables;
+        NoteSceneUpload(uploadBytes + pageTableBytes, rowCount, entryRecords, shadowRecords, meshRecords, pageTableBytes, tables);
         return true;
     }
 
     void MegaGeometryPass::NoteSceneUpload(uint64_t bytes, uint32_t rows, uint32_t entries, uint32_t shadows,
-                                           uint32_t meshes, uint64_t pageTableBytes)
+                                           uint32_t meshes, uint64_t pageTableBytes, const SceneTables &tables)
     {
         SceneUploadStats &stats = m_SceneUploadStats;
         ++stats.Updates;
@@ -5447,8 +5530,47 @@ namespace NorvesLib::Core::Rendering
                                                  "インスタンスと一致しません（変わった席の数え漏れ）",
                              mismatches, m_Instances.size());
         }
+        // 表で直した行の数え漏れも、写しが有効なときに全行で確かめる
+        if (m_EntryCopyCount == tables.Entries.size() && m_ShadowRowCopyCount == tables.ShadowInstances.size() &&
+            m_EntryCopies.size() >= tables.Entries.size() && m_ShadowRowCopies.size() >= tables.ShadowInstances.size())
+        {
+            uint32_t entryMismatches = 0;
+            for (size_t row = 0; row < tables.Entries.size(); ++row)
+            {
+                const GPUMegaEntry &entry = tables.Entries[row];
+                const GPUMegaEntry &copy = m_EntryCopies[row];
+                if (copy.Slot != entry.Slot || copy.MeshIndex != entry.MeshIndex || copy.FirstGroup != entry.FirstGroup)
+                {
+                    ++entryMismatches;
+                }
+            }
+            uint32_t shadowMismatches = 0;
+            for (size_t row = 0; row < tables.ShadowInstances.size(); ++row)
+            {
+                if (std::memcmp(&m_ShadowRowCopies[row], &tables.ShadowInstances[row],
+                                sizeof(MegaGeometryShadowInstance)) != 0)
+                {
+                    ++shadowMismatches;
+                }
+            }
+            if (entryMismatches > 0)
+            {
+                NORVES_LOG_ERROR("MegaGeometryPass", "MEGA_SCENE_UPLOAD_MISMATCH table=entries mismatch=%u rows=%zu "
+                                                     "描く順の表の写しが表と一致しません（変わった行の数え漏れ）",
+                                 entryMismatches, tables.Entries.size());
+            }
+            if (shadowMismatches > 0)
+            {
+                NORVES_LOG_ERROR("MegaGeometryPass", "MEGA_SCENE_UPLOAD_MISMATCH table=shadows mismatch=%u rows=%zu "
+                                                     "影の表の写しが表と一致しません（変わった行の数え漏れ）",
+                                 shadowMismatches, tables.ShadowInstances.size());
+            }
+            mismatches += entryMismatches + shadowMismatches;
+        }
         // 表を広げた後の GPU の表の読み戻しの照合（窓の間に食い違った行）も、数え漏れと同じ食い違いとして数える
         stats.Mismatches = mismatches + stats.GpuMismatches;
+#else
+        (void)tables;
 #endif
 
         // bytes は、この更新で常駐の表とページの表へ書いたバイト数。インスタンスも常駐も変わらない更新は 0。

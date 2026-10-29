@@ -8172,3 +8172,4 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 証拠: `.harness/runs/scene-capture/SCN-WL-PLACEMENT-GROUNDING-FIX/final2/`（verify 全 8 行の出力 `unit-verify.txt`: Debug・RelWithDebInfo の Game と AssetCook のビルド EXIT=0、書き出しの撮影 EXIT=0、`--require-compliant` EXIT=0〔報告を残す `--out` を足した〕、6 視点 EXIT=0、`CompareReference.py --verify` result=pass photos=6、回帰の after result=pass scenes=4、GPU の `gpu-final2/metrics.json`）。見比べ `compare-final2/`（前の版からの差は戻した崖錐の岩と影だけ。ref_cliff_01 の崖錐と戻した岩の切り出しを開き、浮いた株・石と埋もれすぎた岩が無いことを見た）
 - Next: SCN-WL-CLIFF-GEN-TALUS に戻る
 - Notes: 低木 B → A の割合（31:69）は残課題のまま。見送りの一覧は石と小礫も書き出しと同じ区画の標本の分だけ。新しい試験は足していない
+- U1 常駐の表の更新が、変わった行だけを比べる（描く順・影の行の変更を帳簿に残す）: 着地(直し 0 回)
