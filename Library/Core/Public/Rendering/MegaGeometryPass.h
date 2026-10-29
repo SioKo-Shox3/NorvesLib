@@ -15,7 +15,18 @@
 #include "RHI/RHITypes.h"
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
+#include "Debug/DebugConfig.h"
+#if NORVES_BUILD_DEVELOPMENT
+#include "Thread/Mutex.h"
+#endif
 #include <cstddef>
+
+#if NORVES_BUILD_DEVELOPMENT
+namespace NorvesLib::RHI
+{
+    struct BufferDesc;
+}
+#endif
 
 namespace NorvesLib::Core::Rendering
 {
@@ -545,6 +556,11 @@ namespace NorvesLib::Core::Rendering
         uint32_t GetFrameSlotCapacity() const { return m_FrameSlots.GetCapacity(); }
         /** @brief 手放して GPU の使い終わりを待っているバッファの数（検査用） */
         size_t GetRetiredBufferCount() const { return m_RetiredBuffers.size(); }
+
+#if NORVES_BUILD_DEVELOPMENT
+        /** @brief GPU Scene の確保を弱参照で記録する。同じ所有権のバッファは重複して数えない */
+        void NoteGpuSceneBuffer(const RHI::BufferPtr& buffer, const RHI::BufferDesc& desc, bool bDevelopmentOnly);
+#endif
         /**
          * @brief ID・深度へ描く相手（同じ View の VisibilityRasterPass）。渡すと、解決が GBuffer を書くフレームは、
          *        相手の Execute が記録を駆動する（Execute(context) は記録をキューへ積まず、GBuffer の添付の状態遷移だけを行う）
@@ -1243,6 +1259,43 @@ namespace NorvesLib::Core::Rendering
             uint64_t RetiredFrame = 0; // 退避したときの m_RenderFrameCount
         };
         Container::VariableArray<RetiredBuffer> m_RetiredBuffers;
+#if NORVES_BUILD_DEVELOPMENT
+        struct GpuSceneBufferAllocation
+        {
+            Container::TWeakPtr<RHI::IBuffer> Buffer;
+            uint64_t Bytes = 0;
+            uint64_t ExpiredFrame = ~0ull;
+            Container::AnsiString Name;
+            bool bCPUAccessible = false;
+            bool bExcludeDeviceLocal = false;
+            bool bDevelopmentOnly = false;
+            bool bPending = false;
+        };
+        struct GpuSceneVramUsage
+        {
+            uint64_t LiveBytes = 0;
+            uint64_t PendingBytes = 0;
+            uint64_t PeakBytes = 0;
+            uint64_t PeakLiveBytes = 0;
+            uint64_t PeakPendingBytes = 0;
+            uint64_t PeakFrame = 0;
+        };
+        struct GpuSceneVramStats
+        {
+            GpuSceneVramUsage All;
+            GpuSceneVramUsage Device;
+            GpuSceneVramUsage AllDevice;
+            GpuSceneVramUsage DevelopmentOnlyDevice;
+            GpuSceneVramUsage Host;
+            GpuSceneVramUsage HostMaybeDevice;
+        };
+        void UpdateGpuSceneVram();
+        Thread::Mutex m_GpuSceneVramMutex;
+        Container::VariableArray<GpuSceneBufferAllocation> m_GpuSceneBuffers;
+        GpuSceneVramStats m_GpuSceneVramStats;
+        Container::AnsiString m_GpuSceneDevicePeakBuffers;
+        uint64_t m_LastLoggedGpuSceneDevicePeakBytes = 0;
+#endif
         uint64_t m_OcclusionFrameCount = 0;
 
         // 統計（MEGA_OCCLUSION）。フレームの持ち主の読み戻しの口で借りた先へ GPU が数え、提出の完了の後に受け取る（GPUを待たない）。

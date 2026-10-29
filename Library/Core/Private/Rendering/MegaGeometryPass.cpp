@@ -907,6 +907,15 @@ namespace NorvesLib::Core::Rendering
         m_bUnsetFrameSerialWarned = false;
         m_DummyStatsBuffer.reset();
         m_RetiredBuffers.clear();
+#if NORVES_BUILD_DEVELOPMENT
+        {
+            Thread::ScopedLock lock(m_GpuSceneVramMutex);
+            m_GpuSceneBuffers.clear();
+            m_GpuSceneVramStats = GpuSceneVramStats{};
+            m_GpuSceneDevicePeakBuffers.clear();
+            m_LastLoggedGpuSceneDevicePeakBytes = 0;
+        }
+#endif
         m_OcclusionFrameCount = 0;
         // まだ渡っていない統計は受け取らない（読み戻し先は GPU の完了の後にフレームの持ち主へ戻る）
         m_StatsReadback.CancelPending();
@@ -4139,6 +4148,9 @@ namespace NorvesLib::Core::Rendering
         }
 
         ReleaseStaleBuffers();
+#if NORVES_BUILD_DEVELOPMENT
+        UpdateGpuSceneVram();
+#endif
     }
 
     bool MegaGeometryPass::TakeVisibilityDrawPlan(VisibilityDrawPlan &outPlan)
@@ -4387,6 +4399,9 @@ namespace NorvesLib::Core::Rendering
             false,
             "MegaGeometry_DummyStats");
         m_DummyStatsBuffer = device->CreateBuffer(dummyStatsDesc);
+#if NORVES_BUILD_DEVELOPMENT
+        NoteGpuSceneBuffer(m_DummyStatsBuffer, dummyStatsDesc, false);
+#endif
         if (!m_DummyStatsBuffer)
         {
             return false;
@@ -4415,6 +4430,9 @@ namespace NorvesLib::Core::Rendering
                                     false,
                                     "MegaGeometry_BvhCounters");
         m_BvhCounterBuffer = m_Device->CreateBuffer(counterDesc);
+#if NORVES_BUILD_DEVELOPMENT
+        NoteGpuSceneBuffer(m_BvhCounterBuffer, counterDesc, false);
+#endif
         return m_BvhCounterBuffer != nullptr;
     }
 
@@ -4440,6 +4458,9 @@ namespace NorvesLib::Core::Rendering
             {
                 RHI::BufferDesc queueDesc(queueBytes, RHI::ResourceUsage::StorageBuffer, false, "MegaGeometry_BvhQueue");
                 queueBuffer = m_Device->CreateBuffer(queueDesc);
+#if NORVES_BUILD_DEVELOPMENT
+                NoteGpuSceneBuffer(queueBuffer, queueDesc, false);
+#endif
             }
             if (!pass2Buffer)
             {
@@ -4450,6 +4471,9 @@ namespace NorvesLib::Core::Rendering
                                           false,
                                           "MegaGeometry_BvhPass2Deferred");
                 pass2Buffer = m_Device->CreateBuffer(pass2Desc);
+#if NORVES_BUILD_DEVELOPMENT
+                NoteGpuSceneBuffer(pass2Buffer, pass2Desc, false);
+#endif
             }
         }
         catch (const std::exception &exception)
@@ -4516,6 +4540,9 @@ namespace NorvesLib::Core::Rendering
                              false,
                              "MegaGeometry_SwRaster");
         RHI::BufferPtr buffer = m_Device->CreateBuffer(desc);
+#if NORVES_BUILD_DEVELOPMENT
+        NoteGpuSceneBuffer(buffer, desc, false);
+#endif
         if (!buffer)
         {
             return false;
@@ -4558,6 +4585,9 @@ namespace NorvesLib::Core::Rendering
                                  false,
                                  "MegaGeometry_BinCounters");
             RHI::BufferPtr buffer = m_Device->CreateBuffer(desc);
+#if NORVES_BUILD_DEVELOPMENT
+            NoteGpuSceneBuffer(buffer, desc, false);
+#endif
             if (!buffer)
             {
                 return false;
@@ -4586,6 +4616,9 @@ namespace NorvesLib::Core::Rendering
             {
                 RHI::BufferDesc listDesc(visibleListBytes, RHI::ResourceUsage::StorageBuffer, false, "MegaGeometry_VisibleList");
                 listBuffer = m_Device->CreateBuffer(listDesc);
+#if NORVES_BUILD_DEVELOPMENT
+                NoteGpuSceneBuffer(listBuffer, listDesc, false);
+#endif
                 if (bWantMarks)
                 {
                     RHI::BufferDesc markDesc(markBytes,
@@ -4593,6 +4626,9 @@ namespace NorvesLib::Core::Rendering
                                              false,
                                              "MegaGeometry_BinCheckMarks");
                     markBuffer = m_Device->CreateBuffer(markDesc);
+#if NORVES_BUILD_DEVELOPMENT
+                    NoteGpuSceneBuffer(markBuffer, markDesc, true);
+#endif
                 }
                 if (!listBuffer || (bWantMarks && !markBuffer))
                 {
@@ -4648,6 +4684,9 @@ namespace NorvesLib::Core::Rendering
                                  true,
                                  "MegaGeometry_BvhCullUBO");
             stageDraw.Uniform = m_Device->CreateBuffer(desc);
+#if NORVES_BUILD_DEVELOPMENT
+            NoteGpuSceneBuffer(stageDraw.Uniform, desc, false);
+#endif
             stageDraw.DescriptorSet = m_Device->CreateDescriptorSet(cullDsDesc);
             if (!stageDraw.Uniform || !stageDraw.DescriptorSet)
             {
@@ -4681,6 +4720,9 @@ namespace NorvesLib::Core::Rendering
             false,
             "MegaGeometry_IndirectDraw");
         RHI::BufferPtr indirectBuffer = m_Device->CreateBuffer(indirectDesc);
+#if NORVES_BUILD_DEVELOPMENT
+        NoteGpuSceneBuffer(indirectBuffer, indirectDesc, false);
+#endif
 
         // 区間ごとのカウンタ（atomic counter用 SSBO。DrawIndexedIndirectCount のカウントバッファも兼ねる）
         RHI::BufferDesc countDesc(
@@ -4689,6 +4731,9 @@ namespace NorvesLib::Core::Rendering
             false,
             "MegaGeometry_DrawCount");
         RHI::BufferPtr countBuffer = m_Device->CreateBuffer(countDesc);
+#if NORVES_BUILD_DEVELOPMENT
+        NoteGpuSceneBuffer(countBuffer, countDesc, false);
+#endif
 
         // コマンドごとの描画情報（インスタンスの番号・payload）。カリングが書き、頂点シェーダーが読む
         RHI::BufferDesc drawInfoDesc(
@@ -4697,6 +4742,9 @@ namespace NorvesLib::Core::Rendering
             false,
             "MegaGeometry_DrawInfo");
         RHI::BufferPtr drawInfoBuffer = m_Device->CreateBuffer(drawInfoDesc);
+#if NORVES_BUILD_DEVELOPMENT
+        NoteGpuSceneBuffer(drawInfoBuffer, drawInfoDesc, false);
+#endif
 
         if (!indirectBuffer || !countBuffer || !drawInfoBuffer)
         {
@@ -4854,6 +4902,9 @@ namespace NorvesLib::Core::Rendering
                              false,
                              debugName);
         RHI::BufferPtr newBuffer = m_Device->CreateBuffer(desc);
+#if NORVES_BUILD_DEVELOPMENT
+        NoteGpuSceneBuffer(newBuffer, desc, false);
+#endif
         if (!newBuffer)
         {
             return false;
@@ -5392,6 +5443,9 @@ namespace NorvesLib::Core::Rendering
             RHI::BufferDesc desc(capacity, RHI::ResourceUsage::StorageBuffer, true, "MegaGeometry_SceneStaging");
             RHI::FrameResourceProtectedCreationScope protectedCreation;
             RHI::BufferPtr buffer = m_Device->CreateBuffer(desc);
+#if NORVES_BUILD_DEVELOPMENT
+            NoteGpuSceneBuffer(buffer, desc, false);
+#endif
             if (!buffer)
             {
                 invalidateCopies();
@@ -5634,6 +5688,9 @@ namespace NorvesLib::Core::Rendering
                                  "MegaGeometry_SceneCheckReadback");
             RHI::FrameResourceProtectedCreationScope protectedCreation;
             slot.SceneCheckReadback = m_Device->CreateBuffer(desc);
+#if NORVES_BUILD_DEVELOPMENT
+            NoteGpuSceneBuffer(slot.SceneCheckReadback, desc, true);
+#endif
             slot.SceneCheckCapacity = slot.SceneCheckReadback ? totalBytes : 0u;
             if (!slot.SceneCheckReadback)
             {
@@ -5804,6 +5861,9 @@ namespace NorvesLib::Core::Rendering
                                  true,
                                  "MegaGeometry_SectionTable");
             RHI::BufferPtr buffer = m_Device->CreateBuffer(desc);
+#if NORVES_BUILD_DEVELOPMENT
+            NoteGpuSceneBuffer(buffer, desc, false);
+#endif
             if (!buffer)
             {
                 return false;
@@ -5822,6 +5882,9 @@ namespace NorvesLib::Core::Rendering
                                      true,
                                      "MegaGeometry_CullUBO");
                 slot.CullUniform[passIndex] = m_Device->CreateBuffer(desc);
+#if NORVES_BUILD_DEVELOPMENT
+                NoteGpuSceneBuffer(slot.CullUniform[passIndex], desc, false);
+#endif
             }
             if (!slot.CullDescriptorSet[passIndex])
             {
@@ -5844,6 +5907,9 @@ namespace NorvesLib::Core::Rendering
                                      "MegaGeometry_DrawUBO");
                 SectionDraw sectionDraw;
                 sectionDraw.Uniform = m_Device->CreateBuffer(desc);
+#if NORVES_BUILD_DEVELOPMENT
+                NoteGpuSceneBuffer(sectionDraw.Uniform, desc, false);
+#endif
                 sectionDraw.DescriptorSet = m_Device->CreateDescriptorSet(drawDsDesc);
                 if (!sectionDraw.Uniform || !sectionDraw.DescriptorSet)
                 {
@@ -5887,6 +5953,9 @@ namespace NorvesLib::Core::Rendering
                                  "MegaGeometry_PageTable");
             RHI::FrameResourceProtectedCreationScope protectedCreation;
             RHI::BufferPtr buffer = m_Device->CreateBuffer(desc);
+#if NORVES_BUILD_DEVELOPMENT
+            NoteGpuSceneBuffer(buffer, desc, false);
+#endif
             if (!buffer)
             {
                 return false;
@@ -6272,6 +6341,158 @@ namespace NorvesLib::Core::Rendering
 #endif
     }
 
+#if NORVES_BUILD_DEVELOPMENT
+    void MegaGeometryPass::NoteGpuSceneBuffer(const RHI::BufferPtr& buffer, const RHI::BufferDesc& desc,
+                                               bool bDevelopmentOnly)
+    {
+        if (!buffer)
+        {
+            return;
+        }
+        Thread::ScopedLock lock(m_GpuSceneVramMutex);
+        for (const GpuSceneBufferAllocation& allocation : m_GpuSceneBuffers)
+        {
+            // アドレスが再利用されても別の確保として数えられるよう、所有権を比較する。
+            if (!allocation.Buffer.owner_before(buffer) && !buffer.owner_before(allocation.Buffer))
+            {
+                return;
+            }
+        }
+        GpuSceneBufferAllocation allocation;
+        allocation.Buffer = buffer;
+        allocation.Bytes = buffer->GetSize();
+        allocation.Name = desc.DebugName ? desc.DebugName : "unnamed";
+        allocation.bCPUAccessible = desc.CPUAccessible;
+        allocation.bExcludeDeviceLocal = desc.bExcludeDeviceLocal;
+        allocation.bDevelopmentOnly = bDevelopmentOnly;
+        m_GpuSceneBuffers.push_back(std::move(allocation));
+    }
+
+    void MegaGeometryPass::UpdateGpuSceneVram()
+    {
+        Thread::ScopedLock lock(m_GpuSceneVramMutex);
+        const uint64_t previousDevicePeakBytes = m_GpuSceneVramStats.Device.PeakBytes;
+        // 最大値は残し、今回のフレームの合計だけ数え直す。
+        GpuSceneVramUsage* usages[] = {&m_GpuSceneVramStats.All, &m_GpuSceneVramStats.Device,
+                                      &m_GpuSceneVramStats.AllDevice, &m_GpuSceneVramStats.DevelopmentOnlyDevice,
+                                      &m_GpuSceneVramStats.Host, &m_GpuSceneVramStats.HostMaybeDevice};
+        for (GpuSceneVramUsage* usage : usages)
+        {
+            usage->LiveBytes = 0;
+            usage->PendingBytes = 0;
+        }
+        const auto addUsage = [](GpuSceneVramUsage& usage, const GpuSceneBufferAllocation& allocation)
+        {
+            if (allocation.bPending)
+            {
+                usage.PendingBytes += allocation.Bytes;
+            }
+            else
+            {
+                usage.LiveBytes += allocation.Bytes;
+            }
+        };
+        for (size_t index = 0; index < m_GpuSceneBuffers.size();)
+        {
+            GpuSceneBufferAllocation& allocation = m_GpuSceneBuffers[index];
+            allocation.bPending = allocation.Buffer.expired();
+            if (allocation.bPending)
+            {
+                if (allocation.ExpiredFrame == ~0ull)
+                {
+                    allocation.ExpiredFrame = m_RenderFrameCount;
+                }
+                // 弱参照の失効後も RHI の遅延破棄に残りうる。通常の飛行中の 2～3 フレームより長い
+                // 8 フレームを含め、実際の回収より遅い保守的な上限として数える。
+                if (m_RenderFrameCount - allocation.ExpiredFrame > 8u)
+                {
+                    if (index + 1u < m_GpuSceneBuffers.size())
+                    {
+                        allocation = std::move(m_GpuSceneBuffers.back());
+                    }
+                    m_GpuSceneBuffers.pop_back();
+                    continue;
+                }
+            }
+            addUsage(m_GpuSceneVramStats.All, allocation);
+            if (allocation.bCPUAccessible)
+            {
+                addUsage(m_GpuSceneVramStats.Host, allocation);
+                // ホスト可視でも、除外の指定が無ければ BAR のデバイスメモリに載る可能性を別に残す。
+                if (!allocation.bExcludeDeviceLocal)
+                {
+                    addUsage(m_GpuSceneVramStats.HostMaybeDevice, allocation);
+                }
+            }
+            else
+            {
+                addUsage(m_GpuSceneVramStats.AllDevice, allocation);
+                addUsage(allocation.bDevelopmentOnly ? m_GpuSceneVramStats.DevelopmentOnlyDevice
+                                                    : m_GpuSceneVramStats.Device, allocation);
+            }
+            ++index;
+        }
+        for (GpuSceneVramUsage* usage : usages)
+        {
+            const uint64_t bytes = usage->LiveBytes + usage->PendingBytes;
+            if (bytes > usage->PeakBytes)
+            {
+                usage->PeakBytes = bytes;
+                usage->PeakLiveBytes = usage->LiveBytes;
+                usage->PeakPendingBytes = usage->PendingBytes;
+                usage->PeakFrame = m_RenderFrameCount;
+            }
+        }
+        if (m_GpuSceneVramStats.Device.PeakBytes > previousDevicePeakBytes)
+        {
+            // 山が変わったときだけ、そのフレームで数えた名前・状態ごとの内訳を保存する。
+            struct PeakBuffer
+            {
+                Container::AnsiString Name;
+                uint64_t Bytes = 0;
+                bool bPending = false;
+            };
+            Container::VariableArray<PeakBuffer> buffers;
+            for (const GpuSceneBufferAllocation& allocation : m_GpuSceneBuffers)
+            {
+                if (allocation.bCPUAccessible || allocation.bDevelopmentOnly)
+                {
+                    continue;
+                }
+                const auto found = std::find_if(buffers.begin(), buffers.end(), [&allocation](const PeakBuffer& entry)
+                {
+                    return entry.Name == allocation.Name && entry.bPending == allocation.bPending;
+                });
+                if (found != buffers.end())
+                {
+                    found->Bytes += allocation.Bytes;
+                }
+                else
+                {
+                    buffers.push_back(PeakBuffer{allocation.Name, allocation.Bytes, allocation.bPending});
+                }
+            }
+            std::sort(buffers.begin(), buffers.end(), [](const PeakBuffer& left, const PeakBuffer& right)
+            {
+                return left.Bytes > right.Bytes;
+            });
+            Container::AnsiStringBuilder builder;
+            bool bFirst = true;
+            for (const PeakBuffer& buffer : buffers)
+            {
+                if (!bFirst)
+                {
+                    builder.Append(",");
+                }
+                bFirst = false;
+                builder.AppendFormat("%s:%s:%.3f", buffer.Name.c_str(), buffer.bPending ? "pending" : "live",
+                                     static_cast<double>(buffer.Bytes) / (1024.0 * 1024.0));
+            }
+            m_GpuSceneDevicePeakBuffers = builder.ToString();
+        }
+    }
+#endif
+
     void MegaGeometryPass::ReleaseStaleBuffers()
     {
         // 手放したフレームより後のフレームなら参照を落とす（GPU が使い終わるまでの破棄の遅延は RHI が行う）
@@ -6407,16 +6628,38 @@ namespace NorvesLib::Core::Rendering
             // visible_list_* は可視クラスタの全体の列（全パス通しの固定容量）: 枠（要素数・バイト数）、このフレームの溢れ
             // （積もうとした数 − 容量。列を確保できなかったときは容量 0 で、積もうとした数がそのまま溢れ。0 が合格）、
             // 積もうとした数の最大（読み戻したフレームから）
+#if NORVES_BUILD_DEVELOPMENT
             const auto bufferBytes = [](const RHI::BufferPtr &buffer) -> unsigned long long
             { return buffer ? static_cast<unsigned long long>(buffer->GetSize()) : 0ull; };
             const uint32_t visibleListCapacity = pending.VisibleListCapacity;
+            GpuSceneVramStats sceneVram;
+            Container::AnsiString devicePeakBuffers;
+            {
+                Thread::ScopedLock lock(m_GpuSceneVramMutex);
+                sceneVram = m_GpuSceneVramStats;
+                if (sceneVram.Device.PeakBytes > m_LastLoggedGpuSceneDevicePeakBytes)
+                {
+                    devicePeakBuffers = m_GpuSceneDevicePeakBuffers;
+                    m_LastLoggedGpuSceneDevicePeakBytes = sceneVram.Device.PeakBytes;
+                }
+            }
+            constexpr double BytesPerMiB = 1024.0 * 1024.0;
             NORVES_LOG_INFO("MegaGeometryPass",
                             "MEGA_CAPACITY draw_dropped=%u max_draw_count=%u command_capacity=%u "
                             "visibility_bytes=%llu indirect_bytes=%llu draw_info_bytes=%llu "
                             "bvh_queue_bytes=%llu bvh_pass2_bytes=%llu bvh_overflow=%u bvh_pass2_fallback=%u "
                             "bvh_node_peak=%u bvh_leaf_peak=%u "
                             "visible_list_capacity=%u visible_list_bytes=%llu visible_list_overflow=%u visible_list_peak=%u "
-                            "sw_raster_bytes=%llu frame=%llu epoch_frame=%lld",
+                            "sw_raster_bytes=%llu "
+                            "scene_vram_live_mb=%.1f scene_vram_peak_mb=%.1f "
+                            "scene_vram_device_live_mb=%.1f scene_vram_device_pending_mb=%.1f "
+                            "scene_vram_device_peak_mb=%.1f scene_vram_device_peak_frame=%llu "
+                            "scene_vram_dev_only_device_mb=%.1f scene_vram_host_mb=%.1f "
+                            "scene_vram_all_device_peak_mb=%.1f scene_vram_host_peak_mb=%.1f "
+                            "scene_vram_dev_only_device_live_mb=%.1f scene_vram_dev_only_device_pending_mb=%.1f "
+                            "scene_vram_host_live_mb=%.1f scene_vram_host_pending_mb=%.1f "
+                            "scene_vram_host_maybe_device_live_mb=%.1f scene_vram_host_maybe_device_pending_mb=%.1f "
+                            "frame=%llu epoch_frame=%lld",
                             stats[11],
                             m_Settings.MaxDrawCount,
                             m_CommandCapacity,
@@ -6434,8 +6677,35 @@ namespace NorvesLib::Core::Rendering
                             visibleListAttempted > visibleListCapacity ? visibleListAttempted - visibleListCapacity : 0u,
                             m_VisibleListPeak,
                             bufferBytes(m_SwRasterBuffer),
+                            static_cast<double>(sceneVram.All.LiveBytes) / BytesPerMiB,
+                            static_cast<double>(sceneVram.All.PeakBytes) / BytesPerMiB,
+                            static_cast<double>(sceneVram.Device.LiveBytes) / BytesPerMiB,
+                            static_cast<double>(sceneVram.Device.PendingBytes) / BytesPerMiB,
+                            static_cast<double>(sceneVram.Device.PeakBytes) / BytesPerMiB,
+                            static_cast<unsigned long long>(sceneVram.Device.PeakFrame),
+                            static_cast<double>(sceneVram.DevelopmentOnlyDevice.LiveBytes + sceneVram.DevelopmentOnlyDevice.PendingBytes) / BytesPerMiB,
+                            static_cast<double>(sceneVram.Host.LiveBytes + sceneVram.Host.PendingBytes) / BytesPerMiB,
+                            static_cast<double>(sceneVram.AllDevice.PeakBytes) / BytesPerMiB,
+                            static_cast<double>(sceneVram.Host.PeakBytes) / BytesPerMiB,
+                            static_cast<double>(sceneVram.DevelopmentOnlyDevice.LiveBytes) / BytesPerMiB,
+                            static_cast<double>(sceneVram.DevelopmentOnlyDevice.PendingBytes) / BytesPerMiB,
+                            static_cast<double>(sceneVram.Host.LiveBytes) / BytesPerMiB,
+                            static_cast<double>(sceneVram.Host.PendingBytes) / BytesPerMiB,
+                            static_cast<double>(sceneVram.HostMaybeDevice.LiveBytes) / BytesPerMiB,
+                            static_cast<double>(sceneVram.HostMaybeDevice.PendingBytes) / BytesPerMiB,
                             static_cast<unsigned long long>(pending.RenderFrame),
                             static_cast<long long>(pending.EpochFrame));
+            if (!devicePeakBuffers.empty())
+            {
+                NORVES_LOG_INFO("MegaGeometryPass",
+                                "MEGA_SCENE_VRAM_PEAK frame=%llu device_mb=%.1f live_mb=%.1f pending_mb=%.1f buffers=%s",
+                                static_cast<unsigned long long>(sceneVram.Device.PeakFrame),
+                                static_cast<double>(sceneVram.Device.PeakBytes) / BytesPerMiB,
+                                static_cast<double>(sceneVram.Device.PeakLiveBytes) / BytesPerMiB,
+                                static_cast<double>(sceneVram.Device.PeakPendingBytes) / BytesPerMiB,
+                                devicePeakBuffers.c_str());
+            }
+#endif
             m_bStatsLoggedOnce = true;
         }
     }

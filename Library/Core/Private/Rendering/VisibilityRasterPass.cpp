@@ -815,6 +815,12 @@ namespace NorvesLib::Core::Rendering
             {
                 return false;
             }
+#if NORVES_BUILD_DEVELOPMENT
+            if (m_MegaGeometryPass)
+            {
+                m_MegaGeometryPass->NoteGpuSceneBuffer(buffer, desc, false);
+            }
+#endif
             m_RecordTable = buffer;
             m_RecordCapacity = capacity;
             m_RecordState = RHI::ResourceState::Common;
