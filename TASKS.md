@@ -3945,3 +3945,106 @@
 - done-when: `mega-stress` を `--stress-entities=3300` 以上、環境変数 `NORVES_MEGA_MAX_DRAW_COUNT` なしで起動したとき、`MEGA_CAPACITY command_capacity=67108864`（`indirect_bytes` 1.34 GB）で描画が壊れる原因を特定する。原因が装置の上限なら、容量を超える手前で警告して分割する。コード中の判定（`MegaGeometryPass.cpp` の `0x7FFFFFFF / sizeof(DrawIndexedIndirectCommand)`）が実際の上限と合っているかを確かめる。
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1280 -Height 720 -Views overview -GameArgs stress-entities=5000 -OutDir .harness/runs/scene-capture/SCN-MEGA-COMMAND-CAPACITY`
 - notes: 2026-10-10 SCN-MEGA-STRESS-RESIDENT の撮影で見つかった。14 種類のメッシュ（1 種類が約 1〜19 千クラスタ）を 2500 個置くと `command_capacity=33554432` で描かれ、3300 個以上（5000 個で同じ）では `command_capacity=67108864` に跳ねて、空と床だけが写る（`draw_dropped=0`、検証レイヤーのエラーなし、`MEGA_OCCLUSION` は 44 万クラスタを描いたと報告する）。`NORVES_MEGA_MAX_DRAW_COUNT=1000000` で区間ごとの上限を下げると 5000 個で描かれる（`command_capacity=33554432`）。mega-stress は `--stress-entities` を指定したとき（開発ビルド）、この環境変数が無ければ 1000000 を渡して回避している（`GameApplicationHandler.cpp`）。この回避は区間ごとの容量の上限を縮めるだけで、原因ではない。
+
+## SCN-MEGA-FIX-TLAS-REBUILD-P1: 撮影の `-RequireAssets` で、バナナを置けなかった撮影を合格にしない
+- status: todo
+- done-when: `Scripts/CaptureScene.ps1` の `-RequireAssets` で、次の 2 つを失敗にする。(1) ログに `MEGA_BANANAS_ASSET_MISSING` か `MEGA_BANANAS_ASSET_INVALID` がある(`$missingAssetPattern` に足す。`-RequireAssets` が無いときは今と同じく警告と `missing_assets` に数える)。(2) `banana-count`・`stress-entities` を指定したのに `MEGA_BANANAS_PLACED`・`MEGA_STRESS_PLACED` の行が無い(今は置いた数が `$null` のとき突き合わせを飛ばしている。1172〜1184 行)。資産を欠かせた起動(例: `--no-cooked-textures`。効かなければ別の欠かせ方)を 1 回撮り、`-RequireAssets` でこの印を理由に失敗することを確かめて、出力を PROGRESS.md に貼る。資産のそろった mega-bananas の撮影は今までどおり合格する。
+- verify: `powershell -NoProfile -Command "if (-not (Select-String -LiteralPath Scripts/CaptureScene.ps1 -Pattern MEGA_BANANAS_ASSET_ -SimpleMatch -Quiet)) { exit 1 }"`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -Views overview -Build -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -TimeoutSeconds 1800 -GameArgs banana-count=10000 -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-TLAS-REBUILD-P1/ok`
+- paths: Scripts/CaptureScene.ps1, TASKS.md, PROGRESS.md
+- from: SCN-MEGA-FIX-TLAS-REBUILD
+
+## SCN-MEGA-FIX-DRAWLIST-GROWTH: 読み込み中に描画コマンドの列を何世代も作り直して GPU Scene の山を 3 GB 超えにしない
+- status: todo
+- done-when: 判断役の判断(`blocked/resolved/SCN-MEGA-FIX-VISIBLE-LIST.md` の「次の反復への指示 1」と `blocked/resolved/SCN-MEGA-FIX-VISIBLE-LIST-20261029-174526.md`)のとおりにする。
+  - 撮影: SCN-MEGA-FIX-VISIBLE-LIST の verify と同じ引数(1M + 5 万・1% 移動・64 m 区画)で、通常の撮影と長い撮影(`exit-after-rendered-frames=1200`)の両方を撮る。`MEGA_CAPACITY` の全行で次を満たす。
+    - `scene_vram_device_peak_mb` ≤ 3,072。見張りは今の形のまま使い、回収待ちを数える 4 フレームの窓を縮めない。
+    - `draw_dropped=0`・`visible_list_overflow=0`。
+    - 落ち着いた後の `scene_vram_device_live_mb` が 2,658.4 MiB から増えない。
+  - 3,072 MiB の判定は `CheckCaptureMetrics` では見えない。U4(`.harness/runs/20261029-152745/verify-SCN-MEGA-FIX-VISIBLE-LIST-U4.txt`)と同じ全行の集計(最大・frame・回収待ちの内訳)を貼る。
+  - ほかのシーン: `mega-bananas` の overview 1 視点で、画像が同じ引数の前の撮影と変わらないこと(前の撮影が無ければ直す前のコミットで 1 枚撮って比べる)と、device の山 ≤ 3,072 を記録する。
+  - 直し方の制約:
+    - 対象は `MegaGeometry_IndirectDraw`・`MegaGeometry_DrawInfo`・`VisBuffer_DrawRecords`(`VisibilityRasterPass.cpp`)・`MegaGeometry_SwRaster`。読み込み中の作り直しを 1〜2 世代に抑える。
+    - 先に広げるときは、CPU が知る最終の総数(登録済みのインスタンスのクラスタ数の和など)か、3 GB から逆算した天井で上限を抑える。必要量の倍数だけで広げない。
+    - 縮めるのは SceneReady の後に 1 回だけ。
+  - 受入れ文書 `SceneLauncherAcceptance.md:197` の見積もり(2,722 MB・約 3,042 MB)を、回収待ちを含む実測値に書き直す。
+  - SCN-MEGA-ACCEPT-1M の前に閉じる。危険地帯(メモリ・RenderThread)。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -Views overview -Build -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -TimeoutSeconds 2400 -GameArgs banana-count=1000000,stress-entities=50000,stress-moving-percent=1,stress-stream-cell=64,stress-batch-cells -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-DRAWLIST-GROWTH`
+- verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-FIX-DRAWLIST-GROWTH`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -Views overview -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -TimeoutSeconds 2400 -GameArgs banana-count=1000000,stress-entities=50000,stress-moving-percent=1,stress-stream-cell=64,stress-batch-cells,exit-after-rendered-frames=1200 -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-DRAWLIST-GROWTH-long`
+- verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-FIX-DRAWLIST-GROWTH-long`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -Views overview -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -TimeoutSeconds 1800 -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-DRAWLIST-GROWTH-bananas`
+- paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Docs/RenderingValidation, TASKS.md, PROGRESS.md
+- from: SCN-MEGA-FIX-VISIBLE-LIST
+
+## SCN-RENDER-SPEC-WIDE-ESS: RTGI の鏡面の広いローブの重みを、照明が割り戻す LUT の Ess と同じ G に揃える
+- status: todo
+- done-when: 判断役の判断(`blocked/resolved/SCN-RENDER-SPEC-OCC-VERIFY-REG.md` の指示 1)のとおりにする。
+  - 重みの式: `EvaluateGGXVisibleNormalSampleWeight`(`PbrMaterialEvaluation.glsl:143-153`。使うのは `DiffuseIndirect.comp:1455` だけ)の重みを G_Schlick(V)·G_Schlick(L)·(1+Λ(V)) にする。k は roughness²/2、VNDF の pdf の G1(V) は厳密な Smith のままにする。142 行のコメント「重みの平均は A+B」も直す。LUT(`DfgLut.cpp`)とパストレーサーは変えない。
+  - 積分での確かめ: LUT の 4096 標本・半精度・256² の補間を再現した独立の積分(`roof-quadrature.py` と同じ作り)を Scripts に置く。粗さ 0.5・0.8・1.0 と N·V 0.1・0.3・0.5・0.9 の全部の組で、重みの平均 ÷ LUT の Ess が 1±0.005 に入らなければ非 0 で終わるようにする。名前を変えたら verify も合わせる。
+  - 撮影: 反復の最初に、回帰(`CaptureRegression.ps1 -Phase before`)と material-gallery の before を撮る。after では次の 2 つを値で `InteriorLightReference.md` に書く。
+    - 粗さ 0.8〜1.0 の金属の球の鏡面の減り方が、積分の比と合うこと。
+    - rendering3dtest の屋根に差が出ないこと(広いローブの面平均は 0.00006)。
+  - LUT 全体を高さ相関の G(Cycles と同じ形)へ移すかの判断を同じ文書に書き、PROGRESS.md の Notes に SCN-RENDER-ROUGH-STEEP-ENERGY への申し送りとして残す。
+  - 常設のテストは足さない。危険地帯。
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `python Scripts/SpecularWeightQuadrature.py --check`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Terrain/CaptureRegression.ps1 -Item SCN-RENDER-SPEC-WIDE-ESS -Phase after`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene material-gallery -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Hdr -OutDir .harness/runs/scene-capture/SCN-RENDER-SPEC-WIDE-ESS/gallery-after`
+- paths: Assets/Shaders/Common/PbrMaterialEvaluation.glsl, Scripts, Docs/RenderingValidation, Test/Core/Rendering/Baselines, TASKS.md, PROGRESS.md
+- from: SCN-RENDER-SPEC-OCC-VERIFY-REG
+
+## SCN-RENDER-SPEC-ROOF-HITS: rendering3dtest の屋根の鏡面の光線が何に当たっているかを内訳にし、自己交差なら直し、周りの面なら参照と照合する
+- status: todo
+- done-when: 判断役の判断(`blocked/resolved/SCN-RENDER-SPEC-OCC-VERIFY-REG.md` の指示 2。SCN-RENDER-SPEC-WIDE-ESS とは独立)のとおりにする。
+  - 現状: 屋根(誘電体・粗さ 0.26)のブルーム前の HDR の Y が、off の 3,100 から今の形で 3,905 cd/m² になっている(1.26 倍。うち細いローブの当たった面の反射が +974)。
+  - 調べ方:
+    - 反復の最初に回帰の before を撮る。
+    - rendering3dtest の overview を 1280×720・RelWithDebInfo・`-Hdr -Aov` で撮る。屋根の面は、幾何法線の Y>0.9・Z>0.4、深度 21〜25 m の画素で選ぶ。
+    - 細いローブの光線について、当たりの距離・当たった instance(custom index)・表裏・屋根と同じ instance かを、一時的な AOV に出す。撮るたびに元のバイト列へ戻す(`roof-variant.py` の仕組み)。
+    - 当たりの内訳(屋根自身・家の別の面・ほかの物、距離の分布)を `InteriorLightReference.md` に値で書く。
+  - (a) 自己交差が当たりの過半のとき: なるべく `TraceSpecularRay` の中だけで直す。屋根の HDR の Y の off との比を測り直し、残りの増分を項ごとに説明する。
+  - (b) 本当に周りの面に当たっているとき: 同じ大気の空・太陽(高度 40°・方位 30°)の高標本の参照と並べる。エンジンのパストレーサーで同じ空にできなければ Cycles を使う。受け入れるのは、今の形が off より参照に近く、かつ今の形 ÷ 参照が 0.90〜1.10 のときだけ。外れたら、当たった面の光のどの項(直接光・2 回目のバウンス・画面の間接光)が多いかを切り分けて直す。
+  - (a)・(b) のどちらでも、室内の `interior-spec-occlusion.json` の比べを通したままにする。拡散の光線と共有するコードを変えたら、その旨を書く。
+  - 条件を揃えた参照を 1 反復で作れないとき、または (b) で合わない原因を直せないときは、値を付けて BLOCKED にする。危険地帯。
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene rendering3dtest -Views overview -Configuration RelWithDebInfo -RequireAssets -Width 1280 -Height 720 -Hdr -Aov -OutDir .harness/runs/scene-capture/SCN-RENDER-SPEC-ROOF-HITS/roof`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene interior-light -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Hdr -Aov -OutDir .harness/runs/scene-capture/SCN-RENDER-SPEC-ROOF-HITS/interior`
+- verify: `python Scripts/InteriorLightReference.py --compare --capture .harness/runs/scene-capture/SCN-RENDER-SPEC-ROOF-HITS/interior --reference .harness/runs/scene-capture/SCN-INTERIOR-ROOM-ref --expect Scripts/Terrain/ExpectSpecs/interior-spec-occlusion.json`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Terrain/CaptureRegression.ps1 -Item SCN-RENDER-SPEC-ROOF-HITS -Phase after`
+- paths: Assets/Shaders/RTGI, Scripts, Docs/RenderingValidation, Test/Core/Rendering/Baselines, TASKS.md, PROGRESS.md
+- from: SCN-RENDER-SPEC-OCC-VERIFY-REG
+
+## SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1: 鏡面の直しの後の最終の版で、荒野の遮蔽の 8 組を変更前の鏡面の経路と並べて判定し直す
+- status: todo
+- after: SCN-RENDER-SPEC-WIDE-ESS, SCN-RENDER-SPEC-ROOF-HITS
+- done-when: 判断役の判断(`blocked/resolved/SCN-RENDER-SPEC-OCC-VERIFY-REG.md` の指示 3)による。SCN-RENDER-SPEC-WIDE-ESS で粗さ 1 の崖の鏡面が変わるので、SCN-RENDER-SPEC-OCC-VERIFY-OCC の判定を、2 項目の後の同じ最終の版で撮り直す。
+  - 撮影: 同じ Game.exe・同じ焼いた地形で、荒野の遮蔽の 8 組を `--rtgi-specular=off` と今の形の両方で撮る。
+  - 判定: `occlusion-accept.json` の全部の行を `--off-root` 付きで判定する。決まりは VERIFY-OCC と同じ。
+    - 今の形の全部の行が範囲内なら合格。
+    - 範囲の外の行は、off でも範囲の外で、今の形が off から 0.005 を超えて悪くならなければよい。
+    - 遠い急な崖の対照の 2 行は、一時の下限 0.946・0.957 で通る。
+  - off で範囲内なのに今の形で外れる行があれば、値を付けて BLOCKED にする。
+  - `InteriorLightReference.md` の VERIFY-OCC の表(範囲の外の行と遠い急な崖の対照の 2 行の、今の形 ÷ off・エンジン ÷ Cycles)を今の値で書き直す。
+  - 反復の中で地形を焼き直さない。シェーダーと描画の経路は変えない。
+  - 壁時計の残りが 25 分を切ったら新しい撮影を始めず、撮れた所までをコミットして doing のまま終える。
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/off --sets terrain-sky --variant-args rtgi-specular=off`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/on --sets terrain-sky`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/off --sets terrain-sun --variant-args rtgi-specular=off`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/on --sets terrain-sun`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/off --sets rocks-sky --variant-args rtgi-specular=off`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/on --sets rocks-sky`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/off --sets rocks-sun --variant-args rtgi-specular=off`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/on --sets rocks-sun`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/off --sets rocks-cliff-sky --variant-args rtgi-specular=off`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/on --sets rocks-cliff-sky`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/off --sets rocks-cliff-sun --variant-args rtgi-specular=off`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/on --sets rocks-cliff-sun`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/off --sets plant-sky --variant-args rtgi-specular=off`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/on --sets plant-sky`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/off --sets plant-sun --variant-args rtgi-specular=off`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/on --sets plant-sun`
+- verify: `python Scripts/Terrain/ReferenceCheck.py --occlusion --engine-root .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/on --off-root .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/off --reference .harness/runs/scene-capture/SCN-WLR-OCCLUSION-SETS/cycles --regions Scripts/Terrain/ExpectSpecs/occlusion-regions.json --expect Scripts/Terrain/ExpectSpecs/occlusion-accept.json --verify`
+- paths: Docs/RenderingValidation/InteriorLightReference.md, TASKS.md, PROGRESS.md
+- from: SCN-RENDER-SPEC-OCC-VERIFY-OCC
