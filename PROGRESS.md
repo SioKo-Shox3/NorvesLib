@@ -8111,3 +8111,10 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - Next: 同じ項目を続ける。(1) 低木 B の 37.8 % が A に移った種の割合の変化をどう戻すか（傾きで振り分けて全体の割合を保つ、B の根元の枝を直す）を決める。(2) 刻みの範囲（Battleship Rock）と崖の生成の 2 範囲の石と小礫は置き方の地面と焼いた面のずれなので、焼いた面の高さから取る形（作業一覧の条件。読み込みに触るならアセットロードの危険地帯）。(3) 岩の据え直し（73820 個は最も深い足元が窓 max(0.5 m, 高さの 20 %) より深い。規則を見直すなら写真の崖錐の岩を根拠に）。閉じなければ (2) と (3) を別の項目に分ける
 - Notes: GPU 時間（ref_ground_01）は測っていない（前の Game.exe を作り直す時間を取らなかった。次の反復で前後を測る）。許しの 0.02 m・0.07 m は検査の 0.05 m・0.1 m から DEM の格子と焼いた面の差の分 0.03 m を引いた値（推奨を採った判断）。新しい試験は足していない
 - U1 顔ぶれが替わったら TLAS を Build する変更を仕上げ、カメラパスを撮って LightingPass を判定する: 着地(直し 2 回)
+
+### SCN-MEGA-FIX-TLAS-REBUILD（2026-10-29、反復 1・run 20261029-112507）
+- Done: TLAS を、席ごとの物体の鍵（ObjectId・ObjectInstanceIndex）が前回と同じで変換だけ変わったときだけ Update し、顔ぶれか並びが替わったら Build する形にした（9c5875da）。席の並びは選びの後に元の番号順へ戻すので、距離の順に依らない
+- 測った値（1M horizon・カメラパスの再生・300 フレーム、`.harness/runs/20261029-112507/U2-path/`）: `LightingPass` median 70.5 → 4.27 ms・p95 100.4 → 4.94 ms、GPU のフレーム 22.4 / 31.7 ms。再生中は `RT_SCENE update_skipped=0 updated=0 built=120 frames=120 instances=65536`（毎フレーム Build）、`AccelerationStructureBuild` median 1.03 ms。判定は median ≤ 3 ms を満たさず不合格。PNG の近くのバナナの周りに茶色の粒の暈が残る（直す前より弱い。静止の horizon には無い）
+- Next: 同じ項目を続ける。再生が通った時刻の静止の撮影（`camera-path-time=<秒>`）と比べて、残りの LightingPass と暈が視点の中身か動き（RTGI の時間の蓄積の棄却など）かを分ける
+- Notes: 枠の作業ツリーには git 管理外の資産（`build/CookedAssets`・`Assets/Textures/PolyHaven`・`Assets/Models/Generated`）が無く、ほかの枠と同じくメインのチェックアウトへの junction でつないだ。新しい試験は足していない
+- Notes: 要起票: `CaptureScene.ps1 -RequireAssets` が、`MEGA_BANANAS_ASSET_MISSING AssetSystem が無いためバナナを置きません`（クック済みのマニフェストが無い）でバナナを 0 本置いた撮影を result=pass にする（`banana-count` との突き合わせが効いていない）
