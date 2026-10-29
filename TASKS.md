@@ -3307,7 +3307,7 @@
 - notes: 2026-10-14 SCN-MEGA-ACCEPT-1M の撮影で見つけた（前からある見た目の欠陥も直す方針）。描画を変える項目なので起動画面 default の比較を入れた。 2026-10-23 SCN-WL-CLOUD-BANDING の反復 22: 原因は同じ（表示の 8 bit の丸めにディザが無い。空の列が 1 段ずつの平らな帯）で、表示の Blit のディザで直した。同じ Game.exe で Blit だけを戻した前の撮影と比べ、mega-stress の overview の上 350 行の平らな帯の長さの平均 7.263 → 2.836・95 % 点 10 → 7、隣の差が 1 段以下の割合 1.000 → 0.999（最大 2。雑音で隣が逆の向きへ丸まった所）。記録は WastelandCloudRef.md の SCN-WL-CLOUD-BANDING の節。「隣の差が 1 段以下」をディザの 2 段の 0.1 % を許す形に読み替えて閉じるかは計画が決める。
 
 ## SCN-BUILD-ALL-TESTS: Debug の全体のビルドで落ちる試験の対象（Game のソースの一覧の更新漏れ）を直す
-- status: todo
+- status: done
 - after: SCN-GOLDEN-REVERIFY
 - done-when: `cmake --build build --config Debug -- /m:1`（全体）が、試験の対象の一部で落ちる（2026-10-23 の SCN-GOLDEN-REVERIFY の再検証 `.harness/runs/20261023-124311/recheck-SCN-GOLDEN-REVERIFY-4-1.txt`）: `Rendering3DTestRoutine.cpp` の `stb_image.h` が見つからない（C1083）、`GameApplicationHandler.obj` から CameraScriptCapture・GeometrySettleTrace・MultiViewCapture・WastelandHide::Parse・WastelandRoutine などが未解決（LNK2019）。Game のソースを個別に並べている試験の対象の一覧と include の道を、Game の今のソースに合わせる（同じ一覧を二重に持たない形にできるならそうする。試験を増やさない・消さない）。合否: Debug の全体のビルドが EXIT=0。ctest は回さない（落ちる対象のビルドが通ることだけを見る。ローカルの試験の全走は重いので、ユーザーの方針どおり関係の試験だけ）。
 - verify: `cmake --build build --config Debug -- /m:1`
@@ -3355,7 +3355,7 @@
 - notes: 2026-10-14 SCN-MEGA-ACCEPT-1M の診断から。危険地帯（RenderThread）なので評価者を通す。
 
 ## SCN-MEGA-FIX-MIXED-DEFICIT: 混在の負荷でバナナを指定の本数どおりに置く
-- status: todo
+- status: done
 - done-when: mega-stress の `banana-count=1000000,stress-entities=50000` で `MEGA_STRESS_BANANAS count=999999 requested=1000000` になり、撮影が「置いたバナナの本数 999999 が指定（banana-count=1000000）と違う」で失敗する。Entity の足元と動く範囲を空けるマスクのある敷き詰めでも、SCN-MEGA-LAYOUT-MOUNDS の「位置が 1 つも無い区画だけ上限を締めてもう一巡引く」と同じ形で不足を埋める。mega-bananas（マスクなし）の配置は変えない（1M の `MEGA_BANANAS_PLACED`・`MEGA_BANANAS_LAYOUT` の行が今と同じ）。完了の条件: 1% 移動の負荷の撮影で `placed_bananas=1000000`・`result=pass`。
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -Views overview -Build -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -TimeoutSeconds 2400 -GameArgs banana-count=1000000,stress-entities=50000,stress-moving-percent=1 -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-MIXED-DEFICIT`
 - paths: Game/GameModes/MegaBananas, Game/GameModes/MegaStress, TASKS.md, PROGRESS.md

@@ -1,7 +1,7 @@
 ﻿#include "Rendering/CompositePass.h"
+#include "Rendering/LightingPass.h"
 #define private public
 #include "Rendering/FXAAPass.h"
-#include "Rendering/LightingPass.h"
 #include "Rendering/PresentationPass.h"
 #include "Rendering/RenderGraph/RenderGraph.h"
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
@@ -476,6 +476,23 @@ namespace
         uint32_t UpdateCount = 0;
     };
 
+    class FakeDescriptorSetLayout final : public RHI::IDescriptorSetLayout
+    {
+    public:
+        explicit FakeDescriptorSetLayout(const RHI::DescriptorSetDesc& desc)
+            : m_Desc(desc)
+        {
+        }
+
+        const RHI::DescriptorSetDesc& GetDesc() const override
+        {
+            return m_Desc;
+        }
+
+    private:
+        RHI::DescriptorSetDesc m_Desc;
+    };
+
     class FakeShaderCompiler final : public RHI::IShaderCompiler
     {
     public:
@@ -584,6 +601,11 @@ namespace
             return RHI::MakeShared<FakeDescriptorSet>();
         }
 
+        RHI::DescriptorSetLayoutPtr GetOrCreateDescriptorSetLayout(const RHI::DescriptorSetDesc& desc) override
+        {
+            return bCreateDescriptorSetLayouts ? RHI::MakeShared<FakeDescriptorSetLayout>(desc) : nullptr;
+        }
+
         RHI::ShaderCompilerPtr CreateShaderCompiler() override
         {
             return RHI::MakeShared<FakeShaderCompiler>();
@@ -597,6 +619,7 @@ namespace
         uint32_t CreatedFramebufferCount = 0;
         // 計算パイプラインを作るか（既定は作らない。VisibilityResolve の検査だけが作る）
         bool bCreateComputePipelines = false;
+        bool bCreateDescriptorSetLayouts = false;
 
         void WaitIdle() override
         {
@@ -1080,13 +1103,19 @@ namespace
     void TestLightingPersistentSceneColorIncludesTransferSrc()
     {
         GraphFixture fixture;
+        fixture.Device.bCreateDescriptorSetLayouts = true;
+        ShaderManager shaderManager;
+        assert(shaderManager.Initialize(&fixture.Device, kShaderDirectory));
+        fixture.Context.ShaderMgr = &shaderManager;
         LightingPass pass;
-        pass.m_Device = &fixture.Device;
+        assert(pass.Initialize(fixture.Context));
         pass.Setup(fixture.Context);
 
         const RHI::TextureDesc* desc = FindCreatedTextureDesc(fixture.Device, "SceneColor");
         assert(desc);
         assert(HasUsage(desc->Usage, RHI::ResourceUsage::TransferSrc));
+        pass.Shutdown();
+        shaderManager.Shutdown();
         std::cout << "TestLightingPersistentSceneColorIncludesTransferSrc passed\n";
     }
 
