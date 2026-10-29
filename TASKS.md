@@ -3370,7 +3370,7 @@
 - notes: 2026-10-14 SCN-MEGA-ACCEPT-1M の診断から。撮影は SCN-MEGA-FIX-MIXED-DEFICIT の後。危険地帯（メモリ・RenderThread）なので評価者を通す。
 
 ## SCN-MEGA-FIX-STREAM-TABLES-DELTA: 区画の出し入れで MegaGeometry の表を全部作り直さない
-- status: todo
+- status: done
 - done-when: 問い: ストリーミングの負荷の gt・rt の p95 147.9 ms（median 48.9 ms）の山を、区画の出し入れの表の作り直しで説明でき、直せるか。SCN-MEGA-ACCEPT-1M の撮影では、区画の散布の出し入れ（約 1 秒に 1 回）ごとに `MegaGeometryPass.BuildSceneTables` が約 105 万行を全部作り直し（`MEGA_TABLES full=6`/120 フレーム）、窓の 600 フレームのうち 29 フレームが 20 ms を超え、最大 515 ms。出し入れを区間の追加・削除の差分で表へ反映する。完了の条件: ストリーミングの負荷（1M + 5 万個・600 フレーム。区画の解放から再公開を窓に含む）で `MegaGeometryPass.PrepareSceneTables` の p95 ≤ 2 ms、`MEGA_STRESS_STREAM_CYCLE result=pass`、`MEGA_TABLES mismatch=0`。
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -Views overview -Build -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 600 -TimingReadyMarginFrames 2000 -TimeoutSeconds 2400 -GameArgs banana-count=1000000,stress-entities=50000,stress-moving-percent=1,stress-stream-cell=64,stress-batch-cells -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-STREAM-TABLES-DELTA`
 - verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-FIX-STREAM-TABLES-DELTA --timing --min-frames 600 --require-scope MegaGeometryPass.PrepareSceneTables --max-scope-p95-ms MegaGeometryPass.PrepareSceneTables=2`

@@ -8181,3 +8181,16 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 証拠: `.harness/runs/20261029-130624/SCN-MEGA-FIX-SCENE-TABLES-STEADY/`（`u2-unit-verify.txt`: CaptureScene EXIT=0・`CHECK_CAPTURE_METRICS result=pass views=horizon` EXIT=0・trace の集計・ログの抜き出し、`metrics.json`・`horizon.png`・`horizon.Game.log`）
 - Next: なし
 - Notes: 同じ撮影の RenderThread の CPU は `RT.BuildAccelerationStructures` median 24.0 ms が最大で（SCN-MEGA-FIX-TLAS-REBUILD の範囲）、`MegaGeometryPass.CheckSceneTables`（開発ビルドの照合、5 回）は 1 回 91.8 ms。新しい試験は足していない
+
+- U1 出し入れで m_Instances を作り直さず、移動・置き換え・末尾の切り詰めを差分で当てる: 着地(直し 1 回)
+- Notes（SCN-MEGA-FIX-STREAM-TABLES-DELTA の途中）: 出し入れはストリーミングの負荷の窓 600 フレームのうち 60 フレーム（1 フレームの解放・追加は各 840〜1170 行）。インスタンスは差分で当たり、表はまだ全部作る（`BuildSceneTables` median 101 ms）。残りは表の行の配置（予備の行）と行の差分の 2 単位
+- 要起票: mega-stress（1M + 5 万個・1 % が動く）で `MegaGeometryPass.Setup` が出し入れに関係なく毎フレーム median 19.4 ms（`.harness/runs/scene-capture/SCN-MEGA-FIX-STREAM-TABLES-DELTA-U1/metrics.json`）。gt・rt の時間の一部
+- U2 表の行の配置に、BVH の予備の行と BVH の行の一律の影の割り当てを入れ、照合を並びに依らない形にする: 着地(直し 0 回)
+- U3 出し入れの行を差分で表へ反映し（移動・解放・追加）、送る行を絞り、タスクの verify を通す: 着地(直し 1 回)
+
+## 2026-10-29 SCN-MEGA-FIX-STREAM-TABLES-DELTA（run 20261029-174526 の反復 3、完了）
+- Done: 区画の出し入れ（約 1 秒に 1 回・1 フレームの解放と追加が各 840〜1170 行）を MegaGeometry の表へ行の差分で当てる。`Setup` は `m_Instances` を作り直さず移動・置き換え・末尾の切り詰めを当てて変化の一覧を残し、表は `[BVH の行][空の予備の行][平らな行]` の並びで BVH の領域の影の割り当てを 1 行あたり一律にし、`PatchSceneTables` が移動は行の対応の付け替え、BVH の解放は末尾の BVH の行との入れ替え（空いた行は予備へ）、BVH の追加は予備から、平らな解放は穴（割り当ては残す）、平らな追加は穴の再利用か末尾への追加で反映する。送るのは書き換えた行だけ。席の表の 0 番を空行に予約し（`TableSlot = SceneSlot`）、席を持たない物は差分で足さない。予備の不足・新しいメッシュ・影の割り当ての 32 ビット超えなどは全部を作り、理由を `MEGA_TABLES` に数える
+- 値（1M + 5 万個・1 % が動く・区画 64・RelWithDebInfo・1920×1080・600 フレーム）: `PrepareSceneTables` median 0.148 / p95 0.238 ms（前は出し入れのフレームで約 120 ms）、出し入れのフレーム（27 フレーム）の p95 0.321 ms。窓の `MEGA_TABLES` は 5 行とも `full=0`、全行 `mismatch=0`、`MEGA_SCENE_UPLOAD mismatch=0 gpu_mismatch=0`、`MEGA_STRESS_STREAM_CYCLE` は全周 pass、`MEGA_SCENE_DELTA` の検査つきの撮影は 3158 回 pass・fail 0。gt・rt の p95 は 147.9 ms → 48〜60 ms（2 回の撮影）
+- 証拠: `.harness/runs/20261029-174526/SCN-MEGA-FIX-STREAM-TABLES-DELTA/`（`u3-unit-verify.txt`: CaptureScene の `CAPTURE_SCENE result=pass`・`CHECK_CAPTURE_METRICS result=pass views=overview`・ログの集計、`metrics.json`・`overview.png`・`overview.Game.log`）
+- Next: なし
+- Notes: 全体の `PrepareSceneTables` の最大（約 123〜129 ms）は開発ビルドの 120 回ごとの照合（`CheckSceneTables`）で、窓の 600 フレームに 5 回。初期の配置の間は予備の不足で全部を作るのが 55 回あり、窓では 0（予備は 49361〜49861 行残る）。この撮影は出し入れが全部 BVH の行で、平らな行の穴は 0（穴の溜まり方は未検証）。あるメッシュの最後のインスタンスを解放すると全部を作る（`full_unused`）。新しい試験は足していない
