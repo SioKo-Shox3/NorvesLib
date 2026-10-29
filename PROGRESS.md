@@ -8132,3 +8132,10 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - U5 信頼できない升目に掛かった岩も寄せ・縮め・小さなずらしを試し、見送った岩を全部理由つきで残す: 着地(直し 0 回)
 - U6 見送った物の一覧を書き出し、検査が配置の書き出しから一覧を読んで範囲ごとの 2 % を判定する: 着地(直し 0 回)
 - U7 タスクの verify を全部回し、6 視点・写真・回帰・GPU 時間を撮り直して置いた物の接地の記録を直す: 着地(直し 0 回)
+
+## 2026-10-29 SCN-WL-PLACEMENT-GROUNDING-FIX（run 20261029-040916 の反復 3、完了）
+- Done: 差し戻し（Rooster Butte の岩の見送り 94 / 3852 = 2.440 % が 2 % を超える、検査が見送りの一覧を読まず removed=0）を直した。(1) 崖錐の岩は信頼できない升目に当たっても寄せと縮めを続け、収まらなければ 0.5 m・1.0 m の輪の 8 点へずらし、救うときは足元の周り半升目も信頼できる升目かを確かめる。前から置けていた 271748 個は変わらない（`WastelandTalus.cpp`）。(2) 配置の書き出しが見送った物を `<名前>.removed.json`（type・x・z・reason = unreliable / unfit）に書いて `placement.json` の `removed_list` で名指しし、`CheckPlacement.py` は `--removed` が無くてもそれを読んで範囲・組ごとの 2 % を判定する（名指しがあって読めなければ不合格）。(3) `WastelandShape.md` の「置いた物の接地」を今の値に直した
+- 値: `--require-compliant` は result=pass・違反 0・測り切れない物 0・見送り 25851。範囲・組の見送りの割合は全部 2 % 以内で、最大は Battleship Rock の大きな石 0.791 %（859、unreliable 846 / unfit 13）。岩は 271748 → 273466（Rooster Butte 3758 → 3852、見送り 0。全体の見送り 150 は全部 unreliable）。救った岩 1718（寄せ 98・縮め 404・ずらし 1216）。GPU 時間（ref_ground_01、300 フレームの median / p95）: 項目の前 17.291 / 17.875 ms → 最終 16.572 / 17.088 ms
+- 証拠: `.harness/runs/scene-capture/SCN-WL-PLACEMENT-GROUNDING-FIX/final2/`（verify 全 8 行の出力 `unit-verify.txt`: Debug・RelWithDebInfo の Game と AssetCook のビルド EXIT=0、書き出しの撮影 EXIT=0、`--require-compliant` EXIT=0〔報告を残す `--out` を足した〕、6 視点 EXIT=0、`CompareReference.py --verify` result=pass photos=6、回帰の after result=pass scenes=4、GPU の `gpu-final2/metrics.json`）。見比べ `compare-final2/`（前の版からの差は戻した崖錐の岩と影だけ。ref_cliff_01 の崖錐と戻した岩の切り出しを開き、浮いた株・石と埋もれすぎた岩が無いことを見た）
+- Next: SCN-WL-CLIFF-GEN-TALUS に戻る
+- Notes: 低木 B → A の割合（31:69）は残課題のまま。見送りの一覧は石と小礫も書き出しと同じ区画の標本の分だけ。新しい試験は足していない
