@@ -3203,7 +3203,7 @@
 - notes: 2026-10-26 親が SCN-RENDER-SPEC-OCCLUSION の反復 7 の評価の 2 周目の差し戻しから、確かめを 1 反復に収まる大きさに分けて足した。`ReferenceCheck.py --occlusion` に `--off-root`（同じ版の off の撮影の置き場。範囲の外の行を off と比べて上の合格の決まりで判定する）を足す（名前は変えてよいが verify も合わせる）。1 組の撮影は約 2 分。反復の中で地形を焼き直さない（地形が変わったら off と今の形を両方撮り直す）。壁時計（75 分）の残りが 25 分を切ったら新しい撮影を始めず、撮れた所までをコミットして doing のまま終える（未達のまま DONE にしない）。verify は 1 行 10 分未満。シェーダーと描画の経路は変えない（この項目は確かめるだけ。直しが要る差を見つけたら値を付けて BLOCKED）。
 
 ## SCN-RENDER-SPEC-OCC-VERIFY-REG: 鏡面の遮りの回帰の 4 シーン・golden・GPU 時間・material-gallery を、同じ最終の版で変更前の鏡面の経路と並べて確かめる
-- status: todo
+- status: blocked
 - after: SCN-RENDER-SPEC-OCC-VERIFY-OCC
 - done-when: SCN-RENDER-SPEC-OCCLUSION の確かめの残り（run 20261026-002702 の反復 7 の評価の 2 件目）: 同じ Game.exe（HEAD のシェーダー）で、(1) 回帰の 4 シーンの before を `--rtgi-specular=off`、after を今の形で撮り、差の画を開いて変わった所と理由を書く（`CaptureRegression.ps1` に `-GameArgs` を足す）、(2) golden の 2 本（Indoor・Outdoor）を回し、変わるなら差の原因と物理的な妥当さを確かめて `Docs/RenderingValidation/GoldenBaselines.md` の手順で再承認する、(3) GPU 時間を荒野の ref_ground_01 と interior-light の 1 視点で、off と今の形の 300 フレームの中央値で記録する（RT と GI 入りの目安 30 fps の中）、(4) material-gallery を off と今の形で撮って並べて開き、粗さの分岐（細いローブと広いローブの混ぜ）の見た目を書く。記録は `InteriorLightReference.md` と PROGRESS.md。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
