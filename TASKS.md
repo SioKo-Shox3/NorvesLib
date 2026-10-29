@@ -3347,7 +3347,7 @@
 - notes: 2026-10-14 SCN-MEGA-ACCEPT-1M の診断から。1% 移動・ストリーミングの `LightingPass` 11.4〜11.6 ms（静止のバナナだけは 1.7 ms）も同じ refit を毎フレーム行っている（`updated=120 built=0`）ので、この項目の後に撮り直して残りを見る。危険地帯（RHI/Vulkan・RenderThread）なので評価者を通す。 2026-10-15 親: RT の 60 fps は求めなくなったが、動くと RTGI が 40 倍遅くなり（カメラパスで GPU 86 ms・約 12 fps）操作できないので、木の質の欠陥として残す。
 
 ## SCN-MEGA-FIX-SCENE-TABLES-STEADY: 変わらないフレームで MegaGeometry の表を全部なめない
-- status: todo
+- status: done
 - done-when: 問い: 変わった行が 0（`MEGA_SCENE_UPLOAD rows=0`・`MEGA_TABLES delta_rows=0`）の静止で `MegaGeometryPass.UpdateResidentSceneTables` が median 7.1 ms 掛かるのを、変わった行に比例させられるか。100 万の描く順の行を毎フレームたどって席の表の上限を求める（`MegaGeometryPass.cpp` 4771 行付近）など、行の数に比例する処理を、版が変わったときと変わった行だけにする。完了の条件: 静止の 1M horizon（300 フレーム）で `MegaGeometryPass.UpdateResidentSceneTables` の median ≤ 0.5 ms・`MegaGeometryPass.PrepareSceneTables` の median ≤ 1 ms、`MEGA_TABLES mismatch=0`。
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -Views horizon -Build -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -TimeoutSeconds 1800 -GameArgs banana-count=1000000 -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-SCENE-TABLES-STEADY`
 - verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-FIX-SCENE-TABLES-STEADY --views horizon --timing --min-frames 300 --require-scope MegaGeometryPass.UpdateResidentSceneTables --max-scope-median-ms MegaGeometryPass.UpdateResidentSceneTables=0.5 --max-scope-median-ms MegaGeometryPass.PrepareSceneTables=1`

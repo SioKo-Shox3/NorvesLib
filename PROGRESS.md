@@ -8172,3 +8172,12 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 証拠: `.harness/runs/scene-capture/SCN-WL-PLACEMENT-GROUNDING-FIX/final2/`（verify 全 8 行の出力 `unit-verify.txt`: Debug・RelWithDebInfo の Game と AssetCook のビルド EXIT=0、書き出しの撮影 EXIT=0、`--require-compliant` EXIT=0〔報告を残す `--out` を足した〕、6 視点 EXIT=0、`CompareReference.py --verify` result=pass photos=6、回帰の after result=pass scenes=4、GPU の `gpu-final2/metrics.json`）。見比べ `compare-final2/`（前の版からの差は戻した崖錐の岩と影だけ。ref_cliff_01 の崖錐と戻した岩の切り出しを開き、浮いた株・石と埋もれすぎた岩が無いことを見た）
 - Next: SCN-WL-CLIFF-GEN-TALUS に戻る
 - Notes: 低木 B → A の割合（31:69）は残課題のまま。見送りの一覧は石と小礫も書き出しと同じ区画の標本の分だけ。新しい試験は足していない
+
+- U1 常駐の表の更新が、変わった行だけを比べる（描く順・影の行の変更を帳簿に残す）: 着地(直し 0 回)
+
+## 2026-10-29 SCN-MEGA-FIX-SCENE-TABLES-STEADY（run 20261029-130624 の反復 1、完了）
+- Done: `MegaGeometryPass::UpdateResidentSceneTables` が毎フレーム 100 万の描く順の行をなめていた 3 つの走査（席の表の上限・描く順の行の写しとの比較・影の行の memcmp）を、表を全部作ったとき・写しが無効なとき・表を広げて写さなかったときだけにした。`PatchSceneTables` が直した行を次の常駐の更新で送る行の帳簿に足し、Compose・投影物の数え直し・写しの無効化・スタンプの一周は全行の印にする。差分のときは帳簿の行と席の行を確かめた位置の行だけを昇順で比べる。開発ビルドの 120 回ごとの照合に、描く順・影の行の写しと表の全行の一致を足した（`MEGA_SCENE_UPLOAD_MISMATCH table=entries|shadows`）
+- 値（1M 本・静止の horizon・RelWithDebInfo・1920×1080・300 フレーム）: `UpdateResidentSceneTables` median 7.123 → 0.002 ms（p95 0.003）、`PrepareSceneTables` 7.167 → 0.013 ms（p95 0.023）、`BuildSceneTables` 0.003 ms。`MEGA_TABLES mismatch=0`（5 行）、`MEGA_SCENE_UPLOAD mismatch=0 gpu_mismatch=0`（6 行）、静止の窓は `rows=0 entries=0 shadows=0`。GPU のフレーム時間 median 16.806 ms
+- 証拠: `.harness/runs/20261029-130624/SCN-MEGA-FIX-SCENE-TABLES-STEADY/`（`u2-unit-verify.txt`: CaptureScene EXIT=0・`CHECK_CAPTURE_METRICS result=pass views=horizon` EXIT=0・trace の集計・ログの抜き出し、`metrics.json`・`horizon.png`・`horizon.Game.log`）
+- Next: なし
+- Notes: 同じ撮影の RenderThread の CPU は `RT.BuildAccelerationStructures` median 24.0 ms が最大で（SCN-MEGA-FIX-TLAS-REBUILD の範囲）、`MegaGeometryPass.CheckSceneTables`（開発ビルドの照合、5 回）は 1 回 91.8 ms。新しい試験は足していない

@@ -1026,7 +1026,7 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief 常駐の表へ書いたバイト数を数え、120 回ごとに MEGA_SCENE_UPLOAD を出す */
         void NoteSceneUpload(uint64_t bytes, uint32_t rows, uint32_t entries, uint32_t shadows, uint32_t meshes,
-                             uint64_t pageTableBytes);
+                             uint64_t pageTableBytes, const SceneTables &tables);
 
         /**
          * @brief 表を書く共通の前段。読み手のどのパスよりも前（MegaGeometryPass::Execute）で 1 回呼ぶ
@@ -1329,6 +1329,11 @@ namespace NorvesLib::Core::Rendering
         uint32_t m_EntryCopyCount = 0;
         Container::VariableArray<MegaGeometryShadowInstance> m_ShadowRowCopies;
         uint32_t m_ShadowRowCopyCount = 0;
+        // 最後の書き込みから表で直した行。全部を比べるときは行の一覧を使わない
+        Container::VariableArray<uint32_t> m_SceneUploadRows;
+        bool m_bSceneUploadAllRows = true;
+        // 別の表を書いた後は、元の表に戻したときも全行を比べる
+        bool m_bSceneUploadCopiesAreSceneTables = false;
         Container::VariableArray<GPUMegaMesh> m_MeshCopies;
         bool m_bMeshCopiesValid = false;
         // 席の表を確かめる行: Setup が m_Instances を作り直した（全部）か、直したインスタンスの位置。差分を書いた更新が消す
