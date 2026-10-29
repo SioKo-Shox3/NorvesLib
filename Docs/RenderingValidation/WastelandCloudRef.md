@@ -425,3 +425,20 @@ python Scripts/Terrain/BandingCheck.py --before .harness/runs/scene-capture/SCN-
 ```
 
 （`SCN-FIX-SKY-BANDING-before` は Blit を HEAD の版へ戻して同じ Game.exe で撮る。シェーダーは実行時に Assets から読む。）
+
+## mega シーンの空の横縞（SCN-FIX-SKY-BANDING）
+
+判定日: 2026-10-29。原因は表示の 8 bit の丸めにディザが無いことで、SCN-WL-CLOUD-BANDING の Blit のディザで解消した。
+SCN-MEGA-ACCEPT-1M の撮影を現在の HEAD と比較。G の縦列を 4 画素おきに、overview は上 350 行、horizon は上 260 行で測った。
+
+| 前 → 後の撮影 | 平らな帯の長さの平均・95 % 点・最大（画素） | 隣の差が 1 段以下の割合・最大（段） |
+|---|---|---|
+| moving → moving（100 万本・5 万体・1 % 移動） | 7.318・10・56 → 2.833・7・40 | 1.0000・1 → 0.9990・2 |
+| streaming → overview（後は既定負荷） | 7.317・10・56 → 2.836・7・40 | 1.0000・1 → 0.9990・2 |
+| path → path（100 万本・カメラパス） | 8.714・19・64 → 2.823・8・39 | 1.0000・1 → 0.9991・2 |
+
+`BandingCheck.py --shorter` は全て pass。帯の平均と 95 % 点の短縮に加え、隣の差が 1 段以下の割合 ≥ 0.995・最大 ≤ 2 で判定する。
+2 段はディザの雑音で隣の画素が逆向きに丸まる場合を許したもの。3 枚の空と拡大画像では等高線状の段は見えず、細かな雑音が残る。
+path の共通の明るさ範囲による拡大画像は後が黒く潰れるため、同じ範囲を後の中央値 ±6 段で表示した `banding_after_zoom.png` も確認した。
+起動画面 default は `CaptureStartupScene.ps1 -Deterministic` で 2 回撮って `-CompareDeterministicWith` で比べ pass（平均輝度差 0、PSNR 67.894 dB、画素不一致 2.0525 %、最大差 8）。
+描画の変更は無いため基準画像の再承認は不要。撮影と判定の置き場は `.harness/runs/scene-capture/SCN-FIX-SKY-BANDING*`。

@@ -8182,3 +8182,4 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - Next: なし
 - Notes: 同じ撮影の RenderThread の CPU は `RT.BuildAccelerationStructures` median 24.0 ms が最大で（SCN-MEGA-FIX-TLAS-REBUILD の範囲）、`MegaGeometryPass.CheckSceneTables`（開発ビルドの照合、5 回）は 1 回 91.8 ms。新しい試験は足していない
 - U1 BandingCheck に視点が違っても使える判定を足す: 着地(直し 0 回)
+- U2 done-when の視点を撮り直して段を判定し、記録する: 着地(直し 1 回)
