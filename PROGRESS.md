@@ -8182,3 +8182,10 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - Next: なし
 - Notes: 同じ撮影の RenderThread の CPU は `RT.BuildAccelerationStructures` median 24.0 ms が最大で（SCN-MEGA-FIX-TLAS-REBUILD の範囲）、`MegaGeometryPass.CheckSceneTables`（開発ビルドの照合、5 回）は 1 回 91.8 ms。新しい試験は足していない
 - U1 可視クラスタの全体の列の既定の容量を混在の最大に余裕を足した値にし、1M + 5 万の撮影で溢れ 0 を確かめる: 着地(直し 0 回)
+
+## 2026-10-29 SCN-MEGA-FIX-VISIBLE-LIST（run 20261029-152745 の反復 1、完了）
+- Done: 可視クラスタの全体の列（`MegaGeometry_VisibleList`）の既定の容量を 4,194,304 → 6,291,456 要素にした（`MegaGeometryPass.cpp` の `DefaultVisibleListCapacity`。1M + 5 万の混在で積もうとした数の最大 約 482 万に約 3 割の余裕）。環境変数 `NORVES_MEGA_VISIBLE_LIST_CAPACITY` での拡大（既定以上〜1 << 25、finest-lod の 8,388,608）はそのまま。溢れを読み戻して広げる形は、統計の行が 30 フレームごとで、広げるまでの数フレームの溢れが記録の行に乗りうるので採らなかった
+- 証拠（`.harness/runs/20261029-152745/verify-SCN-MEGA-FIX-VISIBLE-LIST-U1.txt`、撮影 `scene-capture/SCN-MEGA-FIX-VISIBLE-LIST/`）: タスクの verify（ビルド込み、1M + 5 万・1% 移動・64 m 区画のストリーミング）が `CAPTURE_SCENE result=pass`・EXIT=0、`CHECK_CAPTURE_METRICS result=pass`。Game.log の `MEGA_CAPACITY` 29 行の全部で `draw_dropped=0`・`visible_list_overflow=0`、`visible_list_capacity=6291456`・`visible_list_peak` 最大 4,774,410、`[ERROR]` 0、`MEGA_STRESS_PLACED entities=50000 ... bananas=1000000`。overview の PNG を開いて確認（穴・欠けなし。空の横縞は SCN-FIX-SKY-BANDING の範囲）
+- メモリ: 可視の一覧と印 80 → 120 MB（+40 MB）。`command_capacity` の最大は前と同じ 33,554,432 で間接描画・描画情報の増分なし。GPU Scene まわりの最大の確保の見積もりは混在で 2,722 + 40 = 2,762 MB（3,072 MB 以内）
+- Next: なし
+- Notes: 試験は足していない。容量は 1920×1080 の実測から決めたので、より高い解像度や細かい LOD の混在では環境変数で広げる必要がありうる
