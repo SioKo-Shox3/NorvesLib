@@ -6484,9 +6484,10 @@ namespace NorvesLib::Core::Rendering
                 {
                     allocation.ExpiredFrame = m_RenderFrameCount;
                 }
-                // 弱参照の失効後も RHI の遅延破棄に残りうる。通常の飛行中の 2～3 フレームより長い
-                // 8 フレームを含め、実際の回収より遅い保守的な上限として数える。
-                if (m_RenderFrameCount - allocation.ExpiredFrame > 8u)
+                // 弱参照の失効後、RHI は遅延破棄に積んだときの提出の通し番号を記録し、
+                // 同じ枠のフェンス待ちでその提出の完了を確認して破棄する。Vulkan の飛行中は 2 フレームだが、
+                // エンジンが扱う飛行中の枠の上限まで、失効を見たフレームから保守的に pending に数える。
+                if (m_RenderFrameCount - allocation.ExpiredFrame >= FrameUseRingMaxInFlightSlots)
                 {
                     if (index + 1u < m_GpuSceneBuffers.size())
                     {
