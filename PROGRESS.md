@@ -8192,3 +8192,10 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - U2 開発ビルドで GPU Scene まわりの同時確保（回収待ちを含む）の山を実測して MEGA_CAPACITY に出し、混在の撮影で 3 GB 以内を確かめる: 着地(直し 1 回)
 - U3 広げて置き換えた GPU Scene のバッファを握り続ける持ち主を見つけて手放させ、device の山を 3 GB 以内に収める: 着地(直し 0 回)
 - U4 見張りの回収待ちの窓を RHI の解放の時期（エンジンの飛行中の枠の数）に合わせ、混在の撮影で device の山を測り直す: 着地(直し 0 回)
+
+## 2026-10-29 SCN-MEGA-FIX-VISIBLE-LIST（run 20261029-152745 の反復 2、人待ち）
+- Done: 差し戻し（回収待ちの古いバッファを含めた同時確保が 3 GB 以内かの証拠が無い）に対して、開発ビルドだけの見張り（`MegaGeometryPass::NoteGpuSceneBuffer`・`UpdateGpuSceneVram`）で GPU Scene まわりのバッファ（MegaGeometryPass が作る物・`VisBuffer_DrawRecords`・`VsmMega_*`）を弱参照で追い、`MEGA_CAPACITY` に `scene_vram_device_*`、山が上がったときに `MEGA_SCENE_VRAM_PEAK`（名前・live/pending ごとの内訳）を出すようにした。回収待ちは弱参照が切れてから飛行中の枠の上限（4 フレーム）まで数える（Vulkan の実際は 2 フレーム）。見張りで見つけた、広げて置き換えた古い表と描画の列（IndirectDraw 160・DrawInfo 64・SlotTable 128・InstanceTable 約 148・ShadowInstanceTable 約 49・SwRaster 16 MiB）を記述子の集まり（`BvhStages`・`SceneScatterDescriptorSet`・`VisibilityRasterPass` の枠のセット）が握り続けていた不具合を直し、GPU が読み終えた枠でだけ手放して要るときに作り直す
+- 値（1M + 5 万・1% 移動・64 m 区画、RelWithDebInfo・1920×1080）: 通常の撮影は `MEGA_CAPACITY` 29 行、長い撮影（`exit-after-rendered-frames=1200`、区画 4 巡）は 67 行で、全行 `draw_dropped=0`・`visible_list_overflow=0`、`visible_list_peak` 最大 4,821,935（容量 6,291,456）、`[ERROR]` 0。静かなフレームの device の live は 3,031.8 → 2,658.4 MiB。device の山は読み込み中の frame 7〜9 で 3,197.1 MiB（通常）・3,439.2 MiB（長い）で 3,072 MiB を超える。山は描画コマンドの列が 4M → 8M → 16M → 32M コマンドと続くフレームで倍々に作り直され、前の世代（IndirectDraw・DrawInfo・`VisBuffer_DrawRecords`・SwRaster）が数フレーム重なるため。RHI の回収待ちの最大（プロセス全体）は 551.7 / 749.1 MiB
+- 証拠: `.harness/runs/20261029-152745/verify-SCN-MEGA-FIX-VISIBLE-LIST-U4.txt`（verify 2 本と長い撮影の終了コード・集計）、`.harness/runs/20261029-152745/SCN-MEGA-FIX-VISIBLE-LIST-iter2/`（2 本の Game.log・overview.png）
+- Next: 読み込み中の倍々の作り直しの山を、この項目で直すか別の項目にするかの判断待ち（`blocked/SCN-MEGA-FIX-VISIBLE-LIST.md`）
+- Notes: 読み込み中の山は今回の可視の一覧の変更（+40 MiB）より前からある（列の伸ばし方による）。新しい試験は足していない
