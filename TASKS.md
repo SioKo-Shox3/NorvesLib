@@ -3299,7 +3299,7 @@
 - notes: 2026-10-10 親が見た点: 1920×1080 のランチャーでカードの説明文が右の縁からはみ出す（折り返しの幅がカードの内側の余白を引いていない）。カードが増えたときの並び（1 行に収まらないときの折り返しかスクロール）も確かめる。 2026-10-19 親: verify を RelWithDebInfo に揃え、周回の試験を 1 コマンド 10 分に収まる形にした（Debug の撮影は約 11 分、3 周は 928 秒の実測）。 2026-10-23（親）: 順を保つため after を足した（先に走ると後の変更で撮り直しになる）。
 
 ## SCN-FIX-SKY-BANDING: 空の階調の段（波打つ横縞）を消す
-- status: todo
+- status: blocked
 - done-when: SCN-MEGA-ACCEPT-1M の撮影で、mega-stress の overview（1% 移動・ストリーミング）とカメラパスの再生中の mega-bananas の horizon の空に、波打つ横縞の段がはっきり見える（`.harness/runs/scene-capture/SCN-MEGA-ACCEPT-1M/{moving,streaming}/overview.png`・`path/horizon.png`）。同じ時刻の mega-bananas の静止の horizon の空は滑らか。mega-stress の空の列の値は SCN-MEGA-MIXED-LOAD（2026-10-11）の撮影と同じで、前からある欠陥。段の出所（空の LUT の解像度・精度、ディザの有無、露出）を特定して直す。完了の条件: 上の 2 つの視点を撮り直した PNG を開いて空に段が見えず、空の縦の列の隣り合う画素の差が 1 段以下で、平らな帯（同じ値が続く区間）の長さが今より短いこと。起動画面 default の決定的撮影の比較が pass（空の見た目を変えるなら基準を再承認し、根拠をコミット本文に書く）。
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -Views overview -Build -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-FIX-SKY-BANDING`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -OutDir .harness/runs/startup-capture/SCN-FIX-SKY-BANDING`
