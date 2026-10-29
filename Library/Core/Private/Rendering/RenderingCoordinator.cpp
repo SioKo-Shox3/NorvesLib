@@ -2069,10 +2069,14 @@ namespace NorvesLib::Core::Rendering
         // この slot で前回記録した入力（集合と並び・変換・マスク・BLAS）と全部一致すれば、slot の TLAS はすでにこの内容なので
         // Update を記録しない。パケットのスロットは GPU の完了を保証しない（RenderThread は提出の直後にパケットを Empty へ戻し、
         // 同じスロットを続けて描くことがある）。前の利用の GPU の読み書きとの順序はフレームの頭の全体のバリアで守り、
-        // インスタンスの表と scratch は呼び出しごとの lease
+        // インスタンスの表と一時作業領域は呼び出しごとに確保し、GPU の完了までエンジンが保持する。
         // 選んだ後は距離順でなく元の番号順（SelectNearest）なので、各席の鍵で顔ぶれを照合できる。
         // 同じ BLAS と件数でも物体が替わると、refit だけでは木の空間的なまとまりを失う。
-        const bool bSameMembership = cachedTopLevel.Keys == instanceKeys;
+        bool bSameMembership = cachedTopLevel.Keys.size() == instanceKeys.size();
+        for (size_t index = 0; bSameMembership && index < instanceKeys.size(); ++index)
+        {
+            bSameMembership = cachedTopLevel.Keys[index] == instanceKeys[index];
+        }
         if (cachedTopLevel.Structure && bSameMembership &&
             SameTopLevelInstances(cachedTopLevel.Instances, tlasInstances, true))
         {
