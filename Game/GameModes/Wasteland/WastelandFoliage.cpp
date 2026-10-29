@@ -278,26 +278,44 @@ namespace Game::GameModes::WastelandFoliage
         return bGravel ? radius * 0.5f : radius;
     }
 
-    void SampleRootRing(const Terrain::TerrainHeightField &field, float x, float z, float radius, float yaw, float &outMinY,
-                        float &outMaxY)
+    bool SamplePlacementGround(const Terrain::TerrainHeightField &field, const Terrain::TerrainPlacementGround *ground,
+                               float x, float z, float &outY)
+    {
+        if (ground != nullptr)
+        {
+            return ground->SampleGround(field, x, z, outY);
+        }
+        outY = field.SampleHeight(x, z);
+        return true;
+    }
+
+    bool SampleRootRing(const Terrain::TerrainHeightField &field, float x, float z, float radius, float yaw, float &outMinY,
+                        float &outMaxY, const Terrain::TerrainPlacementGround *ground)
     {
         outMinY = 0.0f;
         outMaxY = 0.0f;
         for (uint32_t point = 0; point < kRootRingPoints; ++point)
         {
             const float angle = yaw + static_cast<float>(point) * (2.0f * kPi / static_cast<float>(kRootRingPoints));
-            const float height = field.SampleHeight(x + radius * std::cos(angle), z + radius * std::sin(angle));
+            float height = 0.0f;
+            if (!SamplePlacementGround(field, ground, x + radius * std::cos(angle), z + radius * std::sin(angle), height))
+            {
+                return false;
+            }
             outMinY = point == 0u ? height : std::min(outMinY, height);
             outMaxY = point == 0u ? height : std::max(outMaxY, height);
         }
+        return true;
     }
 
     void FoliageScatter::Initialize(TSharedPtr<const Terrain::TerrainHeightField> field,
-                                    TSharedPtr<const Terrain::TerrainSurfaceMask> mask)
+                                    TSharedPtr<const Terrain::TerrainSurfaceMask> mask,
+                                    TSharedPtr<const Terrain::TerrainPlacementGround> ground)
     {
         Reset();
         m_pField = std::move(field);
         m_pMask = std::move(mask);
+        m_pGround = std::move(ground);
         for (uint32_t kindIndex = 0; kindIndex < kPlantKindCount; ++kindIndex)
         {
             m_Templates[kindIndex] = MakeBatch(static_cast<PlantKind>(kindIndex));
@@ -322,6 +340,7 @@ namespace Game::GameModes::WastelandFoliage
     {
         m_pField.reset();
         m_pMask.reset();
+        m_pGround.reset();
         for (FoliageBatch &batch : m_Templates)
         {
             batch = FoliageBatch{};
@@ -365,7 +384,7 @@ namespace Game::GameModes::WastelandFoliage
         return false;
     }
 
-    void FoliageScatter::BuildCell(Cell &cell)
+    void FoliageScatter::BuildCell(Cell &cell, VariableArray<GroundRejection> *rejected)
     {
         const Terrain::TerrainHeightField &field = *m_pField;
         const float minSlopeCos = std::cos(kMaxSlopeDegrees * kPi / 180.0f);
@@ -452,6 +471,7 @@ namespace Game::GameModes::WastelandFoliage
                     // 沿う低木 B を根元の細い低木 A に替え、それでも収まらなければ置かない
                     float rootY = 0.0f;
                     bool bGrounded = false;
+                    bool bUnreliable = false;
                     for (uint32_t attempt = 0; attempt < 2u && !bGrounded; ++attempt)
                     {
                         if (attempt == 1u)
@@ -464,13 +484,28 @@ namespace Game::GameModes::WastelandFoliage
                         }
                         float ringMinY = 0.0f;
                         float ringMaxY = 0.0f;
-                        SampleRootRing(field, x, z, m_RootRadius[static_cast<uint32_t>(kind)] * instance.WidthScale,
-                                       instance.Yaw, ringMinY, ringMaxY);
-                        rootY = std::min(field.SampleHeight(x, z) - kRootSink, ringMinY + kRootRingFloatAllowance);
+                        float centerY = 0.0f;
+                        if (!SamplePlacementGround(field, m_pGround.get(), x, z, centerY) ||
+                            !SampleRootRing(field, x, z, m_RootRadius[static_cast<uint32_t>(kind)] * instance.WidthScale,
+                                            instance.Yaw, ringMinY, ringMaxY, m_pGround.get()))
+                        {
+                            bUnreliable = true;
+                            ++cell.Unreliable[static_cast<uint32_t>(kind)];
+                            if (rejected != nullptr)
+                            {
+                                rejected->push_back({x, z, static_cast<uint32_t>(kind)});
+                            }
+                            break;
+                        }
+                        rootY = std::min(centerY - kRootSink, ringMinY + kRootRingFloatAllowance);
                         bGrounded = rootY >= ringMaxY - kRootRingBurialAllowance;
                     }
                     if (!bGrounded)
                     {
+                        if (!bUnreliable && rejected != nullptr)
+                        {
+                            rejected->push_back({x, z, static_cast<uint32_t>(kind), false});
+                        }
                         continue;
                     }
                     instance.Position[1] = rootY;
@@ -497,7 +532,8 @@ namespace Game::GameModes::WastelandFoliage
         return kCellSize;
     }
 
-    void FoliageScatter::CollectCellAt(float x, float z, VariableArray<FoliageInstance> (&outInstances)[kPlantKindCount])
+    void FoliageScatter::CollectCellAt(float x, float z, VariableArray<FoliageInstance> (&outInstances)[kPlantKindCount],
+                                       VariableArray<GroundRejection> *rejected)
     {
         if (!m_pField)
         {
@@ -508,7 +544,7 @@ namespace Game::GameModes::WastelandFoliage
         Cell cell;
         cell.X = static_cast<int32_t>(std::floor(x / kCellSize));
         cell.Z = static_cast<int32_t>(std::floor(z / kCellSize));
-        BuildCell(cell);
+        BuildCell(cell, rejected);
         m_MaskRejectedCandidates = savedRejected;
         for (uint32_t kind = 0; kind < kPlantKindCount; ++kind)
         {
@@ -571,10 +607,20 @@ namespace Game::GameModes::WastelandFoliage
         {
             instances += batch.Instances ? batch.Instances->size() : 0u;
         }
+        uint64_t unreliable[kPlantKindCount] = {};
+        for (const Cell &cell : m_Cells)
+        {
+            for (uint32_t kind = 0; kind < kPlantKindCount; ++kind)
+            {
+                unreliable[kind] += cell.Unreliable[kind];
+            }
+        }
         LOG_INFO_F("WASTELAND_FOLIAGE center_cell=(%d,%d) cells=%zu created=%u dropped=%zu batches=%zu instances=%zu "
-                   "mask_rejected=%u",
+                   "mask_rejected=%u unreliable=%llu/%llu/%llu/%llu/%llu",
                    centerX, centerZ, m_Cells.size(), created, dropped, inOutScene.Batches.size(), instances,
-                   m_MaskRejectedCandidates);
+                   m_MaskRejectedCandidates, static_cast<unsigned long long>(unreliable[0]),
+                   static_cast<unsigned long long>(unreliable[1]), static_cast<unsigned long long>(unreliable[2]),
+                   static_cast<unsigned long long>(unreliable[3]), static_cast<unsigned long long>(unreliable[4]));
         return true;
     }
 

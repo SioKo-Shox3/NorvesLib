@@ -10,7 +10,8 @@
 //     70 m 前後の斑の値ノイズで空白の帯を残す。崖（急な斜面）には置かない。
 //   - 群れ: 大岩 1 つ（無いこともある）と、その周りの小片（角張った岩と板）。小片は斜面の下へずれて広がる。
 //   - 向き: 岩塊は 6 面のどれかを下にし、斜面の傾きへ寄せて寝かせる。板は平たいまま斜面に沿わせる。
-//   - 高さ: 回したメッシュの底の頂点ごとに地形の高さを引き、どの底の頂点も地面より下になる高さから、大きさに応じて埋める。
+//   - 高さ: 回した全標本の下 5 % の足元で地形の高さを引き、浮き・埋もれ・支持窓に収まる高さへ据える。
+//     収まらない岩は斜面の法線へ寄せ、既存の小片の最小拡大率まで縮め、それでも収まらなければ置かない。
 // 配置は世界の升目の番号と種だけで決まり、どの実行でも同じになる。置く仕組みは散布の Object（MegaGeometryScatterComponent）で、
 // 岩の 1 つ 1 つは Object を持たない軽い行になる。影を落とすのは大岩と転がり出た岩のうち大きい順に上限までで、小片と残りは
 // 影を落とさない別の散布にする（高さフォグが有効な間は CSM が投影物を 1 つずつ描くので、影を落とす数を上限で抑える）。
@@ -20,6 +21,7 @@
 #include "Core/Public/Container/VariableArray.h"
 #include "Core/Public/Math/Vector3.h"
 #include "Core/Public/Rendering/Terrain/TerrainHeightField.h"
+#include "Core/Public/Rendering/Terrain/TerrainPlacementGround.h"
 
 #include <cstdint>
 
@@ -56,6 +58,16 @@ namespace Game::GameModes::WastelandTalus
         float Radius = 0.0f;
     };
 
+    /// 接地が収まらず見送った岩の候補と理由。
+    struct TalusGroundRejection
+    {
+        float X = 0.0f;
+        float Z = 0.0f;
+        uint32_t Mesh = 0;
+        /// 信頼できない升目なら真、支持窓・埋もれ・浮きの許容区間に収まらなければ偽。
+        bool Unreliable = true;
+    };
+
     /// 配置の内訳（ログ用）
     struct TalusStats
     {
@@ -65,12 +77,26 @@ namespace Game::GameModes::WastelandTalus
         uint32_t Fragments = 0;
         uint32_t ToeRocks = 0;
         uint32_t Rejected = 0;
+        /// 置いた岩のうち向きを寄せ直した数と、さらに縮めた数（Shrunk は Realigned の内数）
+        uint32_t Realigned = 0;
+        uint32_t Shrunk = 0;
+        /// 元の中心で収まらず、小さくずらして置いた数（Realigned・Shrunk と重複する）。
+        uint32_t Shifted = 0;
+        /// 信頼できない升目に掛かった後、中心をずらさず寄せ直しだけ・縮小で置けた数。
+        uint32_t RecoveredRealigned = 0;
+        uint32_t RecoveredShrunk = 0;
+        /// 寄せ直し・縮小・ずらしでも接地が収まらず置かなかった数
+        uint32_t Unplaced = 0;
+        uint32_t Unreliable[kTalusMeshCount] = {};
+        /// 塊の外で、DEM の三角形が支持面の向きを満たさず見送った数（Unreliable の内数）。
+        uint32_t NoBlockUnsupported[kTalusMeshCount] = {};
+        NorvesLib::Core::Container::VariableArray<TalusGroundRejection> GroundRejections;
         uint32_t PerMesh[kTalusMeshCount] = {};
         float MaxBoulderHeight = 0.0f;
         /// 影を落とす候補（大岩・転がり出た岩）の数と、影を落とす岩のうち最も小さい高さ[m]
         uint32_t CasterCandidates = 0;
         float MinCasterHeight = 0.0f;
-        /// メッシュごとの底の高さを引く頂点の数
+        /// メッシュごとの足元と高さを判定する全標本の数
         uint32_t SupportPoints[kTalusMeshCount] = {};
     };
 
@@ -83,6 +109,7 @@ namespace Game::GameModes::WastelandTalus
      */
     void BuildTalusRocks(const NorvesLib::Core::Rendering::Terrain::TerrainHeightField &field,
                          const NorvesLib::Core::Rendering::Terrain::TerrainSurfaceMask &mask,
+                         const NorvesLib::Core::Rendering::Terrain::TerrainPlacementGround *ground,
                          const TalusMeshShape (&shapes)[kTalusMeshCount],
                          const NorvesLib::Core::Container::VariableArray<TalusExclusion> &exclusions,
                          NorvesLib::Core::Container::VariableArray<NorvesLib::Core::Component::MegaScatterInstance> &outCasters,

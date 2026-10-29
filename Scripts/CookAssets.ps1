@@ -364,6 +364,7 @@ if ($OnlyPatterns.Count -gt 0) {
     $PreviousAssets = @((Get-Content -LiteralPath $AggregateManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json).assets)
 }
 $missingEntryCount = 0
+$placementGroundSelected = $false
 $aggregateAssets = @()
 $seenKeys = @{}
 $seenPackages = @{}
@@ -559,18 +560,25 @@ foreach ($specFile in $specFiles) {
         # （source_path は格子の記述で、AssetCook が高さ場の読む記述と同じか・格子のファイルの SHA-256 が記述と合うかを確かめる。
         # 格子のファイルと区画の割り方のヘッダは extra_sources に入れ、どれが変わっても焼き直す）。
         # "terrain-tile:dem-plain:<x>,<z>" は dem と同じ区画を崖の細部（TerrainCliffDetail.cpp）なしで焼く（撮り比べ用）。
+        $isPlacementTerrain = $false
         if (Test-PropertyExists -Object $model -Name "generate") {
             $generate = Get-StringField -Object $model -Name "generate" -Context $context
             if (($generate -ne "displaced-sphere") -and ($generate -notmatch '^terrain-tile:(dem:|dem-plain:)?\d+,\d+$')) {
                 throw "$context の generate は displaced-sphere か terrain-tile:<x>,<z>・terrain-tile:dem:<x>,<z>・terrain-tile:dem-plain:<x>,<z> だけを指定できます"
             }
             $cookArguments += @("--generate", $generate)
+            $isPlacementTerrain = ($generate -match '^terrain-tile:dem:\d+,\d+$') -and `
+                ($logicalPath -match '^Models/WastelandTerrain/WastelandDem_\d+_\d+\.generated$') -and `
+                (($OnlyPatterns.Count -eq 0) -or (Test-OnlyTarget -LogicalPath $logicalPath))
         }
         $asset = Invoke-CookEntry -SetName $setName -PackageRootName $packageRoot -Variant $variant -Kind "model" `
             -LogicalPath $logicalPath -CookedPackage $cookedPackage -EntryName $entryName -Item $model `
             -SourceTexts @($sourceText) -StampTexts $stampTexts -CookArguments $cookArguments -SetStateDir $setStateDir
         if ($null -ne $asset) {
             $aggregateAssets += $asset
+            if ($isPlacementTerrain) {
+                $placementGroundSelected = $true
+            }
         }
     }
 }
@@ -587,6 +595,22 @@ if (Test-Path -LiteralPath $AggregateManifestPath -PathType Leaf) {
 }
 if ($existingJson -ne $aggregateJson) {
     Write-TextUtf8 -Path $AggregateManifestPath -Text $aggregateJson
+}
+
+# DEM の区画が今回の対象に含まれるときだけ、集約済みの参照から接地用の格子を更新する。
+# 地形以外だけの絞り込み・印だけの確認・元の DEM が欠けた実行では呼ばない。
+if ($placementGroundSelected) {
+    $placementGroundPath = Join-Path $ResolvedRuntimeRoot "Terrain/WastelandPlacementGround.bin"
+    $placementArguments = @(
+        "--write-placement-ground",
+        "--manifest", $AggregateManifestPath,
+        "--out", $placementGroundPath,
+        "--skip-if-current"
+    )
+    & $AssetCookPath @placementArguments | Out-Host
+    if ($LASTEXITCODE -ne 0) {
+        throw "接地用の高さ格子の書き出しが失敗しました（exit code $LASTEXITCODE）"
+    }
 }
 
 if ($missingEntryCount -gt 0) {

@@ -18,6 +18,7 @@
 #include "Core/Public/Container/VariableArray.h"
 #include "Core/Public/Rendering/FoliageTypes.h"
 #include "Core/Public/Rendering/Terrain/TerrainHeightField.h"
+#include "Core/Public/Rendering/Terrain/TerrainPlacementGround.h"
 
 #include <cstdint>
 
@@ -59,8 +60,23 @@ namespace Game::GameModes::WastelandFoliage
 
     /// (x, z) を中心とする半径 radius・向き yaw の根元の円の点（yaw から 60° おき。X は cos、Z は sin）の地面の高さの
     /// 最小と最大
-    void SampleRootRing(const NorvesLib::Core::Rendering::Terrain::TerrainHeightField &field, float x, float z, float radius,
-                        float yaw, float &outMinY, float &outMaxY);
+    /// 接地用格子が無ければ、以前と同じ高さ場を使う。
+    bool SamplePlacementGround(const NorvesLib::Core::Rendering::Terrain::TerrainHeightField &field,
+                               const NorvesLib::Core::Rendering::Terrain::TerrainPlacementGround *ground,
+                               float x, float z, float &outY);
+    /// 信頼できない点を含む円は false。
+    bool SampleRootRing(const NorvesLib::Core::Rendering::Terrain::TerrainHeightField &field, float x, float z, float radius,
+                        float yaw, float &outMinY, float &outMaxY,
+                        const NorvesLib::Core::Rendering::Terrain::TerrainPlacementGround *ground = nullptr);
+
+    /// 地面が信頼できないか、地面に収まらず見送った候補の位置と種類。
+    struct GroundRejection
+    {
+        float X = 0.0f;
+        float Z = 0.0f;
+        uint32_t Kind = 0;
+        bool Unreliable = true;
+    };
 
     /**
      * @brief カメラの周りの区画へ草・低木を撒き、束の一覧を作る
@@ -73,7 +89,8 @@ namespace Game::GameModes::WastelandFoliage
     public:
         /// 株のメッシュ・色・間引きの距離を作り、高さ場と地図を持つ。地図が無い（読めない）ときは傾斜と密度の斑だけで撒く
         void Initialize(NorvesLib::Core::Container::TSharedPtr<const NorvesLib::Core::Rendering::Terrain::TerrainHeightField> field,
-                        NorvesLib::Core::Container::TSharedPtr<const NorvesLib::Core::Rendering::Terrain::TerrainSurfaceMask> mask);
+                        NorvesLib::Core::Container::TSharedPtr<const NorvesLib::Core::Rendering::Terrain::TerrainSurfaceMask> mask,
+                        NorvesLib::Core::Container::TSharedPtr<const NorvesLib::Core::Rendering::Terrain::TerrainPlacementGround> ground);
 
         /// 持っているものを全部手放す
         void Reset();
@@ -94,7 +111,8 @@ namespace Game::GameModes::WastelandFoliage
         /// outInstances へ足す。持っている区画と束の一覧は変えない
         void CollectCellAt(float x, float z,
                            NorvesLib::Core::Container::VariableArray<NorvesLib::Core::Rendering::FoliageInstance> (
-                               &outInstances)[kPlantKindCount]);
+                               &outInstances)[kPlantKindCount],
+                           NorvesLib::Core::Container::VariableArray<GroundRejection> *rejected = nullptr);
         /// 区画の一辺[m]（書き出しが全域の区画を数えるのに使う）
         static float GetCellSize();
         /// 種類 kind の束のひな形（メッシュと名前。インスタンスは空）
@@ -113,16 +131,18 @@ namespace Game::GameModes::WastelandFoliage
             /// 株の根元の高さの範囲[m]
             float MinRootY = 0.0f;
             float MaxRootY = 0.0f;
+            uint32_t Unreliable[kPlantKindCount] = {};
         };
 
         /// 区画 (cellX, cellZ) の株を作る
-        void BuildCell(Cell &cell);
+        void BuildCell(Cell &cell, NorvesLib::Core::Container::VariableArray<GroundRejection> *rejected = nullptr);
         /// (x,z) が撒かない範囲か
         bool IsExcluded(float x, float z) const;
         /// 持っている区画から束の一覧を作り直す
         void RebuildScene(NorvesLib::Core::Rendering::FoliageScene &inOutScene) const;
 
         NorvesLib::Core::Container::TSharedPtr<const NorvesLib::Core::Rendering::Terrain::TerrainHeightField> m_pField;
+        NorvesLib::Core::Container::TSharedPtr<const NorvesLib::Core::Rendering::Terrain::TerrainPlacementGround> m_pGround;
         NorvesLib::Core::Container::TSharedPtr<const NorvesLib::Core::Rendering::Terrain::TerrainSurfaceMask> m_pMask;
         /// 種類ごとの束のひな形（メッシュ・色・風・間引きの距離。インスタンスと区画は空）
         NorvesLib::Core::Rendering::FoliageBatch m_Templates[kPlantKindCount];
