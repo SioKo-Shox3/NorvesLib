@@ -1190,6 +1190,48 @@ namespace NorvesLib::Core::Rendering
         }
     }
 
+    void VisibilityRasterPass::ReleaseStaleFrameSlotDescriptors(FrameSlot& slot,
+                                                                  const MegaGeometryPass::VisibilityDrawPlan* plan)
+    {
+        // 未使用の組は同じ枠の前の提出を GPU が読み終えている。現在の提出で使った組は触らない。
+        const auto stale = [](const Container::TWeakPtr<RHI::IBuffer>& bound, const RHI::BufferPtr& current)
+        {
+            return !bound.expired() &&
+                   (!current || bound.owner_before(current) || current.owner_before(bound));
+        };
+        const RHI::BufferPtr empty;
+        const RHI::BufferPtr& instance = plan ? plan->InstanceBuffer : empty;
+        const RHI::BufferPtr& mesh = plan ? plan->MeshBuffer : empty;
+        const RHI::BufferPtr& indirect = plan ? plan->IndirectBuffer : empty;
+        const RHI::BufferPtr& drawInfo = plan ? plan->DrawInfoBuffer : empty;
+        if (stale(slot.MegaInstanceBinding, instance) || stale(slot.MegaMeshBinding, mesh) ||
+            stale(slot.MegaDrawInfoBinding, drawInfo))
+        {
+            slot.MegaSet.reset();
+            slot.MegaInstanceBinding.reset();
+            slot.MegaMeshBinding.reset();
+            slot.MegaDrawInfoBinding.reset();
+        }
+        if (stale(slot.RecordIndirectBinding, indirect) || stale(slot.RecordDrawInfoBinding, drawInfo) ||
+            stale(slot.RecordTableBinding, m_RecordTable))
+        {
+            slot.RecordSet.reset();
+            slot.RecordIndirectBinding.reset();
+            slot.RecordDrawInfoBinding.reset();
+            slot.RecordTableBinding.reset();
+        }
+        if (stale(slot.MeshRecordTableBinding, m_RecordTable))
+        {
+            slot.MeshSet.reset();
+            slot.MeshRecordTableBinding.reset();
+        }
+        if (stale(slot.SkinnedRecordTableBinding, m_RecordTable))
+        {
+            slot.SkinnedSet.reset();
+            slot.SkinnedRecordTableBinding.reset();
+        }
+    }
+
     VisibilityRasterPass::PrepareResult VisibilityRasterPass::PrepareFrame(const MegaGeometryPass::VisibilityDrawPlan* plan)
     {
         ViewRenderContext& context = *m_Work.Context;
@@ -1240,6 +1282,11 @@ namespace NorvesLib::Core::Rendering
                               plan->InstanceBuffer && plan->DrawInfoBuffer && plan->IndirectBuffer &&
                               plan->CountBuffer && plan->SectionBuffer && plan->RecordSectionBuffer;
         const bool bHasMegaDraw = m_Work.bHasMegaDraw;
+        m_FrameSlots.BeginFrame(context.FrameIndex, context.ResolveRenderFrameSerial());
+        m_FrameSlots.ForEachIdleInActiveSlot([this, plan, bHasMegaDraw](FrameSlot& idle)
+        {
+            ReleaseStaleFrameSlotDescriptors(idle, bHasMegaDraw ? plan : nullptr);
+        });
         if (!camera || (!bHasMegaDraw && cpuRecords.empty()))
         {
             return PrepareResult::ClearOnly;
@@ -1249,7 +1296,6 @@ namespace NorvesLib::Core::Rendering
         m_Stats.MegaCommandSlots = bHasMegaDraw ? megaSlots : 0u;
         m_Stats.TotalSlots = totalSlots;
 
-        m_FrameSlots.BeginFrame(context.FrameIndex, context.ResolveRenderFrameSerial());
         FrameSlot& slot = m_FrameSlots.Acquire();
         m_Work.Slot = &slot;
         m_MaterialTable.BuildGpuEntriesInto(m_MaterialEntryScratch);
@@ -1336,6 +1382,9 @@ namespace NorvesLib::Core::Rendering
             slot.RecordSet->BindStorageBuffer(7, slot.SectionMaterials, 0, ClampBindSize(sectionMaterials.size() * sizeof(uint32_t)));
             slot.RecordSet->BindStorageBuffer(8, slot.RecordArgs, 0, ClampBindSize(slot.RecordArgs->GetSize()));
             slot.RecordSet->Update();
+            slot.RecordIndirectBinding = plan->IndirectBuffer;
+            slot.RecordDrawInfoBinding = plan->DrawInfoBuffer;
+            slot.RecordTableBinding = m_RecordTable;
 
             m_Work.MegaInstanceBuffer = plan->InstanceBuffer;
             m_Work.MegaInstanceBytes = plan->InstanceBufferBytes;
@@ -1351,6 +1400,9 @@ namespace NorvesLib::Core::Rendering
             slot.MegaSet->BindStorageBuffer(MegaMeshTableBinding, plan->MeshBuffer, 0, ClampBindSize(plan->MeshBufferBytes));
             slot.MegaSet->BindStorageBuffer(2, plan->DrawInfoBuffer, 0, ClampBindSize(plan->DrawInfoBuffer->GetSize()));
             slot.MegaSet->Update();
+            slot.MegaInstanceBinding = plan->InstanceBuffer;
+            slot.MegaMeshBinding = plan->MeshBuffer;
+            slot.MegaDrawInfoBinding = plan->DrawInfoBuffer;
         }
         m_Work.bDrawMesh = !meshDraws.empty();
         if (m_Work.bDrawMesh)
@@ -1361,6 +1413,7 @@ namespace NorvesLib::Core::Rendering
             // メッシュの表は読まないが、同じ形のセットなので有効なバッファを結んでおく
             slot.MeshSet->BindStorageBuffer(MegaMeshTableBinding, m_RecordTable, 0, ClampBindSize(tableBytes));
             slot.MeshSet->Update();
+            slot.MeshRecordTableBinding = m_RecordTable;
         }
         const RHI::BufferPtr& skinnedVertices = m_Work.SkinnedVertices;
         m_Work.bDrawSkinned = !skinnedDraws.empty() && skinnedVertices;
@@ -1371,6 +1424,7 @@ namespace NorvesLib::Core::Rendering
             slot.SkinnedSet->BindStorageBuffer(2, m_RecordTable, 0, ClampBindSize(tableBytes));
             slot.SkinnedSet->BindStorageBuffer(MegaMeshTableBinding, m_RecordTable, 0, ClampBindSize(tableBytes));
             slot.SkinnedSet->Update();
+            slot.SkinnedRecordTableBinding = m_RecordTable;
         }
         return PrepareResult::Ready;
     }

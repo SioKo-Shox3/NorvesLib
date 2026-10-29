@@ -2626,17 +2626,54 @@ namespace NorvesLib::Core::Rendering
 
     void MegaGeometryPass::ReleaseIdleMeshRegionOwners(uint32_t inFlightIndex, uint64_t frameSerial)
     {
-        if (!m_bFrameSlotMeshOwnersHeld || frameSerial == 0 || inFlightIndex >= FrameUseRingMaxInFlightSlots)
+        if (frameSerial == 0 || inFlightIndex >= FrameUseRingMaxInFlightSlots)
         {
             return;
         }
         // 枠を選ぶと、同じ番号の前のフレーム（GPU の仕事が終わっている）が使った組だけが渡される。
         // インスタンスの無いフレームが飛行中のフレームの数だけ続けば、どの組もメッシュの区画を持たなくなる
         // 前のフレームの表の持ち主は CPU の一覧で、GPU が読むのは組の持ち主なので、すぐ手放してよい
-        m_SceneTables.MeshOwners.clear();
-        m_bSceneTablesValid = false;
+        if (m_bFrameSlotMeshOwnersHeld)
+        {
+            m_SceneTables.MeshOwners.clear();
+            m_bSceneTablesValid = false;
+        }
         m_FrameSlots.BeginFrame(inFlightIndex, frameSerial);
-        m_FrameSlots.ForEachIdleInActiveSlot([](FrameSlot &slot) { slot.MeshRegionOwners.clear(); });
+        m_FrameSlots.ForEachIdleInActiveSlot([this](FrameSlot &slot)
+        {
+            slot.MeshRegionOwners.clear();
+            ReleaseStaleFrameSlotDescriptors(slot);
+        });
+    }
+
+    void MegaGeometryPass::ReleaseStaleFrameSlotDescriptors(FrameSlot &slot)
+    {
+        // この組は同じ枠の前の提出の GPU が読み終えている。今のフレームに借りた組は対象にしない。
+        // 置き換え前のバッファを結んだセットはここで手放し、次に使う段だけ作り直す。
+        const auto releaseIfStale = [this](RHI::DescriptorSetPtr &set, uint64_t &revision)
+        {
+            if (set && revision != 0 && revision != m_DescriptorBufferRevision)
+            {
+                set.reset();
+                revision = 0;
+            }
+        };
+        for (uint32_t index = 0; index < 4; ++index)
+        {
+            releaseIfStale(slot.SceneScatterDescriptorSet[index], slot.SceneScatterBufferRevision[index]);
+        }
+        for (uint32_t passIndex = 0; passIndex < 2; ++passIndex)
+        {
+            releaseIfStale(slot.CullDescriptorSet[passIndex], slot.CullBufferRevision[passIndex]);
+            for (BvhStageDraw &stage : slot.BvhStages[passIndex])
+            {
+                releaseIfStale(stage.DescriptorSet, stage.BufferRevision);
+            }
+        }
+        for (SectionDraw &section : slot.Sections)
+        {
+            releaseIfStale(section.DescriptorSet, section.BufferRevision);
+        }
     }
 
     void MegaGeometryPass::PrepareSceneTables(const MegaGeometryPassCommand &command, RHI::ICommandList *commandList)
@@ -2663,6 +2700,7 @@ namespace NorvesLib::Core::Rendering
         // このフレームの資源の組を 1 つ取り、同じフレームの記録へ渡す（記録は同じ枠・同じ通し番号なら取り直さない）。
         // ページの表の版はここで決め、同じフレームの記録（主の描画・ID のラスタ）と VSM が同じ版を使う
         m_FrameSlots.BeginFrame(command.InFlightIndex, command.RenderFrameSerial);
+        m_FrameSlots.ForEachIdleInActiveSlot([this](FrameSlot &slot) { ReleaseStaleFrameSlotDescriptors(slot); });
         FrameSlot &slot = m_FrameSlots.Acquire();
         uint64_t pageTableBytes = 0;
         if (!SyncPageTable(slot, *command.MegaGeometry, &pageTableBytes) ||
@@ -2805,6 +2843,7 @@ namespace NorvesLib::Core::Rendering
             m_LastRenderFrameSerial = frameSerial;
         }
         m_FrameSlots.BeginFrame(command.InFlightIndex, frameSerial);
+        m_FrameSlots.ForEachIdleInActiveSlot([this](FrameSlot &slot) { ReleaseStaleFrameSlotDescriptors(slot); });
         // 決定的な撮影のエポック（読み込み完了）の最初のフレームから、統計の行に相対フレームの番号を付ける
         // 前のフレームの HZB も時間的な状態なので、エポックの最初のフレームは使わない（読み込み完了までの
         // フレーム数の違いが、エポックの最初のフレームの1パス目の数に出ないようにする）
@@ -3051,7 +3090,7 @@ namespace NorvesLib::Core::Rendering
         for (uint32_t sectionIndex = 0; sectionIndex < sectionCount; ++sectionIndex)
         {
             const auto *gpuData = sections[sectionIndex].Representative;
-            const SectionDraw &sectionDraw = frameSlot.Sections[sectionIndex];
+            SectionDraw &sectionDraw = frameSlot.Sections[sectionIndex];
 
             SectionUniformData uniform{};
             cameraConstants.CopyShaderView(uniform.View);
@@ -3242,6 +3281,7 @@ namespace NorvesLib::Core::Rendering
                                              static_cast<uint32_t>(m_DrawInfoBuffer->GetSize()));
 
             descriptorSet->Update();
+            sectionDraw.BufferRevision = m_DescriptorBufferRevision;
         }
 
         // ========================================
@@ -3472,7 +3512,7 @@ namespace NorvesLib::Core::Rendering
             // 2. カリングディスクリプタセット（平らな判定と BVH の各段で、UBO だけが違う）
             // ----------------------------------------
             const auto bindCullDescriptors = [&](const RHI::DescriptorSetPtr &descriptorSet,
-                                                 const RHI::BufferPtr &cullUniformBuffer) -> void
+                                                 const RHI::BufferPtr &cullUniformBuffer, uint64_t &bufferRevision) -> void
             {
                 descriptorSet->BindConstantBuffer(0, cullUniformBuffer, 0,
                                                   static_cast<uint32_t>(sizeof(CullUniformData)));
@@ -3533,6 +3573,7 @@ namespace NorvesLib::Core::Rendering
                                                  static_cast<uint32_t>(m_BinCounterBuffer->GetSize()));
                 descriptorSet->BindStorageBuffer(BinCheckMarkBinding, binMarks, 0, static_cast<uint32_t>(binMarks->GetSize()));
                 descriptorSet->Update();
+                bufferRevision = m_DescriptorBufferRevision;
             };
 
             // 1次元のスレッド数を、x 方向の上限を避けて2次元のワークグループで出す
@@ -3549,7 +3590,7 @@ namespace NorvesLib::Core::Rendering
             //    このパスのセットは binning の接頭和・照合も使うので、平らな判定が無いパスでも結ぶ
             // ----------------------------------------
             const RHI::DescriptorSetPtr &cullDescriptorSet = frameSlot.CullDescriptorSet[passIndex];
-            bindCullDescriptors(cullDescriptorSet, frameSlot.CullUniform[passIndex]);
+            bindCullDescriptors(cullDescriptorSet, frameSlot.CullUniform[passIndex], frameSlot.CullBufferRevision[passIndex]);
             if (totalGroups > 0)
             {
                 cmdList->SetPipeline(m_CullPipeline);
@@ -3642,9 +3683,9 @@ namespace NorvesLib::Core::Rendering
                     rangeUniform.BvhStage = BvhStageRanges;
                     rangeUniform.BvhNextBase = bvhNodeQueueBase(0);
                     rangeUniform.BvhLeafBase = bvhLeafQueueBase;
-                    const BvhStageDraw &rangeDraw = frameSlot.BvhStages[passIndex][bvhLevelCount + 1u];
+                    BvhStageDraw &rangeDraw = frameSlot.BvhStages[passIndex][bvhLevelCount + 1u];
                     rangeDraw.Uniform->Update(&rangeUniform, sizeof(CullUniformData));
-                    bindCullDescriptors(rangeDraw.DescriptorSet, rangeDraw.Uniform);
+                    bindCullDescriptors(rangeDraw.DescriptorSet, rangeDraw.Uniform, rangeDraw.BufferRevision);
                     cmdList->SetDescriptorSet(rangeDraw.DescriptorSet, 0);
                     dispatchThreads(bvhRangeCount);
                     // 席の段が、範囲の段が積んだ一覧・カウンタと引数を読む
@@ -3682,9 +3723,9 @@ namespace NorvesLib::Core::Rendering
                     stageUniform.bBvhSeatsFromRanges = (stage == 0 && bSeatsFromRanges) ? BvhSeatsFromRanges : BvhSeatsFromRoots;
                     stageUniform.BvhNextBase = bvhNodeQueueBase(stage + 1u);
                     stageUniform.BvhLeafBase = bvhLeafQueueBase;
-                    const BvhStageDraw &stageDraw = frameSlot.BvhStages[passIndex][stage];
+                    BvhStageDraw &stageDraw = frameSlot.BvhStages[passIndex][stage];
                     stageDraw.Uniform->Update(&stageUniform, sizeof(CullUniformData));
-                    bindCullDescriptors(stageDraw.DescriptorSet, stageDraw.Uniform);
+                    bindCullDescriptors(stageDraw.DescriptorSet, stageDraw.Uniform, stageDraw.BufferRevision);
                     cmdList->SetDescriptorSet(stageDraw.DescriptorSet, 0);
                     bool bDispatched = true;
                     if (stage == 0 && !bSeatsFromRanges)
@@ -3720,9 +3761,9 @@ namespace NorvesLib::Core::Rendering
                             CullUniformData deferUniform = stageUniform;
                             deferUniform.BvhStage = bvhStage;
                             deferUniform.bBvhSeatsFromRanges = seatsFrom;
-                            const BvhStageDraw &deferDraw = frameSlot.BvhStages[passIndex][slotIndex];
+                            BvhStageDraw &deferDraw = frameSlot.BvhStages[passIndex][slotIndex];
                             deferDraw.Uniform->Update(&deferUniform, sizeof(CullUniformData));
-                            bindCullDescriptors(deferDraw.DescriptorSet, deferDraw.Uniform);
+                            bindCullDescriptors(deferDraw.DescriptorSet, deferDraw.Uniform, deferDraw.BufferRevision);
                             cmdList->SetDescriptorSet(deferDraw.DescriptorSet, 0);
                             if (!cmdList->DispatchIndirect(m_BvhPass2Buffer, static_cast<uint64_t>(argsWord) * sizeof(uint32_t)))
                             {
@@ -3740,9 +3781,9 @@ namespace NorvesLib::Core::Rendering
                         barrierClusterWrites();
                         CullUniformData deferUniform = stageUniform;
                         deferUniform.BvhStage = BvhStageDeferredClusters;
-                        const BvhStageDraw &deferDraw = frameSlot.BvhStages[passIndex][bvhLevelCount + 4u];
+                        BvhStageDraw &deferDraw = frameSlot.BvhStages[passIndex][bvhLevelCount + 4u];
                         deferDraw.Uniform->Update(&deferUniform, sizeof(CullUniformData));
-                        bindCullDescriptors(deferDraw.DescriptorSet, deferDraw.Uniform);
+                        bindCullDescriptors(deferDraw.DescriptorSet, deferDraw.Uniform, deferDraw.BufferRevision);
                         cmdList->SetDescriptorSet(deferDraw.DescriptorSet, 0);
                         if (!cmdList->DispatchIndirect(m_BvhPass2Buffer, static_cast<uint64_t>(BvhDeferClusterArgsWord) * sizeof(uint32_t)))
                         {
@@ -4552,6 +4593,7 @@ namespace NorvesLib::Core::Rendering
         if (m_SwRasterBuffer)
         {
             m_RetiredBuffers.push_back(RetiredBuffer{m_SwRasterBuffer, m_RenderFrameCount});
+            ++m_DescriptorBufferRevision;
         }
         m_SwRasterBuffer = buffer;
         m_SwRasterBufferCapacity = newCapacity;
@@ -4596,6 +4638,7 @@ namespace NorvesLib::Core::Rendering
             if (m_BinCounterBuffer)
             {
                 m_RetiredBuffers.push_back(RetiredBuffer{m_BinCounterBuffer, m_RenderFrameCount});
+                ++m_DescriptorBufferRevision;
             }
             m_BinCounterBuffer = buffer;
             m_BinCounterCapacity = newWords;
@@ -4694,6 +4737,19 @@ namespace NorvesLib::Core::Rendering
             }
             slot.BvhStages[passIndex].push_back(stageDraw);
         }
+        // 使わない間に古いセットを手放した段は、再び使うときだけ作る。
+        for (uint32_t index = 0; index < stageCount; ++index)
+        {
+            BvhStageDraw &stageDraw = slot.BvhStages[passIndex][index];
+            if (!stageDraw.DescriptorSet)
+            {
+                stageDraw.DescriptorSet = m_Device->CreateDescriptorSet(cullDsDesc);
+                if (!stageDraw.DescriptorSet)
+                {
+                    return false;
+                }
+            }
+        }
         return true;
     }
 
@@ -4752,6 +4808,10 @@ namespace NorvesLib::Core::Rendering
         }
 
         // 古いバッファは、直前のフレームのGPUがまだ使っているかもしれないので、しばらく保持してから破棄する
+        if (m_IndirectDrawBuffer || m_DrawCountBuffer || m_DrawInfoBuffer)
+        {
+            ++m_DescriptorBufferRevision;
+        }
         for (RHI::BufferPtr *old : {&m_IndirectDrawBuffer, &m_DrawCountBuffer, &m_DrawInfoBuffer})
         {
             if (*old)
@@ -4928,6 +4988,7 @@ namespace NorvesLib::Core::Rendering
             }
             // 古い表は、前のフレームの GPU がまだ読んでいるかもしれない（このフレームのコピーも読む）ので、しばらく保持してから破棄する
             m_RetiredBuffers.push_back(RetiredBuffer{buffer, m_RenderFrameCount});
+            ++m_DescriptorBufferRevision;
         }
         buffer = newBuffer;
         capacity = newCapacity;
@@ -5471,7 +5532,7 @@ namespace NorvesLib::Core::Rendering
             }
         }
         const auto bindTables = [this, &slot](const RHI::DescriptorSetPtr &descriptorSet, uint64_t offsetWords,
-                                              uint64_t sizeWords) -> void
+                                              uint64_t sizeWords, uint32_t index) -> void
         {
             descriptorSet->BindStorageBuffer(0, slot.SceneStaging, static_cast<uint32_t>(offsetWords * sizeof(uint32_t)),
                                              static_cast<uint32_t>(sizeWords * sizeof(uint32_t)));
@@ -5482,6 +5543,7 @@ namespace NorvesLib::Core::Rendering
             descriptorSet->BindStorageBuffer(4, m_MeshTableBuffer, 0, static_cast<uint32_t>(m_MeshTableBuffer->GetSize()));
             descriptorSet->BindStorageBuffer(5, m_RangeBoundsBuffer, 0, static_cast<uint32_t>(m_RangeBoundsBuffer->GetSize()));
             descriptorSet->Update();
+            slot.SceneScatterBufferRevision[index] = m_DescriptorBufferRevision;
         };
         const auto dispatchRecords = [commandList](uint64_t records) -> void
         {
@@ -5502,7 +5564,7 @@ namespace NorvesLib::Core::Rendering
         commandList->SetPipeline(m_SceneScatterPipeline);
         if (rowRegionWords > 0)
         {
-            bindTables(slot.SceneScatterDescriptorSet[0], 0u, rowRegionWords);
+            bindTables(slot.SceneScatterDescriptorSet[0], 0u, rowRegionWords, 0u);
             commandList->SetDescriptorSet(slot.SceneScatterDescriptorSet[0], 0);
             dispatchRecords(rowCount);
             // 段 1 が席の表から描く順の表を組むので、段 0 の書き込みを見せる
@@ -5510,7 +5572,7 @@ namespace NorvesLib::Core::Rendering
         }
         if (tableRegionWords > 0)
         {
-            bindTables(slot.SceneScatterDescriptorSet[1], tableRegionOffsetWords, tableRegionWords);
+            bindTables(slot.SceneScatterDescriptorSet[1], tableRegionOffsetWords, tableRegionWords, 1u);
             commandList->SetDescriptorSet(slot.SceneScatterDescriptorSet[1], 0);
             dispatchRecords(tableRecords);
         }
@@ -5519,7 +5581,7 @@ namespace NorvesLib::Core::Rendering
             // 段 3 が段 1 の写したメッシュの行（クラスタ配列のアドレス・ホストの球）を読んで半径を広げるので、段 1 の書き込みを見せる。
             // 段 2 はこの後のバリアの後に、広げた半径を読む
             commandList->BufferBarrier(m_MeshTableBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
-            bindTables(slot.SceneScatterDescriptorSet[3], boundsRegionOffsetWords, boundsRegionWords);
+            bindTables(slot.SceneScatterDescriptorSet[3], boundsRegionOffsetWords, boundsRegionWords, 3u);
             commandList->SetDescriptorSet(slot.SceneScatterDescriptorSet[3], 0);
             // 1 ワークグループ（64 スレッド）= 1 メッシュ
             dispatchRecords(static_cast<uint64_t>(meshRecords) * 64u);
@@ -5529,7 +5591,7 @@ namespace NorvesLib::Core::Rendering
             // 段 2 が段 1 の書いた描く順の表とメッシュの表から範囲の境界を作るので、段 1 の書き込みを見せる
             commandList->BufferBarrier(m_InstanceTableBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
             commandList->BufferBarrier(m_MeshTableBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
-            bindTables(slot.SceneScatterDescriptorSet[2], rangeRegionOffsetWords, rangeRegionWords);
+            bindTables(slot.SceneScatterDescriptorSet[2], rangeRegionOffsetWords, rangeRegionWords, 2u);
             commandList->SetDescriptorSet(slot.SceneScatterDescriptorSet[2], 0);
             // 1 ワークグループ = 1 範囲
             dispatchRecords(static_cast<uint64_t>(rangeRecords) * BvhRangeSeats);
@@ -5916,6 +5978,26 @@ namespace NorvesLib::Core::Rendering
                     return false;
                 }
                 slot.Sections.push_back(sectionDraw);
+            }
+        }
+        // 区間の数が再び増えたとき、手放したセットをその区間だけ作り直す。
+        RHI::DescriptorSetDesc drawDsDesc;
+        bool bHaveDrawDsDesc = false;
+        for (uint32_t index = 0; index < sectionCount; ++index)
+        {
+            SectionDraw &section = slot.Sections[index];
+            if (!section.DescriptorSet)
+            {
+                if (!bHaveDrawDsDesc)
+                {
+                    drawDsDesc = BuildDrawDescriptorSetDesc();
+                    bHaveDrawDsDesc = true;
+                }
+                section.DescriptorSet = m_Device->CreateDescriptorSet(drawDsDesc);
+                if (!section.DescriptorSet)
+                {
+                    return false;
+                }
             }
         }
 

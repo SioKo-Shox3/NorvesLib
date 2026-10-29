@@ -747,6 +747,7 @@ namespace NorvesLib::Core::Rendering
         {
             RHI::BufferPtr Uniform;              // 材質の区間ごとの定数（PerObject UBO）
             RHI::DescriptorSetPtr DescriptorSet; // 描画用（UBO・材質のテクスチャ・VTの要求・インスタンスの表・描画情報）
+            uint64_t BufferRevision = 0; // 最後に結んだ GPU Scene バッファの版
         };
 
         /** @brief BVH のたどりの1段分の資源（カリング用UBOと、その UBO を結んだディスクリプタセット） */
@@ -754,6 +755,7 @@ namespace NorvesLib::Core::Rendering
         {
             RHI::BufferPtr Uniform;
             RHI::DescriptorSetPtr DescriptorSet;
+            uint64_t BufferRevision = 0; // 最後に結んだ GPU Scene バッファの版
         };
 
         /** @brief ホストが毎フレーム書く資源の組。1 回の記録（ビューポート）ごとに FrameUseRing から 1 組使う */
@@ -763,6 +765,7 @@ namespace NorvesLib::Core::Rendering
             RHI::BufferPtr SceneStaging;
             uint64_t SceneStagingCapacity = 0; // バイト数
             RHI::DescriptorSetPtr SceneScatterDescriptorSet[4];
+            uint64_t SceneScatterBufferRevision[4] = {};
             // この組を使った記録のメッシュの表が指すメッシュの区画（頂点・インデックス・クラスタ・BVH）の持ち主。
             // 組を次に使うとき（その記録の提出の GPU の仕事が終わった後）まで保ち、区画を空きへ戻さない
             Container::VariableArray<Container::TSharedPtr<void>> MeshRegionOwners;
@@ -784,11 +787,15 @@ namespace NorvesLib::Core::Rendering
             uint64_t PageTableVersion = 0;  // バッファの中身の版（PageTableBuffer が無いときは意味を持たない）
             RHI::BufferPtr CullUniform[2]; // パスごとのカリング用UBO
             RHI::DescriptorSetPtr CullDescriptorSet[2];
+            uint64_t CullBufferRevision[2] = {};
             // BVH のたどり: パスごとに、節の判定の段 + 葉のクラスタの判定の段 + 範囲の段（2 パス目はさらに回した範囲・節・クラスタの段）
             // の数だけ（段ごとにUBOの中身が違うため別々に持つ）
             Container::VariableArray<BvhStageDraw> BvhStages[2];
             Container::VariableArray<SectionDraw> Sections;
         };
+
+        /** @brief GPU が読み終えた組から、置き換え前のバッファを結んだセットを手放す */
+        void ReleaseStaleFrameSlotDescriptors(FrameSlot &slot);
 
         /** @brief フレームスロットに、このフレームの区間の数を収める資源（区間の表・カリングと描画の UBO・ディスクリプタセット）を用意する */
         bool EnsureFrameSlot(FrameSlot &slot, uint32_t sectionTableEntries, uint32_t sectionCount);
@@ -1259,6 +1266,8 @@ namespace NorvesLib::Core::Rendering
             uint64_t RetiredFrame = 0; // 退避したときの m_RenderFrameCount
         };
         Container::VariableArray<RetiredBuffer> m_RetiredBuffers;
+        // GPU Scene のバッファを置き換えるたびに進む版。各セットが結んだ版と照合する
+        uint64_t m_DescriptorBufferRevision = 1;
 #if NORVES_BUILD_DEVELOPMENT
         struct GpuSceneBufferAllocation
         {
