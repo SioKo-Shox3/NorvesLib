@@ -8189,3 +8189,4 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 証拠: `.harness/runs/20261029-134608/verify-SCN-FIX-SKY-BANDING-U2.txt`（撮影 3 本と起動画面 2 本の result=pass・EXIT=0、BandingCheck 3 組 result=pass）。撮影 `.harness/runs/scene-capture/SCN-FIX-SKY-BANDING{,-moving,-path}/` と各 `banding/banding_zoom.png`。moving の overview・path の horizon の全体と、moving の空の等倍の前後の切り出し、拡大の見比べを開いて確かめた（前の等高線の段が後は細かな雑音になる）
 - Notes: 「隣の差が 1 段以下」は、ディザの雑音で隣の画素が逆向きへ丸まる所の 2 段を許し、割合 ≥ 0.995・最大 ≤ 2 と読んで判定した。縮小して見た全体で空に残るゆるい横の濃淡はシーンカラーの空・雲の層の明るさの変化で、8 bit の段ではない（等倍の切り出しで段は無い）。path の horizon は撮り直しの地平線が約 280 行なので上 260 行で測った。新しい試験は足していない
 - Next: TASKS.md の次の未完
+- U3 表示のディザを隣の閾値の差が有界な IGN に替える: 着地(直し 0 回)
