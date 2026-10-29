@@ -205,9 +205,11 @@ namespace NorvesLib::Core::Rendering
 
         // 可視クラスタの全体の列（Common/MegaGeometryCull.glsl の binding 23）。要素は uvec4（席・クラスタの番号・区画・区画の中の位置）で、
         // 全パス通しの固定容量（本数・区間の数によらない）。超えた要素は積まずに数える（MEGA_CAPACITY の visible_list_overflow）。
+        // バナナ 100 万本と mega-stress 5 万個を 1920×1080 で 1% 移動・64 m 区画ストリーミングしたとき、
+        // 列へ積もうとした数は最大約 482 万。既定の容量は約 3 割の余裕を持ち、1 要素につき列 16 バイトと照合の印 4 バイトを取る。
         // 大きさの目安: バナナ 1 万本 overview の 1 パス目で約 36 万クラスタ
         constexpr uint32_t VisibleListBinding = 23;
-        constexpr uint32_t DefaultVisibleListCapacity = 1u << 22;
+        constexpr uint32_t DefaultVisibleListCapacity = 6u << 20;
         // 列の容量。比較の撮影（Game の --wasteland-finest-lod）は見える地形を全部最も細かい段で描き、1 視点で 600 万クラスタを
         // 超えるので、環境変数 NORVES_MEGA_VISIBLE_LIST_CAPACITY（既定の容量〜1 << 25）で広げる（開発ビルドだけ。
         // 最初に呼ばれたときに 1 回だけ読む。シェーダーは結んだバッファの長さで溢れを判定する）
