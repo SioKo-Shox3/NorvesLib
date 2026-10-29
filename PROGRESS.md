@@ -8142,3 +8142,33 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 証拠（`.harness/runs/20261029-040919/`）: `verify-full-debug.txt`（`cmake --build build --config Debug -- -m:1` の全体、EXIT=0・エラー行 0・16 秒の差分ビルド）
 - Next: なし
 - Notes: 取り込みで TASKS.md の verify が全体のビルドに戻った（冷えたビルドでは約 22 分で、再検証の 1 コマンドの上限に当たる恐れがある）。同じ build を 2 つのビルドが同時に使うと C1041 で落ちる
+
+- U1 崖錐の岩を検査と同じ足元の帯で据え直し、ref_ground_01 の GPU 時間を前後で測る: 着地(直し 1 回)
+- U2 焼いた面の高さの疎な格子を AssetCook が書き出し、Library が読む形を作る: 着地(直し 1 回)
+- U3 置き方（草と低木・石・岩）と書き出しの高さを焼いた面の格子から取る: 着地(直し 1 回)
+
+## 2026-10-29 SCN-WL-PLACEMENT-GROUNDING-FIX（run 20261029-040916 の反復 1、未達・doing）
+- Done: (1) 崖錐の岩を検査と同じ足元の帯（回した 2048 標本の下 5 %）で、浮き 0.02 m 以内・最も深い足元が min(高さの 50 %, 窓) − 0.03 m に収まる高さへ据え、収まらない岩は斜面の法線へ 4 段で寄せ、0.75 倍ずつ縮め、それでも収まらなければ置かない（`WastelandTalus.cpp`）。(2) AssetCook の `--write-placement-ground` が、崖の細部・刻みの区画で焼いた面（LOD 0）の DEM に最も近い上向きの面の高さを 8 m の塊・0.25 m おきに書き、升目ごとの信頼の印（中心と 4 辺の中点・急な升目は四分点で 0.02 m 以内）を持たせる（版 2・10650 塊・約 48 MB・書き出し約 547 秒）。`Scripts/CookAssets.ps1` は DEM の区画を焼いたとき `--skip-if-current` で更新する。Library の `TerrainPlacementGround` が読み、元の区画の cooked_hash で古さを判定する。(3) 荒野の起動で格子を読み、草と低木・石・岩の根元と足元の高さを格子から引き、信頼できない升目と支持面の無い DEM の三角形には置かない。格子が無い・古いときは `COOKED_MODEL_MISSING` を出して前の DEM の置き方に戻る（配置の書き出しが前と SHA-256 で一致）
+- 値（`CheckPlacement.py --require-compliant`）: 違反 195191 → 0（result=pass、測り切れない物 0）。物の数（前の反復 → 今）: 草と低木 5841275 → 5841060、大きな石 1561976 → 1560847、石（標本）1563542 → 1560408、小礫（標本）5780643 → 5774192、岩 273616 → 271748（−0.68 %）。GPU 時間（ref_ground_01、RelWithDebInfo・1920×1080・300 フレームの median / p95）: 項目の前 b853c671 17.291 / 17.875 ms、前の先頭 38983820 17.297 / 18.083 ms、岩の据え直しの後 16.779 / 17.140 ms（前の 2 つはほかのビルドが同時に走っていた）
+- 証拠: `.harness/runs/scene-capture/SCN-WL-PLACEMENT-GROUNDING-FIX/iter-20261029/`（`rocks/`: 岩の据え直しの検査の記録・GPU の 3 つ、`ground/`: 格子の書き出しと答え合わせの要約、`grounded/`: 格子を使った検査 `placement_check.require_compliant.json`・残り 72 個の原因の内訳・確かめの出力）
+- Next: 同じ項目の仕上げ（計画の最後の単位）。タスクの verify の全行（Debug のビルド・6 視点・写真との比べ・回帰の after）と最終の ref_ground_01 の GPU 時間を回し、`WastelandShape.md` の「置いた物の接地」に値と前後の表を書く。範囲ごとの物の減りを表にし、低木 B → A の割合の変化（31:69）は残課題として書く
+- Notes: 格子の信頼の判定を強めても形式の版は 2 のままなので、別の機械に前の判定の版 2 の格子があれば `--skip-if-current` なしで作り直す（今の機械の build/CookedAssets は作り直し済み、ほかの枠には格子がまだ無い）。岩の足元の帯は格子を使うときだけ倍精度で選ぶ（検査と帯の境の点が揃う）
+- 要起票: 指揮役の反復（LOOP_RUNNER=1）から `units.mjs run` を呼ぶと、単位の作業ツリーへのハーネスの展開の検証で言語の錨のフック（language-guard.mjs は LOOP_RUNNER があると何も出さない）が空になり「言語の錨出力が不正」で落ちる。今回は LOOP_RUNNER を外して呼んだ
+- U4 タスクの verify を全部回し、6 視点・写真・回帰・GPU 時間を撮って置いた物の接地の記録を書く: 着地(直し 1 回)
+
+## 2026-10-29 SCN-WL-PLACEMENT-GROUNDING-FIX（run 20261029-040916 の反復 2、完了）
+- Done: タスクの verify の全行を今の先頭で回し、`Docs/RenderingValidation/WastelandShape.md` の「置いた物の接地」に岩の据え直し（足元の帯）・焼いた面の接地用の格子・範囲と組ごとの物と違反の前後・GPU 時間・6 視点の見比べ・植物の Cycles の参照の古さ・残課題を書いた
+- 値: `CheckPlacement.py --require-compliant` は result=pass・違反 0・測り切れない物 0（物 15008255、項目の前の違反 364918 → 0）。物の減りは全体で岩 0.683 %・草と低木 0.252 %・大きな石 0.086 %・石 0.201 %・小礫 0.112 %、範囲ごとの最大は Rooster Butte の岩 94 個（2.440 %。ほかは 2 % 以内）。GPU 時間（ref_ground_01、300 フレームの median / p95）: 項目の前 17.291 / 17.875 ms → 最終 16.832 / 17.075 ms
+- 証拠（作業ツリー `.harness/unit-verify.txt` の写し `.harness/runs/scene-capture/SCN-WL-PLACEMENT-GROUNDING-FIX/u4-unit-verify.txt`）: Debug・RelWithDebInfo の Game と AssetCook のビルド EXIT=0、書き出しの撮影 EXIT=0、`--require-compliant` EXIT=0、6 視点 EXIT=0、`CompareReference.py --verify` result=pass photos=6、回帰の after result=pass scenes=4（rendering3dtest 99.53 dB・mega-bananas 63.32 dB・sandbox 一致・night-village は before の PNG が無く比べの値なし）、`gpu-final/metrics.json`。見比べの画は `compare-final/`（ref_cliff_01 の崖錐と ref_ground_02 の谷床の切り出しを開き、浮いた株・石と埋もれすぎた岩が無いことを見た）
+- Next: SCN-WL-CLIFF-GEN-TALUS に戻る
+- Notes: 低木 B → A の割合（B 458281・A 1017573、31:69）は残課題で、種の割合を戻す形は決めていない。植物の Cycles の参照は固定の株を使うので、今回の置き方で古くなるものは無かった。回帰の before（2026-10-28）は night-village の PNG が欠けている
+- U5 信頼できない升目に掛かった岩も寄せ・縮め・小さなずらしを試し、見送った岩を全部理由つきで残す: 着地(直し 0 回)
+- U6 見送った物の一覧を書き出し、検査が配置の書き出しから一覧を読んで範囲ごとの 2 % を判定する: 着地(直し 0 回)
+- U7 タスクの verify を全部回し、6 視点・写真・回帰・GPU 時間を撮り直して置いた物の接地の記録を直す: 着地(直し 0 回)
+
+## 2026-10-29 SCN-WL-PLACEMENT-GROUNDING-FIX（run 20261029-040916 の反復 3、完了）
+- Done: 差し戻し（Rooster Butte の岩の見送り 94 / 3852 = 2.440 % が 2 % を超える、検査が見送りの一覧を読まず removed=0）を直した。(1) 崖錐の岩は信頼できない升目に当たっても寄せと縮めを続け、収まらなければ 0.5 m・1.0 m の輪の 8 点へずらし、救うときは足元の周り半升目も信頼できる升目かを確かめる。前から置けていた 271748 個は変わらない（`WastelandTalus.cpp`）。(2) 配置の書き出しが見送った物を `<名前>.removed.json`（type・x・z・reason = unreliable / unfit）に書いて `placement.json` の `removed_list` で名指しし、`CheckPlacement.py` は `--removed` が無くてもそれを読んで範囲・組ごとの 2 % を判定する（名指しがあって読めなければ不合格）。(3) `WastelandShape.md` の「置いた物の接地」を今の値に直した
+- 値: `--require-compliant` は result=pass・違反 0・測り切れない物 0・見送り 25851。範囲・組の見送りの割合は全部 2 % 以内で、最大は Battleship Rock の大きな石 0.791 %（859、unreliable 846 / unfit 13）。岩は 271748 → 273466（Rooster Butte 3758 → 3852、見送り 0。全体の見送り 150 は全部 unreliable）。救った岩 1718（寄せ 98・縮め 404・ずらし 1216）。GPU 時間（ref_ground_01、300 フレームの median / p95）: 項目の前 17.291 / 17.875 ms → 最終 16.572 / 17.088 ms
+- 証拠: `.harness/runs/scene-capture/SCN-WL-PLACEMENT-GROUNDING-FIX/final2/`（verify 全 8 行の出力 `unit-verify.txt`: Debug・RelWithDebInfo の Game と AssetCook のビルド EXIT=0、書き出しの撮影 EXIT=0、`--require-compliant` EXIT=0〔報告を残す `--out` を足した〕、6 視点 EXIT=0、`CompareReference.py --verify` result=pass photos=6、回帰の after result=pass scenes=4、GPU の `gpu-final2/metrics.json`）。見比べ `compare-final2/`（前の版からの差は戻した崖錐の岩と影だけ。ref_cliff_01 の崖錐と戻した岩の切り出しを開き、浮いた株・石と埋もれすぎた岩が無いことを見た）
+- Next: SCN-WL-CLIFF-GEN-TALUS に戻る
+- Notes: 低木 B → A の割合（31:69）は残課題のまま。見送りの一覧は石と小礫も書き出しと同じ区画の標本の分だけ。新しい試験は足していない
