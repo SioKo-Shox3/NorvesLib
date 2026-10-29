@@ -8183,3 +8183,9 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - Notes: 同じ撮影の RenderThread の CPU は `RT.BuildAccelerationStructures` median 24.0 ms が最大で（SCN-MEGA-FIX-TLAS-REBUILD の範囲）、`MegaGeometryPass.CheckSceneTables`（開発ビルドの照合、5 回）は 1 回 91.8 ms。新しい試験は足していない
 - U1 BandingCheck に視点が違っても使える判定を足す: 着地(直し 0 回)
 - U2 done-when の視点を撮り直して段を判定し、記録する: 着地(直し 1 回)
+### SCN-FIX-SKY-BANDING mega シーンの空の横縞を撮り直して判定する（2026-10-29、run 20261029-134608 の反復 1）
+- Done: 段の出所は表示の 8 bit の丸めにディザが無いこと（SCN-WL-CLOUD-BANDING で特定し、`Assets/Shaders/blit.frag` の Blit のディザで直した）。今の HEAD で done-when の視点（mega-stress overview の既定・100万本 + 5万個 1% 移動、mega-bananas 100万本のカメラパス再生中の horizon）を RelWithDebInfo で撮り直し、10-14 の SCN-MEGA-ACCEPT-1M の撮影と比べた。カメラパスは実時間で進み視点が撮影ごとに変わるので、`Scripts/Terrain/BandingCheck.py` に区画の平均の差を合否に使わない `--shorter` を足した。結果を `WastelandCloudRef.md` の新しい節に書いた
+- 結果: 平らな帯の長さ（平均・95 % 点・最大）moving 7.318・10・56 → 2.833・7・40、streaming → 既定 overview 7.317・10・56 → 2.836・7・40、path 8.714・19・64 → 2.823・8・39。隣の差 1 段以下の割合 1.000 → 0.999（最大 2）。3 組とも `--shorter` pass。起動画面 default の決定的撮影の比較 pass（平均輝度差 0、PSNR 67.894 dB）。描画の変更は無いので基準画像の再承認は無し
+- 証拠: `.harness/runs/20261029-134608/verify-SCN-FIX-SKY-BANDING-U2.txt`（撮影 3 本と起動画面 2 本の result=pass・EXIT=0、BandingCheck 3 組 result=pass）。撮影 `.harness/runs/scene-capture/SCN-FIX-SKY-BANDING{,-moving,-path}/` と各 `banding/banding_zoom.png`。moving の overview・path の horizon の全体と、moving の空の等倍の前後の切り出し、拡大の見比べを開いて確かめた（前の等高線の段が後は細かな雑音になる）
+- Notes: 「隣の差が 1 段以下」は、ディザの雑音で隣の画素が逆向きへ丸まる所の 2 段を許し、割合 ≥ 0.995・最大 ≤ 2 と読んで判定した。縮小して見た全体で空に残るゆるい横の濃淡はシーンカラーの空・雲の層の明るさの変化で、8 bit の段ではない（等倍の切り出しで段は無い）。path の horizon は撮り直しの地平線が約 280 行なので上 260 行で測った。新しい試験は足していない
+- Next: TASKS.md の次の未完
