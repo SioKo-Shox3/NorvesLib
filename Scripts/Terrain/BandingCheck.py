@@ -14,8 +14,8 @@
 #   書くだけで合否に使わない。雲の外形を変える直しで、段が増えていないことだけを見る。SCN-WL-CLOUD-SHAPE-NOISE）。
 # --no-worse: --no-worse-bands に加えて局所の平均の差の平均が 0.5 段以下なら result=pass（段が増えず、平均の明るさも
 #   変わっていないことを見る受け入れの判定。SCN-WL-CLOUD-SHAPE-ACCEPT）。
-# --shorter: 後の平らな帯の長さの平均と 95 % 点が前より短く、隣の差が 1 段以下の割合が 0.995 以上、最大が 2 段以下なら result=pass。
-#   視点が撮影ごとに変わる比べ（カメラパスの再生）で、区画の平均の差を合否に使わない。SCN-FIX-SKY-BANDING。
+# --shorter: 後の平らな帯の長さの平均と 95 % 点が前より短く、隣の差の最大が 1 段以下なら result=pass。
+#   撮影ごとに視点が変わる比較（カメラパスの再生）で、区画の平均の差を合否に使わない。SCN-FIX-SKY-BANDING。
 # 終了コード: 合格・書けたら 0、--verify・--no-worse・--no-worse-bands・--shorter で不合格なら 1、入力が無ければ 2。
 import argparse
 import json
@@ -29,8 +29,7 @@ COLUMN_STEP = 4
 BLOCK = 9
 MEAN_DIFF_LIMIT = 0.5
 NO_WORSE_RATIO = 1.1
-SHORTER_ADJACENT_RATIO = 0.995
-SHORTER_ADJACENT_MAX = 2
+SHORTER_ADJACENT_MAX = 1
 
 
 def load_png(path):
@@ -185,10 +184,8 @@ def main():
     if args.shorter:
         passed = (result['after']['flat_run_mean'] < result['before']['flat_run_mean'] and
                   result['after']['flat_run_p95'] < result['before']['flat_run_p95'] and
-                  result['after']['adjacent_le1_ratio'] >= SHORTER_ADJACENT_RATIO and
                   result['after']['adjacent_max'] <= SHORTER_ADJACENT_MAX)
-        print(f"BANDING_CHECK shorter adjacent_ratio_limit={SHORTER_ADJACENT_RATIO} "
-              f"adjacent_max_limit={SHORTER_ADJACENT_MAX}")
+        print(f"BANDING_CHECK shorter adjacent_max_limit={SHORTER_ADJACENT_MAX}")
         print(f"BANDING_CHECK result={'pass' if passed else 'fail'}")
         return 0 if passed else 1
     if not args.verify:
