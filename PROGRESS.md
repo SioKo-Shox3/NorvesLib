@@ -8193,3 +8193,9 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - U4 --shorter の隣の差を最大 1 段に締める: 着地(直し 0 回)
 - U6 表示のディザを縦の閾値の差が上り下りで釣り合う格子に替える: 着地(直し 0 回)
 - U7 done-when の視点を撮り直して判定し、記録を書き直す: 着地(直し 0 回)
+### SCN-FIX-SKY-BANDING 隣の画素の差を 1 段に収めて閉じる（2026-10-29、run 20261029-134608 の反復 2）
+- Done: 差し戻し（隣の差 2 段が約 0.1 % 残る・streaming の条件で撮っていない）を直した。2 段は、ハッシュのディザで縦の隣の閾値が無相関なため必ず出る。表示の Blit（`Assets/Shaders/blit.frag`）の雑音を、1 画素の分布は一様のまま縦の隣の閾値の差が +0.44 / −0.56 に限られる格子 `fract(0.7548776662 x + 0.44 y)` に替えた（空の縦の勾配は上り・下りとも 0.25 段/画素以下で、余裕 0.19 段以上）。`BandingCheck.py --shorter` を隣の差の最大 1 段に締めた。streaming を ACCEPT-1M と同じ 5 つの引数で撮り直し、記録（`WastelandCloudRef.md` の SCN-FIX-SKY-BANDING の節）を書き直した
+- 結果: 平らな帯の長さ（平均・95 % 点・最大）moving 7.318・10・56 → 1.978・6・33、streaming 7.317・10・56 → 1.978・6・33、path 8.714・19・64 → 2.014・7・33、既定 overview（タスクの verify）7.318・10・56 → 1.975・6・34。4 組とも隣の差の最大 1 段で `--shorter` pass、全列（計 2,507,520 組）でも 2 段以上 0。荒野 ref_far_02 は同じ場面の IGN の撮影と比べ `--no-worse` pass（帯 1.802 → 1.707、区画の平均の差 0.029 段）。起動画面 default は通常の撮影と決定的な 2 回が pass（2 回の比較は平均輝度差 0・PSNR 100 dB）。基準画像の検査（RenderingGolden*）は表示の Blit を通らないので再承認は無し
+- 証拠: `.harness/runs/20261029-134608/verify-SCN-FIX-SKY-BANDING-U7.txt`（タスクの verify 2 本を含む撮影 8 本 result=pass・EXIT=0、BandingCheck 4 組 result=pass、全列の数え）。撮影 `.harness/runs/scene-capture/SCN-FIX-SKY-BANDING{,-moving,-streaming,-path,-wasteland}/`、前のディザの撮影は `-hash`・`-ign` を付けて残した。streaming の overview・path の horizon の全体と streaming の `banding/banding_zoom.png` を開いて確かめた（前の等高線の段が後は細かな粒になり、空に横縞は見えない）
+- Notes: 途中で試した IGN（縦の閾値の差 +0.309 / −0.691）は、空が下へ暗くなる区間で余裕が約 0.1 段しかなく、path の horizon（y≈245）に 2 段が 9 組残った。起動画面の前のハッシュとの参考の比較は平均輝度差 0.0004・PSNR 52.8 dB。新しい試験は足していない
+- Next: TASKS.md の次の未完
