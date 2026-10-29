@@ -8182,3 +8182,5 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - Next: なし
 - Notes: 同じ撮影の RenderThread の CPU は `RT.BuildAccelerationStructures` median 24.0 ms が最大で（SCN-MEGA-FIX-TLAS-REBUILD の範囲）、`MegaGeometryPass.CheckSceneTables`（開発ビルドの照合、5 回）は 1 回 91.8 ms。新しい試験は足していない
 - U1 出し入れで m_Instances を作り直さず、移動・置き換え・末尾の切り詰めを差分で当てる: 着地(直し 1 回)
+- Notes（SCN-MEGA-FIX-STREAM-TABLES-DELTA の途中）: 出し入れはストリーミングの負荷の窓 600 フレームのうち 60 フレーム（1 フレームの解放・追加は各 840〜1170 行）。インスタンスは差分で当たり、表はまだ全部作る（`BuildSceneTables` median 101 ms）。残りは表の行の配置（予備の行）と行の差分の 2 単位
+- 要起票: mega-stress（1M + 5 万個・1 % が動く）で `MegaGeometryPass.Setup` が出し入れに関係なく毎フレーム median 19.4 ms（`.harness/runs/scene-capture/SCN-MEGA-FIX-STREAM-TABLES-DELTA-U1/metrics.json`）。gt・rt の時間の一部
