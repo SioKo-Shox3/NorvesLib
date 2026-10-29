@@ -8185,3 +8185,4 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - Notes（SCN-MEGA-FIX-STREAM-TABLES-DELTA の途中）: 出し入れはストリーミングの負荷の窓 600 フレームのうち 60 フレーム（1 フレームの解放・追加は各 840〜1170 行）。インスタンスは差分で当たり、表はまだ全部作る（`BuildSceneTables` median 101 ms）。残りは表の行の配置（予備の行）と行の差分の 2 単位
 - 要起票: mega-stress（1M + 5 万個・1 % が動く）で `MegaGeometryPass.Setup` が出し入れに関係なく毎フレーム median 19.4 ms（`.harness/runs/scene-capture/SCN-MEGA-FIX-STREAM-TABLES-DELTA-U1/metrics.json`）。gt・rt の時間の一部
 - U2 表の行の配置に、BVH の予備の行と BVH の行の一律の影の割り当てを入れ、照合を並びに依らない形にする: 着地(直し 0 回)
+- U3 出し入れの行を差分で表へ反映し（移動・解放・追加）、送る行を絞り、タスクの verify を通す: 着地(直し 1 回)

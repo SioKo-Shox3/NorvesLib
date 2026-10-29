@@ -46,8 +46,8 @@ namespace NorvesLib::Core::Rendering
     /**
      * @brief 影の表の1要素（GPU送信用。Common/VirtualShadowMapMegaCull.glsl の ShadowInstance と一致）。インスタンスの表と同じ並び（同じ添字）
      *
-     * 影を落とすインスタンスだけが、影の判定のワークグループ（64クラスタ）を持つ。FirstGroup は、そのインスタンスより前の
-     * 影を落とすインスタンスのワークグループの数の合計（落とさないインスタンスは次のインスタンスと同じ値）。
+     * FirstGroup は影の判定のワークグループ（64 クラスタ）の先頭。BVH と空行には、出し入れに備えた余裕を含む。
+     * 影を落とさない行や平らな空行にも、再利用のため以前の割り当てを残すことがある。
      */
     struct alignas(16) MegaGeometryShadowInstance
     {
@@ -651,7 +651,7 @@ namespace NorvesLib::Core::Rendering
         /**
          * @brief 席の表の1要素（席ごと 128 B。mega_scene_scatter.comp の SceneSlotRows と一致）
          *
-         * 席の番号は行の席（MegaGeometryProxy::SceneSlot - 1）。行と一緒に動き、その実体が消えるまで変わらないので、
+         * 席の番号は行の席（MegaGeometryProxy::SceneSlot）。0 は空行のために予約する。行と一緒に動き、その実体が消えるまで変わらないので、
          * 動いた席の行だけを書き直せば、描く順が変わっても行を送り直さずに済む。
          */
         struct alignas(16) GPUMegaSlotRow
@@ -858,6 +858,9 @@ namespace NorvesLib::Core::Rendering
             uint32_t BvhShadowGroups = 0;
             // 空行だけが読む固定変換の席（実インスタンスの席とは共有しない）
             uint32_t EmptySlot = 0;
+            // 一律の影の割り当てが 32 ビットに収まらないときは、予備なしで投影物だけを詰める
+            bool bUniformBvhShadow = true;
+            bool bHasEmptyMesh = false;
             Container::VariableArray<uint64_t> BvhLevelCapacity;
             uint64_t BvhLeafCapacity = 0;
         };
@@ -875,8 +878,8 @@ namespace NorvesLib::Core::Rendering
          * @brief m_Instances とロード済みのメッシュから、このフレームの表を作る（CPU だけ。GPU のバッファには書かない）
          *
          * インスタンスの並びは BVH をたどるインスタンスが先。
-         * 前に作った表（m_SceneTables）を持ち続け、並びが変わらない（インスタンスの作り直し・メッシュの準備や中身の変化・BVH の
-         * 使える状態の変化が無い）フレームは、直したインスタンスの行だけを書き換える（PatchSceneTables）。
+         * 前に作った表（m_SceneTables）を持ち続け、メッシュの準備や中身・BVH の状態が変わらないときは、出し入れと
+         * 直したインスタンスの行だけを書き換える（PatchSceneTables）。
          */
         void BuildSceneTables(const MegaGeometryPassCommand &command, SceneTables &tables);
 
@@ -907,8 +910,8 @@ namespace NorvesLib::Core::Rendering
         /**
          * @brief 前に作った表の、直したインスタンスの行だけを書き換える
          *
-         * 先に全部を確かめ、作り直しが要る（表が無い・メッシュの準備や中身が変わった・BVH の使える状態が変わった・
-         * 直したインスタンスのメッシュが替わった）なら何も変えずに false を返す。VSM の無効化も、直した行とページの常駐が
+         * 先に全部を確かめ、表・メッシュ・予備の状態や割り当ての容量から作り直しが要るなら、何も変えずに false を返す。
+         * VSM の無効化も、直した行とページの常駐が
          * 変わったメッシュの行だけを積む。
          */
         bool PatchSceneTables(const MegaGeometryPassCommand &command, SceneTables &tables, bool bResidencyFresh);
@@ -932,8 +935,8 @@ namespace NorvesLib::Core::Rendering
         /**
          * @brief m_Instances の席の表の番号（TableSlot）を決める（m_bSceneSlotsDirty のときだけ）
          *
-         * 行の席（SceneSlot - 1）をそのまま使う。席を持たないインスタンスと、同じ席を持つ 2 つ目以降のインスタンスは、
-         * 行の席の最大の次から順に割り当てる。
+         * 0 番を空行に予約し、行の席（SceneSlot）をそのまま使う。席を持たないインスタンスと、同じ席を持つ
+         * 2 つ目以降のインスタンスは、行の席の最大の次から順に割り当てる。
          */
         void AssignSceneTableSlots();
 
@@ -1380,7 +1383,7 @@ namespace NorvesLib::Core::Rendering
         Container::VariableArray<uint32_t> m_SceneDirtyPositions;
         // m_Instances の TableSlot を決め直すか（作り直し・手で足した・消したとき）
         bool m_bSceneSlotsDirty = true;
-        // 行の席が全て一意で、TableSlot が SceneSlot - 1 のときだけ差分で席を保てる
+        // 行の席が全て一意で、TableSlot が SceneSlot のときだけ差分で席を保てる
         bool m_bSceneSlotsPatchable = false;
         Container::VariableArray<uint8_t> m_SceneSlotSeen;
         // 散在書き込みの記録を組む作業領域（フレームをまたいで使い回す）
@@ -1443,6 +1446,20 @@ namespace NorvesLib::Core::Rendering
         // メッシュの表の行ごとの出所と、表へ載らなかったインスタンスのメッシュ（ハンドルごとに 1 つ）
         Container::VariableArray<SceneMeshSource> m_SceneMeshSources;
         Container::VariableArray<SceneSkippedMesh> m_SceneSkippedMeshes;
+        // 平らな空行は主の割り当ての大きさで引き、影の割り当ても足りるものを使う
+        struct SceneFlatHole
+        {
+            uint32_t Row = 0;
+            uint32_t ShadowGroups = 0;
+        };
+        Container::Map<uint32_t, Container::VariableArray<SceneFlatHole>> m_SceneFlatHoles;
+        uint32_t m_SceneFlatHoleCount = 0;
+        Container::VariableArray<uint32_t> m_SceneMeshLiveCounts;
+        enum class SceneFullReason : uint8_t
+        {
+            State, ShadowRebuild, MeshChanged, MissingMesh, Spare, BvhGroups, Holes, Overflow, FlatCapacity, MeshUnused, Count
+        };
+        SceneFullReason m_SceneFullReason = SceneFullReason::State;
         // 表の行に効く中身が変わった位置（印と一覧。PatchInstancesFromChangedSlots が積み、表を作ると消える）
         Container::VariableArray<uint8_t> m_SceneTableDirtyMarks;
         Container::VariableArray<uint32_t> m_SceneTableDirtyPositions;
@@ -1460,6 +1477,10 @@ namespace NorvesLib::Core::Rendering
             uint32_t FullBuilds = 0;
             uint32_t DeltaBuilds = 0;
             uint64_t DeltaRows = 0;
+            uint64_t Moved = 0;
+            uint64_t Removed = 0;
+            uint64_t Added = 0;
+            uint32_t FullReasons[static_cast<size_t>(SceneFullReason::Count)] = {};
             uint32_t Checks = 0;
             uint32_t Mismatches = 0;
         };
