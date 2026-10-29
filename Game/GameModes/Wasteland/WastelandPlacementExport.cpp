@@ -93,6 +93,50 @@ namespace Game::GameModes::WastelandPlacementExport
             return path + ".objects.bin";
         }
 
+        /// 見送った物の一覧のパス（拡張子を除いた名前 + .removed.json）
+        String RemovedPath(const String &path)
+        {
+            size_t nameStart = 0;
+            size_t extension = path.size();
+            for (size_t index = 0; index < path.size(); ++index)
+            {
+                if (path[index] == '/' || path[index] == '\\')
+                {
+                    nameStart = index + 1;
+                    extension = path.size();
+                }
+                else if (path[index] == '.' && index > nameStart)
+                {
+                    extension = index;
+                }
+            }
+            return path.substr(0, extension) + ".removed.json";
+        }
+
+        /// ファイル名を JSON の文字列として書く。
+        void AppendJsonString(VariableArray<char> &text, const String &value)
+        {
+            text.push_back('"');
+            for (size_t index = 0; index < value.size(); ++index)
+            {
+                const unsigned char ch = static_cast<unsigned char>(value[index]);
+                if (ch == '"' || ch == '\\')
+                {
+                    text.push_back('\\');
+                    text.push_back(static_cast<char>(ch));
+                }
+                else if (ch < 0x20u)
+                {
+                    AppendFormat(text, "\\u%04x", static_cast<unsigned int>(ch));
+                }
+                else
+                {
+                    text.push_back(static_cast<char>(ch));
+                }
+            }
+            text.push_back('"');
+        }
+
         /// 形の範囲の表を読む。読めなければ理由を outError に入れて false
         bool LoadRegions(VariableArray<RegionBox> &outRegions, String &outError)
         {
@@ -227,30 +271,46 @@ namespace Game::GameModes::WastelandPlacementExport
         {
             uint64_t Values[kRejectionGroups] = {};
         };
-        RejectionCounts rejectedAll;
-        VariableArray<RejectionCounts> rejectedRegions(regions.size() + 1u);
-        const auto countRejection = [&](float x, float z, uint32_t group)
+        RejectionCounts rejectedAll[2];
+        VariableArray<RejectionCounts> rejectedRegions[2] = {
+            VariableArray<RejectionCounts>(regions.size() + 1u), VariableArray<RejectionCounts>(regions.size() + 1u)};
+        VariableArray<char> removedText;
+        AppendFormat(removedText, "{\"format\":\"placement_removed.v1\",\"removed\":[");
+        size_t removedCount = 0;
+        const auto countRejection = [&](float x, float z, uint32_t group, bool bUnreliable)
         {
-            ++rejectedAll.Values[group];
+            const size_t reason = bUnreliable ? 0u : 1u;
+            ++rejectedAll[reason].Values[group];
+            const char *pType = group < WastelandFoliage::kPlantKindCount
+                                    ? kTypePlant
+                                    : (group < WastelandFoliage::kPlantKindCount + WastelandGravel::kTierCount
+                                           ? WastelandGravel::GravelScatter::GetTierName(group - WastelandFoliage::kPlantKindCount)
+                                           : kTypeTalus);
+            // float の位置を復元し、範囲の境界でもログの数え方と一致させる。
+            AppendFormat(removedText, "%s{\"type\":\"%s\",\"x\":%.9g,\"z\":%.9g,\"reason\":\"%s\"}",
+                         removedCount == 0 ? "" : ",", pType, static_cast<double>(x), static_cast<double>(z),
+                         bUnreliable ? "unreliable" : "unfit");
+            ++removedCount;
             bool inside = false;
             for (size_t i = 0; i < regions.size(); ++i)
             {
                 const RegionBox &box = regions[i];
                 if (x >= box.MinX && x <= box.MaxX && z >= box.MinZ && z <= box.MaxZ)
                 {
-                    ++rejectedRegions[i].Values[group];
+                    ++rejectedRegions[reason][i].Values[group];
                     inside = true;
                 }
             }
             if (!inside)
             {
-                ++rejectedRegions[regions.size()].Values[group];
+                ++rejectedRegions[reason][regions.size()].Values[group];
             }
         };
         for (const auto &rejected : talus.GroundRejections)
         {
             countRejection(rejected.X, rejected.Z,
-                           WastelandFoliage::kPlantKindCount + WastelandGravel::kTierCount + rejected.Mesh);
+                           WastelandFoliage::kPlantKindCount + WastelandGravel::kTierCount + rejected.Mesh,
+                           rejected.Unreliable);
         }
 
         const Rendering::Terrain::TerrainGridLayout layout = field.GetGridLayout();
@@ -293,7 +353,7 @@ namespace Game::GameModes::WastelandPlacementExport
                                           static_cast<float>((cellZ + 0.5) * cellSize), plantCell, &rejected);
                     for (const auto &item : rejected)
                     {
-                        countRejection(item.X, item.Z, item.Kind);
+                        countRejection(item.X, item.Z, item.Kind, item.Unreliable);
                     }
                     ++plantCells;
                     for (uint32_t kind = 0; kind < WastelandFoliage::kPlantKindCount; ++kind)
@@ -330,7 +390,7 @@ namespace Game::GameModes::WastelandPlacementExport
             gravel.CollectCellAt(tier, x, z, stoneCell, &rejected);
             for (const auto &item : rejected)
             {
-                countRejection(item.X, item.Z, WastelandFoliage::kPlantKindCount + tier);
+                countRejection(item.X, item.Z, WastelandFoliage::kPlantKindCount + tier, item.Unreliable);
             }
             ++stoneCells[tier];
             for (uint32_t kind = 0; kind < WastelandGravel::kKindsPerTier; ++kind)
@@ -412,6 +472,8 @@ namespace Game::GameModes::WastelandPlacementExport
         }
         const String resolvedPath = ResolvePath(path);
         const String objectsPath = ObjectsPath(resolvedPath);
+        const String removedPath = RemovedPath(resolvedPath);
+        AppendFormat(removedText, "\n]}\n");
         const size_t objectCount = rows.size() / kObjectColumns;
 
         VariableArray<char> text;
@@ -449,9 +511,11 @@ namespace Game::GameModes::WastelandPlacementExport
         {
             AppendFormat(text, ",\"%s\":%zu", WastelandGravel::GravelScatter::GetTierName(tier), stoneCells[tier]);
         }
-        AppendFormat(text, "}},\n\"objects_file\":\"%s\",\n\"object_count\":%zu,\n\"object_columns\":%zu,\n"
+        AppendFormat(text, "}},\n\"objects_file\":\"%s\",\n\"removed_list\":", FileName(objectsPath).c_str());
+        AppendJsonString(text, FileName(removedPath));
+        AppendFormat(text, ",\n\"object_count\":%zu,\n\"object_columns\":%zu,\n"
                            "\"object_format\":\"float32 little-endian, row-major\",\n\"meshes\":[",
-                     FileName(objectsPath).c_str(), objectCount, kObjectColumns);
+                     objectCount, kObjectColumns);
 
         // 形の表: 崖錐の岩 2・草と低木 5・石 3 段 × 4
         for (uint32_t mesh = 0; mesh < WastelandTalus::kTalusMeshCount; ++mesh)
@@ -483,28 +547,33 @@ namespace Game::GameModes::WastelandPlacementExport
         AppendFormat(text, "\n]\n}\n");
 
         if (!WriteBytes(objectsPath, rows.data(), rows.size() * sizeof(float)) ||
+            !WriteBytes(removedPath, removedText.data(), removedText.size()) ||
             !WriteBytes(resolvedPath, text.data(), text.size()))
         {
-            LOG_ERROR_F("WASTELAND_PLACEMENT_EXPORT_FAILED path=%s 配置を書けませんでした", resolvedPath.c_str());
+            LOG_ERROR_F("WASTELAND_PLACEMENT_EXPORT_FAILED path=%s 配置または見送り一覧を書けませんでした", resolvedPath.c_str());
             return false;
         }
-        const auto logRejected = [](const char *region, const RejectionCounts &counts)
+        const auto logRejected = [](const char *pKey, const char *region, const RejectionCounts &counts)
         {
-            LOG_INFO_F("WASTELAND_PLACEMENT_UNRELIABLE region=%s plant=%llu/%llu/%llu/%llu/%llu "
+            LOG_INFO_F("%s region=%s plant=%llu/%llu/%llu/%llu/%llu "
                        "pebble=%llu stone=%llu cobble=%llu talus=%llu/%llu",
-                       region, static_cast<unsigned long long>(counts.Values[0]),
+                       pKey, region, static_cast<unsigned long long>(counts.Values[0]),
                        static_cast<unsigned long long>(counts.Values[1]), static_cast<unsigned long long>(counts.Values[2]),
                        static_cast<unsigned long long>(counts.Values[3]), static_cast<unsigned long long>(counts.Values[4]),
                        static_cast<unsigned long long>(counts.Values[5]), static_cast<unsigned long long>(counts.Values[6]),
                        static_cast<unsigned long long>(counts.Values[7]), static_cast<unsigned long long>(counts.Values[8]),
                        static_cast<unsigned long long>(counts.Values[9]));
         };
-        logRejected("all", rejectedAll);
-        for (size_t i = 0; i < regions.size(); ++i)
+        const char *rejectionKeys[2] = {"WASTELAND_PLACEMENT_UNRELIABLE", "WASTELAND_PLACEMENT_UNFIT"};
+        for (size_t reason = 0; reason < 2u; ++reason)
         {
-            logRejected(regions[i].Id.c_str(), rejectedRegions[i]);
+            logRejected(rejectionKeys[reason], "all", rejectedAll[reason]);
+            for (size_t i = 0; i < regions.size(); ++i)
+            {
+                logRejected(rejectionKeys[reason], regions[i].Id.c_str(), rejectedRegions[reason][i]);
+            }
+            logRejected(rejectionKeys[reason], "outside_regions", rejectedRegions[reason][regions.size()]);
         }
-        logRejected("outside_regions", rejectedRegions[regions.size()]);
         LOG_INFO_F("WASTELAND_PLACEMENT_EXPORT path=%s talus=%zu plants=%zu pebbles=%zu stones=%zu cobbles=%zu "
                    "plant_cells=%zu cobble_cells=%zu lattice_inside=%zu lattice_outside=%zu objects=%zu bytes=%zu",
                    resolvedPath.c_str(), talus.Instances.size(), plants, stoneCounts[0], stoneCounts[1], stoneCounts[2],

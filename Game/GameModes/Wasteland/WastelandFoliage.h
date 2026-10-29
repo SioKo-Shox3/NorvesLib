@@ -69,12 +69,13 @@ namespace Game::GameModes::WastelandFoliage
                         float yaw, float &outMinY, float &outMaxY,
                         const NorvesLib::Core::Rendering::Terrain::TerrainPlacementGround *ground = nullptr);
 
-    /// 信頼できない地面のため見送った候補の位置と種類。
+    /// 地面が信頼できないか、地面に収まらず見送った候補の位置と種類。
     struct GroundRejection
     {
         float X = 0.0f;
         float Z = 0.0f;
         uint32_t Kind = 0;
+        bool Unreliable = true;
     };
 
     /**

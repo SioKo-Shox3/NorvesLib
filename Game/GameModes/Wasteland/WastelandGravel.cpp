@@ -632,6 +632,10 @@ namespace Game::GameModes::WastelandGravel
                         {
                             rejectUnreliable();
                         }
+                        else if (rejected != nullptr)
+                        {
+                            rejected->push_back({x, z, kind, false});
+                        }
                         continue;
                     }
                 }

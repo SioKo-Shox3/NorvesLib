@@ -471,6 +471,7 @@ namespace Game::GameModes::WastelandFoliage
                     // 沿う低木 B を根元の細い低木 A に替え、それでも収まらなければ置かない
                     float rootY = 0.0f;
                     bool bGrounded = false;
+                    bool bUnreliable = false;
                     for (uint32_t attempt = 0; attempt < 2u && !bGrounded; ++attempt)
                     {
                         if (attempt == 1u)
@@ -488,6 +489,7 @@ namespace Game::GameModes::WastelandFoliage
                             !SampleRootRing(field, x, z, m_RootRadius[static_cast<uint32_t>(kind)] * instance.WidthScale,
                                             instance.Yaw, ringMinY, ringMaxY, m_pGround.get()))
                         {
+                            bUnreliable = true;
                             ++cell.Unreliable[static_cast<uint32_t>(kind)];
                             if (rejected != nullptr)
                             {
@@ -500,6 +502,10 @@ namespace Game::GameModes::WastelandFoliage
                     }
                     if (!bGrounded)
                     {
+                        if (!bUnreliable && rejected != nullptr)
+                        {
+                            rejected->push_back({x, z, static_cast<uint32_t>(kind), false});
+                        }
                         continue;
                     }
                     instance.Position[1] = rootY;
