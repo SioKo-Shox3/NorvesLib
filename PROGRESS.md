@@ -8181,3 +8181,4 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 証拠: `.harness/runs/20261029-130624/SCN-MEGA-FIX-SCENE-TABLES-STEADY/`（`u2-unit-verify.txt`: CaptureScene EXIT=0・`CHECK_CAPTURE_METRICS result=pass views=horizon` EXIT=0・trace の集計・ログの抜き出し、`metrics.json`・`horizon.png`・`horizon.Game.log`）
 - Next: なし
 - Notes: 同じ撮影の RenderThread の CPU は `RT.BuildAccelerationStructures` median 24.0 ms が最大で（SCN-MEGA-FIX-TLAS-REBUILD の範囲）、`MegaGeometryPass.CheckSceneTables`（開発ビルドの照合、5 回）は 1 回 91.8 ms。新しい試験は足していない
+- U1 出し入れで m_Instances を作り直さず、移動・置き換え・末尾の切り詰めを差分で当てる: 着地(直し 1 回)

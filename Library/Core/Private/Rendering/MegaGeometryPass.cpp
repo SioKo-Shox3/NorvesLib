@@ -955,6 +955,10 @@ namespace NorvesLib::Core::Rendering
         m_TerrainSampler.reset();
 
         m_Instances.clear();
+        m_SceneInstanceDeltas.clear();
+#if NORVES_BUILD_DEVELOPMENT
+        m_SceneInstanceDeltaStats = SceneInstanceDeltaStats{};
+#endif
         m_InstanceSourceRevision = 0;
         m_InstanceSourceProxies = nullptr;
         m_bPreferRenderGraphGBufferResources = false;
@@ -986,44 +990,372 @@ namespace NorvesLib::Core::Rendering
     {
         const MegaGeometryMirror &mirror = *context.SnapshotMegaMirror;
         const auto &proxies = *context.SnapshotMegaGeometryProxies;
+        const size_t oldSize = m_Instances.size();
+        const size_t newSize = proxies.size();
+        constexpr uint32_t NoPosition = 0xFFFFFFFFu;
 
-        // m_Instances は proxy の配列と同じ並び・同じ数（無効な proxy が無い）ときだけ、位置で対応する。
-        // 先に全部の席を確かめてから書く（途中で諦めても m_Instances を壊さない）
+        // 外れた席は位置へ引けない。残った席と、写しが知らせた位置の両方を確かめてから書く
+        bool bMissingSlot = false;
         Container::VariableArray<uint32_t> positions;
         positions.reserve(context.SnapshotMegaChangedSlots->size());
         for (const uint32_t slot : *context.SnapshotMegaChangedSlots)
         {
             uint32_t position = 0;
-            if (!mirror.TryGetPositionBySlot(slot, position) || position >= proxies.size() ||
-                position >= m_Instances.size())
+            if (!mirror.TryGetPositionBySlot(slot, position))
             {
-                return false;
+                bMissingSlot = true;
+                continue;
             }
-            const MegaGeometryProxy &proxy = proxies[position];
-            // ObjectId が替わる位置は、影のキャッシュの記録の引き継ぎ（鍵の集合）が変わるので作り直す。
-            // 行の席が替わる位置も、席の表の番号を決め直すので作り直す
-            if (!proxy.IsValid() || m_Instances[position].ObjectId != proxy.ObjectId ||
-                m_Instances[position].SceneSlot != proxy.SceneSlot)
+            if (position >= newSize || slot == 0 || proxies[position].SceneSlot != slot || !proxies[position].IsValid())
             {
                 return false;
             }
             positions.push_back(position);
         }
+        std::sort(positions.begin(), positions.end());
+        positions.erase(std::unique(positions.begin(), positions.end()), positions.end());
+        size_t appended = 0;
+        bool bStructureChanged = oldSize != newSize;
         for (const uint32_t position : positions)
         {
-            // 席の表の番号は行の席と一緒に保つ（行の席が同じことは上で確かめた）
-            const uint32_t tableSlot = m_Instances[position].TableSlot;
-            const MegaMeshInstance before = m_Instances[position];
-            m_Instances[position] = MakeMegaMeshInstance(proxies[position]);
-            m_Instances[position].TableSlot = tableSlot;
-            // VSM のキャッシュ: 影に効く中身が変わった位置だけを、次に表を作るときに旧・新の境界で無効にする
-            NoteShadowPatched(position, before, m_Instances[position]);
-            // 表の差分更新: 次に表を作るときに、この位置の行を直す
-            MarkSceneTableDirty(position);
-            // 席の表の行を確かめる位置（全部を確かめる更新が待っていれば要らない）
-            if (!m_bSceneRowsAllDirty)
+            if (position >= oldSize)
             {
-                m_SceneDirtyPositions.push_back(position);
+                ++appended;
+                continue;
+            }
+            const MegaMeshInstance &before = m_Instances[position];
+            const MegaGeometryProxy &proxy = proxies[position];
+            bStructureChanged |= before.ObjectId != proxy.ObjectId || before.ComponentId != proxy.ComponentId ||
+                                 before.SceneSlot != proxy.SceneSlot;
+        }
+        // 並びの変わらない差分では、引けない席は従来どおり作り直す
+        if (!bStructureChanged && bMissingSlot)
+        {
+            return false;
+        }
+        if (newSize > oldSize && appended != newSize - oldSize)
+        {
+            return false;
+        }
+
+        uint32_t moved = 0;
+        uint32_t removed = 0;
+        uint32_t added = 0;
+        bool bResync = false;
+        if (bStructureChanged)
+        {
+            NORVES_PROFILE_SCOPE("MegaGeometryPass.PatchStructuralInstances");
+            for (const uint32_t position : mirror.GetChangedPositions())
+            {
+                if (position < newSize && !std::binary_search(positions.begin(), positions.end(), position))
+                {
+                    return false;
+                }
+            }
+            // 並びを運ぶには、席の割り当てと影の記録が確定している必要がある
+            if (m_bSceneSlotsDirty || !m_bSceneSlotsPatchable || m_bShadowRebuildPending || newSize >= NoPosition ||
+                oldSize >= NoPosition)
+            {
+                return false;
+            }
+            // 表を作ったときの位置ごとの記録が揃っていなければ、安全に運べない
+            if (m_ShadowRecords.size() != oldSize || m_ShadowDirtyMarks.size() != oldSize ||
+                m_SceneTableDirtyMarks.size() != oldSize || m_SceneInstanceRows.size() != oldSize ||
+                m_SceneInstanceHandles.size() != oldSize || m_SceneComposeRecords.size() != oldSize)
+            {
+                return false;
+            }
+
+            struct InstanceKey
+            {
+                uint64_t ObjectId;
+                uint64_t ComponentId;
+                bool operator==(const InstanceKey &other) const
+                {
+                    return ObjectId == other.ObjectId && ComponentId == other.ComponentId;
+                }
+            };
+            struct InstanceKeyHash
+            {
+                size_t operator()(const InstanceKey &key) const
+                {
+                    return static_cast<size_t>(MixShadowInstanceKey(key.ObjectId, key.ComponentId));
+                }
+            };
+            struct PreviousEntry
+            {
+                uint32_t Position = 0;
+                uint32_t NewPosition = NoPosition;
+                MegaMeshInstance Instance;
+                ShadowInstanceRecord Shadow;
+                ShadowInstanceRecord Compose;
+                uint32_t Row = NoPosition;
+                uint64_t Handle = 0;
+                uint8_t ShadowDirty = 0;
+                uint8_t TableDirty = 0;
+            };
+            struct PositionPlan
+            {
+                uint32_t Position = 0;
+                uint32_t Previous = NoPosition;
+                bool bStructural = false;
+            };
+
+            Container::VariableArray<PreviousEntry> previous;
+            Container::VariableArray<PositionPlan> plans;
+            Container::UnorderedMap<InstanceKey, uint32_t, InstanceKeyHash> byKey;
+            Container::UnorderedMap<uint32_t, uint32_t> byPosition;
+            Container::UnorderedMap<uint32_t, uint32_t> bySlot;
+            const size_t candidateCount = positions.size() + (oldSize > newSize ? oldSize - newSize : 0u);
+            previous.reserve(candidateCount);
+            plans.reserve(positions.size());
+            byKey.reserve(candidateCount);
+            byPosition.reserve(candidateCount);
+            bySlot.reserve(candidateCount);
+            const auto savePrevious = [&](uint32_t position) -> bool
+            {
+                const MegaMeshInstance &instance = m_Instances[position];
+                if (instance.ObjectId == 0 || instance.SceneSlot == 0 || instance.TableSlot != instance.SceneSlot - 1u ||
+                    instance.TableSlot >= m_SceneSlotSeen.size() || m_SceneSlotSeen[instance.TableSlot] == 0u)
+                {
+                    return false;
+                }
+                const uint32_t index = static_cast<uint32_t>(previous.size());
+                if (!byKey.emplace(InstanceKey{instance.ObjectId, instance.ComponentId}, index).second ||
+                    !byPosition.emplace(position, index).second || !bySlot.emplace(instance.SceneSlot, index).second)
+                {
+                    return false;
+                }
+                PreviousEntry entry;
+                entry.Position = position;
+                entry.Instance = instance;
+                entry.Shadow = m_ShadowRecords[position];
+                entry.Compose = m_SceneComposeRecords[position];
+                entry.Row = m_SceneInstanceRows[position];
+                entry.Handle = m_SceneInstanceHandles[position];
+                entry.ShadowDirty = m_ShadowDirtyMarks[position];
+                entry.TableDirty = m_SceneTableDirtyMarks[position];
+                previous.push_back(entry);
+                return true;
+            };
+
+            for (const uint32_t position : positions)
+            {
+                PositionPlan plan;
+                plan.Position = position;
+                if (position >= oldSize)
+                {
+                    plan.bStructural = true;
+                }
+                else
+                {
+                    const MegaMeshInstance &before = m_Instances[position];
+                    const MegaGeometryProxy &proxy = proxies[position];
+                    plan.bStructural = before.ObjectId != proxy.ObjectId || before.ComponentId != proxy.ComponentId ||
+                                       before.SceneSlot != proxy.SceneSlot;
+                    if (plan.bStructural && !savePrevious(position))
+                    {
+                        return false;
+                    }
+                }
+                plans.push_back(plan);
+            }
+            for (size_t position = newSize; position < oldSize; ++position)
+            {
+                if (!savePrevious(static_cast<uint32_t>(position)))
+                {
+                    return false;
+                }
+            }
+
+            // 前の候補と ObjectId・ComponentId の組で対応させる。移動した物は席も変わらない
+            for (PositionPlan &plan : plans)
+            {
+                if (!plan.bStructural)
+                {
+                    continue;
+                }
+                const MegaGeometryProxy &proxy = proxies[plan.Position];
+                if (proxy.ObjectId == 0)
+                {
+                    return false;
+                }
+                const auto found = byKey.find(InstanceKey{proxy.ObjectId, proxy.ComponentId});
+                if (found != byKey.end())
+                {
+                    PreviousEntry &entry = previous[found->second];
+                    if (entry.NewPosition != NoPosition || entry.Instance.SceneSlot != proxy.SceneSlot)
+                    {
+                        return false;
+                    }
+                    entry.NewPosition = plan.Position;
+                    plan.Previous = found->second;
+                }
+            }
+            for (const PositionPlan &plan : plans)
+            {
+                if (!plan.bStructural || plan.Previous != NoPosition)
+                {
+                    continue;
+                }
+                const MegaGeometryProxy &proxy = proxies[plan.Position];
+                const uint32_t tableSlot = proxy.SceneSlot - 1u;
+                if (tableSlot < m_SceneSlotSeen.size() && m_SceneSlotSeen[tableSlot] != 0u)
+                {
+                    const auto occupied = bySlot.find(proxy.SceneSlot);
+                    if (occupied == bySlot.end() || previous[occupied->second].NewPosition != NoPosition)
+                    {
+                        return false;
+                    }
+                }
+                // 再利用した席の前の変換が別の物のままなら、前の HZB を使わせない
+                const bool bReused = (tableSlot < m_SceneSlotSeen.size() && m_SceneSlotSeen[tableSlot] != 0u) ||
+                                     (tableSlot < m_SlotRowStates.size() && m_SlotRowStates[tableSlot] != 0u);
+                if (bReused && std::memcmp(&proxy.PreviousWorldTransform, &proxy.WorldTransform,
+                                           sizeof(proxy.WorldTransform)) != 0)
+                {
+                    bResync = true;
+                }
+            }
+
+            // 印の一覧は古い位置を新しい位置に直し、解放した物と切った末尾を外す
+            const auto remapPositions = [&](Container::VariableArray<uint32_t> &list) -> void
+            {
+                size_t out = 0;
+                for (const uint32_t position : list)
+                {
+                    const auto found = byPosition.find(position);
+                    const uint32_t mapped = found != byPosition.end() ? previous[found->second].NewPosition : position;
+                    if (mapped != NoPosition && mapped < newSize)
+                    {
+                        list[out++] = mapped;
+                    }
+                }
+                list.resize(out);
+            };
+            remapPositions(m_ShadowDirtyPositions);
+            remapPositions(m_SceneTableDirtyPositions);
+            remapPositions(m_SceneDirtyPositions);
+
+            for (const PreviousEntry &entry : previous)
+            {
+                if (entry.NewPosition != NoPosition)
+                {
+                    continue;
+                }
+                m_SceneSlotSeen[entry.Instance.TableSlot] = 0u;
+                PushShadowInvalidation(entry.Shadow, ShadowInstanceRecord{});
+                SceneInstanceDelta delta;
+                delta.Kind = SceneInstanceDeltaKind::Removed;
+                delta.PreviousPosition = entry.Position;
+                delta.PreviousRow = entry.Row;
+                m_SceneInstanceDeltas.push_back(delta);
+                ++removed;
+            }
+
+            m_Instances.resize(newSize);
+            m_ShadowRecords.resize(newSize);
+            m_ShadowDirtyMarks.resize(newSize, 0u);
+            m_SceneTableDirtyMarks.resize(newSize, 0u);
+            m_SceneInstanceRows.resize(newSize, NoPosition);
+            m_SceneInstanceHandles.resize(newSize, 0u);
+            m_SceneComposeRecords.resize(newSize);
+            for (const PositionPlan &plan : plans)
+            {
+                const uint32_t position = plan.Position;
+                MegaMeshInstance before;
+                if (plan.bStructural && plan.Previous != NoPosition)
+                {
+                    const PreviousEntry &entry = previous[plan.Previous];
+                    before = entry.Instance;
+                    m_ShadowRecords[position] = entry.Shadow;
+                    m_ShadowDirtyMarks[position] = entry.ShadowDirty;
+                    m_SceneTableDirtyMarks[position] = entry.TableDirty;
+                    m_SceneInstanceRows[position] = entry.Row;
+                    m_SceneInstanceHandles[position] = entry.Handle;
+                    m_SceneComposeRecords[position] = entry.Compose;
+                    if (entry.Position != position)
+                    {
+                        SceneInstanceDelta delta;
+                        delta.Kind = SceneInstanceDeltaKind::Moved;
+                        delta.PreviousPosition = entry.Position;
+                        delta.PreviousRow = entry.Row;
+                        delta.Position = position;
+                        m_SceneInstanceDeltas.push_back(delta);
+                        ++moved;
+                    }
+                }
+                else if (plan.bStructural)
+                {
+                    m_ShadowRecords[position] = ShadowInstanceRecord{};
+                    m_ShadowDirtyMarks[position] = 0u;
+                    m_SceneTableDirtyMarks[position] = 0u;
+                    m_SceneInstanceRows[position] = NoPosition;
+                    m_SceneInstanceHandles[position] = 0u;
+                    m_SceneComposeRecords[position] = ShadowInstanceRecord{};
+                    SceneInstanceDelta delta;
+                    delta.Kind = SceneInstanceDeltaKind::Added;
+                    delta.Position = position;
+                    m_SceneInstanceDeltas.push_back(delta);
+                    ++added;
+                }
+                else
+                {
+                    before = m_Instances[position];
+                }
+
+                m_Instances[position] = MakeMegaMeshInstance(proxies[position]);
+                if (plan.bStructural && plan.Previous == NoPosition)
+                {
+                    const uint32_t tableSlot = proxies[position].SceneSlot - 1u;
+                    if (tableSlot >= m_SceneSlotSeen.size())
+                    {
+                        m_SceneSlotSeen.resize(static_cast<size_t>(tableSlot) + 1u, 0u);
+                    }
+                    m_SceneSlotSeen[tableSlot] = 1u;
+                    m_Instances[position].TableSlot = tableSlot;
+                    m_ShadowDirtyMarks[position] = 1u;
+                    m_ShadowDirtyPositions.push_back(position);
+                }
+                else
+                {
+                    m_Instances[position].TableSlot = before.TableSlot;
+                    NoteShadowPatched(position, before, m_Instances[position]);
+                }
+                MarkSceneTableDirty(position);
+                if (!m_bSceneRowsAllDirty)
+                {
+                    m_SceneDirtyPositions.push_back(position);
+                }
+            }
+            if (bResync)
+            {
+                ++m_SceneResyncCount;
+            }
+            // U3 が使う変化の一覧を残し、この単位では並びの変わった表を全部作る
+            m_bSceneTablesValid = false;
+#if NORVES_BUILD_DEVELOPMENT
+            ++m_SceneInstanceDeltaStats.Frames;
+            m_SceneInstanceDeltaStats.Patched += positions.size();
+            m_SceneInstanceDeltaStats.Moved += moved;
+            m_SceneInstanceDeltaStats.Removed += removed;
+            m_SceneInstanceDeltaStats.Added += added;
+            m_SceneInstanceDeltaStats.Resync += bResync ? 1u : 0u;
+#endif
+        }
+        else
+        {
+            for (const uint32_t position : positions)
+            {
+                const MegaMeshInstance before = m_Instances[position];
+                m_Instances[position] = MakeMegaMeshInstance(proxies[position]);
+                m_Instances[position].TableSlot = before.TableSlot;
+                NoteShadowPatched(position, before, m_Instances[position]);
+                MarkSceneTableDirty(position);
+                if (!m_bSceneRowsAllDirty)
+                {
+                    m_SceneDirtyPositions.push_back(position);
+                }
             }
         }
 
@@ -1036,7 +1368,11 @@ namespace NorvesLib::Core::Rendering
                 const MegaMeshInstance expected = MakeMegaMeshInstance(proxies[index]);
                 const MegaMeshInstance &actual = m_Instances[index];
                 bSame = actual.ObjectId == expected.ObjectId && actual.ComponentId == expected.ComponentId &&
-                        actual.Handle.Id == expected.Handle.Id && actual.bCastShadow == expected.bCastShadow &&
+                        actual.SceneSlot == expected.SceneSlot &&
+                        (m_bSceneSlotsDirty || !m_bSceneSlotsPatchable ||
+                         (actual.SceneSlot != 0 && actual.TableSlot == actual.SceneSlot - 1u)) &&
+                        actual.Handle.Id == expected.Handle.Id &&
+                        actual.bCastShadow == expected.bCastShadow &&
                         std::memcmp(actual.WorldMatrix, expected.WorldMatrix, sizeof(expected.WorldMatrix)) == 0 &&
                         std::memcmp(actual.PreviousWorldMatrix, expected.PreviousWorldMatrix,
                                     sizeof(expected.PreviousWorldMatrix)) == 0 &&
@@ -1053,6 +1389,7 @@ namespace NorvesLib::Core::Rendering
 
     void MegaGeometryPass::Setup(ViewRenderContext &context)
     {
+        NORVES_PROFILE_SCOPE("MegaGeometryPass.Setup");
         // VSM の投影物のカリングの入力は、今フレームの記録が書けたときだけ有効にする（前のフレームのものを残さない）
         m_ShadowCasterInputs = MegaGeometryShadowCasterInputs{};
 
@@ -1067,8 +1404,7 @@ namespace NorvesLib::Core::Rendering
         // 前のフレームの HZB の契約に載せるシーンの世代（差分の同期の写しの世代。全量の同期では世代が来ないので 0）
         m_SceneGeneration = context.SnapshotMegaMirror != nullptr ? context.SnapshotMegaMirror->GetGeneration() : 0;
         if (!bReuseInstances && bSameSource && context.SnapshotMegaMirror != nullptr &&
-            context.SnapshotMegaMirror->CanPatchFrom(m_InstanceSourceRevision) &&
-            m_Instances.size() == context.SnapshotMegaGeometryProxies->size())
+            context.SnapshotMegaMirror->CanPatchFrom(m_InstanceSourceRevision))
         {
             bPatchedInstances = PatchInstancesFromChangedSlots(context);
             if (bPatchedInstances)
@@ -1081,6 +1417,12 @@ namespace NorvesLib::Core::Rendering
             // 作り直したインスタンスは、席の表の番号を決め直し、全部の席の行を確かめる。前のフレームの HZB の契約では
             // 全量の再同期として数える（描いた番号が前のフレームと同じ席を指す保証が無い）
             ++m_SceneResyncCount;
+#if NORVES_BUILD_DEVELOPMENT
+            ++m_SceneInstanceDeltaStats.Frames;
+            ++m_SceneInstanceDeltaStats.Resync;
+            ++m_SceneInstanceDeltaStats.Full;
+#endif
+            m_SceneInstanceDeltas.clear();
             m_bSceneUploadAllRows = true;
             m_bSceneRowsAllDirty = true;
             m_bSceneSlotsDirty = true;
@@ -1105,6 +1447,12 @@ namespace NorvesLib::Core::Rendering
                     }
 
                     m_Instances.push_back(MakeMegaMeshInstance(proxy));
+                }
+                // 無効な proxy を除いた並びは写しの位置と対応しない。揃うまで差分の起点にしない
+                if (m_Instances.size() != megaGeometryProxies.size())
+                {
+                    m_InstanceSourceRevision = 0;
+                    m_InstanceSourceProxies = nullptr;
                 }
             }
 
@@ -2266,6 +2614,7 @@ namespace NorvesLib::Core::Rendering
                 }
             }
             m_ShadowDirtyPositions.clear();
+            m_SceneInstanceDeltas.clear();
             // このフレームに載らなかったメッシュは記録から外す（次に載ったときに変わったものとして扱う）
             for (auto iterator = m_ShadowMeshes.begin(); iterator != m_ShadowMeshes.end();)
             {
@@ -2282,6 +2631,17 @@ namespace NorvesLib::Core::Rendering
                                 static_cast<unsigned long long>(stats.MeshChanges),
                                 static_cast<unsigned long long>(stats.ResidencyChanges), static_cast<unsigned long long>(stats.Boxes),
                                 stats.InvalidateAll, static_cast<uint32_t>(m_Instances.size()));
+#if NORVES_BUILD_DEVELOPMENT
+                const SceneInstanceDeltaStats &delta = m_SceneInstanceDeltaStats;
+                NORVES_LOG_INFO("MegaGeometryPass",
+                                "MEGA_INSTANCES_DELTA frames=%llu patched=%llu moved=%llu removed=%llu added=%llu "
+                                "resync=%llu full=%llu",
+                                static_cast<unsigned long long>(delta.Frames), static_cast<unsigned long long>(delta.Patched),
+                                static_cast<unsigned long long>(delta.Moved), static_cast<unsigned long long>(delta.Removed),
+                                static_cast<unsigned long long>(delta.Added), static_cast<unsigned long long>(delta.Resync),
+                                static_cast<unsigned long long>(delta.Full));
+                m_SceneInstanceDeltaStats = SceneInstanceDeltaStats{};
+#endif
                 stats = ShadowDirtyStats{};
                 stats.bLoggedOnce = true;
             }
@@ -4891,6 +5251,7 @@ namespace NorvesLib::Core::Rendering
     void MegaGeometryPass::AssignSceneTableSlots()
     {
         m_bSceneSlotsDirty = false;
+        m_bSceneSlotsPatchable = true;
         // 席の表の番号が変わるので、次の表は全部を作る
         m_bSceneTablesValid = false;
         // 行の席（SceneSlot = 席の番号 + 1）をそのまま席の表の番号にする。席を持たないインスタンス（手で足した・行の外の
@@ -4911,6 +5272,7 @@ namespace NorvesLib::Core::Rendering
             }
             else
             {
+                m_bSceneSlotsPatchable = false;
                 instance.TableSlot = nextLocalSlot++;
             }
         }

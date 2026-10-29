@@ -13,6 +13,7 @@
 #include "Rendering/RenderGraph/IRenderGraphPass.h"
 #include "RHI/IDescriptorSet.h"
 #include "RHI/RHITypes.h"
+#include "Debug/DebugConfig.h"
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
 #include <cstddef>
@@ -688,14 +689,29 @@ namespace NorvesLib::Core::Rendering
             uint32_t TableSlot = 0;
         };
 
+        /** @brief 表を作るまで残す、インスタンスの並びの変化 */
+        enum class SceneInstanceDeltaKind : uint8_t
+        {
+            Removed,
+            Moved,
+            Added
+        };
+        struct SceneInstanceDelta
+        {
+            SceneInstanceDeltaKind Kind = SceneInstanceDeltaKind::Added;
+            uint32_t PreviousPosition = 0xFFFFFFFFu;
+            uint32_t PreviousRow = 0xFFFFFFFFu;
+            uint32_t Position = 0xFFFFFFFFu;
+        };
+
         /** @brief proxy から描くインスタンスを作る */
         static MegaMeshInstance MakeMegaMeshInstance(const MegaGeometryProxy &proxy);
 
         /**
          * @brief RenderThread の写しの、変わった席のインスタンスだけを直す
          *
-         * 席の数え間違いが無いよう、直す前に全部の席を確かめ、外れた席・無効な proxy・ObjectId が替わる位置があれば
-         * m_Instances を変えずに false を返す（呼び出し側が作り直す）。
+         * 移動・解放・追加は変わった位置と切った末尾だけで見分け、位置ごとの記録を運ぶ。
+         * 席の欠落・重複や追跡できない並びは、状態を変えずに false を返す（呼び出し側が作り直す）。
          */
         bool PatchInstancesFromChangedSlots(const ViewRenderContext &context);
 
@@ -1294,6 +1310,22 @@ namespace NorvesLib::Core::Rendering
 
         // フレーム単位のインスタンスリスト
         Container::VariableArray<MegaMeshInstance> m_Instances;
+        // 解放の前の位置と表の行、移動の前後の位置、追加の位置。表を作るまで順に積む
+        Container::VariableArray<SceneInstanceDelta> m_SceneInstanceDeltas;
+#if NORVES_BUILD_DEVELOPMENT
+        // 出し入れと全量同期の回数・件数（影の統計を出す間の合計）
+        struct SceneInstanceDeltaStats
+        {
+            uint64_t Frames = 0;
+            uint64_t Patched = 0;
+            uint64_t Moved = 0;
+            uint64_t Removed = 0;
+            uint64_t Added = 0;
+            uint64_t Resync = 0;
+            uint64_t Full = 0;
+        };
+        SceneInstanceDeltaStats m_SceneInstanceDeltaStats;
+#endif
         // m_Instances を作った時点の RenderThread の写しの版と配列。差分の同期で写しが変わらないフレームは作り直さない
         // （0 / nullptr は、写しから作ったのではない）
         uint64_t m_InstanceSourceRevision = 0;
@@ -1341,6 +1373,8 @@ namespace NorvesLib::Core::Rendering
         Container::VariableArray<uint32_t> m_SceneDirtyPositions;
         // m_Instances の TableSlot を決め直すか（作り直し・手で足した・消したとき）
         bool m_bSceneSlotsDirty = true;
+        // 行の席が全て一意で、TableSlot が SceneSlot - 1 のときだけ差分で席を保てる
+        bool m_bSceneSlotsPatchable = false;
         Container::VariableArray<uint8_t> m_SceneSlotSeen;
         // 散在書き込みの記録を組む作業領域（フレームをまたいで使い回す）
         Container::VariableArray<uint32_t> m_SceneScatterWords;
