@@ -8118,3 +8118,19 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - Next: 同じ項目を続ける。再生が通った時刻の静止の撮影（`camera-path-time=<秒>`）と比べて、残りの LightingPass と暈が視点の中身か動き（RTGI の時間の蓄積の棄却など）かを分ける
 - Notes: 枠の作業ツリーには git 管理外の資産（`build/CookedAssets`・`Assets/Textures/PolyHaven`・`Assets/Models/Generated`）が無く、ほかの枠と同じくメインのチェックアウトへの junction でつないだ。新しい試験は足していない
 - Notes: 要起票: `CaptureScene.ps1 -RequireAssets` が、`MEGA_BANANAS_ASSET_MISSING AssetSystem が無いためバナナを置きません`（クック済みのマニフェストが無い）でバナナを 0 本置いた撮影を result=pass にする（`banana-count` との突き合わせが効いていない）
+
+### SCN-MEGA-FIX-TLAS-REBUILD（2026-10-29、反復 2・run 20261029-112507）
+- Done: コードは変えていない。残りの LightingPass と暈を、同じ視点の静止の撮影と TLAS の顔ぶれが替わらない本数の撮影で切り分けた
+- 測った値（1920x1080・300 フレーム、`.harness/runs/20261029-112507/U3-static/`・`U4/`）:
+  | 撮影 | LightingPass median / p95 | RT_SCENE（120 フレーム） | 暈 |
+  |---|---|---|---|
+  | 1M 再生（反復 1） | 4.273 / 4.939 ms | built=120 | ある |
+  | 1M 静止 camera-path-time=0.05 / 8.86 / 16.83 | 3.641 / 3.643 / 3.818 ms | update_skipped=120 | 無い |
+  | 50000 本の再生 | 3.865 / 4.002 ms | update_skipped=120・over_limit=0 | ある |
+  | 50000 本の静止 16.83 秒（別の枠の GPU の撮影と重なり参考値） | 3.789 / 3.853 ms | update_skipped=120 | 無い |
+  | 1M 静止の既定の horizon（10-14 と同じ条件） | 2.666 / 2.686 ms（10-14 は 1.657 / 2.961） | update_skipped=120 | 無い |
+- 見立て: カメラパスの視点の RTGI の地の費用が 3.6〜3.8 ms あり、median ≤ 3 ms は TLAS では届かない。暈は TLAS を作り直さない再生でも出るので、カメラの動きによる RTGI の時間の履歴（`DiffuseIndirect.comp` の再投影の棄却・年齢の上限 8）が候補で、シェーダーは paths の外。done-when の扱いを `blocked/SCN-MEGA-FIX-TLAS-REBUILD.md` に書いた（推奨: TLAS の問いで閉じ、暈と費用の退行を別の項目に分ける）
+- Next: 判断待ち（blocked）
+- Notes: 要起票: 10-14 の SCN-MEGA-ACCEPT-1M の静止の既定の horizon と同じ条件で、LightingPass 1.657 → 2.666 ms・MegaGeometryCull1 3.043 → 5.319 ms・MegaBvhC1Leaf 2.560 → 4.829 ms に増えた（`U4/static-default-1m`）。コードかドライバの変化の切り分け
+- Notes: 要起票: 1M の静止の既定の horizon で、RenderThread の `MegaGeometryPass.CheckSceneTables` が median 94.7 ms・`RT.BuildAccelerationStructures` が 23.7 ms（TLAS は update_skipped）。RelWithDebInfo の CPU の費用の原因（`U4-split.txt` 54 行）
+- Notes: 要起票: カメラの動きで RTGI の時間の履歴が棄却され、バナナの周りと床に粒の荒い暈が出る（50000 本の再生でも出る。`U4/u4-compare-left.png`）
