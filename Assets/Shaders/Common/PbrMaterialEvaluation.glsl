@@ -138,8 +138,10 @@ float GeometrySmithHeightCorrelated(float NdotV, float NdotL, float roughness)
     return 1.0 / (1.0 + lambdaV + lambdaL);
 }
 
-// GGX の見える法線の分布（Heitz 2018）で引いた鏡面の光線の BRDF の重み G2 ÷ G1(V)（フレネルを除く）。
-// 重みの平均は brdfLUT の A + B（Ess）になる
+// GGX の見える法線の分布（Heitz 2018）で引いた光線の BRDF の重み G ÷ G1(V)（フレネルを除く）。
+// G は brdfLUT（DfgLut.cpp）と同じ分離形の Schlick（k = roughness²/2）、G1(V) は VNDF の pdf の厳密な Smith。
+// LUT が分離形なので高さ相関の G は使わず、Ess の割り戻しと同じ G に揃える。
+// この重みの平均が brdfLUT の A + B（Ess）になる。
 float EvaluateGGXVisibleNormalSampleWeight(float NdotV, float NdotL, float roughness)
 {
     if (NdotV <= 0.0 || NdotL <= 0.0)
@@ -149,7 +151,10 @@ float EvaluateGGXVisibleNormalSampleWeight(float NdotV, float NdotL, float rough
     float a = roughness * roughness;
     float cosV2 = max(NdotV * NdotV, 1.0e-8);
     float lambdaV = (sqrt(1.0 + a * a * (1.0 - cosV2) / cosV2) - 1.0) * 0.5;
-    return GeometrySmithHeightCorrelated(NdotV, NdotL, roughness) * (1.0 + lambdaV);
+    float k = a / 2.0;
+    float gV = NdotV / (NdotV * (1.0 - k) + k);
+    float gL = NdotL / (NdotL * (1.0 - k) + k);
+    return gV * gL * (1.0 + lambdaV);
 }
 
 // RTGI の鏡面の環境光で、細いローブの推定（空の前計算 × 空へ抜けた割合 ＋ 当たった面の光の平均）から広いローブの推定
