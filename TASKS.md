@@ -3955,7 +3955,7 @@
 - from: SCN-MEGA-FIX-TLAS-REBUILD
 
 ## SCN-MEGA-FIX-DRAWLIST-GROWTH: 読み込み中に描画コマンドの列を何世代も作り直して GPU Scene の山を 3 GB 超えにしない
-- status: todo
+- status: done
 - done-when: 判断役の判断(`blocked/resolved/SCN-MEGA-FIX-VISIBLE-LIST.md` の「次の反復への指示 1」と `blocked/resolved/SCN-MEGA-FIX-VISIBLE-LIST-20261029-174526.md`)のとおりにする。
   - 撮影: SCN-MEGA-FIX-VISIBLE-LIST の verify と同じ引数(1M + 5 万・1% 移動・64 m 区画)で、通常の撮影と長い撮影(`exit-after-rendered-frames=1200`)の両方を撮る。`MEGA_CAPACITY` の全行で次を満たす。
     - `scene_vram_device_peak_mb` ≤ 3,072。見張りは今の形のまま使い、回収待ちを数える 4 フレームの窓を縮めない。
