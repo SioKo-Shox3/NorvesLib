@@ -8212,3 +8212,11 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: `--no-cooked-textures` ではクック済みのマニフェストが無く AssetSystem を持たないため、印は「AssetSystem が無い」の行（411 行）で出る。`MEGA_BANANAS_ASSET_INVALID` 単独と `stress-entities` の行の欠けは実際の撮影では確かめていない（同じ分岐の形）。新しい試験は足していない
 - U1 回帰の before と、屋根の鏡面の光線の当たりの内訳を測って記録する: 着地(直し 0 回)
 - U2 鏡面の光線の自己交差を TraceSpecularRay の中で直し、屋根を測り直して verify を通す: 着地(直し 0 回)
+
+## SCN-RENDER-SPEC-ROOF-HITS: rendering3dtest の屋根の鏡面の光線の当たりの内訳と自己交差の直し
+- Done: 当たりの内訳は判定 (a)（直す前の当たり 3,818 本の 96.4 % が屋根自身の同じ平面の裏、幾何の面の下へ向いた光線）。`TraceSpecularRay` の中だけで、当たった三角形の平面が始点から 6 mm（`3 * RAY_ORIGIN_OFFSET`）以内なら幾何法線で鏡映して同じ始点から 1 回引き直し、それでも自分の面なら空へ抜けた扱いにした。拡散の光線と共有する `TraceDiffuseRay`・`TraceSecondBounce`・`ComputeDirectRadiance` は変えていない
+- 屋根 17,120 画素のブルーム前の HDR の Y: off 3,100.105 → on 3,116.406 cd/m²（比 1.0053、直す前は 3,905.180・1.2597）。同じ平面の裏への当たり 3,682 → 0。残りの +16.3 の有限差分: 画面空間 AO を外した分 +182.5、残りの specularAO +95.6、空の項 −280.4、当たった面の反射と広いローブ +18.6（記録は `Docs/RenderingValidation/InteriorLightReference.md`）
+- verify: Game のビルド・屋根の撮影・室内の撮影は EXIT=0、室内の比べ `interior-spec-occlusion.json` は 9 行とも pass（INTERIOR_COMPARE result=pass）、回帰の after は 4 シーン pass（rendering3dtest PSNR 42.69 dB・平均の差 −0.167、ほかは 57 dB 以上）
+- 証拠: `.harness/runs/scene-capture/SCN-RENDER-SPEC-ROOF-HITS/`（roof・interior・roof-hits.json・変種）、`.harness/runs/regression/SCN-RENDER-SPEC-ROOF-HITS/{before,after}/`
+- Next: なし
+- Notes: 残る当たりの 98 % は同じ Cottage の instance の別の面（距離の中央値 0.44 m）で、この 1 標本の分類だけでは全部が正しい反射かは確定していない。6 mm の閾値は近い薄い別の面の取り違え・LOD のずれが 6 mm を超える面の見逃しがありうる。引き直しの分の GPU 時間は測っていない

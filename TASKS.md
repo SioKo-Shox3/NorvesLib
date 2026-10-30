@@ -3995,7 +3995,7 @@
 - from: SCN-RENDER-SPEC-OCC-VERIFY-REG
 
 ## SCN-RENDER-SPEC-ROOF-HITS: rendering3dtest の屋根の鏡面の光線が何に当たっているかを内訳にし、自己交差なら直し、周りの面なら参照と照合する
-- status: todo
+- status: done
 - done-when: 判断役の判断(`blocked/resolved/SCN-RENDER-SPEC-OCC-VERIFY-REG.md` の指示 2。SCN-RENDER-SPEC-WIDE-ESS とは独立)のとおりにする。
   - 現状: 屋根(誘電体・粗さ 0.26)のブルーム前の HDR の Y が、off の 3,100 から今の形で 3,905 cd/m² になっている(1.26 倍。うち細いローブの当たった面の反射が +974)。
   - 調べ方:
