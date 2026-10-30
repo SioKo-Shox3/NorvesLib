@@ -3947,7 +3947,7 @@
 - notes: 2026-10-10 SCN-MEGA-STRESS-RESIDENT の撮影で見つかった。14 種類のメッシュ（1 種類が約 1〜19 千クラスタ）を 2500 個置くと `command_capacity=33554432` で描かれ、3300 個以上（5000 個で同じ）では `command_capacity=67108864` に跳ねて、空と床だけが写る（`draw_dropped=0`、検証レイヤーのエラーなし、`MEGA_OCCLUSION` は 44 万クラスタを描いたと報告する）。`NORVES_MEGA_MAX_DRAW_COUNT=1000000` で区間ごとの上限を下げると 5000 個で描かれる（`command_capacity=33554432`）。mega-stress は `--stress-entities` を指定したとき（開発ビルド）、この環境変数が無ければ 1000000 を渡して回避している（`GameApplicationHandler.cpp`）。この回避は区間ごとの容量の上限を縮めるだけで、原因ではない。
 
 ## SCN-MEGA-FIX-TLAS-REBUILD-P1: 撮影の `-RequireAssets` で、バナナを置けなかった撮影を合格にしない
-- status: todo
+- status: done
 - done-when: `Scripts/CaptureScene.ps1` の `-RequireAssets` で、次の 2 つを失敗にする。(1) ログに `MEGA_BANANAS_ASSET_MISSING` か `MEGA_BANANAS_ASSET_INVALID` がある(`$missingAssetPattern` に足す。`-RequireAssets` が無いときは今と同じく警告と `missing_assets` に数える)。(2) `banana-count`・`stress-entities` を指定したのに `MEGA_BANANAS_PLACED`・`MEGA_STRESS_PLACED` の行が無い(今は置いた数が `$null` のとき突き合わせを飛ばしている。1172〜1184 行)。資産を欠かせた起動(例: `--no-cooked-textures`。効かなければ別の欠かせ方)を 1 回撮り、`-RequireAssets` でこの印を理由に失敗することを確かめて、出力を PROGRESS.md に貼る。資産のそろった mega-bananas の撮影は今までどおり合格する。
 - verify: `powershell -NoProfile -Command "if (-not (Select-String -LiteralPath Scripts/CaptureScene.ps1 -Pattern MEGA_BANANAS_ASSET_ -SimpleMatch -Quiet)) { exit 1 }"`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -Views overview -Build -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -TimeoutSeconds 1800 -GameArgs banana-count=10000 -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-TLAS-REBUILD-P1/ok`

@@ -8194,3 +8194,19 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 証拠: `.harness/runs/20261029-174526/SCN-MEGA-FIX-STREAM-TABLES-DELTA/`（`u3-unit-verify.txt`: CaptureScene の `CAPTURE_SCENE result=pass`・`CHECK_CAPTURE_METRICS result=pass views=overview`・ログの集計、`metrics.json`・`overview.png`・`overview.Game.log`）
 - Next: なし
 - Notes: 全体の `PrepareSceneTables` の最大（約 123〜129 ms）は開発ビルドの 120 回ごとの照合（`CheckSceneTables`）で、窓の 600 フレームに 5 回。初期の配置の間は予備の不足で全部を作るのが 55 回あり、窓では 0（予備は 49361〜49861 行残る）。この撮影は出し入れが全部 BVH の行で、平らな行の穴は 0（穴の溜まり方は未検証）。あるメッシュの最後のインスタンスを解放すると全部を作る（`full_unused`）。新しい試験は足していない
+
+- U1 -RequireAssets でバナナの資産の欠けと配置の行の欠けを失敗にする: 着地(直し 0 回)
+
+## 2026-10-30 SCN-MEGA-FIX-TLAS-REBUILD-P1（run 20261030-081653 の反復 1、完了）
+- Done: `Scripts/CaptureScene.ps1` の資産の欠けの印（`$missingAssetPattern`）に `MEGA_BANANAS_ASSET_MISSING`・`MEGA_BANANAS_ASSET_INVALID` を足し、`-RequireAssets` で失敗、無いときは今までどおり警告と `missing_assets` に数える。`-RequireAssets` で `stress-entities`・`banana-count` を指定したのに `MEGA_STRESS_PLACED`・`MEGA_BANANAS_PLACED` の行が無い撮影も失敗にする
+- 資産を欠かせた撮影（`-GameArgs banana-count=10000,no-cooked-textures -RequireAssets`）は終了コード 1 で、次の 2 つの理由で失敗した:
+```
+CAPTURE_SCENE placed view=overview entities= bananas= requested_entities= requested_bananas=10000
+CAPTURE_SCENE failure: overview: MEGA_BANANAS_PLACED count= または MEGA_STRESS_PLACED bananas= の行がログに無い（banana-count=10000 を指定したのに置いた数が分からない）
+CAPTURE_SCENE failure: overview: 資産の欠け: [2026-10-30 08:19:25.803] [WARN] [T:60320] [General] [MegaBananasRoutine.cpp:Game::GameModes::`anonymous-namespace'::StartBananaLoad:411] MEGA_BANANAS_ASSET_MISSING AssetSystem が無いためバナナを置きません
+CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS-REBUILD-P1\missing\metrics.json
+```
+- 資産のそろった撮影（タスクの verify）は合格: `CAPTURE_SCENE placed view=overview entities= bananas=10000 requested_entities= requested_bananas=10000`・`CAPTURE_SCENE result=pass scene=mega-bananas`、ログに `MEGA_BANANAS_PLACED count=10000`、`missing_assets` 0。overview.png にバナナの散らばりと山が写っている
+- 証拠: `.harness/runs/20261030-081653/U1-unit-verify.txt`、`.harness/runs/scene-capture/SCN-MEGA-FIX-TLAS-REBUILD-P1/{missing,ok}/`
+- Next: なし
+- Notes: `--no-cooked-textures` ではクック済みのマニフェストが無く AssetSystem を持たないため、印は「AssetSystem が無い」の行（411 行）で出る。`MEGA_BANANAS_ASSET_INVALID` 単独と `stress-entities` の行の欠けは実際の撮影では確かめていない（同じ分岐の形）。新しい試験は足していない
