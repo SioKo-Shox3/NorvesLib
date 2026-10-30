@@ -8243,3 +8243,10 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261030-200242/verify-SCN-MEGA-FIX-DRAWLIST-GROWTH-U2.txt`（verify 5 本の終了コード 0・`CAPTURE_SCENE result=pass` 3 本・`CHECK_CAPTURE_METRICS result=pass` 2 本・全行の集計と live の推移・VRAM_LEDGER の世代・bananas の画素の比べ）、撮影 `scene-capture/SCN-MEGA-FIX-DRAWLIST-GROWTH`・`-long`・`-bananas`
 - Next: SCN-MEGA-FIX-VISIBLE-LIST を閉じる（この項目の統合後に verify 2 本と長い撮影を撮り直す）
 - Notes: 差分に可視クラスタの一覧の項目のコミット（4dbeb68a〜06990ce4）を含む。うち c47fdf34・2b9788c3・4c32c639 は危険地帯（メモリ・RenderThread）の変更で評価を通っていないので、この項目の評価で合わせて見る。mega-bananas は前の撮影（dda58ee3、`-bananas-before`）と比べて 1,512 画素（0.073%）・差 >16 は 107 画素・最大 175 の差が遠景のバナナの輪郭に孤立した点で出る。同じ版で撮り直した過去の 2 枚（`SCN-MEGA-LAYOUT-SEA-10k` と `-rerun`）でも 1,416 画素・119 画素・最大 210 の同じ形の差が出るので、撮るたびの揺れと見てマージコミットでの撮り直しはしていない。live は区画の出し入れで 1,966 → 2,470 MiB と段で増える（表の `InstanceTable`・`ShadowInstanceTable`・`SlotTable`・`RangeBounds` の倍々の拡張。山のフレームでは新旧の表が両方 live に入る）。新しい試験は足していない
+
+## 2026-10-30 SCN-MEGA-FIX-VISIBLE-LIST（run 20261030-214453 の反復 1、完了）
+- Done: 可視クラスタの一覧の既定の容量を 6,291,456（混在の最大 約 482 万に約 3 割の余裕）にした変更と、前提の SCN-MEGA-FIX-DRAWLIST-GROWTH（描画コマンドの列の作り直しを 2 世代に抑える）が入った先頭 92e380ae で、verify 2 本と長い撮影（`exit-after-rendered-frames=1200`）を撮り直して閉じた。コードの変更はこの反復では無い
+- 値（1M + 5 万・1% 移動・64 m 区画、RelWithDebInfo・1920×1080）: 通常の撮影は `MEGA_CAPACITY` 29 行、長い撮影は 67 行。両方とも全行 `draw_dropped=0`・`visible_list_overflow=0`、鍵の欠けた行 0、`[ERROR]` 0。`visible_list_capacity` は 6,291,456 の 1 種類、`visible_list_peak` の最大は 4,731,682（通常）・4,731,675（長い）。回収待ちを含む見張りの device の山は両方とも 2,662.6 MiB（frame 724・725、その行の回収待ち 0.0）で 3,072 MiB 以内、最後の live 2,470.1 MiB。`MEGA_STRESS_PLACED entities=50000`、`overview.png` に欠け・穴は無い
+- 証拠: `.harness/runs/20261030-214453/verify-SCN-MEGA-FIX-VISIBLE-LIST-U5.txt`（6 本の終了コード 0・`CAPTURE_SCENE result=pass` 2 本・`CHECK_CAPTURE_METRICS result=pass` 2 本・全行の集計と推移）、撮影 `scene-capture/SCN-MEGA-FIX-VISIBLE-LIST`・`-long`
+- Next: SCN-MEGA-ACCEPT-1M
+- Notes: 前回の評価の残課題のうち「ストリーミングなしの 1% 移動だけの負荷を単独で撮っていない」は今回も撮っていない（verify はストリーミングを含む混在の負荷で、移動だけの山はそれ以下の見込み）。長い撮影は区画の巡りを複数回含み、ピークは 4,731,675 で容量を大きく下回る
