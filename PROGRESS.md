@@ -8294,3 +8294,9 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 判定の本体は `Scripts/Terrain/Regression.py` にあり（`ReferenceCheck.py --regression` から呼ばれる）、項目の paths に無いがここに足した。before の判定だけのときは撮影の欠け・真っ黒・検証レイヤーは見ない（今までどおり after の比べで見る）
 - Notes: 今回の撮影では予算で追い出される形（SCN-RENDER-SPEC-WIDE-ESS の before の resident=0）は再現せず、原因は調べていない。要起票: night-village で VRAM の予算が足りないとき常駐が 0 まで追い出される原因（SCN-WL-GEOM-LOWVRAM の「粗い段で落ち着く」と食い違う見込み。実例は SCN-RENDER-SPEC-WIDE-ESS の before のログ、budget_blocked=7）
 - Notes: 単位の作業ツリー `NorvesLib-1-u1` は `Assets\Models\PolyHaven` が無く、本体のリポジトリへのジャンクションを足して撮った
+## 2026-10-31 SCN-RENDER-ROUGH-STEEP-ENERGY-P1（run 20261030-232538 の反復 2、完了）
+- Done: 反復 1 の差し戻し（枠での verify の再実行の before が 10 分を超えた）を直した。原因は枠の Game の RelWithDebInfo が統合の取り込みより古く、最初の撮影の `-Build` で Game の翻訳単位を全部コンパイルし直した（rendering3dtest の撮影が 320 秒）ことで、night-village の撮影（検証レイヤー付きで約 345 秒）と合わせて上限を超えた。スクリプトは変えていない。枠のビルドが HEAD にそろった状態で回し直すと、`-Build` は何もせず各コマンドが 10 分に収まる
+- verify: 枠で before 389 秒・after 388 秒、どちらも exit 0・`CAPTURE_REGRESSION result=pass`（各撮影 rendering3dtest 20・mega-bananas 13・sandbox 11・night-village 344/343 秒）。4 シーンとも before・after で settled、resident は rendering3dtest 496・mega-bananas 26・sandbox 0・night-village 3325、進行中・evicted・budget_blocked はすべて 0 で、`regression_check.json` の `scenes.<シーン>.geometry_pages.{before,after}.overview` に記録。PSNR は rendering3dtest 76.08・mega-bananas 66.63・sandbox 一致・night-village 69.76 dB
+- 証拠: `.harness/runs/20261030-232538/iter2-verify-before.txt`・`iter2-verify-after.txt`、`.harness/runs/regression/SCN-RENDER-ROUGH-STEEP-ENERGY-P1/{before,after}/`
+- Next: なし
+- Notes: night-village の撮影は検証レイヤー付きで約 1 フレーム/秒になり、1 本で約 345 秒かかる。枠のビルドが古いと最初の `-Build`（約 5 分）と合わせて 10 分を超えるので、統合の取り込みで C++ が変わった直後の再検証は同じ理由で落ちうる。要起票: 回帰の撮影の verify を、ビルドと撮影の別のコマンドに分けるか、night-village の撮影を短くする（検証レイヤーの下の 1 フレーム/秒の原因）
