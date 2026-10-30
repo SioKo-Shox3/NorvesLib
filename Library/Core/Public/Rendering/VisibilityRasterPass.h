@@ -334,6 +334,15 @@ namespace NorvesLib::Core::Rendering
             RHI::BufferPtr MaterialTable;                // フレームの材質の表（MaterialEntry。ホストが書く）
             uint32_t MaterialTableCapacity = 0;          // 要素数（MaterialEntry）
             RHI::DescriptorSetPtr RecordSet;             // 記録を書く計算（引数を作る計算も同じ組を使う）
+            // そのセットに最後に結んだバッファ。組を次に借りる時点では、前の提出の GPU は読了している
+            Container::TWeakPtr<RHI::IBuffer> MegaInstanceBinding;
+            Container::TWeakPtr<RHI::IBuffer> MegaMeshBinding;
+            Container::TWeakPtr<RHI::IBuffer> MegaDrawInfoBinding;
+            Container::TWeakPtr<RHI::IBuffer> RecordIndirectBinding;
+            Container::TWeakPtr<RHI::IBuffer> RecordDrawInfoBinding;
+            Container::TWeakPtr<RHI::IBuffer> RecordTableBinding;
+            Container::TWeakPtr<RHI::IBuffer> MeshRecordTableBinding;
+            Container::TWeakPtr<RHI::IBuffer> SkinnedRecordTableBinding;
             RHI::BufferPtr RecordArgs;                   // 記録を書く計算の間接 dispatch の引数と、区間ごとのグループの先頭の番号
             uint32_t RecordArgsCapacity = 0;             // 区間の表の要素数（パス × 区間）の上限
             RHI::ResourceState RecordArgsState = RHI::ResourceState::Common;
@@ -400,6 +409,9 @@ namespace NorvesLib::Core::Rendering
              */
             bool bSwRasterResources = false;
         };
+
+        /** @brief GPU が読み終えた組から、置き換え前のバッファを結んだセットを手放す */
+        void ReleaseStaleFrameSlotDescriptors(FrameSlot& slot, const MegaGeometryPass::VisibilityDrawPlan* plan);
 
         bool CreateRenderPass();
         bool CreatePipelines(ViewRenderContext& context);

@@ -742,6 +742,22 @@ namespace NorvesLib::Core::Rendering
         NORVES_LOG_INFO("VirtualShadowMapPass",
                         "VRAM_LEDGER vsm_mega_cull mb=%.3f",
                         static_cast<double>(megaBytes) / BytesPerMegabyte);
+#if NORVES_BUILD_DEVELOPMENT
+        if (m_MegaPass)
+        {
+            // Initialize より後に主パスが結ばれても最初の宣言で登録する。登録済みの所有権は主パスが除外する。
+            // 作成時と同じ用途・名前・属性の記述子を渡す（容量は現在のバッファから取る）。
+            const RHI::BufferDesc listDesc(m_MegaList ? m_MegaList->GetSize() : 0u,
+                                          VirtualShadowMap::MegaCullListUsage(), false, "VsmMega_List");
+            const RHI::BufferDesc dirtyDesc(m_MegaDirtyBits ? m_MegaDirtyBits->GetSize() : 0u,
+                                           VirtualShadowMap::MegaDirtyBitsUsage(), false, "VsmMega_DirtyBits");
+            const RHI::BufferDesc chunksDesc(m_MegaChunks ? m_MegaChunks->GetSize() : 0u,
+                                            VirtualShadowMap::MegaChunkUsage(), false, "VsmMega_Chunks");
+            m_MegaPass->NoteGpuSceneBuffer(m_MegaList, listDesc, false);
+            m_MegaPass->NoteGpuSceneBuffer(m_MegaDirtyBits, dirtyDesc, false);
+            m_MegaPass->NoteGpuSceneBuffer(m_MegaChunks, chunksDesc, false);
+        }
+#endif
         m_bInitialized = true;
         return true;
     }
@@ -785,6 +801,22 @@ namespace NorvesLib::Core::Rendering
 
     void VirtualShadowMapPass::Declare(RenderGraphBuilder& builder)
     {
+#if NORVES_BUILD_DEVELOPMENT
+        if (m_MegaPass)
+        {
+            // Initialize より後に主パスが結ばれても最初の宣言で登録する。登録済みの所有権は主パスが除外する。
+            // 作成時と同じ用途・名前・属性の記述子を渡す（容量は現在のバッファから取る）。
+            const RHI::BufferDesc listDesc(m_MegaList ? m_MegaList->GetSize() : 0u,
+                                          VirtualShadowMap::MegaCullListUsage(), false, "VsmMega_List");
+            const RHI::BufferDesc dirtyDesc(m_MegaDirtyBits ? m_MegaDirtyBits->GetSize() : 0u,
+                                           VirtualShadowMap::MegaDirtyBitsUsage(), false, "VsmMega_DirtyBits");
+            const RHI::BufferDesc chunksDesc(m_MegaChunks ? m_MegaChunks->GetSize() : 0u,
+                                            VirtualShadowMap::MegaChunkUsage(), false, "VsmMega_Chunks");
+            m_MegaPass->NoteGpuSceneBuffer(m_MegaList, listDesc, false);
+            m_MegaPass->NoteGpuSceneBuffer(m_MegaDirtyBits, dirtyDesc, false);
+            m_MegaPass->NoteGpuSceneBuffer(m_MegaChunks, chunksDesc, false);
+        }
+#endif
         m_PoolHandle = {};
         m_PageTableHandle = {};
         m_RequestBitsHandle = {};
