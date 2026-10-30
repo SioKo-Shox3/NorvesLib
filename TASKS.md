@@ -3978,7 +3978,7 @@
 - from: SCN-MEGA-FIX-VISIBLE-LIST
 
 ## SCN-RENDER-SPEC-WIDE-ESS: RTGI の鏡面の広いローブの重みを、照明が割り戻す LUT の Ess と同じ G に揃える
-- status: doing
+- status: done
 - done-when: 判断役の判断(`blocked/resolved/SCN-RENDER-SPEC-OCC-VERIFY-REG.md` の指示 1)のとおりにする。
   - 重みの式: `EvaluateGGXVisibleNormalSampleWeight`(`PbrMaterialEvaluation.glsl:143-153`。使うのは `DiffuseIndirect.comp:1455` だけ)の重みを G_Schlick(V)·G_Schlick(L)·(1+Λ(V)) にする。k は roughness²/2、VNDF の pdf の G1(V) は厳密な Smith のままにする。142 行のコメント「重みの平均は A+B」も直す。LUT(`DfgLut.cpp`)とパストレーサーは変えない。
   - 積分での確かめ: LUT の 4096 標本・半精度・256² の補間を再現した独立の積分(`roof-quadrature.py` と同じ作り)を Scripts に置く。粗さ 0.5・0.8・1.0 と N·V 0.1・0.3・0.5・0.9 の全部の組で、重みの平均 ÷ LUT の Ess が 1±0.005 に入らなければ非 0 で終わるようにする。名前を変えたら verify も合わせる。
