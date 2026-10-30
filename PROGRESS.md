@@ -8220,3 +8220,5 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/scene-capture/SCN-RENDER-SPEC-ROOF-HITS/`（roof・interior・roof-hits.json・変種）、`.harness/runs/regression/SCN-RENDER-SPEC-ROOF-HITS/{before,after}/`
 - Next: なし
 - Notes: 残る当たりの 98 % は同じ Cottage の instance の別の面（距離の中央値 0.44 m）で、この 1 標本の分類だけでは全部が正しい反射かは確定していない。6 mm の閾値は近い薄い別の面の取り違え・LOD のずれが 6 mm を超える面の見逃しがありうる。引き直しの分の GPU 時間は測っていない
+- Notes: 再検証で落ちた室内の比べは、正解の置き場 `.harness/runs/scene-capture/SCN-INTERIOR-ROOM-ref`（git 管理外）がこの作業ツリーに無かったため。メインの作業ツリーの同じ置き場（Cycles の `cycles/` と参照の撮影の AOV）を写し、同じ撮影で回し直して 9 行とも pass・`INTERIOR_COMPARE result=pass`（`.harness/runs/20261030-200848/verify-compare-rerun.txt`）。描画とスクリプトは変えていない
+- Notes: 要起票: `--reference .harness/runs/scene-capture/SCN-INTERIOR-ROOM-ref` を verify に持つ項目は、盤面の枠ごとに正解の置き場を写さないと再検証で FileNotFoundError になる
