@@ -3362,7 +3362,7 @@
 - notes: 2026-10-14 SCN-MEGA-ACCEPT-1M の診断から。混在の 2 つの負荷の撮影が本数の違いで fail になるので、下の STREAM-TABLES-DELTA・VISIBLE-LIST・STRESS-GPU より先に閉じる。
 
 ## SCN-MEGA-FIX-VISIBLE-LIST: 混在の負荷で可視クラスタの一覧を溢れさせない
-- status: todo
+- status: done
 - done-when: 1M + 5 万個で可視クラスタの一覧の容量（`visible_list_capacity=4194304`）を `visible_list_peak` 4,820,881〜4,821,043 が超え、1% 移動では SceneReady の前（最大 `draw_dropped=330250`）、ストリーミングでは計測の窓の中でも `draw_dropped=626568` が出る（描かれないクラスタが出る）。容量を混在の最大に余裕を足して決めるか、溢れを読み戻したら次のフレームで広げる（GPU Scene まわりの最大の確保は 3 GB 以内のまま）。完了の条件: 1% 移動とストリーミングの撮影で、ログの全行 `draw_dropped=0`・`visible_list_overflow=0`。
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -Views overview -Build -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -TimeoutSeconds 2400 -GameArgs banana-count=1000000,stress-entities=50000,stress-moving-percent=1,stress-stream-cell=64,stress-batch-cells -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-VISIBLE-LIST`
 - verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-FIX-VISIBLE-LIST`
@@ -3955,7 +3955,7 @@
 - from: SCN-MEGA-FIX-TLAS-REBUILD
 
 ## SCN-MEGA-FIX-DRAWLIST-GROWTH: 読み込み中に描画コマンドの列を何世代も作り直して GPU Scene の山を 3 GB 超えにしない
-- status: todo
+- status: done
 - done-when: 判断役の判断(`blocked/resolved/SCN-MEGA-FIX-VISIBLE-LIST.md` の「次の反復への指示 1」と `blocked/resolved/SCN-MEGA-FIX-VISIBLE-LIST-20261029-174526.md`)のとおりにする。
   - 撮影: SCN-MEGA-FIX-VISIBLE-LIST の verify と同じ引数(1M + 5 万・1% 移動・64 m 区画)で、通常の撮影と長い撮影(`exit-after-rendered-frames=1200`)の両方を撮る。`MEGA_CAPACITY` の全行で次を満たす。
     - `scene_vram_device_peak_mb` ≤ 3,072。見張りは今の形のまま使い、回収待ちを数える 4 フレームの窓を縮めない。
