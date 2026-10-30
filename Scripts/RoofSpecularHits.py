@@ -19,10 +19,10 @@ ITEM = "SCN-RENDER-SPEC-ROOF-HITS"
 DEFAULT_CAPTURE = ROOT / ".harness" / "runs" / "scene-capture" / ITEM
 CAPTURE = DEFAULT_CAPTURE
 BEFORE = ROOT / ".harness" / "runs" / "regression" / ITEM / "before"
-DESTINATION = ROOT.parent / "NorvesLib-1" / ".harness" / "runs"
 LOG = ROOT / ".harness" / "unit-verify.txt"
 SHADER = Path("Assets/Shaders/RTGI/DiffuseIndirect.comp")
 AOV = Path("Assets/Shaders/gbuffer_aov.frag")
+LIGHTING = Path("Assets/Shaders/lighting.frag")
 Y = np.array([0.2126, 0.7152, 0.0722], dtype=np.float64)
 
 
@@ -42,7 +42,7 @@ def run(command: list[str]) -> None:
     for line in process.stdout:
         log(line.rstrip("\r\n"))
     code = process.wait()
-    log(f"COMMAND_EXIT: {code}")
+    log(f"EXIT={code}")
     if code:
         raise RuntimeError(f"コマンドが失敗しました: exit={code}")
 
@@ -119,11 +119,10 @@ def instrument(source: str, variant: str, sample_index: int | None = None) -> st
     anchor = "    vec3 hitRadiance = TraceDiffuseRay("
     source = replace_once(source, anchor,
         "    gRoofFlags += 1.0;\n"
-        "    if (gRoofPrimary > 0.0) gRoofDot = dot(rayDirection, gRoofPrimaryNormal);\n"
         "    gRoofRecording = true;\n" + anchor)
-    anchor = "                                       hitCustomIndex);\n    if (hitCustomIndex == RTGI_NO_HIT)"
-    replacement = """                                       hitCustomIndex);
-    gRoofRecording = false;
+    anchor = "    if (hitCustomIndex == RTGI_NO_HIT)\n    {\n        // 空へ抜けた光線の空の光"
+    replacement = """    gRoofRecording = false;
+    if (gRoofPrimary > 0.0) gRoofDot = dot(rayDirection, gRoofPrimaryNormal);
     if (hitCustomIndex != RTGI_NO_HIT)
     {
         gRoofHit = hitCustomIndex < 2047u ? float(hitCustomIndex + 1u) : -1.0;
@@ -134,7 +133,9 @@ def instrument(source: str, variant: str, sample_index: int | None = None) -> st
         gRoofFlags += 2.0 * gRoofFront;
         gRoofPlane = dot(hitPosition - gRoofPrimaryPoint, gRoofPrimaryNormal);
     }
-    if (hitCustomIndex == RTGI_NO_HIT)"""
+    if (hitCustomIndex == RTGI_NO_HIT)
+    {
+        // 空へ抜けた光線の空の光"""
     source = replace_once(source, anchor, replacement)
     anchor = """    vec3 screenIndirect;
     hitRadiance = SanitizeUnexposedRadiance(hitRadiance) +
@@ -217,6 +218,34 @@ def capture_variant(variant: str, sample_index: int | None = None) -> None:
                 raise RuntimeError(f"シェーダーの復元に失敗しました: {path}")
         log(f"RESTORED original shader bytes after {variant}: " +
             ", ".join(f"{p.relative_to(ROOT)} sha256={hashes[p]}" for p in paths))
+
+
+def capture_lighting_variant(variant: str) -> None:
+    paths = [ROOT / SHADER, ROOT / LIGHTING]
+    original = {path: path.read_bytes() for path in paths}
+    changes = {
+        "off-noao": [(LIGHTING, "return prefilteredColor * reflectance * specularAO * iblIntensity;",
+                       "return prefilteredColor * reflectance * iblIntensity;")],
+        "off-nossao": [(LIGHTING, "ao *= ssao;", "ao *= 1.0;")],
+        "on-nohit": [(LIGHTING, "+ hitRadiance / hitNormalization);", "+ vec3(0.0));")],
+        "on-nowide": [(path, "float wideLobe = EvaluateWideSpecularLobeBlend(roughness);",
+                        "float wideLobe = 0.0;") for path in (LIGHTING, SHADER)],
+    }
+    try:
+        for relative, before, after in changes[variant]:
+            path = ROOT / relative
+            value = path.read_bytes()
+            if value.count(before.encode()) != 1:
+                raise RuntimeError(f"変種の書き換え位置が一意ではありません: {relative} / {before}")
+            path.write_bytes(value.replace(before.encode(), after.encode()))
+        capture_scene("roof-" + variant, ["-GameArgs", "rtgi-specular=off"] if variant.startswith("off-") else [])
+    finally:
+        for path, value in original.items():
+            path.write_bytes(value)
+        for path, value in original.items():
+            if path.read_bytes() != value:
+                raise RuntimeError(f"シェーダーの復元に失敗しました: {path}")
+        log(f"RESTORED original shader bytes after {variant}")
 
 
 def pfm(path: Path) -> np.ndarray:
@@ -378,6 +407,23 @@ def analyze(mapping_path: Path | None) -> dict:
         "same_plane_tolerance_m": .001,
         "short_distance_m": .1,
     }
+    hdr = result["hdr_y_cd_m2"]
+    hdr["on_off_ratio"] = hdr["on"] / hdr["off"]
+    if all((CAPTURE / f"roof-{name}" / "overview.hdr.pfm").is_file()
+           for name in ("off-nossao", "off-noao", "on-nohit", "on-nowide")):
+        values = {name: float((pfm(CAPTURE / f"roof-{name}" / "overview.hdr.pfm")[mask] @ Y).mean())
+                  for name in ("off-nossao", "off-noao", "on-nohit", "on-nowide")}
+        values.update({name: hdr[name] for name in ("off", "on")})
+        result["finite_difference_y_cd_m2"] = {
+            "values": values,
+            "ssao_removed": values["off-nossao"] - values["off"],
+            "remaining_specular_ao_removed": values["off-noao"] - values["off-nossao"],
+            "sky_change": values["on-nohit"] - values["off-noao"],
+            "hit_and_wide_restored": values["on"] - values["on-nohit"],
+            "wide_difference": values["on"] - values["on-nowide"],
+            "total": values["on"] - values["off"],
+        }
+        log("FINITE_DIFFERENCE " + json.dumps(result["finite_difference_y_cd_m2"], ensure_ascii=False))
     (CAPTURE / "roof-hits.json").write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     log(f"ROOF pixels={count} sample_index={sample_index} traced={int(traced.sum())} "
         f"not_traced={int((~traced).sum())} hit={hit_count} fraction={hit_count / count:.6f}")
@@ -406,6 +452,8 @@ def main() -> None:
     parser.add_argument("--reuse-before", action="store_true", help="撮影済みの before を使う")
     parser.add_argument("--skip-before", action="store_true", help="before を残したまま屋根の撮影だけを行う")
     parser.add_argument("--capture-dir", type=Path, default=DEFAULT_CAPTURE, help="撮影物と集計の置き場")
+    parser.add_argument("--variants", action="store_true", help="項ごとの有限差分の変種も撮影する")
+    parser.add_argument("--copy-to", type=Path, help="指定した runs ディレクトリへ撮影物を写す（既定は写さない）")
     parser.add_argument("--mapping", type=Path, help="custom index と物体名の対応を記した JSON")
     args = parser.parse_args()
     CAPTURE = args.capture_dir if args.capture_dir.is_absolute() else ROOT / args.capture_dir
@@ -418,7 +466,8 @@ def main() -> None:
                 raise FileNotFoundError(f"回帰の before がありません: {BEFORE}")
             if "all_ok=1 exit=0" not in (BEFORE / "capture.txt").read_text(encoding="utf-8-sig"):
                 raise RuntimeError("回帰の before が完了していません")
-            shutil.copytree(BEFORE, DESTINATION / "regression" / ITEM / "before", dirs_exist_ok=True)
+            if args.copy_to:
+                shutil.copytree(BEFORE, args.copy_to / "regression" / ITEM / "before", dirs_exist_ok=True)
         if not args.diagnostics_only:
             capture_unmodified("roof-on")
             capture_unmodified("roof-off", ["-GameArgs", "rtgi-specular=off"])
@@ -427,9 +476,12 @@ def main() -> None:
         log(f"SAMPLE_INDEX: {sample_index}")
         for variant in ("geometry", "radiance"):
             capture_variant(variant, sample_index)
+        if args.variants:
+            for variant in ("off-nossao", "off-noao", "on-nohit", "on-nowide"):
+                capture_lighting_variant(variant)
     analyze(args.mapping)
-    if not args.analyze_only and CAPTURE == DEFAULT_CAPTURE:
-        shutil.copytree(CAPTURE, DESTINATION / "scene-capture" / ITEM, dirs_exist_ok=True)
+    if args.copy_to:
+        shutil.copytree(CAPTURE, args.copy_to / "scene-capture" / ITEM, dirs_exist_ok=True)
 
 
 if __name__ == "__main__":
