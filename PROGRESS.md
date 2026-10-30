@@ -8194,3 +8194,4 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 証拠: `.harness/runs/20261029-174526/SCN-MEGA-FIX-STREAM-TABLES-DELTA/`（`u3-unit-verify.txt`: CaptureScene の `CAPTURE_SCENE result=pass`・`CHECK_CAPTURE_METRICS result=pass views=overview`・ログの集計、`metrics.json`・`overview.png`・`overview.Game.log`）
 - Next: なし
 - Notes: 全体の `PrepareSceneTables` の最大（約 123〜129 ms）は開発ビルドの 120 回ごとの照合（`CheckSceneTables`）で、窓の 600 フレームに 5 回。初期の配置の間は予備の不足で全部を作るのが 55 回あり、窓では 0（予備は 49361〜49861 行残る）。この撮影は出し入れが全部 BVH の行で、平らな行の穴は 0（穴の溜まり方は未検証）。あるメッシュの最後のインスタンスを解放すると全部を作る（`full_unused`）。新しい試験は足していない
+- U2 LUT を再現した独立の積分で重みの平均 ÷ Ess を確かめるスクリプトを足す: 着地(直し 0 回)
