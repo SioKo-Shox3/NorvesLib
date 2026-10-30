@@ -3362,7 +3362,7 @@
 - notes: 2026-10-14 SCN-MEGA-ACCEPT-1M の診断から。混在の 2 つの負荷の撮影が本数の違いで fail になるので、下の STREAM-TABLES-DELTA・VISIBLE-LIST・STRESS-GPU より先に閉じる。
 
 ## SCN-MEGA-FIX-VISIBLE-LIST: 混在の負荷で可視クラスタの一覧を溢れさせない
-- status: todo
+- status: done
 - done-when: 1M + 5 万個で可視クラスタの一覧の容量（`visible_list_capacity=4194304`）を `visible_list_peak` 4,820,881〜4,821,043 が超え、1% 移動では SceneReady の前（最大 `draw_dropped=330250`）、ストリーミングでは計測の窓の中でも `draw_dropped=626568` が出る（描かれないクラスタが出る）。容量を混在の最大に余裕を足して決めるか、溢れを読み戻したら次のフレームで広げる（GPU Scene まわりの最大の確保は 3 GB 以内のまま）。完了の条件: 1% 移動とストリーミングの撮影で、ログの全行 `draw_dropped=0`・`visible_list_overflow=0`。
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -Views overview -Build -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -TimeoutSeconds 2400 -GameArgs banana-count=1000000,stress-entities=50000,stress-moving-percent=1,stress-stream-cell=64,stress-batch-cells -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-VISIBLE-LIST`
 - verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-FIX-VISIBLE-LIST`
@@ -3947,7 +3947,7 @@
 - notes: 2026-10-10 SCN-MEGA-STRESS-RESIDENT の撮影で見つかった。14 種類のメッシュ（1 種類が約 1〜19 千クラスタ）を 2500 個置くと `command_capacity=33554432` で描かれ、3300 個以上（5000 個で同じ）では `command_capacity=67108864` に跳ねて、空と床だけが写る（`draw_dropped=0`、検証レイヤーのエラーなし、`MEGA_OCCLUSION` は 44 万クラスタを描いたと報告する）。`NORVES_MEGA_MAX_DRAW_COUNT=1000000` で区間ごとの上限を下げると 5000 個で描かれる（`command_capacity=33554432`）。mega-stress は `--stress-entities` を指定したとき（開発ビルド）、この環境変数が無ければ 1000000 を渡して回避している（`GameApplicationHandler.cpp`）。この回避は区間ごとの容量の上限を縮めるだけで、原因ではない。
 
 ## SCN-MEGA-FIX-TLAS-REBUILD-P1: 撮影の `-RequireAssets` で、バナナを置けなかった撮影を合格にしない
-- status: todo
+- status: done
 - done-when: `Scripts/CaptureScene.ps1` の `-RequireAssets` で、次の 2 つを失敗にする。(1) ログに `MEGA_BANANAS_ASSET_MISSING` か `MEGA_BANANAS_ASSET_INVALID` がある(`$missingAssetPattern` に足す。`-RequireAssets` が無いときは今と同じく警告と `missing_assets` に数える)。(2) `banana-count`・`stress-entities` を指定したのに `MEGA_BANANAS_PLACED`・`MEGA_STRESS_PLACED` の行が無い(今は置いた数が `$null` のとき突き合わせを飛ばしている。1172〜1184 行)。資産を欠かせた起動(例: `--no-cooked-textures`。効かなければ別の欠かせ方)を 1 回撮り、`-RequireAssets` でこの印を理由に失敗することを確かめて、出力を PROGRESS.md に貼る。資産のそろった mega-bananas の撮影は今までどおり合格する。
 - verify: `powershell -NoProfile -Command "if (-not (Select-String -LiteralPath Scripts/CaptureScene.ps1 -Pattern MEGA_BANANAS_ASSET_ -SimpleMatch -Quiet)) { exit 1 }"`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -Views overview -Build -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -TimeoutSeconds 1800 -GameArgs banana-count=10000 -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-TLAS-REBUILD-P1/ok`
@@ -3955,7 +3955,7 @@
 - from: SCN-MEGA-FIX-TLAS-REBUILD
 
 ## SCN-MEGA-FIX-DRAWLIST-GROWTH: 読み込み中に描画コマンドの列を何世代も作り直して GPU Scene の山を 3 GB 超えにしない
-- status: todo
+- status: done
 - done-when: 判断役の判断(`blocked/resolved/SCN-MEGA-FIX-VISIBLE-LIST.md` の「次の反復への指示 1」と `blocked/resolved/SCN-MEGA-FIX-VISIBLE-LIST-20261029-174526.md`)のとおりにする。
   - 撮影: SCN-MEGA-FIX-VISIBLE-LIST の verify と同じ引数(1M + 5 万・1% 移動・64 m 区画)で、通常の撮影と長い撮影(`exit-after-rendered-frames=1200`)の両方を撮る。`MEGA_CAPACITY` の全行で次を満たす。
     - `scene_vram_device_peak_mb` ≤ 3,072。見張りは今の形のまま使い、回収待ちを数える 4 フレームの窓を縮めない。
@@ -3995,7 +3995,7 @@
 - from: SCN-RENDER-SPEC-OCC-VERIFY-REG
 
 ## SCN-RENDER-SPEC-ROOF-HITS: rendering3dtest の屋根の鏡面の光線が何に当たっているかを内訳にし、自己交差なら直し、周りの面なら参照と照合する
-- status: todo
+- status: done
 - done-when: 判断役の判断(`blocked/resolved/SCN-RENDER-SPEC-OCC-VERIFY-REG.md` の指示 2。SCN-RENDER-SPEC-WIDE-ESS とは独立)のとおりにする。
   - 現状: 屋根(誘電体・粗さ 0.26)のブルーム前の HDR の Y が、off の 3,100 から今の形で 3,905 cd/m² になっている(1.26 倍。うち細いローブの当たった面の反射が +974)。
   - 調べ方:
@@ -4048,3 +4048,17 @@
 - verify: `python Scripts/Terrain/ReferenceCheck.py --occlusion --engine-root .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/on --off-root .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/off --reference .harness/runs/scene-capture/SCN-WLR-OCCLUSION-SETS/cycles --regions Scripts/Terrain/ExpectSpecs/occlusion-regions.json --expect Scripts/Terrain/ExpectSpecs/occlusion-accept.json --verify`
 - paths: Docs/RenderingValidation/InteriorLightReference.md, TASKS.md, PROGRESS.md
 - from: SCN-RENDER-SPEC-OCC-VERIFY-OCC
+
+## SCN-RENDER-SPEC-ROOF-HITS-P1: 室内の比べの `--reference` が盤面の枠に無いとき、メインの作業ツリーの同じ置き場を読む
+- status: done
+- done-when: `Scripts/InteriorLightReference.py` の `--reference` の解決を関数 `resolve_reference(path)` にまとめ、次のとおりに動かす。
+  - 今の作業ツリーにその置き場があれば、今までどおりそれを使う。
+  - 無ければ、`git rev-parse --path-format=absolute --git-common-dir` の親(メインの作業ツリー)から同じ相対パスで探し、そこにあればそれを使う。
+  - どちらで見つけたかと絶対パスを `INTERIOR_REFERENCE path=<絶対パス> source=local|main-worktree` の 1 行で出す。
+  - どちらにも無ければ、FileNotFoundError のトレースバックではなく、探した 2 つのパスを書いたメッセージを出して 0 以外で終わる。
+  - 読むのは `--reference` だけで、`--capture` と出力先(`<撮影>/compare/`)は今の作業ツリーのままにする(メインの作業ツリーへは書かない)。
+  - 盤面の枠(`.harness/runs/scene-capture/SCN-INTERIOR-ROOM-ref` が無い作業ツリー)で下の verify を走らせ、`source=main-worktree` で `cycles/` のある置き場に解決することを確かめる。
+  - 正解の置き場(951 MB)は git に入れない。描画のコードは変えない。
+- verify: `python -c "import os, sys; sys.path.insert(0, 'Scripts'); import InteriorLightReference as m; p = m.resolve_reference('.harness/runs/scene-capture/SCN-INTERIOR-ROOM-ref'); assert os.path.isdir(os.path.join(p, 'cycles')), p; print('REF_OK', p)"`
+- paths: Scripts/InteriorLightReference.py
+- from: SCN-RENDER-SPEC-ROOF-HITS

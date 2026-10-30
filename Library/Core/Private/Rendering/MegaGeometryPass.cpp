@@ -205,9 +205,11 @@ namespace NorvesLib::Core::Rendering
 
         // 可視クラスタの全体の列（Common/MegaGeometryCull.glsl の binding 23）。要素は uvec4（席・クラスタの番号・区画・区画の中の位置）で、
         // 全パス通しの固定容量（本数・区間の数によらない）。超えた要素は積まずに数える（MEGA_CAPACITY の visible_list_overflow）。
+        // バナナ 100 万本と mega-stress 5 万個を 1920×1080 で 1% 移動・64 m 区画ストリーミングしたとき、
+        // 列へ積もうとした数は最大約 482 万。既定の容量は約 3 割の余裕を持ち、1 要素につき列 16 バイトと照合の印 4 バイトを取る。
         // 大きさの目安: バナナ 1 万本 overview の 1 パス目で約 36 万クラスタ
         constexpr uint32_t VisibleListBinding = 23;
-        constexpr uint32_t DefaultVisibleListCapacity = 1u << 22;
+        constexpr uint32_t DefaultVisibleListCapacity = 6u << 20;
         // 列の容量。比較の撮影（Game の --wasteland-finest-lod）は見える地形を全部最も細かい段で描き、1 視点で 600 万クラスタを
         // 超えるので、環境変数 NORVES_MEGA_VISIBLE_LIST_CAPACITY（既定の容量〜1 << 25）で広げる（開発ビルドだけ。
         // 最初に呼ばれたときに 1 回だけ読む。シェーダーは結んだバッファの長さで溢れを判定する）
@@ -909,6 +911,15 @@ namespace NorvesLib::Core::Rendering
         m_bUnsetFrameSerialWarned = false;
         m_DummyStatsBuffer.reset();
         m_RetiredBuffers.clear();
+#if NORVES_BUILD_DEVELOPMENT
+        {
+            Thread::ScopedLock lock(m_GpuSceneVramMutex);
+            m_GpuSceneBuffers.clear();
+            m_GpuSceneVramStats = GpuSceneVramStats{};
+            m_GpuSceneDevicePeakBuffers.clear();
+            m_LastLoggedGpuSceneDevicePeakBytes = 0;
+        }
+#endif
         m_OcclusionFrameCount = 0;
         // まだ渡っていない統計は受け取らない（読み戻し先は GPU の完了の後にフレームの持ち主へ戻る）
         m_StatsReadback.CancelPending();
@@ -3559,17 +3570,54 @@ namespace NorvesLib::Core::Rendering
 
     void MegaGeometryPass::ReleaseIdleMeshRegionOwners(uint32_t inFlightIndex, uint64_t frameSerial)
     {
-        if (!m_bFrameSlotMeshOwnersHeld || frameSerial == 0 || inFlightIndex >= FrameUseRingMaxInFlightSlots)
+        if (frameSerial == 0 || inFlightIndex >= FrameUseRingMaxInFlightSlots)
         {
             return;
         }
         // 枠を選ぶと、同じ番号の前のフレーム（GPU の仕事が終わっている）が使った組だけが渡される。
         // インスタンスの無いフレームが飛行中のフレームの数だけ続けば、どの組もメッシュの区画を持たなくなる
         // 前のフレームの表の持ち主は CPU の一覧で、GPU が読むのは組の持ち主なので、すぐ手放してよい
-        m_SceneTables.MeshOwners.clear();
-        m_bSceneTablesValid = false;
+        if (m_bFrameSlotMeshOwnersHeld)
+        {
+            m_SceneTables.MeshOwners.clear();
+            m_bSceneTablesValid = false;
+        }
         m_FrameSlots.BeginFrame(inFlightIndex, frameSerial);
-        m_FrameSlots.ForEachIdleInActiveSlot([](FrameSlot &slot) { slot.MeshRegionOwners.clear(); });
+        m_FrameSlots.ForEachIdleInActiveSlot([this](FrameSlot &slot)
+        {
+            slot.MeshRegionOwners.clear();
+            ReleaseStaleFrameSlotDescriptors(slot);
+        });
+    }
+
+    void MegaGeometryPass::ReleaseStaleFrameSlotDescriptors(FrameSlot &slot)
+    {
+        // この組は同じ枠の前の提出の GPU が読み終えている。今のフレームに借りた組は対象にしない。
+        // 置き換え前のバッファを結んだセットはここで手放し、次に使う段だけ作り直す。
+        const auto releaseIfStale = [this](RHI::DescriptorSetPtr &set, uint64_t &revision)
+        {
+            if (set && revision != 0 && revision != m_DescriptorBufferRevision)
+            {
+                set.reset();
+                revision = 0;
+            }
+        };
+        for (uint32_t index = 0; index < 4; ++index)
+        {
+            releaseIfStale(slot.SceneScatterDescriptorSet[index], slot.SceneScatterBufferRevision[index]);
+        }
+        for (uint32_t passIndex = 0; passIndex < 2; ++passIndex)
+        {
+            releaseIfStale(slot.CullDescriptorSet[passIndex], slot.CullBufferRevision[passIndex]);
+            for (BvhStageDraw &stage : slot.BvhStages[passIndex])
+            {
+                releaseIfStale(stage.DescriptorSet, stage.BufferRevision);
+            }
+        }
+        for (SectionDraw &section : slot.Sections)
+        {
+            releaseIfStale(section.DescriptorSet, section.BufferRevision);
+        }
     }
 
     void MegaGeometryPass::PrepareSceneTables(const MegaGeometryPassCommand &command, RHI::ICommandList *commandList)
@@ -3596,6 +3644,7 @@ namespace NorvesLib::Core::Rendering
         // このフレームの資源の組を 1 つ取り、同じフレームの記録へ渡す（記録は同じ枠・同じ通し番号なら取り直さない）。
         // ページの表の版はここで決め、同じフレームの記録（主の描画・ID のラスタ）と VSM が同じ版を使う
         m_FrameSlots.BeginFrame(command.InFlightIndex, command.RenderFrameSerial);
+        m_FrameSlots.ForEachIdleInActiveSlot([this](FrameSlot &slot) { ReleaseStaleFrameSlotDescriptors(slot); });
         FrameSlot &slot = m_FrameSlots.Acquire();
         uint64_t pageTableBytes = 0;
         if (!SyncPageTable(slot, *command.MegaGeometry, &pageTableBytes) ||
@@ -3738,6 +3787,7 @@ namespace NorvesLib::Core::Rendering
             m_LastRenderFrameSerial = frameSerial;
         }
         m_FrameSlots.BeginFrame(command.InFlightIndex, frameSerial);
+        m_FrameSlots.ForEachIdleInActiveSlot([this](FrameSlot &slot) { ReleaseStaleFrameSlotDescriptors(slot); });
         // 決定的な撮影のエポック（読み込み完了）の最初のフレームから、統計の行に相対フレームの番号を付ける
         // 前のフレームの HZB も時間的な状態なので、エポックの最初のフレームは使わない（読み込み完了までの
         // フレーム数の違いが、エポックの最初のフレームの1パス目の数に出ないようにする）
@@ -3853,21 +3903,6 @@ namespace NorvesLib::Core::Rendering
         // ========================================
         const uint32_t sectionCount = static_cast<uint32_t>(sections.size());
         const uint32_t passCount = bTwoPass ? 2u : 1u;
-        uint64_t commandsPerPass = 0;
-        for (Section &section : sections)
-        {
-            section.Capacity = static_cast<uint32_t>(std::min<uint64_t>(section.ClusterTotal, m_Settings.MaxDrawCount));
-            section.CommandBase = static_cast<uint32_t>(commandsPerPass);
-            commandsPerPass += section.Capacity;
-        }
-        const uint64_t commandsTotal = commandsPerPass * passCount;
-        if (commandsTotal == 0 || commandsTotal > 0x7FFFFFFFull / IndirectCommandBytes)
-        {
-            NORVES_LOG_ERROR("MegaGeometryPass", "MEGA_BATCH_COMMAND_COUNT_INVALID commands=%llu", static_cast<unsigned long long>(commandsTotal));
-            recordEmptyRenderPass();
-            return;
-        }
-
         // 可視クラスタの binning の数え（区間の表の要素ごとにハード/ソフトの 2 区画）と全体の列
         const uint32_t binSlotCount = sectionCount * passCount;
         const uint32_t binCount = binSlotCount * 2u;
@@ -3878,27 +3913,110 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        // 描画・記録・ソフトの一覧を binning の結果で詰めて書くか（全体の列と接頭和・書き出しの計算があるときだけ。
-        // 無ければ判定が区間ごとのコマンドを書く旧の経路）。記録の枠は詰めた並びの位置 P の分で、全体の列の容量と
-        // 全パスのコマンドの数の小さい方（P は列に入った要素の数未満。超えた分は書き出しが描かずに数える）。
-        // P 番の記録用のコマンドは、コマンドのバッファの区間ごとの範囲（全パス）の後ろに置く
-        uint32_t recordSlots = 0;
-        if (m_Settings.bUseBinning && m_BinPrefixPipeline && m_BinScatterPipeline && m_VisibleListBuffer)
+        const uint32_t visibleListCapacity = ResolveVisibleListCapacity();
+        const bool bCanCompact = m_Settings.bUseBinning && m_BinPrefixPipeline && m_BinScatterPipeline && m_VisibleListBuffer;
+        uint64_t commandsPerPass = 0;
+        const auto assignSectionCapacities = [&](bool bUseCompact) -> void
         {
-            recordSlots = static_cast<uint32_t>(std::min<uint64_t>(commandsTotal, ResolveVisibleListCapacity()));
-            if (commandsTotal + recordSlots > 0x7FFFFFFFull / IndirectCommandBytes)
+            commandsPerPass = 0;
+            const uint32_t sectionLimit = bUseCompact ? std::min(m_Settings.MaxDrawCount, visibleListCapacity)
+                                                      : m_Settings.MaxDrawCount;
+            for (Section &section : sections)
+            {
+                section.Capacity = static_cast<uint32_t>(std::min<uint64_t>(section.ClusterTotal, sectionLimit));
+                section.CommandBase = static_cast<uint32_t>(commandsPerPass);
+                commandsPerPass += section.Capacity;
+            }
+        };
+        assignSectionCapacities(bCanCompact);
+        uint64_t commandsTotal = commandsPerPass * passCount;
+
+        // 詰めた経路の記録は全パス共通の可視列の位置を使い、区間ごとのコマンドの後ろへ置く。
+        // バイト位置の上限に収まらなければ、旧の経路の区間容量へ戻す。
+        constexpr uint64_t maxBatchCommands = 0x7FFFFFFFull / IndirectCommandBytes;
+        uint32_t recordSlots = 0;
+        if (bCanCompact)
+        {
+            recordSlots = static_cast<uint32_t>(std::min<uint64_t>(commandsTotal, visibleListCapacity));
+            if (commandsTotal + recordSlots > maxBatchCommands)
             {
                 recordSlots = 0;
             }
+            if (recordSlots == 0)
+            {
+                assignSectionCapacities(false);
+                commandsTotal = commandsPerPass * passCount;
+            }
+        }
+        if (commandsTotal == 0 || commandsTotal > maxBatchCommands)
+        {
+            NORVES_LOG_ERROR("MegaGeometryPass", "MEGA_BATCH_COMMAND_COUNT_INVALID commands=%llu", static_cast<unsigned long long>(commandsTotal));
+            recordEmptyRenderPass();
+            return;
         }
         const bool bCompact = recordSlots != 0;
+        uint64_t commandCeilingPerPass = commandsPerPass;
+        if (bCompact && (commandsTotal + recordSlots > m_CommandCapacity ||
+                         (bSwRasterBin && std::min<uint64_t>(commandsPerPass, visibleListCapacity) > m_SwRasterBufferCapacity)))
+        {
+            // 拡張するときだけ、転送待ちも含む登録済みインスタンスの CPU 情報から天井を求める。
+            // 描画の表には転送完了済みだけを載せたまま、同じメッシュの件数をまとめてから区間へ足す。
+            UnorderedMap<uint64_t, uint64_t> instanceCounts;
+            for (const MegaMeshInstance &instance : m_Instances)
+            {
+                ++instanceCounts[instance.Handle.Id];
+            }
+            VariableArray<Section> knownSections;
+            for (const auto &entry : instanceCounts)
+            {
+                const auto *gpuData = command.MegaGeometry->GetMegaMeshGPUData(MegaGeometry::MegaMeshHandle{entry.first});
+                if (!gpuData || gpuData->ClusterCount == 0 || !ResolveSceneMeshAddressing(*gpuData).IsUsable())
+                {
+                    continue;
+                }
+                size_t sectionIndex = 0;
+                for (; sectionIndex < knownSections.size(); ++sectionIndex)
+                {
+                    const auto *representative = knownSections[sectionIndex].Representative;
+                    if (representative->VertexBuffer.get() == gpuData->VertexBuffer.get() &&
+                        representative->IndexBuffer.get() == gpuData->IndexBuffer.get() &&
+                        IsSameMaterial(representative->Material, gpuData->Material))
+                    {
+                        break;
+                    }
+                }
+                if (sectionIndex == knownSections.size())
+                {
+                    Section section;
+                    section.Representative = gpuData;
+                    knownSections.push_back(section);
+                }
+                knownSections[sectionIndex].ClusterTotal += entry.second * gpuData->ClusterCount;
+            }
+            uint64_t knownClusterTotal = 0;
+            const uint32_t sectionLimit = std::min(m_Settings.MaxDrawCount, visibleListCapacity);
+            for (const Section &section : knownSections)
+            {
+                knownClusterTotal += section.ClusterTotal;
+            }
+            // 実在する区間の枠をまとめて確保し、読み込み中の小さな増分で天井が上がるのを避ける。
+            // 区間の予備は足さず、シーン全体で CPU が知るクラスタ総数を超えて予約しない。
+            const uint64_t knownCommandsPerPass = std::min(knownClusterTotal,
+                static_cast<uint64_t>(knownSections.size()) * sectionLimit);
+            commandCeilingPerPass = std::max(commandsPerPass, knownCommandsPerPass);
+        }
+        const uint64_t commandCeilingTotal = commandCeilingPerPass * passCount;
+        const uint32_t recordSlotCeiling = bCompact
+            ? static_cast<uint32_t>(std::min<uint64_t>(commandCeilingTotal, visibleListCapacity)) : 0u;
+        const uint32_t batchGrowthCeiling = bCompact
+            ? static_cast<uint32_t>(std::min(maxBatchCommands, commandCeilingTotal + recordSlotCeiling)) : 0u;
         const uint32_t recordCommandBase = static_cast<uint32_t>(commandsTotal);
         const uint32_t recordTableWordBase = BinRecordTableWordBase(binSlotCount);
         // 区間のカウンタの語数（詰めた経路は後ろに記録の区間の表）
         const uint32_t drawCountWords = bCompact ? recordTableWordBase + 2u * binSlotCount : binSlotCount;
 
         FrameSlot &frameSlot = preparedSlot ? *preparedSlot : m_FrameSlots.Acquire();
-        if (!EnsureBatchBuffers(static_cast<uint32_t>(commandsTotal) + recordSlots, drawCountWords) ||
+        if (!EnsureBatchBuffers(static_cast<uint32_t>(commandsTotal) + recordSlots, drawCountWords, batchGrowthCeiling) ||
             !EnsureFrameSlot(frameSlot, sectionCount * passCount, sectionCount) ||
             (bvhInstanceCount > 0 &&
              (!EnsureBvhStageResources(frameSlot, 0, bvhLevelCount + 2u) ||
@@ -3916,8 +4034,11 @@ namespace NorvesLib::Core::Rendering
         }
 
         // ソフトウェアラスタの一覧。作れなければ振り分けずにハードだけで描く
-        const uint32_t swRasterCapacity = static_cast<uint32_t>(commandsPerPass);
-        if (bSwRasterBin && !EnsureSwRasterBuffer(swRasterCapacity))
+        const uint32_t swRasterCapacity = static_cast<uint32_t>(bCompact ? std::min<uint64_t>(commandsPerPass, visibleListCapacity)
+                                                                         : commandsPerPass);
+        const uint32_t swRasterCeiling = bCompact
+            ? static_cast<uint32_t>(std::min<uint64_t>(commandCeilingPerPass, visibleListCapacity)) : 0u;
+        if (bSwRasterBin && !EnsureSwRasterBuffer(swRasterCapacity, swRasterCeiling))
         {
             if (!m_bSwRasterFallbackLogged)
             {
@@ -3984,7 +4105,7 @@ namespace NorvesLib::Core::Rendering
         for (uint32_t sectionIndex = 0; sectionIndex < sectionCount; ++sectionIndex)
         {
             const auto *gpuData = sections[sectionIndex].Representative;
-            const SectionDraw &sectionDraw = frameSlot.Sections[sectionIndex];
+            SectionDraw &sectionDraw = frameSlot.Sections[sectionIndex];
 
             SectionUniformData uniform{};
             cameraConstants.CopyShaderView(uniform.View);
@@ -4175,6 +4296,7 @@ namespace NorvesLib::Core::Rendering
                                              static_cast<uint32_t>(m_DrawInfoBuffer->GetSize()));
 
             descriptorSet->Update();
+            sectionDraw.BufferRevision = m_DescriptorBufferRevision;
         }
 
         // ========================================
@@ -4405,7 +4527,7 @@ namespace NorvesLib::Core::Rendering
             // 2. カリングディスクリプタセット（平らな判定と BVH の各段で、UBO だけが違う）
             // ----------------------------------------
             const auto bindCullDescriptors = [&](const RHI::DescriptorSetPtr &descriptorSet,
-                                                 const RHI::BufferPtr &cullUniformBuffer) -> void
+                                                 const RHI::BufferPtr &cullUniformBuffer, uint64_t &bufferRevision) -> void
             {
                 descriptorSet->BindConstantBuffer(0, cullUniformBuffer, 0,
                                                   static_cast<uint32_t>(sizeof(CullUniformData)));
@@ -4466,6 +4588,7 @@ namespace NorvesLib::Core::Rendering
                                                  static_cast<uint32_t>(m_BinCounterBuffer->GetSize()));
                 descriptorSet->BindStorageBuffer(BinCheckMarkBinding, binMarks, 0, static_cast<uint32_t>(binMarks->GetSize()));
                 descriptorSet->Update();
+                bufferRevision = m_DescriptorBufferRevision;
             };
 
             // 1次元のスレッド数を、x 方向の上限を避けて2次元のワークグループで出す
@@ -4482,7 +4605,7 @@ namespace NorvesLib::Core::Rendering
             //    このパスのセットは binning の接頭和・照合も使うので、平らな判定が無いパスでも結ぶ
             // ----------------------------------------
             const RHI::DescriptorSetPtr &cullDescriptorSet = frameSlot.CullDescriptorSet[passIndex];
-            bindCullDescriptors(cullDescriptorSet, frameSlot.CullUniform[passIndex]);
+            bindCullDescriptors(cullDescriptorSet, frameSlot.CullUniform[passIndex], frameSlot.CullBufferRevision[passIndex]);
             if (totalGroups > 0)
             {
                 cmdList->SetPipeline(m_CullPipeline);
@@ -4575,9 +4698,9 @@ namespace NorvesLib::Core::Rendering
                     rangeUniform.BvhStage = BvhStageRanges;
                     rangeUniform.BvhNextBase = bvhNodeQueueBase(0);
                     rangeUniform.BvhLeafBase = bvhLeafQueueBase;
-                    const BvhStageDraw &rangeDraw = frameSlot.BvhStages[passIndex][bvhLevelCount + 1u];
+                    BvhStageDraw &rangeDraw = frameSlot.BvhStages[passIndex][bvhLevelCount + 1u];
                     rangeDraw.Uniform->Update(&rangeUniform, sizeof(CullUniformData));
-                    bindCullDescriptors(rangeDraw.DescriptorSet, rangeDraw.Uniform);
+                    bindCullDescriptors(rangeDraw.DescriptorSet, rangeDraw.Uniform, rangeDraw.BufferRevision);
                     cmdList->SetDescriptorSet(rangeDraw.DescriptorSet, 0);
                     dispatchThreads(bvhRangeCount);
                     // 席の段が、範囲の段が積んだ一覧・カウンタと引数を読む
@@ -4615,9 +4738,9 @@ namespace NorvesLib::Core::Rendering
                     stageUniform.bBvhSeatsFromRanges = (stage == 0 && bSeatsFromRanges) ? BvhSeatsFromRanges : BvhSeatsFromRoots;
                     stageUniform.BvhNextBase = bvhNodeQueueBase(stage + 1u);
                     stageUniform.BvhLeafBase = bvhLeafQueueBase;
-                    const BvhStageDraw &stageDraw = frameSlot.BvhStages[passIndex][stage];
+                    BvhStageDraw &stageDraw = frameSlot.BvhStages[passIndex][stage];
                     stageDraw.Uniform->Update(&stageUniform, sizeof(CullUniformData));
-                    bindCullDescriptors(stageDraw.DescriptorSet, stageDraw.Uniform);
+                    bindCullDescriptors(stageDraw.DescriptorSet, stageDraw.Uniform, stageDraw.BufferRevision);
                     cmdList->SetDescriptorSet(stageDraw.DescriptorSet, 0);
                     bool bDispatched = true;
                     if (stage == 0 && !bSeatsFromRanges)
@@ -4653,9 +4776,9 @@ namespace NorvesLib::Core::Rendering
                             CullUniformData deferUniform = stageUniform;
                             deferUniform.BvhStage = bvhStage;
                             deferUniform.bBvhSeatsFromRanges = seatsFrom;
-                            const BvhStageDraw &deferDraw = frameSlot.BvhStages[passIndex][slotIndex];
+                            BvhStageDraw &deferDraw = frameSlot.BvhStages[passIndex][slotIndex];
                             deferDraw.Uniform->Update(&deferUniform, sizeof(CullUniformData));
-                            bindCullDescriptors(deferDraw.DescriptorSet, deferDraw.Uniform);
+                            bindCullDescriptors(deferDraw.DescriptorSet, deferDraw.Uniform, deferDraw.BufferRevision);
                             cmdList->SetDescriptorSet(deferDraw.DescriptorSet, 0);
                             if (!cmdList->DispatchIndirect(m_BvhPass2Buffer, static_cast<uint64_t>(argsWord) * sizeof(uint32_t)))
                             {
@@ -4673,9 +4796,9 @@ namespace NorvesLib::Core::Rendering
                         barrierClusterWrites();
                         CullUniformData deferUniform = stageUniform;
                         deferUniform.BvhStage = BvhStageDeferredClusters;
-                        const BvhStageDraw &deferDraw = frameSlot.BvhStages[passIndex][bvhLevelCount + 4u];
+                        BvhStageDraw &deferDraw = frameSlot.BvhStages[passIndex][bvhLevelCount + 4u];
                         deferDraw.Uniform->Update(&deferUniform, sizeof(CullUniformData));
-                        bindCullDescriptors(deferDraw.DescriptorSet, deferDraw.Uniform);
+                        bindCullDescriptors(deferDraw.DescriptorSet, deferDraw.Uniform, deferDraw.BufferRevision);
                         cmdList->SetDescriptorSet(deferDraw.DescriptorSet, 0);
                         if (!cmdList->DispatchIndirect(m_BvhPass2Buffer, static_cast<uint64_t>(BvhDeferClusterArgsWord) * sizeof(uint32_t)))
                         {
@@ -4816,6 +4939,7 @@ namespace NorvesLib::Core::Rendering
             // （接頭和が区間のカウンタの後ろに書いた記録の区間の表と、書き出しが書いた P 番の記録用のコマンド）
             plan.bCompactRecords = bCompact;
             plan.RecordSlots = bCompact ? recordSlots : static_cast<uint32_t>(commandsTotal);
+            plan.RecordSlotCeiling = recordSlotCeiling;
             plan.RecordCommandBase = bCompact ? recordCommandBase : 0u;
             plan.RecordSectionBuffer = bCompact ? m_DrawCountBuffer : frameSlot.SectionBuffer;
             plan.RecordSectionOffset = bCompact ? static_cast<uint64_t>(recordTableWordBase) * sizeof(uint32_t) : 0u;
@@ -5081,6 +5205,9 @@ namespace NorvesLib::Core::Rendering
         }
 
         ReleaseStaleBuffers();
+#if NORVES_BUILD_DEVELOPMENT
+        UpdateGpuSceneVram();
+#endif
     }
 
     bool MegaGeometryPass::TakeVisibilityDrawPlan(VisibilityDrawPlan &outPlan)
@@ -5329,6 +5456,9 @@ namespace NorvesLib::Core::Rendering
             false,
             "MegaGeometry_DummyStats");
         m_DummyStatsBuffer = device->CreateBuffer(dummyStatsDesc);
+#if NORVES_BUILD_DEVELOPMENT
+        NoteGpuSceneBuffer(m_DummyStatsBuffer, dummyStatsDesc, false);
+#endif
         if (!m_DummyStatsBuffer)
         {
             return false;
@@ -5357,6 +5487,9 @@ namespace NorvesLib::Core::Rendering
                                     false,
                                     "MegaGeometry_BvhCounters");
         m_BvhCounterBuffer = m_Device->CreateBuffer(counterDesc);
+#if NORVES_BUILD_DEVELOPMENT
+        NoteGpuSceneBuffer(m_BvhCounterBuffer, counterDesc, false);
+#endif
         return m_BvhCounterBuffer != nullptr;
     }
 
@@ -5382,6 +5515,9 @@ namespace NorvesLib::Core::Rendering
             {
                 RHI::BufferDesc queueDesc(queueBytes, RHI::ResourceUsage::StorageBuffer, false, "MegaGeometry_BvhQueue");
                 queueBuffer = m_Device->CreateBuffer(queueDesc);
+#if NORVES_BUILD_DEVELOPMENT
+                NoteGpuSceneBuffer(queueBuffer, queueDesc, false);
+#endif
             }
             if (!pass2Buffer)
             {
@@ -5392,6 +5528,9 @@ namespace NorvesLib::Core::Rendering
                                           false,
                                           "MegaGeometry_BvhPass2Deferred");
                 pass2Buffer = m_Device->CreateBuffer(pass2Desc);
+#if NORVES_BUILD_DEVELOPMENT
+                NoteGpuSceneBuffer(pass2Buffer, pass2Desc, false);
+#endif
             }
         }
         catch (const std::exception &exception)
@@ -5439,7 +5578,7 @@ namespace NorvesLib::Core::Rendering
         return true;
     }
 
-    bool MegaGeometryPass::EnsureSwRasterBuffer(uint32_t capacity)
+    bool MegaGeometryPass::EnsureSwRasterBuffer(uint32_t capacity, uint32_t growthCeiling)
     {
         if (!m_Device || capacity == 0)
         {
@@ -5450,7 +5589,10 @@ namespace NorvesLib::Core::Rendering
             return true;
         }
 
-        const uint32_t newCapacity = NextPowerOfTwo(std::max(capacity, m_SwRasterBufferCapacity));
+        // 最初は必要数で作り、詰めた経路の拡張では CPU が把握している天井まで広げる。
+        const uint32_t newCapacity = growthCeiling != 0
+            ? std::max(capacity, m_SwRasterBuffer ? growthCeiling : 0u)
+            : NextPowerOfTwo(std::max(capacity, m_SwRasterBufferCapacity));
         const uint64_t words = static_cast<uint64_t>(SwRasterHeaderWords) + 2ull * newCapacity;
         // 頭は間接 dispatch の引数になるので IndirectBuffer も持つ。頭は FillBuffer で 0 にする
         RHI::BufferDesc desc(words * sizeof(uint32_t),
@@ -5458,6 +5600,9 @@ namespace NorvesLib::Core::Rendering
                              false,
                              "MegaGeometry_SwRaster");
         RHI::BufferPtr buffer = m_Device->CreateBuffer(desc);
+#if NORVES_BUILD_DEVELOPMENT
+        NoteGpuSceneBuffer(buffer, desc, false);
+#endif
         if (!buffer)
         {
             return false;
@@ -5467,6 +5612,7 @@ namespace NorvesLib::Core::Rendering
         if (m_SwRasterBuffer)
         {
             m_RetiredBuffers.push_back(RetiredBuffer{m_SwRasterBuffer, m_RenderFrameCount});
+            ++m_DescriptorBufferRevision;
         }
         m_SwRasterBuffer = buffer;
         m_SwRasterBufferCapacity = newCapacity;
@@ -5500,6 +5646,9 @@ namespace NorvesLib::Core::Rendering
                                  false,
                                  "MegaGeometry_BinCounters");
             RHI::BufferPtr buffer = m_Device->CreateBuffer(desc);
+#if NORVES_BUILD_DEVELOPMENT
+            NoteGpuSceneBuffer(buffer, desc, false);
+#endif
             if (!buffer)
             {
                 return false;
@@ -5508,6 +5657,7 @@ namespace NorvesLib::Core::Rendering
             if (m_BinCounterBuffer)
             {
                 m_RetiredBuffers.push_back(RetiredBuffer{m_BinCounterBuffer, m_RenderFrameCount});
+                ++m_DescriptorBufferRevision;
             }
             m_BinCounterBuffer = buffer;
             m_BinCounterCapacity = newWords;
@@ -5528,6 +5678,9 @@ namespace NorvesLib::Core::Rendering
             {
                 RHI::BufferDesc listDesc(visibleListBytes, RHI::ResourceUsage::StorageBuffer, false, "MegaGeometry_VisibleList");
                 listBuffer = m_Device->CreateBuffer(listDesc);
+#if NORVES_BUILD_DEVELOPMENT
+                NoteGpuSceneBuffer(listBuffer, listDesc, false);
+#endif
                 if (bWantMarks)
                 {
                     RHI::BufferDesc markDesc(markBytes,
@@ -5535,6 +5688,9 @@ namespace NorvesLib::Core::Rendering
                                              false,
                                              "MegaGeometry_BinCheckMarks");
                     markBuffer = m_Device->CreateBuffer(markDesc);
+#if NORVES_BUILD_DEVELOPMENT
+                    NoteGpuSceneBuffer(markBuffer, markDesc, true);
+#endif
                 }
                 if (!listBuffer || (bWantMarks && !markBuffer))
                 {
@@ -5590,6 +5746,9 @@ namespace NorvesLib::Core::Rendering
                                  true,
                                  "MegaGeometry_BvhCullUBO");
             stageDraw.Uniform = m_Device->CreateBuffer(desc);
+#if NORVES_BUILD_DEVELOPMENT
+            NoteGpuSceneBuffer(stageDraw.Uniform, desc, false);
+#endif
             stageDraw.DescriptorSet = m_Device->CreateDescriptorSet(cullDsDesc);
             if (!stageDraw.Uniform || !stageDraw.DescriptorSet)
             {
@@ -5597,10 +5756,23 @@ namespace NorvesLib::Core::Rendering
             }
             slot.BvhStages[passIndex].push_back(stageDraw);
         }
+        // 使わない間に古いセットを手放した段は、再び使うときだけ作る。
+        for (uint32_t index = 0; index < stageCount; ++index)
+        {
+            BvhStageDraw &stageDraw = slot.BvhStages[passIndex][index];
+            if (!stageDraw.DescriptorSet)
+            {
+                stageDraw.DescriptorSet = m_Device->CreateDescriptorSet(cullDsDesc);
+                if (!stageDraw.DescriptorSet)
+                {
+                    return false;
+                }
+            }
+        }
         return true;
     }
 
-    bool MegaGeometryPass::EnsureBatchBuffers(uint32_t commandCapacity, uint32_t counterCapacity)
+    bool MegaGeometryPass::EnsureBatchBuffers(uint32_t commandCapacity, uint32_t counterCapacity, uint32_t growthCeiling)
     {
         if (!m_Device)
         {
@@ -5613,7 +5785,43 @@ namespace NorvesLib::Core::Rendering
             return true;
         }
 
-        const uint32_t newCommandCapacity = RoundUpCommandCapacity(std::max(commandCapacity, m_CommandCapacity));
+        // 区間のカウンタだけが不足したとき、大きなコマンドと描画情報の列は作り直さない。
+        if (growthCeiling != 0 && m_IndirectDrawBuffer && m_DrawInfoBuffer && commandCapacity <= m_CommandCapacity)
+        {
+            const uint32_t newCounterCapacity = NextPowerOfTwo(std::max(counterCapacity, m_CounterCapacity));
+            RHI::BufferDesc countDesc(static_cast<uint64_t>(newCounterCapacity) * sizeof(uint32_t),
+                                      RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::IndirectBuffer | RHI::ResourceUsage::TransferDst,
+                                      false,
+                                      "MegaGeometry_DrawCount");
+            RHI::BufferPtr countBuffer = m_Device->CreateBuffer(countDesc);
+#if NORVES_BUILD_DEVELOPMENT
+            NoteGpuSceneBuffer(countBuffer, countDesc, false);
+#endif
+            if (!countBuffer)
+            {
+                return false;
+            }
+            if (m_DrawCountBuffer)
+            {
+                m_RetiredBuffers.push_back(RetiredBuffer{m_DrawCountBuffer, m_RenderFrameCount});
+                ++m_DescriptorBufferRevision;
+            }
+            m_DrawCountBuffer = countBuffer;
+            m_CounterCapacity = newCounterCapacity;
+            NORVES_LOG_INFO("MegaGeometryPass",
+                            "VRAM_LEDGER mega_batch mb=%.2f command_capacity=%u counter_capacity=%u",
+                            static_cast<double>(m_IndirectDrawBuffer->GetSize() + countDesc.Size + m_DrawInfoBuffer->GetSize()) / (1024.0 * 1024.0),
+                            m_CommandCapacity,
+                            m_CounterCapacity);
+            return true;
+        }
+
+        // 最初は必要数で作り、詰めた経路の拡張では丸めずにシーンの天井まで一度に広げる。
+        const uint32_t requestedCapacity = growthCeiling != 0 && m_IndirectDrawBuffer
+            ? std::max(commandCapacity, growthCeiling) : commandCapacity;
+        const uint32_t newCommandCapacity = growthCeiling != 0
+            ? std::max(requestedCapacity, m_CommandCapacity)
+            : RoundUpCommandCapacity(std::max(commandCapacity, m_CommandCapacity));
         const uint32_t newCounterCapacity = NextPowerOfTwo(std::max(counterCapacity, m_CounterCapacity));
 
         // IndirectDrawコマンドバッファ (SSBO + IndirectBuffer)
@@ -5623,6 +5831,9 @@ namespace NorvesLib::Core::Rendering
             false,
             "MegaGeometry_IndirectDraw");
         RHI::BufferPtr indirectBuffer = m_Device->CreateBuffer(indirectDesc);
+#if NORVES_BUILD_DEVELOPMENT
+        NoteGpuSceneBuffer(indirectBuffer, indirectDesc, false);
+#endif
 
         // 区間ごとのカウンタ（atomic counter用 SSBO。DrawIndexedIndirectCount のカウントバッファも兼ねる）
         RHI::BufferDesc countDesc(
@@ -5631,6 +5842,9 @@ namespace NorvesLib::Core::Rendering
             false,
             "MegaGeometry_DrawCount");
         RHI::BufferPtr countBuffer = m_Device->CreateBuffer(countDesc);
+#if NORVES_BUILD_DEVELOPMENT
+        NoteGpuSceneBuffer(countBuffer, countDesc, false);
+#endif
 
         // コマンドごとの描画情報（インスタンスの番号・payload）。カリングが書き、頂点シェーダーが読む
         RHI::BufferDesc drawInfoDesc(
@@ -5639,6 +5853,9 @@ namespace NorvesLib::Core::Rendering
             false,
             "MegaGeometry_DrawInfo");
         RHI::BufferPtr drawInfoBuffer = m_Device->CreateBuffer(drawInfoDesc);
+#if NORVES_BUILD_DEVELOPMENT
+        NoteGpuSceneBuffer(drawInfoBuffer, drawInfoDesc, false);
+#endif
 
         if (!indirectBuffer || !countBuffer || !drawInfoBuffer)
         {
@@ -5646,6 +5863,10 @@ namespace NorvesLib::Core::Rendering
         }
 
         // 古いバッファは、直前のフレームのGPUがまだ使っているかもしれないので、しばらく保持してから破棄する
+        if (m_IndirectDrawBuffer || m_DrawCountBuffer || m_DrawInfoBuffer)
+        {
+            ++m_DescriptorBufferRevision;
+        }
         for (RHI::BufferPtr *old : {&m_IndirectDrawBuffer, &m_DrawCountBuffer, &m_DrawInfoBuffer})
         {
             if (*old)
@@ -5796,6 +6017,9 @@ namespace NorvesLib::Core::Rendering
                              false,
                              debugName);
         RHI::BufferPtr newBuffer = m_Device->CreateBuffer(desc);
+#if NORVES_BUILD_DEVELOPMENT
+        NoteGpuSceneBuffer(newBuffer, desc, false);
+#endif
         if (!newBuffer)
         {
             return false;
@@ -5819,6 +6043,7 @@ namespace NorvesLib::Core::Rendering
             }
             // 古い表は、前のフレームの GPU がまだ読んでいるかもしれない（このフレームのコピーも読む）ので、しばらく保持してから破棄する
             m_RetiredBuffers.push_back(RetiredBuffer{buffer, m_RenderFrameCount});
+            ++m_DescriptorBufferRevision;
         }
         buffer = newBuffer;
         capacity = newCapacity;
@@ -6344,6 +6569,9 @@ namespace NorvesLib::Core::Rendering
             RHI::BufferDesc desc(capacity, RHI::ResourceUsage::StorageBuffer, true, "MegaGeometry_SceneStaging");
             RHI::FrameResourceProtectedCreationScope protectedCreation;
             RHI::BufferPtr buffer = m_Device->CreateBuffer(desc);
+#if NORVES_BUILD_DEVELOPMENT
+            NoteGpuSceneBuffer(buffer, desc, false);
+#endif
             if (!buffer)
             {
                 invalidateCopies();
@@ -6369,7 +6597,7 @@ namespace NorvesLib::Core::Rendering
             }
         }
         const auto bindTables = [this, &slot](const RHI::DescriptorSetPtr &descriptorSet, uint64_t offsetWords,
-                                              uint64_t sizeWords) -> void
+                                              uint64_t sizeWords, uint32_t index) -> void
         {
             descriptorSet->BindStorageBuffer(0, slot.SceneStaging, static_cast<uint32_t>(offsetWords * sizeof(uint32_t)),
                                              static_cast<uint32_t>(sizeWords * sizeof(uint32_t)));
@@ -6380,6 +6608,7 @@ namespace NorvesLib::Core::Rendering
             descriptorSet->BindStorageBuffer(4, m_MeshTableBuffer, 0, static_cast<uint32_t>(m_MeshTableBuffer->GetSize()));
             descriptorSet->BindStorageBuffer(5, m_RangeBoundsBuffer, 0, static_cast<uint32_t>(m_RangeBoundsBuffer->GetSize()));
             descriptorSet->Update();
+            slot.SceneScatterBufferRevision[index] = m_DescriptorBufferRevision;
         };
         const auto dispatchRecords = [commandList](uint64_t records) -> void
         {
@@ -6400,7 +6629,7 @@ namespace NorvesLib::Core::Rendering
         commandList->SetPipeline(m_SceneScatterPipeline);
         if (rowRegionWords > 0)
         {
-            bindTables(slot.SceneScatterDescriptorSet[0], 0u, rowRegionWords);
+            bindTables(slot.SceneScatterDescriptorSet[0], 0u, rowRegionWords, 0u);
             commandList->SetDescriptorSet(slot.SceneScatterDescriptorSet[0], 0);
             dispatchRecords(rowCount);
             // 段 1 が席の表から描く順の表を組むので、段 0 の書き込みを見せる
@@ -6408,7 +6637,7 @@ namespace NorvesLib::Core::Rendering
         }
         if (tableRegionWords > 0)
         {
-            bindTables(slot.SceneScatterDescriptorSet[1], tableRegionOffsetWords, tableRegionWords);
+            bindTables(slot.SceneScatterDescriptorSet[1], tableRegionOffsetWords, tableRegionWords, 1u);
             commandList->SetDescriptorSet(slot.SceneScatterDescriptorSet[1], 0);
             dispatchRecords(tableRecords);
         }
@@ -6417,7 +6646,7 @@ namespace NorvesLib::Core::Rendering
             // 段 3 が段 1 の写したメッシュの行（クラスタ配列のアドレス・ホストの球）を読んで半径を広げるので、段 1 の書き込みを見せる。
             // 段 2 はこの後のバリアの後に、広げた半径を読む
             commandList->BufferBarrier(m_MeshTableBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
-            bindTables(slot.SceneScatterDescriptorSet[3], boundsRegionOffsetWords, boundsRegionWords);
+            bindTables(slot.SceneScatterDescriptorSet[3], boundsRegionOffsetWords, boundsRegionWords, 3u);
             commandList->SetDescriptorSet(slot.SceneScatterDescriptorSet[3], 0);
             // 1 ワークグループ（64 スレッド）= 1 メッシュ
             dispatchRecords(static_cast<uint64_t>(meshRecords) * 64u);
@@ -6427,7 +6656,7 @@ namespace NorvesLib::Core::Rendering
             // 段 2 が段 1 の書いた描く順の表とメッシュの表から範囲の境界を作るので、段 1 の書き込みを見せる
             commandList->BufferBarrier(m_InstanceTableBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
             commandList->BufferBarrier(m_MeshTableBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
-            bindTables(slot.SceneScatterDescriptorSet[2], rangeRegionOffsetWords, rangeRegionWords);
+            bindTables(slot.SceneScatterDescriptorSet[2], rangeRegionOffsetWords, rangeRegionWords, 2u);
             commandList->SetDescriptorSet(slot.SceneScatterDescriptorSet[2], 0);
             // 1 ワークグループ = 1 範囲
             dispatchRecords(static_cast<uint64_t>(rangeRecords) * BvhRangeSeats);
@@ -6586,6 +6815,9 @@ namespace NorvesLib::Core::Rendering
                                  "MegaGeometry_SceneCheckReadback");
             RHI::FrameResourceProtectedCreationScope protectedCreation;
             slot.SceneCheckReadback = m_Device->CreateBuffer(desc);
+#if NORVES_BUILD_DEVELOPMENT
+            NoteGpuSceneBuffer(slot.SceneCheckReadback, desc, true);
+#endif
             slot.SceneCheckCapacity = slot.SceneCheckReadback ? totalBytes : 0u;
             if (!slot.SceneCheckReadback)
             {
@@ -6756,6 +6988,9 @@ namespace NorvesLib::Core::Rendering
                                  true,
                                  "MegaGeometry_SectionTable");
             RHI::BufferPtr buffer = m_Device->CreateBuffer(desc);
+#if NORVES_BUILD_DEVELOPMENT
+            NoteGpuSceneBuffer(buffer, desc, false);
+#endif
             if (!buffer)
             {
                 return false;
@@ -6774,6 +7009,9 @@ namespace NorvesLib::Core::Rendering
                                      true,
                                      "MegaGeometry_CullUBO");
                 slot.CullUniform[passIndex] = m_Device->CreateBuffer(desc);
+#if NORVES_BUILD_DEVELOPMENT
+                NoteGpuSceneBuffer(slot.CullUniform[passIndex], desc, false);
+#endif
             }
             if (!slot.CullDescriptorSet[passIndex])
             {
@@ -6796,12 +7034,35 @@ namespace NorvesLib::Core::Rendering
                                      "MegaGeometry_DrawUBO");
                 SectionDraw sectionDraw;
                 sectionDraw.Uniform = m_Device->CreateBuffer(desc);
+#if NORVES_BUILD_DEVELOPMENT
+                NoteGpuSceneBuffer(sectionDraw.Uniform, desc, false);
+#endif
                 sectionDraw.DescriptorSet = m_Device->CreateDescriptorSet(drawDsDesc);
                 if (!sectionDraw.Uniform || !sectionDraw.DescriptorSet)
                 {
                     return false;
                 }
                 slot.Sections.push_back(sectionDraw);
+            }
+        }
+        // 区間の数が再び増えたとき、手放したセットをその区間だけ作り直す。
+        RHI::DescriptorSetDesc drawDsDesc;
+        bool bHaveDrawDsDesc = false;
+        for (uint32_t index = 0; index < sectionCount; ++index)
+        {
+            SectionDraw &section = slot.Sections[index];
+            if (!section.DescriptorSet)
+            {
+                if (!bHaveDrawDsDesc)
+                {
+                    drawDsDesc = BuildDrawDescriptorSetDesc();
+                    bHaveDrawDsDesc = true;
+                }
+                section.DescriptorSet = m_Device->CreateDescriptorSet(drawDsDesc);
+                if (!section.DescriptorSet)
+                {
+                    return false;
+                }
             }
         }
 
@@ -6839,6 +7100,9 @@ namespace NorvesLib::Core::Rendering
                                  "MegaGeometry_PageTable");
             RHI::FrameResourceProtectedCreationScope protectedCreation;
             RHI::BufferPtr buffer = m_Device->CreateBuffer(desc);
+#if NORVES_BUILD_DEVELOPMENT
+            NoteGpuSceneBuffer(buffer, desc, false);
+#endif
             if (!buffer)
             {
                 return false;
@@ -7224,6 +7488,159 @@ namespace NorvesLib::Core::Rendering
 #endif
     }
 
+#if NORVES_BUILD_DEVELOPMENT
+    void MegaGeometryPass::NoteGpuSceneBuffer(const RHI::BufferPtr& buffer, const RHI::BufferDesc& desc,
+                                               bool bDevelopmentOnly)
+    {
+        if (!buffer)
+        {
+            return;
+        }
+        Thread::ScopedLock lock(m_GpuSceneVramMutex);
+        for (const GpuSceneBufferAllocation& allocation : m_GpuSceneBuffers)
+        {
+            // アドレスが再利用されても別の確保として数えられるよう、所有権を比較する。
+            if (!allocation.Buffer.owner_before(buffer) && !buffer.owner_before(allocation.Buffer))
+            {
+                return;
+            }
+        }
+        GpuSceneBufferAllocation allocation;
+        allocation.Buffer = buffer;
+        allocation.Bytes = buffer->GetSize();
+        allocation.Name = desc.DebugName ? desc.DebugName : "unnamed";
+        allocation.bCPUAccessible = desc.CPUAccessible;
+        allocation.bExcludeDeviceLocal = desc.bExcludeDeviceLocal;
+        allocation.bDevelopmentOnly = bDevelopmentOnly;
+        m_GpuSceneBuffers.push_back(std::move(allocation));
+    }
+
+    void MegaGeometryPass::UpdateGpuSceneVram()
+    {
+        Thread::ScopedLock lock(m_GpuSceneVramMutex);
+        const uint64_t previousDevicePeakBytes = m_GpuSceneVramStats.Device.PeakBytes;
+        // 最大値は残し、今回のフレームの合計だけ数え直す。
+        GpuSceneVramUsage* usages[] = {&m_GpuSceneVramStats.All, &m_GpuSceneVramStats.Device,
+                                      &m_GpuSceneVramStats.AllDevice, &m_GpuSceneVramStats.DevelopmentOnlyDevice,
+                                      &m_GpuSceneVramStats.Host, &m_GpuSceneVramStats.HostMaybeDevice};
+        for (GpuSceneVramUsage* usage : usages)
+        {
+            usage->LiveBytes = 0;
+            usage->PendingBytes = 0;
+        }
+        const auto addUsage = [](GpuSceneVramUsage& usage, const GpuSceneBufferAllocation& allocation)
+        {
+            if (allocation.bPending)
+            {
+                usage.PendingBytes += allocation.Bytes;
+            }
+            else
+            {
+                usage.LiveBytes += allocation.Bytes;
+            }
+        };
+        for (size_t index = 0; index < m_GpuSceneBuffers.size();)
+        {
+            GpuSceneBufferAllocation& allocation = m_GpuSceneBuffers[index];
+            allocation.bPending = allocation.Buffer.expired();
+            if (allocation.bPending)
+            {
+                if (allocation.ExpiredFrame == ~0ull)
+                {
+                    allocation.ExpiredFrame = m_RenderFrameCount;
+                }
+                // 弱参照の失効後、RHI は遅延破棄に積んだときの提出の通し番号を記録し、
+                // 同じ枠のフェンス待ちでその提出の完了を確認して破棄する。Vulkan の飛行中は 2 フレームだが、
+                // エンジンが扱う飛行中の枠の上限まで、失効を見たフレームから保守的に pending に数える。
+                if (m_RenderFrameCount - allocation.ExpiredFrame >= FrameUseRingMaxInFlightSlots)
+                {
+                    if (index + 1u < m_GpuSceneBuffers.size())
+                    {
+                        allocation = std::move(m_GpuSceneBuffers.back());
+                    }
+                    m_GpuSceneBuffers.pop_back();
+                    continue;
+                }
+            }
+            addUsage(m_GpuSceneVramStats.All, allocation);
+            if (allocation.bCPUAccessible)
+            {
+                addUsage(m_GpuSceneVramStats.Host, allocation);
+                // ホスト可視でも、除外の指定が無ければ BAR のデバイスメモリに載る可能性を別に残す。
+                if (!allocation.bExcludeDeviceLocal)
+                {
+                    addUsage(m_GpuSceneVramStats.HostMaybeDevice, allocation);
+                }
+            }
+            else
+            {
+                addUsage(m_GpuSceneVramStats.AllDevice, allocation);
+                addUsage(allocation.bDevelopmentOnly ? m_GpuSceneVramStats.DevelopmentOnlyDevice
+                                                    : m_GpuSceneVramStats.Device, allocation);
+            }
+            ++index;
+        }
+        for (GpuSceneVramUsage* usage : usages)
+        {
+            const uint64_t bytes = usage->LiveBytes + usage->PendingBytes;
+            if (bytes > usage->PeakBytes)
+            {
+                usage->PeakBytes = bytes;
+                usage->PeakLiveBytes = usage->LiveBytes;
+                usage->PeakPendingBytes = usage->PendingBytes;
+                usage->PeakFrame = m_RenderFrameCount;
+            }
+        }
+        if (m_GpuSceneVramStats.Device.PeakBytes > previousDevicePeakBytes)
+        {
+            // 山が変わったときだけ、そのフレームで数えた名前・状態ごとの内訳を保存する。
+            struct PeakBuffer
+            {
+                Container::AnsiString Name;
+                uint64_t Bytes = 0;
+                bool bPending = false;
+            };
+            Container::VariableArray<PeakBuffer> buffers;
+            for (const GpuSceneBufferAllocation& allocation : m_GpuSceneBuffers)
+            {
+                if (allocation.bCPUAccessible || allocation.bDevelopmentOnly)
+                {
+                    continue;
+                }
+                const auto found = std::find_if(buffers.begin(), buffers.end(), [&allocation](const PeakBuffer& entry)
+                {
+                    return entry.Name == allocation.Name && entry.bPending == allocation.bPending;
+                });
+                if (found != buffers.end())
+                {
+                    found->Bytes += allocation.Bytes;
+                }
+                else
+                {
+                    buffers.push_back(PeakBuffer{allocation.Name, allocation.Bytes, allocation.bPending});
+                }
+            }
+            std::sort(buffers.begin(), buffers.end(), [](const PeakBuffer& left, const PeakBuffer& right)
+            {
+                return left.Bytes > right.Bytes;
+            });
+            Container::AnsiStringBuilder builder;
+            bool bFirst = true;
+            for (const PeakBuffer& buffer : buffers)
+            {
+                if (!bFirst)
+                {
+                    builder.Append(",");
+                }
+                bFirst = false;
+                builder.AppendFormat("%s:%s:%.3f", buffer.Name.c_str(), buffer.bPending ? "pending" : "live",
+                                     static_cast<double>(buffer.Bytes) / (1024.0 * 1024.0));
+            }
+            m_GpuSceneDevicePeakBuffers = builder.ToString();
+        }
+    }
+#endif
+
     void MegaGeometryPass::ReleaseStaleBuffers()
     {
         // 手放したフレームより後のフレームなら参照を落とす（GPU が使い終わるまでの破棄の遅延は RHI が行う）
@@ -7359,16 +7776,38 @@ namespace NorvesLib::Core::Rendering
             // visible_list_* は可視クラスタの全体の列（全パス通しの固定容量）: 枠（要素数・バイト数）、このフレームの溢れ
             // （積もうとした数 − 容量。列を確保できなかったときは容量 0 で、積もうとした数がそのまま溢れ。0 が合格）、
             // 積もうとした数の最大（読み戻したフレームから）
+#if NORVES_BUILD_DEVELOPMENT
             const auto bufferBytes = [](const RHI::BufferPtr &buffer) -> unsigned long long
             { return buffer ? static_cast<unsigned long long>(buffer->GetSize()) : 0ull; };
             const uint32_t visibleListCapacity = pending.VisibleListCapacity;
+            GpuSceneVramStats sceneVram;
+            Container::AnsiString devicePeakBuffers;
+            {
+                Thread::ScopedLock lock(m_GpuSceneVramMutex);
+                sceneVram = m_GpuSceneVramStats;
+                if (sceneVram.Device.PeakBytes > m_LastLoggedGpuSceneDevicePeakBytes)
+                {
+                    devicePeakBuffers = m_GpuSceneDevicePeakBuffers;
+                    m_LastLoggedGpuSceneDevicePeakBytes = sceneVram.Device.PeakBytes;
+                }
+            }
+            constexpr double BytesPerMiB = 1024.0 * 1024.0;
             NORVES_LOG_INFO("MegaGeometryPass",
                             "MEGA_CAPACITY draw_dropped=%u max_draw_count=%u command_capacity=%u "
                             "visibility_bytes=%llu indirect_bytes=%llu draw_info_bytes=%llu "
                             "bvh_queue_bytes=%llu bvh_pass2_bytes=%llu bvh_overflow=%u bvh_pass2_fallback=%u "
                             "bvh_node_peak=%u bvh_leaf_peak=%u "
                             "visible_list_capacity=%u visible_list_bytes=%llu visible_list_overflow=%u visible_list_peak=%u "
-                            "sw_raster_bytes=%llu frame=%llu epoch_frame=%lld",
+                            "sw_raster_bytes=%llu "
+                            "scene_vram_live_mb=%.1f scene_vram_peak_mb=%.1f "
+                            "scene_vram_device_live_mb=%.1f scene_vram_device_pending_mb=%.1f "
+                            "scene_vram_device_peak_mb=%.1f scene_vram_device_peak_frame=%llu "
+                            "scene_vram_dev_only_device_mb=%.1f scene_vram_host_mb=%.1f "
+                            "scene_vram_all_device_peak_mb=%.1f scene_vram_host_peak_mb=%.1f "
+                            "scene_vram_dev_only_device_live_mb=%.1f scene_vram_dev_only_device_pending_mb=%.1f "
+                            "scene_vram_host_live_mb=%.1f scene_vram_host_pending_mb=%.1f "
+                            "scene_vram_host_maybe_device_live_mb=%.1f scene_vram_host_maybe_device_pending_mb=%.1f "
+                            "frame=%llu epoch_frame=%lld",
                             stats[11],
                             m_Settings.MaxDrawCount,
                             m_CommandCapacity,
@@ -7386,8 +7825,35 @@ namespace NorvesLib::Core::Rendering
                             visibleListAttempted > visibleListCapacity ? visibleListAttempted - visibleListCapacity : 0u,
                             m_VisibleListPeak,
                             bufferBytes(m_SwRasterBuffer),
+                            static_cast<double>(sceneVram.All.LiveBytes) / BytesPerMiB,
+                            static_cast<double>(sceneVram.All.PeakBytes) / BytesPerMiB,
+                            static_cast<double>(sceneVram.Device.LiveBytes) / BytesPerMiB,
+                            static_cast<double>(sceneVram.Device.PendingBytes) / BytesPerMiB,
+                            static_cast<double>(sceneVram.Device.PeakBytes) / BytesPerMiB,
+                            static_cast<unsigned long long>(sceneVram.Device.PeakFrame),
+                            static_cast<double>(sceneVram.DevelopmentOnlyDevice.LiveBytes + sceneVram.DevelopmentOnlyDevice.PendingBytes) / BytesPerMiB,
+                            static_cast<double>(sceneVram.Host.LiveBytes + sceneVram.Host.PendingBytes) / BytesPerMiB,
+                            static_cast<double>(sceneVram.AllDevice.PeakBytes) / BytesPerMiB,
+                            static_cast<double>(sceneVram.Host.PeakBytes) / BytesPerMiB,
+                            static_cast<double>(sceneVram.DevelopmentOnlyDevice.LiveBytes) / BytesPerMiB,
+                            static_cast<double>(sceneVram.DevelopmentOnlyDevice.PendingBytes) / BytesPerMiB,
+                            static_cast<double>(sceneVram.Host.LiveBytes) / BytesPerMiB,
+                            static_cast<double>(sceneVram.Host.PendingBytes) / BytesPerMiB,
+                            static_cast<double>(sceneVram.HostMaybeDevice.LiveBytes) / BytesPerMiB,
+                            static_cast<double>(sceneVram.HostMaybeDevice.PendingBytes) / BytesPerMiB,
                             static_cast<unsigned long long>(pending.RenderFrame),
                             static_cast<long long>(pending.EpochFrame));
+            if (!devicePeakBuffers.empty())
+            {
+                NORVES_LOG_INFO("MegaGeometryPass",
+                                "MEGA_SCENE_VRAM_PEAK frame=%llu device_mb=%.1f live_mb=%.1f pending_mb=%.1f buffers=%s",
+                                static_cast<unsigned long long>(sceneVram.Device.PeakFrame),
+                                static_cast<double>(sceneVram.Device.PeakBytes) / BytesPerMiB,
+                                static_cast<double>(sceneVram.Device.PeakLiveBytes) / BytesPerMiB,
+                                static_cast<double>(sceneVram.Device.PeakPendingBytes) / BytesPerMiB,
+                                devicePeakBuffers.c_str());
+            }
+#endif
             m_bStatsLoggedOnce = true;
         }
     }

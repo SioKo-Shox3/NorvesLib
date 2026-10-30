@@ -16,7 +16,18 @@
 #include "Debug/DebugConfig.h"
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
+#include "Debug/DebugConfig.h"
+#if NORVES_BUILD_DEVELOPMENT
+#include "Thread/Mutex.h"
+#endif
 #include <cstddef>
+
+#if NORVES_BUILD_DEVELOPMENT
+namespace NorvesLib::RHI
+{
+    struct BufferDesc;
+}
+#endif
 
 namespace NorvesLib::Core::Rendering
 {
@@ -401,6 +412,7 @@ namespace NorvesLib::Core::Rendering
              * 詰めた経路（bCompactRecords）は可視クラスタの詰めた並びの位置 P（ハードとソフトが同じ記録を引く）
              */
             uint32_t RecordSlots = 0;
+            uint32_t RecordSlotCeiling = 0; // 詰めた経路の記録枠の天井（CPU の総数を可視列の容量で抑える）
             bool bCompactRecords = false;
             uint32_t RecordCommandBase = 0; // 記録を書く計算が読むコマンドの位置の足し分（詰めた経路は P 番の記録用のコマンドの先頭）
             /**
@@ -546,6 +558,11 @@ namespace NorvesLib::Core::Rendering
         uint32_t GetFrameSlotCapacity() const { return m_FrameSlots.GetCapacity(); }
         /** @brief 手放して GPU の使い終わりを待っているバッファの数（検査用） */
         size_t GetRetiredBufferCount() const { return m_RetiredBuffers.size(); }
+
+#if NORVES_BUILD_DEVELOPMENT
+        /** @brief GPU Scene の確保を弱参照で記録する。同じ所有権のバッファは重複して数えない */
+        void NoteGpuSceneBuffer(const RHI::BufferPtr& buffer, const RHI::BufferDesc& desc, bool bDevelopmentOnly);
+#endif
         /**
          * @brief ID・深度へ描く相手（同じ View の VisibilityRasterPass）。渡すと、解決が GBuffer を書くフレームは、
          *        相手の Execute が記録を駆動する（Execute(context) は記録をキューへ積まず、GBuffer の添付の状態遷移だけを行う）
@@ -747,6 +764,7 @@ namespace NorvesLib::Core::Rendering
         {
             RHI::BufferPtr Uniform;              // 材質の区間ごとの定数（PerObject UBO）
             RHI::DescriptorSetPtr DescriptorSet; // 描画用（UBO・材質のテクスチャ・VTの要求・インスタンスの表・描画情報）
+            uint64_t BufferRevision = 0; // 最後に結んだ GPU Scene バッファの版
         };
 
         /** @brief BVH のたどりの1段分の資源（カリング用UBOと、その UBO を結んだディスクリプタセット） */
@@ -754,6 +772,7 @@ namespace NorvesLib::Core::Rendering
         {
             RHI::BufferPtr Uniform;
             RHI::DescriptorSetPtr DescriptorSet;
+            uint64_t BufferRevision = 0; // 最後に結んだ GPU Scene バッファの版
         };
 
         /** @brief ホストが毎フレーム書く資源の組。1 回の記録（ビューポート）ごとに FrameUseRing から 1 組使う */
@@ -763,6 +782,7 @@ namespace NorvesLib::Core::Rendering
             RHI::BufferPtr SceneStaging;
             uint64_t SceneStagingCapacity = 0; // バイト数
             RHI::DescriptorSetPtr SceneScatterDescriptorSet[4];
+            uint64_t SceneScatterBufferRevision[4] = {};
             // この組を使った記録のメッシュの表が指すメッシュの区画（頂点・インデックス・クラスタ・BVH）の持ち主。
             // 組を次に使うとき（その記録の提出の GPU の仕事が終わった後）まで保ち、区画を空きへ戻さない
             Container::VariableArray<Container::TSharedPtr<void>> MeshRegionOwners;
@@ -784,11 +804,15 @@ namespace NorvesLib::Core::Rendering
             uint64_t PageTableVersion = 0;  // バッファの中身の版（PageTableBuffer が無いときは意味を持たない）
             RHI::BufferPtr CullUniform[2]; // パスごとのカリング用UBO
             RHI::DescriptorSetPtr CullDescriptorSet[2];
+            uint64_t CullBufferRevision[2] = {};
             // BVH のたどり: パスごとに、節の判定の段 + 葉のクラスタの判定の段 + 範囲の段（2 パス目はさらに回した範囲・節・クラスタの段）
             // の数だけ（段ごとにUBOの中身が違うため別々に持つ）
             Container::VariableArray<BvhStageDraw> BvhStages[2];
             Container::VariableArray<SectionDraw> Sections;
         };
+
+        /** @brief GPU が読み終えた組から、置き換え前のバッファを結んだセットを手放す */
+        void ReleaseStaleFrameSlotDescriptors(FrameSlot &slot);
 
         /** @brief フレームスロットに、このフレームの区間の数を収める資源（区間の表・カリングと描画の UBO・ディスクリプタセット）を用意する */
         bool EnsureFrameSlot(FrameSlot &slot, uint32_t sectionTableEntries, uint32_t sectionCount);
@@ -1076,7 +1100,7 @@ namespace NorvesLib::Core::Rendering
          *
          * 足りなければ作り直し、古いバッファは、GPUが使い終わった後に破棄する。
          */
-        bool EnsureBatchBuffers(uint32_t commandCapacity, uint32_t counterCapacity);
+        bool EnsureBatchBuffers(uint32_t commandCapacity, uint32_t counterCapacity, uint32_t growthCeiling = 0);
 
         /** @brief BVH のたどりのカウンタ（間接 dispatch の引数を含む）を作る。平らな判定のディスクリプタセットも結ぶので初期化で作る */
         bool EnsureBvhCounterBuffer();
@@ -1093,7 +1117,7 @@ namespace NorvesLib::Core::Rendering
          *
          * 足りないときだけ作り直し、古いものは m_RetiredBuffers へ回す。
          */
-        bool EnsureSwRasterBuffer(uint32_t capacity);
+        bool EnsureSwRasterBuffer(uint32_t capacity, uint32_t growthCeiling = 0);
 
         /**
          * @brief 可視クラスタの binning のバッファ（全体の固定容量の列・区画の数え・開発ビルドの照合の印）を用意する
@@ -1269,6 +1293,45 @@ namespace NorvesLib::Core::Rendering
             uint64_t RetiredFrame = 0; // 退避したときの m_RenderFrameCount
         };
         Container::VariableArray<RetiredBuffer> m_RetiredBuffers;
+        // GPU Scene のバッファを置き換えるたびに進む版。各セットが結んだ版と照合する
+        uint64_t m_DescriptorBufferRevision = 1;
+#if NORVES_BUILD_DEVELOPMENT
+        struct GpuSceneBufferAllocation
+        {
+            Container::TWeakPtr<RHI::IBuffer> Buffer;
+            uint64_t Bytes = 0;
+            uint64_t ExpiredFrame = ~0ull;
+            Container::AnsiString Name;
+            bool bCPUAccessible = false;
+            bool bExcludeDeviceLocal = false;
+            bool bDevelopmentOnly = false;
+            bool bPending = false;
+        };
+        struct GpuSceneVramUsage
+        {
+            uint64_t LiveBytes = 0;
+            uint64_t PendingBytes = 0;
+            uint64_t PeakBytes = 0;
+            uint64_t PeakLiveBytes = 0;
+            uint64_t PeakPendingBytes = 0;
+            uint64_t PeakFrame = 0;
+        };
+        struct GpuSceneVramStats
+        {
+            GpuSceneVramUsage All;
+            GpuSceneVramUsage Device;
+            GpuSceneVramUsage AllDevice;
+            GpuSceneVramUsage DevelopmentOnlyDevice;
+            GpuSceneVramUsage Host;
+            GpuSceneVramUsage HostMaybeDevice;
+        };
+        void UpdateGpuSceneVram();
+        Thread::Mutex m_GpuSceneVramMutex;
+        Container::VariableArray<GpuSceneBufferAllocation> m_GpuSceneBuffers;
+        GpuSceneVramStats m_GpuSceneVramStats;
+        Container::AnsiString m_GpuSceneDevicePeakBuffers;
+        uint64_t m_LastLoggedGpuSceneDevicePeakBytes = 0;
+#endif
         uint64_t m_OcclusionFrameCount = 0;
 
         // 統計（MEGA_OCCLUSION）。フレームの持ち主の読み戻しの口で借りた先へ GPU が数え、提出の完了の後に受け取る（GPUを待たない）。

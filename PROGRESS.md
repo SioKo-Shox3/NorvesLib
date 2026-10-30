@@ -8194,20 +8194,80 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 証拠: `.harness/runs/20261029-174526/SCN-MEGA-FIX-STREAM-TABLES-DELTA/`（`u3-unit-verify.txt`: CaptureScene の `CAPTURE_SCENE result=pass`・`CHECK_CAPTURE_METRICS result=pass views=overview`・ログの集計、`metrics.json`・`overview.png`・`overview.Game.log`）
 - Next: なし
 - Notes: 全体の `PrepareSceneTables` の最大（約 123〜129 ms）は開発ビルドの 120 回ごとの照合（`CheckSceneTables`）で、窓の 600 フレームに 5 回。初期の配置の間は予備の不足で全部を作るのが 55 回あり、窓では 0（予備は 49361〜49861 行残る）。この撮影は出し入れが全部 BVH の行で、平らな行の穴は 0（穴の溜まり方は未検証）。あるメッシュの最後のインスタンスを解放すると全部を作る（`full_unused`）。新しい試験は足していない
-- U2 LUT を再現した独立の積分で重みの平均 ÷ Ess を確かめるスクリプトを足す: 着地(直し 0 回)
-- U1 before を撮ってから広いローブの重みを LUT と同じ Schlick の G にする: 着地(直し 1 回)
-- U3 after を撮り、金属の球と屋根の値と LUT の移し替えの判断を記録する: 着地(直し 0 回)
 
-## 2026-10-30 SCN-RENDER-SPEC-WIDE-ESS（run 20261030-200245 の反復 1、完了）
-- Done: RTGI の鏡面の広いローブの重み（`EvaluateGGXVisibleNormalSampleWeight`）を高さ相関の G2/G1 から、LUT（`DfgLut.cpp`）と同じ分離形の Schlick の G（k = roughness²/2）× (1+Λ(V)) にした（VNDF の pdf の G1(V) は厳密な Smith のまま、LUT・パストレーサー・`lighting.frag` は変えていない）。LUT の 4096 標本・半精度・256² の補間を再現した独立の積分 `Scripts/SpecularWeightQuadrature.py --check` を足し、値と判断を `InteriorLightReference.md` の「広いローブの重みを LUT の G に揃える」節に書いた
-- 値: 積分の判定の比は 12 組とも 1±0.005（最大の差 0.0023。前の重みは 1.009〜1.363）。粗さ 1.0 は LUT の座標が最後のセルの中心（粗さ 0.998）に切り詰められるので、判定は LUT が表す粗さで積分し、粗さそのままのエンジンの比（N·V 0.9 で 0.9948）は参考として別に出す。material-gallery の金属の球（粗さ 0.8・1.0、日陰）の after ÷ before は帯ごとに予想（新旧の重みの平均の比 0.758〜0.979）と +0.014 以内。rendering3dtest の屋根の HDR の Y 平均 3818.435 → 3818.319（比 0.99997、撮影の揺れの目安 0.99991）。回帰は pass（PSNR rendering3dtest 56.72・mega-bananas 54.32・sandbox 一致・night-village 34.65）
-- 証拠: `.harness/runs/20261030-200245/SCN-RENDER-SPEC-WIDE-ESS/`（`u3-unit-verify.txt`: Game の RelWithDebInfo ビルド exit 0・積分 result=pass・`CAPTURE_REGRESSION result=pass phase=after`・material-gallery の `CAPTURE_SCENE result=pass`、`u1-unit-verify.txt`: before の 4 撮影と資産のそろえ方、`u2-unit-verify.txt`）、撮影 `.harness/runs/regression/SCN-RENDER-SPEC-WIDE-ESS/{before,after}/`・`.harness/runs/scene-capture/SCN-RENDER-SPEC-WIDE-ESS/{gallery,aux}-{before,after}/`。開いた画: gallery の spheres の before と after（粗い金属の球がわずかに暗くなっただけで、ほかの見た目は同じ）
+- U1 -RequireAssets でバナナの資産の欠けと配置の行の欠けを失敗にする: 着地(直し 0 回)
+
+## 2026-10-30 SCN-MEGA-FIX-TLAS-REBUILD-P1（run 20261030-081653 の反復 1、完了）
+- Done: `Scripts/CaptureScene.ps1` の資産の欠けの印（`$missingAssetPattern`）に `MEGA_BANANAS_ASSET_MISSING`・`MEGA_BANANAS_ASSET_INVALID` を足し、`-RequireAssets` で失敗、無いときは今までどおり警告と `missing_assets` に数える。`-RequireAssets` で `stress-entities`・`banana-count` を指定したのに `MEGA_STRESS_PLACED`・`MEGA_BANANAS_PLACED` の行が無い撮影も失敗にする
+- 資産を欠かせた撮影（`-GameArgs banana-count=10000,no-cooked-textures -RequireAssets`）は終了コード 1 で、次の 2 つの理由で失敗した:
+```
+CAPTURE_SCENE placed view=overview entities= bananas= requested_entities= requested_bananas=10000
+CAPTURE_SCENE failure: overview: MEGA_BANANAS_PLACED count= または MEGA_STRESS_PLACED bananas= の行がログに無い（banana-count=10000 を指定したのに置いた数が分からない）
+CAPTURE_SCENE failure: overview: 資産の欠け: [2026-10-30 08:19:25.803] [WARN] [T:60320] [General] [MegaBananasRoutine.cpp:Game::GameModes::`anonymous-namespace'::StartBananaLoad:411] MEGA_BANANAS_ASSET_MISSING AssetSystem が無いためバナナを置きません
+CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS-REBUILD-P1\missing\metrics.json
+```
+- 資産のそろった撮影（タスクの verify）は合格: `CAPTURE_SCENE placed view=overview entities= bananas=10000 requested_entities= requested_bananas=10000`・`CAPTURE_SCENE result=pass scene=mega-bananas`、ログに `MEGA_BANANAS_PLACED count=10000`、`missing_assets` 0。overview.png にバナナの散らばりと山が写っている
+- 証拠: `.harness/runs/20261030-081653/U1-unit-verify.txt`、`.harness/runs/scene-capture/SCN-MEGA-FIX-TLAS-REBUILD-P1/{missing,ok}/`
 - Next: なし
-- Notes: SCN-RENDER-ROUGH-STEEP-ENERGY への申し送り: LUT 全体を高さ相関の G（Cycles と同じ形）へ移すかはこの項目では移さないと判断した（理由と値は `InteriorLightReference.md` の同じ節）。移すと全シーンの環境光の Ess と多重散乱の補償（CompD・CompC）とパストレーサーの G が変わり、粗い面の単散乱が粗さ 0.8・N·V 0.5 で約 1.136 倍になるので、全シーンの値の移し替えが要る。開けた急な崖が off でも Cycles より 2.5 % 暗い不足とは向きが合うので、ROUGH-STEEP-ENERGY で多重散乱のエネルギーと一緒に決める。作業ツリーに git 管理外の資産が無いため、本体のリポジトリへのジャンクション（元の資産 24 本・焼いた地形）と作業ツリーの AssetCook で焼いた資産で before と after を撮った（地形の焼き直しは 40 分を超える見込みで本体へのリンクにした）。屋根の選択の広いローブの割合の面平均は 0.000949 で、判断役の記録の 0.00006 と違う（屋根の画素の 819 が粗さ 0.45 超。差の原因は切り分けていない）。要起票: 回帰の night-village は before と after で遠景の崖の形が違う（before の撮影の時点の GEOMETRY_PAGES は resident 0・evicted 1101、after は resident 3325）。ジオメトリのページの常駐が撮影の瞬間に揃っておらず、PSNR 34.65 はこの変更の差として使えない。新しい試験は足していない
+- Notes: `--no-cooked-textures` ではクック済みのマニフェストが無く AssetSystem を持たないため、印は「AssetSystem が無い」の行（411 行）で出る。`MEGA_BANANAS_ASSET_INVALID` 単独と `stress-entities` の行の欠けは実際の撮影では確かめていない（同じ分岐の形）。新しい試験は足していない
 
-## 2026-10-30 SCN-RENDER-SPEC-WIDE-ESS（run 20261030-200245 の反復 2、完了）
+- U1 可視クラスタの全体の列の既定の容量を混在の最大に余裕を足した値にし、1M + 5 万の撮影で溢れ 0 を確かめる: 着地(直し 0 回)
 
-- Done: 反復 1 の差し戻し（枠での verify の再実行で night-village が `missing_asset=Assets/Models/Generated/*.glb` で落ちた）を直した。原因は枠の作業ツリーに、git 管理外の生成資産（`Assets/Models/Generated` の banana 以外・`Assets/Terrain`・`Assets/Reference`・`Assets/Models/PolyHaven`・`Assets/Textures/PolyHaven`）が無かったことで、コードの変更とは関係しない。単位の作業ツリーと同じく本体のリポジトリへのジャンクションで補った。
-- 証拠: 枠で回し直した verify は全部 exit 0。`.harness/runs/20261030-200245/aux-SCN-RENDER-SPEC-WIDE-ESS-regression-after.txt`（`CAPTURE_REGRESSION result=pass`、night-village mean_diff −0.037・PSNR 34.65 で反復 1 の値と同じ）、`aux-SCN-RENDER-SPEC-WIDE-ESS-quad.txt`（`SPEC_WEIGHT_QUADRATURE_SUMMARY result=pass`・12 組）、`aux-SCN-RENDER-SPEC-WIDE-ESS-gallery.txt`（`CAPTURE_SCENE result=pass`・asset_missing=0）。開いた画: night-village の after（建物・灯り・地形・崖がそろう）
+## 2026-10-29 SCN-MEGA-FIX-VISIBLE-LIST（run 20261029-152745 の反復 1、完了）
+- Done: 可視クラスタの全体の列（`MegaGeometry_VisibleList`）の既定の容量を 4,194,304 → 6,291,456 要素にした（`MegaGeometryPass.cpp` の `DefaultVisibleListCapacity`。1M + 5 万の混在で積もうとした数の最大 約 482 万に約 3 割の余裕）。環境変数 `NORVES_MEGA_VISIBLE_LIST_CAPACITY` での拡大（既定以上〜1 << 25、finest-lod の 8,388,608）はそのまま。溢れを読み戻して広げる形は、統計の行が 30 フレームごとで、広げるまでの数フレームの溢れが記録の行に乗りうるので採らなかった
+- 証拠（`.harness/runs/20261029-152745/verify-SCN-MEGA-FIX-VISIBLE-LIST-U1.txt`、撮影 `scene-capture/SCN-MEGA-FIX-VISIBLE-LIST/`）: タスクの verify（ビルド込み、1M + 5 万・1% 移動・64 m 区画のストリーミング）が `CAPTURE_SCENE result=pass`・EXIT=0、`CHECK_CAPTURE_METRICS result=pass`。Game.log の `MEGA_CAPACITY` 29 行の全部で `draw_dropped=0`・`visible_list_overflow=0`、`visible_list_capacity=6291456`・`visible_list_peak` 最大 4,774,410、`[ERROR]` 0、`MEGA_STRESS_PLACED entities=50000 ... bananas=1000000`。overview の PNG を開いて確認（穴・欠けなし。空の横縞は SCN-FIX-SKY-BANDING の範囲）
+- メモリ: 可視の一覧と印 80 → 120 MB（+40 MB）。`command_capacity` の最大は前と同じ 33,554,432 で間接描画・描画情報の増分なし。GPU Scene まわりの最大の確保の見積もりは混在で 2,722 + 40 = 2,762 MB（3,072 MB 以内）
 - Next: なし
-- Notes: 要起票: 盤面の枠 `.slots/NorvesLib-3` は、ほかの枠（`NorvesLib-1`・`-2` は `Assets/Models/Generated` ごとジャンクション）と違って生成資産のリンクが欠けていた。枠を作る側でそろえないと、night-village などを撮る verify が枠の再実行だけで落ちる
+- Notes: 試験は足していない。容量は 1920×1080 の実測から決めたので、より高い解像度や細かい LOD の混在では環境変数で広げる必要がありうる
+- U2 開発ビルドで GPU Scene まわりの同時確保（回収待ちを含む）の山を実測して MEGA_CAPACITY に出し、混在の撮影で 3 GB 以内を確かめる: 着地(直し 1 回)
+- U3 広げて置き換えた GPU Scene のバッファを握り続ける持ち主を見つけて手放させ、device の山を 3 GB 以内に収める: 着地(直し 0 回)
+- U4 見張りの回収待ちの窓を RHI の解放の時期（エンジンの飛行中の枠の数）に合わせ、混在の撮影で device の山を測り直す: 着地(直し 0 回)
+
+## 2026-10-29 SCN-MEGA-FIX-VISIBLE-LIST（run 20261029-152745 の反復 2、人待ち）
+- Done: 差し戻し（回収待ちの古いバッファを含めた同時確保が 3 GB 以内かの証拠が無い）に対して、開発ビルドだけの見張り（`MegaGeometryPass::NoteGpuSceneBuffer`・`UpdateGpuSceneVram`）で GPU Scene まわりのバッファ（MegaGeometryPass が作る物・`VisBuffer_DrawRecords`・`VsmMega_*`）を弱参照で追い、`MEGA_CAPACITY` に `scene_vram_device_*`、山が上がったときに `MEGA_SCENE_VRAM_PEAK`（名前・live/pending ごとの内訳）を出すようにした。回収待ちは弱参照が切れてから飛行中の枠の上限（4 フレーム）まで数える（Vulkan の実際は 2 フレーム）。見張りで見つけた、広げて置き換えた古い表と描画の列（IndirectDraw 160・DrawInfo 64・SlotTable 128・InstanceTable 約 148・ShadowInstanceTable 約 49・SwRaster 16 MiB）を記述子の集まり（`BvhStages`・`SceneScatterDescriptorSet`・`VisibilityRasterPass` の枠のセット）が握り続けていた不具合を直し、GPU が読み終えた枠でだけ手放して要るときに作り直す
+- 値（1M + 5 万・1% 移動・64 m 区画、RelWithDebInfo・1920×1080）: 通常の撮影は `MEGA_CAPACITY` 29 行、長い撮影（`exit-after-rendered-frames=1200`、区画 4 巡）は 67 行で、全行 `draw_dropped=0`・`visible_list_overflow=0`、`visible_list_peak` 最大 4,821,935（容量 6,291,456）、`[ERROR]` 0。静かなフレームの device の live は 3,031.8 → 2,658.4 MiB。device の山は読み込み中の frame 7〜9 で 3,197.1 MiB（通常）・3,439.2 MiB（長い）で 3,072 MiB を超える。山は描画コマンドの列が 4M → 8M → 16M → 32M コマンドと続くフレームで倍々に作り直され、前の世代（IndirectDraw・DrawInfo・`VisBuffer_DrawRecords`・SwRaster）が数フレーム重なるため。RHI の回収待ちの最大（プロセス全体）は 551.7 / 749.1 MiB
+- 証拠: `.harness/runs/20261029-152745/verify-SCN-MEGA-FIX-VISIBLE-LIST-U4.txt`（verify 2 本と長い撮影の終了コード・集計）、`.harness/runs/20261029-152745/SCN-MEGA-FIX-VISIBLE-LIST-iter2/`（2 本の Game.log・overview.png）
+- Next: 読み込み中の倍々の作り直しの山を、この項目で直すか別の項目にするかの判断待ち（`blocked/SCN-MEGA-FIX-VISIBLE-LIST.md`）
+- Notes: 読み込み中の山は今回の可視の一覧の変更（+40 MiB）より前からある（列の伸ばし方による）。新しい試験は足していない
+
+## 2026-10-29 SCN-MEGA-FIX-VISIBLE-LIST（run 20261029-152745 の反復 3、前提の項目待ち）
+- Done: 判断（読み込み中の倍々の作り直しの山は別の項目で直す）に従い、この項目を `todo` に戻して `after: SCN-MEGA-FIX-DRAWLIST-GROWTH` を付けた。done-when・verify は変えていない
+- Next: SCN-MEGA-FIX-DRAWLIST-GROWTH が入った後に、この項目の verify 2 本と長い撮影（`exit-after-rendered-frames=1200`）を撮り直し、全行の `draw_dropped=0`・`visible_list_overflow=0`・`scene_vram_device_peak_mb` ≤ 3,072 を確かめて閉じる
+- Notes: 要起票: SCN-MEGA-FIX-DRAWLIST-GROWTH — 読み込み中に描画コマンドの列（`MegaGeometry_IndirectDraw`・`MegaGeometry_DrawInfo`・`VisBuffer_DrawRecords`・`MegaGeometry_SwRaster`）を何世代も作り直して GPU Scene の山を 3 GB 超えにしない。done-when: 1M + 5 万・1% 移動・64 m 区画の通常の撮影と長い撮影（`exit-after-rendered-frames=1200`）の `MEGA_CAPACITY` 全行で `scene_vram_device_peak_mb` ≤ 3,072（見張りは今の形・4 フレームの窓のまま）・`draw_dropped=0`・`visible_list_overflow=0`、落ち着いた後の `scene_vram_device_live_mb` が 2,658.4 MiB から増えない。`mega-bananas` の overview 1 視点で画像が前と変わらず device の山 ≤ 3,072 を記録。直し方の制約: 読み込み中の作り直しを 1〜2 世代に抑え、先に広げるなら CPU が知る最終の総数か 3 GB から逆算した天井で抑える（必要量の倍数だけで広げない）、縮めるのは SceneReady の後に 1 回だけ。受入れ文書 `SceneLauncherAcceptance.md:197` の見積もりを回収待ちを含む実測値に書き直す。paths: `Library/Core/Private/Rendering`・`Library/Core/Public/Rendering`・`Docs/RenderingValidation`・`TASKS.md`・`PROGRESS.md`。危険地帯（メモリ・RenderThread）。全文は `blocked/resolved/SCN-MEGA-FIX-VISIBLE-LIST.md` の「次の反復への指示 1」
+- U3 (U1 の切り直し)見張りの入った先頭の上で、詰めた経路の 4 つの列の容量を V で抑え、作り直しを 2 世代までにする: 着地(直し 0 回)
+- U2 長い撮影と mega-bananas を撮り、受入れ文書の見積もりを実測に書き直して全 verify を通す: 着地(直し 0 回)
+
+## 2026-10-30 SCN-MEGA-FIX-DRAWLIST-GROWTH（run 20261030-200242 の反復 3、完了）
+- Done: 詰めた経路の 4 つの列（`MegaGeometry_IndirectDraw`・`MegaGeometry_DrawInfo`・`VisBuffer_DrawRecords`・`MegaGeometry_SwRaster`）の容量を、可視の列の容量 V（6,291,456）と CPU が知る登録済みのクラスタの総数で抑え、読み込み中の作り直しを各 1 回（2 世代）にした（bcd64da7）。縮める処理は入れていない。受入れ文書 `SceneLauncherAcceptance.md` の「メモリ」の行の見積もり（2,722 MB・約 3,042 MB）を見張りの実測に書き直した（f4d41b6d）。前提として可視クラスタの一覧の項目のコード（06990ce4）をマージ 8835126c で取り込んだ
+- 値（1M + 5 万・1% 移動・64 m 区画、RelWithDebInfo・1920×1080）: 通常の撮影は `MEGA_CAPACITY` 29 行で device の山 2,662.6 MiB（frame 712・回収待ち 0.0）、最後の live 2,470.1 MiB。長い撮影（`exit-after-rendered-frames=1200`）は 67 行で山 2,662.6 MiB（frame 738・回収待ち 0.0）、最後の live 2,470.1 MiB（frame 1974）。両方とも全行 `draw_dropped=0`・`visible_list_overflow=0`、live が 2,658.4 MiB を超える行 0。列の最終の大きさは IndirectDraw 654.1・DrawInfo 261.6・DrawRecords 384.0・SwRaster 48.0 MiB（直す前の山は 3,197.1 / 3,439.2 MiB）。`mega-bananas`（既定 1 万本）の山 1,294.5 MiB（frame 1）
+- 証拠: `.harness/runs/20261030-200242/verify-SCN-MEGA-FIX-DRAWLIST-GROWTH-U2.txt`（verify 5 本の終了コード 0・`CAPTURE_SCENE result=pass` 3 本・`CHECK_CAPTURE_METRICS result=pass` 2 本・全行の集計と live の推移・VRAM_LEDGER の世代・bananas の画素の比べ）、撮影 `scene-capture/SCN-MEGA-FIX-DRAWLIST-GROWTH`・`-long`・`-bananas`
+- Next: SCN-MEGA-FIX-VISIBLE-LIST を閉じる（この項目の統合後に verify 2 本と長い撮影を撮り直す）
+- Notes: 差分に可視クラスタの一覧の項目のコミット（4dbeb68a〜06990ce4）を含む。うち c47fdf34・2b9788c3・4c32c639 は危険地帯（メモリ・RenderThread）の変更で評価を通っていないので、この項目の評価で合わせて見る。mega-bananas は前の撮影（dda58ee3、`-bananas-before`）と比べて 1,512 画素（0.073%）・差 >16 は 107 画素・最大 175 の差が遠景のバナナの輪郭に孤立した点で出る。同じ版で撮り直した過去の 2 枚（`SCN-MEGA-LAYOUT-SEA-10k` と `-rerun`）でも 1,416 画素・119 画素・最大 210 の同じ形の差が出るので、撮るたびの揺れと見てマージコミットでの撮り直しはしていない。live は区画の出し入れで 1,966 → 2,470 MiB と段で増える（表の `InstanceTable`・`ShadowInstanceTable`・`SlotTable`・`RangeBounds` の倍々の拡張。山のフレームでは新旧の表が両方 live に入る）。新しい試験は足していない
+
+## 2026-10-30 SCN-MEGA-FIX-VISIBLE-LIST（run 20261030-214453 の反復 1、完了）
+- Done: 可視クラスタの一覧の既定の容量を 6,291,456（混在の最大 約 482 万に約 3 割の余裕）にした変更と、前提の SCN-MEGA-FIX-DRAWLIST-GROWTH（描画コマンドの列の作り直しを 2 世代に抑える）が入った先頭 92e380ae で、verify 2 本と長い撮影（`exit-after-rendered-frames=1200`）を撮り直して閉じた。コードの変更はこの反復では無い
+- 値（1M + 5 万・1% 移動・64 m 区画、RelWithDebInfo・1920×1080）: 通常の撮影は `MEGA_CAPACITY` 29 行、長い撮影は 67 行。両方とも全行 `draw_dropped=0`・`visible_list_overflow=0`、鍵の欠けた行 0、`[ERROR]` 0。`visible_list_capacity` は 6,291,456 の 1 種類、`visible_list_peak` の最大は 4,731,682（通常）・4,731,675（長い）。回収待ちを含む見張りの device の山は両方とも 2,662.6 MiB（frame 724・725、その行の回収待ち 0.0）で 3,072 MiB 以内、最後の live 2,470.1 MiB。`MEGA_STRESS_PLACED entities=50000`、`overview.png` に欠け・穴は無い
+- 証拠: `.harness/runs/20261030-214453/verify-SCN-MEGA-FIX-VISIBLE-LIST-U5.txt`（6 本の終了コード 0・`CAPTURE_SCENE result=pass` 2 本・`CHECK_CAPTURE_METRICS result=pass` 2 本・全行の集計と推移）、撮影 `scene-capture/SCN-MEGA-FIX-VISIBLE-LIST`・`-long`
+- Next: SCN-MEGA-ACCEPT-1M
+- Notes: 前回の評価の残課題のうち「ストリーミングなしの 1% 移動だけの負荷を単独で撮っていない」は今回も撮っていない（verify はストリーミングを含む混在の負荷で、移動だけの山はそれ以下の見込み）。長い撮影は区画の巡りを複数回含み、ピークは 4,731,675 で容量を大きく下回る
+
+- U1 回帰の before と、屋根の鏡面の光線の当たりの内訳を測って記録する: 着地(直し 0 回)
+- U2 鏡面の光線の自己交差を TraceSpecularRay の中で直し、屋根を測り直して verify を通す: 着地(直し 0 回)
+
+## SCN-RENDER-SPEC-ROOF-HITS: rendering3dtest の屋根の鏡面の光線の当たりの内訳と自己交差の直し
+- Done: 当たりの内訳は判定 (a)（直す前の当たり 3,818 本の 96.4 % が屋根自身の同じ平面の裏、幾何の面の下へ向いた光線）。`TraceSpecularRay` の中だけで、当たった三角形の平面が始点から 6 mm（`3 * RAY_ORIGIN_OFFSET`）以内なら幾何法線で鏡映して同じ始点から 1 回引き直し、それでも自分の面なら空へ抜けた扱いにした。拡散の光線と共有する `TraceDiffuseRay`・`TraceSecondBounce`・`ComputeDirectRadiance` は変えていない
+- 屋根 17,120 画素のブルーム前の HDR の Y: off 3,100.105 → on 3,116.406 cd/m²（比 1.0053、直す前は 3,905.180・1.2597）。同じ平面の裏への当たり 3,682 → 0。残りの +16.3 の有限差分: 画面空間 AO を外した分 +182.5、残りの specularAO +95.6、空の項 −280.4、当たった面の反射と広いローブ +18.6（記録は `Docs/RenderingValidation/InteriorLightReference.md`）
+- verify: Game のビルド・屋根の撮影・室内の撮影は EXIT=0、室内の比べ `interior-spec-occlusion.json` は 9 行とも pass（INTERIOR_COMPARE result=pass）、回帰の after は 4 シーン pass（rendering3dtest PSNR 42.69 dB・平均の差 −0.167、ほかは 57 dB 以上）
+- 証拠: `.harness/runs/scene-capture/SCN-RENDER-SPEC-ROOF-HITS/`（roof・interior・roof-hits.json・変種）、`.harness/runs/regression/SCN-RENDER-SPEC-ROOF-HITS/{before,after}/`
+- Next: なし
+- Notes: 残る当たりの 98 % は同じ Cottage の instance の別の面（距離の中央値 0.44 m）で、この 1 標本の分類だけでは全部が正しい反射かは確定していない。6 mm の閾値は近い薄い別の面の取り違え・LOD のずれが 6 mm を超える面の見逃しがありうる。引き直しの分の GPU 時間は測っていない
+- Notes: 再検証で落ちた室内の比べは、正解の置き場 `.harness/runs/scene-capture/SCN-INTERIOR-ROOM-ref`（git 管理外）がこの作業ツリーに無かったため。メインの作業ツリーの同じ置き場（Cycles の `cycles/` と参照の撮影の AOV）を写し、同じ撮影で回し直して 9 行とも pass・`INTERIOR_COMPARE result=pass`（`.harness/runs/20261030-200848/verify-compare-rerun.txt`）。描画とスクリプトは変えていない
+- Notes: 要起票: `--reference .harness/runs/scene-capture/SCN-INTERIOR-ROOM-ref` を verify に持つ項目は、盤面の枠ごとに正解の置き場を写さないと再検証で FileNotFoundError になる
+
+- U1 --reference の解決を resolve_reference にまとめ、無ければメインの作業ツリーを読む: 着地(直し 0 回)
+
+## SCN-RENDER-SPEC-ROOF-HITS-P1（2026-10-30）
+- Done: `Scripts/InteriorLightReference.py` に `resolve_reference(path)` を足し、`--compare` の `--reference` が今の作業ツリーに無ければ `git rev-parse --git-common-dir` の親（メインの作業ツリー）の同じ相対パスを読む。見つけた方を `INTERIOR_REFERENCE path=... source=local|main-worktree` で出し、どちらにも無ければ探した 2 つのパスを書いて終了コード 1。`--capture` と出力先は今の作業ツリーのまま
+- Done: 置き場を外した作業ツリーで verify が `source=main-worktree`・`REF_OK C:/Users/KINGkawamura/Documents/NorvesLib/.harness/runs/scene-capture/SCN-INTERIOR-ROOM-ref`（`.harness/runs/20261030-224338/verify-SCN-RENDER-SPEC-ROOF-HITS-P1.txt`）
+- Next: なし
+- Notes: 置き場がある枠では今までどおり `source=local` を使うので、古い写しが残った枠はメインの置き場を描き直しても古い方を読む

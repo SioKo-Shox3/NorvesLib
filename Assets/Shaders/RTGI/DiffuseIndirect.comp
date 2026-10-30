@@ -1460,10 +1460,44 @@ vec3 TraceSpecularRay(vec3 worldPosition,
     vec3 hitBaseColor;
     float hitSpecularWeight;
     uint hitCustomIndex;
-    vec3 hitRadiance = TraceDiffuseRay(worldPosition + worldNormal * RAY_ORIGIN_OFFSET, rayDirection, worldNormal,
+    vec3 rayOrigin = worldPosition + worldNormal * RAY_ORIGIN_OFFSET;
+    vec3 hitRadiance = TraceDiffuseRay(rayOrigin, rayDirection, worldNormal,
                                        ProxySelfHitHeightLimit(viewDistance), pixel, 22u, 1.0,
                                        bHit, hitPosition, hitNormal, hitBaseColor, hitSpecularWeight,
                                        hitCustomIndex);
+    // 6 mm は始点の浮かせ幅の 3 倍。再構成位置と光線の面の差 p95 0.56 mm と LOD のずれを含め、
+    // 始点をほぼ通る面を自分の面（同じ平面の隣の三角形を含む）とみなす。
+    const float selfPlaneTolerance = 3.0 * RAY_ORIGIN_OFFSET;
+    if (bHit && hitCustomIndex != RTGI_NO_HIT &&
+        abs(dot(rayOrigin - hitPosition, hitNormal)) <= selfPlaneTolerance)
+    {
+        vec3 geometricNormal = dot(hitNormal, worldNormal) > 0.0 ? hitNormal : -hitNormal;
+        rayDirection = reflect(rayDirection, geometricNormal);
+        if (!(dot(rayDirection, worldNormal) > 1.0e-4))
+        {
+            // 陰影法線の地平の下へ向いた標本と同じく、細いローブは鏡方向、広いローブは重み 0 にする。
+            rayDirection = reflect(-viewDirection, worldNormal);
+            wideWeight = 0.0;
+        }
+        // 微小面から幾何の面の下へ出た光を、面でもう一度散らして上へ戻す近似。始点と乱数次元は保つ。
+        // 広いローブの重みは元の標本の値を使う近似（粗さ 0.26 の屋根では広いローブは 0）。
+        hitRadiance = TraceDiffuseRay(rayOrigin, rayDirection, worldNormal,
+                                     ProxySelfHitHeightLimit(viewDistance), pixel, 22u, 1.0,
+                                     bHit, hitPosition, hitNormal, hitBaseColor, hitSpecularWeight,
+                                     hitCustomIndex);
+        if (bHit && hitCustomIndex != RTGI_NO_HIT &&
+            abs(dot(rayOrigin - hitPosition, hitNormal)) <= selfPlaneTolerance)
+        {
+            // 引き直しても自分の面なら空へ抜けた扱い。細いローブの空は照明の前計算が受け持つ。
+            bHit = false;
+            hitCustomIndex = RTGI_NO_HIT;
+            hitRadiance = parameters.rayLimits.w > 0.0
+                ? LimitStaticEnvironmentRadiance(textureLod(environmentRadiance,
+                                                            EquirectangularUV(rayDirection), 0.0).rgb) *
+                  parameters.rayLimits.w * FoliageCrownTransmittance(rayOrigin, rayDirection, parameters.rayLimits.y)
+                : vec3(0.0);
+        }
+    }
     if (hitCustomIndex == RTGI_NO_HIT)
     {
         // 空へ抜けた光線の空の光（TraceDiffuseRay が IBL の強度を掛けて返す）は広いローブの推定だけが数える
