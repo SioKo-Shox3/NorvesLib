@@ -3903,21 +3903,6 @@ namespace NorvesLib::Core::Rendering
         // ========================================
         const uint32_t sectionCount = static_cast<uint32_t>(sections.size());
         const uint32_t passCount = bTwoPass ? 2u : 1u;
-        uint64_t commandsPerPass = 0;
-        for (Section &section : sections)
-        {
-            section.Capacity = static_cast<uint32_t>(std::min<uint64_t>(section.ClusterTotal, m_Settings.MaxDrawCount));
-            section.CommandBase = static_cast<uint32_t>(commandsPerPass);
-            commandsPerPass += section.Capacity;
-        }
-        const uint64_t commandsTotal = commandsPerPass * passCount;
-        if (commandsTotal == 0 || commandsTotal > 0x7FFFFFFFull / IndirectCommandBytes)
-        {
-            NORVES_LOG_ERROR("MegaGeometryPass", "MEGA_BATCH_COMMAND_COUNT_INVALID commands=%llu", static_cast<unsigned long long>(commandsTotal));
-            recordEmptyRenderPass();
-            return;
-        }
-
         // 可視クラスタの binning の数え（区間の表の要素ごとにハード/ソフトの 2 区画）と全体の列
         const uint32_t binSlotCount = sectionCount * passCount;
         const uint32_t binCount = binSlotCount * 2u;
@@ -3928,27 +3913,110 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        // 描画・記録・ソフトの一覧を binning の結果で詰めて書くか（全体の列と接頭和・書き出しの計算があるときだけ。
-        // 無ければ判定が区間ごとのコマンドを書く旧の経路）。記録の枠は詰めた並びの位置 P の分で、全体の列の容量と
-        // 全パスのコマンドの数の小さい方（P は列に入った要素の数未満。超えた分は書き出しが描かずに数える）。
-        // P 番の記録用のコマンドは、コマンドのバッファの区間ごとの範囲（全パス）の後ろに置く
-        uint32_t recordSlots = 0;
-        if (m_Settings.bUseBinning && m_BinPrefixPipeline && m_BinScatterPipeline && m_VisibleListBuffer)
+        const uint32_t visibleListCapacity = ResolveVisibleListCapacity();
+        const bool bCanCompact = m_Settings.bUseBinning && m_BinPrefixPipeline && m_BinScatterPipeline && m_VisibleListBuffer;
+        uint64_t commandsPerPass = 0;
+        const auto assignSectionCapacities = [&](bool bUseCompact) -> void
         {
-            recordSlots = static_cast<uint32_t>(std::min<uint64_t>(commandsTotal, ResolveVisibleListCapacity()));
-            if (commandsTotal + recordSlots > 0x7FFFFFFFull / IndirectCommandBytes)
+            commandsPerPass = 0;
+            const uint32_t sectionLimit = bUseCompact ? std::min(m_Settings.MaxDrawCount, visibleListCapacity)
+                                                      : m_Settings.MaxDrawCount;
+            for (Section &section : sections)
+            {
+                section.Capacity = static_cast<uint32_t>(std::min<uint64_t>(section.ClusterTotal, sectionLimit));
+                section.CommandBase = static_cast<uint32_t>(commandsPerPass);
+                commandsPerPass += section.Capacity;
+            }
+        };
+        assignSectionCapacities(bCanCompact);
+        uint64_t commandsTotal = commandsPerPass * passCount;
+
+        // 詰めた経路の記録は全パス共通の可視列の位置を使い、区間ごとのコマンドの後ろへ置く。
+        // バイト位置の上限に収まらなければ、旧の経路の区間容量へ戻す。
+        constexpr uint64_t maxBatchCommands = 0x7FFFFFFFull / IndirectCommandBytes;
+        uint32_t recordSlots = 0;
+        if (bCanCompact)
+        {
+            recordSlots = static_cast<uint32_t>(std::min<uint64_t>(commandsTotal, visibleListCapacity));
+            if (commandsTotal + recordSlots > maxBatchCommands)
             {
                 recordSlots = 0;
             }
+            if (recordSlots == 0)
+            {
+                assignSectionCapacities(false);
+                commandsTotal = commandsPerPass * passCount;
+            }
+        }
+        if (commandsTotal == 0 || commandsTotal > maxBatchCommands)
+        {
+            NORVES_LOG_ERROR("MegaGeometryPass", "MEGA_BATCH_COMMAND_COUNT_INVALID commands=%llu", static_cast<unsigned long long>(commandsTotal));
+            recordEmptyRenderPass();
+            return;
         }
         const bool bCompact = recordSlots != 0;
+        uint64_t commandCeilingPerPass = commandsPerPass;
+        if (bCompact && (commandsTotal + recordSlots > m_CommandCapacity ||
+                         (bSwRasterBin && std::min<uint64_t>(commandsPerPass, visibleListCapacity) > m_SwRasterBufferCapacity)))
+        {
+            // 拡張するときだけ、転送待ちも含む登録済みインスタンスの CPU 情報から天井を求める。
+            // 描画の表には転送完了済みだけを載せたまま、同じメッシュの件数をまとめてから区間へ足す。
+            UnorderedMap<uint64_t, uint64_t> instanceCounts;
+            for (const MegaMeshInstance &instance : m_Instances)
+            {
+                ++instanceCounts[instance.Handle.Id];
+            }
+            VariableArray<Section> knownSections;
+            for (const auto &entry : instanceCounts)
+            {
+                const auto *gpuData = command.MegaGeometry->GetMegaMeshGPUData(MegaGeometry::MegaMeshHandle{entry.first});
+                if (!gpuData || gpuData->ClusterCount == 0 || !ResolveSceneMeshAddressing(*gpuData).IsUsable())
+                {
+                    continue;
+                }
+                size_t sectionIndex = 0;
+                for (; sectionIndex < knownSections.size(); ++sectionIndex)
+                {
+                    const auto *representative = knownSections[sectionIndex].Representative;
+                    if (representative->VertexBuffer.get() == gpuData->VertexBuffer.get() &&
+                        representative->IndexBuffer.get() == gpuData->IndexBuffer.get() &&
+                        IsSameMaterial(representative->Material, gpuData->Material))
+                    {
+                        break;
+                    }
+                }
+                if (sectionIndex == knownSections.size())
+                {
+                    Section section;
+                    section.Representative = gpuData;
+                    knownSections.push_back(section);
+                }
+                knownSections[sectionIndex].ClusterTotal += entry.second * gpuData->ClusterCount;
+            }
+            uint64_t knownClusterTotal = 0;
+            const uint32_t sectionLimit = std::min(m_Settings.MaxDrawCount, visibleListCapacity);
+            for (const Section &section : knownSections)
+            {
+                knownClusterTotal += section.ClusterTotal;
+            }
+            // 実在する区間の枠をまとめて確保し、読み込み中の小さな増分で天井が上がるのを避ける。
+            // 区間の予備は足さず、シーン全体で CPU が知るクラスタ総数を超えて予約しない。
+            const uint64_t knownCommandsPerPass = std::min(knownClusterTotal,
+                static_cast<uint64_t>(knownSections.size()) * sectionLimit);
+            commandCeilingPerPass = std::max(commandsPerPass, knownCommandsPerPass);
+        }
+        const uint64_t commandCeilingTotal = commandCeilingPerPass * passCount;
+        const uint32_t recordSlotCeiling = bCompact
+            ? static_cast<uint32_t>(std::min<uint64_t>(commandCeilingTotal, visibleListCapacity)) : 0u;
+        const uint32_t batchGrowthCeiling = bCompact
+            ? static_cast<uint32_t>(std::min(maxBatchCommands, commandCeilingTotal + recordSlotCeiling)) : 0u;
         const uint32_t recordCommandBase = static_cast<uint32_t>(commandsTotal);
         const uint32_t recordTableWordBase = BinRecordTableWordBase(binSlotCount);
         // 区間のカウンタの語数（詰めた経路は後ろに記録の区間の表）
         const uint32_t drawCountWords = bCompact ? recordTableWordBase + 2u * binSlotCount : binSlotCount;
 
         FrameSlot &frameSlot = preparedSlot ? *preparedSlot : m_FrameSlots.Acquire();
-        if (!EnsureBatchBuffers(static_cast<uint32_t>(commandsTotal) + recordSlots, drawCountWords) ||
+        if (!EnsureBatchBuffers(static_cast<uint32_t>(commandsTotal) + recordSlots, drawCountWords, batchGrowthCeiling) ||
             !EnsureFrameSlot(frameSlot, sectionCount * passCount, sectionCount) ||
             (bvhInstanceCount > 0 &&
              (!EnsureBvhStageResources(frameSlot, 0, bvhLevelCount + 2u) ||
@@ -3966,8 +4034,11 @@ namespace NorvesLib::Core::Rendering
         }
 
         // ソフトウェアラスタの一覧。作れなければ振り分けずにハードだけで描く
-        const uint32_t swRasterCapacity = static_cast<uint32_t>(commandsPerPass);
-        if (bSwRasterBin && !EnsureSwRasterBuffer(swRasterCapacity))
+        const uint32_t swRasterCapacity = static_cast<uint32_t>(bCompact ? std::min<uint64_t>(commandsPerPass, visibleListCapacity)
+                                                                         : commandsPerPass);
+        const uint32_t swRasterCeiling = bCompact
+            ? static_cast<uint32_t>(std::min<uint64_t>(commandCeilingPerPass, visibleListCapacity)) : 0u;
+        if (bSwRasterBin && !EnsureSwRasterBuffer(swRasterCapacity, swRasterCeiling))
         {
             if (!m_bSwRasterFallbackLogged)
             {
@@ -4868,6 +4939,7 @@ namespace NorvesLib::Core::Rendering
             // （接頭和が区間のカウンタの後ろに書いた記録の区間の表と、書き出しが書いた P 番の記録用のコマンド）
             plan.bCompactRecords = bCompact;
             plan.RecordSlots = bCompact ? recordSlots : static_cast<uint32_t>(commandsTotal);
+            plan.RecordSlotCeiling = recordSlotCeiling;
             plan.RecordCommandBase = bCompact ? recordCommandBase : 0u;
             plan.RecordSectionBuffer = bCompact ? m_DrawCountBuffer : frameSlot.SectionBuffer;
             plan.RecordSectionOffset = bCompact ? static_cast<uint64_t>(recordTableWordBase) * sizeof(uint32_t) : 0u;
@@ -5506,7 +5578,7 @@ namespace NorvesLib::Core::Rendering
         return true;
     }
 
-    bool MegaGeometryPass::EnsureSwRasterBuffer(uint32_t capacity)
+    bool MegaGeometryPass::EnsureSwRasterBuffer(uint32_t capacity, uint32_t growthCeiling)
     {
         if (!m_Device || capacity == 0)
         {
@@ -5517,7 +5589,10 @@ namespace NorvesLib::Core::Rendering
             return true;
         }
 
-        const uint32_t newCapacity = NextPowerOfTwo(std::max(capacity, m_SwRasterBufferCapacity));
+        // 最初は必要数で作り、詰めた経路の拡張では CPU が把握している天井まで広げる。
+        const uint32_t newCapacity = growthCeiling != 0
+            ? std::max(capacity, m_SwRasterBuffer ? growthCeiling : 0u)
+            : NextPowerOfTwo(std::max(capacity, m_SwRasterBufferCapacity));
         const uint64_t words = static_cast<uint64_t>(SwRasterHeaderWords) + 2ull * newCapacity;
         // 頭は間接 dispatch の引数になるので IndirectBuffer も持つ。頭は FillBuffer で 0 にする
         RHI::BufferDesc desc(words * sizeof(uint32_t),
@@ -5697,7 +5772,7 @@ namespace NorvesLib::Core::Rendering
         return true;
     }
 
-    bool MegaGeometryPass::EnsureBatchBuffers(uint32_t commandCapacity, uint32_t counterCapacity)
+    bool MegaGeometryPass::EnsureBatchBuffers(uint32_t commandCapacity, uint32_t counterCapacity, uint32_t growthCeiling)
     {
         if (!m_Device)
         {
@@ -5710,7 +5785,43 @@ namespace NorvesLib::Core::Rendering
             return true;
         }
 
-        const uint32_t newCommandCapacity = RoundUpCommandCapacity(std::max(commandCapacity, m_CommandCapacity));
+        // 区間のカウンタだけが不足したとき、大きなコマンドと描画情報の列は作り直さない。
+        if (growthCeiling != 0 && m_IndirectDrawBuffer && m_DrawInfoBuffer && commandCapacity <= m_CommandCapacity)
+        {
+            const uint32_t newCounterCapacity = NextPowerOfTwo(std::max(counterCapacity, m_CounterCapacity));
+            RHI::BufferDesc countDesc(static_cast<uint64_t>(newCounterCapacity) * sizeof(uint32_t),
+                                      RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::IndirectBuffer | RHI::ResourceUsage::TransferDst,
+                                      false,
+                                      "MegaGeometry_DrawCount");
+            RHI::BufferPtr countBuffer = m_Device->CreateBuffer(countDesc);
+#if NORVES_BUILD_DEVELOPMENT
+            NoteGpuSceneBuffer(countBuffer, countDesc, false);
+#endif
+            if (!countBuffer)
+            {
+                return false;
+            }
+            if (m_DrawCountBuffer)
+            {
+                m_RetiredBuffers.push_back(RetiredBuffer{m_DrawCountBuffer, m_RenderFrameCount});
+                ++m_DescriptorBufferRevision;
+            }
+            m_DrawCountBuffer = countBuffer;
+            m_CounterCapacity = newCounterCapacity;
+            NORVES_LOG_INFO("MegaGeometryPass",
+                            "VRAM_LEDGER mega_batch mb=%.2f command_capacity=%u counter_capacity=%u",
+                            static_cast<double>(m_IndirectDrawBuffer->GetSize() + countDesc.Size + m_DrawInfoBuffer->GetSize()) / (1024.0 * 1024.0),
+                            m_CommandCapacity,
+                            m_CounterCapacity);
+            return true;
+        }
+
+        // 最初は必要数で作り、詰めた経路の拡張では丸めずにシーンの天井まで一度に広げる。
+        const uint32_t requestedCapacity = growthCeiling != 0 && m_IndirectDrawBuffer
+            ? std::max(commandCapacity, growthCeiling) : commandCapacity;
+        const uint32_t newCommandCapacity = growthCeiling != 0
+            ? std::max(requestedCapacity, m_CommandCapacity)
+            : RoundUpCommandCapacity(std::max(commandCapacity, m_CommandCapacity));
         const uint32_t newCounterCapacity = NextPowerOfTwo(std::max(counterCapacity, m_CounterCapacity));
 
         // IndirectDrawコマンドバッファ (SSBO + IndirectBuffer)

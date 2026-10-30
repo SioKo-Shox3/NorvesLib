@@ -479,6 +479,7 @@ namespace NorvesLib::Core::Rendering
         bool EnsureFramebuffer(const RHI::TexturePtr& idTexture, const RHI::TexturePtr& depthTexture);
         bool EnsureFrameSlot(FrameSlot& slot,
                              uint32_t recordCapacity,
+                             uint32_t recordCapacityCeiling,
                              uint32_t sectionCount,
                              uint32_t sectionSlotCount,
                              uint32_t cpuRecordCount,

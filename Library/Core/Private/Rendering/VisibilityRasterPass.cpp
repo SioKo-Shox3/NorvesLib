@@ -788,6 +788,7 @@ namespace NorvesLib::Core::Rendering
 
     bool VisibilityRasterPass::EnsureFrameSlot(FrameSlot& slot,
                                                uint32_t recordCapacity,
+                                               uint32_t recordCapacityCeiling,
                                                uint32_t sectionCount,
                                                uint32_t sectionSlotCount,
                                                uint32_t cpuRecordCount,
@@ -804,7 +805,10 @@ namespace NorvesLib::Core::Rendering
         // 今の記録の提出の完了まで残すので、ここで置き換えてよい。新しい表の最初の書き込みは Common からのバリアで始まる
         if (!m_RecordTable || m_RecordCapacity < recordCapacity)
         {
-            const uint32_t capacity = std::max(64u, RoundUpRecordCapacity(recordCapacity));
+            // 詰めた経路は最初に必要数で作り、次の拡張で可視列と CPU の記録を収める天井まで広げる。
+            const uint32_t capacity = recordCapacityCeiling != 0
+                ? std::max(recordCapacity, m_RecordTable ? recordCapacityCeiling : 0u)
+                : std::max(64u, RoundUpRecordCapacity(recordCapacity));
             // GPU 専用のメモリ（ホストが書く記録は RecordUpload からのコピーで入れる）
             RHI::BufferDesc desc(static_cast<uint64_t>(capacity) * RecordBytes,
                                  RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::TransferDst,
@@ -1293,6 +1297,10 @@ namespace NorvesLib::Core::Rendering
         }
 
         const uint32_t totalSlots = recordBase + static_cast<uint32_t>(cpuRecords.size());
+        const uint32_t recordCapacityCeiling = bHasMegaDraw && plan->bCompactRecords
+            ? static_cast<uint32_t>(std::min<uint64_t>(1ull + plan->RecordSlotCeiling + cpuRecords.size(),
+                                                       std::numeric_limits<uint32_t>::max()))
+            : 0u;
         m_Stats.MegaCommandSlots = bHasMegaDraw ? megaSlots : 0u;
         m_Stats.TotalSlots = totalSlots;
 
@@ -1305,6 +1313,7 @@ namespace NorvesLib::Core::Rendering
         m_Stats.MaterialOverflowed = m_MaterialTable.GetOverflowedCount();
         if (!EnsureFrameSlot(slot,
                              totalSlots,
+                             recordCapacityCeiling,
                              bHasMegaDraw ? plan->SectionCount : 1u,
                              bHasMegaDraw ? plan->SectionCount * plan->PassCount : 1u,
                              static_cast<uint32_t>(cpuRecords.size()),

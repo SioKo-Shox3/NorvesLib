@@ -412,6 +412,7 @@ namespace NorvesLib::Core::Rendering
              * 詰めた経路（bCompactRecords）は可視クラスタの詰めた並びの位置 P（ハードとソフトが同じ記録を引く）
              */
             uint32_t RecordSlots = 0;
+            uint32_t RecordSlotCeiling = 0; // 詰めた経路の記録枠の天井（CPU の総数を可視列の容量で抑える）
             bool bCompactRecords = false;
             uint32_t RecordCommandBase = 0; // 記録を書く計算が読むコマンドの位置の足し分（詰めた経路は P 番の記録用のコマンドの先頭）
             /**
@@ -1099,7 +1100,7 @@ namespace NorvesLib::Core::Rendering
          *
          * 足りなければ作り直し、古いバッファは、GPUが使い終わった後に破棄する。
          */
-        bool EnsureBatchBuffers(uint32_t commandCapacity, uint32_t counterCapacity);
+        bool EnsureBatchBuffers(uint32_t commandCapacity, uint32_t counterCapacity, uint32_t growthCeiling = 0);
 
         /** @brief BVH のたどりのカウンタ（間接 dispatch の引数を含む）を作る。平らな判定のディスクリプタセットも結ぶので初期化で作る */
         bool EnsureBvhCounterBuffer();
@@ -1116,7 +1117,7 @@ namespace NorvesLib::Core::Rendering
          *
          * 足りないときだけ作り直し、古いものは m_RetiredBuffers へ回す。
          */
-        bool EnsureSwRasterBuffer(uint32_t capacity);
+        bool EnsureSwRasterBuffer(uint32_t capacity, uint32_t growthCeiling = 0);
 
         /**
          * @brief 可視クラスタの binning のバッファ（全体の固定容量の列・区画の数え・開発ビルドの照合の印）を用意する
