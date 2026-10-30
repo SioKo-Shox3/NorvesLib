@@ -8210,3 +8210,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261030-081653/U1-unit-verify.txt`、`.harness/runs/scene-capture/SCN-MEGA-FIX-TLAS-REBUILD-P1/{missing,ok}/`
 - Next: なし
 - Notes: `--no-cooked-textures` ではクック済みのマニフェストが無く AssetSystem を持たないため、印は「AssetSystem が無い」の行（411 行）で出る。`MEGA_BANANAS_ASSET_INVALID` 単独と `stress-entities` の行の欠けは実際の撮影では確かめていない（同じ分岐の形）。新しい試験は足していない
+- U1 回帰の before と、屋根の鏡面の光線の当たりの内訳を測って記録する: 着地(直し 0 回)
