@@ -4050,7 +4050,7 @@
 - from: SCN-RENDER-SPEC-OCC-VERIFY-OCC
 
 ## SCN-RENDER-SPEC-ROOF-HITS-P1: 室内の比べの `--reference` が盤面の枠に無いとき、メインの作業ツリーの同じ置き場を読む
-- status: todo
+- status: done
 - done-when: `Scripts/InteriorLightReference.py` の `--reference` の解決を関数 `resolve_reference(path)` にまとめ、次のとおりに動かす。
   - 今の作業ツリーにその置き場があれば、今までどおりそれを使う。
   - 無ければ、`git rev-parse --path-format=absolute --git-common-dir` の親(メインの作業ツリー)から同じ相対パスで探し、そこにあればそれを使う。

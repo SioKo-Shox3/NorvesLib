@@ -8264,3 +8264,9 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 再検証で落ちた室内の比べは、正解の置き場 `.harness/runs/scene-capture/SCN-INTERIOR-ROOM-ref`（git 管理外）がこの作業ツリーに無かったため。メインの作業ツリーの同じ置き場（Cycles の `cycles/` と参照の撮影の AOV）を写し、同じ撮影で回し直して 9 行とも pass・`INTERIOR_COMPARE result=pass`（`.harness/runs/20261030-200848/verify-compare-rerun.txt`）。描画とスクリプトは変えていない
 - Notes: 要起票: `--reference .harness/runs/scene-capture/SCN-INTERIOR-ROOM-ref` を verify に持つ項目は、盤面の枠ごとに正解の置き場を写さないと再検証で FileNotFoundError になる
 - U1 --reference の解決を resolve_reference にまとめ、無ければメインの作業ツリーを読む: 着地(直し 0 回)
+
+## SCN-RENDER-SPEC-ROOF-HITS-P1（2026-10-30）
+- Done: `Scripts/InteriorLightReference.py` に `resolve_reference(path)` を足し、`--compare` の `--reference` が今の作業ツリーに無ければ `git rev-parse --git-common-dir` の親（メインの作業ツリー）の同じ相対パスを読む。見つけた方を `INTERIOR_REFERENCE path=... source=local|main-worktree` で出し、どちらにも無ければ探した 2 つのパスを書いて終了コード 1。`--capture` と出力先は今の作業ツリーのまま
+- Done: 置き場を外した作業ツリーで verify が `source=main-worktree`・`REF_OK C:/Users/KINGkawamura/Documents/NorvesLib/.harness/runs/scene-capture/SCN-INTERIOR-ROOM-ref`（`.harness/runs/20261030-224338/verify-SCN-RENDER-SPEC-ROOF-HITS-P1.txt`）
+- Next: なし
+- Notes: 置き場がある枠では今までどおり `source=local` を使うので、古い写しが残った枠はメインの置き場を描き直しても古い方を読む
