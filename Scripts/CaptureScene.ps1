@@ -21,7 +21,7 @@
 #   値にカンマを含む引数（startup-camera=0,5,2.5）は、カンマの次が英字で始まらない限り分けない。
 # -RequireAssets を付けると、資産の欠けを失敗にする。付けないときは欠けを metrics.json の missing_assets に数えて警告として出す。
 #   欠けの検出は2つ。シーンの定義の必要な資産は Game が --scene-report で書く報告（<視点>.SceneReport.txt）から読むので、
-#   ログを書かない Release でも検査できる。Rendering3DTest が読み込み失敗で出す印（COOKED_MODEL_MISSING など）は
+#   ログを書かない Release でも検査できる。各シーンが読み込み失敗で出す印（COOKED_MODEL_MISSING・MEGA_BANANAS_ASSET_MISSING など）は
 #   Game.log からだけ読むので、Debug・RelWithDebInfo で効く。
 # -GpuTimingFrames を与えると、決定的な撮影ではなく実時間の計測にする。Game を --trace-file 付きで起動し、有効な標本を
 # -GpuTimingFrames 件だけ得る。計測の窓は、シーンの初期配置と公開の完了（SceneReady。ログの SCENE_READY_FRAME のフレーム番号）
@@ -36,7 +36,7 @@
 # ウォームアップを除いた最初の有効な描画フレーム）も書く。
 # 置いた Entity の数（placed_entities。MEGA_STRESS_PLACED の entities）とバナナの本数（placed_bananas。MEGA_STRESS_PLACED の
 # bananas か MEGA_BANANAS_PLACED の count）も分けて書き、-RequireAssets のときは -GameArgs の stress-entities・banana-count と
-# 違えば失敗にする（引数どおりに置けたことの確認。mega-stress のバナナは banana-count を指定したときだけ置く）。
+# 違うか、Game.log に置いた数の行が無ければ失敗にする（mega-stress のバナナは banana-count を指定したときだけ置く）。
 # 同じ撮影のログから、描いたクラスタ数（MEGA_OCCLUSION の pass1 + pass2_drawn の最後の行）・MegaGeometry のバッファの大きさ
 # （MEGA_CAPACITY）・ジオメトリのプールの使用量（VRAM_POOLS の geometry_used_mb）を mega_stats として書く。
 # 統計が無効な Release は GPU のタイムスタンプを取れないので併用しない（RelWithDebInfo で測る）。
@@ -865,8 +865,8 @@ function Invoke-GameBuild([string]$RepoRoot, [string]$Config, [string]$LogPath)
     return $null
 }
 
-# 資産の欠けを表す印（シーンの定義の SCENE_ASSET_MISSING と、Rendering3DTest が出す読み込み失敗の印）
-$missingAssetPattern = 'SCENE_ASSET_MISSING|COOKED_MODEL_MISSING|COOKED_MODEL_TEXTURES_MISSING|COOKED_BIG_SPHERE_MISSING|SCAN_PROP_MISSING|MATERIAL_GALLERY_TEXTURE_MISSING|INTERIOR_LIGHT_ASSET_MISSING'
+# 資産の欠けを表す印（シーンの定義の SCENE_ASSET_MISSING と、各シーンが出す読み込み失敗の印）
+$missingAssetPattern = 'SCENE_ASSET_MISSING|COOKED_MODEL_MISSING|COOKED_MODEL_TEXTURES_MISSING|COOKED_BIG_SPHERE_MISSING|SCAN_PROP_MISSING|MATERIAL_GALLERY_TEXTURE_MISSING|INTERIOR_LIGHT_ASSET_MISSING|MEGA_BANANAS_ASSET_MISSING|MEGA_BANANAS_ASSET_INVALID'
 
 New-Item -ItemType Directory -Force -Path $outRoot | Out-Null
 if ($Build)
@@ -1173,9 +1173,17 @@ for ($runIndex = 0; $runIndex -lt $runs.Count; ++$runIndex)
         }
         if ($RequireAssets)
         {
+            if ($null -ne $requestedEntities -and $null -eq $placedEntities)
+            {
+                $failures += "$($run.Label): MEGA_STRESS_PLACED entities= の行がログに無い（stress-entities=$requestedEntities を指定したのに置いた数が分からない）"
+            }
             if ($null -ne $requestedEntities -and $null -ne $placedEntities -and $placedEntities -ne $requestedEntities)
             {
                 $failures += "$($run.Label): 置いた Entity の数 $placedEntities が指定（stress-entities=$requestedEntities）と違う"
+            }
+            if ($null -ne $requestedBananas -and $null -eq $placedBananas)
+            {
+                $failures += "$($run.Label): MEGA_BANANAS_PLACED count= または MEGA_STRESS_PLACED bananas= の行がログに無い（banana-count=$requestedBananas を指定したのに置いた数が分からない）"
             }
             if ($null -ne $requestedBananas -and $null -ne $placedBananas -and $placedBananas -ne $requestedBananas)
             {
@@ -1219,7 +1227,7 @@ for ($runIndex = 0; $runIndex -lt $runs.Count; ++$runIndex)
         {
             $failures += "$($run.Label): $($line.Line.Trim())"
         }
-        # シーンの定義の欠け（SCENE_ASSET_MISSING）は報告で数えたので、ログからは Rendering3DTest の読み込み失敗の印だけを拾う。
+        # シーンの定義の欠け（SCENE_ASSET_MISSING）は報告で数えたので、ログからは各シーンの読み込み失敗の印だけを拾う。
         $logMissingAssets = @(Select-String -LiteralPath $viewLogPath -Pattern $missingAssetPattern |
             Where-Object { $_.Line -notmatch 'SCENE_ASSET_MISSING' } | ForEach-Object { $_.Line.Trim() })
     }
