@@ -4064,7 +4064,7 @@
 - from: SCN-RENDER-SPEC-ROOF-HITS
 
 ## SCN-RENDER-ROUGH-STEEP-ENERGY-P1: 回帰の撮影の比べで、ジオメトリのページが落ち着いていない撮影を通さない
-- status: todo
+- status: done
 - done-when: `ReferenceCheck.py --regression` は、before と after の各シーンについて、保存の前の最後の `GEOMETRY_PAGES` の行を読む。進行中(wanted・reading・ready・uploading)のどれかが 0 でない撮影は失敗にする。最後の落ち着きの基準から保存までに `evicted` が増えた撮影も失敗にする。値(resident・wanted・ready・evicted・budget_blocked)は `regression_check.json` にシーンごとに書く。判定は、今ある `blur_case_check` の撮った時点の常駐の確かめ(`BLUR_PAGES_RE`)を使い回す。`GEOMETRY_PAGES` の行が無いシーンは対象外として記録する。SCN-RENDER-SPEC-WIDE-ESS の before の night-village と同じ形のログ(resident=0・ready=64・wanted=1538・evicted=1101・budget_blocked=7)が失敗になることは、一時に作ったログで確かめて PROGRESS.md に書く(常設のテストは足さない)。同じ版で before と after を撮り、両方が通って各シーンの常駐の値が記録されている。
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Terrain/CaptureRegression.ps1 -Item SCN-RENDER-ROUGH-STEEP-ENERGY-P1 -Phase before`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Terrain/CaptureRegression.ps1 -Item SCN-RENDER-ROUGH-STEEP-ENERGY-P1 -Phase after`
