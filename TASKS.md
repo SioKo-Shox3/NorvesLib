@@ -4016,7 +4016,7 @@
 - from: SCN-RENDER-SPEC-OCC-VERIFY-REG
 
 ## SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1: 鏡面の直しの後の最終の版で、荒野の遮蔽の 8 組を変更前の鏡面の経路と並べて判定し直す
-- status: todo
+- status: blocked
 - after: SCN-RENDER-SPEC-WIDE-ESS, SCN-RENDER-SPEC-ROOF-HITS
 - done-when: 判断役の判断(`blocked/resolved/SCN-RENDER-SPEC-OCC-VERIFY-REG.md` の指示 3)による。SCN-RENDER-SPEC-WIDE-ESS で粗さ 1 の崖の鏡面が変わるので、SCN-RENDER-SPEC-OCC-VERIFY-OCC の判定を、2 項目の後の同じ最終の版で撮り直す。
   - 撮影: 同じ Game.exe・同じ焼いた地形で、荒野の遮蔽の 8 組を `--rtgi-specular=off` と今の形の両方で撮る。
