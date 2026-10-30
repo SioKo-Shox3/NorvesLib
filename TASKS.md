@@ -4048,3 +4048,17 @@
 - verify: `python Scripts/Terrain/ReferenceCheck.py --occlusion --engine-root .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/on --off-root .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/off --reference .harness/runs/scene-capture/SCN-WLR-OCCLUSION-SETS/cycles --regions Scripts/Terrain/ExpectSpecs/occlusion-regions.json --expect Scripts/Terrain/ExpectSpecs/occlusion-accept.json --verify`
 - paths: Docs/RenderingValidation/InteriorLightReference.md, TASKS.md, PROGRESS.md
 - from: SCN-RENDER-SPEC-OCC-VERIFY-OCC
+
+## SCN-RENDER-SPEC-ROOF-HITS-P1: 室内の比べの `--reference` が盤面の枠に無いとき、メインの作業ツリーの同じ置き場を読む
+- status: todo
+- done-when: `Scripts/InteriorLightReference.py` の `--reference` の解決を関数 `resolve_reference(path)` にまとめ、次のとおりに動かす。
+  - 今の作業ツリーにその置き場があれば、今までどおりそれを使う。
+  - 無ければ、`git rev-parse --path-format=absolute --git-common-dir` の親(メインの作業ツリー)から同じ相対パスで探し、そこにあればそれを使う。
+  - どちらで見つけたかと絶対パスを `INTERIOR_REFERENCE path=<絶対パス> source=local|main-worktree` の 1 行で出す。
+  - どちらにも無ければ、FileNotFoundError のトレースバックではなく、探した 2 つのパスを書いたメッセージを出して 0 以外で終わる。
+  - 読むのは `--reference` だけで、`--capture` と出力先(`<撮影>/compare/`)は今の作業ツリーのままにする(メインの作業ツリーへは書かない)。
+  - 盤面の枠(`.harness/runs/scene-capture/SCN-INTERIOR-ROOM-ref` が無い作業ツリー)で下の verify を走らせ、`source=main-worktree` で `cycles/` のある置き場に解決することを確かめる。
+  - 正解の置き場(951 MB)は git に入れない。描画のコードは変えない。
+- verify: `python -c "import os, sys; sys.path.insert(0, 'Scripts'); import InteriorLightReference as m; p = m.resolve_reference('.harness/runs/scene-capture/SCN-INTERIOR-ROOM-ref'); assert os.path.isdir(os.path.join(p, 'cycles')), p; print('REF_OK', p)"`
+- paths: Scripts/InteriorLightReference.py
+- from: SCN-RENDER-SPEC-ROOF-HITS
