@@ -4175,7 +4175,7 @@
 - notes: 焼いた地形の版 18 は、未統合の `task/SCN-WL-CLIFF-GEN-TALUS` のクックで焼かれている(HEAD の `kTerrainCliffDetailVersion` は 17)。反復の中で地形を焼き直さない。正解の記録(入力のハッシュ・地形の書き出しのハッシュ)から、どの版の地形で描いたかが分かるようにする。Cycles の描画中は、GPU を使う別の処理(Game の撮影・別の Blender)を重ねない。時間の見込みは、撮影が 1 組約 2 分、Cycles が 1 組 3〜4 分、書き出しが別に数分。壁時計(75 分)の残りが 25 分を切ったら新しい描画を始めない。描けた組までをコミットし、doing のまま終える(未達のまま DONE にしない)。verify は 1 行 10 分未満。
 
 ## SCN-MEGA-ACCEPT-1M-P1-P1: カメラパスの再生の撮影で、保存フレームのパスの時刻を指定どおりに固定する
-- status: todo
+- status: done
 - done-when: 問い: 再生の撮影(`camera-path-play`)ではパスが実時間で進む(`FreeCameraRig.cpp` の `m_PathTime += deltaTime`)。そのため保存フレームのパスの時刻が、走らせるたびに 7.97〜9.27 秒で揺れる。静止の 9.27 秒との組は視点がずれ、RtgiGrain の比が同じ視点の 1.009 に対して 1.245〜1.318 まで動く。直す前の判定の帯の弁別も弱く、直す前でも 1.343 だった(`SceneLauncherAcceptance.md` の既知の限界)。直す中身は次の 4 つ。(1) 開発ビルドだけの引数 `camera-path-capture-time=<秒>` を足し、再生の保存フレームのパスの時刻を指定の時刻に合わせる。保存フレームまでカメラは動いたままにする(保存の前にパスを止めて履歴を収束させない)。`-GpuTimingFrames 300` と一緒に使える形にする。(2) CaptureScene が、保存フレームのパスの時刻を metrics.json に書く。再生でも静止(`camera-path-time` で置いた時刻)でも書く。(3) `RtgiGrain.py` が組の 2 つの metrics.json のパスの時刻を読み、差が 1/60 秒を超えたら fail にする。時刻が無い撮影も fail にする。(4) 固定した組(再生と静止の 9.27 秒)を撮り、floor_near_bananas の比が上限 1.5 以下で pass する。その比と時刻を `SceneLauncherAcceptance.md` に書き、既知の限界の「保存フレームの時刻が揺れる」を直した後の記録に置き換える。描画(シェーダー・Library)は変えない
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -Views horizon -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -TimeoutSeconds 1800 -GameArgs banana-count=50000,camera-path-play,camera-path-time=0,camera-path-capture-time=9.27 -OutDir .harness/runs/scene-capture/SCN-MEGA-ACCEPT-1M-P1-P1/path`
