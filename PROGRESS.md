@@ -8496,3 +8496,12 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Done: 統合ブランチを取り込み（ef2b1189）、P3 の直し（0036107c。`ApplicationProcessor.cpp` の `bSceneAssembling` が `!deterministicCapture.IsSceneReady()`）が入ったことを確かめた。TLAS の直し（9c5875da。顔ぶれが替わったら Build、席の並びを安定させる）は入ったまま。コードは変えていない
 - Next: 起動の確かめは後回し（当分アプリを起動しない決まり）。SCN-MEGA-FIX-TLAS-REBUILD-CHECK で verify の 2 本（1M horizon のカメラパス 300 フレームの撮影と、LightingPass の median ≤ 4.4 ms・p95 ≤ 5 ms の判定）を回し、撮影の前に自分の Game.exe 以外の 3D 利用率の合計が 10 % 未満であることを確かめる。値（LightingPass の median・p95、`RT_SCENE` の built/updated、SCENE_READY_FRAME）を記録する
 - Notes: 10-29 の U2-path（P3 の前・GPU 空き）では median 4.27 / p95 4.94 ms で新しい線を満たしていた。`要起票:`（RTGI の地の費用を 3 ms へ）は上の節に既にある
+
+- U1 5 万個のメッシュ（家・塔・岩）の主のカメラの LOD の許容に下限を付ける: 着地(直し 0 回)
+
+## 2026-11-02 SCN-MEGA-FIX-STRESS-GPU（run 20261102-084605 の反復 1）
+- Done: mega-stress の一覧のメッシュ（家・塔・岩）の主のカメラの LOD の許容に下限 2 px を付けた（`kStressMainLodFloorPixels`、`MegaMeshMaterial::MainLodFloorPixels`。同時に置くバナナと影の LOD は変えていない）。`MEGA_STRESS_PLACED` に `main_lod_floor_px=` を出す。`cmake --build build --config RelWithDebInfo --target Game -- -m:1` は終了コード 0、numstat は 2 通りで一致。新しい試験は足していない
+- Next: 起動の確かめは後回し（当分アプリを起動しない決まり）。SCN-MEGA-FIX-STRESS-GPU-CHECK で verify の 2 本（1% 移動・300 フレームの撮影と、GPU のフレームの median・p95 ≤ 16.6 ms の判定）を回し、TLAS の直しの後の `LightingPass`・`MegaGeometry`（`VisRasterSw1`・`MegaGeometryCull1`・`MegaBvhC1Leaf`）・`VirtualShadowMapPass` の median と描いたクラスタの数を、10-14 の値（16.1・11.4・2.6 ms、264 万クラスタ）と並べて記録する。overview の PNG を開いて、家・塔・岩に穴と影の欠けが無く、粗い段の輪郭が目立たないことを見る
+- Notes: 2 px は測らずに採った値（DAG の段の三角形の数はおよそ許容の 2 乗に反比例するので、一覧のメッシュの約 96 万クラスタが 1/3〜1/4 になる見込み）。撮影で足りなければ値を上げるか、遮蔽の側を見る
+- Notes: done-when の予算は「RT と GI を切った構成で 16.6 ms」だが、verify の撮影の -GameArgs に RT と GI を切る引数は無く、そのような起動引数も今は無い（RT・GI 入りで撮る）。10-14 の内訳から見積もると、TLAS の直し（LightingPass 約 4 ms）と一覧のメッシュの削減の後も、バナナだけの MegaGeometry（静止 168 万クラスタ）・LightingPass・VSM の合計で 16.6 ms を超える見込みで、RT・GI 入りの判定は fail になりうる
+- Notes: 要起票: verify の撮影を RT と GI を切った構成で撮る起動引数（と verify の -GameArgs）が無い。予算の構成で判定できるようにするかを決める

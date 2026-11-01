@@ -671,7 +671,8 @@ namespace Game::GameModes
         }
 
         /// 材質がそろった 1 種類の MegaMesh を作り、モデルとして登録する。作れなければ false
-        bool CreateMegaMeshForLoad(GameModeContext &ctx, StressMeshLoad &load)
+        /// mainLodFloorPixels は主のカメラの LOD を選ぶ誤差の許容の下限[画素]。0 なら全体の許容に従う
+        bool CreateMegaMeshForLoad(GameModeContext &ctx, StressMeshLoad &load, float mainLodFloorPixels)
         {
             const MaterialCreateData &material = load.Material->CreateData;
             if (!material.AlbedoTexture.IsValid() || !material.NormalTexture.IsValid() || !material.ORMTexture.IsValid())
@@ -702,6 +703,7 @@ namespace Game::GameModes
             createInfo.Material.NormalTexture = material.NormalTexture;
             createInfo.Material.ORMTexture = material.ORMTexture;
             createInfo.Material.bNormalTwoChannel = material.bNormalTwoChannel;
+            createInfo.Material.MainLodFloorPixels = mainLodFloorPixels;
             if (load.Spec.bDisplacedSphere)
             {
                 createInfo.Material.DisplacementUVSpacing = StartupBigSphere::DisplacementUVSpacing();
@@ -1194,14 +1196,14 @@ namespace Game::GameModes
             uint32_t resourceCount = 0;
             for (StressMeshLoad &load : assembly.Loads)
             {
-                if (CreateMegaMeshForLoad(ctx, load))
+                if (CreateMegaMeshForLoad(ctx, load, kStressMainLodFloorPixels))
                 {
                     totalWeight += load.Spec.Weight;
                     ++resourceCount;
                 }
             }
             // 同時に置くバナナ。置くときは、Entity の足元をバナナの敷き詰めから空けるマスクを置いた順に作る
-            const bool bBananas = assembly.Banana && CreateMegaMeshForLoad(ctx, *assembly.Banana);
+            const bool bBananas = assembly.Banana && CreateMegaMeshForLoad(ctx, *assembly.Banana, 0.0f);
             StressFootprintMask footprints;
 
             auto movers = MakeShared<StressMovers>();
@@ -1335,9 +1337,9 @@ namespace Game::GameModes
                 }
             }
             LOG_INFO_F("MEGA_STRESS_PLACED entities=%u requested=%u resources=%u sections=%u columns=%u rows=%u batch_cells=%d "
-                       "bananas=%u bananas_requested=%u",
+                       "bananas=%u bananas_requested=%u main_lod_floor_px=%.2f",
                        placed, data.m_EntityCount, resourceCount, sectionCount, columns, rows, bBatch ? 1 : 0, bananaCount,
-                       data.m_BananaCount);
+                       data.m_BananaCount, static_cast<double>(kStressMainLodFloorPixels));
             LOG_INFO_F("MEGA_STRESS_MOVING movers=%zu percent=%.3f start_time=%.3f", movers->Items.size(),
                        static_cast<double>(data.m_MovingPercent), static_cast<double>(data.m_MovingStartTime));
             if (!movers->Items.empty())
