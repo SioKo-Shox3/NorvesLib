@@ -8379,3 +8379,10 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - verify: `cmake -B build -S . -DNORVES_BUILD_TESTS=ON` の後、`cmake --build build --config Debug --target CookedMeshTest -- -m:1` が EXIT=0・エラー 0(CookedMeshTest.exe を生成)
 - Next: 起動の確かめは後回し。CookedClipBankV1Test・SkeletalClipBankBindingTest・RigSplitCookTest の Debug の ctest を G2-GR82-V1-REST-POSE-GUARD-CHECK で回す
 - Notes: 作業ツリーの build/ は NORVES_BUILD_TESTS=OFF(既定)で構成されており、verify のビルドの前に試験を有効にした構成が要る
+
+## 2026-11-02 G2-GR82-V1-REST-POSE-GUARD（run 20261102-075121 の反復 2、完了）
+
+- Done: 反復 1 の verify の再実行の失敗(CookedMeshTest.vcxproj が無い)は、この作業ツリーの build/ が NORVES_BUILD_TESTS=OFF で構成されていたため。`cmake -B build -S . -DNORVES_BUILD_TESTS=ON` で構成し直した。実装・試験の変更なし
+- verify: `cmake --build build --config Debug --target CookedMeshTest -- -m:1` が EXIT=0・エラー 0(build/Test/Core/Asset/Debug/CookedMeshTest.exe を生成)
+- Next: 起動の確かめは後回し。3 本の Debug の ctest は G2-GR82-V1-REST-POSE-GUARD-CHECK で回す
+- Notes: 要起票: 枠の build/ が試験なしの構成に戻ると、試験の target を verify にする項目が同じ形で落ちる
