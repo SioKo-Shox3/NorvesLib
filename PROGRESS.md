@@ -8309,3 +8309,9 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: なし
 - Notes: この環境は `NORVES_BRIDGE_SDK_DIR` が空で、Bridge の 4 つの試験（`Test/CMakeLists.txt` の `TARGET norves_bridge_engine_sdk` の条件）と `AssetManifestReloadBridgeLoopbackTest` は configure されず ctest に登録されない。SDK を有効にした構成での `Not Run (Disabled)` の表示と ALL_BUILD からの除外は確かめられておらず、書き方は目で確かめただけ
 - Notes: 枠 `NorvesLib-3` の build は NORVES_BUILD_TESTS=OFF のため、枠で verify を回し直すと試験の対象はビルドされず、ctest は名前に一致する試験が無いまま EXIT=0 になる（全体のビルドの合否は試験を ON にした単位の作業ツリーで見た）
+## 2026-11-02 SCN-BUILD-ALL-TESTS-P1（run 20261101-231548 の反復 2、完了）
+- Done: 反復 1 の差し戻し（枠での verify の再実行が 10 分を超えた）を直した。原因は枠 `NorvesLib-3` の build が統合の取り込みより古く、全体のビルドで Core と Game の翻訳単位をコンパイルし直したこと。CMake の変更は反復 1 のままで変えていない。枠の build を NORVES_BUILD_TESTS=ON・NORVES_BRIDGE_SDK_DIR=NorvesEditor/bridge/cpp で構成し直して一度ビルドし（10 分 27 秒、/m:4、EXIT=0）、HEAD にそろえた
+- verify: 枠で verify のコマンドをそのまま回して EXIT=0・26 秒。Bridge の SDK を有効にした構成で、外した 6 つの名前（`RenderGraphTextureUsageContractTest`・`AssetManifestReloadBridgeLoopbackTest`・`BridgeBase64Test`・`NorvesLibBridgeAdapterThumbnailTest`・`NorvesLibBridgeAdapterScriptComponentTest`・`NorvesLibBridgeAdapterNumericEntityRegressionTest`）がどれも `Not Run (Disabled)`。温めのビルドと verify のビルドの出力に `NorvesLibBridgeAdapterScriptComponentTest.vcxproj`・`AssetManifestReloadBridgeLoopbackTest.vcxproj` は 0 回で、ALL_BUILD から外れている（反復 1 で確かめられなかった SDK 有効時の 2 点）
+- 証拠: `.harness/runs/20261101-231548/verify-SCN-BUILD-ALL-TESTS-P1-2.txt`・`warm-build.txt`・`warm-configure.txt`
+- Next: なし
+- Notes: 全体のビルドを verify にする項目は、枠の build が統合の取り込みより古いと再検証で 10 分を超える（温まった状態の何もしないビルドは約 20 秒）。要起票: 全体のビルドを verify に含む項目の再検証の前に、枠の build を HEAD にそろえる手順をランナー側に置く
