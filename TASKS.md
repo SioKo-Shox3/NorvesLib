@@ -3382,6 +3382,7 @@
 
 ## SCN-MEGA-FIX-STRESS-GPU: 1M + mega-stress 5 万個の GPU 時間を 16.6 ms に収める
 - status: todo
+- after: SCN-MEGA-FIX-TLAS-REBUILD
 - done-when: 問い: 1% 移動の GPU 32.6 / 34.4 ms（median / p95）を、TLAS の直しの後に何が残るかで分け、予算（RT と GI を切った構成で 16.6 ms）に収められるか。SCN-MEGA-ACCEPT-1M の撮影の内訳（median）は `MegaGeometry` 16.1 ms（`VisRasterSw1` 9.1・`MegaGeometryCull1` 4.9・`MegaBvhC1Leaf` 4.1）、`LightingPass` 11.4、`VirtualShadowMapPass` 2.6（`VsmDraw` 1.5）。描いたクラスタは 264 万でバナナだけの静止（168 万）の 1.6 倍、ソフトウェアラスタの単価は 100 万クラスタあたり 3.4 ms（静止 3.0）でほぼ同じなので、量が多い側と見る。SCN-MEGA-FIX-TLAS-REBUILD の後に撮り直して `LightingPass` の残りを確かめ、残る超過を 5 万個のメッシュ（家・塔・岩）の描くクラスタの量（LOD の誤差の許容・遮蔽）で減らす。完了の条件: 1% 移動の負荷（300 フレーム）で GPU のフレームの median・p95 ≤ 16.6 ms。PNG を開いて穴と影の欠けが無いこと。
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -Views overview -Build -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -TimeoutSeconds 2400 -GameArgs banana-count=1000000,stress-entities=50000,stress-moving-percent=1 -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-STRESS-GPU`
 - verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-FIX-STRESS-GPU --timing --min-frames 300 --max-gpu-median-ms 16.6 --max-gpu-p95-ms 16.6`
