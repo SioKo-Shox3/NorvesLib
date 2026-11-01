@@ -8294,3 +8294,7 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: 判定の全出力 `.harness/runs/20261102-064738/verify-SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1.txt`。人の判断どおり撮り直さず、ビルドと 16 本の撮影の verify はこの反復では回していない（撮影は前の反復の `.harness/runs/20261030-232222/verify-SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1-U1.txt`）。
 - Next: SCN-RENDER-ROUGH-STEEP-ENERGY で対照 2 行を 1 ± 0.03 に戻し、一時の下限を外す。
 - Notes: 判定は盤面の枠の `.harness/runs/scene-capture/` に SCN-WLR-BLENDER-TERRAIN-mesh（manifest と PLY）と SCN-WL-SUN-SHADOW-FIX（前後の比べの前の撮影）が無いと「無い」で fail になる。枠で判定するときはメインか前の枠から写す。
+## 2026-11-02 SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1（run 20261102-074950 の反復 1）
+- Done: 一時の下限を 0.940・0.951 にした期待値で、撮影済みの 16 本（ce0bf2f7・Game.exe 798a708e…・崖の細部の版 18）の判定は result=pass（`.harness/runs/20261102-064738/verify-SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1.txt`、盤面の枠 NorvesLib-5）。`InteriorLightReference.md` の VERIFY-OCC の表は aed4096b で今の値に書き直し済み。項目を done にした。
+- Next: 起動の確かめは後回し（人の決まりで当分アプリを起動しない）。盤面の確かめのタスク SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1-CHECK で、16 本の撮影（on/off × 8 組）と `ReferenceCheck.py --occlusion --off-root --verify` を回し、全行が範囲内か、範囲の外の行が off でも外で悪化 0.005 以内か、遠い急な崖の対照 2 行が 0.940・0.951 を超えるかを確かめる。
+- Notes: 前の反復の後のランナーの再実行では、枠 NorvesLib-5 の rocks-sun（off）の撮影が CAPTURE_SCENE exit_code=-1（208.7 秒）で落ちた。描画の経路はこの項目で変えていないので、枠の環境か撮影の不安定さの見込み。CHECK で再び落ちたら、その撮影のログ（`off/rocks-sun/`）を先に見る。
