@@ -8490,3 +8490,8 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: GPU が空いたら同じ verify 2 本だけを回して閉じる（`blocked/SCN-MEGA-FIX-TLAS-REBUILD.md`）
 - Notes: 要起票: `--exit-after-rendered-frames`（CaptureScene の既定 602）が資産の落ち着きの基準から数え SCENE_READY を待たないので、読み込みが遅いと 1M のバナナを出す前に撮って終了する（10-29 は SCENE_READY が rendered≈473 で先に来て通っていた）
 - Notes: 要起票: カメラパスの視点の RTGI の地の費用（静止で LightingPass 3.6〜3.8 ms、10-29 の U3-static）を 3 ms へ下げる件はどの項目にも無い
+
+### SCN-MEGA-FIX-TLAS-REBUILD（2026-11-02、run 20261102-084124 の反復 1）
+- Done: 統合ブランチを取り込み（ef2b1189）、P3 の直し（0036107c。`ApplicationProcessor.cpp` の `bSceneAssembling` が `!deterministicCapture.IsSceneReady()`）が入ったことを確かめた。TLAS の直し（9c5875da。顔ぶれが替わったら Build、席の並びを安定させる）は入ったまま。コードは変えていない
+- Next: 起動の確かめは後回し（当分アプリを起動しない決まり）。SCN-MEGA-FIX-TLAS-REBUILD-CHECK で verify の 2 本（1M horizon のカメラパス 300 フレームの撮影と、LightingPass の median ≤ 4.4 ms・p95 ≤ 5 ms の判定）を回し、撮影の前に自分の Game.exe 以外の 3D 利用率の合計が 10 % 未満であることを確かめる。値（LightingPass の median・p95、`RT_SCENE` の built/updated、SCENE_READY_FRAME）を記録する
+- Notes: 10-29 の U2-path（P3 の前・GPU 空き）では median 4.27 / p95 4.94 ms で新しい線を満たしていた。`要起票:`（RTGI の地の費用を 3 ms へ）は上の節に既にある
