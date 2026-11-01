@@ -8,12 +8,16 @@
 #include "Core/Public/Math/QuaternionUtils.h"
 #include "Core/Public/Object/Entity.h"
 #include "Core/Public/Object/World.h"
+#include "Core/Public/Rendering/FrameCaptureTypes.h"
 #include "Core/Public/Rendering/RenderWorld.h"
 #include "Debug/CameraScriptCapture.h"
 #include "Scenes/SceneViewSwitch.h"
 
 
 #include <algorithm>
+#include <cmath>
+#include <cstring>
+#include <limits>
 
 using namespace NorvesLib::Core;
 using namespace NorvesLib::Core::GameMode;
@@ -39,6 +43,12 @@ namespace Game::Scenes
         m_PathTime = 0.0f;
         m_bPlayWhenReady = false;
         m_PathPlayedFrames = 0;
+#if NORVES_BUILD_DEVELOPMENT
+        m_pPathCapture = nullptr;
+        m_PathCaptureTime = -1.0;
+        m_PathCaptureTick = 0;
+        m_PathCaptureTargetTick = 0;
+#endif
         if (pPath == nullptr)
         {
             if (bPlayWhenReady)
@@ -63,6 +73,47 @@ namespace Game::Scenes
             m_PathStartTime = std::max(m_PathStartTime, 0.0f);
         }
     }
+
+#if NORVES_BUILD_DEVELOPMENT
+    void FreeCameraRig::ConfigurePath(const ScenePathDescriptor *pPath, float startTimeSeconds, bool bPlayWhenReady,
+                                      double captureTimeSeconds, CameraPathCaptureState *pCaptureState)
+    {
+        ConfigurePath(pPath, startTimeSeconds, bPlayWhenReady);
+        if (captureTimeSeconds < 0.0)
+        {
+            return;
+        }
+        if (!pCaptureState || !m_Path.IsValid() || !bPlayWhenReady ||
+            captureTimeSeconds < pCaptureState->StartTimeSeconds)
+        {
+            LOG_ERROR("CAMERA_PATH_CAPTURE 撮影に必要なパス・開始時刻・再生の指定が不正です");
+            if (pCaptureState)
+            {
+                pCaptureState->bFinished = true;
+            }
+            NorvesLib::Core::Engine::GEngine->RequestExit(1);
+            return;
+        }
+        if (!m_Path.IsLoop() && captureTimeSeconds > static_cast<double>(m_Path.GetDuration()))
+        {
+            LOG_ERROR("CAMERA_PATH_CAPTURE 指定時刻がループしないパスの長さを超えています");
+            pCaptureState->bFinished = true;
+            NorvesLib::Core::Engine::GEngine->RequestExit(1);
+            return;
+        }
+        const double targetTick = std::ceil((captureTimeSeconds - pCaptureState->StartTimeSeconds) * 60.0);
+        if (!std::isfinite(targetTick) || targetTick >= static_cast<double>(std::numeric_limits<uint64_t>::max()))
+        {
+            LOG_ERROR("CAMERA_PATH_CAPTURE 撮影までの Tick 数が大きすぎます");
+            pCaptureState->bFinished = true;
+            NorvesLib::Core::Engine::GEngine->RequestExit(1);
+            return;
+        }
+        m_pPathCapture = pCaptureState;
+        m_PathCaptureTime = captureTimeSeconds;
+        m_PathCaptureTargetTick = static_cast<uint64_t>(targetTick);
+    }
+#endif
 
     bool FreeCameraRig::Enter(GameModeContext &ctx, const FreeCameraPose &pose, const char *scriptPath)
     {
@@ -152,6 +203,13 @@ namespace Game::Scenes
         {
             const NorvesLib::Core::Input::InputState frame = m_Collector.BuildFrameInputState();
             const bool bToggle = m_Collector.ConsumePathToggleRequest();
+#if NORVES_BUILD_DEVELOPMENT
+            if (bToggle && m_pPathCapture && !m_pPathCapture->bFinished && m_bPlayWhenReady)
+            {
+                LOG_WARNING("CAMERA_PATH_CAPTURE シーンの準備が終わるまで再生操作を無視します");
+            }
+            else
+#endif
             if (bToggle && m_Path.IsValid())
             {
                 if (m_bPathPlaying)
@@ -171,18 +229,61 @@ namespace Game::Scenes
 
             if (m_bPathPlaying)
             {
-                m_PathTime += deltaTime;
-                ++m_PathPlayedFrames;
-                if (!m_Path.IsLoop() && m_PathTime >= m_Path.GetDuration())
+#if NORVES_BUILD_DEVELOPMENT
+                if (m_pPathCapture && !m_pPathCapture->bFinished)
                 {
-                    m_PathTime = m_Path.GetDuration();
+                    const double seconds = std::max(
+                        m_pPathCapture->StartTimeSeconds,
+                        m_PathCaptureTime + (static_cast<double>(m_PathCaptureTick) -
+                                             static_cast<double>(m_PathCaptureTargetTick)) / 60.0);
+                    m_PathTime = m_Path.WrapTime(static_cast<float>(seconds));
                     PlaceOnPath(m_PathTime);
-                    StopPath("end");
+                    ++m_PathPlayedFrames;
+                    if (m_PathCaptureTick <= m_PathCaptureTargetTick &&
+                        m_PathCaptureTargetTick - m_PathCaptureTick <= 4)
+                    {
+                        LOG_INFO_F("CAMERA_PATH_CAPTURE_TICK tick=%llu time=%.6f",
+                                   static_cast<unsigned long long>(m_PathCaptureTick), seconds);
+                    }
+                    if (m_PathCaptureTick == m_PathCaptureTargetTick)
+                    {
+                        // この Tick の Publish と要求は、直後の BeginFrame / EndFrame の同じパケットに入る。
+                        FrameCaptureRequest request;
+                        request.SourceKind = FrameCaptureSourceKind::BackBuffer;
+                        if (!ctx.EngineRef.GetRenderWorld().RequestFrameCapture(request).IsAccepted())
+                        {
+                            LOG_ERROR("CAMERA_PATH_CAPTURE 撮影の要求が拒否されました");
+                            m_pPathCapture->bFinished = true;
+                            NorvesLib::Core::Engine::GEngine->RequestExit(1);
+                        }
+                        else
+                        {
+                            m_pPathCapture->bWaitingResult = true;
+                        }
+                    }
+                    else if (m_PathCaptureTick > m_PathCaptureTargetTick && !m_Path.IsLoop() &&
+                             seconds >= static_cast<double>(m_Path.GetDuration()))
+                    {
+                        StopPath("end");
+                    }
+                    ++m_PathCaptureTick;
                 }
                 else
+#endif
                 {
-                    m_PathTime = m_Path.WrapTime(m_PathTime);
-                    PlaceOnPath(m_PathTime);
+                    m_PathTime += deltaTime;
+                    ++m_PathPlayedFrames;
+                    if (!m_Path.IsLoop() && m_PathTime >= m_Path.GetDuration())
+                    {
+                        m_PathTime = m_Path.GetDuration();
+                        PlaceOnPath(m_PathTime);
+                        StopPath("end");
+                    }
+                    else
+                    {
+                        m_PathTime = m_Path.WrapTime(m_PathTime);
+                        PlaceOnPath(m_PathTime);
+                    }
                 }
                 if (m_PathPlayedFrames % kPathTimeLogFrames == 0)
                 {
@@ -362,7 +463,11 @@ namespace Game::Scenes
 
     void FreeCameraRig::StartPath()
     {
-        if (!m_Path.IsLoop() && m_PathTime >= m_Path.GetDuration())
+        if (!m_Path.IsLoop() && m_PathTime >= m_Path.GetDuration()
+#if NORVES_BUILD_DEVELOPMENT
+            && !(m_pPathCapture && !m_pPathCapture->bFinished)
+#endif
+        )
         {
             // 終わりまで再生したパスは、最初から
             m_PathTime = 0.0f;
@@ -373,6 +478,16 @@ namespace Game::Scenes
 
     void FreeCameraRig::StopPath(const char *reason)
     {
+#if NORVES_BUILD_DEVELOPMENT
+        if (m_pPathCapture && !m_pPathCapture->bFinished &&
+            (std::strcmp(reason, "input") == 0 || std::strcmp(reason, "toggle") == 0))
+        {
+            LOG_ERROR("CAMERA_PATH_CAPTURE 入力でパスが停止したため撮影を中止します");
+            m_pPathCapture->bFinished = true;
+            m_pPathCapture->bWaitingResult = false;
+            NorvesLib::Core::Engine::GEngine->RequestExit(1);
+        }
+#endif
         m_bPathPlaying = false;
         const Math::Vector3 position = m_Controller.GetPosition();
         LOG_INFO_F("CAMERA_PATH state=stopped reason=%s time=%.3f position=(%.3f, %.3f, %.3f)", reason,
