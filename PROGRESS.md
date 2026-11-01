@@ -8397,3 +8397,10 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: 単位の作業ツリー `NorvesLib-3-u1` の `.harness/unit-verify.txt` と `.harness/runs/scene-capture/SCN-MEGA-ACCEPT-1M-P1-P1/`
 - Notes: 比 1.420 は前の時刻の揃わない組（1.245〜1.318）・同じ視点の診断（1.009）より高く、上限との余白が小さい。固定刻みは実時間の再生（撮影の直前は約 13.75 ms/Tick）より 1 フレームあたりの動きが約 1.21 倍大きいのが候補だが、速さだけを変えた比べはしていない（受入れ文書に記録）
 - Notes: 要起票: 時刻を固定した組の比 1.420 が上がった原因（固定刻みの 1 フレームあたりの動きか）を、刻みを実時間の Tick の頻度に合わせた撮影と比べて切り分ける
+
+### SCN-MEGA-FIX-TLAS-REBUILD（2026-11-02、run 20261102-064721 の反復 1、blocked）
+- Done: 人の判断（案 A）に従い統合ブランチを取り込んだ（db6db6ce）。コードは変えていない。直した条件（再生の LightingPass median ≤ 4.4 ms・p95 ≤ 5 ms）の verify を回した
+- 結果: 撮影は result=fail で判定できなかった。100 万本は置いた（MEGA_BANANAS_PLACED count=1000000）が、SHOWN と SCENE_READY の前に `capture_png requested rendered=607` で保存して終了した。撮影中は利用者のゲームが GPU を 62〜93 % 使っていて、読み込みが 10-29 より約 3 秒遅かった（証拠 `.harness/runs/20261102-064721/U5-unit-verify.txt`・`U5-path/horizon.Game.log`）
+- Next: GPU が空いたら同じ verify 2 本だけを回して閉じる（`blocked/SCN-MEGA-FIX-TLAS-REBUILD.md`）
+- Notes: 要起票: `--exit-after-rendered-frames`（CaptureScene の既定 602）が資産の落ち着きの基準から数え SCENE_READY を待たないので、読み込みが遅いと 1M のバナナを出す前に撮って終了する（10-29 は SCENE_READY が rendered≈473 で先に来て通っていた）
+- Notes: 要起票: カメラパスの視点の RTGI の地の費用（静止で LightingPass 3.6〜3.8 ms、10-29 の U3-static）を 3 ms へ下げる件はどの項目にも無い
