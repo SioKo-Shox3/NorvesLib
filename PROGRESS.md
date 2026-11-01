@@ -8450,3 +8450,12 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - verify: `cmake --build build --config Debug --target CookedMeshTest AssetCook -- -m:1` EXIT=0。19 件の ctest は UTF-8 で 19/19・cp932 で 18/19（CookedSkeletalAssetTest、範囲外で要起票済み）。`git grep -n "GR77: native"` は 216 行の節を含めて一致。証拠は単位の作業ツリー `NorvesLib-4-u1` の `.harness/unit-verify.txt` と `build/GR77Accept/results.md`
 - Next: 起動の確かめは後回し。アプリを起動しない決まりのため、mega-bananas を `Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets` で 1 枚撮り、GLB 由来のバナナがテクスチャ付きで描かれることを PNG で確かめる段と、ctest の 19 件の再実行は G2-GR77-NATIVE-ACCEPTANCE-CHECK で回す。結果は「GR77: native受入れ」の「表示」に書き足す
 - Notes: loose 経路で実物 GLB を読む受入れは、入口が無いので未実行と節に明記した（fixture の GltfLooseSourceTest で閉じる）。RelWithDebInfo の AssetCook のビルドは PowerShell から呼ぶとき `-- '-m:1'` と引用しないと MSBuild に `-m: 1` と渡って EXIT=1 になる
+
+## 2026-11-02 SCN-MEGA-FIX-TLAS-REBUILD-P3（run 20261102-070013 の反復 1、GPU 待ち）
+- In progress: 決定的でない撮影も SceneReady までを読み込み中として数える直し（`ApplicationProcessor.cpp` の `bSceneAssembling`）と `CaptureScene.ps1` の余白の説明の直しを作った（未着地）。1M のカメラパスの撮影は、利用者のゲームが GPU を使っていたため回していない
+- Next: PC が空いたら U1 の作業ツリーで verify 3 本を回し、合格なら着地して done にする
+- U2 決定的でない撮影も SceneReady までを読み込み中として数える(起動せずビルドで確かめる): 着地(直し 0 回)
+## 2026-11-02 SCN-MEGA-FIX-TLAS-REBUILD-P3（run 20261102-082942 の反復 1）
+- Done: 撮影では決定的かどうかに関わらず、SceneReady までを読み込み中として数える（`ApplicationProcessor.cpp` の `bSceneAssembling` から `bDeterministicCapture &&` を外した。決定的な撮影のエポックは変えていない）。`CaptureScene.ps1` 冒頭の余白の説明を、終了までの描画フレームを SceneReady の後から数える振る舞いに直した。`cmake --build build --config RelWithDebInfo --target Game` は終了コード 0、numstat は 2 通りで一致
+- Next: 起動の確かめは後回し（当分アプリを起動しない決まり）。SCN-MEGA-FIX-TLAS-REBUILD-P3-CHECK で 1M のカメラパスの撮影を回し、最後の `asset settle baseline rendered=` が `SCENE_READY scene=mega-bananas` の後にあること、既定の `-TimingReadyMarginFrames` のままで SceneReady 後の有効な標本が 300 件そろうことを確かめる
+- Notes: 前の反復の U1 の作業ツリーは別タスクに使い回されて差分が残っていなかったので、同じ変更を当て直した
