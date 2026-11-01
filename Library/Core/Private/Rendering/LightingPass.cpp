@@ -1015,6 +1015,9 @@ namespace NorvesLib::Core::Rendering
         return hash;
     }
 
+    // カメラだけの動きでは、バイリニア補間のにじみを抑えるため拡散の年齢を16まで保つ（鏡面は8）。
+    static constexpr uint32_t RTGIHistoryCameraMotionMaximumAge = 16u;
+
     // 静止が続いたフレーム数から、画素ごとの履歴の年齢の上限を決める。
     static uint32_t ComputeRTGIHistoryAgeCap(uint32_t staticFrames)
     {
@@ -1450,6 +1453,33 @@ namespace NorvesLib::Core::Rendering
 #endif
     }
 
+    // 履歴の採否と年齢の診断（開発ビルドだけ）。遮蔽の診断と同時に指定されたらこちらを優先する。
+    static bool IsRTGIHistoryDiagnosticRequested()
+    {
+#if NORVES_BUILD_DEVELOPMENT
+        static const bool bRequested = []
+        {
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4996)
+#endif
+            const char* value = std::getenv("NORVES_RTGI_HISTORY_DIAG");
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
+            const bool bOn = value != nullptr && value[0] == '1' && value[1] == '\0';
+            if (bOn)
+            {
+                LOG_INFO("RTGI_HISTORY_DIAG on source=env");
+            }
+            return bOn;
+        }();
+        return bRequested;
+#else
+        return false;
+#endif
+    }
+
     // 鏡面の環境光を RTGI の光線で遮らない変更前の経路（空の前計算 × 反射率 × 画面空間の鏡面 AO）で描くか
     // （開発ビルドだけ。Game の --rtgi-specular=off が環境変数 NORVES_RTGI_SPECULAR=0 で頼む）。同じ Game.exe・同じ焼いた地形で
     // 鏡面の遮りの前後を撮り比べる（InteriorLightReference.md）。プロセスの間は変わらないので、最初の 1 回だけ読む
@@ -1599,8 +1629,9 @@ namespace NorvesLib::Core::Rendering
             RHI::ResourceBindType::CombinedImageSampler,
             RHI::ResourceBindType::CombinedImageSampler,
             RHI::ResourceBindType::RWTexture,
-            RHI::ResourceBindType::CombinedImageSampler};
-        for (uint32_t bindingIndex = 0u; bindingIndex < 7u; ++bindingIndex)
+            RHI::ResourceBindType::CombinedImageSampler,
+            RHI::ResourceBindType::ConstantBuffer};
+        for (uint32_t bindingIndex = 0u; bindingIndex < 8u; ++bindingIndex)
         {
             RHI::DescriptorBinding binding;
             binding.binding = bindingIndex;
@@ -2449,6 +2480,7 @@ namespace NorvesLib::Core::Rendering
         m_RTGIHistoryCapability = RTGIRayQueryCapability{};
         m_RTGIHistoryLightWeightLimitedFrames = 0u;
         m_RTGIStaticSignature = 0u;
+        m_RTGICameraIndependentSignature = 0u;
         m_RTGIStaticFrames = 0u;
         m_RTGIHistoryAgeCap = RTGIHistoryMaximumAge;
         m_bRTGIStaticSignatureValid = false;
@@ -3653,11 +3685,14 @@ namespace NorvesLib::Core::Rendering
                                            const RHI::TexturePtr& ageTexture,
                                            const RHI::TexturePtr& depthTexture,
                                            const RHI::TexturePtr& normalTexture,
-                                           const RHI::TexturePtr& materialTexture)
+                                           const RHI::TexturePtr& materialTexture,
+                                           const RHI::BufferPtr& parametersBuffer,
+                                           uint32_t parametersOffset,
+                                           uint32_t parametersSize)
     {
         if (!context.CommandList || !context.Device || !temporalRadiance ||
             !confidenceTexture || !ageTexture || !depthTexture || !normalTexture ||
-            !materialTexture ||
+            !materialTexture || !parametersBuffer ||
             temporalRadiance->GetFormat() != RTGIDiffuseIndirectRadianceFormat ||
             confidenceTexture->GetFormat() != RTGIHistoryConfidenceFormat ||
             ageTexture->GetFormat() != RTGIHistoryAgeFormat ||
@@ -3730,6 +3765,7 @@ namespace NorvesLib::Core::Rendering
         denoiserDescriptorSet->BindStorageTexture(5u, m_RTGIDenoisedTexture);
         denoiserDescriptorSet->BindTexture(6u, ageTexture);
         denoiserDescriptorSet->BindSampler(6u, m_GBufferSampler);
+        denoiserDescriptorSet->BindConstantBuffer(7u, parametersBuffer, parametersOffset, parametersSize);
         denoiserDescriptorSet->Update();
 
         const uint32_t groupCountX =
@@ -3928,6 +3964,7 @@ namespace NorvesLib::Core::Rendering
         m_RTGIHistoryLightWeightLimitedFrames = 0u;
         m_bRTGIHistoryFrameNumberValid = false;
         m_RTGIStaticSignature = 0u;
+        m_RTGICameraIndependentSignature = 0u;
         m_RTGIStaticFrames = 0u;
         m_RTGIHistoryAgeCap = RTGIHistoryMaximumAge;
         m_bRTGIStaticSignatureValid = false;
@@ -4126,7 +4163,7 @@ namespace NorvesLib::Core::Rendering
         // 視点（逆ビュー射影と位置）、環境光、レイトレーシングのinstance（位置・拡大率・形状・材質の表と、
         // 材質の色・発光・textureハンドル）が前フレームと同じで、光源も変わらず履歴を再投影できる
         // フレームだけを静止として数える。静止が続くと画素ごとの履歴の年齢の上限を上げ、静止画像を
-        // 収束させる。動いたフレームの上限は従来どおり8。
+        // 収束させる。動いたフレームの静止判定用の上限は従来どおり8。
         // TAAのジッタはフレームごとに投影をずらすだけで視点は動かないため、ジッタを除いた逆ビュー射影で比べる。
         // 露出は履歴を比で掛け直すので署名に含めない（自動露出の小さな揺れで静止が切れないように）。
         // 1フレームでRTGIHistoryStaticExposureStepEVを超える急な変化だけ、署名とは別に静止を切る。
@@ -4159,6 +4196,10 @@ namespace NorvesLib::Core::Rendering
                                         sizeof(environmentIntensity));
         // instance（位置・拡大率・形状・材質の表と、材質の色・textureハンドル）は表を作る走査で畳み込んだ値を使う
         staticSignature = instanceBuild.Signature.Finish(staticSignature);
+        // カメラを除いた同じシーンの署名を別に保ち、視点だけが動いたフレームを見分ける。
+        uint64_t cameraIndependentSignature = HashRTGIBytes(14695981039346656037ull,
+            &environmentIntensity, sizeof(environmentIntensity));
+        cameraIndependentSignature = instanceBuild.Signature.Finish(cameraIndependentSignature);
         const float rtgiPreExposure = std::isfinite(lightingParams.preExposure) &&
                                               lightingParams.preExposure > 0.0f
                                           ? std::clamp(lightingParams.preExposure, 1.0e-6f, 1.0e6f)
@@ -4171,6 +4212,10 @@ namespace NorvesLib::Core::Rendering
                                   !bExposureStepped &&
                                   lightWeightLimitedFrames == 0u && m_bRTGIStaticSignatureValid &&
                                   staticSignature == m_RTGIStaticSignature;
+        const bool bCameraOnlyMotion = !bStaticFrame && bHistoryReprojectionValid &&
+                                       !bLightRevisionMismatch && !bExposureStepped &&
+                                       lightWeightLimitedFrames == 0u && m_bRTGIStaticSignatureValid &&
+                                       cameraIndependentSignature == m_RTGICameraIndependentSignature;
         const uint32_t staticFrames = bStaticFrame ? m_RTGIStaticFrames + 1u : 0u;
         const uint32_t historyAgeCap = ComputeRTGIHistoryAgeCap(staticFrames);
         // 静止で年齢の上限が最大に達したときと、動いて従来の上限へ戻ったときだけ記録する。
@@ -4238,7 +4283,9 @@ namespace NorvesLib::Core::Rendering
                 ? context.PhysicalLighting.StaticEnvironmentMaxRadiance
                 : 0.0f;
         parameters.environmentParameters[1] = ResolveRTGIBounceScale();
-        parameters.environmentParameters[2] = IsRTGIOcclusionDiagnosticRequested() ? 1.0f : 0.0f;
+        parameters.environmentParameters[2] = IsRTGIHistoryDiagnosticRequested()
+            ? 2.0f
+            : (IsRTGIOcclusionDiagnosticRequested() ? 1.0f : 0.0f);
         parameters.environmentParameters[3] = context.bRTGINonShadowCasterOcclusion ? 1.0f : 0.0f;
         // 散らした小物の遮りを頼んだシーン（荒野）だけ、株の冠で拡散の光線を遮る。株は RT のシーンに無い
         Container::VariableArray<RTGIFoliageCrown> foliageCrowns;
@@ -4250,7 +4297,10 @@ namespace NorvesLib::Core::Rendering
         RHI::TexturePtr terrainTextures[4];
         ResolveRTGITerrainBlend(context.SnapshotRayTracingScene->TerrainBlend, context.Resources.Textures,
                                 m_DefaultBlackTexture, parameters, terrainTextures);
-        parameters.temporalState[0] = bHistoryReprojectionValid ? 1u : 0u;
+        // xは0=無効、1=通常の有効履歴、2以上=カメラだけの動きで使う拡散の年齢上限（16）。
+        // wは従来のままにし、動いている間も法線・材質による棄却を維持する。
+        parameters.temporalState[0] = bCameraOnlyMotion ? RTGIHistoryCameraMotionMaximumAge
+            : (bHistoryReprojectionValid ? 1u : 0u);
         parameters.temporalState[1] = bLightRevisionMismatch ? 1u : 0u;
         parameters.temporalState[2] = lightWeightLimitedFrames > 0u ? 1u : 0u;
         parameters.temporalState[3] = historyAgeCap;
@@ -4462,7 +4512,10 @@ namespace NorvesLib::Core::Rendering
                                  writeHistory.Age,
                                  depthTexture,
                                  normalTexture,
-                                 materialTexture))
+                                 materialTexture,
+                                 parametersUpload.Buffer,
+                                 parametersUpload.GetOffset32(),
+                                 parametersUpload.GetSize32()))
         {
             return fail();
         }
@@ -4502,6 +4555,7 @@ namespace NorvesLib::Core::Rendering
         m_bRTGIHistoryFrameNumberValid = true;
         m_bRTGIHistoryLightRevisionValid = true;
         m_RTGIStaticSignature = staticSignature;
+        m_RTGICameraIndependentSignature = cameraIndependentSignature;
         m_RTGIStaticFrames = staticFrames;
         m_RTGIHistoryAgeCap = historyAgeCap;
         m_bRTGIStaticSignatureValid = true;

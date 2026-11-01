@@ -291,3 +291,136 @@
 `SCN-MEGA-FIX-TLAS-REBUILD` の静止の `LightingPass` 3 ms の閾値は、11-01 の median 2.857 ms・p95 2.883 ms では満たすが、最大 3.507 ms で 3 ms 以上のフレームが 11 件ある。基点の 1.657 ms は鏡面光線と統計の追加前の値なので、1.7 ms への復帰を TLAS の静止維持だけで要求する根拠にはならない。3 ms の閾値を変える根拠にもせず、カメラパスの TLAS の改善と静止の光線・統計の費用を分けて判定する。
 
 限界: 10-29 は他の GPU 撮影との重なりの可能性がある。11-01 は 5 秒ごとの記録では対象の Game 以外の Game を検出せず、描画中の 4 標本の SM クロックは 2,760 MHz だったが、常駐アプリは GPU を保持しており、短い別処理の重なりまでは否定できない。11-01 の葉の p95 の山の原因も未特定。各版は 1 回の撮影で、過去の GPU クロック・ビルド時の未コミット差分・アセットの内容の同一性は確認できていない。
+
+## カメラパスの再生の RTGI の粒（50000 本）
+
+判定日: 2026-11-02。RelWithDebInfo、1920×1080、RTX 4080（ドライバ 610.88）。`mega-bananas` の horizon で 5 万本を配置し、カメラパスの再生と静止を撮った。再生・静止とも `CAPTURE_SCENE result=pass`、配置数 50,000、資産の欠け 0。撮影結果は `.harness/runs/scene-capture/SCN-MEGA-ACCEPT-1M-P1-before/` にある。
+
+### 測り方
+
+再生と静止の各 300 フレームを実時間で測り、履歴の採否と年齢は決定的な撮影の AOV から読む。`-Aov` の撮影では `-GpuTimingFrames` を使わず、落ち着いた後の既定 60 フレームで撮る。診断環境変数を切った画像と診断画像の両方を開いて確認した。
+
+```powershell
+cmake --build build --config RelWithDebInfo --target Game -- /m:1
+$root = '.harness/runs/scene-capture/SCN-MEGA-ACCEPT-1M-P1-before'
+powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -Views horizon -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -TimeoutSeconds 1800 -GameArgs 'banana-count=50000,camera-path-play,camera-path-time=0' -OutDir "$root/path"
+powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -Views horizon -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -TimeoutSeconds 1800 -GameArgs 'banana-count=50000,camera-path-time=9.53' -OutDir "$root/static"
+python Scripts/CheckCaptureMetrics.py "$root/path" --views horizon --timing --min-frames 300 --require-pass LightingPass
+$env:NORVES_RTGI_HISTORY_DIAG = '1'
+powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -Views horizon -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Aov -TimeoutSeconds 1800 -GameArgs 'banana-count=50000,camera-path-play,camera-path-time=8.53' -OutDir "$root/diag-path"
+powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -Views horizon -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Aov -TimeoutSeconds 1800 -GameArgs 'banana-count=50000,camera-path-time=10.08' -OutDir "$root/diag-static"
+$env:NORVES_RTGI_HISTORY_DIAG = $null
+powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Terrain/CaptureRegression.ps1 -Item SCN-MEGA-ACCEPT-1M-P1 -Phase before -Motion
+```
+
+実時間の再生ログは `CAMERA_PATH_TIME time=7.962 frames=540`、`time=8.782 frames=600`、撮影要求 `rendered=655`。この 2 点の再生フレーム数と描画フレーム数を同一とみなす外挿は `8.782 + (8.782 - 7.962) × (655 - 600) / 60 = 9.53` 秒で、静止の計測をこの位置で撮った。ただし、描画フレームの数にはパス再生前のフレームが含まれる。再生開始 01:49:25.898 から撮影要求 01:49:35.165 までは 9.267 秒で、600 フレーム時点の時刻差 8.782 秒はログのパス時刻と一致する。したがって再生画像の実際の位置は約 9.27 秒であり、9.53 秒の静止画像とは約 0.26 秒ずれる。
+
+診断の再生は 8.53 秒から開始したが、撮影の待機中もパスが進む。保存した AOV のカメラ位置をパスに照合した時刻は 10.079976 秒なので、診断の静止は 10.08 秒に置いた。2 枚の AOV のカメラ位置の差は 0.000041 m、前方向の差の長さは 0.0000068 で、診断の画素比較に使える。
+
+### 直す前の計測と見た目
+
+| 負荷 | `LightingPass` median | `LightingPass` p95 | 標本数 |
+|---|---:|---:|---:|
+| 再生 | 4.181 ms | 4.339 ms | 300 |
+| 静止（9.53 秒） | 3.790 ms | 3.844 ms | 300 |
+
+`CheckCaptureMetrics.py` は `CHECK_CAPTURE_METRICS result=pass views=horizon`。パスの名前とフレーム数の検査であり、画像の一致判定ではない。上の 2 枚は視点が約 0.26 秒ずれるので、見た目の同一画素の比較には使わない。
+
+診断の再生と静止の PNG、および `diag-compare.png` を開くと、近景のバナナの周りの床は再生の方が粒状で、静止では滑らかに見える。比較画は全景と近景を、撮影・履歴の理由・年齢の順に並べる。床候補の位置は各 `horizon.history-floor-edge.png`、元の AOV は各 `horizon.aov.rtgi_temporal_code.pfm`、集計は `diag-history-stats.json` にある。
+
+### 履歴の診断
+
+開発ビルドの `NORVES_RTGI_HISTORY_DIAG=1` は遮蔽診断と同時に指定された場合、履歴診断を優先する。AOV の値を `floor(a / 2)` で符号に戻す。符号 0 は履歴無効、1 は速度が非有限または画面外、2 は距離・裏返り・非有限などで有効な標本が無い、3 は法線または材質、4 は残った重みの不足、6 は無効な表面を表す。8 以上は履歴採用で、年齢の整数部は符号から 8 を引く（255 に飽和）。棄却時の年齢は 0。診断は出力の半精度 a に空の可視率と同居するため、可視率の丸めによって診断画像の照明がわずかに変わり得る。
+
+対象の床は画像下半分・深度 5 m 未満・法線 Y が 0.9 以上で、線形アルベドの `R > 0.05`、`G > 0.7R`、`B > 0.65R` を満たす画素。バナナ候補は `R > 0.1`、`B < 0.4R`、`G > 1.4B` とし、その周囲の正方形 ±12 画素または ±2 画素にある床候補を集計した。色と法線による近似であり、物体 ID による完全な領域分割ではない。
+
+| 領域 | 状態 | 画素数 | 画面外・速度 | 距離・裏返り等 | 法線・材質 | 重み不足 | 採用 |
+|---|---|---:|---:|---:|---:|---:|---:|
+| 近景の床全体 | 再生 | 319,854 | 0.0456% | 0.4549% | 0.0022% | 0.0231% | 99.4741% |
+| 周囲 ±12 画素 | 再生 | 300,972 | 0.0452% | 0.4834% | 0.0023% | 0.0246% | 99.4445% |
+| 縁 ±2 画素 | 再生 | 115,710 | 0.0354% | 1.2575% | 0.0060% | 0.0640% | 98.6371% |
+| 近景の床全体 | 静止 | 319,876 | 0% | 0% | 0% | 0% | 100% |
+| 周囲 ±12 画素 | 静止 | 300,995 | 0% | 0% | 0% | 0% | 100% |
+| 縁 ±2 画素 | 静止 | 115,705 | 0% | 0% | 0% | 0% | 100% |
+
+いずれの領域も履歴無効の分類は 0%。年齢の分布は次のとおり（割合は各領域の全画素に対する値）。
+
+| 領域 | 状態 | 年齢 0 | 年齢 1〜7 | 年齢 8 | 年齢 51 | 年齢 52 |
+|---|---|---:|---:|---:|---:|---:|
+| 周囲 ±12 画素 | 再生 | 0.556% | 7.341% | 92.103% | 0% | 0% |
+| 縁 ±2 画素 | 再生 | 1.363% | 11.456% | 87.181% | 0% | 0% |
+| 周囲 ±12 画素 | 静止 | 0% | 0% | 0% | 96.948% | 3.052% |
+| 縁 ±2 画素 | 静止 | 0% | 0% | 0% | 93.091% | 6.909% |
+
+比較画の近景の切り出し（x=500〜1459、y=720〜1079）の縁 ±2 画素でも、再生 46,178 画素の 98.343% が採用、85.307% が年齢 8。距離・裏返り等の棄却は 1.555% で、法線・材質の棄却は 0.004%。静止の同領域 46,180 画素は全て採用され、年齢 51 が 93.259%、52 が 6.741%。理由の画でも棄却は輪郭の細い線に集まり、その外側の粒が見える床は主に採用・年齢 8 になっている。
+
+再生中は静止判定が毎フレーム切れて年齢上限が 8 に留まり、静止では上限が伸びる。確信度が 1 のとき、履歴の年齢 8 の重みは約 0.889、年齢 50〜51 なら約 0.980〜0.981 で、再生中は新しい光線のばらつきが残りやすい。広い床の粒については、履歴を全面的に棄却することより、採用した履歴の年齢上限が低いことが主な要因と考えられる。輪郭直近では距離等の棄却と若い履歴も寄与する。上限だけを変えた比較はないため、年齢上限だけで見た目の差の全てを説明できるとは断定しない。
+
+### 既知の限界
+
+- 診断は同じ視点で各 1 フレームを比較したもので、時間全体の棄却頻度は測っていない。診断 AOV の年齢は整数部で、静止の年齢 51〜52 はこの撮影のフレーム数に依存する。
+- AOV の入力記録は他の資産セットも走査し、元資産候補の未取得を 103 件記録した。`mega-bananas` の 4 撮影自体は必要な資産の欠け 0 で完了した。
+- 初期の回帰 before は `rendering3dtest`・`mega-bananas`・`sandbox` が成功した後、`night-village` の `Terrain/ValleyOfTheGods/height.json` が読めず資産欠けとなり中断した。「直した後」の回帰では、資産の接合後に全 5 組を完了した `before-u4` を比較元にしている。
+
+### 直した後
+
+判定日: 2026-11-02。対象は `e9a1c71`。シーン（環境光・instance）が同じでカメラだけが動くフレーム（`temporalState.x > 1u`）では、拡散の放射照度と空の可視率の履歴年齢上限を 16 にし、履歴を棄却付きバイリニアで読む。鏡面の上限は 8 のままとする。空間フィルタには同じフレームの RTGI パラメータを binding 7 で渡し、この条件では近傍の重みを年齢で下げず 1 に保つ。年齢だけを伸ばすと、従来の `8 / min(年齢, 16)` によって空間の均しが弱まり、粒が残るためである。棄却閾値と静止判定は変えていない。静止・golden を含め、カメラだけの動きでないフレームは従来の計算を通る。
+
+#### 同じ視点での診断と採用理由
+
+採用版の診断の再生時刻は 10.079976081 秒、対応する静止とのカメラ位置差は 0 m。帯の静止の粒は 0.1226。以下の輝度差は PNG を線形 Rec.709 輝度（0〜1）へ戻した「再生−静止」で、縁の周囲 ±12 画素の共通の床を集計した。帯の粒の比は再生を静止で割った値である。
+
+| 版 | 帯の粒 | 比 | 輝度差の平均 | 輝度差の絶対値平均 | 輝度差の絶対値 p95 |
+|---|---:|---:|---:|---:|---:|
+| 直す前（年齢 8） | 0.1646 | 1.343 | −0.000246 | 0.008351 | 0.023479 |
+| Catmull-Rom・年齢 16 | 0.1715 | 1.400 | −0.000212 | 0.008293 | 0.023473 |
+| バイリニア 16（空間は従来） | 0.1387 | 1.131 | −0.000605 | 0.007818 | 0.022301 |
+| バイリニア 24（空間は従来） | 0.1223 | 0.998 | −0.000751 | 0.007761 | 0.022480 |
+| バイリニア 32（空間は従来） | 0.1157 | 0.944 | −0.000824 | 0.007844 | 0.022888 |
+| **採用：バイリニア 16＋空間の重み 1** | **0.1236** | **1.009** | **−0.000610** | **0.007603** | **0.021817** |
+
+Catmull-Rom は負の重みで粒を強めるため採用しない。年齢 24・32 は床の粒を減らす一方、バナナ脇の暗いにじみを広げる。採用版は年齢 16 と空間の均しを組み合わせ、帯の粒を静止とほぼ同じに抑える。同じ視点の拡大画を開くと、直す前に床へ広がる粗い粒状の暈が減り、静止に近い細かさになる。薄い暗さの差は残る。
+
+診断の値と拡大画は `.harness/runs/scene-capture/SCN-MEGA-ACCEPT-1M-P1-u8/` の `luminance-difference-u8.json`・`grain-u8/rtgi-grain.json`・`zoom-matched-u8.png` にある。直す前の診断は `SCN-MEGA-ACCEPT-1M-P1-before/`。直す前・採用版・静止の比較画は `.harness/u7-diagnostic-before-after.png` に保存した。採用版とバイリニア 16（空間は従来）の静止の別撮影との差は最大 169/255・1,794 画素で、同じ版同士の別撮影（最大 169/255・1,749 画素）と同程度だった。
+
+#### 300 フレームの計測と粒の判定
+
+RelWithDebInfo の Game ビルドと、再生・静止 9.27 秒・時刻を合わせた静止の 3 撮影は全て終了コード 0、`CAPTURE_SCENE result=pass`。各撮影は 1920×1080、50,000 本、資産の欠け 0、300 標本。保存先は `.harness/runs/scene-capture/SCN-MEGA-ACCEPT-1M-P1/` の `path`・`static`・`static-matched`。
+
+再生開始 `04:20:36.966`（`CAMERA_PATH state=playing time=0.000`）から撮影要求 `04:20:45.053`（`capture_png requested`）までの差で、保存フレームのパス時刻は **T=8.087 秒**。verify の静止 9.27 秒とは 1.183 秒ずれるため、8.087 秒の静止も撮った。時刻合わせはログのミリ秒精度によるもので、実時間の組は診断 AOV によるカメラ位置の完全一致を保証しない。
+
+| 組 | 再生の粒 | 静止の粒 | 比 | 上限 1.5 の判定 |
+|---|---:|---:|---:|---|
+| 直す前：再生約 9.267 秒／静止 9.53 秒（時刻ずれあり） | — | — | 2.114 | fail |
+| 直した後：再生 8.087 秒／静止 9.27 秒（verify 固定） | 0.116337 | 0.088238 | 1.318 | pass |
+| 直した後：再生 8.087 秒／静止 8.087 秒（時刻合わせ） | 0.116337 | 0.089003 | 1.307 | pass |
+
+`RtgiGrain.py` は仕様 `Scripts/Terrain/ExpectSpecs/rtgi-grain-motion.json` をそのまま使用した。固定の組と、一時の置き場 `u7-verify-matched` に `path`・`static-matched` を写した組の両方で `RTGI_GRAIN result=pass`。比較画は `.harness/u7-verify-before-after.png`。`CheckCaptureMetrics.py` は `--views horizon --timing --min-frames 300 --require-pass LightingPass` で `CHECK_CAPTURE_METRICS result=pass views=horizon`。
+
+| 再生の LightingPass | median | p95 | 標本数 |
+|---|---:|---:|---:|
+| 直す前 | 4.181 ms | 4.339 ms | 300 |
+| 直した後 | 4.147 ms | 4.337 ms | 300 |
+
+単発の計測では LightingPass の増加は見られない。静止 9.27 秒の撮影はフレーム時間の最大値が 19.382 ms となり `within_budget=False` だったが、撮影と指定の計測チェックは成功した。これは LightingPass 以外も含むフレーム全体の記録で、今回のチェックは最大フレーム時間の上限を検査していない。
+
+#### 回帰と材質ギャラリー
+
+`CaptureRegression.ps1 -Item SCN-MEGA-ACCEPT-1M-P1 -Phase after -Motion` は 370 秒、終了コード 0、`CAPTURE_REGRESSION result=pass`・`REFERENCE_CHECK result=pass mode=regression scenes=5`。比較元は直す前の `before-u4` を `.harness/runs/regression/SCN-MEGA-ACCEPT-1M-P1/before` へ写したもの。`rendering3dtest`・`mega-bananas`・`sandbox`・`night-village`・`rendering3dtest-motion` の各撮影は終了コード 0、動きの 4 フレームも全て揃った。検証レイヤーのエラーはなく、ジオメトリのページは前後とも settled だった。
+
+前後を並べた `.harness/runs/regression/SCN-MEGA-ACCEPT-1M-P1/before-after.png` と、各組の元の解像度の比較画を開いて確認した。4 シーンの配置・照明・輪郭に崩れは見られない。動きの組は `motion-0`・`motion-8`・`motion-30`・`static-30` を確認し、物体の後ろの尾、二重輪郭、フレーム間の明るさ・粒の変化の増加は見られなかった。`motion-0` の明るさと強い粒は前後共通で、後続フレームで落ち着く。これは保存した離散フレームの比較であり、連続動画全体のちらつきの保証ではない。比較の PSNR は `mega-bananas` 64.24 dB・`night-village` 69.97 dB・`rendering3dtest` 110.69 dB・`sandbox` ∞、動きの `motion-30` は 57.96 dB、平均輝度差は +0.002/255 だった。
+
+`material-gallery` は RelWithDebInfo の既定視点 `overview` を 1280×720、`-RequireAssets` で撮影し、終了コード 0、`CAPTURE_SCENE result=pass`、資産の欠け 0。`material-gallery/overview.png` を開き、板と球の材質、金属度と粗さの球の格子、床と影を確認した。形の欠落、二重輪郭、テクスチャの崩れは見られない。
+
+#### Golden の照合
+
+`cmake --build build --config Debug --target RenderingGoldenImageTest -- /m:1` は終了コード 0。続く `ctest --test-dir build -C Debug --output-on-failure -R "^(RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"` は終了コード 0、`100% tests passed, 0 tests failed out of 2`（113.22 秒）。`LastTest.log` でも Indoor・Outdoor とも `mean_flip=0.000000000 max_flip=0.000000000 raw_max=0`、`mode=on resolve_logs=1 fallback_logs=0` を確認した。静止の既存基準画像に完全一致したため、golden の再承認と基準画像の更新は行っていない。
+
+指定のビルド・撮影・粒の判定・計測チェック・回帰・golden は全て成功した。同じ視点の診断と保存画像の目視で、近景のバナナ周囲と床の粗い粒状の暈の抑制を確認した。コマンドの終了値、保存時刻 T、目視の記録は `.harness/unit-verify.txt`。全撮影は開始 04:20:08 から 50 分以内に始めており、時間制限による未撮影はない。
+
+#### 直した後にも残る限界
+
+- 判定の帯の弁別は弱い。同じ視点の診断では直す前も比 1.343 と上限 1.5 以下であり、数値の pass だけで暈の解消とは判断できない。採用版の比 1.009 と拡大画の目視を合わせて判断する。判定の領域と上限は変更していない。
+- 実時間の保存フレームの時刻は走らせるたびに揺れる（約 7.97〜9.27 秒）。verify の静止は 9.27 秒に固定されるため、固定の組の比は視点の違いも含む。今回の T=8.087 秒の組はログで時刻を合わせた追加撮影と併記し、同一視点の診断とは区別する。
+- 縁の周囲 ±12 画素の床の輝度差の平均は、直す前の −0.000246 から −0.000610 へ少し暗い側に寄る。絶対値平均と p95 は小さくなるが、薄い暗いにじみは残る。
+- 回帰の動きは 4 フレームの抜き出しであり、全時間・全カメラ経路における残像やちらつきは測っていない。GPU・ドライバと撮影回数も上記の範囲に限る。
