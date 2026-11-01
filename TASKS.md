@@ -4107,7 +4107,7 @@
 - from: SCN-RENDER-SPEC-WIDE-ESS
 
 ## SCN-MEGA-FIX-TLAS-REBUILD-P2: 10-14 から、100万本の既定の horizon の静止で LightingPass と MegaGeometry のカリングが重くなった原因を、コードとドライバに切り分ける
-- status: todo
+- status: done
 - done-when: 問い: 10-14 の SCN-MEGA-ACCEPT-1M の静止(`--banana-count=1000000`・horizon・カメラパスなし。置き場は `.harness/runs/scene-capture/SCN-MEGA-ACCEPT-1M/static`、Game.log の `GPU_DRIVER` は 610.88)と同じ条件を今のコードで撮ると、LightingPass が 1.657 → 2.666 ms、MegaGeometryCull1 が 3.043 → 5.319 ms、MegaBvhC1Leaf が 2.560 → 4.829 ms に増えている(SCN-MEGA-FIX-TLAS-REBUILD の U4/static-default-1m)。原因が「コードで処理の量が増えた」のか「ドライバ・クロックで同じ量の単価が上がった」のかを分ける。結果で変わる判断: コードが原因なら、直す項目を PROGRESS.md の Notes に `要起票:` で残す。ドライバが原因なら、SCN-MEGA-FIX-TLAS-REBUILD の閾値 3 ms の元になった静止 1.7 ms を、今のドライバの値で置き直す根拠にする。手順は次の 4 つ。(1) 同じ条件で撮り、3 つのパスの median・p95 と `GPU_DRIVER` の行を 10-14 の値と表に並べる。(2) 3 つのパスの処理の件数(Game.log にある MegaGeometry・BVH・`RT_SCENE` の統計の行。インスタンス・節・クラスタ・可視の数)を 10-14 の値と並べ、量の比と時間の比を分ける。(3) 量が増えていれば、10-14 から今までにそのパスに触れたコミットを `git log` で挙げ、件数の変化と合う変更を特定する。ドライバが替わっていて量が同じなら、ドライバの変化と書く。(4) 結果と表を `Docs/RenderingValidation/SceneLauncherAcceptance.md` の「100万本と混在の負荷の受入れ」の節に書く。
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -Views horizon -Build -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -TimeoutSeconds 1800 -GameArgs banana-count=1000000 -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-TLAS-REBUILD-P2/static`
 - verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-FIX-TLAS-REBUILD-P2/static --views horizon --timing --min-frames 300 --require-pass LightingPass --require-pass MegaGeometryCull1 --require-pass MegaBvhC1Leaf`
