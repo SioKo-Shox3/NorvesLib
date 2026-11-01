@@ -35,19 +35,15 @@ vec3 DecodeSrgb(vec3 encodedColor)
     return mix(high, low, lessThanEqual(encodedColor, vec3(0.04045)));
 }
 
-// PCG の hash（tonemapping.frag のフィルムグレインと同じ式）
-uint DitherHash(uint value)
-{
-    uint state = value * 747796405u + 2891336453u;
-    uint word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
-    return (word >> 22u) ^ word;
-}
-
-// 画素の位置だけで決まる [-0.5, 0.5) の一様な雑音。フレームで変えないので、同じ画の撮影は決定的なまま。
+// 画素位置の一次式の端数による格子の雑音で、値は [-0.5, 0.5) に一様に分布する。
+// 隣り合う画素の閾値の差は縦が +0.44 / −0.56、横が +0.755 / −0.245 に限られる。
+// 隣の表示差は「値の差 + 閾値の差」が ±1 を超えない限り 1 段以下。縦の勾配が上りでも下りでも
+// 0.3 段/画素未満の空では隣の差は 1 段を超えない。無相関ハッシュでは閾値の差が 1 に近づき、
+// IGN の縦の差 +0.309 / −0.691 では下りの余裕が小さく、どちらも 2 段の差が残った。
+// 画素の位置だけで決まりフレームで変えないので、同じ画の撮影は決定的なまま。
 float DitherNoise(uvec2 pixel)
 {
-    uint hash = DitherHash(pixel.x ^ DitherHash(pixel.y));
-    return float(hash >> 8u) * (1.0 / 16777216.0) - 0.5;
+    return fract(dot(vec2(pixel), vec2(0.7548776662, 0.44))) - 0.5;
 }
 
 void main()

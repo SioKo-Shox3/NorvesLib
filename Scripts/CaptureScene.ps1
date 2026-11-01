@@ -29,9 +29,10 @@
 # -GpuTimingFrames 件だけ得る。計測の窓は、シーンの初期配置と公開の完了（SceneReady。ログの SCENE_READY_FRAME のフレーム番号）
 # より後の描画フレームだけで、先頭のウォームアップ（-TimingWarmupFrames 件。既定 60。件数で数える）と、末尾の撮影の直前2件を
 # それぞれ除く。SceneReady の記録（SCENE_READY・SCENE_READY_FRAME）がログに無ければ、計測せず失敗にする。
-# Game は (-GpuTimingFrames + ウォームアップ + 末尾の2 + -TimingReadyMarginFrames) の描画フレームの後に撮って終わる
-# （--exit-after-rendered-frames）。余白 -TimingReadyMarginFrames は SceneReady までに要するフレーム数以上にする
-# （足りないと窓が SceneReady より前に入るので、標本が足りないとして失敗にし、要るフレーム数を示す。重いシーンは大きくする）。
+# Game は SceneReady の後から (-GpuTimingFrames + ウォームアップ + 末尾の2 + -TimingReadyMarginFrames) の描画フレームを数え、
+# 撮って終わる（--exit-after-rendered-frames）。余白 -TimingReadyMarginFrames は SceneReady の記録（ゲームのフレーム番号）と
+# 描画フレームのずれに備える予備なので、SceneReady までのフレーム数を見込む必要はない。
+# 標本が足りなければ失敗にし、要るフレーム数を示す。
 # camera-path-capture-time の指定時は Game がその時刻の Tick を撮る。SceneReady 後の標本が足りない時刻は起動前に拒否し、
 # ApplicationProcessor の撮影と終了までの余白に、指定時刻までの Tick 数と結果待ちを足す。
 # トレースの FrameGPU（GPU のタイムスタンプで測ったフレームの区間）の窓の中央値・平均・95 パーセンタイル・最大と、パスごとの

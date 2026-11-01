@@ -67,8 +67,12 @@ int main()
     settings = {}; settings.Origin = OriginMode::Custom; settings.OriginOffset[1] = std::numeric_limits<double>::quiet_NaN();
     assert(ValidateSettings(settings) == SettingsResult::InvalidValue);
     settings = {}; settings.Origin = OriginMode::SurfaceCentroid;
-    assert(ValidateSettings(settings) == SettingsResult::UnsupportedFeature);
-    assert(EncodeCanonicalSettings(settings).Size == 0);
+    assert(ValidateSettings(settings) == SettingsResult::Success);
+    const auto surface = EncodeCanonicalSettings(settings);
+    assert(surface.Size != 0 && !Same(identity, surface));
+    assert(surface.Bytes[24] == 3);
+    settings.Origin = OriginMode::BoundsCenter;
+    assert(!Same(surface, EncodeCanonicalSettings(settings)));
     settings = {}; settings.OriginOffset[0] = -0.0;
     assert(Same(identity, EncodeCanonicalSettings(settings)));
 

@@ -213,11 +213,14 @@ int main()
             R"({"version":1,"axes":{"up":"+Z","forward":"+X"},"mesh":{"flipU":true,"flipV":true}})",
             R"({"version":1,"axes":{"mirrorX":true},"mesh":{"winding":"auto"}})",
             R"({"version":1,"origin":{"mode":"bounds_center"}})",
+            R"({"version":1,"origin":{"mode":"surface_centroid"}})",
             R"({"version":1,"units":{"scale":2},"origin":{"mode":"custom","offset":[3,-4,5]}})"
         };
+        constexpr size_t boundsCenterIndex=4,surfaceCentroidIndex=5;
         MeshCookResult transformed;
         Staging::ModelStagingData loose;
         uint64_t scaleHash=0,scaleSettingsHash=0;
+        uint64_t boundsCenterHash=0,boundsCenterSettingsHash=0;
         Bytes scalePayload;
         for(size_t i=0;i<sizeof(settings)/sizeof(settings[0]);++i)
         {
@@ -235,6 +238,16 @@ int main()
                 assert(Near(loose.Vertices[2].Position[1],0.6f) && loose.Vertices[0].Position[1]==0);
                 assert(Near(loose.Vertices[0].Position[0],-0.3f));
             }
+            if(i==boundsCenterIndex)
+            {
+                boundsCenterHash=transformed.SourceHash;
+                boundsCenterSettingsHash=transformed.ImportSettingsHash;
+            }
+            if(i==surfaceCentroidIndex)
+            {
+                assert(transformed.SourceHash!=boundsCenterHash);
+                assert(transformed.ImportSettingsHash!=boundsCenterSettingsHash);
+            }
         }
         Write(sidecar,Copy(R"({ "meta":{"note":"format only"},"units":{"scale":2},"version":1 })"));
         assert(cook(transformed) && transformed.SourceHash==scaleHash && transformed.ImportSettingsHash==scaleSettingsHash);
@@ -249,8 +262,7 @@ int main()
         const uint64_t beforeHash=transformed.SourceHash;
         const auto* beforeVertices=loose.Vertices.data();
         const Bytes beforePayload=transformed.NvmeshBytes;
-        for(const char* invalid:{R"({"version":1,"origin":{"mode":"surface_centroid"}})",
-            R"({"version":1,"units":{"scale":-1}})",
+        for(const char* invalid:{R"({"version":1,"units":{"scale":-1}})",
             R"({"version":1,"units":{"fit":{"axis":"forward","meters":1}}})",
             R"({"version":1,"units":{"scale":1e38}})"})
         {
