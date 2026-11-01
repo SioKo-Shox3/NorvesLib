@@ -395,6 +395,9 @@ namespace Game
         // ビジビリティバッファの経路でスキニングの塊が描かれることの撮影（-SkinnedProbe）に使う。
         constexpr const TCHAR *kStartupSkinnedProbeOption = TEXT("--startup-skinned-probe");
         bool s_bRendering3DTestSkinnedProbe = false;
+        // --startup-skinned-probe-materials=<1|2>: 骨付きパネルの材質スロット数（既定 1）。
+        constexpr const TCHAR *kStartupSkinnedProbeMaterialsOption = TEXT("--startup-skinned-probe-materials=");
+        uint32_t s_Rendering3DTestSkinnedProbeMaterialCount = 1u;
         // --startup-scan-props=on|off: 起動画面の地面の外周に並べる高ポリのスキャン資産（Poly Haven）を置くか（既定は on）。
         // off は、スキャン資産を足す前と同じ描画量を撮って、足した分を差し引くための基準に使う。
         constexpr const TCHAR *kStartupScanPropsOption = TEXT("--startup-scan-props=");
@@ -857,6 +860,7 @@ namespace Game
         s_VramBudgetCapMb = 0;
         s_bRendering3DTestDebugDrawTestLines = false;
         s_bRendering3DTestSkinnedProbe = false;
+        s_Rendering3DTestSkinnedProbeMaterialCount = 1u;
         s_bRendering3DTestScanProps = true;
         s_Rendering3DTestStressMegaInstances = 0;
         s_Rendering3DTestStressGeometryCount = 0;
@@ -1998,6 +2002,17 @@ namespace Game
             if (args[i] == kStartupSkinnedProbeOption)
             {
                 s_bRendering3DTestSkinnedProbe = true;
+                continue;
+            }
+            if (TryStripPrefix(args[i], kStartupSkinnedProbeMaterialsOption, sceneValue))
+            {
+                uint32_t materialCount = 1u;
+                if (!TryParseUInt32(sceneValue, materialCount) || (materialCount != 1u && materialCount != 2u))
+                {
+                    LOG_WARNING("--startup-skinned-probe-materials は 1 または 2 で指定してください。1 を使います");
+                    materialCount = 1u;
+                }
+                s_Rendering3DTestSkinnedProbeMaterialCount = materialCount;
                 continue;
             }
             if (args[i] == kDebugDrawTestLinesOption)
@@ -4039,7 +4054,9 @@ namespace Game
                 mode->GetData().m_OrbitDegreesPerSecond = s_Rendering3DTestOrbitDegreesPerSecond;
                 mode->GetData().m_StartupRenderScale = s_Rendering3DTestRenderScale;
                 mode->GetData().m_bDebugDrawTestLines = s_bRendering3DTestDebugDrawTestLines;
-                mode->GetData().m_bStartupSkinnedProbe = s_bRendering3DTestSkinnedProbe;
+                mode->GetData().m_bStartupSkinnedProbe = s_bRendering3DTestSkinnedProbe ||
+                    s_Rendering3DTestSkinnedProbeMaterialCount == 2u;
+                mode->GetData().m_StartupSkinnedProbeMaterialCount = s_Rendering3DTestSkinnedProbeMaterialCount;
                 mode->GetData().m_bAnimationDebug = m_bAnimationDebugRequested;
 #if defined(NORVES_ENABLE_IMGUI)
                 mode->GetData().m_bDebugImGui = m_bImGuiRequested;

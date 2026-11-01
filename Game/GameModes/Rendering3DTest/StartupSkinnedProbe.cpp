@@ -11,10 +11,16 @@
 #include "Core/Public/GameMode/GameModeContext.h"
 #include "Core/Public/GameMode/GameModeScope.h"
 #include "Core/Public/Logging/LogMacros.h"
+#include "Core/Public/Math/Vector4.h"
 #include "Core/Public/Object/Entity.h"
 #include "Core/Public/Object/World.h"
+#include "Core/Public/Rendering/CameraViewConstants.h"
+#include "Core/Public/Rendering/RenderResources.h"
+#include "Core/Public/Rendering/RenderingCoordinator.h"
+#include "Core/Public/Rendering/Screen.h"
 #include "Core/Public/Resource/SkinnedMeshResource.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -27,6 +33,12 @@ namespace Game::GameModes
         // パネルの格子の分割数（辺あたり）と大きさ（m）。置く位置は地面（Y=-1）に下の辺が着く高さ。
         constexpr uint32_t kGridCells = 8u;
         constexpr float kPanelHalfSize = 1.0f;
+        // RGBA8_UNORM は線形で標本される。204/255 = 0.800、26/255 ≈ 0.102、51/255 = 0.200。
+        constexpr uint8_t kMaterialColors[2][3] = {
+            {204u, 26u, 26u},
+            {26u, 51u, 204u},
+        };
+        constexpr uint32_t kMaterialTextureSize = 4u;
 
         // 置く体の位置と、揺れの位相（秒。周期のずらし）。同じ資産を 2 体置く。
         // 計算スキニングの割り当ては体ごとに頂点・骨の基点が後ろへ進むので、1 体目の基点は必ず 0 になる。
@@ -78,12 +90,14 @@ namespace Game::GameModes
         void AppendGridIndices(
             NorvesLib::Core::Container::VariableArray<uint32_t>& indices,
             uint32_t baseIndex,
-            bool bReversed)
+            bool bReversed,
+            uint32_t firstColumn = 0u,
+            uint32_t endColumn = kGridCells)
         {
             const uint32_t stride = kGridCells + 1u;
             for (uint32_t row = 0u; row < kGridCells; ++row)
             {
-                for (uint32_t column = 0u; column < kGridCells; ++column)
+                for (uint32_t column = firstColumn; column < endColumn; ++column)
                 {
                     const uint32_t i00 = baseIndex + row * stride + column;
                     const uint32_t i10 = i00 + 1u;
@@ -131,7 +145,8 @@ namespace Game::GameModes
         {
             return true;
         }
-        if (!data.m_CobbleStoneMaterial.IsValid())
+        const bool bTwoMaterials = data.m_StartupSkinnedProbeMaterialCount == 2u;
+        if (!bTwoMaterials && !data.m_CobbleStoneMaterial.IsValid())
         {
             LOG_ERROR("STARTUP_SKINNED_PROBE_SKIPPED 石畳の材質が無いので骨付きのパネルを置けない");
             return false;
@@ -142,8 +157,19 @@ namespace Game::GameModes
         AppendGridVertices(vertices, 1.0f);
         AppendGridVertices(vertices, -1.0f);
         const uint32_t faceVertexCount = (kGridCells + 1u) * (kGridCells + 1u);
-        AppendGridIndices(indices, 0u, false);
-        AppendGridIndices(indices, faceVertexCount, true);
+        if (bTwoMaterials)
+        {
+            const uint32_t middleColumn = kGridCells / 2u;
+            AppendGridIndices(indices, 0u, false, 0u, middleColumn);
+            AppendGridIndices(indices, faceVertexCount, true, 0u, middleColumn);
+            AppendGridIndices(indices, 0u, false, middleColumn, kGridCells);
+            AppendGridIndices(indices, faceVertexCount, true, middleColumn, kGridCells);
+        }
+        else
+        {
+            AppendGridIndices(indices, 0u, false);
+            AppendGridIndices(indices, faceVertexCount, true);
+        }
 
         // 骨は 1 本（逆バインド行列は単位行列）。
         NorvesLib::Core::Skeletal::SkeletalJoint joint;
@@ -184,6 +210,28 @@ namespace Game::GameModes
         }
         mesh->SetVertices(std::move(vertices));
         mesh->SetIndices(std::move(indices));
+        if (bTwoMaterials)
+        {
+            NorvesLib::Core::Container::VariableArray<NorvesLib::Core::Skeletal::SkeletalSubMesh> submeshes;
+            NorvesLib::Core::Container::VariableArray<NorvesLib::Core::Skeletal::SkeletalMaterialSlot> slots;
+            const uint32_t indicesPerHalf = kGridCells * kGridCells * 3u;
+            for (uint32_t slot = 0u; slot < 2u; ++slot)
+            {
+                NorvesLib::Core::Skeletal::SkeletalSubMesh submesh;
+                submesh.IndexStart = slot * indicesPerHalf;
+                submesh.IndexCount = indicesPerHalf;
+                submesh.MaterialSlot = slot;
+                submesh.VertexCount = faceVertexCount * 2u;
+                submesh.BoundsCenter[0] = slot == 0u ? -0.5f : 0.5f;
+                submesh.BoundsRadius = 1.119f;
+                submeshes.push_back(submesh);
+
+                NorvesLib::Core::Skeletal::SkeletalMaterialSlot materialSlot;
+                materialSlot.Name = slot == 0u ? TEXT("Left") : TEXT("Right");
+                slots.push_back(std::move(materialSlot));
+            }
+            mesh->SetSubmeshTables(std::move(submeshes), std::move(slots));
+        }
         skeleton->SetJoints(std::move(joints));
         animation->SetClip(std::move(clip));
         if (!mesh->Load() || !skeleton->Load() || !animation->Load())
@@ -196,6 +244,46 @@ namespace Game::GameModes
         {
             LOG_ERROR("STARTUP_SKINNED_PROBE_SKIPPED 骨付きのパネルの資産が読み込み済みにならない");
             return false;
+        }
+
+        NorvesLib::Core::Rendering::MaterialHandle probeMaterials[2];
+        if (bTwoMaterials)
+        {
+            for (uint32_t slot = 0u; slot < 2u; ++slot)
+            {
+                uint8_t pixels[kMaterialTextureSize * kMaterialTextureSize * 4u];
+                for (uint32_t pixel = 0u; pixel < kMaterialTextureSize * kMaterialTextureSize; ++pixel)
+                {
+                    for (uint32_t channel = 0u; channel < 3u; ++channel)
+                    {
+                        pixels[pixel * 4u + channel] = kMaterialColors[slot][channel];
+                    }
+                    pixels[pixel * 4u + 3u] = 255u;
+                }
+                NorvesLib::Core::Rendering::TextureCreateInfo textureInfo;
+                textureInfo.Width = kMaterialTextureSize;
+                textureInfo.Height = kMaterialTextureSize;
+                textureInfo.PixelFormat = NorvesLib::Core::Rendering::TextureCreateInfo::Format::RGBA8_UNORM;
+                textureInfo.DebugName = slot == 0u ? TEXT("StartupSkinnedProbeLeft") : TEXT("StartupSkinnedProbeRight");
+                const auto texture = ctx.RenderResourcesRef.Textures().CreateTexture(textureInfo, pixels, sizeof(pixels));
+                if (!texture.IsValid())
+                {
+                    LOG_ERROR("STARTUP_SKINNED_PROBE_SKIPPED 骨付きパネルのテクスチャを作れない slot=%u", slot);
+                    return false;
+                }
+                ctx.ScopeRef.TrackTexture(texture);
+
+                NorvesLib::Core::Rendering::MaterialCreateData material;
+                material.DebugName = slot == 0u ? TEXT("StartupSkinnedProbeLeft") : TEXT("StartupSkinnedProbeRight");
+                material.AlbedoTexture = texture;
+                probeMaterials[slot] = ctx.RenderResourcesRef.Materials().Create(material);
+                if (!probeMaterials[slot].IsValid())
+                {
+                    LOG_ERROR("STARTUP_SKINNED_PROBE_SKIPPED 骨付きパネルの材質を作れない slot=%u", slot);
+                    return false;
+                }
+                ctx.ScopeRef.TrackMaterial(probeMaterials[slot]);
+            }
         }
 
         data.m_StartupSkinnedProbeAsset = asset;
@@ -217,25 +305,41 @@ namespace Game::GameModes
                 return false;
             }
             skinned->SetSkeletalAsset(asset);
-            skinned->SetMaterial(data.m_CobbleStoneMaterial);
+            if (bTwoMaterials)
+            {
+                if (!skinned->SetMaterial(0u, probeMaterials[0]) || !skinned->SetMaterial(1u, probeMaterials[1]))
+                {
+                    LOG_ERROR("STARTUP_SKINNED_PROBE_SKIPPED 骨付きパネルに材質を設定できない index=%zu", index);
+                    return false;
+                }
+            }
+            else
+            {
+                skinned->SetMaterial(data.m_CobbleStoneMaterial);
+            }
             // 再生はせず、UpdateStartupSkinnedProbe が時刻から姿勢を決める（撮影の時刻をそろえるため）。
             skinned->SetPlaying(false);
             skinned->SetLooping(true);
-            skinned->SetAnimationTimeSeconds(placement.PhaseSeconds);
+            const float poseSeconds = bTwoMaterials ? 0.0f : placement.PhaseSeconds;
+            skinned->SetAnimationTimeSeconds(poseSeconds);
             skinned->SetCastShadow(true);
             skinned->SetVisible(true);
             data.m_StartupSkinnedProbeComponents.push_back(skinned);
             LOG_INFO("STARTUP_SKINNED_PROBE placed index=%zu x=%.2f y=%.2f z=%.2f phase=%.2f",
-                     index, placement.X, placement.Y, placement.Z, placement.PhaseSeconds);
+                     index, placement.X, placement.Y, placement.Z, poseSeconds);
         }
         LOG_INFO("STARTUP_SKINNED_PROBE bodies=%zu", kPanelCount);
+        if (bTwoMaterials)
+        {
+            LOG_INFO("STARTUP_SKINNED_PROBE materials=2 slots=2 submeshes=2");
+        }
         return true;
     }
 
     void UpdateStartupSkinnedProbe(NorvesLib::Core::GameMode::GameModeContext& ctx, Rendering3DTestData& data)
     {
         // M9 の受入れは何も変えない 2 フレームの一致を陰性対照に取るので、揺れを止めて生成時の姿勢のままにする。
-        if (data.m_StartupSkinnedProbeComponents.empty() ||
+        if (data.m_StartupSkinnedProbeComponents.empty() || data.m_StartupSkinnedProbeMaterialCount == 2u ||
             (data.m_M9WorldAcceptance && data.m_M9WorldAcceptance->bRequested))
         {
             return;
@@ -254,4 +358,62 @@ namespace Game::GameModes
             data.m_StartupSkinnedProbeComponents[index]->SetAnimationTimeSeconds(poseSeconds);
         }
     }
+
+#if NORVES_BUILD_DEVELOPMENT
+    void LogStartupSkinnedProbeMaterialSamples(const NorvesLib::Core::Rendering::CameraProxy& camera, size_t bodyCount)
+    {
+        const auto& screen = NorvesLib::Core::GEngine.GetScreen();
+        const uint32_t width = screen.GetWidth();
+        const uint32_t height = screen.GetHeight();
+        auto& coordinator = NorvesLib::Core::GEngine.GetRenderingCoordinator();
+        const auto device = coordinator.GetDevice();
+        if (width == 0u || height == 0u || !device)
+        {
+            return;
+        }
+
+        // 描画側と同じ丸めで内部解像度のアスペクト比を求め、画素は最終出力の大きさに直す。
+        const double scale = static_cast<double>(coordinator.GetRenderScale());
+        const uint32_t renderWidth = std::max(1u, static_cast<uint32_t>(std::lround(width * scale)));
+        const uint32_t renderHeight = std::max(1u, static_cast<uint32_t>(std::lround(height * scale)));
+        const float aspect = static_cast<float>(renderWidth) / static_cast<float>(renderHeight);
+        const auto viewProjection = NorvesLib::Core::Rendering::CameraViewConstants::BuildForDevice(
+            camera, aspect, device.get()).ViewProjectionMatrix;
+
+        for (size_t body = 0u; body < bodyCount && body < kPanelCount; ++body)
+        {
+            const PanelPlacement& placement = kPanelPlacements[body];
+            for (uint32_t slot = 0u; slot < 2u; ++slot)
+            {
+                const float x = placement.X + (slot == 0u ? -0.5f : 0.5f);
+                const float y = placement.Y;
+                const float z = placement.Z;
+                const auto clip = viewProjection * NorvesLib::Math::Vector4(x, y, z, 1.0f);
+                const float forward = (x - camera.PositionX) * camera.ForwardX +
+                                      (y - camera.PositionY) * camera.ForwardY +
+                                      (z - camera.PositionZ) * camera.ForwardZ;
+                int px = -1;
+                int py = -1;
+                bool bInside = false;
+                if (std::isfinite(clip.x) && std::isfinite(clip.y) && std::isfinite(clip.w) &&
+                    std::abs(clip.w) > 1.0e-6f)
+                {
+                    const double pixelX = (static_cast<double>(clip.x) / clip.w * 0.5 + 0.5) * width;
+                    // Vulkan の Y 反転済み行列と正の viewport 高さでは、NDC -1 が画像の上端。
+                    const double pixelY = (static_cast<double>(clip.y) / clip.w * 0.5 + 0.5) * height;
+                    if (std::isfinite(pixelX) && std::isfinite(pixelY))
+                    {
+                        px = static_cast<int>(std::floor(std::clamp(pixelX, -1000000000.0, 1000000000.0)));
+                        py = static_cast<int>(std::floor(std::clamp(pixelY, -1000000000.0, 1000000000.0)));
+                        bInside = forward > 0.0f && pixelX >= 0.0 && pixelX < width && pixelY >= 0.0 && pixelY < height;
+                    }
+                }
+                LOG_INFO("STARTUP_SKINNED_PROBE_MATERIAL_SAMPLE body=%zu slot=%u px=%d py=%d inside=%d r=%.3f g=%.3f b=%.3f",
+                         body, slot, px, py, bInside ? 1 : 0,
+                         kMaterialColors[slot][0] / 255.0f, kMaterialColors[slot][1] / 255.0f,
+                         kMaterialColors[slot][2] / 255.0f);
+            }
+        }
+    }
+#endif
 } // namespace Game::GameModes

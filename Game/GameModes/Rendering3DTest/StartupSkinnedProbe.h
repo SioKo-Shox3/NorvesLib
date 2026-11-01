@@ -1,5 +1,12 @@
 ﻿#pragma once
 
+#include <cstddef>
+
+namespace NorvesLib::Core::Rendering
+{
+    struct CameraProxy;
+}
+
 namespace NorvesLib::Core::GameMode
 {
     struct GameModeContext;
@@ -15,7 +22,7 @@ namespace Game::GameModes
      * 起動画面にはスキニングの物が無いので、ビジビリティバッファの ID のラスタ・幾何の解決がスキニングの塊を
      * 描けること（VIS_RASTER の skinned_chunks が 0 でない）と、GBuffer の経路との Albedo・Normal・Velocity の
      * 差を、Game の撮影の入口（Scripts/CaptureStartupScene.ps1 -SkinnedProbe）で確かめるために使う。
-     * 既定は置かない（起動画面は変えない）。
+     * 既定は置かない（起動画面は変えない）。材質数 2 の変種は左右を別のスロットにし、姿勢 0 で置く。
      *
      * 骨 1 本が Y 軸まわりに ±35° 揺れる（周期 2 秒・ループ）。パネルは 8x8 の格子で、表と裏の両方を張る。
      * 2 体は同じ資産で、位置と揺れの位相が違う。2 体目は計算スキニングの割り当ての基点が 0 にならない体で、
@@ -31,4 +38,9 @@ namespace Game::GameModes
      * 同じコードを 2 回撮ると、またビジビリティバッファの on・off で撮り比べても、同じ時刻の同じ姿勢になる。
      */
     void UpdateStartupSkinnedProbe(NorvesLib::Core::GameMode::GameModeContext& ctx, Rendering3DTestData& data);
+
+#if NORVES_BUILD_DEVELOPMENT
+    // 確定したカメラから各体の左右の中心を最終出力の画素へ射影する。
+    void LogStartupSkinnedProbeMaterialSamples(const NorvesLib::Core::Rendering::CameraProxy& camera, size_t bodyCount);
+#endif
 } // namespace Game::GameModes

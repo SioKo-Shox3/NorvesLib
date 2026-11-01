@@ -3310,13 +3310,27 @@ namespace Game::GameModes
         const TWeakPtr<Game::CameraLateUpdateState> weakState = data.m_LateCameraState;
         auto* world = &ctx.EngineRef.GetWorld();
         auto* renderWorld = &ctx.EngineRef.GetRenderWorld();
-        data.m_LateCameraState->Callback = Delegate<void, float>([weakState, world, renderWorld](float)
+#if NORVES_BUILD_DEVELOPMENT
+        // コールバックの所有者は data で、破棄前の Leave で解除される。
+        const auto* startupProbeData = &data;
+#endif
+        data.m_LateCameraState->Callback = Delegate<void, float>([weakState, world, renderWorld
+#if NORVES_BUILD_DEVELOPMENT
+            , startupProbeData
+#endif
+        ](float)
         {
             const auto state = weakState.lock();
             CameraProxy cameraProxy;
             if (!state || !state->BuildSnapshot(*world, cameraProxy)) return;
             ApplyStartupGrading(cameraProxy, state->bLensEffects, state->bLookLut);
             renderWorld->SetMainCamera(cameraProxy);
+#if NORVES_BUILD_DEVELOPMENT
+            if (startupProbeData->m_StartupSkinnedProbeMaterialCount == 2u)
+            {
+                LogStartupSkinnedProbeMaterialSamples(cameraProxy, startupProbeData->m_StartupSkinnedProbeComponents.size());
+            }
+#endif
             if (!state->bSmokeSyncEmitted)
             {
                 LOG_INFO("CAMERA_COMPONENT_SMOKE stage=sync snapshot=1");
