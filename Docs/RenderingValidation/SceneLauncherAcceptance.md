@@ -366,6 +366,42 @@ powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Terrain/CaptureRegre
 
 判定日: 2026-11-02。対象は `e9a1c71`。シーン（環境光・instance）が同じでカメラだけが動くフレーム（`temporalState.x > 1u`）では、拡散の放射照度と空の可視率の履歴年齢上限を 16 にし、履歴を棄却付きバイリニアで読む。鏡面の上限は 8 のままとする。空間フィルタには同じフレームの RTGI パラメータを binding 7 で渡し、この条件では近傍の重みを年齢で下げず 1 に保つ。年齢だけを伸ばすと、従来の `8 / min(年齢, 16)` によって空間の均しが弱まり、粒が残るためである。棄却閾値と静止判定は変えていない。静止・golden を含め、カメラだけの動きでないフレームは従来の計算を通る。
 
+#### 保存フレームのパスの時刻の固定
+
+判定日: 2026-11-02。`--camera-path-capture-time=9.27` は、再生の開始からパスの時刻を 1 Tick ごとに 1/60 秒の固定刻みで進め続け、指定時刻に達した Tick のパケットを Game 自身の撮影要求で保存して終了する。再生の撮影には ApplicationProcessor の撮影を使わず、CaptureScene はそちらの撮影が先に起きないよう `--exit-after-rendered-frames` を延ばす。実時間の再生は経過時間でカメラを進めるが、この指定では Tick 数で進めるため、実時間に対するカメラの速さは異なる。
+
+```powershell
+cmake --build build --config RelWithDebInfo --target Game -- /m:1
+powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -Views horizon -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -TimeoutSeconds 1800 -GameArgs banana-count=50000,camera-path-play,camera-path-time=0,camera-path-capture-time=9.27 -OutDir .harness/runs/scene-capture/SCN-MEGA-ACCEPT-1M-P1-P1/path
+powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -Views horizon -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -TimeoutSeconds 1800 -GameArgs banana-count=50000,camera-path-time=9.27 -OutDir .harness/runs/scene-capture/SCN-MEGA-ACCEPT-1M-P1-P1/static
+python Scripts/RtgiGrain.py --root .harness/runs/scene-capture/SCN-MEGA-ACCEPT-1M-P1-P1 --expect Scripts/Terrain/ExpectSpecs/rtgi-grain-motion.json
+```
+
+4 コマンドは上の順で実行し、全て終了コード 0。撮影 2 本とも `CAPTURE_SCENE result=pass`、各 50,000 本、資産の欠け 0、300 標本だった。各 `metrics.json` の `views` の horizon に保存フレームの `camera_path_time` と `camera_path_mode` を記録した。再生のログには `CAMERA_PATH_CAPTURE_FRAME time=9.2700 mode=played` が 1 回あり、静止には `CAMERA_PATH state=placed time=9.270` があり再生開始の記録は無い。
+
+| 撮影 | `camera_path_time`（秒） | `camera_path_mode` | `floor_near_bananas` の粒 | `LightingPass` median | `LightingPass` p95 |
+|---|---:|---|---:|---:|---:|
+| 再生（path） | 9.27 | played | 0.125334 | 4.153 ms | 4.357 ms |
+| 静止（static） | 9.27 | placed | 0.088238 | 3.870 ms | 4.024 ms |
+
+粒の比（再生／静止）は **1.420398**（出力は 1.420）で、上限 1.5 以下、`RTGI_GRAIN result=pass`。時刻差は 0 秒だった。`RtgiGrain.py` は metrics.json の時刻が無い場合と、組の時刻差が 1/60 秒を超える場合を fail にする。判定の領域・上限・仕様は変更していない。
+
+再生の `path/horizon.Game.log` にある `CAMERA_PATH_CAPTURE_TICK` の 5 行（tick 553〜557）の時刻印は、05:59:48.508・.521・.535・.549・.563。隣り合う 4 区間は 13・14・14・14 ms、平均は `(13 + 14 + 14 + 14) / 4 = 13.75 ms/Tick`、頻度は `1000 / 13.75 = 72.727 Hz` だった。固定刻みは 1 Tick あたりパス時刻を 1/60 秒進めるため、同じ区間を実時間の deltaTime で進める再生に比べ、1 フレームあたりのカメラの動きは `(1/60) / 0.01375 = 約 1.212 倍` 大きい（パス時刻の進み量による比較）。この値は撮影直前の 5 行とミリ秒精度の時刻印から求めた局所的な値で、全再生区間の平均ではない。
+
+| 組・条件 | 粒の比（再生／静止） |
+|---|---:|
+| 実時間の再生 8.087 秒／静止 9.27 秒（時刻ずれあり） | 1.318 |
+| 実時間の再生／時刻を合わせた静止 8.087 秒 | 1.307 |
+| 取り込み後の再検証（`PROGRESS.md` の記録、実時間の組） | 1.245 |
+| 同じ視点の決定的な診断 | 1.009 |
+| 今回の固定刻みの再生／静止 9.27 秒 | 1.420398 |
+
+今回の比 1.420 は上の 4 組より高く、上限 1.5 との余白は小さくなった。1 フレームあたりのカメラの動きの大きさは原因の候補だが、速さだけを変えた比較は行っておらず、比が高くなった原因は確認できていない。時刻や撮影条件の異なる組との比較だけでは、速さの影響を切り分けられない。
+
+`path/horizon.png` と `static/horizon.png` を開き、バナナと床の位置、および地平線が揃っていることを確認した。手前のバナナ周囲の床に粗い粒状の暈は見られず、再生の床には静止より細かな粒が残る。これは保存した各 1 枚の確認であり、実時間の再生速度や連続動画の見た目の保証ではない。フレーム全体の GPU 時間の最大値は再生 18.987 ms・静止 17.758 ms で、両方 `within_budget=False`。これは粒の比の合否とは別の計測結果である。
+
+証拠は `.harness/runs/scene-capture/SCN-MEGA-ACCEPT-1M-P1-P1/` の各 PNG・Game.log・metrics.json と `rtgi-grain.json`。コマンド、終了コード、出力、時刻、目視の記録は `.harness/unit-verify.txt` にある。
+
 #### 同じ視点での診断と採用理由
 
 採用版の診断の再生時刻は 10.079976081 秒、対応する静止とのカメラ位置差は 0 m。帯の静止の粒は 0.1226。以下の輝度差は PNG を線形 Rec.709 輝度（0〜1）へ戻した「再生−静止」で、縁の周囲 ±12 画素の共通の床を集計した。帯の粒の比は再生を静止で割った値である。
@@ -421,6 +457,6 @@ RelWithDebInfo の Game ビルドと、再生・静止 9.27 秒・時刻を合�
 #### 直した後にも残る限界
 
 - 判定の帯の弁別は弱い。同じ視点の診断では直す前も比 1.343 と上限 1.5 以下であり、数値の pass だけで暈の解消とは判断できない。採用版の比 1.009 と拡大画の目視を合わせて判断する。判定の領域と上限は変更していない。
-- 実時間の保存フレームの時刻は走らせるたびに揺れる（約 7.97〜9.27 秒）。verify の静止は 9.27 秒に固定されるため、固定の組の比は視点の違いも含む。今回の T=8.087 秒の組はログで時刻を合わせた追加撮影と併記し、同一視点の診断とは区別する。
+- 保存フレームの時刻を固定した組は metrics.json で再生 9.27 秒（played）・静止 9.27 秒（placed）、時刻差 0 秒、粒の比 1.420398 で pass。比 1.420 は前の組より高く、上限 1.5 との余白が小さくなった。`RtgiGrain.py` は時刻差 1/60 秒超と時刻なしを fail にする。この組は Tick ごとの固定刻みであり、実時間の再生の保存時刻や連続動画全体を保証するものではない。
 - 縁の周囲 ±12 画素の床の輝度差の平均は、直す前の −0.000246 から −0.000610 へ少し暗い側に寄る。絶対値平均と p95 は小さくなるが、薄い暗いにじみは残る。
 - 回帰の動きは 4 フレームの抜き出しであり、全時間・全カメラ経路における残像やちらつきは測っていない。GPU・ドライバと撮影回数も上記の範囲に限る。

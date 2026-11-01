@@ -8365,3 +8365,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 要起票: relay の枠(.slots/NorvesLib-4)は単位の作業ツリーだけで作業するため build・資産のジャンクションが無く、ランナーの再検証が落ちる。枠の初期化で揃える形にするかを決める
 - U2 RtgiGrain.py が組の 2 つの metrics.json のパスの時刻を照合する: 着地(直し 0 回)
 - U4 指定の時刻の Tick を Game が自前で撮って保存し、終了する(U1 の切り直し): 着地(直し 0 回)
+- U3 CaptureScene が保存フレームのパスの時刻を metrics.json に書き、固定した組を撮って受入れ文書を直す: 着地(直し 1 回)

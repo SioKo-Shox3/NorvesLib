@@ -4,6 +4,8 @@
 #   mean_luminance      … Rec.709 の重み（0.2126R+0.7152G+0.0722B）で求めた画素値の平均（0〜255）
 #   clipped_white_ratio … R・G・B がすべて 255 の画素の割合
 #   crushed_black_ratio … R・G・B がすべて 0 の画素の割合
+#   camera_path_time / camera_path_mode … ログで確認した保存フレームのパスの時刻（秒）と状態（played・placed）。
+#     再生の撮影時刻か、再生していない静止の配置時刻が無ければ、どちらも null。
 #
 # -Views を省くと、そのシーンの全視点を撮る。既定の視点を default.png に、残りの視点を <名前>.png に撮る（既定の視点の実際の
 # 名前は metrics.json の scene_view に入る）。-Views を与えると、その視点だけを撮る（視点の名前は Game/Scenes/SceneCatalog.h のシーンの定義）。
@@ -897,6 +899,33 @@ function Get-EngineCheckCounts([string]$LogPath)
     return [pscustomobject]@{ Counts = $counts; FailLines = $failLines }
 }
 
+# 保存フレームのパスの時刻をログから読む。再生の撮影記録を優先し、静止は再生開始が無い場合だけ採る。
+function Get-CameraPathCapture([string]$LogPath)
+{
+    $capturedTime = $null
+    $placedTime = $null
+    $hasPlaying = $false
+    $secondsPattern = '([-+]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?)'
+    foreach ($line in [IO.File]::ReadLines($LogPath))
+    {
+        if ($line -match "CAMERA_PATH_CAPTURE_FRAME time=$secondsPattern mode=played\b")
+        {
+            $capturedTime = [double]::Parse($Matches[1], $invariant)
+        }
+        elseif ($line -match "CAMERA_PATH state=placed time=$secondsPattern\b")
+        {
+            $placedTime = [double]::Parse($Matches[1], $invariant)
+        }
+        elseif ($line -match 'CAMERA_PATH state=playing\b')
+        {
+            $hasPlaying = $true
+        }
+    }
+    if ($null -ne $capturedTime) { return [pscustomobject]@{ Time = $capturedTime; Mode = 'played' } }
+    if ($null -ne $placedTime -and -not $hasPlaying) { return [pscustomobject]@{ Time = $placedTime; Mode = 'placed' } }
+    return [pscustomobject]@{ Time = $null; Mode = $null }
+}
+
 # 撮る構成の Game をビルドする。成功なら $null、失敗なら理由を返す（出力は LogPath へ）。
 function Invoke-GameBuild([string]$RepoRoot, [string]$Config, [string]$LogPath)
 {
@@ -1200,6 +1229,7 @@ for ($runIndex = 0; $runIndex -lt $runs.Count; ++$runIndex)
     # Game.log の検査。Release はログが無効（NORVES_ENABLE_LOGGING=0）で Game.log を書かないため飛ばす。
     $sceneReady = $null
     $sceneReadyFrame = $null
+    $cameraPathCapture = [pscustomobject]@{ Time = $null; Mode = $null }
     $placedCount = $null
     $placedEntities = $null
     $placedBananas = $null
@@ -1207,6 +1237,7 @@ for ($runIndex = 0; $runIndex -lt $runs.Count; ++$runIndex)
     $logMissingAssets = @()
     if (Test-Path -LiteralPath $viewLogPath)
     {
+        $cameraPathCapture = Get-CameraPathCapture $viewLogPath
         # SceneReady のフレーム（SCENE_READY_FRAME）と、シーンが出した配置の数（最後の行）
         $readyFrameLines = @(Select-String -LiteralPath $viewLogPath -Pattern "SCENE_READY_FRAME scene=$Scene frame=(\d+)")
         if ($readyFrameLines.Count -gt 0)
@@ -1524,6 +1555,8 @@ for ($runIndex = 0; $runIndex -lt $runs.Count; ++$runIndex)
             crushed_black_ratio = [math]::Round($measured[4], 6)
             scene_ready = $sceneReady
             scene_ready_frame = $sceneReadyFrame
+            camera_path_time = $cameraPathCapture.Time
+            camera_path_mode = $cameraPathCapture.Mode
             placed_count = $placedCount
             placed_entities = $placedEntities
             placed_bananas = $placedBananas
