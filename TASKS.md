@@ -3300,7 +3300,7 @@
 - notes: 2026-10-10 親が見た点: 1920×1080 のランチャーでカードの説明文が右の縁からはみ出す（折り返しの幅がカードの内側の余白を引いていない）。カードが増えたときの並び（1 行に収まらないときの折り返しかスクロール）も確かめる。 2026-10-19 親: verify を RelWithDebInfo に揃え、周回の試験を 1 コマンド 10 分に収まる形にした（Debug の撮影は約 11 分、3 周は 928 秒の実測）。 2026-10-23（親）: 順を保つため after を足した（先に走ると後の変更で撮り直しになる）。
 
 ## SCN-FIX-SKY-BANDING: 空の階調の段（波打つ横縞）を消す
-- status: todo
+- status: done
 - done-when: SCN-MEGA-ACCEPT-1M の撮影で、mega-stress の overview（1% 移動・ストリーミング）とカメラパスの再生中の mega-bananas の horizon の空に、波打つ横縞の段がはっきり見える（`.harness/runs/scene-capture/SCN-MEGA-ACCEPT-1M/{moving,streaming}/overview.png`・`path/horizon.png`）。同じ時刻の mega-bananas の静止の horizon の空は滑らか。mega-stress の空の列の値は SCN-MEGA-MIXED-LOAD（2026-10-11）の撮影と同じで、前からある欠陥。段の出所（空の LUT の解像度・精度、ディザの有無、露出）を特定して直す。完了の条件: 上の 2 つの視点を撮り直した PNG を開いて空に段が見えず、空の縦の列の隣り合う画素の差が 1 段以下で、平らな帯（同じ値が続く区間）の長さが今より短いこと。起動画面 default の決定的撮影の比較が pass（空の見た目を変えるなら基準を再承認し、根拠をコミット本文に書く）。
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -Views overview -Build -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-FIX-SKY-BANDING`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -OutDir .harness/runs/startup-capture/SCN-FIX-SKY-BANDING`
@@ -3340,7 +3340,8 @@
 - notes: 2026-10-14 SCN-MEGA-ACCEPT-1M の診断から（`Docs/RenderingValidation/SceneLauncherAcceptance.md` の「100万本と混在の負荷の受入れ」）。危険地帯（RenderThread）なので評価者を通す。 2026-10-15 親: RT を入れた構成の 60 fps を求めなくなった（ユーザー）ので外した。静止の 100万本で rt 37 ms（約 27 fps）は操作できる。RT を入れて操作できない遅さになったら戻す。
 
 ## SCN-MEGA-FIX-TLAS-REBUILD: TLAS を、インスタンスの顔ぶれが替わったら作り直す
-- status: blocked
+- status: todo
+- after: SCN-MEGA-FIX-TLAS-REBUILD-P3
 - done-when: 問い: カメラパスの再生で `LightingPass`（RTGI）が median 70.5 / p95 100.4 ms（静止は 1.7 ms）になるのを、TLAS の木の質で説明でき、直せるか。SCN-MEGA-ACCEPT-1M の撮影では、選ぶ件数が上限 65,536 で一定なので、カメラが動いて顔ぶれが替わっても毎フレーム Update（refit）だけで作り直しが 0 回（`RT_SCENE updated=120 built=0`。`RenderingCoordinator.cpp` 1810 行付近は件数が同じなら Update）。refit は同じ要素の小さな動きを前提とするので、席の中身が別の場所のインスタンスへ替わると箱が広がり続け、レイの判定が重くなる、と見る。直す: 同じ席に同じインスタンスが並び変換だけ変わったときだけ Update にし、顔ぶれが替わったら Build（替わった割合の閾値で決めてよい）。席の並びを選びの順（距離の順）に依らず安定させる。完了の条件(人の判断 2026-11-02、`blocked/SCN-MEGA-FIX-TLAS-REBUILD.md` の案 A で直した): カメラパスの再生（1M horizon・300 フレーム以上）で `LightingPass` の p95 ≤ 5 ms、median は同じカメラパスの視点の静止（10-29 の記録 U3-static で 3.64〜3.82 ms）+0.6 ms 以内 = 4.4 ms 以下。元の median ≤ 3 ms は、視点の違う 10-14 の既定の horizon の静止 1.7 ms から取った値で、この視点の RTGI の地の費用（3.6〜3.8 ms）が TLAS の外にあるため外した。近くのバナナの周りの粒の荒い暈は TLAS ではない（50000 本で作り直し 0 回の再生でも出る）ので、この項目の合否から外す（SCN-MEGA-ACCEPT-1M-P1 で直した）。10-14 からの LightingPass・MegaGeometry のカリングの増えは SCN-MEGA-FIX-TLAS-REBUILD-P2 で切り分けた。RTGI の地の費用を 3 ms へ下げる件がまだどの項目にも無ければ、`PROGRESS.md` の Notes に `要起票:` で残す。
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -Views horizon -Build -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -TimeoutSeconds 1800 -GameArgs banana-count=1000000,camera-path-play,camera-path-time=0 -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-TLAS-REBUILD/path`
 - verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-FIX-TLAS-REBUILD/path --views horizon --timing --min-frames 300 --require-pass LightingPass --max-pass-median-ms LightingPass=4.4 --max-pass-p95-ms LightingPass=5`
@@ -3381,6 +3382,7 @@
 
 ## SCN-MEGA-FIX-STRESS-GPU: 1M + mega-stress 5 万個の GPU 時間を 16.6 ms に収める
 - status: todo
+- after: SCN-MEGA-FIX-TLAS-REBUILD
 - done-when: 問い: 1% 移動の GPU 32.6 / 34.4 ms（median / p95）を、TLAS の直しの後に何が残るかで分け、予算（RT と GI を切った構成で 16.6 ms）に収められるか。SCN-MEGA-ACCEPT-1M の撮影の内訳（median）は `MegaGeometry` 16.1 ms（`VisRasterSw1` 9.1・`MegaGeometryCull1` 4.9・`MegaBvhC1Leaf` 4.1）、`LightingPass` 11.4、`VirtualShadowMapPass` 2.6（`VsmDraw` 1.5）。描いたクラスタは 264 万でバナナだけの静止（168 万）の 1.6 倍、ソフトウェアラスタの単価は 100 万クラスタあたり 3.4 ms（静止 3.0）でほぼ同じなので、量が多い側と見る。SCN-MEGA-FIX-TLAS-REBUILD の後に撮り直して `LightingPass` の残りを確かめ、残る超過を 5 万個のメッシュ（家・塔・岩）の描くクラスタの量（LOD の誤差の許容・遮蔽）で減らす。完了の条件: 1% 移動の負荷（300 フレーム）で GPU のフレームの median・p95 ≤ 16.6 ms。PNG を開いて穴と影の欠けが無いこと。
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -Views overview -Build -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -TimeoutSeconds 2400 -GameArgs banana-count=1000000,stress-entities=50000,stress-moving-percent=1 -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-STRESS-GPU`
 - verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-FIX-STRESS-GPU --timing --min-frames 300 --max-gpu-median-ms 16.6 --max-gpu-p95-ms 16.6`
@@ -3389,6 +3391,7 @@
 
 ## SCN-MEGA-ACCEPT-1M: 100万本と混在の負荷を、固定した 4 つの負荷と閾値で判定する
 - status: todo
+- after: SCN-MEGA-FIX-STRESS-GPU
 - done-when: 問い: 最終の配置・描画の経路の 4 つの負荷で、RT と GI を切った構成で 60 fps を満たせるか（RT と GI を入れた既定の構成は値を記録するだけ。4 つの撮影は RT と GI を切る引数で撮り、無ければ足す）。変わる判断: 既定を 100万本にする・直す項目を足す・止めてユーザーへ渡す。- 固定した 4 つの負荷: 100万本 horizon の静止、カメラパスの再生（パス 1 周を計測の窓に含める）、100万本 + mega-stress 5万個の 1% 移動、同じく 64 m 区画のストリーミング（区画の解放から再公開までを窓に含め、ログで確かめる）。- 各負荷で 300 フレーム以上、GPU・gt・rt の median と p95 がすべて 16.6 ms 以下（RTX 4080・1920×1080・RelWithDebInfo）。- 溢れがすべて 0、メモリ ≤ 3 GB（対象は計画の GPU Scene まわりの構造。使用中だけでなく、飛行中の複数のスロット・持ち続ける容量・回収待ちを含む最大の確保量）、Entity の数が本数によらない。PNG を開いて穴と影の欠けが無いことを見る。- 不合格の負荷は、同じ撮影の内訳から直す先を決める: GPU は範囲・インスタンス・BVH の判定、binning と記録、ハード・ソフトの両方のラスタ（`VisibilityRasterPass` を含む）、2 パス目、合流・HZB、VSM（全体とページの処理・カリング・描画。親と子の区間を二重に足さない）の時間と処理の件数。処理の量が多すぎるのか単価が高いのかを分ける。CPU は待ちと作業を分け、支配する関数・系（`RT.BuildAccelerationStructures` とその入力の選択、`RG.Record.*`、ECS の系と同期点、ストリーミングの作成・公開）を特定する。既存の区間で分けられない所だけ区間を足して撮り直す。構造・件数・ログで説明できない規模の依存が残ったときだけ、同じ配置・条件で本数を 30万へ下げた負荷を 1 つ足して比べる。直す先ごとに `SCN-MEGA-FIX-<名前>` を足す。- 合格したら既定の本数を 100万にする。受入れ文書の書き方は前と同じ。どれかの負荷で GPU・gt・rt の p95 のどれかが 25 ms を超えたら、その時点の撮影と内訳を付けてループを止めてユーザーへ渡す（自動で 30万の診断を続けない）。Debug の起動画面で検証レイヤーのエラーが 0。
 - verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-ACCEPT-1M/static --views horizon --timing --min-frames 300 --max-gpu-p95-ms 16.6 --max-gt-p95-ms 16.6 --max-rt-p95-ms 16.6 --max-gpu-median-ms 16.6 --max-gt-median-ms 16.6 --max-rt-median-ms 16.6`
 - verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-ACCEPT-1M/path --views horizon --timing --min-frames 300 --max-gpu-p95-ms 16.6 --max-gt-p95-ms 16.6 --max-rt-p95-ms 16.6 --max-gpu-median-ms 16.6 --max-gt-median-ms 16.6 --max-rt-median-ms 16.6`
@@ -3826,30 +3829,57 @@
 - notes: 2026-10-02追加。未着手の後続作業で、前提と選定課題を解決してから実装タスクへ細分化する。NorvesLib/Editorの境界とVFX-S1〜S5はロードマップ参照。
 
 ## G2-GR77-NATIVE-ACCEPTANCE: 実物GLBとnative統合の受入れを記録する
-- status: blocked
-- done-when: 実物GLBと既存glTFのcooker/loose/骨格の受入れを実行し、必要な範囲でgeometry/texture/hashと寿命を確認する。
-- verify: CookedMeshTest、AssetCookGlbSmoke、実物大型GLBのcpu/cooked/表示結果を区別して記録する。
+- status: done
+- done-when: この Windows の手元で次を行い、`Docs/Architecture/AssetImportPipeline.md` の「GR77: native受入れ」に、CPU の試験・cooked・骨格・表示・未実行を分けて記録する。
+  (1) verify の GR77 の試験19件が Debug で通る。GR77 のコードの不具合は直す。GR77 の外が原因の既存の失敗は、記録して要起票にする。
+  (2) TRELLIS.2 の実物 wooden_shack.glb の cook で、model 1つと texture 3つが実 package で解決する。時間とピークメモリも記録する。
+  (3) dog_trellis2_60k.glb(読めなければ banana.glb)で、2回焼いた結果がバイト単位で一致する。同じ GLB を分けた .gltf から焼いた NVMESH との一致も比べる(違えば原因を記録する)。
+  (4) dog_rigged.glb の骨格の cook が、コンテナではなく既存の契約の診断で拒否される。
+  (5) mega-bananas を -RequireAssets で1枚撮り、GLB 由来のバナナがテクスチャ付きで描かれていることを PNG で確かめる。
+  既存の節の「Windows.h依存で未検証」の注記は、実行結果に合わせて直す。loose の実物 GLB は未実行と明記する。
+- verify: `cmake --build build --config Debug --target CookedMeshTest AssetCook -- -m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 180 -R "^(GltfContainerTest|Base64DecodeTest|GltfBufferSourceTest|GltfBufferSetTest|GltfBufferUriTest|GltfBufferJsonTest|GltfBufferNumberTest|StaticGltfBufferCookTest|GltfImageRangeTest|GltfImageSourceTest|GltfAccessorRangeTest|GltfAccessorStagingTest|ImageBytesStagingTest|GltfDocumentProfileTest|GltfLooseSourceTest|CookedSkeletalAssetTest|CookedMeshTest|AssetCookGlbSmoke|AssetCookMeshSmoke)$"`
+- verify: `git grep -n "GR77: native" -- Docs/Architecture/AssetImportPipeline.md`
+- paths: Docs/Architecture/AssetImportPipeline.md, TASKS.md, PROGRESS.md, Library/Core/Private/Resource/Gltf*, Library/Core/Private/Resource/GLTFAnalyzer.cpp, Library/Core/Private/Resource/SkeletalGltfDecode.cpp, Library/Core/Private/Resource/SkeletalGltfDecode.h, Tools/AssetCook/MeshCooker.cpp, Tools/AssetCook/AssetCookGlbSmoke.cmake.in, Test/Core/Asset/Gltf*, Test/Core/Asset/StaticGltfBufferCookTest.cpp, Test/Core/Asset/ImageBytesStagingTest.cpp, Test/Core/Asset/CookedSkeletalAssetTest.cpp
 - stop-when: pure helperやfixture構文の成功をnative統合の成功として扱う。
 - notes: 現cloudはWindows.h依存で本体compileできず、計画書が参照するDogGameの実物大型GLBも未配置。作者は非描画Windows検証を必須から外しているため、独立実装は継続する。
 
 ## G2-GR78-SURFACE-CENTROID: 表面重心の極端値精度を確認する
-- status: blocked
-- done-when: 面積重み原点の極端値相殺と循環/面列挙順依存を解消し、独立確認後にsurface_centroidを有効化する。
-- verify: 2^100/2^-100の等面積2面、巨大正負座標/微小残差、面積/重心/実頂点結果を独立反証する。
+- status: done
+- done-when: 静的メッシュの取込(cook と loose)で surface_centroid を有効にする。面積重みの原点は、binary64 の全指数域を覆う正確な累算から最後に 1 回だけ丸めて求め、面の順・各面の巡回・巻きの反転に依らず結果をビット単位で一致させる。
+  2^100/2^-100 の等面積 2 面と、±巨大座標が相殺して微小な残りが出る組で、面積・重心・変換後の頂点が期待値どおりになる。総面積 0 は DegenerateSurface で失敗し、他の原点へ置き換えず、頂点と index を変えない。骨格では引き続き拒否する。既存の設定の hash は変えない。
+  `Docs/Architecture/ImportSettings.md` に節「## 表面重心の精度」を足し、方式と誤差の上限を書く。独立確認は、統合の前のランナーの評価者の PASS で満たす。
+- verify: `cmake --build build --config Debug --target CookedMeshTest -- -m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 180 -R "^(ImportTransformTest|ImportSettingsValueTest|ImportSettingsJsonTest|ImportStaticIntegrationTest|CookedSkeletalAssetTest)$"`
+- verify: `git grep -n "## 表面重心の精度" -- Docs/Architecture/ImportSettings.md`
+- paths: Library/Core/Private/Resource/ImportTransform.cpp, Library/Core/Private/Resource/ImportTransform.h, Library/Core/Private/Resource/ImportSettings.cpp, Library/Core/Private/Resource/ImportSettingsJson.cpp, Test/Core/Asset/ImportTransformTest.cpp, Test/Core/Asset/ImportSettingsValueTest.cpp, Test/Core/Asset/ImportSettingsJsonTest.cpp, Test/Core/Asset/ImportStaticIntegrationTest.cpp, Docs/Architecture/ImportSettings.md, TASKS.md, PROGRESS.md
 - stop-when: 未確認実装をロードへ接続する、他の原点選択へ無言fallbackする。
 - notes: 2026-10-03作者は他変換を先行し、この機能は未対応として明示拒否する方針を承認。以前の候補はa6391b2の履歴に保持、active実装からは除く。
 
 ## G2-GR82-V1-REST-POSE-GUARD: clip作成時骨格の差を束縛時に検査する
-- status: blocked
-- done-when: v1で各clipの作成時rest snapshotを保存し、現在骨格との差が許容超過なら既定拒否、明示許可時だけ通し、差量と超過関節を報告する。
-- verify: 同名同階層・異なるrest、全関節Translationを含む古いclip、許容内/外/明示許可/q符号同値、欠落/不正snapshot、cook/parse/bind往復。
+- status: done
+- done-when: 既存の G2-GR82-B1(53f17969/7b423fb1)と B2/B3 の実装が本要件(各 clip の作成時 rest snapshot の保存、現在の骨格との差が許容を超えたら既定で拒否、明示の許可のときだけ通す、差の量と超過した関節を報告)を満たすことを、このブランチの Debug で CookedClipBankV1Test・SkeletalClipBankBindingTest・RigSplitCookTest が通ることで確かめる。そのうえで本項目の `- result:` に、元の verify の各項目(同名同階層で rest が違う / 全関節 Translation を含む古い clip / 許容の内・外・明示許可・q の符号 / snapshot の欠落・不正 / cook・parse・bind の往復)が既存の試験のどこに当たるかを、ファイルと行またはマーカーで書く。新しい形式・API・試験は足さない。試験が落ちたら ClipBank の実装の側で直し、期待値は変えない。
+- verify: `cmake --build build --config Debug --target CookedMeshTest -- -m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 180 -R "^(CookedClipBankV1Test|SkeletalClipBankBindingTest|RigSplitCookTest)$"`
+- paths: TASKS.md, PROGRESS.md, Library/Core/Private/Animation/ClipBankBinding.cpp, Library/Core/Private/Animation/ClipBankBinding.h, Library/Core/Private/Animation/ClipBankRestComparison.cpp, Library/Core/Private/Animation/ClipBankRestComparison.h, Library/Core/Private/Asset/CookedClipBankV1.cpp, Library/Core/Private/Asset/CookedClipBankV1.h
 - stop-when: SkeletonIdからrestを除いたことを無条件互換と扱う、古いclipの歪みを黙認する。
 - notes: 作者承認済みのStage B必須要件。blocked理由はv1形式とStage A等の前提待ちで、作者の再承認待ちではない。
 
 ## G2-GR32-GPU-ACCEPTANCE: 多材質と旧描画互換をWindows GPUで確認する
-- status: blocked
-- done-when: 2材質板のGPU readbackと旧NVSKEL/M9SkinnedのGBuffer全画素一致、既定Rendering3DTestを実機で確認する。
-- verify: Windows/Vulkanで独立draw契約とGPU readback、起動画面を取得して実画像/結果を確認する。
+- status: todo
+- done-when: 次の (1)〜(4) を満たす。
+  (1) 既定のビジビリティバッファの経路で、スキンの submesh ごとの描画が自分のインデックスの範囲だけを ID に描く。`VisibilityRasterPass::CollectSkinnedChunks` が `SourceFirstIndex`/`SourceIndexCount` を `VirtualShadowMapPass` と同じ規則で使い、範囲の計算は 2 つのパスで 1 つの関数に共有する。旧の空表(全体の範囲)の描画は変えない。既存の `SkinnedSubmeshDrawContractTest` に範囲(全体・部分・3 の倍数でない・はみ出し)の検査を足し、Debug で通る(新しい試験の exe は作らない)。
+  (2) 検証用の骨付きパネル(`StartupSkinnedProbe`)に、2 submesh・2 材質 slot の変種を足す。起動の引数で明示したときだけ使い、既定の起動画面と `-SkinnedProbe` だけの撮影の見た目は変えない。`CaptureStartupScene.ps1 -SkinnedProbeMaterials 2` は、ビジビリティバッファの On と Off の両方で、パネルの各半分の材質の色の読み戻しがその slot の材質の色であることを判定し、違えば result=fail にする。
+  (3) `Test-M9World.ps1 -LegacyNvskelCompare` は、同じ ValidU8Float から作った旧 NVSKEL(0.1。表なし)と 0.2 を GBuffer のラスタの経路で描き、GBuffer の全画素一致を判定して、比べた画像を `-EvidenceDir` に残す。旧形式は試験側(`Test/Tools` の oracle)で作り、製品の AssetCook に旧形式の書き出しを戻さない。
+  (4) 既定の Rendering3DTest の起動画面を撮り、result=pass と PNG で確かめる。
+  (2)〜(4) の実行は、当分アプリを起動しない決まりの間は確かめのタスク(`G2-GR32-GPU-ACCEPTANCE-CHECK`)で行う。この項目は、実装・ビルド・CPU の試験と、後で何を確かめるかを `PROGRESS.md` と `Docs/Architecture/NVSKELMigrationInventory.md` に書くことで済む。mock や source の確認を実 GPU の合格と扱わない。
+- verify: `cmake --build build --config Debug --target Game AssetCook SkinnedSubmeshDrawContractTest -- -m:1`
+- verify: `build\Test\Core\Rendering\Debug\SkinnedSubmeshDrawContractTest.exe`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -SkinnedProbe -SkinnedProbeMaterials 2 -VisibilityBuffer On -OutDir .harness/runs/startup-capture/G2-GR32-GPU-ACCEPTANCE-2mat-vb`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -SkinnedProbe -SkinnedProbeMaterials 2 -VisibilityBuffer Off -OutDir .harness/runs/startup-capture/G2-GR32-GPU-ACCEPTANCE-2mat-gbuffer`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Test-M9World.ps1 -Configuration Debug -LegacyNvskelCompare -EvidenceDir .harness/runs/scene-capture/G2-GR32-GPU-ACCEPTANCE-legacy`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -OutDir .harness/runs/startup-capture/G2-GR32-GPU-ACCEPTANCE-default`
+- paths: Library/Core/Private/Rendering/VisibilityRasterPass.cpp, Library/Core/Public/Rendering/VisibilityRasterPass.h, Library/Core/Private/Rendering/VirtualShadowMapPass.cpp, Library/Core/Public/Rendering/MeshIndexChunks.h, Test/Core/Rendering/SkinnedSubmeshDrawContractTest.cpp, Game/GameModes/Rendering3DTest/StartupSkinnedProbe.cpp, Game/GameModes/Rendering3DTest/StartupSkinnedProbe.h, Game/GameModes/Rendering3DTest/Rendering3DTestData.h, Game/GameModes/Rendering3DTest/Rendering3DTestRoutine.cpp, Game/GameApplicationHandler.cpp, Game/GameModes/Rendering3DTest/M9WorldAcceptance.cpp, Game/GameModes/Rendering3DTest/M9WorldAcceptance.h, Scripts/CaptureStartupScene.ps1, Scripts/Test-M9World.ps1, Test/Tools/NvskelLegacyV01Oracle.py, Docs/Architecture/NVSKELMigrationInventory.md, TASKS.md, PROGRESS.md
 - blocked-by: 現在のクラウドにWindows/Vulkan実行環境がない。非描画のWindows免除を描画へ拡張しない。
 - stop-when: mock/source確認を実GPU合格と扱う、ユーザー指定を変えて別環境へ無断移動する。
 
@@ -4018,7 +4048,7 @@
 - from: SCN-RENDER-SPEC-OCC-VERIFY-REG
 
 ## SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1: 鏡面の直しの後の最終の版で、荒野の遮蔽の 8 組を変更前の鏡面の経路と並べて判定し直す
-- status: todo
+- status: done
 - after: SCN-RENDER-SPEC-WIDE-ESS, SCN-RENDER-SPEC-ROOF-HITS
 - done-when: 判断役の判断(`blocked/resolved/SCN-RENDER-SPEC-OCC-VERIFY-REG.md` の指示 3)による。SCN-RENDER-SPEC-WIDE-ESS で粗さ 1 の崖の鏡面が変わるので、SCN-RENDER-SPEC-OCC-VERIFY-OCC の判定を、2 項目の後の同じ最終の版で撮り直す。
   - 撮影: 同じ Game.exe・同じ焼いた地形で、荒野の遮蔽の 8 組を `--rtgi-specular=off` と今の形の両方で撮る。
@@ -4082,7 +4112,7 @@
 - from: SCN-BUILD-ALL-TESTS
 
 ## SCN-RENDER-SPEC-WIDE-ESS-P1: night-village で VRAM の予算が足りないとき、ジオメトリのページが常駐 0 まで外される原因を突き止めて直す
-- status: blocked
+- status: todo
 - done-when: SCN-WL-GEOM-LOWVRAM の「予算が足りないときは粗い段に下がって落ち着く」と食い違う形を、night-village で再現して原因を示し、直す。
   - 元の例: SCN-RENDER-SPEC-WIDE-ESS の before の overview(`<親>/.slots/NorvesLib-3/.harness/runs/regression/SCN-RENDER-SPEC-WIDE-ESS/before/night-village/overview.Game.log`)。ヒープの予算が約 6130 MB まで下がった(並べて走るほかの枠の Game と GPU を分け合った)。プール以外が 5396〜5761 MB、影のプールが 623 MB で、ジオメトリの枠の目標は 0〜111 MB。これが外せない区画(根、約 670 MB)を下回り、ページの目標が 0 になって 1101 ページを外し resident=0 になった。そのあと wanted=1538・ready=64 のまま budget_blocked が 4→7 と増えて止まった。ジオメトリのプールの塊(2048 MB)は確保されたままなので、ページを外してもヒープの使用量は減っていない見込み。
   - 再現: 開発ビルドの `vram-budget-mb` で、ジオメトリの枠の目標が根の区画を下回る上限にして night-village を撮る(目安 6100 MB。値を変えたら verify も合わせる)。直す前の撮影で同じ形(常駐 0・要求が予算で止まったまま)になることを、値で PROGRESS.md に残す。
@@ -4103,7 +4133,7 @@
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Views ref_cliff_02 -GameArgs vram-budget-mb=6600,geom-settle-trace=60 -OutDir .harness/runs/scene-capture/SCN-RENDER-SPEC-WIDE-ESS-P1/wasteland-6600`
 - verify: `python Scripts/Terrain/ReferenceCheck.py --geom-settle --engine .harness/runs/scene-capture/SCN-RENDER-SPEC-WIDE-ESS-P1/wasteland-6600 --verify`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Terrain/CaptureRegression.ps1 -Item SCN-RENDER-SPEC-WIDE-ESS-P1 -Phase after`
-- paths: Library/Core/Private/Rendering, Assets/Shaders/Common/MegaGeometryCull.glsl, Game/Debug, Scripts/Terrain, Docs/RenderingValidation, TASKS.md, PROGRESS.md
+- paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering/MegaGeometryPass.h, Library/Core/Public/Rendering/VisibilityRasterPass.h, Assets/Shaders/Common/MegaGeometryCull.glsl, Assets/Shaders/mega_bin_prefix.comp, Assets/Shaders/mega_bin_scatter.comp, Assets/Shaders/mega_bin_check.comp, Assets/Shaders/mega_bin_draw_args.comp, Assets/Shaders/visbuffer_mega.vert, Assets/Shaders/visbuffer_records.comp, Assets/Shaders/megageometry.vert, Test/Core/Rendering/RenderGraphCompileTest.cpp, Game/Debug, Scripts/Terrain, Docs/RenderingValidation, TASKS.md, PROGRESS.md
 - gpu: exclusive
 - notes: 危険地帯(メモリ・ストリーミング・カリングのシェーダー)。予算の上書きはヒープの予算との小さい方になる。ほかの枠の Game が同じ GPU を使うとヒープの予算が上書きの値より下がり、`--geom-settle` の cap_mb の一致の検査が崩れる。そのため GPU を占有して撮る。
 - from: SCN-RENDER-SPEC-WIDE-ESS
@@ -4196,3 +4226,100 @@
 - paths: Library/Core/Private/Engine/ApplicationProcessor.cpp, Scripts/CaptureScene.ps1, TASKS.md, PROGRESS.md
 - gpu: exclusive
 - from: SCN-MEGA-FIX-TLAS-REBUILD
+
+## SCN-FIX-SKY-BANDING-CHECK: 空の階調の段（波打つ横縞）を消す(後回しにしたアプリの起動の確かめ)
+- status: todo
+- check: launch
+- gpu: exclusive
+- done-when: SCN-FIX-SKY-BANDING で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、SCN-FIX-SKY-BANDING の done-when を満たすことを確かめる。満たさなければ SCN-FIX-SKY-BANDING の done-when と paths の範囲で直す。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -Views overview -Build -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-FIX-SKY-BANDING`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -OutDir .harness/runs/startup-capture/SCN-FIX-SKY-BANDING`
+- paths: Assets/Shaders, Library/Core/Private/Rendering, Library/Core/Public/Rendering, Docs/RenderingValidation, Test/Core/Rendering, Scripts, TASKS.md, PROGRESS.md
+- from: SCN-FIX-SKY-BANDING
+
+## SCN-MEGA-FIX-TLAS-REBUILD-P4: 1M 静止の `MegaBvhC1Leaf` の 10-14 からの +2.4 ms と、11-01 の 10 ms 超の山を、葉の段のクラスタごとの仕事から切り分けて減らす
+- status: todo
+- done-when: 問い: 1M の既定の horizon の静止で、`MegaBvhC1Leaf` の median が 10-14 の 2.560 ms から 11-01 の 4.995 ms に増えた。席・節・クラスタ・可視の件数もドライバ(610.88)も同じで、葉より上の段は変わっていない(`SceneLauncherAcceptance.md` の「10-14 からの静止の GPU の増え」)。11-01 にはこれとは別に、300 フレーム中 33 フレームが 10 ms 以上になる山がある(最大 35.1 ms・p95 15.482 ms)。10-14 と 10-29 には無い。候補は 2 つ。1 つは 4a3a43d6 の形で、`Common/MegaGeometryCull.glsl` の `ProcessCluster` が、子に任せて描かないクラスタからも `RequestPage` を呼び、そのたびに `requestStamp` へ `atomicExchange` する。もう 1 つは e5e06e0d の `cluster_bvh_cull.comp` の `BindClusterInstance` にある `mainLodFloor`・`EffectiveLodBias()`。手順: (1) 編集の前に、今の版を同じ条件で撮る(before)。葉の median・p95・10 ms 以上のフレーム数と、`GEOMETRY_PAGES`・`MEGA_OCCLUSION`・`SW_RASTER_BIN` の行を控える。(2) `RequestPage` を、先に `requestStamp` を読み、今のフレームの印が付いていれば atomic を打たない形にする。列へ積む要求の集合は変えない。これで足りなければ波(subgroup)でまとめる。e5e06e0d の寄与は、シェーダーを一時的に戻した撮影で測る(戻したまま残さない)。(3) 直した版でも 10 ms 以上のフレームが出るなら、もう 1 回撮って再現するかを見る。山のフレームの前後のログの行と並べて原因を書く。(4) 前後の値と寄与の表を同じ節に書く。合否: 直した版で `MegaBvhC1Leaf` の median ≤ 3.3 ms、p95 ≤ 5.0 ms。`GEOMETRY_PAGES` の resident・peak・request_overflow と、`MEGA_OCCLUSION`・`SW_RASTER_BIN` の件数が before と同じ(ページの要求とストリーミングの振る舞いを変えていない)。回帰の撮影が pass し、前後の PNG を開いて穴・欠けが無い。基準画像の 2 本が Passed。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -Views horizon -Build -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -TimeoutSeconds 1800 -GameArgs banana-count=1000000 -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-TLAS-REBUILD-P4/static`
+- verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-FIX-TLAS-REBUILD-P4/static --views horizon --timing --min-frames 300 --require-pass MegaBvhC1Leaf --max-pass-median-ms MegaBvhC1Leaf=3.3 --max-pass-p95-ms MegaBvhC1Leaf=5`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Terrain/CaptureRegression.ps1 -Item SCN-MEGA-FIX-TLAS-REBUILD-P4 -Phase after`
+- verify: `cmake --build build --config Debug --target RenderingGoldenImageTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure -R "^(RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
+- paths: Assets/Shaders/Common/MegaGeometryCull.glsl, Assets/Shaders/cluster_bvh_cull.comp, Docs/RenderingValidation/SceneLauncherAcceptance.md, TASKS.md, PROGRESS.md
+- gpu: exclusive
+- from: SCN-MEGA-FIX-TLAS-REBUILD
+- notes: MegaGeometry のカリングは全シーンに効く危険地帯なので、評価者を通す。反復の最初に、回帰の撮影の before(`-Phase before`)と葉の before を撮る。シェーダーは実行時に Assets から作るので、寄与を測り分ける撮影に C++ の再ビルドは要らない。Game の外の GPU の処理と重なった撮影は合否に使わず、撮り直す。
+
+## SCN-MEGA-FIX-TLAS-REBUILD-P5: 1M 静止の `LightingPass` の 10-14 からの +1.2 ms を RTGI の当たりの統計と鏡面の光線に分け、統計の費用を計測から外せるようにする
+- status: todo
+- done-when: 問い: 1M の既定の horizon の静止で、`LightingPass` の median が 10-14 の 1.657 ms から 11-01 の 2.857 ms に増えた(TLAS は 120 フレームとも skip で同じ)。候補は 3 つ。(a) baaf64b4 の鏡面の光線(`TraceSpecularRay` と、条件つきの `TraceSecondBounce`)。(b) 9e922381・9a2fee63 が足した鏡面の計算。(c) cff879b2 の当たりの統計。統計は開発ビルドでは毎フレーム走り、`DiffuseIndirect.comp` の `main` の barrier 2 回と共有の atomicAdd、`LightingPass.cpp` の TLAS の並びの走査と読み戻しを足す。性能は RelWithDebInfo で測るので、統計の費用はそのまま計測に乗る。手順: (1) 開発ビルドだけの引数 `--rtgi-hit-stats=on|off` を足す。既定は on。今の `RTGI_HITS` の行の中身と、行が出る条件は変えない(`Scripts/Terrain/RtScene.py`・`ReferenceCheck.py` が読む)。(2) 1M 静止を、既定・`rtgi-hit-stats=off`・`rtgi-specular=off` の 3 本撮る。`LightingPass` の median・p95 を 10-14・11-01 の値と表に並べ、+1.2 ms を統計・鏡面・残りに分けて、`SceneLauncherAcceptance.md` の「10-14 からの静止の GPU の増え」に書く。(3) 統計の寄与(既定 − off の median)が 0.1 ms を超えたら、行の中身を変えずに軽くして 0.1 ms 以下にする。(4) 鏡面の光線は機能なので消さない。寄与が 0.5 ms を超えたら、PROGRESS.md の Notes に `要起票:` で残す。合否: 既定と off の median の差が 0.1 ms 以下。既定の撮影の Game.log に `RTGI_HITS` の行があり、off の撮影には無い。基準画像の 2 本が Passed(統計の変更で画は変わらない)。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -Views horizon -Build -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -TimeoutSeconds 1800 -GameArgs banana-count=1000000 -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-TLAS-REBUILD-P5/default`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -Views horizon -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -TimeoutSeconds 1800 -GameArgs banana-count=1000000,rtgi-hit-stats=off -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-TLAS-REBUILD-P5/nostats`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -Views horizon -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -TimeoutSeconds 1800 -GameArgs banana-count=1000000,rtgi-specular=off -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-TLAS-REBUILD-P5/nospecular`
+- verify: `python -c "import json,sys; m=lambda d:[p['median_ms'] for p in json.load(open(d+'/metrics.json',encoding='utf-8'))['views'][0]['gpu_timing']['gpu_pass_ms'] if p['pass']=='LightingPass'][0]; a,b=m(sys.argv[1]),m(sys.argv[2]); print('default',a,'nostats',b); sys.exit(0 if a-b<=0.1 else 1)" .harness/runs/scene-capture/SCN-MEGA-FIX-TLAS-REBUILD-P5/default .harness/runs/scene-capture/SCN-MEGA-FIX-TLAS-REBUILD-P5/nostats`
+- verify: `python -c "import sys; r=lambda p:open(p,encoding='utf-8',errors='replace').read(); sys.exit(0 if 'RTGI_HITS' in r(sys.argv[1]) and 'RTGI_HITS' not in r(sys.argv[2]) else 1)" .harness/runs/scene-capture/SCN-MEGA-FIX-TLAS-REBUILD-P5/default/horizon.Game.log .harness/runs/scene-capture/SCN-MEGA-FIX-TLAS-REBUILD-P5/nostats/horizon.Game.log`
+- verify: `cmake --build build --config Debug --target RenderingGoldenImageTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure -R "^(RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
+- paths: Assets/Shaders/RTGI/DiffuseIndirect.comp, Library/Core/Private/Rendering/LightingPass.cpp, Library/Core/Public/Rendering/LightingPass.h, Game/GameApplicationHandler.cpp, Docs/RenderingValidation/SceneLauncherAcceptance.md, TASKS.md, PROGRESS.md
+- gpu: exclusive
+- from: SCN-MEGA-FIX-TLAS-REBUILD
+- notes: RTGI は全シーンに効く危険地帯なので、評価者を通す。統計を軽くするときも、数える光線と当たりの定義は変えない。
+
+## SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1-CHECK: 鏡面の直しの後の最終の版で、荒野の遮蔽の 8 組を変更前の鏡面の経路と並べて判定し直す(後回しにしたアプリの起動の確かめ)
+- status: todo
+- check: launch
+- gpu: exclusive
+- done-when: SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1 で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1 の done-when を満たすことを確かめる。満たさなければ SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1 の done-when と paths の範囲で直す。
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/off --sets terrain-sky --variant-args rtgi-specular=off`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/on --sets terrain-sky`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/off --sets terrain-sun --variant-args rtgi-specular=off`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/on --sets terrain-sun`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/off --sets rocks-sky --variant-args rtgi-specular=off`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/on --sets rocks-sky`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/off --sets rocks-sun --variant-args rtgi-specular=off`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/on --sets rocks-sun`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/off --sets rocks-cliff-sky --variant-args rtgi-specular=off`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/on --sets rocks-cliff-sky`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/off --sets rocks-cliff-sun --variant-args rtgi-specular=off`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/on --sets rocks-cliff-sun`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/off --sets plant-sky --variant-args rtgi-specular=off`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/on --sets plant-sky`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/off --sets plant-sun --variant-args rtgi-specular=off`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/on --sets plant-sun`
+- verify: `python Scripts/Terrain/ReferenceCheck.py --occlusion --engine-root .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/on --off-root .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/off --reference .harness/runs/scene-capture/SCN-WLR-OCCLUSION-SETS/cycles --regions Scripts/Terrain/ExpectSpecs/occlusion-regions.json --expect Scripts/Terrain/ExpectSpecs/occlusion-accept.json --verify`
+- paths: Docs/RenderingValidation/InteriorLightReference.md, Scripts/Terrain/ExpectSpecs/occlusion-accept.json, TASKS.md, PROGRESS.md
+- from: SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1
+
+## G2-GR82-V1-REST-POSE-GUARD-CHECK: clip作成時骨格の差を束縛時に検査する(後回しにしたアプリの起動の確かめ)
+- status: todo
+- check: launch
+- gpu: exclusive
+- done-when: G2-GR82-V1-REST-POSE-GUARD で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、G2-GR82-V1-REST-POSE-GUARD の done-when を満たすことを確かめる。満たさなければ G2-GR82-V1-REST-POSE-GUARD の done-when と paths の範囲で直す。
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 180 -R "^(CookedClipBankV1Test|SkeletalClipBankBindingTest|RigSplitCookTest)$"`
+- paths: TASKS.md, PROGRESS.md, Library/Core/Private/Animation/ClipBankBinding.cpp, Library/Core/Private/Animation/ClipBankBinding.h, Library/Core/Private/Animation/ClipBankRestComparison.cpp, Library/Core/Private/Animation/ClipBankRestComparison.h, Library/Core/Private/Asset/CookedClipBankV1.cpp, Library/Core/Private/Asset/CookedClipBankV1.h
+- from: G2-GR82-V1-REST-POSE-GUARD
+
+## G2-GR78-SURFACE-CENTROID-CHECK: 表面重心の極端値精度を確認する(後回しにしたアプリの起動の確かめ)
+- status: todo
+- check: launch
+- gpu: exclusive
+- done-when: G2-GR78-SURFACE-CENTROID で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、G2-GR78-SURFACE-CENTROID の done-when を満たすことを確かめる。満たさなければ G2-GR78-SURFACE-CENTROID の done-when と paths の範囲で直す。
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 180 -R "^(ImportTransformTest|ImportSettingsValueTest|ImportSettingsJsonTest|ImportStaticIntegrationTest|CookedSkeletalAssetTest)$"`
+- paths: Library/Core/Private/Resource/ImportTransform.cpp, Library/Core/Private/Resource/ImportTransform.h, Library/Core/Private/Resource/ImportSettings.cpp, Library/Core/Private/Resource/ImportSettingsJson.cpp, Test/Core/Asset/ImportTransformTest.cpp, Test/Core/Asset/ImportSettingsValueTest.cpp, Test/Core/Asset/ImportSettingsJsonTest.cpp, Test/Core/Asset/ImportStaticIntegrationTest.cpp, Docs/Architecture/ImportSettings.md, TASKS.md, PROGRESS.md
+- from: G2-GR78-SURFACE-CENTROID
+
+## G2-GR78-SURFACE-CENTROID-CHECK-P1: CookedSkeletalAssetTest の「警告:」の照合を、コンソールのコードページに関わらず通す
+- status: todo
+- done-when: CookedSkeletalAssetTest.cmake.in で AssetCook の出力を受ける execute_process が、出力を UTF-8 として読む(ENCODING UTF-8 を付けるか、台本の頭で CMP0176 を NEW にする)。これにより「警告:」の照合(reduce・cubic・morph の 3 か所)が、コードページ 932 のコンソールでも 65001 のコンソールでも通る。照合の文字列と合否の条件は変えない。
+- verify: `cmd /c "chcp 932 >nul && ctest --test-dir build -C Debug --output-on-failure --timeout 180 -R CookedSkeletalAssetTest && chcp 65001 >nul && ctest --test-dir build -C Debug --output-on-failure --timeout 180 -R CookedSkeletalAssetTest"`
+- paths: Test/Core/Asset/CookedSkeletalAssetTest.cmake.in
+- from: G2-GR78-SURFACE-CENTROID-CHECK
+
+## G2-GR77-NATIVE-ACCEPTANCE-CHECK: 実物GLBとnative統合の受入れを記録する(後回しにしたアプリの起動の確かめ)
+- status: todo
+- check: launch
+- gpu: exclusive
+- done-when: G2-GR77-NATIVE-ACCEPTANCE で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、G2-GR77-NATIVE-ACCEPTANCE の done-when を満たすことを確かめる。満たさなければ G2-GR77-NATIVE-ACCEPTANCE の done-when と paths の範囲で直す。
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 180 -R "^(GltfContainerTest|Base64DecodeTest|GltfBufferSourceTest|GltfBufferSetTest|GltfBufferUriTest|GltfBufferJsonTest|GltfBufferNumberTest|StaticGltfBufferCookTest|GltfImageRangeTest|GltfImageSourceTest|GltfAccessorRangeTest|GltfAccessorStagingTest|ImageBytesStagingTest|GltfDocumentProfileTest|GltfLooseSourceTest|CookedSkeletalAssetTest|CookedMeshTest|AssetCookGlbSmoke|AssetCookMeshSmoke)$"`
+- paths: Docs/Architecture/AssetImportPipeline.md, TASKS.md, PROGRESS.md, Library/Core/Private/Resource/Gltf*, Library/Core/Private/Resource/GLTFAnalyzer.cpp, Library/Core/Private/Resource/SkeletalGltfDecode.cpp, Library/Core/Private/Resource/SkeletalGltfDecode.h, Tools/AssetCook/MeshCooker.cpp, Tools/AssetCook/AssetCookGlbSmoke.cmake.in, Test/Core/Asset/Gltf*, Test/Core/Asset/StaticGltfBufferCookTest.cpp, Test/Core/Asset/ImageBytesStagingTest.cpp, Test/Core/Asset/CookedSkeletalAssetTest.cpp
+- from: G2-GR77-NATIVE-ACCEPTANCE
