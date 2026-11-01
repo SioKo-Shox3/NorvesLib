@@ -4080,7 +4080,7 @@
 - from: SCN-BUILD-ALL-TESTS
 
 ## SCN-RENDER-SPEC-WIDE-ESS-P1: night-village で VRAM の予算が足りないとき、ジオメトリのページが常駐 0 まで外される原因を突き止めて直す
-- status: todo
+- status: blocked
 - done-when: SCN-WL-GEOM-LOWVRAM の「予算が足りないときは粗い段に下がって落ち着く」と食い違う形を、night-village で再現して原因を示し、直す。
   - 元の例: SCN-RENDER-SPEC-WIDE-ESS の before の overview(`<親>/.slots/NorvesLib-3/.harness/runs/regression/SCN-RENDER-SPEC-WIDE-ESS/before/night-village/overview.Game.log`)。ヒープの予算が約 6130 MB まで下がった(並べて走るほかの枠の Game と GPU を分け合った)。プール以外が 5396〜5761 MB、影のプールが 623 MB で、ジオメトリの枠の目標は 0〜111 MB。これが外せない区画(根、約 670 MB)を下回り、ページの目標が 0 になって 1101 ページを外し resident=0 になった。そのあと wanted=1538・ready=64 のまま budget_blocked が 4→7 と増えて止まった。ジオメトリのプールの塊(2048 MB)は確保されたままなので、ページを外してもヒープの使用量は減っていない見込み。
   - 再現: 開発ビルドの `vram-budget-mb` で、ジオメトリの枠の目標が根の区画を下回る上限にして night-village を撮る(目安 6100 MB。値を変えたら verify も合わせる)。直す前の撮影で同じ形(常駐 0・要求が予算で止まったまま)になることを、値で PROGRESS.md に残す。
