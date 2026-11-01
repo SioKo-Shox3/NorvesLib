@@ -3026,8 +3026,8 @@
 
 ## SCN-WL-CLIFF-GEN-TALUS: 崖の生成に、壁から崖錐へ移る崩れた大きな塊を足す
 - status: blocked
-- after: SCN-WL-CLIFF-GEN-CAPROCK, SCN-WL-SHAPE-INTERNAL-FOLDS, SCN-WL-PLACEMENT-GROUNDING-FIX
-- done-when: SCN-WL-SHAPE-CAUSE の原因 2 の続き: 壁から崖錐へ移る所が滑らかな斜面で、写真の崩れた大きな塊（数 m〜十数 m）が無い。崖の生成の範囲の壁の足元に、崩れた塊の形（押し出しと段）を足す（崖錐の岩の散布〔小さな岩〕とは別の、地形の形の塊）。担当: 崖の生成の担当の 7 範囲（`Tools/AssetCook/TerrainCliffDetail.cpp` の kNearRegions[2] Rooster Butte・kNearRegions[3] Setting Hen Butte と南の小さな崖・kCastleRegions[0]〜[4] の castle の段の 5 範囲。範囲の名前を `Scripts/Terrain/ShapeRegions.json` に同じ ID で持たせる）。Battleship Rock と Franklin Butte の尖塔の台座（kNearRegions[0]・[1]）は SCN-WL-CLIFF-SCAN-NEAR・FRANKLIN のスキャンの崖の担当で、この項目では変えない。合否: (A) `--shape --expect shape-cliff-talus.json` で、内部の折れ線（壁の足・塊の稜線）の一致の割合・余分な折れ・局所の欠けが SCN-WL-SHAPE-INTERNAL-FOLDS の基準を満たし、棚・角・外形が悪くならない、(B) `--shape-cause --baseline --expect`（同じ仕様の範囲の行）: 担当の範囲で局所の退行（前の基準より 10 ポイント以上下がった区画）が 5 % 以下、担当の外の範囲の値が前の基準と変わらない（差 2 ポイント以内）、(C) 置いた物の接地が担当の範囲で前の記録より悪くならない（`CheckPlacement.py --range-group cliff-gen --baseline` で、崖の生成の 7 範囲の物の組ごとの違反の数と浮き・埋もれの 99 百分位が、SCN-WL-CLIFF-PLACEMENT-CHECK の記録〔`.harness/runs/scene-capture/SCN-WL-CLIFF-PLACEMENT-CHECK/placement_check.record.json`〕を物の数の 0.5 % を超えて上回らず、測り切れない物が 0。全域の違反 0 は SCN-WL-PLACEMENT-GROUNDING-FIX で扱う）、(D) クックの対象（`--cook-coverage`。この項目で作る: 担当の範囲に掛かる区画のパッケージの入力の印が新しい AssetCook と生成の版を指し、焼いた数が区画の数と合う）、(E) ページの要求の溢れ・失敗 0（`--geom-requests`）、VRAM の使用（Game.log の値）が予算の 90 % 以下、地形の三角形の数・クックの時間を前後で記録、(F) 継ぎ目・穴・区画の境の段が無いことと写真との並びを開いて確かめる。 崖錐の岩の散布が塊に埋もれない・浮かない（担当の範囲で前の記録より悪くならない。上の (C)）。
+- after: SCN-WL-CLIFF-GEN-CAPROCK, SCN-WL-SHAPE-INTERNAL-FOLDS, SCN-WL-PLACEMENT-GROUNDING-FIX, SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1
+- done-when: 人の判断(2026-11-02、`blocked/SCN-WL-CLIFF-GEN-TALUS.md` の案 A)で問いを替えた。元の問い（壁から崖錐へ移る所に、写真の崩れた大きな塊〔数 m〜十数 m〕の形を高さの場で足す）は、版 16〜18 の 3 回とも (A) が版 15 を下回り、1 m の格子の限界（SCN-WL-SHAPE-CAUSE の原因 1）に当たったので、この項目では未達で閉じる。崩れた塊は、スキャンの岩・Blender の大きな岩の物（数 m〜十数 m のメッシュ）として置く別の項目にする（`PROGRESS.md` の Notes に `要起票:` で残す）。すること: 版 18 の崖錐の側の塊の持ち上げ（`TalusBlockRise`）を外し、生成の版を 19 に上げ（番号は戻さない。出力の形は版 15 と同じ）、214 項目を焼き直す。担当の範囲は元のまま（`Tools/AssetCook/TerrainCliffDetail.cpp` の崖の生成の 7 範囲。Battleship Rock と Franklin Butte の尖塔の台座〔kNearRegions[0]・[1]〕は変えない）。合否: (A) `--shape --expect shape-cliff-talus.json` の各行が版 15 の値に戻る。`shape-cliff-talus.json` は、塊を求める行（`fold_gain` など、版 15 を超えることを求める行）を外し、残りの行（棚・角・外形・内部の折れ線）を版 15 の合格の値に合わせ直す。版 15 の実測より緩めない、(B) `--shape-cause --baseline --expect`（同じ仕様の範囲の行）: 担当の範囲で局所の退行（前の基準より 10 ポイント以上下がった区画）が 5 % 以下、担当の外の範囲の値が前の基準と変わらない（差 2 ポイント以内）、(C) 置いた物の接地が担当の範囲で SCN-WL-CLIFF-PLACEMENT-CHECK の記録〔`.harness/runs/scene-capture/SCN-WL-CLIFF-PLACEMENT-CHECK/placement_check.record.json`〕を物の数の 0.5 % を超えて上回らず、測り切れない物が 0、(D) クックの対象（`--cook-coverage`）: 担当の範囲に掛かる区画のパッケージの入力の印が新しい AssetCook と版 19 を指し、焼いた数が区画の数と合う、(E) ページの要求の溢れ・失敗 0（`--geom-requests`）、VRAM の使用（Game.log の値）が予算の 90 % 以下、地形の三角形の数・クックの時間を前後で記録、(F) 継ぎ目・穴・区画の境の段が無いことと写真との並びを開いて確かめる。結果は `Docs/RenderingValidation/WastelandShape.md` に版 19 として書く。焼き直した地形がほかの枠と共有の置き場に入るなら、版 18 で描いた荒野の遮蔽の比べの Cycles の正解（SCN-RENDER-ROUGH-STEEP-ENERGY-P2）と合わなくなるので、描き直しが要るかを確かめ、要るなら `要起票:` に残す。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `cmake --build build --config RelWithDebInfo --target AssetCook -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CookAssets.ps1 -AssetCookExe build/Tools/AssetCook/RelWithDebInfo/AssetCook.exe -OnlyLogicalPath "Assets/Models/WastelandTerrain/*"`
@@ -3204,7 +3204,7 @@
 
 ## SCN-RENDER-SPEC-OCC-VERIFY-REG: 鏡面の遮りの回帰の 4 シーン・golden・GPU 時間・material-gallery を、同じ最終の版で変更前の鏡面の経路と並べて確かめる
 - status: blocked
-- after: SCN-RENDER-SPEC-OCC-VERIFY-OCC
+- after: SCN-RENDER-SPEC-OCC-VERIFY-OCC, SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1, SCN-RENDER-SPEC-WIDE-ESS, SCN-RENDER-SPEC-ROOF-HITS, SCN-WL-CLIFF-GEN-TALUS
 - done-when: SCN-RENDER-SPEC-OCCLUSION の確かめの残り（run 20261026-002702 の反復 7 の評価の 2 件目）: 同じ Game.exe（HEAD のシェーダー）で、(1) 回帰の 4 シーンの before を `--rtgi-specular=off`、after を今の形で撮り、差の画を開いて変わった所と理由を書く（`CaptureRegression.ps1` に `-GameArgs` を足す）、(2) golden の 2 本（Indoor・Outdoor）を回し、変わるなら差の原因と物理的な妥当さを確かめて `Docs/RenderingValidation/GoldenBaselines.md` の手順で再承認する、(3) GPU 時間を荒野の ref_ground_01 と interior-light の 1 視点で、off と今の形の 300 フレームの中央値で記録する（RT と GI 入りの目安 30 fps の中）、(4) material-gallery を off と今の形で撮って並べて開き、粗さの分岐（細いローブと広いローブの混ぜ）の見た目を書く。記録は `InteriorLightReference.md` と PROGRESS.md。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
@@ -3219,6 +3219,7 @@
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Scene material-gallery -GameArgs rtgi-specular=off -OutDir .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-REG/gallery-off`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Scene material-gallery -OutDir .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-REG/gallery-on`
 - paths: Scripts, Docs/RenderingValidation, Test/Core/Rendering/Baselines, TASKS.md, PROGRESS.md
+- gpu: exclusive
 - notes: 2026-10-26 親が SCN-RENDER-SPEC-OCCLUSION の反復 7 の評価の 2 周目の差し戻しから足した。interior-light の視点の名前が overview でなければ、実際の名前に直して verify も合わせる。material-gallery の撮影に `-RequireAssets` が合わなければ外してよい。壁時計（75 分）の残りが 25 分を切ったら新しい撮影を始めず、撮れた所までをコミットして doing のまま終える（未達のまま DONE にしない）。verify は 1 行 10 分未満。シェーダーと描画の経路は変えない（この項目は確かめるだけ。直しが要る差を見つけたら値を付けて BLOCKED）。
 
 ## SCN-RENDER-SPEC-OCCLUSION: 鏡面の環境光（IBL・空の前計算の鏡面）を、見えない空の分だけ遮る
@@ -3340,9 +3341,9 @@
 
 ## SCN-MEGA-FIX-TLAS-REBUILD: TLAS を、インスタンスの顔ぶれが替わったら作り直す
 - status: blocked
-- done-when: 問い: カメラパスの再生で `LightingPass`（RTGI）が median 70.5 / p95 100.4 ms（静止は 1.7 ms）になるのを、TLAS の木の質で説明でき、直せるか。SCN-MEGA-ACCEPT-1M の撮影では、選ぶ件数が上限 65,536 で一定なので、カメラが動いて顔ぶれが替わっても毎フレーム Update（refit）だけで作り直しが 0 回（`RT_SCENE updated=120 built=0`。`RenderingCoordinator.cpp` 1810 行付近は件数が同じなら Update）。refit は同じ要素の小さな動きを前提とするので、席の中身が別の場所のインスタンスへ替わると箱が広がり続け、レイの判定が重くなる、と見る。直す: 同じ席に同じインスタンスが並び変換だけ変わったときだけ Update にし、顔ぶれが替わったら Build（替わった割合の閾値で決めてよい）。席の並びを選びの順（距離の順）に依らず安定させる。完了の条件: カメラパスの再生（1M horizon・300 フレーム以上）で `LightingPass` の median ≤ 3 ms・p95 ≤ 5 ms。PNG を開き、今の撮影で近くのバナナの周りに出ている粒の荒い暗い輪が消えていること。
+- done-when: 問い: カメラパスの再生で `LightingPass`（RTGI）が median 70.5 / p95 100.4 ms（静止は 1.7 ms）になるのを、TLAS の木の質で説明でき、直せるか。SCN-MEGA-ACCEPT-1M の撮影では、選ぶ件数が上限 65,536 で一定なので、カメラが動いて顔ぶれが替わっても毎フレーム Update（refit）だけで作り直しが 0 回（`RT_SCENE updated=120 built=0`。`RenderingCoordinator.cpp` 1810 行付近は件数が同じなら Update）。refit は同じ要素の小さな動きを前提とするので、席の中身が別の場所のインスタンスへ替わると箱が広がり続け、レイの判定が重くなる、と見る。直す: 同じ席に同じインスタンスが並び変換だけ変わったときだけ Update にし、顔ぶれが替わったら Build（替わった割合の閾値で決めてよい）。席の並びを選びの順（距離の順）に依らず安定させる。完了の条件(人の判断 2026-11-02、`blocked/SCN-MEGA-FIX-TLAS-REBUILD.md` の案 A で直した): カメラパスの再生（1M horizon・300 フレーム以上）で `LightingPass` の p95 ≤ 5 ms、median は同じカメラパスの視点の静止（10-29 の記録 U3-static で 3.64〜3.82 ms）+0.6 ms 以内 = 4.4 ms 以下。元の median ≤ 3 ms は、視点の違う 10-14 の既定の horizon の静止 1.7 ms から取った値で、この視点の RTGI の地の費用（3.6〜3.8 ms）が TLAS の外にあるため外した。近くのバナナの周りの粒の荒い暈は TLAS ではない（50000 本で作り直し 0 回の再生でも出る）ので、この項目の合否から外す（SCN-MEGA-ACCEPT-1M-P1 で直した）。10-14 からの LightingPass・MegaGeometry のカリングの増えは SCN-MEGA-FIX-TLAS-REBUILD-P2 で切り分けた。RTGI の地の費用を 3 ms へ下げる件がまだどの項目にも無ければ、`PROGRESS.md` の Notes に `要起票:` で残す。
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -Views horizon -Build -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -TimeoutSeconds 1800 -GameArgs banana-count=1000000,camera-path-play,camera-path-time=0 -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-TLAS-REBUILD/path`
-- verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-FIX-TLAS-REBUILD/path --views horizon --timing --min-frames 300 --require-pass LightingPass --max-pass-median-ms LightingPass=3 --max-pass-p95-ms LightingPass=5`
+- verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-FIX-TLAS-REBUILD/path --views horizon --timing --min-frames 300 --require-pass LightingPass --max-pass-median-ms LightingPass=4.4 --max-pass-p95-ms LightingPass=5`
 - paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Library/Core/Private/RHI, Library/Core/Public/RHI, TASKS.md, PROGRESS.md
 - notes: 2026-10-14 SCN-MEGA-ACCEPT-1M の診断から。1% 移動・ストリーミングの `LightingPass` 11.4〜11.6 ms（静止のバナナだけは 1.7 ms）も同じ refit を毎フレーム行っている（`updated=120 built=0`）ので、この項目の後に撮り直して残りを見る。危険地帯（RHI/Vulkan・RenderThread）なので評価者を通す。 2026-10-15 親: RT の 60 fps は求めなくなったが、動くと RTGI が 40 倍遅くなり（カメラパスで GPU 86 ms・約 12 fps）操作できないので、木の質の欠陥として残す。
 
@@ -4023,7 +4024,7 @@
   - 判定: `occlusion-accept.json` の全部の行を `--off-root` 付きで判定する。決まりは VERIFY-OCC と同じ。
     - 今の形の全部の行が範囲内なら合格。
     - 範囲の外の行は、off でも範囲の外で、今の形が off から 0.005 を超えて悪くならなければよい。
-    - 遠い急な崖の対照の 2 行は、一時の下限 0.946・0.957 で通る。
+    - 遠い急な崖の対照の 2 行は、一時の下限 0.940・0.951 で通る（人の判断 2026-11-02、`blocked/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1.md` の案 1。SCN-RENDER-SPEC-WIDE-ESS で粗さ 1 の崖の鏡面の環境光が約 0.7 % 下がった分で、SCN-RENDER-ROUGH-STEEP-ENERGY の合否 (2) が受け持つ不足と同じもの）。`Scripts/Terrain/ExpectSpecs/occlusion-accept.json` のこの 2 行の `min` を下げ、note に「SCN-RENDER-SPEC-WIDE-ESS の後、SCN-RENDER-ROUGH-STEEP-ENERGY で 1 ± 0.03 に戻す」と書く。反復の中では撮り直さず、撮影済みの 16 本（`.harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/{on,off}`）で判定し直してよい（ランナーの再検証は verify のとおり撮る）。
   - off で範囲内なのに今の形で外れる行があれば、値を付けて BLOCKED にする。
   - `InteriorLightReference.md` の VERIFY-OCC の表(範囲の外の行と遠い急な崖の対照の 2 行の、今の形 ÷ off・エンジン ÷ Cycles)を今の値で書き直す。
   - 反復の中で地形を焼き直さない。シェーダーと描画の経路は変えない。
@@ -4046,7 +4047,7 @@
 - verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/off --sets plant-sun --variant-args rtgi-specular=off`
 - verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/on --sets plant-sun`
 - verify: `python Scripts/Terrain/ReferenceCheck.py --occlusion --engine-root .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/on --off-root .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/off --reference .harness/runs/scene-capture/SCN-WLR-OCCLUSION-SETS/cycles --regions Scripts/Terrain/ExpectSpecs/occlusion-regions.json --expect Scripts/Terrain/ExpectSpecs/occlusion-accept.json --verify`
-- paths: Docs/RenderingValidation/InteriorLightReference.md, TASKS.md, PROGRESS.md
+- paths: Docs/RenderingValidation/InteriorLightReference.md, Scripts/Terrain/ExpectSpecs/occlusion-accept.json, TASKS.md, PROGRESS.md
 - from: SCN-RENDER-SPEC-OCC-VERIFY-OCC
 
 ## SCN-RENDER-SPEC-ROOF-HITS-P1: 室内の比べの `--reference` が盤面の枠に無いとき、メインの作業ツリーの同じ置き場を読む
