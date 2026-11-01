@@ -8363,6 +8363,7 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 ### SCN-MEGA-ACCEPT-1M-P1(再検証の差し戻しへの対応)
 - Done: 枠に build が無く再検証の 1 行目が落ちていたため、枠で構成し直した(freetype の submodule・テスト有効の構成・CookedAssets と Assets/Terrain をメインへのジャンクション・回帰の before を同じ項目の撮影から写す)。verify 全 8 行がこの枠で EXIT=0: RtgiGrain の比 1.304(上限 1.5)、LightingPass の計測合格、回帰 5 シーン合格、golden 2/2 合格。コードの変更なし
 - Notes: 要起票: relay の枠(.slots/NorvesLib-4)は単位の作業ツリーだけで作業するため build・資産のジャンクションが無く、ランナーの再検証が落ちる。枠の初期化で揃える形にするかを決める
+
 - U2 RtgiGrain.py が組の 2 つの metrics.json のパスの時刻を照合する: 着地(直し 0 回)
 - U4 指定の時刻の Tick を Game が自前で撮って保存し、終了する(U1 の切り直し): 着地(直し 0 回)
 - U3 CaptureScene が保存フレームのパスの時刻を metrics.json に書き、固定した組を撮って受入れ文書を直す: 着地(直し 1 回)
