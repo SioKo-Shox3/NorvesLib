@@ -3845,7 +3845,7 @@
 - notes: 現cloudはWindows.h依存で本体compileできず、計画書が参照するDogGameの実物大型GLBも未配置。作者は非描画Windows検証を必須から外しているため、独立実装は継続する。
 
 ## G2-GR78-SURFACE-CENTROID: 表面重心の極端値精度を確認する
-- status: todo
+- status: done
 - done-when: 静的メッシュの取込(cook と loose)で surface_centroid を有効にする。面積重みの原点は、binary64 の全指数域を覆う正確な累算から最後に 1 回だけ丸めて求め、面の順・各面の巡回・巻きの反転に依らず結果をビット単位で一致させる。
   2^100/2^-100 の等面積 2 面と、±巨大座標が相殺して微小な残りが出る組で、面積・重心・変換後の頂点が期待値どおりになる。総面積 0 は DegenerateSurface で失敗し、他の原点へ置き換えず、頂点と index を変えない。骨格では引き続き拒否する。既存の設定の hash は変えない。
   `Docs/Architecture/ImportSettings.md` に節「## 表面重心の精度」を足し、方式と誤差の上限を書く。独立確認は、統合の前のランナーの評価者の PASS で満たす。
