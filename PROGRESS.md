@@ -8401,3 +8401,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 縮小表示でだけ見えるゆるい縞は人の判断でこの項目の合否にしない。
 - U1 スキンの submesh 範囲の塊を 2 つのパスで共有する: 着地(直し 0 回)
 - U2 骨付きパネルに 2 submesh・2 材質 slot の変種を足す: 着地(直し 2 回)
+- U3 撮影スクリプトに -SkinnedProbeMaterials 2 の判定を足す: 着地(直し 1 回)

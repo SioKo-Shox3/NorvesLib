@@ -186,6 +186,10 @@ param(
     # 2 体が置けたこと（STARTUP_SKINNED_PROBE bodies=2）と、On・Debug では ID に描かれたスキニングの塊の数（VIS_RASTER の skinned_chunks が体の数以上・
     # dropped_chunks が 0）を撮影の判定に入れる。置けない・塊が 0 なら result=fail。near の視点はパネルが画角の外なので、2 体を撮るなら default・low で撮る。
     [switch]$SkinnedProbe,
+    # 2 のとき、骨付きパネルの左右の材質を GBuffer の線形アルベドの AOV で照合する（-SkinnedProbe が必要）。
+    # -GBufferDebug Off・-DebugView Normal で撮る。連続撮影には各フレームの AOV が無いため併用できない。
+    [ValidateSet(1, 2)]
+    [int]$SkinnedProbeMaterials = 1,
     # 遮蔽カリングの確認用の視点（occ-sphere・occ-cottage・occ-cottage-edge・旋回の出発点 occ-sphere-orbit・occ-cottage-orbit）を撮る視点へ加える。
     [switch]$OcclusionViews,
     # 地面の外周のスキャン資産（Poly Haven）を、近くから遠くへカメラを引いて見る視点（scan-d08 から scan-d78 までの 7 視点）を撮る視点へ加える。
@@ -272,6 +276,35 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+if ($SkinnedProbeMaterials -eq 2)
+{
+    if (-not $SkinnedProbe)
+    {
+        Write-Output 'CAPTURE_STARTUP_SCENE result=fail reason=skinned_materials_without_probe（材質の照合には -SkinnedProbe が必要）'
+        exit 1
+    }
+    if ($GBufferDebug -ne 'Off')
+    {
+        Write-Output 'CAPTURE_STARTUP_SCENE result=fail reason=skinned_materials_gbuffer_debug（材質の AOV の照合には -GBufferDebug Off が必要）'
+        exit 1
+    }
+    if ($DebugView -ne 'Normal')
+    {
+        Write-Output 'CAPTURE_STARTUP_SCENE result=fail reason=skinned_materials_debug_view（材質の AOV の照合には -DebugView Normal が必要）'
+        exit 1
+    }
+    if ($OrbitDegreesPerSecond -ne 0.0)
+    {
+        Write-Output 'CAPTURE_STARTUP_SCENE result=fail reason=skinned_materials_orbit（旋回中の複数画像には最後の標本座標を使えない）'
+        exit 1
+    }
+    if ($CompareOnly -or $Configuration -eq 'Release')
+    {
+        Write-Output 'CAPTURE_STARTUP_SCENE result=fail reason=skinned_materials_capture_required（材質の照合には Debug か RelWithDebInfo での撮影とログが必要）'
+        exit 1
+    }
+}
+
 # 検査の名前: 「A,B」の1文字列でも配列でも受ける。
 $requiredChecks = @($RequireChecks | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' } | Select-Object -Unique)
 foreach ($checkName in $requiredChecks)
@@ -304,6 +337,15 @@ foreach ($gameArgument in $GameArgs)
 if ($requiredChecks.Count -gt 0)
 {
     $gameArgumentList += "--engine-checks=$($requiredChecks -join ',')"
+}
+if ($SkinnedProbeMaterials -eq 2)
+{
+    $extraProbeArguments = @(($ExtraGameArguments -join ' ').Split(@(' ', ','), [StringSplitOptions]::RemoveEmptyEntries)) + $gameArgumentList
+    if (@($extraProbeArguments | Where-Object { $_ -match '^--debug-view=' -and $_ -notmatch '^--debug-view=normal$' }).Count -gt 0)
+    {
+        Write-Output 'CAPTURE_STARTUP_SCENE result=fail reason=skinned_materials_debug_view（材質の AOV の照合には --debug-view=normal が必要）'
+        exit 1
+    }
 }
 
 # 長く旋回する撮影は地面の広い範囲を通るので、静止の撮影より VT の常駐量が増える（低角度で 400 フレーム旋回すると 80 MB 台）。
@@ -470,6 +512,11 @@ if ($OrbitDegreesPerSecond -ne 0.0 -and $orbitFrameList.Count -eq 0)
     $orbitFrameList = @(60.0, 75.0, 90.0)
 }
 $stillFrameList = ConvertTo-NumberList $StillRenderedFrames 1.0 100000.0 'still_rendered_frames'
+if ($SkinnedProbeMaterials -eq 2 -and $stillFrameList.Count -gt 0)
+{
+    Write-Output 'CAPTURE_STARTUP_SCENE result=fail reason=skinned_materials_sequence（連続撮影の途中画像には AOV が無い）'
+    exit 1
+}
 if ($stillFrameList.Count -gt 0 -and $OrbitDegreesPerSecond -ne 0.0)
 {
     Write-Output "CAPTURE_STARTUP_SCENE result=fail reason=still_frames_with_orbit（-StillRenderedFrames は -OrbitDegreesPerSecond と併用しない）"
@@ -910,6 +957,235 @@ public static class CaptureProcessJob
 }
 '@
 
+# PFM の RGB 浮動小数を読み、画像の上の行を先頭にした配列で返す。
+function Read-PfmRgb([string]$Path)
+{
+    $bytes = [IO.File]::ReadAllBytes($Path)
+    $offset = 0
+    $header = @()
+    while ($header.Count -lt 3)
+    {
+        $start = $offset
+        while ($offset -lt $bytes.Length -and $bytes[$offset] -ne 10)
+        {
+            ++$offset
+        }
+        if ($offset -ge $bytes.Length)
+        {
+            throw 'PFM のヘッダーが途中で終わっている'
+        }
+        $line = [Text.Encoding]::ASCII.GetString($bytes, $start, $offset - $start).Trim()
+        ++$offset
+        if ($line -ne '' -and -not $line.StartsWith('#'))
+        {
+            $header += $line
+        }
+    }
+    $dimensions = [regex]::Match($header[1], '^(\d+)\s+(\d+)$')
+    if ($header[0] -ne 'PF' -or -not $dimensions.Success)
+    {
+        throw 'PFM の形式または大きさが不正'
+    }
+    $width = [int]::Parse($dimensions.Groups[1].Value)
+    $height = [int]::Parse($dimensions.Groups[2].Value)
+    $scale = [double]::Parse($header[2], [System.Globalization.CultureInfo]::InvariantCulture)
+    $byteCount = [long]$width * [long]$height * 12
+    if ($width -le 0 -or $height -le 0 -or $scale -eq 0 -or [double]::IsNaN($scale) -or [double]::IsInfinity($scale) -or
+        $byteCount -gt [int]::MaxValue -or $byteCount -gt ($bytes.Length - $offset))
+    {
+        throw 'PFM の大きさ・尺度・画素のデータが不正'
+    }
+    # 負の尺度はリトルエンディアン。ホストと違う場合は float ごとにバイトを反転する。
+    if (($scale -lt 0) -ne [BitConverter]::IsLittleEndian)
+    {
+        for ($i = $offset; $i -lt ($offset + $byteCount); $i += 4)
+        {
+            $first = $bytes[$i]
+            $second = $bytes[$i + 1]
+            $bytes[$i] = $bytes[$i + 3]
+            $bytes[$i + 1] = $bytes[$i + 2]
+            $bytes[$i + 2] = $second
+            $bytes[$i + 3] = $first
+        }
+    }
+    $pixels = [single[]]::new([int]($byteCount / 4))
+    $rowBytes = $width * 12
+    for ($y = 0; $y -lt $height; ++$y)
+    {
+        # PFM の最初の行は画像の下端なので、画像の上端から順に並べ直す。
+        [Buffer]::BlockCopy($bytes, $offset + ($height - 1 - $y) * $rowBytes, $pixels, $y * $rowBytes, $rowBytes)
+    }
+    return [pscustomobject]@{ width = $width; height = $height; pixels = $pixels }
+}
+
+# 骨付きパネルの各体・材質スロットの最後の標本と、線形アルベドの AOV を照合する。
+function Test-SkinnedProbeMaterials([string]$LogPath, [string]$AovPath, [int]$PngWidth, [int]$PngHeight)
+{
+    $materialFailures = @()
+    $samplesByKey = @{}
+    $hasMaterials = $false
+    $number = '[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?'
+    $pattern = 'STARTUP_SKINNED_PROBE_MATERIAL_SAMPLE body=([01]) slot=([01]) px=(-?\d+) py=(-?\d+) inside=([01]) r=(' + $number + ') g=(' + $number + ') b=(' + $number + ')'
+    $culture = [System.Globalization.CultureInfo]::InvariantCulture
+    if (Test-Path -LiteralPath $LogPath)
+    {
+        foreach ($line in [IO.File]::ReadLines($LogPath))
+        {
+            if ($line -match 'STARTUP_SKINNED_PROBE materials=2(?:\s|$)')
+            {
+                $hasMaterials = $true
+            }
+            $match = [regex]::Match($line, $pattern)
+            if (-not $match.Success)
+            {
+                continue
+            }
+            $groups = $match.Groups
+            $key = "$($groups[1].Value)/$($groups[2].Value)"
+            $samplesByKey[$key] = [pscustomobject]@{
+                px = [int]$groups[3].Value
+                py = [int]$groups[4].Value
+                inside = $groups[5].Value -eq '1'
+                expected = [ordered]@{
+                    r = [double]::Parse($groups[6].Value, $culture)
+                    g = [double]::Parse($groups[7].Value, $culture)
+                    b = [double]::Parse($groups[8].Value, $culture)
+                }
+            }
+        }
+    }
+    else
+    {
+        $materialFailures += '材質の標本を記録した Game.log が無い'
+    }
+    if (-not $hasMaterials)
+    {
+        $materialFailures += 'STARTUP_SKINNED_PROBE materials=2 がログに無い'
+    }
+    if ($PngWidth -le 0 -or $PngHeight -le 0)
+    {
+        $materialFailures += 'PNG の大きさが不正'
+    }
+    $aov = $null
+    if (-not (Test-Path -LiteralPath $AovPath -PathType Leaf))
+    {
+        $materialFailures += "アルベドの AOV が無い: $AovPath"
+    }
+    else
+    {
+        try
+        {
+            $aov = Read-PfmRgb $AovPath
+        }
+        catch
+        {
+            $materialFailures += "アルベドの AOV を読めない: $($_.Exception.Message)"
+        }
+    }
+    $sampleResults = @()
+    for ($body = 0; $body -lt 2; ++$body)
+    {
+        for ($slot = 0; $slot -lt 2; ++$slot)
+        {
+            $key = "$body/$slot"
+            $otherKey = "$body/$(1 - $slot)"
+            $sample = [ordered]@{
+                body = $body; slot = $slot; px = $null; py = $null; inside = $null
+                aov_px = $null; aov_py = $null
+                expected = $null; observed = $null; difference = $null; closer_other = $null; pass = $false
+            }
+            if (-not $samplesByKey.ContainsKey($key))
+            {
+                $materialFailures += "材質の標本がログに無い（body=$body slot=$slot）"
+                $sampleResults += [pscustomobject]$sample
+                continue
+            }
+            $logged = $samplesByKey[$key]
+            $sample.px = $logged.px
+            $sample.py = $logged.py
+            $sample.inside = $logged.inside
+            $sample.expected = $logged.expected
+            if (-not $logged.inside)
+            {
+                $materialFailures += "材質の標本が画面外（body=$body slot=$slot inside=0）"
+            }
+            elseif ($logged.px -lt 0 -or $logged.py -lt 0 -or $logged.px -ge $PngWidth -or $logged.py -ge $PngHeight)
+            {
+                $materialFailures += "材質の標本の座標が PNG の範囲外（body=$body slot=$slot px=$($logged.px) py=$($logged.py)）"
+            }
+            elseif ($null -ne $aov -and $PngWidth -gt 0 -and $PngHeight -gt 0)
+            {
+                # ログの画素の中心を、内部解像度の AOV の画素に写す。
+                $aovX = [int][math]::Floor(($logged.px + 0.5) * $aov.width / $PngWidth)
+                $aovY = [int][math]::Floor(($logged.py + 0.5) * $aov.height / $PngHeight)
+                $sample.aov_px = $aovX
+                $sample.aov_py = $aovY
+                $sum = @(0.0, 0.0, 0.0)
+                $count = 0
+                $valid = $true
+                for ($y = [math]::Max(0, $aovY - 2); $y -le [math]::Min($aov.height - 1, $aovY + 2); ++$y)
+                {
+                    for ($x = [math]::Max(0, $aovX - 2); $x -le [math]::Min($aov.width - 1, $aovX + 2); ++$x)
+                    {
+                        $index = ($y * $aov.width + $x) * 3
+                        for ($channel = 0; $channel -lt 3; ++$channel)
+                        {
+                            $value = [double]$aov.pixels[$index + $channel]
+                            if ([double]::IsNaN($value) -or [double]::IsInfinity($value))
+                            {
+                                $valid = $false
+                            }
+                            $sum[$channel] += $value
+                        }
+                        ++$count
+                    }
+                }
+                if (-not $valid)
+                {
+                    $materialFailures += "材質の AOV に有限でない色がある（body=$body slot=$slot）"
+                }
+                else
+                {
+                    $observed = @(($sum[0] / $count), ($sum[1] / $count), ($sum[2] / $count))
+                    $sample.observed = [ordered]@{ r = $observed[0]; g = $observed[1]; b = $observed[2] }
+                    $difference = @([math]::Abs($observed[0] - $logged.expected.r), [math]::Abs($observed[1] - $logged.expected.g), [math]::Abs($observed[2] - $logged.expected.b))
+                    $sample.difference = [ordered]@{ r = $difference[0]; g = $difference[1]; b = $difference[2] }
+                    # テクスチャと GBuffer はともに線形 RGBA8_UNORM。1 段は 1/255 ≒ 0.00392、
+                    # ログの丸めは最大 0.0005。許容 0.03 は約 8 段で、材質の主要成分の差 0.698 より小さい。
+                    $tolerance = 0.03
+                    $tooFar = @($difference | Where-Object { $_ -gt $tolerance }).Count -gt 0
+                    if ($tooFar)
+                    {
+                        $materialFailures += "材質の色が期待から離れている（body=$body slot=$slot 許容=$tolerance 差=$($difference -join ',')）"
+                    }
+                    if ($samplesByKey.ContainsKey($otherKey))
+                    {
+                        $other = $samplesByKey[$otherKey].expected
+                        $ownDistance = $difference[0] * $difference[0] + $difference[1] * $difference[1] + $difference[2] * $difference[2]
+                        $otherDistance = [math]::Pow($observed[0] - $other.r, 2) + [math]::Pow($observed[1] - $other.g, 2) + [math]::Pow($observed[2] - $other.b, 2)
+                        $sample.closer_other = $otherDistance -lt $ownDistance
+                        if ($sample.closer_other)
+                        {
+                            $materialFailures += "材質の色が他方のスロットの期待に近い（body=$body slot=$slot）"
+                        }
+                        $sample.pass = -not $tooFar -and -not $sample.closer_other
+                    }
+                }
+            }
+            $sampleResults += [pscustomobject]$sample
+        }
+    }
+    return [pscustomobject][ordered]@{
+        source = 'aov_albedo'
+        aov_file = [IO.Path]::GetFileName($AovPath)
+        aov_width = if ($null -ne $aov) { $aov.width } else { $null }
+        aov_height = if ($null -ne $aov) { $aov.height } else { $null }
+        samples = $sampleResults
+        pass = $materialFailures.Count -eq 0
+        failures = $materialFailures
+    }
+}
+
 # Game.log の ENGINE_CHECK の行を名前ごとに数える。pass/fail の数と、fail の行の本文を返す。
 function Get-EngineCheckCounts([string]$LogPath)
 {
@@ -1022,6 +1298,15 @@ foreach ($view in $shots)
     }
     Remove-Item -LiteralPath $viewLogPath -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $gameLogPath -Force -ErrorAction SilentlyContinue
+    if ($SkinnedProbeMaterials -eq 2)
+    {
+        # 前の撮影の AOV を今回の結果と間違えない。
+        $staleAlbedoPath = [IO.Path]::ChangeExtension($pngPath, '.aov.albedo.pfm')
+        if (Test-Path -LiteralPath $staleAlbedoPath)
+        {
+            Remove-Item -LiteralPath $staleAlbedoPath -Force
+        }
+    }
 
     $arguments = @('--scene=rendering3dtest', "--capture-png=`"$pngPath`"")
     # 検証の起動は窓を前面に出さない（使っている人の作業を遮らない）
@@ -1092,6 +1377,11 @@ foreach ($view in $shots)
     if ($SkinnedProbe)
     {
         $arguments += '--startup-skinned-probe'
+        if ($SkinnedProbeMaterials -eq 2)
+        {
+            $arguments += '--startup-skinned-probe-materials=2'
+            $arguments += '--capture-aov'
+        }
     }
     if ($StressGeometry)
     {
@@ -1553,9 +1843,17 @@ foreach ($view in $shots)
             }
             elseif ($VisibilityBuffer -ne 'Off')
             {
-                if ($null -eq $skinnedProbeInfo.skinned_chunks -or $skinnedProbeInfo.skinned_chunks -lt $expectedProbeBodies)
+                $expectedProbeChunks = $expectedProbeBodies * $SkinnedProbeMaterials
+                if ($null -eq $skinnedProbeInfo.skinned_chunks -or $skinnedProbeInfo.skinned_chunks -lt $expectedProbeChunks)
                 {
-                    $failures += "$($view.Name): スキニングの塊が ID に描かれていない（VIS_RASTER skinned_chunks=$(if ($null -eq $skinnedProbeInfo.skinned_chunks) { 'なし' } else { $skinnedProbeInfo.skinned_chunks }) / 体の数 $expectedProbeBodies 以上が要る。予備の経路（GBuffer）に戻っていないか VISBUFFER_FALLBACK を確認する）"
+                    if ($SkinnedProbeMaterials -eq 2)
+                    {
+                        $failures += "$($view.Name): スキニングの塊が ID に描かれていない（VIS_RASTER skinned_chunks=$(if ($null -eq $skinnedProbeInfo.skinned_chunks) { 'なし' } else { $skinnedProbeInfo.skinned_chunks }) / 体の数とサブメッシュ数の積 $expectedProbeChunks 以上が要る）"
+                    }
+                    else
+                    {
+                        $failures += "$($view.Name): スキニングの塊が ID に描かれていない（VIS_RASTER skinned_chunks=$(if ($null -eq $skinnedProbeInfo.skinned_chunks) { 'なし' } else { $skinnedProbeInfo.skinned_chunks }) / 体の数 $expectedProbeBodies 以上が要る。予備の経路（GBuffer）に戻っていないか VISBUFFER_FALLBACK を確認する）"
+                    }
                 }
                 elseif ($skinnedProbeInfo.dropped_chunks -gt 0)
                 {
@@ -1689,6 +1987,16 @@ foreach ($view in $shots)
             stress_geometry = $stressGeometryInfo
             skinned_probe = $skinnedProbeInfo
             engine_checks = $engineChecks
+        }
+        if ($SkinnedProbeMaterials -eq 2)
+        {
+            $albedoPath = [IO.Path]::ChangeExtension($imagePath, '.aov.albedo.pfm')
+            $materialCheck = Test-SkinnedProbeMaterials $viewLogPath $albedoPath ([int]$measured[0]) ([int]$measured[1])
+            $result['skinned_probe_materials'] = $materialCheck
+            foreach ($failure in $materialCheck.failures)
+            {
+                $failures += "$($image.Name): $failure"
+            }
         }
         $results += [pscustomobject]$result
         Write-Output ("CAPTURE_STARTUP_SCENE view={0} size={1}x{2} mean_luminance={3} clipped_white_ratio={4} crushed_black_ratio={5} indirect_lighting={6}" -f `
