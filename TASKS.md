@@ -4078,3 +4078,98 @@
 - verify: `cmake -S . -B build && cmake --build build --config Debug -- /m:1 && ctest --test-dir build -C Debug -R "^(RenderGraphTextureUsageContractTest|NorvesLibBridgeAdapter.*|BridgeBase64Test|AssetManifestReloadBridgeLoopbackTest)$"`
 - paths: Test/Core/Rendering/CMakeLists.txt, Test/Game/Bridge/CMakeLists.txt, Docs/Testing.md, TASKS.md, PROGRESS.md
 - from: SCN-BUILD-ALL-TESTS
+
+## SCN-RENDER-SPEC-WIDE-ESS-P1: night-village で VRAM の予算が足りないとき、ジオメトリのページが常駐 0 まで外される原因を突き止めて直す
+- status: todo
+- done-when: SCN-WL-GEOM-LOWVRAM の「予算が足りないときは粗い段に下がって落ち着く」と食い違う形を、night-village で再現して原因を示し、直す。
+  - 元の例: SCN-RENDER-SPEC-WIDE-ESS の before の overview(`<親>/.slots/NorvesLib-3/.harness/runs/regression/SCN-RENDER-SPEC-WIDE-ESS/before/night-village/overview.Game.log`)。ヒープの予算が約 6130 MB まで下がった(並べて走るほかの枠の Game と GPU を分け合った)。プール以外が 5396〜5761 MB、影のプールが 623 MB で、ジオメトリの枠の目標は 0〜111 MB。これが外せない区画(根、約 670 MB)を下回り、ページの目標が 0 になって 1101 ページを外し resident=0 になった。そのあと wanted=1538・ready=64 のまま budget_blocked が 4→7 と増えて止まった。ジオメトリのプールの塊(2048 MB)は確保されたままなので、ページを外してもヒープの使用量は減っていない見込み。
+  - 再現: 開発ビルドの `vram-budget-mb` で、ジオメトリの枠の目標が根の区画を下回る上限にして night-village を撮る(目安 6100 MB。値を変えたら verify も合わせる)。直す前の撮影で同じ形(常駐 0・要求が予算で止まったまま)になることを、値で PROGRESS.md に残す。
+  - 原因: VRAM_BUDGET・VRAM_POOLS・GEOMETRY_PAGES・GEOM_SETTLE_TRACE の値で次の 2 つを示し、`Docs/RenderingValidation/WastelandFarBlurStatic.md` の「VRAM が少ないとき」の節に書く。
+    - (a) プール以外の約 5.4 GB の内訳: いつも要る確保か、読み込みの間だけの確保か。
+    - (b) 枠の目標が根の区画を下回ったとき、ストリーマが粗い段(段 1 以上)のページまで全部外し、ヒープの使用量を減らせないまま要求が残る経路。
+  - 直し: 確かめた原因を 1 つ直す。完了の形は次の 2 つ。
+    - 同じ上限の night-village で `ReferenceCheck.py --geom-settle` が pass する(記録の間の追い出し 0・書き込み 0・段ごとの常駐が不変・常駐 ≤ ページの目標・プールの使用量 ≤ 枠の目標)。
+    - 常駐が 0 でない粗い段で落ち着く。
+  - 直しが VRAM の割り振りの方針を変えることになるなら(ほかのプールから取る、上限を超えて確保するなど)、値と案を添えて blocked にする。
+  - 壊していないこと:
+    - wasteland の ref_cliff_02 の 6600 MB の撮影で `--geom-settle` が pass する(SCN-WL-GEOM-LOWVRAM の直しが保たれる)。
+    - 反復の最初に回帰の before(`CaptureRegression.ps1 -Item SCN-RENDER-SPEC-WIDE-ESS-P1 -Phase before`)を撮り、after の比べが pass して 4 シーンとも geometry_pages が settled になる。
+  - 常設のテストは足さない。
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene night-village -Configuration RelWithDebInfo -Build -RequireAssets -Views overview -GameArgs vram-budget-mb=6100,geom-settle-trace=60 -OutDir .harness/runs/scene-capture/SCN-RENDER-SPEC-WIDE-ESS-P1/night-village-low`
+- verify: `python Scripts/Terrain/ReferenceCheck.py --geom-settle --engine .harness/runs/scene-capture/SCN-RENDER-SPEC-WIDE-ESS-P1/night-village-low --verify`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Views ref_cliff_02 -GameArgs vram-budget-mb=6600,geom-settle-trace=60 -OutDir .harness/runs/scene-capture/SCN-RENDER-SPEC-WIDE-ESS-P1/wasteland-6600`
+- verify: `python Scripts/Terrain/ReferenceCheck.py --geom-settle --engine .harness/runs/scene-capture/SCN-RENDER-SPEC-WIDE-ESS-P1/wasteland-6600 --verify`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Terrain/CaptureRegression.ps1 -Item SCN-RENDER-SPEC-WIDE-ESS-P1 -Phase after`
+- paths: Library/Core/Private/Rendering, Assets/Shaders/Common/MegaGeometryCull.glsl, Game/Debug, Scripts/Terrain, Docs/RenderingValidation, TASKS.md, PROGRESS.md
+- gpu: exclusive
+- notes: 危険地帯(メモリ・ストリーミング・カリングのシェーダー)。予算の上書きはヒープの予算との小さい方になる。ほかの枠の Game が同じ GPU を使うとヒープの予算が上書きの値より下がり、`--geom-settle` の cap_mb の一致の検査が崩れる。そのため GPU を占有して撮る。
+- from: SCN-RENDER-SPEC-WIDE-ESS
+
+## SCN-MEGA-FIX-TLAS-REBUILD-P2: 10-14 から、100万本の既定の horizon の静止で LightingPass と MegaGeometry のカリングが重くなった原因を、コードとドライバに切り分ける
+- status: todo
+- done-when: 問い: 10-14 の SCN-MEGA-ACCEPT-1M の静止(`--banana-count=1000000`・horizon・カメラパスなし。置き場は `.harness/runs/scene-capture/SCN-MEGA-ACCEPT-1M/static`、Game.log の `GPU_DRIVER` は 610.88)と同じ条件を今のコードで撮ると、LightingPass が 1.657 → 2.666 ms、MegaGeometryCull1 が 3.043 → 5.319 ms、MegaBvhC1Leaf が 2.560 → 4.829 ms に増えている(SCN-MEGA-FIX-TLAS-REBUILD の U4/static-default-1m)。原因が「コードで処理の量が増えた」のか「ドライバ・クロックで同じ量の単価が上がった」のかを分ける。結果で変わる判断: コードが原因なら、直す項目を PROGRESS.md の Notes に `要起票:` で残す。ドライバが原因なら、SCN-MEGA-FIX-TLAS-REBUILD の閾値 3 ms の元になった静止 1.7 ms を、今のドライバの値で置き直す根拠にする。手順は次の 4 つ。(1) 同じ条件で撮り、3 つのパスの median・p95 と `GPU_DRIVER` の行を 10-14 の値と表に並べる。(2) 3 つのパスの処理の件数(Game.log にある MegaGeometry・BVH・`RT_SCENE` の統計の行。インスタンス・節・クラスタ・可視の数)を 10-14 の値と並べ、量の比と時間の比を分ける。(3) 量が増えていれば、10-14 から今までにそのパスに触れたコミットを `git log` で挙げ、件数の変化と合う変更を特定する。ドライバが替わっていて量が同じなら、ドライバの変化と書く。(4) 結果と表を `Docs/RenderingValidation/SceneLauncherAcceptance.md` の「100万本と混在の負荷の受入れ」の節に書く。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -Views horizon -Build -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -TimeoutSeconds 1800 -GameArgs banana-count=1000000 -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-TLAS-REBUILD-P2/static`
+- verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-FIX-TLAS-REBUILD-P2/static --views horizon --timing --min-frames 300 --require-pass LightingPass --require-pass MegaGeometryCull1 --require-pass MegaBvhC1Leaf`
+- paths: Docs/RenderingValidation/SceneLauncherAcceptance.md, TASKS.md, PROGRESS.md
+- gpu: exclusive
+- from: SCN-MEGA-FIX-TLAS-REBUILD
+- notes: 調べるだけの項目で、コードは変えない。10-14 の撮影はメインの作業ツリーの置き場にある。枠に無ければ、メインの作業ツリーの同じ相対パスを読む。古い版をビルドするために作業ツリーを増やさない。今の作業ツリーを古い版へ切り替えることもしない。ドライバも戻さない。件数とコミットの履歴だけで決められなければ、値を付けて BLOCKED にする。
+
+## SCN-MEGA-ACCEPT-1M-P1: カメラが動くとバナナの周りと床に出る、RTGI の粒の荒い暈を消す
+- status: todo
+- done-when: 問い: カメラパスの再生で、近くのバナナの周りと床に粒の荒い暈が出る。この暈は 50000 本で TLAS を一度も作り直さない再生(built=0・over_limit=0)でも出る。同じ本数・同じパスの時刻の静止には出ない(SCN-MEGA-FIX-TLAS-REBUILD の BLOCKED の記録、`U4/u4-compare-left.png`)。原因の候補は RTGI の時間の履歴(再投影の棄却と年齢の上限 8。`DiffuseIndirect.comp` の 783-925・1614-1657 行付近と `CrossBilateralDenoise.comp`)。棄却の割合と履歴の年齢を一時の AOV(開発ビルドだけ)に出して暈の画素と重ね、原因を特定して直す。量を測る `Scripts/RtgiGrain.py` を置く。中身は、領域の高い周波数の輝度の標準偏差 ÷ 平均を、2 つの撮影の同じ視点・同じ領域で比べ、`--expect` の上限で合否を出すもの。領域と上限は `Scripts/Terrain/ExpectSpecs/rtgi-grain-motion.json` に書く。合否: (1) バナナの周りの床の領域で、50000 本の再生の撮影 ÷ 同じパスの時刻の静止の撮影が 1.5 以下(直す前の値も記録する)。(2) PNG を開いて暈が消えたことを見る。(3) 回帰の動きの撮影(-Motion)で残像とちらつきが増えない(前後の画を開いて確かめる)。(4) 回帰の 4 シーンと material-gallery を撮って開き、golden を確かめる。変わるなら差の原因と物理的な妥当さを書いて再承認する。(5) 再生の LightingPass の GPU 時間(300 フレーム)を前後で記録する。記録先は `SceneLauncherAcceptance.md`。
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -Views horizon -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -TimeoutSeconds 1800 -GameArgs banana-count=50000,camera-path-play,camera-path-time=0 -OutDir .harness/runs/scene-capture/SCN-MEGA-ACCEPT-1M-P1/path`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -Views horizon -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -TimeoutSeconds 1800 -GameArgs banana-count=50000,camera-path-time=16.83 -OutDir .harness/runs/scene-capture/SCN-MEGA-ACCEPT-1M-P1/static`
+- verify: `python Scripts/RtgiGrain.py --root .harness/runs/scene-capture/SCN-MEGA-ACCEPT-1M-P1 --expect Scripts/Terrain/ExpectSpecs/rtgi-grain-motion.json`
+- verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-ACCEPT-1M-P1/path --views horizon --timing --min-frames 300 --require-pass LightingPass`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Terrain/CaptureRegression.ps1 -Item SCN-MEGA-ACCEPT-1M-P1 -Phase after -Motion`
+- verify: `cmake --build build --config Debug --target RenderingGoldenImageTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure -R "^(RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
+- paths: Assets/Shaders/RTGI, Library/Core/Private/Rendering/LightingPass.cpp, Library/Core/Public/Rendering/LightingPass.h, Scripts/RtgiGrain.py, Scripts/Terrain/ExpectSpecs/rtgi-grain-motion.json, Docs/RenderingValidation/SceneLauncherAcceptance.md, Docs/RenderingValidation/GoldenBaselines.md, Test/Core/Rendering/Baselines, TASKS.md, PROGRESS.md
+- gpu: exclusive
+- from: SCN-MEGA-ACCEPT-1M
+- notes: 危険地帯(RTGI は全シーンに効く)なので、評価者を通す。反復の最初に回帰の撮影の before(-Motion)を撮る。再生の撮影の保存フレームのパスの時刻が 16.83 秒でなければ、静止の行の `camera-path-time` をその時刻に合わせ、verify も直す。履歴の棄却を緩めるだけで粒を消す直し(残像が増える)にはしない。SCN-RENDER-RTGI-TEMPORAL(静止の収束)と同じシェーダーを触るので、そちらが先に統合されていたら反復の最初に測り直す。壁時計(75 分)の残りが 25 分を切ったら新しい撮影を始めない。撮れた所までをコミットし、doing のまま終える(未達のまま DONE にしない)。verify は 1 行 10 分未満。
+
+## SCN-RENDER-SPEC-OCC-VERIFY-REG-P1: RTGI の鏡面の光線の粒を、60 フレームの撮影で粗い金属・屋根・バナナに残さない
+- status: todo
+- after: SCN-RENDER-RTGI-TEMPORAL
+- done-when: RTGI の反射の向きの光線は 1 画素 1 本で、撮影の 60 フレームの蓄積の後も、粗さ 0.6〜1.0 の金属(material-gallery の球)・rendering3dtest の屋根・バナナに細かな粒を残す(SCN-RENDER-SPEC-OCC-VERIFY-REG の `gallery-side-by-side-spheres.png`・`regression-detail-house.png`)。反復の最初に、SCN-RENDER-RTGI-TEMPORAL の後の今の形で測り直す。量は `Scripts/RtgiGrain.py` で取る(SCN-MEGA-ACCEPT-1M-P1 と同じ量。まだ無ければ作る)。3 つの領域で、高い周波数の輝度の標準偏差 ÷ 平均を、既定の撮影(60 フレーム)と長い蓄積の撮影(`-GpuTimingFrames 300`)で比べる。領域と上限は `Scripts/Terrain/ExpectSpecs/rtgi-grain-specular.json` に書く。合否: 3 つの領域とも、60 フレーム ÷ 長い蓄積が 1.5 以下(直す前の値も記録する)。測り直しの時点で既に満たしていれば、値を書いて直さずに閉じる。直す場合(候補: 鏡面の光線の時間の蓄積、粗さで導くデノイズ、粗い面の光線の数)は、長い蓄積の撮影で 3 つの領域の平均の輝度の前後の比を 1 ± 0.01 に収める(鏡面の明るさを変えない)。回帰の 4 シーンと material-gallery を撮って開き、golden を確かめる。変わるなら差の原因と物理的な妥当さを書いて再承認する。GPU 時間(material-gallery の 1 視点、300 フレーム)を前後で記録する。記録先は `InteriorLightReference.md`。
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene material-gallery -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Hdr -OutDir .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-REG-P1/gallery-60`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene material-gallery -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Hdr -GpuTimingFrames 300 -OutDir .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-REG-P1/gallery-300`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene rendering3dtest -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Hdr -OutDir .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-REG-P1/r3d-60`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene rendering3dtest -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Hdr -GpuTimingFrames 300 -OutDir .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-REG-P1/r3d-300`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Hdr -OutDir .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-REG-P1/bananas-60`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Hdr -GpuTimingFrames 300 -OutDir .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-REG-P1/bananas-300`
+- verify: `python Scripts/RtgiGrain.py --root .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-REG-P1 --expect Scripts/Terrain/ExpectSpecs/rtgi-grain-specular.json`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Terrain/CaptureRegression.ps1 -Item SCN-RENDER-SPEC-OCC-VERIFY-REG-P1 -Phase after`
+- verify: `cmake --build build --config Debug --target RenderingGoldenImageTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure -R "^(RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
+- paths: Assets/Shaders/RTGI, Assets/Shaders/Common/PbrMaterialEvaluation.glsl, Library/Core/Private/Rendering/LightingPass.cpp, Library/Core/Public/Rendering/LightingPass.h, Scripts/RtgiGrain.py, Scripts/Terrain/ExpectSpecs/rtgi-grain-specular.json, Docs/RenderingValidation/InteriorLightReference.md, Docs/RenderingValidation/GoldenBaselines.md, Test/Core/Rendering/Baselines, TASKS.md, PROGRESS.md
+- gpu: exclusive
+- from: SCN-RENDER-SPEC-OCC-VERIFY-REG
+- notes: 危険地帯(RTGI の鏡面は全シーンに効く)なので、評価者を通す。反復の最初に回帰の撮影の before を撮る。粗い金属の球・屋根・近くのバナナが映る視点を選び、`-Views` で指定して verify も合わせる(視点の名前は実際の名前に合わせる)。鏡面の重みや光線の数を変える場合は、荒野の遮蔽の組 terrain-sky・rocks-cliff-sky を撮り直し、`occlusion-accept.json` の判定が悪くならないことも確かめる(verify の行は足してよい。1 行 10 分未満)。壁時計(75 分)の残りが 25 分を切ったら新しい撮影を始めない。撮れた所までをコミットし、doing のまま終える。
+
+## SCN-RENDER-ROUGH-STEEP-ENERGY-P2: 荒野の遮蔽の比べの Cycles の正解を、今の焼いた地形(崖の細部の版 18)で描き直す
+- status: todo
+- done-when: 今の Cycles の正解(`.harness/runs/scene-capture/SCN-WLR-OCCLUSION-SETS/cycles`)は、2026-10-23 に古い地形の書き出し `SCN-WLR-BLENDER-TERRAIN-mesh`(崖の細部が版 15 以前)で描いたもの。今の焼いた地形は版 18 で形が違う(SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1 の記録)。そのため判定に参照の古さが混ざる(例: rocks-sun の地形の受け手の IoU が 0.8521 → 0.5146、漏れが 0.0054 → 0.1919。on と off で同じ値)。やること: (1) 今の焼いた地形を `--wasteland-export-terrain` で `<置き場>/mesh` へ書き出し、記録に崖の細部の版を書く。(2) 同じ Game.exe で 8 組をエンジンで撮り、同じ置き場に Cycles の正解を本描画(1024 サンプル・種 2)で描く。(3) `ReferenceCheck.py --occlusion --regions ... --verify` で、入力の照合・収束・必須の層の画素数が通る。(4) `Docs/RenderingValidation/WastelandOcclusion.md` に、全部の行のエンジン ÷ Cycles を古い正解と新しい正解で並べた表を書く。あわせて次の 2 点を書く: 遠い急な崖の対照(`slope60-180_d500-100000`)の 2 行で「開けた急な面が Cycles より 2.5 % 暗い」が新しい正解でも残るか。rocks-sun の IoU と漏れが戻るか。(5) PROGRESS.md の Notes に、SCN-RENDER-ROUGH-STEEP-ENERGY への申し送りを残す(どちらの正解で判定するか、`occlusion-accept.json` の前の記録をどう置き直すか)。`occlusion-accept.json` と古い正解の置き場は書き換えない。
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY-P2 --sets terrain-sky,terrain-sun`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY-P2 --sets rocks-sky,rocks-sun`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY-P2 --sets rocks-cliff-sky,rocks-cliff-sun`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY-P2 --sets plant-sky,plant-sun`
+- verify: `python Scripts/Terrain/OcclusionSets.py --cycles --seeds 2 --out .harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY-P2 --sets terrain-sky --mesh .harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY-P2/mesh`
+- verify: `python Scripts/Terrain/OcclusionSets.py --cycles --seeds 2 --out .harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY-P2 --sets terrain-sun --mesh .harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY-P2/mesh`
+- verify: `python Scripts/Terrain/OcclusionSets.py --cycles --seeds 2 --out .harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY-P2 --sets rocks-sky --mesh .harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY-P2/mesh`
+- verify: `python Scripts/Terrain/OcclusionSets.py --cycles --seeds 2 --out .harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY-P2 --sets rocks-sun --mesh .harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY-P2/mesh`
+- verify: `python Scripts/Terrain/OcclusionSets.py --cycles --seeds 2 --out .harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY-P2 --sets rocks-cliff-sky --mesh .harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY-P2/mesh`
+- verify: `python Scripts/Terrain/OcclusionSets.py --cycles --seeds 2 --out .harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY-P2 --sets rocks-cliff-sun --mesh .harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY-P2/mesh`
+- verify: `python Scripts/Terrain/OcclusionSets.py --cycles --seeds 2 --out .harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY-P2 --sets plant-sky --mesh .harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY-P2/mesh`
+- verify: `python Scripts/Terrain/OcclusionSets.py --cycles --seeds 2 --out .harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY-P2 --sets plant-sun --mesh .harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY-P2/mesh`
+- verify: `python Scripts/Terrain/ReferenceCheck.py --occlusion --engine-root .harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY-P2 --reference .harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY-P2/cycles --regions Scripts/Terrain/ExpectSpecs/occlusion-regions.json --verify`
+- paths: Scripts/Terrain/OcclusionSets.py, Scripts/Terrain/BlenderOcclusionReference.py, Docs/RenderingValidation/WastelandOcclusion.md, TASKS.md, PROGRESS.md
+- gpu: exclusive
+- from: SCN-RENDER-ROUGH-STEEP-ENERGY
+- notes: 焼いた地形の版 18 は、未統合の `task/SCN-WL-CLIFF-GEN-TALUS` のクックで焼かれている(HEAD の `kTerrainCliffDetailVersion` は 17)。反復の中で地形を焼き直さない。正解の記録(入力のハッシュ・地形の書き出しのハッシュ)から、どの版の地形で描いたかが分かるようにする。Cycles の描画中は、GPU を使う別の処理(Game の撮影・別の Blender)を重ねない。時間の見込みは、撮影が 1 組約 2 分、Cycles が 1 組 3〜4 分、書き出しが別に数分。壁時計(75 分)の残りが 25 分を切ったら新しい描画を始めない。描けた組までをコミットし、doing のまま終える(未達のまま DONE にしない)。verify は 1 行 10 分未満。
