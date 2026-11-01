@@ -3866,9 +3866,20 @@
 - notes: 作者承認済みのStage B必須要件。blocked理由はv1形式とStage A等の前提待ちで、作者の再承認待ちではない。
 
 ## G2-GR32-GPU-ACCEPTANCE: 多材質と旧描画互換をWindows GPUで確認する
-- status: blocked
-- done-when: 2材質板のGPU readbackと旧NVSKEL/M9SkinnedのGBuffer全画素一致、既定Rendering3DTestを実機で確認する。
-- verify: Windows/Vulkanで独立draw契約とGPU readback、起動画面を取得して実画像/結果を確認する。
+- status: todo
+- done-when: 次の (1)〜(4) を満たす。
+  (1) 既定のビジビリティバッファの経路で、スキンの submesh ごとの描画が自分のインデックスの範囲だけを ID に描く。`VisibilityRasterPass::CollectSkinnedChunks` が `SourceFirstIndex`/`SourceIndexCount` を `VirtualShadowMapPass` と同じ規則で使い、範囲の計算は 2 つのパスで 1 つの関数に共有する。旧の空表(全体の範囲)の描画は変えない。既存の `SkinnedSubmeshDrawContractTest` に範囲(全体・部分・3 の倍数でない・はみ出し)の検査を足し、Debug で通る(新しい試験の exe は作らない)。
+  (2) 検証用の骨付きパネル(`StartupSkinnedProbe`)に、2 submesh・2 材質 slot の変種を足す。起動の引数で明示したときだけ使い、既定の起動画面と `-SkinnedProbe` だけの撮影の見た目は変えない。`CaptureStartupScene.ps1 -SkinnedProbeMaterials 2` は、ビジビリティバッファの On と Off の両方で、パネルの各半分の材質の色の読み戻しがその slot の材質の色であることを判定し、違えば result=fail にする。
+  (3) `Test-M9World.ps1 -LegacyNvskelCompare` は、同じ ValidU8Float から作った旧 NVSKEL(0.1。表なし)と 0.2 を GBuffer のラスタの経路で描き、GBuffer の全画素一致を判定して、比べた画像を `-EvidenceDir` に残す。旧形式は試験側(`Test/Tools` の oracle)で作り、製品の AssetCook に旧形式の書き出しを戻さない。
+  (4) 既定の Rendering3DTest の起動画面を撮り、result=pass と PNG で確かめる。
+  (2)〜(4) の実行は、当分アプリを起動しない決まりの間は確かめのタスク(`G2-GR32-GPU-ACCEPTANCE-CHECK`)で行う。この項目は、実装・ビルド・CPU の試験と、後で何を確かめるかを `PROGRESS.md` と `Docs/Architecture/NVSKELMigrationInventory.md` に書くことで済む。mock や source の確認を実 GPU の合格と扱わない。
+- verify: `cmake --build build --config Debug --target Game AssetCook SkinnedSubmeshDrawContractTest -- -m:1`
+- verify: `build\Test\Core\Rendering\Debug\SkinnedSubmeshDrawContractTest.exe`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -SkinnedProbe -SkinnedProbeMaterials 2 -VisibilityBuffer On -OutDir .harness/runs/startup-capture/G2-GR32-GPU-ACCEPTANCE-2mat-vb`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -SkinnedProbe -SkinnedProbeMaterials 2 -VisibilityBuffer Off -OutDir .harness/runs/startup-capture/G2-GR32-GPU-ACCEPTANCE-2mat-gbuffer`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Test-M9World.ps1 -Configuration Debug -LegacyNvskelCompare -EvidenceDir .harness/runs/scene-capture/G2-GR32-GPU-ACCEPTANCE-legacy`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -OutDir .harness/runs/startup-capture/G2-GR32-GPU-ACCEPTANCE-default`
+- paths: Library/Core/Private/Rendering/VisibilityRasterPass.cpp, Library/Core/Public/Rendering/VisibilityRasterPass.h, Library/Core/Private/Rendering/VirtualShadowMapPass.cpp, Library/Core/Public/Rendering/MeshIndexChunks.h, Test/Core/Rendering/SkinnedSubmeshDrawContractTest.cpp, Game/GameModes/Rendering3DTest/StartupSkinnedProbe.cpp, Game/GameModes/Rendering3DTest/StartupSkinnedProbe.h, Game/GameModes/Rendering3DTest/Rendering3DTestData.h, Game/GameModes/Rendering3DTest/Rendering3DTestRoutine.cpp, Game/GameApplicationHandler.cpp, Game/GameModes/Rendering3DTest/M9WorldAcceptance.cpp, Game/GameModes/Rendering3DTest/M9WorldAcceptance.h, Scripts/CaptureStartupScene.ps1, Scripts/Test-M9World.ps1, Test/Tools/NvskelLegacyV01Oracle.py, Docs/Architecture/NVSKELMigrationInventory.md, TASKS.md, PROGRESS.md
 - blocked-by: 現在のクラウドにWindows/Vulkan実行環境がない。非描画のWindows免除を描画へ拡張しない。
 - stop-when: mock/source確認を実GPU合格と扱う、ユーザー指定を変えて別環境へ無断移動する。
 
