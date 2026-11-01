@@ -8301,6 +8301,7 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261030-232538/iter2-verify-before.txt`・`iter2-verify-after.txt`、`.harness/runs/regression/SCN-RENDER-ROUGH-STEEP-ENERGY-P1/{before,after}/`
 - Next: なし
 - Notes: night-village の撮影は検証レイヤー付きで約 1 フレーム/秒になり、1 本で約 345 秒かかる。枠のビルドが古いと最初の `-Build`（約 5 分）と合わせて 10 分を超えるので、統合の取り込みで C++ が変わった直後の再検証は同じ理由で落ちうる。要起票: 回帰の撮影の verify を、ビルドと撮影の別のコマンドに分けるか、night-village の撮影を短くする（検証レイヤーの下の 1 フレーム/秒の原因）
+
 - U1 終わらない試験と Game のソースを組み込む 2 つの試験の対象を、全体のビルドと ctest の実行から外す: 着地(直し 0 回)
 ## 2026-11-02 SCN-BUILD-ALL-TESTS-P1（run 20261101-231548 の反復 1、完了）
 - Done: `RenderGraphTextureUsageContractTest` を DISABLED にした（VisibilityResolve の `constantCount == 3` の assert で対話窓のまま終わる）。Game のソース（NorvesGameSources）を組み込む `NorvesLibBridgeAdapterScriptComponentTest`・`AssetManifestReloadBridgeLoopbackTest` の対象を `EXCLUDE_FROM_ALL` にし、その実行ファイルを使う ctest の 5 つの名前を DISABLED にした。`.cpp` と束の MEMBER は残し、理由を CMake のコメントと `Docs/Testing.md` の「外したもの」に 2026-11-01 の日付で書いた
