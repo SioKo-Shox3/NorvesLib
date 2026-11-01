@@ -222,3 +222,73 @@
 - 各負荷 1 回の撮影。他の GPU・ドライバでは測っていない。
 - 回収待ちの表の大きさはログに無いので、メモリの最大は見積もり。
 - `RT.BuildAccelerationStructures` の中は区間に分けていない（選択と TLAS の記録の比は、静止で TLAS の更新が 0 回であることから選択と判断した）。
+
+## カメラパスの再生の RTGI の粒（50000 本）
+
+判定日: 2026-11-02。RelWithDebInfo、1920×1080、RTX 4080（ドライバ 610.88）。`mega-bananas` の horizon で 5 万本を配置し、カメラパスの再生と静止を撮った。再生・静止とも `CAPTURE_SCENE result=pass`、配置数 50,000、資産の欠け 0。撮影結果は `.harness/runs/scene-capture/SCN-MEGA-ACCEPT-1M-P1-before/` にある。
+
+### 測り方
+
+再生と静止の各 300 フレームを実時間で測り、履歴の採否と年齢は決定的な撮影の AOV から読む。`-Aov` の撮影では `-GpuTimingFrames` を使わず、落ち着いた後の既定 60 フレームで撮る。診断環境変数を切った画像と診断画像の両方を開いて確認した。
+
+```powershell
+cmake --build build --config RelWithDebInfo --target Game -- /m:1
+$root = '.harness/runs/scene-capture/SCN-MEGA-ACCEPT-1M-P1-before'
+powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -Views horizon -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -TimeoutSeconds 1800 -GameArgs 'banana-count=50000,camera-path-play,camera-path-time=0' -OutDir "$root/path"
+powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -Views horizon -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -TimeoutSeconds 1800 -GameArgs 'banana-count=50000,camera-path-time=9.53' -OutDir "$root/static"
+python Scripts/CheckCaptureMetrics.py "$root/path" --views horizon --timing --min-frames 300 --require-pass LightingPass
+$env:NORVES_RTGI_HISTORY_DIAG = '1'
+powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -Views horizon -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Aov -TimeoutSeconds 1800 -GameArgs 'banana-count=50000,camera-path-play,camera-path-time=8.53' -OutDir "$root/diag-path"
+powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -Views horizon -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Aov -TimeoutSeconds 1800 -GameArgs 'banana-count=50000,camera-path-time=10.08' -OutDir "$root/diag-static"
+$env:NORVES_RTGI_HISTORY_DIAG = $null
+powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Terrain/CaptureRegression.ps1 -Item SCN-MEGA-ACCEPT-1M-P1 -Phase before -Motion
+```
+
+実時間の再生ログは `CAMERA_PATH_TIME time=7.962 frames=540`、`time=8.782 frames=600`、撮影要求 `rendered=655`。この 2 点の再生フレーム数と描画フレーム数を同一とみなす外挿は `8.782 + (8.782 - 7.962) × (655 - 600) / 60 = 9.53` 秒で、静止の計測をこの位置で撮った。ただし、描画フレームの数にはパス再生前のフレームが含まれる。再生開始 01:49:25.898 から撮影要求 01:49:35.165 までは 9.267 秒で、600 フレーム時点の時刻差 8.782 秒はログのパス時刻と一致する。したがって再生画像の実際の位置は約 9.27 秒であり、9.53 秒の静止画像とは約 0.26 秒ずれる。
+
+診断の再生は 8.53 秒から開始したが、撮影の待機中もパスが進む。保存した AOV のカメラ位置をパスに照合した時刻は 10.079976 秒なので、診断の静止は 10.08 秒に置いた。2 枚の AOV のカメラ位置の差は 0.000041 m、前方向の差の長さは 0.0000068 で、診断の画素比較に使える。
+
+### 直す前の計測と見た目
+
+| 負荷 | `LightingPass` median | `LightingPass` p95 | 標本数 |
+|---|---:|---:|---:|
+| 再生 | 4.181 ms | 4.339 ms | 300 |
+| 静止（9.53 秒） | 3.790 ms | 3.844 ms | 300 |
+
+`CheckCaptureMetrics.py` は `CHECK_CAPTURE_METRICS result=pass views=horizon`。パスの名前とフレーム数の検査であり、画像の一致判定ではない。上の 2 枚は視点が約 0.26 秒ずれるので、見た目の同一画素の比較には使わない。
+
+診断の再生と静止の PNG、および `diag-compare.png` を開くと、近景のバナナの周りの床は再生の方が粒状で、静止では滑らかに見える。比較画は全景と近景を、撮影・履歴の理由・年齢の順に並べる。床候補の位置は各 `horizon.history-floor-edge.png`、元の AOV は各 `horizon.aov.rtgi_temporal_code.pfm`、集計は `diag-history-stats.json` にある。
+
+### 履歴の診断
+
+開発ビルドの `NORVES_RTGI_HISTORY_DIAG=1` は遮蔽診断と同時に指定された場合、履歴診断を優先する。AOV の値を `floor(a / 2)` で符号に戻す。符号 0 は履歴無効、1 は速度が非有限または画面外、2 は距離・裏返り・非有限などで有効な標本が無い、3 は法線または材質、4 は残った重みの不足、6 は無効な表面を表す。8 以上は履歴採用で、年齢の整数部は符号から 8 を引く（255 に飽和）。棄却時の年齢は 0。診断は出力の半精度 a に空の可視率と同居するため、可視率の丸めによって診断画像の照明がわずかに変わり得る。
+
+対象の床は画像下半分・深度 5 m 未満・法線 Y が 0.9 以上で、線形アルベドの `R > 0.05`、`G > 0.7R`、`B > 0.65R` を満たす画素。バナナ候補は `R > 0.1`、`B < 0.4R`、`G > 1.4B` とし、その周囲の正方形 ±12 画素または ±2 画素にある床候補を集計した。色と法線による近似であり、物体 ID による完全な領域分割ではない。
+
+| 領域 | 状態 | 画素数 | 画面外・速度 | 距離・裏返り等 | 法線・材質 | 重み不足 | 採用 |
+|---|---|---:|---:|---:|---:|---:|---:|
+| 近景の床全体 | 再生 | 319,854 | 0.0456% | 0.4549% | 0.0022% | 0.0231% | 99.4741% |
+| 周囲 ±12 画素 | 再生 | 300,972 | 0.0452% | 0.4834% | 0.0023% | 0.0246% | 99.4445% |
+| 縁 ±2 画素 | 再生 | 115,710 | 0.0354% | 1.2575% | 0.0060% | 0.0640% | 98.6371% |
+| 近景の床全体 | 静止 | 319,876 | 0% | 0% | 0% | 0% | 100% |
+| 周囲 ±12 画素 | 静止 | 300,995 | 0% | 0% | 0% | 0% | 100% |
+| 縁 ±2 画素 | 静止 | 115,705 | 0% | 0% | 0% | 0% | 100% |
+
+いずれの領域も履歴無効の分類は 0%。年齢の分布は次のとおり（割合は各領域の全画素に対する値）。
+
+| 領域 | 状態 | 年齢 0 | 年齢 1〜7 | 年齢 8 | 年齢 51 | 年齢 52 |
+|---|---|---:|---:|---:|---:|---:|
+| 周囲 ±12 画素 | 再生 | 0.556% | 7.341% | 92.103% | 0% | 0% |
+| 縁 ±2 画素 | 再生 | 1.363% | 11.456% | 87.181% | 0% | 0% |
+| 周囲 ±12 画素 | 静止 | 0% | 0% | 0% | 96.948% | 3.052% |
+| 縁 ±2 画素 | 静止 | 0% | 0% | 0% | 93.091% | 6.909% |
+
+比較画の近景の切り出し（x=500〜1459、y=720〜1079）の縁 ±2 画素でも、再生 46,178 画素の 98.343% が採用、85.307% が年齢 8。距離・裏返り等の棄却は 1.555% で、法線・材質の棄却は 0.004%。静止の同領域 46,180 画素は全て採用され、年齢 51 が 93.259%、52 が 6.741%。理由の画でも棄却は輪郭の細い線に集まり、その外側の粒が見える床は主に採用・年齢 8 になっている。
+
+再生中は静止判定が毎フレーム切れて年齢上限が 8 に留まり、静止では上限が伸びる。確信度が 1 のとき、履歴の年齢 8 の重みは約 0.889、年齢 50〜51 なら約 0.980〜0.981 で、再生中は新しい光線のばらつきが残りやすい。広い床の粒については、履歴を全面的に棄却することより、採用した履歴の年齢上限が低いことが主な要因と考えられる。輪郭直近では距離等の棄却と若い履歴も寄与する。上限だけを変えた比較はないため、年齢上限だけで見た目の差の全てを説明できるとは断定しない。
+
+### 既知の限界
+
+- 診断は同じ視点で各 1 フレームを比較したもので、時間全体の棄却頻度は測っていない。診断 AOV の年齢は整数部で、静止の年齢 51〜52 はこの撮影のフレーム数に依存する。
+- AOV の入力記録は他の資産セットも走査し、元資産候補の未取得を 103 件記録した。`mega-bananas` の 4 撮影自体は必要な資産の欠け 0 で完了した。
+- 回帰 before は `rendering3dtest`・`mega-bananas`・`sandbox` が成功した後、`night-village` の `Terrain/ValleyOfTheGods/height.json` が読めず資産欠けとなり中断した。動きの撮影と回帰の最終判定は未完了。

@@ -8302,3 +8302,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: なし
 - Notes: night-village の撮影は検証レイヤー付きで約 1 フレーム/秒になり、1 本で約 345 秒かかる。枠のビルドが古いと最初の `-Build`（約 5 分）と合わせて 10 分を超えるので、統合の取り込みで C++ が変わった直後の再検証は同じ理由で落ちうる。要起票: 回帰の撮影の verify を、ビルドと撮影の別のコマンドに分けるか、night-village の撮影を短くする（検証レイヤーの下の 1 フレーム/秒の原因）
 - U1 粒の量を測る RtgiGrain.py と判定の仕様を置く: 着地(直し 0 回)
+- U2 履歴の棄却と年齢の開発用 AOV を足し、直す前の撮影と診断をする: 着地(直し 2 回)

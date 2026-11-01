@@ -20,7 +20,7 @@ layout(set = 0, binding = 1, std140) uniform RTGIComputeParameters
     uvec4 sampleState;
     vec4 previousCameraPosition; // xyz=履歴を書いた前フレームのカメラ位置、w=履歴に掛ける露出の比
     // x=静的HDR環境の放射輝度の上限（倍率を掛ける前。0は上限なし）、y=当たりの色に掛ける倍率（照り返しを切ると 0）、
-    // z=遮蔽の診断（1/0）、w=拡散の光線が影を落とさない不透明物体にも当たるか（1/0）
+    // z=診断（0=なし、1=遮蔽、2=履歴）、w=拡散の光線が影を落とさない不透明物体にも当たるか（1/0）
     vec4 environmentParameters;
     // 地形の当たりの色（LightingPass.cpp の RTGIComputeParameters と同じ並び）
     vec4 terrainMask;    // x,y=地表の分類の地図の外縁の X・Z の最小、z,w=X・Z の広さの逆数（z が 0 なら地図なし）
@@ -154,8 +154,15 @@ const float RTGI_OCCLUSION_DIAG_LARGE_HEIGHT = 2.0;
 
 bool IsOcclusionDiagnosticEnabled()
 {
-    return parameters.environmentParameters.z > 0.5;
+    return parameters.environmentParameters.z > 0.5 && parameters.environmentParameters.z < 1.5;
 }
+// 履歴の診断は遮蔽の診断より優先し、無効な表面を別の分類として記録する。
+bool IsHistoryDiagnosticEnabled()
+{
+    return parameters.environmentParameters.z > 1.5;
+}
+uint gHistoryDiagnosticReason = 6u;
+
 // 画素ごとの履歴の年齢の上限（静止が続いたとき）。フレームごとの上限はtemporalState.wで、視点・光源・
 // シーンが動いているフレームでは8になる。重みは累積平均の 1-1/(年齢+1) で、上限は256/257。
 const uint RTGI_HISTORY_MAXIMUM_AGE = 256u;
@@ -793,17 +800,30 @@ bool TryReadReprojectedHistory(vec2 currentUV,
                                out vec3 previousSpecularHit,
                                out float previousSpecularSky)
 {
+    bool bHistoryDiagnostic = IsHistoryDiagnosticEnabled();
+    if (bHistoryDiagnostic)
+    {
+        gHistoryDiagnosticReason = 2u;
+    }
     previousSkyVisibility = 1.0;
     previousSpecularHit = vec3(0.0);
     previousSpecularSky = 1.0;
     if (parameters.temporalState.x == 0u)
     {
+        if (bHistoryDiagnostic)
+        {
+            gHistoryDiagnosticReason = 0u;
+        }
         return false;
     }
 
     vec2 velocity = texture(gbufferVelocity, currentUV).rg;
     if (!IsFiniteVector(vec3(velocity, 0.0)))
     {
+        if (bHistoryDiagnostic)
+        {
+            gHistoryDiagnosticReason = 1u;
+        }
         return false;
     }
 
@@ -812,6 +832,10 @@ bool TryReadReprojectedHistory(vec2 currentUV,
         any(lessThan(previousUV, vec2(0.0))) ||
         any(greaterThanEqual(previousUV, vec2(1.0))))
     {
+        if (bHistoryDiagnostic)
+        {
+            gHistoryDiagnosticReason = 1u;
+        }
         return false;
     }
 
@@ -880,6 +904,10 @@ bool TryReadReprojectedHistory(vec2 currentUV,
         {
             continue;
         }
+        if (bHistoryDiagnostic)
+        {
+            gHistoryDiagnosticReason = max(gHistoryDiagnosticReason, 3u);
+        }
         // 法線と材質は、固定の閾値か、近傍の同じ面のばらつき（ComputeLocalSurfaceSpread）の大きい方まで許す。
         if (!bStaticView)
         {
@@ -894,6 +922,11 @@ bool TryReadReprojectedHistory(vec2 currentUV,
             {
                 continue;
             }
+        }
+
+        if (bHistoryDiagnostic)
+        {
+            gHistoryDiagnosticReason = 4u;
         }
 
         radianceSum += sampledRadiance * bilinearWeight;
@@ -911,6 +944,10 @@ bool TryReadReprojectedHistory(vec2 currentUV,
     if (!(weightSum >= RTGI_HISTORY_MINIMUM_TAP_WEIGHT))
     {
         return false;
+    }
+    if (bHistoryDiagnostic)
+    {
+        gHistoryDiagnosticReason = 5u;
     }
     previousRadiance = radianceSum / weightSum;
     previousSkyVisibility = skyVisibilitySum / weightSum;
@@ -971,9 +1008,10 @@ void StoreTemporalSample(uvec2 pixel,
 {
     vec3 safeRadiance = SanitizeRadiance(radiance);
     // 履歴の a = 時間の蓄積の後の空の分、出力の a = 2 × 符号 + 空の分（空間のフィルタが空の分を取り出して均し、照明が
-    // 鏡面の環境光の遮りに使う）。符号は遮蔽の診断のときだけ生の空 + 2 × 読み飛ばしの分類で、診断しないときは 0
+    // 鏡面の環境光の遮りに使う）。遮蔽の診断では生の空と読み飛ばしの分類、履歴の診断では採否と年齢を符号に入れる
     float safeSkyVisibility = IsFiniteScalar(skyVisibility) ? clamp(skyVisibility, 0.0, 1.0) : 1.0;
-    float outputAlpha = IsOcclusionDiagnosticEnabled() ? 2.0 * diagnosticCode + safeSkyVisibility : safeSkyVisibility;
+    float outputAlpha = (IsOcclusionDiagnosticEnabled() || IsHistoryDiagnosticEnabled())
+        ? 2.0 * diagnosticCode + safeSkyVisibility : safeSkyVisibility;
     float historyAlpha = safeSkyVisibility;
     float safeAge = IsFiniteScalar(age)
         ? clamp(age,
@@ -1689,6 +1727,14 @@ void ShadeDiffuseIndirect(uvec2 pixel, out bool bRayTraced, out uint firstHitCus
                         min(float(parameters.temporalState.w),
                             float(RTGI_HISTORY_MAXIMUM_AGE)));
         outputConfidence = clamp(previousConfidence + 0.125, 0.0, 1.0);
+    }
+
+    if (IsHistoryDiagnosticEnabled())
+    {
+        // 棄却は 0〜4、無効な表面は 6。採用は 8 + 年齢の整数部（上限 255）。
+        // この範囲なら半精度に保存した後も floor(a / 2) で符号を区別できる。
+        diagnosticCode = bHistoryAccepted ? 8.0 + min(floor(outputAge), 255.0)
+                                          : float(gHistoryDiagnosticReason);
     }
 
     StoreTemporalSample(pixel,

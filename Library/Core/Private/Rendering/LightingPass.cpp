@@ -1450,6 +1450,33 @@ namespace NorvesLib::Core::Rendering
 #endif
     }
 
+    // 履歴の採否と年齢の診断（開発ビルドだけ）。遮蔽の診断と同時に指定されたらこちらを優先する。
+    static bool IsRTGIHistoryDiagnosticRequested()
+    {
+#if NORVES_BUILD_DEVELOPMENT
+        static const bool bRequested = []
+        {
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4996)
+#endif
+            const char* value = std::getenv("NORVES_RTGI_HISTORY_DIAG");
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
+            const bool bOn = value != nullptr && value[0] == '1' && value[1] == '\0';
+            if (bOn)
+            {
+                LOG_INFO("RTGI_HISTORY_DIAG on source=env");
+            }
+            return bOn;
+        }();
+        return bRequested;
+#else
+        return false;
+#endif
+    }
+
     // 鏡面の環境光を RTGI の光線で遮らない変更前の経路（空の前計算 × 反射率 × 画面空間の鏡面 AO）で描くか
     // （開発ビルドだけ。Game の --rtgi-specular=off が環境変数 NORVES_RTGI_SPECULAR=0 で頼む）。同じ Game.exe・同じ焼いた地形で
     // 鏡面の遮りの前後を撮り比べる（InteriorLightReference.md）。プロセスの間は変わらないので、最初の 1 回だけ読む
@@ -4238,7 +4265,9 @@ namespace NorvesLib::Core::Rendering
                 ? context.PhysicalLighting.StaticEnvironmentMaxRadiance
                 : 0.0f;
         parameters.environmentParameters[1] = ResolveRTGIBounceScale();
-        parameters.environmentParameters[2] = IsRTGIOcclusionDiagnosticRequested() ? 1.0f : 0.0f;
+        parameters.environmentParameters[2] = IsRTGIHistoryDiagnosticRequested()
+            ? 2.0f
+            : (IsRTGIOcclusionDiagnosticRequested() ? 1.0f : 0.0f);
         parameters.environmentParameters[3] = context.bRTGINonShadowCasterOcclusion ? 1.0f : 0.0f;
         // 散らした小物の遮りを頼んだシーン（荒野）だけ、株の冠で拡散の光線を遮る。株は RT のシーンに無い
         Container::VariableArray<RTGIFoliageCrown> foliageCrowns;
