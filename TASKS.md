@@ -4264,3 +4264,28 @@
 - gpu: exclusive
 - from: SCN-MEGA-FIX-TLAS-REBUILD
 - notes: RTGI は全シーンに効く危険地帯なので、評価者を通す。統計を軽くするときも、数える光線と当たりの定義は変えない。
+
+## SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1-CHECK: 鏡面の直しの後の最終の版で、荒野の遮蔽の 8 組を変更前の鏡面の経路と並べて判定し直す(後回しにしたアプリの起動の確かめ)
+- status: todo
+- check: launch
+- gpu: exclusive
+- done-when: SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1 で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1 の done-when を満たすことを確かめる。満たさなければ SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1 の done-when と paths の範囲で直す。
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/off --sets terrain-sky --variant-args rtgi-specular=off`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/on --sets terrain-sky`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/off --sets terrain-sun --variant-args rtgi-specular=off`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/on --sets terrain-sun`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/off --sets rocks-sky --variant-args rtgi-specular=off`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/on --sets rocks-sky`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/off --sets rocks-sun --variant-args rtgi-specular=off`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/on --sets rocks-sun`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/off --sets rocks-cliff-sky --variant-args rtgi-specular=off`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/on --sets rocks-cliff-sky`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/off --sets rocks-cliff-sun --variant-args rtgi-specular=off`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/on --sets rocks-cliff-sun`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/off --sets plant-sky --variant-args rtgi-specular=off`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/on --sets plant-sky`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/off --sets plant-sun --variant-args rtgi-specular=off`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/on --sets plant-sun`
+- verify: `python Scripts/Terrain/ReferenceCheck.py --occlusion --engine-root .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/on --off-root .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/off --reference .harness/runs/scene-capture/SCN-WLR-OCCLUSION-SETS/cycles --regions Scripts/Terrain/ExpectSpecs/occlusion-regions.json --expect Scripts/Terrain/ExpectSpecs/occlusion-accept.json --verify`
+- paths: Docs/RenderingValidation/InteriorLightReference.md, Scripts/Terrain/ExpectSpecs/occlusion-accept.json, TASKS.md, PROGRESS.md
+- from: SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1
