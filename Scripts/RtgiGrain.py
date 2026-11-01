@@ -10,19 +10,10 @@ import numpy as np
 from PIL import Image
 
 
-def measure_grain(png_path, regions, blur_radius_px=2):
-    """sRGB の PNG を線形輝度へ戻し、各領域の粒の量と失敗理由を返す。"""
-    with Image.open(png_path) as image:
-        encoded = np.asarray(image.convert("RGB"), dtype=np.float64) / 255.0
-    linear = np.where(encoded <= 0.04045, encoded / 12.92,
-                      ((encoded + 0.055) / 1.055) ** 2.4)
-    luma = linear @ np.array([0.2126, 0.7152, 0.0722])
-    height, width = luma.shape
-
-    # 全画面を箱でぼかしてから切り出し、領域の境界に人工的な縁を作らない。
+def box_blur(values, radius):
+    """画像の端の値を延ばし、指定した半径の箱で平均する。"""
     # 画像の端では端の値を延ばす。半径 r の箱は (2r + 1) × (2r + 1) 画素。
-    blurred = luma
-    radius = blur_radius_px
+    blurred = values
     if radius > 0:
         for axis in (0, 1):
             pad = [(0, 0), (0, 0)]
@@ -31,18 +22,87 @@ def measure_grain(png_path, regions, blur_radius_px=2):
             indices = np.arange(blurred.shape[axis])
             blurred = (np.take(cumulative, indices + 2 * radius + 1, axis=axis)
                        - np.take(cumulative, indices, axis=axis)) / (2 * radius + 1)
+    return blurred
+
+
+def dilate_disk(mask, radius):
+    """最も近い真の画素までのユークリッド距離が半径以内の画素を返す。"""
+    height, width = mask.shape
+    expanded = np.zeros_like(mask)
+    # 円盤を行ごとの区間に分け、横の積分和で区間内の有無を調べる。
+    cumulative = np.cumsum(np.pad(mask, ((0, 0), (radius + 1, radius))),
+                           axis=1, dtype=np.int64)
+    for dy in range(-min(radius, height - 1), min(radius, height - 1) + 1):
+        dx = math.isqrt(radius * radius - dy * dy)
+        start, end = radius - dx, radius + dx + 1
+        occupied = cumulative[:, end:end + width] > cumulative[:, start:start + width]
+        if dy >= 0:
+            expanded[dy:] |= occupied[:height - dy]
+        else:
+            expanded[:height + dy] |= occupied[-dy:]
+    return expanded
+
+
+def select_floor_pixels(hsv, spec):
+    """sRGB の HSV 色とバナナからの距離で、床と測定対象のマスクを返す。"""
+    hue, saturation, value = hsv[:, :, 0] * 360.0, hsv[:, :, 1], hsv[:, :, 2]
+    floor_spec, banana_spec = spec["floor_hsv"], spec["banana_hsv"]
+    floor = ((saturation <= floor_spec["max_saturation"])
+             & (value >= floor_spec["min_value"]) & (value <= floor_spec["max_value"]))
+    banana = ((hue >= banana_spec["min_hue_degrees"])
+              & (hue <= banana_spec["max_hue_degrees"])
+              & (saturation >= banana_spec["min_saturation"])
+              & (value >= banana_spec["min_value"]))
+    selected = floor & ~dilate_disk(banana, spec["banana_exclusion_px"])
+    outer = spec["banana_band_outer_px"]
+    if outer is not None:
+        selected &= dilate_disk(banana, outer)
+    return floor, selected
+
+
+def region_bounds(region, width, height):
+    """左上を含み右下を含まない正規化矩形を画素の境界へ広げる。"""
+    x0, y0, x1, y1 = region["rect"]
+    return (math.floor(x0 * width), math.floor(y0 * height),
+            math.ceil(x1 * width), math.ceil(y1 * height))
+
+
+def measure_grain(png_path, spec):
+    """sRGB の PNG を線形輝度へ戻し、選んだ床だけの粒の量と失敗理由を返す。"""
+    with Image.open(png_path) as image:
+        rgb = image.convert("RGB")
+        encoded = np.asarray(rgb, dtype=np.float64) / 255.0
+        # 色の分類は線形化せず、Pillow の 8 bit HSV を正規化して行う。
+        hsv = np.asarray(rgb.convert("HSV"), dtype=np.float64) / 255.0
+    linear = np.where(encoded <= 0.04045, encoded / 12.92,
+                      ((encoded + 0.055) / 1.055) ** 2.4)
+    luma = linear @ np.array([0.2126, 0.7152, 0.0722])
+    height, width = luma.shape
+    floor, selected = select_floor_pixels(hsv, spec)
+
+    # 全画面の床だけで箱の平均を取り、隙間やバナナの輝度を混ぜない。
+    # 帯の外の床もぼかしには使い、矩形や帯の境界に人工的な縁を作らない。
+    radius = spec["blur_radius_px"]
+    weights = box_blur(floor.astype(np.float64), radius)
+    blurred = np.divide(box_blur(luma * floor, radius), weights,
+                        out=np.zeros_like(luma), where=weights > 0)
     high_frequency = luma - blurred
 
     measurements = []
-    for region in regions:
-        x0, y0, x1, y1 = region["rect"]
-        # 左上を含み右下を含まない。正規化の端は床・天井で画素の境界へ広げる。
-        left, top = math.floor(x0 * width), math.floor(y0 * height)
-        right, bottom = math.ceil(x1 * width), math.ceil(y1 * height)
-        mean = float(luma[top:bottom, left:right].mean())
-        stddev = float(high_frequency[top:bottom, left:right].std())
-        entry = {"name": region["name"], "mean_luminance": mean,
-                 "high_frequency_stddev": stddev, "value": None}
+    for region in spec["regions"]:
+        left, top, right, bottom = region_bounds(region, width, height)
+        mask = selected[top:bottom, left:right]
+        count = int(np.count_nonzero(mask))
+        entry = {"name": region["name"], "pixel_count": count, "mean_luminance": None,
+                 "high_frequency_stddev": None, "value": None}
+        if count < spec["min_floor_pixels"]:
+            entry["reason"] = f"測定する床の画素数が不足: {count} < {spec['min_floor_pixels']}"
+            measurements.append(entry)
+            continue
+        mean = float(luma[top:bottom, left:right][mask].mean())
+        stddev = float(high_frequency[top:bottom, left:right][mask].std())
+        entry["mean_luminance"] = mean
+        entry["high_frequency_stddev"] = stddev
         if mean < 1e-4:
             entry["reason"] = "領域の平均輝度が 1e-4 未満"
         else:
@@ -62,6 +122,34 @@ def validate_spec(spec):
     radius = spec.setdefault("blur_radius_px", 2)
     if type(radius) is not int or radius < 0:
         raise ValueError("blur_radius_px は 0 以上の整数で指定する")
+    for key, defaults in (
+            ("floor_hsv", {"max_saturation": 0.15, "min_value": 0.15, "max_value": 0.40}),
+            ("banana_hsv", {"min_hue_degrees": 10, "max_hue_degrees": 80,
+                            "min_saturation": 0.30, "min_value": 0.05})):
+        color = spec.setdefault(key, defaults)
+        if not isinstance(color, dict):
+            raise ValueError(f"{key} は JSON オブジェクトで指定する")
+        for channel, default in defaults.items():
+            value = color.setdefault(channel, default)
+            upper = 360 if channel.endswith("_hue_degrees") else 1
+            if (type(value) not in (int, float) or not math.isfinite(value)
+                    or not 0 <= value <= upper):
+                raise ValueError(f"{key}.{channel} は 0 以上 {upper} 以下の有限な数値で指定する")
+    if spec["floor_hsv"]["min_value"] > spec["floor_hsv"]["max_value"]:
+        raise ValueError("floor_hsv の明度の下限が上限を超えている")
+    if spec["banana_hsv"]["min_hue_degrees"] > spec["banana_hsv"]["max_hue_degrees"]:
+        raise ValueError("banana_hsv の色相の下限が上限を超えている")
+    # ぼかし窓の角までバナナを避けるため、除外距離は窓の対角半径以上にする。
+    minimum_exclusion = math.ceil(math.sqrt(2) * radius)
+    exclusion = spec.setdefault("banana_exclusion_px", max(radius + 1, minimum_exclusion))
+    if type(exclusion) is not int or exclusion < minimum_exclusion:
+        raise ValueError(f"banana_exclusion_px は {minimum_exclusion} 以上の整数で指定する")
+    outer = spec.setdefault("banana_band_outer_px", None)
+    if outer is not None and (type(outer) is not int or outer <= exclusion):
+        raise ValueError("banana_band_outer_px は除外距離より大きい整数、または null で指定する")
+    minimum = spec.setdefault("min_floor_pixels", 3000)
+    if type(minimum) is not int or minimum < 1:
+        raise ValueError("min_floor_pixels は 1 以上の整数で指定する")
     regions = spec.get("regions")
     if not isinstance(regions, list) or not regions:
         raise ValueError("regions に領域を 1 つ以上指定する")
@@ -90,6 +178,10 @@ def check_grain(root, spec):
     validate_spec(spec)
     report = {"view": spec["view"], "numerator": spec["numerator"],
               "denominator": spec["denominator"], "blur_radius_px": spec["blur_radius_px"],
+              "floor_hsv": spec["floor_hsv"], "banana_hsv": spec["banana_hsv"],
+              "banana_distance_metric": "euclidean", "banana_exclusion_px": spec["banana_exclusion_px"],
+              "banana_band_outer_px": spec["banana_band_outer_px"],
+              "min_floor_pixels": spec["min_floor_pixels"],
               "regions": [], "result": "fail"}
     measured = {}
     sizes = {}
@@ -99,7 +191,7 @@ def check_grain(root, spec):
         try:
             if not png_path.is_file():
                 raise ValueError(f"画像ファイルが無い: {png_path}")
-            measured[key], sizes[key] = measure_grain(png_path, spec["regions"], spec["blur_radius_px"])
+            measured[key], sizes[key] = measure_grain(png_path, spec)
         except (OSError, ValueError) as error:
             failures[key] = str(error)
     if len(sizes) == 2 and sizes["numerator"] != sizes["denominator"]:
@@ -108,12 +200,14 @@ def check_grain(root, spec):
     for index, region in enumerate(spec["regions"]):
         row = {"name": region["name"], "rect": region["rect"], "numerator": None,
                "denominator": None, "ratio": None, "max_ratio": region["max_ratio"],
+               "numerator_pixels": None, "denominator_pixels": None,
                "result": "fail"}
         reasons = list(failures.values())
         for key in ("numerator", "denominator"):
             if key in measured:
                 measurement = measured[key][index]
                 row[key] = measurement["value"]
+                row[key + "_pixels"] = measurement["pixel_count"]
                 if "reason" in measurement:
                     reasons.append(f"{key}: {measurement['reason']}")
         if not reasons:
@@ -148,10 +242,13 @@ def main():
     for row in report["regions"]:
         def number(key):
             value = row[key]
+            if key.endswith("_pixels"):
+                return "null" if value is None else str(value)
             return "null" if value is None else f"{value:.6f}" if key in ("numerator", "denominator") else f"{value:.3f}"
         print(f"RTGI_GRAIN region={row['name']} numerator={number('numerator')} "
               f"denominator={number('denominator')} ratio={number('ratio')} "
-              f"max_ratio={number('max_ratio')} result={row['result']}")
+              f"max_ratio={number('max_ratio')} numerator_pixels={number('numerator_pixels')} "
+              f"denominator_pixels={number('denominator_pixels')} result={row['result']}")
         for reason in row.get("reasons", []):
             print(f"RTGI_GRAIN reason={reason}")
     for reason in report.get("reasons", []):
