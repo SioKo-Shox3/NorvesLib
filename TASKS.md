@@ -3829,7 +3829,7 @@
 - notes: 2026-10-02追加。未着手の後続作業で、前提と選定課題を解決してから実装タスクへ細分化する。NorvesLib/Editorの境界とVFX-S1〜S5はロードマップ参照。
 
 ## G2-GR77-NATIVE-ACCEPTANCE: 実物GLBとnative統合の受入れを記録する
-- status: todo
+- status: done
 - done-when: この Windows の手元で次を行い、`Docs/Architecture/AssetImportPipeline.md` の「GR77: native受入れ」に、CPU の試験・cooked・骨格・表示・未実行を分けて記録する。
   (1) verify の GR77 の試験19件が Debug で通る。GR77 のコードの不具合は直す。GR77 の外が原因の既存の失敗は、記録して要起票にする。
   (2) TRELLIS.2 の実物 wooden_shack.glb の cook で、model 1つと texture 3つが実 package で解決する。時間とピークメモリも記録する。
