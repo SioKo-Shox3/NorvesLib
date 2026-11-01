@@ -801,7 +801,12 @@ namespace Game::GameModes
             Game::Scenes::EndSceneAssembly(ctx.EngineRef);
             return GameModeEnterResult::Failed;
         }
+#if NORVES_BUILD_DEVELOPMENT
+        data.m_Rig.ConfigurePath(scene->CameraPath, data.m_CameraPathTime, data.m_bCameraPathPlay,
+                                 data.m_CameraPathCaptureTime, data.m_pCameraPathCapture);
+#else
         data.m_Rig.ConfigurePath(scene->CameraPath, data.m_CameraPathTime, data.m_bCameraPathPlay);
+#endif
         if (!data.m_Rig.Enter(ctx, pose, data.m_CameraScriptPath.c_str()))
         {
             LOG_ERROR("mega-bananas: カメラを作れませんでした");

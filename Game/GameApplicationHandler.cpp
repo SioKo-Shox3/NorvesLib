@@ -17,7 +17,9 @@
 #include "Core/Public/Object/World.h"
 #include "Core/Public/Rendering/PostProcessStack.h"
 #include "Core/Public/Rendering/RenderResources.h"
+#include "Core/Public/Rendering/FrameCaptureTypes.h"
 #include "Core/Public/Rendering/RenderWorld.h"
+#include "Debug/CapturedFramePng.h"
 #include "Core/Public/Rendering/ToneMappingPass.h"
 #include "Core/Public/Resource/SkinnedMeshResource.h"
 #include "GameModes/DogMovementSmoke/DogMovementSmokeMode.h"
@@ -176,6 +178,8 @@ namespace Game
         // --camera-path-play: カメラパスを持つシーンで、組み立てが済んだところからパスを再生したままにする（開発ビルドだけ。
         // 値を取らない。開始の時刻は --camera-path-time、無ければ 0 秒。計測でパスを飛ぶ負荷を撮るのに使う）。
         constexpr const TCHAR *kCameraPathPlayOption = TEXT("--camera-path-play");
+        // --camera-path-capture-time=<秒>: 再生を固定刻みで進め、指定時刻の姿勢を PNG に撮る（開発ビルドだけ）。
+        constexpr const TCHAR *kCameraPathCaptureTimeOption = TEXT("--camera-path-capture-time=");
         // --banana-count=<n>: mega-bananas のバナナの本数（1〜kMaxBananaCount。既定 kDefaultBananaCount）。
         // mega-stress では、指定したときだけ同じ配置のバナナ n 本を個別の Entity と同時に置く（混在の負荷）。
         constexpr const TCHAR *kBananaCountOption = TEXT("--banana-count=");
@@ -483,6 +487,36 @@ namespace Game
             return true;
         }
 
+#if NORVES_BUILD_DEVELOPMENT
+        // 固定刻みの Tick 数を計算するときは、引数の秒数を float に丸める前の精度で使う。
+        bool TryParsePathCaptureTime(const String &text, double &outValue)
+        {
+            char buffer[64] = {};
+            if (text.empty() || text.size() >= sizeof(buffer))
+            {
+                return false;
+            }
+            for (size_t i = 0; i < text.size(); ++i)
+            {
+                const TCHAR ch = text[i];
+                if (ch < 0x20 || ch > 0x7E)
+                {
+                    return false;
+                }
+                buffer[i] = static_cast<char>(ch);
+            }
+            char *pEnd = nullptr;
+            const double value = std::strtod(buffer, &pEnd);
+            if (pEnd == buffer || *pEnd != '\0' || !std::isfinite(value) || value < 0.0 ||
+                value > static_cast<double>(std::numeric_limits<float>::max()))
+            {
+                return false;
+            }
+            outValue = value;
+            return true;
+        }
+#endif
+
         /**
          * @brief "<yaw>,<pitch>,<arm>" を3つの有限の小数として読む。腕の長さは正でなければならない。
          */
@@ -757,6 +791,12 @@ namespace Game
         m_CameraScriptPath = {};
         m_CameraPathTime = -1.0f;
         m_bCameraPathPlay = false;
+#if NORVES_BUILD_DEVELOPMENT
+        m_CameraPathCaptureTime = -1.0;
+        m_CameraPathCapture = {};
+        m_CameraPathCapturePngPath = {};
+        m_CameraPathCaptureWaitedFrames = 0;
+#endif
         m_BananaCount = Game::GameModes::kDefaultBananaCount;
         m_bBananaCountSet = false;
         m_StressEntityCount = Game::GameModes::kDefaultStressEntityCount;
@@ -1220,6 +1260,13 @@ namespace Game
                     return false;
                 }
                 m_CameraPathTime = pathTime;
+#if NORVES_BUILD_DEVELOPMENT
+                if (!TryParsePathCaptureTime(sceneValue, m_CameraPathCapture.StartTimeSeconds))
+                {
+                    LOG_ERROR("--camera-path-time の秒数を読み取れません");
+                    return false;
+                }
+#endif
                 continue;
             }
             if (TryStripPrefix(args[i], kBananaCountOption, sceneValue))
@@ -1810,6 +1857,34 @@ namespace Game
             if (args[i] == kStressBatchCellsOption)
             {
                 m_bStressBatchCells = true;
+                continue;
+            }
+            if (args[i] == TEXT("--camera-path-capture-time"))
+            {
+#if NORVES_BUILD_DEVELOPMENT
+                LOG_ERROR("--camera-path-capture-time は = に続けて秒数を指定してください");
+                return false;
+#else
+                LOG_WARNING("--camera-path-capture-time は開発ビルドだけで使えます。無視します");
+                continue;
+#endif
+            }
+            if (TryStripPrefix(args[i], kCameraPathCaptureTimeOption, sceneValue))
+            {
+#if NORVES_BUILD_DEVELOPMENT
+                if (m_CameraPathCaptureTime >= 0.0)
+                {
+                    LOG_ERROR("--camera-path-capture-time が重複しています");
+                    return false;
+                }
+                if (!TryParsePathCaptureTime(sceneValue, m_CameraPathCaptureTime))
+                {
+                    LOG_ERROR("--camera-path-capture-time は 0 以上の有限の秒数で指定してください");
+                    return false;
+                }
+#else
+                LOG_WARNING("--camera-path-capture-time は開発ビルドだけで使えます。無視します");
+#endif
                 continue;
             }
             if (args[i] == kCameraPathPlayOption)
@@ -2579,6 +2654,30 @@ namespace Game
                 }
             }
         }
+#if NORVES_BUILD_DEVELOPMENT
+        if (m_CameraPathCaptureTime >= 0.0)
+        {
+            if (bCaptureHdr || bCaptureAov || !m_CaptureViewsRequest.empty() || !captureSequencePrefix.empty())
+            {
+                LOG_ERROR("--camera-path-capture-time は --capture-hdr・--capture-aov・--capture-views・--capture-sequence と併用できません");
+                return false;
+            }
+            if (!m_bCameraPathPlay || capturePngPath.empty())
+            {
+                LOG_WARNING("--camera-path-capture-time は --camera-path-play と --capture-png が必要です。無視します");
+                m_CameraPathCaptureTime = -1.0;
+            }
+            else if (m_CameraPathCaptureTime < m_CameraPathCapture.StartTimeSeconds)
+            {
+                LOG_ERROR("--camera-path-capture-time は --camera-path-time 以上にしてください");
+                return false;
+            }
+            else
+            {
+                m_CameraPathCapturePngPath = capturePngPath;
+            }
+        }
+#endif
         if (!m_CaptureViewsRequest.empty())
         {
             if (capturePngPath.empty())
@@ -2596,6 +2695,15 @@ namespace Game
         {
             return false;
         }
+#if NORVES_BUILD_DEVELOPMENT
+        if (m_CameraPathCaptureTime >= 0.0 &&
+            !Scenes::SceneTextEquals(m_StartupSceneId.c_str(), Scenes::kMegaBananasSceneId))
+        {
+            LOG_WARNING("--camera-path-capture-time は mega-bananas で使えます。このシーンでは無視します");
+            m_CameraPathCaptureTime = -1.0;
+            m_CameraPathCapturePngPath = {};
+        }
+#endif
         if (!m_CaptureViewNames.empty())
         {
             // 保存先は --capture-png のパスのフォルダ（区切りが無ければ作業ディレクトリ）
@@ -3372,6 +3480,40 @@ namespace Game
 
     void GameApplicationHandler::OnPostRender()
     {
+#if NORVES_BUILD_DEVELOPMENT
+        if (m_CameraPathCapture.bWaitingResult && !m_CameraPathCapture.bFinished &&
+            NorvesLib::Core::Engine::GEngine)
+        {
+            NorvesLib::Core::Rendering::CapturedFrame capturedFrame;
+            auto &renderWorld = NorvesLib::Core::Engine::GEngine->GetRenderWorld();
+            if (renderWorld.TryConsumeCapturedFrame(capturedFrame))
+            {
+                m_CameraPathCapture.bWaitingResult = false;
+                m_CameraPathCapture.bFinished = true;
+                if (!Game::Debug::SaveCapturedFramePng(capturedFrame, m_CameraPathCapturePngPath))
+                {
+                    LOG_ERROR_F("CAMERA_PATH_CAPTURE PNG の保存に失敗しました status=%u format=%u width=%u height=%u path=%s",
+                                static_cast<unsigned int>(capturedFrame.Status),
+                                static_cast<unsigned int>(capturedFrame.Format), capturedFrame.Width,
+                                capturedFrame.Height, m_CameraPathCapturePngPath.c_str());
+                    NorvesLib::Core::Engine::GEngine->RequestExit(1);
+                }
+                else
+                {
+                    LOG_INFO_F("CAMERA_PATH_CAPTURE_FRAME time=%.4f mode=played", m_CameraPathCaptureTime);
+                    LOG_INFO("CAMERA_PATH_CAPTURE RequestExit code=0 保存後に終了します");
+                    NorvesLib::Core::Engine::GEngine->RequestExit(0);
+                }
+            }
+            else if (++m_CameraPathCaptureWaitedFrames > 120)
+            {
+                LOG_ERROR("CAMERA_PATH_CAPTURE 120 フレーム待っても撮影結果が届きません");
+                m_CameraPathCapture.bWaitingResult = false;
+                m_CameraPathCapture.bFinished = true;
+                NorvesLib::Core::Engine::GEngine->RequestExit(1);
+            }
+        }
+#endif
         if (m_SequenceFrameCapture.IsEnabled() && NorvesLib::Core::Engine::GEngine)
         {
             m_SequenceFrameCapture.OnPostRender(NorvesLib::Core::Engine::GEngine->GetRenderWorld());
@@ -3547,6 +3689,11 @@ namespace Game
     {
         // --capture-views は撮り終えるまで、ApplicationProcessor の --capture-png の撮影と終了を止めておく
 #if NORVES_BUILD_DEVELOPMENT
+        // パスの指定時刻の撮影が終わるまで、ApplicationProcessor の撮影を待たせる。
+        if (m_CameraPathCaptureTime >= 0.0 && !m_CameraPathCapture.bFinished)
+        {
+            return true;
+        }
         // --geom-settle-trace は、記録を書き終えるまで撮影と終了を止める
         if (m_GeometrySettleTrace.IsHolding())
         {
@@ -3948,6 +4095,9 @@ namespace Game
         stateMachine->Registry().Register(
             MegaBananas,
             [viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath, pathTime = m_CameraPathTime,
+#if NORVES_BUILD_DEVELOPMENT
+             captureTime = m_CameraPathCaptureTime, pathCapture = &m_CameraPathCapture,
+#endif
              bPathPlay = m_bCameraPathPlay, bananaCount = m_BananaCount, bShowInfo = m_bOpenSceneInfo,
              pauseMenu = &m_PauseMenu, viewSwitch = &m_SceneViewSwitch,
              getAssetSystem = [this]() { return GetAssetSystemSnapshot(); }](const GameModeParams&)
@@ -3958,6 +4108,10 @@ namespace Game
                 mode->GetData().m_CameraScriptPath = scriptPath;
                 mode->GetData().m_CameraPathTime = pathTime;
                 mode->GetData().m_bCameraPathPlay = bPathPlay;
+#if NORVES_BUILD_DEVELOPMENT
+                mode->GetData().m_CameraPathCaptureTime = captureTime;
+                mode->GetData().m_pCameraPathCapture = pathCapture;
+#endif
                 mode->GetData().m_BananaCount = bananaCount;
                 mode->GetData().m_bShowInfoAtStart = bShowInfo;
                 mode->GetData().m_pPauseMenu = pauseMenu;

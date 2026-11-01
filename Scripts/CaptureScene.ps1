@@ -30,6 +30,8 @@
 # Game は (-GpuTimingFrames + ウォームアップ + 末尾の2 + -TimingReadyMarginFrames) の描画フレームの後に撮って終わる
 # （--exit-after-rendered-frames）。余白 -TimingReadyMarginFrames は SceneReady までに要するフレーム数以上にする
 # （足りないと窓が SceneReady より前に入るので、標本が足りないとして失敗にし、要るフレーム数を示す。重いシーンは大きくする）。
+# camera-path-capture-time の指定時は Game がその時刻の Tick を撮る。SceneReady 後の標本が足りない時刻は起動前に拒否し、
+# ApplicationProcessor の撮影と終了までの余白に、指定時刻までの Tick 数と結果待ちを足す。
 # トレースの FrameGPU（GPU のタイムスタンプで測ったフレームの区間）の窓の中央値・平均・95 パーセンタイル・最大と、パスごとの
 # 中央値を gpu_timing として metrics.json へ書く。視点ごとに、シーンが出した配置の数（placed_count。MEGA_STRESS_PLACED・
 # MEGA_BANANAS_PLACED の行）、SceneReady のフレーム（scene_ready_frame）、計測の開始のフレーム（timing_start_frame。
@@ -250,6 +252,60 @@ foreach ($gameArgument in $GameArgs)
         if ($trimmed -ne '')
         {
             $extraArguments += "--$trimmed"
+        }
+    }
+}
+# 計測の窓から外す、末尾の撮影のフレームの直前のフレーム数
+$timingTailFrames = 2
+$pathCaptureFrames = $null
+$hasPathCaptureTime = [bool]($extraArguments | Where-Object { $_ -clike '--camera-path-capture-time=*' })
+if ($GpuTimingFrames -gt 0 -and $hasPathCaptureTime)
+{
+    $pathCaptureTime = $null
+    $pathStartTime = 0.0
+    $pathStartSeen = $false
+    foreach ($argument in $extraArguments)
+    {
+        if ($argument -cmatch '^--camera-path-capture-time=(.*)$')
+        {
+            $value = 0.0
+            if ($null -ne $pathCaptureTime -or
+                -not [double]::TryParse($Matches[1], [System.Globalization.NumberStyles]::Float, $invariant, [ref]$value) -or
+                [double]::IsNaN($value) -or [double]::IsInfinity($value) -or $value -lt 0.0)
+            {
+                Write-Output 'CAPTURE_SCENE result=fail reason=invalid_camera_path_capture_time（撮影時刻は 0 以上の有限の数を 1 回だけ指定する）'
+                exit 1
+            }
+            $pathCaptureTime = $value
+        }
+        elseif ($argument -cmatch '^--camera-path-time=(.*)$')
+        {
+            $value = 0.0
+            if ($pathStartSeen -or
+                -not [double]::TryParse($Matches[1], [System.Globalization.NumberStyles]::Float, $invariant, [ref]$value) -or
+                [double]::IsNaN($value) -or [double]::IsInfinity($value) -or $value -lt 0.0)
+            {
+                Write-Output 'CAPTURE_SCENE result=fail reason=invalid_camera_path_time（開始時刻は 0 以上の有限の数を 1 回だけ指定する）'
+                exit 1
+            }
+            $pathStartSeen = $true
+            $pathStartTime = $value
+        }
+    }
+    if ($null -ne $pathCaptureTime)
+    {
+        $pathTicks = [math]::Ceiling(($pathCaptureTime - $pathStartTime) * 60.0)
+        if ($pathCaptureTime -lt $pathStartTime -or $pathTicks -gt ([uint32]::MaxValue - 120 - $GpuTimingFrames - $TimingWarmupFrames - $timingTailFrames - $TimingReadyMarginFrames))
+        {
+            Write-Output 'CAPTURE_SCENE result=fail reason=invalid_camera_path_capture_interval（撮影時刻は開始時刻以上とし、Tick 数を指定可能な範囲にする）'
+            exit 1
+        }
+        $pathCaptureFrames = [long]$pathTicks
+        $requiredPathFrames = $GpuTimingFrames + $TimingWarmupFrames + $timingTailFrames
+        if ($pathCaptureFrames -lt $requiredPathFrames)
+        {
+            Write-Output "CAPTURE_SCENE result=fail reason=camera_path_capture_too_early（SceneReady の後の Tick 数 $pathCaptureFrames が、標本・ウォームアップ・末尾に必要な $requiredPathFrames に足りない）"
+            exit 1
         }
     }
 }
@@ -888,9 +944,6 @@ if (-not (Test-Path -LiteralPath $gamePath))
 $failures = @()
 $results = @()
 $gameLogPath = Join-Path $repoRoot 'Game.log'
-# 計測の窓から外す、末尾の撮影のフレームの直前のフレーム数
-$timingTailFrames = 2
-
 # Game の起動の列。1 回の起動（run）が 1 つ以上の視点（Shots）を撮る。
 #   視点ごとの起動: Label は視点の名前で、Shots は 1 つ。-Views を省いたときは、既定の視点の起動の報告（views=）で残りの起動を足す。
 #   1 回の起動で複数の視点（--capture-views）: Label は views。-Views を省いたときは Game が報告に書く capture_views= で Shots を決める。
@@ -965,7 +1018,12 @@ for ($runIndex = 0; $runIndex -lt $runs.Count; ++$runIndex)
         # 実時間の計測: 決定的な撮影にせず、トレースを取って決まった描画フレーム数の後に撮る
         Remove-Item -LiteralPath $tracePath -Force -ErrorAction SilentlyContinue
         $arguments += "--trace-file=`"$tracePath`""
-        $arguments += "--exit-after-rendered-frames=$($GpuTimingFrames + $TimingWarmupFrames + $timingTailFrames + $TimingReadyMarginFrames)"
+        $exitRenderedFrames = $GpuTimingFrames + $TimingWarmupFrames + $timingTailFrames + $TimingReadyMarginFrames
+        if ($null -ne $pathCaptureFrames)
+        {
+            $exitRenderedFrames += $pathCaptureFrames + 120
+        }
+        $arguments += "--exit-after-rendered-frames=$exitRenderedFrames"
     }
     else
     {
