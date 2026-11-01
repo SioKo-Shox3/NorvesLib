@@ -8340,8 +8340,26 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: SCN-RENDER-ROUGH-STEEP-ENERGY への申し送り（`occlusion-accept.json` の前の記録の置き直し）: 今の `baseline_engine_root`（SCN-WL-SUN-SHADOW-FIX）と一時の下限（0.946・0.957）は古い地形・古い正解の上の値。判定の正解を新しい正解へ替えるときは、同じ変更で前の記録も版 18 の地形の撮影（この項目の `.harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY-P2`、Game.exe eb5b8edf…）へ置き直し、その層の 2 行を 1 ± 0.03 へ戻して一時の印を消す。置き直した理由（地形の版 15 → 18 と正解の描き直し）と前後の値を WastelandOcclusion.md に書く。この項目では `occlusion-accept.json` を変えていない
 - Notes: 単位の作業ツリー `NorvesLib-5-u1` は build が無かったので、freetype の初期化・cmake の構成・Game のビルド（初回 420 秒）をし、`Assets/Terrain`・`build/CookedAssets`・置き場 2 つを本体への junction にした
 - Notes: SCN-RENDER-ROUGH-STEEP-ENERGY-P2 の再検証はリポジトリ直下の枠 `NorvesLib-5` で回るが、そこに build と資産の junction が無くビルドの行が落ちた。枠にも freetype の初期化・cmake の構成・Game の RelWithDebInfo のビルド（458 秒、EXIT=0）をし、`Assets/Terrain`・`build/CookedAssets`・置き場 2 つ（SCN-RENDER-ROUGH-STEEP-ENERGY-P2・SCN-WLR-OCCLUSION-SETS）を本体への junction にした。枠のビルド行は EXIT=0、最後の判定 `ReferenceCheck.py --occlusion ... --verify` は今の置き場で `result=pass`（`.harness/runs/20261101-235006/env-verify-1.txt`・`env-verify-check.txt`）。枠の Game.exe は 87eed2a7…で単位の作業ツリーの eb5b8edf…と別のビルドなので、再検証で 8 組の撮影と Cycles の正解は枠の Game.exe で描き直される（地形の書き出しは焼いた資産から作るので版 18 のまま。照合は地形の一覧のハッシュで行う）
+
 ## 2026-11-02 SCN-MEGA-ACCEPT-1M-P1（run 20261101-234959 の反復 7、統合ブランチの取り込み）
 - Done: `feature/scene-launcher` を取り込み、`SceneLauncherAcceptance.md` の衝突は両側の節を残して解いた（統合側の「10-14 からの静止の GPU の増え」を前の節の下に、この項目の「カメラパスの再生の RTGI の粒（50000 本）」をその後に置く）。取り込んだ差はエンジンのコードとシェーダーに触れない（試験の設定・文書・`OcclusionSets.py`）。
 - verify: Game のビルド EXIT=0、再生と静止の撮影とも EXIT=0・result=pass、`RtgiGrain.py` は floor_near_bananas の比 1.245（上限 1.500）で pass、`CheckCaptureMetrics.py` pass、回帰の動きの撮影 pass（5 シーン）、基準画像の試験 2 本 Passed。再生の LightingPass の GPU は median 4.122 ms・p95 4.359 ms。再生の horizon.png を開き、手前のバナナの周りの床に粒の荒い暈が無いことを見た。
 - 証拠: `.harness/runs/20261101-234959/merge-verify-*.txt`、`.harness/runs/scene-capture/SCN-MEGA-ACCEPT-1M-P1/`、`.harness/runs/regression/SCN-MEGA-ACCEPT-1M-P1/after/`
 - Notes: 比 1.245 は採用時の同視点の 1.009 より大きい。実時間の保存フレームの時刻が走らせるたびに揺れ、静止の 9.27 秒と視点がずれるため（受入れ文書の既知の限界のとおり）。
+- U1 粒の量を測る RtgiGrain.py と判定の仕様を置く: 着地(直し 0 回)
+- U2 履歴の棄却と年齢の開発用 AOV を足し、直す前の撮影と診断をする: 着地(直し 2 回)
+- U3 RtgiGrain の測り方を床だけに絞り、直す前の比を確かめる: 着地(直し 1 回)
+- U4 カメラだけが動くフレームの拡散の履歴の年齢の上限を 32 にし、直した後の再生と静止を撮る: 着地(直し 2 回)
+- U6 拡散の履歴の読みをバイリニアに戻し、カメラだけの動きの年齢の上限を帯の粒で選び直す: 着地(直し 0 回)
+- U8 カメラだけが動くフレームは空間のフィルタの近傍の重みを年齢で下げない: 着地(直し 0 回)
+- U7 直した後の回帰・golden・判定を通し、受入れ文書を仕上げる: 着地(直し 0 回)
+## 2026-11-02 SCN-MEGA-ACCEPT-1M-P1（run 20261101-234959 の反復 5、完了）
+- Done: カメラパスの再生（50000 本）でバナナの周りと床に出た RTGI の粒の荒い暈を直した。原因は、カメラが動くと静止の署名が毎フレーム変わって履歴の年齢の上限が 8 に留まること（暈の床の 98.6% が履歴を採用・87% が年齢 8、静止は 51〜52）と、空間のフィルタが年齢 8 超の近傍の重みを下げる静止向けの作り。シーンが同じでカメラだけが動くフレームは拡散の年齢の上限を 16（鏡面は 8、履歴は棄却つきバイリニア）にし、空間のフィルタの近傍の重みを年齢で下げない。棄却の閾値と静止の判定は変えていない。履歴の診断の AOV（開発ビルドの `NORVES_RTGI_HISTORY_DIAG=1`）と `Scripts/RtgiGrain.py`・`rtgi-grain-motion.json` を足した
+- verify: RelWithDebInfo の Game ビルド exit 0。再生（保存フレームの時刻 T=8.087 秒）・静止 9.27 秒・時刻を合わせた静止 8.087 秒の撮影は全部 `CAPTURE_SCENE result=pass`。RtgiGrain の比 1.318（verify の固定の組）・1.307（時刻を合わせた組）、直す前 2.114、視点を合わせた診断の組で直す前 1.343 → 1.009。`CHECK_CAPTURE_METRICS result=pass`、LightingPass median/p95 4.181/4.339 → 4.147/4.337 ms。回帰の after -Motion は 5 組 `CAPTURE_REGRESSION result=pass`。golden Indoor・Outdoor は Passed（raw_max=0、再承認なし）。material-gallery は撮れて崩れなし
+- 開いた画: 診断の拡大の前後と静止の比べ（直した版の床の粒が静止に近い）、回帰の前後の並べ（尾・二重の輪郭・ちらつきの増加なし）
+- 証拠: `.harness/runs/20261101-234959/` の反復の記録、単位の作業ツリーの `.harness/unit-verify.txt`、受入れ文書 `SceneLauncherAcceptance.md` の「直した後」
+- Notes: 判定の帯の弁別は弱い（直す前の視点を合わせた組も 1.343 で上限 1.5 以下）。再生の保存フレームの時刻は走らせるたびに 7.97〜9.27 秒で揺れ、verify の静止は 9.27 秒に固定。縁 ±12 画素の床の輝度の差の平均が −0.000246 → −0.000610 と少し暗い側に寄る
+- Notes: 要起票: CaptureScene の再生の保存フレームのパスの時刻を固定する（`camera-path-play` で保存の時刻を指定できないため、再生と静止の組が毎回ずれる）
+### SCN-MEGA-ACCEPT-1M-P1(再検証の差し戻しへの対応)
+- Done: 枠に build が無く再検証の 1 行目が落ちていたため、枠で構成し直した(freetype の submodule・テスト有効の構成・CookedAssets と Assets/Terrain をメインへのジャンクション・回帰の before を同じ項目の撮影から写す)。verify 全 8 行がこの枠で EXIT=0: RtgiGrain の比 1.304(上限 1.5)、LightingPass の計測合格、回帰 5 シーン合格、golden 2/2 合格。コードの変更なし
+- Notes: 要起票: relay の枠(.slots/NorvesLib-4)は単位の作業ツリーだけで作業するため build・資産のジャンクションが無く、ランナーの再検証が落ちる。枠の初期化で揃える形にするかを決める
