@@ -8414,3 +8414,16 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Done: 一時の下限を 0.940・0.951 にした期待値で、撮影済みの 16 本（ce0bf2f7・Game.exe 798a708e…・崖の細部の版 18）の判定は result=pass（`.harness/runs/20261102-064738/verify-SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1.txt`、盤面の枠 NorvesLib-5）。`InteriorLightReference.md` の VERIFY-OCC の表は aed4096b で今の値に書き直し済み。項目を done にした。
 - Next: 起動の確かめは後回し（人の決まりで当分アプリを起動しない）。盤面の確かめのタスク SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1-CHECK で、16 本の撮影（on/off × 8 組）と `ReferenceCheck.py --occlusion --off-root --verify` を回し、全行が範囲内か、範囲の外の行が off でも外で悪化 0.005 以内か、遠い急な崖の対照 2 行が 0.940・0.951 を超えるかを確かめる。
 - Notes: 前の反復の後のランナーの再実行では、枠 NorvesLib-5 の rocks-sun（off）の撮影が CAPTURE_SCENE exit_code=-1（208.7 秒）で落ちた。描画の経路はこの項目で変えていないので、枠の環境か撮影の不安定さの見込み。CHECK で再び落ちたら、その撮影のログ（`off/rocks-sun/`）を先に見る。
+
+## 2026-11-02 G2-GR82-V1-REST-POSE-GUARD（run 20261102-075121 の反復 1、完了）
+- Done: clip 作成時の rest snapshot・束縛時の差の検査(既定で拒否、明示の許可で通す、差の量と超過した関節の報告)は G2-GR82-B1/B2/B3 の既存実装で満たされていることを確かめ、元の verify の各項目と既存の試験の行・マーカーの対応を TASKS.md の result に書いた。実装・試験の変更なし
+- verify: `cmake -B build -S . -DNORVES_BUILD_TESTS=ON` の後、`cmake --build build --config Debug --target CookedMeshTest -- -m:1` が EXIT=0・エラー 0(CookedMeshTest.exe を生成)
+- Next: 起動の確かめは後回し。CookedClipBankV1Test・SkeletalClipBankBindingTest・RigSplitCookTest の Debug の ctest を G2-GR82-V1-REST-POSE-GUARD-CHECK で回す
+- Notes: 作業ツリーの build/ は NORVES_BUILD_TESTS=OFF(既定)で構成されており、verify のビルドの前に試験を有効にした構成が要る
+
+## 2026-11-02 G2-GR82-V1-REST-POSE-GUARD（run 20261102-075121 の反復 2、完了）
+
+- Done: 反復 1 の verify の再実行の失敗(CookedMeshTest.vcxproj が無い)は、この作業ツリーの build/ が NORVES_BUILD_TESTS=OFF で構成されていたため。`cmake -B build -S . -DNORVES_BUILD_TESTS=ON` で構成し直した。実装・試験の変更なし
+- verify: `cmake --build build --config Debug --target CookedMeshTest -- -m:1` が EXIT=0・エラー 0(build/Test/Core/Asset/Debug/CookedMeshTest.exe を生成)
+- Next: 起動の確かめは後回し。3 本の Debug の ctest は G2-GR82-V1-REST-POSE-GUARD-CHECK で回す
+- Notes: 要起票: 枠の build/ が試験なしの構成に戻ると、試験の target を verify にする項目が同じ形で落ちる
