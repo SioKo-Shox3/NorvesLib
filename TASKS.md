@@ -4334,3 +4334,13 @@
 - verify: `python -c "import re,sys; t=open(sys.argv[1],encoding='utf-8',errors='replace').read(); r=t.find('SCENE_READY scene=mega-bananas'); b=[m.start() for m in re.finditer('asset settle baseline rendered=',t)]; sys.exit(0 if r>=0 and b and b[-1]>r else 1)" .harness/runs/scene-capture/SCN-MEGA-FIX-TLAS-REBUILD-P3/path/horizon.Game.log`
 - paths: Library/Core/Private/Engine/ApplicationProcessor.cpp, Scripts/CaptureScene.ps1, TASKS.md, PROGRESS.md
 - from: SCN-MEGA-FIX-TLAS-REBUILD-P3
+
+## SCN-MEGA-FIX-TLAS-REBUILD-CHECK: TLAS を、インスタンスの顔ぶれが替わったら作り直す(後回しにしたアプリの起動の確かめ)
+- status: todo
+- check: launch
+- gpu: exclusive
+- done-when: SCN-MEGA-FIX-TLAS-REBUILD で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、SCN-MEGA-FIX-TLAS-REBUILD の done-when を満たすことを確かめる。満たさなければ SCN-MEGA-FIX-TLAS-REBUILD の done-when と paths の範囲で直す。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -Views horizon -Build -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -TimeoutSeconds 1800 -GameArgs banana-count=1000000,camera-path-play,camera-path-time=0 -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-TLAS-REBUILD/path`
+- verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-FIX-TLAS-REBUILD/path --views horizon --timing --min-frames 300 --require-pass LightingPass --max-pass-median-ms LightingPass=4.4 --max-pass-p95-ms LightingPass=5`
+- paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Library/Core/Private/RHI, Library/Core/Public/RHI, TASKS.md, PROGRESS.md
+- from: SCN-MEGA-FIX-TLAS-REBUILD
