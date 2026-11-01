@@ -8373,3 +8373,29 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: 単位の作業ツリー `NorvesLib-3-u1` の `.harness/unit-verify.txt` と `.harness/runs/scene-capture/SCN-MEGA-ACCEPT-1M-P1-P1/`
 - Notes: 比 1.420 は前の時刻の揃わない組（1.245〜1.318）・同じ視点の診断（1.009）より高く、上限との余白が小さい。固定刻みは実時間の再生（撮影の直前は約 13.75 ms/Tick）より 1 フレームあたりの動きが約 1.21 倍大きいのが候補だが、速さだけを変えた比べはしていない（受入れ文書に記録）
 - Notes: 要起票: 時刻を固定した組の比 1.420 が上がった原因（固定刻みの 1 フレームあたりの動きか）を、刻みを実時間の Tick の頻度に合わせた撮影と比べて切り分ける
+
+- U1 BandingCheck に視点が違っても使える判定を足す: 着地(直し 0 回)
+- U2 done-when の視点を撮り直して段を判定し、記録する: 着地(直し 1 回)
+### SCN-FIX-SKY-BANDING mega シーンの空の横縞を撮り直して判定する（2026-10-29、run 20261029-134608 の反復 1）
+- Done: 段の出所は表示の 8 bit の丸めにディザが無いこと（SCN-WL-CLOUD-BANDING で特定し、`Assets/Shaders/blit.frag` の Blit のディザで直した）。今の HEAD で done-when の視点（mega-stress overview の既定・100万本 + 5万個 1% 移動、mega-bananas 100万本のカメラパス再生中の horizon）を RelWithDebInfo で撮り直し、10-14 の SCN-MEGA-ACCEPT-1M の撮影と比べた。カメラパスは実時間で進み視点が撮影ごとに変わるので、`Scripts/Terrain/BandingCheck.py` に区画の平均の差を合否に使わない `--shorter` を足した。結果を `WastelandCloudRef.md` の新しい節に書いた
+- 結果: 平らな帯の長さ（平均・95 % 点・最大）moving 7.318・10・56 → 2.833・7・40、streaming → 既定 overview 7.317・10・56 → 2.836・7・40、path 8.714・19・64 → 2.823・8・39。隣の差 1 段以下の割合 1.000 → 0.999（最大 2）。3 組とも `--shorter` pass。起動画面 default の決定的撮影の比較 pass（平均輝度差 0、PSNR 67.894 dB）。描画の変更は無いので基準画像の再承認は無し
+- 証拠: `.harness/runs/20261029-134608/verify-SCN-FIX-SKY-BANDING-U2.txt`（撮影 3 本と起動画面 2 本の result=pass・EXIT=0、BandingCheck 3 組 result=pass）。撮影 `.harness/runs/scene-capture/SCN-FIX-SKY-BANDING{,-moving,-path}/` と各 `banding/banding_zoom.png`。moving の overview・path の horizon の全体と、moving の空の等倍の前後の切り出し、拡大の見比べを開いて確かめた（前の等高線の段が後は細かな雑音になる）
+- Notes: 「隣の差が 1 段以下」は、ディザの雑音で隣の画素が逆向きへ丸まる所の 2 段を許し、割合 ≥ 0.995・最大 ≤ 2 と読んで判定した。縮小して見た全体で空に残るゆるい横の濃淡は縮小表示での見え方で、ぼかした残差は 1 段未満（等倍の切り出しで段は無い）。path の horizon は撮り直しの地平線が約 280 行なので上 260 行で測った。新しい試験は足していない
+- Next: TASKS.md の次の未完
+- U3 表示のディザを隣の閾値の差が有界な IGN に替える: 着地(直し 0 回)
+- U4 --shorter の隣の差を最大 1 段に締める: 着地(直し 0 回)
+- U6 表示のディザを縦の閾値の差が上り下りで釣り合う格子に替える: 着地(直し 0 回)
+- U7 done-when の視点を撮り直して判定し、記録を書き直す: 着地(直し 0 回)
+### SCN-FIX-SKY-BANDING 隣の画素の差を 1 段に収めて閉じる（2026-10-29、run 20261029-134608 の反復 2）
+- Done: 差し戻し（隣の差 2 段が約 0.1 % 残る・streaming の条件で撮っていない）を直した。2 段は、ハッシュのディザで縦の隣の閾値が無相関なため必ず出る。表示の Blit（`Assets/Shaders/blit.frag`）の雑音を、1 画素の分布は一様のまま縦の隣の閾値の差が +0.44 / −0.56 に限られる格子 `fract(0.7548776662 x + 0.44 y)` に替えた（空の縦の勾配は上り・下りとも 0.25 段/画素以下で、余裕 0.19 段以上）。`BandingCheck.py --shorter` を隣の差の最大 1 段に締めた。streaming を ACCEPT-1M と同じ 5 つの引数で撮り直し、記録（`WastelandCloudRef.md` の SCN-FIX-SKY-BANDING の節）を書き直した
+- 結果: 平らな帯の長さ（平均・95 % 点・最大）moving 7.318・10・56 → 1.978・6・33、streaming 7.317・10・56 → 1.978・6・33、path 8.714・19・64 → 2.014・7・33、既定 overview（タスクの verify）7.318・10・56 → 1.975・6・34。4 組とも隣の差の最大 1 段で `--shorter` pass、全列（計 2,507,520 組）でも 2 段以上 0。荒野 ref_far_02 は同じ場面の IGN の撮影と比べ `--no-worse` pass（帯 1.802 → 1.707、区画の平均の差 0.029 段）。起動画面 default は通常の撮影と決定的な 2 回が pass（2 回の比較は平均輝度差 0・PSNR 100 dB）。基準画像の検査（RenderingGolden*）は Blit の後の BackBuffer を撮るので変わり、R1Acceptance.md の節で 4 枚を再承認した
+- 証拠: `.harness/runs/20261029-134608/verify-SCN-FIX-SKY-BANDING-U7.txt`（タスクの verify 2 本を含む撮影 8 本 result=pass・EXIT=0、BandingCheck 4 組 result=pass、全列の数え）。撮影 `.harness/runs/scene-capture/SCN-FIX-SKY-BANDING{,-moving,-streaming,-path,-wasteland}/`、前のディザの撮影は `-hash`・`-ign` を付けて残した。streaming の overview・path の horizon の全体と streaming の `banding/banding_zoom.png` を開いて確かめた（前の等高線の段が後は細かな粒になり、等倍で空に横縞は見えない）
+- Notes: 途中で試した IGN（縦の閾値の差 +0.309 / −0.691）は、空が下へ暗くなる区間で余裕が約 0.1 段しかなく、path の horizon（y≈245）に 2 段が 9 組残った。起動画面の前のハッシュとの参考の比較は平均輝度差 0.0004・PSNR 52.8 dB。新しい試験は足していない
+- Next: TASKS.md の次の未完
+- U8 格子のディザで変わった基準画像 4 枚を再承認する: 着地(直し 1 回)
+- U10 基準画像と縮小表示についての誤った記述を直す(アプリを起動しない): 着地(直し 0 回)
+### SCN-FIX-SKY-BANDING 基準画像の再承認と記録の直しで閉じる（2026-11-02、run 20261102-074959）
+- Done: 表示の Blit の格子のディザで変わる基準画像 4 枚（Indoor・Outdoor と予備の経路 2 枚）を再承認した（816957d8、根拠は R1Acceptance.md の「表示のディザを格子の雑音にした後のIndoor・Outdoor再承認」）。「基準画像の検査は Blit を通らない」の誤りを WastelandCloudRef.md と本書で直し、空の段の目視が等倍の話であること・縮小表示のゆるい濃淡（ぼかした残差 0.057 段）は合否にしないことを書いた。
+- 証拠: `.harness/relay/SCN-FIX-SKY-BANDING-U8-verify.txt`（再承認の前に HEAD で 4 本が落ちること、`blit.frag` だけを戻すと差 0、公開後の ctest 4 本 Passed・mean FLIP 0・raw 最大 0）。空の撮り直しと段の判定は 9a6c203d の格子のディザで撮った U7 の記録（`.harness/runs/20261029-134608/verify-SCN-FIX-SKY-BANDING-U7.txt`）で、その後シェーダーは変わっていない。
+- Next: 起動の確かめは後回し（人の決まりでアプリを起動しない）。SCN-FIX-SKY-BANDING-CHECK でタスクの verify 2 本（mega-stress overview の撮影・起動画面 default の撮影）を回し、overview.png を等倍で開いて空に段が無いことを確かめる。
+- Notes: 縮小表示でだけ見えるゆるい縞は人の判断でこの項目の合否にしない。
