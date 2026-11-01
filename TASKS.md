@@ -4307,3 +4307,10 @@
 - verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 180 -R "^(ImportTransformTest|ImportSettingsValueTest|ImportSettingsJsonTest|ImportStaticIntegrationTest|CookedSkeletalAssetTest)$"`
 - paths: Library/Core/Private/Resource/ImportTransform.cpp, Library/Core/Private/Resource/ImportTransform.h, Library/Core/Private/Resource/ImportSettings.cpp, Library/Core/Private/Resource/ImportSettingsJson.cpp, Test/Core/Asset/ImportTransformTest.cpp, Test/Core/Asset/ImportSettingsValueTest.cpp, Test/Core/Asset/ImportSettingsJsonTest.cpp, Test/Core/Asset/ImportStaticIntegrationTest.cpp, Docs/Architecture/ImportSettings.md, TASKS.md, PROGRESS.md
 - from: G2-GR78-SURFACE-CENTROID
+
+## G2-GR78-SURFACE-CENTROID-CHECK-P1: CookedSkeletalAssetTest の「警告:」の照合を、コンソールのコードページに関わらず通す
+- status: todo
+- done-when: CookedSkeletalAssetTest.cmake.in で AssetCook の出力を受ける execute_process が、出力を UTF-8 として読む(ENCODING UTF-8 を付けるか、台本の頭で CMP0176 を NEW にする)。これにより「警告:」の照合(reduce・cubic・morph の 3 か所)が、コードページ 932 のコンソールでも 65001 のコンソールでも通る。照合の文字列と合否の条件は変えない。
+- verify: `cmd /c "chcp 932 >nul && ctest --test-dir build -C Debug --output-on-failure --timeout 180 -R CookedSkeletalAssetTest && chcp 65001 >nul && ctest --test-dir build -C Debug --output-on-failure --timeout 180 -R CookedSkeletalAssetTest"`
+- paths: Test/Core/Asset/CookedSkeletalAssetTest.cmake.in
+- from: G2-GR78-SURFACE-CENTROID-CHECK
