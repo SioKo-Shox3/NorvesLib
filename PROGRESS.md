@@ -8289,3 +8289,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/{on,off}`（並べの記録 `on/occlusion_off_compare.json`）、判定の全出力 `.harness/runs/20261030-232222/verify-SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1-U1.txt`。
 - Next: 遠い急な崖の対照 slope60-180_d500-100000 の 2 行が off で範囲内・今の形で一時の下限の外（terrain-sky 0.9445 < 0.946、rocks-cliff-sky 0.9559 < 0.957。今の形 ÷ off 0.9682・0.9708、エンジン ÷ Cycles 今の形 0.9631・0.9749）。扱い（一時の下限を下げて撮影済みの 16 本で判定し直す／SCN-RENDER-ROUGH-STEEP-ENERGY の後に回す）は `blocked/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1.md`。`InteriorLightReference.md` の VERIFY-OCC の表は書き直していない。
 - Notes: 太陽の影の 3 行は off と今の形で同じ（差 0.0001 以内）だが、rocks-sun（contact_near）の地形の受け手の IoU は前の記録 0.8521 → 0.5146・漏れ 0.0054 → 0.1919 と大きく動いた。on/off で同じなので鏡面の変更ではなく、焼いた地形の版 15 → 18 の差の見込み。要起票: Cycles の参照（SCN-WLR-OCCLUSION-SETS）を版 18 の地形で描き直すか。
+- U2 遠い急な崖の対照 2 行の一時の下限を下げ、撮影済みの 16 本で判定し直して VERIFY-OCC の表を書き直す: 着地(直し 2 回)

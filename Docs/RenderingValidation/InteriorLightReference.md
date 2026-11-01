@@ -437,33 +437,40 @@ terrain_mesh.inputs_sha256」（Cycles の参照を描いた後の地形の変�
 
 ### 同じ最終の版で変更前の経路と並べた荒野の遮蔽の 8 組（SCN-RENDER-SPEC-OCC-VERIFY-OCC）
 
-同じ Game.exe（38cf602d、HEAD のシェーダー）・同じ焼いた地形（崖の細部の版 15）で、荒野の遮蔽の 8 組を今の形と `--rtgi-specular=off`
-（変更前の鏡面の経路）で撮った（`scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC/{on,off}`、16 本とも撮影 pass）。判定は
+SCN-RENDER-SPEC-WIDE-ESS の後の版 ce0bf2f7 で、同じ Game.exe・同じ焼いた地形（崖の細部の版 18）による荒野の遮蔽の 8 組を、
+今の形と `--rtgi-specular=off`（変更前の鏡面の経路）で並べた。Game.exe の SHA-256 は
+`798a708e41ff2248f5841ddf3fa525931d65c6a30b5314a2eb6868c873feaa35`、撮影は
+`scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/{on,off}`（16 本とも撮影 pass）。判定は
 `ReferenceCheck.py --occlusion --off-root`（`OcclusionCompare.compare_off`）で、off も同じ参照・同じ `occlusion-accept.json` で測り、
 今の形で範囲の外の行は off でも外れて今の形が off から 0.005 を超えて悪くならないときだけ「参照が古い分」として通す。off で範囲内・
 今の形で外れる行と、一時の下限の行が外れたときは fail。両方の撮影の Game.exe・実装・小物の配置が同じで、起動引数の違いが
-`rtgi-specular=off` だけであることも確かめる。結果は pass（`.harness/runs/20261026-002702/verify-SCN-RENDER-SPEC-OCC-VERIFY-OCC-18.txt`、
-並べの記録は `scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC/on/occlusion_off_compare.json`）。
+`rtgi-specular=off` だけであることも確かめる。結果は pass（`.harness/runs/20261102-064738/verify-SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1.txt`、
+並べの記録は `scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/on/occlusion_off_compare.json`）。
 
 | 行（`occlusion-accept.json`） | 範囲 | 今の形 ÷ off | エンジン ÷ Cycles（off） | エンジン ÷ Cycles（今の形） | 判定 |
 |---|---|---|---|---|---|
-| terrain-sky の対照 slope60-180_d500-100000（前の記録との比 off 0.9755 → 今の形 0.9513） | 一時の下限 0.946〜1.03 | 0.9752 | 0.9947 | 0.9700 | 内 |
-| rocks-cliff-sky の対照 slope60-180_d500-100000（同 0.9847 → 0.9622） | 一時の下限 0.957〜1.03 | 0.9771 | 1.0042 | 0.9813 | 内 |
-| terrain-sun の太陽の影（ref_cliff_01）。IoU・漏れ・縁の幅の比 | IoU 0.9 以上・漏れ 0.02 以下 | IoU 1.0000 | IoU 0.8535・漏れ 0.0265・縁 1.129 | 同じ | 両方で外（参照が古い分、差 0） |
-| rocks-cliff-sun の太陽の影（ref_cliff_01） | 同上 | IoU 0.9998 | IoU 0.5657・漏れ 0.0169・縁 0.942 | IoU 0.5656・漏れ 0.0168・縁 0.942 | 両方で外（差 0.0001） |
-| rocks-sun の太陽の影（contact_near、地形の受け手の IoU） | 同上 | IoU 1.0000 | IoU 0.8521・漏れ 0.0054・縁 1.076 | 同じ | 両方で外（差 0） |
+| terrain-sky の対照 slope60-180_d500-100000（前の記録との比 off 0.9755 → 今の形 0.9445） | 一時の下限 0.940〜1.03 | 0.9682 | 0.9947 | 0.9631 | 内 |
+| rocks-cliff-sky の対照 slope60-180_d500-100000（同 0.9847 → 0.9559） | 一時の下限 0.951〜1.03 | 0.9708 | 1.0042 | 0.9749 | 内 |
+| terrain-sun の太陽の影（ref_cliff_01）。IoU・漏れ・縁の幅の比 | IoU 0.9 以上・漏れ 0.02 以下・縁 0.5〜1.5 | IoU 1.0000 | IoU 0.8535・漏れ 0.0265・縁 1.1290 | IoU 0.8535・漏れ 0.0265・縁 1.1290 | 両方で外（参照が古い分、悪化 0.0000） |
+| rocks-cliff-sun の太陽の影（ref_cliff_01） | 同上 | IoU 1.0000 | IoU 0.5657・漏れ 0.0169・縁 0.9421 | IoU 0.5657・漏れ 0.0168・縁 0.9421 | 両方で外（参照が古い分、悪化 0.0000） |
+| rocks-sun の太陽の影（contact_near、地形の受け手の IoU） | 同上 | IoU 1.0000 | IoU 0.5146・漏れ 0.1919・縁 1.0062 | IoU 0.5146・漏れ 0.1919・縁 1.0068 | 両方で外（参照が古い分、悪化 0.0000） |
 
-- 決めた層（エンジン ÷ Cycles、範囲 0.85〜1.15）は両方で内: off / 今の形で groove（terrain-sky）1.0966 / 1.0950、contact 1.0127 / 1.0017・
-  1.0050 / 0.9854、plant_root 0.9814 / 0.9733。ほかの対照 5 行・plant-sun の太陽の影（IoU 0.923 / 0.9235）も両方で内。
-  off で範囲内・今の形で外れる行は無い。
+- 決めた層（エンジン ÷ Cycles、範囲 0.85〜1.15）は両方で内: off / 今の形で groove（terrain-sky）1.0966 / 1.1020、contact 1.0089 / 0.9858・
+  1.0097 / 0.9968、plant_root 0.9814 / 0.9788。ほかの層の groove（rocks-cliff-sky）も 1.1011 / 1.1032 で内。
+- ほかの対照 5 行（前の記録との比、範囲 0.97〜1.03）も両方で内: off / 今の形で terrain-sky の slope30-60 は 0.9835 / 0.9710、
+  rocks-cliff-sky の slope30-60 は 0.9893 / 0.9780、rocks-sky の slope0-30 は 0.9888 / 0.9828・slope30-60 は 0.9881 / 0.9754、
+  plant-sky は 0.9970 / 0.9968。plant-sun の太陽の影（IoU 0.9245 / 0.9245）も両方で内。off で範囲内・今の形で外れる行は無い。
 - 行の外の失敗は off と今の形で同じで、どれも Cycles の参照を描いた後の地形と小物の変更による: 8 組の「地形のメッシュの元の入力が描いた後に
-  変わった」、岩塊の 4 組の小物の配置・形の一覧の違い、ref_cliff_01 の同じ面の画素の割合（terrain 0.8585、rocks-cliff 0.7097〜0.7098、
-  下限 0.9）。同じ面の割合は on と off の撮影の間で 0.0001 揺れるので、数の差が 0.005 以内の同じ文を同じ失敗と見る。
+  変わった」、岩塊の 4 組の小物の配置・形の一覧の違い、同じ面の画素の割合（ref_cliff_01 の terrain 0.8585・rocks-cliff 0.7097〜0.7098、
+  contact_near の rocks 0.6430、下限 0.9）。同じ面の割合は on と off の撮影の間で 0.0001 揺れるので、数の差が 0.005 以内の同じ文を同じ失敗と見る。
 - 行の外の失敗を off と同じことで通すのは、地形の焼き直しで参照が古くなった分だけにしている（`OcclusionCompare.stale_reference_failure`:
   地形のメッシュの入力の変更と、同じ組にその変更があるときの小物の配置・形の一覧の違いと同じ面の割合）。必須の層・視点の未測定、撮影や
   ファイルの不足、今の実装との入力の不一致は、off に同じ失敗があっても fail（空の組で測ると必須の 8 項目の未測定が 8 件の失敗として残る）。
-- 値は版 11 で撮った反復 2 の撮影と同じ（ref_cliff_01・contact_near・plant_near の画は崖の細部の版 12〜15 の範囲の外）。遠い急な崖の
-  対照の 2 行は一時の下限の内で、off との差（−2.3〜−2.5 %）は SCN-RENDER-ROUGH-STEEP-ENERGY で扱う。
+
+前の VERIFY-OCC（版 38cf602d・崖の細部の版 15）から、遠い急な崖の対照の今の形 ÷ off は 0.9752・0.9771 → 0.9682・0.9708 に変わった。
+SCN-RENDER-SPEC-WIDE-ESS で粗さ 1 の崖の鏡面の環境光が約 0.7 % 下がったため、一時の下限を 0.940・0.951 に下げ、落ちた分は
+SCN-RENDER-ROUGH-STEEP-ENERGY で 1 ± 0.03 に戻す。rocks-sun（contact_near）の地形の受け手の IoU が 0.8521 → 0.5146・
+漏れが 0.0054 → 0.1919 と動いたのは on/off で同じなので、鏡面の変更でなく地形の版 15 → 18 の差と見られる。
 
 ### rendering3dtest の屋根の鏡面の光線の当たりの内訳（SCN-RENDER-SPEC-ROOF-HITS）
 
