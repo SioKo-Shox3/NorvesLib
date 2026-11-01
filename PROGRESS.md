@@ -8427,3 +8427,18 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - verify: `cmake --build build --config Debug --target CookedMeshTest -- -m:1` が EXIT=0・エラー 0(build/Test/Core/Asset/Debug/CookedMeshTest.exe を生成)
 - Next: 起動の確かめは後回し。3 本の Debug の ctest は G2-GR82-V1-REST-POSE-GUARD-CHECK で回す
 - Notes: 要起票: 枠の build/ が試験なしの構成に戻ると、試験の target を verify にする項目が同じ形で落ちる
+
+- U1 表面重心を正確な固定小数点の累算で実装し、設定の拒否を外す: 着地(直し 0 回)
+- U3 文書の予約・拒否の記述を直し「## 表面重心の精度」を足す: 着地(直し 0 回)
+- U2 JSON と静的取込の統合試験の拒否の期待を成功へ替え、全 verify を回す: 着地(直し 0 回)
+## 2026-11-02 G2-GR78-SURFACE-CENTROID（run 20261102-074918 の反復 1、完了）
+- Done: 静的メッシュの取込（cook と loose）で surface_centroid を有効にした。面積重みの原点は、2^-1074 を単位とする 34 limb（2176 ビット）の固定配列の正確な累算器で、各面の外積の成分（6 つの正確な積の和から 1 回だけ丸める）・面の重み w = hypot(|cx|,|cy|,|cz|)・モーメント Σw·v（積と fma の残差）・3Σw を足し、原点 = round(Σw·v) ÷ round(3Σw) で求める。面の順・巡回・巻きの反転で原点・総面積・変換後の頂点がビット一致する。総面積 0 は DegenerateSurface で失敗し頂点と index を変えない。骨格は SupportsSkeletalScaleImport が Origin==Keep 以外を拒否したまま。結果に SurfaceArea を足した。`Docs/Architecture/ImportSettings.md` の予約・拒否の記述を直し、節「## 表面重心の精度」に方式と誤差の上限（最大の座標 × 数 ulp）を書いた
+- verify: `cmake --build build --config Debug --target CookedMeshTest -- -m:1` EXIT=0、ctest の 5 試験（ImportTransformTest・ImportSettingsValueTest・ImportSettingsJsonTest・ImportStaticIntegrationTest・CookedSkeletalAssetTest）100% Passed、`git grep -n "## 表面重心の精度"` が 91 行に一致。いずれも CPU だけで、アプリ・GPU は起動していない
+- 証拠: 単位の作業ツリー `NorvesLib-1-u1` の `.harness/unit-verify.txt`
+- Next: 統合の前にランナーの評価者の独立確認（done-when の「独立確認」）。ctest の行は盤面が確かめのタスク G2-GR78-SURFACE-CENTROID-CHECK で回し直す
+- Notes: 2^100/2^-100 の等面積 2 面は原点 (1/3, 2^-100/3, 0)・総面積 1 をビット一致で、±1e20 の相殺は 3 面の 6 通りの面順 × 3 通りの巡回 × 巻きの反転でビット一致を確かめた。累算器は 1 面あたり外積用に 3 つ作るので、表面重心を選んだ大きなメッシュでは取込が bounds_center より遅い（計測はしていない）
+- Notes: 要起票: CookedSkeletalAssetTest（cmake スクリプト）が日本語の警告文を照合するため、コードページ 932 のコンソールでは文字化けで失敗する（UTF-8 のコンソールでは通る。今回の変更と無関係の reduce の警告）
+
+## 2026-11-02 G2-GR78-SURFACE-CENTROID（run 20261102-074918 の反復 2、再検証の時間切れへの対応）
+- Done: 再検証の `cmake --build build --config Debug --target CookedMeshTest -- -m:1` が 10 分を超えたのは、この作業ツリーの build が単位の作業ツリーと別で未ビルドだったため。反復の中で 1 回ビルドし、今は差分なしで 3 秒・EXIT=0（`.harness/runs/20261102-074918/aux-G2-GR78-build1.txt`）。`git grep -n "## 表面重心の精度"` は 91 行に一致。コードは変えていない
+- Next: ctest の 5 試験は盤面の確かめのタスク G2-GR78-SURFACE-CENTROID-CHECK で回す。統合の前にランナーの評価者の独立確認
