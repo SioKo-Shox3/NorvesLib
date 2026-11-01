@@ -4323,3 +4323,14 @@
 - verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 180 -R "^(GltfContainerTest|Base64DecodeTest|GltfBufferSourceTest|GltfBufferSetTest|GltfBufferUriTest|GltfBufferJsonTest|GltfBufferNumberTest|StaticGltfBufferCookTest|GltfImageRangeTest|GltfImageSourceTest|GltfAccessorRangeTest|GltfAccessorStagingTest|ImageBytesStagingTest|GltfDocumentProfileTest|GltfLooseSourceTest|CookedSkeletalAssetTest|CookedMeshTest|AssetCookGlbSmoke|AssetCookMeshSmoke)$"`
 - paths: Docs/Architecture/AssetImportPipeline.md, TASKS.md, PROGRESS.md, Library/Core/Private/Resource/Gltf*, Library/Core/Private/Resource/GLTFAnalyzer.cpp, Library/Core/Private/Resource/SkeletalGltfDecode.cpp, Library/Core/Private/Resource/SkeletalGltfDecode.h, Tools/AssetCook/MeshCooker.cpp, Tools/AssetCook/AssetCookGlbSmoke.cmake.in, Test/Core/Asset/Gltf*, Test/Core/Asset/StaticGltfBufferCookTest.cpp, Test/Core/Asset/ImageBytesStagingTest.cpp, Test/Core/Asset/CookedSkeletalAssetTest.cpp
 - from: G2-GR77-NATIVE-ACCEPTANCE
+
+## SCN-MEGA-FIX-TLAS-REBUILD-P3-CHECK: GPU 計測の撮影でも、終了までの描画フレームを SceneReady の後から数える(後回しにしたアプリの起動の確かめ)
+- status: todo
+- check: launch
+- gpu: exclusive
+- done-when: SCN-MEGA-FIX-TLAS-REBUILD-P3 で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、SCN-MEGA-FIX-TLAS-REBUILD-P3 の done-when を満たすことを確かめる。満たさなければ SCN-MEGA-FIX-TLAS-REBUILD-P3 の done-when と paths の範囲で直す。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -Views horizon -Build -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -TimeoutSeconds 1800 -GameArgs banana-count=1000000,camera-path-play,camera-path-time=0 -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-TLAS-REBUILD-P3/path`
+- verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-FIX-TLAS-REBUILD-P3/path --views horizon --timing --min-frames 300`
+- verify: `python -c "import re,sys; t=open(sys.argv[1],encoding='utf-8',errors='replace').read(); r=t.find('SCENE_READY scene=mega-bananas'); b=[m.start() for m in re.finditer('asset settle baseline rendered=',t)]; sys.exit(0 if r>=0 and b and b[-1]>r else 1)" .harness/runs/scene-capture/SCN-MEGA-FIX-TLAS-REBUILD-P3/path/horizon.Game.log`
+- paths: Library/Core/Private/Engine/ApplicationProcessor.cpp, Scripts/CaptureScene.ps1, TASKS.md, PROGRESS.md
+- from: SCN-MEGA-FIX-TLAS-REBUILD-P3
