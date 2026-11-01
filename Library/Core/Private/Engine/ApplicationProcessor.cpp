@@ -2251,9 +2251,9 @@ namespace NorvesLib::Core::Engine
             auto &renderWorld = GEngine->GetRenderWorld();
             if (renderWorld.IsInitialized())
             {
-                // 決定的な撮影では、GameMode が読み込み後の組み立て（大きな球の生成など）を終えるまでを
-                // 読み込み中として数える。
-                const bool bSceneAssembling = bDeterministicCapture && !deterministicCapture.IsSceneReady();
+                // 撮影では決定的かどうかに関わらず、GameMode が読み込み後の組み立て（大きな球の生成など）を終えて
+                // SceneReady になるまでを読み込み中として数える。
+                const bool bSceneAssembling = !deterministicCapture.IsSceneReady();
                 if (m_bWaitForAssetSettle)
                 {
                     Detail::ObservePendingAssets(renderWorld.HasPendingAsyncAssets() ||

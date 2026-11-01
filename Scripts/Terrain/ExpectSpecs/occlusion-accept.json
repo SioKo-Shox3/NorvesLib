@@ -11,10 +11,10 @@
   "worse_tolerance": 0.03,
   "control_y_tolerance": 0.03,
   "control_overrides": [
-    {"set": "terrain-sky", "view": "ref_cliff_01", "stratum": "slope60-180_d500-100000", "min": 0.946,
-     "note": "一時的な守り（SCN-RENDER-SPEC-OCCLUSION の鏡面の遮りの後の値 0.9513 − 0.005）。粗さ 1 の急な面の反射のローブが谷底へ向く分の遮りで、開けた急な面は off でも Cycles より暗い。SCN-RENDER-ROUGH-STEEP-ENERGY が 1 ± 0.03 へ戻す"},
-    {"set": "rocks-cliff-sky", "view": "ref_cliff_01", "stratum": "slope60-180_d500-100000", "min": 0.957,
-     "note": "一時的な守り（SCN-RENDER-SPEC-OCCLUSION の鏡面の遮りの後の値 0.9622 − 0.005）。粗さ 1 の急な面の反射のローブが谷底へ向く分の遮りで、開けた急な面は off でも Cycles より暗い。SCN-RENDER-ROUGH-STEEP-ENERGY が 1 ± 0.03 へ戻す"}
+    {"set": "terrain-sky", "view": "ref_cliff_01", "stratum": "slope60-180_d500-100000", "min": 0.940,
+     "note": "一時的な守り（SCN-RENDER-SPEC-WIDE-ESS の後の値 0.9445 − 0.005 を丸めた下限 0.940）。粗さ 1 の急な面の反射のローブが谷底へ向く分の遮りで、開けた急な面は off でも Cycles より暗い。SCN-RENDER-SPEC-WIDE-ESS の後、SCN-RENDER-ROUGH-STEEP-ENERGY で 1 ± 0.03 に戻す"},
+    {"set": "rocks-cliff-sky", "view": "ref_cliff_01", "stratum": "slope60-180_d500-100000", "min": 0.951,
+     "note": "一時的な守り（SCN-RENDER-SPEC-WIDE-ESS の後の値 0.9559 − 0.005 を丸めた下限 0.951）。粗さ 1 の急な面の反射のローブが谷底へ向く分の遮りで、開けた急な面は off でも Cycles より暗い。SCN-RENDER-SPEC-WIDE-ESS の後、SCN-RENDER-ROUGH-STEEP-ENERGY で 1 ± 0.03 に戻す"}
   ],
   "sun": {
     "iou_min": 0.9,

@@ -8,7 +8,9 @@
 # 台本を流し、capture=<名前> ごとの overview.<名前>.png が揃わなければ失敗にする）。
 # 出力は .harness/runs/regression/<ID>/<before|after>/<シーン>/（CaptureScene.ps1 の出力）。after は撮り終えてから
 # ReferenceCheck.py --regression で before と並べ、撮影の欠け・真っ黒・検証レイヤーのエラーがあれば失敗にする
-# （差の PSNR・平均の差は <after>/regression_check.json に記録する）。全体で 9 分を超えたら失敗にする。
+# （差の PSNR・平均の差は <after>/regression_check.json に記録する）。before・after とも保存時点のジオメトリのページが
+# 進行中か、落ち着きの基準から保存までに追い出しの数が変われば失敗にする。before はこの判定と記録だけを行う。
+# ページの値と判定は <before|after>/regression_check.json に記録する。全体で 9 分を超えたら失敗にする。
 param(
     [Parameter(Mandatory = $true)][string]$Item,
     [Parameter(Mandatory = $true)][ValidateSet('before', 'after')][string]$Phase,
@@ -66,14 +68,12 @@ foreach ($shot in $shots)
 }
 
 $exitCode = if ($allOk) { 0 } else { 1 }
-if ($Phase -eq 'after')
-{
-    $ErrorActionPreference = 'Continue'
-    & python Scripts/Terrain/ReferenceCheck.py --regression --capture $phaseDir --reference "$root/before" --verify 2>&1 | ForEach-Object { "$_" } | Tee-Object -FilePath "$phaseDir/regression.txt"
-    $checkCode = $LASTEXITCODE
-    $ErrorActionPreference = 'Stop'
-    if ($checkCode -ne 0) { $exitCode = 1 }
-}
+$referenceDir = if ($Phase -eq 'before') { $phaseDir } else { "$root/before" }
+$ErrorActionPreference = 'Continue'
+& python Scripts/Terrain/ReferenceCheck.py --regression --capture $phaseDir --reference $referenceDir --verify 2>&1 | ForEach-Object { "$_" } | Tee-Object -FilePath "$phaseDir/regression.txt"
+$checkCode = $LASTEXITCODE
+$ErrorActionPreference = 'Stop'
+if ($checkCode -ne 0) { $exitCode = 1 }
 $seconds = [int]$sw.Elapsed.TotalSeconds
 if ($seconds -gt $limitSeconds)
 {

@@ -16,6 +16,7 @@
 #include "Debug/SequenceFrameCapture.h"
 #include "GameModes/Rendering3DTest/M9WorldAcceptance.h"
 #include "Pause/PauseMenu.h"
+#include "Scenes/FreeCameraRig.h"
 #include "Scenes/SceneCatalog.h"
 #include "Scenes/SceneCycleSmoke.h"
 #include "Scenes/SceneViewSwitch.h"
@@ -259,6 +260,13 @@ namespace Game
         float m_CameraPathTime = -1.0f;
         /// --camera-path-play（開発ビルドだけ）: カメラパスを持つシーンで、組み立てが済んだところからパスを再生する
         bool m_bCameraPathPlay = false;
+#if NORVES_BUILD_DEVELOPMENT
+        /// 指定時刻の撮影。状態は rig と共有し、PNG は OnPostRender で保存する
+        double m_CameraPathCaptureTime = -1.0;
+        Game::Scenes::CameraPathCaptureState m_CameraPathCapture;
+        NorvesLib::Core::Container::String m_CameraPathCapturePngPath;
+        uint32_t m_CameraPathCaptureWaitedFrames = 0;
+#endif
         /// --banana-count=<n> で指定された、バナナのシーンの本数（指定が無ければ既定。mega-stress は指定したときだけ置く）
         uint32_t m_BananaCount = 10000;
         bool m_bBananaCountSet = false;

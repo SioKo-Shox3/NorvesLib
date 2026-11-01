@@ -158,17 +158,27 @@ namespace NorvesLib::Core::Rendering
             RHI::AccelerationStructurePtr Structure;
         };
 
+        /** @brief 同じ BLAS を使う別の物体も区別する、フレームをまたぐインスタンスの鍵 */
+        struct TopLevelInstanceKey
+        {
+            uint64_t ObjectId = 0;
+            uint32_t ObjectInstanceIndex = 0;
+
+            bool operator==(const TopLevelInstanceKey&) const = default;
+        };
+
         /**
-         * @brief frame slot ごとの TLAS と、最後に記録したインスタンスの入力
+         * @brief フレームのスロットごとの TLAS と、最後に記録したインスタンスの入力
          *
          * Instances は最後に Build / Update を記録したときのインスタンス（選んだ集合と並び・変換・マスク・customIndex・
          * BLAS）。次にその slot で描くフレームの入力が全部一致すれば Update を記録しない。BLAS の参照を持つので、
          * 準備完了で増えた・交換で作り直した BLAS は別の参照になり、一致しない。
+         * Keys は各席の物体を区別し、顔ぶれか並びが替わったら件数が同じでも Build にする。
          */
         struct TopLevelCacheEntry
         {
             RHI::AccelerationStructurePtr Structure;
-            uint32_t InstanceCount = 0;
+            Container::VariableArray<TopLevelInstanceKey> Keys;
             Container::VariableArray<RHI::AccelerationStructureInstanceDesc> Instances;
         };
 
@@ -177,15 +187,16 @@ namespace NorvesLib::Core::Rendering
         {
             uint32_t Frames = 0;
             uint32_t Skipped = 0; // 入力が slot の前回と一致して Update を記録しなかった
-            uint32_t Updated = 0; // 同じ数のインスタンスで Update を記録した
+            uint32_t Updated = 0; // 同じ席の同じ物体の変換だけが変わり Update を記録した
             uint32_t Built = 0;   // 作り直して Build を記録した
             uint32_t LastInstances = 0;
         };
 
-        /** @brief 2 つの TLAS のインスタンスの入力が全部一致するか（BLAS は参照、変換はビットで比べる） */
+        /** @brief 2 つの TLAS のインスタンスの入力が一致するか（BLAS は参照、変換は指定時だけビットで比べる） */
         static bool SameTopLevelInstances(
             const Container::VariableArray<RHI::AccelerationStructureInstanceDesc>& lhs,
-            const Container::VariableArray<RHI::AccelerationStructureInstanceDesc>& rhs);
+            const Container::VariableArray<RHI::AccelerationStructureInstanceDesc>& rhs,
+            bool bCompareTransforms);
 
         /** @brief TLAS の記録の内訳を出す（最初と、120 フレームごと。bFlush なら出していない残りを出す） */
         void LogTopLevelUpdates(bool bFlush);

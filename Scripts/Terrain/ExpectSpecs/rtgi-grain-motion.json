@@ -1,0 +1,27 @@
+{
+  "view": "horizon",
+  "numerator": "path",
+  "denominator": "static",
+  "blur_radius_px": 2,
+  "floor_hsv": {
+    "max_saturation": 0.15,
+    "min_value": 0.15,
+    "max_value": 0.40
+  },
+  "banana_hsv": {
+    "min_hue_degrees": 10,
+    "max_hue_degrees": 80,
+    "min_saturation": 0.30,
+    "min_value": 0.05
+  },
+  "banana_exclusion_px": 3,
+  "banana_band_outer_px": 12,
+  "min_floor_pixels": 3000,
+  "regions": [
+    {
+      "name": "floor_near_bananas",
+      "rect": [0.2604166666666667, 0.7407407407407407, 0.7604166666666666, 1.0],
+      "max_ratio": 1.5
+    }
+  ]
+}
