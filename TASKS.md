@@ -4186,3 +4186,13 @@
 - paths: Game/Scenes/FreeCameraRig.cpp, Game/Scenes/FreeCameraRig.h, Game/GameApplicationHandler.cpp, Game/GameApplicationHandler.h, Game/GameModes/MegaBananas, Scripts/CaptureScene.ps1, Scripts/RtgiGrain.py, Docs/RenderingValidation/SceneLauncherAcceptance.md, TASKS.md, PROGRESS.md
 - gpu: exclusive
 - from: SCN-MEGA-ACCEPT-1M-P1
+
+## SCN-MEGA-FIX-TLAS-REBUILD-P3: GPU 計測の撮影でも、終了までの描画フレームを SceneReady の後から数える
+- status: todo
+- done-when: GPU 計測の撮影(`-GpuTimingFrames`。決定的でない `--capture-png`)では、今は `--exit-after-rendered-frames` を資産の読み込みが落ち着いた時点(`asset settle baseline`)から数えている。これを SceneReady の後から数えるようにする。原因は `Library/Core/Private/Engine/ApplicationProcessor.cpp` 2256 行の `bSceneAssembling` が決定的な撮影のときだけ真になること。シーンの組み立ての状態は決定的でないときも持っている(`Game/Scenes/SceneReadiness.h`)ので、決定的な撮影に限らず読み込み中として数える。決定的な撮影のエポックの扱いは変えない。確かめること: 1M のカメラパスの撮影の `horizon.Game.log` で、最後の `asset settle baseline rendered=` の行が `SCENE_READY scene=mega-bananas` の行より後にある。また、既定の `-TimingReadyMarginFrames` のままで、SceneReady の後の有効な標本が 300 件そろう(`CheckCaptureMetrics --timing --min-frames 300` が通る)。`CaptureScene.ps1` 冒頭にある余白の説明(32〜34 行)も、今の振る舞いに合わせて直す。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -Views horizon -Build -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -TimeoutSeconds 1800 -GameArgs banana-count=1000000,camera-path-play,camera-path-time=0 -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-TLAS-REBUILD-P3/path`
+- verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-FIX-TLAS-REBUILD-P3/path --views horizon --timing --min-frames 300`
+- verify: `python -c "import re,sys; t=open(sys.argv[1],encoding='utf-8',errors='replace').read(); r=t.find('SCENE_READY scene=mega-bananas'); b=[m.start() for m in re.finditer('asset settle baseline rendered=',t)]; sys.exit(0 if r>=0 and b and b[-1]>r else 1)" .harness/runs/scene-capture/SCN-MEGA-FIX-TLAS-REBUILD-P3/path/horizon.Game.log`
+- paths: Library/Core/Private/Engine/ApplicationProcessor.cpp, Scripts/CaptureScene.ps1, TASKS.md, PROGRESS.md
+- gpu: exclusive
+- from: SCN-MEGA-FIX-TLAS-REBUILD
