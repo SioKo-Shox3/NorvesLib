@@ -8373,3 +8373,9 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: 単位の作業ツリー `NorvesLib-3-u1` の `.harness/unit-verify.txt` と `.harness/runs/scene-capture/SCN-MEGA-ACCEPT-1M-P1-P1/`
 - Notes: 比 1.420 は前の時刻の揃わない組（1.245〜1.318）・同じ視点の診断（1.009）より高く、上限との余白が小さい。固定刻みは実時間の再生（撮影の直前は約 13.75 ms/Tick）より 1 フレームあたりの動きが約 1.21 倍大きいのが候補だが、速さだけを変えた比べはしていない（受入れ文書に記録）
 - Notes: 要起票: 時刻を固定した組の比 1.420 が上がった原因（固定刻みの 1 フレームあたりの動きか）を、刻みを実時間の Tick の頻度に合わせた撮影と比べて切り分ける
+
+## 2026-11-02 G2-GR82-V1-REST-POSE-GUARD（run 20261102-075121 の反復 1、完了）
+- Done: clip 作成時の rest snapshot・束縛時の差の検査(既定で拒否、明示の許可で通す、差の量と超過した関節の報告)は G2-GR82-B1/B2/B3 の既存実装で満たされていることを確かめ、元の verify の各項目と既存の試験の行・マーカーの対応を TASKS.md の result に書いた。実装・試験の変更なし
+- verify: `cmake -B build -S . -DNORVES_BUILD_TESTS=ON` の後、`cmake --build build --config Debug --target CookedMeshTest -- -m:1` が EXIT=0・エラー 0(CookedMeshTest.exe を生成)
+- Next: 起動の確かめは後回し。CookedClipBankV1Test・SkeletalClipBankBindingTest・RigSplitCookTest の Debug の ctest を G2-GR82-V1-REST-POSE-GUARD-CHECK で回す
+- Notes: 作業ツリーの build/ は NORVES_BUILD_TESTS=OFF(既定)で構成されており、verify のビルドの前に試験を有効にした構成が要る
