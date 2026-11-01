@@ -8302,3 +8302,10 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: なし
 - Notes: night-village の撮影は検証レイヤー付きで約 1 フレーム/秒になり、1 本で約 345 秒かかる。枠のビルドが古いと最初の `-Build`（約 5 分）と合わせて 10 分を超えるので、統合の取り込みで C++ が変わった直後の再検証は同じ理由で落ちうる。要起票: 回帰の撮影の verify を、ビルドと撮影の別のコマンドに分けるか、night-village の撮影を短くする（検証レイヤーの下の 1 フレーム/秒の原因）
 - U1 終わらない試験と Game のソースを組み込む 2 つの試験の対象を、全体のビルドと ctest の実行から外す: 着地(直し 0 回)
+## 2026-11-02 SCN-BUILD-ALL-TESTS-P1（run 20261101-231548 の反復 1、完了）
+- Done: `RenderGraphTextureUsageContractTest` を DISABLED にした（VisibilityResolve の `constantCount == 3` の assert で対話窓のまま終わる）。Game のソース（NorvesGameSources）を組み込む `NorvesLibBridgeAdapterScriptComponentTest`・`AssetManifestReloadBridgeLoopbackTest` の対象を `EXCLUDE_FROM_ALL` にし、その実行ファイルを使う ctest の 5 つの名前を DISABLED にした。`.cpp` と束の MEMBER は残し、理由を CMake のコメントと `Docs/Testing.md` の「外したもの」に 2026-11-01 の日付で書いた
+- verify: 試験を有効にした構成（NORVES_BUILD_TESTS=ON）で configure・Debug の全体のビルド・ctest がすべて EXIT=0。`RenderGraphTextureUsageContractTest` は `Not Run (Disabled)`。登録の数は 487 → 487 で変わらない。numstat の 2 通りの比べは一致
+- 証拠: `.harness/runs/20261101-231548/u1-unit-verify.txt`
+- Next: なし
+- Notes: この環境は `NORVES_BRIDGE_SDK_DIR` が空で、Bridge の 4 つの試験（`Test/CMakeLists.txt` の `TARGET norves_bridge_engine_sdk` の条件）と `AssetManifestReloadBridgeLoopbackTest` は configure されず ctest に登録されない。SDK を有効にした構成での `Not Run (Disabled)` の表示と ALL_BUILD からの除外は確かめられておらず、書き方は目で確かめただけ
+- Notes: 枠 `NorvesLib-3` の build は NORVES_BUILD_TESTS=OFF のため、枠で verify を回し直すと試験の対象はビルドされず、ctest は名前に一致する試験が無いまま EXIT=0 になる（全体のビルドの合否は試験を ON にした単位の作業ツリーで見た）
