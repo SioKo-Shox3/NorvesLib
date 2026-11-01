@@ -8376,3 +8376,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 ## 2026-11-02 SCN-MEGA-FIX-TLAS-REBUILD-P3（run 20261102-070013 の反復 1、GPU 待ち）
 - In progress: 決定的でない撮影も SceneReady までを読み込み中として数える直し（`ApplicationProcessor.cpp` の `bSceneAssembling`）と `CaptureScene.ps1` の余白の説明の直しを作った（未着地）。1M のカメラパスの撮影は、利用者のゲームが GPU を使っていたため回していない
 - Next: PC が空いたら U1 の作業ツリーで verify 3 本を回し、合格なら着地して done にする
+- U2 決定的でない撮影も SceneReady までを読み込み中として数える(起動せずビルドで確かめる): 着地(直し 0 回)
