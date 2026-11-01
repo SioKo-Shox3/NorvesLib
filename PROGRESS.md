@@ -8308,3 +8308,11 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U6 拡散の履歴の読みをバイリニアに戻し、カメラだけの動きの年齢の上限を帯の粒で選び直す: 着地(直し 0 回)
 - U8 カメラだけが動くフレームは空間のフィルタの近傍の重みを年齢で下げない: 着地(直し 0 回)
 - U7 直した後の回帰・golden・判定を通し、受入れ文書を仕上げる: 着地(直し 0 回)
+## 2026-11-02 SCN-MEGA-ACCEPT-1M-P1（run 20261101-234959 の反復 5、完了）
+- Done: カメラパスの再生（50000 本）でバナナの周りと床に出た RTGI の粒の荒い暈を直した。原因は、カメラが動くと静止の署名が毎フレーム変わって履歴の年齢の上限が 8 に留まること（暈の床の 98.6% が履歴を採用・87% が年齢 8、静止は 51〜52）と、空間のフィルタが年齢 8 超の近傍の重みを下げる静止向けの作り。シーンが同じでカメラだけが動くフレームは拡散の年齢の上限を 16（鏡面は 8、履歴は棄却つきバイリニア）にし、空間のフィルタの近傍の重みを年齢で下げない。棄却の閾値と静止の判定は変えていない。履歴の診断の AOV（開発ビルドの `NORVES_RTGI_HISTORY_DIAG=1`）と `Scripts/RtgiGrain.py`・`rtgi-grain-motion.json` を足した
+- verify: RelWithDebInfo の Game ビルド exit 0。再生（保存フレームの時刻 T=8.087 秒）・静止 9.27 秒・時刻を合わせた静止 8.087 秒の撮影は全部 `CAPTURE_SCENE result=pass`。RtgiGrain の比 1.318（verify の固定の組）・1.307（時刻を合わせた組）、直す前 2.114、視点を合わせた診断の組で直す前 1.343 → 1.009。`CHECK_CAPTURE_METRICS result=pass`、LightingPass median/p95 4.181/4.339 → 4.147/4.337 ms。回帰の after -Motion は 5 組 `CAPTURE_REGRESSION result=pass`。golden Indoor・Outdoor は Passed（raw_max=0、再承認なし）。material-gallery は撮れて崩れなし
+- 開いた画: 診断の拡大の前後と静止の比べ（直した版の床の粒が静止に近い）、回帰の前後の並べ（尾・二重の輪郭・ちらつきの増加なし）
+- 証拠: `.harness/runs/20261101-234959/` の反復の記録、単位の作業ツリーの `.harness/unit-verify.txt`、受入れ文書 `SceneLauncherAcceptance.md` の「直した後」
+- Next: なし
+- Notes: 判定の帯の弁別は弱い（直す前の視点を合わせた組も 1.343 で上限 1.5 以下）。再生の保存フレームの時刻は走らせるたびに 7.97〜9.27 秒で揺れ、verify の静止は 9.27 秒に固定。縁 ±12 画素の床の輝度の差の平均が −0.000246 → −0.000610 と少し暗い側に寄る
+- Notes: 要起票: CaptureScene の再生の保存フレームのパスの時刻を固定する（`camera-path-play` で保存の時刻を指定できないため、再生と静止の組が毎回ずれる）
