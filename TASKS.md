@@ -3845,9 +3845,14 @@
 - notes: 現cloudはWindows.h依存で本体compileできず、計画書が参照するDogGameの実物大型GLBも未配置。作者は非描画Windows検証を必須から外しているため、独立実装は継続する。
 
 ## G2-GR78-SURFACE-CENTROID: 表面重心の極端値精度を確認する
-- status: blocked
-- done-when: 面積重み原点の極端値相殺と循環/面列挙順依存を解消し、独立確認後にsurface_centroidを有効化する。
-- verify: 2^100/2^-100の等面積2面、巨大正負座標/微小残差、面積/重心/実頂点結果を独立反証する。
+- status: todo
+- done-when: 静的メッシュの取込(cook と loose)で surface_centroid を有効にする。面積重みの原点は、binary64 の全指数域を覆う正確な累算から最後に 1 回だけ丸めて求め、面の順・各面の巡回・巻きの反転に依らず結果をビット単位で一致させる。
+  2^100/2^-100 の等面積 2 面と、±巨大座標が相殺して微小な残りが出る組で、面積・重心・変換後の頂点が期待値どおりになる。総面積 0 は DegenerateSurface で失敗し、他の原点へ置き換えず、頂点と index を変えない。骨格では引き続き拒否する。既存の設定の hash は変えない。
+  `Docs/Architecture/ImportSettings.md` に節「## 表面重心の精度」を足し、方式と誤差の上限を書く。独立確認は、統合の前のランナーの評価者の PASS で満たす。
+- verify: `cmake --build build --config Debug --target CookedMeshTest -- -m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 180 -R "^(ImportTransformTest|ImportSettingsValueTest|ImportSettingsJsonTest|ImportStaticIntegrationTest|CookedSkeletalAssetTest)$"`
+- verify: `git grep -n "## 表面重心の精度" -- Docs/Architecture/ImportSettings.md`
+- paths: Library/Core/Private/Resource/ImportTransform.cpp, Library/Core/Private/Resource/ImportTransform.h, Library/Core/Private/Resource/ImportSettings.cpp, Library/Core/Private/Resource/ImportSettingsJson.cpp, Test/Core/Asset/ImportTransformTest.cpp, Test/Core/Asset/ImportSettingsValueTest.cpp, Test/Core/Asset/ImportSettingsJsonTest.cpp, Test/Core/Asset/ImportStaticIntegrationTest.cpp, Docs/Architecture/ImportSettings.md, TASKS.md, PROGRESS.md
 - stop-when: 未確認実装をロードへ接続する、他の原点選択へ無言fallbackする。
 - notes: 2026-10-03作者は他変換を先行し、この機能は未対応として明示拒否する方針を承認。以前の候補はa6391b2の履歴に保持、active実装からは除く。
 
