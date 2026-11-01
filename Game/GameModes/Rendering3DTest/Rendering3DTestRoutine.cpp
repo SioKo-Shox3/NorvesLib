@@ -1826,6 +1826,19 @@ namespace Game::GameModes
             data.m_M9WorldAcceptance->SkeletalAsset = std::move(event.Asset);
             data.m_M9WorldAcceptance->SelectedClip = std::move(event.Clip);
             data.m_M9WorldAcceptance->bAssetsReady = true;
+            if (data.m_M9WorldAcceptance->bCompare)
+            {
+                if (!InitializeM9WorldSkeletal(ctx, data))
+                {
+                    CleanupM9WorldAcceptance(ctx, data);
+                    FailM9WorldSmoke(ctx, "skeletal_attach_failed");
+                    return false;
+                }
+                // AttachM9SkeletalAsset が設定する停止済みの 0 秒の姿勢を保つ。
+                data.m_bM9Attached = true;
+                LOG_INFO("M9_WORLD_COMPARE stage=assets_ready pose_time=0");
+                return true;
+            }
             auto* audioModule =
                 NorvesLib::Modules::Audio::FindAudioModule(NorvesLib::Core::Module::GetModuleRegistry());
             if (audioModule == nullptr || !data.m_M9WorldAcceptance->EffectClip || !data.m_M9WorldAcceptance->LoopClip)
@@ -3553,7 +3566,8 @@ namespace Game::GameModes
         data.m_ElapsedTime += deltaTime;
 
 #if defined(NORVES_GAME_AUDIO)
-        if (data.m_M9WorldAcceptance && data.m_M9WorldAcceptance->bRequested && !data.m_bM9Completed)
+        if (data.m_M9WorldAcceptance && data.m_M9WorldAcceptance->bRequested &&
+            !data.m_M9WorldAcceptance->bCompare && !data.m_bM9Completed)
         {
             ++data.m_M9TickCount;
             auto& renderWorld = ctx.EngineRef.GetRenderWorld();

@@ -8403,3 +8403,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U2 骨付きパネルに 2 submesh・2 材質 slot の変種を足す: 着地(直し 2 回)
 - U3 撮影スクリプトに -SkinnedProbeMaterials 2 の判定を足す: 着地(直し 1 回)
 - U6 旧 NVSKEL 0.1 を 0.2 から作る oracle: 着地(直し 1 回)
+- U7 Test-M9World.ps1 -LegacyNvskelCompare と固定姿勢の GBuffer 撮影: 着地(直し 0 回)
