@@ -4073,14 +4073,14 @@
 - notes: このタスクは、落ち着いていない撮影を見つけて止めるところまで。VRAM の予算が足りないときに常駐が 0 まで追い出された原因は扱わない(SCN-WL-GEOM-LOWVRAM の「粗い段で落ち着く」と食い違うかもしれない)。原因は直さず、見つけたら PROGRESS.md の Notes に `要起票:` で残す。
 
 ## SCN-BUILD-ALL-TESTS-P1: 落ちて終わらない試験と、Game のソースを組み込む 2 つの試験を、ビルドと ctest の実行から外す
-- status: todo
+- status: done
 - done-when: 人の指示（「AIが作るテストはほとんど意味がないので外していい」）どおりに、次の試験を外す。どれも戻せる形で外し、`.cpp` と束の MEMBER は消さない。(1) `Test/Core/Rendering/CMakeLists.txt` の `RenderGraphTextureUsageContractTest` の add_test に `set_tests_properties(... PROPERTIES DISABLED TRUE)` を付ける。理由は VisibilityResolve の `constantCount == 3` の assert で落ち、対話窓のまま終わらないこと。(2) Game のソースを組み込む 2 つの試験の対象 `NorvesLibBridgeAdapterScriptComponentTest`（`Test/Game/Bridge/CMakeLists.txt`）と `AssetManifestReloadBridgeLoopbackTest`（`Test/Core/Rendering/CMakeLists.txt`）を `EXCLUDE_FROM_ALL` にして、全体のビルドで `NorvesGameSources` をもう一度コンパイルしないようにする。この 2 つの実行ファイルを使う ctest の名前（`NorvesLibBridgeAdapterScriptComponentTest`・`NorvesLibBridgeAdapterNumericEntityRegressionTest`・`NorvesLibBridgeAdapterThumbnailTest`・`BridgeBase64Test`・`AssetManifestReloadBridgeLoopbackTest`）も DISABLED にする。(3) 理由を CMake のコメントに書き、`Docs/Testing.md` の「外したもの」に日付つきで足す。合否は 3 つ。Debug の全体のビルドが EXIT=0。下の ctest で、外した名前がどれも `Not Run (Disabled)` になり EXIT=0（試験を走らせて通すことは見ない）。ほかの試験の登録は変えない。
 - verify: `cmake -S . -B build && cmake --build build --config Debug -- /m:1 && ctest --test-dir build -C Debug -R "^(RenderGraphTextureUsageContractTest|NorvesLibBridgeAdapter.*|BridgeBase64Test|AssetManifestReloadBridgeLoopbackTest)$"`
 - paths: Test/Core/Rendering/CMakeLists.txt, Test/Game/Bridge/CMakeLists.txt, Docs/Testing.md, TASKS.md, PROGRESS.md
 - from: SCN-BUILD-ALL-TESTS
 
 ## SCN-RENDER-SPEC-WIDE-ESS-P1: night-village で VRAM の予算が足りないとき、ジオメトリのページが常駐 0 まで外される原因を突き止めて直す
-- status: todo
+- status: blocked
 - done-when: SCN-WL-GEOM-LOWVRAM の「予算が足りないときは粗い段に下がって落ち着く」と食い違う形を、night-village で再現して原因を示し、直す。
   - 元の例: SCN-RENDER-SPEC-WIDE-ESS の before の overview(`<親>/.slots/NorvesLib-3/.harness/runs/regression/SCN-RENDER-SPEC-WIDE-ESS/before/night-village/overview.Game.log`)。ヒープの予算が約 6130 MB まで下がった(並べて走るほかの枠の Game と GPU を分け合った)。プール以外が 5396〜5761 MB、影のプールが 623 MB で、ジオメトリの枠の目標は 0〜111 MB。これが外せない区画(根、約 670 MB)を下回り、ページの目標が 0 になって 1101 ページを外し resident=0 になった。そのあと wanted=1538・ready=64 のまま budget_blocked が 4→7 と増えて止まった。ジオメトリのプールの塊(2048 MB)は確保されたままなので、ページを外してもヒープの使用量は減っていない見込み。
   - 再現: 開発ビルドの `vram-budget-mb` で、ジオメトリの枠の目標が根の区画を下回る上限にして night-village を撮る(目安 6100 MB。値を変えたら verify も合わせる)。直す前の撮影で同じ形(常駐 0・要求が予算で止まったまま)になることを、値で PROGRESS.md に残す。
@@ -4107,7 +4107,7 @@
 - from: SCN-RENDER-SPEC-WIDE-ESS
 
 ## SCN-MEGA-FIX-TLAS-REBUILD-P2: 10-14 から、100万本の既定の horizon の静止で LightingPass と MegaGeometry のカリングが重くなった原因を、コードとドライバに切り分ける
-- status: todo
+- status: done
 - done-when: 問い: 10-14 の SCN-MEGA-ACCEPT-1M の静止(`--banana-count=1000000`・horizon・カメラパスなし。置き場は `.harness/runs/scene-capture/SCN-MEGA-ACCEPT-1M/static`、Game.log の `GPU_DRIVER` は 610.88)と同じ条件を今のコードで撮ると、LightingPass が 1.657 → 2.666 ms、MegaGeometryCull1 が 3.043 → 5.319 ms、MegaBvhC1Leaf が 2.560 → 4.829 ms に増えている(SCN-MEGA-FIX-TLAS-REBUILD の U4/static-default-1m)。原因が「コードで処理の量が増えた」のか「ドライバ・クロックで同じ量の単価が上がった」のかを分ける。結果で変わる判断: コードが原因なら、直す項目を PROGRESS.md の Notes に `要起票:` で残す。ドライバが原因なら、SCN-MEGA-FIX-TLAS-REBUILD の閾値 3 ms の元になった静止 1.7 ms を、今のドライバの値で置き直す根拠にする。手順は次の 4 つ。(1) 同じ条件で撮り、3 つのパスの median・p95 と `GPU_DRIVER` の行を 10-14 の値と表に並べる。(2) 3 つのパスの処理の件数(Game.log にある MegaGeometry・BVH・`RT_SCENE` の統計の行。インスタンス・節・クラスタ・可視の数)を 10-14 の値と並べ、量の比と時間の比を分ける。(3) 量が増えていれば、10-14 から今までにそのパスに触れたコミットを `git log` で挙げ、件数の変化と合う変更を特定する。ドライバが替わっていて量が同じなら、ドライバの変化と書く。(4) 結果と表を `Docs/RenderingValidation/SceneLauncherAcceptance.md` の「100万本と混在の負荷の受入れ」の節に書く。
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -Views horizon -Build -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -TimeoutSeconds 1800 -GameArgs banana-count=1000000 -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-TLAS-REBUILD-P2/static`
 - verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-FIX-TLAS-REBUILD-P2/static --views horizon --timing --min-frames 300 --require-pass LightingPass --require-pass MegaGeometryCull1 --require-pass MegaBvhC1Leaf`
@@ -4153,7 +4153,7 @@
 - notes: 危険地帯(RTGI の鏡面は全シーンに効く)なので、評価者を通す。反復の最初に回帰の撮影の before を撮る。粗い金属の球・屋根・近くのバナナが映る視点を選び、`-Views` で指定して verify も合わせる(視点の名前は実際の名前に合わせる)。鏡面の重みや光線の数を変える場合は、荒野の遮蔽の組 terrain-sky・rocks-cliff-sky を撮り直し、`occlusion-accept.json` の判定が悪くならないことも確かめる(verify の行は足してよい。1 行 10 分未満)。壁時計(75 分)の残りが 25 分を切ったら新しい撮影を始めない。撮れた所までをコミットし、doing のまま終える。
 
 ## SCN-RENDER-ROUGH-STEEP-ENERGY-P2: 荒野の遮蔽の比べの Cycles の正解を、今の焼いた地形(崖の細部の版 18)で描き直す
-- status: todo
+- status: done
 - done-when: 今の Cycles の正解(`.harness/runs/scene-capture/SCN-WLR-OCCLUSION-SETS/cycles`)は、2026-10-23 に古い地形の書き出し `SCN-WLR-BLENDER-TERRAIN-mesh`(崖の細部が版 15 以前)で描いたもの。今の焼いた地形は版 18 で形が違う(SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1 の記録)。そのため判定に参照の古さが混ざる(例: rocks-sun の地形の受け手の IoU が 0.8521 → 0.5146、漏れが 0.0054 → 0.1919。on と off で同じ値)。やること: (1) 今の焼いた地形を `--wasteland-export-terrain` で `<置き場>/mesh` へ書き出し、記録に崖の細部の版を書く。(2) 同じ Game.exe で 8 組をエンジンで撮り、同じ置き場に Cycles の正解を本描画(1024 サンプル・種 2)で描く。(3) `ReferenceCheck.py --occlusion --regions ... --verify` で、入力の照合・収束・必須の層の画素数が通る。(4) `Docs/RenderingValidation/WastelandOcclusion.md` に、全部の行のエンジン ÷ Cycles を古い正解と新しい正解で並べた表を書く。あわせて次の 2 点を書く: 遠い急な崖の対照(`slope60-180_d500-100000`)の 2 行で「開けた急な面が Cycles より 2.5 % 暗い」が新しい正解でも残るか。rocks-sun の IoU と漏れが戻るか。(5) PROGRESS.md の Notes に、SCN-RENDER-ROUGH-STEEP-ENERGY への申し送りを残す(どちらの正解で判定するか、`occlusion-accept.json` の前の記録をどう置き直すか)。`occlusion-accept.json` と古い正解の置き場は書き換えない。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY-P2 --sets terrain-sky,terrain-sun`
