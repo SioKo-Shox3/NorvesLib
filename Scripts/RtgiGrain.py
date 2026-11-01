@@ -173,16 +173,69 @@ def validate_spec(spec):
             raise ValueError(f"領域 {name}: max_ratio は 0 以上の有限な数値で指定する")
 
 
+def read_camera_path_data(root, capture, view):
+    """撮影した視点のパスの時刻とモードを読み取る。"""
+    try:
+        with (root / capture / "metrics.json").open(encoding="utf-8") as stream:
+            metrics = json.load(stream)
+    except (OSError, ValueError):
+        return None, None
+
+    views = metrics.get("views") if isinstance(metrics, dict) else None
+    if not isinstance(views, list):
+        return None, None
+    entry = next((item for item in views
+                  if isinstance(item, dict) and item.get("view") == view), None)
+    if entry is None:
+        return None, None
+
+    path_time = entry.get("camera_path_time")
+    try:
+        if type(path_time) not in (int, float) or not math.isfinite(path_time):
+            path_time = None
+    except OverflowError:
+        path_time = None
+    path_mode = entry.get("camera_path_mode")
+    return path_time, path_mode if isinstance(path_mode, str) else None
+
+
 def check_grain(root, spec):
     """仕様の置き場の組を読み、領域ごとの比と全体の判定を返す。"""
     validate_spec(spec)
     report = {"view": spec["view"], "numerator": spec["numerator"],
-              "denominator": spec["denominator"], "blur_radius_px": spec["blur_radius_px"],
+              "denominator": spec["denominator"],
+              "camera_path_time": {"numerator": None, "denominator": None},
+              "camera_path_mode": {"numerator": None, "denominator": None},
+              "camera_path_time_difference": None,
+              "max_camera_path_time_difference": 1 / 60,
+              "blur_radius_px": spec["blur_radius_px"],
               "floor_hsv": spec["floor_hsv"], "banana_hsv": spec["banana_hsv"],
               "banana_distance_metric": "euclidean", "banana_exclusion_px": spec["banana_exclusion_px"],
               "banana_band_outer_px": spec["banana_band_outer_px"],
               "min_floor_pixels": spec["min_floor_pixels"],
               "regions": [], "result": "fail"}
+    time_reasons = []
+    for key in ("numerator", "denominator"):
+        path_time, path_mode = read_camera_path_data(root, spec[key], spec["view"])
+        report["camera_path_time"][key] = path_time
+        report["camera_path_mode"][key] = path_mode
+        if path_time is None:
+            time_reasons.append(f"{spec[key]}: 保存フレームのパスの時刻が無い")
+    if not time_reasons:
+        numerator_time = report["camera_path_time"]["numerator"]
+        denominator_time = report["camera_path_time"]["denominator"]
+        difference = abs(numerator_time - denominator_time)
+        if isinstance(difference, float) and not math.isfinite(difference):
+            difference = abs(int(numerator_time) - int(denominator_time))
+        report["camera_path_time_difference"] = difference
+        if difference > report["max_camera_path_time_difference"]:
+            time_reasons.append(
+                f"保存フレームのパスの時刻差が上限を超えた: "
+                f"{spec['numerator']}={numerator_time} 秒、{spec['denominator']}={denominator_time} 秒、"
+                f"差={difference} 秒")
+    if time_reasons:
+        report["reasons"] = time_reasons
+
     measured = {}
     sizes = {}
     failures = {}
@@ -222,7 +275,7 @@ def check_grain(root, spec):
         if reasons:
             row["reasons"] = reasons
         report["regions"].append(row)
-    if all(row["result"] == "pass" for row in report["regions"]):
+    if not time_reasons and all(row["result"] == "pass" for row in report["regions"]):
         report["result"] = "pass"
     return report
 

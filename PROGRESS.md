@@ -8363,3 +8363,13 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 ### SCN-MEGA-ACCEPT-1M-P1(再検証の差し戻しへの対応)
 - Done: 枠に build が無く再検証の 1 行目が落ちていたため、枠で構成し直した(freetype の submodule・テスト有効の構成・CookedAssets と Assets/Terrain をメインへのジャンクション・回帰の before を同じ項目の撮影から写す)。verify 全 8 行がこの枠で EXIT=0: RtgiGrain の比 1.304(上限 1.5)、LightingPass の計測合格、回帰 5 シーン合格、golden 2/2 合格。コードの変更なし
 - Notes: 要起票: relay の枠(.slots/NorvesLib-4)は単位の作業ツリーだけで作業するため build・資産のジャンクションが無く、ランナーの再検証が落ちる。枠の初期化で揃える形にするかを決める
+
+- U2 RtgiGrain.py が組の 2 つの metrics.json のパスの時刻を照合する: 着地(直し 0 回)
+- U4 指定の時刻の Tick を Game が自前で撮って保存し、終了する(U1 の切り直し): 着地(直し 0 回)
+- U3 CaptureScene が保存フレームのパスの時刻を metrics.json に書き、固定した組を撮って受入れ文書を直す: 着地(直し 1 回)
+## 2026-11-02 SCN-MEGA-ACCEPT-1M-P1-P1（run 20261102-053731 の反復 1、完了）
+- Done: 開発ビルドだけの `--camera-path-capture-time=<秒>` を足した。再生のパスの時刻を再生の開始から 1 Tick 1/60 秒の固定刻みで進め、時刻が指定に達した Tick で Game が自分で撮影を要求し（その Tick のパケットが撮られる）、`--capture-png` の場所へ保存して終了する。保存の直前までカメラは動いたまま。ApplicationProcessor の撮影は描画済みの数（非同期）で決まり Tick と一定の対応にならないため使わず、CaptureScene はこの引数があると `--exit-after-rendered-frames` を延ばす。CaptureScene は保存フレームのパスの時刻と状態（played・placed）を metrics.json の views に書き、`RtgiGrain.py` は組の時刻が無い・差が 1/60 秒を超えると fail にする。受入れ文書の既知の限界「保存フレームの時刻が揺れる」を直した後の記録に置き換えた
+- verify: Game のビルド EXIT=0、再生（9.27 秒・played）と静止（9.27 秒・placed）の撮影とも `CAPTURE_SCENE result=pass`（300 標本・50,000 本・資産の欠け 0）、`RtgiGrain.py` は時刻差 0 秒・floor_near_bananas の比 1.420（上限 1.5）で `RTGI_GRAIN result=pass`。再生の LightingPass は median 4.153 ms・p95 4.357 ms。2 枚の horizon.png を開き、視点が揃い手前の床に粗い粒の暈が無いことを見た
+- 証拠: 単位の作業ツリー `NorvesLib-3-u1` の `.harness/unit-verify.txt` と `.harness/runs/scene-capture/SCN-MEGA-ACCEPT-1M-P1-P1/`
+- Notes: 比 1.420 は前の時刻の揃わない組（1.245〜1.318）・同じ視点の診断（1.009）より高く、上限との余白が小さい。固定刻みは実時間の再生（撮影の直前は約 13.75 ms/Tick）より 1 フレームあたりの動きが約 1.21 倍大きいのが候補だが、速さだけを変えた比べはしていない（受入れ文書に記録）
+- Notes: 要起票: 時刻を固定した組の比 1.420 が上がった原因（固定刻みの 1 フレームあたりの動きか）を、刻みを実時間の Tick の頻度に合わせた撮影と比べて切り分ける
