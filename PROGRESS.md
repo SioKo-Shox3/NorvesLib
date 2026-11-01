@@ -8284,17 +8284,118 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Done: 反復 1 の差し戻し（枠での verify の再実行で night-village が `missing_asset=Assets/Models/Generated/*.glb` で落ちた）を直した。原因は枠の作業ツリーに、git 管理外の生成資産（`Assets/Models/Generated` の banana 以外・`Assets/Terrain`・`Assets/Reference`・`Assets/Models/PolyHaven`・`Assets/Textures/PolyHaven`）が無かったことで、コードの変更とは関係しない。単位の作業ツリーと同じく本体のリポジトリへのジャンクションで補った。
 - 証拠: 枠で回し直した verify は全部 exit 0。`.harness/runs/20261030-200245/aux-SCN-RENDER-SPEC-WIDE-ESS-regression-after.txt`（`CAPTURE_REGRESSION result=pass`、night-village mean_diff −0.037・PSNR 34.65 で反復 1 の値と同じ）、`aux-SCN-RENDER-SPEC-WIDE-ESS-quad.txt`（`SPEC_WEIGHT_QUADRATURE_SUMMARY result=pass`・12 組）、`aux-SCN-RENDER-SPEC-WIDE-ESS-gallery.txt`（`CAPTURE_SCENE result=pass`・asset_missing=0）。開いた画: night-village の after（建物・灯り・地形・崖がそろう）
 - Notes: 要起票: 盤面の枠 `.slots/NorvesLib-3` は、ほかの枠（`NorvesLib-1`・`-2` は `Assets/Models/Generated` ごとジャンクション）と違って生成資産のリンクが欠けていた。枠を作る側でそろえないと、night-village などを撮る verify が枠の再実行だけで落ちる
-## 2026-10-31 SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1（run 20261030-232222 の反復 1、BLOCKED）
-- Done: ce0bf2f7 の RelWithDebInfo の Game.exe（SHA-256 798a708e…）・崖の細部の版 18 の焼いた地形で、荒野の遮蔽の 8 組を `--rtgi-specular=off` と今の形で撮った（16 本とも撮影 pass、各組の on/off で実行ファイル・実装・小物の配置のハッシュが一致）。`ReferenceCheck.py --occlusion --off-root --verify` は result=fail。
-- 証拠: `.harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/{on,off}`（並べの記録 `on/occlusion_off_compare.json`）、判定の全出力 `.harness/runs/20261030-232222/verify-SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1-U1.txt`。
-- Next: 遠い急な崖の対照 slope60-180_d500-100000 の 2 行が off で範囲内・今の形で一時の下限の外（terrain-sky 0.9445 < 0.946、rocks-cliff-sky 0.9559 < 0.957。今の形 ÷ off 0.9682・0.9708、エンジン ÷ Cycles 今の形 0.9631・0.9749）。扱い（一時の下限を下げて撮影済みの 16 本で判定し直す／SCN-RENDER-ROUGH-STEEP-ENERGY の後に回す）は `blocked/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1.md`。`InteriorLightReference.md` の VERIFY-OCC の表は書き直していない。
-- Notes: 太陽の影の 3 行は off と今の形で同じ（差 0.0001 以内）だが、rocks-sun（contact_near）の地形の受け手の IoU は前の記録 0.8521 → 0.5146・漏れ 0.0054 → 0.1919 と大きく動いた。on/off で同じなので鏡面の変更ではなく、焼いた地形の版 15 → 18 の差の見込み。要起票: Cycles の参照（SCN-WLR-OCCLUSION-SETS）を版 18 の地形で描き直すか。
-- U2 遠い急な崖の対照 2 行の一時の下限を下げ、撮影済みの 16 本で判定し直して VERIFY-OCC の表を書き直す: 着地(直し 2 回)
-- Done: 人の判断（案 1）で、遠い急な崖の対照 slope60-180_d500-100000 の 2 行（terrain-sky・rocks-cliff-sky の ref_cliff_01）の一時の下限を 0.940・0.951 に下げ（`occlusion-accept.json`、note に SCN-RENDER-ROUGH-STEEP-ENERGY で 1 ± 0.03 に戻すことを記載）、撮影済みの 16 本（ce0bf2f7・Game.exe 798a708e…・崖の細部の版 18。ソースは HEAD と同じ）で判定し直して result=pass（off で範囲内・今の形で外れる行は無し、範囲の外は太陽の影 3 行で両方で外・悪化 0.0000）。`InteriorLightReference.md` の VERIFY-OCC の表を今の値（今の形 ÷ off 0.9682・0.9708、エンジン ÷ Cycles 今の形 0.9631・0.9749）で書き直した。
-- 証拠: 判定の全出力 `.harness/runs/20261102-064738/verify-SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1.txt`。人の判断どおり撮り直さず、ビルドと 16 本の撮影の verify はこの反復では回していない（撮影は前の反復の `.harness/runs/20261030-232222/verify-SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1-U1.txt`）。
-- Next: SCN-RENDER-ROUGH-STEEP-ENERGY で対照 2 行を 1 ± 0.03 に戻し、一時の下限を外す。
-- Notes: 判定は盤面の枠の `.harness/runs/scene-capture/` に SCN-WLR-BLENDER-TERRAIN-mesh（manifest と PLY）と SCN-WL-SUN-SHADOW-FIX（前後の比べの前の撮影）が無いと「無い」で fail になる。枠で判定するときはメインか前の枠から写す。
-## 2026-11-02 SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1（run 20261102-074950 の反復 1）
-- Done: 一時の下限を 0.940・0.951 にした期待値で、撮影済みの 16 本（ce0bf2f7・Game.exe 798a708e…・崖の細部の版 18）の判定は result=pass（`.harness/runs/20261102-064738/verify-SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1.txt`、盤面の枠 NorvesLib-5）。`InteriorLightReference.md` の VERIFY-OCC の表は aed4096b で今の値に書き直し済み。項目を done にした。
-- Next: 起動の確かめは後回し（人の決まりで当分アプリを起動しない）。盤面の確かめのタスク SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1-CHECK で、16 本の撮影（on/off × 8 組）と `ReferenceCheck.py --occlusion --off-root --verify` を回し、全行が範囲内か、範囲の外の行が off でも外で悪化 0.005 以内か、遠い急な崖の対照 2 行が 0.940・0.951 を超えるかを確かめる。
-- Notes: 前の反復の後のランナーの再実行では、枠 NorvesLib-5 の rocks-sun（off）の撮影が CAPTURE_SCENE exit_code=-1（208.7 秒）で落ちた。描画の経路はこの項目で変えていないので、枠の環境か撮影の不安定さの見込み。CHECK で再び落ちたら、その撮影のログ（`off/rocks-sun/`）を先に見る。
+
+- U1 回帰の比べで before と after のジオメトリのページの落ち着きを判定し記録する: 着地(直し 0 回)
+## 2026-10-31 SCN-RENDER-ROUGH-STEEP-ENERGY-P1（run 20261030-232538 の反復 1、完了）
+- Done: 回帰の比べ（`ReferenceCheck.py --regression` → `Regression.py`）が、before と after の各シーンについて保存の前の最後の `GEOMETRY_PAGES` を読み、進行中（wanted・reading・ready・uploading）が 0 でない撮影と、最後の落ち着きの基準から保存までに `evicted` が変わった撮影を失敗にする。判定は `blur_case_check` から切り出した `geometry_pages_resident_complete`（`BLUR_PAGES_RE` と `geometry_pages_at_capture`）を両方で使う。値（resident・uploading・ready・reading・wanted・evicted・budget_blocked・settle_evicted）と status（settled・unsettled・not_applicable）を `regression_check.json` の `scenes.<シーン>.geometry_pages.{before,after}` に書き、行が無いシーンは not_applicable と理由を記録する。`CaptureRegression.ps1` は before でも同じ置き場を before と after に渡してページの判定だけを回し、失敗なら終了コード 1
+- 一時のログでの確かめ: SCN-RENDER-SPEC-WIDE-ESS の before・after の写しで比べると終了コード 1、`night-village: before の撮影でジオメトリのページが落ち着いていない（視点 overview、resident=0・uploading=0・ready=64・reading=0・wanted=1538・evicted=1101・budget_blocked=7、基準から保存までの evicted [1101]）`（ほかのシーンと night-village の after は settled）。作ったログの 3 通り: 同じ形の 1 行 → 失敗、進行中 0 で基準の後に evicted 1101→1102 → 失敗、GEOMETRY_PAGES の行なし → pass・not_applicable（`.harness/runs/20261030-232538/u1-selftest/`）。常設のテストは足していない
+- verify: 同じ版（after はコンパイルなし・Game.exe の SHA-256 一致）で before（424 秒）・after（387 秒）とも `CAPTURE_REGRESSION result=pass`。4 シーンとも before・after で settled、resident は rendering3dtest 496・mega-bananas 26・sandbox 0・night-village 3325、進行中・evicted・budget_blocked はすべて 0。PSNR は rendering3dtest 76.08・mega-bananas 63.93・sandbox 一致・night-village 70.62 dB。開いた画: night-village の after（建物・灯り・地形・崖がそろう）
+- 証拠: `.harness/runs/20261030-232538/u2-unit-verify.txt`、`.harness/runs/regression/SCN-RENDER-ROUGH-STEEP-ENERGY-P1/{before,after}/`（regression.txt・regression_check.json）
+- Next: なし
+- Notes: 判定の本体は `Scripts/Terrain/Regression.py` にあり（`ReferenceCheck.py --regression` から呼ばれる）、項目の paths に無いがここに足した。before の判定だけのときは撮影の欠け・真っ黒・検証レイヤーは見ない（今までどおり after の比べで見る）
+- Notes: 今回の撮影では予算で追い出される形（SCN-RENDER-SPEC-WIDE-ESS の before の resident=0）は再現せず、原因は調べていない。要起票: night-village で VRAM の予算が足りないとき常駐が 0 まで追い出される原因（SCN-WL-GEOM-LOWVRAM の「粗い段で落ち着く」と食い違う見込み。実例は SCN-RENDER-SPEC-WIDE-ESS の before のログ、budget_blocked=7）
+- Notes: 単位の作業ツリー `NorvesLib-1-u1` は `Assets\Models\PolyHaven` が無く、本体のリポジトリへのジャンクションを足して撮った
+## 2026-10-31 SCN-RENDER-ROUGH-STEEP-ENERGY-P1（run 20261030-232538 の反復 2、完了）
+- Done: 反復 1 の差し戻し（枠での verify の再実行の before が 10 分を超えた）を直した。原因は枠の Game の RelWithDebInfo が統合の取り込みより古く、最初の撮影の `-Build` で Game の翻訳単位を全部コンパイルし直した（rendering3dtest の撮影が 320 秒）ことで、night-village の撮影（検証レイヤー付きで約 345 秒）と合わせて上限を超えた。スクリプトは変えていない。枠のビルドが HEAD にそろった状態で回し直すと、`-Build` は何もせず各コマンドが 10 分に収まる
+- verify: 枠で before 389 秒・after 388 秒、どちらも exit 0・`CAPTURE_REGRESSION result=pass`（各撮影 rendering3dtest 20・mega-bananas 13・sandbox 11・night-village 344/343 秒）。4 シーンとも before・after で settled、resident は rendering3dtest 496・mega-bananas 26・sandbox 0・night-village 3325、進行中・evicted・budget_blocked はすべて 0 で、`regression_check.json` の `scenes.<シーン>.geometry_pages.{before,after}.overview` に記録。PSNR は rendering3dtest 76.08・mega-bananas 66.63・sandbox 一致・night-village 69.76 dB
+- 証拠: `.harness/runs/20261030-232538/iter2-verify-before.txt`・`iter2-verify-after.txt`、`.harness/runs/regression/SCN-RENDER-ROUGH-STEEP-ENERGY-P1/{before,after}/`
+- Next: なし
+- Notes: night-village の撮影は検証レイヤー付きで約 1 フレーム/秒になり、1 本で約 345 秒かかる。枠のビルドが古いと最初の `-Build`（約 5 分）と合わせて 10 分を超えるので、統合の取り込みで C++ が変わった直後の再検証は同じ理由で落ちうる。要起票: 回帰の撮影の verify を、ビルドと撮影の別のコマンドに分けるか、night-village の撮影を短くする（検証レイヤーの下の 1 フレーム/秒の原因）
+
+- U1 終わらない試験と Game のソースを組み込む 2 つの試験の対象を、全体のビルドと ctest の実行から外す: 着地(直し 0 回)
+## 2026-11-02 SCN-BUILD-ALL-TESTS-P1（run 20261101-231548 の反復 1、完了）
+- Done: `RenderGraphTextureUsageContractTest` を DISABLED にした（VisibilityResolve の `constantCount == 3` の assert で対話窓のまま終わる）。Game のソース（NorvesGameSources）を組み込む `NorvesLibBridgeAdapterScriptComponentTest`・`AssetManifestReloadBridgeLoopbackTest` の対象を `EXCLUDE_FROM_ALL` にし、その実行ファイルを使う ctest の 5 つの名前を DISABLED にした。`.cpp` と束の MEMBER は残し、理由を CMake のコメントと `Docs/Testing.md` の「外したもの」に 2026-11-01 の日付で書いた
+- verify: 試験を有効にした構成（NORVES_BUILD_TESTS=ON）で configure・Debug の全体のビルド・ctest がすべて EXIT=0。`RenderGraphTextureUsageContractTest` は `Not Run (Disabled)`。登録の数は 487 → 487 で変わらない。numstat の 2 通りの比べは一致
+- 証拠: `.harness/runs/20261101-231548/u1-unit-verify.txt`
+- Next: なし
+- Notes: この環境は `NORVES_BRIDGE_SDK_DIR` が空で、Bridge の 4 つの試験（`Test/CMakeLists.txt` の `TARGET norves_bridge_engine_sdk` の条件）と `AssetManifestReloadBridgeLoopbackTest` は configure されず ctest に登録されない。SDK を有効にした構成での `Not Run (Disabled)` の表示と ALL_BUILD からの除外は確かめられておらず、書き方は目で確かめただけ
+- Notes: 枠 `NorvesLib-3` の build は NORVES_BUILD_TESTS=OFF のため、枠で verify を回し直すと試験の対象はビルドされず、ctest は名前に一致する試験が無いまま EXIT=0 になる（全体のビルドの合否は試験を ON にした単位の作業ツリーで見た）
+## 2026-11-02 SCN-BUILD-ALL-TESTS-P1（run 20261101-231548 の反復 2、完了）
+- Done: 反復 1 の差し戻し（枠での verify の再実行が 10 分を超えた）を直した。原因は枠 `NorvesLib-3` の build が統合の取り込みより古く、全体のビルドで Core と Game の翻訳単位をコンパイルし直したこと。CMake の変更は反復 1 のままで変えていない。枠の build を NORVES_BUILD_TESTS=ON・NORVES_BRIDGE_SDK_DIR=NorvesEditor/bridge/cpp で構成し直して一度ビルドし（10 分 27 秒、/m:4、EXIT=0）、HEAD にそろえた
+- verify: 枠で verify のコマンドをそのまま回して EXIT=0・26 秒。Bridge の SDK を有効にした構成で、外した 6 つの名前（`RenderGraphTextureUsageContractTest`・`AssetManifestReloadBridgeLoopbackTest`・`BridgeBase64Test`・`NorvesLibBridgeAdapterThumbnailTest`・`NorvesLibBridgeAdapterScriptComponentTest`・`NorvesLibBridgeAdapterNumericEntityRegressionTest`）がどれも `Not Run (Disabled)`。温めのビルドと verify のビルドの出力に `NorvesLibBridgeAdapterScriptComponentTest.vcxproj`・`AssetManifestReloadBridgeLoopbackTest.vcxproj` は 0 回で、ALL_BUILD から外れている（反復 1 で確かめられなかった SDK 有効時の 2 点）
+- 証拠: `.harness/runs/20261101-231548/verify-SCN-BUILD-ALL-TESTS-P1-2.txt`・`warm-build.txt`・`warm-configure.txt`
+- Next: なし
+- Notes: 全体のビルドを verify にする項目は、枠の build が統合の取り込みより古いと再検証で 10 分を超える（温まった状態の何もしないビルドは約 20 秒）。要起票: 全体のビルドを verify に含む項目の再検証の前に、枠の build を HEAD にそろえる手順をランナー側に置く
+
+- U1 1M の既定の horizon の静止を撮り、10-14 と件数・時間・ドライバを並べ、増えたパスに触れたコミットを挙げて受入れ文書に書く: 着地(直し 0 回)
+## 2026-11-02 SCN-MEGA-FIX-TLAS-REBUILD-P2（run 20261101-234952 の反復 1、完了）
+- Done: 1M の既定の horizon の静止（カメラパスなし）を今のコードで撮り、10-14・10-29 と並べた。`GPU_DRIVER` は 3 回とも 610.88、MegaGeometry・BVH・RT_SCENE の件数（席 292,080・葉の山 903,737・可視の山 1,679,084・TLAS 65,536・skip 120/120）はすべて同じで、`VisRasterSw1`・`MegaGeometryDraw1`・VSM・BVH の S0〜S3 の median も同じ。増えたのは `MegaBvhC1Leaf`（2.560 → 4.995 ms）・`LightingPass`（1.657 → 2.857 ms）・`VisibilityResolvePass` だけで、量でもドライバ・クロックでもなく、コードで 1 件あたりの処理が増えたと判定した。候補は葉が 4a3a43d6（落としたクラスタからもページの要求の atomic）と e5e06e0d、照明が baaf64b4（RTGI の鏡面の光線）・cff879b2（光線ごとの当たりの統計の atomic）・9e922381・9a2fee63。表と判定は `Docs/RenderingValidation/SceneLauncherAcceptance.md` の「10-14 からの静止の GPU の増え」
+- verify: `CAPTURE_SCENE result=pass`（exit 0、`MEGA_BANANAS_PLACED count=1000000`）、`CHECK_CAPTURE_METRICS result=pass views=horizon`（exit 0）
+- 証拠: 単位の作業ツリー `NorvesLib-2-u1` の `.harness/unit-verify.txt` と `.harness/runs/scene-capture/SCN-MEGA-FIX-TLAS-REBUILD-P2/static/`
+- Next: なし
+- Notes: 静止の 1.7 ms は鏡面の光線と統計を足す前の値なので、SCN-MEGA-FIX-TLAS-REBUILD の閾値 3 ms を今のドライバの値で置き直す根拠にはしない（ドライバは替わっていない）。各寄与は古い版を撮らずに差分から挙げた候補で、ms への割り当ては未計測
+- Notes: 要起票: `Common/MegaGeometryCull.glsl` の `ProcessCluster` が子に任せて描かないクラスタからも `RequestPage` の atomic を打つ形（4a3a43d6）を、1M 静止の `MegaBvhC1Leaf` +2.4 ms の原因かを確かめて軽くする（要求を印の未設定のときだけにする・波でまとめるなど）
+- Notes: 要起票: RTGI の光線の当たりの統計（cff879b2 の `DiffuseIndirect.comp` の光線ごとの共有 atomicAdd）を RelWithDebInfo の計測でも常に走らせるかを見直し、鏡面の光線（baaf64b4）と合わせて 1M 静止の `LightingPass` +1.2 ms の内訳を測る
+- Notes: 要起票: 11-01 の撮影で `MegaBvhC1Leaf` の 300 フレーム中 33 フレームが 10 ms 以上（最大 35.1 ms、p95 15.5 ms）の山が出た。10-14・10-29 には無く、原因は未特定（重なりは検出されず）
+
+- U1 地形の書き出しの手順と記録を足し、版 18 の地形を書き出す: 着地(直し 0 回)
+- U2 8 組を撮り、Cycles の正解を本描画で描いて判定する: 着地(直し 0 回)
+- U3 古い正解と新しい正解のエンジン ÷ Cycles を並べた表を書き、仕上げの確かめを回す: 着地(直し 0 回)
+## 2026-11-02 SCN-RENDER-ROUGH-STEEP-ENERGY-P2（run 20261101-235006 の反復 1、完了）
+- Done: 今の焼いた地形（崖の細部の版 18。`build/CookedAssets/cook_coverage.cliff-gen.json`）を `OcclusionSets.py --export-terrain` で書き出し（198 区画・1.54 億三角形、`mesh/export_record.json` に版 18・HEAD のソースの版 17・Game.exe・焼いた資産の manifest のハッシュ）、同じ Game.exe（eb5b8edf…）で 8 組を撮り、Cycles の正解を 1024 サンプル・種 2 で描き直した。8 組とも参照の記録の manifest が書き出しと一致（`cycles/terrain_export.json`）。古い正解と新しい正解の全部の行の並べは `Docs/RenderingValidation/WastelandOcclusion.md` の「崖の細部の版 18 での正解の描き直し」
+- verify: ビルド EXIT=0、撮影 4 本・Cycles 8 本とも EXIT=0、`ReferenceCheck.py --occlusion ... --verify` は `mode=occlusion sets=8 off=0 result=pass`（入力の照合・収束・必須の層の画素数）。古い正解の元の置き場は 112 ファイルとも前後で一致（測りは写し `old-reference/cycles` で行った）
+- 証拠: `.harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY-P2/`（本体の置き場。`logs/U1-verify.txt`・`U2-verify.txt`・`U3-verify.txt`、`cycles/<組>/occlusion_check.json`、`old-reference/cycles/<組>/occlusion_check.json`）
+- Next: SCN-RENDER-ROUGH-STEEP-ENERGY（下の申し送り）
+- Notes: SCN-RENDER-ROUGH-STEEP-ENERGY への申し送り（どちらの正解で判定するか）: 新しい正解 `.harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY-P2/cycles` で判定する。古い正解は地形が版 15 以前で、判定に地形の差が混ざる。新しい正解では遠い急な崖の対照（`slope60-180_d500-100000`）のエンジン ÷ Cycles が terrain-sky 0.9630 → 1.0126、rocks-cliff-sky 0.9749 → 1.0178 で、「開けた急な面が Cycles より 2.5 % 暗い」は残らない（今の鏡面の遮りの入った形で、項目の合否 (1) の 0.985 以上を既に満たす）。項目の前提が新しい正解で消えたので、まず今の形と `--rtgi-specular=off` を新しい正解で並べ直して、直す不足が残るかを確かめてから多重散乱・照り返しの切り分けに入る。rocks-sun の地面の受け手の IoU・漏れも 0.5145・19.19 % → 0.9745・0.64 % に戻った
+- Notes: SCN-RENDER-ROUGH-STEEP-ENERGY への申し送り（`occlusion-accept.json` の前の記録の置き直し）: 今の `baseline_engine_root`（SCN-WL-SUN-SHADOW-FIX）と一時の下限（0.946・0.957）は古い地形・古い正解の上の値。判定の正解を新しい正解へ替えるときは、同じ変更で前の記録も版 18 の地形の撮影（この項目の `.harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY-P2`、Game.exe eb5b8edf…）へ置き直し、その層の 2 行を 1 ± 0.03 へ戻して一時の印を消す。置き直した理由（地形の版 15 → 18 と正解の描き直し）と前後の値を WastelandOcclusion.md に書く。この項目では `occlusion-accept.json` を変えていない
+- Notes: 単位の作業ツリー `NorvesLib-5-u1` は build が無かったので、freetype の初期化・cmake の構成・Game のビルド（初回 420 秒）をし、`Assets/Terrain`・`build/CookedAssets`・置き場 2 つを本体への junction にした
+- Notes: SCN-RENDER-ROUGH-STEEP-ENERGY-P2 の再検証はリポジトリ直下の枠 `NorvesLib-5` で回るが、そこに build と資産の junction が無くビルドの行が落ちた。枠にも freetype の初期化・cmake の構成・Game の RelWithDebInfo のビルド（458 秒、EXIT=0）をし、`Assets/Terrain`・`build/CookedAssets`・置き場 2 つ（SCN-RENDER-ROUGH-STEEP-ENERGY-P2・SCN-WLR-OCCLUSION-SETS）を本体への junction にした。枠のビルド行は EXIT=0、最後の判定 `ReferenceCheck.py --occlusion ... --verify` は今の置き場で `result=pass`（`.harness/runs/20261101-235006/env-verify-1.txt`・`env-verify-check.txt`）。枠の Game.exe は 87eed2a7…で単位の作業ツリーの eb5b8edf…と別のビルドなので、再検証で 8 組の撮影と Cycles の正解は枠の Game.exe で描き直される（地形の書き出しは焼いた資産から作るので版 18 のまま。照合は地形の一覧のハッシュで行う）
+
+## 2026-11-02 SCN-MEGA-ACCEPT-1M-P1（run 20261101-234959 の反復 7、統合ブランチの取り込み）
+- Done: `feature/scene-launcher` を取り込み、`SceneLauncherAcceptance.md` の衝突は両側の節を残して解いた（統合側の「10-14 からの静止の GPU の増え」を前の節の下に、この項目の「カメラパスの再生の RTGI の粒（50000 本）」をその後に置く）。取り込んだ差はエンジンのコードとシェーダーに触れない（試験の設定・文書・`OcclusionSets.py`）。
+- verify: Game のビルド EXIT=0、再生と静止の撮影とも EXIT=0・result=pass、`RtgiGrain.py` は floor_near_bananas の比 1.245（上限 1.500）で pass、`CheckCaptureMetrics.py` pass、回帰の動きの撮影 pass（5 シーン）、基準画像の試験 2 本 Passed。再生の LightingPass の GPU は median 4.122 ms・p95 4.359 ms。再生の horizon.png を開き、手前のバナナの周りの床に粒の荒い暈が無いことを見た。
+- 証拠: `.harness/runs/20261101-234959/merge-verify-*.txt`、`.harness/runs/scene-capture/SCN-MEGA-ACCEPT-1M-P1/`、`.harness/runs/regression/SCN-MEGA-ACCEPT-1M-P1/after/`
+- Notes: 比 1.245 は採用時の同視点の 1.009 より大きい。実時間の保存フレームの時刻が走らせるたびに揺れ、静止の 9.27 秒と視点がずれるため（受入れ文書の既知の限界のとおり）。
+- U1 粒の量を測る RtgiGrain.py と判定の仕様を置く: 着地(直し 0 回)
+- U2 履歴の棄却と年齢の開発用 AOV を足し、直す前の撮影と診断をする: 着地(直し 2 回)
+- U3 RtgiGrain の測り方を床だけに絞り、直す前の比を確かめる: 着地(直し 1 回)
+- U4 カメラだけが動くフレームの拡散の履歴の年齢の上限を 32 にし、直した後の再生と静止を撮る: 着地(直し 2 回)
+- U6 拡散の履歴の読みをバイリニアに戻し、カメラだけの動きの年齢の上限を帯の粒で選び直す: 着地(直し 0 回)
+- U8 カメラだけが動くフレームは空間のフィルタの近傍の重みを年齢で下げない: 着地(直し 0 回)
+- U7 直した後の回帰・golden・判定を通し、受入れ文書を仕上げる: 着地(直し 0 回)
+## 2026-11-02 SCN-MEGA-ACCEPT-1M-P1（run 20261101-234959 の反復 5、完了）
+- Done: カメラパスの再生（50000 本）でバナナの周りと床に出た RTGI の粒の荒い暈を直した。原因は、カメラが動くと静止の署名が毎フレーム変わって履歴の年齢の上限が 8 に留まること（暈の床の 98.6% が履歴を採用・87% が年齢 8、静止は 51〜52）と、空間のフィルタが年齢 8 超の近傍の重みを下げる静止向けの作り。シーンが同じでカメラだけが動くフレームは拡散の年齢の上限を 16（鏡面は 8、履歴は棄却つきバイリニア）にし、空間のフィルタの近傍の重みを年齢で下げない。棄却の閾値と静止の判定は変えていない。履歴の診断の AOV（開発ビルドの `NORVES_RTGI_HISTORY_DIAG=1`）と `Scripts/RtgiGrain.py`・`rtgi-grain-motion.json` を足した
+- verify: RelWithDebInfo の Game ビルド exit 0。再生（保存フレームの時刻 T=8.087 秒）・静止 9.27 秒・時刻を合わせた静止 8.087 秒の撮影は全部 `CAPTURE_SCENE result=pass`。RtgiGrain の比 1.318（verify の固定の組）・1.307（時刻を合わせた組）、直す前 2.114、視点を合わせた診断の組で直す前 1.343 → 1.009。`CHECK_CAPTURE_METRICS result=pass`、LightingPass median/p95 4.181/4.339 → 4.147/4.337 ms。回帰の after -Motion は 5 組 `CAPTURE_REGRESSION result=pass`。golden Indoor・Outdoor は Passed（raw_max=0、再承認なし）。material-gallery は撮れて崩れなし
+- 開いた画: 診断の拡大の前後と静止の比べ（直した版の床の粒が静止に近い）、回帰の前後の並べ（尾・二重の輪郭・ちらつきの増加なし）
+- 証拠: `.harness/runs/20261101-234959/` の反復の記録、単位の作業ツリーの `.harness/unit-verify.txt`、受入れ文書 `SceneLauncherAcceptance.md` の「直した後」
+- Notes: 判定の帯の弁別は弱い（直す前の視点を合わせた組も 1.343 で上限 1.5 以下）。再生の保存フレームの時刻は走らせるたびに 7.97〜9.27 秒で揺れ、verify の静止は 9.27 秒に固定。縁 ±12 画素の床の輝度の差の平均が −0.000246 → −0.000610 と少し暗い側に寄る
+- Notes: 要起票: CaptureScene の再生の保存フレームのパスの時刻を固定する（`camera-path-play` で保存の時刻を指定できないため、再生と静止の組が毎回ずれる）
+### SCN-MEGA-ACCEPT-1M-P1(再検証の差し戻しへの対応)
+- Done: 枠に build が無く再検証の 1 行目が落ちていたため、枠で構成し直した(freetype の submodule・テスト有効の構成・CookedAssets と Assets/Terrain をメインへのジャンクション・回帰の before を同じ項目の撮影から写す)。verify 全 8 行がこの枠で EXIT=0: RtgiGrain の比 1.304(上限 1.5)、LightingPass の計測合格、回帰 5 シーン合格、golden 2/2 合格。コードの変更なし
+- Notes: 要起票: relay の枠(.slots/NorvesLib-4)は単位の作業ツリーだけで作業するため build・資産のジャンクションが無く、ランナーの再検証が落ちる。枠の初期化で揃える形にするかを決める
+
+- U2 RtgiGrain.py が組の 2 つの metrics.json のパスの時刻を照合する: 着地(直し 0 回)
+- U4 指定の時刻の Tick を Game が自前で撮って保存し、終了する(U1 の切り直し): 着地(直し 0 回)
+- U3 CaptureScene が保存フレームのパスの時刻を metrics.json に書き、固定した組を撮って受入れ文書を直す: 着地(直し 1 回)
+## 2026-11-02 SCN-MEGA-ACCEPT-1M-P1-P1（run 20261102-053731 の反復 1、完了）
+- Done: 開発ビルドだけの `--camera-path-capture-time=<秒>` を足した。再生のパスの時刻を再生の開始から 1 Tick 1/60 秒の固定刻みで進め、時刻が指定に達した Tick で Game が自分で撮影を要求し（その Tick のパケットが撮られる）、`--capture-png` の場所へ保存して終了する。保存の直前までカメラは動いたまま。ApplicationProcessor の撮影は描画済みの数（非同期）で決まり Tick と一定の対応にならないため使わず、CaptureScene はこの引数があると `--exit-after-rendered-frames` を延ばす。CaptureScene は保存フレームのパスの時刻と状態（played・placed）を metrics.json の views に書き、`RtgiGrain.py` は組の時刻が無い・差が 1/60 秒を超えると fail にする。受入れ文書の既知の限界「保存フレームの時刻が揺れる」を直した後の記録に置き換えた
+- verify: Game のビルド EXIT=0、再生（9.27 秒・played）と静止（9.27 秒・placed）の撮影とも `CAPTURE_SCENE result=pass`（300 標本・50,000 本・資産の欠け 0）、`RtgiGrain.py` は時刻差 0 秒・floor_near_bananas の比 1.420（上限 1.5）で `RTGI_GRAIN result=pass`。再生の LightingPass は median 4.153 ms・p95 4.357 ms。2 枚の horizon.png を開き、視点が揃い手前の床に粗い粒の暈が無いことを見た
+- 証拠: 単位の作業ツリー `NorvesLib-3-u1` の `.harness/unit-verify.txt` と `.harness/runs/scene-capture/SCN-MEGA-ACCEPT-1M-P1-P1/`
+- Notes: 比 1.420 は前の時刻の揃わない組（1.245〜1.318）・同じ視点の診断（1.009）より高く、上限との余白が小さい。固定刻みは実時間の再生（撮影の直前は約 13.75 ms/Tick）より 1 フレームあたりの動きが約 1.21 倍大きいのが候補だが、速さだけを変えた比べはしていない（受入れ文書に記録）
+- Notes: 要起票: 時刻を固定した組の比 1.420 が上がった原因（固定刻みの 1 フレームあたりの動きか）を、刻みを実時間の Tick の頻度に合わせた撮影と比べて切り分ける
+
+- U1 BandingCheck に視点が違っても使える判定を足す: 着地(直し 0 回)
+- U2 done-when の視点を撮り直して段を判定し、記録する: 着地(直し 1 回)
+### SCN-FIX-SKY-BANDING mega シーンの空の横縞を撮り直して判定する（2026-10-29、run 20261029-134608 の反復 1）
+- Done: 段の出所は表示の 8 bit の丸めにディザが無いこと（SCN-WL-CLOUD-BANDING で特定し、`Assets/Shaders/blit.frag` の Blit のディザで直した）。今の HEAD で done-when の視点（mega-stress overview の既定・100万本 + 5万個 1% 移動、mega-bananas 100万本のカメラパス再生中の horizon）を RelWithDebInfo で撮り直し、10-14 の SCN-MEGA-ACCEPT-1M の撮影と比べた。カメラパスは実時間で進み視点が撮影ごとに変わるので、`Scripts/Terrain/BandingCheck.py` に区画の平均の差を合否に使わない `--shorter` を足した。結果を `WastelandCloudRef.md` の新しい節に書いた
+- 結果: 平らな帯の長さ（平均・95 % 点・最大）moving 7.318・10・56 → 2.833・7・40、streaming → 既定 overview 7.317・10・56 → 2.836・7・40、path 8.714・19・64 → 2.823・8・39。隣の差 1 段以下の割合 1.000 → 0.999（最大 2）。3 組とも `--shorter` pass。起動画面 default の決定的撮影の比較 pass（平均輝度差 0、PSNR 67.894 dB）。描画の変更は無いので基準画像の再承認は無し
+- 証拠: `.harness/runs/20261029-134608/verify-SCN-FIX-SKY-BANDING-U2.txt`（撮影 3 本と起動画面 2 本の result=pass・EXIT=0、BandingCheck 3 組 result=pass）。撮影 `.harness/runs/scene-capture/SCN-FIX-SKY-BANDING{,-moving,-path}/` と各 `banding/banding_zoom.png`。moving の overview・path の horizon の全体と、moving の空の等倍の前後の切り出し、拡大の見比べを開いて確かめた（前の等高線の段が後は細かな雑音になる）
+- Notes: 「隣の差が 1 段以下」は、ディザの雑音で隣の画素が逆向きへ丸まる所の 2 段を許し、割合 ≥ 0.995・最大 ≤ 2 と読んで判定した。縮小して見た全体で空に残るゆるい横の濃淡は縮小表示での見え方で、ぼかした残差は 1 段未満（等倍の切り出しで段は無い）。path の horizon は撮り直しの地平線が約 280 行なので上 260 行で測った。新しい試験は足していない
+- Next: TASKS.md の次の未完
+- U3 表示のディザを隣の閾値の差が有界な IGN に替える: 着地(直し 0 回)
+- U4 --shorter の隣の差を最大 1 段に締める: 着地(直し 0 回)
+- U6 表示のディザを縦の閾値の差が上り下りで釣り合う格子に替える: 着地(直し 0 回)
+- U7 done-when の視点を撮り直して判定し、記録を書き直す: 着地(直し 0 回)
+### SCN-FIX-SKY-BANDING 隣の画素の差を 1 段に収めて閉じる（2026-10-29、run 20261029-134608 の反復 2）
+- Done: 差し戻し（隣の差 2 段が約 0.1 % 残る・streaming の条件で撮っていない）を直した。2 段は、ハッシュのディザで縦の隣の閾値が無相関なため必ず出る。表示の Blit（`Assets/Shaders/blit.frag`）の雑音を、1 画素の分布は一様のまま縦の隣の閾値の差が +0.44 / −0.56 に限られる格子 `fract(0.7548776662 x + 0.44 y)` に替えた（空の縦の勾配は上り・下りとも 0.25 段/画素以下で、余裕 0.19 段以上）。`BandingCheck.py --shorter` を隣の差の最大 1 段に締めた。streaming を ACCEPT-1M と同じ 5 つの引数で撮り直し、記録（`WastelandCloudRef.md` の SCN-FIX-SKY-BANDING の節）を書き直した
+- 結果: 平らな帯の長さ（平均・95 % 点・最大）moving 7.318・10・56 → 1.978・6・33、streaming 7.317・10・56 → 1.978・6・33、path 8.714・19・64 → 2.014・7・33、既定 overview（タスクの verify）7.318・10・56 → 1.975・6・34。4 組とも隣の差の最大 1 段で `--shorter` pass、全列（計 2,507,520 組）でも 2 段以上 0。荒野 ref_far_02 は同じ場面の IGN の撮影と比べ `--no-worse` pass（帯 1.802 → 1.707、区画の平均の差 0.029 段）。起動画面 default は通常の撮影と決定的な 2 回が pass（2 回の比較は平均輝度差 0・PSNR 100 dB）。基準画像の検査（RenderingGolden*）は Blit の後の BackBuffer を撮るので変わり、R1Acceptance.md の節で 4 枚を再承認した
+- 証拠: `.harness/runs/20261029-134608/verify-SCN-FIX-SKY-BANDING-U7.txt`（タスクの verify 2 本を含む撮影 8 本 result=pass・EXIT=0、BandingCheck 4 組 result=pass、全列の数え）。撮影 `.harness/runs/scene-capture/SCN-FIX-SKY-BANDING{,-moving,-streaming,-path,-wasteland}/`、前のディザの撮影は `-hash`・`-ign` を付けて残した。streaming の overview・path の horizon の全体と streaming の `banding/banding_zoom.png` を開いて確かめた（前の等高線の段が後は細かな粒になり、等倍で空に横縞は見えない）
+- Notes: 途中で試した IGN（縦の閾値の差 +0.309 / −0.691）は、空が下へ暗くなる区間で余裕が約 0.1 段しかなく、path の horizon（y≈245）に 2 段が 9 組残った。起動画面の前のハッシュとの参考の比較は平均輝度差 0.0004・PSNR 52.8 dB。新しい試験は足していない
+- Next: TASKS.md の次の未完
+- U8 格子のディザで変わった基準画像 4 枚を再承認する: 着地(直し 1 回)
+- U10 基準画像と縮小表示についての誤った記述を直す(アプリを起動しない): 着地(直し 0 回)
+### SCN-FIX-SKY-BANDING 基準画像の再承認と記録の直しで閉じる（2026-11-02、run 20261102-074959）
+- Done: 表示の Blit の格子のディザで変わる基準画像 4 枚（Indoor・Outdoor と予備の経路 2 枚）を再承認した（816957d8、根拠は R1Acceptance.md の「表示のディザを格子の雑音にした後のIndoor・Outdoor再承認」）。「基準画像の検査は Blit を通らない」の誤りを WastelandCloudRef.md と本書で直し、空の段の目視が等倍の話であること・縮小表示のゆるい濃淡（ぼかした残差 0.057 段）は合否にしないことを書いた。
+- 証拠: `.harness/relay/SCN-FIX-SKY-BANDING-U8-verify.txt`（再承認の前に HEAD で 4 本が落ちること、`blit.frag` だけを戻すと差 0、公開後の ctest 4 本 Passed・mean FLIP 0・raw 最大 0）。空の撮り直しと段の判定は 9a6c203d の格子のディザで撮った U7 の記録（`.harness/runs/20261029-134608/verify-SCN-FIX-SKY-BANDING-U7.txt`）で、その後シェーダーは変わっていない。
+- Next: 起動の確かめは後回し（人の決まりでアプリを起動しない）。SCN-FIX-SKY-BANDING-CHECK でタスクの verify 2 本（mega-stress overview の撮影・起動画面 default の撮影）を回し、overview.png を等倍で開いて空に段が無いことを確かめる。
+- Notes: 縮小表示でだけ見えるゆるい縞は人の判断でこの項目の合否にしない。

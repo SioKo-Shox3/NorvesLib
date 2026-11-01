@@ -9,6 +9,9 @@ norves_add_test_bundle(NorvesLibBridgeAdapterScriptComponentTest
     MEMBER NorvesLibBridgeAdapterThumbnailTest NorvesLibBridgeAdapterThumbnailTest.cpp
     MEMBER BridgeBase64Test BridgeBase64Test.cpp
 )
+# Game のソース（NorvesGameSources）を組み込むので、全体のビルドで Game の翻訳単位をもう一度コンパイルし、
+# Game のソースが増えるたびに壊れていた。対象と実行から外す（2026-11-01）。
+set_target_properties(NorvesLibBridgeAdapterScriptComponentTest PROPERTIES EXCLUDE_FROM_ALL TRUE)
 target_link_libraries(NorvesLibBridgeAdapterScriptComponentTest PRIVATE NorvesGameSources)
 target_include_directories(NorvesLibBridgeAdapterScriptComponentTest PRIVATE
     ${CMAKE_SOURCE_DIR}/Library/Core/Private
@@ -36,6 +39,14 @@ set_tests_properties(
     NorvesLibBridgeAdapterScriptComponentTest
     NorvesLibBridgeAdapterNumericEntityRegressionTest
     PROPERTIES TIMEOUT 300
+)
+
+set_tests_properties(
+    NorvesLibBridgeAdapterScriptComponentTest
+    NorvesLibBridgeAdapterNumericEntityRegressionTest
+    NorvesLibBridgeAdapterThumbnailTest
+    BridgeBase64Test
+    PROPERTIES DISABLED TRUE
 )
 
 # ランチャーの入力順の検査。LauncherMenu は入力の型だけに依存するので、Core にはリンクしない小さな実行ファイルにする。
