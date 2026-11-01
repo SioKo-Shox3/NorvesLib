@@ -50,6 +50,15 @@ endfunction()
 set(VERIFY_SCRIPT "${RUN_DIR}/verify.ps1")
 file(WRITE "${VERIFY_SCRIPT}" [=[param([string]$Manifest,[string]$Root,[string]$Mode)
 $ErrorActionPreference = 'Stop'
+# CTest からの PowerShell 5.1 では Get-FileHash のモジュール解決が環境に依存するため、.NET で計算する。
+function Get-Sha256Hex([string]$FilePath) {
+    $sha256 = [Security.Cryptography.SHA256]::Create()
+    try {
+        return [BitConverter]::ToString($sha256.ComputeHash([IO.File]::ReadAllBytes($FilePath))).Replace('-', '')
+    } finally {
+        $sha256.Dispose()
+    }
+}
 $doc = Get-Content -LiteralPath $Manifest -Raw | ConvertFrom-Json
 $assets = @($doc.assets)
 if ($assets.Count -ne 5) { throw 'manifest must retain one skeletal entry and contain model+3 textures' }
@@ -84,12 +93,12 @@ for ($i=0; $i -lt 3; ++$i) {
 if (-not [IO.File]::Exists((Join-Path $Root $model[0].cooked_package))) { throw 'missing model package' }
 $stateFile = Join-Path $Root 'baseline.json'
 if ($Mode -eq 'initial') {
-    @{ model=$model[0]; textures=$textures; manifest_hash=(Get-FileHash -LiteralPath $Manifest -Algorithm SHA256).Hash } |
+    @{ model=$model[0]; textures=$textures; manifest_hash=(Get-Sha256Hex $Manifest) } |
         ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $stateFile -Encoding UTF8
 } else {
     $before = Get-Content -LiteralPath $stateFile -Raw | ConvertFrom-Json
     if ($Mode -eq 'repeat') {
-        if ((Get-FileHash -LiteralPath $Manifest -Algorithm SHA256).Hash -ne $before.manifest_hash) { throw 'repeat changed manifest bytes' }
+        if ((Get-Sha256Hex $Manifest) -ne $before.manifest_hash) { throw 'repeat changed manifest bytes' }
     } elseif ($Mode -eq 'changed') {
         if ($model[0].source_hash -eq $before.model.source_hash -or $model[0].cooked_hash -ne $before.model.cooked_hash) {
             throw 'image change must alter model source hash but keep model payload hash'
