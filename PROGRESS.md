@@ -8201,3 +8201,8 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - Next: TASKS.md の次の未完
 - U8 格子のディザで変わった基準画像 4 枚を再承認する: 着地(直し 1 回)
 - U10 基準画像と縮小表示についての誤った記述を直す(アプリを起動しない): 着地(直し 0 回)
+### SCN-FIX-SKY-BANDING 基準画像の再承認と記録の直しで閉じる（2026-11-02、run 20261102-074959）
+- Done: 表示の Blit の格子のディザで変わる基準画像 4 枚（Indoor・Outdoor と予備の経路 2 枚）を再承認した（816957d8、根拠は R1Acceptance.md の「表示のディザを格子の雑音にした後のIndoor・Outdoor再承認」）。「基準画像の検査は Blit を通らない」の誤りを WastelandCloudRef.md と本書で直し、空の段の目視が等倍の話であること・縮小表示のゆるい濃淡（ぼかした残差 0.057 段）は合否にしないことを書いた。
+- 証拠: `.harness/relay/SCN-FIX-SKY-BANDING-U8-verify.txt`（再承認の前に HEAD で 4 本が落ちること、`blit.frag` だけを戻すと差 0、公開後の ctest 4 本 Passed・mean FLIP 0・raw 最大 0）。空の撮り直しと段の判定は 9a6c203d の格子のディザで撮った U7 の記録（`.harness/runs/20261029-134608/verify-SCN-FIX-SKY-BANDING-U7.txt`）で、その後シェーダーは変わっていない。
+- Next: 起動の確かめは後回し（人の決まりでアプリを起動しない）。SCN-FIX-SKY-BANDING-CHECK でタスクの verify 2 本（mega-stress overview の撮影・起動画面 default の撮影）を回し、overview.png を等倍で開いて空に段が無いことを確かめる。
+- Notes: 縮小表示でだけ見えるゆるい縞は人の判断でこの項目の合否にしない。
