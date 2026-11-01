@@ -4344,3 +4344,13 @@
 - verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-FIX-TLAS-REBUILD/path --views horizon --timing --min-frames 300 --require-pass LightingPass --max-pass-median-ms LightingPass=4.4 --max-pass-p95-ms LightingPass=5`
 - paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Library/Core/Private/RHI, Library/Core/Public/RHI, TASKS.md, PROGRESS.md
 - from: SCN-MEGA-FIX-TLAS-REBUILD
+
+## SCN-MEGA-FIX-STRESS-GPU-CHECK: 1M + mega-stress 5 万個の GPU 時間を 16.6 ms に収める(後回しにしたアプリの起動の確かめ)
+- status: todo
+- check: launch
+- gpu: exclusive
+- done-when: SCN-MEGA-FIX-STRESS-GPU で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、SCN-MEGA-FIX-STRESS-GPU の done-when を満たすことを確かめる。満たさなければ SCN-MEGA-FIX-STRESS-GPU の done-when と paths の範囲で直す。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -Views overview -Build -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -TimeoutSeconds 2400 -GameArgs banana-count=1000000,stress-entities=50000,stress-moving-percent=1 -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-STRESS-GPU`
+- verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-FIX-STRESS-GPU --timing --min-frames 300 --max-gpu-median-ms 16.6 --max-gpu-p95-ms 16.6`
+- paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Assets/Shaders, Game/GameModes/MegaStress, TASKS.md, PROGRESS.md
+- from: SCN-MEGA-FIX-STRESS-GPU
