@@ -4298,3 +4298,12 @@
 - verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 180 -R "^(CookedClipBankV1Test|SkeletalClipBankBindingTest|RigSplitCookTest)$"`
 - paths: TASKS.md, PROGRESS.md, Library/Core/Private/Animation/ClipBankBinding.cpp, Library/Core/Private/Animation/ClipBankBinding.h, Library/Core/Private/Animation/ClipBankRestComparison.cpp, Library/Core/Private/Animation/ClipBankRestComparison.h, Library/Core/Private/Asset/CookedClipBankV1.cpp, Library/Core/Private/Asset/CookedClipBankV1.h
 - from: G2-GR82-V1-REST-POSE-GUARD
+
+## G2-GR78-SURFACE-CENTROID-CHECK: 表面重心の極端値精度を確認する(後回しにしたアプリの起動の確かめ)
+- status: todo
+- check: launch
+- gpu: exclusive
+- done-when: G2-GR78-SURFACE-CENTROID で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、G2-GR78-SURFACE-CENTROID の done-when を満たすことを確かめる。満たさなければ G2-GR78-SURFACE-CENTROID の done-when と paths の範囲で直す。
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 180 -R "^(ImportTransformTest|ImportSettingsValueTest|ImportSettingsJsonTest|ImportStaticIntegrationTest|CookedSkeletalAssetTest)$"`
+- paths: Library/Core/Private/Resource/ImportTransform.cpp, Library/Core/Private/Resource/ImportTransform.h, Library/Core/Private/Resource/ImportSettings.cpp, Library/Core/Private/Resource/ImportSettingsJson.cpp, Test/Core/Asset/ImportTransformTest.cpp, Test/Core/Asset/ImportSettingsValueTest.cpp, Test/Core/Asset/ImportSettingsJsonTest.cpp, Test/Core/Asset/ImportStaticIntegrationTest.cpp, Docs/Architecture/ImportSettings.md, TASKS.md, PROGRESS.md
+- from: G2-GR78-SURFACE-CENTROID
