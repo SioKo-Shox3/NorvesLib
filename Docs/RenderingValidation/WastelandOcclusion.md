@@ -657,3 +657,49 @@ rocks-sun / contact_near の全体の IoU 0.880 の外れ（崖錐の岩の面�
 （各 98・208・218 秒、どれも pass で値は上の表と同じ。撮影の Game.exe と実装の揃いと組の一覧の参照の有無は、絞っても全組で見る）。
 同じ Game.exe（5b77f919…）の ref_cliff_01 の GPU 時間は、ほかの処理と重なった計測で中央値 22.078 ms（全部のパスが一様に約 1.5 倍、
 CPU も 26 → 35 ms）、測り直しで 16.727 ms（VirtualShadowMapPass 0.635 ms）。VRAM の使用はどちらも 9715 MB。
+
+## 崖の細部の版 18 での正解の描き直し（SCN-RENDER-ROUGH-STEEP-ENERGY-P2）
+
+判定日: 2026-11-02。古い正解 `SCN-WLR-OCCLUSION-SETS/cycles` は、2026-10-23 に崖の細部が版 15 以前の書き出し
+`SCN-WLR-BLENDER-TERRAIN-mesh` で描いた。今の焼いた地形は版 18 で、未統合の `task/SCN-WL-CLIFF-GEN-TALUS` の AssetCook による。
+HEAD のソースは版 17 なので、焼いた地形と揃う正解を描き直した。
+
+置き場は `.harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY-P2`。`mesh/export_record.json` は版 18、198 区画・153,658,569 三角形、
+地形の manifest は `fdbbcc2a…`、焼いた資産の manifest は `771b027f…`、書き出し時の git は `e130b651…` を記録している。
+古い書き出し（manifest `d9fd5483…`）の全体は 198 区画・146,381,717 三角形で、区画数は同じ、三角形は 7,276,852（4.97 %）増えた。
+既存の参照の記録にある 156 区画・約 1.23 億三角形は、岩塊の視点に選んだ範囲の数。
+
+`cmake --build build --config RelWithDebInfo --target Game -- /m:1` は終了コード 0（2.1 秒）。撮影と描画の git は `4c5a9c04…`、
+Game.exe（RelWithDebInfo）は書き出し時と同じ `eb5b8edf…`。全 8 組をこの Game.exe・実装 `6048958b…` で撮った。
+撮影は 2 組ずつ、Cycles は 1 組ずつ順に回した。組の指定を省いたコマンドは次の 3 行。
+
+```
+python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY-P2
+python Scripts/Terrain/OcclusionSets.py --cycles --seeds 2 --out .harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY-P2 --mesh .harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY-P2/mesh
+python Scripts/Terrain/ReferenceCheck.py --occlusion --engine-root .harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY-P2 --reference .harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY-P2/cycles --regions Scripts/Terrain/ExpectSpecs/occlusion-regions.json --verify
+```
+
+各組の `cycles/<組>/inputs.json`・`<視点>.cycles.json` による値。1920 × 1080、1024 サンプル・種 2（0 と 1）・デノイズなし。
+三角形は視点に選んだ地形の数、秒数はコマンド全体／種 2 つの本描画（読み込み・照合用の画・太陽の可視率を除く）。株は小物の配置数とは別に数えた。
+
+| 組 | 視点 | 置いた物の数 | 地形の三角形 | 秒数（全体／本描画） | manifest の一致 |
+|---|---|---|---|---|---|
+| terrain-sky | ref_cliff_01 | 0 | 127,008,009 | 124.6／18.4 | `true` |
+| terrain-sun | ref_cliff_01 | 0 | 127,008,009 | 128.1／21.7 | `true` |
+| rocks-sky | contact_near | 15,446 | 129,245,202 | 140.7／32.1 | `true` |
+| rocks-sun | contact_near | 15,446 | 129,245,202 | 164.3／40.5 | `true` |
+| rocks-cliff-sky | ref_cliff_01 | 584 | 127,008,009 | 120.4／18.5 | `true` |
+| rocks-cliff-sun | ref_cliff_01 | 584 | 127,008,009 | 131.2／22.3 | `true` |
+| plant-sky | plant_near | 株 1（小物 0） | 85,037,657 | 88.9／21.5 | `true` |
+| plant-sun | plant_near | 株 1（小物 0） | 85,037,657 | 110.2／29.5 | `true` |
+
+`cycles/terrain_export.json` の全 8 組が `manifest_match: true`。撮影 4 本・Cycles 8 本は全て終了コード 0、撮り直しなし。
+判定は終了コード 0（282.9 秒）、`REFERENCE_CHECK mode=occlusion sets=8 off=0 result=pass`。
+入力の照合・種 2 つの収束・必須の 4 層の画素数が通った。必須層のエンジン ÷ Cycles は、地形の溝 1.0512、岩塊の接触域 0.9962・0.9981、株の根元 0.9788。
+岩塊の太陽の影は地面の受け手の IoU 0.9745、漏れ 0.64 %（全体の IoU 0.9184）。
+崖の岩塊の `slope60-180_d500-100000` は溝が 1.1666、接触域が 2.0083。比や影の許容による合否は、この判定には含まれない。
+
+出力・終了コード・所要時間は `.harness/unit-verify.txt` と `.harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY-P2/logs/U2-verify.txt`。
+判定の JSON は `.harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY-P2/cycles/<組>/occlusion_check.json`（8 組分）、
+地形の一致の記録は `cycles/terrain_export.json`、組ごとの入力は `cycles/<組>/inputs.json`。
+数値とコマンド結果をまとめた記録は `.harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY-P2/logs/U2-summary.json`。
