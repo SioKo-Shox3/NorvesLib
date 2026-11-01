@@ -8302,3 +8302,12 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: なし
 - Notes: night-village の撮影は検証レイヤー付きで約 1 フレーム/秒になり、1 本で約 345 秒かかる。枠のビルドが古いと最初の `-Build`（約 5 分）と合わせて 10 分を超えるので、統合の取り込みで C++ が変わった直後の再検証は同じ理由で落ちうる。要起票: 回帰の撮影の verify を、ビルドと撮影の別のコマンドに分けるか、night-village の撮影を短くする（検証レイヤーの下の 1 フレーム/秒の原因）
 - U1 1M の既定の horizon の静止を撮り、10-14 と件数・時間・ドライバを並べ、増えたパスに触れたコミットを挙げて受入れ文書に書く: 着地(直し 0 回)
+## 2026-11-02 SCN-MEGA-FIX-TLAS-REBUILD-P2（run 20261101-234952 の反復 1、完了）
+- Done: 1M の既定の horizon の静止（カメラパスなし）を今のコードで撮り、10-14・10-29 と並べた。`GPU_DRIVER` は 3 回とも 610.88、MegaGeometry・BVH・RT_SCENE の件数（席 292,080・葉の山 903,737・可視の山 1,679,084・TLAS 65,536・skip 120/120）はすべて同じで、`VisRasterSw1`・`MegaGeometryDraw1`・VSM・BVH の S0〜S3 の median も同じ。増えたのは `MegaBvhC1Leaf`（2.560 → 4.995 ms）・`LightingPass`（1.657 → 2.857 ms）・`VisibilityResolvePass` だけで、量でもドライバ・クロックでもなく、コードで 1 件あたりの処理が増えたと判定した。候補は葉が 4a3a43d6（落としたクラスタからもページの要求の atomic）と e5e06e0d、照明が baaf64b4（RTGI の鏡面の光線）・cff879b2（光線ごとの当たりの統計の atomic）・9e922381・9a2fee63。表と判定は `Docs/RenderingValidation/SceneLauncherAcceptance.md` の「10-14 からの静止の GPU の増え」
+- verify: `CAPTURE_SCENE result=pass`（exit 0、`MEGA_BANANAS_PLACED count=1000000`）、`CHECK_CAPTURE_METRICS result=pass views=horizon`（exit 0）
+- 証拠: 単位の作業ツリー `NorvesLib-2-u1` の `.harness/unit-verify.txt` と `.harness/runs/scene-capture/SCN-MEGA-FIX-TLAS-REBUILD-P2/static/`
+- Next: なし
+- Notes: 静止の 1.7 ms は鏡面の光線と統計を足す前の値なので、SCN-MEGA-FIX-TLAS-REBUILD の閾値 3 ms を今のドライバの値で置き直す根拠にはしない（ドライバは替わっていない）。各寄与は古い版を撮らずに差分から挙げた候補で、ms への割り当ては未計測
+- Notes: 要起票: `Common/MegaGeometryCull.glsl` の `ProcessCluster` が子に任せて描かないクラスタからも `RequestPage` の atomic を打つ形（4a3a43d6）を、1M 静止の `MegaBvhC1Leaf` +2.4 ms の原因かを確かめて軽くする（要求を印の未設定のときだけにする・波でまとめるなど）
+- Notes: 要起票: RTGI の光線の当たりの統計（cff879b2 の `DiffuseIndirect.comp` の光線ごとの共有 atomicAdd）を RelWithDebInfo の計測でも常に走らせるかを見直し、鏡面の光線（baaf64b4）と合わせて 1M 静止の `LightingPass` +1.2 ms の内訳を測る
+- Notes: 要起票: 11-01 の撮影で `MegaBvhC1Leaf` の 300 フレーム中 33 フレームが 10 ms 以上（最大 35.1 ms、p95 15.5 ms）の山が出た。10-14・10-29 には無く、原因は未特定（重なりは検出されず）
