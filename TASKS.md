@@ -3857,9 +3857,11 @@
 - notes: 2026-10-03作者は他変換を先行し、この機能は未対応として明示拒否する方針を承認。以前の候補はa6391b2の履歴に保持、active実装からは除く。
 
 ## G2-GR82-V1-REST-POSE-GUARD: clip作成時骨格の差を束縛時に検査する
-- status: blocked
-- done-when: v1で各clipの作成時rest snapshotを保存し、現在骨格との差が許容超過なら既定拒否、明示許可時だけ通し、差量と超過関節を報告する。
-- verify: 同名同階層・異なるrest、全関節Translationを含む古いclip、許容内/外/明示許可/q符号同値、欠落/不正snapshot、cook/parse/bind往復。
+- status: todo
+- done-when: 既存の G2-GR82-B1(53f17969/7b423fb1)と B2/B3 の実装が本要件(各 clip の作成時 rest snapshot の保存、現在の骨格との差が許容を超えたら既定で拒否、明示の許可のときだけ通す、差の量と超過した関節を報告)を満たすことを、このブランチの Debug で CookedClipBankV1Test・SkeletalClipBankBindingTest・RigSplitCookTest が通ることで確かめる。そのうえで本項目の `- result:` に、元の verify の各項目(同名同階層で rest が違う / 全関節 Translation を含む古い clip / 許容の内・外・明示許可・q の符号 / snapshot の欠落・不正 / cook・parse・bind の往復)が既存の試験のどこに当たるかを、ファイルと行またはマーカーで書く。新しい形式・API・試験は足さない。試験が落ちたら ClipBank の実装の側で直し、期待値は変えない。
+- verify: `cmake --build build --config Debug --target CookedMeshTest -- -m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 180 -R "^(CookedClipBankV1Test|SkeletalClipBankBindingTest|RigSplitCookTest)$"`
+- paths: TASKS.md, PROGRESS.md, Library/Core/Private/Animation/ClipBankBinding.cpp, Library/Core/Private/Animation/ClipBankBinding.h, Library/Core/Private/Animation/ClipBankRestComparison.cpp, Library/Core/Private/Animation/ClipBankRestComparison.h, Library/Core/Private/Asset/CookedClipBankV1.cpp, Library/Core/Private/Asset/CookedClipBankV1.h
 - stop-when: SkeletonIdからrestを除いたことを無条件互換と扱う、古いclipの歪みを黙認する。
 - notes: 作者承認済みのStage B必須要件。blocked理由はv1形式とStage A等の前提待ちで、作者の再承認待ちではない。
 
