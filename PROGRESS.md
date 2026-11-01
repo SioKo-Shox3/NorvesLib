@@ -8404,3 +8404,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U3 撮影スクリプトに -SkinnedProbeMaterials 2 の判定を足す: 着地(直し 1 回)
 - U6 旧 NVSKEL 0.1 を 0.2 から作る oracle: 着地(直し 1 回)
 - U7 Test-M9World.ps1 -LegacyNvskelCompare と固定姿勢の GBuffer 撮影: 着地(直し 0 回)
+- U5 受入れの記録を書き、Debug のビルドと CPU の試験を通す: 着地(直し 0 回)
