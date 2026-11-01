@@ -3829,9 +3829,18 @@
 - notes: 2026-10-02追加。未着手の後続作業で、前提と選定課題を解決してから実装タスクへ細分化する。NorvesLib/Editorの境界とVFX-S1〜S5はロードマップ参照。
 
 ## G2-GR77-NATIVE-ACCEPTANCE: 実物GLBとnative統合の受入れを記録する
-- status: blocked
-- done-when: 実物GLBと既存glTFのcooker/loose/骨格の受入れを実行し、必要な範囲でgeometry/texture/hashと寿命を確認する。
-- verify: CookedMeshTest、AssetCookGlbSmoke、実物大型GLBのcpu/cooked/表示結果を区別して記録する。
+- status: todo
+- done-when: この Windows の手元で次を行い、`Docs/Architecture/AssetImportPipeline.md` の「GR77: native受入れ」に、CPU の試験・cooked・骨格・表示・未実行を分けて記録する。
+  (1) verify の GR77 の試験19件が Debug で通る。GR77 のコードの不具合は直す。GR77 の外が原因の既存の失敗は、記録して要起票にする。
+  (2) TRELLIS.2 の実物 wooden_shack.glb の cook で、model 1つと texture 3つが実 package で解決する。時間とピークメモリも記録する。
+  (3) dog_trellis2_60k.glb(読めなければ banana.glb)で、2回焼いた結果がバイト単位で一致する。同じ GLB を分けた .gltf から焼いた NVMESH との一致も比べる(違えば原因を記録する)。
+  (4) dog_rigged.glb の骨格の cook が、コンテナではなく既存の契約の診断で拒否される。
+  (5) mega-bananas を -RequireAssets で1枚撮り、GLB 由来のバナナがテクスチャ付きで描かれていることを PNG で確かめる。
+  既存の節の「Windows.h依存で未検証」の注記は、実行結果に合わせて直す。loose の実物 GLB は未実行と明記する。
+- verify: `cmake --build build --config Debug --target CookedMeshTest AssetCook -- -m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 180 -R "^(GltfContainerTest|Base64DecodeTest|GltfBufferSourceTest|GltfBufferSetTest|GltfBufferUriTest|GltfBufferJsonTest|GltfBufferNumberTest|StaticGltfBufferCookTest|GltfImageRangeTest|GltfImageSourceTest|GltfAccessorRangeTest|GltfAccessorStagingTest|ImageBytesStagingTest|GltfDocumentProfileTest|GltfLooseSourceTest|CookedSkeletalAssetTest|CookedMeshTest|AssetCookGlbSmoke|AssetCookMeshSmoke)$"`
+- verify: `git grep -n "GR77: native" -- Docs/Architecture/AssetImportPipeline.md`
+- paths: Docs/Architecture/AssetImportPipeline.md, TASKS.md, PROGRESS.md, Library/Core/Private/Resource/Gltf*, Library/Core/Private/Resource/GLTFAnalyzer.cpp, Library/Core/Private/Resource/SkeletalGltfDecode.cpp, Library/Core/Private/Resource/SkeletalGltfDecode.h, Tools/AssetCook/MeshCooker.cpp, Tools/AssetCook/AssetCookGlbSmoke.cmake.in, Test/Core/Asset/Gltf*, Test/Core/Asset/StaticGltfBufferCookTest.cpp, Test/Core/Asset/ImageBytesStagingTest.cpp, Test/Core/Asset/CookedSkeletalAssetTest.cpp
 - stop-when: pure helperやfixture構文の成功をnative統合の成功として扱う。
 - notes: 現cloudはWindows.h依存で本体compileできず、計画書が参照するDogGameの実物大型GLBも未配置。作者は非描画Windows検証を必須から外しているため、独立実装は継続する。
 
