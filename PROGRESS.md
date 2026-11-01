@@ -8375,3 +8375,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 要起票: 時刻を固定した組の比 1.420 が上がった原因（固定刻みの 1 フレームあたりの動きか）を、刻みを実時間の Tick の頻度に合わせた撮影と比べて切り分ける
 - U1 Debug ビルドと GR77 の CPU 試験19件を通す: 着地(直し 1 回)
 - Notes: 要起票: CookedSkeletalAssetTest が既定の code page 932 で落ちる（`CookedSkeletalAssetTest.cmake.in` の「警告:」の照合が execute_process の出力の文字化けで外れる。chcp 65001 では通る。G2-GR77-NATIVE-ACCEPTANCE で確認）
+- U2 実物 GLB の cook 受入れと「GR77: native受入れ」節: 着地(直し 0 回)
