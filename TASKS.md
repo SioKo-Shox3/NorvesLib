@@ -4112,7 +4112,7 @@
 - from: SCN-BUILD-ALL-TESTS
 
 ## SCN-RENDER-SPEC-WIDE-ESS-P1: night-village で VRAM の予算が足りないとき、ジオメトリのページが常駐 0 まで外される原因を突き止めて直す
-- status: blocked
+- status: todo
 - done-when: SCN-WL-GEOM-LOWVRAM の「予算が足りないときは粗い段に下がって落ち着く」と食い違う形を、night-village で再現して原因を示し、直す。
   - 元の例: SCN-RENDER-SPEC-WIDE-ESS の before の overview(`<親>/.slots/NorvesLib-3/.harness/runs/regression/SCN-RENDER-SPEC-WIDE-ESS/before/night-village/overview.Game.log`)。ヒープの予算が約 6130 MB まで下がった(並べて走るほかの枠の Game と GPU を分け合った)。プール以外が 5396〜5761 MB、影のプールが 623 MB で、ジオメトリの枠の目標は 0〜111 MB。これが外せない区画(根、約 670 MB)を下回り、ページの目標が 0 になって 1101 ページを外し resident=0 になった。そのあと wanted=1538・ready=64 のまま budget_blocked が 4→7 と増えて止まった。ジオメトリのプールの塊(2048 MB)は確保されたままなので、ページを外してもヒープの使用量は減っていない見込み。
   - 再現: 開発ビルドの `vram-budget-mb` で、ジオメトリの枠の目標が根の区画を下回る上限にして night-village を撮る(目安 6100 MB。値を変えたら verify も合わせる)。直す前の撮影で同じ形(常駐 0・要求が予算で止まったまま)になることを、値で PROGRESS.md に残す。
@@ -4133,7 +4133,7 @@
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Views ref_cliff_02 -GameArgs vram-budget-mb=6600,geom-settle-trace=60 -OutDir .harness/runs/scene-capture/SCN-RENDER-SPEC-WIDE-ESS-P1/wasteland-6600`
 - verify: `python Scripts/Terrain/ReferenceCheck.py --geom-settle --engine .harness/runs/scene-capture/SCN-RENDER-SPEC-WIDE-ESS-P1/wasteland-6600 --verify`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Terrain/CaptureRegression.ps1 -Item SCN-RENDER-SPEC-WIDE-ESS-P1 -Phase after`
-- paths: Library/Core/Private/Rendering, Assets/Shaders/Common/MegaGeometryCull.glsl, Game/Debug, Scripts/Terrain, Docs/RenderingValidation, TASKS.md, PROGRESS.md
+- paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering/MegaGeometryPass.h, Library/Core/Public/Rendering/VisibilityRasterPass.h, Assets/Shaders/Common/MegaGeometryCull.glsl, Assets/Shaders/mega_bin_prefix.comp, Assets/Shaders/mega_bin_scatter.comp, Assets/Shaders/mega_bin_check.comp, Assets/Shaders/mega_bin_draw_args.comp, Assets/Shaders/visbuffer_mega.vert, Assets/Shaders/visbuffer_records.comp, Assets/Shaders/megageometry.vert, Test/Core/Rendering/RenderGraphCompileTest.cpp, Game/Debug, Scripts/Terrain, Docs/RenderingValidation, TASKS.md, PROGRESS.md
 - gpu: exclusive
 - notes: 危険地帯(メモリ・ストリーミング・カリングのシェーダー)。予算の上書きはヒープの予算との小さい方になる。ほかの枠の Game が同じ GPU を使うとヒープの予算が上書きの値より下がり、`--geom-settle` の cap_mb の一致の検査が崩れる。そのため GPU を占有して撮る。
 - from: SCN-RENDER-SPEC-WIDE-ESS
