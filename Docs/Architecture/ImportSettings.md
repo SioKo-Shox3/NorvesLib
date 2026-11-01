@@ -23,7 +23,7 @@ rootはobject、version: 1が必須。省略時にv1と推測しない。
 - axes: up/forwardは +X/-X/+Y/-Y/+Z/-Z、既定+Y/+Z
   - 同じ座標軸の組合せは符号が違っても不可
   - mirrorXはbool、既定false
-- origin: modeはkeep/bounds_center/bounds_bottom_center/custom、既定keep。surface_centroidは名前を予約するが、現在はUnsupportedFeatureで明示拒否する
+- origin: modeはkeep/bounds_center/bounds_bottom_center/surface_centroid/custom、既定keep。surface_centroidは静的メッシュで使用でき、骨格では拒否する
   - offsetは有限number3要素、既定[0,0,0]
   - custom以外の非ゼロoffsetは拒否する
 - mesh: windingはkeep/flip/auto、既定keep。flipU/flipVはbool、既定false
@@ -48,7 +48,7 @@ typed値ではfit未使用時のFitMetersは1、fit使用時のScaleは1に固�
 | 21 | Up: +X=0 / -X=1 / +Y=2 / -Y=3 / +Z=4 / -Z=5 | 1 |
 | 22 | Forward（同じaxis番号） | 1 |
 | 23 | mirrorX 0/1 | 1 |
-| 24 | Origin: Keep=0 / BoundsCenter=1 / BoundsBottomCenter=2 / SurfaceCentroid=3（予約・拒否） / Custom=4 | 1 |
+| 24 | Origin: Keep=0 / BoundsCenter=1 / BoundsBottomCenter=2 / SurfaceCentroid=3 / Custom=4 | 1 |
 | 25 | OriginOffset X/Y/Z binary64 | 24 |
 | 49 | Winding: Keep=0 / Flip=1 / Auto=2 | 1 |
 | 50 | flipU 0/1 | 1 |
@@ -73,7 +73,7 @@ strideとfield offsetでlayoutを渡し、他のfieldやpaddingは変更しな�
 
 - up/forwardをtargetの+Y/+Zへ写す右手直交基底を作り、mirrorXはtarget Xへ別に掛ける
 - units.fitは軸変換後boundsのup=Y、forward=Z、longest=最大extentでmetersへ合わせる。選択軸のextentが0なら失敗
-- bounds_centerはbounds中心、bounds_bottom_centerはXZ中心とminYを原点へ移す。surface_centroidは未対応で、ParseSettingsではUnsupportedFeature、変換入口ではUnsupportedOriginとして拒否する
+- bounds_centerはbounds中心、bounds_bottom_centerはXZ中心とminYを原点へ移す。surface_centroidは面積重みの重心を原点へ移す（方式は「表面重心の精度」を参照）。総面積0はDegenerateSurfaceで失敗する
 - custom.offsetは軸/scale適用後に加える平行移動量。ソース内のpivot指定ではない
 - 演算はdouble。P' = (R×P − Pivot) × Scale + Offset と評価し、巨大な中間平行移動行列を作らない。floatへは最後に一度だけ変換する
 - 法線は正の一様scaleで逆転置のscale成分が正規化時に消えるため、直交rotation/mirrorを適用して単位化する。ゼロ/非有限法線は拒否
@@ -86,8 +86,30 @@ strideとfield offsetでlayoutを渡し、他のfieldやpaddingは変更しな�
 通常・最適化・ASan/UBSan（LeakSanitizer除外）を実行済み。
 骨格のIBM/animation等の一様scaleと静的cooker/looseへの挿入は、下記の接続契約に従う。
 
-表面重心は作者承認により後段へ分離した。極端値の精度確認が完了するまでは名前を認識して明示拒否し、
-bounds_center等へ無言で置き換えない。候補実装は履歴に残るが、現在の変換処理からは除外している。
+表面重心は静的メッシュのcookとlooseで有効。骨格ではSupportsSkeletalScaleImportがOrigin == Keepを要求するため拒否する。
+
+## 表面重心の精度
+
+原点は軸/鏡像変換後・scale前の空間で求める。適用順はbounds_centerと同じく、
+P' = (R×P − Pivot) × Scale + Offset とする。ImportTransformOutcome::SurfaceAreaは同じ空間の総面積を返す。
+
+- ExactSumは2^-1074を単位とする2の補数の多倍長整数。uint64のlimb 34本（2176ビット）の固定配列で、binary64の全範囲と2^64回分の加算の余裕を持ち、追加確保はない。加算順に依らず正確な和を保持し、doubleへ戻すときだけround-to-nearest-evenで1回丸める。
+- SurfaceWeightは各面の外積の各成分を6つの積の正確な和から1回だけ丸め、w = hypot(|cx|, |cy|, |cz|)を求める。float×floatの積はdoubleで正確で、wは面積の2倍。頂点の巡回は同じ6項の並べ替え、巻きの反転は符号の反転になるため、wはビット単位で一致する。
+- 各軸のモーメントΣ w·vは、各面の3頂点について積とfmaの残差の2項を正確に足す。float座標の範囲では残差も正確に表せる。3·Σwも同じ方式で正確に足す。
+- 原点 = round(Σ w·v) ÷ round(3·Σw)、総面積 = round(Σw) / 2。面の順・面内の巡回・巻きの反転によらず、原点・総面積・変換後の頂点がビット単位で一致する。
+- 総面積0（全ての面が縮退）はDegenerateSurfaceで失敗し、bounds_center等へ置き換えない。和や丸めの結果が非有限、またはdoubleへ戻せない場合はUnrepresentableで失敗する。失敗時は頂点もindexも変更しない。
+
+和そのものの誤差は0。累算後の丸めはΣw・Σ w·v・3·Σwの各1回と原点の最後の割り算1回で、
+原点の相対誤差の目安は約1.5 ulp。相殺で原点が小さくなる場合も、モーメントを丸めるときの相対誤差0.5 ulpが
+そのまま効くため、原点の大きさに対して数ulpとなる。ここでroundはdoubleへの丸めを表す。
+
+これとは別に残る誤差は、面ごとの重みwの丸め（外積の各成分で0.5 ulp、hypotで約1 ulp）。
+各面の重みの相対誤差をε（数ulp）とすると、原点の移動は高々ε × max|v − 原点| ≲ ε × 2·max|座標|。
+したがって絶対誤差の上限の目安は「最大の座標の大きさ × 数ulp」となる。
+
+ImportTransformTestで確認する組は、2^100/2^-100の等面積2面（原点(1/3, 2^-100/3, 0)・総面積1のビット一致）、
+±1e20の座標の相殺（原点の成分1/3など）、3面の6通りの面順 × 3通りの巡回 × 巻きの反転による
+原点・総面積・変換後の頂点のビット一致、および総面積0での頂点/index非変更の失敗。
 
 ## 設定file選択とsource_hash連結の基盤
 

@@ -35,8 +35,10 @@ namespace NorvesLib::Core::AssetImport
     {
         TransformResult Result = TransformResult::InvalidLayout;
         double AppliedScale = 1.0;
-        // 軸/鏡像変換後、scale前の原点。customはPivot=0で設定offsetを加算する。
+        // 軸/鏡像変換後、scale前の原点。表面重心もこの空間で求め、customは設定offsetを加算する。
         double Pivot[3] = {};
+        // 表面重心を選んだ場合の、軸/鏡像変換後かつscale前の総面積。
+        double SurfaceArea = 0.0;
         bool bFlippedWinding = false;
     };
     // interleaved頂点のfloat3位置/float3法線/float2 UVだけを書き換え、他field/paddingを保持する。
