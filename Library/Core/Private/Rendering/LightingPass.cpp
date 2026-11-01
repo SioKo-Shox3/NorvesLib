@@ -1015,7 +1015,7 @@ namespace NorvesLib::Core::Rendering
         return hash;
     }
 
-    // RTGIHistoryMaximumAge（8）に対し、カメラだけが動くときは視点に依らない拡散の年齢だけを16まで保つ。
+    // カメラだけの動きでは、バイリニア補間のにじみを抑えるため拡散の年齢を16まで保つ（鏡面は8）。
     static constexpr uint32_t RTGIHistoryCameraMotionMaximumAge = 16u;
 
     // 静止が続いたフレーム数から、画素ごとの履歴の年齢の上限を決める。
