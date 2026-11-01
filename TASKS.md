@@ -4153,7 +4153,7 @@
 - notes: 危険地帯(RTGI の鏡面は全シーンに効く)なので、評価者を通す。反復の最初に回帰の撮影の before を撮る。粗い金属の球・屋根・近くのバナナが映る視点を選び、`-Views` で指定して verify も合わせる(視点の名前は実際の名前に合わせる)。鏡面の重みや光線の数を変える場合は、荒野の遮蔽の組 terrain-sky・rocks-cliff-sky を撮り直し、`occlusion-accept.json` の判定が悪くならないことも確かめる(verify の行は足してよい。1 行 10 分未満)。壁時計(75 分)の残りが 25 分を切ったら新しい撮影を始めない。撮れた所までをコミットし、doing のまま終える。
 
 ## SCN-RENDER-ROUGH-STEEP-ENERGY-P2: 荒野の遮蔽の比べの Cycles の正解を、今の焼いた地形(崖の細部の版 18)で描き直す
-- status: todo
+- status: done
 - done-when: 今の Cycles の正解(`.harness/runs/scene-capture/SCN-WLR-OCCLUSION-SETS/cycles`)は、2026-10-23 に古い地形の書き出し `SCN-WLR-BLENDER-TERRAIN-mesh`(崖の細部が版 15 以前)で描いたもの。今の焼いた地形は版 18 で形が違う(SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1 の記録)。そのため判定に参照の古さが混ざる(例: rocks-sun の地形の受け手の IoU が 0.8521 → 0.5146、漏れが 0.0054 → 0.1919。on と off で同じ値)。やること: (1) 今の焼いた地形を `--wasteland-export-terrain` で `<置き場>/mesh` へ書き出し、記録に崖の細部の版を書く。(2) 同じ Game.exe で 8 組をエンジンで撮り、同じ置き場に Cycles の正解を本描画(1024 サンプル・種 2)で描く。(3) `ReferenceCheck.py --occlusion --regions ... --verify` で、入力の照合・収束・必須の層の画素数が通る。(4) `Docs/RenderingValidation/WastelandOcclusion.md` に、全部の行のエンジン ÷ Cycles を古い正解と新しい正解で並べた表を書く。あわせて次の 2 点を書く: 遠い急な崖の対照(`slope60-180_d500-100000`)の 2 行で「開けた急な面が Cycles より 2.5 % 暗い」が新しい正解でも残るか。rocks-sun の IoU と漏れが戻るか。(5) PROGRESS.md の Notes に、SCN-RENDER-ROUGH-STEEP-ENERGY への申し送りを残す(どちらの正解で判定するか、`occlusion-accept.json` の前の記録をどう置き直すか)。`occlusion-accept.json` と古い正解の置き場は書き換えない。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY-P2 --sets terrain-sky,terrain-sun`
