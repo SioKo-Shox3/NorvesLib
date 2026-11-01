@@ -8399,3 +8399,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/relay/SCN-FIX-SKY-BANDING-U8-verify.txt`（再承認の前に HEAD で 4 本が落ちること、`blit.frag` だけを戻すと差 0、公開後の ctest 4 本 Passed・mean FLIP 0・raw 最大 0）。空の撮り直しと段の判定は 9a6c203d の格子のディザで撮った U7 の記録（`.harness/runs/20261029-134608/verify-SCN-FIX-SKY-BANDING-U7.txt`）で、その後シェーダーは変わっていない。
 - Next: 起動の確かめは後回し（人の決まりでアプリを起動しない）。SCN-FIX-SKY-BANDING-CHECK でタスクの verify 2 本（mega-stress overview の撮影・起動画面 default の撮影）を回し、overview.png を等倍で開いて空に段が無いことを確かめる。
 - Notes: 縮小表示でだけ見えるゆるい縞は人の判断でこの項目の合否にしない。
+- U1 スキンの submesh 範囲の塊を 2 つのパスで共有する: 着地(直し 0 回)
