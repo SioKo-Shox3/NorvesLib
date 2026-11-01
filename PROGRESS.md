@@ -8301,13 +8301,18 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261030-232538/iter2-verify-before.txt`・`iter2-verify-after.txt`、`.harness/runs/regression/SCN-RENDER-ROUGH-STEEP-ENERGY-P1/{before,after}/`
 - Next: なし
 - Notes: night-village の撮影は検証レイヤー付きで約 1 フレーム/秒になり、1 本で約 345 秒かかる。枠のビルドが古いと最初の `-Build`（約 5 分）と合わせて 10 分を超えるので、統合の取り込みで C++ が変わった直後の再検証は同じ理由で落ちうる。要起票: 回帰の撮影の verify を、ビルドと撮影の別のコマンドに分けるか、night-village の撮影を短くする（検証レイヤーの下の 1 フレーム/秒の原因）
-- U1 1M の既定の horizon の静止を撮り、10-14 と件数・時間・ドライバを並べ、増えたパスに触れたコミットを挙げて受入れ文書に書く: 着地(直し 0 回)
-## 2026-11-02 SCN-MEGA-FIX-TLAS-REBUILD-P2（run 20261101-234952 の反復 1、完了）
-- Done: 1M の既定の horizon の静止（カメラパスなし）を今のコードで撮り、10-14・10-29 と並べた。`GPU_DRIVER` は 3 回とも 610.88、MegaGeometry・BVH・RT_SCENE の件数（席 292,080・葉の山 903,737・可視の山 1,679,084・TLAS 65,536・skip 120/120）はすべて同じで、`VisRasterSw1`・`MegaGeometryDraw1`・VSM・BVH の S0〜S3 の median も同じ。増えたのは `MegaBvhC1Leaf`（2.560 → 4.995 ms）・`LightingPass`（1.657 → 2.857 ms）・`VisibilityResolvePass` だけで、量でもドライバ・クロックでもなく、コードで 1 件あたりの処理が増えたと判定した。候補は葉が 4a3a43d6（落としたクラスタからもページの要求の atomic）と e5e06e0d、照明が baaf64b4（RTGI の鏡面の光線）・cff879b2（光線ごとの当たりの統計の atomic）・9e922381・9a2fee63。表と判定は `Docs/RenderingValidation/SceneLauncherAcceptance.md` の「10-14 からの静止の GPU の増え」
-- verify: `CAPTURE_SCENE result=pass`（exit 0、`MEGA_BANANAS_PLACED count=1000000`）、`CHECK_CAPTURE_METRICS result=pass views=horizon`（exit 0）
-- 証拠: 単位の作業ツリー `NorvesLib-2-u1` の `.harness/unit-verify.txt` と `.harness/runs/scene-capture/SCN-MEGA-FIX-TLAS-REBUILD-P2/static/`
+
+- U1 終わらない試験と Game のソースを組み込む 2 つの試験の対象を、全体のビルドと ctest の実行から外す: 着地(直し 0 回)
+## 2026-11-02 SCN-BUILD-ALL-TESTS-P1（run 20261101-231548 の反復 1、完了）
+- Done: `RenderGraphTextureUsageContractTest` を DISABLED にした（VisibilityResolve の `constantCount == 3` の assert で対話窓のまま終わる）。Game のソース（NorvesGameSources）を組み込む `NorvesLibBridgeAdapterScriptComponentTest`・`AssetManifestReloadBridgeLoopbackTest` の対象を `EXCLUDE_FROM_ALL` にし、その実行ファイルを使う ctest の 5 つの名前を DISABLED にした。`.cpp` と束の MEMBER は残し、理由を CMake のコメントと `Docs/Testing.md` の「外したもの」に 2026-11-01 の日付で書いた
+- verify: 試験を有効にした構成（NORVES_BUILD_TESTS=ON）で configure・Debug の全体のビルド・ctest がすべて EXIT=0。`RenderGraphTextureUsageContractTest` は `Not Run (Disabled)`。登録の数は 487 → 487 で変わらない。numstat の 2 通りの比べは一致
+- 証拠: `.harness/runs/20261101-231548/u1-unit-verify.txt`
 - Next: なし
-- Notes: 静止の 1.7 ms は鏡面の光線と統計を足す前の値なので、SCN-MEGA-FIX-TLAS-REBUILD の閾値 3 ms を今のドライバの値で置き直す根拠にはしない（ドライバは替わっていない）。各寄与は古い版を撮らずに差分から挙げた候補で、ms への割り当ては未計測
-- Notes: 要起票: `Common/MegaGeometryCull.glsl` の `ProcessCluster` が子に任せて描かないクラスタからも `RequestPage` の atomic を打つ形（4a3a43d6）を、1M 静止の `MegaBvhC1Leaf` +2.4 ms の原因かを確かめて軽くする（要求を印の未設定のときだけにする・波でまとめるなど）
-- Notes: 要起票: RTGI の光線の当たりの統計（cff879b2 の `DiffuseIndirect.comp` の光線ごとの共有 atomicAdd）を RelWithDebInfo の計測でも常に走らせるかを見直し、鏡面の光線（baaf64b4）と合わせて 1M 静止の `LightingPass` +1.2 ms の内訳を測る
-- Notes: 要起票: 11-01 の撮影で `MegaBvhC1Leaf` の 300 フレーム中 33 フレームが 10 ms 以上（最大 35.1 ms、p95 15.5 ms）の山が出た。10-14・10-29 には無く、原因は未特定（重なりは検出されず）
+- Notes: この環境は `NORVES_BRIDGE_SDK_DIR` が空で、Bridge の 4 つの試験（`Test/CMakeLists.txt` の `TARGET norves_bridge_engine_sdk` の条件）と `AssetManifestReloadBridgeLoopbackTest` は configure されず ctest に登録されない。SDK を有効にした構成での `Not Run (Disabled)` の表示と ALL_BUILD からの除外は確かめられておらず、書き方は目で確かめただけ
+- Notes: 枠 `NorvesLib-3` の build は NORVES_BUILD_TESTS=OFF のため、枠で verify を回し直すと試験の対象はビルドされず、ctest は名前に一致する試験が無いまま EXIT=0 になる（全体のビルドの合否は試験を ON にした単位の作業ツリーで見た）
+## 2026-11-02 SCN-BUILD-ALL-TESTS-P1（run 20261101-231548 の反復 2、完了）
+- Done: 反復 1 の差し戻し（枠での verify の再実行が 10 分を超えた）を直した。原因は枠 `NorvesLib-3` の build が統合の取り込みより古く、全体のビルドで Core と Game の翻訳単位をコンパイルし直したこと。CMake の変更は反復 1 のままで変えていない。枠の build を NORVES_BUILD_TESTS=ON・NORVES_BRIDGE_SDK_DIR=NorvesEditor/bridge/cpp で構成し直して一度ビルドし（10 分 27 秒、/m:4、EXIT=0）、HEAD にそろえた
+- verify: 枠で verify のコマンドをそのまま回して EXIT=0・26 秒。Bridge の SDK を有効にした構成で、外した 6 つの名前（`RenderGraphTextureUsageContractTest`・`AssetManifestReloadBridgeLoopbackTest`・`BridgeBase64Test`・`NorvesLibBridgeAdapterThumbnailTest`・`NorvesLibBridgeAdapterScriptComponentTest`・`NorvesLibBridgeAdapterNumericEntityRegressionTest`）がどれも `Not Run (Disabled)`。温めのビルドと verify のビルドの出力に `NorvesLibBridgeAdapterScriptComponentTest.vcxproj`・`AssetManifestReloadBridgeLoopbackTest.vcxproj` は 0 回で、ALL_BUILD から外れている（反復 1 で確かめられなかった SDK 有効時の 2 点）
+- 証拠: `.harness/runs/20261101-231548/verify-SCN-BUILD-ALL-TESTS-P1-2.txt`・`warm-build.txt`・`warm-configure.txt`
+- Next: なし
+- Notes: 全体のビルドを verify にする項目は、枠の build が統合の取り込みより古いと再検証で 10 分を超える（温まった状態の何もしないビルドは約 20 秒）。要起票: 全体のビルドを verify に含む項目の再検証の前に、枠の build を HEAD にそろえる手順をランナー側に置く
