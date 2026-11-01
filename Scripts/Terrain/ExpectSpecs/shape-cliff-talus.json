@@ -1,5 +1,5 @@
 ﻿{
-  "description": "崖の生成に壁から崖錐へ移る崩れた大きな塊を足す項目（SCN-WL-CLIFF-GEN-TALUS）の形の合否。棚・角・外形の行と region_rows は shape-cliff-caprock.json と同じ（移した行の moved_to と撮り直しの揺れの retake_jitter もそのまま）。内部の折れ線の行は写真の崖の生成の担当の範囲ごと（fold_regions.<範囲の ID>）の 5 組で、SCN-WL-SHAPE-INTERNAL-FOLDS の基準（WastelandShape.md の「内部の折れ線」の前の基準 SCN-WL-SHAPE-BASELINE の値）から: 一致は前の基準以上、局所の欠けの最長は + 2 画素まで、余分な折れは前の基準以下。塊が折れを足したことは組 fold_gain（版 15〔崖の細部の版 15、scene-capture/SCN-WL-CLIFF-GEN-CAPROCK/shape〕の一致 + 0.03 以上が 5 組のうち 3 組以上）で求める。閾値は地形を変える前に書き、変えた後に変えない",
+  "description": "高さの場で塊を足す形は版 16〜18 で版 15 を超えなかったため、崩れた塊の項目（SCN-WL-CLIFF-GEN-TALUS）は未達とし、塊を求める行を外す。この形の合否は、版 19（版 15 と同じ形）が版 15 の値に戻ることを確かめる。棚・角・外形の 27 行と region_rows は shape-cliff-caprock.json と同じ（moved_to と retake_jitter を含む）。内部の折れ線の 5 組 × 3 行は版 15 の 4 回の撮影（shape・shape-retake-1〜3）の実測に合わせ、一致は最小を小数 3 桁で切り捨てた値以上、欠けは最大を小数 1 桁で切り上げた値以下、余分は最大を小数 3 桁で切り上げた値以下とする。従来の閾値がより厳しい行はその値を保つ。",
   "annotations_sha256": "9db8b9b5afac738e970f4fb0ea925ac9d48ea8f94c4afd2e6e09c4359f5c72a2",
   "fold_annotations_sha256": "36a0a53890a6f32558289aec25368e7657fee0aee2f25043d0643db58d26914c",
   "rows": [
@@ -206,134 +206,94 @@
     {
       "photo": "far_01",
       "quantity": "fold_regions.cliff_castle_1_far_cliffs.fold_match",
-      "min": 0.243,
-      "note": "前の基準 0.243 以上（SCN-WL-SHAPE-BASELINE）。版 15 0.353"
-    },
-    {
-      "photo": "far_01",
-      "quantity": "fold_regions.cliff_castle_1_far_cliffs.fold_match",
-      "min": 0.383,
-      "group": "fold_gain",
-      "note": "版 15 0.353 + 0.03（撮り直しの揺れ 0.012 より大きい上げ）"
+      "min": 0.352,
+      "note": "版 15 の 4 回の最小 0.352818（小数 3 桁で切り捨て）。前の基準 0.243"
     },
     {
       "photo": "far_01",
       "quantity": "fold_regions.cliff_castle_1_far_cliffs.fold_gap_max_px",
-      "max": 288.9,
-      "note": "前の基準 286.9 + 2 画素。版 15 163.5"
+      "max": 163.5,
+      "note": "版 15 の 4 回の最大 163.483614（小数 1 桁で切り上げ）。前の基準 286.9 + 2 画素"
     },
     {
       "photo": "far_01",
       "quantity": "fold_regions.cliff_castle_1_far_cliffs.fold_extra_ratio",
-      "max": 2.638,
-      "note": "前の基準 2.638 以下。版 15 2.025"
+      "max": 2.034,
+      "note": "版 15 の 4 回の最大 2.033319（小数 3 桁で切り上げ）。前の基準 2.638"
     },
     {
       "photo": "far_01",
       "quantity": "fold_regions.cliff_castle_0_main_butte.fold_match",
-      "min": 0.0,
-      "note": "前の基準 0.000 以上（SCN-WL-SHAPE-BASELINE）。版 15 0.133"
-    },
-    {
-      "photo": "far_01",
-      "quantity": "fold_regions.cliff_castle_0_main_butte.fold_match",
-      "min": 0.163,
-      "group": "fold_gain",
-      "note": "版 15 0.133 + 0.03（撮り直しの揺れ 0.012 より大きい上げ）"
+      "min": 0.132,
+      "note": "版 15 の 4 回の最小 0.132653（小数 3 桁で切り捨て）。前の基準 0.000"
     },
     {
       "photo": "far_01",
       "quantity": "fold_regions.cliff_castle_0_main_butte.fold_gap_max_px",
-      "max": 100.9,
-      "note": "前の基準 98.9 + 2 画素。版 15 68.6"
+      "max": 68.7,
+      "note": "版 15 の 4 回の最大 68.644948（小数 1 桁で切り上げ）。前の基準 98.9 + 2 画素"
     },
     {
       "photo": "far_01",
       "quantity": "fold_regions.cliff_castle_0_main_butte.fold_extra_ratio",
-      "max": 2.257,
-      "note": "前の基準 2.257 以下。版 15 2.037"
+      "max": 2.069,
+      "note": "版 15 の 4 回の最大 2.068015（小数 3 桁で切り上げ）。前の基準 2.257"
     },
     {
       "photo": "far_02",
       "quantity": "fold_regions.cliff_near_3_setting_hen_butte.fold_match",
-      "min": 0.268,
-      "note": "前の基準 0.268 以上（SCN-WL-SHAPE-BASELINE）。版 15 0.282"
-    },
-    {
-      "photo": "far_02",
-      "quantity": "fold_regions.cliff_near_3_setting_hen_butte.fold_match",
-      "min": 0.312,
-      "group": "fold_gain",
-      "note": "版 15 0.282 + 0.03（撮り直しの揺れ 0.012 より大きい上げ）"
+      "min": 0.282,
+      "note": "版 15 の 4 回の最小 0.282485（小数 3 桁で切り捨て）。前の基準 0.268"
     },
     {
       "photo": "far_02",
       "quantity": "fold_regions.cliff_near_3_setting_hen_butte.fold_gap_max_px",
-      "max": 597.5,
-      "note": "前の基準 595.5 + 2 画素。版 15 563.4"
+      "max": 563.5,
+      "note": "版 15 の 4 回の最大 563.426909（小数 1 桁で切り上げ）。前の基準 595.5 + 2 画素"
     },
     {
       "photo": "far_02",
       "quantity": "fold_regions.cliff_near_3_setting_hen_butte.fold_extra_ratio",
-      "max": 1.413,
-      "note": "前の基準 1.413 以下。版 15 1.275"
+      "max": 1.276,
+      "note": "版 15 の 4 回の最大 1.275119（小数 3 桁で切り上げ）。前の基準 1.413"
     },
     {
       "photo": "far_02",
       "quantity": "fold_regions.cliff_near_2_rooster_butte.fold_match",
-      "min": 0.127,
-      "note": "前の基準 0.127 以上（SCN-WL-SHAPE-BASELINE）。版 15 0.199"
-    },
-    {
-      "photo": "far_02",
-      "quantity": "fold_regions.cliff_near_2_rooster_butte.fold_match",
-      "min": 0.229,
-      "group": "fold_gain",
-      "note": "版 15 0.199 + 0.03（撮り直しの揺れ 0.012 より大きい上げ）"
+      "min": 0.199,
+      "note": "版 15 の 4 回の最小 0.199363（小数 3 桁で切り捨て）。前の基準 0.127"
     },
     {
       "photo": "far_02",
       "quantity": "fold_regions.cliff_near_2_rooster_butte.fold_gap_max_px",
-      "max": 362.2,
-      "note": "前の基準 360.2 + 2 画素。版 15 265.9"
+      "max": 265.9,
+      "note": "版 15 の 4 回の最大 265.861272（小数 1 桁で切り上げ）。前の基準 360.2 + 2 画素"
     },
     {
       "photo": "far_02",
       "quantity": "fold_regions.cliff_near_2_rooster_butte.fold_extra_ratio",
-      "max": 2.809,
-      "note": "前の基準 2.809 以下。版 15 2.451"
+      "max": 2.451,
+      "note": "版 15 の 4 回の最大 2.450778（小数 3 桁で切り上げ）。前の基準 2.809"
     },
     {
       "photo": "ground_02",
       "quantity": "fold_regions.cliff_near_2_rooster_butte.fold_match",
-      "min": 0.62,
-      "note": "前の基準 0.620 以上（SCN-WL-SHAPE-BASELINE）。版 15 0.624"
-    },
-    {
-      "photo": "ground_02",
-      "quantity": "fold_regions.cliff_near_2_rooster_butte.fold_match",
-      "min": 0.654,
-      "group": "fold_gain",
-      "note": "版 15 0.624 + 0.03（撮り直しの揺れ 0.012 より大きい上げ）"
+      "min": 0.623,
+      "note": "版 15 の 4 回の最小 0.623727（小数 3 桁で切り捨て）。前の基準 0.620"
     },
     {
       "photo": "ground_02",
       "quantity": "fold_regions.cliff_near_2_rooster_butte.fold_gap_max_px",
-      "max": 60.6,
-      "note": "前の基準 58.6 + 2 画素。版 15 58.6"
+      "max": 58.7,
+      "note": "版 15 の 4 回の最大 58.610526（小数 1 桁で切り上げ）。前の基準 58.6 + 2 画素"
     },
     {
       "photo": "ground_02",
       "quantity": "fold_regions.cliff_near_2_rooster_butte.fold_extra_ratio",
-      "max": 1.202,
-      "note": "前の基準 1.202 以下。版 15 0.955"
+      "max": 0.959,
+      "note": "版 15 の 4 回の最大 0.958345（小数 3 桁で切り上げ）。前の基準 1.202"
     }
   ],
-  "groups": {
-    "fold_gain": {
-      "min_pass": 3
-    }
-  },
   "region_rows": [
     {
       "region": "cliff_near_2_rooster_butte",
