@@ -42,6 +42,7 @@ namespace NorvesLib::Core::Rendering
         {
             m_Proxies.clear();
             m_ChangedSlots.clear();
+            m_ChangedPositions.clear();
             m_PositionBySlot.clear();
             m_bAllChanged = false;
             m_bChangedConsumed = true;
@@ -95,6 +96,7 @@ namespace NorvesLib::Core::Rendering
                 m_PositionBySlot.clear();
                 m_Generation = sceneGeneration;
                 m_bAllChanged = true;
+                m_ChangedPositions.clear();
                 MarkPendingAll();
             }
             else if (m_Generation != sceneGeneration)
@@ -145,6 +147,10 @@ namespace NorvesLib::Core::Rendering
                     }
                 }
                 NoteChangedSlot(incoming.SceneSlot);
+                if (!m_bAllChanged)
+                {
+                    m_ChangedPositions.push_back(index);
+                }
                 NotePendingPosition(index);
             }
             // 2 周目: 書いて、席の位置の表を更新する
@@ -165,6 +171,7 @@ namespace NorvesLib::Core::Rendering
                 std::sort(m_ChangedSlots.begin(), m_ChangedSlots.end());
                 m_ChangedSlots.erase(std::unique(m_ChangedSlots.begin(), m_ChangedSlots.end()), m_ChangedSlots.end());
             }
+            SortChangedPositions();
             // 描かないまま差分が溜まり続けても、覚える量は配列の大きさで頭打ちにする
             if (!m_bPendingAll && m_PendingPositions.size() > m_Proxies.size() + 4096u)
             {
@@ -231,6 +238,7 @@ namespace NorvesLib::Core::Rendering
                 }
                 ++m_Revision;
             }
+            SortChangedPositions();
 
             // 次に描くときに前の変換を揃える物体（このフレームで前の変換と変換が違う物体）を覚え直す
             m_Unsettled.clear();
@@ -363,6 +371,8 @@ namespace NorvesLib::Core::Rendering
          * 消費者が取り込んだ（NoteDrawn を通った）あとの最初の Apply で数え直すので、描画を見送った差分の席も残る。
          */
         [[nodiscard]] const Container::VariableArray<uint32_t>& GetChangedSlots() const { return m_ChangedSlots; }
+        /** @brief 変わった配列の位置（昇順・重複なし）。席が重なった場合の数え漏れの検出にも使う */
+        [[nodiscard]] const Container::VariableArray<uint32_t>& GetChangedPositions() const { return m_ChangedPositions; }
         [[nodiscard]] bool AreAllChanged() const { return m_bAllChanged; }
         /** @brief GetChangedSlots が数え始めた版。消費者が前に見た版がこれと同じときだけ、変わった席で直せる */
         [[nodiscard]] uint64_t GetChangedBaseRevision() const { return m_ChangedBaseRevision; }
@@ -435,10 +445,18 @@ namespace NorvesLib::Core::Rendering
             if (m_bChangedConsumed)
             {
                 m_ChangedSlots.clear();
+                m_ChangedPositions.clear();
                 m_bAllChanged = false;
                 m_ChangedBaseRevision = m_Revision;
                 m_bChangedConsumed = false;
             }
+        }
+
+        void SortChangedPositions()
+        {
+            std::sort(m_ChangedPositions.begin(), m_ChangedPositions.end());
+            m_ChangedPositions.erase(std::unique(m_ChangedPositions.begin(), m_ChangedPositions.end()),
+                                     m_ChangedPositions.end());
         }
 
         // 席を持たない proxy（SceneSlot が 0）が変わったら、席の一覧では数えられないので全部が変わった扱いにする
@@ -452,6 +470,7 @@ namespace NorvesLib::Core::Rendering
             {
                 m_bAllChanged = true;
                 m_ChangedSlots.clear();
+                m_ChangedPositions.clear();
                 return;
             }
             m_ChangedSlots.push_back(slot);
@@ -514,6 +533,10 @@ namespace NorvesLib::Core::Rendering
             }
             proxy.PreviousWorldTransform = previous;
             NoteChangedSlot(proxy.SceneSlot);
+            if (!m_bAllChanged)
+            {
+                m_ChangedPositions.push_back(index);
+            }
             return true;
         }
 
@@ -588,6 +611,7 @@ namespace NorvesLib::Core::Rendering
 
         Container::VariableArray<MegaGeometryProxy> m_Proxies;
         Container::VariableArray<uint32_t> m_ChangedSlots;
+        Container::VariableArray<uint32_t> m_ChangedPositions;
         Container::VariableArray<UnsettledEntry> m_Unsettled;
         // 変わった席を消費者が取り込んだか（true のとき、次の Apply で数え直す）と、数え始めた版
         bool m_bChangedConsumed = true;

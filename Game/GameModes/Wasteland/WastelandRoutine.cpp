@@ -72,6 +72,8 @@ namespace Game::GameModes
     {
         /// 区画を読む AssetSystem
         TSharedPtr<const Asset::AssetSystem> AssetSystem;
+        /// 配置と書き出しが共有する、焼いた面の接地用格子。
+        TSharedPtr<const Terrain::TerrainPlacementGround> PlacementGround;
         /// 地形の区画のクック済みメッシュの論理パス（Tick ごとに NextTile から数区画ずつ読んで置く）
         VariableArray<String> TilePaths;
         uint32_t NextTile = 0;
@@ -86,6 +88,7 @@ namespace Game::GameModes
         /// 置いた物の配置の書き出し（--wasteland-export-placement のときだけ。空なら書かない）と、書き出す崖錐の岩の写し
         String PlacementExportPath;
         VariableArray<Component::MegaScatterInstance> PlacementTalus;
+        VariableArray<WastelandTalus::TalusGroundRejection> PlacementTalusRejected;
         bool bPlacementExported = false;
         /// 灰色の材質の撮影で、崖錐の岩を視点（TalusCenterX・TalusCenterZ）から kGrayTalusRadius 以内に限るか
         bool bLimitTalus = false;
@@ -801,6 +804,73 @@ namespace Game::GameModes
             return String(TerrainSpec::kDemCookedMeshLogicalPathPrefix) + suffix;
         }
 
+        bool SwapToCliffDetailOff(const Asset::AssetSystem &assetSystem, String &path);
+
+        /// 見出しに記録された区画だけが格子の作成時に問い合わせた区画。DEM の全区画から該当分を照合する。
+        TSharedPtr<const Terrain::TerrainPlacementGround> LoadPlacementGround(const Asset::AssetSystem *assetSystem,
+                                                                              const Terrain::TerrainGridLayout &layout,
+                                                                              bool bCliffDetailOff)
+        {
+            constexpr const char *path = "Terrain/WastelandPlacementGround.bin";
+            if (assetSystem == nullptr)
+            {
+                LOG_WARNING_F("COOKED_MODEL_MISSING scene=wasteland path=%s クック済み資産を読めません", path);
+                return {};
+            }
+            AnsiString error;
+            const auto ground = Terrain::TerrainPlacementGround::Load(path, assetSystem->GetCookedFileReader(), error);
+            if (!ground)
+            {
+                LOG_WARNING_F("COOKED_MODEL_MISSING scene=wasteland path=%s %s", path, error.c_str());
+                return {};
+            }
+            VariableArray<Terrain::TerrainPlacementGroundSource> sources;
+            const auto stored = ground->GetSources();
+            const uint32_t tilesX = TerrainSpec::DemTileCount(layout.Columns);
+            const uint32_t tilesZ = TerrainSpec::DemTileCount(layout.Rows);
+            for (uint32_t z = 0; z < tilesZ; ++z)
+            {
+                for (uint32_t x = 0; x < tilesX; ++x)
+                {
+                    String tilePath = MakeDemTileLogicalPath(x, z);
+                    auto resolved = assetSystem->FindCookedVariant(AnsiString(tilePath.c_str()), Asset::AssetKind::Model);
+                    if (!resolved.ShouldUseCooked())
+                    {
+                        continue;
+                    }
+                    // マニフェストは Assets/ を除いた正規化後の論理名を持つ。
+                    const auto found = std::find_if(stored.begin(), stored.end(), [&](const auto &source)
+                                                    { return source.LogicalPath == resolved.Reference.LogicalPath; });
+                    if (found == stored.end())
+                    {
+                        continue;
+                    }
+                    // 描画で崖なしの区画へ差し替わるなら、通常の区画から焼いた格子は使えない。
+                    if (bCliffDetailOff && SwapToCliffDetailOff(*assetSystem, tilePath))
+                    {
+                        resolved = assetSystem->FindCookedVariant(AnsiString(tilePath.c_str()), Asset::AssetKind::Model);
+                    }
+                    if (resolved.ShouldUseCooked())
+                    {
+                        Terrain::TerrainPlacementGroundSource source;
+                        source.LogicalPath = resolved.Reference.LogicalPath;
+                        source.CookedPackage = resolved.Reference.CookedPackage;
+                        source.CookedHash = resolved.Reference.CookedHash;
+                        sources.push_back(std::move(source));
+                    }
+                }
+            }
+            if (stored.empty() || !ground->IsCurrent({sources.data(), sources.size()}))
+            {
+                LOG_WARNING_F("COOKED_MODEL_MISSING scene=wasteland path=%s 区画の参照が現在のマニフェストと一致しません "
+                              "sources=%zu matched=%zu", path, stored.size(), sources.size());
+                return {};
+            }
+            LOG_INFO_F("WASTELAND_PLACEMENT_GROUND path=%s blocks=%zu sources=%zu current=1", path,
+                       ground->GetBlockCount(), sources.size());
+            return ground;
+        }
+
         /// 崖の細部を焼かなかった区画（--wasteland-cliff-detail=off）の論理パスの置き場と、差し替える元の置き場（近景と遠景の
         /// 論理パスの頭 kDemCookedMeshLogicalPathPrefix・kHorizonCookedMeshLogicalPathPrefix のフォルダ）。
         /// Scripts/Terrain/WriteTerrainAssetSet.py が Assets/AssetSets/WastelandTerrainCliffOff.json に書く
@@ -1358,7 +1428,8 @@ namespace Game::GameModes
             VariableArray<Component::MegaScatterInstance> casters;
             VariableArray<Component::MegaScatterInstance> fragments;
             WastelandTalus::TalusStats stats;
-            WastelandTalus::BuildTalusRocks(field, *pMask, assembly.TalusShapes, exclusions, casters, fragments, stats);
+            WastelandTalus::BuildTalusRocks(field, *pMask, assembly.PlacementGround.get(), assembly.TalusShapes, exclusions,
+                                             casters, fragments, stats);
             if (assembly.bLimitTalus)
             {
                 const auto keepNear = [&assembly](VariableArray<Component::MegaScatterInstance> &instances)
@@ -1436,6 +1507,7 @@ namespace Game::GameModes
             if (!assembly.PlacementExportPath.empty())
             {
                 assembly.PlacementTalus.clear();
+                assembly.PlacementTalusRejected = std::move(stats.GroundRejections);
                 if (placedCasters != 0)
                 {
                     assembly.PlacementTalus.insert(assembly.PlacementTalus.end(), casters.begin(), casters.end());
@@ -1961,6 +2033,17 @@ namespace Game::GameModes
                           "Scripts/Terrain/CropDem.py --build で作ると描けます",
                           TerrainSpec::kDemGridDescriptorPath, gridError.c_str());
         }
+        TSharedPtr<const Asset::AssetSystem> assetSystem;
+        if (data.m_GetAssetSystem.IsBound())
+        {
+            assetSystem = data.m_GetAssetSystem.Invoke();
+        }
+        TSharedPtr<const Terrain::TerrainPlacementGround> placementGround;
+        if (data.m_pHeightField)
+        {
+            placementGround = LoadPlacementGround(assetSystem.get(), data.m_pHeightField->GetGridLayout(),
+                                                  data.m_bCliffDetailOff);
+        }
         LiftPoseToTerrain(data.m_pHeightField.get(), data.m_ViewName, pose);
 
         // 共通の照明と灰色の板（起動引数で選んだときだけ）。定義が読めなければモードを失敗にする（黙って既定の照明で撮らない）
@@ -1992,8 +2075,8 @@ namespace Game::GameModes
             }
             data.m_pSurfaceMask = surfaceMask;
             // 石と礫は地図の礫・崖錐・沢底の重みで置くので、地図が無ければ置かない
-            data.m_GravelScatter.Initialize(data.m_pHeightField, surfaceMask);
-            data.m_FoliageScatter.Initialize(data.m_pHeightField, std::move(surfaceMask));
+            data.m_GravelScatter.Initialize(data.m_pHeightField, surfaceMask, placementGround);
+            data.m_FoliageScatter.Initialize(data.m_pHeightField, std::move(surfaceMask), placementGround);
             if ((data.m_HideMask & WastelandHide::ReferencePlantOnly) != 0)
             {
                 PlaceReferencePlant(data);
@@ -2012,11 +2095,6 @@ namespace Game::GameModes
             data.m_bRTGINonCasterOcclusion);
 
         // 地形の区画を読み、材質のテクスチャの読み込みを始める。無いときは空と太陽だけで組み立てを終える
-        TSharedPtr<const Asset::AssetSystem> assetSystem;
-        if (data.m_GetAssetSystem.IsBound())
-        {
-            assetSystem = data.m_GetAssetSystem.Invoke();
-        }
         if (!assetSystem)
         {
             LOG_WARNING("COOKED_MODEL_MISSING scene=wasteland AssetSystem が無いため地形を置きません");
@@ -2025,6 +2103,7 @@ namespace Game::GameModes
         {
             auto assembly = MakeShared<WastelandAssembly>();
             assembly->AssetSystem = assetSystem;
+            assembly->PlacementGround = placementGround;
             assembly->TerrainExport.Directory = data.m_TerrainExportDir;
             assembly->PlacementExportPath = data.m_PlacementExportPath;
             assembly->bTightSunShadow = !data.m_bNightVillage;
@@ -2294,8 +2373,10 @@ namespace Game::GameModes
                             WastelandPropExport::MeshNameFromLogicalPath(
                                 String(Layout::GetPropKindSpec(Layout::PropKind::TalusSlab).MeshPath));
                         talus.Instances = std::move(assembly.PlacementTalus);
-                        WastelandPlacementExport::Write(assembly.PlacementExportPath, *data.m_pHeightField, talus,
-                                                        data.m_FoliageScatter, data.m_GravelScatter);
+                        talus.GroundRejections = std::move(assembly.PlacementTalusRejected);
+                        WastelandPlacementExport::Write(assembly.PlacementExportPath, *data.m_pHeightField,
+                                                        assembly.PlacementGround.get(), talus, data.m_FoliageScatter,
+                                                        data.m_GravelScatter);
                         assembly.bPlacementExported = true;
                     }
                 }

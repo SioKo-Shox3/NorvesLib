@@ -13,9 +13,21 @@
 #include "Rendering/RenderGraph/IRenderGraphPass.h"
 #include "RHI/IDescriptorSet.h"
 #include "RHI/RHITypes.h"
+#include "Debug/DebugConfig.h"
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
+#include "Debug/DebugConfig.h"
+#if NORVES_BUILD_DEVELOPMENT
+#include "Thread/Mutex.h"
+#endif
 #include <cstddef>
+
+#if NORVES_BUILD_DEVELOPMENT
+namespace NorvesLib::RHI
+{
+    struct BufferDesc;
+}
+#endif
 
 namespace NorvesLib::Core::Rendering
 {
@@ -45,8 +57,8 @@ namespace NorvesLib::Core::Rendering
     /**
      * @brief 影の表の1要素（GPU送信用。Common/VirtualShadowMapMegaCull.glsl の ShadowInstance と一致）。インスタンスの表と同じ並び（同じ添字）
      *
-     * 影を落とすインスタンスだけが、影の判定のワークグループ（64クラスタ）を持つ。FirstGroup は、そのインスタンスより前の
-     * 影を落とすインスタンスのワークグループの数の合計（落とさないインスタンスは次のインスタンスと同じ値）。
+     * FirstGroup は影の判定のワークグループ（64 クラスタ）の先頭。BVH と空行には、出し入れに備えた余裕を含む。
+     * 影を落とさない行や平らな空行にも、再利用のため以前の割り当てを残すことがある。
      */
     struct alignas(16) MegaGeometryShadowInstance
     {
@@ -400,6 +412,7 @@ namespace NorvesLib::Core::Rendering
              * 詰めた経路（bCompactRecords）は可視クラスタの詰めた並びの位置 P（ハードとソフトが同じ記録を引く）
              */
             uint32_t RecordSlots = 0;
+            uint32_t RecordSlotCeiling = 0; // 詰めた経路の記録枠の天井（CPU の総数を可視列の容量で抑える）
             bool bCompactRecords = false;
             uint32_t RecordCommandBase = 0; // 記録を書く計算が読むコマンドの位置の足し分（詰めた経路は P 番の記録用のコマンドの先頭）
             /**
@@ -545,6 +558,11 @@ namespace NorvesLib::Core::Rendering
         uint32_t GetFrameSlotCapacity() const { return m_FrameSlots.GetCapacity(); }
         /** @brief 手放して GPU の使い終わりを待っているバッファの数（検査用） */
         size_t GetRetiredBufferCount() const { return m_RetiredBuffers.size(); }
+
+#if NORVES_BUILD_DEVELOPMENT
+        /** @brief GPU Scene の確保を弱参照で記録する。同じ所有権のバッファは重複して数えない */
+        void NoteGpuSceneBuffer(const RHI::BufferPtr& buffer, const RHI::BufferDesc& desc, bool bDevelopmentOnly);
+#endif
         /**
          * @brief ID・深度へ描く相手（同じ View の VisibilityRasterPass）。渡すと、解決が GBuffer を書くフレームは、
          *        相手の Execute が記録を駆動する（Execute(context) は記録をキューへ積まず、GBuffer の添付の状態遷移だけを行う）
@@ -650,7 +668,7 @@ namespace NorvesLib::Core::Rendering
         /**
          * @brief 席の表の1要素（席ごと 128 B。mega_scene_scatter.comp の SceneSlotRows と一致）
          *
-         * 席の番号は行の席（MegaGeometryProxy::SceneSlot - 1）。行と一緒に動き、その実体が消えるまで変わらないので、
+         * 席の番号は行の席（MegaGeometryProxy::SceneSlot）。0 は空行のために予約する。行と一緒に動き、その実体が消えるまで変わらないので、
          * 動いた席の行だけを書き直せば、描く順が変わっても行を送り直さずに済む。
          */
         struct alignas(16) GPUMegaSlotRow
@@ -688,14 +706,29 @@ namespace NorvesLib::Core::Rendering
             uint32_t TableSlot = 0;
         };
 
+        /** @brief 表を作るまで残す、インスタンスの並びの変化 */
+        enum class SceneInstanceDeltaKind : uint8_t
+        {
+            Removed,
+            Moved,
+            Added
+        };
+        struct SceneInstanceDelta
+        {
+            SceneInstanceDeltaKind Kind = SceneInstanceDeltaKind::Added;
+            uint32_t PreviousPosition = 0xFFFFFFFFu;
+            uint32_t PreviousRow = 0xFFFFFFFFu;
+            uint32_t Position = 0xFFFFFFFFu;
+        };
+
         /** @brief proxy から描くインスタンスを作る */
         static MegaMeshInstance MakeMegaMeshInstance(const MegaGeometryProxy &proxy);
 
         /**
          * @brief RenderThread の写しの、変わった席のインスタンスだけを直す
          *
-         * 席の数え間違いが無いよう、直す前に全部の席を確かめ、外れた席・無効な proxy・ObjectId が替わる位置があれば
-         * m_Instances を変えずに false を返す（呼び出し側が作り直す）。
+         * 移動・解放・追加は変わった位置と切った末尾だけで見分け、位置ごとの記録を運ぶ。
+         * 席の欠落・重複や追跡できない並びは、状態を変えずに false を返す（呼び出し側が作り直す）。
          */
         bool PatchInstancesFromChangedSlots(const ViewRenderContext &context);
 
@@ -731,6 +764,7 @@ namespace NorvesLib::Core::Rendering
         {
             RHI::BufferPtr Uniform;              // 材質の区間ごとの定数（PerObject UBO）
             RHI::DescriptorSetPtr DescriptorSet; // 描画用（UBO・材質のテクスチャ・VTの要求・インスタンスの表・描画情報）
+            uint64_t BufferRevision = 0; // 最後に結んだ GPU Scene バッファの版
         };
 
         /** @brief BVH のたどりの1段分の資源（カリング用UBOと、その UBO を結んだディスクリプタセット） */
@@ -738,6 +772,7 @@ namespace NorvesLib::Core::Rendering
         {
             RHI::BufferPtr Uniform;
             RHI::DescriptorSetPtr DescriptorSet;
+            uint64_t BufferRevision = 0; // 最後に結んだ GPU Scene バッファの版
         };
 
         /** @brief ホストが毎フレーム書く資源の組。1 回の記録（ビューポート）ごとに FrameUseRing から 1 組使う */
@@ -747,6 +782,7 @@ namespace NorvesLib::Core::Rendering
             RHI::BufferPtr SceneStaging;
             uint64_t SceneStagingCapacity = 0; // バイト数
             RHI::DescriptorSetPtr SceneScatterDescriptorSet[4];
+            uint64_t SceneScatterBufferRevision[4] = {};
             // この組を使った記録のメッシュの表が指すメッシュの区画（頂点・インデックス・クラスタ・BVH）の持ち主。
             // 組を次に使うとき（その記録の提出の GPU の仕事が終わった後）まで保ち、区画を空きへ戻さない
             Container::VariableArray<Container::TSharedPtr<void>> MeshRegionOwners;
@@ -768,11 +804,15 @@ namespace NorvesLib::Core::Rendering
             uint64_t PageTableVersion = 0;  // バッファの中身の版（PageTableBuffer が無いときは意味を持たない）
             RHI::BufferPtr CullUniform[2]; // パスごとのカリング用UBO
             RHI::DescriptorSetPtr CullDescriptorSet[2];
+            uint64_t CullBufferRevision[2] = {};
             // BVH のたどり: パスごとに、節の判定の段 + 葉のクラスタの判定の段 + 範囲の段（2 パス目はさらに回した範囲・節・クラスタの段）
             // の数だけ（段ごとにUBOの中身が違うため別々に持つ）
             Container::VariableArray<BvhStageDraw> BvhStages[2];
             Container::VariableArray<SectionDraw> Sections;
         };
+
+        /** @brief GPU が読み終えた組から、置き換え前のバッファを結んだセットを手放す */
+        void ReleaseStaleFrameSlotDescriptors(FrameSlot &slot);
 
         /** @brief フレームスロットに、このフレームの区間の数を収める資源（区間の表・カリングと描画の UBO・ディスクリプタセット）を用意する */
         bool EnsureFrameSlot(FrameSlot &slot, uint32_t sectionTableEntries, uint32_t sectionCount);
@@ -829,7 +869,7 @@ namespace NorvesLib::Core::Rendering
             Container::VariableArray<GPUMegaMesh> Meshes;
             // メッシュの表の行と同じ並びの、メッシュの区画の持ち主（MegaMeshGPUData::RegionOwner）
             Container::VariableArray<Container::TSharedPtr<void>> MeshOwners;
-            // 影の表（インスタンスの表と同じ並び）。影を落とすインスタンスだけが、影の判定のワークグループを持つ
+            // 影の表（インスタンスの表と同じ並び）。BVH の領域は一律、平らな行は投影物だけに割り当てる
             Container::VariableArray<MegaGeometryShadowInstance> ShadowInstances;
             uint64_t ShadowTotalGroups = 0;
             uint32_t ShadowCasterCount = 0;
@@ -837,6 +877,14 @@ namespace NorvesLib::Core::Rendering
             uint64_t TotalGroups = 0;
             // BVH のたどりの規模: BVH を持つインスタンスの数と、段ごとの節の数・葉の数のインスタンスの合計（列の大きさになる）
             uint32_t BvhInstanceCount = 0;
+            // BVH の直後に置く空行の数と、BVH の領域の 1 行あたりの影の割り当て
+            uint32_t BvhSpareCount = 0;
+            uint32_t BvhShadowGroups = 0;
+            // 空行だけが読む固定変換の席（実インスタンスの席とは共有しない）
+            uint32_t EmptySlot = 0;
+            // 一律の影の割り当てが 32 ビットに収まらないときは、予備なしで投影物だけを詰める
+            bool bUniformBvhShadow = true;
+            bool bHasEmptyMesh = false;
             Container::VariableArray<uint64_t> BvhLevelCapacity;
             uint64_t BvhLeafCapacity = 0;
         };
@@ -854,8 +902,8 @@ namespace NorvesLib::Core::Rendering
          * @brief m_Instances とロード済みのメッシュから、このフレームの表を作る（CPU だけ。GPU のバッファには書かない）
          *
          * インスタンスの並びは BVH をたどるインスタンスが先。
-         * 前に作った表（m_SceneTables）を持ち続け、並びが変わらない（インスタンスの作り直し・メッシュの準備や中身の変化・BVH の
-         * 使える状態の変化が無い）フレームは、直したインスタンスの行だけを書き換える（PatchSceneTables）。
+         * 前に作った表（m_SceneTables）を持ち続け、メッシュの準備や中身・BVH の状態が変わらないときは、出し入れと
+         * 直したインスタンスの行だけを書き換える（PatchSceneTables）。
          */
         void BuildSceneTables(const MegaGeometryPassCommand &command, SceneTables &tables);
 
@@ -886,8 +934,8 @@ namespace NorvesLib::Core::Rendering
         /**
          * @brief 前に作った表の、直したインスタンスの行だけを書き換える
          *
-         * 先に全部を確かめ、作り直しが要る（表が無い・メッシュの準備や中身が変わった・BVH の使える状態が変わった・
-         * 直したインスタンスのメッシュが替わった）なら何も変えずに false を返す。VSM の無効化も、直した行とページの常駐が
+         * 先に全部を確かめ、表・メッシュ・予備の状態や割り当ての容量から作り直しが要るなら、何も変えずに false を返す。
+         * VSM の無効化も、直した行とページの常駐が
          * 変わったメッシュの行だけを積む。
          */
         bool PatchSceneTables(const MegaGeometryPassCommand &command, SceneTables &tables, bool bResidencyFresh);
@@ -911,8 +959,8 @@ namespace NorvesLib::Core::Rendering
         /**
          * @brief m_Instances の席の表の番号（TableSlot）を決める（m_bSceneSlotsDirty のときだけ）
          *
-         * 行の席（SceneSlot - 1）をそのまま使う。席を持たないインスタンスと、同じ席を持つ 2 つ目以降のインスタンスは、
-         * 行の席の最大の次から順に割り当てる。
+         * 0 番を空行に予約し、行の席（SceneSlot）をそのまま使う。席を持たないインスタンスと、同じ席を持つ
+         * 2 つ目以降のインスタンスは、行の席の最大の次から順に割り当てる。
          */
         void AssignSceneTableSlots();
 
@@ -1006,10 +1054,12 @@ namespace NorvesLib::Core::Rendering
          *
          * @param bCommit true なら差分更新の出所（席の行・メッシュ・載らなかったメッシュ）を覚える。
          * false なら何も変えずに作る（開発ビルドの照合）
+         * @param outRows インスタンスの位置ごとの表の行（載らなければ NoSceneRow）
          * @param outRecords m_Instances と同じ並びの、影の表へ載せた記録（載らなかったインスタンスは投影物でない記録）
          */
         void ComposeSceneTables(const MegaGeometryPassCommand &command, SceneTables &tables, bool bCommit,
-                                Container::VariableArray<ShadowInstanceRecord> &outRecords);
+                                Container::VariableArray<ShadowInstanceRecord> &outRecords,
+                                Container::VariableArray<uint32_t> &outRows);
         /**
          * @brief インスタンス 1 つの影の表の行（FirstGroup 以外）と記録を組む
          * @param ioEntry FirstGroup はそのまま残し、ほかを書く
@@ -1026,7 +1076,7 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief 常駐の表へ書いたバイト数を数え、120 回ごとに MEGA_SCENE_UPLOAD を出す */
         void NoteSceneUpload(uint64_t bytes, uint32_t rows, uint32_t entries, uint32_t shadows, uint32_t meshes,
-                             uint64_t pageTableBytes);
+                             uint64_t pageTableBytes, const SceneTables &tables);
 
         /**
          * @brief 表を書く共通の前段。読み手のどのパスよりも前（MegaGeometryPass::Execute）で 1 回呼ぶ
@@ -1050,7 +1100,7 @@ namespace NorvesLib::Core::Rendering
          *
          * 足りなければ作り直し、古いバッファは、GPUが使い終わった後に破棄する。
          */
-        bool EnsureBatchBuffers(uint32_t commandCapacity, uint32_t counterCapacity);
+        bool EnsureBatchBuffers(uint32_t commandCapacity, uint32_t counterCapacity, uint32_t growthCeiling = 0);
 
         /** @brief BVH のたどりのカウンタ（間接 dispatch の引数を含む）を作る。平らな判定のディスクリプタセットも結ぶので初期化で作る */
         bool EnsureBvhCounterBuffer();
@@ -1067,7 +1117,7 @@ namespace NorvesLib::Core::Rendering
          *
          * 足りないときだけ作り直し、古いものは m_RetiredBuffers へ回す。
          */
-        bool EnsureSwRasterBuffer(uint32_t capacity);
+        bool EnsureSwRasterBuffer(uint32_t capacity, uint32_t growthCeiling = 0);
 
         /**
          * @brief 可視クラスタの binning のバッファ（全体の固定容量の列・区画の数え・開発ビルドの照合の印）を用意する
@@ -1243,6 +1293,45 @@ namespace NorvesLib::Core::Rendering
             uint64_t RetiredFrame = 0; // 退避したときの m_RenderFrameCount
         };
         Container::VariableArray<RetiredBuffer> m_RetiredBuffers;
+        // GPU Scene のバッファを置き換えるたびに進む版。各セットが結んだ版と照合する
+        uint64_t m_DescriptorBufferRevision = 1;
+#if NORVES_BUILD_DEVELOPMENT
+        struct GpuSceneBufferAllocation
+        {
+            Container::TWeakPtr<RHI::IBuffer> Buffer;
+            uint64_t Bytes = 0;
+            uint64_t ExpiredFrame = ~0ull;
+            Container::AnsiString Name;
+            bool bCPUAccessible = false;
+            bool bExcludeDeviceLocal = false;
+            bool bDevelopmentOnly = false;
+            bool bPending = false;
+        };
+        struct GpuSceneVramUsage
+        {
+            uint64_t LiveBytes = 0;
+            uint64_t PendingBytes = 0;
+            uint64_t PeakBytes = 0;
+            uint64_t PeakLiveBytes = 0;
+            uint64_t PeakPendingBytes = 0;
+            uint64_t PeakFrame = 0;
+        };
+        struct GpuSceneVramStats
+        {
+            GpuSceneVramUsage All;
+            GpuSceneVramUsage Device;
+            GpuSceneVramUsage AllDevice;
+            GpuSceneVramUsage DevelopmentOnlyDevice;
+            GpuSceneVramUsage Host;
+            GpuSceneVramUsage HostMaybeDevice;
+        };
+        void UpdateGpuSceneVram();
+        Thread::Mutex m_GpuSceneVramMutex;
+        Container::VariableArray<GpuSceneBufferAllocation> m_GpuSceneBuffers;
+        GpuSceneVramStats m_GpuSceneVramStats;
+        Container::AnsiString m_GpuSceneDevicePeakBuffers;
+        uint64_t m_LastLoggedGpuSceneDevicePeakBytes = 0;
+#endif
         uint64_t m_OcclusionFrameCount = 0;
 
         // 統計（MEGA_OCCLUSION）。フレームの持ち主の読み戻しの口で借りた先へ GPU が数え、提出の完了の後に受け取る（GPUを待たない）。
@@ -1294,6 +1383,22 @@ namespace NorvesLib::Core::Rendering
 
         // フレーム単位のインスタンスリスト
         Container::VariableArray<MegaMeshInstance> m_Instances;
+        // 解放の前の位置と表の行、移動の前後の位置、追加の位置。表を作るまで順に積む
+        Container::VariableArray<SceneInstanceDelta> m_SceneInstanceDeltas;
+#if NORVES_BUILD_DEVELOPMENT
+        // 出し入れと全量同期の回数・件数（影の統計を出す間の合計）
+        struct SceneInstanceDeltaStats
+        {
+            uint64_t Frames = 0;
+            uint64_t Patched = 0;
+            uint64_t Moved = 0;
+            uint64_t Removed = 0;
+            uint64_t Added = 0;
+            uint64_t Resync = 0;
+            uint64_t Full = 0;
+        };
+        SceneInstanceDeltaStats m_SceneInstanceDeltaStats;
+#endif
         // m_Instances を作った時点の RenderThread の写しの版と配列。差分の同期で写しが変わらないフレームは作り直さない
         // （0 / nullptr は、写しから作ったのではない）
         uint64_t m_InstanceSourceRevision = 0;
@@ -1329,6 +1434,11 @@ namespace NorvesLib::Core::Rendering
         uint32_t m_EntryCopyCount = 0;
         Container::VariableArray<MegaGeometryShadowInstance> m_ShadowRowCopies;
         uint32_t m_ShadowRowCopyCount = 0;
+        // 最後の書き込みから表で直した行。全部を比べるときは行の一覧を使わない
+        Container::VariableArray<uint32_t> m_SceneUploadRows;
+        bool m_bSceneUploadAllRows = true;
+        // 別の表を書いた後は、元の表に戻したときも全行を比べる
+        bool m_bSceneUploadCopiesAreSceneTables = false;
         Container::VariableArray<GPUMegaMesh> m_MeshCopies;
         bool m_bMeshCopiesValid = false;
         // 席の表を確かめる行: Setup が m_Instances を作り直した（全部）か、直したインスタンスの位置。差分を書いた更新が消す
@@ -1336,6 +1446,8 @@ namespace NorvesLib::Core::Rendering
         Container::VariableArray<uint32_t> m_SceneDirtyPositions;
         // m_Instances の TableSlot を決め直すか（作り直し・手で足した・消したとき）
         bool m_bSceneSlotsDirty = true;
+        // 行の席が全て一意で、TableSlot が SceneSlot のときだけ差分で席を保てる
+        bool m_bSceneSlotsPatchable = false;
         Container::VariableArray<uint8_t> m_SceneSlotSeen;
         // 散在書き込みの記録を組む作業領域（フレームをまたいで使い回す）
         Container::VariableArray<uint32_t> m_SceneScatterWords;
@@ -1397,6 +1509,20 @@ namespace NorvesLib::Core::Rendering
         // メッシュの表の行ごとの出所と、表へ載らなかったインスタンスのメッシュ（ハンドルごとに 1 つ）
         Container::VariableArray<SceneMeshSource> m_SceneMeshSources;
         Container::VariableArray<SceneSkippedMesh> m_SceneSkippedMeshes;
+        // 平らな空行は主の割り当ての大きさで引き、影の割り当ても足りるものを使う
+        struct SceneFlatHole
+        {
+            uint32_t Row = 0;
+            uint32_t ShadowGroups = 0;
+        };
+        Container::Map<uint32_t, Container::VariableArray<SceneFlatHole>> m_SceneFlatHoles;
+        uint32_t m_SceneFlatHoleCount = 0;
+        Container::VariableArray<uint32_t> m_SceneMeshLiveCounts;
+        enum class SceneFullReason : uint8_t
+        {
+            State, ShadowRebuild, MeshChanged, MissingMesh, Spare, BvhGroups, Holes, Overflow, FlatCapacity, MeshUnused, Count
+        };
+        SceneFullReason m_SceneFullReason = SceneFullReason::State;
         // 表の行に効く中身が変わった位置（印と一覧。PatchInstancesFromChangedSlots が積み、表を作ると消える）
         Container::VariableArray<uint8_t> m_SceneTableDirtyMarks;
         Container::VariableArray<uint32_t> m_SceneTableDirtyPositions;
@@ -1407,12 +1533,17 @@ namespace NorvesLib::Core::Rendering
         // 開発ビルドの照合 MEGA_TABLES: 全部を作り直した表の作業領域と、統計（mismatch・checks は通算、ほかは出す間隔の間）
         SceneTables m_SceneTablesCheck;
         Container::VariableArray<ShadowInstanceRecord> m_SceneTablesCheckRecords;
+        Container::VariableArray<uint32_t> m_SceneTablesCheckRows;
         struct SceneTablesStats
         {
             uint32_t SinceCheck = 0;
             uint32_t FullBuilds = 0;
             uint32_t DeltaBuilds = 0;
             uint64_t DeltaRows = 0;
+            uint64_t Moved = 0;
+            uint64_t Removed = 0;
+            uint64_t Added = 0;
+            uint32_t FullReasons[static_cast<size_t>(SceneFullReason::Count)] = {};
             uint32_t Checks = 0;
             uint32_t Mismatches = 0;
         };

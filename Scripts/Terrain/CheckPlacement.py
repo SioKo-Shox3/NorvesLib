@@ -27,8 +27,9 @@
 #       (--record | --require-compliant | --baseline <前の記録.json>) [--range-group <組>]
 #       [--removed <removed.json>] [--out <report.json>] [--workers N] [--verify]
 #   --record: 書き出した物の全部を測り切れたら通る（違反の数は範囲ごとに書くだけ）
-#   --require-compliant: 加えて違反 0。物を消して通すなら、消した物の一覧（--removed。{"removed": [{"type", "x", "z"}, ...]}。
-#     type は物の組の名前）を渡し、範囲ごと（名前の付いた範囲・どの範囲にも入らない所・全体）に消した数が、その範囲の物
+#   --require-compliant: 加えて違反 0。消した物の一覧（{"removed": [{"type", "x", "z"}, ...]}。type は物の組）を
+#     --removed で渡すか、配置 JSON の removed_list から配置 JSON に対する相対パスで読む。両方あれば --removed を使う。
+#     範囲ごと（名前の付いた範囲・どの範囲にも入らない所・全体）に消した数が、その範囲の物
 #     （残した物 + 消した物）の REMOVED_MAX_SHARE 以下
 #   --baseline: 書き出した物の全部を測り切れ、--range-group の範囲（ShapeRegions.json の range_groups。省くと全部の名前の
 #     付いた範囲）の物の組ごとに、前の記録（同じ規則の --record の報告）より悪くならない。違反の数は前の記録の数 +
@@ -86,6 +87,47 @@ STATUS_CODES = {name: code for code, name in enumerate(STATUS_NAMES)}
 def load_json(path):
     with open(path, encoding="utf-8-sig") as handle:
         return json.load(handle)
+
+
+def load_removed(placement, placement_path, explicit_path, categories):
+    """見送り一覧を読み、重い問い合わせより前に形と値を確かめる。"""
+    automatic = explicit_path is None and "removed_list" in placement
+    if explicit_path is None and not automatic:
+        return []
+    if automatic:
+        relative_path = placement["removed_list"]
+        if (not isinstance(relative_path, str) or not relative_path or os.path.isabs(relative_path)
+                or os.path.splitdrive(relative_path)[0]):
+            raise ValueError("配置の removed_list は空でない相対パスで指定してください")
+        path = os.path.join(os.path.dirname(os.path.abspath(placement_path)), relative_path)
+    else:
+        path = explicit_path
+    try:
+        document = load_json(path)
+    except OSError as exc:
+        raise ValueError(f"見送り一覧を読めません: {path}") from exc
+    except (UnicodeError, ValueError) as exc:
+        raise ValueError(f"見送り一覧の文字コードまたは JSON の形式が不正です: {path}") from exc
+    if not isinstance(document, dict) or not isinstance(document.get("removed"), list):
+        raise ValueError(f"見送り一覧の形が違います: {path}（removed の配列が必要です）")
+    if automatic and document.get("format") != "placement_removed.v1":
+        raise ValueError(f"見送り一覧の形式が違います: {path}（placement_removed.v1 が必要です）")
+    for index, item in enumerate(document["removed"]):
+        if not isinstance(item, dict) or item.get("type") not in categories:
+            raise ValueError(f"見送り一覧の {index + 1} 件目の組が分かりません: {path}")
+        if automatic and any(isinstance(item.get(axis), bool) or not isinstance(item.get(axis), (int, float))
+                             for axis in ("x", "z")):
+            raise ValueError(f"見送り一覧の {index + 1} 件目の位置は数で指定してください: {path}")
+        try:
+            x, z = float(item["x"]), float(item["z"])
+        except (KeyError, TypeError, ValueError, OverflowError) as exc:
+            raise ValueError(f"見送り一覧の {index + 1} 件目の位置が不正です: {path}") from exc
+        if not math.isfinite(x) or not math.isfinite(z):
+            raise ValueError(f"見送り一覧の {index + 1} 件目の位置が有限ではありません: {path}")
+        reason = item.get("reason", "unspecified")
+        if not isinstance(reason, str) or not reason or (automatic and reason not in ("unreliable", "unfit")):
+            raise ValueError(f"見送り一覧の {index + 1} 件目の理由が不正です: {path}")
+    return document["removed"]
 
 
 def load_objects(placement, placement_path):
@@ -356,6 +398,14 @@ def main():
     failures = []
     placement = load_json(args.placement)
     meshes = placement["meshes"]
+    # 一覧の欠落や不正は、配置バイナリと地形の問い合わせを読む前に落とす。
+    mesh_category = [m.get("tier") or m["type"] for m in meshes]
+    categories = list(dict.fromkeys(mesh_category))
+    try:
+        removed = load_removed(placement, args.placement, args.removed, categories)
+    except ValueError as exc:
+        failures.append(str(exc))
+        return finish(args, failures, {}, None)
     objects = load_objects(placement, args.placement)
     region_document = load_json(args.regions)
     regions = region_document["regions"]
@@ -373,8 +423,6 @@ def main():
     else:
         judged_regions = [region["id"] for region in regions]
     # 物の組（形の tier。前の形の書き出しは type）と、組ごとの規則（岩か、草と石か）
-    mesh_category = [m.get("tier") or m["type"] for m in meshes]
-    categories = list(dict.fromkeys(mesh_category))
     mesh_cat_index = np.array([categories.index(c) for c in mesh_category])
     category_is_rock = {c: any(m["type"] == "talus" for m, mc in zip(meshes, mesh_category) if mc == c) for c in categories}
     obj_cat = mesh_cat_index[objects[:, 0].astype(np.int64)] if len(objects) else np.zeros(0, dtype=np.int64)
@@ -448,13 +496,11 @@ def main():
                        for row in unmeasured_rows[:UNMEASURED_LISTED]]
 
     # 範囲ごとの値と消した物
-    removed = load_json(args.removed)["removed"] if args.removed else []
-    for item in removed:
-        if item.get("type") not in categories:
-            failures.append(f"消した物の組 {item.get('type')} が分かりません（{categories} のどれか）")
     removed_x = np.array([float(r["x"]) for r in removed])
     removed_z = np.array([float(r["z"]) for r in removed])
-    removed_type = np.array([r.get("type") for r in removed], dtype=object)
+    removed_type = np.array([r["type"] for r in removed], dtype=object)
+    removed_reason = np.array([r.get("reason", "unspecified") for r in removed], dtype=object)
+    reason_names = ["unreliable", "unfit"] + sorted(set(removed_reason) - {"unreliable", "unfit"})
     report_regions = {}
     for region_id, inside, removed_inside in region_masks(regions, center_x, center_z, n):
         removed_sel = removed_inside(removed_x, removed_z) if len(removed) else np.zeros(0, dtype=bool)
@@ -471,7 +517,9 @@ def main():
                               "float_m": None if np.isnan(float_m[row]) else round(float(float_m[row]), 3),
                               "burial_m": None if np.isnan(burial_m[row]) else round(float(burial_m[row]), 3),
                               "no_support": bool(v_support[row])})
-            gone = int((removed_sel & (removed_type == c)).sum()) if len(removed) else 0
+            gone_sel = removed_sel & (removed_type == c)
+            gone = int(gone_sel.sum())
+            removed_by_reason = {reason: int((gone_sel & (removed_reason == reason)).sum()) for reason in reason_names}
             item = {
                 "objects": int(sel.sum()),
                 "measured": int((sel & measured).sum()),
@@ -486,6 +534,7 @@ def main():
                 "float_m": percentiles(float_m[sel_m]),
                 "burial_m": percentiles(burial_m[sel_m]),
                 "removed": gone,
+                "removed_by_reason": removed_by_reason,
                 "worst": worst,
             }
             if category_is_rock[c]:
@@ -601,7 +650,8 @@ def finish(args, failures, summary, regions):
                   f"unmeasured={item['unmeasured']} violations={item['violations']} float={item['float_violations']} "
                   f"burial={item['burial_violations']} no_support={item['no_support']}(buried={item['no_support_buried']} "
                   f"floating={item['no_support_floating']} no_upward={item['no_support_no_upward']}) "
-                  f"removed={item['removed']}({item['removed_share']}) float_m={item['float_m']} "
+                  f"removed={item['removed']}({item['removed_share']}) "
+                  f"removed_by_reason={json.dumps(item['removed_by_reason'], ensure_ascii=False)} float_m={item['float_m']} "
                   f"burial_m={item['burial_m']}" + (f" burial_share={item['burial_share']}" if "burial_share" in item else "")
                   + (f" baseline={json.dumps(item['baseline'], ensure_ascii=False)}" if "baseline" in item else ""))
     for failure in failures:

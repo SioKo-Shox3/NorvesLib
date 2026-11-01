@@ -8134,3 +8134,266 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - Notes: 要起票: 10-14 の SCN-MEGA-ACCEPT-1M の静止の既定の horizon と同じ条件で、LightingPass 1.657 → 2.666 ms・MegaGeometryCull1 3.043 → 5.319 ms・MegaBvhC1Leaf 2.560 → 4.829 ms に増えた（`U4/static-default-1m`）。コードかドライバの変化の切り分け
 - Notes: 要起票: 1M の静止の既定の horizon で、RenderThread の `MegaGeometryPass.CheckSceneTables` が median 94.7 ms・`RT.BuildAccelerationStructures` が 23.7 ms（TLAS は update_skipped）。RelWithDebInfo の CPU の費用の原因（`U4-split.txt` 54 行）
 - Notes: 要起票: カメラの動きで RTGI の時間の履歴が棄却され、バナナの周りと床に粒の荒い暈が出る（50000 本の再生でも出る。`U4/u4-compare-left.png`）
+
+- U1 マスクのある敷き詰めで位置の無い区画を空いた升に絞って引き直し、1M 混在で指定の本数どおりに置く: 着地(直し 0 回)
+
+## 2026-10-29 SCN-MEGA-FIX-MIXED-DEFICIT（run 20261029-040922 の反復 1、完了）
+- Done: マスクのある敷き詰め（mega-stress）で、締めた上限でも位置が無い区画は、密度が正でマスクの空いた升に絞り、その升の密度の最大で上限を締めてもう一巡引く（最後の 1 回は空いた升の中心を採る）。最後の区画に残った本数は、空いた升のある済んだ区画へ戻して置く。マスクなし（mega-bananas）の乱数の並びは変えない（`BananaLayout.cpp`）
+- 不足の原因: 最後の区画 grid=(5,38) に密度が正で空いた升の中心が無く、繰り越しの 1 本が捨てられていた。空いた升に絞る巡だけでは 999999 のまま（診断の撮影）で、済んだ区画への戻しで埋まった
+- 証拠（`.harness/runs/20261029-040922/verify-SCN-MEGA-FIX-MIXED-DEFICIT-U1.txt`）: タスクの verify（ビルド込み、1M + 5 万・1% 移動）が `result=pass`・EXIT=0、metrics.json に `placed_bananas=1000000`・`placed_entities=50000`、`MEGA_STRESS_BANANAS count=1000000 requested=1000000 pile=780 field=999220`、`[ERROR]` 0（撮影 `scene-capture/SCN-MEGA-FIX-MIXED-DEFICIT/`）。overview の PNG を開いて確認（Entity の足元は空き、破綻なし）。mega-bananas 1M horizon（`scene-capture/SCN-MEGA-FIX-MIXED-DEFICIT-unmasked-after/`）は `MEGA_BANANAS_PLACED`・`MEGA_BANANAS_LAYOUT` が基準（`-unmasked-before`）と build_ms・steps 以外で一致、山の記録 20000 行の sha256 も一致
+- Next: TASKS.md の次の未完
+- Notes: 試験は足していない。要起票: 単位の作業ツリーへハーネスを配る deploy の検証（言語の錨のフックの実走）が、指揮役から継いだ `LOOP_RUNNER` でフックが黙るため「言語の錨出力が不正」で落ちる（`units.mjs run` を `LOOP_RUNNER` を外して起動して回避した）
+
+- U2 RenderGraphCompileTest の LightingPass::OnFrameReadback の未解決を直す: 着地(直し 1 回)
+
+## 2026-10-29 SCN-BUILD-ALL-TESTS（run 20261029-040919 の反復 2、DONE）
+- Done: Debug の全体のビルドを通した。Game の起動の入口（`Game/Boot/`）を除くソース・include の道・定義・リンクを INTERFACE の対象 `NorvesGameSources` にまとめ、Game と、Game を組み込む 2 つの試験の対象（`AssetManifestReloadBridgeLoopbackTest`・`NorvesLibBridgeAdapterScriptComponentTest`）がそれをリンクする形にした（試験側に Game のソースの一覧を二重に持たない）。`RenderGraphCompileTest` は `RenderGraphTextureUsageContractTest.cpp` が `#define private public` の後に `LightingPass.h` を読んで private の仮想関数の装飾名が Core と合わなかったので、ヘッダを先に読む形にした。`RenderingDDGILightingContractTest` は今の `DDGIProbePass::ViewResources` に合わせた
+- 試験ごとの判断: 4 つとも消さずに直した。2 つの Bridge の試験は Bridge のアダプタとスクリプトの部品の公開境界の検査で、壊れたのは一覧の更新漏れだけ。DDGI の試験（実行の失敗で古い atlas を無効にする）は失敗が黙って起きる契約の検査で、型の名前の追従だけで直る。RenderGraphCompileTest の実行ファイルは名前ごとの add_test で別の検査（RenderGraphTextureUsageContractTest など）も載せているので、リンクを通す形にした。試験は足していない・消していない
+- 証拠（`.harness/runs/20261029-040919/`）: `verify-SCN-BUILD-ALL-TESTS-debug-all.txt`（`cmake --build build --config Debug -- -m:1` の全体、EXIT=0・エラー行 0・1333 秒。4 つの対象のリンク行あり）
+- Next: なし
+- Notes: ctest は回していない（完了条件どおり）。要起票: ctest で有効な `RenderGraphTextureUsageContractTest`（`RenderGraphCompileTest --test=...`）が `RenderGraphTextureUsageContractTest.cpp:1462` の VisibilityResolve の `constantCount == 3` の assertion で落ちて終わらない（`.harness/runs/20261029-040919/aux-SCN-BUILD-ALL-TESTS-rendergraph-run.txt`。この項目の前から）。INTERFACE のソースは試験の対象ごとにコンパイルし直すので、Game のソースを組み込む 2 つの試験のビルドが重い
+
+## 2026-10-29 SCN-BUILD-ALL-TESTS（run 20261029-040919 の反復 3、DONE）
+
+- Done: 全体のビルド（約 22 分）が再検証の 1 コマンド 10 分の上限を超えたので、verify を Game と落ちていた 4 つの試験の対象（AssetManifestReloadBridgeLoopbackTest・NorvesLibBridgeAdapterScriptComponentTest・RenderGraphCompileTest・RenderingDDGILightingContractTest）ごとの Debug ビルド 5 本に分けた。コードの変更なし
+- 証拠（`.harness/runs/20261029-040919/`）: `verify-SCN-BUILD-ALL-TESTS-targets.txt`（5 本とも EXIT=0、温まったビルドで各 2〜5 秒）。全体の EXIT=0 は反復 2 の `verify-SCN-BUILD-ALL-TESTS-debug-all.txt`
+- Next: なし
+- Notes: 冷えたビルドでは Game のソースを組み込む 2 つの試験がそれぞれ数分かかる（この枠では Game の後の AssetManifestReloadBridgeLoopbackTest が約 3 分）。libwebsockets のカスタムビルドで MSB8065（出力が作られず差分ビルドが効かない恐れ）の警告が出る
+
+## 2026-10-29 SCN-BUILD-ALL-TESTS（run 20261029-040919 の反復 4、DONE）
+
+- Done: 統合ブランチの取り込みの後の再検証の落ち（`WorldCameraSyncTest` の C1041。同じ `vc143.pdb` を開けない）を確かめた。対象だけを依存なしで再コンパイルすると通り（`worldcamerasync-rebuild.txt`、EXIT=0）、落ちた直後にその対象の obj と pdb が書かれていたので、別のプロセスが同じ PDB を同時に書いた一過性の衝突と判断した。コードの変更なし
+- 証拠（`.harness/runs/20261029-040919/`）: `verify-full-debug.txt`（`cmake --build build --config Debug -- -m:1` の全体、EXIT=0・エラー行 0・16 秒の差分ビルド）
+- Next: なし
+- Notes: 取り込みで TASKS.md の verify が全体のビルドに戻った（冷えたビルドでは約 22 分で、再検証の 1 コマンドの上限に当たる恐れがある）。同じ build を 2 つのビルドが同時に使うと C1041 で落ちる
+
+- U1 崖錐の岩を検査と同じ足元の帯で据え直し、ref_ground_01 の GPU 時間を前後で測る: 着地(直し 1 回)
+- U2 焼いた面の高さの疎な格子を AssetCook が書き出し、Library が読む形を作る: 着地(直し 1 回)
+- U3 置き方（草と低木・石・岩）と書き出しの高さを焼いた面の格子から取る: 着地(直し 1 回)
+
+## 2026-10-29 SCN-WL-PLACEMENT-GROUNDING-FIX（run 20261029-040916 の反復 1、未達・doing）
+- Done: (1) 崖錐の岩を検査と同じ足元の帯（回した 2048 標本の下 5 %）で、浮き 0.02 m 以内・最も深い足元が min(高さの 50 %, 窓) − 0.03 m に収まる高さへ据え、収まらない岩は斜面の法線へ 4 段で寄せ、0.75 倍ずつ縮め、それでも収まらなければ置かない（`WastelandTalus.cpp`）。(2) AssetCook の `--write-placement-ground` が、崖の細部・刻みの区画で焼いた面（LOD 0）の DEM に最も近い上向きの面の高さを 8 m の塊・0.25 m おきに書き、升目ごとの信頼の印（中心と 4 辺の中点・急な升目は四分点で 0.02 m 以内）を持たせる（版 2・10650 塊・約 48 MB・書き出し約 547 秒）。`Scripts/CookAssets.ps1` は DEM の区画を焼いたとき `--skip-if-current` で更新する。Library の `TerrainPlacementGround` が読み、元の区画の cooked_hash で古さを判定する。(3) 荒野の起動で格子を読み、草と低木・石・岩の根元と足元の高さを格子から引き、信頼できない升目と支持面の無い DEM の三角形には置かない。格子が無い・古いときは `COOKED_MODEL_MISSING` を出して前の DEM の置き方に戻る（配置の書き出しが前と SHA-256 で一致）
+- 値（`CheckPlacement.py --require-compliant`）: 違反 195191 → 0（result=pass、測り切れない物 0）。物の数（前の反復 → 今）: 草と低木 5841275 → 5841060、大きな石 1561976 → 1560847、石（標本）1563542 → 1560408、小礫（標本）5780643 → 5774192、岩 273616 → 271748（−0.68 %）。GPU 時間（ref_ground_01、RelWithDebInfo・1920×1080・300 フレームの median / p95）: 項目の前 b853c671 17.291 / 17.875 ms、前の先頭 38983820 17.297 / 18.083 ms、岩の据え直しの後 16.779 / 17.140 ms（前の 2 つはほかのビルドが同時に走っていた）
+- 証拠: `.harness/runs/scene-capture/SCN-WL-PLACEMENT-GROUNDING-FIX/iter-20261029/`（`rocks/`: 岩の据え直しの検査の記録・GPU の 3 つ、`ground/`: 格子の書き出しと答え合わせの要約、`grounded/`: 格子を使った検査 `placement_check.require_compliant.json`・残り 72 個の原因の内訳・確かめの出力）
+- Next: 同じ項目の仕上げ（計画の最後の単位）。タスクの verify の全行（Debug のビルド・6 視点・写真との比べ・回帰の after）と最終の ref_ground_01 の GPU 時間を回し、`WastelandShape.md` の「置いた物の接地」に値と前後の表を書く。範囲ごとの物の減りを表にし、低木 B → A の割合の変化（31:69）は残課題として書く
+- Notes: 格子の信頼の判定を強めても形式の版は 2 のままなので、別の機械に前の判定の版 2 の格子があれば `--skip-if-current` なしで作り直す（今の機械の build/CookedAssets は作り直し済み、ほかの枠には格子がまだ無い）。岩の足元の帯は格子を使うときだけ倍精度で選ぶ（検査と帯の境の点が揃う）
+- 要起票: 指揮役の反復（LOOP_RUNNER=1）から `units.mjs run` を呼ぶと、単位の作業ツリーへのハーネスの展開の検証で言語の錨のフック（language-guard.mjs は LOOP_RUNNER があると何も出さない）が空になり「言語の錨出力が不正」で落ちる。今回は LOOP_RUNNER を外して呼んだ
+- U4 タスクの verify を全部回し、6 視点・写真・回帰・GPU 時間を撮って置いた物の接地の記録を書く: 着地(直し 1 回)
+
+## 2026-10-29 SCN-WL-PLACEMENT-GROUNDING-FIX（run 20261029-040916 の反復 2、完了）
+- Done: タスクの verify の全行を今の先頭で回し、`Docs/RenderingValidation/WastelandShape.md` の「置いた物の接地」に岩の据え直し（足元の帯）・焼いた面の接地用の格子・範囲と組ごとの物と違反の前後・GPU 時間・6 視点の見比べ・植物の Cycles の参照の古さ・残課題を書いた
+- 値: `CheckPlacement.py --require-compliant` は result=pass・違反 0・測り切れない物 0（物 15008255、項目の前の違反 364918 → 0）。物の減りは全体で岩 0.683 %・草と低木 0.252 %・大きな石 0.086 %・石 0.201 %・小礫 0.112 %、範囲ごとの最大は Rooster Butte の岩 94 個（2.440 %。ほかは 2 % 以内）。GPU 時間（ref_ground_01、300 フレームの median / p95）: 項目の前 17.291 / 17.875 ms → 最終 16.832 / 17.075 ms
+- 証拠（作業ツリー `.harness/unit-verify.txt` の写し `.harness/runs/scene-capture/SCN-WL-PLACEMENT-GROUNDING-FIX/u4-unit-verify.txt`）: Debug・RelWithDebInfo の Game と AssetCook のビルド EXIT=0、書き出しの撮影 EXIT=0、`--require-compliant` EXIT=0、6 視点 EXIT=0、`CompareReference.py --verify` result=pass photos=6、回帰の after result=pass scenes=4（rendering3dtest 99.53 dB・mega-bananas 63.32 dB・sandbox 一致・night-village は before の PNG が無く比べの値なし）、`gpu-final/metrics.json`。見比べの画は `compare-final/`（ref_cliff_01 の崖錐と ref_ground_02 の谷床の切り出しを開き、浮いた株・石と埋もれすぎた岩が無いことを見た）
+- Next: SCN-WL-CLIFF-GEN-TALUS に戻る
+- Notes: 低木 B → A の割合（B 458281・A 1017573、31:69）は残課題で、種の割合を戻す形は決めていない。植物の Cycles の参照は固定の株を使うので、今回の置き方で古くなるものは無かった。回帰の before（2026-10-28）は night-village の PNG が欠けている
+- U5 信頼できない升目に掛かった岩も寄せ・縮め・小さなずらしを試し、見送った岩を全部理由つきで残す: 着地(直し 0 回)
+- U6 見送った物の一覧を書き出し、検査が配置の書き出しから一覧を読んで範囲ごとの 2 % を判定する: 着地(直し 0 回)
+- U7 タスクの verify を全部回し、6 視点・写真・回帰・GPU 時間を撮り直して置いた物の接地の記録を直す: 着地(直し 0 回)
+
+## 2026-10-29 SCN-WL-PLACEMENT-GROUNDING-FIX（run 20261029-040916 の反復 3、完了）
+- Done: 差し戻し（Rooster Butte の岩の見送り 94 / 3852 = 2.440 % が 2 % を超える、検査が見送りの一覧を読まず removed=0）を直した。(1) 崖錐の岩は信頼できない升目に当たっても寄せと縮めを続け、収まらなければ 0.5 m・1.0 m の輪の 8 点へずらし、救うときは足元の周り半升目も信頼できる升目かを確かめる。前から置けていた 271748 個は変わらない（`WastelandTalus.cpp`）。(2) 配置の書き出しが見送った物を `<名前>.removed.json`（type・x・z・reason = unreliable / unfit）に書いて `placement.json` の `removed_list` で名指しし、`CheckPlacement.py` は `--removed` が無くてもそれを読んで範囲・組ごとの 2 % を判定する（名指しがあって読めなければ不合格）。(3) `WastelandShape.md` の「置いた物の接地」を今の値に直した
+- 値: `--require-compliant` は result=pass・違反 0・測り切れない物 0・見送り 25851。範囲・組の見送りの割合は全部 2 % 以内で、最大は Battleship Rock の大きな石 0.791 %（859、unreliable 846 / unfit 13）。岩は 271748 → 273466（Rooster Butte 3758 → 3852、見送り 0。全体の見送り 150 は全部 unreliable）。救った岩 1718（寄せ 98・縮め 404・ずらし 1216）。GPU 時間（ref_ground_01、300 フレームの median / p95）: 項目の前 17.291 / 17.875 ms → 最終 16.572 / 17.088 ms
+- 証拠: `.harness/runs/scene-capture/SCN-WL-PLACEMENT-GROUNDING-FIX/final2/`（verify 全 8 行の出力 `unit-verify.txt`: Debug・RelWithDebInfo の Game と AssetCook のビルド EXIT=0、書き出しの撮影 EXIT=0、`--require-compliant` EXIT=0〔報告を残す `--out` を足した〕、6 視点 EXIT=0、`CompareReference.py --verify` result=pass photos=6、回帰の after result=pass scenes=4、GPU の `gpu-final2/metrics.json`）。見比べ `compare-final2/`（前の版からの差は戻した崖錐の岩と影だけ。ref_cliff_01 の崖錐と戻した岩の切り出しを開き、浮いた株・石と埋もれすぎた岩が無いことを見た）
+- Next: SCN-WL-CLIFF-GEN-TALUS に戻る
+- Notes: 低木 B → A の割合（31:69）は残課題のまま。見送りの一覧は石と小礫も書き出しと同じ区画の標本の分だけ。新しい試験は足していない
+
+- U1 常駐の表の更新が、変わった行だけを比べる（描く順・影の行の変更を帳簿に残す）: 着地(直し 0 回)
+
+## 2026-10-29 SCN-MEGA-FIX-SCENE-TABLES-STEADY（run 20261029-130624 の反復 1、完了）
+- Done: `MegaGeometryPass::UpdateResidentSceneTables` が毎フレーム 100 万の描く順の行をなめていた 3 つの走査（席の表の上限・描く順の行の写しとの比較・影の行の memcmp）を、表を全部作ったとき・写しが無効なとき・表を広げて写さなかったときだけにした。`PatchSceneTables` が直した行を次の常駐の更新で送る行の帳簿に足し、Compose・投影物の数え直し・写しの無効化・スタンプの一周は全行の印にする。差分のときは帳簿の行と席の行を確かめた位置の行だけを昇順で比べる。開発ビルドの 120 回ごとの照合に、描く順・影の行の写しと表の全行の一致を足した（`MEGA_SCENE_UPLOAD_MISMATCH table=entries|shadows`）
+- 値（1M 本・静止の horizon・RelWithDebInfo・1920×1080・300 フレーム）: `UpdateResidentSceneTables` median 7.123 → 0.002 ms（p95 0.003）、`PrepareSceneTables` 7.167 → 0.013 ms（p95 0.023）、`BuildSceneTables` 0.003 ms。`MEGA_TABLES mismatch=0`（5 行）、`MEGA_SCENE_UPLOAD mismatch=0 gpu_mismatch=0`（6 行）、静止の窓は `rows=0 entries=0 shadows=0`。GPU のフレーム時間 median 16.806 ms
+- 証拠: `.harness/runs/20261029-130624/SCN-MEGA-FIX-SCENE-TABLES-STEADY/`（`u2-unit-verify.txt`: CaptureScene EXIT=0・`CHECK_CAPTURE_METRICS result=pass views=horizon` EXIT=0・trace の集計・ログの抜き出し、`metrics.json`・`horizon.png`・`horizon.Game.log`）
+- Next: なし
+- Notes: 同じ撮影の RenderThread の CPU は `RT.BuildAccelerationStructures` median 24.0 ms が最大で（SCN-MEGA-FIX-TLAS-REBUILD の範囲）、`MegaGeometryPass.CheckSceneTables`（開発ビルドの照合、5 回）は 1 回 91.8 ms。新しい試験は足していない
+
+- U1 出し入れで m_Instances を作り直さず、移動・置き換え・末尾の切り詰めを差分で当てる: 着地(直し 1 回)
+- Notes（SCN-MEGA-FIX-STREAM-TABLES-DELTA の途中）: 出し入れはストリーミングの負荷の窓 600 フレームのうち 60 フレーム（1 フレームの解放・追加は各 840〜1170 行）。インスタンスは差分で当たり、表はまだ全部作る（`BuildSceneTables` median 101 ms）。残りは表の行の配置（予備の行）と行の差分の 2 単位
+- 要起票: mega-stress（1M + 5 万個・1 % が動く）で `MegaGeometryPass.Setup` が出し入れに関係なく毎フレーム median 19.4 ms（`.harness/runs/scene-capture/SCN-MEGA-FIX-STREAM-TABLES-DELTA-U1/metrics.json`）。gt・rt の時間の一部
+- U2 表の行の配置に、BVH の予備の行と BVH の行の一律の影の割り当てを入れ、照合を並びに依らない形にする: 着地(直し 0 回)
+- U3 出し入れの行を差分で表へ反映し（移動・解放・追加）、送る行を絞り、タスクの verify を通す: 着地(直し 1 回)
+
+## 2026-10-29 SCN-MEGA-FIX-STREAM-TABLES-DELTA（run 20261029-174526 の反復 3、完了）
+- Done: 区画の出し入れ（約 1 秒に 1 回・1 フレームの解放と追加が各 840〜1170 行）を MegaGeometry の表へ行の差分で当てる。`Setup` は `m_Instances` を作り直さず移動・置き換え・末尾の切り詰めを当てて変化の一覧を残し、表は `[BVH の行][空の予備の行][平らな行]` の並びで BVH の領域の影の割り当てを 1 行あたり一律にし、`PatchSceneTables` が移動は行の対応の付け替え、BVH の解放は末尾の BVH の行との入れ替え（空いた行は予備へ）、BVH の追加は予備から、平らな解放は穴（割り当ては残す）、平らな追加は穴の再利用か末尾への追加で反映する。送るのは書き換えた行だけ。席の表の 0 番を空行に予約し（`TableSlot = SceneSlot`）、席を持たない物は差分で足さない。予備の不足・新しいメッシュ・影の割り当ての 32 ビット超えなどは全部を作り、理由を `MEGA_TABLES` に数える
+- 値（1M + 5 万個・1 % が動く・区画 64・RelWithDebInfo・1920×1080・600 フレーム）: `PrepareSceneTables` median 0.148 / p95 0.238 ms（前は出し入れのフレームで約 120 ms）、出し入れのフレーム（27 フレーム）の p95 0.321 ms。窓の `MEGA_TABLES` は 5 行とも `full=0`、全行 `mismatch=0`、`MEGA_SCENE_UPLOAD mismatch=0 gpu_mismatch=0`、`MEGA_STRESS_STREAM_CYCLE` は全周 pass、`MEGA_SCENE_DELTA` の検査つきの撮影は 3158 回 pass・fail 0。gt・rt の p95 は 147.9 ms → 48〜60 ms（2 回の撮影）
+- 証拠: `.harness/runs/20261029-174526/SCN-MEGA-FIX-STREAM-TABLES-DELTA/`（`u3-unit-verify.txt`: CaptureScene の `CAPTURE_SCENE result=pass`・`CHECK_CAPTURE_METRICS result=pass views=overview`・ログの集計、`metrics.json`・`overview.png`・`overview.Game.log`）
+- Next: なし
+- Notes: 全体の `PrepareSceneTables` の最大（約 123〜129 ms）は開発ビルドの 120 回ごとの照合（`CheckSceneTables`）で、窓の 600 フレームに 5 回。初期の配置の間は予備の不足で全部を作るのが 55 回あり、窓では 0（予備は 49361〜49861 行残る）。この撮影は出し入れが全部 BVH の行で、平らな行の穴は 0（穴の溜まり方は未検証）。あるメッシュの最後のインスタンスを解放すると全部を作る（`full_unused`）。新しい試験は足していない
+
+- U1 -RequireAssets でバナナの資産の欠けと配置の行の欠けを失敗にする: 着地(直し 0 回)
+
+## 2026-10-30 SCN-MEGA-FIX-TLAS-REBUILD-P1（run 20261030-081653 の反復 1、完了）
+- Done: `Scripts/CaptureScene.ps1` の資産の欠けの印（`$missingAssetPattern`）に `MEGA_BANANAS_ASSET_MISSING`・`MEGA_BANANAS_ASSET_INVALID` を足し、`-RequireAssets` で失敗、無いときは今までどおり警告と `missing_assets` に数える。`-RequireAssets` で `stress-entities`・`banana-count` を指定したのに `MEGA_STRESS_PLACED`・`MEGA_BANANAS_PLACED` の行が無い撮影も失敗にする
+- 資産を欠かせた撮影（`-GameArgs banana-count=10000,no-cooked-textures -RequireAssets`）は終了コード 1 で、次の 2 つの理由で失敗した:
+```
+CAPTURE_SCENE placed view=overview entities= bananas= requested_entities= requested_bananas=10000
+CAPTURE_SCENE failure: overview: MEGA_BANANAS_PLACED count= または MEGA_STRESS_PLACED bananas= の行がログに無い（banana-count=10000 を指定したのに置いた数が分からない）
+CAPTURE_SCENE failure: overview: 資産の欠け: [2026-10-30 08:19:25.803] [WARN] [T:60320] [General] [MegaBananasRoutine.cpp:Game::GameModes::`anonymous-namespace'::StartBananaLoad:411] MEGA_BANANAS_ASSET_MISSING AssetSystem が無いためバナナを置きません
+CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS-REBUILD-P1\missing\metrics.json
+```
+- 資産のそろった撮影（タスクの verify）は合格: `CAPTURE_SCENE placed view=overview entities= bananas=10000 requested_entities= requested_bananas=10000`・`CAPTURE_SCENE result=pass scene=mega-bananas`、ログに `MEGA_BANANAS_PLACED count=10000`、`missing_assets` 0。overview.png にバナナの散らばりと山が写っている
+- 証拠: `.harness/runs/20261030-081653/U1-unit-verify.txt`、`.harness/runs/scene-capture/SCN-MEGA-FIX-TLAS-REBUILD-P1/{missing,ok}/`
+- Next: なし
+- Notes: `--no-cooked-textures` ではクック済みのマニフェストが無く AssetSystem を持たないため、印は「AssetSystem が無い」の行（411 行）で出る。`MEGA_BANANAS_ASSET_INVALID` 単独と `stress-entities` の行の欠けは実際の撮影では確かめていない（同じ分岐の形）。新しい試験は足していない
+
+- U1 可視クラスタの全体の列の既定の容量を混在の最大に余裕を足した値にし、1M + 5 万の撮影で溢れ 0 を確かめる: 着地(直し 0 回)
+
+## 2026-10-29 SCN-MEGA-FIX-VISIBLE-LIST（run 20261029-152745 の反復 1、完了）
+- Done: 可視クラスタの全体の列（`MegaGeometry_VisibleList`）の既定の容量を 4,194,304 → 6,291,456 要素にした（`MegaGeometryPass.cpp` の `DefaultVisibleListCapacity`。1M + 5 万の混在で積もうとした数の最大 約 482 万に約 3 割の余裕）。環境変数 `NORVES_MEGA_VISIBLE_LIST_CAPACITY` での拡大（既定以上〜1 << 25、finest-lod の 8,388,608）はそのまま。溢れを読み戻して広げる形は、統計の行が 30 フレームごとで、広げるまでの数フレームの溢れが記録の行に乗りうるので採らなかった
+- 証拠（`.harness/runs/20261029-152745/verify-SCN-MEGA-FIX-VISIBLE-LIST-U1.txt`、撮影 `scene-capture/SCN-MEGA-FIX-VISIBLE-LIST/`）: タスクの verify（ビルド込み、1M + 5 万・1% 移動・64 m 区画のストリーミング）が `CAPTURE_SCENE result=pass`・EXIT=0、`CHECK_CAPTURE_METRICS result=pass`。Game.log の `MEGA_CAPACITY` 29 行の全部で `draw_dropped=0`・`visible_list_overflow=0`、`visible_list_capacity=6291456`・`visible_list_peak` 最大 4,774,410、`[ERROR]` 0、`MEGA_STRESS_PLACED entities=50000 ... bananas=1000000`。overview の PNG を開いて確認（穴・欠けなし。空の横縞は SCN-FIX-SKY-BANDING の範囲）
+- メモリ: 可視の一覧と印 80 → 120 MB（+40 MB）。`command_capacity` の最大は前と同じ 33,554,432 で間接描画・描画情報の増分なし。GPU Scene まわりの最大の確保の見積もりは混在で 2,722 + 40 = 2,762 MB（3,072 MB 以内）
+- Next: なし
+- Notes: 試験は足していない。容量は 1920×1080 の実測から決めたので、より高い解像度や細かい LOD の混在では環境変数で広げる必要がありうる
+- U2 開発ビルドで GPU Scene まわりの同時確保（回収待ちを含む）の山を実測して MEGA_CAPACITY に出し、混在の撮影で 3 GB 以内を確かめる: 着地(直し 1 回)
+- U3 広げて置き換えた GPU Scene のバッファを握り続ける持ち主を見つけて手放させ、device の山を 3 GB 以内に収める: 着地(直し 0 回)
+- U4 見張りの回収待ちの窓を RHI の解放の時期（エンジンの飛行中の枠の数）に合わせ、混在の撮影で device の山を測り直す: 着地(直し 0 回)
+
+## 2026-10-29 SCN-MEGA-FIX-VISIBLE-LIST（run 20261029-152745 の反復 2、人待ち）
+- Done: 差し戻し（回収待ちの古いバッファを含めた同時確保が 3 GB 以内かの証拠が無い）に対して、開発ビルドだけの見張り（`MegaGeometryPass::NoteGpuSceneBuffer`・`UpdateGpuSceneVram`）で GPU Scene まわりのバッファ（MegaGeometryPass が作る物・`VisBuffer_DrawRecords`・`VsmMega_*`）を弱参照で追い、`MEGA_CAPACITY` に `scene_vram_device_*`、山が上がったときに `MEGA_SCENE_VRAM_PEAK`（名前・live/pending ごとの内訳）を出すようにした。回収待ちは弱参照が切れてから飛行中の枠の上限（4 フレーム）まで数える（Vulkan の実際は 2 フレーム）。見張りで見つけた、広げて置き換えた古い表と描画の列（IndirectDraw 160・DrawInfo 64・SlotTable 128・InstanceTable 約 148・ShadowInstanceTable 約 49・SwRaster 16 MiB）を記述子の集まり（`BvhStages`・`SceneScatterDescriptorSet`・`VisibilityRasterPass` の枠のセット）が握り続けていた不具合を直し、GPU が読み終えた枠でだけ手放して要るときに作り直す
+- 値（1M + 5 万・1% 移動・64 m 区画、RelWithDebInfo・1920×1080）: 通常の撮影は `MEGA_CAPACITY` 29 行、長い撮影（`exit-after-rendered-frames=1200`、区画 4 巡）は 67 行で、全行 `draw_dropped=0`・`visible_list_overflow=0`、`visible_list_peak` 最大 4,821,935（容量 6,291,456）、`[ERROR]` 0。静かなフレームの device の live は 3,031.8 → 2,658.4 MiB。device の山は読み込み中の frame 7〜9 で 3,197.1 MiB（通常）・3,439.2 MiB（長い）で 3,072 MiB を超える。山は描画コマンドの列が 4M → 8M → 16M → 32M コマンドと続くフレームで倍々に作り直され、前の世代（IndirectDraw・DrawInfo・`VisBuffer_DrawRecords`・SwRaster）が数フレーム重なるため。RHI の回収待ちの最大（プロセス全体）は 551.7 / 749.1 MiB
+- 証拠: `.harness/runs/20261029-152745/verify-SCN-MEGA-FIX-VISIBLE-LIST-U4.txt`（verify 2 本と長い撮影の終了コード・集計）、`.harness/runs/20261029-152745/SCN-MEGA-FIX-VISIBLE-LIST-iter2/`（2 本の Game.log・overview.png）
+- Next: 読み込み中の倍々の作り直しの山を、この項目で直すか別の項目にするかの判断待ち（`blocked/SCN-MEGA-FIX-VISIBLE-LIST.md`）
+- Notes: 読み込み中の山は今回の可視の一覧の変更（+40 MiB）より前からある（列の伸ばし方による）。新しい試験は足していない
+
+## 2026-10-29 SCN-MEGA-FIX-VISIBLE-LIST（run 20261029-152745 の反復 3、前提の項目待ち）
+- Done: 判断（読み込み中の倍々の作り直しの山は別の項目で直す）に従い、この項目を `todo` に戻して `after: SCN-MEGA-FIX-DRAWLIST-GROWTH` を付けた。done-when・verify は変えていない
+- Next: SCN-MEGA-FIX-DRAWLIST-GROWTH が入った後に、この項目の verify 2 本と長い撮影（`exit-after-rendered-frames=1200`）を撮り直し、全行の `draw_dropped=0`・`visible_list_overflow=0`・`scene_vram_device_peak_mb` ≤ 3,072 を確かめて閉じる
+- Notes: 要起票: SCN-MEGA-FIX-DRAWLIST-GROWTH — 読み込み中に描画コマンドの列（`MegaGeometry_IndirectDraw`・`MegaGeometry_DrawInfo`・`VisBuffer_DrawRecords`・`MegaGeometry_SwRaster`）を何世代も作り直して GPU Scene の山を 3 GB 超えにしない。done-when: 1M + 5 万・1% 移動・64 m 区画の通常の撮影と長い撮影（`exit-after-rendered-frames=1200`）の `MEGA_CAPACITY` 全行で `scene_vram_device_peak_mb` ≤ 3,072（見張りは今の形・4 フレームの窓のまま）・`draw_dropped=0`・`visible_list_overflow=0`、落ち着いた後の `scene_vram_device_live_mb` が 2,658.4 MiB から増えない。`mega-bananas` の overview 1 視点で画像が前と変わらず device の山 ≤ 3,072 を記録。直し方の制約: 読み込み中の作り直しを 1〜2 世代に抑え、先に広げるなら CPU が知る最終の総数か 3 GB から逆算した天井で抑える（必要量の倍数だけで広げない）、縮めるのは SceneReady の後に 1 回だけ。受入れ文書 `SceneLauncherAcceptance.md:197` の見積もりを回収待ちを含む実測値に書き直す。paths: `Library/Core/Private/Rendering`・`Library/Core/Public/Rendering`・`Docs/RenderingValidation`・`TASKS.md`・`PROGRESS.md`。危険地帯（メモリ・RenderThread）。全文は `blocked/resolved/SCN-MEGA-FIX-VISIBLE-LIST.md` の「次の反復への指示 1」
+- U3 (U1 の切り直し)見張りの入った先頭の上で、詰めた経路の 4 つの列の容量を V で抑え、作り直しを 2 世代までにする: 着地(直し 0 回)
+- U2 長い撮影と mega-bananas を撮り、受入れ文書の見積もりを実測に書き直して全 verify を通す: 着地(直し 0 回)
+
+## 2026-10-30 SCN-MEGA-FIX-DRAWLIST-GROWTH（run 20261030-200242 の反復 3、完了）
+- Done: 詰めた経路の 4 つの列（`MegaGeometry_IndirectDraw`・`MegaGeometry_DrawInfo`・`VisBuffer_DrawRecords`・`MegaGeometry_SwRaster`）の容量を、可視の列の容量 V（6,291,456）と CPU が知る登録済みのクラスタの総数で抑え、読み込み中の作り直しを各 1 回（2 世代）にした（bcd64da7）。縮める処理は入れていない。受入れ文書 `SceneLauncherAcceptance.md` の「メモリ」の行の見積もり（2,722 MB・約 3,042 MB）を見張りの実測に書き直した（f4d41b6d）。前提として可視クラスタの一覧の項目のコード（06990ce4）をマージ 8835126c で取り込んだ
+- 値（1M + 5 万・1% 移動・64 m 区画、RelWithDebInfo・1920×1080）: 通常の撮影は `MEGA_CAPACITY` 29 行で device の山 2,662.6 MiB（frame 712・回収待ち 0.0）、最後の live 2,470.1 MiB。長い撮影（`exit-after-rendered-frames=1200`）は 67 行で山 2,662.6 MiB（frame 738・回収待ち 0.0）、最後の live 2,470.1 MiB（frame 1974）。両方とも全行 `draw_dropped=0`・`visible_list_overflow=0`、live が 2,658.4 MiB を超える行 0。列の最終の大きさは IndirectDraw 654.1・DrawInfo 261.6・DrawRecords 384.0・SwRaster 48.0 MiB（直す前の山は 3,197.1 / 3,439.2 MiB）。`mega-bananas`（既定 1 万本）の山 1,294.5 MiB（frame 1）
+- 証拠: `.harness/runs/20261030-200242/verify-SCN-MEGA-FIX-DRAWLIST-GROWTH-U2.txt`（verify 5 本の終了コード 0・`CAPTURE_SCENE result=pass` 3 本・`CHECK_CAPTURE_METRICS result=pass` 2 本・全行の集計と live の推移・VRAM_LEDGER の世代・bananas の画素の比べ）、撮影 `scene-capture/SCN-MEGA-FIX-DRAWLIST-GROWTH`・`-long`・`-bananas`
+- Next: SCN-MEGA-FIX-VISIBLE-LIST を閉じる（この項目の統合後に verify 2 本と長い撮影を撮り直す）
+- Notes: 差分に可視クラスタの一覧の項目のコミット（4dbeb68a〜06990ce4）を含む。うち c47fdf34・2b9788c3・4c32c639 は危険地帯（メモリ・RenderThread）の変更で評価を通っていないので、この項目の評価で合わせて見る。mega-bananas は前の撮影（dda58ee3、`-bananas-before`）と比べて 1,512 画素（0.073%）・差 >16 は 107 画素・最大 175 の差が遠景のバナナの輪郭に孤立した点で出る。同じ版で撮り直した過去の 2 枚（`SCN-MEGA-LAYOUT-SEA-10k` と `-rerun`）でも 1,416 画素・119 画素・最大 210 の同じ形の差が出るので、撮るたびの揺れと見てマージコミットでの撮り直しはしていない。live は区画の出し入れで 1,966 → 2,470 MiB と段で増える（表の `InstanceTable`・`ShadowInstanceTable`・`SlotTable`・`RangeBounds` の倍々の拡張。山のフレームでは新旧の表が両方 live に入る）。新しい試験は足していない
+
+## 2026-10-30 SCN-MEGA-FIX-VISIBLE-LIST（run 20261030-214453 の反復 1、完了）
+- Done: 可視クラスタの一覧の既定の容量を 6,291,456（混在の最大 約 482 万に約 3 割の余裕）にした変更と、前提の SCN-MEGA-FIX-DRAWLIST-GROWTH（描画コマンドの列の作り直しを 2 世代に抑える）が入った先頭 92e380ae で、verify 2 本と長い撮影（`exit-after-rendered-frames=1200`）を撮り直して閉じた。コードの変更はこの反復では無い
+- 値（1M + 5 万・1% 移動・64 m 区画、RelWithDebInfo・1920×1080）: 通常の撮影は `MEGA_CAPACITY` 29 行、長い撮影は 67 行。両方とも全行 `draw_dropped=0`・`visible_list_overflow=0`、鍵の欠けた行 0、`[ERROR]` 0。`visible_list_capacity` は 6,291,456 の 1 種類、`visible_list_peak` の最大は 4,731,682（通常）・4,731,675（長い）。回収待ちを含む見張りの device の山は両方とも 2,662.6 MiB（frame 724・725、その行の回収待ち 0.0）で 3,072 MiB 以内、最後の live 2,470.1 MiB。`MEGA_STRESS_PLACED entities=50000`、`overview.png` に欠け・穴は無い
+- 証拠: `.harness/runs/20261030-214453/verify-SCN-MEGA-FIX-VISIBLE-LIST-U5.txt`（6 本の終了コード 0・`CAPTURE_SCENE result=pass` 2 本・`CHECK_CAPTURE_METRICS result=pass` 2 本・全行の集計と推移）、撮影 `scene-capture/SCN-MEGA-FIX-VISIBLE-LIST`・`-long`
+- Next: SCN-MEGA-ACCEPT-1M
+- Notes: 前回の評価の残課題のうち「ストリーミングなしの 1% 移動だけの負荷を単独で撮っていない」は今回も撮っていない（verify はストリーミングを含む混在の負荷で、移動だけの山はそれ以下の見込み）。長い撮影は区画の巡りを複数回含み、ピークは 4,731,675 で容量を大きく下回る
+
+- U1 回帰の before と、屋根の鏡面の光線の当たりの内訳を測って記録する: 着地(直し 0 回)
+- U2 鏡面の光線の自己交差を TraceSpecularRay の中で直し、屋根を測り直して verify を通す: 着地(直し 0 回)
+
+## SCN-RENDER-SPEC-ROOF-HITS: rendering3dtest の屋根の鏡面の光線の当たりの内訳と自己交差の直し
+- Done: 当たりの内訳は判定 (a)（直す前の当たり 3,818 本の 96.4 % が屋根自身の同じ平面の裏、幾何の面の下へ向いた光線）。`TraceSpecularRay` の中だけで、当たった三角形の平面が始点から 6 mm（`3 * RAY_ORIGIN_OFFSET`）以内なら幾何法線で鏡映して同じ始点から 1 回引き直し、それでも自分の面なら空へ抜けた扱いにした。拡散の光線と共有する `TraceDiffuseRay`・`TraceSecondBounce`・`ComputeDirectRadiance` は変えていない
+- 屋根 17,120 画素のブルーム前の HDR の Y: off 3,100.105 → on 3,116.406 cd/m²（比 1.0053、直す前は 3,905.180・1.2597）。同じ平面の裏への当たり 3,682 → 0。残りの +16.3 の有限差分: 画面空間 AO を外した分 +182.5、残りの specularAO +95.6、空の項 −280.4、当たった面の反射と広いローブ +18.6（記録は `Docs/RenderingValidation/InteriorLightReference.md`）
+- verify: Game のビルド・屋根の撮影・室内の撮影は EXIT=0、室内の比べ `interior-spec-occlusion.json` は 9 行とも pass（INTERIOR_COMPARE result=pass）、回帰の after は 4 シーン pass（rendering3dtest PSNR 42.69 dB・平均の差 −0.167、ほかは 57 dB 以上）
+- 証拠: `.harness/runs/scene-capture/SCN-RENDER-SPEC-ROOF-HITS/`（roof・interior・roof-hits.json・変種）、`.harness/runs/regression/SCN-RENDER-SPEC-ROOF-HITS/{before,after}/`
+- Next: なし
+- Notes: 残る当たりの 98 % は同じ Cottage の instance の別の面（距離の中央値 0.44 m）で、この 1 標本の分類だけでは全部が正しい反射かは確定していない。6 mm の閾値は近い薄い別の面の取り違え・LOD のずれが 6 mm を超える面の見逃しがありうる。引き直しの分の GPU 時間は測っていない
+- Notes: 再検証で落ちた室内の比べは、正解の置き場 `.harness/runs/scene-capture/SCN-INTERIOR-ROOM-ref`（git 管理外）がこの作業ツリーに無かったため。メインの作業ツリーの同じ置き場（Cycles の `cycles/` と参照の撮影の AOV）を写し、同じ撮影で回し直して 9 行とも pass・`INTERIOR_COMPARE result=pass`（`.harness/runs/20261030-200848/verify-compare-rerun.txt`）。描画とスクリプトは変えていない
+- Notes: 要起票: `--reference .harness/runs/scene-capture/SCN-INTERIOR-ROOM-ref` を verify に持つ項目は、盤面の枠ごとに正解の置き場を写さないと再検証で FileNotFoundError になる
+
+- U1 --reference の解決を resolve_reference にまとめ、無ければメインの作業ツリーを読む: 着地(直し 0 回)
+
+## SCN-RENDER-SPEC-ROOF-HITS-P1（2026-10-30）
+- Done: `Scripts/InteriorLightReference.py` に `resolve_reference(path)` を足し、`--compare` の `--reference` が今の作業ツリーに無ければ `git rev-parse --git-common-dir` の親（メインの作業ツリー）の同じ相対パスを読む。見つけた方を `INTERIOR_REFERENCE path=... source=local|main-worktree` で出し、どちらにも無ければ探した 2 つのパスを書いて終了コード 1。`--capture` と出力先は今の作業ツリーのまま
+- Done: 置き場を外した作業ツリーで verify が `source=main-worktree`・`REF_OK C:/Users/KINGkawamura/Documents/NorvesLib/.harness/runs/scene-capture/SCN-INTERIOR-ROOM-ref`（`.harness/runs/20261030-224338/verify-SCN-RENDER-SPEC-ROOF-HITS-P1.txt`）
+- Next: なし
+- Notes: 置き場がある枠では今までどおり `source=local` を使うので、古い写しが残った枠はメインの置き場を描き直しても古い方を読む
+
+- U2 LUT を再現した独立の積分で重みの平均 ÷ Ess を確かめるスクリプトを足す: 着地(直し 0 回)
+- U1 before を撮ってから広いローブの重みを LUT と同じ Schlick の G にする: 着地(直し 1 回)
+- U3 after を撮り、金属の球と屋根の値と LUT の移し替えの判断を記録する: 着地(直し 0 回)
+## 2026-10-30 SCN-RENDER-SPEC-WIDE-ESS（run 20261030-200245 の反復 1、完了）
+- Done: RTGI の鏡面の広いローブの重み（`EvaluateGGXVisibleNormalSampleWeight`）を高さ相関の G2/G1 から、LUT（`DfgLut.cpp`）と同じ分離形の Schlick の G（k = roughness²/2）× (1+Λ(V)) にした（VNDF の pdf の G1(V) は厳密な Smith のまま、LUT・パストレーサー・`lighting.frag` は変えていない）。LUT の 4096 標本・半精度・256² の補間を再現した独立の積分 `Scripts/SpecularWeightQuadrature.py --check` を足し、値と判断を `InteriorLightReference.md` の「広いローブの重みを LUT の G に揃える」節に書いた
+- 値: 積分の判定の比は 12 組とも 1±0.005（最大の差 0.0023。前の重みは 1.009〜1.363）。粗さ 1.0 は LUT の座標が最後のセルの中心（粗さ 0.998）に切り詰められるので、判定は LUT が表す粗さで積分し、粗さそのままのエンジンの比（N·V 0.9 で 0.9948）は参考として別に出す。material-gallery の金属の球（粗さ 0.8・1.0、日陰）の after ÷ before は帯ごとに予想（新旧の重みの平均の比 0.758〜0.979）と +0.014 以内。rendering3dtest の屋根の HDR の Y 平均 3818.435 → 3818.319（比 0.99997、撮影の揺れの目安 0.99991）。回帰は pass（PSNR rendering3dtest 56.72・mega-bananas 54.32・sandbox 一致・night-village 34.65）
+- 証拠: `.harness/runs/20261030-200245/SCN-RENDER-SPEC-WIDE-ESS/`（`u3-unit-verify.txt`: Game の RelWithDebInfo ビルド exit 0・積分 result=pass・`CAPTURE_REGRESSION result=pass phase=after`・material-gallery の `CAPTURE_SCENE result=pass`、`u1-unit-verify.txt`: before の 4 撮影と資産のそろえ方、`u2-unit-verify.txt`）、撮影 `.harness/runs/regression/SCN-RENDER-SPEC-WIDE-ESS/{before,after}/`・`.harness/runs/scene-capture/SCN-RENDER-SPEC-WIDE-ESS/{gallery,aux}-{before,after}/`。開いた画: gallery の spheres の before と after（粗い金属の球がわずかに暗くなっただけで、ほかの見た目は同じ）
+- Notes: SCN-RENDER-ROUGH-STEEP-ENERGY への申し送り: LUT 全体を高さ相関の G（Cycles と同じ形）へ移すかはこの項目では移さないと判断した（理由と値は `InteriorLightReference.md` の同じ節）。移すと全シーンの環境光の Ess と多重散乱の補償（CompD・CompC）とパストレーサーの G が変わり、粗い面の単散乱が粗さ 0.8・N·V 0.5 で約 1.136 倍になるので、全シーンの値の移し替えが要る。開けた急な崖が off でも Cycles より 2.5 % 暗い不足とは向きが合うので、ROUGH-STEEP-ENERGY で多重散乱のエネルギーと一緒に決める。作業ツリーに git 管理外の資産が無いため、本体のリポジトリへのジャンクション（元の資産 24 本・焼いた地形）と作業ツリーの AssetCook で焼いた資産で before と after を撮った（地形の焼き直しは 40 分を超える見込みで本体へのリンクにした）。屋根の選択の広いローブの割合の面平均は 0.000949 で、判断役の記録の 0.00006 と違う（屋根の画素の 819 が粗さ 0.45 超。差の原因は切り分けていない）。要起票: 回帰の night-village は before と after で遠景の崖の形が違う（before の撮影の時点の GEOMETRY_PAGES は resident 0・evicted 1101、after は resident 3325）。ジオメトリのページの常駐が撮影の瞬間に揃っておらず、PSNR 34.65 はこの変更の差として使えない。新しい試験は足していない
+## 2026-10-30 SCN-RENDER-SPEC-WIDE-ESS（run 20261030-200245 の反復 2、完了）
+- Done: 反復 1 の差し戻し（枠での verify の再実行で night-village が `missing_asset=Assets/Models/Generated/*.glb` で落ちた）を直した。原因は枠の作業ツリーに、git 管理外の生成資産（`Assets/Models/Generated` の banana 以外・`Assets/Terrain`・`Assets/Reference`・`Assets/Models/PolyHaven`・`Assets/Textures/PolyHaven`）が無かったことで、コードの変更とは関係しない。単位の作業ツリーと同じく本体のリポジトリへのジャンクションで補った。
+- 証拠: 枠で回し直した verify は全部 exit 0。`.harness/runs/20261030-200245/aux-SCN-RENDER-SPEC-WIDE-ESS-regression-after.txt`（`CAPTURE_REGRESSION result=pass`、night-village mean_diff −0.037・PSNR 34.65 で反復 1 の値と同じ）、`aux-SCN-RENDER-SPEC-WIDE-ESS-quad.txt`（`SPEC_WEIGHT_QUADRATURE_SUMMARY result=pass`・12 組）、`aux-SCN-RENDER-SPEC-WIDE-ESS-gallery.txt`（`CAPTURE_SCENE result=pass`・asset_missing=0）。開いた画: night-village の after（建物・灯り・地形・崖がそろう）
+- Notes: 要起票: 盤面の枠 `.slots/NorvesLib-3` は、ほかの枠（`NorvesLib-1`・`-2` は `Assets/Models/Generated` ごとジャンクション）と違って生成資産のリンクが欠けていた。枠を作る側でそろえないと、night-village などを撮る verify が枠の再実行だけで落ちる
+
+- U1 回帰の比べで before と after のジオメトリのページの落ち着きを判定し記録する: 着地(直し 0 回)
+## 2026-10-31 SCN-RENDER-ROUGH-STEEP-ENERGY-P1（run 20261030-232538 の反復 1、完了）
+- Done: 回帰の比べ（`ReferenceCheck.py --regression` → `Regression.py`）が、before と after の各シーンについて保存の前の最後の `GEOMETRY_PAGES` を読み、進行中（wanted・reading・ready・uploading）が 0 でない撮影と、最後の落ち着きの基準から保存までに `evicted` が変わった撮影を失敗にする。判定は `blur_case_check` から切り出した `geometry_pages_resident_complete`（`BLUR_PAGES_RE` と `geometry_pages_at_capture`）を両方で使う。値（resident・uploading・ready・reading・wanted・evicted・budget_blocked・settle_evicted）と status（settled・unsettled・not_applicable）を `regression_check.json` の `scenes.<シーン>.geometry_pages.{before,after}` に書き、行が無いシーンは not_applicable と理由を記録する。`CaptureRegression.ps1` は before でも同じ置き場を before と after に渡してページの判定だけを回し、失敗なら終了コード 1
+- 一時のログでの確かめ: SCN-RENDER-SPEC-WIDE-ESS の before・after の写しで比べると終了コード 1、`night-village: before の撮影でジオメトリのページが落ち着いていない（視点 overview、resident=0・uploading=0・ready=64・reading=0・wanted=1538・evicted=1101・budget_blocked=7、基準から保存までの evicted [1101]）`（ほかのシーンと night-village の after は settled）。作ったログの 3 通り: 同じ形の 1 行 → 失敗、進行中 0 で基準の後に evicted 1101→1102 → 失敗、GEOMETRY_PAGES の行なし → pass・not_applicable（`.harness/runs/20261030-232538/u1-selftest/`）。常設のテストは足していない
+- verify: 同じ版（after はコンパイルなし・Game.exe の SHA-256 一致）で before（424 秒）・after（387 秒）とも `CAPTURE_REGRESSION result=pass`。4 シーンとも before・after で settled、resident は rendering3dtest 496・mega-bananas 26・sandbox 0・night-village 3325、進行中・evicted・budget_blocked はすべて 0。PSNR は rendering3dtest 76.08・mega-bananas 63.93・sandbox 一致・night-village 70.62 dB。開いた画: night-village の after（建物・灯り・地形・崖がそろう）
+- 証拠: `.harness/runs/20261030-232538/u2-unit-verify.txt`、`.harness/runs/regression/SCN-RENDER-ROUGH-STEEP-ENERGY-P1/{before,after}/`（regression.txt・regression_check.json）
+- Next: なし
+- Notes: 判定の本体は `Scripts/Terrain/Regression.py` にあり（`ReferenceCheck.py --regression` から呼ばれる）、項目の paths に無いがここに足した。before の判定だけのときは撮影の欠け・真っ黒・検証レイヤーは見ない（今までどおり after の比べで見る）
+- Notes: 今回の撮影では予算で追い出される形（SCN-RENDER-SPEC-WIDE-ESS の before の resident=0）は再現せず、原因は調べていない。要起票: night-village で VRAM の予算が足りないとき常駐が 0 まで追い出される原因（SCN-WL-GEOM-LOWVRAM の「粗い段で落ち着く」と食い違う見込み。実例は SCN-RENDER-SPEC-WIDE-ESS の before のログ、budget_blocked=7）
+- Notes: 単位の作業ツリー `NorvesLib-1-u1` は `Assets\Models\PolyHaven` が無く、本体のリポジトリへのジャンクションを足して撮った
+## 2026-10-31 SCN-RENDER-ROUGH-STEEP-ENERGY-P1（run 20261030-232538 の反復 2、完了）
+- Done: 反復 1 の差し戻し（枠での verify の再実行の before が 10 分を超えた）を直した。原因は枠の Game の RelWithDebInfo が統合の取り込みより古く、最初の撮影の `-Build` で Game の翻訳単位を全部コンパイルし直した（rendering3dtest の撮影が 320 秒）ことで、night-village の撮影（検証レイヤー付きで約 345 秒）と合わせて上限を超えた。スクリプトは変えていない。枠のビルドが HEAD にそろった状態で回し直すと、`-Build` は何もせず各コマンドが 10 分に収まる
+- verify: 枠で before 389 秒・after 388 秒、どちらも exit 0・`CAPTURE_REGRESSION result=pass`（各撮影 rendering3dtest 20・mega-bananas 13・sandbox 11・night-village 344/343 秒）。4 シーンとも before・after で settled、resident は rendering3dtest 496・mega-bananas 26・sandbox 0・night-village 3325、進行中・evicted・budget_blocked はすべて 0 で、`regression_check.json` の `scenes.<シーン>.geometry_pages.{before,after}.overview` に記録。PSNR は rendering3dtest 76.08・mega-bananas 66.63・sandbox 一致・night-village 69.76 dB
+- 証拠: `.harness/runs/20261030-232538/iter2-verify-before.txt`・`iter2-verify-after.txt`、`.harness/runs/regression/SCN-RENDER-ROUGH-STEEP-ENERGY-P1/{before,after}/`
+- Next: なし
+- Notes: night-village の撮影は検証レイヤー付きで約 1 フレーム/秒になり、1 本で約 345 秒かかる。枠のビルドが古いと最初の `-Build`（約 5 分）と合わせて 10 分を超えるので、統合の取り込みで C++ が変わった直後の再検証は同じ理由で落ちうる。要起票: 回帰の撮影の verify を、ビルドと撮影の別のコマンドに分けるか、night-village の撮影を短くする（検証レイヤーの下の 1 フレーム/秒の原因）
+
+- U1 終わらない試験と Game のソースを組み込む 2 つの試験の対象を、全体のビルドと ctest の実行から外す: 着地(直し 0 回)
+## 2026-11-02 SCN-BUILD-ALL-TESTS-P1（run 20261101-231548 の反復 1、完了）
+- Done: `RenderGraphTextureUsageContractTest` を DISABLED にした（VisibilityResolve の `constantCount == 3` の assert で対話窓のまま終わる）。Game のソース（NorvesGameSources）を組み込む `NorvesLibBridgeAdapterScriptComponentTest`・`AssetManifestReloadBridgeLoopbackTest` の対象を `EXCLUDE_FROM_ALL` にし、その実行ファイルを使う ctest の 5 つの名前を DISABLED にした。`.cpp` と束の MEMBER は残し、理由を CMake のコメントと `Docs/Testing.md` の「外したもの」に 2026-11-01 の日付で書いた
+- verify: 試験を有効にした構成（NORVES_BUILD_TESTS=ON）で configure・Debug の全体のビルド・ctest がすべて EXIT=0。`RenderGraphTextureUsageContractTest` は `Not Run (Disabled)`。登録の数は 487 → 487 で変わらない。numstat の 2 通りの比べは一致
+- 証拠: `.harness/runs/20261101-231548/u1-unit-verify.txt`
+- Next: なし
+- Notes: この環境は `NORVES_BRIDGE_SDK_DIR` が空で、Bridge の 4 つの試験（`Test/CMakeLists.txt` の `TARGET norves_bridge_engine_sdk` の条件）と `AssetManifestReloadBridgeLoopbackTest` は configure されず ctest に登録されない。SDK を有効にした構成での `Not Run (Disabled)` の表示と ALL_BUILD からの除外は確かめられておらず、書き方は目で確かめただけ
+- Notes: 枠 `NorvesLib-3` の build は NORVES_BUILD_TESTS=OFF のため、枠で verify を回し直すと試験の対象はビルドされず、ctest は名前に一致する試験が無いまま EXIT=0 になる（全体のビルドの合否は試験を ON にした単位の作業ツリーで見た）
+## 2026-11-02 SCN-BUILD-ALL-TESTS-P1（run 20261101-231548 の反復 2、完了）
+- Done: 反復 1 の差し戻し（枠での verify の再実行が 10 分を超えた）を直した。原因は枠 `NorvesLib-3` の build が統合の取り込みより古く、全体のビルドで Core と Game の翻訳単位をコンパイルし直したこと。CMake の変更は反復 1 のままで変えていない。枠の build を NORVES_BUILD_TESTS=ON・NORVES_BRIDGE_SDK_DIR=NorvesEditor/bridge/cpp で構成し直して一度ビルドし（10 分 27 秒、/m:4、EXIT=0）、HEAD にそろえた
+- verify: 枠で verify のコマンドをそのまま回して EXIT=0・26 秒。Bridge の SDK を有効にした構成で、外した 6 つの名前（`RenderGraphTextureUsageContractTest`・`AssetManifestReloadBridgeLoopbackTest`・`BridgeBase64Test`・`NorvesLibBridgeAdapterThumbnailTest`・`NorvesLibBridgeAdapterScriptComponentTest`・`NorvesLibBridgeAdapterNumericEntityRegressionTest`）がどれも `Not Run (Disabled)`。温めのビルドと verify のビルドの出力に `NorvesLibBridgeAdapterScriptComponentTest.vcxproj`・`AssetManifestReloadBridgeLoopbackTest.vcxproj` は 0 回で、ALL_BUILD から外れている（反復 1 で確かめられなかった SDK 有効時の 2 点）
+- 証拠: `.harness/runs/20261101-231548/verify-SCN-BUILD-ALL-TESTS-P1-2.txt`・`warm-build.txt`・`warm-configure.txt`
+- Next: なし
+- Notes: 全体のビルドを verify にする項目は、枠の build が統合の取り込みより古いと再検証で 10 分を超える（温まった状態の何もしないビルドは約 20 秒）。要起票: 全体のビルドを verify に含む項目の再検証の前に、枠の build を HEAD にそろえる手順をランナー側に置く
+
+- U1 1M の既定の horizon の静止を撮り、10-14 と件数・時間・ドライバを並べ、増えたパスに触れたコミットを挙げて受入れ文書に書く: 着地(直し 0 回)
+## 2026-11-02 SCN-MEGA-FIX-TLAS-REBUILD-P2（run 20261101-234952 の反復 1、完了）
+- Done: 1M の既定の horizon の静止（カメラパスなし）を今のコードで撮り、10-14・10-29 と並べた。`GPU_DRIVER` は 3 回とも 610.88、MegaGeometry・BVH・RT_SCENE の件数（席 292,080・葉の山 903,737・可視の山 1,679,084・TLAS 65,536・skip 120/120）はすべて同じで、`VisRasterSw1`・`MegaGeometryDraw1`・VSM・BVH の S0〜S3 の median も同じ。増えたのは `MegaBvhC1Leaf`（2.560 → 4.995 ms）・`LightingPass`（1.657 → 2.857 ms）・`VisibilityResolvePass` だけで、量でもドライバ・クロックでもなく、コードで 1 件あたりの処理が増えたと判定した。候補は葉が 4a3a43d6（落としたクラスタからもページの要求の atomic）と e5e06e0d、照明が baaf64b4（RTGI の鏡面の光線）・cff879b2（光線ごとの当たりの統計の atomic）・9e922381・9a2fee63。表と判定は `Docs/RenderingValidation/SceneLauncherAcceptance.md` の「10-14 からの静止の GPU の増え」
+- verify: `CAPTURE_SCENE result=pass`（exit 0、`MEGA_BANANAS_PLACED count=1000000`）、`CHECK_CAPTURE_METRICS result=pass views=horizon`（exit 0）
+- 証拠: 単位の作業ツリー `NorvesLib-2-u1` の `.harness/unit-verify.txt` と `.harness/runs/scene-capture/SCN-MEGA-FIX-TLAS-REBUILD-P2/static/`
+- Next: なし
+- Notes: 静止の 1.7 ms は鏡面の光線と統計を足す前の値なので、SCN-MEGA-FIX-TLAS-REBUILD の閾値 3 ms を今のドライバの値で置き直す根拠にはしない（ドライバは替わっていない）。各寄与は古い版を撮らずに差分から挙げた候補で、ms への割り当ては未計測
+- Notes: 要起票: `Common/MegaGeometryCull.glsl` の `ProcessCluster` が子に任せて描かないクラスタからも `RequestPage` の atomic を打つ形（4a3a43d6）を、1M 静止の `MegaBvhC1Leaf` +2.4 ms の原因かを確かめて軽くする（要求を印の未設定のときだけにする・波でまとめるなど）
+- Notes: 要起票: RTGI の光線の当たりの統計（cff879b2 の `DiffuseIndirect.comp` の光線ごとの共有 atomicAdd）を RelWithDebInfo の計測でも常に走らせるかを見直し、鏡面の光線（baaf64b4）と合わせて 1M 静止の `LightingPass` +1.2 ms の内訳を測る
+- Notes: 要起票: 11-01 の撮影で `MegaBvhC1Leaf` の 300 フレーム中 33 フレームが 10 ms 以上（最大 35.1 ms、p95 15.5 ms）の山が出た。10-14・10-29 には無く、原因は未特定（重なりは検出されず）
+
+- U1 地形の書き出しの手順と記録を足し、版 18 の地形を書き出す: 着地(直し 0 回)
+- U2 8 組を撮り、Cycles の正解を本描画で描いて判定する: 着地(直し 0 回)
+- U3 古い正解と新しい正解のエンジン ÷ Cycles を並べた表を書き、仕上げの確かめを回す: 着地(直し 0 回)
+## 2026-11-02 SCN-RENDER-ROUGH-STEEP-ENERGY-P2（run 20261101-235006 の反復 1、完了）
+- Done: 今の焼いた地形（崖の細部の版 18。`build/CookedAssets/cook_coverage.cliff-gen.json`）を `OcclusionSets.py --export-terrain` で書き出し（198 区画・1.54 億三角形、`mesh/export_record.json` に版 18・HEAD のソースの版 17・Game.exe・焼いた資産の manifest のハッシュ）、同じ Game.exe（eb5b8edf…）で 8 組を撮り、Cycles の正解を 1024 サンプル・種 2 で描き直した。8 組とも参照の記録の manifest が書き出しと一致（`cycles/terrain_export.json`）。古い正解と新しい正解の全部の行の並べは `Docs/RenderingValidation/WastelandOcclusion.md` の「崖の細部の版 18 での正解の描き直し」
+- verify: ビルド EXIT=0、撮影 4 本・Cycles 8 本とも EXIT=0、`ReferenceCheck.py --occlusion ... --verify` は `mode=occlusion sets=8 off=0 result=pass`（入力の照合・収束・必須の層の画素数）。古い正解の元の置き場は 112 ファイルとも前後で一致（測りは写し `old-reference/cycles` で行った）
+- 証拠: `.harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY-P2/`（本体の置き場。`logs/U1-verify.txt`・`U2-verify.txt`・`U3-verify.txt`、`cycles/<組>/occlusion_check.json`、`old-reference/cycles/<組>/occlusion_check.json`）
+- Next: SCN-RENDER-ROUGH-STEEP-ENERGY（下の申し送り）
+- Notes: SCN-RENDER-ROUGH-STEEP-ENERGY への申し送り（どちらの正解で判定するか）: 新しい正解 `.harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY-P2/cycles` で判定する。古い正解は地形が版 15 以前で、判定に地形の差が混ざる。新しい正解では遠い急な崖の対照（`slope60-180_d500-100000`）のエンジン ÷ Cycles が terrain-sky 0.9630 → 1.0126、rocks-cliff-sky 0.9749 → 1.0178 で、「開けた急な面が Cycles より 2.5 % 暗い」は残らない（今の鏡面の遮りの入った形で、項目の合否 (1) の 0.985 以上を既に満たす）。項目の前提が新しい正解で消えたので、まず今の形と `--rtgi-specular=off` を新しい正解で並べ直して、直す不足が残るかを確かめてから多重散乱・照り返しの切り分けに入る。rocks-sun の地面の受け手の IoU・漏れも 0.5145・19.19 % → 0.9745・0.64 % に戻った
+- Notes: SCN-RENDER-ROUGH-STEEP-ENERGY への申し送り（`occlusion-accept.json` の前の記録の置き直し）: 今の `baseline_engine_root`（SCN-WL-SUN-SHADOW-FIX）と一時の下限（0.946・0.957）は古い地形・古い正解の上の値。判定の正解を新しい正解へ替えるときは、同じ変更で前の記録も版 18 の地形の撮影（この項目の `.harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY-P2`、Game.exe eb5b8edf…）へ置き直し、その層の 2 行を 1 ± 0.03 へ戻して一時の印を消す。置き直した理由（地形の版 15 → 18 と正解の描き直し）と前後の値を WastelandOcclusion.md に書く。この項目では `occlusion-accept.json` を変えていない
+- Notes: 単位の作業ツリー `NorvesLib-5-u1` は build が無かったので、freetype の初期化・cmake の構成・Game のビルド（初回 420 秒）をし、`Assets/Terrain`・`build/CookedAssets`・置き場 2 つを本体への junction にした
+- Notes: SCN-RENDER-ROUGH-STEEP-ENERGY-P2 の再検証はリポジトリ直下の枠 `NorvesLib-5` で回るが、そこに build と資産の junction が無くビルドの行が落ちた。枠にも freetype の初期化・cmake の構成・Game の RelWithDebInfo のビルド（458 秒、EXIT=0）をし、`Assets/Terrain`・`build/CookedAssets`・置き場 2 つ（SCN-RENDER-ROUGH-STEEP-ENERGY-P2・SCN-WLR-OCCLUSION-SETS）を本体への junction にした。枠のビルド行は EXIT=0、最後の判定 `ReferenceCheck.py --occlusion ... --verify` は今の置き場で `result=pass`（`.harness/runs/20261101-235006/env-verify-1.txt`・`env-verify-check.txt`）。枠の Game.exe は 87eed2a7…で単位の作業ツリーの eb5b8edf…と別のビルドなので、再検証で 8 組の撮影と Cycles の正解は枠の Game.exe で描き直される（地形の書き出しは焼いた資産から作るので版 18 のまま。照合は地形の一覧のハッシュで行う）
+
+## 2026-11-02 SCN-MEGA-ACCEPT-1M-P1（run 20261101-234959 の反復 7、統合ブランチの取り込み）
+- Done: `feature/scene-launcher` を取り込み、`SceneLauncherAcceptance.md` の衝突は両側の節を残して解いた（統合側の「10-14 からの静止の GPU の増え」を前の節の下に、この項目の「カメラパスの再生の RTGI の粒（50000 本）」をその後に置く）。取り込んだ差はエンジンのコードとシェーダーに触れない（試験の設定・文書・`OcclusionSets.py`）。
+- verify: Game のビルド EXIT=0、再生と静止の撮影とも EXIT=0・result=pass、`RtgiGrain.py` は floor_near_bananas の比 1.245（上限 1.500）で pass、`CheckCaptureMetrics.py` pass、回帰の動きの撮影 pass（5 シーン）、基準画像の試験 2 本 Passed。再生の LightingPass の GPU は median 4.122 ms・p95 4.359 ms。再生の horizon.png を開き、手前のバナナの周りの床に粒の荒い暈が無いことを見た。
+- 証拠: `.harness/runs/20261101-234959/merge-verify-*.txt`、`.harness/runs/scene-capture/SCN-MEGA-ACCEPT-1M-P1/`、`.harness/runs/regression/SCN-MEGA-ACCEPT-1M-P1/after/`
+- Notes: 比 1.245 は採用時の同視点の 1.009 より大きい。実時間の保存フレームの時刻が走らせるたびに揺れ、静止の 9.27 秒と視点がずれるため（受入れ文書の既知の限界のとおり）。
+- U1 粒の量を測る RtgiGrain.py と判定の仕様を置く: 着地(直し 0 回)
+- U2 履歴の棄却と年齢の開発用 AOV を足し、直す前の撮影と診断をする: 着地(直し 2 回)
+- U3 RtgiGrain の測り方を床だけに絞り、直す前の比を確かめる: 着地(直し 1 回)
+- U4 カメラだけが動くフレームの拡散の履歴の年齢の上限を 32 にし、直した後の再生と静止を撮る: 着地(直し 2 回)
+- U6 拡散の履歴の読みをバイリニアに戻し、カメラだけの動きの年齢の上限を帯の粒で選び直す: 着地(直し 0 回)
+- U8 カメラだけが動くフレームは空間のフィルタの近傍の重みを年齢で下げない: 着地(直し 0 回)
+- U7 直した後の回帰・golden・判定を通し、受入れ文書を仕上げる: 着地(直し 0 回)
+## 2026-11-02 SCN-MEGA-ACCEPT-1M-P1（run 20261101-234959 の反復 5、完了）
+- Done: カメラパスの再生（50000 本）でバナナの周りと床に出た RTGI の粒の荒い暈を直した。原因は、カメラが動くと静止の署名が毎フレーム変わって履歴の年齢の上限が 8 に留まること（暈の床の 98.6% が履歴を採用・87% が年齢 8、静止は 51〜52）と、空間のフィルタが年齢 8 超の近傍の重みを下げる静止向けの作り。シーンが同じでカメラだけが動くフレームは拡散の年齢の上限を 16（鏡面は 8、履歴は棄却つきバイリニア）にし、空間のフィルタの近傍の重みを年齢で下げない。棄却の閾値と静止の判定は変えていない。履歴の診断の AOV（開発ビルドの `NORVES_RTGI_HISTORY_DIAG=1`）と `Scripts/RtgiGrain.py`・`rtgi-grain-motion.json` を足した
+- verify: RelWithDebInfo の Game ビルド exit 0。再生（保存フレームの時刻 T=8.087 秒）・静止 9.27 秒・時刻を合わせた静止 8.087 秒の撮影は全部 `CAPTURE_SCENE result=pass`。RtgiGrain の比 1.318（verify の固定の組）・1.307（時刻を合わせた組）、直す前 2.114、視点を合わせた診断の組で直す前 1.343 → 1.009。`CHECK_CAPTURE_METRICS result=pass`、LightingPass median/p95 4.181/4.339 → 4.147/4.337 ms。回帰の after -Motion は 5 組 `CAPTURE_REGRESSION result=pass`。golden Indoor・Outdoor は Passed（raw_max=0、再承認なし）。material-gallery は撮れて崩れなし
+- 開いた画: 診断の拡大の前後と静止の比べ（直した版の床の粒が静止に近い）、回帰の前後の並べ（尾・二重の輪郭・ちらつきの増加なし）
+- 証拠: `.harness/runs/20261101-234959/` の反復の記録、単位の作業ツリーの `.harness/unit-verify.txt`、受入れ文書 `SceneLauncherAcceptance.md` の「直した後」
+- Notes: 判定の帯の弁別は弱い（直す前の視点を合わせた組も 1.343 で上限 1.5 以下）。再生の保存フレームの時刻は走らせるたびに 7.97〜9.27 秒で揺れ、verify の静止は 9.27 秒に固定。縁 ±12 画素の床の輝度の差の平均が −0.000246 → −0.000610 と少し暗い側に寄る
+- Notes: 要起票: CaptureScene の再生の保存フレームのパスの時刻を固定する（`camera-path-play` で保存の時刻を指定できないため、再生と静止の組が毎回ずれる）
+### SCN-MEGA-ACCEPT-1M-P1(再検証の差し戻しへの対応)
+- Done: 枠に build が無く再検証の 1 行目が落ちていたため、枠で構成し直した(freetype の submodule・テスト有効の構成・CookedAssets と Assets/Terrain をメインへのジャンクション・回帰の before を同じ項目の撮影から写す)。verify 全 8 行がこの枠で EXIT=0: RtgiGrain の比 1.304(上限 1.5)、LightingPass の計測合格、回帰 5 シーン合格、golden 2/2 合格。コードの変更なし
+- Notes: 要起票: relay の枠(.slots/NorvesLib-4)は単位の作業ツリーだけで作業するため build・資産のジャンクションが無く、ランナーの再検証が落ちる。枠の初期化で揃える形にするかを決める
+
+- U2 RtgiGrain.py が組の 2 つの metrics.json のパスの時刻を照合する: 着地(直し 0 回)
+- U4 指定の時刻の Tick を Game が自前で撮って保存し、終了する(U1 の切り直し): 着地(直し 0 回)
+- U3 CaptureScene が保存フレームのパスの時刻を metrics.json に書き、固定した組を撮って受入れ文書を直す: 着地(直し 1 回)
+## 2026-11-02 SCN-MEGA-ACCEPT-1M-P1-P1（run 20261102-053731 の反復 1、完了）
+- Done: 開発ビルドだけの `--camera-path-capture-time=<秒>` を足した。再生のパスの時刻を再生の開始から 1 Tick 1/60 秒の固定刻みで進め、時刻が指定に達した Tick で Game が自分で撮影を要求し（その Tick のパケットが撮られる）、`--capture-png` の場所へ保存して終了する。保存の直前までカメラは動いたまま。ApplicationProcessor の撮影は描画済みの数（非同期）で決まり Tick と一定の対応にならないため使わず、CaptureScene はこの引数があると `--exit-after-rendered-frames` を延ばす。CaptureScene は保存フレームのパスの時刻と状態（played・placed）を metrics.json の views に書き、`RtgiGrain.py` は組の時刻が無い・差が 1/60 秒を超えると fail にする。受入れ文書の既知の限界「保存フレームの時刻が揺れる」を直した後の記録に置き換えた
+- verify: Game のビルド EXIT=0、再生（9.27 秒・played）と静止（9.27 秒・placed）の撮影とも `CAPTURE_SCENE result=pass`（300 標本・50,000 本・資産の欠け 0）、`RtgiGrain.py` は時刻差 0 秒・floor_near_bananas の比 1.420（上限 1.5）で `RTGI_GRAIN result=pass`。再生の LightingPass は median 4.153 ms・p95 4.357 ms。2 枚の horizon.png を開き、視点が揃い手前の床に粗い粒の暈が無いことを見た
+- 証拠: 単位の作業ツリー `NorvesLib-3-u1` の `.harness/unit-verify.txt` と `.harness/runs/scene-capture/SCN-MEGA-ACCEPT-1M-P1-P1/`
+- Notes: 比 1.420 は前の時刻の揃わない組（1.245〜1.318）・同じ視点の診断（1.009）より高く、上限との余白が小さい。固定刻みは実時間の再生（撮影の直前は約 13.75 ms/Tick）より 1 フレームあたりの動きが約 1.21 倍大きいのが候補だが、速さだけを変えた比べはしていない（受入れ文書に記録）
+- Notes: 要起票: 時刻を固定した組の比 1.420 が上がった原因（固定刻みの 1 フレームあたりの動きか）を、刻みを実時間の Tick の頻度に合わせた撮影と比べて切り分ける

@@ -3,12 +3,16 @@
 # before・after の下にシーンごとの撮影（CaptureScene.ps1 の出力。metrics.json と PNG）が並ぶ。シーンごと・PNG ごとに:
 #   落ちる: after にシーンか PNG が無い（撮影の欠け）、after の CaptureScene が失敗を書いた、真っ黒（輝度の平均が BLACK_MEAN 未満か
 #           最大が BLACK_MAX 以下）、検証レイヤーのエラーが 1 件以上か記録が無い（metrics.json の vulkan_validation.error_count。
-#           回帰の撮影は RelWithDebInfo に --validation-layer を付けて検証レイヤーを入れる）
+#           回帰の撮影は RelWithDebInfo に --validation-layer を付けて検証レイヤーを入れる）、before・after の保存時点で
+#           ジオメトリのページが進行中、または落ち着きの基準から保存までに追い出しの数が変わった
 #   記録する: before との差（輝度の PSNR〔dB〕と平均の差〔0〜255〕）。差は合否に使わない（変更の意図した差か見るため）
+#   記録する: before・after の視点ごとのジオメトリのページの値と落ち着き（保存前に行が無ければ対象外）。
+# 同じ置き場を before・after に指定すると、before のページの判定と記録だけを行う。
 # 結果は <after>/regression_check.json に書く。
 import json
 import math
 import os
+import re
 
 import numpy as np
 from PIL import Image
@@ -42,24 +46,82 @@ def validation_errors(metrics):
     return total
 
 
+def check_geometry_pages(rc, scene_dir, scene, phase, failures):
+    """各視点の保存時点のページの落ち着きを記録し、進行中か追い出しがあれば失敗にする。"""
+    with open(os.path.join(scene_dir, "metrics.json"), encoding="utf-8-sig") as f:
+        metrics = json.load(f)
+    views = metrics.get("views") or []
+    if isinstance(views, dict):
+        views = [views]
+    records = {}
+    fields = ("resident", "uploading", "ready", "reading", "wanted", "evicted", "budget_blocked")
+    for view_info in views:
+        view = view_info["view"]
+        log_name = rc.view_game_log(scene_dir, view)
+        log_path = os.path.join(scene_dir, log_name) if log_name else None
+        lines = []
+        if log_path and os.path.isfile(log_path):
+            with open(log_path, encoding="utf-8-sig", errors="replace") as f:
+                lines = f.readlines()
+        pages = rc.geometry_pages_at_capture(lines, single_view=view).get(view)
+        record = dict.fromkeys(fields)
+        record["settle_evicted"] = []
+        if pages is None:
+            record.update(status="not_applicable", reason="保存の前の GEOMETRY_PAGES の行が無い")
+        else:
+            record.update(pages)
+            # ページの値と同じ保存の時点で、最後のページの行の予算による保留を採る。
+            last_budget_blocked = None
+            for line in lines:
+                if rc.BLUR_PAGES_RE.search(line):
+                    found = re.search(r"\bbudget_blocked=(\d+)", line)
+                    last_budget_blocked = int(found.group(1)) if found else None
+                found = re.search(r"CAPTURE_VIEWS view=(\S+) saved ", line)
+                saved_view = found.group(1) if found else None
+                if saved_view is None and "ApplicationProcessor capture_png saved " in line:
+                    saved_view = view
+                if saved_view == view:
+                    record["budget_blocked"] = last_budget_blocked
+            complete, _ = rc.geometry_pages_resident_complete(pages)
+            record["status"] = "settled" if complete else "unsettled"
+            if not complete:
+                values = "・".join(f"{key}={record[key]}" for key in fields)
+                failures.append(f"{scene}: {phase} の撮影でジオメトリのページが落ち着いていない"
+                                f"（視点 {view}、{values}、基準から保存までの evicted {record['settle_evicted']}）")
+        records[view] = record
+        values = " ".join(f"{key}={record[key]}" for key in
+                          ("resident", "wanted", "ready", "reading", "uploading", "evicted", "budget_blocked"))
+        print(f"REFERENCE_CHECK regression_pages scene={scene} phase={phase} view={view} "
+              f"status={record['status']} {values}")
+    return records
+
+
 def run(rc, after_dir, before_dir, verify):
     before_dir = before_dir or os.path.join(os.path.dirname(after_dir), "before")
+    before_only = os.path.normcase(os.path.normpath(os.path.abspath(after_dir))) == os.path.normcase(
+        os.path.normpath(os.path.abspath(before_dir)))
     failures = []
-    report = {"mode": "regression", "verify": bool(verify), "after": os.path.relpath(after_dir, rc.REPO_ROOT),
+    report = {"mode": "regression-before" if before_only else "regression", "verify": bool(verify), "after": os.path.relpath(after_dir, rc.REPO_ROOT),
               "before": os.path.relpath(before_dir, rc.REPO_ROOT), "scenes": {}}
     before_scenes = scene_dirs(before_dir)
     if not before_scenes:
         failures.append(f"before の撮影が無い（{before_dir}）")
     for scene in sorted(set(before_scenes) | set(scene_dirs(after_dir))):
-        entry = {"shots": {}}
+        entry = {"geometry_pages": {"before": {}, "after": {}}}
         report["scenes"][scene] = entry
         after_scene = os.path.join(after_dir, scene)
         before_scene = os.path.join(before_dir, scene)
+        if scene in before_scenes:
+            entry["geometry_pages"]["before"] = check_geometry_pages(rc, before_scene, scene, "before", failures)
+        if before_only:
+            continue
+        entry["shots"] = {}
         if not os.path.isfile(os.path.join(after_scene, "metrics.json")):
             failures.append(f"{scene}: after の撮影が無い（撮影の欠け）")
             continue
         with open(os.path.join(after_scene, "metrics.json"), encoding="utf-8-sig") as f:
             metrics = json.load(f)
+        entry["geometry_pages"]["after"] = check_geometry_pages(rc, after_scene, scene, "after", failures)
         if metrics.get("failures"):
             failures.extend(f"{scene}: 撮影の失敗: {item}" for item in metrics["failures"])
         errors = validation_errors(metrics)
@@ -103,6 +165,6 @@ def run(rc, after_dir, before_dir, verify):
         json.dump(report, f, indent=2, ensure_ascii=False, default=str)
     for failure in failures:
         print(f"REFERENCE_CHECK failure: {failure}")
-    print(f"REFERENCE_CHECK result={'pass' if not failures else 'fail'} mode=regression scenes={len(report['scenes'])} "
+    print(f"REFERENCE_CHECK result={'pass' if not failures else 'fail'} mode={report['mode']} scenes={len(report['scenes'])} "
           f"report={report_path}")
     return 0 if not failures else 1

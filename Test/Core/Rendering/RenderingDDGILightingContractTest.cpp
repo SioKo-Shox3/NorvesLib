@@ -93,24 +93,22 @@ namespace
     void TestStaleAtlasInvalidation()
     {
         DDGIProbePass probePass;
-        DDGIProbePass::FrameResources previousFrame;
-        previousFrame.FrameIndex = 1u;
-        previousFrame.ViewId = 3u;
-        previousFrame.ViewportId = 5u;
-        previousFrame.FrameNumber = 16u;
-        previousFrame.AtlasProbeCount = 4u;
-        previousFrame.bAtlasValid = true;
-        probePass.m_FrameResources.push_back(previousFrame);
+        DDGIProbePass::ViewResources previousView;
+        previousView.ViewId = 3u;
+        previousView.ViewportId = 5u;
+        previousView.LastExecuteFrameNumber = 16u;
+        previousView.AtlasProbeCount = 4u;
+        previousView.bAtlasValid = true;
+        probePass.m_ViewResources.push_back(previousView);
 
         ViewRenderContext failedContext;
-        failedContext.FrameIndex = 1u;
         failedContext.FrameNumber = 18u;
         failedContext.PhysicalLighting.ViewId = 3u;
         failedContext.PhysicalLighting.ViewportId = 5u;
         assert(!probePass.Execute(failedContext));
-        assert(!probePass.GetIrradianceAtlas(1u, 3u, 5u));
-        assert(!probePass.GetDistanceAtlas(1u, 3u, 5u));
-        assert(probePass.GetAtlasProbeCount(1u, 3u, 5u) == 0u);
+        assert(!probePass.GetIrradianceAtlas(3u, 5u));
+        assert(!probePass.GetDistanceAtlas(3u, 5u));
+        assert(probePass.GetAtlasProbeCount(3u, 5u) == 0u);
     }
 
     MeshProxy MakeSceneRevisionMeshProxy(uint64_t objectId,

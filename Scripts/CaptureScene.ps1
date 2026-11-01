@@ -4,6 +4,8 @@
 #   mean_luminance      … Rec.709 の重み（0.2126R+0.7152G+0.0722B）で求めた画素値の平均（0〜255）
 #   clipped_white_ratio … R・G・B がすべて 255 の画素の割合
 #   crushed_black_ratio … R・G・B がすべて 0 の画素の割合
+#   camera_path_time / camera_path_mode … ログで確認した保存フレームのパスの時刻（秒）と状態（played・placed）。
+#     再生の撮影時刻か、再生していない静止の配置時刻が無ければ、どちらも null。
 #
 # -Views を省くと、そのシーンの全視点を撮る。既定の視点を default.png に、残りの視点を <名前>.png に撮る（既定の視点の実際の
 # 名前は metrics.json の scene_view に入る）。-Views を与えると、その視点だけを撮る（視点の名前は Game/Scenes/SceneCatalog.h のシーンの定義）。
@@ -21,7 +23,7 @@
 #   値にカンマを含む引数（startup-camera=0,5,2.5）は、カンマの次が英字で始まらない限り分けない。
 # -RequireAssets を付けると、資産の欠けを失敗にする。付けないときは欠けを metrics.json の missing_assets に数えて警告として出す。
 #   欠けの検出は2つ。シーンの定義の必要な資産は Game が --scene-report で書く報告（<視点>.SceneReport.txt）から読むので、
-#   ログを書かない Release でも検査できる。Rendering3DTest が読み込み失敗で出す印（COOKED_MODEL_MISSING など）は
+#   ログを書かない Release でも検査できる。各シーンが読み込み失敗で出す印（COOKED_MODEL_MISSING・MEGA_BANANAS_ASSET_MISSING など）は
 #   Game.log からだけ読むので、Debug・RelWithDebInfo で効く。
 # -GpuTimingFrames を与えると、決定的な撮影ではなく実時間の計測にする。Game を --trace-file 付きで起動し、有効な標本を
 # -GpuTimingFrames 件だけ得る。計測の窓は、シーンの初期配置と公開の完了（SceneReady。ログの SCENE_READY_FRAME のフレーム番号）
@@ -30,13 +32,15 @@
 # Game は (-GpuTimingFrames + ウォームアップ + 末尾の2 + -TimingReadyMarginFrames) の描画フレームの後に撮って終わる
 # （--exit-after-rendered-frames）。余白 -TimingReadyMarginFrames は SceneReady までに要するフレーム数以上にする
 # （足りないと窓が SceneReady より前に入るので、標本が足りないとして失敗にし、要るフレーム数を示す。重いシーンは大きくする）。
+# camera-path-capture-time の指定時は Game がその時刻の Tick を撮る。SceneReady 後の標本が足りない時刻は起動前に拒否し、
+# ApplicationProcessor の撮影と終了までの余白に、指定時刻までの Tick 数と結果待ちを足す。
 # トレースの FrameGPU（GPU のタイムスタンプで測ったフレームの区間）の窓の中央値・平均・95 パーセンタイル・最大と、パスごとの
 # 中央値を gpu_timing として metrics.json へ書く。視点ごとに、シーンが出した配置の数（placed_count。MEGA_STRESS_PLACED・
 # MEGA_BANANAS_PLACED の行）、SceneReady のフレーム（scene_ready_frame）、計測の開始のフレーム（timing_start_frame。
 # ウォームアップを除いた最初の有効な描画フレーム）も書く。
 # 置いた Entity の数（placed_entities。MEGA_STRESS_PLACED の entities）とバナナの本数（placed_bananas。MEGA_STRESS_PLACED の
 # bananas か MEGA_BANANAS_PLACED の count）も分けて書き、-RequireAssets のときは -GameArgs の stress-entities・banana-count と
-# 違えば失敗にする（引数どおりに置けたことの確認。mega-stress のバナナは banana-count を指定したときだけ置く）。
+# 違うか、Game.log に置いた数の行が無ければ失敗にする（mega-stress のバナナは banana-count を指定したときだけ置く）。
 # 同じ撮影のログから、描いたクラスタ数（MEGA_OCCLUSION の pass1 + pass2_drawn の最後の行）・MegaGeometry のバッファの大きさ
 # （MEGA_CAPACITY）・ジオメトリのプールの使用量（VRAM_POOLS の geometry_used_mb）を mega_stats として書く。
 # 統計が無効な Release は GPU のタイムスタンプを取れないので併用しない（RelWithDebInfo で測る）。
@@ -250,6 +254,60 @@ foreach ($gameArgument in $GameArgs)
         if ($trimmed -ne '')
         {
             $extraArguments += "--$trimmed"
+        }
+    }
+}
+# 計測の窓から外す、末尾の撮影のフレームの直前のフレーム数
+$timingTailFrames = 2
+$pathCaptureFrames = $null
+$hasPathCaptureTime = [bool]($extraArguments | Where-Object { $_ -clike '--camera-path-capture-time=*' })
+if ($GpuTimingFrames -gt 0 -and $hasPathCaptureTime)
+{
+    $pathCaptureTime = $null
+    $pathStartTime = 0.0
+    $pathStartSeen = $false
+    foreach ($argument in $extraArguments)
+    {
+        if ($argument -cmatch '^--camera-path-capture-time=(.*)$')
+        {
+            $value = 0.0
+            if ($null -ne $pathCaptureTime -or
+                -not [double]::TryParse($Matches[1], [System.Globalization.NumberStyles]::Float, $invariant, [ref]$value) -or
+                [double]::IsNaN($value) -or [double]::IsInfinity($value) -or $value -lt 0.0)
+            {
+                Write-Output 'CAPTURE_SCENE result=fail reason=invalid_camera_path_capture_time（撮影時刻は 0 以上の有限の数を 1 回だけ指定する）'
+                exit 1
+            }
+            $pathCaptureTime = $value
+        }
+        elseif ($argument -cmatch '^--camera-path-time=(.*)$')
+        {
+            $value = 0.0
+            if ($pathStartSeen -or
+                -not [double]::TryParse($Matches[1], [System.Globalization.NumberStyles]::Float, $invariant, [ref]$value) -or
+                [double]::IsNaN($value) -or [double]::IsInfinity($value) -or $value -lt 0.0)
+            {
+                Write-Output 'CAPTURE_SCENE result=fail reason=invalid_camera_path_time（開始時刻は 0 以上の有限の数を 1 回だけ指定する）'
+                exit 1
+            }
+            $pathStartSeen = $true
+            $pathStartTime = $value
+        }
+    }
+    if ($null -ne $pathCaptureTime)
+    {
+        $pathTicks = [math]::Ceiling(($pathCaptureTime - $pathStartTime) * 60.0)
+        if ($pathCaptureTime -lt $pathStartTime -or $pathTicks -gt ([uint32]::MaxValue - 120 - $GpuTimingFrames - $TimingWarmupFrames - $timingTailFrames - $TimingReadyMarginFrames))
+        {
+            Write-Output 'CAPTURE_SCENE result=fail reason=invalid_camera_path_capture_interval（撮影時刻は開始時刻以上とし、Tick 数を指定可能な範囲にする）'
+            exit 1
+        }
+        $pathCaptureFrames = [long]$pathTicks
+        $requiredPathFrames = $GpuTimingFrames + $TimingWarmupFrames + $timingTailFrames
+        if ($pathCaptureFrames -lt $requiredPathFrames)
+        {
+            Write-Output "CAPTURE_SCENE result=fail reason=camera_path_capture_too_early（SceneReady の後の Tick 数 $pathCaptureFrames が、標本・ウォームアップ・末尾に必要な $requiredPathFrames に足りない）"
+            exit 1
         }
     }
 }
@@ -841,6 +899,33 @@ function Get-EngineCheckCounts([string]$LogPath)
     return [pscustomobject]@{ Counts = $counts; FailLines = $failLines }
 }
 
+# 保存フレームのパスの時刻をログから読む。再生の撮影記録を優先し、静止は再生開始が無い場合だけ採る。
+function Get-CameraPathCapture([string]$LogPath)
+{
+    $capturedTime = $null
+    $placedTime = $null
+    $hasPlaying = $false
+    $secondsPattern = '([-+]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?)'
+    foreach ($line in [IO.File]::ReadLines($LogPath))
+    {
+        if ($line -match "CAMERA_PATH_CAPTURE_FRAME time=$secondsPattern mode=played\b")
+        {
+            $capturedTime = [double]::Parse($Matches[1], $invariant)
+        }
+        elseif ($line -match "CAMERA_PATH state=placed time=$secondsPattern\b")
+        {
+            $placedTime = [double]::Parse($Matches[1], $invariant)
+        }
+        elseif ($line -match 'CAMERA_PATH state=playing\b')
+        {
+            $hasPlaying = $true
+        }
+    }
+    if ($null -ne $capturedTime) { return [pscustomobject]@{ Time = $capturedTime; Mode = 'played' } }
+    if ($null -ne $placedTime -and -not $hasPlaying) { return [pscustomobject]@{ Time = $placedTime; Mode = 'placed' } }
+    return [pscustomobject]@{ Time = $null; Mode = $null }
+}
+
 # 撮る構成の Game をビルドする。成功なら $null、失敗なら理由を返す（出力は LogPath へ）。
 function Invoke-GameBuild([string]$RepoRoot, [string]$Config, [string]$LogPath)
 {
@@ -865,8 +950,8 @@ function Invoke-GameBuild([string]$RepoRoot, [string]$Config, [string]$LogPath)
     return $null
 }
 
-# 資産の欠けを表す印（シーンの定義の SCENE_ASSET_MISSING と、Rendering3DTest が出す読み込み失敗の印）
-$missingAssetPattern = 'SCENE_ASSET_MISSING|COOKED_MODEL_MISSING|COOKED_MODEL_TEXTURES_MISSING|COOKED_BIG_SPHERE_MISSING|SCAN_PROP_MISSING|MATERIAL_GALLERY_TEXTURE_MISSING|INTERIOR_LIGHT_ASSET_MISSING'
+# 資産の欠けを表す印（シーンの定義の SCENE_ASSET_MISSING と、各シーンが出す読み込み失敗の印）
+$missingAssetPattern = 'SCENE_ASSET_MISSING|COOKED_MODEL_MISSING|COOKED_MODEL_TEXTURES_MISSING|COOKED_BIG_SPHERE_MISSING|SCAN_PROP_MISSING|MATERIAL_GALLERY_TEXTURE_MISSING|INTERIOR_LIGHT_ASSET_MISSING|MEGA_BANANAS_ASSET_MISSING|MEGA_BANANAS_ASSET_INVALID'
 
 New-Item -ItemType Directory -Force -Path $outRoot | Out-Null
 if ($Build)
@@ -888,9 +973,6 @@ if (-not (Test-Path -LiteralPath $gamePath))
 $failures = @()
 $results = @()
 $gameLogPath = Join-Path $repoRoot 'Game.log'
-# 計測の窓から外す、末尾の撮影のフレームの直前のフレーム数
-$timingTailFrames = 2
-
 # Game の起動の列。1 回の起動（run）が 1 つ以上の視点（Shots）を撮る。
 #   視点ごとの起動: Label は視点の名前で、Shots は 1 つ。-Views を省いたときは、既定の視点の起動の報告（views=）で残りの起動を足す。
 #   1 回の起動で複数の視点（--capture-views）: Label は views。-Views を省いたときは Game が報告に書く capture_views= で Shots を決める。
@@ -965,7 +1047,12 @@ for ($runIndex = 0; $runIndex -lt $runs.Count; ++$runIndex)
         # 実時間の計測: 決定的な撮影にせず、トレースを取って決まった描画フレーム数の後に撮る
         Remove-Item -LiteralPath $tracePath -Force -ErrorAction SilentlyContinue
         $arguments += "--trace-file=`"$tracePath`""
-        $arguments += "--exit-after-rendered-frames=$($GpuTimingFrames + $TimingWarmupFrames + $timingTailFrames + $TimingReadyMarginFrames)"
+        $exitRenderedFrames = $GpuTimingFrames + $TimingWarmupFrames + $timingTailFrames + $TimingReadyMarginFrames
+        if ($null -ne $pathCaptureFrames)
+        {
+            $exitRenderedFrames += $pathCaptureFrames + 120
+        }
+        $arguments += "--exit-after-rendered-frames=$exitRenderedFrames"
     }
     else
     {
@@ -1142,6 +1229,7 @@ for ($runIndex = 0; $runIndex -lt $runs.Count; ++$runIndex)
     # Game.log の検査。Release はログが無効（NORVES_ENABLE_LOGGING=0）で Game.log を書かないため飛ばす。
     $sceneReady = $null
     $sceneReadyFrame = $null
+    $cameraPathCapture = [pscustomobject]@{ Time = $null; Mode = $null }
     $placedCount = $null
     $placedEntities = $null
     $placedBananas = $null
@@ -1149,6 +1237,7 @@ for ($runIndex = 0; $runIndex -lt $runs.Count; ++$runIndex)
     $logMissingAssets = @()
     if (Test-Path -LiteralPath $viewLogPath)
     {
+        $cameraPathCapture = Get-CameraPathCapture $viewLogPath
         # SceneReady のフレーム（SCENE_READY_FRAME）と、シーンが出した配置の数（最後の行）
         $readyFrameLines = @(Select-String -LiteralPath $viewLogPath -Pattern "SCENE_READY_FRAME scene=$Scene frame=(\d+)")
         if ($readyFrameLines.Count -gt 0)
@@ -1173,9 +1262,17 @@ for ($runIndex = 0; $runIndex -lt $runs.Count; ++$runIndex)
         }
         if ($RequireAssets)
         {
+            if ($null -ne $requestedEntities -and $null -eq $placedEntities)
+            {
+                $failures += "$($run.Label): MEGA_STRESS_PLACED entities= の行がログに無い（stress-entities=$requestedEntities を指定したのに置いた数が分からない）"
+            }
             if ($null -ne $requestedEntities -and $null -ne $placedEntities -and $placedEntities -ne $requestedEntities)
             {
                 $failures += "$($run.Label): 置いた Entity の数 $placedEntities が指定（stress-entities=$requestedEntities）と違う"
+            }
+            if ($null -ne $requestedBananas -and $null -eq $placedBananas)
+            {
+                $failures += "$($run.Label): MEGA_BANANAS_PLACED count= または MEGA_STRESS_PLACED bananas= の行がログに無い（banana-count=$requestedBananas を指定したのに置いた数が分からない）"
             }
             if ($null -ne $requestedBananas -and $null -ne $placedBananas -and $placedBananas -ne $requestedBananas)
             {
@@ -1219,7 +1316,7 @@ for ($runIndex = 0; $runIndex -lt $runs.Count; ++$runIndex)
         {
             $failures += "$($run.Label): $($line.Line.Trim())"
         }
-        # シーンの定義の欠け（SCENE_ASSET_MISSING）は報告で数えたので、ログからは Rendering3DTest の読み込み失敗の印だけを拾う。
+        # シーンの定義の欠け（SCENE_ASSET_MISSING）は報告で数えたので、ログからは各シーンの読み込み失敗の印だけを拾う。
         $logMissingAssets = @(Select-String -LiteralPath $viewLogPath -Pattern $missingAssetPattern |
             Where-Object { $_.Line -notmatch 'SCENE_ASSET_MISSING' } | ForEach-Object { $_.Line.Trim() })
     }
@@ -1458,6 +1555,8 @@ for ($runIndex = 0; $runIndex -lt $runs.Count; ++$runIndex)
             crushed_black_ratio = [math]::Round($measured[4], 6)
             scene_ready = $sceneReady
             scene_ready_frame = $sceneReadyFrame
+            camera_path_time = $cameraPathCapture.Time
+            camera_path_mode = $cameraPathCapture.Mode
             placed_count = $placedCount
             placed_entities = $placedEntities
             placed_bananas = $placedBananas

@@ -286,6 +286,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/MegaGeometry/LODHierarchyBuilder.cpp
     # 地形
     Private/Rendering/Terrain/TerrainHeightField.cpp
+    Private/Rendering/Terrain/TerrainPlacementGround.cpp
     Private/Rendering/MegaGeometryPass.cpp
     Private/Rendering/HiZPyramidPass.cpp
     Private/Rendering/SkinningComputePass.cpp
@@ -667,6 +668,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/MegaGeometry/LODHierarchyBuilder.h
     # 地形
     Public/Rendering/Terrain/TerrainHeightField.h
+    Public/Rendering/Terrain/TerrainPlacementGround.h
     # Object
     Public/Object/Invocation.h
     Public/Object/ObjectCast.h
