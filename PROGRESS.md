@@ -8496,3 +8496,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Done: 統合ブランチを取り込み（ef2b1189）、P3 の直し（0036107c。`ApplicationProcessor.cpp` の `bSceneAssembling` が `!deterministicCapture.IsSceneReady()`）が入ったことを確かめた。TLAS の直し（9c5875da。顔ぶれが替わったら Build、席の並びを安定させる）は入ったまま。コードは変えていない
 - Next: 起動の確かめは後回し（当分アプリを起動しない決まり）。SCN-MEGA-FIX-TLAS-REBUILD-CHECK で verify の 2 本（1M horizon のカメラパス 300 フレームの撮影と、LightingPass の median ≤ 4.4 ms・p95 ≤ 5 ms の判定）を回し、撮影の前に自分の Game.exe 以外の 3D 利用率の合計が 10 % 未満であることを確かめる。値（LightingPass の median・p95、`RT_SCENE` の built/updated、SCENE_READY_FRAME）を記録する
 - Notes: 10-29 の U2-path（P3 の前・GPU 空き）では median 4.27 / p95 4.94 ms で新しい線を満たしていた。`要起票:`（RTGI の地の費用を 3 ms へ）は上の節に既にある
+- U1 5 万個のメッシュ（家・塔・岩）の主のカメラの LOD の許容に下限を付ける: 着地(直し 0 回)
