@@ -4215,3 +4215,13 @@
 - paths: Library/Core/Private/Engine/ApplicationProcessor.cpp, Scripts/CaptureScene.ps1, TASKS.md, PROGRESS.md
 - gpu: exclusive
 - from: SCN-MEGA-FIX-TLAS-REBUILD
+
+## SCN-FIX-SKY-BANDING-CHECK: 空の階調の段（波打つ横縞）を消す(後回しにしたアプリの起動の確かめ)
+- status: todo
+- check: launch
+- gpu: exclusive
+- done-when: SCN-FIX-SKY-BANDING で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、SCN-FIX-SKY-BANDING の done-when を満たすことを確かめる。満たさなければ SCN-FIX-SKY-BANDING の done-when と paths の範囲で直す。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -Views overview -Build -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-FIX-SKY-BANDING`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -OutDir .harness/runs/startup-capture/SCN-FIX-SKY-BANDING`
+- paths: Assets/Shaders, Library/Core/Private/Rendering, Library/Core/Public/Rendering, Docs/RenderingValidation, Test/Core/Rendering, Scripts, TASKS.md, PROGRESS.md
+- from: SCN-FIX-SKY-BANDING
