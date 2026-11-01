@@ -199,24 +199,6 @@ namespace NorvesLib::Tools::AssetCook
         constexpr float kCapOverhangMeters = 1.2f;
         constexpr float kCapOverhangEdge = 0.2f;
         constexpr float kCapOverhangWavelength = 40.0f;
-        // 崩れた塊（壁の足元から崖錐へ移る所の数 m〜十数 m の塊。地層の棚と同じ担当の 7 範囲だけ）: 面の内側（上り）へ
-        // kTalusFootSearchMeters までたどり、1 歩の上りが kTalusWallSlope（42 度の正接）を超える手前を壁の足とする。
-        // 面の外側（下り）へ kTalusApronMeters 以内に kTalusFootSlope（38 度の正接）を超える下りがあれば、下に壁が続く
-        // 棚の踏み面として除く。壁の足までの水平の距離が kTalusBandFullMeters までは満ち、kTalusBandMeters で 0 に戻る。
-        // 水平面の Voronoi（間隔 kTalusBlockSpacing m）で崖錐を塊に区切り、塊ごとの高さ（0〜kTalusBlockHeightMax m。
-        // 半分の塊は 0）だけ斜面に沿って持ち上げ、前・後・横に段を作る。38 度以下で満ち、42 度で 0 になる面だけに掛け、
-        // 帽岩の帯（頂から kCapThickness）とは重ねない。高さだけを持ち上げるので面は折り返さない
-        constexpr double kTalusFootSearchMeters = 20.0;
-        constexpr double kTalusWallSlope = 0.90;
-        constexpr double kTalusFootSlope = 0.78;
-        constexpr double kTalusApronMeters = 10.0;
-        constexpr float kTalusBandFullMeters = 10.0f;
-        constexpr float kTalusBandMeters = 18.0f;
-        constexpr float kTalusBlockSpacing = 9.0f;
-        constexpr float kTalusBlockSideWidth = 0.6f;
-        constexpr float kTalusBlockHeightMax = 4.0f;
-        constexpr float kTalusSinLow = 0.616f;
-        constexpr float kTalusSinHigh = 0.67f;
         // 細かな凹凸の振幅（m）
         constexpr float kRoughnessCoarse = 0.12f;
         constexpr float kRoughnessFine = 0.05f;
@@ -1380,22 +1362,19 @@ namespace NorvesLib::Tools::AssetCook
                 m_WindowColumns = static_cast<int>(cellsX) + 2 * kWindowMargin;
                 m_WindowRows = static_cast<int>(cellsZ) + 2 * kWindowMargin;
 
-                // 急な升目と塊の升目の印（膨らませる分、窓より 1 升目広く求める）
+                // 急な升目の印（膨らませる分、窓より 1 升目広く求める）
                 const int steepColumns = m_WindowColumns + 2;
                 const int steepRows = m_WindowRows + 2;
                 VariableArray<uint8_t> steep(static_cast<size_t>(steepColumns) * steepRows, 0u);
-                VariableArray<uint8_t> talus(static_cast<size_t>(steepColumns) * steepRows, 0u);
                 for (int row = 0; row < steepRows; ++row)
                 {
                     for (int column = 0; column < steepColumns; ++column)
                     {
                         steep[static_cast<size_t>(row) * steepColumns + column] =
                             IsSteepCell(m_WindowColumn - 1 + column, m_WindowRow - 1 + row) ? 1u : 0u;
-                        talus[static_cast<size_t>(row) * steepColumns + column] =
-                            IsTalusBlockCell(m_WindowColumn - 1 + column, m_WindowRow - 1 + row) ? 1u : 0u;
                     }
                 }
-                // 細分する升目は、急な升目・塊の升目とその周り 1 升目（変形が 0 から上がる帯）
+                // 細分する升目は、急な升目とその周り 1 升目（押し出しが 0 から上がる帯）
                 const size_t windowCells = static_cast<size_t>(m_WindowColumns) * m_WindowRows;
                 m_Refined.assign(windowCells, 0u);
                 m_SubdivisionX.assign(windowCells, 1u);
@@ -1415,8 +1394,7 @@ namespace NorvesLib::Tools::AssetCook
                         {
                             for (int dx = 0; dx <= 2 && !bRefined; ++dx)
                             {
-                                const size_t mark = static_cast<size_t>(row + dz) * steepColumns + column + dx;
-                                bRefined = steep[mark] != 0u || talus[mark] != 0u;
+                                bRefined = steep[static_cast<size_t>(row + dz) * steepColumns + column + dx] != 0u;
                             }
                         }
                         if (!bRefined)
@@ -1741,84 +1719,6 @@ namespace NorvesLib::Tools::AssetCook
                 return std::max(top - base, 0.0) * static_cast<double>(lift * plateau * slope * interior) * fade;
             }
 
-            // 壁の足元の崖錐の持ち上げ（m）。base は帽岩の持ち上げの前の高さ、capTop は帽岩の頂の高さ（無い所は NaN）
-            double TalusBlockRise(double gx, double gz, double base, const float normal[3], float capTop) const
-            {
-                return TalusBlockRise(gx, gz, base, normal, capTop, InteriorWeight(gx, gz));
-            }
-
-            // 印を求めるときは interior を 1 にして、まだ決まっていない細分の印への依存を外す
-            double TalusBlockRise(double gx, double gz, double base, const float normal[3], float capTop,
-                                  float interior) const
-            {
-                const double x = WorldX(gx);
-                const double z = WorldZ(gz);
-                const float horizontal = std::sqrt(normal[0] * normal[0] + normal[2] * normal[2]);
-                const float slope = 1.0f - SmoothStep(kTalusSinLow, kTalusSinHigh, horizontal);
-                if (horizontal < 0.05f || slope <= 0.0f ||
-                    IsScanOwnedRegion(static_cast<float>(x), static_cast<float>(z)))
-                {
-                    return 0.0;
-                }
-                const double fade = RegionFade(x, z);
-                if (fade <= 0.0 || interior <= 0.0f)
-                {
-                    return 0.0;
-                }
-                // 塊の高さ（塊の境で 0 へ下げる。半分の塊は 0）
-                DisplacementPoint point;
-                point.X = static_cast<float>(x);
-                point.Z = static_cast<float>(z);
-                point.FaceX = normal[0] / horizontal;
-                point.FaceZ = normal[2] / horizontal;
-                const JointSample cell = SampleJoints(point.X, point.Z, kTalusBlockSpacing, 300, kTalusBlockSideWidth, point);
-                const float blockHeight = std::max(cell.Block, 0.0f) * 2.0f * kTalusBlockHeightMax;
-                if (blockHeight <= 0.0f)
-                {
-                    return 0.0;
-                }
-                // 面の内側（上り）へ格子の間隔ごとにたどり、急な上りの手前までの水平の距離を求める
-                const double outX = static_cast<double>(normal[0]) / horizontal;
-                const double outZ = static_cast<double>(normal[2]) / horizontal;
-                const int steps = static_cast<int>(kTalusFootSearchMeters / m_Layout.Spacing);
-                const int apronSteps = static_cast<int>(kTalusApronMeters / m_Layout.Spacing);
-                const double start = BilinearHeight(gx, gz);
-                double previous = start;
-                double distance = std::numeric_limits<double>::quiet_NaN();
-                for (int step = 1; step <= steps; ++step)
-                {
-                    const double height = BilinearHeight(gx - outX * step, gz - outZ * step);
-                    if ((height - previous) / m_Layout.Spacing > kTalusWallSlope)
-                    {
-                        distance = static_cast<double>(step - 1) * m_Layout.Spacing;
-                        break;
-                    }
-                    previous = height;
-                }
-                if (!std::isfinite(distance))
-                {
-                    return 0.0;
-                }
-                // 棚の踏み面（点の下に壁が続く所）を崖錐として持ち上げない
-                previous = start;
-                for (int step = 1; step <= apronSteps; ++step)
-                {
-                    const double height = BilinearHeight(gx + outX * step, gz + outZ * step);
-                    if ((previous - height) / m_Layout.Spacing > kTalusFootSlope)
-                    {
-                        return 0.0;
-                    }
-                    previous = height;
-                }
-                const float band = 1.0f - SmoothStep(kTalusBandFullMeters, kTalusBandMeters, static_cast<float>(distance));
-                const double rise = static_cast<double>(blockHeight * slope * band * interior) * fade;
-                if (std::isfinite(capTop) && base + rise > static_cast<double>(capTop - kCapThickness))
-                {
-                    return 0.0;
-                }
-                return rise;
-            }
-
             // 格子の座標 (gx, gz) の、押し出した後の位置（m）
             void Position(double gx, double gz, double outPosition[3], bool &outDisplaced) const
             {
@@ -1830,9 +1730,7 @@ namespace NorvesLib::Tools::AssetCook
                 float capTop = 0.0f;
                 float capWeight = 0.0f;
                 const double carvedBase = BaseHeight(gx, gz);
-                const double capRise = CapRise(gx, gz, carvedBase, normal, capTop, capWeight);
-                // 壁の足元の崖錐の持ち上げも押し出しの前に高さへ足す
-                const double rise = capRise + TalusBlockRise(gx, gz, carvedBase, normal, capTop);
+                const double rise = CapRise(gx, gz, carvedBase, normal, capTop, capWeight);
                 const double base = carvedBase + rise;
                 outPosition[0] = x;
                 outPosition[1] = base;
@@ -1978,34 +1876,6 @@ namespace NorvesLib::Tools::AssetCook
                     float normal[3];
                     SmoothedNormal(gx, gz, normal);
                     if (SlopeWeight(gx, gz, normal) > 0.0f)
-                    {
-                        return true;
-                    }
-                }
-                return false;
-            }
-
-            // 升目の 4 隅と中心のどれかで塊の持ち上げが正か。格子の全体の座標だけから決める。
-            // 帽岩の除外は省き、重なる升目も保守的に細分する（実際の持ち上げでは除外する）
-            bool IsTalusBlockCell(int column, int row) const
-            {
-                if (!IsCellInGrid(column, row))
-                {
-                    return false;
-                }
-                const double points[5][2] = {{0.0, 0.0}, {1.0, 0.0}, {0.0, 1.0}, {1.0, 1.0}, {0.5, 0.5}};
-                for (const auto &offset : points)
-                {
-                    const double gx = static_cast<double>(column) + offset[0];
-                    const double gz = static_cast<double>(row) + offset[1];
-                    if (RegionFade(WorldX(gx), WorldZ(gz)) <= 0.0)
-                    {
-                        continue;
-                    }
-                    float normal[3];
-                    SmoothedNormal(gx, gz, normal);
-                    if (TalusBlockRise(gx, gz, BaseHeight(gx, gz), normal,
-                                       std::numeric_limits<float>::quiet_NaN(), 1.0f) > 0.0)
                     {
                         return true;
                     }
