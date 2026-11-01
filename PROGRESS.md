@@ -8304,3 +8304,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 粒の量を測る RtgiGrain.py と判定の仕様を置く: 着地(直し 0 回)
 - U2 履歴の棄却と年齢の開発用 AOV を足し、直す前の撮影と診断をする: 着地(直し 2 回)
 - U3 RtgiGrain の測り方を床だけに絞り、直す前の比を確かめる: 着地(直し 1 回)
+- U4 カメラだけが動くフレームの拡散の履歴の年齢の上限を 32 にし、直した後の再生と静止を撮る: 着地(直し 2 回)

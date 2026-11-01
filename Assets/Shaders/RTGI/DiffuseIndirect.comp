@@ -14,7 +14,8 @@ layout(set = 0, binding = 1, std140) uniform RTGIComputeParameters
     vec4 cameraPosition;
     uvec4 imageAndSceneCounts; // xy=画像寸法、z=インスタンス数、w=ライト数
     vec4 rayLimits; // x=最小距離、y=最大距離、z=pre-exposure、w=環境強度
-    uvec4 temporalState; // x=履歴有効、y=ライトrevision差、z=weight制限、w=age上限
+    // xは0=履歴無効、1=通常の有効履歴、2以上=カメラだけの動きで使う拡散の年齢上限（16）。
+    uvec4 temporalState; // y=光源の改訂差、z=重みの制限、w=静止判定用の年齢上限
     // x=試料系列の番号（RTGIのdispatchごとに1進む）、y=発光instance数、z=発光三角形数、
     // w=当たりの統計（開発ビルドだけ。0は数えない。それ以外はMegaGeometryの先頭のcustom index + 1）
     uvec4 sampleState;
@@ -164,7 +165,8 @@ bool IsHistoryDiagnosticEnabled()
 uint gHistoryDiagnosticReason = 6u;
 
 // 画素ごとの履歴の年齢の上限（静止が続いたとき）。フレームごとの上限はtemporalState.wで、視点・光源・
-// シーンが動いているフレームでは8になる。重みは累積平均の 1-1/(年齢+1) で、上限は256/257。
+// シーンが動いているフレームでは8になる。カメラだけの動きの拡散の上限はxで伝える。
+// 重みは累積平均の 1-1/(年齢+1) で、上限は256/257。
 const uint RTGI_HISTORY_MAXIMUM_AGE = 256u;
 const float RTGI_HISTORY_MAXIMUM_WEIGHT = 256.0 / 257.0;
 // 視点・光源・シーンが動いているフレームの年齢の上限（RTGIHistoryMaximumAge）。temporalState.wがこれを
@@ -172,6 +174,12 @@ const float RTGI_HISTORY_MAXIMUM_WEIGHT = 256.0 / 257.0;
 const uint RTGI_HISTORY_DYNAMIC_MAXIMUM_AGE = 8u;
 const float RTGI_HISTORY_LIGHT_WEIGHT_LIMIT = 0.25;
 const float RTGI_HISTORY_INITIAL_CONFIDENCE = 0.25;
+
+// 拡散だけの年齢上限。wは変えず、静止判定と法線・材質の棄却条件を維持する。
+uint DiffuseHistoryMaximumAge()
+{
+    return parameters.temporalState.x > 1u ? parameters.temporalState.x : parameters.temporalState.w;
+}
 const float RTGI_HISTORY_NORMAL_REJECTION_DOT = 0.9;
 const float RTGI_HISTORY_DEPTH_REJECTION_THRESHOLD = 0.02;
 const float RTGI_HISTORY_MATERIAL_REJECTION_THRESHOLD = 0.05;
@@ -787,6 +795,76 @@ void ComputeLocalSurfaceSpread(vec2 uv,
     materialSpread *= RTGI_HISTORY_SURFACE_SPREAD_SCALE;
 }
 
+// Catmull-Romの標準の4タップの重み。負の端の重みで、バイリニアの反復によるぼけを抑える。
+vec4 CatmullRomHistoryWeights(float fraction)
+{
+    float squared = fraction * fraction;
+    float cubed = squared * fraction;
+    return vec4(-0.5 * fraction + squared - 0.5 * cubed,
+                1.0 - 2.5 * squared + 1.5 * cubed,
+                0.5 * fraction + 2.0 * squared - 1.5 * cubed,
+                -0.5 * squared + 0.5 * cubed);
+}
+
+// 追加の16タップも、既存のバイリニアと同じ有限・距離・裏返り・法線・材質の条件で判定する。
+// 診断の採否は元のバイリニアが決め、この読み出しが失敗したときは元の結果をそのまま使う。
+bool TryReadCatmullRomHistoryTap(ivec2 texel,
+                                  float currentDistance,
+                                  vec3 currentNormal,
+                                  vec3 currentMaterial,
+                                  float normalSpread,
+                                  float materialSpread,
+                                  bool bStaticView,
+                                  out vec4 sampledHistory)
+{
+    float sampledDistance = texelFetch(historyDepth, texel, 0).r;
+    vec3 sampledNormal = texelFetch(historyNormal, texel, 0).xyz;
+    vec3 sampledMaterial = texelFetch(historyMaterial, texel, 0).rgb;
+    sampledHistory = texelFetch(historyRadiance, texel, 0);
+    float sampledAge = texelFetch(historyAge, texel, 0).r;
+    float sampledConfidence = texelFetch(historyConfidence, texel, 0).r;
+    if (!IsFiniteScalar(sampledDistance) || !IsFiniteVector(sampledNormal) ||
+        !IsFiniteVector(sampledMaterial) || !IsFiniteVector(sampledHistory.rgb) ||
+        !IsFiniteScalar(sampledAge) || !IsFiniteScalar(sampledConfidence))
+    {
+        return false;
+    }
+    float sampledNormalLengthSquared = dot(sampledNormal, sampledNormal);
+    if (!IsFiniteScalar(sampledNormalLengthSquared) || sampledNormalLengthSquared <= 1.0e-8)
+    {
+        return false;
+    }
+    sampledNormal *= inversesqrt(sampledNormalLengthSquared);
+    float depthThreshold = max(RTGI_HISTORY_DEPTH_REJECTION_THRESHOLD,
+                               0.05 * max(currentDistance, sampledDistance));
+    if (abs(currentDistance - sampledDistance) > depthThreshold ||
+        dot(currentNormal, sampledNormal) <= 0.0)
+    {
+        return false;
+    }
+    if (!bStaticView)
+    {
+        if (dot(currentNormal, sampledNormal) < RTGI_HISTORY_NORMAL_REJECTION_DOT &&
+            length(currentNormal - sampledNormal) > normalSpread)
+        {
+            return false;
+        }
+        vec3 materialDelta = abs(currentMaterial - sampledMaterial);
+        if (max(materialDelta.x, max(materialDelta.y, materialDelta.z)) >
+            max(RTGI_HISTORY_MATERIAL_REJECTION_THRESHOLD, materialSpread))
+        {
+            return false;
+        }
+    }
+    // 空の値が非有限の場合も鮮鋭な補間だけを諦め、既存のバイリニアの代替値へ戻す。
+    if (!IsFiniteScalar(sampledHistory.a))
+    {
+        return false;
+    }
+    sampledHistory.a = clamp(sampledHistory.a, 0.0, 1.0);
+    return true;
+}
+
 bool TryReadReprojectedHistory(vec2 currentUV,
                                float currentDistance,
                                vec3 currentNormal,
@@ -853,6 +931,9 @@ bool TryReadReprojectedHistory(vec2 currentUV,
     float ageSum = 0.0;
     float confidenceSum = 0.0;
     float weightSum = 0.0;
+    bool bCameraOnlyMotion = parameters.temporalState.x > 1u;
+    vec4 bilinearHistoryMinimum = vec4(3.402823e38);
+    vec4 bilinearHistoryMaximum = vec4(-3.402823e38);
     // 静止が続いているフレームでは、同じ表面の法線・材質の差はTAAのジッタで画素の中の標本の位置が
     // 変わったことだけから来る（石畳の目地や法線マップの細かな模様の上では近傍のばらつきを超えうる）。
     // そこで棄却すると年齢が0へ戻り、止まった画面で疎らに明滅するため、距離と裏返りだけで判定する。
@@ -929,6 +1010,13 @@ bool TryReadReprojectedHistory(vec2 currentUV,
             gHistoryDiagnosticReason = 4u;
         }
 
+        if (bCameraOnlyMotion)
+        {
+            vec4 acceptedHistory = vec4(sampledRadiance,
+                IsFiniteScalar(sampledHistory.a) ? clamp(sampledHistory.a, 0.0, 1.0) : 1.0);
+            bilinearHistoryMinimum = min(bilinearHistoryMinimum, acceptedHistory);
+            bilinearHistoryMaximum = max(bilinearHistoryMaximum, acceptedHistory);
+        }
         radianceSum += sampledRadiance * bilinearWeight;
         skyVisibilitySum += (IsFiniteScalar(sampledHistory.a) ? clamp(sampledHistory.a, 0.0, 1.0) : 1.0) *
                             bilinearWeight;
@@ -956,9 +1044,41 @@ bool TryReadReprojectedHistory(vec2 currentUV,
     previousAge = ageSum / weightSum;
     previousConfidence = confidenceSum / weightSum;
 
+    // バイリニアの再投影は年齢ぶん積み重なってぼけるため、カメラだけの動きで年齢を伸ばすときだけ
+    // 拡散と空の見え方を鮮鋭に読む。画面端や16タップのどれかが別の面なら、上の結果を維持する。
+    // 鏡面・年齢・確信度と通常のフレームは、バイリニアの計算をそのまま使う。
+    if (bCameraOnlyMotion && all(greaterThanEqual(baseTexel, ivec2(1))) &&
+        all(lessThan(baseTexel + ivec2(2), historySize)))
+    {
+        vec4 weightsX = CatmullRomHistoryWeights(fraction.x);
+        vec4 weightsY = CatmullRomHistoryWeights(fraction.y);
+        vec4 sharpHistory = vec4(0.0);
+        bool bAllTapsValid = true;
+        for (int tap = 0; tap < 16; ++tap)
+        {
+            ivec2 offset = ivec2(tap & 3, tap >> 2);
+            vec4 sampledHistory;
+            if (!TryReadCatmullRomHistoryTap(baseTexel + offset - ivec2(1),
+                                               currentDistance, currentNormal, currentMaterial,
+                                               normalSpread, materialSpread, bStaticView, sampledHistory))
+            {
+                bAllTapsValid = false;
+                break;
+            }
+            sharpHistory += sampledHistory * (weightsX[offset.x] * weightsY[offset.y]);
+        }
+        if (bAllTapsValid && IsFiniteVector(sharpHistory.rgb) && IsFiniteScalar(sharpHistory.a))
+        {
+            // 負の重みで輪郭が振れないよう、採用した2×2の各成分の最小値・最大値に収める。
+            sharpHistory = clamp(sharpHistory, bilinearHistoryMinimum, bilinearHistoryMaximum);
+            previousRadiance = max(sharpHistory.rgb, vec3(0.0));
+            previousSkyVisibility = clamp(sharpHistory.a, 0.0, 1.0);
+        }
+    }
+
     previousAge = clamp(previousAge,
                         0.0,
-                        min(float(parameters.temporalState.w),
+                        min(float(DiffuseHistoryMaximumAge()),
                             float(RTGI_HISTORY_MAXIMUM_AGE)));
     previousConfidence = clamp(previousConfidence, 0.0, 1.0);
     // 履歴を書いたフレームの露出から今のフレームの露出へ掛け直す。
@@ -1016,7 +1136,7 @@ void StoreTemporalSample(uvec2 pixel,
     float safeAge = IsFiniteScalar(age)
         ? clamp(age,
                 0.0,
-                min(float(parameters.temporalState.w),
+                min(float(DiffuseHistoryMaximumAge()),
                     float(RTGI_HISTORY_MAXIMUM_AGE)))
         : 0.0;
     float safeConfidence = IsFiniteScalar(confidence)
@@ -1713,18 +1833,26 @@ void ShadeDiffuseIndirect(uvec2 pixel, out bool bRayTraced, out uint firstHitCus
         historyWeight = clamp(1.0 - 1.0 / (previousAge + 1.0),
                               0.0,
                               RTGI_HISTORY_MAXIMUM_WEIGHT);
+        // カメラだけが動く間、鏡面は視点に依るため従来の年齢8までの重みを使う。
+        float specularAge = parameters.temporalState.x > 1u
+            ? min(previousAge, float(RTGI_HISTORY_DYNAMIC_MAXIMUM_AGE)) : previousAge;
+        float specularHistoryWeight = clamp(1.0 - 1.0 / (specularAge + 1.0),
+                                            0.0, RTGI_HISTORY_MAXIMUM_WEIGHT);
         historyWeight *= previousConfidence;
+        specularHistoryWeight *= previousConfidence;
         if (parameters.temporalState.y != 0u || parameters.temporalState.z != 0u)
         {
             historyWeight = min(historyWeight, RTGI_HISTORY_LIGHT_WEIGHT_LIMIT);
+            specularHistoryWeight = min(specularHistoryWeight, RTGI_HISTORY_LIGHT_WEIGHT_LIMIT);
         }
         historyWeight = clamp(historyWeight, 0.0, RTGI_HISTORY_MAXIMUM_WEIGHT);
+        specularHistoryWeight = clamp(specularHistoryWeight, 0.0, RTGI_HISTORY_MAXIMUM_WEIGHT);
         outputRadiance = mix(outputRadiance, previousRadiance, historyWeight);
         outputSkyVisibility = mix(rawSkyVisibility, previousSkyVisibility, historyWeight);
-        outputSpecularHit = mix(rawSpecularHit, previousSpecularHit, historyWeight);
-        outputSpecularSky = mix(rawSpecularSky, previousSpecularSky, historyWeight);
+        outputSpecularHit = mix(rawSpecularHit, previousSpecularHit, specularHistoryWeight);
+        outputSpecularSky = mix(rawSpecularSky, previousSpecularSky, specularHistoryWeight);
         outputAge = min(previousAge + 1.0,
-                        min(float(parameters.temporalState.w),
+                        min(float(DiffuseHistoryMaximumAge()),
                             float(RTGI_HISTORY_MAXIMUM_AGE)));
         outputConfidence = clamp(previousConfidence + 0.125, 0.0, 1.0);
     }

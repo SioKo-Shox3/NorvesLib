@@ -480,6 +480,8 @@ namespace NorvesLib::Core::Rendering
         uint8_t m_LoggedIndirectLightingSource = 0xFFu;
         /** @brief 視点（ジッタを除いた逆ビュー射影・位置）とレイトレーシングのinstanceの前フレームの署名 */
         uint64_t m_RTGIStaticSignature = 0;
+        /** @brief カメラを除いた環境光とinstanceの前フレームの署名（静止の署名と同時に有効化・破棄する） */
+        uint64_t m_RTGICameraIndependentSignature = 0;
         /** @brief 視点・光源・シーンが変わらなかった連続フレーム数 */
         uint32_t m_RTGIStaticFrames = 0;
         /** @brief 直近のdispatchで使った画素ごとの履歴の年齢の上限 */

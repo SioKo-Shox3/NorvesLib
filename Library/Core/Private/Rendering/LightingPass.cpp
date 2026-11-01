@@ -1015,6 +1015,9 @@ namespace NorvesLib::Core::Rendering
         return hash;
     }
 
+    // RTGIHistoryMaximumAge（8）に対し、カメラだけが動くときは視点に依らない拡散の年齢だけを16まで保つ。
+    static constexpr uint32_t RTGIHistoryCameraMotionMaximumAge = 16u;
+
     // 静止が続いたフレーム数から、画素ごとの履歴の年齢の上限を決める。
     static uint32_t ComputeRTGIHistoryAgeCap(uint32_t staticFrames)
     {
@@ -2476,6 +2479,7 @@ namespace NorvesLib::Core::Rendering
         m_RTGIHistoryCapability = RTGIRayQueryCapability{};
         m_RTGIHistoryLightWeightLimitedFrames = 0u;
         m_RTGIStaticSignature = 0u;
+        m_RTGICameraIndependentSignature = 0u;
         m_RTGIStaticFrames = 0u;
         m_RTGIHistoryAgeCap = RTGIHistoryMaximumAge;
         m_bRTGIStaticSignatureValid = false;
@@ -3955,6 +3959,7 @@ namespace NorvesLib::Core::Rendering
         m_RTGIHistoryLightWeightLimitedFrames = 0u;
         m_bRTGIHistoryFrameNumberValid = false;
         m_RTGIStaticSignature = 0u;
+        m_RTGICameraIndependentSignature = 0u;
         m_RTGIStaticFrames = 0u;
         m_RTGIHistoryAgeCap = RTGIHistoryMaximumAge;
         m_bRTGIStaticSignatureValid = false;
@@ -4153,7 +4158,7 @@ namespace NorvesLib::Core::Rendering
         // 視点（逆ビュー射影と位置）、環境光、レイトレーシングのinstance（位置・拡大率・形状・材質の表と、
         // 材質の色・発光・textureハンドル）が前フレームと同じで、光源も変わらず履歴を再投影できる
         // フレームだけを静止として数える。静止が続くと画素ごとの履歴の年齢の上限を上げ、静止画像を
-        // 収束させる。動いたフレームの上限は従来どおり8。
+        // 収束させる。動いたフレームの静止判定用の上限は従来どおり8。
         // TAAのジッタはフレームごとに投影をずらすだけで視点は動かないため、ジッタを除いた逆ビュー射影で比べる。
         // 露出は履歴を比で掛け直すので署名に含めない（自動露出の小さな揺れで静止が切れないように）。
         // 1フレームでRTGIHistoryStaticExposureStepEVを超える急な変化だけ、署名とは別に静止を切る。
@@ -4186,6 +4191,10 @@ namespace NorvesLib::Core::Rendering
                                         sizeof(environmentIntensity));
         // instance（位置・拡大率・形状・材質の表と、材質の色・textureハンドル）は表を作る走査で畳み込んだ値を使う
         staticSignature = instanceBuild.Signature.Finish(staticSignature);
+        // カメラを除いた同じシーンの署名を別に保ち、視点だけが動いたフレームを見分ける。
+        uint64_t cameraIndependentSignature = HashRTGIBytes(14695981039346656037ull,
+            &environmentIntensity, sizeof(environmentIntensity));
+        cameraIndependentSignature = instanceBuild.Signature.Finish(cameraIndependentSignature);
         const float rtgiPreExposure = std::isfinite(lightingParams.preExposure) &&
                                               lightingParams.preExposure > 0.0f
                                           ? std::clamp(lightingParams.preExposure, 1.0e-6f, 1.0e6f)
@@ -4198,6 +4207,10 @@ namespace NorvesLib::Core::Rendering
                                   !bExposureStepped &&
                                   lightWeightLimitedFrames == 0u && m_bRTGIStaticSignatureValid &&
                                   staticSignature == m_RTGIStaticSignature;
+        const bool bCameraOnlyMotion = !bStaticFrame && bHistoryReprojectionValid &&
+                                       !bLightRevisionMismatch && !bExposureStepped &&
+                                       lightWeightLimitedFrames == 0u && m_bRTGIStaticSignatureValid &&
+                                       cameraIndependentSignature == m_RTGICameraIndependentSignature;
         const uint32_t staticFrames = bStaticFrame ? m_RTGIStaticFrames + 1u : 0u;
         const uint32_t historyAgeCap = ComputeRTGIHistoryAgeCap(staticFrames);
         // 静止で年齢の上限が最大に達したときと、動いて従来の上限へ戻ったときだけ記録する。
@@ -4279,7 +4292,10 @@ namespace NorvesLib::Core::Rendering
         RHI::TexturePtr terrainTextures[4];
         ResolveRTGITerrainBlend(context.SnapshotRayTracingScene->TerrainBlend, context.Resources.Textures,
                                 m_DefaultBlackTexture, parameters, terrainTextures);
-        parameters.temporalState[0] = bHistoryReprojectionValid ? 1u : 0u;
+        // xは0=無効、1=通常の有効履歴、2以上=カメラだけの動きで使う拡散の年齢上限（16）。
+        // wは従来のままにし、動いている間も法線・材質による棄却を維持する。
+        parameters.temporalState[0] = bCameraOnlyMotion ? RTGIHistoryCameraMotionMaximumAge
+            : (bHistoryReprojectionValid ? 1u : 0u);
         parameters.temporalState[1] = bLightRevisionMismatch ? 1u : 0u;
         parameters.temporalState[2] = lightWeightLimitedFrames > 0u ? 1u : 0u;
         parameters.temporalState[3] = historyAgeCap;
@@ -4531,6 +4547,7 @@ namespace NorvesLib::Core::Rendering
         m_bRTGIHistoryFrameNumberValid = true;
         m_bRTGIHistoryLightRevisionValid = true;
         m_RTGIStaticSignature = staticSignature;
+        m_RTGICameraIndependentSignature = cameraIndependentSignature;
         m_RTGIStaticFrames = staticFrames;
         m_RTGIHistoryAgeCap = historyAgeCap;
         m_bRTGIStaticSignatureValid = true;
