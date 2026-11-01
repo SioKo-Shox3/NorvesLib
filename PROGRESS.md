@@ -8199,3 +8199,4 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 証拠: `.harness/runs/20261029-134608/verify-SCN-FIX-SKY-BANDING-U7.txt`（タスクの verify 2 本を含む撮影 8 本 result=pass・EXIT=0、BandingCheck 4 組 result=pass、全列の数え）。撮影 `.harness/runs/scene-capture/SCN-FIX-SKY-BANDING{,-moving,-streaming,-path,-wasteland}/`、前のディザの撮影は `-hash`・`-ign` を付けて残した。streaming の overview・path の horizon の全体と streaming の `banding/banding_zoom.png` を開いて確かめた（前の等高線の段が後は細かな粒になり、空に横縞は見えない）
 - Notes: 途中で試した IGN（縦の閾値の差 +0.309 / −0.691）は、空が下へ暗くなる区間で余裕が約 0.1 段しかなく、path の horizon（y≈245）に 2 段が 9 組残った。起動画面の前のハッシュとの参考の比較は平均輝度差 0.0004・PSNR 52.8 dB。新しい試験は足していない
 - Next: TASKS.md の次の未完
+- U8 格子のディザで変わった基準画像 4 枚を再承認する: 着地(直し 1 回)
