@@ -8383,3 +8383,7 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: 統合の前にランナーの評価者の独立確認（done-when の「独立確認」）。ctest の行は盤面が確かめのタスク G2-GR78-SURFACE-CENTROID-CHECK で回し直す
 - Notes: 2^100/2^-100 の等面積 2 面は原点 (1/3, 2^-100/3, 0)・総面積 1 をビット一致で、±1e20 の相殺は 3 面の 6 通りの面順 × 3 通りの巡回 × 巻きの反転でビット一致を確かめた。累算器は 1 面あたり外積用に 3 つ作るので、表面重心を選んだ大きなメッシュでは取込が bounds_center より遅い（計測はしていない）
 - Notes: 要起票: CookedSkeletalAssetTest（cmake スクリプト）が日本語の警告文を照合するため、コードページ 932 のコンソールでは文字化けで失敗する（UTF-8 のコンソールでは通る。今回の変更と無関係の reduce の警告）
+
+## 2026-11-02 G2-GR78-SURFACE-CENTROID（run 20261102-074918 の反復 2、再検証の時間切れへの対応）
+- Done: 再検証の `cmake --build build --config Debug --target CookedMeshTest -- -m:1` が 10 分を超えたのは、この作業ツリーの build が単位の作業ツリーと別で未ビルドだったため。反復の中で 1 回ビルドし、今は差分なしで 3 秒・EXIT=0（`.harness/runs/20261102-074918/aux-G2-GR78-build1.txt`）。`git grep -n "## 表面重心の精度"` は 91 行に一致。コードは変えていない
+- Next: ctest の 5 試験は盤面の確かめのタスク G2-GR78-SURFACE-CENTROID-CHECK で回す。統合の前にランナーの評価者の独立確認
