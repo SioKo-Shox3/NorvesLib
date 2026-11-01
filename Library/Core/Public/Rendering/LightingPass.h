@@ -357,7 +357,10 @@ namespace NorvesLib::Core::Rendering
                                  const RHI::TexturePtr& ageTexture,
                                  const RHI::TexturePtr& depthTexture,
                                  const RHI::TexturePtr& normalTexture,
-                                 const RHI::TexturePtr& materialTexture);
+                                 const RHI::TexturePtr& materialTexture,
+                                 const RHI::BufferPtr& parametersBuffer,
+                                 uint32_t parametersOffset,
+                                 uint32_t parametersSize);
         void RegisterOutputs(ViewRenderContext& context,
                              const LightingOutputTargets& targets,
                              const RHI::TexturePtr& depthTexture) const;

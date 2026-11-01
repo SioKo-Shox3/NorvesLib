@@ -1629,8 +1629,9 @@ namespace NorvesLib::Core::Rendering
             RHI::ResourceBindType::CombinedImageSampler,
             RHI::ResourceBindType::CombinedImageSampler,
             RHI::ResourceBindType::RWTexture,
-            RHI::ResourceBindType::CombinedImageSampler};
-        for (uint32_t bindingIndex = 0u; bindingIndex < 7u; ++bindingIndex)
+            RHI::ResourceBindType::CombinedImageSampler,
+            RHI::ResourceBindType::ConstantBuffer};
+        for (uint32_t bindingIndex = 0u; bindingIndex < 8u; ++bindingIndex)
         {
             RHI::DescriptorBinding binding;
             binding.binding = bindingIndex;
@@ -3684,11 +3685,14 @@ namespace NorvesLib::Core::Rendering
                                            const RHI::TexturePtr& ageTexture,
                                            const RHI::TexturePtr& depthTexture,
                                            const RHI::TexturePtr& normalTexture,
-                                           const RHI::TexturePtr& materialTexture)
+                                           const RHI::TexturePtr& materialTexture,
+                                           const RHI::BufferPtr& parametersBuffer,
+                                           uint32_t parametersOffset,
+                                           uint32_t parametersSize)
     {
         if (!context.CommandList || !context.Device || !temporalRadiance ||
             !confidenceTexture || !ageTexture || !depthTexture || !normalTexture ||
-            !materialTexture ||
+            !materialTexture || !parametersBuffer ||
             temporalRadiance->GetFormat() != RTGIDiffuseIndirectRadianceFormat ||
             confidenceTexture->GetFormat() != RTGIHistoryConfidenceFormat ||
             ageTexture->GetFormat() != RTGIHistoryAgeFormat ||
@@ -3761,6 +3765,7 @@ namespace NorvesLib::Core::Rendering
         denoiserDescriptorSet->BindStorageTexture(5u, m_RTGIDenoisedTexture);
         denoiserDescriptorSet->BindTexture(6u, ageTexture);
         denoiserDescriptorSet->BindSampler(6u, m_GBufferSampler);
+        denoiserDescriptorSet->BindConstantBuffer(7u, parametersBuffer, parametersOffset, parametersSize);
         denoiserDescriptorSet->Update();
 
         const uint32_t groupCountX =
@@ -4507,7 +4512,10 @@ namespace NorvesLib::Core::Rendering
                                  writeHistory.Age,
                                  depthTexture,
                                  normalTexture,
-                                 materialTexture))
+                                 materialTexture,
+                                 parametersUpload.Buffer,
+                                 parametersUpload.GetOffset32(),
+                                 parametersUpload.GetSize32()))
         {
             return fail();
         }
