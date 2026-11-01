@@ -8304,3 +8304,11 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 地形の書き出しの手順と記録を足し、版 18 の地形を書き出す: 着地(直し 0 回)
 - U2 8 組を撮り、Cycles の正解を本描画で描いて判定する: 着地(直し 0 回)
 - U3 古い正解と新しい正解のエンジン ÷ Cycles を並べた表を書き、仕上げの確かめを回す: 着地(直し 0 回)
+## 2026-11-02 SCN-RENDER-ROUGH-STEEP-ENERGY-P2（run 20261101-235006 の反復 1、完了）
+- Done: 今の焼いた地形（崖の細部の版 18。`build/CookedAssets/cook_coverage.cliff-gen.json`）を `OcclusionSets.py --export-terrain` で書き出し（198 区画・1.54 億三角形、`mesh/export_record.json` に版 18・HEAD のソースの版 17・Game.exe・焼いた資産の manifest のハッシュ）、同じ Game.exe（eb5b8edf…）で 8 組を撮り、Cycles の正解を 1024 サンプル・種 2 で描き直した。8 組とも参照の記録の manifest が書き出しと一致（`cycles/terrain_export.json`）。古い正解と新しい正解の全部の行の並べは `Docs/RenderingValidation/WastelandOcclusion.md` の「崖の細部の版 18 での正解の描き直し」
+- verify: ビルド EXIT=0、撮影 4 本・Cycles 8 本とも EXIT=0、`ReferenceCheck.py --occlusion ... --verify` は `mode=occlusion sets=8 off=0 result=pass`（入力の照合・収束・必須の層の画素数）。古い正解の元の置き場は 112 ファイルとも前後で一致（測りは写し `old-reference/cycles` で行った）
+- 証拠: `.harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY-P2/`（本体の置き場。`logs/U1-verify.txt`・`U2-verify.txt`・`U3-verify.txt`、`cycles/<組>/occlusion_check.json`、`old-reference/cycles/<組>/occlusion_check.json`）
+- Next: SCN-RENDER-ROUGH-STEEP-ENERGY（下の申し送り）
+- Notes: SCN-RENDER-ROUGH-STEEP-ENERGY への申し送り（どちらの正解で判定するか）: 新しい正解 `.harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY-P2/cycles` で判定する。古い正解は地形が版 15 以前で、判定に地形の差が混ざる。新しい正解では遠い急な崖の対照（`slope60-180_d500-100000`）のエンジン ÷ Cycles が terrain-sky 0.9630 → 1.0126、rocks-cliff-sky 0.9749 → 1.0178 で、「開けた急な面が Cycles より 2.5 % 暗い」は残らない（今の鏡面の遮りの入った形で、項目の合否 (1) の 0.985 以上を既に満たす）。項目の前提が新しい正解で消えたので、まず今の形と `--rtgi-specular=off` を新しい正解で並べ直して、直す不足が残るかを確かめてから多重散乱・照り返しの切り分けに入る。rocks-sun の地面の受け手の IoU・漏れも 0.5145・19.19 % → 0.9745・0.64 % に戻った
+- Notes: SCN-RENDER-ROUGH-STEEP-ENERGY への申し送り（`occlusion-accept.json` の前の記録の置き直し）: 今の `baseline_engine_root`（SCN-WL-SUN-SHADOW-FIX）と一時の下限（0.946・0.957）は古い地形・古い正解の上の値。判定の正解を新しい正解へ替えるときは、同じ変更で前の記録も版 18 の地形の撮影（この項目の `.harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY-P2`、Game.exe eb5b8edf…）へ置き直し、その層の 2 行を 1 ± 0.03 へ戻して一時の印を消す。置き直した理由（地形の版 15 → 18 と正解の描き直し）と前後の値を WastelandOcclusion.md に書く。この項目では `occlusion-accept.json` を変えていない
+- Notes: 単位の作業ツリー `NorvesLib-5-u1` は build が無かったので、freetype の初期化・cmake の構成・Game のビルド（初回 420 秒）をし、`Assets/Terrain`・`build/CookedAssets`・置き場 2 つを本体への junction にした
