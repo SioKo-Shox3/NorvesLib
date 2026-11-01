@@ -4289,3 +4289,12 @@
 - verify: `python Scripts/Terrain/ReferenceCheck.py --occlusion --engine-root .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/on --off-root .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/off --reference .harness/runs/scene-capture/SCN-WLR-OCCLUSION-SETS/cycles --regions Scripts/Terrain/ExpectSpecs/occlusion-regions.json --expect Scripts/Terrain/ExpectSpecs/occlusion-accept.json --verify`
 - paths: Docs/RenderingValidation/InteriorLightReference.md, Scripts/Terrain/ExpectSpecs/occlusion-accept.json, TASKS.md, PROGRESS.md
 - from: SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1
+
+## G2-GR82-V1-REST-POSE-GUARD-CHECK: clip作成時骨格の差を束縛時に検査する(後回しにしたアプリの起動の確かめ)
+- status: todo
+- check: launch
+- gpu: exclusive
+- done-when: G2-GR82-V1-REST-POSE-GUARD で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、G2-GR82-V1-REST-POSE-GUARD の done-when を満たすことを確かめる。満たさなければ G2-GR82-V1-REST-POSE-GUARD の done-when と paths の範囲で直す。
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 180 -R "^(CookedClipBankV1Test|SkeletalClipBankBindingTest|RigSplitCookTest)$"`
+- paths: TASKS.md, PROGRESS.md, Library/Core/Private/Animation/ClipBankBinding.cpp, Library/Core/Private/Animation/ClipBankBinding.h, Library/Core/Private/Animation/ClipBankRestComparison.cpp, Library/Core/Private/Animation/ClipBankRestComparison.h, Library/Core/Private/Asset/CookedClipBankV1.cpp, Library/Core/Private/Asset/CookedClipBankV1.h
+- from: G2-GR82-V1-REST-POSE-GUARD
