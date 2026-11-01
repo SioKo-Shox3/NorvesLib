@@ -4314,3 +4314,12 @@
 - verify: `cmd /c "chcp 932 >nul && ctest --test-dir build -C Debug --output-on-failure --timeout 180 -R CookedSkeletalAssetTest && chcp 65001 >nul && ctest --test-dir build -C Debug --output-on-failure --timeout 180 -R CookedSkeletalAssetTest"`
 - paths: Test/Core/Asset/CookedSkeletalAssetTest.cmake.in
 - from: G2-GR78-SURFACE-CENTROID-CHECK
+
+## G2-GR77-NATIVE-ACCEPTANCE-CHECK: 実物GLBとnative統合の受入れを記録する(後回しにしたアプリの起動の確かめ)
+- status: todo
+- check: launch
+- gpu: exclusive
+- done-when: G2-GR77-NATIVE-ACCEPTANCE で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、G2-GR77-NATIVE-ACCEPTANCE の done-when を満たすことを確かめる。満たさなければ G2-GR77-NATIVE-ACCEPTANCE の done-when と paths の範囲で直す。
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 180 -R "^(GltfContainerTest|Base64DecodeTest|GltfBufferSourceTest|GltfBufferSetTest|GltfBufferUriTest|GltfBufferJsonTest|GltfBufferNumberTest|StaticGltfBufferCookTest|GltfImageRangeTest|GltfImageSourceTest|GltfAccessorRangeTest|GltfAccessorStagingTest|ImageBytesStagingTest|GltfDocumentProfileTest|GltfLooseSourceTest|CookedSkeletalAssetTest|CookedMeshTest|AssetCookGlbSmoke|AssetCookMeshSmoke)$"`
+- paths: Docs/Architecture/AssetImportPipeline.md, TASKS.md, PROGRESS.md, Library/Core/Private/Resource/Gltf*, Library/Core/Private/Resource/GLTFAnalyzer.cpp, Library/Core/Private/Resource/SkeletalGltfDecode.cpp, Library/Core/Private/Resource/SkeletalGltfDecode.h, Tools/AssetCook/MeshCooker.cpp, Tools/AssetCook/AssetCookGlbSmoke.cmake.in, Test/Core/Asset/Gltf*, Test/Core/Asset/StaticGltfBufferCookTest.cpp, Test/Core/Asset/ImageBytesStagingTest.cpp, Test/Core/Asset/CookedSkeletalAssetTest.cpp
+- from: G2-GR77-NATIVE-ACCEPTANCE
