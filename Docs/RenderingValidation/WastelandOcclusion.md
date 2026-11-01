@@ -697,9 +697,134 @@ python Scripts/Terrain/ReferenceCheck.py --occlusion --engine-root .harness/runs
 判定は終了コード 0（282.9 秒）、`REFERENCE_CHECK mode=occlusion sets=8 off=0 result=pass`。
 入力の照合・種 2 つの収束・必須の 4 層の画素数が通った。必須層のエンジン ÷ Cycles は、地形の溝 1.0512、岩塊の接触域 0.9962・0.9981、株の根元 0.9788。
 岩塊の太陽の影は地面の受け手の IoU 0.9745、漏れ 0.64 %（全体の IoU 0.9184）。
-崖の岩塊の `slope60-180_d500-100000` は溝が 1.1666、接触域が 2.0083。比や影の許容による合否は、この判定には含まれない。
+比や影の許容による合否は、この判定には含まれない。
 
-出力・終了コード・所要時間は `.harness/unit-verify.txt` と `.harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY-P2/logs/U2-verify.txt`。
+出力・終了コード・所要時間は `.harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY-P2/logs/U2-verify.txt`。
 判定の JSON は `.harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY-P2/cycles/<組>/occlusion_check.json`（8 組分）、
 地形の一致の記録は `cycles/terrain_export.json`、組ごとの入力は `cycles/<組>/inputs.json`。
 数値とコマンド結果をまとめた記録は `.harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY-P2/logs/U2-summary.json`。
+
+### 古い正解と新しい正解の並べ
+
+両列のエンジンの撮影は同じ Game.exe（`eb5b8edf…`）・崖の細部の版 18 の地形である。エンジンを変更した差ではなく、
+正解の地形を古い版から版 18 へ入れ替えた差を並べた。岩の配置も古い正解の rocks は 14,931 個、rocks-cliff は 3 個から、
+新しい正解では 15,446 個・584 個へ変わっている。地形と配置の差で同じ面の判定と領域・対照の画素集合も変わるため、同一画素の前後比較ではない。
+
+古い正解の元は `.harness/runs/scene-capture/SCN-WLR-OCCLUSION-SETS/cycles`。測りには置き場の `old-reference/cycles` へ
+全ファイルを写したものだけを使い、写しの `inputs.json`（`mesh_dir` など）もそのまま残した。以下の「置き場」は
+`.harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY-P2` を指す。古い列は `old-reference/cycles/<組>/occlusion_check.json`、
+新しい列は `cycles/<組>/occlusion_check.json` から取り出した。古い正解の測りは `--verify` を付けず、終了コード 1、
+`REFERENCE_CHECK mode=occlusion sets=8 off=0 result=fail`。入力・配置や同じ面の不一致を含む比較用の値であり、受け入れの合否とは分けて読む。
+
+空だけの組は、古い正解と新しい正解にある `metric.regions.<領域>.<層>` の全行を並べた。画素は新しい正解の `region_pixels`。
+比は `engine_over_cycles`、対照は `engine_y_control / cycles_y_control` で、小数第 4 位まで表示する。太陽だけの 4 組にこの領域表はなく、影の表へ全視点を載せた。
+受け入れの対応は `occlusion-accept.json` の配列の先頭を 1 として示す。「対象」は `targets`、「対照」は `control_overrides`、
+「観測」は対象に指定されていない行、「対照共通」は `control_y_tolerance` に対応する。ここでは合否を付けない。
+
+| 組 | 視点 | 層 | 領域 | 画素（新しい正解） | エンジン ÷ Cycles（古い正解） | エンジン ÷ Cycles（新しい正解） | 対照の輝度比（古い正解） | 対照の輝度比（新しい正解） | 受け入れの対応 |
+|---|---|---|---|---:|---:|---:|---:|---:|---|
+| plant-sky | plant_near | slope0-30_d0-10 | plant_root | 37,537 | 0.9788 | 0.9788 | 0.9988 | 0.9988 | 対象4／対照共通 |
+| rocks-cliff-sky | ref_cliff_01 | slope0-30_d500-100000 | contact | 751 | —（領域なし） | 1.9555 | —（領域なし） | 0.9738 | 観測／対照共通 |
+| rocks-cliff-sky | ref_cliff_01 | slope30-60_d500-100000 | contact | 3,088 | —（領域なし） | 1.8093 | —（領域なし） | 0.9889 | 観測／対照共通 |
+| rocks-cliff-sky | ref_cliff_01 | slope60-180_d500-100000 | contact | 6,832 | —（領域なし） | 2.0083 | —（領域なし） | 1.0178 | 観測／対照2 |
+| rocks-cliff-sky | ref_cliff_01 | slope30-60_d500-100000 | groove | 314 | 0.9729 | 1.2172 | 0.9774 | 0.9889 | 観測／対照共通 |
+| rocks-cliff-sky | ref_cliff_01 | slope60-180_d500-100000 | groove | 7,674 | 1.1033 | 1.1666 | 0.9749 | 1.0178 | 観測／対照2 |
+| rocks-sky | contact_near | slope0-30_d0-10 | contact | 75,670 | 0.9858 | 0.9962 | 0.9896 | 1.0013 | 対象2／対照共通 |
+| rocks-sky | contact_near | slope0-30_d10-50 | contact | 10,882 | 0.9845 | 0.9903 | 0.9882 | 1.0014 | 観測／対照共通 |
+| rocks-sky | contact_near | slope30-60_d10-50 | contact | 11,175 | 0.9968 | 0.9981 | 0.9747 | 0.9895 | 対象3／対照共通 |
+| rocks-sky | contact_near | slope60-180_d10-50 | contact | 989 | —（領域なし） | —（対照0画素） | —（領域なし） | —（対照0画素） | 観測／対照共通 |
+| rocks-sky | contact_near | slope60-180_d50-500 | contact | 178 | —（領域なし） | 1.1363 | —（領域なし） | 1.0763 | 観測／対照共通 |
+| rocks-sky | contact_near | slope60-180_d10-50 | groove | 379 | —（領域なし） | —（対照0画素） | —（領域なし） | —（対照0画素） | 観測／対照共通 |
+| terrain-sky | ref_cliff_01 | slope30-60_d500-100000 | groove | 1,448 | 1.0526 | 1.0289 | 0.9710 | 0.9883 | 観測／対照共通 |
+| terrain-sky | ref_cliff_01 | slope60-180_d500-100000 | groove | 33,199 | 1.1020 | 1.0512 | 0.9630 | 1.0126 | 対象1／対照1 |
+
+rocks-sky / contact_near の `slope60-180_d10-50` は contact と groove の両方で対照が 0 画素のため、比と対照の輝度比を算出できない。
+組全体で測りが出なかったものはなく、別の Game.exe の記録による代用はしていない。領域が片側にない行は、その側に画素集合がないことを示す。
+
+rocks-cliff-sky / ref_cliff_01 の groove／`slope60-180_d500-100000` = 1.1666 と、contact／同じ層 = 2.0083 は、
+どちらも決めた対象層ではなく観測の行である。
+
+太陽の表の値は「古い正解 → 新しい正解」。IoU と漏れは `metric` の値、縁の比は `edge_width_m.engine / edge_width_m.cycles`。
+IoU は影の一致度であり、領域表の `engine_over_cycles` とは別の指標である。
+
+| 組 | 視点 | 全体の IoU | 地面の受け手の IoU | 物体の受け手の IoU | 漏れ | 縁の比（エンジン ÷ Cycles） | 受け入れの対応 |
+|---|---|---:|---:|---:|---:|---:|---|
+| plant-sun | plant_near | 0.9245 → 0.9245 | 0.9245 → 0.9245 | — → — | 0.00 % → 0.00 % | 0.9554 → 0.9554 | 太陽の対象4（全体の IoU・漏れ・縁の比） |
+| rocks-cliff-sun | ref_cliff_01 | 0.5657 → 0.8955 | 0.5657 → 0.9389 | — → 0.8524 | 1.68 % → 1.39 % | 0.9421 → 1.0879 | 太陽の対象3（全体の IoU・漏れ・縁の比） |
+| rocks-sun | contact_near | 0.5064 → 0.9184 | 0.5145 → 0.9745 | 0.4364 → 0.9057 | 19.19 % → 0.64 % | 1.0068 → 1.0062 | 太陽の対象2（地面の IoU・漏れ・縁の比） |
+| terrain-sun | ref_cliff_01 | 0.8535 → 0.9357 | 0.8535 → 0.9357 | — → — | 2.64 % → 1.08 % | 1.1289 → 1.0539 | 太陽の対象1（全体の IoU・漏れ・縁の比） |
+
+影の残りの測定値も次に並べる。「—」は該当する受け手がなく、JSON の値が `null` の場合を含む。
+
+| 組 | 視点 | 指標 | 古い正解 | 新しい正解 |
+|---|---|---|---:|---:|
+| plant-sun | plant_near | 太陽へ向く同じ面の画素 | 1,968,588 | 1,968,588 |
+| plant-sun | plant_near | エンジンの影の画素 | 17,800 | 17,800 |
+| plant-sun | plant_near | Cycles の影の画素 | 17,801 | 17,801 |
+| plant-sun | plant_near | 漏れの画素 | 0 | 0 |
+| plant-sun | plant_near | Cycles の本影の画素 | 3,052 | 3,052 |
+| plant-sun | plant_near | エンジンだけに影がある割合 | 0.0377 | 0.0377 |
+| plant-sun | plant_near | エンジンの縁の幅（m） | 0.0257 | 0.0257 |
+| plant-sun | plant_near | Cycles の縁の幅（m） | 0.0269 | 0.0269 |
+| plant-sun | plant_near | 縁の画素の幅の中央値（m） | 0.00286 | 0.00286 |
+| plant-sun | plant_near | 受け手の texel の幅の中央値（m） | 0.00195 | 0.00195 |
+| plant-sun | plant_near | 平滑化の半径（画素） | 1 | 1 |
+| rocks-cliff-sun | ref_cliff_01 | 太陽へ向く同じ面の画素 | 558,037 | 773,197 |
+| rocks-cliff-sun | ref_cliff_01 | エンジンの影の画素 | 39,707 | 101,435 |
+| rocks-cliff-sun | ref_cliff_01 | Cycles の影の画素 | 25,410 | 111,232 |
+| rocks-cliff-sun | ref_cliff_01 | 漏れの画素 | 321 | 1,236 |
+| rocks-cliff-sun | ref_cliff_01 | Cycles の本影の画素 | 19,154 | 89,089 |
+| rocks-cliff-sun | ref_cliff_01 | エンジンだけに影がある割合 | 0.3891 | 0.0086 |
+| rocks-cliff-sun | ref_cliff_01 | エンジンの縁の幅（m） | 1.5450 | 1.2635 |
+| rocks-cliff-sun | ref_cliff_01 | Cycles の縁の幅（m） | 1.6399 | 1.1614 |
+| rocks-cliff-sun | ref_cliff_01 | 縁の画素の幅の中央値（m） | 0.17793 | 0.17706 |
+| rocks-cliff-sun | ref_cliff_01 | 受け手の texel の幅の中央値（m） | 0.12500 | 0.12500 |
+| rocks-cliff-sun | ref_cliff_01 | 平滑化の半径（画素） | 1 | 1 |
+| rocks-sun | contact_near | 太陽へ向く同じ面の画素 | 1,170,870 | 1,633,744 |
+| rocks-sun | contact_near | エンジンの影の画素 | 24,855 | 169,946 |
+| rocks-sun | contact_near | Cycles の影の画素 | 20,064 | 174,926 |
+| rocks-sun | contact_near | 漏れの画素 | 3,247 | 879 |
+| rocks-sun | contact_near | Cycles の本影の画素 | 16,916 | 136,332 |
+| rocks-sun | contact_near | エンジンだけに影がある割合 | 0.3271 | 0.0269 |
+| rocks-sun | contact_near | エンジンの縁の幅（m） | 0.1632 | 0.1780 |
+| rocks-sun | contact_near | Cycles の縁の幅（m） | 0.1621 | 0.1769 |
+| rocks-sun | contact_near | 縁の画素の幅の中央値（m） | 0.00813 | 0.00847 |
+| rocks-sun | contact_near | 受け手の texel の幅の中央値（m） | 0.00391 | 0.00391 |
+| rocks-sun | contact_near | 平滑化の半径（画素） | 1 | 1 |
+| terrain-sun | ref_cliff_01 | 太陽へ向く同じ面の画素 | 669,185 | 777,900 |
+| terrain-sun | ref_cliff_01 | エンジンの影の画素 | 53,038 | 82,957 |
+| terrain-sun | ref_cliff_01 | Cycles の影の画素 | 54,458 | 87,930 |
+| terrain-sun | ref_cliff_01 | 漏れの画素 | 1,183 | 807 |
+| terrain-sun | ref_cliff_01 | Cycles の本影の画素 | 44,727 | 74,761 |
+| terrain-sun | ref_cliff_01 | エンジンだけに影がある割合 | 0.0610 | 0.0040 |
+| terrain-sun | ref_cliff_01 | エンジンの縁の幅（m） | 1.7653 | 1.5975 |
+| terrain-sun | ref_cliff_01 | Cycles の縁の幅（m） | 1.5637 | 1.5158 |
+| terrain-sun | ref_cliff_01 | 縁の画素の幅の中央値（m） | 0.18076 | 0.18182 |
+| terrain-sun | ref_cliff_01 | 受け手の texel の幅の中央値（m） | 0.12500 | 0.12500 |
+| terrain-sun | ref_cliff_01 | 平滑化の半径（画素） | 1 | 1 |
+
+影の `metric.vsm`（設定・ページ数・LOD など）は両列で同じ撮影ログから読むため値が同じ。上表は正解と照らして測る影の指標と、その画素・幅・平滑化の条件を網羅した。
+
+遠い急な崖の対照（`slope60-180_d500-100000`）は、terrain-sky が 0.9630 → 1.0126、rocks-cliff-sky が 0.9749 → 1.0178。
+P1（SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1、Game.exe `798a708e…`）での 0.9631・0.9749 と違い、新しい正解では 1 よりそれぞれ 1.26 %・1.78 % 明るく、
+「開けた急な面が Cycles より約 2.5 % 暗い」という差は残らない。
+
+rocks-sun の地面の受け手の IoU・漏れは、2026-10-23 の 0.8521・0.54 % → P1 の 0.5146・19.19 %（古い正解）→
+今回の同じ撮影を古い正解で測ると 0.5145・19.19 % → 新しい正解では 0.9745・0.64 %。
+新しい正解では IoU が以前の水準以上に戻り、漏れも P1 の 19.19 % から 0.64 % へ戻った（2026-10-23 の 0.54 % よりは 0.10 ポイント多い）。
+
+領域の比が大きく動いた行（古い正解 → 新しい正解）は次のとおり。正解側の形と測定画素の差も含む。
+
+- rocks-cliff-sky / groove / `slope30-60_d500-100000`: 0.9729 → 1.2172（差 +0.2443）
+- rocks-cliff-sky / groove / `slope60-180_d500-100000`: 1.1033 → 1.1666（差 +0.0633）
+- terrain-sky / groove / `slope60-180_d500-100000`: 1.1020 → 1.0512（差 -0.0508）
+- terrain-sky / groove / `slope30-60_d500-100000`: 1.0526 → 1.0289（差 -0.0237）
+
+元の古い正解は、コピー前と全判定後に相対パスごとの SHA-256 を全 112 ファイルで照合し、一致した（追加 0・削除 0・内容変更 0）。
+一覧は置き場の `logs/U3-old-reference-sha256-before.json` と `logs/U3-old-reference-sha256-after.json`。
+新しい正解の判定 JSON 8 個も、古い正解の測りで変わっていない。仕上げの `--verify` 後も判定 JSON のバイト列は元と一致した。
+
+仕上げのビルドは終了コード 0、Game.exe の SHA-256 は前後とも `eb5b8edfc5641f757d6d7629f9279018328a48e08105c66f98bd8de5193a845b`。
+新しい正解での `ReferenceCheck.py --occlusion ... --verify` は終了コード 0、`REFERENCE_CHECK mode=occlusion sets=8 off=0 result=pass`。
+これは入力の照合・収束・必須層の画素数の確かめで、上表に受け入れの比や影の許容による合否は付けていない。
+出力と終了コードは置き場の `logs/U3-verify.txt` に保存した。通常の `git diff --numstat` と `--ignore-cr-at-eol --numstat` は一致し、追加行の説明文は日本語。
