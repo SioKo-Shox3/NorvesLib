@@ -4071,3 +4071,10 @@
 - paths: Scripts/Terrain/ReferenceCheck.py, Scripts/Terrain/CaptureRegression.ps1
 - from: SCN-RENDER-ROUGH-STEEP-ENERGY
 - notes: このタスクは、落ち着いていない撮影を見つけて止めるところまで。VRAM の予算が足りないときに常駐が 0 まで追い出された原因は扱わない(SCN-WL-GEOM-LOWVRAM の「粗い段で落ち着く」と食い違うかもしれない)。原因は直さず、見つけたら PROGRESS.md の Notes に `要起票:` で残す。
+
+## SCN-BUILD-ALL-TESTS-P1: 落ちて終わらない試験と、Game のソースを組み込む 2 つの試験を、ビルドと ctest の実行から外す
+- status: todo
+- done-when: 人の指示（「AIが作るテストはほとんど意味がないので外していい」）どおりに、次の試験を外す。どれも戻せる形で外し、`.cpp` と束の MEMBER は消さない。(1) `Test/Core/Rendering/CMakeLists.txt` の `RenderGraphTextureUsageContractTest` の add_test に `set_tests_properties(... PROPERTIES DISABLED TRUE)` を付ける。理由は VisibilityResolve の `constantCount == 3` の assert で落ち、対話窓のまま終わらないこと。(2) Game のソースを組み込む 2 つの試験の対象 `NorvesLibBridgeAdapterScriptComponentTest`（`Test/Game/Bridge/CMakeLists.txt`）と `AssetManifestReloadBridgeLoopbackTest`（`Test/Core/Rendering/CMakeLists.txt`）を `EXCLUDE_FROM_ALL` にして、全体のビルドで `NorvesGameSources` をもう一度コンパイルしないようにする。この 2 つの実行ファイルを使う ctest の名前（`NorvesLibBridgeAdapterScriptComponentTest`・`NorvesLibBridgeAdapterNumericEntityRegressionTest`・`NorvesLibBridgeAdapterThumbnailTest`・`BridgeBase64Test`・`AssetManifestReloadBridgeLoopbackTest`）も DISABLED にする。(3) 理由を CMake のコメントに書き、`Docs/Testing.md` の「外したもの」に日付つきで足す。合否は 3 つ。Debug の全体のビルドが EXIT=0。下の ctest で、外した名前がどれも `Not Run (Disabled)` になり EXIT=0（試験を走らせて通すことは見ない）。ほかの試験の登録は変えない。
+- verify: `cmake -S . -B build && cmake --build build --config Debug -- /m:1 && ctest --test-dir build -C Debug -R "^(RenderGraphTextureUsageContractTest|NorvesLibBridgeAdapter.*|BridgeBase64Test|AssetManifestReloadBridgeLoopbackTest)$"`
+- paths: Test/Core/Rendering/CMakeLists.txt, Test/Game/Bridge/CMakeLists.txt, Docs/Testing.md, TASKS.md, PROGRESS.md
+- from: SCN-BUILD-ALL-TESTS
