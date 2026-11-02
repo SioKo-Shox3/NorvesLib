@@ -8879,3 +8879,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS/u12/`（`parallel-result.json`・`assetcook-sha256.txt`・項目ごとの出力）
 - Next: 起動の確かめは後回し（SCN-WL-CLIFF-GEN-TALUS-CHECK）。verify の 5〜12 行目を版 19 で回す
 - Notes: 要起票: AssetCook のソースが変わる取り込みのたびに、検証を回す作業ツリーの exe のハッシュが変わって地形の全項目の焼き直し（並列で約 31 分）が要る。印に exe のハッシュではなく地形の生成の版を使う形は Scripts の設計変更になるので、この項目では変えていない
+- U1 SceneView に一時のワールドの板を持たせ、毎フレームの板を空間で振り分ける: 着地(直し 0 回)
