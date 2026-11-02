@@ -4,6 +4,7 @@
 #include "AssetCookOutput.h"
 #include "GeometryInspection.h"
 #include "Resource/SkeletalImportPolicy.h"
+#include "Resource/MaterialImportSettings.h"
 #include "Asset/CookedSkeletalNameCodec.h"
 #include <algorithm>
 #include <bit>
@@ -331,11 +332,17 @@ namespace NorvesLib::Tools::AssetCook
             }
             I::SourceMaterialCatalog catalog;
             I::ResolvedMaterialImportPlan resolved;
-            if (I::ReadSourceMaterialCatalog(root, catalog) != I::SettingsResult::Success ||
-                !I::ResolveMaterialImportPlan(catalog, candidate.Import.Settings, request.AssetSetEmission, resolved)
-                     .Succeeded())
+            if (I::ReadSourceMaterialCatalog(root, catalog) != I::SettingsResult::Success)
             {
                 return fail("split_material_selector_or_settings");
+            }
+            const auto outcome =
+                I::ResolveMaterialImportPlan(catalog, candidate.Import.Settings, request.AssetSetEmission, resolved);
+            if (!outcome.Succeeded())
+            {
+                return fail(outcome.Status == I::MaterialImportPlanStatus::SettingsFailed
+                                ? I::MaterialSettingsErrorKey(outcome.Settings)
+                                : "split_material_selector_or_settings");
             }
             // 保存先(GR81)ができるまで surface を受け取って捨てない。
             for (const auto& entry : resolved.Materials)
