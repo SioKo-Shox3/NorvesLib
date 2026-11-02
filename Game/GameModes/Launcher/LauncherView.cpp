@@ -3,14 +3,19 @@
 #if defined(NORVES_ENABLE_IMGUI)
 
 #include "GameModes/Launcher/LauncherMenu.h"
-
-#include "imgui.h"
+#include "Core/Public/Container/String.h"
+#include "Core/Public/Logging/LogMacros.h"
 
 #include <algorithm>
 #include <cfloat>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
+#include <system_error>
+
+#include "imgui.h"
+#include "stb_image.h"
 
 namespace Game::GameModes
 {
@@ -18,6 +23,15 @@ namespace Game::GameModes
     namespace
     {
         using NorvesLib::Modules::Gui::ImGuiFontSlot;
+
+        // 登録した画像と寸法はシーンの一覧と同じ添字で保持する。
+        struct LauncherThumbnail
+        {
+            uint64_t Id = 0;
+            int Width = 0;
+            int Height = 0;
+        };
+        LauncherThumbnail g_LauncherThumbnails[Game::Scenes::kSceneCatalogCount] = {};
 
         // 文言（UTF-8 の固定の文字列）。ここに書いた文字は RegisterLauncherDisplayText で字のアトラスへ載る。
         constexpr const char *kTitleText = "NorvesLib";
@@ -253,6 +267,75 @@ namespace Game::GameModes
             AddImGuiDisplayText(scene.DisplayName);
             AddImGuiDisplayText(scene.Description);
             AddImGuiDisplayText(scene.FetchCommand);
+        }
+    }
+
+    void RegisterLauncherThumbnails()
+    {
+        // 失敗した画像も含めて登録を一度だけ試し、重複登録と警告の繰り返しを防ぐ。
+        static bool bRegistrationAttempted = false;
+        if (bRegistrationAttempted)
+        {
+            return;
+        }
+        bRegistrationAttempted = true;
+
+        NorvesLib::Core::Container::AnsiString missingIds;
+        uint32_t missingCount = 0;
+        uint32_t registeredCount = 0;
+        for (std::size_t index = 0; index < Game::Scenes::kSceneCatalogCount; ++index)
+        {
+            const Game::Scenes::SceneDescriptor &scene = Game::Scenes::kSceneCatalog[index];
+            LauncherThumbnail &thumbnail = g_LauncherThumbnails[index];
+            if (scene.ThumbnailPath != nullptr && scene.ThumbnailPath[0] != '\0')
+            {
+                std::filesystem::path resolvedPath(scene.ThumbnailPath);
+#if defined(NORVES_SOURCE_ASSET_DIR)
+                // 実行時の作業ディレクトリによらず、リポジトリの Assets を基準に探す。
+                resolvedPath = std::filesystem::path(NORVES_SOURCE_ASSET_DIR).parent_path() / resolvedPath;
+#endif
+                std::error_code error;
+                if (std::filesystem::exists(resolvedPath, error) && !error)
+                {
+                    int width = 0;
+                    int height = 0;
+                    int channels = 0;
+                    stbi_uc *pixels = stbi_load(resolvedPath.string().c_str(), &width, &height, &channels, 4);
+                    // 登録できない寸法はここで除外し、失敗の警告を最後の一行へまとめる。
+                    if (pixels != nullptr && width > 0 && height > 0 && width <= 4096 && height <= 4096)
+                    {
+                        thumbnail.Id = NorvesLib::Modules::Gui::RegisterImGuiImage(
+                            pixels, static_cast<uint32_t>(width), static_cast<uint32_t>(height));
+                    }
+                    stbi_image_free(pixels);
+                    if (thumbnail.Id != 0)
+                    {
+                        thumbnail.Width = width;
+                        thumbnail.Height = height;
+                    }
+                }
+            }
+            if (thumbnail.Id == 0)
+            {
+                if (missingCount > 0)
+                {
+                    missingIds += ",";
+                }
+                missingIds += scene.Id;
+                ++missingCount;
+            }
+            else
+            {
+                ++registeredCount;
+            }
+        }
+        if (missingCount > 0)
+        {
+            LOG_WARNING_F("LAUNCHER_THUMBNAIL_MISSING count=%u ids=%s", missingCount, missingIds.c_str());
+        }
+        else
+        {
+            LOG_INFO_F("LAUNCHER_THUMBNAILS registered=%u", registeredCount);
         }
     }
 
@@ -506,12 +589,39 @@ namespace Game::GameModes
                 const ImVec2 imageMin(min.x + inset, min.y + inset);
                 const ImVec2 imageMax(max.x - inset, max.y - inset);
                 m_CardImageRects[index] = {imageMin.x, imageMin.y, imageMax.x, imageMax.y, true};
-                const float hue = HueFromText(scene.Id);
+                const LauncherThumbnail &thumbnail = g_LauncherThumbnails[index];
+                const bool bImageReady = thumbnail.Id != 0 && NorvesLib::Modules::Gui::IsImGuiImageReady(thumbnail.Id);
                 drawList->AddRectFilled(min, max, kColorCard, cardRadius);
-                drawList->AddRectFilledMultiColor(imageMin, imageMax, HsvColor(hue, 0.38f, 0.34f, 1.0f),
-                                                  HsvColor(hue + 0.06f, 0.34f, 0.28f, 1.0f),
-                                                  HsvColor(hue + 0.06f, 0.46f, 0.10f, 1.0f),
-                                                  HsvColor(hue, 0.50f, 0.12f, 1.0f));
+                if (bImageReady)
+                {
+                    // 縦横比を保って矩形を埋め、はみ出す方向を中央で切り取る。
+                    ImVec2 uvMin(0.0f, 0.0f);
+                    ImVec2 uvMax(1.0f, 1.0f);
+                    const float imageAspect = static_cast<float>(thumbnail.Width) / static_cast<float>(thumbnail.Height);
+                    const float rectAspect = (imageMax.x - imageMin.x) / (imageMax.y - imageMin.y);
+                    if (imageAspect > rectAspect)
+                    {
+                        const float uvWidth = rectAspect / imageAspect;
+                        uvMin.x = (1.0f - uvWidth) * 0.5f;
+                        uvMax.x = 1.0f - uvMin.x;
+                    }
+                    else
+                    {
+                        const float uvHeight = imageAspect / rectAspect;
+                        uvMin.y = (1.0f - uvHeight) * 0.5f;
+                        uvMax.y = 1.0f - uvMin.y;
+                    }
+                    drawList->AddImageRounded(ImTextureRef(static_cast<ImTextureID>(thumbnail.Id)), imageMin, imageMax,
+                                              uvMin, uvMax, IM_COL32_WHITE, std::max(cardRadius - inset, 0.0f));
+                }
+                else
+                {
+                    const float hue = HueFromText(scene.Id);
+                    drawList->AddRectFilledMultiColor(imageMin, imageMax, HsvColor(hue, 0.38f, 0.34f, 1.0f),
+                                                      HsvColor(hue + 0.06f, 0.34f, 0.28f, 1.0f),
+                                                      HsvColor(hue + 0.06f, 0.46f, 0.10f, 1.0f),
+                                                      HsvColor(hue, 0.50f, 0.12f, 1.0f));
+                }
 
                 // 説明文と足りない資産の案内（画像の下部に重ねる）
                 const float textLeft = min.x + textPad;
@@ -553,6 +663,7 @@ namespace Game::GameModes
                 drawList->PushClipRect(ImVec2(textLeft, min.y + textPad), ImVec2(max.x - textPad, max.y - textPad), true);
 
                 // 見本画像が無いカードは、画像の部分（重ねた文字の上）の中央にシーン名を出す
+                if (!bImageReady)
                 {
                     const float freeHeight = overlayTop - min.y;
                     if (freeHeight > headingFont->LegacySize * 1.6f)

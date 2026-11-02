@@ -23,6 +23,10 @@ namespace Game::GameModes
     /// ImGui モジュールの Initialize より前に呼ぶ
     void RegisterLauncherDisplayText();
 
+    /// シーンの見本画像を一度だけ読み込み、ImGui モジュールの Initialize より前に登録する。
+    /// 読めない画像のカードは、暗いグラデーションと中央のシーン名で表示する。
+    void RegisterLauncherThumbnails();
+
     class LauncherView final : public NorvesLib::Modules::Gui::IImGuiView
     {
     public:
