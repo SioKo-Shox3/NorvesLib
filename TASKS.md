@@ -4572,7 +4572,7 @@
 - from: G2-GR32-GPU-ACCEPTANCE
 
 ## G2-GR32-GPU-ACCEPTANCE-P2: `NVSKELMigrationInventory.md` に残る、旧い環境(Linux・Windows.h で未実行)の記述を今の状態に直す
-- status: todo
+- status: done
 - done-when: `Docs/Architecture/NVSKELMigrationInventory.md` で「範囲drawの接続」より前の節にある 2 つの記述を直す。1 つは「Windows.hに依存するためこのLinux環境では登録・静的照合に留まり」(「GR32 Nprimitive decodeの中間段階」の節)、もう 1 つは「Component API・snapshot・SceneRevisionのnative回帰は登録済みだがWindows.hにより未実行」(「Componentの材質slot API」の節)。直した後は、挙げた native の回帰ごとに、Windows で実行した記録(PROGRESS.md と `.harness/runs` の記録にある日付・コマンド・結果)を書く。記録が無いものは「未実行」と書き、どのタスクで回すかを添える。実行していないものを実行済みと書かない。ほかの節は変えない。
 - verify: `python -c "import sys; t=open('Docs/Architecture/NVSKELMigrationInventory.md',encoding='utf-8-sig').read(); bad=[s for s in ('\u3053\u306eLinux\u74b0\u5883','Windows.h\u306b\u3088\u308a\u672a\u5b9f\u884c') if s in t]; print(bad); sys.exit(1 if bad else 0)"`
 - paths: Docs/Architecture/NVSKELMigrationInventory.md, TASKS.md, PROGRESS.md
