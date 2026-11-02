@@ -8972,3 +8972,15 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: 起動の確かめは後回し。`--animation-debug` で起動して、剣が手に付いたまま振りの間に手から遅れたり揺れたりしないこと、剣のトレイルの帯の先が描画の剣と合うことを確かめる（GAME-GR130-VFX-CHECK の起動の確かめと一緒に回せる）
 - Notes: 補間を要求していない（描画の変換の列を持たない）付けた Entity は前のまま（シミュレーションの変換で描く）。付け先だけ補間すると手とずれるので、付ける側も `SetRenderInterpolationEnabled(true)` にする前提。外したフレームは履歴が今の姿勢から始め直すので、外した瞬間に最大 1 ステップ分の段差が出うる
 - Notes: `UpdateRenderRows` は補間の行ごとに親の鎖をたどって `SocketAttachmentComponent` を探す。補間の行が大量になる場面では計測で確かめる
+
+- U1 スキニングの計算の計画を component(lease)ごとにまとめ、GPU なしで呼べる関数に分けて試験を足す: 着地(直し 2 回)
+
+## 2026-11-02 G2-GR32-GPU-ACCEPTANCE-P1（run 20261102-191742 の反復 1）
+
+- Done: `SkinningComputePass` の計画づくりを `BuildSkinningComputePlan`(ヘッダに公開、ViewRenderContext・GPU に依存しない)に分け、同じ `Skinned.FrameLeaseIndex` の描画を 1 component にまとめた。変形(PrepareDraw・MarkLastUse・dispatch)と出力の頂点の範囲は component ごとに 1 回で、その描画の `SkinningComputeInstance` はどれも同じ `VertexBase`・`VertexCount`・頂点のアドレスを指し、材質・インデックスの範囲・`bOpaque`・`bCastShadow` は描画ごとの値を保つ。頂点の合計の上限・束縛の上限と外した数(`SkinningComputeDroppedInstances`)は component ごとに 1 回。解決が使えず影だけが読むフレームは影を落とす描画だけを候補にし、影を落とす描画の無い component は変形しない。同じ lease の描画が一覧の中で離れていても(不透明と半透明に分かれても)まとめる。
+- Done: `SkinnedRenderPathContractTest` に `TestComputeSkinningPlanSharesOutputPerComponent` を足した(Docs/Testing.md の 3 点は関数の前のコメントに書いた)。同じ lease の 2 描画で component 1 つ・出力 1 倍・同じ VertexBase・範囲は各描画の値、lease の違う component の範囲が重ならない、上限を超える component は描画の数によらず 1 つとして外す、影だけのフレームの選び方を確かめる。
+- Done: 試験の `FakeSwapChain` に複数のコマンドリストの `EndFrame`(6ccff855 で ISwapChain に足された形)を足した。変更前から `TestCoordinatorPropagatesFramePacketStatsAndSubmissionSerials` の最初の `RenderFrame` で、3 本のリストの提出を既定の実装が `InvalidCommandList` で拒み、未捕捉の例外で試験が終わっていた(変更前の版でも同じ所で落ちることを確かめた)。
+- verify: Debug の `Game`・`SkinnedRenderPathContractTest`・`SkinnedSubmeshDrawContractTest` のビルド EXIT 0、ctest 2/2 Passed(EXIT 0、`SkinnedRenderPathContractTest passed` まで走った)。出力は `.harness/runs/20261102-191742/verify-G2-GR32-GPU-ACCEPTANCE-P1-U1.txt`。
+- Next: 起動の確かめは後回し(人の決まりでアプリを起動しない)。`G2-GR32-GPU-ACCEPTANCE-P1-CHECK` で `CaptureStartupScene.ps1 -SkinnedProbe -SkinnedProbeMaterials 2 -VisibilityBuffer On`(RelWithDebInfo)を回し、2 材質のパネルの材質の色の判定が result=pass のままであることを確かめる。
+- Notes: done-when の「足す前に Docs/Testing.md の 3 点を書く」は、Docs/Testing.md が paths の外なので試験の関数の前のコメントに書いた。
+- Notes: 試験の偽のコマンドリストは提出の状態を追わないので、束で出したリストの `GetLastSubmissionSerial()` は 0 のまま(提出番号は偽のスワップチェーンの枠で持つ)。
