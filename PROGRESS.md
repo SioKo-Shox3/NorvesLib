@@ -8507,3 +8507,12 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 要起票: verify の撮影を RT と GI を切った構成で撮る起動引数（と verify の -GameArgs）が無い。予算の構成で判定できるようにするかを決める
 - U1 CookTextureAssetSet.ps1 を AssetCook --asset-set の薄い包みにする: 着地(直し 2 回)
 - U2 Windows 実 byte 比較を回して文書を本番の呼び出し元の切り替えに合わせる: 着地(直し 1 回)
+
+## 2026-11-02 G2-S6-ASSET-SET（run 20261102-092737 の反復 1）
+- Done: `Scripts/CookTextureAssetSet.ps1` を `AssetCook --asset-set` を 1 回呼ぶ包みにした（478deddd）。PS 側の texture ごとの単体 cook・spec 解析・集約 manifest の組み立てを除き、引数とリポジトリ基準の相対パス規則は保ち、絶対パスで渡す（`--manifest` も runtime 直下の絶対パス、runtime の直親だけ先に作る）。増分判定は native の共通判断だけが行う。文書（`ManagedTextureAssetSetCli.md`・`AssetCookWorkflow.md`）を合わせた（ffdb795b）。
+- Done: Windows 実 byte 比較（Windows 11 10.0.22631・Windows PowerShell 5.1.22621、Debug の AssetCook）: 凍結した texture 旧基準（run 37205025949・artifact 11303728946、snapshot SHA-256 一致）に対し、`--asset-set` の直接呼び出しと包みの PS の両方で Rendering3DTestSilverTextures 6・Rendering3DTestSilverGltfTextures 4 の計 10 出力（package と manifest）が生 byte 一致。同じ root の再実行は unchanged で bytes・更新時刻とも不変。凍結した旧 PS（b8c5df1d）＋同じ exe の出力とも 10/10 一致。
+- Done: verify の 2 行を回した: `cmake --build build --config Debug --target AssetCook CookedMeshTest -- /m:1` EXIT 0、ctest の 8 本（TextureAssetSetSpec・TextureAssetSetOutput・CookDependencySnapshot・CookCacheDecision・CookOutputPackage・SingleAssetCookService・AssetCookTextureSmoke・AssetCookGlbSmoke）8/8 Passed。glTF の外部 buffer・画像と sidecar の印、その変更・不在・復帰・破損での再 cook と拒否は CookDependencySnapshotTest・CookCacheDecisionTest が受け持つ。
+- Next: model の資産を `--asset-set` の spec v2 へ載せ、同じ印で増分 cook する（ほかの kind の本番の呼び出し元の移行も含め後続）。
+- Notes: 単体 CLI の分割前後の比較（`AssetCookCliParity.py`）は、ローカルでは capture が出力先の制約と Skeletal の警告文の判定で止まり、正式な 79 出力の compare は未完了。途中の出力の照合では Audio 6・Import 13・Glb 12 が一致、Mesh 20・Raw 2・Skeletal 1（manifest の source_hash）が不一致で、main のクラスタ化の変更と入力の行末（CRLF→LF）の差による見込み（詳細は `ManagedTextureAssetSetCli.md` の受入れ節）。`VerifyTextureAssetSet.py` そのものは CI の PowerShell の hash と入力 hash の固定のためローカルでは前段で止まり、比較器の関数で同じ比較を行った。
+- Notes: 要起票: `CookManagedBootstrapTest`（ctest、Debug）がこの機で単独でも 300 秒でタイムアウトする（最後の出力 `line 182: InitializeNewCookManagedStore(Owner, out, error) == CookManagedStoreInitializationResult::Created`、直前に `rename_no_replace; win32_hex=5`）。今回は C++ と試験を変えていない。
+- Notes: 要起票: `AssetCookCliParity.py capture` がローカルの Windows で完走しない（出力先が source 配下の拒否、Skeletal の警告文の判定）。main のクラスタ化の後の 79 出力の基準を取り直すかを決める。
