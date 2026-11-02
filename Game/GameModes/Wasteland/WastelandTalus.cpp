@@ -1,4 +1,4 @@
-﻿// 崖錐の岩と、崖の生成の 7 範囲の壁の足に置く崩れた塊。
+﻿// 崖錐の岩と、崖の生成のうち接地用の格子の中の near の 2 範囲の壁の足に置く崩れた塊。
 // 塊は接地用の格子の焼いた面を使い、不可の升目は見送る。塊の無い所は焼いた面が高さ場と同じ。
 // 崖錐と共通の接地・寄せ直し・縮小・ずらしで据える。
 
@@ -129,14 +129,11 @@ namespace Game::GameModes::WastelandTalus
 
         // 出典: Scripts/Terrain/ShapeRegions.json の range_groups["cliff-gen"]。
         // Tools/AssetCook/TerrainCliffDetail.cpp と同じ世界座標[m]。表の先頭を重複升目の所有範囲にする。
+        // castle の 5 範囲は接地用の格子の外で根元の高さが取れないため、塊を置かない。
+        // これらの崖は遠景の格子の上にあり、遠景の別の項目で扱う。
         constexpr CliffBlockRegion kCliffBlockRegions[kCliffBlockRegionCount] = {
             {"cliff_near_2_rooster_butte", 640.0f, 1160.0f, 560.0f, 1160.0f},
-            {"cliff_near_3_setting_hen_butte", 960.0f, 1460.0f, 1140.0f, 1960.0f},
-            {"cliff_castle_0_main_butte", -3450.0f, -2100.0f, -4450.0f, -3950.0f},
-            {"cliff_castle_1_far_cliffs", -3650.0f, -1900.0f, -6340.0f, -4650.0f},
-            {"cliff_castle_2_left_7_9km", -6250.0f, -5150.0f, -8250.0f, -6250.0f},
-            {"cliff_castle_3_left_5_7km", -5350.0f, -4250.0f, -7000.0f, -5500.0f},
-            {"cliff_castle_4_left_edge_9km", -6875.0f, -6150.0f, -8625.0f, -7875.0f}};
+            {"cliff_near_3_setting_hen_butte", 960.0f, 1460.0f, 1140.0f, 1960.0f}};
 
         uint32_t Hash(uint32_t value)
         {
