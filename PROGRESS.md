@@ -8507,3 +8507,6 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 要起票: verify の撮影を RT と GI を切った構成で撮る起動引数（と verify の -GameArgs）が無い。予算の構成で判定できるようにするかを決める
 - U1 カードの説明文の折り返しと、収まらないときの並び: 着地(直し 0 回)
 - U2 シーンの一覧に見本の視点と置き場を書き、見本画像を撮る台本を作る: 着地(直し 1 回)
+- U3 見本画像を板で出す案: 捨てた（キャンバスはフレーム開始後に作れず、`--capture-png` がキャンバスを切る）。表示は `Library/Modules/ImGui` に画像のテクスチャを足す案を推奨し、paths の拡張を `blocked/SCN-THUMBNAILS.md` で求めた
+- Notes: LauncherMenuTest はブリッジ SDK を入れた構成（`-DNORVES_BRIDGE_SDK_DIR=C:/Users/KINGkawamura/Documents/NorvesEditor/bridge/cpp`）でしか作られない（`Test/CMakeLists.txt` の `if(TARGET norves_bridge_engine_sdk)`）。この枠の `build` は SDK なしの構成で、そのままでは verify の 1・2 行目が通らない。U1+U2 を合わせた状態は SDK 入りの構成で Debug の Game・LauncherMenuTest のビルド EXIT=0、ctest Passed
+- Notes: 要起票: `--scene=<id>` で直接入った後にランチャーへ戻ると、`RegisterLauncherDisplayText` が呼ばれていない（`GameApplicationHandler.cpp` 2865 行付近は `m_bLauncherStartup` のときだけ）ので、ランチャーの字が欠けるおそれがある
