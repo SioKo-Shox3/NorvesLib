@@ -170,6 +170,52 @@ namespace
             R"({"version":1,"nodes":[{"id":"a","type":"clip","clip":"a"},{"id":"m","type":"stateMachine","states":[{"name":"Idle","node":"a"}],"transitions":[{"from":"Idle","to":"Missing"}]}],"root":"m"})",
             A::AnimGraphError::InvalidTransition);
     }
+    void TestGraphMaskRoots()
+    {
+        GraphFixture f(5);
+        // このケースだけ Root から Child と Joint2 の二枝に分ける。
+        auto joints = f.Skeleton->GetJoints();
+        joints[2].ParentIndex = 0;
+        f.Skeleton->SetJoints(std::move(joints));
+        auto graph = f.Graph(
+            R"({"version":1,"masks":[{"name":"Branches","roots":["Child","Joint2"]}],"nodes":[{"id":"a","type":"clip","clip":"a"}],"root":"a"})");
+        const auto& weights = graph->GetData()->Masks[0].Weights;
+        GRAPH_CHECK(weights.size() == 5);
+        NearGraph(weights[0], 0);
+        for (size_t i = 1; i < weights.size(); ++i)
+        {
+            NearGraph(weights[i], 1);
+        }
+        auto faded = f.Graph(
+            R"({"version":1,"masks":[{"name":"Overlap","roots":["Joint3","Joint2"],"fadeDepth":3}],"nodes":[{"id":"a","type":"clip","clip":"a"}],"root":"a"})");
+        const auto& fadeWeights = faded->GetData()->Masks[0].Weights;
+        GRAPH_CHECK(fadeWeights.size() == 5);
+        NearGraph(fadeWeights[0], 0);
+        NearGraph(fadeWeights[1], 0);
+        NearGraph(fadeWeights[2], 1.f / 3);
+        NearGraph(fadeWeights[3], 2.f / 3);
+        NearGraph(fadeWeights[4], 1);
+        auto single = f.Graph(
+            R"({"version":1,"masks":[{"name":"Legacy","root":"Joint2","fadeDepth":3},{"name":"Single","roots":["Joint2"],"fadeDepth":3}],"nodes":[{"id":"a","type":"clip","clip":"a"}],"root":"a"})");
+        const auto& masks = single->GetData()->Masks;
+        GRAPH_CHECK(masks[0].Weights.size() == masks[1].Weights.size());
+        for (size_t i = 0; i < masks[0].Weights.size(); ++i)
+        {
+            GRAPH_CHECK(masks[0].Weights[i] == masks[1].Weights[i]);
+        }
+        f.Reject(
+            R"({"version":1,"masks":[{"name":"Both","root":"Child","roots":["Joint2"]}],"nodes":[{"id":"a","type":"clip","clip":"a"}],"root":"a"})",
+            A::AnimGraphError::InvalidSchema);
+        f.Reject(
+            R"({"version":1,"masks":[{"name":"Empty","roots":[]}],"nodes":[{"id":"a","type":"clip","clip":"a"}],"root":"a"})",
+            A::AnimGraphError::InvalidSchema);
+        f.Reject(
+            R"({"version":1,"masks":[{"name":"Duplicate","roots":["Child","Child"]}],"nodes":[{"id":"a","type":"clip","clip":"a"}],"root":"a"})",
+            A::AnimGraphError::DuplicateName);
+        f.Reject(
+            R"({"version":1,"masks":[{"name":"Unknown","roots":["Child","Missing"]}],"nodes":[{"id":"a","type":"clip","clip":"a"}],"root":"a"})",
+            A::AnimGraphError::UnknownJoint);
+    }
     void TestGraphNodeKinds()
     {
         GraphFixture f;
@@ -1393,6 +1439,7 @@ namespace
 void TestAnimGraphRuntime()
 {
     TestGraphBlendAndLoad();
+    TestGraphMaskRoots();
     TestGraphNodeKinds();
     TestClipMetadataRuntime();
     TestAnimationEventRuntime();

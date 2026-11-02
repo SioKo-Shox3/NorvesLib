@@ -9136,3 +9136,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 遮蔽の視点 contact_near・ref_cliff_01 から castle の範囲までは 2 km 以上で、塊は遮蔽の小物の書き出し（300 m）に入らない
 - U1 params の min/max（float・int）を読み、全ての書き込み口で丸める: 着地(直し 1 回)
 - U4 animgraph.json v1 の仕様を文書に書く: 着地(直し 1 回)
+- U2 masks の roots（複数の根）を読む: 着地(直し 0 回)

@@ -251,19 +251,59 @@ namespace NorvesLib::Core::Animation
             for (size_t i = 0; i < array.GetArraySize(); ++i)
             {
                 auto v = array.GetArrayElement(i);
-                Identity name, root;
-                if (!UniqueObject(v) || !Name(v.FindMember("name"), name) || !Name(v.FindMember("root"), root))
+                Identity name;
+                if (!UniqueObject(v) || !Name(v.FindMember("name"), name))
                 {
                     return Fail(r, AnimGraphError::InvalidSchema, "mask_name");
+                }
+                const auto roots = v.FindMember("roots");
+                if (v.HasMember("root") && v.HasMember("roots"))
+                {
+                    return Fail(r, AnimGraphError::InvalidSchema, "mask_roots");
+                }
+                Container::VariableArray<Identity> rootNames;
+                if (v.HasMember("roots"))
+                {
+                    if (!roots.IsArray() || roots.GetArraySize() == 0 || roots.GetArraySize() > 256)
+                    {
+                        return Fail(r, AnimGraphError::InvalidSchema, "mask_roots");
+                    }
+                    for (size_t j = 0; j < roots.GetArraySize(); ++j)
+                    {
+                        Identity root;
+                        if (!Name(roots.GetArrayElement(j), root))
+                        {
+                            return Fail(r, AnimGraphError::InvalidSchema, "mask_roots");
+                        }
+                        if (Find(rootNames, root, [](auto n) { return n; }) != InvalidAnimNode)
+                        {
+                            return Fail(r, AnimGraphError::DuplicateName, "mask_root");
+                        }
+                        rootNames.push_back(root);
+                    }
+                }
+                else
+                {
+                    Identity root;
+                    if (!Name(v.FindMember("root"), root))
+                    {
+                        return Fail(r, AnimGraphError::InvalidSchema, "mask_name");
+                    }
+                    rootNames.push_back(root);
                 }
                 if (Find(d.MaskNames, name, [](auto n) { return n; }) != InvalidAnimNode)
                 {
                     return Fail(r, AnimGraphError::DuplicateName, "mask_name");
                 }
-                const auto joint = Find(d.JointNames, root, [](auto n) { return n; });
-                if (joint == InvalidAnimNode)
+                Container::VariableArray<uint32_t> joints;
+                for (const auto root : rootNames)
                 {
-                    return Fail(r, AnimGraphError::UnknownJoint, "mask_root");
+                    const auto joint = Find(d.JointNames, root, [](auto n) { return n; });
+                    if (joint == InvalidAnimNode)
+                    {
+                        return Fail(r, AnimGraphError::UnknownJoint, "mask_root");
+                    }
+                    joints.push_back(joint);
                 }
                 int32_t fade = 0;
                 if (v.HasMember("fadeDepth") && (!Integer(v.FindMember("fadeDepth"), fade) || fade < 0))
@@ -271,9 +311,25 @@ namespace NorvesLib::Core::Animation
                     return Fail(r, AnimGraphError::InvalidSchema, "mask_depth");
                 }
                 BoneMask mask;
-                if (!mask.Build(d.Parents, joint, uint32_t(fade)))
+                for (const auto joint : joints)
                 {
-                    return Fail(r, AnimGraphError::SkeletonMismatch, "mask_hierarchy");
+                    BoneMask branch;
+                    if (!branch.Build(d.Parents, joint, uint32_t(fade)))
+                    {
+                        return Fail(r, AnimGraphError::SkeletonMismatch, "mask_hierarchy");
+                    }
+                    if (mask.Weights.empty())
+                    {
+                        mask = std::move(branch);
+                    }
+                    else
+                    {
+                        // 重なる枝は関節ごとの最大値で合成する。
+                        for (size_t j = 0; j < mask.Weights.size(); ++j)
+                        {
+                            mask.Weights[j] = std::max(mask.Weights[j], branch.Weights[j]);
+                        }
+                    }
                 }
                 d.MaskNames.push_back(name);
                 d.Masks.push_back(std::move(mask));
