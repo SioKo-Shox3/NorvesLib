@@ -4435,3 +4435,12 @@
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SCN-INTERIOR-SHAFTS`
 - paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Scripts, TASKS.md, PROGRESS.md
 - from: SCN-INTERIOR-SHAFTS
+
+## TEST-FULL-CTEST-BASELINE-CHECK: 全体CTestの既存の失敗を直す(後回しにしたアプリの起動の確かめ)
+- status: todo
+- check: launch
+- gpu: exclusive
+- done-when: TEST-FULL-CTEST-BASELINE で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、TEST-FULL-CTEST-BASELINE の done-when を満たすことを確かめる。満たさなければ TEST-FULL-CTEST-BASELINE の done-when と paths の範囲で直す。
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 600`
+- paths: Library/Core, Test/Core, Game, Docs/Testing.md, TASKS.md, PROGRESS.md
+- from: TEST-FULL-CTEST-BASELINE
