@@ -8848,3 +8848,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 検証: verify の python 1 行が `[]`・終了コード 0。numstat は 2 通りで一致（17 行追加・2 行削除）。文書だけの変更で、ビルド・試験・アプリは起動していない
 - Next: TEST-FULL-CTEST-BASELINE-CHECK で全体 CTest を回したら、在庫文書の「未実行」の 3 本を実行の記録に更新する
 - Notes: 要起票: 同じ文書の 144 行（reader の native 回帰は Windows/Core 全体の実行が未検証）・159 行（native Resource/Core/描画の Windows 実行は未検証）・181 行（packet の native 回帰は Windows 依存で未実行）も古い可能性がある。181 行の packet の回帰は `SkeletalFramePacketSnapshotTest` で、2026-11-02 に Passed している
+- U2 SkeletalImportReportTest の行を 2026-10-11 の実行記録に直す: 着地(直し 0 回)

@@ -138,8 +138,8 @@ morphの総数/幅/対象なしprimitiveと幅不一致、および旧writerの�
 - `CookedSkeletalAssetTest`: 2026-11-02のWindows Debugで`cmake --build build --config Debug --target CookedMeshTest AssetCook -- /m:1`が終了コード0。
   コードページ932・65001のそれぞれで`ctest --test-dir build -C Debug --output-on-failure --timeout 180 -R CookedSkeletalAssetTest`がPassed（終了コード0）。
   記録は`PROGRESS.md`のG2-GR78-SURFACE-CENTROID-CHECK-P1（run 20261102-095825）。
-- `SkeletalImportReportTest`（`CookedMeshTest --test=SkeletalImportReportTest`、mesh_target_width・dropped_targetsの報告）: 未実行。
-  TEST-FULL-CTEST-BASELINE-CHECKの全体CTest（`ctest --test-dir build -C Debug --output-on-failure --timeout 600`）で回す。
+- `SkeletalImportReportTest`（`CookedMeshTest --test=SkeletalImportReportTest`、mesh_target_width・dropped_targetsの報告）: 2026-10-11のWindows Debugで、隣接69件をまとめた`ctest --test-dir build -C Debug -R <隣接69件> --no-tests=error --output-on-failure`の中でPassed。
+  69件中の失敗は無関係の`BoardComponentRoutingTest`のTimeout 1件（単体の再実行で通過）で、試験のソースはこの実行の後に変わっていない。記録は`PROGRESS.md`のSCN-ECS-RENDER-SYNC-SWITCH（run 20261010-223034、`verify-SCN-ECS-RENDER-SYNC-SWITCH-3-neighbors.txt`）。
 - `GLTFSkeletalAnalyzerTest`（2primitiveの連結）: 未実行（ビルドのみ）。2026-10-29のWindows Debugで`cmake --build build --config Debug -- /m:1`が終了コード0
   （`PROGRESS.md`のSCN-BUILD-ALL-TESTS、run 20261029-040919）。TEST-FULL-CTEST-BASELINE-CHECKの全体CTestで回す。
 
