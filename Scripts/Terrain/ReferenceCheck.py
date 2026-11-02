@@ -6741,7 +6741,7 @@ def main():
     parser.add_argument("--off-root", default="",
                         help="--occlusion: 同じ版の変更前の鏡面の経路（rtgi-specular=off）の撮影の置き場。範囲の外の行を off と比べる")
     parser.add_argument("--cook-coverage", action="store_true",
-                        help="崖の生成の範囲に掛かる地形の区画が今の AssetCook で焼かれているか（CookCoverage.py。--manifest・"
+                        help="崖の生成の範囲の地形の印と代表区画の焼き直しを照合する（CookCoverage.py。--manifest・"
                              "--regions・--range-group）")
     parser.add_argument("--manifest", default="", help="--cook-coverage: クックのマニフェスト（build/CookedAssets/manifest.json）")
     parser.add_argument("--range-group", default="", help="--cook-coverage: --regions の range_groups の組")
