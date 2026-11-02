@@ -9018,17 +9018,30 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 検証: TEMP/TMP を既定のまま、`cmake --build build --config Debug --target CookedMeshTest AssetCook -- /m:1` 終了コード 0、`ctest -R "^CookManagedBootstrapTest$" --timeout 180` Passed（22.10 秒）、`ctest -R "^(CookManagedUpdateTest|TextureManagedCliTest|CookManagedStoreInitializationTest)$" --timeout 180` 3/3 Passed（88.89・14.84・1.89 秒）。別プロセスで mutex を 7.2 秒握った間の Bootstrap は `VOLUME_BUSY_RETRY waited_ms=6874` の後に Passed（34.90 秒）。出力は `.harness/runs/20261102-191021/G2-S6-ASSET-SET-P1-U6-verify.txt`
 - Notes: `paths:` の外の 3 試験（`CookManagedUpdateTest.cpp`・`CookManagedStoreInitializationTest.cpp`・`TextureManagedCliTest.cpp`）を触った。verify の 3 行目がこの 3 本を名指ししており、直しは置き場と待ち直しだけで期待は変えていない
 - Notes: 子プロセスを強制終了する 2 本（StoreInitialization・Update）は、子の側でも待ち直すため子の待ちの上限を 60 秒から 120 秒にした。強制終了の後に放棄された mutex を復旧が観測する Bootstrap のケースは、その間に別プロセスが先に mutex を取ると放棄の観測が消えて落ちうる（まれな競合として残る）
-- U1 待ちの範囲の仕組みを共通の header にし、宛先ロックの試験に前提の待ちと Busy の確かめの待ち 0 を入れる: 着地(直し 0 回)
-- U2 Bootstrap・Update の試験に前提の待ちと Busy の確かめの待ち 0 を入れ、タスクの verify を全部回す: 着地(直し 0 回)
-## 2026-11-02 G2-MATERIAL-SELECTION-INTEGRATION-P1-P1-P1（run 20261102-201606 の反復 1）
-- Done: 共通の `Test/Core/Asset/CookLockWaitTestScope.h` を足した。CookDestinationLockTest・CookManagedBootstrapTest・CookManagedUpdateTest は頭で `NORVES_COOK_LOCK_WAIT_MS=120000` を立てて終わりに元へ戻し、`Busy` を確かめる取得の間だけ環境変数を消す。対象は ProbeBusy・BusyPoint・Peer・CreateRoot・ProcessProbe の子・子が持つ間の親・WaitOption の待ちなしの側。WaitOption の待ちありの側は 5000 から 120000 にした。本体と CTest の ENVIRONMENT は変えていない
-- 検証: ビルドは 0。3 本を直列で回すと Passed（0.56・20.65・79.23 秒）。ENVIRONMENT の python の確かめは 0。`-j 4` は終了コード 8（`volume_busy`・`VOLUME_BUSY_RETRY` は 0 行。落ちたのは同名 event の作成と abandoned の観測）。出力は `.harness/runs/20261102-201606/U2-verify.txt`
-- Notes: `-j 4` の合格は止めた。同名 event・abandoned・ordinary の検査は、機械全体で 1 つの mutex の名前を独り占めする前提で、並列の試験どうしが互いに壊し合う。待ち直しとやり直しで切り直した試し（`U3-dropped-verify.txt`）でも、event の間にほかの試験が `mutex_create_failed` で落ち、ほかの試験の abandoned を受け取った。CMakeLists.txt の RESOURCE_LOCK を推奨とした判断待ち（blocked）
-- U4 宛先 volume のロックを取る cook の試験に CTest の RESOURCE_LOCK を付け、タスクの verify を全部回す: 着地(直し 0 回)
-## 2026-11-02 G2-MATERIAL-SELECTION-INTEGRATION-P1-P1-P1（run 20261102-205307 の反復 1）
-- Done: 判断役の判断（案 A）に従い、`Test/Core/Asset/CMakeLists.txt` で宛先 volume のロックを取る cook の試験 7 本（CookDestinationLockTest・CookManagedBootstrapTest・CookManagedUpdateTest・RigSplitCookTest・TextureManagedCliTest・CookManagedStoreObservationTest・CookManagedStoreInitializationTest）に `RESOURCE_LOCK cook_destination_volume` を付けた。CookCacheDecisionTest・CookManagedUpdateInventoryTest・CookManagedTransactionIntentTest は Inventory・Intent の構築だけでロックを取らないので外した。.cpp の独り占めの検査（同名 event・abandoned の観測・全 handle の後の ordinary）と期待は変えていない。本体と 3 本の ENVIRONMENT も変えていない
-- 検証: ビルドは 0。3 本の直列は Passed（0.56・21.87・82.71 秒）。`-j 4` の 4 本は 1 本ずつ流れて 4/4 Passed・終了コード 0（67.73・79.94・22.93・0.56 秒）。ENVIRONMENT の確かめ・RESOURCE_LOCK の確かめはどちらも 0。numstat は 2 通りとも 14 追加で一致。出力は `.harness/runs/20261102-205307/U4-verify.txt`
-- Next: なし（この項目は完了）
-- Notes: TASKS.md の項目の done-when・verify・paths は、判断（blocked/resolved）で書き換えた欄に従って仕上げた（項目の本文は旧い文のまま。status だけ更新した）
-- Notes: 残る限界: RESOURCE_LOCK が効くのは 1 回の ctest の中だけ。盤面の別の枠で cook の試験や AssetCook が同時に走ると、独り占めの検査は今も落ちうる
-- Notes: 要起票: cook のロックの試験の独り占めの検査(同名 event・abandoned の観測・全 handle の後の ordinary)を、別の枠の cook と同時に走っても壊れない形にする(試験だけの mutex 名の口を本体に足すかの判断を含む)
+
+- U1 地形の項目の印を exe のハッシュから切り離し、旧の印からの移行と照合を入れる: 着地(直し 1 回)
+- U2 --cook-coverage に代表の区画の焼き比べを足し、報告を今の形に直して、共有の状態を移行して verify を回す: 着地(直し 0 回)
+
+## 2026-11-02 SCN-WL-CLIFF-GEN-TALUS-CHECK-P3（run 20261102-191441 の反復 2、完了）
+- Done: 地形の項目（generate が terrain-tile:）のクックの印を AssetCook.exe のハッシュから切り離した。印の元は崖の細部の版（kTerrainCliffDetailVersion=19）と地形のクックの経路のソース 67 ファイルの内容の SHA-256（`CookAssets.ps1` の `$TerrainStampSourcePaths`）で、状態の新しい欄 `terrain_stamp` に持つ。旧の欄 `stamp` は exe を含む旧の形で書き続けて残し、旧い `CookAssets.ps1` も読める。`terrain_stamp` が無く旧の印が今の exe で合う項目は焼かずに書き足す（共有の置き場を NorvesLib-6 の exe で移行し `terrain_stamp_migrated=214`・`cooked=0 skipped=214`）。地形を実際に焼くときは exe が地形のソースより古ければ止める。`--cook-coverage` に代表の区画（掛かる近景の範囲が最も多く、同数なら名前順の先頭。今は WastelandDem_7_7）を一時の置き場で焼き直して共有の `cooked_hash` と比べる検査を足し、報告の印の元を版とソースの一覧に直した。地形以外の項目の印は今のまま exe のハッシュを含む
+- 検証: AssetCook のビルド EXIT=0。verify のクックの行は `cooked=0 skipped=214`（8.9 秒）。`--cook-coverage --verify` は `tiles=27 cooked=27 result=pass`・`recook tile=WastelandDem_7_7 match=true seconds=152.002`。末尾に 1 バイト足した exe の写しで `terrain_stamps 214 ['match']`。`Tools/AssetCook/TerrainCliffDetail.cpp` に 1 行足すと地形の 214 項目が stale、内容と更新時刻を戻すと 214 match。代表の区画は別々の一時の置き場で 2 回焼いて `cooked_hash` が同じ（65fb1ace6c72204e）。出力は `.harness/runs/20261102-191441/verify-SCN-WL-CLIFF-GEN-TALUS-CHECK-P3-U2.txt`。アプリは起動していない。新しい試験は足していない
+- Next: なし
+- Notes: 焼き比べは代表の 1 区画だけで、その区画の出力に効かない入力の漏れ（遠景の段だけに効くソースなど）は検出できない。焼き比べで `--cook-coverage` が約 2.5 分長くなった
+- U3 地形の書き出しの記録が読む欄を、網羅の報告の新しい印の元に替える: 着地(直し 0 回)
+
+## 2026-11-02 SCN-WL-CLIFF-GEN-TALUS-CHECK-P3（run 20261102-191441 の反復 3、差し戻しの直し・完了）
+- Done: 網羅の報告 `cook_coverage.cliff-gen.json` の最上位から `asset_cook_sha256` が消えたため `OcclusionSets.py --export-terrain` が KeyError で必ず失敗していたのを直した。書き出しは報告の `terrain_sources_sha256`（地形の印の元）を読み、`export_record.json` にも同じ名前で記録する
+- 検証: `capture_set` を終了コード 1 に差し替えて `run_export_terrain` を呼ぶと、失敗の理由が撮影の終了コード 1 になり報告の読みを通り過ぎる（`cliff_detail_version=19 head_cliff_detail_version=19`）。タスクの verify 4 行を回し直した: AssetCook のビルド EXIT=0、クックの行 `cooked=0 skipped=214`（9 秒）、`--cook-coverage --verify` は `result=pass`・`recook tile=WastelandDem_7_7 match=true`（171 秒）、1 バイト足した exe の写しで `terrain_stamps 214 ['match']`。出力は `.harness/runs/20261102-191441/verify-SCN-WL-CLIFF-GEN-TALUS-CHECK-P3-iter3.txt`。アプリは起動していない。新しい試験は足していない
+- Next: なし（`--export-terrain` を実際に回すのは Game を起動する SCN-WL-CLIFF-GEN-TALUS-CHECK-P2 の verify で確かめる）
+- Notes: 移行と飛ばしの経路には exe がソースより新しいかの検査が掛からない（焼くときだけ掛かる）。共有の状態は移行済みで、旧いスクリプトが焼き直して `terrain_stamp` を落としたときだけ起こり得る
+- Notes: 要起票: `Tools/AssetCook/MeshCooker.cpp` の 2942〜2943 行目のコメント「高さ場の関数の変更は AssetCook の実行ファイルの変更として CookAssets が検出する」が、地形の印をソースの内容で求める今の仕組みと合わない
+
+- U1 開発ビルドの --rt-gi=on|off で RT と DDGI を起動から終了まで切り、SCENE_READY で実際の状態をログに書く: 着地(直し 0 回)
+
+## 2026-11-02 SCN-MEGA-FIX-STRESS-GPU-CHECK-P1（run 20261102-195301 の反復 1）
+
+- Done: 開発ビルド（Debug・RelWithDebInfo）にだけ起動引数 `--rt-gi=on|off` を足した（`--rtgi-bounce` と同じ形。Release は警告を出して無視）。Game が環境変数 `NORVES_RT_GI` へ渡し、`RenderingCoordinator::Initialize` が 1 回読んで固定する。`off` のときはパケットの `bRTGIEnabled` と DDGI の `bEnabled` を偽にし、GameThread のレイトレーシングの snapshot・RenderThread の MegaGeometry のインスタンスの追加・加速構造の構築を飛ばす（TLAS が無いので RT の影・DDGI・RTGI は既存の判定で代替へ落ち、間接光は IBL になる）。シーンの `SetRTGIEnabled`・`SetDDGIVolumeParameters` の要求は保持し、パケットへ写す値だけを off にするので、Launcher・荒野の共通の照明が呼んでも off が勝つ。未指定（と `on`）は今までと同じ分岐を通る。開発ビルドでは RenderThread が提出したパケットの RTGI・DDGI・TLAS の有無とインスタンス数を記録し、Game が SceneReady の偽→真の後に、その後のパケットの値から `RT_GI_STATE off|on rtgi= ddgi= tlas= instances= frame=` を 1 行書く
+- 検証: `cmake --build build --config Debug --target Game -- /m:1` 終了コード 0（単位の作業ツリーの `.harness/unit-verify.txt`。`git diff --numstat` と `--ignore-cr-at-eol` の 2 通りも一致）
+- Next: 起動の確かめは後回し（`SCN-MEGA-FIX-STRESS-GPU-CHECK-P1-CHECK`）。mega-stress を `-GameArgs rt-gi=off` で撮り、`overview.Game.log` に `RT_GI_STATE off` が出ることを確かめる
+- Notes: SCN-MEGA-FIX-STRESS-GPU-CHECK と SCN-MEGA-ACCEPT-1M の予算（16.6 ms）の撮影は、`-GameArgs` に `rt-gi=off` を足して撮る
+- Notes: `--rt-gi=off` ではパストレーシングのモードにも TLAS が渡らない（開発用の切り替えとして受け入れた）

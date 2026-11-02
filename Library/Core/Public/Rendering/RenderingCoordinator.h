@@ -155,6 +155,18 @@ namespace NorvesLib::Core::Rendering
         bool bTruncated = false;
     };
 
+#if NORVES_BUILD_DEVELOPMENT
+    /** @brief 提出されたフレームパケットのレイトレーシングと間接光の状態。 */
+    struct RenderedRayTracingState
+    {
+        uint64_t FrameNumber = 0;
+        uint64_t InstanceCount = 0;
+        bool bRTGIEnabled = false;
+        bool bDDGIEnabled = false;
+        bool bTLASAvailable = false;
+    };
+#endif
+
     class RenderingCoordinatorDiagnostics;
 
     /**
@@ -357,6 +369,17 @@ namespace NorvesLib::Core::Rendering
         /** @brief RTGIを次のFramePacketへ明示的に有効化または無効化する。 */
         void SetRTGIEnabled(bool bEnabled);
         bool IsRTGIEnabled() const { return m_bRTGIEnabled; }
+
+#if NORVES_BUILD_DEVELOPMENT
+        /**
+         * @brief 描画へ提出された最新のパケットの状態を取得する（GameThread）。
+         * @return まだ提出されていないか更新中なら false。
+         */
+        bool TryGetRenderedRayTracingState(RenderedRayTracingState& outState) const;
+
+        /** @brief 次に確保するフレームパケットの番号を取得する（GameThread）。 */
+        uint64_t GetNextFramePacketNumber() const { return m_PacketManager.GetCurrentFrameNumber(); }
+#endif
 
         /**
          * @brief RTGIの拡散の光線が影を落とさない不透明物体にも当たるかを次のFramePacketへ公開する（既定は切）
@@ -672,6 +695,15 @@ namespace NorvesLib::Core::Rendering
         DecalScene m_Decals;
         DistortionScene m_Distortions;
         bool m_bRTGIEnabled = true;
+        // 初期化時に確定し、描画スレッドの開始後は変更しない。
+        bool m_bRayTracingForcedOff = false;
+#if NORVES_BUILD_DEVELOPMENT
+        // 奇数は更新中、0 は未提出。連番で前後を挟んで同じパケットの値を読む。
+        Thread::Atomic<uint64_t> m_RenderedRayTracingSequence{0};
+        Thread::Atomic<uint64_t> m_RenderedRayTracingFrameNumber{0};
+        Thread::Atomic<uint64_t> m_RenderedRayTracingInstanceCount{0};
+        Thread::Atomic<uint8_t> m_RenderedRayTracingFlags{0};
+#endif
         bool m_bRTGINonShadowCasterOcclusion = false;
         uint64_t m_SceneRevision = 1u;
         uint64_t m_LightRevision = 1u;

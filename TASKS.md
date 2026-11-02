@@ -4554,7 +4554,7 @@
 - from: G2-GR82-B4-STATIC-ROOT-FRAME128
 
 ## SCN-MEGA-FIX-STRESS-GPU-CHECK-P1: RT と GI を切って撮る開発用の起動引数 `--rt-gi=off` を足す
-- status: todo
+- status: done
 - done-when: 開発ビルド(Debug・RelWithDebInfo)にだけ起動引数 `--rt-gi=on|off` を足す(`--rtgi-bounce` と同じ形。Release では警告を出して無視する)。`off` にすると、起動から終了まで RT(RTGI・RT の影と反射・TLAS の構築と更新)と GI(DDGI)を切り、間接光は既存の IBL に替わる(`ResolveRTGIIndirectLighting` の順のとおり)。途中で入るシーン(Launcher・荒野の共通の照明など)が `SetRTGIEnabled` を呼んでも、`off` の指定が勝つ。引数を付けない起動の既定の経路と見た目は変えない。開発ビルドでは SCENE_READY の時点で、実際に描いたフレームパケットの値から `RT_GI_STATE off` か `RT_GI_STATE on` を 1 行ログに書く(フラグの値ではなく実際の状態を書く)。PROGRESS.md には「SCN-MEGA-FIX-STRESS-GPU-CHECK と SCN-MEGA-ACCEPT-1M の予算(16.6 ms)の撮影は、`-GameArgs` に `rt-gi=off` を足して撮る」と書く。起動しないで確かめるのはビルドが通ることまで。ログの行の確かめは下の verify の撮影で行う(起動を戻した後)。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -Views overview -Build -RequireAssets -Configuration RelWithDebInfo -GameArgs rt-gi=off -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-STRESS-GPU-CHECK-P1`
@@ -4607,7 +4607,7 @@
 - stop-when: 説明できない差があるのに基準を更新する、source の下への出力の拒否を外す。
 
 ## G2-S6-ASSET-SET-P3: `windows-assetcook.yml` を手動で起動し、直した `VerifyTextureAssetSet.py` の全体が CI で完走することを確かめる
-- status: blocked
+- status: todo
 - done-when: 盤面が既にプッシュした統合ブランチ `feature/scene-launcher` を対象に、`gh workflow run windows-assetcook.yml --ref feature/scene-launcher` で 1 回だけ起動する。起動する前に、そのブランチの head に `66499489`(照合の直し)が含まれることを確かめる。ワーカーはプッシュしない。run が終わったら、結論が success であることを確かめる。あわせて、`VerifyTextureAssetSet.py` の段(失敗のときの検査を含む)と `texture_parity` が最後まで走ったことを、ジョブのログで確かめる。run の ID・URL・head の SHA・各段の結果を、PROGRESS.md と `ManagedTextureAssetSetCli.md` の受入れの節に書く。失敗したときは、原因とログの該当行を書き、直しは `要起票:` で残す(このタスクの中で再プッシュはしない)。
 - verify: `python -c "import json,subprocess,sys; r=json.loads(subprocess.check_output(['gh','run','list','--workflow','windows-assetcook.yml','--branch','feature/scene-launcher','--event','workflow_dispatch','--limit','1','--json','conclusion,headSha,url'])); print(r); sys.exit(0 if r and r[0]['conclusion']=='success' and subprocess.call(['git','merge-base','--is-ancestor','66499489',r[0]['headSha']])==0 else 1)"`
 - paths: Docs/Architecture/ManagedTextureAssetSetCli.md, TASKS.md, PROGRESS.md
@@ -4749,7 +4749,7 @@
   - verify は 1 行 10 分未満。
 
 ## SCN-WL-CLIFF-GEN-TALUS-CHECK-P3: 地形の項目のクックの印を AssetCook.exe のハッシュから切り離し、地形に関わらない取り込みで地形の全項目を焼き直さない
-- status: todo
+- status: done
 - done-when: SCN-WL-CLIFF-GEN-TALUS の反復 4（PROGRESS.md）で、地形に関わらない取り込みのたびに地形の全項目を焼き直すことになった。
   - 取り込んだのはリグ・VFX のクックの変更だけだったが、AssetCook.exe のハッシュが変わった。
   - `Scripts/CookAssets.ps1` の印は `assetcook=<exe の SHA-256>` を含むので、地形の 214 項目すべての印が stale になった。
@@ -4847,12 +4847,10 @@
 ## G2-MATERIAL-SELECTION-INTEGRATION-P1-P1-P1: `Busy` を期待する cook の試験で、前提のロックの取得だけ上限つきで待ち、`Busy` を確かめる取得は待ち 0 のままにする
 - status: done
 - done-when: 次の 4 点を満たす。
-  - **前提の取得は待つ。** `CookDestinationLockTest`・`CookManagedBootstrapTest`・`CookManagedUpdateTest` では、各試験の頭で `NORVES_COOK_LOCK_WAIT_MS=120000` をプロセスの中だけで立て、試験の終わりに元の値へ戻す。戻すには、`CookDestinationLockTest.cpp` にある `EnvironmentVariableRestore` と同じ形の範囲つきの仕組みを使う。これで、試験が自分でロックを取る所(`f.Run`・回復・解放後の取り直し・子プロセスの取得)が、ほかの枠の AssetCook と重なっても上限つきで待つ。
-  - **`Busy` を確かめる取得だけは待ち 0 にする。** 対象は次の 4 か所。
-    - `CookManagedBootstrapTest` の `ProbeBusy`/`TryBusy`
-    - `CookManagedUpdateTest` の `BusyPoint`/`TryBusy`
-    - `CookDestinationLockTest` の入れ子の peer(94・109 行付近)と、子プロセスが持っている間の親の取得(698 行付近)
-    - `WaitOption` の「待ちなし」の側
+  - **前提の取得は待つ。** `CookDestinationLockTest`・`CookManagedBootstrapTest`・`CookManagedUpdateTest` では、各試験の頭で `NORVES_COOK_LOCK_WAIT_MS=120000` をプロセスの中だけで立て、試験の終わりに元の値へ戻す(`CookLockWaitTestScope.h` の範囲つきの仕組み)。試験が自分でロックを取る所(`f.Run`・回復・解放後の取り直し・子プロセスの取得)は、上限つきで待つ。
+  - **`Busy` を確かめる取得だけは待ち 0 にする。** 対象は Bootstrap の `ProbeBusy`/`TryBusy`、Update の `BusyPoint`/`TryBusy`、DestinationLock の入れ子の peer と子プロセスが持っている間の親の取得、`WaitOption` の「待ちなし」の側。取得の直前に環境変数を消し、確かめた後に戻す。どれも待ち 0 で `Busy` を返し、今の期待(`Busy`・callback の呼び出しが 0 回)のまま通る。
+  - **本体と、CTest の待ちの設定は変えない。** `Tools/AssetCook/` の既定の待ち・mutex の名前・volume 単位は変えない。上の 3 つの試験の CTest の `ENVIRONMENT` に `NORVES_COOK_LOCK_WAIT_MS` を足さない。
+  - **並列の ctest でも通る。** 宛先 volume のロックを取る cook の試験(少なくとも `CookDestinationLockTest`・`CookManagedBootstrapTest`・`CookManagedUpdateTest`・`RigSplitCookTest`・`TextureManagedCliTest`・`CookManagedStoreObservationTest`・`CookManagedStoreInitializationTest`)に、`Test/Core/Asset/CMakeLists.txt` で `RESOURCE_LOCK cook_destination_volume` を付ける。`ctest -j 4` で回すと、これらは 1 本ずつ流れて全部通る。独り占めの検査(同名の event・abandoned の観測・全 handle の後の ordinary)は、検査も期待も変えない。
 
     これらでは、取得の直前に環境変数を消し、確かめた後に元へ戻す。どれも待ち 0 で `Busy` を返し、今の期待(`Busy`・callback の呼び出しが 0 回)のまま通る。
   - **本体と CTest の設定は変えない。** `Tools/AssetCook/` の既定の待ち・mutex の名前・volume 単位は変えない。この 3 つの試験の CTest の `ENVIRONMENT` にも `NORVES_COOK_LOCK_WAIT_MS` を足さない。
@@ -4861,7 +4859,8 @@
 - verify: `ctest --test-dir build -C Debug -R "^(CookDestinationLockTest|CookManagedBootstrapTest|CookManagedUpdateTest)$" --no-tests=error --output-on-failure --timeout 180`
 - verify: `ctest --test-dir build -C Debug -j 4 -R "^(CookDestinationLockTest|CookManagedBootstrapTest|CookManagedUpdateTest|RigSplitCookTest)$" --no-tests=error --output-on-failure --timeout 300`
 - verify: `python -c "import json,subprocess,sys; d=json.loads(subprocess.check_output(['ctest','--test-dir','build','-C','Debug','-R','^(CookDestinationLockTest|CookManagedBootstrapTest|CookManagedUpdateTest)$','--show-only=json-v1'])); e={t['name']:[v for p in t.get('properties',[]) if p['name']=='ENVIRONMENT' for v in p['value']] for t in d['tests']}; k='NORVES_COOK_LOCK_WAIT_MS='; print(e); sys.exit(0 if len(e)==3 and not any(v.startswith(k) for vs in e.values() for v in vs) else 1)"`
-- paths: Test/Core/Asset/CookDestinationLockTest.cpp, Test/Core/Asset/CookManagedBootstrapTest.cpp, Test/Core/Asset/CookManagedUpdateTest.cpp, Test/Core/Asset/CookLockWaitTestScope.h, TASKS.md, PROGRESS.md
+- verify: `python -c "import json,subprocess,sys; n=['CookDestinationLockTest','CookManagedBootstrapTest','CookManagedUpdateTest','RigSplitCookTest','TextureManagedCliTest','CookManagedStoreObservationTest','CookManagedStoreInitializationTest']; d=json.loads(subprocess.check_output(['ctest','--test-dir','build','-C','Debug','-R','^('+'|'.join(n)+')$','--show-only=json-v1'])); r={t['name']:[x for p in t.get('properties',[]) if p['name']=='RESOURCE_LOCK' for x in (p['value'] if isinstance(p['value'],list) else [p['value']])] for t in d['tests']}; print(r); sys.exit(0 if sorted(r)==sorted(n) and all('cook_destination_volume' in v for v in r.values()) else 1)"`
+- paths: Test/Core/Asset/CookDestinationLockTest.cpp, Test/Core/Asset/CookManagedBootstrapTest.cpp, Test/Core/Asset/CookManagedUpdateTest.cpp, Test/Core/Asset/CookLockWaitTestScope.h, Test/Core/Asset/CMakeLists.txt, TASKS.md, PROGRESS.md
 - after: G2-S6-ASSET-SET-P1
 - from: G2-MATERIAL-SELECTION-INTEGRATION-P1-P1
 - stop-when: 次のどれかが要るなら止める。
@@ -4869,3 +4868,13 @@
   - `Tools/AssetCook/` の既定の待ち・mutex の名前・volume 単位を変える
   - 試験のために mutex の名前や volume を差し替える口を本体に足す
   - `Busy` の期待や callback の回数の期待を弱める
+
+## SCN-MEGA-FIX-STRESS-GPU-CHECK-P1-CHECK: RT と GI を切って撮る開発用の起動引数 `--rt-gi=off` を足す(後回しにしたアプリの起動の確かめ)
+- status: todo
+- check: launch
+- gpu: exclusive
+- done-when: SCN-MEGA-FIX-STRESS-GPU-CHECK-P1 で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、SCN-MEGA-FIX-STRESS-GPU-CHECK-P1 の done-when を満たすことを確かめる。満たさなければ SCN-MEGA-FIX-STRESS-GPU-CHECK-P1 の done-when と paths の範囲で直す。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -Views overview -Build -RequireAssets -Configuration RelWithDebInfo -GameArgs rt-gi=off -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-STRESS-GPU-CHECK-P1`
+- verify: `python -c "import sys; t=open(sys.argv[1],encoding='utf-8',errors='replace').read(); sys.exit(0 if 'RT_GI_STATE off' in t else 1)" .harness/runs/scene-capture/SCN-MEGA-FIX-STRESS-GPU-CHECK-P1/overview.Game.log`
+- paths: Game/GameApplicationHandler.cpp, Game/GameApplicationHandler.h, Library/Core/Public/Rendering/RenderingCoordinator.h, Library/Core/Private/Rendering/RenderingCoordinator.cpp, TASKS.md, PROGRESS.md
+- from: SCN-MEGA-FIX-STRESS-GPU-CHECK-P1
