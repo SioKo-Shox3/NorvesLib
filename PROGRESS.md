@@ -8516,3 +8516,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 単体 CLI の分割前後の比較（`AssetCookCliParity.py`）は、ローカルでは capture が出力先の制約と Skeletal の警告文の判定で止まり、正式な 79 出力の compare は未完了。途中の出力の照合では Audio 6・Import 13・Glb 12 が一致、Mesh 20・Raw 2・Skeletal 1（manifest の source_hash）が不一致で、main のクラスタ化の変更と入力の行末（CRLF→LF）の差による見込み（詳細は `ManagedTextureAssetSetCli.md` の受入れ節）。`VerifyTextureAssetSet.py` そのものは CI の PowerShell の hash と入力 hash の固定のためローカルでは前段で止まり、比較器の関数で同じ比較を行った。
 - Notes: 要起票: `CookManagedBootstrapTest`（ctest、Debug）がこの機で単独でも 300 秒でタイムアウトする（最後の出力 `line 182: InitializeNewCookManagedStore(Owner, out, error) == CookManagedStoreInitializationResult::Created`、直前に `rename_no_replace; win32_hex=5`）。今回は C++ と試験を変えていない。
 - Notes: 要起票: `AssetCookCliParity.py capture` がローカルの Windows で完走しない（出力先が source 配下の拒否、Skeletal の警告文の判定）。main のクラスタ化の後の 79 出力の基準を取り直すかを決める。
+- U3 VerifyTextureAssetSet.py の checkout 入力の照合から旧 PS1 を外す: 着地(直し 0 回)
