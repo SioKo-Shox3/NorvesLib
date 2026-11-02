@@ -4587,7 +4587,7 @@
 - from: G2-MATERIAL-SELECTION-INTEGRATION
 
 ## G2-S6-ASSET-SET-P1: `CookManagedBootstrapTest` が `rename_no_replace`(win32 5)のあと止まり、300 秒でタイムアウトする原因を直す
-- status: done
+- status: doing
 - done-when: この機で `CookManagedBootstrapTest` を単独で回すと、182 行の `InitializeNewCookManagedStore` の前に `rename_no_replace; win32_hex=5`(ERROR_ACCESS_DENIED)が出て、そのまま 300 秒でタイムアウトする。原因を特定して PROGRESS.md に書く。調べる候補: fixture を `GetTempPathW` の下(共有の TEMP)に作っていること、改名する項目やその子の handle が `FILE_SHARE_DELETE` 無しで開いたままであること、TEMP を見張る外部のソフト。原因が製品の側にあれば製品を直し、試験の置き場の側にあれば fixture を ctest の作業ディレクトリの下へ移す(`RigSplitCookTest` と同じ形)。そのうえで次の 2 つを満たす。(1) 失敗のときは止まらず、数秒のうちに 0 でない終了コードで終わる。(2) `ctest -R "^CookManagedBootstrapTest$" --timeout 180` が単独で Passed になる。復旧で `RolledBack` を期待する箇所など、期待そのものは弱めない。timeout を延ばして通すこともしない。`ManagedTextureAssetSetCli.md` の 2026-11-02 の受入れの節に、Bootstrap の結果を書き足す。
 - verify: `cmake --build build --config Debug --target CookedMeshTest AssetCook -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^CookManagedBootstrapTest$" --no-tests=error --output-on-failure --timeout 180`
