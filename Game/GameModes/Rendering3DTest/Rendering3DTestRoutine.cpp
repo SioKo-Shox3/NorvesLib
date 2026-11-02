@@ -3367,19 +3367,36 @@ namespace Game::GameModes
         const TWeakPtr<Game::CameraLateUpdateState> weakState = data.m_LateCameraState;
         auto* world = &ctx.EngineRef.GetWorld();
         auto* renderWorld = &ctx.EngineRef.GetRenderWorld();
+        if (data.m_bAnimationDebug)
+        {
+            data.m_AnimationDebug = NorvesLib::Core::Container::MakeShared<AnimationDebugScene>();
+            if (!data.m_AnimationDebug->Prepare(ctx, data.m_CobbleStoneMaterial))
+            {
+                LOG_ERROR("ANIMATION_DEBUG 合成sceneの準備に失敗しました");
+                return GameModeEnterResult::Failed;
+            }
+        }
+        const TWeakPtr<AnimationDebugScene> weakAnimationDebug = data.m_AnimationDebug;
 #if NORVES_BUILD_DEVELOPMENT
         // コールバックの所有者は data で、破棄前の Leave で解除される。
         const auto* startupProbeData = &data;
 #endif
-        data.m_LateCameraState->Callback = Delegate<void, float>([weakState, world, renderWorld
+        data.m_LateCameraState->Callback = Delegate<void, float>([weakState, weakAnimationDebug, world, renderWorld
 #if NORVES_BUILD_DEVELOPMENT
             , startupProbeData
 #endif
-        ](float)
+        ](float deltaTime)
         {
             const auto state = weakState.lock();
             CameraProxy cameraProxy;
-            if (!state || !state->BuildSnapshot(*world, cameraProxy)) return;
+            const bool cameraReady = state && state->BuildSnapshot(*world, cameraProxy);
+            if (const auto animationDebug = weakAnimationDebug.lock())
+            {
+                // カメラを組み立てられない場合も、描画時と同じ変換を確定する。
+                if (!cameraReady) world->UpdateRenderTransforms();
+                animationDebug->TickTrail(*world, deltaTime);
+            }
+            if (!cameraReady) return;
             ApplyStartupGrading(cameraProxy, state->bLensEffects, state->bLookLut);
             renderWorld->SetMainCamera(cameraProxy);
 #if NORVES_BUILD_DEVELOPMENT
@@ -3397,15 +3414,6 @@ namespace Game::GameModes
                 state->bSmokeSyncEmitted = true;
             }
         });
-        if (data.m_bAnimationDebug)
-        {
-            data.m_AnimationDebug = NorvesLib::Core::Container::MakeShared<AnimationDebugScene>();
-            if (!data.m_AnimationDebug->Prepare(ctx, data.m_CobbleStoneMaterial))
-            {
-                LOG_ERROR("ANIMATION_DEBUG 合成sceneの準備に失敗しました");
-                return GameModeEnterResult::Failed;
-            }
-        }
         m9FailureGuard.bCommitted = true;
         // 決定的な撮影では、組み立てが終わるまで読み込み中として扱う（最初の
         // Tick が判定する）。
@@ -3417,6 +3425,10 @@ namespace Game::GameModes
 
     void Rendering3DTestRoutine::Tick(GameModeContext &ctx, Rendering3DTestData &data, float deltaTime)
     {
+        // 調整用の剣は、カメラが無効なフレームも描画の変換を標本にする。
+        if (data.m_AnimationDebug)
+            if (auto slot = data.m_LateCameraSlot.lock())
+                slot->Arm(data.m_LateCameraState);
 #if defined(NORVES_GAME_AUDIO)
         if (!ConsumeM9WorldCompletion(ctx, data))
         {
