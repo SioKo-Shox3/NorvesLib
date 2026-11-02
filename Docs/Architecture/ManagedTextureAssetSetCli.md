@@ -266,3 +266,23 @@ recipe は両方31項目。B は18一致、行末だけ8件、smoke 変更4件�
 (c) は0件で、未説明の旧出力差は残らなかった。C の `snapshot/` をそのまま `%LOCALAPPDATA%/NorvesLib/AssetCookCliBaseline/b9d7468e3f0c-crlf/snapshot` へ新規保存した。保存後に snapshot の有限一覧・全出力 byte と元 C の一致を確認した。91出力（56 package＋35 JSON）、`snapshot.json` の SHA-256 は `e58a03535cd8c52f0121d7acb1d616be019fba64e632592d971a5f71fdfe6a52`。採取コミットは `b9d7468e3f0c739a1b51b8a42a0fdca329d1622d`、exe hash はこの節の現行 Debug の2本、source は `%TEMP%/NorvesCliP2/src-crlf`。参考として B の snapshot SHA-256 は `a7b76d2dd924e3d776375b5437af661ad654c742298da646ea7610d1fb6aa6ff`。再現手順は [単体 CLI 比較手順](../TestingAssetCookCliParity.md#クラスタ化の後の基準) に記す。
 
 CI の `windows-assetcook.yml` はまだ旧 artifact `11302304928` を参照し、この新しいローカル基準は artifact として公開していない。A 対 C の `compare` が成功したという意味ではなく、recipe・追加・クラスタ化を説明したうえで保存した別基準である。凍結 Release と現行 Debug の比較であり、現行 Release の実行結果はこの比較に含まない。
+
+## CI の手動起動で検証するもの
+
+`windows-assetcook.yml` を既定の引数で手動起動すると、`NORVES_MERGE_VALIDATION=true` となり、`[validate-merge]` と同じ範囲を検証する。
+
+```powershell
+gh workflow run windows-assetcook.yml --ref <branch>
+```
+
+段4・5の凍結基準の取得と固定hashの照合、段6の在庫79件の照合は実行する。段6のrecipe照合は行わず、段17・18の `capture` と `parity`、それに続く候補のartifact保存は skipped になる。`texture_parity`（`VerifyTextureAssetSet.py`）・CPU契約・Role Profile・Sampler・骨格ローダなど、ほかの段は実行する。段の番号は GitHub の画面で「Set up job」を1とした番号である。
+
+凍結時点の出力を確かめ直す場合は、`-f frozen_parity=true` を指定する。
+
+```powershell
+gh workflow run windows-assetcook.yml --ref <branch> -f frozen_parity=true
+```
+
+この指定では従来どおりrecipe照合と全出力のbyte比較を実行する。mainのクラスタ化（`13ba56a7`）以後の出力は旧基準と一致しないため、凍結時点の出力を確かめ直すときだけ使う。
+
+push時の `[validate-assets]` / `[validate-merge]` の起動条件と検証範囲は変わらない。

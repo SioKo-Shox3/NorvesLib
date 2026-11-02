@@ -1,4 +1,5 @@
 ﻿#include "Rendering/SceneView.h"
+#include "Rendering/CanvasView.h"
 #include "Rendering/Viewport.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Rendering/SceneRenderer.h"
@@ -87,6 +88,26 @@ namespace NorvesLib::Core::Rendering
             outData.CustomData[1] = static_cast<float>(proxy.ImpostorAtlasWidth);
             outData.CustomData[2] = static_cast<float>(proxy.ImpostorAtlasHeight);
             outData.CustomData[3] = proxy.LODSwitchDistance;
+        }
+
+        // BillboardComponent::BuildBoardProxy と同じ式で、板の基点から各頂点を包む境界を作る。
+        void BuildTransientBoardBounds(BoardProxy& proxy)
+        {
+            const Math::Vector3 translation = proxy.WorldTransform.GetTranslationRow();
+            proxy.WorldBounds.CenterX = translation.x;
+            proxy.WorldBounds.CenterY = translation.y;
+            proxy.WorldBounds.CenterZ = translation.z;
+
+            const Math::Vector3 scale = Math::MatrixUtils::ExtractScale(proxy.WorldTransform);
+            const float width = std::abs(proxy.SizeWorld.x) * scale.x;
+            const float height = std::abs(proxy.SizeWorld.y) * scale.y;
+            const float left = -proxy.Pivot.x * width;
+            const float right = (1.0f - proxy.Pivot.x) * width;
+            const float bottom = -proxy.Pivot.y * height;
+            const float top = (1.0f - proxy.Pivot.y) * height;
+            const float maxX = std::max(std::abs(left), std::abs(right));
+            const float maxY = std::max(std::abs(bottom), std::abs(top));
+            proxy.WorldBounds.Radius = std::sqrt(maxX * maxX + maxY * maxY);
         }
 
         float ComputeDistanceToBounds(const BoundingSphere &bounds,
@@ -327,6 +348,54 @@ namespace NorvesLib::Core::Rendering
         m_BoardProxies.push_back(proxy);
         m_BoardProxyIndex[proxy.ComponentId] = index;
         m_VisibleBoardProxies.clear();
+    }
+
+    void SceneView::SetTransientBoardProxies(const Container::VariableArray<BoardProxy>& proxies)
+    {
+        m_TransientBoardProxies.clear();
+        for (const BoardProxy& proxy : proxies)
+        {
+            if (!proxy.IsValid() || proxy.Space != BoardSpace::WorldSpace)
+            {
+                continue;
+            }
+
+            BoardProxy transientProxy = proxy;
+            if (transientProxy.WorldBounds.Radius <= 0.0f)
+            {
+                BuildTransientBoardBounds(transientProxy);
+            }
+            m_TransientBoardProxies.push_back(transientProxy);
+        }
+        m_VisibleBoardProxies.clear();
+    }
+
+    void DistributeTransientBoardProxies(const Container::VariableArray<BoardProxy>& frameProxies,
+                                         SceneView* sceneView,
+                                         CanvasView* canvasView)
+    {
+        Container::VariableArray<BoardProxy> worldProxies;
+        Container::VariableArray<BoardProxy> screenProxies;
+        for (const BoardProxy& proxy : frameProxies)
+        {
+            if (proxy.Space == BoardSpace::WorldSpace)
+            {
+                worldProxies.push_back(proxy);
+            }
+            else if (proxy.Space == BoardSpace::ScreenSpace)
+            {
+                screenProxies.push_back(proxy);
+            }
+        }
+
+        if (sceneView)
+        {
+            sceneView->SetTransientBoardProxies(worldProxies);
+        }
+        if (canvasView)
+        {
+            canvasView->SetTransientBoardProxies(screenProxies);
+        }
     }
 
     void SceneView::RemoveBoardProxy(uint64_t componentId)
@@ -748,6 +817,7 @@ namespace NorvesLib::Core::Rendering
         m_MeshProxies.clear();
         m_SkinnedMeshProxies.clear();
         m_BoardProxies.clear();
+        m_TransientBoardProxies.clear();
         m_MegaGeometryProxies.clear();
         m_LightProxies.clear();
         m_MeshProxyIndex.clear();
@@ -1347,6 +1417,43 @@ namespace NorvesLib::Core::Rendering
         SetPostProcessStack(std::move(postProcessStack));
     }
 
+    void SceneView::CullBoardProxy(BoardProxy& proxy,
+                                 const CameraProxy& camera,
+                                 const Math::Matrix4x4& viewProjection,
+                                 const Math::Vector3& cameraPosition,
+                                 Container::UnorderedSet<uint64_t>& suppressedMeshComponentIds)
+    {
+        bool bVisible = proxy.IsValid() &&
+                        proxy.Space == BoardSpace::WorldSpace &&
+                        HasFlag(camera.CullingMask, proxy.LayerMask);
+
+        if (m_bEnableFrustumCulling && bVisible)
+        {
+            bVisible = FrustumCull(proxy, viewProjection);
+        }
+
+        if (m_bEnableDistanceCulling && bVisible)
+        {
+            bVisible = DistanceCull(proxy, cameraPosition);
+        }
+
+        if (bVisible)
+        {
+            proxy.SortDepth = ComputeDistanceToBounds(proxy.WorldBounds, cameraPosition);
+            bVisible = IsImpostorBoardEligibleForDistance(proxy, proxy.SortDepth);
+        }
+
+        if (bVisible)
+        {
+            if (ShouldSuppressMeshForImpostor(proxy))
+            {
+                suppressedMeshComponentIds.insert(proxy.SourceMeshComponentId);
+            }
+
+            m_VisibleBoardProxies.push_back(&proxy);
+        }
+    }
+
     void SceneView::CullProxies(Viewport *viewport)
     {
         NORVES_STAT_TIME_START(cullingViewport);
@@ -1370,37 +1477,13 @@ namespace NorvesLib::Core::Rendering
 
         Container::UnorderedSet<uint64_t> suppressedMeshComponentIds;
 
-        for (BoardProxy &proxy : m_BoardProxies)
+        for (BoardProxy& proxy : m_BoardProxies)
         {
-            bool bVisible = proxy.IsValid() &&
-                            proxy.Space == BoardSpace::WorldSpace &&
-                            HasFlag(camera.CullingMask, proxy.LayerMask);
-
-            if (m_bEnableFrustumCulling && bVisible)
-            {
-                bVisible = FrustumCull(proxy, viewProjection);
-            }
-
-            if (m_bEnableDistanceCulling && bVisible)
-            {
-                bVisible = DistanceCull(proxy, cameraPosition);
-            }
-
-            if (bVisible)
-            {
-                proxy.SortDepth = ComputeDistanceToBounds(proxy.WorldBounds, cameraPosition);
-                bVisible = IsImpostorBoardEligibleForDistance(proxy, proxy.SortDepth);
-            }
-
-            if (bVisible)
-            {
-                if (ShouldSuppressMeshForImpostor(proxy))
-                {
-                    suppressedMeshComponentIds.insert(proxy.SourceMeshComponentId);
-                }
-
-                m_VisibleBoardProxies.push_back(&proxy);
-            }
+            CullBoardProxy(proxy, camera, viewProjection, cameraPosition, suppressedMeshComponentIds);
+        }
+        for (BoardProxy& proxy : m_TransientBoardProxies)
+        {
+            CullBoardProxy(proxy, camera, viewProjection, cameraPosition, suppressedMeshComponentIds);
         }
 
         for (MeshProxy &proxy : m_MeshProxies)
@@ -1477,37 +1560,13 @@ namespace NorvesLib::Core::Rendering
 
         Container::UnorderedSet<uint64_t> suppressedMeshComponentIds;
 
-        for (BoardProxy &proxy : m_BoardProxies)
+        for (BoardProxy& proxy : m_BoardProxies)
         {
-            bool bVisible = proxy.IsValid() &&
-                            proxy.Space == BoardSpace::WorldSpace &&
-                            HasFlag(camera.CullingMask, proxy.LayerMask);
-
-            if (m_bEnableFrustumCulling && bVisible)
-            {
-                bVisible = FrustumCull(proxy, viewProjection);
-            }
-
-            if (m_bEnableDistanceCulling && bVisible)
-            {
-                bVisible = DistanceCull(proxy, cameraPosition);
-            }
-
-            if (bVisible)
-            {
-                proxy.SortDepth = ComputeDistanceToBounds(proxy.WorldBounds, cameraPosition);
-                bVisible = IsImpostorBoardEligibleForDistance(proxy, proxy.SortDepth);
-            }
-
-            if (bVisible)
-            {
-                if (ShouldSuppressMeshForImpostor(proxy))
-                {
-                    suppressedMeshComponentIds.insert(proxy.SourceMeshComponentId);
-                }
-
-                m_VisibleBoardProxies.push_back(&proxy);
-            }
+            CullBoardProxy(proxy, camera, viewProjection, cameraPosition, suppressedMeshComponentIds);
+        }
+        for (BoardProxy& proxy : m_TransientBoardProxies)
+        {
+            CullBoardProxy(proxy, camera, viewProjection, cameraPosition, suppressedMeshComponentIds);
         }
 
         for (MeshProxy &proxy : m_MeshProxies)
