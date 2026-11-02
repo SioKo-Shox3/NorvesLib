@@ -8850,3 +8850,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: なし（アプリを起動する確かめは無い）
 - Notes: 利用者の TEMP（直下に約 13 万項目）のままだと `CookManagedUpdateTest`（`update fixture bootstrap: cook_managed_store: entry_limit`）と `TextureManagedCliTest`（258 行の Created）が落ちる。原因はこのタスクの対象外の `CookManagedTransactionController.cpp` の祖先の全件列挙（433 行）で、この変更の前から同じく落ちる
 - 要起票: `CookManagedTransactionController.cpp` の祖先の列挙（433 行）と workspace の列挙（`VerifyClaims` 333 行）も固定名・claim の長名だけ残す読み流しにし、利用者の TEMP のままで `CookManagedUpdateTest`・`TextureManagedCliTest` が通るようにする
+- Notes(G2-GR82-B4-STATIC-ROOT-FRAME128-P1 反復 2): ランナーの再検証の失敗は、ほかの枠と同時に走った cook の試験とボリュームのロックが重なった `volume_busy`。重ならなくても、利用者の TEMP では対象外の TransactionController の全件列挙で UpdateTest・TextureManagedCliTest が落ちるので BLOCKED にした(判断の材料は blocked/ に記載)

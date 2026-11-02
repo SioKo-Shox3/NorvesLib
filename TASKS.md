@@ -4537,7 +4537,7 @@
 - from: GAME-GR135-VFX
 
 ## G2-GR82-B4-STATIC-ROOT-FRAME128-P1: 管理ストアの祖先の列挙を、祖先の項目数で失敗しない形にする
-- status: done
+- status: doing
 - done-when: `ObserveLocked` は、workspace からボリュームの根までのどの階層でも、固定名 `StoreLeaf` と長名か short alias で fold 一致する項目だけを残し、ほかの項目はためずに読み流す。こうして、祖先に 1 ディレクトリで 16384 を超える項目があっても `entry_limit` で落ちないようにする。上限(1 ディレクトリ 16384・全列挙 65536・metadata 32MiB)は、store の制御領域の列挙(`header.json`・`roots.json`・`pending`)と、読み流しで残した一致の項目にだけ掛ける。次の 3 つは今のまま保つ。
   - 列挙の失敗を「store なし」と扱わないこと
   - 固定名の ordinal case-insensitive 一致が複数あるとき・実長名の大文字小文字違い・alias の衝突を Conflict にすること
