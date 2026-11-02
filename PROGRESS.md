@@ -8517,3 +8517,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 要起票: `CookManagedBootstrapTest`（ctest、Debug）がこの機で単独でも 300 秒でタイムアウトする（最後の出力 `line 182: InitializeNewCookManagedStore(Owner, out, error) == CookManagedStoreInitializationResult::Created`、直前に `rename_no_replace; win32_hex=5`）。今回は C++ と試験を変えていない。
 - Notes: 要起票: `AssetCookCliParity.py capture` がローカルの Windows で完走しない（出力先が source 配下の拒否、Skeletal の警告文の判定）。main のクラスタ化の後の 79 出力の基準を取り直すかを決める。
 - U3 VerifyTextureAssetSet.py の checkout 入力の照合から旧 PS1 を外す: 着地(直し 0 回)
+- U4 受入れ節の記録と古い「後続」の記述を直す: 着地(直し 0 回)
