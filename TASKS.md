@@ -4473,3 +4473,15 @@
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -OutDir .harness/runs/startup-capture/GAME-GR136-VFX`
 - paths: Library/Core/Public/Particle, Library/Core/Private/Particle, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Tools/AssetCook, Test/Core/Rendering, Docs/Plans/GameFeatureRoadmap.md, TASKS.md, PROGRESS.md
 - from: GAME-GR136-VFX
+
+## G2-GR32-GPU-ACCEPTANCE-CHECK: 多材質と旧描画互換をWindows GPUで確認する(後回しにしたアプリの起動の確かめ)
+- status: todo
+- check: launch
+- gpu: exclusive
+- done-when: G2-GR32-GPU-ACCEPTANCE で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、G2-GR32-GPU-ACCEPTANCE の done-when を満たすことを確かめる。満たさなければ G2-GR32-GPU-ACCEPTANCE の done-when と paths の範囲で直す。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -SkinnedProbe -SkinnedProbeMaterials 2 -VisibilityBuffer On -OutDir .harness/runs/startup-capture/G2-GR32-GPU-ACCEPTANCE-2mat-vb`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -SkinnedProbe -SkinnedProbeMaterials 2 -VisibilityBuffer Off -OutDir .harness/runs/startup-capture/G2-GR32-GPU-ACCEPTANCE-2mat-gbuffer`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Test-M9World.ps1 -Configuration Debug -LegacyNvskelCompare -EvidenceDir .harness/runs/scene-capture/G2-GR32-GPU-ACCEPTANCE-legacy`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -OutDir .harness/runs/startup-capture/G2-GR32-GPU-ACCEPTANCE-default`
+- paths: Library/Core/Private/Rendering/VisibilityRasterPass.cpp, Library/Core/Public/Rendering/VisibilityRasterPass.h, Library/Core/Private/Rendering/VirtualShadowMapPass.cpp, Library/Core/Public/Rendering/MeshIndexChunks.h, Test/Core/Rendering/SkinnedSubmeshDrawContractTest.cpp, Game/GameModes/Rendering3DTest/StartupSkinnedProbe.cpp, Game/GameModes/Rendering3DTest/StartupSkinnedProbe.h, Game/GameModes/Rendering3DTest/Rendering3DTestData.h, Game/GameModes/Rendering3DTest/Rendering3DTestRoutine.cpp, Game/GameApplicationHandler.cpp, Game/GameModes/Rendering3DTest/M9WorldAcceptance.cpp, Game/GameModes/Rendering3DTest/M9WorldAcceptance.h, Scripts/CaptureStartupScene.ps1, Scripts/Test-M9World.ps1, Test/Tools/NvskelLegacyV01Oracle.py, Docs/Architecture/NVSKELMigrationInventory.md, TASKS.md, PROGRESS.md
+- from: G2-GR32-GPU-ACCEPTANCE
