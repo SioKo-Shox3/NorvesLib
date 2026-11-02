@@ -8745,3 +8745,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 完了を宣言しない範囲: 粒子から歪みのバッファへ描く描画のモジュール（GR57 の描画パスの後）、メッシュの法線で歪ませる源（GR134・GR27 の後）、GR25 の口への移し替え、TAA のリアクティブの印（GR30）、ずらした先の手前の物の写り込みの拒否、Editor の編集の画面。どのシーンにも源を置かないので、起動画面とシーンの見た目は変わらない
 - U1 歪みの源の型と GameThread から描画の文脈までの受け渡し: 着地(直し 0 回)
 - U2 歪みのシェーダー 4 本: 着地(直し 0 回)
+- U3 DistortionPass と SceneView への配置: 着地(直し 0 回)
