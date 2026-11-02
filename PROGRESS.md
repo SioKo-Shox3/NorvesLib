@@ -9087,3 +9087,9 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 要起票: castle の 5 範囲（ref_far_01、5〜9 km）の壁の足から崖錐への移り（far_01 の wall_foot。版 15 で 0.334〜0.344、外した下限 0.356）を、遠景の格子の崖の生成（式）か MegaGeometry の散布で上げる
 - U1 宛先ロックに試験だけの mutex 名前空間の口を足し、宛先ロックの試験をその中で走らせる: 着地(直し 0 回)
 - U2 Bootstrap・Update の試験と子プロセスを名前空間の中で走らせ、タスクの verify を全部回す: 着地(直し 0 回)
+
+## 2026-11-03 G2-MATERIAL-SELECTION-INTEGRATION-P1-P1-P1-P1（run 20261103-004712 の反復 1、完了）
+- Done: cook の宛先ロックに試験だけの mutex 名前空間の口 `Detail::ScopedCookDestinationLockNamespaceForTest`（`CookDestinationLockTestAccess.h`、範囲つき・入れ子で前の値へ戻す）を足した。設定中だけ mutex 名が `Global\NorvesLib.AssetCook.DestinationVolumeLock.v1.test.<名前空間>.<小文字の volume GUID>` になり、外すと今の名前に戻る。本体は新しい環境変数も引数も読まない（`CookDestinationLock.cpp` の `GetEnvironmentVariable` は 1 か所のまま）。試験側の `CookLockWaitTestScope.h` に、親が実行ごとに一意の名前空間を立てて試験だけの環境変数 `NORVES_COOK_LOCK_TEST_NAMESPACE` で子へ継承させる範囲と、子がそれを読んで同じ名前空間を立てる範囲を足し、`CookDestinationLockTest`・`CookManagedBootstrapTest`・`CookManagedUpdateTest` の親と子（`--lock-child`・`--bootstrap-child`・`--update-child`・`--recovery-child`）をその中で走らせる。`CookDestinationLockTest` は名前空間を外した状態で製品の名前（接頭辞 + 36 文字の小文字 GUID）を確かめる。検査・期待と CMakeLists の `RESOURCE_LOCK`・`ENVIRONMENT` は変えていない
+- 証拠: `.harness/runs/20261103-004712/U2-verify.txt`（Debug のビルド 0、3 本の直列 Passed 0.56・20.96・76.71 秒、製品の名前の mutex を python が持った状態（取得結果 `[0]`）で 3 本 Passed、`-j 4` の 4 本 Passed、参照数 1、numstat 一致）
+- Next: なし（この項目は完了）
+- Notes: 名前空間は試験の環境変数で子へ渡すため、試験から AssetCook.exe など製品の実行ファイルを起動する経路があれば、その子は製品の名前で取る（今の 3 本の子は CookedMeshTest 自身だけ）
