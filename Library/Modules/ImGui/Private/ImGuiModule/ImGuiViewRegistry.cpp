@@ -2,8 +2,10 @@
 #include "ImGuiModule/ImGuiViewRegistry.h"
 
 #include "CoreTypes.h"
+#include "Logging/LogMacros.h"
 
 #include <algorithm>
+#include <utility>
 
 // ImGuiViewRegistry — ImGui view 登録レジストリの定義(Piece 2)。
 //
@@ -86,7 +88,57 @@ namespace NorvesLib::Modules::Gui
             static bool bInCapture = false;
             return bInCapture;
         }
+
+        bool &GetImageInitializationStartedStorage()
+        {
+            static bool bStarted = false;
+            return bStarted;
+        }
     } // namespace
+
+    Core::Container::VariableArray<ImGuiImageRegistration> &GetRegisteredImGuiImages()
+    {
+        static Core::Container::VariableArray<ImGuiImageRegistration> images;
+        return images;
+    }
+
+    void BeginImGuiImageInitialization()
+    {
+        GetImageInitializationStartedStorage() = true;
+    }
+
+    uint64_t RegisterImGuiImage(const uint8_t *rgba8Pixels, uint32_t width, uint32_t height)
+    {
+        static uint64_t nextId = 2;
+        if (GetImageInitializationStartedStorage() || rgba8Pixels == nullptr ||
+            width == 0 || height == 0 || width > 4096 || height > 4096 || nextId < 2)
+        {
+            NORVES_LOG_WARNING("ImGui", "画像を登録できません（初期化開始後・画素または寸法が無効・ID 枯渇）");
+            return 0;
+        }
+
+        ImGuiImageRegistration image;
+        image.Id = nextId;
+        image.Width = width;
+        image.Height = height;
+        // 辺の上限により、RGBA8 全体のサイズも 32bit の範囲に収まる。
+        const uint32_t byteCount = width * height * 4u;
+        image.Pixels.assign(rgba8Pixels, rgba8Pixels + byteCount);
+        GetRegisteredImGuiImages().push_back(std::move(image));
+        return nextId++;
+    }
+
+    bool IsImGuiImageReady(uint64_t imageId)
+    {
+        for (const ImGuiImageRegistration &image : GetRegisteredImGuiImages())
+        {
+            if (image.Id == imageId)
+            {
+                return image.bReady;
+            }
+        }
+        return false;
+    }
 
     void AddImGuiDisplayText(const char *utf8Text)
     {

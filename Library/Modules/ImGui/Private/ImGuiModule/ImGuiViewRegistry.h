@@ -24,4 +24,20 @@ namespace NorvesLib::Modules::Gui
      * @brief AddImGuiDisplayText で足された文字（UTF-8 の連結）を返す（モジュール内部用）
      */
     const Core::Container::AnsiString &GetImGuiDisplayText();
+
+    // GameThread 専用。初期化後は画素の写しを解放し、描画可否だけを問い合わせに残す。
+    struct ImGuiImageRegistration
+    {
+        uint64_t Id = 0;
+        uint32_t Width = 0;
+        uint32_t Height = 0;
+        Core::Container::VariableArray<uint8_t> Pixels;
+        bool bReady = false;
+    };
+
+    /** @brief 登録画像の表を返す（GameThread・モジュール内部用） */
+    Core::Container::VariableArray<ImGuiImageRegistration> &GetRegisteredImGuiImages();
+
+    /** @brief Initialize 開始を記録し、以後の画像登録を閉じる（GameThread 専用） */
+    void BeginImGuiImageInitialization();
 } // namespace NorvesLib::Modules::Gui

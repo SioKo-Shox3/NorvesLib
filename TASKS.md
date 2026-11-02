@@ -3299,7 +3299,7 @@
 - notes: 危険地帯（描画）。`Assets/Shaders/volumetrics.frag` 103〜135 行付近は CSM の影の地図（`cascadedShadowMap`）を読む。太陽の影が VSM のときに霧の影が効いているかを先に確かめる。 2026-10-12 親: 計測の見直し（ユーザーの指摘「節目に計測を入れても意味があるのかを考えるべき」。計測ごとに、問い・結果で変わる判断・測らずに分からないかの 3 点を書き、書けないものは置かない。Sol の批評を反映）。 2026-10-15 ユーザー: 室内の光は「ほぼ実写」の美しさを見るシーン。SCN-INT-REFERENCE-SELECT の写真と並べた比較画像（1920×1080）と、同じ視点のパストレースの正解で判断する。速さの条件は無い。 2026-10-19 親: verify を RelWithDebInfo に揃え、周回の試験を 1 コマンド 10 分に収まる形にした（Debug の撮影は約 11 分、3 周は 928 秒の実測）。 2026-10-23（親）: 順を保つため after を足した（先に走ると後の変更で撮り直しになる）。
 
 ## SCN-THUMBNAILS: ランチャーのカードに各シーンの見本画像を出す
-- status: todo
+- status: done
 - done-when: `Scripts/CaptureLauncherThumbnails.ps1` を作る: 各シーンの見本用の視点（シーンの一覧に書く。既定は `overview`）を `Scripts/CaptureScene.ps1` で `-WorkDir`（`.harness/runs/scene-capture/` の下）へ撮り、640×360 程度に縮めて `Assets/Textures/Launcher/<id>.png` に書く（追跡する）。ランチャーは `Assets/Textures/Launcher/<id>.png` を読み込んでカードに出し、ファイルが無いカードは今の表示のままにする（落ちない。警告は 1 行）。1920×1080 でカードの説明文が右の縁からはみ出さないよう、折り返しの幅からカードの内側の余白を引き、カードが 1 行に収まらないときの並び（折り返しかスクロール）を決める。起動せずに確かめるのは、Debug の Game のビルドと `LauncherMenuTest` が通ること。台本の実行（見本画像の生成）と、ランチャーの撮影を開いて見本画像が正しいカードに出て選択の強調が分かることは、起動を戻した後の `SCN-THUMBNAILS-CHECK` で確かめる（見本画像は各シーンの見た目が決まった後に撮り直す）。
 - verify: `cmake --build build --config Debug --target Game LauncherMenuTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^LauncherMenuTest$" --no-tests=error --output-on-failure --timeout 180`
@@ -3752,7 +3752,7 @@
 - notes: SS-CONTACT-SHADOWの反復（2026-10-02）で見つけた。lowの段で`mean_flip=0.396656647`（上限0.02）・`raw_max=163`・`maximum_channel=19`で落ちる。接触影を切ったシェーダーでも同じ値（`.harness/runs/20261002-084328/check-SS-CONTACT-SHADOW-r3-density-contact-off.txt`）なので、それより前の変更による。ctestには入っていない。
 
 ## TEST-FULL-CTEST-BASELINE: 全体CTestの既存の失敗を直す
-- status: todo
+- status: done
 - after: TEST-ASSERT-NO-DIALOG
 - done-when: 2026-09-25 の全体 CTest で落ちていた試験のうち、今も登録があり実行から外していないもの（`RenderResourcesDomainContractTest`・`ViewportCameraIdRenderPlanTest`・`BoardComponentRoutingTest`・`SkeletalFramePacketSnapshotTest`・`FrameCaptureReadbackHelperTest`・`WorldSyncDifferentialTest`・`CanvasViewRenderTest`）を Debug で回し、今も落ちる・止まるものを `Docs/Testing.md` の扱いで分ける: 製品のコードの不具合（例: GPU デバイスの無い試験で `RenderingCoordinator::GenerateDrawCommands` が `m_Device->GetCapabilities()` を null 参照する）は直す。実装の写し（数・並びの決め打ち。例: `WaitIdleWithoutResultCheck(` の数）の検査は、期待値を書き直さずに `set_tests_properties(... DISABLED TRUE)` で外し、理由を CMake のコメントと `Docs/Testing.md` の「外したもの」に書く。`VolumetricsPassContractTest`・`ComponentDataRegistryTest` は登録が無くなり、`RenderGraphTextureUsageContractTest` は 2026-11-01 に外したので対象外。上の 7 本の ctest が通る（外したものは Not Run）。`M9WorldAcceptanceTest` と全体の CTest（GPU の試験を含む）は、起動を戻した後の `TEST-FULL-CTEST-BASELINE-CHECK` で回し、残った失敗の理由と扱いを記録する。
 - verify: `cmake --build build --config Debug --target RenderResourcesDomainContractTest ViewportCameraIdRenderPlanTest BoardComponentRoutingTest SkeletalFramePacketSnapshotTest FrameCaptureReadbackHelperTest WorldSyncDifferentialTest CanvasViewRenderTest -- /m:1`
@@ -3944,7 +3944,7 @@
 - stop-when: 手元確認用CookAssets.ps1/StartupMaterialsを対象に戻す、PS側へ増分判定を重複実装、Windows実byte比較を未実施で完了とする。
 
 ## G2-MATERIAL-SELECTION-INTEGRATION: 共通照合を設定とslot名へ接続する
-- status: todo
+- status: done
 - after: G2-GR79-IMPORT-POLICY-CONNECTION
 - done-when: GR79 ARM/発光、GR78 材質→SurfaceName、GR32 slot名が同じResolveMaterialSelectionを使う。元catalog/生成slotを明示し、全設定の未一致/二重指定をcookと増分preflight双方で拒否。同名GLBは元での改名推奨を資産名付きで警告する。 verify の文章にあった場合（raw の無名 1 個・Blender の Material_0、primitive の逆順・同名・生成名の衝突、name と index の二重指定、不在、unicode の名前、増分の skip で検証を迂回しないこと、設定値・SurfaceName・slot への実際の到達）は、既存の試験（`MaterialSelectionTest`・`MaterialImportDocumentTest`・`SkeletalMaterialBindingsTest`）の検査として足す（足す前に `Docs/Testing.md` の 3 点を書く）。
 - verify: `cmake --build build --config Debug --target CookedMeshTest AssetCook -- /m:1`
@@ -4435,3 +4435,22 @@
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SCN-INTERIOR-SHAFTS`
 - paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Scripts, TASKS.md, PROGRESS.md
 - from: SCN-INTERIOR-SHAFTS
+
+## TEST-FULL-CTEST-BASELINE-CHECK: 全体CTestの既存の失敗を直す(後回しにしたアプリの起動の確かめ)
+- status: todo
+- check: launch
+- gpu: exclusive
+- done-when: TEST-FULL-CTEST-BASELINE で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、TEST-FULL-CTEST-BASELINE の done-when を満たすことを確かめる。満たさなければ TEST-FULL-CTEST-BASELINE の done-when と paths の範囲で直す。
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 600`
+- paths: Library/Core, Test/Core, Game, Docs/Testing.md, TASKS.md, PROGRESS.md
+- from: TEST-FULL-CTEST-BASELINE
+
+## SCN-THUMBNAILS-CHECK: ランチャーのカードに各シーンの見本画像を出す(後回しにしたアプリの起動の確かめ)
+- status: todo
+- check: launch
+- gpu: exclusive
+- done-when: SCN-THUMBNAILS で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、SCN-THUMBNAILS の done-when を満たすことを確かめる。満たさなければ SCN-THUMBNAILS の done-when と paths の範囲で直す。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureLauncherThumbnails.ps1 -Configuration RelWithDebInfo -WorkDir .harness/runs/scene-capture/SCN-THUMBNAILS/thumbs`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene launcher -Configuration RelWithDebInfo -Build -OutDir .harness/runs/scene-capture/SCN-THUMBNAILS`
+- paths: Game, Scripts, Assets/Textures/Launcher, TASKS.md, PROGRESS.md
+- from: SCN-THUMBNAILS

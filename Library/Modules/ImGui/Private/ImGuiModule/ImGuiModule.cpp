@@ -248,6 +248,9 @@ namespace NorvesLib::Modules::Gui
 
             bool Initialize() override
             {
+                // 失敗経路も含め、Initialize に入った時点で画像登録を締め切る。
+                BeginImGuiImageInitialization();
+
                 // ImGui コンテキストを GameThread で生成・所有する。2B-i② で MT 安全化のため、
                 // imgui バックエンドの初期化とフォントアトラスの GPU アップロードもこの
                 // GameThread 初期化フェーズ(最初のフレーム投入前=RenderThread アイドルで
@@ -393,6 +396,15 @@ namespace NorvesLib::Modules::Gui
                     NORVES_LOG_WARNING(kLogCategory, "InitializeBackend failed: overlay InitializeGameThread");
                     return false;
                 }
+
+                // InstallAll は ApplicationProcessor::Initialize 内で完了し、Run の最初の
+                // Tick / パケット投入より先に戻る。この表の書き込みと RT の初回 Execute は重ならない。
+                for (ImGuiImageRegistration &image : GetRegisteredImGuiImages())
+                {
+                    image.bReady = m_OverlayPass.UploadImageGameThread(
+                        device.get(), image.Id, image.Pixels.data(), image.Width, image.Height);
+                    Core::Container::VariableArray<uint8_t>().swap(image.Pixels);
+                }
                 return true;
             }
 
@@ -443,6 +455,7 @@ namespace NorvesLib::Modules::Gui
                 // ここでの購読解除はない(ルーター登録解除は Uninstall が担う)。
 
                 m_OverlayPass.Shutdown();
+                Core::Container::VariableArray<ImGuiImageRegistration>().swap(GetRegisteredImGuiImages());
 
                 if (m_Context != nullptr)
                 {
