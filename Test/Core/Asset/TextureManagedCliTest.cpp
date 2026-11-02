@@ -3,6 +3,7 @@
 #include "Tools/AssetCook/CookManagedUpdate.h"
 #include "Tools/AssetCook/CookManagedUpdateTestAccess.h"
 #include "Tools/AssetCook/CookManagedStoreInitialization.h"
+#include "Tools/AssetCook/CookDestinationLockTestAccess.h"
 #include "Tools/AssetCook/CookManagedTransactionIntent.h"
 #include "Tools/AssetCook/CookCacheDecision.h"
 #include "Text/JsonDocument.h"
@@ -74,6 +75,61 @@ namespace TextureCliTest
         Write(path, {reinterpret_cast<const uint8_t*>(text), std::strlen(text)});
     }
 #if defined(_WIN32)
+    // 同一プロセスの待機時間を全呼び出しで共有し、上限を超えたら最後の Busy を返す。
+    ULONGLONG gVolumeBusyWaitedMs = 0;
+    template <class F> auto RetryVolumeBusy(F&& operation)
+    {
+        constexpr ULONGLONG MaximumWaitMs = 90000;
+        constexpr DWORD WaitStepMs = 50;
+        ULONGLONG waitedMs = 0;
+        auto result = operation();
+        while (result == decltype(result)::Busy && gVolumeBusyWaitedMs <= MaximumWaitMs - WaitStepMs)
+        {
+            const auto start = GetTickCount64();
+            Sleep(WaitStepMs);
+            const auto elapsed = GetTickCount64() - start;
+            waitedMs += elapsed;
+            gVolumeBusyWaitedMs += elapsed;
+            if (gVolumeBusyWaitedMs >= MaximumWaitMs)
+            {
+                break;
+            }
+            result = operation();
+        }
+        if (waitedMs != 0)
+        {
+            std::fprintf(stderr, "VOLUME_BUSY_RETRY waited_ms=%llu\n", waitedMs);
+        }
+        return result;
+    }
+    HANDLE gVolumeMutex = nullptr;
+    template <class F> auto WithVolumeGuard(F&& operation)
+    {
+        // 上位 API は Busy の前にも書き込み得るため、呼び出しの間だけ同じ mutex を確保する。
+        const auto status = RetryVolumeBusy([&]()
+        {
+            const DWORD wait = WaitForSingleObject(gVolumeMutex, 0);
+            if (wait == WAIT_TIMEOUT)
+            {
+                return CookDestinationLockResult::Busy;
+            }
+            return wait == WAIT_OBJECT_0 || wait == WAIT_ABANDONED ? CookDestinationLockResult::Executed
+                                                                   : CookDestinationLockResult::Error;
+        });
+        CHECK(status == CookDestinationLockResult::Executed);
+        const auto result = operation();
+        CHECK(ReleaseMutex(gVolumeMutex));
+        return result;
+    }
+    TextureAssetSetCookResult CookGuarded(const TextureAssetSetCookRequest& request,
+                                          CookManagedBootstrapOutcome& out, TestText& error)
+    {
+        return WithVolumeGuard([&]() { return CookTextureAssetSetWithOutcome(request, out, error); });
+    }
+    bool CookGuarded(const TextureAssetSetCookRequest& request, TestText& error)
+    {
+        return WithVolumeGuard([&]() { return CookTextureAssetSet(request, error); });
+    }
     struct NativeId
     {
         uint64_t Volume = 0;
@@ -153,7 +209,10 @@ namespace TextureCliTest
             args.push_back(value.c_str());
         }
         int code = -1;
-        CHECK(RunTextureAssetSetCommand(static_cast<int>(args.size()), args.data(), code));
+        CHECK(WithVolumeGuard([&]()
+        {
+            return RunTextureAssetSetCommand(static_cast<int>(args.size()), args.data(), code);
+        }));
         CHECK(code == expected);
     }
     struct Fixture
@@ -235,7 +294,10 @@ namespace TextureCliTest
             CookManagedUpdateOutcome out;
             out.ClaimId = "held";
             TestText error;
-            const auto result = Access::UpdateCookManagedAssetSetForTest(request, probe, out, error);
+            const auto result = RetryVolumeBusy([&]()
+            {
+                return Access::UpdateCookManagedAssetSetForTest(request, probe, out, error);
+            });
             if (result != Update::NeedsRecovery)
             {
                 std::fprintf(stderr, "cli fixture interrupt: %s\n", error.c_str());
@@ -255,7 +317,7 @@ namespace TextureCliTest
         request.Report = &report;
         CookManagedBootstrapOutcome out;
         TestText error;
-        CHECK(CookTextureAssetSetWithOutcome(request, out, error) == TextureAssetSetCookResult::Created);
+        CHECK(CookGuarded(request, out, error) == TextureAssetSetCookResult::Created);
         CHECK(report.Assets.size() == 2 && report.Assets[0].Metrics.TextureBytes == 20 &&
               report.Assets[1].Metrics.TextureBytes == 0);
         CHECK(std::filesystem::is_regular_file(report.ReportDirectory / "cook_report.json"));
@@ -281,11 +343,11 @@ namespace TextureCliTest
         const auto generation = out.StateGeneration;
         const auto texture = Read(f.Runtime / "Cooked/Probe/a.nvpkg");
         const auto manifest = Read(f.Runtime / "manifest.json");
-        CHECK(CookTextureAssetSetWithOutcome(request, out, error) == TextureAssetSetCookResult::NoChange);
+        CHECK(CookGuarded(request, out, error) == TextureAssetSetCookResult::NoChange);
         CHECK(out.StateGeneration == generation && report.Assets[0].bSkipped && report.Assets[1].bSkipped);
         CHECK(Read(f.Runtime / "manifest.json") == manifest);
         Write(f.Source / "config.bin", "changed raw source");
-        CHECK(CookTextureAssetSetWithOutcome(request, out, error) == TextureAssetSetCookResult::Updated);
+        CHECK(CookGuarded(request, out, error) == TextureAssetSetCookResult::Updated);
         CHECK(out.StateGeneration == generation + 1 && report.Assets[0].bSkipped && !report.Assets[1].bSkipped);
         CHECK(Read(f.Runtime / "Cooked/Probe/a.nvpkg") == texture);
         const auto published = Read(f.Runtime / "manifest.json");
@@ -294,7 +356,7 @@ namespace TextureCliTest
         const auto limited = f.SpecText.substr(0, at) + "\"budgets\":{\"defaults\":{\"texture\":{\"max_bytes\":0}}}," +
                              f.SpecText.substr(at);
         Write(f.Spec, BytesOf(limited));
-        CHECK(CookTextureAssetSetWithOutcome(request, out, error) == TextureAssetSetCookResult::BudgetExceeded);
+        CHECK(CookGuarded(request, out, error) == TextureAssetSetCookResult::BudgetExceeded);
         CHECK(report.BudgetErrors == 1 && Read(f.Runtime / "manifest.json") == published);
         Call(f.Arguments(), 2);
         auto warning = f.Arguments();
@@ -316,22 +378,22 @@ namespace TextureCliTest
         const auto textureOnly = f.SpecText.substr(0, rawEntry) + "]}";
         Write(f.Spec, BytesOf(textureOnly));
         const auto beforePrune = Read(f.Runtime / "manifest.json");
-        CHECK(CookTextureAssetSetWithOutcome(request, out, error) == TextureAssetSetCookResult::NoChange);
+        CHECK(CookGuarded(request, out, error) == TextureAssetSetCookResult::NoChange);
         CHECK(Read(f.Runtime / "manifest.json") == beforePrune);
         request.bPrune = true;
-        CHECK(CookTextureAssetSetWithOutcome(request, out, error) == TextureAssetSetCookResult::Updated);
+        CHECK(CookGuarded(request, out, error) == TextureAssetSetCookResult::Updated);
         CHECK(report.Assets.size() == 1 && report.Assets[0].bSkipped);
         CHECK(Read(f.Runtime / "Cooked/Probe/config.nvpk") == rawBeforeRemoval);
-        CHECK(CookTextureAssetSetWithOutcome(request, out, error) == TextureAssetSetCookResult::NoChange);
+        CHECK(CookGuarded(request, out, error) == TextureAssetSetCookResult::NoChange);
         Write(f.Spec, BytesOf(f.SpecText));
-        CHECK(CookTextureAssetSetWithOutcome(request, out, error) == TextureAssetSetCookResult::Error);
+        CHECK(CookGuarded(request, out, error) == TextureAssetSetCookResult::Error);
         CHECK(error.find("new_output_requires_absence") != TestText::npos);
         auto added = f.SpecText;
         const auto packageAt = added.find("config.nvpk");
         CHECK(packageAt != TestText::npos);
         added = added.substr(0, packageAt) + "config-new.nvpk" + added.substr(packageAt + std::strlen("config.nvpk"));
         Write(f.Spec, BytesOf(added));
-        CHECK(CookTextureAssetSetWithOutcome(request, out, error) == TextureAssetSetCookResult::Updated);
+        CHECK(CookGuarded(request, out, error) == TextureAssetSetCookResult::Updated);
         CHECK(report.Assets[0].bSkipped && !report.Assets[1].bSkipped);
         CHECK(Read(f.Runtime / "Cooked/Probe/config.nvpk") == rawBeforeRemoval);
         CHECK(std::filesystem::is_regular_file(f.Runtime / "Cooked/Probe/config-new.nvpk"));
@@ -359,7 +421,8 @@ namespace TextureCliTest
         CHECK(request.Report == nullptr);
         CookManagedBootstrapOutcome out;
         TestText error;
-        CHECK(UpdateCookManagedAssetSet(request, out, error) == CookManagedUpdateResult::Error);
+        CHECK(RetryVolumeBusy([&]() { return UpdateCookManagedAssetSet(request, out, error); }) ==
+              CookManagedUpdateResult::Error);
         CHECK(error.find("budget_exceeded") != TestText::npos);
         Unchanged(before, Snapshot(f.Runtime));
     }
@@ -371,19 +434,19 @@ namespace TextureCliTest
             Fixture f(root / "service");
             CookManagedBootstrapOutcome out;
             TestText error;
-            CHECK(CookTextureAssetSetWithOutcome(f.ServiceRequest(), out, error) == TextureAssetSetCookResult::Created);
+            CHECK(CookGuarded(f.ServiceRequest(), out, error) == TextureAssetSetCookResult::Created);
             CHECK(out.StateGeneration == 1 && out.IndexGeneration == 2);
             const auto initial = Snapshot(f.Base);
-            CHECK(CookTextureAssetSetWithOutcome(f.ServiceRequest(), out, error) ==
+            CHECK(CookGuarded(f.ServiceRequest(), out, error) ==
                   TextureAssetSetCookResult::NoChange);
             CHECK(out.StateGeneration == 1 && out.IndexGeneration == 2);
             Unchanged(initial, Snapshot(f.Base));
-            CHECK(CookTextureAssetSet(f.ServiceRequest(), error));
+            CHECK(CookGuarded(f.ServiceRequest(), error));
             Unchanged(initial, Snapshot(f.Base));
             f.Change();
             const auto skipId = Identity(f.Assets[1].PackagePath);
             const auto skipBytes = Read(f.Assets[1].PackagePath);
-            CHECK(CookTextureAssetSetWithOutcome(f.ServiceRequest(), out, error) == TextureAssetSetCookResult::Updated);
+            CHECK(CookGuarded(f.ServiceRequest(), out, error) == TextureAssetSetCookResult::Updated);
             CHECK(out.StateGeneration == 2 && out.IndexGeneration == 3);
             CHECK(Same(skipId, Identity(f.Assets[1].PackagePath)) && Read(f.Assets[1].PackagePath) == skipBytes);
         }
@@ -428,7 +491,7 @@ namespace TextureCliTest
             CookManagedBootstrapOutcome out;
             out.ClaimId = "held";
             TestText error;
-            CHECK(CookTextureAssetSetWithOutcome(f.ServiceRequest(), out, error) ==
+            CHECK(CookGuarded(f.ServiceRequest(), out, error) ==
                   TextureAssetSetCookResult::Conflict);
             CHECK(out.ClaimId == "held");
             Unchanged(initial, Snapshot(f.Base));
@@ -452,7 +515,7 @@ namespace TextureCliTest
             CookManagedBootstrapOutcome out;
             out.ClaimId = "held";
             TestText error;
-            CHECK(CookTextureAssetSetWithOutcome(f.ServiceRequest(), out, error) ==
+            CHECK(CookGuarded(f.ServiceRequest(), out, error) ==
                   TextureAssetSetCookResult::NeedsRecovery);
             CHECK(out.ClaimId == "held");
             Call(f.Arguments(), 1);
@@ -510,19 +573,32 @@ namespace TextureCliTest
         std::puts(
             "TEXTURE_MANAGED_CLI result=pass adapter_nochange_update_explicit_workspace_recovery_source_absent_pending_refusal_raw_paths_bom");
     }
+    void RunWithVolumeGuard(const std::filesystem::path& root)
+    {
+        TestText name, error;
+        CHECK(Access::InspectCookDestinationMutexNameForTest({root / "Runtime"}, name, error));
+        Array<wchar_t> wideName;
+        for (const unsigned char c : name)
+        {
+            wideName.push_back(static_cast<wchar_t>(c));
+        }
+        wideName.push_back(0);
+        gVolumeMutex = CreateMutexExW(nullptr, wideName.data(), 0, SYNCHRONIZE | MUTEX_MODIFY_STATE);
+        CHECK(gVolumeMutex);
+        Run(root);
+        CHECK(CloseHandle(gVolumeMutex));
+    }
 #endif
 } // 名前空間 TextureCliTest
 int main()
 {
 #if defined(_WIN32)
-    wchar_t temp[32768]{};
-    const auto length = GetTempPathW(32768, temp);
-    CHECK(length && length < 32768);
     wchar_t name[128]{};
-    std::swprintf(name, 128, L"NorvesManagedTextureCli-%lu-%llu", GetCurrentProcessId(), GetTickCount64());
-    const auto root = std::filesystem::path(temp) / name;
+    std::swprintf(name, 128, L"nmt-%lu-%llu", GetCurrentProcessId(), GetTickCount64());
+    // 管理ストアは RuntimeRoot の祖先を列挙するため、項目の多い共有の TEMP の外に置く。
+    const auto root = std::filesystem::current_path() / name;
     CHECK(std::filesystem::create_directory(root));
-    TextureCliTest::Run(root);
+    TextureCliTest::RunWithVolumeGuard(root);
     CHECK(std::filesystem::remove_all(root) > 0);
     return 0;
 #else

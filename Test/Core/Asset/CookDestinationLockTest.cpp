@@ -1,4 +1,5 @@
 ﻿// 実thread/processの協調排他とmutex消滅/abandonedを検証する。資産publicationは行わない。
+#include "CookLockWaitTestScope.h"
 #include "Tools/AssetCook/CookDestinationLock.h"
 #include "Tools/AssetCook/CookDestinationLockTestAccess.h"
 #include "Container/VariableArray.h"
@@ -85,6 +86,11 @@ namespace DestinationLockTest
             Work peer;
             LockText otherError;
             Result result = Result::Error;
+#if defined(_WIN32)
+            // Busy を即時に確認するため、この取得では待たない。
+            const auto noWait = CookLockWaitTest::DoNotWaitForCookLock();
+            CHECK(noWait.Valid());
+#endif
             std::thread thread(
                 [&]
                 {
@@ -100,6 +106,11 @@ namespace DestinationLockTest
             Work peer;
             LockText otherError;
             Result result = Result::Error;
+#if defined(_WIN32)
+            // Busy を即時に確認するため、この取得では待たない。
+            const auto noWait = CookLockWaitTest::DoNotWaitForCookLock();
+            CHECK(noWait.Valid());
+#endif
             std::thread thread(
                 [&]
                 {
@@ -205,6 +216,81 @@ namespace DestinationLockTest
             }
         }
     };
+    struct JoiningThread
+    {
+        std::thread& Thread;
+        HANDLE Start, Release;
+        ~JoiningThread()
+        {
+            if (Thread.joinable())
+            {
+                if (!SetEvent(Start))
+                {
+                    bCleanupFailed = true;
+                }
+                if (!SetEvent(Release))
+                {
+                    bCleanupFailed = true;
+                }
+                Thread.join();
+            }
+        }
+    };
+    void WaitOption(const CookDestinationLockRequest& request)
+    {
+        struct Holder
+        {
+            Work WorkData;
+            HANDLE Ready, Start, Release;
+            bool bHoldUntilProbeFinished;
+        };
+        const auto hold = [](const CookDestinationLockContext& context, void* data, LockText& error)
+        {
+            auto& holder = *static_cast<Holder*>(data);
+            if (!Run(context, &holder.WorkData, error) || !SetEvent(holder.Ready) ||
+                WaitForSingleObject(holder.Start, 60000) != WAIT_OBJECT_0)
+            {
+                return false;
+            }
+            Sleep(200);
+            return !holder.bHoldUntilProbeFinished || WaitForSingleObject(holder.Release, 60000) == WAIT_OBJECT_0;
+        };
+        for (const bool bWait : {true, false})
+        {
+            Handle ready(CreateEventW(nullptr, TRUE, FALSE, nullptr));
+            Handle start(CreateEventW(nullptr, TRUE, FALSE, nullptr));
+            Handle release(CreateEventW(nullptr, TRUE, FALSE, nullptr));
+            Handle done(CreateEventW(nullptr, TRUE, FALSE, nullptr));
+            CHECK(ready.Value && start.Value && release.Value && done.Value);
+            Holder holder{{}, ready.Value, start.Value, release.Value, !bWait};
+            LockText holderError;
+            Result holderResult = Result::Error;
+            std::thread thread(
+                [&]
+                {
+                    holderResult = WithCookDestinationLock(request, hold, &holder, holderError);
+                    if (!SetEvent(done.Value))
+                    {
+                        bCleanupFailed = true;
+                    }
+                });
+            JoiningThread join{thread, start.Value, release.Value};
+            HANDLE signals[] = {ready.Value, done.Value};
+            CHECK(WaitForMultipleObjects(2, signals, FALSE, 60000) == WAIT_OBJECT_0);
+            // 待ちなしの検証では Busy を即時に確認する。
+            const CookLockWaitTest::ScopedCookLockWait wait(bWait ? CookLockWaitTest::TestWaitMilliseconds : nullptr);
+            CHECK(wait.Valid());
+            CHECK(SetEvent(start.Value));
+            Work work;
+            LockText error;
+            const auto result = WithCookDestinationLock(request, Run, &work, error);
+            CHECK(SetEvent(release.Value));
+            thread.join();
+            CHECK(holderResult == Result::Executed && holder.WorkData.Calls == 1 && holderError.empty());
+            CHECK(result == (bWait ? Result::Executed : Result::Busy));
+            CHECK(work.Calls == (bWait ? 1u : 0u) && error.empty());
+        }
+    }
     struct Process
     {
         HANDLE Value = nullptr, Stop = nullptr;
@@ -307,6 +393,9 @@ namespace DestinationLockTest
     }
     bool ProcessProbe(const CookDestinationLockContext& context, void*, LockText&)
     {
+        // 子が Busy を即時に返せるよう、起動前に待ちを消す。
+        const auto noWait = CookLockWaitTest::DoNotWaitForCookLock();
+        CHECK(noWait.Valid());
         Process child({context.FinalRuntimeRootLocator}, "probe");
         CHECK(child.Exit() == 20);
         return true;
@@ -409,6 +498,8 @@ int main(int argc, char** argv)
         {
             return ChildMain(argc, argv);
         }
+        const auto lockWait = CookLockWaitTest::WaitForCookLock();
+        CHECK(lockWait.Valid());
         char leaf[100];
         std::snprintf(leaf, sizeof(leaf), "norves-destination-lock-%lu-%llu", GetCurrentProcessId(),
                       static_cast<unsigned long long>(GetTickCount64()));
@@ -422,6 +513,10 @@ int main(int argc, char** argv)
         const auto name = Name(request);
         CHECK(std::strstr(name.c_str(), "NorvesLib.AssetCook.DestinationVolumeLock.v1."));
         GoodPeer(request);
+        // 反証する契約: 待ちを指定すれば解放後に取得し、未指定ならBusyを返してcallbackを呼ばない。
+        // ほかの手段で気づけるか: 気づきにくい。通常の単独cookではロック競合が起きない。
+        // 失敗が黙って起きるか: 起きる。設定が無視されても競合時だけBusyになり、原因を区別できない。
+        WaitOption(request);
         CHECK(Count(root) == initialCount && !std::filesystem::exists(request.FinalRuntimeRoot));
         Work nested;
         nested.Action = Mode::Nested;
@@ -580,8 +675,13 @@ int main(int argc, char** argv)
             Events events(1);
             Process child(request, "hold", events.ReadyName.c_str(), events.StopName.c_str(), events.Stop.Value);
             events.WaitReady(child);
-            Work work;
-            CHECK(WithCookDestinationLock(request, Run, &work, error) == Result::Busy && work.Calls == 0);
+            {
+                // 子の所有中に Busy を即時に確認する。
+                const auto noWait = CookLockWaitTest::DoNotWaitForCookLock();
+                CHECK(noWait.Valid());
+                Work work;
+                CHECK(WithCookDestinationLock(request, Run, &work, error) == Result::Busy && work.Calls == 0);
+            }
             CHECK(SetEvent(events.Stop.Value));
             CHECK(child.Exit() == 0);
         }

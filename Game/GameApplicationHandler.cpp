@@ -318,6 +318,8 @@ namespace Game
         // 外れた光線の空の光は残す（RTGI を切ると IBL・DDGI へ替わるので、照り返しの量は入・切の差で測る。
         // Scripts/Terrain/ReferenceCheck.py --bounce）。環境変数 NORVES_RTGI_BOUNCE で描画側（LightingPass）へ渡す
         constexpr const TCHAR *kRTGIBounceOption = TEXT("--rtgi-bounce=");
+        // --rt-gi=on|off: 開発ビルドでレイトレーシングと DDGI をまとめて切り替える。
+        constexpr const TCHAR *kRTGIOption = TEXT("--rt-gi=");
         // --rtgi-specular=on|off: off は鏡面の環境光を RTGI の光線で遮らない変更前の経路（空の前計算 × 反射率 × 画面空間の鏡面 AO）で
         // 描く（開発ビルドだけ。同じ Game.exe・同じ焼いた地形で鏡面の遮りの前後を撮り比べる。InteriorLightReference.md）。
         // 環境変数 NORVES_RTGI_SPECULAR で描画側（LightingPass）へ渡す
@@ -1735,6 +1737,20 @@ namespace Game
                 _putenv_s("NORVES_TERRAIN_MAX_ANISOTROPY", anisotropyText);
 #else
                 LOG_WARNING("--terrain-anisotropy は開発ビルドだけで使えます。無視します");
+#endif
+                continue;
+            }
+            if (TryStripPrefix(args[i], kRTGIOption, sceneValue))
+            {
+#if NORVES_BUILD_DEVELOPMENT
+                if (sceneValue != TEXT("on") && sceneValue != TEXT("off"))
+                {
+                    LOG_ERROR("--rt-gi は on か off で指定してください");
+                    return false;
+                }
+                _putenv_s("NORVES_RT_GI", sceneValue == TEXT("off") ? "0" : "1");
+#else
+                LOG_WARNING("--rt-gi は開発ビルドだけで使えます。無視します");
 #endif
                 continue;
             }
@@ -3500,6 +3516,41 @@ namespace Game
         UpdatePauseMenu();
 
 #if NORVES_BUILD_DEVELOPMENT
+        if (NorvesLib::Core::Engine::GEngine != nullptr)
+        {
+            auto& engine = *NorvesLib::Core::Engine::GEngine;
+            auto& coordinator = engine.GetRenderWorld().GetRenderingCoordinator();
+            const bool bSceneReady = engine.GetDeterministicCapture().IsSceneReady();
+            if (!bSceneReady)
+            {
+                m_bRTGIStateLogPending = false;
+            }
+            else if (!m_bPreviousSceneReady)
+            {
+                // 準備前に送った別のシーンのパケットを、準備後の記録に使わない。
+                m_RTGIStateMinimumFrameNumber = coordinator.GetNextFramePacketNumber();
+                m_bRTGIStateLogPending = true;
+            }
+            m_bPreviousSceneReady = bSceneReady;
+            if (m_bRTGIStateLogPending)
+            {
+                NorvesLib::Core::Rendering::RenderedRayTracingState state;
+                if (coordinator.TryGetRenderedRayTracingState(state) &&
+                    state.FrameNumber >= m_RTGIStateMinimumFrameNumber)
+                {
+                    const bool bEnabled = state.bRTGIEnabled || state.bDDGIEnabled || state.bTLASAvailable;
+                    LOG_INFO("RT_GI_STATE %s rtgi=%d ddgi=%d tlas=%d instances=%llu frame=%llu",
+                             bEnabled ? "on" : "off",
+                             state.bRTGIEnabled ? 1 : 0,
+                             state.bDDGIEnabled ? 1 : 0,
+                             state.bTLASAvailable ? 1 : 0,
+                             static_cast<unsigned long long>(state.InstanceCount),
+                             static_cast<unsigned long long>(state.FrameNumber));
+                    m_bRTGIStateLogPending = false;
+                }
+            }
+        }
+
         // 検査の窓口の配線の確認: ENGINE_CHECK_SELFTEST が有効なら、起動の後の最初の更新で結果を 1 回出す。
         if (!s_bEngineChecksSelfTestReported && NorvesLib::Core::Engine::GEngine != nullptr)
         {
