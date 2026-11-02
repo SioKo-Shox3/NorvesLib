@@ -8928,3 +8928,10 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: なし（アプリを起動する確かめは無い）
 - Notes: ほかの枠が 120 秒より長くロックを握る cook（重い AssetCook など）と重なると、この試験は今も Busy で落ちる。待ちの上限を超えたら前の要起票（宛先ロックを取る cook の試験の取り合い）で扱う。
 - U1 手動起動の既定を統合の検証の範囲にし、frozen_parity で従来の照合を選べるようにする: 着地(直し 0 回)
+
+## G2-S6-ASSET-SET-P4（2026-11-02、run 20261102-192820 の反復 1）
+- Done: `windows-assetcook.yml` に `workflow_dispatch.inputs.frozen_parity`(boolean・既定 false)を足し、`NORVES_MERGE_VALIDATION` を `[validate-merge]` のときか手動起動で `frozen_parity` が false のときに true にした。凍結 hash の照合(段 4・5)・在庫 79 件の照合(段 6)・recipe 照合と capture・parity の段(段 17・18)は消さず、`-f frozen_parity=true` で従来どおり走る。push の起動条件と挙動は変えていない。理由は workflow の日本語のコメントに書いた
+- Done: `ManagedTextureAssetSetCli.md` に「CI の手動起動で検証するもの」の節を足した(既定の起動で走る段・skipped になる段・`frozen_parity=true` の使いどころ)
+- 証拠: verify 終了コード 0(`.harness/runs/20261102-192820/verify-G2-S6-ASSET-SET-P4.txt`)。単位の確かめで YAML の読み込みと numstat 2 通りの一致も確認
+- Next: なし(workflow の起動とプッシュはこのタスクの範囲外。実際の手動起動での完走は G2-S6-ASSET-SET-P3 の再開で確かめる)
+- Notes: GitHub Actions 上での条件式の評価はまだ実行で確かめていない
