@@ -9025,3 +9025,10 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 検証: ビルドは 0。3 本を直列で回すと Passed（0.56・20.65・79.23 秒）。ENVIRONMENT の python の確かめは 0。`-j 4` は終了コード 8（`volume_busy`・`VOLUME_BUSY_RETRY` は 0 行。落ちたのは同名 event の作成と abandoned の観測）。出力は `.harness/runs/20261102-201606/U2-verify.txt`
 - Notes: `-j 4` の合格は止めた。同名 event・abandoned・ordinary の検査は、機械全体で 1 つの mutex の名前を独り占めする前提で、並列の試験どうしが互いに壊し合う。待ち直しとやり直しで切り直した試し（`U3-dropped-verify.txt`）でも、event の間にほかの試験が `mutex_create_failed` で落ち、ほかの試験の abandoned を受け取った。CMakeLists.txt の RESOURCE_LOCK を推奨とした判断待ち（blocked）
 - U4 宛先 volume のロックを取る cook の試験に CTest の RESOURCE_LOCK を付け、タスクの verify を全部回す: 着地(直し 0 回)
+## 2026-11-02 G2-MATERIAL-SELECTION-INTEGRATION-P1-P1-P1（run 20261102-205307 の反復 1）
+- Done: 判断役の判断（案 A）に従い、`Test/Core/Asset/CMakeLists.txt` で宛先 volume のロックを取る cook の試験 7 本（CookDestinationLockTest・CookManagedBootstrapTest・CookManagedUpdateTest・RigSplitCookTest・TextureManagedCliTest・CookManagedStoreObservationTest・CookManagedStoreInitializationTest）に `RESOURCE_LOCK cook_destination_volume` を付けた。CookCacheDecisionTest・CookManagedUpdateInventoryTest・CookManagedTransactionIntentTest は Inventory・Intent の構築だけでロックを取らないので外した。.cpp の独り占めの検査（同名 event・abandoned の観測・全 handle の後の ordinary）と期待は変えていない。本体と 3 本の ENVIRONMENT も変えていない
+- 検証: ビルドは 0。3 本の直列は Passed（0.56・21.87・82.71 秒）。`-j 4` の 4 本は 1 本ずつ流れて 4/4 Passed・終了コード 0（67.73・79.94・22.93・0.56 秒）。ENVIRONMENT の確かめ・RESOURCE_LOCK の確かめはどちらも 0。numstat は 2 通りとも 14 追加で一致。出力は `.harness/runs/20261102-205307/U4-verify.txt`
+- Next: なし（この項目は完了）
+- Notes: TASKS.md の項目の done-when・verify・paths は、判断（blocked/resolved）で書き換えた欄に従って仕上げた（項目の本文は旧い文のまま。status だけ更新した）
+- Notes: 残る限界: RESOURCE_LOCK が効くのは 1 回の ctest の中だけ。盤面の別の枠で cook の試験や AssetCook が同時に走ると、独り占めの検査は今も落ちうる
+- Notes: 要起票: cook のロックの試験の独り占めの検査(同名 event・abandoned の観測・全 handle の後の ordinary)を、別の枠の cook と同時に走っても壊れない形にする(試験だけの mutex 名の口を本体に足すかの判断を含む)
