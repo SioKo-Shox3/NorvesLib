@@ -1551,9 +1551,10 @@ target_link_libraries(CanvasViewRenderTest PRIVATE Core)
 target_include_directories(CanvasViewRenderTest PRIVATE
     ${CMAKE_SOURCE_DIR}
 )
+target_compile_definitions(CanvasViewRenderTest PRIVATE
+    NORVES_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+)
 add_test(NAME CanvasViewRenderTest COMMAND CanvasViewRenderTest)
-# 作るグラフィックスのパイプラインの数（== 3）を決め打ちしており、実装の写しなので実行から外す。CanvasLayerCompositeSnapshotTest は名前ごとの add_test で走る（2026-11-02）。
-set_tests_properties(CanvasViewRenderTest PROPERTIES DISABLED TRUE)
 
 add_test(NAME CanvasLayerCompositeSnapshotTest COMMAND CanvasViewRenderTest --test=CanvasLayerCompositeSnapshotTest)
 

@@ -8548,3 +8548,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 検証: verify の 1 行目のビルドは終了コード 0。2 行目の ctest は 5 本 Passed・2 本 Not Run（Disabled）で終了コード 0（`.harness/runs/20261102-101626/verify-TEST-FULL-CTEST-BASELINE-U1.txt`。直す前の状態は同じ置き場の `triage-ctest.txt`）。numstat は 2 通りで一致
 - Next: 起動の確かめは後回し（当分アプリを起動しない決まり）。TEST-FULL-CTEST-BASELINE-CHECK で `M9WorldAcceptanceTest` と全体の CTest（`ctest --test-dir build -C Debug --output-on-failure --timeout 600`、GPU の試験を含む）を回し、残った失敗の理由と扱いを記録する
 - Notes: Git Bash から `cmake --build ... -- /m:1` を回すと `/m:1` が `m:1` に書き換えられて MSBuild が MSB1008 で落ちる。PowerShell で回す
+- U2 CanvasViewRenderTest のシェーダーの場所を絶対パスで渡し、実行に戻す: 着地(直し 0 回)
