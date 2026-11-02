@@ -8849,3 +8849,5 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/unit-verify.txt`（単位の作業ツリー。`cmake --build build --config Debug --target CookedMeshTest AssetCook -- /m:1` 終了コード 0、ctest の RigSplitCookTest・CookCacheDecisionTest・SkeletalMaterialBindingsTest・MaterialSelectionTest の 4 本 Passed、numstat 2 通り一致）
 - Next: なし（アプリを起動する確かめは無い）
 - Notes: done-when の「設定の失敗（例: 未一致の指定）」の未一致の名前は `ResolveMaterialImportPlan` では照合の失敗（SelectionFailed）になるので、設定の失敗には asset-set の発光の倍率 0 を使った
+- 再確認（run 20261102-173054 の反復 2）: 反復 1 の差し戻し（RigSplitCookTest の `cook_managed_store: volume_busy`）はコードの不具合ではなく、宛先ロックが C: のボリューム単位の Global 名前付きミューテックスを待たずに取るため、同時に走っていたほかの枠の AssetCook（NorvesLib-6 の地形の焼き）とぶつかったもの。ほかの枠の AssetCook が止んだ後に verify を回し直し、ビルド終了コード 0・ctest 4 本 Passed（`.harness/runs/20261102-173054/verify-build-iter2.txt`・`verify-ctest-iter2-wait-1.txt`）
+- Notes: 要起票: cook の試験（RigSplitCookTest など宛先ロックを取るもの）は、同じボリュームでほかの枠の AssetCook や cook の試験が走っていると `volume_busy` で落ちる（ロックの待ち時間 0）。盤面の並列の枠では verify の再実行が環境で落ちうる
