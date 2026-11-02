@@ -8548,3 +8548,9 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Done: `CookedSkeletalAssetTest.cmake.in` の `expect_reduce`・`expect_cubic`・`expect_morph` で AssetCook の出力を受ける execute_process に `ENCODING UTF-8` を付けた。照合の文字列と合否の条件は変えていない。verify は `cmake --build build --config Debug --target CookedMeshTest AssetCook -- /m:1` が終了コード 0、ctest はコードページ 932 と 65001 の両方で `CookedSkeletalAssetTest` が Passed（終了コード 0）
 - Next: なし
 - Notes: 変更前の版が 932 で落ちることは、この反復では回し直していない
+
+## 2026-11-02 GAME-GR136-VFX（run 20261102-102403 の反復 1。着手）
+- 方式（推奨を採った）: GR57 を GR136 の形で設計する。効果の定義（エミッタ・モジュール・スキーマ・取り込み設定・クックの形式）は GR136 の `VfxEffectAsset` の 1 つにし、GR57 はそれを GPU で回す実行先として上に載せる。理由: 定義が 2 つになるとデータ・クック・試験の基準が二重になり、GR57 の設計案が既に求める「CPU 参照実装」「JSON の定義」を GR136 が先に作る形になる。逆（GR57 の上に GR136）は GR57 の硬い前提（G3・G4・G5）が揃うまで作者の形式を決められない。雨（GR58）・しぶき（GR59）もこの定義のエフェクトにする
+- 方式と前提の境界の記録: `Docs/Plans/GameFeatureRoadmap.md`（メイン側・管理外）の「GR136 VFX システム（Niagara 相当）の方式と境界」の節。スキーマは自前の静的な表（Object の反射に範囲・単位の欄が無いため）、単位はエミッタの空間の単位、積分と乱数は既存の 2D `ParticleSystem` と同じ、描画は今は `BoardProxy`
+- 完了を宣言しない範囲: GR57 の GPU の実行先・3D の粒子の描画パス、GR02 の時間のチャンネル、GR12/GR13/GR19 のボーン・表面のエミッタ、GR96 の asset-set・依存の追跡とテクスチャのパスの解決、GR126 の並列化の後の順序、GR72 の音、Editor の編集の画面、寿命の曲線のモジュール
+- Notes: 新しい Core のソースの登録のため `Library/Core/CMakeLists.txt` と、試験の理由の `Docs/Testing.md` を paths の外だが触る（ソースの並びに足すだけ・done-when が名指し）。エフェクトのファイルの置き場（`Assets/Vfx`）は paths の外なので、Rendering3DTest の橙の粒はコードで組む
