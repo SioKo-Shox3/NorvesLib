@@ -1,5 +1,7 @@
 ﻿#include "Particle/VfxEffectSystem.h"
 
+#include "Math/MatrixUtils.h"
+#include "Math/QuaternionUtils.h"
 #include "Particle/VfxSchema.h"
 #include "Rendering/SceneProxy.h"
 
@@ -54,6 +56,11 @@ namespace NorvesLib::Core::Particle
             case VfxModuleType::SpriteRenderer:
             {
                 constexpr const char* names[] = {"Layer", "Blend", "SortKey", "Flipbook"};
+                return names[index];
+            }
+            case VfxModuleType::MeshRenderer:
+            {
+                constexpr const char* names[] = {"Mesh", "AlignToVelocity", "DissolveStart", "DissolveDuration", "EdgeWidth", "EdgeColor"};
                 return names[index];
             }
             default:
@@ -224,6 +231,34 @@ namespace NorvesLib::Core::Particle
         return true;
     }
 
+    bool VfxEffectSystem::RaiseOrientedEvent(VfxEffectHandle handle, const char* eventName, const Math::Vector3& position,
+        const Math::Vector3& normal, double timeSeconds)
+    {
+        if (!IsFinite(normal))
+        {
+            return false;
+        }
+        // 倍精度で長さを判定し、有限な大きい成分の二乗があふれないようにする。
+        const double lengthSquared = static_cast<double>(normal.x) * normal.x +
+            static_cast<double>(normal.y) * normal.y + static_cast<double>(normal.z) * normal.z;
+        if (lengthSquared <= 1.0e-12)
+        {
+            return false;
+        }
+        const double largest = std::fmax(std::fabs(normal.x), std::fmax(std::fabs(normal.y), std::fabs(normal.z)));
+        const Math::Vector3 scaledNormal(static_cast<float>(normal.x / largest),
+            static_cast<float>(normal.y / largest), static_cast<float>(normal.z / largest));
+        const float scaledLength = std::sqrt(Math::Vector3::Dot(scaledNormal, scaledNormal));
+        if (!RaiseEvent(handle, eventName, position, timeSeconds))
+        {
+            return false;
+        }
+        PendingEvent& event = m_Instances[handle.Index].Events.back();
+        event.Normal = scaledNormal / scaledLength;
+        event.bOriented = true;
+        return true;
+    }
+
     void VfxEffectSystem::Tick(float deltaTime)
     {
         if (!std::isfinite(deltaTime) || deltaTime < 0.0f)
@@ -315,7 +350,8 @@ namespace NorvesLib::Core::Particle
                         if (module.Type == VfxModuleType::SpawnOnEvent && module.Values[binding.Arguments[0]].Name == event.Name)
                         {
                             SpawnParticles(slot, emitter, module.Values[binding.Arguments[1]].UInt,
-                                event.Position, event.Time, static_cast<float>(end - event.Time));
+                                event.Position, event.Time, static_cast<float>(end - event.Time),
+                                event.bOriented ? &event.Normal : nullptr);
                         }
                     }
                 }
@@ -408,6 +444,80 @@ namespace NorvesLib::Core::Particle
                 }
             }
         }
+    }
+
+    void VfxEffectSystem::AppendMeshInstances(VariableArray<VfxMeshInstance>& outInstances) const
+    {
+        uint64_t emitterOrdinal = 0u;
+        for (uint32_t instanceIndex = 0u; instanceIndex < m_Instances.size(); ++instanceIndex)
+        {
+            const InstanceSlot& slot = m_Instances[instanceIndex];
+            for (uint32_t emitterIndex = 0u; emitterIndex < slot.Emitters.size(); ++emitterIndex)
+            {
+                const uint64_t emitterId = emitterOrdinal++ << 16u;
+                const EmitterState& emitter = slot.Emitters[emitterIndex];
+                if (!slot.bActive || !slot.Desc.bEnabled || !emitter.bHasMeshRenderer)
+                {
+                    continue;
+                }
+                for (uint32_t particleIndex = 0u; particleIndex < emitter.Particles.size(); ++particleIndex)
+                {
+                    const VfxParticleState& particle = emitter.Particles[particleIndex];
+                    Math::Quaternion rotation = Math::Quaternion::Identity;
+                    if (emitter.bAlignToVelocity)
+                    {
+                        const double x = particle.Velocity.x;
+                        const double y = particle.Velocity.y;
+                        const double z = particle.Velocity.z;
+                        const double speed = std::hypot(x, y, z);
+                        if (std::isfinite(speed) && speed > 1.0e-6)
+                        {
+                            const double horizontal = std::hypot(x, y);
+                            if (horizontal > 0.0)
+                            {
+                                // 行ベクトル規約では、速度から局所の +Z への回転を指定する。
+                                const Math::Vector3 axis(static_cast<float>(y / horizontal), static_cast<float>(-x / horizontal), 0.0f);
+                                rotation = Math::QuaternionUtils::FromAxisAngle(axis, static_cast<float>(std::atan2(horizontal, z)));
+                            }
+                            else if (z < 0.0)
+                            {
+                                rotation = Math::QuaternionUtils::FromAxisAngle(Math::Vector3::UnitX, Math::Constants::PI);
+                            }
+                        }
+                    }
+                    const float size = particle.Size.x;
+                    VfxMeshInstance instance;
+                    // 板と異なる帯にエミッタの通し番号と粒の添字を置く。粒は最大 65536 個。
+                    instance.Id = (uint64_t{1} << 62u) | emitterId | static_cast<uint64_t>(particleIndex);
+                    instance.World = Math::MatrixUtils::CreateWorldRowVector(particle.Position, rotation, Math::Vector3(size, size, size));
+                    instance.Color = particle.Color;
+                    instance.DissolveThreshold = ComputeDissolveThreshold(particle.Age, particle.Lifetime, emitter.DissolveStart, emitter.DissolveDuration);
+                    instance.EdgeWidth = emitter.EdgeWidth;
+                    instance.EdgeColor = emitter.EdgeColor;
+                    instance.Mesh = slot.Desc.Mesh;
+                    instance.Material = slot.Desc.Material;
+                    instance.InstanceIndex = instanceIndex;
+                    instance.EmitterIndex = emitterIndex;
+                    instance.ParticleIndex = particleIndex;
+                    outInstances.push_back(instance);
+                }
+            }
+        }
+    }
+
+    float VfxEffectSystem::ComputeDissolveThreshold(float age, float lifetime, float dissolveStart, float dissolveDuration)
+    {
+        const double normalizedAge = lifetime > 0.0f ? static_cast<double>(age) / lifetime : 1.0;
+        if (dissolveDuration > 0.0f)
+        {
+            const double threshold = (normalizedAge - static_cast<double>(dissolveStart)) / dissolveDuration;
+            if (!(threshold > 0.0))
+            {
+                return 0.0f;
+            }
+            return threshold >= 1.0 ? 1.0f : static_cast<float>(threshold);
+        }
+        return normalizedAge >= dissolveStart ? 1.0f : 0.0f;
     }
 
     uint32_t VfxEffectSystem::ComputeFlipbookFrame(const VfxFlipbookImportSettings& flipbook, float age, float lifetime)
@@ -508,6 +618,7 @@ namespace NorvesLib::Core::Particle
         emitter.Size = Math::Vector2(8.0f, 8.0f);
         emitter.bHasVelocity = false;
         emitter.bHasRenderer = false;
+        emitter.bHasMeshRenderer = false;
         emitter.FlipbookIndex = -1;
         for (uint32_t moduleIndex = 0u; moduleIndex < asset.Modules.size(); ++moduleIndex)
         {
@@ -550,6 +661,14 @@ namespace NorvesLib::Core::Particle
                     }
                 }
                 break;
+            case VfxModuleType::MeshRenderer:
+                emitter.bHasMeshRenderer = true;
+                emitter.bAlignToVelocity = module.Values[binding.Arguments[1]].UInt != 0u;
+                emitter.DissolveStart = module.Values[binding.Arguments[2]].Vector.x;
+                emitter.DissolveDuration = module.Values[binding.Arguments[3]].Vector.x;
+                emitter.EdgeWidth = module.Values[binding.Arguments[4]].Vector.x;
+                emitter.EdgeColor = module.Values[binding.Arguments[5]].Vector;
+                break;
             default:
                 break;
             }
@@ -569,10 +688,19 @@ namespace NorvesLib::Core::Particle
     }
 
     void VfxEffectSystem::SpawnParticles(InstanceSlot& slot, EmitterState& emitter, uint32_t count,
-        const Math::Vector3& position, double birthTime, float age)
+        const Math::Vector3& position, double birthTime, float age, const Math::Vector3* orientationNormal)
     {
         const uint32_t available = emitter.MaxParticles - static_cast<uint32_t>(emitter.Particles.size());
         const uint32_t spawnCount = count < available ? count : available;
+        Math::Vector3 tangent;
+        Math::Vector3 bitangent;
+        if (orientationNormal != nullptr && emitter.bHasVelocity && spawnCount > 0u)
+        {
+            const Math::Vector3 helper = std::fabs(orientationNormal->y) < 0.999f ?
+                Math::Vector3(0.0f, 1.0f, 0.0f) : Math::Vector3(1.0f, 0.0f, 0.0f);
+            tangent = Math::Vector3::Cross(helper, *orientationNormal).Normalized();
+            bitangent = Math::Vector3::Cross(*orientationNormal, tangent);
+        }
         for (uint32_t index = 0u; index < spawnCount; ++index)
         {
             VfxParticleState particle;
@@ -583,6 +711,11 @@ namespace NorvesLib::Core::Particle
                 particle.Velocity.x = emitter.VelocityMin.x + (emitter.VelocityMax.x - emitter.VelocityMin.x) * NextUnitFloat(emitter.RandomState);
                 particle.Velocity.y = emitter.VelocityMin.y + (emitter.VelocityMax.y - emitter.VelocityMin.y) * NextUnitFloat(emitter.RandomState);
                 particle.Velocity.z = emitter.VelocityMin.z + (emitter.VelocityMax.z - emitter.VelocityMin.z) * NextUnitFloat(emitter.RandomState);
+                if (orientationNormal != nullptr)
+                {
+                    const Math::Vector3 localVelocity = particle.Velocity;
+                    particle.Velocity = tangent * localVelocity.x + bitangent * localVelocity.y + *orientationNormal * localVelocity.z;
+                }
             }
             particle.Color = emitter.Color;
             particle.Size = emitter.Size;

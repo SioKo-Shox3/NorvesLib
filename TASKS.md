@@ -3769,7 +3769,7 @@
 - notes: ParseUnicodeEscapeは現状4桁単位、AppendUtf8は3byteまで。P5Aとは別件。既定game action名はASCIIで進め、汎用JSON整合として後続修正する。
 
 ## GAME-GR130-VFX: 剣のトレイル（リボン）を実装する
-- status: doing
+- status: done
 - after: GAME-GR136-VFX
 - done-when: 着手の最初に、作者の判断が要る方式と、未着手の前提の GR との境界を `Docs/Plans/GameFeatureRoadmap.md` に書く（推奨の案で進め、理由を PROGRESS.md に書く。前提が未完の部分は完了を宣言しない範囲として残す）。 起動せずに確かめる完了の条件: CPU の試験 `SwordTrailRibbonTest`（新しい実行ファイル。足す前に `Docs/Testing.md` の 3 点を書く）で、固定ステップの回数が 0・1・2 のどのフレームでも帯の点列が連続で NaN が無い、1 フレームで 90 度以上振っても補間で折れ目の角度が上限以下になる、寿命で点が消えて上限を超えない（剣は描画用の補間された Transform を読む）。既知の軌跡の帯の画素の位置が期待と一致すること（GPU の試験 `SwordTrailRibbonVulkanTest`）は、起動を戻した後の `GAME-GR130-VFX-CHECK` で確かめる。
 - verify: `cmake --build build --config Debug --target Game SwordTrailRibbonTest -- /m:1`
@@ -3783,7 +3783,7 @@
 - notes: 2026-10-02追加。未着手の後続作業で、前提と選定課題を解決してから実装タスクへ細分化する。NorvesLib/Editorの境界とVFX-S1〜S5はロードマップ参照。
 
 ## GAME-GR131-VFX: 当たりの火花・衝撃（ヒットエフェクト）を実装する
-- status: todo
+- status: done
 - after: GAME-GR136-VFX
 - done-when: 着手の最初に、作者の判断が要る方式と、未着手の前提の GR との境界を `Docs/Plans/GameFeatureRoadmap.md` に書く（推奨の案で進め、理由を PROGRESS.md に書く。前提が未完の部分は完了を宣言しない範囲として残す）。 起動せずに確かめる完了の条件: CPU の試験 `HitEffectEmissionTest`（新しい実行ファイル。足す前に `Docs/Testing.md` の 3 点を書く）で、当たり 1 回で放出の要求がちょうど 1 回積まれ、位置と法線が当たりの値と一致する。表面の種類ごとに表のエフェクトが選ばれ、表に無い種類は既定の 1 種類になる（GR115 が無いうち）。
 - verify: `cmake --build build --config Debug --target Game HitEffectEmissionTest -- /m:1`
@@ -3807,7 +3807,7 @@
 - notes: 2026-10-02追加。未着手の後続作業で、前提と選定課題を解決してから実装タスクへ細分化する。NorvesLib/Editorの境界とVFX-S1〜S5はロードマップ参照。
 
 ## GAME-GR133-VFX: デカール（地面や体に残る跡）を実装する
-- status: todo
+- status: done
 - done-when: 着手の最初に、作者の判断が要る方式と、未着手の前提の GR との境界を `Docs/Plans/GameFeatureRoadmap.md` に書く（推奨の案で進め、理由を PROGRESS.md に書く。前提が未完の部分は完了を宣言しない範囲として残す）。 草（GR43）の上には描かないのを既定にする。起動せずに確かめる完了の条件: CPU の試験 `DecalPoolEvictionTest`（新しい実行ファイル。足す前に `Docs/Testing.md` の 3 点を書く）で、上限を超えると古いものから消える。既知の箱のデカールが範囲内の GBuffer の色と法線だけを変え、範囲外の画素が変わらないこと（GPU の試験 `DecalGBufferVulkanTest`）は、起動を戻した後の `GAME-GR133-VFX-CHECK` で確かめる。
 - verify: `cmake --build build --config Debug --target Game DecalPoolEvictionTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^DecalPoolEvictionTest$" --no-tests=error --output-on-failure --timeout 180`
@@ -3820,7 +3820,7 @@
 - notes: 2026-10-02追加。未着手の後続作業で、前提と選定課題を解決してから実装タスクへ細分化する。NorvesLib/Editorの境界とVFX-S1〜S5はロードマップ参照。
 
 ## GAME-GR134-VFX: メッシュのエフェクトを実装する
-- status: todo
+- status: done
 - after: GAME-GR136-VFX
 - done-when: 着手の最初に、作者の判断が要る方式と、未着手の前提の GR との境界を `Docs/Plans/GameFeatureRoadmap.md` に書く（推奨の案で進め、理由を PROGRESS.md に書く。前提が未完の部分は完了を宣言しない範囲として残す）。 起動せずに確かめる完了の条件: CPU の試験 `MeshParticleInstanceTest`（新しい実行ファイル。足す前に `Docs/Testing.md` の 3 点を書く）で、粒子の数だけインスタンスの記録が積まれ、時間の値で溶けの閾値が変わる。描かれた画素で溶けを確かめること（GPU の試験 `MeshParticleDissolveVulkanTest`）は、起動を戻した後の `GAME-GR134-VFX-CHECK` で確かめる。
 - verify: `cmake --build build --config Debug --target Game MeshParticleInstanceTest -- /m:1`
@@ -4485,3 +4485,23 @@
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -OutDir .harness/runs/startup-capture/G2-GR32-GPU-ACCEPTANCE-default`
 - paths: Library/Core/Private/Rendering/VisibilityRasterPass.cpp, Library/Core/Public/Rendering/VisibilityRasterPass.h, Library/Core/Private/Rendering/VirtualShadowMapPass.cpp, Library/Core/Public/Rendering/MeshIndexChunks.h, Test/Core/Rendering/SkinnedSubmeshDrawContractTest.cpp, Game/GameModes/Rendering3DTest/StartupSkinnedProbe.cpp, Game/GameModes/Rendering3DTest/StartupSkinnedProbe.h, Game/GameModes/Rendering3DTest/Rendering3DTestData.h, Game/GameModes/Rendering3DTest/Rendering3DTestRoutine.cpp, Game/GameApplicationHandler.cpp, Game/GameModes/Rendering3DTest/M9WorldAcceptance.cpp, Game/GameModes/Rendering3DTest/M9WorldAcceptance.h, Scripts/CaptureStartupScene.ps1, Scripts/Test-M9World.ps1, Test/Tools/NvskelLegacyV01Oracle.py, Docs/Architecture/NVSKELMigrationInventory.md, TASKS.md, PROGRESS.md
 - from: G2-GR32-GPU-ACCEPTANCE
+
+## GAME-GR133-VFX-CHECK: デカール（地面や体に残る跡）を実装する(後回しにしたアプリの起動の確かめ)
+- status: todo
+- check: launch
+- gpu: exclusive
+- done-when: GAME-GR133-VFX で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、GAME-GR133-VFX の done-when を満たすことを確かめる。満たさなければ GAME-GR133-VFX の done-when と paths の範囲で直す。
+- verify: `cmake --build build --config Debug --target DecalGBufferVulkanTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^DecalGBufferVulkanTest$" --no-tests=error --output-on-failure --timeout 600`
+- paths: Library/Core/Public/Particle, Library/Core/Private/Particle, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Tools/AssetCook, Test/Core/Rendering, Docs/Plans/GameFeatureRoadmap.md, TASKS.md, PROGRESS.md
+- from: GAME-GR133-VFX
+
+## GAME-GR134-VFX-CHECK: メッシュのエフェクトを実装する(後回しにしたアプリの起動の確かめ)
+- status: todo
+- check: launch
+- gpu: exclusive
+- done-when: GAME-GR134-VFX で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、GAME-GR134-VFX の done-when を満たすことを確かめる。満たさなければ GAME-GR134-VFX の done-when と paths の範囲で直す。
+- verify: `cmake --build build --config Debug --target MeshParticleDissolveVulkanTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^MeshParticleDissolveVulkanTest$" --no-tests=error --output-on-failure --timeout 600`
+- paths: Library/Core/Public/Particle, Library/Core/Private/Particle, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Tools/AssetCook, Test/Core/Rendering, Docs/Plans/GameFeatureRoadmap.md, TASKS.md, PROGRESS.md
+- from: GAME-GR134-VFX

@@ -427,6 +427,9 @@ namespace NorvesLib::Core::Rendering
          * @param trails 描画コマンド生成前に設定し、FramePacket へ値コピーした後は保持を空にする
          */
         void SetRibbonTrails(const RibbonTrailScene& trails);
+        /** @brief 箱で投影するデカールの一覧を設定する（GameThread） */
+        void SetDecals(const DecalScene& decals);
+        const DecalScene& GetDecals() const { return m_Decals; }
 
         /** @brief 決定的な撮影にする（GameThread）。FramePacket の経過時間を 1/60 秒に固定する */
         void SetDeterministicCapture(bool bEnabled) { m_bDeterministicCapture = bEnabled; }
@@ -662,6 +665,7 @@ namespace NorvesLib::Core::Rendering
         CloudLayerParameters m_CloudLayer;
         FoliageScene m_Foliage;
         RibbonTrailScene m_RibbonTrails;
+        DecalScene m_Decals;
         bool m_bRTGIEnabled = true;
         bool m_bRTGINonShadowCasterOcclusion = false;
         uint64_t m_SceneRevision = 1u;

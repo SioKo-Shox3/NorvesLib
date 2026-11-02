@@ -10,6 +10,16 @@ set_target_properties(FramePacketManagerTest PROPERTIES FOLDER "Test/Core/Render
 include(CTest)
 add_test(NAME FramePacketManagerTest COMMAND FramePacketManagerTest)
 
+add_executable(DecalPoolEvictionTest
+    DecalPoolEvictionTest.cpp
+)
+target_link_libraries(DecalPoolEvictionTest PRIVATE Core)
+target_include_directories(DecalPoolEvictionTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(DecalPoolEvictionTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME DecalPoolEvictionTest COMMAND DecalPoolEvictionTest)
+
 add_test(NAME RenderGraphGPUTimestampScopeTest COMMAND RenderingCoordinatorGPUTimestampPublicationTest --test=RenderGraphGPUTimestampScopeTest)
 
 
@@ -132,6 +142,24 @@ register_rendering_gpu_test(
     DDGIProbeRayQueryVulkanTest
     DDGIProbeRadianceVulkanTest --test=DDGIProbeRayQueryVulkanTest
 )
+add_executable(MeshParticleDissolveVulkanTest
+    MeshParticleDissolveVulkanTest.cpp
+)
+target_link_libraries(MeshParticleDissolveVulkanTest PRIVATE RenderingGpuTestSupport)
+target_include_directories(MeshParticleDissolveVulkanTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Library/Core/Private
+    ${CMAKE_SOURCE_DIR}/Test/Core/Rendering
+)
+target_compile_definitions(MeshParticleDissolveVulkanTest PRIVATE
+    NORVES_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
+)
+set_target_properties(MeshParticleDissolveVulkanTest PROPERTIES FOLDER "Test/Core/Rendering")
+register_rendering_gpu_test(
+    MeshParticleDissolveVulkanTest
+    MeshParticleDissolveVulkanTest
+)
+
 add_executable(RTGIDiffuseIndirectVulkanTest
     RTGIDiffuseIndirectVulkanTest.cpp
 )
@@ -148,6 +176,24 @@ set_target_properties(RTGIDiffuseIndirectVulkanTest PROPERTIES FOLDER "Test/Core
 register_rendering_gpu_test(
     RTGIDiffuseIndirectVulkanTest
     RTGIDiffuseIndirectVulkanTest
+)
+
+add_executable(DecalGBufferVulkanTest
+    DecalGBufferVulkanTest.cpp
+)
+target_link_libraries(DecalGBufferVulkanTest PRIVATE RenderingGpuTestSupport)
+target_include_directories(DecalGBufferVulkanTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Library/Core/Private
+    ${CMAKE_SOURCE_DIR}/Test/Core/Rendering
+)
+target_compile_definitions(DecalGBufferVulkanTest PRIVATE
+    NORVES_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
+)
+set_target_properties(DecalGBufferVulkanTest PROPERTIES FOLDER "Test/Core/Rendering")
+register_rendering_gpu_test(
+    DecalGBufferVulkanTest
+    DecalGBufferVulkanTest
 )
 
 norves_add_test_bundle(R8AcesLutToneMappingVulkanTest
@@ -2097,6 +2143,19 @@ target_compile_definitions(SwordTrailRibbonVulkanTest PRIVATE
 )
 set_target_properties(SwordTrailRibbonVulkanTest PROPERTIES FOLDER "Test/Core/Rendering")
 register_rendering_gpu_test(SwordTrailRibbonVulkanTest SwordTrailRibbonVulkanTest)
+
+add_executable(HitEffectEmissionTest
+    HitEffectEmissionTest.cpp
+)
+target_link_libraries(HitEffectEmissionTest PRIVATE Core)
+set_target_properties(HitEffectEmissionTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME HitEffectEmissionTest COMMAND HitEffectEmissionTest)
+
+# メッシュの粒子の記録と溶けの閾値を確かめる。
+add_executable(MeshParticleInstanceTest MeshParticleInstanceTest.cpp)
+target_link_libraries(MeshParticleInstanceTest PRIVATE Core)
+set_target_properties(MeshParticleInstanceTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME MeshParticleInstanceTest COMMAND MeshParticleInstanceTest)
 
 add_test(NAME ParticleFrameSnapshotTest COMMAND CanvasTransientBoardSnapshotTest --test=ParticleFrameSnapshotTest)
 

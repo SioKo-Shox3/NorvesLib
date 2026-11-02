@@ -1,5 +1,6 @@
 ﻿#pragma once
 
+#include "Math/Matrix4x4.h"
 #include "Particle/VfxEffectTypes.h"
 #include "Rendering/RenderTypes.h"
 
@@ -31,6 +32,23 @@ namespace NorvesLib::Core::Particle
         uint32_t Seed = 0xC001D00Du;
         Rendering::TextureHandle Texture = Rendering::TextureHandle::Invalid();
         bool bEnabled = true;
+        Rendering::MeshDataHandle Mesh = Rendering::MeshDataHandle::Invalid();
+        Rendering::MaterialHandle Material = Rendering::MaterialHandle::Invalid();
+    };
+
+    struct VfxMeshInstance
+    {
+        uint64_t Id = 0u;
+        Math::Matrix4x4 World;
+        Math::Vector4 Color;
+        float DissolveThreshold = 0.0f;
+        float EdgeWidth = 0.0f;
+        Math::Vector4 EdgeColor;
+        Rendering::MeshDataHandle Mesh = Rendering::MeshDataHandle::Invalid();
+        Rendering::MaterialHandle Material = Rendering::MaterialHandle::Invalid();
+        uint32_t InstanceIndex = 0u;
+        uint32_t EmitterIndex = 0u;
+        uint32_t ParticleIndex = 0u;
     };
 
     struct VfxParticleState
@@ -60,18 +78,26 @@ namespace NorvesLib::Core::Particle
         bool SetModuleParameter(VfxEffectHandle handle, uint32_t emitterIndex, uint32_t moduleIndex, const char* parameterName, const VfxValue& value, Container::String* outError = nullptr);
         bool SetEmitterProperty(VfxEffectHandle handle, uint32_t emitterIndex, const char* propertyName, const VfxValue& value, Container::String* outError = nullptr);
         bool RaiseEvent(VfxEffectHandle handle, const char* eventName, const Math::Vector3& position, double timeSeconds);
+        /**
+         * @brief 法線をローカルの +Z とするイベントを予約する。
+         * @return イベントを受け付けた場合は true、入力が無効な場合は false。
+         */
+        bool RaiseOrientedEvent(VfxEffectHandle handle, const char* eventName, const Math::Vector3& position,
+            const Math::Vector3& normal, double timeSeconds);
         void Tick(float deltaTime);
         double GetInstanceTime(VfxEffectHandle handle) const;
         uint32_t GetEmitterCount(VfxEffectHandle handle) const;
         bool CopyParticles(VfxEffectHandle handle, uint32_t emitterIndex, VariableArray<VfxParticleState>& outParticles) const;
         void AppendBoardProxies(VariableArray<Rendering::BoardProxy>& outProxies) const;
+        void AppendMeshInstances(VariableArray<VfxMeshInstance>& outInstances) const;
+        static float ComputeDissolveThreshold(float age, float lifetime, float dissolveStart, float dissolveDuration);
         static uint32_t ComputeFlipbookFrame(const VfxFlipbookImportSettings& flipbook, float age, float lifetime);
         static Math::Vector4 ComputeFlipbookUVRect(const VfxFlipbookImportSettings& flipbook, uint32_t frame);
 
     private:
         struct ModuleBinding
         {
-            uint32_t Arguments[4] = {};
+            uint32_t Arguments[6] = {};
         };
 
         struct EmitterState
@@ -88,6 +114,8 @@ namespace NorvesLib::Core::Particle
             uint32_t Blend = 0u;
             int32_t FlipbookIndex = -1;
             bool bHasRenderer = false;
+            bool bHasMeshRenderer = false;
+            bool bAlignToVelocity = false;
             bool bHasVelocity = false;
             Math::Vector3 Offset;
             Math::Vector3 VelocityMin;
@@ -96,13 +124,19 @@ namespace NorvesLib::Core::Particle
             Math::Vector4 Color;
             Math::Vector2 Size;
             float Lifetime = 1.0f;
+            float DissolveStart = 0.5f;
+            float DissolveDuration = 0.5f;
+            float EdgeWidth = 0.05f;
+            Math::Vector4 EdgeColor = Math::Vector4(4.0f, 1.5f, 0.3f, 1.0f);
         };
 
         struct PendingEvent
         {
             Container::String Name;
             Math::Vector3 Position;
+            Math::Vector3 Normal;
             double Time = 0.0;
+            bool bOriented = false;
         };
 
         struct InstanceSlot
@@ -124,7 +158,7 @@ namespace NorvesLib::Core::Particle
         static void RefreshEmitter(InstanceSlot& slot, uint32_t emitterIndex);
         static void UpdateFlipbook(const InstanceSlot& slot, const EmitterState& emitter, VfxParticleState& particle);
         static void SpawnParticles(InstanceSlot& slot, EmitterState& emitter, uint32_t count,
-            const Math::Vector3& position, double birthTime, float age);
+            const Math::Vector3& position, double birthTime, float age, const Math::Vector3* orientationNormal = nullptr);
         void ReleaseSlot(uint32_t index);
 
         VariableArray<InstanceSlot> m_Instances;

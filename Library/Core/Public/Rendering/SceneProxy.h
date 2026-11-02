@@ -10,6 +10,7 @@
 #include "VolumetricFog.h"
 #include "FoliageTypes.h"
 #include "RibbonTrailTypes.h"
+#include "DecalTypes.h"
 #include "AutoExposure.h"
 #include "Container/Containers.h"
 #include "Math/Matrix4x4.h"
@@ -588,6 +589,8 @@ namespace NorvesLib::Core::Rendering
         FoliageScene Foliage;
         // このフレームの帯の頂点と描画範囲
         RibbonTrailScene RibbonTrails;
+        // 箱で投影するデカールの一覧。DecalPass が GBuffer の色と法線へ描く
+        DecalScene Decals;
 
         // フォグ設定
         bool bFogEnabled = false;
@@ -619,6 +622,7 @@ namespace NorvesLib::Core::Rendering
             CloudLayer = CloudLayerParameters{};
             Foliage = FoliageScene{};
             RibbonTrails.Clear();
+            Decals = DecalScene{};
         }
 
         void SetDDGIVolumeParameters(const DDGIVolumeParameters& parameters)

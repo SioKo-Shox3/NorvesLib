@@ -364,6 +364,11 @@ namespace NorvesLib::Core::Rendering
         m_RenderingCoordinator.SetRibbonTrails(trails);
     }
 
+    void RenderWorld::SetDecals(const DecalScene& decals)
+    {
+        m_RenderingCoordinator.SetDecals(decals);
+    }
+
     void RenderWorld::SetDeterministicCapture(bool bEnabled)
     {
         m_RenderingCoordinator.SetDeterministicCapture(bEnabled);

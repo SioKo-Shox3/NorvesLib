@@ -4558,6 +4558,7 @@ namespace NorvesLib::Core::Rendering
         packet.Scene.RibbonTrails = m_RibbonTrails;
         // 帯はこのパケットだけで使い、配列の容量は次のフレームにも再利用する。
         m_RibbonTrails.Clear();
+        packet.Scene.Decals = m_Decals;
         packet.bRTGIEnabled = m_bRTGIEnabled;
         packet.bRTGINonShadowCasterOcclusion = m_bRTGINonShadowCasterOcclusion;
     }
@@ -5792,6 +5793,7 @@ namespace NorvesLib::Core::Rendering
         viewContext.SnapshotDebugLineVertices = &packet->DebugLineVertices;
         viewContext.SnapshotFoliage = &packet->Scene.Foliage;
         viewContext.SnapshotRibbonTrails = &packet->Scene.RibbonTrails;
+        viewContext.SnapshotDecals = &packet->Scene.Decals;
         viewContext.SnapshotOpaqueCommands = DrawCommandView::FromRange(packet->DrawCommands,
                                                                         packet->OpaqueCommandRange);
         viewContext.SnapshotTransparentCommands = DrawCommandView::FromRange(packet->DrawCommands,
@@ -6551,6 +6553,11 @@ namespace NorvesLib::Core::Rendering
     void RenderingCoordinator::SetRibbonTrails(const RibbonTrailScene& trails)
     {
         m_RibbonTrails = trails;
+    }
+
+    void RenderingCoordinator::SetDecals(const DecalScene& decals)
+    {
+        m_Decals = decals;
     }
 
     uint64_t RenderingCoordinator::RegisterCamera(const CameraProxy &camera)

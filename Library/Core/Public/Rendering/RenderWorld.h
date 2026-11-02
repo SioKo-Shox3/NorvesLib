@@ -251,6 +251,14 @@ namespace NorvesLib::Core::Rendering
         void SetRibbonTrails(const RibbonTrailScene& trails);
 
         /**
+         * @brief 箱で投影するデカールの一覧を設定する（GameThread）
+         *
+         * Particle::DecalPool::BuildScene() の結果を渡す。RenderThread の DecalPass が GBuffer の色と法線へ描く。
+         * 空の一覧で描かなくなる。一覧は作った後に書き換えない共有の値で、写しは参照を数えるだけ。
+         */
+        void SetDecals(const DecalScene& decals);
+
+        /**
          * @brief 決定的な撮影（--capture-deterministic）にする（GameThread）
          *
          * 有効な間、FramePacket の経過時間を 1/60 秒に固定する。起動の初期化で一度だけ呼ぶ。
