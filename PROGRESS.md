@@ -8995,3 +8995,8 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: なし（アプリを起動する確かめは無い）
 - Notes: 確かめの途中、ほかの枠の AssetCook.exe が C: のロックを握っている間は、待ちを付けない `CookManagedBootstrapTest`・`CookManagedUpdateTest`（fixture の `InitializeNewCookManagedStore == Created`）と `CookDestinationLockTest` の既存の `GoodPeer` が落ちた。この 3 つは変更前と同じ待ち 0 の挙動で、ロックが空いた後の CookDestinationLockTest は Passed
 - Notes: 要起票: Busy を期待する cook の試験（CookDestinationLockTest・CookManagedBootstrapTest・CookManagedUpdateTest）は、ほかの枠の AssetCook が同じボリュームで走っていると前提の取得が Busy になって落ちる（待ちを付けられない）。試験だけ別の volume の名前に分けるなどの扱いが要る
+
+## G2-S6-ASSET-SET-P1 統合ブランチの取り込み後の確かめ（2026-11-02）
+
+- Done: feature/scene-launcher を取り込み、ManagedTextureAssetSetCli.md の衝突は統合側の「単体 CLI の凍結基準との比較」の節を採り、Bootstrap の原因と待ち直しの 2 項目を残して解いた。Debug の CookedMeshTest・AssetCook のビルドは成功、CookManagedBootstrapTest は単独で 23.65 秒で Passed、CookManagedStoreInitializationTest・CookManagedUpdateTest・TextureManagedCliTest は 2.10 秒・81.79 秒・15.26 秒で Passed（timeout 180 秒）。
+- Next: なし。
