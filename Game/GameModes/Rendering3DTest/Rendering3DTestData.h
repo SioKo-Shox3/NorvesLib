@@ -294,6 +294,7 @@ namespace Game::GameModes
         bool m_bDebugDrawTestLines = false;
         // --startup-skinned-probe の指定で true にする。検証用の骨付きのパネルを地面の上へ 2 体置く（既定は置かない）。
         bool m_bStartupSkinnedProbe = false;
+        // --startup-skinned-probe-materials=<n> の値。2 のとき左右の半分を別の材質 slot にした 2 submesh のパネルにする（既定は 1）。
         uint32_t m_StartupSkinnedProbeMaterialCount = 1u;
         bool m_bAnimationDebug = false;
         /// --imgui のとき true。デバッグ用の ImGui の窓（空の太陽の編集）を出す。ランチャーのために ImGui モジュールが

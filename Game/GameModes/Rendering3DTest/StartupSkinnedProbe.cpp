@@ -157,6 +157,7 @@ namespace Game::GameModes
         AppendGridVertices(vertices, 1.0f);
         AppendGridVertices(vertices, -1.0f);
         const uint32_t faceVertexCount = (kGridCells + 1u) * (kGridCells + 1u);
+        uint32_t indicesPerHalf = 0u;
         if (bTwoMaterials)
         {
             const uint32_t middleColumn = kGridCells / 2u;
@@ -164,6 +165,8 @@ namespace Game::GameModes
             AppendGridIndices(indices, faceVertexCount, true, 0u, middleColumn);
             AppendGridIndices(indices, 0u, false, middleColumn, kGridCells);
             AppendGridIndices(indices, faceVertexCount, true, middleColumn, kGridCells);
+            // 1 半分は表と裏の 2 面ぶんのインデックスを含む。
+            indicesPerHalf = static_cast<uint32_t>(indices.size()) / 2u;
         }
         else
         {
@@ -214,7 +217,6 @@ namespace Game::GameModes
         {
             NorvesLib::Core::Container::VariableArray<NorvesLib::Core::Skeletal::SkeletalSubMesh> submeshes;
             NorvesLib::Core::Container::VariableArray<NorvesLib::Core::Skeletal::SkeletalMaterialSlot> slots;
-            const uint32_t indicesPerHalf = kGridCells * kGridCells * 3u;
             for (uint32_t slot = 0u; slot < 2u; ++slot)
             {
                 NorvesLib::Core::Skeletal::SkeletalSubMesh submesh;

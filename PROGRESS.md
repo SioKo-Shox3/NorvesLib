@@ -8421,3 +8421,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261102-105745/verify-G2-GR32-GPU-ACCEPTANCE-iter2.txt`（HEAD c0207f4c で `cmake --build build --config Debug --target Game AssetCook SkinnedSubmeshDrawContractTest -- -m:1` EXIT=0、`SkinnedSubmeshDrawContractTest.exe` PASS・EXIT=0）
 - Next: 起動の確かめは後回し。`G2-GR32-GPU-ACCEPTANCE-CHECK` で verify の 3〜6 行目を回し、PNG・metrics.json・result.json を開いて確かめる
 - Notes: 残ったビルドと重なって走らせると PDB の取り合い（C1041）で落ちる。再検証の時間切れの後は、同じ作業ツリーのビルドの終了を待ってから回す
+- U8 2 材質のパネルの submesh の範囲を左右の半分に合わせる: 着地(直し 0 回)
