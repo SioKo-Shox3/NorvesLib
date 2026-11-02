@@ -2077,6 +2077,13 @@ target_link_libraries(VfxEffectSystemTest PRIVATE Core)
 set_target_properties(VfxEffectSystemTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME VfxEffectSystemTest COMMAND VfxEffectSystemTest)
 
+add_executable(SwordTrailRibbonTest
+    SwordTrailRibbonTest.cpp
+)
+target_link_libraries(SwordTrailRibbonTest PRIVATE Core)
+set_target_properties(SwordTrailRibbonTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME SwordTrailRibbonTest COMMAND SwordTrailRibbonTest)
+
 add_test(NAME ParticleFrameSnapshotTest COMMAND CanvasTransientBoardSnapshotTest --test=ParticleFrameSnapshotTest)
 
 
