@@ -1,4 +1,5 @@
 ﻿#include "Asset/AssetSystem.h"
+#include "Rendering/GeometryPool.h"
 #include "Rendering/RenderResources.h"
 #include "Resource/ModelAssetRuntime.h"
 #include "RHI/IBuffer.h"
@@ -58,11 +59,9 @@ namespace
     {
     public:
         FakeBuffer(const NorvesLib::RHI::BufferDesc& desc,
-                   std::function<void()>* pUpdateHook,
                    std::function<void()>* pDestroyHook)
             : Desc(desc),
               Bytes(static_cast<size_t>(desc.Size)),
-              m_pUpdateHook(pUpdateHook),
               m_pDestroyHook(pDestroyHook)
         {
             ++LiveCount;
@@ -90,12 +89,6 @@ namespace
             {
                 std::memcpy(Bytes.data() + static_cast<size_t>(offset), data, static_cast<size_t>(size));
             }
-            if (m_pUpdateHook != nullptr && *m_pUpdateHook)
-            {
-                std::function<void()> hook = std::move(*m_pUpdateHook);
-                *m_pUpdateHook = {};
-                hook();
-            }
         }
         NorvesLib::RHI::ResourceUsage GetUsage() const override { return Desc.Usage; }
 
@@ -104,7 +97,6 @@ namespace
         std::vector<uint8_t> Bytes;
 
     private:
-        std::function<void()>* m_pUpdateHook = nullptr;
         std::function<void()>* m_pDestroyHook = nullptr;
     };
 
@@ -116,8 +108,10 @@ namespace
         NorvesLib::RHI::BufferPtr CreateBuffer(const NorvesLib::RHI::BufferDesc& desc) override
         {
             CreatedBufferDescs.push_back(desc);
-            auto buffer = Container::MakeShared<FakeBuffer>(desc, &OnNextBufferUpdate, &OnBufferDestroyed);
+            auto buffer = Container::MakeShared<FakeBuffer>(desc, &OnBufferDestroyed);
             CreatedBuffers.push_back(buffer);
+            auto hook = std::move(OnNextBufferCreated);
+            hook.InvokeIfBound();
             return buffer;
         }
         NorvesLib::RHI::TexturePtr CreateTexture(const NorvesLib::RHI::TextureDesc&) override { return {}; }
@@ -160,7 +154,7 @@ namespace
         NorvesLib::RHI::DeviceCapabilities Capabilities;
         std::vector<NorvesLib::RHI::BufferDesc> CreatedBufferDescs;
         std::vector<Container::TWeakPtr<FakeBuffer>> CreatedBuffers;
-        std::function<void()> OnNextBufferUpdate;
+        NorvesLib::Core::Delegate<void> OnNextBufferCreated;
         std::function<void()> OnBufferDestroyed;
     };
 
@@ -309,6 +303,13 @@ namespace
         assert(resources.MegaGeometry().FlushCompletedModelLoads(0) == 1);
         assert(cached.IsValid());
 
+        // モデルの区画を返しても共有プールのバッファは残るため、専用の観測用バッファを用意する。
+        // GpuResourceStore::Clear が同期的に破棄する時点は、受付を閉じてから ReopenAfterClear するまでの間にある。
+        Rendering::BufferCreateInfo clearProbeInfo;
+        clearProbeInfo.Size = sizeof(uint32_t);
+        clearProbeInfo.DebugName = "ClearAdmissionProbe";
+        assert(resources.Gpu().CreateBuffer(clearProbeInfo).IsValid());
+
         uint32_t requestDuringClear = 99;
         bool bDestroyHookRan = false;
         device->OnBufferDestroyed = [&resources, &requestDuringClear, &bDestroyHookRan]()
@@ -349,7 +350,8 @@ namespace
         runtime.Bind(&resources.Textures(), &resources.MegaGeometry());
         assert(runtime.SetAssetSystem(fixture.System));
 
-        const int baseline = FakeBuffer::LiveCount.load();
+        const auto baseline = resources.GetGeometryPool()->GetStats();
+        const size_t baselineModels = resources.MegaGeometry().GetModelCount();
         const size_t preGpuBufferCount = device->CreatedBufferDescs.size();
         Rendering::ModelHandle preGpuCallback{777};
         assert(runtime.LoadModelAsync(
@@ -372,13 +374,22 @@ namespace
                        staleCallback = handle;
                    }) != 0);
         WaitForWorkers();
-        device->OnNextBufferUpdate = [&runtime]()
+        // 初回の区画確保は FinalizeModelStaging の中で共有プールのバッファを作る。
+        // コピーの記録は後のフレームなので、候補の生成と世代の再確認の間に通る作成時点で世代を進める。
+        bool bGenerationHookRan = false;
+        device->OnNextBufferCreated = [&runtime, &bGenerationHookRan]()
         {
+            bGenerationHookRan = true;
             runtime.AdvanceGenerationForTesting();
         };
         assert(runtime.FlushCompletedModelLoads(0) == 1);
+        assert(bGenerationHookRan);
         assert(!staleCallback.IsValid());
-        assert(FakeBuffer::LiveCount.load() == baseline);
+        // 共有バッファは残ってよいが、捨てた候補のモデル・区画・アップロード待ちは残さない。
+        assert(resources.MegaGeometry().GetModelCount() == baselineModels);
+        assert(resources.GetGeometryPool()->GetStats().UsedBytes == baseline.UsedBytes);
+        assert(resources.GetGeometryPool()->GetStats().AllocationCount == baseline.AllocationCount);
+        assert(!resources.MegaGeometry().HasPendingGpuUploads());
 
         assert(runtime.SetAssetSystem(fixture.System));
         Rendering::ModelHandle existing = resources.MegaGeometry().LoadModel(
@@ -387,7 +398,8 @@ namespace
         assert(existing.IsValid());
         const auto existingMega = resources.MegaGeometry().GetModelMegaMeshHandle(existing);
         assert(existingMega.IsValid());
-        const int existingLive = FakeBuffer::LiveCount.load();
+        const auto existingStats = resources.GetGeometryPool()->GetStats();
+        const size_t existingModels = resources.MegaGeometry().GetModelCount();
 
         Rendering::ModelHandle published = Rendering::ModelHandle::Invalid();
         assert(runtime.LoadModelAsync(
@@ -400,7 +412,12 @@ namespace
         WaitForWorkers();
         assert(runtime.FlushCompletedModelLoads(0) == 1);
         assert(published == existing);
-        assert(FakeBuffer::LiveCount.load() == existingLive);
+        // 競合に負けた候補だけを捨て、既存モデルとその区画は保つ。
+        assert(resources.MegaGeometry().GetModelMegaMeshHandle(existing) == existingMega);
+        assert(resources.MegaGeometry().GetMegaMeshGPUData(existingMega) != nullptr);
+        assert(resources.MegaGeometry().GetModelCount() == existingModels);
+        assert(resources.GetGeometryPool()->GetStats().UsedBytes == existingStats.UsedBytes);
+        assert(resources.GetGeometryPool()->GetStats().AllocationCount == existingStats.AllocationCount);
 
         runtime.AdvanceGenerationForTesting();
         auto released = runtime.ReleaseManagedModel(existing);
@@ -409,7 +426,10 @@ namespace
         resources.MegaGeometry().ReleaseModel(released.HandleToRelease);
         assert(!resources.MegaGeometry().GetModelMegaMeshHandle(existing).IsValid());
         assert(resources.MegaGeometry().GetMegaMeshGPUData(existingMega) == nullptr);
-        assert(FakeBuffer::LiveCount.load() == baseline);
+        assert(resources.MegaGeometry().GetModelCount() == baselineModels);
+        assert(resources.GetGeometryPool()->GetStats().UsedBytes == baseline.UsedBytes);
+        assert(resources.GetGeometryPool()->GetStats().AllocationCount == baseline.AllocationCount);
+        assert(!resources.MegaGeometry().HasPendingGpuUploads());
 
         Rendering::ModelHandle zeroLease = resources.MegaGeometry().LoadModel(
             *fixture.System,
@@ -419,6 +439,10 @@ namespace
         runtime.AdvanceGenerationForTesting();
         assert(!resources.MegaGeometry().GetModelMegaMeshHandle(zeroLease).IsValid());
         assert(resources.MegaGeometry().GetMegaMeshGPUData(zeroLeaseMega) == nullptr);
+        assert(resources.MegaGeometry().GetModelCount() == baselineModels);
+        assert(resources.GetGeometryPool()->GetStats().UsedBytes == baseline.UsedBytes);
+        assert(resources.GetGeometryPool()->GetStats().AllocationCount == baseline.AllocationCount);
+        assert(!resources.MegaGeometry().HasPendingGpuUploads());
 
         bool bAdmissionCloseHookRan = false;
         Rendering::ModelAssetRuntimeShutdownTestAccess::SetAdmissionCloseHook(

@@ -4926,7 +4926,7 @@
 - P1: TASK G2-MATERIAL-SELECTION-INTEGRATION-P1-P1-P1-P1
 
 ## G2-S6-ASSET-SET-P5: `windows-assetcook.yml` の CPU 契約で落ちる `MegaGeometryResourcesTest`(1989 行)と `ModelResourcesAssetRuntimeTest`(323 行)を、今の契約に合わせて通す
-- status: todo
+- status: done
 - done-when: 次の 4 点をすべて満たす。
   - まず、ローカルで 2 本の失敗が Release と Debug の両方で起きるかを確かめる(`ctest --test-dir build -C <構成> --output-on-failure -R ...`)。構成ごとの結果と落ちた行を PROGRESS.md に書く。
   - `MegaGeometryResourcesTest.cpp` の `TestGroupBvhRegionIsUploadedAndValidated` の「BVH の無いメッシュは BVH の領域を持たない」という検査(1987〜1989 行)を直す。PROGRESS.md の SCN-WL-GEOMETRY-PAGE-THRASH の Notes に、実行時に BVH を作る変更(e806a3c9、SCN-MEGA-BVH-LEAF-SPLIT)の後も古い前提が残っていると書かれている。焼いた BVH を持たないメッシュに実行時の BVH ができるという今の契約を確かめる検査に置き換える。今の契約として言えることが無い、ただ実装を写しただけの検査なら消す。壊れた BVH を拒否する検査(1992 行以降)は変えない。
