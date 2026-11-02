@@ -8507,3 +8507,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 要起票: verify の撮影を RT と GI を切った構成で撮る起動引数（と verify の -GameArgs）が無い。予算の構成で判定できるようにするかを決める
 - U1 霧の太陽の散乱に VSM の可視を掛ける（読めない所は CSM）: 着地(直し 1 回)
 - U2 シーンごとの霧の範囲（距離の上限）と周りの光の倍率: 着地(直し 0 回)
+- U3 interior-light に薄い霧を入れ、タスクの verify を回す: 着地(直し 0 回)
