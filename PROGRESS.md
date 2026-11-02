@@ -8510,3 +8510,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U3 見本画像を板で出す案: 捨てた（キャンバスはフレーム開始後に作れず、`--capture-png` がキャンバスを切る）。表示は `Library/Modules/ImGui` に画像のテクスチャを足す案を推奨し、paths の拡張を `blocked/SCN-THUMBNAILS.md` で求めた
 - Notes: LauncherMenuTest はブリッジ SDK を入れた構成（`-DNORVES_BRIDGE_SDK_DIR=C:/Users/KINGkawamura/Documents/NorvesEditor/bridge/cpp`）でしか作られない（`Test/CMakeLists.txt` の `if(TARGET norves_bridge_engine_sdk)`）。この枠の `build` は SDK なしの構成で、そのままでは verify の 1・2 行目が通らない。U1+U2 を合わせた状態は SDK 入りの構成で Debug の Game・LauncherMenuTest のビルド EXIT=0、ctest Passed
 - Notes: 要起票: `--scene=<id>` で直接入った後にランチャーへ戻ると、`RegisterLauncherDisplayText` が呼ばれていない（`GameApplicationHandler.cpp` 2865 行付近は `m_bLauncherStartup` のときだけ）ので、ランチャーの字が欠けるおそれがある
+- U4 ImGui モジュールに画像のテクスチャの登録と束ねを足す: 着地(直し 0 回)
