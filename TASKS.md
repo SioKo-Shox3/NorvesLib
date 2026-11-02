@@ -4554,7 +4554,7 @@
 - from: G2-GR82-B4-STATIC-ROOT-FRAME128
 
 ## SCN-MEGA-FIX-STRESS-GPU-CHECK-P1: RT と GI を切って撮る開発用の起動引数 `--rt-gi=off` を足す
-- status: todo
+- status: done
 - done-when: 開発ビルド(Debug・RelWithDebInfo)にだけ起動引数 `--rt-gi=on|off` を足す(`--rtgi-bounce` と同じ形。Release では警告を出して無視する)。`off` にすると、起動から終了まで RT(RTGI・RT の影と反射・TLAS の構築と更新)と GI(DDGI)を切り、間接光は既存の IBL に替わる(`ResolveRTGIIndirectLighting` の順のとおり)。途中で入るシーン(Launcher・荒野の共通の照明など)が `SetRTGIEnabled` を呼んでも、`off` の指定が勝つ。引数を付けない起動の既定の経路と見た目は変えない。開発ビルドでは SCENE_READY の時点で、実際に描いたフレームパケットの値から `RT_GI_STATE off` か `RT_GI_STATE on` を 1 行ログに書く(フラグの値ではなく実際の状態を書く)。PROGRESS.md には「SCN-MEGA-FIX-STRESS-GPU-CHECK と SCN-MEGA-ACCEPT-1M の予算(16.6 ms)の撮影は、`-GameArgs` に `rt-gi=off` を足して撮る」と書く。起動しないで確かめるのはビルドが通ることまで。ログの行の確かめは下の verify の撮影で行う(起動を戻した後)。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -Views overview -Build -RequireAssets -Configuration RelWithDebInfo -GameArgs rt-gi=off -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-STRESS-GPU-CHECK-P1`
