@@ -3769,7 +3769,7 @@
 - notes: ParseUnicodeEscapeは現状4桁単位、AppendUtf8は3byteまで。P5Aとは別件。既定game action名はASCIIで進め、汎用JSON整合として後続修正する。
 
 ## GAME-GR130-VFX: 剣のトレイル（リボン）を実装する
-- status: doing
+- status: done
 - after: GAME-GR136-VFX
 - done-when: 着手の最初に、作者の判断が要る方式と、未着手の前提の GR との境界を `Docs/Plans/GameFeatureRoadmap.md` に書く（推奨の案で進め、理由を PROGRESS.md に書く。前提が未完の部分は完了を宣言しない範囲として残す）。 起動せずに確かめる完了の条件: CPU の試験 `SwordTrailRibbonTest`（新しい実行ファイル。足す前に `Docs/Testing.md` の 3 点を書く）で、固定ステップの回数が 0・1・2 のどのフレームでも帯の点列が連続で NaN が無い、1 フレームで 90 度以上振っても補間で折れ目の角度が上限以下になる、寿命で点が消えて上限を超えない（剣は描画用の補間された Transform を読む）。既知の軌跡の帯の画素の位置が期待と一致すること（GPU の試験 `SwordTrailRibbonVulkanTest`）は、起動を戻した後の `GAME-GR130-VFX-CHECK` で確かめる。
 - verify: `cmake --build build --config Debug --target Game SwordTrailRibbonTest -- /m:1`

@@ -8716,3 +8716,9 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U6 --animation-debug の剣にトレイルを付ける（Game）: 着地(直し 0 回)
 - U4 帯の描画器・シェーダー・ForwardPass の半透明の段への組み込み: 着地(直し 1 回)
 - U5 SwordTrailRibbonVulkanTest（GPU の試験。ビルドだけ）と最後の確かめ: 着地(直し 0 回)
+- Done: 起動せずに確かめる完了の条件を `SwordTrailRibbonTest`（CPU の試験。足す理由の 3 点は `Docs/Testing.md`）で確かめた。剣の変換は `RenderTransformHistory` で補間したものを読み、固定ステップ 0・1・2 回のフレームが混ざる列で点列が連続・NaN 無し・帯の先が描画用の補間位置と一致、1 フレーム 120 度の振りで隣り合う刃の向きの差と切っ先の縁の折れ目の角度が 10 度以下、寿命で点が消え上限（128・8）を超えず新しい点が残る。`cmake --build build --config Debug --target Game SwordTrailRibbonTest -- /m:1` は終了コード 0、`ctest -R "^SwordTrailRibbonTest$"` は Passed、`cmake --build build --config Debug --target SwordTrailRibbonVulkanTest -- /m:1` も終了コード 0（`.harness/runs/20261102-145119/verify-GAME-GR130-VFX-final.txt`）
+- Done: 帯の頂点は `RenderWorld::SetRibbonTrails` → FramePacket の `Scene.RibbonTrails` → `ViewRenderContext::SnapshotRibbonTrails` で渡し（写した後に保持を空にし、前のフレームの帯を残さない）、`ForwardPass` の半透明の段の GeometryPass の後に別のレンダーパス（色・深度とも Load、初期と最後の状態は元のパスの最後の状態）で `RibbonTrailRenderer` が描く。帯の無いフレームは前と同じ経路。`--animation-debug` の剣に、描画の補間を有効にした剣の `GetRenderWorldTransform` を late update で読むトレイル（根元 (0,0,0)・切っ先 (0,0.8,0)、加算、寿命 0.25 秒）を付けた。既定の起動画面とランチャーの各シーンには置かない
+- Next: 起動の確かめは後回し。`GAME-GR130-VFX-CHECK` で `ctest --test-dir build -C Debug -R "^SwordTrailRibbonVulkanTest$" --no-tests=error --output-on-failure --timeout 600` を回し（実デバイスでのシェーダーのコンパイル・D32_FLOAT の的・読み戻し・検証レイヤーは未確認）、`--animation-debug` で起動して剣の振りに帯が付くこと、既定の起動画面が変わらないことを確かめる
+- Notes: 完了を宣言しない範囲は着手時の記録のとおり（GR57 の共有の半透明のキュー、GR30 の TAA の整合、GR136 の VFX の定義のリボンのエミッタ、GR16・G8 の攻撃の窓に合わせた出し止め、Editor の編集の画面）
+- Notes: 剣はソケットの先とは別のルートの Entity で、ソケットの更新が固定ステップの外で姿勢を変えるため、補間を要求しても補間の履歴が今の姿勢に戻され、固定ステップの間の補間が効かないフレームがある見込み（`--animation-debug` の剣だけ。帯は描画の剣には合う）。Bridge の一時停止中は late update が呼ばれず帯が更新されない
+- Notes: 要起票: ソケットに付けた Entity（`SocketAttachmentComponent`）の描画の補間を、親の描画の変換から求める形にする（今は補間の履歴が固定ステップの外の書き換えで戻される）
