@@ -8607,3 +8607,24 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 検証: `cmake --build build --config Debug --target CookedMeshTest AssetCook -- /m:1` は終了コード 0、ctest の 7 本（MaterialSelectionTest・MaterialImportDocumentTest・MaterialImportSettingsJsonTest・SkeletalMaterialBindingsTest・GltfMaterialSourceTest・CookCacheDecisionTest・AssetCookImportSmoke）はすべて Passed、RigSplitCookTest・CookedClipBankV1Test・SkeletalClipBankBindingTest も Passed（作業ツリー内の TEMP で再実行。`.harness/runs/20261102-095605/verify-G2-MATERIAL-SELECTION-INTEGRATION-U6.txt`、足した検査の出力行は `aux-G2-MATERIAL-SELECTION-INTEGRATION-rigsplit.txt`）
 - Next: なし（この項目は完了）
 - Notes: 反復 1 の Notes の「target 骨格の sidecar は preflight では依存として採るだけ」は、この反復で解消した。`--rig-split` の CLI の警告を実際の CLI の出力で確かめる試験は無い（コードで確かめた）
+
+- U1 カードの説明文の折り返しと、収まらないときの並び: 着地(直し 0 回)
+- U2 シーンの一覧に見本の視点と置き場を書き、見本画像を撮る台本を作る: 着地(直し 1 回)
+- U3 見本画像を板で出す案: 捨てた（キャンバスはフレーム開始後に作れず、`--capture-png` がキャンバスを切る）。表示は `Library/Modules/ImGui` に画像のテクスチャを足す案を推奨し、paths の拡張を `blocked/SCN-THUMBNAILS.md` で求めた
+- Notes: LauncherMenuTest はブリッジ SDK を入れた構成（`-DNORVES_BRIDGE_SDK_DIR=C:/Users/KINGkawamura/Documents/NorvesEditor/bridge/cpp`）でしか作られない（`Test/CMakeLists.txt` の `if(TARGET norves_bridge_engine_sdk)`）。この枠の `build` は SDK なしの構成で、そのままでは verify の 1・2 行目が通らない。U1+U2 を合わせた状態は SDK 入りの構成で Debug の Game・LauncherMenuTest のビルド EXIT=0、ctest Passed
+- Notes: 要起票: `--scene=<id>` で直接入った後にランチャーへ戻ると、`RegisterLauncherDisplayText` が呼ばれていない（`GameApplicationHandler.cpp` 2865 行付近は `m_bLauncherStartup` のときだけ）ので、ランチャーの字が欠けるおそれがある
+- U4 ImGui モジュールに画像のテクスチャの登録と束ねを足す: 着地(直し 0 回)
+- U5 ランチャーで見本画像を読み込んでカードに描く: 着地(直し 0 回)
+
+## 2026-11-02 SCN-THUMBNAILS（run 20261102-093543 の反復 2）
+- Done: 判断役の判断（案 A）に従い、ImGui の重ね描きに画像の登録を足した（0b1cc160）。公開の `RegisterImGuiImage(rgba8, w, h)`（ImGui モジュールの Initialize の前だけ受け付け、ID は 2 から。時期外・引数不正は 0）と `IsImGuiImageReady(id)`。積んだ画像は `InitializeBackend`（GameThread・最初のフレームの前、フォントのアップロードの後）で `R8G8B8A8_UNORM` の ITexture にする。`RenderDrawData` は描画コマンドの `GetTexID()` を見て、1 はフォント、登録した ID はその画像の記述子セット（フレームの持ち主から Execute ごと・テクスチャごとに 1 つ借りる）、知らない ID は飛ばす
+- Done: ランチャーが `Assets/Textures/Launcher/<id>.png` を stb_image で読んで登録し、用意できたカードはグラデーションと中央の名前の代わりに `AddImageRounded`（縦横比を保ち中央で切り取る）で描く（37f8a2ee）。無い・読めないカードは今の表示のままで、警告は `LAUNCHER_THUMBNAIL_MISSING count=… ids=…` の 1 行。`RegisterLauncherDisplayText` と見本画像の登録は `m_bLauncherStartup || m_bPauseMenuWanted` で呼ぶ（`--scene=<id>` からポーズメニューで戻る起動でも字と画像が出る。前の反復の要起票の字の欠けもこれで閉じた）
+- 確かめ（起動しない分）: この枠の `build` をブリッジ SDK 入りで構成し直した（`cmake -S . -B build -DNORVES_BRIDGE_SDK_DIR=C:/Users/KINGkawamura/Documents/NorvesEditor/bridge/cpp`、EXIT=0）。U5 の作業ツリーで `cmake --build build --config Debug --target Game LauncherMenuTest -- /m:1` → BUILD_EXIT=0、`ctest --test-dir build -C Debug -R "^LauncherMenuTest$" --no-tests=error --output-on-failure --timeout 180` → `1/1 Test #493: LauncherMenuTest ... Passed 0.01 sec`・`100% tests passed, 0 tests failed out of 1`・CTEST_EXIT=0（`.harness/runs/20261102-093543/U5-unit-verify.txt`）。numstat は 2 通りで一致。新しい試験は足していない
+- Next: 起動の確かめは後回し（当分アプリを起動しない決まり）。SCN-THUMBNAILS-CHECK で verify の 3・4 行目（`CaptureLauncherThumbnails.ps1` で見本画像を作って `Assets/Textures/Launcher/` に追跡し、`CaptureScene.ps1 -Scene launcher` で撮る）を回し、撮影を開いて、見本画像が正しいカードに出ること・色が暗すぎ明るすぎないこと（UNORM で mesh2d.frag が線形化）・中央の切り取りの向き・角丸・選択の光る縁と強調が分かることを見る。`--scene=<id>` からポーズメニューでランチャーへ戻ったときにも画像と字が出るかも見る
+- Notes: 危険地帯（RenderThread・RHI の資源の寿命）の変更。評価者に確かめてほしい点: (1) アップロードの時期（`ImGuiModule::InitializeBackend` は `ApplicationProcessor::Initialize` の `InstallAll` の中で最初のフレームの前に走り、以後 `ITexture::Update` を呼ぶ経路が無いか）(2) 知らない ID の扱い（0・未登録・アップロードに失敗した ID のコマンドを発行せずに飛ばすか）(3) 記述子セットの借り方（フレームの持ち主から Execute ごと・テクスチャごとに借り、パスに FrameIndex を持たないか。UBO の切れ端を共用してよいか）(4) `Shutdown` で手放す順（`ImGuiOverlayPass::Shutdown` で画像のテクスチャ、`ImGuiModule::Shutdown` で登録の表を空にする。RenderThread 静止後・device 生存中か）
+- Notes: TASKS.md の SCN-THUMBNAILS の `paths:` の行は `Library/Modules/ImGui` を含んでいない（判断役が足すと決めたが、ワーカーは `status:`・`after:` 以外を書き換えられない）。統合で範囲の照合をするなら、判断役の判断（blocked/resolved/SCN-THUMBNAILS.md）を根拠にする
+
+## 2026-11-02 SCN-THUMBNAILS（run 20261102-093543 の反復 3）
+- Done: 反復 2 の再検証の時間切れを直した。原因は実装でなく、この枠の build がブリッジ SDK 入りで構成し直した直後で Game の全体を初めて組んだため（単位は別の作業ツリーで組んでいた）。この枠で一度組み終えて最新にし、verify の 1・2 行目を回し直した: `cmake --build build --config Debug --target Game LauncherMenuTest -- /m:1` は BUILD_EXIT=0（4 秒、Game.exe と LauncherMenuTest.exe とも最新）、`ctest ... -R "^LauncherMenuTest$"` は `1/1 Test #493: LauncherMenuTest ... Passed 0.02 sec`・CTEST_EXIT=0
+- Next: 起動の確かめは後回し（反復 2 の Next のとおり SCN-THUMBNAILS-CHECK で verify の 3・4 行目と撮影の確認）。評価者への申し送り（危険地帯・確かめどころ 4 点）は反復 2 の記録のまま
+- Notes: 構成し直した枠で Game を一から組むと /m:1 で 10 分を超える。verify は増分のビルドを前提にしている
