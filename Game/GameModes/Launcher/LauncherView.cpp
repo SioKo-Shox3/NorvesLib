@@ -79,7 +79,7 @@ namespace Game::GameModes
             return 1;
         }
 
-        /// 行頭に来てはいけない文字（句読点・閉じ括弧・長音など）か。来そうなときは前の行の末尾へ送る
+        /// 行頭に来てはいけない文字（句読点・閉じ括弧・長音など）か
         bool IsLineHeadProhibited(const char *text, const char *textEnd)
         {
             static constexpr const char *kProhibited[] = {"、", "。", "，", "．", "）", "」", "』", "】", "！", "？", "ー", "…"};
@@ -121,10 +121,29 @@ namespace Game::GameModes
                         next = textEnd;
                     }
                     const float width = font->CalcTextSizeA(size, FLT_MAX, 0.0f, lineBegin, next).x;
-                    if (width > maxWidth && lineEnd > lineBegin && !IsLineHeadProhibited(lineEnd, textEnd))
+                    if (width > maxWidth && lineEnd > lineBegin)
                     {
+                        if (IsLineHeadProhibited(lineEnd, textEnd))
+                        {
+                            // 禁則の文字をぶら下げず、直前の文字から次の行へ送る。
+                            // 連続する禁則の文字も一緒に送り、空行になる場合は幅の制限を優先する。
+                            const char *previous = lineEnd;
+                            do
+                            {
+                                --previous;
+                                while (previous > lineBegin && (static_cast<unsigned char>(*previous) & 0xC0) == 0x80)
+                                {
+                                    --previous;
+                                }
+                            } while (previous > lineBegin && IsLineHeadProhibited(previous, textEnd));
+                            if (previous > lineBegin)
+                            {
+                                lineEnd = previous;
+                            }
+                        }
                         break;
                     }
+                    // 1文字だけで幅を超える場合も、その文字を消費して先へ進める。
                     lineEnd = next;
                 }
                 lines[count].Begin = lineBegin;
@@ -142,17 +161,17 @@ namespace Game::GameModes
 
         /// 行を描く。続きが切れている最後の行は、末尾を削って「…」を付ける
         void DrawLines(ImDrawList *drawList, ImFont *font, const TextLine *lines, int count, bool bTruncated,
-                       ImVec2 origin, float lineHeight, float maxWidth, ImU32 color)
+                       ImVec2 origin, float lineHeight, float maxWidth, ImU32 color, bool bCentered = false)
         {
             const float size = font->LegacySize;
             for (int index = 0; index < count; ++index)
             {
                 const char *end = lines[index].End;
                 const bool bEllipsis = bTruncated && index == count - 1;
+                const float ellipsisWidth =
+                    bEllipsis ? font->CalcTextSizeA(size, FLT_MAX, 0.0f, kEllipsisText, nullptr).x : 0.0f;
                 if (bEllipsis)
                 {
-                    const float ellipsisWidth =
-                        font->CalcTextSizeA(size, FLT_MAX, 0.0f, kEllipsisText, nullptr).x;
                     while (end > lines[index].Begin &&
                            font->CalcTextSizeA(size, FLT_MAX, 0.0f, lines[index].Begin, end).x + ellipsisWidth >
                                maxWidth)
@@ -164,11 +183,12 @@ namespace Game::GameModes
                         }
                     }
                 }
-                const ImVec2 position(origin.x, origin.y + lineHeight * static_cast<float>(index));
+                const float width = font->CalcTextSizeA(size, FLT_MAX, 0.0f, lines[index].Begin, end).x;
+                const float offsetX = bCentered ? std::max((maxWidth - width - ellipsisWidth) * 0.5f, 0.0f) : 0.0f;
+                const ImVec2 position(origin.x + offsetX, origin.y + lineHeight * static_cast<float>(index));
                 drawList->AddText(font, size, position, color, lines[index].Begin, end);
                 if (bEllipsis)
                 {
-                    const float width = font->CalcTextSizeA(size, FLT_MAX, 0.0f, lines[index].Begin, end).x;
                     drawList->AddText(font, size, ImVec2(position.x + width, position.y), color, kEllipsisText);
                 }
             }
@@ -244,8 +264,29 @@ namespace Game::GameModes
         }
     }
 
+    bool LauncherView::GetCardImageRect(std::size_t sceneIndex, float &outMinX, float &outMinY,
+                                        float &outMaxX, float &outMaxY) const
+    {
+        if (sceneIndex >= Game::Scenes::kSceneCatalogCount || !m_CardImageRects[sceneIndex].bVisible)
+        {
+            return false;
+        }
+        const CardImageRect &rect = m_CardImageRects[sceneIndex];
+        outMinX = rect.MinX;
+        outMinY = rect.MinY;
+        outMaxX = rect.MaxX;
+        outMaxY = rect.MaxY;
+        return true;
+    }
+
     void LauncherView::OnImGui()
     {
+        // 描画しなかったフレームや行について、前の矩形を公開しない。
+        for (CardImageRect &rect : m_CardImageRects)
+        {
+            rect.bVisible = false;
+        }
+
         ImGuiIO &io = ImGui::GetIO();
         const ImVec2 display = io.DisplaySize;
         if (m_pMenu == nullptr || display.x <= 0.0f || display.y <= 0.0f)
@@ -279,27 +320,75 @@ namespace Game::GameModes
         const float descLineHeight = bodyFont->LegacySize * 1.35f;
         const float warnLineHeight = captionFont->LegacySize * 1.3f;
 
-        const int columns = kCardCount <= 0 ? 1 : (kCardCount < 3 ? kCardCount : 3);
-        const int rows = kCardCount <= 0 ? 0 : (kCardCount + columns - 1) / columns;
-
         const float areaTop = metrics.Px(236.0f);
         const float areaBottom = display.y - metrics.Px(186.0f);
         const float areaHeight = areaBottom - areaTop;
         const float areaWidth = display.x - margin * 2.0f;
 
-        float cardWidth = metrics.Px(640.0f);
-        if (rows > 0)
+        const float minCardWidth = metrics.Px(360.0f);
+        const float maxCardWidth = metrics.Px(640.0f);
+        const int maxColumns = std::min(4, std::max(kCardCount, 1));
+        int columns = 1;
+        float cardWidth = 0.0f;
+        // 全行を収めたときの幅を比較する。同じ幅なら列の少ない並びを選ぶ。
+        for (int candidate = 1; candidate <= maxColumns; ++candidate)
         {
-            const float byWidth = (areaWidth - gap * static_cast<float>(columns - 1)) / static_cast<float>(columns);
-            const float rowHeight = (areaHeight - gap * static_cast<float>(rows - 1)) / static_cast<float>(rows);
-            cardWidth = std::min(cardWidth, std::min(byWidth, rowHeight * (16.0f / 9.0f)));
+            const int candidateRows = std::max((kCardCount + candidate - 1) / candidate, 1);
+            const float byWidth = (areaWidth - gap * static_cast<float>(candidate - 1)) / static_cast<float>(candidate);
+            const float rowHeight =
+                (areaHeight - gap * static_cast<float>(candidateRows - 1)) / static_cast<float>(candidateRows);
+            const float width = std::min(maxCardWidth, std::min(byWidth, rowHeight * (16.0f / 9.0f)));
+            if (width > cardWidth)
+            {
+                columns = candidate;
+                cardWidth = width;
+            }
         }
+
+        const bool bScrollRows = cardWidth < minCardWidth;
+        if (bScrollRows)
+        {
+            // 最小幅で横に入る最大の列数にし、縦方向だけを行単位で送る。
+            columns = 1;
+            for (int candidate = 2; candidate <= maxColumns; ++candidate)
+            {
+                if (minCardWidth * static_cast<float>(candidate) + gap * static_cast<float>(candidate - 1) <= areaWidth)
+                {
+                    columns = candidate;
+                }
+            }
+            cardWidth = minCardWidth;
+        }
+        const int rows = (kCardCount + columns - 1) / columns;
         const float cardHeight = cardWidth * (9.0f / 16.0f);
-        const float gridHeight = cardHeight * static_cast<float>(rows) + gap * static_cast<float>(std::max(rows - 1, 0));
+        const int visibleRows = bScrollRows
+                                    ? std::min(rows, std::max(1, static_cast<int>((areaHeight + gap) / (cardHeight + gap))))
+                                    : rows;
+
+        // 方向の入力を反映してから、選択行が見える位置へ先頭行を動かす。
+        m_pMenu->ApplyNavigation(columns);
+        m_FirstVisibleRow = std::min(m_FirstVisibleRow, std::max(rows - visibleRows, 0));
+        const int navigationSelected = m_pMenu->GetSelected();
+        if (navigationSelected >= 0 && navigationSelected < kCardCount && navigationSelected != m_pMenu->GetQuitIndex())
+        {
+            const int selectedRow = navigationSelected / columns;
+            if (selectedRow < m_FirstVisibleRow)
+            {
+                m_FirstVisibleRow = selectedRow;
+            }
+            else if (selectedRow >= m_FirstVisibleRow + visibleRows)
+            {
+                m_FirstVisibleRow = selectedRow - visibleRows + 1;
+            }
+        }
+        const int firstVisibleCard = m_FirstVisibleRow * columns;
+        const int endVisibleCard = std::min(kCardCount, (m_FirstVisibleRow + visibleRows) * columns);
+        const float gridHeight =
+            cardHeight * static_cast<float>(visibleRows) + gap * static_cast<float>(std::max(visibleRows - 1, 0));
         const float gridTop = areaTop + std::max((areaHeight - gridHeight) * 0.5f, 0.0f);
 
         CardRect cards[Game::Scenes::kSceneCatalogCount > 0 ? Game::Scenes::kSceneCatalogCount : 1];
-        for (int index = 0; index < kCardCount; ++index)
+        for (int index = firstVisibleCard; index < endVisibleCard; ++index)
         {
             const int row = index / columns;
             const int column = index % columns;
@@ -307,7 +396,7 @@ namespace Game::GameModes
             const float rowWidth = cardWidth * static_cast<float>(inRow) + gap * static_cast<float>(inRow - 1);
             const float rowLeft = (display.x - rowWidth) * 0.5f;
             cards[index].Min = ImVec2(rowLeft + (cardWidth + gap) * static_cast<float>(column),
-                                      gridTop + (cardHeight + gap) * static_cast<float>(row));
+                                      gridTop + (cardHeight + gap) * static_cast<float>(row - m_FirstVisibleRow));
             cards[index].Max = ImVec2(cards[index].Min.x + cardWidth, cards[index].Min.y + cardHeight);
         }
 
@@ -318,9 +407,7 @@ namespace Game::GameModes
             ImVec2((display.x + quitWidth) * 0.5f, display.y - metrics.Px(150.0f) + quitHeight),
         };
 
-        // ---- 入力（方向の入力の適用、マウスのホバーとクリック）----
-        m_pMenu->ApplyNavigation(columns);
-
+        // ---- 入力（マウスのホバーとクリック）----
         const bool bMouseValid = io.MousePos.x > -FLT_MAX * 0.5f && io.MousePos.y > -FLT_MAX * 0.5f;
         const bool bMouseMoved = bMouseValid && (std::fabs(io.MousePos.x - m_LastMouseX) > 0.5f ||
                                                  std::fabs(io.MousePos.y - m_LastMouseY) > 0.5f);
@@ -337,7 +424,7 @@ namespace Game::GameModes
             ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNav;
         if (ImGui::Begin("##NorvesLauncher", nullptr, kWindowFlags))
         {
-            for (int index = 0; index < kCardCount; ++index)
+            for (int index = firstVisibleCard; index < endVisibleCard; ++index)
             {
                 ImGui::PushID(index);
                 ImGui::SetCursorScreenPos(cards[index].Min);
@@ -395,7 +482,7 @@ namespace Game::GameModes
                                     kColorAccent, metrics.Px(2.0f));
 
             // カード
-            for (int index = 0; index < kCardCount; ++index)
+            for (int index = firstVisibleCard; index < endVisibleCard; ++index)
             {
                 const Game::Scenes::SceneDescriptor &scene = Game::Scenes::kSceneCatalog[index];
                 const bool bSelected = index == selected;
@@ -418,6 +505,7 @@ namespace Game::GameModes
                 const float inset = metrics.Px(2.0f);
                 const ImVec2 imageMin(min.x + inset, min.y + inset);
                 const ImVec2 imageMax(max.x - inset, max.y - inset);
+                m_CardImageRects[index] = {imageMin.x, imageMin.y, imageMax.x, imageMax.y, true};
                 const float hue = HueFromText(scene.Id);
                 drawList->AddRectFilled(min, max, kColorCard, cardRadius);
                 drawList->AddRectFilledMultiColor(imageMin, imageMax, HsvColor(hue, 0.38f, 0.34f, 1.0f),
@@ -461,6 +549,9 @@ namespace Game::GameModes
                     IM_COL32(8, 10, 20, 200), IM_COL32(8, 10, 20, 200));
                 drawList->AddRectFilled(ImVec2(imageMin.x, overlayTop), imageMax, IM_COL32(8, 10, 20, 200));
 
+                // すべてのカードの文字を、上下左右の内側の余白で切り取る。
+                drawList->PushClipRect(ImVec2(textLeft, min.y + textPad), ImVec2(max.x - textPad, max.y - textPad), true);
+
                 // 見本画像が無いカードは、画像の部分（重ねた文字の上）の中央にシーン名を出す
                 {
                     const float freeHeight = overlayTop - min.y;
@@ -472,23 +563,12 @@ namespace Game::GameModes
                                                                placeholderLine, bPlaceholderTruncated);
                         if (placeholderCount > 0)
                         {
-                            const float nameWidth =
-                                std::min(headingFont
-                                             ->CalcTextSizeA(headingFont->LegacySize, FLT_MAX, 0.0f,
-                                                             placeholderLine[0].Begin, placeholderLine[0].End)
-                                             .x,
-                                         textWidth);
                             DrawLines(drawList, headingFont, placeholderLine, placeholderCount, bPlaceholderTruncated,
-                                      ImVec2(min.x + (cardWidth - nameWidth) * 0.5f,
-                                             min.y + (freeHeight - headingFont->LegacySize) * 0.5f),
-                                      nameLineHeight, textWidth, IM_COL32(244, 238, 230, 150));
+                                      ImVec2(textLeft, min.y + (freeHeight - headingFont->LegacySize) * 0.5f),
+                                      nameLineHeight, textWidth, IM_COL32(244, 238, 230, 150), true);
                         }
                     }
                 }
-
-                // 枠
-                drawList->AddRect(min, max, bSelected ? kColorAccent : kColorEdge, cardRadius, 0,
-                                  bSelected ? metrics.Px(3.5f) : metrics.Px(1.5f));
 
                 float cursorY = overlayTop + textPad;
                 {
@@ -508,6 +588,29 @@ namespace Game::GameModes
                     DrawLines(drawList, captionFont, warnLines, warnCount, bWarnTruncated, ImVec2(textLeft, cursorY),
                               warnLineHeight, textWidth, kColorWarning);
                 }
+                drawList->PopClipRect();
+
+                // 枠は文字用のクリップの外で描く。
+                drawList->AddRect(min, max, bSelected ? kColorAccent : kColorEdge, cardRadius, 0,
+                                  bSelected ? metrics.Px(3.5f) : metrics.Px(1.5f));
+            }
+
+            // 見えていない行が続く方向を、領域の端の小さな三角で示す。
+            const float indicatorHalfWidth = metrics.Px(7.0f);
+            const float indicatorHeight = metrics.Px(6.0f);
+            const float centerX = display.x * 0.5f;
+            const ImU32 indicatorColor = (kColorAccent & ~IM_COL32_A_MASK) | IM_COL32(0, 0, 0, 150);
+            if (m_FirstVisibleRow > 0)
+            {
+                drawList->AddTriangleFilled(ImVec2(centerX, areaTop),
+                                            ImVec2(centerX + indicatorHalfWidth, areaTop + indicatorHeight),
+                                            ImVec2(centerX - indicatorHalfWidth, areaTop + indicatorHeight), indicatorColor);
+            }
+            if (m_FirstVisibleRow + visibleRows < rows)
+            {
+                drawList->AddTriangleFilled(ImVec2(centerX - indicatorHalfWidth, areaBottom - indicatorHeight),
+                                            ImVec2(centerX + indicatorHalfWidth, areaBottom - indicatorHeight),
+                                            ImVec2(centerX, areaBottom), indicatorColor);
             }
 
             // ゲームを終了

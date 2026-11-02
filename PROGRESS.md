@@ -8505,3 +8505,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 2 px は測らずに採った値（DAG の段の三角形の数はおよそ許容の 2 乗に反比例するので、一覧のメッシュの約 96 万クラスタが 1/3〜1/4 になる見込み）。撮影で足りなければ値を上げるか、遮蔽の側を見る
 - Notes: done-when の予算は「RT と GI を切った構成で 16.6 ms」だが、verify の撮影の -GameArgs に RT と GI を切る引数は無く、そのような起動引数も今は無い（RT・GI 入りで撮る）。10-14 の内訳から見積もると、TLAS の直し（LightingPass 約 4 ms）と一覧のメッシュの削減の後も、バナナだけの MegaGeometry（静止 168 万クラスタ）・LightingPass・VSM の合計で 16.6 ms を超える見込みで、RT・GI 入りの判定は fail になりうる
 - Notes: 要起票: verify の撮影を RT と GI を切った構成で撮る起動引数（と verify の -GameArgs）が無い。予算の構成で判定できるようにするかを決める
+- U1 カードの説明文の折り返しと、収まらないときの並び: 着地(直し 0 回)
