@@ -641,6 +641,24 @@ namespace NorvesLib::Core::Rendering
             return bEnabled;
         }
 
+        // 開発ビルドでは起動引数から渡された環境変数が 0 のときだけ RT と GI を切る。
+        bool ResolveRayTracingEnabled()
+        {
+#if NORVES_BUILD_DEVELOPMENT
+            char* value = nullptr;
+            size_t length = 0;
+            if (_dupenv_s(&value, &length, "NORVES_RT_GI") != 0)
+            {
+                value = nullptr;
+            }
+            const bool bEnabled = value == nullptr || std::strcmp(value, "0") != 0;
+            std::free(value);
+            return bEnabled;
+#else
+            return true;
+#endif
+        }
+
         // フレームの持ち主の CPU から書ける領域の 1 ページの大きさ。開発ビルドだけ --frame-arena-initial-kb
         // （Game が NORVES_FRAME_ARENA_INITIAL_KB へ渡す）で小さくでき、ページを足す道を通せる
         uint64_t ResolveFrameUploadPageBytes()
@@ -2318,6 +2336,10 @@ namespace NorvesLib::Core::Rendering
             return true;
         }
 
+        m_bRayTracingForcedOff = !ResolveRayTracingEnabled();
+#if NORVES_BUILD_DEVELOPMENT
+        m_RenderedRayTracingSequence.Store(0);
+#endif
         LOG_INFO("RenderingCoordinator::Initialize() - Starting initialization");
 
         m_PreviousCompletedTotalFrameTimeMs = 0.0f;
@@ -4541,9 +4563,14 @@ namespace NorvesLib::Core::Rendering
     {
         // 空の太陽は、パケットへ運ぶ光源表（UpdatePacketLights）が SceneView の光源の後に加える。
         packet.Scene.SkyAtmosphere = m_SkyAtmosphere;
+        DDGIVolumeParameters ddgiVolume = m_DDGIVolume;
+        if (m_bRayTracingForcedOff)
+        {
+            ddgiVolume.bEnabled = false;
+        }
         packet.Scene.SetDDGIVolumeParameters(
             SanitizeDDGIVolumeParametersForRHI(
-                m_DDGIVolume,
+                ddgiVolume,
                 capabilities.RayTracing.bAccelerationStructure,
                 capabilities.RayTracing.bRayQuery));
         packet.Scene.SetVolumetricFogParameters(m_VolumetricFog);
@@ -4560,7 +4587,7 @@ namespace NorvesLib::Core::Rendering
         m_RibbonTrails.Clear();
         packet.Scene.Decals = m_Decals;
         packet.Scene.Distortions = m_Distortions;
-        packet.bRTGIEnabled = m_bRTGIEnabled;
+        packet.bRTGIEnabled = m_bRTGIEnabled && !m_bRayTracingForcedOff;
         packet.bRTGINonShadowCasterOcclusion = m_bRTGINonShadowCasterOcclusion;
     }
 
@@ -5017,27 +5044,35 @@ namespace NorvesLib::Core::Rendering
                 static_cast<uint32_t>(m_CurrentPacket->DrawCommands.size());
             ApplyPreviousObjectStates(*m_CurrentPacket);
 
-            const MeshResources* meshResources =
-                m_RenderResources ? &m_RenderResources->Meshes() : nullptr;
-            const MaterialResources* materialResources =
-                m_RenderResources ? &m_RenderResources->Materials() : nullptr;
-            const MegaGeometryResources* megaGeometryResources =
-                m_RenderResources ? &m_RenderResources->MegaGeometry() : nullptr;
-            // 差分の同期では、MegaGeometry のレイトレーシングのインスタンスは RenderThread が写しの席ごとの配列から選んで足す
-            // （連番のパストレーシングも同じ。前の値の持ち越しは RenderThread が MegaGeometry を足した後に当てる）
-            const bool bDeferMegaRayTracing = m_CurrentPacket->MegaDelta.bActive;
-            if (!NorvesLib::Core::GEngine.GetRayTracingSceneSubsystem().BuildFrameSnapshot(
-                    meshResources,
-                    *m_CurrentPacket,
-                    materialResources,
-                    bDeferMegaRayTracing ? nullptr : megaGeometryResources,
-                    nullptr,
-                    m_CurrentPacket->MeshDelta.bActive && m_MainSceneView
-                        ? &m_MainSceneView->GetMeshProxies()
-                        : nullptr))
+            if (m_bRayTracingForcedOff)
             {
-                NORVES_LOG_WARNING("RayTracingSceneSubsystem", "FramePacketのレイトレーシングscene "
-                                                               "snapshotを構築できませんでした");
+                // この指定ではパストレーシングにも TLAS が渡らないため描画されない。
+                m_CurrentPacket->RayTracingScene.Clear();
+            }
+            else
+            {
+                const MeshResources* meshResources =
+                    m_RenderResources ? &m_RenderResources->Meshes() : nullptr;
+                const MaterialResources* materialResources =
+                    m_RenderResources ? &m_RenderResources->Materials() : nullptr;
+                const MegaGeometryResources* megaGeometryResources =
+                    m_RenderResources ? &m_RenderResources->MegaGeometry() : nullptr;
+                // 差分の同期では、MegaGeometry のレイトレーシングのインスタンスは RenderThread が写しの席ごとの配列から選んで足す
+                // （連番のパストレーシングも同じ。前の値の持ち越しは RenderThread が MegaGeometry を足した後に当てる）
+                const bool bDeferMegaRayTracing = m_CurrentPacket->MegaDelta.bActive;
+                if (!NorvesLib::Core::GEngine.GetRayTracingSceneSubsystem().BuildFrameSnapshot(
+                        meshResources,
+                        *m_CurrentPacket,
+                        materialResources,
+                        bDeferMegaRayTracing ? nullptr : megaGeometryResources,
+                        nullptr,
+                        m_CurrentPacket->MeshDelta.bActive && m_MainSceneView
+                            ? &m_MainSceneView->GetMeshProxies()
+                            : nullptr))
+                {
+                    NORVES_LOG_WARNING("RayTracingSceneSubsystem", "FramePacketのレイトレーシングscene "
+                                                                   "snapshotを構築できませんでした");
+                }
             }
             // 連番の1フレームの間は、どのパケットにも同じ前のカメラ・instance変換を書く。
             ApplyPathTracingSequenceCarry(*m_CurrentPacket, m_PacketManager.GetSequenceCarry());
@@ -5666,25 +5701,28 @@ namespace NorvesLib::Core::Rendering
                     m_CommandList->BeginGPUTimestampScope("AccelerationStructureBuild");
             }
 #endif
-            // 差分の同期の MegaGeometry は、RenderThread の写し（NoteDrawn の後）の席ごとの配列から、
-            // GameThread が足したメッシュのインスタンスと合わせて規則で選んだレイトレーシングのインスタンスを足す
-            if (packet->MegaDelta.bActive && m_RenderResources && m_Device &&
-                m_Device->GetCapabilities().RayTracing.bAccelerationStructure)
+            if (!m_bRayTracingForcedOff)
             {
-                NorvesLib::Core::GEngine.GetRayTracingSceneSubsystem().AppendMegaGeometryInstancesFromMirror(
-                    &m_RenderResources->Meshes(),
-                    &m_RenderResources->MegaGeometry(),
-                    m_MegaMirror,
-                    *packet);
-            }
-            if (!NorvesLib::Core::GEngine.GetRayTracingSceneSubsystem().BuildAccelerationStructures(
-                    m_Device,
-                    *m_CommandList,
-                    m_PacketManager.GetSlotIndex(packet),
-                    *packet))
-            {
-                NORVES_LOG_WARNING("RayTracingSceneSubsystem",
-                                   "FramePacketのレイトレーシング加速構造を構築できませんでした");
+                // 差分の同期の MegaGeometry は、RenderThread の写し（NoteDrawn の後）の席ごとの配列から、
+                // GameThread が足したメッシュのインスタンスと合わせて規則で選んだレイトレーシングのインスタンスを足す
+                if (packet->MegaDelta.bActive && m_RenderResources && m_Device &&
+                    m_Device->GetCapabilities().RayTracing.bAccelerationStructure)
+                {
+                    NorvesLib::Core::GEngine.GetRayTracingSceneSubsystem().AppendMegaGeometryInstancesFromMirror(
+                        &m_RenderResources->Meshes(),
+                        &m_RenderResources->MegaGeometry(),
+                        m_MegaMirror,
+                        *packet);
+                }
+                if (!NorvesLib::Core::GEngine.GetRayTracingSceneSubsystem().BuildAccelerationStructures(
+                        m_Device,
+                        *m_CommandList,
+                        m_PacketManager.GetSlotIndex(packet),
+                        *packet))
+                {
+                    NORVES_LOG_WARNING("RayTracingSceneSubsystem",
+                                       "FramePacketのレイトレーシング加速構造を構築できませんでした");
+                }
             }
 #if NORVES_ENABLE_STATS
             if (accelerationStructureTimestamp.IsValid())
@@ -6157,6 +6195,21 @@ namespace NorvesLib::Core::Rendering
             ThrowSwapChainEndFrameError(endFrameResult.Status);
         }
 
+#if NORVES_BUILD_DEVELOPMENT
+        if (endFrameResult.SubmissionSerial != 0)
+        {
+            // 加速構造の確定後、提出できたパケットだけを一組の値として公開する。
+            m_RenderedRayTracingSequence.FetchAdd(1);
+            m_RenderedRayTracingFrameNumber.Store(packet->FrameNumber);
+            m_RenderedRayTracingInstanceCount.Store(static_cast<uint64_t>(packet->RayTracingScene.Instances.size()));
+            const uint8_t flags = static_cast<uint8_t>((packet->bRTGIEnabled ? 1u : 0u) |
+                                                       (packet->Scene.DDGIVolume.bEnabled ? 2u : 0u) |
+                                                       (packet->RayTracingScene.TopLevel != nullptr ? 4u : 0u));
+            m_RenderedRayTracingFlags.Store(flags);
+            m_RenderedRayTracingSequence.FetchAdd(1);
+        }
+#endif
+
         // 鍵で持ち続けるレンダーパス・フレームバッファ・パイプラインのフレームを進め、見えなくなった鍵を手放す
         m_Device->AdvanceObjectCacheFrame();
 #if NORVES_BUILD_DEVELOPMENT
@@ -6499,6 +6552,31 @@ namespace NorvesLib::Core::Rendering
     {
         m_bRTGIEnabled = bEnabled;
     }
+
+#if NORVES_BUILD_DEVELOPMENT
+    bool RenderingCoordinator::TryGetRenderedRayTracingState(RenderedRayTracingState& outState) const
+    {
+        const uint64_t sequence = m_RenderedRayTracingSequence.Load();
+        if (sequence == 0 || (sequence & 1u) != 0)
+        {
+            return false;
+        }
+
+        RenderedRayTracingState state;
+        state.FrameNumber = m_RenderedRayTracingFrameNumber.Load();
+        state.InstanceCount = m_RenderedRayTracingInstanceCount.Load();
+        const uint8_t flags = m_RenderedRayTracingFlags.Load();
+        state.bRTGIEnabled = (flags & 1u) != 0;
+        state.bDDGIEnabled = (flags & 2u) != 0;
+        state.bTLASAvailable = (flags & 4u) != 0;
+        if (m_RenderedRayTracingSequence.Load() != sequence)
+        {
+            return false;
+        }
+        outState = state;
+        return true;
+    }
+#endif
 
     void RenderingCoordinator::SetRTGINonShadowCasterOcclusion(bool bEnabled)
     {

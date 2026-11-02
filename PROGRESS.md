@@ -8962,3 +8962,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 検証: タスクの verify が `[]`・終了コード 0。ビルドと ctest の出力は `.harness/runs/20261102-194401/verify-TEST-FULL-CTEST-BASELINE-CHECK-P1-U1.txt`
 - Next: 起動の確かめは無い。GPU 描画の受入れは TEST-FULL-CTEST-BASELINE-CHECK で回す
 - Notes: 同じ build でビルドを途中で中断すると、残った cl が `AssetCookLib.pdb` を握って次のビルドが C1041 になり、`CookedSkeletalAssetTest` は AssetCook の `resource busy or locked` で落ちる。中断せずに回し直すと通った
+- U1 開発ビルドの --rt-gi=on|off で RT と DDGI を起動から終了まで切り、SCENE_READY で実際の状態をログに書く: 着地(直し 0 回)
