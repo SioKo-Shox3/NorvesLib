@@ -437,6 +437,8 @@ namespace BootstrapTest
         {
             return -1;
         }
+        const CookLockWaitTest::ScopedChildCookLockTestNamespace lockNamespace;
+        CHECK(lockNamespace.Valid());
         Fixture f(std::filesystem::path(argv[2]), false);
         Stop stop;
         stop.At = static_cast<Point>(std::strtoul(argv[3], nullptr, 10));
@@ -926,6 +928,8 @@ int main(int argc, char** argv)
     {
         return child;
     }
+    const CookLockWaitTest::ScopedCookLockTestNamespace lockNamespace;
+    CHECK(lockNamespace.Valid());
     // 前提のロック取得は、ほかの試験の終了を最大 120000 ミリ秒待つ。
     const auto lockWait = CookLockWaitTest::WaitForCookLock();
     CHECK(lockWait.Valid());
