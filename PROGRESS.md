@@ -8194,6 +8194,11 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - Next: 起動の確かめは後回し（SCN-WL-CLIFF-GEN-TALUS-CHECK）。verify の 5〜12 行目（形の撮影と判定・範囲ごとの量・置いた物の接地・look の撮影・ページの要求・写真との比べ）を版 19 で回し、(A) が版 15 の値に戻ること、(C)・(E)・(F) が前の記録より悪くならないことを確かめる
 - Notes: 崩れた大きな塊（数 m〜十数 m）は地形の形としては作らず未達で閉じた（1 m の高さの場の持ち上げは版 16〜18 の 3 回とも棚の線を崩して (A) が版 15 を下回った）。新しい試験は足していない
 - 要起票: 壁から崖錐へ移る所の崩れた大きな塊（数 m〜十数 m）を、スキャンの岩・Blender の大きな岩の物として崖の生成の 7 範囲の壁の足元に置く（置いた物の接地の検査の組に入れる）
-- 要起票: 荒野の遮蔽の Cycles の正解（SCN-WLR-OCCLUSION-SETS）は 10 月 18 日の地形の書き出し（`SCN-WLR-BLENDER-TERRAIN-mesh`、manifest d9fd5483…）で描かれ、版 18 でも版 19 でもない。版 19 の地形と厳密に比べるには地形の書き出しと Cycles の描き直しが要る（2 段目の「地形の Cycles の参照の描き直し」と同じ作業）。後回しの SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1-CHECK の撮影は版 19 の地形で撮ることになる
+- 要起票: 荒野の遮蔽の比べの Cycles の正解は、SCN-RENDER-ROUGH-STEEP-ENERGY-P2 が崖の細部の版 18 の地形で描き直したもの（`.harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY-P2/cycles`、地形の manifest fdbbcc2a…）で、版 19 に焼き直した共有の地形と合わない。SCN-RENDER-ROUGH-STEEP-ENERGY と SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1-CHECK の撮影は版 19 の地形になり、地形の一覧のハッシュの照合で落ちる。版 19 の地形の書き出しと Cycles の正解の描き直しが要る
 - U10 合否の仕様の棚・角・外形の行を版 15 の 4 回の実測に締める（反復 2 の差し戻しの 1）: 着地(直し 0 回)
 - U11 遮蔽の正解の記述を P2（版 18 で描き直した正解）の事実に直す（反復 2 の差し戻しの 2）: 着地(直し 0 回)
+
+## 2026-11-02 SCN-WL-CLIFF-GEN-TALUS（run 20261102-145122 の反復 3、差し戻しの直し・完了）
+- Done: 合否の仕様 `shape-cliff-talus.json` の moved_to の無い棚・角・外形の 17 行を版 15 の 4 回の撮影（CAPROCK の shape・shape-retake-1〜3）の実測に締めた（一致は最小を 3 桁で切り捨て、欠け・残差は最大を 1 桁で切り上げ、余分は最大を 3 桁で切り上げ。retake_jitter 0.3333 は保った）。4 回の撮影に `--shape --terrain-only --expect --verify` を当てて 4 回とも EXIT=0・17 行すべて pass。荒野の形の記録と上の要起票の遮蔽の正解の記述を、P2 が版 18 で描き直した正解が版 19 の地形と合わない形に直した
+- Next: 起動の確かめは後回し（SCN-WL-CLIFF-GEN-TALUS-CHECK）。verify の 5〜12 行目（形・範囲ごとの量・置いた物の接地・ページの要求と VRAM・写真との比べの撮影と判定）を版 19 で回す
+- Notes: verify の 1〜4 行目は前の反復の U9 で NorvesLib-6 の AssetCook（9ed6c406…）で通しており、この反復は仕様の JSON と文書だけを変えたので回し直していない。この作業ブランチの TASKS.md の done-when は統合ブランチの cc21c026（人の判断で替えた問い）より前の文面のままで、統合のときに合わせる。新しい試験は足していない
