@@ -1,4 +1,5 @@
 ﻿// 固定inventory更新とsource非依存復旧を、実process終了とnative IDで反証する。
+#include "CookLockWaitTestScope.h"
 #include "Tools/AssetCook/CookManagedBootstrap.h"
 #include "Tools/AssetCook/CookManagedUpdate.h"
 #include "Tools/AssetCook/CookManagedUpdateTestAccess.h"
@@ -543,10 +544,15 @@ namespace UpdateTest
         {
             return true;
         }
-        HANDLE thread = CreateThread(nullptr, 0, TryBusy, context, 0, nullptr);
-        CHECK(thread);
-        CHECK(WaitForSingleObject(thread, 60000) == WAIT_OBJECT_0);
-        CHECK(CloseHandle(thread));
+        {
+            // 主スレッドのロックに対する Busy を、待ちなしで確認する。
+            const auto noWait = CookLockWaitTest::DoNotWaitForCookLock();
+            CHECK(noWait.Valid());
+            HANDLE thread = CreateThread(nullptr, 0, TryBusy, context, 0, nullptr);
+            CHECK(thread);
+            CHECK(WaitForSingleObject(thread, 60000) == WAIT_OBJECT_0);
+            CHECK(CloseHandle(thread));
+        }
         return true;
     }
     struct DirtyInput
@@ -888,6 +894,9 @@ int main(int argc, char** argv)
     {
         return child;
     }
+    // 前提のロック取得は、ほかの試験の終了を最大 120000 ミリ秒待つ。
+    const auto lockWait = CookLockWaitTest::WaitForCookLock();
+    CHECK(lockWait.Valid());
     wchar_t name[128]{};
     std::swprintf(name, 128, L"nmu-%lu-%llu", GetCurrentProcessId(), GetTickCount64());
     // 管理ストアは RuntimeRoot の祖先を列挙するため、項目の多い共有の TEMP の外に置く。

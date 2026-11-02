@@ -9019,3 +9019,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: `paths:` の外の 3 試験（`CookManagedUpdateTest.cpp`・`CookManagedStoreInitializationTest.cpp`・`TextureManagedCliTest.cpp`）を触った。verify の 3 行目がこの 3 本を名指ししており、直しは置き場と待ち直しだけで期待は変えていない
 - Notes: 子プロセスを強制終了する 2 本（StoreInitialization・Update）は、子の側でも待ち直すため子の待ちの上限を 60 秒から 120 秒にした。強制終了の後に放棄された mutex を復旧が観測する Bootstrap のケースは、その間に別プロセスが先に mutex を取ると放棄の観測が消えて落ちうる（まれな競合として残る）
 - U1 待ちの範囲の仕組みを共通の header にし、宛先ロックの試験に前提の待ちと Busy の確かめの待ち 0 を入れる: 着地(直し 0 回)
+- U2 Bootstrap・Update の試験に前提の待ちと Busy の確かめの待ち 0 を入れ、タスクの verify を全部回す: 着地(直し 0 回)
