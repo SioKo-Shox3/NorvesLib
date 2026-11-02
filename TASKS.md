@@ -4867,7 +4867,7 @@
 - from: G2-GR32-GPU-ACCEPTANCE-P1
 
 ## G2-MATERIAL-SELECTION-INTEGRATION-P1-P1-P1: `Busy` を期待する cook の試験で、前提のロックの取得だけ上限つきで待ち、`Busy` を確かめる取得は待ち 0 のままにする
-- status: todo
+- status: done
 - done-when: 次の 4 点を満たす。
   - **前提の取得は待つ。** `CookDestinationLockTest`・`CookManagedBootstrapTest`・`CookManagedUpdateTest` では、各試験の頭で `NORVES_COOK_LOCK_WAIT_MS=120000` をプロセスの中だけで立て、試験の終わりに元の値へ戻す(`CookLockWaitTestScope.h` の範囲つきの仕組み)。試験が自分でロックを取る所(`f.Run`・回復・解放後の取り直し・子プロセスの取得)は、上限つきで待つ。
   - **`Busy` を確かめる取得だけは待ち 0 にする。** 対象は Bootstrap の `ProbeBusy`/`TryBusy`、Update の `BusyPoint`/`TryBusy`、DestinationLock の入れ子の peer と子プロセスが持っている間の親の取得、`WaitOption` の「待ちなし」の側。取得の直前に環境変数を消し、確かめた後に戻す。どれも待ち 0 で `Busy` を返し、今の期待(`Busy`・callback の呼び出しが 0 回)のまま通る。

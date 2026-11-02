@@ -354,3 +354,17 @@ foreach(cook_lock_wait_test IN ITEMS
 )
     set_property(TEST ${cook_lock_wait_test} APPEND PROPERTY ENVIRONMENT "NORVES_COOK_LOCK_WAIT_MS=120000")
 endforeach()
+
+# 宛先 volume ごとに機械全体で 1 つの mutex の名前を独り占めする検査
+# （同名 event・abandoned の観測）があるため、1 回の ctest の中ではこれらの試験を順に流す。
+foreach(cook_destination_lock_test IN ITEMS
+    CookDestinationLockTest
+    CookManagedBootstrapTest
+    CookManagedUpdateTest
+    RigSplitCookTest
+    TextureManagedCliTest
+    CookManagedStoreObservationTest
+    CookManagedStoreInitializationTest
+)
+    set_property(TEST ${cook_destination_lock_test} APPEND PROPERTY RESOURCE_LOCK cook_destination_volume)
+endforeach()
