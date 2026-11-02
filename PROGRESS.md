@@ -9020,3 +9020,7 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 子プロセスを強制終了する 2 本（StoreInitialization・Update）は、子の側でも待ち直すため子の待ちの上限を 60 秒から 120 秒にした。強制終了の後に放棄された mutex を復旧が観測する Bootstrap のケースは、その間に別プロセスが先に mutex を取ると放棄の観測が消えて落ちうる（まれな競合として残る）
 - U1 待ちの範囲の仕組みを共通の header にし、宛先ロックの試験に前提の待ちと Busy の確かめの待ち 0 を入れる: 着地(直し 0 回)
 - U2 Bootstrap・Update の試験に前提の待ちと Busy の確かめの待ち 0 を入れ、タスクの verify を全部回す: 着地(直し 0 回)
+## 2026-11-02 G2-MATERIAL-SELECTION-INTEGRATION-P1-P1-P1（run 20261102-201606 の反復 1）
+- Done: 共通の `Test/Core/Asset/CookLockWaitTestScope.h` を足した。CookDestinationLockTest・CookManagedBootstrapTest・CookManagedUpdateTest は頭で `NORVES_COOK_LOCK_WAIT_MS=120000` を立てて終わりに元へ戻し、`Busy` を確かめる取得の間だけ環境変数を消す。対象は ProbeBusy・BusyPoint・Peer・CreateRoot・ProcessProbe の子・子が持つ間の親・WaitOption の待ちなしの側。WaitOption の待ちありの側は 5000 から 120000 にした。本体と CTest の ENVIRONMENT は変えていない
+- 検証: ビルドは 0。3 本を直列で回すと Passed（0.56・20.65・79.23 秒）。ENVIRONMENT の python の確かめは 0。`-j 4` は終了コード 8（`volume_busy`・`VOLUME_BUSY_RETRY` は 0 行。落ちたのは同名 event の作成と abandoned の観測）。出力は `.harness/runs/20261102-201606/U2-verify.txt`
+- Notes: `-j 4` の合格は止めた。同名 event・abandoned・ordinary の検査は、機械全体で 1 つの mutex の名前を独り占めする前提で、並列の試験どうしが互いに壊し合う。待ち直しとやり直しで切り直した試し（`U3-dropped-verify.txt`）でも、event の間にほかの試験が `mutex_create_failed` で落ち、ほかの試験の abandoned を受け取った。CMakeLists.txt の RESOURCE_LOCK を推奨とした判断待ち（blocked）
