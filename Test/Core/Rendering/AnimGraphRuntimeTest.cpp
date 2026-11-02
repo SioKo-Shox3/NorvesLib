@@ -244,6 +244,70 @@ namespace
         GRAPH_CHECK(select.Update(.25f) && select.Evaluate());
         NearGraph(select.GetLocalPose()[0].Translation.x, 10.5f);
     }
+    void TestGraphNominalSpeedPositions()
+    {
+        GraphFixture f;
+        A::ClipMetadataReport report;
+        GRAPH_CHECK(f.AClip->ApplyMetadataJson(C::String(R"({"rootMotion":{"nominalSpeed":1}})"), report));
+        GRAPH_CHECK(f.BClip->ApplyMetadataJson(C::String(R"({"rootMotion":{"nominalSpeed":3}})"), report));
+        // mix を先に置き、Clip の前方参照も含めて公称速度の位置を解く。
+        constexpr const char* json =
+            R"({"version":1,"params":[{"name":"X","type":"float","value":2}],"nodes":[{"id":"mix","type":"blend1d","x":"X","samples":[{"position":"nominalSpeed","node":"a"},{"position":"nominalSpeed","node":"b"}]},{"id":"a","type":"clip","clip":"a"},{"id":"b","type":"clip","clip":"b"}],"root":"mix"})";
+        auto graph = f.Graph(json);
+        A::AnimGraphInstance instance;
+        GRAPH_CHECK(instance.Initialize(*graph, *f.Skeleton, *f.Mesh, M::Matrix4x4::Identity));
+        NearGraph(instance.GetLocalPose()[0].Translation.x, 5);
+        NearGraph(instance.GetNodeWeights()[1], .5f);
+        NearGraph(instance.GetNodeWeights()[2], .5f);
+
+        GRAPH_CHECK(f.BClip->ApplyMetadataJson(C::String(R"({"rootMotion":{"nominalSpeed":5}})"), report));
+        GRAPH_CHECK(instance.Update(0) && instance.Evaluate());
+        NearGraph(instance.GetLocalPose()[0].Translation.x, 2.5f);
+        NearGraph(instance.GetNodeWeights()[2], .25f);
+        // 不正な順序・ゼロ速度が続く間は拒否し、直前の姿勢と重みを保つ。
+        for (const char* invalid : {R"({"rootMotion":{"nominalSpeed":0.5}})",
+                                    R"({"rootMotion":{"nominalSpeed":0}})"})
+        {
+            GRAPH_CHECK(f.BClip->ApplyMetadataJson(C::String(invalid), report));
+            GRAPH_CHECK(!instance.Update(0) && !instance.Evaluate());
+            GRAPH_CHECK(!instance.Update(0) && !instance.Evaluate());
+            NearGraph(instance.GetLocalPose()[0].Translation.x, 2.5f);
+            NearGraph(instance.GetNodeWeights()[2], .25f);
+            GRAPH_CHECK(f.BClip->ApplyMetadataJson(C::String(R"({"rootMotion":{"nominalSpeed":5}})"), report));
+            GRAPH_CHECK(instance.Update(0) && instance.Evaluate());
+            NearGraph(instance.GetLocalPose()[0].Translation.x, 2.5f);
+            NearGraph(instance.GetNodeWeights()[2], .25f);
+        }
+
+        f.Reject(
+            R"({"version":1,"nodes":[{"id":"mix","type":"blend1d","samples":[{"position":"nominalSpeed","node":"pair"}]},{"id":"pair","type":"blend2","children":["a","a"]},{"id":"a","type":"clip","clip":"a"}],"root":"mix"})",
+            A::AnimGraphError::InvalidSchema);
+        GRAPH_CHECK(f.BClip->ApplyMetadataJson(C::String(R"({"rootMotion":{"nominalSpeed":0}})"), report));
+        f.Reject(json, A::AnimGraphError::InvalidNominalSpeed);
+        GRAPH_CHECK(f.BClip->ApplyMetadataJson(C::String(R"({"rootMotion":{"nominalSpeed":1}})"), report));
+        f.Reject(json, A::AnimGraphError::InvalidSchema);
+        f.Reject(
+            R"({"version":1,"nodes":[{"id":"mix","type":"blend1d","samples":[{"position":2,"node":"a"},{"position":"nominalSpeed","node":"b"}]},{"id":"a","type":"clip","clip":"a"},{"id":"b","type":"clip","clip":"b"}],"root":"mix"})",
+            A::AnimGraphError::InvalidSchema);
+
+        // root の移動は毎秒 2。明示値がない a はインスタンスと同じ推定速度を使う。
+        GRAPH_CHECK(f.AClip->ApplyMetadataJson(C::String(R"({"rootMotion":{"mode":"inPlace"}})"), report));
+        GRAPH_CHECK(f.BClip->ApplyMetadataJson(C::String(R"({"rootMotion":{"nominalSpeed":6}})"), report));
+        auto estimated = f.Graph(json);
+        A::AnimGraphInstance inferred;
+        GRAPH_CHECK(inferred.Initialize(*estimated, *f.Skeleton, *f.Mesh, M::Matrix4x4::Identity));
+        const float speed = inferred.GetNominalSpeed(0);
+        NearGraph(speed, 2);
+        GRAPH_CHECK(inferred.Parameters().SetFloat(0, speed + (inferred.GetNominalSpeed(1) - speed) * .25f));
+        GRAPH_CHECK(inferred.Update(0) && inferred.Evaluate());
+        NearGraph(inferred.GetNodeWeights()[2], .25f);
+        NearGraph(inferred.GetLocalPose()[0].Translation.x, 2.5f);
+        // 推定値を解けても速度がゼロなら初期化を拒否する。
+        f.AClip->ClearRuntimeMetadata();
+        A::AnimGraphInstance stationary;
+        GRAPH_CHECK(!stationary.Initialize(*estimated, *f.Skeleton, *f.Mesh, M::Matrix4x4::Identity));
+        f.BClip->ClearRuntimeMetadata();
+    }
     void TestGraphStateMachine()
     {
         GraphFixture f;
@@ -1441,6 +1505,7 @@ void TestAnimGraphRuntime()
     TestGraphBlendAndLoad();
     TestGraphMaskRoots();
     TestGraphNodeKinds();
+    TestGraphNominalSpeedPositions();
     TestClipMetadataRuntime();
     TestAnimationEventRuntime();
     TestRootMotionRuntime();

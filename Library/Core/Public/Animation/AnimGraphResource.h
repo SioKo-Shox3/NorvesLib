@@ -91,6 +91,8 @@ namespace NorvesLib::Core
             AnimNodeKind Kind = AnimNodeKind::Clip;
             Container::VariableArray<uint32_t> Children;
             Container::VariableArray<float> AxisX, AxisY;
+            // blend1d の各位置が子 Clip の公称速度由来なら 1。数値だけのときは空。
+            Container::VariableArray<uint8_t> AxisFromNominalSpeed;
             AnimScalar X, Y, Weight{InvalidAnimParam, 0.5f};
             AnimParamHandle Select = InvalidAnimParam;
             uint32_t Clip = InvalidAnimNode;
@@ -141,7 +143,8 @@ namespace NorvesLib::Core
             Cycle,
             SkeletonMismatch,
             InvalidClip,
-            MarkerMismatch
+            MarkerMismatch,
+            InvalidNominalSpeed
         };
         struct AnimGraphReport
         {

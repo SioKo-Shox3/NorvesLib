@@ -9137,3 +9137,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 params の min/max（float・int）を読み、全ての書き込み口で丸める: 着地(直し 1 回)
 - U4 animgraph.json v1 の仕様を文書に書く: 着地(直し 1 回)
 - U2 masks の roots（複数の根）を読む: 着地(直し 0 回)
+- U3 blend1d の position に "nominalSpeed" を許し、実行時に解き直す（最後の単位）: 着地(直し 0 回)

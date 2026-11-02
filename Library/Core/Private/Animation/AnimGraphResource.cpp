@@ -632,8 +632,9 @@ namespace NorvesLib::Core::Animation
                     auto sample = samples.GetArrayElement(i);
                     float x = 0;
                     uint32_t id;
-                    if (!UniqueObject(sample) || !Number(sample.FindMember("position"), x) ||
-                        (!n.AxisX.empty() && x <= n.AxisX.back()))
+                    const bool bNominalSpeed = Word(sample.FindMember("position"), "nominalSpeed");
+                    if (!UniqueObject(sample) || (!bNominalSpeed && !Number(sample.FindMember("position"), x)) ||
+                        (!bNominalSpeed && !n.AxisX.empty() && !n.AxisFromNominalSpeed.back() && x <= n.AxisX.back()))
                     {
                         return Fail(r, AnimGraphError::InvalidSchema, "sample_axis");
                     }
@@ -642,7 +643,13 @@ namespace NorvesLib::Core::Animation
                         return false;
                     }
                     n.AxisX.push_back(x);
+                    n.AxisFromNominalSpeed.push_back(bNominalSpeed ? 1 : 0);
                     n.Children.push_back(id);
+                }
+                if (std::find(n.AxisFromNominalSpeed.begin(), n.AxisFromNominalSpeed.end(), uint8_t(1)) ==
+                    n.AxisFromNominalSpeed.end())
+                {
+                    n.AxisFromNominalSpeed.clear();
                 }
                 return true;
             }
@@ -964,6 +971,43 @@ namespace NorvesLib::Core::Animation
                 return false;
             }
         }
+        // 子は前方参照できるので、全ノードの読込後に公称速度と既知の位置の順序を検証する。
+        for (auto& n : d->Nodes)
+        {
+            if (n.Kind != AnimNodeKind::BlendSpace1D)
+            {
+                continue;
+            }
+            float previous = 0;
+            bool bHasPrevious = false;
+            for (size_t i = 0; i < n.AxisX.size(); ++i)
+            {
+                if (!n.AxisFromNominalSpeed.empty() && n.AxisFromNominalSpeed[i])
+                {
+                    const auto& child = d->Nodes[n.Children[i]];
+                    if (child.Kind != AnimNodeKind::Clip)
+                    {
+                        return Fail(report, AnimGraphError::InvalidSchema, "sample_nominal_child");
+                    }
+                    const float speed = d->Clips[child.Clip]->GetClipMetadata().Root.NominalSpeed;
+                    if (speed < 0)
+                    {
+                        continue;
+                    }
+                    if (speed <= 0)
+                    {
+                        return Fail(report, AnimGraphError::InvalidNominalSpeed, "sample_nominal_speed");
+                    }
+                    n.AxisX[i] = speed;
+                }
+                if (bHasPrevious && n.AxisX[i] <= previous)
+                {
+                    return Fail(report, AnimGraphError::InvalidSchema, "sample_axis");
+                }
+                previous = n.AxisX[i];
+                bHasPrevious = true;
+            }
+        }
         if (!ReadSyncGroups(root.FindMember("syncGroups"), *d, report))
             return false;
         Identity rootName;
@@ -1086,6 +1130,7 @@ namespace NorvesLib::Core
         {
             bytes += n.Children.capacity() * sizeof(uint32_t) +
                      (n.AxisX.capacity() + n.AxisY.capacity()) * sizeof(float) +
+                     n.AxisFromNominalSpeed.capacity() * sizeof(uint8_t) +
                      n.Layers.capacity() * sizeof(AnimLayer) + n.States.capacity() * sizeof(AnimState) +
                      n.Transitions.capacity() * sizeof(AnimTransition);
             for (const auto& t : n.Transitions)
