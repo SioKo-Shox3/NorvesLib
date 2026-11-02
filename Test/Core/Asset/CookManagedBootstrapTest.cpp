@@ -71,6 +71,27 @@ namespace BootstrapTest
         Write(path, {reinterpret_cast<const uint8_t*>(text), std::strlen(text)});
     }
 #if defined(_WIN32)
+    // 全呼び出しで待ち時間を共有し、別プロセスとの競合だけを期限つきで待ち直す。
+    ULONGLONG VolumeBusyWaitedMs = 0;
+    template <class Call> auto RetryVolumeBusy(Call&& call)
+    {
+        constexpr ULONGLONG MaximumWaitMs = 90000;
+        auto result = call();
+        while (result == decltype(result)::Busy && VolumeBusyWaitedMs < MaximumWaitMs)
+        {
+            const auto remaining = MaximumWaitMs - VolumeBusyWaitedMs;
+            const auto before = GetTickCount64();
+            Sleep(static_cast<DWORD>((std::min)(ULONGLONG{100}, remaining)));
+            VolumeBusyWaitedMs += GetTickCount64() - before;
+            std::fprintf(stderr, "VOLUME_BUSY_RETRY waited_ms=%llu\n", VolumeBusyWaitedMs);
+            if (VolumeBusyWaitedMs >= MaximumWaitMs)
+            {
+                return result;
+            }
+            result = call();
+        }
+        return result;
+    }
     struct NativeId
     {
         uint64_t Volume = 0;
@@ -179,7 +200,7 @@ namespace BootstrapTest
             {
                 CookManagedStoreObservation out;
                 TestText error;
-                const auto result = InitializeNewCookManagedStore(Owner, out, error);
+                const auto result = RetryVolumeBusy([&] { return InitializeNewCookManagedStore(Owner, out, error); });
                 if (result != CookManagedStoreInitializationResult::Created)
                 {
                     std::fprintf(stderr, "STORE_INITIALIZATION result=%u error=%s fixture=%ls\n",
@@ -192,11 +213,16 @@ namespace BootstrapTest
         {
             return {Owner, Assets, BytesOf(SpecText), 7};
         }
-        Boot Run(CookManagedBootstrapOutcome& out, TestText& error, const Probe* probe = nullptr) const
+        Boot Run(CookManagedBootstrapOutcome& out, TestText& error, const Probe* probe = nullptr,
+                 bool bRetryBusy = true) const
         {
             auto request = Request();
-            const auto result = probe ? Access::BootstrapCookManagedAssetSetForTest(request, *probe, out, error)
-                                      : BootstrapCookManagedAssetSet(request, out, error);
+            const auto run = [&]
+            {
+                return probe ? Access::BootstrapCookManagedAssetSetForTest(request, *probe, out, error)
+                             : BootstrapCookManagedAssetSet(request, out, error);
+            };
+            const auto result = bRetryBusy ? RetryVolumeBusy(run) : run();
             if (result != Boot::Created)
             {
                 std::fprintf(stderr, "BOOTSTRAP_RESULT result=%u error=%s\n", static_cast<unsigned>(result), error.c_str());
@@ -338,7 +364,7 @@ namespace BootstrapTest
         CookManagedBootstrapOutcome out;
         out.ClaimId = "held";
         TestText error;
-        const auto result = RecoverCookManagedPending(f.Runtime, out, error);
+        const auto result = RetryVolumeBusy([&] { return RecoverCookManagedPending(f.Runtime, out, error); });
         if (result != expected)
         {
             std::fprintf(stderr, "recover fixture=%ls expected=%u got=%u: %s\n", f.Base.c_str(),
@@ -423,7 +449,7 @@ namespace BootstrapTest
         }
         else
         {
-            (void)Access::RecoverCookManagedPendingForTest(f.Runtime, probe, out, error);
+            (void)RetryVolumeBusy([&] { return Access::RecoverCookManagedPendingForTest(f.Runtime, probe, out, error); });
         }
         std::fprintf(stderr, "child did not exit: %s\n", error.c_str());
         return 91;
@@ -464,7 +490,8 @@ namespace BootstrapTest
         auto& data = *static_cast<BusyData*>(context);
         CookManagedBootstrapOutcome out;
         TestText error;
-        data.Result = data.Case->Run(out, error);
+        // 主スレッドがロックを保持してこのスレッドを待つため、ここでは待ち直さない。
+        data.Result = data.Case->Run(out, error, nullptr, false);
         return 0;
     }
     bool ProbeBusy(Point point, const std::filesystem::path&, const std::filesystem::path&, void* context)
@@ -558,7 +585,8 @@ namespace BootstrapTest
         CHECK(!out.bCleanupIncomplete && out.RetiredDirectory.empty());
         VerifyCommitted(fresh, binding);
         CookManagedStoreObservation observed;
-        CHECK(ObserveCookManagedStore(fresh.Owner, observed, error) == CookManagedStoreResult::Observed &&
+        CHECK(RetryVolumeBusy([&] { return ObserveCookManagedStore(fresh.Owner, observed, error); }) ==
+                  CookManagedStoreResult::Observed &&
               observed.bRuntimeRootClaimed);
         const auto packageId = Identity(fresh.Runtime / "Cooked/a.nvpkg");
         const auto packageBytes = Read(fresh.Runtime / "Cooked/a.nvpkg");
@@ -802,7 +830,8 @@ namespace BootstrapTest
             bool bAbandoned = false;
             Probe probe;
             probe.bAbandonedObserved = &bAbandoned;
-            CHECK(Access::RecoverCookManagedPendingForTest(f.Runtime, probe, out, error) == Recovery::RolledBack &&
+            CHECK(RetryVolumeBusy([&] { return Access::RecoverCookManagedPendingForTest(f.Runtime, probe, out, error); }) ==
+                      Recovery::RolledBack &&
                   bAbandoned);
             CHECK(CloseHandle(keep));
             ++crashes;

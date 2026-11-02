@@ -8852,3 +8852,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 要起票: `CookManagedStoreInitializationTest`・`CookManagedUpdateTest`・`TextureManagedCliTest` も fixture を `GetTempPathW` の下に作るため、共有の TEMP が 16384 項目を超えるこの機では `entry_limit` で落ちる（Bootstrap と同じ形で ctest の作業ディレクトリの下へ移すか、祖先の列挙の上限を見直すか）。
 - Notes: 要起票: 管理ストアの取引の段のディレクトリ（`.norves-assetcook\.transaction-stage-<32 桁>\work-N\Cooked\...`）は、置き場のパスが長いと CreateDirectory のパス長の上限（248 文字）で `failed to create parent directory` になる。ctest の作業ディレクトリへ fixture を移した Bootstrap も、深いパスのチェックアウトでは同じ制限に当たりうる。
 - Notes: `cook_store_initialization: volume_busy` は、ボリューム単位の機械全体の名前付き mutex を別の枠の管理ストア試験が握っているときに待たずに返る結果。並行する枠があると周辺の管理試験が落ちることがある。
+- U4 Bootstrap 試験で別プロセスの Busy を期限つきで待ち直す: 着地(直し 0 回)
