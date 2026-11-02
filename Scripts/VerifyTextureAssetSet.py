@@ -9,6 +9,10 @@ import subprocess
 import runpy
 
 
+# native の検証は旧 PS1 を読まない。旧出力の正しさは receipt の snapshot SHA と payload hash で保つ。
+LEGACY_ONLY_INPUTS = frozenset({"Scripts/CookTextureAssetSet.ps1"})
+
+
 def digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
@@ -52,9 +56,13 @@ def run(source: Path, exe: Path, reference: Path, output: Path) -> None:
         raise ValueError("実Windows検証が必要です")
     receipt = json.loads((source / "Docs/AssetCookTextureFrozenBaseline.json").read_text())
     snapshot, expected = load_reference(reference, receipt)
-    input_hashes = {name: digest((source / name).read_bytes()) for name in snapshot["checkout_inputs"]}
-    if any(input_hashes[name] != record["sha256"] for name, record in snapshot["checkout_inputs"].items()):
-        raise ValueError("固定上流inputと現在のcheckout byteが一致しません")
+    checkout_inputs = snapshot["checkout_inputs"]
+    if not LEGACY_ONLY_INPUTS.issubset(checkout_inputs) or len(checkout_inputs) <= len(LEGACY_ONLY_INPUTS):
+        raise ValueError("固定texture snapshot入力一覧不一致")
+    input_hashes = {name: digest((source / name).read_bytes()) for name in checkout_inputs if name not in LEGACY_ONLY_INPUTS}
+    mismatches = sorted(name for name, value in input_hashes.items() if value != checkout_inputs[name]["sha256"])
+    if mismatches:
+        raise ValueError("固定上流inputと現在のcheckout byteが一致しません: " + ", ".join(mismatches))
     exe_hash = digest(exe.read_bytes())
     output.mkdir(parents=True, exist_ok=False)
     logs = output / "logs"

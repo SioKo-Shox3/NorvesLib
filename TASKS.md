@@ -3936,7 +3936,7 @@
 - stop-when: provenanceを拡張子だけで決める、sidecarよりasset-set設定を無言優先、非発光を不必要に拒否、見た目未確認を受入れ済みとする。
 
 ## G2-S6-ASSET-SET: C++一括cookと増分判定を接続する
-- status: todo
+- status: done
 - done-when: AssetCook --asset-setへ一括cookと増分判定を集約。origin/main CookTextureAssetSet.ps1 + Rendering3DTestSilverTextures/Rendering3DTestSilverGltfTexturesに対してcooked/manifestのbyte一致を確認。glTF外部ファイルとsidecarを印に含む。 verify の文章にあった確かめ（単体 CLI の分割前後の比較、旧 texture spec v1 の 2 spec の同値、外部 buffer・画像・sidecar の変更・不在・復帰・破損での再 cook と拒否、失敗時の出力の保持）は、上の既存の試験と `Scripts/VerifyTextureAssetSet.py`・`Scripts/AssetCookCliParity.py` の手順で行い、Windows の実 byte の比較の結果を PROGRESS.md に書く。
 - verify: `cmake --build build --config Debug --target AssetCook CookedMeshTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^(TextureAssetSetSpecTest|TextureAssetSetOutputTest|CookDependencySnapshotTest|CookCacheDecisionTest|CookOutputPackageTest|SingleAssetCookServiceTest|AssetCookTextureSmoke|AssetCookGlbSmoke)$" --no-tests=error --output-on-failure --timeout 180`
@@ -4369,7 +4369,7 @@
 - from: G2-GR78-SURFACE-CENTROID
 
 ## G2-GR78-SURFACE-CENTROID-CHECK-P1: CookedSkeletalAssetTest の「警告:」の照合を、コンソールのコードページに関わらず通す
-- status: todo
+- status: done
 - done-when: CookedSkeletalAssetTest.cmake.in で AssetCook の出力を受ける execute_process が、出力を UTF-8 として読む(ENCODING UTF-8 を付けるか、台本の頭で CMP0176 を NEW にする)。これにより「警告:」の照合(reduce・cubic・morph の 3 か所)が、コードページ 932 のコンソールでも 65001 のコンソールでも通る。照合の文字列と合否の条件は変えない。
 - verify: `cmake --build build --config Debug --target CookedMeshTest AssetCook -- /m:1`
 - verify: `cmd /c "chcp 932 >nul && ctest --test-dir build -C Debug --output-on-failure --timeout 180 -R CookedSkeletalAssetTest && chcp 65001 >nul && ctest --test-dir build -C Debug --output-on-failure --timeout 180 -R CookedSkeletalAssetTest"`
