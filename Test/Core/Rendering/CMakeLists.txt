@@ -2084,6 +2084,20 @@ target_link_libraries(SwordTrailRibbonTest PRIVATE Core)
 set_target_properties(SwordTrailRibbonTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME SwordTrailRibbonTest COMMAND SwordTrailRibbonTest)
 
+add_executable(SwordTrailRibbonVulkanTest
+    SwordTrailRibbonVulkanTest.cpp
+)
+target_link_libraries(SwordTrailRibbonVulkanTest PRIVATE Core)
+target_include_directories(SwordTrailRibbonVulkanTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Library/Core/Private
+)
+target_compile_definitions(SwordTrailRibbonVulkanTest PRIVATE
+    NORVES_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
+)
+set_target_properties(SwordTrailRibbonVulkanTest PROPERTIES FOLDER "Test/Core/Rendering")
+register_rendering_gpu_test(SwordTrailRibbonVulkanTest SwordTrailRibbonVulkanTest)
+
 add_test(NAME ParticleFrameSnapshotTest COMMAND CanvasTransientBoardSnapshotTest --test=ParticleFrameSnapshotTest)
 
 

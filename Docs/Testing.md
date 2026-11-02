@@ -88,6 +88,11 @@ GPUを使うテストは、Vulkanを使えない環境ではskip（終了コー�
 - ほかの手段で気づけるか: 気づけない。撮影は 1 フレームなので、補間の点の数・折れ目の角度・寿命の切れ方を区別できない。ログにも出ない。
 - 失敗が黙って起きるか: 起きる。点が詰まる・飛ぶ・残っても帯は何かしら描かれ、落ちない。
 
+`SwordTrailRibbonVulkanTest` を足す理由:
+- 反証する契約: 既知の軌跡の帯の頂点を、ForwardPass と同じ描画器・シェーダーで描くと、CPU で投影した帯の内側の画素だけが塗られ、外側が塗られない（頂点の配置・帯の並び・投影の取り違えが無い）。
+- ほかの手段で気づけるか: 気づけない。帯は `--animation-debug` の場面にしか出ず、既定の撮影・基準画像に写らない。
+- 失敗が黙って起きるか: 起きる。頂点の配置や行列の向きを取り違えても、何かしらの三角形が描かれるか何も描かれず、落ちない。
+
 `MaterialSelectionTest`・`MaterialImportDocumentTest`・`SkeletalMaterialBindingsTest` を拡充する理由: 反証する契約は、元材質（`SourceMaterial`）と生成 slot（`GeneratedSlot`）を名前の全バイトで照合し、正規化や推測をせず、設定値・`SurfaceName`・slot の割当てが選んだ 1 件にだけ届くこと。壊れても cook は成功し、別の材質へ設定や slot が入るだけでログに出ないため、撮影・検証レイヤー・開発ビルドの検査・ログでは気づけず、失敗は黙って起きる。
 
 `CookCacheDecisionTest` を拡充する理由: 反証する契約は、静的 mesh・skinmesh・clips の入力側 sidecar にある材質設定の未一致・二重指定・未対応の `SurfaceName` を、増分の skip を許した場合も preflight で拒否し、記録の一致で検証を迂回させないこと。リターゲット先骨格の sidecar もこの契約の対象とし、`RigSplitCookTest` で BVH 入力からの増分 preflight を検証する。skip されると cook のログが出ず、前の出力がそのまま使われるため、ほかの手段では気づけず、失敗は黙って起きる。
