@@ -8516,3 +8516,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: `init_seg(lib)` と同じか前の領域で走る初期化（CRT・ほかのライブラリの lib 領域）で assert が落ちた場合は止められない
 - Notes: 要起票: `RenderGraphCompileTest.cpp` などで副作用のある呼び出しを `assert(...)` の中に置いており、RelWithDebInfo では初期化ごと消えて 0xC0000005 で落ちる（直すか試験を消すか）
 - U2 取り込みの試験に node 配列そのものの並べ替えと、予算・境界の失敗で out を保つ確かめを足す: 着地(直し 0 回)
+- U4 RigSplitCookTest の管理ストアの段を利用者の TEMP の項目数に左右されないようにする: 着地(直し 1 回)
