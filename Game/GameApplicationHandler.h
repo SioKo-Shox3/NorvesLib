@@ -209,6 +209,10 @@ namespace Game
         // --capture-views で、1回の起動の中でシーンの複数の名前付き視点を順に撮る。
         Game::Debug::MultiViewCapture m_MultiViewCapture;
 #if NORVES_BUILD_DEVELOPMENT
+        // SceneReady の遷移ごとに、描画済みパケットの状態を一度だけ記録する。
+        bool m_bPreviousSceneReady = true;
+        bool m_bRTGIStateLogPending = false;
+        uint64_t m_RTGIStateMinimumFrameNumber = 0;
         // --geom-settle-trace で、ジオメトリのページの読み込みが落ち着いた後の推移をログへ書く（開発ビルドだけ）
         Game::Debug::GeometrySettleTrace m_GeometrySettleTrace;
 #endif

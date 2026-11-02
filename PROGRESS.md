@@ -9035,3 +9035,13 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: なし（`--export-terrain` を実際に回すのは Game を起動する SCN-WL-CLIFF-GEN-TALUS-CHECK-P2 の verify で確かめる）
 - Notes: 移行と飛ばしの経路には exe がソースより新しいかの検査が掛からない（焼くときだけ掛かる）。共有の状態は移行済みで、旧いスクリプトが焼き直して `terrain_stamp` を落としたときだけ起こり得る
 - Notes: 要起票: `Tools/AssetCook/MeshCooker.cpp` の 2942〜2943 行目のコメント「高さ場の関数の変更は AssetCook の実行ファイルの変更として CookAssets が検出する」が、地形の印をソースの内容で求める今の仕組みと合わない
+
+- U1 開発ビルドの --rt-gi=on|off で RT と DDGI を起動から終了まで切り、SCENE_READY で実際の状態をログに書く: 着地(直し 0 回)
+
+## 2026-11-02 SCN-MEGA-FIX-STRESS-GPU-CHECK-P1（run 20261102-195301 の反復 1）
+
+- Done: 開発ビルド（Debug・RelWithDebInfo）にだけ起動引数 `--rt-gi=on|off` を足した（`--rtgi-bounce` と同じ形。Release は警告を出して無視）。Game が環境変数 `NORVES_RT_GI` へ渡し、`RenderingCoordinator::Initialize` が 1 回読んで固定する。`off` のときはパケットの `bRTGIEnabled` と DDGI の `bEnabled` を偽にし、GameThread のレイトレーシングの snapshot・RenderThread の MegaGeometry のインスタンスの追加・加速構造の構築を飛ばす（TLAS が無いので RT の影・DDGI・RTGI は既存の判定で代替へ落ち、間接光は IBL になる）。シーンの `SetRTGIEnabled`・`SetDDGIVolumeParameters` の要求は保持し、パケットへ写す値だけを off にするので、Launcher・荒野の共通の照明が呼んでも off が勝つ。未指定（と `on`）は今までと同じ分岐を通る。開発ビルドでは RenderThread が提出したパケットの RTGI・DDGI・TLAS の有無とインスタンス数を記録し、Game が SceneReady の偽→真の後に、その後のパケットの値から `RT_GI_STATE off|on rtgi= ddgi= tlas= instances= frame=` を 1 行書く
+- 検証: `cmake --build build --config Debug --target Game -- /m:1` 終了コード 0（単位の作業ツリーの `.harness/unit-verify.txt`。`git diff --numstat` と `--ignore-cr-at-eol` の 2 通りも一致）
+- Next: 起動の確かめは後回し（`SCN-MEGA-FIX-STRESS-GPU-CHECK-P1-CHECK`）。mega-stress を `-GameArgs rt-gi=off` で撮り、`overview.Game.log` に `RT_GI_STATE off` が出ることを確かめる
+- Notes: SCN-MEGA-FIX-STRESS-GPU-CHECK と SCN-MEGA-ACCEPT-1M の予算（16.6 ms）の撮影は、`-GameArgs` に `rt-gi=off` を足して撮る
+- Notes: `--rt-gi=off` ではパストレーシングのモードにも TLAS が渡らない（開発用の切り替えとして受け入れた）
