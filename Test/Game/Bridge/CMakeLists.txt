@@ -86,3 +86,22 @@ if(MSVC)
     target_compile_options(PauseMenuTest PRIVATE /utf-8)
 endif()
 add_test(NAME PauseMenuTest COMMAND PauseMenuTest)
+
+# 資産プロパティの編集・保存・拒否を Game 全体に依存せず検査する。
+add_executable(BridgeAssetPropertyEditTest
+    BridgeAssetPropertyEditTest.cpp
+    ${CMAKE_SOURCE_DIR}/Game/Bridge/BridgeAssetPropertyEditor.cpp
+)
+set_target_properties(BridgeAssetPropertyEditTest PROPERTIES FOLDER "Test/Game/Bridge")
+target_link_libraries(BridgeAssetPropertyEditTest PRIVATE Core)
+target_include_directories(BridgeAssetPropertyEditTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Game
+    ${CMAKE_SOURCE_DIR}/Library
+    ${CMAKE_SOURCE_DIR}/Library/Core
+    ${CMAKE_SOURCE_DIR}/Library/Core/Public
+)
+if(MSVC)
+    target_compile_options(BridgeAssetPropertyEditTest PRIVATE /utf-8)
+endif()
+add_test(NAME BridgeAssetPropertyEditTest COMMAND BridgeAssetPropertyEditTest)
