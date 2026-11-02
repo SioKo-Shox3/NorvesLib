@@ -57,6 +57,7 @@ namespace NorvesLib::Tools::AssetCook
         using Detail::ManagedStoreNative::Entry;
         using Detail::ManagedStoreNative::Entries;
         using Detail::ManagedStoreNative::Enumerate;
+        using Detail::ManagedStoreNative::EnumerateKept;
         using Detail::ManagedStoreNative::Fixed;
         using Detail::ManagedStoreNative::Direct;
         using Detail::ManagedStoreNative::Read;
@@ -137,7 +138,13 @@ namespace NorvesLib::Tools::AssetCook
             {
                 const auto& place = chain[n];
                 Entries entries;
-                if (!Enumerate(place, entries, budget, error))
+                // 祖先の列挙は読み流し、固定名と長名または短い別名が一致する項目だけを残す。
+                if (!EnumerateKept(place, entries, budget, error,
+                                   [](const WIN32_FIND_DATAW& data)
+                                   {
+                                       return Fold(data.cFileName, StoreLeaf) ||
+                                              (data.cAlternateFileName[0] && Fold(data.cAlternateFileName, StoreLeaf));
+                                   }))
                 {
                     return false;
                 }
@@ -215,16 +222,42 @@ namespace NorvesLib::Tools::AssetCook
                 {
                     return conflict("index_schema_or_duplicate");
                 }
-                // 各claimの長名を実列挙と照合。保存pathではなく今回のentryを開く。
+                // 祖先をもう一度読み流し、claimの長名と完全一致する項目だけを残す。
+                // 各claimを今回の列挙と照合し、保存パスではなく今回の項目を開く。
+                Core::Container::VariableArray<std::filesystem::path> claimNames;
+                for (const auto& claim : view.Roots)
+                {
+                    claimNames.push_back(std::filesystem::path(claim.RootLeaf.c_str()));
+                }
+                std::sort(claimNames.begin(), claimNames.end(),
+                          [](const auto& a, const auto& b)
+                          {
+                              return a.native() < b.native();
+                          });
+                Entries claimEntries;
+                if (!claimNames.empty() &&
+                    !EnumerateKept(place, claimEntries, budget, error,
+                                   [&](const WIN32_FIND_DATAW& data)
+                                   {
+                                       const auto it = std::lower_bound(claimNames.begin(), claimNames.end(), data.cFileName,
+                                                                        [](const auto& name, const wchar_t* value)
+                                                                        {
+                                                                            return name.native() < value;
+                                                                        });
+                                       return it != claimNames.end() && it->native() == data.cFileName;
+                                   }))
+                {
+                    return false;
+                }
                 Core::Container::VariableArray<size_t> order;
-                for (size_t i = 0; i < entries.size(); ++i)
+                for (size_t i = 0; i < claimEntries.size(); ++i)
                 {
                     order.push_back(i);
                 }
                 std::sort(order.begin(), order.end(),
                           [&](size_t a, size_t b)
                           {
-                              return entries[a].Name.native() < entries[b].Name.native();
+                              return claimEntries[a].Name.native() < claimEntries[b].Name.native();
                           });
                 for (const auto& claim : view.Roots)
                 {
@@ -232,15 +265,15 @@ namespace NorvesLib::Tools::AssetCook
                     auto it = std::lower_bound(order.begin(), order.end(), wanted,
                                                [&](size_t i, const auto& value)
                                                {
-                                                   return entries[i].Name.native() < value.native();
+                                                   return claimEntries[i].Name.native() < value.native();
                                                });
-                    if (it == order.end() || entries[*it].Name.native() != wanted.native())
+                    if (it == order.end() || claimEntries[*it].Name.native() != wanted.native())
                     {
                         return conflict("active_root_missing_or_renamed");
                     }
                     Identity actual;
-                    if (!Directory(place.Canonical / entries[*it].Name, actual, error) || !Direct(place, actual) ||
-                        actual.Canonical.filename().native() != entries[*it].Name.native() ||
+                    if (!Directory(place.Canonical / claimEntries[*it].Name, actual, error) || !Direct(place, actual) ||
+                        actual.Canonical.filename().native() != claimEntries[*it].Name.native() ||
                         !SameId(actual.FileId, claim.DirectoryId))
                     {
                         return conflict("active_root_changed");

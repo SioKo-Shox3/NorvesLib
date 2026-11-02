@@ -162,7 +162,8 @@ namespace NorvesLib::Tools::AssetCook::Detail::ManagedStoreNative
         std::filesystem::path Name, ShortName;
     };
     using Entries = Core::Container::VariableArray<Entry>;
-    inline bool Enumerate(const Identity& directory, Entries& out, Budget& budget, Text& error)
+    template <class Keep>
+    inline bool EnumerateKept(const Identity& directory, Entries& out, Budget& budget, Text& error, Keep&& keep)
     {
         WIN32_FIND_DATAW data{};
         const auto pattern = directory.Canonical / L"*";
@@ -192,7 +193,7 @@ namespace NorvesLib::Tools::AssetCook::Detail::ManagedStoreNative
         bool bGood = true;
         for (;;)
         {
-            if (std::wcscmp(data.cFileName, L".") && std::wcscmp(data.cFileName, L".."))
+            if (std::wcscmp(data.cFileName, L".") && std::wcscmp(data.cFileName, L"..") && keep(data))
             {
                 if (budget.Entries == MaximumCookStoreEntries || out.size() == 16384)
                 {
@@ -222,6 +223,14 @@ namespace NorvesLib::Tools::AssetCook::Detail::ManagedStoreNative
             bGood = Fail(error, "enumeration_close");
         }
         return bGood;
+    }
+    inline bool Enumerate(const Identity& directory, Entries& out, Budget& budget, Text& error)
+    {
+        return EnumerateKept(directory, out, budget, error,
+                             [](const WIN32_FIND_DATAW&)
+                             {
+                                 return true;
+                             });
     }
     // fold一致する実長名を全件確認。aliasやcase違いを第2の管理領域にしない。
     inline bool Fixed(const Entries& entries, const wchar_t* name, bool bRequired, const Entry*& found, Text& error)
