@@ -4845,14 +4845,12 @@
 - from: G2-GR32-GPU-ACCEPTANCE-P1
 
 ## G2-MATERIAL-SELECTION-INTEGRATION-P1-P1-P1: `Busy` を期待する cook の試験で、前提のロックの取得だけ上限つきで待ち、`Busy` を確かめる取得は待ち 0 のままにする
-- status: blocked
+- status: todo
 - done-when: 次の 4 点を満たす。
-  - **前提の取得は待つ。** `CookDestinationLockTest`・`CookManagedBootstrapTest`・`CookManagedUpdateTest` では、各試験の頭で `NORVES_COOK_LOCK_WAIT_MS=120000` をプロセスの中だけで立て、試験の終わりに元の値へ戻す。戻すには、`CookDestinationLockTest.cpp` にある `EnvironmentVariableRestore` と同じ形の範囲つきの仕組みを使う。これで、試験が自分でロックを取る所(`f.Run`・回復・解放後の取り直し・子プロセスの取得)が、ほかの枠の AssetCook と重なっても上限つきで待つ。
-  - **`Busy` を確かめる取得だけは待ち 0 にする。** 対象は次の 4 か所。
-    - `CookManagedBootstrapTest` の `ProbeBusy`/`TryBusy`
-    - `CookManagedUpdateTest` の `BusyPoint`/`TryBusy`
-    - `CookDestinationLockTest` の入れ子の peer(94・109 行付近)と、子プロセスが持っている間の親の取得(698 行付近)
-    - `WaitOption` の「待ちなし」の側
+  - **前提の取得は待つ。** `CookDestinationLockTest`・`CookManagedBootstrapTest`・`CookManagedUpdateTest` では、各試験の頭で `NORVES_COOK_LOCK_WAIT_MS=120000` をプロセスの中だけで立て、試験の終わりに元の値へ戻す(`CookLockWaitTestScope.h` の範囲つきの仕組み)。試験が自分でロックを取る所(`f.Run`・回復・解放後の取り直し・子プロセスの取得)は、上限つきで待つ。
+  - **`Busy` を確かめる取得だけは待ち 0 にする。** 対象は Bootstrap の `ProbeBusy`/`TryBusy`、Update の `BusyPoint`/`TryBusy`、DestinationLock の入れ子の peer と子プロセスが持っている間の親の取得、`WaitOption` の「待ちなし」の側。取得の直前に環境変数を消し、確かめた後に戻す。どれも待ち 0 で `Busy` を返し、今の期待(`Busy`・callback の呼び出しが 0 回)のまま通る。
+  - **本体と、CTest の待ちの設定は変えない。** `Tools/AssetCook/` の既定の待ち・mutex の名前・volume 単位は変えない。上の 3 つの試験の CTest の `ENVIRONMENT` に `NORVES_COOK_LOCK_WAIT_MS` を足さない。
+  - **並列の ctest でも通る。** 宛先 volume のロックを取る cook の試験(少なくとも `CookDestinationLockTest`・`CookManagedBootstrapTest`・`CookManagedUpdateTest`・`RigSplitCookTest`・`TextureManagedCliTest`・`CookManagedStoreObservationTest`・`CookManagedStoreInitializationTest`)に、`Test/Core/Asset/CMakeLists.txt` で `RESOURCE_LOCK cook_destination_volume` を付ける。`ctest -j 4` で回すと、これらは 1 本ずつ流れて全部通る。独り占めの検査(同名の event・abandoned の観測・全 handle の後の ordinary)は、検査も期待も変えない。
 
     これらでは、取得の直前に環境変数を消し、確かめた後に元へ戻す。どれも待ち 0 で `Busy` を返し、今の期待(`Busy`・callback の呼び出しが 0 回)のまま通る。
   - **本体と CTest の設定は変えない。** `Tools/AssetCook/` の既定の待ち・mutex の名前・volume 単位は変えない。この 3 つの試験の CTest の `ENVIRONMENT` にも `NORVES_COOK_LOCK_WAIT_MS` を足さない。
@@ -4861,7 +4859,8 @@
 - verify: `ctest --test-dir build -C Debug -R "^(CookDestinationLockTest|CookManagedBootstrapTest|CookManagedUpdateTest)$" --no-tests=error --output-on-failure --timeout 180`
 - verify: `ctest --test-dir build -C Debug -j 4 -R "^(CookDestinationLockTest|CookManagedBootstrapTest|CookManagedUpdateTest|RigSplitCookTest)$" --no-tests=error --output-on-failure --timeout 300`
 - verify: `python -c "import json,subprocess,sys; d=json.loads(subprocess.check_output(['ctest','--test-dir','build','-C','Debug','-R','^(CookDestinationLockTest|CookManagedBootstrapTest|CookManagedUpdateTest)$','--show-only=json-v1'])); e={t['name']:[v for p in t.get('properties',[]) if p['name']=='ENVIRONMENT' for v in p['value']] for t in d['tests']}; k='NORVES_COOK_LOCK_WAIT_MS='; print(e); sys.exit(0 if len(e)==3 and not any(v.startswith(k) for vs in e.values() for v in vs) else 1)"`
-- paths: Test/Core/Asset/CookDestinationLockTest.cpp, Test/Core/Asset/CookManagedBootstrapTest.cpp, Test/Core/Asset/CookManagedUpdateTest.cpp, Test/Core/Asset/CookLockWaitTestScope.h, TASKS.md, PROGRESS.md
+- verify: `python -c "import json,subprocess,sys; n=['CookDestinationLockTest','CookManagedBootstrapTest','CookManagedUpdateTest','RigSplitCookTest','TextureManagedCliTest','CookManagedStoreObservationTest','CookManagedStoreInitializationTest']; d=json.loads(subprocess.check_output(['ctest','--test-dir','build','-C','Debug','-R','^('+'|'.join(n)+')$','--show-only=json-v1'])); r={t['name']:[x for p in t.get('properties',[]) if p['name']=='RESOURCE_LOCK' for x in (p['value'] if isinstance(p['value'],list) else [p['value']])] for t in d['tests']}; print(r); sys.exit(0 if sorted(r)==sorted(n) and all('cook_destination_volume' in v for v in r.values()) else 1)"`
+- paths: Test/Core/Asset/CookDestinationLockTest.cpp, Test/Core/Asset/CookManagedBootstrapTest.cpp, Test/Core/Asset/CookManagedUpdateTest.cpp, Test/Core/Asset/CookLockWaitTestScope.h, Test/Core/Asset/CMakeLists.txt, TASKS.md, PROGRESS.md
 - after: G2-S6-ASSET-SET-P1
 - from: G2-MATERIAL-SELECTION-INTEGRATION-P1-P1
 - stop-when: 次のどれかが要るなら止める。
