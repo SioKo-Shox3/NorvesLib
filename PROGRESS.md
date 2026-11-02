@@ -8704,3 +8704,8 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261102-105745/verify-G2-GR32-GPU-ACCEPTANCE-iter3.txt`（範囲の検算で全範囲を隙間・重複なく覆い、slot 0 が列 0〜3・slot 1 が列 4〜7 の表裏 64 三角形ずつ。`cmake --build build --config Debug --target Game AssetCook SkinnedSubmeshDrawContractTest -- -m:1` 終了コード 0、`SkinnedSubmeshDrawContractTest.exe` PASS・終了コード 0。numstat 2 通り一致）
 - Next: 起動の確かめは後回し。`G2-GR32-GPU-ACCEPTANCE-CHECK` で verify の 3〜6 行目を回し、PNG・metrics.json・result.json を開いて確かめる（2 材質の撮影は STARTUP_SKINNED_PROBE_SKIPPED が出ないことと体の数も見る）
 - Notes: 評価の残課題のうち、-LegacyNvskelCompare が RTGI の面を含む 9 面すべてで全画素一致を求める扱いと、Test-M9World.ps1 が M9_WORLD_COMPARE stage=assets_ready の印を照合しない点は、確かめのタスクで実行の結果を見て決める
+
+## 2026-11-02 GAME-GR131-VFX（run 20261102-145118 の反復 1。着手）
+- 方式（推奨を採った）: Core の `Particle/HitEffectEmitter` が当たり（位置・法線・表面の名前）を受け、当たり 1 回につき放出の要求をちょうど 1 つ積む。表面の名前を全バイトの一致で表から引き、表に無い名前は既定の 1 種類にする（GR115 が無いうちは名前を文字列で受ける）。再生は GR136 の `VfxEffectSystem` に、エフェクトごとのワールドのインスタンス 1 つへの向きつきのイベント（法線を +Z とした局所の初速の箱）として流す。理由: GR136 のイベントの仕組みをそのまま使えば、当たりごとのインスタンスの作り捨てと片付けの規則が要らず、エフェクトの定義も GR136 の 1 つの形式のままになる。既定の中身は火花（`Metal`）と衝撃（既定）をコードで組む
+- 方式と前提の境界の記録: `Docs/Plans/GameFeatureRoadmap.md`（メイン側・管理外）の「GR131 ヒットエフェクト（当たりの火花・衝撃）の方式と境界」の節
+- 完了を宣言しない範囲: GR16 の当たりを出す側（`CombatHitEvent` からの写し）、GR115 の `SurfaceId`・parent のフォールバック、GR57 の GPU の実行先・3D の粒子の描画パス、GR02 のヒットストップ・時間のチャンネル、GR96 の表とエフェクトのファイル化・クック、GR72 の音・GR133 の跡、Editor の表の編集の画面。火花と衝撃の見た目は起動を戻した後に確かめる
