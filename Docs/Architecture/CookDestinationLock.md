@@ -26,7 +26,7 @@ hash、owner、spec、SourceRoot、manifest、StatePath、root leaf、存在状�
 
 CreateMutexExWは初期owner flagなし、SYNCHRONIZE | MUTEX_MODIFY_STATEのaccess mask、default DACL、非継承handleを使う。MUTEX_MODIFY_STATEは公式にはreservedであり、ReleaseMutex必須権限とは説明しない。ACL変更やprivilege有効化はしない。
 
-WaitForSingleObjectのtimeoutは0。WAIT_TIMEOUTではBusyを即返し、callbackを呼ばない。access deniedや同名の別種kernel object、その他の失敗はError。Local namespace、drive文字、lock fileなどへfallbackしない。Global namespaceにより別process/sessionも同じ名前へ到達するが、default DACLで開けなければfail closedとなる。
+WaitForSingleObjectの既定のtimeoutは0。既定ではWAIT_TIMEOUTになるとBusyを即返し、callbackを呼ばない。環境変数NORVES_COOK_LOCK_WAIT_MSは試験環境（ctestのENVIRONMENT）だけで使い、1〜600000の整数ならそのミリ秒まで待つ。それ以外は0として扱い、待ちきって取得できなければBusyを返す。本番の既定では設定しない。access deniedや同名の別種kernel object、その他の失敗はError。Local namespace、drive文字、lock fileなどへfallbackしない。Global namespaceにより別process/sessionも同じ名前へ到達するが、default DACLで開けなければfail closedとなる。
 
 ## Abandonedは永続crash印ではない
 
@@ -36,7 +36,7 @@ WAIT_ABANDONEDもmutexの所有権取得済みであり、bAbandoned=trueをcall
 
 ## 検証
 
-CookDestinationLockTestは実thread/processのBusy、同volumeの親子/sibling/case/作成前後、callback失敗/例外/再入、別threadからの再取得、実process終了後のAbandoned、全handle消滅後のordinary、同名event衝突、無関係fileの保持を扱う。子processは同じtest bundleを明示選択し、bundleが--test引数を除去する規約に合わせて専用引数を読む。
+CookDestinationLockTestは実thread/processのBusy、同volumeの親子/sibling/case/作成前後、callback失敗/例外/再入、別threadからの再取得、実process終了後のAbandoned、全handle消滅後のordinary、同名event衝突、無関係fileの保持を扱う。待ちの指定があれば解放後にExecuted、指定がなければBusyとなることも検査する。子processは同じtest bundleを明示選択し、bundleが--test引数を除去する規約に合わせて専用引数を読む。
 
 8.3/SUBST/ASCII alias経由Unicode/別volumeのflagをreceiptへ記録する。cross-processは必須。cross-sessionの実試験はこのrunnerでは行わず、設計上のGlobal namespaceと区別してflag 0を出す。private faultはCreate/Wait/Reobserve/volume差/Release/Closeを検査する。Release/Close注入でも実cleanupは行い、実OSの失敗を再現したとは扱わない。
 

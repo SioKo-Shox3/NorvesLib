@@ -4810,7 +4810,7 @@
 - stop-when: プッシュする、workflow を起動する、凍結基準の照合段を削除する。
 
 ## G2-MATERIAL-SELECTION-INTEGRATION-P1-P1: ほかの枠の cook と重なっても cook の試験が `volume_busy` で落ちないよう、宛先 volume のロックに試験の環境だけで使う上限つきの待ちを足す
-- status: todo
+- status: done
 - done-when: `Tools/AssetCook/CookDestinationLock.cpp` の `WithCookDestinationLock` を次のように変える。
   - 環境変数 `NORVES_COOK_LOCK_WAIT_MS` が無い・空・不正(整数でない、0 以下、600000 超)のときは、今と同じく待ち 0 で `Busy` を返す。
   - 1〜600000 の整数のときは、その時間まで `WaitForSingleObject` で待って取得する。待ちきっても取れなければ `Busy` を返す。mutex の名前・volume 単位・再観測・`WAIT_ABANDONED` の扱いは変えない。
