@@ -86,16 +86,17 @@ def expected_pose():
             'frame_comparison_complete':True, 'no_render_lease':True, 'manual_clip_rejected':True}
 
 
-def expected_general_pose():
-    arm = [0,2,0,0,-2,0,0,0,0,0,2,0,2,3,0,1]
-    world = [1,0,0,0,0,0,1,0,0,-1,0,0,-1,4,1,1]
+def expected_general_pose(scale=1):
+    scale = float(scale)
+    arm = [float(v) for v in [0,2,0,0,-2,0,0,0,0,0,2,0,2*scale,3*scale,0,1]]
+    world = [float(v) for v in [1,0,0,0,0,0,1,0,0,-1,0,0,-1*scale,4*scale,1*scale,1]]
     frame = multiply(arm, world)
-    root = [-2,0,0,0,0,-3,0,0,0,0,4,0,0,3,0,1]
-    child = multiply(translation(y=3), root)
-    inv_mesh = translation(-5)
+    root = [float(v) for v in [-2,0,0,0,0,-3,0,0,0,0,4,0,0,3*scale,0,1]]
+    child = multiply(translation(y=3*scale), root)
+    inv_mesh = translation(-5*scale)
     models = [multiply(multiply(child, frame), inv_mesh), multiply(multiply(root, frame), inv_mesh)]
-    palettes = [multiply(multiply(multiply(translation(y=-1), child), frame), inv_mesh), models[1]]
-    vertex = [sum([0,1,0,1][k]*palettes[0][k*4+c] for k in range(4)) for c in range(3)]
+    palettes = [multiply(multiply(multiply(translation(y=-1*scale), child), frame), inv_mesh), models[1]]
+    vertex = [sum([0,scale,0,1][k]*palettes[0][k*4+c] for k in range(4)) for c in range(3)]
     return {'palettes':palettes, 'models':models, 'vertex':vertex}
 
 
@@ -105,7 +106,7 @@ def check_wire(actual, role):
     return {'bytes':len(actual), 'sha256':hashlib.sha256(actual).hexdigest()}
 
 
-def check_pose(actual, general=False):
+def check_pose(actual, general=False, scale=1):
     def compare(a, e):
         if isinstance(e, dict):
             return type(a) is dict and set(a) == set(e) and all(compare(a[k],v) for k,v in e.items())
@@ -114,7 +115,7 @@ def check_pose(actual, general=False):
         if type(e) is bool:
             return type(a) is bool and a == e
         return type(a) in (int,float) and math.isfinite(a) and abs(a-e) <= (1e-4 if general else 1e-6)
-    if not compare(actual, expected_general_pose() if general else expected_pose()):
+    if not compare(actual, expected_general_pose(scale) if general else expected_pose()):
         raise ValueError('profile2の実姿勢/束縛診断が独立期待値と一致しません')
 
 
@@ -189,6 +190,15 @@ class Tests(unittest.TestCase):
             broken=json.loads(json.dumps(expected));broken[field][0]=999
             with self.assertRaises(ValueError):check_pose(broken,general=True)
 
+    def test_general_root_trs_scale2(self):
+        expected=expected_general_pose(2);check_pose(expected,general=True,scale=2)
+        self.assertEqual(expected['vertex'],[16,8,8])
+        self.assertEqual(expected['palettes'][0][12:15],[4,8,8])
+        self.assertEqual(expected['models'][0][12:15],[16,8,8])
+        for field in expected:
+            broken=json.loads(json.dumps(expected));broken[field][0]=999
+            with self.assertRaises(ValueError):check_pose(broken,general=True,scale=2)
+
     def test_profile1_separate(self):
         for role,old in ((1,old_skeleton()),(2,old_mesh()),(3,old_bank())):
             with self.assertRaises(ValueError):check_wire(old,role)
@@ -199,6 +209,7 @@ if __name__=='__main__':
     parser.add_argument('--self-test',action='store_true')
     for name in ('skeleton','mesh','bank','pose'):parser.add_argument('--'+name,type=Path,action='append',default=[])
     parser.add_argument('--general-pose',type=Path,action='append',default=[])
+    parser.add_argument('--general-pose-scale2',type=Path,action='append',default=[])
     args=parser.parse_args()
     if args.self_test and not unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.loadTestsFromTestCase(Tests)).wasSuccessful():raise SystemExit(1)
     result={}
@@ -210,4 +221,7 @@ if __name__=='__main__':
     result['general_pose']=[]
     for path in args.general_pose:
         value=json.loads(path.read_text(encoding='utf-8'));check_pose(value,general=True);result['general_pose'].append(value)
+    result['general_pose_scale2']=[]
+    for path in args.general_pose_scale2:
+        value=json.loads(path.read_text(encoding='utf-8'));check_pose(value,general=True,scale=2);result['general_pose_scale2'].append(value)
     print(json.dumps(result,ensure_ascii=False,sort_keys=True))

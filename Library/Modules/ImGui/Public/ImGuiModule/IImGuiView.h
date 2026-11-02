@@ -1,5 +1,7 @@
 ﻿#pragma once
 
+#include <cstdint>
+
 // IImGuiView — ImGui オーバーレイへ 1 つの UI ビューを差し込む公開インターフェース
 // (Piece 2: view 登録機構)。
 //
@@ -87,6 +89,22 @@ namespace NorvesLib::Modules::Gui
      * ASCII は常に載る。足した文字のうち NotoSansJP が持つものだけが載る。GameThread 専用。
      */
     void AddImGuiDisplayText(const char *utf8Text);
+
+    /**
+     * @brief RGBA8 画像の CPU の写しを登録し、描画用 ID を返す（GameThread 専用）
+     *
+     * ImGui モジュールの Initialize より前だけ受け付ける。画素は幅×高さ×4 バイトの密詰め。
+     * ID は 2 以上。初期化開始後・画素が nullptr・辺が 0 または 4096 超なら警告して 0 を返す。
+     * GPU へのアップロードは初期化中に行い、描画できるかは IsImGuiImageReady で確認する。
+     */
+    uint64_t RegisterImGuiImage(const uint8_t *rgba8Pixels, uint32_t width, uint32_t height);
+
+    /**
+     * @brief 登録画像が GPU に載って描画可能なら true を返す（GameThread 専用）
+     *
+     * 未登録・アップロード前・アップロード失敗・Shutdown 後の ID は false を返す。
+     */
+    bool IsImGuiImageReady(uint64_t imageId);
 
     /**
      * @brief 撮影（--capture-png）の最終出力へ ImGui の overlay を載せるかを決める

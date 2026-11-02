@@ -59,7 +59,7 @@ GPUを使うテストは、Vulkanを使えない環境ではskip（終了コー�
 - GitHub Actions のワークフローは 3 本（`animation-cpu.yml`・`texture-asset-set-baseline.yml`・`windows-assetcook.yml`）。
 
 扱い:
-- 邪魔になった試験は、消す前に `set_tests_properties(<名前> PROPERTIES DISABLED TRUE)` で ctest の実行から外す（戻せる）。理由をコメントに書く。外したもの: `RenderGraphCompileTest`（2026-10-13）、`GeometryPageRequestVulkanTest`（2026-10-14。シェーダーの束縛を手で写したレイアウト）、`RenderGraphTextureUsageContractTest`（2026-11-01。VisibilityResolve の assert で落ち、対話窓のまま終わらない）、`NorvesLibBridgeAdapterScriptComponentTest` の対象と `NorvesLibBridgeAdapterScriptComponentTest`・`NorvesLibBridgeAdapterNumericEntityRegressionTest`・`NorvesLibBridgeAdapterThumbnailTest`・`BridgeBase64Test` の4試験、`AssetManifestReloadBridgeLoopbackTest`（2026-11-01。Game のソースを組み込み、全体のビルドで Game をもう一度コンパイルするので、対象ごと `EXCLUDE_FROM_ALL` にして実行からも外した）。
+- 邪魔になった試験は、消す前に `set_tests_properties(<名前> PROPERTIES DISABLED TRUE)` で ctest の実行から外す（戻せる）。理由をコメントに書く。外したもの: `RenderGraphCompileTest`（2026-10-13）、`GeometryPageRequestVulkanTest`（2026-10-14。シェーダーの束縛を手で写したレイアウト）、`RenderGraphTextureUsageContractTest`（2026-11-01。VisibilityResolve の assert で落ち、対話窓のまま終わらない）、`NorvesLibBridgeAdapterScriptComponentTest` の対象と `NorvesLibBridgeAdapterScriptComponentTest`・`NorvesLibBridgeAdapterNumericEntityRegressionTest`・`NorvesLibBridgeAdapterThumbnailTest`・`BridgeBase64Test` の4試験、`AssetManifestReloadBridgeLoopbackTest`（2026-11-01。Game のソースを組み込み、全体のビルドで Game をもう一度コンパイルするので、対象ごと `EXCLUDE_FROM_ALL` にして実行からも外した）、`FrameCaptureReadbackHelperTest`（2026-11-02。対応しない形式の一覧の決め打ち）。
 - 外した試験・写しの検査は、その周りを触るときに消す。期待値を書き直して生かし続けない。
 - まとめての洗い出しと削除は、まだしていない（負債として残す）。
 
@@ -82,3 +82,7 @@ GPUを使うテストは、Vulkanを使えない環境ではskip（終了コー�
 - 反証する契約: VFX のエフェクトのスキーマ(型・範囲・単位・既定値)、範囲外・型違いの値の拒否と前の値の保持、クックしたバイナリと元の形式の読み込みの一致(同じ種・固定の刻みで粒の位置の列が一致)、動作中の値の変更が次の刻みから効くこと、イベントで起動したエミッタの生成の位置と時刻、フリップブックの UV の矩形と再生の速さ。
 - ほかの手段で気づけるか: 気づけない。起動画面の粒は乱数で散り、撮影ではクックの読み違い・値の拒否漏れ・刻みのずれを区別できない。ログにも出ない。
 - 失敗が黙って起きるか: 起きる。範囲外の値を受けても、クックで値が化けても、粒は何かしら描かれ、落ちない。
+
+`MaterialSelectionTest`・`MaterialImportDocumentTest`・`SkeletalMaterialBindingsTest` を拡充する理由: 反証する契約は、元材質（`SourceMaterial`）と生成 slot（`GeneratedSlot`）を名前の全バイトで照合し、正規化や推測をせず、設定値・`SurfaceName`・slot の割当てが選んだ 1 件にだけ届くこと。壊れても cook は成功し、別の材質へ設定や slot が入るだけでログに出ないため、撮影・検証レイヤー・開発ビルドの検査・ログでは気づけず、失敗は黙って起きる。
+
+`CookCacheDecisionTest` を拡充する理由: 反証する契約は、静的 mesh・skinmesh・clips の入力側 sidecar にある材質設定の未一致・二重指定・未対応の `SurfaceName` を、増分の skip を許した場合も preflight で拒否し、記録の一致で検証を迂回させないこと。リターゲット先骨格の sidecar もこの契約の対象とし、`RigSplitCookTest` で BVH 入力からの増分 preflight を検証する。skip されると cook のログが出ず、前の出力がそのまま使われるため、ほかの手段では気づけず、失敗は黙って起きる。

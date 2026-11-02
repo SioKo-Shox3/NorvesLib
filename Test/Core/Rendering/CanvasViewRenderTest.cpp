@@ -779,7 +779,7 @@ namespace
             Pool.BeginFrame(0);
             assert(Graph.Initialize(&Pool));
             Graph.BeginFrame(0);
-            assert(ShaderManager.Initialize(Device.get(), "Assets/Shaders"));
+            assert(ShaderManager.Initialize(Device.get(), NORVES_SOURCE_DIR "/Assets/Shaders"));
             assert(Renderer.Initialize(Device.get(), nullptr, &Pool));
 
             Context.Device = Device.get();

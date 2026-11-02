@@ -75,8 +75,10 @@ namespace Game::Scenes
         const char *DisplayName;
         /// ランチャーのカードに出す日本語の説明
         const char *Description;
-        /// ランチャーのカードの見本画像（リポジトリのルートからの相対パス。640×360 程度の PNG）
+        /// ランチャーのカードの見本画像（Assets/Textures/Launcher/<id>.png。リポジトリのルートからの相対パス）
         const char *ThumbnailPath;
+        /// 見本画像を撮る名前付きの視点。nullptr は overview（Scripts/CaptureLauncherThumbnails.ps1 が読む）
+        const char *ThumbnailView;
         /// このシーンを担当する GameMode
         NorvesLib::Core::GameMode::GameModeId Mode;
         /// 名前付き視点の並び。先頭が既定の視点
@@ -330,7 +332,8 @@ namespace Game::Scenes
             "rendering3dtest",
             "描画テスト",
             "天球・地面・球・岩・小屋で、物理ベースの空と光、影、間接光を確かめる基準のシーン。",
-            "Assets/Launcher/Thumbnails/rendering3dtest.png",
+            "Assets/Textures/Launcher/rendering3dtest.png",
+            nullptr,
             Game::GameModes::Rendering3DTest,
             kRendering3DTestViews,
             sizeof(kRendering3DTestViews) / sizeof(kRendering3DTestViews[0]),
@@ -343,7 +346,8 @@ namespace Game::Scenes
             kMegaBananasSceneId,
             "バナナの山",
             "生成した高ポリのバナナを、仮想化ジオメトリで床いっぱいに敷き詰めるシーン。近づくほど細かい形が出る。",
-            "Assets/Launcher/Thumbnails/mega-bananas.png",
+            "Assets/Textures/Launcher/mega-bananas.png",
+            nullptr,
             Game::GameModes::MegaBananas,
             kMegaBananasViews,
             sizeof(kMegaBananasViews) / sizeof(kMegaBananasViews[0]),
@@ -356,7 +360,8 @@ namespace Game::Scenes
             kWastelandSceneId,
             "荒野",
             "高さ場から焼いた約 2 km 四方の起伏のある地形（盆地・砂丘・メサ・稜線）を、仮想化ジオメトリで描くシーン。",
-            "Assets/Launcher/Thumbnails/wasteland.png",
+            "Assets/Textures/Launcher/wasteland.png",
+            nullptr,
             Game::GameModes::Wasteland,
             kWastelandViews,
             sizeof(kWastelandViews) / sizeof(kWastelandViews[0]),
@@ -369,7 +374,8 @@ namespace Game::Scenes
             kNightVillageSceneId,
             "夜の集落",
             "荒野の谷床の一角に、生成した建物と小物で組んだ道沿いの集落。月明かりと夜空の下を、自動露出で夜の明るさに合わせて描く。",
-            "Assets/Launcher/Thumbnails/night-village.png",
+            "Assets/Textures/Launcher/night-village.png",
+            nullptr,
             Game::GameModes::NightVillage,
             kNightVillageViews,
             sizeof(kNightVillageViews) / sizeof(kNightVillageViews[0]),
@@ -383,7 +389,8 @@ namespace Game::Scenes
             kMaterialGallerySceneId,
             "材質ギャラリー",
             "石の床の展示場に、Poly Haven の地面・壁・木・金属・屋根と荒野の材質を、視差を付けた板と球で並べる。金属度 × 粗さの球の格子もある。",
-            "Assets/Launcher/Thumbnails/material-gallery.png",
+            "Assets/Textures/Launcher/material-gallery.png",
+            nullptr,
             Game::GameModes::MaterialGallery,
             kMaterialGalleryViews,
             sizeof(kMaterialGalleryViews) / sizeof(kMaterialGalleryViews[0]),
@@ -396,7 +403,8 @@ namespace Game::Scenes
             kInteriorLightSceneId,
             "室内の光",
             "板張りの床と漆喰の壁の部屋に、大きな窓から低い夕日が差し込む。生成した家具を置き、窓の日だまり・照り返し・赤いラグの色移り・床の映り込みを見る。",
-            "Assets/Launcher/Thumbnails/interior-light.png",
+            "Assets/Textures/Launcher/interior-light.png",
+            nullptr,
             Game::GameModes::InteriorLight,
             kInteriorLightViews,
             sizeof(kInteriorLightViews) / sizeof(kInteriorLightViews[0]),
@@ -412,7 +420,8 @@ namespace Game::Scenes
             kSandboxSceneId,
             "サンドボックス",
             "空と平らな地面だけの確認用シーン。自由飛行カメラの動きを確かめる。開発ビルドだけ。",
-            "Assets/Launcher/Thumbnails/sandbox.png",
+            "Assets/Textures/Launcher/sandbox.png",
+            nullptr,
             Game::GameModes::Sandbox,
             kSandboxViews,
             sizeof(kSandboxViews) / sizeof(kSandboxViews[0]),
@@ -426,7 +435,8 @@ namespace Game::Scenes
             kMegaStressSceneId,
             "負荷（仮想化ジオメトリ）",
             "起動画面の岩・小屋・球・スキャン資産と生成した建物・果物を、個別の Entity として床に並べる負荷シーン。--stress-entities=<n> で数を変える。開発ビルドだけ。",
-            "Assets/Launcher/Thumbnails/mega-stress.png",
+            "Assets/Textures/Launcher/mega-stress.png",
+            nullptr,
             Game::GameModes::MegaStress,
             kMegaStressViews,
             sizeof(kMegaStressViews) / sizeof(kMegaStressViews[0]),
