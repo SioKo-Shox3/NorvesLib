@@ -9,6 +9,57 @@ namespace C = Core::Container;
 namespace S = Core::Skeletal;
 namespace
 {
+    F::Text JointCountSource(F::Fixture& f, uint32_t count)
+    {
+        const auto number = [](uint32_t value)
+        {
+            char buffer[32];
+            std::snprintf(buffer, sizeof(buffer), "%u", value);
+            return F::Text(buffer);
+        };
+        F::Text joints = "0", children;
+        F::Text nodes = "{\"name\":\"Root\",\"children\":[";
+        for (uint32_t i = 1; i < count; ++i)
+        {
+            joints += "," + number(i);
+            if (i > 1)
+            {
+                children += ",";
+            }
+            children += number(i);
+        }
+        nodes += children + "]}";
+        for (uint32_t i = 1; i < count; ++i)
+        {
+            nodes += ",{\"name\":\"" + (i == 1 ? F::Text("Child") : "Bone" + number(i)) + "\",\"translation\":[0,1,0]}";
+        }
+        nodes += ",{\"name\":\"Mesh\",\"translation\":[5,0,0],\"mesh\":0,\"skin\":0}";
+        auto json = F::Replace(
+            f.Json,
+            "{\"name\":\"Root\",\"children\":[1]},{\"name\":\"Child\",\"translation\":[0,1,0]},{\"name\":\"Mesh\",\"translation\":[5,0,0],\"mesh\":0,\"skin\":0}",
+            nodes);
+        json = F::Replace(json, "\"nodes\":[0,2]", "\"nodes\":[0," + number(count) + "]");
+        json = F::Replace(json, "\"joints\":[0,1]", "\"joints\":[" + joints + "]");
+        json = F::Replace(json, "\"byteLength\":416", "\"byteLength\":" + number(416 + count * 64));
+        json = F::Replace(json, "\"byteOffset\":224,\"byteLength\":128",
+                          "\"byteOffset\":416,\"byteLength\":" + number(count * 64));
+        json = F::Replace(json, "\"bufferView\":9,\"componentType\":5126,\"count\":2",
+                          "\"bufferView\":9,\"componentType\":5126,\"count\":" + number(count));
+        auto binary = f.Binary;
+        binary.resize(416 + count * 64, 0);
+        for (uint32_t i = 0; i < count; ++i)
+        {
+            const size_t offset = 416 + size_t(i) * 64;
+            for (size_t j = 0; j < 4; ++j)
+            {
+                F::Float(binary, offset + j * 20, 1);
+            }
+            F::Float(binary, offset + 48, 5);
+            F::Float(binary, offset + 52, i == 0 ? 0.0f : -1.0f);
+        }
+        f.SetBuffer(binary);
+        return json;
+    }
     void Roots(F::Fixture& f)
     {
         const auto json = H::Armature(f.Json);
@@ -17,6 +68,29 @@ namespace
         RIG_CHECK(d->Profile == H::Profile && S::SameRigRootFrame(d->RootFrame, H::ExpectedFrame()));
         RIG_CHECK(d->Geometry.Joints[0].ParentIndex == -1 && d->Geometry.Joints[1].ParentIndex == 0 &&
                   d->LocalRest[1].Translation.Y == 1);
+        // 元のnode添字を0→2、1→4、2→1、3→0、4→3へ移し、祖先をjointの前後に分ける。
+        auto reorderedJson = F::Replace(
+            json,
+            "\"nodes\":[{\"name\":\"Root\",\"children\":[1]},{\"name\":\"Child\",\"translation\":[0,1,0]},{\"name\":\"Mesh\",\"translation\":[5,0,0],\"mesh\":0,\"skin\":0},{\"name\":\"Armature\",\"children\":[0],\"translation\":[2,3,0],\"rotation\":[0,0,1,0],\"scale\":[2,2,2]},{\"name\":\"WorldFrame\",\"children\":[3],\"translation\":[-1,4,1],\"rotation\":[1,0,0,0]}]",
+            "\"nodes\":[{\"name\":\"Armature\",\"children\":[2],\"translation\":[2,3,0],\"rotation\":[0,0,1,0],\"scale\":[2,2,2]},{\"name\":\"Mesh\",\"translation\":[5,0,0],\"mesh\":0,\"skin\":0},{\"name\":\"Root\",\"children\":[4]},{\"name\":\"WorldFrame\",\"children\":[0],\"translation\":[-1,4,1],\"rotation\":[1,0,0,0]},{\"name\":\"Child\",\"translation\":[0,1,0]}]");
+        reorderedJson = F::Replace(reorderedJson, "\"nodes\":[4,2]", "\"nodes\":[3,1]");
+        reorderedJson = F::Replace(reorderedJson, "\"joints\":[0,1]", "\"joints\":[2,4]");
+        reorderedJson = F::Replace(reorderedJson, "\"node\":1,\"path\":\"translation\"", "\"node\":4,\"path\":\"translation\"");
+        reorderedJson = F::Replace(reorderedJson, "\"node\":0,\"path\":\"rotation\"", "\"node\":2,\"path\":\"rotation\"");
+        const auto reordered = H::Import(reorderedJson);
+        const auto* reorderedData = reordered.GetData();
+        RIG_CHECK(S::SameRigRootFrame(reorderedData->RootFrame, H::ExpectedFrame()) &&
+                  S::SameRigTopology(reorderedData->Topology, d->Topology) &&
+                  reorderedData->LocalRest.size() == d->LocalRest.size());
+        for (size_t i = 0; i < d->LocalRest.size(); ++i)
+        {
+            const auto& a = reorderedData->LocalRest[i];
+            const auto& b = d->LocalRest[i];
+            RIG_CHECK(a.Translation.X == b.Translation.X && a.Translation.Y == b.Translation.Y &&
+                      a.Translation.Z == b.Translation.Z && a.Rotation.X == b.Rotation.X &&
+                      a.Rotation.Y == b.Rotation.Y && a.Rotation.Z == b.Rotation.Z && a.Rotation.W == b.Rotation.W &&
+                      a.Scale.X == b.Scale.X && a.Scale.Y == b.Scale.Y && a.Scale.Z == b.Scale.Z);
+        }
         for (const char* hint : {"0", "3", "4"})
         {
             const auto text =
@@ -55,7 +129,7 @@ namespace
                                                "\"rotation\":[1,0,0,0]", "\"rotation\":[-1,0,0,0]"));
         RIG_CHECK(S::SameRigRootFrame(sign.GetData()->RootFrame, d->RootFrame));
         std::printf(
-            "ROOT_FRAME_IMPORT_CASE result=pass optional_skin_hint_static_chain_joint_order_scale_same_read_glb_qsign\n");
+            "ROOT_FRAME_IMPORT_CASE result=pass optional_skin_hint_static_chain_joint_order_node_array_order_scale_same_read_glb_qsign\n");
     }
     void Reject(F::Fixture& f)
     {
@@ -113,6 +187,20 @@ namespace
         std::printf(
             "ROOT_FRAME_IMPORT_CASE result=pass malformed_hint_static_domain_scene_cycle_interjoint_animated_parent_rejected\n");
     }
+    void JointCapacity(F::Fixture& f)
+    {
+        const auto json = JointCountSource(f, 128);
+        const auto stable = H::Import(json);
+        RIG_CHECK(stable.GetData()->Topology.Joints.size() == 128 && stable.GetData()->LocalRest.size() == 128);
+        const auto tooMany = JointCountSource(f, 129);
+        auto out = stable;
+        S::RigV1Report report;
+        RIG_CHECK(!S::DecodeRigAuthoringWithProfileNativePath(F::View(tooMany), "RigV1Fixture/rig.gltf", H::Profile,
+                                                              out, report) &&
+                  out.GetData() == stable.GetData());
+        f.SetBuffer(f.Binary);
+        std::printf("ROOT_FRAME_IMPORT_CASE result=pass profile2_joint_128_accepted_129_rejected_out_preserved\n");
+    }
     void Budgets(F::Fixture& f)
     {
         const auto json = H::Armature(f.Json);
@@ -124,14 +212,17 @@ namespace
         S::RigAuthoringCpu out;
         RIG_CHECK(S::DecodeRigAuthoringWithProfileNativePath(F::View(json), "RigV1Fixture/rig.gltf", H::Profile, out,
                                                              report, limits));
+        out = stable;
         limits.MaxNodes = 4;
         RIG_CHECK(!S::DecodeRigAuthoringWithProfileNativePath(F::View(json), "RigV1Fixture/rig.gltf", H::Profile, out,
                                                               report, limits) &&
-                  report.Status == S::RigV1Status::LimitExceeded);
+                  report.Status == S::RigV1Status::LimitExceeded && out.GetData() == stable.GetData());
         limits.MaxNodes = 5;
         limits.MaxSourceBytes = json.size() - 1;
+        out = stable;
         RIG_CHECK(!S::DecodeRigAuthoringWithProfileNativePath(F::View(json), "RigV1Fixture/rig.gltf", H::Profile, out,
-                                                              report, limits));
+                                                              report, limits) &&
+                  out.GetData() == stable.GetData());
         S::RigRootFrame frame = H::ExpectedFrame();
         frame[0] = -0.f;
         RIG_CHECK(!S::IsValidRigRootFrame(frame, H::Profile));
@@ -142,7 +233,7 @@ namespace
         frame[0] = 2;
         RIG_CHECK(!S::IsValidRigRootFrame(frame, H::Profile));
         RIG_CHECK(!S::IsValidRigRootFrame(H::ExpectedFrame(), S::RigImportProfile::DirectTrs128));
-        std::printf("ROOT_FRAME_IMPORT_CASE result=pass exact_node_source_limits_frame_domain_old_profile_refusal\n");
+        std::printf("ROOT_FRAME_IMPORT_CASE result=pass exact_node_source_limits_out_preserved_frame_domain_old_profile_refusal\n");
     }
 } // namespace
 int main()
@@ -151,6 +242,7 @@ int main()
     Roots(f);
     Reject(f);
     Budgets(f);
+    JointCapacity(f);
     std::printf("ROOT_FRAME_IMPORT result=pass explicit_static_parent_author_frame_owned_limits\n");
     return 0;
 }

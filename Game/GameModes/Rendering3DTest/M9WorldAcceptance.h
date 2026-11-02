@@ -23,6 +23,10 @@ namespace Game::GameModes
     {
         bool bRequested = false;
         bool bAssetsReady = false;
+        // 比較は再生を止めたまま、エンジンの決定的な撮影へ委ねる。
+        bool bCompare = false;
+        bool bCompareCaptured = false;
+        NorvesLib::Core::Container::String ComparePngPath;
         NorvesLib::Core::Container::AnsiString SkeletalPath = "Models/M9Skinned/ValidU8Float.gltf";
         NorvesLib::Core::Container::String ClipName = _T("Wave");
         M9SkeletalPreparation Preparation;
@@ -34,4 +38,6 @@ namespace Game::GameModes
         NorvesLib::Core::Container::TSharedPtr<NorvesLib::Modules::Audio::AudioClipResource> LoopClip;
 #endif
     };
+
+    void ObserveM9WorldCompareCapture(M9WorldAcceptanceConfig& config);
 } // namespace Game::GameModes

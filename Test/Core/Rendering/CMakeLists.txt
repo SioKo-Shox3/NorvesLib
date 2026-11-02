@@ -2098,6 +2098,13 @@ target_link_libraries(ParticleSystemTest PRIVATE Core)
 set_target_properties(ParticleSystemTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME ParticleSystemTest COMMAND ParticleSystemTest)
 
+add_executable(VfxEffectSystemTest
+    VfxEffectSystemTest.cpp
+)
+target_link_libraries(VfxEffectSystemTest PRIVATE Core)
+set_target_properties(VfxEffectSystemTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME VfxEffectSystemTest COMMAND VfxEffectSystemTest)
+
 add_test(NAME ParticleFrameSnapshotTest COMMAND CanvasTransientBoardSnapshotTest --test=ParticleFrameSnapshotTest)
 
 

@@ -8586,26 +8586,121 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Done: 差し戻しを直した。`CanvasViewRenderTest` が落ちた原因はパイプラインの数の決め打ちではなく、組み立てがシェーダーの場所を相対パス（`Assets/Shaders`）で渡し、ctest の作業ディレクトリ（`build/Test/Core/Rendering`）では 08722112 から `ShaderManager::LoadShader` が GLSL を読めず、板のパイプラインが 0 本になることだった。ほかの試験と同じく `NORVES_SOURCE_DIR` の絶対パスで渡し、`DISABLED`・誤った理由のコメント・`Docs/Testing.md` の記載を外して実行に戻した。期待値（`== 3`）は製品の `BoardPipelineVariantCount = 3` と一致しており触っていない。`FrameCaptureReadbackHelperTest` は対応しない形式の一覧の写しとして外したまま
 - 検証: verify の 1 行目のビルドは終了コード 0（1 回目は `.ilk` の取り合いの LNK1104 で、再実行で通った）。2 行目の ctest は 6 本 Passed・`FrameCaptureReadbackHelperTest` だけ Not Run（Disabled）で終了コード 0。`CanvasLayerCompositeSnapshotTest` も Passed（`.harness/runs/20261102-101626/verify-TEST-FULL-CTEST-BASELINE-U2.txt`）。numstat は 2 通りで一致
 - Next: 起動の確かめは後回し（当分アプリを起動しない決まり）。TEST-FULL-CTEST-BASELINE-CHECK で `M9WorldAcceptanceTest` と全体の CTest（`ctest --test-dir build -C Debug --output-on-failure --timeout 600`、GPU の試験を含む）を回し、残った失敗の理由と扱いを記録する
-- U1 デカールの型とプール、DecalPoolEvictionTest: 着地(直し 0 回)
 
-## 2026-11-02 GAME-GR133-VFX（run 20261102-104123 の反復 1）
-- Done: 方式と前提の境界をロードマップ（`Docs/Plans/GameFeatureRoadmap.md` の「GR133 デカール」の節。リポジトリ管理外）に書いた。推奨の案で進める: 画面空間の遅延デカール（箱の投影）を草（FoliagePass）の前に 1 本置き、GBuffer の Albedo と Normal の RGB だけを α で混ぜて書き換える（Material・Emissive・Velocity・各 A は変えない）。既定では草（Material.A が 0.125〜0.375）に描かない。ゲーム側の `DecalPool`（上限の既定 256、超えたら足した順で最古を消す、寿命と薄れ）の写しを `RenderWorld::SetDecals` で草と同じ道で渡す。理由: GR25（ゲーム定義のパスの口）・GR26（シェーディングモデルの ID）が無い今のエンジンで、既存の GBuffer の印（草の Material.A・地形の Normal.A）だけで受け手を選べ、パスの登録をエンジンの遅延の段に直に置けば前提を待たずに作れる。前提が要る部分（粗さ・濡れの書き換え、地形の層ごとの受け、テクスチャ・アトラスとクック、GR25 の口への移し替え）は完了を宣言しない範囲として節に残した
-- Done: デカールの描画値 `DecalInstance`・一覧 `DecalScene`（`Rendering/DecalTypes.h`）と `Particle::DecalPool` を足し、`DecalPoolEvictionTest`（3 点は `Docs/Testing.md`）が Passed
-- Next: 受け渡し（U2）→ DecalPass とシェーダー（U3）→ `DecalGBufferVulkanTest` を作るだけ・起動しない verify（U4）
-- U2 デカールの一覧を GameThread から RenderThread へ渡す: 着地(直し 0 回)
-- U3 デカールのパスとシェーダー: 着地(直し 0 回)
-- U4 DecalGBufferVulkanTest（作るだけ・走らせない）と仕上げの確かめ: 着地(直し 0 回)
+- U1 骨格の分割 cook で SurfaceName を拒否する: 着地(直し 0 回)
+- U2 クリップ・リターゲットの cook で材質設定を照合し、分割 cook の警告を表示する: 着地(直し 0 回)
+- U3 共通照合・import-plan・slot 名の試験に名指しの場合を足す: 着地(直し 0 回)
+- U4 増分の preflight で拒否されることを反証し、文書を今の接続に合わせ、タスクの verify を通す: 着地(直し 0 回)
 
-## 2026-11-02 GAME-GR133-VFX（run 20261102-104123 の反復 2）
-- Done: デカールの一覧を草と同じ道（`RenderWorld::SetDecals` → RenderingCoordinator → `FramePacket::Scene.Decals` → `ViewRenderContext::SnapshotDecals`）で RenderThread へ渡した
-- Done: `DecalPass` と `decal.vert`・`decal.frag` を足し、`SceneView` で FoliagePass の直前に置いた。単位立方体をデカールの数だけインスタンス描画し（裏の面を描く・深度の添付なし）、深度からワールド位置を戻して箱の外を捨て、GBuffer の Albedo と Normal の RGB だけを α で混ぜる（Material・各 A は変えない）。`DecalFlags::ReceiveFoliage` が無ければ草（Material.A 0.125〜0.375）に描かない。一覧が空のフレームは何も宣言しない（既定の描画は変わらない）。定数・インスタンス・記述子セットは FrameResources から借りる。試験が SceneView なしで呼べる記録の口 `DecalPass::RecordDecals` を持つ
-- Done: GPU の試験 `DecalGBufferVulkanTest`（3 点は `Docs/Testing.md`）を足した: 64×64 の既知の GBuffer に既知の箱を描いて読み戻し、範囲内の色と法線の RGB だけが変わり範囲外・Material・各 A・深度が変わらないこと、既定で草に描かず `ReceiveFoliage` で描くことを見る。ビルドと ctest への登録（`-N`）だけ確かめ、走らせていない
-- 検証: verify のうち起動しない 3 行を回した。`Game`・`DecalPoolEvictionTest` のビルド EXIT=0、`DecalPoolEvictionTest` 1/1 Passed、`DecalGBufferVulkanTest` のビルド EXIT=0（`.harness/runs/20261102-104123/verify-GAME-GR133-VFX-U4.txt`）。シェーダーは glslangValidator の単体コンパイルで EXIT=0。numstat は 2 通りで一致
-- Next: 起動の確かめは後回し（当分アプリを起動しない決まり）。`GAME-GR133-VFX-CHECK` で `DecalGBufferVulkanTest` の ctest（`--timeout 600`）を回す。範囲内の色・法線の値、CPU と GPU の座標の向きの一致、検証レイヤーのエラー 0 はそこで初めて確かめる
-- Notes: 受け手の法線で投影を制限しない（DecalPass は Normal を添付として書くので読めない）。急な斜面・壁が箱に入ると伸びて描かれる。粗さ・濡れの書き換え、地形の層ごとの受け、テクスチャ・アトラスとクック、GR25 の口への移し替えはロードマップの節のとおり完了を宣言しない範囲
-- Notes: 要起票: ゲーム側で `DecalPool` を持って `RenderWorld::SetDecals` を毎フレーム呼ぶ呼び出し元（足跡・弾痕など）がまだ無く、起動画面ではデカールが出ない
+## 2026-11-02 G2-MATERIAL-SELECTION-INTEGRATION（run 20261102-095605 の反復 1）
+- Done: 材質の共通照合（`ResolveMaterialSelection`）を、ARM/発光と SurfaceName（`ResolveMaterialImportPlan` の 1 回の SourceMaterial 照合）と GR32 の slot 名（GeneratedSlot）で使う形にそろえた。骨格の分割 cook は未対応の SurfaceName を `surface_requires_GR81` で拒否する（受け取って捨てない）。クリップ/リターゲットの cook は入力（と target の骨格）の sidecar を glTF の元 catalog に対して照合し、未一致・二重指定・不正設定を `clip_material_selector_or_settings`、surface を `surface_requires_GR81` で拒否する（在庫モードでも照合するので、増分の preflight でも拒否される。設定は適用しない）。骨格の分割 cook の同名材質の警告（資産名と元 index 付き、元での改名を促す）を cook のときに stderr へ出す。検査は `MaterialSelectionTest`（Unicode を正規化しない）・`MaterialImportDocumentTest`（設定値と SurfaceName が選んだ元 index にだけ届く）・`SkeletalMaterialBindingsTest`（生成 slot 名の衝突、逆順の catalog から slot identity への到達）・`CookCacheDecisionTest`（静的 v1・skinmesh・clips で、skip を許し依存印を合わせた記録でも未一致・二重指定・surface を Error にする）に足し、`Docs/Testing.md` に 3 点を書いた。`MaterialSelection.md`・`MaterialImportDocument.md` を今の接続に合わせた
+- 検証: `cmake --build build --config Debug --target CookedMeshTest AssetCook -- /m:1` は終了コード 0、ctest の 7 本（MaterialSelectionTest・MaterialImportDocumentTest・MaterialImportSettingsJsonTest・SkeletalMaterialBindingsTest・GltfMaterialSourceTest・CookCacheDecisionTest・AssetCookImportSmoke）はすべて Passed（`.harness/runs/20261102-095605/verify-G2-MATERIAL-SELECTION-INTEGRATION-U4.txt`）。クリップの既存試験（CookedClipBankV1Test・SkeletalClipBankBindingTest・CookedSkinMeshV1Test・RigStaticRootFrameWireTest）と RigSplitCookTest も Passed
+- Next: 実物の GLB（同名材質・surface 付き sidecar）での AssetCook の実行と警告の表示の目視は未実施（アプリを起動しない決まりの間は CPU の試験で確かめた）
+- Notes: リターゲットの target 骨格の sidecar は preflight では依存として採るだけで、材質の照合は cook のときに行う（target の bytes を在庫モードで読まないため）
+- Notes: `Docs/Architecture` の 2 文書は paths の外だが、「後続工程」と書いたままでは今の接続と食い違うので、該当の段落だけ直した
+- Notes: 要起票: `RigSplitCookTest` は共有の TEMP の項目が多いと `cook_managed_store: entry_limit` で落ちる（作業ツリー内の空の TEMP では Passed）。試験が一時フォルダーの数の上限に依存している
+- U5 rig-split の CLI でも同名材質の警告を表示する: 着地(直し 0 回)
+- U6 在庫モードでもリターゲット先の骨格の sidecar を照合し、文書と記録を直してタスクの verify を通す: 着地(直し 0 回)
 
-## 2026-11-02 GAME-GR133-VFX（run 20261102-145119 の反復 1）
-- Done: 実装の 4 単位（型とプール・受け渡し・パスとシェーダー・GPU の試験）は前のランで着地済み。前のランの評価が枠切れで行われず doing に戻っていたので、差分は変えずに done に戻した（評価はこの反復の後に回る）
-- 検証: 起動しない verify の 3 行は着地の確かめで EXIT=0（`Game`・`DecalPoolEvictionTest` のビルド、`DecalPoolEvictionTest` 1/1 Passed、`DecalGBufferVulkanTest` のビルド）。その後のコミットは TASKS.md と PROGRESS.md だけでコードは変わっていない
-- Next: 起動の確かめは後回し。`GAME-GR133-VFX-CHECK` で `DecalGBufferVulkanTest` の ctest（`--timeout 600`）を回す
+## 2026-11-02 G2-MATERIAL-SELECTION-INTEGRATION（run 20261102-095605 の反復 2）
+- Done: 差し戻しの 2 点を直した。`AssetCook --rig-split`（`CookRigSplitFile`）でも骨格の分割 cook の同名材質の警告（資産名と元 index 付き、元での改名を促す）を stderr に出す。増分の preflight（在庫モード）でも、リターゲット先の骨格の bytes と sidecar を採取済みの依存（`TargetSkeleton`・`Sidecar` の行）と突き合わせ、先の骨格の sidecar の材質設定を `ValidateClipMaterialSettings` で照合する（依存印が一致する記録があっても不正な設定は skip されず Error）。検査は `RigSplitCookTest` の BVH 入力のリターゲットで 1 件（未一致の先の骨格の sidecar が依存印を合わせた記録でも Error、戻すと Skip）。`MaterialSelection.md`・`Docs/Testing.md` を合わせた
+- 検証: `cmake --build build --config Debug --target CookedMeshTest AssetCook -- /m:1` は終了コード 0、ctest の 7 本（MaterialSelectionTest・MaterialImportDocumentTest・MaterialImportSettingsJsonTest・SkeletalMaterialBindingsTest・GltfMaterialSourceTest・CookCacheDecisionTest・AssetCookImportSmoke）はすべて Passed、RigSplitCookTest・CookedClipBankV1Test・SkeletalClipBankBindingTest も Passed（作業ツリー内の TEMP で再実行。`.harness/runs/20261102-095605/verify-G2-MATERIAL-SELECTION-INTEGRATION-U6.txt`、足した検査の出力行は `aux-G2-MATERIAL-SELECTION-INTEGRATION-rigsplit.txt`）
+- Next: なし（この項目は完了）
+- Notes: 反復 1 の Notes の「target 骨格の sidecar は preflight では依存として採るだけ」は、この反復で解消した。`--rig-split` の CLI の警告を実際の CLI の出力で確かめる試験は無い（コードで確かめた）
+
+- U1 カードの説明文の折り返しと、収まらないときの並び: 着地(直し 0 回)
+- U2 シーンの一覧に見本の視点と置き場を書き、見本画像を撮る台本を作る: 着地(直し 1 回)
+- U3 見本画像を板で出す案: 捨てた（キャンバスはフレーム開始後に作れず、`--capture-png` がキャンバスを切る）。表示は `Library/Modules/ImGui` に画像のテクスチャを足す案を推奨し、paths の拡張を `blocked/SCN-THUMBNAILS.md` で求めた
+- Notes: LauncherMenuTest はブリッジ SDK を入れた構成（`-DNORVES_BRIDGE_SDK_DIR=C:/Users/KINGkawamura/Documents/NorvesEditor/bridge/cpp`）でしか作られない（`Test/CMakeLists.txt` の `if(TARGET norves_bridge_engine_sdk)`）。この枠の `build` は SDK なしの構成で、そのままでは verify の 1・2 行目が通らない。U1+U2 を合わせた状態は SDK 入りの構成で Debug の Game・LauncherMenuTest のビルド EXIT=0、ctest Passed
+- Notes: 要起票: `--scene=<id>` で直接入った後にランチャーへ戻ると、`RegisterLauncherDisplayText` が呼ばれていない（`GameApplicationHandler.cpp` 2865 行付近は `m_bLauncherStartup` のときだけ）ので、ランチャーの字が欠けるおそれがある
+- U4 ImGui モジュールに画像のテクスチャの登録と束ねを足す: 着地(直し 0 回)
+- U5 ランチャーで見本画像を読み込んでカードに描く: 着地(直し 0 回)
+
+## 2026-11-02 SCN-THUMBNAILS（run 20261102-093543 の反復 2）
+- Done: 判断役の判断（案 A）に従い、ImGui の重ね描きに画像の登録を足した（0b1cc160）。公開の `RegisterImGuiImage(rgba8, w, h)`（ImGui モジュールの Initialize の前だけ受け付け、ID は 2 から。時期外・引数不正は 0）と `IsImGuiImageReady(id)`。積んだ画像は `InitializeBackend`（GameThread・最初のフレームの前、フォントのアップロードの後）で `R8G8B8A8_UNORM` の ITexture にする。`RenderDrawData` は描画コマンドの `GetTexID()` を見て、1 はフォント、登録した ID はその画像の記述子セット（フレームの持ち主から Execute ごと・テクスチャごとに 1 つ借りる）、知らない ID は飛ばす
+- Done: ランチャーが `Assets/Textures/Launcher/<id>.png` を stb_image で読んで登録し、用意できたカードはグラデーションと中央の名前の代わりに `AddImageRounded`（縦横比を保ち中央で切り取る）で描く（37f8a2ee）。無い・読めないカードは今の表示のままで、警告は `LAUNCHER_THUMBNAIL_MISSING count=… ids=…` の 1 行。`RegisterLauncherDisplayText` と見本画像の登録は `m_bLauncherStartup || m_bPauseMenuWanted` で呼ぶ（`--scene=<id>` からポーズメニューで戻る起動でも字と画像が出る。前の反復の要起票の字の欠けもこれで閉じた）
+- 確かめ（起動しない分）: この枠の `build` をブリッジ SDK 入りで構成し直した（`cmake -S . -B build -DNORVES_BRIDGE_SDK_DIR=C:/Users/KINGkawamura/Documents/NorvesEditor/bridge/cpp`、EXIT=0）。U5 の作業ツリーで `cmake --build build --config Debug --target Game LauncherMenuTest -- /m:1` → BUILD_EXIT=0、`ctest --test-dir build -C Debug -R "^LauncherMenuTest$" --no-tests=error --output-on-failure --timeout 180` → `1/1 Test #493: LauncherMenuTest ... Passed 0.01 sec`・`100% tests passed, 0 tests failed out of 1`・CTEST_EXIT=0（`.harness/runs/20261102-093543/U5-unit-verify.txt`）。numstat は 2 通りで一致。新しい試験は足していない
+- Next: 起動の確かめは後回し（当分アプリを起動しない決まり）。SCN-THUMBNAILS-CHECK で verify の 3・4 行目（`CaptureLauncherThumbnails.ps1` で見本画像を作って `Assets/Textures/Launcher/` に追跡し、`CaptureScene.ps1 -Scene launcher` で撮る）を回し、撮影を開いて、見本画像が正しいカードに出ること・色が暗すぎ明るすぎないこと（UNORM で mesh2d.frag が線形化）・中央の切り取りの向き・角丸・選択の光る縁と強調が分かることを見る。`--scene=<id>` からポーズメニューでランチャーへ戻ったときにも画像と字が出るかも見る
+- Notes: 危険地帯（RenderThread・RHI の資源の寿命）の変更。評価者に確かめてほしい点: (1) アップロードの時期（`ImGuiModule::InitializeBackend` は `ApplicationProcessor::Initialize` の `InstallAll` の中で最初のフレームの前に走り、以後 `ITexture::Update` を呼ぶ経路が無いか）(2) 知らない ID の扱い（0・未登録・アップロードに失敗した ID のコマンドを発行せずに飛ばすか）(3) 記述子セットの借り方（フレームの持ち主から Execute ごと・テクスチャごとに借り、パスに FrameIndex を持たないか。UBO の切れ端を共用してよいか）(4) `Shutdown` で手放す順（`ImGuiOverlayPass::Shutdown` で画像のテクスチャ、`ImGuiModule::Shutdown` で登録の表を空にする。RenderThread 静止後・device 生存中か）
+- Notes: TASKS.md の SCN-THUMBNAILS の `paths:` の行は `Library/Modules/ImGui` を含んでいない（判断役が足すと決めたが、ワーカーは `status:`・`after:` 以外を書き換えられない）。統合で範囲の照合をするなら、判断役の判断（blocked/resolved/SCN-THUMBNAILS.md）を根拠にする
+
+## 2026-11-02 SCN-THUMBNAILS（run 20261102-093543 の反復 3）
+- Done: 反復 2 の再検証の時間切れを直した。原因は実装でなく、この枠の build がブリッジ SDK 入りで構成し直した直後で Game の全体を初めて組んだため（単位は別の作業ツリーで組んでいた）。この枠で一度組み終えて最新にし、verify の 1・2 行目を回し直した: `cmake --build build --config Debug --target Game LauncherMenuTest -- /m:1` は BUILD_EXIT=0（4 秒、Game.exe と LauncherMenuTest.exe とも最新）、`ctest ... -R "^LauncherMenuTest$"` は `1/1 Test #493: LauncherMenuTest ... Passed 0.02 sec`・CTEST_EXIT=0
+- Next: 起動の確かめは後回し（反復 2 の Next のとおり SCN-THUMBNAILS-CHECK で verify の 3・4 行目と撮影の確認）。評価者への申し送り（危険地帯・確かめどころ 4 点）は反復 2 の記録のまま
+- Notes: 構成し直した枠で Game を一から組むと /m:1 で 10 分を超える。verify は増分のビルドを前提にしている
+
+- U2 取り込みの試験に node 配列そのものの並べ替えと、予算・境界の失敗で out を保つ確かめを足す: 着地(直し 0 回)
+- U4 RigSplitCookTest の管理ストアの段を利用者の TEMP の項目数に左右されないようにする: 着地(直し 1 回)
+- U3 runtime の試験に有効な proof への Unload 単独と、非対角 G と import scale 2 を合わせた独立の行列の照合を足し、タスクの verify を全部回す: 着地(直し 0 回)
+## 2026-11-02 G2-GR82-B4-STATIC-ROOT-FRAME128（run 20261102-094113 の反復 1、完了）
+- Done: 10-07 に入った明示 profile2（静的な非関節祖先と作者 frame）の実装と RigStaticRootFrame{Import,Wire,Runtime}Test・RigRootFrameV2Oracle.py を初めて native で回し、実装の変更なしで全部通ることを確かめた。done-when の欠けを 3 本の試験に足した: glTF の nodes 配列そのものの置換（参照を全部付け替え）で frame・topology・local rest が同じこと、予算の失敗と 129 関節の拒否で既存の out を保つこと・128 関節ちょうどの受理、有効な束縛証明への Unload 単独で Sample が拒否され Load だけでは戻らないこと、非対角の祖先 G・root の T/R/S・IBM に import scale 2 を合わせた全 joint の palette/model と頂点の独立 double 照合（G の linear 部は scale しない）。2 scheduler の姿勢を別名のファイルに書き、oracle で両方を照合する
+- Done: RigSplitCookTest の ManagedMixedRig は、利用者の TEMP に約 13 万項目あると cook_managed_store: entry_limit で落ちていた（管理ストアが RuntimeRoot の祖先を列挙するため）。試験の fixture を ctest の作業ディレクトリの下に作る形にして、既定の TEMP のまま通るようにした（期待は不変）
+- 検証: Debug の CookedMeshTest のビルドは終了 0、Debug の ctest 7/7 合格（RigSplitCookTest を含む、TEMP は既定のまま）、Release のビルドは終了 0、Release の ctest 3/3 合格、`RigRootFrameV2Oracle.py --self-test` 13/13 OK。Debug・Release の三役の実 bytes（Bank 1088 byte）と 2 scheduler 分の姿勢 6 ファイルを oracle に渡した照合も終了 0（`.harness/runs/20261102-094113/G2-GR82-B4-U3-final-verify.txt`）
+- Next: 実犬・DCC・GPU の受入れはこの項目の外。旧 71 の全体・固定 Sampler の基準比較・CLI・profile1 Bank の 992 byte の独立照合は、この verify の範囲（CookedSkeletonV1Test・CookedSkinMeshV1Test・RigSplitCookTest・SkeletalSplitRuntimeTest）を超えては回していない
+- Notes: 要起票: 製品の cook の管理ストアが RuntimeRoot の祖先からボリュームの根までを列挙し（`Tools/AssetCook/CookManagedStoreObservation.cpp` 93 行付近）、項目の多い祖先（利用者の TEMP など）があると entry_limit で失敗する
+## 2026-11-02 G2-GR82-B4-STATIC-ROOT-FRAME128（run 20261102-094113 の反復 2、完了）
+- Done: 反復 1 の後の再検証で Release の CookedMeshTest のビルドが 10 分の上限を超えた。原因は、確かめを単位ごとの作業ツリーでだけ回しており、この作業ツリーの build の Release が古いまま全量のコンパイルになったこと。実装・試験・verify は変えず、この作業ツリーで verify を順に回して build を最新にした
+- 検証: Release のビルド 終了 0（初回 478 秒、2 回目 3 秒）、Debug のビルド 終了 0（3 秒）、Debug の ctest 7/7 合格（44 秒）、Release の ctest 3/3 合格、`RigRootFrameV2Oracle.py --self-test` 13 件 OK（`.harness/runs/20261102-094113/verify-*.txt`）
+- Next: 反復 1 の Next のとおり（実犬・DCC・GPU の受入れはこの項目の外）
+- Notes: 単位の作業ツリーで verify を通しても、ランナーの再検証は本体の作業ツリーの build で回る。重いビルドを含む項目は、仕上げの前に本体の作業ツリーで verify を 1 回回しておく
+
+- U1 CreateNormalMatrix の特異判定を尺度に対する比にし、小スケールの回転の検査を足す: 着地(直し 0 回)
+- U2 PT の閉包命中から退化規則の写しを外し、R1 室内の平面の頂点法線を幾何に合わせる: 着地(直し 0 回)
+
+## 2026-11-02 FIX-NORMAL-MATRIX-SCALE（run 20261102-103124 の反復 1）
+- Done: `MatrixUtils::CreateNormalMatrix` の特異判定を、上 3x3 の行の長さの積に対する比（`|det| < EPSILON * |r0||r1||r2|`、アダマールの上界に対する比で尺度不変）にした。行の長さの積が 0 か非有限なら単位行列。`MatrixAbstractionTest` に一様スケール 0.001・0.0025・0.005 で Y 軸 45° 回転した物体の法線行列が単位行列に落ちず、スケール 1 と同じ向きに法線を移す検査を足した（旧判定に一時的に戻すとこの検査で落ちることを確かめた）（4f28a538）。
+- Done: PT の閉包命中の法線行列を常に `transpose(mat3(gl_WorldToObjectEXT))` にし、ラスタの旧規則の写し（`RASTER_NORMAL_MATRIX_DETERMINANT_EPSILON`）を外した。R1 室内の平面（`BuildR1PlaneMesh`）の頂点法線を +Z から反転した巻き順に合う局所 -Y にし、`ValidateR1PlaneMeshContract` の期待値も合わせた。エンジンの関数で Euler (90°,0,0)・スケール 0.0025 と 0.0005 の局所 -Y はワールド (0, -6e-8, 1) に移り、ワールドのシェーディング法線は前と同じ +Z（8152fe17）。
+- Done: verify のアプリを起動しない 2 行を回した: `cmake --build build --config Debug --target Game MathGeometryTest MeshBatcherInstancingTest -- /m:1` exit 0、ctest `MatrixAbstractionTest`・`InstanceDataFlattenTest` 2/2 Passed。`RenderingValidationFixtureSupport` のビルド exit 0、閉包命中シェーダーは通常版・sparse 版とも glslangValidator（Vulkan 1.2）でコンパイルが通る（`.harness/runs/20261102-103124/FIX-NORMAL-MATRIX-SCALE-U2-verify.txt`）。
+- Next: 起動の確かめは後回し。`FIX-NORMAL-MATRIX-SCALE-CHECK` で `cmake --build build --config Debug --target Game RenderingHdrSceneCaptureTest PathTracingRasterParityVulkanTest -- /m:1` と `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -L RenderingValidation` を回し、R1 の数値検証・Indoor/Outdoor golden・`PathTracingRasterParityVulkanTest` が変わらず通ることを確かめる（変わるなら基準の更新を提案して止まる）。ワールド法線の Y 成分 -6e-8 の差は float の丸めの範囲。
+- Notes: 要起票: GPU スキニング `Assets/Shaders/skinning_compute.comp` の `SingularDeterminant` と `ComputeSkinningVulkanTest.cpp` の `TransformNormal` の写しは旧の絶対判定のまま（範囲外）。CPU のスキニング（`SkeletalAnimationSampler`）と、一様スケール約 0.005 未満の骨で法線が食い違う。
+- Notes: 要起票: `RenderingHdrSceneCaptureTest.cpp` の 5018 行（平面の符号化ワールド法線 (0.5,0.5,1)）・5936 行（N·L=N·V=1）はワールド +Z を前提にしており、今回のワールド法線は変わらないので触っていない。CHECK で落ちたら見る。
+
+## 2026-11-02 GAME-GR136-VFX（run 20261102-102403 の反復 1。着手）
+- 方式（推奨を採った）: GR57 を GR136 の形で設計する。効果の定義（エミッタ・モジュール・スキーマ・取り込み設定・クックの形式）は GR136 の `VfxEffectAsset` の 1 つにし、GR57 はそれを GPU で回す実行先として上に載せる。理由: 定義が 2 つになるとデータ・クック・試験の基準が二重になり、GR57 の設計案が既に求める「CPU 参照実装」「JSON の定義」を GR136 が先に作る形になる。逆（GR57 の上に GR136）は GR57 の硬い前提（G3・G4・G5）が揃うまで作者の形式を決められない。雨（GR58）・しぶき（GR59）もこの定義のエフェクトにする
+- 方式と前提の境界の記録: `Docs/Plans/GameFeatureRoadmap.md`（メイン側・管理外）の「GR136 VFX システム（Niagara 相当）の方式と境界」の節。スキーマは自前の静的な表（Object の反射に範囲・単位の欄が無いため）、単位はエミッタの空間の単位、積分と乱数は既存の 2D `ParticleSystem` と同じ、描画は今は `BoardProxy`
+- 完了を宣言しない範囲: GR57 の GPU の実行先・3D の粒子の描画パス、GR02 の時間のチャンネル、GR12/GR13/GR19 のボーン・表面のエミッタ、GR96 の asset-set・依存の追跡とテクスチャのパスの解決、GR126 の並列化の後の順序、GR72 の音、Editor の編集の画面、寿命の曲線のモジュール
+- Notes: 新しい Core のソースの登録のため `Library/Core/CMakeLists.txt` と、試験の理由の `Docs/Testing.md` を paths の外だが触る（ソースの並びに足すだけ・done-when が名指し）。エフェクトのファイルの置き場（`Assets/Vfx`）は paths の外なので、Rendering3DTest の橙の粒はコードで組む
+- U1 VFX の型・スキーマ・API の骨組み: 着地(直し 0 回)
+- U2 JSON の読み込みとクックしたバイナリの読み書き: 着地(直し 0 回)
+- U3 CPU のシミュレーション（実行時のインスタンス・イベント・フリップブック・板の出力）: 着地(直し 0 回)
+- U4 VfxEffectSystemTest と Docs/Testing.md の 3 点: 着地(直し 0 回)
+- U5 AssetCook の --cook-vfx: 着地(直し 0 回)
+- U6 ParticleSystem への組み込みと Rendering3DTest の橙の粒の置き換え（最後の確かめ）: 着地(直し 0 回)
+- Done: 起動せずに確かめる完了の条件 (1)〜(6) を `VfxEffectSystemTest`（CPU の試験。足す理由の 3 点は `Docs/Testing.md`）で確かめた。`cmake --build build --config Debug --target Game VfxEffectSystemTest ParticleSystemTest -- /m:1` は終了コード 0、`ctest -R "^(VfxEffectSystemTest|ParticleSystemTest)$"` は 2 件とも Passed。AssetCook の `--cook-vfx` は正常の入力で終了コード 0（`vfx_cooked bytes=96 emitters=1`）、Rate −1 の入力で終了コード 1（`out_of_range SpawnRate.Rate`）
+- Done: Rendering3DTest の橙の粒を VFX のエフェクト `Rendering3DTestEmbers` で組み直した。値（位置・速度の箱・重力・生成の速さ・寿命・最大数・色・大きさ・層・混合）と乱数の種（0xC001D00D）は前の 2D のエミッタと同じで、前のエミッタが粒子系の添字 0・世代 1 だったなら乱数の列も一致する。エンジンの `ParticleSystem` が `VfxEffectSystem` を持ち、Tick・板の収集・Clear で回す
+- Next: 起動の確かめは後回し。`GAME-GR136-VFX-CHECK` で `Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo` を撮り、起動画面の橙の粒の見た目が前と変わらないことを確かめる
+- Notes: 完了を宣言しない範囲は着手時の記録のとおり（GR57 の GPU の実行先・3D の粒子の描画パス、GR02 の時間のチャンネル、GR12/GR13/GR19 のボーン・表面のエミッタ、GR96 の asset-set・依存の追跡とテクスチャのパスの解決、GR126 の並列化の後の順序、GR72 の音、Editor の編集の画面、寿命の曲線のモジュール）
+- Notes: VFX のインスタンスの合成 ID は 2D のエミッタの ID と別の帯（ビット 63・62）を使う。イベントの位置はエミッタの空間の絶対位置で、インスタンスの位置を足さない
+- U7 カメラの検査スクリプトが探すエミッタ生成の呼び出しを VFX のインスタンス生成に合わせる: 着地(直し 0 回)
+- Done(反復 3): 差し戻しの退行を直した。`Scripts/Test-CameraWorld.ps1` の契約検査が探す呼び出しを `GetParticleSystem().GetVfxEffects().CreateInstance(` に合わせ、`-ContractOnly` は `CAMERA_WORLD_CONTRACT result=pass camera_initialization_before_emitter=1`（終了コード 0）。`cmake --build build --config Debug --target Game VfxEffectSystemTest -- /m:1` は終了コード 0、`ctest -R "^VfxEffectSystemTest$"` は Passed
+- Next: 起動の確かめは後回し（`GAME-GR136-VFX-CHECK`）。`Scripts/Test-CameraWorld.ps1` の起動するスモークもそこで回す
+- Notes: `Scripts` は paths の外だが、このタスクが起こした退行の打ち消しなので直した。残課題（blocking でない）: `AppendBoardProxies` の ID は `(instanceIndex << 8 | emitterIndex) + 1` で、1 つのエフェクトにエミッタが 256 個以上あると別のインスタンスの ID とぶつかる。バーストで出した粒の年齢は刻みの終わりで 0（イベントの粒はイベントの時刻から年齢を決める）
+
+- U1 スキンの submesh 範囲の塊を 2 つのパスで共有する: 着地(直し 0 回)
+- U2 骨付きパネルに 2 submesh・2 材質 slot の変種を足す: 着地(直し 2 回)
+- U3 撮影スクリプトに -SkinnedProbeMaterials 2 の判定を足す: 着地(直し 1 回)
+- U6 旧 NVSKEL 0.1 を 0.2 から作る oracle: 着地(直し 1 回)
+- U7 Test-M9World.ps1 -LegacyNvskelCompare と固定姿勢の GBuffer 撮影: 着地(直し 0 回)
+- U5 受入れの記録を書き、Debug のビルドと CPU の試験を通す: 着地(直し 0 回)
+### G2-GR32-GPU-ACCEPTANCE 多材質と旧描画互換の実装と CPU の確かめ（2026-11-02、run 20261102-075818 の反復 1）
+- Done: (1) スキンの submesh の範囲を塊に分ける規則を `MeshIndexChunks.h` の `BuildSkinnedMeshIndexChunks` にまとめ、VSM とビジビリティバッファの ID のラスタ（`VisibilityRasterPass::CollectSkinnedChunks`）が同じ規則で使う。前は ID のラスタが submesh ごとにメッシュ全体をその材質で描いていた。旧の空表は登録時の塊のまま。`SkinnedSubmeshDrawContractTest` に全体・部分・3 の倍数でない・はみ出し（4G 付近を含む）の検査を足した。(2) `--startup-skinned-probe-materials=2` で骨付きパネルを左右 2 submesh・2 slot にし、姿勢を 0 に止め、各半分の中心の画面の位置と期待の線形の色を `STARTUP_SKINNED_PROBE_MATERIAL_SAMPLE` に出す。スキンの描画は材質の基本色を使わない（`skinned_gbuffer.vert`・`VisObjectColor` で 1）ので、色は 4×4 の単色の RGBA8_UNORM のアルベドのテクスチャで持たせた。`CaptureStartupScene.ps1 -SkinnedProbeMaterials 2` は `--capture-aov` の `.aov.albedo.pfm` をその位置で読み、許容 0.03 で判定する。(3) `Test/Tools/NvskelLegacyV01Oracle.py` が AssetCook の 0.2 の包みから表と extension を落とした 0.1 の包みと manifest を作り、`Test-M9World.ps1 -LegacyNvskelCompare -EvidenceDir` が `--m9-world-compare`（止めた姿勢・音なし）を `--capture-aov --capture-deterministic` で 0.2 と 0.1 の 2 回撮り、AOV の面ごとの全画素一致を判定して画像と result.json を残す。(4) `NVSKELMigrationInventory.md` の範囲 draw の節を実装済みと未検証に書き分けた
+- 証拠: `.harness/runs/20261102-075818/verify-G2-GR32-GPU-ACCEPTANCE-final.txt`（HEAD 5889967 の上で `cmake --build build --config Debug --target Game AssetCook SkinnedSubmeshDrawContractTest -- -m:1` 終了コード 0、`SkinnedSubmeshDrawContractTest.exe` PASS・終了コード 0）。oracle は AssetCook の 0.2 から 0.1（header 256 B・全長 868 B、内部 hash と包み・manifest の hash 一致）を作って自己検査が通り、1 バイト壊した入力と表 2 個の入力で終了コード 1。撮影の判定は小さな PFM とログ行で合う・色の入れ替え・inside=0・AOV なしの 4 通りを確かめた（Game は起動していない）
+- Next: 起動の確かめは後回し（人の決まりでアプリを起動しない）。`G2-GR32-GPU-ACCEPTANCE-CHECK` でタスクの verify の 3〜6 行目（2 材質の VB On・Off、`Test-M9World.ps1 -LegacyNvskelCompare`、既定の起動画面）を回し、PNG と metrics.json・result.json を開いて確かめる。mock・source の確かめは実 GPU の合格と扱わない
+- Notes: 範囲の直しは GPU で未確認（コードの読みでの判断）。`--m9-world-compare` の比べは AOV の 9 面（太陽の可視率・RTGI の時間の符号なども含む）を全部一致で見るので、-CHECK で RTGI など NVSKEL と関係ない面だけが決定的でなく落ちたら、GBuffer の面（albedo・normal・roughness・depth）に絞るかを判断する。`--m9-world-compare` は音の入りのビルド（NORVES_GAME_AUDIO）でだけ使える。oracle は Test/Tools の既存の .py と違い BOM 付き
+- Notes: 要起票: 既定経路でスキニングの計算と出力の頂点の範囲を submesh の数だけ重ねて取っている(SkinningComputePass::Declare)のを、component ごとに 1 回へ共有する
+- Notes: 要起票: `NVSKELMigrationInventory.md` の範囲 draw より前の節に、native の回帰が Windows.h で未実行という旧い環境の記述が残っている
+### G2-GR32-GPU-ACCEPTANCE を閉じ直す（2026-11-02、run 20261102-105745 の反復 1）
+- Done: 作業単位は全部着地済み（U4 は U6・U7 に切り直した）。最後の確かめ `NorvesLib-3/.harness/runs/20261102-075818/verify-G2-GR32-GPU-ACCEPTANCE-final.txt` は Debug の Game・AssetCook・SkinnedSubmeshDrawContractTest のビルドが終了コード 0、試験が PASS・終了コード 0。その後の差分は文書（NVSKELMigrationInventory.md・PROGRESS.md・TASKS.md）だけ
+- Next: 起動の確かめは後回し。`G2-GR32-GPU-ACCEPTANCE-CHECK` で verify の 3〜6 行目を回し、PNG・metrics.json・result.json を開いて確かめる
+- Notes: 前回の評価は停止の依頼で中断して未評価（f1f25a1..HEAD）。評価はランナーが回す
+### G2-GR32-GPU-ACCEPTANCE の verify の時間切れを解いて閉じる（2026-11-02、run 20261102-105745 の反復 2）
+- Done: 前の再検証の落ちはコードの失敗ではなく、この作業ツリーの build に SkinnedSubmeshDrawContractTest などが未生成で、`-m:1` の全量ビルドが 10 分の上限を超えたもの。時間切れの後も残っていたそのビルドの終了を待ち、同じコマンドで続きをビルドして成果物をそろえた（再検証は差分のビルドになる）。コードの変更はない
+- 証拠: `.harness/runs/20261102-105745/verify-G2-GR32-GPU-ACCEPTANCE-iter2.txt`（HEAD c0207f4c で `cmake --build build --config Debug --target Game AssetCook SkinnedSubmeshDrawContractTest -- -m:1` EXIT=0、`SkinnedSubmeshDrawContractTest.exe` PASS・EXIT=0）
+- Next: 起動の確かめは後回し。`G2-GR32-GPU-ACCEPTANCE-CHECK` で verify の 3〜6 行目を回し、PNG・metrics.json・result.json を開いて確かめる
+- Notes: 残ったビルドと重なって走らせると PDB の取り合い（C1041）で落ちる。再検証の時間切れの後は、同じ作業ツリーのビルドの終了を待ってから回す
+- U8 2 材質のパネルの submesh の範囲を左右の半分に合わせる: 着地(直し 0 回)
+### G2-GR32-GPU-ACCEPTANCE の 2 材質パネルの範囲を直して閉じる（2026-11-02、run 20261102-105745 の反復 3）
+- Done: 評価の差し戻しを直した。2 材質のパネルは AppendGridIndices を 4 回積んで 768 個（左の表・左の裏・右の表・右の裏）なのに submesh の表が 192 個ずつ [0,384) しか覆わず、ResolveSkeletalSubmeshLayout が InvalidIndexRange で読み込みを止めていた。1 半分を積んだ数の半分（384）にして slot 0 = 左 [0,384)・slot 1 = 右 [384,768) にした。m_StartupSkinnedProbeMaterialCount に説明のコメントを足した
+- 証拠: `.harness/runs/20261102-105745/verify-G2-GR32-GPU-ACCEPTANCE-iter3.txt`（範囲の検算で全範囲を隙間・重複なく覆い、slot 0 が列 0〜3・slot 1 が列 4〜7 の表裏 64 三角形ずつ。`cmake --build build --config Debug --target Game AssetCook SkinnedSubmeshDrawContractTest -- -m:1` 終了コード 0、`SkinnedSubmeshDrawContractTest.exe` PASS・終了コード 0。numstat 2 通り一致）
+- Next: 起動の確かめは後回し。`G2-GR32-GPU-ACCEPTANCE-CHECK` で verify の 3〜6 行目を回し、PNG・metrics.json・result.json を開いて確かめる（2 材質の撮影は STARTUP_SKINNED_PROBE_SKIPPED が出ないことと体の数も見る）
+- Notes: 評価の残課題のうち、-LegacyNvskelCompare が RTGI の面を含む 9 面すべてで全画素一致を求める扱いと、Test-M9World.ps1 が M9_WORLD_COMPARE stage=assets_ready の印を照合しない点は、確かめのタスクで実行の結果を見て決める

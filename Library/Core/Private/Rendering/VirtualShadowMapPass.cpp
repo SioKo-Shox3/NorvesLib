@@ -1004,11 +1004,16 @@ namespace NorvesLib::Core::Rendering
                     ++state.Stats.SkippedDraws;
                     continue;
                 }
-                // 元の描画のインデックスの範囲。数が 0 か、メッシュ全体を覆う範囲なら全体として扱う
-                const bool bWholeMesh = instance.SourceIndexCount == 0u ||
-                                        (instance.SourceFirstIndex == 0u && instance.SourceIndexCount >= instance.IndexCount);
+                // 元の描画のインデックスの範囲を、全体か部分の塊として扱う
                 Container::VariableArray<MeshIndexChunk>& chunks = state.SkinnedChunks;
-                if (bWholeMesh)
+                const SkinnedMeshIndexChunkResult chunkResult = BuildSkinnedMeshIndexChunks(
+                    instance.IndexCount, instance.SourceFirstIndex, instance.SourceIndexCount, chunks);
+                if (chunkResult == SkinnedMeshIndexChunkResult::Failure)
+                {
+                    ++state.Stats.SkippedDraws;
+                    continue;
+                }
+                if (chunkResult == SkinnedMeshIndexChunkResult::WholeMesh)
                 {
                     // 登録時に分けた塊を使い、無ければインデックスの全体を分ける
                     if (!context.SkinnedMeshes || !context.SkinnedMeshes->TryGetChunks(instance.MeshHandle, chunks) || chunks.empty())
@@ -1018,22 +1023,6 @@ namespace NorvesLib::Core::Rendering
                             ++state.Stats.SkippedDraws;
                             continue;
                         }
-                    }
-                }
-                else
-                {
-                    // サブメッシュの範囲だけを塊に分け、塊の先頭をインデックスバッファの中の位置へずらす
-                    if (instance.SourceFirstIndex % 3u != 0u || instance.SourceIndexCount % 3u != 0u ||
-                        instance.SourceFirstIndex > instance.IndexCount ||
-                        instance.SourceIndexCount > instance.IndexCount - instance.SourceFirstIndex ||
-                        !BuildMeshIndexChunks(instance.SourceIndexCount, nullptr, 0, chunks))
-                    {
-                        ++state.Stats.SkippedDraws;
-                        continue;
-                    }
-                    for (MeshIndexChunk& chunk : chunks)
-                    {
-                        chunk.FirstIndex += instance.SourceFirstIndex;
                     }
                 }
                 VirtualShadowMap::AppendSkinnedInstance(

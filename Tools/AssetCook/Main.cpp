@@ -8,6 +8,7 @@
 #include "SkeletalRoleFileCli.h"
 #include "TextureAssetSetCook.h"
 #include "TextureCooker.h"
+#include "VfxEffectCookCli.h"
 #include "TerrainCliffDetail.h"
 #include "Rendering/Terrain/TerrainHeightField.h"
 #include <charconv>
@@ -646,6 +647,11 @@ namespace
 
 int main(int argc, char **argv)
 {
+    int vfxExitCode = 0;
+    if (NorvesLib::Tools::AssetCook::RunVfxEffectCookCommand(argc, argv, vfxExitCode))
+    {
+        return vfxExitCode;
+    }
     int rigExitCode = 0;
     if (NorvesLib::Tools::AssetCook::Detail::RunRigRetargetCommand(argc, argv, rigExitCode))
     {

@@ -23,6 +23,10 @@ namespace Game::GameModes
     /// ImGui モジュールの Initialize より前に呼ぶ
     void RegisterLauncherDisplayText();
 
+    /// シーンの見本画像を一度だけ読み込み、ImGui モジュールの Initialize より前に登録する。
+    /// 読めない画像のカードは、暗いグラデーションと中央のシーン名で表示する。
+    void RegisterLauncherThumbnails();
+
     class LauncherView final : public NorvesLib::Modules::Gui::IImGuiView
     {
     public:
@@ -32,6 +36,9 @@ namespace Game::GameModes
 
         /// シーンの必要な資産が欠けているか（カードに取得のコマンドを出す）。添字は kSceneCatalog の並び
         void SetAssetsMissing(std::size_t sceneIndex, bool bMissing);
+
+        /// 直前の OnImGui で求めた、カードの見本画像の矩形（画面の px）。見えていないカードは false を返す
+        bool GetCardImageRect(std::size_t sceneIndex, float &outMinX, float &outMinY, float &outMaxX, float &outMaxY) const;
 
         void OnImGui() override;
 
@@ -44,8 +51,20 @@ namespace Game::GameModes
         static constexpr std::size_t kMaxScenes = 16;
         static_assert(Game::Scenes::kSceneCatalogCount <= kMaxScenes, "ランチャーのカードの上限を超えている");
 
+        struct CardImageRect
+        {
+            float MinX = 0.0f;
+            float MinY = 0.0f;
+            float MaxX = 0.0f;
+            float MaxY = 0.0f;
+            bool bVisible = false;
+        };
+
         LauncherMenu *m_pMenu = nullptr;
         bool m_AssetsMissing[kMaxScenes] = {};
+        CardImageRect m_CardImageRects[kMaxScenes] = {};
+        /// 行単位のスクロールで、先頭に表示している行。
+        int m_FirstVisibleRow = 0;
         /// マウスが動いたときだけホバーで選ぶ（止まったマウスが矢印キーの選択を奪わないように）
         float m_LastMouseX = -1.0f;
         float m_LastMouseY = -1.0f;

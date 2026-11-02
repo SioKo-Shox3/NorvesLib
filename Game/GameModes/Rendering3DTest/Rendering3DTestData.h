@@ -21,7 +21,7 @@
 #include "Core/Public/Thread/Atomic.h"
 #include "Core/Public/Thread/Mutex.h"
 #include "Core/Public/Thread/Task.h"
-#include "Core/Public/Particle/ParticleSystem.h"
+#include "Core/Public/Particle/VfxEffectSystem.h"
 #include "GameModes/Rendering3DTest/M8MinimalPhysicsSmoke.h"
 #include "GameModes/Rendering3DTest/M9WorldAcceptance.h"
 #include "Core/Public/Rendering/FrameCaptureTypes.h"
@@ -294,6 +294,8 @@ namespace Game::GameModes
         bool m_bDebugDrawTestLines = false;
         // --startup-skinned-probe の指定で true にする。検証用の骨付きのパネルを地面の上へ 2 体置く（既定は置かない）。
         bool m_bStartupSkinnedProbe = false;
+        // --startup-skinned-probe-materials=<n> の値。2 のとき左右の半分を別の材質 slot にした 2 submesh のパネルにする（既定は 1）。
+        uint32_t m_StartupSkinnedProbeMaterialCount = 1u;
         bool m_bAnimationDebug = false;
         /// --imgui のとき true。デバッグ用の ImGui の窓（空の太陽の編集）を出す。ランチャーのために ImGui モジュールが
         /// 登録されていても、--imgui が無ければ出さない
@@ -428,7 +430,7 @@ namespace Game::GameModes
         NorvesLib::Core::Rendering::ModelHandle m_CottageModelHandle;
         uint32_t m_CottageLoadRequestId = 0;
         TSharedPtr<BoulderAsyncState> m_CottageAsyncState; ///< 小屋の非同期ロード共有状態（Boulder と同じ型）
-        NorvesLib::Core::Particle::ParticleEmitterHandle m_ParticleEmitter;
+        NorvesLib::Core::Particle::VfxEffectHandle m_VfxEmbers;
     };
 
 } // namespace Game::GameModes

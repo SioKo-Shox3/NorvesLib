@@ -1,6 +1,6 @@
 # 材質識別の共通契約（GR79 / GR78 / GR32）
 
-ResolveMaterialSelection を唯一の照合処理とする。共通核に加え、GR32 の SkinnedMeshComponent::FindMaterialSlot を接続した。GR79 の ARM/発光設定と GR78 の SurfaceName への接続は後続工程。
+ARM・発光・surface の全 selector は ResolveMaterialImportPlan が SourceMaterial に対する 1 回の ResolveMaterialSelection で照合する。NVMESH v1 の静的 cook・骨格の分割 cook・クリップ/リターゲットの cook は、未一致・二重指定・不正設定を拒否する。増分 preflight でも静的 mesh・分割 cook とクリップ/リターゲットの glTF 入力側の sidecar を照合する。リターゲット先骨格の sidecar も増分 preflight で材質設定を照合し、依存印が一致していても不正な設定を拒否する。SurfaceName は元 index の entry に届くが、保存先 GR81 ができるまで cook は surface_requires_GR81 で拒否する。GR32 の SkinnedMeshComponent::FindMaterialSlot は GeneratedSlot で照合する。
 
 - SourceMaterial: glTF materials 配列の元番号と元名。primitive の初出順や生成 slot 名から復元しない
 - GeneratedSlot: runtime が保持する slot 番号と slot 名。元材質番号とは別の catalog
@@ -15,7 +15,7 @@ ResolveMaterialSelection を唯一の照合処理とする。共通核に加え�
 
 全 catalog（未使用の元材質を含む）で重複名群の数と最初の組の行番号を返す。複数の無名材質も重複である。名前選択を使わなくても警告情報を取得できる。同名材質同士の入れ替えは番号 + expectedName でも検出できない。
 
-呼出側は GLB に同名材質がある場合、資産名を添えて「同名材質の入れ替わりは検出できません。元データで材質名を一意に付け直してください」と警告する。核はログ・資産名を所有しないため、警告の実表示は接続側の責任。
+静的 cook と骨格の分割 cook は、同名材質がある場合に資産名と元の index を添え、元データでの改名を促す警告を stderr に出す。骨格の分割 cook は、管理された単体 cook と `AssetCook --rig-split` の両方で警告を表示する。核はログ・資産名を所有しないため、警告の実表示は接続側の責任。
 
 ## メモリと失敗
 
@@ -25,7 +25,7 @@ scratch は N + 2S 個の uint32_t。入力名を含む全借用領域と書込�
 
 ## 検証範囲
 
-MaterialSelectionTest を standalone と Core test bundle に登録。Linux の実共通核・実名前 codec による通常/O2 NDEBUG/ASan+UBSan（LSan除外）は検証対象。Windows Core 全体、JSON 入口、cook/runtime 接続、実 GLB 警告表示はこのテストの成功に含めない。
+MaterialSelectionTest を standalone と Core test bundle に登録。Linux の実共通核・実名前 codec による通常/O2 NDEBUG/ASan+UBSan（LSan除外）は検証対象。MaterialImportDocumentTest・SkeletalMaterialBindingsTest は import-plan と runtime slot の接続を検証する。CookCacheDecisionTest は静的 mesh・skinmesh・clips の増分 preflight における selector の未一致・二重指定・surface の拒否を検証する。
 
 独立の総当たり型参照実装とのランダム比較で、成功判定・行出力・二重指定・失敗保持を確認。範囲外指定で直前の成功行が診断へ残る問題を修正し、未一致の CatalogRow は UINT32_MAX とする回帰を追加した。
 
