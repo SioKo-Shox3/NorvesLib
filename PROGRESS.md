@@ -8507,3 +8507,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 要起票: verify の撮影を RT と GI を切った構成で撮る起動引数（と verify の -GameArgs）が無い。予算の構成で判定できるようにするかを決める
 - U2 asset-set 換算の変更で増分 cook が skip しないことを CookCacheDecisionTest で反証する: 着地(直し 0 回)
 - U1 発光換算の接続を GltfMaterialCookV1Test で反証する: 着地(直し 0 回)
+- U3 材質設定の接続を文書へ反映し、タスクの verify を通す: 着地(直し 2 回)
