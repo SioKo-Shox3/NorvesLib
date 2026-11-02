@@ -8524,3 +8524,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 要起票: 骨格の分割 cook（`RigSplitCook.cpp:338`）は設定の解決の失敗を `split_material_selector_or_settings` の 1 つの名前で返し、設定名（`MaterialSettingsErrorKey`）を出さない。NVMESH v1 と同じ形にそろえるか
 - U1 骨格の分割 cook で SurfaceName を拒否する: 着地(直し 0 回)
 - U2 クリップ・リターゲットの cook で材質設定を照合し、分割 cook の警告を表示する: 着地(直し 0 回)
+- U3 共通照合・import-plan・slot 名の試験に名指しの場合を足す: 着地(直し 0 回)

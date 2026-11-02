@@ -77,3 +77,5 @@ GPUを使うテストは、Vulkanを使えない環境ではskip（終了コー�
 - 失敗が黙って起きるか: 起きる。一括リンクが外れても assert が失敗するまで何も変わらない。
 
 共通処理は `Test/TestSupport` に置き、`Test/CMakeLists.txt` で一括リンクするため、新しいテストに個別の設定は要らない。
+
+`MaterialSelectionTest`・`MaterialImportDocumentTest`・`SkeletalMaterialBindingsTest` を拡充する理由: 反証する契約は、元材質（`SourceMaterial`）と生成 slot（`GeneratedSlot`）を名前の全バイトで照合し、正規化や推測をせず、設定値・`SurfaceName`・slot の割当てが選んだ 1 件にだけ届くこと。壊れても cook は成功し、別の材質へ設定や slot が入るだけでログに出ないため、撮影・検証レイヤー・開発ビルドの検査・ログでは気づけず、失敗は黙って起きる。
