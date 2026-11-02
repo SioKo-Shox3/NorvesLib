@@ -20,6 +20,7 @@
 #include "Core/Public/Object/Entity.h"
 #include "Core/Public/Object/World.h"
 #include "Core/Public/Particle/ParticleSystem.h"
+#include "Core/Public/Particle/VfxSchema.h"
 #include "Core/Public/Rendering/CanvasView.h"
 #include "Core/Public/Rendering/ImpostorBake.h"
 #include "Core/Public/Rendering/MegaGeometryPass.h"
@@ -1826,6 +1827,19 @@ namespace Game::GameModes
             data.m_M9WorldAcceptance->SkeletalAsset = std::move(event.Asset);
             data.m_M9WorldAcceptance->SelectedClip = std::move(event.Clip);
             data.m_M9WorldAcceptance->bAssetsReady = true;
+            if (data.m_M9WorldAcceptance->bCompare)
+            {
+                if (!InitializeM9WorldSkeletal(ctx, data))
+                {
+                    CleanupM9WorldAcceptance(ctx, data);
+                    FailM9WorldSmoke(ctx, "skeletal_attach_failed");
+                    return false;
+                }
+                // AttachM9SkeletalAsset が設定する停止済みの 0 秒の姿勢を保つ。
+                data.m_bM9Attached = true;
+                LOG_INFO("M9_WORLD_COMPARE stage=assets_ready pose_time=0");
+                return true;
+            }
             auto* audioModule =
                 NorvesLib::Modules::Audio::FindAudioModule(NorvesLib::Core::Module::GetModuleRegistry());
             if (audioModule == nullptr || !data.m_M9WorldAcceptance->EffectClip || !data.m_M9WorldAcceptance->LoopClip)
@@ -1987,18 +2001,61 @@ namespace Game::GameModes
 
         if (!data.m_M9WorldAcceptance || !data.m_M9WorldAcceptance->bRequested)
         {
-            NorvesLib::Core::Particle::ParticleEmitterDesc particleDesc;
-            particleDesc.Position = Math::Vector3(96.0f, 72.0f, 0.0f);
-            particleDesc.VelocityMin = Math::Vector3(-16.0f, -28.0f, 0.0f);
-            particleDesc.VelocityMax = Math::Vector3(16.0f, -12.0f, 0.0f);
-            particleDesc.Gravity = Math::Vector3(0.0f, 16.0f, 0.0f);
-            particleDesc.SpawnRate = 12.0f;
-            particleDesc.Lifetime = 1.5f;
-            particleDesc.MaxCount = 24u;
-            particleDesc.Color = Math::Vector4(1.0f, 0.45f, 0.1f, 0.85f);
-            particleDesc.SizePx = Math::Vector2(14.0f, 14.0f);
-            data.m_ParticleEmitter = ctx.EngineRef.GetParticleSystem().CreateEmitter(particleDesc);
-            LOG_INFO("Rendering3DTest particle emitter created valid=%d", data.m_ParticleEmitter.IsValid());
+            using namespace NorvesLib::Core::Particle;
+            VfxEffectAsset effect;
+            effect.Name = "Rendering3DTestEmbers";
+            VfxEmitterAsset emitter = MakeVfxDefaultEmitter("Embers");
+            VfxModule spawnRate = MakeVfxDefaultModule(VfxModuleType::SpawnRate);
+            VfxModule velocity = MakeVfxDefaultModule(VfxModuleType::InitVelocityBox);
+            VfxModule lifetime = MakeVfxDefaultModule(VfxModuleType::InitLifetime);
+            VfxModule color = MakeVfxDefaultModule(VfxModuleType::InitColor);
+            VfxModule size = MakeVfxDefaultModule(VfxModuleType::InitSize);
+            VfxModule acceleration = MakeVfxDefaultModule(VfxModuleType::Acceleration);
+            VfxModule renderer = MakeVfxDefaultModule(VfxModuleType::SpriteRenderer);
+            Container::String error;
+            // UI は VFX スキーマの列挙値 2 で指定する。
+            const bool bConfigured =
+                SetVfxEmitterProperty(emitter, "MaxParticles", VfxValue::MakeUInt(24u), &error) &&
+                SetVfxEmitterProperty(emitter, "Space", VfxValue::MakeEnum(static_cast<uint32_t>(VfxSimulationSpace::Screen)), &error) &&
+                SetVfxEmitterProperty(emitter, "Seed", VfxValue::MakeUInt(0u), &error) &&
+                SetVfxModuleParameter(spawnRate, "Rate", VfxValue::MakeFloat(12.0f), &error) &&
+                SetVfxModuleParameter(velocity, "Min", VfxValue::MakeVector3(Math::Vector3(-16.0f, -28.0f, 0.0f)), &error) &&
+                SetVfxModuleParameter(velocity, "Max", VfxValue::MakeVector3(Math::Vector3(16.0f, -12.0f, 0.0f)), &error) &&
+                SetVfxModuleParameter(lifetime, "Lifetime", VfxValue::MakeFloat(1.5f), &error) &&
+                SetVfxModuleParameter(color, "Color", VfxValue::MakeColor(Math::Vector4(1.0f, 0.45f, 0.1f, 0.85f)), &error) &&
+                SetVfxModuleParameter(size, "Size", VfxValue::MakeVector2(Math::Vector2(14.0f, 14.0f)), &error) &&
+                SetVfxModuleParameter(acceleration, "Acceleration", VfxValue::MakeVector3(Math::Vector3(0.0f, 16.0f, 0.0f)), &error) &&
+                SetVfxModuleParameter(renderer, "Layer", VfxValue::MakeEnum(2u), &error) &&
+                SetVfxModuleParameter(renderer, "Blend", VfxValue::MakeEnum(static_cast<uint32_t>(BlendMode::Translucent)), &error) &&
+                SetVfxModuleParameter(renderer, "SortKey", VfxValue::MakeUInt(0u), &error) &&
+                SetVfxModuleParameter(renderer, "Flipbook", VfxValue::MakeName(""), &error);
+            if (!bConfigured)
+            {
+                LOG_ERROR("Rendering3DTest VFX の設定に失敗しました: %s", error.c_str());
+            }
+            else
+            {
+                emitter.Modules.push_back(spawnRate);
+                emitter.Modules.push_back(velocity);
+                emitter.Modules.push_back(lifetime);
+                emitter.Modules.push_back(color);
+                emitter.Modules.push_back(size);
+                emitter.Modules.push_back(acceleration);
+                emitter.Modules.push_back(renderer);
+                effect.Emitters.push_back(emitter);
+
+                VfxInstanceDesc instanceDesc;
+                instanceDesc.Position = Math::Vector3(96.0f, 72.0f, 0.0f);
+                instanceDesc.Seed = 0xC001D00Du;
+                instanceDesc.Texture = TextureHandle::Invalid();
+                instanceDesc.bEnabled = true;
+                data.m_VfxEmbers = ctx.EngineRef.GetParticleSystem().GetVfxEffects().CreateInstance(effect, instanceDesc, &error);
+                if (!data.m_VfxEmbers.IsValid())
+                {
+                    LOG_ERROR("Rendering3DTest VFX の生成に失敗しました: %s", error.c_str());
+                }
+            }
+            LOG_INFO("Rendering3DTest vfx effect created valid=%d", data.m_VfxEmbers.IsValid());
         }
 
         // ========================================
@@ -3310,22 +3367,6 @@ namespace Game::GameModes
         const TWeakPtr<Game::CameraLateUpdateState> weakState = data.m_LateCameraState;
         auto* world = &ctx.EngineRef.GetWorld();
         auto* renderWorld = &ctx.EngineRef.GetRenderWorld();
-        data.m_LateCameraState->Callback = Delegate<void, float>([weakState, world, renderWorld](float)
-        {
-            const auto state = weakState.lock();
-            CameraProxy cameraProxy;
-            if (!state || !state->BuildSnapshot(*world, cameraProxy)) return;
-            ApplyStartupGrading(cameraProxy, state->bLensEffects, state->bLookLut);
-            renderWorld->SetMainCamera(cameraProxy);
-            if (!state->bSmokeSyncEmitted)
-            {
-                LOG_INFO("CAMERA_COMPONENT_SMOKE stage=sync snapshot=1");
-                EmitM9WorldSmokeMarker("CAMERA_COMPONENT_SMOKE stage=sync snapshot=1");
-                LOG_INFO("TICK_STAGE_SMOKE order=ok stage=late_camera");
-                EmitM9WorldSmokeMarker("TICK_STAGE_SMOKE order=ok stage=late_camera");
-                state->bSmokeSyncEmitted = true;
-            }
-        });
         if (data.m_bAnimationDebug)
         {
             data.m_AnimationDebug = NorvesLib::Core::Container::MakeShared<AnimationDebugScene>();
@@ -3335,6 +3376,44 @@ namespace Game::GameModes
                 return GameModeEnterResult::Failed;
             }
         }
+        const TWeakPtr<AnimationDebugScene> weakAnimationDebug = data.m_AnimationDebug;
+#if NORVES_BUILD_DEVELOPMENT
+        // コールバックの所有者は data で、破棄前の Leave で解除される。
+        const auto* startupProbeData = &data;
+#endif
+        data.m_LateCameraState->Callback = Delegate<void, float>([weakState, weakAnimationDebug, world, renderWorld
+#if NORVES_BUILD_DEVELOPMENT
+            , startupProbeData
+#endif
+        ](float deltaTime)
+        {
+            const auto state = weakState.lock();
+            CameraProxy cameraProxy;
+            const bool cameraReady = state && state->BuildSnapshot(*world, cameraProxy);
+            if (const auto animationDebug = weakAnimationDebug.lock())
+            {
+                // カメラを組み立てられない場合も、描画時と同じ変換を確定する。
+                if (!cameraReady) world->UpdateRenderTransforms();
+                animationDebug->TickTrail(*world, deltaTime);
+            }
+            if (!cameraReady) return;
+            ApplyStartupGrading(cameraProxy, state->bLensEffects, state->bLookLut);
+            renderWorld->SetMainCamera(cameraProxy);
+#if NORVES_BUILD_DEVELOPMENT
+            if (startupProbeData->m_StartupSkinnedProbeMaterialCount == 2u)
+            {
+                LogStartupSkinnedProbeMaterialSamples(cameraProxy, startupProbeData->m_StartupSkinnedProbeComponents.size());
+            }
+#endif
+            if (!state->bSmokeSyncEmitted)
+            {
+                LOG_INFO("CAMERA_COMPONENT_SMOKE stage=sync snapshot=1");
+                EmitM9WorldSmokeMarker("CAMERA_COMPONENT_SMOKE stage=sync snapshot=1");
+                LOG_INFO("TICK_STAGE_SMOKE order=ok stage=late_camera");
+                EmitM9WorldSmokeMarker("TICK_STAGE_SMOKE order=ok stage=late_camera");
+                state->bSmokeSyncEmitted = true;
+            }
+        });
         m9FailureGuard.bCommitted = true;
         // 決定的な撮影では、組み立てが終わるまで読み込み中として扱う（最初の
         // Tick が判定する）。
@@ -3346,6 +3425,10 @@ namespace Game::GameModes
 
     void Rendering3DTestRoutine::Tick(GameModeContext &ctx, Rendering3DTestData &data, float deltaTime)
     {
+        // 調整用の剣は、カメラが無効なフレームも描画の変換を標本にする。
+        if (data.m_AnimationDebug)
+            if (auto slot = data.m_LateCameraSlot.lock())
+                slot->Arm(data.m_LateCameraState);
 #if defined(NORVES_GAME_AUDIO)
         if (!ConsumeM9WorldCompletion(ctx, data))
         {
@@ -3539,7 +3622,8 @@ namespace Game::GameModes
         data.m_ElapsedTime += deltaTime;
 
 #if defined(NORVES_GAME_AUDIO)
-        if (data.m_M9WorldAcceptance && data.m_M9WorldAcceptance->bRequested && !data.m_bM9Completed)
+        if (data.m_M9WorldAcceptance && data.m_M9WorldAcceptance->bRequested &&
+            !data.m_M9WorldAcceptance->bCompare && !data.m_bM9Completed)
         {
             ++data.m_M9TickCount;
             auto& renderWorld = ctx.EngineRef.GetRenderWorld();
@@ -4160,10 +4244,10 @@ namespace Game::GameModes
         data.m_PendingMaterialUpdates.clear();
         data.m_CookedStartupModelLoads.clear();
 
-        if (data.m_ParticleEmitter.IsValid())
+        if (data.m_VfxEmbers.IsValid())
         {
-            ctx.EngineRef.GetParticleSystem().DestroyEmitter(data.m_ParticleEmitter);
-            data.m_ParticleEmitter = {};
+            ctx.EngineRef.GetParticleSystem().GetVfxEffects().DestroyInstance(data.m_VfxEmbers);
+            data.m_VfxEmbers = {};
         }
     }
 

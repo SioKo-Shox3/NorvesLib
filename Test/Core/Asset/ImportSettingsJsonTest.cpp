@@ -70,9 +70,15 @@ int main()
         const auto after = EncodeCanonicalSettings(custom);
         assert(after.Size == before.Size && std::memcmp(after.Bytes, before.Bytes, before.Size) == 0);
     }
-    assert(Parse(R"({"version":1,"origin":{"mode":"surface_centroid"}})", custom) == SettingsResult::UnsupportedFeature);
-    const auto afterUnsupported = EncodeCanonicalSettings(custom);
-    assert(afterUnsupported.Size == before.Size && std::memcmp(afterUnsupported.Bytes, before.Bytes, before.Size) == 0);
+    ImportSettings boundsCenter;
+    assert(Parse(R"({"version":1,"origin":{"mode":"bounds_center"}})", boundsCenter) == SettingsResult::Success);
+    const auto boundsCenterBytes = EncodeCanonicalSettings(boundsCenter);
+    ImportSettings surfaceCentroid;
+    assert(Parse(R"({"version":1,"origin":{"mode":"surface_centroid"}})", surfaceCentroid) == SettingsResult::Success);
+    assert(surfaceCentroid.Origin == OriginMode::SurfaceCentroid);
+    const auto surfaceCentroidBytes = EncodeCanonicalSettings(surfaceCentroid);
+    assert(surfaceCentroidBytes.Size != boundsCenterBytes.Size ||
+        std::memcmp(surfaceCentroidBytes.Bytes, boundsCenterBytes.Bytes, boundsCenterBytes.Size) != 0);
     assert(ParseSettings({}, custom) == SettingsResult::InvalidRoot);
     std::cout << "ImportSettingsJsonTest PASS: schema_duplicates_defaults_meta_failure_preservation\n";
     return 0;

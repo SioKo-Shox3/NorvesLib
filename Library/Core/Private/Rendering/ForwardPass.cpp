@@ -157,6 +157,7 @@ namespace NorvesLib::Core::Rendering
         }
 
         m_Device = context.Device;
+        m_ShaderManager = context.ShaderMgr;
 
         if (m_bTransparentOnly)
         {
@@ -421,9 +422,11 @@ namespace NorvesLib::Core::Rendering
         m_SceneColorTexture.reset();
         m_GBufferDepthTexture.reset();
         m_ForwardRenderPass.reset();
+        m_RibbonTrailRenderPass.reset();
         m_ForwardFramebuffer.reset();
         m_TransparentPipeline.reset();
         m_WorldBoardPipeline.reset();
+        m_RibbonTrailRenderer.Shutdown();
         m_ImpostorPipeline.reset();
         m_TransparentVertexShader.reset();
         m_TransparentFragmentShader.reset();
@@ -441,6 +444,7 @@ namespace NorvesLib::Core::Rendering
         m_UniformAllocator.Shutdown();
         m_WorldBoardUniformAllocator.Shutdown();
         m_Device = nullptr;
+        m_ShaderManager = nullptr;
         m_bTransparentRenderPassUsesRenderGraphInitialStates = false;
         m_FramebufferSceneColorTexture = nullptr;
         m_FramebufferGBufferDepthTexture = nullptr;
@@ -695,6 +699,7 @@ namespace NorvesLib::Core::Rendering
                                                  bool bUseRenderGraphInitialStates)
     {
         if (!m_Device ||
+            !m_ShaderManager ||
             !m_SceneColorTexture ||
             !m_GBufferDepthTexture ||
             !m_TransparentVertexShader ||
@@ -714,8 +719,10 @@ namespace NorvesLib::Core::Rendering
         m_ForwardFramebuffer.reset();
         m_TransparentPipeline.reset();
         m_WorldBoardPipeline.reset();
+        m_RibbonTrailRenderer.Shutdown();
         m_ImpostorPipeline.reset();
         m_ForwardRenderPass.reset();
+        m_RibbonTrailRenderPass.reset();
         m_TransparentRenderPassSignature = {};
 
         RHI::RenderPassDesc renderPassDesc;
@@ -743,6 +750,28 @@ namespace NorvesLib::Core::Rendering
         if (!m_ForwardRenderPass)
         {
             NORVES_LOG_ERROR("ForwardPass", "Failed to create transparent forward render pass");
+            return false;
+        }
+
+        // 半透明の描画が終わった状態から始め、同じ状態へ戻して後の段の前提を保つ。
+        // 的の形式と構成は元のパスから写し、互換なフレームバッファを共用する。
+        RHI::RenderPassDesc ribbonRenderPassDesc = renderPassDesc;
+        for (RHI::AttachmentDesc& attachment : ribbonRenderPassDesc.colorAttachments)
+        {
+            attachment.clear = false;
+            attachment.loadOp = RHI::AttachmentLoadOp::Load;
+            attachment.storeOp = RHI::AttachmentStoreOp::Store;
+            attachment.initialState = attachment.finalState;
+        }
+        ribbonRenderPassDesc.depthStencilAttachment.clear = false;
+        ribbonRenderPassDesc.depthStencilAttachment.loadOp = RHI::AttachmentLoadOp::Load;
+        ribbonRenderPassDesc.depthStencilAttachment.storeOp = RHI::AttachmentStoreOp::Store;
+        ribbonRenderPassDesc.depthStencilAttachment.initialState =
+            ribbonRenderPassDesc.depthStencilAttachment.finalState;
+        m_RibbonTrailRenderPass = m_Device->CreateRenderPass(ribbonRenderPassDesc);
+        if (!m_RibbonTrailRenderPass)
+        {
+            NORVES_LOG_ERROR("ForwardPass", "帯のレンダーパスを作れませんでした");
             return false;
         }
 
@@ -920,6 +949,11 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
+        if (!m_RibbonTrailRenderer.Initialize(m_Device, m_ShaderManager, m_RibbonTrailRenderPass))
+        {
+            return false;
+        }
+
         RHI::GraphicsPipelineDesc impostorPipelineDesc = boardPipelineDesc;
         impostorPipelineDesc.vertexShader = m_ImpostorVertexShader;
         impostorPipelineDesc.pixelShader = m_ImpostorFragmentShader;
@@ -1011,6 +1045,8 @@ namespace NorvesLib::Core::Rendering
             !m_ForwardFramebuffer ||
             !m_TransparentPipeline ||
             !m_WorldBoardPipeline ||
+            !m_RibbonTrailRenderPass ||
+            !m_RibbonTrailRenderer.IsInitialized() ||
             !m_ImpostorPipeline;
 
         if (!bResourcesChanged)
@@ -1035,7 +1071,10 @@ namespace NorvesLib::Core::Rendering
                                                  bool bUseRenderGraphManagedStates)
     {
         const DrawCommandView activeTransparentCommands = context.GetActiveTransparentCommands();
-        if (activeTransparentCommands.empty())
+        const bool bHasRibbonTrails = context.SnapshotRibbonTrails &&
+                                      !context.SnapshotRibbonTrails->IsEmpty() &&
+                                      context.CommandList && context.FrameResources;
+        if (activeTransparentCommands.empty() && !bHasRibbonTrails)
         {
             if (bUseRenderGraphManagedStates)
             {
@@ -1048,8 +1087,9 @@ namespace NorvesLib::Core::Rendering
             !m_ForwardFramebuffer ||
             !m_TransparentPipeline ||
             !m_WorldBoardPipeline ||
+            (bHasRibbonTrails && (!m_RibbonTrailRenderPass || !m_RibbonTrailRenderer.IsInitialized())) ||
             !m_ImpostorPipeline ||
-            !context.InstanceDataBuffer)
+            (!context.InstanceDataBuffer && !activeTransparentCommands.empty()))
         {
             if (bUseRenderGraphManagedStates)
             {
@@ -1058,8 +1098,9 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        const uint64_t instanceDataSize64 = context.InstanceDataBuffer->GetSize();
-        if (instanceDataSize64 == 0)
+        // 帯だけのフレームにはメッシュや板のインスタンスのバッファは要らない。
+        const uint64_t instanceDataSize64 = context.InstanceDataBuffer ? context.InstanceDataBuffer->GetSize() : 0;
+        if (instanceDataSize64 == 0 && !activeTransparentCommands.empty())
         {
             if (bUseRenderGraphManagedStates)
             {
@@ -1437,7 +1478,7 @@ namespace NorvesLib::Core::Rendering
             transparentCommands->push_back(drawCommand);
         }
 
-        if (transparentCommands->empty())
+        if (transparentCommands->empty() && !bHasRibbonTrails)
         {
             if (bUseRenderGraphManagedStates)
             {
@@ -1459,6 +1500,26 @@ namespace NorvesLib::Core::Rendering
                                                                      context.GetActiveLocalViewport(),
                                                                      context.GetActiveLocalScissor(),
                                                                      meshes));
+
+        if (bHasRibbonTrails)
+        {
+            // 板などの半透明の記録を先に流し、その最後の状態から帯を重ねる。
+            if (context.PendingFrameCommands && !context.PendingFrameCommands->empty())
+            {
+                m_SceneRenderer->ExecuteFrameCommands(*context.PendingFrameCommands, context.CommandList);
+                context.PendingFrameCommands->clear();
+            }
+            context.CommandList->BeginRenderPass(m_RibbonTrailRenderPass, m_ForwardFramebuffer);
+            context.CommandList->SetViewport(context.GetActiveLocalViewport());
+            context.CommandList->SetScissor(context.GetActiveLocalScissor());
+            if (!m_RibbonTrailRenderer.Record(context.CommandList, context.FrameResources,
+                                             *context.SnapshotRibbonTrails, viewData, projectionData,
+                                             sceneColorPreExposure))
+            {
+                NORVES_LOG_WARNING("ForwardPass", "帯の描画に必要なフレームの資源または頂点を準備できませんでした");
+            }
+            context.CommandList->EndRenderPass();
+        }
 
         if (!bUseRenderGraphManagedStates)
         {

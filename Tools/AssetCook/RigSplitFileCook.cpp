@@ -89,6 +89,10 @@ namespace NorvesLib::Tools::AssetCook
             {
                 return false;
             }
+            for (const auto& warning : cooked.Warnings)
+            {
+                std::fprintf(stderr, "AssetCook warning: %s\n", warning.c_str());
+            }
             C::VariableArray<RigSplitCookEntry> entries;
             entries.push_back(std::move(cooked.Skeleton));
             entries.push_back(std::move(cooked.Mesh));

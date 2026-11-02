@@ -14,6 +14,7 @@
 // 止めたあとの再生は、止めたパスの時刻へ戻って続ける。--camera-path-time=<秒> は起動時にパスの途中へ置く（撮影用）。
 // 開発ビルドの --camera-path-play は、シーンの組み立てが済んだ（NotifySceneReady）ところから、その時刻（無ければ 0 秒）で
 // パスを再生したままにする（計測用）。再生中は約 1 秒ごとにパスの時刻をログ（CAMERA_PATH_TIME）へ出す。
+// --camera-path-capture-time=<秒> を併せると、再生を固定刻みで進め、指定時刻の Tick の姿勢を撮る。
 // 開発ビルドだけ、--camera-script=<file> の台本（Input/CameraScript.h）を自由飛行カメラへ流せる。台本を流している間は
 // 実際の入力を無視し、1フレームを固定刻み（1/60 秒）で進める。台本が終わるまで IsScriptRunning() が真になる。
 // 台本の撮影の段取り（home・epoch・capture・wait-ready）は SetScriptCapture で渡した窓口（Debug/CameraScriptCapture.h）へ頼む。
@@ -48,6 +49,16 @@ namespace Game::Scenes
 
     class SceneViewSwitch;
 
+#if NORVES_BUILD_DEVELOPMENT
+    /// パスの撮影要求と読み出しの状態。GameApplicationHandler が所有する
+    struct CameraPathCaptureState
+    {
+        double StartTimeSeconds = 0.0;
+        bool bWaitingResult = false;
+        bool bFinished = false;
+    };
+#endif
+
     class FreeCameraRig
     {
     public:
@@ -61,6 +72,11 @@ namespace Game::Scenes
          * @param bPlayWhenReady 真なら、NotifySceneReady でパスの再生を始める（開始の時刻は startTimeSeconds。負なら 0）
          */
         void ConfigurePath(const Game::Scenes::ScenePathDescriptor *pPath, float startTimeSeconds, bool bPlayWhenReady = false);
+#if NORVES_BUILD_DEVELOPMENT
+        /// 指定時刻の撮影を有効にする。状態は呼び出し側が所有する
+        void ConfigurePath(const Game::Scenes::ScenePathDescriptor *pPath, float startTimeSeconds, bool bPlayWhenReady,
+                           double captureTimeSeconds, CameraPathCaptureState *pCaptureState);
+#endif
 
         /// 台本の撮影の段取りを頼む窓口（非所有。無ければ nullptr で、段取りのある台本は失敗の印をログに出す）。Enter の前に呼ぶ
         void SetScriptCapture(Game::Debug::CameraScriptCapture *pScriptCapture)
@@ -165,6 +181,12 @@ namespace Game::Scenes
         bool m_bPlayWhenReady = false;
         /// 再生した Tick の数（時刻のログの間隔に使う）
         uint32_t m_PathPlayedFrames = 0;
+#if NORVES_BUILD_DEVELOPMENT
+        CameraPathCaptureState *m_pPathCapture = nullptr;
+        double m_PathCaptureTime = -1.0;
+        uint64_t m_PathCaptureTick = 0;
+        uint64_t m_PathCaptureTargetTick = 0;
+#endif
     };
 
 } // namespace Game::Scenes

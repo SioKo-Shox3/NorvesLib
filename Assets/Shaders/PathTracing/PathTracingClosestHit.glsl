@@ -20,8 +20,6 @@ hitAttributeEXT vec2 hitBarycentrics;
 
 // Mesh3DVertexの並び（位置3・法線3・UV2の32 byte）。これより短い頂点は位置だけを持つ。
 const uint MESH3D_VERTEX_BYTES = 32u;
-// ラスタの法線行列（MatrixUtils::CreateNormalMatrix）が単位行列へ落とす行列式の閾値（FLT_EPSILON）。
-const float RASTER_NORMAL_MATRIX_DETERMINANT_EPSILON = 1.192092896e-07;
 
 // 番号の bit30 は、その texture が sparse（VT）である印（PathTracingPass が立てる）。残りが texture 配列番号。
 // bit31 の印（法線が2チャンネル・ORM の1枚）は呼び出し側が先に外す。
@@ -31,10 +29,16 @@ const uint TEXTURE_INDEX_MASK = 0x3FFFFFFFu;
 vec4 SampleMaterialTexture(uint textureIndex, vec2 uv)
 {
     // レイトレーシング段には画面微分がないため、LOD 0を標本化する。
-    // VT の texture は、常駐していないタイルを読まず、常駐している粗いミップへ逃げる（ラスタと共通の関数）。
-    bool bVirtualTexture = (textureIndex & TEXTURE_SPARSE_BIT) != 0u;
-    return SampleMaterialTextureLod(
-        materialTextures[nonuniformEXT(textureIndex & TEXTURE_INDEX_MASK)], uv, 0.0, bVirtualTexture);
+    // 配列への一様でない参照を各標本命令の位置で行う。
+    uint index = textureIndex & TEXTURE_INDEX_MASK;
+#ifdef NORVES_SPARSE_RESIDENCY_SHADING
+    // VT は、常駐していないタイルを読まず、常駐している粗いミップへ逃げる。
+    if ((textureIndex & TEXTURE_SPARSE_BIT) != 0u)
+    {
+        NORVES_RETURN_SPARSE_RESIDENT_LOD(materialTextures[nonuniformEXT(index)], uv, 0.0);
+    }
+#endif
+    return textureLod(materialTextures[nonuniformEXT(index)], uv, 0.0);
 }
 
 void main()
@@ -85,12 +89,7 @@ void main()
     if (bHasAttributes)
     {
         // 法線は物体→ワールド行列の逆転置で運ぶ（非一様スケールでも面に垂直を保つ）。
-        // ラスタのGBufferと同じく、3x3の行列式の絶対値がFLT_EPSILON未満（一様スケールで約0.005未満）
-        // なら単位行列を使う。小さく縮めた物体の頂点法線はこの規則を前提に作られている。
-        mat3 normalMatrix = abs(determinant(mat3(gl_ObjectToWorldEXT))) <
-                                RASTER_NORMAL_MATRIX_DETERMINANT_EPSILON
-            ? mat3(1.0)
-            : transpose(mat3(gl_WorldToObjectEXT));
+        mat3 normalMatrix = transpose(mat3(gl_WorldToObjectEXT));
         vec3 interpolatedNormal = normalMatrix *
             (ReadFloat3(vertices, a, stride, 3u) * weights.x +
              ReadFloat3(vertices, b, stride, 3u) * weights.y +

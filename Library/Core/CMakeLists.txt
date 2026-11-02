@@ -51,6 +51,14 @@ set(PRIVATE_SOURCES
     Private/Object/ResourceRegistry.cpp
     Private/Object/World.cpp
     Private/Particle/ParticleSystem.cpp
+    Private/Particle/SwordTrailRibbon.cpp
+    Private/Particle/DecalPool.cpp
+    Private/Particle/VfxSchema.cpp
+    Private/Particle/VfxEffectSerialization.cpp
+    Private/Particle/HitEffectEmitter.cpp
+    Private/Particle/VfxEffectSystem.cpp
+    Private/Particle/DefeatBloodSequence.cpp
+    Private/Particle/DefeatBloodPresenter.cpp
     # Animation
     Private/Animation/AnimationClipResource.cpp
     Private/Animation/SkeletalJointIndex.h
@@ -210,6 +218,8 @@ set(PRIVATE_SOURCES
     Private/Rendering/DebugDrawQueue.cpp
     Private/Rendering/DebugDrawPass.cpp
     Private/Rendering/FoliageMesh.cpp
+    Private/Rendering/DecalPass.cpp
+    Private/Rendering/DistortionPass.cpp
     Private/Rendering/FoliagePass.cpp
     Private/Rendering/RenderingCoordinator.cpp
     Private/Rendering/RenderingCoordinatorDiagnostics.cpp
@@ -274,6 +284,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/UpscalePass.cpp
     Private/Rendering/SSRPass.cpp
     Private/Rendering/ForwardPass.cpp
+    Private/Rendering/RibbonTrailRenderer.cpp
     Private/Rendering/ShaderManager.cpp
     Private/Rendering/NeuralMaterialResource.cpp
     Private/Rendering/NeuralMaterialDecoder.cpp
@@ -512,6 +523,15 @@ set(PUBLIC_HEADERS
     Public/Application/ApplicationHandlerBase.h
     Public/Engine/Engine.h
     Public/Particle/ParticleSystem.h
+    Public/Particle/SwordTrailRibbon.h
+    Public/Particle/DecalPool.h
+    Public/Particle/VfxEffectTypes.h
+    Public/Particle/VfxSchema.h
+    Public/Particle/VfxEffectSerialization.h
+    Public/Particle/HitEffectEmitter.h
+    Public/Particle/VfxEffectSystem.h
+    Public/Particle/DefeatBloodSequence.h
+    Public/Particle/DefeatBloodPresenter.h
     Public/Engine/ApplicationProcessor.h
     Public/Engine/FixedStepSettings.h
     # Animation
@@ -604,8 +624,14 @@ set(PUBLIC_HEADERS
     Public/Rendering/DebugDrawQueue.h
     Public/Rendering/DebugDrawPass.h
     Public/Rendering/FoliageMesh.h
+    Public/Rendering/DecalPass.h
+    Public/Rendering/DistortionPass.h
     Public/Rendering/FoliagePass.h
     Public/Rendering/FoliageTypes.h
+    Public/Rendering/RibbonTrailTypes.h
+    Public/Rendering/RibbonTrailRenderer.h
+    Public/Rendering/DecalTypes.h
+    Public/Rendering/DistortionTypes.h
     Public/Rendering/RenderingCoordinator.h
     Public/Rendering/RenderGraph/RenderGraphTypes.h
     Public/Rendering/RenderGraph/RenderGraphResourceNames.h

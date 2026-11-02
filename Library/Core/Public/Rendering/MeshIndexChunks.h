@@ -142,4 +142,42 @@ namespace NorvesLib::Core::Rendering
         return BuildMeshIndexChunks(indexCount, boundaryIndices, boundaryCount, outChunks, cutScratch);
     }
 
+    /** @brief スキニングの描画範囲を塊に分けた結果 */
+    enum class SkinnedMeshIndexChunkResult
+    {
+        WholeMesh,
+        Built,
+        Failure
+    };
+
+    /**
+     * @brief スキニングの部分描画をインデックスバッファ内の絶対位置の塊に分ける
+     *
+     * 全体を描く場合は WholeMesh を返し、outChunks は変更しない。登録時の塊を使うかは呼び出し側が選ぶ。
+     * 部分範囲が不正なら Failure を返す。失敗時の outChunks は使わない。
+     * outChunks は呼び出し側で持ち回し、確保済みの容量を再利用できる。
+     */
+    [[nodiscard]] inline SkinnedMeshIndexChunkResult BuildSkinnedMeshIndexChunks(
+        uint32_t indexCount,
+        uint32_t sourceFirstIndex,
+        uint32_t sourceIndexCount,
+        Container::VariableArray<MeshIndexChunk>& outChunks)
+    {
+        if (sourceIndexCount == 0u || (sourceFirstIndex == 0u && sourceIndexCount >= indexCount))
+        {
+            return SkinnedMeshIndexChunkResult::WholeMesh;
+        }
+        if (sourceFirstIndex % 3u != 0u || sourceIndexCount % 3u != 0u ||
+            sourceFirstIndex > indexCount || sourceIndexCount > indexCount - sourceFirstIndex ||
+            !BuildMeshIndexChunks(sourceIndexCount, nullptr, 0, outChunks))
+        {
+            return SkinnedMeshIndexChunkResult::Failure;
+        }
+        for (MeshIndexChunk& chunk : outChunks)
+        {
+            chunk.FirstIndex += sourceFirstIndex;
+        }
+        return SkinnedMeshIndexChunkResult::Built;
+    }
+
 } // namespace NorvesLib::Core::Rendering

@@ -147,7 +147,8 @@ namespace
         return result;
     }
     Fixture Make(const std::filesystem::path& root, const char* name, const std::filesystem::path& source,
-                 const char* kind, const char* type, const char* format, bool bDisabled = false)
+                 const char* kind, const char* type, const char* format, bool bDisabled = false,
+                 AssetImport::EmissiveScale assetSetEmission = {})
     {
         Fixture f;
         auto& r = f.Request;
@@ -163,6 +164,7 @@ namespace
         // 非modelでも新しい判定のskip意図は独立。実行要求へ旧skipを伝播させない。
         r.bSkipIfUnchanged = true;
         r.bNoSidecar = bDisabled;
+        r.AssetSetEmission = assetSetEmission;
         Text error;
         if (DecideCookCache(r, 7, true, nullptr, nullptr, f.Before, error) != CookDecision::Cook)
         {
@@ -343,6 +345,110 @@ namespace
         joined.append(" \n\t");
         return Manifest({reinterpret_cast<const uint8_t*>(joined.data()), joined.size()});
     }
+    Bytes NamedMaterialGlb(const Bytes& original)
+    {
+        CHECK(original.size() >= 20 && Get(original, 0, 4) == 0x46546c67 && Get(original, 16, 4) == 0x4e4f534a);
+        const size_t jsonEnd = 20 + static_cast<size_t>(Get(original, 12, 4));
+        CHECK(jsonEnd <= original.size());
+        Text json;
+        json.append(reinterpret_cast<const char*>(original.data() + 20), jsonEnd - 20);
+        const char* marker = "\"materials\":[{";
+        const auto at = json.find(marker);
+        CHECK(at != Text::npos);
+        const size_t insert = 20 + at + std::strlen(marker);
+        const char field[] = "\"name\":\"Body\",";
+        Bytes named;
+        named.insert(named.end(), original.begin(), original.begin() + insert);
+        named.insert(named.end(), field, field + sizeof(field) - 1);
+        named.insert(named.end(), original.begin() + insert, original.begin() + jsonEnd);
+        while ((named.size() - 20) % 4 != 0)
+        {
+            named.push_back(' ');
+        }
+        const size_t jsonSize = named.size() - 20;
+        named.insert(named.end(), original.begin() + jsonEnd, original.end());
+        Put(named, 8, named.size(), 4);
+        Put(named, 12, jsonSize, 4);
+        return named;
+    }
+    constexpr const char* ValidMaterialSidecar = R"({"version":1,"materials":[{"name":"Body"}]})";
+    Fixture MakeMaterialPreflightFixture(const std::filesystem::path& root, const char* name,
+                                         const std::filesystem::path& source, const char* kind,
+                                         const char* type, const char* format)
+    {
+        Fixture f;
+        auto& r = f.Request;
+        r.InputPath = source;
+        r.PackagePath = root / name / "Cooked/item.nvpkg";
+        r.ManifestPath = root / name / "manifest.json";
+        r.Kind = kind;
+        r.EntryTypeText = type;
+        r.Format = format;
+        r.EntryName = "__asset__";
+        r.LogicalPath = "Test/asset";
+        r.Variant = "default";
+        auto sidecar = source;
+        sidecar += ".import.json";
+        WriteText(sidecar, ValidMaterialSidecar);
+        Text error;
+        if (DecideCookCache(r, 7, true, nullptr, nullptr, f.Before, error) != CookDecision::Cook ||
+            !CookSingleAsset(f.Before.Request, error))
+        {
+            std::fprintf(stderr, "material prepare %s: %s\n", name, error.c_str());
+            CHECK(false);
+        }
+        f.Live = Load(r.ManifestPath);
+        if (!CaptureCookOutputRecord(f.Before, f.Live, f.Record, error))
+        {
+            std::fprintf(stderr, "material capture %s: %s\n", name, error.c_str());
+            CHECK(false);
+        }
+        CHECK(Decide(r, &f.Record, &f.Live) == CookDecision::Skip);
+        return f;
+    }
+    void VerifyMaterialPreflight(Fixture& f, const char* selectorError)
+    {
+        struct InvalidSidecar
+        {
+            const char* Name;
+            const char* Json;
+            const char* Error;
+        };
+        const InvalidSidecar cases[] = {
+            {"unmatched", R"({"version":1,"materials":[{"name":"Missing"}]})", selectorError},
+            {"duplicate", R"({"version":1,"materials":[{"name":"Body"},{"index":0,"expectedName":"Body"}]})",
+             selectorError},
+            {"surface", R"({"version":1,"materials":[{"name":"Body","surface":"Stone"}]})",
+             "surface_requires_GR81"}};
+        auto sidecar = f.Request.InputPath;
+        sidecar += ".import.json";
+        for (const auto& test : cases)
+        {
+            WriteText(sidecar, test.Json);
+            CookDependencySnapshot current;
+            Text error;
+            CHECK(CaptureCookDependencySnapshot(f.Before.Request, 7, current, error));
+            // 現在の依存印だけ合わせた記録でも、検証を経ずにskipできないことを確かめる。
+            auto matched = f.Record;
+            matched.DependencyFingerprint = current.Fingerprint;
+            for (const auto* record : {&f.Record, &matched})
+            {
+                CookDecisionContext context;
+                const auto result = DecideCookCache(f.Request, 7, true, record, &f.Live, context, error);
+                if (result != CookDecision::Error || std::strstr(error.c_str(), test.Error) == nullptr)
+                {
+                    std::fprintf(stderr, "material preflight %s %s: result=%u error=%s\n",
+                                 f.Request.Format.c_str(), test.Name, unsigned(result), error.c_str());
+                }
+                CHECK(result == CookDecision::Error);
+                CHECK(std::strstr(error.c_str(), test.Error) != nullptr);
+            }
+        }
+        WriteText(sidecar, ValidMaterialSidecar);
+        CHECK(Decide(f.Request, &f.Record, &f.Live) == CookDecision::Skip);
+        std::printf("COOK_CACHE_MATERIAL_PREFLIGHT format=%s result=pass unmatched_duplicate_surface\n",
+                    f.Request.Format.c_str());
+    }
     struct Mutation
     {
         std::filesystem::path Path;
@@ -406,6 +512,22 @@ int main()
     auto mesh = Make(root, "mesh", glb, "model", "Msh0", "nvmesh.v0.mesh3d.pnt.u32.clustered");
     CHECK(mesh.Record.Outputs.size() == 4);
     Misses(mesh);
+    // 換算なしの記録は、asset-set 換算を追加すると失効する。
+    {
+        auto request = mesh.Request;
+        request.AssetSetEmission = {true, 10};
+        CHECK(Decide(request, &mesh.Record, &mesh.Live) == CookDecision::Cook);
+    }
+    // 同じ換算は skip を保ち、換算値の変更と削除は記録を失効させる。
+    {
+        auto withEmission = Make(root, "mesh-emission", glb, "model", "Msh0", mesh.Request.Format.c_str(), false, {true, 10});
+        CHECK(Decide(withEmission.Request, &withEmission.Record, &withEmission.Live) == CookDecision::Skip);
+        auto request = withEmission.Request;
+        request.AssetSetEmission = {true, 20};
+        CHECK(Decide(request, &withEmission.Record, &withEmission.Live) == CookDecision::Cook);
+        request.AssetSetEmission = {false, 10};
+        CHECK(Decide(request, &withEmission.Record, &withEmission.Live) == CookDecision::Cook);
+    }
     auto swapped = mesh.Record;
     std::swap(swapped.Outputs[1], swapped.Outputs[2]);
     CHECK(Decide(mesh.Request, &swapped, &mesh.Live) == CookDecision::Cook);
@@ -427,6 +549,32 @@ int main()
     auto changedOptions = skeletalFixture.Request;
     changedOptions.SkeletalDecode.InfluencePolicy = Skeletal::SkeletalInfluencePolicy::ReduceToFour;
     CHECK(Decide(changedOptions, &skeletalFixture.Record, &skeletalFixture.Live) == CookDecision::Cook);
+    // 実cookの記録を使い、skip許可時も不正な材質設定がpreflightで拒否される。
+    {
+        const auto materialGlb = root / "material.glb";
+        Write(materialGlb, NamedMaterialGlb(Read(glb)));
+        const auto rigPath = root / "skeletal/material.gltf";
+        const auto rigSource = Read(root / "skeletal/ValidU8Float.gltf");
+        Text rigJson;
+        rigJson.append(reinterpret_cast<const char*>(rigSource.data()), rigSource.size());
+        const char* mode = "\"mode\": 4";
+        const auto at = rigJson.find(mode);
+        CHECK(at != Text::npos && !rigJson.empty() && rigJson[0] == '{');
+        Text namedRig = "{\"materials\":[{\"name\":\"Body\"}],";
+        namedRig.append(rigJson.data() + 1, at - 1);
+        namedRig.append("\"mode\": 4, \"material\": 0");
+        namedRig.append(rigJson.data() + at + std::strlen(mode), rigJson.size() - at - std::strlen(mode));
+        Write(rigPath, {reinterpret_cast<const uint8_t*>(namedRig.data()), namedRig.size()});
+        auto materialMesh = MakeMaterialPreflightFixture(root, "material-mesh", materialGlb, "model", "Msh0",
+                                                          "nvmesh.v1.mesh3d.pnt.u32.clustered");
+        auto materialSkin = MakeMaterialPreflightFixture(root, "material-skin", rigPath, "model", "Skm1",
+                                                          "nvskel.v1.skinmesh.pnujiw.u32");
+        auto materialClips = MakeMaterialPreflightFixture(root, "material-clips", rigPath, "animation", "Anm1",
+                                                           "nvskel.v1.clips");
+        VerifyMaterialPreflight(materialMesh, "material_selector_or_settings");
+        VerifyMaterialPreflight(materialSkin, "split_material_selector_or_settings");
+        VerifyMaterialPreflight(materialClips, "clip_material_selector_or_settings");
+    }
     // 同じ意味のsidecarでも生byte変更はcache miss。disabledでは探索しない。
     auto sidecar = mesh.Request.InputPath;
     sidecar += ".import.json";

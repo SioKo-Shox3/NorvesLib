@@ -130,6 +130,11 @@ namespace Game::GameModes
         float m_CameraPathTime = -1.0f;
         /// 組み立てが済んだところからカメラパスを再生する（--camera-path-play。開発ビルドだけ）
         bool m_bCameraPathPlay = false;
+#if NORVES_BUILD_DEVELOPMENT
+        /// 指定時刻で撮るときの時刻と、GameApplicationHandler が持つ結果の窓口
+        double m_CameraPathCaptureTime = -1.0;
+        Game::Scenes::CameraPathCaptureState *m_pCameraPathCapture = nullptr;
+#endif
         /// バナナの本数（--banana-count）
         uint32_t m_BananaCount = kDefaultBananaCount;
         /// 起動時から情報を出す（--open-scene-info。開発ビルドだけ。撮影で情報を確かめるのに使う）

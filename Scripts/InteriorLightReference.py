@@ -12,7 +12,8 @@
 #   3. python Scripts/InteriorLightReference.py --compare --capture <撮影> [--reference <正解の置き場>] [--expect <仕様>]
 #      <撮影>/compare/<視点>.compare.png（左上 エンジン・右上 Cycles・下 2 枚が手本の写真）と、領域ごとの明るさと色の比
 #      compare.json を書く。--reference は Cycles の絵（<置き場>/cycles/）を描いた撮影のフォルダ（既定は --capture）で、
-#      カメラが今の撮影と同じことを確かめる。--expect は判定の仕様（Scripts/Terrain/ExpectSpecs/interior-*.json）で、
+#      今の作業ツリーに無ければメインの作業ツリーの同じ相対パスを読む。カメラが今の撮影と同じことを確かめる。
+#      --expect は判定の仕様（Scripts/Terrain/ExpectSpecs/interior-*.json）で、
 #      行ごとに視点・領域・量（luminance_ratio = 輝度の中央値のエンジン ÷ Cycles、chroma_bg_ratio = 青 ÷ 緑の比の
 #      エンジン ÷ Cycles、sunlit_iou = 領域の印と正解の置き場の撮影の印の IoU）と min・max を持ち、外れたら fail にする。
 #
@@ -805,12 +806,48 @@ def evaluate_expect(spec, results, sunlit_iou):
     return rows, failures
 
 
+def resolve_reference(path):
+    """正解の置き場を今の作業ツリー、メインの作業ツリーの順で探す。"""
+    local = os.path.abspath(path)
+    if os.path.isdir(local):
+        print(f"INTERIOR_REFERENCE path={local} source=local")
+        return local
+
+    main_candidate = None
+    reason = None
+    try:
+        result = subprocess.run(
+            ["git", "-C", REPO_ROOT, "rev-parse", "--path-format=absolute", "--git-common-dir"],
+            capture_output=True, text=True)
+        if result.returncode != 0:
+            reason = f"git によるメインの作業ツリーの取得に失敗（終了コード {result.returncode}）"
+        elif not result.stdout.strip():
+            reason = "git が共通ディレクトリを返さなかった"
+        else:
+            main_root = os.path.dirname(os.path.normpath(result.stdout.strip()))
+            relative = os.path.relpath(local, REPO_ROOT)
+            if relative.startswith(".."):
+                reason = "指定パスがリポジトリの外にある"
+            else:
+                main_candidate = os.path.join(main_root, relative)
+    except OSError:
+        reason = "git を実行できなかった"
+    except ValueError:
+        reason = "指定パスをリポジトリからの相対パスにできなかった"
+
+    if main_candidate is not None and os.path.isdir(main_candidate):
+        print(f"INTERIOR_REFERENCE path={main_candidate} source=main-worktree")
+        return main_candidate
+    main_detail = main_candidate if main_candidate is not None else f"候補を作れない（{reason}）"
+    raise SystemExit(f"正解の置き場が見つかりません。今の作業ツリー: {local}、メインの作業ツリー: {main_detail}")
+
+
 def run_compare(args):
     sys.path.insert(0, os.path.join(REPO_ROOT, "Scripts", "Terrain"))
     import DisplayTransform
     from PIL import Image, ImageDraw, ImageFont
     capture = os.path.abspath(args.capture)
-    reference = os.path.abspath(args.reference) if args.reference else capture
+    reference = resolve_reference(args.reference) if args.reference else capture
     cycles_dir = os.path.join(reference, RESULT_DIR)
     spec = None
     if args.expect:
@@ -927,7 +964,7 @@ def main():
     parser.add_argument("--samples", type=int, default=DEFAULT_SAMPLES, help="Cycles の標本数")
     parser.add_argument("--blender", default=DEFAULT_BLENDER, help="blender.exe")
     parser.add_argument("--engine-sky", help="--render: 空をエンジンの空の LUT で描く。-GameArgs atmosphere-dump で撮った置き場")
-    parser.add_argument("--reference", help="--compare: Cycles の絵（cycles/）を描いた撮影のフォルダ（既定は --capture）")
+    parser.add_argument("--reference", help="--compare: Cycles の絵（cycles/）を描いた撮影のフォルダ（既定は --capture）。今の作業ツリーに無ければメインの作業ツリーの同じ相対パスを読む")
     parser.add_argument("--expect", help="--compare: 判定の仕様（領域の比の範囲。Scripts/Terrain/ExpectSpecs/interior-*.json）")
     args = parser.parse_args()
     return run_render(args) if args.render else run_compare(args)

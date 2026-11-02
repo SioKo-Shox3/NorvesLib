@@ -17,7 +17,9 @@
 #include "Core/Public/Object/World.h"
 #include "Core/Public/Rendering/PostProcessStack.h"
 #include "Core/Public/Rendering/RenderResources.h"
+#include "Core/Public/Rendering/FrameCaptureTypes.h"
 #include "Core/Public/Rendering/RenderWorld.h"
+#include "Debug/CapturedFramePng.h"
 #include "Core/Public/Rendering/ToneMappingPass.h"
 #include "Core/Public/Resource/SkinnedMeshResource.h"
 #include "GameModes/DogMovementSmoke/DogMovementSmokeMode.h"
@@ -176,6 +178,8 @@ namespace Game
         // --camera-path-play: カメラパスを持つシーンで、組み立てが済んだところからパスを再生したままにする（開発ビルドだけ。
         // 値を取らない。開始の時刻は --camera-path-time、無ければ 0 秒。計測でパスを飛ぶ負荷を撮るのに使う）。
         constexpr const TCHAR *kCameraPathPlayOption = TEXT("--camera-path-play");
+        // --camera-path-capture-time=<秒>: 再生を固定刻みで進め、指定時刻の姿勢を PNG に撮る（開発ビルドだけ）。
+        constexpr const TCHAR *kCameraPathCaptureTimeOption = TEXT("--camera-path-capture-time=");
         // --banana-count=<n>: mega-bananas のバナナの本数（1〜kMaxBananaCount。既定 kDefaultBananaCount）。
         // mega-stress では、指定したときだけ同じ配置のバナナ n 本を個別の Entity と同時に置く（混在の負荷）。
         constexpr const TCHAR *kBananaCountOption = TEXT("--banana-count=");
@@ -391,6 +395,9 @@ namespace Game
         // ビジビリティバッファの経路でスキニングの塊が描かれることの撮影（-SkinnedProbe）に使う。
         constexpr const TCHAR *kStartupSkinnedProbeOption = TEXT("--startup-skinned-probe");
         bool s_bRendering3DTestSkinnedProbe = false;
+        // --startup-skinned-probe-materials=<1|2>: 骨付きパネルの材質スロット数（既定 1）。
+        constexpr const TCHAR *kStartupSkinnedProbeMaterialsOption = TEXT("--startup-skinned-probe-materials=");
+        uint32_t s_Rendering3DTestSkinnedProbeMaterialCount = 1u;
         // --startup-scan-props=on|off: 起動画面の地面の外周に並べる高ポリのスキャン資産（Poly Haven）を置くか（既定は on）。
         // off は、スキャン資産を足す前と同じ描画量を撮って、足した分を差し引くための基準に使う。
         constexpr const TCHAR *kStartupScanPropsOption = TEXT("--startup-scan-props=");
@@ -482,6 +489,36 @@ namespace Game
             outValue = value;
             return true;
         }
+
+#if NORVES_BUILD_DEVELOPMENT
+        // 固定刻みの Tick 数を計算するときは、引数の秒数を float に丸める前の精度で使う。
+        bool TryParsePathCaptureTime(const String &text, double &outValue)
+        {
+            char buffer[64] = {};
+            if (text.empty() || text.size() >= sizeof(buffer))
+            {
+                return false;
+            }
+            for (size_t i = 0; i < text.size(); ++i)
+            {
+                const TCHAR ch = text[i];
+                if (ch < 0x20 || ch > 0x7E)
+                {
+                    return false;
+                }
+                buffer[i] = static_cast<char>(ch);
+            }
+            char *pEnd = nullptr;
+            const double value = std::strtod(buffer, &pEnd);
+            if (pEnd == buffer || *pEnd != '\0' || !std::isfinite(value) || value < 0.0 ||
+                value > static_cast<double>(std::numeric_limits<float>::max()))
+            {
+                return false;
+            }
+            outValue = value;
+            return true;
+        }
+#endif
 
         /**
          * @brief "<yaw>,<pitch>,<arm>" を3つの有限の小数として読む。腕の長さは正でなければならない。
@@ -757,6 +794,12 @@ namespace Game
         m_CameraScriptPath = {};
         m_CameraPathTime = -1.0f;
         m_bCameraPathPlay = false;
+#if NORVES_BUILD_DEVELOPMENT
+        m_CameraPathCaptureTime = -1.0;
+        m_CameraPathCapture = {};
+        m_CameraPathCapturePngPath = {};
+        m_CameraPathCaptureWaitedFrames = 0;
+#endif
         m_BananaCount = Game::GameModes::kDefaultBananaCount;
         m_bBananaCountSet = false;
         m_StressEntityCount = Game::GameModes::kDefaultStressEntityCount;
@@ -817,6 +860,7 @@ namespace Game
         s_VramBudgetCapMb = 0;
         s_bRendering3DTestDebugDrawTestLines = false;
         s_bRendering3DTestSkinnedProbe = false;
+        s_Rendering3DTestSkinnedProbeMaterialCount = 1u;
         s_bRendering3DTestScanProps = true;
         s_Rendering3DTestStressMegaInstances = 0;
         s_Rendering3DTestStressGeometryCount = 0;
@@ -1220,6 +1264,13 @@ namespace Game
                     return false;
                 }
                 m_CameraPathTime = pathTime;
+#if NORVES_BUILD_DEVELOPMENT
+                if (!TryParsePathCaptureTime(sceneValue, m_CameraPathCapture.StartTimeSeconds))
+                {
+                    LOG_ERROR("--camera-path-time の秒数を読み取れません");
+                    return false;
+                }
+#endif
                 continue;
             }
             if (TryStripPrefix(args[i], kBananaCountOption, sceneValue))
@@ -1812,6 +1863,34 @@ namespace Game
                 m_bStressBatchCells = true;
                 continue;
             }
+            if (args[i] == TEXT("--camera-path-capture-time"))
+            {
+#if NORVES_BUILD_DEVELOPMENT
+                LOG_ERROR("--camera-path-capture-time は = に続けて秒数を指定してください");
+                return false;
+#else
+                LOG_WARNING("--camera-path-capture-time は開発ビルドだけで使えます。無視します");
+                continue;
+#endif
+            }
+            if (TryStripPrefix(args[i], kCameraPathCaptureTimeOption, sceneValue))
+            {
+#if NORVES_BUILD_DEVELOPMENT
+                if (m_CameraPathCaptureTime >= 0.0)
+                {
+                    LOG_ERROR("--camera-path-capture-time が重複しています");
+                    return false;
+                }
+                if (!TryParsePathCaptureTime(sceneValue, m_CameraPathCaptureTime))
+                {
+                    LOG_ERROR("--camera-path-capture-time は 0 以上の有限の秒数で指定してください");
+                    return false;
+                }
+#else
+                LOG_WARNING("--camera-path-capture-time は開発ビルドだけで使えます。無視します");
+#endif
+                continue;
+            }
             if (args[i] == kCameraPathPlayOption)
             {
 #if NORVES_BUILD_DEVELOPMENT
@@ -1923,6 +2002,17 @@ namespace Game
             if (args[i] == kStartupSkinnedProbeOption)
             {
                 s_bRendering3DTestSkinnedProbe = true;
+                continue;
+            }
+            if (TryStripPrefix(args[i], kStartupSkinnedProbeMaterialsOption, sceneValue))
+            {
+                uint32_t materialCount = 1u;
+                if (!TryParseUInt32(sceneValue, materialCount) || (materialCount != 1u && materialCount != 2u))
+                {
+                    LOG_WARNING("--startup-skinned-probe-materials は 1 または 2 で指定してください。1 を使います");
+                    materialCount = 1u;
+                }
+                s_Rendering3DTestSkinnedProbeMaterialCount = materialCount;
                 continue;
             }
             if (args[i] == kDebugDrawTestLinesOption)
@@ -2472,6 +2562,36 @@ namespace Game
             LOG_INFO("Module runtime option --dummy-overlay: DummyRenderModule registered");
         }
 
+        bool bM9WorldCompare = false;
+        String m9ComparePngPath;
+#if NORVES_BUILD_DEVELOPMENT
+        bool bM9CompareAov = false;
+        bool bM9CompareDeterministic = false;
+        for (const auto& argument : args)
+        {
+            bM9WorldCompare = bM9WorldCompare || argument == TEXT("--m9-world-compare");
+            bM9CompareAov = bM9CompareAov || argument == TEXT("--capture-aov");
+            bM9CompareDeterministic = bM9CompareDeterministic || argument == TEXT("--capture-deterministic");
+            String value;
+            if (TryStripPrefix(argument, kCapturePngOption, value))
+            {
+                m9ComparePngPath = value;
+            }
+        }
+        if (bM9WorldCompare)
+        {
+            const auto dot = m9ComparePngPath.FindLast(TEXT('.'));
+            const auto metadata = dot == String::npos ? String{} :
+                m9ComparePngPath.substr(0, dot) + String(TEXT(".aov.json"));
+            if (!bM9CompareAov || !bM9CompareDeterministic || m9ComparePngPath.empty() || metadata.empty() ||
+                GetFileAttributes(m9ComparePngPath.c_str()) != INVALID_FILE_ATTRIBUTES ||
+                GetFileAttributes(metadata.c_str()) != INVALID_FILE_ATTRIBUTES)
+            {
+                LOG_ERROR("M9 の比較には未使用の --capture-png と --capture-aov・--capture-deterministic が必要です");
+                return false;
+            }
+        }
+#endif
         bool bM9WorldSmoke = false;
         for (size_t i = 0; i < args.size(); ++i)
         {
@@ -2481,12 +2601,14 @@ namespace Game
                 break;
             }
         }
-        if (bM9WorldSmoke)
+        if (bM9WorldSmoke || bM9WorldCompare)
         {
             m_M9WorldAcceptance = MakeShared<Game::GameModes::M9WorldAcceptanceConfig>();
             m_M9WorldAcceptance->bRequested = true;
+            m_M9WorldAcceptance->bCompare = bM9WorldCompare;
+            m_M9WorldAcceptance->ComparePngPath = m9ComparePngPath;
 #if defined(NORVES_GAME_AUDIO)
-            if (NorvesLib::Modules::Audio::RegisterAudioModule(
+            if (!bM9WorldCompare && NorvesLib::Modules::Audio::RegisterAudioModule(
                     NorvesLib::Core::Module::GetModuleRegistry()) == nullptr)
             {
                 LOG_ERROR("M9 world smoke failed to register the XAudio2 module");
@@ -2496,10 +2618,17 @@ namespace Game
             LOG_ERROR("M9 world smoke is unavailable because Game was built without audio support");
             return false;
 #endif
-            LOG_INFO("M9_WORLD_SMOKE stage=registered");
+            if (bM9WorldCompare)
+            {
+                LOG_INFO("M9_WORLD_COMPARE stage=registered pose_time=0");
+            }
+            else
+            {
+                LOG_INFO("M9_WORLD_SMOKE stage=registered");
 #if defined(NORVES_GAME_AUDIO)
-            Game::GameModes::EmitM9WorldSmokeMarker("M9_WORLD_SMOKE stage=registered");
+                Game::GameModes::EmitM9WorldSmokeMarker("M9_WORLD_SMOKE stage=registered");
 #endif
+            }
         }
 
         // 第2段 B-i: --imgui 不変条件ゲート。値を取らない bare フラグの厳密一致を走査し、
@@ -2579,6 +2708,30 @@ namespace Game
                 }
             }
         }
+#if NORVES_BUILD_DEVELOPMENT
+        if (m_CameraPathCaptureTime >= 0.0)
+        {
+            if (bCaptureHdr || bCaptureAov || !m_CaptureViewsRequest.empty() || !captureSequencePrefix.empty())
+            {
+                LOG_ERROR("--camera-path-capture-time は --capture-hdr・--capture-aov・--capture-views・--capture-sequence と併用できません");
+                return false;
+            }
+            if (!m_bCameraPathPlay || capturePngPath.empty())
+            {
+                LOG_WARNING("--camera-path-capture-time は --camera-path-play と --capture-png が必要です。無視します");
+                m_CameraPathCaptureTime = -1.0;
+            }
+            else if (m_CameraPathCaptureTime < m_CameraPathCapture.StartTimeSeconds)
+            {
+                LOG_ERROR("--camera-path-capture-time は --camera-path-time 以上にしてください");
+                return false;
+            }
+            else
+            {
+                m_CameraPathCapturePngPath = capturePngPath;
+            }
+        }
+#endif
         if (!m_CaptureViewsRequest.empty())
         {
             if (capturePngPath.empty())
@@ -2596,6 +2749,15 @@ namespace Game
         {
             return false;
         }
+#if NORVES_BUILD_DEVELOPMENT
+        if (m_CameraPathCaptureTime >= 0.0 &&
+            !Scenes::SceneTextEquals(m_StartupSceneId.c_str(), Scenes::kMegaBananasSceneId))
+        {
+            LOG_WARNING("--camera-path-capture-time は mega-bananas で使えます。このシーンでは無視します");
+            m_CameraPathCaptureTime = -1.0;
+            m_CameraPathCapturePngPath = {};
+        }
+#endif
         if (!m_CaptureViewNames.empty())
         {
             // 保存先は --capture-png のパスのフォルダ（区切りが無ければ作業ディレクトリ）
@@ -2754,10 +2916,11 @@ namespace Game
                 NorvesLib::Core::Module::GetModuleRegistry());
             // バナナのシーンの情報表示（H キー）の文字。シーンは ImGui モジュールがあるときだけ表示を登録する
             Game::GameModes::RegisterBananasInfoDisplayText();
-            if (m_bLauncherStartup)
+            if (m_bLauncherStartup || m_bPauseMenuWanted)
             {
-                // ランチャーの文字を表示用フォントへ載せる。ImGui モジュールの Initialize より前に渡す。
+                // ポーズメニューから戻る起動も含め、ランチャーの文字と見本画像を Initialize より前に渡す。
                 Game::GameModes::RegisterLauncherDisplayText();
+                Game::GameModes::RegisterLauncherThumbnails();
             }
             if (m_bPauseMenuWanted)
             {
@@ -3200,47 +3363,50 @@ namespace Game
 #if !defined(NORVES_GAME_AUDIO)
         return false;
 #else
-        const Asset::AssetResolveResult effectResult = m_AssetSystemSnapshot->ResolveAsset(
-            "Audio/M9/effect.wav", Asset::AssetKind::Audio);
-        const Asset::AssetResolveResult loopResult = m_AssetSystemSnapshot->ResolveAsset(
-            "Audio/M9/loop.wav", Asset::AssetKind::Audio);
-        if (!effectResult.UsedCooked() || !loopResult.UsedCooked())
+        if (!m_M9WorldAcceptance->bCompare)
         {
-            LOG_ERROR("M9_WORLD_SMOKE audio resolution requires both cooked assets");
-            return false;
-        }
+            const Asset::AssetResolveResult effectResult = m_AssetSystemSnapshot->ResolveAsset(
+                "Audio/M9/effect.wav", Asset::AssetKind::Audio);
+            const Asset::AssetResolveResult loopResult = m_AssetSystemSnapshot->ResolveAsset(
+                "Audio/M9/loop.wav", Asset::AssetKind::Audio);
+            if (!effectResult.UsedCooked() || !loopResult.UsedCooked())
+            {
+                LOG_ERROR("M9_WORLD_SMOKE audio resolution requires both cooked assets");
+                return false;
+            }
 
-        Asset::CookedAudioParseResult effect = Asset::ParseCookedAudio(effectResult.Blob);
-        Asset::CookedAudioParseResult loop = Asset::ParseCookedAudio(loopResult.Blob);
-        if (!effect.Succeeded() || !loop.Succeeded())
-        {
-            LOG_ERROR("M9_WORLD_SMOKE cooked asset parsing failed");
-            return false;
-        }
+            Asset::CookedAudioParseResult effect = Asset::ParseCookedAudio(effectResult.Blob);
+            Asset::CookedAudioParseResult loop = Asset::ParseCookedAudio(loopResult.Blob);
+            if (!effect.Succeeded() || !loop.Succeeded())
+            {
+                LOG_ERROR("M9_WORLD_SMOKE cooked asset parsing failed");
+                return false;
+            }
 
-        const NorvesLib::Modules::Audio::AudioPcmFormat effectFormat{
-            effect.Audio.SampleRate, effect.Audio.ChannelCount, effect.Audio.BitsPerSample, effect.Audio.BlockAlignment};
-        const NorvesLib::Modules::Audio::AudioPcmFormat loopFormat{
-            loop.Audio.SampleRate, loop.Audio.ChannelCount, loop.Audio.BitsPerSample, loop.Audio.BlockAlignment};
-        Asset::AssetBlob effectPcm = effect.Audio.SourceBlob.TryCreateSubBlob(
-            static_cast<size_t>(effect.Audio.PayloadOffset), static_cast<size_t>(effect.Audio.PayloadSize));
-        Asset::AssetBlob loopPcm = loop.Audio.SourceBlob.TryCreateSubBlob(
-            static_cast<size_t>(loop.Audio.PayloadOffset), static_cast<size_t>(loop.Audio.PayloadSize));
-        if (!effectPcm.IsValid() || effectPcm.IsEmpty() || !loopPcm.IsValid() || loopPcm.IsEmpty())
-        {
-            return false;
-        }
-        auto effectClip = MakeShared<NorvesLib::Modules::Audio::AudioClipResource>(
-            effectPcm, effectFormat, effect.Audio.FrameCount);
-        auto loopClip = MakeShared<NorvesLib::Modules::Audio::AudioClipResource>(
-            loopPcm, loopFormat, loop.Audio.FrameCount);
-        if (!effectClip || !loopClip || !effectClip->IsValid() || !loopClip->IsValid())
-        {
-            return false;
-        }
+            const NorvesLib::Modules::Audio::AudioPcmFormat effectFormat{
+                effect.Audio.SampleRate, effect.Audio.ChannelCount, effect.Audio.BitsPerSample, effect.Audio.BlockAlignment};
+            const NorvesLib::Modules::Audio::AudioPcmFormat loopFormat{
+                loop.Audio.SampleRate, loop.Audio.ChannelCount, loop.Audio.BitsPerSample, loop.Audio.BlockAlignment};
+            Asset::AssetBlob effectPcm = effect.Audio.SourceBlob.TryCreateSubBlob(
+                static_cast<size_t>(effect.Audio.PayloadOffset), static_cast<size_t>(effect.Audio.PayloadSize));
+            Asset::AssetBlob loopPcm = loop.Audio.SourceBlob.TryCreateSubBlob(
+                static_cast<size_t>(loop.Audio.PayloadOffset), static_cast<size_t>(loop.Audio.PayloadSize));
+            if (!effectPcm.IsValid() || effectPcm.IsEmpty() || !loopPcm.IsValid() || loopPcm.IsEmpty())
+            {
+                return false;
+            }
+            auto effectClip = MakeShared<NorvesLib::Modules::Audio::AudioClipResource>(
+                effectPcm, effectFormat, effect.Audio.FrameCount);
+            auto loopClip = MakeShared<NorvesLib::Modules::Audio::AudioClipResource>(
+                loopPcm, loopFormat, loop.Audio.FrameCount);
+            if (!effectClip || !loopClip || !effectClip->IsValid() || !loopClip->IsValid())
+            {
+                return false;
+            }
 
-        m_M9WorldAcceptance->EffectClip = effectClip;
-        m_M9WorldAcceptance->LoopClip = loopClip;
+            m_M9WorldAcceptance->EffectClip = effectClip;
+            m_M9WorldAcceptance->LoopClip = loopClip;
+        }
         m_M9WorldAcceptance->bAssetsReady = false;
         auto& session = NorvesLib::Core::GEngine.GetSkeletalAssetSession();
         const auto bound = session.BindSnapshot(m_AssetSystemSnapshot);
@@ -3372,6 +3538,44 @@ namespace Game
 
     void GameApplicationHandler::OnPostRender()
     {
+#if NORVES_BUILD_DEVELOPMENT
+        if (m_M9WorldAcceptance)
+        {
+            Game::GameModes::ObserveM9WorldCompareCapture(*m_M9WorldAcceptance);
+        }
+        if (m_CameraPathCapture.bWaitingResult && !m_CameraPathCapture.bFinished &&
+            NorvesLib::Core::Engine::GEngine)
+        {
+            NorvesLib::Core::Rendering::CapturedFrame capturedFrame;
+            auto &renderWorld = NorvesLib::Core::Engine::GEngine->GetRenderWorld();
+            if (renderWorld.TryConsumeCapturedFrame(capturedFrame))
+            {
+                m_CameraPathCapture.bWaitingResult = false;
+                m_CameraPathCapture.bFinished = true;
+                if (!Game::Debug::SaveCapturedFramePng(capturedFrame, m_CameraPathCapturePngPath))
+                {
+                    LOG_ERROR_F("CAMERA_PATH_CAPTURE PNG の保存に失敗しました status=%u format=%u width=%u height=%u path=%s",
+                                static_cast<unsigned int>(capturedFrame.Status),
+                                static_cast<unsigned int>(capturedFrame.Format), capturedFrame.Width,
+                                capturedFrame.Height, m_CameraPathCapturePngPath.c_str());
+                    NorvesLib::Core::Engine::GEngine->RequestExit(1);
+                }
+                else
+                {
+                    LOG_INFO_F("CAMERA_PATH_CAPTURE_FRAME time=%.4f mode=played", m_CameraPathCaptureTime);
+                    LOG_INFO("CAMERA_PATH_CAPTURE RequestExit code=0 保存後に終了します");
+                    NorvesLib::Core::Engine::GEngine->RequestExit(0);
+                }
+            }
+            else if (++m_CameraPathCaptureWaitedFrames > 120)
+            {
+                LOG_ERROR("CAMERA_PATH_CAPTURE 120 フレーム待っても撮影結果が届きません");
+                m_CameraPathCapture.bWaitingResult = false;
+                m_CameraPathCapture.bFinished = true;
+                NorvesLib::Core::Engine::GEngine->RequestExit(1);
+            }
+        }
+#endif
         if (m_SequenceFrameCapture.IsEnabled() && NorvesLib::Core::Engine::GEngine)
         {
             m_SequenceFrameCapture.OnPostRender(NorvesLib::Core::Engine::GEngine->GetRenderWorld());
@@ -3547,6 +3751,11 @@ namespace Game
     {
         // --capture-views は撮り終えるまで、ApplicationProcessor の --capture-png の撮影と終了を止めておく
 #if NORVES_BUILD_DEVELOPMENT
+        // パスの指定時刻の撮影が終わるまで、ApplicationProcessor の撮影を待たせる。
+        if (m_CameraPathCaptureTime >= 0.0 && !m_CameraPathCapture.bFinished)
+        {
+            return true;
+        }
         // --geom-settle-trace は、記録を書き終えるまで撮影と終了を止める
         if (m_GeometrySettleTrace.IsHolding())
         {
@@ -3892,7 +4101,9 @@ namespace Game
                 mode->GetData().m_OrbitDegreesPerSecond = s_Rendering3DTestOrbitDegreesPerSecond;
                 mode->GetData().m_StartupRenderScale = s_Rendering3DTestRenderScale;
                 mode->GetData().m_bDebugDrawTestLines = s_bRendering3DTestDebugDrawTestLines;
-                mode->GetData().m_bStartupSkinnedProbe = s_bRendering3DTestSkinnedProbe;
+                mode->GetData().m_bStartupSkinnedProbe = s_bRendering3DTestSkinnedProbe ||
+                    s_Rendering3DTestSkinnedProbeMaterialCount == 2u;
+                mode->GetData().m_StartupSkinnedProbeMaterialCount = s_Rendering3DTestSkinnedProbeMaterialCount;
                 mode->GetData().m_bAnimationDebug = m_bAnimationDebugRequested;
 #if defined(NORVES_ENABLE_IMGUI)
                 mode->GetData().m_bDebugImGui = m_bImGuiRequested;
@@ -3948,6 +4159,9 @@ namespace Game
         stateMachine->Registry().Register(
             MegaBananas,
             [viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath, pathTime = m_CameraPathTime,
+#if NORVES_BUILD_DEVELOPMENT
+             captureTime = m_CameraPathCaptureTime, pathCapture = &m_CameraPathCapture,
+#endif
              bPathPlay = m_bCameraPathPlay, bananaCount = m_BananaCount, bShowInfo = m_bOpenSceneInfo,
              pauseMenu = &m_PauseMenu, viewSwitch = &m_SceneViewSwitch,
              getAssetSystem = [this]() { return GetAssetSystemSnapshot(); }](const GameModeParams&)
@@ -3958,6 +4172,10 @@ namespace Game
                 mode->GetData().m_CameraScriptPath = scriptPath;
                 mode->GetData().m_CameraPathTime = pathTime;
                 mode->GetData().m_bCameraPathPlay = bPathPlay;
+#if NORVES_BUILD_DEVELOPMENT
+                mode->GetData().m_CameraPathCaptureTime = captureTime;
+                mode->GetData().m_pCameraPathCapture = pathCapture;
+#endif
                 mode->GetData().m_BananaCount = bananaCount;
                 mode->GetData().m_bShowInfoAtStart = bShowInfo;
                 mode->GetData().m_pPauseMenu = pauseMenu;

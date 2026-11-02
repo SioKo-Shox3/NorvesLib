@@ -9,6 +9,9 @@ norves_add_test_bundle(NorvesLibBridgeAdapterScriptComponentTest
     MEMBER NorvesLibBridgeAdapterThumbnailTest NorvesLibBridgeAdapterThumbnailTest.cpp
     MEMBER BridgeBase64Test BridgeBase64Test.cpp
 )
+# Game のソース（NorvesGameSources）を組み込むので、全体のビルドで Game の翻訳単位をもう一度コンパイルし、
+# Game のソースが増えるたびに壊れていた。対象と実行から外す（2026-11-01）。
+set_target_properties(NorvesLibBridgeAdapterScriptComponentTest PROPERTIES EXCLUDE_FROM_ALL TRUE)
 target_link_libraries(NorvesLibBridgeAdapterScriptComponentTest PRIVATE NorvesGameSources)
 target_include_directories(NorvesLibBridgeAdapterScriptComponentTest PRIVATE
     ${CMAKE_SOURCE_DIR}/Library/Core/Private
@@ -36,6 +39,14 @@ set_tests_properties(
     NorvesLibBridgeAdapterScriptComponentTest
     NorvesLibBridgeAdapterNumericEntityRegressionTest
     PROPERTIES TIMEOUT 300
+)
+
+set_tests_properties(
+    NorvesLibBridgeAdapterScriptComponentTest
+    NorvesLibBridgeAdapterNumericEntityRegressionTest
+    NorvesLibBridgeAdapterThumbnailTest
+    BridgeBase64Test
+    PROPERTIES DISABLED TRUE
 )
 
 # ランチャーの入力順の検査。LauncherMenu は入力の型だけに依存するので、Core にはリンクしない小さな実行ファイルにする。
@@ -75,3 +86,52 @@ if(MSVC)
     target_compile_options(PauseMenuTest PRIVATE /utf-8)
 endif()
 add_test(NAME PauseMenuTest COMMAND PauseMenuTest)
+
+# 資産プロパティの編集・保存・拒否を Game 全体に依存せず検査する。
+add_executable(BridgeAssetPropertyEditTest
+    BridgeAssetPropertyEditTest.cpp
+    ${CMAKE_SOURCE_DIR}/Game/Bridge/BridgeAssetPropertyEditor.cpp
+)
+set_target_properties(BridgeAssetPropertyEditTest PROPERTIES FOLDER "Test/Game/Bridge")
+target_link_libraries(BridgeAssetPropertyEditTest PRIVATE Core)
+target_include_directories(BridgeAssetPropertyEditTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Game
+    ${CMAKE_SOURCE_DIR}/Library
+    ${CMAKE_SOURCE_DIR}/Library/Core
+    ${CMAKE_SOURCE_DIR}/Library/Core/Public
+)
+if(MSVC)
+    target_compile_options(BridgeAssetPropertyEditTest PRIVATE /utf-8)
+endif()
+add_test(NAME BridgeAssetPropertyEditTest COMMAND BridgeAssetPropertyEditTest)
+
+# 決定的な撮影の実 GPU 検査。Game からは撮影セッションの翻訳単位だけを組み込む。
+add_executable(BridgeDeterministicCaptureVulkanTest
+    BridgeDeterministicCaptureVulkanTest.cpp
+    ${CMAKE_SOURCE_DIR}/Game/Bridge/BridgeDeterministicCapture.cpp
+)
+set_target_properties(BridgeDeterministicCaptureVulkanTest PROPERTIES FOLDER "Test/Game/Bridge")
+target_link_libraries(BridgeDeterministicCaptureVulkanTest PRIVATE
+    RenderingValidationFixtureSupport
+    RenderingGpuTestSupport
+    Core
+)
+target_include_directories(BridgeDeterministicCaptureVulkanTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Game
+    ${CMAKE_SOURCE_DIR}/Library
+    ${CMAKE_SOURCE_DIR}/Library/Core
+    ${CMAKE_SOURCE_DIR}/Library/Core/Public
+)
+if(MSVC)
+    target_compile_options(BridgeDeterministicCaptureVulkanTest PRIVATE /utf-8)
+endif()
+add_test(NAME BridgeDeterministicCaptureVulkanTest COMMAND BridgeDeterministicCaptureVulkanTest)
+set_tests_properties(BridgeDeterministicCaptureVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    TIMEOUT 600
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)

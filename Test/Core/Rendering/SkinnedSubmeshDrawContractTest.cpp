@@ -1,4 +1,5 @@
 ﻿// 既存の停止中テストとは別exe。実Coreと小さなRHI test doubleでCPU記録契約を検査する。
+#include "Rendering/MeshIndexChunks.h"
 #include "Rendering/SkinnedDrawCommands.h"
 #include "Rendering/SkinnedMeshGpuStore.h"
 #include "Rendering/SkinnedShadowComponentBindings.h"
@@ -45,6 +46,35 @@ namespace Skeletal = NorvesLib::Core::Skeletal;
 
 namespace
 {
+    void TestSkinnedMeshIndexChunks()
+    {
+        Container::VariableArray<MeshIndexChunk> chunks;
+        chunks.push_back({9u, 3u});
+        assert(BuildSkinnedMeshIndexChunks(900u, 1200u, 0u, chunks) == SkinnedMeshIndexChunkResult::WholeMesh);
+        assert(BuildSkinnedMeshIndexChunks(900u, 0u, 900u, chunks) == SkinnedMeshIndexChunkResult::WholeMesh);
+        assert(BuildSkinnedMeshIndexChunks(900u, 0u, 1200u, chunks) == SkinnedMeshIndexChunkResult::WholeMesh);
+        assert(chunks.size() == 1u && chunks[0].FirstIndex == 9u && chunks[0].IndexCount == 3u);
+
+        assert(BuildSkinnedMeshIndexChunks(1536u, 384u, 768u, chunks) == SkinnedMeshIndexChunkResult::Built);
+        assert(chunks.size() >= 2u);
+        uint32_t covered = 0u;
+        for (const MeshIndexChunk& chunk : chunks)
+        {
+            assert(chunk.FirstIndex == 384u + covered);
+            assert(chunk.IndexCount > 0u && chunk.IndexCount % 3u == 0u);
+            assert(chunk.IndexCount <= MESH_CHUNK_MAX_TRIANGLES * 3u);
+            covered += chunk.IndexCount;
+        }
+        assert(covered == 768u);
+
+        assert(BuildSkinnedMeshIndexChunks(1536u, 1u, 384u, chunks) == SkinnedMeshIndexChunkResult::Failure);
+        assert(BuildSkinnedMeshIndexChunks(1536u, 384u, 385u, chunks) == SkinnedMeshIndexChunkResult::Failure);
+        assert(BuildSkinnedMeshIndexChunks(1536u, 1539u, 3u, chunks) == SkinnedMeshIndexChunkResult::Failure);
+        assert(BuildSkinnedMeshIndexChunks(1536u, 1152u, 768u, chunks) == SkinnedMeshIndexChunkResult::Failure);
+        assert(BuildSkinnedMeshIndexChunks(UINT32_MAX - 1u, UINT32_MAX - 3u, 6u, chunks) ==
+               SkinnedMeshIndexChunkResult::Failure);
+    }
+
     class FakeBuffer final : public RHI::IBuffer
     {
     public:
@@ -897,6 +927,7 @@ namespace
 }
 int main()
 {
+    TestSkinnedMeshIndexChunks();
     TestCommandsAndInvalidLeases();
     TestRecordedRangesAndForgery();
     TestPaletteSharingOrdersAndIdentity();

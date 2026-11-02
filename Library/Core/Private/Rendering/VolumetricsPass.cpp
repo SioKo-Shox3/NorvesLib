@@ -9,6 +9,7 @@
 #include "Rendering/SceneProxy.h"
 #include "Rendering/ShaderManager.h"
 #include "Rendering/ViewRenderContext.h"
+#include "Rendering/VirtualShadowMapPass.h"
 #include "RHI/IDevice.h"
 #include "Logging/LogMacros.h"
 #include "RHI/ICommandList.h"
@@ -17,6 +18,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <iterator>
+#include <limits>
 
 namespace NorvesLib::Core::Rendering
 {
@@ -47,11 +49,13 @@ namespace NorvesLib::Core::Rendering
             float AerialScattering[4];
             // 空気遠近の高度ごとの表（SkyAerialProfile）。[i] = 太陽の照度 × 透過率、[SkyAerialProfileSize + i] = 太陽の照度 × Ψ_ms
             float AerialProfile[2u * SkyAerialProfileSize][4];
+            // x=霧の距離の上限（m、0 で視線全体）、y=周りの光の倍率、zw=未使用
+            float FogRange[4];
         };
 
-        static_assert(sizeof(GPUVolumetricsParams) == 784u + 2u * SkyAerialProfileSize * 16u);
+        static_assert(sizeof(GPUVolumetricsParams) == 800u + 2u * SkyAerialProfileSize * 16u);
 
-        RHI::DescriptorSetDesc CreateVolumetricsDescriptorSetDesc()
+        RHI::DescriptorSetDesc CreateVolumetricsDescriptorSetDesc(bool bUseVsm)
         {
             RHI::DescriptorSetDesc desc;
 
@@ -84,6 +88,20 @@ namespace NorvesLib::Core::Rendering
             skyTransmittanceBinding.type = RHI::ResourceBindType::CombinedImageSampler;
             skyTransmittanceBinding.stages = RHI::ShaderStage::Pixel;
             desc.bindings.push_back(skyTransmittanceBinding);
+
+            // 大気の書き出しでは増やさず、画面の霧だけが VSM の資源を読む。
+            if (bUseVsm)
+            {
+                for (uint32_t binding = 6u; binding <= 9u; ++binding)
+                {
+                    RHI::DescriptorBinding vsmBinding;
+                    vsmBinding.binding = binding;
+                    vsmBinding.type = binding == 6u ? RHI::ResourceBindType::ConstantBuffer
+                                                   : RHI::ResourceBindType::StructuredBuffer;
+                    vsmBinding.stages = RHI::ShaderStage::Pixel;
+                    desc.bindings.push_back(vsmBinding);
+                }
+            }
             return desc;
         }
 
@@ -276,6 +294,8 @@ namespace NorvesLib::Core::Rendering
             outParams.FogParameters[1] = fog.BaseHeight;
             outParams.FogParameters[2] = fog.HeightFalloffPerUnit;
             outParams.FogParameters[3] = skyRadianceTexture ? 1.0f : 0.0f;
+            outParams.FogRange[0] = fog.MaxDistanceMeters;
+            outParams.FogRange[1] = fog.AmbientScale;
 
             const SceneProxy* scene = context.SnapshotScene;
             outParams.FallbackFogColor[0] = scene ? SafeFogColorChannel(scene->FogColorR) : 0.0f;
@@ -405,11 +425,20 @@ namespace NorvesLib::Core::Rendering
         m_SkyTransmittanceSampler = m_Device->CreateSampler(skyTransmittanceSamplerDesc);
 
         // 記述子セットのレイアウト（同じ形のパスと共有する 1 つをデバイスから引く。セットと定数は Execute ごとに借りる）
-        m_DescriptorSetLayout = m_Device->GetOrCreateDescriptorSetLayout(CreateVolumetricsDescriptorSetDesc());
-        if (!m_SceneDepthSampler || !m_SkyRadianceSampler || !m_SkyTransmittanceSampler ||
-            !m_DescriptorSetLayout)
+        m_DescriptorSetLayout = m_Device->GetOrCreateDescriptorSetLayout(CreateVolumetricsDescriptorSetDesc(true));
+        const uint32_t emptyVsmWord = 0u;
+        m_DefaultVsmBuffer = m_Device->CreateBuffer(RHI::BufferDesc(sizeof(emptyVsmWord),
+                                                                  RHI::ResourceUsage::StorageBuffer,
+                                                                  true,
+                                                                  "VolumetricsVsmDefault"));
+        if (m_DefaultVsmBuffer)
         {
-            NORVES_LOG_ERROR("VolumetricsPass", "サンプラか記述子セットのレイアウトを作れませんでした");
+            m_DefaultVsmBuffer->Update(&emptyVsmWord, sizeof(emptyVsmWord));
+        }
+        if (!m_SceneDepthSampler || !m_SkyRadianceSampler || !m_SkyTransmittanceSampler ||
+            !m_DescriptorSetLayout || !m_DefaultVsmBuffer)
+        {
+            NORVES_LOG_ERROR("VolumetricsPass", "サンプラ・記述子セットのレイアウト・VSM の既定のバッファを作れませんでした");
             Shutdown();
             return false;
         }
@@ -425,6 +454,7 @@ namespace NorvesLib::Core::Rendering
         m_RenderPass.reset();
         m_UnownedDescriptorSets.clear();
         m_UnownedBuffers.clear();
+        m_DefaultVsmBuffer.reset();
         m_DescriptorSetLayout.reset();
         m_SkyTransmittanceSampler.reset();
         m_SkyRadianceSampler.reset();
@@ -437,6 +467,8 @@ namespace NorvesLib::Core::Rendering
         m_SkyAtmosphereRadianceHandle = {};
         m_SkyAtmosphereTransmittanceHandle = {};
         m_CascadedShadowMapHandle = {};
+        m_VsmPageTableHandle = {};
+        m_VsmPoolHandle = {};
         m_CurrentWidth = 0u;
         m_CurrentHeight = 0u;
         m_CurrentFormat = RHI::Format::UNKNOWN;
@@ -459,6 +491,8 @@ namespace NorvesLib::Core::Rendering
         m_SkyAtmosphereRadianceHandle = {};
         m_SkyAtmosphereTransmittanceHandle = {};
         m_CascadedShadowMapHandle = {};
+        m_VsmPageTableHandle = {};
+        m_VsmPoolHandle = {};
 
         const ViewRenderContext* context = builder.GetContext();
         const SceneProxy* snapshotScene = context ? context->SnapshotScene : nullptr;
@@ -512,6 +546,21 @@ namespace NorvesLib::Core::Rendering
             m_CascadedShadowMapHandle = cascadedShadowMapHandle.ToResourceHandle();
         }
 
+        // VSM が公開されたフレームだけ読み、グラフに書き込み後の可視性を保証させる。
+        if (builder.HasBuffer(RenderGraphResourceNames::VsmPageTable) &&
+            builder.HasBuffer(RenderGraphResourceNames::VsmPhysicalPool))
+        {
+            const RGBufferHandle vsmPageTableBuffer =
+                builder.ReadBuffer(RenderGraphResourceNames::VsmPageTable, RHI::ResourceState::ShaderResource);
+            const RGBufferHandle vsmPoolBuffer =
+                builder.ReadBuffer(RenderGraphResourceNames::VsmPhysicalPool, RHI::ResourceState::ShaderResource);
+            if (vsmPageTableBuffer.IsValid() && vsmPoolBuffer.IsValid())
+            {
+                m_VsmPageTableHandle = vsmPageTableBuffer.ToResourceHandle();
+                m_VsmPoolHandle = vsmPoolBuffer.ToResourceHandle();
+            }
+        }
+
         // SSRがあれば、その出力（照明の色の環境光の鏡面反射を画面の反射へ置き換えた色）へフォグを重ねる
         RGTextureHandle sceneColorHandle;
         const bool bHasSceneColor =
@@ -533,6 +582,8 @@ namespace NorvesLib::Core::Rendering
             m_SkyAtmosphereRadianceHandle = {};
             m_SkyAtmosphereTransmittanceHandle = {};
             m_CascadedShadowMapHandle = {};
+            m_VsmPageTableHandle = {};
+            m_VsmPoolHandle = {};
             return;
         }
         m_SceneColorHandle = sceneColorHandle.ToResourceHandle();
@@ -639,7 +690,7 @@ namespace NorvesLib::Core::Rendering
                 paramsBuffer->Update(&params, sizeof(params));
                 m_UnownedBuffers.push_back(paramsBuffer);
             }
-            descriptorSet = m_Device->CreateDescriptorSet(CreateVolumetricsDescriptorSetDesc());
+            descriptorSet = m_Device->CreateDescriptorSet(CreateVolumetricsDescriptorSetDesc(true));
             if (descriptorSet)
             {
                 m_UnownedDescriptorSets.push_back(descriptorSet);
@@ -652,6 +703,100 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
+        // 太陽の VSM が揃わないフレームは無効の定数と既定のバッファで CSM へ戻す。
+        GPUVsmSampleParams vsmParams = {};
+        GPUVsmSlice vsmSlices[VirtualShadowMapMaxSlices];
+        BuildVirtualShadowMapSlices(nullptr, nullptr, VirtualShadowMapMaxSlices, vsmSlices);
+        RHI::BufferPtr boundVsmPageTable = m_DefaultVsmBuffer;
+        RHI::BufferPtr boundVsmPool = m_DefaultVsmBuffer;
+        uint32_t boundVsmPageTableBytes = 4u;
+        uint32_t boundVsmPoolBytes = 4u;
+        const RHI::BufferPtr vsmPageTable = m_VsmPageTableHandle.IsValid()
+                                               ? resources.GetBuffer(m_VsmPageTableHandle)
+                                               : RHI::BufferPtr{};
+        const RHI::BufferPtr vsmPool = m_VsmPoolHandle.IsValid()
+                                          ? resources.GetBuffer(m_VsmPoolHandle)
+                                          : RHI::BufferPtr{};
+        if (paramsState.bDirectionalAvailable && vsmPageTable && vsmPool &&
+            activeCamera->Projection == ProjectionType::Perspective &&
+            vsmPageTable->GetSize() >= VirtualShadowMap::PageTableBytes() &&
+            vsmPool->GetSize() >= VirtualShadowMap::PAGE_BYTES)
+        {
+            const float cameraPosition[3] = {activeCamera->PositionX, activeCamera->PositionY, activeCamera->PositionZ};
+            const float cameraForward[3] = {activeCamera->ForwardX, activeCamera->ForwardY, activeCamera->ForwardZ};
+            const uint64_t poolPages = vsmPool->GetSize() / VirtualShadowMap::PAGE_BYTES;
+            const uint32_t clampedPoolPages = static_cast<uint32_t>(
+                std::min<uint64_t>(poolPages, VirtualShadowMap::MAX_POOL_PAGES));
+            if (BuildVirtualShadowMapSampleParams(&context.PhysicalLighting.SunClipmap,
+                                                  cameraPosition,
+                                                  cameraForward,
+                                                  context.PhysicalLighting.CascadedShadow.SplitDistances,
+                                                  activeCamera->FieldOfView,
+                                                  static_cast<float>(sceneDepthTexture->GetHeight()),
+                                                  clampedPoolPages,
+                                                  vsmParams,
+                                                  &m_VsmLevelThresholdCache))
+            {
+                BuildVirtualShadowMapSlices(&context.PhysicalLighting.SunClipmap, nullptr,
+                                             VirtualShadowMapMaxSlices, vsmSlices);
+                boundVsmPageTable = vsmPageTable;
+                boundVsmPool = vsmPool;
+                boundVsmPageTableBytes = static_cast<uint32_t>(std::min<uint64_t>(
+                    vsmPageTable->GetSize(), std::numeric_limits<uint32_t>::max()));
+                boundVsmPoolBytes = static_cast<uint32_t>(std::min<uint64_t>(
+                    vsmPool->GetSize(), std::numeric_limits<uint32_t>::max()));
+            }
+        }
+
+        RHI::BufferPtr vsmParamsBuffer;
+        RHI::BufferPtr vsmSlicesBuffer;
+        uint32_t vsmParamsOffset = 0u;
+        uint32_t vsmSlicesOffset = 0u;
+        if (FrameResourceLane* frameResources = context.FrameResources)
+        {
+            const FrameUploadAllocation vsmParamsAllocation = frameResources->AllocateConstants(vsmParams);
+            const FrameUploadAllocation vsmSlicesAllocation = frameResources->AllocateUploadData(
+                vsmSlices, sizeof(vsmSlices), FrameUploadUsage::Storage);
+            if (vsmParamsAllocation.IsValid() && vsmSlicesAllocation.IsValid())
+            {
+                vsmParamsBuffer = vsmParamsAllocation.Buffer;
+                vsmParamsOffset = vsmParamsAllocation.GetOffset32();
+                vsmSlicesBuffer = vsmSlicesAllocation.Buffer;
+                vsmSlicesOffset = vsmSlicesAllocation.GetOffset32();
+            }
+        }
+        else if (m_Device)
+        {
+            // 持ち主が無いときも毎回作り、提出済みの定数と表を上書きしない。
+            const auto createUnownedBuffer = [this](const void* data, uint64_t size,
+                                                    RHI::ResourceUsage usage, const char* name)
+            {
+                RHI::BufferPtr buffer = m_Device->CreateBuffer(RHI::BufferDesc(size, usage, true, name));
+                if (buffer)
+                {
+                    buffer->Update(data, size);
+                    m_UnownedBuffers.push_back(buffer);
+                }
+                return buffer;
+            };
+            vsmParamsBuffer = createUnownedBuffer(&vsmParams, sizeof(vsmParams),
+                                                  RHI::ResourceUsage::ConstantBuffer,
+                                                  "VolumetricsVsmParams.Unowned");
+            vsmSlicesBuffer = createUnownedBuffer(vsmSlices, sizeof(vsmSlices),
+                                                  RHI::ResourceUsage::StorageBuffer,
+                                                  "VolumetricsVsmSlices.Unowned");
+        }
+        if (!vsmParamsBuffer || !vsmSlicesBuffer || !boundVsmPageTable || !boundVsmPool)
+        {
+            NORVES_LOG_ERROR("VolumetricsPass", "VSM の定数か表を借りられないため、このフレームは霧を描きません");
+            EnqueueEmptyNativePass(context, sceneColorTexture);
+            return;
+        }
+
+        descriptorSet->BindConstantBuffer(6u, vsmParamsBuffer, vsmParamsOffset, sizeof(vsmParams));
+        descriptorSet->BindStorageBuffer(7u, boundVsmPageTable, 0u, boundVsmPageTableBytes);
+        descriptorSet->BindStorageBuffer(8u, boundVsmPool, 0u, boundVsmPoolBytes);
+        descriptorSet->BindStorageBuffer(9u, vsmSlicesBuffer, vsmSlicesOffset, sizeof(vsmSlices));
         descriptorSet->BindConstantBuffer(2u, paramsBuffer, paramsOffset, sizeof(GPUVolumetricsParams));
         descriptorSet->BindTexture(0u, sceneDepthTexture);
         descriptorSet->BindSampler(0u, m_SceneDepthSampler);
@@ -786,7 +931,7 @@ namespace NorvesLib::Core::Rendering
                                          RHI::ColorWriteMask::B;
         pipelineDesc.blendState.attachments.push_back(blendAttachment);
         pipelineDesc.renderPass = m_RenderPass;
-        pipelineDesc.descriptorSetLayouts.push_back(CreateVolumetricsDescriptorSetDesc());
+        pipelineDesc.descriptorSetLayouts.push_back(CreateVolumetricsDescriptorSetDesc(true));
         m_Pipeline = m_Device->CreateGraphicsPipeline(pipelineDesc);
         if (!m_Pipeline)
         {
@@ -856,7 +1001,7 @@ namespace NorvesLib::Core::Rendering
 
         RHI::DescriptorSetDesc CreateAtmosphereProbeDescriptorSetDesc()
         {
-            RHI::DescriptorSetDesc desc = CreateVolumetricsDescriptorSetDesc();
+            RHI::DescriptorSetDesc desc = CreateVolumetricsDescriptorSetDesc(false);
             RHI::DescriptorBinding raysBinding;
             raysBinding.binding = 5u;
             raysBinding.type = RHI::ResourceBindType::ConstantBuffer;

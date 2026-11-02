@@ -3025,9 +3025,9 @@
 - notes: 2026-10-24 親が確認 2 の後の計画の後半（地形の形。ユーザーの順: 地形の形 → 植物 → 地面 → 建物）の 1 段目として足した。SCN-WL-SHAPE-CAUSE の所見（`Docs/RenderingValidation/WastelandShape.md`、e5e06e0d）: 丸さの原因は重い順に 近景の谷床の 1 m の格子の限界・崖の生成が縦の溝だけを足し水平の棚と上端の角と崖錐へ移る塊を作らないこと・遠い崖の陰影の頂点の法線・LOD（効き 1〜7 ポイントで小さいので項目にしない）・遠景の格子の段。Sol の批評 2 回（`Docs/Plans/WastelandRebuild-SolCritique-TerrainCloud-20261024.txt`・`WastelandRebuild-SolCritique-Terrain2-20261024.txt`）を反映した。1 段目は 形の測りの補強 → 地形の画素の印 → 範囲ごとの量と前の基準 → 焼いた面の問い合わせ → 置いた物の接地の検査 → 棚 → 上端の角 → 内部の折れ線の注釈 → 崩れた塊。2 段目（細かな高さの契約・涸れ川・遠い崖の陰影の法線・地形の Cycles の参照の描き直し）は 1 段目の結果を見て組む（設計の論点は `Docs/Plans/WastelandRebuild.md`）。 時間の見積もり: 注釈 3 枚 20〜30 分、測りの拡張 20〜30 分。 壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える（未達のまま DONE にしない）。verify は 1 行 10 分未満（ビルドは構成ごとに別の行、撮影は組か視点で分ける）。
 
 ## SCN-WL-CLIFF-GEN-TALUS: 崖の生成に、壁から崖錐へ移る崩れた大きな塊を足す
-- status: done
-- after: SCN-WL-CLIFF-GEN-CAPROCK, SCN-WL-SHAPE-INTERNAL-FOLDS, SCN-WL-PLACEMENT-GROUNDING-FIX
-- done-when: SCN-WL-SHAPE-CAUSE の原因 2 の続き: 壁から崖錐へ移る所が滑らかな斜面で、写真の崩れた大きな塊（数 m〜十数 m）が無い。崖の生成の範囲の壁の足元に、崩れた塊の形（押し出しと段）を足す（崖錐の岩の散布〔小さな岩〕とは別の、地形の形の塊）。担当: 崖の生成の担当の 7 範囲（`Tools/AssetCook/TerrainCliffDetail.cpp` の kNearRegions[2] Rooster Butte・kNearRegions[3] Setting Hen Butte と南の小さな崖・kCastleRegions[0]〜[4] の castle の段の 5 範囲。範囲の名前を `Scripts/Terrain/ShapeRegions.json` に同じ ID で持たせる）。Battleship Rock と Franklin Butte の尖塔の台座（kNearRegions[0]・[1]）は SCN-WL-CLIFF-SCAN-NEAR・FRANKLIN のスキャンの崖の担当で、この項目では変えない。合否: (A) `--shape --expect shape-cliff-talus.json` で、内部の折れ線（壁の足・塊の稜線）の一致の割合・余分な折れ・局所の欠けが SCN-WL-SHAPE-INTERNAL-FOLDS の基準を満たし、棚・角・外形が悪くならない、(B) `--shape-cause --baseline --expect`（同じ仕様の範囲の行）: 担当の範囲で局所の退行（前の基準より 10 ポイント以上下がった区画）が 5 % 以下、担当の外の範囲の値が前の基準と変わらない（差 2 ポイント以内）、(C) 置いた物の接地が担当の範囲で前の記録より悪くならない（`CheckPlacement.py --range-group cliff-gen --baseline` で、崖の生成の 7 範囲の物の組ごとの違反の数と浮き・埋もれの 99 百分位が、SCN-WL-CLIFF-PLACEMENT-CHECK の記録〔`.harness/runs/scene-capture/SCN-WL-CLIFF-PLACEMENT-CHECK/placement_check.record.json`〕を物の数の 0.5 % を超えて上回らず、測り切れない物が 0。全域の違反 0 は SCN-WL-PLACEMENT-GROUNDING-FIX で扱う）、(D) クックの対象（`--cook-coverage`。この項目で作る: 担当の範囲に掛かる区画のパッケージの入力の印が新しい AssetCook と生成の版を指し、焼いた数が区画の数と合う）、(E) ページの要求の溢れ・失敗 0（`--geom-requests`）、VRAM の使用（Game.log の値）が予算の 90 % 以下、地形の三角形の数・クックの時間を前後で記録、(F) 継ぎ目・穴・区画の境の段が無いことと写真との並びを開いて確かめる。 崖錐の岩の散布が塊に埋もれない・浮かない（担当の範囲で前の記録より悪くならない。上の (C)）。
+- status: todo
+- after: SCN-WL-CLIFF-GEN-CAPROCK, SCN-WL-SHAPE-INTERNAL-FOLDS, SCN-WL-PLACEMENT-GROUNDING-FIX, SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1
+- done-when: 人の判断(2026-11-02、`blocked/SCN-WL-CLIFF-GEN-TALUS.md` の案 A)で問いを替えた。元の問い（壁から崖錐へ移る所に、写真の崩れた大きな塊〔数 m〜十数 m〕の形を高さの場で足す）は、版 16〜18 の 3 回とも (A) が版 15 を下回り、1 m の格子の限界（SCN-WL-SHAPE-CAUSE の原因 1）に当たったので、この項目では未達で閉じる。崩れた塊は、スキャンの岩・Blender の大きな岩の物（数 m〜十数 m のメッシュ）として置く別の項目にする（`PROGRESS.md` の Notes に `要起票:` で残す）。すること: 版 18 の崖錐の側の塊の持ち上げ（`TalusBlockRise`）を外し、生成の版を 19 に上げ（番号は戻さない。出力の形は版 15 と同じ）、214 項目を焼き直す。担当の範囲は元のまま（`Tools/AssetCook/TerrainCliffDetail.cpp` の崖の生成の 7 範囲。Battleship Rock と Franklin Butte の尖塔の台座〔kNearRegions[0]・[1]〕は変えない）。合否: (A) `--shape --expect shape-cliff-talus.json` の各行が版 15 の値に戻る。`shape-cliff-talus.json` は、塊を求める行（`fold_gain` など、版 15 を超えることを求める行）を外し、残りの行（棚・角・外形・内部の折れ線）を版 15 の合格の値に合わせ直す。版 15 の実測より緩めない、(B) `--shape-cause --baseline --expect`（同じ仕様の範囲の行）: 担当の範囲で局所の退行（前の基準より 10 ポイント以上下がった区画）が 5 % 以下、担当の外の範囲の値が前の基準と変わらない（差 2 ポイント以内）、(C) 置いた物の接地が担当の範囲で SCN-WL-CLIFF-PLACEMENT-CHECK の記録〔`.harness/runs/scene-capture/SCN-WL-CLIFF-PLACEMENT-CHECK/placement_check.record.json`〕を物の数の 0.5 % を超えて上回らず、測り切れない物が 0、(D) クックの対象（`--cook-coverage`）: 担当の範囲に掛かる区画のパッケージの入力の印が新しい AssetCook と版 19 を指し、焼いた数が区画の数と合う、(E) ページの要求の溢れ・失敗 0（`--geom-requests`）、VRAM の使用（Game.log の値）が予算の 90 % 以下、地形の三角形の数・クックの時間を前後で記録、(F) 継ぎ目・穴・区画の境の段が無いことと写真との並びを開いて確かめる。結果は `Docs/RenderingValidation/WastelandShape.md` に版 19 として書く。焼き直した地形がほかの枠と共有の置き場に入るなら、版 18 で描いた荒野の遮蔽の比べの Cycles の正解（SCN-RENDER-ROUGH-STEEP-ENERGY-P2）と合わなくなるので、描き直しが要るかを確かめ、要るなら `要起票:` に残す。 起動を止めている間は、`TalusBlockRise` を外して版 19 にした AssetCook のビルド、214 項目の焼き直し、(D) の `--cook-coverage`、`shape-cliff-talus.json` の行の整理（版 15 の合格の値は `Docs/RenderingValidation/WastelandShape.md` の記録から書く）、`要起票:` の記録までで済む。(A)〜(C)・(E)・(F) の撮影と比べは、起動を戻した後の `SCN-WL-CLIFF-GEN-TALUS-CHECK` で確かめる。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `cmake --build build --config RelWithDebInfo --target AssetCook -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CookAssets.ps1 -AssetCookExe build/Tools/AssetCook/RelWithDebInfo/AssetCook.exe -OnlyLogicalPath "Assets/Models/WastelandTerrain/*"`
@@ -3071,6 +3071,7 @@
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `python Scripts/Terrain/LaunchVariance.py --views ref_cliff_01 --launches 5 --game-args wasteland-common-light,wasteland-hide=clouds+foliage+gravel+buildings+aerial+fog,wasteland-gray-material,wasteland-aa=fxaa,wasteland-talus-limit=off --out .harness/runs/scene-capture/SCN-WL-SHADOW-LAUNCH-VARIANCE --verify`
 - paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Scripts, Docs/RenderingValidation, TASKS.md, PROGRESS.md
+- check: launch
 - notes: 危険地帯（影のページ・ジオメトリのページの常駐）。2026-10-25 親が PROGRESS.md の要起票から足した。`LaunchVariance.py`（この項目で作る。CaptureScene.ps1 を同じ引数で別々の起動で回して組ごとの差を出す）の名前と引数は変えてよいが verify も合わせる。5 回の撮影が 10 分を超えるなら、回数を分けた行にする。Git Bash では `cmake --build ... -- /m:1` の `/m:1` が `m:1` に書き換わって MSBuild が MSB1008 で落ちるので、ビルドは PowerShell で回す。壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える（未達のまま DONE にしない）。verify は 1 行 10 分未満（RelWithDebInfo のビルドは別の行）。
 
 ## SCN-WL-CLOUD-TOWERS: 遠い積雲に上へ伸びる塔の形を足し、頂を写真の積雲の盛り上がりに近づける
@@ -3087,6 +3088,7 @@
 - verify: `python Scripts/Terrain/ReferenceCheck.py --cloud-far --flicker --engine .harness/runs/scene-capture/SCN-WL-CLOUD-TOWERS/far --expect Scripts/Terrain/ExpectSpecs/cloud-far-accept.json --verify`
 - verify: `python Scripts/Terrain/ReferenceCheck.py --cloud --engine .harness/runs/scene-capture/SCN-WL-CLOUD-TOWERS/dump --reference .harness/runs/scene-capture/SCN-WL-CLOUD-TOWERS/cycles --expect Scripts/Terrain/ExpectSpecs/cloud-ref.json --verify`
 - paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Scripts, Docs/RenderingValidation, TASKS.md, PROGRESS.md
+- check: launch
 - notes: 危険地帯（共有の GLSL・既定の見た目）。2026-10-25 親が PROGRESS.md の要起票から足した。ちらつきの前の連番は `.harness/runs/scene-capture/SCN-WL-CLOUD-SHAPE-ACCEPT/far-flicker/after` を `.harness/runs/scene-capture/SCN-WL-CLOUD-TOWERS/far-flicker/before` に写して使う。cloud_sky の書き出し（`.harness/runs/scene-capture/SCN-WL-CLOUD-TOWERS/dump`）は反復の中で直しの後に 1 回撮って保存し、Cycles はその書き出しから描く（verify で撮り直さない）。雲の上端の高さの揺れの量の台本はこの項目で作る（`--cloud-shape` に足してよい）。壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える（未達のまま DONE にしない）。verify は 1 行 10 分未満（RelWithDebInfo のビルドは別の行）。
 ## SCN-CLOUDS-TEMPORAL: 雲を低解像度と時間方向の蓄積で軽くする
 - status: backlog
@@ -3204,7 +3206,7 @@
 
 ## SCN-RENDER-SPEC-OCC-VERIFY-REG: 鏡面の遮りの回帰の 4 シーン・golden・GPU 時間・material-gallery を、同じ最終の版で変更前の鏡面の経路と並べて確かめる
 - status: todo
-- after: SCN-RENDER-SPEC-OCC-VERIFY-OCC
+- after: SCN-RENDER-SPEC-OCC-VERIFY-OCC, SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1, SCN-RENDER-SPEC-WIDE-ESS, SCN-RENDER-SPEC-ROOF-HITS, SCN-WL-CLIFF-GEN-TALUS
 - done-when: SCN-RENDER-SPEC-OCCLUSION の確かめの残り（run 20261026-002702 の反復 7 の評価の 2 件目）: 同じ Game.exe（HEAD のシェーダー）で、(1) 回帰の 4 シーンの before を `--rtgi-specular=off`、after を今の形で撮り、差の画を開いて変わった所と理由を書く（`CaptureRegression.ps1` に `-GameArgs` を足す）、(2) golden の 2 本（Indoor・Outdoor）を回し、変わるなら差の原因と物理的な妥当さを確かめて `Docs/RenderingValidation/GoldenBaselines.md` の手順で再承認する、(3) GPU 時間を荒野の ref_ground_01 と interior-light の 1 視点で、off と今の形の 300 フレームの中央値で記録する（RT と GI 入りの目安 30 fps の中）、(4) material-gallery を off と今の形で撮って並べて開き、粗さの分岐（細いローブと広いローブの混ぜ）の見た目を書く。記録は `InteriorLightReference.md` と PROGRESS.md。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
@@ -3219,6 +3221,8 @@
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Scene material-gallery -GameArgs rtgi-specular=off -OutDir .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-REG/gallery-off`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Scene material-gallery -OutDir .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-REG/gallery-on`
 - paths: Scripts, Docs/RenderingValidation, Test/Core/Rendering/Baselines, TASKS.md, PROGRESS.md
+- gpu: exclusive
+- check: launch
 - notes: 2026-10-26 親が SCN-RENDER-SPEC-OCCLUSION の反復 7 の評価の 2 周目の差し戻しから足した。interior-light の視点の名前が overview でなければ、実際の名前に直して verify も合わせる。material-gallery の撮影に `-RequireAssets` が合わなければ外してよい。壁時計（75 分）の残りが 25 分を切ったら新しい撮影を始めず、撮れた所までをコミットして doing のまま終える（未達のまま DONE にしない）。verify は 1 行 10 分未満。シェーダーと描画の経路は変えない（この項目は確かめるだけ。直しが要る差を見つけたら値を付けて BLOCKED）。
 
 ## SCN-RENDER-SPEC-OCCLUSION: 鏡面の環境光（IBL・空の前計算の鏡面）を、見えない空の分だけ遮る
@@ -3230,6 +3234,7 @@
 - verify: `python Scripts/InteriorLightReference.py --compare --capture .harness/runs/scene-capture/SCN-RENDER-SPEC-OCCLUSION/interior --reference .harness/runs/scene-capture/SCN-INTERIOR-ROOM-ref --expect Scripts/Terrain/ExpectSpecs/interior-spec-occlusion.json`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Terrain/CaptureRegression.ps1 -Item SCN-RENDER-SPEC-OCCLUSION -Phase after`
 - paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Scripts, Docs/RenderingValidation, Test/Core/Rendering/Baselines, TASKS.md, PROGRESS.md
+- check: launch
 - notes: 危険地帯（描画の既定。全シーンに効く）。2026-10-23 親が SCN-INTERIOR-ROOM の反復 39 の BLOCKED（推奨の案 1）から足した。荒野の遮蔽の受け入れ（SCN-WL-OCCLUSION-ACCEPT）の後に回し、荒野の遮蔽と共通の照明の値が悪くならないことを確かめる（`OcclusionSets.py --capture --sets <組>` を組ごとの行で撮り、`--occlusion --expect occlusion-accept.json` と、共通の照明の組の撮り直しで `--light-final` を通す。verify の行はこの項目で足してよい。1 行 10 分未満）。壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える。 時間の見積もり: 回帰の before・after 各 7〜9 分、ビルド 3〜6 分、室内の撮影 約 3 分、荒野の組の撮り直し 約 25 分。 2026-10-25（親）: 走行 20261025-120217 の反復 9 の BLOCKED（空の見え方のコサインの重みの割合で鏡面を遮り、周りの面の光で埋める土台〔d96e2a2e〕で日陰の床の比は 2.5〜16 倍から 0.64〜1.24 へ寄ったが、overview の床の輝度 0.635 と 3 視点の青 ÷ 緑の比〔0.76〜1.17〕が範囲の外。反射の向きにだけ窓や日向の壁が見える形を今の情報で作れない）を推奨の案 1 で解いた: この項目の続きとして、RTGI に反射の向きの周り（GGX のローブ）の光線を 1 本足し、空へ抜けた割合と当たった面の光を時間で蓄積して、照明の鏡面の空の遮りと埋めをこの値から作る（d96e2a2e の変更は土台として残す）。合否の行（`interior-spec-occlusion.json`）は変えない。GPU 時間は荒野の ref_ground_01 と室内の 1 視点で前後を記録し、RT と GI 入りの目安（30 fps）の中に収める。荒野の遮蔽の必須の比と共通の照明の行が悪くならないことは、前の反復と同じ範囲で確かめる（地形の変更で古くなった参照による fail は前の反復の記録と同じ理由として書き、新しい差だけを見る）。1 反復で閉じなければ、進んだ所（光線の追加と蓄積 → 照明への接続）までコミットして doing のまま終える（新しい判断が要るときだけ BLOCKED）。 2026-10-25（親）: 反復 12 の BLOCKED（前の室内の正解は Blender の空のテクスチャを輝度だけ合わせて倍していて、窓越しの空の色がエンジンとずれていた。エンジンの空の LUT で描き直すと青 ÷ 緑の 3 行と日だまりの IoU の 3 行は合格し、日陰の床の輝度の 3 行は 0.612・0.694・0.720 で、部屋の中の拡散の照り返しの不足〔2 回目のバウンスで打ち切り〕が残る）を推奨の案 A で解いた: (1) エンジンの空の LUT で描き直した正解（`.harness/runs/scene-capture/SCN-INTERIOR-ROOM-ref/cycles/`。前の絵は `cycles-blender-sky/`）をこの項目と後の室内の項目の正解として採る（荒野の正解と同じ扱い。`InteriorLightReference.md` に描き方の変更と前後の空の画素の比を書く）。(2) この項目は鏡面の遮りの範囲で閉じる: `interior-spec-occlusion.json` の青 ÷ 緑の 3 行と日だまりの 3 行はそのまま、日陰の床の輝度の 3 行は上限（1.25 以下。空の映り込みの余分が消えたこと）だけをこの項目で見て、下限（0.8 以上）は SCN-RENDER-RTGI-HIT-ALBEDO の合否（`interior-hit-albedo.json` の床の行）へ移す。行の分け直しは仕様の弱めではなく項目の受け持ちの移し替えとして文書に書く。(3) 拡散の照り返しの変更（画面の RTGI の履歴を当たりに使う試し）はこの項目に入れない（入っていれば戻し、測った値を記録に残す）。(4) 反復 11 の評価の残り 2 件はこの項目で通す: 荒野の `rocks-sky/contact_near/slope30-60_d10-50` の対照の輝度比（0.962、下限 0.97）は同じ地形で前と今のシェーダーを比べてこの変更の分を切り分け、範囲へ戻す。共通の照明の組は今の版で撮り直して `--light-final` を通す（地形の変更で古くなった参照による fail は前の記録と同じ理由として分け、新しい差だけを見る）。この走行の評価の差し戻しは 1/2 周なので、評価に出す前に (2) と (4) を全部の行で開いて確かめる。 2026-10-25（親）: 反復 14 の BLOCKED（判断の要らない続きの BLOCKED。荒野の rocks-sky/contact_near の 0.962 は鏡面の遮りだけから来て、空の前計算が地平の下の地面の光まで畳み込んでいるのに、粗い面で地形に当たった光線の分をさらに引くため。BRDF の重みと空へ抜けた光線の空の光を両方使うと荒野は 0.995 に直るが、室内 overview の青 ÷ 緑が 0.886 に落ちる）を、この項目の続きとして解いた。次の反復は、反復 14 の案（BRDF の重みを粗さで混ぜる形）に加えて、原因に沿った形も候補にする: 前計算の環境光を地平の上の空だけの分と地平の下の分に分け、光線の空の見え方（地平の上の光線のうち空へ抜けた割合）はその空だけの分にだけ掛け、地平の下と地形に当たった向きは当たった面の光で埋める（地面を二重に数えない）。どちらの形でも、まず荒野の rocks-sky と室内の 3 視点だけを撮って両方の行が通る形を決め、そのあと回帰の before・after、golden、GPU 時間、荒野の遮蔽の 8 組、共通の照明の組を回す。壁時計に全部が収まらなければ、シェーダーの変更と済んだ検証をコミットして doing のまま終え、残りの検証を次の反復で回す（判断が要らない続きでは BLOCKED を返さない）。評価の差し戻しは残り 1 周なので、全部の行が通るまで DONE にしない。この後の 2 反復で荒野と室内の両方が通る形が見つからなければ、試した形ごとの値を付けて BLOCKED にする（親が範囲を決める）。 2026-10-25（親）: 反復 16 の評価の 2 周目の差し戻しで blocked（室内の 9 行と rocks-sky の対照 0.995 は合格。残りは (i) 共通の照明の `bounce/ref_cliff_01/shadow_ground/chroma_diff` 0.0346〔上限 0.02、前は 0.0036〕、(ii) 荒野の遮蔽の `ref_cliff_01/slope60-180_d500-100000` が rocks-cliff-sky 0.9622・terrain-sky 0.9513〔下限 0.97〕で原因が分かれていない、8 組の入力の指紋が揃っていない、(iii) 今の版の material-gallery の撮影が無い）を、この項目の続きとして todo に戻した。遠い急な崖の行は、反復 15 で崖の棚の版 9 を焼いた地形（Cycles の参照を描いた後の地形の変更）と重なるので、比べ方を次の形にする: (1) 開発ビルドだけの起動引数 `--rtgi-specular=off`（変更前の鏡面の環境光の経路に戻す。Release では使えない。`--rtgi-bounce` と同じ形）を足し、同じ Game.exe・同じ焼いた地形で、荒野の遮蔽の 8 組と共通の照明の組を off と今の形で撮る（反復の中で地形を焼き直さない）。(2) 範囲の外の行ごとに、off と今の形の値を並べた表を `InteriorLightReference.md` に書く: off でも範囲の外なら、地形の変更による古い参照の分として、今の形の値が off から行の揺れ（照明の組は前の記録の起動の揺れ、遮蔽は 0.005）を超えて悪くならないことで合格とする。off では範囲内で今の形で外れる行（(i) の chroma_diff はその見込み）は、この変更の差なので直す（日陰の地面の照り返しの色が当たりの面の光で変わる分を確かめる）。(3) 8 組と共通の照明の組は全部、同じ最終の版で撮り直して入力の指紋を揃える。(4) material-gallery を今の版で撮って開く。評価の差し戻しはこの走行で使い切ったので、(1)〜(4) を全部の行で開いて確かめてから DONE にする。壁時計に収まらなければ、済んだ所までコミットして doing のまま終える。 2026-10-26（親）: run 20261026-002702 の反復 3 の BLOCKED（`ref_cliff_01` の `slope60-180_d500-100000` の対照の暗さは、粗さ 1 の急な面の反射のローブの約 2 割が谷底と下の斜面に当たる分を遮った結果で、今の形 ÷ off は terrain-sky 0.975・rocks-cliff-sky 0.977。ただしエンジン ÷ Cycles は off 0.995・1.004 から今の形 0.970・0.981 へ離れた。開けた急な面は off でも Cycles より 2.5 % 暗く、遮りの前は空の光の数えすぎがその不足を隠していた）を、推奨の案 1 に守りを足して解いた: (1) `occlusion-accept.json` のこの層の 2 行（terrain-sky・rocks-cliff-sky）は、下限を今の形の値から 0.005 引いた値（0.946・0.957。これより暗くしない守り）に一時的に替え、行の note に「SCN-RENDER-ROUGH-STEEP-ENERGY が 1 ± 0.03 へ戻す」と書く。ほかの行は変えない。(2) この項目の記録には、同じ Game.exe・同じ焼いた地形の `--rtgi-specular=off` との比（0.97 以上）と、エンジン ÷ Cycles を off と今の形で並べて書く。(3) 開けた急な面の不足（粗さ 1 の鏡面の多重散乱のエネルギー、谷底からの拡散の照り返し、当たりの光の量）は新しい項目 SCN-RENDER-ROUGH-STEEP-ENERGY（SCN-RENDER-RTGI-HIT-ALBEDO の後）へ移した。(4) 次の反復はシェーダーを変えずに、8 組と共通の照明の組を off と今の形で同じ最終の版で撮り、`--occlusion` と `--light-final` の判定を最後まで出す（前の `shadow_ground/chroma_diff` を含め、範囲の外の行は全部 off と並べて表に書く。off で範囲内・今の形で外れる行が (1) の 2 行のほかに残れば直すか、値を付けて BLOCKED）。そのあと回帰の before・after、golden、GPU 時間、material-gallery を同じ最終の版で回して閉じる。評価に出す前に、評価者の前の指摘（判定の出力の欠け・古い after）を全部の行で開いて確かめる。 2026-10-26（親）: run 20261026-002702 の反復 7 の評価の 2 周目の差し戻しで blocked（室内の 9 行・共通の照明の off との並べ〔shadow_ground/chroma_diff は off 0.0045 → 今 0.0033 で合格〕・一時の下限の判定は済んだ。残りは荒野の遮蔽の 8 組の off との並べと、回帰・golden・GPU 時間の最終の証拠）。この項目の確かめは 1 反復に収まらないので、SCN-RENDER-SPEC-OCC-VERIFY-OCC（遮蔽の 8 組）と SCN-RENDER-SPEC-OCC-VERIFY-REG（回帰・golden・GPU 時間・material-gallery）に分けた。この項目はその 2 つが done になった後に、シェーダーを変えずに 2 つの記録を引いて閉じる（新しい撮影は要らない。done-when の各行がどの記録で満たされたかを表で書く）。評価の差し戻しはこの走行で使い切っているので、2 つの記録を開いて全部の行を確かめてから DONE にする。
 
 ## SCN-RENDER-RTGI-HIT-ALBEDO: RTGI の当たりの反射率を、テクスチャの粗いミップの平均から引く
@@ -3241,6 +3246,7 @@
 - verify: `python Scripts/InteriorLightReference.py --compare --capture .harness/runs/scene-capture/SCN-RENDER-RTGI-HIT-ALBEDO/interior --reference .harness/runs/scene-capture/SCN-INTERIOR-ROOM-ref --expect Scripts/Terrain/ExpectSpecs/interior-hit-albedo.json`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Terrain/CaptureRegression.ps1 -Item SCN-RENDER-RTGI-HIT-ALBEDO -Phase after`
 - paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Scripts, Docs/RenderingValidation, Test/Core/Rendering/Baselines, TASKS.md, PROGRESS.md, Assets/AssetSets, Tools/AssetCook
+- check: launch
 - notes: 危険地帯（描画の既定。全シーンに効く）。2026-10-23 親が SCN-INTERIOR-ROOM の反復 39 の BLOCKED（推奨の案 1）から足した。荒野の遮蔽の受け入れ（SCN-WL-OCCLUSION-ACCEPT）の後に回し、荒野の遮蔽と共通の照明の値が悪くならないことを確かめる（`OcclusionSets.py --capture --sets <組>` を組ごとの行で撮り、`--occlusion --expect occlusion-accept.json` と、共通の照明の組の撮り直しで `--light-final` を通す。verify の行はこの項目で足してよい。1 行 10 分未満）。壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える。 時間の見積もり: 回帰の before・after 各 7〜9 分、ビルド 3〜6 分、室内の撮影 約 3 分、荒野の組の撮り直し 約 25 分。 2026-10-25（親）: SCN-RENDER-SPEC-OCCLUSION の反復 12 の判断（推奨の案 A）で、室内の正解をエンジンの空の LUT で描き直した版（`.harness/runs/scene-capture/SCN-INTERIOR-ROOM-ref/cycles/`）に替えた。done-when の前提の数（壁 1.25〜1.50 倍・天井 1.55〜2.00 倍）は前の正解で測った値なので、反復の最初に新しい正解で測り直して書き直す（反復 12 の値: 日陰の床 0.612・0.694・0.720 倍、日陰の壁 0.69〜0.81 倍で、明るすぎから暗すぎへ変わった）。SCN-RENDER-SPEC-OCCLUSION から移した日陰の床の輝度の下限はこの項目の `interior-hit-albedo.json` の床の行（0.85〜1.15）で見る。原因の候補は当たりの反射率（単位のアルベド × 99 百分位）とバウンスの数（2 回目で打ち切り）の両方で、当たりの反射率を直しても届かずバウンスの数が原因と分かったら、RTGI-MULTI-BOUNCE（backlog）の中身（当たり面が画面に見えるときの RTGI の履歴の再利用、見えないときの 3 回目以降）をこの項目で扱ってよい。1 反復で閉じなければ、進んだ所までコミットして doing のまま終える（反射率 → バウンスの順）。全シーンの拡散の GI が変わるので、荒野の遮蔽の 8 組と共通の照明の組の撮り直しを verify の行に足して通す（組ごとに 1 行、1 行 10 分未満）。
 
 ## SCN-RENDER-ROUGH-STEEP-ENERGY: 開けた急な崖の粗い面が Cycles より暗い分を、鏡面の多重散乱と照り返しの不足から直す
@@ -3257,6 +3263,7 @@
 - verify: `python Scripts/InteriorLightReference.py --compare --capture .harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY/interior --reference .harness/runs/scene-capture/SCN-INTERIOR-ROOM-ref --expect Scripts/Terrain/ExpectSpecs/interior-spec-occlusion.json`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Terrain/CaptureRegression.ps1 -Item SCN-RENDER-ROUGH-STEEP-ENERGY -Phase after`
 - paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Scripts, Docs/RenderingValidation, Test/Core/Rendering/Baselines, TASKS.md, PROGRESS.md
+- check: launch
 - notes: 危険地帯（描画の既定・全シーンに効く）。2026-10-26 親が SCN-RENDER-SPEC-OCCLUSION の反復 3 の BLOCKED から足した。SCN-RENDER-RTGI-HIT-ALBEDO の後に回す（バウンスの数と当たりの反射率がそこで変わるので、反復の最初に今の値を測り直して書き直す）。反復の最初に回帰の撮影の `before` を撮る。8 組の残りと共通の照明の組（`--light-final`）は、変えた経路が効く組を反復の中で撮り直して通す（verify の行は足してよい。1 行 10 分未満）。多重散乱のエネルギーの補い（例えば Kulla-Conty 系の補正）を足すなら、全部の粗い材質の見た目が変わるので material-gallery の 4 視点を前後で並べて開く。壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える（未達のまま DONE にしない）。
 ## SCN-RENDER-RTGI-TEMPORAL: RTGI の時間の蓄積を、60 フレームの撮影で壁の粒が目立たない所まで上げる
 - status: todo
@@ -3267,6 +3274,7 @@
 - verify: `python Scripts/InteriorLightReference.py --compare --capture .harness/runs/scene-capture/SCN-RENDER-RTGI-TEMPORAL/interior --reference .harness/runs/scene-capture/SCN-INTERIOR-ROOM-ref --expect Scripts/Terrain/ExpectSpecs/interior-temporal.json`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Terrain/CaptureRegression.ps1 -Item SCN-RENDER-RTGI-TEMPORAL -Phase after -Motion`
 - paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Scripts, Docs/RenderingValidation, Test/Core/Rendering/Baselines, TASKS.md, PROGRESS.md
+- check: launch
 - notes: 危険地帯（描画の既定。全シーンに効く）。2026-10-23 親が SCN-INTERIOR-ROOM の反復 39 の BLOCKED（推奨の案 1）から足した。荒野の遮蔽の受け入れ（SCN-WL-OCCLUSION-ACCEPT）の後に回し、荒野の遮蔽と共通の照明の値が悪くならないことを確かめる（`OcclusionSets.py --capture --sets <組>` を組ごとの行で撮り、`--occlusion --expect occlusion-accept.json` と、共通の照明の組の撮り直しで `--light-final` を通す。verify の行はこの項目で足してよい。1 行 10 分未満）。壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える。 時間の見積もり: 回帰の before・after 各 7〜9 分、ビルド 3〜6 分、室内の撮影 約 3 分、荒野の組の撮り直し 約 25 分。
 
 ## SCN-INTERIOR-ROOM: 室内の光のシーンを組む
@@ -3277,29 +3285,31 @@
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene interior-light -Configuration RelWithDebInfo -Build -RequireAssets -OutDir .harness/runs/scene-capture/SCN-INTERIOR-ROOM`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Scenes interior-light -Cycles 2 -Configuration RelWithDebInfo`
 - paths: Game, Assets/AssetSets, Scripts, Test/Game/Bridge/CMakeLists.txt, Test/Core/Rendering/CMakeLists.txt, TASKS.md, PROGRESS.md
+- check: launch
 - notes: 2026-10-15 ユーザー: 室内の光は「ほぼ実写」の美しさを見るシーン。SCN-INT-REFERENCE-SELECT の写真と並べた比較画像（1920×1080）と、同じ視点のパストレースの正解で判断する。速さの条件は無い。 2026-10-19 親: verify を RelWithDebInfo に揃え、周回の試験を 1 コマンド 10 分に収まる形にした（Debug の撮影は約 11 分、3 周は 928 秒の実測）。 2026-10-23（親）: 反復 39 の BLOCKED（ほぼ実写の差の 3 つがエンジン側）を推奨の案 1 で解いた。鏡面の環境光の遮り・RTGI の当たりの反射率・RTGI の時間の蓄積を SCN-RENDER-SPEC-OCCLUSION・SCN-RENDER-RTGI-HIT-ALBEDO・SCN-RENDER-RTGI-TEMPORAL として先に立て、この項目はその後に `InteriorLightReference.py --compare --reference .harness/runs/scene-capture/SCN-INTERIOR-ROOM-ref` で同じ比較画像を作り直し、残る差を記録して閉じる（Cycles の正解は描き直さない。部屋・家具・視点・周回は反復 38・39 のまま）。
 
 ## SCN-INTERIOR-SHAFTS: 窓から入る光の筋を出す
-- status: todo
-- after: SCN-INTERIOR-ROOM
-- done-when: ボリュメトリックフォグの散乱が太陽の影（既定の VSM）で遮られ、窓から入る光の筋が見える。シーンごとにフォグの密度・範囲を設定でき、`interior-light` で室内に薄い霧を入れる（Rendering3DTest の霧は変えない）。`overview`・`window` の撮影を開いて光の筋を確かめ、Rendering3DTest の撮影が変わらない。性能はこの項目では測らず、SCN-ACCEPT で目標を超えたときに、霧の内訳から解像度・範囲・更新の方式を調整する。
-- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- status: done
+- done-when: ボリュメトリックフォグの散乱が太陽の影（既定の VSM）で遮られ、窓から入る光の筋が見える。シーンごとにフォグの密度・範囲を設定でき、`interior-light` で室内に薄い霧を入れる（Rendering3DTest の霧は変えない）。`overview`・`window` の撮影を開いて光の筋を確かめ、Rendering3DTest の撮影が変わらない。性能はこの項目では測らず、SCN-ACCEPT で目標を超えたときに、霧の内訳から解像度・範囲・更新の方式を調整する。 起動を止めている間は、散乱に VSM の可視を掛ける実装（VSM が無い構成では今の CSM の経路のまま）、`interior-light` の霧の設定（密度・範囲）、Debug のビルドと `VolumetricFogModelTest` までで済み、`overview`・`window` の撮影を開いての光の筋の確かめと Rendering3DTest の撮影が変わらないことは、起動を戻した後の `SCN-INTERIOR-SHAFTS-CHECK` で確かめる。
+- verify: `cmake --build build --config Debug --target Game VolumetricFogModelTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^VolumetricFogModelTest$" --no-tests=error --output-on-failure --timeout 180`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene interior-light -Configuration RelWithDebInfo -Build -RequireAssets -OutDir .harness/runs/scene-capture/SCN-INTERIOR-SHAFTS`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SCN-INTERIOR-SHAFTS`
 - paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Scripts, TASKS.md, PROGRESS.md
 - notes: 危険地帯（描画）。`Assets/Shaders/volumetrics.frag` 103〜135 行付近は CSM の影の地図（`cascadedShadowMap`）を読む。太陽の影が VSM のときに霧の影が効いているかを先に確かめる。 2026-10-12 親: 計測の見直し（ユーザーの指摘「節目に計測を入れても意味があるのかを考えるべき」。計測ごとに、問い・結果で変わる判断・測らずに分からないかの 3 点を書き、書けないものは置かない。Sol の批評を反映）。 2026-10-15 ユーザー: 室内の光は「ほぼ実写」の美しさを見るシーン。SCN-INT-REFERENCE-SELECT の写真と並べた比較画像（1920×1080）と、同じ視点のパストレースの正解で判断する。速さの条件は無い。 2026-10-19 親: verify を RelWithDebInfo に揃え、周回の試験を 1 コマンド 10 分に収まる形にした（Debug の撮影は約 11 分、3 周は 928 秒の実測）。 2026-10-23（親）: 順を保つため after を足した（先に走ると後の変更で撮り直しになる）。
 
 ## SCN-THUMBNAILS: ランチャーのカードに各シーンの見本画像を出す
-- status: todo
-- after: SCN-INTERIOR-SHAFTS, SCN-WASTELAND-POLISH
-- done-when: `Scripts/CaptureLauncherThumbnails.ps1` が各シーンの見本用の視点（シーンの一覧に書く。既定は `overview`）を撮って 640×360 程度に縮め、`Assets/Textures/Launcher/<id>.png` に書く（追跡する）。ランチャーが読み込んでカードに出す。ランチャーの撮影を開いて、見本画像が正しいカードに出て、選択の強調が分かることを確かめる。
-- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- status: done
+- done-when: `Scripts/CaptureLauncherThumbnails.ps1` を作る: 各シーンの見本用の視点（シーンの一覧に書く。既定は `overview`）を `Scripts/CaptureScene.ps1` で `-WorkDir`（`.harness/runs/scene-capture/` の下）へ撮り、640×360 程度に縮めて `Assets/Textures/Launcher/<id>.png` に書く（追跡する）。ランチャーは `Assets/Textures/Launcher/<id>.png` を読み込んでカードに出し、ファイルが無いカードは今の表示のままにする（落ちない。警告は 1 行）。1920×1080 でカードの説明文が右の縁からはみ出さないよう、折り返しの幅からカードの内側の余白を引き、カードが 1 行に収まらないときの並び（折り返しかスクロール）を決める。起動せずに確かめるのは、Debug の Game のビルドと `LauncherMenuTest` が通ること。台本の実行（見本画像の生成）と、ランチャーの撮影を開いて見本画像が正しいカードに出て選択の強調が分かることは、起動を戻した後の `SCN-THUMBNAILS-CHECK` で確かめる（見本画像は各シーンの見た目が決まった後に撮り直す）。
+- verify: `cmake --build build --config Debug --target Game LauncherMenuTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^LauncherMenuTest$" --no-tests=error --output-on-failure --timeout 180`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureLauncherThumbnails.ps1 -Configuration RelWithDebInfo -WorkDir .harness/runs/scene-capture/SCN-THUMBNAILS/thumbs`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene launcher -Configuration RelWithDebInfo -Build -OutDir .harness/runs/scene-capture/SCN-THUMBNAILS`
 - paths: Game, Scripts, Assets/Textures/Launcher, TASKS.md, PROGRESS.md
 - notes: 2026-10-10 親が見た点: 1920×1080 のランチャーでカードの説明文が右の縁からはみ出す（折り返しの幅がカードの内側の余白を引いていない）。カードが増えたときの並び（1 行に収まらないときの折り返しかスクロール）も確かめる。 2026-10-19 親: verify を RelWithDebInfo に揃え、周回の試験を 1 コマンド 10 分に収まる形にした（Debug の撮影は約 11 分、3 周は 928 秒の実測）。 2026-10-23（親）: 順を保つため after を足した（先に走ると後の変更で撮り直しになる）。
 
 ## SCN-FIX-SKY-BANDING: 空の階調の段（波打つ横縞）を消す
-- status: todo
+- status: done
 - done-when: SCN-MEGA-ACCEPT-1M の撮影で、mega-stress の overview（1% 移動・ストリーミング）とカメラパスの再生中の mega-bananas の horizon の空に、波打つ横縞の段がはっきり見える（`.harness/runs/scene-capture/SCN-MEGA-ACCEPT-1M/{moving,streaming}/overview.png`・`path/horizon.png`）。同じ時刻の mega-bananas の静止の horizon の空は滑らか。mega-stress の空の列の値は SCN-MEGA-MIXED-LOAD（2026-10-11）の撮影と同じで、前からある欠陥。段の出所（空の LUT の解像度・精度、ディザの有無、露出）を特定して直す。完了の条件: 上の 2 つの視点を撮り直した PNG を開いて空に段が見えず、空の縦の列の隣り合う画素の差が 1 段以下で、平らな帯（同じ値が続く区間）の長さが今より短いこと。起動画面 default の決定的撮影の比較が pass（空の見た目を変えるなら基準を再承認し、根拠をコミット本文に書く）。
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -Views overview -Build -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-FIX-SKY-BANDING`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -OutDir .harness/runs/startup-capture/SCN-FIX-SKY-BANDING`
@@ -3326,6 +3336,7 @@
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene launcher -Configuration Release -OutDir .harness/runs/scene-capture/SCN-ACCEPT-release`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SCN-ACCEPT`
 - paths: Docs/RenderingValidation, Game, Library, Assets, Scripts, Test, TASKS.md, PROGRESS.md
+- check: launch
 - notes: 2026-10-12 親: 計測の見直し（ユーザーの指摘「節目に計測を入れても意味があるのかを考えるべき」。計測ごとに、問い・結果で変わる判断・測らずに分からないかの 3 点を書き、書けないものは置かない。Sol の批評を反映）。 2026-10-19 親: verify を RelWithDebInfo に揃え、周回の試験を 1 コマンド 10 分に収まる形にした（Debug の撮影は約 11 分、3 周は 928 秒の実測）。 2026-10-23（親）: 順を保つため after を足した（先に走ると後の変更で撮り直しになる）。
 
 ## SCN-MEGA-FIX-RT-SELECT: レイトレーシングのインスタンスの選び直しを、変わったときだけ区画の単位で行う
@@ -3339,15 +3350,17 @@
 - notes: 2026-10-14 SCN-MEGA-ACCEPT-1M の診断から（`Docs/RenderingValidation/SceneLauncherAcceptance.md` の「100万本と混在の負荷の受入れ」）。危険地帯（RenderThread）なので評価者を通す。 2026-10-15 親: RT を入れた構成の 60 fps を求めなくなった（ユーザー）ので外した。静止の 100万本で rt 37 ms（約 27 fps）は操作できる。RT を入れて操作できない遅さになったら戻す。
 
 ## SCN-MEGA-FIX-TLAS-REBUILD: TLAS を、インスタンスの顔ぶれが替わったら作り直す
-- status: todo
-- done-when: 問い: カメラパスの再生で `LightingPass`（RTGI）が median 70.5 / p95 100.4 ms（静止は 1.7 ms）になるのを、TLAS の木の質で説明でき、直せるか。SCN-MEGA-ACCEPT-1M の撮影では、選ぶ件数が上限 65,536 で一定なので、カメラが動いて顔ぶれが替わっても毎フレーム Update（refit）だけで作り直しが 0 回（`RT_SCENE updated=120 built=0`。`RenderingCoordinator.cpp` 1810 行付近は件数が同じなら Update）。refit は同じ要素の小さな動きを前提とするので、席の中身が別の場所のインスタンスへ替わると箱が広がり続け、レイの判定が重くなる、と見る。直す: 同じ席に同じインスタンスが並び変換だけ変わったときだけ Update にし、顔ぶれが替わったら Build（替わった割合の閾値で決めてよい）。席の並びを選びの順（距離の順）に依らず安定させる。完了の条件: カメラパスの再生（1M horizon・300 フレーム以上）で `LightingPass` の median ≤ 3 ms・p95 ≤ 5 ms。PNG を開き、今の撮影で近くのバナナの周りに出ている粒の荒い暗い輪が消えていること。
+- status: done
+- after: SCN-MEGA-FIX-TLAS-REBUILD-P3
+- done-when: 問い: カメラパスの再生で `LightingPass`（RTGI）が median 70.5 / p95 100.4 ms（静止は 1.7 ms）になるのを、TLAS の木の質で説明でき、直せるか。SCN-MEGA-ACCEPT-1M の撮影では、選ぶ件数が上限 65,536 で一定なので、カメラが動いて顔ぶれが替わっても毎フレーム Update（refit）だけで作り直しが 0 回（`RT_SCENE updated=120 built=0`。`RenderingCoordinator.cpp` 1810 行付近は件数が同じなら Update）。refit は同じ要素の小さな動きを前提とするので、席の中身が別の場所のインスタンスへ替わると箱が広がり続け、レイの判定が重くなる、と見る。直す: 同じ席に同じインスタンスが並び変換だけ変わったときだけ Update にし、顔ぶれが替わったら Build（替わった割合の閾値で決めてよい）。席の並びを選びの順（距離の順）に依らず安定させる。完了の条件(人の判断 2026-11-02、`blocked/SCN-MEGA-FIX-TLAS-REBUILD.md` の案 A で直した): カメラパスの再生（1M horizon・300 フレーム以上）で `LightingPass` の p95 ≤ 5 ms、median は同じカメラパスの視点の静止（10-29 の記録 U3-static で 3.64〜3.82 ms）+0.6 ms 以内 = 4.4 ms 以下。元の median ≤ 3 ms は、視点の違う 10-14 の既定の horizon の静止 1.7 ms から取った値で、この視点の RTGI の地の費用（3.6〜3.8 ms）が TLAS の外にあるため外した。近くのバナナの周りの粒の荒い暈は TLAS ではない（50000 本で作り直し 0 回の再生でも出る）ので、この項目の合否から外す（SCN-MEGA-ACCEPT-1M-P1 で直した）。10-14 からの LightingPass・MegaGeometry のカリングの増えは SCN-MEGA-FIX-TLAS-REBUILD-P2 で切り分けた。RTGI の地の費用を 3 ms へ下げる件がまだどの項目にも無ければ、`PROGRESS.md` の Notes に `要起票:` で残す。
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -Views horizon -Build -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -TimeoutSeconds 1800 -GameArgs banana-count=1000000,camera-path-play,camera-path-time=0 -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-TLAS-REBUILD/path`
-- verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-FIX-TLAS-REBUILD/path --views horizon --timing --min-frames 300 --require-pass LightingPass --max-pass-median-ms LightingPass=3 --max-pass-p95-ms LightingPass=5`
+- verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-FIX-TLAS-REBUILD/path --views horizon --timing --min-frames 300 --require-pass LightingPass --max-pass-median-ms LightingPass=4.4 --max-pass-p95-ms LightingPass=5`
 - paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Library/Core/Private/RHI, Library/Core/Public/RHI, TASKS.md, PROGRESS.md
+- gpu: exclusive
 - notes: 2026-10-14 SCN-MEGA-ACCEPT-1M の診断から。1% 移動・ストリーミングの `LightingPass` 11.4〜11.6 ms（静止のバナナだけは 1.7 ms）も同じ refit を毎フレーム行っている（`updated=120 built=0`）ので、この項目の後に撮り直して残りを見る。危険地帯（RHI/Vulkan・RenderThread）なので評価者を通す。 2026-10-15 親: RT の 60 fps は求めなくなったが、動くと RTGI が 40 倍遅くなり（カメラパスで GPU 86 ms・約 12 fps）操作できないので、木の質の欠陥として残す。
 
 ## SCN-MEGA-FIX-SCENE-TABLES-STEADY: 変わらないフレームで MegaGeometry の表を全部なめない
-- status: todo
+- status: done
 - done-when: 問い: 変わった行が 0（`MEGA_SCENE_UPLOAD rows=0`・`MEGA_TABLES delta_rows=0`）の静止で `MegaGeometryPass.UpdateResidentSceneTables` が median 7.1 ms 掛かるのを、変わった行に比例させられるか。100 万の描く順の行を毎フレームたどって席の表の上限を求める（`MegaGeometryPass.cpp` 4771 行付近）など、行の数に比例する処理を、版が変わったときと変わった行だけにする。完了の条件: 静止の 1M horizon（300 フレーム）で `MegaGeometryPass.UpdateResidentSceneTables` の median ≤ 0.5 ms・`MegaGeometryPass.PrepareSceneTables` の median ≤ 1 ms、`MEGA_TABLES mismatch=0`。
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -Views horizon -Build -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -TimeoutSeconds 1800 -GameArgs banana-count=1000000 -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-SCENE-TABLES-STEADY`
 - verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-FIX-SCENE-TABLES-STEADY --views horizon --timing --min-frames 300 --require-scope MegaGeometryPass.UpdateResidentSceneTables --max-scope-median-ms MegaGeometryPass.UpdateResidentSceneTables=0.5 --max-scope-median-ms MegaGeometryPass.PrepareSceneTables=1`
@@ -3362,7 +3375,7 @@
 - notes: 2026-10-14 SCN-MEGA-ACCEPT-1M の診断から。混在の 2 つの負荷の撮影が本数の違いで fail になるので、下の STREAM-TABLES-DELTA・VISIBLE-LIST・STRESS-GPU より先に閉じる。
 
 ## SCN-MEGA-FIX-VISIBLE-LIST: 混在の負荷で可視クラスタの一覧を溢れさせない
-- status: todo
+- status: done
 - done-when: 1M + 5 万個で可視クラスタの一覧の容量（`visible_list_capacity=4194304`）を `visible_list_peak` 4,820,881〜4,821,043 が超え、1% 移動では SceneReady の前（最大 `draw_dropped=330250`）、ストリーミングでは計測の窓の中でも `draw_dropped=626568` が出る（描かれないクラスタが出る）。容量を混在の最大に余裕を足して決めるか、溢れを読み戻したら次のフレームで広げる（GPU Scene まわりの最大の確保は 3 GB 以内のまま）。完了の条件: 1% 移動とストリーミングの撮影で、ログの全行 `draw_dropped=0`・`visible_list_overflow=0`。
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -Views overview -Build -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -TimeoutSeconds 2400 -GameArgs banana-count=1000000,stress-entities=50000,stress-moving-percent=1,stress-stream-cell=64,stress-batch-cells -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-VISIBLE-LIST`
 - verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-FIX-VISIBLE-LIST`
@@ -3370,7 +3383,7 @@
 - notes: 2026-10-14 SCN-MEGA-ACCEPT-1M の診断から。撮影は SCN-MEGA-FIX-MIXED-DEFICIT の後。危険地帯（メモリ・RenderThread）なので評価者を通す。
 
 ## SCN-MEGA-FIX-STREAM-TABLES-DELTA: 区画の出し入れで MegaGeometry の表を全部作り直さない
-- status: todo
+- status: done
 - done-when: 問い: ストリーミングの負荷の gt・rt の p95 147.9 ms（median 48.9 ms）の山を、区画の出し入れの表の作り直しで説明でき、直せるか。SCN-MEGA-ACCEPT-1M の撮影では、区画の散布の出し入れ（約 1 秒に 1 回）ごとに `MegaGeometryPass.BuildSceneTables` が約 105 万行を全部作り直し（`MEGA_TABLES full=6`/120 フレーム）、窓の 600 フレームのうち 29 フレームが 20 ms を超え、最大 515 ms。出し入れを区間の追加・削除の差分で表へ反映する。完了の条件: ストリーミングの負荷（1M + 5 万個・600 フレーム。区画の解放から再公開を窓に含む）で `MegaGeometryPass.PrepareSceneTables` の p95 ≤ 2 ms、`MEGA_STRESS_STREAM_CYCLE result=pass`、`MEGA_TABLES mismatch=0`。
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -Views overview -Build -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 600 -TimingReadyMarginFrames 2000 -TimeoutSeconds 2400 -GameArgs banana-count=1000000,stress-entities=50000,stress-moving-percent=1,stress-stream-cell=64,stress-batch-cells -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-STREAM-TABLES-DELTA`
 - verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-FIX-STREAM-TABLES-DELTA --timing --min-frames 600 --require-scope MegaGeometryPass.PrepareSceneTables --max-scope-p95-ms MegaGeometryPass.PrepareSceneTables=2`
@@ -3378,7 +3391,8 @@
 - notes: 2026-10-14 SCN-MEGA-ACCEPT-1M の診断から。撮影は SCN-MEGA-FIX-MIXED-DEFICIT（本数の違いで fail）と SCN-MEGA-FIX-VISIBLE-LIST（`draw_dropped` で fail）の後。危険地帯（RenderThread・Object/Resource の寿命）なので評価者を通す。
 
 ## SCN-MEGA-FIX-STRESS-GPU: 1M + mega-stress 5 万個の GPU 時間を 16.6 ms に収める
-- status: todo
+- status: done
+- after: SCN-MEGA-FIX-TLAS-REBUILD
 - done-when: 問い: 1% 移動の GPU 32.6 / 34.4 ms（median / p95）を、TLAS の直しの後に何が残るかで分け、予算（RT と GI を切った構成で 16.6 ms）に収められるか。SCN-MEGA-ACCEPT-1M の撮影の内訳（median）は `MegaGeometry` 16.1 ms（`VisRasterSw1` 9.1・`MegaGeometryCull1` 4.9・`MegaBvhC1Leaf` 4.1）、`LightingPass` 11.4、`VirtualShadowMapPass` 2.6（`VsmDraw` 1.5）。描いたクラスタは 264 万でバナナだけの静止（168 万）の 1.6 倍、ソフトウェアラスタの単価は 100 万クラスタあたり 3.4 ms（静止 3.0）でほぼ同じなので、量が多い側と見る。SCN-MEGA-FIX-TLAS-REBUILD の後に撮り直して `LightingPass` の残りを確かめ、残る超過を 5 万個のメッシュ（家・塔・岩）の描くクラスタの量（LOD の誤差の許容・遮蔽）で減らす。完了の条件: 1% 移動の負荷（300 フレーム）で GPU のフレームの median・p95 ≤ 16.6 ms。PNG を開いて穴と影の欠けが無いこと。
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -Views overview -Build -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -TimeoutSeconds 2400 -GameArgs banana-count=1000000,stress-entities=50000,stress-moving-percent=1 -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-STRESS-GPU`
 - verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-FIX-STRESS-GPU --timing --min-frames 300 --max-gpu-median-ms 16.6 --max-gpu-p95-ms 16.6`
@@ -3387,6 +3401,7 @@
 
 ## SCN-MEGA-ACCEPT-1M: 100万本と混在の負荷を、固定した 4 つの負荷と閾値で判定する
 - status: todo
+- after: SCN-MEGA-FIX-STRESS-GPU
 - done-when: 問い: 最終の配置・描画の経路の 4 つの負荷で、RT と GI を切った構成で 60 fps を満たせるか（RT と GI を入れた既定の構成は値を記録するだけ。4 つの撮影は RT と GI を切る引数で撮り、無ければ足す）。変わる判断: 既定を 100万本にする・直す項目を足す・止めてユーザーへ渡す。- 固定した 4 つの負荷: 100万本 horizon の静止、カメラパスの再生（パス 1 周を計測の窓に含める）、100万本 + mega-stress 5万個の 1% 移動、同じく 64 m 区画のストリーミング（区画の解放から再公開までを窓に含め、ログで確かめる）。- 各負荷で 300 フレーム以上、GPU・gt・rt の median と p95 がすべて 16.6 ms 以下（RTX 4080・1920×1080・RelWithDebInfo）。- 溢れがすべて 0、メモリ ≤ 3 GB（対象は計画の GPU Scene まわりの構造。使用中だけでなく、飛行中の複数のスロット・持ち続ける容量・回収待ちを含む最大の確保量）、Entity の数が本数によらない。PNG を開いて穴と影の欠けが無いことを見る。- 不合格の負荷は、同じ撮影の内訳から直す先を決める: GPU は範囲・インスタンス・BVH の判定、binning と記録、ハード・ソフトの両方のラスタ（`VisibilityRasterPass` を含む）、2 パス目、合流・HZB、VSM（全体とページの処理・カリング・描画。親と子の区間を二重に足さない）の時間と処理の件数。処理の量が多すぎるのか単価が高いのかを分ける。CPU は待ちと作業を分け、支配する関数・系（`RT.BuildAccelerationStructures` とその入力の選択、`RG.Record.*`、ECS の系と同期点、ストリーミングの作成・公開）を特定する。既存の区間で分けられない所だけ区間を足して撮り直す。構造・件数・ログで説明できない規模の依存が残ったときだけ、同じ配置・条件で本数を 30万へ下げた負荷を 1 つ足して比べる。直す先ごとに `SCN-MEGA-FIX-<名前>` を足す。- 合格したら既定の本数を 100万にする。受入れ文書の書き方は前と同じ。どれかの負荷で GPU・gt・rt の p95 のどれかが 25 ms を超えたら、その時点の撮影と内訳を付けてループを止めてユーザーへ渡す（自動で 30万の診断を続けない）。Debug の起動画面で検証レイヤーのエラーが 0。
 - verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-ACCEPT-1M/static --views horizon --timing --min-frames 300 --max-gpu-p95-ms 16.6 --max-gt-p95-ms 16.6 --max-rt-p95-ms 16.6 --max-gpu-median-ms 16.6 --max-gt-median-ms 16.6 --max-rt-median-ms 16.6`
 - verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-ACCEPT-1M/path --views horizon --timing --min-frames 300 --max-gpu-p95-ms 16.6 --max-gt-p95-ms 16.6 --max-rt-p95-ms 16.6 --max-gpu-median-ms 16.6 --max-gt-median-ms 16.6 --max-rt-median-ms 16.6`
@@ -3394,11 +3409,14 @@
 - verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-ACCEPT-1M/streaming --timing --min-frames 300 --max-gpu-p95-ms 16.6 --max-gt-p95-ms 16.6 --max-rt-p95-ms 16.6 --max-gpu-median-ms 16.6 --max-gt-median-ms 16.6 --max-rt-median-ms 16.6`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -OutDir .harness/runs/startup-capture/SCN-MEGA-ACCEPT-1M-debug`
 - paths: Docs/RenderingValidation/SceneLauncherAcceptance.md, Game/GameModes/MegaBananas/MegaBananasMode.h, TASKS.md, PROGRESS.md
+- check: launch
 - notes: 4 つの撮影は反復の中で 1 回ずつ `-Build -GpuTimingFrames 300` で撮る。混在の負荷を作る引数は UNCERTAIN U12。status は前のとおり、規模の段で todo に上げる。 混在の負荷は SCN-MEGA-MIXED-LOAD の引数で作る。 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。 2026-10-12 親: 計測の見直し（ユーザーの指摘「節目に計測を入れても意味があるのかを考えるべき」。計測ごとに、問い・結果で変わる判断・測らずに分からないかの 3 点を書き、書けないものは置かない。Sol の批評を反映）。SCN-MEGA-MEASURE-CULL・MEASURE-VSM（閾値が 1M の予算から導かれていなかった）と SCN-MEGA-SCALE-300K（1M の内訳で同じことが分かる）を外し、この受入れの診断へまとめた。点光源の影は夜のシーンの受入れ（SCN-ACCEPT）で判断する。 2026-10-14 親: 1 回目の判定は不合格（`Docs/RenderingValidation/SceneLauncherAcceptance.md` の「100万本と混在の負荷の受入れ」。静止は GPU 15.1 ms で合格、rt は TLAS の入力の選び直しと MegaGeometry の表の毎フレームの走査で 37 ms）。ユーザーの指示（100万本は過程で、終わったらシーンの整備へ戻る）で、直す項目（SCN-MEGA-FIX-RT-SELECT〜STRESS-GPU）をシーンの項目の後に置き、この項目はその後で測り直す。
 
 ## PT-NONUNIFORM-SAMPLER: パストレーサーの材質のテクスチャの添字の一様でない印を、標本の関数の中まで届ける
-- status: backlog
-- done-when: `PathTracingClosestHit.glsl`（36〜37 行付近）が `materialTextures[nonuniformEXT(i)]` で取った sampler を関数の引数で渡し、呼ばれる側（`SparseResidencySampling.glsl` の `SampleMaterialTextureLod`・`SampleSparseResidentLod`）で標本している。GL_EXT_nonuniform_qualifier の一様でない印は関数の引数を越えて伝わらないので、標本の命令の sampled image に `NonUniform` の装飾が付かない疑いがある（NVIDIA では表に出ないが、装飾に頼る装置では1つの wave の中で別の材質のテクスチャを取り違えうる。VT に限らず PT の全材質のテクスチャ）。コンパイルした rchit を `spirv-dis` して、`OpImageSampleExplicitLod`・`OpImageSparseSampleExplicitLod` が受け取る sampled image に `NonUniform` があるかを確かめ、無ければ添字を関数へ渡して呼ばれる側で `nonuniformEXT` を付ける形にする。CPU のテスト（SPIR-V の逆アセンブルの照合）か、記録で確かめる。
+- status: done
+- done-when: `PathTracingClosestHit.glsl`（36〜37 行付近）が `materialTextures[nonuniformEXT(i)]` で取った sampler を関数の引数で渡し、呼ばれる側（`SparseResidencySampling.glsl` の `SampleMaterialTextureLod`・`SampleSparseResidentLod`）で標本している。GL_EXT_nonuniform_qualifier の一様でない印は関数の引数を越えて伝わらないので、標本の命令の sampled image に `NonUniform` の装飾が付かない疑いがある（NVIDIA では表に出ないが、装飾に頼る装置では1つの wave の中で別の材質のテクスチャを取り違えうる。VT に限らず PT の全材質のテクスチャ）。コンパイルした rchit を `spirv-dis` して、`OpImageSampleExplicitLod`・`OpImageSparseSampleExplicitLod` が受け取る sampled image に `NonUniform` があるかを確かめ、無ければ添字を関数へ渡して呼ばれる側で `nonuniformEXT` を付ける形にする。CPU のテスト（SPIR-V の逆アセンブルの照合）か、記録で確かめる。 確かめは CPU の試験 `PathTracingNonUniformSamplerSpirvTest`（`Test/Core/Rendering/CMakeLists.txt` の `RHIRayTracingApiContractTest` の束の MEMBER と、同名の add_test）で行う: `VulkanShaderCompiler` で `PathTracingClosestHit.glsl` を含む rchit を SPIR-V にし、材質のテクスチャの配列から取った sampled image を受ける `OpImageSampleExplicitLod`・`OpImageSparseSampleExplicitLod` の operand（とその元の load）に `NonUniform` の装飾があることを見る。足す前に `Docs/Testing.md` の 3 点を書く。`PathTracingMaterialVulkanTest` は起動を戻した後の `PT-NONUNIFORM-SAMPLER-CHECK` で回す。
+- verify: `cmake --build build --config Debug --target RHIRayTracingApiContractTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^PathTracingNonUniformSamplerSpirvTest$" --no-tests=error --output-on-failure --timeout 180`
 - verify: `cmake --build build --config Debug --target PathTracingMaterialVulkanTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^PathTracingMaterialVulkanTest$"`
 - paths: Assets/Shaders/PathTracing, Assets/Shaders/Common, Library/Core/Private/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
@@ -3412,9 +3430,11 @@
 - notes: 2026-10-06 VTG6-PT-VT-TEXTURES の評価で見つけた（段6の外）。撮影は `.harness/runs/startup-capture/VTG6-PT-VT-TEXTURES*`。
 
 ## TEST-ASSERT-NO-DIALOG: Debug のテストが assert の失敗で対話窓を出して ctest の打ち切りまで止まるのを、共通の仕組みで止める
-- status: backlog
-- done-when: `assert(` を使い、`_set_abort_behavior` も `_CRT_ERROR` の報告先の設定もしていないテストの実行ファイル（2026-10-06 の数え方で 158 件、Test/Core/Rendering で 96 件）が、Debug で assert が失敗すると対話窓を出して ctest の打ち切りまで待つ（TEST-SKINNED と同じ止まり方）。テストの実行ファイル全部に効く共通の仕組み（テストの共通のライブラリに静的初期化で `_set_error_mode(_OUT_TO_STDERR)` と `_set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT)` を入れて CMake で全テストへリンクする等）で止める。わざと assert を落とすテストの実行ファイルが、対話窓を出さずにすぐ非 0 で終わることを確かめる。あわせて、`RenderGraphCompileTest` などが副作用を `assert(...)` の中に置いていて NDEBUG の構成（RelWithDebInfo）では初期化ごと消えて 0xC0000005 で落ちる件を記録する（直すのは別）。
+- status: done
+- done-when: `assert(` を使い、`_set_abort_behavior` も `_CRT_ERROR` の報告先の設定もしていないテストの実行ファイル（2026-10-06 の数え方で 158 件、Test/Core/Rendering で 96 件）が、Debug で assert が失敗すると対話窓を出して ctest の打ち切りまで待つ（TEST-SKINNED と同じ止まり方）。テストの実行ファイル全部に効く共通の仕組み（テストの共通のライブラリに静的初期化で `_set_error_mode(_OUT_TO_STDERR)` と `_set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT)` を入れて CMake で全テストへリンクする等）で止める。わざと assert を落とすテストの実行ファイルが、対話窓を出さずにすぐ非 0 で終わることを確かめる。あわせて、`RenderGraphCompileTest` などが副作用を `assert(...)` の中に置いていて NDEBUG の構成（RelWithDebInfo）では初期化ごと消えて 0xC0000005 で落ちる件を記録する（直すのは別）。 わざと assert を落とす実行ファイルとして `TestAssertNoDialogTest` を足し（共通の仕組みをリンクした形で）、ctest には短い TIMEOUT（例 30 秒）と WILL_FAIL を付けて登録し、対話窓を出さずに非 0 ですぐ終わるときだけ通るようにする。足す前に `Docs/Testing.md` の 3 点を書く。
 - verify: `cmake --build build --config Debug --target RenderGraphCompileTest -- /m:1`
+- verify: `cmake --build build --config Debug --target TestAssertNoDialogTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^TestAssertNoDialogTest$" --no-tests=error --output-on-failure --timeout 60`
 - paths: Test, Library/Core/CMakeLists.txt, CMakeLists.txt, TASKS.md, PROGRESS.md
 - notes: 2026-10-06 TEST-SKINNED の評価で見つけた（段6の外）。
 
@@ -3673,12 +3693,14 @@
 - result: SS-GTAO（2026-10-02）で置き換わった。原因は旧SSAOがワールド空間の法線をビュー空間の標本へそのまま使い、開けた面も遮蔽に数えていたこと。GTAOはビュー空間の地平線で余弦重みの可視率を求め、半径1 mの外の面を数えないので、Cornellの壁の中ほどの可視率は0.97〜1.00（`RenderingGTAOCornellRoomVulkanTest`）。statusは人の確認のためbacklogのまま。
 
 ## FIX-NORMAL-MATRIX-SCALE: 法線行列の小スケール退化判定を尺度不変にする
-- status: backlog
-- done-when: `MatrixUtils::CreateNormalMatrix`が一様スケール約0.005未満の物体にも逆転置を返し（特異かどうかは尺度に対する比で判定）、R1室内フィクスチャの平面メッシュの頂点法線を幾何と一致させ、PTの閉包命中シェーダから同じ退化規則の写しを外す。R1数値検証、Indoor/Outdoor golden、`PathTracingRasterParityVulkanTest`が変わらず通る。
+- status: done
+- done-when: `MatrixUtils::CreateNormalMatrix`が一様スケール約0.005未満の物体にも逆転置を返し（特異かどうかは尺度に対する比で判定）、R1室内フィクスチャの平面メッシュの頂点法線を幾何と一致させ、PTの閉包命中シェーダから同じ退化規則の写しを外す。R1数値検証、Indoor/Outdoor golden、`PathTracingRasterParityVulkanTest`が変わらず通る。 既存の `MatrixAbstractionTest` に、一様スケール 0.001〜0.005 で回転した物体の法線行列が回転を保つ（単位行列に落ちない）検査を足す（新しい実行ファイルは作らない）。R1 の数値検証・Indoor/Outdoor の golden・`PathTracingRasterParityVulkanTest` は起動を戻した後の `FIX-NORMAL-MATRIX-SCALE-CHECK` で回し、変わるなら stop-when のとおり基準の更新を提案する。
+- verify: `cmake --build build --config Debug --target Game MathGeometryTest MeshBatcherInstancingTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^(MatrixAbstractionTest|InstanceDataFlattenTest)$" --no-tests=error --output-on-failure --timeout 180`
 - verify: `cmake --build build --config Debug --target Game RenderingHdrSceneCaptureTest PathTracingRasterParityVulkanTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -L RenderingValidation`
 - stop-when: 承認済みgoldenやR1の数値が変わる場合は、基準の更新を提案して止まる。
-- paths: Library/Core/Public/Math, Assets/Shaders/PathTracing, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- paths: Library/Core/Public/Math, Assets/Shaders/PathTracing, Test/Core/Math, Test/Core/Rendering, TASKS.md, PROGRESS.md
 - notes: R7-P3Dで発見。3x3の行列式の絶対値がFLT_EPSILON未満だと単位行列になり、回転した小さな物体の法線が回らない。R1室内の平面はこの規則を前提に頂点法線を+Zへ書き換えているため、PTも同じ規則でラスタと揃えている。
 
 ## RTGI-HIT-SPECULAR: RTGIの命中面を光沢のある反射でも照らす
@@ -3730,11 +3752,14 @@
 - notes: SS-CONTACT-SHADOWの反復（2026-10-02）で見つけた。lowの段で`mean_flip=0.396656647`（上限0.02）・`raw_max=163`・`maximum_channel=19`で落ちる。接触影を切ったシェーダーでも同じ値（`.harness/runs/20261002-084328/check-SS-CONTACT-SHADOW-r3-density-contact-off.txt`）なので、それより前の変更による。ctestには入っていない。
 
 ## TEST-FULL-CTEST-BASELINE: 全体CTestの既存の失敗を直す
-- status: backlog
-- done-when: 全体CTestで、R7の作業前（`c9a3e33`）から失敗している次のテストが通るか、失敗の理由と扱いが記録される: `VolumetricsPassContractTest`（霧の設定行の文字列）、`RenderResourcesDomainContractTest`（`WaitIdleWithoutResultCheck(`の数3、期待2）、`ViewportCameraIdRenderPlanTest`・`BoardComponentRoutingTest`・`SkeletalFramePacketSnapshotTest`（GPUデバイスのないテストでRenderingCoordinator::GenerateDrawCommandsが`m_Device->GetCapabilities()`をnull参照、`578236d`以来）、`FrameCaptureReadbackHelperTest`・`ComponentDataRegistryTest`・`WorldSyncDifferentialTest`（WorldTransformの777）・`CanvasViewRenderTest`・`RenderGraphTextureUsageContractTest`（ShadowMapPassの初期化失敗）（Debugのassertの対話窓で止まりtimeout）、`M9WorldAcceptanceTest`（負の対照の画素差）。
+- status: done
+- after: TEST-ASSERT-NO-DIALOG
+- done-when: 2026-09-25 の全体 CTest で落ちていた試験のうち、今も登録があり実行から外していないもの（`RenderResourcesDomainContractTest`・`ViewportCameraIdRenderPlanTest`・`BoardComponentRoutingTest`・`SkeletalFramePacketSnapshotTest`・`FrameCaptureReadbackHelperTest`・`WorldSyncDifferentialTest`・`CanvasViewRenderTest`）を Debug で回し、今も落ちる・止まるものを `Docs/Testing.md` の扱いで分ける: 製品のコードの不具合（例: GPU デバイスの無い試験で `RenderingCoordinator::GenerateDrawCommands` が `m_Device->GetCapabilities()` を null 参照する）は直す。実装の写し（数・並びの決め打ち。例: `WaitIdleWithoutResultCheck(` の数）の検査は、期待値を書き直さずに `set_tests_properties(... DISABLED TRUE)` で外し、理由を CMake のコメントと `Docs/Testing.md` の「外したもの」に書く。`VolumetricsPassContractTest`・`ComponentDataRegistryTest` は登録が無くなり、`RenderGraphTextureUsageContractTest` は 2026-11-01 に外したので対象外。上の 7 本の ctest が通る（外したものは Not Run）。`M9WorldAcceptanceTest` と全体の CTest（GPU の試験を含む）は、起動を戻した後の `TEST-FULL-CTEST-BASELINE-CHECK` で回し、残った失敗の理由と扱いを記録する。
+- verify: `cmake --build build --config Debug --target RenderResourcesDomainContractTest ViewportCameraIdRenderPlanTest BoardComponentRoutingTest SkeletalFramePacketSnapshotTest FrameCaptureReadbackHelperTest WorldSyncDifferentialTest CanvasViewRenderTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^(RenderResourcesDomainContractTest|ViewportCameraIdRenderPlanTest|BoardComponentRoutingTest|SkeletalFramePacketSnapshotTest|FrameCaptureReadbackHelperTest|WorldSyncDifferentialTest|CanvasViewRenderTest)$" --no-tests=error --output-on-failure --timeout 180`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 600`
 - stop-when: テストの期待を変える必要がある場合は理由を記録してユーザーへ戻す。
-- paths: Library/Core, Test/Core, Game
+- paths: Library/Core, Test/Core, Game, Docs/Testing.md, TASKS.md, PROGRESS.md
 - notes: 2026-09-25の全体gate（`.harness/runs/20260925-r7-gate/`）で確認。SkinnedRenderPathContractTestはTEST-SKINNED、R4はR4-REOPEN。
 
 ## CORE-JSON-SURROGATE: JSONの非BMP文字列を整合させる
@@ -3744,129 +3769,187 @@
 - notes: ParseUnicodeEscapeは現状4桁単位、AppendUtf8は3byteまで。P5Aとは別件。既定game action名はASCIIで進め、汎用JSON整合として後続修正する。
 
 ## GAME-GR130-VFX: 剣のトレイル（リボン）を実装する
-- status: backlog
-- done-when: 着手時に完了条件案を確定し、実装と検証を完了する。原文の案: CPU の試験で、固定ステップの回数が 0・1・2 のどのフレームでも帯の点列が連続で NaN が無いこと、1フレームで90度以上振っても補間で折れ目の角度が上限以下になること、寿命で点が消えて上限を超えないこと。GPU の試験で、既知の軌跡の帯の画素の位置が期待と一致すること。
-- verify: 要件原文のCPU/GPU/Bridge試験を着手計画へ分解し、実行済みと未実行を分離して記録。実機/SDKが必要な確認は代替stubで合格扱いしない。
+- status: done
+- after: GAME-GR136-VFX
+- done-when: 着手の最初に、作者の判断が要る方式と、未着手の前提の GR との境界を `Docs/Plans/GameFeatureRoadmap.md` に書く（推奨の案で進め、理由を PROGRESS.md に書く。前提が未完の部分は完了を宣言しない範囲として残す）。 起動せずに確かめる完了の条件: CPU の試験 `SwordTrailRibbonTest`（新しい実行ファイル。足す前に `Docs/Testing.md` の 3 点を書く）で、固定ステップの回数が 0・1・2 のどのフレームでも帯の点列が連続で NaN が無い、1 フレームで 90 度以上振っても補間で折れ目の角度が上限以下になる、寿命で点が消えて上限を超えない（剣は描画用の補間された Transform を読む）。既知の軌跡の帯の画素の位置が期待と一致すること（GPU の試験 `SwordTrailRibbonVulkanTest`）は、起動を戻した後の `GAME-GR130-VFX-CHECK` で確かめる。
+- verify: `cmake --build build --config Debug --target Game SwordTrailRibbonTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^SwordTrailRibbonTest$" --no-tests=error --output-on-failure --timeout 180`
+- verify: `cmake --build build --config Debug --target SwordTrailRibbonVulkanTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^SwordTrailRibbonVulkanTest$" --no-tests=error --output-on-failure --timeout 600`
 - stop-when: 作者判断が未決の方式を確定扱いする、前提GR未完のまま完了宣言、範囲外repoの無承認変更、blocking未解消。
-- paths: Docs/Plans/GameFeatureRoadmap.md, Docs/Plans/GameFeatureRequirements.md, Docs/Plans/NORVESLIB_ROADMAP_ADDITION_VFX_2026-10-02.md（非追跡の計画参照。実装pathsは着手時に確定）
+- paths: Library/Core/Public/Particle, Library/Core/Private/Particle, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Tools/AssetCook, Test/Core/Rendering, Docs/Plans/GameFeatureRoadmap.md, TASKS.md, PROGRESS.md
 - dependencies: GR13（ボーンソケット）、GR57（描画の経路と半透明のキューを共有）、GR136、GR02（剣は描画用の補間された Transform を読む。攻撃判定 GR16 はシミュレーションの Transform を読む。段階をまたぐ注意の G4 の項目どおり）、GR30（TAA の整合）。
 - stage-proposal: G8（戦闘と進行）。垂直スライスの戦闘で使う。
 - notes: 2026-10-02追加。未着手の後続作業で、前提と選定課題を解決してから実装タスクへ細分化する。NorvesLib/Editorの境界とVFX-S1〜S5はロードマップ参照。
 
 ## GAME-GR131-VFX: 当たりの火花・衝撃（ヒットエフェクト）を実装する
-- status: backlog
-- done-when: 着手時に完了条件案を確定し、実装と検証を完了する。原文の案: 当たり1回で放出の要求がちょうど1回積まれ、位置と法線が当たりの値と一致すること。表面の種類ごとに表のエフェクトが選ばれること。
-- verify: 要件原文のCPU/GPU/Bridge試験を着手計画へ分解し、実行済みと未実行を分離して記録。実機/SDKが必要な確認は代替stubで合格扱いしない。
+- status: done
+- after: GAME-GR136-VFX
+- done-when: 着手の最初に、作者の判断が要る方式と、未着手の前提の GR との境界を `Docs/Plans/GameFeatureRoadmap.md` に書く（推奨の案で進め、理由を PROGRESS.md に書く。前提が未完の部分は完了を宣言しない範囲として残す）。 起動せずに確かめる完了の条件: CPU の試験 `HitEffectEmissionTest`（新しい実行ファイル。足す前に `Docs/Testing.md` の 3 点を書く）で、当たり 1 回で放出の要求がちょうど 1 回積まれ、位置と法線が当たりの値と一致する。表面の種類ごとに表のエフェクトが選ばれ、表に無い種類は既定の 1 種類になる（GR115 が無いうち）。
+- verify: `cmake --build build --config Debug --target Game HitEffectEmissionTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^HitEffectEmissionTest$" --no-tests=error --output-on-failure --timeout 180`
 - stop-when: 作者判断が未決の方式を確定扱いする、前提GR未完のまま完了宣言、範囲外repoの無承認変更、blocking未解消。
-- paths: Docs/Plans/GameFeatureRoadmap.md, Docs/Plans/GameFeatureRequirements.md, Docs/Plans/NORVESLIB_ROADMAP_ADDITION_VFX_2026-10-02.md（非追跡の計画参照。実装pathsは着手時に確定）
+- paths: Library/Core/Public/Particle, Library/Core/Private/Particle, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Tools/AssetCook, Test/Core/Rendering, Docs/Plans/GameFeatureRoadmap.md, TASKS.md, PROGRESS.md
 - dependencies: GR16、GR57、GR136、GR115（軟い。無いうちは既定の1種類）、GR02。
 - stage-proposal: G8。
 - notes: 2026-10-02追加。未着手の後続作業で、前提と選定課題を解決してから実装タスクへ細分化する。NorvesLib/Editorの境界とVFX-S1〜S5はロードマップ参照。
 
 ## GAME-GR132-VFX: シ者を倒したときの赤い血を実装する
-- status: backlog
-- done-when: 着手時に完了条件案を確定し、実装と検証を完了する。原文の案: 撃破の合図から、血・滲み・消滅が時間割どおりの時刻で始まること（固定刻みのクロックで2回撮って一致）。滲みのマスクが時間に対して単調に広がること。
-- verify: 要件原文のCPU/GPU/Bridge試験を着手計画へ分解し、実行済みと未実行を分離して記録。実機/SDKが必要な確認は代替stubで合格扱いしない。
+- status: done
+- after: GAME-GR136-VFX, GAME-GR133-VFX
+- done-when: 着手の最初に、作者の判断が要る方式と、未着手の前提の GR との境界を `Docs/Plans/GameFeatureRoadmap.md` に書く（推奨の案で進め、理由を PROGRESS.md に書く。前提が未完の部分は完了を宣言しない範囲として残す）。 垂直スライス（G8）で最小の形（血しぶきの粒だけ）にするかもここで決める。起動せずに確かめる完了の条件: CPU の試験 `DefeatBloodSequenceTest`（新しい実行ファイル。足す前に `Docs/Testing.md` の 3 点を書く）で、撃破の合図から血・滲み・消滅が時間割どおりの時刻で始まり（固定刻みのクロックで 2 回回して一致）、滲みのマスクが時間に対して単調に広がる。
+- verify: `cmake --build build --config Debug --target Game DefeatBloodSequenceTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^DefeatBloodSequenceTest$" --no-tests=error --output-on-failure --timeout 180`
 - stop-when: 作者判断が未決の方式を確定扱いする、前提GR未完のまま完了宣言、範囲外repoの無承認変更、blocking未解消。
-- paths: Docs/Plans/GameFeatureRoadmap.md, Docs/Plans/GameFeatureRequirements.md, Docs/Plans/NORVESLIB_ROADMAP_ADDITION_VFX_2026-10-02.md（非追跡の計画参照。実装pathsは着手時に確定）
+- paths: Library/Core/Public/Particle, Library/Core/Private/Particle, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Tools/AssetCook, Test/Core/Rendering, Docs/Plans/GameFeatureRoadmap.md, TASKS.md, PROGRESS.md
 - dependencies: GR57、GR60、GR65、GR26、GR133、GR136。
 - stage-proposal: G10（シ者の表現と戦闘の拡張）。垂直スライス（G8）では、最小の形（血しぶきのパーティクルだけ）を入れるかを作者が決める。
 - notes: 2026-10-02追加。未着手の後続作業で、前提と選定課題を解決してから実装タスクへ細分化する。NorvesLib/Editorの境界とVFX-S1〜S5はロードマップ参照。
 
 ## GAME-GR133-VFX: デカール（地面や体に残る跡）を実装する
-- status: backlog
-- done-when: 着手時に完了条件案を確定し、実装と検証を完了する。原文の案: GPU の試験で、既知の箱のデカールが範囲内の GBuffer の色と法線だけを変え、範囲外の画素が変わらないこと。上限を超えると古いものから消えること。
-- verify: 要件原文のCPU/GPU/Bridge試験を着手計画へ分解し、実行済みと未実行を分離して記録。実機/SDKが必要な確認は代替stubで合格扱いしない。
+- status: done
+- done-when: 着手の最初に、作者の判断が要る方式と、未着手の前提の GR との境界を `Docs/Plans/GameFeatureRoadmap.md` に書く（推奨の案で進め、理由を PROGRESS.md に書く。前提が未完の部分は完了を宣言しない範囲として残す）。 草（GR43）の上には描かないのを既定にする。起動せずに確かめる完了の条件: CPU の試験 `DecalPoolEvictionTest`（新しい実行ファイル。足す前に `Docs/Testing.md` の 3 点を書く）で、上限を超えると古いものから消える。既知の箱のデカールが範囲内の GBuffer の色と法線だけを変え、範囲外の画素が変わらないこと（GPU の試験 `DecalGBufferVulkanTest`）は、起動を戻した後の `GAME-GR133-VFX-CHECK` で確かめる。
+- verify: `cmake --build build --config Debug --target Game DecalPoolEvictionTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^DecalPoolEvictionTest$" --no-tests=error --output-on-failure --timeout 180`
+- verify: `cmake --build build --config Debug --target DecalGBufferVulkanTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^DecalGBufferVulkanTest$" --no-tests=error --output-on-failure --timeout 600`
 - stop-when: 作者判断が未決の方式を確定扱いする、前提GR未完のまま完了宣言、範囲外repoの無承認変更、blocking未解消。
-- paths: Docs/Plans/GameFeatureRoadmap.md, Docs/Plans/GameFeatureRequirements.md, Docs/Plans/NORVESLIB_ROADMAP_ADDITION_VFX_2026-10-02.md（非追跡の計画参照。実装pathsは着手時に確定）
+- paths: Library/Core/Public/Particle, Library/Core/Private/Particle, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Tools/AssetCook, Test/Core/Rendering, Docs/Plans/GameFeatureRoadmap.md, TASKS.md, PROGRESS.md
 - dependencies: GR25（描画の拡張点）、GR26（材質の拡張）、GR37（地形）。草（GR43）の上の扱いは、草には描かないのを既定にする。
 - stage-proposal: G10。足跡を垂直スライスで使うなら G7 に前倒し。
 - notes: 2026-10-02追加。未着手の後続作業で、前提と選定課題を解決してから実装タスクへ細分化する。NorvesLib/Editorの境界とVFX-S1〜S5はロードマップ参照。
 
 ## GAME-GR134-VFX: メッシュのエフェクトを実装する
-- status: backlog
-- done-when: 着手時に完了条件案を確定し、実装と検証を完了する。原文の案: 粒子の数だけインスタンスが描かれ、時間の値で溶けの閾値が変わること（GPU の試験の画素で確かめる）。
-- verify: 要件原文のCPU/GPU/Bridge試験を着手計画へ分解し、実行済みと未実行を分離して記録。実機/SDKが必要な確認は代替stubで合格扱いしない。
+- status: done
+- after: GAME-GR136-VFX
+- done-when: 着手の最初に、作者の判断が要る方式と、未着手の前提の GR との境界を `Docs/Plans/GameFeatureRoadmap.md` に書く（推奨の案で進め、理由を PROGRESS.md に書く。前提が未完の部分は完了を宣言しない範囲として残す）。 起動せずに確かめる完了の条件: CPU の試験 `MeshParticleInstanceTest`（新しい実行ファイル。足す前に `Docs/Testing.md` の 3 点を書く）で、粒子の数だけインスタンスの記録が積まれ、時間の値で溶けの閾値が変わる。描かれた画素で溶けを確かめること（GPU の試験 `MeshParticleDissolveVulkanTest`）は、起動を戻した後の `GAME-GR134-VFX-CHECK` で確かめる。
+- verify: `cmake --build build --config Debug --target Game MeshParticleInstanceTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^MeshParticleInstanceTest$" --no-tests=error --output-on-failure --timeout 180`
+- verify: `cmake --build build --config Debug --target MeshParticleDissolveVulkanTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^MeshParticleDissolveVulkanTest$" --no-tests=error --output-on-failure --timeout 600`
 - stop-when: 作者判断が未決の方式を確定扱いする、前提GR未完のまま完了宣言、範囲外repoの無承認変更、blocking未解消。
-- paths: Docs/Plans/GameFeatureRoadmap.md, Docs/Plans/GameFeatureRequirements.md, Docs/Plans/NORVESLIB_ROADMAP_ADDITION_VFX_2026-10-02.md（非追跡の計画参照。実装pathsは着手時に確定）
+- paths: Library/Core/Public/Particle, Library/Core/Private/Particle, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Tools/AssetCook, Test/Core/Rendering, Docs/Plans/GameFeatureRoadmap.md, TASKS.md, PROGRESS.md
 - dependencies: GR57、GR136、GR26、GR27（アルファテストと両面描画）、GR60。
 - stage-proposal: G10。
 - notes: 2026-10-02追加。未着手の後続作業で、前提と選定課題を解決してから実装タスクへ細分化する。NorvesLib/Editorの境界とVFX-S1〜S5はロードマップ参照。
 
 ## GAME-GR135-VFX: 空気の歪み（屈折）を実装する
-- status: backlog
-- done-when: 着手時に完了条件案を確定し、実装と検証を完了する。原文の案: 歪みのバッファが空のとき、出力が歪みのパスの有無で画素単位で一致すること。既知のずらしの値で、画素が期待の量だけ動くこと。
-- verify: 要件原文のCPU/GPU/Bridge試験を着手計画へ分解し、実行済みと未実行を分離して記録。実機/SDKが必要な確認は代替stubで合格扱いしない。
+- status: done
+- after: GAME-GR136-VFX, GAME-GR134-VFX
+- done-when: 着手の最初に、作者の判断が要る方式と、未着手の前提の GR との境界を `Docs/Plans/GameFeatureRoadmap.md` に書く（推奨の案で進め、理由を PROGRESS.md に書く。前提が未完の部分は完了を宣言しない範囲として残す）。 起動せずに確かめる完了の条件: 歪みのバッファとパスを足し、Debug の Game のビルドが通る。歪みのバッファが空のとき出力が歪みのパスの有無で画素単位で一致すること、既知のずらしの値で画素が期待の量だけ動くこと（GPU の試験 `DistortionPassVulkanTest`）は、起動を戻した後の `GAME-GR135-VFX-CHECK` で確かめる。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `cmake --build build --config Debug --target DistortionPassVulkanTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^DistortionPassVulkanTest$" --no-tests=error --output-on-failure --timeout 600`
 - stop-when: 作者判断が未決の方式を確定扱いする、前提GR未完のまま完了宣言、範囲外repoの無承認変更、blocking未解消。
-- paths: Docs/Plans/GameFeatureRoadmap.md, Docs/Plans/GameFeatureRequirements.md, Docs/Plans/NORVESLIB_ROADMAP_ADDITION_VFX_2026-10-02.md（非追跡の計画参照。実装pathsは着手時に確定）
+- paths: Library/Core/Public/Particle, Library/Core/Private/Particle, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Tools/AssetCook, Test/Core/Rendering, Docs/Plans/GameFeatureRoadmap.md, TASKS.md, PROGRESS.md
 - dependencies: GR25、GR30、GR57、GR134、GR136。
 - stage-proposal: G10。
 - notes: 2026-10-02追加。未着手の後続作業で、前提と選定課題を解決してから実装タスクへ細分化する。NorvesLib/Editorの境界とVFX-S1〜S5はロードマップ参照。
 
 ## GAME-GR136-VFX: Niagara 相当の VFX システムを実装する
-- status: backlog
-- done-when: 着手時に完了条件案を確定し、実装と検証を完了する。原文の案: スキーマに、エミッタとモジュールの型、値の範囲・単位・既定値が出ること。範囲外の値や型の合わない値の設定が拒否されること。クックしたバイナリを読んだ結果が、元の形式から読んだ結果と一致すること（同じ種と刻みで、粒子の位置の列が一致）。動いているゲームでの値の変更が、次のフレームから反映すること。イベントで起動したエミッタが、起動の位置と時刻どおりに生成すること。フリップブックの取り込み設定どおりの UV の矩形と再生の速さ。雨（GR58）を含む既存の要件のエフェクトを少なくとも1つ、このシステムで組めること。
-- verify: 要件原文のCPU/GPU/Bridge試験を着手計画へ分解し、実行済みと未実行を分離して記録。実機/SDKが必要な確認は代替stubで合格扱いしない。
+- status: done
+- done-when: 着手の最初に、作者の判断が要る方式と、未着手の前提の GR との境界を `Docs/Plans/GameFeatureRoadmap.md` に書く（推奨の案で進め、理由を PROGRESS.md に書く。前提が未完の部分は完了を宣言しない範囲として残す）。 GR57（雨）をこの形で設計するか、この上の層として作るかもここで決める。起動せずに確かめる完了の条件は CPU の試験 `VfxEffectSystemTest`（新しい実行ファイル。足す前に `Docs/Testing.md` の 3 点を書く）で次を見る: (1) エミッタとモジュールの型、値の範囲・単位・既定値がスキーマに出る、(2) 範囲外の値や型の合わない値の設定が拒否され、前の値を保つ、(3) クックしたバイナリを読んだ結果が元の形式から読んだ結果と一致する（同じ種と固定の刻みで、粒子の位置の列が一致）、(4) 動いているシミュレーションでの値の変更が次の刻みから反映する、(5) イベントで起動したエミッタが起動の位置と時刻どおりに生成する、(6) フリップブックの取り込み設定どおりの UV の矩形と再生の速さ。既存の要件のエフェクトを少なくとも 1 つ（例: Rendering3DTest の橙の粒）このシステムで組み、起動画面の見た目が変わらないことは、起動を戻した後の `GAME-GR136-VFX-CHECK` で確かめる。
+- verify: `cmake --build build --config Debug --target Game VfxEffectSystemTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^VfxEffectSystemTest$" --no-tests=error --output-on-failure --timeout 180`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -OutDir .harness/runs/startup-capture/GAME-GR136-VFX`
 - stop-when: 作者判断が未決の方式を確定扱いする、前提GR未完のまま完了宣言、範囲外repoの無承認変更、blocking未解消。
-- paths: Docs/Plans/GameFeatureRoadmap.md, Docs/Plans/GameFeatureRequirements.md, Docs/Plans/NORVESLIB_ROADMAP_ADDITION_VFX_2026-10-02.md（非追跡の計画参照。実装pathsは着手時に確定）
+- paths: Library/Core/Public/Particle, Library/Core/Private/Particle, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Tools/AssetCook, Test/Core/Rendering, Docs/Plans/GameFeatureRoadmap.md, TASKS.md, PROGRESS.md
 - dependencies: GR57（この要件は GR57 と範囲が重なる。GR57 をこの形で設計するか、GR57 の上の層として作るかは着手時に決める）、GR78、GR96、GR02、GR126（軟い）、GR72（軟い。音は後で足せる形）。
 - stage-proposal: G7（GR57 と一緒）。雨（GR58）やしぶき（GR59）もこのシステムのエフェクトとして作るので、早めに入れる。
 - notes: 2026-10-02追加。未着手の後続作業で、前提と選定課題を解決してから実装タスクへ細分化する。NorvesLib/Editorの境界とVFX-S1〜S5はロードマップ参照。
 
 ## GAME-GR137-VFX: 資産の編集・決定的な撮影・言語モデルの口（Bridge の拡張。汎用）を実装する
-- status: backlog
-- done-when: 着手時に完了条件案を確定し、実装と検証を完了する。原文の案: Bridge の試験で、資産を開いて値を設定し、保存して開き直すと値が一致すること。型の合わない値や範囲外の値が拒否されること。同じ引数で2回撮影した画像が一致すること（GPU の試験。GPU の無い環境では飛ばす）。MCP の口から、スキーマの一覧、値の設定、撮影が通ること（NorvesEditor の側の作業なら、NorvesLib の試験の対象外）。
-- verify: 要件原文のCPU/GPU/Bridge試験を着手計画へ分解し、実行済みと未実行を分離して記録。実機/SDKが必要な確認は代替stubで合格扱いしない。
+- status: done
+- after: GAME-GR136-VFX
+- done-when: 着手の最初に、作者の判断が要る方式と、未着手の前提の GR との境界を `Docs/Plans/GameFeatureRoadmap.md` に書く（推奨の案で進め、理由を PROGRESS.md に書く。前提が未完の部分は完了を宣言しない範囲として残す）。 NorvesLib と NorvesEditor の境界（MCP の口は Editor 側か）もここで決める。起動せずに確かめる完了の条件: Bridge の CPU の試験 `BridgeAssetPropertyEditTest`（新しい実行ファイル。足す前に `Docs/Testing.md` の 3 点を書く）（Game のソースを丸ごと組み込まない形。丸ごと組み込む試験は 2026-11-01 に全体のビルドから外した）で、資産を開いて値を設定し、保存して開き直すと値が一致する・型の合わない値や範囲外の値が拒否される。同じ引数で 2 回撮った画像が一致すること（GPU の試験 `BridgeDeterministicCaptureVulkanTest`。GPU の無い環境では飛ばす）は、起動を戻した後の `GAME-GR137-VFX-CHECK` で確かめる。MCP の口が NorvesEditor 側の作業なら、この項目の対象外と記録する。
+- verify: `cmake --build build --config Debug --target Game BridgeAssetPropertyEditTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^BridgeAssetPropertyEditTest$" --no-tests=error --output-on-failure --timeout 180`
+- verify: `cmake --build build --config Debug --target BridgeDeterministicCaptureVulkanTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^BridgeDeterministicCaptureVulkanTest$" --no-tests=error --output-on-failure --timeout 600`
 - stop-when: 作者判断が未決の方式を確定扱いする、前提GR未完のまま完了宣言、範囲外repoの無承認変更、blocking未解消。
-- paths: Docs/Plans/GameFeatureRoadmap.md, Docs/Plans/GameFeatureRequirements.md, Docs/Plans/NORVESLIB_ROADMAP_ADDITION_VFX_2026-10-02.md（非追跡の計画参照。実装pathsは着手時に確定）
+- paths: Game/Bridge, Library/Core/Public/Object, Library/Core/Private/Object, Library/Core/Public/Particle, Library/Core/Private/Particle, Test/Game/Bridge, Docs/Plans/GameFeatureRoadmap.md, TASKS.md, PROGRESS.md
 - dependencies: GR136（エフェクトの資産がリフレクションで公開されていること）、GR78、GR96、GR02、GR126。
 - stage-proposal: G7（GR136 と一緒）。エフェクト以外の資産にも使えるので、早く欲しければ前倒しできる。
 - notes: 2026-10-02追加。未着手の後続作業で、前提と選定課題を解決してから実装タスクへ細分化する。NorvesLib/Editorの境界とVFX-S1〜S5はロードマップ参照。
 
 ## G2-GR77-NATIVE-ACCEPTANCE: 実物GLBとnative統合の受入れを記録する
-- status: blocked
-- done-when: 実物GLBと既存glTFのcooker/loose/骨格の受入れを実行し、必要な範囲でgeometry/texture/hashと寿命を確認する。
-- verify: CookedMeshTest、AssetCookGlbSmoke、実物大型GLBのcpu/cooked/表示結果を区別して記録する。
+- status: done
+- done-when: この Windows の手元で次を行い、`Docs/Architecture/AssetImportPipeline.md` の「GR77: native受入れ」に、CPU の試験・cooked・骨格・表示・未実行を分けて記録する。
+  (1) verify の GR77 の試験19件が Debug で通る。GR77 のコードの不具合は直す。GR77 の外が原因の既存の失敗は、記録して要起票にする。
+  (2) TRELLIS.2 の実物 wooden_shack.glb の cook で、model 1つと texture 3つが実 package で解決する。時間とピークメモリも記録する。
+  (3) dog_trellis2_60k.glb(読めなければ banana.glb)で、2回焼いた結果がバイト単位で一致する。同じ GLB を分けた .gltf から焼いた NVMESH との一致も比べる(違えば原因を記録する)。
+  (4) dog_rigged.glb の骨格の cook が、コンテナではなく既存の契約の診断で拒否される。
+  (5) mega-bananas を -RequireAssets で1枚撮り、GLB 由来のバナナがテクスチャ付きで描かれていることを PNG で確かめる。
+  既存の節の「Windows.h依存で未検証」の注記は、実行結果に合わせて直す。loose の実物 GLB は未実行と明記する。
+- verify: `cmake --build build --config Debug --target CookedMeshTest AssetCook -- -m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 180 -R "^(GltfContainerTest|Base64DecodeTest|GltfBufferSourceTest|GltfBufferSetTest|GltfBufferUriTest|GltfBufferJsonTest|GltfBufferNumberTest|StaticGltfBufferCookTest|GltfImageRangeTest|GltfImageSourceTest|GltfAccessorRangeTest|GltfAccessorStagingTest|ImageBytesStagingTest|GltfDocumentProfileTest|GltfLooseSourceTest|CookedSkeletalAssetTest|CookedMeshTest|AssetCookGlbSmoke|AssetCookMeshSmoke)$"`
+- verify: `git grep -n "GR77: native" -- Docs/Architecture/AssetImportPipeline.md`
+- paths: Docs/Architecture/AssetImportPipeline.md, TASKS.md, PROGRESS.md, Library/Core/Private/Resource/Gltf*, Library/Core/Private/Resource/GLTFAnalyzer.cpp, Library/Core/Private/Resource/SkeletalGltfDecode.cpp, Library/Core/Private/Resource/SkeletalGltfDecode.h, Tools/AssetCook/MeshCooker.cpp, Tools/AssetCook/AssetCookGlbSmoke.cmake.in, Test/Core/Asset/Gltf*, Test/Core/Asset/StaticGltfBufferCookTest.cpp, Test/Core/Asset/ImageBytesStagingTest.cpp, Test/Core/Asset/CookedSkeletalAssetTest.cpp
 - stop-when: pure helperやfixture構文の成功をnative統合の成功として扱う。
 - notes: 現cloudはWindows.h依存で本体compileできず、計画書が参照するDogGameの実物大型GLBも未配置。作者は非描画Windows検証を必須から外しているため、独立実装は継続する。
 
 ## G2-GR78-SURFACE-CENTROID: 表面重心の極端値精度を確認する
-- status: blocked
-- done-when: 面積重み原点の極端値相殺と循環/面列挙順依存を解消し、独立確認後にsurface_centroidを有効化する。
-- verify: 2^100/2^-100の等面積2面、巨大正負座標/微小残差、面積/重心/実頂点結果を独立反証する。
+- status: done
+- done-when: 静的メッシュの取込(cook と loose)で surface_centroid を有効にする。面積重みの原点は、binary64 の全指数域を覆う正確な累算から最後に 1 回だけ丸めて求め、面の順・各面の巡回・巻きの反転に依らず結果をビット単位で一致させる。
+  2^100/2^-100 の等面積 2 面と、±巨大座標が相殺して微小な残りが出る組で、面積・重心・変換後の頂点が期待値どおりになる。総面積 0 は DegenerateSurface で失敗し、他の原点へ置き換えず、頂点と index を変えない。骨格では引き続き拒否する。既存の設定の hash は変えない。
+  `Docs/Architecture/ImportSettings.md` に節「## 表面重心の精度」を足し、方式と誤差の上限を書く。独立確認は、統合の前のランナーの評価者の PASS で満たす。
+- verify: `cmake --build build --config Debug --target CookedMeshTest -- -m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 180 -R "^(ImportTransformTest|ImportSettingsValueTest|ImportSettingsJsonTest|ImportStaticIntegrationTest|CookedSkeletalAssetTest)$"`
+- verify: `git grep -n "## 表面重心の精度" -- Docs/Architecture/ImportSettings.md`
+- paths: Library/Core/Private/Resource/ImportTransform.cpp, Library/Core/Private/Resource/ImportTransform.h, Library/Core/Private/Resource/ImportSettings.cpp, Library/Core/Private/Resource/ImportSettingsJson.cpp, Test/Core/Asset/ImportTransformTest.cpp, Test/Core/Asset/ImportSettingsValueTest.cpp, Test/Core/Asset/ImportSettingsJsonTest.cpp, Test/Core/Asset/ImportStaticIntegrationTest.cpp, Docs/Architecture/ImportSettings.md, TASKS.md, PROGRESS.md
 - stop-when: 未確認実装をロードへ接続する、他の原点選択へ無言fallbackする。
 - notes: 2026-10-03作者は他変換を先行し、この機能は未対応として明示拒否する方針を承認。以前の候補はa6391b2の履歴に保持、active実装からは除く。
 
 ## G2-GR82-V1-REST-POSE-GUARD: clip作成時骨格の差を束縛時に検査する
-- status: blocked
-- done-when: v1で各clipの作成時rest snapshotを保存し、現在骨格との差が許容超過なら既定拒否、明示許可時だけ通し、差量と超過関節を報告する。
-- verify: 同名同階層・異なるrest、全関節Translationを含む古いclip、許容内/外/明示許可/q符号同値、欠落/不正snapshot、cook/parse/bind往復。
+- status: done
+- done-when: 既存の G2-GR82-B1(53f17969/7b423fb1)と B2/B3 の実装が本要件(各 clip の作成時 rest snapshot の保存、現在の骨格との差が許容を超えたら既定で拒否、明示の許可のときだけ通す、差の量と超過した関節を報告)を満たすことを、このブランチの Debug で CookedClipBankV1Test・SkeletalClipBankBindingTest・RigSplitCookTest が通ることで確かめる。そのうえで本項目の `- result:` に、元の verify の各項目(同名同階層で rest が違う / 全関節 Translation を含む古い clip / 許容の内・外・明示許可・q の符号 / snapshot の欠落・不正 / cook・parse・bind の往復)が既存の試験のどこに当たるかを、ファイルと行またはマーカーで書く。新しい形式・API・試験は足さない。試験が落ちたら ClipBank の実装の側で直し、期待値は変えない。
+- verify: `cmake --build build --config Debug --target CookedMeshTest -- -m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 180 -R "^(CookedClipBankV1Test|SkeletalClipBankBindingTest|RigSplitCookTest)$"`
+- paths: TASKS.md, PROGRESS.md, Library/Core/Private/Animation/ClipBankBinding.cpp, Library/Core/Private/Animation/ClipBankBinding.h, Library/Core/Private/Animation/ClipBankRestComparison.cpp, Library/Core/Private/Animation/ClipBankRestComparison.h, Library/Core/Private/Asset/CookedClipBankV1.cpp, Library/Core/Private/Asset/CookedClipBankV1.h
 - stop-when: SkeletonIdからrestを除いたことを無条件互換と扱う、古いclipの歪みを黙認する。
 - notes: 作者承認済みのStage B必須要件。blocked理由はv1形式とStage A等の前提待ちで、作者の再承認待ちではない。
 
 ## G2-GR32-GPU-ACCEPTANCE: 多材質と旧描画互換をWindows GPUで確認する
-- status: blocked
-- done-when: 2材質板のGPU readbackと旧NVSKEL/M9SkinnedのGBuffer全画素一致、既定Rendering3DTestを実機で確認する。
-- verify: Windows/Vulkanで独立draw契約とGPU readback、起動画面を取得して実画像/結果を確認する。
+- status: done
+- done-when: 次の (1)〜(4) を満たす。
+  (1) 既定のビジビリティバッファの経路で、スキンの submesh ごとの描画が自分のインデックスの範囲だけを ID に描く。`VisibilityRasterPass::CollectSkinnedChunks` が `SourceFirstIndex`/`SourceIndexCount` を `VirtualShadowMapPass` と同じ規則で使い、範囲の計算は 2 つのパスで 1 つの関数に共有する。旧の空表(全体の範囲)の描画は変えない。既存の `SkinnedSubmeshDrawContractTest` に範囲(全体・部分・3 の倍数でない・はみ出し)の検査を足し、Debug で通る(新しい試験の exe は作らない)。
+  (2) 検証用の骨付きパネル(`StartupSkinnedProbe`)に、2 submesh・2 材質 slot の変種を足す。起動の引数で明示したときだけ使い、既定の起動画面と `-SkinnedProbe` だけの撮影の見た目は変えない。`CaptureStartupScene.ps1 -SkinnedProbeMaterials 2` は、ビジビリティバッファの On と Off の両方で、パネルの各半分の材質の色の読み戻しがその slot の材質の色であることを判定し、違えば result=fail にする。
+  (3) `Test-M9World.ps1 -LegacyNvskelCompare` は、同じ ValidU8Float から作った旧 NVSKEL(0.1。表なし)と 0.2 を GBuffer のラスタの経路で描き、GBuffer の全画素一致を判定して、比べた画像を `-EvidenceDir` に残す。旧形式は試験側(`Test/Tools` の oracle)で作り、製品の AssetCook に旧形式の書き出しを戻さない。
+  (4) 既定の Rendering3DTest の起動画面を撮り、result=pass と PNG で確かめる。
+  (2)〜(4) の実行は、当分アプリを起動しない決まりの間は確かめのタスク(`G2-GR32-GPU-ACCEPTANCE-CHECK`)で行う。この項目は、実装・ビルド・CPU の試験と、後で何を確かめるかを `PROGRESS.md` と `Docs/Architecture/NVSKELMigrationInventory.md` に書くことで済む。mock や source の確認を実 GPU の合格と扱わない。
+- verify: `cmake --build build --config Debug --target Game AssetCook SkinnedSubmeshDrawContractTest -- -m:1`
+- verify: `ctest --test-dir build -C Debug -R "^SkinnedSubmeshDrawContractTest$" --no-tests=error --output-on-failure --timeout 180`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -SkinnedProbe -SkinnedProbeMaterials 2 -VisibilityBuffer On -OutDir .harness/runs/startup-capture/G2-GR32-GPU-ACCEPTANCE-2mat-vb`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -SkinnedProbe -SkinnedProbeMaterials 2 -VisibilityBuffer Off -OutDir .harness/runs/startup-capture/G2-GR32-GPU-ACCEPTANCE-2mat-gbuffer`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Test-M9World.ps1 -Configuration Debug -LegacyNvskelCompare -EvidenceDir .harness/runs/scene-capture/G2-GR32-GPU-ACCEPTANCE-legacy`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -OutDir .harness/runs/startup-capture/G2-GR32-GPU-ACCEPTANCE-default`
+- paths: Library/Core/Private/Rendering/VisibilityRasterPass.cpp, Library/Core/Public/Rendering/VisibilityRasterPass.h, Library/Core/Private/Rendering/VirtualShadowMapPass.cpp, Library/Core/Public/Rendering/MeshIndexChunks.h, Test/Core/Rendering/SkinnedSubmeshDrawContractTest.cpp, Game/GameModes/Rendering3DTest/StartupSkinnedProbe.cpp, Game/GameModes/Rendering3DTest/StartupSkinnedProbe.h, Game/GameModes/Rendering3DTest/Rendering3DTestData.h, Game/GameModes/Rendering3DTest/Rendering3DTestRoutine.cpp, Game/GameApplicationHandler.cpp, Game/GameModes/Rendering3DTest/M9WorldAcceptance.cpp, Game/GameModes/Rendering3DTest/M9WorldAcceptance.h, Scripts/CaptureStartupScene.ps1, Scripts/Test-M9World.ps1, Test/Tools/NvskelLegacyV01Oracle.py, Docs/Architecture/NVSKELMigrationInventory.md, TASKS.md, PROGRESS.md
 - blocked-by: 現在のクラウドにWindows/Vulkan実行環境がない。非描画のWindows免除を描画へ拡張しない。
 - stop-when: mock/source確認を実GPU合格と扱う、ユーザー指定を変えて別環境へ無断移動する。
 
 ## G2-GR79-IMPORT-POLICY-CONNECTION: 材質設定と出所付き診断を接続する
-- status: backlog
-- done-when: material/asset/asset-setの設定を解決し、発光換算の未設定拒否に資産名・材質名・emissiveNitsPerUnitを表示。AI生成profileを明示的に適用し素材単位overrideを保持する。canonical/hash/cacheとJSON/CLIへ接続する。
-- verify: asset-set単位指定/素材上書き/欠落・不正/発光textureのみ/診断名/設定差cache失効と旧非発光・v0互換を確認する。
+- status: done
+- done-when: material/asset/asset-setの設定を解決し、発光換算の未設定拒否に資産名・材質名・emissiveNitsPerUnitを表示。AI生成profileを明示的に適用し素材単位overrideを保持する。canonical/hash/cacheとJSON/CLIへ接続する。 verify の文章にあった場合（asset-set 単位の指定・素材の上書き・欠落と不正・発光の texture だけ・診断の名前・設定差による cache の失効・旧の非発光と v0 の互換）は、新しい実行ファイルを作らず、上の既存の試験（`MaterialImportPolicyTest`・`GltfMaterialCookV1Test`・`CookCacheDecisionTest` など）の検査として足す（足す前に `Docs/Testing.md` の 3 点を書く）。見た目の確かめを受入れ済みと扱わない。
+- verify: `cmake --build build --config Debug --target CookedMeshTest AssetCook -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^(MaterialImportPolicyTest|MaterialImportSettingsTest|MaterialImportSettingsJsonTest|MaterialImportDocumentTest|GltfMaterialCookV1Test|ImportSettingsHashTest|CookCacheDecisionTest|AssetCookImportSmoke|AssetCookGlbSmoke)$" --no-tests=error --output-on-failure --timeout 180`
+- paths: Library/Core/Public/Resource, Library/Core/Private/Resource, Tools/AssetCook, Test/Core/Asset, Docs/Architecture, TASKS.md, PROGRESS.md
 - stop-when: provenanceを拡張子だけで決める、sidecarよりasset-set設定を無言優先、非発光を不必要に拒否、見た目未確認を受入れ済みとする。
 
 ## G2-S6-ASSET-SET: C++一括cookと増分判定を接続する
-- status: backlog
-- done-when: AssetCook --asset-setへ一括cookと増分判定を集約。origin/main CookTextureAssetSet.ps1 + Rendering3DTestSilverTextures/Rendering3DTestSilverGltfTexturesに対してcooked/manifestのbyte一致を確認。glTF外部ファイルとsidecarを印に含む。
-- verify: 単体CLIの分割前後比較、旧texture spec v1の2spec同値、外部buffer/画像/sidecarの変更・不在・復帰・破損で正しい再cook/拒否、失敗時出力保持。
+- status: done
+- done-when: AssetCook --asset-setへ一括cookと増分判定を集約。origin/main CookTextureAssetSet.ps1 + Rendering3DTestSilverTextures/Rendering3DTestSilverGltfTexturesに対してcooked/manifestのbyte一致を確認。glTF外部ファイルとsidecarを印に含む。 verify の文章にあった確かめ（単体 CLI の分割前後の比較、旧 texture spec v1 の 2 spec の同値、外部 buffer・画像・sidecar の変更・不在・復帰・破損での再 cook と拒否、失敗時の出力の保持）は、上の既存の試験と `Scripts/VerifyTextureAssetSet.py`・`Scripts/AssetCookCliParity.py` の手順で行い、Windows の実 byte の比較の結果を PROGRESS.md に書く。
+- verify: `cmake --build build --config Debug --target AssetCook CookedMeshTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^(TextureAssetSetSpecTest|TextureAssetSetOutputTest|CookDependencySnapshotTest|CookCacheDecisionTest|CookOutputPackageTest|SingleAssetCookServiceTest|AssetCookTextureSmoke|AssetCookGlbSmoke)$" --no-tests=error --output-on-failure --timeout 180`
+- paths: Tools/AssetCook, Library/Core/Private/Resource, Scripts, Test/Core/Asset, Docs/Architecture, TASKS.md, PROGRESS.md
 - stop-when: 手元確認用CookAssets.ps1/StartupMaterialsを対象に戻す、PS側へ増分判定を重複実装、Windows実byte比較を未実施で完了とする。
 
 ## G2-MATERIAL-SELECTION-INTEGRATION: 共通照合を設定とslot名へ接続する
-- status: backlog
-- done-when: GR79 ARM/発光、GR78 材質→SurfaceName、GR32 slot名が同じResolveMaterialSelectionを使う。元catalog/生成slotを明示し、全設定の未一致/二重指定をcookと増分preflight双方で拒否。同名GLBは元での改名推奨を資産名付きで警告する。
-- verify: raw無名1/Blender Material_0、逆primitive順/同名/生成名衝突、name+index二重指定、不在、unicode名、incremental skipの検証迂回なし、設定値/SurfaceName/slotへの実到達。
+- status: done
+- after: G2-GR79-IMPORT-POLICY-CONNECTION
+- done-when: GR79 ARM/発光、GR78 材質→SurfaceName、GR32 slot名が同じResolveMaterialSelectionを使う。元catalog/生成slotを明示し、全設定の未一致/二重指定をcookと増分preflight双方で拒否。同名GLBは元での改名推奨を資産名付きで警告する。 verify の文章にあった場合（raw の無名 1 個・Blender の Material_0、primitive の逆順・同名・生成名の衝突、name と index の二重指定、不在、unicode の名前、増分の skip で検証を迂回しないこと、設定値・SurfaceName・slot への実際の到達）は、既存の試験（`MaterialSelectionTest`・`MaterialImportDocumentTest`・`SkeletalMaterialBindingsTest`）の検査として足す（足す前に `Docs/Testing.md` の 3 点を書く）。
+- verify: `cmake --build build --config Debug --target CookedMeshTest AssetCook -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^(MaterialSelectionTest|MaterialImportDocumentTest|MaterialImportSettingsJsonTest|SkeletalMaterialBindingsTest|GltfMaterialSourceTest|CookCacheDecisionTest|AssetCookImportSmoke)$" --no-tests=error --output-on-failure --timeout 180`
+- paths: Library/Core/Public/Resource, Library/Core/Private/Resource, Tools/AssetCook, Test/Core/Asset, TASKS.md, PROGRESS.md
 - stop-when: 未実装SurfaceNameを受理して捨てる、共通核の存在だけで全接続完了とする、元indexとslotindexの混同、旧wire予約領域へ勝手に保存。
 
 ## CORE-STRING-REPLACE-TERMINATOR: 部分置換によるsuffixのNUL破損を修正する
@@ -3876,9 +3959,14 @@
 - stop-when: StringCopyの全呼出し規約を検証なしに変更、Windows CRTの動作を偽shimで合格扱い。
 
 ## G2-GR82-B4-STATIC-ROOT-FRAME128: 静的なArmature親と作者frameを安全に束縛する
-- status: backlog
-- done-when: 明示profile2/128で、skin.skeleton省略と静的な非関節祖先を作者importから三role保存/同snapshot読込/既存runtime公開/実CPU poseまで通す。現在ROOTと全作者snapshotの必須AFRMを比較し、同local restでも異なるframeはrest overrideでも拒否する。profile2 clipには失効可能な束縛証明を持たせ、直接Sampleの迂回も拒否する。
-- verify: 合成glTF/GLBのArmature/祖先chain/省略hint/並べ替え、非可換G・M・IBMとimport scale2の独立pose oracle、frame欠落/不正/混在profile/全snapshot差拒否、SetClip・Unload・別targetでproof失効、三NVPKから実runtime/名前指定Sample、確保前の境界予算と失敗out保持。既存profile1のwire/pose・旧71/固定Sampler/cook/CLIを維持し、新Debug/Release常時検査と独立oracleを使う。
+- status: done
+- done-when: 明示profile2/128で、skin.skeleton省略と静的な非関節祖先を作者importから三role保存/同snapshot読込/既存runtime公開/実CPU poseまで通す。現在ROOTと全作者snapshotの必須AFRMを比較し、同local restでも異なるframeはrest overrideでも拒否する。profile2 clipには失効可能な束縛証明を持たせ、直接Sampleの迂回も拒否する。 verify の文章にあった場合（合成 glTF/GLB の Armature・祖先の鎖・省略の hint・並べ替え、非可換の G・M・IBM と import scale 2 の独立の pose oracle、frame の欠落・不正・混在 profile・全 snapshot の差の拒否、SetClip・Unload・別 target での proof の失効、三 NVPK から実 runtime と名前指定の Sample、確保前の境界の予算と失敗時の out の保持、既存 profile1 の wire・pose・旧 71・固定 Sampler・cook・CLI の維持）は、`RigStaticRootFrameImportTest`・`RigStaticRootFrameWireTest`・`RigStaticRootFrameRuntimeTest` と `Test/Tools/RigRootFrameV2Oracle.py` で Debug と Release の両方で確かめる。実犬・DCC・GPU の受入れはこの項目に含めない。
+- verify: `cmake --build build --config Debug --target CookedMeshTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^(RigStaticRootFrameImportTest|RigStaticRootFrameWireTest|RigStaticRootFrameRuntimeTest|CookedSkeletonV1Test|CookedSkinMeshV1Test|RigSplitCookTest|SkeletalSplitRuntimeTest)$" --no-tests=error --output-on-failure --timeout 180`
+- verify: `cmake --build build --config Release --target CookedMeshTest -- /m:1`
+- verify: `ctest --test-dir build -C Release -R "^(RigStaticRootFrameImportTest|RigStaticRootFrameWireTest|RigStaticRootFrameRuntimeTest)$" --no-tests=error --output-on-failure --timeout 180`
+- verify: `python -B Test/Tools/RigRootFrameV2Oracle.py --self-test`
+- paths: Library/Core/Public/Animation, Library/Core/Private/Animation, Library/Core/Private/Resource, Tools/AssetCook, Test/Core/Asset, Test/Tools, Docs/Architecture, TASKS.md, PROGRESS.md
 - policy: profile1の既定/bytes/128/Identity ROOTを維持。profile2はroot上の静的直接TRS・正一様scale祖先だけ、joint自体は既存正TRS。joint間非joint/祖先animation/matrix/非一様祖先は拒否。SkeletonIdにprofile/rest/ROOTを混ぜず、別guardでprofile照合。frame全64byte一致、cross-profile自動束縛なし。
 - stop-when: 作者frameを現在ROOT/IBM/t0から埋める、旧profileを緩める、独立pose期待を実装都合で変える、CPU拡張のため描画側を黙って変える、clip-only/256/CLI/GR96を同時に含める。実犬/DCC/GPU受入とCPU合成試験を分ける。
 
@@ -3945,3 +4033,505 @@
 - done-when: `mega-stress` を `--stress-entities=3300` 以上、環境変数 `NORVES_MEGA_MAX_DRAW_COUNT` なしで起動したとき、`MEGA_CAPACITY command_capacity=67108864`（`indirect_bytes` 1.34 GB）で描画が壊れる原因を特定する。原因が装置の上限なら、容量を超える手前で警告して分割する。コード中の判定（`MegaGeometryPass.cpp` の `0x7FFFFFFF / sizeof(DrawIndexedIndirectCommand)`）が実際の上限と合っているかを確かめる。
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1280 -Height 720 -Views overview -GameArgs stress-entities=5000 -OutDir .harness/runs/scene-capture/SCN-MEGA-COMMAND-CAPACITY`
 - notes: 2026-10-10 SCN-MEGA-STRESS-RESIDENT の撮影で見つかった。14 種類のメッシュ（1 種類が約 1〜19 千クラスタ）を 2500 個置くと `command_capacity=33554432` で描かれ、3300 個以上（5000 個で同じ）では `command_capacity=67108864` に跳ねて、空と床だけが写る（`draw_dropped=0`、検証レイヤーのエラーなし、`MEGA_OCCLUSION` は 44 万クラスタを描いたと報告する）。`NORVES_MEGA_MAX_DRAW_COUNT=1000000` で区間ごとの上限を下げると 5000 個で描かれる（`command_capacity=33554432`）。mega-stress は `--stress-entities` を指定したとき（開発ビルド）、この環境変数が無ければ 1000000 を渡して回避している（`GameApplicationHandler.cpp`）。この回避は区間ごとの容量の上限を縮めるだけで、原因ではない。
+
+## SCN-MEGA-FIX-TLAS-REBUILD-P1: 撮影の `-RequireAssets` で、バナナを置けなかった撮影を合格にしない
+- status: done
+- done-when: `Scripts/CaptureScene.ps1` の `-RequireAssets` で、次の 2 つを失敗にする。(1) ログに `MEGA_BANANAS_ASSET_MISSING` か `MEGA_BANANAS_ASSET_INVALID` がある(`$missingAssetPattern` に足す。`-RequireAssets` が無いときは今と同じく警告と `missing_assets` に数える)。(2) `banana-count`・`stress-entities` を指定したのに `MEGA_BANANAS_PLACED`・`MEGA_STRESS_PLACED` の行が無い(今は置いた数が `$null` のとき突き合わせを飛ばしている。1172〜1184 行)。資産を欠かせた起動(例: `--no-cooked-textures`。効かなければ別の欠かせ方)を 1 回撮り、`-RequireAssets` でこの印を理由に失敗することを確かめて、出力を PROGRESS.md に貼る。資産のそろった mega-bananas の撮影は今までどおり合格する。
+- verify: `powershell -NoProfile -Command "if (-not (Select-String -LiteralPath Scripts/CaptureScene.ps1 -Pattern MEGA_BANANAS_ASSET_ -SimpleMatch -Quiet)) { exit 1 }"`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -Views overview -Build -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -TimeoutSeconds 1800 -GameArgs banana-count=10000 -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-TLAS-REBUILD-P1/ok`
+- paths: Scripts/CaptureScene.ps1, TASKS.md, PROGRESS.md
+- from: SCN-MEGA-FIX-TLAS-REBUILD
+
+## SCN-MEGA-FIX-DRAWLIST-GROWTH: 読み込み中に描画コマンドの列を何世代も作り直して GPU Scene の山を 3 GB 超えにしない
+- status: done
+- done-when: 判断役の判断(`blocked/resolved/SCN-MEGA-FIX-VISIBLE-LIST.md` の「次の反復への指示 1」と `blocked/resolved/SCN-MEGA-FIX-VISIBLE-LIST-20261029-174526.md`)のとおりにする。
+  - 撮影: SCN-MEGA-FIX-VISIBLE-LIST の verify と同じ引数(1M + 5 万・1% 移動・64 m 区画)で、通常の撮影と長い撮影(`exit-after-rendered-frames=1200`)の両方を撮る。`MEGA_CAPACITY` の全行で次を満たす。
+    - `scene_vram_device_peak_mb` ≤ 3,072。見張りは今の形のまま使い、回収待ちを数える 4 フレームの窓を縮めない。
+    - `draw_dropped=0`・`visible_list_overflow=0`。
+    - 落ち着いた後の `scene_vram_device_live_mb` が 2,658.4 MiB から増えない。
+  - 3,072 MiB の判定は `CheckCaptureMetrics` では見えない。U4(`.harness/runs/20261029-152745/verify-SCN-MEGA-FIX-VISIBLE-LIST-U4.txt`)と同じ全行の集計(最大・frame・回収待ちの内訳)を貼る。
+  - ほかのシーン: `mega-bananas` の overview 1 視点で、画像が同じ引数の前の撮影と変わらないこと(前の撮影が無ければ直す前のコミットで 1 枚撮って比べる)と、device の山 ≤ 3,072 を記録する。
+  - 直し方の制約:
+    - 対象は `MegaGeometry_IndirectDraw`・`MegaGeometry_DrawInfo`・`VisBuffer_DrawRecords`(`VisibilityRasterPass.cpp`)・`MegaGeometry_SwRaster`。読み込み中の作り直しを 1〜2 世代に抑える。
+    - 先に広げるときは、CPU が知る最終の総数(登録済みのインスタンスのクラスタ数の和など)か、3 GB から逆算した天井で上限を抑える。必要量の倍数だけで広げない。
+    - 縮めるのは SceneReady の後に 1 回だけ。
+  - 受入れ文書 `SceneLauncherAcceptance.md:197` の見積もり(2,722 MB・約 3,042 MB)を、回収待ちを含む実測値に書き直す。
+  - SCN-MEGA-ACCEPT-1M の前に閉じる。危険地帯(メモリ・RenderThread)。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -Views overview -Build -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -TimeoutSeconds 2400 -GameArgs banana-count=1000000,stress-entities=50000,stress-moving-percent=1,stress-stream-cell=64,stress-batch-cells -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-DRAWLIST-GROWTH`
+- verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-FIX-DRAWLIST-GROWTH`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -Views overview -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -TimeoutSeconds 2400 -GameArgs banana-count=1000000,stress-entities=50000,stress-moving-percent=1,stress-stream-cell=64,stress-batch-cells,exit-after-rendered-frames=1200 -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-DRAWLIST-GROWTH-long`
+- verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-FIX-DRAWLIST-GROWTH-long`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -Views overview -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -TimeoutSeconds 1800 -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-DRAWLIST-GROWTH-bananas`
+- paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Docs/RenderingValidation, TASKS.md, PROGRESS.md
+- from: SCN-MEGA-FIX-VISIBLE-LIST
+
+## SCN-RENDER-SPEC-WIDE-ESS: RTGI の鏡面の広いローブの重みを、照明が割り戻す LUT の Ess と同じ G に揃える
+- status: done
+- done-when: 判断役の判断(`blocked/resolved/SCN-RENDER-SPEC-OCC-VERIFY-REG.md` の指示 1)のとおりにする。
+  - 重みの式: `EvaluateGGXVisibleNormalSampleWeight`(`PbrMaterialEvaluation.glsl:143-153`。使うのは `DiffuseIndirect.comp:1455` だけ)の重みを G_Schlick(V)·G_Schlick(L)·(1+Λ(V)) にする。k は roughness²/2、VNDF の pdf の G1(V) は厳密な Smith のままにする。142 行のコメント「重みの平均は A+B」も直す。LUT(`DfgLut.cpp`)とパストレーサーは変えない。
+  - 積分での確かめ: LUT の 4096 標本・半精度・256² の補間を再現した独立の積分(`roof-quadrature.py` と同じ作り)を Scripts に置く。粗さ 0.5・0.8・1.0 と N·V 0.1・0.3・0.5・0.9 の全部の組で、重みの平均 ÷ LUT の Ess が 1±0.005 に入らなければ非 0 で終わるようにする。名前を変えたら verify も合わせる。
+  - 撮影: 反復の最初に、回帰(`CaptureRegression.ps1 -Phase before`)と material-gallery の before を撮る。after では次の 2 つを値で `InteriorLightReference.md` に書く。
+    - 粗さ 0.8〜1.0 の金属の球の鏡面の減り方が、積分の比と合うこと。
+    - rendering3dtest の屋根に差が出ないこと(広いローブの面平均は 0.00006)。
+  - LUT 全体を高さ相関の G(Cycles と同じ形)へ移すかの判断を同じ文書に書き、PROGRESS.md の Notes に SCN-RENDER-ROUGH-STEEP-ENERGY への申し送りとして残す。
+  - 常設のテストは足さない。危険地帯。
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `python Scripts/SpecularWeightQuadrature.py --check`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Terrain/CaptureRegression.ps1 -Item SCN-RENDER-SPEC-WIDE-ESS -Phase after`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene material-gallery -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Hdr -OutDir .harness/runs/scene-capture/SCN-RENDER-SPEC-WIDE-ESS/gallery-after`
+- paths: Assets/Shaders/Common/PbrMaterialEvaluation.glsl, Scripts, Docs/RenderingValidation, Test/Core/Rendering/Baselines, TASKS.md, PROGRESS.md
+- from: SCN-RENDER-SPEC-OCC-VERIFY-REG
+
+## SCN-RENDER-SPEC-ROOF-HITS: rendering3dtest の屋根の鏡面の光線が何に当たっているかを内訳にし、自己交差なら直し、周りの面なら参照と照合する
+- status: done
+- done-when: 判断役の判断(`blocked/resolved/SCN-RENDER-SPEC-OCC-VERIFY-REG.md` の指示 2。SCN-RENDER-SPEC-WIDE-ESS とは独立)のとおりにする。
+  - 現状: 屋根(誘電体・粗さ 0.26)のブルーム前の HDR の Y が、off の 3,100 から今の形で 3,905 cd/m² になっている(1.26 倍。うち細いローブの当たった面の反射が +974)。
+  - 調べ方:
+    - 反復の最初に回帰の before を撮る。
+    - rendering3dtest の overview を 1280×720・RelWithDebInfo・`-Hdr -Aov` で撮る。屋根の面は、幾何法線の Y>0.9・Z>0.4、深度 21〜25 m の画素で選ぶ。
+    - 細いローブの光線について、当たりの距離・当たった instance(custom index)・表裏・屋根と同じ instance かを、一時的な AOV に出す。撮るたびに元のバイト列へ戻す(`roof-variant.py` の仕組み)。
+    - 当たりの内訳(屋根自身・家の別の面・ほかの物、距離の分布)を `InteriorLightReference.md` に値で書く。
+  - (a) 自己交差が当たりの過半のとき: なるべく `TraceSpecularRay` の中だけで直す。屋根の HDR の Y の off との比を測り直し、残りの増分を項ごとに説明する。
+  - (b) 本当に周りの面に当たっているとき: 同じ大気の空・太陽(高度 40°・方位 30°)の高標本の参照と並べる。エンジンのパストレーサーで同じ空にできなければ Cycles を使う。受け入れるのは、今の形が off より参照に近く、かつ今の形 ÷ 参照が 0.90〜1.10 のときだけ。外れたら、当たった面の光のどの項(直接光・2 回目のバウンス・画面の間接光)が多いかを切り分けて直す。
+  - (a)・(b) のどちらでも、室内の `interior-spec-occlusion.json` の比べを通したままにする。拡散の光線と共有するコードを変えたら、その旨を書く。
+  - 条件を揃えた参照を 1 反復で作れないとき、または (b) で合わない原因を直せないときは、値を付けて BLOCKED にする。危険地帯。
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene rendering3dtest -Views overview -Configuration RelWithDebInfo -RequireAssets -Width 1280 -Height 720 -Hdr -Aov -OutDir .harness/runs/scene-capture/SCN-RENDER-SPEC-ROOF-HITS/roof`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene interior-light -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Hdr -Aov -OutDir .harness/runs/scene-capture/SCN-RENDER-SPEC-ROOF-HITS/interior`
+- verify: `python Scripts/InteriorLightReference.py --compare --capture .harness/runs/scene-capture/SCN-RENDER-SPEC-ROOF-HITS/interior --reference .harness/runs/scene-capture/SCN-INTERIOR-ROOM-ref --expect Scripts/Terrain/ExpectSpecs/interior-spec-occlusion.json`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Terrain/CaptureRegression.ps1 -Item SCN-RENDER-SPEC-ROOF-HITS -Phase after`
+- paths: Assets/Shaders/RTGI, Scripts, Docs/RenderingValidation, Test/Core/Rendering/Baselines, TASKS.md, PROGRESS.md
+- from: SCN-RENDER-SPEC-OCC-VERIFY-REG
+
+## SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1: 鏡面の直しの後の最終の版で、荒野の遮蔽の 8 組を変更前の鏡面の経路と並べて判定し直す
+- status: done
+- after: SCN-RENDER-SPEC-WIDE-ESS, SCN-RENDER-SPEC-ROOF-HITS
+- done-when: 判断役の判断(`blocked/resolved/SCN-RENDER-SPEC-OCC-VERIFY-REG.md` の指示 3)による。SCN-RENDER-SPEC-WIDE-ESS で粗さ 1 の崖の鏡面が変わるので、SCN-RENDER-SPEC-OCC-VERIFY-OCC の判定を、2 項目の後の同じ最終の版で撮り直す。
+  - 撮影: 同じ Game.exe・同じ焼いた地形で、荒野の遮蔽の 8 組を `--rtgi-specular=off` と今の形の両方で撮る。
+  - 判定: `occlusion-accept.json` の全部の行を `--off-root` 付きで判定する。決まりは VERIFY-OCC と同じ。
+    - 今の形の全部の行が範囲内なら合格。
+    - 範囲の外の行は、off でも範囲の外で、今の形が off から 0.005 を超えて悪くならなければよい。
+    - 遠い急な崖の対照の 2 行は、一時の下限 0.940・0.951 で通る（人の判断 2026-11-02、`blocked/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1.md` の案 1。SCN-RENDER-SPEC-WIDE-ESS で粗さ 1 の崖の鏡面の環境光が約 0.7 % 下がった分で、SCN-RENDER-ROUGH-STEEP-ENERGY の合否 (2) が受け持つ不足と同じもの）。`Scripts/Terrain/ExpectSpecs/occlusion-accept.json` のこの 2 行の `min` を下げ、note に「SCN-RENDER-SPEC-WIDE-ESS の後、SCN-RENDER-ROUGH-STEEP-ENERGY で 1 ± 0.03 に戻す」と書く。反復の中では撮り直さず、撮影済みの 16 本（`.harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/{on,off}`）で判定し直してよい（ランナーの再検証は verify のとおり撮る）。
+  - off で範囲内なのに今の形で外れる行があれば、値を付けて BLOCKED にする。
+  - `InteriorLightReference.md` の VERIFY-OCC の表(範囲の外の行と遠い急な崖の対照の 2 行の、今の形 ÷ off・エンジン ÷ Cycles)を今の値で書き直す。
+  - 反復の中で地形を焼き直さない。シェーダーと描画の経路は変えない。
+  - 壁時計の残りが 25 分を切ったら新しい撮影を始めず、撮れた所までをコミットして doing のまま終える。
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/off --sets terrain-sky --variant-args rtgi-specular=off`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/on --sets terrain-sky`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/off --sets terrain-sun --variant-args rtgi-specular=off`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/on --sets terrain-sun`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/off --sets rocks-sky --variant-args rtgi-specular=off`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/on --sets rocks-sky`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/off --sets rocks-sun --variant-args rtgi-specular=off`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/on --sets rocks-sun`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/off --sets rocks-cliff-sky --variant-args rtgi-specular=off`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/on --sets rocks-cliff-sky`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/off --sets rocks-cliff-sun --variant-args rtgi-specular=off`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/on --sets rocks-cliff-sun`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/off --sets plant-sky --variant-args rtgi-specular=off`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/on --sets plant-sky`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/off --sets plant-sun --variant-args rtgi-specular=off`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/on --sets plant-sun`
+- verify: `python Scripts/Terrain/ReferenceCheck.py --occlusion --engine-root .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/on --off-root .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/off --reference .harness/runs/scene-capture/SCN-WLR-OCCLUSION-SETS/cycles --regions Scripts/Terrain/ExpectSpecs/occlusion-regions.json --expect Scripts/Terrain/ExpectSpecs/occlusion-accept.json --verify`
+- paths: Docs/RenderingValidation/InteriorLightReference.md, Scripts/Terrain/ExpectSpecs/occlusion-accept.json, TASKS.md, PROGRESS.md
+- from: SCN-RENDER-SPEC-OCC-VERIFY-OCC
+
+## SCN-RENDER-SPEC-ROOF-HITS-P1: 室内の比べの `--reference` が盤面の枠に無いとき、メインの作業ツリーの同じ置き場を読む
+- status: done
+- done-when: `Scripts/InteriorLightReference.py` の `--reference` の解決を関数 `resolve_reference(path)` にまとめ、次のとおりに動かす。
+  - 今の作業ツリーにその置き場があれば、今までどおりそれを使う。
+  - 無ければ、`git rev-parse --path-format=absolute --git-common-dir` の親(メインの作業ツリー)から同じ相対パスで探し、そこにあればそれを使う。
+  - どちらで見つけたかと絶対パスを `INTERIOR_REFERENCE path=<絶対パス> source=local|main-worktree` の 1 行で出す。
+  - どちらにも無ければ、FileNotFoundError のトレースバックではなく、探した 2 つのパスを書いたメッセージを出して 0 以外で終わる。
+  - 読むのは `--reference` だけで、`--capture` と出力先(`<撮影>/compare/`)は今の作業ツリーのままにする(メインの作業ツリーへは書かない)。
+  - 盤面の枠(`.harness/runs/scene-capture/SCN-INTERIOR-ROOM-ref` が無い作業ツリー)で下の verify を走らせ、`source=main-worktree` で `cycles/` のある置き場に解決することを確かめる。
+  - 正解の置き場(951 MB)は git に入れない。描画のコードは変えない。
+- verify: `python -c "import os, sys; sys.path.insert(0, 'Scripts'); import InteriorLightReference as m; p = m.resolve_reference('.harness/runs/scene-capture/SCN-INTERIOR-ROOM-ref'); assert os.path.isdir(os.path.join(p, 'cycles')), p; print('REF_OK', p)"`
+- paths: Scripts/InteriorLightReference.py
+- from: SCN-RENDER-SPEC-ROOF-HITS
+
+## SCN-RENDER-ROUGH-STEEP-ENERGY-P1: 回帰の撮影の比べで、ジオメトリのページが落ち着いていない撮影を通さない
+- status: done
+- done-when: `ReferenceCheck.py --regression` は、before と after の各シーンについて、保存の前の最後の `GEOMETRY_PAGES` の行を読む。進行中(wanted・reading・ready・uploading)のどれかが 0 でない撮影は失敗にする。最後の落ち着きの基準から保存までに `evicted` が増えた撮影も失敗にする。値(resident・wanted・ready・evicted・budget_blocked)は `regression_check.json` にシーンごとに書く。判定は、今ある `blur_case_check` の撮った時点の常駐の確かめ(`BLUR_PAGES_RE`)を使い回す。`GEOMETRY_PAGES` の行が無いシーンは対象外として記録する。SCN-RENDER-SPEC-WIDE-ESS の before の night-village と同じ形のログ(resident=0・ready=64・wanted=1538・evicted=1101・budget_blocked=7)が失敗になることは、一時に作ったログで確かめて PROGRESS.md に書く(常設のテストは足さない)。同じ版で before と after を撮り、両方が通って各シーンの常駐の値が記録されている。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Terrain/CaptureRegression.ps1 -Item SCN-RENDER-ROUGH-STEEP-ENERGY-P1 -Phase before`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Terrain/CaptureRegression.ps1 -Item SCN-RENDER-ROUGH-STEEP-ENERGY-P1 -Phase after`
+- paths: Scripts/Terrain/ReferenceCheck.py, Scripts/Terrain/CaptureRegression.ps1
+- from: SCN-RENDER-ROUGH-STEEP-ENERGY
+- notes: このタスクは、落ち着いていない撮影を見つけて止めるところまで。VRAM の予算が足りないときに常駐が 0 まで追い出された原因は扱わない(SCN-WL-GEOM-LOWVRAM の「粗い段で落ち着く」と食い違うかもしれない)。原因は直さず、見つけたら PROGRESS.md の Notes に `要起票:` で残す。
+
+## SCN-BUILD-ALL-TESTS-P1: 落ちて終わらない試験と、Game のソースを組み込む 2 つの試験を、ビルドと ctest の実行から外す
+- status: done
+- done-when: 人の指示（「AIが作るテストはほとんど意味がないので外していい」）どおりに、次の試験を外す。どれも戻せる形で外し、`.cpp` と束の MEMBER は消さない。(1) `Test/Core/Rendering/CMakeLists.txt` の `RenderGraphTextureUsageContractTest` の add_test に `set_tests_properties(... PROPERTIES DISABLED TRUE)` を付ける。理由は VisibilityResolve の `constantCount == 3` の assert で落ち、対話窓のまま終わらないこと。(2) Game のソースを組み込む 2 つの試験の対象 `NorvesLibBridgeAdapterScriptComponentTest`（`Test/Game/Bridge/CMakeLists.txt`）と `AssetManifestReloadBridgeLoopbackTest`（`Test/Core/Rendering/CMakeLists.txt`）を `EXCLUDE_FROM_ALL` にして、全体のビルドで `NorvesGameSources` をもう一度コンパイルしないようにする。この 2 つの実行ファイルを使う ctest の名前（`NorvesLibBridgeAdapterScriptComponentTest`・`NorvesLibBridgeAdapterNumericEntityRegressionTest`・`NorvesLibBridgeAdapterThumbnailTest`・`BridgeBase64Test`・`AssetManifestReloadBridgeLoopbackTest`）も DISABLED にする。(3) 理由を CMake のコメントに書き、`Docs/Testing.md` の「外したもの」に日付つきで足す。合否は 3 つ。Debug の全体のビルドが EXIT=0。下の ctest で、外した名前がどれも `Not Run (Disabled)` になり EXIT=0（試験を走らせて通すことは見ない）。ほかの試験の登録は変えない。
+- verify: `cmake -S . -B build && cmake --build build --config Debug -- /m:1 && ctest --test-dir build -C Debug -R "^(RenderGraphTextureUsageContractTest|NorvesLibBridgeAdapter.*|BridgeBase64Test|AssetManifestReloadBridgeLoopbackTest)$"`
+- paths: Test/Core/Rendering/CMakeLists.txt, Test/Game/Bridge/CMakeLists.txt, Docs/Testing.md, TASKS.md, PROGRESS.md
+- from: SCN-BUILD-ALL-TESTS
+
+## SCN-RENDER-SPEC-WIDE-ESS-P1: night-village で VRAM の予算が足りないとき、ジオメトリのページが常駐 0 まで外される原因を突き止めて直す
+- status: todo
+- done-when: SCN-WL-GEOM-LOWVRAM の「予算が足りないときは粗い段に下がって落ち着く」と食い違う形を、night-village で再現して原因を示し、直す。
+  - 元の例: SCN-RENDER-SPEC-WIDE-ESS の before の overview(`<親>/.slots/NorvesLib-3/.harness/runs/regression/SCN-RENDER-SPEC-WIDE-ESS/before/night-village/overview.Game.log`)。ヒープの予算が約 6130 MB まで下がった(並べて走るほかの枠の Game と GPU を分け合った)。プール以外が 5396〜5761 MB、影のプールが 623 MB で、ジオメトリの枠の目標は 0〜111 MB。これが外せない区画(根、約 670 MB)を下回り、ページの目標が 0 になって 1101 ページを外し resident=0 になった。そのあと wanted=1538・ready=64 のまま budget_blocked が 4→7 と増えて止まった。ジオメトリのプールの塊(2048 MB)は確保されたままなので、ページを外してもヒープの使用量は減っていない見込み。
+  - 再現: 開発ビルドの `vram-budget-mb` で、ジオメトリの枠の目標が根の区画を下回る上限にして night-village を撮る(目安 6100 MB。値を変えたら verify も合わせる)。直す前の撮影で同じ形(常駐 0・要求が予算で止まったまま)になることを、値で PROGRESS.md に残す。
+  - 原因: VRAM_BUDGET・VRAM_POOLS・GEOMETRY_PAGES・GEOM_SETTLE_TRACE の値で次の 2 つを示し、`Docs/RenderingValidation/WastelandFarBlurStatic.md` の「VRAM が少ないとき」の節に書く。
+    - (a) プール以外の約 5.4 GB の内訳: いつも要る確保か、読み込みの間だけの確保か。
+    - (b) 枠の目標が根の区画を下回ったとき、ストリーマが粗い段(段 1 以上)のページまで全部外し、ヒープの使用量を減らせないまま要求が残る経路。
+  - 直し: 確かめた原因を 1 つ直す。完了の形は次の 2 つ。
+    - 同じ上限の night-village で `ReferenceCheck.py --geom-settle` が pass する(記録の間の追い出し 0・書き込み 0・段ごとの常駐が不変・常駐 ≤ ページの目標・プールの使用量 ≤ 枠の目標)。
+    - 常駐が 0 でない粗い段で落ち着く。
+  - 直しが VRAM の割り振りの方針を変えることになるなら(ほかのプールから取る、上限を超えて確保するなど)、値と案を添えて blocked にする。
+  - 壊していないこと:
+    - wasteland の ref_cliff_02 の 6600 MB の撮影で `--geom-settle` が pass する(SCN-WL-GEOM-LOWVRAM の直しが保たれる)。
+    - 反復の最初に回帰の before(`CaptureRegression.ps1 -Item SCN-RENDER-SPEC-WIDE-ESS-P1 -Phase before`)を撮り、after の比べが pass して 4 シーンとも geometry_pages が settled になる。
+  - 常設のテストは足さない。
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene night-village -Configuration RelWithDebInfo -Build -RequireAssets -Views overview -GameArgs vram-budget-mb=6100,geom-settle-trace=60 -OutDir .harness/runs/scene-capture/SCN-RENDER-SPEC-WIDE-ESS-P1/night-village-low`
+- verify: `python Scripts/Terrain/ReferenceCheck.py --geom-settle --engine .harness/runs/scene-capture/SCN-RENDER-SPEC-WIDE-ESS-P1/night-village-low --verify`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Views ref_cliff_02 -GameArgs vram-budget-mb=6600,geom-settle-trace=60 -OutDir .harness/runs/scene-capture/SCN-RENDER-SPEC-WIDE-ESS-P1/wasteland-6600`
+- verify: `python Scripts/Terrain/ReferenceCheck.py --geom-settle --engine .harness/runs/scene-capture/SCN-RENDER-SPEC-WIDE-ESS-P1/wasteland-6600 --verify`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Terrain/CaptureRegression.ps1 -Item SCN-RENDER-SPEC-WIDE-ESS-P1 -Phase after`
+- paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering/MegaGeometryPass.h, Library/Core/Public/Rendering/VisibilityRasterPass.h, Assets/Shaders/Common/MegaGeometryCull.glsl, Assets/Shaders/mega_bin_prefix.comp, Assets/Shaders/mega_bin_scatter.comp, Assets/Shaders/mega_bin_check.comp, Assets/Shaders/mega_bin_draw_args.comp, Assets/Shaders/visbuffer_mega.vert, Assets/Shaders/visbuffer_records.comp, Assets/Shaders/megageometry.vert, Test/Core/Rendering/RenderGraphCompileTest.cpp, Game/Debug, Scripts/Terrain, Docs/RenderingValidation, TASKS.md, PROGRESS.md
+- gpu: exclusive
+- check: launch
+- notes: 危険地帯(メモリ・ストリーミング・カリングのシェーダー)。予算の上書きはヒープの予算との小さい方になる。ほかの枠の Game が同じ GPU を使うとヒープの予算が上書きの値より下がり、`--geom-settle` の cap_mb の一致の検査が崩れる。そのため GPU を占有して撮る。
+- from: SCN-RENDER-SPEC-WIDE-ESS
+
+## SCN-MEGA-FIX-TLAS-REBUILD-P2: 10-14 から、100万本の既定の horizon の静止で LightingPass と MegaGeometry のカリングが重くなった原因を、コードとドライバに切り分ける
+- status: done
+- done-when: 問い: 10-14 の SCN-MEGA-ACCEPT-1M の静止(`--banana-count=1000000`・horizon・カメラパスなし。置き場は `.harness/runs/scene-capture/SCN-MEGA-ACCEPT-1M/static`、Game.log の `GPU_DRIVER` は 610.88)と同じ条件を今のコードで撮ると、LightingPass が 1.657 → 2.666 ms、MegaGeometryCull1 が 3.043 → 5.319 ms、MegaBvhC1Leaf が 2.560 → 4.829 ms に増えている(SCN-MEGA-FIX-TLAS-REBUILD の U4/static-default-1m)。原因が「コードで処理の量が増えた」のか「ドライバ・クロックで同じ量の単価が上がった」のかを分ける。結果で変わる判断: コードが原因なら、直す項目を PROGRESS.md の Notes に `要起票:` で残す。ドライバが原因なら、SCN-MEGA-FIX-TLAS-REBUILD の閾値 3 ms の元になった静止 1.7 ms を、今のドライバの値で置き直す根拠にする。手順は次の 4 つ。(1) 同じ条件で撮り、3 つのパスの median・p95 と `GPU_DRIVER` の行を 10-14 の値と表に並べる。(2) 3 つのパスの処理の件数(Game.log にある MegaGeometry・BVH・`RT_SCENE` の統計の行。インスタンス・節・クラスタ・可視の数)を 10-14 の値と並べ、量の比と時間の比を分ける。(3) 量が増えていれば、10-14 から今までにそのパスに触れたコミットを `git log` で挙げ、件数の変化と合う変更を特定する。ドライバが替わっていて量が同じなら、ドライバの変化と書く。(4) 結果と表を `Docs/RenderingValidation/SceneLauncherAcceptance.md` の「100万本と混在の負荷の受入れ」の節に書く。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -Views horizon -Build -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -TimeoutSeconds 1800 -GameArgs banana-count=1000000 -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-TLAS-REBUILD-P2/static`
+- verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-FIX-TLAS-REBUILD-P2/static --views horizon --timing --min-frames 300 --require-pass LightingPass --require-pass MegaGeometryCull1 --require-pass MegaBvhC1Leaf`
+- paths: Docs/RenderingValidation/SceneLauncherAcceptance.md, TASKS.md, PROGRESS.md
+- gpu: exclusive
+- from: SCN-MEGA-FIX-TLAS-REBUILD
+- notes: 調べるだけの項目で、コードは変えない。10-14 の撮影はメインの作業ツリーの置き場にある。枠に無ければ、メインの作業ツリーの同じ相対パスを読む。古い版をビルドするために作業ツリーを増やさない。今の作業ツリーを古い版へ切り替えることもしない。ドライバも戻さない。件数とコミットの履歴だけで決められなければ、値を付けて BLOCKED にする。
+
+## SCN-MEGA-ACCEPT-1M-P1: カメラが動くとバナナの周りと床に出る、RTGI の粒の荒い暈を消す
+- status: done
+- done-when: 問い: カメラパスの再生で、近くのバナナの周りと床に粒の荒い暈が出る。この暈は 50000 本で TLAS を一度も作り直さない再生(built=0・over_limit=0)でも出る。同じ本数・同じパスの時刻の静止には出ない(SCN-MEGA-FIX-TLAS-REBUILD の BLOCKED の記録、`U4/u4-compare-left.png`)。原因の候補は RTGI の時間の履歴(再投影の棄却と年齢の上限 8。`DiffuseIndirect.comp` の 783-925・1614-1657 行付近と `CrossBilateralDenoise.comp`)。棄却の割合と履歴の年齢を一時の AOV(開発ビルドだけ)に出して暈の画素と重ね、原因を特定して直す。量を測る `Scripts/RtgiGrain.py` を置く。中身は、領域の高い周波数の輝度の標準偏差 ÷ 平均を、2 つの撮影の同じ視点・同じ領域で比べ、`--expect` の上限で合否を出すもの。領域と上限は `Scripts/Terrain/ExpectSpecs/rtgi-grain-motion.json` に書く。合否: (1) バナナの周りの床の領域で、50000 本の再生の撮影 ÷ 同じパスの時刻の静止の撮影が 1.5 以下(直す前の値も記録する)。(2) PNG を開いて暈が消えたことを見る。(3) 回帰の動きの撮影(-Motion)で残像とちらつきが増えない(前後の画を開いて確かめる)。(4) 回帰の 4 シーンと material-gallery を撮って開き、golden を確かめる。変わるなら差の原因と物理的な妥当さを書いて再承認する。(5) 再生の LightingPass の GPU 時間(300 フレーム)を前後で記録する。記録先は `SceneLauncherAcceptance.md`。
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -Views horizon -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -TimeoutSeconds 1800 -GameArgs banana-count=50000,camera-path-play,camera-path-time=0 -OutDir .harness/runs/scene-capture/SCN-MEGA-ACCEPT-1M-P1/path`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -Views horizon -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -TimeoutSeconds 1800 -GameArgs banana-count=50000,camera-path-time=16.83 -OutDir .harness/runs/scene-capture/SCN-MEGA-ACCEPT-1M-P1/static`
+- verify: `python Scripts/RtgiGrain.py --root .harness/runs/scene-capture/SCN-MEGA-ACCEPT-1M-P1 --expect Scripts/Terrain/ExpectSpecs/rtgi-grain-motion.json`
+- verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-ACCEPT-1M-P1/path --views horizon --timing --min-frames 300 --require-pass LightingPass`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Terrain/CaptureRegression.ps1 -Item SCN-MEGA-ACCEPT-1M-P1 -Phase after -Motion`
+- verify: `cmake --build build --config Debug --target RenderingGoldenImageTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure -R "^(RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
+- paths: Assets/Shaders/RTGI, Library/Core/Private/Rendering/LightingPass.cpp, Library/Core/Public/Rendering/LightingPass.h, Scripts/RtgiGrain.py, Scripts/Terrain/ExpectSpecs/rtgi-grain-motion.json, Docs/RenderingValidation/SceneLauncherAcceptance.md, Docs/RenderingValidation/GoldenBaselines.md, Test/Core/Rendering/Baselines, TASKS.md, PROGRESS.md
+- gpu: exclusive
+- from: SCN-MEGA-ACCEPT-1M
+- notes: 危険地帯(RTGI は全シーンに効く)なので、評価者を通す。反復の最初に回帰の撮影の before(-Motion)を撮る。再生の撮影の保存フレームのパスの時刻が 16.83 秒でなければ、静止の行の `camera-path-time` をその時刻に合わせ、verify も直す。履歴の棄却を緩めるだけで粒を消す直し(残像が増える)にはしない。SCN-RENDER-RTGI-TEMPORAL(静止の収束)と同じシェーダーを触るので、そちらが先に統合されていたら反復の最初に測り直す。壁時計(75 分)の残りが 25 分を切ったら新しい撮影を始めない。撮れた所までをコミットし、doing のまま終える(未達のまま DONE にしない)。verify は 1 行 10 分未満。
+
+## SCN-RENDER-SPEC-OCC-VERIFY-REG-P1: RTGI の鏡面の光線の粒を、60 フレームの撮影で粗い金属・屋根・バナナに残さない
+- status: todo
+- after: SCN-RENDER-RTGI-TEMPORAL
+- done-when: RTGI の反射の向きの光線は 1 画素 1 本で、撮影の 60 フレームの蓄積の後も、粗さ 0.6〜1.0 の金属(material-gallery の球)・rendering3dtest の屋根・バナナに細かな粒を残す(SCN-RENDER-SPEC-OCC-VERIFY-REG の `gallery-side-by-side-spheres.png`・`regression-detail-house.png`)。反復の最初に、SCN-RENDER-RTGI-TEMPORAL の後の今の形で測り直す。量は `Scripts/RtgiGrain.py` で取る(SCN-MEGA-ACCEPT-1M-P1 と同じ量。まだ無ければ作る)。3 つの領域で、高い周波数の輝度の標準偏差 ÷ 平均を、既定の撮影(60 フレーム)と長い蓄積の撮影(`-GpuTimingFrames 300`)で比べる。領域と上限は `Scripts/Terrain/ExpectSpecs/rtgi-grain-specular.json` に書く。合否: 3 つの領域とも、60 フレーム ÷ 長い蓄積が 1.5 以下(直す前の値も記録する)。測り直しの時点で既に満たしていれば、値を書いて直さずに閉じる。直す場合(候補: 鏡面の光線の時間の蓄積、粗さで導くデノイズ、粗い面の光線の数)は、長い蓄積の撮影で 3 つの領域の平均の輝度の前後の比を 1 ± 0.01 に収める(鏡面の明るさを変えない)。回帰の 4 シーンと material-gallery を撮って開き、golden を確かめる。変わるなら差の原因と物理的な妥当さを書いて再承認する。GPU 時間(material-gallery の 1 視点、300 フレーム)を前後で記録する。記録先は `InteriorLightReference.md`。
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene material-gallery -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Hdr -OutDir .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-REG-P1/gallery-60`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene material-gallery -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Hdr -GpuTimingFrames 300 -OutDir .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-REG-P1/gallery-300`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene rendering3dtest -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Hdr -OutDir .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-REG-P1/r3d-60`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene rendering3dtest -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Hdr -GpuTimingFrames 300 -OutDir .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-REG-P1/r3d-300`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Hdr -OutDir .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-REG-P1/bananas-60`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Hdr -GpuTimingFrames 300 -OutDir .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-REG-P1/bananas-300`
+- verify: `python Scripts/RtgiGrain.py --root .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-REG-P1 --expect Scripts/Terrain/ExpectSpecs/rtgi-grain-specular.json`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Terrain/CaptureRegression.ps1 -Item SCN-RENDER-SPEC-OCC-VERIFY-REG-P1 -Phase after`
+- verify: `cmake --build build --config Debug --target RenderingGoldenImageTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure -R "^(RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
+- paths: Assets/Shaders/RTGI, Assets/Shaders/Common/PbrMaterialEvaluation.glsl, Library/Core/Private/Rendering/LightingPass.cpp, Library/Core/Public/Rendering/LightingPass.h, Scripts/RtgiGrain.py, Scripts/Terrain/ExpectSpecs/rtgi-grain-specular.json, Docs/RenderingValidation/InteriorLightReference.md, Docs/RenderingValidation/GoldenBaselines.md, Test/Core/Rendering/Baselines, TASKS.md, PROGRESS.md
+- gpu: exclusive
+- check: launch
+- from: SCN-RENDER-SPEC-OCC-VERIFY-REG
+- notes: 危険地帯(RTGI の鏡面は全シーンに効く)なので、評価者を通す。反復の最初に回帰の撮影の before を撮る。粗い金属の球・屋根・近くのバナナが映る視点を選び、`-Views` で指定して verify も合わせる(視点の名前は実際の名前に合わせる)。鏡面の重みや光線の数を変える場合は、荒野の遮蔽の組 terrain-sky・rocks-cliff-sky を撮り直し、`occlusion-accept.json` の判定が悪くならないことも確かめる(verify の行は足してよい。1 行 10 分未満)。壁時計(75 分)の残りが 25 分を切ったら新しい撮影を始めない。撮れた所までをコミットし、doing のまま終える。
+
+## SCN-RENDER-ROUGH-STEEP-ENERGY-P2: 荒野の遮蔽の比べの Cycles の正解を、今の焼いた地形(崖の細部の版 18)で描き直す
+- status: done
+- done-when: 今の Cycles の正解(`.harness/runs/scene-capture/SCN-WLR-OCCLUSION-SETS/cycles`)は、2026-10-23 に古い地形の書き出し `SCN-WLR-BLENDER-TERRAIN-mesh`(崖の細部が版 15 以前)で描いたもの。今の焼いた地形は版 18 で形が違う(SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1 の記録)。そのため判定に参照の古さが混ざる(例: rocks-sun の地形の受け手の IoU が 0.8521 → 0.5146、漏れが 0.0054 → 0.1919。on と off で同じ値)。やること: (1) 今の焼いた地形を `--wasteland-export-terrain` で `<置き場>/mesh` へ書き出し、記録に崖の細部の版を書く。(2) 同じ Game.exe で 8 組をエンジンで撮り、同じ置き場に Cycles の正解を本描画(1024 サンプル・種 2)で描く。(3) `ReferenceCheck.py --occlusion --regions ... --verify` で、入力の照合・収束・必須の層の画素数が通る。(4) `Docs/RenderingValidation/WastelandOcclusion.md` に、全部の行のエンジン ÷ Cycles を古い正解と新しい正解で並べた表を書く。あわせて次の 2 点を書く: 遠い急な崖の対照(`slope60-180_d500-100000`)の 2 行で「開けた急な面が Cycles より 2.5 % 暗い」が新しい正解でも残るか。rocks-sun の IoU と漏れが戻るか。(5) PROGRESS.md の Notes に、SCN-RENDER-ROUGH-STEEP-ENERGY への申し送りを残す(どちらの正解で判定するか、`occlusion-accept.json` の前の記録をどう置き直すか)。`occlusion-accept.json` と古い正解の置き場は書き換えない。
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY-P2 --sets terrain-sky,terrain-sun`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY-P2 --sets rocks-sky,rocks-sun`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY-P2 --sets rocks-cliff-sky,rocks-cliff-sun`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY-P2 --sets plant-sky,plant-sun`
+- verify: `python Scripts/Terrain/OcclusionSets.py --cycles --seeds 2 --out .harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY-P2 --sets terrain-sky --mesh .harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY-P2/mesh`
+- verify: `python Scripts/Terrain/OcclusionSets.py --cycles --seeds 2 --out .harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY-P2 --sets terrain-sun --mesh .harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY-P2/mesh`
+- verify: `python Scripts/Terrain/OcclusionSets.py --cycles --seeds 2 --out .harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY-P2 --sets rocks-sky --mesh .harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY-P2/mesh`
+- verify: `python Scripts/Terrain/OcclusionSets.py --cycles --seeds 2 --out .harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY-P2 --sets rocks-sun --mesh .harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY-P2/mesh`
+- verify: `python Scripts/Terrain/OcclusionSets.py --cycles --seeds 2 --out .harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY-P2 --sets rocks-cliff-sky --mesh .harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY-P2/mesh`
+- verify: `python Scripts/Terrain/OcclusionSets.py --cycles --seeds 2 --out .harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY-P2 --sets rocks-cliff-sun --mesh .harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY-P2/mesh`
+- verify: `python Scripts/Terrain/OcclusionSets.py --cycles --seeds 2 --out .harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY-P2 --sets plant-sky --mesh .harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY-P2/mesh`
+- verify: `python Scripts/Terrain/OcclusionSets.py --cycles --seeds 2 --out .harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY-P2 --sets plant-sun --mesh .harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY-P2/mesh`
+- verify: `python Scripts/Terrain/ReferenceCheck.py --occlusion --engine-root .harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY-P2 --reference .harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY-P2/cycles --regions Scripts/Terrain/ExpectSpecs/occlusion-regions.json --verify`
+- paths: Scripts/Terrain/OcclusionSets.py, Scripts/Terrain/BlenderOcclusionReference.py, Docs/RenderingValidation/WastelandOcclusion.md, TASKS.md, PROGRESS.md
+- gpu: exclusive
+- from: SCN-RENDER-ROUGH-STEEP-ENERGY
+- notes: 焼いた地形の版 18 は、未統合の `task/SCN-WL-CLIFF-GEN-TALUS` のクックで焼かれている(HEAD の `kTerrainCliffDetailVersion` は 17)。反復の中で地形を焼き直さない。正解の記録(入力のハッシュ・地形の書き出しのハッシュ)から、どの版の地形で描いたかが分かるようにする。Cycles の描画中は、GPU を使う別の処理(Game の撮影・別の Blender)を重ねない。時間の見込みは、撮影が 1 組約 2 分、Cycles が 1 組 3〜4 分、書き出しが別に数分。壁時計(75 分)の残りが 25 分を切ったら新しい描画を始めない。描けた組までをコミットし、doing のまま終える(未達のまま DONE にしない)。verify は 1 行 10 分未満。
+
+## SCN-MEGA-ACCEPT-1M-P1-P1: カメラパスの再生の撮影で、保存フレームのパスの時刻を指定どおりに固定する
+- status: done
+- done-when: 問い: 再生の撮影(`camera-path-play`)ではパスが実時間で進む(`FreeCameraRig.cpp` の `m_PathTime += deltaTime`)。そのため保存フレームのパスの時刻が、走らせるたびに 7.97〜9.27 秒で揺れる。静止の 9.27 秒との組は視点がずれ、RtgiGrain の比が同じ視点の 1.009 に対して 1.245〜1.318 まで動く。直す前の判定の帯の弁別も弱く、直す前でも 1.343 だった(`SceneLauncherAcceptance.md` の既知の限界)。直す中身は次の 4 つ。(1) 開発ビルドだけの引数 `camera-path-capture-time=<秒>` を足し、再生の保存フレームのパスの時刻を指定の時刻に合わせる。保存フレームまでカメラは動いたままにする(保存の前にパスを止めて履歴を収束させない)。`-GpuTimingFrames 300` と一緒に使える形にする。(2) CaptureScene が、保存フレームのパスの時刻を metrics.json に書く。再生でも静止(`camera-path-time` で置いた時刻)でも書く。(3) `RtgiGrain.py` が組の 2 つの metrics.json のパスの時刻を読み、差が 1/60 秒を超えたら fail にする。時刻が無い撮影も fail にする。(4) 固定した組(再生と静止の 9.27 秒)を撮り、floor_near_bananas の比が上限 1.5 以下で pass する。その比と時刻を `SceneLauncherAcceptance.md` に書き、既知の限界の「保存フレームの時刻が揺れる」を直した後の記録に置き換える。描画(シェーダー・Library)は変えない
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -Views horizon -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -TimeoutSeconds 1800 -GameArgs banana-count=50000,camera-path-play,camera-path-time=0,camera-path-capture-time=9.27 -OutDir .harness/runs/scene-capture/SCN-MEGA-ACCEPT-1M-P1-P1/path`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -Views horizon -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -TimeoutSeconds 1800 -GameArgs banana-count=50000,camera-path-time=9.27 -OutDir .harness/runs/scene-capture/SCN-MEGA-ACCEPT-1M-P1-P1/static`
+- verify: `python Scripts/RtgiGrain.py --root .harness/runs/scene-capture/SCN-MEGA-ACCEPT-1M-P1-P1 --expect Scripts/Terrain/ExpectSpecs/rtgi-grain-motion.json`
+- paths: Game/Scenes/FreeCameraRig.cpp, Game/Scenes/FreeCameraRig.h, Game/GameApplicationHandler.cpp, Game/GameApplicationHandler.h, Game/GameModes/MegaBananas, Scripts/CaptureScene.ps1, Scripts/RtgiGrain.py, Docs/RenderingValidation/SceneLauncherAcceptance.md, TASKS.md, PROGRESS.md
+- gpu: exclusive
+- from: SCN-MEGA-ACCEPT-1M-P1
+
+## SCN-MEGA-FIX-TLAS-REBUILD-P3: GPU 計測の撮影でも、終了までの描画フレームを SceneReady の後から数える
+- status: done
+- done-when: GPU 計測の撮影(`-GpuTimingFrames`。決定的でない `--capture-png`)では、今は `--exit-after-rendered-frames` を資産の読み込みが落ち着いた時点(`asset settle baseline`)から数えている。これを SceneReady の後から数えるようにする。原因は `Library/Core/Private/Engine/ApplicationProcessor.cpp` 2256 行の `bSceneAssembling` が決定的な撮影のときだけ真になること。シーンの組み立ての状態は決定的でないときも持っている(`Game/Scenes/SceneReadiness.h`)ので、決定的な撮影に限らず読み込み中として数える。決定的な撮影のエポックの扱いは変えない。確かめること: 1M のカメラパスの撮影の `horizon.Game.log` で、最後の `asset settle baseline rendered=` の行が `SCENE_READY scene=mega-bananas` の行より後にある。また、既定の `-TimingReadyMarginFrames` のままで、SceneReady の後の有効な標本が 300 件そろう(`CheckCaptureMetrics --timing --min-frames 300` が通る)。`CaptureScene.ps1` 冒頭にある余白の説明(32〜34 行)も、今の振る舞いに合わせて直す。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -Views horizon -Build -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -TimeoutSeconds 1800 -GameArgs banana-count=1000000,camera-path-play,camera-path-time=0 -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-TLAS-REBUILD-P3/path`
+- verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-FIX-TLAS-REBUILD-P3/path --views horizon --timing --min-frames 300`
+- verify: `python -c "import re,sys; t=open(sys.argv[1],encoding='utf-8',errors='replace').read(); r=t.find('SCENE_READY scene=mega-bananas'); b=[m.start() for m in re.finditer('asset settle baseline rendered=',t)]; sys.exit(0 if r>=0 and b and b[-1]>r else 1)" .harness/runs/scene-capture/SCN-MEGA-FIX-TLAS-REBUILD-P3/path/horizon.Game.log`
+- paths: Library/Core/Private/Engine/ApplicationProcessor.cpp, Scripts/CaptureScene.ps1, TASKS.md, PROGRESS.md
+- gpu: exclusive
+- from: SCN-MEGA-FIX-TLAS-REBUILD
+
+## SCN-FIX-SKY-BANDING-CHECK: 空の階調の段（波打つ横縞）を消す(後回しにしたアプリの起動の確かめ)
+- status: todo
+- check: launch
+- gpu: exclusive
+- done-when: SCN-FIX-SKY-BANDING で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、SCN-FIX-SKY-BANDING の done-when を満たすことを確かめる。満たさなければ SCN-FIX-SKY-BANDING の done-when と paths の範囲で直す。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -Views overview -Build -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -OutDir .harness/runs/scene-capture/SCN-FIX-SKY-BANDING`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -OutDir .harness/runs/startup-capture/SCN-FIX-SKY-BANDING`
+- paths: Assets/Shaders, Library/Core/Private/Rendering, Library/Core/Public/Rendering, Docs/RenderingValidation, Test/Core/Rendering, Scripts, TASKS.md, PROGRESS.md
+- from: SCN-FIX-SKY-BANDING
+
+## SCN-MEGA-FIX-TLAS-REBUILD-P4: 1M 静止の `MegaBvhC1Leaf` の 10-14 からの +2.4 ms と、11-01 の 10 ms 超の山を、葉の段のクラスタごとの仕事から切り分けて減らす
+- status: todo
+- done-when: 問い: 1M の既定の horizon の静止で、`MegaBvhC1Leaf` の median が 10-14 の 2.560 ms から 11-01 の 4.995 ms に増えた。席・節・クラスタ・可視の件数もドライバ(610.88)も同じで、葉より上の段は変わっていない(`SceneLauncherAcceptance.md` の「10-14 からの静止の GPU の増え」)。11-01 にはこれとは別に、300 フレーム中 33 フレームが 10 ms 以上になる山がある(最大 35.1 ms・p95 15.482 ms)。10-14 と 10-29 には無い。候補は 2 つ。1 つは 4a3a43d6 の形で、`Common/MegaGeometryCull.glsl` の `ProcessCluster` が、子に任せて描かないクラスタからも `RequestPage` を呼び、そのたびに `requestStamp` へ `atomicExchange` する。もう 1 つは e5e06e0d の `cluster_bvh_cull.comp` の `BindClusterInstance` にある `mainLodFloor`・`EffectiveLodBias()`。手順: (1) 編集の前に、今の版を同じ条件で撮る(before)。葉の median・p95・10 ms 以上のフレーム数と、`GEOMETRY_PAGES`・`MEGA_OCCLUSION`・`SW_RASTER_BIN` の行を控える。(2) `RequestPage` を、先に `requestStamp` を読み、今のフレームの印が付いていれば atomic を打たない形にする。列へ積む要求の集合は変えない。これで足りなければ波(subgroup)でまとめる。e5e06e0d の寄与は、シェーダーを一時的に戻した撮影で測る(戻したまま残さない)。(3) 直した版でも 10 ms 以上のフレームが出るなら、もう 1 回撮って再現するかを見る。山のフレームの前後のログの行と並べて原因を書く。(4) 前後の値と寄与の表を同じ節に書く。合否: 直した版で `MegaBvhC1Leaf` の median ≤ 3.3 ms、p95 ≤ 5.0 ms。`GEOMETRY_PAGES` の resident・peak・request_overflow と、`MEGA_OCCLUSION`・`SW_RASTER_BIN` の件数が before と同じ(ページの要求とストリーミングの振る舞いを変えていない)。回帰の撮影が pass し、前後の PNG を開いて穴・欠けが無い。基準画像の 2 本が Passed。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -Views horizon -Build -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -TimeoutSeconds 1800 -GameArgs banana-count=1000000 -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-TLAS-REBUILD-P4/static`
+- verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-FIX-TLAS-REBUILD-P4/static --views horizon --timing --min-frames 300 --require-pass MegaBvhC1Leaf --max-pass-median-ms MegaBvhC1Leaf=3.3 --max-pass-p95-ms MegaBvhC1Leaf=5`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Terrain/CaptureRegression.ps1 -Item SCN-MEGA-FIX-TLAS-REBUILD-P4 -Phase after`
+- verify: `cmake --build build --config Debug --target RenderingGoldenImageTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure -R "^(RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
+- paths: Assets/Shaders/Common/MegaGeometryCull.glsl, Assets/Shaders/cluster_bvh_cull.comp, Docs/RenderingValidation/SceneLauncherAcceptance.md, TASKS.md, PROGRESS.md
+- gpu: exclusive
+- check: launch
+- from: SCN-MEGA-FIX-TLAS-REBUILD
+- notes: MegaGeometry のカリングは全シーンに効く危険地帯なので、評価者を通す。反復の最初に、回帰の撮影の before(`-Phase before`)と葉の before を撮る。シェーダーは実行時に Assets から作るので、寄与を測り分ける撮影に C++ の再ビルドは要らない。Game の外の GPU の処理と重なった撮影は合否に使わず、撮り直す。
+
+## SCN-MEGA-FIX-TLAS-REBUILD-P5: 1M 静止の `LightingPass` の 10-14 からの +1.2 ms を RTGI の当たりの統計と鏡面の光線に分け、統計の費用を計測から外せるようにする
+- status: todo
+- done-when: 問い: 1M の既定の horizon の静止で、`LightingPass` の median が 10-14 の 1.657 ms から 11-01 の 2.857 ms に増えた(TLAS は 120 フレームとも skip で同じ)。候補は 3 つ。(a) baaf64b4 の鏡面の光線(`TraceSpecularRay` と、条件つきの `TraceSecondBounce`)。(b) 9e922381・9a2fee63 が足した鏡面の計算。(c) cff879b2 の当たりの統計。統計は開発ビルドでは毎フレーム走り、`DiffuseIndirect.comp` の `main` の barrier 2 回と共有の atomicAdd、`LightingPass.cpp` の TLAS の並びの走査と読み戻しを足す。性能は RelWithDebInfo で測るので、統計の費用はそのまま計測に乗る。手順: (1) 開発ビルドだけの引数 `--rtgi-hit-stats=on|off` を足す。既定は on。今の `RTGI_HITS` の行の中身と、行が出る条件は変えない(`Scripts/Terrain/RtScene.py`・`ReferenceCheck.py` が読む)。(2) 1M 静止を、既定・`rtgi-hit-stats=off`・`rtgi-specular=off` の 3 本撮る。`LightingPass` の median・p95 を 10-14・11-01 の値と表に並べ、+1.2 ms を統計・鏡面・残りに分けて、`SceneLauncherAcceptance.md` の「10-14 からの静止の GPU の増え」に書く。(3) 統計の寄与(既定 − off の median)が 0.1 ms を超えたら、行の中身を変えずに軽くして 0.1 ms 以下にする。(4) 鏡面の光線は機能なので消さない。寄与が 0.5 ms を超えたら、PROGRESS.md の Notes に `要起票:` で残す。合否: 既定と off の median の差が 0.1 ms 以下。既定の撮影の Game.log に `RTGI_HITS` の行があり、off の撮影には無い。基準画像の 2 本が Passed(統計の変更で画は変わらない)。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -Views horizon -Build -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -TimeoutSeconds 1800 -GameArgs banana-count=1000000 -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-TLAS-REBUILD-P5/default`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -Views horizon -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -TimeoutSeconds 1800 -GameArgs banana-count=1000000,rtgi-hit-stats=off -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-TLAS-REBUILD-P5/nostats`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -Views horizon -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -TimeoutSeconds 1800 -GameArgs banana-count=1000000,rtgi-specular=off -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-TLAS-REBUILD-P5/nospecular`
+- verify: `python -c "import json,sys; m=lambda d:[p['median_ms'] for p in json.load(open(d+'/metrics.json',encoding='utf-8'))['views'][0]['gpu_timing']['gpu_pass_ms'] if p['pass']=='LightingPass'][0]; a,b=m(sys.argv[1]),m(sys.argv[2]); print('default',a,'nostats',b); sys.exit(0 if a-b<=0.1 else 1)" .harness/runs/scene-capture/SCN-MEGA-FIX-TLAS-REBUILD-P5/default .harness/runs/scene-capture/SCN-MEGA-FIX-TLAS-REBUILD-P5/nostats`
+- verify: `python -c "import sys; r=lambda p:open(p,encoding='utf-8',errors='replace').read(); sys.exit(0 if 'RTGI_HITS' in r(sys.argv[1]) and 'RTGI_HITS' not in r(sys.argv[2]) else 1)" .harness/runs/scene-capture/SCN-MEGA-FIX-TLAS-REBUILD-P5/default/horizon.Game.log .harness/runs/scene-capture/SCN-MEGA-FIX-TLAS-REBUILD-P5/nostats/horizon.Game.log`
+- verify: `cmake --build build --config Debug --target RenderingGoldenImageTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure -R "^(RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
+- paths: Assets/Shaders/RTGI/DiffuseIndirect.comp, Library/Core/Private/Rendering/LightingPass.cpp, Library/Core/Public/Rendering/LightingPass.h, Game/GameApplicationHandler.cpp, Docs/RenderingValidation/SceneLauncherAcceptance.md, TASKS.md, PROGRESS.md
+- gpu: exclusive
+- check: launch
+- from: SCN-MEGA-FIX-TLAS-REBUILD
+- notes: RTGI は全シーンに効く危険地帯なので、評価者を通す。統計を軽くするときも、数える光線と当たりの定義は変えない。
+
+## SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1-CHECK: 鏡面の直しの後の最終の版で、荒野の遮蔽の 8 組を変更前の鏡面の経路と並べて判定し直す(後回しにしたアプリの起動の確かめ)
+- status: todo
+- check: launch
+- gpu: exclusive
+- done-when: SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1 で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1 の done-when を満たすことを確かめる。満たさなければ SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1 の done-when と paths の範囲で直す。
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/off --sets terrain-sky --variant-args rtgi-specular=off`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/on --sets terrain-sky`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/off --sets terrain-sun --variant-args rtgi-specular=off`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/on --sets terrain-sun`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/off --sets rocks-sky --variant-args rtgi-specular=off`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/on --sets rocks-sky`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/off --sets rocks-sun --variant-args rtgi-specular=off`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/on --sets rocks-sun`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/off --sets rocks-cliff-sky --variant-args rtgi-specular=off`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/on --sets rocks-cliff-sky`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/off --sets rocks-cliff-sun --variant-args rtgi-specular=off`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/on --sets rocks-cliff-sun`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/off --sets plant-sky --variant-args rtgi-specular=off`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/on --sets plant-sky`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/off --sets plant-sun --variant-args rtgi-specular=off`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/on --sets plant-sun`
+- verify: `python Scripts/Terrain/ReferenceCheck.py --occlusion --engine-root .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/on --off-root .harness/runs/scene-capture/SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1/off --reference .harness/runs/scene-capture/SCN-WLR-OCCLUSION-SETS/cycles --regions Scripts/Terrain/ExpectSpecs/occlusion-regions.json --expect Scripts/Terrain/ExpectSpecs/occlusion-accept.json --verify`
+- paths: Docs/RenderingValidation/InteriorLightReference.md, Scripts/Terrain/ExpectSpecs/occlusion-accept.json, TASKS.md, PROGRESS.md
+- from: SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1
+
+## G2-GR82-V1-REST-POSE-GUARD-CHECK: clip作成時骨格の差を束縛時に検査する(後回しにしたアプリの起動の確かめ)
+- status: todo
+- check: launch
+- gpu: exclusive
+- done-when: G2-GR82-V1-REST-POSE-GUARD で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、G2-GR82-V1-REST-POSE-GUARD の done-when を満たすことを確かめる。満たさなければ G2-GR82-V1-REST-POSE-GUARD の done-when と paths の範囲で直す。
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 180 -R "^(CookedClipBankV1Test|SkeletalClipBankBindingTest|RigSplitCookTest)$"`
+- paths: TASKS.md, PROGRESS.md, Library/Core/Private/Animation/ClipBankBinding.cpp, Library/Core/Private/Animation/ClipBankBinding.h, Library/Core/Private/Animation/ClipBankRestComparison.cpp, Library/Core/Private/Animation/ClipBankRestComparison.h, Library/Core/Private/Asset/CookedClipBankV1.cpp, Library/Core/Private/Asset/CookedClipBankV1.h
+- from: G2-GR82-V1-REST-POSE-GUARD
+
+## G2-GR78-SURFACE-CENTROID-CHECK: 表面重心の極端値精度を確認する(後回しにしたアプリの起動の確かめ)
+- status: todo
+- check: launch
+- gpu: exclusive
+- done-when: G2-GR78-SURFACE-CENTROID で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、G2-GR78-SURFACE-CENTROID の done-when を満たすことを確かめる。満たさなければ G2-GR78-SURFACE-CENTROID の done-when と paths の範囲で直す。
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 180 -R "^(ImportTransformTest|ImportSettingsValueTest|ImportSettingsJsonTest|ImportStaticIntegrationTest|CookedSkeletalAssetTest)$"`
+- paths: Library/Core/Private/Resource/ImportTransform.cpp, Library/Core/Private/Resource/ImportTransform.h, Library/Core/Private/Resource/ImportSettings.cpp, Library/Core/Private/Resource/ImportSettingsJson.cpp, Test/Core/Asset/ImportTransformTest.cpp, Test/Core/Asset/ImportSettingsValueTest.cpp, Test/Core/Asset/ImportSettingsJsonTest.cpp, Test/Core/Asset/ImportStaticIntegrationTest.cpp, Docs/Architecture/ImportSettings.md, TASKS.md, PROGRESS.md
+- from: G2-GR78-SURFACE-CENTROID
+
+## G2-GR78-SURFACE-CENTROID-CHECK-P1: CookedSkeletalAssetTest の「警告:」の照合を、コンソールのコードページに関わらず通す
+- status: done
+- done-when: CookedSkeletalAssetTest.cmake.in で AssetCook の出力を受ける execute_process が、出力を UTF-8 として読む(ENCODING UTF-8 を付けるか、台本の頭で CMP0176 を NEW にする)。これにより「警告:」の照合(reduce・cubic・morph の 3 か所)が、コードページ 932 のコンソールでも 65001 のコンソールでも通る。照合の文字列と合否の条件は変えない。
+- verify: `cmake --build build --config Debug --target CookedMeshTest AssetCook -- /m:1`
+- verify: `cmd /c "chcp 932 >nul && ctest --test-dir build -C Debug --output-on-failure --timeout 180 -R CookedSkeletalAssetTest && chcp 65001 >nul && ctest --test-dir build -C Debug --output-on-failure --timeout 180 -R CookedSkeletalAssetTest"`
+- paths: Test/Core/Asset/CookedSkeletalAssetTest.cmake.in, TASKS.md, PROGRESS.md
+- from: G2-GR78-SURFACE-CENTROID-CHECK
+
+## G2-GR77-NATIVE-ACCEPTANCE-CHECK: 実物GLBとnative統合の受入れを記録する(後回しにしたアプリの起動の確かめ)
+- status: todo
+- check: launch
+- gpu: exclusive
+- done-when: G2-GR77-NATIVE-ACCEPTANCE で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、G2-GR77-NATIVE-ACCEPTANCE の done-when を満たすことを確かめる。満たさなければ G2-GR77-NATIVE-ACCEPTANCE の done-when と paths の範囲で直す。
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 180 -R "^(GltfContainerTest|Base64DecodeTest|GltfBufferSourceTest|GltfBufferSetTest|GltfBufferUriTest|GltfBufferJsonTest|GltfBufferNumberTest|StaticGltfBufferCookTest|GltfImageRangeTest|GltfImageSourceTest|GltfAccessorRangeTest|GltfAccessorStagingTest|ImageBytesStagingTest|GltfDocumentProfileTest|GltfLooseSourceTest|CookedSkeletalAssetTest|CookedMeshTest|AssetCookGlbSmoke|AssetCookMeshSmoke)$"`
+- paths: Docs/Architecture/AssetImportPipeline.md, TASKS.md, PROGRESS.md, Library/Core/Private/Resource/Gltf*, Library/Core/Private/Resource/GLTFAnalyzer.cpp, Library/Core/Private/Resource/SkeletalGltfDecode.cpp, Library/Core/Private/Resource/SkeletalGltfDecode.h, Tools/AssetCook/MeshCooker.cpp, Tools/AssetCook/AssetCookGlbSmoke.cmake.in, Test/Core/Asset/Gltf*, Test/Core/Asset/StaticGltfBufferCookTest.cpp, Test/Core/Asset/ImageBytesStagingTest.cpp, Test/Core/Asset/CookedSkeletalAssetTest.cpp
+- from: G2-GR77-NATIVE-ACCEPTANCE
+
+## SCN-MEGA-FIX-TLAS-REBUILD-P3-CHECK: GPU 計測の撮影でも、終了までの描画フレームを SceneReady の後から数える(後回しにしたアプリの起動の確かめ)
+- status: todo
+- check: launch
+- gpu: exclusive
+- done-when: SCN-MEGA-FIX-TLAS-REBUILD-P3 で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、SCN-MEGA-FIX-TLAS-REBUILD-P3 の done-when を満たすことを確かめる。満たさなければ SCN-MEGA-FIX-TLAS-REBUILD-P3 の done-when と paths の範囲で直す。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -Views horizon -Build -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -TimeoutSeconds 1800 -GameArgs banana-count=1000000,camera-path-play,camera-path-time=0 -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-TLAS-REBUILD-P3/path`
+- verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-FIX-TLAS-REBUILD-P3/path --views horizon --timing --min-frames 300`
+- verify: `python -c "import re,sys; t=open(sys.argv[1],encoding='utf-8',errors='replace').read(); r=t.find('SCENE_READY scene=mega-bananas'); b=[m.start() for m in re.finditer('asset settle baseline rendered=',t)]; sys.exit(0 if r>=0 and b and b[-1]>r else 1)" .harness/runs/scene-capture/SCN-MEGA-FIX-TLAS-REBUILD-P3/path/horizon.Game.log`
+- paths: Library/Core/Private/Engine/ApplicationProcessor.cpp, Scripts/CaptureScene.ps1, TASKS.md, PROGRESS.md
+- from: SCN-MEGA-FIX-TLAS-REBUILD-P3
+
+## SCN-MEGA-FIX-TLAS-REBUILD-CHECK: TLAS を、インスタンスの顔ぶれが替わったら作り直す(後回しにしたアプリの起動の確かめ)
+- status: todo
+- check: launch
+- gpu: exclusive
+- done-when: SCN-MEGA-FIX-TLAS-REBUILD で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、SCN-MEGA-FIX-TLAS-REBUILD の done-when を満たすことを確かめる。満たさなければ SCN-MEGA-FIX-TLAS-REBUILD の done-when と paths の範囲で直す。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -Views horizon -Build -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -TimeoutSeconds 1800 -GameArgs banana-count=1000000,camera-path-play,camera-path-time=0 -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-TLAS-REBUILD/path`
+- verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-FIX-TLAS-REBUILD/path --views horizon --timing --min-frames 300 --require-pass LightingPass --max-pass-median-ms LightingPass=4.4 --max-pass-p95-ms LightingPass=5`
+- paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Library/Core/Private/RHI, Library/Core/Public/RHI, TASKS.md, PROGRESS.md
+- from: SCN-MEGA-FIX-TLAS-REBUILD
+
+## SCN-MEGA-FIX-STRESS-GPU-CHECK: 1M + mega-stress 5 万個の GPU 時間を 16.6 ms に収める(後回しにしたアプリの起動の確かめ)
+- status: todo
+- check: launch
+- gpu: exclusive
+- done-when: SCN-MEGA-FIX-STRESS-GPU で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、SCN-MEGA-FIX-STRESS-GPU の done-when を満たすことを確かめる。満たさなければ SCN-MEGA-FIX-STRESS-GPU の done-when と paths の範囲で直す。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -Views overview -Build -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -TimeoutSeconds 2400 -GameArgs banana-count=1000000,stress-entities=50000,stress-moving-percent=1 -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-STRESS-GPU`
+- verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-FIX-STRESS-GPU --timing --min-frames 300 --max-gpu-median-ms 16.6 --max-gpu-p95-ms 16.6`
+- paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Assets/Shaders, Game/GameModes/MegaStress, TASKS.md, PROGRESS.md
+- from: SCN-MEGA-FIX-STRESS-GPU
+
+## PT-NONUNIFORM-SAMPLER-CHECK: パストレーサーの材質のテクスチャの添字の一様でない印を、標本の関数の中まで届ける(後回しにしたアプリの起動の確かめ)
+- status: todo
+- check: launch
+- gpu: exclusive
+- done-when: PT-NONUNIFORM-SAMPLER で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、PT-NONUNIFORM-SAMPLER の done-when を満たすことを確かめる。満たさなければ PT-NONUNIFORM-SAMPLER の done-when と paths の範囲で直す。
+- verify: `cmake --build build --config Debug --target PathTracingMaterialVulkanTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^PathTracingMaterialVulkanTest$"`
+- paths: Assets/Shaders/PathTracing, Assets/Shaders/Common, Library/Core/Private/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- from: PT-NONUNIFORM-SAMPLER
+
+## SCN-INTERIOR-SHAFTS-CHECK: 窓から入る光の筋を出す(後回しにしたアプリの起動の確かめ)
+- status: todo
+- check: launch
+- gpu: exclusive
+- done-when: SCN-INTERIOR-SHAFTS で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、SCN-INTERIOR-SHAFTS の done-when を満たすことを確かめる。満たさなければ SCN-INTERIOR-SHAFTS の done-when と paths の範囲で直す。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene interior-light -Configuration RelWithDebInfo -Build -RequireAssets -OutDir .harness/runs/scene-capture/SCN-INTERIOR-SHAFTS`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SCN-INTERIOR-SHAFTS`
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Scripts, TASKS.md, PROGRESS.md
+- from: SCN-INTERIOR-SHAFTS
+
+## TEST-FULL-CTEST-BASELINE-CHECK: 全体CTestの既存の失敗を直す(後回しにしたアプリの起動の確かめ)
+- status: todo
+- check: launch
+- gpu: exclusive
+- done-when: TEST-FULL-CTEST-BASELINE で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、TEST-FULL-CTEST-BASELINE の done-when を満たすことを確かめる。満たさなければ TEST-FULL-CTEST-BASELINE の done-when と paths の範囲で直す。
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 600`
+- paths: Library/Core, Test/Core, Game, Docs/Testing.md, TASKS.md, PROGRESS.md
+- from: TEST-FULL-CTEST-BASELINE
+
+## SCN-THUMBNAILS-CHECK: ランチャーのカードに各シーンの見本画像を出す(後回しにしたアプリの起動の確かめ)
+- status: todo
+- check: launch
+- gpu: exclusive
+- done-when: SCN-THUMBNAILS で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、SCN-THUMBNAILS の done-when を満たすことを確かめる。満たさなければ SCN-THUMBNAILS の done-when と paths の範囲で直す。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureLauncherThumbnails.ps1 -Configuration RelWithDebInfo -WorkDir .harness/runs/scene-capture/SCN-THUMBNAILS/thumbs`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene launcher -Configuration RelWithDebInfo -Build -OutDir .harness/runs/scene-capture/SCN-THUMBNAILS`
+- paths: Game, Scripts, Assets/Textures/Launcher, TASKS.md, PROGRESS.md
+- from: SCN-THUMBNAILS
+
+## FIX-NORMAL-MATRIX-SCALE-CHECK: 法線行列の小スケール退化判定を尺度不変にする(後回しにしたアプリの起動の確かめ)
+- status: todo
+- check: launch
+- gpu: exclusive
+- done-when: FIX-NORMAL-MATRIX-SCALE で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、FIX-NORMAL-MATRIX-SCALE の done-when を満たすことを確かめる。満たさなければ FIX-NORMAL-MATRIX-SCALE の done-when と paths の範囲で直す。
+- verify: `cmake --build build --config Debug --target Game RenderingHdrSceneCaptureTest PathTracingRasterParityVulkanTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -L RenderingValidation`
+- paths: Library/Core/Public/Math, Assets/Shaders/PathTracing, Test/Core/Math, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- from: FIX-NORMAL-MATRIX-SCALE
+
+## GAME-GR136-VFX-CHECK: Niagara 相当の VFX システムを実装する(後回しにしたアプリの起動の確かめ)
+- status: todo
+- check: launch
+- gpu: exclusive
+- done-when: GAME-GR136-VFX で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、GAME-GR136-VFX の done-when を満たすことを確かめる。満たさなければ GAME-GR136-VFX の done-when と paths の範囲で直す。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -OutDir .harness/runs/startup-capture/GAME-GR136-VFX`
+- paths: Library/Core/Public/Particle, Library/Core/Private/Particle, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Tools/AssetCook, Test/Core/Rendering, Docs/Plans/GameFeatureRoadmap.md, TASKS.md, PROGRESS.md
+- from: GAME-GR136-VFX
+
+## G2-GR32-GPU-ACCEPTANCE-CHECK: 多材質と旧描画互換をWindows GPUで確認する(後回しにしたアプリの起動の確かめ)
+- status: todo
+- check: launch
+- gpu: exclusive
+- done-when: G2-GR32-GPU-ACCEPTANCE で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、G2-GR32-GPU-ACCEPTANCE の done-when を満たすことを確かめる。満たさなければ G2-GR32-GPU-ACCEPTANCE の done-when と paths の範囲で直す。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -SkinnedProbe -SkinnedProbeMaterials 2 -VisibilityBuffer On -OutDir .harness/runs/startup-capture/G2-GR32-GPU-ACCEPTANCE-2mat-vb`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -SkinnedProbe -SkinnedProbeMaterials 2 -VisibilityBuffer Off -OutDir .harness/runs/startup-capture/G2-GR32-GPU-ACCEPTANCE-2mat-gbuffer`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Test-M9World.ps1 -Configuration Debug -LegacyNvskelCompare -EvidenceDir .harness/runs/scene-capture/G2-GR32-GPU-ACCEPTANCE-legacy`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -OutDir .harness/runs/startup-capture/G2-GR32-GPU-ACCEPTANCE-default`
+- paths: Library/Core/Private/Rendering/VisibilityRasterPass.cpp, Library/Core/Public/Rendering/VisibilityRasterPass.h, Library/Core/Private/Rendering/VirtualShadowMapPass.cpp, Library/Core/Public/Rendering/MeshIndexChunks.h, Test/Core/Rendering/SkinnedSubmeshDrawContractTest.cpp, Game/GameModes/Rendering3DTest/StartupSkinnedProbe.cpp, Game/GameModes/Rendering3DTest/StartupSkinnedProbe.h, Game/GameModes/Rendering3DTest/Rendering3DTestData.h, Game/GameModes/Rendering3DTest/Rendering3DTestRoutine.cpp, Game/GameApplicationHandler.cpp, Game/GameModes/Rendering3DTest/M9WorldAcceptance.cpp, Game/GameModes/Rendering3DTest/M9WorldAcceptance.h, Scripts/CaptureStartupScene.ps1, Scripts/Test-M9World.ps1, Test/Tools/NvskelLegacyV01Oracle.py, Docs/Architecture/NVSKELMigrationInventory.md, TASKS.md, PROGRESS.md
+- from: G2-GR32-GPU-ACCEPTANCE
+
+## GAME-GR133-VFX-CHECK: デカール（地面や体に残る跡）を実装する(後回しにしたアプリの起動の確かめ)
+- status: todo
+- check: launch
+- gpu: exclusive
+- done-when: GAME-GR133-VFX で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、GAME-GR133-VFX の done-when を満たすことを確かめる。満たさなければ GAME-GR133-VFX の done-when と paths の範囲で直す。
+- verify: `cmake --build build --config Debug --target DecalGBufferVulkanTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^DecalGBufferVulkanTest$" --no-tests=error --output-on-failure --timeout 600`
+- paths: Library/Core/Public/Particle, Library/Core/Private/Particle, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Tools/AssetCook, Test/Core/Rendering, Docs/Plans/GameFeatureRoadmap.md, TASKS.md, PROGRESS.md
+- from: GAME-GR133-VFX
+
+## GAME-GR134-VFX-CHECK: メッシュのエフェクトを実装する(後回しにしたアプリの起動の確かめ)
+- status: todo
+- check: launch
+- gpu: exclusive
+- done-when: GAME-GR134-VFX で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、GAME-GR134-VFX の done-when を満たすことを確かめる。満たさなければ GAME-GR134-VFX の done-when と paths の範囲で直す。
+- verify: `cmake --build build --config Debug --target MeshParticleDissolveVulkanTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^MeshParticleDissolveVulkanTest$" --no-tests=error --output-on-failure --timeout 600`
+- paths: Library/Core/Public/Particle, Library/Core/Private/Particle, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Tools/AssetCook, Test/Core/Rendering, Docs/Plans/GameFeatureRoadmap.md, TASKS.md, PROGRESS.md
+- from: GAME-GR134-VFX
+
+## GAME-GR137-VFX-CHECK: 資産の編集・決定的な撮影・言語モデルの口（Bridge の拡張。汎用）を実装する(後回しにしたアプリの起動の確かめ)
+- status: todo
+- check: launch
+- gpu: exclusive
+- done-when: GAME-GR137-VFX で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、GAME-GR137-VFX の done-when を満たすことを確かめる。満たさなければ GAME-GR137-VFX の done-when と paths の範囲で直す。
+- verify: `cmake --build build --config Debug --target BridgeDeterministicCaptureVulkanTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^BridgeDeterministicCaptureVulkanTest$" --no-tests=error --output-on-failure --timeout 600`
+- paths: Game/Bridge, Library/Core/Public/Object, Library/Core/Private/Object, Library/Core/Public/Particle, Library/Core/Private/Particle, Test/Game/Bridge, Docs/Plans/GameFeatureRoadmap.md, TASKS.md, PROGRESS.md
+- from: GAME-GR137-VFX
+
+## GAME-GR130-VFX-CHECK: 剣のトレイル（リボン）を実装する(後回しにしたアプリの起動の確かめ)
+- status: todo
+- check: launch
+- gpu: exclusive
+- done-when: GAME-GR130-VFX で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、GAME-GR130-VFX の done-when を満たすことを確かめる。満たさなければ GAME-GR130-VFX の done-when と paths の範囲で直す。
+- verify: `cmake --build build --config Debug --target SwordTrailRibbonVulkanTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^SwordTrailRibbonVulkanTest$" --no-tests=error --output-on-failure --timeout 600`
+- paths: Library/Core/Public/Particle, Library/Core/Private/Particle, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Tools/AssetCook, Test/Core/Rendering, Docs/Plans/GameFeatureRoadmap.md, TASKS.md, PROGRESS.md
+- from: GAME-GR130-VFX
+
+## GAME-GR135-VFX-CHECK: 空気の歪み（屈折）を実装する(後回しにしたアプリの起動の確かめ)
+- status: todo
+- check: launch
+- gpu: exclusive
+- done-when: GAME-GR135-VFX で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、GAME-GR135-VFX の done-when を満たすことを確かめる。満たさなければ GAME-GR135-VFX の done-when と paths の範囲で直す。
+- verify: `cmake --build build --config Debug --target DistortionPassVulkanTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^DistortionPassVulkanTest$" --no-tests=error --output-on-failure --timeout 600`
+- paths: Library/Core/Public/Particle, Library/Core/Private/Particle, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Tools/AssetCook, Test/Core/Rendering, Docs/Plans/GameFeatureRoadmap.md, TASKS.md, PROGRESS.md
+- from: GAME-GR135-VFX

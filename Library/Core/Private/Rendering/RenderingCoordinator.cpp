@@ -1882,6 +1882,8 @@ namespace NorvesLib::Core::Rendering
 
         Container::VariableArray<BottomLevelCacheEntry> activeBottomLevels;
         Container::VariableArray<RHI::AccelerationStructureInstanceDesc> tlasInstances;
+        Container::VariableArray<TopLevelInstanceKey> instanceKeys;
+        instanceKeys.reserve(packet.RayTracingScene.Instances.size());
         // この回に新しく作った BLAS の数・三角形・同期の構築の時間（RT_BLAS に出す）
         uint32_t builtBottomLevels = 0;
         uint64_t builtTriangles = 0;
@@ -2021,6 +2023,7 @@ namespace NorvesLib::Core::Rendering
             RHI::AccelerationStructureInstanceDesc tlasInstance = instance.Instance;
             tlasInstance.bottomLevel = bottomLevel->Structure;
             tlasInstances.push_back(std::move(tlasInstance));
+            instanceKeys.push_back(TopLevelInstanceKey{instance.ObjectId, instance.ObjectInstanceIndex});
         }
 
         m_BottomLevelCache = std::move(activeBottomLevels);
@@ -2066,8 +2069,16 @@ namespace NorvesLib::Core::Rendering
         // この slot で前回記録した入力（集合と並び・変換・マスク・BLAS）と全部一致すれば、slot の TLAS はすでにこの内容なので
         // Update を記録しない。パケットのスロットは GPU の完了を保証しない（RenderThread は提出の直後にパケットを Empty へ戻し、
         // 同じスロットを続けて描くことがある）。前の利用の GPU の読み書きとの順序はフレームの頭の全体のバリアで守り、
-        // インスタンスの表と scratch は呼び出しごとの lease
-        if (cachedTopLevel.Structure && SameTopLevelInstances(cachedTopLevel.Instances, tlasInstances))
+        // インスタンスの表と一時作業領域は呼び出しごとに確保し、GPU の完了までエンジンが保持する。
+        // 選んだ後は距離順でなく元の番号順（SelectNearest）なので、各席の鍵で顔ぶれを照合できる。
+        // 同じ BLAS と件数でも物体が替わると、refit だけでは木の空間的なまとまりを失う。
+        bool bSameMembership = cachedTopLevel.Keys.size() == instanceKeys.size();
+        for (size_t index = 0; bSameMembership && index < instanceKeys.size(); ++index)
+        {
+            bSameMembership = cachedTopLevel.Keys[index] == instanceKeys[index];
+        }
+        if (cachedTopLevel.Structure && bSameMembership &&
+            SameTopLevelInstances(cachedTopLevel.Instances, tlasInstances, true))
         {
             ++m_TopLevelUpdateStats.Skipped;
             LogTopLevelUpdates(false);
@@ -2076,7 +2087,9 @@ namespace NorvesLib::Core::Rendering
         }
 
         RHI::AccelerationStructurePtr topLevel;
-        if (cachedTopLevel.Structure && cachedTopLevel.InstanceCount == instanceCount)
+        // Update は変換だけが変わったときに限る。顔ぶれ・並び・BLAS・属性の変更は Build にする。
+        if (cachedTopLevel.Structure && bSameMembership &&
+            SameTopLevelInstances(cachedTopLevel.Instances, tlasInstances, false))
         {
             RHI::AccelerationStructureBuildDesc tlasUpdate;
             tlasUpdate.type = RHI::AccelerationStructureType::TopLevel;
@@ -2122,7 +2135,7 @@ namespace NorvesLib::Core::Rendering
             }
 
             cachedTopLevel.Structure = topLevel;
-            cachedTopLevel.InstanceCount = instanceCount;
+            cachedTopLevel.Keys = std::move(instanceKeys);
             cachedTopLevel.Instances = std::move(tlasBuild.instances);
             ++m_TopLevelUpdateStats.Built;
         }
@@ -2134,7 +2147,8 @@ namespace NorvesLib::Core::Rendering
 
     bool RayTracingSceneSubsystem::SameTopLevelInstances(
         const Container::VariableArray<RHI::AccelerationStructureInstanceDesc>& lhs,
-        const Container::VariableArray<RHI::AccelerationStructureInstanceDesc>& rhs)
+        const Container::VariableArray<RHI::AccelerationStructureInstanceDesc>& rhs,
+        bool bCompareTransforms)
     {
         if (lhs.size() != rhs.size())
         {
@@ -2147,7 +2161,7 @@ namespace NorvesLib::Core::Rendering
             if (a.bottomLevel.get() != b.bottomLevel.get() || a.customIndex != b.customIndex || a.mask != b.mask ||
                 a.shaderBindingTableRecordOffset != b.shaderBindingTableRecordOffset ||
                 a.disableTriangleFacingCull != b.disableTriangleFacingCull ||
-                std::memcmp(a.transform, b.transform, sizeof(a.transform)) != 0)
+                (bCompareTransforms && std::memcmp(a.transform, b.transform, sizeof(a.transform)) != 0))
             {
                 return false;
             }
@@ -4523,7 +4537,7 @@ namespace NorvesLib::Core::Rendering
 
     void RenderingCoordinator::SnapshotSceneParameters(
         FramePacket& packet,
-        const RHI::DeviceCapabilities& capabilities) const
+        const RHI::DeviceCapabilities& capabilities)
     {
         // 空の太陽は、パケットへ運ぶ光源表（UpdatePacketLights）が SceneView の光源の後に加える。
         packet.Scene.SkyAtmosphere = m_SkyAtmosphere;
@@ -4541,6 +4555,11 @@ namespace NorvesLib::Core::Rendering
         packet.Scene.AerialPerspective = m_AerialPerspective;
         packet.Scene.CloudLayer = m_CloudLayer;
         packet.Scene.Foliage = m_Foliage;
+        packet.Scene.RibbonTrails = m_RibbonTrails;
+        // 帯はこのパケットだけで使い、配列の容量は次のフレームにも再利用する。
+        m_RibbonTrails.Clear();
+        packet.Scene.Decals = m_Decals;
+        packet.Scene.Distortions = m_Distortions;
         packet.bRTGIEnabled = m_bRTGIEnabled;
         packet.bRTGINonShadowCasterOcclusion = m_bRTGINonShadowCasterOcclusion;
     }
@@ -5077,6 +5096,9 @@ namespace NorvesLib::Core::Rendering
         {
             return nullptr;
         }
+
+        // パケットを確保できなかったフレームの帯も翌フレームへ持ち越さない。
+        m_RibbonTrails.Clear();
 
         // 書き込み完了をマーク（Writing→Ready）
         // Screen.EndFrame（submit/present）はRenderFrame内で実行するため、ここでは行わない。
@@ -5771,6 +5793,9 @@ namespace NorvesLib::Core::Rendering
                                                                       packet->DrawCommandRange);
         viewContext.SnapshotDebugLineVertices = &packet->DebugLineVertices;
         viewContext.SnapshotFoliage = &packet->Scene.Foliage;
+        viewContext.SnapshotRibbonTrails = &packet->Scene.RibbonTrails;
+        viewContext.SnapshotDecals = &packet->Scene.Decals;
+        viewContext.SnapshotDistortions = &packet->Scene.Distortions;
         viewContext.SnapshotOpaqueCommands = DrawCommandView::FromRange(packet->DrawCommands,
                                                                         packet->OpaqueCommandRange);
         viewContext.SnapshotTransparentCommands = DrawCommandView::FromRange(packet->DrawCommands,
@@ -6525,6 +6550,21 @@ namespace NorvesLib::Core::Rendering
     void RenderingCoordinator::SetFoliage(const FoliageScene& foliage)
     {
         m_Foliage = foliage;
+    }
+
+    void RenderingCoordinator::SetRibbonTrails(const RibbonTrailScene& trails)
+    {
+        m_RibbonTrails = trails;
+    }
+
+    void RenderingCoordinator::SetDecals(const DecalScene& decals)
+    {
+        m_Decals = decals;
+    }
+
+    void RenderingCoordinator::SetDistortions(const DistortionScene& distortions)
+    {
+        m_Distortions = distortions;
     }
 
     uint64_t RenderingCoordinator::RegisterCamera(const CameraProxy &camera)

@@ -742,6 +742,22 @@ namespace NorvesLib::Core::Rendering
         NORVES_LOG_INFO("VirtualShadowMapPass",
                         "VRAM_LEDGER vsm_mega_cull mb=%.3f",
                         static_cast<double>(megaBytes) / BytesPerMegabyte);
+#if NORVES_BUILD_DEVELOPMENT
+        if (m_MegaPass)
+        {
+            // Initialize より後に主パスが結ばれても最初の宣言で登録する。登録済みの所有権は主パスが除外する。
+            // 作成時と同じ用途・名前・属性の記述子を渡す（容量は現在のバッファから取る）。
+            const RHI::BufferDesc listDesc(m_MegaList ? m_MegaList->GetSize() : 0u,
+                                          VirtualShadowMap::MegaCullListUsage(), false, "VsmMega_List");
+            const RHI::BufferDesc dirtyDesc(m_MegaDirtyBits ? m_MegaDirtyBits->GetSize() : 0u,
+                                           VirtualShadowMap::MegaDirtyBitsUsage(), false, "VsmMega_DirtyBits");
+            const RHI::BufferDesc chunksDesc(m_MegaChunks ? m_MegaChunks->GetSize() : 0u,
+                                            VirtualShadowMap::MegaChunkUsage(), false, "VsmMega_Chunks");
+            m_MegaPass->NoteGpuSceneBuffer(m_MegaList, listDesc, false);
+            m_MegaPass->NoteGpuSceneBuffer(m_MegaDirtyBits, dirtyDesc, false);
+            m_MegaPass->NoteGpuSceneBuffer(m_MegaChunks, chunksDesc, false);
+        }
+#endif
         m_bInitialized = true;
         return true;
     }
@@ -785,6 +801,22 @@ namespace NorvesLib::Core::Rendering
 
     void VirtualShadowMapPass::Declare(RenderGraphBuilder& builder)
     {
+#if NORVES_BUILD_DEVELOPMENT
+        if (m_MegaPass)
+        {
+            // Initialize より後に主パスが結ばれても最初の宣言で登録する。登録済みの所有権は主パスが除外する。
+            // 作成時と同じ用途・名前・属性の記述子を渡す（容量は現在のバッファから取る）。
+            const RHI::BufferDesc listDesc(m_MegaList ? m_MegaList->GetSize() : 0u,
+                                          VirtualShadowMap::MegaCullListUsage(), false, "VsmMega_List");
+            const RHI::BufferDesc dirtyDesc(m_MegaDirtyBits ? m_MegaDirtyBits->GetSize() : 0u,
+                                           VirtualShadowMap::MegaDirtyBitsUsage(), false, "VsmMega_DirtyBits");
+            const RHI::BufferDesc chunksDesc(m_MegaChunks ? m_MegaChunks->GetSize() : 0u,
+                                            VirtualShadowMap::MegaChunkUsage(), false, "VsmMega_Chunks");
+            m_MegaPass->NoteGpuSceneBuffer(m_MegaList, listDesc, false);
+            m_MegaPass->NoteGpuSceneBuffer(m_MegaDirtyBits, dirtyDesc, false);
+            m_MegaPass->NoteGpuSceneBuffer(m_MegaChunks, chunksDesc, false);
+        }
+#endif
         m_PoolHandle = {};
         m_PageTableHandle = {};
         m_RequestBitsHandle = {};
@@ -972,11 +1004,16 @@ namespace NorvesLib::Core::Rendering
                     ++state.Stats.SkippedDraws;
                     continue;
                 }
-                // 元の描画のインデックスの範囲。数が 0 か、メッシュ全体を覆う範囲なら全体として扱う
-                const bool bWholeMesh = instance.SourceIndexCount == 0u ||
-                                        (instance.SourceFirstIndex == 0u && instance.SourceIndexCount >= instance.IndexCount);
+                // 元の描画のインデックスの範囲を、全体か部分の塊として扱う
                 Container::VariableArray<MeshIndexChunk>& chunks = state.SkinnedChunks;
-                if (bWholeMesh)
+                const SkinnedMeshIndexChunkResult chunkResult = BuildSkinnedMeshIndexChunks(
+                    instance.IndexCount, instance.SourceFirstIndex, instance.SourceIndexCount, chunks);
+                if (chunkResult == SkinnedMeshIndexChunkResult::Failure)
+                {
+                    ++state.Stats.SkippedDraws;
+                    continue;
+                }
+                if (chunkResult == SkinnedMeshIndexChunkResult::WholeMesh)
                 {
                     // 登録時に分けた塊を使い、無ければインデックスの全体を分ける
                     if (!context.SkinnedMeshes || !context.SkinnedMeshes->TryGetChunks(instance.MeshHandle, chunks) || chunks.empty())
@@ -986,22 +1023,6 @@ namespace NorvesLib::Core::Rendering
                             ++state.Stats.SkippedDraws;
                             continue;
                         }
-                    }
-                }
-                else
-                {
-                    // サブメッシュの範囲だけを塊に分け、塊の先頭をインデックスバッファの中の位置へずらす
-                    if (instance.SourceFirstIndex % 3u != 0u || instance.SourceIndexCount % 3u != 0u ||
-                        instance.SourceFirstIndex > instance.IndexCount ||
-                        instance.SourceIndexCount > instance.IndexCount - instance.SourceFirstIndex ||
-                        !BuildMeshIndexChunks(instance.SourceIndexCount, nullptr, 0, chunks))
-                    {
-                        ++state.Stats.SkippedDraws;
-                        continue;
-                    }
-                    for (MeshIndexChunk& chunk : chunks)
-                    {
-                        chunk.FirstIndex += instance.SourceFirstIndex;
                     }
                 }
                 VirtualShadowMap::AppendSkinnedInstance(

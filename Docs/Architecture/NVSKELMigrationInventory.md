@@ -182,18 +182,58 @@ CPU packet生成はDeviceCapabilitiesを受け取るprivate overloadへ分離し
 
 ## 範囲drawの接続
 
-SkinnedMeshAssetLeaseの生成時に全index/表/metadata/名前を一度だけ検査し、FrameLeaseではその結果を参照する。
-旧空表は全index/slot0として解釈する。assetを非activeにしても取得済みframeの内容を無効化しない。
+### 実装済み
 
-AppendSkinnedDrawCommandsをprivate部品へ分離し、proxyのhandleとimmutable leaseを照合して、1proxyにつき1frame leaseを登録する。
-submeshごとにIndexOffset/IndexCount/SubMeshIndex/MaterialIndexを指定し、VertexOffset=0、Opaque、非instancedを保持する。
-未割当材質はslot0へ落ち、影はcomponentのbCastShadowとsubmeshのNoShadowの両方を反映する。
+`SkinnedMeshAssetLease` の生成時に全インデックス・表・メタデータ・名前を一度だけ検査し、`FrameLease` はその結果を参照する。
+旧形式の空表は全インデックス・slot 0 と解釈する。アセットを非アクティブにしても、取得済みフレームの内容は無効化しない。
 
-RecordSkinnedDrawCallはGPU記録前に選択recordとcommandの範囲/slot/baseVertexを照合し、DrawIndexed(count,start,0)を発行する。
-旧空表のIndexCount=0だけ全meshへ解決する。予約したtableの外の部分範囲を勝手に描かない。
-preparedのhandle/VB/IB/総index数/前paletteの組を照合し、component付きframeはそのpreparedを作ったframeにだけ使用する。
-同じhandle/generationを名乗る別assetオブジェクトをGPU upload cacheへ混入させない。
+`AppendSkinnedDrawCommands` を private 部品へ分離し、proxy のハンドルと変更不可の lease を照合して、1 proxy につき 1 frame lease を登録する。
+サブメッシュごとに `IndexOffset`・`IndexCount`・`SubMeshIndex`・`MaterialIndex` を指定し、`VertexOffset=0`、`Opaque`、非インスタンス描画を保持する。
+未割当の材質は slot 0 へ落ち、影は component の `bCastShadow` とサブメッシュの `NoShadow` の両方を反映する。
 
-SkinnedSubmeshDrawContractTestは既存停止テストと別exeにし、実CoreとCPU RHI test doubleでcommand/記録/不正入力を検査する。
-この環境ではnativeコンパイルはWindows.hで未実行。共有のない現段階のpalette生成回数は合格扱いせず、別taskの作者判断待ち。
-実GPUの2材質readback・旧画素一致・M9実行も未検証。静止boundsを全animationのboundsとしてcullingへ流用しない。
+`RecordSkinnedDrawCall` は GPU 記録前に選択したレコードとコマンドの範囲・slot・base vertex を照合し、`DrawIndexed(count,start,0)` を発行する。
+旧形式の空表では `IndexCount=0` だけをメッシュ全体へ解決し、予約した表の外の部分範囲は描かない。
+準備済みのハンドル・VB・IB・総インデックス数・前の palette の組を照合し、component 付きフレームではそのフレームで準備したものだけを使う。
+同じハンドル・generation を名乗る別のアセットオブジェクトを GPU アップロードのキャッシュへ混入させない。
+
+`MeshIndexChunks.h` の `BuildSkinnedMeshIndexChunks` でスキンのサブメッシュのインデックス範囲を塊に分け、
+`VirtualShadowMapPass` とビジビリティバッファの ID ラスタを集める `VisibilityRasterPass::CollectSkinnedChunks` が同じ規則を使う。
+旧形式の空表は従来どおりメッシュ全体として扱う。
+`SkinnedSubmeshDrawContractTest` は実 Core と CPU 用 RHI test double でコマンド・記録・不正入力を検査し、
+全体・部分・3 の倍数でない範囲・はみ出す範囲の検査も含む。2026-11-02 の Windows Debug で同テストは PASS、終了コード 0。
+`Game`・`AssetCook`・`SkinnedSubmeshDrawContractTest` の Debug ビルドも終了コード 0。出力は `.harness/unit-verify.txt` に記録した。
+
+`--startup-skinned-probe-materials=2` で、2 サブメッシュ・2 材質 slot の骨付きパネルを使える。
+`CaptureStartupScene.ps1 -SkinnedProbeMaterials 2` は `--capture-aov` で取得する線形アルベドの `.aov.albedo.pfm` を読み、
+各パネルの各半分の中心に投影した座標の周辺（最大 5×5 画素）の平均色を、その slot の期待色と照合する。
+スキン描画は材質の基本色を使わないため、材質の色は 4×4 の単色アルベドテクスチャで持たせている。
+
+`Test/Tools/NvskelLegacyV01Oracle.py` は 0.2 の出力から試験用の旧 NVSKEL 0.1 を作る。製品の `AssetCook` は 0.1 を書き出さない。
+`Test-M9World.ps1 -LegacyNvskelCompare -EvidenceDir` は、同じ `ValidU8Float` から作った 0.1 と 0.2 を比較し、画像と判定を指定先へ残す。
+
+### 実 GPU で未検証の受入れ
+
+以下は `G2-GR32-GPU-ACCEPTANCE-CHECK` で実行する。実 GPU で確認するまで GR32 の描画は完了扱いにしない。
+CPU の test double やソースの確認は実 GPU の合格と扱わない。
+
+- ビジビリティバッファの On・Off それぞれで、2 材質の骨付きパネルの各半分が対応する slot の色になっていることを判定する。
+
+  ```powershell
+  powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -SkinnedProbe -SkinnedProbeMaterials 2 -VisibilityBuffer On -OutDir .harness/runs/startup-capture/G2-GR32-GPU-ACCEPTANCE-2mat-vb
+  powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -SkinnedProbe -SkinnedProbeMaterials 2 -VisibilityBuffer Off -OutDir .harness/runs/startup-capture/G2-GR32-GPU-ACCEPTANCE-2mat-gbuffer
+  ```
+
+- `--m9-world-compare` で止めた姿勢を `--capture-aov --capture-deterministic` で撮り、旧 0.1 と 0.2 の GBuffer の AOV を面ごとに全画素一致で比較する。
+
+  ```powershell
+  powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Test-M9World.ps1 -Configuration Debug -LegacyNvskelCompare -EvidenceDir .harness/runs/scene-capture/G2-GR32-GPU-ACCEPTANCE-legacy
+  ```
+
+- 既定の `Rendering3DTest` の起動画面を撮り、`result=pass` と PNG を確認する。
+
+  ```powershell
+  powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -OutDir .harness/runs/startup-capture/G2-GR32-GPU-ACCEPTANCE-default
+  ```
+
+palette の共有は未解決。既定経路ではスキニングの計算と出力頂点範囲の確保がサブメッシュの数だけ重複する。
+静止時の bounds を全アニメーションの bounds としてカリングへ流用しない。

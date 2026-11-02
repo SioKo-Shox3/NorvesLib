@@ -244,6 +244,29 @@ namespace NorvesLib::Core::Rendering
         void SetFoliage(const FoliageScene& foliage);
 
         /**
+         * @brief このフレームの帯の頂点と描画範囲を設定する（GameThread）
+         *
+         * 描画コマンド生成前に呼び、FramePacket へコピーした後は保持を空にする。
+         */
+        void SetRibbonTrails(const RibbonTrailScene& trails);
+
+        /**
+         * @brief 箱で投影するデカールの一覧を設定する（GameThread）
+         *
+         * Particle::DecalPool::BuildScene() の結果を渡す。RenderThread の DecalPass が GBuffer の色と法線へ描く。
+         * 空の一覧で描かなくなる。一覧は作った後に書き換えない共有の値で、写しは参照を数えるだけ。
+         */
+        void SetDecals(const DecalScene& decals);
+
+        /**
+         * @brief 歪みの源の一覧を設定する（GameThread）
+         *
+         * RenderThread の DistortionPass が半透明の後のシーンの色をずらす。
+         * 一覧は作った後に書き換えない共有の値で、空の一覧では歪みを描かない。
+         */
+        void SetDistortions(const DistortionScene& distortions);
+
+        /**
          * @brief 決定的な撮影（--capture-deterministic）にする（GameThread）
          *
          * 有効な間、FramePacket の経過時間を 1/60 秒に固定する。起動の初期化で一度だけ呼ぶ。

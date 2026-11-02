@@ -845,6 +845,14 @@ BLUR_CASES = (
 # 撮った時点の常駐の確かめ: GEOMETRY_PAGES は常駐・進行中の各段・追い出しのどれかが変わると、落ち着き待ちの間は毎フレーム出る。
 # 保存の前の最後の行の進行中（wanted・reading・ready・uploading）がすべて 0 で、最後の落ち着きの基準から保存までの行の
 # 追い出しの数が変わっていないこと
+def geometry_pages_resident_complete(pages):
+    """保存時点の進行中のページと、落ち着きの基準からの追い出しで常駐完了を判定する。"""
+    in_flight = {k: pages.get(k) for k in ("wanted", "reading", "ready", "uploading")}
+    complete = bool(pages.get("resident") is not None and not any(in_flight.values())
+                    and len(pages["settle_evicted"]) == 1)
+    return complete, in_flight
+
+
 # 撮った時点の描画の溢れ: 保存の前の最後の MEGA_CAPACITY の行の draw_dropped と visible_list_overflow が 0（描かれないクラスタが無い）
 BLUR_CAPACITY_RE = re.compile(r"MEGA_CAPACITY draw_dropped=(\d+) .*visible_list_overflow=(\d+) ")
 BLUR_PAGES_RE = re.compile(r"GEOMETRY_PAGES resident=(\d+) uploading=(\d+) ready=(\d+) reading=(\d+) wanted=(\d+) "
@@ -4030,9 +4038,7 @@ def blur_case_check(case_dir, expected_args, expected_logs, size, require_reside
         if pages is None:
             failures.append(f"{view}: Game のログに撮影の保存の行が無い")
         else:
-            in_flight = {k: pages.get(k) for k in ("wanted", "reading", "ready", "uploading")}
-            pages["resident_complete"] = bool(pages.get("resident") is not None and not any(in_flight.values())
-                                              and len(pages["settle_evicted"]) == 1)
+            pages["resident_complete"], in_flight = geometry_pages_resident_complete(pages)
             if require_resident and not pages["resident_complete"]:
                 failures.append(f"{view}: 撮った時点でジオメトリのページが常駐しきっていない（進行中 {in_flight}、"
                                 f"落ち着きの基準から保存までの追い出しの数 {pages['settle_evicted']}）")

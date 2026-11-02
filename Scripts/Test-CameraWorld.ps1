@@ -28,10 +28,10 @@ function Test-CameraInitializationOrderContract([string]$RepositoryRoot)
     Assert-CameraWorld ($tickStart -gt $enterStart) "Rendering3DTestRoutine::Tick boundary not found"
     $enterSource = $source.Substring($enterStart, $tickStart - $enterStart)
     $cameraInitialization = $enterSource.IndexOf("if (!InitializeCameraPath(ctx, data))", [StringComparison]::Ordinal)
-    $emitterCreation = $enterSource.IndexOf("GetParticleSystem().CreateEmitter(", [StringComparison]::Ordinal)
+    $effectCreation = $enterSource.IndexOf("GetParticleSystem().GetVfxEffects().CreateInstance(", [StringComparison]::Ordinal)
     Assert-CameraWorld ($cameraInitialization -ge 0) "camera initialization call not found in Enter"
-    Assert-CameraWorld ($emitterCreation -ge 0) "particle emitter creation call not found in Enter"
-    Assert-CameraWorld ($cameraInitialization -lt $emitterCreation) "camera initialization must precede particle emitter creation"
+    Assert-CameraWorld ($effectCreation -ge 0) "particle effect instance creation call not found in Enter"
+    Assert-CameraWorld ($cameraInitialization -lt $effectCreation) "camera initialization must precede particle effect instance creation"
 }
 
 function Get-CameraWorldDescendantProcessIds([int]$RootProcessId)

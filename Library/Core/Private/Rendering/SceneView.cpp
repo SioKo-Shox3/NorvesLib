@@ -4,6 +4,8 @@
 #include "Rendering/SceneRenderer.h"
 #include "Rendering/ShadowMapPass.h"
 #include "Rendering/GBufferPass.h"
+#include "Rendering/DecalPass.h"
+#include "Rendering/DistortionPass.h"
 #include "Rendering/FoliagePass.h"
 #include "Rendering/SkyAtmospherePass.h"
 #include "Rendering/MaterialTileClassifyPass.h"
@@ -1105,6 +1107,11 @@ namespace NorvesLib::Core::Rendering
             AddPass(std::move(visibilityResolvePass));
         }
 
+        // DecalPass: 画面空間の遅延デカールを解決・GBuffer の描画の後、草の前に重ねる。
+        // 色と法線の RGB だけを混ぜ、Material と各 A は変えない。既定では草に描かない。
+        // 一覧が空のフレームは何も宣言しない。
+        AddPass(MakeUnique<DecalPass>());
+
         // FoliagePass: 草・低木の株を、ビジビリティの解決（または GBuffer の描画）の後の GBuffer と深度へ直接重ねて描く。
         // 頂点シェーダーで風に揺らすので解決の経路には載せず、SSAO・影の印付け・照明より前に置いて影を受ける。
         // 束が無いフレームは何も宣言しない（既定の描画は変えない）
@@ -1195,6 +1202,9 @@ namespace NorvesLib::Core::Rendering
         transparentForwardPass->SetTransparentOnly(true);
         transparentForwardPass->SetRegisterOutputs(false);
         AddPass(std::move(transparentForwardPass));
+
+        // 半透明の後・TAA の前にシーンの色をずらす。源が無いフレームは何も宣言しない。
+        AddPass(MakeUnique<DistortionPass>());
 
         // VisibilityDebugPass: ID を色にして最後のシーンの色へ書く（--visibility-buffer=debug の検証表示）
         if (visibilityBuffer == VisibilityBufferMode::Debug && visibilityRasterPassPtr)

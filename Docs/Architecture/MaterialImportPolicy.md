@@ -3,9 +3,9 @@
 ## 適用範囲
 
 MaterialImportPolicyは画像IO・JSON・RHIに依存しない数値処理。
-現時点では設定parser/asset-set/CLI/runtimeへ接続していないため、既存cookerの出力や起動画面は変わらない。
-AI生成かどうかは呼出元が明示する。GLBという拡張子だけで分類しない。
-設定・診断・canonical/hashの配線と、NVMESH v1への保存、撮影での受入れは別の接続工程。
+設定parser・sidecar・asset-set/CLIから明示NVMESH v1のcook/fingerprintへ接続し、解決済み設定をhashへ、換算した材質値をNVMESH v1へ保存する。
+AI生成profileはsidecarのmaterial.profile: ai_generatedを明示したときだけ適用し、GLBなどの拡張子では決めない。素材単位の上書きは保持する。
+import設定の正本はsidecarであり、asset-setの発光換算だけを限定した例外として受け取る。runtimeの対応範囲はImportedOpaqueRuntime.mdを参照する。実物の資産の撮影・見た目の受入れは未実施。
 
 ## ARM
 
@@ -36,8 +36,10 @@ Y=0.2126R+0.7152G+0.0722Bとし、色=factor/Y、nits=Y*strength*emissiveNitsPer
 float化後も共有128B材質codecの発光制約（Y許容・raw/再正規化後の65504未満）を通す。
 表現できない巨大値・underflowは拒否し、失敗時出力は保持する。
 
-MissingNitsPerUnitの診断へ資産名・材質名・設定名を付けることと、asset-setの実設定読込は接続工程の必須条件。
-数値処理がasset-set fallbackを受け取れることだけで、その接続が済んだとは扱わない。
+asset-set spec v2のtop-level emissiveNitsPerUnitは正の有限numberだけを受理し、不正値はemissiveNitsPerUnitの名前で拒否する。
+値はspecから単体requestのAssetSetEmission、ImportSettingsFileOptionsを経て共有resolverへ渡る。
+明示NVMESH v1の発光材質で換算が未設定なら、`mesh_material_v1: asset=<logical> material="<名前>" index=<n> setting=emissiveNitsPerUnit`の形で拒否する。非発光材質は換算未設定でも通る。
+v0 cookは換算を使わず、発光sourceも従来どおり受理する。
 
 ## 検証
 
@@ -61,10 +63,12 @@ u8両面、u8 alpha、u8換算存在、f64 nits/unit。LE/IEEE binary64でpaddin
 既存hashへASCII NVMATERIALSETTINGS、u64 canonical長、canonical bytesをFNV-1a64で連結する。
 材質列を処理するときはsource material index順を固定する。旧幾何52Bや旧v0経路には自動適用しない。
 
-この部品は解決済み値の契約であり、JSONの素材選択、設定ファイル、asset-set driver、cook/cacheの実呼出しは未接続。
-素材名・資産名を付けた診断は呼出元で補う必要がある。設定名はMaterialSettingsErrorKeyで取得する。
+JSONの素材選択と設定ファイルはLoadImportSettingsDocument/ResolveMaterialImportPlanを通じて明示NVMESH v1のcook/fingerprintへ接続し、素材 > 資産sidecar > asset-setで発光換算を解決する。存在する不正値は下位の正常値へfallbackしない。
+解決済み設定のcanonical（67B）は材質のsource hashへ含める。共通増分の依存snapshotはAssetSetEmission.Presentのときだけasset-set.emissiveNitsPerUnitと換算値を含め、cache判定のfingerprintにも同じ換算を渡す。
+骨格の分割cookも共有resolverへ換算を渡し、骨格単体requestではasset-setの不正値を拒否する。ただしNVSKELの材質はslot名のみで、発光の換算値を保存しない。
+設定名はMaterialSettingsErrorKeyで取得し、NVMESH v1の診断には呼出元が資産名・材質名・元indexを付ける。
 
-## 設定blockのJSON解析API（sidecar接続前）
+## 設定blockのJSON解析API
 
 ParseAssetMaterialSettings は material block の値を受け、profile: source / ai_generated と下記の設定値を解析する。
 ParseMaterialSettingsLayer は同じ設定値を解析するが、profile の素材単位上書きは拒否する。
@@ -78,8 +82,8 @@ block省略と空objectは有効、null・未知field・重複field・不正型/
 constant値はASCII浮動小数（指数表記も可）として全消費し、空白・非有限・範囲外を拒否する。
 解析が最後まで成功するまで出力profile/layerを変更しない。
 
-素材の対象指定とsidecar全体の接続は別工程。既存ParseSettings/LoadImportSettingsFileは変更せず、非空material blockをまだ受理しない。
-ARM tokenの純テストは実行済み。実JsonDocumentによるJSON契約はnative MEMBER/CTestへ登録したが、Windows.h依存のため実行は未検証。
+素材の対象指定とsidecar全体はLoadImportSettingsDocumentで受理する（MaterialImportDocument.mdを参照）。旧ParseSettings/LoadImportSettingsFileは幾何だけを受理し、非空material blockは黙って捨てずに拒否する。
+MaterialImportSettingsJsonTestはWindowsのDebugのctestで実行し、合格している。
 
 ## RGBA8の判定・焼込
 
@@ -98,7 +102,7 @@ ARMで使わないalphaはactiveなMR画像、MRを使わなければactiveなAO
 入力pixelだけでなくpolicy/factor/画像view本体、出力planとのaliasも拒否する。呼出中に入力を変更してはならない。
 
 合成100×100画像で、G=249の外れ値1画素を含むG=254/255の畳み込みと、AI既定のmetallic ignore、素材texture overrideを検証した。
-これは作者の実物GLBを測定した結果ではない。画像IO、NVTEX/manifest出力、実cook/runtime接続、実物撮影は未実施。
+これは作者の実物GLBを測定した結果ではない。画像IO・NVTEX/manifest出力・実cookの接続はGltfMaterialCookV1.md、runtimeの対応範囲はImportedOpaqueRuntime.mdを参照する。実物の資産の撮影・見た目の受入れは未実施。
 
 焼込と定数textureの量子化はbyte領域で行い、sample/255→係数→255の往復誤差を避ける。
 ArmChannelDecision.Scalarは解析用の連続値、QuantizedScalarは定数texture用のUNORM8値。定数画像や1x1 textureを作る側は後者を使い、Scalarから再量子化しない。
