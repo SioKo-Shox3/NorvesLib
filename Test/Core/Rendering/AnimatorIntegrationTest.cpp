@@ -235,6 +235,195 @@ namespace
         }
     }
 
+    struct ArrayStorage
+    {
+        size_t Size;
+        size_t Capacity;
+        const void* Data;
+    };
+
+    template <typename T>
+    ArrayStorage CaptureStorage(const C::VariableArray<T>& array, size_t jointCount)
+    {
+        INTEGRATION_CHECK(array.size() == jointCount && array.capacity() >= jointCount && array.data() != nullptr);
+        return {array.size(), array.capacity(), array.data()};
+    }
+
+    template <typename T>
+    void CheckStorage(const C::VariableArray<T>& array, const ArrayStorage& expected, unsigned frame, const char* name)
+    {
+        if (array.size() != expected.Size || array.capacity() != expected.Capacity || array.data() != expected.Data)
+        {
+            std::fprintf(stderr,
+                         "Animator 作業配列が変化: %s コマ=%u 大きさ=%zu/%zu 容量=%zu/%zu アドレス=%p/%p\n",
+                         name, frame, array.size(), expected.Size, array.capacity(), expected.Capacity,
+                         static_cast<const void*>(array.data()), expected.Data);
+            std::abort();
+        }
+    }
+
+    void TestSteadyPoseStorage()
+    {
+        IntegrationFixture fixture(true);
+        auto graph = fixture.Graph(
+            R"({"version":1,"params":[{"name":"Go","type":"bool","value":false},{"name":"Blend","type":"float","value":0.25}],"nodes":[{"id":"a","type":"clip","clip":"a"},{"id":"b","type":"clip","clip":"b"},{"id":"mix","type":"blend2","children":["a","b"],"weight":"Blend"},{"id":"machine","type":"stateMachine","states":[{"name":"Idle","node":"mix"},{"name":"Run","node":"b"}],"transitions":[{"from":"Idle","to":"Run","duration":0.25,"conditions":[{"param":"Go","op":"eq","value":true}]},{"from":"Run","to":"Idle","duration":0.25,"conditions":[{"param":"Go","op":"eq","value":false}]}]}],"root":"machine"})");
+        World world;
+        world.Initialize();
+        Entity* owner = world.SpawnEntity<Entity>();
+        INTEGRATION_CHECK(owner);
+        auto* mesh = world.CreateComponent<Component::SkinnedMeshComponent>(owner);
+        auto* animator = world.CreateComponent<Component::AnimatorComponent>(owner);
+        INTEGRATION_CHECK(mesh && animator);
+        mesh->SetSkeletalAsset(fixture.Asset);
+        INTEGRATION_CHECK(animator->SetGraph(graph));
+        INTEGRATION_CHECK(animator->AddModifier(C::MakeShared<ReadOnlyModifier>()));
+        const auto go = animator->FindParam(Identity("Go"));
+        const auto blend = animator->FindParam(Identity("Blend"));
+        INTEGRATION_CHECK(go != A::InvalidAnimParam && blend != A::InvalidAnimParam);
+        constexpr float dt = 1.f / 60.f;
+        A::AnimStateStatus status;
+        INTEGRATION_CHECK(animator->GetState(Identity("machine"), status));
+        INTEGRATION_CHECK(status.Current == Identity("Idle") && !status.bTransitioning);
+
+        // 双方向の遷移を完了させ、各経路の作業配列を準備する。
+        for (bool run : {true, false})
+        {
+            INTEGRATION_CHECK(animator->SetBool(go, run));
+            for (unsigned frame = 0; frame < 40; ++frame)
+                world.Tick(dt);
+            INTEGRATION_CHECK(animator->GetState(Identity("machine"), status));
+            INTEGRATION_CHECK(status.Current == Identity(run ? "Run" : "Idle") && !status.bTransitioning);
+            INTEGRATION_CHECK(mesh->IsPoseCurrent());
+        }
+        const size_t jointCount = fixture.Skeleton->GetPoseRuntime().Parents.size();
+        INTEGRATION_CHECK(jointCount >= 3);
+        const auto& scratch = animator->GetModifierScratch();
+        const auto& pose = mesh->GetPoseSnapshot();
+        const ArrayStorage storage[] = {
+            CaptureStorage(animator->GetLocalPose(), jointCount),
+            CaptureStorage(animator->GetFinalPose(), jointCount),
+            CaptureStorage(scratch.Local, jointCount),
+            CaptureStorage(scratch.LocalMatrices, jointCount),
+            CaptureStorage(scratch.GlobalMatrices, jointCount),
+            CaptureStorage(animator->GetModifierModelMatrices(), jointCount),
+            CaptureStorage(pose.BonePalette, jointCount),
+            CaptureStorage(pose.JointModelMatrices, jointCount),
+        };
+        unsigned idleToRun = 0, runToIdle = 0;
+        for (unsigned frame = 0; frame < 1000; ++frame)
+        {
+            if (frame % 40 == 0)
+                INTEGRATION_CHECK(animator->SetBool(go, (frame / 40) % 2 == 0));
+            INTEGRATION_CHECK(animator->SetFloat(blend, float(frame % 101) / 100.f));
+            world.Tick(dt);
+            INTEGRATION_CHECK(mesh->IsPoseCurrent());
+            CheckStorage(animator->GetLocalPose(), storage[0], frame, "LocalPose");
+            CheckStorage(animator->GetFinalPose(), storage[1], frame, "FinalPose");
+            CheckStorage(animator->GetModifierScratch().Local, storage[2], frame, "ModifierScratch.Local");
+            CheckStorage(animator->GetModifierScratch().LocalMatrices, storage[3], frame, "ModifierScratch.LocalMatrices");
+            CheckStorage(animator->GetModifierScratch().GlobalMatrices, storage[4], frame, "ModifierScratch.GlobalMatrices");
+            CheckStorage(animator->GetModifierModelMatrices(), storage[5], frame, "ModifierModelMatrices");
+            CheckStorage(mesh->GetPoseSnapshot().BonePalette, storage[6], frame, "BonePalette");
+            CheckStorage(mesh->GetPoseSnapshot().JointModelMatrices, storage[7], frame, "JointModelMatrices");
+            INTEGRATION_CHECK(animator->GetState(Identity("machine"), status));
+            if (status.bTransitioning)
+            {
+                if (status.Current == Identity("Idle") && status.Next == Identity("Run"))
+                    ++idleToRun;
+                else if (status.Current == Identity("Run") && status.Next == Identity("Idle"))
+                    ++runToIdle;
+                else
+                    INTEGRATION_CHECK(false);
+            }
+        }
+        INTEGRATION_CHECK(idleToRun > 0 && runToIdle > 0);
+        std::printf("Animator 結合: 1000 コマ中の遷移は %u コマ (Idle→Run %u、Run→Idle %u)\n",
+                    idleToRun + runToIdle, idleToRun, runToIdle);
+        world.Finalize();
+    }
+
+    float DebugFloat(const Component::AnimatorDebugSnapshot& snapshot, Identity name)
+    {
+        for (const auto& param : snapshot.Parameters)
+        {
+            if (param.Name == name)
+            {
+                INTEGRATION_CHECK(param.Type == A::AnimParamType::Float);
+                return param.Value.Float;
+            }
+        }
+        INTEGRATION_CHECK(false);
+        return 0;
+    }
+
+    void TestParameterTransitionsAndDriveSignals()
+    {
+        IntegrationFixture fixture(true);
+        auto graph = fixture.Graph(
+            R"({"version":1,"params":[{"name":"Speed","type":"float","value":0,"bind":"speed"},{"name":"Unbound","type":"float","value":0.25}],"nodes":[{"id":"a","type":"clip","clip":"a"},{"id":"b","type":"clip","clip":"b"},{"id":"machine","type":"stateMachine","states":[{"name":"Idle","node":"a"},{"name":"Run","node":"b"}],"transitions":[{"from":"Idle","to":"Run","duration":0.1,"conditions":[{"param":"Speed","op":"gt","value":0.5}]},{"from":"Run","to":"Idle","duration":0.1,"conditions":[{"param":"Speed","op":"le","value":0.5}]}]}],"root":"machine"})");
+        World world;
+        world.Initialize();
+        Entity* owner = world.SpawnEntity<Entity>();
+        INTEGRATION_CHECK(owner);
+        auto* mesh = world.CreateComponent<Component::SkinnedMeshComponent>(owner);
+        auto* animator = world.CreateComponent<Component::AnimatorComponent>(owner);
+        INTEGRATION_CHECK(mesh && animator);
+        mesh->SetSkeletalAsset(fixture.Asset);
+        INTEGRATION_CHECK(animator->SetGraph(graph));
+        const auto speed = animator->FindParam(Identity("Speed"));
+        const auto unbound = animator->FindParam(Identity("Unbound"));
+        INTEGRATION_CHECK(speed != A::InvalidAnimParam && unbound != A::InvalidAnimParam);
+        INTEGRATION_CHECK(animator->SetFloat(unbound, .375f));
+        constexpr float dt = 1.f / 60.f;
+        constexpr float duration = .1f;
+        // 遷移開始の 1 コマと切り上げた遷移時間に、浮動小数点の丸め余裕を 1 コマ加える。
+        const unsigned maxFrames = 1u + static_cast<unsigned>(std::ceil(duration / dt)) + 1u;
+        A::AnimStateStatus status;
+        INTEGRATION_CHECK(animator->GetState(Identity("machine"), status));
+        INTEGRATION_CHECK(status.Current == Identity("Idle") && !status.bTransitioning);
+        auto reachState = [&](Identity target)
+        {
+            bool reached = false;
+            unsigned frames = 0;
+            for (; frames < maxFrames;)
+            {
+                world.Tick(dt);
+                ++frames;
+                INTEGRATION_CHECK(mesh->IsPoseCurrent());
+                INTEGRATION_CHECK(animator->GetState(Identity("machine"), status));
+                if (status.Current == target && !status.bTransitioning)
+                {
+                    reached = true;
+                    break;
+                }
+            }
+            INTEGRATION_CHECK(reached);
+            return frames;
+        };
+        INTEGRATION_CHECK(animator->SetFloat(speed, 1.f));
+        const unsigned forwardFrames = reachState(Identity("Run"));
+        INTEGRATION_CHECK(animator->SetFloat(speed, .5f));
+        const unsigned reverseFrames = reachState(Identity("Idle"));
+
+        Component::AnimatorDebugSnapshot snapshot;
+        animator->BuildDebugSnapshot(snapshot);
+        INTEGRATION_CHECK(DebugFloat(snapshot, Identity("Speed")) == .5f);
+        INTEGRATION_CHECK(DebugFloat(snapshot, Identity("Unbound")) == .375f);
+        A::AnimDriveSignals signals;
+        signals.Speed = .75f;
+        INTEGRATION_CHECK(animator->SetDriveSignals(signals));
+        animator->BuildDebugSnapshot(snapshot);
+        INTEGRATION_CHECK(DebugFloat(snapshot, Identity("Speed")) == .75f);
+        INTEGRATION_CHECK(DebugFloat(snapshot, Identity("Unbound")) == .375f);
+        world.Tick(dt);
+        INTEGRATION_CHECK(mesh->IsPoseCurrent());
+        INTEGRATION_CHECK(animator->GetState(Identity("machine"), status));
+        INTEGRATION_CHECK(status.bTransitioning && status.Current == Identity("Idle") && status.Next == Identity("Run"));
+        std::printf("Animator 結合: SetFloat の遷移は上限 %u コマ中 Idle→Run %u、Run→Idle %u\n",
+                    maxFrames, forwardFrames, reverseFrames);
+        world.Finalize();
+    }
+
     void TestPartialLayeredMask()
     {
         IntegrationFixture fixture(true);
@@ -287,5 +476,7 @@ namespace
 void TestAnimatorIntegration()
 {
     TestSingleClipSampleAgreement();
+    TestSteadyPoseStorage();
+    TestParameterTransitionsAndDriveSignals();
     TestPartialLayeredMask();
 }

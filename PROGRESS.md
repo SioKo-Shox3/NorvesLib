@@ -9136,3 +9136,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 遮蔽の視点 contact_near・ref_cliff_01 から castle の範囲までは 2 km 以上で、塊は遮蔽の小物の書き出し（300 m）に入らない
 - U1 Animator と SkinnedMesh の作業配列を読む const の口を足す: 着地(直し 0 回)
 - U2 AnimatorIntegrationTest を足し、単一クリップの Sample 一致と部分マスクの Layered を確かめる: 着地(直し 0 回)
+- U3 定常で作業配列を確保し直さないことと、パラメータからの遷移・SetDriveSignals を確かめる: 着地(直し 0 回)
