@@ -5006,3 +5006,18 @@
 - verify: `ctest --test-dir build -C Debug -j 4 -R "^(CookDestinationLockTest|CookManagedBootstrapTest|CookManagedUpdateTest|RigSplitCookTest)$" --no-tests=error --output-on-failure --timeout 300`
 - paths: Test/Core/Asset/CookManagedBootstrapTest.cpp, Tools/AssetCook/CookManagedBootstrap.cpp, TASKS.md, PROGRESS.md
 - from: G2-MATERIAL-SELECTION-INTEGRATION-P1-P1-P1-P1
+
+## SCN-WL-CLIFF-BLOCKS-CASTLE-CHECK: 崖の生成の castle の 5 範囲（ref_far_01、5〜9 km）の壁の足に、崩れた塊を物の岩として置き、far_01 の壁の足の一致を上げる(後回しにしたアプリの起動の確かめ)
+- status: todo
+- check: launch
+- gpu: exclusive
+- done-when: SCN-WL-CLIFF-BLOCKS-CASTLE で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、SCN-WL-CLIFF-BLOCKS-CASTLE の done-when を満たすことを確かめる。満たさなければ SCN-WL-CLIFF-BLOCKS-CASTLE の done-when と paths の範囲で直す。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Hdr -Aov -Views ref_far_01 -GameArgs wasteland-common-light,wasteland-hide=clouds+foliage+gravel+buildings+aerial+fog,wasteland-gray-material,wasteland-aa=fxaa,wasteland-talus-limit=off -OutDir .harness/runs/scene-capture/SCN-WL-CLIFF-BLOCKS-CASTLE/shape`
+- verify: `python Scripts/Terrain/CompareReference.py --capture .harness/runs/scene-capture/SCN-WL-CLIFF-BLOCKS-CASTLE/shape --photos far_01 --shape --expect Scripts/Terrain/ExpectSpecs/shape-cliff-blocks-castle.json --verify`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Views ref_cliff_01 -GameArgs wasteland-export-placement=.harness/runs/scene-capture/SCN-WL-CLIFF-BLOCKS-CASTLE/placement/placement.json -OutDir .harness/runs/scene-capture/SCN-WL-CLIFF-BLOCKS-CASTLE/placement`
+- verify: `python Scripts/Terrain/CheckPlacement.py --placement .harness/runs/scene-capture/SCN-WL-CLIFF-BLOCKS-CASTLE/placement/placement.json --asset-cook build/Tools/AssetCook/RelWithDebInfo/AssetCook.exe --regions Scripts/Terrain/ShapeRegions.json --range-group cliff-gen --baseline .harness/runs/scene-capture/SCN-WL-CLIFF-PLACEMENT-CHECK/placement_check.record.json --verify`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Views ref_far_01 -OutDir .harness/runs/scene-capture/SCN-WL-CLIFF-BLOCKS-CASTLE/look`
+- verify: `python Scripts/Terrain/ReferenceCheck.py --geom-requests --capture .harness/runs/scene-capture/SCN-WL-CLIFF-BLOCKS-CASTLE/look --verify`
+- verify: `python Scripts/Terrain/CompareReference.py --capture .harness/runs/scene-capture/SCN-WL-CLIFF-BLOCKS-CASTLE/look --photos far_01 --verify`
+- paths: Game/GameModes/Wasteland, Tools/AssetCook/CookedTerrainQuery.cpp, Tools/AssetCook/CookedTerrainQuery.h, Library/Core/Public/Rendering/Terrain/TerrainPlacementGround.h, Library/Core/Private/Rendering/Terrain/TerrainPlacementGround.cpp, Scripts/Terrain/CheckPlacement.py, Scripts/Terrain/ExpectSpecs/shape-cliff-blocks-castle.json, Docs/RenderingValidation/WastelandShape.md, TASKS.md, PROGRESS.md
+- from: SCN-WL-CLIFF-BLOCKS-CASTLE
