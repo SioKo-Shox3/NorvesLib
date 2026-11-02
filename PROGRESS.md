@@ -8953,6 +8953,7 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 検証: verify の 2 行をこの枠の `build` で回し直し、ビルド 終了コード 0、ctest 5/5 Passed（BoardComponentRoutingTest・SceneViewWorldBoardDrawCommandTest・HitEffectEmissionTest・ParticleFrameSnapshotTest・CanvasTransientBoardSnapshotTest。`.harness/runs/20261102-191023/verify-GAME-GR131-VFX-P1-iter2.txt`）
 - Next: 起動の確かめは後回し（`GAME-GR131-VFX-CHECK`）
 - Notes: 要起票: GAME-GR131-VFX-P1 の verify のビルド行に `BoardComponentRoutingTest` のターゲットが無く、新しい `build` では ctest の行が Not Run で落ちる（ビルド行へターゲットを足すのが推奨）
+
 - U1 reader・Resource の native 回帰を Windows Debug で回し、在庫文書の 3 行を実行記録に直す: 着地(直し 1 回)
 
 ## 2026-11-02 TEST-FULL-CTEST-BASELINE-CHECK-P1（run 20261102-194401 の反復 1）
