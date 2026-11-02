@@ -3289,7 +3289,7 @@
 - notes: 2026-10-15 ユーザー: 室内の光は「ほぼ実写」の美しさを見るシーン。SCN-INT-REFERENCE-SELECT の写真と並べた比較画像（1920×1080）と、同じ視点のパストレースの正解で判断する。速さの条件は無い。 2026-10-19 親: verify を RelWithDebInfo に揃え、周回の試験を 1 コマンド 10 分に収まる形にした（Debug の撮影は約 11 分、3 周は 928 秒の実測）。 2026-10-23（親）: 反復 39 の BLOCKED（ほぼ実写の差の 3 つがエンジン側）を推奨の案 1 で解いた。鏡面の環境光の遮り・RTGI の当たりの反射率・RTGI の時間の蓄積を SCN-RENDER-SPEC-OCCLUSION・SCN-RENDER-RTGI-HIT-ALBEDO・SCN-RENDER-RTGI-TEMPORAL として先に立て、この項目はその後に `InteriorLightReference.py --compare --reference .harness/runs/scene-capture/SCN-INTERIOR-ROOM-ref` で同じ比較画像を作り直し、残る差を記録して閉じる（Cycles の正解は描き直さない。部屋・家具・視点・周回は反復 38・39 のまま）。
 
 ## SCN-INTERIOR-SHAFTS: 窓から入る光の筋を出す
-- status: todo
+- status: done
 - done-when: ボリュメトリックフォグの散乱が太陽の影（既定の VSM）で遮られ、窓から入る光の筋が見える。シーンごとにフォグの密度・範囲を設定でき、`interior-light` で室内に薄い霧を入れる（Rendering3DTest の霧は変えない）。`overview`・`window` の撮影を開いて光の筋を確かめ、Rendering3DTest の撮影が変わらない。性能はこの項目では測らず、SCN-ACCEPT で目標を超えたときに、霧の内訳から解像度・範囲・更新の方式を調整する。 起動を止めている間は、散乱に VSM の可視を掛ける実装（VSM が無い構成では今の CSM の経路のまま）、`interior-light` の霧の設定（密度・範囲）、Debug のビルドと `VolumetricFogModelTest` までで済み、`overview`・`window` の撮影を開いての光の筋の確かめと Rendering3DTest の撮影が変わらないことは、起動を戻した後の `SCN-INTERIOR-SHAFTS-CHECK` で確かめる。
 - verify: `cmake --build build --config Debug --target Game VolumetricFogModelTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^VolumetricFogModelTest$" --no-tests=error --output-on-failure --timeout 180`
@@ -4425,3 +4425,13 @@
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^PathTracingMaterialVulkanTest$"`
 - paths: Assets/Shaders/PathTracing, Assets/Shaders/Common, Library/Core/Private/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
 - from: PT-NONUNIFORM-SAMPLER
+
+## SCN-INTERIOR-SHAFTS-CHECK: 窓から入る光の筋を出す(後回しにしたアプリの起動の確かめ)
+- status: todo
+- check: launch
+- gpu: exclusive
+- done-when: SCN-INTERIOR-SHAFTS で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、SCN-INTERIOR-SHAFTS の done-when を満たすことを確かめる。満たさなければ SCN-INTERIOR-SHAFTS の done-when と paths の範囲で直す。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene interior-light -Configuration RelWithDebInfo -Build -RequireAssets -OutDir .harness/runs/scene-capture/SCN-INTERIOR-SHAFTS`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SCN-INTERIOR-SHAFTS`
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Scripts, TASKS.md, PROGRESS.md
+- from: SCN-INTERIOR-SHAFTS

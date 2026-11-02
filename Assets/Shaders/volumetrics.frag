@@ -3,6 +3,7 @@
 layout(location = 0) in vec2 fragUV;
 layout(location = 0) out vec4 outColor;
 
+#define VOLUMETRICS_USE_VSM 1
 #include "Common/VolumetricsCommon.glsl"
 
 void main()
@@ -33,7 +34,7 @@ void main()
     }
 
     vec3 rayDirection = viewVector / rayDistance;
-    VolumetricsRayResult ray = EvaluateVolumetricsRay(rayDirection, rayDistance);
+    VolumetricsRayResult ray = EvaluateVolumetricsRay(rayDirection, rayDistance, gl_FragCoord.xy, true);
     float transmittance = ray.FogTransmittance;
     float opacity = ray.FogOpacity;
     vec3 fogLight = vec3(0.0);
