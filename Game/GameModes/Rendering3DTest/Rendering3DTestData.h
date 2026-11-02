@@ -21,7 +21,7 @@
 #include "Core/Public/Thread/Atomic.h"
 #include "Core/Public/Thread/Mutex.h"
 #include "Core/Public/Thread/Task.h"
-#include "Core/Public/Particle/ParticleSystem.h"
+#include "Core/Public/Particle/VfxEffectSystem.h"
 #include "GameModes/Rendering3DTest/M8MinimalPhysicsSmoke.h"
 #include "GameModes/Rendering3DTest/M9WorldAcceptance.h"
 #include "Core/Public/Rendering/FrameCaptureTypes.h"
@@ -430,7 +430,7 @@ namespace Game::GameModes
         NorvesLib::Core::Rendering::ModelHandle m_CottageModelHandle;
         uint32_t m_CottageLoadRequestId = 0;
         TSharedPtr<BoulderAsyncState> m_CottageAsyncState; ///< 小屋の非同期ロード共有状態（Boulder と同じ型）
-        NorvesLib::Core::Particle::ParticleEmitterHandle m_ParticleEmitter;
+        NorvesLib::Core::Particle::VfxEffectHandle m_VfxEmbers;
     };
 
 } // namespace Game::GameModes
