@@ -9136,3 +9136,9 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 遮蔽の視点 contact_near・ref_cliff_01 から castle の範囲までは 2 km 以上で、塊は遮蔽の小物の書き出し（300 m）に入らない
 - U1 ソケットの向きのオラクル・関節の scale・JSON の拒否の試験を足す: 着地(直し 0 回)
 - U2 再生中の姿勢と Animator 駆動で、付けた Entity が同じフレームのソケットに付くことの試験を足し、タスクの verify を回す: 着地(直し 0 回)
+
+## 2026-11-03 G3-GR13-SOCKET-ORACLE-TIMING（run 20261103-065450 の反復 1、完了）
+- Done: `SkeletalAnimationSamplingTest` に `Test/Core/Rendering/SocketOracleTest.cpp` を足した。(1) 向き: +90°Z と任意の回転・平行移動の子の関節、恒等でない剛体のメッシュノード行列 M、回転・平行移動・一様 scale 1.7 のオーナーで、ウェイト 1 の頂点の CPU スキニング（`SkinPosition` と palette、続けてオーナーのワールド）と、ソケットのローカルの原点と 3 軸の点（0.5）をソケットのワールド変換で写した点が 1e-4 で一致する。(2) 子の関節の scale 2 でソケットの scale はオーナーの 1.7 になり、原点はスキニングと一致する。(3) 時刻: `SetPlaying(true)` の再生と `AnimatorComponent`（clip ノード 1 つのグラフ）× 追従する Entity を骨格の前・後に作る 4 通りで、`World::Tick`・`World::LateTick` の後の追従する Entity の位置と回転が同じフレームの `GetSocketWorldTransform` と一致し、ソケットはフレームごとに 1e-3 より大きく動く（6 フレーム）。(4) `ApplySocketsJson` は `1e400`・単位でない回転・scale 2・空の名前を拒否し、有効な候補を先に並べても前の定義（親と offset）を保つ。どれも最初から通り、製品のコードは変えていない
+- 証拠: `.harness/runs/20261103-065450/u2-unit-verify.txt`（verify のビルド 3 ターゲットの終了コード 0、ctest の SkeletalAnimationSamplingTest・CookedSkeletonV1Test・WorldRenderInterpolationTest・WorldTickGroupTest の 4 本 Passed）
+- Next: なし（この項目は完了。アプリを起動する確かめは無い）
+- Notes: 関節の scale はソケットが捨てる約束なので、関節が scale を持ちソケットの offset の位置が 0 でないときは、ソケットの原点とスキニングの点は一致しない（試験の (2) は offset の位置を 0 にして比べた）。M に scale がある場合も同じ
