@@ -8911,3 +8911,19 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Done: 前の run で着地した 2 件(出力先の拒否文言・凍結基準との差の分類と新基準の記録)の確かめの出力を開き直し、verify 3 本(ビルド・AssetCookCliParityTest 13 件・%TEMP% 下への capture 7 件)がすべて終了コード 0 であることを確かめて、status を done に戻した。新基準 snapshot.json の SHA-256 は e58a0353…6a52(採取コミット b9d7468e)。
 - Next: ランナーの評価(前回は評価者の枠切れで未実施)。
 - Notes: 新基準は %LOCALAPPDATA% にあり未公開で、CI はまだ旧基準を参照している。
+
+- U1 分割 cook の材質の解決の失敗を設定名で返し、検査を足す: 着地(直し 0 回)
+
+## G2-MATERIAL-SELECTION-INTEGRATION-P1（2026-11-02）
+- Done: `RigSplitCook.cpp` の材質の解決を catalog の読みと `ResolveMaterialImportPlan` に分け、状態が `SettingsFailed` のときは `MaterialSettingsErrorKey` の設定名を返す（NVMESH v1 と同じ形）。照合の失敗と catalog を読めないときは `split_material_selector_or_settings` のまま。増分の preflight は同じ cook の関数を通り、`CookCacheDecisionTest` の期待（照合の失敗の 2 件）は変わらないので触っていない
+- Done: `RigSplitCookTest` の `CookAndSettings` に、`AssetSetEmission={true,0}` の設定の失敗が `emissiveNitsPerUnit` と完全一致し、未一致の名前 `Missing` の照合の失敗が `split_material_selector_or_settings` と一致する検査を足した（反証する契約・気づける手段・黙って起きるかの 3 点はテストのコメントに書いた）
+- 証拠: `.harness/unit-verify.txt`（単位の作業ツリー。`cmake --build build --config Debug --target CookedMeshTest AssetCook -- /m:1` 終了コード 0、ctest の RigSplitCookTest・CookCacheDecisionTest・SkeletalMaterialBindingsTest・MaterialSelectionTest の 4 本 Passed、numstat 2 通り一致）
+- Next: なし（アプリを起動する確かめは無い）
+- Notes: done-when の「設定の失敗（例: 未一致の指定）」の未一致の名前は `ResolveMaterialImportPlan` では照合の失敗（SelectionFailed）になるので、設定の失敗には asset-set の発光の倍率 0 を使った
+- 再確認（run 20261102-173054 の反復 2）: 反復 1 の差し戻し（RigSplitCookTest の `cook_managed_store: volume_busy`）はコードの不具合ではなく、宛先ロックが C: のボリューム単位の Global 名前付きミューテックスを待たずに取るため、同時に走っていたほかの枠の AssetCook（NorvesLib-6 の地形の焼き）とぶつかったもの。ほかの枠の AssetCook が止んだ後に verify を回し直し、ビルド終了コード 0・ctest 4 本 Passed（`.harness/runs/20261102-173054/verify-build-iter2.txt`・`verify-ctest-iter2-wait-1.txt`）
+- Notes: 要起票: cook の試験（RigSplitCookTest など宛先ロックを取るもの）は、同じボリュームでほかの枠の AssetCook や cook の試験が走っていると `volume_busy` で落ちる（ロックの待ち時間 0）。盤面の並列の枠では verify の再実行が環境で落ちうる
+- U3 分割 cook の試験で、ボリュームのロックが他のプロセスに取られているときは待ってやり直す(作業ツリーを取られた U2 の切り直し): 着地(直し 0 回)
+- Done（run 20261102-191021）: 差し戻しの `mixed rig ... cook_managed_store: volume_busy` を直した。原因は機械全体の宛先ボリュームのロック（`Global\NorvesLib.AssetCook.DestinationVolumeLock.v1.<volume GUID>`、待たずに取る）を並列の枠の cook が同じ C: で握っていたこと。`RigSplitCookTest` の retarget と mixed rig の cook を、結果が Busy かつ期待が Busy でない間だけ 100 ms 間隔・合計 120 秒まで待ってやり直す形にした（検査の数は 120 件のまま）。外のプロセスでロックを 5.5 秒握った状態でも合格。
+- 証拠: 単位の作業ツリー（NorvesLib-2-u1）の `.harness/unit-verify.txt`（`cmake --build build --config Debug --target CookedMeshTest AssetCook -- /m:1` 終了コード 0、4 試験の ctest 終了コード 0・100% passed。RigSplitCookTest は待ちが無くても 50 秒前後かかる）
+- Next: なし（アプリを起動する確かめは無い）
+- Notes: ほかの枠が 120 秒より長くロックを握る cook（重い AssetCook など）と重なると、この試験は今も Busy で落ちる。待ちの上限を超えたら前の要起票（宛先ロックを取る cook の試験の取り合い）で扱う。
