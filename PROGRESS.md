@@ -9138,3 +9138,10 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U4 animgraph.json v1 の仕様を文書に書く: 着地(直し 1 回)
 - U2 masks の roots（複数の根）を読む: 着地(直し 0 回)
 - U3 blend1d の position に "nominalSpeed" を許し、実行時に解き直す（最後の単位）: 着地(直し 0 回)
+- U3 blend1d の position に "nominalSpeed" を許し、実行時に解き直す: 着地(直し 0 回)
+
+## 2026-11-03 G3-GR10-GRAPH-FORMAT-GAPS（run 20261103-065438 の反復 3、完了）
+- Done: animgraph.json v1 に要件の形式の 3 つの欄を足した。(1) params の float・int の `min`・`max`（`SetFloat`・`SetInt`・`bind`・スクリプトの `SetAnim*ByIndex` で丸める。既定値が範囲外・min>max・bool/trigger への指定は読込失敗）。(2) masks の `roots`（各根の枝の重みの最大。`root` 1 つは今と同じ。同時指定・空・重複は InvalidSchema、未知は UnknownJoint）。(3) blend1d の sample の `"position":"nominalSpeed"`（子の Clip の公称速度。子が Clip でない・明示値 0 は読込失敗〔`InvalidNominalSpeed` を足した〕、位置の分かる sample どうしの厳密増加を読込で確かめ、推定の公称速度はインスタンスの RefreshRootMetadata で解く。metadata の差し替えで不正になると Update/Evaluate が false で前の位置を保つ）。仕様は `Docs/Architecture/AnimationRuntime.md` の「animgraph.json v1」
+- 証拠: `.harness/runs/20261103-065438/u3-unit-verify.txt`（Debug の SkeletalAnimationSamplingTest のビルド、ctest で SkeletalAnimationSamplingTest・SkinnedRenderPathContractTest の 2 本 Passed）
+- Next: なし（アプリの起動の確かめは無い）
+- Notes: 公称速度由来の位置を持つ blend1d は RefreshRootMetadata の後に重みを直ちに求め直すので、Update を挟まず Evaluate だけを呼んでもパラメータの今の値が重みに入る（数値の位置だけの blend1d は Update まで前の重み）。blend2d の軸は明示値のまま
