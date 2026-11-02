@@ -9002,3 +9002,9 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U6 仕様 shape-cliff-blocks.json から far_01 の行を外し moved_rows に残す: 着地(直し 0 回)
 - U7 崖の塊を置く範囲を near の 2 範囲に絞る: 着地(直し 0 回)
 - U8 文書を near の 2 範囲と far_01 の行を外したことに直し、2 つの構成でビルドする: 着地(直し 0 回)
+
+## 2026-11-02 SCN-WL-CLIFF-GEN-TALUS-CHECK-P1（run 20261102-211748 の反復 1、判断役の案 2 で完了・起動の確かめは後回し）
+- Done: 判断役の判断（案 2）に従い、崖の塊を置く範囲を接地用の格子（X −2600〜2099・Z −2499〜2100）の中の near の 2 範囲（cliff_near_2_rooster_butte・cliff_near_3_setting_hen_butte）に絞った（`kCliffBlockRegionCount` = 2）。castle の 5 範囲は格子の外で根元の高さが取れないため置かない。仕様 `shape-cliff-blocks.json` から far_01 の行（wall_foot ≥ 0.356）を外して `moved_rows` に元の値と理由を残し、残る 4 行の下限と 2 つの sha256 は変えていない（版 15 の shape に当てて版の照合 pass・4 行とも fail を確かめた）。`ShapeRegions.json` の cliff-gen は 7 範囲のまま。WastelandShape.md の節を直し、(F) を足した。遮蔽の視点からの最短距離は contact_near 3380.6 m・ref_cliff_01 3862.3 m（near_2）で 300 m の外
+- 証拠: `.harness/runs/20261102-211748/u8-unit-verify.txt`（Debug・RelWithDebInfo の Game のビルドの終了コード 0、numstat 一致）
+- Next: 起動の確かめは後回し（SCN-WL-CLIFF-GEN-TALUS-CHECK-P1-CHECK）。verify の 3〜10 行目で (A) 残る 4 行・(B) 地形だけの仕様・(C) 接地・(D) ページの要求と VRAM・(E) look の 3 視点・(F) ログ `WASTELAND_CLIFF_BLOCKS` で near_2・near_3 のそれぞれに塊が 1 個以上、を確かめる
+- Notes: 要起票: castle の 5 範囲（ref_far_01、5〜9 km）の壁の足から崖錐への移り（far_01 の wall_foot。版 15 で 0.334〜0.344、外した下限 0.356）を、遠景の格子の崖の生成（式）か MegaGeometry の散布で上げる
