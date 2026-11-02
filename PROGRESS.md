@@ -9001,3 +9001,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: 人が案を決めて status を todo に戻したら再開する。
 - U6 仕様 shape-cliff-blocks.json から far_01 の行を外し moved_rows に残す: 着地(直し 0 回)
 - U7 崖の塊を置く範囲を near の 2 範囲に絞る: 着地(直し 0 回)
+- U8 文書を near の 2 範囲と far_01 の行を外したことに直し、2 つの構成でビルドする: 着地(直し 0 回)
