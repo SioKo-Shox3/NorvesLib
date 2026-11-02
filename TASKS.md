@@ -4900,3 +4900,27 @@
 - verify: `python -c "import sys; t=open(sys.argv[1],encoding='utf-8',errors='replace').read(); sys.exit(0 if 'RT_GI_STATE off' in t else 1)" .harness/runs/scene-capture/SCN-MEGA-FIX-STRESS-GPU-CHECK-P1/overview.Game.log`
 - paths: Game/GameApplicationHandler.cpp, Game/GameApplicationHandler.h, Library/Core/Public/Rendering/RenderingCoordinator.h, Library/Core/Private/Rendering/RenderingCoordinator.cpp, TASKS.md, PROGRESS.md
 - from: SCN-MEGA-FIX-STRESS-GPU-CHECK-P1
+
+## G2-MATERIAL-SELECTION-INTEGRATION-P1-P1-P1-P1: cook のロックの 3 本の試験を試験だけの mutex の名前空間で走らせ、別の枠の cook と取り合わないようにする
+- status: todo
+- done-when: 次の 4 点を満たす。
+  - **口は試験のコードからしか届かない。** `Tools/AssetCook/CookDestinationLockTestAccess.h` に、プロセスの中だけで効く試験用の名前空間の設定を足す。置き方は今の `WithCookDestinationLockForTest`・`InspectCookDestinationMutexNameForTest` と同じ `Detail::...ForTest` で、範囲つきで戻せる形にする。
+    - 設定している間は、宛先ロックの mutex の名前に試験用の区切りが入る。
+    - 外すと今と同じ名前(`Global\NorvesLib.AssetCook.DestinationVolumeLock.v1.<小文字の volume GUID>`)に戻る。
+    - 本体は新しい環境変数もコマンドライン引数も読まない。`CookDestinationLock.cpp` の `GetEnvironmentVariable` は今の `NORVES_COOK_LOCK_WAIT_MS` の 1 か所のまま。
+    - 既定の名前・待ち・volume 単位は変えない。
+  - **3 本の試験は名前空間の中で走る。** `CookDestinationLockTest`・`CookManagedBootstrapTest`・`CookManagedUpdateTest` は、頭で実行ごとに一意の名前空間を立てる。自分で起動する子プロセス(`--lock-child`・`--bootstrap-child`・`--update-child`・`--recovery-child`)にも同じ名前空間を渡す。
+    - 独り占めの検査(同名の event・abandoned の観測・全 handle の後の ordinary)も含め、試験の中の取得はすべてその名前で走る。
+    - 検査も期待も変えない(`Busy`・callback の呼び出し回数・`bAbandoned`・同名 event のときの `Error`)。
+  - **製品の名前の形は確かめ続ける。** `CookDestinationLockTest` は名前空間を外した状態で、`InspectCookDestinationMutexNameForTest` が `Global\NorvesLib.AssetCook.DestinationVolumeLock.v1.` に 36 文字の GUID が続く名前を返すことを確かめる。
+  - **別の枠の cook と重なっても通る。** 別のプロセスが製品の名前の mutex を持っている間も、3 本が通る(verify の 3 行目で、別の枠の cook を模す)。直列の行と `-j 4` の行も今どおり通る。`Test/Core/Asset/CMakeLists.txt` の `RESOURCE_LOCK`・`ENVIRONMENT` は変えない。
+- verify: `cmake --build build --config Debug --target CookedMeshTest AssetCook -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^(CookDestinationLockTest|CookManagedBootstrapTest|CookManagedUpdateTest)$" --no-tests=error --output-on-failure --timeout 180`
+- verify: `python -c "import ctypes,os,subprocess,sys; k=ctypes.WinDLL('kernel32'); k.CreateMutexW.restype=ctypes.c_void_p; k.WaitForSingleObject.argtypes=[ctypes.c_void_p,ctypes.c_uint32]; k.ReleaseMutex.argtypes=[ctypes.c_void_p]; b=ctypes.create_unicode_buffer(64); g=lambda p:(k.GetVolumeNameForVolumeMountPointW(os.path.splitdrive(os.path.abspath(p))[0]+'\\',b,64),b.value[11:47].lower())[1]; v={g(p) for p in ('build',os.environ['TEMP'])}; n=['Global\\NorvesLib.AssetCook.DestinationVolumeLock.v1.'+x for x in sorted(v)]; h=[k.CreateMutexW(None,False,x) for x in n]; w=[k.WaitForSingleObject(x,0) for x in h]; print(n,w); r=subprocess.call(['ctest','--test-dir','build','-C','Debug','-R','^(CookDestinationLockTest|CookManagedBootstrapTest|CookManagedUpdateTest)$','--no-tests=error','--output-on-failure','--timeout','180']); [k.ReleaseMutex(x) for x,y in zip(h,w) if y in (0,128)]; sys.exit(r if all(h) and all(len(x)==36 for x in v) else 1)"`
+- verify: `ctest --test-dir build -C Debug -j 4 -R "^(CookDestinationLockTest|CookManagedBootstrapTest|CookManagedUpdateTest|RigSplitCookTest)$" --no-tests=error --output-on-failure --timeout 300`
+- verify: `python -c "import sys; t=open('Tools/AssetCook/CookDestinationLock.cpp',encoding='utf-8-sig').read(); c=t.count('GetEnvironmentVariable'); print(c); sys.exit(0 if c==1 else 1)"`
+- paths: Tools/AssetCook/CookDestinationLock.cpp, Tools/AssetCook/CookDestinationLockTestAccess.h, Test/Core/Asset/CookDestinationLockTest.cpp, Test/Core/Asset/CookManagedBootstrapTest.cpp, Test/Core/Asset/CookManagedUpdateTest.cpp, Test/Core/Asset/CookLockWaitTestScope.h, TASKS.md, PROGRESS.md
+- from: G2-MATERIAL-SELECTION-INTEGRATION-P1-P1-P1
+
+判断:
+- P1: TASK G2-MATERIAL-SELECTION-INTEGRATION-P1-P1-P1-P1
