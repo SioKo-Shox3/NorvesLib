@@ -8984,3 +8984,14 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: 起動の確かめは後回し(人の決まりでアプリを起動しない)。`G2-GR32-GPU-ACCEPTANCE-P1-CHECK` で `CaptureStartupScene.ps1 -SkinnedProbe -SkinnedProbeMaterials 2 -VisibilityBuffer On`(RelWithDebInfo)を回し、2 材質のパネルの材質の色の判定が result=pass のままであることを確かめる。
 - Notes: done-when の「足す前に Docs/Testing.md の 3 点を書く」は、Docs/Testing.md が paths の外なので試験の関数の前のコメントに書いた。
 - Notes: 試験の偽のコマンドリストは提出の状態を追わないので、束で出したリストの `GetLastSubmissionSerial()` は 0 のまま(提出番号は偽のスワップチェーンの枠で持つ)。
+
+- U1 宛先ロックに環境変数で上限つきの待ちを足し、検査と文書を書く: 着地(直し 1 回)
+- U2 宛先ロックを取る cook の試験に待ちの環境変数を付け、タスクの verify を通す: 着地(直し 0 回)
+
+## G2-MATERIAL-SELECTION-INTEGRATION-P1-P1（2026-11-02、run 20261102-193320 の反復 1）
+- Done: `CookDestinationLock.cpp` の取得の待ちを、環境変数 `NORVES_COOK_LOCK_WAIT_MS` が 1〜600000 の整数のときだけその時間にした（呼ぶたびに読む。無い・空・数字以外・0・600000 超は今と同じ待ち 0 で `Busy`）。mutex の名前・volume 単位・再観測・`WAIT_ABANDONED` の扱いは変えていない。`CookDestinationLockTest` に、別 thread が約 200 ms 握って放すとき待ちの指定ありで `Executed`・無しで `Busy` になる検査を 1 件足した（環境変数は RAII で元に戻す。3 点はコメントに書いた）。`CookDestinationLock.md` の「Win32操作」と「検証」に既定の待ち 0 と試験の環境だけの待ちを書いた
+- Done: `Test/Core/Asset/CMakeLists.txt` で、宛先ロックに届く `RigSplitCookTest`・`TextureManagedCliTest`・`CookManagedStoreObservationTest`・`CookManagedStoreInitializationTest` に `NORVES_COOK_LOCK_WAIT_MS=120000` を付けた。Busy を期待する `CookDestinationLockTest`・`CookManagedBootstrapTest`・`CookManagedUpdateTest` と束ね全体の `CookedMeshTest`、宛先ロックに届かない `CookCacheDecisionTest`・`GltfMaterialCookV1Test`・`CookManagedTransactionIntentTest`・`CookManagedUpdateInventoryTest`・`SkeletalBvhCookBridgeTest`・`CookedSkeletalAssetTest` には付けていない
+- 証拠: `.harness/runs/20261102-193320/verify-U2-unit-verify.txt`（ビルド終了コード 0、ctest の CookCacheDecisionTest・CookDestinationLockTest・RigSplitCookTest の 3 本 Passed、python の確かめ終了コード 0 で `{'CookDestinationLockTest': [], 'RigSplitCookTest': ['NORVES_COOK_LOCK_WAIT_MS=120000']}`、numstat 2 通り一致）
+- Next: なし（アプリを起動する確かめは無い）
+- Notes: 確かめの途中、ほかの枠の AssetCook.exe が C: のロックを握っている間は、待ちを付けない `CookManagedBootstrapTest`・`CookManagedUpdateTest`（fixture の `InitializeNewCookManagedStore == Created`）と `CookDestinationLockTest` の既存の `GoodPeer` が落ちた。この 3 つは変更前と同じ待ち 0 の挙動で、ロックが空いた後の CookDestinationLockTest は Passed
+- Notes: 要起票: Busy を期待する cook の試験（CookDestinationLockTest・CookManagedBootstrapTest・CookManagedUpdateTest）は、ほかの枠の AssetCook が同じボリュームで走っていると前提の取得が Busy になって落ちる（待ちを付けられない）。試験だけ別の volume の名前に分けるなどの扱いが要る
