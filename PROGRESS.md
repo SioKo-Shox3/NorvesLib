@@ -8526,3 +8526,11 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U2 クリップ・リターゲットの cook で材質設定を照合し、分割 cook の警告を表示する: 着地(直し 0 回)
 - U3 共通照合・import-plan・slot 名の試験に名指しの場合を足す: 着地(直し 0 回)
 - U4 増分の preflight で拒否されることを反証し、文書を今の接続に合わせ、タスクの verify を通す: 着地(直し 0 回)
+
+## 2026-11-02 G2-MATERIAL-SELECTION-INTEGRATION（run 20261102-095605 の反復 1）
+- Done: 材質の共通照合（`ResolveMaterialSelection`）を、ARM/発光と SurfaceName（`ResolveMaterialImportPlan` の 1 回の SourceMaterial 照合）と GR32 の slot 名（GeneratedSlot）で使う形にそろえた。骨格の分割 cook は未対応の SurfaceName を `surface_requires_GR81` で拒否する（受け取って捨てない）。クリップ/リターゲットの cook は入力（と target の骨格）の sidecar を glTF の元 catalog に対して照合し、未一致・二重指定・不正設定を `clip_material_selector_or_settings`、surface を `surface_requires_GR81` で拒否する（在庫モードでも照合するので、増分の preflight でも拒否される。設定は適用しない）。骨格の分割 cook の同名材質の警告（資産名と元 index 付き、元での改名を促す）を cook のときに stderr へ出す。検査は `MaterialSelectionTest`（Unicode を正規化しない）・`MaterialImportDocumentTest`（設定値と SurfaceName が選んだ元 index にだけ届く）・`SkeletalMaterialBindingsTest`（生成 slot 名の衝突、逆順の catalog から slot identity への到達）・`CookCacheDecisionTest`（静的 v1・skinmesh・clips で、skip を許し依存印を合わせた記録でも未一致・二重指定・surface を Error にする）に足し、`Docs/Testing.md` に 3 点を書いた。`MaterialSelection.md`・`MaterialImportDocument.md` を今の接続に合わせた
+- 検証: `cmake --build build --config Debug --target CookedMeshTest AssetCook -- /m:1` は終了コード 0、ctest の 7 本（MaterialSelectionTest・MaterialImportDocumentTest・MaterialImportSettingsJsonTest・SkeletalMaterialBindingsTest・GltfMaterialSourceTest・CookCacheDecisionTest・AssetCookImportSmoke）はすべて Passed（`.harness/runs/20261102-095605/verify-G2-MATERIAL-SELECTION-INTEGRATION-U4.txt`）。クリップの既存試験（CookedClipBankV1Test・SkeletalClipBankBindingTest・CookedSkinMeshV1Test・RigStaticRootFrameWireTest）と RigSplitCookTest も Passed
+- Next: 実物の GLB（同名材質・surface 付き sidecar）での AssetCook の実行と警告の表示の目視は未実施（アプリを起動しない決まりの間は CPU の試験で確かめた）
+- Notes: リターゲットの target 骨格の sidecar は preflight では依存として採るだけで、材質の照合は cook のときに行う（target の bytes を在庫モードで読まないため）
+- Notes: `Docs/Architecture` の 2 文書は paths の外だが、「後続工程」と書いたままでは今の接続と食い違うので、該当の段落だけ直した
+- Notes: 要起票: `RigSplitCookTest` は共有の TEMP の項目が多いと `cook_managed_store: entry_limit` で落ちる（作業ツリー内の空の TEMP では Passed）。試験が一時フォルダーの数の上限に依存している
