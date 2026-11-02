@@ -852,6 +852,235 @@ static void CaseZeroInputHoldsYaw()
               << " max_yaw_error=" << maxYawError << " delta_yaw=0 speed=" << s.Speed << '\n';
 }
 
+static void CaseFrameRateIndependence()
+{
+    constexpr double pi = 3.14159265358979323846;
+    const int rates[] = {30, 60, 144};
+    struct Result
+    {
+        double X = 0, Z = 0, Yaw = 0;
+    };
+    Result results[3];
+    auto p = MakeTestParams();
+    p.TargetHalfLife = .1f;
+    p.TurnSlowdown = .15f;
+    assert(QuadrupedLocomotionModel::IsValidParams(p));
+    const auto originalPrecision = std::cout.precision();
+    std::cout.precision(9);
+
+    for (int test = 0; test < 3; ++test)
+    {
+        const int rate = rates[test];
+        const float dt = 1.f / rate;
+        LocomotionGroundInfo g;
+        g.bReady = g.bGrounded = true;
+        g.Velocity = {};
+        LocomotionIntent i;
+        LocomotionState s;
+        LocomotionOutput o;
+        bool bAccelerated = false, bReleasedDeceleration = false, bReverseBraked = false;
+        for (int frame = 0; frame < rate * 3; ++frame)
+        {
+            // 加算誤差を持ち越さず、各フレームの開始時刻で入力を選ぶ。
+            const double time = static_cast<double>(frame) / rate;
+            if (time < .5)
+            {
+                i.Move = Vector3(0, 0, .75f);
+            }
+            else if (time < 1.5)
+            {
+                i.Move = Vector3(.8f, 0, 0);
+            }
+            else if (time < 2)
+            {
+                i.Move = {};
+            }
+            else
+            {
+                i.Move = Vector3(-.6f, 0, -.6f);
+            }
+            const float previousSpeed = s.Speed;
+            const double error = time >= 2 ? std::remainder(-3 * pi / 4 - s.Yaw, 2 * pi) : 0;
+            Step(s, p, i, g, dt, o);
+            assert(s.Gait == 0);
+            bAccelerated |= time < .5 && s.Speed > previousSpeed;
+            bReleasedDeceleration |= time >= 1.5 && time < 2 && s.Speed < previousSpeed;
+            bReverseBraked |= time >= 2 && std::cos(error) < 0 && s.Speed < previousSpeed;
+            results[test].X += o.PlanarDisplacement.x;
+            results[test].Z += o.PlanarDisplacement.z;
+        }
+        results[test].Yaw = s.Yaw;
+        assert(bAccelerated && bReleasedDeceleration && bReverseBraked);
+        const double rotation = std::fabs(std::remainder(results[test].Yaw, 2 * pi));
+        std::cout << "FrameRateIndependence rate=" << rate << " dt_s=" << dt
+                  << " final_x_m=" << results[test].X << " final_z_m=" << results[test].Z
+                  << " final_yaw_rad=" << results[test].Yaw << " expected_rotation_min_rad=0.5 actual_rotation_rad="
+                  << rotation << '\n';
+        assert(rotation >= .5);
+    }
+
+    double maxPositionDifference = 0, maxYawDifference = 0;
+    for (int first = 0; first < 3; ++first)
+    {
+        for (int second = first + 1; second < 3; ++second)
+        {
+            const double positionDifference = std::hypot(results[first].X - results[second].X,
+                                                         results[first].Z - results[second].Z);
+            const double yawDifference = std::fabs(std::remainder(results[first].Yaw - results[second].Yaw, 2 * pi));
+            maxPositionDifference = std::max(maxPositionDifference, positionDifference);
+            maxYawDifference = std::max(maxYawDifference, yawDifference);
+            std::cout << "FrameRateIndependence pair=" << rates[first] << ',' << rates[second]
+                      << " expected_position_max_m=0.02 actual_position_m=" << positionDifference
+                      << " expected_yaw_max_rad=0.01 actual_yaw_rad=" << yawDifference << '\n';
+            assert(positionDifference <= .02 && yawDifference <= .01);
+        }
+    }
+    std::cout << "FrameRateIndependence max_position_difference_m=" << maxPositionDifference
+              << " max_yaw_difference_rad=" << maxYawDifference << '\n';
+    std::cout.precision(originalPrecision);
+}
+
+static void CasePivotTurn()
+{
+    constexpr float dt = 1.f / 256;
+    constexpr double pi = 3.14159265358979323846;
+    auto p = MakeTestParams();
+    p.TargetHalfLife = 0;
+    p.TurnSlowdown = 0;
+    p.PivotSpeed = .25f;
+    p.PivotEnterAngle = 1.2f;
+    p.PivotExitAngle = .25f;
+    p.PivotRate = 4;
+    assert(QuadrupedLocomotionModel::IsValidParams(p));
+    LocomotionGroundInfo g;
+    g.bReady = g.bGrounded = true;
+    LocomotionIntent i;
+    const float inputYaw = p.PivotEnterAngle + .05f;
+    i.Move = Vector3(std::sin(inputYaw), 0, std::cos(inputYaw));
+    LocomotionState s;
+    LocomotionOutput o;
+    int pivotSteps = 0;
+    bool bExited = false;
+    double maxTurnError = 0, maxPivotSpeed = 0;
+    const double expectedTurn = p.PivotRate * static_cast<double>(dt);
+    for (int frame = 0; frame < 256; ++frame)
+    {
+        const float previousYaw = s.Yaw;
+        const double previousError = std::fabs(std::remainder(static_cast<double>(inputYaw) - previousYaw, 2 * pi));
+        Step(s, p, i, g, dt, o);
+        if (frame == 0)
+        {
+            assert(s.bPivot);
+        }
+        const double remaining = std::fabs(std::remainder(static_cast<double>(inputYaw) - s.Yaw, 2 * pi));
+        if (s.bPivot)
+        {
+            assert(previousError > p.PivotExitAngle);
+            ++pivotSteps;
+            maxPivotSpeed = std::max(maxPivotSpeed, static_cast<double>(s.Speed));
+            const double actualTurn = std::remainder(static_cast<double>(s.Yaw) - previousYaw, 2 * pi);
+            maxTurnError = std::max(maxTurnError, std::fabs(actualTurn - expectedTurn));
+            assert(std::fabs(actualTurn - expectedTurn) < 1e-6);
+            assert(std::fabs(o.DeltaYaw - expectedTurn) < 1e-6);
+            assert(s.Speed == 0 && o.PlanarDisplacement == Vector3::Zero);
+        }
+        else
+        {
+            assert(previousError <= p.PivotExitAngle && remaining < p.PivotExitAngle);
+            std::cout << "PivotTurn exit_step=" << frame + 1 << " expected_error_below_rad=" << p.PivotExitAngle
+                      << " actual_error_rad=" << remaining << " error_before_rad=" << previousError << '\n';
+            bExited = true;
+            break;
+        }
+    }
+    assert(pivotSteps > 0 && bExited);
+    std::cout << "PivotTurn pivot_steps=" << pivotSteps << " expected_turn_rad=" << expectedTurn
+              << " max_turn_error_rad=" << maxTurnError << " expected_speed_mps=0 actual_max_pivot_speed_mps="
+              << maxPivotSpeed << '\n';
+
+    for (int test = 0; test < 2; ++test)
+    {
+        s = {};
+        const float angle = p.PivotEnterAngle + (test == 0 ? -.05f : .05f);
+        s.Speed = test == 0 ? 0 : p.PivotSpeed;
+        s.PlanarVelocity = Vector3(0, 0, s.Speed);
+        const float initialSpeed = s.Speed;
+        i.Move = Vector3(std::sin(angle), 0, std::cos(angle));
+        Step(s, p, i, g, dt, o);
+        std::cout << "PivotTurn counterexample=" << (test == 0 ? "below_enter_angle" : "at_pivot_speed")
+                  << " input_error_rad=" << angle << " initial_speed_mps=" << initialSpeed
+                  << " expected_pivot=0 actual_pivot=" << s.bPivot << '\n';
+        assert(!s.bPivot);
+    }
+}
+
+static void CaseTurnBank()
+{
+    constexpr float dt = 1.f / 256;
+    constexpr float speed = 3;
+    for (int saturated = 0; saturated < 2; ++saturated)
+    {
+        for (int direction : {-1, 1})
+        {
+            auto p = MakeTestParams();
+            p.TargetHalfLife = 0;
+            p.TurnSlowdown = 0;
+            p.Gaits[0].TurnRateCap = 1;
+            p.Gaits[0].LateralAcceleration = 6;
+            p.LeanGain = saturated ? 5.f : 1.f;
+            p.MaximumBank = .45f;
+            p.LeanHalfLife = .05f;
+            assert(QuadrupedLocomotionModel::IsValidParams(p));
+            LocomotionGroundInfo g;
+            g.bReady = g.bGrounded = true;
+            g.Gravity = 9.81f;
+            LocomotionIntent i;
+            LocomotionState s;
+            s.Speed = s.SmoothedTarget = speed;
+            s.PlanarVelocity = Vector3(0, 0, speed);
+            LocomotionOutput o;
+            const float magnitude = speed / p.Gaits[1].SpeedMax;
+            double maxBank = 0, maxSettledError = 0, expected = 0;
+            for (int frame = 0; frame < 512; ++frame)
+            {
+                // 旋回方向へ一定のずれを与え、速さと角速度を一定に保つ。
+                const float inputYaw = s.Yaw + direction * .8f;
+                i.Move = Vector3(magnitude * std::sin(inputYaw), 0, magnitude * std::cos(inputYaw));
+                Step(s, p, i, g, dt, o);
+                assert(s.Gait == 0 && !s.bPivot && std::fabs(s.Speed - speed) < 1e-5);
+                assert(std::fabs(o.TurnRate - direction * p.Gaits[0].TurnRateCap) < 1e-5);
+                const double physicalBank = std::atan2(static_cast<double>(s.Speed) * o.TurnRate, g.Gravity);
+                const double target = physicalBank * p.LeanGain;
+                expected = std::clamp(target, -static_cast<double>(p.MaximumBank),
+                                      static_cast<double>(p.MaximumBank));
+                assert(o.Bank * physicalBank > 0 && s.Bank == o.Bank);
+                assert(std::fabs(o.Bank) <= p.MaximumBank);
+                maxBank = std::max(maxBank, std::fabs(static_cast<double>(o.Bank)));
+                if (saturated)
+                {
+                    assert(std::fabs(target) > p.MaximumBank);
+                }
+                else
+                {
+                    assert(std::fabs(target) < p.MaximumBank);
+                }
+                // 1 秒の整定後から全刻みを検査し、終端だけの偶然の一致を避ける。
+                if (frame >= 256)
+                {
+                    const double error = std::fabs(o.Bank - expected);
+                    maxSettledError = std::max(maxSettledError, error);
+                    assert(error <= (saturated ? 1e-5 : std::fabs(expected) * .02));
+                }
+            }
+            std::cout << "TurnBank direction=" << direction << " saturated=" << saturated
+                      << " expected_bank_rad=" << expected << " actual_bank_rad=" << o.Bank
+                      << " expected_max_rad=" << p.MaximumBank << " actual_max_rad=" << maxBank
+                      << " max_settled_error_rad=" << maxSettledError
+                      << " allowed_error_rad=" << (saturated ? 1e-5 : std::fabs(expected) * .02) << '\n';
+        }
+    }
+}
+
 int main()
 {
     CaseExistingBaseline();
@@ -864,6 +1093,9 @@ int main()
     CaseAirControl();
     CaseExtremeTimeSteps();
     CaseZeroInputHoldsYaw();
+    CaseFrameRateIndependence();
+    CasePivotTurn();
+    CaseTurnBank();
     std::cout << "QuadrupedLocomotionModelTest PASS\n";
     return 0;
 }
