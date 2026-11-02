@@ -8535,3 +8535,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: `Docs/Architecture` の 2 文書は paths の外だが、「後続工程」と書いたままでは今の接続と食い違うので、該当の段落だけ直した
 - Notes: 要起票: `RigSplitCookTest` は共有の TEMP の項目が多いと `cook_managed_store: entry_limit` で落ちる（作業ツリー内の空の TEMP では Passed）。試験が一時フォルダーの数の上限に依存している
 - U5 rig-split の CLI でも同名材質の警告を表示する: 着地(直し 0 回)
+- U6 在庫モードでもリターゲット先の骨格の sidecar を照合し、文書と記録を直してタスクの verify を通す: 着地(直し 0 回)

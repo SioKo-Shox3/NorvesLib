@@ -245,6 +245,57 @@ namespace NorvesLib::Tools::AssetCook::Detail
                     return false;
                 }
             }
+            if (bInventoryOnly && HasRigRetarget(request))
+            {
+                // 在庫だけの確認でも、先の骨格とsidecarを採取済みの依存に照合する。
+                C::VariableArray<uint8_t> targetBytes;
+                if (!Read(request.RetargetSkeletonPath, targetBytes))
+                {
+                    return Fail(error, "retarget_target_snapshot");
+                }
+                const auto targetPath = std::filesystem::weakly_canonical(request.RetargetSkeletonPath);
+                bool bTargetMatched = false;
+                for (const auto& file : dependencies.Files)
+                {
+                    if (file.Role == CookDependencyRole::TargetSkeleton && file.Path == targetPath &&
+                        sameBytes(file, targetBytes))
+                    {
+                        bTargetMatched = true;
+                    }
+                }
+                if (!bTargetMatched)
+                {
+                    return Fail(error, "retarget_target_snapshot");
+                }
+                I::LoadedImportSettingsDocument targetDocument;
+                if (I::LoadImportSettingsDocument(request.RetargetSkeletonPath, I::ImportSettingsFileOptions{},
+                                                   targetDocument).Result != I::SettingsFileResult::Success)
+                {
+                    return Fail(error, "retarget_sidecar");
+                }
+                if (!targetDocument.Path.empty())
+                {
+                    const auto targetSidecarPath = std::filesystem::weakly_canonical(targetDocument.Path);
+                    bool bSidecarMatched = false;
+                    for (const auto& file : dependencies.Files)
+                    {
+                        if (file.Role == CookDependencyRole::Sidecar && file.Path == targetSidecarPath &&
+                            file.bPresent == targetDocument.bPresent &&
+                            (!targetDocument.bPresent || sameBytes(file, targetDocument.RawSourceBytes)))
+                        {
+                            bSidecarMatched = true;
+                        }
+                    }
+                    if (!bSidecarMatched)
+                    {
+                        return Fail(error, "retarget_sidecar_snapshot");
+                    }
+                }
+                if (!ValidateClipMaterialSettings(targetBytes, targetDocument, {}, error))
+                {
+                    return false;
+                }
+            }
             hash = dependencies.Fingerprint;
             RigSplitCookEntry entry;
             auto& r = entry.Reference;
