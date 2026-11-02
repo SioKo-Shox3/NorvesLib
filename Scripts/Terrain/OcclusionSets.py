@@ -120,9 +120,9 @@ def run_export_terrain(root):
     try:
         coverage = read_json(coverage_path)
         cliff_version = coverage["cliff_detail_version"]
-        asset_cook_hash = coverage["asset_cook_sha256"]
-        if not isinstance(cliff_version, int) or not isinstance(asset_cook_hash, str) or not asset_cook_hash:
-            raise ValueError("焼いた地形の版または AssetCook のハッシュを読めない")
+        terrain_sources_hash = coverage["terrain_sources_sha256"]
+        if not isinstance(cliff_version, int) or not isinstance(terrain_sources_hash, str) or not terrain_sources_hash:
+            raise ValueError("焼いた地形の版または地形のソースのハッシュを読めない")
         head_version = head_cliff_detail_version()
         git_commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=REPO_ROOT, capture_output=True,
                                     text=True, encoding="utf-8", check=True).stdout.strip()
@@ -159,7 +159,7 @@ def run_export_terrain(root):
             "git_commit": git_commit,
             "game_exe_sha256": game_hash,
             "cliff_detail_version": cliff_version,
-            "asset_cook_sha256": asset_cook_hash,
+            "terrain_sources_sha256": terrain_sources_hash,
             "cook_coverage_sha256": coverage_hash,
             "cooked_manifest_sha256": cooked_manifest_hash,
             "head_cliff_detail_version": head_version,
