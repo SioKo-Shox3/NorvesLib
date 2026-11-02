@@ -8,6 +8,8 @@
 #include "RigSplitWireTestFixture.h"
 #include "Tools/AssetCook/MeshMaterialV1Plan.h"
 #include "Resource/MaterialImportSettings.h"
+#include <chrono>
+#include <thread>
 #if defined(_WIN32)
 #include <Windows.h>
 #endif
@@ -20,6 +22,27 @@ namespace C = NorvesLib::Core::Container;
 namespace I = NorvesLib::Core::AssetImport;
 namespace
 {
+    // Busy ではランタイムの公開が進まず、管理ストアの初期化済みでも再試行の結果は変わらない。
+    // 報告は呼ぶたびに初期化され、試験は最後の呼び出しの結果だけを観測する。
+    Cook::TextureAssetSetCookResult CookWithBusyRetry(const Cook::TextureAssetSetCookRequest& request,
+                                                     Cook::CookManagedBootstrapOutcome& outcome, F::Text& error,
+                                                     Cook::TextureAssetSetCookResult expected)
+    {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(120);
+        auto result = Cook::CookTextureAssetSetWithOutcome(request, outcome, error);
+        while (result == Cook::TextureAssetSetCookResult::Busy && expected != Cook::TextureAssetSetCookResult::Busy &&
+               std::chrono::steady_clock::now() < deadline)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            if (std::chrono::steady_clock::now() >= deadline)
+            {
+                break;
+            }
+            result = Cook::CookTextureAssetSetWithOutcome(request, outcome, error);
+        }
+        return result;
+    }
+
 #if defined(_WIN32)
     struct EnvironmentValue
     {
@@ -215,7 +238,7 @@ Frame Time: 0.5
         F::Text error;
         const auto run = [&](Cook::TextureAssetSetCookResult expected)
         {
-            const auto result = Cook::CookTextureAssetSetWithOutcome(request, outcome, error);
+            const auto result = CookWithBusyRetry(request, outcome, error, expected);
             if (result != expected)
             {
                 std::fprintf(stderr, "retarget expected=%u actual=%u error=%s\n", unsigned(expected), unsigned(result),
@@ -308,7 +331,7 @@ Frame Time: 0.5
         F::Text error;
         const auto run = [&](Cook::TextureAssetSetCookResult expected)
         {
-            const auto result = Cook::CookTextureAssetSetWithOutcome(request, outcome, error);
+            const auto result = CookWithBusyRetry(request, outcome, error, expected);
             if (result != expected)
             {
                 std::fprintf(stderr, "mixed rig expected=%u actual=%u error=%s\n", unsigned(expected), unsigned(result),
