@@ -8566,3 +8566,6 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 完了を宣言しない範囲は着手時の記録のとおり（GR57 の GPU の実行先・3D の粒子の描画パス、GR02 の時間のチャンネル、GR12/GR13/GR19 のボーン・表面のエミッタ、GR96 の asset-set・依存の追跡とテクスチャのパスの解決、GR126 の並列化の後の順序、GR72 の音、Editor の編集の画面、寿命の曲線のモジュール）
 - Notes: VFX のインスタンスの合成 ID は 2D のエミッタの ID と別の帯（ビット 63・62）を使う。イベントの位置はエミッタの空間の絶対位置で、インスタンスの位置を足さない
 - U7 カメラの検査スクリプトが探すエミッタ生成の呼び出しを VFX のインスタンス生成に合わせる: 着地(直し 0 回)
+- Done(反復 3): 差し戻しの退行を直した。`Scripts/Test-CameraWorld.ps1` の契約検査が探す呼び出しを `GetParticleSystem().GetVfxEffects().CreateInstance(` に合わせ、`-ContractOnly` は `CAMERA_WORLD_CONTRACT result=pass camera_initialization_before_emitter=1`（終了コード 0）。`cmake --build build --config Debug --target Game VfxEffectSystemTest -- /m:1` は終了コード 0、`ctest -R "^VfxEffectSystemTest$"` は Passed
+- Next: 起動の確かめは後回し（`GAME-GR136-VFX-CHECK`）。`Scripts/Test-CameraWorld.ps1` の起動するスモークもそこで回す
+- Notes: `Scripts` は paths の外だが、このタスクが起こした退行の打ち消しなので直した。残課題（blocking でない）: `AppendBoardProxies` の ID は `(instanceIndex << 8 | emitterIndex) + 1` で、1 つのエフェクトにエミッタが 256 個以上あると別のインスタンスの ID とぶつかる。バーストで出した粒の年齢は刻みの終わりで 0（イベントの粒はイベントの時刻から年齢を決める）
