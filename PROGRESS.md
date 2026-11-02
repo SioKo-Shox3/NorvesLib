@@ -8542,3 +8542,9 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: 起動の確かめは後回し（当分アプリを起動しない決まり）。SCN-INTERIOR-SHAFTS-CHECK で `CaptureScene.ps1 -Scene interior-light`（RelWithDebInfo）の `overview`・`window` を開いて窓からの光の筋を確かめ、`CaptureStartupScene.ps1` で Rendering3DTest の撮影が変わらないことを確かめる
 - Notes: 霧の値は撮影の前の初めの値。筋が弱い・霧が一様に光るなら密度と `kFogAmbientScale` を撮影で詰める。空気遠近と一緒に積む経路（`MarchFogAndAerial`）は歩をずらしていない（interior-light は大気の書き出しのときだけ空気遠近を有効にする）
 - U1 写しの検査で落ちる 2 本を ctest から外し、理由を記録する: 着地(直し 0 回)
+
+## 2026-11-02 TEST-FULL-CTEST-BASELINE（run 20261102-101626 の反復 1）
+- Done: 2026-09-25 に落ちていた 7 本を今の HEAD（297ededc）の Debug でビルドして回した。`ViewportCameraIdRenderPlanTest`・`WorldSyncDifferentialTest`・`BoardComponentRoutingTest`・`RenderResourcesDomainContractTest`・`SkeletalFramePacketSnapshotTest` は直さずに Passed（`GenerateDrawCommands` の null 参照は既に直っていた。RenderingCoordinator.cpp:4762）。落ちる 2 本はどちらも実装の写しなので、期待値を書き直さずに `DISABLED TRUE` で外し、理由を CMake のコメントと `Docs/Testing.md` の「外したもの」に書いた: `FrameCaptureReadbackHelperTest`（`R32G32B32A32_FLOAT` を対応しない形式として決め打ち。製品は読み戻しに対応済み）、`CanvasViewRenderTest`（作るパイプラインの数 `== 3` の決め打ち。同じ実行ファイルの `CanvasLayerCompositeSnapshotTest` は走り Passed）
+- 検証: verify の 1 行目のビルドは終了コード 0。2 行目の ctest は 5 本 Passed・2 本 Not Run（Disabled）で終了コード 0（`.harness/runs/20261102-101626/verify-TEST-FULL-CTEST-BASELINE-U1.txt`。直す前の状態は同じ置き場の `triage-ctest.txt`）。numstat は 2 通りで一致
+- Next: 起動の確かめは後回し（当分アプリを起動しない決まり）。TEST-FULL-CTEST-BASELINE-CHECK で `M9WorldAcceptanceTest` と全体の CTest（`ctest --test-dir build -C Debug --output-on-failure --timeout 600`、GPU の試験を含む）を回し、残った失敗の理由と扱いを記録する
+- Notes: Git Bash から `cmake --build ... -- /m:1` を回すと `/m:1` が `m:1` に書き換えられて MSBuild が MSB1008 で落ちる。PowerShell で回す
