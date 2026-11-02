@@ -9134,3 +9134,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 共有のクック済みの置き場（build/CookedAssets）の格子は版 3 に書き直した。版 3 を読めない古い Game（統合前の別の枠の実行ファイル）では格子が読めず、崖錐の岩と塊は見送られる
 - Notes: castle の層の塊の無い所・不可の升目は no_ground に数える。(E) の no_ground 0 は、castle の不可の升目の割合（0.233）からすると落ちうる。そのときは不可の升目の分布（壁の足の帯にあるか）を先に見る
 - Notes: 遮蔽の視点 contact_near・ref_cliff_01 から castle の範囲までは 2 km 以上で、塊は遮蔽の小物の書き出し（300 m）に入らない
+- U1 params の min/max（float・int）を読み、全ての書き込み口で丸める: 着地(直し 1 回)

@@ -421,10 +421,10 @@ namespace
         }
     }
 
-    void TestAnimatorScriptParameter()
+    void TestAnimatorScriptParameter(const char* json = BlendJson, float expected = .75f)
     {
         GraphFixture f;
-        auto graph = f.Graph(BlendJson);
+        auto graph = f.Graph(json);
         World world;
         world.Initialize();
         GRAPH_CHECK(GEngine.GetScriptRuntime().Initialize(world) == EScriptRuntimeResult::Success);
@@ -443,9 +443,53 @@ namespace
         Component::AnimatorDebugSnapshot snapshot;
         animator->BuildDebugSnapshot(snapshot);
         GRAPH_CHECK(snapshot.Parameters.size() == 1);
-        NearGraph(snapshot.Parameters[0].Value.Float, .75f);
+        NearGraph(snapshot.Parameters[0].Value.Float, expected);
         world.Finalize();
         GRAPH_CHECK(GEngine.GetScriptRuntime().Shutdown() == EScriptRuntimeResult::Success);
+    }
+
+    void TestGraphParamRange()
+    {
+        GraphFixture f;
+        auto graph = f.Graph(
+            R"({"version":1,"params":[{"name":"Float","type":"float","min":-1.5,"max":1.5},{"name":"Int","type":"int","min":-2,"max":3},{"name":"Speed","type":"float","bind":"speed","max":0.5}],"nodes":[{"id":"a","type":"clip","clip":"a"}],"root":"a"})");
+        A::AnimGraphInstance instance;
+        GRAPH_CHECK(instance.Initialize(*graph, *f.Skeleton, *f.Mesh, M::Matrix4x4::Identity));
+        const auto floatParam = instance.Parameters().Find(Identity("Float"));
+        const auto intParam = instance.Parameters().Find(Identity("Int"));
+        const auto speedParam = instance.Parameters().Find(Identity("Speed"));
+        GRAPH_CHECK(floatParam != A::InvalidAnimParam && intParam != A::InvalidAnimParam &&
+                    speedParam != A::InvalidAnimParam);
+        GRAPH_CHECK(instance.Parameters().SetFloat(floatParam, 9));
+        NearGraph(instance.Parameters().Get(floatParam)->Float, 1.5f);
+        GRAPH_CHECK(instance.Parameters().SetFloat(floatParam, -9));
+        NearGraph(instance.Parameters().Get(floatParam)->Float, -1.5f);
+        GRAPH_CHECK(instance.Parameters().SetInt(intParam, 9));
+        GRAPH_CHECK(instance.Parameters().Get(intParam)->Int == 3);
+        GRAPH_CHECK(instance.Parameters().SetInt(intParam, -9));
+        GRAPH_CHECK(instance.Parameters().Get(intParam)->Int == -2);
+        A::AnimDriveSignals signals;
+        signals.Speed = 9;
+        GRAPH_CHECK(instance.Parameters().ApplyDriveSignals(signals));
+        NearGraph(instance.Parameters().Get(speedParam)->Float, .5f);
+        TestAnimatorScriptParameter(
+            R"({"version":1,"params":[{"name":"Speed","type":"float","value":0.25,"bind":"speed","max":0.5}],"nodes":[{"id":"a","type":"clip","clip":"a"},{"id":"b","type":"clip","clip":"b"},{"id":"mix","type":"blend2","children":["a","b"],"weight":"Speed"}],"root":"mix"})",
+            .5f);
+        f.Reject(
+            R"({"version":1,"params":[{"name":"Float","type":"float","value":2,"max":1}],"nodes":[{"id":"a","type":"clip","clip":"a"}],"root":"a"})",
+            A::AnimGraphError::InvalidSchema);
+        f.Reject(
+            R"({"version":1,"params":[{"name":"Float","type":"float","min":2,"max":1}],"nodes":[{"id":"a","type":"clip","clip":"a"}],"root":"a"})",
+            A::AnimGraphError::InvalidSchema);
+        f.Reject(
+            R"({"version":1,"params":[{"name":"Bool","type":"bool","min":0}],"nodes":[{"id":"a","type":"clip","clip":"a"}],"root":"a"})",
+            A::AnimGraphError::InvalidSchema);
+        f.Reject(
+            R"({"version":1,"params":[{"name":"Trigger","type":"trigger","max":1}],"nodes":[{"id":"a","type":"clip","clip":"a"}],"root":"a"})",
+            A::AnimGraphError::InvalidSchema);
+        f.Reject(
+            R"({"version":1,"params":[{"name":"Int","type":"int","min":0.5}],"nodes":[{"id":"a","type":"clip","clip":"a"}],"root":"a"})",
+            A::AnimGraphError::InvalidSchema);
     }
 
     void TestGraphPlaybackRegressions()
@@ -1364,6 +1408,7 @@ void TestAnimGraphRuntime()
     TestGraphPlaybackRegressions();
     TestAnimatorConnection();
     TestAnimatorScriptParameter();
+    TestGraphParamRange();
     TestSocketsAndHoldSlots();
     TestSocketAttachmentRuntime();
     TestSocketDependencyOrder();

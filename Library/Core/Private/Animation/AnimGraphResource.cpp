@@ -155,25 +155,53 @@ namespace NorvesLib::Core::Animation
                     return Fail(r, AnimGraphError::DuplicateName, "param_name");
                 }
                 auto type = v.FindMember("type"), def = v.FindMember("value");
+                const auto minimum = v.FindMember("min"), maximum = v.FindMember("max");
+                p.bHasMin = minimum.IsValid();
+                p.bHasMax = maximum.IsValid();
                 if (Word(type, "float"))
                 {
                     p.Type = AnimParamType::Float;
+                    if ((p.bHasMin && !Number(minimum, p.Min.Float)) ||
+                        (p.bHasMax && !Number(maximum, p.Max.Float)) ||
+                        (p.bHasMin && p.bHasMax && p.Min.Float > p.Max.Float))
+                    {
+                        return Fail(r, AnimGraphError::InvalidSchema, "param_range");
+                    }
                     if (def.IsValid() && !Number(def, p.Default.Float))
                     {
                         return Fail(r, AnimGraphError::InvalidSchema, "float_default");
+                    }
+                    if ((p.bHasMin && p.Default.Float < p.Min.Float) ||
+                        (p.bHasMax && p.Default.Float > p.Max.Float))
+                    {
+                        return Fail(r, AnimGraphError::InvalidSchema, "param_default_range");
                     }
                 }
                 else if (Word(type, "int"))
                 {
                     p.Type = AnimParamType::Int;
+                    if ((p.bHasMin && !Integer(minimum, p.Min.Int)) ||
+                        (p.bHasMax && !Integer(maximum, p.Max.Int)) ||
+                        (p.bHasMin && p.bHasMax && p.Min.Int > p.Max.Int))
+                    {
+                        return Fail(r, AnimGraphError::InvalidSchema, "param_range");
+                    }
                     if (def.IsValid() && !Integer(def, p.Default.Int))
                     {
                         return Fail(r, AnimGraphError::InvalidSchema, "int_default");
+                    }
+                    if ((p.bHasMin && p.Default.Int < p.Min.Int) || (p.bHasMax && p.Default.Int > p.Max.Int))
+                    {
+                        return Fail(r, AnimGraphError::InvalidSchema, "param_default_range");
                     }
                 }
                 else if (Word(type, "bool") || Word(type, "trigger"))
                 {
                     p.Type = Word(type, "bool") ? AnimParamType::Bool : AnimParamType::Trigger;
+                    if (p.bHasMin || p.bHasMax)
+                    {
+                        return Fail(r, AnimGraphError::InvalidSchema, "param_range");
+                    }
                     if (def.IsValid() && !def.IsBoolean())
                     {
                         return Fail(r, AnimGraphError::InvalidSchema, "bool_default");
