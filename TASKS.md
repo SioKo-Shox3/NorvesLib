@@ -4656,8 +4656,30 @@
 - from: SCN-WL-CLIFF-GEN-TALUS
 
 ## SCN-WL-CLIFF-GEN-TALUS-CHECK-P1: 壁から崖錐へ移る所の崩れた大きな塊（数 m〜十数 m）を、岩の物として崖の生成の 7 範囲の壁の足元に置く
-- status: blocked
-- done-when: 2026-11-02 の人の判断（cc21c026、SCN-WL-CLIFF-GEN-TALUS の案 A）で、崩れた塊は高さの場ではなく物の岩として置く別の項目にすると決まった。地形のクック（崖の細部の版 19）は変えない。
+- status: todo
+- done-when: 2026-11-02 の人の判断（cc21c026、SCN-WL-CLIFF-GEN-TALUS の案 A）で、崩れた塊は高さの場ではなく物の岩として置く別の項目にすると決まった。地形のクック（崖の細部の版 19）は変えない。判断役の判断（2026-11-02、`blocked/SCN-WL-CLIFF-GEN-TALUS-CHECK-P1.md` の案 2）で、塊を置く範囲を接地用の格子の中の near の 2 範囲に絞った。
+  すること:
+  (1) 塊の素材を決め、選んだ素材と理由を記録する。今ある崖錐のスキャンの岩（boulder_01・rock_09）を大きく使うか、Blender で数 m〜十数 m の崩れた砂岩の塊を作って `Assets/AssetSets/WastelandCliffBlocks.json` からクックする。
+  (2) `Scripts/Terrain/ShapeRegions.json` の `cliff-gen` の 7 範囲のうち、接地用の格子 `WastelandPlacementGround.bin`（X −2600〜2099・Z −2499〜2100）の中にある near の 2 範囲（cliff_near_2_rooster_butte・cliff_near_3_setting_hen_butte）の壁の足（急な面が崖錐へ移る所）に、塊を写真の大きさで置く規則を荒野の置き方に足す。
+  - castle の 5 範囲は格子の外で根元の高さが取れないので、この項目では置かない。遠景の別の項目にするため、`PROGRESS.md` の Notes に `要起票:` で残す。
+  - 根元の高さは、接地用の格子の焼いた面から取る。
+  - 置いた塊は、置き方の書き出し（`wasteland-export-placement`）に新しい種類として出し、`CheckPlacement.py --range-group cliff-gen` の接地の検査の組に入れる。
+  (3) 塊の効きの合否の仕様 `Scripts/Terrain/ExpectSpecs/shape-cliff-blocks.json` を、置く前に書いてコミットする（8ca012a5 で済み）。
+  - 中身は、写真の内部の折れ線のうち、壁の足と崩れた塊の稜線の一致。物を含めて測るので `--terrain-only` は付けない。
+  - 基準は、版 15 の撮影（shape・shape-retake-1〜3）から取る。
+  - far_01 の行（wall_foot ≥ 0.356）は外し、`moved_rows` に元の値と理由を残す（判定には使わない）。理由は、注釈が格子の外の castle_0・castle_1 にだけあること。
+  - 残る 4 行（far_02 の wall_foot ≥ 0.179・block_ridge ≥ 0.303、ground_02 の wall_foot ≥ 0.28・block_ridge ≥ 0.814）の下限と sha256 は変えない。
+  - これ以外には、置いた後に仕様を変えない。
+  合否:
+  - ビルド（Debug・RelWithDebInfo）が通る。
+  - 起動の確かめ:
+    - (A) `shape-cliff-blocks.json` の残る 4 行がすべて通る。
+    - (B) `shape-cliff-talus.json`（地形だけ）の行が通る。
+    - (C) 接地: 新しい種類の塊は、違反が物の数の 0.5 % 以下で、測り切れない物が 0。ほかの種類は SCN-WL-CLIFF-PLACEMENT-CHECK の記録を、物の数の 0.5 % を超えて上回らない。
+    - (D) ページの要求の溢れ・失敗が 0。VRAM が予算の 90 % 以下。
+    - (E) look の 3 視点を写真と並べて開き、壁の足に崩れた塊が見えることを確かめる。
+    - (F) ログの `WASTELAND_CLIFF_BLOCKS` で、near_2・near_3 のそれぞれに塊が 1 個以上ある。
+  - 結果は `Docs/RenderingValidation/WastelandShape.md` に書く。
 
   すること:
 
