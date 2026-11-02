@@ -8879,3 +8879,18 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS/u12/`（`parallel-result.json`・`assetcook-sha256.txt`・項目ごとの出力）
 - Next: 起動の確かめは後回し（SCN-WL-CLIFF-GEN-TALUS-CHECK）。verify の 5〜12 行目を版 19 で回す
 - Notes: 要起票: AssetCook のソースが変わる取り込みのたびに、検証を回す作業ツリーの exe のハッシュが変わって地形の全項目の焼き直し（並列で約 31 分）が要る。印に exe のハッシュではなく地形の生成の版を使う形は Scripts の設計変更になるので、この項目では変えていない
+
+- U1 在庫文書の旧環境の 2 文を Windows の実行記録に置き換える: 着地(直し 1 回)
+
+## 2026-11-02 G2-GR32-GPU-ACCEPTANCE-P2（run 20261102-173051 の反復 1、完了）
+- Done: `Docs/Architecture/NVSKELMigrationInventory.md` の「GR32 Nprimitive decodeの中間段階」と「Componentの材質slot API」に残っていた Linux・Windows.h で未実行の記述 2 つを、native 回帰ごとの Windows の実行記録に置き換えた。実行済み: `CookedSkeletalAssetTest`（2026-11-02 Debug、cp932・65001 で Passed、G2-GR78-SURFACE-CENTROID-CHECK-P1）、`SkeletalFramePacketSnapshotTest`（2026-11-02 TEST-FULL-CTEST-BASELINE と 2026-10-11 SCN-MEGA-SCENE-CONFIRM で Passed）。`SkeletalImportReportTest`（2026-10-11 SCN-ECS-RENDER-SYNC-SWITCH の隣接 69 件の ctest で Passed。反復 2 で訂正）。未実行（実行の記録なし）: `GLTFSkeletalAnalyzerTest`・`RenderingDDGILightingContractTest`（2026-10-29 SCN-BUILD-ALL-TESTS でビルドだけ通った）。この 2 本は TEST-FULL-CTEST-BASELINE-CHECK の全体 CTest で回すと書いた
+- 検証: verify の python 1 行が `[]`・終了コード 0。numstat は 2 通りで一致（17 行追加・2 行削除）。文書だけの変更で、ビルド・試験・アプリは起動していない
+- Next: TEST-FULL-CTEST-BASELINE-CHECK で全体 CTest を回したら、在庫文書の「未実行」の 2 本を実行の記録に更新する
+- Notes: 要起票: 同じ文書の 144 行（reader の native 回帰は Windows/Core 全体の実行が未検証）・159 行（native Resource/Core/描画の Windows 実行は未検証）・181 行（packet の native 回帰は Windows 依存で未実行）も古い可能性がある。181 行の packet の回帰は `SkeletalFramePacketSnapshotTest` で、2026-11-02 に Passed している
+- U2 SkeletalImportReportTest の行を 2026-10-11 の実行記録に直す: 着地(直し 0 回)
+
+## 2026-11-02 G2-GR32-GPU-ACCEPTANCE-P2（run 20261102-173051 の反復 2、完了）
+- Done: 差し戻し（`SkeletalImportReportTest` を未実行と書いていたが実行の記録がある）を直した。在庫文書の「GR32 Nprimitive decodeの中間段階」の `SkeletalImportReportTest` の 2 行を、2026-10-11 の Windows Debug で隣接 69 件の ctest（`ctest --test-dir build -C Debug -R <隣接69件> --no-tests=error --output-on-failure`）の中で Passed した記録（run 20261010-223034、`verify-SCN-ECS-RENDER-SYNC-SWITCH-3-neighbors.txt`）に置き換えた。試験のソースの最後の変更は 2026-10-04（9c229361）で、実行より前。反復 1 の Done の記述も同じ内容に訂正した
+- 検証: verify の python 1 行が `[]`・EXIT=0（`.harness/runs/20261102-173051/verify-G2-GR32-GPU-ACCEPTANCE-P2-2.txt`）。単位の numstat は 2 通りで一致（2 行追加・2 行削除）。文書だけの変更で、ビルド・試験・アプリは起動していない
+- Next: TEST-FULL-CTEST-BASELINE-CHECK で全体 CTest を回したら、在庫文書の「未実行」の 2 本（`GLTFSkeletalAnalyzerTest`・`RenderingDDGILightingContractTest`）を実行の記録に更新する
+- Done: G2-GR32-GPU-ACCEPTANCE-P2 の反復 2 の変更（SkeletalImportReportTest を 2026-10-11 の実行記録に訂正）は評価が枠切れで未実施だったため、変更を足さずに verify を回し直した（`[]`・EXIT=0、`.harness/runs/20261102-191020/verify-G2-GR32-GPU-ACCEPTANCE-P2.txt`）。文書の記述と `verify-SCN-ECS-RENDER-SYNC-SWITCH-3-neighbors.txt` の 102 行目（Passed）が合うことも確かめた
