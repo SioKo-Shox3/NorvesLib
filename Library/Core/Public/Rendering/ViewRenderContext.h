@@ -606,6 +606,8 @@ namespace NorvesLib::Core::Rendering
         /** @brief 草・低木の株の束と風のスナップショット（FramePacket::Scene.Foliage を指す） */
         const FoliageScene *SnapshotFoliage = nullptr;
 
+        /** @brief 帯の頂点と描画範囲のスナップショット（FramePacket::Scene.RibbonTrails を指す） */
+        const RibbonTrailScene *SnapshotRibbonTrails = nullptr;
         /** @brief 箱で投影するデカールの一覧（FramePacket::Scene.Decals を指す） */
         const DecalScene *SnapshotDecals = nullptr;
 

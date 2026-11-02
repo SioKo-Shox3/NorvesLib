@@ -2,6 +2,7 @@
 
 #include "IViewPass.h"
 #include "DynamicUniformAllocator.h"
+#include "Rendering/RibbonTrailRenderer.h"
 #include "Rendering/RenderGraph/IRenderGraphPass.h"
 #include "RHI/RHITypes.h"
 #include "Container/Containers.h"
@@ -137,6 +138,7 @@ namespace NorvesLib::Core::Rendering
         const LightingPass* m_LightingPass = nullptr;
         const GBufferPass* m_GBufferPass = nullptr;
         RHI::IDevice* m_Device = nullptr;
+        ShaderManager* m_ShaderManager = nullptr;
 
         // 出力テクスチャ（フォワード単独パイプライン用、TransientResourcePoolから取得、非所有）
         RHI::ITexture* m_ColorTexture = nullptr;
@@ -150,9 +152,11 @@ namespace NorvesLib::Core::Rendering
 
         // フォワード用リソース
         RHI::RenderPassPtr m_ForwardRenderPass;
+        RHI::RenderPassPtr m_RibbonTrailRenderPass;
         RHI::FramebufferPtr m_ForwardFramebuffer;
         RHI::PipelinePtr m_TransparentPipeline;
         RHI::PipelinePtr m_WorldBoardPipeline;
+        RibbonTrailRenderer m_RibbonTrailRenderer;
         RHI::PipelinePtr m_ImpostorPipeline;
         RHI::ShaderPtr m_TransparentVertexShader;
         RHI::ShaderPtr m_TransparentFragmentShader;

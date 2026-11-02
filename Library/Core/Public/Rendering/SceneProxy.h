@@ -9,6 +9,7 @@
 #include "SkyAtmosphere.h"
 #include "VolumetricFog.h"
 #include "FoliageTypes.h"
+#include "RibbonTrailTypes.h"
 #include "DecalTypes.h"
 #include "AutoExposure.h"
 #include "Container/Containers.h"
@@ -586,6 +587,8 @@ namespace NorvesLib::Core::Rendering
         CloudLayerParameters CloudLayer;
         // 草・低木の株の束と風。FoliagePass が GBuffer へ描く
         FoliageScene Foliage;
+        // このフレームの帯の頂点と描画範囲
+        RibbonTrailScene RibbonTrails;
         // 箱で投影するデカールの一覧。DecalPass が GBuffer の色と法線へ描く
         DecalScene Decals;
 
@@ -618,6 +621,7 @@ namespace NorvesLib::Core::Rendering
             AerialPerspective = AerialPerspectiveParameters{};
             CloudLayer = CloudLayerParameters{};
             Foliage = FoliageScene{};
+            RibbonTrails.Clear();
             Decals = DecalScene{};
         }
 

@@ -4,11 +4,13 @@
 #include "Core/Public/Component/HoldSlotComponent.h"
 #include "Core/Public/Component/SkinnedMeshComponent.h"
 #include "Core/Public/Component/SocketAttachmentComponent.h"
+#include "Core/Public/Engine/Engine.h"
 #include "Core/Public/Engine/NorvesEngine.h"
 #include "Core/Public/GameMode/GameModeContext.h"
 #include "Core/Public/GameMode/GameModeScope.h"
 #include "Core/Public/Logging/LogMacros.h"
 #include "Core/Public/Object/World.h"
+#include "Core/Public/Rendering/RenderWorld.h"
 #include "Core/Public/Resource/SkinnedMeshResource.h"
 #include <cmath>
 namespace Game::GameModes
@@ -89,6 +91,19 @@ namespace Game::GameModes
         Stop();
         if (!material.IsValid())
             return false;
+        Particle::SwordTrailRibbonSettings trailSettings;
+        // 剣の板は局所 Y 軸の 0〜0.8 に作る。
+        trailSettings.BaseLocal = M::Vector3(0.0f, 0.0f, 0.0f);
+        trailSettings.TipLocal = M::Vector3(0.0f, 0.8f, 0.0f);
+        trailSettings.Lifetime = 0.25f;
+        trailSettings.MaxPoints = 128;
+        trailSettings.MaxBendDegrees = 10.0f;
+        trailSettings.Color = M::Vector4(0.6f, 0.8f, 1.0f, 0.8f);
+        trailSettings.Blend = Rendering::RibbonTrailBlend::Additive;
+        if (!m_SwordTrail.Configure(trailSettings))
+            return false;
+        m_TrailScene.Vertices.reserve(trailSettings.MaxPoints * 2);
+        m_TrailScene.Draws.reserve(1);
         auto& registry = GEngine.GetResourceRegistry();
         auto skeleton = registry.CreateTransient<SkeletonResource>("AnimationDebugSkeleton");
         auto mesh = registry.CreateTransient<SkinnedMeshResource>("AnimationDebugBody");
@@ -172,6 +187,8 @@ namespace Game::GameModes
         const Identity tag("Sword");
         if (!attachment->Attach(character->GetObjectId(), Identity("Mouth"), Identity("Mouth"), .1f, {&tag, 1}))
             return false;
+        // 剣はソケット先とは別のルートなので、自身に描画補間を要求する。
+        item->SetRenderInterpolationEnabled(true);
         m_Character = character->GetObjectId();
         m_Item = item->GetObjectId();
         LOG_INFO("ANIMATION_DEBUG scene=ready synthetic=1");
@@ -189,8 +206,41 @@ namespace Game::GameModes
         (void)world;
 #endif
     }
+    void AnimationDebugScene::TickTrail(World& world, float deltaTime)
+    {
+        if (!m_Item || !Engine::GEngine)
+            return;
+
+        m_SwordTrail.Tick(deltaTime);
+        if (std::isfinite(deltaTime) && deltaTime > 0.0f)
+            m_TrailTime += static_cast<double>(deltaTime);
+        if (auto* item = world.FindEntityByObjectId(m_Item))
+        {
+            if (m_bFirstTrailSample)
+            {
+                // 場面の開始位置へ古い軌跡をつながない。
+                m_SwordTrail.Reset();
+                m_bFirstTrailSample = false;
+            }
+            m_SwordTrail.AddSample(item->GetRenderWorldTransform(), m_TrailTime);
+        }
+        else
+        {
+            m_SwordTrail.Reset();
+            m_bFirstTrailSample = true;
+        }
+        m_TrailScene.Clear();
+        m_SwordTrail.AppendDraw(m_TrailScene);
+        Engine::GEngine->GetRenderWorld().SetRibbonTrails(m_TrailScene);
+    }
     void AnimationDebugScene::Stop()
     {
+        m_SwordTrail.Reset();
+        m_TrailScene.Clear();
+        if (m_Item && Engine::GEngine)
+            Engine::GEngine->GetRenderWorld().SetRibbonTrails(m_TrailScene);
+        m_TrailTime = 0.0;
+        m_bFirstTrailSample = true;
 #if defined(NORVES_ENABLE_IMGUI)
         m_AnimatorView.Detach();
         m_SocketView.Detach();

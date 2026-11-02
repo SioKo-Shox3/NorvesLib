@@ -51,6 +51,7 @@ set(PRIVATE_SOURCES
     Private/Object/ResourceRegistry.cpp
     Private/Object/World.cpp
     Private/Particle/ParticleSystem.cpp
+    Private/Particle/SwordTrailRibbon.cpp
     Private/Particle/DecalPool.cpp
     Private/Particle/VfxSchema.cpp
     Private/Particle/VfxEffectSerialization.cpp
@@ -282,6 +283,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/UpscalePass.cpp
     Private/Rendering/SSRPass.cpp
     Private/Rendering/ForwardPass.cpp
+    Private/Rendering/RibbonTrailRenderer.cpp
     Private/Rendering/ShaderManager.cpp
     Private/Rendering/NeuralMaterialResource.cpp
     Private/Rendering/NeuralMaterialDecoder.cpp
@@ -520,6 +522,7 @@ set(PUBLIC_HEADERS
     Public/Application/ApplicationHandlerBase.h
     Public/Engine/Engine.h
     Public/Particle/ParticleSystem.h
+    Public/Particle/SwordTrailRibbon.h
     Public/Particle/DecalPool.h
     Public/Particle/VfxEffectTypes.h
     Public/Particle/VfxSchema.h
@@ -623,6 +626,8 @@ set(PUBLIC_HEADERS
     Public/Rendering/DecalPass.h
     Public/Rendering/FoliagePass.h
     Public/Rendering/FoliageTypes.h
+    Public/Rendering/RibbonTrailTypes.h
+    Public/Rendering/RibbonTrailRenderer.h
     Public/Rendering/DecalTypes.h
     Public/Rendering/RenderingCoordinator.h
     Public/Rendering/RenderGraph/RenderGraphTypes.h
