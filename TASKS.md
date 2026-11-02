@@ -4454,3 +4454,13 @@
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene launcher -Configuration RelWithDebInfo -Build -OutDir .harness/runs/scene-capture/SCN-THUMBNAILS`
 - paths: Game, Scripts, Assets/Textures/Launcher, TASKS.md, PROGRESS.md
 - from: SCN-THUMBNAILS
+
+## FIX-NORMAL-MATRIX-SCALE-CHECK: 法線行列の小スケール退化判定を尺度不変にする(後回しにしたアプリの起動の確かめ)
+- status: todo
+- check: launch
+- gpu: exclusive
+- done-when: FIX-NORMAL-MATRIX-SCALE で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、FIX-NORMAL-MATRIX-SCALE の done-when を満たすことを確かめる。満たさなければ FIX-NORMAL-MATRIX-SCALE の done-when と paths の範囲で直す。
+- verify: `cmake --build build --config Debug --target Game RenderingHdrSceneCaptureTest PathTracingRasterParityVulkanTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -L RenderingValidation`
+- paths: Library/Core/Public/Math, Assets/Shaders/PathTracing, Test/Core/Math, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- from: FIX-NORMAL-MATRIX-SCALE
