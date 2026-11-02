@@ -301,6 +301,7 @@ norves_add_test_bundle(RHIRayTracingApiContractTest
     FOLDER "Test/Core/Rendering"
     MEMBER RHIRayTracingApiContractTest RHIRayTracingApiContractTest.cpp
     MEMBER RHIRayTracingShaderStageCompileTest RHIRayTracingShaderStageCompileTest.cpp
+    MEMBER PathTracingNonUniformSamplerSpirvTest PathTracingNonUniformSamplerSpirvTest.cpp
 )
 target_link_libraries(RHIRayTracingApiContractTest PRIVATE Core)
 target_include_directories(RHIRayTracingApiContractTest PRIVATE
@@ -313,6 +314,7 @@ target_compile_definitions(RHIRayTracingApiContractTest PRIVATE
 add_test(NAME RHIRayTracingApiContractTest COMMAND RHIRayTracingApiContractTest)
 
 add_test(NAME RHIRayTracingShaderStageCompileTest COMMAND RHIRayTracingApiContractTest --test=RHIRayTracingShaderStageCompileTest)
+add_test(NAME PathTracingNonUniformSamplerSpirvTest COMMAND RHIRayTracingApiContractTest --test=PathTracingNonUniformSamplerSpirvTest)
 
 add_test(NAME RHITextureToBufferReadbackVulkanTest COMMAND RHITextureUpdateVulkanTest --test=RHITextureToBufferReadbackVulkanTest)
 set_tests_properties(RHITextureToBufferReadbackVulkanTest PROPERTIES

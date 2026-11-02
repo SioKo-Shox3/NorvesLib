@@ -21,9 +21,13 @@ ResolveMaterialImportPlanはARM/発光/surfaceの全selectorを1回のResolveMat
 
 重複名は全catalogから検出し、同名の入替は見分けられない。cook接続側が資産名付きで元データの改名を促す警告を出すため、group数と最初の組の元indexをplanに保持する。
 
-## 未完の接続
+## cookへの接続と保存範囲
 
-このAPIは正式な値所有import-planまで。既存v0 cook/loose/NVSKEL0.2/CLIを新設定対応へ変更していない。次のv1 cook/fingerprintが同じplanを使い、未一致をcache hitで迂回させない。
+明示NVMESH v1のcook/fingerprintは同じ値所有import-planを使い、未一致のselectorや不正設定をcache hitで迂回させない。asset-set/CLIではspec v2のtop-level emissiveNitsPerUnitを単体requestのAssetSetEmission、ImportSettingsFileOptions経由で渡す。正の有限number以外はemissiveNitsPerUnitの名前で拒否する。素材 > 資産sidecar > asset-setの順で解決し、上位の不正値を下位で置き換えない。import設定の正本はsidecarであり、asset-setの換算だけを限定した例外とする。
+
+AI生成profileはsidecarのmaterial.profile: ai_generatedを明示したときだけ適用し、拡張子では選ばない。素材単位の上書きは保持する。解決済み設定のcanonical（67B）は材質のsource hashへ含め、共通増分の依存snapshotはasset-set換算がPresentのときだけasset-set.emissiveNitsPerUnitを含める。
+
+骨格の分割cookも同じresolverで設定を解決し、骨格単体requestではasset-setの不正値を拒否する。NVSKELの材質はslot名のみを保存し、発光の換算値は保存しない。v0 cookは換算を使わず、発光sourceも従来どおり受理する。
 
 SurfaceNameの正式保存・適用先はGR81のColliderComponent/PhysicsShapeProxy。保存先ができる前にCLI surface指定を受理して捨てたり、診断reportだけでruntime対応と扱ったりしない。Material128/NVSKEL予約を転用しない。
 

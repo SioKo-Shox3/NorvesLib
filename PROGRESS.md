@@ -8505,26 +8505,46 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 2 px は測らずに採った値（DAG の段の三角形の数はおよそ許容の 2 乗に反比例するので、一覧のメッシュの約 96 万クラスタが 1/3〜1/4 になる見込み）。撮影で足りなければ値を上げるか、遮蔽の側を見る
 - Notes: done-when の予算は「RT と GI を切った構成で 16.6 ms」だが、verify の撮影の -GameArgs に RT と GI を切る引数は無く、そのような起動引数も今は無い（RT・GI 入りで撮る）。10-14 の内訳から見積もると、TLAS の直し（LightingPass 約 4 ms）と一覧のメッシュの削減の後も、バナナだけの MegaGeometry（静止 168 万クラスタ）・LightingPass・VSM の合計で 16.6 ms を超える見込みで、RT・GI 入りの判定は fail になりうる
 - Notes: 要起票: verify の撮影を RT と GI を切った構成で撮る起動引数（と verify の -GameArgs）が無い。予算の構成で判定できるようにするかを決める
-- U1 CookTextureAssetSet.ps1 を AssetCook --asset-set の薄い包みにする: 着地(直し 2 回)
-- U2 Windows 実 byte 比較を回して文書を本番の呼び出し元の切り替えに合わせる: 着地(直し 1 回)
 
-## 2026-11-02 G2-S6-ASSET-SET（run 20261102-092737 の反復 1）
-- Done: `Scripts/CookTextureAssetSet.ps1` を `AssetCook --asset-set` を 1 回呼ぶ包みにした（478deddd）。PS 側の texture ごとの単体 cook・spec 解析・集約 manifest の組み立てを除き、引数とリポジトリ基準の相対パス規則は保ち、絶対パスで渡す（`--manifest` も runtime 直下の絶対パス、runtime の直親だけ先に作る）。増分判定は native の共通判断だけが行う。文書（`ManagedTextureAssetSetCli.md`・`AssetCookWorkflow.md`）を合わせた（ffdb795b）。
-- Done: Windows 実 byte 比較（Windows 11 10.0.22631・Windows PowerShell 5.1.22621、Debug の AssetCook）: 凍結した texture 旧基準（run 37205025949・artifact 11303728946、snapshot SHA-256 一致）に対し、`--asset-set` の直接呼び出しと包みの PS の両方で Rendering3DTestSilverTextures 6・Rendering3DTestSilverGltfTextures 4 の計 10 出力（package と manifest）が生 byte 一致。同じ root の再実行は unchanged で bytes・更新時刻とも不変。凍結した旧 PS（b8c5df1d）＋同じ exe の出力とも 10/10 一致。
-- Done: verify の 2 行を回した: `cmake --build build --config Debug --target AssetCook CookedMeshTest -- /m:1` EXIT 0、ctest の 8 本（TextureAssetSetSpec・TextureAssetSetOutput・CookDependencySnapshot・CookCacheDecision・CookOutputPackage・SingleAssetCookService・AssetCookTextureSmoke・AssetCookGlbSmoke）8/8 Passed。glTF の外部 buffer・画像と sidecar の印、その変更・不在・復帰・破損での再 cook と拒否は CookDependencySnapshotTest・CookCacheDecisionTest が受け持つ。
-- Next: model の資産を `--asset-set` の spec v2 へ載せ、同じ印で増分 cook する（ほかの kind の本番の呼び出し元の移行も含め後続）。
-- Notes: 単体 CLI の分割前後の比較（`AssetCookCliParity.py`）は、ローカルでは capture が出力先の制約と Skeletal の警告文の判定で止まり、正式な 79 出力の compare は未完了。途中の出力の照合では Audio 6・Import 13・Glb 12 が一致、Mesh 20・Raw 2・Skeletal 1（manifest の source_hash）が不一致で、main のクラスタ化の変更と入力の行末（CRLF→LF）の差による見込み（詳細は `ManagedTextureAssetSetCli.md` の受入れ節）。`VerifyTextureAssetSet.py` そのものは入口の入力 hash の照合で止まり、比較器の関数で同じ比較を行った（止まった原因のうち旧 PS1 の hash の不一致は CI でも落ちる退行だった。反復 2 で直した）。
-- Notes: 要起票: `CookManagedBootstrapTest`（ctest、Debug）がこの機で単独でも 300 秒でタイムアウトする（最後の出力 `line 182: InitializeNewCookManagedStore(Owner, out, error) == CookManagedStoreInitializationResult::Created`、直前に `rename_no_replace; win32_hex=5`）。今回は C++ と試験を変えていない。
-- Notes: 要起票: `AssetCookCliParity.py capture` がローカルの Windows で完走しない（出力先が source 配下の拒否、Skeletal の警告文の判定）。main のクラスタ化の後の 79 出力の基準を取り直すかを決める。
-- U3 VerifyTextureAssetSet.py の checkout 入力の照合から旧 PS1 を外す: 着地(直し 0 回)
-- U4 受入れ節の記録と古い「後続」の記述を直す: 着地(直し 0 回)
+- U1 テストの全実行ファイルに assert の対話窓を止める仕組みを付け、わざと落とすテストで確かめる: 着地(直し 1 回)
 
-## 2026-11-02 G2-S6-ASSET-SET（run 20261102-092737 の反復 2）
-- Done: `Scripts/VerifyTextureAssetSet.py` の checkout 入力の照合（初回と終わりの再照合）から `Scripts/CookTextureAssetSet.ps1` を外した（66499489）。凍結 snapshot は旧 PS の CRLF の hash（846ba539…）で固定しており、包みにした PS1 はどの行末でも合わないため、CI の `texture_parity` 段も入口で必ず落ちていた。native の検証はこの PS1 を読まず、旧出力の正しさは receipt の snapshot SHA と payload hash で保つ。除く名前が snapshot に無いときは止め、不一致のときは名前を出す。
-- Done: 残る 10 入力を照べた: spec 2 件は HEAD の内容を CRLF にした形（CI の Windows checkout）で凍結値に一致、png 8 件は raw で一致。ローカルの実行は入口で spec 2 件（この機の checkout は LF）だけを名指しして止まる。
-- Done: `ManagedTextureAssetSetCli.md` の、もう在る spec v2 の model/skeletal・所属資産の追加と除去・budget/`--jobs`/reports を後続とする記述を直し、受入れ節に上の照合の直しを書いた（88544aa0）。
-- Done: verify の 2 行を回した: ビルド EXIT_BUILD=0、ctest 8/8 Passed（`.harness/runs/20261102-092737/G2-S6-ASSET-SET-iter2-verify-build.txt`・`G2-S6-ASSET-SET-iter2-verify.txt`。後者のビルド行は Git Bash の `/m:1` の変換で失敗したので PowerShell で回し直した）。
-- Next: texture 以外の本番の呼び出し元の `--asset-set` への移行、旧 standalone ModelCookCache の移行（反復 1 の Next の「model を spec v2 へ載せる」は既に在る）。
-- Notes: この機の powershell.exe の binary（3247bcfd…）は receipt の値（38f43846…）と違うので、照合を直しても `VerifyTextureAssetSet.py` のローカルの完走は PS binary の照合で止まる。スクリプトの失敗時の検査（既存の directory・empty・file・junction の拒否、source-reparse の拒否、prefix・manifest の衝突の拒否、失敗した root を公開しない・stage を残さない、末尾の `VerifyManagedTextureCli.py`）のローカルの根拠は、通っている `TextureManagedCliTest` と `TextureAssetSetOutputTest`。スクリプト全体の完走は `windows-assetcook.yml` の CI の手動起動が要り、まだ回していない（外に出る操作なので人が決める）。
-- Notes: 要起票: `windows-assetcook.yml` を手動起動して、照合を直した `VerifyTextureAssetSet.py` の全体（失敗時の検査を含む）が CI で完走することを確かめる。
-- Notes: 範囲外で残したもの: `CookTextureAssetSet.ps1` の `Quote-ProcessArgument` は、空白を含み末尾が `\` のパスを渡すと閉じの引用符を `\"` にする（前からある関数、端の場合だけ）。
+## 2026-11-02 TEST-ASSERT-NO-DIALOG（run 20261102-092732 の反復 1）
+
+- Done: `Test/TestSupport/NorvesTestNoDialog.cpp`（OBJECT ライブラリ）の静的初期化（`#pragma init_seg(lib)`）で `_set_error_mode(_OUT_TO_STDERR)`・`_set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT)`・Debug の `_CRT_ASSERT`/`_CRT_ERROR` の報告先を stderr にし、`Test/CMakeLists.txt` の末尾で `Test/` 以下の全 EXECUTABLE ターゲットへ再帰で一括リンクする（今の構成で 126 個。Bridge SDK の無い構成なので `Test/Game` は含まない）。わざと assert を落とす `TestAssertNoDialogTest`（Core をリンクしない、`#undef NDEBUG`）を WILL_FAIL・TIMEOUT 30 で登録。`Docs/Testing.md` に 3 点と、`RenderGraphCompileTest.cpp` の assert の中の副作用（344 行）が NDEBUG で消えて 0xC0000005 で落ちる件を記録した
+- 検証: `RenderGraphCompileTest`・`TestAssertNoDialogTest` の Debug ビルドは終了コード 0（C4073 も無し）。`ctest -R "^TestAssertNoDialogTest$"` は Passed 0.01 秒。実行ファイルを直接起動すると stderr に `Assertion failed` が出て終了コード 3 で即座に戻る（`.harness/runs/20261102-092732/verify-TEST-ASSERT-NO-DIALOG-U1.txt`）
+- Next: 既存のテストに個別に入っている `_set_abort_behavior` などは重なっても害が無いので残した。その周りを触るときに消してよい
+- Notes: `init_seg(lib)` と同じか前の領域で走る初期化（CRT・ほかのライブラリの lib 領域）で assert が落ちた場合は止められない
+- Notes: 要起票: `RenderGraphCompileTest.cpp` などで副作用のある呼び出しを `assert(...)` の中に置いており、RelWithDebInfo では初期化ごと消えて 0xC0000005 で落ちる（直すか試験を消すか）
+
+- U2 asset-set 換算の変更で増分 cook が skip しないことを CookCacheDecisionTest で反証する: 着地(直し 0 回)
+- U1 発光換算の接続を GltfMaterialCookV1Test で反証する: 着地(直し 0 回)
+- U3 材質設定の接続を文書へ反映し、タスクの verify を通す: 着地(直し 2 回)
+- Done: G2-GR79-IMPORT-POLICY-CONNECTION — 材質設定の接続（asset-set spec v2 の `emissiveNitsPerUnit` → 単体 request → 共有 resolver、素材 > 資産 sidecar > asset-set、AI 生成 profile の明示、hash/cache）を反証する検査を `GltfMaterialCookV1Test`・`CookCacheDecisionTest` に足した（asset-set だけの換算・上書き・上位不正値の非 fallback・未設定拒否の資産名/材質名/設定名・strength0 と texture だけの非発光・設定差での fingerprint と cache の失効・v0 互換）。asset-set の不正な換算値の拒否を `setting=emissiveNitsPerUnit` で診断するよう直した。`MaterialImportPolicy.md`・`GltfMaterialCookV1.md`・`MaterialImportDocument.md` の「未接続」を今の接続に書き換えた。verify は `cmake --build build --config Debug --target CookedMeshTest AssetCook -- /m:1` が終了コード 0、ctest の 9 本がすべて Passed
+- Next: 実物の資産（発光のある GLB）での cook と撮影・見た目の受入れは未実施（アプリを起動しない決まりのため）。G2-MATERIAL-SELECTION-INTEGRATION がこの項目の後に回せる
+- Notes: 要起票: 骨格の分割 cook（`RigSplitCook.cpp:338`）は設定の解決の失敗を `split_material_selector_or_settings` の 1 つの名前で返し、設定名（`MaterialSettingsErrorKey`）を出さない。NVMESH v1 と同じ形にそろえるか
+
+- U1 PT の材質のテクスチャの標本へ一様でない印を届ける: 着地(直し 0 回)
+- U2 rchit の SPIR-V の NonUniform を照合する CPU の試験を足す: 着地(直し 0 回)
+
+## 2026-11-02 PT-NONUNIFORM-SAMPLER（run 20261102-093543 の反復 1）
+- Done: 直す前の rchit（sparse あり・なし）を -O・vulkan1.2 で SPIR-V にして逆アセンブルし、`materialTextures` から取った sampled image の `OpAccessChain`・`OpLoad`（sparse ありでは `OpImageQueryLevels` の `OpImage` も）に `NonUniform` が無いことを確かめた（添字の `OpCopyObject` にだけ付いていた）。sampler の式を受けるマクロ `NORVES_RETURN_SPARSE_RESIDENT_LOD` に常駐の判定と粗いミップへの逃げの本体を移し、rchit の `SampleMaterialTexture` が標本の命令の位置で `materialTextures[nonuniformEXT(index)]` を引く形にした（`SampleSparseResidentLod` はマクロを使う形で残し、megageometry.frag の SPIR-V は sparse あり・なしとも変わらない）
+- Done: CPU の試験 `PathTracingNonUniformSamplerSpirvTest`（`RHIRayTracingApiContractTest` の束）を足した。`VulkanShaderCompiler` で sparse あり・なしの rchit を SPIR-V にし、材質の配列由来の `OpImageSampleExplicitLod`・`OpImageSparseSampleExplicitLod`・`OpImageQueryLevels` の operand と元の load・access chain・`OpImage` に `NonUniform` があることを見る。ビルドは終了コード 0、ctest は Passed（束のほか 2 本も Passed）。直す前のシェーダー（`--shader-root` で差し替え）では終了コード 1 で落ちる（証拠 `.harness/runs/20261102-093543/verify-PT-NONUNIFORM-SAMPLER-U2.txt`）
+- Next: 起動の確かめは後回し（当分アプリを起動しない決まり）。PT-NONUNIFORM-SAMPLER-CHECK で `PathTracingMaterialVulkanTest` のビルドと ctest を回し、PT の材質のテクスチャ（VT と VT でないもの）が前と同じに読めることを確かめる
+- Notes: PathTracing の下にほかに sampler の配列を関数の引数で渡す箇所は無い
+
+- U1 霧の太陽の散乱に VSM の可視を掛ける（読めない所は CSM）: 着地(直し 1 回)
+- U2 シーンごとの霧の範囲（距離の上限）と周りの光の倍率: 着地(直し 0 回)
+- U3 interior-light に薄い霧を入れ、タスクの verify を回す: 着地(直し 0 回)
+
+## 2026-11-02 SCN-INTERIOR-SHAFTS（run 20261102-093542 の反復 2）
+- Done: 霧の太陽の単一散乱に VSM の可視を掛けた（どの段にも無い点・VSM が無い構成は今の CSM の経路。大気の書き出しは CSM のまま）。`VolumetricFogParameters` に距離の上限 `MaxDistanceMeters`（0 = 視線全体）と周りの光の倍率 `AmbientScale`（既定 1）を足し、上限があるときだけ霧だけの経路の単一散乱の歩を画素ごとに固定の IGN でずらす（既定値では今の式・中点の歩に戻る）。`interior-light` に一様な薄い霧（密度 0.012 /m・高さの減衰 0・範囲 24 m・周りの光の倍率 0.03）を入れた。`ResetEnvironment` とほかのシーンの霧は既定のまま
+- 検証: `cmake --build build --config Debug --target Game VolumetricFogModelTest -- /m:1` は EXIT=0（1 回目は PDB の取り合いの C1041 で、再実行で通った）、`ctest -R "^VolumetricFogModelTest$"` は 1/1 Passed（`.harness/runs/20261102-093542/U3-unit-verify.txt`）。シェーダー 3 本（volumetrics・volumetrics_probe・lighting）のオフラインのコンパイルも通った。numstat は 2 通りで一致
+- Next: 起動の確かめは後回し（当分アプリを起動しない決まり）。SCN-INTERIOR-SHAFTS-CHECK で `CaptureScene.ps1 -Scene interior-light`（RelWithDebInfo）の `overview`・`window` を開いて窓からの光の筋を確かめ、`CaptureStartupScene.ps1` で Rendering3DTest の撮影が変わらないことを確かめる
+- Notes: 霧の値は撮影の前の初めの値。筋が弱い・霧が一様に光るなら密度と `kFogAmbientScale` を撮影で詰める。空気遠近と一緒に積む経路（`MarchFogAndAerial`）は歩をずらしていない（interior-light は大気の書き出しのときだけ空気遠近を有効にする）
+
+- U1 AssetCook の出力を UTF-8 として読み、「警告:」の照合をコードページに依らず通す: 着地(直し 0 回)
+
+## 2026-11-02 G2-GR78-SURFACE-CENTROID-CHECK-P1（run 20261102-095825 の反復 1）
+- Done: `CookedSkeletalAssetTest.cmake.in` の `expect_reduce`・`expect_cubic`・`expect_morph` で AssetCook の出力を受ける execute_process に `ENCODING UTF-8` を付けた。照合の文字列と合否の条件は変えていない。verify は `cmake --build build --config Debug --target CookedMeshTest AssetCook -- /m:1` が終了コード 0、ctest はコードページ 932 と 65001 の両方で `CookedSkeletalAssetTest` が Passed（終了コード 0）
+- Next: なし
+- Notes: 変更前の版が 932 で落ちることは、この反復では回し直していない

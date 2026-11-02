@@ -5,6 +5,7 @@
 #include "Rendering/FrameCaptureTypes.h"
 #include "Rendering/SkyAtmosphere.h"
 #include "Rendering/VolumetricFog.h"
+#include "Rendering/VirtualShadowMapSample.h"
 #include "Rendering/RenderGraph/IRenderGraphPass.h"
 #include "RHI/IDescriptorSet.h"
 #include "RHI/RHITypes.h"
@@ -41,7 +42,9 @@ namespace NorvesLib::Core::Rendering
         RHI::SamplerPtr m_SkyTransmittanceSampler;
         // 共有の記述子セットのレイアウト（定数と記述子セットは Execute ごとにフレームの持ち主から借りる）
         RHI::DescriptorSetLayoutPtr m_DescriptorSetLayout;
-        // 持ち主の無い文脈（RenderingCoordinator を通さない検査）で作った使い回さない定数と記述子セット。
+        // VSM が無効なフレームにも束縛する、書き換えない 1 語のストレージ
+        RHI::BufferPtr m_DefaultVsmBuffer;
+        // 持ち主の無い文脈（RenderingCoordinator を通さない検査）で作った使い回さない定数・表と記述子セット。
         // 提出の完了を知る手段が無いので、パスを手放すまで持つ
         Container::VariableArray<RHI::BufferPtr> m_UnownedBuffers;
         Container::VariableArray<RHI::DescriptorSetPtr> m_UnownedDescriptorSets;
@@ -54,6 +57,9 @@ namespace NorvesLib::Core::Rendering
         RGResourceHandle m_SkyAtmosphereRadianceHandle;
         RGResourceHandle m_SkyAtmosphereTransmittanceHandle;
         RGResourceHandle m_CascadedShadowMapHandle;
+        RGResourceHandle m_VsmPageTableHandle;
+        RGResourceHandle m_VsmPoolHandle;
+        VirtualShadowMapLevelThresholdCache m_VsmLevelThresholdCache;
         VolumetricFogParameters m_FogParameters;
         // このフレームの空気遠近（空が無効なら bEnabled を偽にしてある）と空のパラメータ
         AerialPerspectiveParameters m_AerialPerspective;
