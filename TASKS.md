@@ -4924,3 +4924,15 @@
 
 判断:
 - P1: TASK G2-MATERIAL-SELECTION-INTEGRATION-P1-P1-P1-P1
+
+## G2-S6-ASSET-SET-P5: `windows-assetcook.yml` の CPU 契約で落ちる `MegaGeometryResourcesTest`(1989 行)と `ModelResourcesAssetRuntimeTest`(323 行)を、今の契約に合わせて通す
+- status: todo
+- done-when: 次の 4 点をすべて満たす。
+  - まず、ローカルで 2 本の失敗が Release と Debug の両方で起きるかを確かめる(`ctest --test-dir build -C <構成> --output-on-failure -R ...`)。構成ごとの結果と落ちた行を PROGRESS.md に書く。
+  - `MegaGeometryResourcesTest.cpp` の `TestGroupBvhRegionIsUploadedAndValidated` の「BVH の無いメッシュは BVH の領域を持たない」という検査(1987〜1989 行)を直す。PROGRESS.md の SCN-WL-GEOMETRY-PAGE-THRASH の Notes に、実行時に BVH を作る変更(e806a3c9、SCN-MEGA-BVH-LEAF-SPLIT)の後も古い前提が残っていると書かれている。焼いた BVH を持たないメッシュに実行時の BVH ができるという今の契約を確かめる検査に置き換える。今の契約として言えることが無い、ただ実装を写しただけの検査なら消す。壊れた BVH を拒否する検査(1992 行以降)は変えない。
+  - `ModelResourcesAssetRuntimeTest.cpp` の `TestCancelClearAndShutdownAdmission` で、`ClearAllResources()` の中で `OnBufferDestroyed` が呼ばれない理由(提出が終わるまで破棄を遅らせる SCN-ECS-FIF-DEFERRED-DESTROY-MEMORY の後に、破棄の時期が変わったなど)を突き止め、PROGRESS.md に書く。破棄の時期の変化だけが原因なら、試験の駆動を今の破棄の時期に合わせる。そのうえで、「Clear と Shutdown の最中に頼まれた読み込みは 0 を返して受け付けない」という検査(`requestDuringClear == 0`)が空振りせずに走るようにする。Clear で資源を手放していないのが原因なら、`RenderResources.cpp` か `ModelAssetRuntime.cpp` を直す。受付を締める検査そのものは緩めない。
+  - `windows-assetcook.yml` の ctest の `-R` から 2 本を外さない。CI の起動・プッシュはしない(再確認は G2-S6-ASSET-SET-P3 が受け持つ)。下の verify が Release と Debug の両方で終了コード 0 になる。
+- verify: `cmake --build build --config Release --target MegaGeometryResourcesTest ModelResourcesAssetRuntimeTest -- -m:1 && ctest --test-dir build -C Release --output-on-failure -R "^(MegaGeometryResourcesTest|ModelResourcesAssetRuntimeTest|ModelHandleCacheTest|ModelAsyncLoadQueueTest)$" && cmake --build build --config Debug --target MegaGeometryResourcesTest ModelResourcesAssetRuntimeTest -- -m:1 && ctest --test-dir build -C Debug --output-on-failure -R "^(MegaGeometryResourcesTest|ModelResourcesAssetRuntimeTest|ModelHandleCacheTest|ModelAsyncLoadQueueTest)$"`
+- paths: Test/Core/Rendering/MegaGeometryResourcesTest.cpp, Test/Core/Rendering/ModelResourcesAssetRuntimeTest.cpp, Library/Core/Private/Rendering/RenderResources.cpp, Library/Core/Private/Resource/ModelAssetRuntime.cpp, TASKS.md, PROGRESS.md
+- from: G2-S6-ASSET-SET-P3
+- stop-when: 2 本を ctest の対象や CI の `-R` から外して通す、受付を締める検査(`requestDuringClear == 0`)を緩める・消す、プッシュする、workflow を起動する。
