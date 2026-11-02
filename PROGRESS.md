@@ -8872,3 +8872,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Done: 合否の仕様 `shape-cliff-talus.json` の moved_to の無い棚・角・外形の 17 行を版 15 の 4 回の撮影（CAPROCK の shape・shape-retake-1〜3）の実測に締めた（一致は最小を 3 桁で切り捨て、欠け・残差は最大を 1 桁で切り上げ、余分は最大を 3 桁で切り上げ。retake_jitter 0.3333 は保った）。4 回の撮影に `--shape --terrain-only --expect --verify` を当てて 4 回とも EXIT=0・17 行すべて pass。荒野の形の記録と上の要起票の遮蔽の正解の記述を、P2 が版 18 で描き直した正解が版 19 の地形と合わない形に直した
 - Next: 起動の確かめは後回し（SCN-WL-CLIFF-GEN-TALUS-CHECK）。verify の 5〜12 行目（形・範囲ごとの量・置いた物の接地・ページの要求と VRAM・写真との比べの撮影と判定）を版 19 で回す
 - Notes: verify の 1〜4 行目は前の反復の U9 で NorvesLib-6 の AssetCook（9ed6c406…）で通しており、この反復は仕様の JSON と文書だけを変えたので回し直していない。この作業ブランチの TASKS.md の done-when は統合ブランチの cc21c026（人の判断で替えた問い）より前の文面のままで、統合のときに合わせる。新しい試験は足していない
+- U12 統合ブランチの取り込みで変わった AssetCook で地形の全項目を並列に焼き直し、verify の 1〜4 行目を NorvesLib-6 で通す: 着地(直し 0 回)
