@@ -9104,3 +9104,9 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261103-004712/U2-verify.txt`（Debug のビルド 0、3 本の直列 Passed 0.56・20.96・76.71 秒、製品の名前の mutex を python が持った状態（取得結果 `[0]`）で 3 本 Passed、`-j 4` の 4 本 Passed、参照数 1、numstat 一致）
 - Next: なし（この項目は完了）
 - Notes: 名前空間は試験の環境変数で子へ渡すため、試験から AssetCook.exe など製品の実行ファイルを起動する経路があれば、その子は製品の名前で取る（今の 3 本の子は CookedMeshTest 自身だけ）
+
+## 2026-11-03 G2-MATERIAL-SELECTION-INTEGRATION-P1-P1-P1-P1（run 20261103-004712 の反復 2、統合ブランチの取り込み後の verify の再確認）
+- Done: 取り込み（119588e5）は試験 2 本（MegaGeometryResourcesTest・ModelResourcesAssetRuntimeTest）と帳簿だけを変え、cook の本体・試験には触れていない。取り込み後の verify の `-j 4` の行で落ちた CookManagedBootstrapTest（432 行、`--bootstrap-child` が StatePublished に届かず 91 で終了）は再現しなかった。コードは変えていない
+- 証拠: `.harness/runs/20261103-004712/iter2-build.txt`（Debug のビルド 0）、`iter2-bootstrap-repeat.txt`（Bootstrap 単独 6 回 Passed）、`iter2-verify-j4.txt`（`-j 4` の 4 本 Passed、終了コード 0）。直列の行と製品の名前の mutex を握った行は取り込み後の `sync-…-2.txt`・`sync-…-3.txt` で Passed、参照数の行は 1
+- Next: なし（この項目は完了）
+- Notes: 要起票: CookManagedBootstrapTest のクラッシュの子（`Crash`）が間欠的に止める点の前で 91 を返す（9 回中 1 回、point=3）。子は stderr を継がず（CreateProcessW の bInheritHandles=FALSE）、`child did not exit:` の理由が親の出力に残らないため原因が分からない。子の理由を親に見せる形にしてから原因を追う
