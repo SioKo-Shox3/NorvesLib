@@ -8746,3 +8746,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 歪みの源の型と GameThread から描画の文脈までの受け渡し: 着地(直し 0 回)
 - U2 歪みのシェーダー 4 本: 着地(直し 0 回)
 - U3 DistortionPass と SceneView への配置: 着地(直し 0 回)
+- U4 DistortionPassVulkanTest（作るだけ・走らせない）と仕上げの確かめ: 着地(直し 1 回)
