@@ -9151,3 +9151,9 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Done: 統合ブランチ feature/scene-launcher（d4bccf6e の偽のスワップチェーンの複数コマンドリストの `EndFrame` を含む）を取り込んだ木で、`cmake --build build --config Debug --target MathGeometryTest SkinnedRenderPathContractTest RHITextureUpdateVulkanTest -- /m:1` が通り（`ComputeSkinningVulkanTest.cpp` も `RHITextureUpdateVulkanTest` の中でコンパイルされる）、ctest `MatrixAbstractionTest`・`SkinnedRenderPathContractTest` が 2/2 Passed（`.harness/runs/20261103-065137/U2-unit-verify.txt`）。前回の `SkinnedRenderPathContractTest` の失敗は取り込み前の偽のスワップチェーンの欠けによるもので、取り込みで解消した
 - Next: 起動の確かめは後回し。`FIX-NORMAL-MATRIX-SCALE-CHECK-P1-CHECK` で `cmake --build build --config Debug --target Game RHITextureUpdateVulkanTest MathGeometryTest -- /m:1` と `ctest --test-dir build -C Debug -R "^ComputeSkinningVulkanTest$" --no-tests=error --output-on-failure --timeout 600` を回し、インスタンス A〜D の GPU の出力が CPU の参照と一致し、D の 2 種の検査が通ることを確かめる
 - Notes: `ComputeSkinningVulkanTest` は単独の cmake のターゲットではなく、ctest の名前だけ（実行ファイルは `RHITextureUpdateVulkanTest` に束ねられている）。ビルドで `--target ComputeSkinningVulkanTest` を指定すると MSB1009 で落ちる
+
+## 2026-11-03 FIX-NORMAL-MATRIX-SCALE-CHECK-P1（run 20261103-065137 の反復 2。完了）
+
+- Done: ランナーの再検証はこの作業ツリーの `build/` にある取り込み前（10 月 29 日）の試験の実行ファイルを回して `SkinnedRenderPathContractTest` が落ちていた。この木で `cmake --build build --config Debug --target MathGeometryTest SkinnedRenderPathContractTest RHITextureUpdateVulkanTest -- /m:1` を回して終了コード 0（`.harness/runs/20261103-065137/iter-2-build.txt`）、続けて verify の ctest `MatrixAbstractionTest`・`SkinnedRenderPathContractTest` が 2/2 Passed（`.harness/runs/20261103-065137/iter-2-ctest.txt`）
+- Next: 起動の確かめは後回し。`FIX-NORMAL-MATRIX-SCALE-CHECK-P1-CHECK` で `Game` を含むビルドと ctest `ComputeSkinningVulkanTest` を回す
+- Notes: verify のビルドの行は `Game` を含むので後回しにされ、作業ツリーの `build/` の試験の実行ファイルが古いまま ctest の行だけが再検証される。試験の実行ファイルは反復の中で先にビルドしておく
