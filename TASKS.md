@@ -4425,3 +4425,13 @@
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^PathTracingMaterialVulkanTest$"`
 - paths: Assets/Shaders/PathTracing, Assets/Shaders/Common, Library/Core/Private/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
 - from: PT-NONUNIFORM-SAMPLER
+
+## SCN-INTERIOR-SHAFTS-CHECK: 窓から入る光の筋を出す(後回しにしたアプリの起動の確かめ)
+- status: todo
+- check: launch
+- gpu: exclusive
+- done-when: SCN-INTERIOR-SHAFTS で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、SCN-INTERIOR-SHAFTS の done-when を満たすことを確かめる。満たさなければ SCN-INTERIOR-SHAFTS の done-when と paths の範囲で直す。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene interior-light -Configuration RelWithDebInfo -Build -RequireAssets -OutDir .harness/runs/scene-capture/SCN-INTERIOR-SHAFTS`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SCN-INTERIOR-SHAFTS`
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Scripts, TASKS.md, PROGRESS.md
+- from: SCN-INTERIOR-SHAFTS
