@@ -8937,3 +8937,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: なし(workflow の起動とプッシュはこのタスクの範囲外。実際の手動起動での完走は G2-S6-ASSET-SET-P3 の再開で確かめる)
 - Notes: GitHub Actions 上での条件式の評価はまだ実行で確かめていない
 - U1 宛先ロックに環境変数で上限つきの待ちを足し、検査と文書を書く: 着地(直し 1 回)
+- U2 宛先ロックを取る cook の試験に待ちの環境変数を付け、タスクの verify を通す: 着地(直し 0 回)
