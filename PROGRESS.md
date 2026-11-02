@@ -8541,3 +8541,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 検証: `cmake --build build --config Debug --target Game VolumetricFogModelTest -- /m:1` は EXIT=0（1 回目は PDB の取り合いの C1041 で、再実行で通った）、`ctest -R "^VolumetricFogModelTest$"` は 1/1 Passed（`.harness/runs/20261102-093542/U3-unit-verify.txt`）。シェーダー 3 本（volumetrics・volumetrics_probe・lighting）のオフラインのコンパイルも通った。numstat は 2 通りで一致
 - Next: 起動の確かめは後回し（当分アプリを起動しない決まり）。SCN-INTERIOR-SHAFTS-CHECK で `CaptureScene.ps1 -Scene interior-light`（RelWithDebInfo）の `overview`・`window` を開いて窓からの光の筋を確かめ、`CaptureStartupScene.ps1` で Rendering3DTest の撮影が変わらないことを確かめる
 - Notes: 霧の値は撮影の前の初めの値。筋が弱い・霧が一様に光るなら密度と `kFogAmbientScale` を撮影で詰める。空気遠近と一緒に積む経路（`MarchFogAndAerial`）は歩をずらしていない（interior-light は大気の書き出しのときだけ空気遠近を有効にする）
+- U1 写しの検査で落ちる 2 本を ctest から外し、理由を記録する: 着地(直し 0 回)
