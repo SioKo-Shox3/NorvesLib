@@ -8572,3 +8572,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: この機の powershell.exe の binary（3247bcfd…）は receipt の値（38f43846…）と違うので、照合を直しても `VerifyTextureAssetSet.py` のローカルの完走は PS binary の照合で止まる。スクリプトの失敗時の検査（既存の directory・empty・file・junction の拒否、source-reparse の拒否、prefix・manifest の衝突の拒否、失敗した root を公開しない・stage を残さない、末尾の `VerifyManagedTextureCli.py`）のローカルの根拠は、通っている `TextureManagedCliTest` と `TextureAssetSetOutputTest`。スクリプト全体の完走は `windows-assetcook.yml` の CI の手動起動が要り、まだ回していない（外に出る操作なので人が決める）。
 - Notes: 要起票: `windows-assetcook.yml` を手動起動して、照合を直した `VerifyTextureAssetSet.py` の全体（失敗時の検査を含む）が CI で完走することを確かめる。
 - Notes: 範囲外で残したもの: `CookTextureAssetSet.ps1` の `Quote-ProcessArgument` は、空白を含み末尾が `\` のパスを渡すと閉じの引用符を `\"` にする（前からある関数、端の場合だけ）。
+- U1 CreateNormalMatrix の特異判定を尺度に対する比にし、小スケールの回転の検査を足す: 着地(直し 0 回)
