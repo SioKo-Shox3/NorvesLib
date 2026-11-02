@@ -4936,3 +4936,19 @@
 - paths: Test/Core/Rendering/MegaGeometryResourcesTest.cpp, Test/Core/Rendering/ModelResourcesAssetRuntimeTest.cpp, Library/Core/Private/Rendering/RenderResources.cpp, Library/Core/Private/Resource/ModelAssetRuntime.cpp, TASKS.md, PROGRESS.md
 - from: G2-S6-ASSET-SET-P3
 - stop-when: 2 本を ctest の対象や CI の `-R` から外して通す、受付を締める検査(`requestDuringClear == 0`)を緩める・消す、プッシュする、workflow を起動する。
+
+## SCN-WL-CLIFF-GEN-TALUS-CHECK-P1-CHECK: 壁から崖錐へ移る所の崩れた大きな塊（数 m〜十数 m）を、岩の物として崖の生成の 7 範囲の壁の足元に置く(後回しにしたアプリの起動の確かめ)
+- status: todo
+- check: launch
+- gpu: exclusive
+- done-when: SCN-WL-CLIFF-GEN-TALUS-CHECK-P1 で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、SCN-WL-CLIFF-GEN-TALUS-CHECK-P1 の done-when を満たすことを確かめる。満たさなければ SCN-WL-CLIFF-GEN-TALUS-CHECK-P1 の done-when と paths の範囲で直す。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Hdr -Aov -Views ref_far_01,ref_far_02,ref_ground_02 -GameArgs wasteland-common-light,wasteland-hide=clouds+foliage+gravel+buildings+aerial+fog,wasteland-gray-material,wasteland-aa=fxaa,wasteland-talus-limit=off -OutDir .harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS-CHECK-P1/shape`
+- verify: `python Scripts/Terrain/CompareReference.py --capture .harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS-CHECK-P1/shape --photos far_01,far_02,ground_02 --shape --expect Scripts/Terrain/ExpectSpecs/shape-cliff-blocks.json --verify`
+- verify: `python Scripts/Terrain/CompareReference.py --capture .harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS-CHECK-P1/shape --photos far_01,far_02,ground_02 --shape --terrain-only --expect Scripts/Terrain/ExpectSpecs/shape-cliff-talus.json --verify`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Views ref_cliff_01 -GameArgs wasteland-export-placement=.harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS-CHECK-P1/placement/placement.json -OutDir .harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS-CHECK-P1/placement`
+- verify: `python Scripts/Terrain/CheckPlacement.py --placement .harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS-CHECK-P1/placement/placement.json --asset-cook build/Tools/AssetCook/RelWithDebInfo/AssetCook.exe --regions Scripts/Terrain/ShapeRegions.json --range-group cliff-gen --baseline .harness/runs/scene-capture/SCN-WL-CLIFF-PLACEMENT-CHECK/placement_check.record.json --verify`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Views ref_far_01,ref_far_02,ref_ground_02 -OutDir .harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS-CHECK-P1/look`
+- verify: `python Scripts/Terrain/ReferenceCheck.py --geom-requests --capture .harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS-CHECK-P1/look --verify`
+- verify: `python Scripts/Terrain/CompareReference.py --capture .harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS-CHECK-P1/look --photos far_01,far_02,ground_02 --verify`
+- paths: Game/GameModes/Wasteland, Game/CMakeLists.txt, Assets/AssetSets/WastelandCliffBlocks.json, Assets/Models/WastelandCliffBlocks, Scripts/Terrain/CheckPlacement.py, Scripts/Terrain/ExpectSpecs, Docs/RenderingValidation/WastelandShape.md, TASKS.md, PROGRESS.md
+- from: SCN-WL-CLIFF-GEN-TALUS-CHECK-P1
