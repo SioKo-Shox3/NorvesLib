@@ -3866,7 +3866,7 @@
 - notes: 作者承認済みのStage B必須要件。blocked理由はv1形式とStage A等の前提待ちで、作者の再承認待ちではない。
 
 ## G2-GR32-GPU-ACCEPTANCE: 多材質と旧描画互換をWindows GPUで確認する
-- status: done
+- status: doing
 - done-when: 次の (1)〜(4) を満たす。
   (1) 既定のビジビリティバッファの経路で、スキンの submesh ごとの描画が自分のインデックスの範囲だけを ID に描く。`VisibilityRasterPass::CollectSkinnedChunks` が `SourceFirstIndex`/`SourceIndexCount` を `VirtualShadowMapPass` と同じ規則で使い、範囲の計算は 2 つのパスで 1 つの関数に共有する。旧の空表(全体の範囲)の描画は変えない。既存の `SkinnedSubmeshDrawContractTest` に範囲(全体・部分・3 の倍数でない・はみ出し)の検査を足し、Debug で通る(新しい試験の exe は作らない)。
   (2) 検証用の骨付きパネル(`StartupSkinnedProbe`)に、2 submesh・2 材質 slot の変種を足す。起動の引数で明示したときだけ使い、既定の起動画面と `-SkinnedProbe` だけの撮影の見た目は変えない。`CaptureStartupScene.ps1 -SkinnedProbeMaterials 2` は、ビジビリティバッファの On と Off の両方で、パネルの各半分の材質の色の読み戻しがその slot の材質の色であることを判定し、違えば result=fail にする。
