@@ -8986,3 +8986,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 試験の偽のコマンドリストは提出の状態を追わないので、束で出したリストの `GetLastSubmissionSerial()` は 0 のまま(提出番号は偽のスワップチェーンの枠で持つ)。
 - U1 塊の効きの合否の仕様を版 15 の撮影から書く: 着地(直し 0 回)
 - U2 接地の検査に前の記録の無い新しい物の組（cliff_block）の絶対の合否を足す: 着地(直し 0 回)
+- U3 崖の生成の 7 範囲の壁の足に崩れた塊を置く規則（BuildCliffBlocks）: 着地(直し 1 回)

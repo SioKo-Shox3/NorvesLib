@@ -1,4 +1,8 @@
-﻿#include "GameModes/Wasteland/WastelandTalus.h"
+﻿// 崖錐の岩と、崖の生成の 7 範囲の壁の足に置く崩れた塊。
+// 塊は接地用の格子の焼いた面を使い、不可の升目は見送る。塊の無い所は焼いた面が高さ場と同じ。
+// 崖錐と共通の接地・寄せ直し・縮小・ずらしで据える。
+
+#include "GameModes/Wasteland/WastelandTalus.h"
 #include "GameModes/Wasteland/WastelandFoliage.h"
 
 #include "Core/Public/Logging/LogMacros.h"
@@ -100,6 +104,39 @@ namespace Game::GameModes::WastelandTalus
         // 影を落とす岩の上限（大きい順）。高さフォグが有効な間は CSM が投影物を 1 つずつ（カスケードの数だけ）描き、
         // 1 つあたり Debug の記録で約 0.5 ms かかるので、影が遠くから見える大岩だけに絞る。残りは影を落とさない散布へ回す
         constexpr uint32_t kCasterBudget = 96;
+
+        // ---- 崖の塊 ----
+        constexpr float kBlockCellMeters = 12.0f;
+        constexpr float kBlockMaxSlopeDegrees = 38.0f;
+        constexpr float kWallMinSlopeDegrees = 55.0f;
+        constexpr float kBlockChance = 0.55f;
+        // 崖錐の系列（群れ・小片・斑）から離した専用の系列。
+        constexpr uint32_t kBlockStream = 20000u;
+
+        struct CliffBlockRegion
+        {
+            const char *Id;
+            float MinX;
+            float MaxX;
+            float MinZ;
+            float MaxZ;
+
+            bool Contains(float x, float z) const
+            {
+                return x >= MinX && x <= MaxX && z >= MinZ && z <= MaxZ;
+            }
+        };
+
+        // 出典: Scripts/Terrain/ShapeRegions.json の range_groups["cliff-gen"]。
+        // Tools/AssetCook/TerrainCliffDetail.cpp と同じ世界座標[m]。表の先頭を重複升目の所有範囲にする。
+        constexpr CliffBlockRegion kCliffBlockRegions[kCliffBlockRegionCount] = {
+            {"cliff_near_2_rooster_butte", 640.0f, 1160.0f, 560.0f, 1160.0f},
+            {"cliff_near_3_setting_hen_butte", 960.0f, 1460.0f, 1140.0f, 1960.0f},
+            {"cliff_castle_0_main_butte", -3450.0f, -2100.0f, -4450.0f, -3950.0f},
+            {"cliff_castle_1_far_cliffs", -3650.0f, -1900.0f, -6340.0f, -4650.0f},
+            {"cliff_castle_2_left_7_9km", -6250.0f, -5150.0f, -8250.0f, -6250.0f},
+            {"cliff_castle_3_left_5_7km", -5350.0f, -4250.0f, -7000.0f, -5500.0f},
+            {"cliff_castle_4_left_edge_9km", -6875.0f, -6150.0f, -8625.0f, -7875.0f}};
 
         uint32_t Hash(uint32_t value)
         {
@@ -255,49 +292,16 @@ namespace Game::GameModes::WastelandTalus
             float Height = 0.0f;
         };
 
-        struct Builder
+        /// 接地の標本と許容区間。崖錐と崖の塊で同じ判定を使う。
+        struct RockFitter
         {
             const TerrainHeightField &Field;
-            const TerrainSurfaceMask &Mask;
-            const NorvesLib::Core::Rendering::Terrain::TerrainPlacementGround *Ground;
+            const Terrain::TerrainPlacementGround *Ground;
             const TalusMeshShape (&Shapes)[kTalusMeshCount];
-            const VariableArray<TalusExclusion> &Exclusions;
-            /// 影を落とさない岩（小片と、影の上限から溢れた候補）
-            VariableArray<MegaScatterInstance> &Fragments;
-            TalusStats &Stats;
-            float MinSlopeCosine = std::cos(kMaxSlopeDegrees * kDegToRad);
-            /// 影を落とす候補
-            VariableArray<CasterCandidate> Candidates;
             /// 回した全標本の座標（足元の帯と高さを同じ標本から求める）
             VariableArray<Vector3> RotatedPoints;
-            /// 書き出した四元数と頂点を検査と同じ精度で回した、高さだけの列。
+            /// 検査と同じ倍精度で回した高さの列。
             VariableArray<double> RotatedBandY;
-
-            bool IsExcluded(float x, float z) const
-            {
-                for (const TalusExclusion &exclusion : Exclusions)
-                {
-                    const float dx = x - exclusion.X;
-                    const float dz = z - exclusion.Z;
-                    if (dx * dx + dz * dz < exclusion.Radius * exclusion.Radius)
-                    {
-                        return true;
-                    }
-                }
-                return false;
-            }
-
-            /// (x,z) に置けるか（格子の縁から kGridEdgeMargin の内・崖でない・除外の外）。置けるなら法線を返す
-            bool CanPlace(float x, float z, TerrainNormal &outNormal) const
-            {
-                if (!Field.Contains(x - kGridEdgeMargin, z - kGridEdgeMargin) ||
-                    !Field.Contains(x + kGridEdgeMargin, z + kGridEdgeMargin) || IsExcluded(x, z))
-                {
-                    return false;
-                }
-                outNormal = Field.SampleNormal(x, z, 1.0f);
-                return outNormal.Y >= MinSlopeCosine;
-            }
 
             /// 検査と同じ全標本の下 5 % を足元とし、浮きと埋もれの両方に収まる高さを求める
             bool FitRock(TalusMesh mesh, const Quaternion &worldRotation, float scale, float x, float z,
@@ -432,132 +436,257 @@ namespace Game::GameModes::WastelandTalus
                 outInstance.MeshIndex = static_cast<uint32_t>(mesh);
                 return true;
             }
+        };
 
-            /// 同じ乱数の向きを保ち、収まらない岩だけ法線へ寄せ、それでも収まらなければ縮める
+        struct RockFitResult
+        {
+            MegaScatterInstance Instance;
+            float Height = 0.0f;
+            float CenterX = 0.0f;
+            float CenterZ = 0.0f;
+            float RejectionX = 0.0f;
+            float RejectionZ = 0.0f;
+            bool bFits = false;
+            bool bRealigned = false;
+            bool bShrunk = false;
+            bool bShifted = false;
+            bool bRecoveredRealigned = false;
+            bool bRecoveredShrunk = false;
+            bool bUnreliable = false;
+            bool bNoBlockUnsupported = false;
+        };
+
+        /// 向きを決めた全標本の高さ（板では最長辺）で拡大率を決める。
+        float OrientedExtent(const TalusMeshShape &shape, const Quaternion &rotation, bool bLongestEdge, float scale = 1.0f)
+        {
+            Vector3 low(std::numeric_limits<float>::max());
+            Vector3 high(std::numeric_limits<float>::lowest());
+            for (const Vector3 &point : shape.Points)
+            {
+                const Vector3 offset = rotation * Vector3(point.x * scale, point.y * scale, point.z * scale);
+                low.x = std::min(low.x, offset.x);
+                low.y = std::min(low.y, offset.y);
+                low.z = std::min(low.z, offset.z);
+                high.x = std::max(high.x, offset.x);
+                high.y = std::max(high.y, offset.y);
+                high.z = std::max(high.z, offset.z);
+            }
+            return bLongestEdge ? std::max({high.x - low.x, high.y - low.y, high.z - low.z}) : high.y - low.y;
+        }
+
+        /// 寄せ直し、縮小、ずらしを共通化する。scale は崖錐では拡大率、塊では狙う寸法。
+        template <typename TContext>
+        RockFitResult TryPlaceRock(TContext &context, TalusMesh mesh, float x, float z, const TerrainNormal &normal,
+                                  float scale, int32_t cx, int32_t cz, uint32_t stream, bool bBlock = false)
+        {
+            RockFitResult result;
+            const bool bSlab = !bBlock && mesh == TalusMesh::Slab;
+            const float initialAlign = bSlab ? kSlabAlign : kCragAlign;
+            const float jitter = bSlab ? kSlabTiltJitterDegrees : kCragTiltJitterDegrees;
+            const float u0 = Random(cx, cz, stream);
+            const float u1 = Random(cx, cz, stream + 1);
+            const Quaternion yaw(Vector3(0.0f, 1.0f, 0.0f), Random(cx, cz, stream + 2) * 2.0f * kPi);
+            const Quaternion face = bSlab ? Quaternion() : RestFace(Random(cx, cz, stream + 3));
+            MegaScatterInstance instance;
+            float height = 0.0f;
+            bool bRealigned = false;
+            bool unreliable = false;
+            bool noBlockUnsupported = false;
+            bool bEncounteredUnreliable = false;
+            const float initialScale = scale;
+            // 岩塊・板とも、既存の小片の最小拡大率までに留める。
+            float minScale = bSlab ? kSlabScale[0] : kFragmentCragScale[0];
+            const auto hasBlockSize = [&](const Quaternion &rotation)
+            {
+                const float extent = mesh == TalusMesh::Slab
+                                         ? OrientedExtent(context.Shapes[static_cast<uint32_t>(mesh)], rotation, true, scale)
+                                         : height;
+                return std::isfinite(extent) && extent >= 3.0f && extent <= 14.0f;
+            };
+            const auto fitAt = [&](float fitX, float fitZ, const TerrainNormal &fitNormal, bool bShifted)
+            {
+                Quaternion rotation;
+                scale = initialScale;
+                bRealigned = false;
+                for (uint32_t step = 0; step <= kAlignmentSteps; ++step)
+                {
+                    const float t = static_cast<float>(step) / static_cast<float>(kAlignmentSteps);
+                    // 最後はばらつきも取り除いて法線に揃える。最初は乱数の回転と積の順序を保つ。
+                    const Vector3 up = TiltedUp(fitNormal, initialAlign + (1.0f - initialAlign) * t,
+                                               jitter * (1.0f - t), u0, u1);
+                    rotation = RotateUpTo(up) * yaw;
+                    if (!bSlab)
+                    {
+                        rotation = rotation * face;
+                    }
+                    if (bBlock)
+                    {
+                        // 板は薄さを保つため、縮小の下限も高さではなく最長辺 3 m とする。
+                        const float extent = OrientedExtent(context.Shapes[static_cast<uint32_t>(mesh)], rotation,
+                                                            mesh == TalusMesh::Slab);
+                        if (!std::isfinite(extent) || extent <= 1.0e-5f)
+                        {
+                            return false;
+                        }
+                        scale = initialScale / extent;
+                        minScale = 3.0f / extent;
+                    }
+                    if (context.Fitter.FitRock(mesh, rotation, scale, fitX, fitZ, instance, height, unreliable, noBlockUnsupported,
+                                               bShifted || bEncounteredUnreliable) &&
+                        (!bBlock || hasBlockSize(rotation)))
+                    {
+                        bRealigned = step > 0;
+                        result.CenterX = fitX;
+                        result.CenterZ = fitZ;
+                        return true;
+                    }
+                    bEncounteredUnreliable = bEncounteredUnreliable || unreliable;
+                }
+                // 向きと大きさで足元の帯が変わるため、信頼できない升目でも次の試行を続ける。
+                while (scale > minScale)
+                {
+                    scale = std::max(minScale, scale * kShrinkFactor);
+                    bRealigned = true;
+                    if (context.Fitter.FitRock(mesh, rotation, scale, fitX, fitZ, instance, height, unreliable, noBlockUnsupported,
+                                               bShifted || bEncounteredUnreliable) &&
+                        (!bBlock || hasBlockSize(rotation)))
+                    {
+                        result.CenterX = fitX;
+                        result.CenterZ = fitZ;
+                        return true;
+                    }
+                    bEncounteredUnreliable = bEncounteredUnreliable || unreliable;
+                }
+                return false;
+            };
+            bool bFits = fitAt(x, z, normal, false);
+            if (bFits && bEncounteredUnreliable)
+            {
+                if (bBlock ? height < initialScale : scale < initialScale)
+                {
+                    result.bRecoveredShrunk = true;
+                }
+                else
+                {
+                    result.bRecoveredRealigned = true;
+                }
+            }
+            // 見送りの集計は、ずらす前の最終試行と同じ配置原点に残す。
+            const float rejectionX = instance.Position.x;
+            const float rejectionZ = instance.Position.z;
+            if (!bFits)
+            {
+                // 系列 +4 は各岩の未使用枠。群れの生成は配置結果を参照せず、予定の中心と大きさを使う。
+                const float shiftAngle = Random(cx, cz, stream + 4) * 2.0f * kPi;
+                for (uint32_t step = 0; step < kShiftSteps; ++step)
+                {
+                    const float angle = shiftAngle + static_cast<float>(step % 4) * (0.5f * kPi);
+                    const float distance = kShiftDistances[step / 4];
+                    const float shiftedX = x + distance * std::cos(angle);
+                    const float shiftedZ = z + distance * std::sin(angle);
+                    TerrainNormal shiftedNormal;
+                    if (context.CanPlace(shiftedX, shiftedZ, shiftedNormal) && fitAt(shiftedX, shiftedZ, shiftedNormal, true))
+                    {
+                        bFits = true;
+                        result.bShifted = true;
+                        break;
+                    }
+                }
+            }
+            result.Instance = instance;
+            result.Height = height;
+            result.RejectionX = rejectionX;
+            result.RejectionZ = rejectionZ;
+            result.bFits = bFits;
+            result.bRealigned = bRealigned;
+            result.bShrunk = bBlock ? height < initialScale : scale < initialScale;
+            result.bUnreliable = unreliable;
+            result.bNoBlockUnsupported = noBlockUnsupported;
+            return result;
+        }
+
+        struct Builder
+        {
+            const TerrainHeightField &Field;
+            const TerrainSurfaceMask &Mask;
+            const NorvesLib::Core::Rendering::Terrain::TerrainPlacementGround *Ground;
+            const TalusMeshShape (&Shapes)[kTalusMeshCount];
+            const VariableArray<TalusExclusion> &Exclusions;
+            /// 影を落とさない岩（小片と、影の上限から溢れた候補）
+            VariableArray<MegaScatterInstance> &Fragments;
+            TalusStats &Stats;
+            float MinSlopeCosine = std::cos(kMaxSlopeDegrees * kDegToRad);
+            /// 影を落とす候補
+            VariableArray<CasterCandidate> Candidates;
+            RockFitter Fitter{Field, Ground, Shapes};
+
+            bool IsExcluded(float x, float z) const
+            {
+                for (const TalusExclusion &exclusion : Exclusions)
+                {
+                    const float dx = x - exclusion.X;
+                    const float dz = z - exclusion.Z;
+                    if (dx * dx + dz * dz < exclusion.Radius * exclusion.Radius)
+                    {
+                        return true;
+                    }
+                }
+                return false;
+            }
+
+            /// (x,z) に置けるか（格子の縁から kGridEdgeMargin の内・崖でない・除外の外）。置けるなら法線を返す
+            bool CanPlace(float x, float z, TerrainNormal &outNormal) const
+            {
+                if (!Field.Contains(x - kGridEdgeMargin, z - kGridEdgeMargin) ||
+                    !Field.Contains(x + kGridEdgeMargin, z + kGridEdgeMargin) || IsExcluded(x, z))
+                {
+                    return false;
+                }
+                outNormal = Field.SampleNormal(x, z, 1.0f);
+                return outNormal.Y >= MinSlopeCosine;
+            }
+
+            /// 共通の据え方の結果だけを、崖錐の岩の統計と散布へ反映する。
             float AddRock(TalusMesh mesh, float x, float z, const TerrainNormal &normal, float scale, int32_t cx,
                           int32_t cz, uint32_t stream, bool bCaster)
             {
-                const bool bSlab = mesh == TalusMesh::Slab;
-                const float initialAlign = bSlab ? kSlabAlign : kCragAlign;
-                const float jitter = bSlab ? kSlabTiltJitterDegrees : kCragTiltJitterDegrees;
-                const float u0 = Random(cx, cz, stream);
-                const float u1 = Random(cx, cz, stream + 1);
-                const Quaternion yaw(Vector3(0.0f, 1.0f, 0.0f), Random(cx, cz, stream + 2) * 2.0f * kPi);
-                const Quaternion face = bSlab ? Quaternion() : RestFace(Random(cx, cz, stream + 3));
-                MegaScatterInstance instance;
-                float height = 0.0f;
-                bool bRealigned = false;
-                bool unreliable = false;
-                bool noBlockUnsupported = false;
-                bool bEncounteredUnreliable = false;
-                const float initialScale = scale;
-                // 岩塊・板とも、既存の小片の最小拡大率までに留める。
-                const float minScale = bSlab ? kSlabScale[0] : kFragmentCragScale[0];
-                const auto fitAt = [&](float fitX, float fitZ, const TerrainNormal &fitNormal, bool bShifted)
-                {
-                    Quaternion rotation;
-                    scale = initialScale;
-                    bRealigned = false;
-                    for (uint32_t step = 0; step <= kAlignmentSteps; ++step)
-                    {
-                        const float t = static_cast<float>(step) / static_cast<float>(kAlignmentSteps);
-                        // 最後はばらつきも取り除いて法線に揃える。最初は乱数の回転と積の順序を保つ。
-                        const Vector3 up = TiltedUp(fitNormal, initialAlign + (1.0f - initialAlign) * t,
-                                                   jitter * (1.0f - t), u0, u1);
-                        rotation = RotateUpTo(up) * yaw;
-                        if (!bSlab)
-                        {
-                            rotation = rotation * face;
-                        }
-                        if (FitRock(mesh, rotation, scale, fitX, fitZ, instance, height, unreliable, noBlockUnsupported,
-                                    bShifted || bEncounteredUnreliable))
-                        {
-                            bRealigned = step > 0;
-                            return true;
-                        }
-                        bEncounteredUnreliable = bEncounteredUnreliable || unreliable;
-                    }
-                    // 向きと大きさで足元の帯が変わるため、信頼できない升目でも次の試行を続ける。
-                    while (scale > minScale)
-                    {
-                        scale = std::max(minScale, scale * kShrinkFactor);
-                        bRealigned = true;
-                        if (FitRock(mesh, rotation, scale, fitX, fitZ, instance, height, unreliable, noBlockUnsupported,
-                                    bShifted || bEncounteredUnreliable))
-                        {
-                            return true;
-                        }
-                        bEncounteredUnreliable = bEncounteredUnreliable || unreliable;
-                    }
-                    return false;
-                };
-                bool bFits = fitAt(x, z, normal, false);
-                if (bFits && bEncounteredUnreliable)
-                {
-                    if (scale < initialScale)
-                    {
-                        ++Stats.RecoveredShrunk;
-                    }
-                    else
-                    {
-                        ++Stats.RecoveredRealigned;
-                    }
-                }
-                // 見送りの集計は、ずらす前の最終試行と同じ配置原点に残す。
-                const float rejectionX = instance.Position.x;
-                const float rejectionZ = instance.Position.z;
-                if (!bFits)
-                {
-                    // 系列 +4 は各岩の未使用枠。群れの生成は配置結果を参照せず、予定の中心と大きさを使う。
-                    const float shiftAngle = Random(cx, cz, stream + 4) * 2.0f * kPi;
-                    for (uint32_t step = 0; step < kShiftSteps; ++step)
-                    {
-                        const float angle = shiftAngle + static_cast<float>(step % 4) * (0.5f * kPi);
-                        const float distance = kShiftDistances[step / 4];
-                        const float shiftedX = x + distance * std::cos(angle);
-                        const float shiftedZ = z + distance * std::sin(angle);
-                        TerrainNormal shiftedNormal;
-                        if (CanPlace(shiftedX, shiftedZ, shiftedNormal) && fitAt(shiftedX, shiftedZ, shiftedNormal, true))
-                        {
-                            bFits = true;
-                            ++Stats.Shifted;
-                            break;
-                        }
-                    }
-                }
-                if (!bFits)
+                const RockFitResult result = TryPlaceRock(*this, mesh, x, z, normal, scale, cx, cz, stream);
+                Stats.RecoveredShrunk += result.bRecoveredShrunk ? 1u : 0u;
+                Stats.RecoveredRealigned += result.bRecoveredRealigned ? 1u : 0u;
+                Stats.Shifted += result.bShifted ? 1u : 0u;
+                if (!result.bFits)
                 {
                     ++Stats.Unplaced;
-                    // 理由は最後に接地を試した結果で分類し、位置はずらす前の原点を使う。
-                    Stats.GroundRejections.push_back({rejectionX, rejectionZ, static_cast<uint32_t>(mesh), unreliable});
-                    if (unreliable)
+                    Stats.GroundRejections.push_back({result.RejectionX, result.RejectionZ,
+                                                      static_cast<uint32_t>(mesh), result.bUnreliable});
+                    if (result.bUnreliable)
                     {
                         ++Stats.Unreliable[static_cast<uint32_t>(mesh)];
-                        if (noBlockUnsupported)
+                        if (result.bNoBlockUnsupported)
                         {
                             ++Stats.NoBlockUnsupported[static_cast<uint32_t>(mesh)];
                         }
                     }
                     return 0.0f;
                 }
-                if (bRealigned)
+                if (result.bRealigned)
                 {
                     ++Stats.Realigned;
                 }
-                if (scale < initialScale)
+                if (result.bShrunk)
                 {
                     ++Stats.Shrunk;
                 }
                 if (bCaster)
                 {
-                    Candidates.push_back({instance, height});
+                    Candidates.push_back({result.Instance, result.Height});
                 }
                 else
                 {
-                    Fragments.push_back(instance);
+                    Fragments.push_back(result.Instance);
                 }
                 ++Stats.PerMesh[static_cast<uint32_t>(mesh)];
-                return height;
+                return result.Height;
             }
 
             /// 岩塊を 1 つ置く（6 面のどれか・斜面へ寄せる・向きは乱数）
@@ -648,7 +777,255 @@ namespace Game::GameModes::WastelandTalus
                 }
             }
         };
+
+        /// 中心と ±1 m の 5 点の焼いた面から中心差分で斜面を求める。不可の升目は見送り、塊の無い所は高さ場を使う。
+        bool SampleBlockGround(const TerrainHeightField &field, const Terrain::TerrainPlacementGround &ground,
+                               float x, float z, float &height, TerrainNormal &normal)
+        {
+            float left = 0.0f;
+            float right = 0.0f;
+            float back = 0.0f;
+            float front = 0.0f;
+            if (!ground.SampleGround(field, x, z, height) ||
+                !ground.SampleGround(field, x - 1.0f, z, left) ||
+                !ground.SampleGround(field, x + 1.0f, z, right) ||
+                !ground.SampleGround(field, x, z - 1.0f, back) ||
+                !ground.SampleGround(field, x, z + 1.0f, front) ||
+                !std::isfinite(height) || !std::isfinite(left) || !std::isfinite(right) ||
+                !std::isfinite(back) || !std::isfinite(front))
+            {
+                return false;
+            }
+            const float dx = (right - left) * 0.5f;
+            const float dz = (front - back) * 0.5f;
+            const float length = std::sqrt(dx * dx + 1.0f + dz * dz);
+            normal = {-dx / length, 1.0f / length, -dz / length};
+            return true;
+        }
+
+        /// 緩い斜面の上向き 4〜20 m に、3 m 以上高い急な壁がある帯。
+        bool IsBlockFoot(const TerrainHeightField &field, const Terrain::TerrainPlacementGround &ground,
+                         float x, float z, TerrainNormal &normal, bool &noGround)
+        {
+            noGround = false;
+            float height = 0.0f;
+            if (!SampleBlockGround(field, ground, x, z, height, normal))
+            {
+                noGround = true;
+                return false;
+            }
+            if (normal.Y < std::cos(kBlockMaxSlopeDegrees * kDegToRad))
+            {
+                return false;
+            }
+            const float length = std::sqrt(normal.X * normal.X + normal.Z * normal.Z);
+            if (length <= 1.0e-5f)
+            {
+                return false;
+            }
+            for (uint32_t distance = 4; distance <= 20; distance += 2)
+            {
+                const float wallX = x - normal.X / length * static_cast<float>(distance);
+                const float wallZ = z - normal.Z / length * static_cast<float>(distance);
+                float wallHeight = 0.0f;
+                TerrainNormal wallNormal;
+                if (!SampleBlockGround(field, ground, wallX, wallZ, wallHeight, wallNormal))
+                {
+                    noGround = true;
+                    continue;
+                }
+                if (wallNormal.Y <= std::cos(kWallMinSlopeDegrees * kDegToRad) && wallHeight >= height + 3.0f)
+                {
+                    noGround = false;
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /// 塊の接地とずらし先の制約。崖錐の散布・統計は持たない。
+        struct CliffBlockBuilder
+        {
+            const TerrainHeightField &Field;
+            const Terrain::TerrainPlacementGround *Ground;
+            const TalusMeshShape (&Shapes)[kTalusMeshCount];
+            const VariableArray<TalusExclusion> &Exclusions;
+            const CliffBlockRegion &Region;
+            RockFitter Fitter{Field, Ground, Shapes};
+
+            bool IsExcluded(float x, float z) const
+            {
+                for (const TalusExclusion &exclusion : Exclusions)
+                {
+                    const float dx = x - exclusion.X;
+                    const float dz = z - exclusion.Z;
+                    if (dx * dx + dz * dz < exclusion.Radius * exclusion.Radius)
+                    {
+                        return true;
+                    }
+                }
+                return false;
+            }
+
+            bool CanPlace(float x, float z, TerrainNormal &normal) const
+            {
+                bool noGround = false;
+                return Region.Contains(x, z) && !IsExcluded(x, z) && IsBlockFoot(Field, *Ground, x, z, normal, noGround);
+            }
+        };
+
+        struct PlacedCliffBlock
+        {
+            int32_t CellX;
+            int32_t CellZ;
+            float X;
+            float Z;
+            float Height;
+            int32_t Next;
+        };
+
     } // namespace
+
+    const char *GetCliffBlockRegionId(uint32_t index)
+    {
+        return index < kCliffBlockRegionCount ? kCliffBlockRegions[index].Id : "";
+    }
+
+    void BuildCliffBlocks(const TerrainHeightField &field, const Terrain::TerrainPlacementGround *ground,
+                          const TalusMeshShape (&shapes)[kTalusMeshCount], const VariableArray<TalusExclusion> &exclusions,
+                          VariableArray<MegaScatterInstance> &outBlocks, CliffBlockStats &outStats)
+    {
+        outBlocks.clear();
+        outStats = CliffBlockStats{};
+        const TalusMeshShape &crag = shapes[static_cast<uint32_t>(TalusMesh::Crag)];
+        if (!crag.bAvailable || crag.Points.empty())
+        {
+            return;
+        }
+        VariableArray<PlacedCliffBlock> placed;
+        // 世界の升目をハッシュで引き、近隣 ±3 升目だけを調べる。範囲をまたぐ隣の塊とも間隔を保つ。
+        constexpr uint32_t kNeighborBuckets = 4096u;
+        int32_t heads[kNeighborBuckets];
+        for (int32_t &head : heads)
+        {
+            head = -1;
+        }
+        const auto bucket = [](int32_t x, int32_t z)
+        {
+            return Hash(static_cast<uint32_t>(x) ^ Hash(static_cast<uint32_t>(z))) % kNeighborBuckets;
+        };
+        for (uint32_t regionIndex = 0; regionIndex < kCliffBlockRegionCount; ++regionIndex)
+        {
+            const CliffBlockRegion &region = kCliffBlockRegions[regionIndex];
+            CliffBlockBuilder builder{field, ground, shapes, exclusions, region};
+            const int32_t firstX = static_cast<int32_t>(std::ceil(region.MinX / kBlockCellMeters - 0.5f));
+            const int32_t lastX = static_cast<int32_t>(std::floor(region.MaxX / kBlockCellMeters - 0.5f));
+            const int32_t firstZ = static_cast<int32_t>(std::ceil(region.MinZ / kBlockCellMeters - 0.5f));
+            const int32_t lastZ = static_cast<int32_t>(std::floor(region.MaxZ / kBlockCellMeters - 0.5f));
+            for (int32_t cz = firstZ; cz <= lastZ; ++cz)
+            {
+                for (int32_t cx = firstX; cx <= lastX; ++cx)
+                {
+                    const float centerX = (static_cast<float>(cx) + 0.5f) * kBlockCellMeters;
+                    const float centerZ = (static_cast<float>(cz) + 0.5f) * kBlockCellMeters;
+                    bool bOwned = true;
+                    for (uint32_t previous = 0; previous < regionIndex; ++previous)
+                    {
+                        if (kCliffBlockRegions[previous].Contains(centerX, centerZ))
+                        {
+                            bOwned = false;
+                            break;
+                        }
+                    }
+                    if (!bOwned)
+                    {
+                        continue;
+                    }
+                    ++outStats.CellsVisited;
+                    if (ground == nullptr)
+                    {
+                        ++outStats.NoGround;
+                        continue;
+                    }
+                    const float x = (static_cast<float>(cx) + Random(cx, cz, kBlockStream)) * kBlockCellMeters;
+                    const float z = (static_cast<float>(cz) + Random(cx, cz, kBlockStream + 1)) * kBlockCellMeters;
+                    if (!region.Contains(x, z))
+                    {
+                        continue;
+                    }
+                    TerrainNormal normal;
+                    bool noGround = false;
+                    if (!IsBlockFoot(field, *ground, x, z, normal, noGround))
+                    {
+                        outStats.NoGround += noGround ? 1u : 0u;
+                        continue;
+                    }
+                    ++outStats.FootCells;
+                    const float coarse = ValueNoise(x / kPatchWavelengths[0], z / kPatchWavelengths[0], kBlockStream + 100);
+                    const float fine = ValueNoise(x / kPatchWavelengths[1], z / kPatchWavelengths[1], kBlockStream + 101);
+                    const float patch = Smooth(kPatchRange, 0.7f * coarse + 0.3f * fine);
+                    if (Random(cx, cz, kBlockStream + 2) >= kBlockChance * patch || builder.IsExcluded(x, z))
+                    {
+                        continue;
+                    }
+                    const uint32_t slabIndex = static_cast<uint32_t>(TalusMesh::Slab);
+                    const TalusMesh mesh = shapes[slabIndex].bAvailable && !shapes[slabIndex].Points.empty() &&
+                                                   Random(cx, cz, kBlockStream + 3) < 0.2f
+                                               ? TalusMesh::Slab : TalusMesh::Crag;
+                    const float u = Random(cx, cz, kBlockStream + 4);
+                    const RockFitResult fit = TryPlaceRock(builder, mesh, x, z, normal, 3.0f + 11.0f * u * u,
+                                                          cx, cz, kBlockStream + 16, true);
+                    if (!fit.bFits)
+                    {
+                        ++outStats.Unplaced;
+                        outStats.GroundRejections.push_back({fit.RejectionX, fit.RejectionZ,
+                                                            static_cast<uint32_t>(mesh), fit.bUnreliable});
+                        continue;
+                    }
+                    const int32_t cellX = static_cast<int32_t>(std::floor(fit.CenterX / kBlockCellMeters));
+                    const int32_t cellZ = static_cast<int32_t>(std::floor(fit.CenterZ / kBlockCellMeters));
+                    bool bTooClose = false;
+                    // 最大の間隔は 0.6 × (14 + 14) = 16.8 m。ずらした後の中心の升目で近傍を引く。
+                    for (int32_t dz = -3; dz <= 3 && !bTooClose; ++dz)
+                    {
+                        for (int32_t dx = -3; dx <= 3 && !bTooClose; ++dx)
+                        {
+                            for (int32_t index = heads[bucket(cellX + dx, cellZ + dz)]; index >= 0;
+                                 index = placed[static_cast<size_t>(index)].Next)
+                            {
+                                const PlacedCliffBlock &other = placed[static_cast<size_t>(index)];
+                                if (other.CellX != cellX + dx || other.CellZ != cellZ + dz)
+                                {
+                                    continue;
+                                }
+                                const float separation = 0.6f * (fit.Height + other.Height);
+                                const float distanceX = fit.CenterX - other.X;
+                                const float distanceZ = fit.CenterZ - other.Z;
+                                if (distanceX * distanceX + distanceZ * distanceZ < separation * separation)
+                                {
+                                    bTooClose = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    if (bTooClose)
+                    {
+                        continue;
+                    }
+                    const uint32_t key = bucket(cellX, cellZ);
+                    placed.push_back({cellX, cellZ, fit.CenterX, fit.CenterZ, fit.Height, heads[key]});
+                    heads[key] = static_cast<int32_t>(placed.size() - 1);
+                    outBlocks.push_back(fit.Instance);
+                    ++outStats.Placed;
+                    ++outStats.PerRegion[regionIndex];
+                    ++outStats.PerMesh[static_cast<uint32_t>(mesh)];
+                    outStats.MinHeight = outStats.Placed == 1 ? fit.Height : std::min(outStats.MinHeight, fit.Height);
+                    outStats.MaxHeight = std::max(outStats.MaxHeight, fit.Height);
+                }
+            }
+        }
+    }
 
     void BuildTalusRocks(const TerrainHeightField &field, const TerrainSurfaceMask &mask,
                          const NorvesLib::Core::Rendering::Terrain::TerrainPlacementGround *ground,
