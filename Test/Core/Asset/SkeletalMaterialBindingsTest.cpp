@@ -3,9 +3,17 @@
 #undef NDEBUG
 #endif
 #include <cassert>
+#include <cstring>
 #include <iostream>
 
 using namespace NorvesLib::Core::Skeletal;
+namespace
+{
+    NorvesLib::Core::Container::Span<const uint8_t> Name(const char* value)
+    {
+        return {reinterpret_cast<const uint8_t*>(value),std::strlen(value)};
+    }
+}
 int main()
 {
     SkeletalMaterialBindings bindings;
@@ -54,6 +62,19 @@ int main()
     const uint8_t defaultName[] = {'D','e','f','a','u','l','t'};
     MaterialIdentityView legacy[] = {{0,{defaultName,7}}};
     assert(FindSkeletalMaterialSlot(legacy,{defaultName,7}) == 0);
+    // 逆順の primitive で作られた slot を、slot identity と逆順の行に置く。
+    MaterialIdentityView collidingSlots[] = {{1,Name("Material_0")},{0,Name("Material_0")}};
+    assert(FindSkeletalMaterialSlot(collidingSlots,Name("Material_0")) == -1);
+    collidingSlots[0].Name = Name("Material_0 [0]");
+    collidingSlots[1].Name = Name("Material_0 [1]");
+    const auto generatedSlot = FindSkeletalMaterialSlot(collidingSlots,Name("Material_0 [0]"));
+    const auto authoredSlot = FindSkeletalMaterialSlot(collidingSlots,Name("Material_0 [1]"));
+    assert(generatedSlot == 1 && authoredSlot == 0);
+    const auto slotCount = static_cast<uint32_t>(sizeof(collidingSlots)/sizeof(collidingSlots[0]));
+    SkeletalMaterialBindings namedBindings;
+    assert(namedBindings.Set(1,1,slotCount,static_cast<uint32_t>(generatedSlot),20));
+    assert(namedBindings.TryGet(1,1,slotCount,static_cast<uint32_t>(generatedSlot),10,out) && out == 20);
+    assert(namedBindings.TryGet(1,1,slotCount,static_cast<uint32_t>(authoredSlot),10,out) && out == 10);
     std::cout << "SkeletalMaterialBindingsTest PASS: scope_generation_fallback_clear_failure_unique_name\n";
     return 0;
 }

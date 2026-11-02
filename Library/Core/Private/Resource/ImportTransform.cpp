@@ -1,5 +1,6 @@
 ﻿#include "Resource/ImportTransform.h"
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <cstring>
 #include <limits>
@@ -8,8 +9,157 @@
 namespace NorvesLib::Core::AssetImport
 {
     static_assert(sizeof(float) == 4 && std::numeric_limits<float>::is_iec559);
+    static_assert(sizeof(double) == 8 && std::numeric_limits<double>::is_iec559);
     namespace
     {
+        // 2^-1074を単位とする2の補数整数。binary64の全範囲と64ビット分の加算回数を保持する。
+        struct ExactSum
+        {
+            static constexpr size_t LimbCount = 34;
+            uint64_t Limbs[LimbCount] = {};
+
+            void AddWord(size_t index, uint64_t word, bool bNegative)
+            {
+                while (word != 0 && index < LimbCount)
+                {
+                    const uint64_t previous = Limbs[index];
+                    if (bNegative)
+                    {
+                        Limbs[index] -= word;
+                        word = previous < word ? 1 : 0;
+                    }
+                    else
+                    {
+                        Limbs[index] += word;
+                        word = Limbs[index] < previous ? 1 : 0;
+                    }
+                    ++index;
+                }
+            }
+
+            bool Add(double value)
+            {
+                if (!std::isfinite(value))
+                {
+                    return false;
+                }
+                const uint64_t bits = std::bit_cast<uint64_t>(value);
+                const uint64_t exponent = (bits >> 52) & 0x7ff;
+                uint64_t significand = bits & ((uint64_t{1} << 52) - 1);
+                const size_t shift = exponent == 0 ? 0 : static_cast<size_t>(exponent - 1);
+                if (exponent != 0)
+                {
+                    significand |= uint64_t{1} << 52;
+                }
+                const size_t index = shift / 64;
+                const size_t offset = shift % 64;
+                const bool bNegative = (bits >> 63) != 0;
+                AddWord(index, significand << offset, bNegative);
+                if (offset != 0)
+                {
+                    AddWord(index + 1, significand >> (64 - offset), bNegative);
+                }
+                return true;
+            }
+
+            bool AddProduct(double left, double right)
+            {
+                const double product = left * right;
+                if (!std::isfinite(product))
+                {
+                    return false;
+                }
+                // 積の丸めで失われた下位分も正確な和に加える。
+                return Add(product) && Add(std::fma(left, right, -product));
+            }
+
+            bool IsZero() const
+            {
+                for (const uint64_t limb : Limbs)
+                {
+                    if (limb != 0)
+                    {
+                        return false;
+                    }
+                }
+                return true;
+            }
+
+            bool ToDouble(double& out) const
+            {
+                const bool bNegative = (Limbs[LimbCount - 1] >> 63) != 0;
+                uint64_t magnitude[LimbCount];
+                uint64_t carry = bNegative ? 1 : 0;
+                for (size_t index = 0; index < LimbCount; ++index)
+                {
+                    magnitude[index] = (bNegative ? ~Limbs[index] : Limbs[index]) + carry;
+                    carry = carry != 0 && magnitude[index] == 0 ? 1 : 0;
+                }
+                size_t count = LimbCount;
+                while (count != 0 && magnitude[count - 1] == 0)
+                {
+                    --count;
+                }
+                if (count == 0)
+                {
+                    out = 0.0;
+                    return true;
+                }
+                size_t highest = (count - 1) * 64 + 63 - std::countl_zero(magnitude[count - 1]);
+                const uint64_t sign = bNegative ? uint64_t{1} << 63 : 0;
+                if (highest < 52)
+                {
+                    // 非正規数は累算器の単位と同じため丸めずに表現できる。
+                    out = std::bit_cast<double>(sign | magnitude[0]);
+                    return true;
+                }
+                if (highest > 2097)
+                {
+                    return false;
+                }
+                const size_t shift = highest - 52;
+                const size_t index = shift / 64, offset = shift % 64;
+                uint64_t significand = magnitude[index] >> offset;
+                if (offset != 0 && index + 1 < LimbCount)
+                {
+                    significand |= magnitude[index + 1] << (64 - offset);
+                }
+                if (shift != 0)
+                {
+                    const size_t guardIndex = shift - 1;
+                    const bool bGuard = ((magnitude[guardIndex / 64] >> (guardIndex % 64)) & 1) != 0;
+                    bool bSticky = false;
+                    for (size_t limb = 0; limb < guardIndex / 64; ++limb)
+                    {
+                        bSticky |= magnitude[limb] != 0;
+                    }
+                    const size_t remainder = guardIndex % 64;
+                    if (remainder != 0)
+                    {
+                        bSticky |= (magnitude[guardIndex / 64] & ((uint64_t{1} << remainder) - 1)) != 0;
+                    }
+                    // 中間値は最下位の仮数が偶数になる方向に丸める。
+                    if (bGuard && (bSticky || (significand & 1) != 0))
+                    {
+                        ++significand;
+                        if (significand == (uint64_t{1} << 53))
+                        {
+                            significand >>= 1;
+                            ++highest;
+                        }
+                    }
+                }
+                if (highest > 2097)
+                {
+                    return false;
+                }
+                const uint64_t exponent = static_cast<uint64_t>(highest - 51);
+                const uint64_t fraction = significand & ((uint64_t{1} << 52) - 1);
+                out = std::bit_cast<double>(sign | (exponent << 52) | fraction);
+                return true;
+            }
+        };
+
         struct TransformPlan
         {
             double Rotation[3][3] = {};
@@ -59,6 +209,23 @@ namespace NorvesLib::Core::AssetImport
             double position[3];
             ReadPosition(vertex, offset, position);
             Rotate(plan, position, out);
+        }
+        bool SurfaceWeight(const double (&a)[3], const double (&b)[3], const double (&c)[3], double& out)
+        {
+            double cross[3];
+            for (size_t axis = 0; axis < 3; ++axis)
+            {
+                const size_t y = (axis + 1) % 3, z = (axis + 2) % 3;
+                ExactSum sum;
+                if (!sum.Add(a[y] * b[z]) || !sum.Add(-a[z] * b[y]) ||
+                    !sum.Add(b[y] * c[z]) || !sum.Add(-b[z] * c[y]) ||
+                    !sum.Add(c[y] * a[z]) || !sum.Add(-c[z] * a[y]) || !sum.ToDouble(cross[axis]))
+                {
+                    return false;
+                }
+            }
+            out = std::hypot(std::abs(cross[0]), std::abs(cross[1]), std::abs(cross[2]));
+            return std::isfinite(out);
         }
         void BuildRotation(const ImportSettings& settings, TransformPlan& plan)
         {
@@ -275,6 +442,7 @@ namespace NorvesLib::Core::AssetImport
             return fail(resolvedScale.Result);
         }
         plan.Scale = resolvedScale.Value;
+        double surfaceArea = 0.0;
         if (settings.Origin == OriginMode::BoundsCenter || settings.Origin == OriginMode::BoundsBottomCenter)
         {
             for (size_t axis = 0; axis < 3; ++axis)
@@ -284,6 +452,65 @@ namespace NorvesLib::Core::AssetImport
             if (settings.Origin == OriginMode::BoundsBottomCenter)
             {
                 plan.Pivot[1] = minimum[1];
+            }
+        }
+        else if (settings.Origin == OriginMode::SurfaceCentroid)
+        {
+            ExactSum area, area3, moment[3];
+            for (size_t triangle = 0; triangle < indices.size(); triangle += 3)
+            {
+                double position[3][3];
+                for (size_t vertex = 0; vertex < 3; ++vertex)
+                {
+                    ReadRotatedPosition(vertices.data() + static_cast<size_t>(indices[triangle + vertex]) * layout.Stride,
+                        layout.PositionOffset, plan, position[vertex]);
+                }
+                double weight = 0.0;
+                if (!SurfaceWeight(position[0], position[1], position[2], weight))
+                {
+                    return fail(TransformResult::Unrepresentable);
+                }
+                if (weight == 0.0)
+                {
+                    continue;
+                }
+                if (!area3.AddProduct(weight, 3.0) || !area.Add(weight))
+                {
+                    return fail(TransformResult::Unrepresentable);
+                }
+                for (size_t axis = 0; axis < 3; ++axis)
+                {
+                    for (size_t vertex = 0; vertex < 3; ++vertex)
+                    {
+                        if (!moment[axis].AddProduct(position[vertex][axis], weight))
+                        {
+                            return fail(TransformResult::Unrepresentable);
+                        }
+                    }
+                }
+            }
+            if (area.IsZero())
+            {
+                return fail(TransformResult::DegenerateSurface);
+            }
+            double totalArea = 0.0, totalArea3 = 0.0;
+            if (!area.ToDouble(totalArea) || !area3.ToDouble(totalArea3) || totalArea3 == 0.0)
+            {
+                return fail(TransformResult::Unrepresentable);
+            }
+            surfaceArea = totalArea / 2.0;
+            for (size_t axis = 0; axis < 3; ++axis)
+            {
+                double totalMoment = 0.0;
+                if (!moment[axis].ToDouble(totalMoment))
+                {
+                    return fail(TransformResult::Unrepresentable);
+                }
+                plan.Pivot[axis] = totalMoment / totalArea3;
+                if (!std::isfinite(plan.Pivot[axis]))
+                {
+                    return fail(TransformResult::Unrepresentable);
+                }
             }
         }
         else if (settings.Origin == OriginMode::Custom)
@@ -324,6 +551,7 @@ namespace NorvesLib::Core::AssetImport
         ImportTransformOutcome outcome;
         outcome.Result = TransformResult::Success;
         outcome.AppliedScale = plan.Scale;
+        outcome.SurfaceArea = surfaceArea;
         for (size_t axis = 0; axis < 3; ++axis)
         {
             outcome.Pivot[axis] = plan.Pivot[axis];

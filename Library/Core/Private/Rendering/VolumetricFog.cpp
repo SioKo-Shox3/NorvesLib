@@ -13,6 +13,8 @@ namespace NorvesLib::Core::Rendering
         constexpr float kMaximumDensityAtBaseHeight = 10.0f;
         constexpr float kMaximumAbsoluteBaseHeight = 1.0e6f;
         constexpr float kMaximumHeightFalloffPerUnit = 1.0f;
+        constexpr float kMaximumFogDistanceMeters = 1.0e6f;
+        constexpr float kMaximumFogAmbientScale = 16.0f;
         constexpr double kMaximumOpticalDepth = 80.0;
 
         float ClampFinite(float value, float minimum, float maximum, float fallback)
@@ -56,6 +58,14 @@ namespace NorvesLib::Core::Rendering
             parameters.HeightFalloffPerUnit,
             kMaximumHeightFalloffPerUnit,
             kDefaultHeightFalloffPerUnit);
+        result.MaxDistanceMeters = ClampNonNegativeFinite(
+            parameters.MaxDistanceMeters,
+            kMaximumFogDistanceMeters,
+            0.0f);
+        result.AmbientScale = ClampNonNegativeFinite(
+            parameters.AmbientScale,
+            kMaximumFogAmbientScale,
+            1.0f);
         return result;
     }
 
@@ -82,7 +92,10 @@ namespace NorvesLib::Core::Rendering
         const double originExponent = -falloff *
             (static_cast<double>(rayOriginHeight) - static_cast<double>(sanitized.BaseHeight));
         const double directionY = std::clamp(static_cast<double>(rayDirectionY), -1.0, 1.0);
-        const double distance = static_cast<double>(rayDistance);
+        const float fogDistance = sanitized.MaxDistanceMeters > 0.0f
+                                      ? std::min(rayDistance, sanitized.MaxDistanceMeters)
+                                      : rayDistance;
+        const double distance = static_cast<double>(fogDistance);
         const double verticalRate = falloff * directionY;
 
         double logIntegral = 0.0;

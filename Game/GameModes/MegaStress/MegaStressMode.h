@@ -7,6 +7,7 @@
 // 1 つのメッシュ = 1 つの MegaMesh（Model）として読み、個別の Entity を --stress-entities=<n>（既定 2000）個置く。
 // 同じメッシュの Entity は 1 つの Model を共有し、メッシュの種類・向きは番号から決める（実行ごとに同じ）。
 // 一覧に書いた資産のうちクック済みが無いものは、警告して読み飛ばす（読めた種類だけで続ける）。
+// 一覧のメッシュは主のカメラの LOD の許容に下限 kStressMainLodFloorPixels を付ける。
 // 置いた数・読めたメッシュ（資源）の数・区間（材質とプールの塊が同じ Entity の集まり。メッシュごとに 1 つ）の数は
 // MEGA_STRESS_PLACED でログに出る。
 // 視点は SceneCatalog.h の kMegaStressViews（overview・close・aerial）。
@@ -54,6 +55,10 @@ namespace Game::GameModes
     /// --stress-entities の既定値と上限
     inline constexpr uint32_t kDefaultStressEntityCount = 2000;
     inline constexpr uint32_t kMaxStressEntityCount = 200000;
+
+    /// 一覧のメッシュ（家・塔・岩）の主のカメラの LOD を選ぶ誤差の許容の下限[画素]。
+    /// 全体の許容（1 px）より粗くして、5 万個が描くクラスタの量を減らす。バナナと影の LOD には付けない。
+    inline constexpr float kStressMainLodFloorPixels = 2.0f;
 
     /// --stress-stream-cell（区画の一辺[m]）の下限・上限、--stress-stream-period（周期[秒]）の既定・下限
     inline constexpr float kMinStressStreamCellMeters = 4.0f;

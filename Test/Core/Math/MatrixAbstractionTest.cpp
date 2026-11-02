@@ -155,6 +155,37 @@ int main()
     }
 
     {
+        const NorvesLib::Math::Quaternion rotation(
+            NorvesLib::Math::Vector3(0.0f, 1.0f, 0.0f),
+            NorvesLib::Math::Constants::PI * 0.25f);
+        const NorvesLib::Math::Matrix4x4 referenceWorld =
+            NorvesLib::Math::MatrixUtils::CreateWorldRowVector(
+                NorvesLib::Math::Vector3::Zero, rotation, NorvesLib::Math::Vector3::One);
+        const NorvesLib::Math::Matrix4x4 referenceNormal =
+            NorvesLib::Math::MatrixUtils::CreateNormalMatrix(referenceWorld);
+        const NorvesLib::Math::Vector3 inputNormal(1.0f, 0.0f, 0.0f);
+        const NorvesLib::Math::Vector3 expectedDirection =
+            NorvesLib::Math::MatrixUtils::TransformVectorRowVector(referenceNormal, inputNormal).Normalized();
+        const float scales[] = {0.001f, 0.0025f, 0.005f};
+
+        for (const float scale : scales)
+        {
+            const NorvesLib::Math::Matrix4x4 world =
+                NorvesLib::Math::MatrixUtils::CreateWorldRowVector(
+                    NorvesLib::Math::Vector3::Zero,
+                    rotation,
+                    NorvesLib::Math::Vector3(scale, scale, scale));
+            const NorvesLib::Math::Matrix4x4 normal =
+                NorvesLib::Math::MatrixUtils::CreateNormalMatrix(world);
+            assert(!NorvesLib::Math::MatrixUtils::ApproxEqualUpperLeft3x3(
+                normal, NorvesLib::Math::Matrix4x4::Identity));
+            const NorvesLib::Math::Vector3 actualDirection =
+                NorvesLib::Math::MatrixUtils::TransformVectorRowVector(normal, inputNormal).Normalized();
+            AssertVector3NearlyEqual(actualDirection, expectedDirection, 1.0e-4f);
+        }
+    }
+
+    {
         AssertWorldRowVectorMatchesTransform(
             NorvesLib::Math::Vector3::Zero,
             NorvesLib::Math::Quaternion::Identity,

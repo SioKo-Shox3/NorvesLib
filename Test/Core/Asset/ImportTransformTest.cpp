@@ -8,6 +8,7 @@
 #include <cstring>
 #include <iostream>
 #include <limits>
+#include <utility>
 
 using namespace NorvesLib::Core;
 using namespace NorvesLib::Core::AssetImport;
@@ -188,7 +189,138 @@ int main()
     UnchangedFailure(vertices,indices,settings,TransformResult::Unrepresentable);
     Triangle(vertices);
     settings={}; settings.Origin=OriginMode::SurfaceCentroid;
-    UnchangedFailure(vertices,indices,settings,TransformResult::UnsupportedOrigin);
+    assert(!SupportsSkeletalScaleImport(settings));
+    result=ApplyImportTransform(Bytes(vertices),3,Layout,indices,settings);
+    assert(result.Result==TransformResult::Success && result.SurfaceArea==4.0);
+    assert(result.Pivot[0]==2.0/3.0 && result.Pivot[1]==4.0/3.0 && result.Pivot[2]==0.0);
+    assert(vertices[0].Position[0]==static_cast<float>(-2.0/3.0));
+    assert(vertices[0].Position[1]==static_cast<float>(-4.0/3.0));
+    assert(vertices[1].Position[0]==static_cast<float>(2.0-2.0/3.0));
+    assert(vertices[1].Position[1]==static_cast<float>(-4.0/3.0));
+    assert(vertices[2].Position[0]==static_cast<float>(-2.0/3.0));
+    assert(vertices[2].Position[1]==static_cast<float>(4.0-4.0/3.0));
+    for (const auto& vertex : vertices) { assert(vertex.Position[2]==0.0f); }
+
+    // 各頂点の寄与を正確に累算し、巨大な項の相殺後にも1を残す。
+    Vertex referenceExtreme[6];
+    ImportTransformOutcome referenceExtremeResult;
+    for (bool reverse : {false,true})
+    {
+        Vertex extreme[6];
+        const float magnitude=std::ldexp(1.0f,100), tiny=std::ldexp(1.0f,-100);
+        extreme[0].Position[0]=magnitude; extreme[3].Position[0]=-magnitude;
+        extreme[2].Position[0]=1; extreme[2].Position[1]=tiny;
+        extreme[5].Position[0]=1; extreme[5].Position[1]=tiny;
+        uint32_t faces[]={0,1,2,3,4,5};
+        if (reverse)
+        {
+            for (size_t index=0;index<3;++index) { std::swap(faces[index],faces[index+3]); }
+        }
+        result=ApplyImportTransform(Bytes(extreme),6,Layout,faces,settings);
+        assert(result.Result==TransformResult::Success && result.SurfaceArea==1.0);
+        assert(result.Pivot[0]==1.0/3.0 && result.Pivot[1]==std::ldexp(1.0,-100)/3.0 && result.Pivot[2]==0.0);
+        assert(extreme[2].Position[0]==static_cast<float>(1.0-1.0/3.0));
+        assert(extreme[5].Position[0]==static_cast<float>(1.0-1.0/3.0));
+        if (!reverse)
+        {
+            std::memcpy(referenceExtreme,extreme,sizeof(extreme));
+            referenceExtremeResult=result;
+        }
+        else
+        {
+            assert(std::memcmp(referenceExtremeResult.Pivot,result.Pivot,sizeof(result.Pivot))==0);
+            assert(std::memcmp(&referenceExtremeResult.SurfaceArea,&result.SurfaceArea,sizeof(result.SurfaceArea))==0);
+            for (size_t vertex=0;vertex<6;++vertex)
+            {
+                assert(std::memcmp(referenceExtreme[vertex].Position,extreme[vertex].Position,sizeof(extreme[vertex].Position))==0);
+            }
+        }
+    }
+
+    // 外積の巨大な正負の積を相殺しても、面内の巡回と巻きの反転で結果を保つ。
+    Vertex referenceTriangle[3];
+    ImportTransformOutcome referenceTriangleResult;
+    bool bFirstTriangle=true;
+    for (uint32_t rotation=0;rotation<3;++rotation)
+    for (bool reverse : {false,true})
+    {
+        Vertex extreme[3];
+        const float magnitude=1e20f;
+        extreme[0].Position[0]=magnitude; extreme[0].Position[1]=magnitude;
+        extreme[1].Position[0]=-magnitude; extreme[1].Position[1]=-magnitude;
+        extreme[2].Position[0]=1; extreme[2].Position[1]=2;
+        uint32_t face[]={rotation,(rotation+1)%3,(rotation+2)%3};
+        if (reverse) { std::swap(face[1],face[2]); }
+        result=ApplyImportTransform(Bytes(extreme),3,Layout,face,settings);
+        assert(result.Result==TransformResult::Success && result.SurfaceArea==static_cast<double>(magnitude));
+        assert(result.Pivot[0]==1.0/3.0 && result.Pivot[1]==2.0/3.0 && result.Pivot[2]==0.0);
+        assert(extreme[2].Position[0]==static_cast<float>(1.0-1.0/3.0));
+        assert(extreme[2].Position[1]==static_cast<float>(2.0-2.0/3.0));
+        if (bFirstTriangle)
+        {
+            std::memcpy(referenceTriangle,extreme,sizeof(extreme));
+            referenceTriangleResult=result;
+            bFirstTriangle=false;
+        }
+        else
+        {
+            assert(std::memcmp(referenceTriangleResult.Pivot,result.Pivot,sizeof(result.Pivot))==0);
+            assert(std::memcmp(&referenceTriangleResult.SurfaceArea,&result.SurfaceArea,sizeof(result.SurfaceArea))==0);
+            for (size_t vertex=0;vertex<3;++vertex)
+            {
+                assert(std::memcmp(referenceTriangle[vertex].Position,extreme[vertex].Position,sizeof(extreme[vertex].Position))==0);
+            }
+        }
+    }
+
+    // 面の順序、面内の巡回、巻きの反転で結果のビットが変わらないことを確かめる。
+    const uint32_t permutations[][3]={{0,1,2},{0,2,1},{1,0,2},{1,2,0},{2,0,1},{2,1,0}};
+    Vertex referenceSurfaces[9];
+    ImportTransformOutcome referenceSurfaceResult;
+    bool bFirstSurface=true;
+    for (const auto& permutation : permutations)
+    for (uint32_t rotation=0;rotation<3;++rotation)
+    for (bool reverse : {false,true})
+    {
+        Vertex surfaces[9];
+        const float x[]={1e20f,-1e20f,1};
+        uint32_t faces[9];
+        for (uint32_t triangle=0;triangle<3;++triangle)
+        {
+            for (uint32_t vertex=0;vertex<3;++vertex)
+            {
+                surfaces[triangle*3+vertex].Position[0]=x[triangle];
+                faces[triangle*3+vertex]=permutation[triangle]*3+(vertex+rotation)%3;
+            }
+            surfaces[triangle*3+1].Position[1]=1;
+            surfaces[triangle*3+2].Position[2]=1;
+            if (reverse) { std::swap(faces[triangle*3+1],faces[triangle*3+2]); }
+        }
+        result=ApplyImportTransform(Bytes(surfaces),9,Layout,faces,settings);
+        assert(result.Result==TransformResult::Success && result.SurfaceArea==1.5);
+        assert(result.Pivot[0]==1.0/3.0 && result.Pivot[1]==1.0/3.0 && result.Pivot[2]==1.0/3.0);
+        assert(surfaces[6].Position[0]==static_cast<float>(1.0-1.0/3.0));
+        if (bFirstSurface)
+        {
+            std::memcpy(referenceSurfaces,surfaces,sizeof(surfaces));
+            referenceSurfaceResult=result;
+            bFirstSurface=false;
+        }
+        else
+        {
+            assert(std::memcmp(referenceSurfaceResult.Pivot,result.Pivot,sizeof(result.Pivot))==0);
+            assert(std::memcmp(&referenceSurfaceResult.SurfaceArea,&result.SurfaceArea,sizeof(result.SurfaceArea))==0);
+            for (size_t vertex=0;vertex<9;++vertex)
+            {
+                assert(std::memcmp(referenceSurfaces[vertex].Position,surfaces[vertex].Position,sizeof(surfaces[vertex].Position))==0);
+            }
+        }
+    }
+    Triangle(vertices); vertices[2].Position[1]=0;
+    UnchangedFailure(vertices,indices,settings,TransformResult::DegenerateSurface);
+    Triangle(vertices); indices[1]=indices[2]=0;
+    UnchangedFailure(vertices,indices,settings,TransformResult::DegenerateSurface);
+    indices[1]=1; indices[2]=2;
     Triangle(vertices); settings={};
     assert(ApplyImportTransform({Bytes(vertices).data(),sizeof(vertices)-1},3,Layout,indices,settings).Result==TransformResult::InvalidLayout);
     assert(ApplyImportTransform(Bytes(vertices),0,Layout,indices,settings).Result==TransformResult::InvalidLayout);

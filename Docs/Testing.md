@@ -51,13 +51,15 @@ GPUを使うテストは、Vulkanを使えない環境ではskip（終了コー�
 
 こうした検査は、正しい変更のたびに壊れて直す手間を生む。一方で、撮影の比較・検証レイヤー・開発ビルドの検査・コードの読み合わせで見つからない不具合は捕まえていない。
 
+`RenderGraphCompileTest.cpp` などでは副作用のある呼び出しを `assert(...)` の中に置いている（例: `assert(graph.Initialize(nullptr));`、`assert(graph.Compile());`）。同ファイルで `assert(` の中に `Initialize`・`Create`・`Compile`・`Register` の呼び出しを含む行は 344 行ある。NDEBUG の構成（RelWithDebInfo・Release）では初期化ごと消え、0xC0000005 で落ちる。修正は別途、その周りを触るときに試験を消すか、副作用を assert の外へ出す。
+
 規模（2026-10-13 時点）:
 - `Test/` の追跡ファイルは約 580 個（.cpp は約 470 個）。`Test/Core/Rendering/CMakeLists.txt` の `add_test` は約 165 個ある。
 - 例として、`RenderGraphCompileTest.cpp` は約 1.55 万行・assert は約 2,700 個ある。`== N` の形の数の決め打ちは約 160 個で、このファイルに触れたコミットは約 120 個。
 - GitHub Actions のワークフローは 3 本（`animation-cpu.yml`・`texture-asset-set-baseline.yml`・`windows-assetcook.yml`）。
 
 扱い:
-- 邪魔になった試験は、消す前に `set_tests_properties(<名前> PROPERTIES DISABLED TRUE)` で ctest の実行から外す（戻せる）。理由をコメントに書く。外したもの: `RenderGraphCompileTest`（2026-10-13）、`GeometryPageRequestVulkanTest`（2026-10-14。シェーダーの束縛を手で写したレイアウト）、`RenderGraphTextureUsageContractTest`（2026-11-01。VisibilityResolve の assert で落ち、対話窓のまま終わらない）、`NorvesLibBridgeAdapterScriptComponentTest` の対象と `NorvesLibBridgeAdapterScriptComponentTest`・`NorvesLibBridgeAdapterNumericEntityRegressionTest`・`NorvesLibBridgeAdapterThumbnailTest`・`BridgeBase64Test` の4試験、`AssetManifestReloadBridgeLoopbackTest`（2026-11-01。Game のソースを組み込み、全体のビルドで Game をもう一度コンパイルするので、対象ごと `EXCLUDE_FROM_ALL` にして実行からも外した）。
+- 邪魔になった試験は、消す前に `set_tests_properties(<名前> PROPERTIES DISABLED TRUE)` で ctest の実行から外す（戻せる）。理由をコメントに書く。外したもの: `RenderGraphCompileTest`（2026-10-13）、`GeometryPageRequestVulkanTest`（2026-10-14。シェーダーの束縛を手で写したレイアウト）、`RenderGraphTextureUsageContractTest`（2026-11-01。VisibilityResolve の assert で落ち、対話窓のまま終わらない）、`NorvesLibBridgeAdapterScriptComponentTest` の対象と `NorvesLibBridgeAdapterScriptComponentTest`・`NorvesLibBridgeAdapterNumericEntityRegressionTest`・`NorvesLibBridgeAdapterThumbnailTest`・`BridgeBase64Test` の4試験、`AssetManifestReloadBridgeLoopbackTest`（2026-11-01。Game のソースを組み込み、全体のビルドで Game をもう一度コンパイルするので、対象ごと `EXCLUDE_FROM_ALL` にして実行からも外した）、`FrameCaptureReadbackHelperTest`（2026-11-02。対応しない形式の一覧の決め打ち）。
 - 外した試験・写しの検査は、その周りを触るときに消す。期待値を書き直して生かし続けない。
 - まとめての洗い出しと削除は、まだしていない（負債として残す）。
 
@@ -68,3 +70,14 @@ GPUを使うテストは、Vulkanを使えない環境ではskip（終了コー�
   - 失敗が黙って起きるか。
 - 実装の写し（数・並び・バイト数の決め打ち）を書かない。可逆で影響の小さい変更には試験を足さない。
 - 計画や評価で試験・CI の追加を求められても、上の 3 つで採否を決める。足すこと自体を完了の条件にしない。
+
+`TestAssertNoDialogTest` を足す理由:
+- 反証する契約: `Test/` 以下のすべてのテスト実行ファイルに共通処理が付き、Debug で assert が失敗しても対話窓を出さず、すぐ非 0 で終了する。
+- ほかの手段で気づけるか: 気づけない。assert が失敗したときだけ対話窓で止まり、ctest の打ち切りまで待つだけになり、ログにも出ない。
+- 失敗が黙って起きるか: 起きる。一括リンクが外れても assert が失敗するまで何も変わらない。
+
+共通処理は `Test/TestSupport` に置き、`Test/CMakeLists.txt` で一括リンクするため、新しいテストに個別の設定は要らない。
+
+`MaterialSelectionTest`・`MaterialImportDocumentTest`・`SkeletalMaterialBindingsTest` を拡充する理由: 反証する契約は、元材質（`SourceMaterial`）と生成 slot（`GeneratedSlot`）を名前の全バイトで照合し、正規化や推測をせず、設定値・`SurfaceName`・slot の割当てが選んだ 1 件にだけ届くこと。壊れても cook は成功し、別の材質へ設定や slot が入るだけでログに出ないため、撮影・検証レイヤー・開発ビルドの検査・ログでは気づけず、失敗は黙って起きる。
+
+`CookCacheDecisionTest` を拡充する理由: 反証する契約は、静的 mesh・skinmesh・clips の入力側 sidecar にある材質設定の未一致・二重指定・未対応の `SurfaceName` を、増分の skip を許した場合も preflight で拒否し、記録の一致で検証を迂回させないこと。リターゲット先骨格の sidecar もこの契約の対象とし、`RigSplitCookTest` で BVH 入力からの増分 preflight を検証する。skip されると cook のログが出ず、前の出力がそのまま使われるため、ほかの手段では気づけず、失敗は黙って起きる。

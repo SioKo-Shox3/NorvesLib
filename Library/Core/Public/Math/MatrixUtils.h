@@ -770,7 +770,7 @@ namespace NorvesLib::Math
             return result;
         }
 
-        // 法線行列(ワールド上3x3の逆転置)を構築する。DrawCommandの既存手書きロジックを逐語移設。
+        // 法線行列(ワールド上3x3の逆転置)を構築する。
         static MatrixType CreateNormalMatrix(const MatrixType& world)
         {
             static_assert(Layout == MatrixLayout::RowMajor,
@@ -791,8 +791,16 @@ namespace NorvesLib::Math
                 a01 * (a10 * a22 - a12 * a20) +
                 a02 * (a10 * a21 - a11 * a20);
 
+            const float scale =
+                std::sqrt(a00 * a00 + a01 * a01 + a02 * a02) *
+                std::sqrt(a10 * a10 + a11 * a11 + a12 * a12) *
+                std::sqrt(a20 * a20 + a21 * a21 + a22 * a22);
+
             MatrixType normalMatrix = MatrixType::Identity;
-            if (std::abs(determinant) < Constants::EPSILON)
+            // 行の長さの積に対する比で特異性を判定し、
+            // 一様に小さく縮めた物体でも逆転置を返す。
+            if (scale == 0.0f || !std::isfinite(scale) ||
+                std::abs(determinant) < Constants::EPSILON * scale)
             {
                 return normalMatrix;
             }

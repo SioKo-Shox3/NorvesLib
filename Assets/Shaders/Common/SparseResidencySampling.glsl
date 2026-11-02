@@ -19,22 +19,28 @@ bool g_VirtualTextureOrmEscaped = false;
 
 #ifdef NORVES_SPARSE_RESIDENCY_SHADING
 
+// sampler の式を各命令へ展開し、配列添字の一様でない印を届ける。色は呼び出し元の関数から返す。
+#define NORVES_RETURN_SPARSE_RESIDENT_LOD(TEX, UV, LOD) \
+{ \
+    float maxLod = float(textureQueryLevels(TEX) - 1); \
+    float level = clamp(LOD, 0.0, maxLod); \
+    vec4 color = vec4(0.0); \
+    for (int step = 0; step < 16; ++step) \
+    { \
+        int code = sparseTextureLodARB(TEX, UV, level, color); \
+        if (sparseTexelsResidentARB(code) || level >= maxLod) \
+        { \
+            return color; \
+        } \
+        level = min(floor(level) + 1.0, maxLod); \
+    } \
+    return color; \
+}
+
 // ミップを明示して標本する。常駐していなければ、1段ずつ粗いミップへ下げる（最初の読みで常駐していればそのミップ）。
 vec4 SampleSparseResidentLod(sampler2D tex, vec2 uv, float lod)
 {
-    float maxLod = float(textureQueryLevels(tex) - 1);
-    float level = clamp(lod, 0.0, maxLod);
-    vec4 color = vec4(0.0);
-    for (int step = 0; step < 16; ++step)
-    {
-        int code = sparseTextureLodARB(tex, uv, level, color);
-        if (sparseTexelsResidentARB(code) || level >= maxLod)
-        {
-            return color;
-        }
-        level = min(floor(level) + 1.0, maxLod);
-    }
-    return color;
+    NORVES_RETURN_SPARSE_RESIDENT_LOD(tex, uv, lod);
 }
 
 // 画面微分（勾配）を明示して標本する。常駐していなければ、sampledLod（実際の標本ミップ）から1段ずつ粗いミップへ下げて読み直す。
