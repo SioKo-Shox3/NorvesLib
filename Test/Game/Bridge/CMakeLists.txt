@@ -105,3 +105,33 @@ if(MSVC)
     target_compile_options(BridgeAssetPropertyEditTest PRIVATE /utf-8)
 endif()
 add_test(NAME BridgeAssetPropertyEditTest COMMAND BridgeAssetPropertyEditTest)
+
+# 決定的な撮影の実 GPU 検査。Game からは撮影セッションの翻訳単位だけを組み込む。
+add_executable(BridgeDeterministicCaptureVulkanTest
+    BridgeDeterministicCaptureVulkanTest.cpp
+    ${CMAKE_SOURCE_DIR}/Game/Bridge/BridgeDeterministicCapture.cpp
+)
+set_target_properties(BridgeDeterministicCaptureVulkanTest PROPERTIES FOLDER "Test/Game/Bridge")
+target_link_libraries(BridgeDeterministicCaptureVulkanTest PRIVATE
+    RenderingValidationFixtureSupport
+    RenderingGpuTestSupport
+    Core
+)
+target_include_directories(BridgeDeterministicCaptureVulkanTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Game
+    ${CMAKE_SOURCE_DIR}/Library
+    ${CMAKE_SOURCE_DIR}/Library/Core
+    ${CMAKE_SOURCE_DIR}/Library/Core/Public
+)
+if(MSVC)
+    target_compile_options(BridgeDeterministicCaptureVulkanTest PRIVATE /utf-8)
+endif()
+add_test(NAME BridgeDeterministicCaptureVulkanTest COMMAND BridgeDeterministicCaptureVulkanTest)
+set_tests_properties(BridgeDeterministicCaptureVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    TIMEOUT 600
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)

@@ -8716,3 +8716,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U4 Bridge の決定的な撮影の部品: 着地(直し 0 回)
 - U2 Bridge の資産のプロパティの編集の部品: 着地(直し 0 回)
 - U3 BridgeAssetPropertyEditTest と試験を足す理由: 着地(直し 0 回)
+- U5 BridgeDeterministicCaptureVulkanTest（ビルドまで）と最後の確かめ: 着地(直し 0 回)
