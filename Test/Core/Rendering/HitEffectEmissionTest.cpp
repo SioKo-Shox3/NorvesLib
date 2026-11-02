@@ -1,5 +1,6 @@
 ﻿// 当たりからエフェクトの放出要求を作る契約を CPU 上で反証する。
 #include "Particle/HitEffectEmitter.h"
+#include "Particle/VfxSchema.h"
 
 #include <cmath>
 #include <iostream>
@@ -125,6 +126,70 @@ namespace
         return true;
     }
 
+    bool TestPlayback()
+    {
+        const char* item = "5. 当たりの位置と法線に沿う再生";
+        VfxEmitterAsset particleEmitter = MakeVfxDefaultEmitter("HitPlayback");
+        VfxModule spawn = MakeVfxDefaultModule(VfxModuleType::SpawnOnEvent);
+        VfxModule velocity = MakeVfxDefaultModule(VfxModuleType::InitVelocityBox);
+        VfxModule acceleration = MakeVfxDefaultModule(VfxModuleType::Acceleration);
+        VfxModule lifetime = MakeVfxDefaultModule(VfxModuleType::InitLifetime);
+        Container::String error;
+        REQUIRE(SetVfxEmitterProperty(particleEmitter, "Space",
+            VfxValue::MakeEnum(static_cast<uint32_t>(VfxSimulationSpace::World)), &error),
+            "ワールド空間を設定できない");
+        REQUIRE(SetVfxModuleParameter(spawn, "EventName",
+            VfxValue::MakeName(HitEffectEmitter::HitEventName), &error), "当たりイベントを設定できない");
+        REQUIRE(SetVfxModuleParameter(spawn, "Count", VfxValue::MakeUInt(8u), &error),
+            "放出数を設定できない");
+        REQUIRE(SetVfxModuleParameter(velocity, "Max",
+            VfxValue::MakeVector3(Math::Vector3(0.5f, 0.5f, 2.0f)), &error), "初速の上限を設定できない");
+        REQUIRE(SetVfxModuleParameter(velocity, "Min",
+            VfxValue::MakeVector3(Math::Vector3(-0.5f, -0.5f, 1.0f)), &error), "初速の下限を設定できない");
+        REQUIRE(SetVfxModuleParameter(acceleration, "Acceleration",
+            VfxValue::MakeVector3(Math::Vector3(0.0f, 0.0f, 0.0f)), &error), "加速度をゼロに設定できない");
+        REQUIRE(SetVfxModuleParameter(lifetime, "Lifetime", VfxValue::MakeFloat(1.0f), &error),
+            "寿命を設定できない");
+        particleEmitter.Modules.push_back(spawn);
+        particleEmitter.Modules.push_back(velocity);
+        particleEmitter.Modules.push_back(lifetime);
+        particleEmitter.Modules.push_back(acceleration);
+        particleEmitter.Modules.push_back(MakeVfxDefaultModule(VfxModuleType::SpriteRenderer));
+        VfxEffectAsset effect;
+        effect.Name = "HitPlayback";
+        effect.Emitters.push_back(particleEmitter);
+        HitEffectTable table;
+        table.Effects.push_back(effect);
+        HitEffectEmitter emitter;
+        REQUIRE(emitter.SetTable(table, &error), "再生用の表を設定できない");
+
+        VfxEffectSystem effects;
+        HitEffectHit hit;
+        hit.Position = Math::Vector3(2.0f, 3.0f, -1.0f);
+        hit.Normal = Math::Vector3(1.0f, 0.0f, 0.0f);
+        REQUIRE(emitter.SubmitHit(hit), "再生用の当たりを受け付けない");
+        emitter.Dispatch(effects);
+        effects.Tick(0.1f);
+        VariableArray<VfxParticleState> particles;
+        REQUIRE(effects.CopyParticles(emitter.GetInstanceHandle(0u), 0u, particles), "放出した粒を取得できない");
+        REQUIRE(particles.size() == 8u, "当たり 1 回の粒が 8 個ではない");
+        for (const VfxParticleState& particle : particles)
+        {
+            REQUIRE(Math::Vector3::Dot(particle.Velocity, hit.Normal) > 0.9f, "粒が当たりの法線の側へ進まない");
+            const Math::Vector3 expectedPosition = hit.Position + particle.Velocity * particle.Age;
+            REQUIRE(std::fabs(particle.Position.x - expectedPosition.x) <= 1e-4f &&
+                std::fabs(particle.Position.y - expectedPosition.y) <= 1e-4f &&
+                std::fabs(particle.Position.z - expectedPosition.z) <= 1e-4f,
+                "粒の位置が当たりの位置と速度・経過時間から求めた位置と一致しない");
+        }
+
+        emitter.Dispatch(effects);
+        effects.Tick(0.1f);
+        REQUIRE(effects.CopyParticles(emitter.GetInstanceHandle(0u), 0u, particles), "次の更新の粒を取得できない");
+        REQUIRE(particles.size() <= 8u, "当たりを追加していないのに粒が増えた");
+        return true;
+    }
+
 #undef REQUIRE
 } // namespace
 
@@ -156,5 +221,6 @@ int main()
     const bool bFallback = TestFallback(emitter);
     const bool bRejection = TestRejection(emitter);
     const bool bConsumption = TestConsumption(emitter);
-    return bSingleHits && bFallback && bRejection && bConsumption ? 0 : 1;
+    const bool bPlayback = TestPlayback();
+    return bSingleHits && bFallback && bRejection && bConsumption && bPlayback ? 0 : 1;
 }
