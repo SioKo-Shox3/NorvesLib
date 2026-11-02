@@ -8903,3 +8903,10 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: なし
 - Notes: 焼き比べは代表の 1 区画だけで、その区画の出力に効かない入力の漏れ（遠景の段だけに効くソースなど）は検出できない。焼き比べで `--cook-coverage` が約 2.5 分長くなった
 - U3 地形の書き出しの記録が読む欄を、網羅の報告の新しい印の元に替える: 着地(直し 0 回)
+
+## 2026-11-02 SCN-WL-CLIFF-GEN-TALUS-CHECK-P3（run 20261102-191441 の反復 3、差し戻しの直し・完了）
+- Done: 網羅の報告 `cook_coverage.cliff-gen.json` の最上位から `asset_cook_sha256` が消えたため `OcclusionSets.py --export-terrain` が KeyError で必ず失敗していたのを直した。書き出しは報告の `terrain_sources_sha256`（地形の印の元）を読み、`export_record.json` にも同じ名前で記録する
+- 検証: `capture_set` を終了コード 1 に差し替えて `run_export_terrain` を呼ぶと、失敗の理由が撮影の終了コード 1 になり報告の読みを通り過ぎる（`cliff_detail_version=19 head_cliff_detail_version=19`）。タスクの verify 4 行を回し直した: AssetCook のビルド EXIT=0、クックの行 `cooked=0 skipped=214`（9 秒）、`--cook-coverage --verify` は `result=pass`・`recook tile=WastelandDem_7_7 match=true`（171 秒）、1 バイト足した exe の写しで `terrain_stamps 214 ['match']`。出力は `.harness/runs/20261102-191441/verify-SCN-WL-CLIFF-GEN-TALUS-CHECK-P3-iter3.txt`。アプリは起動していない。新しい試験は足していない
+- Next: なし（`--export-terrain` を実際に回すのは Game を起動する SCN-WL-CLIFF-GEN-TALUS-CHECK-P2 の verify で確かめる）
+- Notes: 移行と飛ばしの経路には exe がソースより新しいかの検査が掛からない（焼くときだけ掛かる）。共有の状態は移行済みで、旧いスクリプトが焼き直して `terrain_stamp` を落としたときだけ起こり得る
+- Notes: 要起票: `Tools/AssetCook/MeshCooker.cpp` の 2942〜2943 行目のコメント「高さ場の関数の変更は AssetCook の実行ファイルの変更として CookAssets が検出する」が、地形の印をソースの内容で求める今の仕組みと合わない
