@@ -8972,3 +8972,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: 起動の確かめは後回し。`--animation-debug` で起動して、剣が手に付いたまま振りの間に手から遅れたり揺れたりしないこと、剣のトレイルの帯の先が描画の剣と合うことを確かめる（GAME-GR130-VFX-CHECK の起動の確かめと一緒に回せる）
 - Notes: 補間を要求していない（描画の変換の列を持たない）付けた Entity は前のまま（シミュレーションの変換で描く）。付け先だけ補間すると手とずれるので、付ける側も `SetRenderInterpolationEnabled(true)` にする前提。外したフレームは履歴が今の姿勢から始め直すので、外した瞬間に最大 1 ステップ分の段差が出うる
 - Notes: `UpdateRenderRows` は補間の行ごとに親の鎖をたどって `SocketAttachmentComponent` を探す。補間の行が大量になる場面では計測で確かめる
+- U1 GPU スキニングの法線行列の退化判定を尺度不変にし、小さな一様スケールの骨の検査を足す: 着地(直し 0 回)
