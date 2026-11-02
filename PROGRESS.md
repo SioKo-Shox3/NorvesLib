@@ -8842,3 +8842,9 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: `DistortionPassVulkanTest` は GPU で未実行。合成の後の色の添付の状態（render pass の最終は ShaderResource）から転送への明示の障壁、RGBA16F の読み戻しの並び、カメラの右・上を `CopyShaderInverseView` の最初の 2 列から取る向きは、コードの読みでの判断。落ちたら、ずらしの y の符号（Vulkan の画面は下向き）と集めるシェーダーの標本の位置から見る
 - Notes: 源を置く呼び手（`RenderWorld::SetDistortions` を呼ぶゲーム側）はまだ無い。どのシーンにも源が無いので、起動画面と各シーンの見た目は変わらない（パスは何も宣言しない）。源のずらしの描画（円盤・模様の流れ・深度の遮り）は試験の対象外で、源を置く項目で撮影して確かめる
 - U1 在庫文書の旧環境の 2 文を Windows の実行記録に置き換える: 着地(直し 1 回)
+
+## 2026-11-02 G2-GR32-GPU-ACCEPTANCE-P2（run 20261102-173051 の反復 1、完了）
+- Done: `Docs/Architecture/NVSKELMigrationInventory.md` の「GR32 Nprimitive decodeの中間段階」と「Componentの材質slot API」に残っていた Linux・Windows.h で未実行の記述 2 つを、native 回帰ごとの Windows の実行記録に置き換えた。実行済み: `CookedSkeletalAssetTest`（2026-11-02 Debug、cp932・65001 で Passed、G2-GR78-SURFACE-CENTROID-CHECK-P1）、`SkeletalFramePacketSnapshotTest`（2026-11-02 TEST-FULL-CTEST-BASELINE と 2026-10-11 SCN-MEGA-SCENE-CONFIRM で Passed）。未実行（実行の記録なし）: `SkeletalImportReportTest`、`GLTFSkeletalAnalyzerTest`・`RenderingDDGILightingContractTest`（2026-10-29 SCN-BUILD-ALL-TESTS でビルドだけ通った）。この 3 本は TEST-FULL-CTEST-BASELINE-CHECK の全体 CTest で回すと書いた
+- 検証: verify の python 1 行が `[]`・終了コード 0。numstat は 2 通りで一致（17 行追加・2 行削除）。文書だけの変更で、ビルド・試験・アプリは起動していない
+- Next: TEST-FULL-CTEST-BASELINE-CHECK で全体 CTest を回したら、在庫文書の「未実行」の 3 本を実行の記録に更新する
+- Notes: 要起票: 同じ文書の 144 行（reader の native 回帰は Windows/Core 全体の実行が未検証）・159 行（native Resource/Core/描画の Windows 実行は未検証）・181 行（packet の native 回帰は Windows 依存で未実行）も古い可能性がある。181 行の packet の回帰は `SkeletalFramePacketSnapshotTest` で、2026-11-02 に Passed している
