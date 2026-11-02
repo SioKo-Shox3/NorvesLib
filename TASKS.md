@@ -4954,7 +4954,7 @@
 - from: SCN-WL-CLIFF-GEN-TALUS-CHECK-P1
 
 ## SCN-WL-CLIFF-BLOCKS-CASTLE: 崖の生成の castle の 5 範囲（ref_far_01、5〜9 km）の壁の足に、崩れた塊を物の岩として置き、far_01 の壁の足の一致を上げる
-- status: todo
+- status: done
 - after: SCN-WL-CLIFF-GEN-TALUS-CHECK-P1
 - done-when: 2026-11-02 の人の判断（cc21c026、SCN-WL-CLIFF-GEN-TALUS の案 A）で、崩れた塊は高さの場ではなく物の岩として置くと決まっている。高さの場で塊を足す形は版 16〜18 で 3 回とも届かなかったので、提案にある「遠景の格子の崖の生成（式）」は採らない。SCN-WL-CLIFF-GEN-TALUS-CHECK-P1 の物の岩の散布（`WastelandTalus::BuildCliffBlocks`、boulder_01・rock_09 を高さ 3〜14 m に拡大）を castle の 5 範囲へ広げる。地形のクック（崖の細部の版 19）は変えない。
   すること:
