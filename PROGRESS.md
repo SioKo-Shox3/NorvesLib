@@ -8843,3 +8843,12 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 源を置く呼び手（`RenderWorld::SetDistortions` を呼ぶゲーム側）はまだ無い。どのシーンにも源が無いので、起動画面と各シーンの見た目は変わらない（パスは何も宣言しない）。源のずらしの描画（円盤・模様の流れ・深度の遮り）は試験の対象外で、源を置く項目で撮影して確かめる
 - U1 Bootstrap 試験の失敗を即時終了にし、改名の拒否の原因を特定して直す: 着地(直し 1 回)
 - U3 受入れの節に Bootstrap の結果を書き、タスクの verify を全部回す(U2 の切り直し): 着地(直し 1 回)
+
+## 2026-11-02 G2-S6-ASSET-SET-P1（run 20261102-191021 の反復 1）
+
+- Done: `CookManagedBootstrapTest` の 300 秒の止まりを直した。止まった原因は、`CHECK` が失敗のとき `std::abort()` を呼び、Debug CRT の abort の対話窓と WER が入力を待って ctest の timeout まで残ったこと。`CHECK` を stderr の flush と `std::_Exit(EXIT_FAILURE)` に変え、強制した失敗で親 0.070 秒・子 0.030 秒、終了コード 1 で終わる。182 行の初期化の失敗の原因は、fixture を共有の TEMP（約 13.3 万項目）の下に作り、管理ストアが RuntimeRoot の祖先を列挙するときに 1 ディレクトリ 16384 項目の上限（`CookManagedStoreNative.h` の `entry_limit`）を超えたこと。原因は置き場の側にあるので、fixture を ctest の作業ディレクトリの下（`current_path()`）へ移した。製品のコード・期待値・timeout は変えていない。`ManagedTextureAssetSetCli.md` の 2026-11-02 の受入れの節に結果を書き足した。
+- 検証: Debug の `CookedMeshTest AssetCook` のビルドは終了コード 0。`ctest -R "^CookManagedBootstrapTest$" --timeout 180` は単独で Passed（24.35 秒）。周辺 3 本（StoreInitialization・Update・TextureManagedCli）は、既定の TEMP では `entry_limit` で 3 本とも落ち、TEMP/TMP を短いパスの空のディレクトリへ向けると 3/3 Passed（1.68・84.37・12.63 秒）。出力は `.harness/runs/20261102-191021/G2-S6-ASSET-SET-P1-verify.txt`。
+- Notes: 置き場を移した後は `rename_no_replace; win32_hex=5` が再現せず、その原因（外部の handle か TEMP の監視か）は特定できていない。
+- Notes: 要起票: `CookManagedStoreInitializationTest`・`CookManagedUpdateTest`・`TextureManagedCliTest` も fixture を `GetTempPathW` の下に作るため、共有の TEMP が 16384 項目を超えるこの機では `entry_limit` で落ちる（Bootstrap と同じ形で ctest の作業ディレクトリの下へ移すか、祖先の列挙の上限を見直すか）。
+- Notes: 要起票: 管理ストアの取引の段のディレクトリ（`.norves-assetcook\.transaction-stage-<32 桁>\work-N\Cooked\...`）は、置き場のパスが長いと CreateDirectory のパス長の上限（248 文字）で `failed to create parent directory` になる。ctest の作業ディレクトリへ fixture を移した Bootstrap も、深いパスのチェックアウトでは同じ制限に当たりうる。
+- Notes: `cook_store_initialization: volume_busy` は、ボリューム単位の機械全体の名前付き mutex を別の枠の管理ストア試験が握っているときに待たずに返る結果。並行する枠があると周辺の管理試験が落ちることがある。
