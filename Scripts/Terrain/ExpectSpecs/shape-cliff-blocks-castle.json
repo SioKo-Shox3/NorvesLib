@@ -1,0 +1,13 @@
+﻿{
+  "description": "崩れた塊を物の岩として castle の 5 範囲（cliff_castle_0〜4、ref_far_01 の 5〜9 km）の壁の足に置いた効きを、far_01 の壁の足（wall_foot）の fold_match で判定する。下限は shape-cliff-blocks.json の moved_rows の値をそのまま使い、版 15 の 4 回の実測 0.3336〜0.3443 から決めた 0.356 とする。物を含めて測るため --terrain-only を付けず、配置後にこの仕様を変えない。",
+  "annotations_sha256": "9db8b9b5afac738e970f4fb0ea925ac9d48ea8f94c4afd2e6e09c4359f5c72a2",
+  "fold_annotations_sha256": "36a0a53890a6f32558289aec25368e7657fee0aee2f25043d0643db58d26914c",
+  "rows": [
+    {
+      "photo": "far_01",
+      "quantity": "fold_kinds.wall_foot.fold_match",
+      "min": 0.356,
+      "note": "版 15 の 4 回の実測 0.33359325458359534〜0.34430619524053974（揺れ 0.01071294065694440）。置く前の基準より上がることを求める"
+    }
+  ]
+}
