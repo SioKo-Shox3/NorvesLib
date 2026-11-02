@@ -8416,3 +8416,8 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Done: 作業単位は全部着地済み（U4 は U6・U7 に切り直した）。最後の確かめ `NorvesLib-3/.harness/runs/20261102-075818/verify-G2-GR32-GPU-ACCEPTANCE-final.txt` は Debug の Game・AssetCook・SkinnedSubmeshDrawContractTest のビルドが終了コード 0、試験が PASS・終了コード 0。その後の差分は文書（NVSKELMigrationInventory.md・PROGRESS.md・TASKS.md）だけ
 - Next: 起動の確かめは後回し。`G2-GR32-GPU-ACCEPTANCE-CHECK` で verify の 3〜6 行目を回し、PNG・metrics.json・result.json を開いて確かめる
 - Notes: 前回の評価は停止の依頼で中断して未評価（f1f25a1..HEAD）。評価はランナーが回す
+### G2-GR32-GPU-ACCEPTANCE の verify の時間切れを解いて閉じる（2026-11-02、run 20261102-105745 の反復 2）
+- Done: 前の再検証の落ちはコードの失敗ではなく、この作業ツリーの build に SkinnedSubmeshDrawContractTest などが未生成で、`-m:1` の全量ビルドが 10 分の上限を超えたもの。時間切れの後も残っていたそのビルドの終了を待ち、同じコマンドで続きをビルドして成果物をそろえた（再検証は差分のビルドになる）。コードの変更はない
+- 証拠: `.harness/runs/20261102-105745/verify-G2-GR32-GPU-ACCEPTANCE-iter2.txt`（HEAD c0207f4c で `cmake --build build --config Debug --target Game AssetCook SkinnedSubmeshDrawContractTest -- -m:1` EXIT=0、`SkinnedSubmeshDrawContractTest.exe` PASS・EXIT=0）
+- Next: 起動の確かめは後回し。`G2-GR32-GPU-ACCEPTANCE-CHECK` で verify の 3〜6 行目を回し、PNG・metrics.json・result.json を開いて確かめる
+- Notes: 残ったビルドと重なって走らせると PDB の取り合い（C1041）で落ちる。再検証の時間切れの後は、同じ作業ツリーのビルドの終了を待ってから回す
