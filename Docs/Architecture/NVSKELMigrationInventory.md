@@ -134,7 +134,14 @@ MorphTargetWidth（JSONのmesh_target_width）はmesh/node初期weightsおよび
 
 raw/legacy/file/GLB、2/8primitive、名前衝突/順序/省略、local index越境、全体Reduce prefix、全体fit、
 morphの総数/幅/対象なしprimitiveと幅不一致、および旧writerの出力保持をnative試験へ登録する。
-Windows.hに依存するためこのLinux環境では登録・静的照合に留まり、実行済みの純JSON/範囲検査とは区別する。
+純JSON/範囲検査は実行済み。native回帰は次のとおり。
+- `CookedSkeletalAssetTest`: 2026-11-02のWindows Debugで`cmake --build build --config Debug --target CookedMeshTest AssetCook -- /m:1`が終了コード0。
+  コードページ932・65001のそれぞれで`ctest --test-dir build -C Debug --output-on-failure --timeout 180 -R CookedSkeletalAssetTest`がPassed（終了コード0）。
+  記録は`PROGRESS.md`のG2-GR78-SURFACE-CENTROID-CHECK-P1（run 20261102-095825）。
+- `SkeletalImportReportTest`（`CookedMeshTest --test=SkeletalImportReportTest`、mesh_target_width・dropped_targetsの報告）: 未実行。
+  TEST-FULL-CTEST-BASELINE-CHECKの全体CTest（`ctest --test-dir build -C Debug --output-on-failure --timeout 600`）で回す。
+- `GLTFSkeletalAnalyzerTest`（2primitiveの連結）: 未実行（ビルドのみ）。2026-10-29のWindows Debugで`cmake --build build --config Debug -- /m:1`が終了コード0
+  （`PROGRESS.md`のSCN-BUILD-ALL-TESTS、run 20261029-040919）。TEST-FULL-CTEST-BASELINE-CHECKの全体CTestで回す。
 
 ## 0.2 readerの段階接続
 
@@ -173,7 +180,15 @@ FramePacket/SceneViewの値所有コピーで後続のcomponent設定変更か�
 FrameLeaseは検証済み表を範囲drawへ渡すが、ここだけで複数材質のGPU表示を検証済みとは扱わない。
 
 世代/fallback/無効入力/曖昧名の純binding試験を通常/最適化/sanitizerで実行する。
-Component API・snapshot・SceneRevisionのnative回帰は登録済みだがWindows.hにより未実行。
+- Component API・snapshotの`SkeletalFramePacketSnapshotTest`（`TestMaterialSlots`等でslot APIとpacketの値コピーを検証）は、
+  2026-11-02のWindows Debug（HEAD `297ededc`）で次のビルドが終了コード0、ctestで本試験がPassed（終了コード0）。
+  ビルド: `cmake --build build --config Debug --target RenderResourcesDomainContractTest ViewportCameraIdRenderPlanTest BoardComponentRoutingTest SkeletalFramePacketSnapshotTest FrameCaptureReadbackHelperTest WorldSyncDifferentialTest CanvasViewRenderTest -- /m:1`。
+  ctest: `ctest --test-dir build -C Debug -R "^(RenderResourcesDomainContractTest|ViewportCameraIdRenderPlanTest|BoardComponentRoutingTest|SkeletalFramePacketSnapshotTest|FrameCaptureReadbackHelperTest|WorldSyncDifferentialTest|CanvasViewRenderTest)$" --no-tests=error --output-on-failure --timeout 180`。
+  記録は`PROGRESS.md`のTEST-FULL-CTEST-BASELINE（run 20261102-101626、`.harness/runs/20261102-101626/verify-TEST-FULL-CTEST-BASELINE-U1.txt`）。
+  2026-10-11のWindows Debugでも`FramePacketManagerTest`・`RenderThreadFrameCompletionTest`・`SkeletalFramePacketSnapshotTest`の3件をビルド（EXIT=0）し、ctestで3件すべてPassed（EXIT=0、`100% tests passed, 0 tests failed out of 3`）。記録は`PROGRESS.md`のSCN-MEGA-SCENE-CONFIRM（run 20261010-223034、`verify-SCN-MEGA-SCENE-CONFIRM-4-build.txt`・`verify-SCN-MEGA-SCENE-CONFIRM-4-ctest.txt`）。
+- SceneRevisionの`RenderingDDGILightingContractTest`（slot数・各material idによる`ComputeSceneRevisionHash`の変化を検証）は未実行（ビルドのみ）。
+  2026-10-29のWindows Debugで`cmake --build build --config Debug -- /m:1`が終了コード0（`PROGRESS.md`のSCN-BUILD-ALL-TESTS、run 20261029-040919）。
+  TEST-FULL-CTEST-BASELINE-CHECKの全体CTest（`ctest --test-dir build -C Debug --output-on-failure --timeout 600`）で回す。
 
 packetのnative回帰はSceneViewから実GenerateDrawCommandsへ通し、component再設定・再同期・mesh世代変更・破棄後の保持を確認する。
 CPU packet生成はDeviceCapabilitiesを受け取るprivate overloadへ分離し、本番入口は実deviceから渡す。
