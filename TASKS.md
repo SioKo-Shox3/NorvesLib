@@ -4597,7 +4597,7 @@
 - stop-when: 期待を弱める・timeout を延ばして合格にする・原因を書かずに fixture だけを移す。
 
 ## G2-S6-ASSET-SET-P2: `AssetCookCliParity.py capture` をローカルの Windows で完走させ、main のクラスタ化の後の 79 出力の基準を取り直す
-- status: doing
+- status: done
 - done-when: (1) `capture` が、source の外の新しい出力先(`%TEMP%` の下の新しいディレクトリ)で 7 ケースとも終了コード 0 で完走し、snapshot を保存する。Skeletal の警告文の判定は、コンソールのコードページに左右されない形にする(G2-GR78-SURFACE-CENTROID-CHECK-P1 と同じ考え方)。source の下の出力先を拒否する安全の規則は弱めない。拒否するときは、出力先の指定の誤りと分かる文言を出す。(2) 凍結した旧基準(run 37200047966、artifact 11302304928、`snapshot.json` の SHA-256 は `09af3262…6c85`)と `compare` し、合わない出力をすべて原因ごとに分けて `ManagedTextureAssetSetCli.md` の受入れの節に書く。原因の分け方は、main のクラスタ化・入力の行末(CRLF/LF)・その他の 3 つ。その他に分かれた差は直すか、値を付けて残課題として書く。(3) 合わない出力の原因がすべて (2) の前の 2 つで説明できたときだけ、新しい 79 出力の snapshot を、クラスタ化の後の基準として保存する。その SHA-256 と、作ったコミットを `ManagedTextureAssetSetCli.md` と `Docs/TestingAssetCookCliParity.md` に書く。説明できない差があるときは、基準を更新しない。`AssetCookCliParityTest.py` は通る。
 - verify: `cmake --build build --config Debug --target AssetCook CookedMeshTest -- /m:1`
 - verify: `python Test/Tools/AssetCookCliParityTest.py -q`
