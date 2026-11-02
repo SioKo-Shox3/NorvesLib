@@ -3959,7 +3959,7 @@
 - stop-when: StringCopyの全呼出し規約を検証なしに変更、Windows CRTの動作を偽shimで合格扱い。
 
 ## G2-GR82-B4-STATIC-ROOT-FRAME128: 静的なArmature親と作者frameを安全に束縛する
-- status: doing
+- status: done
 - done-when: 明示profile2/128で、skin.skeleton省略と静的な非関節祖先を作者importから三role保存/同snapshot読込/既存runtime公開/実CPU poseまで通す。現在ROOTと全作者snapshotの必須AFRMを比較し、同local restでも異なるframeはrest overrideでも拒否する。profile2 clipには失効可能な束縛証明を持たせ、直接Sampleの迂回も拒否する。 verify の文章にあった場合（合成 glTF/GLB の Armature・祖先の鎖・省略の hint・並べ替え、非可換の G・M・IBM と import scale 2 の独立の pose oracle、frame の欠落・不正・混在 profile・全 snapshot の差の拒否、SetClip・Unload・別 target での proof の失効、三 NVPK から実 runtime と名前指定の Sample、確保前の境界の予算と失敗時の out の保持、既存 profile1 の wire・pose・旧 71・固定 Sampler・cook・CLI の維持）は、`RigStaticRootFrameImportTest`・`RigStaticRootFrameWireTest`・`RigStaticRootFrameRuntimeTest` と `Test/Tools/RigRootFrameV2Oracle.py` で Debug と Release の両方で確かめる。実犬・DCC・GPU の受入れはこの項目に含めない。
 - verify: `cmake --build build --config Debug --target CookedMeshTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^(RigStaticRootFrameImportTest|RigStaticRootFrameWireTest|RigStaticRootFrameRuntimeTest|CookedSkeletonV1Test|CookedSkinMeshV1Test|RigSplitCookTest|SkeletalSplitRuntimeTest)$" --no-tests=error --output-on-failure --timeout 180`
