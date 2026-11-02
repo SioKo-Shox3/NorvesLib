@@ -8710,3 +8710,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 方式と前提の境界の記録: `Docs/Plans/GameFeatureRoadmap.md`（メイン側・管理外）の「GR131 ヒットエフェクト（当たりの火花・衝撃）の方式と境界」の節
 - 完了を宣言しない範囲: GR16 の当たりを出す側（`CombatHitEvent` からの写し）、GR115 の `SurfaceId`・parent のフォールバック、GR57 の GPU の実行先・3D の粒子の描画パス、GR02 のヒットストップ・時間のチャンネル、GR96 の表とエフェクトのファイル化・クック、GR72 の音・GR133 の跡、Editor の表の編集の画面。火花と衝撃の見た目は起動を戻した後に確かめる
 - U1 当たりの型・表・要求の列（HitEffectEmitter）: 着地(直し 0 回)
+- U2 VFX の向きつきのイベント: 着地(直し 0 回)

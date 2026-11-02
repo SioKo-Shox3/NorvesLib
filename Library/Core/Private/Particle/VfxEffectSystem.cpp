@@ -224,6 +224,34 @@ namespace NorvesLib::Core::Particle
         return true;
     }
 
+    bool VfxEffectSystem::RaiseOrientedEvent(VfxEffectHandle handle, const char* eventName, const Math::Vector3& position,
+        const Math::Vector3& normal, double timeSeconds)
+    {
+        if (!IsFinite(normal))
+        {
+            return false;
+        }
+        // 倍精度で長さを判定し、有限な大きい成分の二乗があふれないようにする。
+        const double lengthSquared = static_cast<double>(normal.x) * normal.x +
+            static_cast<double>(normal.y) * normal.y + static_cast<double>(normal.z) * normal.z;
+        if (lengthSquared <= 1.0e-12)
+        {
+            return false;
+        }
+        const double largest = std::fmax(std::fabs(normal.x), std::fmax(std::fabs(normal.y), std::fabs(normal.z)));
+        const Math::Vector3 scaledNormal(static_cast<float>(normal.x / largest),
+            static_cast<float>(normal.y / largest), static_cast<float>(normal.z / largest));
+        const float scaledLength = std::sqrt(Math::Vector3::Dot(scaledNormal, scaledNormal));
+        if (!RaiseEvent(handle, eventName, position, timeSeconds))
+        {
+            return false;
+        }
+        PendingEvent& event = m_Instances[handle.Index].Events.back();
+        event.Normal = scaledNormal / scaledLength;
+        event.bOriented = true;
+        return true;
+    }
+
     void VfxEffectSystem::Tick(float deltaTime)
     {
         if (!std::isfinite(deltaTime) || deltaTime < 0.0f)
@@ -315,7 +343,8 @@ namespace NorvesLib::Core::Particle
                         if (module.Type == VfxModuleType::SpawnOnEvent && module.Values[binding.Arguments[0]].Name == event.Name)
                         {
                             SpawnParticles(slot, emitter, module.Values[binding.Arguments[1]].UInt,
-                                event.Position, event.Time, static_cast<float>(end - event.Time));
+                                event.Position, event.Time, static_cast<float>(end - event.Time),
+                                event.bOriented ? &event.Normal : nullptr);
                         }
                     }
                 }
@@ -569,10 +598,19 @@ namespace NorvesLib::Core::Particle
     }
 
     void VfxEffectSystem::SpawnParticles(InstanceSlot& slot, EmitterState& emitter, uint32_t count,
-        const Math::Vector3& position, double birthTime, float age)
+        const Math::Vector3& position, double birthTime, float age, const Math::Vector3* orientationNormal)
     {
         const uint32_t available = emitter.MaxParticles - static_cast<uint32_t>(emitter.Particles.size());
         const uint32_t spawnCount = count < available ? count : available;
+        Math::Vector3 tangent;
+        Math::Vector3 bitangent;
+        if (orientationNormal != nullptr && emitter.bHasVelocity && spawnCount > 0u)
+        {
+            const Math::Vector3 helper = std::fabs(orientationNormal->y) < 0.999f ?
+                Math::Vector3(0.0f, 1.0f, 0.0f) : Math::Vector3(1.0f, 0.0f, 0.0f);
+            tangent = Math::Vector3::Cross(helper, *orientationNormal).Normalized();
+            bitangent = Math::Vector3::Cross(*orientationNormal, tangent);
+        }
         for (uint32_t index = 0u; index < spawnCount; ++index)
         {
             VfxParticleState particle;
@@ -583,6 +621,11 @@ namespace NorvesLib::Core::Particle
                 particle.Velocity.x = emitter.VelocityMin.x + (emitter.VelocityMax.x - emitter.VelocityMin.x) * NextUnitFloat(emitter.RandomState);
                 particle.Velocity.y = emitter.VelocityMin.y + (emitter.VelocityMax.y - emitter.VelocityMin.y) * NextUnitFloat(emitter.RandomState);
                 particle.Velocity.z = emitter.VelocityMin.z + (emitter.VelocityMax.z - emitter.VelocityMin.z) * NextUnitFloat(emitter.RandomState);
+                if (orientationNormal != nullptr)
+                {
+                    const Math::Vector3 localVelocity = particle.Velocity;
+                    particle.Velocity = tangent * localVelocity.x + bitangent * localVelocity.y + *orientationNormal * localVelocity.z;
+                }
             }
             particle.Color = emitter.Color;
             particle.Size = emitter.Size;
