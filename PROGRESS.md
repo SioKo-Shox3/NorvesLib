@@ -8739,3 +8739,22 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: 起動の確かめは後回し（人の決まりで GPU を使う試験を起動しない）。`GAME-GR134-VFX-CHECK` で `ctest --test-dir build -C Debug -R "^MeshParticleDissolveVulkanTest$" --no-tests=error --output-on-failure --timeout 600` を回し、標準出力の 5 行（年齢 0 で四角形の全部が本体の色・年齢 0.25→0.5→0.75 で覆う画素が真に減る・0.5 の覆う割合が 0.2〜0.8・縁の画素が各 1 つ以上・閾値 1 で 0）を確かめる
 - Notes: `MeshParticleDissolveVulkanTest` は GPU で未実行。四角形の向き（カリングは無し）・`CopyToShaderData` で上げた行列の掛け方・R8G8B8A8_UNORM の読み戻しの並びは、コードの読みでの判断。落ちたらシェーダーのインスタンスの形（112 バイト）と行列の上げ方から見る
 - Notes: `AlignToVelocity` の回転は `CreateWorldRowVector` が四元数の回転行列を行ベクトルの規約でそのまま置く（転置の向きになる）ことに合わせて軸の符号を選んでいる。`MeshParticleInstanceTest` の検査 7 で局所の +Z が速度の向きへ写ることを確かめた
+
+## 2026-11-02 GAME-GR137-VFX（run 20261102-145121 の反復 1。着手）
+- 方式（推奨を採った）: MCP の口は NorvesEditor 側に置き、言語モデル → NorvesEditor の MCP → Bridge → Game の順で呼ぶ。この項目では MCP の口を作らず対象外とする。理由: NorvesEditor に既にローカルの MCP の入口と編集の履歴があり、Game に MCP を持たせると履歴を通らない書き換えと二重の権限・検証ができる
+- 方式（推奨を採った）: Bridge の線の上の新しいメソッド（資産のプロパティの一覧・設定・保存、決定的な撮影）は NorvesEditor の Bridge SDK（`IBridgeEngineAdapter` と振り分け）に口が無く、SDK は範囲の外のリポジトリなので足さない。NorvesLib は SDK に依存しないエンジンの側の部品（`Game/Bridge/BridgeAssetPropertyEditor`・`Game/Bridge/BridgeDeterministicCapture`）だけを作り、SDK に口ができたら `NorvesLibBridgeAdapter` からつなぐ。部品が SDK に依存しないので、Game のソースを丸ごと組み込まずに試験から呼べる
+- 方式（推奨を採った）: 資産の編集は拡張子 → 種類の表の汎用の形で、最初の種類は GR136 のエフェクト（`.vfx.json`）。値は JSON の値の文字列で受け、型の不一致・範囲外・知らない道を英語のコードで拒否して前の値を保つ。資産の根の下の相対の道だけを開き・保存する。決定的な撮影は `--capture-deterministic` で起動した Game でだけ受け、エポックを始め直して指定のフレーム数の後に 1 枚撮る
+- 方式と前提の境界の記録: `Docs/Plans/GameFeatureRoadmap.md`（メイン側・管理外）の「GR137 資産の編集・決定的な撮影・言語モデルの口」の節
+- 完了を宣言しない範囲: Bridge の線の上のメソッドと MCP の道具（NorvesEditor 側）、保存の後の実行中のエフェクトへの反映（GR136 の読み直しの口の後）、保存の後のクック（GR96）、機械・ドライバをまたぐ撮影の一致（GR126）、エポックで数え直さない状態を持つシーンの撮影の一致、編集の画面
+- Notes: 試験を足す理由を書くため `Docs/Testing.md` を paths の外だが触る（done-when が名指し）
+- Notes: 要起票: NorvesEditor の Bridge SDK と仕様に、資産のプロパティの一覧・設定・保存と決定的な撮影のメソッドを足し、MCP の道具から呼ぶ（NorvesEditor 側）
+- U1 エフェクトの資産を JSON へ書き出す: 着地(直し 0 回)
+- U4 Bridge の決定的な撮影の部品: 着地(直し 0 回)
+- U2 Bridge の資産のプロパティの編集の部品: 着地(直し 0 回)
+- U3 BridgeAssetPropertyEditTest と試験を足す理由: 着地(直し 0 回)
+- U5 BridgeDeterministicCaptureVulkanTest（ビルドまで）と最後の確かめ: 着地(直し 0 回)
+### GAME-GR137-VFX を閉じる（2026-11-02、run 20261102-145121 の反復 2）
+- Done: `Game/Bridge/BridgeAssetPropertyEditor`（拡張子 → 種類の表。最初の種類は `.vfx.json`。資産の根の下の相対の道だけを開き、道は `emitters/<エミッタ名>/<プロパティ名>` と `emitters/<エミッタ名>/modules/<添字>/<パラメータ名>`。値は JSON の値の文字列で受け、`type_mismatch`・`out_of_range`・`unknown_property`・`invalid_path` で拒否して前の値を保ち、同じフォルダの一時ファイルから置き換えて保存する）、CPU の試験 `BridgeAssetPropertyEditTest`（Core と部品の .cpp 1 つだけを組み込む）、GPU の試験 `BridgeDeterministicCaptureVulkanTest`（部品の撮影の手順で同じ要求を 2 回撮り、画素のハッシュと PNG の全バイトの一致を見る。GPU の無い環境では 125 で飛ばす）を足した。`Docs/Testing.md` に 2 本の試験を足す理由を書いた
+- 証拠: `.harness/runs/20261102-145121/verify-GAME-GR137-VFX-final.txt`（HEAD 484c7e0c と同じ内容の作業ツリーで `cmake --build build --config Debug --target BridgeDeterministicCaptureVulkanTest -- /m:1` EXIT_CODE 0、`cmake --build build --config Debug --target Game BridgeAssetPropertyEditTest -- /m:1` EXIT_CODE 0、`ctest ... -R "^BridgeAssetPropertyEditTest$"` Passed・EXIT_CODE 0、`ctest -N` で BridgeDeterministicCaptureVulkanTest の登録を確認。GPU の試験は実行していない）
+- Next: 起動の確かめは後回し（人の決まりでアプリと GPU の試験を起動しない）。`GAME-GR137-VFX-CHECK` で verify の 3・4 行目（`BridgeDeterministicCaptureVulkanTest` のビルドと実行）を回し、`BRIDGE_DETERMINISTIC_CAPTURE` の 2 行のハッシュと result=PASS を確かめる
+- Notes: 完了を宣言しない範囲は反復 1 の記録のとおり（Bridge の線の上のメソッドと MCP の道具は NorvesEditor 側、保存後の実行中のエフェクトへの反映、クック、機械をまたぐ撮影の一致）。GPU の試験は試験の側で決定的な撮影を有効にし（`--capture-deterministic` は `--capture-png` が無いと無視されるため）、`--scene=indoor`・128×128・待ち 60 フレームで撮る。RTGI は土台の既定で無効。時間・TAA・自動露出などエポックで戻らない状態が残ると -CHECK で一致しない見込みがあり、そのときは部品の BeginEpoch の数え直しの範囲を見直す
