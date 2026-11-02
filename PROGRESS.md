@@ -8628,3 +8628,18 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Done: 反復 2 の再検証の時間切れを直した。原因は実装でなく、この枠の build がブリッジ SDK 入りで構成し直した直後で Game の全体を初めて組んだため（単位は別の作業ツリーで組んでいた）。この枠で一度組み終えて最新にし、verify の 1・2 行目を回し直した: `cmake --build build --config Debug --target Game LauncherMenuTest -- /m:1` は BUILD_EXIT=0（4 秒、Game.exe と LauncherMenuTest.exe とも最新）、`ctest ... -R "^LauncherMenuTest$"` は `1/1 Test #493: LauncherMenuTest ... Passed 0.02 sec`・CTEST_EXIT=0
 - Next: 起動の確かめは後回し（反復 2 の Next のとおり SCN-THUMBNAILS-CHECK で verify の 3・4 行目と撮影の確認）。評価者への申し送り（危険地帯・確かめどころ 4 点）は反復 2 の記録のまま
 - Notes: 構成し直した枠で Game を一から組むと /m:1 で 10 分を超える。verify は増分のビルドを前提にしている
+
+- U2 取り込みの試験に node 配列そのものの並べ替えと、予算・境界の失敗で out を保つ確かめを足す: 着地(直し 0 回)
+- U4 RigSplitCookTest の管理ストアの段を利用者の TEMP の項目数に左右されないようにする: 着地(直し 1 回)
+- U3 runtime の試験に有効な proof への Unload 単独と、非対角 G と import scale 2 を合わせた独立の行列の照合を足し、タスクの verify を全部回す: 着地(直し 0 回)
+## 2026-11-02 G2-GR82-B4-STATIC-ROOT-FRAME128（run 20261102-094113 の反復 1、完了）
+- Done: 10-07 に入った明示 profile2（静的な非関節祖先と作者 frame）の実装と RigStaticRootFrame{Import,Wire,Runtime}Test・RigRootFrameV2Oracle.py を初めて native で回し、実装の変更なしで全部通ることを確かめた。done-when の欠けを 3 本の試験に足した: glTF の nodes 配列そのものの置換（参照を全部付け替え）で frame・topology・local rest が同じこと、予算の失敗と 129 関節の拒否で既存の out を保つこと・128 関節ちょうどの受理、有効な束縛証明への Unload 単独で Sample が拒否され Load だけでは戻らないこと、非対角の祖先 G・root の T/R/S・IBM に import scale 2 を合わせた全 joint の palette/model と頂点の独立 double 照合（G の linear 部は scale しない）。2 scheduler の姿勢を別名のファイルに書き、oracle で両方を照合する
+- Done: RigSplitCookTest の ManagedMixedRig は、利用者の TEMP に約 13 万項目あると cook_managed_store: entry_limit で落ちていた（管理ストアが RuntimeRoot の祖先を列挙するため）。試験の fixture を ctest の作業ディレクトリの下に作る形にして、既定の TEMP のまま通るようにした（期待は不変）
+- 検証: Debug の CookedMeshTest のビルドは終了 0、Debug の ctest 7/7 合格（RigSplitCookTest を含む、TEMP は既定のまま）、Release のビルドは終了 0、Release の ctest 3/3 合格、`RigRootFrameV2Oracle.py --self-test` 13/13 OK。Debug・Release の三役の実 bytes（Bank 1088 byte）と 2 scheduler 分の姿勢 6 ファイルを oracle に渡した照合も終了 0（`.harness/runs/20261102-094113/G2-GR82-B4-U3-final-verify.txt`）
+- Next: 実犬・DCC・GPU の受入れはこの項目の外。旧 71 の全体・固定 Sampler の基準比較・CLI・profile1 Bank の 992 byte の独立照合は、この verify の範囲（CookedSkeletonV1Test・CookedSkinMeshV1Test・RigSplitCookTest・SkeletalSplitRuntimeTest）を超えては回していない
+- Notes: 要起票: 製品の cook の管理ストアが RuntimeRoot の祖先からボリュームの根までを列挙し（`Tools/AssetCook/CookManagedStoreObservation.cpp` 93 行付近）、項目の多い祖先（利用者の TEMP など）があると entry_limit で失敗する
+## 2026-11-02 G2-GR82-B4-STATIC-ROOT-FRAME128（run 20261102-094113 の反復 2、完了）
+- Done: 反復 1 の後の再検証で Release の CookedMeshTest のビルドが 10 分の上限を超えた。原因は、確かめを単位ごとの作業ツリーでだけ回しており、この作業ツリーの build の Release が古いまま全量のコンパイルになったこと。実装・試験・verify は変えず、この作業ツリーで verify を順に回して build を最新にした
+- 検証: Release のビルド 終了 0（初回 478 秒、2 回目 3 秒）、Debug のビルド 終了 0（3 秒）、Debug の ctest 7/7 合格（44 秒）、Release の ctest 3/3 合格、`RigRootFrameV2Oracle.py --self-test` 13 件 OK（`.harness/runs/20261102-094113/verify-*.txt`）
+- Next: 反復 1 の Next のとおり（実犬・DCC・GPU の受入れはこの項目の外）
+- Notes: 単位の作業ツリーで verify を通しても、ランナーの再検証は本体の作業ツリーの build で回る。重いビルドを含む項目は、仕上げの前に本体の作業ツリーで verify を 1 回回しておく

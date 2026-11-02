@@ -48,7 +48,7 @@ namespace
         out += "]";
     }
     void SavePose(const C::TSharedPtr<Core::SkeletalAssetResource>& asset, const A::SkeletalPoseSnapshot& pose,
-                  bool rawRejected)
+                  bool rawRejected, const char* scheduler)
     {
         if (const char* directory = std::getenv("NORVES_ROOT_FRAME_V2_OUTPUT"))
         {
@@ -78,7 +78,10 @@ namespace
             F::Bytes bytes;
             bytes.insert(bytes.end(), json.begin(), json.end());
             std::filesystem::create_directories(directory);
-            F::WriteBytes(std::filesystem::path(directory) / "root-frame-pose.json", bytes);
+            F::Text filename = "root-frame-pose-";
+            filename += scheduler;
+            filename += ".json";
+            F::WriteBytes(std::filesystem::path(directory) / filename.c_str(), bytes);
         }
     }
     bool Sample(const Core::SkeletonResource& skeleton, const Core::AnimationClipResource& clip,
@@ -100,12 +103,25 @@ namespace
         C::TSharedPtr<Core::SkeletalAssetResource> asset;
         S::RigSplitReport report;
         RIG_CHECK(S::AssembleRigSplitV1(cpu, context, asset, report));
-        H::Pose(asset);
+        auto pose = H::Pose(asset);
         const auto original = asset->GetClip(0)->GetClip();
+        const auto* boundTarget = asset->GetSkeleton()->GetSplitSkeleton();
+        RIG_CHECK(S::RigBoundClipAccess::Matches(*asset->GetClip(0), boundTarget));
+        RIG_CHECK(Sample(*asset->GetSkeleton(), *asset->GetClip(0), *asset->GetMesh(), pose) &&
+                  !pose.BonePalette.empty());
+        asset->GetClip(0)->Unload();
+        RIG_CHECK(!S::RigBoundClipAccess::Matches(*asset->GetClip(0), boundTarget));
+        RIG_CHECK(!Sample(*asset->GetSkeleton(), *asset->GetClip(0), *asset->GetMesh(), pose) &&
+                  pose.BonePalette.empty());
+        RIG_CHECK(asset->GetClip(0)->Load());
+        RIG_CHECK(!S::RigBoundClipAccess::Matches(*asset->GetClip(0), boundTarget));
+        RIG_CHECK(!Sample(*asset->GetSkeleton(), *asset->GetClip(0), *asset->GetMesh(), pose) &&
+                  pose.BonePalette.empty());
+        RIG_CHECK(S::AssembleRigSplitV1(cpu, context, asset, report));
+        H::Pose(asset);
         auto raw = registry.CreateResource<Core::AnimationClipResource>(_T("raw"));
         raw->SetClip(S::SkeletalAnimationClip(original));
         RIG_CHECK(raw->Load());
-        A::SkeletalPoseSnapshot pose;
         RIG_CHECK(!Sample(*asset->GetSkeleton(), *raw, *asset->GetMesh(), pose) && pose.BonePalette.empty());
         asset->GetClip(0)->SetClip(S::SkeletalAnimationClip(original));
         RIG_CHECK(!Sample(*asset->GetSkeleton(), *asset->GetClip(0), *asset->GetMesh(), pose) &&
@@ -151,9 +167,9 @@ namespace
         RIG_CHECK(S::AssembleRigSplitV1(cpu, context, asset, report));
         H::Pose(asset, 2);
         std::printf(
-            "ROOT_FRAME_RUNTIME_CASE result=pass bound_proof_raw_setter_unload_separate_target_rebind_legacy_scale2_pose\n");
+            "ROOT_FRAME_RUNTIME_CASE result=pass bound_proof_unload_alone_raw_setter_unload_separate_target_rebind_legacy_scale2_pose\n");
     }
-    void GeneralRootTrs(F::Fixture& f)
+    void GeneralRootTrs(F::Fixture& f, const char* scheduler)
     {
         // 非対角の祖先Gと実際に変化するroot T/R/Sを、独立な行列リテラルで照合する。
         auto json = H::Armature(f.Json);
@@ -231,13 +247,75 @@ namespace
             F::Bytes bytes;
             bytes.insert(bytes.end(), value.begin(), value.end());
             std::filesystem::create_directories(directory);
-            F::WriteBytes(std::filesystem::path(directory) / "root-frame-general.json", bytes);
+            F::Text filename = "root-frame-general-";
+            filename += scheduler;
+            filename += ".json";
+            F::WriteBytes(std::filesystem::path(directory) / filename.c_str(), bytes);
+        }
+        Core::AssetImport::LoadedImportSettings settings;
+        settings.bPresent = true;
+        settings.Settings.Scale = 2;
+        const auto rig = H::Import(json, &settings);
+        S::SkeletonV1 scaledSkeleton;
+        S::SkinMeshV1 scaledMesh;
+        S::ClipBankV1 scaledBank;
+        S::RigV1Report parsed;
+        RIG_CHECK(S::BuildSkeletonV1(rig, scaledSkeleton, parsed, {}, H::Profile));
+        RIG_CHECK(S::BuildSkinMeshV1(rig, scaledSkeleton, "Models/Rig.nvskel", cpu.GetData()->Mesh.GetData()->Materials,
+                                     scaledMesh, parsed, {}, H::Profile));
+        RIG_CHECK(S::BuildClipBankV1({&rig, 1}, scaledBank, parsed, {}, H::Profile) &&
+                  S::BindRigSplitV1(scaledSkeleton, scaledMesh, {&scaledBank, 1}, {}, cpu, report, {}, H::Profile));
+        RIG_CHECK(S::AssembleRigSplitV1(cpu, {&registry, T::Thread::GetCurrentThreadId()}, asset, report));
+        A::SkeletalPoseSnapshot scaledPose;
+        RIG_CHECK(A::SkeletalAnimationSampler::Sample(*asset->GetSkeleton(), *asset->GetClip(0), *asset->GetMesh(), 2,
+                                                      F::MeshMatrix(*asset->GetMesh()), scaledPose));
+        RIG_CHECK(scaledPose.BonePalette.size() == 2 && scaledPose.JointModelMatrices.size() == 2);
+        for (size_t j = 0; j < 2; ++j)
+        {
+            for (size_t i = 0; i < 12; ++i)
+            {
+                RIG_CHECK(std::abs(double(scaledPose.BonePalette[j].values[i]) - linear[i]) <= 1e-4);
+                RIG_CHECK(std::abs(double(scaledPose.JointModelMatrices[j].values[i]) - linear[i]) <= 1e-4);
+            }
+            RIG_CHECK(std::abs(double(scaledPose.BonePalette[j].values[12]) - (j == 0 ? 4 : -20)) <= 1e-4);
+            RIG_CHECK(std::abs(double(scaledPose.JointModelMatrices[j].values[12]) - (j == 0 ? 16 : -20)) <= 1e-4);
+            for (size_t k = 13; k < 16; ++k)
+            {
+                RIG_CHECK(std::abs(double(scaledPose.BonePalette[j].values[k]) - (k == 15 ? 1 : 8)) <= 1e-4);
+                RIG_CHECK(std::abs(double(scaledPose.JointModelMatrices[j].values[k]) - (k == 15 ? 1 : 8)) <= 1e-4);
+            }
+        }
+        const auto scaledVertex =
+            A::SkeletalAnimationSampler::SkinVertex(asset->GetMesh()->GetVertices()[2], scaledPose.BonePalette);
+        RIG_CHECK(std::abs(scaledVertex.Position.x - 16) <= 1e-4 && std::abs(scaledVertex.Position.y - 8) <= 1e-4 &&
+                  std::abs(scaledVertex.Position.z - 8) <= 1e-4);
+        if (const char* directory = std::getenv("NORVES_ROOT_FRAME_V2_OUTPUT"))
+        {
+            F::Text value = "{\"palettes\":";
+            MatrixJson(value, scaledPose.BonePalette);
+            value += ",\"models\":";
+            MatrixJson(value, scaledPose.JointModelMatrices);
+            value += ",\"vertex\":[";
+            JsonNumber(value, scaledVertex.Position.x);
+            value += ",";
+            JsonNumber(value, scaledVertex.Position.y);
+            value += ",";
+            JsonNumber(value, scaledVertex.Position.z);
+            value += "]}";
+            F::Bytes bytes;
+            bytes.insert(bytes.end(), value.begin(), value.end());
+            std::filesystem::create_directories(directory);
+            F::Text filename = "root-frame-general-scale2-";
+            filename += scheduler;
+            filename += ".json";
+            F::WriteBytes(std::filesystem::path(directory) / filename.c_str(), bytes);
         }
         f.SetBuffer(f.Binary);
         std::printf(
             "ROOT_FRAME_RUNTIME_CASE result=pass nondiagonal_parent_noncommuting_root_translation_rotation_scale_all_matrix_oracle\n");
+        std::printf("ROOT_FRAME_RUNTIME_CASE result=pass nondiagonal_parent_import_scale2_all_matrix_oracle\n");
     }
-    void Runtime(F::Fixture& f, T::JobSystem::ExecutionMode mode)
+    void Runtime(F::Fixture& f, T::JobSystem::ExecutionMode mode, const char* scheduler)
     {
         const auto json = H::Armature(f.Json);
         const auto cooked = H::Cook(json);
@@ -283,7 +361,7 @@ namespace
         A::SkeletalPoseSnapshot rejected;
         const bool rawRejected = !Sample(*completed.Asset->GetSkeleton(), *raw, *completed.Asset->GetMesh(), rejected);
         RIG_CHECK(rawRejected && rejected.BonePalette.empty());
-        SavePose(completed.Asset, pose, rawRejected);
+        SavePose(completed.Asset, pose, rawRejected, scheduler);
         unsigned hits = 0;
         RIG_CHECK(runtime
                       .LoadRigSplitAsync(request,
@@ -384,8 +462,8 @@ int main(int argc, char** argv)
         const auto mode = std::strcmp(argv[2], "simple") == 0 ? T::JobSystem::EXECUTION_SIMPLE
                                                               : T::JobSystem::EXECUTION_WORK_STEALING;
         Proof(f);
-        GeneralRootTrs(f);
-        Runtime(f, mode);
+        GeneralRootTrs(f, argv[2]);
+        Runtime(f, mode, argv[2]);
         MismatchAndCancel(f, mode);
         return 0;
     }

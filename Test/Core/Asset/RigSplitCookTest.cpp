@@ -7,6 +7,9 @@
 #include "Tools/AssetCook/CookCacheDecision.h"
 #include "RigSplitWireTestFixture.h"
 #include "Tools/AssetCook/MeshMaterialV1Plan.h"
+#if defined(_WIN32)
+#include <Windows.h>
+#endif
 namespace F = NorvesLib::Tests::RigV1Fixture;
 namespace X = NorvesLib::Tests::RigSplitFixture;
 namespace Cook = NorvesLib::Tools::AssetCook;
@@ -15,6 +18,72 @@ namespace S = NorvesLib::Core::Skeletal;
 namespace C = NorvesLib::Core::Container;
 namespace
 {
+#if defined(_WIN32)
+    struct EnvironmentValue
+    {
+        const wchar_t* Name;
+        C::VariableArray<wchar_t> Value;
+        bool bPresent = false;
+
+        explicit EnvironmentValue(const wchar_t* name) : Name(name)
+        {
+            SetLastError(ERROR_SUCCESS);
+            const DWORD size = GetEnvironmentVariableW(Name, nullptr, 0);
+            if (size == 0)
+            {
+                const auto status = GetLastError();
+                RIG_CHECK(status == ERROR_SUCCESS || status == ERROR_ENVVAR_NOT_FOUND);
+                bPresent = status == ERROR_SUCCESS;
+                if (bPresent)
+                {
+                    Value.push_back(L'\0');
+                }
+                return;
+            }
+            Value.resize(size, L'\0');
+            const DWORD length = GetEnvironmentVariableW(Name, Value.data(), size);
+            RIG_CHECK(length > 0 && length < size);
+            bPresent = true;
+        }
+        void Restore() const
+        {
+            RIG_CHECK(SetEnvironmentVariableW(Name, bPresent ? Value.data() : nullptr));
+        }
+    };
+
+    // 管理ストアはRuntimeRootの祖先を列挙するため、TEMPの外にfixtureを作る。
+    struct ScopedFixtureEnvironment
+    {
+        EnvironmentValue Temp{L"TEMP"}, Tmp{L"TMP"};
+        std::filesystem::path Directory;
+        bool bRestored = false;
+
+        ScopedFixtureEnvironment()
+        {
+            char name[64];
+            std::snprintf(name, sizeof(name), "RigSplitCookTest-tmp-%lu", GetCurrentProcessId());
+            Directory = std::filesystem::current_path() / name;
+            RIG_CHECK(std::filesystem::create_directory(Directory));
+            RIG_CHECK(SetEnvironmentVariableW(L"TEMP", Directory.c_str()));
+            RIG_CHECK(SetEnvironmentVariableW(L"TMP", Directory.c_str()));
+        }
+        void Restore()
+        {
+            if (!bRestored)
+            {
+                Temp.Restore();
+                Tmp.Restore();
+                bRestored = true;
+            }
+        }
+        ~ScopedFixtureEnvironment()
+        {
+            Restore();
+            std::error_code error;
+            RIG_CHECK(std::filesystem::remove(Directory, error) && !error);
+        }
+    };
+#endif
     void RetargetTargetMaterialPreflight(F::Fixture& f)
     {
         const auto sourceRoot = f.Root / "RigV1Fixture";
@@ -758,7 +827,13 @@ Frame Time: 0.5
 } // namespace
 int main()
 {
+#if defined(_WIN32)
+    ScopedFixtureEnvironment environment;
+#endif
     F::Fixture fixture;
+#if defined(_WIN32)
+    environment.Restore();
+#endif
     CookAndSettings(fixture);
     SlotMapping(fixture);
     CapturedInputs(fixture);
