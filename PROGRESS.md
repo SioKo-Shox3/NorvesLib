@@ -8704,3 +8704,11 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261102-105745/verify-G2-GR32-GPU-ACCEPTANCE-iter3.txt`（範囲の検算で全範囲を隙間・重複なく覆い、slot 0 が列 0〜3・slot 1 が列 4〜7 の表裏 64 三角形ずつ。`cmake --build build --config Debug --target Game AssetCook SkinnedSubmeshDrawContractTest -- -m:1` 終了コード 0、`SkinnedSubmeshDrawContractTest.exe` PASS・終了コード 0。numstat 2 通り一致）
 - Next: 起動の確かめは後回し。`G2-GR32-GPU-ACCEPTANCE-CHECK` で verify の 3〜6 行目を回し、PNG・metrics.json・result.json を開いて確かめる（2 材質の撮影は STARTUP_SKINNED_PROBE_SKIPPED が出ないことと体の数も見る）
 - Notes: 評価の残課題のうち、-LegacyNvskelCompare が RTGI の面を含む 9 面すべてで全画素一致を求める扱いと、Test-M9World.ps1 が M9_WORLD_COMPARE stage=assets_ready の印を照合しない点は、確かめのタスクで実行の結果を見て決める
+## 2026-11-02 GAME-GR137-VFX（run 20261102-145121 の反復 1。着手）
+- 方式（推奨を採った）: MCP の口は NorvesEditor 側に置き、言語モデル → NorvesEditor の MCP → Bridge → Game の順で呼ぶ。この項目では MCP の口を作らず対象外とする。理由: NorvesEditor に既にローカルの MCP の入口と編集の履歴があり、Game に MCP を持たせると履歴を通らない書き換えと二重の権限・検証ができる
+- 方式（推奨を採った）: Bridge の線の上の新しいメソッド（資産のプロパティの一覧・設定・保存、決定的な撮影）は NorvesEditor の Bridge SDK（`IBridgeEngineAdapter` と振り分け）に口が無く、SDK は範囲の外のリポジトリなので足さない。NorvesLib は SDK に依存しないエンジンの側の部品（`Game/Bridge/BridgeAssetPropertyEditor`・`Game/Bridge/BridgeDeterministicCapture`）だけを作り、SDK に口ができたら `NorvesLibBridgeAdapter` からつなぐ。部品が SDK に依存しないので、Game のソースを丸ごと組み込まずに試験から呼べる
+- 方式（推奨を採った）: 資産の編集は拡張子 → 種類の表の汎用の形で、最初の種類は GR136 のエフェクト（`.vfx.json`）。値は JSON の値の文字列で受け、型の不一致・範囲外・知らない道を英語のコードで拒否して前の値を保つ。資産の根の下の相対の道だけを開き・保存する。決定的な撮影は `--capture-deterministic` で起動した Game でだけ受け、エポックを始め直して指定のフレーム数の後に 1 枚撮る
+- 方式と前提の境界の記録: `Docs/Plans/GameFeatureRoadmap.md`（メイン側・管理外）の「GR137 資産の編集・決定的な撮影・言語モデルの口」の節
+- 完了を宣言しない範囲: Bridge の線の上のメソッドと MCP の道具（NorvesEditor 側）、保存の後の実行中のエフェクトへの反映（GR136 の読み直しの口の後）、保存の後のクック（GR96）、機械・ドライバをまたぐ撮影の一致（GR126）、エポックで数え直さない状態を持つシーンの撮影の一致、編集の画面
+- Notes: 試験を足す理由を書くため `Docs/Testing.md` を paths の外だが触る（done-when が名指し）
+- Notes: 要起票: NorvesEditor の Bridge SDK と仕様に、資産のプロパティの一覧・設定・保存と決定的な撮影のメソッドを足し、MCP の道具から呼ぶ（NorvesEditor 側）
