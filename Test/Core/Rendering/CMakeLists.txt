@@ -10,6 +10,16 @@ set_target_properties(FramePacketManagerTest PROPERTIES FOLDER "Test/Core/Render
 include(CTest)
 add_test(NAME FramePacketManagerTest COMMAND FramePacketManagerTest)
 
+add_executable(DecalPoolEvictionTest
+    DecalPoolEvictionTest.cpp
+)
+target_link_libraries(DecalPoolEvictionTest PRIVATE Core)
+target_include_directories(DecalPoolEvictionTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(DecalPoolEvictionTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME DecalPoolEvictionTest COMMAND DecalPoolEvictionTest)
+
 add_test(NAME RenderGraphGPUTimestampScopeTest COMMAND RenderingCoordinatorGPUTimestampPublicationTest --test=RenderGraphGPUTimestampScopeTest)
 
 

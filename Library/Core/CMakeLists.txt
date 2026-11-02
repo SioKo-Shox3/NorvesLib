@@ -51,6 +51,7 @@ set(PRIVATE_SOURCES
     Private/Object/ResourceRegistry.cpp
     Private/Object/World.cpp
     Private/Particle/ParticleSystem.cpp
+    Private/Particle/DecalPool.cpp
     # Animation
     Private/Animation/AnimationClipResource.cpp
     Private/Animation/SkeletalJointIndex.h
@@ -512,6 +513,7 @@ set(PUBLIC_HEADERS
     Public/Application/ApplicationHandlerBase.h
     Public/Engine/Engine.h
     Public/Particle/ParticleSystem.h
+    Public/Particle/DecalPool.h
     Public/Engine/ApplicationProcessor.h
     Public/Engine/FixedStepSettings.h
     # Animation
@@ -606,6 +608,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/FoliageMesh.h
     Public/Rendering/FoliagePass.h
     Public/Rendering/FoliageTypes.h
+    Public/Rendering/DecalTypes.h
     Public/Rendering/RenderingCoordinator.h
     Public/Rendering/RenderGraph/RenderGraphTypes.h
     Public/Rendering/RenderGraph/RenderGraphResourceNames.h
