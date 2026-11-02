@@ -9086,3 +9086,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: 起動の確かめは後回し（SCN-WL-CLIFF-GEN-TALUS-CHECK-P1-CHECK）。verify の 3〜10 行目で (A) 残る 4 行・(B) 地形だけの仕様・(C) 接地・(D) ページの要求と VRAM・(E) look の 3 視点・(F) ログ `WASTELAND_CLIFF_BLOCKS` で near_2・near_3 のそれぞれに塊が 1 個以上、を確かめる
 - Notes: 要起票: castle の 5 範囲（ref_far_01、5〜9 km）の壁の足から崖錐への移り（far_01 の wall_foot。版 15 で 0.334〜0.344、外した下限 0.356）を、遠景の格子の崖の生成（式）か MegaGeometry の散布で上げる
 - U1 castle の範囲の塊の合否の仕様を書く: 着地(直し 0 回)
+- U2 接地用の格子の版 3（層を持つ形）の読み込み: 着地(直し 0 回)
