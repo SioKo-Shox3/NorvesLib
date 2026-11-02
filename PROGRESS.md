@@ -8505,9 +8505,13 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 2 px は測らずに採った値（DAG の段の三角形の数はおよそ許容の 2 乗に反比例するので、一覧のメッシュの約 96 万クラスタが 1/3〜1/4 になる見込み）。撮影で足りなければ値を上げるか、遮蔽の側を見る
 - Notes: done-when の予算は「RT と GI を切った構成で 16.6 ms」だが、verify の撮影の -GameArgs に RT と GI を切る引数は無く、そのような起動引数も今は無い（RT・GI 入りで撮る）。10-14 の内訳から見積もると、TLAS の直し（LightingPass 約 4 ms）と一覧のメッシュの削減の後も、バナナだけの MegaGeometry（静止 168 万クラスタ）・LightingPass・VSM の合計で 16.6 ms を超える見込みで、RT・GI 入りの判定は fail になりうる
 - Notes: 要起票: verify の撮影を RT と GI を切った構成で撮る起動引数（と verify の -GameArgs）が無い。予算の構成で判定できるようにするかを決める
-- U2 asset-set 換算の変更で増分 cook が skip しないことを CookCacheDecisionTest で反証する: 着地(直し 0 回)
-- U1 発光換算の接続を GltfMaterialCookV1Test で反証する: 着地(直し 0 回)
-- U3 材質設定の接続を文書へ反映し、タスクの verify を通す: 着地(直し 2 回)
-- Done: G2-GR79-IMPORT-POLICY-CONNECTION — 材質設定の接続（asset-set spec v2 の `emissiveNitsPerUnit` → 単体 request → 共有 resolver、素材 > 資産 sidecar > asset-set、AI 生成 profile の明示、hash/cache）を反証する検査を `GltfMaterialCookV1Test`・`CookCacheDecisionTest` に足した（asset-set だけの換算・上書き・上位不正値の非 fallback・未設定拒否の資産名/材質名/設定名・strength0 と texture だけの非発光・設定差での fingerprint と cache の失効・v0 互換）。asset-set の不正な換算値の拒否を `setting=emissiveNitsPerUnit` で診断するよう直した。`MaterialImportPolicy.md`・`GltfMaterialCookV1.md`・`MaterialImportDocument.md` の「未接続」を今の接続に書き換えた。verify は `cmake --build build --config Debug --target CookedMeshTest AssetCook -- /m:1` が終了コード 0、ctest の 9 本がすべて Passed
-- Next: 実物の資産（発光のある GLB）での cook と撮影・見た目の受入れは未実施（アプリを起動しない決まりのため）。G2-MATERIAL-SELECTION-INTEGRATION がこの項目の後に回せる
-- Notes: 要起票: 骨格の分割 cook（`RigSplitCook.cpp:338`）は設定の解決の失敗を `split_material_selector_or_settings` の 1 つの名前で返し、設定名（`MaterialSettingsErrorKey`）を出さない。NVMESH v1 と同じ形にそろえるか
+
+- U1 テストの全実行ファイルに assert の対話窓を止める仕組みを付け、わざと落とすテストで確かめる: 着地(直し 1 回)
+
+## 2026-11-02 TEST-ASSERT-NO-DIALOG（run 20261102-092732 の反復 1）
+
+- Done: `Test/TestSupport/NorvesTestNoDialog.cpp`（OBJECT ライブラリ）の静的初期化（`#pragma init_seg(lib)`）で `_set_error_mode(_OUT_TO_STDERR)`・`_set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT)`・Debug の `_CRT_ASSERT`/`_CRT_ERROR` の報告先を stderr にし、`Test/CMakeLists.txt` の末尾で `Test/` 以下の全 EXECUTABLE ターゲットへ再帰で一括リンクする（今の構成で 126 個。Bridge SDK の無い構成なので `Test/Game` は含まない）。わざと assert を落とす `TestAssertNoDialogTest`（Core をリンクしない、`#undef NDEBUG`）を WILL_FAIL・TIMEOUT 30 で登録。`Docs/Testing.md` に 3 点と、`RenderGraphCompileTest.cpp` の assert の中の副作用（344 行）が NDEBUG で消えて 0xC0000005 で落ちる件を記録した
+- 検証: `RenderGraphCompileTest`・`TestAssertNoDialogTest` の Debug ビルドは終了コード 0（C4073 も無し）。`ctest -R "^TestAssertNoDialogTest$"` は Passed 0.01 秒。実行ファイルを直接起動すると stderr に `Assertion failed` が出て終了コード 3 で即座に戻る（`.harness/runs/20261102-092732/verify-TEST-ASSERT-NO-DIALOG-U1.txt`）
+- Next: 既存のテストに個別に入っている `_set_abort_behavior` などは重なっても害が無いので残した。その周りを触るときに消してよい
+- Notes: `init_seg(lib)` と同じか前の領域で走る初期化（CRT・ほかのライブラリの lib 領域）で assert が落ちた場合は止められない
+- Notes: 要起票: `RenderGraphCompileTest.cpp` などで副作用のある呼び出しを `assert(...)` の中に置いており、RelWithDebInfo では初期化ごと消えて 0xC0000005 で落ちる（直すか試験を消すか）
