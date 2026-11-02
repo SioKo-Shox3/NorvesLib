@@ -4525,3 +4525,13 @@
 - verify: `ctest --test-dir build -C Debug -R "^SwordTrailRibbonVulkanTest$" --no-tests=error --output-on-failure --timeout 600`
 - paths: Library/Core/Public/Particle, Library/Core/Private/Particle, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Tools/AssetCook, Test/Core/Rendering, Docs/Plans/GameFeatureRoadmap.md, TASKS.md, PROGRESS.md
 - from: GAME-GR130-VFX
+
+## GAME-GR135-VFX-CHECK: 空気の歪み（屈折）を実装する(後回しにしたアプリの起動の確かめ)
+- status: todo
+- check: launch
+- gpu: exclusive
+- done-when: GAME-GR135-VFX で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、GAME-GR135-VFX の done-when を満たすことを確かめる。満たさなければ GAME-GR135-VFX の done-when と paths の範囲で直す。
+- verify: `cmake --build build --config Debug --target DistortionPassVulkanTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^DistortionPassVulkanTest$" --no-tests=error --output-on-failure --timeout 600`
+- paths: Library/Core/Public/Particle, Library/Core/Private/Particle, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Tools/AssetCook, Test/Core/Rendering, Docs/Plans/GameFeatureRoadmap.md, TASKS.md, PROGRESS.md
+- from: GAME-GR135-VFX
