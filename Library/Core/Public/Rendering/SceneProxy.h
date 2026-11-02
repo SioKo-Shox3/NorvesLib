@@ -9,6 +9,7 @@
 #include "SkyAtmosphere.h"
 #include "VolumetricFog.h"
 #include "FoliageTypes.h"
+#include "RibbonTrailTypes.h"
 #include "AutoExposure.h"
 #include "Container/Containers.h"
 #include "Math/Matrix4x4.h"
@@ -585,6 +586,8 @@ namespace NorvesLib::Core::Rendering
         CloudLayerParameters CloudLayer;
         // 草・低木の株の束と風。FoliagePass が GBuffer へ描く
         FoliageScene Foliage;
+        // このフレームの帯の頂点と描画範囲
+        RibbonTrailScene RibbonTrails;
 
         // フォグ設定
         bool bFogEnabled = false;
@@ -615,6 +618,7 @@ namespace NorvesLib::Core::Rendering
             AerialPerspective = AerialPerspectiveParameters{};
             CloudLayer = CloudLayerParameters{};
             Foliage = FoliageScene{};
+            RibbonTrails.Clear();
         }
 
         void SetDDGIVolumeParameters(const DDGIVolumeParameters& parameters)

@@ -422,6 +422,12 @@ namespace NorvesLib::Core::Rendering
         void SetFoliage(const FoliageScene& foliage);
         const FoliageScene& GetFoliage() const { return m_Foliage; }
 
+        /**
+         * @brief このフレームの帯の頂点と描画範囲を設定する（GameThread）
+         * @param trails 描画コマンド生成前に設定し、FramePacket へ値コピーした後は保持を空にする
+         */
+        void SetRibbonTrails(const RibbonTrailScene& trails);
+
         /** @brief 決定的な撮影にする（GameThread）。FramePacket の経過時間を 1/60 秒に固定する */
         void SetDeterministicCapture(bool bEnabled) { m_bDeterministicCapture = bEnabled; }
 
@@ -562,7 +568,7 @@ namespace NorvesLib::Core::Rendering
         // CPUのpacket生成は実capability値を受け取る。GPU操作は行わない。
         void GenerateDrawCommands(const RHI::DeviceCapabilities& capabilities);
         void SnapshotSceneParameters(FramePacket& packet,
-                                     const RHI::DeviceCapabilities& capabilities) const;
+                                     const RHI::DeviceCapabilities& capabilities);
         void UpdateFrameRevisions(FramePacket& packet);
         /**
          * @brief Mesh・Skinned・Light の proxy を差分でパケットへ積み、構成の hash の集合と光源表を変わった位置だけで更新する
@@ -655,6 +661,7 @@ namespace NorvesLib::Core::Rendering
         AerialPerspectiveParameters m_AerialPerspective;
         CloudLayerParameters m_CloudLayer;
         FoliageScene m_Foliage;
+        RibbonTrailScene m_RibbonTrails;
         bool m_bRTGIEnabled = true;
         bool m_bRTGINonShadowCasterOcclusion = false;
         uint64_t m_SceneRevision = 1u;

@@ -8712,3 +8712,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 新しい Core のソースの登録のため `Library/Core/CMakeLists.txt` と、試験の理由の `Docs/Testing.md` を paths の外だが触る（ソースの並びに足すだけ・done-when が名指し）
 - U1 剣のトレイルの帯（CPU）と描画の頂点の型: 着地(直し 0 回)
 - U2 SwordTrailRibbonTest（CPU の試験）と Docs/Testing.md の 3 点: 着地(直し 0 回)
+- U3 帯の頂点を GameThread から RenderThread へ渡す道: 着地(直し 0 回)

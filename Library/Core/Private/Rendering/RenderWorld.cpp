@@ -359,6 +359,11 @@ namespace NorvesLib::Core::Rendering
         m_RenderingCoordinator.SetFoliage(foliage);
     }
 
+    void RenderWorld::SetRibbonTrails(const RibbonTrailScene& trails)
+    {
+        m_RenderingCoordinator.SetRibbonTrails(trails);
+    }
+
     void RenderWorld::SetDeterministicCapture(bool bEnabled)
     {
         m_RenderingCoordinator.SetDeterministicCapture(bEnabled);

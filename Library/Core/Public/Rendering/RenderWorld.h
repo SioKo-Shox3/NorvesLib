@@ -244,6 +244,13 @@ namespace NorvesLib::Core::Rendering
         void SetFoliage(const FoliageScene& foliage);
 
         /**
+         * @brief このフレームの帯の頂点と描画範囲を設定する（GameThread）
+         *
+         * 描画コマンド生成前に呼び、FramePacket へコピーした後は保持を空にする。
+         */
+        void SetRibbonTrails(const RibbonTrailScene& trails);
+
+        /**
          * @brief 決定的な撮影（--capture-deterministic）にする（GameThread）
          *
          * 有効な間、FramePacket の経過時間を 1/60 秒に固定する。起動の初期化で一度だけ呼ぶ。

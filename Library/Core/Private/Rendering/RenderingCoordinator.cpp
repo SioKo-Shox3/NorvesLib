@@ -4537,7 +4537,7 @@ namespace NorvesLib::Core::Rendering
 
     void RenderingCoordinator::SnapshotSceneParameters(
         FramePacket& packet,
-        const RHI::DeviceCapabilities& capabilities) const
+        const RHI::DeviceCapabilities& capabilities)
     {
         // 空の太陽は、パケットへ運ぶ光源表（UpdatePacketLights）が SceneView の光源の後に加える。
         packet.Scene.SkyAtmosphere = m_SkyAtmosphere;
@@ -4555,6 +4555,9 @@ namespace NorvesLib::Core::Rendering
         packet.Scene.AerialPerspective = m_AerialPerspective;
         packet.Scene.CloudLayer = m_CloudLayer;
         packet.Scene.Foliage = m_Foliage;
+        packet.Scene.RibbonTrails = m_RibbonTrails;
+        // 帯はこのパケットだけで使い、配列の容量は次のフレームにも再利用する。
+        m_RibbonTrails.Clear();
         packet.bRTGIEnabled = m_bRTGIEnabled;
         packet.bRTGINonShadowCasterOcclusion = m_bRTGINonShadowCasterOcclusion;
     }
@@ -5091,6 +5094,9 @@ namespace NorvesLib::Core::Rendering
         {
             return nullptr;
         }
+
+        // パケットを確保できなかったフレームの帯も翌フレームへ持ち越さない。
+        m_RibbonTrails.Clear();
 
         // 書き込み完了をマーク（Writing→Ready）
         // Screen.EndFrame（submit/present）はRenderFrame内で実行するため、ここでは行わない。
@@ -5785,6 +5791,7 @@ namespace NorvesLib::Core::Rendering
                                                                       packet->DrawCommandRange);
         viewContext.SnapshotDebugLineVertices = &packet->DebugLineVertices;
         viewContext.SnapshotFoliage = &packet->Scene.Foliage;
+        viewContext.SnapshotRibbonTrails = &packet->Scene.RibbonTrails;
         viewContext.SnapshotOpaqueCommands = DrawCommandView::FromRange(packet->DrawCommands,
                                                                         packet->OpaqueCommandRange);
         viewContext.SnapshotTransparentCommands = DrawCommandView::FromRange(packet->DrawCommands,
@@ -6539,6 +6546,11 @@ namespace NorvesLib::Core::Rendering
     void RenderingCoordinator::SetFoliage(const FoliageScene& foliage)
     {
         m_Foliage = foliage;
+    }
+
+    void RenderingCoordinator::SetRibbonTrails(const RibbonTrailScene& trails)
+    {
+        m_RibbonTrails = trails;
     }
 
     uint64_t RenderingCoordinator::RegisterCamera(const CameraProxy &camera)
