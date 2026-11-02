@@ -164,6 +164,8 @@ add_library(AssetCookLib STATIC
     NativeCookArguments.h
     RigSplitCook.cpp
     RigSplitCook.h
+    VfxEffectCookCli.cpp
+    VfxEffectCookCli.h
 )
 target_link_libraries(AssetCookLib PUBLIC Core AssetCookTextureCooker AssetCookMeshOptimizer)
 if(WIN32)

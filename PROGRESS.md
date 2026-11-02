@@ -8558,3 +8558,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U2 JSON の読み込みとクックしたバイナリの読み書き: 着地(直し 0 回)
 - U3 CPU のシミュレーション（実行時のインスタンス・イベント・フリップブック・板の出力）: 着地(直し 0 回)
 - U4 VfxEffectSystemTest と Docs/Testing.md の 3 点: 着地(直し 0 回)
+- U5 AssetCook の --cook-vfx: 着地(直し 0 回)
