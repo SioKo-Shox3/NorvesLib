@@ -8881,3 +8881,10 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 要起票: AssetCook のソースが変わる取り込みのたびに、検証を回す作業ツリーの exe のハッシュが変わって地形の全項目の焼き直し（並列で約 31 分）が要る。印に exe のハッシュではなく地形の生成の版を使う形は Scripts の設計変更になるので、この項目では変えていない
 - U1 ソケットに付けた Entity の描画の変換を、付け先の描画の変換から求める: 着地(直し 0 回)
 - U2 WorldRenderInterpolationTest に付けた Entity の描画の補間の検査を足し、Testing.md に 3 点を書く: 着地(直し 0 回)
+
+## 2026-11-02 GAME-GR130-VFX-CHECK-P1（run 20261102-191024 の反復 1。完了）
+- Done: ソケットに付けた Entity の描画の変換を、付け先（スキンのメッシュ）の描画の変換を所有者として組んだソケット × grip・profile の offset（付けたときの混ぜを含む）で求める形にした（`SocketAttachmentComponent::GetRenderTarget`・`TryBuildRenderWorldTransform`）。`World::UpdateRenderRows` は付いた行とその子孫を後回しにし、親と付け先の描画の変換が出た後に処理する（付け先が深さの順で後ろにいる・付け先も付いている連鎖も解ける。解けない行は従来の式へ戻す）。付いている間は補間の履歴に Prepare・Capture・Evaluate をせず、固定ステップの外の書き換えで履歴を戻さない。検査 `VerifyRenderRow` も同じ式にそろえた。シミュレーションの変換（PostPhysics の `SetWorldTransform`）の求め方と値は変えていない
+- Done: `WorldRenderInterpolationTest` に `TestSocketAttachmentFollowsParentRender` を足した（足す理由の 3 点は `Docs/Testing.md`）。親が 3 m/s で動き固定ステップ 0・1・2 回のフレームが混ざる 24 フレームで、剣の描画の位置 = 親の描画の位置 + (1,0,0)（1e-4）、剣のシミュレーションの位置 = 親のシミュレーションの位置 + (1,0,0)、描画の x の差 = v × dt（跳ばない）、ECS の描画の変換の照合が通る。`cmake --build build --config Debug --target Game EntityTreeTest SwordTrailRibbonTest SkeletalAnimationSamplingTest -- /m:1` は終了コード 0、`ctest -R "^(WorldRenderInterpolationTest|SwordTrailRibbonTest|SkeletalAnimationSamplingTest)$"` は 3 本 Passed、`EntityTreeTest` も Passed（`.harness/runs/20261102-191024/verify-GAME-GR130-VFX-CHECK-P1-final.txt`）。束の中の `AnimGraphRuntimeTest`（ソケットの追従の試験）も PASS
+- Next: 起動の確かめは後回し。`--animation-debug` で起動して、剣が手に付いたまま振りの間に手から遅れたり揺れたりしないこと、剣のトレイルの帯の先が描画の剣と合うことを確かめる（GAME-GR130-VFX-CHECK の起動の確かめと一緒に回せる）
+- Notes: 補間を要求していない（描画の変換の列を持たない）付けた Entity は前のまま（シミュレーションの変換で描く）。付け先だけ補間すると手とずれるので、付ける側も `SetRenderInterpolationEnabled(true)` にする前提。外したフレームは履歴が今の姿勢から始め直すので、外した瞬間に最大 1 ステップ分の段差が出うる
+- Notes: `UpdateRenderRows` は補間の行ごとに親の鎖をたどって `SocketAttachmentComponent` を探す。補間の行が大量になる場面では計測で確かめる

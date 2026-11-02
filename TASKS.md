@@ -4632,7 +4632,7 @@
 - from: GAME-GR131-VFX
 
 ## GAME-GR130-VFX-CHECK-P1: ソケットに付けた Entity の描画の補間を、親の描画の変換から求める
-- status: todo
+- status: done
 - done-when: `SocketAttachmentComponent` は今、PostPhysics の段(固定ステップの外)でワールドの変換を書き換えている。そのため、付けた Entity の補間の履歴が毎フレーム戻されている。これをやめ、描画用の変換を次の形で求める: 親(スキンのメッシュ)の補間した描画の変換 × ソケットの相対の変換(骨のソケット × grip・profile の offset。移り変わりの混ぜを含む)。補間の履歴は、固定ステップの外の書き換えで戻さない。シミュレーションの変換(攻撃の判定 GR16 が読むもの)の値は変えない。既存の `WorldRenderInterpolationTest`(`EntityTreeTest` の束)に次の検査を足す(新しい exe は作らない。足す前に `Docs/Testing.md` の 3 点を書く): 親が一定の速さで動き、固定ステップが 0・1・2 回のフレームが混ざる列で、付けた Entity の描画の位置が、親の描画の位置 + offset と 1e-4 以内で一致し、フレームの間で跳ばない。`SwordTrailRibbonTest` と `SkeletalAnimationSamplingTest` は通ったまま。
 - verify: `cmake --build build --config Debug --target Game EntityTreeTest SwordTrailRibbonTest SkeletalAnimationSamplingTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^(WorldRenderInterpolationTest|SwordTrailRibbonTest|SkeletalAnimationSamplingTest)$" --no-tests=error --output-on-failure --timeout 180`
