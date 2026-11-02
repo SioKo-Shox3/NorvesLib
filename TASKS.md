@@ -3783,7 +3783,7 @@
 - notes: 2026-10-02追加。未着手の後続作業で、前提と選定課題を解決してから実装タスクへ細分化する。NorvesLib/Editorの境界とVFX-S1〜S5はロードマップ参照。
 
 ## GAME-GR131-VFX: 当たりの火花・衝撃（ヒットエフェクト）を実装する
-- status: doing
+- status: done
 - after: GAME-GR136-VFX
 - done-when: 着手の最初に、作者の判断が要る方式と、未着手の前提の GR との境界を `Docs/Plans/GameFeatureRoadmap.md` に書く（推奨の案で進め、理由を PROGRESS.md に書く。前提が未完の部分は完了を宣言しない範囲として残す）。 起動せずに確かめる完了の条件: CPU の試験 `HitEffectEmissionTest`（新しい実行ファイル。足す前に `Docs/Testing.md` の 3 点を書く）で、当たり 1 回で放出の要求がちょうど 1 回積まれ、位置と法線が当たりの値と一致する。表面の種類ごとに表のエフェクトが選ばれ、表に無い種類は既定の 1 種類になる（GR115 が無いうち）。
 - verify: `cmake --build build --config Debug --target Game HitEffectEmissionTest -- /m:1`
