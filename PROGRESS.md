@@ -8873,3 +8873,9 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: 起動の確かめは後回し（SCN-WL-CLIFF-GEN-TALUS-CHECK）。verify の 5〜12 行目（形・範囲ごとの量・置いた物の接地・ページの要求と VRAM・写真との比べの撮影と判定）を版 19 で回す
 - Notes: verify の 1〜4 行目は前の反復の U9 で NorvesLib-6 の AssetCook（9ed6c406…）で通しており、この反復は仕様の JSON と文書だけを変えたので回し直していない。この作業ブランチの TASKS.md の done-when は統合ブランチの cc21c026（人の判断で替えた問い）より前の文面のままで、統合のときに合わせる。新しい試験は足していない
 - U12 統合ブランチの取り込みで変わった AssetCook で地形の全項目を並列に焼き直し、verify の 1〜4 行目を NorvesLib-6 で通す: 着地(直し 0 回)
+
+## 2026-11-02 SCN-WL-CLIFF-GEN-TALUS（run 20261102-145122 の反復 4、統合ブランチの取り込み後の再検証の直し・完了）
+- Done: feature/scene-launcher の取り込み（0fef65c4）で Tools/AssetCook（リグ・VFX のクック）が変わり、NorvesLib-6 の AssetCook.exe のハッシュが ad954ff3… になって地形の 214 項目の印が全部 stale になり、再検証のクックの行（直列）が 10 分を超えて切れた。切れたまま残っていた直列のクックを止め、この exe で 214 項目を 12 組の並列で共有の置き場へ焼き直した（1851.37 秒・失敗 0・三角形 326,092,012 個・焼いた中身の変化 0 項目・接地用の格子は書き直し不要）。verify の 1〜4 行目は NorvesLib-6 で EXIT=0（クックの行は `cooked=0 skipped=214`・13.75 秒、`--cook-coverage` は `cliff_detail_version=19`・`stale_terrain_items=0`・`tiles=27 cooked=27 result=pass`）
+- 証拠: `.harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS/u12/`（`parallel-result.json`・`assetcook-sha256.txt`・項目ごとの出力）
+- Next: 起動の確かめは後回し（SCN-WL-CLIFF-GEN-TALUS-CHECK）。verify の 5〜12 行目を版 19 で回す
+- Notes: 要起票: AssetCook のソースが変わる取り込みのたびに、検証を回す作業ツリーの exe のハッシュが変わって地形の全項目の焼き直し（並列で約 31 分）が要る。印に exe のハッシュではなく地形の生成の版を使う形は Scripts の設計変更になるので、この項目では変えていない
