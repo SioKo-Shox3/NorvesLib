@@ -46,6 +46,17 @@ namespace Game::GameModes
         // 太陽への水平の向きは (cos 240°, sin 240°) = (-0.5, -0.87)。InteriorLightReference.md の「窓の向き」「太陽の高さ」
         constexpr float kSunAltitudeDegrees = 15.0f;
         constexpr float kSunAzimuthDegrees = 240.0f;
+        // 窓から入る太陽光の筋を見せる薄い霧。12〜15 m で不透明度が約 0.15〜0.2 となり、
+        // 日の当たる 2 m の筋で太陽の散乱が壁の明るさと並ぶ程度の密度[1/m]。
+        constexpr bool kFogEnabled = true;
+        constexpr float kFogDensityAtBaseHeight = 0.012f;
+        // 室内は高さによって密度を変えず、一様な霧にする。
+        constexpr float kFogHeightFalloffPerUnit = 0.0f;
+        constexpr float kFogBaseHeight = 0.0f;
+        // 部屋の対角と天井の高さを含み、窓の外の遠い視線でも積分の歩幅を粗くしない範囲[m]。
+        constexpr float kFogMaxDistanceMeters = 24.0f;
+        // RTGI の空の見え方の AOV（室内で 2〜3 %）に合わせ、空の放射輝度で霧が一様に光るのを抑える。
+        constexpr float kFogAmbientScale = 0.03f;
         // 自動露出の補正[EV]
         constexpr float kExposureCompensationEV = 0.5f;
         // SceneReady を出すまでの最小の Tick の数
@@ -633,7 +644,14 @@ namespace Game::GameModes
             sky.SunAltitudeDegrees = kSunAltitudeDegrees;
             sky.SunAzimuthDegrees = kSunAzimuthDegrees;
             ctx.EngineRef.GetRenderWorld().SetSkyAtmosphere(sky);
-            ctx.EngineRef.GetRenderWorld().SetVolumetricFogParameters(MakeDefaultVolumetricFogParameters());
+            VolumetricFogParameters fog = MakeDefaultVolumetricFogParameters();
+            fog.bEnabled = kFogEnabled;
+            fog.DensityAtBaseHeight = kFogDensityAtBaseHeight;
+            fog.HeightFalloffPerUnit = kFogHeightFalloffPerUnit;
+            fog.BaseHeight = kFogBaseHeight;
+            fog.MaxDistanceMeters = kFogMaxDistanceMeters;
+            fog.AmbientScale = kFogAmbientScale;
+            ctx.EngineRef.GetRenderWorld().SetVolumetricFogParameters(fog);
             ctx.EngineRef.GetRenderWorld().SetStaticEnvironmentIntensityScale(1.0f);
             ctx.EngineRef.GetRenderWorld().SetStaticEnvironmentMaxRadiance(0.0f);
             // 大気の書き出し（--atmosphere-dump）は霞か空気遠近が有効なときだけ書かれるので、そのときだけ空気遠近を有効にする。

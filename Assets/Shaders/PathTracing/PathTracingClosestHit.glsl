@@ -31,10 +31,16 @@ const uint TEXTURE_INDEX_MASK = 0x3FFFFFFFu;
 vec4 SampleMaterialTexture(uint textureIndex, vec2 uv)
 {
     // レイトレーシング段には画面微分がないため、LOD 0を標本化する。
-    // VT の texture は、常駐していないタイルを読まず、常駐している粗いミップへ逃げる（ラスタと共通の関数）。
-    bool bVirtualTexture = (textureIndex & TEXTURE_SPARSE_BIT) != 0u;
-    return SampleMaterialTextureLod(
-        materialTextures[nonuniformEXT(textureIndex & TEXTURE_INDEX_MASK)], uv, 0.0, bVirtualTexture);
+    // 配列への一様でない参照を各標本命令の位置で行う。
+    uint index = textureIndex & TEXTURE_INDEX_MASK;
+#ifdef NORVES_SPARSE_RESIDENCY_SHADING
+    // VT は、常駐していないタイルを読まず、常駐している粗いミップへ逃げる。
+    if ((textureIndex & TEXTURE_SPARSE_BIT) != 0u)
+    {
+        NORVES_RETURN_SPARSE_RESIDENT_LOD(materialTextures[nonuniformEXT(index)], uv, 0.0);
+    }
+#endif
+    return textureLod(materialTextures[nonuniformEXT(index)], uv, 0.0);
 }
 
 void main()

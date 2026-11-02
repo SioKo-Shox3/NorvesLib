@@ -53,6 +53,12 @@ int main()
     CHECK(ResolveMaterialSelection(Domain::SourceMaterial,catalog,one,scratch,rows).Status==Status::Unmatched);held();
     one[0]=Indexed(1,"Body");one[0].bExpectedNamePresent=false;
     CHECK(ResolveMaterialSelection(Domain::SourceMaterial,catalog,one,scratch,rows).Status==Status::InvalidSelector);held();
+    MaterialIdentityView composed[]={{0,Name(reinterpret_cast<const char*>(u8"\u00E9"))}};
+    one[0]=Named(reinterpret_cast<const char*>(u8"e\u0301"));
+    CHECK(ResolveMaterialSelection(Domain::SourceMaterial,composed,one,scratch,rows).Status==Status::Unmatched);held();
+    one[0]=Named(reinterpret_cast<const char*>(u8"\u00E9"));
+    CHECK(ResolveMaterialSelection(Domain::SourceMaterial,composed,one,scratch,rows).Succeeded() && rows[0]==0);
+    reset();
     MaterialIdentityView unnamed[]={{0,{}}};one[0]=Indexed(0,"");
     CHECK(ResolveMaterialSelection(Domain::SourceMaterial,unnamed,one,scratch,rows).Succeeded());
     one[0]=Named("");reset();

@@ -57,6 +57,31 @@ namespace
         CHECK(ResolveMaterialImportPlan({},defaults,{true,9},plan).Succeeded());
         CHECK(plan.Materials.empty() && plan.ImplicitDefault.Emission.NitsPerUnit==9);
     }
+    void SelectedMaterialOnly()
+    {
+        auto settings=Settings(R"({"version":1,"material":{"profile":"ai_generated","emissiveNitsPerUnit":2},"materials":[{"name":"Target","arm":{"metallic":"texture"},"emissiveNitsPerUnit":7,"surface":"Stone"}]})");
+        auto catalog=Catalog(R"({"materials":[{"name":"First"},{"name":"Target"},{"name":"Other"}]})");
+        std::swap(catalog[0],catalog[1]);
+        ResolvedMaterialImportPlan plan;
+        CHECK(ResolveMaterialImportPlan(catalog,settings,{},plan).Succeeded() && plan.Materials.size()==catalog.size());
+        const auto& target=plan.Materials[1];
+        CHECK(target.SourceIndex==1 && Equals(target.Name,"Target"));
+        CHECK(target.Settings.Arm.Channels[2].Mode==ArmMode::Texture);
+        CHECK(target.Settings.Emission.Present && target.Settings.Emission.NitsPerUnit==7);
+        CHECK(target.bSurfacePresent && Equals(target.SurfaceName,"Stone"));
+        CHECK(plan.ImplicitDefault.Arm.Channels[2].Mode!=ArmMode::Texture);
+        CHECK(plan.ImplicitDefault.Emission.Present && plan.ImplicitDefault.Emission.NitsPerUnit==2);
+        const auto defaults=EncodeCanonicalMaterialSettings(plan.ImplicitDefault);
+        CHECK(defaults.Size!=0);
+        for (size_t index=0;index<plan.Materials.size();++index)
+        {
+            if (index==1) { continue; }
+            const auto& entry=plan.Materials[index];
+            CHECK(entry.SourceIndex==index && !entry.bSurfacePresent && entry.SurfaceName.empty());
+            const auto actual=EncodeCanonicalMaterialSettings(entry.Settings);
+            CHECK(actual.Size==defaults.Size && std::memcmp(actual.Bytes,defaults.Bytes,defaults.Size)==0);
+        }
+    }
     void SelectionAndFailure()
     {
         auto catalog=Catalog(R"({"materials":[{"name":"Body"},{"name":"Body"}]})");
@@ -191,7 +216,7 @@ namespace
 }
 int main()
 {
-    OwnershipAndLayers();SelectionAndFailure();StrictParsing();InvalidManualPlan();UnicodeAndFile();
+    OwnershipAndLayers();SelectedMaterialOnly();SelectionAndFailure();StrictParsing();InvalidManualPlan();UnicodeAndFile();
     std::puts("MaterialImportDocumentTest PASS: owner_selector_settings_surface_atomic_file_legacy");
     return 0;
 }
