@@ -39,6 +39,33 @@ namespace NorvesLib::Tools::AssetCook
             }
         };
 #if defined(_WIN32)
+        DWORD LockWaitMilliseconds()
+        {
+            // 既定は待ち0。待ちは協調排他の公平性を保証しないため、試験環境だけで指定する。
+            constexpr DWORD maximumWait = 600000;
+            char text[16];
+            const DWORD length =
+                GetEnvironmentVariableA("NORVES_COOK_LOCK_WAIT_MS", text, static_cast<DWORD>(sizeof(text)));
+            if (length == 0 || length >= sizeof(text))
+            {
+                return 0;
+            }
+            DWORD value = 0;
+            for (DWORD i = 0; i < length; ++i)
+            {
+                if (text[i] < '0' || text[i] > '9')
+                {
+                    return 0;
+                }
+                const DWORD digit = static_cast<DWORD>(text[i] - '0');
+                if (value > (maximumWait - digit) / 10)
+                {
+                    return 0;
+                }
+                value = value * 10 + digit;
+            }
+            return value;
+        }
         constexpr size_t VolumeRootUnits = 49;
         bool Guid(const wchar_t* text, size_t size, LockText& out)
         {
@@ -249,7 +276,8 @@ namespace NorvesLib::Tools::AssetCook
                 }
                 else
                 {
-                    const DWORD wait = fault == Fault::Wait ? WAIT_FAILED : WaitForSingleObject(mutex.Handle, 0);
+                    const DWORD wait =
+                        fault == Fault::Wait ? WAIT_FAILED : WaitForSingleObject(mutex.Handle, LockWaitMilliseconds());
                     if (wait == WAIT_TIMEOUT)
                     {
                         result = Result::Busy;

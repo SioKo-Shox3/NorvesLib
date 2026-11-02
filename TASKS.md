@@ -4563,7 +4563,7 @@
 - from: SCN-MEGA-FIX-STRESS-GPU-CHECK
 
 ## G2-GR32-GPU-ACCEPTANCE-P1: スキニングの計算と出力の頂点の範囲を、submesh ごとでなく component ごとに 1 回にする
-- status: todo
+- status: done
 - done-when: `SkinningComputePass::Declare` は、同じ `Skinned.FrameLeaseIndex`(同じ component)から出た複数の submesh の描画を 1 回だけ変形し、出力の頂点の範囲も 1 回だけ取る。その submesh の `SkinningComputeInstance` は、どれも同じ `VertexBase`・`VertexCount`・頂点のアドレスを指し、`MaterialIndex`・`Material`・`SourceFirstIndex`・`SourceIndexCount`・`bOpaque`・`bCastShadow` はそれぞれの submesh の値を保つ。頂点の合計の上限と、外したインスタンスの数(`SkinningComputeDroppedInstances`)は component ごとに 1 回数える。解決が使えず影の描画だけが読むフレームでは、影を落とす submesh が 1 つでもある component だけを変形する。計画を作る部分は GPU の無い試験から呼べる関数に分け、既存の `SkinnedRenderPathContractTest` に次の検査を足す(新しい exe は作らない。足す前に `Docs/Testing.md` の 3 点を書く): 2 submesh で同じ lease のとき、変形は 1 回で出力の頂点の数は 1 倍、2 つのインスタンスが同じ `VertexBase` を持ち範囲はそれぞれの値のまま。lease の違う 2 component では範囲が重ならない。上限を超える component は submesh の数によらず 1 つとして外す。2 材質のパネルの撮影(下の verify。起動を戻した後に回す)で、材質の色の判定が result=pass のままであること。
 - verify: `cmake --build build --config Debug --target Game SkinnedRenderPathContractTest SkinnedSubmeshDrawContractTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^(SkinnedRenderPathContractTest|SkinnedSubmeshDrawContractTest)$" --no-tests=error --output-on-failure --timeout 180`
@@ -4587,7 +4587,7 @@
 - from: G2-MATERIAL-SELECTION-INTEGRATION
 
 ## G2-S6-ASSET-SET-P1: `CookManagedBootstrapTest` が `rename_no_replace`(win32 5)のあと止まり、300 秒でタイムアウトする原因を直す
-- status: todo
+- status: done
 - done-when: この機で `CookManagedBootstrapTest` を単独で回すと、182 行の `InitializeNewCookManagedStore` の前に `rename_no_replace; win32_hex=5`(ERROR_ACCESS_DENIED)が出て、そのまま 300 秒でタイムアウトする。原因を特定して PROGRESS.md に書く。調べる候補: fixture を `GetTempPathW` の下(共有の TEMP)に作っていること、改名する項目やその子の handle が `FILE_SHARE_DELETE` 無しで開いたままであること、TEMP を見張る外部のソフト。原因が製品の側にあれば製品を直し、試験の置き場の側にあれば fixture を ctest の作業ディレクトリの下へ移す(`RigSplitCookTest` と同じ形)。そのうえで次の 2 つを満たす。(1) 失敗のときは止まらず、数秒のうちに 0 でない終了コードで終わる。(2) `ctest -R "^CookManagedBootstrapTest$" --timeout 180` が単独で Passed になる。復旧で `RolledBack` を期待する箇所など、期待そのものは弱めない。timeout を延ばして通すこともしない。`ManagedTextureAssetSetCli.md` の 2026-11-02 の受入れの節に、Bootstrap の結果を書き足す。
 - verify: `cmake --build build --config Debug --target CookedMeshTest AssetCook -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^CookManagedBootstrapTest$" --no-tests=error --output-on-failure --timeout 180`
@@ -4632,7 +4632,7 @@
 - from: GAME-GR131-VFX
 
 ## GAME-GR130-VFX-CHECK-P1: ソケットに付けた Entity の描画の補間を、親の描画の変換から求める
-- status: todo
+- status: done
 - done-when: `SocketAttachmentComponent` は今、PostPhysics の段(固定ステップの外)でワールドの変換を書き換えている。そのため、付けた Entity の補間の履歴が毎フレーム戻されている。これをやめ、描画用の変換を次の形で求める: 親(スキンのメッシュ)の補間した描画の変換 × ソケットの相対の変換(骨のソケット × grip・profile の offset。移り変わりの混ぜを含む)。補間の履歴は、固定ステップの外の書き換えで戻さない。シミュレーションの変換(攻撃の判定 GR16 が読むもの)の値は変えない。既存の `WorldRenderInterpolationTest`(`EntityTreeTest` の束)に次の検査を足す(新しい exe は作らない。足す前に `Docs/Testing.md` の 3 点を書く): 親が一定の速さで動き、固定ステップが 0・1・2 回のフレームが混ざる列で、付けた Entity の描画の位置が、親の描画の位置 + offset と 1e-4 以内で一致し、フレームの間で跳ばない。`SwordTrailRibbonTest` と `SkeletalAnimationSamplingTest` は通ったまま。
 - verify: `cmake --build build --config Debug --target Game EntityTreeTest SwordTrailRibbonTest SkeletalAnimationSamplingTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^(WorldRenderInterpolationTest|SwordTrailRibbonTest|SkeletalAnimationSamplingTest)$" --no-tests=error --output-on-failure --timeout 180`
@@ -4749,7 +4749,7 @@
   - verify は 1 行 10 分未満。
 
 ## SCN-WL-CLIFF-GEN-TALUS-CHECK-P3: 地形の項目のクックの印を AssetCook.exe のハッシュから切り離し、地形に関わらない取り込みで地形の全項目を焼き直さない
-- status: todo
+- status: done
 - done-when: SCN-WL-CLIFF-GEN-TALUS の反復 4（PROGRESS.md）で、地形に関わらない取り込みのたびに地形の全項目を焼き直すことになった。
   - 取り込んだのはリグ・VFX のクックの変更だけだったが、AssetCook.exe のハッシュが変わった。
   - `Scripts/CookAssets.ps1` の印は `assetcook=<exe の SHA-256>` を含むので、地形の 214 項目すべての印が stale になった。
@@ -4810,7 +4810,7 @@
 - stop-when: プッシュする、workflow を起動する、凍結基準の照合段を削除する。
 
 ## G2-MATERIAL-SELECTION-INTEGRATION-P1-P1: ほかの枠の cook と重なっても cook の試験が `volume_busy` で落ちないよう、宛先 volume のロックに試験の環境だけで使う上限つきの待ちを足す
-- status: todo
+- status: done
 - done-when: `Tools/AssetCook/CookDestinationLock.cpp` の `WithCookDestinationLock` を次のように変える。
   - 環境変数 `NORVES_COOK_LOCK_WAIT_MS` が無い・空・不正(整数でない、0 以下、600000 超)のときは、今と同じく待ち 0 で `Busy` を返す。
   - 1〜600000 の整数のときは、その時間まで `WaitForSingleObject` で待って取得する。待ちきっても取れなければ `Busy` を返す。mutex の名前・volume 単位・再観測・`WAIT_ABANDONED` の扱いは変えない。
@@ -4834,3 +4834,38 @@
 - verify: `python -c "import pathlib,sys; t=pathlib.Path('Docs/Architecture/NVSKELMigrationInventory.md').read_text(encoding='utf-8'); b=[s for s in ['\u5168\u4f53\u306e\u5b9f\u884c\u306f\u672a\u691c\u8a3c','\u5b9f\u884c\u306f\u307e\u3060\u672a\u691c\u8a3c','\u4f9d\u5b58\u3067\u672a\u5b9f\u884c'] if s in t]; print(ascii(b)); sys.exit(1 if b else 0)"`
 - paths: Docs/Architecture/NVSKELMigrationInventory.md, TASKS.md, PROGRESS.md
 - from: TEST-FULL-CTEST-BASELINE-CHECK
+
+## G2-GR32-GPU-ACCEPTANCE-P1-CHECK: スキニングの計算と出力の頂点の範囲を、submesh ごとでなく component ごとに 1 回にする(後回しにしたアプリの起動の確かめ)
+- status: todo
+- check: launch
+- gpu: exclusive
+- done-when: G2-GR32-GPU-ACCEPTANCE-P1 で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、G2-GR32-GPU-ACCEPTANCE-P1 の done-when を満たすことを確かめる。満たさなければ G2-GR32-GPU-ACCEPTANCE-P1 の done-when と paths の範囲で直す。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -SkinnedProbe -SkinnedProbeMaterials 2 -VisibilityBuffer On -OutDir .harness/runs/startup-capture/G2-GR32-GPU-ACCEPTANCE-P1-2mat-vb`
+- paths: Library/Core/Private/Rendering/SkinningComputePass.cpp, Library/Core/Public/Rendering/SkinningComputePass.h, Test/Core/Rendering/SkinnedRenderPathContractTest.cpp, TASKS.md, PROGRESS.md
+- from: G2-GR32-GPU-ACCEPTANCE-P1
+
+## G2-MATERIAL-SELECTION-INTEGRATION-P1-P1-P1: `Busy` を期待する cook の試験で、前提のロックの取得だけ上限つきで待ち、`Busy` を確かめる取得は待ち 0 のままにする
+- status: todo
+- done-when: 次の 4 点を満たす。
+  - **前提の取得は待つ。** `CookDestinationLockTest`・`CookManagedBootstrapTest`・`CookManagedUpdateTest` では、各試験の頭で `NORVES_COOK_LOCK_WAIT_MS=120000` をプロセスの中だけで立て、試験の終わりに元の値へ戻す。戻すには、`CookDestinationLockTest.cpp` にある `EnvironmentVariableRestore` と同じ形の範囲つきの仕組みを使う。これで、試験が自分でロックを取る所(`f.Run`・回復・解放後の取り直し・子プロセスの取得)が、ほかの枠の AssetCook と重なっても上限つきで待つ。
+  - **`Busy` を確かめる取得だけは待ち 0 にする。** 対象は次の 4 か所。
+    - `CookManagedBootstrapTest` の `ProbeBusy`/`TryBusy`
+    - `CookManagedUpdateTest` の `BusyPoint`/`TryBusy`
+    - `CookDestinationLockTest` の入れ子の peer(94・109 行付近)と、子プロセスが持っている間の親の取得(698 行付近)
+    - `WaitOption` の「待ちなし」の側
+
+    これらでは、取得の直前に環境変数を消し、確かめた後に元へ戻す。どれも待ち 0 で `Busy` を返し、今の期待(`Busy`・callback の呼び出しが 0 回)のまま通る。
+  - **本体と CTest の設定は変えない。** `Tools/AssetCook/` の既定の待ち・mutex の名前・volume 単位は変えない。この 3 つの試験の CTest の `ENVIRONMENT` にも `NORVES_COOK_LOCK_WAIT_MS` を足さない。
+  - **並列でも通る。** 4 つの試験を `-j 4` で同時に回しても(同じ volume のロックを取り合う)、`volume_busy`・`Busy` による前提の失敗が出ない。
+- verify: `cmake --build build --config Debug --target CookedMeshTest AssetCook -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^(CookDestinationLockTest|CookManagedBootstrapTest|CookManagedUpdateTest)$" --no-tests=error --output-on-failure --timeout 180`
+- verify: `ctest --test-dir build -C Debug -j 4 -R "^(CookDestinationLockTest|CookManagedBootstrapTest|CookManagedUpdateTest|RigSplitCookTest)$" --no-tests=error --output-on-failure --timeout 300`
+- verify: `python -c "import json,subprocess,sys; d=json.loads(subprocess.check_output(['ctest','--test-dir','build','-C','Debug','-R','^(CookDestinationLockTest|CookManagedBootstrapTest|CookManagedUpdateTest)$','--show-only=json-v1'])); e={t['name']:[v for p in t.get('properties',[]) if p['name']=='ENVIRONMENT' for v in p['value']] for t in d['tests']}; k='NORVES_COOK_LOCK_WAIT_MS='; print(e); sys.exit(0 if len(e)==3 and not any(v.startswith(k) for vs in e.values() for v in vs) else 1)"`
+- paths: Test/Core/Asset/CookDestinationLockTest.cpp, Test/Core/Asset/CookManagedBootstrapTest.cpp, Test/Core/Asset/CookManagedUpdateTest.cpp, Test/Core/Asset/CookLockWaitTestScope.h, TASKS.md, PROGRESS.md
+- after: G2-S6-ASSET-SET-P1
+- from: G2-MATERIAL-SELECTION-INTEGRATION-P1-P1
+- stop-when: 次のどれかが要るなら止める。
+  - `Busy` を確かめる取得に待ちを残したまま通す
+  - `Tools/AssetCook/` の既定の待ち・mutex の名前・volume 単位を変える
+  - 試験のために mutex の名前や volume を差し替える口を本体に足す
+  - `Busy` の期待や callback の回数の期待を弱める

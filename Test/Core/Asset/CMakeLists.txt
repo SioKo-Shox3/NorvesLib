@@ -343,3 +343,14 @@ add_test(NAME RigStaticRootFrameImportTest COMMAND CookedMeshTest --test=RigStat
 add_test(NAME RigStaticRootFrameWireTest COMMAND CookedMeshTest --test=RigStaticRootFrameWireTest)
 
 add_test(NAME RigStaticRootFrameRuntimeTest COMMAND CookedMeshTest --test=RigStaticRootFrameRuntimeTest)
+
+# 並列の枠の cook と宛先 volume のロックを取り合っても落ちないよう、
+# 試験の環境だけで上限付きで待つ。Busy を期待する試験には付けない。
+foreach(cook_lock_wait_test IN ITEMS
+    RigSplitCookTest
+    TextureManagedCliTest
+    CookManagedStoreObservationTest
+    CookManagedStoreInitializationTest
+)
+    set_property(TEST ${cook_lock_wait_test} APPEND PROPERTY ENVIRONMENT "NORVES_COOK_LOCK_WAIT_MS=120000")
+endforeach()

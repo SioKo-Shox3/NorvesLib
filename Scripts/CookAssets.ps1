@@ -12,8 +12,15 @@
 # 荒野の手続きの地形の区画、terrain-tile:dem:<x>,<z> は DEM の格子の区画で、source_path が格子の記述（height.json）、
 # extra_sources が格子のファイルと区画の割り方のヘッダ。一覧の DEM の項目は Scripts/Terrain/WriteTerrainAssetSet.py が書く）を持つ。
 #
-# 差分クック: 元画像の内容・一覧の項目・AssetCook の実行ファイルのどれかが変わったものだけを焼き、変わらないものは
-# 前回の結果（<RuntimeRoot>/.cookstate/ に項目ごとの印とマニフェスト項目を残す）をそのまま使う。
+# 差分クック: 元のファイル・一覧の項目・共通設定・品質の内容から印を求め、変わらないものは前回の結果を使う。
+# 地形（モデルの generate が terrain-tile: で始まる項目）の印は exe を含まず、崖の細部の版と地形の経路のソースの内容を含む。
+# それ以外の印は AssetCook の exe の内容を含む。一覧外のソースやビルド設定・コンパイラの変更による出力差は
+# ReferenceCheck.py --cook-coverage の代表区画の焼き比べで検出する。
+# <RuntimeRoot>/.cookstate/ の stamp は今の exe による旧形式の印で、旧スクリプトとの互換用に残す。
+# 地形だけに持つ terrain_stamp が地形用の印。これが無く stamp が一致するときは、焼かずに terrain_stamp を追加して移行する。
+# terrain_stamp があるのに不一致なら焼き直す。移行した実行は COOK_ASSETS terrain_stamp_migrated=<件数> を出す。
+# 地形を実際に焼く前に、exe が地形のソース一覧のどのファイルよりも古くないことを求める。
+# 古ければ AssetCook のビルドし直しを求めて止める（飛ばし・移行・-CheckStamps には適用しない）。
 # 元画像が無い項目は飛ばし、"COOK_ASSETS missing=<path>" を出す（クックの失敗にはしない）。
 #
 # 対象を絞る: -OnlyLogicalPath（ワイルドカード可。論理パスと -like で照合）に合う項目だけを焼き（印が同じなら飛ばす。
@@ -24,6 +31,9 @@
 # 印だけ照らす: -CheckStamps は焼かず、-OnlyLogicalPath に合う項目ごとに今の入力から印を求めて状態の印と比べ、
 # "COOK_STAMP logical=<論理パス> package=<パッケージ> status=<match|stale|state_missing|state_invalid|package_missing>" を出す
 # （マニフェストもパッケージも状態も書かない。-OnlyLogicalPath が要る）。
+# 地形は terrain_stamp があればそれと比較し、無ければ stamp と比較する（match なら移行可能。確認だけでは移行しない）。
+# 対象に地形があれば印の元を 1 回だけ COOK_STAMP_TERRAIN cliff_detail_version=<版> sources_sha256=<一覧の印> sources=<数> と、
+# ファイルごとの COOK_STAMP_TERRAIN_SOURCE path=<リポジトリ相対パス> sha256=<印> で出す。
 #
 # 出力: <RuntimeRoot>/manifest.json（全項目を集めたマニフェスト）と、一覧の package_root 以下の .nvpkg。
 # 標準出力の最後の行: COOK_ASSETS cooked=<焼いた数> skipped=<前回のまま使った数>
@@ -64,6 +74,82 @@ $ValidUsages = @("albedo", "normal", "orm", "single", "height16")
 $OrmSourceKeys = @("orm_ao", "orm_roughness", "orm_metallic", "orm_occlusion")
 $OrmArguments = @{ orm_ao = "--orm-ao"; orm_roughness = "--orm-roughness"; orm_metallic = "--orm-metallic";
     orm_occlusion = "--orm-occlusion" }
+
+# 地形生成・崖・DEM・DAG/簡略化・クラスタ化・NVMESH/パッケージ/マニフェストの値と形式、入力の読み取りを含む。
+# SingleAssetCook は崖の切り替えと要求の既定値も含める。meshoptimizer は呼び出し先の取り漏れを避け、上流のソース全体を名前順で固定する。
+# Main の引数の配線・検査、CookOutputPackage の検証、glTF/リグ/VFX/音/テクスチャ専用の処理、ビルド設定は含めない。
+# 一覧外やコンパイラの変更は ReferenceCheck.py --cook-coverage の代表区画の焼き比べで検出する。
+$TerrainStampSourcePaths = @(
+    "Tools/AssetCook/SingleAssetCook.cpp",
+    "Tools/AssetCook/SingleAssetCook.h",
+    "Tools/AssetCook/AssetCookLegacyOptions.h",
+    "Tools/AssetCook/MeshCooker.cpp",
+    "Tools/AssetCook/MeshCooker.h",
+    "Tools/AssetCook/TerrainCliffDetail.cpp",
+    "Tools/AssetCook/TerrainCliffDetail.h",
+    "Tools/AssetCook/TerrainCliffCarveBattleship.h",
+    "Tools/AssetCook/TerrainCliffShelfBattleship.h",
+    "Tools/AssetCook/CookMeshDag.cpp",
+    "Tools/AssetCook/CookMeshDag.h",
+    "Tools/AssetCook/CookMeshOptimizer.cpp",
+    "Tools/AssetCook/CookMeshOptimizer.h",
+    "Tools/AssetCook/Sha256Digest.cpp",
+    "Tools/AssetCook/Sha256Digest.h",
+    "Tools/AssetCook/AssetCookOutput.cpp",
+    "Tools/AssetCook/AssetCookOutput.h",
+    "Library/Core/Public/Rendering/Terrain/TerrainHeightField.h",
+    "Library/Core/Private/Rendering/Terrain/TerrainHeightField.cpp",
+    "Library/Core/Public/Rendering/MegaGeometry/MeshClusterizer.h",
+    "Library/Core/Private/Rendering/MegaGeometry/MeshClusterizer.cpp",
+    "Library/Core/Public/Rendering/MegaGeometry/MegaGeometryTypes.h",
+    "Library/Core/Public/Asset/CookedMeshFormat.h",
+    "Library/Core/Public/Asset/CookedMeshWireFormat.h",
+    "Library/Core/Public/Asset/CookedMaterialFormat.h",
+    "Library/Core/Private/Asset/CookedMeshLoader.cpp",
+    "Library/Core/Private/Asset/CookedMeshWireValidation.cpp",
+    "Library/Core/Private/Asset/CookedMeshWireValidation.h",
+    "Library/Core/Public/Asset/AssetPackageFormat.h",
+    "Library/Core/Public/FileStream/Package.h",
+    "Library/Core/Private/FileStream/Package.cpp",
+    "Library/Core/Public/Asset/AssetFileReader.h",
+    "Library/Core/Private/Asset/AssetFileReader.cpp",
+    "Library/Core/Public/Asset/AssetReadRequest.h",
+    "Library/Core/Public/Asset/AssetPath.h",
+    "Library/Core/Private/Asset/AssetPath.cpp",
+    "Library/Core/Public/Asset/AssetBlob.h",
+    "Library/Core/Private/Asset/AssetBlob.cpp",
+    "Library/Core/Public/FileStream/FileStream.h",
+    "Library/Core/Private/FileStream/FileStream.cpp",
+    "Library/Core/Public/FileStream/IFileStream.h",
+    "Library/Core/Public/Text/JsonDocument.h",
+    "Library/Core/Private/Text/JsonDocument.cpp",
+    "Library/Core/Private/Text/JsonUnicodeScalar.h",
+    "Library/Core/Private/Text/UnicodeText.h",
+    "Library/ThirdParty/meshoptimizer/upstream/allocator.cpp",
+    "Library/ThirdParty/meshoptimizer/upstream/clusterizer.cpp",
+    "Library/ThirdParty/meshoptimizer/upstream/indexanalyzer.cpp",
+    "Library/ThirdParty/meshoptimizer/upstream/indexcodec.cpp",
+    "Library/ThirdParty/meshoptimizer/upstream/indexgenerator.cpp",
+    "Library/ThirdParty/meshoptimizer/upstream/meshletcodec.cpp",
+    "Library/ThirdParty/meshoptimizer/upstream/meshletutils.cpp",
+    "Library/ThirdParty/meshoptimizer/upstream/meshoptimizer.h",
+    "Library/ThirdParty/meshoptimizer/upstream/opacitymap.cpp",
+    "Library/ThirdParty/meshoptimizer/upstream/overdrawoptimizer.cpp",
+    "Library/ThirdParty/meshoptimizer/upstream/partition.cpp",
+    "Library/ThirdParty/meshoptimizer/upstream/quantization.cpp",
+    "Library/ThirdParty/meshoptimizer/upstream/rasterizer.cpp",
+    "Library/ThirdParty/meshoptimizer/upstream/remesher.cpp",
+    "Library/ThirdParty/meshoptimizer/upstream/simplifier.cpp",
+    "Library/ThirdParty/meshoptimizer/upstream/spatialorder.cpp",
+    "Library/ThirdParty/meshoptimizer/upstream/stripifier.cpp",
+    "Library/ThirdParty/meshoptimizer/upstream/tangentspace.cpp",
+    "Library/ThirdParty/meshoptimizer/upstream/vcacheoptimizer.cpp",
+    "Library/ThirdParty/meshoptimizer/upstream/vertexcodec.cpp",
+    "Library/ThirdParty/meshoptimizer/upstream/vertexfilter.cpp",
+    "Library/ThirdParty/meshoptimizer/upstream/vfetchoptimizer.cpp"
+)
+$TerrainStampInputs = $null
+$TerrainCookExecutableChecked = $false
 
 function Resolve-RepoPath {
     param([string]$Path)
@@ -176,6 +262,57 @@ function Write-TextUtf8 {
     [System.IO.File]::WriteAllText($Path, $Text, [System.Text.UTF8Encoding]::new($false))
 }
 
+function Initialize-TerrainStampInputs {
+    if ($null -ne $script:TerrainStampInputs) {
+        return
+    }
+
+    $versionPath = Resolve-RepoPath "Tools/AssetCook/TerrainCliffDetail.h"
+    $versionText = Get-Content -LiteralPath $versionPath -Raw -Encoding UTF8
+    $versionMatch = [regex]::Match($versionText, 'kTerrainCliffDetailVersion\s*=\s*(\d+)u?;')
+    if (-not $versionMatch.Success) {
+        throw "地形の崖の細部の版を読めません: $versionPath"
+    }
+
+    $sourceText = New-Object System.Text.StringBuilder
+    $sources = @(
+        foreach ($path in $script:TerrainStampSourcePaths) {
+            $resolved = Resolve-RepoPath $path
+            if (-not (Test-Path -LiteralPath $resolved -PathType Leaf)) {
+                throw "地形の変更の検出に使うソースが見つかりません: $path"
+            }
+            $hash = Get-FileSha256 $resolved
+            [void]$sourceText.Append("src:$path=$hash;")
+            [pscustomobject]@{ Path = $path; Hash = $hash }
+        }
+    )
+    $version = $versionMatch.Groups[1].Value
+    $script:TerrainStampInputs = "terrain-stamp-v1;cliff_detail_version=$version;" + $sourceText.ToString()
+    if ($script:CheckStampsOnly) {
+        $sourcesHash = Get-TextSha256 $sourceText.ToString()
+        Write-Host "COOK_STAMP_TERRAIN cliff_detail_version=$version sources_sha256=$sourcesHash sources=$($sources.Count)"
+        foreach ($source in $sources) {
+            Write-Host "COOK_STAMP_TERRAIN_SOURCE path=$($source.Path) sha256=$($source.Hash)"
+        }
+    }
+}
+
+function Assert-TerrainCookExecutableCurrent {
+    if ($script:TerrainCookExecutableChecked) {
+        return
+    }
+
+    $executableWriteTime = (Get-Item -LiteralPath $script:AssetCookPath).LastWriteTimeUtc
+    # 崖の細部の版を持つ TerrainCliffDetail.h もソース一覧に含む。
+    foreach ($path in $script:TerrainStampSourcePaths) {
+        $sourceWriteTime = (Get-Item -LiteralPath (Resolve-RepoPath $path)).LastWriteTimeUtc
+        if ($executableWriteTime -lt $sourceWriteTime) {
+            throw "AssetCook が地形のソース $path より古い。先に AssetCook をビルドし直す"
+        }
+    }
+    $script:TerrainCookExecutableChecked = $true
+}
+
 # 項目 1 つ分: 印で前回の結果が使えるかを判定し、使えなければ AssetCook を実行する。
 # 戻り値は、マニフェストへ載せる項目（前回のものか、今回焼いたもの）。元画像が無いときは $null（COOK_ASSETS missing=<path> を出す）。
 function Test-OnlyTarget {
@@ -202,7 +339,8 @@ function Invoke-CookEntry {
         [string[]]$SourceTexts,
         [string[]]$StampTexts,
         [string[]]$CookArguments,
-        [string]$SetStateDir
+        [string]$SetStateDir,
+        [bool]$IsTerrain = $false
     )
 
     # 対象を絞っているとき、対象外は焼かず、既存のマニフェストの項目（埋め込みの画像を含む）を引き継ぐ
@@ -231,9 +369,9 @@ function Invoke-CookEntry {
     # 状態ファイル名は出力先の相対パス全体のハッシュにする（"A/B" と "A__B" のような別パッケージが同じ名前にならない）
     $statePath = Join-Path $SetStateDir ((Get-TextSha256 $CookedPackage) + ".json")
 
-    # 印: AssetCook・一覧の項目・一覧の共通設定・元画像の内容・品質のどれかが変われば変わる
+    # 旧形式の印は互換用に維持し、地形用には exe を除いた共通の入力に地形のソースを足す。
     $stampSource = New-Object System.Text.StringBuilder
-    [void]$stampSource.Append("assetcook=$($script:AssetCookHash);set=$SetName;root=$PackageRootName;variant=$Variant;quality=$($script:Quality);")
+    [void]$stampSource.Append("set=$SetName;root=$PackageRootName;variant=$Variant;quality=$($script:Quality);")
     [void]$stampSource.Append("entry=" + ($Item | ConvertTo-Json -Compress -Depth 8) + ";")
     foreach ($stampText in $StampTexts) {
         $stampPath = Resolve-RepoPath $stampText
@@ -242,7 +380,12 @@ function Invoke-CookEntry {
         }
         [void]$stampSource.Append("src:$stampText=" + (Get-FileSha256 $stampPath) + ";")
     }
-    $stamp = Get-TextSha256 $stampSource.ToString()
+    $stamp = Get-TextSha256 ("assetcook=$($script:AssetCookHash);" + $stampSource.ToString())
+    $terrainStamp = $null
+    if ($IsTerrain) {
+        Initialize-TerrainStampInputs
+        $terrainStamp = Get-TextSha256 ($script:TerrainStampInputs + $stampSource.ToString())
+    }
 
     if ($script:CheckStampsOnly) {
         $stampStatus = "match"
@@ -255,7 +398,12 @@ function Invoke-CookEntry {
         else {
             try {
                 $state = Get-Content -LiteralPath $statePath -Raw -Encoding UTF8 | ConvertFrom-Json
-                if ($state.stamp -ne $stamp) {
+                $stampMatches = if ($IsTerrain -and (Test-PropertyExists -Object $state -Name "terrain_stamp")) {
+                    $state.terrain_stamp -eq $terrainStamp
+                } else {
+                    $state.stamp -eq $stamp
+                }
+                if (-not $stampMatches) {
                     $stampStatus = "stale"
                 }
             }
@@ -271,22 +419,40 @@ function Invoke-CookEntry {
     }
 
     if ((-not $script:ForceCook) -and (Test-Path -LiteralPath $statePath -PathType Leaf) -and (Test-Path -LiteralPath $packagePath -PathType Leaf)) {
+        $state = $null
         try {
             $state = Get-Content -LiteralPath $statePath -Raw -Encoding UTF8 | ConvertFrom-Json
-            if (($state.stamp -eq $stamp) -and ($null -ne $state.asset)) {
+        }
+        catch {
+            # 状態ファイルが壊れていれば焼き直す
+        }
+        if ((Test-PropertyExists -Object $state -Name "asset") -and ($null -ne $state.asset)) {
+            $hasTerrainStamp = Test-PropertyExists -Object $state -Name "terrain_stamp"
+            $stampMatches = if ($IsTerrain -and $hasTerrainStamp) {
+                $state.terrain_stamp -eq $terrainStamp
+            } else {
+                (Test-PropertyExists -Object $state -Name "stamp") -and ($state.stamp -eq $stamp)
+            }
+            if ($stampMatches) {
+                if ($IsTerrain -and (-not $hasTerrainStamp)) {
+                    # 既存の欄を保ち、旧形式の印が今の exe と一致する状態だけを焼かずに移行する。
+                    $state | Add-Member -MemberType NoteProperty -Name "terrain_stamp" -Value $terrainStamp
+                    Write-TextUtf8 -Path $statePath -Text ($state | ConvertTo-Json -Depth 16)
+                    $script:terrainStampMigratedCount++
+                }
                 $script:skippedCount++
                 $previous = @($state.asset)
-                if ($null -ne $state.embedded_assets) {
+                if ((Test-PropertyExists -Object $state -Name "embedded_assets") -and ($null -ne $state.embedded_assets)) {
                     $previous += @($state.embedded_assets)
                 }
                 return $previous
             }
         }
-        catch {
-            # 状態ファイルが壊れていれば焼き直す
-        }
     }
 
+    if ($IsTerrain) {
+        Assert-TerrainCookExecutableCurrent
+    }
     New-Item -ItemType Directory -Path (Split-Path -Parent $packagePath) -Force | Out-Null
     Remove-Item -LiteralPath $script:TemporaryManifestPath -ErrorAction SilentlyContinue
 
@@ -326,7 +492,11 @@ function Invoke-CookEntry {
     }
     Remove-Item -LiteralPath $script:TemporaryManifestPath -ErrorAction SilentlyContinue
 
-    $stateJson = [ordered]@{ stamp = $stamp; asset = $asset; embedded_assets = $embeddedAssets } | ConvertTo-Json -Depth 16
+    $stateFields = [ordered]@{ stamp = $stamp; asset = $asset; embedded_assets = $embeddedAssets }
+    if ($IsTerrain) {
+        $stateFields["terrain_stamp"] = $terrainStamp
+    }
+    $stateJson = $stateFields | ConvertTo-Json -Depth 16
     Write-TextUtf8 -Path $statePath -Text $stateJson
 
     $script:cookedCount++
@@ -347,11 +517,14 @@ $StateRoot = Join-Path $ResolvedRuntimeRoot ".cookstate"
 $TemporaryManifestPath = Join-Path $ResolvedRuntimeRoot "manifest.cook.$PID.tmp.json"
 $AggregateManifestPath = Join-Path $ResolvedRuntimeRoot "manifest.json"
 
-New-Item -ItemType Directory -Path $ResolvedRuntimeRoot -Force | Out-Null
+if (-not $CheckStamps) {
+    New-Item -ItemType Directory -Path $ResolvedRuntimeRoot -Force | Out-Null
+}
 
 $AssetCookHash = Get-FileSha256 $AssetCookPath
 $cookedCount = 0
 $skippedCount = 0
+$terrainStampMigratedCount = 0
 $untouchedCount = 0
 $ForceCook = $Force.IsPresent
 $CheckStampsOnly = $CheckStamps.IsPresent
@@ -391,7 +564,9 @@ foreach ($specFile in $specFiles) {
     }
 
     $setStateDir = Join-Path $StateRoot $setName
-    New-Item -ItemType Directory -Path $setStateDir -Force | Out-Null
+    if (-not $CheckStampsOnly) {
+        New-Item -ItemType Directory -Path $setStateDir -Force | Out-Null
+    }
 
     $index = 0
     foreach ($texture in @($spec.textures)) {
@@ -564,19 +739,21 @@ foreach ($specFile in $specFiles) {
         # 格子のファイルと区画の割り方のヘッダは extra_sources に入れ、どれが変わっても焼き直す）。
         # "terrain-tile:dem-plain:<x>,<z>" は dem と同じ区画を崖の細部（TerrainCliffDetail.cpp）なしで焼く（撮り比べ用）。
         $isPlacementTerrain = $false
+        $isTerrain = $false
         if (Test-PropertyExists -Object $model -Name "generate") {
             $generate = Get-StringField -Object $model -Name "generate" -Context $context
             if (($generate -ne "displaced-sphere") -and ($generate -notmatch '^terrain-tile:(dem:|dem-plain:)?\d+,\d+$')) {
                 throw "$context の generate は displaced-sphere か terrain-tile:<x>,<z>・terrain-tile:dem:<x>,<z>・terrain-tile:dem-plain:<x>,<z> だけを指定できます"
             }
             $cookArguments += @("--generate", $generate)
+            $isTerrain = $generate -match '^terrain-tile:'
             $isPlacementTerrain = ($generate -match '^terrain-tile:dem:\d+,\d+$') -and `
                 ($logicalPath -match '^Models/WastelandTerrain/WastelandDem_\d+_\d+\.generated$') -and `
                 (($OnlyPatterns.Count -eq 0) -or (Test-OnlyTarget -LogicalPath $logicalPath))
         }
         $asset = Invoke-CookEntry -SetName $setName -PackageRootName $packageRoot -Variant $variant -Kind "model" `
             -LogicalPath $logicalPath -CookedPackage $cookedPackage -EntryName $entryName -Item $model `
-            -SourceTexts @($sourceText) -StampTexts $stampTexts -CookArguments $cookArguments -SetStateDir $setStateDir
+            -SourceTexts @($sourceText) -StampTexts $stampTexts -CookArguments $cookArguments -SetStateDir $setStateDir -IsTerrain $isTerrain
         if ($null -ne $asset) {
             $aggregateAssets += $asset
             if ($isPlacementTerrain) {
@@ -623,6 +800,9 @@ if ($missingEntryCount -gt 0) {
 }
 if ($OnlyPatterns.Count -gt 0) {
     Write-Output "COOK_ASSETS only=$($OnlyPatterns -join ',') untouched=$untouchedCount"
+}
+if ($terrainStampMigratedCount -gt 0) {
+    Write-Output "COOK_ASSETS terrain_stamp_migrated=$terrainStampMigratedCount"
 }
 Write-Output "COOK_ASSETS cooked=$cookedCount skipped=$skippedCount"
 exit 0
