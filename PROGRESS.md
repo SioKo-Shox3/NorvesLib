@@ -8186,3 +8186,12 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - U5 塊の合否の仕様から塊を求める行を外し、残りを版 15 の合格の値に合わせ直す: 着地(直し 1 回)
 - U8 版 19 の焼きの結果と未達で閉じた理由を荒野の形の記録に書く（U7 の記録の切り直し）: 着地(直し 0 回)
 - U9 検証を回す作業ツリー（NorvesLib-6）で AssetCook を作り、その AssetCook で地形の全項目を並列に焼き直して、verify の 1〜4 行目を NorvesLib-6 で通す: 着地(直し 1 回)
+
+## 2026-11-02 SCN-WL-CLIFF-GEN-TALUS（run 20261102-145122 の反復 2、未達で閉じた）
+- Done: 人の判断（案 A）に従い、崖錐の塊の持ち上げを外して崖の細部を版 19（出力は版 15 と同じ形）にした（`TerrainCliffDetail.cpp` は版 15 の内容、`.h` は版の番号だけ 19）。`shape-cliff-talus.json` から塊を求める `fold_gain` の行を外し、棚・角・外形の行は `shape-cliff-caprock.json` と同じ、内部の折れ線の行は版 15 の 4 回の撮影の実測に締めた（版 15 の撮影に当てて `--shape --expect` と `--shape-cause --baseline --expect` が合格）。地形の 214 項目を版 19 で焼き直し、検証に使う作業ツリーの AssetCook（9ed6c406…）でもう一度焼き直して、`WastelandShape.md` に版 19 と未達で閉じた理由を書いた
+- 値: 地形の三角形 326,092,012 個（版 15 と同じ、版 18 より 13,648,233 個少ない）。並列のクックは失敗 0、`changed_cooked_hashes=0`。verify の 1〜4 行目: Game・AssetCook のビルド EXIT=0、クック `cooked=0 skipped=214`（格子も skipped、7.53 秒）、`--cook-coverage` は `cliff_detail_version=19`・`stale_terrain_items=0`・`tiles=27 cooked=27 result=pass`
+- 証拠: `.harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS/u9/`（`parallel-cook-v19.txt`・`parallel-result.json`・項目ごとの出力・ビルドと exe のハッシュ）、単位の確かめの出力（verify の 1〜4 行目と numstat）
+- Next: 起動の確かめは後回し（SCN-WL-CLIFF-GEN-TALUS-CHECK）。verify の 5〜12 行目（形の撮影と判定・範囲ごとの量・置いた物の接地・look の撮影・ページの要求・写真との比べ）を版 19 で回し、(A) が版 15 の値に戻ること、(C)・(E)・(F) が前の記録より悪くならないことを確かめる
+- Notes: 崩れた大きな塊（数 m〜十数 m）は地形の形としては作らず未達で閉じた（1 m の高さの場の持ち上げは版 16〜18 の 3 回とも棚の線を崩して (A) が版 15 を下回った）。新しい試験は足していない
+- 要起票: 壁から崖錐へ移る所の崩れた大きな塊（数 m〜十数 m）を、スキャンの岩・Blender の大きな岩の物として崖の生成の 7 範囲の壁の足元に置く（置いた物の接地の検査の組に入れる）
+- 要起票: 荒野の遮蔽の Cycles の正解（SCN-WLR-OCCLUSION-SETS）は 10 月 18 日の地形の書き出し（`SCN-WLR-BLENDER-TERRAIN-mesh`、manifest d9fd5483…）で描かれ、版 18 でも版 19 でもない。版 19 の地形と厳密に比べるには地形の書き出しと Cycles の描き直しが要る（2 段目の「地形の Cycles の参照の描き直し」と同じ作業）。後回しの SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1-CHECK の撮影は版 19 の地形で撮ることになる
