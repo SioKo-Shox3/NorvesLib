@@ -8726,19 +8726,16 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 検証: 起動しない verify の 3 行は着地の確かめで EXIT=0（`Game`・`DecalPoolEvictionTest` のビルド、`DecalPoolEvictionTest` 1/1 Passed、`DecalGBufferVulkanTest` のビルド）。その後のコミットは TASKS.md と PROGRESS.md だけでコードは変わっていない
 - Next: 起動の確かめは後回し。`GAME-GR133-VFX-CHECK` で `DecalGBufferVulkanTest` の ctest（`--timeout 600`）を回す
 
-## 2026-11-02 GAME-GR131-VFX（run 20261102-145118 の反復 1。着手）
-- 方式（推奨を採った）: Core の `Particle/HitEffectEmitter` が当たり（位置・法線・表面の名前）を受け、当たり 1 回につき放出の要求をちょうど 1 つ積む。表面の名前を全バイトの一致で表から引き、表に無い名前は既定の 1 種類にする（GR115 が無いうちは名前を文字列で受ける）。再生は GR136 の `VfxEffectSystem` に、エフェクトごとのワールドのインスタンス 1 つへの向きつきのイベント（法線を +Z とした局所の初速の箱）として流す。理由: GR136 のイベントの仕組みをそのまま使えば、当たりごとのインスタンスの作り捨てと片付けの規則が要らず、エフェクトの定義も GR136 の 1 つの形式のままになる。既定の中身は火花（`Metal`）と衝撃（既定）をコードで組む
-- 方式と前提の境界の記録: `Docs/Plans/GameFeatureRoadmap.md`（メイン側・管理外）の「GR131 ヒットエフェクト（当たりの火花・衝撃）の方式と境界」の節
-- 完了を宣言しない範囲: GR16 の当たりを出す側（`CombatHitEvent` からの写し）、GR115 の `SurfaceId`・parent のフォールバック、GR57 の GPU の実行先・3D の粒子の描画パス、GR02 のヒットストップ・時間のチャンネル、GR96 の表とエフェクトのファイル化・クック、GR72 の音・GR133 の跡、Editor の表の編集の画面。火花と衝撃の見た目は起動を戻した後に確かめる
-- U1 当たりの型・表・要求の列（HitEffectEmitter）: 着地(直し 0 回)
-- U2 VFX の向きつきのイベント: 着地(直し 0 回)
-- U3 HitEffectEmissionTest と Docs/Testing.md の 3 点: 着地(直し 0 回)
-- U4 再生（VFX へ流す）・既定の火花と衝撃・ParticleSystem への組み込み: 着地(直し 0 回)
-- U5 再生の確かめを試験に足し、タスクの verify を通す: 着地(直し 0 回)
-- U6 既定の火花と衝撃が組めていない（初速の箱の設定の順）を直す: 着地(直し 0 回)
-- Done: 起動せずに確かめる完了の条件を `HitEffectEmissionTest`（CPU の試験。足す理由の 3 点は `Docs/Testing.md`）で確かめた。当たり 1 回で要求がちょうど 1 つ積まれ、位置は完全一致・法線は 1e-6 以内で当たりの値と一致する。`Metal`・`Wood` は表のエフェクト、`Glass`・空・`metal`（大文字小文字違い）は既定の 1 種類。NaN の位置・長さ 0 と無限大の法線は積まない。再生は当たりの位置から法線の側（法線 (1,0,0) の当たりで速度の法線成分 > 0.9）へ粒を出し、既定の表の火花（`Metal`）と衝撃（既定）の粒が出る。`cmake --build build --config Debug --target Game HitEffectEmissionTest -- /m:1` 終了コード 0、`ctest -R "^HitEffectEmissionTest$"` Passed（`.harness/runs/20261102-145118/verify-GAME-GR131-VFX-final.txt`。前半の失敗は直す前の形で検査 6 が落ちることを確かめた分）
-- Done: エンジンの `ParticleSystem` が `HitEffectEmitter` を持ち（`GetParticleSystem().GetHitEffects().SubmitHit(...)`）、刻みで VFX の前に要求を流す。当たりが無ければ VFX のインスタンスは作られず、Rendering3DTest の橙の粒は前のまま。`VfxEffectSystem::RaiseOrientedEvent` を足し、向きの無い既存のイベントは変えていない（`VfxEffectSystemTest`・`ParticleSystemTest` Passed）
-- Next: 起動の確かめは後回し（`GAME-GR131-VFX-CHECK`）。当たりを出す場面（GR16 の当たりか、確かめ用の起動引数）を用意し、火花と衝撃の見た目を撮って確かめる。ただし下の Notes のとおり、今はワールドの空間の板が描かれないので、その経路ができるまで画面には出ない
-- Notes: 完了を宣言しない範囲は着手時の記録のとおり。加えて、粒子の板は `ApplicationProcessor` からキャンバスの view（画面の空間）にだけ渡り、ワールドの空間の板は描かれない。ロードマップの GR131 の節の境界に書いた
-- Notes: 要起票: ワールドの空間の粒子の板（`BoardSpace::WorldSpace` の `BoardProxy`）を 3D の view へ渡す経路が無い（`ApplicationProcessor.cpp` の粒子の板の受け渡しはキャンバスの view だけ）。当たりのエフェクトなどワールドの空間の VFX が画面に出ない
-- Notes: スキーマの初速の箱は `Min` を `Max` より先に入れると既定の `Max`（0）を超えて拒否される。VFX をコードで組むときは上限を先に入れる
+- U1 MeshRenderer のモジュールとメッシュのインスタンスの記録: 着地(直し 0 回)
+- U2 溶けの式の include と試験用のシェーダー: 着地(直し 0 回)
+- U3 MeshParticleInstanceTest と試験の理由: 着地(直し 1 回)
+- U4 MeshParticleDissolveVulkanTest(ビルドまで。起動しない): 着地(直し 0 回)
+### GAME-GR134-VFX メッシュのエフェクト（2026-11-02、run 20261102-145120 の反復 1）
+- 方式（推奨を採った）: メッシュの粒子は GR136 の `VfxEffectAsset` のエミッタに描画のモジュール `MeshRenderer` を足す形にし、専用の形式を作らない（定義・スキーマ・クックを GR136 の 1 つにそろえる決定に従う）。溶けの閾値は秒でなく寿命の割合（`DissolveStart`・`DissolveDuration`、単位 life）で決める。寿命が乱数で散る粒でも溶け切る前に消える粒が出ないため。メッシュと材質は GR136 のテクスチャと同じく実行時のハンドルで渡す。方式と境界の記録は `Docs/Plans/GameFeatureRoadmap.md`（メイン側・管理外）の「GR134 メッシュのエフェクト」の節
+- 完了を宣言しない範囲: シーンの描画（GBuffer・VSM・ビジビリティバッファ）へメッシュの粒子を流すことと影の形の溶け（GR27 のアルファテストと両面描画の後）、GPU の実行先と間接描画（GR57・GR60）、材質ごとのノイズ・縁のテクスチャ（GR26）、メッシュの名前からハンドルの解決（GR96）、Editor の編集の画面。どのシーンにもメッシュの粒子を置いていないので、起動画面とシーンの見た目は変わらない
+- Done: `MeshRenderer`（Mesh・AlignToVelocity・DissolveStart・DissolveDuration・EdgeWidth・EdgeColor）と検証（描画のモジュールは 1 つ・画面の空間は `mesh_requires_world_space` で拒否）、`VfxEffectSystem::AppendMeshInstances`（生きている粒 1 つにつき記録 1 つ。ワールド行列は `CreateWorldRowVector`、ID は板と別の帯のビット 62）と `ComputeDissolveThreshold` を足した。溶けの式は `Assets/Shaders/Common/MeshParticleDissolve.glsl`（UV の 16×16 の value noise と、捨てる・縁・本体の分け方）、それで描く `mesh_particle_dissolve.vert/.frag` を足した
+- Done: 起動せずに確かめる完了の条件を `MeshParticleInstanceTest`（CPU。足す理由の 3 点は `Docs/Testing.md`）で確かめた: 粒の数だけ記録が積まれる・記録の位置と拡大とハンドル・時間で閾値が式どおりに変わる・式の端・動作中の値の変更が次の刻みから効く・拒否・板に出ない・速度へ向ける向き
+- 証拠: `.harness/runs/20261102-145120/verify-GAME-GR134-VFX-final.txt`（HEAD 0085fb6 の上の U4 の作業ツリーで `cmake --build build --config Debug --target Game MeshParticleInstanceTest -- /m:1` 終了コード 0、`ctest -R "^MeshParticleInstanceTest$"` 1/1 Passed、`cmake --build build --config Debug --target MeshParticleDissolveVulkanTest -- /m:1` 終了コード 0、`ctest -N` で `MeshParticleDissolveVulkanTest` の登録 1 件。numstat 2 通り一致）
+- Next: 起動の確かめは後回し（人の決まりで GPU を使う試験を起動しない）。`GAME-GR134-VFX-CHECK` で `ctest --test-dir build -C Debug -R "^MeshParticleDissolveVulkanTest$" --no-tests=error --output-on-failure --timeout 600` を回し、標準出力の 5 行（年齢 0 で四角形の全部が本体の色・年齢 0.25→0.5→0.75 で覆う画素が真に減る・0.5 の覆う割合が 0.2〜0.8・縁の画素が各 1 つ以上・閾値 1 で 0）を確かめる
+- Notes: `MeshParticleDissolveVulkanTest` は GPU で未実行。四角形の向き（カリングは無し）・`CopyToShaderData` で上げた行列の掛け方・R8G8B8A8_UNORM の読み戻しの並びは、コードの読みでの判断。落ちたらシェーダーのインスタンスの形（112 バイト）と行列の上げ方から見る
+- Notes: `AlignToVelocity` の回転は `CreateWorldRowVector` が四元数の回転行列を行ベクトルの規約でそのまま置く（転置の向きになる）ことに合わせて軸の符号を選んでいる。`MeshParticleInstanceTest` の検査 7 で局所の +Z が速度の向きへ写ることを確かめた

@@ -1,5 +1,6 @@
 ﻿#pragma once
 
+#include "Math/Matrix4x4.h"
 #include "Particle/VfxEffectTypes.h"
 #include "Rendering/RenderTypes.h"
 
@@ -31,6 +32,23 @@ namespace NorvesLib::Core::Particle
         uint32_t Seed = 0xC001D00Du;
         Rendering::TextureHandle Texture = Rendering::TextureHandle::Invalid();
         bool bEnabled = true;
+        Rendering::MeshDataHandle Mesh = Rendering::MeshDataHandle::Invalid();
+        Rendering::MaterialHandle Material = Rendering::MaterialHandle::Invalid();
+    };
+
+    struct VfxMeshInstance
+    {
+        uint64_t Id = 0u;
+        Math::Matrix4x4 World;
+        Math::Vector4 Color;
+        float DissolveThreshold = 0.0f;
+        float EdgeWidth = 0.0f;
+        Math::Vector4 EdgeColor;
+        Rendering::MeshDataHandle Mesh = Rendering::MeshDataHandle::Invalid();
+        Rendering::MaterialHandle Material = Rendering::MaterialHandle::Invalid();
+        uint32_t InstanceIndex = 0u;
+        uint32_t EmitterIndex = 0u;
+        uint32_t ParticleIndex = 0u;
     };
 
     struct VfxParticleState
@@ -71,13 +89,15 @@ namespace NorvesLib::Core::Particle
         uint32_t GetEmitterCount(VfxEffectHandle handle) const;
         bool CopyParticles(VfxEffectHandle handle, uint32_t emitterIndex, VariableArray<VfxParticleState>& outParticles) const;
         void AppendBoardProxies(VariableArray<Rendering::BoardProxy>& outProxies) const;
+        void AppendMeshInstances(VariableArray<VfxMeshInstance>& outInstances) const;
+        static float ComputeDissolveThreshold(float age, float lifetime, float dissolveStart, float dissolveDuration);
         static uint32_t ComputeFlipbookFrame(const VfxFlipbookImportSettings& flipbook, float age, float lifetime);
         static Math::Vector4 ComputeFlipbookUVRect(const VfxFlipbookImportSettings& flipbook, uint32_t frame);
 
     private:
         struct ModuleBinding
         {
-            uint32_t Arguments[4] = {};
+            uint32_t Arguments[6] = {};
         };
 
         struct EmitterState
@@ -94,6 +114,8 @@ namespace NorvesLib::Core::Particle
             uint32_t Blend = 0u;
             int32_t FlipbookIndex = -1;
             bool bHasRenderer = false;
+            bool bHasMeshRenderer = false;
+            bool bAlignToVelocity = false;
             bool bHasVelocity = false;
             Math::Vector3 Offset;
             Math::Vector3 VelocityMin;
@@ -102,6 +124,10 @@ namespace NorvesLib::Core::Particle
             Math::Vector4 Color;
             Math::Vector2 Size;
             float Lifetime = 1.0f;
+            float DissolveStart = 0.5f;
+            float DissolveDuration = 0.5f;
+            float EdgeWidth = 0.05f;
+            Math::Vector4 EdgeColor = Math::Vector4(4.0f, 1.5f, 0.3f, 1.0f);
         };
 
         struct PendingEvent
