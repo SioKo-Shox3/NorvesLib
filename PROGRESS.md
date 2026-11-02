@@ -8985,3 +8985,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: done-when の「足す前に Docs/Testing.md の 3 点を書く」は、Docs/Testing.md が paths の外なので試験の関数の前のコメントに書いた。
 - Notes: 試験の偽のコマンドリストは提出の状態を追わないので、束で出したリストの `GetLastSubmissionSerial()` は 0 のまま(提出番号は偽のスワップチェーンの枠で持つ)。
 - U1 塊の効きの合否の仕様を版 15 の撮影から書く: 着地(直し 0 回)
+- U2 接地の検査に前の記録の無い新しい物の組（cliff_block）の絶対の合否を足す: 着地(直し 0 回)
