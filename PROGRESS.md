@@ -8532,3 +8532,8 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: 起動の確かめは後回し（当分アプリを起動しない決まり）。PT-NONUNIFORM-SAMPLER-CHECK で `PathTracingMaterialVulkanTest` のビルドと ctest を回し、PT の材質のテクスチャ（VT と VT でないもの）が前と同じに読めることを確かめる
 - Notes: PathTracing の下にほかに sampler の配列を関数の引数で渡す箇所は無い
 - U1 AssetCook の出力を UTF-8 として読み、「警告:」の照合をコードページに依らず通す: 着地(直し 0 回)
+
+## 2026-11-02 G2-GR78-SURFACE-CENTROID-CHECK-P1（run 20261102-095825 の反復 1）
+- Done: `CookedSkeletalAssetTest.cmake.in` の `expect_reduce`・`expect_cubic`・`expect_morph` で AssetCook の出力を受ける execute_process に `ENCODING UTF-8` を付けた。照合の文字列と合否の条件は変えていない。verify は `cmake --build build --config Debug --target CookedMeshTest AssetCook -- /m:1` が終了コード 0、ctest はコードページ 932 と 65001 の両方で `CookedSkeletalAssetTest` が Passed（終了コード 0）
+- Next: なし
+- Notes: 変更前の版が 932 で落ちることは、この反復では回し直していない
