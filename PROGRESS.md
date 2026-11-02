@@ -8422,3 +8422,8 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: 起動の確かめは後回し。`G2-GR32-GPU-ACCEPTANCE-CHECK` で verify の 3〜6 行目を回し、PNG・metrics.json・result.json を開いて確かめる
 - Notes: 残ったビルドと重なって走らせると PDB の取り合い（C1041）で落ちる。再検証の時間切れの後は、同じ作業ツリーのビルドの終了を待ってから回す
 - U8 2 材質のパネルの submesh の範囲を左右の半分に合わせる: 着地(直し 0 回)
+### G2-GR32-GPU-ACCEPTANCE の 2 材質パネルの範囲を直して閉じる（2026-11-02、run 20261102-105745 の反復 3）
+- Done: 評価の差し戻しを直した。2 材質のパネルは AppendGridIndices を 4 回積んで 768 個（左の表・左の裏・右の表・右の裏）なのに submesh の表が 192 個ずつ [0,384) しか覆わず、ResolveSkeletalSubmeshLayout が InvalidIndexRange で読み込みを止めていた。1 半分を積んだ数の半分（384）にして slot 0 = 左 [0,384)・slot 1 = 右 [384,768) にした。m_StartupSkinnedProbeMaterialCount に説明のコメントを足した
+- 証拠: `.harness/runs/20261102-105745/verify-G2-GR32-GPU-ACCEPTANCE-iter3.txt`（範囲の検算で全範囲を隙間・重複なく覆い、slot 0 が列 0〜3・slot 1 が列 4〜7 の表裏 64 三角形ずつ。`cmake --build build --config Debug --target Game AssetCook SkinnedSubmeshDrawContractTest -- -m:1` 終了コード 0、`SkinnedSubmeshDrawContractTest.exe` PASS・終了コード 0。numstat 2 通り一致）
+- Next: 起動の確かめは後回し。`G2-GR32-GPU-ACCEPTANCE-CHECK` で verify の 3〜6 行目を回し、PNG・metrics.json・result.json を開いて確かめる（2 材質の撮影は STARTUP_SKINNED_PROBE_SKIPPED が出ないことと体の数も見る）
+- Notes: 評価の残課題のうち、-LegacyNvskelCompare が RTGI の面を含む 9 面すべてで全画素一致を求める扱いと、Test-M9World.ps1 が M9_WORLD_COMPARE stage=assets_ready の印を照合しない点は、確かめのタスクで実行の結果を見て決める
