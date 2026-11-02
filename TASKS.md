@@ -4552,3 +4552,89 @@
 - verify: `ctest --test-dir build -C Debug -R "^(CookManagedStoreObservationTest|CookManagedStoreInitializationTest|CookManagedUpdateInventoryTest|CookManagedUpdateTest|TextureManagedCliTest|RigSplitCookTest)$" --no-tests=error --output-on-failure --timeout 180`
 - paths: Tools/AssetCook/CookManagedStoreNative.h, Tools/AssetCook/CookManagedStoreObservation.cpp, Test/Core/Asset/CookManagedStoreObservationTest.cpp, Docs/Architecture/CookManagedStoreObservation.md, TASKS.md, PROGRESS.md
 - from: G2-GR82-B4-STATIC-ROOT-FRAME128
+
+## SCN-MEGA-FIX-STRESS-GPU-CHECK-P1: RT と GI を切って撮る開発用の起動引数 `--rt-gi=off` を足す
+- status: todo
+- done-when: 開発ビルド(Debug・RelWithDebInfo)にだけ起動引数 `--rt-gi=on|off` を足す(`--rtgi-bounce` と同じ形。Release では警告を出して無視する)。`off` にすると、起動から終了まで RT(RTGI・RT の影と反射・TLAS の構築と更新)と GI(DDGI)を切り、間接光は既存の IBL に替わる(`ResolveRTGIIndirectLighting` の順のとおり)。途中で入るシーン(Launcher・荒野の共通の照明など)が `SetRTGIEnabled` を呼んでも、`off` の指定が勝つ。引数を付けない起動の既定の経路と見た目は変えない。開発ビルドでは SCENE_READY の時点で、実際に描いたフレームパケットの値から `RT_GI_STATE off` か `RT_GI_STATE on` を 1 行ログに書く(フラグの値ではなく実際の状態を書く)。PROGRESS.md には「SCN-MEGA-FIX-STRESS-GPU-CHECK と SCN-MEGA-ACCEPT-1M の予算(16.6 ms)の撮影は、`-GameArgs` に `rt-gi=off` を足して撮る」と書く。起動しないで確かめるのはビルドが通ることまで。ログの行の確かめは下の verify の撮影で行う(起動を戻した後)。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -Views overview -Build -RequireAssets -Configuration RelWithDebInfo -GameArgs rt-gi=off -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-STRESS-GPU-CHECK-P1`
+- verify: `python -c "import sys; t=open(sys.argv[1],encoding='utf-8',errors='replace').read(); sys.exit(0 if 'RT_GI_STATE off' in t else 1)" .harness/runs/scene-capture/SCN-MEGA-FIX-STRESS-GPU-CHECK-P1/overview.Game.log`
+- paths: Game/GameApplicationHandler.cpp, Game/GameApplicationHandler.h, Library/Core/Public/Rendering/RenderingCoordinator.h, Library/Core/Private/Rendering/RenderingCoordinator.cpp, TASKS.md, PROGRESS.md
+- from: SCN-MEGA-FIX-STRESS-GPU-CHECK
+
+## G2-GR32-GPU-ACCEPTANCE-P1: スキニングの計算と出力の頂点の範囲を、submesh ごとでなく component ごとに 1 回にする
+- status: todo
+- done-when: `SkinningComputePass::Declare` は、同じ `Skinned.FrameLeaseIndex`(同じ component)から出た複数の submesh の描画を 1 回だけ変形し、出力の頂点の範囲も 1 回だけ取る。その submesh の `SkinningComputeInstance` は、どれも同じ `VertexBase`・`VertexCount`・頂点のアドレスを指し、`MaterialIndex`・`Material`・`SourceFirstIndex`・`SourceIndexCount`・`bOpaque`・`bCastShadow` はそれぞれの submesh の値を保つ。頂点の合計の上限と、外したインスタンスの数(`SkinningComputeDroppedInstances`)は component ごとに 1 回数える。解決が使えず影の描画だけが読むフレームでは、影を落とす submesh が 1 つでもある component だけを変形する。計画を作る部分は GPU の無い試験から呼べる関数に分け、既存の `SkinnedRenderPathContractTest` に次の検査を足す(新しい exe は作らない。足す前に `Docs/Testing.md` の 3 点を書く): 2 submesh で同じ lease のとき、変形は 1 回で出力の頂点の数は 1 倍、2 つのインスタンスが同じ `VertexBase` を持ち範囲はそれぞれの値のまま。lease の違う 2 component では範囲が重ならない。上限を超える component は submesh の数によらず 1 つとして外す。2 材質のパネルの撮影(下の verify。起動を戻した後に回す)で、材質の色の判定が result=pass のままであること。
+- verify: `cmake --build build --config Debug --target Game SkinnedRenderPathContractTest SkinnedSubmeshDrawContractTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^(SkinnedRenderPathContractTest|SkinnedSubmeshDrawContractTest)$" --no-tests=error --output-on-failure --timeout 180`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -SkinnedProbe -SkinnedProbeMaterials 2 -VisibilityBuffer On -OutDir .harness/runs/startup-capture/G2-GR32-GPU-ACCEPTANCE-P1-2mat-vb`
+- paths: Library/Core/Private/Rendering/SkinningComputePass.cpp, Library/Core/Public/Rendering/SkinningComputePass.h, Test/Core/Rendering/SkinnedRenderPathContractTest.cpp, TASKS.md, PROGRESS.md
+- from: G2-GR32-GPU-ACCEPTANCE
+
+## G2-GR32-GPU-ACCEPTANCE-P2: `NVSKELMigrationInventory.md` に残る、旧い環境(Linux・Windows.h で未実行)の記述を今の状態に直す
+- status: todo
+- done-when: `Docs/Architecture/NVSKELMigrationInventory.md` で「範囲drawの接続」より前の節にある 2 つの記述を直す。1 つは「Windows.hに依存するためこのLinux環境では登録・静的照合に留まり」(「GR32 Nprimitive decodeの中間段階」の節)、もう 1 つは「Component API・snapshot・SceneRevisionのnative回帰は登録済みだがWindows.hにより未実行」(「Componentの材質slot API」の節)。直した後は、挙げた native の回帰ごとに、Windows で実行した記録(PROGRESS.md と `.harness/runs` の記録にある日付・コマンド・結果)を書く。記録が無いものは「未実行」と書き、どのタスクで回すかを添える。実行していないものを実行済みと書かない。ほかの節は変えない。
+- verify: `python -c "import sys; t=open('Docs/Architecture/NVSKELMigrationInventory.md',encoding='utf-8-sig').read(); bad=[s for s in ('\u3053\u306eLinux\u74b0\u5883','Windows.h\u306b\u3088\u308a\u672a\u5b9f\u884c') if s in t]; print(bad); sys.exit(1 if bad else 0)"`
+- paths: Docs/Architecture/NVSKELMigrationInventory.md, TASKS.md, PROGRESS.md
+- from: G2-GR32-GPU-ACCEPTANCE
+
+## G2-MATERIAL-SELECTION-INTEGRATION-P1: 骨格の分割 cook で、材質の設定の解決に失敗したとき設定名のエラーを返す
+- status: todo
+- done-when: `Tools/AssetCook/RigSplitCook.cpp` の材質の解決(338 行付近)を NVMESH v1(`MeshMaterialV1Plan.cpp` の 470〜477 行)と同じ形にする。`ResolveMaterialImportPlan` の状態が `SettingsFailed` のときは `MaterialSettingsErrorKey(resolved.Settings)` を返し、それ以外の照合の失敗は `split_material_selector_or_settings` のまま返す。元の catalog を読めないときも、今と同じく区別できる名前で返す。増分の preflight も cook と同じ名前を返す(`CookCacheDecisionTest` の 575 行付近の期待は、この変更で変わる場合だけ直す)。`RigSplitCookTest` に、設定の失敗 1 件(例: 未一致の指定)で返る名前が設定名のキーと一致し、照合の失敗はこれまでの名前のままであることの検査を足す(新しい exe は作らない。足す前に `Docs/Testing.md` の 3 点を書く)。
+- verify: `cmake --build build --config Debug --target CookedMeshTest AssetCook -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^(RigSplitCookTest|CookCacheDecisionTest|SkeletalMaterialBindingsTest|MaterialSelectionTest)$" --no-tests=error --output-on-failure --timeout 180`
+- paths: Tools/AssetCook/RigSplitCook.cpp, Test/Core/Asset/RigSplitCookTest.cpp, Test/Core/Asset/CookCacheDecisionTest.cpp, TASKS.md, PROGRESS.md
+- from: G2-MATERIAL-SELECTION-INTEGRATION
+
+## G2-S6-ASSET-SET-P1: `CookManagedBootstrapTest` が `rename_no_replace`(win32 5)のあと止まり、300 秒でタイムアウトする原因を直す
+- status: todo
+- done-when: この機で `CookManagedBootstrapTest` を単独で回すと、182 行の `InitializeNewCookManagedStore` の前に `rename_no_replace; win32_hex=5`(ERROR_ACCESS_DENIED)が出て、そのまま 300 秒でタイムアウトする。原因を特定して PROGRESS.md に書く。調べる候補: fixture を `GetTempPathW` の下(共有の TEMP)に作っていること、改名する項目やその子の handle が `FILE_SHARE_DELETE` 無しで開いたままであること、TEMP を見張る外部のソフト。原因が製品の側にあれば製品を直し、試験の置き場の側にあれば fixture を ctest の作業ディレクトリの下へ移す(`RigSplitCookTest` と同じ形)。そのうえで次の 2 つを満たす。(1) 失敗のときは止まらず、数秒のうちに 0 でない終了コードで終わる。(2) `ctest -R "^CookManagedBootstrapTest$" --timeout 180` が単独で Passed になる。復旧で `RolledBack` を期待する箇所など、期待そのものは弱めない。timeout を延ばして通すこともしない。`ManagedTextureAssetSetCli.md` の 2026-11-02 の受入れの節に、Bootstrap の結果を書き足す。
+- verify: `cmake --build build --config Debug --target CookedMeshTest AssetCook -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^CookManagedBootstrapTest$" --no-tests=error --output-on-failure --timeout 180`
+- verify: `ctest --test-dir build -C Debug -R "^(CookManagedUpdateTest|TextureManagedCliTest|CookManagedStoreInitializationTest)$" --no-tests=error --output-on-failure --timeout 180`
+- paths: Test/Core/Asset/CookManagedBootstrapTest.cpp, Tools/AssetCook/CookManagedTransactionController.cpp, Tools/AssetCook/CookManagedBootstrapTestAccess.h, Docs/Architecture/ManagedTextureAssetSetCli.md, TASKS.md, PROGRESS.md
+- from: G2-S6-ASSET-SET
+- stop-when: 期待を弱める・timeout を延ばして合格にする・原因を書かずに fixture だけを移す。
+
+## G2-S6-ASSET-SET-P2: `AssetCookCliParity.py capture` をローカルの Windows で完走させ、main のクラスタ化の後の 79 出力の基準を取り直す
+- status: todo
+- done-when: (1) `capture` が、source の外の新しい出力先(`%TEMP%` の下の新しいディレクトリ)で 7 ケースとも終了コード 0 で完走し、snapshot を保存する。Skeletal の警告文の判定は、コンソールのコードページに左右されない形にする(G2-GR78-SURFACE-CENTROID-CHECK-P1 と同じ考え方)。source の下の出力先を拒否する安全の規則は弱めない。拒否するときは、出力先の指定の誤りと分かる文言を出す。(2) 凍結した旧基準(run 37200047966、artifact 11302304928、`snapshot.json` の SHA-256 は `09af3262…6c85`)と `compare` し、合わない出力をすべて原因ごとに分けて `ManagedTextureAssetSetCli.md` の受入れの節に書く。原因の分け方は、main のクラスタ化・入力の行末(CRLF/LF)・その他の 3 つ。その他に分かれた差は直すか、値を付けて残課題として書く。(3) 合わない出力の原因がすべて (2) の前の 2 つで説明できたときだけ、新しい 79 出力の snapshot を、クラスタ化の後の基準として保存する。その SHA-256 と、作ったコミットを `ManagedTextureAssetSetCli.md` と `Docs/TestingAssetCookCliParity.md` に書く。説明できない差があるときは、基準を更新しない。`AssetCookCliParityTest.py` は通る。
+- verify: `cmake --build build --config Debug --target AssetCook CookedMeshTest -- /m:1`
+- verify: `python Test/Tools/AssetCookCliParityTest.py -q`
+- verify: `python -c "import pathlib,subprocess,sys,tempfile; o=pathlib.Path(tempfile.mkdtemp(prefix='NorvesCliAfter-'))/'run'; sys.exit(subprocess.call([sys.executable,'Scripts/AssetCookCliParity.py','capture','--source','.','--exe','build/Tools/AssetCook/Debug/AssetCook.exe','--skeletal-test-exe','build/Test/Core/Asset/Debug/CookedMeshTest.exe','--output',str(o)]))"`
+- paths: Scripts/AssetCookCliParity.py, Test/Tools/AssetCookCliParityTest.py, Docs/TestingAssetCookCliParity.md, Docs/Architecture/ManagedTextureAssetSetCli.md, TASKS.md, PROGRESS.md
+- from: G2-S6-ASSET-SET
+- stop-when: 説明できない差があるのに基準を更新する、source の下への出力の拒否を外す。
+
+## G2-S6-ASSET-SET-P3: `windows-assetcook.yml` を手動で起動し、直した `VerifyTextureAssetSet.py` の全体が CI で完走することを確かめる
+- status: todo
+- done-when: 盤面が既にプッシュした統合ブランチ `feature/scene-launcher` を対象に、`gh workflow run windows-assetcook.yml --ref feature/scene-launcher` で 1 回だけ起動する。起動する前に、そのブランチの head に `66499489`(照合の直し)が含まれることを確かめる。ワーカーはプッシュしない。run が終わったら、結論が success であることを確かめる。あわせて、`VerifyTextureAssetSet.py` の段(失敗のときの検査を含む)と `texture_parity` が最後まで走ったことを、ジョブのログで確かめる。run の ID・URL・head の SHA・各段の結果を、PROGRESS.md と `ManagedTextureAssetSetCli.md` の受入れの節に書く。失敗したときは、原因とログの該当行を書き、直しは `要起票:` で残す(このタスクの中で再プッシュはしない)。
+- verify: `python -c "import json,subprocess,sys; r=json.loads(subprocess.check_output(['gh','run','list','--workflow','windows-assetcook.yml','--branch','feature/scene-launcher','--event','workflow_dispatch','--limit','1','--json','conclusion,headSha,url'])); print(r); sys.exit(0 if r and r[0]['conclusion']=='success' and subprocess.call(['git','merge-base','--is-ancestor','66499489',r[0]['headSha']])==0 else 1)"`
+- paths: Docs/Architecture/ManagedTextureAssetSetCli.md, TASKS.md, PROGRESS.md
+- from: G2-S6-ASSET-SET
+- stop-when: 自分でプッシュする、workflow を何度も起動し直す、main を対象に起動する。
+
+## FIX-NORMAL-MATRIX-SCALE-CHECK-P1: GPU スキニングの法線行列の退化判定を、CPU と同じ尺度不変の規則にする
+- status: todo
+- done-when: `Assets/Shaders/skinning_compute.comp` の `NormalMatrixOf` を、`MatrixUtils::CreateNormalMatrix`(`Library/Core/Public/Math/MatrixUtils.h` 774 行〜)と同じ規則にする。規則: `|det| < EPSILON × 3 本の軸の長さの積` か、積が 0 または有限でないときは単位行列を返す。軸は、CPU の行ベクトル規約の行にあたるものを、GLSL の列優先の mat3 に正しく対応させて取る。せん断を含む行列でも CPU と同じ判定になるよう、行と列を取り違えない。旧の絶対の閾値 `SingularDeterminant` は消す。`ComputeSkinningVulkanTest.cpp` の `TransformNormal` の写しも同じ規則にする。`ComputeSkinningVulkanTest` には、一様スケール 0.001〜0.005 で回転した骨の頂点の法線が、CPU のスキニング(`SkeletalAnimationSampler`)の法線と許容の範囲で一致し、単位行列に落ちないことの検査を足す。この GPU の試験の実行は、起動を戻した後に回す。
+- verify: `cmake --build build --config Debug --target Game RHITextureUpdateVulkanTest MathGeometryTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^(MatrixAbstractionTest|SkinnedRenderPathContractTest)$" --no-tests=error --output-on-failure --timeout 180`
+- verify: `ctest --test-dir build -C Debug -R "^ComputeSkinningVulkanTest$" --no-tests=error --output-on-failure --timeout 600`
+- paths: Assets/Shaders/skinning_compute.comp, Test/Core/Rendering/ComputeSkinningVulkanTest.cpp, TASKS.md, PROGRESS.md
+- from: FIX-NORMAL-MATRIX-SCALE-CHECK
+
+## GAME-GR131-VFX-P1: ワールドの空間の粒子の板を 3D の view へ渡し、当たりのエフェクトなどを画面に出す
+- status: todo
+- done-when: `ApplicationProcessor.cpp` の毎フレームの板の受け渡し(2200 行付近)では今、Text のグリフと粒子の板を、空間によらずキャンバスの view にだけ渡している。これを空間で分ける。`BoardSpace::WorldSpace` の一時の板(粒子の板、Text のグリフのうちワールドの空間のもの)は、そのフレームだけ 3D の scene view へ渡す。経路は `FramePacket` のスナップショットを越えるものに限り、RenderThread から GameThread の値を直接読まない。描き方と並べ方は、常駐のワールドの板と同じ。`ScreenSpace` の板は、今までどおりキャンバスへだけ渡す。同じ板を両方に描かない。一時の板が無いフレームでは、前のフレームの板を残さない。常駐の板(`BoardComponent`)の受け渡しと見た目は変えない。既存の試験に次の検査を足す(新しい exe は作らない。足す前に `Docs/Testing.md` の 3 点を書く): `ParticleFrameSnapshotTest` と `SceneViewWorldBoardDrawCommandTest` で、ワールドの空間の粒子の板 1 枚がそのフレームの 3D の view の描画コマンドに 1 回だけ載ってキャンバスには載らない。スクリーンの空間の板はキャンバスにだけ載る。次のフレームに放出が無ければ、どちらにも残らない。
+- verify: `cmake --build build --config Debug --target Game CanvasTransientBoardSnapshotTest SceneViewWorldBoardDrawCommandTest HitEffectEmissionTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^(ParticleFrameSnapshotTest|CanvasTransientBoardSnapshotTest|SceneViewWorldBoardDrawCommandTest|HitEffectEmissionTest|BoardComponentRoutingTest)$" --no-tests=error --output-on-failure --timeout 180`
+- paths: Library/Core/Private/Engine/ApplicationProcessor.cpp, Library/Core/Public/Rendering/SceneView.h, Library/Core/Private/Rendering/SceneView.cpp, Library/Core/Public/Rendering/CanvasView.h, Library/Core/Private/Rendering/CanvasView.cpp, Library/Core/Public/Rendering/FramePacket.h, Test/Core/Rendering/ParticleFrameSnapshotTest.cpp, Test/Core/Rendering/SceneViewWorldBoardDrawCommandTest.cpp, TASKS.md, PROGRESS.md
+- from: GAME-GR131-VFX
+
+## GAME-GR130-VFX-CHECK-P1: ソケットに付けた Entity の描画の補間を、親の描画の変換から求める
+- status: todo
+- done-when: `SocketAttachmentComponent` は今、PostPhysics の段(固定ステップの外)でワールドの変換を書き換えている。そのため、付けた Entity の補間の履歴が毎フレーム戻されている。これをやめ、描画用の変換を次の形で求める: 親(スキンのメッシュ)の補間した描画の変換 × ソケットの相対の変換(骨のソケット × grip・profile の offset。移り変わりの混ぜを含む)。補間の履歴は、固定ステップの外の書き換えで戻さない。シミュレーションの変換(攻撃の判定 GR16 が読むもの)の値は変えない。既存の `WorldRenderInterpolationTest`(`EntityTreeTest` の束)に次の検査を足す(新しい exe は作らない。足す前に `Docs/Testing.md` の 3 点を書く): 親が一定の速さで動き、固定ステップが 0・1・2 回のフレームが混ざる列で、付けた Entity の描画の位置が、親の描画の位置 + offset と 1e-4 以内で一致し、フレームの間で跳ばない。`SwordTrailRibbonTest` と `SkeletalAnimationSamplingTest` は通ったまま。
+- verify: `cmake --build build --config Debug --target Game EntityTreeTest SwordTrailRibbonTest SkeletalAnimationSamplingTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^(WorldRenderInterpolationTest|SwordTrailRibbonTest|SkeletalAnimationSamplingTest)$" --no-tests=error --output-on-failure --timeout 180`
+- paths: Library/Core/Private/Component/SocketAttachmentComponent.cpp, Library/Core/Public/Component/SocketAttachmentComponent.h, Library/Core/Private/Object/World.cpp, Test/Core/Object/WorldRenderInterpolationTest.cpp, TASKS.md, PROGRESS.md
+- from: GAME-GR130-VFX-CHECK
