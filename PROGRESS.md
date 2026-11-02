@@ -8556,3 +8556,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 新しい Core のソースの登録のため `Library/Core/CMakeLists.txt` と、試験の理由の `Docs/Testing.md` を paths の外だが触る（ソースの並びに足すだけ・done-when が名指し）。エフェクトのファイルの置き場（`Assets/Vfx`）は paths の外なので、Rendering3DTest の橙の粒はコードで組む
 - U1 VFX の型・スキーマ・API の骨組み: 着地(直し 0 回)
 - U2 JSON の読み込みとクックしたバイナリの読み書き: 着地(直し 0 回)
+- U3 CPU のシミュレーション（実行時のインスタンス・イベント・フリップブック・板の出力）: 着地(直し 0 回)

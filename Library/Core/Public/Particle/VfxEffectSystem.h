@@ -67,5 +67,67 @@ namespace NorvesLib::Core::Particle
         void AppendBoardProxies(VariableArray<Rendering::BoardProxy>& outProxies) const;
         static uint32_t ComputeFlipbookFrame(const VfxFlipbookImportSettings& flipbook, float age, float lifetime);
         static Math::Vector4 ComputeFlipbookUVRect(const VfxFlipbookImportSettings& flipbook, uint32_t frame);
+
+    private:
+        struct ModuleBinding
+        {
+            uint32_t Arguments[4] = {};
+        };
+
+        struct EmitterState
+        {
+            VariableArray<VfxParticleState> Particles;
+            VariableArray<ModuleBinding> Bindings;
+            float SpawnAccumulator = 0.0f;
+            uint32_t RandomState = 0u;
+            uint32_t Seed = 0u;
+            uint32_t MaxParticles = 0u;
+            uint32_t Space = 0u;
+            uint32_t SortKey = 0u;
+            uint32_t Layer = 0u;
+            uint32_t Blend = 0u;
+            int32_t FlipbookIndex = -1;
+            bool bHasRenderer = false;
+            bool bHasVelocity = false;
+            Math::Vector3 Offset;
+            Math::Vector3 VelocityMin;
+            Math::Vector3 VelocityMax;
+            Math::Vector3 Acceleration;
+            Math::Vector4 Color;
+            Math::Vector2 Size;
+            float Lifetime = 1.0f;
+        };
+
+        struct PendingEvent
+        {
+            Container::String Name;
+            Math::Vector3 Position;
+            double Time = 0.0;
+        };
+
+        struct InstanceSlot
+        {
+            VfxEffectAsset Asset;
+            VfxInstanceDesc Desc;
+            VariableArray<EmitterState> Emitters;
+            VariableArray<PendingEvent> Events;
+            uint32_t PropertyIndices[3] = {};
+            double Time = 0.0;
+            uint32_t Generation = 1u;
+            bool bActive = false;
+            bool bRetired = false;
+        };
+
+        static uint32_t InitialRandomState(uint32_t seed, uint32_t emitterIndex);
+        static float NextUnitFloat(uint32_t& state);
+        static void CacheBindings(InstanceSlot& slot);
+        static void RefreshEmitter(InstanceSlot& slot, uint32_t emitterIndex);
+        static void UpdateFlipbook(const InstanceSlot& slot, const EmitterState& emitter, VfxParticleState& particle);
+        static void SpawnParticles(InstanceSlot& slot, EmitterState& emitter, uint32_t count,
+            const Math::Vector3& position, double birthTime, float age);
+        void ReleaseSlot(uint32_t index);
+
+        VariableArray<InstanceSlot> m_Instances;
+        VariableArray<uint32_t> m_FreeInstanceIndices;
     };
 } // namespace NorvesLib::Core::Particle
