@@ -8654,3 +8654,24 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: 起動の確かめは後回し。`FIX-NORMAL-MATRIX-SCALE-CHECK` で `cmake --build build --config Debug --target Game RenderingHdrSceneCaptureTest PathTracingRasterParityVulkanTest -- /m:1` と `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -L RenderingValidation` を回し、R1 の数値検証・Indoor/Outdoor golden・`PathTracingRasterParityVulkanTest` が変わらず通ることを確かめる（変わるなら基準の更新を提案して止まる）。ワールド法線の Y 成分 -6e-8 の差は float の丸めの範囲。
 - Notes: 要起票: GPU スキニング `Assets/Shaders/skinning_compute.comp` の `SingularDeterminant` と `ComputeSkinningVulkanTest.cpp` の `TransformNormal` の写しは旧の絶対判定のまま（範囲外）。CPU のスキニング（`SkeletalAnimationSampler`）と、一様スケール約 0.005 未満の骨で法線が食い違う。
 - Notes: 要起票: `RenderingHdrSceneCaptureTest.cpp` の 5018 行（平面の符号化ワールド法線 (0.5,0.5,1)）・5936 行（N·L=N·V=1）はワールド +Z を前提にしており、今回のワールド法線は変わらないので触っていない。CHECK で落ちたら見る。
+
+## 2026-11-02 GAME-GR136-VFX（run 20261102-102403 の反復 1。着手）
+- 方式（推奨を採った）: GR57 を GR136 の形で設計する。効果の定義（エミッタ・モジュール・スキーマ・取り込み設定・クックの形式）は GR136 の `VfxEffectAsset` の 1 つにし、GR57 はそれを GPU で回す実行先として上に載せる。理由: 定義が 2 つになるとデータ・クック・試験の基準が二重になり、GR57 の設計案が既に求める「CPU 参照実装」「JSON の定義」を GR136 が先に作る形になる。逆（GR57 の上に GR136）は GR57 の硬い前提（G3・G4・G5）が揃うまで作者の形式を決められない。雨（GR58）・しぶき（GR59）もこの定義のエフェクトにする
+- 方式と前提の境界の記録: `Docs/Plans/GameFeatureRoadmap.md`（メイン側・管理外）の「GR136 VFX システム（Niagara 相当）の方式と境界」の節。スキーマは自前の静的な表（Object の反射に範囲・単位の欄が無いため）、単位はエミッタの空間の単位、積分と乱数は既存の 2D `ParticleSystem` と同じ、描画は今は `BoardProxy`
+- 完了を宣言しない範囲: GR57 の GPU の実行先・3D の粒子の描画パス、GR02 の時間のチャンネル、GR12/GR13/GR19 のボーン・表面のエミッタ、GR96 の asset-set・依存の追跡とテクスチャのパスの解決、GR126 の並列化の後の順序、GR72 の音、Editor の編集の画面、寿命の曲線のモジュール
+- Notes: 新しい Core のソースの登録のため `Library/Core/CMakeLists.txt` と、試験の理由の `Docs/Testing.md` を paths の外だが触る（ソースの並びに足すだけ・done-when が名指し）。エフェクトのファイルの置き場（`Assets/Vfx`）は paths の外なので、Rendering3DTest の橙の粒はコードで組む
+- U1 VFX の型・スキーマ・API の骨組み: 着地(直し 0 回)
+- U2 JSON の読み込みとクックしたバイナリの読み書き: 着地(直し 0 回)
+- U3 CPU のシミュレーション（実行時のインスタンス・イベント・フリップブック・板の出力）: 着地(直し 0 回)
+- U4 VfxEffectSystemTest と Docs/Testing.md の 3 点: 着地(直し 0 回)
+- U5 AssetCook の --cook-vfx: 着地(直し 0 回)
+- U6 ParticleSystem への組み込みと Rendering3DTest の橙の粒の置き換え（最後の確かめ）: 着地(直し 0 回)
+- Done: 起動せずに確かめる完了の条件 (1)〜(6) を `VfxEffectSystemTest`（CPU の試験。足す理由の 3 点は `Docs/Testing.md`）で確かめた。`cmake --build build --config Debug --target Game VfxEffectSystemTest ParticleSystemTest -- /m:1` は終了コード 0、`ctest -R "^(VfxEffectSystemTest|ParticleSystemTest)$"` は 2 件とも Passed。AssetCook の `--cook-vfx` は正常の入力で終了コード 0（`vfx_cooked bytes=96 emitters=1`）、Rate −1 の入力で終了コード 1（`out_of_range SpawnRate.Rate`）
+- Done: Rendering3DTest の橙の粒を VFX のエフェクト `Rendering3DTestEmbers` で組み直した。値（位置・速度の箱・重力・生成の速さ・寿命・最大数・色・大きさ・層・混合）と乱数の種（0xC001D00D）は前の 2D のエミッタと同じで、前のエミッタが粒子系の添字 0・世代 1 だったなら乱数の列も一致する。エンジンの `ParticleSystem` が `VfxEffectSystem` を持ち、Tick・板の収集・Clear で回す
+- Next: 起動の確かめは後回し。`GAME-GR136-VFX-CHECK` で `Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo` を撮り、起動画面の橙の粒の見た目が前と変わらないことを確かめる
+- Notes: 完了を宣言しない範囲は着手時の記録のとおり（GR57 の GPU の実行先・3D の粒子の描画パス、GR02 の時間のチャンネル、GR12/GR13/GR19 のボーン・表面のエミッタ、GR96 の asset-set・依存の追跡とテクスチャのパスの解決、GR126 の並列化の後の順序、GR72 の音、Editor の編集の画面、寿命の曲線のモジュール）
+- Notes: VFX のインスタンスの合成 ID は 2D のエミッタの ID と別の帯（ビット 63・62）を使う。イベントの位置はエミッタの空間の絶対位置で、インスタンスの位置を足さない
+- U7 カメラの検査スクリプトが探すエミッタ生成の呼び出しを VFX のインスタンス生成に合わせる: 着地(直し 0 回)
+- Done(反復 3): 差し戻しの退行を直した。`Scripts/Test-CameraWorld.ps1` の契約検査が探す呼び出しを `GetParticleSystem().GetVfxEffects().CreateInstance(` に合わせ、`-ContractOnly` は `CAMERA_WORLD_CONTRACT result=pass camera_initialization_before_emitter=1`（終了コード 0）。`cmake --build build --config Debug --target Game VfxEffectSystemTest -- /m:1` は終了コード 0、`ctest -R "^VfxEffectSystemTest$"` は Passed
+- Next: 起動の確かめは後回し（`GAME-GR136-VFX-CHECK`）。`Scripts/Test-CameraWorld.ps1` の起動するスモークもそこで回す
+- Notes: `Scripts` は paths の外だが、このタスクが起こした退行の打ち消しなので直した。残課題（blocking でない）: `AppendBoardProxies` の ID は `(instanceIndex << 8 | emitterIndex) + 1` で、1 つのエフェクトにエミッタが 256 個以上あると別のインスタンスの ID とぶつかる。バーストで出した粒の年齢は刻みの終わりで 0（イベントの粒はイベントの時刻から年齢を決める）
