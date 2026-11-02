@@ -211,6 +211,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/DebugDrawQueue.cpp
     Private/Rendering/DebugDrawPass.cpp
     Private/Rendering/FoliageMesh.cpp
+    Private/Rendering/DecalPass.cpp
     Private/Rendering/FoliagePass.cpp
     Private/Rendering/RenderingCoordinator.cpp
     Private/Rendering/RenderingCoordinatorDiagnostics.cpp
@@ -606,6 +607,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/DebugDrawQueue.h
     Public/Rendering/DebugDrawPass.h
     Public/Rendering/FoliageMesh.h
+    Public/Rendering/DecalPass.h
     Public/Rendering/FoliagePass.h
     Public/Rendering/FoliageTypes.h
     Public/Rendering/DecalTypes.h

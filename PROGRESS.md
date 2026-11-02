@@ -8593,3 +8593,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Done: デカールの描画値 `DecalInstance`・一覧 `DecalScene`（`Rendering/DecalTypes.h`）と `Particle::DecalPool` を足し、`DecalPoolEvictionTest`（3 点は `Docs/Testing.md`）が Passed
 - Next: 受け渡し（U2）→ DecalPass とシェーダー（U3）→ `DecalGBufferVulkanTest` を作るだけ・起動しない verify（U4）
 - U2 デカールの一覧を GameThread から RenderThread へ渡す: 着地(直し 0 回)
+- U3 デカールのパスとシェーダー: 着地(直し 0 回)
