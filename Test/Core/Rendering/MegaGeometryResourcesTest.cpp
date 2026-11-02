@@ -108,8 +108,10 @@ namespace
         NorvesLib::RHI::BufferPtr CreateBuffer(const NorvesLib::RHI::BufferDesc &desc) override
         {
             CreatedBufferDescs.push_back(desc);
-            if (FailBufferCreateIndex == CreatedBufferDescs.size())
+            // プール確保の再試行も含め、指定した作成番号以降は解除するまで失敗させる
+            if (FailBufferCreateFromIndex != 0 && CreatedBufferDescs.size() >= FailBufferCreateFromIndex)
             {
+                ++FailedBufferCreateCount;
                 return {};
             }
 
@@ -154,7 +156,8 @@ namespace
         std::vector<NorvesLib::RHI::BufferDesc> CreatedBufferDescs;
         std::vector<NorvesLib::Core::Container::TSharedPtr<FakeBuffer>> CreatedBuffers;
         NorvesLib::Core::Container::TSharedPtr<FakeBuffer> LastBuffer;
-        size_t FailBufferCreateIndex = 0;
+        size_t FailBufferCreateFromIndex = 0;
+        size_t FailedBufferCreateCount = 0;
     };
 
     struct MeshFixture
@@ -1975,7 +1978,7 @@ namespace
         assert(std::memcmp(PoolBytesAt(*gpuData, gpuData->VertexBufferOffsetBytes), mesh.Cooked.Vertices.data(),
                            gpuData->VertexBufferBytes) == 0);
 
-        // BVH の無いメッシュ（同じクラスタ）は、BVH の領域を持たない（区画は従来のまま）
+        // BVH の無いメッシュには実行時に BVH を作り、節の後ろに並べ替えの表を付けて書く
         {
             Mega::MegaMeshCreateInfo noBvh = mesh.CreateInfo;
             noBvh.GroupBVH.clear();
@@ -1985,8 +1988,57 @@ namespace
             const auto otherHandle = otherManager.MegaGeometry().CreateMegaMesh(noBvh);
             assert(otherHandle.IsValid());
             const auto *otherData = otherManager.MegaGeometry().GetMegaMeshGPUData(otherHandle);
-            assert(otherData != nullptr && otherData->GroupBVHNodeCount == 0 && otherData->GroupBVHBufferBytes == 0 &&
-                   otherData->GroupBVHLevelNodeCounts.empty());
+            assert(otherData != nullptr);
+            assert(otherData->GroupBVHNodeCount > 0);
+            assert(otherData->GroupBVHLeafCount > 0);
+            uint32_t otherLevelTotal = 0;
+            for (const uint32_t count : otherData->GroupBVHLevelNodeCounts)
+            {
+                otherLevelTotal += count;
+            }
+            assert(otherLevelTotal == otherData->GroupBVHNodeCount);
+            const size_t clusterCount = noBvh.Clusters.size();
+            const size_t nodeBytes = otherData->GroupBVHNodeCount * sizeof(Mega::GPUGroupBVHNode);
+            assert(otherData->GroupBVHBufferBytes == nodeBytes + clusterCount * sizeof(uint32_t));
+            assert(otherData->GroupBVHBufferOffsetBytes % 256 == 0);
+            assert(otherData->GroupBVHBufferOffsetBytes >= otherData->IndexBufferOffsetBytes + otherData->IndexBufferBytes);
+            assert(otherData->GroupBVHBufferOffsetBytes >= otherData->ClusterBufferOffsetBytes + otherData->ClusterBufferBytes);
+            assert(GeometryUpload::DrainGeometryUploads(otherManager));
+            const uint8_t *bvhBytes = PoolBytesAt(*otherData, otherData->GroupBVHBufferOffsetBytes);
+            uint32_t leafCount = 0;
+            uint64_t leafClusterTotal = 0;
+            for (uint32_t nodeIndex = 0; nodeIndex < otherData->GroupBVHNodeCount; ++nodeIndex)
+            {
+                Mega::GPUGroupBVHNode node;
+                std::memcpy(&node, bvhBytes + nodeIndex * sizeof(node), sizeof(node));
+                if ((node.Flags & Mega::GPU_GROUP_BVH_NODE_FLAG_LEAF) != 0)
+                {
+                    const uint32_t leafFlags = Mega::GPU_GROUP_BVH_NODE_FLAG_LEAF | Mega::GPU_GROUP_BVH_NODE_FLAG_CLUSTER_ORDER;
+                    assert((node.Flags & leafFlags) == leafFlags);
+                    assert(node.Count >= 1 && node.Count <= Mega::GROUP_BVH_MAX_LEAF_CLUSTERS);
+                    assert(static_cast<uint64_t>(node.First) + node.Count <= clusterCount);
+                    ++leafCount;
+                    leafClusterTotal += node.Count;
+                }
+            }
+            assert(leafCount == otherData->GroupBVHLeafCount);
+            assert(leafClusterTotal == clusterCount);
+            Container::VariableArray<uint32_t> clusterOccurrences(clusterCount, 0);
+            for (size_t orderIndex = 0; orderIndex < clusterCount; ++orderIndex)
+            {
+                uint32_t clusterIndex = 0;
+                std::memcpy(&clusterIndex, bvhBytes + nodeBytes + orderIndex * sizeof(clusterIndex), sizeof(clusterIndex));
+                assert(clusterIndex < clusterCount);
+                ++clusterOccurrences[clusterIndex];
+            }
+            for (const uint32_t count : clusterOccurrences)
+            {
+                assert(count == 1);
+            }
+            // 並べ替えは表だけで行い、クラスタの記録は焼いた BVH の版と同じ順序で保つ
+            assert(otherData->ClusterBufferBytes == gpuData->ClusterBufferBytes);
+            assert(std::memcmp(PoolBytesAt(*otherData, otherData->ClusterBufferOffsetBytes),
+                               PoolBytesAt(*gpuData, gpuData->ClusterBufferOffsetBytes), otherData->ClusterBufferBytes) == 0);
         }
 
         // 壊れた BVH（子の位置が違う・葉が同じクラスタを二重に覆う）／焼き込み済みの階層でないメッシュの BVH は拒否する
@@ -2685,15 +2737,25 @@ namespace
         RenderResources manager;
         auto device = MakeShared<FakeDevice>();
         assert(InitializeWithSmallPool(manager, device));
-        device->FailBufferCreateIndex = failBufferCreateIndex;
+        const size_t bufferDescCountBefore = device->CreatedBufferDescs.size();
+        const size_t bufferCountBefore = device->CreatedBuffers.size();
+        const auto statsBefore = manager.GetResourceStats();
+        device->FailBufferCreateFromIndex = bufferDescCountBefore + failBufferCreateIndex;
 
         MeshFixture mesh("FailureMega");
         const auto failedHandle = manager.MegaGeometry().CreateMegaMesh(mesh.CreateInfo);
+        // 失敗注入が実際に働き、再試行でもバッファが作られず資源が増えていない
+        assert(device->FailedBufferCreateCount > 0);
+        assert(device->CreatedBufferDescs.size() - bufferDescCountBefore == device->FailedBufferCreateCount);
+        assert(device->CreatedBuffers.size() == bufferCountBefore);
         assert(!failedHandle.IsValid());
         assert(manager.MegaGeometry().GetMegaMeshGPUData(MakeMegaMeshHandle(1)) == nullptr);
-        assert(manager.GetResourceStats().BufferCount == 0);
+        const auto statsAfter = manager.GetResourceStats();
+        assert(statsAfter.BufferCount == statsBefore.BufferCount);
+        assert(statsAfter.GeometryPoolCapacityBytes == statsBefore.GeometryPoolCapacityBytes);
+        assert(statsAfter.GeometryPoolUsedBytes == statsBefore.GeometryPoolUsedBytes);
 
-        device->FailBufferCreateIndex = 0;
+        device->FailBufferCreateFromIndex = 0;
         const auto retryHandle = manager.MegaGeometry().CreateMegaMesh(mesh.CreateInfo);
         assert(retryHandle.IsValid());
         assert(retryHandle.Id == 1);

@@ -9085,18 +9085,36 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261102-211748/u8-unit-verify.txt`（Debug・RelWithDebInfo の Game のビルドの終了コード 0、numstat 一致）
 - Next: 起動の確かめは後回し（SCN-WL-CLIFF-GEN-TALUS-CHECK-P1-CHECK）。verify の 3〜10 行目で (A) 残る 4 行・(B) 地形だけの仕様・(C) 接地・(D) ページの要求と VRAM・(E) look の 3 視点・(F) ログ `WASTELAND_CLIFF_BLOCKS` で near_2・near_3 のそれぞれに塊が 1 個以上、を確かめる
 - Notes: 要起票: castle の 5 範囲（ref_far_01、5〜9 km）の壁の足から崖錐への移り（far_01 の wall_foot。版 15 で 0.334〜0.344、外した下限 0.356）を、遠景の格子の崖の生成（式）か MegaGeometry の散布で上げる
-- U1 castle の範囲の塊の合否の仕様を書く: 着地(直し 0 回)
-- U2 接地用の格子の版 3（層を持つ形）の読み込み: 着地(直し 0 回)
-- U5 接地の検査で castle の範囲の足元を castle の段の焼いた面で測る: 着地(直し 0 回)
-- U3 接地用の格子の書き出しに castle の層を足す: 着地(直し 0 回)
-- U4 荒野で castle の 5 範囲にも崖の塊を置く: 着地(直し 0 回)
-- U6 記録を書き、ビルドとクックの verify を通す: 着地(直し 0 回)
 
-## 2026-11-03 SCN-WL-CLIFF-BLOCKS-CASTLE（run 20261103-004716 の反復 1、完了・起動の確かめは後回し）
-- Done: 崖の壁の足の崩れた塊（boulder_01・rock_09 を高さ 3〜14 m）を castle の 5 範囲（cliff_castle_0〜4、ref_far_01 の 5〜9 km）にも置く（`kCliffBlockRegionCount` = 7）。根元の高さは接地用の格子 `WastelandPlacementGround.bin` の版 3 で足した castle の層から取る。版 3 は層を持つ形で、近景の層（8 m の塊・0.25 m 間隔・塊の無い所は高さ場へ戻す。塊は版 2 とバイト単位で一致）と castle の層（32 m の塊・1 m 間隔〔castle の段の 2 m 格子の半分〕・5 範囲を 48 m 広げた矩形に掛かる塊を全部・塊の無い所は不可）。`AssetCook --write-placement-ground` は castle の段の焼いた面を問い合わせて castle の層を書き、参照に castle の 21 区画を足す。Game は格子の参照の照合に遠景の区画を足し、ログ `WASTELAND_CLIFF_BLOCKS` に `no_ground_regions=` を足した。CheckPlacement.py は DEM の外で castle の段の中の足元を `--horizon-level castle` で測る（castle の 3 点・DEM の 3 点で状態 ok を確かめた。castle の問い合わせ 1 回は約 39 秒）。合否の仕様 `shape-cliff-blocks-castle.json`（far_01 の wall_foot ≥ 0.356 の 1 行、2 つの sha256 は shape-cliff-blocks.json と同じ）は置く前にコミットし、版 15 の shape に当てて版の照合 pass・行は 0.3336 で fail を確かめた。地形のクック（崖の細部の版 19）は変えていない
-- 証拠: `.harness/runs/20261103-004716/u6-unit-verify.txt`（Debug・RelWithDebInfo の Game、RelWithDebInfo の AssetCook のビルドの終了コード 0、地形のクック `COOK_ASSETS cooked=0 skipped=214`、格子の要約で castle の 5 範囲の covered_block_count = expected_block_count〔748・3024・2205・1645・576〕、格子の見出し 版 3・2 層・参照 77）、`.harness/runs/20261103-004716/u3-pg-summary.json`
-- 実測: ファイル 88,633,179 バイト（版 2 は 47,847,084）、書き出し 1270.7 秒（castle の層 396.1 秒。版 2 から書き直す 1 回だけで、以後は --skip-if-current で飛ぶ）、castle 9,079 塊・不可の升目の割合 0.233・範囲の 4 m おきの点が焼いた面で引ける割合 0.70〜0.79
-- Next: 起動の確かめは後回し（SCN-WL-CLIFF-BLOCKS-CASTLE-CHECK）。verify の 5〜11 行目で (A) shape-cliff-blocks-castle.json の行・(B) 接地（cliff_block の違反 ≤ 0.5 %、castle の範囲も含めて測り切れない物 0）・(C) ページの要求と VRAM・(D) look の ref_far_01 を写真と並べる・(E) ログ `WASTELAND_CLIFF_BLOCKS` の regions と no_ground_regions で castle_0・castle_1 のそれぞれに塊 ≥ 1・no_ground 0
-- Notes: 共有のクック済みの置き場（build/CookedAssets）の格子は版 3 に書き直した。版 3 を読めない古い Game（統合前の別の枠の実行ファイル）では格子が読めず、崖錐の岩と塊は見送られる
-- Notes: castle の層の塊の無い所・不可の升目は no_ground に数える。(E) の no_ground 0 は、castle の不可の升目の割合（0.233）からすると落ちうる。そのときは不可の升目の分布（壁の足の帯にあるか）を先に見る
-- Notes: 遮蔽の視点 contact_near・ref_cliff_01 から castle の範囲までは 2 km 以上で、塊は遮蔽の小物の書き出し（300 m）に入らない
+- U1 Clear・Shutdown の受付を締める試験を今の破棄の時期で空振りせずに走らせる: 着地(直し 1 回)
+- U2 焼いた BVH を持たないメッシュに実行時の BVH ができる契約へ検査を置き換え、タスクの verify を通す: 着地(直し 1 回)
+
+## 2026-11-03 G2-S6-ASSET-SET-P5（run 20261103-004713 の反復 1）
+- 変更前の結果（ローカル）: Release・Debug の両方で同じ 2 本が落ちた。ModelResourcesAssetRuntimeTest は 323 行 `bDestroyHookRan`、MegaGeometryResourcesTest は 1989 行（BVH の無いメッシュは BVH の領域を持たない）。両試験とも独自の assert で、Release でも検査は有効
+- ClearAllResources で OnBufferDestroyed が呼ばれない理由: be18928f でメッシュの区画が共有のジオメトリのプールへ移り、Clear は区画を手放して GpuRetireQueue へ返すが、共有のバッファはプールが持ち続ける（試験では serial 0 で区画はその場で返る）。VulkanDevice の破棄の遅延（SCN-ECS-FIF-DEFERRED-DESTROY-MEMORY）は関係ない。Clear が資源を手放していないのではないので、実装は直さず試験の駆動を合わせた: GpuResourceStore に観測用のバッファを置き、Clear がその場で破棄する時点（受付を締めてから ReopenAfterClear までの間）で hook を走らせて `requestDuringClear == 0` を確かめる。Shutdown 側は GeometryBuffers の破棄で hook が走る
+- 前の失敗で隠れていた同じ形の失敗も直した: TestGenerationGatesAndLostPublishCleanup（アップロードが後のフレームへ移り、FakeBuffer の Update の hook が公開の最中に走らない。世代を進める hook をプールの塊の作成の時点へ移し、走ったことを assert。解放の確かめを FakeBuffer の数からモデル数・プールの使用バイト数・区画数・アップロード待ちへ置き換え）、MegaGeometryResourcesTest の TestCreateFailureDoesNotRegister（プールの確保の再試行で単発の失敗の注入が空振り。Initialize 後からの相対の番号以降を失敗させ、注入が当たったことと資源が増えないことを assert）
+- MegaGeometryResourcesTest の BVH の無いメッシュの検査は、実行時に作る BVH（e806a3c9）の契約に置き換えた: 節数・葉の数・段の節数の合計、バイト数 = 節 × 32 + クラスタ数 × 4、256 整列でインデックス・クラスタの後ろ、葉に LEAF と CLUSTER_ORDER の印・範囲が表の中、表がクラスタ番号の置換、クラスタの記録は焼いた BVH の版とバイト単位で同じ。壊れた BVH を拒否する検査は変えていない
+- 証拠: `.harness/runs/20261103-004713/u2-unit-verify.txt`（タスクの verify。Release・Debug とも 4 本 Passed、終了コード 0）。windows-assetcook.yml の `-R` は変えていない。CI の再確認は G2-S6-ASSET-SET-P3
+
+- U1 宛先ロックに試験だけの mutex 名前空間の口を足し、宛先ロックの試験をその中で走らせる: 着地(直し 0 回)
+- U2 Bootstrap・Update の試験と子プロセスを名前空間の中で走らせ、タスクの verify を全部回す: 着地(直し 0 回)
+
+## 2026-11-03 G2-MATERIAL-SELECTION-INTEGRATION-P1-P1-P1-P1（run 20261103-004712 の反復 1、完了）
+- Done: cook の宛先ロックに試験だけの mutex 名前空間の口 `Detail::ScopedCookDestinationLockNamespaceForTest`（`CookDestinationLockTestAccess.h`、範囲つき・入れ子で前の値へ戻す）を足した。設定中だけ mutex 名が `Global\NorvesLib.AssetCook.DestinationVolumeLock.v1.test.<名前空間>.<小文字の volume GUID>` になり、外すと今の名前に戻る。本体は新しい環境変数も引数も読まない（`CookDestinationLock.cpp` の `GetEnvironmentVariable` は 1 か所のまま）。試験側の `CookLockWaitTestScope.h` に、親が実行ごとに一意の名前空間を立てて試験だけの環境変数 `NORVES_COOK_LOCK_TEST_NAMESPACE` で子へ継承させる範囲と、子がそれを読んで同じ名前空間を立てる範囲を足し、`CookDestinationLockTest`・`CookManagedBootstrapTest`・`CookManagedUpdateTest` の親と子（`--lock-child`・`--bootstrap-child`・`--update-child`・`--recovery-child`）をその中で走らせる。`CookDestinationLockTest` は名前空間を外した状態で製品の名前（接頭辞 + 36 文字の小文字 GUID）を確かめる。検査・期待と CMakeLists の `RESOURCE_LOCK`・`ENVIRONMENT` は変えていない
+- 証拠: `.harness/runs/20261103-004712/U2-verify.txt`（Debug のビルド 0、3 本の直列 Passed 0.56・20.96・76.71 秒、製品の名前の mutex を python が持った状態（取得結果 `[0]`）で 3 本 Passed、`-j 4` の 4 本 Passed、参照数 1、numstat 一致）
+- Next: なし（この項目は完了）
+- Notes: 名前空間は試験の環境変数で子へ渡すため、試験から AssetCook.exe など製品の実行ファイルを起動する経路があれば、その子は製品の名前で取る（今の 3 本の子は CookedMeshTest 自身だけ）
+
+## 2026-11-03 G2-MATERIAL-SELECTION-INTEGRATION-P1-P1-P1-P1（run 20261103-004712 の反復 2、統合ブランチの取り込み後の verify の再確認）
+- Done: 取り込み（119588e5）は試験 2 本（MegaGeometryResourcesTest・ModelResourcesAssetRuntimeTest）と帳簿だけを変え、cook の本体・試験には触れていない。取り込み後の verify の `-j 4` の行で落ちた CookManagedBootstrapTest（432 行、`--bootstrap-child` が StatePublished に届かず 91 で終了）は再現しなかった。コードは変えていない
+- 証拠: `.harness/runs/20261103-004712/iter2-build.txt`（Debug のビルド 0）、`iter2-bootstrap-repeat.txt`（Bootstrap 単独 6 回 Passed）、`iter2-verify-j4.txt`（`-j 4` の 4 本 Passed、終了コード 0）。直列の行と製品の名前の mutex を握った行は取り込み後の `sync-…-2.txt`・`sync-…-3.txt` で Passed、参照数の行は 1
+- Next: なし（この項目は完了）
+- Notes: 要起票: CookManagedBootstrapTest のクラッシュの子（`Crash`）が間欠的に止める点の前で 91 を返す（9 回中 1 回、point=3）。子は stderr を継がず（CreateProcessW の bInheritHandles=FALSE）、`child did not exit:` の理由が親の出力に残らないため原因が分からない。子の理由を親に見せる形にしてから原因を追う
+
+- U1 Bootstrap 試験のクラッシュの子に親の stderr を継がせ、タスクの verify を全部回す: 着地(直し 0 回)
+
+## 2026-11-03 G2-MATERIAL-SELECTION-INTEGRATION-P1-P1-P1-P1-P1（run 20261103-013153 の反復 1、完了）
+- Done: `CookManagedBootstrapTest.cpp` の `Crash` を `CookManagedUpdateTest.cpp` の `Crash` と同じ形にした（親の stderr を継承可能に複製して `STARTF_USESTDHANDLES` で `hStdInput`・`hStdOutput`・`hStdError` へ入れ、`bInheritHandles=TRUE` で起動し、起動の後に複製を閉じる）。子が 73 以外で終わると、子の `BOOTSTRAP_RESULT`・`VOLUME_BUSY_RETRY`・`child did not exit:` の行が親の `child recovery=... point=... wait=... exit=...` の行と一緒に ctest の出力に出る。直列の 20 回の繰り返しで 91 は再現しなかったので、`CookManagedBootstrap.cpp` と試験の期待・名前空間・`RetryVolumeBusy` の上限・CMakeLists は変えていない
+- 証拠: `.harness/runs/20261103-013153/u1-unit-verify.txt`（Debug の CookedMeshTest のビルド 0、python の検査 True、`--repeat until-fail:20` で 20 回 Passed（20.2〜23.7 秒）、`-j 4` の 4 本 Passed、numstat 一致 14/2）
+- Next: なし（この項目は完了）
+- Notes: 91 は今回の 20 回では出ていない。次に出たときは ctest の `--output-on-failure` の出力に子の理由の行が残るので、その行から原因を追う

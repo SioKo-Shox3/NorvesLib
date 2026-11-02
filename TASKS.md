@@ -4902,7 +4902,7 @@
 - from: SCN-MEGA-FIX-STRESS-GPU-CHECK-P1
 
 ## G2-MATERIAL-SELECTION-INTEGRATION-P1-P1-P1-P1: cook のロックの 3 本の試験を試験だけの mutex の名前空間で走らせ、別の枠の cook と取り合わないようにする
-- status: todo
+- status: done
 - done-when: 次の 4 点を満たす。
   - **口は試験のコードからしか届かない。** `Tools/AssetCook/CookDestinationLockTestAccess.h` に、プロセスの中だけで効く試験用の名前空間の設定を足す。置き方は今の `WithCookDestinationLockForTest`・`InspectCookDestinationMutexNameForTest` と同じ `Detail::...ForTest` で、範囲つきで戻せる形にする。
     - 設定している間は、宛先ロックの mutex の名前に試験用の区切りが入る。
@@ -4926,7 +4926,7 @@
 - P1: TASK G2-MATERIAL-SELECTION-INTEGRATION-P1-P1-P1-P1
 
 ## G2-S6-ASSET-SET-P5: `windows-assetcook.yml` の CPU 契約で落ちる `MegaGeometryResourcesTest`(1989 行)と `ModelResourcesAssetRuntimeTest`(323 行)を、今の契約に合わせて通す
-- status: todo
+- status: done
 - done-when: 次の 4 点をすべて満たす。
   - まず、ローカルで 2 本の失敗が Release と Debug の両方で起きるかを確かめる(`ctest --test-dir build -C <構成> --output-on-failure -R ...`)。構成ごとの結果と落ちた行を PROGRESS.md に書く。
   - `MegaGeometryResourcesTest.cpp` の `TestGroupBvhRegionIsUploadedAndValidated` の「BVH の無いメッシュは BVH の領域を持たない」という検査(1987〜1989 行)を直す。PROGRESS.md の SCN-WL-GEOMETRY-PAGE-THRASH の Notes に、実行時に BVH を作る変更(e806a3c9、SCN-MEGA-BVH-LEAF-SPLIT)の後も古い前提が残っていると書かれている。焼いた BVH を持たないメッシュに実行時の BVH ができるという今の契約を確かめる検査に置き換える。今の契約として言えることが無い、ただ実装を写しただけの検査なら消す。壊れた BVH を拒否する検査(1992 行以降)は変えない。
@@ -4988,3 +4988,21 @@
 - verify: `python Scripts/Terrain/CompareReference.py --capture .harness/runs/scene-capture/SCN-WL-CLIFF-BLOCKS-CASTLE/look --photos far_01 --verify`
 - paths: Game/GameModes/Wasteland, Tools/AssetCook/CookedTerrainQuery.cpp, Tools/AssetCook/CookedTerrainQuery.h, Library/Core/Public/Rendering/Terrain/TerrainPlacementGround.h, Library/Core/Private/Rendering/Terrain/TerrainPlacementGround.cpp, Scripts/Terrain/CheckPlacement.py, Scripts/Terrain/ExpectSpecs/shape-cliff-blocks-castle.json, Docs/RenderingValidation/WastelandShape.md, TASKS.md, PROGRESS.md
 - from: SCN-WL-CLIFF-GEN-TALUS-CHECK-P1-CHECK
+
+## G2-MATERIAL-SELECTION-INTEGRATION-P1-P1-P1-P1-P1: CookManagedBootstrapTest のクラッシュの子が止める点の前で 91 を返すときの理由を親の出力に残し、間欠的な失敗の原因を直す
+- status: done
+- done-when: 次の 3 点を満たす。
+  - **子の理由が親の出力に残る。** `Test/Core/Asset/CookManagedBootstrapTest.cpp` の `Crash` は、`CookManagedUpdateTest.cpp` の `Crash`(469〜482 行)と同じ形で子に stderr を渡す。親の stderr を継承できる形に複製し、`STARTF_USESTDHANDLES` で `hStdInput`・`hStdOutput`・`hStdError` に入れ、`bInheritHandles=TRUE` で起動し、起動の後に複製を閉じる。
+    - 子が 73 以外で終わったとき、子の出す行(`BOOTSTRAP_RESULT`・`VOLUME_BUSY_RETRY`・`child did not exit:`)が、親の `child recovery=... point=... wait=... exit=...` の行と一緒に ctest の `--output-on-failure` の出力に出る。
+  - **直列の 20 回の繰り返しで通る。** 繰り返しの中で 91 が再現したら、子の出力で原因を 1 つ確かめて直し、原因(子の出力の行)をコミット本文に書く。直すのは `CookManagedBootstrap.cpp` か試験の側。
+    - 試験の期待(各 point の `Recovery` の結果・`crashes == 16`・`bAbandoned`)は変えない。
+    - ロックの試験の名前空間(`ScopedChildCookLockTestNamespace`)は変えない。
+    - `RetryVolumeBusy` の上限 90000 ms は緩めない。
+    - `Test/Core/Asset/CMakeLists.txt` の `RESOURCE_LOCK`・`ENVIRONMENT` は変えない。
+  - **今の行も通る。** 3 本の試験と `RigSplitCookTest` を `-j 4` で流す行も、今どおり通る。
+- verify: `cmake --build build --config Debug --target CookedMeshTest -- /m:1`
+- verify: `python -c "import sys; t=open('Test/Core/Asset/CookManagedBootstrapTest.cpp',encoding='utf-8-sig').read(); b=t[t.index('void Crash('):t.index('int Child(')]; ok='STARTF_USESTDHANDLES' in b and 'hStdError' in b; print(ok); sys.exit(0 if ok else 1)"`
+- verify: `ctest --test-dir build -C Debug -R "^CookManagedBootstrapTest$" --repeat until-fail:20 --no-tests=error --output-on-failure --timeout 180`
+- verify: `ctest --test-dir build -C Debug -j 4 -R "^(CookDestinationLockTest|CookManagedBootstrapTest|CookManagedUpdateTest|RigSplitCookTest)$" --no-tests=error --output-on-failure --timeout 300`
+- paths: Test/Core/Asset/CookManagedBootstrapTest.cpp, Tools/AssetCook/CookManagedBootstrap.cpp, TASKS.md, PROGRESS.md
+- from: G2-MATERIAL-SELECTION-INTEGRATION-P1-P1-P1-P1

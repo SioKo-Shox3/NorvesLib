@@ -411,9 +411,21 @@ namespace BootstrapTest
         command.push_back(0);
         STARTUPINFOW startup{};
         startup.cb = sizeof(startup);
+        // 強制終了する子の理由を親の標準エラーへ渡す。
+        HANDLE childError = nullptr;
+        const HANDLE parentError = GetStdHandle(STD_ERROR_HANDLE);
+        CHECK(parentError && parentError != INVALID_HANDLE_VALUE);
+        CHECK(DuplicateHandle(GetCurrentProcess(), parentError, GetCurrentProcess(), &childError, 0, TRUE,
+                              DUPLICATE_SAME_ACCESS));
+        startup.dwFlags = STARTF_USESTDHANDLES;
+        startup.hStdInput = childError;
+        startup.hStdOutput = childError;
+        startup.hStdError = childError;
         PROCESS_INFORMATION process{};
-        CHECK(CreateProcessW(exe, command.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &startup,
-                             &process));
+        const BOOL bStarted = CreateProcessW(exe, command.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr,
+                                             nullptr, &startup, &process);
+        CHECK(CloseHandle(childError));
+        CHECK(bStarted);
         CHECK(CloseHandle(process.hThread));
         const DWORD wait = WaitForSingleObject(process.hProcess, 60000);
         if (wait != WAIT_OBJECT_0)
@@ -437,6 +449,8 @@ namespace BootstrapTest
         {
             return -1;
         }
+        const CookLockWaitTest::ScopedChildCookLockTestNamespace lockNamespace;
+        CHECK(lockNamespace.Valid());
         Fixture f(std::filesystem::path(argv[2]), false);
         Stop stop;
         stop.At = static_cast<Point>(std::strtoul(argv[3], nullptr, 10));
@@ -926,6 +940,8 @@ int main(int argc, char** argv)
     {
         return child;
     }
+    const CookLockWaitTest::ScopedCookLockTestNamespace lockNamespace;
+    CHECK(lockNamespace.Valid());
     // 前提のロック取得は、ほかの試験の終了を最大 120000 ミリ秒待つ。
     const auto lockWait = CookLockWaitTest::WaitForCookLock();
     CHECK(lockWait.Valid());
