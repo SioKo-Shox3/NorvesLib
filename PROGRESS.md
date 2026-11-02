@@ -8725,12 +8725,17 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Done: 実装の 4 単位（型とプール・受け渡し・パスとシェーダー・GPU の試験）は前のランで着地済み。前のランの評価が枠切れで行われず doing に戻っていたので、差分は変えずに done に戻した（評価はこの反復の後に回る）
 - 検証: 起動しない verify の 3 行は着地の確かめで EXIT=0（`Game`・`DecalPoolEvictionTest` のビルド、`DecalPoolEvictionTest` 1/1 Passed、`DecalGBufferVulkanTest` のビルド）。その後のコミットは TASKS.md と PROGRESS.md だけでコードは変わっていない
 - Next: 起動の確かめは後回し。`GAME-GR133-VFX-CHECK` で `DecalGBufferVulkanTest` の ctest（`--timeout 600`）を回す
-- U1 撃破の血の時間割の型と CPU の試験: 着地(直し 0 回)
-- U2 合図を GR136 の粒と GR133 のデカールへ写す: 着地(直し 0 回)
 
-## 2026-11-02 GAME-GR132-VFX（run 20261102-152003 の反復 1）
-- 方式（推奨を採った）: 撃破の合図 1 回から、血しぶき → 滲み → 消滅 → 終わりの 4 つの合図を、合図からの相対の時刻の時間割（`DefeatBloodTimeline`）で決め、Core の純粋な CPU の型 `Particle/DefeatBloodSequence` が呼び手の固定の刻みで進める。合図の時刻は刻みの幅によらず時間割の値そのもの。滲みのマスクは 1−(1−t)^2 で単調に広がり、消滅の間も縮めず不透明度で薄れる。`Particle/DefeatBloodPresenter` が、しぶきを GR136 の `VfxEffectSystem` のイベント（コードで組む既定の赤い粒、ワールドの空間）へ、滲みと消滅を GR133 の `DecalPool` のデカール（半径と不透明度を毎刻み更新し、終わりで消す。`DecalPool::SetAppearance` を足した）へ写す。理由: いまある 2 つの道に載せれば前提の GR を待たずに作れ、時間割を 1 つにすれば体の滲み（GR26）・ディゾルブ（GR60）も同じ合図と値で後から繋げられる
-- 垂直スライス（G8）: 粒と地面の滲み（デカール）までを G8 に入れるのを推奨した。どちらもいまのエンジンで動き、時間割を共有するので粒だけに絞っても作業はほとんど減らない。粒だけにするなら滲みを使わない設定で済む。体の滲み・ディゾルブとの連動・白い質感の上の見え方は G10
-- 方式と前提の境界の記録: `Docs/Plans/GameFeatureRoadmap.md`（メイン側・管理外）の「GR132 シ者を倒したときの赤い血」の節。完了を宣言しない範囲: 撃破を出す側（GR17。今は呼び手が `Trigger` を直接呼び、Game からは呼ばない）、GPU の粒（GR57）、濡れと体の表面の滲み（GR26）、ディゾルブ（GR60）、白い面の上の見え方（GR65）、しぶきの向き（GR131 の向きつきのイベントの統合後）、時間のチャンネル（GR02）
-- 検証: verify の 2 行を回した。`Game`・`DefeatBloodSequenceTest`（と `DecalPoolEvictionTest`・`VfxEffectSystemTest`）の Debug のビルド EXIT=0、`DefeatBloodSequenceTest` 1/1 Passed、`DecalPoolEvictionTest`・`VfxEffectSystemTest` 2/2 Passed（`.harness/runs/20261102-152003/verify-GAME-GR132-VFX-U2.txt`）。numstat は 2 通りで一致
-- Next: Game に撃破の場面が無いので起動画面の見た目は変わらず、起動の確かめは無い。粒とデカールの見た目（色・数・大きさ・時間割の仮の値、ワールドの空間の粒が今の描画で出るか）は、GR17 の撃破の場面ができてから撮影で確かめて合わせる
+- U1 MeshRenderer のモジュールとメッシュのインスタンスの記録: 着地(直し 0 回)
+- U2 溶けの式の include と試験用のシェーダー: 着地(直し 0 回)
+- U3 MeshParticleInstanceTest と試験の理由: 着地(直し 1 回)
+- U4 MeshParticleDissolveVulkanTest(ビルドまで。起動しない): 着地(直し 0 回)
+### GAME-GR134-VFX メッシュのエフェクト（2026-11-02、run 20261102-145120 の反復 1）
+- 方式（推奨を採った）: メッシュの粒子は GR136 の `VfxEffectAsset` のエミッタに描画のモジュール `MeshRenderer` を足す形にし、専用の形式を作らない（定義・スキーマ・クックを GR136 の 1 つにそろえる決定に従う）。溶けの閾値は秒でなく寿命の割合（`DissolveStart`・`DissolveDuration`、単位 life）で決める。寿命が乱数で散る粒でも溶け切る前に消える粒が出ないため。メッシュと材質は GR136 のテクスチャと同じく実行時のハンドルで渡す。方式と境界の記録は `Docs/Plans/GameFeatureRoadmap.md`（メイン側・管理外）の「GR134 メッシュのエフェクト」の節
+- 完了を宣言しない範囲: シーンの描画（GBuffer・VSM・ビジビリティバッファ）へメッシュの粒子を流すことと影の形の溶け（GR27 のアルファテストと両面描画の後）、GPU の実行先と間接描画（GR57・GR60）、材質ごとのノイズ・縁のテクスチャ（GR26）、メッシュの名前からハンドルの解決（GR96）、Editor の編集の画面。どのシーンにもメッシュの粒子を置いていないので、起動画面とシーンの見た目は変わらない
+- Done: `MeshRenderer`（Mesh・AlignToVelocity・DissolveStart・DissolveDuration・EdgeWidth・EdgeColor）と検証（描画のモジュールは 1 つ・画面の空間は `mesh_requires_world_space` で拒否）、`VfxEffectSystem::AppendMeshInstances`（生きている粒 1 つにつき記録 1 つ。ワールド行列は `CreateWorldRowVector`、ID は板と別の帯のビット 62）と `ComputeDissolveThreshold` を足した。溶けの式は `Assets/Shaders/Common/MeshParticleDissolve.glsl`（UV の 16×16 の value noise と、捨てる・縁・本体の分け方）、それで描く `mesh_particle_dissolve.vert/.frag` を足した
+- Done: 起動せずに確かめる完了の条件を `MeshParticleInstanceTest`（CPU。足す理由の 3 点は `Docs/Testing.md`）で確かめた: 粒の数だけ記録が積まれる・記録の位置と拡大とハンドル・時間で閾値が式どおりに変わる・式の端・動作中の値の変更が次の刻みから効く・拒否・板に出ない・速度へ向ける向き
+- 証拠: `.harness/runs/20261102-145120/verify-GAME-GR134-VFX-final.txt`（HEAD 0085fb6 の上の U4 の作業ツリーで `cmake --build build --config Debug --target Game MeshParticleInstanceTest -- /m:1` 終了コード 0、`ctest -R "^MeshParticleInstanceTest$"` 1/1 Passed、`cmake --build build --config Debug --target MeshParticleDissolveVulkanTest -- /m:1` 終了コード 0、`ctest -N` で `MeshParticleDissolveVulkanTest` の登録 1 件。numstat 2 通り一致）
+- Next: 起動の確かめは後回し（人の決まりで GPU を使う試験を起動しない）。`GAME-GR134-VFX-CHECK` で `ctest --test-dir build -C Debug -R "^MeshParticleDissolveVulkanTest$" --no-tests=error --output-on-failure --timeout 600` を回し、標準出力の 5 行（年齢 0 で四角形の全部が本体の色・年齢 0.25→0.5→0.75 で覆う画素が真に減る・0.5 の覆う割合が 0.2〜0.8・縁の画素が各 1 つ以上・閾値 1 で 0）を確かめる
+- Notes: `MeshParticleDissolveVulkanTest` は GPU で未実行。四角形の向き（カリングは無し）・`CopyToShaderData` で上げた行列の掛け方・R8G8B8A8_UNORM の読み戻しの並びは、コードの読みでの判断。落ちたらシェーダーのインスタンスの形（112 バイト）と行列の上げ方から見る
+- Notes: `AlignToVelocity` の回転は `CreateWorldRowVector` が四元数の回転行列を行ベクトルの規約でそのまま置く（転置の向きになる）ことに合わせて軸の符号を選んでいる。`MeshParticleInstanceTest` の検査 7 で局所の +Z が速度の向きへ写ることを確かめた

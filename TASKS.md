@@ -3820,7 +3820,7 @@
 - notes: 2026-10-02追加。未着手の後続作業で、前提と選定課題を解決してから実装タスクへ細分化する。NorvesLib/Editorの境界とVFX-S1〜S5はロードマップ参照。
 
 ## GAME-GR134-VFX: メッシュのエフェクトを実装する
-- status: todo
+- status: done
 - after: GAME-GR136-VFX
 - done-when: 着手の最初に、作者の判断が要る方式と、未着手の前提の GR との境界を `Docs/Plans/GameFeatureRoadmap.md` に書く（推奨の案で進め、理由を PROGRESS.md に書く。前提が未完の部分は完了を宣言しない範囲として残す）。 起動せずに確かめる完了の条件: CPU の試験 `MeshParticleInstanceTest`（新しい実行ファイル。足す前に `Docs/Testing.md` の 3 点を書く）で、粒子の数だけインスタンスの記録が積まれ、時間の値で溶けの閾値が変わる。描かれた画素で溶けを確かめること（GPU の試験 `MeshParticleDissolveVulkanTest`）は、起動を戻した後の `GAME-GR134-VFX-CHECK` で確かめる。
 - verify: `cmake --build build --config Debug --target Game MeshParticleInstanceTest -- /m:1`
@@ -4495,3 +4495,13 @@
 - verify: `ctest --test-dir build -C Debug -R "^DecalGBufferVulkanTest$" --no-tests=error --output-on-failure --timeout 600`
 - paths: Library/Core/Public/Particle, Library/Core/Private/Particle, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Tools/AssetCook, Test/Core/Rendering, Docs/Plans/GameFeatureRoadmap.md, TASKS.md, PROGRESS.md
 - from: GAME-GR133-VFX
+
+## GAME-GR134-VFX-CHECK: メッシュのエフェクトを実装する(後回しにしたアプリの起動の確かめ)
+- status: todo
+- check: launch
+- gpu: exclusive
+- done-when: GAME-GR134-VFX で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、GAME-GR134-VFX の done-when を満たすことを確かめる。満たさなければ GAME-GR134-VFX の done-when と paths の範囲で直す。
+- verify: `cmake --build build --config Debug --target MeshParticleDissolveVulkanTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^MeshParticleDissolveVulkanTest$" --no-tests=error --output-on-failure --timeout 600`
+- paths: Library/Core/Public/Particle, Library/Core/Private/Particle, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Tools/AssetCook, Test/Core/Rendering, Docs/Plans/GameFeatureRoadmap.md, TASKS.md, PROGRESS.md
+- from: GAME-GR134-VFX
