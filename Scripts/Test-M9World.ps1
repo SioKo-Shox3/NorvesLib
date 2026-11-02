@@ -7,7 +7,9 @@ param(
     [int]$TimeoutSeconds = 120,
     [switch]$ContractOnly,
     [ValidateSet("All", "Cleanup", "Process", "Configuration")]
-    [string]$ReviewContract = "All"
+    [string]$ReviewContract = "All",
+    [switch]$LegacyNvskelCompare,
+    [string]$EvidenceDir
 )
 
 $ErrorActionPreference = "Stop"
@@ -323,7 +325,214 @@ function Invoke-M9Game([string]$GamePath, [string[]]$Arguments, [string]$RunDire
     }
 }
 
+function Read-M9PixelImage([string]$Path)
+{
+    if ([IO.Path]::GetExtension($Path) -ieq '.png')
+    {
+        Add-Type -AssemblyName System.Drawing
+        $bitmap = [Drawing.Bitmap]::new($Path)
+        try
+        {
+            $rectangle = [Drawing.Rectangle]::new(0, 0, $bitmap.Width, $bitmap.Height)
+            $locked = $bitmap.LockBits($rectangle, [Drawing.Imaging.ImageLockMode]::ReadOnly, [Drawing.Imaging.PixelFormat]::Format32bppArgb)
+            try
+            {
+                $bytes = [byte[]]::new($bitmap.Width * $bitmap.Height * 4)
+                for ($y = 0; $y -lt $bitmap.Height; ++$y)
+                {
+                    [Runtime.InteropServices.Marshal]::Copy([IntPtr]::Add($locked.Scan0, $y * $locked.Stride), $bytes, $y * $bitmap.Width * 4, $bitmap.Width * 4)
+                }
+                return [pscustomobject]@{ Width = $bitmap.Width; Height = $bitmap.Height; BytesPerPixel = 4; BottomUp = $false; Bytes = $bytes }
+            }
+            finally { $bitmap.UnlockBits($locked) }
+        }
+        finally { $bitmap.Dispose() }
+    }
+
+    # 書き出し側の PFM は 3 行のヘッダとリトルエンディアンの float。数値へ丸めず全ビットを比較する。
+    $bytes = [IO.File]::ReadAllBytes($Path)
+    $offset = 0
+    $lines = @()
+    for ($line = 0; $line -lt 3; ++$line)
+    {
+        $start = $offset
+        while ($offset -lt $bytes.Length -and $bytes[$offset] -ne 10) { ++$offset }
+        Assert-M9 ($offset -lt $bytes.Length) "PFM のヘッダが途中で終わっています: $Path"
+        $lines += [Text.Encoding]::ASCII.GetString($bytes, $start, $offset - $start).TrimEnd("`r")
+        ++$offset
+    }
+    Assert-M9 ($lines[0] -ceq 'PF' -or $lines[0] -ceq 'Pf') "PFM の形式が不正です: $Path"
+    $dimensions = [regex]::Match($lines[1], '^([1-9]\d*) ([1-9]\d*)$')
+    Assert-M9 ($dimensions.Success -and $lines[2] -ceq '-1.0') "PFM の寸法またはスケールが不正です: $Path"
+    $width = [int]$dimensions.Groups[1].Value
+    $height = [int]$dimensions.Groups[2].Value
+    $pixelBytes = if ($lines[0] -ceq 'PF') { 12 } else { 4 }
+    $length = [long]$width * $height * $pixelBytes
+    Assert-M9 ($length -eq $bytes.LongLength - $offset) "PFM の画素列の長さが不正です: $Path"
+    $pixels = [byte[]]::new($length)
+    [Buffer]::BlockCopy($bytes, $offset, $pixels, 0, $pixels.Length)
+    return [pscustomobject]@{ Width = $width; Height = $height; BytesPerPixel = $pixelBytes; BottomUp = $true; Bytes = $pixels }
+}
+
+function Compare-M9PixelImage([string]$ReferencePath, [string]$ActualPath)
+{
+    if ($null -eq ('M9PixelComparison' -as [type]))
+    {
+        # 全画素をバイト単位で調べ、複数のチャンネルが違っても 1 画素として数える。
+        Add-Type -TypeDefinition @"
+public static class M9PixelComparison
+{
+    public static long[] Compare(byte[] reference, byte[] actual, int bytesPerPixel)
+    {
+        long count = 0;
+        long first = -1;
+        for (int offset = 0; offset < reference.Length; offset += bytesPerPixel)
+        {
+            for (int channel = 0; channel < bytesPerPixel; ++channel)
+            {
+                if (reference[offset + channel] != actual[offset + channel])
+                {
+                    if (first < 0) { first = offset / bytesPerPixel; }
+                    ++count;
+                    break;
+                }
+            }
+        }
+        return new long[] { count, first };
+    }
+}
+"@
+    }
+    $reference = Read-M9PixelImage $ReferencePath
+    $actual = Read-M9PixelImage $ActualPath
+    Assert-M9 ($reference.Width -eq $actual.Width -and $reference.Height -eq $actual.Height -and
+        $reference.BytesPerPixel -eq $actual.BytesPerPixel -and $reference.BottomUp -eq $actual.BottomUp) "比較する画像の寸法・形式が一致しません: $ReferencePath / $ActualPath"
+    $difference = [M9PixelComparison]::Compare($reference.Bytes, $actual.Bytes, $reference.BytesPerPixel)
+    $first = $null
+    if ($difference[1] -ge 0)
+    {
+        $y = [int][Math]::Floor($difference[1] / $reference.Width)
+        if ($reference.BottomUp) { $y = $reference.Height - 1 - $y }
+        $first = [pscustomobject]@{ x = $difference[1] % $reference.Width; y = $y }
+    }
+    return [pscustomobject]@{
+        matched = $difference[0] -eq 0
+        width = $reference.Width
+        height = $reference.Height
+        mismatched_pixels = $difference[0]
+        first_mismatch = $first
+    }
+}
+
+function ConvertTo-M9QuotedArguments([string[]]$Arguments)
+{
+    foreach ($argument in $Arguments)
+    {
+        Assert-M9 (-not $argument.Contains('"')) "引数に引用符を含められません: $argument"
+        '"' + $argument + '"'
+    }
+}
+
+function Invoke-M9LegacyNvskelCompare([string]$GamePath, [string]$AssetCookPath, [string]$TrackedModel, [string]$RunRoot, [string]$EvidencePath)
+{
+    $evidence = [IO.Path]::GetFullPath($EvidencePath)
+    Assert-M9 ($Configuration -eq 'Debug') '旧 NVSKEL の比較には開発ビルドの Debug を指定してください'
+    New-Item -ItemType Directory -Path $evidence -Force | Out-Null
+    Assert-M9 (@(Get-ChildItem -LiteralPath $evidence -Force).Count -eq 0) "証跡の保存先には空のディレクトリを指定してください: $evidence"
+    $faces = @('albedo', 'normal', 'roughness', 'depth', 'sun_visibility', 'rtgi_temporal_code', 'rtgi_filtered_sky', 'geometric_normal', 'terrain_id')
+    $results = [Collections.Generic.List[object]]::new()
+    $mismatchedPixels = [long]0
+    $passed = $false
+    $errorText = $null
+    try
+    {
+        Assert-M9 (Test-Path -LiteralPath $GamePath) "Game が見つかりません: $GamePath"
+        Assert-M9 (Test-Path -LiteralPath $AssetCookPath) "AssetCook が見つかりません: $AssetCookPath"
+        $runtimeRoot = Join-Path $RunRoot 'RuntimeRoot'
+        $sourceRoot = Join-Path $RunRoot 'Source'
+        New-Item -ItemType Directory -Path (Join-Path $runtimeRoot 'Cooked'), $sourceRoot | Out-Null
+        $gltf = Join-Path $sourceRoot 'ValidU8Float.gltf'
+        Copy-Item -LiteralPath $TrackedModel -Destination $gltf
+        Write-M9FixtureBin (Join-Path $sourceRoot 'fixture.bin')
+        $manifest = Join-Path $runtimeRoot 'manifest.json'
+        $legacyManifest = Join-Path $runtimeRoot 'legacy-manifest.json'
+        $package = Join-Path $runtimeRoot 'Cooked\m9.nvpkg'
+        $legacyPackage = Join-Path $runtimeRoot 'Cooked\m9-v01.nvpkg'
+        Set-Content -LiteralPath $manifest -Value '{"version":1,"assets":[]}' -Encoding utf8
+        $cookArguments = ConvertTo-M9QuotedArguments @('--input', $gltf, '--out', $package, '--manifest', $manifest, '--logical', 'Models/M9Skinned/ValidU8Float.gltf', '--kind', 'model', '--entry', 'm9.nvskel', '--entry-type', 'Skl0', '--format', 'nvskel.v0.skinned.pnujiw.u32', '--variant', 'default')
+        Invoke-M9Tool $AssetCookPath $cookArguments $RunRoot
+        Assert-M9 ($script:AssetCookInvocations -eq 1) "比較経路の AssetCook 呼び出し数が不正です: $script:AssetCookInvocations"
+
+        $oracle = Join-Path $repoRoot 'Test\Tools\NvskelLegacyV01Oracle.py'
+        $python = (Get-Command python -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+        $oracleArguments = ConvertTo-M9QuotedArguments @($oracle, '--package', $package, '--manifest', $manifest, '--out-package', $legacyPackage, '--out-manifest', $legacyManifest)
+        $oracleResult = Invoke-M9OwnedProcess $python $oracleArguments $RunRoot (Join-Path $evidence 'oracle.stdout.txt') (Join-Path $evidence 'oracle.stderr.txt') $TimeoutSeconds $evidence
+        Assert-M9 ($oracleResult.ExitCode -eq 0) "旧 NVSKEL の生成が失敗しました。証跡: $evidence"
+
+        foreach ($variant in @('current', 'legacy'))
+        {
+            $directory = Join-Path $evidence $variant
+            New-Item -ItemType Directory -Path $directory | Out-Null
+            $selectedManifest = if ($variant -eq 'current') { $manifest } else { $legacyManifest }
+            $png = Join-Path $directory 'capture.png'
+            $gameArguments = ConvertTo-M9QuotedArguments @('--scene=rendering3dtest', '--window-background', '--m9-world-compare', '--texture-asset-root', $runtimeRoot, '--texture-asset-manifest', $selectedManifest, '--render-thread=st', '--visibility-buffer=off', '--capture-deterministic', '--capture-aov', "--capture-png=$png")
+            $game = Invoke-M9Game $GamePath $gameArguments $directory
+            Assert-M9 ($game.ExitCode -eq 0) "比較の Game が失敗しました: variant=$variant exit=$($game.ExitCode) 証跡: $directory"
+            Assert-M9 (-not $game.RootAlive -and $game.RemainingOwnedProcessIds.Count -eq 0) "比較の Game の終了後にプロセスが残っています: $directory"
+            Assert-M9 ([regex]::Matches($game.Transcript, 'M9_WORLD_COMPARE stage=captured pose_time=0 faces=9(?=\s|$)').Count -eq 1) "比較の撮影完了の印がありません: $directory"
+            Assert-M9 (-not ($game.Transcript -match 'M9_WORLD_SMOKE stage=failure')) "M9 の組み立てが失敗しました: $directory"
+            Assert-M9 (Test-Path -LiteralPath $png) "比較の PNG がありません: $png"
+            Assert-M9 (Test-Path -LiteralPath (Join-Path $directory 'capture.aov.json')) "比較の AOV の情報がありません: $directory"
+            Assert-M9 (@(Get-ChildItem -LiteralPath $directory -Filter 'capture.aov.*.pfm').Count -eq $faces.Count) "AOV の面数が不正です: $directory"
+        }
+        foreach ($face in $faces)
+        {
+            $reference = Join-Path $evidence "current\capture.aov.$face.pfm"
+            $actual = Join-Path $evidence "legacy\capture.aov.$face.pfm"
+            $comparison = Compare-M9PixelImage $reference $actual
+            $results.Add([pscustomobject]@{ face = $face; current = $reference; legacy = $actual; comparison = $comparison })
+            $mismatchedPixels += $comparison.mismatched_pixels
+            if (-not $comparison.matched)
+            {
+                Write-Output "M9_LEGACY_NVSKEL_FACE face=$face result=fail mismatched_pixels=$($comparison.mismatched_pixels) first_x=$($comparison.first_mismatch.x) first_y=$($comparison.first_mismatch.y)"
+            }
+        }
+        Assert-M9 ((Get-M9Sha256 $TrackedModel) -eq $trackedHashBefore) '追跡中のモデルのハッシュが変わっています'
+        $passed = $mismatchedPixels -eq 0
+    }
+    catch
+    {
+        $errorText = $_.Exception.Message
+    }
+    finally
+    {
+        $result = if ($passed) { 'pass' } else { 'fail' }
+        [pscustomobject]@{
+            result = $result
+            faces = $results.Count
+            expected_faces = $faces.Count
+            mismatched_pixels = $mismatchedPixels
+            pose_time = 0
+            capture_deterministic = $true
+            visibility_buffer = 'off'
+            render_thread = 'st'
+            assetcook_calls = $script:AssetCookInvocations
+            evidence = $evidence
+            comparisons = @($results.ToArray())
+            error = $errorText
+        } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $evidence 'result.json') -Encoding utf8
+        Write-Output "M9_LEGACY_NVSKEL_COMPARE result=$result faces=$($results.Count) mismatched_pixels=$mismatchedPixels evidence=$evidence"
+        if ($passed -and (Test-Path -LiteralPath $RunRoot)) { Remove-Item -LiteralPath $RunRoot -Recurse -Force }
+    }
+    Assert-M9 $passed "旧 NVSKEL と一致しません。証跡: $evidence $errorText"
+}
+
+
 $repoRoot = Split-Path -Parent $PSScriptRoot
+if ($LegacyNvskelCompare)
+{
+    Assert-M9 (-not [string]::IsNullOrWhiteSpace($EvidenceDir)) '-LegacyNvskelCompare には -EvidenceDir が必要です'
+}
 if ($ReviewContract -eq "All" -or $ReviewContract -eq "Cleanup") { Test-M9CleanupSourceContract $repoRoot }
 if ($ReviewContract -eq "All" -or $ReviewContract -eq "Process") { Test-M9OwnedProcessSourceContract $PSCommandPath }
 if ($ReviewContract -eq "All" -or $ReviewContract -eq "Configuration") { Test-M9ConfigurationSourceContract $repoRoot }
@@ -347,6 +556,13 @@ $trackedHashBefore = Get-M9Sha256 $trackedModel
 $runRoot = Join-Path ([IO.Path]::GetTempPath()) "NorvesLibM9World-$([guid]::NewGuid().ToString('N'))"
 $script:AssetCookInvocations = 0
 $success = $false
+if ($LegacyNvskelCompare)
+{
+    # 比較の一時資産は作業ツリー内へ閉じ込め、画像と判定は明示した保存先に残す。
+    $runRoot = Join-Path $repoRoot ".harness\tmp\M9LegacyNvskel-$([guid]::NewGuid().ToString('N'))"
+    Invoke-M9LegacyNvskelCompare $gamePath $assetCookPath $trackedModel $runRoot $EvidenceDir
+    return
+}
 
 try
 {

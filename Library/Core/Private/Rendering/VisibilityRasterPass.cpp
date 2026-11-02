@@ -1139,14 +1139,24 @@ namespace NorvesLib::Core::Rendering
                 continue;
             }
 
-            // 登録時に分けた塊を使い、無ければインデックスの全体を分ける
-            if (!context.SkinnedMeshes || !context.SkinnedMeshes->TryGetChunks(instance.MeshHandle, chunks) ||
-                chunks.empty())
+            const SkinnedMeshIndexChunkResult chunkResult = BuildSkinnedMeshIndexChunks(
+                instance.IndexCount, instance.SourceFirstIndex, instance.SourceIndexCount, chunks);
+            if (chunkResult == SkinnedMeshIndexChunkResult::Failure)
             {
-                if (!BuildMeshIndexChunks(instance.IndexCount, nullptr, 0, chunks))
+                LogChunkFailureOnce();
+                continue;
+            }
+            if (chunkResult == SkinnedMeshIndexChunkResult::WholeMesh)
+            {
+                // 登録時に分けた塊を使い、無ければインデックスの全体を分ける
+                if (!context.SkinnedMeshes || !context.SkinnedMeshes->TryGetChunks(instance.MeshHandle, chunks) ||
+                    chunks.empty())
                 {
-                    LogChunkFailureOnce();
-                    continue;
+                    if (!BuildMeshIndexChunks(instance.IndexCount, nullptr, 0, chunks))
+                    {
+                        LogChunkFailureOnce();
+                        continue;
+                    }
                 }
             }
 

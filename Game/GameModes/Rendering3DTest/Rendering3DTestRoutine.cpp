@@ -1827,6 +1827,19 @@ namespace Game::GameModes
             data.m_M9WorldAcceptance->SkeletalAsset = std::move(event.Asset);
             data.m_M9WorldAcceptance->SelectedClip = std::move(event.Clip);
             data.m_M9WorldAcceptance->bAssetsReady = true;
+            if (data.m_M9WorldAcceptance->bCompare)
+            {
+                if (!InitializeM9WorldSkeletal(ctx, data))
+                {
+                    CleanupM9WorldAcceptance(ctx, data);
+                    FailM9WorldSmoke(ctx, "skeletal_attach_failed");
+                    return false;
+                }
+                // AttachM9SkeletalAsset が設定する停止済みの 0 秒の姿勢を保つ。
+                data.m_bM9Attached = true;
+                LOG_INFO("M9_WORLD_COMPARE stage=assets_ready pose_time=0");
+                return true;
+            }
             auto* audioModule =
                 NorvesLib::Modules::Audio::FindAudioModule(NorvesLib::Core::Module::GetModuleRegistry());
             if (audioModule == nullptr || !data.m_M9WorldAcceptance->EffectClip || !data.m_M9WorldAcceptance->LoopClip)
@@ -3354,13 +3367,27 @@ namespace Game::GameModes
         const TWeakPtr<Game::CameraLateUpdateState> weakState = data.m_LateCameraState;
         auto* world = &ctx.EngineRef.GetWorld();
         auto* renderWorld = &ctx.EngineRef.GetRenderWorld();
-        data.m_LateCameraState->Callback = Delegate<void, float>([weakState, world, renderWorld](float)
+#if NORVES_BUILD_DEVELOPMENT
+        // コールバックの所有者は data で、破棄前の Leave で解除される。
+        const auto* startupProbeData = &data;
+#endif
+        data.m_LateCameraState->Callback = Delegate<void, float>([weakState, world, renderWorld
+#if NORVES_BUILD_DEVELOPMENT
+            , startupProbeData
+#endif
+        ](float)
         {
             const auto state = weakState.lock();
             CameraProxy cameraProxy;
             if (!state || !state->BuildSnapshot(*world, cameraProxy)) return;
             ApplyStartupGrading(cameraProxy, state->bLensEffects, state->bLookLut);
             renderWorld->SetMainCamera(cameraProxy);
+#if NORVES_BUILD_DEVELOPMENT
+            if (startupProbeData->m_StartupSkinnedProbeMaterialCount == 2u)
+            {
+                LogStartupSkinnedProbeMaterialSamples(cameraProxy, startupProbeData->m_StartupSkinnedProbeComponents.size());
+            }
+#endif
             if (!state->bSmokeSyncEmitted)
             {
                 LOG_INFO("CAMERA_COMPONENT_SMOKE stage=sync snapshot=1");
@@ -3583,7 +3610,8 @@ namespace Game::GameModes
         data.m_ElapsedTime += deltaTime;
 
 #if defined(NORVES_GAME_AUDIO)
-        if (data.m_M9WorldAcceptance && data.m_M9WorldAcceptance->bRequested && !data.m_bM9Completed)
+        if (data.m_M9WorldAcceptance && data.m_M9WorldAcceptance->bRequested &&
+            !data.m_M9WorldAcceptance->bCompare && !data.m_bM9Completed)
         {
             ++data.m_M9TickCount;
             auto& renderWorld = ctx.EngineRef.GetRenderWorld();

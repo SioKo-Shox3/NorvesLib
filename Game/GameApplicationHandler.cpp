@@ -395,6 +395,9 @@ namespace Game
         // ビジビリティバッファの経路でスキニングの塊が描かれることの撮影（-SkinnedProbe）に使う。
         constexpr const TCHAR *kStartupSkinnedProbeOption = TEXT("--startup-skinned-probe");
         bool s_bRendering3DTestSkinnedProbe = false;
+        // --startup-skinned-probe-materials=<1|2>: 骨付きパネルの材質スロット数（既定 1）。
+        constexpr const TCHAR *kStartupSkinnedProbeMaterialsOption = TEXT("--startup-skinned-probe-materials=");
+        uint32_t s_Rendering3DTestSkinnedProbeMaterialCount = 1u;
         // --startup-scan-props=on|off: 起動画面の地面の外周に並べる高ポリのスキャン資産（Poly Haven）を置くか（既定は on）。
         // off は、スキャン資産を足す前と同じ描画量を撮って、足した分を差し引くための基準に使う。
         constexpr const TCHAR *kStartupScanPropsOption = TEXT("--startup-scan-props=");
@@ -857,6 +860,7 @@ namespace Game
         s_VramBudgetCapMb = 0;
         s_bRendering3DTestDebugDrawTestLines = false;
         s_bRendering3DTestSkinnedProbe = false;
+        s_Rendering3DTestSkinnedProbeMaterialCount = 1u;
         s_bRendering3DTestScanProps = true;
         s_Rendering3DTestStressMegaInstances = 0;
         s_Rendering3DTestStressGeometryCount = 0;
@@ -2000,6 +2004,17 @@ namespace Game
                 s_bRendering3DTestSkinnedProbe = true;
                 continue;
             }
+            if (TryStripPrefix(args[i], kStartupSkinnedProbeMaterialsOption, sceneValue))
+            {
+                uint32_t materialCount = 1u;
+                if (!TryParseUInt32(sceneValue, materialCount) || (materialCount != 1u && materialCount != 2u))
+                {
+                    LOG_WARNING("--startup-skinned-probe-materials は 1 または 2 で指定してください。1 を使います");
+                    materialCount = 1u;
+                }
+                s_Rendering3DTestSkinnedProbeMaterialCount = materialCount;
+                continue;
+            }
             if (args[i] == kDebugDrawTestLinesOption)
             {
                 s_bRendering3DTestDebugDrawTestLines = true;
@@ -2547,6 +2562,36 @@ namespace Game
             LOG_INFO("Module runtime option --dummy-overlay: DummyRenderModule registered");
         }
 
+        bool bM9WorldCompare = false;
+        String m9ComparePngPath;
+#if NORVES_BUILD_DEVELOPMENT
+        bool bM9CompareAov = false;
+        bool bM9CompareDeterministic = false;
+        for (const auto& argument : args)
+        {
+            bM9WorldCompare = bM9WorldCompare || argument == TEXT("--m9-world-compare");
+            bM9CompareAov = bM9CompareAov || argument == TEXT("--capture-aov");
+            bM9CompareDeterministic = bM9CompareDeterministic || argument == TEXT("--capture-deterministic");
+            String value;
+            if (TryStripPrefix(argument, kCapturePngOption, value))
+            {
+                m9ComparePngPath = value;
+            }
+        }
+        if (bM9WorldCompare)
+        {
+            const auto dot = m9ComparePngPath.FindLast(TEXT('.'));
+            const auto metadata = dot == String::npos ? String{} :
+                m9ComparePngPath.substr(0, dot) + String(TEXT(".aov.json"));
+            if (!bM9CompareAov || !bM9CompareDeterministic || m9ComparePngPath.empty() || metadata.empty() ||
+                GetFileAttributes(m9ComparePngPath.c_str()) != INVALID_FILE_ATTRIBUTES ||
+                GetFileAttributes(metadata.c_str()) != INVALID_FILE_ATTRIBUTES)
+            {
+                LOG_ERROR("M9 の比較には未使用の --capture-png と --capture-aov・--capture-deterministic が必要です");
+                return false;
+            }
+        }
+#endif
         bool bM9WorldSmoke = false;
         for (size_t i = 0; i < args.size(); ++i)
         {
@@ -2556,12 +2601,14 @@ namespace Game
                 break;
             }
         }
-        if (bM9WorldSmoke)
+        if (bM9WorldSmoke || bM9WorldCompare)
         {
             m_M9WorldAcceptance = MakeShared<Game::GameModes::M9WorldAcceptanceConfig>();
             m_M9WorldAcceptance->bRequested = true;
+            m_M9WorldAcceptance->bCompare = bM9WorldCompare;
+            m_M9WorldAcceptance->ComparePngPath = m9ComparePngPath;
 #if defined(NORVES_GAME_AUDIO)
-            if (NorvesLib::Modules::Audio::RegisterAudioModule(
+            if (!bM9WorldCompare && NorvesLib::Modules::Audio::RegisterAudioModule(
                     NorvesLib::Core::Module::GetModuleRegistry()) == nullptr)
             {
                 LOG_ERROR("M9 world smoke failed to register the XAudio2 module");
@@ -2571,10 +2618,17 @@ namespace Game
             LOG_ERROR("M9 world smoke is unavailable because Game was built without audio support");
             return false;
 #endif
-            LOG_INFO("M9_WORLD_SMOKE stage=registered");
+            if (bM9WorldCompare)
+            {
+                LOG_INFO("M9_WORLD_COMPARE stage=registered pose_time=0");
+            }
+            else
+            {
+                LOG_INFO("M9_WORLD_SMOKE stage=registered");
 #if defined(NORVES_GAME_AUDIO)
-            Game::GameModes::EmitM9WorldSmokeMarker("M9_WORLD_SMOKE stage=registered");
+                Game::GameModes::EmitM9WorldSmokeMarker("M9_WORLD_SMOKE stage=registered");
 #endif
+            }
         }
 
         // 第2段 B-i: --imgui 不変条件ゲート。値を取らない bare フラグの厳密一致を走査し、
@@ -3309,47 +3363,50 @@ namespace Game
 #if !defined(NORVES_GAME_AUDIO)
         return false;
 #else
-        const Asset::AssetResolveResult effectResult = m_AssetSystemSnapshot->ResolveAsset(
-            "Audio/M9/effect.wav", Asset::AssetKind::Audio);
-        const Asset::AssetResolveResult loopResult = m_AssetSystemSnapshot->ResolveAsset(
-            "Audio/M9/loop.wav", Asset::AssetKind::Audio);
-        if (!effectResult.UsedCooked() || !loopResult.UsedCooked())
+        if (!m_M9WorldAcceptance->bCompare)
         {
-            LOG_ERROR("M9_WORLD_SMOKE audio resolution requires both cooked assets");
-            return false;
-        }
+            const Asset::AssetResolveResult effectResult = m_AssetSystemSnapshot->ResolveAsset(
+                "Audio/M9/effect.wav", Asset::AssetKind::Audio);
+            const Asset::AssetResolveResult loopResult = m_AssetSystemSnapshot->ResolveAsset(
+                "Audio/M9/loop.wav", Asset::AssetKind::Audio);
+            if (!effectResult.UsedCooked() || !loopResult.UsedCooked())
+            {
+                LOG_ERROR("M9_WORLD_SMOKE audio resolution requires both cooked assets");
+                return false;
+            }
 
-        Asset::CookedAudioParseResult effect = Asset::ParseCookedAudio(effectResult.Blob);
-        Asset::CookedAudioParseResult loop = Asset::ParseCookedAudio(loopResult.Blob);
-        if (!effect.Succeeded() || !loop.Succeeded())
-        {
-            LOG_ERROR("M9_WORLD_SMOKE cooked asset parsing failed");
-            return false;
-        }
+            Asset::CookedAudioParseResult effect = Asset::ParseCookedAudio(effectResult.Blob);
+            Asset::CookedAudioParseResult loop = Asset::ParseCookedAudio(loopResult.Blob);
+            if (!effect.Succeeded() || !loop.Succeeded())
+            {
+                LOG_ERROR("M9_WORLD_SMOKE cooked asset parsing failed");
+                return false;
+            }
 
-        const NorvesLib::Modules::Audio::AudioPcmFormat effectFormat{
-            effect.Audio.SampleRate, effect.Audio.ChannelCount, effect.Audio.BitsPerSample, effect.Audio.BlockAlignment};
-        const NorvesLib::Modules::Audio::AudioPcmFormat loopFormat{
-            loop.Audio.SampleRate, loop.Audio.ChannelCount, loop.Audio.BitsPerSample, loop.Audio.BlockAlignment};
-        Asset::AssetBlob effectPcm = effect.Audio.SourceBlob.TryCreateSubBlob(
-            static_cast<size_t>(effect.Audio.PayloadOffset), static_cast<size_t>(effect.Audio.PayloadSize));
-        Asset::AssetBlob loopPcm = loop.Audio.SourceBlob.TryCreateSubBlob(
-            static_cast<size_t>(loop.Audio.PayloadOffset), static_cast<size_t>(loop.Audio.PayloadSize));
-        if (!effectPcm.IsValid() || effectPcm.IsEmpty() || !loopPcm.IsValid() || loopPcm.IsEmpty())
-        {
-            return false;
-        }
-        auto effectClip = MakeShared<NorvesLib::Modules::Audio::AudioClipResource>(
-            effectPcm, effectFormat, effect.Audio.FrameCount);
-        auto loopClip = MakeShared<NorvesLib::Modules::Audio::AudioClipResource>(
-            loopPcm, loopFormat, loop.Audio.FrameCount);
-        if (!effectClip || !loopClip || !effectClip->IsValid() || !loopClip->IsValid())
-        {
-            return false;
-        }
+            const NorvesLib::Modules::Audio::AudioPcmFormat effectFormat{
+                effect.Audio.SampleRate, effect.Audio.ChannelCount, effect.Audio.BitsPerSample, effect.Audio.BlockAlignment};
+            const NorvesLib::Modules::Audio::AudioPcmFormat loopFormat{
+                loop.Audio.SampleRate, loop.Audio.ChannelCount, loop.Audio.BitsPerSample, loop.Audio.BlockAlignment};
+            Asset::AssetBlob effectPcm = effect.Audio.SourceBlob.TryCreateSubBlob(
+                static_cast<size_t>(effect.Audio.PayloadOffset), static_cast<size_t>(effect.Audio.PayloadSize));
+            Asset::AssetBlob loopPcm = loop.Audio.SourceBlob.TryCreateSubBlob(
+                static_cast<size_t>(loop.Audio.PayloadOffset), static_cast<size_t>(loop.Audio.PayloadSize));
+            if (!effectPcm.IsValid() || effectPcm.IsEmpty() || !loopPcm.IsValid() || loopPcm.IsEmpty())
+            {
+                return false;
+            }
+            auto effectClip = MakeShared<NorvesLib::Modules::Audio::AudioClipResource>(
+                effectPcm, effectFormat, effect.Audio.FrameCount);
+            auto loopClip = MakeShared<NorvesLib::Modules::Audio::AudioClipResource>(
+                loopPcm, loopFormat, loop.Audio.FrameCount);
+            if (!effectClip || !loopClip || !effectClip->IsValid() || !loopClip->IsValid())
+            {
+                return false;
+            }
 
-        m_M9WorldAcceptance->EffectClip = effectClip;
-        m_M9WorldAcceptance->LoopClip = loopClip;
+            m_M9WorldAcceptance->EffectClip = effectClip;
+            m_M9WorldAcceptance->LoopClip = loopClip;
+        }
         m_M9WorldAcceptance->bAssetsReady = false;
         auto& session = NorvesLib::Core::GEngine.GetSkeletalAssetSession();
         const auto bound = session.BindSnapshot(m_AssetSystemSnapshot);
@@ -3482,6 +3539,10 @@ namespace Game
     void GameApplicationHandler::OnPostRender()
     {
 #if NORVES_BUILD_DEVELOPMENT
+        if (m_M9WorldAcceptance)
+        {
+            Game::GameModes::ObserveM9WorldCompareCapture(*m_M9WorldAcceptance);
+        }
         if (m_CameraPathCapture.bWaitingResult && !m_CameraPathCapture.bFinished &&
             NorvesLib::Core::Engine::GEngine)
         {
@@ -4040,7 +4101,9 @@ namespace Game
                 mode->GetData().m_OrbitDegreesPerSecond = s_Rendering3DTestOrbitDegreesPerSecond;
                 mode->GetData().m_StartupRenderScale = s_Rendering3DTestRenderScale;
                 mode->GetData().m_bDebugDrawTestLines = s_bRendering3DTestDebugDrawTestLines;
-                mode->GetData().m_bStartupSkinnedProbe = s_bRendering3DTestSkinnedProbe;
+                mode->GetData().m_bStartupSkinnedProbe = s_bRendering3DTestSkinnedProbe ||
+                    s_Rendering3DTestSkinnedProbeMaterialCount == 2u;
+                mode->GetData().m_StartupSkinnedProbeMaterialCount = s_Rendering3DTestSkinnedProbeMaterialCount;
                 mode->GetData().m_bAnimationDebug = m_bAnimationDebugRequested;
 #if defined(NORVES_ENABLE_IMGUI)
                 mode->GetData().m_bDebugImGui = m_bImGuiRequested;
