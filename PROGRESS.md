@@ -8586,3 +8586,24 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Done: 差し戻しを直した。`CanvasViewRenderTest` が落ちた原因はパイプラインの数の決め打ちではなく、組み立てがシェーダーの場所を相対パス（`Assets/Shaders`）で渡し、ctest の作業ディレクトリ（`build/Test/Core/Rendering`）では 08722112 から `ShaderManager::LoadShader` が GLSL を読めず、板のパイプラインが 0 本になることだった。ほかの試験と同じく `NORVES_SOURCE_DIR` の絶対パスで渡し、`DISABLED`・誤った理由のコメント・`Docs/Testing.md` の記載を外して実行に戻した。期待値（`== 3`）は製品の `BoardPipelineVariantCount = 3` と一致しており触っていない。`FrameCaptureReadbackHelperTest` は対応しない形式の一覧の写しとして外したまま
 - 検証: verify の 1 行目のビルドは終了コード 0（1 回目は `.ilk` の取り合いの LNK1104 で、再実行で通った）。2 行目の ctest は 6 本 Passed・`FrameCaptureReadbackHelperTest` だけ Not Run（Disabled）で終了コード 0。`CanvasLayerCompositeSnapshotTest` も Passed（`.harness/runs/20261102-101626/verify-TEST-FULL-CTEST-BASELINE-U2.txt`）。numstat は 2 通りで一致
 - Next: 起動の確かめは後回し（当分アプリを起動しない決まり）。TEST-FULL-CTEST-BASELINE-CHECK で `M9WorldAcceptanceTest` と全体の CTest（`ctest --test-dir build -C Debug --output-on-failure --timeout 600`、GPU の試験を含む）を回し、残った失敗の理由と扱いを記録する
+
+- U1 骨格の分割 cook で SurfaceName を拒否する: 着地(直し 0 回)
+- U2 クリップ・リターゲットの cook で材質設定を照合し、分割 cook の警告を表示する: 着地(直し 0 回)
+- U3 共通照合・import-plan・slot 名の試験に名指しの場合を足す: 着地(直し 0 回)
+- U4 増分の preflight で拒否されることを反証し、文書を今の接続に合わせ、タスクの verify を通す: 着地(直し 0 回)
+
+## 2026-11-02 G2-MATERIAL-SELECTION-INTEGRATION（run 20261102-095605 の反復 1）
+- Done: 材質の共通照合（`ResolveMaterialSelection`）を、ARM/発光と SurfaceName（`ResolveMaterialImportPlan` の 1 回の SourceMaterial 照合）と GR32 の slot 名（GeneratedSlot）で使う形にそろえた。骨格の分割 cook は未対応の SurfaceName を `surface_requires_GR81` で拒否する（受け取って捨てない）。クリップ/リターゲットの cook は入力（と target の骨格）の sidecar を glTF の元 catalog に対して照合し、未一致・二重指定・不正設定を `clip_material_selector_or_settings`、surface を `surface_requires_GR81` で拒否する（在庫モードでも照合するので、増分の preflight でも拒否される。設定は適用しない）。骨格の分割 cook の同名材質の警告（資産名と元 index 付き、元での改名を促す）を cook のときに stderr へ出す。検査は `MaterialSelectionTest`（Unicode を正規化しない）・`MaterialImportDocumentTest`（設定値と SurfaceName が選んだ元 index にだけ届く）・`SkeletalMaterialBindingsTest`（生成 slot 名の衝突、逆順の catalog から slot identity への到達）・`CookCacheDecisionTest`（静的 v1・skinmesh・clips で、skip を許し依存印を合わせた記録でも未一致・二重指定・surface を Error にする）に足し、`Docs/Testing.md` に 3 点を書いた。`MaterialSelection.md`・`MaterialImportDocument.md` を今の接続に合わせた
+- 検証: `cmake --build build --config Debug --target CookedMeshTest AssetCook -- /m:1` は終了コード 0、ctest の 7 本（MaterialSelectionTest・MaterialImportDocumentTest・MaterialImportSettingsJsonTest・SkeletalMaterialBindingsTest・GltfMaterialSourceTest・CookCacheDecisionTest・AssetCookImportSmoke）はすべて Passed（`.harness/runs/20261102-095605/verify-G2-MATERIAL-SELECTION-INTEGRATION-U4.txt`）。クリップの既存試験（CookedClipBankV1Test・SkeletalClipBankBindingTest・CookedSkinMeshV1Test・RigStaticRootFrameWireTest）と RigSplitCookTest も Passed
+- Next: 実物の GLB（同名材質・surface 付き sidecar）での AssetCook の実行と警告の表示の目視は未実施（アプリを起動しない決まりの間は CPU の試験で確かめた）
+- Notes: リターゲットの target 骨格の sidecar は preflight では依存として採るだけで、材質の照合は cook のときに行う（target の bytes を在庫モードで読まないため）
+- Notes: `Docs/Architecture` の 2 文書は paths の外だが、「後続工程」と書いたままでは今の接続と食い違うので、該当の段落だけ直した
+- Notes: 要起票: `RigSplitCookTest` は共有の TEMP の項目が多いと `cook_managed_store: entry_limit` で落ちる（作業ツリー内の空の TEMP では Passed）。試験が一時フォルダーの数の上限に依存している
+- U5 rig-split の CLI でも同名材質の警告を表示する: 着地(直し 0 回)
+- U6 在庫モードでもリターゲット先の骨格の sidecar を照合し、文書と記録を直してタスクの verify を通す: 着地(直し 0 回)
+
+## 2026-11-02 G2-MATERIAL-SELECTION-INTEGRATION（run 20261102-095605 の反復 2）
+- Done: 差し戻しの 2 点を直した。`AssetCook --rig-split`（`CookRigSplitFile`）でも骨格の分割 cook の同名材質の警告（資産名と元 index 付き、元での改名を促す）を stderr に出す。増分の preflight（在庫モード）でも、リターゲット先の骨格の bytes と sidecar を採取済みの依存（`TargetSkeleton`・`Sidecar` の行）と突き合わせ、先の骨格の sidecar の材質設定を `ValidateClipMaterialSettings` で照合する（依存印が一致する記録があっても不正な設定は skip されず Error）。検査は `RigSplitCookTest` の BVH 入力のリターゲットで 1 件（未一致の先の骨格の sidecar が依存印を合わせた記録でも Error、戻すと Skip）。`MaterialSelection.md`・`Docs/Testing.md` を合わせた
+- 検証: `cmake --build build --config Debug --target CookedMeshTest AssetCook -- /m:1` は終了コード 0、ctest の 7 本（MaterialSelectionTest・MaterialImportDocumentTest・MaterialImportSettingsJsonTest・SkeletalMaterialBindingsTest・GltfMaterialSourceTest・CookCacheDecisionTest・AssetCookImportSmoke）はすべて Passed、RigSplitCookTest・CookedClipBankV1Test・SkeletalClipBankBindingTest も Passed（作業ツリー内の TEMP で再実行。`.harness/runs/20261102-095605/verify-G2-MATERIAL-SELECTION-INTEGRATION-U6.txt`、足した検査の出力行は `aux-G2-MATERIAL-SELECTION-INTEGRATION-rigsplit.txt`）
+- Next: なし（この項目は完了）
+- Notes: 反復 1 の Notes の「target 骨格の sidecar は preflight では依存として採るだけ」は、この反復で解消した。`--rig-split` の CLI の警告を実際の CLI の出力で確かめる試験は無い（コードで確かめた）
