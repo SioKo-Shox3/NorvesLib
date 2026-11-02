@@ -4415,3 +4415,13 @@
 - verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-FIX-STRESS-GPU --timing --min-frames 300 --max-gpu-median-ms 16.6 --max-gpu-p95-ms 16.6`
 - paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Assets/Shaders, Game/GameModes/MegaStress, TASKS.md, PROGRESS.md
 - from: SCN-MEGA-FIX-STRESS-GPU
+
+## PT-NONUNIFORM-SAMPLER-CHECK: パストレーサーの材質のテクスチャの添字の一様でない印を、標本の関数の中まで届ける(後回しにしたアプリの起動の確かめ)
+- status: todo
+- check: launch
+- gpu: exclusive
+- done-when: PT-NONUNIFORM-SAMPLER で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、PT-NONUNIFORM-SAMPLER の done-when を満たすことを確かめる。満たさなければ PT-NONUNIFORM-SAMPLER の done-when と paths の範囲で直す。
+- verify: `cmake --build build --config Debug --target PathTracingMaterialVulkanTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^PathTracingMaterialVulkanTest$"`
+- paths: Assets/Shaders/PathTracing, Assets/Shaders/Common, Library/Core/Private/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- from: PT-NONUNIFORM-SAMPLER
