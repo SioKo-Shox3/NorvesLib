@@ -9060,3 +9060,28 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: TASKS.md の項目の done-when・verify・paths は、判断（blocked/resolved）で書き換えた欄に従って仕上げた（項目の本文は旧い文のまま。status だけ更新した）
 - Notes: 残る限界: RESOURCE_LOCK が効くのは 1 回の ctest の中だけ。盤面の別の枠で cook の試験や AssetCook が同時に走ると、独り占めの検査は今も落ちうる
 - Notes: 要起票: cook のロックの試験の独り占めの検査(同名 event・abandoned の観測・全 handle の後の ordinary)を、別の枠の cook と同時に走っても壊れない形にする(試験だけの mutex 名の口を本体に足すかの判断を含む)
+
+- U1 塊の効きの合否の仕様を版 15 の撮影から書く: 着地(直し 0 回)
+- U2 接地の検査に前の記録の無い新しい物の組（cliff_block）の絶対の合否を足す: 着地(直し 0 回)
+- U3 崖の生成の 7 範囲の壁の足に崩れた塊を置く規則（BuildCliffBlocks）: 着地(直し 1 回)
+- U4 置き方の書き出しに崖の塊を新しい種類として出す: 着地(直し 0 回)
+- U5 荒野の組み立てに塊をつなぎ、記録を書き、ビルドを通す: 着地(直し 1 回)
+
+## 2026-11-02 SCN-WL-CLIFF-GEN-TALUS-CHECK-P1（run 20261102-200220 の反復 1、完了・起動の確かめは後回し）
+- Done: 崖の生成の 7 範囲の壁の足に、崩れた塊を物の岩として置いた。素材は崖錐のスキャンの岩 boulder_01（8 割）と rock_09（2 割）を高さ 3〜14 m に拡大したもの（Blender は起動できず、boulder_01 の角張った節理の砂岩が崩れた塊の形に合い、新しい資産の読み込みの経路を増やさないため。WastelandCliffBlocks.json は作らない）。置く規則は `WastelandTalus::BuildCliffBlocks`（12 m の升目、接地用の格子の焼いた面 `SampleGround` で傾き 38°以下・斜面の上 4〜20 m に 55°以上で 3 m 以上高い壁、斑つきの確率 0.55、間隔は高さの和の 0.6 倍、据え方は崖錐の岩の FitRock と寄せ直し・縮小・ずらしを共有）。荒野の組み立てで影を落とす散布にし、灰色の撮影の 300 m の制限・rocks の外し・置き方の書き出し（物の組 `cliff_block`）・遮蔽の小物の書き出しに崖錐の岩と同じく渡す。合否の仕様 `shape-cliff-blocks.json` は置く前に版 15 の 4 回の撮影から書いた（写真 × 種類の fold_match の下限 5 行。版 15 では 5 行とも fail）。CheckPlacement.py は前の記録に無い `cliff_block` を違反 ≤ 物の数の 0.5 % で判定する。地形のクック（版 19）は変えていない。結果の節は WastelandShape.md の「崖の壁の足の崩れた塊（物の岩）」
+- 証拠: `.harness/runs/20261102-200220/u5-unit-verify.txt`（Debug・RelWithDebInfo の Game のビルド EXIT=0、仕様の JSON の読み込み・CheckPlacement.py の構文 EXIT=0、numstat 一致）
+- Next: 起動の確かめは後回し（SCN-WL-CLIFF-GEN-TALUS-CHECK-P1-CHECK）。verify の 3〜10 行目で (A) 塊の仕様の行が基準を超える・(B) 地形だけの仕様が通る・(C) 接地・(D) ページの要求と VRAM・(E) look の 3 視点を写真と並べて壁の足に塊が見える、を確かめる。ログの `WASTELAND_CLIFF_BLOCKS`（範囲ごとの数・no_ground）で、遠い castle の範囲に塊が出ているかも見る
+- Notes: 遮蔽の組の視点 contact_near・ref_cliff_01 から 7 範囲までの最短距離は 2642.5 m・2400 m で、塊は遮蔽の小物の書き出し（300 m）に入らない（遮蔽の Cycles の正解は古くならない）。壁の検出の閾値（38°・55°・3 m）と塊の見た目は起動の確かめまで未検証。BuildTalusRocks の出力は同じ乱数・同じ順の共有化で変わらない作りだが、実行での一致は未確認
+
+## 2026-11-02 SCN-WL-CLIFF-GEN-TALUS-CHECK-P1（run 20261102-200220 の反復 2、人の判断待ち）
+- Notes: castle の 5 範囲（z −3950 以南・x −4250 以西）は接地用の格子 WastelandPlacementGround.bin（x −2600〜2099、z −2499〜2100）の外で、塊は構造上 0 個になる。shape-cliff-blocks.json の far_01 の行（wall_foot ≥ 0.356）の注釈は castle_0・castle_1 にだけあるので (A) が必ず落ちる。done-when の「根元は接地用の格子から取る」と「仕様を置いた後に変えない」がぶつかるため、案（遠景の格子から根元を取る / 塊を near の 2 範囲に絞り far_01 の行を移す）を人の判断に回した。
+- Next: 人が案を決めて status を todo に戻したら再開する。
+- U6 仕様 shape-cliff-blocks.json から far_01 の行を外し moved_rows に残す: 着地(直し 0 回)
+- U7 崖の塊を置く範囲を near の 2 範囲に絞る: 着地(直し 0 回)
+- U8 文書を near の 2 範囲と far_01 の行を外したことに直し、2 つの構成でビルドする: 着地(直し 0 回)
+
+## 2026-11-02 SCN-WL-CLIFF-GEN-TALUS-CHECK-P1（run 20261102-211748 の反復 1、判断役の案 2 で完了・起動の確かめは後回し）
+- Done: 判断役の判断（案 2）に従い、崖の塊を置く範囲を接地用の格子（X −2600〜2099・Z −2499〜2100）の中の near の 2 範囲（cliff_near_2_rooster_butte・cliff_near_3_setting_hen_butte）に絞った（`kCliffBlockRegionCount` = 2）。castle の 5 範囲は格子の外で根元の高さが取れないため置かない。仕様 `shape-cliff-blocks.json` から far_01 の行（wall_foot ≥ 0.356）を外して `moved_rows` に元の値と理由を残し、残る 4 行の下限と 2 つの sha256 は変えていない（版 15 の shape に当てて版の照合 pass・4 行とも fail を確かめた）。`ShapeRegions.json` の cliff-gen は 7 範囲のまま。WastelandShape.md の節を直し、(F) を足した。遮蔽の視点からの最短距離は contact_near 3380.6 m・ref_cliff_01 3862.3 m（near_2）で 300 m の外
+- 証拠: `.harness/runs/20261102-211748/u8-unit-verify.txt`（Debug・RelWithDebInfo の Game のビルドの終了コード 0、numstat 一致）
+- Next: 起動の確かめは後回し（SCN-WL-CLIFF-GEN-TALUS-CHECK-P1-CHECK）。verify の 3〜10 行目で (A) 残る 4 行・(B) 地形だけの仕様・(C) 接地・(D) ページの要求と VRAM・(E) look の 3 視点・(F) ログ `WASTELAND_CLIFF_BLOCKS` で near_2・near_3 のそれぞれに塊が 1 個以上、を確かめる
+- Notes: 要起票: castle の 5 範囲（ref_far_01、5〜9 km）の壁の足から崖錐への移り（far_01 の wall_foot。版 15 で 0.334〜0.344、外した下限 0.356）を、遠景の格子の崖の生成（式）か MegaGeometry の散布で上げる

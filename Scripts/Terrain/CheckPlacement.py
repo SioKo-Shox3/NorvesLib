@@ -5,7 +5,7 @@
 # 入力: Game の --wasteland-export-placement=<path> が書く配置（WastelandPlacementExport.h）。JSON に形の表と標本の取り方、
 # 隣の objects_file（float32 の 12 列）に物の行。崖錐の岩・草と低木・大きな石（cobble）は全部、石（stone）と小礫（pebble）は
 # 格子の点を含む区画を丸ごと書いた標本（sampling.cell_sampled）。合否は書き出した物の全部で決める。
-# 物の組（category）は形の tier（talus・plant・pebble・stone・cobble）。規則は type（talus か、草と石か）で決める。
+# 物の組（category）は形の tier（talus・cliff_block・plant・pebble・stone・cobble）。規則は type（talus か、草と石か）で決める。
 # 足元の点（どれも回転・拡大率を掛けたワールドの位置）:
 #   - 岩: 書き出したメッシュの頂点（置き方と同じ標本）を置いた向きに回し、高さの下 5 % の帯に入る頂点の全部
 #   - 草と低木・石: 根元の高さ（置き方が地面と見なした高さ）の水平の円の 6 点。半径はメッシュの根元の円の半径 × 横の拡大率
@@ -35,6 +35,7 @@
 #     付いた範囲）の物の組ごとに、前の記録（同じ規則の --record の報告）より悪くならない。違反の数は前の記録の数 +
 #     今の物の数の BASELINE_SLACK_SHARE まで。浮き・埋もれは、前の記録の 99 百分位を超える物が今の測れた物の
 #     1 % + BASELINE_SLACK_SHARE まで（前の 99 百分位を物の数の 0.5 % を超えて上回らない）。全域の違反 0 は求めない
+#     前の記録に無い cliff_block は比較せず、違反の数が物の数の BASELINE_SLACK_SHARE（0.5 %）以下なら通る
 # 終了コード: --verify で合格なら 0、不合格なら 1。--verify なしは値を出すだけで 0。
 import argparse
 import concurrent.futures
@@ -68,6 +69,8 @@ SCATTER_MAX_BURIAL_M = 0.1
 REMOVED_MAX_SHARE = 0.02
 # --baseline の前の記録からの揺れ（物の数に対する割合）
 BASELINE_SLACK_SHARE = 0.005
+# 前の記録に無いときは違反の割合で判定する組
+NEW_CATEGORIES = ("cliff_block",)
 # 問い合わせ 1 回の点の数の上限と、並べて走らせる問い合わせ（AssetCook と結果の解析）の数
 QUERY_CHUNK_POINTS = 300000
 DEFAULT_WORKERS = max(1, min(16, (os.cpu_count() or 2) // 2))
@@ -545,7 +548,7 @@ def main():
             if baseline is not None and region_id in judged_regions:
                 before = ((baseline.get("regions") or {}).get(region_id) or {}).get(c)
                 if before is None:
-                    failures.append(f"{region_id} の {c} が前の記録にありません")
+                    check_missing_baseline(region_id, c, item, failures)
                 else:
                     item["baseline"] = compare_with_baseline(region_id, c, item, before, float_m[sel_m], burial_m[sel_m],
                                                              failures)
@@ -584,6 +587,18 @@ def main():
         "total_seconds": round(time.time() - started, 1),
     }
     return finish(args, failures, summary, report_regions)
+
+
+def check_missing_baseline(region_id, category, item, failures):
+    """前の記録に無い組を判定し、比べの記録または落ちた理由を残す。"""
+    if category not in NEW_CATEGORIES:
+        failures.append(f"{region_id} の {category} が前の記録にありません")
+        return
+    violations_max = BASELINE_SLACK_SHARE * item["objects"]
+    item["baseline"] = {"new_category": True, "violations_max": violations_max}
+    if item["violations"] > violations_max:
+        failures.append(f"{region_id} の {category} の違反 {item['violations']} 個が物 {item['objects']} 個の "
+                        f"{BASELINE_SLACK_SHARE:.1%} を超えます")
 
 
 def compare_with_baseline(region_id, category, item, before, float_values, burial_values, failures):

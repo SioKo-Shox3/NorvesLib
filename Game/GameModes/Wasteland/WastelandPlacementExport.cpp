@@ -24,6 +24,7 @@ namespace Game::GameModes::WastelandPlacementExport
     {
         /// 物の種類（JSON の type）
         constexpr const char *kTypeTalus = "talus";
+        constexpr const char *kTierCliffBlock = "cliff_block";
         constexpr const char *kTypePlant = "plant";
         constexpr const char *kTypeGravel = "gravel";
         /// 全域の全部を書く石の段（ほかの段は格子の区画の標本）
@@ -254,7 +255,8 @@ namespace Game::GameModes::WastelandPlacementExport
 
     bool Write(const String &path, const Rendering::Terrain::TerrainHeightField &field,
                const Rendering::Terrain::TerrainPlacementGround *ground, const TalusInput &talus,
-               WastelandFoliage::FoliageScatter &foliage, const WastelandGravel::GravelScatter &gravel)
+               const CliffBlockInput &blocks, WastelandFoliage::FoliageScatter &foliage,
+               const WastelandGravel::GravelScatter &gravel)
     {
         VariableArray<RegionBox> regions;
         String regionError;
@@ -265,8 +267,9 @@ namespace Game::GameModes::WastelandPlacementExport
         }
 
         // 各範囲は重なりを含めて別々に数え、どれにも入らない候補は最後に数える。
-        constexpr uint32_t kRejectionGroups = WastelandFoliage::kPlantKindCount + WastelandGravel::kTierCount +
-                                               WastelandTalus::kTalusMeshCount;
+        constexpr uint32_t kCliffBlockRejectionGroup = WastelandFoliage::kPlantKindCount + WastelandGravel::kTierCount +
+                                                        WastelandTalus::kTalusMeshCount;
+        constexpr uint32_t kRejectionGroups = kCliffBlockRejectionGroup + 1u;
         struct RejectionCounts
         {
             uint64_t Values[kRejectionGroups] = {};
@@ -285,7 +288,7 @@ namespace Game::GameModes::WastelandPlacementExport
                                     ? kTypePlant
                                     : (group < WastelandFoliage::kPlantKindCount + WastelandGravel::kTierCount
                                            ? WastelandGravel::GravelScatter::GetTierName(group - WastelandFoliage::kPlantKindCount)
-                                           : kTypeTalus);
+                                           : (group == kCliffBlockRejectionGroup ? kTierCliffBlock : kTypeTalus));
             // float の位置を復元し、範囲の境界でもログの数え方と一致させる。
             AppendFormat(removedText, "%s{\"type\":\"%s\",\"x\":%.9g,\"z\":%.9g,\"reason\":\"%s\"}",
                          removedCount == 0 ? "" : ",", pType, static_cast<double>(x), static_cast<double>(z),
@@ -313,6 +316,11 @@ namespace Game::GameModes::WastelandPlacementExport
                            rejected.Unreliable);
         }
 
+        for (const auto &rejected : blocks.GroundRejections)
+        {
+            countRejection(rejected.X, rejected.Z, kCliffBlockRejectionGroup, rejected.Unreliable);
+        }
+
         const Rendering::Terrain::TerrainGridLayout layout = field.GetGridLayout();
         const double firstX = layout.FirstX;
         const double firstZ = layout.FirstZ;
@@ -320,6 +328,7 @@ namespace Game::GameModes::WastelandPlacementExport
         const double lastZ = layout.FirstZ + layout.Spacing * static_cast<double>(layout.Rows > 0 ? layout.Rows - 1 : 0);
         const uint32_t plantBase = WastelandTalus::kTalusMeshCount;
         const uint32_t gravelBase = plantBase + WastelandFoliage::kPlantKindCount;
+        const uint32_t cliffBlockBase = gravelBase + WastelandGravel::kTierCount * WastelandGravel::kKindsPerTier;
 
         VariableArray<float> rows;
         rows.reserve(static_cast<size_t>(8u) << 20u);
@@ -466,6 +475,17 @@ namespace Game::GameModes::WastelandPlacementExport
             }
         }
 
+        // 崖の塊: 既存の物の行の後ろに、置いた全部を足す
+        for (const Component::MegaScatterInstance &instance : blocks.Instances)
+        {
+            const float values[kObjectColumns] = {static_cast<float>(cliffBlockBase + instance.MeshIndex),
+                                                  instance.Position.x, instance.Position.y, instance.Position.z,
+                                                  instance.Rotation.x, instance.Rotation.y, instance.Rotation.z,
+                                                  instance.Rotation.w, instance.Scale.x, instance.Scale.y, instance.Scale.z,
+                                                  instance.Position.y};
+            AppendRow(rows, values);
+        }
+
         if (bGravelGroundError)
         {
             return false;
@@ -483,8 +503,8 @@ namespace Game::GameModes::WastelandPlacementExport
                      "\"grid\":{\"first_x\":%.3f,\"first_z\":%.3f,\"columns\":%u,\"rows\":%u,\"spacing\":%.4f},\n",
                      layout.FirstX, layout.FirstZ, layout.Columns, layout.Rows, layout.Spacing);
         AppendFormat(text,
-                     "\"sampling\":{\"full\":[\"talus\",\"plant\",\"%s\"],\"cell_sampled\":[",
-                     kFullGravelTier);
+                     "\"sampling\":{\"full\":[\"talus\",\"plant\",\"%s\",\"%s\"],\"cell_sampled\":[",
+                     kFullGravelTier, kTierCliffBlock);
         bool bFirstTier = true;
         for (uint32_t tier = 0; tier < WastelandGravel::kTierCount; ++tier)
         {
@@ -517,21 +537,27 @@ namespace Game::GameModes::WastelandPlacementExport
                            "\"object_format\":\"float32 little-endian, row-major\",\n\"meshes\":[",
                      objectCount, kObjectColumns);
 
-        // 形の表: 崖錐の岩 2・草と低木 5・石 3 段 × 4
-        for (uint32_t mesh = 0; mesh < WastelandTalus::kTalusMeshCount; ++mesh)
+        // 崖錐の岩と崖の塊は同じ形を使い、組だけを変える。
+        const auto appendTalusMeshes = [&](const char *pTier, bool bFirst)
         {
-            const WastelandTalus::TalusMeshShape &shape = talus.Shapes[mesh];
-            AppendFormat(text, "%s\n{\"name\":\"%s\",\"type\":\"%s\",\"tier\":\"talus\",\"available\":%s,\"points\":[",
-                         mesh == 0 ? "" : ",", talus.MeshNames[mesh].c_str(), kTypeTalus, shape.bAvailable ? "true" : "false");
-            for (size_t index = 0; index < shape.Points.size(); ++index)
+            for (uint32_t mesh = 0; mesh < WastelandTalus::kTalusMeshCount; ++mesh)
             {
-                const NorvesLib::Math::Vector3 &point = shape.Points[index];
-                // float の頂点を丸めずに復元し、足元の帯の判定を置き方とそろえる。
-                AppendFormat(text, "%s[%.9g,%.9g,%.9g]", index == 0 ? "" : ",", static_cast<double>(point.x),
-                             static_cast<double>(point.y), static_cast<double>(point.z));
+                const WastelandTalus::TalusMeshShape &shape = talus.Shapes[mesh];
+                AppendFormat(text, "%s\n{\"name\":\"%s\",\"type\":\"%s\",\"tier\":\"%s\",\"available\":%s,\"points\":[",
+                             bFirst && mesh == 0 ? "" : ",", talus.MeshNames[mesh].c_str(), kTypeTalus, pTier,
+                             shape.bAvailable ? "true" : "false");
+                for (size_t index = 0; index < shape.Points.size(); ++index)
+                {
+                    const NorvesLib::Math::Vector3 &point = shape.Points[index];
+                    // float の頂点を丸めずに復元し、足元の帯の判定を置き方とそろえる。
+                    AppendFormat(text, "%s[%.9g,%.9g,%.9g]", index == 0 ? "" : ",", static_cast<double>(point.x),
+                                 static_cast<double>(point.y), static_cast<double>(point.z));
+                }
+                AppendFormat(text, "]}");
             }
-            AppendFormat(text, "]}");
-        }
+        };
+        // 形の表: 崖錐の岩・草と低木・石と礫・崖の塊
+        appendTalusMeshes(kTypeTalus, true);
         for (uint32_t kind = 0; kind < WastelandFoliage::kPlantKindCount; ++kind)
         {
             AppendScatterMesh(text, foliage.GetTemplate(kind), kTypePlant, kTypePlant, false);
@@ -544,6 +570,7 @@ namespace Game::GameModes::WastelandPlacementExport
                                   WastelandGravel::GravelScatter::GetTierName(tier), true);
             }
         }
+        appendTalusMeshes(kTierCliffBlock, false);
         AppendFormat(text, "\n]\n}\n");
 
         if (!WriteBytes(objectsPath, rows.data(), rows.size() * sizeof(float)) ||
@@ -556,13 +583,14 @@ namespace Game::GameModes::WastelandPlacementExport
         const auto logRejected = [](const char *pKey, const char *region, const RejectionCounts &counts)
         {
             LOG_INFO_F("%s region=%s plant=%llu/%llu/%llu/%llu/%llu "
-                       "pebble=%llu stone=%llu cobble=%llu talus=%llu/%llu",
+                       "pebble=%llu stone=%llu cobble=%llu talus=%llu/%llu cliff_block=%llu",
                        pKey, region, static_cast<unsigned long long>(counts.Values[0]),
                        static_cast<unsigned long long>(counts.Values[1]), static_cast<unsigned long long>(counts.Values[2]),
                        static_cast<unsigned long long>(counts.Values[3]), static_cast<unsigned long long>(counts.Values[4]),
                        static_cast<unsigned long long>(counts.Values[5]), static_cast<unsigned long long>(counts.Values[6]),
                        static_cast<unsigned long long>(counts.Values[7]), static_cast<unsigned long long>(counts.Values[8]),
-                       static_cast<unsigned long long>(counts.Values[9]));
+                       static_cast<unsigned long long>(counts.Values[9]),
+                       static_cast<unsigned long long>(counts.Values[kCliffBlockRejectionGroup]));
         };
         const char *rejectionKeys[2] = {"WASTELAND_PLACEMENT_UNRELIABLE", "WASTELAND_PLACEMENT_UNFIT"};
         for (size_t reason = 0; reason < 2u; ++reason)
@@ -575,9 +603,10 @@ namespace Game::GameModes::WastelandPlacementExport
             logRejected(rejectionKeys[reason], "outside_regions", rejectedRegions[reason][regions.size()]);
         }
         LOG_INFO_F("WASTELAND_PLACEMENT_EXPORT path=%s talus=%zu plants=%zu pebbles=%zu stones=%zu cobbles=%zu "
-                   "plant_cells=%zu cobble_cells=%zu lattice_inside=%zu lattice_outside=%zu objects=%zu bytes=%zu",
+                   "plant_cells=%zu cobble_cells=%zu lattice_inside=%zu lattice_outside=%zu objects=%zu bytes=%zu cliff_blocks=%zu",
                    resolvedPath.c_str(), talus.Instances.size(), plants, stoneCounts[0], stoneCounts[1], stoneCounts[2],
-                   plantCells, stoneCells[2], latticeInside, latticeOutside, objectCount, rows.size() * sizeof(float));
+                   plantCells, stoneCells[2], latticeInside, latticeOutside, objectCount, rows.size() * sizeof(float),
+                   blocks.Instances.size());
         return true;
     }
 } // namespace Game::GameModes::WastelandPlacementExport
