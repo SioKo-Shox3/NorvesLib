@@ -8954,3 +8954,10 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: 起動の確かめは後回し（`GAME-GR131-VFX-CHECK`）
 - Notes: 要起票: GAME-GR131-VFX-P1 の verify のビルド行に `BoardComponentRoutingTest` のターゲットが無く、新しい `build` では ctest の行が Not Run で落ちる（ビルド行へターゲットを足すのが推奨）
 - U1 reader・Resource の native 回帰を Windows Debug で回し、在庫文書の 3 行を実行記録に直す: 着地(直し 1 回)
+
+## 2026-11-02 TEST-FULL-CTEST-BASELINE-CHECK-P1（run 20261102-194401 の反復 1）
+
+- Done: `Docs/Architecture/NVSKELMigrationInventory.md` の reader・Resource・packet の「未検証・未実行」の 3 行を、登録済みの試験ごとの Windows の実行記録に直した。reader は `CookedSkeletalAssetTest`・`CookedSkeletalWireContractTest`、Resource は `SkeletalResourceLifetimeTest`・`SkeletalSubmeshLayoutTest`。2026-11-02 の Windows Debug（HEAD `123f1b98`）で `cmake --build build --config Debug --target CookedMeshTest ResourceRegistryTest -- /m:1 /nodeReuse:false` が終了コード 0、`ctest --test-dir build -C Debug -R "^(CookedSkeletalAssetTest|CookedSkeletalWireContractTest|SkeletalSubmeshLayoutTest|SkeletalResourceLifetimeTest)$" --no-tests=error --output-on-failure --timeout 180` で 4/4 Passed（終了コード 0）。packet は `SkeletalFramePacketSnapshotTest` の 2026-11-02 の Passed（TEST-FULL-CTEST-BASELINE、run 20261102-101626）を引いた。Resource の描画（GPU）の Windows 実行は未実行とし、理由と回す先（TEST-FULL-CTEST-BASELINE-CHECK の全体 CTest と GR32 描画の受入れ）を書いた。「描画受入れも未完」「GPU描画の証拠にはしない」は残した
+- 検証: タスクの verify が `[]`・終了コード 0。ビルドと ctest の出力は `.harness/runs/20261102-194401/verify-TEST-FULL-CTEST-BASELINE-CHECK-P1-U1.txt`
+- Next: 起動の確かめは無い。GPU 描画の受入れは TEST-FULL-CTEST-BASELINE-CHECK で回す
+- Notes: 同じ build でビルドを途中で中断すると、残った cl が `AssetCookLib.pdb` を握って次のビルドが C1041 になり、`CookedSkeletalAssetTest` は AssetCook の `resource busy or locked` で落ちる。中断せずに回し直すと通った
