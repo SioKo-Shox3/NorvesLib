@@ -8714,3 +8714,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U2 SwordTrailRibbonTest（CPU の試験）と Docs/Testing.md の 3 点: 着地(直し 0 回)
 - U3 帯の頂点を GameThread から RenderThread へ渡す道: 着地(直し 0 回)
 - U6 --animation-debug の剣にトレイルを付ける（Game）: 着地(直し 0 回)
+- U4 帯の描画器・シェーダー・ForwardPass の半透明の段への組み込み: 着地(直し 1 回)

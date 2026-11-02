@@ -278,6 +278,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/UpscalePass.cpp
     Private/Rendering/SSRPass.cpp
     Private/Rendering/ForwardPass.cpp
+    Private/Rendering/RibbonTrailRenderer.cpp
     Private/Rendering/ShaderManager.cpp
     Private/Rendering/NeuralMaterialResource.cpp
     Private/Rendering/NeuralMaterialDecoder.cpp
@@ -616,6 +617,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/FoliagePass.h
     Public/Rendering/FoliageTypes.h
     Public/Rendering/RibbonTrailTypes.h
+    Public/Rendering/RibbonTrailRenderer.h
     Public/Rendering/RenderingCoordinator.h
     Public/Rendering/RenderGraph/RenderGraphTypes.h
     Public/Rendering/RenderGraph/RenderGraphResourceNames.h
