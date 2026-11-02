@@ -8522,3 +8522,12 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Done: G2-GR79-IMPORT-POLICY-CONNECTION — 材質設定の接続（asset-set spec v2 の `emissiveNitsPerUnit` → 単体 request → 共有 resolver、素材 > 資産 sidecar > asset-set、AI 生成 profile の明示、hash/cache）を反証する検査を `GltfMaterialCookV1Test`・`CookCacheDecisionTest` に足した（asset-set だけの換算・上書き・上位不正値の非 fallback・未設定拒否の資産名/材質名/設定名・strength0 と texture だけの非発光・設定差での fingerprint と cache の失効・v0 互換）。asset-set の不正な換算値の拒否を `setting=emissiveNitsPerUnit` で診断するよう直した。`MaterialImportPolicy.md`・`GltfMaterialCookV1.md`・`MaterialImportDocument.md` の「未接続」を今の接続に書き換えた。verify は `cmake --build build --config Debug --target CookedMeshTest AssetCook -- /m:1` が終了コード 0、ctest の 9 本がすべて Passed
 - Next: 実物の資産（発光のある GLB）での cook と撮影・見た目の受入れは未実施（アプリを起動しない決まりのため）。G2-MATERIAL-SELECTION-INTEGRATION がこの項目の後に回せる
 - Notes: 要起票: 骨格の分割 cook（`RigSplitCook.cpp:338`）は設定の解決の失敗を `split_material_selector_or_settings` の 1 つの名前で返し、設定名（`MaterialSettingsErrorKey`）を出さない。NVMESH v1 と同じ形にそろえるか
+
+- U1 PT の材質のテクスチャの標本へ一様でない印を届ける: 着地(直し 0 回)
+- U2 rchit の SPIR-V の NonUniform を照合する CPU の試験を足す: 着地(直し 0 回)
+
+## 2026-11-02 PT-NONUNIFORM-SAMPLER（run 20261102-093543 の反復 1）
+- Done: 直す前の rchit（sparse あり・なし）を -O・vulkan1.2 で SPIR-V にして逆アセンブルし、`materialTextures` から取った sampled image の `OpAccessChain`・`OpLoad`（sparse ありでは `OpImageQueryLevels` の `OpImage` も）に `NonUniform` が無いことを確かめた（添字の `OpCopyObject` にだけ付いていた）。sampler の式を受けるマクロ `NORVES_RETURN_SPARSE_RESIDENT_LOD` に常駐の判定と粗いミップへの逃げの本体を移し、rchit の `SampleMaterialTexture` が標本の命令の位置で `materialTextures[nonuniformEXT(index)]` を引く形にした（`SampleSparseResidentLod` はマクロを使う形で残し、megageometry.frag の SPIR-V は sparse あり・なしとも変わらない）
+- Done: CPU の試験 `PathTracingNonUniformSamplerSpirvTest`（`RHIRayTracingApiContractTest` の束）を足した。`VulkanShaderCompiler` で sparse あり・なしの rchit を SPIR-V にし、材質の配列由来の `OpImageSampleExplicitLod`・`OpImageSparseSampleExplicitLod`・`OpImageQueryLevels` の operand と元の load・access chain・`OpImage` に `NonUniform` があることを見る。ビルドは終了コード 0、ctest は Passed（束のほか 2 本も Passed）。直す前のシェーダー（`--shader-root` で差し替え）では終了コード 1 で落ちる（証拠 `.harness/runs/20261102-093543/verify-PT-NONUNIFORM-SAMPLER-U2.txt`）
+- Next: 起動の確かめは後回し（当分アプリを起動しない決まり）。PT-NONUNIFORM-SAMPLER-CHECK で `PathTracingMaterialVulkanTest` のビルドと ctest を回し、PT の材質のテクスチャ（VT と VT でないもの）が前と同じに読めることを確かめる
+- Notes: PathTracing の下にほかに sampler の配列を関数の引数で渡す箇所は無い
