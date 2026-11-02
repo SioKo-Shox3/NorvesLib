@@ -4535,3 +4535,20 @@
 - verify: `ctest --test-dir build -C Debug -R "^DistortionPassVulkanTest$" --no-tests=error --output-on-failure --timeout 600`
 - paths: Library/Core/Public/Particle, Library/Core/Private/Particle, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Tools/AssetCook, Test/Core/Rendering, Docs/Plans/GameFeatureRoadmap.md, TASKS.md, PROGRESS.md
 - from: GAME-GR135-VFX
+
+## G2-GR82-B4-STATIC-ROOT-FRAME128-P1: 管理ストアの祖先の列挙を、祖先の項目数で失敗しない形にする
+- status: todo
+- done-when: `ObserveLocked` は、workspace からボリュームの根までのどの階層でも、固定名 `StoreLeaf` と長名か short alias で fold 一致する項目だけを残し、ほかの項目はためずに読み流す。こうして、祖先に 1 ディレクトリで 16384 を超える項目があっても `entry_limit` で落ちないようにする。上限(1 ディレクトリ 16384・全列挙 65536・metadata 32MiB)は、store の制御領域の列挙(`header.json`・`roots.json`・`pending`)と、読み流しで残した一致の項目にだけ掛ける。次の 3 つは今のまま保つ。
+  - 列挙の失敗を「store なし」と扱わないこと
+  - 固定名の ordinal case-insensitive 一致が複数あるとき・実長名の大文字小文字違い・alias の衝突を Conflict にすること
+  - ボリュームの根の store を拒否すること
+  
+  `CookManagedStoreObservationTest` に次の 2 件を足す。どちらも fixture は試験の置き場の下に作り、TEMP には置かない。
+  - 祖先に 16385 個の空ファイルを置き、RuntimeRoot をその下に置いても Observe が `entry_limit` で失敗しない
+  - 同じ混んだ祖先に `.norves-assetcook` の store があれば、従来どおり祖先の store として検出する
+  
+  `Docs/Architecture/CookManagedStoreObservation.md` の「上限」節と列挙の節を、祖先は読み流しで検査することに合わせて直す。`CookManagedTransactionController.cpp` の workspace の列挙は対象外。
+- verify: `cmake --build build --config Debug --target CookedMeshTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^(CookManagedStoreObservationTest|CookManagedStoreInitializationTest|CookManagedUpdateInventoryTest|CookManagedUpdateTest|TextureManagedCliTest|RigSplitCookTest)$" --no-tests=error --output-on-failure --timeout 180`
+- paths: Tools/AssetCook/CookManagedStoreNative.h, Tools/AssetCook/CookManagedStoreObservation.cpp, Test/Core/Asset/CookManagedStoreObservationTest.cpp, Docs/Architecture/CookManagedStoreObservation.md, TASKS.md, PROGRESS.md
+- from: G2-GR82-B4-STATIC-ROOT-FRAME128
