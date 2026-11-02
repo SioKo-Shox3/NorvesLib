@@ -3847,7 +3847,7 @@
 - notes: 2026-10-02追加。未着手の後続作業で、前提と選定課題を解決してから実装タスクへ細分化する。NorvesLib/Editorの境界とVFX-S1〜S5はロードマップ参照。
 
 ## GAME-GR136-VFX: Niagara 相当の VFX システムを実装する
-- status: doing
+- status: done
 - done-when: 着手の最初に、作者の判断が要る方式と、未着手の前提の GR との境界を `Docs/Plans/GameFeatureRoadmap.md` に書く（推奨の案で進め、理由を PROGRESS.md に書く。前提が未完の部分は完了を宣言しない範囲として残す）。 GR57（雨）をこの形で設計するか、この上の層として作るかもここで決める。起動せずに確かめる完了の条件は CPU の試験 `VfxEffectSystemTest`（新しい実行ファイル。足す前に `Docs/Testing.md` の 3 点を書く）で次を見る: (1) エミッタとモジュールの型、値の範囲・単位・既定値がスキーマに出る、(2) 範囲外の値や型の合わない値の設定が拒否され、前の値を保つ、(3) クックしたバイナリを読んだ結果が元の形式から読んだ結果と一致する（同じ種と固定の刻みで、粒子の位置の列が一致）、(4) 動いているシミュレーションでの値の変更が次の刻みから反映する、(5) イベントで起動したエミッタが起動の位置と時刻どおりに生成する、(6) フリップブックの取り込み設定どおりの UV の矩形と再生の速さ。既存の要件のエフェクトを少なくとも 1 つ（例: Rendering3DTest の橙の粒）このシステムで組み、起動画面の見た目が変わらないことは、起動を戻した後の `GAME-GR136-VFX-CHECK` で確かめる。
 - verify: `cmake --build build --config Debug --target Game VfxEffectSystemTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^VfxEffectSystemTest$" --no-tests=error --output-on-failure --timeout 180`
