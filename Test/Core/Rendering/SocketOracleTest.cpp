@@ -1,8 +1,11 @@
 ﻿// ソケットの姿勢を CPU スキニングと比較し、不正な定義の拒否を検証する。
+#include "Animation/AnimGraphResource.h"
 #include "Animation/SkeletalAssetResource.h"
 #include "Animation/SkeletalAnimationSampler.h"
 #include "Animation/SkeletalPoseBounds.h"
+#include "Component/AnimatorComponent.h"
 #include "Component/SkinnedMeshComponent.h"
+#include "Component/SocketAttachmentComponent.h"
 #include "Math/MatrixUtils.h"
 #include "Math/QuaternionUtils.h"
 #include "Object/Entity.h"
@@ -229,6 +232,118 @@ namespace
         }
         world.Finalize();
     }
+    struct SocketClipResolver : A::IClipResolver
+    {
+        C::TSharedPtr<AnimationClipResource> Clip;
+
+        explicit SocketClipResolver(const C::TSharedPtr<AnimationClipResource>& clip) : Clip(clip)
+        {
+        }
+
+        C::TSharedPtr<AnimationClipResource> ResolveClip(C::StringView name) const override
+        {
+            return name == C::StringView("moving") ? Clip : C::TSharedPtr<AnimationClipResource>{};
+        }
+    };
+
+    void NearRotation(const M::Quaternion& actual, const M::Quaternion& expected)
+    {
+        const float sign = M::QuaternionUtils::Dot(actual, expected) < 0 ? -1.0f : 1.0f;
+        Near(actual.x, sign * expected.x);
+        Near(actual.y, sign * expected.y);
+        Near(actual.z, sign * expected.z);
+        Near(actual.w, sign * expected.w);
+    }
+
+    void TestAttachmentTiming(bool bAnimatorDriven, bool bFollowerFirst)
+    {
+        std::fprintf(stderr, "ソケット追従: 駆動=%s, 生成順=%s\n",
+                     bAnimatorDriven ? "Animator" : "Clip", bFollowerFirst ? "追従側が先" : "骨格側が先");
+        const auto childRotation = M::QuaternionUtils::Normalize({0.25f, -0.38f, 0.17f, 0.85f});
+        SocketFixture fixture(childRotation, 1.0f);
+        auto clip = fixture.Registry.CreateTransient<AnimationClipResource>("SocketMovingClip");
+        SOCKET_CHECK(clip);
+
+        // 1 秒かけて大きく移動・回転し、2 秒で元の姿勢へ戻るループ。
+        S::SkeletalAnimationClip data;
+        data.Name = "moving";
+        data.DurationSeconds = 2.0f;
+        S::SkeletalAnimationChannel translation;
+        translation.JointIndex = 0;
+        translation.Path = S::SkeletalAnimationPath::Translation;
+        translation.Samples.push_back({0, {0, 0, 0, 0}});
+        translation.Samples.push_back({1, {12, 5, -3, 0}});
+        translation.Samples.push_back({2, {0, 0, 0, 0}});
+        data.Channels.push_back(std::move(translation));
+        constexpr float halfSqrt = 0.7071067811865475f;
+        S::SkeletalAnimationChannel rotation;
+        rotation.JointIndex = 0;
+        rotation.Path = S::SkeletalAnimationPath::Rotation;
+        rotation.Samples.push_back({0, {0, 0, 0, 1}});
+        rotation.Samples.push_back({1, {0, 0, halfSqrt, halfSqrt}});
+        rotation.Samples.push_back({2, {0, 0, 0, 1}});
+        data.Channels.push_back(std::move(rotation));
+        AddChannel(data, 1, S::SkeletalAnimationPath::Translation, {0.35f, -0.7f, 1.2f, 0});
+        AddChannel(data, 1, S::SkeletalAnimationPath::Rotation,
+                   {childRotation.x, childRotation.y, childRotation.z, childRotation.w});
+        clip->SetClip(std::move(data));
+        SOCKET_CHECK(clip->Load());
+        fixture.Asset->SetResources(fixture.Mesh, fixture.Skeleton, clip);
+        SOCKET_CHECK(fixture.Asset->Load());
+
+        World world;
+        world.Initialize();
+        auto* first = world.SpawnEntity<Entity>();
+        auto* second = world.SpawnEntity<Entity>();
+        SOCKET_CHECK(first && second);
+        auto* follower = bFollowerFirst ? first : second;
+        auto* target = bFollowerFirst ? second : first;
+        auto* attachment = world.CreateComponent<Component::SocketAttachmentComponent>(follower);
+        auto* mesh = world.CreateComponent<Component::SkinnedMeshComponent>(target);
+        SOCKET_CHECK(attachment && mesh);
+        target->SetLocalPosition(-3.0f, 4.0f, 2.0f);
+        target->SetLocalRotation(M::QuaternionUtils::Normalize({-0.16f, 0.18f, 0.24f, 0.93f}));
+        target->SetLocalScale(1.7f, 1.7f, 1.7f);
+        mesh->SetSkeletalAsset(fixture.Asset);
+        mesh->SetMeshNodeGlobalTransform(fixture.MeshNode);
+        mesh->SetLooping(true);
+        mesh->SetPlaying(!bAnimatorDriven);
+        if (bAnimatorDriven)
+        {
+            SocketClipResolver resolver(clip);
+            auto graph = fixture.Registry.CreateTransient<AnimGraphResource>("SocketMovingGraph");
+            A::AnimGraphReport report;
+            SOCKET_CHECK(graph && graph->Compile(
+                C::String(R"({"version":1,"nodes":[{"id":"move","type":"clip","clip":"moving","loop":true}],"root":"move"})"),
+                *fixture.Skeleton, resolver, report) && graph->Load());
+            auto* animator = world.CreateComponent<Component::AnimatorComponent>(target);
+            SOCKET_CHECK(animator && animator->SetGraph(graph) && mesh->IsExternalAnimationDriven());
+        }
+        else
+        {
+            SOCKET_CHECK(mesh->IsPlaying() && !mesh->IsExternalAnimationDriven());
+        }
+        SOCKET_CHECK(attachment->Attach(target->GetObjectId(), Identity("Hand"), {}, 0));
+
+        M::Vector3 previous;
+        constexpr float dt = 1.0f / 30.0f;
+        for (unsigned frame = 0; frame < 6; ++frame)
+        {
+            world.Tick(dt);
+            world.LateTick(dt);
+            M::Transform socket;
+            SOCKET_CHECK(mesh->GetSocketWorldTransform(Identity("Hand"), socket));
+            const auto& followerTransform = follower->GetWorldTransform();
+            NearPoint(followerTransform.position, socket.position);
+            NearRotation(followerTransform.rotation, socket.rotation);
+            if (frame > 0)
+            {
+                SOCKET_CHECK((socket.position - previous).LengthSquared() > 1e-6f);
+            }
+            previous = socket.position;
+        }
+        world.Finalize();
+    }
 } // namespace
 
 void TestSocketOracle()
@@ -238,4 +353,8 @@ void TestSocketOracle()
     const auto arbitrary = M::QuaternionUtils::Normalize({0.25f, -0.38f, 0.17f, 0.85f});
     TestPose(arbitrary, 1.0f, true);
     TestPose(arbitrary, 2.0f, false);
+    TestAttachmentTiming(false, true);
+    TestAttachmentTiming(false, false);
+    TestAttachmentTiming(true, true);
+    TestAttachmentTiming(true, false);
 }
