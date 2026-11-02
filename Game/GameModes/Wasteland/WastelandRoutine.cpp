@@ -808,7 +808,7 @@ namespace Game::GameModes
 
         bool SwapToCliffDetailOff(const Asset::AssetSystem &assetSystem, String &path);
 
-        /// 見出しに記録された区画だけが格子の作成時に問い合わせた区画。DEM の全区画から該当分を照合する。
+        /// 見出しに記録された区画だけが格子の作成時に問い合わせた区画。DEM と遠景の全区画から該当分を照合する。
         TSharedPtr<const Terrain::TerrainPlacementGround> LoadPlacementGround(const Asset::AssetSystem *assetSystem,
                                                                               const Terrain::TerrainGridLayout &layout,
                                                                               bool bCliffDetailOff)
@@ -862,14 +862,48 @@ namespace Game::GameModes
                     }
                 }
             }
+            VariableArray<Terrain::TerrainHorizonMesh> horizonMeshes;
+            AnsiString horizonError;
+            if (Terrain::LoadTerrainHorizonMeshes(TerrainSpec::kHorizonDescriptorPath, horizonMeshes, horizonError))
+            {
+                for (const Terrain::TerrainHorizonMesh &mesh : horizonMeshes)
+                {
+                    String tilePath = String(TerrainSpec::kHorizonCookedMeshLogicalPathPrefix) + String(mesh.Name.c_str()) +
+                                      ".generated";
+                    auto resolved = assetSystem->FindCookedVariant(AnsiString(tilePath.c_str()), Asset::AssetKind::Model);
+                    if (!resolved.ShouldUseCooked())
+                    {
+                        continue;
+                    }
+                    // DEM と同じく、正規化後の論理名が格子の参照にある遠景の区画だけを照合する。
+                    const auto found = std::find_if(stored.begin(), stored.end(), [&](const auto &source)
+                                                    { return source.LogicalPath == resolved.Reference.LogicalPath; });
+                    if (found == stored.end())
+                    {
+                        continue;
+                    }
+                    if (bCliffDetailOff && SwapToCliffDetailOff(*assetSystem, tilePath))
+                    {
+                        resolved = assetSystem->FindCookedVariant(AnsiString(tilePath.c_str()), Asset::AssetKind::Model);
+                    }
+                    if (resolved.ShouldUseCooked())
+                    {
+                        Terrain::TerrainPlacementGroundSource source;
+                        source.LogicalPath = resolved.Reference.LogicalPath;
+                        source.CookedPackage = resolved.Reference.CookedPackage;
+                        source.CookedHash = resolved.Reference.CookedHash;
+                        sources.push_back(std::move(source));
+                    }
+                }
+            }
             if (stored.empty() || !ground->IsCurrent({sources.data(), sources.size()}))
             {
                 LOG_WARNING_F("COOKED_MODEL_MISSING scene=wasteland path=%s 区画の参照が現在のマニフェストと一致しません "
                               "sources=%zu matched=%zu", path, stored.size(), sources.size());
                 return {};
             }
-            LOG_INFO_F("WASTELAND_PLACEMENT_GROUND path=%s blocks=%zu sources=%zu current=1", path,
-                       ground->GetBlockCount(), sources.size());
+            LOG_INFO_F("WASTELAND_PLACEMENT_GROUND path=%s blocks=%zu layers=%zu sources=%zu current=1", path,
+                       ground->GetBlockCount(), ground->GetLayerCount(), sources.size());
             return ground;
         }
 
@@ -1606,7 +1640,9 @@ namespace Game::GameModes
 #if NORVES_ENABLE_LOGGING
             // 生成の統計は灰色の撮影の半径制限より前の値。実際の散布の数は WASTELAND_CLIFF_BLOCKS_SCATTER に出す
             char regions[1024] = {};
+            char noGroundRegions[1024] = {};
             size_t regionLength = 0;
+            size_t noGroundRegionLength = 0;
             for (uint32_t index = 0; index < WastelandTalus::kCliffBlockRegionCount; ++index)
             {
                 const int written = std::snprintf(regions + regionLength, sizeof(regions) - regionLength, "%s%s:%u",
@@ -1617,13 +1653,24 @@ namespace Game::GameModes
                     break;
                 }
                 regionLength += static_cast<size_t>(written);
+                const int noGroundWritten = std::snprintf(noGroundRegions + noGroundRegionLength,
+                                                          sizeof(noGroundRegions) - noGroundRegionLength, "%s%s:%u",
+                                                          index == 0 ? "" : ",", WastelandTalus::GetCliffBlockRegionId(index),
+                                                          blockStats.NoGroundPerRegion[index]);
+                if (noGroundWritten < 0 ||
+                    static_cast<size_t>(noGroundWritten) >= sizeof(noGroundRegions) - noGroundRegionLength)
+                {
+                    break;
+                }
+                noGroundRegionLength += static_cast<size_t>(noGroundWritten);
             }
             LOG_INFO_F("WASTELAND_CLIFF_BLOCKS cells=%u foot_cells=%u placed=%u unplaced=%u no_ground=%u crag=%u slab=%u "
-                       "min_h=%.2f max_h=%.2f regions=%s", blockStats.CellsVisited, blockStats.FootCells, blockStats.Placed,
-                       blockStats.Unplaced, blockStats.NoGround,
+                       "min_h=%.2f max_h=%.2f regions=%s no_ground_regions=%s",
+                       blockStats.CellsVisited, blockStats.FootCells, blockStats.Placed, blockStats.Unplaced, blockStats.NoGround,
                        blockStats.PerMesh[static_cast<uint32_t>(WastelandTalus::TalusMesh::Crag)],
                        blockStats.PerMesh[static_cast<uint32_t>(WastelandTalus::TalusMesh::Slab)],
-                       static_cast<double>(blockStats.MinHeight), static_cast<double>(blockStats.MaxHeight), regions);
+                       static_cast<double>(blockStats.MinHeight), static_cast<double>(blockStats.MaxHeight), regions,
+                       noGroundRegions);
 #endif
         }
 

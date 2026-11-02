@@ -12,8 +12,8 @@
 //   - 向き: 岩塊は 6 面のどれかを下にし、斜面の傾きへ寄せて寝かせる。板は平たいまま斜面に沿わせる。
 //   - 高さ: 回した全標本の下 5 % の足元で地形の高さを引き、浮き・埋もれ・支持窓に収まる高さへ据える。
 //     収まらない岩は斜面の法線へ寄せ、既存の小片の最小拡大率まで縮め、それでも収まらなければ置かない。
-// 崖の生成のうち接地用の格子の中の near の 2 範囲では、焼いた面の緩い斜面から上向きに急な壁を探し、その足に 3〜14 m の崩れた塊を置く。
-// 不可の升目は見送り、接地用の塊の無い所は焼いた面が高さ場と同じなので高さ場を使う。
+// 崖の生成の near の 2 範囲と castle の 5 範囲では、接地用の格子の各層から急な壁を探し、その足に 3〜14 m の崩れた塊を置く。
+// 不可の升目は見送り、近景の層の塊の無い所だけ高さ場を使う。castle の層では塊の無い所も見送る。
 // 塊は専用の升目と乱数で空きを残し、崖錐の岩と同じ接地・寄せ直し・縮小・ずらしで据えて影を落とす。
 // 配置は世界の升目の番号と種だけで決まり、どの実行でも同じになる。置く仕組みは散布の Object（MegaGeometryScatterComponent）で、
 // 岩の 1 つ 1 つは Object を持たない軽い行になる。影を落とすのは大岩と転がり出た岩のうち大きい順に上限までで、小片と残りは
@@ -103,9 +103,9 @@ namespace Game::GameModes::WastelandTalus
         uint32_t SupportPoints[kTalusMeshCount] = {};
     };
 
-    /// 崖の生成の範囲のうち、接地用の格子の中の near の 2 範囲の数。
+    /// 崖の塊を置く near の 2 範囲と castle の 5 範囲の数。
     /// 座標は Scripts/Terrain/ShapeRegions.json の cliff-gen、Tools/AssetCook/TerrainCliffDetail.cpp と同じ。
-    inline constexpr uint32_t kCliffBlockRegionCount = 2;
+    inline constexpr uint32_t kCliffBlockRegionCount = 7;
 
     /// 崖の塊の配置の内訳（ログ用）
     struct CliffBlockStats
@@ -116,8 +116,9 @@ namespace Game::GameModes::WastelandTalus
         uint32_t Placed = 0;
         /// 据え方が収まらず置かなかった数
         uint32_t Unplaced = 0;
-        /// 接地用の格子が無い・不可の升目で見送った数（塊の無い所は焼いた面が高さ場と同じなので使える）
+        /// 接地用の格子が無い・不可の升目で見送った数。塊の無い所は近景の層だけ高さ場を使い、castle の層では不可として数える。
         uint32_t NoGround = 0;
+        uint32_t NoGroundPerRegion[kCliffBlockRegionCount] = {};
         uint32_t PerRegion[kCliffBlockRegionCount] = {};
         uint32_t PerMesh[kTalusMeshCount] = {};
         float MinHeight = 0.0f;
@@ -129,8 +130,8 @@ namespace Game::GameModes::WastelandTalus
     const char *GetCliffBlockRegionId(uint32_t index);
 
     /**
-     * @brief 崖の生成のうち接地用の格子の中の near の 2 範囲で、急な壁の足元から崖錐へ移る所に崩れた大きな塊を置く
-     * @param ground 接地用の格子（不可の升目は見送り、塊の無い所は焼いた面が高さ場と同じ）。nullptr なら何も置かない
+     * @brief near の 2 範囲と castle の 5 範囲で、急な壁の足元から崖錐へ移る所に崩れた大きな塊を置く
+     * @param ground 接地用の格子（不可の升目は見送り、塊の無い所は近景の層だけ高さ場を使う）。nullptr なら何も置かない
      * @param outBlocks 置いた塊（MeshIndex は TalusMesh。影を落とす散布にする）
      */
     void BuildCliffBlocks(const NorvesLib::Core::Rendering::Terrain::TerrainHeightField &field,
