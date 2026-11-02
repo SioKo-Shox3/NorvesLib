@@ -8747,3 +8747,9 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U2 歪みのシェーダー 4 本: 着地(直し 0 回)
 - U3 DistortionPass と SceneView への配置: 着地(直し 0 回)
 - U4 DistortionPassVulkanTest（作るだけ・走らせない）と仕上げの確かめ: 着地(直し 1 回)
+- Done: 歪みのバッファとパスを足した。`DistortionPass`（`Library/Core/Private/Rendering/DistortionPass.cpp`）は源の一覧が空・カメラが無いフレームは何も宣言せず、源があればずらしの RG16F を 0 で消して源を加算し（`distortion_offset.vert/.frag`）、シーンの色をずらして一時の色へ集め（`distortion_gather.frag`）、混合せずに書き戻す（`distortion_copy.frag`）。SceneView の半透明の ForwardPass の直後・TAA の前に置いた。試験から呼べる記録の口 `RecordOffsets`・`RecordComposite` を出した
+- Done: GPU の試験 `DistortionPassVulkanTest` を足した（足す理由の 3 点は `Docs/Testing.md`）。96×64 の画像で、ずらし 0 のとき全画素がビットまで一致すること、ずらし (4/64, −2/64) で出力 (x, y) が入力 (x+4, y−2) と一致すること（幅と高さを違え、単位が高さであることを反証する）の 2 点だけを見る
+- 証拠: `.harness/relay/GAME-GR135-VFX-U4-verify.txt`（HEAD ec7fe05 の上の U4 の作業ツリーで `cmake --build build --config Debug --target Game -- /m:1` 終了コード 0、`cmake --build build --config Debug --target DistortionPassVulkanTest -- /m:1` 終了コード 0、`ctest -N -R "^DistortionPassVulkanTest$"` で登録 1 件。numstat 2 通り一致・新規ファイルは BOM・CRLF）
+- Next: 起動の確かめは後回し（人の決まりで GPU を使う試験を起動しない）。`GAME-GR135-VFX-CHECK` で `ctest --test-dir build -C Debug -R "^DistortionPassVulkanTest$" --no-tests=error --output-on-failure --timeout 600` を回し、標準出力の 2 行（ZERO_OFFSET・KNOWN_OFFSET が合格・不一致画素数 0）を確かめる
+- Notes: `DistortionPassVulkanTest` は GPU で未実行。合成の後の色の添付の状態（render pass の最終は ShaderResource）から転送への明示の障壁、RGBA16F の読み戻しの並び、カメラの右・上を `CopyShaderInverseView` の最初の 2 列から取る向きは、コードの読みでの判断。落ちたら、ずらしの y の符号（Vulkan の画面は下向き）と集めるシェーダーの標本の位置から見る
+- Notes: 源を置く呼び手（`RenderWorld::SetDistortions` を呼ぶゲーム側）はまだ無い。どのシーンにも源が無いので、起動画面と各シーンの見た目は変わらない（パスは何も宣言しない）。源のずらしの描画（円盤・模様の流れ・深度の遮り）は試験の対象外で、源を置く項目で撮影して確かめる
