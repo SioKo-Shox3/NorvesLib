@@ -8536,3 +8536,9 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 要起票: `RigSplitCookTest` は共有の TEMP の項目が多いと `cook_managed_store: entry_limit` で落ちる（作業ツリー内の空の TEMP では Passed）。試験が一時フォルダーの数の上限に依存している
 - U5 rig-split の CLI でも同名材質の警告を表示する: 着地(直し 0 回)
 - U6 在庫モードでもリターゲット先の骨格の sidecar を照合し、文書と記録を直してタスクの verify を通す: 着地(直し 0 回)
+
+## 2026-11-02 G2-MATERIAL-SELECTION-INTEGRATION（run 20261102-095605 の反復 2）
+- Done: 差し戻しの 2 点を直した。`AssetCook --rig-split`（`CookRigSplitFile`）でも骨格の分割 cook の同名材質の警告（資産名と元 index 付き、元での改名を促す）を stderr に出す。増分の preflight（在庫モード）でも、リターゲット先の骨格の bytes と sidecar を採取済みの依存（`TargetSkeleton`・`Sidecar` の行）と突き合わせ、先の骨格の sidecar の材質設定を `ValidateClipMaterialSettings` で照合する（依存印が一致する記録があっても不正な設定は skip されず Error）。検査は `RigSplitCookTest` の BVH 入力のリターゲットで 1 件（未一致の先の骨格の sidecar が依存印を合わせた記録でも Error、戻すと Skip）。`MaterialSelection.md`・`Docs/Testing.md` を合わせた
+- 検証: `cmake --build build --config Debug --target CookedMeshTest AssetCook -- /m:1` は終了コード 0、ctest の 7 本（MaterialSelectionTest・MaterialImportDocumentTest・MaterialImportSettingsJsonTest・SkeletalMaterialBindingsTest・GltfMaterialSourceTest・CookCacheDecisionTest・AssetCookImportSmoke）はすべて Passed、RigSplitCookTest・CookedClipBankV1Test・SkeletalClipBankBindingTest も Passed（作業ツリー内の TEMP で再実行。`.harness/runs/20261102-095605/verify-G2-MATERIAL-SELECTION-INTEGRATION-U6.txt`、足した検査の出力行は `aux-G2-MATERIAL-SELECTION-INTEGRATION-rigsplit.txt`）
+- Next: なし（この項目は完了）
+- Notes: 反復 1 の Notes の「target 骨格の sidecar は preflight では依存として採るだけ」は、この反復で解消した。`--rig-split` の CLI の警告を実際の CLI の出力で確かめる試験は無い（コードで確かめた）
