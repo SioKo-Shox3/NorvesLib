@@ -3430,7 +3430,7 @@
 - notes: 2026-10-06 VTG6-PT-VT-TEXTURES の評価で見つけた（段6の外）。撮影は `.harness/runs/startup-capture/VTG6-PT-VT-TEXTURES*`。
 
 ## TEST-ASSERT-NO-DIALOG: Debug のテストが assert の失敗で対話窓を出して ctest の打ち切りまで止まるのを、共通の仕組みで止める
-- status: todo
+- status: done
 - done-when: `assert(` を使い、`_set_abort_behavior` も `_CRT_ERROR` の報告先の設定もしていないテストの実行ファイル（2026-10-06 の数え方で 158 件、Test/Core/Rendering で 96 件）が、Debug で assert が失敗すると対話窓を出して ctest の打ち切りまで待つ（TEST-SKINNED と同じ止まり方）。テストの実行ファイル全部に効く共通の仕組み（テストの共通のライブラリに静的初期化で `_set_error_mode(_OUT_TO_STDERR)` と `_set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT)` を入れて CMake で全テストへリンクする等）で止める。わざと assert を落とすテストの実行ファイルが、対話窓を出さずにすぐ非 0 で終わることを確かめる。あわせて、`RenderGraphCompileTest` などが副作用を `assert(...)` の中に置いていて NDEBUG の構成（RelWithDebInfo）では初期化ごと消えて 0xC0000005 で落ちる件を記録する（直すのは別）。 わざと assert を落とす実行ファイルとして `TestAssertNoDialogTest` を足し（共通の仕組みをリンクした形で）、ctest には短い TIMEOUT（例 30 秒）と WILL_FAIL を付けて登録し、対話窓を出さずに非 0 ですぐ終わるときだけ通るようにする。足す前に `Docs/Testing.md` の 3 点を書く。
 - verify: `cmake --build build --config Debug --target RenderGraphCompileTest -- /m:1`
 - verify: `cmake --build build --config Debug --target TestAssertNoDialogTest -- /m:1`
@@ -3928,7 +3928,7 @@
 - stop-when: mock/source確認を実GPU合格と扱う、ユーザー指定を変えて別環境へ無断移動する。
 
 ## G2-GR79-IMPORT-POLICY-CONNECTION: 材質設定と出所付き診断を接続する
-- status: todo
+- status: done
 - done-when: material/asset/asset-setの設定を解決し、発光換算の未設定拒否に資産名・材質名・emissiveNitsPerUnitを表示。AI生成profileを明示的に適用し素材単位overrideを保持する。canonical/hash/cacheとJSON/CLIへ接続する。 verify の文章にあった場合（asset-set 単位の指定・素材の上書き・欠落と不正・発光の texture だけ・診断の名前・設定差による cache の失効・旧の非発光と v0 の互換）は、新しい実行ファイルを作らず、上の既存の試験（`MaterialImportPolicyTest`・`GltfMaterialCookV1Test`・`CookCacheDecisionTest` など）の検査として足す（足す前に `Docs/Testing.md` の 3 点を書く）。見た目の確かめを受入れ済みと扱わない。
 - verify: `cmake --build build --config Debug --target CookedMeshTest AssetCook -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^(MaterialImportPolicyTest|MaterialImportSettingsTest|MaterialImportSettingsJsonTest|MaterialImportDocumentTest|GltfMaterialCookV1Test|ImportSettingsHashTest|CookCacheDecisionTest|AssetCookImportSmoke|AssetCookGlbSmoke)$" --no-tests=error --output-on-failure --timeout 180`
