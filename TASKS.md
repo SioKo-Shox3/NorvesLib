@@ -3807,7 +3807,7 @@
 - notes: 2026-10-02追加。未着手の後続作業で、前提と選定課題を解決してから実装タスクへ細分化する。NorvesLib/Editorの境界とVFX-S1〜S5はロードマップ参照。
 
 ## GAME-GR133-VFX: デカール（地面や体に残る跡）を実装する
-- status: done
+- status: doing
 - done-when: 着手の最初に、作者の判断が要る方式と、未着手の前提の GR との境界を `Docs/Plans/GameFeatureRoadmap.md` に書く（推奨の案で進め、理由を PROGRESS.md に書く。前提が未完の部分は完了を宣言しない範囲として残す）。 草（GR43）の上には描かないのを既定にする。起動せずに確かめる完了の条件: CPU の試験 `DecalPoolEvictionTest`（新しい実行ファイル。足す前に `Docs/Testing.md` の 3 点を書く）で、上限を超えると古いものから消える。既知の箱のデカールが範囲内の GBuffer の色と法線だけを変え、範囲外の画素が変わらないこと（GPU の試験 `DecalGBufferVulkanTest`）は、起動を戻した後の `GAME-GR133-VFX-CHECK` で確かめる。
 - verify: `cmake --build build --config Debug --target Game DecalPoolEvictionTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^DecalPoolEvictionTest$" --no-tests=error --output-on-failure --timeout 180`
