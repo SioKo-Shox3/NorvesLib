@@ -618,6 +618,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/FoliagePass.h
     Public/Rendering/FoliageTypes.h
     Public/Rendering/DecalTypes.h
+    Public/Rendering/DistortionTypes.h
     Public/Rendering/RenderingCoordinator.h
     Public/Rendering/RenderGraph/RenderGraphTypes.h
     Public/Rendering/RenderGraph/RenderGraphResourceNames.h

@@ -364,6 +364,11 @@ namespace NorvesLib::Core::Rendering
         m_RenderingCoordinator.SetDecals(decals);
     }
 
+    void RenderWorld::SetDistortions(const DistortionScene& distortions)
+    {
+        m_RenderingCoordinator.SetDistortions(distortions);
+    }
+
     void RenderWorld::SetDeterministicCapture(bool bEnabled)
     {
         m_RenderingCoordinator.SetDeterministicCapture(bEnabled);

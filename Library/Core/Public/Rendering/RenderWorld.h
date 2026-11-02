@@ -252,6 +252,14 @@ namespace NorvesLib::Core::Rendering
         void SetDecals(const DecalScene& decals);
 
         /**
+         * @brief 歪みの源の一覧を設定する（GameThread）
+         *
+         * RenderThread の DistortionPass が半透明の後のシーンの色をずらす。
+         * 一覧は作った後に書き換えない共有の値で、空の一覧では歪みを描かない。
+         */
+        void SetDistortions(const DistortionScene& distortions);
+
+        /**
          * @brief 決定的な撮影（--capture-deterministic）にする（GameThread）
          *
          * 有効な間、FramePacket の経過時間を 1/60 秒に固定する。起動の初期化で一度だけ呼ぶ。
