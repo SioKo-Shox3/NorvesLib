@@ -183,8 +183,8 @@ namespace NorvesLib::Test::RenderingValidation
             Core::Rendering::ProceduralMeshGenerator::GeneratePlane(
                 10.0f, 10.0f, 1, 1, outVertices, outIndices);
 
-            // Indoor uses the existing wall-facing representation. Outdoor keeps
-            // the generator's native ground-facing winding and normal.
+            // 室内は巻き順を反転して裏返し、頂点法線も幾何に合わせて -Y にする。
+            // 屋外は生成器の巻き順と法線をそのまま使う。
             if (kind != SceneKind::Indoor)
             {
                 return;
@@ -193,8 +193,8 @@ namespace NorvesLib::Test::RenderingValidation
             for (Core::Rendering::Mesh3DVertex& vertex : outVertices)
             {
                 vertex.Normal[0] = 0.0f;
-                vertex.Normal[1] = 0.0f;
-                vertex.Normal[2] = 1.0f;
+                vertex.Normal[1] = -1.0f;
+                vertex.Normal[2] = 0.0f;
             }
             for (size_t index = 0; index + 2 < outIndices.size(); index += 3)
             {
@@ -222,8 +222,8 @@ namespace NorvesLib::Test::RenderingValidation
             constexpr uint32_t outdoorIndices[6] = {0u, 1u, 2u, 1u, 3u, 2u};
             constexpr uint32_t indoorIndices[6] = {0u, 2u, 1u, 1u, 2u, 3u};
             const float expectedNormalX = 0.0f;
-            const float expectedNormalY = kind == SceneKind::Indoor ? 0.0f : 1.0f;
-            const float expectedNormalZ = kind == SceneKind::Indoor ? 1.0f : 0.0f;
+            const float expectedNormalY = kind == SceneKind::Indoor ? -1.0f : 1.0f;
+            const float expectedNormalZ = 0.0f;
             const uint32_t* expectedIndices =
                 kind == SceneKind::Indoor ? indoorIndices : outdoorIndices;
 

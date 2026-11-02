@@ -8573,3 +8573,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 要起票: `windows-assetcook.yml` を手動起動して、照合を直した `VerifyTextureAssetSet.py` の全体（失敗時の検査を含む）が CI で完走することを確かめる。
 - Notes: 範囲外で残したもの: `CookTextureAssetSet.ps1` の `Quote-ProcessArgument` は、空白を含み末尾が `\` のパスを渡すと閉じの引用符を `\"` にする（前からある関数、端の場合だけ）。
 - U1 CreateNormalMatrix の特異判定を尺度に対する比にし、小スケールの回転の検査を足す: 着地(直し 0 回)
+- U2 PT の閉包命中から退化規則の写しを外し、R1 室内の平面の頂点法線を幾何に合わせる: 着地(直し 0 回)
