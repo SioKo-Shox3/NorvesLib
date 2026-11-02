@@ -21,7 +21,8 @@
         if (!(x))                                                                                                      \
         {                                                                                                              \
             std::fprintf(stderr, "line %d: %s\n", __LINE__, #x);                                                       \
-            std::abort();                                                                                              \
+            std::fflush(stderr);                                                                                        \
+            std::_Exit(EXIT_FAILURE);                                                                                  \
         }                                                                                                              \
     } while (false)
 namespace BootstrapTest
@@ -178,8 +179,13 @@ namespace BootstrapTest
             {
                 CookManagedStoreObservation out;
                 TestText error;
-                CHECK(InitializeNewCookManagedStore(Owner, out, error) ==
-                      CookManagedStoreInitializationResult::Created);
+                const auto result = InitializeNewCookManagedStore(Owner, out, error);
+                if (result != CookManagedStoreInitializationResult::Created)
+                {
+                    std::fprintf(stderr, "STORE_INITIALIZATION result=%u error=%s fixture=%ls\n",
+                                 static_cast<unsigned>(result), error.c_str(), Base.c_str());
+                }
+                CHECK(result == CookManagedStoreInitializationResult::Created);
             }
         }
         CookManagedBootstrapRequest Request() const
@@ -335,8 +341,8 @@ namespace BootstrapTest
         const auto result = RecoverCookManagedPending(f.Runtime, out, error);
         if (result != expected)
         {
-            std::fprintf(stderr, "recover expected=%u got=%u: %s\n", static_cast<unsigned>(expected),
-                         static_cast<unsigned>(result), error.c_str());
+            std::fprintf(stderr, "recover fixture=%ls expected=%u got=%u: %s\n", f.Base.c_str(),
+                         static_cast<unsigned>(expected), static_cast<unsigned>(result), error.c_str());
         }
         CHECK(result == expected);
         if (expected == Recovery::NoPending || expected == Recovery::Conflict || expected == Recovery::Error)
@@ -885,12 +891,10 @@ int main(int argc, char** argv)
     {
         return child;
     }
-    wchar_t temp[32768]{};
-    const auto length = GetTempPathW(32768, temp);
-    CHECK(length && length < 32768);
     wchar_t name[128]{};
     std::swprintf(name, 128, L"NorvesManagedBootstrap-%lu-%llu", GetCurrentProcessId(), GetTickCount64());
-    const auto root = std::filesystem::path(temp) / name;
+    // 管理ストアは RuntimeRoot の祖先を列挙するため、項目の多い共有の TEMP の外に置く。
+    const auto root = std::filesystem::current_path() / name;
     CHECK(std::filesystem::create_directory(root));
     BootstrapTest::Run(root);
     CHECK(std::filesystem::remove_all(root) > 0);
