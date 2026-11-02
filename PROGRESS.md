@@ -9095,3 +9095,12 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 前の失敗で隠れていた同じ形の失敗も直した: TestGenerationGatesAndLostPublishCleanup（アップロードが後のフレームへ移り、FakeBuffer の Update の hook が公開の最中に走らない。世代を進める hook をプールの塊の作成の時点へ移し、走ったことを assert。解放の確かめを FakeBuffer の数からモデル数・プールの使用バイト数・区画数・アップロード待ちへ置き換え）、MegaGeometryResourcesTest の TestCreateFailureDoesNotRegister（プールの確保の再試行で単発の失敗の注入が空振り。Initialize 後からの相対の番号以降を失敗させ、注入が当たったことと資源が増えないことを assert）
 - MegaGeometryResourcesTest の BVH の無いメッシュの検査は、実行時に作る BVH（e806a3c9）の契約に置き換えた: 節数・葉の数・段の節数の合計、バイト数 = 節 × 32 + クラスタ数 × 4、256 整列でインデックス・クラスタの後ろ、葉に LEAF と CLUSTER_ORDER の印・範囲が表の中、表がクラスタ番号の置換、クラスタの記録は焼いた BVH の版とバイト単位で同じ。壊れた BVH を拒否する検査は変えていない
 - 証拠: `.harness/runs/20261103-004713/u2-unit-verify.txt`（タスクの verify。Release・Debug とも 4 本 Passed、終了コード 0）。windows-assetcook.yml の `-R` は変えていない。CI の再確認は G2-S6-ASSET-SET-P3
+
+- U1 宛先ロックに試験だけの mutex 名前空間の口を足し、宛先ロックの試験をその中で走らせる: 着地(直し 0 回)
+- U2 Bootstrap・Update の試験と子プロセスを名前空間の中で走らせ、タスクの verify を全部回す: 着地(直し 0 回)
+
+## 2026-11-03 G2-MATERIAL-SELECTION-INTEGRATION-P1-P1-P1-P1（run 20261103-004712 の反復 1、完了）
+- Done: cook の宛先ロックに試験だけの mutex 名前空間の口 `Detail::ScopedCookDestinationLockNamespaceForTest`（`CookDestinationLockTestAccess.h`、範囲つき・入れ子で前の値へ戻す）を足した。設定中だけ mutex 名が `Global\NorvesLib.AssetCook.DestinationVolumeLock.v1.test.<名前空間>.<小文字の volume GUID>` になり、外すと今の名前に戻る。本体は新しい環境変数も引数も読まない（`CookDestinationLock.cpp` の `GetEnvironmentVariable` は 1 か所のまま）。試験側の `CookLockWaitTestScope.h` に、親が実行ごとに一意の名前空間を立てて試験だけの環境変数 `NORVES_COOK_LOCK_TEST_NAMESPACE` で子へ継承させる範囲と、子がそれを読んで同じ名前空間を立てる範囲を足し、`CookDestinationLockTest`・`CookManagedBootstrapTest`・`CookManagedUpdateTest` の親と子（`--lock-child`・`--bootstrap-child`・`--update-child`・`--recovery-child`）をその中で走らせる。`CookDestinationLockTest` は名前空間を外した状態で製品の名前（接頭辞 + 36 文字の小文字 GUID）を確かめる。検査・期待と CMakeLists の `RESOURCE_LOCK`・`ENVIRONMENT` は変えていない
+- 証拠: `.harness/runs/20261103-004712/U2-verify.txt`（Debug のビルド 0、3 本の直列 Passed 0.56・20.96・76.71 秒、製品の名前の mutex を python が持った状態（取得結果 `[0]`）で 3 本 Passed、`-j 4` の 4 本 Passed、参照数 1、numstat 一致）
+- Next: なし（この項目は完了）
+- Notes: 名前空間は試験の環境変数で子へ渡すため、試験から AssetCook.exe など製品の実行ファイルを起動する経路があれば、その子は製品の名前で取る（今の 3 本の子は CookedMeshTest 自身だけ）
