@@ -1,4 +1,5 @@
 ﻿// 実thread/processの協調排他とmutex消滅/abandonedを検証する。資産publicationは行わない。
+#include "CookLockWaitTestScope.h"
 #include "Tools/AssetCook/CookDestinationLock.h"
 #include "Tools/AssetCook/CookDestinationLockTestAccess.h"
 #include "Container/VariableArray.h"
@@ -85,6 +86,11 @@ namespace DestinationLockTest
             Work peer;
             LockText otherError;
             Result result = Result::Error;
+#if defined(_WIN32)
+            // Busy を即時に確認するため、この取得では待たない。
+            const auto noWait = CookLockWaitTest::DoNotWaitForCookLock();
+            CHECK(noWait.Valid());
+#endif
             std::thread thread(
                 [&]
                 {
@@ -100,6 +106,11 @@ namespace DestinationLockTest
             Work peer;
             LockText otherError;
             Result result = Result::Error;
+#if defined(_WIN32)
+            // Busy を即時に確認するため、この取得では待たない。
+            const auto noWait = CookLockWaitTest::DoNotWaitForCookLock();
+            CHECK(noWait.Valid());
+#endif
             std::thread thread(
                 [&]
                 {
@@ -205,41 +216,6 @@ namespace DestinationLockTest
             }
         }
     };
-    struct EnvironmentVariableRestore
-    {
-        const char* Name;
-        NorvesLib::Core::Container::VariableArray<char> Previous;
-        bool bPresent = false;
-        explicit EnvironmentVariableRestore(const char* name) : Name(name)
-        {
-            SetLastError(ERROR_SUCCESS);
-            const DWORD size = GetEnvironmentVariableA(Name, nullptr, 0);
-            if (!size)
-            {
-                const DWORD error = GetLastError();
-                CHECK(error == ERROR_SUCCESS || error == ERROR_ENVVAR_NOT_FOUND);
-                bPresent = error == ERROR_SUCCESS;
-                if (bPresent)
-                {
-                    Previous.push_back(0);
-                }
-                return;
-            }
-            Previous.resize(size);
-            SetLastError(ERROR_SUCCESS);
-            const DWORD length = GetEnvironmentVariableA(Name, Previous.data(), size);
-            CHECK(length < size && (length > 0 || GetLastError() == ERROR_SUCCESS));
-            bPresent = true;
-        }
-        ~EnvironmentVariableRestore()
-        {
-            if (!SetEnvironmentVariableA(Name, bPresent ? Previous.data() : nullptr))
-            {
-                bCleanupFailed = true;
-                std::fputs("環境変数を元に戻せませんでした\n", stderr);
-            }
-        }
-    };
     struct JoiningThread
     {
         std::thread& Thread;
@@ -262,8 +238,6 @@ namespace DestinationLockTest
     };
     void WaitOption(const CookDestinationLockRequest& request)
     {
-        constexpr char variable[] = "NORVES_COOK_LOCK_WAIT_MS";
-        EnvironmentVariableRestore restore(variable);
         struct Holder
         {
             Work WorkData;
@@ -303,7 +277,9 @@ namespace DestinationLockTest
             JoiningThread join{thread, start.Value, release.Value};
             HANDLE signals[] = {ready.Value, done.Value};
             CHECK(WaitForMultipleObjects(2, signals, FALSE, 60000) == WAIT_OBJECT_0);
-            CHECK(SetEnvironmentVariableA(variable, bWait ? "5000" : nullptr));
+            // 待ちなしの検証では Busy を即時に確認する。
+            const CookLockWaitTest::ScopedCookLockWait wait(bWait ? CookLockWaitTest::TestWaitMilliseconds : nullptr);
+            CHECK(wait.Valid());
             CHECK(SetEvent(start.Value));
             Work work;
             LockText error;
@@ -417,6 +393,9 @@ namespace DestinationLockTest
     }
     bool ProcessProbe(const CookDestinationLockContext& context, void*, LockText&)
     {
+        // 子が Busy を即時に返せるよう、起動前に待ちを消す。
+        const auto noWait = CookLockWaitTest::DoNotWaitForCookLock();
+        CHECK(noWait.Valid());
         Process child({context.FinalRuntimeRootLocator}, "probe");
         CHECK(child.Exit() == 20);
         return true;
@@ -519,6 +498,8 @@ int main(int argc, char** argv)
         {
             return ChildMain(argc, argv);
         }
+        const auto lockWait = CookLockWaitTest::WaitForCookLock();
+        CHECK(lockWait.Valid());
         char leaf[100];
         std::snprintf(leaf, sizeof(leaf), "norves-destination-lock-%lu-%llu", GetCurrentProcessId(),
                       static_cast<unsigned long long>(GetTickCount64()));
@@ -694,8 +675,13 @@ int main(int argc, char** argv)
             Events events(1);
             Process child(request, "hold", events.ReadyName.c_str(), events.StopName.c_str(), events.Stop.Value);
             events.WaitReady(child);
-            Work work;
-            CHECK(WithCookDestinationLock(request, Run, &work, error) == Result::Busy && work.Calls == 0);
+            {
+                // 子の所有中に Busy を即時に確認する。
+                const auto noWait = CookLockWaitTest::DoNotWaitForCookLock();
+                CHECK(noWait.Valid());
+                Work work;
+                CHECK(WithCookDestinationLock(request, Run, &work, error) == Result::Busy && work.Calls == 0);
+            }
             CHECK(SetEvent(events.Stop.Value));
             CHECK(child.Exit() == 0);
         }
