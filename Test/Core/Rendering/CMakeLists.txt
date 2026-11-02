@@ -142,6 +142,24 @@ register_rendering_gpu_test(
     DDGIProbeRayQueryVulkanTest
     DDGIProbeRadianceVulkanTest --test=DDGIProbeRayQueryVulkanTest
 )
+add_executable(MeshParticleDissolveVulkanTest
+    MeshParticleDissolveVulkanTest.cpp
+)
+target_link_libraries(MeshParticleDissolveVulkanTest PRIVATE RenderingGpuTestSupport)
+target_include_directories(MeshParticleDissolveVulkanTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Library/Core/Private
+    ${CMAKE_SOURCE_DIR}/Test/Core/Rendering
+)
+target_compile_definitions(MeshParticleDissolveVulkanTest PRIVATE
+    NORVES_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
+)
+set_target_properties(MeshParticleDissolveVulkanTest PROPERTIES FOLDER "Test/Core/Rendering")
+register_rendering_gpu_test(
+    MeshParticleDissolveVulkanTest
+    MeshParticleDissolveVulkanTest
+)
+
 add_executable(RTGIDiffuseIndirectVulkanTest
     RTGIDiffuseIndirectVulkanTest.cpp
 )
@@ -2104,6 +2122,12 @@ add_executable(VfxEffectSystemTest
 target_link_libraries(VfxEffectSystemTest PRIVATE Core)
 set_target_properties(VfxEffectSystemTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME VfxEffectSystemTest COMMAND VfxEffectSystemTest)
+
+# メッシュの粒子の記録と溶けの閾値を確かめる。
+add_executable(MeshParticleInstanceTest MeshParticleInstanceTest.cpp)
+target_link_libraries(MeshParticleInstanceTest PRIVATE Core)
+set_target_properties(MeshParticleInstanceTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME MeshParticleInstanceTest COMMAND MeshParticleInstanceTest)
 
 add_test(NAME ParticleFrameSnapshotTest COMMAND CanvasTransientBoardSnapshotTest --test=ParticleFrameSnapshotTest)
 
