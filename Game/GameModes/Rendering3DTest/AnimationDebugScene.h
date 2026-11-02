@@ -1,6 +1,7 @@
 ﻿#pragma once
 #include "Core/Public/Animation/AnimGraphResource.h"
 #include "Core/Public/Animation/SkeletalAssetResource.h"
+#include "Core/Public/Particle/SwordTrailRibbon.h"
 #include "Core/Public/Rendering/MaterialTypes.h"
 #if defined(NORVES_ENABLE_IMGUI)
 #include "Debug/AnimatorDebugView.h"
@@ -23,12 +24,17 @@ namespace Game::GameModes
         ~AnimationDebugScene();
         bool Prepare(NorvesLib::Core::GameMode::GameModeContext&, NorvesLib::Core::Rendering::MaterialHandle);
         void ActivateViews(NorvesLib::Core::World&);
+        void TickTrail(NorvesLib::Core::World&, float deltaTime);
         void Stop();
 
       private:
         uint64_t m_Character = 0, m_Item = 0;
         NorvesLib::Core::Container::TSharedPtr<NorvesLib::Core::SkeletalAssetResource> m_CharacterAsset, m_ItemAsset;
         NorvesLib::Core::Container::TSharedPtr<NorvesLib::Core::AnimGraphResource> m_Graph;
+        NorvesLib::Core::Particle::SwordTrailRibbon m_SwordTrail;
+        NorvesLib::Core::Rendering::RibbonTrailScene m_TrailScene;
+        double m_TrailTime = 0.0;
+        bool m_bFirstTrailSample = true;
 #if defined(NORVES_ENABLE_IMGUI)
         Game::Debug::AnimatorDebugView m_AnimatorView;
         Game::Debug::SocketDebugView m_SocketView;

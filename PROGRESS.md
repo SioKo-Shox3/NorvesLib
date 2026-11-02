@@ -8739,17 +8739,90 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: 起動の確かめは後回し（人の決まりで GPU を使う試験を起動しない）。`GAME-GR134-VFX-CHECK` で `ctest --test-dir build -C Debug -R "^MeshParticleDissolveVulkanTest$" --no-tests=error --output-on-failure --timeout 600` を回し、標準出力の 5 行（年齢 0 で四角形の全部が本体の色・年齢 0.25→0.5→0.75 で覆う画素が真に減る・0.5 の覆う割合が 0.2〜0.8・縁の画素が各 1 つ以上・閾値 1 で 0）を確かめる
 - Notes: `MeshParticleDissolveVulkanTest` は GPU で未実行。四角形の向き（カリングは無し）・`CopyToShaderData` で上げた行列の掛け方・R8G8B8A8_UNORM の読み戻しの並びは、コードの読みでの判断。落ちたらシェーダーのインスタンスの形（112 バイト）と行列の上げ方から見る
 - Notes: `AlignToVelocity` の回転は `CreateWorldRowVector` が四元数の回転行列を行ベクトルの規約でそのまま置く（転置の向きになる）ことに合わせて軸の符号を選んでいる。`MeshParticleInstanceTest` の検査 7 で局所の +Z が速度の向きへ写ることを確かめた
-### GAME-GR135-VFX 空気の歪み（2026-11-02、run 20261102-154424 の反復 1。着手）
-- 方式（推奨を採った）: 歪みは画面空間の後処理 1 本（`DistortionPass`）にし、半透明の前方描画の後・TAA の前に置く。歪みのバッファは描画の大きさの RG16F 1 枚で、値は画面の高さに対する割合のずらし（出力の画素 p = 入力の p + ずらし × 高さ[px] の色。ずらしが 0 の画素は入力をそのまま写す）。源は画面に向く円盤（`DistortionInstance`。陽炎の模様を時間で流す）の一覧をデカールと同じ道（`RenderWorld::SetDistortions` → `FramePacket` → 描画の文脈）で渡し、源が無いフレームは何も宣言しない。理由: 粒子（GR57）・メッシュ（GR134 の GR27 の後）の描き手が今のエンジンで 3D の view に出ないため、それらに依らない源と、後でそれらが同じバッファへ加算できる口を先に作る。半透明・霧まで曲げ、TAA・ブルームを後に掛けるため、半透明の後に置く
-- 方式と境界の記録: `Docs/Plans/GameFeatureRoadmap.md`（メイン側・管理外）の「GR135 空気の歪み（屈折）の方式と境界」の節
-- 完了を宣言しない範囲: 粒子から歪みのバッファへ描く描画のモジュール（GR57 の描画パスの後）、メッシュの法線で歪ませる源（GR134・GR27 の後）、GR25 の口への移し替え、TAA のリアクティブの印（GR30）、ずらした先の手前の物の写り込みの拒否、Editor の編集の画面。どのシーンにも源を置かないので、起動画面とシーンの見た目は変わらない
-- U1 歪みの源の型と GameThread から描画の文脈までの受け渡し: 着地(直し 0 回)
-- U2 歪みのシェーダー 4 本: 着地(直し 0 回)
-- U3 DistortionPass と SceneView への配置: 着地(直し 0 回)
-- U4 DistortionPassVulkanTest（作るだけ・走らせない）と仕上げの確かめ: 着地(直し 1 回)
-- Done: 歪みのバッファとパスを足した。`DistortionPass`（`Library/Core/Private/Rendering/DistortionPass.cpp`）は源の一覧が空・カメラが無いフレームは何も宣言せず、源があればずらしの RG16F を 0 で消して源を加算し（`distortion_offset.vert/.frag`）、シーンの色をずらして一時の色へ集め（`distortion_gather.frag`）、混合せずに書き戻す（`distortion_copy.frag`）。SceneView の半透明の ForwardPass の直後・TAA の前に置いた。試験から呼べる記録の口 `RecordOffsets`・`RecordComposite` を出した
-- Done: GPU の試験 `DistortionPassVulkanTest` を足した（足す理由の 3 点は `Docs/Testing.md`）。96×64 の画像で、ずらし 0 のとき全画素がビットまで一致すること、ずらし (4/64, −2/64) で出力 (x, y) が入力 (x+4, y−2) と一致すること（幅と高さを違え、単位が高さであることを反証する）の 2 点だけを見る
-- 証拠: `.harness/relay/GAME-GR135-VFX-U4-verify.txt`（HEAD ec7fe05 の上の U4 の作業ツリーで `cmake --build build --config Debug --target Game -- /m:1` 終了コード 0、`cmake --build build --config Debug --target DistortionPassVulkanTest -- /m:1` 終了コード 0、`ctest -N -R "^DistortionPassVulkanTest$"` で登録 1 件。numstat 2 通り一致・新規ファイルは BOM・CRLF）
-- Next: 起動の確かめは後回し（人の決まりで GPU を使う試験を起動しない）。`GAME-GR135-VFX-CHECK` で `ctest --test-dir build -C Debug -R "^DistortionPassVulkanTest$" --no-tests=error --output-on-failure --timeout 600` を回し、標準出力の 2 行（ZERO_OFFSET・KNOWN_OFFSET が合格・不一致画素数 0）を確かめる
-- Notes: `DistortionPassVulkanTest` は GPU で未実行。合成の後の色の添付の状態（render pass の最終は ShaderResource）から転送への明示の障壁、RGBA16F の読み戻しの並び、カメラの右・上を `CopyShaderInverseView` の最初の 2 列から取る向きは、コードの読みでの判断。落ちたら、ずらしの y の符号（Vulkan の画面は下向き）と集めるシェーダーの標本の位置から見る
-- Notes: 源を置く呼び手（`RenderWorld::SetDistortions` を呼ぶゲーム側）はまだ無い。どのシーンにも源が無いので、起動画面と各シーンの見た目は変わらない（パスは何も宣言しない）。源のずらしの描画（円盤・模様の流れ・深度の遮り）は試験の対象外で、源を置く項目で撮影して確かめる
+
+## 2026-11-02 GAME-GR131-VFX（run 20261102-145118 の反復 1。着手）
+- 方式（推奨を採った）: Core の `Particle/HitEffectEmitter` が当たり（位置・法線・表面の名前）を受け、当たり 1 回につき放出の要求をちょうど 1 つ積む。表面の名前を全バイトの一致で表から引き、表に無い名前は既定の 1 種類にする（GR115 が無いうちは名前を文字列で受ける）。再生は GR136 の `VfxEffectSystem` に、エフェクトごとのワールドのインスタンス 1 つへの向きつきのイベント（法線を +Z とした局所の初速の箱）として流す。理由: GR136 のイベントの仕組みをそのまま使えば、当たりごとのインスタンスの作り捨てと片付けの規則が要らず、エフェクトの定義も GR136 の 1 つの形式のままになる。既定の中身は火花（`Metal`）と衝撃（既定）をコードで組む
+- 方式と前提の境界の記録: `Docs/Plans/GameFeatureRoadmap.md`（メイン側・管理外）の「GR131 ヒットエフェクト（当たりの火花・衝撃）の方式と境界」の節
+- 完了を宣言しない範囲: GR16 の当たりを出す側（`CombatHitEvent` からの写し）、GR115 の `SurfaceId`・parent のフォールバック、GR57 の GPU の実行先・3D の粒子の描画パス、GR02 のヒットストップ・時間のチャンネル、GR96 の表とエフェクトのファイル化・クック、GR72 の音・GR133 の跡、Editor の表の編集の画面。火花と衝撃の見た目は起動を戻した後に確かめる
+- U1 当たりの型・表・要求の列（HitEffectEmitter）: 着地(直し 0 回)
+- U2 VFX の向きつきのイベント: 着地(直し 0 回)
+- U3 HitEffectEmissionTest と Docs/Testing.md の 3 点: 着地(直し 0 回)
+- U4 再生（VFX へ流す）・既定の火花と衝撃・ParticleSystem への組み込み: 着地(直し 0 回)
+- U5 再生の確かめを試験に足し、タスクの verify を通す: 着地(直し 0 回)
+- U6 既定の火花と衝撃が組めていない（初速の箱の設定の順）を直す: 着地(直し 0 回)
+- Done: 起動せずに確かめる完了の条件を `HitEffectEmissionTest`（CPU の試験。足す理由の 3 点は `Docs/Testing.md`）で確かめた。当たり 1 回で要求がちょうど 1 つ積まれ、位置は完全一致・法線は 1e-6 以内で当たりの値と一致する。`Metal`・`Wood` は表のエフェクト、`Glass`・空・`metal`（大文字小文字違い）は既定の 1 種類。NaN の位置・長さ 0 と無限大の法線は積まない。再生は当たりの位置から法線の側（法線 (1,0,0) の当たりで速度の法線成分 > 0.9）へ粒を出し、既定の表の火花（`Metal`）と衝撃（既定）の粒が出る。`cmake --build build --config Debug --target Game HitEffectEmissionTest -- /m:1` 終了コード 0、`ctest -R "^HitEffectEmissionTest$"` Passed（`.harness/runs/20261102-145118/verify-GAME-GR131-VFX-final.txt`。前半の失敗は直す前の形で検査 6 が落ちることを確かめた分）
+- Done: エンジンの `ParticleSystem` が `HitEffectEmitter` を持ち（`GetParticleSystem().GetHitEffects().SubmitHit(...)`）、刻みで VFX の前に要求を流す。当たりが無ければ VFX のインスタンスは作られず、Rendering3DTest の橙の粒は前のまま。`VfxEffectSystem::RaiseOrientedEvent` を足し、向きの無い既存のイベントは変えていない（`VfxEffectSystemTest`・`ParticleSystemTest` Passed）
+- Next: 起動の確かめは後回し（`GAME-GR131-VFX-CHECK`）。当たりを出す場面（GR16 の当たりか、確かめ用の起動引数）を用意し、火花と衝撃の見た目を撮って確かめる。ただし下の Notes のとおり、今はワールドの空間の板が描かれないので、その経路ができるまで画面には出ない
+- Notes: 完了を宣言しない範囲は着手時の記録のとおり。加えて、粒子の板は `ApplicationProcessor` からキャンバスの view（画面の空間）にだけ渡り、ワールドの空間の板は描かれない。ロードマップの GR131 の節の境界に書いた
+- Notes: 要起票: ワールドの空間の粒子の板（`BoardSpace::WorldSpace` の `BoardProxy`）を 3D の view へ渡す経路が無い（`ApplicationProcessor.cpp` の粒子の板の受け渡しはキャンバスの view だけ）。当たりのエフェクトなどワールドの空間の VFX が画面に出ない
+- Notes: スキーマの初速の箱は `Min` を `Max` より先に入れると既定の `Max`（0）を超えて拒否される。VFX をコードで組むときは上限を先に入れる
+## 2026-11-02 GAME-GR131-VFX（run 20261102-145118 の反復 1。着手）
+- 方式（推奨を採った）: Core の `Particle/HitEffectEmitter` が当たり（位置・法線・表面の名前）を受け、当たり 1 回につき放出の要求をちょうど 1 つ積む。表面の名前を全バイトの一致で表から引き、表に無い名前は既定の 1 種類にする（GR115 が無いうちは名前を文字列で受ける）。再生は GR136 の `VfxEffectSystem` に、エフェクトごとのワールドのインスタンス 1 つへの向きつきのイベント（法線を +Z とした局所の初速の箱）として流す。理由: GR136 のイベントの仕組みをそのまま使えば、当たりごとのインスタンスの作り捨てと片付けの規則が要らず、エフェクトの定義も GR136 の 1 つの形式のままになる。既定の中身は火花（`Metal`）と衝撃（既定）をコードで組む
+- 方式と前提の境界の記録: `Docs/Plans/GameFeatureRoadmap.md`（メイン側・管理外）の「GR131 ヒットエフェクト（当たりの火花・衝撃）の方式と境界」の節
+- 完了を宣言しない範囲: GR16 の当たりを出す側（`CombatHitEvent` からの写し）、GR115 の `SurfaceId`・parent のフォールバック、GR57 の GPU の実行先・3D の粒子の描画パス、GR02 のヒットストップ・時間のチャンネル、GR96 の表とエフェクトのファイル化・クック、GR72 の音・GR133 の跡、Editor の表の編集の画面。火花と衝撃の見た目は起動を戻した後に確かめる
+- U1 当たりの型・表・要求の列（HitEffectEmitter）: 着地(直し 0 回)
+- U2 VFX の向きつきのイベント: 着地(直し 0 回)
+- U3 HitEffectEmissionTest と Docs/Testing.md の 3 点: 着地(直し 0 回)
+- U4 再生（VFX へ流す）・既定の火花と衝撃・ParticleSystem への組み込み: 着地(直し 0 回)
+- U5 再生の確かめを試験に足し、タスクの verify を通す: 着地(直し 0 回)
+- U6 既定の火花と衝撃が組めていない（初速の箱の設定の順）を直す: 着地(直し 0 回)
+- Done: 起動せずに確かめる完了の条件を `HitEffectEmissionTest`（CPU の試験。足す理由の 3 点は `Docs/Testing.md`）で確かめた。当たり 1 回で要求がちょうど 1 つ積まれ、位置は完全一致・法線は 1e-6 以内で当たりの値と一致する。`Metal`・`Wood` は表のエフェクト、`Glass`・空・`metal`（大文字小文字違い）は既定の 1 種類。NaN の位置・長さ 0 と無限大の法線は積まない。再生は当たりの位置から法線の側（法線 (1,0,0) の当たりで速度の法線成分 > 0.9）へ粒を出し、既定の表の火花（`Metal`）と衝撃（既定）の粒が出る。`cmake --build build --config Debug --target Game HitEffectEmissionTest -- /m:1` 終了コード 0、`ctest -R "^HitEffectEmissionTest$"` Passed（`.harness/runs/20261102-145118/verify-GAME-GR131-VFX-final.txt`。前半の失敗は直す前の形で検査 6 が落ちることを確かめた分）
+- Done: エンジンの `ParticleSystem` が `HitEffectEmitter` を持ち（`GetParticleSystem().GetHitEffects().SubmitHit(...)`）、刻みで VFX の前に要求を流す。当たりが無ければ VFX のインスタンスは作られず、Rendering3DTest の橙の粒は前のまま。`VfxEffectSystem::RaiseOrientedEvent` を足し、向きの無い既存のイベントは変えていない（`VfxEffectSystemTest`・`ParticleSystemTest` Passed）
+- Next: 起動の確かめは後回し（`GAME-GR131-VFX-CHECK`）。当たりを出す場面（GR16 の当たりか、確かめ用の起動引数）を用意し、火花と衝撃の見た目を撮って確かめる。ただし下の Notes のとおり、今はワールドの空間の板が描かれないので、その経路ができるまで画面には出ない
+- Notes: 完了を宣言しない範囲は着手時の記録のとおり。加えて、粒子の板は `ApplicationProcessor` からキャンバスの view（画面の空間）にだけ渡り、ワールドの空間の板は描かれない。ロードマップの GR131 の節の境界に書いた
+- Notes: 要起票: ワールドの空間の粒子の板（`BoardSpace::WorldSpace` の `BoardProxy`）を 3D の view へ渡す経路が無い（`ApplicationProcessor.cpp` の粒子の板の受け渡しはキャンバスの view だけ）。当たりのエフェクトなどワールドの空間の VFX が画面に出ない
+- Notes: スキーマの初速の箱は `Min` を `Max` より先に入れると既定の `Max`（0）を超えて拒否される。VFX をコードで組むときは上限を先に入れる
+
+## 2026-11-02 GAME-GR137-VFX（run 20261102-145121 の反復 1。着手）
+- 方式（推奨を採った）: MCP の口は NorvesEditor 側に置き、言語モデル → NorvesEditor の MCP → Bridge → Game の順で呼ぶ。この項目では MCP の口を作らず対象外とする。理由: NorvesEditor に既にローカルの MCP の入口と編集の履歴があり、Game に MCP を持たせると履歴を通らない書き換えと二重の権限・検証ができる
+- 方式（推奨を採った）: Bridge の線の上の新しいメソッド（資産のプロパティの一覧・設定・保存、決定的な撮影）は NorvesEditor の Bridge SDK（`IBridgeEngineAdapter` と振り分け）に口が無く、SDK は範囲の外のリポジトリなので足さない。NorvesLib は SDK に依存しないエンジンの側の部品（`Game/Bridge/BridgeAssetPropertyEditor`・`Game/Bridge/BridgeDeterministicCapture`）だけを作り、SDK に口ができたら `NorvesLibBridgeAdapter` からつなぐ。部品が SDK に依存しないので、Game のソースを丸ごと組み込まずに試験から呼べる
+- 方式（推奨を採った）: 資産の編集は拡張子 → 種類の表の汎用の形で、最初の種類は GR136 のエフェクト（`.vfx.json`）。値は JSON の値の文字列で受け、型の不一致・範囲外・知らない道を英語のコードで拒否して前の値を保つ。資産の根の下の相対の道だけを開き・保存する。決定的な撮影は `--capture-deterministic` で起動した Game でだけ受け、エポックを始め直して指定のフレーム数の後に 1 枚撮る
+- 方式と前提の境界の記録: `Docs/Plans/GameFeatureRoadmap.md`（メイン側・管理外）の「GR137 資産の編集・決定的な撮影・言語モデルの口」の節
+- 完了を宣言しない範囲: Bridge の線の上のメソッドと MCP の道具（NorvesEditor 側）、保存の後の実行中のエフェクトへの反映（GR136 の読み直しの口の後）、保存の後のクック（GR96）、機械・ドライバをまたぐ撮影の一致（GR126）、エポックで数え直さない状態を持つシーンの撮影の一致、編集の画面
+- Notes: 試験を足す理由を書くため `Docs/Testing.md` を paths の外だが触る（done-when が名指し）
+- Notes: 要起票: NorvesEditor の Bridge SDK と仕様に、資産のプロパティの一覧・設定・保存と決定的な撮影のメソッドを足し、MCP の道具から呼ぶ（NorvesEditor 側）
+- U1 エフェクトの資産を JSON へ書き出す: 着地(直し 0 回)
+- U4 Bridge の決定的な撮影の部品: 着地(直し 0 回)
+- U2 Bridge の資産のプロパティの編集の部品: 着地(直し 0 回)
+- U3 BridgeAssetPropertyEditTest と試験を足す理由: 着地(直し 0 回)
+- U5 BridgeDeterministicCaptureVulkanTest（ビルドまで）と最後の確かめ: 着地(直し 0 回)
+### GAME-GR137-VFX を閉じる（2026-11-02、run 20261102-145121 の反復 2）
+- Done: `Game/Bridge/BridgeAssetPropertyEditor`（拡張子 → 種類の表。最初の種類は `.vfx.json`。資産の根の下の相対の道だけを開き、道は `emitters/<エミッタ名>/<プロパティ名>` と `emitters/<エミッタ名>/modules/<添字>/<パラメータ名>`。値は JSON の値の文字列で受け、`type_mismatch`・`out_of_range`・`unknown_property`・`invalid_path` で拒否して前の値を保ち、同じフォルダの一時ファイルから置き換えて保存する）、CPU の試験 `BridgeAssetPropertyEditTest`（Core と部品の .cpp 1 つだけを組み込む）、GPU の試験 `BridgeDeterministicCaptureVulkanTest`（部品の撮影の手順で同じ要求を 2 回撮り、画素のハッシュと PNG の全バイトの一致を見る。GPU の無い環境では 125 で飛ばす）を足した。`Docs/Testing.md` に 2 本の試験を足す理由を書いた
+- 証拠: `.harness/runs/20261102-145121/verify-GAME-GR137-VFX-final.txt`（HEAD 484c7e0c と同じ内容の作業ツリーで `cmake --build build --config Debug --target BridgeDeterministicCaptureVulkanTest -- /m:1` EXIT_CODE 0、`cmake --build build --config Debug --target Game BridgeAssetPropertyEditTest -- /m:1` EXIT_CODE 0、`ctest ... -R "^BridgeAssetPropertyEditTest$"` Passed・EXIT_CODE 0、`ctest -N` で BridgeDeterministicCaptureVulkanTest の登録を確認。GPU の試験は実行していない）
+- Next: 起動の確かめは後回し（人の決まりでアプリと GPU の試験を起動しない）。`GAME-GR137-VFX-CHECK` で verify の 3・4 行目（`BridgeDeterministicCaptureVulkanTest` のビルドと実行）を回し、`BRIDGE_DETERMINISTIC_CAPTURE` の 2 行のハッシュと result=PASS を確かめる
+- Notes: 完了を宣言しない範囲は反復 1 の記録のとおり（Bridge の線の上のメソッドと MCP の道具は NorvesEditor 側、保存後の実行中のエフェクトへの反映、クック、機械をまたぐ撮影の一致）。GPU の試験は試験の側で決定的な撮影を有効にし（`--capture-deterministic` は `--capture-png` が無いと無視されるため）、`--scene=indoor`・128×128・待ち 60 フレームで撮る。RTGI は土台の既定で無効。時間・TAA・自動露出などエポックで戻らない状態が残ると -CHECK で一致しない見込みがあり、そのときは部品の BeginEpoch の数え直しの範囲を見直す
+
+- U1 撃破の血の時間割の型と CPU の試験: 着地(直し 0 回)
+- U2 合図を GR136 の粒と GR133 のデカールへ写す: 着地(直し 0 回)
+## 2026-11-02 GAME-GR132-VFX（run 20261102-152003 の反復 1）
+- 方式（推奨を採った）: 撃破の合図 1 回から、血しぶき → 滲み → 消滅 → 終わりの 4 つの合図を、合図からの相対の時刻の時間割（`DefeatBloodTimeline`）で決め、Core の純粋な CPU の型 `Particle/DefeatBloodSequence` が呼び手の固定の刻みで進める。合図の時刻は刻みの幅によらず時間割の値そのもの。滲みのマスクは 1−(1−t)^2 で単調に広がり、消滅の間も縮めず不透明度で薄れる。`Particle/DefeatBloodPresenter` が、しぶきを GR136 の `VfxEffectSystem` のイベント（コードで組む既定の赤い粒、ワールドの空間）へ、滲みと消滅を GR133 の `DecalPool` のデカール（半径と不透明度を毎刻み更新し、終わりで消す。`DecalPool::SetAppearance` を足した）へ写す。理由: いまある 2 つの道に載せれば前提の GR を待たずに作れ、時間割を 1 つにすれば体の滲み（GR26）・ディゾルブ（GR60）も同じ合図と値で後から繋げられる
+- 垂直スライス（G8）: 粒と地面の滲み（デカール）までを G8 に入れるのを推奨した。どちらもいまのエンジンで動き、時間割を共有するので粒だけに絞っても作業はほとんど減らない。粒だけにするなら滲みを使わない設定で済む。体の滲み・ディゾルブとの連動・白い質感の上の見え方は G10
+- 方式と前提の境界の記録: `Docs/Plans/GameFeatureRoadmap.md`（メイン側・管理外）の「GR132 シ者を倒したときの赤い血」の節。完了を宣言しない範囲: 撃破を出す側（GR17。今は呼び手が `Trigger` を直接呼び、Game からは呼ばない）、GPU の粒（GR57）、濡れと体の表面の滲み（GR26）、ディゾルブ（GR60）、白い面の上の見え方（GR65）、しぶきの向き（GR131 の向きつきのイベントの統合後）、時間のチャンネル（GR02）
+- 検証: verify の 2 行を回した。`Game`・`DefeatBloodSequenceTest`（と `DecalPoolEvictionTest`・`VfxEffectSystemTest`）の Debug のビルド EXIT=0、`DefeatBloodSequenceTest` 1/1 Passed、`DecalPoolEvictionTest`・`VfxEffectSystemTest` 2/2 Passed（`.harness/runs/20261102-152003/verify-GAME-GR132-VFX-U2.txt`）。numstat は 2 通りで一致
+- Next: Game に撃破の場面が無いので起動画面の見た目は変わらず、起動の確かめは無い。粒とデカールの見た目（色・数・大きさ・時間割の仮の値、ワールドの空間の粒が今の描画で出るか）は、GR17 の撃破の場面ができてから撮影で確かめて合わせる
+- U1 撃破の血の時間割の型と CPU の試験: 着地(直し 0 回)
+- U2 合図を GR136 の粒と GR133 のデカールへ写す: 着地(直し 0 回)
+## 2026-11-02 GAME-GR132-VFX（run 20261102-152003 の反復 1）
+- 方式（推奨を採った）: 撃破の合図 1 回から、血しぶき → 滲み → 消滅 → 終わりの 4 つの合図を、合図からの相対の時刻の時間割（`DefeatBloodTimeline`）で決め、Core の純粋な CPU の型 `Particle/DefeatBloodSequence` が呼び手の固定の刻みで進める。合図の時刻は刻みの幅によらず時間割の値そのもの。滲みのマスクは 1−(1−t)^2 で単調に広がり、消滅の間も縮めず不透明度で薄れる。`Particle/DefeatBloodPresenter` が、しぶきを GR136 の `VfxEffectSystem` のイベント（コードで組む既定の赤い粒、ワールドの空間）へ、滲みと消滅を GR133 の `DecalPool` のデカール（半径と不透明度を毎刻み更新し、終わりで消す。`DecalPool::SetAppearance` を足した）へ写す。理由: いまある 2 つの道に載せれば前提の GR を待たずに作れ、時間割を 1 つにすれば体の滲み（GR26）・ディゾルブ（GR60）も同じ合図と値で後から繋げられる
+- 垂直スライス（G8）: 粒と地面の滲み（デカール）までを G8 に入れるのを推奨した。どちらもいまのエンジンで動き、時間割を共有するので粒だけに絞っても作業はほとんど減らない。粒だけにするなら滲みを使わない設定で済む。体の滲み・ディゾルブとの連動・白い質感の上の見え方は G10
+- 方式と前提の境界の記録: `Docs/Plans/GameFeatureRoadmap.md`（メイン側・管理外）の「GR132 シ者を倒したときの赤い血」の節。完了を宣言しない範囲: 撃破を出す側（GR17。今は呼び手が `Trigger` を直接呼び、Game からは呼ばない）、GPU の粒（GR57）、濡れと体の表面の滲み（GR26）、ディゾルブ（GR60）、白い面の上の見え方（GR65）、しぶきの向き（GR131 の向きつきのイベントの統合後）、時間のチャンネル（GR02）
+- 検証: verify の 2 行を回した。`Game`・`DefeatBloodSequenceTest`（と `DecalPoolEvictionTest`・`VfxEffectSystemTest`）の Debug のビルド EXIT=0、`DefeatBloodSequenceTest` 1/1 Passed、`DecalPoolEvictionTest`・`VfxEffectSystemTest` 2/2 Passed（`.harness/runs/20261102-152003/verify-GAME-GR132-VFX-U2.txt`）。numstat は 2 通りで一致
+- Next: Game に撃破の場面が無いので起動画面の見た目は変わらず、起動の確かめは無い。粒とデカールの見た目（色・数・大きさ・時間割の仮の値、ワールドの空間の粒が今の描画で出るか）は、GR17 の撃破の場面ができてから撮影で確かめて合わせる
+
+## 2026-11-02 GAME-GR130-VFX（run 20261102-145119 の反復 1。着手）
+- 方式（推奨を採った）: トレイルは描画用に補間された剣の変換（GR02 の `Entity::GetRenderWorldTransform`。ソケットに付けた剣は GR13 の変換の補間）を、描画のフレームごとに 1 回読む。固定ステップごとに点を足すと、ステップ 0 回のフレームで帯が止まり 2 回のフレームで点が詰まって、描画の剣と帯の先がずれるため。帯は刃の根元と切っ先の 2 縁で、前の標本との回転の差が折れ目の上限（既定 10 度）を超えたら回転を slerp・位置を線形補間して点を足す（曲線で縁を滑らかにする形は最新の点が 1 フレーム遅れ、ねじれも抑えないので採らない）。寿命（既定 0.25 秒）と点の上限（既定 128）で古い点から捨てる。描画は専用の小さな描画器を `ForwardPass` の半透明の段（ワールドの板の後）から呼び、頂点は `RenderWorld::SetRibbonTrails` から FramePacket の Scene に写して渡す（草の `SetFoliage` と同じ道）
+- 方式と前提の境界の記録: `Docs/Plans/GameFeatureRoadmap.md`（メイン側・管理外）の「GR130 剣のトレイル（リボン）の方式と境界」の節
+- 完了を宣言しない範囲: GR57 の共有の半透明のキュー（並べ替え・ソフトな縁・霧・照明）、GR30 の TAA の整合（半透明の速度・反応度のマスク）、GR136 の VFX の定義のリボンのエミッタ（スキーマ・クック）、GR16・G8 の攻撃の窓に合わせた出し止め、Editor の編集の画面。帯を付けるのは明示の調整の場面（`--animation-debug`）の剣だけで、既定の起動画面とランチャーの各シーンには置かない
+- Notes: 新しい Core のソースの登録のため `Library/Core/CMakeLists.txt` と、試験の理由の `Docs/Testing.md` を paths の外だが触る（ソースの並びに足すだけ・done-when が名指し）
+- U1 剣のトレイルの帯（CPU）と描画の頂点の型: 着地(直し 0 回)
+- U2 SwordTrailRibbonTest（CPU の試験）と Docs/Testing.md の 3 点: 着地(直し 0 回)
+- U3 帯の頂点を GameThread から RenderThread へ渡す道: 着地(直し 0 回)
+- U6 --animation-debug の剣にトレイルを付ける（Game）: 着地(直し 0 回)
+- U4 帯の描画器・シェーダー・ForwardPass の半透明の段への組み込み: 着地(直し 1 回)
+- U5 SwordTrailRibbonVulkanTest（GPU の試験。ビルドだけ）と最後の確かめ: 着地(直し 0 回)
+- Done: 起動せずに確かめる完了の条件を `SwordTrailRibbonTest`（CPU の試験。足す理由の 3 点は `Docs/Testing.md`）で確かめた。剣の変換は `RenderTransformHistory` で補間したものを読み、固定ステップ 0・1・2 回のフレームが混ざる列で点列が連続・NaN 無し・帯の先が描画用の補間位置と一致、1 フレーム 120 度の振りで隣り合う刃の向きの差と切っ先の縁の折れ目の角度が 10 度以下、寿命で点が消え上限（128・8）を超えず新しい点が残る。`cmake --build build --config Debug --target Game SwordTrailRibbonTest -- /m:1` は終了コード 0、`ctest -R "^SwordTrailRibbonTest$"` は Passed、`cmake --build build --config Debug --target SwordTrailRibbonVulkanTest -- /m:1` も終了コード 0（`.harness/runs/20261102-145119/verify-GAME-GR130-VFX-final.txt`）
+- Done: 帯の頂点は `RenderWorld::SetRibbonTrails` → FramePacket の `Scene.RibbonTrails` → `ViewRenderContext::SnapshotRibbonTrails` で渡し（写した後に保持を空にし、前のフレームの帯を残さない）、`ForwardPass` の半透明の段の GeometryPass の後に別のレンダーパス（色・深度とも Load、初期と最後の状態は元のパスの最後の状態）で `RibbonTrailRenderer` が描く。帯の無いフレームは前と同じ経路。`--animation-debug` の剣に、描画の補間を有効にした剣の `GetRenderWorldTransform` を late update で読むトレイル（根元 (0,0,0)・切っ先 (0,0.8,0)、加算、寿命 0.25 秒）を付けた。既定の起動画面とランチャーの各シーンには置かない
+- Next: 起動の確かめは後回し。`GAME-GR130-VFX-CHECK` で `ctest --test-dir build -C Debug -R "^SwordTrailRibbonVulkanTest$" --no-tests=error --output-on-failure --timeout 600` を回し（実デバイスでのシェーダーのコンパイル・D32_FLOAT の的・読み戻し・検証レイヤーは未確認）、`--animation-debug` で起動して剣の振りに帯が付くこと、既定の起動画面が変わらないことを確かめる
+- Notes: 完了を宣言しない範囲は着手時の記録のとおり（GR57 の共有の半透明のキュー、GR30 の TAA の整合、GR136 の VFX の定義のリボンのエミッタ、GR16・G8 の攻撃の窓に合わせた出し止め、Editor の編集の画面）
+- Notes: 剣はソケットの先とは別のルートの Entity で、ソケットの更新が固定ステップの外で姿勢を変えるため、補間を要求しても補間の履歴が今の姿勢に戻され、固定ステップの間の補間が効かないフレームがある見込み（`--animation-debug` の剣だけ。帯は描画の剣には合う）。Bridge の一時停止中は late update が呼ばれず帯が更新されない
+- Notes: 要起票: ソケットに付けた Entity（`SocketAttachmentComponent`）の描画の補間を、親の描画の変換から求める形にする（今は補間の履歴が固定ステップの外の書き換えで戻される）

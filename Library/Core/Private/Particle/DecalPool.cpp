@@ -145,6 +145,43 @@ namespace NorvesLib::Core::Particle
         return IsAlive(handle) && NormalizeTransform(m_Slots[handle.Index].Desc.Instance, position, rotation);
     }
 
+    bool DecalPool::SetAppearance(DecalHandle handle, const float halfExtents[3], const float color[4])
+    {
+        if (!IsAlive(handle) || halfExtents == nullptr || color == nullptr)
+        {
+            return false;
+        }
+        for (uint32_t component = 0u; component < 3u; ++component)
+        {
+            if (!std::isfinite(halfExtents[component]) || halfExtents[component] <= 0.0f)
+            {
+                return false;
+            }
+        }
+        for (uint32_t component = 0u; component < 4u; ++component)
+        {
+            if (!std::isfinite(color[component]))
+            {
+                return false;
+            }
+        }
+        if (color[3] < 0.0f || color[3] > 1.0f)
+        {
+            return false;
+        }
+
+        Rendering::DecalInstance& instance = m_Slots[handle.Index].Desc.Instance;
+        for (uint32_t component = 0u; component < 3u; ++component)
+        {
+            instance.HalfExtents[component] = halfExtents[component];
+        }
+        for (uint32_t component = 0u; component < 4u; ++component)
+        {
+            instance.Color[component] = color[component];
+        }
+        return true;
+    }
+
     void DecalPool::Tick(float deltaSeconds)
     {
         if (!std::isfinite(deltaSeconds) || deltaSeconds < 0.0f)

@@ -244,6 +244,13 @@ namespace NorvesLib::Core::Rendering
         void SetFoliage(const FoliageScene& foliage);
 
         /**
+         * @brief このフレームの帯の頂点と描画範囲を設定する（GameThread）
+         *
+         * 描画コマンド生成前に呼び、FramePacket へコピーした後は保持を空にする。
+         */
+        void SetRibbonTrails(const RibbonTrailScene& trails);
+
+        /**
          * @brief 箱で投影するデカールの一覧を設定する（GameThread）
          *
          * Particle::DecalPool::BuildScene() の結果を渡す。RenderThread の DecalPass が GBuffer の色と法線へ描く。

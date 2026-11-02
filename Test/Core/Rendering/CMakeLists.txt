@@ -2141,6 +2141,41 @@ target_link_libraries(VfxEffectSystemTest PRIVATE Core)
 set_target_properties(VfxEffectSystemTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME VfxEffectSystemTest COMMAND VfxEffectSystemTest)
 
+add_executable(SwordTrailRibbonTest
+    SwordTrailRibbonTest.cpp
+)
+target_link_libraries(SwordTrailRibbonTest PRIVATE Core)
+set_target_properties(SwordTrailRibbonTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME SwordTrailRibbonTest COMMAND SwordTrailRibbonTest)
+
+add_executable(SwordTrailRibbonVulkanTest
+    SwordTrailRibbonVulkanTest.cpp
+)
+target_link_libraries(SwordTrailRibbonVulkanTest PRIVATE Core)
+target_include_directories(SwordTrailRibbonVulkanTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Library/Core/Private
+)
+target_compile_definitions(SwordTrailRibbonVulkanTest PRIVATE
+    NORVES_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
+)
+set_target_properties(SwordTrailRibbonVulkanTest PROPERTIES FOLDER "Test/Core/Rendering")
+register_rendering_gpu_test(SwordTrailRibbonVulkanTest SwordTrailRibbonVulkanTest)
+
+add_executable(DefeatBloodSequenceTest
+    DefeatBloodSequenceTest.cpp
+)
+target_link_libraries(DefeatBloodSequenceTest PRIVATE Core)
+set_target_properties(DefeatBloodSequenceTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME DefeatBloodSequenceTest COMMAND DefeatBloodSequenceTest)
+
+add_executable(HitEffectEmissionTest
+    HitEffectEmissionTest.cpp
+)
+target_link_libraries(HitEffectEmissionTest PRIVATE Core)
+set_target_properties(HitEffectEmissionTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME HitEffectEmissionTest COMMAND HitEffectEmissionTest)
+
 # メッシュの粒子の記録と溶けの閾値を確かめる。
 add_executable(MeshParticleInstanceTest MeshParticleInstanceTest.cpp)
 target_link_libraries(MeshParticleInstanceTest PRIVATE Core)

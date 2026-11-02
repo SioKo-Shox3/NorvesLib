@@ -78,6 +78,12 @@ namespace NorvesLib::Core::Particle
         bool SetModuleParameter(VfxEffectHandle handle, uint32_t emitterIndex, uint32_t moduleIndex, const char* parameterName, const VfxValue& value, Container::String* outError = nullptr);
         bool SetEmitterProperty(VfxEffectHandle handle, uint32_t emitterIndex, const char* propertyName, const VfxValue& value, Container::String* outError = nullptr);
         bool RaiseEvent(VfxEffectHandle handle, const char* eventName, const Math::Vector3& position, double timeSeconds);
+        /**
+         * @brief 法線をローカルの +Z とするイベントを予約する。
+         * @return イベントを受け付けた場合は true、入力が無効な場合は false。
+         */
+        bool RaiseOrientedEvent(VfxEffectHandle handle, const char* eventName, const Math::Vector3& position,
+            const Math::Vector3& normal, double timeSeconds);
         void Tick(float deltaTime);
         double GetInstanceTime(VfxEffectHandle handle) const;
         uint32_t GetEmitterCount(VfxEffectHandle handle) const;
@@ -128,7 +134,9 @@ namespace NorvesLib::Core::Particle
         {
             Container::String Name;
             Math::Vector3 Position;
+            Math::Vector3 Normal;
             double Time = 0.0;
+            bool bOriented = false;
         };
 
         struct InstanceSlot
@@ -150,7 +158,7 @@ namespace NorvesLib::Core::Particle
         static void RefreshEmitter(InstanceSlot& slot, uint32_t emitterIndex);
         static void UpdateFlipbook(const InstanceSlot& slot, const EmitterState& emitter, VfxParticleState& particle);
         static void SpawnParticles(InstanceSlot& slot, EmitterState& emitter, uint32_t count,
-            const Math::Vector3& position, double birthTime, float age);
+            const Math::Vector3& position, double birthTime, float age, const Math::Vector3* orientationNormal = nullptr);
         void ReleaseSlot(uint32_t index);
 
         VariableArray<InstanceSlot> m_Instances;

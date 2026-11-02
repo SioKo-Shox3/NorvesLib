@@ -108,6 +108,16 @@ namespace NorvesLib::Core::Particle
         return m_VfxEffects;
     }
 
+    HitEffectEmitter& ParticleSystem::GetHitEffects()
+    {
+        return m_HitEffects;
+    }
+
+    const HitEffectEmitter& ParticleSystem::GetHitEffects() const
+    {
+        return m_HitEffects;
+    }
+
     void ParticleSystem::Clear()
     {
         for (uint32_t index = 0u; index < m_Emitters.size(); ++index)
@@ -118,6 +128,7 @@ namespace NorvesLib::Core::Particle
             }
         }
         m_VfxEffects.Clear();
+        m_HitEffects.ResetInstances();
     }
 
     void ParticleSystem::Tick(float deltaTime)
@@ -172,6 +183,7 @@ namespace NorvesLib::Core::Particle
                 slot.Particles.push_back(particle);
             }
         }
+        m_HitEffects.Dispatch(m_VfxEffects);
         m_VfxEffects.Tick(deltaTime);
     }
 
