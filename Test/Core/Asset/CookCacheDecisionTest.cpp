@@ -147,7 +147,8 @@ namespace
         return result;
     }
     Fixture Make(const std::filesystem::path& root, const char* name, const std::filesystem::path& source,
-                 const char* kind, const char* type, const char* format, bool bDisabled = false)
+                 const char* kind, const char* type, const char* format, bool bDisabled = false,
+                 AssetImport::EmissiveScale assetSetEmission = {})
     {
         Fixture f;
         auto& r = f.Request;
@@ -163,6 +164,7 @@ namespace
         // 非modelでも新しい判定のskip意図は独立。実行要求へ旧skipを伝播させない。
         r.bSkipIfUnchanged = true;
         r.bNoSidecar = bDisabled;
+        r.AssetSetEmission = assetSetEmission;
         Text error;
         if (DecideCookCache(r, 7, true, nullptr, nullptr, f.Before, error) != CookDecision::Cook)
         {
@@ -406,6 +408,22 @@ int main()
     auto mesh = Make(root, "mesh", glb, "model", "Msh0", "nvmesh.v0.mesh3d.pnt.u32.clustered");
     CHECK(mesh.Record.Outputs.size() == 4);
     Misses(mesh);
+    // 換算なしの記録は、asset-set 換算を追加すると失効する。
+    {
+        auto request = mesh.Request;
+        request.AssetSetEmission = {true, 10};
+        CHECK(Decide(request, &mesh.Record, &mesh.Live) == CookDecision::Cook);
+    }
+    // 同じ換算は skip を保ち、換算値の変更と削除は記録を失効させる。
+    {
+        auto withEmission = Make(root, "mesh-emission", glb, "model", "Msh0", mesh.Request.Format.c_str(), false, {true, 10});
+        CHECK(Decide(withEmission.Request, &withEmission.Record, &withEmission.Live) == CookDecision::Skip);
+        auto request = withEmission.Request;
+        request.AssetSetEmission = {true, 20};
+        CHECK(Decide(request, &withEmission.Record, &withEmission.Live) == CookDecision::Cook);
+        request.AssetSetEmission = {false, 10};
+        CHECK(Decide(request, &withEmission.Record, &withEmission.Live) == CookDecision::Cook);
+    }
     auto swapped = mesh.Record;
     std::swap(swapped.Outputs[1], swapped.Outputs[2]);
     CHECK(Decide(mesh.Request, &swapped, &mesh.Live) == CookDecision::Cook);

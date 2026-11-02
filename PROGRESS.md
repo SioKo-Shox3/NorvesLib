@@ -8505,12 +8505,29 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 2 px は測らずに採った値（DAG の段の三角形の数はおよそ許容の 2 乗に反比例するので、一覧のメッシュの約 96 万クラスタが 1/3〜1/4 になる見込み）。撮影で足りなければ値を上げるか、遮蔽の側を見る
 - Notes: done-when の予算は「RT と GI を切った構成で 16.6 ms」だが、verify の撮影の -GameArgs に RT と GI を切る引数は無く、そのような起動引数も今は無い（RT・GI 入りで撮る）。10-14 の内訳から見積もると、TLAS の直し（LightingPass 約 4 ms）と一覧のメッシュの削減の後も、バナナだけの MegaGeometry（静止 168 万クラスタ）・LightingPass・VSM の合計で 16.6 ms を超える見込みで、RT・GI 入りの判定は fail になりうる
 - Notes: 要起票: verify の撮影を RT と GI を切った構成で撮る起動引数（と verify の -GameArgs）が無い。予算の構成で判定できるようにするかを決める
-- U1 霧の太陽の散乱に VSM の可視を掛ける（読めない所は CSM）: 着地(直し 1 回)
-- U2 シーンごとの霧の範囲（距離の上限）と周りの光の倍率: 着地(直し 0 回)
-- U3 interior-light に薄い霧を入れ、タスクの verify を回す: 着地(直し 0 回)
 
-## 2026-11-02 SCN-INTERIOR-SHAFTS（run 20261102-093542 の反復 2）
-- Done: 霧の太陽の単一散乱に VSM の可視を掛けた（どの段にも無い点・VSM が無い構成は今の CSM の経路。大気の書き出しは CSM のまま）。`VolumetricFogParameters` に距離の上限 `MaxDistanceMeters`（0 = 視線全体）と周りの光の倍率 `AmbientScale`（既定 1）を足し、上限があるときだけ霧だけの経路の単一散乱の歩を画素ごとに固定の IGN でずらす（既定値では今の式・中点の歩に戻る）。`interior-light` に一様な薄い霧（密度 0.012 /m・高さの減衰 0・範囲 24 m・周りの光の倍率 0.03）を入れた。`ResetEnvironment` とほかのシーンの霧は既定のまま
-- 検証: `cmake --build build --config Debug --target Game VolumetricFogModelTest -- /m:1` は EXIT=0（1 回目は PDB の取り合いの C1041 で、再実行で通った）、`ctest -R "^VolumetricFogModelTest$"` は 1/1 Passed（`.harness/runs/20261102-093542/U3-unit-verify.txt`）。シェーダー 3 本（volumetrics・volumetrics_probe・lighting）のオフラインのコンパイルも通った。numstat は 2 通りで一致
-- Next: 起動の確かめは後回し（当分アプリを起動しない決まり）。SCN-INTERIOR-SHAFTS-CHECK で `CaptureScene.ps1 -Scene interior-light`（RelWithDebInfo）の `overview`・`window` を開いて窓からの光の筋を確かめ、`CaptureStartupScene.ps1` で Rendering3DTest の撮影が変わらないことを確かめる
-- Notes: 霧の値は撮影の前の初めの値。筋が弱い・霧が一様に光るなら密度と `kFogAmbientScale` を撮影で詰める。空気遠近と一緒に積む経路（`MarchFogAndAerial`）は歩をずらしていない（interior-light は大気の書き出しのときだけ空気遠近を有効にする）
+- U1 テストの全実行ファイルに assert の対話窓を止める仕組みを付け、わざと落とすテストで確かめる: 着地(直し 1 回)
+
+## 2026-11-02 TEST-ASSERT-NO-DIALOG（run 20261102-092732 の反復 1）
+
+- Done: `Test/TestSupport/NorvesTestNoDialog.cpp`（OBJECT ライブラリ）の静的初期化（`#pragma init_seg(lib)`）で `_set_error_mode(_OUT_TO_STDERR)`・`_set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT)`・Debug の `_CRT_ASSERT`/`_CRT_ERROR` の報告先を stderr にし、`Test/CMakeLists.txt` の末尾で `Test/` 以下の全 EXECUTABLE ターゲットへ再帰で一括リンクする（今の構成で 126 個。Bridge SDK の無い構成なので `Test/Game` は含まない）。わざと assert を落とす `TestAssertNoDialogTest`（Core をリンクしない、`#undef NDEBUG`）を WILL_FAIL・TIMEOUT 30 で登録。`Docs/Testing.md` に 3 点と、`RenderGraphCompileTest.cpp` の assert の中の副作用（344 行）が NDEBUG で消えて 0xC0000005 で落ちる件を記録した
+- 検証: `RenderGraphCompileTest`・`TestAssertNoDialogTest` の Debug ビルドは終了コード 0（C4073 も無し）。`ctest -R "^TestAssertNoDialogTest$"` は Passed 0.01 秒。実行ファイルを直接起動すると stderr に `Assertion failed` が出て終了コード 3 で即座に戻る（`.harness/runs/20261102-092732/verify-TEST-ASSERT-NO-DIALOG-U1.txt`）
+- Next: 既存のテストに個別に入っている `_set_abort_behavior` などは重なっても害が無いので残した。その周りを触るときに消してよい
+- Notes: `init_seg(lib)` と同じか前の領域で走る初期化（CRT・ほかのライブラリの lib 領域）で assert が落ちた場合は止められない
+- Notes: 要起票: `RenderGraphCompileTest.cpp` などで副作用のある呼び出しを `assert(...)` の中に置いており、RelWithDebInfo では初期化ごと消えて 0xC0000005 で落ちる（直すか試験を消すか）
+
+- U2 asset-set 換算の変更で増分 cook が skip しないことを CookCacheDecisionTest で反証する: 着地(直し 0 回)
+- U1 発光換算の接続を GltfMaterialCookV1Test で反証する: 着地(直し 0 回)
+- U3 材質設定の接続を文書へ反映し、タスクの verify を通す: 着地(直し 2 回)
+- Done: G2-GR79-IMPORT-POLICY-CONNECTION — 材質設定の接続（asset-set spec v2 の `emissiveNitsPerUnit` → 単体 request → 共有 resolver、素材 > 資産 sidecar > asset-set、AI 生成 profile の明示、hash/cache）を反証する検査を `GltfMaterialCookV1Test`・`CookCacheDecisionTest` に足した（asset-set だけの換算・上書き・上位不正値の非 fallback・未設定拒否の資産名/材質名/設定名・strength0 と texture だけの非発光・設定差での fingerprint と cache の失効・v0 互換）。asset-set の不正な換算値の拒否を `setting=emissiveNitsPerUnit` で診断するよう直した。`MaterialImportPolicy.md`・`GltfMaterialCookV1.md`・`MaterialImportDocument.md` の「未接続」を今の接続に書き換えた。verify は `cmake --build build --config Debug --target CookedMeshTest AssetCook -- /m:1` が終了コード 0、ctest の 9 本がすべて Passed
+- Next: 実物の資産（発光のある GLB）での cook と撮影・見た目の受入れは未実施（アプリを起動しない決まりのため）。G2-MATERIAL-SELECTION-INTEGRATION がこの項目の後に回せる
+- Notes: 要起票: 骨格の分割 cook（`RigSplitCook.cpp:338`）は設定の解決の失敗を `split_material_selector_or_settings` の 1 つの名前で返し、設定名（`MaterialSettingsErrorKey`）を出さない。NVMESH v1 と同じ形にそろえるか
+
+- U1 PT の材質のテクスチャの標本へ一様でない印を届ける: 着地(直し 0 回)
+- U2 rchit の SPIR-V の NonUniform を照合する CPU の試験を足す: 着地(直し 0 回)
+
+## 2026-11-02 PT-NONUNIFORM-SAMPLER（run 20261102-093543 の反復 1）
+- Done: 直す前の rchit（sparse あり・なし）を -O・vulkan1.2 で SPIR-V にして逆アセンブルし、`materialTextures` から取った sampled image の `OpAccessChain`・`OpLoad`（sparse ありでは `OpImageQueryLevels` の `OpImage` も）に `NonUniform` が無いことを確かめた（添字の `OpCopyObject` にだけ付いていた）。sampler の式を受けるマクロ `NORVES_RETURN_SPARSE_RESIDENT_LOD` に常駐の判定と粗いミップへの逃げの本体を移し、rchit の `SampleMaterialTexture` が標本の命令の位置で `materialTextures[nonuniformEXT(index)]` を引く形にした（`SampleSparseResidentLod` はマクロを使う形で残し、megageometry.frag の SPIR-V は sparse あり・なしとも変わらない）
+- Done: CPU の試験 `PathTracingNonUniformSamplerSpirvTest`（`RHIRayTracingApiContractTest` の束）を足した。`VulkanShaderCompiler` で sparse あり・なしの rchit を SPIR-V にし、材質の配列由来の `OpImageSampleExplicitLod`・`OpImageSparseSampleExplicitLod`・`OpImageQueryLevels` の operand と元の load・access chain・`OpImage` に `NonUniform` があることを見る。ビルドは終了コード 0、ctest は Passed（束のほか 2 本も Passed）。直す前のシェーダー（`--shader-root` で差し替え）では終了コード 1 で落ちる（証拠 `.harness/runs/20261102-093543/verify-PT-NONUNIFORM-SAMPLER-U2.txt`）
+- Next: 起動の確かめは後回し（当分アプリを起動しない決まり）。PT-NONUNIFORM-SAMPLER-CHECK で `PathTracingMaterialVulkanTest` のビルドと ctest を回し、PT の材質のテクスチャ（VT と VT でないもの）が前と同じに読めることを確かめる
+- Notes: PathTracing の下にほかに sampler の配列を関数の引数で渡す箇所は無い

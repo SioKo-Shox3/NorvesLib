@@ -245,13 +245,13 @@ namespace MaterialV1Test
                 Write(Sidecar, Data(sidecar));
             }
         }
-        MeshCookResult Cook(const char* format = V1)
+        MeshCookResult Cook(const char* format = V1, const I::ImportSettingsFileOptions* options = nullptr)
         {
             const auto bytes = Read(Source);
             MeshCookResult out;
             Text error;
             const auto success = CookGltfToNvmeshNativePath(bytes.data(), bytes.size(), format, Source,
-                                                            "Models/material.gltf", out, error);
+                                                            "Models/material.gltf", out, error, options);
             if (!success)
             {
                 std::fprintf(stderr, "v1 cook: %s\n", error.c_str());
@@ -259,29 +259,35 @@ namespace MaterialV1Test
             CHECK(success);
             return out;
         }
-        ModelCookFingerprint Fingerprint(const char* format = V1)
+        ModelCookFingerprint Fingerprint(const char* format = V1, const I::ImportSettingsFileOptions* options = nullptr)
         {
             const auto bytes = Read(Source);
             ModelCookFingerprint out;
             Text error;
             CHECK(FingerprintModelCookSourceNativePath(bytes.data(), bytes.size(), format, Source,
-                                                       "Models/material.gltf", out, error));
+                                                       "Models/material.gltf", out, error, options));
             return out;
         }
-        void Reject(View expected)
+        Text Reject(View expected, const I::ImportSettingsFileOptions* options = nullptr)
         {
             const auto bytes = Read(Source);
             MeshCookResult out;
             out.SourceHash = 42;
             Text error;
             CHECK(!CookGltfToNvmeshNativePath(bytes.data(), bytes.size(), V1, Source, "Models/material.gltf", out,
-                                              error));
+                                              error, options));
+            if (out.SourceHash != 42 || error.find(expected) == Text::npos)
+            {
+                std::fprintf(stderr, "拒否診断: %s\n", error.c_str());
+            }
             CHECK(out.SourceHash == 42 && error.find(expected) != Text::npos);
+            const auto cookError = error;
             ModelCookFingerprint fingerprint;
             fingerprint.SourceHash = 43;
             CHECK(!FingerprintModelCookSourceNativePath(bytes.data(), bytes.size(), V1, Source, "Models/material.gltf",
-                                                        fingerprint, error));
+                                                        fingerprint, error, options));
             CHECK(fingerprint.SourceHash == 43);
+            return cookError;
         }
     };
     void GeometryAndRaw()
@@ -764,7 +770,45 @@ namespace MaterialV1Test
             const char* material =
                 R"({"name":"Glow","emissiveFactor":[1,0.5,0.25],"emissiveTexture":{"index":0},"extensions":{"KHR_materials_emissive_strength":{"emissiveStrength":2}}})";
             f.Set(material, images);
-            f.Reject("emissiveNitsPerUnit");
+            const auto missingError = f.Reject("setting=emissiveNitsPerUnit");
+            CHECK(missingError.find("asset=Models/material.gltf") != Text::npos &&
+                  missingError.find("material=\"Glow\"") != Text::npos);
+            const auto v0 = Parse(f.Cook(V0));
+            CHECK(v0.Succeeded() && v0.Mesh.VersionMajor == 0);
+
+            I::ImportSettingsFileOptions setTen, setTwenty, setZero;
+            setTen.AssetSetEmission = {true, 10};
+            setTwenty.AssetSetEmission = {true, 20};
+            setZero.AssetSetEmission = {true, 0};
+            const auto setCooked = f.Cook(V1, &setTen);
+            const auto setParsed = Parse(setCooked);
+            CHECK(setParsed.Succeeded() && setParsed.Mesh.Materials.size() == 1);
+            const auto& setPbr = setParsed.Mesh.Materials[0].Pbr;
+            CHECK(Close(setPbr.EmissiveColor[0] * setPbr.EmissiveNits, 20));
+            const auto hashTen = f.Fingerprint(V1, &setTen).SourceHash;
+            CHECK(hashTen == setCooked.SourceHash && f.Fingerprint(V1, &setTen).SourceHash == hashTen &&
+                  f.Fingerprint(V1, &setTwenty).SourceHash != hashTen);
+
+            f.Set(material, images, R"({"version":1,"material":{"emissiveNitsPerUnit":5}})");
+            const auto assetOverride = Parse(f.Cook(V1, &setTen));
+            CHECK(assetOverride.Succeeded() && assetOverride.Mesh.Materials.size() == 1);
+            const auto& assetPbr = assetOverride.Mesh.Materials[0].Pbr;
+            CHECK(Close(assetPbr.EmissiveColor[0] * assetPbr.EmissiveNits, 10));
+            f.Set(material, images,
+                  R"({"version":1,"material":{"emissiveNitsPerUnit":5},"materials":[{"name":"Glow","emissiveNitsPerUnit":3}]})");
+            const auto materialOverride = Parse(f.Cook(V1, &setTen));
+            CHECK(materialOverride.Succeeded() && materialOverride.Mesh.Materials.size() == 1);
+            const auto& materialPbr = materialOverride.Mesh.Materials[0].Pbr;
+            CHECK(Close(materialPbr.EmissiveColor[0] * materialPbr.EmissiveNits, 6));
+
+            f.Set(material, images, R"({"version":1,"material":{"emissiveNitsPerUnit":0}})");
+            f.Reject("asset=Models/material.gltf", &setTen);
+            f.Set(material, images,
+                  R"({"version":1,"material":{"emissiveNitsPerUnit":5},"materials":[{"name":"Glow","emissiveNitsPerUnit":0}]})");
+            f.Reject("asset=Models/material.gltf", &setTen);
+            f.Set(material, images);
+            f.Reject("setting=emissiveNitsPerUnit", &setZero);
+
             f.Set(material, images, R"({"version":1,"material":{"emissiveNitsPerUnit":10}})");
             const auto cooked = f.Cook();
             const auto parsed = Parse(cooked);
@@ -772,6 +816,9 @@ namespace MaterialV1Test
             const auto& p = parsed.Mesh.Materials[0].Pbr;
             CHECK(Close(p.EmissiveColor[0] * p.EmissiveNits, 20) && Close(p.EmissiveColor[1] * p.EmissiveNits, 10));
             CHECK(cooked.EmbeddedImages.size() == 1 && cooked.EmbeddedImages[0].Format == "nvtex.v0.rgba8.srgb");
+            f.Set(R"({"name":"ZeroStrength","emissiveFactor":[1,0.5,0.25],"extensions":{"KHR_materials_emissive_strength":{"emissiveStrength":0}}})");
+            const auto zeroStrength = Parse(f.Cook());
+            CHECK(zeroStrength.Succeeded() && zeroStrength.Mesh.Materials[0].Pbr.EmissiveNits == 0);
             f.Set(R"({"name":"Dark","emissiveTexture":{"index":0}})", images);
             const auto dark = Parse(f.Cook());
             CHECK(dark.Succeeded() && dark.Mesh.Materials[0].Pbr.EmissiveNits == 0 &&
