@@ -375,6 +375,8 @@ namespace DestinationLockTest
     }
     int ChildMain(int argc, char** argv)
     {
+        const CookLockWaitTest::ScopedChildCookLockTestNamespace lockNamespace;
+        CHECK(lockNamespace.Valid());
         CHECK(argc == 6);
         CookDestinationLockRequest request{std::filesystem::path(argv[2])};
         LockText error;
@@ -498,6 +500,8 @@ int main(int argc, char** argv)
         {
             return ChildMain(argc, argv);
         }
+        const CookLockWaitTest::ScopedCookLockTestNamespace lockNamespace;
+        CHECK(lockNamespace.Valid());
         const auto lockWait = CookLockWaitTest::WaitForCookLock();
         CHECK(lockWait.Valid());
         char leaf[100];
@@ -512,6 +516,34 @@ int main(int argc, char** argv)
         LockText error;
         const auto name = Name(request);
         CHECK(std::strstr(name.c_str(), "NorvesLib.AssetCook.DestinationVolumeLock.v1."));
+        constexpr char testPrefix[] = "Global\\NorvesLib.AssetCook.DestinationVolumeLock.v1.test.";
+        constexpr char productionPrefix[] = "Global\\NorvesLib.AssetCook.DestinationVolumeLock.v1.";
+        CHECK(std::strncmp(name.c_str(), testPrefix, sizeof(testPrefix) - 1) == 0);
+        CHECK(name.size() >= sizeof(testPrefix) - 1 + 36);
+        LockText productionName;
+        {
+            const Probe::ScopedCookDestinationLockNamespaceForTest productionNamespace(nullptr);
+            CHECK(productionNamespace.Valid());
+            CHECK(Probe::InspectCookDestinationMutexNameForTest(request, productionName, error));
+            constexpr size_t prefixLength = sizeof(productionPrefix) - 1;
+            CHECK(productionName.size() == prefixLength + 36);
+            CHECK(std::strncmp(productionName.c_str(), productionPrefix, prefixLength) == 0);
+            const char* guid = productionName.c_str() + prefixLength;
+            for (size_t i = 0; i < 36; ++i)
+            {
+                if (i == 8 || i == 13 || i == 18 || i == 23)
+                {
+                    CHECK(guid[i] == '-');
+                }
+                else
+                {
+                    CHECK((guid[i] >= '0' && guid[i] <= '9') || (guid[i] >= 'a' && guid[i] <= 'f'));
+                }
+            }
+        }
+        CHECK(std::memcmp(name.c_str() + name.size() - 36, productionName.c_str() + productionName.size() - 36, 36) ==
+              0);
+        CHECK(Name(request) == name);
         GoodPeer(request);
         // 反証する契約: 待ちを指定すれば解放後に取得し、未指定ならBusyを返してcallbackを呼ばない。
         // ほかの手段で気づけるか: 気づきにくい。通常の単独cookではロック競合が起きない。

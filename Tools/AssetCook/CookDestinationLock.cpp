@@ -39,6 +39,10 @@ namespace NorvesLib::Tools::AssetCook
             }
         };
 #if defined(_WIN32)
+        constinit SRWLOCK g_TestNamespaceLock = SRWLOCK_INIT;
+        constinit char g_TestNamespace[Detail::MaximumCookDestinationLockNamespaceBytesForTest + 1]{};
+        constinit size_t g_TestNamespaceLength = 0;
+
         DWORD LockWaitMilliseconds()
         {
             // 既定は待ち0。待ちは協調排他の公平性を保証しないため、試験環境だけで指定する。
@@ -160,7 +164,18 @@ namespace NorvesLib::Tools::AssetCook
                 return Fail(error, "canonical_root_limit_or_utf8");
             }
             candidate.Context.bFinalRuntimeRootPresent = identity.bPresent;
+            char testNamespace[Detail::MaximumCookDestinationLockNamespaceBytesForTest + 1]{};
+            AcquireSRWLockShared(&g_TestNamespaceLock);
+            std::memcpy(testNamespace, g_TestNamespace, g_TestNamespaceLength + 1);
+            ReleaseSRWLockShared(&g_TestNamespaceLock);
+
             candidate.Name = "Global\\NorvesLib.AssetCook.DestinationVolumeLock.v1.";
+            if (testNamespace[0])
+            {
+                candidate.Name.append("test.");
+                candidate.Name.append(testNamespace);
+                candidate.Name.push_back('.');
+            }
             candidate.Name.append(candidate.Context.CanonicalVolumeGuid);
             out = std::move(candidate);
             return true;
@@ -206,6 +221,44 @@ namespace NorvesLib::Tools::AssetCook
         };
 #endif
     } // namespace
+    bool Detail::ExchangeCookDestinationLockNamespaceForTest(
+        const char* next, char (&previous)[MaximumCookDestinationLockNamespaceBytesForTest + 1])
+    {
+#if !defined(_WIN32)
+        (void)next;
+        (void)previous;
+        return false;
+#else
+        char candidate[MaximumCookDestinationLockNamespaceBytesForTest + 1]{};
+        size_t length = 0;
+        if (next)
+        {
+            while (next[length])
+            {
+                if (length == MaximumCookDestinationLockNamespaceBytesForTest)
+                {
+                    return false;
+                }
+                const char c = next[length];
+                if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                      (c >= '0' && c <= '9') || c == '-'))
+                {
+                    return false;
+                }
+                candidate[length] = c;
+                ++length;
+            }
+        }
+
+        AcquireSRWLockExclusive(&g_TestNamespaceLock);
+        std::memcpy(previous, g_TestNamespace, g_TestNamespaceLength + 1);
+        std::memcpy(g_TestNamespace, candidate, length + 1);
+        g_TestNamespaceLength = length;
+        ReleaseSRWLockExclusive(&g_TestNamespaceLock);
+        return true;
+#endif
+    }
+
     bool Detail::InspectCookDestinationMutexNameForTest(const CookDestinationLockRequest& request, LockText& out,
                                                         LockText& error)
     {
