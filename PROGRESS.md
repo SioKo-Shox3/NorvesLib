@@ -8523,3 +8523,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: 実物の資産（発光のある GLB）での cook と撮影・見た目の受入れは未実施（アプリを起動しない決まりのため）。G2-MATERIAL-SELECTION-INTEGRATION がこの項目の後に回せる
 - Notes: 要起票: 骨格の分割 cook（`RigSplitCook.cpp:338`）は設定の解決の失敗を `split_material_selector_or_settings` の 1 つの名前で返し、設定名（`MaterialSettingsErrorKey`）を出さない。NVMESH v1 と同じ形にそろえるか
 - U1 骨格の分割 cook で SurfaceName を拒否する: 着地(直し 0 回)
+- U2 クリップ・リターゲットの cook で材質設定を照合し、分割 cook の警告を表示する: 着地(直し 0 回)

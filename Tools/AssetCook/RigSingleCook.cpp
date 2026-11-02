@@ -3,6 +3,8 @@
 #include "RigClipBankCook.h"
 #include "CookRigPayload.h"
 #include "Resource/RigGltfImportCapture.h"
+#include "Resource/GltfContainer.h"
+#include "Text/JsonDocument.h"
 #include "CookDependencySnapshot.h"
 #include "CookOutputSetGuard.h"
 #include "CookOutputPaths.h"
@@ -11,6 +13,7 @@
 #include <charconv>
 #include <fstream>
 #include <cmath>
+#include <cstdio>
 namespace NorvesLib::Tools::AssetCook::Detail
 {
     namespace C = Core::Container;
@@ -38,6 +41,34 @@ namespace NorvesLib::Tools::AssetCook::Detail
             return bool(input) && input.peek() == std::char_traits<char>::eof();
         }
     } // namespace
+    bool ValidateClipMaterialSettings(C::Span<const uint8_t> source, const I::LoadedImportSettingsDocument& document,
+                                      I::EmissiveScale assetSet, C::AnsiString& error)
+    {
+        Core::Gltf::ContainerView container;
+        const auto parsed = Core::Gltf::ParseContainer(source, container);
+        Core::JsonDocument json;
+        if ((parsed != Core::Gltf::ContainerParseResult::Success &&
+             parsed != Core::Gltf::ContainerParseResult::NotGlb) ||
+            !Core::JsonDocument::TryParseUtf8(container.Json, json) || !json.GetRoot().IsObject())
+        {
+            return Fail(error, "clip_material_selector_or_settings");
+        }
+        I::SourceMaterialCatalog catalog;
+        I::ResolvedMaterialImportPlan resolved;
+        if (I::ReadSourceMaterialCatalog(json.GetRoot(), catalog) != I::SettingsResult::Success ||
+            !I::ResolveMaterialImportPlan(catalog, document.Settings, assetSet, resolved).Succeeded())
+        {
+            return Fail(error, "clip_material_selector_or_settings");
+        }
+        for (const auto& material : resolved.Materials)
+        {
+            if (material.bSurfacePresent)
+            {
+                return Fail(error, "surface_requires_GR81");
+            }
+        }
+        return true;
+    }
     bool IsRigSingleFormat(C::AnsiStringView format)
     {
         return format == C::AnsiStringView("nvskel.v1.skinmesh.pnujiw.u32") ||
@@ -132,6 +163,13 @@ namespace NorvesLib::Tools::AssetCook::Detail
             {
                 return false;
             }
+            if (!bInventoryOnly)
+            {
+                for (const auto& warning : result.Warnings)
+                {
+                    std::fprintf(stderr, "AssetCook warning: %s\n", warning.c_str());
+                }
+            }
             hash = result.SourceHash;
             images = std::move(result.TexturePlans);
             // primaryを常に先頭にし、derived roleと画像を安定順に並べる。
@@ -178,6 +216,35 @@ namespace NorvesLib::Tools::AssetCook::Detail
             {
                 return Fail(error, "clip_source_snapshot_mismatch");
             }
+            I::LoadedImportSettingsDocument document;
+            if (!IsBvhRetargetSource(request))
+            {
+                if (I::LoadImportSettingsDocument(request.InputPath, options, document).Result !=
+                    I::SettingsFileResult::Success)
+                {
+                    return Fail(error, "clip_sidecar");
+                }
+                const auto sidecarPath =
+                    document.Path.empty() ? std::filesystem::path{} : std::filesystem::weakly_canonical(document.Path);
+                bool bSidecarMatched = document.Path.empty() && !document.bPresent;
+                for (const auto& file : dependencies.Files)
+                {
+                    if (file.Role == CookDependencyRole::Sidecar && file.Path == sidecarPath &&
+                        file.bPresent == document.bPresent &&
+                        (!document.bPresent || sameBytes(file, document.RawSourceBytes)))
+                    {
+                        bSidecarMatched = true;
+                    }
+                }
+                if (!bSidecarMatched)
+                {
+                    return Fail(error, "clip_sidecar_snapshot_mismatch");
+                }
+                if (!ValidateClipMaterialSettings(source, document, request.AssetSetEmission, error))
+                {
+                    return false;
+                }
+            }
             hash = dependencies.Fingerprint;
             RigSplitCookEntry entry;
             auto& r = entry.Reference;
@@ -204,34 +271,12 @@ namespace NorvesLib::Tools::AssetCook::Detail
             }
             else if (!bInventoryOnly)
             {
-                I::LoadedImportSettingsDocument document;
-                if (I::LoadImportSettingsDocument(request.InputPath, options, document).Result !=
-                    I::SettingsFileResult::Success)
-                {
-                    return Fail(error, "clip_sidecar");
-                }
                 I::LoadedImportSettings geometry;
                 geometry.Settings = document.Settings.Geometry;
                 geometry.Path = document.Path;
                 geometry.bPresent = document.bPresent;
                 S::RigClipSourceSelection selection{request.ClipJointNodes};
                 S::RigClipAnalysisOptions analysis;
-                const auto sidecarPath =
-                    document.Path.empty() ? std::filesystem::path{} : std::filesystem::weakly_canonical(document.Path);
-                bool bSidecarMatched = document.Path.empty() && !document.bPresent;
-                for (const auto& file : dependencies.Files)
-                {
-                    if (file.Role == CookDependencyRole::Sidecar && file.Path == sidecarPath &&
-                        file.bPresent == document.bPresent &&
-                        (!document.bPresent || sameBytes(file, document.RawSourceBytes)))
-                    {
-                        bSidecarMatched = true;
-                    }
-                }
-                if (!bSidecarMatched)
-                {
-                    return Fail(error, "clip_sidecar_snapshot_mismatch");
-                }
                 S::RigGltfImportCapture capture;
                 RigClipBankCookResult cooked;
                 if (!CookRigClipBankV1NativePath(source, request.InputPath, request.Format, cooked, report, limits,
