@@ -9118,3 +9118,19 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261103-013153/u1-unit-verify.txt`（Debug の CookedMeshTest のビルド 0、python の検査 True、`--repeat until-fail:20` で 20 回 Passed（20.2〜23.7 秒）、`-j 4` の 4 本 Passed、numstat 一致 14/2）
 - Next: なし（この項目は完了）
 - Notes: 91 は今回の 20 回では出ていない。次に出たときは ctest の `--output-on-failure` の出力に子の理由の行が残るので、その行から原因を追う
+
+- U1 castle の範囲の塊の合否の仕様を書く: 着地(直し 0 回)
+- U2 接地用の格子の版 3（層を持つ形）の読み込み: 着地(直し 0 回)
+- U5 接地の検査で castle の範囲の足元を castle の段の焼いた面で測る: 着地(直し 0 回)
+- U3 接地用の格子の書き出しに castle の層を足す: 着地(直し 0 回)
+- U4 荒野で castle の 5 範囲にも崖の塊を置く: 着地(直し 0 回)
+- U6 記録を書き、ビルドとクックの verify を通す: 着地(直し 0 回)
+
+## 2026-11-03 SCN-WL-CLIFF-BLOCKS-CASTLE（run 20261103-004716 の反復 1、完了・起動の確かめは後回し）
+- Done: 崖の壁の足の崩れた塊（boulder_01・rock_09 を高さ 3〜14 m）を castle の 5 範囲（cliff_castle_0〜4、ref_far_01 の 5〜9 km）にも置く（`kCliffBlockRegionCount` = 7）。根元の高さは接地用の格子 `WastelandPlacementGround.bin` の版 3 で足した castle の層から取る。版 3 は層を持つ形で、近景の層（8 m の塊・0.25 m 間隔・塊の無い所は高さ場へ戻す。塊は版 2 とバイト単位で一致）と castle の層（32 m の塊・1 m 間隔〔castle の段の 2 m 格子の半分〕・5 範囲を 48 m 広げた矩形に掛かる塊を全部・塊の無い所は不可）。`AssetCook --write-placement-ground` は castle の段の焼いた面を問い合わせて castle の層を書き、参照に castle の 21 区画を足す。Game は格子の参照の照合に遠景の区画を足し、ログ `WASTELAND_CLIFF_BLOCKS` に `no_ground_regions=` を足した。CheckPlacement.py は DEM の外で castle の段の中の足元を `--horizon-level castle` で測る（castle の 3 点・DEM の 3 点で状態 ok を確かめた。castle の問い合わせ 1 回は約 39 秒）。合否の仕様 `shape-cliff-blocks-castle.json`（far_01 の wall_foot ≥ 0.356 の 1 行、2 つの sha256 は shape-cliff-blocks.json と同じ）は置く前にコミットし、版 15 の shape に当てて版の照合 pass・行は 0.3336 で fail を確かめた。地形のクック（崖の細部の版 19）は変えていない
+- 証拠: `.harness/runs/20261103-004716/u6-unit-verify.txt`（Debug・RelWithDebInfo の Game、RelWithDebInfo の AssetCook のビルドの終了コード 0、地形のクック `COOK_ASSETS cooked=0 skipped=214`、格子の要約で castle の 5 範囲の covered_block_count = expected_block_count〔748・3024・2205・1645・576〕、格子の見出し 版 3・2 層・参照 77）、`.harness/runs/20261103-004716/u3-pg-summary.json`
+- 実測: ファイル 88,633,179 バイト（版 2 は 47,847,084）、書き出し 1270.7 秒（castle の層 396.1 秒。版 2 から書き直す 1 回だけで、以後は --skip-if-current で飛ぶ）、castle 9,079 塊・不可の升目の割合 0.233・範囲の 4 m おきの点が焼いた面で引ける割合 0.70〜0.79
+- Next: 起動の確かめは後回し（SCN-WL-CLIFF-BLOCKS-CASTLE-CHECK）。verify の 5〜11 行目で (A) shape-cliff-blocks-castle.json の行・(B) 接地（cliff_block の違反 ≤ 0.5 %、castle の範囲も含めて測り切れない物 0）・(C) ページの要求と VRAM・(D) look の ref_far_01 を写真と並べる・(E) ログ `WASTELAND_CLIFF_BLOCKS` の regions と no_ground_regions で castle_0・castle_1 のそれぞれに塊 ≥ 1・no_ground 0
+- Notes: 共有のクック済みの置き場（build/CookedAssets）の格子は版 3 に書き直した。版 3 を読めない古い Game（統合前の別の枠の実行ファイル）では格子が読めず、崖錐の岩と塊は見送られる
+- Notes: castle の層の塊の無い所・不可の升目は no_ground に数える。(E) の no_ground 0 は、castle の不可の升目の割合（0.233）からすると落ちうる。そのときは不可の升目の分布（壁の足の帯にあるか）を先に見る
+- Notes: 遮蔽の視点 contact_near・ref_cliff_01 から castle の範囲までは 2 km 以上で、塊は遮蔽の小物の書き出し（300 m）に入らない

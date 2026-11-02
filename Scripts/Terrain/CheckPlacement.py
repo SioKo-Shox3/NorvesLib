@@ -1,4 +1,5 @@
 ﻿# 置いた物（崖錐の岩・草と低木・石と礫）の浮きと埋もれを、焼いた地形の面（支持面）で測る。
+# DEM の外で castle の範囲にある足元の点は、遠景の castle の段の焼いた面で測る。
 # 置き方（Game/GameModes/Wasteland の WastelandTalus.cpp・WastelandFoliage.cpp・WastelandGravel.cpp）は 1 m の格子の高さ
 # （TerrainHeightField::SampleHeight）を読むので、崖の生成が面を押し出した範囲では焼いた面とずれうる。
 #
@@ -53,6 +54,7 @@ REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 DEFAULT_ASSET_COOK = os.path.join(REPO_ROOT, "build", "Tools", "AssetCook", "RelWithDebInfo", "AssetCook.exe")
 DEFAULT_MANIFEST = os.path.join(REPO_ROOT, "build", "CookedAssets", "manifest.json")
 DEM_DESCRIPTOR = os.path.join(REPO_ROOT, "Assets", "Terrain", "ValleyOfTheGods", "height.json")
+HORIZON_DESCRIPTOR = os.path.join(REPO_ROOT, "Assets", "Terrain", "ValleyOfTheGods", "horizon.json")
 # DEM の区画の一辺の升目の数（TerrainHeightField.h の kDemTileCells）。問い合わせを区画ごとにまとめるのに使う
 DEM_TILE_CELLS = 500
 
@@ -179,13 +181,15 @@ def ring_points(objects, meshes):
     return foot, height
 
 
-def run_query(asset_cook, manifest, xz):
+def run_query(asset_cook, manifest, xz, horizon_level=None):
     with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as handle:
         json.dump({"points": xz.tolist()}, handle)
         path = handle.name
     try:
-        result = subprocess.run([asset_cook, "--sample-cooked-terrain", "--manifest", manifest, "--points", path],
-                                capture_output=True, cwd=REPO_ROOT)
+        command = [asset_cook, "--sample-cooked-terrain", "--manifest", manifest, "--points", path]
+        if horizon_level is not None:
+            command += ["--horizon-level", horizon_level]
+        result = subprocess.run(command, capture_output=True, cwd=REPO_ROOT)
     finally:
         os.remove(path)
     if result.returncode != 0:
@@ -200,11 +204,11 @@ def run_query(asset_cook, manifest, xz):
 def query_worker(job):
     """別のプロセスで 1 回の問い合わせを走らせ、点ごとの最も近い上を向く面との差（無ければ NaN）・状態の番号・
     張り出しの所の点（下を向く面と上を向く面 2 つ以上が同じ X/Z にある点）の番号・面の一覧・選んだ面の番号を返す"""
-    asset_cook, manifest, xz, foot_y = job
+    asset_cook, manifest, xz, foot_y, horizon_level = job
     nearest = np.full(len(xz), np.nan)
     status = np.zeros(len(xz), dtype=np.int8)
     overhang = []
-    for local, point in enumerate(run_query(asset_cook, manifest, xz)):
+    for local, point in enumerate(run_query(asset_cook, manifest, xz, horizon_level)):
         code = STATUS_CODES.get(point["status"], STATUS_CODES["unknown"])
         status[local] = code
         if code != 0:
@@ -229,14 +233,29 @@ def query_worker(job):
     return nearest, status, overhang
 
 
-def query_chunks(foot):
-    """問い合わせを DEM の区画ごとにまとめた点の番号の組"""
+def castle_foot_mask(foot):
+    """DEM の格子の外で、castle の段の範囲内にある足元の点を選ぶ。"""
+    dem_bounds = load_json(DEM_DESCRIPTOR)["engine_bounds"]
+    castle_bounds = next(level for level in load_json(HORIZON_DESCRIPTOR)["levels"] if level["name"] == "castle")
+
+    def in_bounds(bounds):
+        return ((foot[:, 0] >= bounds["x_min"]) & (foot[:, 0] <= bounds["x_max"])
+                & (foot[:, 2] >= bounds["z_min"]) & (foot[:, 2] <= bounds["z_max"]))
+
+    return ~in_bounds(dem_bounds) & in_bounds(castle_bounds)
+
+
+def query_chunks(foot, horizon_level=None):
+    """問い合わせを DEM の区画ごとにまとめる。遠景の段では近い点をまとめ、点の数だけで切る。"""
     dem = load_json(DEM_DESCRIPTOR)
     first_x = float(dem["first_vertex_engine"]["x"])
     first_z = float(dem["first_vertex_engine"]["z"])
     spacing = float(dem["vertex_spacing_m"])
     tile_x = np.floor((foot[:, 0] - first_x) / (spacing * DEM_TILE_CELLS)).astype(np.int64)
     tile_z = np.floor((foot[:, 2] - first_z) / (spacing * DEM_TILE_CELLS)).astype(np.int64)
+    if horizon_level is not None:
+        order = np.lexsort((foot[:, 0], foot[:, 2], tile_x, tile_z))
+        return [order[start:start + QUERY_CHUNK_POINTS] for start in range(0, len(order), QUERY_CHUNK_POINTS)]
     order = np.lexsort((tile_x, tile_z))
     keys = tile_z[order] * 100000 + tile_x[order]
     chunks = []
@@ -259,10 +278,15 @@ def query_support(asset_cook, manifest, foot, window, workers):
     nearest = np.full(len(foot), np.nan)
     status = np.full(len(foot), STATUS_CODES["unknown"], dtype=np.int8)
     overhang = []
-    chunks = query_chunks(foot)
-    jobs = ((asset_cook, manifest, foot[index][:, [0, 2]], foot[index, 1]) for index in chunks)
+    castle = castle_foot_mask(foot)
+    chunks = []
+    for selected, horizon_level in ((~castle, None), (castle, "castle")):
+        rows = np.flatnonzero(selected)
+        chunks += [(rows[index], horizon_level) for index in query_chunks(foot[rows], horizon_level)]
+    jobs = ((asset_cook, manifest, foot[index][:, [0, 2]], foot[index, 1], horizon_level)
+            for index, horizon_level in chunks)
     with concurrent.futures.ProcessPoolExecutor(max_workers=workers) as pool:
-        for index, (part_nearest, part_status, part_overhang) in zip(chunks, pool.map(query_worker, jobs)):
+        for (index, _), (part_nearest, part_status, part_overhang) in zip(chunks, pool.map(query_worker, jobs)):
             nearest[index] = part_nearest
             status[index] = part_status
             overhang += [(int(index[local]), faces, selected) for local, faces, selected in part_overhang]
@@ -574,6 +598,7 @@ def main():
         "baseline": os.path.abspath(args.baseline) if args.baseline else None,
         "objects": counts,
         "foot_points": int(len(foot)),
+        "castle_foot_points": int(np.count_nonzero(castle_foot_mask(foot))),
         "query_statuses": statuses,
         "sampling": placement.get("sampling"),
         "violations": total_violations,

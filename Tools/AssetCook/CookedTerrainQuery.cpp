@@ -2,6 +2,7 @@
 
 #include "AssetCookOutput.h"
 #include "TerrainCliffDetail.h"
+#include "Asset/AssetFileReader.h"
 #include "Asset/AssetSystem.h"
 #include "Asset/CookedMeshFormat.h"
 #include "Container/String.h"
@@ -231,7 +232,8 @@ namespace NorvesLib::Tools::AssetCook
 
         /// 区画のメッシュの最も細かい段の三角形と、指した点の鉛直の線の交点を集める。クラスタの範囲が壊れていれば false
         bool IntersectTile(const Asset::CookedMeshData &mesh, Container::VariableArray<QueryPoint> &points,
-                           const Container::VariableArray<size_t> &pointIndices, TileReport &report, bool bSupportOnly = false)
+                           const Container::VariableArray<size_t> &pointIndices, TileReport &report, bool bSupportOnly = false,
+                           bool bHighestOnly = false)
         {
             uint32_t finestLod = UINT32_MAX;
             for (const Asset::CookedMeshCluster &cluster : mesh.Clusters)
@@ -397,11 +399,14 @@ namespace NorvesLib::Tools::AssetCook
                         hit.Cluster = box.Cluster;
                         hit.TileX = report.TileX;
                         hit.TileZ = report.TileZ;
-                        if (bSupportOnly)
+                        if (bSupportOnly || bHighestOnly)
                         {
-                            // 接地用は指定した高さに最も近い上向きの面だけ保持し、密な標本のメモリを抑える。
-                            if (hit.Normal[1] < 0.3 || (!point.Hits.empty() &&
-                                std::fabs(point.Hits[0].Height - point.DemHeight) <= std::fabs(hit.Height - point.DemHeight)))
+                            // 接地用は上向きの面から指定した高さに最も近い交点、または最上面だけを保持する。
+                            if ((bSupportOnly && hit.Normal[1] < 0.3) ||
+                                (!point.Hits.empty() &&
+                                 (bHighestOnly ? point.Hits[0].Height >= hit.Height
+                                               : std::fabs(point.Hits[0].Height - point.DemHeight) <=
+                                                     std::fabs(hit.Height - point.DemHeight))))
                             {
                                 continue;
                             }
@@ -956,6 +961,172 @@ namespace NorvesLib::Tools::AssetCook
             uint32_t Blocks = 0;
         };
 
+        struct PlacementBounds
+        {
+            double MinX = 0.0;
+            double MaxX = 0.0;
+            double MinZ = 0.0;
+            double MaxZ = 0.0;
+        };
+
+        struct PlacementRegion
+        {
+            const char *Id;
+            PlacementBounds Bounds;
+        };
+
+        // Scripts/Terrain/ShapeRegions.json の range_groups["cliff-gen"] と
+        // TerrainCliffDetail.cpp の kCastleRegions[0]〜[4] の範囲。
+        constexpr PlacementRegion kCastlePlacementRegions[] = {
+            {"cliff_castle_0_main_butte", {-3450.0, -2100.0, -4450.0, -3950.0}},
+            {"cliff_castle_1_far_cliffs", {-3650.0, -1900.0, -6340.0, -4650.0}},
+            {"cliff_castle_2_left_7_9km", {-6250.0, -5150.0, -8250.0, -6250.0}},
+            {"cliff_castle_3_left_5_7km", {-5350.0, -4250.0, -7000.0, -5500.0}},
+            {"cliff_castle_4_left_edge_9km", {-6875.0, -6150.0, -8625.0, -7875.0}},
+        };
+        constexpr double kCastleRegionPadding = 48.0;
+
+        struct PlacementSummary
+        {
+            uint64_t NanCount = 0;
+            uint64_t SampledCount = 0;
+            uint64_t UnreliableCells = 0;
+            uint64_t CenterQueryCells = 0;
+            uint64_t ConfidenceQueryPoints = 0;
+            uint64_t ConfidenceProbeSamples = 0;
+            uint64_t QuarterQueryCells = 0;
+            float ConfidenceMs = 0.0f;
+            Container::VariableArray<double> Differences;
+        };
+
+        bool IsCastleName(const JsonValue &value)
+        {
+            constexpr char expected[] = "castle";
+            if (!value.IsString() || value.AsString().size() != sizeof(expected) - 1u)
+            {
+                return false;
+            }
+            for (size_t i = 0; i < sizeof(expected) - 1u; ++i)
+            {
+                if (value.AsString().data()[i] != expected[i])
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        bool ReadPlacementBounds(const JsonValue &object, PlacementBounds &bounds)
+        {
+            const JsonValue values[] = {object.FindMember("x_min"), object.FindMember("x_max"),
+                                        object.FindMember("z_min"), object.FindMember("z_max")};
+            for (const JsonValue &value : values)
+            {
+                if (!value.IsNumber() || !std::isfinite(value.AsNumber()))
+                {
+                    return false;
+                }
+            }
+            bounds = {values[0].AsNumber(), values[1].AsNumber(), values[2].AsNumber(), values[3].AsNumber()};
+            return bounds.MinX < bounds.MaxX && bounds.MinZ < bounds.MaxZ;
+        }
+
+        /// 遠景の記述はアセットの根から読み、通常の遠景メッシュの検証も通す。
+        bool LoadCastlePlacementLayout(PlacementBounds &bounds, Container::VariableArray<PlacementTile> &tiles,
+                                       Container::AnsiString &outError)
+        {
+            Container::VariableArray<Terrain::TerrainHorizonMesh> meshes;
+            if (!Terrain::LoadTerrainHorizonMeshes(Terrain::WastelandTerrain::kHorizonDescriptorPath, meshes, outError))
+            {
+                return false;
+            }
+            Asset::AssetFileReader reader;
+            Asset::AssetReadRequest request;
+            request.InputPath = Terrain::WastelandTerrain::kHorizonDescriptorPath;
+            request.bAllowAbsolutePath = false;
+            request.MaxReadBytes = 4u * 1024u * 1024u;
+            const Asset::AssetReadResult descriptor = reader.Read(request);
+            if (!descriptor.Succeeded())
+            {
+                outError = "遠景の地形の記述を読めません";
+                return false;
+            }
+            auto text = descriptor.Blob.GetSpan();
+            if (text.size() >= 3u && text[0] == 0xefu && text[1] == 0xbbu && text[2] == 0xbfu)
+            {
+                text = {text.data() + 3, text.size() - 3};
+            }
+            JsonDocument document;
+            if (!JsonDocument::TryParseUtf8(text, document))
+            {
+                outError = "遠景の地形の記述が JSON として読めません";
+                return false;
+            }
+            const JsonValue root = document.GetRoot();
+            const JsonValue levels = root.FindMember("levels");
+            const JsonValue entries = root.FindMember("meshes");
+            if (!levels.IsArray() || !entries.IsArray() || entries.GetArraySize() != meshes.size())
+            {
+                outError = "遠景の地形の段または区画の並びが不正です";
+                return false;
+            }
+            bool bFound = false;
+            for (size_t i = 0; i < levels.GetArraySize(); ++i)
+            {
+                const JsonValue level = levels.GetArrayElement(i);
+                if (!IsCastleName(level.FindMember("name")))
+                {
+                    continue;
+                }
+                if (bFound || !ReadPlacementBounds(level, bounds))
+                {
+                    outError = "castle の段の範囲が不正です";
+                    return false;
+                }
+                bFound = true;
+            }
+            if (!bFound || (bounds.MaxX - bounds.MinX) / Terrain::PlacementGroundFormat::kCastleBlockMeters > INT32_MAX ||
+                (bounds.MaxZ - bounds.MinZ) / Terrain::PlacementGroundFormat::kCastleBlockMeters > INT32_MAX)
+            {
+                outError = "castle の段の範囲がないか、大きすぎます";
+                return false;
+            }
+            for (size_t i = 0; i < entries.GetArraySize(); ++i)
+            {
+                const JsonValue entry = entries.GetArrayElement(i);
+                if (!IsCastleName(entry.FindMember("level")))
+                {
+                    continue;
+                }
+                PlacementBounds tileBounds;
+                if (!ReadPlacementBounds(entry.FindMember("bounds"), tileBounds))
+                {
+                    outError = "castle の区画の範囲が不正です";
+                    return false;
+                }
+                PlacementTile tile;
+                tile.MinX = tileBounds.MinX;
+                tile.MaxX = tileBounds.MaxX;
+                tile.MinZ = tileBounds.MinZ;
+                tile.MaxZ = tileBounds.MaxZ;
+                tile.Report.LogicalPath = Container::AnsiString(Terrain::WastelandTerrain::kHorizonCookedMeshLogicalPathPrefix) +
+                                          meshes[i].Name + Container::AnsiString(".generated");
+                tiles.push_back(std::move(tile));
+            }
+            if (tiles.empty())
+            {
+                outError = "castle の段の区画が記述にありません";
+                return false;
+            }
+            return true;
+        }
+
+        bool PlacementOverlaps(double x0, double x1, double z0, double z1, const PlacementBounds &bounds, double padding)
+        {
+            return x1 >= bounds.MinX - padding && x0 <= bounds.MaxX + padding &&
+                   z1 >= bounds.MinZ - padding && z0 <= bounds.MaxZ + padding;
+        }
+
         /// 生の構造体を書かず、整数と浮動小数点のビットを little-endian で書く。
         void WritePlacementUInt(std::ostream &stream, uint64_t value, size_t width)
         {
@@ -1107,6 +1278,72 @@ namespace NorvesLib::Tools::AssetCook
                     batches[static_cast<size_t>(tz) * tilesX + tx].push_back(block);
                 }
             }
+            PlacementBounds castleBounds;
+            Container::VariableArray<PlacementTile> castleTiles;
+            if (!LoadCastlePlacementLayout(castleBounds, castleTiles, outError))
+            {
+                return false;
+            }
+            for (const PlacementRegion &region : kCastlePlacementRegions)
+            {
+                if (region.Bounds.MinX - kCastleRegionPadding < castleBounds.MinX ||
+                    region.Bounds.MaxX + kCastleRegionPadding > castleBounds.MaxX ||
+                    region.Bounds.MinZ - kCastleRegionPadding < castleBounds.MinZ ||
+                    region.Bounds.MaxZ + kCastleRegionPadding > castleBounds.MaxZ)
+                {
+                    return reject("castle の段が接地用の範囲を覆っていません");
+                }
+            }
+            const uint32_t castleBlocksX = static_cast<uint32_t>(std::ceil((castleBounds.MaxX - castleBounds.MinX) / kCastleBlockMeters));
+            const uint32_t castleBlocksZ = static_cast<uint32_t>(std::ceil((castleBounds.MaxZ - castleBounds.MinZ) / kCastleBlockMeters));
+            Container::VariableArray<Container::VariableArray<PlacementCoordinate>> castleBatches(castleTiles.size());
+            Container::VariableArray<uint8_t> castleSourceNeeded(castleTiles.size(), 0);
+            for (uint32_t bz = 0; bz < castleBlocksZ; ++bz)
+            {
+                for (uint32_t bx = 0; bx < castleBlocksX; ++bx)
+                {
+                    const double x0 = castleBounds.MinX + bx * kCastleBlockMeters;
+                    const double z0 = castleBounds.MinZ + bz * kCastleBlockMeters;
+                    const double x1 = std::min(x0 + kCastleBlockMeters, castleBounds.MaxX);
+                    const double z1 = std::min(z0 + kCastleBlockMeters, castleBounds.MaxZ);
+                    bool bCandidate = false;
+                    for (const PlacementRegion &region : kCastlePlacementRegions)
+                    {
+                        if (PlacementOverlaps(x0, x1, z0, z1, region.Bounds, kCastleRegionPadding))
+                        {
+                            bCandidate = true;
+                            break;
+                        }
+                    }
+                    if (!bCandidate)
+                    {
+                        continue;
+                    }
+                    size_t owner = castleTiles.size();
+                    for (size_t id = 0; id < castleTiles.size(); ++id)
+                    {
+                        const auto &tile = castleTiles[id];
+                        if (owner == castleTiles.size() && x0 >= tile.MinX && x0 <= tile.MaxX &&
+                            z0 >= tile.MinZ && z0 <= tile.MaxZ)
+                        {
+                            owner = id;
+                        }
+                        if (x1 >= tile.MinX - kSeamReachMeters && x0 <= tile.MaxX + kSeamReachMeters &&
+                            z1 >= tile.MinZ - kSeamReachMeters && z0 <= tile.MaxZ + kSeamReachMeters)
+                        {
+                            castleSourceNeeded[id] = 1;
+                        }
+                    }
+                    if (owner == castleTiles.size())
+                    {
+                        return reject("castle の接地用の塊を区画へ割り当てられません");
+                    }
+                    PlacementCoordinate block;
+                    block.X = static_cast<int32_t>(bx);
+                    block.Z = static_cast<int32_t>(bz);
+                    castleBatches[owner].push_back(block);
+                }
+            }
             Container::VariableArray<Terrain::TerrainPlacementGroundSource> sources;
             Container::VariableArray<uint8_t> sourceNeeded(tiles.size(), 0);
             // 標本化の前に問い合わせる区画を決める。中心の点は同じ塊の四隅の範囲内にある。
@@ -1129,36 +1366,48 @@ namespace NorvesLib::Tools::AssetCook
                     }
                 }
             }
-            for (size_t id = 0; id < tiles.size(); ++id)
+            const auto addSources = [&](const auto &sourceTiles, const auto &needed)
             {
-                if (sourceNeeded[id] == 0)
+                for (size_t id = 0; id < sourceTiles.size(); ++id)
                 {
-                    continue;
+                    if (needed[id] == 0)
+                    {
+                        continue;
+                    }
+                    const auto resolved = system.FindCookedVariant(sourceTiles[id].Report.LogicalPath.c_str(), Asset::AssetKind::Model);
+                    if (!resolved.ShouldUseCooked())
+                    {
+                        outError = sourceTiles[id].Report.LogicalPath + ": 区画のクック済みの参照がありません";
+                        return false;
+                    }
+                    Terrain::TerrainPlacementGroundSource source;
+                    source.LogicalPath = resolved.Reference.LogicalPath;
+                    source.CookedPackage = resolved.Reference.CookedPackage;
+                    source.CookedHash = resolved.Reference.CookedHash;
+                    sources.push_back(std::move(source));
                 }
-                const auto resolved =
-                    system.FindCookedVariant(tiles[id].Report.LogicalPath.c_str(), Asset::AssetKind::Model);
-                if (!resolved.ShouldUseCooked())
-                {
-                    outError = tiles[id].Report.LogicalPath + ": 区画のクック済みの参照がありません";
-                    return false;
-                }
-                Terrain::TerrainPlacementGroundSource source;
-                source.LogicalPath = resolved.Reference.LogicalPath;
-                source.CookedPackage = resolved.Reference.CookedPackage;
-                source.CookedHash = resolved.Reference.CookedHash;
-                sources.push_back(std::move(source));
+                return true;
+            };
+            if (!addSources(tiles, sourceNeeded))
+            {
+                return false;
+            }
+            const size_t nearSourceCount = sources.size();
+            if (!addSources(castleTiles, castleSourceNeeded))
+            {
+                return false;
             }
             if (bSkipIfCurrent && std::filesystem::exists(destination))
             {
                 Container::AnsiString loadError;
                 const auto current = Terrain::TerrainPlacementGround::Load(
                     Container::AnsiString(destination.generic_string().c_str()), loadError);
-                if (current && current->IsCurrent({sources.data(), sources.size()}))
+                if (current && current->GetLayerCount() == 2u && current->IsCurrent({sources.data(), sources.size()}))
                 {
                     float elapsedMs = 0.0f;
                     NORVES_STAT_TIME_END(PlacementGround, elapsedMs);
                     std::cout << "{\"skipped\":true,\"format_version\":" << kVersion
-                              << ",\"source_count\":" << sources.size()
+                              << ",\"source_count\":" << nearSourceCount
                               << ",\"file_bytes\":" << std::filesystem::file_size(destination) << ",\"seconds\":";
 #if NORVES_ENABLE_STATS
                     WriteNumber(elapsedMs / 1000.0);
@@ -1169,7 +1418,7 @@ namespace NorvesLib::Tools::AssetCook
                     return true;
                 }
             }
-            const auto intersectPoints = [&](Container::VariableArray<QueryPoint> &points)
+            const auto intersectPoints = [&](Container::VariableArray<QueryPoint> &points, bool)
             {
                 Container::VariableArray<Container::VariableArray<size_t>> tilePoints(tiles.size());
                 for (size_t pointIndex = 0; pointIndex < points.size(); ++pointIndex)
@@ -1219,206 +1468,302 @@ namespace NorvesLib::Tools::AssetCook
                 }
                 return true;
             };
-            Container::VariableArray<PlacementBlock> written;
-            Container::VariableArray<double> differences;
-            uint64_t nanCount = 0;
-            uint64_t sampledCount = 0;
-            uint64_t unreliableCells = 0;
-            uint64_t centerQueryCells = 0;
-            uint64_t confidenceQueryPoints = 0;
-            uint64_t confidenceProbeSamples = 0;
-            uint64_t quarterQueryCells = 0;
-            float confidenceMs = 0.0f;
-            for (size_t owner = 0; owner < batches.size(); ++owner)
+            const auto intersectCastlePoints = [&](Container::VariableArray<QueryPoint> &points, bool bProbe)
             {
-                auto &batch = batches[owner];
-                if (batch.empty())
+                if (points.empty())
                 {
-                    continue;
+                    return true;
                 }
-                const size_t firstWritten = written.size();
-                Container::VariableArray<QueryPoint> points;
-                points.reserve(batch.size() * kSamples);
-                for (const auto &block : batch)
+                double minX = points[0].X, maxX = points[0].X;
+                double minZ = points[0].Z, maxZ = points[0].Z;
+                for (const auto &point : points)
                 {
-                    for (uint32_t iz = 0; iz < kSide; ++iz)
-                    {
-                        for (uint32_t ix = 0; ix < kSide; ++ix)
-                        {
-                            QueryPoint point;
-                            point.X = layout.FirstX + block.X * kBlockMeters + ix * kSpacing;
-                            point.Z = layout.FirstZ + block.Z * kBlockMeters + iz * kSpacing;
-                            point.DemHeight =
-                                field->SampleHeight(static_cast<float>(point.X), static_cast<float>(point.Z));
-                            points.push_back(std::move(point));
-                        }
-                    }
+                    minX = std::min(minX, point.X);
+                    maxX = std::max(maxX, point.X);
+                    minZ = std::min(minZ, point.Z);
+                    maxZ = std::max(maxZ, point.Z);
                 }
-                sampledCount += points.size();
-                if (!intersectPoints(points))
+                for (auto &tile : castleTiles)
                 {
-                    return false;
-                }
-                for (size_t index = 0; index < batch.size(); ++index)
-                {
-                    PlacementBlock block;
-                    block.X = batch[index].X;
-                    block.Z = batch[index].Z;
-                    bool bChanged = false;
-                    for (uint32_t i = 0; i < kSamples; ++i)
-                    {
-                        const auto &point = points[index * kSamples + i];
-                        block.Heights[i] = point.Hits.empty() ? std::numeric_limits<float>::quiet_NaN()
-                                                              : static_cast<float>(point.Hits[0].Height);
-                        if (!point.Hits.empty() && std::fabs(point.Hits[0].Height - point.DemHeight) > 0.01)
-                        {
-                            bChanged = true;
-                        }
-                    }
-                    if (!bChanged)
+                    if (maxX < tile.MinX - kSeamReachMeters || minX > tile.MaxX + kSeamReachMeters ||
+                        maxZ < tile.MinZ - kSeamReachMeters || minZ > tile.MaxZ + kSeamReachMeters)
                     {
                         continue;
                     }
-                    for (uint32_t i = 0; i < kSamples; ++i)
+                    Container::VariableArray<size_t> indices;
+                    for (size_t i = 0; i < points.size(); ++i)
                     {
-                        const float height = block.Heights[i];
-                        if (std::isnan(height))
+                        const auto &point = points[i];
+                        if (point.X >= tile.MinX - kSeamReachMeters && point.X <= tile.MaxX + kSeamReachMeters &&
+                            point.Z >= tile.MinZ - kSeamReachMeters && point.Z <= tile.MaxZ + kSeamReachMeters)
                         {
-                            ++nanCount;
+                            indices.push_back(i);
+                        }
+                    }
+                    if (indices.empty())
+                    {
+                        continue;
+                    }
+                    auto &report = tile.Report;
+                    const auto resolved = system.ResolveAsset(report.LogicalPath.c_str(), Asset::AssetKind::Model);
+                    if (!resolved.Succeeded() || !resolved.UsedCooked())
+                    {
+                        outError = report.LogicalPath + ": " + resolved.Reason;
+                        return false;
+                    }
+                    const auto parsed = Asset::ParseCookedMesh(resolved.Blob);
+                    // 頂点の標本は最上面、信頼の探りは近景と同じく補間値に最も近い上向きの面を使う。
+                    if (!parsed.Succeeded() || !IntersectTile(parsed.Mesh, points, indices, report, bProbe, !bProbe) ||
+                        report.FinestLod != 0u)
+                    {
+                        outError = report.LogicalPath + ": LOD 0 のメッシュまたはクラスタの範囲が不正です ";
+                        outError += report.Reason;
+                        return false;
+                    }
+                }
+                return true;
+            };
+            const auto processBatches = [&](auto &layerTiles, auto &layerBatches, auto &queryPoints,
+                                            double firstX, double firstZ, float blockMeters, float spacing, bool bCastle,
+                                            Container::VariableArray<PlacementBlock> &layerWritten, PlacementSummary &summary)
+            {
+                auto &tiles = layerTiles;
+                auto &batches = layerBatches;
+                auto &written = layerWritten;
+                auto &differences = summary.Differences;
+                auto &nanCount = summary.NanCount;
+                auto &sampledCount = summary.SampledCount;
+                auto &unreliableCells = summary.UnreliableCells;
+                auto &centerQueryCells = summary.CenterQueryCells;
+                auto &confidenceQueryPoints = summary.ConfidenceQueryPoints;
+                auto &confidenceProbeSamples = summary.ConfidenceProbeSamples;
+                auto &quarterQueryCells = summary.QuarterQueryCells;
+                auto &confidenceMs = summary.ConfidenceMs;
+                for (size_t owner = 0; owner < batches.size(); ++owner)
+                {
+                    auto &batch = batches[owner];
+                    if (batch.empty())
+                    {
+                        continue;
+                    }
+                    const size_t firstWritten = written.size();
+                    Container::VariableArray<QueryPoint> points;
+                    points.reserve(batch.size() * kSamples);
+                    for (const auto &block : batch)
+                    {
+                        for (uint32_t iz = 0; iz < kSide; ++iz)
+                        {
+                            for (uint32_t ix = 0; ix < kSide; ++ix)
+                            {
+                                QueryPoint point;
+                                point.X = firstX + block.X * blockMeters + ix * spacing;
+                                point.Z = firstZ + block.Z * blockMeters + iz * spacing;
+                                if (!bCastle)
+                                {
+                                    point.DemHeight = field->SampleHeight(static_cast<float>(point.X), static_cast<float>(point.Z));
+                                }
+                                points.push_back(std::move(point));
+                            }
+                        }
+                    }
+                    sampledCount += points.size();
+                    if (!queryPoints(points, false))
+                    {
+                        return false;
+                    }
+                    for (size_t index = 0; index < batch.size(); ++index)
+                    {
+                        PlacementBlock block;
+                        block.X = batch[index].X;
+                        block.Z = batch[index].Z;
+                        bool bChanged = false;
+                        for (uint32_t i = 0; i < kSamples; ++i)
+                        {
+                            const auto &point = points[index * kSamples + i];
+                            block.Heights[i] = point.Hits.empty() ? std::numeric_limits<float>::quiet_NaN()
+                                                                  : static_cast<float>(point.Hits[0].Height);
+                            if (!point.Hits.empty() && (bCastle || std::fabs(point.Hits[0].Height - point.DemHeight) > 0.01))
+                            {
+                                bChanged = true;
+                            }
+                        }
+                        if (!bChanged)
+                        {
+                            continue;
+                        }
+                        for (uint32_t i = 0; i < kSamples; ++i)
+                        {
+                            const float height = block.Heights[i];
+                            if (std::isnan(height))
+                            {
+                                ++nanCount;
+                            }
+                            else if (!bCastle)
+                            {
+                                differences.push_back(
+                                    std::fabs(static_cast<double>(height) - points[index * kSamples + i].DemHeight));
+                            }
+                        }
+                        written.push_back(block);
+                        ++tiles[owner].Blocks;
+                    }
+                    // 四隅の探索で使った大きい列は信頼判定の探索の前に手放す。
+                    Container::VariableArray<QueryPoint>().swap(points);
+                    NORVES_STAT_TIME_START(PlacementConfidence);
+                    struct CellProbes
+                    {
+                        size_t Block = 0;
+                        uint32_t Cell = 0;
+                        size_t Points[9] = {};
+                        uint32_t PointCount = 5u;
+                    };
+                    Container::VariableArray<CellProbes> cells;
+                    Container::VariableArray<QueryPoint> probes;
+                    for (size_t blockIndex = firstWritten; blockIndex < written.size(); ++blockIndex)
+                    {
+                        auto &block = written[blockIndex];
+                        // 隣り合う升目の辺の中点は同じ高さ・同じ交点なので、塊の中では一度だけ問い合わせる。
+                        size_t horizontal[kSide * kCellSide];
+                        size_t vertical[kSide * kCellSide];
+                        const size_t missing = std::numeric_limits<size_t>::max();
+                        std::fill(horizontal, horizontal + kSide * kCellSide, missing);
+                        std::fill(vertical, vertical + kSide * kCellSide, missing);
+                        const auto appendProbe = [&](double x, double z, double height)
+                        {
+                            const size_t index = probes.size();
+                            QueryPoint point;
+                            point.X = x;
+                            point.Z = z;
+                            point.DemHeight = height;
+                            probes.push_back(std::move(point));
+                            return index;
+                        };
+                        const auto edgeProbe = [&](size_t &index, double x, double z, double height)
+                        {
+                            if (index == missing)
+                            {
+                                index = appendProbe(x, z, height);
+                            }
+                            return index;
+                        };
+                        for (uint32_t cell = 0; cell < kCells; ++cell)
+                        {
+                            const uint32_t ix = cell % kCellSide;
+                            const uint32_t iz = cell / kCellSide;
+                            const uint32_t i = iz * kSide + ix;
+                            const double a = block.Heights[i];
+                            const double b = block.Heights[i + 1u];
+                            const double c = block.Heights[i + kSide];
+                            const double d = block.Heights[i + kSide + 1u];
+                            if (!std::isfinite(a) || !std::isfinite(b) || !std::isfinite(c) || !std::isfinite(d))
+                            {
+                                ++unreliableCells;
+                                continue;
+                            }
+                            const double x0 = firstX + block.X * blockMeters + ix * spacing;
+                            const double z0 = firstZ + block.Z * blockMeters + iz * spacing;
+                            const double half = 0.5 * spacing;
+                            CellProbes entry;
+                            entry.Block = blockIndex;
+                            entry.Cell = cell;
+                            entry.Points[0] = appendProbe(x0 + half, z0 + half, (a + b + c + d) * 0.25);
+                            entry.Points[1] = edgeProbe(horizontal[iz * kCellSide + ix], x0 + half, z0, (a + b) * 0.5);
+                            entry.Points[2] = edgeProbe(horizontal[(iz + 1u) * kCellSide + ix], x0 + half,
+                                                        z0 + spacing, (c + d) * 0.5);
+                            entry.Points[3] = edgeProbe(vertical[iz * kSide + ix], x0, z0 + half, (a + c) * 0.5);
+                            entry.Points[4] = edgeProbe(vertical[iz * kSide + ix + 1u], x0 + spacing,
+                                                        z0 + half, (b + d) * 0.5);
+                            // 傾きの大きい升目では、中央と辺の中点の間に細い段がある例を確認した。
+                            if (std::max({a, b, c, d}) - std::min({a, b, c, d}) > 0.1)
+                            {
+                                const auto quarterProbe = [&](double u, double v)
+                                {
+                                    const double value = (1.0 - v) * ((1.0 - u) * a + u * b) +
+                                                         v * ((1.0 - u) * c + u * d);
+                                    return appendProbe(x0 + u * spacing, z0 + v * spacing, value);
+                                };
+                                entry.Points[5] = quarterProbe(0.25, 0.25);
+                                entry.Points[6] = quarterProbe(0.75, 0.25);
+                                entry.Points[7] = quarterProbe(0.25, 0.75);
+                                entry.Points[8] = quarterProbe(0.75, 0.75);
+                                entry.PointCount = 9u;
+                                ++quarterQueryCells;
+                            }
+                            confidenceProbeSamples += entry.PointCount;
+                            cells.push_back(entry);
+                        }
+                    }
+                    centerQueryCells += cells.size();
+                    confidenceQueryPoints += probes.size();
+                    if (!queryPoints(probes, true))
+                    {
+                        return false;
+                    }
+                    for (const CellProbes &cell : cells)
+                    {
+                        bool reliable = true;
+                        for (uint32_t probe = 0; probe < cell.PointCount; ++probe)
+                        {
+                            const QueryPoint &point = probes[cell.Points[probe]];
+                            if (point.Hits.empty() || std::fabs(point.Hits[0].Height - point.DemHeight) > 0.02)
+                            {
+                                reliable = false;
+                                break;
+                            }
+                        }
+                        if (reliable)
+                        {
+                            written[cell.Block].ReliableCells[cell.Cell / 8u] |= static_cast<uint8_t>(1u << (cell.Cell % 8u));
                         }
                         else
                         {
-                            differences.push_back(
-                                std::fabs(static_cast<double>(height) - points[index * kSamples + i].DemHeight));
-                        }
-                    }
-                    written.push_back(block);
-                    ++tiles[owner].Blocks;
-                }
-                // 四隅の探索で使った大きい列は信頼判定の探索の前に手放す。
-                Container::VariableArray<QueryPoint>().swap(points);
-                NORVES_STAT_TIME_START(PlacementConfidence);
-                struct CellProbes
-                {
-                    size_t Block = 0;
-                    uint32_t Cell = 0;
-                    size_t Points[9] = {};
-                    uint32_t PointCount = 5u;
-                };
-                Container::VariableArray<CellProbes> cells;
-                Container::VariableArray<QueryPoint> probes;
-                for (size_t blockIndex = firstWritten; blockIndex < written.size(); ++blockIndex)
-                {
-                    auto &block = written[blockIndex];
-                    // 隣り合う升目の辺の中点は同じ高さ・同じ交点なので、塊の中では一度だけ問い合わせる。
-                    size_t horizontal[kSide * kCellSide];
-                    size_t vertical[kSide * kCellSide];
-                    const size_t missing = std::numeric_limits<size_t>::max();
-                    std::fill(horizontal, horizontal + kSide * kCellSide, missing);
-                    std::fill(vertical, vertical + kSide * kCellSide, missing);
-                    const auto appendProbe = [&](double x, double z, double height)
-                    {
-                        const size_t index = probes.size();
-                        QueryPoint point;
-                        point.X = x;
-                        point.Z = z;
-                        point.DemHeight = height;
-                        probes.push_back(std::move(point));
-                        return index;
-                    };
-                    const auto edgeProbe = [&](size_t &index, double x, double z, double height)
-                    {
-                        if (index == missing)
-                        {
-                            index = appendProbe(x, z, height);
-                        }
-                        return index;
-                    };
-                    for (uint32_t cell = 0; cell < kCells; ++cell)
-                    {
-                        const uint32_t ix = cell % kCellSide;
-                        const uint32_t iz = cell / kCellSide;
-                        const uint32_t i = iz * kSide + ix;
-                        const double a = block.Heights[i];
-                        const double b = block.Heights[i + 1u];
-                        const double c = block.Heights[i + kSide];
-                        const double d = block.Heights[i + kSide + 1u];
-                        if (!std::isfinite(a) || !std::isfinite(b) || !std::isfinite(c) || !std::isfinite(d))
-                        {
                             ++unreliableCells;
-                            continue;
-                        }
-                        const double x0 = layout.FirstX + block.X * kBlockMeters + ix * kSpacing;
-                        const double z0 = layout.FirstZ + block.Z * kBlockMeters + iz * kSpacing;
-                        const double half = 0.5 * kSpacing;
-                        CellProbes entry;
-                        entry.Block = blockIndex;
-                        entry.Cell = cell;
-                        entry.Points[0] = appendProbe(x0 + half, z0 + half, (a + b + c + d) * 0.25);
-                        entry.Points[1] = edgeProbe(horizontal[iz * kCellSide + ix], x0 + half, z0, (a + b) * 0.5);
-                        entry.Points[2] = edgeProbe(horizontal[(iz + 1u) * kCellSide + ix], x0 + half,
-                                                    z0 + kSpacing, (c + d) * 0.5);
-                        entry.Points[3] = edgeProbe(vertical[iz * kSide + ix], x0, z0 + half, (a + c) * 0.5);
-                        entry.Points[4] = edgeProbe(vertical[iz * kSide + ix + 1u], x0 + kSpacing,
-                                                    z0 + half, (b + d) * 0.5);
-                        // 傾きの大きい升目では、中央と辺の中点の間に細い段がある例を確認した。
-                        if (std::max({a, b, c, d}) - std::min({a, b, c, d}) > 0.1)
-                        {
-                            const auto quarterProbe = [&](double u, double v)
-                            {
-                                const double value = (1.0 - v) * ((1.0 - u) * a + u * b) +
-                                                     v * ((1.0 - u) * c + u * d);
-                                return appendProbe(x0 + u * kSpacing, z0 + v * kSpacing, value);
-                            };
-                            entry.Points[5] = quarterProbe(0.25, 0.25);
-                            entry.Points[6] = quarterProbe(0.75, 0.25);
-                            entry.Points[7] = quarterProbe(0.25, 0.75);
-                            entry.Points[8] = quarterProbe(0.75, 0.75);
-                            entry.PointCount = 9u;
-                            ++quarterQueryCells;
-                        }
-                        confidenceProbeSamples += entry.PointCount;
-                        cells.push_back(entry);
-                    }
-                }
-                centerQueryCells += cells.size();
-                confidenceQueryPoints += probes.size();
-                if (!intersectPoints(probes))
-                {
-                    return false;
-                }
-                for (const CellProbes &cell : cells)
-                {
-                    bool reliable = true;
-                    for (uint32_t probe = 0; probe < cell.PointCount; ++probe)
-                    {
-                        const QueryPoint &point = probes[cell.Points[probe]];
-                        if (point.Hits.empty() || std::fabs(point.Hits[0].Height - point.DemHeight) > 0.02)
-                        {
-                            reliable = false;
-                            break;
                         }
                     }
-                    if (reliable)
-                    {
-                        written[cell.Block].ReliableCells[cell.Cell / 8u] |= static_cast<uint8_t>(1u << (cell.Cell % 8u));
-                    }
-                    else
-                    {
-                        ++unreliableCells;
-                    }
+                    float batchConfidenceMs = 0.0f;
+                    NORVES_STAT_TIME_END(PlacementConfidence, batchConfidenceMs);
+                    confidenceMs += batchConfidenceMs;
+                    // 区画ごとの作業メモリは次の区画へ持ち越さない。
+                    Container::VariableArray<PlacementCoordinate>().swap(batch);
                 }
-                float batchConfidenceMs = 0.0f;
-                NORVES_STAT_TIME_END(PlacementConfidence, batchConfidenceMs);
-                confidenceMs += batchConfidenceMs;
-                // 大きい DEM の区画ごとの作業メモリは次の区画へ持ち越さない。
-                Container::VariableArray<PlacementCoordinate>().swap(batch);
+                return true;
+            };
+            Container::VariableArray<PlacementBlock> written;
+            Container::VariableArray<PlacementBlock> castleWritten;
+            PlacementSummary nearSummary;
+            PlacementSummary castleSummary;
+            if (!processBatches(tiles, batches, intersectPoints, layout.FirstX, layout.FirstZ, kBlockMeters, kSpacing,
+                                false, written, nearSummary))
+            {
+                return false;
             }
-            if (written.size() > UINT32_MAX || sources.size() > UINT32_MAX)
+            NORVES_STAT_TIME_START(PlacementCastle);
+            if (!processBatches(castleTiles, castleBatches, intersectCastlePoints, castleBounds.MinX, castleBounds.MinZ,
+                                kCastleBlockMeters, kCastleSpacing, true, castleWritten, castleSummary))
+            {
+                return false;
+            }
+            float castleMs = 0.0f;
+            NORVES_STAT_TIME_END(PlacementCastle, castleMs);
+            auto &differences = nearSummary.Differences;
+            const uint64_t nanCount = nearSummary.NanCount;
+            const uint64_t sampledCount = nearSummary.SampledCount;
+            const uint64_t unreliableCells = nearSummary.UnreliableCells;
+            const uint64_t centerQueryCells = nearSummary.CenterQueryCells;
+            const uint64_t confidenceQueryPoints = nearSummary.ConfidenceQueryPoints;
+            const uint64_t confidenceProbeSamples = nearSummary.ConfidenceProbeSamples;
+            const uint64_t quarterQueryCells = nearSummary.QuarterQueryCells;
+            const float confidenceMs = nearSummary.ConfidenceMs;
+            if (written.size() > UINT32_MAX || castleWritten.size() > UINT32_MAX || sources.size() > UINT32_MAX)
             {
                 return reject("接地用の高さ格子の個数が形式の上限を超えています");
             }
             std::sort(written.begin(), written.end(),
+                      [](const auto &a, const auto &b)
+                      {
+                          return a.Z < b.Z || (a.Z == b.Z && a.X < b.X);
+                      });
+            std::sort(castleWritten.begin(), castleWritten.end(),
                       [](const auto &a, const auto &b)
                       {
                           return a.Z < b.Z || (a.Z == b.Z && a.X < b.X);
@@ -1433,14 +1778,8 @@ namespace NorvesLib::Tools::AssetCook
             }
             WritePlacementUInt(stream, kMagic, 4);
             WritePlacementUInt(stream, kVersion, 4);
-            WritePlacementUInt(stream, std::bit_cast<uint32_t>(kBlockMeters), 4);
-            WritePlacementUInt(stream, std::bit_cast<uint32_t>(kSpacing), 4);
             WritePlacementUInt(stream, kSide, 4);
-            for (const double value : {layout.FirstX, layout.FirstZ, maxX, maxZ})
-            {
-                WritePlacementUInt(stream, std::bit_cast<uint64_t>(value), 8);
-            }
-            WritePlacementUInt(stream, written.size(), 4);
+            WritePlacementUInt(stream, 2u, 4);
             WritePlacementUInt(stream, sources.size(), 4);
             for (const auto &source : sources)
             {
@@ -1452,16 +1791,32 @@ namespace NorvesLib::Tools::AssetCook
                 WritePlacementText(stream, source.CookedPackage);
                 WritePlacementUInt(stream, source.CookedHash, 8);
             }
-            for (const auto &block : written)
+            const auto writeLayer = [&](uint32_t flags, float blockMeters, float spacing,
+                                        double firstX, double firstZ, double layerMaxX, double layerMaxZ,
+                                        const Container::VariableArray<PlacementBlock> &blocks)
             {
-                WritePlacementUInt(stream, std::bit_cast<uint32_t>(block.X), 4);
-                WritePlacementUInt(stream, std::bit_cast<uint32_t>(block.Z), 4);
-                for (const float height : block.Heights)
+                WritePlacementUInt(stream, flags, 4);
+                WritePlacementUInt(stream, std::bit_cast<uint32_t>(blockMeters), 4);
+                WritePlacementUInt(stream, std::bit_cast<uint32_t>(spacing), 4);
+                for (const double value : {firstX, firstZ, layerMaxX, layerMaxZ})
                 {
-                    WritePlacementUInt(stream, std::bit_cast<uint32_t>(height), 4);
+                    WritePlacementUInt(stream, std::bit_cast<uint64_t>(value), 8);
                 }
-                stream.write(reinterpret_cast<const char *>(block.ReliableCells), kMaskBytes);
-            }
+                WritePlacementUInt(stream, blocks.size(), 4);
+                for (const auto &block : blocks)
+                {
+                    WritePlacementUInt(stream, std::bit_cast<uint32_t>(block.X), 4);
+                    WritePlacementUInt(stream, std::bit_cast<uint32_t>(block.Z), 4);
+                    for (const float height : block.Heights)
+                    {
+                        WritePlacementUInt(stream, std::bit_cast<uint32_t>(height), 4);
+                    }
+                    stream.write(reinterpret_cast<const char *>(block.ReliableCells), kMaskBytes);
+                }
+            };
+            writeLayer(kLayerFallbackToHeightField, kBlockMeters, kSpacing, layout.FirstX, layout.FirstZ, maxX, maxZ, written);
+            writeLayer(0u, kCastleBlockMeters, kCastleSpacing, castleBounds.MinX, castleBounds.MinZ,
+                       castleBounds.MaxX, castleBounds.MaxZ, castleWritten);
             stream.close();
             if (!stream)
             {
@@ -1471,6 +1826,65 @@ namespace NorvesLib::Tools::AssetCook
                              MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
             {
                 return reject("接地用の高さ格子の出力ファイルを置き換えられません");
+            }
+            Container::AnsiString loadError;
+            const auto loaded = Terrain::TerrainPlacementGround::Load(
+                Container::AnsiString(destination.generic_string().c_str()), loadError);
+            if (!loaded)
+            {
+                outError = "書き出した接地用の高さ格子を読み直せません: ";
+                outError += loadError;
+                return false;
+            }
+            struct RegionSummary
+            {
+                uint64_t CoveredBlocks = 0;
+                uint64_t ExpectedBlocks = 0;
+                uint64_t BakedSamples = 0;
+                uint64_t Samples = 0;
+            };
+            RegionSummary regionSummaries[sizeof(kCastlePlacementRegions) / sizeof(kCastlePlacementRegions[0])] = {};
+            Container::VariableArray<uint8_t> castleBlockMap(static_cast<size_t>(castleBlocksX) * castleBlocksZ, 0);
+            for (const auto &block : castleWritten)
+            {
+                castleBlockMap[static_cast<size_t>(block.Z) * castleBlocksX + block.X] = 1;
+            }
+            for (size_t i = 0; i < sizeof(kCastlePlacementRegions) / sizeof(kCastlePlacementRegions[0]); ++i)
+            {
+                const auto &region = kCastlePlacementRegions[i];
+                auto &summary = regionSummaries[i];
+                for (uint32_t bz = 0; bz < castleBlocksZ; ++bz)
+                {
+                    for (uint32_t bx = 0; bx < castleBlocksX; ++bx)
+                    {
+                        const double x0 = castleBounds.MinX + bx * kCastleBlockMeters;
+                        const double z0 = castleBounds.MinZ + bz * kCastleBlockMeters;
+                        if (PlacementOverlaps(x0, std::min(x0 + kCastleBlockMeters, castleBounds.MaxX),
+                                              z0, std::min(z0 + kCastleBlockMeters, castleBounds.MaxZ), region.Bounds, 0.0))
+                        {
+                            ++summary.ExpectedBlocks;
+                            summary.CoveredBlocks += castleBlockMap[static_cast<size_t>(bz) * castleBlocksX + bx];
+                        }
+                    }
+                }
+                for (double z = region.Bounds.MinZ; z <= region.Bounds.MaxZ; z += 4.0)
+                {
+                    for (double x = region.Bounds.MinX; x <= region.Bounds.MaxX; x += 4.0)
+                    {
+                        float height = 0.0f;
+                        if (loaded->Sample(static_cast<float>(x), static_cast<float>(z), height) ==
+                            Terrain::PlacementGroundSample::Baked)
+                        {
+                            ++summary.BakedSamples;
+                        }
+                        ++summary.Samples;
+                    }
+                }
+            }
+            size_t castleTileCount = 0;
+            for (const uint8_t needed : castleSourceNeeded)
+            {
+                castleTileCount += needed != 0;
             }
             const auto fileBytes = std::filesystem::file_size(destination);
             float elapsedMs = 0.0f;
@@ -1500,7 +1914,7 @@ namespace NorvesLib::Tools::AssetCook
 #else
             std::cout << "null";
 #endif
-            std::cout << ",\"source_count\":" << sources.size() << ",\"tiles\":[";
+            std::cout << ",\"source_count\":" << nearSourceCount << ",\"tiles\":[";
             bool bFirst = true;
             for (const auto &tile : tiles)
             {
@@ -1512,7 +1926,31 @@ namespace NorvesLib::Tools::AssetCook
                           << "],\"block_count\":" << tile.Blocks << "}";
                 bFirst = false;
             }
-            std::cout << "]}\n";
+            std::cout << "],\"castle\":{\"block_count\":" << castleWritten.size()
+                      << ",\"point_count\":" << castleWritten.size() * kSamples
+                      << ",\"nan_point_count\":" << castleSummary.NanCount
+                      << ",\"unreliable_cell_count\":" << castleSummary.UnreliableCells
+                      << ",\"unreliable_cell_ratio\":";
+            WriteNumber(castleWritten.empty() ? 0.0
+                                               : static_cast<double>(castleSummary.UnreliableCells) / (castleWritten.size() * kCells));
+            std::cout << ",\"seconds\":";
+#if NORVES_ENABLE_STATS
+            WriteNumber(castleMs / 1000.0);
+#else
+            std::cout << "null";
+#endif
+            std::cout << ",\"tile_count\":" << castleTileCount << ",\"regions\":[";
+            for (size_t i = 0; i < sizeof(kCastlePlacementRegions) / sizeof(kCastlePlacementRegions[0]); ++i)
+            {
+                const auto &summary = regionSummaries[i];
+                std::cout << (i == 0 ? "" : ",") << "{\"id\":";
+                WriteJsonString(kCastlePlacementRegions[i].Id);
+                std::cout << ",\"covered_block_count\":" << summary.CoveredBlocks
+                          << ",\"expected_block_count\":" << summary.ExpectedBlocks << ",\"baked_sample_ratio\":";
+                WriteNumber(summary.Samples == 0 ? 0.0 : static_cast<double>(summary.BakedSamples) / summary.Samples);
+                std::cout << "}";
+            }
+            std::cout << "]}}\n";
             return true;
         }
     } // namespace

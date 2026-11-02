@@ -19,6 +19,7 @@ namespace NorvesLib::Tools::AssetCook
     /// argv[1] が --sample-cooked-terrain でなければ false を返して何もしない。結果の JSON は標準出力へ書く
     bool RunCookedTerrainSampleCommand(int argc, char **argv, int &outExitCode);
     /// AssetCook --write-placement-ground --manifest <manifest.json> --out <path> [--skip-if-current]。
+    /// 近景に加え、遠景の castle の段にある焼いた面から接地用の層を作る。
     /// argv[1] が一致したときだけ処理し、接地用の疎な高さ格子と標準出力の要約 JSON を書く。
     bool RunPlacementGroundWriteCommand(int argc, char **argv, int &outExitCode);
 } // namespace NorvesLib::Tools::AssetCook
