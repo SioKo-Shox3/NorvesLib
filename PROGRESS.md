@@ -8880,3 +8880,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: 起動の確かめは後回し（SCN-WL-CLIFF-GEN-TALUS-CHECK）。verify の 5〜12 行目を版 19 で回す
 - Notes: 要起票: AssetCook のソースが変わる取り込みのたびに、検証を回す作業ツリーの exe のハッシュが変わって地形の全項目の焼き直し（並列で約 31 分）が要る。印に exe のハッシュではなく地形の生成の版を使う形は Scripts の設計変更になるので、この項目では変えていない
 - U1 ソケットに付けた Entity の描画の変換を、付け先の描画の変換から求める: 着地(直し 0 回)
+- U2 WorldRenderInterpolationTest に付けた Entity の描画の補間の検査を足し、Testing.md に 3 点を書く: 着地(直し 0 回)
