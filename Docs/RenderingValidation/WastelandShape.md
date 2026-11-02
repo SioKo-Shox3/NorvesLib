@@ -814,8 +814,11 @@ SCN-WL-SHAPE-BASELINE の撮り直しの置き場（`scene-capture/SCN-WL-SHAPE-
   数 m〜十数 m の崩れた塊は、スキャンの岩・Blender の大きな岩の物として置く形で別に扱う。
   合否の仕様は塊を求める組 `fold_gain` を外し、版 15 の値に戻ることを確かめる形にした
 - 版 19 の形・範囲ごとの量・置いた物の接地・ページの要求と VRAM・写真との比べは撮影で確かめる（未撮影）
-- 遮蔽の比べの Cycles の正解は版 19 と異なる 10 月 18 日の地形から描いたため、
-  同じ面で比べるには地形の書き出しと描き直しが要る
+- 遮蔽の比べの Cycles の正解は、SCN-RENDER-ROUGH-STEEP-ENERGY-P2 で崖の細部の版 18 の地形から描き直した
+  （`.harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY-P2/cycles`、地形の manifest `fdbbcc2a…`）。
+  共有の置き場は版 19 に焼き直したので、この正解は今の地形と合わない。
+  SCN-RENDER-ROUGH-STEEP-ENERGY と SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1-CHECK の撮影は版 19 の地形になり、
+  エンジンの撮影と正解の地形の一覧のハッシュの照合で落ちる。版 19 の地形の書き出しと Cycles の描き直しが要る
 
 ## 既知の限界
 
