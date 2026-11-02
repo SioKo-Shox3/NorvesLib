@@ -4444,3 +4444,13 @@
 - verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 600`
 - paths: Library/Core, Test/Core, Game, Docs/Testing.md, TASKS.md, PROGRESS.md
 - from: TEST-FULL-CTEST-BASELINE
+
+## SCN-THUMBNAILS-CHECK: ランチャーのカードに各シーンの見本画像を出す(後回しにしたアプリの起動の確かめ)
+- status: todo
+- check: launch
+- gpu: exclusive
+- done-when: SCN-THUMBNAILS で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、SCN-THUMBNAILS の done-when を満たすことを確かめる。満たさなければ SCN-THUMBNAILS の done-when と paths の範囲で直す。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureLauncherThumbnails.ps1 -Configuration RelWithDebInfo -WorkDir .harness/runs/scene-capture/SCN-THUMBNAILS/thumbs`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene launcher -Configuration RelWithDebInfo -Build -OutDir .harness/runs/scene-capture/SCN-THUMBNAILS`
+- paths: Game, Scripts, Assets/Textures/Launcher, TASKS.md, PROGRESS.md
+- from: SCN-THUMBNAILS
