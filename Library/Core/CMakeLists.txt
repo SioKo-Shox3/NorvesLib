@@ -54,6 +54,7 @@ set(PRIVATE_SOURCES
     Private/Particle/DecalPool.cpp
     Private/Particle/VfxSchema.cpp
     Private/Particle/VfxEffectSerialization.cpp
+    Private/Particle/HitEffectEmitter.cpp
     Private/Particle/VfxEffectSystem.cpp
     # Animation
     Private/Animation/AnimationClipResource.cpp
@@ -521,6 +522,7 @@ set(PUBLIC_HEADERS
     Public/Particle/VfxEffectTypes.h
     Public/Particle/VfxSchema.h
     Public/Particle/VfxEffectSerialization.h
+    Public/Particle/HitEffectEmitter.h
     Public/Particle/VfxEffectSystem.h
     Public/Engine/ApplicationProcessor.h
     Public/Engine/FixedStepSettings.h
