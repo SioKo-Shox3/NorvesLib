@@ -9110,6 +9110,7 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261103-004712/iter2-build.txt`（Debug のビルド 0）、`iter2-bootstrap-repeat.txt`（Bootstrap 単独 6 回 Passed）、`iter2-verify-j4.txt`（`-j 4` の 4 本 Passed、終了コード 0）。直列の行と製品の名前の mutex を握った行は取り込み後の `sync-…-2.txt`・`sync-…-3.txt` で Passed、参照数の行は 1
 - Next: なし（この項目は完了）
 - Notes: 要起票: CookManagedBootstrapTest のクラッシュの子（`Crash`）が間欠的に止める点の前で 91 を返す（9 回中 1 回、point=3）。子は stderr を継がず（CreateProcessW の bInheritHandles=FALSE）、`child did not exit:` の理由が親の出力に残らないため原因が分からない。子の理由を親に見せる形にしてから原因を追う
+
 - U1 Bootstrap 試験のクラッシュの子に親の stderr を継がせ、タスクの verify を全部回す: 着地(直し 0 回)
 
 ## 2026-11-03 G2-MATERIAL-SELECTION-INTEGRATION-P1-P1-P1-P1-P1（run 20261103-013153 の反復 1、完了）
