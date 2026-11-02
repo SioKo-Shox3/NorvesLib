@@ -9134,20 +9134,52 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 共有のクック済みの置き場（build/CookedAssets）の格子は版 3 に書き直した。版 3 を読めない古い Game（統合前の別の枠の実行ファイル）では格子が読めず、崖錐の岩と塊は見送られる
 - Notes: castle の層の塊の無い所・不可の升目は no_ground に数える。(E) の no_ground 0 は、castle の不可の升目の割合（0.233）からすると落ちうる。そのときは不可の升目の分布（壁の足の帯にあるか）を先に見る
 - Notes: 遮蔽の視点 contact_near・ref_cliff_01 から castle の範囲までは 2 km 以上で、塊は遮蔽の小物の書き出し（300 m）に入らない
-- U1 params の min/max（float・int）を読み、全ての書き込み口で丸める: 着地(直し 1 回)
-- U4 animgraph.json v1 の仕様を文書に書く: 着地(直し 1 回)
-- U2 masks の roots（複数の根）を読む: 着地(直し 0 回)
-- U3 blend1d の position に "nominalSpeed" を許し、実行時に解き直す（最後の単位）: 着地(直し 0 回)
-- U3 blend1d の position に "nominalSpeed" を許し、実行時に解き直す: 着地(直し 0 回)
 
-## 2026-11-03 G3-GR10-GRAPH-FORMAT-GAPS（run 20261103-065438 の反復 3、完了）
-- Done: animgraph.json v1 に要件の形式の 3 つの欄を足した。(1) params の float・int の `min`・`max`（`SetFloat`・`SetInt`・`bind`・スクリプトの `SetAnim*ByIndex` で丸める。既定値が範囲外・min>max・bool/trigger への指定は読込失敗）。(2) masks の `roots`（各根の枝の重みの最大。`root` 1 つは今と同じ。同時指定・空・重複は InvalidSchema、未知は UnknownJoint）。(3) blend1d の sample の `"position":"nominalSpeed"`（子の Clip の公称速度。子が Clip でない・明示値 0 は読込失敗〔`InvalidNominalSpeed` を足した〕、位置の分かる sample どうしの厳密増加を読込で確かめ、推定の公称速度はインスタンスの RefreshRootMetadata で解く。metadata の差し替えで不正になると Update/Evaluate が false で前の位置を保つ）。仕様は `Docs/Architecture/AnimationRuntime.md` の「animgraph.json v1」
-- 証拠: `.harness/runs/20261103-065438/u3-unit-verify.txt`（Debug の SkeletalAnimationSamplingTest のビルド、ctest で SkeletalAnimationSamplingTest・SkinnedRenderPathContractTest の 2 本 Passed）
-- Next: なし（アプリの起動の確かめは無い）
-- Notes: 公称速度由来の位置を持つ blend1d は RefreshRootMetadata の後に重みを直ちに求め直すので、Update を挟まず Evaluate だけを呼んでもパラメータの今の値が重みに入る（数値の位置だけの blend1d は Update まで前の重み）。blend2d の軸は明示値のまま
+- U1 GPU スキニングの法線行列の退化判定を尺度不変にし、小さな一様スケールの骨の検査を足す: 着地(直し 0 回)
 
-## 2026-11-03 G3-GR10-GRAPH-FORMAT-GAPS（run 20261103-065438 の反復 4、完了）
-- Done: 反復 3 の再検証の失敗は、この枠の build に `SkinnedRenderPathContractTest.exe` が無かったため（verify のビルド行は SkeletalAnimationSamplingTest だけを作る）。コードの変更は無く、この枠で両方のターゲットをビルドして verify の ctest を回し直し、2 本とも Passed
-- 証拠: `.harness/runs/20261103-065438/build-G3-GR10.txt`（両ターゲットのビルド EXIT=0）・`.harness/runs/20261103-065438/verify-G3-GR10-ctest.txt`（SkeletalAnimationSamplingTest 0.25 sec・SkinnedRenderPathContractTest 18.51 sec Passed、100%）
-- Next: なし
-- Notes: 要起票: この項目の verify は ctest で SkinnedRenderPathContractTest を回すのにビルド行がそのターゲットを作らないので、新しい枠・消した build では再検証が Not Run で落ちる。ビルド行に `--target SkinnedRenderPathContractTest` を足すかは計画が決める
+## 2026-11-02 FIX-NORMAL-MATRIX-SCALE-CHECK-P1（run 20261102-195420 の反復 1。完了）
+- Done: `skinning_compute.comp` の `NormalMatrixOf` を `MatrixUtils::CreateNormalMatrix` と同じ尺度不変の規則にした（軸の長さの積 = GLSL の列 `m[0..2]` の長さの積。CPU の行優先の行列をそのまま std430 の mat4 に載せるので GLSL の列が CPU の行にあたる。積が 0・非有限、または `|det| < EPSILON × 積` で単位行列）。`SingularDeterminant` は消した。`ComputeSkinningVulkanTest` の `TransformNormal` の写しも CPU の行の長さで同じ規則にした
+- Done: `ComputeSkinningVulkanTest` にインスタンス D（一様スケール 0.001〜0.005 × 回転の骨 2 本と変換、3 頂点）を足した。GPU の出力は既存の流れで CPU の写しと比べ、さらに今・前の骨の空間の法線が `SkeletalAnimationSampler::SkinVertex` と許容 1e-4 で一致すること、単独の骨の頂点の法線が入力の向きから回転していること（内積 < 0.99）を確かめる
+- Done: アプリを起動しない確かめを回した: `glslangValidator -V --target-env vulkan1.2` で `skinning_compute.comp` のコンパイルが通る、`cmake --build build --config Debug --target RHITextureUpdateVulkanTest MathGeometryTest SkinnedRenderPathContractTest -- /m:1` 終了コード 0、ctest `MatrixAbstractionTest` Passed（`.harness/runs/20261102-195420/FIX-NORMAL-MATRIX-SCALE-CHECK-P1-U1-verify.txt`）
+- Next: 起動の確かめは後回し。`FIX-NORMAL-MATRIX-SCALE-CHECK-P1-CHECK` で `cmake --build build --config Debug --target Game RHITextureUpdateVulkanTest MathGeometryTest -- /m:1` と `ctest --test-dir build -C Debug -R "^ComputeSkinningVulkanTest$" --no-tests=error --output-on-failure --timeout 600` を回し、インスタンス A〜D の GPU の出力が CPU の参照と一致し、D の 2 種の検査が通ることを確かめる
+- Notes: verify の ctest のうち `SkinnedRenderPathContractTest` は終了コード 3 で落ちるが、変更前のシェーダー（ac1e5680 の `skinning_compute.comp`）に戻して同じ実行ファイルを走らせても同じ箇所・同じ終了コードで落ちる（`FIX-NORMAL-MATRIX-SCALE-CHECK-P1-contract-base-shader.txt` と `-contract-new-shader.txt`）。この試験の実行ファイルは `ComputeSkinningVulkanTest.cpp` を含まないので、今回の変更とは関係しない前からの失敗
+- Notes: 要起票: `SkinnedRenderPathContractTest` が `TestChunkFailureKeepsGBufferAndShadowDrawAndLogsOnce` の後（`TestInitializedPassesExecuteThroughFrameCommandsAndSceneRenderer` の中）で assert の文言を出さずに終了コード 3 で終わる（ac1e5680 の Debug ビルド）
+- Notes(反復 2): ランナーの再検証の ctest が終了コード 8 で落ちた。原因は、この枠の build/ に `MathGeometryTest.exe`・`SkinnedRenderPathContractTest.exe` が無いこと(ビルドの verify 行が後回しの対象)と、基点 ac1e5680 の `SkinnedRenderPathContractTest` が `TestCoordinatorPropagatesFramePacketStatsAndSubmissionSerials` の未捕捉の例外で落ちること。後者は G2-GR32-GPU-ACCEPTANCE-P1(d4bccf6e、統合ブランチに着地済み・本ブランチには未取り込み)で直っているので、`after: G2-GR32-GPU-ACCEPTANCE-P1` を付けて取り込み待ちにした。取り込んだ後、この枠で `MathGeometryTest`・`SkinnedRenderPathContractTest` をビルドしてから ctest を回す
+
+## 2026-11-03 FIX-NORMAL-MATRIX-SCALE-CHECK-P1（run 20261103-065137 の反復 1。完了）
+
+- Done: 統合ブランチ feature/scene-launcher（d4bccf6e の偽のスワップチェーンの複数コマンドリストの `EndFrame` を含む）を取り込んだ木で、`cmake --build build --config Debug --target MathGeometryTest SkinnedRenderPathContractTest RHITextureUpdateVulkanTest -- /m:1` が通り（`ComputeSkinningVulkanTest.cpp` も `RHITextureUpdateVulkanTest` の中でコンパイルされる）、ctest `MatrixAbstractionTest`・`SkinnedRenderPathContractTest` が 2/2 Passed（`.harness/runs/20261103-065137/U2-unit-verify.txt`）。前回の `SkinnedRenderPathContractTest` の失敗は取り込み前の偽のスワップチェーンの欠けによるもので、取り込みで解消した
+- Next: 起動の確かめは後回し。`FIX-NORMAL-MATRIX-SCALE-CHECK-P1-CHECK` で `cmake --build build --config Debug --target Game RHITextureUpdateVulkanTest MathGeometryTest -- /m:1` と `ctest --test-dir build -C Debug -R "^ComputeSkinningVulkanTest$" --no-tests=error --output-on-failure --timeout 600` を回し、インスタンス A〜D の GPU の出力が CPU の参照と一致し、D の 2 種の検査が通ることを確かめる
+- Notes: `ComputeSkinningVulkanTest` は単独の cmake のターゲットではなく、ctest の名前だけ（実行ファイルは `RHITextureUpdateVulkanTest` に束ねられている）。ビルドで `--target ComputeSkinningVulkanTest` を指定すると MSB1009 で落ちる
+
+## 2026-11-03 FIX-NORMAL-MATRIX-SCALE-CHECK-P1（run 20261103-065137 の反復 2。完了）
+
+- Done: ランナーの再検証はこの作業ツリーの `build/` にある取り込み前（10 月 29 日）の試験の実行ファイルを回して `SkinnedRenderPathContractTest` が落ちていた。この木で `cmake --build build --config Debug --target MathGeometryTest SkinnedRenderPathContractTest RHITextureUpdateVulkanTest -- /m:1` を回して終了コード 0（`.harness/runs/20261103-065137/iter-2-build.txt`）、続けて verify の ctest `MatrixAbstractionTest`・`SkinnedRenderPathContractTest` が 2/2 Passed（`.harness/runs/20261103-065137/iter-2-ctest.txt`）
+- Next: 起動の確かめは後回し。`FIX-NORMAL-MATRIX-SCALE-CHECK-P1-CHECK` で `Game` を含むビルドと ctest `ComputeSkinningVulkanTest` を回す
+- Notes: verify のビルドの行は `Game` を含むので後回しにされ、作業ツリーの `build/` の試験の実行ファイルが古いまま ctest の行だけが再検証される。試験の実行ファイルは反復の中で先にビルドしておく
+
+- U1 ソケットの向きのオラクル・関節の scale・JSON の拒否の試験を足す: 着地(直し 0 回)
+- U2 再生中の姿勢と Animator 駆動で、付けた Entity が同じフレームのソケットに付くことの試験を足し、タスクの verify を回す: 着地(直し 0 回)
+
+## 2026-11-03 G3-GR13-SOCKET-ORACLE-TIMING（run 20261103-065450 の反復 1、完了）
+- Done: `SkeletalAnimationSamplingTest` に `Test/Core/Rendering/SocketOracleTest.cpp` を足した。(1) 向き: +90°Z と任意の回転・平行移動の子の関節、恒等でない剛体のメッシュノード行列 M、回転・平行移動・一様 scale 1.7 のオーナーで、ウェイト 1 の頂点の CPU スキニング（`SkinPosition` と palette、続けてオーナーのワールド）と、ソケットのローカルの原点と 3 軸の点（0.5）をソケットのワールド変換で写した点が 1e-4 で一致する。(2) 子の関節の scale 2 でソケットの scale はオーナーの 1.7 になり、原点はスキニングと一致する。(3) 時刻: `SetPlaying(true)` の再生と `AnimatorComponent`（clip ノード 1 つのグラフ）× 追従する Entity を骨格の前・後に作る 4 通りで、`World::Tick`・`World::LateTick` の後の追従する Entity の位置と回転が同じフレームの `GetSocketWorldTransform` と一致し、ソケットはフレームごとに 1e-3 より大きく動く（6 フレーム）。(4) `ApplySocketsJson` は `1e400`・単位でない回転・scale 2・空の名前を拒否し、有効な候補を先に並べても前の定義（親と offset）を保つ。どれも最初から通り、製品のコードは変えていない
+- 証拠: `.harness/runs/20261103-065450/u2-unit-verify.txt`（verify のビルド 3 ターゲットの終了コード 0、ctest の SkeletalAnimationSamplingTest・CookedSkeletonV1Test・WorldRenderInterpolationTest・WorldTickGroupTest の 4 本 Passed）
+- Next: なし（この項目は完了。アプリを起動する確かめは無い）
+- Notes: 関節の scale はソケットが捨てる約束なので、関節が scale を持ちソケットの offset の位置が 0 でないときは、ソケットの原点とスキニングの点は一致しない（試験の (2) は offset の位置を 0 にして比べた）。M に scale がある場合も同じ
+
+- U1 AnimEventPropertyTest.cpp を足し、イベントの配送の性質 (1)〜(4) を AnimGraphInstance 経由で確かめる: 着地(直し 0 回)
+- U2 metadata の拒否・ルートモーション・接地解析の性質 (5)〜(7) を足し、タスクの verify を回す: 着地(直し 1 回)
+
+## 2026-11-03 G3-GR11-EVENT-PROPERTIES（run 20261103-065440 の反復 2、完了）
+- Done: `Test/Core/Rendering/AnimEventPropertyTest.cpp` を `SkeletalAnimationSamplingTest` に足し、`AnimGraphInstance` 経由で GR11 の残りの受け入れ確認を押さえた。(1) ループの点・窓イベントと 2 クリップの Blend2・同期グループを 1/60×N・1/30×N/2・種固定の乱数の dt 列で回して、配送の集合と順序（名前・種類・周回・窓の Begin と End の組）が一致 (2) (prev, cur] の境界・逆再生・1 回の Update での 2 周跨ぎ (3) 点イベントの `minWeight` の閾値と、状態の遷移で抜けた窓の `bInterrupted` の End が 1 回だけ (4) 64 件の配送領域の溢れで `DroppedCount()` の増加・警告・Begin だけ残る窓が無い (5) metadata の時刻が減る並び・空の名前・`1e400` の拒否（extras とサイドカーの両方）、未知キーは extras で無視・サイドカーで警告して読む、extras の基底とサイドカーを空の基底に重ねた結果が `SameClipMetadata` で一致 (6) `inPlace` で root の水平の移動が除かれ `ConsumeRootMotion` が 0、extract の 2 クリップの Blend2（重み 0.25・0.7）の差分が試験の中で独立に求めた値と一致 (7) 振幅が鉛直速度のしきい値の半分に当たる種固定の雑音を足した足の軌跡で、接地窓 2 つを ±1 コマで復元し余分な窓なし。製品のコードは外れが無く変えていない。既存のケースは期待を変えずに通る
+- 証拠: `.harness/runs/20261103-065440/u2-unit-verify.txt`（Debug の `SkeletalAnimationSamplingTest`・`CookedMeshTest` のビルドの終了コード 0、ctest の `SkeletalAnimationSamplingTest`・`CookedClipBankV1Test`・`SkeletalClipBankBindingTest` が Passed・終了コード 0）
+- Notes: `1e400` は `JsonDocument` の数値の解析で読込失敗になり、metadata は `InvalidJson` で拒否される（無限大として読む経路ではない）
+- Notes: ルートモーションの Blend2 の契約は、各クリップの差分を始点の向きで回した X・Z と Yaw の成分ごとの線形の重み付け和
+- Next: なし（アプリを起動する確かめは無い）
+
+- U1 Animator と SkinnedMesh の作業配列を読む const の口を足す: 着地(直し 0 回)
+- U2 AnimatorIntegrationTest を足し、単一クリップの Sample 一致と部分マスクの Layered を確かめる: 着地(直し 0 回)
+- U3 定常で作業配列を確保し直さないことと、パラメータからの遷移・SetDriveSignals を確かめる: 着地(直し 0 回)
+- Done: G3-GR10-ANIMATOR-ORACLE — `SkeletalAnimationSamplingTest` に `AnimatorIntegrationTest.cpp` を足した。World の上の Animator（作る順は両方）が、親が後ろに並ぶ関節と根 2 つの骨格・回転と一様でない scale を含む M で、単一クリップの `Sample` と BonePalette・JointModelMatrices の全要素で相対 1e-5 で一致（何もしない modifier ありでも一致）。Blend2＋状態機械で 1000 コマ（遷移中 350 コマ）回して 8 つの作業配列の capacity・data が不変。SetFloat の遷移は上限 8 コマ中 6 コマ、SetDriveSignals は bind した値だけへ書く。Spine を根にした fadeDepth 2 のマスク（重み 0・0.5・1）の override と additive が手計算と一致。製品の不一致・再確保は見つからず、製品のコードは読む const の口を足しただけ
+- 検証: verify の 2 行（4 ターゲットのビルド、ctest 4 件 100% Passed）。M を恒等に替える改変と FinalPose の容量を増やす改変で試験が落ちることを確かめて戻した
+- Next: なし（GPU の表示・ImGui の目視は G3-ANIM-DEBUG-LAUNCH-CHECK）
