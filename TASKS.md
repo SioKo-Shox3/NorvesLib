@@ -4834,3 +4834,12 @@
 - verify: `python -c "import pathlib,sys; t=pathlib.Path('Docs/Architecture/NVSKELMigrationInventory.md').read_text(encoding='utf-8'); b=[s for s in ['\u5168\u4f53\u306e\u5b9f\u884c\u306f\u672a\u691c\u8a3c','\u5b9f\u884c\u306f\u307e\u3060\u672a\u691c\u8a3c','\u4f9d\u5b58\u3067\u672a\u5b9f\u884c'] if s in t]; print(ascii(b)); sys.exit(1 if b else 0)"`
 - paths: Docs/Architecture/NVSKELMigrationInventory.md, TASKS.md, PROGRESS.md
 - from: TEST-FULL-CTEST-BASELINE-CHECK
+
+## G2-GR32-GPU-ACCEPTANCE-P1-CHECK: スキニングの計算と出力の頂点の範囲を、submesh ごとでなく component ごとに 1 回にする(後回しにしたアプリの起動の確かめ)
+- status: todo
+- check: launch
+- gpu: exclusive
+- done-when: G2-GR32-GPU-ACCEPTANCE-P1 で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、G2-GR32-GPU-ACCEPTANCE-P1 の done-when を満たすことを確かめる。満たさなければ G2-GR32-GPU-ACCEPTANCE-P1 の done-when と paths の範囲で直す。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -SkinnedProbe -SkinnedProbeMaterials 2 -VisibilityBuffer On -OutDir .harness/runs/startup-capture/G2-GR32-GPU-ACCEPTANCE-P1-2mat-vb`
+- paths: Library/Core/Private/Rendering/SkinningComputePass.cpp, Library/Core/Public/Rendering/SkinningComputePass.h, Test/Core/Rendering/SkinnedRenderPathContractTest.cpp, TASKS.md, PROGRESS.md
+- from: G2-GR32-GPU-ACCEPTANCE-P1
