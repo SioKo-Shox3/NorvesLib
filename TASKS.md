@@ -5023,7 +5023,7 @@
 - from: SCN-WL-CLIFF-BLOCKS-CASTLE
 
 ## G3-GR10-ANIMATOR-ORACLE: Animator で駆動した姿勢が単一クリップの Sample と一致し、定常で作業配列を確保し直さないことを World の上で押さえる
-- status: todo
+- status: done
 - gr: GR10
 - done-when: `SkeletalAnimationSamplingTest` の実行ファイルに新しいソース `Test/Core/Rendering/AnimatorIntegrationTest.cpp` を足し（実行ファイルは増やさない。`main` から呼ぶ）、次を確かめる。(1) World に Entity・`SkinnedMeshComponent`・`AnimatorComponent` を置き（作る順は両方）、単一 Clip ノードのグラフで駆動した `BonePalette` と `JointModelMatrices` が、同じクリップ時刻の `SkeletalAnimationSampler::Sample` と要素の最大値に対して相対 1e-5 で一致する。骨格は親が子より後ろに並ぶ順と親の無い関節が複数ある形を含み、メッシュノードの行列 M は恒等でない可逆な行列（`SetMeshNodeGlobalTransform`）にする。modifier を足さなければ一致し、何もしない modifier を足しても一致する。(2) Blend2＋状態機械（遷移中を含む）のグラフで World::Tick をウォームアップ後 1000 回回し、Animator の LocalPose・最終姿勢・modifier の作業配列と SkinnedMesh の palette の `capacity()` と `data()` が変わらない（読むための const の口が無ければ足す）。(3) `AnimatorComponent::SetFloat` で条件を満たすと、決まった数のコマ以内に状態が遷移し、`SetDriveSignals` が `bind` したパラメータへ書かれる。(4) 3 関節以上の鎖で、途中の関節を根にした `fadeDepth` 付きのマスクの Layered（override と additive の両方）の姿勢が、試験の中で独立に計算した数値と一致する。不一致が出たら期待値でなく製品のコードを直す。既存の `SkeletalAnimationSamplingTest` のケースは期待を変えずに通る。
 - verify: `cmake --build build --config Debug --target SkeletalAnimationSamplingTest SkinnedRenderPathContractTest GLTFSkeletalAnalyzerTest ResourceRegistryTest -- /m:1`

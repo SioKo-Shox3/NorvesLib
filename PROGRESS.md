@@ -9137,3 +9137,6 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 Animator と SkinnedMesh の作業配列を読む const の口を足す: 着地(直し 0 回)
 - U2 AnimatorIntegrationTest を足し、単一クリップの Sample 一致と部分マスクの Layered を確かめる: 着地(直し 0 回)
 - U3 定常で作業配列を確保し直さないことと、パラメータからの遷移・SetDriveSignals を確かめる: 着地(直し 0 回)
+- Done: G3-GR10-ANIMATOR-ORACLE — `SkeletalAnimationSamplingTest` に `AnimatorIntegrationTest.cpp` を足した。World の上の Animator（作る順は両方）が、親が後ろに並ぶ関節と根 2 つの骨格・回転と一様でない scale を含む M で、単一クリップの `Sample` と BonePalette・JointModelMatrices の全要素で相対 1e-5 で一致（何もしない modifier ありでも一致）。Blend2＋状態機械で 1000 コマ（遷移中 350 コマ）回して 8 つの作業配列の capacity・data が不変。SetFloat の遷移は上限 8 コマ中 6 コマ、SetDriveSignals は bind した値だけへ書く。Spine を根にした fadeDepth 2 のマスク（重み 0・0.5・1）の override と additive が手計算と一致。製品の不一致・再確保は見つからず、製品のコードは読む const の口を足しただけ
+- 検証: verify の 2 行（4 ターゲットのビルド、ctest 4 件 100% Passed）。M を恒等に替える改変と FinalPose の容量を増やす改変で試験が落ちることを確かめて戻した
+- Next: なし（GPU の表示・ImGui の目視は G3-ANIM-DEBUG-LAUNCH-CHECK）
