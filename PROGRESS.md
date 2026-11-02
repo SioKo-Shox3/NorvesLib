@@ -9166,3 +9166,13 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261103-065450/u2-unit-verify.txt`（verify のビルド 3 ターゲットの終了コード 0、ctest の SkeletalAnimationSamplingTest・CookedSkeletonV1Test・WorldRenderInterpolationTest・WorldTickGroupTest の 4 本 Passed）
 - Next: なし（この項目は完了。アプリを起動する確かめは無い）
 - Notes: 関節の scale はソケットが捨てる約束なので、関節が scale を持ちソケットの offset の位置が 0 でないときは、ソケットの原点とスキニングの点は一致しない（試験の (2) は offset の位置を 0 にして比べた）。M に scale がある場合も同じ
+
+- U1 AnimEventPropertyTest.cpp を足し、イベントの配送の性質 (1)〜(4) を AnimGraphInstance 経由で確かめる: 着地(直し 0 回)
+- U2 metadata の拒否・ルートモーション・接地解析の性質 (5)〜(7) を足し、タスクの verify を回す: 着地(直し 1 回)
+
+## 2026-11-03 G3-GR11-EVENT-PROPERTIES（run 20261103-065440 の反復 2、完了）
+- Done: `Test/Core/Rendering/AnimEventPropertyTest.cpp` を `SkeletalAnimationSamplingTest` に足し、`AnimGraphInstance` 経由で GR11 の残りの受け入れ確認を押さえた。(1) ループの点・窓イベントと 2 クリップの Blend2・同期グループを 1/60×N・1/30×N/2・種固定の乱数の dt 列で回して、配送の集合と順序（名前・種類・周回・窓の Begin と End の組）が一致 (2) (prev, cur] の境界・逆再生・1 回の Update での 2 周跨ぎ (3) 点イベントの `minWeight` の閾値と、状態の遷移で抜けた窓の `bInterrupted` の End が 1 回だけ (4) 64 件の配送領域の溢れで `DroppedCount()` の増加・警告・Begin だけ残る窓が無い (5) metadata の時刻が減る並び・空の名前・`1e400` の拒否（extras とサイドカーの両方）、未知キーは extras で無視・サイドカーで警告して読む、extras の基底とサイドカーを空の基底に重ねた結果が `SameClipMetadata` で一致 (6) `inPlace` で root の水平の移動が除かれ `ConsumeRootMotion` が 0、extract の 2 クリップの Blend2（重み 0.25・0.7）の差分が試験の中で独立に求めた値と一致 (7) 振幅が鉛直速度のしきい値の半分に当たる種固定の雑音を足した足の軌跡で、接地窓 2 つを ±1 コマで復元し余分な窓なし。製品のコードは外れが無く変えていない。既存のケースは期待を変えずに通る
+- 証拠: `.harness/runs/20261103-065440/u2-unit-verify.txt`（Debug の `SkeletalAnimationSamplingTest`・`CookedMeshTest` のビルドの終了コード 0、ctest の `SkeletalAnimationSamplingTest`・`CookedClipBankV1Test`・`SkeletalClipBankBindingTest` が Passed・終了コード 0）
+- Notes: `1e400` は `JsonDocument` の数値の解析で読込失敗になり、metadata は `InvalidJson` で拒否される（無限大として読む経路ではない）
+- Notes: ルートモーションの Blend2 の契約は、各クリップの差分を始点の向きで回した X・Z と Yaw の成分ごとの線形の重み付け和
+- Next: なし（アプリを起動する確かめは無い）

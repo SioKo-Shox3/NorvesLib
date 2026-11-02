@@ -729,6 +729,7 @@ void TestClipChannelSearch();
 void TestPoseEvaluation();
 void TestAnimPoseOps();
 void TestAnimGraphRuntime();
+void TestAnimEventProperties();
 void TestRootMotionMath();
 void TestAnimatorIntegration();
 void TestSocketOracle();
@@ -739,6 +740,7 @@ int main(int argc, char** argv)
     TestPoseEvaluation();
     TestAnimPoseOps();
     TestAnimGraphRuntime();
+    TestAnimEventProperties();
     TestRootMotionMath();
     TestAnimatorIntegration();
     TestSocketOracle();
