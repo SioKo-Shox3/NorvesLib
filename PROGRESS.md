@@ -8595,3 +8595,12 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U2 デカールの一覧を GameThread から RenderThread へ渡す: 着地(直し 0 回)
 - U3 デカールのパスとシェーダー: 着地(直し 0 回)
 - U4 DecalGBufferVulkanTest（作るだけ・走らせない）と仕上げの確かめ: 着地(直し 0 回)
+
+## 2026-11-02 GAME-GR133-VFX（run 20261102-104123 の反復 2）
+- Done: デカールの一覧を草と同じ道（`RenderWorld::SetDecals` → RenderingCoordinator → `FramePacket::Scene.Decals` → `ViewRenderContext::SnapshotDecals`）で RenderThread へ渡した
+- Done: `DecalPass` と `decal.vert`・`decal.frag` を足し、`SceneView` で FoliagePass の直前に置いた。単位立方体をデカールの数だけインスタンス描画し（裏の面を描く・深度の添付なし）、深度からワールド位置を戻して箱の外を捨て、GBuffer の Albedo と Normal の RGB だけを α で混ぜる（Material・各 A は変えない）。`DecalFlags::ReceiveFoliage` が無ければ草（Material.A 0.125〜0.375）に描かない。一覧が空のフレームは何も宣言しない（既定の描画は変わらない）。定数・インスタンス・記述子セットは FrameResources から借りる。試験が SceneView なしで呼べる記録の口 `DecalPass::RecordDecals` を持つ
+- Done: GPU の試験 `DecalGBufferVulkanTest`（3 点は `Docs/Testing.md`）を足した: 64×64 の既知の GBuffer に既知の箱を描いて読み戻し、範囲内の色と法線の RGB だけが変わり範囲外・Material・各 A・深度が変わらないこと、既定で草に描かず `ReceiveFoliage` で描くことを見る。ビルドと ctest への登録（`-N`）だけ確かめ、走らせていない
+- 検証: verify のうち起動しない 3 行を回した。`Game`・`DecalPoolEvictionTest` のビルド EXIT=0、`DecalPoolEvictionTest` 1/1 Passed、`DecalGBufferVulkanTest` のビルド EXIT=0（`.harness/runs/20261102-104123/verify-GAME-GR133-VFX-U4.txt`）。シェーダーは glslangValidator の単体コンパイルで EXIT=0。numstat は 2 通りで一致
+- Next: 起動の確かめは後回し（当分アプリを起動しない決まり）。`GAME-GR133-VFX-CHECK` で `DecalGBufferVulkanTest` の ctest（`--timeout 600`）を回す。範囲内の色・法線の値、CPU と GPU の座標の向きの一致、検証レイヤーのエラー 0 はそこで初めて確かめる
+- Notes: 受け手の法線で投影を制限しない（DecalPass は Normal を添付として書くので読めない）。急な斜面・壁が箱に入ると伸びて描かれる。粗さ・濡れの書き換え、地形の層ごとの受け、テクスチャ・アトラスとクック、GR25 の口への移し替えはロードマップの節のとおり完了を宣言しない範囲
+- Notes: 要起票: ゲーム側で `DecalPool` を持って `RenderWorld::SetDecals` を毎フレーム呼ぶ呼び出し元（足跡・弾痕など）がまだ無く、起動画面ではデカールが出ない
