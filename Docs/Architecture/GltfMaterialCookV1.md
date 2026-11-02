@@ -13,7 +13,7 @@ G2 / GR79。形式名 `nvmesh.v1.mesh3d.pnt.u32.clustered` を明示した単体
 - retained ARMではroughness/metallicのscalarを未指定の負値、AOを1として二重乗算を防ぐ。定数channelには最終scalarを記録する
 - 色画像と発光画像はsRGB、法線とARMはlinear。ARMはraw RGBA8としてtexture cookerに渡し、PNG bytesに偽装しない
 - 発光factor×strengthが非ゼロならemissiveNitsPerUnit必須。資産・材質・設定名付きで拒否する。textureだけでfactorゼロの材質は通す
-- asset-set単位の換算値は単体requestにまだ存在しない。今回の共有resolverには不在として渡し、種別横断spec側の接続は後続に残す
+- asset-set spec v2のtop-level emissiveNitsPerUnitは正の有限numberのみ受理し、不正値は設定名付きで拒否する。spec.Emissionから単体requestのAssetSetEmission、ImportSettingsFileOptionsを経て共有resolverへ渡す。優先順位は素材 > 資産sidecar > asset-setで、上位の不正値を下位へfallbackしない。import設定の正本はsidecarであり、asset-setの換算は限定した例外
 
 ## Auto両面判定
 
@@ -24,7 +24,7 @@ G2 / GR79。形式名 `nvmesh.v1.mesh3d.pnt.u32.clustered` を明示した単体
 ## 依存と互換
 
 cookとfingerprintは材質解析を共有する。必要な外部画像は所有してcookし、GLB内のbytesだけを入力blob存続中に借用する。ARMが定数化して省略されても、判定に読んだ元画像はsource hashへ含める。
-JSONの順序ではなく解決済みの設定をhashする。一方、共通増分の依存snapshotはsidecarの生bytesとglTF外部参照も記録する。
+JSONの順序ではなく解決済みの設定のcanonical（67B）を材質のsource hashへ含める。共通増分の依存snapshotはsidecarの生bytesとglTF外部参照に加え、AssetSetEmission.Presentのときだけasset-set.emissiveNitsPerUnitと換算値を記録する。cache判定のfingerprintにも同じ換算を渡す。
 出力前に共通の依存・集合guardを使い、入力、sidecar、外部画像への出力aliasを拒否する。出力の版とmanifestのcooked_versionは厳密に合わせる。
 可変inventoryのmanaged update、spec v2、並列jobs、runtime描画接続はこの単体cook変更に含めない。
 
@@ -32,7 +32,13 @@ JSONの順序ではなく解決済みの設定をhashする。一方、共通増
 
 GltfMaterialCookV1Testはreleaseでも有効なCHECKで実glTF/GLB、PNG decode、既存encoded/raw texture byte一致、材質codec往復、ARM、発光、selector、閉鎖判定、単体package/manifest、cache、入力alias拒否を検証する。
 既存の79 standalone出力と10 texture出力は凍結基準と別途byte比較する。managed CLI、中断復旧、CNGの既存gateも維持する。
-実Windows CIの受入れ結果はPROGRESS.mdに記録する。実画像/GPU描画の受入れは後続。
+発光換算とcacheについて、次の検査を含む。
+
+- GltfMaterialCookV1Test: asset-set換算による保存値、資産sidecar・素材の上書き、上位の不正値と不正なasset-set値の拒否、換算未設定時の資産名・材質名・設定名付き診断、strength=0・factor=0の非発光材質の受理、換算差によるfingerprintの変化とcookとのhash一致、発光sourceのv0 cook互換
+- CookCacheDecisionTest: asset-set換算の追加・変更・削除でcacheを失効させ、同じ換算ならskipを維持すること
+
+Docs/Testing.mdの試験規律に沿い、反証する契約は換算の優先順位、上位不正値の非fallback、未設定拒否の診断名、非発光の非拒否、設定差によるcache失効、v0互換である。cookが成功して明るさの値だけが違う不具合は撮影・ログでは見分けられず、失敗が黙って起きるため、保存値とfingerprint/cache判定を直接検査する。
+実Windows CIの受入れ結果はPROGRESS.mdに記録する。実物の資産の撮影・見た目の受入れは未実施であり、これらの検査では代えない。
 
 後続のruntime対応subsetはImportedOpaqueRuntime.mdに記載する。この文書のcook単体受入れと、描画接続/GPU画像の受入れは別である。
 

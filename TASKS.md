@@ -3928,7 +3928,7 @@
 - stop-when: mock/source確認を実GPU合格と扱う、ユーザー指定を変えて別環境へ無断移動する。
 
 ## G2-GR79-IMPORT-POLICY-CONNECTION: 材質設定と出所付き診断を接続する
-- status: todo
+- status: done
 - done-when: material/asset/asset-setの設定を解決し、発光換算の未設定拒否に資産名・材質名・emissiveNitsPerUnitを表示。AI生成profileを明示的に適用し素材単位overrideを保持する。canonical/hash/cacheとJSON/CLIへ接続する。 verify の文章にあった場合（asset-set 単位の指定・素材の上書き・欠落と不正・発光の texture だけ・診断の名前・設定差による cache の失効・旧の非発光と v0 の互換）は、新しい実行ファイルを作らず、上の既存の試験（`MaterialImportPolicyTest`・`GltfMaterialCookV1Test`・`CookCacheDecisionTest` など）の検査として足す（足す前に `Docs/Testing.md` の 3 点を書く）。見た目の確かめを受入れ済みと扱わない。
 - verify: `cmake --build build --config Debug --target CookedMeshTest AssetCook -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^(MaterialImportPolicyTest|MaterialImportSettingsTest|MaterialImportSettingsJsonTest|MaterialImportDocumentTest|GltfMaterialCookV1Test|ImportSettingsHashTest|CookCacheDecisionTest|AssetCookImportSmoke|AssetCookGlbSmoke)$" --no-tests=error --output-on-failure --timeout 180`
