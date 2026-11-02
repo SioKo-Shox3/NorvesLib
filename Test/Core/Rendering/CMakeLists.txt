@@ -2123,6 +2123,13 @@ target_link_libraries(VfxEffectSystemTest PRIVATE Core)
 set_target_properties(VfxEffectSystemTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME VfxEffectSystemTest COMMAND VfxEffectSystemTest)
 
+add_executable(DefeatBloodSequenceTest
+    DefeatBloodSequenceTest.cpp
+)
+target_link_libraries(DefeatBloodSequenceTest PRIVATE Core)
+set_target_properties(DefeatBloodSequenceTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME DefeatBloodSequenceTest COMMAND DefeatBloodSequenceTest)
+
 add_executable(HitEffectEmissionTest
     HitEffectEmissionTest.cpp
 )
