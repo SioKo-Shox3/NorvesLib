@@ -422,6 +422,10 @@ namespace NorvesLib::Core::Rendering
         void SetFoliage(const FoliageScene& foliage);
         const FoliageScene& GetFoliage() const { return m_Foliage; }
 
+        /** @brief 箱で投影するデカールの一覧を設定する（GameThread） */
+        void SetDecals(const DecalScene& decals);
+        const DecalScene& GetDecals() const { return m_Decals; }
+
         /** @brief 決定的な撮影にする（GameThread）。FramePacket の経過時間を 1/60 秒に固定する */
         void SetDeterministicCapture(bool bEnabled) { m_bDeterministicCapture = bEnabled; }
 
@@ -655,6 +659,7 @@ namespace NorvesLib::Core::Rendering
         AerialPerspectiveParameters m_AerialPerspective;
         CloudLayerParameters m_CloudLayer;
         FoliageScene m_Foliage;
+        DecalScene m_Decals;
         bool m_bRTGIEnabled = true;
         bool m_bRTGINonShadowCasterOcclusion = false;
         uint64_t m_SceneRevision = 1u;

@@ -101,6 +101,15 @@ namespace NorvesLib::Core::Particle
             NameParameter("Flipbook", 0u, 63u, "", "フリップブック名")
         };
 
+        constexpr VfxParameterSchema kMeshRendererParameters[] = {
+            NameParameter("Mesh", 0u, 63u, "", "メッシュの資産名"),
+            BoolParameter("AlignToVelocity", false, "局所の +Z を速度へ向ける"),
+            VectorParameter("DissolveStart", VfxValueType::Float, 0.0, 1.0, "life", 0.5f, 0.0f, 0.0f, 0.0f, "溶け始める正規化年齢"),
+            VectorParameter("DissolveDuration", VfxValueType::Float, 0.0, 1.0, "life", 0.5f, 0.0f, 0.0f, 0.0f, "溶け切るまでの正規化年齢の長さ"),
+            VectorParameter("EdgeWidth", VfxValueType::Float, 0.0, 1.0, "", 0.05f, 0.0f, 0.0f, 0.0f, "縁の帯の幅(ノイズの値の幅)"),
+            VectorParameter("EdgeColor", VfxValueType::Color, 0.0, 64.0, "linear_rgba", 4.0f, 1.5f, 0.3f, 1.0f, "縁の色(線形)")
+        };
+
         constexpr VfxObjectSchema kEmitterSchema = {
             "Emitter", static_cast<VfxModuleType>(0), VfxModuleStage::Object,
             kEmitterParameters, CountOf(kEmitterParameters)
@@ -119,7 +128,8 @@ namespace NorvesLib::Core::Particle
             {"InitColor", VfxModuleType::InitColor, VfxModuleStage::Initialize, kInitColorParameters, CountOf(kInitColorParameters)},
             {"InitSize", VfxModuleType::InitSize, VfxModuleStage::Initialize, kInitSizeParameters, CountOf(kInitSizeParameters)},
             {"Acceleration", VfxModuleType::Acceleration, VfxModuleStage::Update, kAccelerationParameters, CountOf(kAccelerationParameters)},
-            {"SpriteRenderer", VfxModuleType::SpriteRenderer, VfxModuleStage::Render, kSpriteRendererParameters, CountOf(kSpriteRendererParameters)}
+            {"SpriteRenderer", VfxModuleType::SpriteRenderer, VfxModuleStage::Render, kSpriteRendererParameters, CountOf(kSpriteRendererParameters)},
+            {"MeshRenderer", VfxModuleType::MeshRenderer, VfxModuleStage::Render, kMeshRendererParameters, CountOf(kMeshRendererParameters)}
         };
 
         bool Fail(Container::String* outError, const char* code, const char* object, const char* parameter)
@@ -531,20 +541,27 @@ namespace NorvesLib::Core::Particle
             }
         }
         bool bHasRenderer = false;
+        bool bHasMeshRenderer = false;
         for (const VfxModule& module : emitter.Modules)
         {
             if (!ValidateVfxModule(module, outError))
             {
                 return false;
             }
-            if (module.Type == VfxModuleType::SpriteRenderer)
+            if (module.Type == VfxModuleType::SpriteRenderer || module.Type == VfxModuleType::MeshRenderer)
             {
                 if (bHasRenderer)
                 {
                     return Fail(outError, "multiple_renderers", "Emitter", "Modules");
                 }
                 bHasRenderer = true;
+                bHasMeshRenderer = module.Type == VfxModuleType::MeshRenderer;
             }
+        }
+        const uint32_t spaceIndex = static_cast<uint32_t>(FindVfxParameterIndex(kEmitterSchema, "Space"));
+        if (bHasMeshRenderer && emitter.Properties[spaceIndex].UInt == static_cast<uint32_t>(VfxSimulationSpace::Screen))
+        {
+            return Fail(outError, "mesh_requires_world_space", "MeshRenderer", "Space");
         }
         return true;
     }

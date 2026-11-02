@@ -51,6 +51,7 @@ set(PRIVATE_SOURCES
     Private/Object/ResourceRegistry.cpp
     Private/Object/World.cpp
     Private/Particle/ParticleSystem.cpp
+    Private/Particle/DecalPool.cpp
     Private/Particle/VfxSchema.cpp
     Private/Particle/VfxEffectSerialization.cpp
     Private/Particle/VfxEffectSystem.cpp
@@ -213,6 +214,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/DebugDrawQueue.cpp
     Private/Rendering/DebugDrawPass.cpp
     Private/Rendering/FoliageMesh.cpp
+    Private/Rendering/DecalPass.cpp
     Private/Rendering/FoliagePass.cpp
     Private/Rendering/RenderingCoordinator.cpp
     Private/Rendering/RenderingCoordinatorDiagnostics.cpp
@@ -515,6 +517,7 @@ set(PUBLIC_HEADERS
     Public/Application/ApplicationHandlerBase.h
     Public/Engine/Engine.h
     Public/Particle/ParticleSystem.h
+    Public/Particle/DecalPool.h
     Public/Particle/VfxEffectTypes.h
     Public/Particle/VfxSchema.h
     Public/Particle/VfxEffectSerialization.h
@@ -611,8 +614,10 @@ set(PUBLIC_HEADERS
     Public/Rendering/DebugDrawQueue.h
     Public/Rendering/DebugDrawPass.h
     Public/Rendering/FoliageMesh.h
+    Public/Rendering/DecalPass.h
     Public/Rendering/FoliagePass.h
     Public/Rendering/FoliageTypes.h
+    Public/Rendering/DecalTypes.h
     Public/Rendering/RenderingCoordinator.h
     Public/Rendering/RenderGraph/RenderGraphTypes.h
     Public/Rendering/RenderGraph/RenderGraphResourceNames.h

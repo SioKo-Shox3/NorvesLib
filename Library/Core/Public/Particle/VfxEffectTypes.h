@@ -51,7 +51,8 @@ namespace NorvesLib::Core::Particle
         InitColor = 13,
         InitSize = 14,
         Acceleration = 20,
-        SpriteRenderer = 30
+        SpriteRenderer = 30,
+        MeshRenderer = 31
     };
 
     enum class VfxModuleStage : uint8_t
