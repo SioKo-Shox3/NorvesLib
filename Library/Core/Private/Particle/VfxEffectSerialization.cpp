@@ -3,6 +3,7 @@
 #include "Particle/VfxSchema.h"
 #include "Text/JsonDocument.h"
 #include "Text/JsonUnicodeScalar.h"
+#include "Text/JsonWriter.h"
 #include "Text/UnicodeText.h"
 
 #include <bit>
@@ -371,6 +372,72 @@ namespace NorvesLib::Core::Particle
                 emitter.Modules.push_back(std::move(module));
             }
             result = std::move(emitter);
+            return true;
+        }
+
+        bool ValidateJsonString(const Container::String& value, const char* object,
+            const char* field, Container::String& error)
+        {
+            if (!TextDetail::ForEachUnicodeScalar<Container::String::value_type>(
+                {value.data(), value.size()}, [](uint32_t) {}))
+            {
+                return Fail(error, "invalid_utf8", object, field);
+            }
+            return true;
+        }
+
+        bool WriteJsonValue(JsonWriter& writer, const VfxObjectSchema& object,
+            const VfxParameterSchema& schema, const VfxValue& value, Container::String& error)
+        {
+            switch (schema.Type)
+            {
+            case VfxValueType::Float:
+                writer.WriteNumber(schema.Name, value.Vector.x);
+                break;
+            case VfxValueType::UInt:
+                writer.WriteUInt64(schema.Name, value.UInt);
+                break;
+            case VfxValueType::Bool:
+                writer.WriteBool(schema.Name, value.UInt != 0u);
+                break;
+            case VfxValueType::Vector2:
+            case VfxValueType::Vector3:
+            case VfxValueType::Color:
+                writer.BeginArray(schema.Name);
+                writer.WriteNumberElement(value.Vector.x);
+                writer.WriteNumberElement(value.Vector.y);
+                if (schema.Type != VfxValueType::Vector2)
+                {
+                    writer.WriteNumberElement(value.Vector.z);
+                }
+                if (schema.Type == VfxValueType::Color)
+                {
+                    writer.WriteNumberElement(value.Vector.w);
+                }
+                writer.EndArray();
+                break;
+            case VfxValueType::Enum:
+                writer.WriteString(schema.Name, schema.EnumNames[value.UInt]);
+                break;
+            case VfxValueType::Name:
+                writer.WriteString(schema.Name, value.Name);
+                break;
+            default:
+                return Fail(error, "type_mismatch", object.Name, schema.Name);
+            }
+            return true;
+        }
+
+        bool WriteJsonParameters(JsonWriter& writer, const VfxObjectSchema& schema,
+            const VariableArray<VfxValue>& values, Container::String& error)
+        {
+            for (uint32_t index = 0; index < schema.ParameterCount; ++index)
+            {
+                if (!WriteJsonValue(writer, schema, schema.Parameters[index], values[index], error))
+                {
+                    return false;
+                }
+            }
             return true;
         }
 
@@ -774,6 +841,78 @@ namespace NorvesLib::Core::Particle
             return false;
         }
         outAsset = std::move(asset);
+        outError.clear();
+        return true;
+    }
+
+    bool SaveVfxEffectToJson(const VfxEffectAsset& asset, Container::String& outText, Container::String& outError)
+    {
+        if (!ValidateVfxEffect(asset, &outError) ||
+            !ValidateJsonString(asset.Name, "Effect", "Name", outError))
+        {
+            return false;
+        }
+        for (const VfxFlipbookImportSettings& flipbook : asset.Flipbooks)
+        {
+            if (!ValidateJsonString(flipbook.Texture, "Flipbook", "Texture", outError))
+            {
+                return false;
+            }
+        }
+
+        JsonWriter writer(true);
+        writer.BeginObject();
+        writer.WriteString("format", "norves.vfx");
+        writer.WriteUInt64("version", 1u);
+        writer.WriteString("name", asset.Name);
+        writer.BeginArray("flipbooks");
+        for (const VfxFlipbookImportSettings& flipbook : asset.Flipbooks)
+        {
+            writer.BeginObject();
+            writer.WriteString("name", flipbook.Name);
+            writer.WriteString("texture", flipbook.Texture);
+            writer.WriteUInt64("columns", flipbook.Columns);
+            writer.WriteUInt64("rows", flipbook.Rows);
+            writer.WriteUInt64("frame_count", flipbook.FrameCount);
+            writer.WriteNumber("frames_per_second", flipbook.FramesPerSecond);
+            writer.WriteUInt64("start_frame", flipbook.StartFrame);
+            writer.WriteBool("loop", flipbook.bLoop);
+            writer.EndObject();
+        }
+        writer.EndArray();
+        writer.BeginArray("emitters");
+        for (const VfxEmitterAsset& emitter : asset.Emitters)
+        {
+            writer.BeginObject();
+            writer.WriteString("name", emitter.Name);
+            writer.BeginObject("properties");
+            if (!WriteJsonParameters(writer, GetVfxEmitterSchema(), emitter.Properties, outError))
+            {
+                return false;
+            }
+            writer.EndObject();
+            writer.BeginArray("modules");
+            for (const VfxModule& module : emitter.Modules)
+            {
+                const VfxObjectSchema& schema = *FindVfxModuleSchema(module.Type);
+                writer.BeginObject();
+                writer.WriteString("type", schema.Name);
+                if (!WriteJsonParameters(writer, schema, module.Values, outError))
+                {
+                    return false;
+                }
+                writer.EndObject();
+            }
+            writer.EndArray();
+            writer.EndObject();
+        }
+        writer.EndArray();
+        writer.EndObject();
+        if (!writer.IsComplete())
+        {
+            return Fail(outError, "json_write", "Effect");
+        }
+        outText = writer.ToString();
         outError.clear();
         return true;
     }

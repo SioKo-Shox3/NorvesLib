@@ -2144,6 +2144,13 @@ target_compile_definitions(SwordTrailRibbonVulkanTest PRIVATE
 set_target_properties(SwordTrailRibbonVulkanTest PROPERTIES FOLDER "Test/Core/Rendering")
 register_rendering_gpu_test(SwordTrailRibbonVulkanTest SwordTrailRibbonVulkanTest)
 
+add_executable(DefeatBloodSequenceTest
+    DefeatBloodSequenceTest.cpp
+)
+target_link_libraries(DefeatBloodSequenceTest PRIVATE Core)
+set_target_properties(DefeatBloodSequenceTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME DefeatBloodSequenceTest COMMAND DefeatBloodSequenceTest)
+
 add_executable(HitEffectEmissionTest
     HitEffectEmissionTest.cpp
 )

@@ -57,6 +57,8 @@ set(PRIVATE_SOURCES
     Private/Particle/VfxEffectSerialization.cpp
     Private/Particle/HitEffectEmitter.cpp
     Private/Particle/VfxEffectSystem.cpp
+    Private/Particle/DefeatBloodSequence.cpp
+    Private/Particle/DefeatBloodPresenter.cpp
     # Animation
     Private/Animation/AnimationClipResource.cpp
     Private/Animation/SkeletalJointIndex.h
@@ -527,6 +529,8 @@ set(PUBLIC_HEADERS
     Public/Particle/VfxEffectSerialization.h
     Public/Particle/HitEffectEmitter.h
     Public/Particle/VfxEffectSystem.h
+    Public/Particle/DefeatBloodSequence.h
+    Public/Particle/DefeatBloodPresenter.h
     Public/Engine/ApplicationProcessor.h
     Public/Engine/FixedStepSettings.h
     # Animation

@@ -3769,7 +3769,7 @@
 - notes: ParseUnicodeEscapeは現状4桁単位、AppendUtf8は3byteまで。P5Aとは別件。既定game action名はASCIIで進め、汎用JSON整合として後続修正する。
 
 ## GAME-GR130-VFX: 剣のトレイル（リボン）を実装する
-- status: doing
+- status: done
 - after: GAME-GR136-VFX
 - done-when: 着手の最初に、作者の判断が要る方式と、未着手の前提の GR との境界を `Docs/Plans/GameFeatureRoadmap.md` に書く（推奨の案で進め、理由を PROGRESS.md に書く。前提が未完の部分は完了を宣言しない範囲として残す）。 起動せずに確かめる完了の条件: CPU の試験 `SwordTrailRibbonTest`（新しい実行ファイル。足す前に `Docs/Testing.md` の 3 点を書く）で、固定ステップの回数が 0・1・2 のどのフレームでも帯の点列が連続で NaN が無い、1 フレームで 90 度以上振っても補間で折れ目の角度が上限以下になる、寿命で点が消えて上限を超えない（剣は描画用の補間された Transform を読む）。既知の軌跡の帯の画素の位置が期待と一致すること（GPU の試験 `SwordTrailRibbonVulkanTest`）は、起動を戻した後の `GAME-GR130-VFX-CHECK` で確かめる。
 - verify: `cmake --build build --config Debug --target Game SwordTrailRibbonTest -- /m:1`
@@ -3795,7 +3795,7 @@
 - notes: 2026-10-02追加。未着手の後続作業で、前提と選定課題を解決してから実装タスクへ細分化する。NorvesLib/Editorの境界とVFX-S1〜S5はロードマップ参照。
 
 ## GAME-GR132-VFX: シ者を倒したときの赤い血を実装する
-- status: todo
+- status: done
 - after: GAME-GR136-VFX, GAME-GR133-VFX
 - done-when: 着手の最初に、作者の判断が要る方式と、未着手の前提の GR との境界を `Docs/Plans/GameFeatureRoadmap.md` に書く（推奨の案で進め、理由を PROGRESS.md に書く。前提が未完の部分は完了を宣言しない範囲として残す）。 垂直スライス（G8）で最小の形（血しぶきの粒だけ）にするかもここで決める。起動せずに確かめる完了の条件: CPU の試験 `DefeatBloodSequenceTest`（新しい実行ファイル。足す前に `Docs/Testing.md` の 3 点を書く）で、撃破の合図から血・滲み・消滅が時間割どおりの時刻で始まり（固定刻みのクロックで 2 回回して一致）、滲みのマスクが時間に対して単調に広がる。
 - verify: `cmake --build build --config Debug --target Game DefeatBloodSequenceTest -- /m:1`
@@ -3859,7 +3859,7 @@
 - notes: 2026-10-02追加。未着手の後続作業で、前提と選定課題を解決してから実装タスクへ細分化する。NorvesLib/Editorの境界とVFX-S1〜S5はロードマップ参照。
 
 ## GAME-GR137-VFX: 資産の編集・決定的な撮影・言語モデルの口（Bridge の拡張。汎用）を実装する
-- status: todo
+- status: done
 - after: GAME-GR136-VFX
 - done-when: 着手の最初に、作者の判断が要る方式と、未着手の前提の GR との境界を `Docs/Plans/GameFeatureRoadmap.md` に書く（推奨の案で進め、理由を PROGRESS.md に書く。前提が未完の部分は完了を宣言しない範囲として残す）。 NorvesLib と NorvesEditor の境界（MCP の口は Editor 側か）もここで決める。起動せずに確かめる完了の条件: Bridge の CPU の試験 `BridgeAssetPropertyEditTest`（新しい実行ファイル。足す前に `Docs/Testing.md` の 3 点を書く）（Game のソースを丸ごと組み込まない形。丸ごと組み込む試験は 2026-11-01 に全体のビルドから外した）で、資産を開いて値を設定し、保存して開き直すと値が一致する・型の合わない値や範囲外の値が拒否される。同じ引数で 2 回撮った画像が一致すること（GPU の試験 `BridgeDeterministicCaptureVulkanTest`。GPU の無い環境では飛ばす）は、起動を戻した後の `GAME-GR137-VFX-CHECK` で確かめる。MCP の口が NorvesEditor 側の作業なら、この項目の対象外と記録する。
 - verify: `cmake --build build --config Debug --target Game BridgeAssetPropertyEditTest -- /m:1`
@@ -4505,3 +4505,13 @@
 - verify: `ctest --test-dir build -C Debug -R "^MeshParticleDissolveVulkanTest$" --no-tests=error --output-on-failure --timeout 600`
 - paths: Library/Core/Public/Particle, Library/Core/Private/Particle, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Tools/AssetCook, Test/Core/Rendering, Docs/Plans/GameFeatureRoadmap.md, TASKS.md, PROGRESS.md
 - from: GAME-GR134-VFX
+
+## GAME-GR137-VFX-CHECK: 資産の編集・決定的な撮影・言語モデルの口（Bridge の拡張。汎用）を実装する(後回しにしたアプリの起動の確かめ)
+- status: todo
+- check: launch
+- gpu: exclusive
+- done-when: GAME-GR137-VFX で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、GAME-GR137-VFX の done-when を満たすことを確かめる。満たさなければ GAME-GR137-VFX の done-when と paths の範囲で直す。
+- verify: `cmake --build build --config Debug --target BridgeDeterministicCaptureVulkanTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^BridgeDeterministicCaptureVulkanTest$" --no-tests=error --output-on-failure --timeout 600`
+- paths: Game/Bridge, Library/Core/Public/Object, Library/Core/Private/Object, Library/Core/Public/Particle, Library/Core/Private/Particle, Test/Game/Bridge, Docs/Plans/GameFeatureRoadmap.md, TASKS.md, PROGRESS.md
+- from: GAME-GR137-VFX

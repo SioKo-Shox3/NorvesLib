@@ -8772,3 +8772,39 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 完了を宣言しない範囲は着手時の記録のとおり。加えて、粒子の板は `ApplicationProcessor` からキャンバスの view（画面の空間）にだけ渡り、ワールドの空間の板は描かれない。ロードマップの GR131 の節の境界に書いた
 - Notes: 要起票: ワールドの空間の粒子の板（`BoardSpace::WorldSpace` の `BoardProxy`）を 3D の view へ渡す経路が無い（`ApplicationProcessor.cpp` の粒子の板の受け渡しはキャンバスの view だけ）。当たりのエフェクトなどワールドの空間の VFX が画面に出ない
 - Notes: スキーマの初速の箱は `Min` を `Max` より先に入れると既定の `Max`（0）を超えて拒否される。VFX をコードで組むときは上限を先に入れる
+
+## 2026-11-02 GAME-GR137-VFX（run 20261102-145121 の反復 1。着手）
+- 方式（推奨を採った）: MCP の口は NorvesEditor 側に置き、言語モデル → NorvesEditor の MCP → Bridge → Game の順で呼ぶ。この項目では MCP の口を作らず対象外とする。理由: NorvesEditor に既にローカルの MCP の入口と編集の履歴があり、Game に MCP を持たせると履歴を通らない書き換えと二重の権限・検証ができる
+- 方式（推奨を採った）: Bridge の線の上の新しいメソッド（資産のプロパティの一覧・設定・保存、決定的な撮影）は NorvesEditor の Bridge SDK（`IBridgeEngineAdapter` と振り分け）に口が無く、SDK は範囲の外のリポジトリなので足さない。NorvesLib は SDK に依存しないエンジンの側の部品（`Game/Bridge/BridgeAssetPropertyEditor`・`Game/Bridge/BridgeDeterministicCapture`）だけを作り、SDK に口ができたら `NorvesLibBridgeAdapter` からつなぐ。部品が SDK に依存しないので、Game のソースを丸ごと組み込まずに試験から呼べる
+- 方式（推奨を採った）: 資産の編集は拡張子 → 種類の表の汎用の形で、最初の種類は GR136 のエフェクト（`.vfx.json`）。値は JSON の値の文字列で受け、型の不一致・範囲外・知らない道を英語のコードで拒否して前の値を保つ。資産の根の下の相対の道だけを開き・保存する。決定的な撮影は `--capture-deterministic` で起動した Game でだけ受け、エポックを始め直して指定のフレーム数の後に 1 枚撮る
+- 方式と前提の境界の記録: `Docs/Plans/GameFeatureRoadmap.md`（メイン側・管理外）の「GR137 資産の編集・決定的な撮影・言語モデルの口」の節
+- 完了を宣言しない範囲: Bridge の線の上のメソッドと MCP の道具（NorvesEditor 側）、保存の後の実行中のエフェクトへの反映（GR136 の読み直しの口の後）、保存の後のクック（GR96）、機械・ドライバをまたぐ撮影の一致（GR126）、エポックで数え直さない状態を持つシーンの撮影の一致、編集の画面
+- Notes: 試験を足す理由を書くため `Docs/Testing.md` を paths の外だが触る（done-when が名指し）
+- Notes: 要起票: NorvesEditor の Bridge SDK と仕様に、資産のプロパティの一覧・設定・保存と決定的な撮影のメソッドを足し、MCP の道具から呼ぶ（NorvesEditor 側）
+- U1 エフェクトの資産を JSON へ書き出す: 着地(直し 0 回)
+- U4 Bridge の決定的な撮影の部品: 着地(直し 0 回)
+- U2 Bridge の資産のプロパティの編集の部品: 着地(直し 0 回)
+- U3 BridgeAssetPropertyEditTest と試験を足す理由: 着地(直し 0 回)
+- U5 BridgeDeterministicCaptureVulkanTest（ビルドまで）と最後の確かめ: 着地(直し 0 回)
+### GAME-GR137-VFX を閉じる（2026-11-02、run 20261102-145121 の反復 2）
+- Done: `Game/Bridge/BridgeAssetPropertyEditor`（拡張子 → 種類の表。最初の種類は `.vfx.json`。資産の根の下の相対の道だけを開き、道は `emitters/<エミッタ名>/<プロパティ名>` と `emitters/<エミッタ名>/modules/<添字>/<パラメータ名>`。値は JSON の値の文字列で受け、`type_mismatch`・`out_of_range`・`unknown_property`・`invalid_path` で拒否して前の値を保ち、同じフォルダの一時ファイルから置き換えて保存する）、CPU の試験 `BridgeAssetPropertyEditTest`（Core と部品の .cpp 1 つだけを組み込む）、GPU の試験 `BridgeDeterministicCaptureVulkanTest`（部品の撮影の手順で同じ要求を 2 回撮り、画素のハッシュと PNG の全バイトの一致を見る。GPU の無い環境では 125 で飛ばす）を足した。`Docs/Testing.md` に 2 本の試験を足す理由を書いた
+- 証拠: `.harness/runs/20261102-145121/verify-GAME-GR137-VFX-final.txt`（HEAD 484c7e0c と同じ内容の作業ツリーで `cmake --build build --config Debug --target BridgeDeterministicCaptureVulkanTest -- /m:1` EXIT_CODE 0、`cmake --build build --config Debug --target Game BridgeAssetPropertyEditTest -- /m:1` EXIT_CODE 0、`ctest ... -R "^BridgeAssetPropertyEditTest$"` Passed・EXIT_CODE 0、`ctest -N` で BridgeDeterministicCaptureVulkanTest の登録を確認。GPU の試験は実行していない）
+- Next: 起動の確かめは後回し（人の決まりでアプリと GPU の試験を起動しない）。`GAME-GR137-VFX-CHECK` で verify の 3・4 行目（`BridgeDeterministicCaptureVulkanTest` のビルドと実行）を回し、`BRIDGE_DETERMINISTIC_CAPTURE` の 2 行のハッシュと result=PASS を確かめる
+- Notes: 完了を宣言しない範囲は反復 1 の記録のとおり（Bridge の線の上のメソッドと MCP の道具は NorvesEditor 側、保存後の実行中のエフェクトへの反映、クック、機械をまたぐ撮影の一致）。GPU の試験は試験の側で決定的な撮影を有効にし（`--capture-deterministic` は `--capture-png` が無いと無視されるため）、`--scene=indoor`・128×128・待ち 60 フレームで撮る。RTGI は土台の既定で無効。時間・TAA・自動露出などエポックで戻らない状態が残ると -CHECK で一致しない見込みがあり、そのときは部品の BeginEpoch の数え直しの範囲を見直す
+
+- U1 撃破の血の時間割の型と CPU の試験: 着地(直し 0 回)
+- U2 合図を GR136 の粒と GR133 のデカールへ写す: 着地(直し 0 回)
+## 2026-11-02 GAME-GR132-VFX（run 20261102-152003 の反復 1）
+- 方式（推奨を採った）: 撃破の合図 1 回から、血しぶき → 滲み → 消滅 → 終わりの 4 つの合図を、合図からの相対の時刻の時間割（`DefeatBloodTimeline`）で決め、Core の純粋な CPU の型 `Particle/DefeatBloodSequence` が呼び手の固定の刻みで進める。合図の時刻は刻みの幅によらず時間割の値そのもの。滲みのマスクは 1−(1−t)^2 で単調に広がり、消滅の間も縮めず不透明度で薄れる。`Particle/DefeatBloodPresenter` が、しぶきを GR136 の `VfxEffectSystem` のイベント（コードで組む既定の赤い粒、ワールドの空間）へ、滲みと消滅を GR133 の `DecalPool` のデカール（半径と不透明度を毎刻み更新し、終わりで消す。`DecalPool::SetAppearance` を足した）へ写す。理由: いまある 2 つの道に載せれば前提の GR を待たずに作れ、時間割を 1 つにすれば体の滲み（GR26）・ディゾルブ（GR60）も同じ合図と値で後から繋げられる
+- 垂直スライス（G8）: 粒と地面の滲み（デカール）までを G8 に入れるのを推奨した。どちらもいまのエンジンで動き、時間割を共有するので粒だけに絞っても作業はほとんど減らない。粒だけにするなら滲みを使わない設定で済む。体の滲み・ディゾルブとの連動・白い質感の上の見え方は G10
+- 方式と前提の境界の記録: `Docs/Plans/GameFeatureRoadmap.md`（メイン側・管理外）の「GR132 シ者を倒したときの赤い血」の節。完了を宣言しない範囲: 撃破を出す側（GR17。今は呼び手が `Trigger` を直接呼び、Game からは呼ばない）、GPU の粒（GR57）、濡れと体の表面の滲み（GR26）、ディゾルブ（GR60）、白い面の上の見え方（GR65）、しぶきの向き（GR131 の向きつきのイベントの統合後）、時間のチャンネル（GR02）
+- 検証: verify の 2 行を回した。`Game`・`DefeatBloodSequenceTest`（と `DecalPoolEvictionTest`・`VfxEffectSystemTest`）の Debug のビルド EXIT=0、`DefeatBloodSequenceTest` 1/1 Passed、`DecalPoolEvictionTest`・`VfxEffectSystemTest` 2/2 Passed（`.harness/runs/20261102-152003/verify-GAME-GR132-VFX-U2.txt`）。numstat は 2 通りで一致
+- Next: Game に撃破の場面が無いので起動画面の見た目は変わらず、起動の確かめは無い。粒とデカールの見た目（色・数・大きさ・時間割の仮の値、ワールドの空間の粒が今の描画で出るか）は、GR17 の撃破の場面ができてから撮影で確かめて合わせる
+- U1 撃破の血の時間割の型と CPU の試験: 着地(直し 0 回)
+- U2 合図を GR136 の粒と GR133 のデカールへ写す: 着地(直し 0 回)
+## 2026-11-02 GAME-GR132-VFX（run 20261102-152003 の反復 1）
+- 方式（推奨を採った）: 撃破の合図 1 回から、血しぶき → 滲み → 消滅 → 終わりの 4 つの合図を、合図からの相対の時刻の時間割（`DefeatBloodTimeline`）で決め、Core の純粋な CPU の型 `Particle/DefeatBloodSequence` が呼び手の固定の刻みで進める。合図の時刻は刻みの幅によらず時間割の値そのもの。滲みのマスクは 1−(1−t)^2 で単調に広がり、消滅の間も縮めず不透明度で薄れる。`Particle/DefeatBloodPresenter` が、しぶきを GR136 の `VfxEffectSystem` のイベント（コードで組む既定の赤い粒、ワールドの空間）へ、滲みと消滅を GR133 の `DecalPool` のデカール（半径と不透明度を毎刻み更新し、終わりで消す。`DecalPool::SetAppearance` を足した）へ写す。理由: いまある 2 つの道に載せれば前提の GR を待たずに作れ、時間割を 1 つにすれば体の滲み（GR26）・ディゾルブ（GR60）も同じ合図と値で後から繋げられる
+- 垂直スライス（G8）: 粒と地面の滲み（デカール）までを G8 に入れるのを推奨した。どちらもいまのエンジンで動き、時間割を共有するので粒だけに絞っても作業はほとんど減らない。粒だけにするなら滲みを使わない設定で済む。体の滲み・ディゾルブとの連動・白い質感の上の見え方は G10
+- 方式と前提の境界の記録: `Docs/Plans/GameFeatureRoadmap.md`（メイン側・管理外）の「GR132 シ者を倒したときの赤い血」の節。完了を宣言しない範囲: 撃破を出す側（GR17。今は呼び手が `Trigger` を直接呼び、Game からは呼ばない）、GPU の粒（GR57）、濡れと体の表面の滲み（GR26）、ディゾルブ（GR60）、白い面の上の見え方（GR65）、しぶきの向き（GR131 の向きつきのイベントの統合後）、時間のチャンネル（GR02）
+- 検証: verify の 2 行を回した。`Game`・`DefeatBloodSequenceTest`（と `DecalPoolEvictionTest`・`VfxEffectSystemTest`）の Debug のビルド EXIT=0、`DefeatBloodSequenceTest` 1/1 Passed、`DecalPoolEvictionTest`・`VfxEffectSystemTest` 2/2 Passed（`.harness/runs/20261102-152003/verify-GAME-GR132-VFX-U2.txt`）。numstat は 2 通りで一致
+- Next: Game に撃破の場面が無いので起動画面の見た目は変わらず、起動の確かめは無い。粒とデカールの見た目（色・数・大きさ・時間割の仮の値、ワールドの空間の粒が今の描画で出るか）は、GR17 の撃破の場面ができてから撮影で確かめて合わせる
