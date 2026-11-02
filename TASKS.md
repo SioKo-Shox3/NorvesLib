@@ -4563,7 +4563,7 @@
 - from: SCN-MEGA-FIX-STRESS-GPU-CHECK
 
 ## G2-GR32-GPU-ACCEPTANCE-P1: スキニングの計算と出力の頂点の範囲を、submesh ごとでなく component ごとに 1 回にする
-- status: todo
+- status: done
 - done-when: `SkinningComputePass::Declare` は、同じ `Skinned.FrameLeaseIndex`(同じ component)から出た複数の submesh の描画を 1 回だけ変形し、出力の頂点の範囲も 1 回だけ取る。その submesh の `SkinningComputeInstance` は、どれも同じ `VertexBase`・`VertexCount`・頂点のアドレスを指し、`MaterialIndex`・`Material`・`SourceFirstIndex`・`SourceIndexCount`・`bOpaque`・`bCastShadow` はそれぞれの submesh の値を保つ。頂点の合計の上限と、外したインスタンスの数(`SkinningComputeDroppedInstances`)は component ごとに 1 回数える。解決が使えず影の描画だけが読むフレームでは、影を落とす submesh が 1 つでもある component だけを変形する。計画を作る部分は GPU の無い試験から呼べる関数に分け、既存の `SkinnedRenderPathContractTest` に次の検査を足す(新しい exe は作らない。足す前に `Docs/Testing.md` の 3 点を書く): 2 submesh で同じ lease のとき、変形は 1 回で出力の頂点の数は 1 倍、2 つのインスタンスが同じ `VertexBase` を持ち範囲はそれぞれの値のまま。lease の違う 2 component では範囲が重ならない。上限を超える component は submesh の数によらず 1 つとして外す。2 材質のパネルの撮影(下の verify。起動を戻した後に回す)で、材質の色の判定が result=pass のままであること。
 - verify: `cmake --build build --config Debug --target Game SkinnedRenderPathContractTest SkinnedSubmeshDrawContractTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^(SkinnedRenderPathContractTest|SkinnedSubmeshDrawContractTest)$" --no-tests=error --output-on-failure --timeout 180`
@@ -4579,7 +4579,7 @@
 - from: G2-GR32-GPU-ACCEPTANCE
 
 ## G2-MATERIAL-SELECTION-INTEGRATION-P1: 骨格の分割 cook で、材質の設定の解決に失敗したとき設定名のエラーを返す
-- status: todo
+- status: done
 - done-when: `Tools/AssetCook/RigSplitCook.cpp` の材質の解決(338 行付近)を NVMESH v1(`MeshMaterialV1Plan.cpp` の 470〜477 行)と同じ形にする。`ResolveMaterialImportPlan` の状態が `SettingsFailed` のときは `MaterialSettingsErrorKey(resolved.Settings)` を返し、それ以外の照合の失敗は `split_material_selector_or_settings` のまま返す。元の catalog を読めないときも、今と同じく区別できる名前で返す。増分の preflight も cook と同じ名前を返す(`CookCacheDecisionTest` の 575 行付近の期待は、この変更で変わる場合だけ直す)。`RigSplitCookTest` に、設定の失敗 1 件(例: 未一致の指定)で返る名前が設定名のキーと一致し、照合の失敗はこれまでの名前のままであることの検査を足す(新しい exe は作らない。足す前に `Docs/Testing.md` の 3 点を書く)。
 - verify: `cmake --build build --config Debug --target CookedMeshTest AssetCook -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^(RigSplitCookTest|CookCacheDecisionTest|SkeletalMaterialBindingsTest|MaterialSelectionTest)$" --no-tests=error --output-on-failure --timeout 180`
@@ -4597,7 +4597,7 @@
 - stop-when: 期待を弱める・timeout を延ばして合格にする・原因を書かずに fixture だけを移す。
 
 ## G2-S6-ASSET-SET-P2: `AssetCookCliParity.py capture` をローカルの Windows で完走させ、main のクラスタ化の後の 79 出力の基準を取り直す
-- status: todo
+- status: done
 - done-when: (1) `capture` が、source の外の新しい出力先(`%TEMP%` の下の新しいディレクトリ)で 7 ケースとも終了コード 0 で完走し、snapshot を保存する。Skeletal の警告文の判定は、コンソールのコードページに左右されない形にする(G2-GR78-SURFACE-CENTROID-CHECK-P1 と同じ考え方)。source の下の出力先を拒否する安全の規則は弱めない。拒否するときは、出力先の指定の誤りと分かる文言を出す。(2) 凍結した旧基準(run 37200047966、artifact 11302304928、`snapshot.json` の SHA-256 は `09af3262…6c85`)と `compare` し、合わない出力をすべて原因ごとに分けて `ManagedTextureAssetSetCli.md` の受入れの節に書く。原因の分け方は、main のクラスタ化・入力の行末(CRLF/LF)・その他の 3 つ。その他に分かれた差は直すか、値を付けて残課題として書く。(3) 合わない出力の原因がすべて (2) の前の 2 つで説明できたときだけ、新しい 79 出力の snapshot を、クラスタ化の後の基準として保存する。その SHA-256 と、作ったコミットを `ManagedTextureAssetSetCli.md` と `Docs/TestingAssetCookCliParity.md` に書く。説明できない差があるときは、基準を更新しない。`AssetCookCliParityTest.py` は通る。
 - verify: `cmake --build build --config Debug --target AssetCook CookedMeshTest -- /m:1`
 - verify: `python Test/Tools/AssetCookCliParityTest.py -q`
@@ -4624,7 +4624,7 @@
 - from: FIX-NORMAL-MATRIX-SCALE-CHECK
 
 ## GAME-GR131-VFX-P1: ワールドの空間の粒子の板を 3D の view へ渡し、当たりのエフェクトなどを画面に出す
-- status: todo
+- status: done
 - done-when: `ApplicationProcessor.cpp` の毎フレームの板の受け渡し(2200 行付近)では今、Text のグリフと粒子の板を、空間によらずキャンバスの view にだけ渡している。これを空間で分ける。`BoardSpace::WorldSpace` の一時の板(粒子の板、Text のグリフのうちワールドの空間のもの)は、そのフレームだけ 3D の scene view へ渡す。経路は `FramePacket` のスナップショットを越えるものに限り、RenderThread から GameThread の値を直接読まない。描き方と並べ方は、常駐のワールドの板と同じ。`ScreenSpace` の板は、今までどおりキャンバスへだけ渡す。同じ板を両方に描かない。一時の板が無いフレームでは、前のフレームの板を残さない。常駐の板(`BoardComponent`)の受け渡しと見た目は変えない。既存の試験に次の検査を足す(新しい exe は作らない。足す前に `Docs/Testing.md` の 3 点を書く): `ParticleFrameSnapshotTest` と `SceneViewWorldBoardDrawCommandTest` で、ワールドの空間の粒子の板 1 枚がそのフレームの 3D の view の描画コマンドに 1 回だけ載ってキャンバスには載らない。スクリーンの空間の板はキャンバスにだけ載る。次のフレームに放出が無ければ、どちらにも残らない。
 - verify: `cmake --build build --config Debug --target Game CanvasTransientBoardSnapshotTest SceneViewWorldBoardDrawCommandTest HitEffectEmissionTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^(ParticleFrameSnapshotTest|CanvasTransientBoardSnapshotTest|SceneViewWorldBoardDrawCommandTest|HitEffectEmissionTest|BoardComponentRoutingTest)$" --no-tests=error --output-on-failure --timeout 180`
@@ -4632,7 +4632,7 @@
 - from: GAME-GR131-VFX
 
 ## GAME-GR130-VFX-CHECK-P1: ソケットに付けた Entity の描画の補間を、親の描画の変換から求める
-- status: todo
+- status: done
 - done-when: `SocketAttachmentComponent` は今、PostPhysics の段(固定ステップの外)でワールドの変換を書き換えている。そのため、付けた Entity の補間の履歴が毎フレーム戻されている。これをやめ、描画用の変換を次の形で求める: 親(スキンのメッシュ)の補間した描画の変換 × ソケットの相対の変換(骨のソケット × grip・profile の offset。移り変わりの混ぜを含む)。補間の履歴は、固定ステップの外の書き換えで戻さない。シミュレーションの変換(攻撃の判定 GR16 が読むもの)の値は変えない。既存の `WorldRenderInterpolationTest`(`EntityTreeTest` の束)に次の検査を足す(新しい exe は作らない。足す前に `Docs/Testing.md` の 3 点を書く): 親が一定の速さで動き、固定ステップが 0・1・2 回のフレームが混ざる列で、付けた Entity の描画の位置が、親の描画の位置 + offset と 1e-4 以内で一致し、フレームの間で跳ばない。`SwordTrailRibbonTest` と `SkeletalAnimationSamplingTest` は通ったまま。
 - verify: `cmake --build build --config Debug --target Game EntityTreeTest SwordTrailRibbonTest SkeletalAnimationSamplingTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^(WorldRenderInterpolationTest|SwordTrailRibbonTest|SkeletalAnimationSamplingTest)$" --no-tests=error --output-on-failure --timeout 180`
@@ -4800,3 +4800,72 @@
 - paths: Tools/AssetCook/CookManagedTransactionController.cpp, Tools/AssetCook/CookManagedStoreNative.h, TASKS.md, PROGRESS.md
 - from: G2-GR82-B4-STATIC-ROOT-FRAME128-P1
 - after: G2-GR82-B4-STATIC-ROOT-FRAME128-P1
+
+## G2-S6-ASSET-SET-P4: `windows-assetcook.yml` の手動起動を、統合の検証と同じ範囲で通るようにする
+- status: done
+- done-when: `workflow_dispatch.inputs.frozen_parity`(boolean、既定 false)を足す。`NORVES_MERGE_VALIDATION` は、`[validate-merge]` のときか「手動起動で `frozen_parity` が false」のときに true にする。凍結基準の照合段は消さず、`-f frozen_parity=true` で今までどおり走らせる。段 4・5 の凍結 hash の照合と、段 6 の在庫 79 件の照合は残す。push の `[validate-assets]`/`[validate-merge]` の挙動は変えない。理由を日本語のコメントで書く。結果として、既定の引数で手動起動すると段 6 は recipe を照合せずに在庫 79 件だけを照合し、段 17・18 は skipped になる。`frozen_parity=true` で起動すると従来の照合が走る。手動起動で何を検証するかを `ManagedTextureAssetSetCli.md` に書く。プッシュも workflow の起動もしない。
+- verify: `python -c "import pathlib,sys; t=pathlib.Path('.github/workflows/windows-assetcook.yml').read_text(encoding='utf-8'); l=t.split('NORVES_MERGE_VALIDATION:')[1].splitlines()[0]; sys.exit(0 if 'frozen_parity' in t and 'Frozen recipe mismatch' in t and 'workflow_dispatch' in l else 1)"`
+- paths: .github/workflows/windows-assetcook.yml, Docs/Architecture/ManagedTextureAssetSetCli.md, TASKS.md, PROGRESS.md
+- from: G2-S6-ASSET-SET-P3
+- stop-when: プッシュする、workflow を起動する、凍結基準の照合段を削除する。
+
+## G2-MATERIAL-SELECTION-INTEGRATION-P1-P1: ほかの枠の cook と重なっても cook の試験が `volume_busy` で落ちないよう、宛先 volume のロックに試験の環境だけで使う上限つきの待ちを足す
+- status: done
+- done-when: `Tools/AssetCook/CookDestinationLock.cpp` の `WithCookDestinationLock` を次のように変える。
+  - 環境変数 `NORVES_COOK_LOCK_WAIT_MS` が無い・空・不正(整数でない、0 以下、600000 超)のときは、今と同じく待ち 0 で `Busy` を返す。
+  - 1〜600000 の整数のときは、その時間まで `WaitForSingleObject` で待って取得する。待ちきっても取れなければ `Busy` を返す。mutex の名前・volume 単位・再観測・`WAIT_ABANDONED` の扱いは変えない。
+  - `Test/Core/Asset/CMakeLists.txt` で、宛先ロックを取る cook の試験(`RigSplitCookTest` を含む)の `ENVIRONMENT` に `NORVES_COOK_LOCK_WAIT_MS=120000` を付ける。`Busy` を期待する検査を持つ試験(`CookDestinationLockTest`・`CookManagedBootstrapTest`・`CookManagedUpdateTest` など)には付けない。
+  - `CookDestinationLockTest` に検査を 1 件足す。別の thread がロックを持ち、約 200 ms 後に放す。待ちの指定があれば `Executed`、無ければ `Busy` になることを確かめ、検査の後に環境変数を元に戻す。新しい exe は作らない。足す前に `Docs/Testing.md` の 3 点を書く。
+  - `Docs/Architecture/CookDestinationLock.md` の「Win32操作」に、既定は待ち 0 であることと、試験の環境だけで使う上限つきの待ちを書く。
+- verify: `cmake --build build --config Debug --target CookedMeshTest AssetCook -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^(CookDestinationLockTest|RigSplitCookTest|CookCacheDecisionTest)$" --no-tests=error --output-on-failure --timeout 180`
+- verify: `python -c "import json,subprocess,sys; d=json.loads(subprocess.check_output(['ctest','--test-dir','build','-C','Debug','-R','^(RigSplitCookTest|CookDestinationLockTest)$','--show-only=json-v1'])); e={t['name']:[v for p in t.get('properties',[]) if p['name']=='ENVIRONMENT' for v in p['value']] for t in d['tests']}; k='NORVES_COOK_LOCK_WAIT_MS='; print(e); sys.exit(0 if any(v.startswith(k) for v in e.get('RigSplitCookTest',[])) and not any(v.startswith(k) for v in e.get('CookDestinationLockTest',[])) else 1)"`
+- paths: Tools/AssetCook/CookDestinationLock.cpp, Test/Core/Asset/CookDestinationLockTest.cpp, Test/Core/Asset/CMakeLists.txt, Docs/Architecture/CookDestinationLock.md, TASKS.md, PROGRESS.md
+- from: G2-MATERIAL-SELECTION-INTEGRATION-P1
+- stop-when: 既定の待ちを 0 から変える、ロックの単位(volume ごと)や mutex の名前を変える、`Busy` を期待する試験に待ちを付けて通す。
+
+## TEST-FULL-CTEST-BASELINE-CHECK-P1: `NVSKELMigrationInventory.md` の reader・Resource・packet の native 回帰の「未検証・未実行」の 3 行を、Windows での実行記録か、回す先を書いた未実行に直す
+- status: done
+- done-when: `Docs/Architecture/NVSKELMigrationInventory.md` の次の 3 行(今の 151・166・196 行)を直す。
+  - 対象は「readerのnative回帰は登録済みだがWindows/Core全体の実行は未検証」「native Resource/Core/描画のWindows実行はまだ未検証」「このnative回帰もWindows依存で未実行」の 3 行。それぞれが指す登録済みの試験の名前を挙げる。
+  - アプリを起動せず GPU も使わない試験は、Windows Debug でビルドと ctest(`-R` で名指し)を回す。結果は、同じ文書の `CookedSkeletalAssetTest`・`SkeletalFramePacketSnapshotTest` の行と同じ形で書く(日付・HEAD・コマンド・結果・PROGRESS.md の記録の場所)。packet の回帰には、2026-11-02 の `SkeletalFramePacketSnapshotTest` の Passed を使ってよい。
+  - GPU や全体の CTest が要るものは「未実行」と書き、理由と回す先(TEST-FULL-CTEST-BASELINE-CHECK など)を添える。
+  - 「描画受入れも未完」「GPU描画の証拠にはしない」の扱いは変えない。
+- verify: `python -c "import pathlib,sys; t=pathlib.Path('Docs/Architecture/NVSKELMigrationInventory.md').read_text(encoding='utf-8'); b=[s for s in ['\u5168\u4f53\u306e\u5b9f\u884c\u306f\u672a\u691c\u8a3c','\u5b9f\u884c\u306f\u307e\u3060\u672a\u691c\u8a3c','\u4f9d\u5b58\u3067\u672a\u5b9f\u884c'] if s in t]; print(ascii(b)); sys.exit(1 if b else 0)"`
+- paths: Docs/Architecture/NVSKELMigrationInventory.md, TASKS.md, PROGRESS.md
+- from: TEST-FULL-CTEST-BASELINE-CHECK
+
+## G2-GR32-GPU-ACCEPTANCE-P1-CHECK: スキニングの計算と出力の頂点の範囲を、submesh ごとでなく component ごとに 1 回にする(後回しにしたアプリの起動の確かめ)
+- status: todo
+- check: launch
+- gpu: exclusive
+- done-when: G2-GR32-GPU-ACCEPTANCE-P1 で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、G2-GR32-GPU-ACCEPTANCE-P1 の done-when を満たすことを確かめる。満たさなければ G2-GR32-GPU-ACCEPTANCE-P1 の done-when と paths の範囲で直す。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -SkinnedProbe -SkinnedProbeMaterials 2 -VisibilityBuffer On -OutDir .harness/runs/startup-capture/G2-GR32-GPU-ACCEPTANCE-P1-2mat-vb`
+- paths: Library/Core/Private/Rendering/SkinningComputePass.cpp, Library/Core/Public/Rendering/SkinningComputePass.h, Test/Core/Rendering/SkinnedRenderPathContractTest.cpp, TASKS.md, PROGRESS.md
+- from: G2-GR32-GPU-ACCEPTANCE-P1
+
+## G2-MATERIAL-SELECTION-INTEGRATION-P1-P1-P1: `Busy` を期待する cook の試験で、前提のロックの取得だけ上限つきで待ち、`Busy` を確かめる取得は待ち 0 のままにする
+- status: todo
+- done-when: 次の 4 点を満たす。
+  - **前提の取得は待つ。** `CookDestinationLockTest`・`CookManagedBootstrapTest`・`CookManagedUpdateTest` では、各試験の頭で `NORVES_COOK_LOCK_WAIT_MS=120000` をプロセスの中だけで立て、試験の終わりに元の値へ戻す。戻すには、`CookDestinationLockTest.cpp` にある `EnvironmentVariableRestore` と同じ形の範囲つきの仕組みを使う。これで、試験が自分でロックを取る所(`f.Run`・回復・解放後の取り直し・子プロセスの取得)が、ほかの枠の AssetCook と重なっても上限つきで待つ。
+  - **`Busy` を確かめる取得だけは待ち 0 にする。** 対象は次の 4 か所。
+    - `CookManagedBootstrapTest` の `ProbeBusy`/`TryBusy`
+    - `CookManagedUpdateTest` の `BusyPoint`/`TryBusy`
+    - `CookDestinationLockTest` の入れ子の peer(94・109 行付近)と、子プロセスが持っている間の親の取得(698 行付近)
+    - `WaitOption` の「待ちなし」の側
+
+    これらでは、取得の直前に環境変数を消し、確かめた後に元へ戻す。どれも待ち 0 で `Busy` を返し、今の期待(`Busy`・callback の呼び出しが 0 回)のまま通る。
+  - **本体と CTest の設定は変えない。** `Tools/AssetCook/` の既定の待ち・mutex の名前・volume 単位は変えない。この 3 つの試験の CTest の `ENVIRONMENT` にも `NORVES_COOK_LOCK_WAIT_MS` を足さない。
+  - **並列でも通る。** 4 つの試験を `-j 4` で同時に回しても(同じ volume のロックを取り合う)、`volume_busy`・`Busy` による前提の失敗が出ない。
+- verify: `cmake --build build --config Debug --target CookedMeshTest AssetCook -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^(CookDestinationLockTest|CookManagedBootstrapTest|CookManagedUpdateTest)$" --no-tests=error --output-on-failure --timeout 180`
+- verify: `ctest --test-dir build -C Debug -j 4 -R "^(CookDestinationLockTest|CookManagedBootstrapTest|CookManagedUpdateTest|RigSplitCookTest)$" --no-tests=error --output-on-failure --timeout 300`
+- verify: `python -c "import json,subprocess,sys; d=json.loads(subprocess.check_output(['ctest','--test-dir','build','-C','Debug','-R','^(CookDestinationLockTest|CookManagedBootstrapTest|CookManagedUpdateTest)$','--show-only=json-v1'])); e={t['name']:[v for p in t.get('properties',[]) if p['name']=='ENVIRONMENT' for v in p['value']] for t in d['tests']}; k='NORVES_COOK_LOCK_WAIT_MS='; print(e); sys.exit(0 if len(e)==3 and not any(v.startswith(k) for vs in e.values() for v in vs) else 1)"`
+- paths: Test/Core/Asset/CookDestinationLockTest.cpp, Test/Core/Asset/CookManagedBootstrapTest.cpp, Test/Core/Asset/CookManagedUpdateTest.cpp, Test/Core/Asset/CookLockWaitTestScope.h, TASKS.md, PROGRESS.md
+- after: G2-S6-ASSET-SET-P1
+- from: G2-MATERIAL-SELECTION-INTEGRATION-P1-P1
+- stop-when: 次のどれかが要るなら止める。
+  - `Busy` を確かめる取得に待ちを残したまま通す
+  - `Tools/AssetCook/` の既定の待ち・mutex の名前・volume 単位を変える
+  - 試験のために mutex の名前や volume を差し替える口を本体に足す
+  - `Busy` の期待や callback の回数の期待を弱める

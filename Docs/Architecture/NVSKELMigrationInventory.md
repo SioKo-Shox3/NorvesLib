@@ -148,7 +148,11 @@ morphの総数/幅/対象なしprimitiveと幅不一致、および旧writerの�
 旧0.0/0.1を維持して320B/表/UTF-8とclip別所有検査を接続する。
 submeshのflags/bounds/任意VertexCountを所有型へ残す。M9は現在Resourceへ表を渡し、複数clip選択だけ明示拒否する。
 writerは統一0.2へ切替え、単一primitiveのslot名も保存する。cacheはminor2を要求し、旧版は通常loadのみ維持する。
-readerのnative回帰は登録済みだがWindows/Core全体の実行は未検証。描画受入れも未完。
+readerのnative回帰の`CookedSkeletalAssetTest`・`CookedSkeletalWireContractTest`は、2026-11-02のWindows Debug（HEAD `123f1b98`）で次のビルドが終了コード0、ctestで両試験がPassed（終了コード0）。
+- ビルド: `cmake --build build --config Debug --target CookedMeshTest ResourceRegistryTest -- /m:1 /nodeReuse:false`。
+- ctest: `ctest --test-dir build -C Debug -R "^(CookedSkeletalAssetTest|CookedSkeletalWireContractTest|SkeletalSubmeshLayoutTest|SkeletalResourceLifetimeTest)$" --no-tests=error --output-on-failure --timeout 180`。
+  `CookedSkeletalAssetTest`は12.25秒、`CookedSkeletalWireContractTest`は0.03秒。
+  記録は`PROGRESS.md`のTEST-FULL-CTEST-BASELINE-CHECK-P1（run 20261102-194401）。描画受入れも未完。
 
 ## Resourceと不変leaseの表保持
 
@@ -163,7 +167,11 @@ GetMemorySizeにはresource側の表とslot名の所有サイズを加える。
 FrameLeaseは生成時検証済みのimmutable表を受理する。旧3引数AssetLeaseと空表FrameLeaseも保持する。
 範囲drawのコード接続は済んでも、palette共有とWindows/GPU受入れが済むまでGR32描画完了とは扱わない。
 純layout/実index/頂点範囲/有限bounds検査を実行し、Resourceの1/2/8表・不正名/範囲・世代・Unload寿命はnative回帰へ登録する。
-native Resource/Core/描画のWindows実行はまだ未検証。
+Resourceのnative回帰の`SkeletalResourceLifetimeTest`・`SkeletalSubmeshLayoutTest`（純layout検査）は、2026-11-02のWindows Debug（HEAD `123f1b98`）で、
+上記readerと同じビルド・ctestがともに終了コード0、両試験がPassed（それぞれ0.03秒）。
+記録は`PROGRESS.md`のTEST-FULL-CTEST-BASELINE-CHECK-P1（run 20261102-194401）。
+描画（GPU）のWindows実行は、GPUとアプリの起動が必要で、当分アプリを起動しない方針のため未実行。
+TEST-FULL-CTEST-BASELINE-CHECKの全体CTestとGR32描画の受入れで回す。
 
 ## Componentの材質slot API
 
@@ -193,7 +201,7 @@ FrameLeaseは検証済み表を範囲drawへ渡すが、ここだけで複数材
 packetのnative回帰はSceneViewから実GenerateDrawCommandsへ通し、component再設定・再同期・mesh世代変更・破棄後の保持を確認する。
 CPU packet生成はDeviceCapabilitiesを受け取るprivate overloadへ分離し、本番入口は実deviceから渡す。
 試験は実capability値を渡すため、未設定deviceのnull参照やFakeDevice/Core差し替えを検証経路に使わない。
-このnative回帰もWindows依存で未実行であり、GPU描画の証拠にはしない。
+packetのnative回帰は`SkeletalFramePacketSnapshotTest`。上記Component API・snapshotの2026-11-02のWindows Debug（HEAD `297ededc`）のPassed記録を参照する（`PROGRESS.md`のTEST-FULL-CTEST-BASELINE、run 20261102-101626）。今回は再実行せず、GPU描画の証拠にはしない。
 
 ## 範囲drawの接続
 
