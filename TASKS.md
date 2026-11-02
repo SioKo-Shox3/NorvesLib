@@ -4869,3 +4869,13 @@
   - `Tools/AssetCook/` の既定の待ち・mutex の名前・volume 単位を変える
   - 試験のために mutex の名前や volume を差し替える口を本体に足す
   - `Busy` の期待や callback の回数の期待を弱める
+
+## SCN-MEGA-FIX-STRESS-GPU-CHECK-P1-CHECK: RT と GI を切って撮る開発用の起動引数 `--rt-gi=off` を足す(後回しにしたアプリの起動の確かめ)
+- status: todo
+- check: launch
+- gpu: exclusive
+- done-when: SCN-MEGA-FIX-STRESS-GPU-CHECK-P1 で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、SCN-MEGA-FIX-STRESS-GPU-CHECK-P1 の done-when を満たすことを確かめる。満たさなければ SCN-MEGA-FIX-STRESS-GPU-CHECK-P1 の done-when と paths の範囲で直す。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -Views overview -Build -RequireAssets -Configuration RelWithDebInfo -GameArgs rt-gi=off -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-STRESS-GPU-CHECK-P1`
+- verify: `python -c "import sys; t=open(sys.argv[1],encoding='utf-8',errors='replace').read(); sys.exit(0 if 'RT_GI_STATE off' in t else 1)" .harness/runs/scene-capture/SCN-MEGA-FIX-STRESS-GPU-CHECK-P1/overview.Game.log`
+- paths: Game/GameApplicationHandler.cpp, Game/GameApplicationHandler.h, Library/Core/Public/Rendering/RenderingCoordinator.h, Library/Core/Private/Rendering/RenderingCoordinator.cpp, TASKS.md, PROGRESS.md
+- from: SCN-MEGA-FIX-STRESS-GPU-CHECK-P1
