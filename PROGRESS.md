@@ -8842,3 +8842,10 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: `DistortionPassVulkanTest` は GPU で未実行。合成の後の色の添付の状態（render pass の最終は ShaderResource）から転送への明示の障壁、RGBA16F の読み戻しの並び、カメラの右・上を `CopyShaderInverseView` の最初の 2 列から取る向きは、コードの読みでの判断。落ちたら、ずらしの y の符号（Vulkan の画面は下向き）と集めるシェーダーの標本の位置から見る
 - Notes: 源を置く呼び手（`RenderWorld::SetDistortions` を呼ぶゲーム側）はまだ無い。どのシーンにも源が無いので、起動画面と各シーンの見た目は変わらない（パスは何も宣言しない）。源のずらしの描画（円盤・模様の流れ・深度の遮り）は試験の対象外で、源を置く項目で撮影して確かめる
 - U1 分割 cook の材質の解決の失敗を設定名で返し、検査を足す: 着地(直し 0 回)
+
+## G2-MATERIAL-SELECTION-INTEGRATION-P1（2026-11-02）
+- Done: `RigSplitCook.cpp` の材質の解決を catalog の読みと `ResolveMaterialImportPlan` に分け、状態が `SettingsFailed` のときは `MaterialSettingsErrorKey` の設定名を返す（NVMESH v1 と同じ形）。照合の失敗と catalog を読めないときは `split_material_selector_or_settings` のまま。増分の preflight は同じ cook の関数を通り、`CookCacheDecisionTest` の期待（照合の失敗の 2 件）は変わらないので触っていない
+- Done: `RigSplitCookTest` の `CookAndSettings` に、`AssetSetEmission={true,0}` の設定の失敗が `emissiveNitsPerUnit` と完全一致し、未一致の名前 `Missing` の照合の失敗が `split_material_selector_or_settings` と一致する検査を足した（反証する契約・気づける手段・黙って起きるかの 3 点はテストのコメントに書いた）
+- 証拠: `.harness/unit-verify.txt`（単位の作業ツリー。`cmake --build build --config Debug --target CookedMeshTest AssetCook -- /m:1` 終了コード 0、ctest の RigSplitCookTest・CookCacheDecisionTest・SkeletalMaterialBindingsTest・MaterialSelectionTest の 4 本 Passed、numstat 2 通り一致）
+- Next: なし（アプリを起動する確かめは無い）
+- Notes: done-when の「設定の失敗（例: 未一致の指定）」の未一致の名前は `ResolveMaterialImportPlan` では照合の失敗（SelectionFailed）になるので、設定の失敗には asset-set の発光の倍率 0 を使った
