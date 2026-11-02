@@ -51,10 +51,21 @@ runtimeのgolden payload比較は従来の有限一覧のまま。artifactはrun
 
 ownerは実spec/root canonical identityとmanifestから独立にSHA-256 tupleで算出する。strict JSON/有限shape、claim/stateの対応、golden manifestとのrecord対応、package全bytesのFNVとSHA/sizeを照合する。baseline2回分の各4file＋receipt、CLI receipt、summaryを有限の別inventoryとして受け入れる。79/10 fileの直接byte比較器は変更しない。
 
-この単位だけでG2-S6全体や全kindの増分統合完了とはしない。production callers、旧standalone ModelCookCache移行、model対応spec v2、glTF外部依存・sidecar、inventory追加除去、budget/jobs/reportsは後続。cross-session実測、最大規模性能、電源断保証も含めない。
+textureのproduction callerは `CookTextureAssetSet.ps1` が `AssetCook --asset-set` へ委譲する形で接続済み。G2-S6全体や全kindの増分統合完了とはしない。texture以外のproduction callers、旧standalone ModelCookCache移行、model対応spec v2、inventory追加除去、budget/jobs/reportsは後続。依存の印（`CaptureCookDependencySnapshot`、`CookDependencySnapshot.md`）には、glTF/GLBの全外部buffer・外部imageと選択sidecarのraw byteが既に含まれ、共通の増分判断 `CookCacheDecision` がそれを使う。後続はmodel資産を `--asset-set` のspec v2へ載せ、その印で増分cookすること。cross-session実測、最大規模性能、電源断保証も含めない。
 
 ## 実行受入れ（2026-10-05）
 
 19128d41503a72784ad4703c4ce048e1310d3a9f / run37303534756で36CPUとadapter receipt、Update29/Bootstrap17の実child終了、全条件flagを確認。元25実CLIの9成功/16拒否、別15実CLIの8成功/7拒否、7単体smoke/79＋10直接byte/5診断が成功した。管理metadata12fileの有限一覧・raw SHA/size・原native ID・独立owner tuple・package/dependency record、3 ZIP/API digest/CRC/exact inventory、両実MSVC x64 binaryのCNGを独立照合し、親側でも全verifierを再実行した。
 
 旧証拠216fileを保持し、共通controller/cache/parser/serializerの不変を確認した。cross-session実測と広いGR96残件は未完了。次はロードマップのGR79モデル材質writer/cookを進め、spec v2/可変inventory拡張を先行させない。
+
+## 実行受入れ（2026-11-02、ローカル Windows）
+
+Windows 11 10.0.22631、Windows PowerShell 5.1.22621.6133で実行した。使用したDebug構成の `AssetCook.exe` のSHA-256は `430a20c25bf2ad58a8422385a2618ebe6414147bc469cba3af500305b2b080bb`、`CookedMeshTest.exe` は `c70158994cc512d0c8b13248018573a4e4964febf2d5cbf2fdf75aebf01ce8bb`。凍結基準を作ったRelease構成の `AssetCook.exe` は `7ac890ce40434bf9e1c062ca0fe0ee0f5f2b49d79fbf40ca7b81662a01b50079`、`CookedMeshTest.exe` は `93b8d1dfc012bcb4afeffdefd4eca356bf2d709dead2bd76cf6ab4bbbeaf0c48`。
+
+- texture旧基準（run 37205025949、artifact 11303728946）の `snapshot.json` はSHA-256 `9e20e823c0c518c5b6dc34f5d561472ebcf10ac4dc5acd0042627d8e5bfe96e2` に一致。Debugの `AssetCook --asset-set` と `CookTextureAssetSet.ps1` の両方で、2 specの各10出力（6＋4）がそれぞれ基準と生byte一致した。各経路の同一root再実行でも10出力のbytesと更新時刻が不変で、管理情報のbytesと更新時刻も不変だった。直接呼び出しは `unchanged` を表示し、包みの再実行後に同じrootを直接呼んだときも `unchanged` を表示した。
+- 標準の `VerifyTextureAssetSet.py` は凍結時との入力hash差3件で停止した。2 specはLF/CRLFの差で、残る1件は旧PSと現在の包みの差。実PowerShellのbinary SHA-256は `3247bcfd60f6dd25f34cb74b5889ab10ef1b3ec72b4d4b3d95b5b25b534560b8` で、基準の `38f4384643b3fa0de714d2367b712c2e0fa1c89e2cfd131ae6b831ad962b1033` とも異なる。上記のbyte比較には固定snapshotを検証したうえで比較器の `load_reference`・`files`・`compare` を使用した。
+- 指定のDebugビルドは成功し、`TextureAssetSetSpecTest`、`TextureAssetSetOutputTest`、`CookDependencySnapshotTest`、`CookCacheDecisionTest`、`CookOutputPackageTest`、`SingleAssetCookServiceTest`、`AssetCookTextureSmoke`、`AssetCookGlbSmoke` は8/8成功。`CookDependencySnapshotTest` と `CookCacheDecisionTest` は、外部buffer・画像の変更・不在・復帰、sidecarの追加・変更・不正・必須不在、出力packageの破損に対する依存記録・再cook判定・拒否を受け持つ。依存記録の段では画像を完全decodeしない。
+- 追加の管理試験は `CookManagedUpdateTest` と `TextureManagedCliTest` が成功し、`CookManagedBootstrapTest` は180秒でタイムアウトした。出力には復旧で `RolledBack` を期待した箇所の `rename_no_replace; win32_hex=5` と `Error` が残ったため、Bootstrapの失敗時の保持・復旧をこの実行で合格とは扱わない。比較と並行しない単独の再実行（`ctest -R "^CookManagedBootstrapTest$" --timeout 300`）でも300秒でタイムアウトし、最後の出力は `line 182: InitializeNewCookManagedStore(Owner, out, error) == CookManagedStoreInitializationResult::Created` だった。今回の変更ではC++と試験を変更していない。
+- 単体CLI旧基準（run 37200047966、artifact 11302304928）の `snapshot.json` はSHA-256 `09af3262f55ce75cf512cfb9086c0dbf3b81cd8344233b5f10ebda8e87f36c85` に一致。指定captureは出力先がsource配下のため拒否された。checkoutと32入力fileのSHA-256が一致する作業用コピーをsourceにしたcaptureも、Skeletalの警告文判定で停止した。完全なcandidate snapshotと79出力の正式比較は未完了。
+- そのcaptureで得られた途中出力を旧79出力と照合すると、Textureは既存4一致・12追加、Audioは6一致、Importは13一致、Glbは12一致、Meshは6一致・20不一致、Rawは2不一致、Skeletalは11一致・1不一致・4未生成だった。Skeletalの不一致はmanifestの `source_hash` で、未生成分はcaptureの停止による。Rawの入力は凍結時のCRLFに対しローカルはLF。Meshはmainのクラスタ化変更に加え入力の行末差もあり、各出力差への寄与は未分離。Textureの追加分は現行smokeが生成した出力で、旧出力の不一致ではない。
