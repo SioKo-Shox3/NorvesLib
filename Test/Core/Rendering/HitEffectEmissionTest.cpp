@@ -190,6 +190,50 @@ namespace
         return true;
     }
 
+    bool TestDefaultEffects()
+    {
+        const char* item = "6. 既定の表の火花と衝撃";
+        HitEffectEmitter emitter;
+        VfxEffectSystem effects;
+        const HitEffectTable& table = emitter.GetTable();
+        REQUIRE(table.Effects.size() >= 2u, "既定の表に火花と衝撃がない");
+        Container::String error;
+        for (const VfxEffectAsset& effect : table.Effects)
+        {
+            REQUIRE(ValidateVfxEffect(effect, &error), "既定のエフェクトが無効");
+            REQUIRE(!effect.Emitters.empty(), "既定のエフェクトにエミッタがない");
+        }
+
+        HitEffectHit hit;
+        hit.SurfaceName = "Metal";
+        hit.Position = Math::Vector3(0.0f, 1.0f, 0.0f);
+        hit.Normal = Math::Vector3(0.0f, 1.0f, 0.0f);
+        REQUIRE(emitter.SubmitHit(hit), "Metal の当たりを受け付けない");
+        emitter.Dispatch(effects);
+        effects.Tick(1.0f / 60.0f);
+
+        hit.SurfaceName = "Glass";
+        hit.Position = Math::Vector3(3.0f, 1.0f, 0.0f);
+        REQUIRE(emitter.SubmitHit(hit), "Glass の当たりを受け付けない");
+        emitter.Dispatch(effects);
+        effects.Tick(1.0f / 60.0f);
+
+        const uint32_t effectIndices[] = {1u, 0u};
+        for (uint32_t effectIndex : effectIndices)
+        {
+            VariableArray<VfxParticleState> particles;
+            REQUIRE(effects.CopyParticles(emitter.GetInstanceHandle(effectIndex), 0u, particles),
+                "既定のエフェクトの粒を取得できない");
+            REQUIRE(!particles.empty(), "既定のエフェクトから粒が放出されない");
+            for (const VfxParticleState& particle : particles)
+            {
+                REQUIRE(Math::Vector3::Dot(particle.Velocity, hit.Normal) > 0.0f,
+                    "粒が当たりの法線の側へ進まない");
+            }
+        }
+        return true;
+    }
+
 #undef REQUIRE
 } // namespace
 
@@ -222,5 +266,6 @@ int main()
     const bool bRejection = TestRejection(emitter);
     const bool bConsumption = TestConsumption(emitter);
     const bool bPlayback = TestPlayback();
-    return bSingleHits && bFallback && bRejection && bConsumption && bPlayback ? 0 : 1;
+    const bool bDefaultEffects = TestDefaultEffects();
+    return bSingleHits && bFallback && bRejection && bConsumption && bPlayback && bDefaultEffects ? 0 : 1;
 }

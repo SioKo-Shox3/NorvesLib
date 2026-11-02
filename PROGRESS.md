@@ -8714,3 +8714,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U3 HitEffectEmissionTest と Docs/Testing.md の 3 点: 着地(直し 0 回)
 - U4 再生（VFX へ流す）・既定の火花と衝撃・ParticleSystem への組み込み: 着地(直し 0 回)
 - U5 再生の確かめを試験に足し、タスクの verify を通す: 着地(直し 0 回)
+- U6 既定の火花と衝撃が組めていない（初速の箱の設定の順）を直す: 着地(直し 0 回)

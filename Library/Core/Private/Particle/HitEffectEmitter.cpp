@@ -34,8 +34,8 @@ namespace NorvesLib::Core::Particle
                 SetVfxEmitterProperty(emitter, "Space", VfxValue::MakeEnum(static_cast<uint32_t>(VfxSimulationSpace::World)), &error) &&
                 SetVfxModuleParameter(spawn, "EventName", VfxValue::MakeName(HitEffectEmitter::HitEventName), &error) &&
                 SetVfxModuleParameter(spawn, "Count", VfxValue::MakeUInt(count), &error) &&
-                SetVfxModuleParameter(velocity, "Min", VfxValue::MakeVector3(velocityMin), &error) &&
                 SetVfxModuleParameter(velocity, "Max", VfxValue::MakeVector3(velocityMax), &error) &&
+                SetVfxModuleParameter(velocity, "Min", VfxValue::MakeVector3(velocityMin), &error) &&
                 SetVfxModuleParameter(lifetime, "Lifetime", VfxValue::MakeFloat(lifetimeValue), &error) &&
                 SetVfxModuleParameter(color, "Color", VfxValue::MakeColor(colorValue), &error) &&
                 SetVfxModuleParameter(size, "Size", VfxValue::MakeVector2(sizeValue), &error) &&
