@@ -8508,3 +8508,6 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U2 asset-set 換算の変更で増分 cook が skip しないことを CookCacheDecisionTest で反証する: 着地(直し 0 回)
 - U1 発光換算の接続を GltfMaterialCookV1Test で反証する: 着地(直し 0 回)
 - U3 材質設定の接続を文書へ反映し、タスクの verify を通す: 着地(直し 2 回)
+- Done: G2-GR79-IMPORT-POLICY-CONNECTION — 材質設定の接続（asset-set spec v2 の `emissiveNitsPerUnit` → 単体 request → 共有 resolver、素材 > 資産 sidecar > asset-set、AI 生成 profile の明示、hash/cache）を反証する検査を `GltfMaterialCookV1Test`・`CookCacheDecisionTest` に足した（asset-set だけの換算・上書き・上位不正値の非 fallback・未設定拒否の資産名/材質名/設定名・strength0 と texture だけの非発光・設定差での fingerprint と cache の失効・v0 互換）。asset-set の不正な換算値の拒否を `setting=emissiveNitsPerUnit` で診断するよう直した。`MaterialImportPolicy.md`・`GltfMaterialCookV1.md`・`MaterialImportDocument.md` の「未接続」を今の接続に書き換えた。verify は `cmake --build build --config Debug --target CookedMeshTest AssetCook -- /m:1` が終了コード 0、ctest の 9 本がすべて Passed
+- Next: 実物の資産（発光のある GLB）での cook と撮影・見た目の受入れは未実施（アプリを起動しない決まりのため）。G2-MATERIAL-SELECTION-INTEGRATION がこの項目の後に回せる
+- Notes: 要起票: 骨格の分割 cook（`RigSplitCook.cpp:338`）は設定の解決の失敗を `split_material_selector_or_settings` の 1 つの名前で返し、設定名（`MaterialSettingsErrorKey`）を出さない。NVMESH v1 と同じ形にそろえるか
