@@ -8520,3 +8520,8 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: 起動の確かめは後回し（当分アプリを起動しない決まり）。SCN-THUMBNAILS-CHECK で verify の 3・4 行目（`CaptureLauncherThumbnails.ps1` で見本画像を作って `Assets/Textures/Launcher/` に追跡し、`CaptureScene.ps1 -Scene launcher` で撮る）を回し、撮影を開いて、見本画像が正しいカードに出ること・色が暗すぎ明るすぎないこと（UNORM で mesh2d.frag が線形化）・中央の切り取りの向き・角丸・選択の光る縁と強調が分かることを見る。`--scene=<id>` からポーズメニューでランチャーへ戻ったときにも画像と字が出るかも見る
 - Notes: 危険地帯（RenderThread・RHI の資源の寿命）の変更。評価者に確かめてほしい点: (1) アップロードの時期（`ImGuiModule::InitializeBackend` は `ApplicationProcessor::Initialize` の `InstallAll` の中で最初のフレームの前に走り、以後 `ITexture::Update` を呼ぶ経路が無いか）(2) 知らない ID の扱い（0・未登録・アップロードに失敗した ID のコマンドを発行せずに飛ばすか）(3) 記述子セットの借り方（フレームの持ち主から Execute ごと・テクスチャごとに借り、パスに FrameIndex を持たないか。UBO の切れ端を共用してよいか）(4) `Shutdown` で手放す順（`ImGuiOverlayPass::Shutdown` で画像のテクスチャ、`ImGuiModule::Shutdown` で登録の表を空にする。RenderThread 静止後・device 生存中か）
 - Notes: TASKS.md の SCN-THUMBNAILS の `paths:` の行は `Library/Modules/ImGui` を含んでいない（判断役が足すと決めたが、ワーカーは `status:`・`after:` 以外を書き換えられない）。統合で範囲の照合をするなら、判断役の判断（blocked/resolved/SCN-THUMBNAILS.md）を根拠にする
+
+## 2026-11-02 SCN-THUMBNAILS（run 20261102-093543 の反復 3）
+- Done: 反復 2 の再検証の時間切れを直した。原因は実装でなく、この枠の build がブリッジ SDK 入りで構成し直した直後で Game の全体を初めて組んだため（単位は別の作業ツリーで組んでいた）。この枠で一度組み終えて最新にし、verify の 1・2 行目を回し直した: `cmake --build build --config Debug --target Game LauncherMenuTest -- /m:1` は BUILD_EXIT=0（4 秒、Game.exe と LauncherMenuTest.exe とも最新）、`ctest ... -R "^LauncherMenuTest$"` は `1/1 Test #493: LauncherMenuTest ... Passed 0.02 sec`・CTEST_EXIT=0
+- Next: 起動の確かめは後回し（反復 2 の Next のとおり SCN-THUMBNAILS-CHECK で verify の 3・4 行目と撮影の確認）。評価者への申し送り（危険地帯・確かめどころ 4 点）は反復 2 の記録のまま
+- Notes: 構成し直した枠で Game を一から組むと /m:1 で 10 分を超える。verify は増分のビルドを前提にしている
