@@ -8989,3 +8989,9 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U3 崖の生成の 7 範囲の壁の足に崩れた塊を置く規則（BuildCliffBlocks）: 着地(直し 1 回)
 - U4 置き方の書き出しに崖の塊を新しい種類として出す: 着地(直し 0 回)
 - U5 荒野の組み立てに塊をつなぎ、記録を書き、ビルドを通す: 着地(直し 1 回)
+
+## 2026-11-02 SCN-WL-CLIFF-GEN-TALUS-CHECK-P1（run 20261102-200220 の反復 1、完了・起動の確かめは後回し）
+- Done: 崖の生成の 7 範囲の壁の足に、崩れた塊を物の岩として置いた。素材は崖錐のスキャンの岩 boulder_01（8 割）と rock_09（2 割）を高さ 3〜14 m に拡大したもの（Blender は起動できず、boulder_01 の角張った節理の砂岩が崩れた塊の形に合い、新しい資産の読み込みの経路を増やさないため。WastelandCliffBlocks.json は作らない）。置く規則は `WastelandTalus::BuildCliffBlocks`（12 m の升目、接地用の格子の焼いた面 `SampleGround` で傾き 38°以下・斜面の上 4〜20 m に 55°以上で 3 m 以上高い壁、斑つきの確率 0.55、間隔は高さの和の 0.6 倍、据え方は崖錐の岩の FitRock と寄せ直し・縮小・ずらしを共有）。荒野の組み立てで影を落とす散布にし、灰色の撮影の 300 m の制限・rocks の外し・置き方の書き出し（物の組 `cliff_block`）・遮蔽の小物の書き出しに崖錐の岩と同じく渡す。合否の仕様 `shape-cliff-blocks.json` は置く前に版 15 の 4 回の撮影から書いた（写真 × 種類の fold_match の下限 5 行。版 15 では 5 行とも fail）。CheckPlacement.py は前の記録に無い `cliff_block` を違反 ≤ 物の数の 0.5 % で判定する。地形のクック（版 19）は変えていない。結果の節は WastelandShape.md の「崖の壁の足の崩れた塊（物の岩）」
+- 証拠: `.harness/runs/20261102-200220/u5-unit-verify.txt`（Debug・RelWithDebInfo の Game のビルド EXIT=0、仕様の JSON の読み込み・CheckPlacement.py の構文 EXIT=0、numstat 一致）
+- Next: 起動の確かめは後回し（SCN-WL-CLIFF-GEN-TALUS-CHECK-P1-CHECK）。verify の 3〜10 行目で (A) 塊の仕様の行が基準を超える・(B) 地形だけの仕様が通る・(C) 接地・(D) ページの要求と VRAM・(E) look の 3 視点を写真と並べて壁の足に塊が見える、を確かめる。ログの `WASTELAND_CLIFF_BLOCKS`（範囲ごとの数・no_ground）で、遠い castle の範囲に塊が出ているかも見る
+- Notes: 遮蔽の組の視点 contact_near・ref_cliff_01 から 7 範囲までの最短距離は 2642.5 m・2400 m で、塊は遮蔽の小物の書き出し（300 m）に入らない（遮蔽の Cycles の正解は古くならない）。壁の検出の閾値（38°・55°・3 m）と塊の見た目は起動の確かめまで未検証。BuildTalusRocks の出力は同じ乱数・同じ順の共有化で変わらない作りだが、実行での一致は未確認
