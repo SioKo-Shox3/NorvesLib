@@ -9111,3 +9111,9 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: なし（この項目は完了）
 - Notes: 要起票: CookManagedBootstrapTest のクラッシュの子（`Crash`）が間欠的に止める点の前で 91 を返す（9 回中 1 回、point=3）。子は stderr を継がず（CreateProcessW の bInheritHandles=FALSE）、`child did not exit:` の理由が親の出力に残らないため原因が分からない。子の理由を親に見せる形にしてから原因を追う
 - U1 Bootstrap 試験のクラッシュの子に親の stderr を継がせ、タスクの verify を全部回す: 着地(直し 0 回)
+
+## 2026-11-03 G2-MATERIAL-SELECTION-INTEGRATION-P1-P1-P1-P1-P1（run 20261103-013153 の反復 1、完了）
+- Done: `CookManagedBootstrapTest.cpp` の `Crash` を `CookManagedUpdateTest.cpp` の `Crash` と同じ形にした（親の stderr を継承可能に複製して `STARTF_USESTDHANDLES` で `hStdInput`・`hStdOutput`・`hStdError` へ入れ、`bInheritHandles=TRUE` で起動し、起動の後に複製を閉じる）。子が 73 以外で終わると、子の `BOOTSTRAP_RESULT`・`VOLUME_BUSY_RETRY`・`child did not exit:` の行が親の `child recovery=... point=... wait=... exit=...` の行と一緒に ctest の出力に出る。直列の 20 回の繰り返しで 91 は再現しなかったので、`CookManagedBootstrap.cpp` と試験の期待・名前空間・`RetryVolumeBusy` の上限・CMakeLists は変えていない
+- 証拠: `.harness/runs/20261103-013153/u1-unit-verify.txt`（Debug の CookedMeshTest のビルド 0、python の検査 True、`--repeat until-fail:20` で 20 回 Passed（20.2〜23.7 秒）、`-j 4` の 4 本 Passed、numstat 一致 14/2）
+- Next: なし（この項目は完了）
+- Notes: 91 は今回の 20 回では出ていない。次に出たときは ctest の `--output-on-failure` の出力に子の理由の行が残るので、その行から原因を追う
