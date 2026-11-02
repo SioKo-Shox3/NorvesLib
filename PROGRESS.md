@@ -8879,12 +8879,77 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS/u12/`（`parallel-result.json`・`assetcook-sha256.txt`・項目ごとの出力）
 - Next: 起動の確かめは後回し（SCN-WL-CLIFF-GEN-TALUS-CHECK）。verify の 5〜12 行目を版 19 で回す
 - Notes: 要起票: AssetCook のソースが変わる取り込みのたびに、検証を回す作業ツリーの exe のハッシュが変わって地形の全項目の焼き直し（並列で約 31 分）が要る。印に exe のハッシュではなく地形の生成の版を使う形は Scripts の設計変更になるので、この項目では変えていない
-- U1 ソケットに付けた Entity の描画の変換を、付け先の描画の変換から求める: 着地(直し 0 回)
-- U2 WorldRenderInterpolationTest に付けた Entity の描画の補間の検査を足し、Testing.md に 3 点を書く: 着地(直し 0 回)
 
-## 2026-11-02 GAME-GR130-VFX-CHECK-P1（run 20261102-191024 の反復 1。完了）
-- Done: ソケットに付けた Entity の描画の変換を、付け先（スキンのメッシュ）の描画の変換を所有者として組んだソケット × grip・profile の offset（付けたときの混ぜを含む）で求める形にした（`SocketAttachmentComponent::GetRenderTarget`・`TryBuildRenderWorldTransform`）。`World::UpdateRenderRows` は付いた行とその子孫を後回しにし、親と付け先の描画の変換が出た後に処理する（付け先が深さの順で後ろにいる・付け先も付いている連鎖も解ける。解けない行は従来の式へ戻す）。付いている間は補間の履歴に Prepare・Capture・Evaluate をせず、固定ステップの外の書き換えで履歴を戻さない。検査 `VerifyRenderRow` も同じ式にそろえた。シミュレーションの変換（PostPhysics の `SetWorldTransform`）の求め方と値は変えていない
-- Done: `WorldRenderInterpolationTest` に `TestSocketAttachmentFollowsParentRender` を足した（足す理由の 3 点は `Docs/Testing.md`）。親が 3 m/s で動き固定ステップ 0・1・2 回のフレームが混ざる 24 フレームで、剣の描画の位置 = 親の描画の位置 + (1,0,0)（1e-4）、剣のシミュレーションの位置 = 親のシミュレーションの位置 + (1,0,0)、描画の x の差 = v × dt（跳ばない）、ECS の描画の変換の照合が通る。`cmake --build build --config Debug --target Game EntityTreeTest SwordTrailRibbonTest SkeletalAnimationSamplingTest -- /m:1` は終了コード 0、`ctest -R "^(WorldRenderInterpolationTest|SwordTrailRibbonTest|SkeletalAnimationSamplingTest)$"` は 3 本 Passed、`EntityTreeTest` も Passed（`.harness/runs/20261102-191024/verify-GAME-GR130-VFX-CHECK-P1-final.txt`）。束の中の `AnimGraphRuntimeTest`（ソケットの追従の試験）も PASS
-- Next: 起動の確かめは後回し。`--animation-debug` で起動して、剣が手に付いたまま振りの間に手から遅れたり揺れたりしないこと、剣のトレイルの帯の先が描画の剣と合うことを確かめる（GAME-GR130-VFX-CHECK の起動の確かめと一緒に回せる）
-- Notes: 補間を要求していない（描画の変換の列を持たない）付けた Entity は前のまま（シミュレーションの変換で描く）。付け先だけ補間すると手とずれるので、付ける側も `SetRenderInterpolationEnabled(true)` にする前提。外したフレームは履歴が今の姿勢から始め直すので、外した瞬間に最大 1 ステップ分の段差が出うる
-- Notes: `UpdateRenderRows` は補間の行ごとに親の鎖をたどって `SocketAttachmentComponent` を探す。補間の行が大量になる場面では計測で確かめる
+- U1 在庫文書の旧環境の 2 文を Windows の実行記録に置き換える: 着地(直し 1 回)
+
+## 2026-11-02 G2-GR32-GPU-ACCEPTANCE-P2（run 20261102-173051 の反復 1、完了）
+- Done: `Docs/Architecture/NVSKELMigrationInventory.md` の「GR32 Nprimitive decodeの中間段階」と「Componentの材質slot API」に残っていた Linux・Windows.h で未実行の記述 2 つを、native 回帰ごとの Windows の実行記録に置き換えた。実行済み: `CookedSkeletalAssetTest`（2026-11-02 Debug、cp932・65001 で Passed、G2-GR78-SURFACE-CENTROID-CHECK-P1）、`SkeletalFramePacketSnapshotTest`（2026-11-02 TEST-FULL-CTEST-BASELINE と 2026-10-11 SCN-MEGA-SCENE-CONFIRM で Passed）。`SkeletalImportReportTest`（2026-10-11 SCN-ECS-RENDER-SYNC-SWITCH の隣接 69 件の ctest で Passed。反復 2 で訂正）。未実行（実行の記録なし）: `GLTFSkeletalAnalyzerTest`・`RenderingDDGILightingContractTest`（2026-10-29 SCN-BUILD-ALL-TESTS でビルドだけ通った）。この 2 本は TEST-FULL-CTEST-BASELINE-CHECK の全体 CTest で回すと書いた
+- 検証: verify の python 1 行が `[]`・終了コード 0。numstat は 2 通りで一致（17 行追加・2 行削除）。文書だけの変更で、ビルド・試験・アプリは起動していない
+- Next: TEST-FULL-CTEST-BASELINE-CHECK で全体 CTest を回したら、在庫文書の「未実行」の 2 本を実行の記録に更新する
+- Notes: 要起票: 同じ文書の 144 行（reader の native 回帰は Windows/Core 全体の実行が未検証）・159 行（native Resource/Core/描画の Windows 実行は未検証）・181 行（packet の native 回帰は Windows 依存で未実行）も古い可能性がある。181 行の packet の回帰は `SkeletalFramePacketSnapshotTest` で、2026-11-02 に Passed している
+- U2 SkeletalImportReportTest の行を 2026-10-11 の実行記録に直す: 着地(直し 0 回)
+
+## 2026-11-02 G2-GR32-GPU-ACCEPTANCE-P2（run 20261102-173051 の反復 2、完了）
+- Done: 差し戻し（`SkeletalImportReportTest` を未実行と書いていたが実行の記録がある）を直した。在庫文書の「GR32 Nprimitive decodeの中間段階」の `SkeletalImportReportTest` の 2 行を、2026-10-11 の Windows Debug で隣接 69 件の ctest（`ctest --test-dir build -C Debug -R <隣接69件> --no-tests=error --output-on-failure`）の中で Passed した記録（run 20261010-223034、`verify-SCN-ECS-RENDER-SYNC-SWITCH-3-neighbors.txt`）に置き換えた。試験のソースの最後の変更は 2026-10-04（9c229361）で、実行より前。反復 1 の Done の記述も同じ内容に訂正した
+- 検証: verify の python 1 行が `[]`・EXIT=0（`.harness/runs/20261102-173051/verify-G2-GR32-GPU-ACCEPTANCE-P2-2.txt`）。単位の numstat は 2 通りで一致（2 行追加・2 行削除）。文書だけの変更で、ビルド・試験・アプリは起動していない
+- Next: TEST-FULL-CTEST-BASELINE-CHECK で全体 CTest を回したら、在庫文書の「未実行」の 2 本（`GLTFSkeletalAnalyzerTest`・`RenderingDDGILightingContractTest`）を実行の記録に更新する
+- Done: G2-GR32-GPU-ACCEPTANCE-P2 の反復 2 の変更（SkeletalImportReportTest を 2026-10-11 の実行記録に訂正）は評価が枠切れで未実施だったため、変更を足さずに verify を回し直した（`[]`・EXIT=0、`.harness/runs/20261102-191020/verify-G2-GR32-GPU-ACCEPTANCE-P2.txt`）。文書の記述と `verify-SCN-ECS-RENDER-SYNC-SWITCH-3-neighbors.txt` の 102 行目（Passed）が合うことも確かめた
+
+- U1 capture の出力先の拒否文言を直し、コードページ 932/65001 で 7 ケース完走を確かめる: 着地(直し 0 回)
+- U2 凍結基準と 4 通りの capture を比べて差を原因ごとに分け、文書に書き、説明が付けば新しい基準を保存する: 着地(直し 0 回)
+
+## 2026-11-02 G2-S6-ASSET-SET-P2（run 20261102-173100 の反復 1）
+- Done: `AssetCookCliParity.py capture` は、--output が --source の下（source 自身を含む）を指すと、両パスを出して「source の外の新しいディレクトリ（例: %TEMP% の下）を --output に指定」と案内して拒否する。規則は緩めず、出力先を作る前に拒否する。Skeletal の「警告:」の照合は 2707ab89 の ENCODING UTF-8 のまま、コードページ 932 と 65001 の両方で 7 ケースが完走し、snapshot は同じ SHA-256（a7b76d2d…a6ff）になった。
+- Done: 凍結基準（run 37200047966・artifact 11302304928・snapshot.json 09af3262…6c85、凍結 exe 2 本も一致）と、今の Debug exe × checkout（LF）／CRLF の写し、凍結 exe × 同 2 通りを比べた。旧 79 出力は 57 一致・main のクラスタ化（13ba56a7）20 件・入力の行末（raw_sample.bin）2 件・その他 0 件。クラスタ化の差は NVMESH の cluster 表・index の並べ替え・header/hash とその manifest の cooked_hash に限られ、材質・文字列・頂点と三角形の多重集合は一致。Texture の追加 12 件（bb53b109・e4a71feb の smoke 追加）は不一致と別に数えた。
+- Done: その他が 0 件のため、HEAD b9d7468e の CRLF の写しの 91 出力（56 package＋35 JSON）を `%LOCALAPPDATA%/NorvesLib/AssetCookCliBaseline/b9d7468e3f0c-crlf/snapshot` に保存した（snapshot.json e58a0353…6a52）。`ManagedTextureAssetSetCli.md` の受入れ節と `TestingAssetCookCliParity.md` の「クラスタ化の後の基準」に記録した。
+- verify: Debug ビルド EXIT 0、`AssetCookCliParityTest.py -q` 13 件 OK、`%TEMP%` の下への capture EXIT 0（全 7 件成功）。
+- Notes: 新しい基準はこの機のローカルにだけあり、CI の `windows-assetcook.yml` は旧 artifact を参照したまま。出力は 79 ではなく 91（Texture の smoke 追加分）。凍結 exe は `--usage` を知らないので、凍結 exe での capture は Texture で止まる（Mesh は凍結時の smoke で別に照合した）。
+- Notes: 要起票: クラスタ化の後の単体 CLI 基準（91 出力）を CI の artifact として公開し、`windows-assetcook.yml` と `Docs/AssetCookCliFrozenBaseline.json` の参照先を切り替えるか決める（公開する操作なので人が決める）。
+
+## 2026-11-02 G2-S6-ASSET-SET-P2（run 20261102-191022 の反復 1）
+
+- Done: 前の run で着地した 2 件(出力先の拒否文言・凍結基準との差の分類と新基準の記録)の確かめの出力を開き直し、verify 3 本(ビルド・AssetCookCliParityTest 13 件・%TEMP% 下への capture 7 件)がすべて終了コード 0 であることを確かめて、status を done に戻した。新基準 snapshot.json の SHA-256 は e58a0353…6a52(採取コミット b9d7468e)。
+- Next: ランナーの評価(前回は評価者の枠切れで未実施)。
+- Notes: 新基準は %LOCALAPPDATA% にあり未公開で、CI はまだ旧基準を参照している。
+
+- U1 分割 cook の材質の解決の失敗を設定名で返し、検査を足す: 着地(直し 0 回)
+
+## G2-MATERIAL-SELECTION-INTEGRATION-P1（2026-11-02）
+- Done: `RigSplitCook.cpp` の材質の解決を catalog の読みと `ResolveMaterialImportPlan` に分け、状態が `SettingsFailed` のときは `MaterialSettingsErrorKey` の設定名を返す（NVMESH v1 と同じ形）。照合の失敗と catalog を読めないときは `split_material_selector_or_settings` のまま。増分の preflight は同じ cook の関数を通り、`CookCacheDecisionTest` の期待（照合の失敗の 2 件）は変わらないので触っていない
+- Done: `RigSplitCookTest` の `CookAndSettings` に、`AssetSetEmission={true,0}` の設定の失敗が `emissiveNitsPerUnit` と完全一致し、未一致の名前 `Missing` の照合の失敗が `split_material_selector_or_settings` と一致する検査を足した（反証する契約・気づける手段・黙って起きるかの 3 点はテストのコメントに書いた）
+- 証拠: `.harness/unit-verify.txt`（単位の作業ツリー。`cmake --build build --config Debug --target CookedMeshTest AssetCook -- /m:1` 終了コード 0、ctest の RigSplitCookTest・CookCacheDecisionTest・SkeletalMaterialBindingsTest・MaterialSelectionTest の 4 本 Passed、numstat 2 通り一致）
+- Next: なし（アプリを起動する確かめは無い）
+- Notes: done-when の「設定の失敗（例: 未一致の指定）」の未一致の名前は `ResolveMaterialImportPlan` では照合の失敗（SelectionFailed）になるので、設定の失敗には asset-set の発光の倍率 0 を使った
+- 再確認（run 20261102-173054 の反復 2）: 反復 1 の差し戻し（RigSplitCookTest の `cook_managed_store: volume_busy`）はコードの不具合ではなく、宛先ロックが C: のボリューム単位の Global 名前付きミューテックスを待たずに取るため、同時に走っていたほかの枠の AssetCook（NorvesLib-6 の地形の焼き）とぶつかったもの。ほかの枠の AssetCook が止んだ後に verify を回し直し、ビルド終了コード 0・ctest 4 本 Passed（`.harness/runs/20261102-173054/verify-build-iter2.txt`・`verify-ctest-iter2-wait-1.txt`）
+- Notes: 要起票: cook の試験（RigSplitCookTest など宛先ロックを取るもの）は、同じボリュームでほかの枠の AssetCook や cook の試験が走っていると `volume_busy` で落ちる（ロックの待ち時間 0）。盤面の並列の枠では verify の再実行が環境で落ちうる
+- U3 分割 cook の試験で、ボリュームのロックが他のプロセスに取られているときは待ってやり直す(作業ツリーを取られた U2 の切り直し): 着地(直し 0 回)
+- Done（run 20261102-191021）: 差し戻しの `mixed rig ... cook_managed_store: volume_busy` を直した。原因は機械全体の宛先ボリュームのロック（`Global\NorvesLib.AssetCook.DestinationVolumeLock.v1.<volume GUID>`、待たずに取る）を並列の枠の cook が同じ C: で握っていたこと。`RigSplitCookTest` の retarget と mixed rig の cook を、結果が Busy かつ期待が Busy でない間だけ 100 ms 間隔・合計 120 秒まで待ってやり直す形にした（検査の数は 120 件のまま）。外のプロセスでロックを 5.5 秒握った状態でも合格。
+- 証拠: 単位の作業ツリー（NorvesLib-2-u1）の `.harness/unit-verify.txt`（`cmake --build build --config Debug --target CookedMeshTest AssetCook -- /m:1` 終了コード 0、4 試験の ctest 終了コード 0・100% passed。RigSplitCookTest は待ちが無くても 50 秒前後かかる）
+- Next: なし（アプリを起動する確かめは無い）
+- Notes: ほかの枠が 120 秒より長くロックを握る cook（重い AssetCook など）と重なると、この試験は今も Busy で落ちる。待ちの上限を超えたら前の要起票（宛先ロックを取る cook の試験の取り合い）で扱う。
+
+- U1 手動起動の既定を統合の検証の範囲にし、frozen_parity で従来の照合を選べるようにする: 着地(直し 0 回)
+
+## G2-S6-ASSET-SET-P4（2026-11-02、run 20261102-192820 の反復 1）
+- Done: `windows-assetcook.yml` に `workflow_dispatch.inputs.frozen_parity`(boolean・既定 false)を足し、`NORVES_MERGE_VALIDATION` を `[validate-merge]` のときか手動起動で `frozen_parity` が false のときに true にした。凍結 hash の照合(段 4・5)・在庫 79 件の照合(段 6)・recipe 照合と capture・parity の段(段 17・18)は消さず、`-f frozen_parity=true` で従来どおり走る。push の起動条件と挙動は変えていない。理由は workflow の日本語のコメントに書いた
+- Done: `ManagedTextureAssetSetCli.md` に「CI の手動起動で検証するもの」の節を足した(既定の起動で走る段・skipped になる段・`frozen_parity=true` の使いどころ)
+- 証拠: verify 終了コード 0(`.harness/runs/20261102-192820/verify-G2-S6-ASSET-SET-P4.txt`)。単位の確かめで YAML の読み込みと numstat 2 通りの一致も確認
+- Next: なし(workflow の起動とプッシュはこのタスクの範囲外。実際の手動起動での完走は G2-S6-ASSET-SET-P3 の再開で確かめる)
+- Notes: GitHub Actions 上での条件式の評価はまだ実行で確かめていない
+
+- U1 SceneView に一時のワールドの板を持たせ、毎フレームの板を空間で振り分ける: 着地(直し 0 回)
+- U2 振り分けの検査を既存の 2 本の試験に足し、タスクの verify を回す: 着地(直し 0 回)
+
+## 2026-11-02 GAME-GR131-VFX-P1（run 20261102-191023 の反復 1）
+
+- Done: 毎フレームの一時の板を空間で分けた。`Rendering::DistributeTransientBoardProxies`（`SceneView.h`）が `WorldSpace` の板を main の SceneView の `SetTransientBoardProxies` へ、`ScreenSpace` の板をキャンバスへ渡し、空の列でも毎フレーム置き換える。SceneView は一時の板を常駐の板と同じ判定（`CullBoardProxy` に括り出し、2 つの `CullProxies` の両方）で可視列へ足し、描画コマンドは常駐の板と同じ `AppendWorldBoardDrawCommands` と並べ替えで作る。描画コマンドは GameThread の RenderingCoordinator が書き込み中の `FramePacket` へ写すので、RenderThread は SceneView を読まない。境界を持たない VFX の板（半径 0）は `BillboardComponent` と同じ式で境界を作ってから視錐台に掛ける
+- 検証: `cmake --build build --config Debug --target Game CanvasTransientBoardSnapshotTest SceneViewWorldBoardDrawCommandTest HitEffectEmissionTest -- /m:1` 終了コード 0、`ctest -R "^(ParticleFrameSnapshotTest|CanvasTransientBoardSnapshotTest|SceneViewWorldBoardDrawCommandTest|HitEffectEmissionTest|BoardComponentRoutingTest)$"` 5/5 Passed（`.harness/runs/20261102-191023/verify-GAME-GR131-VFX-P1-final.txt`）。足した検査は `SceneViewWorldBoardDrawCommandTest`（境界の無いワールドの一時の板が 1 回だけ載り、スクリーンの板は載らず、空の列の後は残らず、常駐の板は 1 回のまま）と `ParticleFrameSnapshotTest`（`ParticleSystem` の VFX から実際に出したワールドの板が SceneView にだけ、エミッタのスクリーンの板がキャンバスにだけ載り、次のフレームはどちらにも残らない）。足す理由の 3 点は `Docs/Testing.md`
+- Next: 起動の確かめは後回し。当たりを出す場面で火花と衝撃が 3D の view に出ること（`GAME-GR131-VFX-CHECK`）を撮って確かめる
+- Notes: `ParticleSystem` の通常のエミッタの板と Text のグリフの板は今もいつも `ScreenSpace` で、ワールドの空間に出るのは VFX（`VfxSimulationSpace::World`）の板だけ
+
+## 2026-11-02 GAME-GR131-VFX-P1（run 20261102-191023 の反復 2）
+
+- Done: 反復 1 の再検証の失敗（`BoardComponentRoutingTest.exe` が無く Not Run）を解いた。原因は実装ではなく、verify のビルド行が `BoardComponentRoutingTest` のターゲットを含まず、この枠の `build` にその実行ファイルが作られていなかったこと。`cmake --build build --config Debug --target BoardComponentRoutingTest -- /m:1` で作った（終了コード 0）
+- 検証: verify の 2 行をこの枠の `build` で回し直し、ビルド 終了コード 0、ctest 5/5 Passed（BoardComponentRoutingTest・SceneViewWorldBoardDrawCommandTest・HitEffectEmissionTest・ParticleFrameSnapshotTest・CanvasTransientBoardSnapshotTest。`.harness/runs/20261102-191023/verify-GAME-GR131-VFX-P1-iter2.txt`）
+- Next: 起動の確かめは後回し（`GAME-GR131-VFX-CHECK`）
+- Notes: 要起票: GAME-GR131-VFX-P1 の verify のビルド行に `BoardComponentRoutingTest` のターゲットが無く、新しい `build` では ctest の行が Not Run で落ちる（ビルド行へターゲットを足すのが推奨）

@@ -3,6 +3,11 @@ name: AssetCook Windows CLI
 on:
   # 手動操作か、ロードマップの区切りを明示したcommitだけを検証する。
   workflow_dispatch:
+    inputs:
+      frozen_parity:
+        description: 'true のとき分割前の凍結基準との recipe 照合と全出力の byte 比較を実行する'
+        type: boolean
+        default: false
   push:
     branches: [feature/game-asset-import]
 
@@ -24,7 +29,10 @@ jobs:
         shell: pwsh
     env:
       PYTHONUTF8: '1'
-      NORVES_MERGE_VALIDATION: ${{ contains(github.event.head_commit.message, '[validate-merge]') }}
+      # mainのクラスタ化で旧出力との一致は成り立たないため、手動起動の既定は統合の検証と同じ範囲にする。
+      # 凍結hashと在庫79件の照合、現行のsmoke契約、native textureの照合を行う。
+      # frozen_parity=trueで起動すると、従来のrecipe照合と全出力のbyte比較を行う。
+      NORVES_MERGE_VALIDATION: ${{ contains(github.event.head_commit.message, '[validate-merge]') || (github.event_name == 'workflow_dispatch' && !inputs.frozen_parity) }}
       SDK_VERSION: 1.4.309.0
       SDK_ROOT: C:\VulkanSDK\1.4.309.0
     steps:
@@ -81,7 +89,7 @@ jobs:
           if len(files) != 79:
               raise SystemExit("Frozen payload inventory mismatch")
           # G2分割の旧bytes一致はc1690c/run37652726746で確定済み。
-          # mainはクラスタ化を変更しているので、統合では旧出力同一性ではなく現在のCLI smokeを検証する。
+          # mainはクラスタ化を変更しているので、統合と手動起動の既定では現在のCLI smokeを検証する。
           if os.environ.get("NORVES_MERGE_VALIDATION") != "true":
               if meta["recipe"] != p["build_recipe"](source, scripts):
                   raise SystemExit("Frozen recipe mismatch")
