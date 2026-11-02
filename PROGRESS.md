@@ -8712,3 +8712,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 完了を宣言しない範囲: Bridge の線の上のメソッドと MCP の道具（NorvesEditor 側）、保存の後の実行中のエフェクトへの反映（GR136 の読み直しの口の後）、保存の後のクック（GR96）、機械・ドライバをまたぐ撮影の一致（GR126）、エポックで数え直さない状態を持つシーンの撮影の一致、編集の画面
 - Notes: 試験を足す理由を書くため `Docs/Testing.md` を paths の外だが触る（done-when が名指し）
 - Notes: 要起票: NorvesEditor の Bridge SDK と仕様に、資産のプロパティの一覧・設定・保存と決定的な撮影のメソッドを足し、MCP の道具から呼ぶ（NorvesEditor 側）
+- U1 エフェクトの資産を JSON へ書き出す: 着地(直し 0 回)
