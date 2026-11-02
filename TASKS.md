@@ -4654,3 +4654,133 @@
 - verify: `python Scripts/Terrain/CompareReference.py --capture .harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS/look --photos far_01,far_02,ground_02 --verify`
 - paths: Tools/AssetCook, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Assets/AssetSets, Game, Scripts, Docs/RenderingValidation, TASKS.md, PROGRESS.md
 - from: SCN-WL-CLIFF-GEN-TALUS
+
+## SCN-WL-CLIFF-GEN-TALUS-CHECK-P1: 壁から崖錐へ移る所の崩れた大きな塊（数 m〜十数 m）を、岩の物として崖の生成の 7 範囲の壁の足元に置く
+- status: todo
+- done-when: 2026-11-02 の人の判断（cc21c026、SCN-WL-CLIFF-GEN-TALUS の案 A）で、崩れた塊は高さの場ではなく物の岩として置く別の項目にすると決まった。地形のクック（崖の細部の版 19）は変えない。
+
+  すること:
+
+  (1) 塊の素材を決める。今ある崖錐のスキャンの岩（boulder_01・rock_09）を大きく使うか、Blender（Y:\AI\blender）で数 m〜十数 m の崩れた砂岩の塊を作って `Assets/AssetSets/WastelandCliffBlocks.json` からクックする。選んだ素材と理由を記録する。
+
+  (2) `Scripts/Terrain/ShapeRegions.json` の `cliff-gen` の 7 範囲の壁の足（急な面が崖錐へ移る所）に、塊を写真の大きさで置く規則を荒野の置き方に足す。
+  - 根元の高さは、接地用の格子（`WastelandPlacementGround.bin`）の焼いた面から取る。
+  - 置いた塊は、置き方の書き出し（`wasteland-export-placement`）に新しい種類として出し、`CheckPlacement.py --range-group cliff-gen` の接地の検査の組に入れる。
+
+  (3) 置く前に、塊の効きの合否の仕様 `Scripts/Terrain/ExpectSpecs/shape-cliff-blocks.json` を書いてコミットする。
+  - 中身は、写真の内部の折れ線のうち、壁の足と崩れた塊の稜線の一致（SCN-WL-SHAPE-INTERNAL-FOLDS の注釈）。物を含めて測るので `--terrain-only` は付けない。
+  - 基準は、版 19 と同じ形の地形の既存の撮影（版 15 の SCN-WL-CLIFF-GEN-CAPROCK の shape・shape-retake-1〜3）に当てて取る。
+  - 置いた後に仕様を変えない。
+
+  合否:
+  - ビルド（Debug・RelWithDebInfo）が通る。
+  - 起動の確かめ:
+    - (A) `shape-cliff-blocks.json` の行が置く前の基準より上がる。
+    - (B) `shape-cliff-talus.json`（地形だけ）の行が通る。
+    - (C) 接地: 新しい種類の塊は違反が物の数の 0.5 % 以下で、測り切れない物が 0。ほかの種類は SCN-WL-CLIFF-PLACEMENT-CHECK の記録を、物の数の 0.5 % を超えて上回らない。
+    - (D) ページの要求の溢れ・失敗が 0。VRAM が予算の 90 % 以下。
+    - (E) look の 3 視点を写真と並べて開き、壁の足に崩れた塊が見えることを確かめる。
+  - 結果は `Docs/RenderingValidation/WastelandShape.md` に書く。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Hdr -Aov -Views ref_far_01,ref_far_02,ref_ground_02 -GameArgs wasteland-common-light,wasteland-hide=clouds+foliage+gravel+buildings+aerial+fog,wasteland-gray-material,wasteland-aa=fxaa,wasteland-talus-limit=off -OutDir .harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS-CHECK-P1/shape`
+- verify: `python Scripts/Terrain/CompareReference.py --capture .harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS-CHECK-P1/shape --photos far_01,far_02,ground_02 --shape --expect Scripts/Terrain/ExpectSpecs/shape-cliff-blocks.json --verify`
+- verify: `python Scripts/Terrain/CompareReference.py --capture .harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS-CHECK-P1/shape --photos far_01,far_02,ground_02 --shape --terrain-only --expect Scripts/Terrain/ExpectSpecs/shape-cliff-talus.json --verify`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Views ref_cliff_01 -GameArgs wasteland-export-placement=.harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS-CHECK-P1/placement/placement.json -OutDir .harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS-CHECK-P1/placement`
+- verify: `python Scripts/Terrain/CheckPlacement.py --placement .harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS-CHECK-P1/placement/placement.json --asset-cook build/Tools/AssetCook/RelWithDebInfo/AssetCook.exe --regions Scripts/Terrain/ShapeRegions.json --range-group cliff-gen --baseline .harness/runs/scene-capture/SCN-WL-CLIFF-PLACEMENT-CHECK/placement_check.record.json --verify`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Views ref_far_01,ref_far_02,ref_ground_02 -OutDir .harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS-CHECK-P1/look`
+- verify: `python Scripts/Terrain/ReferenceCheck.py --geom-requests --capture .harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS-CHECK-P1/look --verify`
+- verify: `python Scripts/Terrain/CompareReference.py --capture .harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS-CHECK-P1/look --photos far_01,far_02,ground_02 --verify`
+- paths: Game/GameModes/Wasteland, Game/CMakeLists.txt, Assets/AssetSets/WastelandCliffBlocks.json, Assets/Models/WastelandCliffBlocks, Scripts/Terrain/CheckPlacement.py, Scripts/Terrain/ExpectSpecs, Docs/RenderingValidation/WastelandShape.md, TASKS.md, PROGRESS.md
+- from: SCN-WL-CLIFF-GEN-TALUS-CHECK
+- notes:
+  - ユーザーの方針（近景の崖はスキャンの岩と Blender で作り、遠景だけ式で作る）に沿う。
+  - 遠い castle の 5 範囲（5〜9 km）では塊は数画素なので、MegaGeometry の散布で置き、数を目標にしない。
+  - 新しい資産を読み込むので、アセットロードの危険地帯として扱う。
+  - 塊が遮蔽の組の小物の書き出し（occlusion_props）に入ると、遮蔽の Cycles の正解が古くなる。遮蔽の組は rocks・rocks-cliff で、視点は contact_near・ref_cliff_01、範囲は視点から 300 m 以内。入るなら `要起票:` で残す。
+
+## SCN-WL-CLIFF-GEN-TALUS-CHECK-P2: 荒野の遮蔽の比べの Cycles の正解を、版 19 に焼き直した地形で描き直す
+- status: todo
+- check: launch
+- gpu: exclusive
+- after: SCN-WL-CLIFF-GEN-TALUS-CHECK
+- done-when: 今の Cycles の正解は、SCN-RENDER-ROUGH-STEEP-ENERGY-P2 が崖の細部の版 18 で描いたもの（地形の書き出しの manifest は fdbbcc2a…）。版 19 に焼き直した共有の地形とは、地形の一覧のハッシュの照合で合わない。
+
+  やること:
+
+  (1) 版 19 の焼いた地形を `--export-terrain` で `<置き場>/mesh` へ書き出す。記録（`export_record.json`）の `cliff_detail_version` と `head_cliff_detail_version` が、どちらも 19 であること。
+
+  (2) 同じ Game.exe で 8 組をエンジンで撮り、同じ置き場に Cycles の正解を本描画（1024 サンプル・種 2）で描く。
+
+  (3) `ReferenceCheck.py --occlusion --engine-root <置き場> --reference <置き場>/cycles --regions ... --verify` で、次の 3 つが通る。
+  - 入力の照合（地形の一覧のハッシュを含む）
+  - 収束
+  - 必須の層の画素数
+
+  (4) `Docs/RenderingValidation/WastelandOcclusion.md` に、全部の行のエンジン ÷ Cycles を、版 18 の正解と版 19 の正解で並べた表を書く。版 19 は版 15 と同じ形なので、差は崖の生成の 7 範囲の崖錐の塊の分だけのはず。違う行があれば理由を書く。
+
+  (5) PROGRESS.md の Notes に、SCN-RENDER-ROUGH-STEEP-ENERGY と SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1-CHECK の判定では、この置き場の正解を `--reference` に使うことを申し送る。
+
+  `occlusion-accept.json` と、前の正解の置き場（SCN-WLR-OCCLUSION-SETS・SCN-RENDER-ROUGH-STEEP-ENERGY-P2）は書き換えない。
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `python Scripts/Terrain/OcclusionSets.py --export-terrain --out .harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS-CHECK-P2`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS-CHECK-P2 --sets terrain-sky,terrain-sun`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS-CHECK-P2 --sets rocks-sky,rocks-sun`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS-CHECK-P2 --sets rocks-cliff-sky,rocks-cliff-sun`
+- verify: `python Scripts/Terrain/OcclusionSets.py --capture --out .harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS-CHECK-P2 --sets plant-sky,plant-sun`
+- verify: `python Scripts/Terrain/OcclusionSets.py --cycles --seeds 2 --out .harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS-CHECK-P2 --sets terrain-sky --mesh .harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS-CHECK-P2/mesh`
+- verify: `python Scripts/Terrain/OcclusionSets.py --cycles --seeds 2 --out .harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS-CHECK-P2 --sets terrain-sun --mesh .harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS-CHECK-P2/mesh`
+- verify: `python Scripts/Terrain/OcclusionSets.py --cycles --seeds 2 --out .harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS-CHECK-P2 --sets rocks-sky --mesh .harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS-CHECK-P2/mesh`
+- verify: `python Scripts/Terrain/OcclusionSets.py --cycles --seeds 2 --out .harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS-CHECK-P2 --sets rocks-sun --mesh .harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS-CHECK-P2/mesh`
+- verify: `python Scripts/Terrain/OcclusionSets.py --cycles --seeds 2 --out .harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS-CHECK-P2 --sets rocks-cliff-sky --mesh .harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS-CHECK-P2/mesh`
+- verify: `python Scripts/Terrain/OcclusionSets.py --cycles --seeds 2 --out .harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS-CHECK-P2 --sets rocks-cliff-sun --mesh .harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS-CHECK-P2/mesh`
+- verify: `python Scripts/Terrain/OcclusionSets.py --cycles --seeds 2 --out .harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS-CHECK-P2 --sets plant-sky --mesh .harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS-CHECK-P2/mesh`
+- verify: `python Scripts/Terrain/OcclusionSets.py --cycles --seeds 2 --out .harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS-CHECK-P2 --sets plant-sun --mesh .harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS-CHECK-P2/mesh`
+- verify: `python Scripts/Terrain/ReferenceCheck.py --occlusion --engine-root .harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS-CHECK-P2 --reference .harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS-CHECK-P2/cycles --regions Scripts/Terrain/ExpectSpecs/occlusion-regions.json --verify`
+- paths: Scripts/Terrain/OcclusionSets.py, Scripts/Terrain/BlenderOcclusionReference.py, Docs/RenderingValidation/WastelandOcclusion.md, TASKS.md, PROGRESS.md
+- from: SCN-WL-CLIFF-GEN-TALUS-CHECK
+- notes:
+  - 地形の確かめ（SCN-WL-CLIFF-GEN-TALUS-CHECK）で地形を直して焼き直すと正解がまた古くなるので、その後に描く。
+  - 反復の中で地形を焼き直さない。
+  - SCN-WL-CLIFF-GEN-TALUS-CHECK-P1 の塊が統合済みで、rocks の組の小物（occlusion_props）に入るなら、その版で描く。
+  - Cycles の描画中は、GPU を使う別の処理（Game の撮影・別の Blender）を重ねない。
+  - 時間の見込み（SCN-RENDER-ROUGH-STEEP-ENERGY-P2 と同じ）: 撮影は 1 組約 2 分、Cycles は 1 組 3〜4 分、書き出しは別に数分。
+  - 壁時計（75 分）の残りが 25 分を切ったら、新しい描画を始めない。描けた組までをコミットして終える。
+  - verify は 1 行 10 分未満。
+
+## SCN-WL-CLIFF-GEN-TALUS-CHECK-P3: 地形の項目のクックの印を AssetCook.exe のハッシュから切り離し、地形に関わらない取り込みで地形の全項目を焼き直さない
+- status: todo
+- done-when: SCN-WL-CLIFF-GEN-TALUS の反復 4（PROGRESS.md）で、地形に関わらない取り込みのたびに地形の全項目を焼き直すことになった。
+  - 取り込んだのはリグ・VFX のクックの変更だけだったが、AssetCook.exe のハッシュが変わった。
+  - `Scripts/CookAssets.ps1` の印は `assetcook=<exe の SHA-256>` を含むので、地形の 214 項目すべての印が stale になった。
+  - 並列で約 31 分の焼き直しが要り、焼いた中身の変化は 0 項目だった。
+
+  直す:
+
+  (1) 地形の項目（`Assets/AssetSets/WastelandTerrain.json` の `generate` が `terrain-tile:` の項目）の印から exe のハッシュを外し、地形の出力に効く入力で求める。
+  - 崖の細部の版（`kTerrainCliffDetailVersion`）
+  - 地形のクックの経路のソースの内容のハッシュ（地形の生成・崖の細部・DEM の読み・メッシュの DAG と簡略化・NVMESH の書き出しなど。一覧はコードを読んで決めて書く）
+  - 地形以外の項目の印は、今のまま exe のハッシュを含める。
+
+  (2) 一覧の漏れに気づけるようにする。`--cook-coverage` が、崖の生成の範囲に掛かる代表の DEM の区画 1 つを今の AssetCook で一時の置き場へ焼き、共有の置き場の `cooked_hash` と比べて、違えば失敗にする。
+
+  (3) 移行で焼き直しを起こさない。
+  - 旧の形の印が今の exe で match の項目は、焼かずに新しい形の印を状態へ書き足す。
+  - 状態の旧の印の欄は残し、ほかの作業ツリーの旧い `CookAssets.ps1` が読んでも壊れない形にする。
+
+  (4) `CookAssets.ps1` の冒頭の説明と、`CookCoverage.py` の報告（印の元）を今の形に直す。
+
+  確かめ:
+  - 末尾に 1 バイト足した AssetCook.exe の写しで `-CheckStamps` を回すと、地形の 214 項目がすべて match になる。
+  - 地形の経路のソースの 1 つを一時的に変えると、地形の項目が stale になる。反復の中で確かめて記録し、変えたソースは戻す。
+  - verify のクックの行は `cooked=0 skipped=214` で 10 分以内に終わる。
+- verify: `cmake --build build --config RelWithDebInfo --target AssetCook -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CookAssets.ps1 -AssetCookExe build/Tools/AssetCook/RelWithDebInfo/AssetCook.exe -OnlyLogicalPath "Assets/Models/WastelandTerrain/*"`
+- verify: `python Scripts/Terrain/ReferenceCheck.py --cook-coverage --manifest build/CookedAssets/manifest.json --regions Scripts/Terrain/ShapeRegions.json --range-group cliff-gen --verify`
+- verify: `python -c "import os,re,shutil,subprocess,sys,tempfile; d=tempfile.mkdtemp(); p=os.path.join(d,'AssetCook.exe'); shutil.copyfile('build/Tools/AssetCook/RelWithDebInfo/AssetCook.exe',p); open(p,'ab').write(b'\x00'); o=subprocess.run(['powershell','-NoProfile','-ExecutionPolicy','Bypass','-File','Scripts/CookAssets.ps1','-AssetCookExe',p,'-CheckStamps','-OnlyLogicalPath','Assets/Models/WastelandTerrain/*'],capture_output=True,text=True,encoding='utf-8',errors='replace').stdout; s=re.findall(r'COOK_STAMP logical=\S+ package=\S+ status=(\S+)',o); print('terrain_stamps',len(s),sorted(set(s))); sys.exit(0 if len(s)>=214 and set(s)=={'match'} else 1)"`
+- paths: Scripts/CookAssets.ps1, Scripts/Terrain/CookCoverage.py, Scripts/Terrain/ReferenceCheck.py, Scripts/Terrain/WriteTerrainAssetSet.py, Assets/AssetSets/WastelandTerrain.json, TASKS.md, PROGRESS.md
+- from: SCN-WL-CLIFF-GEN-TALUS-CHECK
+- notes:
+  - ユーザーの方針（10 分を超える待ちが続いたら道具を見直す）に沿う。
+  - 印の照合が誤ると古い地形を黙って使うことになるので、評価者に (1) の一覧と (2) の検査を反証させる。
+  - アプリは起動しない（クックとスクリプトだけで確かめられる）。
