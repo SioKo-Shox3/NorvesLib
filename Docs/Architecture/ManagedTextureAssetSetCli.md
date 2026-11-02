@@ -67,5 +67,202 @@ Windows 11 10.0.22631、Windows PowerShell 5.1.22621.6133で実行した。使�
 - 標準の `Scripts/VerifyTextureAssetSet.py` は当初、凍結時との入力hash差3件で停止した。うち `Scripts/CookTextureAssetSet.ps1` の不一致は旧PSから包みへの変更によるもので、CIの `texture_parity` も必ず停止する原因だったため、checkout入力の初回と終了時の照合対象から外した。native検証はこのPS1を読まず、旧出力の正しさはreceiptのsnapshot SHAとpayload hashで保つ。残る2 specはこの機のcheckoutがLFのため凍結値と異なり、CIのWindows checkout（CRLF）に相当するHEADのCRLF化では凍結値と一致した。8 PNGはrawで一致した。照合変更後のローカル実行もspec 2件を名指しして入口で停止した。この機の `powershell.exe` のbinary SHA-256は `3247bcfd60f6dd25f34cb74b5889ab10ef1b3ec72b4d4b3d95b5b25b534560b8` で、receiptの `38f4384643b3fa0de714d2367b712c2e0fa1c89e2cfd131ae6b831ad962b1033` と異なるため、specの行末を直してもローカルの完走は `powershell.exe` のbinary照合で止まる。スクリプトの失敗時検査（既存のdirectory・empty・file・junctionの拒否、source-reparseの拒否、prefix・manifestの衝突の拒否、失敗したrootを公開しないこと・stageを残さないこと）と末尾の `VerifyManagedTextureCli.py` に対するローカルの根拠は、通過済みの `TextureManagedCliTest` と `TextureAssetSetOutputTest` である。スクリプト全体の完走には `windows-assetcook.yml` のCI手動起動による確認が必要で、まだ実行していない。上記のbyte比較には固定snapshotを検証したうえで比較器の `load_reference`・`files`・`compare` を使用した。
 - 指定のDebugビルドは成功し、`TextureAssetSetSpecTest`、`TextureAssetSetOutputTest`、`CookDependencySnapshotTest`、`CookCacheDecisionTest`、`CookOutputPackageTest`、`SingleAssetCookServiceTest`、`AssetCookTextureSmoke`、`AssetCookGlbSmoke` は8/8成功。`CookDependencySnapshotTest` と `CookCacheDecisionTest` は、外部buffer・画像の変更・不在・復帰、sidecarの追加・変更・不正・必須不在、出力packageの破損に対する依存記録・再cook判定・拒否を受け持つ。依存記録の段では画像を完全decodeしない。
 - 追加の管理試験は `CookManagedUpdateTest` と `TextureManagedCliTest` が成功し、`CookManagedBootstrapTest` は180秒でタイムアウトした。出力には復旧で `RolledBack` を期待した箇所の `rename_no_replace; win32_hex=5` と `Error` が残ったため、Bootstrapの失敗時の保持・復旧をこの実行で合格とは扱わない。比較と並行しない単独の再実行（`ctest -R "^CookManagedBootstrapTest$" --timeout 300`）でも300秒でタイムアウトし、最後の出力は `line 182: InitializeNewCookManagedStore(Owner, out, error) == CookManagedStoreInitializationResult::Created` だった。今回の変更ではC++と試験を変更していない。
-- 単体CLI旧基準（run 37200047966、artifact 11302304928）の `snapshot.json` はSHA-256 `09af3262f55ce75cf512cfb9086c0dbf3b81cd8344233b5f10ebda8e87f36c85` に一致。指定captureは出力先がsource配下のため拒否された。checkoutと32入力fileのSHA-256が一致する作業用コピーをsourceにしたcaptureも、Skeletalの警告文判定で停止した。完全なcandidate snapshotと79出力の正式比較は未完了。
-- そのcaptureで得られた途中出力を旧79出力と照合すると、Textureは既存4一致・12追加、Audioは6一致、Importは13一致、Glbは12一致、Meshは6一致・20不一致、Rawは2不一致、Skeletalは11一致・1不一致・4未生成だった。Skeletalの不一致はmanifestの `source_hash` で、未生成分はcaptureの停止による。Rawの入力は凍結時のCRLFに対しローカルはLF。Meshはmainのクラスタ化変更に加え入力の行末差もあり、各出力差への寄与は未分離。Textureの追加分は現行smokeが生成した出力で、旧出力の不一致ではない。
+### 単体 CLI の凍結基準との比較
+
+比較対象 HEAD は `b9d7468e3f0c739a1b51b8a42a0fdca329d1622d`。今回の実行環境は Windows 11 10.0.22631、PowerShell 7.6.9、Python 3.14.3、CMake 3.31.6。Debug の `AssetCook.exe` は SHA-256 `ba17bc55a585f9f209bdf9852e5d877008c0988396b53e1b7adf32f347fc67cc`、`CookedMeshTest.exe` は `98f3bbc8f3a1bf3f15406f033823624c5d96a56736661545d3891e8accb2aaff`。上の別ゲートで使った Debug バイナリとは区別する。
+
+A は run `37200047966`、artifact `11302304928`、commit `d1307c32ec86ec187c7cfb3959d5452760059543`、Release の凍結基準。取得先は `%TEMP%/NorvesCliP2/frozen`。`snapshot/snapshot.json` の SHA-256 `09af3262f55ce75cf512cfb9086c0dbf3b81cd8344233b5f10ebda8e87f36c85` と79出力、および凍結 exe 2本の上記 SHA-256 が `Docs/AssetCookCliFrozenBaseline.json` と一致した。snapshot の各出力もサイズ・SHA-256・有限一覧を検証した。
+
+| 記号 | exe・source | capture の結果 |
+|---|---|---|
+| B | 現行 Debug・checkout（LF） | `%TEMP%/NorvesCliP2-U1-cp932` を再利用。recipe・exe hash が現在値と一致。全7件成功、91出力 |
+| C | 現行 Debug・HEAD の CRLF 写し | `%TEMP%/NorvesCliP2/C`。全7件成功、91出力 |
+| D | 凍結 Release・checkout（LF） | `%TEMP%/NorvesCliP2/D`。Raw 成功、Texture の `--usage albedo` で終了コード1。6出力、snapshot なし |
+| E | 凍結 Release・HEAD の CRLF 写し | `%TEMP%/NorvesCliP2/E`。D と同じ箇所で終了コード1。6出力、snapshot なし |
+
+D/E とも `logs/Texture.log:15` に `AssetCook error: unknown argument: --usage`、同17–18行に `AssetCookTextureSmoke.cmake.in:148` と `AssetCook --usage albedo が exit code 1 で失敗した` がある。これは `bb53b109` で増えた呼び出しに凍結 exe が対応しないため。Audio 以降の73出力は capture では未生成であり、不一致とは数えない。D/E の生出力は driver の `artifacts()` で選び、A の `files/` と比較した。
+
+A 対 B/C の正式な `compare` はいずれも終了コード1。両方とも recipe 差の警告と追加12件を含み、旧出力の不一致は B が22件、C が20件だった。原因別の排他的な件数は **(a) クラスタ化20件（11 package＋9 JSON）、(b) 行末2件（1 package＋1 JSON）、(c) その他0件**。B で一致する旧出力は57件、C では59件。欠落は B/C とも0件。
+
+| ケース | 旧出力数 | B の一致 | C の一致 | 主原因 |
+|---|---:|---:|---:|---|
+| Raw | 2 | 0 | 2 | (b) 2件 |
+| Texture | 4 | 4 | 4 | 一致。追加12件は別集計 |
+| Audio | 6 | 6 | 6 | 一致 |
+| Mesh | 26 | 6 | 6 | (a) 20件。うち5 manifest は (b) も重なる |
+| Glb | 12 | 12 | 12 | 一致 |
+| Import | 13 | 13 | 13 | 一致 |
+| Skeletal | 16 | 16 | 16 | 最終出力はすべて一致 |
+
+下表は旧79出力を省略せず列挙する。「差 offset; A/X」は0始まりの先頭差 byte と旧/比較先の size（byte）。「一致」は全 byte と size の一致、「未生成」は capture がそのケースまで進まなかったことを表す。`a` は CRLF を揃えても残るクラスタ化差、`b` は CRLF を揃えると消える差で、行末も重なる Mesh manifest を `b` に重複計上しない。
+
+| パス（A の files/ からの相対名） | B | C | D | E | 分類 |
+|---|---|---|---|---|---|
+| `Audio/AB/Cooked/a.nvpkg` | 一致 | 一致 | 未生成 | 未生成 | 一致 |
+| `Audio/AB/Cooked/b.nvpkg` | 一致 | 一致 | 未生成 | 未生成 | 一致 |
+| `Audio/AB/manifest.json` | 一致 | 一致 | 未生成 | 未生成 | 一致 |
+| `Audio/BA/Cooked/a.nvpkg` | 一致 | 一致 | 未生成 | 未生成 | 一致 |
+| `Audio/BA/Cooked/b.nvpkg` | 一致 | 一致 | 未生成 | 未生成 | 一致 |
+| `Audio/BA/manifest.json` | 一致 | 一致 | 未生成 | 未生成 | 一致 |
+| `Glb/Embedded/Cooked/model.nvpkg` | 一致 | 一致 | 未生成 | 未生成 | 一致 |
+| `Glb/Embedded/Cooked/model.nvpkg.img0.nvpkg` | 一致 | 一致 | 未生成 | 未生成 | 一致 |
+| `Glb/Embedded/Cooked/model.nvpkg.img1.nvpkg` | 一致 | 一致 | 未生成 | 未生成 | 一致 |
+| `Glb/Embedded/Cooked/model.nvpkg.img2.nvpkg` | 一致 | 一致 | 未生成 | 未生成 | 一致 |
+| `Glb/Embedded/manifest.json` | 一致 | 一致 | 未生成 | 未生成 | 一致 |
+| `Glb/Embedded/Retained/Cooked/model.nvpkg.img0.nvpkg` | 一致 | 一致 | 未生成 | 未生成 | 一致 |
+| `Glb/Embedded/Retained/manifest.json` | 一致 | 一致 | 未生成 | 未生成 | 一致 |
+| `Glb/Embedded/SettingsGuard/Cooked/model.nvpkg` | 一致 | 一致 | 未生成 | 未生成 | 一致 |
+| `Glb/Embedded/SettingsGuard/Cooked/model.nvpkg.img0.nvpkg` | 一致 | 一致 | 未生成 | 未生成 | 一致 |
+| `Glb/Embedded/SettingsGuard/Cooked/model.nvpkg.img1.nvpkg` | 一致 | 一致 | 未生成 | 未生成 | 一致 |
+| `Glb/Embedded/SettingsGuard/Cooked/model.nvpkg.img2.nvpkg` | 一致 | 一致 | 未生成 | 未生成 | 一致 |
+| `Glb/Embedded/SettingsGuard/manifest.json` | 一致 | 一致 | 未生成 | 未生成 | 一致 |
+| `Import/ImportSettings/Cooked/model.nvpkg` | 一致 | 一致 | 未生成 | 未生成 | 一致 |
+| `Import/ImportSettings/Cooked/model.nvpkg.img0.nvpkg` | 一致 | 一致 | 未生成 | 未生成 | 一致 |
+| `Import/ImportSettings/Cooked/model.nvpkg.img1.nvpkg` | 一致 | 一致 | 未生成 | 未生成 | 一致 |
+| `Import/ImportSettings/Cooked/model.nvpkg.img2.nvpkg` | 一致 | 一致 | 未生成 | 未生成 | 一致 |
+| `Import/ImportSettings/Cooked/moved.nvpkg` | 一致 | 一致 | 未生成 | 未生成 | 一致 |
+| `Import/ImportSettings/Cooked/moved.nvpkg.img0.nvpkg` | 一致 | 一致 | 未生成 | 未生成 | 一致 |
+| `Import/ImportSettings/Cooked/moved.nvpkg.img1.nvpkg` | 一致 | 一致 | 未生成 | 未生成 | 一致 |
+| `Import/ImportSettings/Cooked/moved.nvpkg.img2.nvpkg` | 一致 | 一致 | 未生成 | 未生成 | 一致 |
+| `Import/ImportSettings/Cooked/variant.nvpkg` | 一致 | 一致 | 未生成 | 未生成 | 一致 |
+| `Import/ImportSettings/Cooked/variant.nvpkg.img0.nvpkg` | 一致 | 一致 | 未生成 | 未生成 | 一致 |
+| `Import/ImportSettings/Cooked/variant.nvpkg.img1.nvpkg` | 一致 | 一致 | 未生成 | 未生成 | 一致 |
+| `Import/ImportSettings/Cooked/variant.nvpkg.img2.nvpkg` | 一致 | 一致 | 未生成 | 未生成 | 一致 |
+| `Import/ImportSettings/manifest.json` | 一致 | 一致 | 未生成 | 未生成 | 一致 |
+| `Mesh/Bom/Plain/Cooked/Rendering3DTestSilverGltf.nvpkg` | 差 24; 4984568/3021928 | 差 24; 4984568/3021928 | 未生成 | 未生成 | a |
+| `Mesh/Bom/Plain/manifest.json` | 差 167; 523/523 | 差 467; 523/523 | 未生成 | 未生成 | a |
+| `Mesh/Bom/Prefixed/Cooked/Rendering3DTestSilverGltf.nvpkg` | 差 24; 4984568/3021928 | 差 24; 4984568/3021928 | 未生成 | 未生成 | a |
+| `Mesh/Bom/Prefixed/manifest.json` | 差 167; 523/523 | 差 467; 523/523 | 未生成 | 未生成 | a |
+| `Mesh/Cooked/Rendering3DTestSilverGltf.nvpkg` | 差 24; 4984568/3021928 | 差 24; 4984568/3021928 | 未生成 | 未生成 | a |
+| `Mesh/CorruptMsh0FourCC.nvpkg` | 差 24; 4984568/3021928 | 差 24; 4984568/3021928 | 未生成 | 未生成 | a |
+| `Mesh/manifest.json` | 差 167; 523/523 | 差 467; 523/523 | 未生成 | 未生成 | a |
+| `Mesh/ShortMsh0StoredSize.nvpkg` | 差 24; 4984568/3021928 | 差 24; 4984568/3021928 | 未生成 | 未生成 | a |
+| `Mesh/SourceHash/Baseline/Cooked/Rendering3DTestSilverGltf.nvpkg` | 差 24; 4984568/3021928 | 差 24; 4984568/3021928 | 未生成 | 未生成 | a |
+| `Mesh/SourceHash/Baseline/manifest.json` | 差 167; 523/523 | 差 467; 523/523 | 未生成 | 未生成 | a |
+| `Mesh/SourceHash/MutatedBuffer/Cooked/Rendering3DTestSilverGltf.nvpkg` | 差 24; 4984568/3021848 | 差 24; 4984568/3021848 | 未生成 | 未生成 | a |
+| `Mesh/SourceHash/MutatedBuffer/manifest.json` | 差 167; 523/523 | 差 467; 523/523 | 未生成 | 未生成 | a |
+| `Mesh/Synthetic/boundary_128/boundary_128.manifest.json` | 一致 | 一致 | 未生成 | 未生成 | 一致 |
+| `Mesh/Synthetic/boundary_128/boundary_128.nvpkg` | 一致 | 一致 | 未生成 | 未生成 | 一致 |
+| `Mesh/Synthetic/one_triangle/one_triangle.manifest.json` | 一致 | 一致 | 未生成 | 未生成 | 一致 |
+| `Mesh/Synthetic/one_triangle/one_triangle.nvpkg` | 一致 | 一致 | 未生成 | 未生成 | 一致 |
+| `Mesh/Synthetic/split_129/split_129.manifest.json` | 一致 | 一致 | 未生成 | 未生成 | 一致 |
+| `Mesh/Synthetic/split_129/split_129.nvpkg` | 一致 | 一致 | 未生成 | 未生成 | 一致 |
+| `Mesh/ValidVariants/base_color_tex_coord_zero.manifest.json` | 差 467; 523/523 | 差 467; 523/523 | 未生成 | 未生成 | a |
+| `Mesh/ValidVariants/Cooked/base_color_tex_coord_zero.nvpkg` | 差 24; 4984568/3021928 | 差 24; 4984568/3021928 | 未生成 | 未生成 | a |
+| `Mesh/ValidVariants/Cooked/extensions_required_empty.nvpkg` | 差 24; 4984568/3021928 | 差 24; 4984568/3021928 | 未生成 | 未生成 | a |
+| `Mesh/ValidVariants/Cooked/optional_primitive_extension.nvpkg` | 差 24; 4984568/3021928 | 差 24; 4984568/3021928 | 未生成 | 未生成 | a |
+| `Mesh/ValidVariants/Cooked/transformed_mesh_node.nvpkg` | 差 24; 4984568/3021928 | 差 24; 4984568/3021928 | 未生成 | 未生成 | a |
+| `Mesh/ValidVariants/extensions_required_empty.manifest.json` | 差 467; 523/523 | 差 467; 523/523 | 未生成 | 未生成 | a |
+| `Mesh/ValidVariants/optional_primitive_extension.manifest.json` | 差 470; 526/526 | 差 470; 526/526 | 未生成 | 未生成 | a |
+| `Mesh/ValidVariants/transformed_mesh_node.manifest.json` | 差 463; 519/519 | 差 463; 519/519 | 未生成 | 未生成 | a |
+| `Raw/Cooked/raw_sample.nvpkg` | 差 24; 208/207 | 一致 | 差 24; 208/207 | 一致 | b |
+| `Raw/manifest.json` | 差 120; 375/375 | 一致 | 差 120; 375/375 | 一致 | b |
+| `Skeletal/Cubic/manifest.json` | 一致 | 一致 | 未生成 | 未生成 | 一致 |
+| `Skeletal/Cubic/rig.nvpkg` | 一致 | 一致 | 未生成 | 未生成 | 一致 |
+| `Skeletal/Morph/manifest.json` | 一致 | 一致 | 未生成 | 未生成 | 一致 |
+| `Skeletal/Morph/rig.nvpkg` | 一致 | 一致 | 未生成 | 未生成 | 一致 |
+| `Skeletal/Reduce/manifest.json` | 一致 | 一致 | 未生成 | 未生成 | 一致 |
+| `Skeletal/Reduce/rig.nvpkg` | 一致 | 一致 | 未生成 | 未生成 | 一致 |
+| `Skeletal/RuntimeRoot/Cooked/disabled.nvpkg` | 一致 | 一致 | 未生成 | 未生成 | 一致 |
+| `Skeletal/RuntimeRoot/Cooked/explicit.nvpkg` | 一致 | 一致 | 未生成 | 未生成 | 一致 |
+| `Skeletal/RuntimeRoot/Cooked/imported.nvpkg` | 一致 | 一致 | 未生成 | 未生成 | 一致 |
+| `Skeletal/RuntimeRoot/Cooked/ValidU8Float-mutated.nvpkg` | 一致 | 一致 | 未生成 | 未生成 | 一致 |
+| `Skeletal/RuntimeRoot/Cooked/ValidU8Float.nvpkg` | 一致 | 一致 | 未生成 | 未生成 | 一致 |
+| `Skeletal/RuntimeRoot/disabled.json` | 一致 | 一致 | 未生成 | 未生成 | 一致 |
+| `Skeletal/RuntimeRoot/explicit.json` | 一致 | 一致 | 未生成 | 未生成 | 一致 |
+| `Skeletal/RuntimeRoot/imported.json` | 一致 | 一致 | 未生成 | 未生成 | 一致 |
+| `Skeletal/RuntimeRoot/manifest-mutated.json` | 一致 | 一致 | 未生成 | 未生成 | 一致 |
+| `Skeletal/RuntimeRoot/manifest.json` | 一致 | 一致 | 未生成 | 未生成 | 一致 |
+| `Texture/Cooked/odd_texture.nvpkg` | 一致 | 一致 | 一致 | 一致 | 一致 |
+| `Texture/Cooked/sample_texture.nvpkg` | 一致 | 一致 | 一致 | 一致 | 一致 |
+| `Texture/manifest.json` | 一致 | 一致 | 一致 | 一致 | 一致 |
+| `Texture/odd_manifest.json` | 一致 | 一致 | 一致 | 一致 | 一致 |
+
+#### クラスタ化と行末の切り分け
+
+D/E の capture 後、凍結コミットの `Tools/AssetCook/AssetCookMeshSmoke.cmake.in` を `git show d1307c32:Tools/AssetCook/AssetCookMeshSmoke.cmake.in` で `%TEMP%/NorvesCliP2/tools/AssetCookMeshSmoke-frozen.cmake.in` に取り出し、凍結 `AssetCook.exe` とそれぞれの source で独立実行した。出力先は `D-mesh-proof/Mesh` と `E-mesh-proof/Mesh`。両方終了コード0、各26出力。E の補助出力は26/26が A と生 byte 一致し、D は21/26一致、残る5 manifest だけ `source_hash` が異なった。補助出力は上表の D/E capture の未生成欄とは混ぜない。
+
+現行 Mesh smoke の凍結時との差はクラスタ数の期待値 `25562 → 1029` と、`DAG_SMOKE_EXE` 指定時だけ走る LOD 階層の追加ブロック。capture はその変数を渡さないため、今回の11 package はすべて **`NVMESHv0`、version 0.0、header 256 byte、cluster record 80 byte** のまま。LOD 階層・NVMESH v1/v1.1 の追加は今回の差を直接作っていない。
+
+`Tools/AssetCook/MeshCooker.cpp` の `BuildNvmeshBytes` と `Library/Core/Public/Asset/CookedMeshWireFormat.h` を読み、節を header → submesh → material → cluster → string → vertex → index の順に分けて照合した。代表の `Mesh/Cooked/Rendering3DTestSilverGltf.nvpkg` は次のとおり（位置は NVMESH 先頭から、package 内の NVMESH 先頭は232）。
+
+| 領域・値 | A | C | 差の意味 |
+|---|---|---|---|
+| package 全体 | 4984568 byte | 3021928 byte | 先頭差24は NVPKG の `PackageSize` |
+| NVMESH 全体 | 4984336 byte | 3021696 byte | 内側の先頭差40は `FileSize` |
+| vertex / index / cluster 数 | 67042 / 198366 / 25562 | 67042 / 198366 / 1029 | クラスタのまとめ方だけ変化 |
+| submesh | 64 byte @256 | 64 byte @256 | レコード内 `ClusterCount`（+24）だけ変化 |
+| material | 64 byte @320 | 64 byte @320 | byte 一致 |
+| cluster | 2044960 byte @384 | 82320 byte @384 | 80 byte × cluster 数。内容も変化 |
+| string | 178 byte @2045344 | 178 byte @82704 | 移動のみ、byte 一致 |
+| vertex | 2145344 byte @2045528 | 2145344 byte @82888 | 移動のみ、byte 一致 |
+| index | 793464 byte @4190872 | 793464 byte @2228232 | クラスタ順へ並べ替え。向きと重複数を保った三角形の多重集合は一致 |
+
+11 package 全件で材質・文字列・頂点の一致、三角形の多重集合一致、submesh の差が cluster 数だけであることを確認した。NVMESH header の差は `FileSize`、cluster 表の size、後続節の offset、`PayloadHash`、`ClusterCount` のみ。package 側の差も全体 size と entry の size/hash に限られる。意図的に壊した `CorruptMsh0FourCC.nvpkg`・`ShortMsh0StoredSize.nvpkg` も同じ分類で、元の FourCC/短縮値の作り方は維持される。`SourceHash/MutatedBuffer` だけは新 cluster 数1028、cluster 表82240 byte、package3021848 byteで、同じ検査を通った。
+
+原因は `13ba56a7` の `Library/Core/Private/Rendering/MegaGeometry/MeshClusterizer.cpp`。位置による隣接と、隣接が尽きた後の近い三角形からの成長が cluster の件数・範囲・境界・index 順序を変える。`MeshCooker.cpp` が cluster 表・並べ替えた index・header/hash を書き、`Library/Core/Private/Asset/CookedMeshLoader.cpp` はその版と節を検査する。LOD 書き出しの `CookLodGraphMesh` / `SerializeCookedMeshV1Paged` は別の format 指定であり、今回使われない。
+
+9 manifest の A 対 C は `/assets/0/cooked_hash` だけが異なる。通常は `4eaa09c42173afa3 → b47d19c4baa20a4d`、`SourceHash/MutatedBuffer/manifest.json` は `97af1be12256d6ab → 68e11c13a79aa2cf`。他の JSON 値は同じで、package 内の NVMESH の変更から連鎖する (a) とした。
+
+行末の (b) 2件は `raw_sample.bin` の LF/CRLF 差。B/D の Raw package は207 byte、A/C/E は208 byteで、manifest の `source_hash`・`cooked_hash` もその1 byte差から変わる。また `Mesh/manifest.json`、`Mesh/Bom/Plain/manifest.json`、`Mesh/Bom/Prefixed/manifest.json`、`Mesh/SourceHash/Baseline/manifest.json`、`Mesh/SourceHash/MutatedBuffer/manifest.json` の5件では B の `source_hash` も行末で変化する（通常 `87cbc9ceb25ac859 → 05b973076601d67e`、BOM付き `d86bea10639d5d7f → e104881275d30aae`、buffer変更 `12fe109cd4a74344 → 95fd5c52d337bf23`）。C では全5件の `source_hash` が A と一致し、残る `cooked_hash` だけを (a) に数えた。Skeletal は途中の manifest ではなく、capture 完走後の16出力で一致した。
+
+#### 追加出力と recipe
+
+追加12件（6 package＋6 JSON）は旧79出力の不一致に含めない。`bb53b109` が5用途の10件を増やし、`e4a71feb` がタイル付き single の2件を増やした。用途別5種類の形式が v0.1 から v0.2 へ変わったのも `e4a71feb`。今回の一覧は次のとおり。
+
+| 追加パス | size（byte） | smoke を追加したコミット |
+|---|---|---|
+| `Texture/Cooked/tiled_single.nvpkg` | 350400 | `e4a71feb`（タイル付き single） |
+| `Texture/Cooked/usage_albedo.nvpkg` | 584 | `bb53b109`（用途別5種類） |
+| `Texture/Cooked/usage_height16.nvpkg` | 642 | `bb53b109`（用途別5種類） |
+| `Texture/Cooked/usage_normal.nvpkg` | 584 | `bb53b109`（用途別5種類） |
+| `Texture/Cooked/usage_orm.nvpkg` | 576 | `bb53b109`（用途別5種類） |
+| `Texture/Cooked/usage_single.nvpkg` | 528 | `bb53b109`（用途別5種類） |
+| `Texture/tiled_single_manifest.json` | 416 | `e4a71feb`（タイル付き single） |
+| `Texture/usage_albedo_manifest.json` | 414 | `bb53b109`（用途別5種類） |
+| `Texture/usage_height16_manifest.json` | 422 | `bb53b109`（用途別5種類） |
+| `Texture/usage_normal_manifest.json` | 416 | `bb53b109`（用途別5種類） |
+| `Texture/usage_orm_manifest.json` | 407 | `bb53b109`（用途別5種類） |
+| `Texture/usage_single_manifest.json` | 416 | `bb53b109`（用途別5種類） |
+
+recipe は両方31項目。B は18一致、行末だけ8件、smoke 変更4件（うち3件は行末も異なる）、driver 変更1件。C は26一致、smoke 変更4件、driver 変更1件。旧31項目のうち d1307c32 から git blob が変わっていない26項目は、CRLF 写しの hash がすべて凍結 recipe と一致した。属性は全30ファイルで `text/eol: unspecified`。NUL のあるバイナリを除き、recipe 対象だけ LF→CRLF とし、実際に byte が変わったのは11件。driver は呼び出し元の実ファイルを記録するため、写しの Scripts へ置き換えない。項目別の分類は次のとおり。
+
+| recipe 項目 | A 対 B | A 対 C | 原因・コミット |
+|---|---|---|---|
+| `Assets/Models/M9Skinned/CubicChannels.gltf` | 一致 | 一致 | 変更なし（git blob 同一） |
+| `Assets/Models/M9Skinned/ExtraZeroInfluences.gltf` | 一致 | 一致 | 変更なし（git blob 同一） |
+| `Assets/Models/M9Skinned/FiveInfluences.gltf` | 一致 | 一致 | 変更なし（git blob 同一） |
+| `Assets/Models/M9Skinned/MorphDrop.gltf` | 一致 | 一致 | 変更なし（git blob 同一） |
+| `Assets/Models/M9Skinned/ThreeClips.gltf` | (b) 行末 | 一致 | 変更なし（git blob 同一） |
+| `Assets/Models/M9Skinned/ThreeClipsInvalid.gltf` | (b) 行末 | 一致 | 変更なし（git blob 同一） |
+| `Assets/Models/M9Skinned/ThreeCubicClips.gltf` | (b) 行末 | 一致 | 変更なし（git blob 同一） |
+| `Assets/Models/M9Skinned/ThreeMorphClips.gltf` | (b) 行末 | 一致 | 変更なし（git blob 同一） |
+| `Assets/Models/M9Skinned/ThreeMorphClipsInvalid.gltf` | (b) 行末 | 一致 | 変更なし（git blob 同一） |
+| `Assets/Models/M9Skinned/TwoMaterials.gltf` | 一致 | 一致 | 変更なし（git blob 同一） |
+| `Assets/Models/M9Skinned/ValidImportScale.gltf` | 一致 | 一致 | 変更なし（git blob 同一） |
+| `Assets/Models/M9Skinned/ValidU16Unorm8.gltf` | 一致 | 一致 | 変更なし（git blob 同一） |
+| `Assets/Models/M9Skinned/ValidU8Float.gltf` | 一致 | 一致 | 変更なし（git blob 同一） |
+| `Assets/Models/M9Skinned/ValidU8Unorm16.gltf` | 一致 | 一致 | 変更なし（git blob 同一） |
+| `Assets/Models/Rendering3DTestSilverGltf/Rendering3DTestSilverGltf.bin` | 一致 | 一致 | 変更なし（git blob 同一） |
+| `Assets/Models/Rendering3DTestSilverGltf/Rendering3DTestSilverGltf.gltf` | (b) 行末 | 一致 | 変更なし（git blob 同一） |
+| `Assets/Models/Rendering3DTestSilverGltf/textures/silver_albedo.png` | 一致 | 一致 | 変更なし（git blob 同一） |
+| `Assets/Models/Rendering3DTestSilverGltf/textures/silver_arm.png` | 一致 | 一致 | 変更なし（git blob 同一） |
+| `Assets/Models/Rendering3DTestSilverGltf/textures/silver_normal-ogl.png` | 一致 | 一致 | 変更なし（git blob 同一） |
+| `Test/Core/Asset/CookedSkeletalAssetTest.cmake.in` | smoke の変更 | smoke の変更 | `2707ab89`：出力の `ENCODING UTF-8` |
+| `Test/Core/Asset/Fixtures/AssetCook/embedded_tri.glb` | 一致 | 一致 | 変更なし（git blob 同一） |
+| `Test/Core/Asset/Fixtures/AssetCook/embedded_tri_changed.glb` | 一致 | 一致 | 変更なし（git blob 同一） |
+| `Test/Core/Asset/Fixtures/AssetCook/embedded_tri_invalid_image.glb` | 一致 | 一致 | 変更なし（git blob 同一） |
+| `Test/Core/Asset/Fixtures/AssetCook/embedded_tri_mismatched_mime.glb` | 一致 | 一致 | 変更なし（git blob 同一） |
+| `Test/Core/Asset/Fixtures/AssetCook/raw_sample.bin` | (b) 行末 | 一致 | 変更なし（git blob 同一） |
+| `Tools/AssetCook/AssetCookAudioSmoke.cmake.in` | 一致 | 一致 | 変更なし（git blob 同一） |
+| `Tools/AssetCook/AssetCookGlbSmoke.cmake.in` | smoke の変更＋行末 | smoke の変更 | `619e16eb`：manifest の hash 計算を .NET へ変更 |
+| `Tools/AssetCook/AssetCookImportSmoke.cmake.in` | (b) 行末 | 一致 | 変更なし（git blob 同一） |
+| `Tools/AssetCook/AssetCookMeshSmoke.cmake.in` | smoke の変更＋行末 | smoke の変更 | `13ba56a7`：クラスタ数の期待値、`4bc840da`・`585ebd09`：任意の LOD smoke |
+| `Tools/AssetCook/AssetCookTextureSmoke.cmake.in` | smoke の変更＋行末 | smoke の変更 | `bb53b109`・`38110fef`・`e4a71feb`：用途別・タイルの smoke |
+| `driver` | driver の変更 | driver の変更 | `b9d7468e`：source 配下出力の拒否文言と既存出力の判定 |
+
+#### 基準の保存と適用範囲
+
+(c) は0件で、未説明の旧出力差は残らなかった。C の `snapshot/` をそのまま `%LOCALAPPDATA%/NorvesLib/AssetCookCliBaseline/b9d7468e3f0c-crlf/snapshot` へ新規保存した。保存後に snapshot の有限一覧・全出力 byte と元 C の一致を確認した。91出力（56 package＋35 JSON）、`snapshot.json` の SHA-256 は `e58a03535cd8c52f0121d7acb1d616be019fba64e632592d971a5f71fdfe6a52`。採取コミットは `b9d7468e3f0c739a1b51b8a42a0fdca329d1622d`、exe hash はこの節の現行 Debug の2本、source は `%TEMP%/NorvesCliP2/src-crlf`。参考として B の snapshot SHA-256 は `a7b76d2dd924e3d776375b5437af661ad654c742298da646ea7610d1fb6aa6ff`。再現手順は [単体 CLI 比較手順](../TestingAssetCookCliParity.md#クラスタ化の後の基準) に記す。
+
+CI の `windows-assetcook.yml` はまだ旧 artifact `11302304928` を参照し、この新しいローカル基準は artifact として公開していない。A 対 C の `compare` が成功したという意味ではなく、recipe・追加・クラスタ化を説明したうえで保存した別基準である。凍結 Release と現行 Debug の比較であり、現行 Release の実行結果はこの比較に含まない。

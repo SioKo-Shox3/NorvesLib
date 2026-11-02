@@ -8894,3 +8894,20 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 検証: verify の python 1 行が `[]`・EXIT=0（`.harness/runs/20261102-173051/verify-G2-GR32-GPU-ACCEPTANCE-P2-2.txt`）。単位の numstat は 2 通りで一致（2 行追加・2 行削除）。文書だけの変更で、ビルド・試験・アプリは起動していない
 - Next: TEST-FULL-CTEST-BASELINE-CHECK で全体 CTest を回したら、在庫文書の「未実行」の 2 本（`GLTFSkeletalAnalyzerTest`・`RenderingDDGILightingContractTest`）を実行の記録に更新する
 - Done: G2-GR32-GPU-ACCEPTANCE-P2 の反復 2 の変更（SkeletalImportReportTest を 2026-10-11 の実行記録に訂正）は評価が枠切れで未実施だったため、変更を足さずに verify を回し直した（`[]`・EXIT=0、`.harness/runs/20261102-191020/verify-G2-GR32-GPU-ACCEPTANCE-P2.txt`）。文書の記述と `verify-SCN-ECS-RENDER-SYNC-SWITCH-3-neighbors.txt` の 102 行目（Passed）が合うことも確かめた
+
+- U1 capture の出力先の拒否文言を直し、コードページ 932/65001 で 7 ケース完走を確かめる: 着地(直し 0 回)
+- U2 凍結基準と 4 通りの capture を比べて差を原因ごとに分け、文書に書き、説明が付けば新しい基準を保存する: 着地(直し 0 回)
+
+## 2026-11-02 G2-S6-ASSET-SET-P2（run 20261102-173100 の反復 1）
+- Done: `AssetCookCliParity.py capture` は、--output が --source の下（source 自身を含む）を指すと、両パスを出して「source の外の新しいディレクトリ（例: %TEMP% の下）を --output に指定」と案内して拒否する。規則は緩めず、出力先を作る前に拒否する。Skeletal の「警告:」の照合は 2707ab89 の ENCODING UTF-8 のまま、コードページ 932 と 65001 の両方で 7 ケースが完走し、snapshot は同じ SHA-256（a7b76d2d…a6ff）になった。
+- Done: 凍結基準（run 37200047966・artifact 11302304928・snapshot.json 09af3262…6c85、凍結 exe 2 本も一致）と、今の Debug exe × checkout（LF）／CRLF の写し、凍結 exe × 同 2 通りを比べた。旧 79 出力は 57 一致・main のクラスタ化（13ba56a7）20 件・入力の行末（raw_sample.bin）2 件・その他 0 件。クラスタ化の差は NVMESH の cluster 表・index の並べ替え・header/hash とその manifest の cooked_hash に限られ、材質・文字列・頂点と三角形の多重集合は一致。Texture の追加 12 件（bb53b109・e4a71feb の smoke 追加）は不一致と別に数えた。
+- Done: その他が 0 件のため、HEAD b9d7468e の CRLF の写しの 91 出力（56 package＋35 JSON）を `%LOCALAPPDATA%/NorvesLib/AssetCookCliBaseline/b9d7468e3f0c-crlf/snapshot` に保存した（snapshot.json e58a0353…6a52）。`ManagedTextureAssetSetCli.md` の受入れ節と `TestingAssetCookCliParity.md` の「クラスタ化の後の基準」に記録した。
+- verify: Debug ビルド EXIT 0、`AssetCookCliParityTest.py -q` 13 件 OK、`%TEMP%` の下への capture EXIT 0（全 7 件成功）。
+- Notes: 新しい基準はこの機のローカルにだけあり、CI の `windows-assetcook.yml` は旧 artifact を参照したまま。出力は 79 ではなく 91（Texture の smoke 追加分）。凍結 exe は `--usage` を知らないので、凍結 exe での capture は Texture で止まる（Mesh は凍結時の smoke で別に照合した）。
+- Notes: 要起票: クラスタ化の後の単体 CLI 基準（91 出力）を CI の artifact として公開し、`windows-assetcook.yml` と `Docs/AssetCookCliFrozenBaseline.json` の参照先を切り替えるか決める（公開する操作なので人が決める）。
+
+## 2026-11-02 G2-S6-ASSET-SET-P2（run 20261102-191022 の反復 1）
+
+- Done: 前の run で着地した 2 件(出力先の拒否文言・凍結基準との差の分類と新基準の記録)の確かめの出力を開き直し、verify 3 本(ビルド・AssetCookCliParityTest 13 件・%TEMP% 下への capture 7 件)がすべて終了コード 0 であることを確かめて、status を done に戻した。新基準 snapshot.json の SHA-256 は e58a0353…6a52(採取コミット b9d7468e)。
+- Next: ランナーの評価(前回は評価者の枠切れで未実施)。
+- Notes: 新基準は %LOCALAPPDATA% にあり未公開で、CI はまだ旧基準を参照している。
