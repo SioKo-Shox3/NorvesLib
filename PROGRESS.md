@@ -8507,3 +8507,9 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 要起票: verify の撮影を RT と GI を切った構成で撮る起動引数（と verify の -GameArgs）が無い。予算の構成で判定できるようにするかを決める
 - U1 PT の材質のテクスチャの標本へ一様でない印を届ける: 着地(直し 0 回)
 - U2 rchit の SPIR-V の NonUniform を照合する CPU の試験を足す: 着地(直し 0 回)
+
+## 2026-11-02 PT-NONUNIFORM-SAMPLER（run 20261102-093543 の反復 1）
+- Done: 直す前の rchit（sparse あり・なし）を -O・vulkan1.2 で SPIR-V にして逆アセンブルし、`materialTextures` から取った sampled image の `OpAccessChain`・`OpLoad`（sparse ありでは `OpImageQueryLevels` の `OpImage` も）に `NonUniform` が無いことを確かめた（添字の `OpCopyObject` にだけ付いていた）。sampler の式を受けるマクロ `NORVES_RETURN_SPARSE_RESIDENT_LOD` に常駐の判定と粗いミップへの逃げの本体を移し、rchit の `SampleMaterialTexture` が標本の命令の位置で `materialTextures[nonuniformEXT(index)]` を引く形にした（`SampleSparseResidentLod` はマクロを使う形で残し、megageometry.frag の SPIR-V は sparse あり・なしとも変わらない）
+- Done: CPU の試験 `PathTracingNonUniformSamplerSpirvTest`（`RHIRayTracingApiContractTest` の束）を足した。`VulkanShaderCompiler` で sparse あり・なしの rchit を SPIR-V にし、材質の配列由来の `OpImageSampleExplicitLod`・`OpImageSparseSampleExplicitLod`・`OpImageQueryLevels` の operand と元の load・access chain・`OpImage` に `NonUniform` があることを見る。ビルドは終了コード 0、ctest は Passed（束のほか 2 本も Passed）。直す前のシェーダー（`--shader-root` で差し替え）では終了コード 1 で落ちる（証拠 `.harness/runs/20261102-093543/verify-PT-NONUNIFORM-SAMPLER-U2.txt`）
+- Next: 起動の確かめは後回し（当分アプリを起動しない決まり）。PT-NONUNIFORM-SAMPLER-CHECK で `PathTracingMaterialVulkanTest` のビルドと ctest を回し、PT の材質のテクスチャ（VT と VT でないもの）が前と同じに読めることを確かめる
+- Notes: PathTracing の下にほかに sampler の配列を関数の引数で渡す箇所は無い
