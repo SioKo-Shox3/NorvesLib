@@ -8894,3 +8894,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 検証: verify の python 1 行が `[]`・EXIT=0（`.harness/runs/20261102-173051/verify-G2-GR32-GPU-ACCEPTANCE-P2-2.txt`）。単位の numstat は 2 通りで一致（2 行追加・2 行削除）。文書だけの変更で、ビルド・試験・アプリは起動していない
 - Next: TEST-FULL-CTEST-BASELINE-CHECK で全体 CTest を回したら、在庫文書の「未実行」の 2 本（`GLTFSkeletalAnalyzerTest`・`RenderingDDGILightingContractTest`）を実行の記録に更新する
 - Done: G2-GR32-GPU-ACCEPTANCE-P2 の反復 2 の変更（SkeletalImportReportTest を 2026-10-11 の実行記録に訂正）は評価が枠切れで未実施だったため、変更を足さずに verify を回し直した（`[]`・EXIT=0、`.harness/runs/20261102-191020/verify-G2-GR32-GPU-ACCEPTANCE-P2.txt`）。文書の記述と `verify-SCN-ECS-RENDER-SYNC-SWITCH-3-neighbors.txt` の 102 行目（Passed）が合うことも確かめた
+- U1 地形の項目の印を exe のハッシュから切り離し、旧の印からの移行と照合を入れる: 着地(直し 1 回)
