@@ -8525,3 +8525,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 骨格の分割 cook で SurfaceName を拒否する: 着地(直し 0 回)
 - U2 クリップ・リターゲットの cook で材質設定を照合し、分割 cook の警告を表示する: 着地(直し 0 回)
 - U3 共通照合・import-plan・slot 名の試験に名指しの場合を足す: 着地(直し 0 回)
+- U4 増分の preflight で拒否されることを反証し、文書を今の接続に合わせ、タスクの verify を通す: 着地(直し 0 回)
