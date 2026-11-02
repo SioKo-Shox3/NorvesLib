@@ -54,13 +54,14 @@ struct ImDrawData;
 //   借りた切れ端のバッファとその中の基点(VertexBufferOffsetBytes / IndexBufferOffsetBytes)を渡す。
 //   持ち主の無い文脈(RenderingCoordinator を通さない呼び出し)では描かずに警告する。
 //
-// テクスチャ(MT 安全・レガシー単一アトラス維持):
+// テクスチャ(MT 安全・レガシー単一アトラスと登録画像):
 //   フォントアトラスは GameThread の InitializeGameThread で
 //   io.Fonts->GetTexDataAsRGBA32 の CPU ピクセルから ITexture を一度だけ生成・アップロード
-//   し、io.Fonts->SetTexID へ非 Invalid のセンチネルを GameThread で確定する(RT はテクスチャに
-//   一切触れない)。アトラスは 1 枚のみで Execute は cmd.GetTexID() を解決に使わず常に借りた
-//   DescriptorSet を直接バインドするため、TexID は「ImDrawCmd が有効テクスチャを
-//   指す目印」で足りる。imgui 1.92 の動的テクスチャ(ImGuiBackendFlags_RendererHasTextures)は
+//   し、io.Fonts->SetTexID へ非 Invalid のセンチネルを GameThread で確定する(RT はテクスチャの
+//   状態を書き込まない)。アトラスは 1 枚でセンチネル 1 を使い、登録画像には 2 以上の ID を使う。
+//   登録画像も GameThread の初期化中に一度だけアップロードし、最初のフレーム投入前に表を確定する。
+//   RenderThread は cmd.GetTexID() で読み取り専用の表を引き、テクスチャごとにフレームの持ち主から
+//   借りた DescriptorSet を束ねる。imgui 1.92 の動的テクスチャ(ImGuiBackendFlags_RendererHasTextures)は
 //   使わず、レガシー単一アトラスに固定する(ImTextureData::Status の跨スレッド共有書込みを
 //   構造的に排除する現方針の維持)。
 //
@@ -109,6 +110,15 @@ namespace NorvesLib::Modules::Gui
          */
         bool InitializeGameThread(NorvesLib::RHI::IDevice *device);
 
+        /**
+         * @brief 登録画像をアップロードして保持する（GameThread・最初のフレーム投入前のみ）
+         *
+         * InitializeGameThread 後、ImGuiModule::InitializeBackend からだけ呼ぶ。
+         * フォントの linear/clamp サンプラーを共用する。失敗時は警告して false を返す。
+         */
+        bool UploadImageGameThread(NorvesLib::RHI::IDevice *device, uint64_t imageId,
+                                   const uint8_t *rgba8Pixels, uint32_t width, uint32_t height);
+
         const char *GetName() const override;
 
         bool Initialize(NorvesLib::Core::Rendering::ViewRenderContext &context) override;
@@ -140,12 +150,20 @@ namespace NorvesLib::Modules::Gui
         // GameThread ①: linear/clamp サンプラー(本パス所有)。
         NorvesLib::RHI::SamplerPtr m_FontSampler;
 
+        struct ImageTexture
+        {
+            uint64_t Id = 0;
+            NorvesLib::RHI::TexturePtr Texture;
+        };
+        // GameThread の InitializeBackend でのみ追加し、最初のフレーム投入前に確定する。
+        // RenderThread は読み取り専用。Shutdown の解放は RenderThread 静止後なので競合しない。
+        Core::Container::VariableArray<ImageTexture> m_ImageTextures;
+
         // seam ②: mesh2d パイプライン(overlay load RP に対して生成・本パス所有)。
         NorvesLib::RHI::PipelinePtr m_Pipeline;
-        // seam ②: 借りる DescriptorSet の共有レイアウト(binding0 UBO / binding1 フォント)。
-        // Execute ごとにこのレイアウトでフレームの持ち主から 1 つ借り、借りた UBO の切れ端と共有フォント
-        // テクスチャ/サンプラーを束ねる。アトラスは 1 枚のみのため、Execute は cmd.GetTexID() を
-        // 解決に使わず常に借りた DescriptorSet を直接バインドする。
+        // seam ②: 借りる DescriptorSet の共有レイアウト(binding0 UBO / binding1 テクスチャ)。
+        // Execute 内でテクスチャごとに 1 つ借り、同じ UBO の切れ端とフォントまたは登録画像、
+        // 共有の linear/clamp サンプラーを束ねる。画像のセットは使用時だけ借りる。
         NorvesLib::RHI::DescriptorSetLayoutPtr m_DescriptorSetLayout;
 
         // FramePacket スロットごとの ImDrawData ディープクローン(本パス所有・CPU の写し)。
