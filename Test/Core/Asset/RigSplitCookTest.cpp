@@ -7,6 +7,9 @@
 #include "Tools/AssetCook/CookCacheDecision.h"
 #include "RigSplitWireTestFixture.h"
 #include "Tools/AssetCook/MeshMaterialV1Plan.h"
+#include "Resource/MaterialImportSettings.h"
+#include <chrono>
+#include <thread>
 #if defined(_WIN32)
 #include <Windows.h>
 #endif
@@ -16,8 +19,30 @@ namespace Cook = NorvesLib::Tools::AssetCook;
 namespace Core = NorvesLib::Core;
 namespace S = NorvesLib::Core::Skeletal;
 namespace C = NorvesLib::Core::Container;
+namespace I = NorvesLib::Core::AssetImport;
 namespace
 {
+    // Busy ではランタイムの公開が進まず、管理ストアの初期化済みでも再試行の結果は変わらない。
+    // 報告は呼ぶたびに初期化され、試験は最後の呼び出しの結果だけを観測する。
+    Cook::TextureAssetSetCookResult CookWithBusyRetry(const Cook::TextureAssetSetCookRequest& request,
+                                                     Cook::CookManagedBootstrapOutcome& outcome, F::Text& error,
+                                                     Cook::TextureAssetSetCookResult expected)
+    {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(120);
+        auto result = Cook::CookTextureAssetSetWithOutcome(request, outcome, error);
+        while (result == Cook::TextureAssetSetCookResult::Busy && expected != Cook::TextureAssetSetCookResult::Busy &&
+               std::chrono::steady_clock::now() < deadline)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            if (std::chrono::steady_clock::now() >= deadline)
+            {
+                break;
+            }
+            result = Cook::CookTextureAssetSetWithOutcome(request, outcome, error);
+        }
+        return result;
+    }
+
 #if defined(_WIN32)
     struct EnvironmentValue
     {
@@ -213,7 +238,7 @@ Frame Time: 0.5
         F::Text error;
         const auto run = [&](Cook::TextureAssetSetCookResult expected)
         {
-            const auto result = Cook::CookTextureAssetSetWithOutcome(request, outcome, error);
+            const auto result = CookWithBusyRetry(request, outcome, error, expected);
             if (result != expected)
             {
                 std::fprintf(stderr, "retarget expected=%u actual=%u error=%s\n", unsigned(expected), unsigned(result),
@@ -306,7 +331,7 @@ Frame Time: 0.5
         F::Text error;
         const auto run = [&](Cook::TextureAssetSetCookResult expected)
         {
-            const auto result = Cook::CookTextureAssetSetWithOutcome(request, outcome, error);
+            const auto result = CookWithBusyRetry(request, outcome, error, expected);
             if (result != expected)
             {
                 std::fprintf(stderr, "mixed rig expected=%u actual=%u error=%s\n", unsigned(expected), unsigned(result),
@@ -457,10 +482,18 @@ Frame Time: 0.5
                   mesh.GetData()->Materials[0].Record.OcclusionStrength == 1);
         const auto stable = scaled.SourceHash;
         F::Text error;
+        // 反証する契約: 分割cookはNVMESH v1と同じく、材質設定の解決失敗では設定名のキーを返し、
+        // 照合失敗ではsplit_material_selector_or_settingsを返す。
+        // 気づける手段: 名前を返して止まるだけなので、撮影・検証レイヤー・ログの見た目では区別できない。
+        // 黙って起きるか: どちらの名前でもcookは失敗するため、名前の取り違えだけでは検査が落ちない。
         X::Sidecar(R"({"version":1,"materials":[{"name":"Missing","doubleSided":"force_true"}]})");
         RIG_CHECK(!Cook::CookRigSplitV1NativePath(F::View(f.Json), X::Request(), scaled, report, error) &&
-                  scaled.SourceHash == stable);
+                  scaled.SourceHash == stable && error == "split_material_selector_or_settings");
         std::filesystem::remove("RigV1Fixture/rig.gltf.import.json");
+        auto bad = X::Request();
+        bad.AssetSetEmission = {true, 0};
+        RIG_CHECK(!Cook::CookRigSplitV1NativePath(F::View(f.Json), bad, scaled, report, error) &&
+                  error == I::MaterialSettingsErrorKey(I::MaterialSettingsStatus::InvalidNitsPerUnit));
         auto tail = f.Binary;
         tail.push_back(42);
         f.SetBuffer(tail);

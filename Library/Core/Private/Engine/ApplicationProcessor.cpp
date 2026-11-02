@@ -2197,15 +2197,15 @@ namespace NorvesLib::Core::Engine
             &GEngine->GetRenderResources().Materials(),
             &GEngine->GetRenderResources().Meshes());
         {
-            // Text のグリフと粒子の板を集める区間
+            // Text のグリフと粒子の板を集め、空間に応じて各ビューへ渡す区間
             NorvesLib::Debug::ScopedStat transientScope("GameThread.TransientBoards", "GameThread");
             Container::VariableArray<Rendering::BoardProxy> frameTransient;
             GEngine->GetWorld().CollectTransientBoardProxies(frameTransient);
             GEngine->GetParticleSystem().AppendBoardProxies(frameTransient);
-            if (auto canvasView = GEngine->GetRenderWorld().GetRenderingCoordinator().GetCanvasView())
-            {
-                canvasView->SetTransientBoardProxies(frameTransient);
-            }
+            auto& coordinator = GEngine->GetRenderWorld().GetRenderingCoordinator();
+            auto sceneView = coordinator.GetMainSceneView();
+            auto canvasView = coordinator.GetCanvasView();
+            Rendering::DistributeTransientBoardProxies(frameTransient, sceneView.get(), canvasView.get());
         }
         // SceneQuery は、SyncToSceneView が確定した境界の変化だけを反映する(静止なら更新 0 件)。検査 ECS_SCENEQUERY が有効なら全量と照合する
         {

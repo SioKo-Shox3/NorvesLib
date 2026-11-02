@@ -29,6 +29,10 @@ namespace NorvesLib::Core::Component
         [[nodiscard]] bool Attach(uint64_t target, Identity socket, Identity slot = {}, float blendSeconds = .1f,
                                   Container::Span<const Identity> tags = {}, float massMultiplier = 1);
         void Detach();
+        /// 最後の追従更新が成功した付け先を返す。
+        [[nodiscard]] Entity* GetRenderTarget() const;
+        /// 付け先の描画変換から、現在の追従状態を使って描画変換を求める。
+        [[nodiscard]] bool TryBuildRenderWorldTransform(const Math::Transform& targetRender, Math::Transform& out) const;
         [[nodiscard]] bool SetProfiles(Container::Span<const Animation::AttachProfile>);
         [[nodiscard]] bool ApplySettingsFile(const Container::String&, Animation::SocketReport&);
         [[nodiscard]] bool ApplySettingsJson(const Container::String&, Animation::SocketReport&);
@@ -88,6 +92,8 @@ namespace NorvesLib::Core::Component
         AttachState m_State = AttachState::Detached;
         AttachmentVelocity m_Velocity, m_ReleaseVelocity;
         bool m_bVisiting = false, m_bHaveSample = false, m_bLastSuccess = false;
+        // 同一フレーム用の成功値を変えず、早期失敗だけを描画用に記録する。
+        bool m_bRenderUpdateRejected = false;
         bool UpdateAttachment(float, uint64_t, uint32_t depth);
         Entity* ResolveTarget() const;
         void UnbindEvents();
