@@ -205,6 +205,116 @@ namespace DestinationLockTest
             }
         }
     };
+    struct EnvironmentVariableRestore
+    {
+        const char* Name;
+        NorvesLib::Core::Container::VariableArray<char> Previous;
+        bool bPresent = false;
+        explicit EnvironmentVariableRestore(const char* name) : Name(name)
+        {
+            SetLastError(ERROR_SUCCESS);
+            const DWORD size = GetEnvironmentVariableA(Name, nullptr, 0);
+            if (!size)
+            {
+                const DWORD error = GetLastError();
+                CHECK(error == ERROR_SUCCESS || error == ERROR_ENVVAR_NOT_FOUND);
+                bPresent = error == ERROR_SUCCESS;
+                if (bPresent)
+                {
+                    Previous.push_back(0);
+                }
+                return;
+            }
+            Previous.resize(size);
+            SetLastError(ERROR_SUCCESS);
+            const DWORD length = GetEnvironmentVariableA(Name, Previous.data(), size);
+            CHECK(length < size && (length > 0 || GetLastError() == ERROR_SUCCESS));
+            bPresent = true;
+        }
+        ~EnvironmentVariableRestore()
+        {
+            if (!SetEnvironmentVariableA(Name, bPresent ? Previous.data() : nullptr))
+            {
+                bCleanupFailed = true;
+                std::fputs("環境変数を元に戻せませんでした\n", stderr);
+            }
+        }
+    };
+    struct JoiningThread
+    {
+        std::thread& Thread;
+        HANDLE Start, Release;
+        ~JoiningThread()
+        {
+            if (Thread.joinable())
+            {
+                if (!SetEvent(Start))
+                {
+                    bCleanupFailed = true;
+                }
+                if (!SetEvent(Release))
+                {
+                    bCleanupFailed = true;
+                }
+                Thread.join();
+            }
+        }
+    };
+    void WaitOption(const CookDestinationLockRequest& request)
+    {
+        constexpr char variable[] = "NORVES_COOK_LOCK_WAIT_MS";
+        EnvironmentVariableRestore restore(variable);
+        struct Holder
+        {
+            Work WorkData;
+            HANDLE Ready, Start, Release;
+            bool bHoldUntilProbeFinished;
+        };
+        const auto hold = [](const CookDestinationLockContext& context, void* data, LockText& error)
+        {
+            auto& holder = *static_cast<Holder*>(data);
+            if (!Run(context, &holder.WorkData, error) || !SetEvent(holder.Ready) ||
+                WaitForSingleObject(holder.Start, 60000) != WAIT_OBJECT_0)
+            {
+                return false;
+            }
+            Sleep(200);
+            return !holder.bHoldUntilProbeFinished || WaitForSingleObject(holder.Release, 60000) == WAIT_OBJECT_0;
+        };
+        for (const bool bWait : {true, false})
+        {
+            Handle ready(CreateEventW(nullptr, TRUE, FALSE, nullptr));
+            Handle start(CreateEventW(nullptr, TRUE, FALSE, nullptr));
+            Handle release(CreateEventW(nullptr, TRUE, FALSE, nullptr));
+            Handle done(CreateEventW(nullptr, TRUE, FALSE, nullptr));
+            CHECK(ready.Value && start.Value && release.Value && done.Value);
+            Holder holder{{}, ready.Value, start.Value, release.Value, !bWait};
+            LockText holderError;
+            Result holderResult = Result::Error;
+            std::thread thread(
+                [&]
+                {
+                    holderResult = WithCookDestinationLock(request, hold, &holder, holderError);
+                    if (!SetEvent(done.Value))
+                    {
+                        bCleanupFailed = true;
+                    }
+                });
+            JoiningThread join{thread, start.Value, release.Value};
+            HANDLE signals[] = {ready.Value, done.Value};
+            CHECK(WaitForMultipleObjects(2, signals, FALSE, 60000) == WAIT_OBJECT_0);
+            CHECK(SetEnvironmentVariableA(variable, bWait ? "5000" : nullptr));
+            CHECK(SetEvent(start.Value));
+            Work work;
+            LockText error;
+            const auto result = WithCookDestinationLock(request, Run, &work, error);
+            CHECK(SetEvent(release.Value));
+            thread.join();
+            CHECK(holderResult == Result::Executed && holder.WorkData.Calls == 1 && holderError.empty());
+            CHECK(result == (bWait ? Result::Executed : Result::Busy));
+            CHECK(work.Calls == (bWait ? 1u : 0u) && error.empty());
+        }
+    }
     struct Process
     {
         HANDLE Value = nullptr, Stop = nullptr;
@@ -422,6 +532,10 @@ int main(int argc, char** argv)
         const auto name = Name(request);
         CHECK(std::strstr(name.c_str(), "NorvesLib.AssetCook.DestinationVolumeLock.v1."));
         GoodPeer(request);
+        // 反証する契約: 待ちを指定すれば解放後に取得し、未指定ならBusyを返してcallbackを呼ばない。
+        // ほかの手段で気づけるか: 気づきにくい。通常の単独cookではロック競合が起きない。
+        // 失敗が黙って起きるか: 起きる。設定が無視されても競合時だけBusyになり、原因を区別できない。
+        WaitOption(request);
         CHECK(Count(root) == initialCount && !std::filesystem::exists(request.FinalRuntimeRoot));
         Work nested;
         nested.Action = Mode::Nested;
