@@ -8604,3 +8604,8 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: 起動の確かめは後回し（当分アプリを起動しない決まり）。`GAME-GR133-VFX-CHECK` で `DecalGBufferVulkanTest` の ctest（`--timeout 600`）を回す。範囲内の色・法線の値、CPU と GPU の座標の向きの一致、検証レイヤーのエラー 0 はそこで初めて確かめる
 - Notes: 受け手の法線で投影を制限しない（DecalPass は Normal を添付として書くので読めない）。急な斜面・壁が箱に入ると伸びて描かれる。粗さ・濡れの書き換え、地形の層ごとの受け、テクスチャ・アトラスとクック、GR25 の口への移し替えはロードマップの節のとおり完了を宣言しない範囲
 - Notes: 要起票: ゲーム側で `DecalPool` を持って `RenderWorld::SetDecals` を毎フレーム呼ぶ呼び出し元（足跡・弾痕など）がまだ無く、起動画面ではデカールが出ない
+
+## 2026-11-02 GAME-GR133-VFX（run 20261102-145119 の反復 1）
+- Done: 実装の 4 単位（型とプール・受け渡し・パスとシェーダー・GPU の試験）は前のランで着地済み。前のランの評価が枠切れで行われず doing に戻っていたので、差分は変えずに done に戻した（評価はこの反復の後に回る）
+- 検証: 起動しない verify の 3 行は着地の確かめで EXIT=0（`Game`・`DecalPoolEvictionTest` のビルド、`DecalPoolEvictionTest` 1/1 Passed、`DecalGBufferVulkanTest` のビルド）。その後のコミットは TASKS.md と PROGRESS.md だけでコードは変わっていない
+- Next: 起動の確かめは後回し。`GAME-GR133-VFX-CHECK` で `DecalGBufferVulkanTest` の ctest（`--timeout 600`）を回す
