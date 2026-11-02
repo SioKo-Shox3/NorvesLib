@@ -9,6 +9,30 @@ layout(set = 0, binding = 0) uniform sampler2D sceneDepthTexture;
 layout(set = 0, binding = 1) uniform sampler2D skyAtmosphereRadiance;
 layout(set = 0, binding = 3) uniform sampler2DArray cascadedShadowMap;
 
+#ifdef VOLUMETRICS_USE_VSM
+// 大気の書き出しは CSM のまま。VSM の資源は画面へ霧を重ねるときだけ束縛する。
+#include "Common/VirtualShadowMapParams.glsl"
+layout(std140, set = 0, binding = 6) uniform VsmSampleBlock
+{
+    VsmSampleParams vsm;
+} vsmBlock;
+layout(std430, set = 0, binding = 7) readonly buffer VsmPageTableBuffer
+{
+    uint vsmPageTable[];
+};
+layout(std430, set = 0, binding = 8) readonly buffer VsmPoolBuffer
+{
+    uint vsmPool[];
+};
+#define VSM_SLICE_BINDING 9
+#include "Common/VirtualShadowMapSlice.glsl"
+#define VSM_PARAMS vsmBlock.vsm
+#define VSM_SLICE(i) vsmSlices[i]
+#define VSM_PAGE_TABLE(i) vsmPageTable[i]
+#define VSM_POOL(i) vsmPool[i]
+#include "Common/VirtualShadowMap.glsl"
+#endif
+
 // 空気遠近の高度ごとの表の段の数（SkyAerialProfileSize）と、霧と空気遠近を一緒に積む視線の歩数
 const uint kAerialProfileSize = 128u;
 const int kAtmosphereSteps = 32;
@@ -32,6 +56,7 @@ layout(std140, set = 0, binding = 2) uniform VolumetricsParams
     vec4 aerialScattering; // x=高度 0 の Mie の散乱係数(1/m), y=高度ごとの表のいちばん上の段の高度(m), z=惑星の半径(m)
     // 高度ごとの表: [i] = 太陽の照度 × 透過率(lux), [kAerialProfileSize + i] = 太陽の照度 × 多重散乱の表 Ψ_ms(cd/m²)
     vec4 aerialProfile[2u * kAerialProfileSize];
+    vec4 fogRange; // x=霧の距離の上限(m、0 で視線全体), y=周りの光の倍率, zw=未使用
 } params;
 
 bool IsFiniteFloat(float value)
@@ -167,6 +192,17 @@ float CalculateVolumetricShadowVisibility(vec3 worldPosition)
         return 1.0;
     }
 
+#ifdef VOLUMETRICS_USE_VSM
+    float vsmVisibility;
+    if (VsmSampleSunVisibilityPoint(worldPosition, VSMS_CONSTANT_BIAS_TEXELS, vsmVisibility))
+    {
+        // CSM と同じく、最後のカスケードの奥の 10% で影を薄める。
+        float fadeWidth = max((farDistance - GetCascadeSplitDistance(3u)) * 0.1, 0.001);
+        return mix(vsmVisibility, 1.0,
+                   smoothstep(farDistance - fadeWidth, farDistance, receiverDistance));
+    }
+#endif
+
     uint cascadeIndex = 3u;
     for (uint candidate = 0u; candidate < 3u; ++candidate)
     {
@@ -207,7 +243,7 @@ float CalculateVolumetricShadowVisibility(vec3 worldPosition)
     return visibility;
 }
 
-vec3 IntegrateDirectionalSingleScattering(vec3 rayDirection, float rayDistance)
+vec3 IntegrateDirectionalSingleScattering(vec3 rayDirection, float rayDistance, float sampleOffset)
 {
     if (params.cameraForwardAndScatteringEnabled.w <= 0.5 ||
         params.directionalLightRadianceAndEnabled.w <= 0.5)
@@ -232,7 +268,7 @@ vec3 IntegrateDirectionalSingleScattering(vec3 rayDirection, float rayDistance)
 
     for (int stepIndex = 0; stepIndex < 24; ++stepIndex)
     {
-        float sampleDistance = (float(stepIndex) + 0.5) * stepLength;
+        float sampleDistance = (float(stepIndex) + sampleOffset) * stepLength;
         vec3 samplePosition = params.cameraPositionAndPreExposure.xyz +
                               rayDirection * sampleDistance;
         float densityExponent = -params.fogParameters.z *
@@ -286,7 +322,7 @@ struct VolumetricsRayResult
     // 高さフォグの周りの光の色（空の放射輝度 LUT の視線の向きの値か、LUT が無いときの既定の色。負は 0）
     vec3 FogRadiance;
     // 高さフォグの周りの光。空気遠近が有効なら、各点の空の多重散乱の表 Ψ_ms（高度ごとの表）× 霧の散乱係数 × 透過率を
-    // 視線で積んだ値。無効なら FogRadiance × 不透明度
+    // 視線で積んだ値。無効なら FogRadiance × 不透明度。どちらも周りの光の倍率を掛ける
     vec3 FogAmbient;
     // 高さフォグの太陽の単一散乱（影つき）。不透明度が 0 のときは数えない
     vec3 FogDirectional;
@@ -303,7 +339,8 @@ struct VolumetricsRayResult
 // 高度ごとの表の太陽の照度 × 透過率）と多重散乱（散乱係数 × 表の Ψ_ms）。霧は太陽の単一散乱（影つき）と周りの光を散乱する。
 // 霧の周りの光は空の媒質と同じ多重散乱の表 Ψ_ms（等方の近似）で数える。視線の向きの空の輝度を使うと、その輝度が視線の奥の
 // 太陽の散乱まで含むので、霧の点の周りの光を多く数える（正解 B の 1.3〜1.6 倍）。中点則で kAtmosphereSteps 歩
-void MarchFogAndAerial(vec3 rayDirection, float rayDistance, inout VolumetricsRayResult result)
+void MarchFogAndAerial(vec3 rayDirection, float rayDistance, float fogDistance,
+                       inout VolumetricsRayResult result)
 {
     float startDistance = max(params.aerialPerspective.z, 0.0);
     float distanceScale = params.aerialPerspective.y;
@@ -342,7 +379,7 @@ void MarchFogAndAerial(vec3 rayDirection, float rayDistance, inout VolumetricsRa
         float mieScattering = params.aerialScattering.x * mieDensity * airWeight;
         vec3 airExtinction = rayleighScattering + vec3(params.mieExtinctionAndScaleHeight.x * mieDensity * airWeight);
         float fogScattering = 0.0;
-        if (fogDensity > 0.0)
+        if (fogDensity > 0.0 && sampleDistance <= fogDistance)
         {
             float worldY = params.cameraPositionAndPreExposure.y + rayDirection.y * sampleDistance;
             fogScattering = fogDensity * exp(clamp(-params.fogParameters.z * (worldY - params.fogParameters.y),
@@ -382,18 +419,20 @@ void MarchFogAndAerial(vec3 rayDirection, float rayDistance, inout VolumetricsRa
     result.AerialScattering = result.AerialSingle + result.AerialMultiple;
     if (result.FogOpacity > 0.0)
     {
-        result.FogAmbient = fogAmbient;
+        result.FogAmbient = fogAmbient * params.fogRange.y;
         result.FogDirectional = fogDirectional;
     }
 }
 
-VolumetricsRayResult EvaluateVolumetricsRay(vec3 rayDirection, float rayDistance)
+VolumetricsRayResult EvaluateVolumetricsRay(vec3 rayDirection, float rayDistance,
+                                            vec2 pixelPosition, bool bJitterFog)
 {
+    float fogDistance = params.fogRange.x > 0.0 ? min(rayDistance, params.fogRange.x) : rayDistance;
     VolumetricsRayResult result;
     result.FogTransmittance = ComputeAnalyticTransmittance(
         params.cameraPositionAndPreExposure.y,
         rayDirection.y,
-        rayDistance);
+        fogDistance);
     result.FogOpacity = clamp(1.0 - result.FogTransmittance, 0.0, 1.0);
     result.FogRadiance = vec3(0.0);
     result.FogAmbient = vec3(0.0);
@@ -414,15 +453,27 @@ VolumetricsRayResult EvaluateVolumetricsRay(vec3 rayDirection, float rayDistance
     }
     if (params.aerialPerspective.x > 0.5 && rayDistance > 0.0)
     {
-        MarchFogAndAerial(rayDirection, rayDistance, result);
+        MarchFogAndAerial(rayDirection, rayDistance, fogDistance, result);
     }
     else if (result.FogOpacity > 0.0)
     {
         // 霧だけ: 周りの光は不透明度を掛け、太陽の単一散乱は霧の透過率だけで減らして積む
-        result.FogAmbient = result.FogRadiance * result.FogOpacity;
-        result.FogDirectional = IntegrateDirectionalSingleScattering(rayDirection, rayDistance);
+        result.FogAmbient = result.FogRadiance * result.FogOpacity * params.fogRange.y;
+        float sampleOffset = 0.5;
+        if (bJitterFog && params.fogRange.x > 0.0)
+        {
+            // 画素ごとに固定した Interleaved Gradient Noise で歩の位置をずらす。
+            sampleOffset = fract(52.9829189 * fract(dot(floor(pixelPosition), vec2(0.06711056, 0.00583715))));
+        }
+        result.FogDirectional = IntegrateDirectionalSingleScattering(rayDirection, fogDistance, sampleOffset);
     }
     return result;
+}
+
+// 大気の書き出しは画素によるずれを使わず、歩の中点で評価する。
+VolumetricsRayResult EvaluateVolumetricsRay(vec3 rayDirection, float rayDistance)
+{
+    return EvaluateVolumetricsRay(rayDirection, rayDistance, vec2(0.0), false);
 }
 
 #endif

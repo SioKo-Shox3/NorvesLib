@@ -19,6 +19,7 @@
 // texel の一辺（m。粗い段へ逃げた標本はその段の値。読めた標本の平均）を返す。深度の比較の余裕と法線の向きへのずらしを受け手で
 // 変える側（地形の受け手）は VsmSampleSunShadowWithBias(worldPos, normal, constantBiasTexels, normalOffsetTexels, texelMeters) を呼ぶ。
 // 草・低木の株の受け手は VsmSampleSunShadowFoliage（PCF の半径の下限・法線の向きへのずらし・余裕の上限を葉の大きさに合わせる）。
+// 体積の点は VsmSampleSunVisibilityPoint(worldPos, constantBiasTexels, outVisibility) を呼び、読めなければ false で CSM へ逃げる。
 //
 // 影の縁は CSM（Common/SunShadowCsm.glsl の PCSSFilter）と同じ考え方で、ブロッカーの探索 → 物理の半影 → PCF の順に引く。
 // 半影の半幅（ワールドの長さ）は 受け手と遮る物の深度の差 × 太陽の角半径の tan で、接するところは鋭く、離れるほどぼける。
@@ -150,6 +151,30 @@ bool VsmFetchDepthWithFallback(uint level, vec2 lightXY, out float outDepthMeter
         outEscaped = true;
     }
     return false;
+}
+
+// 体積の点の太陽の可視度。面の法線やフィルターを使わず、読めた段の texel で比較の余裕を決める。
+bool VsmSampleSunVisibilityPoint(vec3 worldPos, float constantBiasTexels, out float outVisibility)
+{
+    outVisibility = 1.0;
+    if (VSM_PARAMS.control.x == 0u || VSM_PARAMS.control.y == 0u)
+    {
+        return false;
+    }
+
+    const uint level = VsmSelectLevel(length(worldPos - VSM_PARAMS.cameraPosition.xyz));
+    const vec2 lightXY = vec2(dot(worldPos, VSM_PARAMS.lightRight.xyz),
+                              dot(worldPos, VSM_PARAMS.lightUp.xyz));
+    const float receiverDepth = dot(worldPos, VSM_PARAMS.lightDirection.xyz);
+    float storedDepth;
+    float texelMeters;
+    bool escaped;
+    if (!VsmFetchDepthWithFallback(level, lightXY, storedDepth, texelMeters, escaped))
+    {
+        return false;
+    }
+    outVisibility = receiverDepth - constantBiasTexels * texelMeters > storedDepth ? 0.0 : 1.0;
+    return true;
 }
 
 // 太陽の可視度（1 = 光が当たる、0 = 影）。outTexelMeters は PCF の標本が実際に読んだ段の texel の一辺（m）の平均。
