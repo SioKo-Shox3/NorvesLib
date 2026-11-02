@@ -8412,3 +8412,7 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 範囲の直しは GPU で未確認（コードの読みでの判断）。`--m9-world-compare` の比べは AOV の 9 面（太陽の可視率・RTGI の時間の符号なども含む）を全部一致で見るので、-CHECK で RTGI など NVSKEL と関係ない面だけが決定的でなく落ちたら、GBuffer の面（albedo・normal・roughness・depth）に絞るかを判断する。`--m9-world-compare` は音の入りのビルド（NORVES_GAME_AUDIO）でだけ使える。oracle は Test/Tools の既存の .py と違い BOM 付き
 - Notes: 要起票: 既定経路でスキニングの計算と出力の頂点の範囲を submesh の数だけ重ねて取っている(SkinningComputePass::Declare)のを、component ごとに 1 回へ共有する
 - Notes: 要起票: `NVSKELMigrationInventory.md` の範囲 draw より前の節に、native の回帰が Windows.h で未実行という旧い環境の記述が残っている
+### G2-GR32-GPU-ACCEPTANCE を閉じ直す（2026-11-02、run 20261102-105745 の反復 1）
+- Done: 作業単位は全部着地済み（U4 は U6・U7 に切り直した）。最後の確かめ `NorvesLib-3/.harness/runs/20261102-075818/verify-G2-GR32-GPU-ACCEPTANCE-final.txt` は Debug の Game・AssetCook・SkinnedSubmeshDrawContractTest のビルドが終了コード 0、試験が PASS・終了コード 0。その後の差分は文書（NVSKELMigrationInventory.md・PROGRESS.md・TASKS.md）だけ
+- Next: 起動の確かめは後回し。`G2-GR32-GPU-ACCEPTANCE-CHECK` で verify の 3〜6 行目を回し、PNG・metrics.json・result.json を開いて確かめる
+- Notes: 前回の評価は停止の依頼で中断して未評価（f1f25a1..HEAD）。評価はランナーが回す
