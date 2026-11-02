@@ -9145,3 +9145,9 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261103-065438/u3-unit-verify.txt`（Debug の SkeletalAnimationSamplingTest のビルド、ctest で SkeletalAnimationSamplingTest・SkinnedRenderPathContractTest の 2 本 Passed）
 - Next: なし（アプリの起動の確かめは無い）
 - Notes: 公称速度由来の位置を持つ blend1d は RefreshRootMetadata の後に重みを直ちに求め直すので、Update を挟まず Evaluate だけを呼んでもパラメータの今の値が重みに入る（数値の位置だけの blend1d は Update まで前の重み）。blend2d の軸は明示値のまま
+
+## 2026-11-03 G3-GR10-GRAPH-FORMAT-GAPS（run 20261103-065438 の反復 4、完了）
+- Done: 反復 3 の再検証の失敗は、この枠の build に `SkinnedRenderPathContractTest.exe` が無かったため（verify のビルド行は SkeletalAnimationSamplingTest だけを作る）。コードの変更は無く、この枠で両方のターゲットをビルドして verify の ctest を回し直し、2 本とも Passed
+- 証拠: `.harness/runs/20261103-065438/build-G3-GR10.txt`（両ターゲットのビルド EXIT=0）・`.harness/runs/20261103-065438/verify-G3-GR10-ctest.txt`（SkeletalAnimationSamplingTest 0.25 sec・SkinnedRenderPathContractTest 18.51 sec Passed、100%）
+- Next: なし
+- Notes: 要起票: この項目の verify は ctest で SkinnedRenderPathContractTest を回すのにビルド行がそのターゲットを作らないので、新しい枠・消した build では再検証が Not Run で落ちる。ビルド行に `--target SkinnedRenderPathContractTest` を足すかは計画が決める
