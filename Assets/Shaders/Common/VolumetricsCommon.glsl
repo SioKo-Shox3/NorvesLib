@@ -9,6 +9,30 @@ layout(set = 0, binding = 0) uniform sampler2D sceneDepthTexture;
 layout(set = 0, binding = 1) uniform sampler2D skyAtmosphereRadiance;
 layout(set = 0, binding = 3) uniform sampler2DArray cascadedShadowMap;
 
+#ifdef VOLUMETRICS_USE_VSM
+// 大気の書き出しは CSM のまま。VSM の資源は画面へ霧を重ねるときだけ束縛する。
+#include "Common/VirtualShadowMapParams.glsl"
+layout(std140, set = 0, binding = 6) uniform VsmSampleBlock
+{
+    VsmSampleParams vsm;
+} vsmBlock;
+layout(std430, set = 0, binding = 7) readonly buffer VsmPageTableBuffer
+{
+    uint vsmPageTable[];
+};
+layout(std430, set = 0, binding = 8) readonly buffer VsmPoolBuffer
+{
+    uint vsmPool[];
+};
+#define VSM_SLICE_BINDING 9
+#include "Common/VirtualShadowMapSlice.glsl"
+#define VSM_PARAMS vsmBlock.vsm
+#define VSM_SLICE(i) vsmSlices[i]
+#define VSM_PAGE_TABLE(i) vsmPageTable[i]
+#define VSM_POOL(i) vsmPool[i]
+#include "Common/VirtualShadowMap.glsl"
+#endif
+
 // 空気遠近の高度ごとの表の段の数（SkyAerialProfileSize）と、霧と空気遠近を一緒に積む視線の歩数
 const uint kAerialProfileSize = 128u;
 const int kAtmosphereSteps = 32;
@@ -166,6 +190,17 @@ float CalculateVolumetricShadowVisibility(vec3 worldPosition)
     {
         return 1.0;
     }
+
+#ifdef VOLUMETRICS_USE_VSM
+    float vsmVisibility;
+    if (VsmSampleSunVisibilityPoint(worldPosition, VSMS_CONSTANT_BIAS_TEXELS, vsmVisibility))
+    {
+        // CSM と同じく、最後のカスケードの奥の 10% で影を薄める。
+        float fadeWidth = max((farDistance - GetCascadeSplitDistance(3u)) * 0.1, 0.001);
+        return mix(vsmVisibility, 1.0,
+                   smoothstep(farDistance - fadeWidth, farDistance, receiverDistance));
+    }
+#endif
 
     uint cascadeIndex = 3u;
     for (uint candidate = 0u; candidate < 3u; ++candidate)

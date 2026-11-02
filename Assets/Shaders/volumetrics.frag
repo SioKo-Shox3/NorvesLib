@@ -3,6 +3,7 @@
 layout(location = 0) in vec2 fragUV;
 layout(location = 0) out vec4 outColor;
 
+#define VOLUMETRICS_USE_VSM 1
 #include "Common/VolumetricsCommon.glsl"
 
 void main()
