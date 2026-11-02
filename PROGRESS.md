@@ -8854,3 +8854,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: `cook_store_initialization: volume_busy` は、ボリューム単位の機械全体の名前付き mutex を別の枠の管理ストア試験が握っているときに待たずに返る結果。並行する枠があると周辺の管理試験が落ちることがある。
 - U4 Bootstrap 試験で別プロセスの Busy を期限つきで待ち直す: 着地(直し 0 回)
 - U5 近くの 3 試験の置き場を共有の TEMP の外へ移し、別プロセスの Busy を待ち直す: 着地(直し 1 回)
+- U6 受入れの節に Busy の待ち直しを書き、タスクの verify を全部回す: 着地(直し 0 回)
