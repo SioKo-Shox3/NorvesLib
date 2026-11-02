@@ -3693,7 +3693,7 @@
 - result: SS-GTAO（2026-10-02）で置き換わった。原因は旧SSAOがワールド空間の法線をビュー空間の標本へそのまま使い、開けた面も遮蔽に数えていたこと。GTAOはビュー空間の地平線で余弦重みの可視率を求め、半径1 mの外の面を数えないので、Cornellの壁の中ほどの可視率は0.97〜1.00（`RenderingGTAOCornellRoomVulkanTest`）。statusは人の確認のためbacklogのまま。
 
 ## FIX-NORMAL-MATRIX-SCALE: 法線行列の小スケール退化判定を尺度不変にする
-- status: todo
+- status: done
 - done-when: `MatrixUtils::CreateNormalMatrix`が一様スケール約0.005未満の物体にも逆転置を返し（特異かどうかは尺度に対する比で判定）、R1室内フィクスチャの平面メッシュの頂点法線を幾何と一致させ、PTの閉包命中シェーダから同じ退化規則の写しを外す。R1数値検証、Indoor/Outdoor golden、`PathTracingRasterParityVulkanTest`が変わらず通る。 既存の `MatrixAbstractionTest` に、一様スケール 0.001〜0.005 で回転した物体の法線行列が回転を保つ（単位行列に落ちない）検査を足す（新しい実行ファイルは作らない）。R1 の数値検証・Indoor/Outdoor の golden・`PathTracingRasterParityVulkanTest` は起動を戻した後の `FIX-NORMAL-MATRIX-SCALE-CHECK` で回し、変わるなら stop-when のとおり基準の更新を提案する。
 - verify: `cmake --build build --config Debug --target Game MathGeometryTest MeshBatcherInstancingTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^(MatrixAbstractionTest|InstanceDataFlattenTest)$" --no-tests=error --output-on-failure --timeout 180`
