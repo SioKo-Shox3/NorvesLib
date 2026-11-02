@@ -8531,3 +8531,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Done: CPU の試験 `PathTracingNonUniformSamplerSpirvTest`（`RHIRayTracingApiContractTest` の束）を足した。`VulkanShaderCompiler` で sparse あり・なしの rchit を SPIR-V にし、材質の配列由来の `OpImageSampleExplicitLod`・`OpImageSparseSampleExplicitLod`・`OpImageQueryLevels` の operand と元の load・access chain・`OpImage` に `NonUniform` があることを見る。ビルドは終了コード 0、ctest は Passed（束のほか 2 本も Passed）。直す前のシェーダー（`--shader-root` で差し替え）では終了コード 1 で落ちる（証拠 `.harness/runs/20261102-093543/verify-PT-NONUNIFORM-SAMPLER-U2.txt`）
 - Next: 起動の確かめは後回し（当分アプリを起動しない決まり）。PT-NONUNIFORM-SAMPLER-CHECK で `PathTracingMaterialVulkanTest` のビルドと ctest を回し、PT の材質のテクスチャ（VT と VT でないもの）が前と同じに読めることを確かめる
 - Notes: PathTracing の下にほかに sampler の配列を関数の引数で渡す箇所は無い
+- U1 AssetCook の出力を UTF-8 として読み、「警告:」の照合をコードページに依らず通す: 着地(直し 0 回)
