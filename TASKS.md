@@ -4825,7 +4825,7 @@
 - stop-when: 既定の待ちを 0 から変える、ロックの単位(volume ごと)や mutex の名前を変える、`Busy` を期待する試験に待ちを付けて通す。
 
 ## TEST-FULL-CTEST-BASELINE-CHECK-P1: `NVSKELMigrationInventory.md` の reader・Resource・packet の native 回帰の「未検証・未実行」の 3 行を、Windows での実行記録か、回す先を書いた未実行に直す
-- status: todo
+- status: done
 - done-when: `Docs/Architecture/NVSKELMigrationInventory.md` の次の 3 行(今の 151・166・196 行)を直す。
   - 対象は「readerのnative回帰は登録済みだがWindows/Core全体の実行は未検証」「native Resource/Core/描画のWindows実行はまだ未検証」「このnative回帰もWindows依存で未実行」の 3 行。それぞれが指す登録済みの試験の名前を挙げる。
   - アプリを起動せず GPU も使わない試験は、Windows Debug でビルドと ctest(`-R` で名指し)を回す。結果は、同じ文書の `CookedSkeletalAssetTest`・`SkeletalFramePacketSnapshotTest` の行と同じ形で書く(日付・HEAD・コマンド・結果・PROGRESS.md の記録の場所)。packet の回帰には、2026-11-02 の `SkeletalFramePacketSnapshotTest` の Passed を使ってよい。
