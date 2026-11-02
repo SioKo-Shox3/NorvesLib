@@ -5941,7 +5941,8 @@
 - notes: 絶対規則7 の確かめ（鏡面の AA は既定の描画の見た目を変える）と、完了条件の GR30 の「SS-TAA-P2 の連続撮影」に当たる目での確かめ。数値のちらつきとゴーストは G5-GR30-THIN-TAA-MEASURE の GPU の試験が受け持つ。性能は測らない。起動画面の既定の AA は TAA（CaptureStartupScene.ps1:132）。`-OrbitRenderedFrames` は「60,75,90」の形の描画フレーム数の並び（CaptureStartupScene.ps1:129）。
 
 ## G5-GR38-IMPORT-TERRAIN-BASE: 統合ブランチに入っていない高さ格子と地形の衝突（origin/feature/game-terrain-materials の 1 コミット）を取り込み、Windows でビルドと試験を通す
-- status: todo
+- status: backlog
+- parked: G5 後半の GR37・GR38 のタスク(今の TerrainHeightField を一般化する G5B-S1 (B))に一本化する。取り込む元のコミットは Windows で未検証で、役割が重なる
 - gr: GR38, GR37
 - done-when: `origin/feature/game-terrain-materials` の `233fd061`（高さ格子の地形描画とキャラクター用衝突を接続）を統合ブランチへ取り込む（cherry-pick。衝突は `Game/GameApplicationHandler.cpp`・`Game/GameApplicationHandler.h`・`PROGRESS.md`・`TASKS.md` の 4 つ。`git merge-tree` で確認済み）。`Library/Core/Public/Terrain/HeightField.h`・`TerrainMesher.h`、`Library/Modules/Physics/Private/Physics/TerrainCollision.cpp` ほかが Windows の Debug で警告なしにビルドでき（独自型の規則・行末・BOM を満たす）、取り込んだ `TASKS.md` の `G5-TERRAIN-BASE`（構文の確認だけで done にされている）の受け入れを試験で押さえる: CPU の `TerrainHeightFieldCollisionTest`（`PhysicsDynamicsTest` の束の MEMBER）が、起伏のある小さな格子で、`HeightField::Sample` の高さと法線が `BuildTerrainMesh`（step=1）の三角形の面と一致し、レイ・球と箱とカプセルの重なり・カプセルの掃引が格子の三角形に対して正しい距離と法線（押し出す向き）を返し、開始時に重なっている掃引は距離 0 と重なりの印を返し、範囲の外では当たらないことを確かめる。`--terrain-smoke` の明示起動の経路はビルドが通ることまで（起動はしない）。既存の物理・移動の試験が変わらず通る。
 - verify: `cmake --build build --config Debug --target PhysicsDynamicsTest Game -- /m:1`
