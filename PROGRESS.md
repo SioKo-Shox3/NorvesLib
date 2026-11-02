@@ -8710,3 +8710,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 方式と前提の境界の記録: `Docs/Plans/GameFeatureRoadmap.md`（メイン側・管理外）の「GR130 剣のトレイル（リボン）の方式と境界」の節
 - 完了を宣言しない範囲: GR57 の共有の半透明のキュー（並べ替え・ソフトな縁・霧・照明）、GR30 の TAA の整合（半透明の速度・反応度のマスク）、GR136 の VFX の定義のリボンのエミッタ（スキーマ・クック）、GR16・G8 の攻撃の窓に合わせた出し止め、Editor の編集の画面。帯を付けるのは明示の調整の場面（`--animation-debug`）の剣だけで、既定の起動画面とランチャーの各シーンには置かない
 - Notes: 新しい Core のソースの登録のため `Library/Core/CMakeLists.txt` と、試験の理由の `Docs/Testing.md` を paths の外だが触る（ソースの並びに足すだけ・done-when が名指し）
+- U1 剣のトレイルの帯（CPU）と描画の頂点の型: 着地(直し 0 回)

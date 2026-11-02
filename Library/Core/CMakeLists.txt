@@ -51,6 +51,7 @@ set(PRIVATE_SOURCES
     Private/Object/ResourceRegistry.cpp
     Private/Object/World.cpp
     Private/Particle/ParticleSystem.cpp
+    Private/Particle/SwordTrailRibbon.cpp
     Private/Particle/VfxSchema.cpp
     Private/Particle/VfxEffectSerialization.cpp
     Private/Particle/VfxEffectSystem.cpp
@@ -515,6 +516,7 @@ set(PUBLIC_HEADERS
     Public/Application/ApplicationHandlerBase.h
     Public/Engine/Engine.h
     Public/Particle/ParticleSystem.h
+    Public/Particle/SwordTrailRibbon.h
     Public/Particle/VfxEffectTypes.h
     Public/Particle/VfxSchema.h
     Public/Particle/VfxEffectSerialization.h
@@ -613,6 +615,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/FoliageMesh.h
     Public/Rendering/FoliagePass.h
     Public/Rendering/FoliageTypes.h
+    Public/Rendering/RibbonTrailTypes.h
     Public/Rendering/RenderingCoordinator.h
     Public/Rendering/RenderGraph/RenderGraphTypes.h
     Public/Rendering/RenderGraph/RenderGraphResourceNames.h
