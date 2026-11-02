@@ -9134,3 +9134,14 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 共有のクック済みの置き場（build/CookedAssets）の格子は版 3 に書き直した。版 3 を読めない古い Game（統合前の別の枠の実行ファイル）では格子が読めず、崖錐の岩と塊は見送られる
 - Notes: castle の層の塊の無い所・不可の升目は no_ground に数える。(E) の no_ground 0 は、castle の不可の升目の割合（0.233）からすると落ちうる。そのときは不可の升目の分布（壁の足の帯にあるか）を先に見る
 - Notes: 遮蔽の視点 contact_near・ref_cliff_01 から castle の範囲までは 2 km 以上で、塊は遮蔽の小物の書き出し（300 m）に入らない
+
+- U1 GPU スキニングの法線行列の退化判定を尺度不変にし、小さな一様スケールの骨の検査を足す: 着地(直し 0 回)
+
+## 2026-11-02 FIX-NORMAL-MATRIX-SCALE-CHECK-P1（run 20261102-195420 の反復 1。完了）
+- Done: `skinning_compute.comp` の `NormalMatrixOf` を `MatrixUtils::CreateNormalMatrix` と同じ尺度不変の規則にした（軸の長さの積 = GLSL の列 `m[0..2]` の長さの積。CPU の行優先の行列をそのまま std430 の mat4 に載せるので GLSL の列が CPU の行にあたる。積が 0・非有限、または `|det| < EPSILON × 積` で単位行列）。`SingularDeterminant` は消した。`ComputeSkinningVulkanTest` の `TransformNormal` の写しも CPU の行の長さで同じ規則にした
+- Done: `ComputeSkinningVulkanTest` にインスタンス D（一様スケール 0.001〜0.005 × 回転の骨 2 本と変換、3 頂点）を足した。GPU の出力は既存の流れで CPU の写しと比べ、さらに今・前の骨の空間の法線が `SkeletalAnimationSampler::SkinVertex` と許容 1e-4 で一致すること、単独の骨の頂点の法線が入力の向きから回転していること（内積 < 0.99）を確かめる
+- Done: アプリを起動しない確かめを回した: `glslangValidator -V --target-env vulkan1.2` で `skinning_compute.comp` のコンパイルが通る、`cmake --build build --config Debug --target RHITextureUpdateVulkanTest MathGeometryTest SkinnedRenderPathContractTest -- /m:1` 終了コード 0、ctest `MatrixAbstractionTest` Passed（`.harness/runs/20261102-195420/FIX-NORMAL-MATRIX-SCALE-CHECK-P1-U1-verify.txt`）
+- Next: 起動の確かめは後回し。`FIX-NORMAL-MATRIX-SCALE-CHECK-P1-CHECK` で `cmake --build build --config Debug --target Game RHITextureUpdateVulkanTest MathGeometryTest -- /m:1` と `ctest --test-dir build -C Debug -R "^ComputeSkinningVulkanTest$" --no-tests=error --output-on-failure --timeout 600` を回し、インスタンス A〜D の GPU の出力が CPU の参照と一致し、D の 2 種の検査が通ることを確かめる
+- Notes: verify の ctest のうち `SkinnedRenderPathContractTest` は終了コード 3 で落ちるが、変更前のシェーダー（ac1e5680 の `skinning_compute.comp`）に戻して同じ実行ファイルを走らせても同じ箇所・同じ終了コードで落ちる（`FIX-NORMAL-MATRIX-SCALE-CHECK-P1-contract-base-shader.txt` と `-contract-new-shader.txt`）。この試験の実行ファイルは `ComputeSkinningVulkanTest.cpp` を含まないので、今回の変更とは関係しない前からの失敗
+- Notes: 要起票: `SkinnedRenderPathContractTest` が `TestChunkFailureKeepsGBufferAndShadowDrawAndLogsOnce` の後（`TestInitializedPassesExecuteThroughFrameCommandsAndSceneRenderer` の中）で assert の文言を出さずに終了コード 3 で終わる（ac1e5680 の Debug ビルド）
+- Notes(反復 2): ランナーの再検証の ctest が終了コード 8 で落ちた。原因は、この枠の build/ に `MathGeometryTest.exe`・`SkinnedRenderPathContractTest.exe` が無いこと(ビルドの verify 行が後回しの対象)と、基点 ac1e5680 の `SkinnedRenderPathContractTest` が `TestCoordinatorPropagatesFramePacketStatsAndSubmissionSerials` の未捕捉の例外で落ちること。後者は G2-GR32-GPU-ACCEPTANCE-P1(d4bccf6e、統合ブランチに着地済み・本ブランチには未取り込み)で直っているので、`after: G2-GR32-GPU-ACCEPTANCE-P1` を付けて取り込み待ちにした。取り込んだ後、この枠で `MathGeometryTest`・`SkinnedRenderPathContractTest` をビルドしてから ctest を回す
