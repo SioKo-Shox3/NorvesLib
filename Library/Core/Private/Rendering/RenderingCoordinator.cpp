@@ -4555,6 +4555,7 @@ namespace NorvesLib::Core::Rendering
         packet.Scene.AerialPerspective = m_AerialPerspective;
         packet.Scene.CloudLayer = m_CloudLayer;
         packet.Scene.Foliage = m_Foliage;
+        packet.Scene.Decals = m_Decals;
         packet.bRTGIEnabled = m_bRTGIEnabled;
         packet.bRTGINonShadowCasterOcclusion = m_bRTGINonShadowCasterOcclusion;
     }
@@ -5785,6 +5786,7 @@ namespace NorvesLib::Core::Rendering
                                                                       packet->DrawCommandRange);
         viewContext.SnapshotDebugLineVertices = &packet->DebugLineVertices;
         viewContext.SnapshotFoliage = &packet->Scene.Foliage;
+        viewContext.SnapshotDecals = &packet->Scene.Decals;
         viewContext.SnapshotOpaqueCommands = DrawCommandView::FromRange(packet->DrawCommands,
                                                                         packet->OpaqueCommandRange);
         viewContext.SnapshotTransparentCommands = DrawCommandView::FromRange(packet->DrawCommands,
@@ -6539,6 +6541,11 @@ namespace NorvesLib::Core::Rendering
     void RenderingCoordinator::SetFoliage(const FoliageScene& foliage)
     {
         m_Foliage = foliage;
+    }
+
+    void RenderingCoordinator::SetDecals(const DecalScene& decals)
+    {
+        m_Decals = decals;
     }
 
     uint64_t RenderingCoordinator::RegisterCamera(const CameraProxy &camera)
