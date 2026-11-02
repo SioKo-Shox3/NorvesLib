@@ -4749,7 +4749,7 @@
   - verify は 1 行 10 分未満。
 
 ## SCN-WL-CLIFF-GEN-TALUS-CHECK-P3: 地形の項目のクックの印を AssetCook.exe のハッシュから切り離し、地形に関わらない取り込みで地形の全項目を焼き直さない
-- status: todo
+- status: done
 - done-when: SCN-WL-CLIFF-GEN-TALUS の反復 4（PROGRESS.md）で、地形に関わらない取り込みのたびに地形の全項目を焼き直すことになった。
   - 取り込んだのはリグ・VFX のクックの変更だけだったが、AssetCook.exe のハッシュが変わった。
   - `Scripts/CookAssets.ps1` の印は `assetcook=<exe の SHA-256>` を含むので、地形の 214 項目すべての印が stale になった。

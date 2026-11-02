@@ -8896,3 +8896,9 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Done: G2-GR32-GPU-ACCEPTANCE-P2 の反復 2 の変更（SkeletalImportReportTest を 2026-10-11 の実行記録に訂正）は評価が枠切れで未実施だったため、変更を足さずに verify を回し直した（`[]`・EXIT=0、`.harness/runs/20261102-191020/verify-G2-GR32-GPU-ACCEPTANCE-P2.txt`）。文書の記述と `verify-SCN-ECS-RENDER-SYNC-SWITCH-3-neighbors.txt` の 102 行目（Passed）が合うことも確かめた
 - U1 地形の項目の印を exe のハッシュから切り離し、旧の印からの移行と照合を入れる: 着地(直し 1 回)
 - U2 --cook-coverage に代表の区画の焼き比べを足し、報告を今の形に直して、共有の状態を移行して verify を回す: 着地(直し 0 回)
+
+## 2026-11-02 SCN-WL-CLIFF-GEN-TALUS-CHECK-P3（run 20261102-191441 の反復 2、完了）
+- Done: 地形の項目（generate が terrain-tile:）のクックの印を AssetCook.exe のハッシュから切り離した。印の元は崖の細部の版（kTerrainCliffDetailVersion=19）と地形のクックの経路のソース 67 ファイルの内容の SHA-256（`CookAssets.ps1` の `$TerrainStampSourcePaths`）で、状態の新しい欄 `terrain_stamp` に持つ。旧の欄 `stamp` は exe を含む旧の形で書き続けて残し、旧い `CookAssets.ps1` も読める。`terrain_stamp` が無く旧の印が今の exe で合う項目は焼かずに書き足す（共有の置き場を NorvesLib-6 の exe で移行し `terrain_stamp_migrated=214`・`cooked=0 skipped=214`）。地形を実際に焼くときは exe が地形のソースより古ければ止める。`--cook-coverage` に代表の区画（掛かる近景の範囲が最も多く、同数なら名前順の先頭。今は WastelandDem_7_7）を一時の置き場で焼き直して共有の `cooked_hash` と比べる検査を足し、報告の印の元を版とソースの一覧に直した。地形以外の項目の印は今のまま exe のハッシュを含む
+- 検証: AssetCook のビルド EXIT=0。verify のクックの行は `cooked=0 skipped=214`（8.9 秒）。`--cook-coverage --verify` は `tiles=27 cooked=27 result=pass`・`recook tile=WastelandDem_7_7 match=true seconds=152.002`。末尾に 1 バイト足した exe の写しで `terrain_stamps 214 ['match']`。`Tools/AssetCook/TerrainCliffDetail.cpp` に 1 行足すと地形の 214 項目が stale、内容と更新時刻を戻すと 214 match。代表の区画は別々の一時の置き場で 2 回焼いて `cooked_hash` が同じ（65fb1ace6c72204e）。出力は `.harness/runs/20261102-191441/verify-SCN-WL-CLIFF-GEN-TALUS-CHECK-P3-U2.txt`。アプリは起動していない。新しい試験は足していない
+- Next: なし
+- Notes: 焼き比べは代表の 1 区画だけで、その区画の出力に効かない入力の漏れ（遠景の段だけに効くソースなど）は検出できない。焼き比べで `--cook-coverage` が約 2.5 分長くなった
