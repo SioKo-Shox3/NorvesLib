@@ -8554,3 +8554,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 方式と前提の境界の記録: `Docs/Plans/GameFeatureRoadmap.md`（メイン側・管理外）の「GR136 VFX システム（Niagara 相当）の方式と境界」の節。スキーマは自前の静的な表（Object の反射に範囲・単位の欄が無いため）、単位はエミッタの空間の単位、積分と乱数は既存の 2D `ParticleSystem` と同じ、描画は今は `BoardProxy`
 - 完了を宣言しない範囲: GR57 の GPU の実行先・3D の粒子の描画パス、GR02 の時間のチャンネル、GR12/GR13/GR19 のボーン・表面のエミッタ、GR96 の asset-set・依存の追跡とテクスチャのパスの解決、GR126 の並列化の後の順序、GR72 の音、Editor の編集の画面、寿命の曲線のモジュール
 - Notes: 新しい Core のソースの登録のため `Library/Core/CMakeLists.txt` と、試験の理由の `Docs/Testing.md` を paths の外だが触る（ソースの並びに足すだけ・done-when が名指し）。エフェクトのファイルの置き場（`Assets/Vfx`）は paths の外なので、Rendering3DTest の橙の粒はコードで組む
+- U1 VFX の型・スキーマ・API の骨組み: 着地(直し 0 回)
