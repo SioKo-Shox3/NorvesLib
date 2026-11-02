@@ -611,6 +611,9 @@ namespace NorvesLib::Core::Rendering
         /** @brief 箱で投影するデカールの一覧（FramePacket::Scene.Decals を指す） */
         const DecalScene *SnapshotDecals = nullptr;
 
+        /** @brief 歪みの源の一覧（FramePacket::Scene.Distortions を指す） */
+        const DistortionScene *SnapshotDistortions = nullptr;
+
         /** @brief 不透明DrawCommandスナップショット */
         DrawCommandView SnapshotOpaqueCommands;
 

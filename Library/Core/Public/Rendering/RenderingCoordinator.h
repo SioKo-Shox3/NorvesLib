@@ -431,6 +431,10 @@ namespace NorvesLib::Core::Rendering
         void SetDecals(const DecalScene& decals);
         const DecalScene& GetDecals() const { return m_Decals; }
 
+        /** @brief 歪みの源の一覧を設定する（GameThread） */
+        void SetDistortions(const DistortionScene& distortions);
+        const DistortionScene& GetDistortions() const { return m_Distortions; }
+
         /** @brief 決定的な撮影にする（GameThread）。FramePacket の経過時間を 1/60 秒に固定する */
         void SetDeterministicCapture(bool bEnabled) { m_bDeterministicCapture = bEnabled; }
 
@@ -666,6 +670,7 @@ namespace NorvesLib::Core::Rendering
         FoliageScene m_Foliage;
         RibbonTrailScene m_RibbonTrails;
         DecalScene m_Decals;
+        DistortionScene m_Distortions;
         bool m_bRTGIEnabled = true;
         bool m_bRTGINonShadowCasterOcclusion = false;
         uint64_t m_SceneRevision = 1u;

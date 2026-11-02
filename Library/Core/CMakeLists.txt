@@ -219,6 +219,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/DebugDrawPass.cpp
     Private/Rendering/FoliageMesh.cpp
     Private/Rendering/DecalPass.cpp
+    Private/Rendering/DistortionPass.cpp
     Private/Rendering/FoliagePass.cpp
     Private/Rendering/RenderingCoordinator.cpp
     Private/Rendering/RenderingCoordinatorDiagnostics.cpp
@@ -624,11 +625,13 @@ set(PUBLIC_HEADERS
     Public/Rendering/DebugDrawPass.h
     Public/Rendering/FoliageMesh.h
     Public/Rendering/DecalPass.h
+    Public/Rendering/DistortionPass.h
     Public/Rendering/FoliagePass.h
     Public/Rendering/FoliageTypes.h
     Public/Rendering/RibbonTrailTypes.h
     Public/Rendering/RibbonTrailRenderer.h
     Public/Rendering/DecalTypes.h
+    Public/Rendering/DistortionTypes.h
     Public/Rendering/RenderingCoordinator.h
     Public/Rendering/RenderGraph/RenderGraphTypes.h
     Public/Rendering/RenderGraph/RenderGraphResourceNames.h

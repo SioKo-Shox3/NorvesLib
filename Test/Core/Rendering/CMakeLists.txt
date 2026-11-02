@@ -196,6 +196,24 @@ register_rendering_gpu_test(
     DecalGBufferVulkanTest
 )
 
+add_executable(DistortionPassVulkanTest
+    DistortionPassVulkanTest.cpp
+)
+target_link_libraries(DistortionPassVulkanTest PRIVATE RenderingGpuTestSupport)
+target_include_directories(DistortionPassVulkanTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Library/Core/Private
+    ${CMAKE_SOURCE_DIR}/Test/Core/Rendering
+)
+target_compile_definitions(DistortionPassVulkanTest PRIVATE
+    NORVES_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
+)
+set_target_properties(DistortionPassVulkanTest PROPERTIES FOLDER "Test/Core/Rendering")
+register_rendering_gpu_test(
+    DistortionPassVulkanTest
+    DistortionPassVulkanTest
+)
+
 norves_add_test_bundle(R8AcesLutToneMappingVulkanTest
     FOLDER "Test/Core/Rendering"
     MEMBER R8AcesLutToneMappingVulkanTest R8AcesLutToneMappingVulkanTest.cpp

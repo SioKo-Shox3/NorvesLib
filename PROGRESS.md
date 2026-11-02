@@ -8826,3 +8826,18 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 完了を宣言しない範囲は着手時の記録のとおり（GR57 の共有の半透明のキュー、GR30 の TAA の整合、GR136 の VFX の定義のリボンのエミッタ、GR16・G8 の攻撃の窓に合わせた出し止め、Editor の編集の画面）
 - Notes: 剣はソケットの先とは別のルートの Entity で、ソケットの更新が固定ステップの外で姿勢を変えるため、補間を要求しても補間の履歴が今の姿勢に戻され、固定ステップの間の補間が効かないフレームがある見込み（`--animation-debug` の剣だけ。帯は描画の剣には合う）。Bridge の一時停止中は late update が呼ばれず帯が更新されない
 - Notes: 要起票: ソケットに付けた Entity（`SocketAttachmentComponent`）の描画の補間を、親の描画の変換から求める形にする（今は補間の履歴が固定ステップの外の書き換えで戻される）
+
+### GAME-GR135-VFX 空気の歪み（2026-11-02、run 20261102-154424 の反復 1。着手）
+- 方式（推奨を採った）: 歪みは画面空間の後処理 1 本（`DistortionPass`）にし、半透明の前方描画の後・TAA の前に置く。歪みのバッファは描画の大きさの RG16F 1 枚で、値は画面の高さに対する割合のずらし（出力の画素 p = 入力の p + ずらし × 高さ[px] の色。ずらしが 0 の画素は入力をそのまま写す）。源は画面に向く円盤（`DistortionInstance`。陽炎の模様を時間で流す）の一覧をデカールと同じ道（`RenderWorld::SetDistortions` → `FramePacket` → 描画の文脈）で渡し、源が無いフレームは何も宣言しない。理由: 粒子（GR57）・メッシュ（GR134 の GR27 の後）の描き手が今のエンジンで 3D の view に出ないため、それらに依らない源と、後でそれらが同じバッファへ加算できる口を先に作る。半透明・霧まで曲げ、TAA・ブルームを後に掛けるため、半透明の後に置く
+- 方式と境界の記録: `Docs/Plans/GameFeatureRoadmap.md`（メイン側・管理外）の「GR135 空気の歪み（屈折）の方式と境界」の節
+- 完了を宣言しない範囲: 粒子から歪みのバッファへ描く描画のモジュール（GR57 の描画パスの後）、メッシュの法線で歪ませる源（GR134・GR27 の後）、GR25 の口への移し替え、TAA のリアクティブの印（GR30）、ずらした先の手前の物の写り込みの拒否、Editor の編集の画面。どのシーンにも源を置かないので、起動画面とシーンの見た目は変わらない
+- U1 歪みの源の型と GameThread から描画の文脈までの受け渡し: 着地(直し 0 回)
+- U2 歪みのシェーダー 4 本: 着地(直し 0 回)
+- U3 DistortionPass と SceneView への配置: 着地(直し 0 回)
+- U4 DistortionPassVulkanTest（作るだけ・走らせない）と仕上げの確かめ: 着地(直し 1 回)
+- Done: 歪みのバッファとパスを足した。`DistortionPass`（`Library/Core/Private/Rendering/DistortionPass.cpp`）は源の一覧が空・カメラが無いフレームは何も宣言せず、源があればずらしの RG16F を 0 で消して源を加算し（`distortion_offset.vert/.frag`）、シーンの色をずらして一時の色へ集め（`distortion_gather.frag`）、混合せずに書き戻す（`distortion_copy.frag`）。SceneView の半透明の ForwardPass の直後・TAA の前に置いた。試験から呼べる記録の口 `RecordOffsets`・`RecordComposite` を出した
+- Done: GPU の試験 `DistortionPassVulkanTest` を足した（足す理由の 3 点は `Docs/Testing.md`）。96×64 の画像で、ずらし 0 のとき全画素がビットまで一致すること、ずらし (4/64, −2/64) で出力 (x, y) が入力 (x+4, y−2) と一致すること（幅と高さを違え、単位が高さであることを反証する）の 2 点だけを見る
+- 証拠: `.harness/relay/GAME-GR135-VFX-U4-verify.txt`（HEAD ec7fe05 の上の U4 の作業ツリーで `cmake --build build --config Debug --target Game -- /m:1` 終了コード 0、`cmake --build build --config Debug --target DistortionPassVulkanTest -- /m:1` 終了コード 0、`ctest -N -R "^DistortionPassVulkanTest$"` で登録 1 件。numstat 2 通り一致・新規ファイルは BOM・CRLF）
+- Next: 起動の確かめは後回し（人の決まりで GPU を使う試験を起動しない）。`GAME-GR135-VFX-CHECK` で `ctest --test-dir build -C Debug -R "^DistortionPassVulkanTest$" --no-tests=error --output-on-failure --timeout 600` を回し、標準出力の 2 行（ZERO_OFFSET・KNOWN_OFFSET が合格・不一致画素数 0）を確かめる
+- Notes: `DistortionPassVulkanTest` は GPU で未実行。合成の後の色の添付の状態（render pass の最終は ShaderResource）から転送への明示の障壁、RGBA16F の読み戻しの並び、カメラの右・上を `CopyShaderInverseView` の最初の 2 列から取る向きは、コードの読みでの判断。落ちたら、ずらしの y の符号（Vulkan の画面は下向き）と集めるシェーダーの標本の位置から見る
+- Notes: 源を置く呼び手（`RenderWorld::SetDistortions` を呼ぶゲーム側）はまだ無い。どのシーンにも源が無いので、起動画面と各シーンの見た目は変わらない（パスは何も宣言しない）。源のずらしの描画（円盤・模様の流れ・深度の遮り）は試験の対象外で、源を置く項目で撮影して確かめる

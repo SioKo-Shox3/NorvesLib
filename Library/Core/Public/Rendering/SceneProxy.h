@@ -11,6 +11,7 @@
 #include "FoliageTypes.h"
 #include "RibbonTrailTypes.h"
 #include "DecalTypes.h"
+#include "DistortionTypes.h"
 #include "AutoExposure.h"
 #include "Container/Containers.h"
 #include "Math/Matrix4x4.h"
@@ -591,6 +592,8 @@ namespace NorvesLib::Core::Rendering
         RibbonTrailScene RibbonTrails;
         // 箱で投影するデカールの一覧。DecalPass が GBuffer の色と法線へ描く
         DecalScene Decals;
+        // 半透明の後のシーンの色をずらす歪みの源の一覧
+        DistortionScene Distortions;
 
         // フォグ設定
         bool bFogEnabled = false;
@@ -623,6 +626,7 @@ namespace NorvesLib::Core::Rendering
             Foliage = FoliageScene{};
             RibbonTrails.Clear();
             Decals = DecalScene{};
+            Distortions = DistortionScene{};
         }
 
         void SetDDGIVolumeParameters(const DDGIVolumeParameters& parameters)

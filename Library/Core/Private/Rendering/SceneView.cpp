@@ -5,6 +5,7 @@
 #include "Rendering/ShadowMapPass.h"
 #include "Rendering/GBufferPass.h"
 #include "Rendering/DecalPass.h"
+#include "Rendering/DistortionPass.h"
 #include "Rendering/FoliagePass.h"
 #include "Rendering/SkyAtmospherePass.h"
 #include "Rendering/MaterialTileClassifyPass.h"
@@ -1201,6 +1202,9 @@ namespace NorvesLib::Core::Rendering
         transparentForwardPass->SetTransparentOnly(true);
         transparentForwardPass->SetRegisterOutputs(false);
         AddPass(std::move(transparentForwardPass));
+
+        // 半透明の後・TAA の前にシーンの色をずらす。源が無いフレームは何も宣言しない。
+        AddPass(MakeUnique<DistortionPass>());
 
         // VisibilityDebugPass: ID を色にして最後のシーンの色へ書く（--visibility-buffer=debug の検証表示）
         if (visibilityBuffer == VisibilityBufferMode::Debug && visibilityRasterPassPtr)
