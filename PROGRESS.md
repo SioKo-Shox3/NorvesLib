@@ -9087,3 +9087,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 要起票: castle の 5 範囲（ref_far_01、5〜9 km）の壁の足から崖錐への移り（far_01 の wall_foot。版 15 で 0.334〜0.344、外した下限 0.356）を、遠景の格子の崖の生成（式）か MegaGeometry の散布で上げる
 - U1 castle の範囲の塊の合否の仕様を書く: 着地(直し 0 回)
 - U2 接地用の格子の版 3（層を持つ形）の読み込み: 着地(直し 0 回)
+- U5 接地の検査で castle の範囲の足元を castle の段の焼いた面で測る: 着地(直し 0 回)
