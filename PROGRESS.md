@@ -8549,3 +8549,8 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: 起動の確かめは後回し（当分アプリを起動しない決まり）。TEST-FULL-CTEST-BASELINE-CHECK で `M9WorldAcceptanceTest` と全体の CTest（`ctest --test-dir build -C Debug --output-on-failure --timeout 600`、GPU の試験を含む）を回し、残った失敗の理由と扱いを記録する
 - Notes: Git Bash から `cmake --build ... -- /m:1` を回すと `/m:1` が `m:1` に書き換えられて MSBuild が MSB1008 で落ちる。PowerShell で回す
 - U2 CanvasViewRenderTest のシェーダーの場所を絶対パスで渡し、実行に戻す: 着地(直し 0 回)
+
+## 2026-11-02 TEST-FULL-CTEST-BASELINE（run 20261102-101626 の反復 2）
+- Done: 差し戻しを直した。`CanvasViewRenderTest` が落ちた原因はパイプラインの数の決め打ちではなく、組み立てがシェーダーの場所を相対パス（`Assets/Shaders`）で渡し、ctest の作業ディレクトリ（`build/Test/Core/Rendering`）では 08722112 から `ShaderManager::LoadShader` が GLSL を読めず、板のパイプラインが 0 本になることだった。ほかの試験と同じく `NORVES_SOURCE_DIR` の絶対パスで渡し、`DISABLED`・誤った理由のコメント・`Docs/Testing.md` の記載を外して実行に戻した。期待値（`== 3`）は製品の `BoardPipelineVariantCount = 3` と一致しており触っていない。`FrameCaptureReadbackHelperTest` は対応しない形式の一覧の写しとして外したまま
+- 検証: verify の 1 行目のビルドは終了コード 0（1 回目は `.ilk` の取り合いの LNK1104 で、再実行で通った）。2 行目の ctest は 6 本 Passed・`FrameCaptureReadbackHelperTest` だけ Not Run（Disabled）で終了コード 0。`CanvasLayerCompositeSnapshotTest` も Passed（`.harness/runs/20261102-101626/verify-TEST-FULL-CTEST-BASELINE-U2.txt`）。numstat は 2 通りで一致
+- Next: 起動の確かめは後回し（当分アプリを起動しない決まり）。TEST-FULL-CTEST-BASELINE-CHECK で `M9WorldAcceptanceTest` と全体の CTest（`ctest --test-dir build -C Debug --output-on-failure --timeout 600`、GPU の試験を含む）を回し、残った失敗の理由と扱いを記録する
