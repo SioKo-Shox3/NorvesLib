@@ -4563,7 +4563,7 @@
 - from: SCN-MEGA-FIX-STRESS-GPU-CHECK
 
 ## G2-GR32-GPU-ACCEPTANCE-P1: スキニングの計算と出力の頂点の範囲を、submesh ごとでなく component ごとに 1 回にする
-- status: todo
+- status: done
 - done-when: `SkinningComputePass::Declare` は、同じ `Skinned.FrameLeaseIndex`(同じ component)から出た複数の submesh の描画を 1 回だけ変形し、出力の頂点の範囲も 1 回だけ取る。その submesh の `SkinningComputeInstance` は、どれも同じ `VertexBase`・`VertexCount`・頂点のアドレスを指し、`MaterialIndex`・`Material`・`SourceFirstIndex`・`SourceIndexCount`・`bOpaque`・`bCastShadow` はそれぞれの submesh の値を保つ。頂点の合計の上限と、外したインスタンスの数(`SkinningComputeDroppedInstances`)は component ごとに 1 回数える。解決が使えず影の描画だけが読むフレームでは、影を落とす submesh が 1 つでもある component だけを変形する。計画を作る部分は GPU の無い試験から呼べる関数に分け、既存の `SkinnedRenderPathContractTest` に次の検査を足す(新しい exe は作らない。足す前に `Docs/Testing.md` の 3 点を書く): 2 submesh で同じ lease のとき、変形は 1 回で出力の頂点の数は 1 倍、2 つのインスタンスが同じ `VertexBase` を持ち範囲はそれぞれの値のまま。lease の違う 2 component では範囲が重ならない。上限を超える component は submesh の数によらず 1 つとして外す。2 材質のパネルの撮影(下の verify。起動を戻した後に回す)で、材質の色の判定が result=pass のままであること。
 - verify: `cmake --build build --config Debug --target Game SkinnedRenderPathContractTest SkinnedSubmeshDrawContractTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^(SkinnedRenderPathContractTest|SkinnedSubmeshDrawContractTest)$" --no-tests=error --output-on-failure --timeout 180`
