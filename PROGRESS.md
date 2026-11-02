@@ -8739,3 +8739,7 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: 起動の確かめは後回し（人の決まりで GPU を使う試験を起動しない）。`GAME-GR134-VFX-CHECK` で `ctest --test-dir build -C Debug -R "^MeshParticleDissolveVulkanTest$" --no-tests=error --output-on-failure --timeout 600` を回し、標準出力の 5 行（年齢 0 で四角形の全部が本体の色・年齢 0.25→0.5→0.75 で覆う画素が真に減る・0.5 の覆う割合が 0.2〜0.8・縁の画素が各 1 つ以上・閾値 1 で 0）を確かめる
 - Notes: `MeshParticleDissolveVulkanTest` は GPU で未実行。四角形の向き（カリングは無し）・`CopyToShaderData` で上げた行列の掛け方・R8G8B8A8_UNORM の読み戻しの並びは、コードの読みでの判断。落ちたらシェーダーのインスタンスの形（112 バイト）と行列の上げ方から見る
 - Notes: `AlignToVelocity` の回転は `CreateWorldRowVector` が四元数の回転行列を行ベクトルの規約でそのまま置く（転置の向きになる）ことに合わせて軸の符号を選んでいる。`MeshParticleInstanceTest` の検査 7 で局所の +Z が速度の向きへ写ることを確かめた
+### GAME-GR135-VFX 空気の歪み（2026-11-02、run 20261102-154424 の反復 1。着手）
+- 方式（推奨を採った）: 歪みは画面空間の後処理 1 本（`DistortionPass`）にし、半透明の前方描画の後・TAA の前に置く。歪みのバッファは描画の大きさの RG16F 1 枚で、値は画面の高さに対する割合のずらし（出力の画素 p = 入力の p + ずらし × 高さ[px] の色。ずらしが 0 の画素は入力をそのまま写す）。源は画面に向く円盤（`DistortionInstance`。陽炎の模様を時間で流す）の一覧をデカールと同じ道（`RenderWorld::SetDistortions` → `FramePacket` → 描画の文脈）で渡し、源が無いフレームは何も宣言しない。理由: 粒子（GR57）・メッシュ（GR134 の GR27 の後）の描き手が今のエンジンで 3D の view に出ないため、それらに依らない源と、後でそれらが同じバッファへ加算できる口を先に作る。半透明・霧まで曲げ、TAA・ブルームを後に掛けるため、半透明の後に置く
+- 方式と境界の記録: `Docs/Plans/GameFeatureRoadmap.md`（メイン側・管理外）の「GR135 空気の歪み（屈折）の方式と境界」の節
+- 完了を宣言しない範囲: 粒子から歪みのバッファへ描く描画のモジュール（GR57 の描画パスの後）、メッシュの法線で歪ませる源（GR134・GR27 の後）、GR25 の口への移し替え、TAA のリアクティブの印（GR30）、ずらした先の手前の物の写り込みの拒否、Editor の編集の画面。どのシーンにも源を置かないので、起動画面とシーンの見た目は変わらない
