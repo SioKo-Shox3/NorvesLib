@@ -122,10 +122,13 @@ def capture(args: argparse.Namespace) -> None:
     exe = args.exe.resolve(strict=True)
     unit = args.skeletal_test_exe.resolve(strict=True)
     output = args.output.resolve()
-    if output.exists():
+    if output.exists() and source != output:
         raise ValueError("既存出力を上書きしません。新しい --output を指定してください")
     if source == output or source in output.parents:
-        raise ValueError("入力保護のため出力先はリポジトリ外に指定してください")
+        raise ValueError(
+            f"--output が --source の下を指しています (--output={output}, --source={source})。"
+            "入力を守るため、source の外の新しいディレクトリ (例: %TEMP% の下) を --output に指定してください"
+        )
     scripts = [source / "Tools/AssetCook" / f"AssetCook{x}Smoke.cmake.in" for x in SMOKES]
     skeletal = source / "Test/Core/Asset/CookedSkeletalAssetTest.cmake.in"
     scripts.append(skeletal)

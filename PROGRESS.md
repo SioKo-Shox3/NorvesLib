@@ -8841,3 +8841,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: 起動の確かめは後回し（人の決まりで GPU を使う試験を起動しない）。`GAME-GR135-VFX-CHECK` で `ctest --test-dir build -C Debug -R "^DistortionPassVulkanTest$" --no-tests=error --output-on-failure --timeout 600` を回し、標準出力の 2 行（ZERO_OFFSET・KNOWN_OFFSET が合格・不一致画素数 0）を確かめる
 - Notes: `DistortionPassVulkanTest` は GPU で未実行。合成の後の色の添付の状態（render pass の最終は ShaderResource）から転送への明示の障壁、RGBA16F の読み戻しの並び、カメラの右・上を `CopyShaderInverseView` の最初の 2 列から取る向きは、コードの読みでの判断。落ちたら、ずらしの y の符号（Vulkan の画面は下向き）と集めるシェーダーの標本の位置から見る
 - Notes: 源を置く呼び手（`RenderWorld::SetDistortions` を呼ぶゲーム側）はまだ無い。どのシーンにも源が無いので、起動画面と各シーンの見た目は変わらない（パスは何も宣言しない）。源のずらしの描画（円盤・模様の流れ・深度の遮り）は試験の対象外で、源を置く項目で撮影して確かめる
+- U1 capture の出力先の拒否文言を直し、コードページ 932/65001 で 7 ケース完走を確かめる: 着地(直し 0 回)
