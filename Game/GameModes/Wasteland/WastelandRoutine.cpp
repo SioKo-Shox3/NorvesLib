@@ -85,12 +85,14 @@ namespace Game::GameModes
         /// 小物の形と配置の書き出し（--wasteland-gray-material で撮影の保存先があるときだけ。小さな遮蔽の比べの Cycles の正解
         /// Scripts/Terrain/BlenderOcclusionReference.py が同じ形を同じ配置で置く。Directory が空なら何もしない）
         WastelandPropExport::State PropExport;
-        /// 置いた物の配置の書き出し（--wasteland-export-placement のときだけ。空なら書かない）と、書き出す崖錐の岩の写し
+        /// 置いた物の配置の書き出し（--wasteland-export-placement のときだけ。空なら書かない）と、書き出す岩の写し
         String PlacementExportPath;
         VariableArray<Component::MegaScatterInstance> PlacementTalus;
         VariableArray<WastelandTalus::TalusGroundRejection> PlacementTalusRejected;
+        VariableArray<Component::MegaScatterInstance> PlacementCliffBlocks;
+        VariableArray<WastelandTalus::TalusGroundRejection> PlacementCliffBlocksRejected;
         bool bPlacementExported = false;
-        /// 灰色の材質の撮影で、崖錐の岩を視点（TalusCenterX・TalusCenterZ）から kGrayTalusRadius 以内に限るか
+        /// 灰色の材質の撮影で、崖錐の岩と崖の塊を視点（TalusCenterX・TalusCenterZ）から kGrayTalusRadius 以内に限るか
         bool bLimitTalus = false;
         float TalusCenterX = 0.0f;
         float TalusCenterZ = 0.0f;
@@ -125,7 +127,7 @@ namespace Game::GameModes
         bool bCancelled = false;
         bool bPlaced = false;
         bool bPropsPlaced = false;
-        /// 崖錐の岩の行を作る間だけ散布の仕事の列の予算を上げている（作り終えたら SavedMassBudget へ戻す）
+        /// 崖錐の岩と崖の塊の行を作る間だけ散布の仕事の列の予算を上げている（作り終えたら SavedMassBudget へ戻す）
         bool bMassBudgetRaised = false;
         NorvesLib::Core::Ecs::EcsMassBudget SavedMassBudget;
     };
@@ -1383,7 +1385,7 @@ namespace Game::GameModes
             return true;
         }
 
-        /// 崖錐の岩の行を作る間だけ上げた、散布の仕事の列の予算を戻す
+        /// 崖錐の岩と崖の塊の行を作る間だけ上げた、散布の仕事の列の予算を戻す
         void RestoreMassBudget(GameModeContext &ctx, WastelandAssembly &assembly)
         {
             if (assembly.bMassBudgetRaised)
@@ -1393,13 +1395,17 @@ namespace Game::GameModes
             }
         }
 
-        /// 崖の下の崖錐に、剥がれ落ちた岩の群れを散布の Object（Entity 1 つと軽い行）で置く。影を落とす大岩と、影を落とさない
-        /// 小片の 2 つに分ける。名前付き視点の足元と、置いた建物の足元は空ける
+        /// 崖の下の崖錐に剥がれ落ちた岩の群れと壁の足の塊を散布の Object（Entity 1 つと軽い行）で置く。
+        /// 名前付き視点の足元と、置いた建物の足元は空ける
         void PlaceTalusRocks(GameModeContext &ctx, const Terrain::TerrainHeightField &field,
                              const Terrain::TerrainSurfaceMask *pMask, WastelandAssembly &assembly, const char *sceneId)
         {
             const WastelandTalus::TalusMeshShape &crag =
                 assembly.TalusShapes[static_cast<uint32_t>(WastelandTalus::TalusMesh::Crag)];
+            if (!assembly.PlacementGround)
+            {
+                LOG_WARNING_F("WASTELAND_CLIFF_BLOCKS_SKIPPED ground=%d 接地用の格子が無いため、崖の塊を置きません", 0);
+            }
             if (pMask == nullptr || !crag.bAvailable)
             {
                 LOG_WARNING_F("WASTELAND_TALUS_SKIPPED mask=%d crag=%d 地表の分類の地図か岩塊のメッシュが無いため、"
@@ -1430,22 +1436,22 @@ namespace Game::GameModes
             WastelandTalus::TalusStats stats;
             WastelandTalus::BuildTalusRocks(field, *pMask, assembly.PlacementGround.get(), assembly.TalusShapes, exclusions,
                                              casters, fragments, stats);
+            const auto keepNear = [&assembly](VariableArray<Component::MegaScatterInstance> &instances)
+            {
+                VariableArray<Component::MegaScatterInstance> kept;
+                for (const Component::MegaScatterInstance &instance : instances)
+                {
+                    const float dx = instance.Position.x - assembly.TalusCenterX;
+                    const float dz = instance.Position.z - assembly.TalusCenterZ;
+                    if (dx * dx + dz * dz <= kGrayTalusRadius * kGrayTalusRadius)
+                    {
+                        kept.push_back(instance);
+                    }
+                }
+                instances = std::move(kept);
+            };
             if (assembly.bLimitTalus)
             {
-                const auto keepNear = [&assembly](VariableArray<Component::MegaScatterInstance> &instances)
-                {
-                    VariableArray<Component::MegaScatterInstance> kept;
-                    for (const Component::MegaScatterInstance &instance : instances)
-                    {
-                        const float dx = instance.Position.x - assembly.TalusCenterX;
-                        const float dz = instance.Position.z - assembly.TalusCenterZ;
-                        if (dx * dx + dz * dz <= kGrayTalusRadius * kGrayTalusRadius)
-                        {
-                            kept.push_back(instance);
-                        }
-                    }
-                    instances = std::move(kept);
-                };
                 const size_t plannedCasters = casters.size();
                 const size_t plannedFragments = fragments.size();
                 keepNear(casters);
@@ -1504,10 +1510,34 @@ namespace Game::GameModes
             // 小片も影を落とす（地面と岩に落ちる小片の影が無いと、太陽の影が Cycles より大きく欠ける）。
             // CSM はフォグだけが読む間、大きい順の上限までしか描かない（ShadowMapPass の CsmFogMegaCasterBudget）
             const uint32_t placedFragments = spawnScatter(fragments, true, fragmentRanges);
+            VariableArray<Component::MegaScatterInstance> blocks;
+            WastelandTalus::CliffBlockStats blockStats;
+            WastelandTalus::BuildCliffBlocks(field, assembly.PlacementGround.get(), assembly.TalusShapes, exclusions, blocks,
+                                             blockStats);
+            if (assembly.bLimitTalus)
+            {
+                const size_t plannedBlocks = blocks.size();
+                keepNear(blocks);
+                LOG_INFO_F("WASTELAND_CLIFF_BLOCKS_GRAY_LIMIT blocks=%zu/%zu", blocks.size(), plannedBlocks);
+            }
+            uint32_t blockRanges = 0;
+            const uint32_t placedBlocks = spawnScatter(blocks, true, blockRanges);
+            if (!blocks.empty() && placedBlocks == 0)
+            {
+                LOG_WARNING("WASTELAND_CLIFF_BLOCKS_SKIPPED 崖の塊の散布を作れませんでした");
+            }
+            LOG_INFO_F("WASTELAND_CLIFF_BLOCKS_SCATTER planned=%zu placed=%u ranges=%u", blocks.size(), placedBlocks,
+                       blockRanges);
             if (!assembly.PlacementExportPath.empty())
             {
                 assembly.PlacementTalus.clear();
                 assembly.PlacementTalusRejected = std::move(stats.GroundRejections);
+                assembly.PlacementCliffBlocks.clear();
+                assembly.PlacementCliffBlocksRejected = std::move(blockStats.GroundRejections);
+                if (placedBlocks != 0)
+                {
+                    assembly.PlacementCliffBlocks.insert(assembly.PlacementCliffBlocks.end(), blocks.begin(), blocks.end());
+                }
                 if (placedCasters != 0)
                 {
                     assembly.PlacementTalus.insert(assembly.PlacementTalus.end(), casters.begin(), casters.end());
@@ -1552,9 +1582,10 @@ namespace Game::GameModes
                 };
                 recordScatter(casters, true, placedCasters);
                 recordScatter(fragments, true, placedFragments);
+                recordScatter(blocks, true, placedBlocks);
             }
             // 行を作り終えるまで（シーンの準備ができる前）だけ、仕事の列の予算を上げる
-            if (placedCasters + placedFragments != 0 && !assembly.bMassBudgetRaised)
+            if (placedCasters + placedFragments + placedBlocks != 0 && !assembly.bMassBudgetRaised)
             {
                 Ecs::EcsMassWorkQueue &massWork = ctx.WorldRef.GetEcsWorld().GetMassWork();
                 assembly.SavedMassBudget = massWork.GetBudget();
@@ -1572,6 +1603,28 @@ namespace Game::GameModes
                        stats.PerMesh[static_cast<uint32_t>(WastelandTalus::TalusMesh::Slab)],
                        static_cast<double>(stats.MaxBoulderHeight), stats.CasterCandidates,
                        static_cast<double>(stats.MinCasterHeight), stats.SupportPoints[0], stats.SupportPoints[1]);
+#if NORVES_ENABLE_LOGGING
+            // 生成の統計は灰色の撮影の半径制限より前の値。実際の散布の数は WASTELAND_CLIFF_BLOCKS_SCATTER に出す
+            char regions[1024] = {};
+            size_t regionLength = 0;
+            for (uint32_t index = 0; index < WastelandTalus::kCliffBlockRegionCount; ++index)
+            {
+                const int written = std::snprintf(regions + regionLength, sizeof(regions) - regionLength, "%s%s:%u",
+                                                  index == 0 ? "" : ",", WastelandTalus::GetCliffBlockRegionId(index),
+                                                  blockStats.PerRegion[index]);
+                if (written < 0 || static_cast<size_t>(written) >= sizeof(regions) - regionLength)
+                {
+                    break;
+                }
+                regionLength += static_cast<size_t>(written);
+            }
+            LOG_INFO_F("WASTELAND_CLIFF_BLOCKS cells=%u foot_cells=%u placed=%u unplaced=%u no_ground=%u crag=%u slab=%u "
+                       "min_h=%.2f max_h=%.2f regions=%s", blockStats.CellsVisited, blockStats.FootCells, blockStats.Placed,
+                       blockStats.Unplaced, blockStats.NoGround,
+                       blockStats.PerMesh[static_cast<uint32_t>(WastelandTalus::TalusMesh::Crag)],
+                       blockStats.PerMesh[static_cast<uint32_t>(WastelandTalus::TalusMesh::Slab)],
+                       static_cast<double>(blockStats.MinHeight), static_cast<double>(blockStats.MaxHeight), regions);
+#endif
         }
 
         /// 材質のテクスチャがそろった読み込みを MegaMesh にしてモデルとして登録し、load.MegaMesh に入れる（解析したメッシュは手放す）。
@@ -2374,13 +2427,16 @@ namespace Game::GameModes
                                 String(Layout::GetPropKindSpec(Layout::PropKind::TalusSlab).MeshPath));
                         talus.Instances = std::move(assembly.PlacementTalus);
                         talus.GroundRejections = std::move(assembly.PlacementTalusRejected);
+                        WastelandPlacementExport::CliffBlockInput blocks;
+                        blocks.Instances = std::move(assembly.PlacementCliffBlocks);
+                        blocks.GroundRejections = std::move(assembly.PlacementCliffBlocksRejected);
                         WastelandPlacementExport::Write(assembly.PlacementExportPath, *data.m_pHeightField,
-                                                        assembly.PlacementGround.get(), talus, data.m_FoliageScatter,
+                                                        assembly.PlacementGround.get(), talus, blocks, data.m_FoliageScatter,
                                                         data.m_GravelScatter);
                         assembly.bPlacementExported = true;
                     }
                 }
-                // 崖錐の岩の行を作り終えるまで待つ（行が揃う前に撮影を始めない）
+                // 崖錐の岩と崖の塊の行を作り終えるまで待つ（行が揃う前に撮影を始めない）
                 if (assembly.bPlaced && assembly.bPropsPlaced &&
                     !ctx.WorldRef.GetEcsWorld().GetMassWork().HasPendingWork())
                 {

@@ -8988,3 +8988,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U2 接地の検査に前の記録の無い新しい物の組（cliff_block）の絶対の合否を足す: 着地(直し 0 回)
 - U3 崖の生成の 7 範囲の壁の足に崩れた塊を置く規則（BuildCliffBlocks）: 着地(直し 1 回)
 - U4 置き方の書き出しに崖の塊を新しい種類として出す: 着地(直し 0 回)
+- U5 荒野の組み立てに塊をつなぎ、記録を書き、ビルドを通す: 着地(直し 1 回)

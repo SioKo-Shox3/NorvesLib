@@ -822,6 +822,45 @@ SCN-WL-SHAPE-BASELINE の撮り直しの置き場（`scene-capture/SCN-WL-SHAPE-
   SCN-RENDER-ROUGH-STEEP-ENERGY と SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1-CHECK の撮影は版 19 の地形になり、
   エンジンの撮影と正解の地形の一覧のハッシュの照合で落ちる。版 19 の地形の書き出しと Cycles の描き直しが要る
 
+## 崖の壁の足の崩れた塊（物の岩）
+
+崖錐のスキャンの岩 boulder_01（節理で割れた角張った砂岩の岩塊）と rock_09（板）を高さ 3〜14 m に拡大して使う。角張った崩れた砂岩の塊の形に合い、既存の岩の読み込み経路を共用できる。
+
+`WastelandTalus.cpp` の `BuildCliffBlocks` は崖の生成の 7 範囲を 12 m の升目で調べる。接地用の格子の `SampleGround` で焼いた面を読み、不可の升目は見送る。塊の無い所の焼いた面は高さ場と同じである。傾き 38° 以下の斜面から上に 4〜20 m、かつ 3 m 以上高い所に傾き 55° 以上の壁がある帯を候補にする。斑で重みを付けた確率で候補を選び、高さ 3〜14 m の岩を置く。名前付き視点と建物の除外円を避け、塊同士の中心の間隔は高さの和の 0.6 倍以上にする。据え方は崖錐の岩と同じ接地判定を使う。高さ場と崖の細部の版 19 は変えない。
+
+形の合否は `Scripts/Terrain/ExpectSpecs/shape-cliff-blocks.json` の写真・種類ごとの `fold_match` 下限で判定する。物の縁を含めるため `--terrain-only` は付けない。版 15 の同じ焼きの 4 回の実測と下限は次のとおり。
+
+| 写真 | 種類 | 版 15 の 4 回の実測の範囲 | 下限 |
+|---|---|---:|---:|
+| far_01 | `wall_foot` | 0.33359325458359534〜0.34430619524053974 | 0.356 |
+| far_02 | `wall_foot` | 0.1683510513058516〜0.1683510513058516 | 0.179 |
+| far_02 | `block_ridge` | 0.2924323768979043〜0.2924323768979043 | 0.303 |
+| ground_02 | `wall_foot` | 0.2691561786036778〜0.2691561786036778 | 0.280 |
+| ground_02 | `block_ridge` | 0.8032786885245902〜0.8032786885245902 | 0.814 |
+
+置き方の書き出しでは、実際に散布した塊を物の組 `cliff_block` として記録する。接地は崖錐の岩と同じ規則で測り、前の記録にこの組が無い場合は、範囲ごとの違反を物の数の 0.5 % 以下で判定する。見送った接地候補も書き出す。
+
+### 撮影と検査（未測定）
+
+- (A) 物を含む `shape-cliff-blocks.json` の行（`--terrain-only` なし）が、置く前の基準（上の表の下限）を超える。結果: 未測定。
+- (B) 地形だけを測る `shape-cliff-talus.json` の行（`--terrain-only`）が通る。結果: 未測定。
+- (C) 接地は、物の組 `cliff_block` の違反が物の数の 0.5 % 以下で、測り切れない物が 0。ほかの組の違反は SCN-WL-CLIFF-PLACEMENT-CHECK の記録を、物の数の 0.5 % を超えて上回らない。結果: 未測定。
+- (D) ジオメトリのページの要求の溢れ・失敗が 0、VRAM が予算の 90 % 以下。結果: 未測定。
+- (E) look の 3 視点を写真と並べて開き、壁の足に崩れた塊が見えることを確かめる。結果: 未測定。
+
+遮蔽の視点 `contact_near`・`ref_cliff_01` から崖の生成の 7 範囲までの最短の水平距離はそれぞれ 2642.5 m・2400 m で、塊は遮蔽の小物を書き出す 300 m の範囲に入らない。
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Hdr -Aov -Views ref_far_01,ref_far_02,ref_ground_02 -GameArgs wasteland-common-light,wasteland-hide=clouds+foliage+gravel+buildings+aerial+fog,wasteland-gray-material,wasteland-aa=fxaa,wasteland-talus-limit=off -OutDir .harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS-CHECK-P1/shape
+python Scripts/Terrain/CompareReference.py --capture .harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS-CHECK-P1/shape --photos far_01,far_02,ground_02 --shape --expect Scripts/Terrain/ExpectSpecs/shape-cliff-blocks.json --verify
+python Scripts/Terrain/CompareReference.py --capture .harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS-CHECK-P1/shape --photos far_01,far_02,ground_02 --shape --terrain-only --expect Scripts/Terrain/ExpectSpecs/shape-cliff-talus.json --verify
+powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Views ref_cliff_01 -GameArgs wasteland-export-placement=.harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS-CHECK-P1/placement/placement.json -OutDir .harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS-CHECK-P1/placement
+python Scripts/Terrain/CheckPlacement.py --placement .harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS-CHECK-P1/placement/placement.json --asset-cook build/Tools/AssetCook/RelWithDebInfo/AssetCook.exe --regions Scripts/Terrain/ShapeRegions.json --range-group cliff-gen --baseline .harness/runs/scene-capture/SCN-WL-CLIFF-PLACEMENT-CHECK/placement_check.record.json --verify
+powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Views ref_far_01,ref_far_02,ref_ground_02 -OutDir .harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS-CHECK-P1/look
+python Scripts/Terrain/ReferenceCheck.py --geom-requests --capture .harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS-CHECK-P1/look --verify
+python Scripts/Terrain/CompareReference.py --capture .harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS-CHECK-P1/look --photos far_01,far_02,ground_02 --verify
+```
+
 ## 既知の限界
 
 - 折れ目と差の画素は面の法線から測るので、1 画素に複数の三角形が入る遠景（最も細かい LOD の 0.5 m/画素より遠い崖）では、画素が拾う三角形で値が揺れる。値は 3 組の比べにだけ使う（絶対の目標にしない）。
