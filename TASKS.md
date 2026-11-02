@@ -4624,7 +4624,7 @@
 - from: FIX-NORMAL-MATRIX-SCALE-CHECK
 
 ## GAME-GR131-VFX-P1: ワールドの空間の粒子の板を 3D の view へ渡し、当たりのエフェクトなどを画面に出す
-- status: todo
+- status: done
 - done-when: `ApplicationProcessor.cpp` の毎フレームの板の受け渡し(2200 行付近)では今、Text のグリフと粒子の板を、空間によらずキャンバスの view にだけ渡している。これを空間で分ける。`BoardSpace::WorldSpace` の一時の板(粒子の板、Text のグリフのうちワールドの空間のもの)は、そのフレームだけ 3D の scene view へ渡す。経路は `FramePacket` のスナップショットを越えるものに限り、RenderThread から GameThread の値を直接読まない。描き方と並べ方は、常駐のワールドの板と同じ。`ScreenSpace` の板は、今までどおりキャンバスへだけ渡す。同じ板を両方に描かない。一時の板が無いフレームでは、前のフレームの板を残さない。常駐の板(`BoardComponent`)の受け渡しと見た目は変えない。既存の試験に次の検査を足す(新しい exe は作らない。足す前に `Docs/Testing.md` の 3 点を書く): `ParticleFrameSnapshotTest` と `SceneViewWorldBoardDrawCommandTest` で、ワールドの空間の粒子の板 1 枚がそのフレームの 3D の view の描画コマンドに 1 回だけ載ってキャンバスには載らない。スクリーンの空間の板はキャンバスにだけ載る。次のフレームに放出が無ければ、どちらにも残らない。
 - verify: `cmake --build build --config Debug --target Game CanvasTransientBoardSnapshotTest SceneViewWorldBoardDrawCommandTest HitEffectEmissionTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^(ParticleFrameSnapshotTest|CanvasTransientBoardSnapshotTest|SceneViewWorldBoardDrawCommandTest|HitEffectEmissionTest|BoardComponentRoutingTest)$" --no-tests=error --output-on-failure --timeout 180`
