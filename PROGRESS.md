@@ -8841,19 +8841,56 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: 起動の確かめは後回し（人の決まりで GPU を使う試験を起動しない）。`GAME-GR135-VFX-CHECK` で `ctest --test-dir build -C Debug -R "^DistortionPassVulkanTest$" --no-tests=error --output-on-failure --timeout 600` を回し、標準出力の 2 行（ZERO_OFFSET・KNOWN_OFFSET が合格・不一致画素数 0）を確かめる
 - Notes: `DistortionPassVulkanTest` は GPU で未実行。合成の後の色の添付の状態（render pass の最終は ShaderResource）から転送への明示の障壁、RGBA16F の読み戻しの並び、カメラの右・上を `CopyShaderInverseView` の最初の 2 列から取る向きは、コードの読みでの判断。落ちたら、ずらしの y の符号（Vulkan の画面は下向き）と集めるシェーダーの標本の位置から見る
 - Notes: 源を置く呼び手（`RenderWorld::SetDistortions` を呼ぶゲーム側）はまだ無い。どのシーンにも源が無いので、起動画面と各シーンの見た目は変わらない（パスは何も宣言しない）。源のずらしの描画（円盤・模様の流れ・深度の遮り）は試験の対象外で、源を置く項目で撮影して確かめる
-- U1 capture の出力先の拒否文言を直し、コードページ 932/65001 で 7 ケース完走を確かめる: 着地(直し 0 回)
-- U2 凍結基準と 4 通りの capture を比べて差を原因ごとに分け、文書に書き、説明が付けば新しい基準を保存する: 着地(直し 0 回)
 
-## 2026-11-02 G2-S6-ASSET-SET-P2（run 20261102-173100 の反復 1）
-- Done: `AssetCookCliParity.py capture` は、--output が --source の下（source 自身を含む）を指すと、両パスを出して「source の外の新しいディレクトリ（例: %TEMP% の下）を --output に指定」と案内して拒否する。規則は緩めず、出力先を作る前に拒否する。Skeletal の「警告:」の照合は 2707ab89 の ENCODING UTF-8 のまま、コードページ 932 と 65001 の両方で 7 ケースが完走し、snapshot は同じ SHA-256（a7b76d2d…a6ff）になった。
-- Done: 凍結基準（run 37200047966・artifact 11302304928・snapshot.json 09af3262…6c85、凍結 exe 2 本も一致）と、今の Debug exe × checkout（LF）／CRLF の写し、凍結 exe × 同 2 通りを比べた。旧 79 出力は 57 一致・main のクラスタ化（13ba56a7）20 件・入力の行末（raw_sample.bin）2 件・その他 0 件。クラスタ化の差は NVMESH の cluster 表・index の並べ替え・header/hash とその manifest の cooked_hash に限られ、材質・文字列・頂点と三角形の多重集合は一致。Texture の追加 12 件（bb53b109・e4a71feb の smoke 追加）は不一致と別に数えた。
-- Done: その他が 0 件のため、HEAD b9d7468e の CRLF の写しの 91 出力（56 package＋35 JSON）を `%LOCALAPPDATA%/NorvesLib/AssetCookCliBaseline/b9d7468e3f0c-crlf/snapshot` に保存した（snapshot.json e58a0353…6a52）。`ManagedTextureAssetSetCli.md` の受入れ節と `TestingAssetCookCliParity.md` の「クラスタ化の後の基準」に記録した。
-- verify: Debug ビルド EXIT 0、`AssetCookCliParityTest.py -q` 13 件 OK、`%TEMP%` の下への capture EXIT 0（全 7 件成功）。
-- Notes: 新しい基準はこの機のローカルにだけあり、CI の `windows-assetcook.yml` は旧 artifact を参照したまま。出力は 79 ではなく 91（Texture の smoke 追加分）。凍結 exe は `--usage` を知らないので、凍結 exe での capture は Texture で止まる（Mesh は凍結時の smoke で別に照合した）。
-- Notes: 要起票: クラスタ化の後の単体 CLI 基準（91 出力）を CI の artifact として公開し、`windows-assetcook.yml` と `Docs/AssetCookCliFrozenBaseline.json` の参照先を切り替えるか決める（公開する操作なので人が決める）。
+- U0 地形の並列のクックで接地用の格子の書き出しを省ける引数を足す: 着地(直し 0 回)
+- U1 崩れた塊を壁の側から崖錐の側へ移し、細分の印を塊の所へ広げる（崖の細部の版 18）: 着地(直し 0 回)
+- U2 地形の全項目を並列に焼き、接地用の格子を作り直して、形とページの要求・VRAM を先に測る（試しの焼き）: 着地(直し 0 回)
 
-## 2026-11-02 G2-S6-ASSET-SET-P2（run 20261102-191022 の反復 1）
+## 2026-10-29 SCN-WL-CLIFF-GEN-TALUS（run 20261029-101010 の反復 2、BLOCKED）
+- Done: 崖の細部の版 18（崖錐の側の 38 度より緩い升目に 0〜4 m の塊を持ち上げ、塊の升目と周り 1 升目を細分）を 214 項目の並列のクックで焼き（979 秒・失敗 0）、接地用の格子を書き直し（537 秒）、verify の 1〜7 行目と look の撮影・ページの要求を回した。値を `WastelandShape.md` に記録した
+- 値: (A) 形の仕様は不合格 7 行（`fold_gain` 1 / 5、ground_02 Rooster の内部の折れ線の一致 0.431〔下限 0.62〕、棚の行 5 つ）。(B) 合格（担当の局所の退行の最大 2.4 %）。(D) 合格（版 18、27 区画）。(E) ページの要求の溢れ・失敗 0、VRAM 10161 / 15280 MB = 66.5 %、地形の三角形 3.3974 億（版 17 の 1.041 倍）
+- 証拠: `.harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS/u2/`（`unit-verify.txt`、`shape/`・`look/`・`compare-v18/`、並列のクックと格子の出力）
+- Next: 判断待ち（`blocked/SCN-WL-CLIFF-GEN-TALUS.md`）。notes の停止条件（崖錐の側でも (A) が版 15 を超えない）に当たった。推奨は塊の持ち上げを切った版 19 で版 15 の形へ戻し、崩れた塊は物（スキャン・Blender の岩）として別に計画する案
+- Notes: (C) 置いた物の接地と (F) 写真との比べは回していない。枝と共有の置き場は版 18 のまま（棚の行が CAPROCK の合格の値を割っている）。格子の書き出しは `unreliable_cell_ratio=0.1415`・`nan_point_count=386659`
+- U4 崖錐の塊の持ち上げを外し、崖の細部を版 19（出力は版 15 と同じ形）にする: 着地(直し 0 回)
+- U5 塊の合否の仕様から塊を求める行を外し、残りを版 15 の合格の値に合わせ直す: 着地(直し 1 回)
+- U8 版 19 の焼きの結果と未達で閉じた理由を荒野の形の記録に書く（U7 の記録の切り直し）: 着地(直し 0 回)
+- U9 検証を回す作業ツリー（NorvesLib-6）で AssetCook を作り、その AssetCook で地形の全項目を並列に焼き直して、verify の 1〜4 行目を NorvesLib-6 で通す: 着地(直し 1 回)
 
-- Done: 前の run で着地した 2 件(出力先の拒否文言・凍結基準との差の分類と新基準の記録)の確かめの出力を開き直し、verify 3 本(ビルド・AssetCookCliParityTest 13 件・%TEMP% 下への capture 7 件)がすべて終了コード 0 であることを確かめて、status を done に戻した。新基準 snapshot.json の SHA-256 は e58a0353…6a52(採取コミット b9d7468e)。
-- Next: ランナーの評価(前回は評価者の枠切れで未実施)。
-- Notes: 新基準は %LOCALAPPDATA% にあり未公開で、CI はまだ旧基準を参照している。
+## 2026-11-02 SCN-WL-CLIFF-GEN-TALUS（run 20261102-145122 の反復 2、未達で閉じた）
+- Done: 人の判断（案 A）に従い、崖錐の塊の持ち上げを外して崖の細部を版 19（出力は版 15 と同じ形）にした（`TerrainCliffDetail.cpp` は版 15 の内容、`.h` は版の番号だけ 19）。`shape-cliff-talus.json` から塊を求める `fold_gain` の行を外し、棚・角・外形の行は `shape-cliff-caprock.json` と同じ、内部の折れ線の行は版 15 の 4 回の撮影の実測に締めた（版 15 の撮影に当てて `--shape --expect` と `--shape-cause --baseline --expect` が合格）。地形の 214 項目を版 19 で焼き直し、検証に使う作業ツリーの AssetCook（9ed6c406…）でもう一度焼き直して、`WastelandShape.md` に版 19 と未達で閉じた理由を書いた
+- 値: 地形の三角形 326,092,012 個（版 15 と同じ、版 18 より 13,648,233 個少ない）。並列のクックは失敗 0、`changed_cooked_hashes=0`。verify の 1〜4 行目: Game・AssetCook のビルド EXIT=0、クック `cooked=0 skipped=214`（格子も skipped、7.53 秒）、`--cook-coverage` は `cliff_detail_version=19`・`stale_terrain_items=0`・`tiles=27 cooked=27 result=pass`
+- 証拠: `.harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS/u9/`（`parallel-cook-v19.txt`・`parallel-result.json`・項目ごとの出力・ビルドと exe のハッシュ）、単位の確かめの出力（verify の 1〜4 行目と numstat）
+- Next: 起動の確かめは後回し（SCN-WL-CLIFF-GEN-TALUS-CHECK）。verify の 5〜12 行目（形の撮影と判定・範囲ごとの量・置いた物の接地・look の撮影・ページの要求・写真との比べ）を版 19 で回し、(A) が版 15 の値に戻ること、(C)・(E)・(F) が前の記録より悪くならないことを確かめる
+- Notes: 崩れた大きな塊（数 m〜十数 m）は地形の形としては作らず未達で閉じた（1 m の高さの場の持ち上げは版 16〜18 の 3 回とも棚の線を崩して (A) が版 15 を下回った）。新しい試験は足していない
+- 要起票: 壁から崖錐へ移る所の崩れた大きな塊（数 m〜十数 m）を、スキャンの岩・Blender の大きな岩の物として崖の生成の 7 範囲の壁の足元に置く（置いた物の接地の検査の組に入れる）
+- 要起票: 荒野の遮蔽の比べの Cycles の正解は、SCN-RENDER-ROUGH-STEEP-ENERGY-P2 が崖の細部の版 18 の地形で描き直したもの（`.harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY-P2/cycles`、地形の manifest fdbbcc2a…）で、版 19 に焼き直した共有の地形と合わない。SCN-RENDER-ROUGH-STEEP-ENERGY と SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1-CHECK の撮影は版 19 の地形になり、地形の一覧のハッシュの照合で落ちる。版 19 の地形の書き出しと Cycles の正解の描き直しが要る
+- U10 合否の仕様の棚・角・外形の行を版 15 の 4 回の実測に締める（反復 2 の差し戻しの 1）: 着地(直し 0 回)
+- U11 遮蔽の正解の記述を P2（版 18 で描き直した正解）の事実に直す（反復 2 の差し戻しの 2）: 着地(直し 0 回)
+
+## 2026-11-02 SCN-WL-CLIFF-GEN-TALUS（run 20261102-145122 の反復 3、差し戻しの直し・完了）
+- Done: 合否の仕様 `shape-cliff-talus.json` の moved_to の無い棚・角・外形の 17 行を版 15 の 4 回の撮影（CAPROCK の shape・shape-retake-1〜3）の実測に締めた（一致は最小を 3 桁で切り捨て、欠け・残差は最大を 1 桁で切り上げ、余分は最大を 3 桁で切り上げ。retake_jitter 0.3333 は保った）。4 回の撮影に `--shape --terrain-only --expect --verify` を当てて 4 回とも EXIT=0・17 行すべて pass。荒野の形の記録と上の要起票の遮蔽の正解の記述を、P2 が版 18 で描き直した正解が版 19 の地形と合わない形に直した
+- Next: 起動の確かめは後回し（SCN-WL-CLIFF-GEN-TALUS-CHECK）。verify の 5〜12 行目（形・範囲ごとの量・置いた物の接地・ページの要求と VRAM・写真との比べの撮影と判定）を版 19 で回す
+- Notes: verify の 1〜4 行目は前の反復の U9 で NorvesLib-6 の AssetCook（9ed6c406…）で通しており、この反復は仕様の JSON と文書だけを変えたので回し直していない。この作業ブランチの TASKS.md の done-when は統合ブランチの cc21c026（人の判断で替えた問い）より前の文面のままで、統合のときに合わせる。新しい試験は足していない
+- U12 統合ブランチの取り込みで変わった AssetCook で地形の全項目を並列に焼き直し、verify の 1〜4 行目を NorvesLib-6 で通す: 着地(直し 0 回)
+
+## 2026-11-02 SCN-WL-CLIFF-GEN-TALUS（run 20261102-145122 の反復 4、統合ブランチの取り込み後の再検証の直し・完了）
+- Done: feature/scene-launcher の取り込み（0fef65c4）で Tools/AssetCook（リグ・VFX のクック）が変わり、NorvesLib-6 の AssetCook.exe のハッシュが ad954ff3… になって地形の 214 項目の印が全部 stale になり、再検証のクックの行（直列）が 10 分を超えて切れた。切れたまま残っていた直列のクックを止め、この exe で 214 項目を 12 組の並列で共有の置き場へ焼き直した（1851.37 秒・失敗 0・三角形 326,092,012 個・焼いた中身の変化 0 項目・接地用の格子は書き直し不要）。verify の 1〜4 行目は NorvesLib-6 で EXIT=0（クックの行は `cooked=0 skipped=214`・13.75 秒、`--cook-coverage` は `cliff_detail_version=19`・`stale_terrain_items=0`・`tiles=27 cooked=27 result=pass`）
+- 証拠: `.harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS/u12/`（`parallel-result.json`・`assetcook-sha256.txt`・項目ごとの出力）
+- Next: 起動の確かめは後回し（SCN-WL-CLIFF-GEN-TALUS-CHECK）。verify の 5〜12 行目を版 19 で回す
+- Notes: 要起票: AssetCook のソースが変わる取り込みのたびに、検証を回す作業ツリーの exe のハッシュが変わって地形の全項目の焼き直し（並列で約 31 分）が要る。印に exe のハッシュではなく地形の生成の版を使う形は Scripts の設計変更になるので、この項目では変えていない
+
+- U1 在庫文書の旧環境の 2 文を Windows の実行記録に置き換える: 着地(直し 1 回)
+
+## 2026-11-02 G2-GR32-GPU-ACCEPTANCE-P2（run 20261102-173051 の反復 1、完了）
+- Done: `Docs/Architecture/NVSKELMigrationInventory.md` の「GR32 Nprimitive decodeの中間段階」と「Componentの材質slot API」に残っていた Linux・Windows.h で未実行の記述 2 つを、native 回帰ごとの Windows の実行記録に置き換えた。実行済み: `CookedSkeletalAssetTest`（2026-11-02 Debug、cp932・65001 で Passed、G2-GR78-SURFACE-CENTROID-CHECK-P1）、`SkeletalFramePacketSnapshotTest`（2026-11-02 TEST-FULL-CTEST-BASELINE と 2026-10-11 SCN-MEGA-SCENE-CONFIRM で Passed）。`SkeletalImportReportTest`（2026-10-11 SCN-ECS-RENDER-SYNC-SWITCH の隣接 69 件の ctest で Passed。反復 2 で訂正）。未実行（実行の記録なし）: `GLTFSkeletalAnalyzerTest`・`RenderingDDGILightingContractTest`（2026-10-29 SCN-BUILD-ALL-TESTS でビルドだけ通った）。この 2 本は TEST-FULL-CTEST-BASELINE-CHECK の全体 CTest で回すと書いた
+- 検証: verify の python 1 行が `[]`・終了コード 0。numstat は 2 通りで一致（17 行追加・2 行削除）。文書だけの変更で、ビルド・試験・アプリは起動していない
+- Next: TEST-FULL-CTEST-BASELINE-CHECK で全体 CTest を回したら、在庫文書の「未実行」の 2 本を実行の記録に更新する
+- Notes: 要起票: 同じ文書の 144 行（reader の native 回帰は Windows/Core 全体の実行が未検証）・159 行（native Resource/Core/描画の Windows 実行は未検証）・181 行（packet の native 回帰は Windows 依存で未実行）も古い可能性がある。181 行の packet の回帰は `SkeletalFramePacketSnapshotTest` で、2026-11-02 に Passed している
+- U2 SkeletalImportReportTest の行を 2026-10-11 の実行記録に直す: 着地(直し 0 回)
+
+## 2026-11-02 G2-GR32-GPU-ACCEPTANCE-P2（run 20261102-173051 の反復 2、完了）
+- Done: 差し戻し（`SkeletalImportReportTest` を未実行と書いていたが実行の記録がある）を直した。在庫文書の「GR32 Nprimitive decodeの中間段階」の `SkeletalImportReportTest` の 2 行を、2026-10-11 の Windows Debug で隣接 69 件の ctest（`ctest --test-dir build -C Debug -R <隣接69件> --no-tests=error --output-on-failure`）の中で Passed した記録（run 20261010-223034、`verify-SCN-ECS-RENDER-SYNC-SWITCH-3-neighbors.txt`）に置き換えた。試験のソースの最後の変更は 2026-10-04（9c229361）で、実行より前。反復 1 の Done の記述も同じ内容に訂正した
+- 検証: verify の python 1 行が `[]`・EXIT=0（`.harness/runs/20261102-173051/verify-G2-GR32-GPU-ACCEPTANCE-P2-2.txt`）。単位の numstat は 2 通りで一致（2 行追加・2 行削除）。文書だけの変更で、ビルド・試験・アプリは起動していない
+- Next: TEST-FULL-CTEST-BASELINE-CHECK で全体 CTest を回したら、在庫文書の「未実行」の 2 本（`GLTFSkeletalAnalyzerTest`・`RenderingDDGILightingContractTest`）を実行の記録に更新する
+- Done: G2-GR32-GPU-ACCEPTANCE-P2 の反復 2 の変更（SkeletalImportReportTest を 2026-10-11 の実行記録に訂正）は評価が枠切れで未実施だったため、変更を足さずに verify を回し直した（`[]`・EXIT=0、`.harness/runs/20261102-191020/verify-G2-GR32-GPU-ACCEPTANCE-P2.txt`）。文書の記述と `verify-SCN-ECS-RENDER-SYNC-SWITCH-3-neighbors.txt` の 102 行目（Passed）が合うことも確かめた
