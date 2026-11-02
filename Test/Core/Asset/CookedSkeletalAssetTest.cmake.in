@@ -416,7 +416,7 @@ set(REDUCE_ARGS --input "${REDUCE_DIR}/FiveInfluences.gltf" --out "${REDUCE_DIR}
     --entry rig.nvskel --entry-type Skl0 --format nvskel.v0.skinned.pnujiw.u32 --variant default --no-sidecar)
 function(expect_reduce success skipped)
     execute_process(COMMAND "${ASSET_COOK_EXE}" ${REDUCE_ARGS} ${ARGN}
-        RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error)
+        RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error ENCODING UTF-8)
     if((success AND NOT result EQUAL 0) OR (NOT success AND result EQUAL 0))
         message(FATAL_ERROR "unexpected reduction CLI result: ${result} ${output} ${error}")
     endif()
@@ -536,7 +536,7 @@ set(CUBIC_ARGS --input "${CUBIC_DIR}/CubicChannels.gltf" --out "${CUBIC_DIR}/rig
     --entry rig.nvskel --entry-type Skl0 --format nvskel.v0.skinned.pnujiw.u32 --variant default --no-sidecar)
 function(expect_cubic success skipped)
     execute_process(COMMAND "${ASSET_COOK_EXE}" ${CUBIC_ARGS} ${ARGN}
-        RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error)
+        RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error ENCODING UTF-8)
     if((success AND NOT result EQUAL 0) OR (NOT success AND result EQUAL 0))
         message(FATAL_ERROR "unexpected cubic CLI result: ${result} ${output} ${error}")
     endif()
@@ -672,7 +672,7 @@ set(MORPH_ARGS --input "${MORPH_DIR}/MorphDrop.gltf" --out "${MORPH_DIR}/rig.nvp
     --entry rig.nvskel --entry-type Skl0 --format nvskel.v0.skinned.pnujiw.u32 --variant default --no-sidecar)
 function(expect_morph success skipped expected_targets)
     execute_process(COMMAND "${ASSET_COOK_EXE}" ${MORPH_ARGS} ${ARGN}
-        RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error)
+        RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error ENCODING UTF-8)
     if((success AND NOT result EQUAL 0) OR (NOT success AND result EQUAL 0))
         message(FATAL_ERROR "unexpected morph CLI result: ${result} ${output} ${error}")
     endif()

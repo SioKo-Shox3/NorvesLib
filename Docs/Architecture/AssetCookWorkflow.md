@@ -12,13 +12,13 @@ This workflow separates an asset-set spec from the runtime manifest consumed by 
 - `default_variant`: variant used when a texture entry omits `variant`, currently `default`.
 - `textures`: source images plus cook metadata for each texture package.
 
-Spec paths are resolved by `Scripts/CookTextureAssetSet.ps1`, not by the caller's current working directory. `SpecPath`, `RuntimeRoot`, `ManifestPath`, and `source_path` may be absolute or repository-relative. Manifest and logical fields such as `package_root`, `package_name`, `logical_path`, and `entry_name` must be non-empty relative paths with no absolute, drive-relative, UNC, or `..` traversal segments. They are normalized to `/` before cook validation.
+`Scripts/CookTextureAssetSet.ps1` は `SpecPath`、`RuntimeRoot`、`ManifestPath` を絶対パスまたはリポジトリ相対パスとして解決し、リポジトリを `--source-root` に指定する。spec内の `source_path` は絶対パスまたはsource rootからの相対パス。`package_root`、`package_name`、`logical_path`、`entry_name` は空でなく、絶対パス・ドライブ相対パス・UNC・`..` を含まない相対パスにし、native側で `/` に正規化して検証する。
 
-`logical_path` and `entry_name` may use the Game-facing `Assets/...` spelling. The helper normalizes those fields through the same logical-path convention as `AssetCook`, so runtime manifest entries omit the leading `Assets/` prefix, for example `Assets/Textures/Silver/silver_albedo.png` becomes `Textures/Silver/silver_albedo.png`.
+`logical_path` と `entry_name` にはGame向けの `Assets/...` 表記も使える。native側が先頭の `Assets/` を除くため、例えば `Assets/Textures/Silver/silver_albedo.png` はruntime manifestでは `Textures/Silver/silver_albedo.png` になる。
 
 ## Runtime Manifest
 
-The helper runs `AssetCook` once per texture, using the same manifest path for each invocation. After every invocation it reads the single-entry manifest, verifies the entry against the spec, and collects those entries into one aggregate manifest.
+包みは `AssetCook --asset-set` を1回呼び出す。specの検証、増分判定、全entryを含むmanifestの書き出しはnative側が行う。
 
 The final manifest defaults to:
 
@@ -26,7 +26,9 @@ The final manifest defaults to:
 <RuntimeRoot>/manifest.json
 ```
 
-If `-ManifestPath` is supplied, its parent must be exactly `RuntimeRoot`. This keeps `cooked_package` entries relative to `RuntimeRoot`; the helper does not rebase manifests placed elsewhere.
+`-ManifestPath` を指定するときは、その親を `RuntimeRoot` と一致させる。native CLIを直接呼ぶ場合も `--manifest` にはruntime root直下の絶対パスを渡す。
+
+未所有の既存runtime rootは拒否する。新しいrootの初期化時には、その親に管理情報の `.norves-assetcook` が作られる。同じ入力での再実行は `unchanged` となり、runtimeのbytesと更新時刻を変えない。包みはnativeの標準出力を転送しないため、結果表示は直接呼び出して確認する。復旧が必要な場合は `AssetCook --recover --runtime-root <root>` を実行し、その親workspaceにある保留中の処理を復旧する。
 
 ## Current Silver Texture Formats
 

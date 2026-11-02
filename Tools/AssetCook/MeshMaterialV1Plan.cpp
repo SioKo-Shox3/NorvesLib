@@ -471,8 +471,10 @@ namespace NorvesLib::Tools::AssetCook
                 I::ResolveMaterialImportPlan(catalog, plan.Import.Settings, effective.AssetSetEmission, plan.Resolved);
             if (!resolved.Succeeded())
             {
-                return Fail(error, logicalPath, bHasMaterial, materialIndex, materialName,
-                            "material_selector_or_settings");
+                const char* reason = resolved.Status == I::MaterialImportPlanStatus::SettingsFailed
+                                         ? I::MaterialSettingsErrorKey(resolved.Settings)
+                                         : "material_selector_or_settings";
+                return Fail(error, logicalPath, bHasMaterial, materialIndex, materialName, reason);
             }
         }
         for (const auto& entry : plan.Resolved.Materials)

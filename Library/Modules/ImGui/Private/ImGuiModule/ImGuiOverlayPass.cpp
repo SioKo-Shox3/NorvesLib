@@ -23,6 +23,9 @@
 
 namespace NorvesLib::Modules::Gui
 {
+    static_assert(sizeof(ImTextureID) == sizeof(uint64_t),
+                  "ImGui のテクスチャ ID は公開 API と同じ 64bit 幅が必要。");
+
     namespace
     {
         constexpr const char *kLogCategory = "ImGui";
@@ -128,9 +131,8 @@ namespace NorvesLib::Modules::Gui
         m_FontTexture->Update(pixels, rowPitch, slicePitch);
 
         // フォントアトラスの TexID に非 Invalid のセンチネルを GameThread で確定する。
-        // 本パスはアトラスが 1 枚のみ(レガシー単一アトラス)で、Execute は cmd.GetTexID() を
-        // 解決に使わず常に当該スロットの DescriptorSet をバインドするため、TexID の値自体は
-        // 「ImDrawCmd が有効なテクスチャを指す(imgui のアサート/カリングを通す)」目印で足りる。
+        // レガシー単一アトラスのセンチネル 1 を cmd.GetTexID() でフォントへ解決する。
+        // 登録画像は 2 以上の ID を使うため、フォントの目印と衝突しない。
         // SetTexID は io.Fonts->TexRef._TexData が必要(GetTexDataAsRGBA32 が割当済み)で、
         // 全フレームのキャプチャ前(=最初のフレーム投入前)に GameThread で一度だけ設定する。
         if (io.Fonts->TexRef._TexData != nullptr)
@@ -159,6 +161,46 @@ namespace NorvesLib::Modules::Gui
                         "InitializeGameThread: font atlas uploaded on GameThread (%dx%d, legacy single atlas)",
                         width, height);
         return true;
+    }
+
+    bool ImGuiOverlayPass::UploadImageGameThread(RHI::IDevice *device, uint64_t imageId,
+                                                const uint8_t *rgba8Pixels, uint32_t width, uint32_t height)
+    {
+        // InitializeBackend が最初のフレーム投入前にだけ呼ぶ。フレーム走行中の更新経路は持たない。
+        if (device == nullptr || !m_bFontReady || !m_FontSampler || imageId < 2 ||
+            rgba8Pixels == nullptr || width == 0 || height == 0 || width > 4096 || height > 4096)
+        {
+            NORVES_LOG_WARNING(kLogCategory, "画像をアップロードできません（準備または引数が無効、ID=%llu）",
+                               static_cast<unsigned long long>(imageId));
+            return false;
+        }
+
+        // RHI の生成・Update は例外を投げることがある。失敗はこの画像だけに閉じる。
+        try
+        {
+            RHI::TextureDesc textureDesc;
+            textureDesc.Width = width;
+            textureDesc.Height = height;
+            // mesh2d.frag が sRGB を線形化するので、テクスチャ形式では変換しない。
+            textureDesc.TextureFormat = RHI::Format::R8G8B8A8_UNORM;
+            textureDesc.Usage = RHI::ResourceUsage::ShaderRead;
+            textureDesc.DebugName = "ImGuiImage";
+            RHI::TexturePtr texture = device->CreateTexture(textureDesc);
+            if (texture)
+            {
+                const uint32_t rowPitch = width * 4u;
+                texture->Update(rgba8Pixels, rowPitch, rowPitch * height);
+                m_ImageTextures.push_back({imageId, texture});
+                return true;
+            }
+        }
+        catch (...)
+        {
+            // 生成途中のテクスチャはローカルの所有権で手放す。次の画像の処理は続ける。
+        }
+        NORVES_LOG_WARNING(kLogCategory, "画像の生成またはアップロードに失敗しました（ID=%llu）",
+                           static_cast<unsigned long long>(imageId));
+        return false;
     }
 
     bool ImGuiOverlayPass::Initialize(Core::Rendering::ViewRenderContext &context)
@@ -270,9 +312,8 @@ namespace NorvesLib::Modules::Gui
         }
 
         // フォントアトラスの TexID は InitializeGameThread(GameThread・全フレームキャプチャ前)で
-        // 既にセンチネル確定済み。Execute は cmd.GetTexID() を解決に使わず常に借りた
-        // DescriptorSet をバインドするため、ここでの SetTexID 再設定は不要(RenderThread から
-        // imgui コンテキスト状態を書き換えない=スレッド安全)。
+        // 既にセンチネル 1 として確定済み。RenderThread は ID を読みフォント用のセットを選ぶ。
+        // SetTexID の再設定は行わず、imgui コンテキスト状態を書き換えない。
 
         m_bInitialized = true;
         NORVES_LOG_INFO(kLogCategory, "Initialize(seam): mesh2d pipeline + descriptor layout ready");
@@ -285,6 +326,7 @@ namespace NorvesLib::Modules::Gui
         // 本パスが所有しているため明示解放する(順序は任意・参照カウントで安全)。
         m_DescriptorSetLayout.reset();
         m_Pipeline.reset();
+        m_ImageTextures.clear();
         m_FontSampler.reset();
         m_FontTexture.reset();
         m_PendingDrawData = nullptr;
@@ -438,20 +480,35 @@ namespace NorvesLib::Modules::Gui
         transform.Scale[1] = 2.0f / displaySize.y;
         transform.Translate[0] = -1.0f - displayPos.x * transform.Scale[0];
         transform.Translate[1] = -1.0f - displayPos.y * transform.Scale[1];
-        // UBO の切れ端と DescriptorSet をこの描画の分だけ借り、切れ端と共有フォントテクスチャ/
-        // サンプラーを束ねる(借りたセットは借りたフレームの回収まで前の提出が読むことは無い)。
+        // UBO の切れ端は全テクスチャで共用し、セットはテクスチャごとにこの呼び出し内で再利用する。
+        // 借りたセットの寿命はフレームの持ち主が管理し、パスには保持しない。
         const Core::Rendering::FrameUploadAllocation uniformAllocation = frameResources.AllocateConstants(transform);
-        RHI::DescriptorSetPtr descriptorSet = frameResources.AllocateDescriptorSet(m_DescriptorSetLayout).Set;
-        if (!uniformAllocation.IsValid() || !descriptorSet)
+        if (!uniformAllocation.IsValid())
         {
-            NORVES_LOG_WARNING(kLogCategory, "RenderDrawData: UBO/DescriptorSet allocation failed");
+            NORVES_LOG_WARNING(kLogCategory, "RenderDrawData: UBO の確保に失敗しました");
             return;
         }
-        descriptorSet->BindConstantBuffer(0, uniformAllocation.Buffer, uniformAllocation.GetOffset32(),
-                                          static_cast<uint32_t>(sizeof(Mesh2DTransform)));
-        descriptorSet->BindTexture(1, m_FontTexture);
-        descriptorSet->BindSampler(1, m_FontSampler);
-        descriptorSet->Update();
+        const auto allocateDescriptorSet = [&](const RHI::TexturePtr &texture)
+        {
+            RHI::DescriptorSetPtr set = frameResources.AllocateDescriptorSet(m_DescriptorSetLayout).Set;
+            if (set)
+            {
+                set->BindConstantBuffer(0, uniformAllocation.Buffer, uniformAllocation.GetOffset32(),
+                                        static_cast<uint32_t>(sizeof(Mesh2DTransform)));
+                set->BindTexture(1, texture);
+                set->BindSampler(1, m_FontSampler);
+                set->Update();
+            }
+            return set;
+        };
+        const RHI::DescriptorSetPtr fontDescriptorSet = allocateDescriptorSet(m_FontTexture);
+        struct ImageDescriptorSet
+        {
+            uint64_t Id = 0;
+            RHI::DescriptorSetPtr Set;
+        };
+        // 確保失敗も空セットとして記録し、同じ Execute 内では同じ画像を借り直さない。
+        Core::Container::VariableArray<ImageDescriptorSet> imageDescriptorSets;
 
         // back buffer 全体を覆う viewport(Mesh2D 経路は viewport を設定しないため明示する)。
         const float fbWidth = static_cast<float>(context.OverlayLoadFramebuffer->GetWidth());
@@ -504,6 +561,44 @@ namespace NorvesLib::Modules::Gui
                 if (clipMaxX <= clipMinX || clipMaxY <= clipMinY)
                 {
                     // 完全にクリップ外。発行しない。
+                    continue;
+                }
+
+                const uint64_t textureId = static_cast<uint64_t>(cmd.GetTexID());
+                RHI::DescriptorSetPtr descriptorSet;
+                if (textureId == 1)
+                {
+                    descriptorSet = fontDescriptorSet;
+                }
+                else
+                {
+                    for (const ImageTexture &image : m_ImageTextures)
+                    {
+                        if (image.Id != textureId)
+                        {
+                            continue;
+                        }
+                        bool bCached = false;
+                        for (const ImageDescriptorSet &cached : imageDescriptorSets)
+                        {
+                            if (cached.Id == textureId)
+                            {
+                                descriptorSet = cached.Set;
+                                bCached = true;
+                                break;
+                            }
+                        }
+                        if (!bCached)
+                        {
+                            descriptorSet = allocateDescriptorSet(image.Texture);
+                            imageDescriptorSets.push_back({textureId, descriptorSet});
+                        }
+                        break;
+                    }
+                }
+                if (!descriptorSet)
+                {
+                    // 無効・未登録の ID と確保失敗は、そのテクスチャのコマンドだけを飛ばす。
                     continue;
                 }
 

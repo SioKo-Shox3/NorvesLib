@@ -4,6 +4,7 @@
 #include "Tools/AssetCook/TextureAssetSetCook.h"
 #include "Tools/AssetCook/RigSingleCook.h"
 #include "Tools/AssetCook/RigRetargetCook.h"
+#include "Tools/AssetCook/CookCacheDecision.h"
 #include "RigSplitWireTestFixture.h"
 #include "Tools/AssetCook/MeshMaterialV1Plan.h"
 #if defined(_WIN32)
@@ -83,6 +84,52 @@ namespace
         }
     };
 #endif
+    void RetargetTargetMaterialPreflight(F::Fixture& f)
+    {
+        const auto sourceRoot = f.Root / "RigV1Fixture";
+        const auto sidecar = sourceRoot / "target.gltf.import.json";
+        const auto writeSidecar = [&](const F::Text& text)
+        { F::WriteBytes(sidecar, F::Bytes(text.begin(), text.end())); };
+        const F::Text valid = R"({"version":1})";
+        writeSidecar(valid);
+        Cook::SingleAssetCookRequest request;
+        request.InputPath = sourceRoot / "run.bvh";
+        request.RetargetSkeletonPath = sourceRoot / "target.gltf";
+        request.RetargetProfilePath = sourceRoot / "roles.json";
+        request.RetargetClipName = "Run";
+        request.PackagePath = f.Root / "retarget-preflight/Cooked/run.nvpk";
+        request.ManifestPath = f.Root / "retarget-preflight/manifest.json";
+        request.Kind = "animation";
+        request.Format = "nvskel.v1.clips";
+        request.EntryTypeText = "Anm1";
+        request.EntryName = "run";
+        request.LogicalPath = "Animations/Run";
+        request.Variant = "default";
+        Cook::CookDecisionContext before, context;
+        F::Text error;
+        RIG_CHECK(Cook::DecideCookCache(request, 7, true, nullptr, nullptr, before, error) == Cook::CookDecision::Cook);
+        RIG_CHECK(Cook::CookSingleAsset(before.Request, error));
+        const auto manifestBytes = F::ReadBytes(request.ManifestPath);
+        Core::Asset::AssetManifest manifest;
+        RIG_CHECK(manifest.LoadFromJsonText(C::String(
+            F::Text(C::AnsiStringView(reinterpret_cast<const char*>(manifestBytes.data()), manifestBytes.size())).c_str())));
+        Cook::CookOutputRecord record;
+        RIG_CHECK(Cook::CaptureCookOutputRecord(before, manifest, record, error));
+        RIG_CHECK(Cook::DecideCookCache(request, 7, true, &record, &manifest, context, error) == Cook::CookDecision::Skip);
+
+        writeSidecar(R"({"version":1,"materials":[{"name":"Missing"}]})");
+        Cook::CookDependencySnapshot current;
+        RIG_CHECK(Cook::CaptureCookDependencySnapshot(before.Request, 7, current, error));
+        // 依存印が一致していても、不正な先の骨格の設定をskipで迂回させない。
+        auto matched = record;
+        matched.DependencyFingerprint = current.Fingerprint;
+        RIG_CHECK(Cook::DecideCookCache(request, 7, true, &matched, &manifest, context, error) == Cook::CookDecision::Error);
+        RIG_CHECK(error.find(C::AnsiStringView("clip_material_selector_or_settings")) != F::Text::npos);
+        writeSidecar(valid);
+        RIG_CHECK(Cook::DecideCookCache(request, 7, true, &record, &manifest, context, error) == Cook::CookDecision::Skip);
+        std::filesystem::remove(sidecar);
+        std::printf("RIG_SPLIT_CASE retarget_target_material_preflight_skip result=pass\n");
+    }
     void RetargetBatch(F::Fixture& f)
     {
         f.SetBuffer(f.Binary);
@@ -176,6 +223,7 @@ Frame Time: 0.5
         };
         run(Cook::TextureAssetSetCookResult::Created);
         run(Cook::TextureAssetSetCookResult::NoChange);
+        RetargetTargetMaterialPreflight(f);
         const auto manifest = F::ReadBytes(request.RuntimeRoot / "manifest.json");
         auto assets =
             C::MakeShared<Core::Asset::AssetSystem>(C::AnsiString(request.RuntimeRoot.generic_string().c_str()));

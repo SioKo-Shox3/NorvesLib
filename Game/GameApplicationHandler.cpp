@@ -2862,10 +2862,11 @@ namespace Game
                 NorvesLib::Core::Module::GetModuleRegistry());
             // バナナのシーンの情報表示（H キー）の文字。シーンは ImGui モジュールがあるときだけ表示を登録する
             Game::GameModes::RegisterBananasInfoDisplayText();
-            if (m_bLauncherStartup)
+            if (m_bLauncherStartup || m_bPauseMenuWanted)
             {
-                // ランチャーの文字を表示用フォントへ載せる。ImGui モジュールの Initialize より前に渡す。
+                // ポーズメニューから戻る起動も含め、ランチャーの文字と見本画像を Initialize より前に渡す。
                 Game::GameModes::RegisterLauncherDisplayText();
+                Game::GameModes::RegisterLauncherThumbnails();
             }
             if (m_bPauseMenuWanted)
             {

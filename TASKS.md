@@ -3289,7 +3289,7 @@
 - notes: 2026-10-15 ユーザー: 室内の光は「ほぼ実写」の美しさを見るシーン。SCN-INT-REFERENCE-SELECT の写真と並べた比較画像（1920×1080）と、同じ視点のパストレースの正解で判断する。速さの条件は無い。 2026-10-19 親: verify を RelWithDebInfo に揃え、周回の試験を 1 コマンド 10 分に収まる形にした（Debug の撮影は約 11 分、3 周は 928 秒の実測）。 2026-10-23（親）: 反復 39 の BLOCKED（ほぼ実写の差の 3 つがエンジン側）を推奨の案 1 で解いた。鏡面の環境光の遮り・RTGI の当たりの反射率・RTGI の時間の蓄積を SCN-RENDER-SPEC-OCCLUSION・SCN-RENDER-RTGI-HIT-ALBEDO・SCN-RENDER-RTGI-TEMPORAL として先に立て、この項目はその後に `InteriorLightReference.py --compare --reference .harness/runs/scene-capture/SCN-INTERIOR-ROOM-ref` で同じ比較画像を作り直し、残る差を記録して閉じる（Cycles の正解は描き直さない。部屋・家具・視点・周回は反復 38・39 のまま）。
 
 ## SCN-INTERIOR-SHAFTS: 窓から入る光の筋を出す
-- status: todo
+- status: done
 - done-when: ボリュメトリックフォグの散乱が太陽の影（既定の VSM）で遮られ、窓から入る光の筋が見える。シーンごとにフォグの密度・範囲を設定でき、`interior-light` で室内に薄い霧を入れる（Rendering3DTest の霧は変えない）。`overview`・`window` の撮影を開いて光の筋を確かめ、Rendering3DTest の撮影が変わらない。性能はこの項目では測らず、SCN-ACCEPT で目標を超えたときに、霧の内訳から解像度・範囲・更新の方式を調整する。 起動を止めている間は、散乱に VSM の可視を掛ける実装（VSM が無い構成では今の CSM の経路のまま）、`interior-light` の霧の設定（密度・範囲）、Debug のビルドと `VolumetricFogModelTest` までで済み、`overview`・`window` の撮影を開いての光の筋の確かめと Rendering3DTest の撮影が変わらないことは、起動を戻した後の `SCN-INTERIOR-SHAFTS-CHECK` で確かめる。
 - verify: `cmake --build build --config Debug --target Game VolumetricFogModelTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^VolumetricFogModelTest$" --no-tests=error --output-on-failure --timeout 180`
@@ -3299,7 +3299,7 @@
 - notes: 危険地帯（描画）。`Assets/Shaders/volumetrics.frag` 103〜135 行付近は CSM の影の地図（`cascadedShadowMap`）を読む。太陽の影が VSM のときに霧の影が効いているかを先に確かめる。 2026-10-12 親: 計測の見直し（ユーザーの指摘「節目に計測を入れても意味があるのかを考えるべき」。計測ごとに、問い・結果で変わる判断・測らずに分からないかの 3 点を書き、書けないものは置かない。Sol の批評を反映）。 2026-10-15 ユーザー: 室内の光は「ほぼ実写」の美しさを見るシーン。SCN-INT-REFERENCE-SELECT の写真と並べた比較画像（1920×1080）と、同じ視点のパストレースの正解で判断する。速さの条件は無い。 2026-10-19 親: verify を RelWithDebInfo に揃え、周回の試験を 1 コマンド 10 分に収まる形にした（Debug の撮影は約 11 分、3 周は 928 秒の実測）。 2026-10-23（親）: 順を保つため after を足した（先に走ると後の変更で撮り直しになる）。
 
 ## SCN-THUMBNAILS: ランチャーのカードに各シーンの見本画像を出す
-- status: todo
+- status: done
 - done-when: `Scripts/CaptureLauncherThumbnails.ps1` を作る: 各シーンの見本用の視点（シーンの一覧に書く。既定は `overview`）を `Scripts/CaptureScene.ps1` で `-WorkDir`（`.harness/runs/scene-capture/` の下）へ撮り、640×360 程度に縮めて `Assets/Textures/Launcher/<id>.png` に書く（追跡する）。ランチャーは `Assets/Textures/Launcher/<id>.png` を読み込んでカードに出し、ファイルが無いカードは今の表示のままにする（落ちない。警告は 1 行）。1920×1080 でカードの説明文が右の縁からはみ出さないよう、折り返しの幅からカードの内側の余白を引き、カードが 1 行に収まらないときの並び（折り返しかスクロール）を決める。起動せずに確かめるのは、Debug の Game のビルドと `LauncherMenuTest` が通ること。台本の実行（見本画像の生成）と、ランチャーの撮影を開いて見本画像が正しいカードに出て選択の強調が分かることは、起動を戻した後の `SCN-THUMBNAILS-CHECK` で確かめる（見本画像は各シーンの見た目が決まった後に撮り直す）。
 - verify: `cmake --build build --config Debug --target Game LauncherMenuTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^LauncherMenuTest$" --no-tests=error --output-on-failure --timeout 180`
@@ -3413,7 +3413,7 @@
 - notes: 4 つの撮影は反復の中で 1 回ずつ `-Build -GpuTimingFrames 300` で撮る。混在の負荷を作る引数は UNCERTAIN U12。status は前のとおり、規模の段で todo に上げる。 混在の負荷は SCN-MEGA-MIXED-LOAD の引数で作る。 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。 2026-10-12 親: 計測の見直し（ユーザーの指摘「節目に計測を入れても意味があるのかを考えるべき」。計測ごとに、問い・結果で変わる判断・測らずに分からないかの 3 点を書き、書けないものは置かない。Sol の批評を反映）。SCN-MEGA-MEASURE-CULL・MEASURE-VSM（閾値が 1M の予算から導かれていなかった）と SCN-MEGA-SCALE-300K（1M の内訳で同じことが分かる）を外し、この受入れの診断へまとめた。点光源の影は夜のシーンの受入れ（SCN-ACCEPT）で判断する。 2026-10-14 親: 1 回目の判定は不合格（`Docs/RenderingValidation/SceneLauncherAcceptance.md` の「100万本と混在の負荷の受入れ」。静止は GPU 15.1 ms で合格、rt は TLAS の入力の選び直しと MegaGeometry の表の毎フレームの走査で 37 ms）。ユーザーの指示（100万本は過程で、終わったらシーンの整備へ戻る）で、直す項目（SCN-MEGA-FIX-RT-SELECT〜STRESS-GPU）をシーンの項目の後に置き、この項目はその後で測り直す。
 
 ## PT-NONUNIFORM-SAMPLER: パストレーサーの材質のテクスチャの添字の一様でない印を、標本の関数の中まで届ける
-- status: todo
+- status: done
 - done-when: `PathTracingClosestHit.glsl`（36〜37 行付近）が `materialTextures[nonuniformEXT(i)]` で取った sampler を関数の引数で渡し、呼ばれる側（`SparseResidencySampling.glsl` の `SampleMaterialTextureLod`・`SampleSparseResidentLod`）で標本している。GL_EXT_nonuniform_qualifier の一様でない印は関数の引数を越えて伝わらないので、標本の命令の sampled image に `NonUniform` の装飾が付かない疑いがある（NVIDIA では表に出ないが、装飾に頼る装置では1つの wave の中で別の材質のテクスチャを取り違えうる。VT に限らず PT の全材質のテクスチャ）。コンパイルした rchit を `spirv-dis` して、`OpImageSampleExplicitLod`・`OpImageSparseSampleExplicitLod` が受け取る sampled image に `NonUniform` があるかを確かめ、無ければ添字を関数へ渡して呼ばれる側で `nonuniformEXT` を付ける形にする。CPU のテスト（SPIR-V の逆アセンブルの照合）か、記録で確かめる。 確かめは CPU の試験 `PathTracingNonUniformSamplerSpirvTest`（`Test/Core/Rendering/CMakeLists.txt` の `RHIRayTracingApiContractTest` の束の MEMBER と、同名の add_test）で行う: `VulkanShaderCompiler` で `PathTracingClosestHit.glsl` を含む rchit を SPIR-V にし、材質のテクスチャの配列から取った sampled image を受ける `OpImageSampleExplicitLod`・`OpImageSparseSampleExplicitLod` の operand（とその元の load）に `NonUniform` の装飾があることを見る。足す前に `Docs/Testing.md` の 3 点を書く。`PathTracingMaterialVulkanTest` は起動を戻した後の `PT-NONUNIFORM-SAMPLER-CHECK` で回す。
 - verify: `cmake --build build --config Debug --target RHIRayTracingApiContractTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^PathTracingNonUniformSamplerSpirvTest$" --no-tests=error --output-on-failure --timeout 180`
@@ -3752,7 +3752,7 @@
 - notes: SS-CONTACT-SHADOWの反復（2026-10-02）で見つけた。lowの段で`mean_flip=0.396656647`（上限0.02）・`raw_max=163`・`maximum_channel=19`で落ちる。接触影を切ったシェーダーでも同じ値（`.harness/runs/20261002-084328/check-SS-CONTACT-SHADOW-r3-density-contact-off.txt`）なので、それより前の変更による。ctestには入っていない。
 
 ## TEST-FULL-CTEST-BASELINE: 全体CTestの既存の失敗を直す
-- status: todo
+- status: done
 - after: TEST-ASSERT-NO-DIALOG
 - done-when: 2026-09-25 の全体 CTest で落ちていた試験のうち、今も登録があり実行から外していないもの（`RenderResourcesDomainContractTest`・`ViewportCameraIdRenderPlanTest`・`BoardComponentRoutingTest`・`SkeletalFramePacketSnapshotTest`・`FrameCaptureReadbackHelperTest`・`WorldSyncDifferentialTest`・`CanvasViewRenderTest`）を Debug で回し、今も落ちる・止まるものを `Docs/Testing.md` の扱いで分ける: 製品のコードの不具合（例: GPU デバイスの無い試験で `RenderingCoordinator::GenerateDrawCommands` が `m_Device->GetCapabilities()` を null 参照する）は直す。実装の写し（数・並びの決め打ち。例: `WaitIdleWithoutResultCheck(` の数）の検査は、期待値を書き直さずに `set_tests_properties(... DISABLED TRUE)` で外し、理由を CMake のコメントと `Docs/Testing.md` の「外したもの」に書く。`VolumetricsPassContractTest`・`ComponentDataRegistryTest` は登録が無くなり、`RenderGraphTextureUsageContractTest` は 2026-11-01 に外したので対象外。上の 7 本の ctest が通る（外したものは Not Run）。`M9WorldAcceptanceTest` と全体の CTest（GPU の試験を含む）は、起動を戻した後の `TEST-FULL-CTEST-BASELINE-CHECK` で回し、残った失敗の理由と扱いを記録する。
 - verify: `cmake --build build --config Debug --target RenderResourcesDomainContractTest ViewportCameraIdRenderPlanTest BoardComponentRoutingTest SkeletalFramePacketSnapshotTest FrameCaptureReadbackHelperTest WorldSyncDifferentialTest CanvasViewRenderTest -- /m:1`
@@ -3928,7 +3928,7 @@
 - stop-when: mock/source確認を実GPU合格と扱う、ユーザー指定を変えて別環境へ無断移動する。
 
 ## G2-GR79-IMPORT-POLICY-CONNECTION: 材質設定と出所付き診断を接続する
-- status: todo
+- status: done
 - done-when: material/asset/asset-setの設定を解決し、発光換算の未設定拒否に資産名・材質名・emissiveNitsPerUnitを表示。AI生成profileを明示的に適用し素材単位overrideを保持する。canonical/hash/cacheとJSON/CLIへ接続する。 verify の文章にあった場合（asset-set 単位の指定・素材の上書き・欠落と不正・発光の texture だけ・診断の名前・設定差による cache の失効・旧の非発光と v0 の互換）は、新しい実行ファイルを作らず、上の既存の試験（`MaterialImportPolicyTest`・`GltfMaterialCookV1Test`・`CookCacheDecisionTest` など）の検査として足す（足す前に `Docs/Testing.md` の 3 点を書く）。見た目の確かめを受入れ済みと扱わない。
 - verify: `cmake --build build --config Debug --target CookedMeshTest AssetCook -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^(MaterialImportPolicyTest|MaterialImportSettingsTest|MaterialImportSettingsJsonTest|MaterialImportDocumentTest|GltfMaterialCookV1Test|ImportSettingsHashTest|CookCacheDecisionTest|AssetCookImportSmoke|AssetCookGlbSmoke)$" --no-tests=error --output-on-failure --timeout 180`
@@ -3936,7 +3936,7 @@
 - stop-when: provenanceを拡張子だけで決める、sidecarよりasset-set設定を無言優先、非発光を不必要に拒否、見た目未確認を受入れ済みとする。
 
 ## G2-S6-ASSET-SET: C++一括cookと増分判定を接続する
-- status: todo
+- status: done
 - done-when: AssetCook --asset-setへ一括cookと増分判定を集約。origin/main CookTextureAssetSet.ps1 + Rendering3DTestSilverTextures/Rendering3DTestSilverGltfTexturesに対してcooked/manifestのbyte一致を確認。glTF外部ファイルとsidecarを印に含む。 verify の文章にあった確かめ（単体 CLI の分割前後の比較、旧 texture spec v1 の 2 spec の同値、外部 buffer・画像・sidecar の変更・不在・復帰・破損での再 cook と拒否、失敗時の出力の保持）は、上の既存の試験と `Scripts/VerifyTextureAssetSet.py`・`Scripts/AssetCookCliParity.py` の手順で行い、Windows の実 byte の比較の結果を PROGRESS.md に書く。
 - verify: `cmake --build build --config Debug --target AssetCook CookedMeshTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^(TextureAssetSetSpecTest|TextureAssetSetOutputTest|CookDependencySnapshotTest|CookCacheDecisionTest|CookOutputPackageTest|SingleAssetCookServiceTest|AssetCookTextureSmoke|AssetCookGlbSmoke)$" --no-tests=error --output-on-failure --timeout 180`
@@ -3944,7 +3944,7 @@
 - stop-when: 手元確認用CookAssets.ps1/StartupMaterialsを対象に戻す、PS側へ増分判定を重複実装、Windows実byte比較を未実施で完了とする。
 
 ## G2-MATERIAL-SELECTION-INTEGRATION: 共通照合を設定とslot名へ接続する
-- status: todo
+- status: done
 - after: G2-GR79-IMPORT-POLICY-CONNECTION
 - done-when: GR79 ARM/発光、GR78 材質→SurfaceName、GR32 slot名が同じResolveMaterialSelectionを使う。元catalog/生成slotを明示し、全設定の未一致/二重指定をcookと増分preflight双方で拒否。同名GLBは元での改名推奨を資産名付きで警告する。 verify の文章にあった場合（raw の無名 1 個・Blender の Material_0、primitive の逆順・同名・生成名の衝突、name と index の二重指定、不在、unicode の名前、増分の skip で検証を迂回しないこと、設定値・SurfaceName・slot への実際の到達）は、既存の試験（`MaterialSelectionTest`・`MaterialImportDocumentTest`・`SkeletalMaterialBindingsTest`）の検査として足す（足す前に `Docs/Testing.md` の 3 点を書く）。
 - verify: `cmake --build build --config Debug --target CookedMeshTest AssetCook -- /m:1`
@@ -4369,7 +4369,7 @@
 - from: G2-GR78-SURFACE-CENTROID
 
 ## G2-GR78-SURFACE-CENTROID-CHECK-P1: CookedSkeletalAssetTest の「警告:」の照合を、コンソールのコードページに関わらず通す
-- status: todo
+- status: done
 - done-when: CookedSkeletalAssetTest.cmake.in で AssetCook の出力を受ける execute_process が、出力を UTF-8 として読む(ENCODING UTF-8 を付けるか、台本の頭で CMP0176 を NEW にする)。これにより「警告:」の照合(reduce・cubic・morph の 3 か所)が、コードページ 932 のコンソールでも 65001 のコンソールでも通る。照合の文字列と合否の条件は変えない。
 - verify: `cmake --build build --config Debug --target CookedMeshTest AssetCook -- /m:1`
 - verify: `cmd /c "chcp 932 >nul && ctest --test-dir build -C Debug --output-on-failure --timeout 180 -R CookedSkeletalAssetTest && chcp 65001 >nul && ctest --test-dir build -C Debug --output-on-failure --timeout 180 -R CookedSkeletalAssetTest"`
@@ -4415,3 +4415,42 @@
 - verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-FIX-STRESS-GPU --timing --min-frames 300 --max-gpu-median-ms 16.6 --max-gpu-p95-ms 16.6`
 - paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Assets/Shaders, Game/GameModes/MegaStress, TASKS.md, PROGRESS.md
 - from: SCN-MEGA-FIX-STRESS-GPU
+
+## PT-NONUNIFORM-SAMPLER-CHECK: パストレーサーの材質のテクスチャの添字の一様でない印を、標本の関数の中まで届ける(後回しにしたアプリの起動の確かめ)
+- status: todo
+- check: launch
+- gpu: exclusive
+- done-when: PT-NONUNIFORM-SAMPLER で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、PT-NONUNIFORM-SAMPLER の done-when を満たすことを確かめる。満たさなければ PT-NONUNIFORM-SAMPLER の done-when と paths の範囲で直す。
+- verify: `cmake --build build --config Debug --target PathTracingMaterialVulkanTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^PathTracingMaterialVulkanTest$"`
+- paths: Assets/Shaders/PathTracing, Assets/Shaders/Common, Library/Core/Private/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- from: PT-NONUNIFORM-SAMPLER
+
+## SCN-INTERIOR-SHAFTS-CHECK: 窓から入る光の筋を出す(後回しにしたアプリの起動の確かめ)
+- status: todo
+- check: launch
+- gpu: exclusive
+- done-when: SCN-INTERIOR-SHAFTS で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、SCN-INTERIOR-SHAFTS の done-when を満たすことを確かめる。満たさなければ SCN-INTERIOR-SHAFTS の done-when と paths の範囲で直す。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene interior-light -Configuration RelWithDebInfo -Build -RequireAssets -OutDir .harness/runs/scene-capture/SCN-INTERIOR-SHAFTS`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SCN-INTERIOR-SHAFTS`
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Scripts, TASKS.md, PROGRESS.md
+- from: SCN-INTERIOR-SHAFTS
+
+## TEST-FULL-CTEST-BASELINE-CHECK: 全体CTestの既存の失敗を直す(後回しにしたアプリの起動の確かめ)
+- status: todo
+- check: launch
+- gpu: exclusive
+- done-when: TEST-FULL-CTEST-BASELINE で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、TEST-FULL-CTEST-BASELINE の done-when を満たすことを確かめる。満たさなければ TEST-FULL-CTEST-BASELINE の done-when と paths の範囲で直す。
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 600`
+- paths: Library/Core, Test/Core, Game, Docs/Testing.md, TASKS.md, PROGRESS.md
+- from: TEST-FULL-CTEST-BASELINE
+
+## SCN-THUMBNAILS-CHECK: ランチャーのカードに各シーンの見本画像を出す(後回しにしたアプリの起動の確かめ)
+- status: todo
+- check: launch
+- gpu: exclusive
+- done-when: SCN-THUMBNAILS で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、SCN-THUMBNAILS の done-when を満たすことを確かめる。満たさなければ SCN-THUMBNAILS の done-when と paths の範囲で直す。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureLauncherThumbnails.ps1 -Configuration RelWithDebInfo -WorkDir .harness/runs/scene-capture/SCN-THUMBNAILS/thumbs`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene launcher -Configuration RelWithDebInfo -Build -OutDir .harness/runs/scene-capture/SCN-THUMBNAILS`
+- paths: Game, Scripts, Assets/Textures/Launcher, TASKS.md, PROGRESS.md
+- from: SCN-THUMBNAILS

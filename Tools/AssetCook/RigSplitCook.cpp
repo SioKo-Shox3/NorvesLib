@@ -337,6 +337,14 @@ namespace NorvesLib::Tools::AssetCook
             {
                 return fail("split_material_selector_or_settings");
             }
+            // 保存先(GR81)ができるまで surface を受け取って捨てない。
+            for (const auto& entry : resolved.Materials)
+            {
+                if (entry.bSurfacePresent)
+                {
+                    return fail("surface_requires_GR81");
+                }
+            }
             candidate.DecodeReport = rig.GetData()->DecodeReport;
             candidate.DuplicateMaterialNameGroups = resolved.DuplicateNameGroups;
             if (resolved.DuplicateNameGroups)
