@@ -4464,3 +4464,12 @@
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -L RenderingValidation`
 - paths: Library/Core/Public/Math, Assets/Shaders/PathTracing, Test/Core/Math, Test/Core/Rendering, TASKS.md, PROGRESS.md
 - from: FIX-NORMAL-MATRIX-SCALE
+
+## GAME-GR136-VFX-CHECK: Niagara 相当の VFX システムを実装する(後回しにしたアプリの起動の確かめ)
+- status: todo
+- check: launch
+- gpu: exclusive
+- done-when: GAME-GR136-VFX で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、GAME-GR136-VFX の done-when を満たすことを確かめる。満たさなければ GAME-GR136-VFX の done-when と paths の範囲で直す。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -OutDir .harness/runs/startup-capture/GAME-GR136-VFX`
+- paths: Library/Core/Public/Particle, Library/Core/Private/Particle, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Tools/AssetCook, Test/Core/Rendering, Docs/Plans/GameFeatureRoadmap.md, TASKS.md, PROGRESS.md
+- from: GAME-GR136-VFX
