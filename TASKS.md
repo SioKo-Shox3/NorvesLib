@@ -3430,7 +3430,7 @@
 - notes: 2026-10-06 VTG6-PT-VT-TEXTURES の評価で見つけた（段6の外）。撮影は `.harness/runs/startup-capture/VTG6-PT-VT-TEXTURES*`。
 
 ## TEST-ASSERT-NO-DIALOG: Debug のテストが assert の失敗で対話窓を出して ctest の打ち切りまで止まるのを、共通の仕組みで止める
-- status: todo
+- status: done
 - done-when: `assert(` を使い、`_set_abort_behavior` も `_CRT_ERROR` の報告先の設定もしていないテストの実行ファイル（2026-10-06 の数え方で 158 件、Test/Core/Rendering で 96 件）が、Debug で assert が失敗すると対話窓を出して ctest の打ち切りまで待つ（TEST-SKINNED と同じ止まり方）。テストの実行ファイル全部に効く共通の仕組み（テストの共通のライブラリに静的初期化で `_set_error_mode(_OUT_TO_STDERR)` と `_set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT)` を入れて CMake で全テストへリンクする等）で止める。わざと assert を落とすテストの実行ファイルが、対話窓を出さずにすぐ非 0 で終わることを確かめる。あわせて、`RenderGraphCompileTest` などが副作用を `assert(...)` の中に置いていて NDEBUG の構成（RelWithDebInfo）では初期化ごと消えて 0xC0000005 で落ちる件を記録する（直すのは別）。 わざと assert を落とす実行ファイルとして `TestAssertNoDialogTest` を足し（共通の仕組みをリンクした形で）、ctest には短い TIMEOUT（例 30 秒）と WILL_FAIL を付けて登録し、対話窓を出さずに非 0 ですぐ終わるときだけ通るようにする。足す前に `Docs/Testing.md` の 3 点を書く。
 - verify: `cmake --build build --config Debug --target RenderGraphCompileTest -- /m:1`
 - verify: `cmake --build build --config Debug --target TestAssertNoDialogTest -- /m:1`

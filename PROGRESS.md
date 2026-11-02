@@ -8506,3 +8506,11 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: done-when の予算は「RT と GI を切った構成で 16.6 ms」だが、verify の撮影の -GameArgs に RT と GI を切る引数は無く、そのような起動引数も今は無い（RT・GI 入りで撮る）。10-14 の内訳から見積もると、TLAS の直し（LightingPass 約 4 ms）と一覧のメッシュの削減の後も、バナナだけの MegaGeometry（静止 168 万クラスタ）・LightingPass・VSM の合計で 16.6 ms を超える見込みで、RT・GI 入りの判定は fail になりうる
 - Notes: 要起票: verify の撮影を RT と GI を切った構成で撮る起動引数（と verify の -GameArgs）が無い。予算の構成で判定できるようにするかを決める
 - U1 テストの全実行ファイルに assert の対話窓を止める仕組みを付け、わざと落とすテストで確かめる: 着地(直し 1 回)
+
+## 2026-11-02 TEST-ASSERT-NO-DIALOG（run 20261102-092732 の反復 1）
+
+- Done: `Test/TestSupport/NorvesTestNoDialog.cpp`（OBJECT ライブラリ）の静的初期化（`#pragma init_seg(lib)`）で `_set_error_mode(_OUT_TO_STDERR)`・`_set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT)`・Debug の `_CRT_ASSERT`/`_CRT_ERROR` の報告先を stderr にし、`Test/CMakeLists.txt` の末尾で `Test/` 以下の全 EXECUTABLE ターゲットへ再帰で一括リンクする（今の構成で 126 個。Bridge SDK の無い構成なので `Test/Game` は含まない）。わざと assert を落とす `TestAssertNoDialogTest`（Core をリンクしない、`#undef NDEBUG`）を WILL_FAIL・TIMEOUT 30 で登録。`Docs/Testing.md` に 3 点と、`RenderGraphCompileTest.cpp` の assert の中の副作用（344 行）が NDEBUG で消えて 0xC0000005 で落ちる件を記録した
+- 検証: `RenderGraphCompileTest`・`TestAssertNoDialogTest` の Debug ビルドは終了コード 0（C4073 も無し）。`ctest -R "^TestAssertNoDialogTest$"` は Passed 0.01 秒。実行ファイルを直接起動すると stderr に `Assertion failed` が出て終了コード 3 で即座に戻る（`.harness/runs/20261102-092732/verify-TEST-ASSERT-NO-DIALOG-U1.txt`）
+- Next: 既存のテストに個別に入っている `_set_abort_behavior` などは重なっても害が無いので残した。その周りを触るときに消してよい
+- Notes: `init_seg(lib)` と同じか前の領域で走る初期化（CRT・ほかのライブラリの lib 領域）で assert が落ちた場合は止められない
+- Notes: 要起票: `RenderGraphCompileTest.cpp` などで副作用のある呼び出しを `assert(...)` の中に置いており、RelWithDebInfo では初期化ごと消えて 0xC0000005 で落ちる（直すか試験を消すか）
