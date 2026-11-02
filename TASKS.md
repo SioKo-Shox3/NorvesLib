@@ -4615,13 +4615,14 @@
 - stop-when: 自分でプッシュする、workflow を何度も起動し直す、main を対象に起動する。
 
 ## FIX-NORMAL-MATRIX-SCALE-CHECK-P1: GPU スキニングの法線行列の退化判定を、CPU と同じ尺度不変の規則にする
-- status: todo
+- status: done
 - done-when: `Assets/Shaders/skinning_compute.comp` の `NormalMatrixOf` を、`MatrixUtils::CreateNormalMatrix`(`Library/Core/Public/Math/MatrixUtils.h` 774 行〜)と同じ規則にする。規則: `|det| < EPSILON × 3 本の軸の長さの積` か、積が 0 または有限でないときは単位行列を返す。軸は、CPU の行ベクトル規約の行にあたるものを、GLSL の列優先の mat3 に正しく対応させて取る。せん断を含む行列でも CPU と同じ判定になるよう、行と列を取り違えない。旧の絶対の閾値 `SingularDeterminant` は消す。`ComputeSkinningVulkanTest.cpp` の `TransformNormal` の写しも同じ規則にする。`ComputeSkinningVulkanTest` には、一様スケール 0.001〜0.005 で回転した骨の頂点の法線が、CPU のスキニング(`SkeletalAnimationSampler`)の法線と許容の範囲で一致し、単位行列に落ちないことの検査を足す。この GPU の試験の実行は、起動を戻した後に回す。
 - verify: `cmake --build build --config Debug --target Game RHITextureUpdateVulkanTest MathGeometryTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^(MatrixAbstractionTest|SkinnedRenderPathContractTest)$" --no-tests=error --output-on-failure --timeout 180`
 - verify: `ctest --test-dir build -C Debug -R "^ComputeSkinningVulkanTest$" --no-tests=error --output-on-failure --timeout 600`
 - paths: Assets/Shaders/skinning_compute.comp, Test/Core/Rendering/ComputeSkinningVulkanTest.cpp, TASKS.md, PROGRESS.md
 - from: FIX-NORMAL-MATRIX-SCALE-CHECK
+- after: G2-GR32-GPU-ACCEPTANCE-P1
 
 ## GAME-GR131-VFX-P1: ワールドの空間の粒子の板を 3D の view へ渡し、当たりのエフェクトなどを画面に出す
 - status: done
