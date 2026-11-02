@@ -90,6 +90,14 @@ namespace NorvesLib::Core::Component
         {
             return m_RootMotionFrame;
         }
+        // グラフ評価後（modifier 適用前）の姿勢を返し、作業配列の再確保を試験・診断する読み取り専用の口。
+        const Animation::LocalPose& GetLocalPose() const { return m_Instance.GetLocalPose(); }
+        // modifier 適用後に渡す姿勢を返し、作業配列の再確保を試験・診断する読み取り専用の口。
+        const Animation::LocalPose& GetFinalPose() const { return m_FinalPose; }
+        // modifier 用の作業領域を返し、作業配列の再確保を試験・診断する読み取り専用の口。
+        const Animation::PoseScratch& GetModifierScratch() const { return m_ModifierScratch; }
+        // modifier 用のモデル行列を返し、作業配列の再確保を試験・診断する読み取り専用の口。
+        const Container::VariableArray<Math::Matrix4x4>& GetModifierModelMatrices() const { return m_ModifierModels; }
         // 取り逃した古い累積分は破棄し、指定した最新Updateだけを取得する。
         bool TryConsumeRootMotionFrame(uint64_t serial, Animation::RootMotionDelta& out);
         void SetEvaluationEnabled(bool enabled)

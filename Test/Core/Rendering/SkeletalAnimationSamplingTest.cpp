@@ -731,6 +731,7 @@ void TestAnimPoseOps();
 void TestAnimGraphRuntime();
 void TestAnimEventProperties();
 void TestRootMotionMath();
+void TestAnimatorIntegration();
 void TestSocketOracle();
 
 int main(int argc, char** argv)
@@ -741,6 +742,7 @@ int main(int argc, char** argv)
     TestAnimGraphRuntime();
     TestAnimEventProperties();
     TestRootMotionMath();
+    TestAnimatorIntegration();
     TestSocketOracle();
     if (argc != 1 && (argc != 3 || std::strcmp(argv[1], "--capture-pose-snapshot") != 0))
     {
