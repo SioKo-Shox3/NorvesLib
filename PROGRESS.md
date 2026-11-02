@@ -8526,3 +8526,10 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 検証: Debug の CookedMeshTest のビルドは終了 0、Debug の ctest 7/7 合格（RigSplitCookTest を含む、TEMP は既定のまま）、Release のビルドは終了 0、Release の ctest 3/3 合格、`RigRootFrameV2Oracle.py --self-test` 13/13 OK。Debug・Release の三役の実 bytes（Bank 1088 byte）と 2 scheduler 分の姿勢 6 ファイルを oracle に渡した照合も終了 0（`.harness/runs/20261102-094113/G2-GR82-B4-U3-final-verify.txt`）
 - Next: 実犬・DCC・GPU の受入れはこの項目の外。旧 71 の全体・固定 Sampler の基準比較・CLI・profile1 Bank の 992 byte の独立照合は、この verify の範囲（CookedSkeletonV1Test・CookedSkinMeshV1Test・RigSplitCookTest・SkeletalSplitRuntimeTest）を超えては回していない
 - Notes: 要起票: 製品の cook の管理ストアが RuntimeRoot の祖先からボリュームの根までを列挙し（`Tools/AssetCook/CookManagedStoreObservation.cpp` 93 行付近）、項目の多い祖先（利用者の TEMP など）があると entry_limit で失敗する
+
+## 2026-11-02 G2-GR82-B4-STATIC-ROOT-FRAME128（run 20261102-094113 の反復 2、完了）
+
+- Done: 反復 1 の後の再検証で Release の CookedMeshTest のビルドが 10 分の上限を超えた。原因は、確かめを単位ごとの作業ツリーでだけ回しており、この作業ツリーの build の Release が古いまま全量のコンパイルになったこと。実装・試験・verify は変えず、この作業ツリーで verify を順に回して build を最新にした
+- 検証: Release のビルド 終了 0（初回 478 秒、2 回目 3 秒）、Debug のビルド 終了 0（3 秒）、Debug の ctest 7/7 合格（44 秒）、Release の ctest 3/3 合格、`RigRootFrameV2Oracle.py --self-test` 13 件 OK（`.harness/runs/20261102-094113/verify-*.txt`）
+- Next: 反復 1 の Next のとおり（実犬・DCC・GPU の受入れはこの項目の外）
+- Notes: 単位の作業ツリーで verify を通しても、ランナーの再検証は本体の作業ツリーの build で回る。重いビルドを含む項目は、仕上げの前に本体の作業ツリーで verify を 1 回回しておく
