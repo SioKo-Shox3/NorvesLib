@@ -8628,3 +8628,14 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Done: 反復 2 の再検証の時間切れを直した。原因は実装でなく、この枠の build がブリッジ SDK 入りで構成し直した直後で Game の全体を初めて組んだため（単位は別の作業ツリーで組んでいた）。この枠で一度組み終えて最新にし、verify の 1・2 行目を回し直した: `cmake --build build --config Debug --target Game LauncherMenuTest -- /m:1` は BUILD_EXIT=0（4 秒、Game.exe と LauncherMenuTest.exe とも最新）、`ctest ... -R "^LauncherMenuTest$"` は `1/1 Test #493: LauncherMenuTest ... Passed 0.02 sec`・CTEST_EXIT=0
 - Next: 起動の確かめは後回し（反復 2 の Next のとおり SCN-THUMBNAILS-CHECK で verify の 3・4 行目と撮影の確認）。評価者への申し送り（危険地帯・確かめどころ 4 点）は反復 2 の記録のまま
 - Notes: 構成し直した枠で Game を一から組むと /m:1 で 10 分を超える。verify は増分のビルドを前提にしている
+
+- U1 CreateNormalMatrix の特異判定を尺度に対する比にし、小スケールの回転の検査を足す: 着地(直し 0 回)
+- U2 PT の閉包命中から退化規則の写しを外し、R1 室内の平面の頂点法線を幾何に合わせる: 着地(直し 0 回)
+
+## 2026-11-02 FIX-NORMAL-MATRIX-SCALE（run 20261102-103124 の反復 1）
+- Done: `MatrixUtils::CreateNormalMatrix` の特異判定を、上 3x3 の行の長さの積に対する比（`|det| < EPSILON * |r0||r1||r2|`、アダマールの上界に対する比で尺度不変）にした。行の長さの積が 0 か非有限なら単位行列。`MatrixAbstractionTest` に一様スケール 0.001・0.0025・0.005 で Y 軸 45° 回転した物体の法線行列が単位行列に落ちず、スケール 1 と同じ向きに法線を移す検査を足した（旧判定に一時的に戻すとこの検査で落ちることを確かめた）（4f28a538）。
+- Done: PT の閉包命中の法線行列を常に `transpose(mat3(gl_WorldToObjectEXT))` にし、ラスタの旧規則の写し（`RASTER_NORMAL_MATRIX_DETERMINANT_EPSILON`）を外した。R1 室内の平面（`BuildR1PlaneMesh`）の頂点法線を +Z から反転した巻き順に合う局所 -Y にし、`ValidateR1PlaneMeshContract` の期待値も合わせた。エンジンの関数で Euler (90°,0,0)・スケール 0.0025 と 0.0005 の局所 -Y はワールド (0, -6e-8, 1) に移り、ワールドのシェーディング法線は前と同じ +Z（8152fe17）。
+- Done: verify のアプリを起動しない 2 行を回した: `cmake --build build --config Debug --target Game MathGeometryTest MeshBatcherInstancingTest -- /m:1` exit 0、ctest `MatrixAbstractionTest`・`InstanceDataFlattenTest` 2/2 Passed。`RenderingValidationFixtureSupport` のビルド exit 0、閉包命中シェーダーは通常版・sparse 版とも glslangValidator（Vulkan 1.2）でコンパイルが通る（`.harness/runs/20261102-103124/FIX-NORMAL-MATRIX-SCALE-U2-verify.txt`）。
+- Next: 起動の確かめは後回し。`FIX-NORMAL-MATRIX-SCALE-CHECK` で `cmake --build build --config Debug --target Game RenderingHdrSceneCaptureTest PathTracingRasterParityVulkanTest -- /m:1` と `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -L RenderingValidation` を回し、R1 の数値検証・Indoor/Outdoor golden・`PathTracingRasterParityVulkanTest` が変わらず通ることを確かめる（変わるなら基準の更新を提案して止まる）。ワールド法線の Y 成分 -6e-8 の差は float の丸めの範囲。
+- Notes: 要起票: GPU スキニング `Assets/Shaders/skinning_compute.comp` の `SingularDeterminant` と `ComputeSkinningVulkanTest.cpp` の `TransformNormal` の写しは旧の絶対判定のまま（範囲外）。CPU のスキニング（`SkeletalAnimationSampler`）と、一様スケール約 0.005 未満の骨で法線が食い違う。
+- Notes: 要起票: `RenderingHdrSceneCaptureTest.cpp` の 5018 行（平面の符号化ワールド法線 (0.5,0.5,1)）・5936 行（N·L=N·V=1）はワールド +Z を前提にしており、今回のワールド法線は変わらないので触っていない。CHECK で落ちたら見る。
