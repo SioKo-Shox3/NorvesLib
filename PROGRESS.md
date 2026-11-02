@@ -8707,3 +8707,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 MeshRenderer のモジュールとメッシュのインスタンスの記録: 着地(直し 0 回)
 - U2 溶けの式の include と試験用のシェーダー: 着地(直し 0 回)
 - U3 MeshParticleInstanceTest と試験の理由: 着地(直し 1 回)
+- U4 MeshParticleDissolveVulkanTest(ビルドまで。起動しない): 着地(直し 0 回)
