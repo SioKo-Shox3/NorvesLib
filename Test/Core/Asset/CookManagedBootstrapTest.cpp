@@ -411,9 +411,21 @@ namespace BootstrapTest
         command.push_back(0);
         STARTUPINFOW startup{};
         startup.cb = sizeof(startup);
+        // 強制終了する子の理由を親の標準エラーへ渡す。
+        HANDLE childError = nullptr;
+        const HANDLE parentError = GetStdHandle(STD_ERROR_HANDLE);
+        CHECK(parentError && parentError != INVALID_HANDLE_VALUE);
+        CHECK(DuplicateHandle(GetCurrentProcess(), parentError, GetCurrentProcess(), &childError, 0, TRUE,
+                              DUPLICATE_SAME_ACCESS));
+        startup.dwFlags = STARTF_USESTDHANDLES;
+        startup.hStdInput = childError;
+        startup.hStdOutput = childError;
+        startup.hStdError = childError;
         PROCESS_INFORMATION process{};
-        CHECK(CreateProcessW(exe, command.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &startup,
-                             &process));
+        const BOOL bStarted = CreateProcessW(exe, command.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr,
+                                             nullptr, &startup, &process);
+        CHECK(CloseHandle(childError));
+        CHECK(bStarted);
         CHECK(CloseHandle(process.hThread));
         const DWORD wait = WaitForSingleObject(process.hProcess, 60000);
         if (wait != WAIT_OBJECT_0)
