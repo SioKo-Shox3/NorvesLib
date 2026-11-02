@@ -1,9 +1,11 @@
 ﻿// グラフ経由のイベント配送で、刻み・境界・閾値・溢れの契約を確かめる。
 #include "Animation/AnimGraphInstance.h"
+#include "Animation/MotionAnalysis.h"
 #include "Animation/SkeletonResource.h"
 #include "Logging/Logger.h"
 #include "Object/ResourceRegistry.h"
 #include "Resource/SkinnedMeshResource.h"
+#include "Text/JsonDocument.h"
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -376,6 +378,220 @@ namespace
         Advance(instance, .125f);
         CheckPairs(events);
     }
+    void TestMetadataLoadingProperties()
+    {
+        const A::ClipMetadata empty;
+        A::ClipMetadata parsed, overridden;
+        A::ClipMetadataReport report;
+        const C::String overflow = R"({"events":[{"name":"overflow","t":1e400}]})";
+        JsonDocument document;
+        const bool bJsonAccepted = JsonDocument::TryParse(overflow, document);
+        if (bJsonAccepted)
+        {
+            EVENT_CHECK(!std::isfinite(document.GetRoot().FindMember("events").GetArrayElement(0)
+                                           .FindMember("t").AsNumber()));
+        }
+        std::puts(bJsonAccepted ? "1e400: JSON解析後のmetadata数値検査で拒否"
+                                : "1e400: JsonDocumentの数値解析で拒否");
+        const char* rejected[] = {
+            R"({"events":[{"name":"late","t":0.75},{"name":"early","t":0.25}]})",
+            R"({"events":[{"name":"","t":0.25}]})",
+            overflow.c_str()
+        };
+        const A::ClipMetadataError errors[] = {
+            A::ClipMetadataError::InvalidTime, A::ClipMetadataError::InvalidName,
+            bJsonAccepted ? A::ClipMetadataError::InvalidTime : A::ClipMetadataError::InvalidJson
+        };
+        for (unsigned i = 0; i < 3; ++i)
+        {
+            // extrasと実行時sidecarの入口で同じ不正データを拒否する。
+            EVENT_CHECK(!A::ParseClipMetadata(C::String(rejected[i]), 1, false, parsed, report));
+            EVENT_CHECK(report.Error == errors[i]);
+            EVENT_CHECK(!A::ApplyClipMetadataOverride(empty, C::String(rejected[i]), 1, overridden, report));
+            EVENT_CHECK(report.Error == errors[i]);
+        }
+
+        const C::String unknown = R"({"futureTop":true,"events":[{"name":"step","t":0.25,"futureEvent":1}],"markers":[{"name":"plant","t":0.125,"futureMarker":1}],"rootMotion":{"mode":"extract","futureRoot":1}})";
+        struct MetadataWarningSink final : L::ILogSink
+        {
+            unsigned Warnings = 0;
+            void OnLog(const L::LogEntry& entry) override
+            {
+                if (entry.level == L::LogLevel::Warning && entry.category == C::String("Animation"))
+                {
+                    ++Warnings;
+                }
+            }
+        };
+        auto& logger = L::Logger::GetInstance();
+        const auto savedConfig = logger.GetConfig();
+        auto config = savedConfig;
+        config.bAsyncLogging = false;
+        config.minLevel = L::LogLevel::Warning;
+        config.outputType = L::LogOutput::None;
+        logger.UpdateConfig(config);
+        MetadataWarningSink sink;
+        logger.AddSink(&sink);
+        EVENT_CHECK(A::ParseClipMetadata(unknown, 1, false, parsed, report));
+        EVENT_CHECK(sink.Warnings == 0);
+        EVENT_CHECK(report.Error == A::ClipMetadataError::None && report.UnknownKeys == 0);
+        EVENT_CHECK(A::ApplyClipMetadataOverride(empty, unknown, 1, overridden, report));
+        logger.RemoveSink(&sink);
+        logger.UpdateConfig(savedConfig);
+#if NORVES_ENABLE_LOGGING
+        EVENT_CHECK(sink.Warnings > 0);
+#endif
+        EVENT_CHECK(report.Error == A::ClipMetadataError::None && report.UnknownKeys == 4);
+        EVENT_CHECK(A::SameClipMetadata(parsed, overridden));
+
+        const C::String complete = R"({"version":1,"events":[{"name":"step","t":0.125,"value":0.5,"intValue":2},{"name":"plant","t":0.25,"end":0.625,"minWeight":0.5}],"markers":[{"name":"left","t":0},{"name":"right","t":0.5}],"rootMotion":{"mode":"extract","joint":0,"x":true,"z":false,"yaw":true,"nominalSpeed":2},"loop":{"start":0.125,"end":0.875},"groundOffset":0.125})";
+        EVENT_CHECK(A::ParseClipMetadata(complete, 1, false, parsed, report));
+        EVENT_CHECK(report.Error == A::ClipMetadataError::None && report.UnknownKeys == 0);
+        EVENT_CHECK(A::ApplyClipMetadataOverride(empty, complete, 1, overridden, report));
+        EVENT_CHECK(report.Error == A::ClipMetadataError::None && report.UnknownKeys == 0);
+        EVENT_CHECK(parsed.Events.size() == 2 && parsed.Events[0].EndTime < 0 &&
+                    parsed.Events[1].EndTime == .625f && parsed.Markers.size() == 2 &&
+                    parsed.Root.Mode == A::RootMotionMode::Extract && parsed.Root.Joint == 0 &&
+                    !parsed.Root.bZ && parsed.Root.NominalSpeed == 2);
+        EVENT_CHECK(A::SameClipMetadata(parsed, overridden));
+    }
+
+    void TestRootMotionProperties()
+    {
+        EventFixture f;
+        auto clip = f.AClip->GetClip();
+        clip.Channels[0].Samples = {{0, {2, 1, -3, 0}}, {1, {6, 3, 3, 0}}};
+        S::SkeletalAnimationChannel rotation;
+        rotation.JointIndex = 0;
+        rotation.Path = S::SkeletalAnimationPath::Rotation;
+        rotation.Samples = {{0, {0, 0, 0, 1}},
+                            {1, {0, float(std::sin(.4)), 0, float(std::cos(.4))}}};
+        clip.Channels.push_back(std::move(rotation));
+        f.AClip->SetClip(std::move(clip));
+        f.Metadata(*f.AClip, C::String(R"({"rootMotion":{"mode":"inPlace"}})"));
+        auto graph = f.Graph(SingleGraph);
+        A::AnimGraphInstance inPlace;
+        EVENT_CHECK(inPlace.Initialize(*graph, *f.Skeleton, *f.Mesh, M::Matrix4x4::Identity));
+        for (unsigned frame = 1; frame <= 3; ++frame)
+        {
+            EVENT_CHECK(inPlace.Update(.25f) && inPlace.Evaluate());
+            const auto& root = inPlace.GetLocalPose()[0].Translation;
+            EVENT_CHECK(std::fabs(root.x - 2) < 1e-5f && std::fabs(root.z + 3) < 1e-5f);
+            EVENT_CHECK(std::fabs(root.y - (1 + .5f * frame)) < 1e-5f);
+            const auto delta = inPlace.ConsumeRootMotion();
+            EVENT_CHECK(delta.X == 0 && delta.Z == 0 && delta.Yaw == 0);
+        }
+
+        // 各曲線はX=vx*t、Z=vz*t、Yaw=turn*t。速度と向きの両方を違える。
+        const double vx[] = {2, -1}, vz[] = {1, 3}, turn[] = {.8, -.6};
+        for (unsigned i = 0; i < 2; ++i)
+        {
+            auto& resource = i == 0 ? *f.AClip : *f.BClip;
+            auto curve = resource.GetClip();
+            curve.Channels.clear();
+            S::SkeletalAnimationChannel stationary;
+            stationary.JointIndex = 0;
+            stationary.Path = S::SkeletalAnimationPath::Translation;
+            stationary.Samples = {{0, {0, 0, 0, 0}}, {1, {0, 0, 0, 0}}};
+            curve.Channels.push_back(std::move(stationary));
+            curve.RootMotionJoint = 0;
+            curve.RootMotion = {{0, 0, 0, 0}, {1, vx[i], vz[i], turn[i]}};
+            resource.SetClip(std::move(curve));
+            f.Metadata(resource, C::String(R"({"rootMotion":{"mode":"extract"}})"));
+        }
+        graph = f.Graph(
+            R"({"version":1,"params":[{"name":"blend","type":"float","value":0.5}],"nodes":[{"id":"a","type":"clip","clip":"a","loop":false},{"id":"b","type":"clip","clip":"b","loop":false},{"id":"mix","type":"blend2","children":["a","b"],"weight":"blend"}],"root":"mix"})");
+        for (float weight : {.25f, .7f})
+        {
+            A::AnimGraphInstance blended;
+            EVENT_CHECK(blended.Initialize(*graph, *f.Skeleton, *f.Mesh, M::Matrix4x4::Identity));
+            EVENT_CHECK(blended.Parameters().SetFloat(0, weight));
+            double previous = 0;
+            for (float dt : {.25f, .375f, .25f})
+            {
+                double expectedX = 0, expectedZ = 0, expectedYaw = 0;
+                for (unsigned i = 0; i < 2; ++i)
+                {
+                    // 始点の向きで逆回転した曲線差分を、成分ごとに線形加重する。
+                    // 製品の差分・合成・ブレンド関数は期待値の計算に使わない。
+                    const double c = std::cos(turn[i] * previous), s = std::sin(turn[i] * previous);
+                    const double dx = vx[i] * dt, dz = vz[i] * dt;
+                    const double w = i == 0 ? 1 - double(weight) : double(weight);
+                    expectedX += w * (c * dx - s * dz);
+                    expectedZ += w * (s * dx + c * dz);
+                    expectedYaw += w * turn[i] * dt;
+                }
+                EVENT_CHECK(blended.Update(dt));
+                const auto last = blended.GetLastRootMotionDelta();
+                const auto consumed = blended.ConsumeRootMotion();
+                for (const auto& actual : {last, consumed})
+                {
+                    EVENT_CHECK(std::fabs(actual.X - expectedX) < 1e-6 &&
+                                std::fabs(actual.Z - expectedZ) < 1e-6 &&
+                                std::fabs(actual.Yaw - expectedYaw) < 1e-6);
+                }
+                previous += dt;
+            }
+        }
+    }
+
+    void TestNoisyFootContactProperties()
+    {
+        EventFixture f;
+        auto joints = f.Skeleton->GetJoints();
+        joints.push_back(joints[0]);
+        joints[1].Name = "Foot";
+        joints[1].ParentIndex = 0;
+        f.Skeleton->SetJoints(std::move(joints));
+        auto clip = f.AClip->GetClip();
+        clip.Channels.clear();
+        S::SkeletalAnimationChannel foot;
+        foot.JointIndex = 1;
+        foot.Path = S::SkeletalAnimationPath::Translation;
+        A::FootContactOptions options;
+        options.SampleRate = 60;
+        const double noiseAmplitude = options.VerticalSpeedThreshold / (4 * options.SampleRate);
+        EVENT_CHECK(2 * noiseAmplitude * options.SampleRate <= options.VerticalSpeedThreshold / 2 &&
+                    noiseAmplitude < options.HeightThreshold / 10);
+        std::mt19937 random(0x464f4f54);
+        for (unsigned frame = 0; frame <= 60; ++frame)
+        {
+            // 真の接地は[12,24]と[36,48]コマ。間は明確な速度で上げ下げする。
+            float height = .1f;
+            if (frame < 12)
+            {
+                height += .2f * float(12 - frame) / 12;
+            }
+            else if (frame > 24 && frame < 36)
+            {
+                height += .2f * float(frame <= 30 ? frame - 24 : 36 - frame) / 6;
+            }
+            else if (frame > 48)
+            {
+                height += .2f * float(frame - 48) / 12;
+            }
+            const float noise = float(noiseAmplitude * float(int(random() % 2001) - 1000) / 1000);
+            foot.Samples.push_back({float(frame) / 60, {0, height + noise, 0, 0}});
+        }
+        clip.Channels.push_back(std::move(foot));
+        f.AClip->SetClip(std::move(clip));
+        A::SkeletalPoseContext context;
+        EVENT_CHECK(A::SkeletalPoseBuilder::Prepare(*f.Skeleton, *f.AClip, *f.Mesh,
+                                                   M::Matrix4x4::Identity, context));
+        const A::FootContactSpec spec{1, Identity("Foot.Contact")};
+        A::FootContactReport contact;
+        EVENT_CHECK(A::AnalyzeFootContacts(context, *f.AClip, {&spec, 1}, options, contact));
+        EVENT_CHECK(contact.Samples == 61 && contact.Windows.size() == 2);
+        const unsigned starts[] = {12, 36}, ends[] = {24, 48};
+        for (unsigned i = 0; i < 2; ++i)
+        {
+            // 時刻のfloat丸めだけを足し、許容差は解析の1コマに固定する。
+            const double tolerance = 1 / options.SampleRate + 1e-7;
+            EVENT_CHECK(contact.Windows[i].Name == spec.Name &&
+                        std::fabs(contact.Windows[i].Start - starts[i] / options.SampleRate) <= tolerance &&
+                        std::fabs(contact.Windows[i].End - ends[i] / options.SampleRate) <= tolerance);
+        }
+    }
 } // 無名名前空間
 
 void TestAnimEventProperties()
@@ -384,5 +600,8 @@ void TestAnimEventProperties()
     TestTraversalBoundaries();
     TestWeightAndInterruption();
     TestDeliveryOverflow();
+    TestMetadataLoadingProperties();
+    TestRootMotionProperties();
+    TestNoisyFootContactProperties();
     std::puts("AnimEventPropertyTest PASS");
 }
