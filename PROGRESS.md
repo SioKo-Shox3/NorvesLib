@@ -8715,3 +8715,9 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U4 再生（VFX へ流す）・既定の火花と衝撃・ParticleSystem への組み込み: 着地(直し 0 回)
 - U5 再生の確かめを試験に足し、タスクの verify を通す: 着地(直し 0 回)
 - U6 既定の火花と衝撃が組めていない（初速の箱の設定の順）を直す: 着地(直し 0 回)
+- Done: 起動せずに確かめる完了の条件を `HitEffectEmissionTest`（CPU の試験。足す理由の 3 点は `Docs/Testing.md`）で確かめた。当たり 1 回で要求がちょうど 1 つ積まれ、位置は完全一致・法線は 1e-6 以内で当たりの値と一致する。`Metal`・`Wood` は表のエフェクト、`Glass`・空・`metal`（大文字小文字違い）は既定の 1 種類。NaN の位置・長さ 0 と無限大の法線は積まない。再生は当たりの位置から法線の側（法線 (1,0,0) の当たりで速度の法線成分 > 0.9）へ粒を出し、既定の表の火花（`Metal`）と衝撃（既定）の粒が出る。`cmake --build build --config Debug --target Game HitEffectEmissionTest -- /m:1` 終了コード 0、`ctest -R "^HitEffectEmissionTest$"` Passed（`.harness/runs/20261102-145118/verify-GAME-GR131-VFX-final.txt`。前半の失敗は直す前の形で検査 6 が落ちることを確かめた分）
+- Done: エンジンの `ParticleSystem` が `HitEffectEmitter` を持ち（`GetParticleSystem().GetHitEffects().SubmitHit(...)`）、刻みで VFX の前に要求を流す。当たりが無ければ VFX のインスタンスは作られず、Rendering3DTest の橙の粒は前のまま。`VfxEffectSystem::RaiseOrientedEvent` を足し、向きの無い既存のイベントは変えていない（`VfxEffectSystemTest`・`ParticleSystemTest` Passed）
+- Next: 起動の確かめは後回し（`GAME-GR131-VFX-CHECK`）。当たりを出す場面（GR16 の当たりか、確かめ用の起動引数）を用意し、火花と衝撃の見た目を撮って確かめる。ただし下の Notes のとおり、今はワールドの空間の板が描かれないので、その経路ができるまで画面には出ない
+- Notes: 完了を宣言しない範囲は着手時の記録のとおり。加えて、粒子の板は `ApplicationProcessor` からキャンバスの view（画面の空間）にだけ渡り、ワールドの空間の板は描かれない。ロードマップの GR131 の節の境界に書いた
+- Notes: 要起票: ワールドの空間の粒子の板（`BoardSpace::WorldSpace` の `BoardProxy`）を 3D の view へ渡す経路が無い（`ApplicationProcessor.cpp` の粒子の板の受け渡しはキャンバスの view だけ）。当たりのエフェクトなどワールドの空間の VFX が画面に出ない
+- Notes: スキーマの初速の箱は `Min` を `Max` より先に入れると既定の `Max`（0）を超えて拒否される。VFX をコードで組むときは上限を先に入れる
