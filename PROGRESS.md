@@ -8654,3 +8654,32 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: 起動の確かめは後回し。`FIX-NORMAL-MATRIX-SCALE-CHECK` で `cmake --build build --config Debug --target Game RenderingHdrSceneCaptureTest PathTracingRasterParityVulkanTest -- /m:1` と `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -L RenderingValidation` を回し、R1 の数値検証・Indoor/Outdoor golden・`PathTracingRasterParityVulkanTest` が変わらず通ることを確かめる（変わるなら基準の更新を提案して止まる）。ワールド法線の Y 成分 -6e-8 の差は float の丸めの範囲。
 - Notes: 要起票: GPU スキニング `Assets/Shaders/skinning_compute.comp` の `SingularDeterminant` と `ComputeSkinningVulkanTest.cpp` の `TransformNormal` の写しは旧の絶対判定のまま（範囲外）。CPU のスキニング（`SkeletalAnimationSampler`）と、一様スケール約 0.005 未満の骨で法線が食い違う。
 - Notes: 要起票: `RenderingHdrSceneCaptureTest.cpp` の 5018 行（平面の符号化ワールド法線 (0.5,0.5,1)）・5936 行（N·L=N·V=1）はワールド +Z を前提にしており、今回のワールド法線は変わらないので触っていない。CHECK で落ちたら見る。
+
+- U1 スキンの submesh 範囲の塊を 2 つのパスで共有する: 着地(直し 0 回)
+- U2 骨付きパネルに 2 submesh・2 材質 slot の変種を足す: 着地(直し 2 回)
+- U3 撮影スクリプトに -SkinnedProbeMaterials 2 の判定を足す: 着地(直し 1 回)
+- U6 旧 NVSKEL 0.1 を 0.2 から作る oracle: 着地(直し 1 回)
+- U7 Test-M9World.ps1 -LegacyNvskelCompare と固定姿勢の GBuffer 撮影: 着地(直し 0 回)
+- U5 受入れの記録を書き、Debug のビルドと CPU の試験を通す: 着地(直し 0 回)
+### G2-GR32-GPU-ACCEPTANCE 多材質と旧描画互換の実装と CPU の確かめ（2026-11-02、run 20261102-075818 の反復 1）
+- Done: (1) スキンの submesh の範囲を塊に分ける規則を `MeshIndexChunks.h` の `BuildSkinnedMeshIndexChunks` にまとめ、VSM とビジビリティバッファの ID のラスタ（`VisibilityRasterPass::CollectSkinnedChunks`）が同じ規則で使う。前は ID のラスタが submesh ごとにメッシュ全体をその材質で描いていた。旧の空表は登録時の塊のまま。`SkinnedSubmeshDrawContractTest` に全体・部分・3 の倍数でない・はみ出し（4G 付近を含む）の検査を足した。(2) `--startup-skinned-probe-materials=2` で骨付きパネルを左右 2 submesh・2 slot にし、姿勢を 0 に止め、各半分の中心の画面の位置と期待の線形の色を `STARTUP_SKINNED_PROBE_MATERIAL_SAMPLE` に出す。スキンの描画は材質の基本色を使わない（`skinned_gbuffer.vert`・`VisObjectColor` で 1）ので、色は 4×4 の単色の RGBA8_UNORM のアルベドのテクスチャで持たせた。`CaptureStartupScene.ps1 -SkinnedProbeMaterials 2` は `--capture-aov` の `.aov.albedo.pfm` をその位置で読み、許容 0.03 で判定する。(3) `Test/Tools/NvskelLegacyV01Oracle.py` が AssetCook の 0.2 の包みから表と extension を落とした 0.1 の包みと manifest を作り、`Test-M9World.ps1 -LegacyNvskelCompare -EvidenceDir` が `--m9-world-compare`（止めた姿勢・音なし）を `--capture-aov --capture-deterministic` で 0.2 と 0.1 の 2 回撮り、AOV の面ごとの全画素一致を判定して画像と result.json を残す。(4) `NVSKELMigrationInventory.md` の範囲 draw の節を実装済みと未検証に書き分けた
+- 証拠: `.harness/runs/20261102-075818/verify-G2-GR32-GPU-ACCEPTANCE-final.txt`（HEAD 5889967 の上で `cmake --build build --config Debug --target Game AssetCook SkinnedSubmeshDrawContractTest -- -m:1` 終了コード 0、`SkinnedSubmeshDrawContractTest.exe` PASS・終了コード 0）。oracle は AssetCook の 0.2 から 0.1（header 256 B・全長 868 B、内部 hash と包み・manifest の hash 一致）を作って自己検査が通り、1 バイト壊した入力と表 2 個の入力で終了コード 1。撮影の判定は小さな PFM とログ行で合う・色の入れ替え・inside=0・AOV なしの 4 通りを確かめた（Game は起動していない）
+- Next: 起動の確かめは後回し（人の決まりでアプリを起動しない）。`G2-GR32-GPU-ACCEPTANCE-CHECK` でタスクの verify の 3〜6 行目（2 材質の VB On・Off、`Test-M9World.ps1 -LegacyNvskelCompare`、既定の起動画面）を回し、PNG と metrics.json・result.json を開いて確かめる。mock・source の確かめは実 GPU の合格と扱わない
+- Notes: 範囲の直しは GPU で未確認（コードの読みでの判断）。`--m9-world-compare` の比べは AOV の 9 面（太陽の可視率・RTGI の時間の符号なども含む）を全部一致で見るので、-CHECK で RTGI など NVSKEL と関係ない面だけが決定的でなく落ちたら、GBuffer の面（albedo・normal・roughness・depth）に絞るかを判断する。`--m9-world-compare` は音の入りのビルド（NORVES_GAME_AUDIO）でだけ使える。oracle は Test/Tools の既存の .py と違い BOM 付き
+- Notes: 要起票: 既定経路でスキニングの計算と出力の頂点の範囲を submesh の数だけ重ねて取っている(SkinningComputePass::Declare)のを、component ごとに 1 回へ共有する
+- Notes: 要起票: `NVSKELMigrationInventory.md` の範囲 draw より前の節に、native の回帰が Windows.h で未実行という旧い環境の記述が残っている
+### G2-GR32-GPU-ACCEPTANCE を閉じ直す（2026-11-02、run 20261102-105745 の反復 1）
+- Done: 作業単位は全部着地済み（U4 は U6・U7 に切り直した）。最後の確かめ `NorvesLib-3/.harness/runs/20261102-075818/verify-G2-GR32-GPU-ACCEPTANCE-final.txt` は Debug の Game・AssetCook・SkinnedSubmeshDrawContractTest のビルドが終了コード 0、試験が PASS・終了コード 0。その後の差分は文書（NVSKELMigrationInventory.md・PROGRESS.md・TASKS.md）だけ
+- Next: 起動の確かめは後回し。`G2-GR32-GPU-ACCEPTANCE-CHECK` で verify の 3〜6 行目を回し、PNG・metrics.json・result.json を開いて確かめる
+- Notes: 前回の評価は停止の依頼で中断して未評価（f1f25a1..HEAD）。評価はランナーが回す
+### G2-GR32-GPU-ACCEPTANCE の verify の時間切れを解いて閉じる（2026-11-02、run 20261102-105745 の反復 2）
+- Done: 前の再検証の落ちはコードの失敗ではなく、この作業ツリーの build に SkinnedSubmeshDrawContractTest などが未生成で、`-m:1` の全量ビルドが 10 分の上限を超えたもの。時間切れの後も残っていたそのビルドの終了を待ち、同じコマンドで続きをビルドして成果物をそろえた（再検証は差分のビルドになる）。コードの変更はない
+- 証拠: `.harness/runs/20261102-105745/verify-G2-GR32-GPU-ACCEPTANCE-iter2.txt`（HEAD c0207f4c で `cmake --build build --config Debug --target Game AssetCook SkinnedSubmeshDrawContractTest -- -m:1` EXIT=0、`SkinnedSubmeshDrawContractTest.exe` PASS・EXIT=0）
+- Next: 起動の確かめは後回し。`G2-GR32-GPU-ACCEPTANCE-CHECK` で verify の 3〜6 行目を回し、PNG・metrics.json・result.json を開いて確かめる
+- Notes: 残ったビルドと重なって走らせると PDB の取り合い（C1041）で落ちる。再検証の時間切れの後は、同じ作業ツリーのビルドの終了を待ってから回す
+- U8 2 材質のパネルの submesh の範囲を左右の半分に合わせる: 着地(直し 0 回)
+### G2-GR32-GPU-ACCEPTANCE の 2 材質パネルの範囲を直して閉じる（2026-11-02、run 20261102-105745 の反復 3）
+- Done: 評価の差し戻しを直した。2 材質のパネルは AppendGridIndices を 4 回積んで 768 個（左の表・左の裏・右の表・右の裏）なのに submesh の表が 192 個ずつ [0,384) しか覆わず、ResolveSkeletalSubmeshLayout が InvalidIndexRange で読み込みを止めていた。1 半分を積んだ数の半分（384）にして slot 0 = 左 [0,384)・slot 1 = 右 [384,768) にした。m_StartupSkinnedProbeMaterialCount に説明のコメントを足した
+- 証拠: `.harness/runs/20261102-105745/verify-G2-GR32-GPU-ACCEPTANCE-iter3.txt`（範囲の検算で全範囲を隙間・重複なく覆い、slot 0 が列 0〜3・slot 1 が列 4〜7 の表裏 64 三角形ずつ。`cmake --build build --config Debug --target Game AssetCook SkinnedSubmeshDrawContractTest -- -m:1` 終了コード 0、`SkinnedSubmeshDrawContractTest.exe` PASS・終了コード 0。numstat 2 通り一致）
+- Next: 起動の確かめは後回し。`G2-GR32-GPU-ACCEPTANCE-CHECK` で verify の 3〜6 行目を回し、PNG・metrics.json・result.json を開いて確かめる（2 材質の撮影は STARTUP_SKINNED_PROBE_SKIPPED が出ないことと体の数も見る）
+- Notes: 評価の残課題のうち、-LegacyNvskelCompare が RTGI の面を含む 9 面すべてで全画素一致を求める扱いと、Test-M9World.ps1 が M9_WORLD_COMPARE stage=assets_ready の印を照合しない点は、確かめのタスクで実行の結果を見て決める
