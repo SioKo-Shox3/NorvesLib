@@ -1,4 +1,5 @@
 ﻿// 固定inventory更新とsource非依存復旧を、実process終了とnative IDで反証する。
+#include "CookLockWaitTestScope.h"
 #include "Tools/AssetCook/CookManagedBootstrap.h"
 #include "Tools/AssetCook/CookManagedUpdate.h"
 #include "Tools/AssetCook/CookManagedUpdateTestAccess.h"
@@ -72,6 +73,38 @@ namespace UpdateTest
         Write(path, {reinterpret_cast<const uint8_t*>(text), std::strlen(text)});
     }
 #if defined(_WIN32)
+    // 同一プロセスの待機時間を全呼び出しで共有し、上限を超えたら最後の Busy を返す。
+    ULONGLONG gVolumeBusyWaitedMs = 0;
+    ULONGLONG gPendingRetryWaitedMs = 0;
+    void ReportVolumeBusyRetry()
+    {
+        if (gPendingRetryWaitedMs != 0)
+        {
+            std::fprintf(stderr, "VOLUME_BUSY_RETRY waited_ms=%llu\n", gPendingRetryWaitedMs);
+            gPendingRetryWaitedMs = 0;
+        }
+    }
+    template <class F> auto RetryVolumeBusy(F&& operation)
+    {
+        constexpr ULONGLONG MaximumWaitMs = 90000;
+        constexpr DWORD WaitStepMs = 50;
+        auto result = operation();
+        while (result == decltype(result)::Busy && gVolumeBusyWaitedMs <= MaximumWaitMs - WaitStepMs)
+        {
+            const auto start = GetTickCount64();
+            Sleep(WaitStepMs);
+            const auto elapsed = GetTickCount64() - start;
+            gPendingRetryWaitedMs += elapsed;
+            gVolumeBusyWaitedMs += elapsed;
+            if (gVolumeBusyWaitedMs >= MaximumWaitMs)
+            {
+                break;
+            }
+            result = operation();
+        }
+        ReportVolumeBusyRetry();
+        return result;
+    }
     struct NativeId
     {
         uint64_t Volume = 0;
@@ -182,9 +215,9 @@ namespace UpdateTest
                 CookManagedStoreObservation observed;
                 CookManagedBootstrapOutcome out;
                 TestText error;
-                CHECK(InitializeNewCookManagedStore(Owner, observed, error) ==
+                CHECK(RetryVolumeBusy([&]() { return InitializeNewCookManagedStore(Owner, observed, error); }) ==
                       CookManagedStoreInitializationResult::Created);
-                const auto result = BootstrapCookManagedAssetSet(Request(), out, error);
+                const auto result = RetryVolumeBusy([&]() { return BootstrapCookManagedAssetSet(Request(), out, error); });
                 if (result != Boot::Created)
                 {
                     std::fprintf(stderr, "update fixture bootstrap: %s\n", error.c_str());
@@ -201,8 +234,11 @@ namespace UpdateTest
         Update Run(CookManagedUpdateOutcome& out, TestText& error, const Probe* probe = nullptr) const
         {
             const auto request = Request();
-            const auto result = probe ? Access::UpdateCookManagedAssetSetForTest(request, *probe, out, error)
-                                      : UpdateCookManagedAssetSet(request, out, error);
+            const auto result = RetryVolumeBusy([&]()
+            {
+                return probe ? Access::UpdateCookManagedAssetSetForTest(request, *probe, out, error)
+                             : UpdateCookManagedAssetSet(request, out, error);
+            });
             if (result != Update::Updated && result != Update::NoChange)
             {
                 std::fprintf(stderr, "UPDATE_RESULT result=%u error=%s\n", static_cast<unsigned>(result),
@@ -345,6 +381,8 @@ namespace UpdateTest
         stop.Transaction = transaction;
         if (stop.bExit)
         {
+            // 子プロセスの強制終了前に、実施した待機を記録する。
+            ReportVolumeBusyRetry();
             ExitProcess(73);
         }
         return false;
@@ -375,8 +413,11 @@ namespace UpdateTest
         CookManagedUpdateOutcome out;
         out.ClaimId = "held";
         TestText error;
-        const auto result = probe ? Access::RecoverCookManagedUpdateForTest(f.Runtime, *probe, out, error)
-                                  : RecoverCookManagedPending(f.Runtime, out, error);
+        const auto result = RetryVolumeBusy([&]()
+        {
+            return probe ? Access::RecoverCookManagedUpdateForTest(f.Runtime, *probe, out, error)
+                         : RecoverCookManagedPending(f.Runtime, out, error);
+        });
         if (result != expected)
         {
             std::fprintf(stderr, "update recovery expected=%u result=%u error=%s\n", static_cast<unsigned>(expected),
@@ -425,11 +466,23 @@ namespace UpdateTest
         command.push_back(0);
         STARTUPINFOW startup{};
         startup.cb = sizeof(startup);
+        // 強制終了する子の待機ログを親の標準エラーへ渡す。
+        HANDLE childError = nullptr;
+        const HANDLE parentError = GetStdHandle(STD_ERROR_HANDLE);
+        CHECK(parentError && parentError != INVALID_HANDLE_VALUE);
+        CHECK(DuplicateHandle(GetCurrentProcess(), parentError, GetCurrentProcess(), &childError, 0, TRUE,
+                              DUPLICATE_SAME_ACCESS));
+        startup.dwFlags = STARTF_USESTDHANDLES;
+        startup.hStdInput = childError;
+        startup.hStdOutput = childError;
+        startup.hStdError = childError;
         PROCESS_INFORMATION process{};
-        CHECK(CreateProcessW(exe, command.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &startup,
-                             &process));
+        const BOOL bStarted = CreateProcessW(exe, command.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr,
+                                             nullptr, &startup, &process);
+        CHECK(CloseHandle(childError));
+        CHECK(bStarted);
         CHECK(CloseHandle(process.hThread));
-        const DWORD wait = WaitForSingleObject(process.hProcess, 60000);
+        const DWORD wait = WaitForSingleObject(process.hProcess, 120000);
         if (wait != WAIT_OBJECT_0)
         {
             (void)TerminateProcess(process.hProcess, 99);
@@ -451,6 +504,8 @@ namespace UpdateTest
         {
             return -1;
         }
+        const CookLockWaitTest::ScopedChildCookLockTestNamespace lockNamespace;
+        CHECK(lockNamespace.Valid());
         Fixture f(std::filesystem::path(argv[2]), false);
         Stop stop;
         stop.Target.At = static_cast<Point>(std::strtoul(argv[3], nullptr, 10));
@@ -465,7 +520,7 @@ namespace UpdateTest
         }
         else
         {
-            (void)Access::RecoverCookManagedUpdateForTest(f.Runtime, probe, out, error);
+            (void)RetryVolumeBusy([&]() { return Access::RecoverCookManagedUpdateForTest(f.Runtime, probe, out, error); });
         }
         std::fprintf(stderr, "update child did not exit: %s\n", error.c_str());
         return 91;
@@ -480,7 +535,9 @@ namespace UpdateTest
         auto& data = *static_cast<BusyData*>(context);
         CookManagedUpdateOutcome out;
         TestText error;
-        data.Result = data.Case->Run(out, error);
+        // 親スレッドが保持するロックとの競合を検証するため、この呼び出しは待ち直さない。
+        const auto request = data.Case->Request();
+        data.Result = UpdateCookManagedAssetSet(request, out, error);
         return 0;
     }
     bool BusyPoint(Point point, const std::filesystem::path&, const std::filesystem::path&, size_t, void* context)
@@ -489,10 +546,15 @@ namespace UpdateTest
         {
             return true;
         }
-        HANDLE thread = CreateThread(nullptr, 0, TryBusy, context, 0, nullptr);
-        CHECK(thread);
-        CHECK(WaitForSingleObject(thread, 60000) == WAIT_OBJECT_0);
-        CHECK(CloseHandle(thread));
+        {
+            // 主スレッドのロックに対する Busy を、待ちなしで確認する。
+            const auto noWait = CookLockWaitTest::DoNotWaitForCookLock();
+            CHECK(noWait.Valid());
+            HANDLE thread = CreateThread(nullptr, 0, TryBusy, context, 0, nullptr);
+            CHECK(thread);
+            CHECK(WaitForSingleObject(thread, 60000) == WAIT_OBJECT_0);
+            CHECK(CloseHandle(thread));
+        }
         return true;
     }
     struct DirtyInput
@@ -536,7 +598,8 @@ namespace UpdateTest
                 asset.PackagePath = sibling.Runtime / "Cooked" / asset.PackagePath.filename();
                 asset.ManifestPath = sibling.Runtime / "manifest.json";
             }
-            CHECK(BootstrapCookManagedAssetSet(sibling.Request(), out, error) == Boot::Created);
+            CHECK(RetryVolumeBusy([&]() { return BootstrapCookManagedAssetSet(sibling.Request(), out, error); }) ==
+                  Boot::Created);
             const auto siblingId = Identity(sibling.Runtime);
             const auto siblingTree = Snapshot(sibling.Runtime);
             CHECK(std::filesystem::create_directory(f.Store / ".transaction-stage-foreign"));
@@ -833,12 +896,15 @@ int main(int argc, char** argv)
     {
         return child;
     }
-    wchar_t temp[32768]{};
-    const auto length = GetTempPathW(32768, temp);
-    CHECK(length && length < 32768);
+    const CookLockWaitTest::ScopedCookLockTestNamespace lockNamespace;
+    CHECK(lockNamespace.Valid());
+    // 前提のロック取得は、ほかの試験の終了を最大 120000 ミリ秒待つ。
+    const auto lockWait = CookLockWaitTest::WaitForCookLock();
+    CHECK(lockWait.Valid());
     wchar_t name[128]{};
-    std::swprintf(name, 128, L"NorvesManagedUpdate-%lu-%llu", GetCurrentProcessId(), GetTickCount64());
-    const auto root = std::filesystem::path(temp) / name;
+    std::swprintf(name, 128, L"nmu-%lu-%llu", GetCurrentProcessId(), GetTickCount64());
+    // 管理ストアは RuntimeRoot の祖先を列挙するため、項目の多い共有の TEMP の外に置く。
+    const auto root = std::filesystem::current_path() / name;
     CHECK(std::filesystem::create_directory(root));
     UpdateTest::Run(root);
     CHECK(std::filesystem::remove_all(root) > 0);

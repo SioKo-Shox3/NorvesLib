@@ -92,6 +92,115 @@ namespace
 {
     constexpr float Epsilon = 0.0001f;
 
+    // 反証する契約: 同じコンポーネントの描画は 1 回だけ変形され出力範囲を共有し、別のコンポーネントの範囲は重ならず、上限はコンポーネント単位。
+    // ほかの手段: 同じ頂点を繰り返し変形しても絵は変わらず、撮影では過剰な変形と出力を検出できない。上限の数え方の違いも統計にしか出ない。
+    // 黙った失敗: GPU 時間と VRAM が描画の数倍になるだけで、警告もエラーも出ずに起きる。
+    void TestComputeSkinningPlanSharesOutputPerComponent()
+    {
+        SkinningComputePlan plan;
+        {
+            const SkinningComputePlanDraw draws[] = {
+                {0, 10, 100, 0, 30, true},
+                {1, 10, 100, 30, 60, true},
+            };
+            BuildSkinningComputePlan(draws, 2, false, 100, plan);
+            assert(plan.Components.size() == 1);
+            assert(plan.Draws.size() == 2);
+            assert(plan.TotalVertices == 100);
+            assert(plan.DroppedComponentCount == 0);
+            assert(plan.Components[0].FirstDraw == 0);
+            assert(plan.Components[0].DrawCount == 2);
+            assert(plan.Draws[0].VertexBase == plan.Draws[1].VertexBase);
+            assert(plan.Draws[0].VertexBase == plan.Components[0].VertexBase);
+            assert(plan.Draws[0].VertexCount == 100);
+            assert(plan.Draws[1].VertexCount == 100);
+            assert(plan.Draws[0].SourceFirstIndex == 0);
+            assert(plan.Draws[0].SourceIndexCount == 30);
+            assert(plan.Draws[1].SourceFirstIndex == 30);
+            assert(plan.Draws[1].SourceIndexCount == 60);
+        }
+        {
+            // リース 10 の描画が離れていても一つにまとまり、描画とコンポーネントの順序を保つ。
+            const SkinningComputePlanDraw draws[] = {
+                {0, 10, 100, 0, 30, true},
+                {1, 20, 50, 0, 15, true},
+                {2, 10, 100, 30, 60, true},
+            };
+            BuildSkinningComputePlan(draws, 3, false, 1000, plan);
+            assert(plan.Components.size() == 2);
+            assert(plan.Draws.size() == 3);
+            assert(plan.TotalVertices == 150);
+            assert(plan.Components[0].FrameLeaseIndex == 10);
+            assert(plan.Components[1].FrameLeaseIndex == 20);
+            assert(plan.Components[0].FirstDraw == 0);
+            assert(plan.Components[0].DrawCount == 2);
+            assert(plan.Components[1].FirstDraw == 2);
+            assert(plan.Components[1].DrawCount == 1);
+            assert(plan.Draws[0].CommandIndex == 0);
+            assert(plan.Draws[1].CommandIndex == 2);
+            assert(plan.Draws[2].CommandIndex == 1);
+            assert(plan.Draws[0].ComponentIndex == 0);
+            assert(plan.Draws[1].ComponentIndex == 0);
+            assert(plan.Draws[2].ComponentIndex == 1);
+            assert(plan.Draws[0].VertexBase == plan.Draws[1].VertexBase);
+            assert(plan.Components[0].VertexBase + plan.Components[0].VertexCount <= plan.Components[1].VertexBase);
+        }
+        {
+            const SkinningComputePlanDraw draws[] = {
+                {0, 10, 100, 0, 30, true},
+                {1, 20, 50, 0, 15, true},
+                {2, 10, 100, 30, 30, true},
+                {3, 20, 50, 15, 15, true},
+                {4, 10, 100, 60, 30, true},
+            };
+            BuildSkinningComputePlan(draws, 5, false, 120, plan);
+            assert(plan.Components.size() == 1);
+            assert(plan.Components[0].FrameLeaseIndex == 10);
+            assert(plan.Components[0].DrawCount == 3);
+            assert(plan.Draws.size() == 3);
+            assert(plan.TotalVertices == 100);
+            assert(plan.DroppedComponentCount == 1);
+        }
+        {
+            const SkinningComputePlanDraw draws[] = {
+                {0, 10, 100, 0, 30, false},
+                {1, 20, 50, 0, 15, false},
+                {2, 10, 100, 30, 30, true},
+                {3, 20, 50, 15, 15, false},
+                {4, 10, 100, 60, 30, true},
+            };
+            BuildSkinningComputePlan(draws, 5, true, 1000, plan);
+            assert(plan.Components.size() == 1);
+            assert(plan.Components[0].FrameLeaseIndex == 10);
+            assert(plan.Components[0].DrawCount == 2);
+            assert(plan.Draws.size() == 2);
+            assert(plan.Draws[0].CommandIndex == 2);
+            assert(plan.Draws[1].CommandIndex == 4);
+            assert(plan.Draws[0].bCastShadow);
+            assert(plan.Draws[1].bCastShadow);
+            assert(plan.TotalVertices == 100);
+            assert(plan.DroppedComponentCount == 0);
+        }
+        {
+            // 頂点が無いコンポーネントは外した数に入れず、束縛の上限を超えるコンポーネントは一度だけ数える。
+            constexpr uint64_t maxInputVertices = SKINNING_MAX_BINDING_BYTES / sizeof(SkinnedMeshVertex);
+            const SkinningComputePlanDraw draws[] = {
+                {0, 10, 0, 0, 0, true},
+                {1, 20, maxInputVertices + 1, 0, 3, true},
+                {2, 30, 50, 0, 15, true},
+                {3, 20, maxInputVertices + 1, 3, 3, true},
+                {4, 10, 0, 0, 0, true},
+                {5, 40, UINT64_MAX, 0, 3, true},
+            };
+            BuildSkinningComputePlan(draws, 6, false, SKINNING_MAX_OUTPUT_VERTICES, plan);
+            assert(plan.Components.size() == 1);
+            assert(plan.Components[0].FrameLeaseIndex == 30);
+            assert(plan.Draws.size() == 1);
+            assert(plan.TotalVertices == 50);
+            assert(plan.DroppedComponentCount == 2);
+        }
+    }
+
     Math::Vector3 TransformPointAsShaderColumnMajor(const float* matrix, float x, float y, float z)
     {
         return Math::Vector3(
@@ -401,6 +510,7 @@ namespace
     public:
         explicit FakeSwapChain(uint32_t frameSlotCount)
             : m_FrameSlotSerials(frameSlotCount, 0)
+            , m_FrameSlotCommandLists(frameSlotCount)
         {
             RHI::TextureDesc desc = RHI::TextureDesc::RenderTarget(
                 640, 480, RHI::Format::B8G8R8A8_UNORM, "FakeBackBuffer");
@@ -434,6 +544,14 @@ namespace
             {
                 m_CompletedSerial = slotSerial;
             }
+            for (const auto& weakCommandList : m_FrameSlotCommandLists[m_CurrentFrame])
+            {
+                if (auto commandList = weakCommandList.lock())
+                {
+                    commandList->NotifySubmissionCompleted(slotSerial);
+                }
+            }
+            m_FrameSlotCommandLists[m_CurrentFrame].clear();
             m_bImageAcquired = true;
             return RHI::SwapChainBeginFrameStatus::Success;
         }
@@ -478,6 +596,69 @@ namespace
             return result;
         }
 
+        RHI::SwapChainEndFrameResult EndFrame(const RHI::CommandListPtr* commandLists,
+                                             uint32_t commandListCount) override
+        {
+            bool bValid = commandLists != nullptr && commandListCount != 0;
+            if (bValid)
+            {
+                for (uint32_t index = 0; index < commandListCount && bValid; ++index)
+                {
+                    if (!commandLists[index] ||
+                        commandLists[index]->GetSubmissionState() != RHI::CommandListSubmissionState::Recorded)
+                    {
+                        bValid = false;
+                        break;
+                    }
+                    for (uint32_t previous = 0; previous < index; ++previous)
+                    {
+                        if (commandLists[previous].get() == commandLists[index].get())
+                        {
+                            bValid = false;
+                            break;
+                        }
+                    }
+                }
+            }
+            if (!bValid)
+            {
+                ++EndFrameCallCount;
+                if (commandLists)
+                {
+                    for (uint32_t index = 0; index < commandListCount; ++index)
+                    {
+                        if (commandLists[index])
+                        {
+                            commandLists[index]->AbortSubmission();
+                        }
+                    }
+                }
+                RHI::SwapChainEndFrameResult result;
+                result.Status = RHI::SwapChainEndFrameStatus::InvalidCommandList;
+                return result;
+            }
+
+            // 束を 1 回の提出として扱い、リストを弱参照で記録して枠の完了を通知する。
+            const uint32_t submittedFrame = m_CurrentFrame;
+            const RHI::SwapChainEndFrameResult result = EndFrame(commandLists[0]);
+            if (result.SubmissionSerial != 0)
+            {
+                for (uint32_t index = 0; index < commandListCount; ++index)
+                {
+                    commandLists[index]->CommitGPUTimestampSubmission(submittedFrame, result.SubmissionSerial);
+                    m_FrameSlotCommandLists[submittedFrame].push_back(commandLists[index]);
+                }
+            }
+            else
+            {
+                for (uint32_t index = 0; index < commandListCount; ++index)
+                {
+                    commandLists[index]->AbortSubmission();
+                }
+            }
+            return result;
+        }
+
         void SetNextBeginFrameStatus(RHI::SwapChainBeginFrameStatus status)
         {
             m_NextBeginFrameStatus = status;
@@ -504,6 +685,7 @@ namespace
 
     private:
         Container::VariableArray<uint64_t> m_FrameSlotSerials;
+        Container::VariableArray<Container::VariableArray<Container::TWeakPtr<RHI::ICommandList>>> m_FrameSlotCommandLists;
         RHI::TexturePtr m_BackBuffer;
         uint32_t m_CurrentFrame = 0;
         uint64_t m_NextSerial = 0;
@@ -2083,6 +2265,7 @@ int main()
     _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
 #endif
     std::cout << "SkinnedRenderPathContractTest start\n";
+    TestComputeSkinningPlanSharesOutputPerComponent();
     TestSkinnedVertexLayoutAbi();
     TestOutOfRangeIndexRejectsLeaseBeforeGpuStoreAndDraw();
     TestScreenPropagatesSubmissionAndCompletionSerialsForSingleAndMultiSlot();

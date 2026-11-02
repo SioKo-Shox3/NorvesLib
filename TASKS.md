@@ -4554,7 +4554,7 @@
 - from: G2-GR82-B4-STATIC-ROOT-FRAME128
 
 ## SCN-MEGA-FIX-STRESS-GPU-CHECK-P1: RT と GI を切って撮る開発用の起動引数 `--rt-gi=off` を足す
-- status: todo
+- status: done
 - done-when: 開発ビルド(Debug・RelWithDebInfo)にだけ起動引数 `--rt-gi=on|off` を足す(`--rtgi-bounce` と同じ形。Release では警告を出して無視する)。`off` にすると、起動から終了まで RT(RTGI・RT の影と反射・TLAS の構築と更新)と GI(DDGI)を切り、間接光は既存の IBL に替わる(`ResolveRTGIIndirectLighting` の順のとおり)。途中で入るシーン(Launcher・荒野の共通の照明など)が `SetRTGIEnabled` を呼んでも、`off` の指定が勝つ。引数を付けない起動の既定の経路と見た目は変えない。開発ビルドでは SCENE_READY の時点で、実際に描いたフレームパケットの値から `RT_GI_STATE off` か `RT_GI_STATE on` を 1 行ログに書く(フラグの値ではなく実際の状態を書く)。PROGRESS.md には「SCN-MEGA-FIX-STRESS-GPU-CHECK と SCN-MEGA-ACCEPT-1M の予算(16.6 ms)の撮影は、`-GameArgs` に `rt-gi=off` を足して撮る」と書く。起動しないで確かめるのはビルドが通ることまで。ログの行の確かめは下の verify の撮影で行う(起動を戻した後)。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -Views overview -Build -RequireAssets -Configuration RelWithDebInfo -GameArgs rt-gi=off -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-STRESS-GPU-CHECK-P1`
@@ -4563,7 +4563,7 @@
 - from: SCN-MEGA-FIX-STRESS-GPU-CHECK
 
 ## G2-GR32-GPU-ACCEPTANCE-P1: スキニングの計算と出力の頂点の範囲を、submesh ごとでなく component ごとに 1 回にする
-- status: todo
+- status: done
 - done-when: `SkinningComputePass::Declare` は、同じ `Skinned.FrameLeaseIndex`(同じ component)から出た複数の submesh の描画を 1 回だけ変形し、出力の頂点の範囲も 1 回だけ取る。その submesh の `SkinningComputeInstance` は、どれも同じ `VertexBase`・`VertexCount`・頂点のアドレスを指し、`MaterialIndex`・`Material`・`SourceFirstIndex`・`SourceIndexCount`・`bOpaque`・`bCastShadow` はそれぞれの submesh の値を保つ。頂点の合計の上限と、外したインスタンスの数(`SkinningComputeDroppedInstances`)は component ごとに 1 回数える。解決が使えず影の描画だけが読むフレームでは、影を落とす submesh が 1 つでもある component だけを変形する。計画を作る部分は GPU の無い試験から呼べる関数に分け、既存の `SkinnedRenderPathContractTest` に次の検査を足す(新しい exe は作らない。足す前に `Docs/Testing.md` の 3 点を書く): 2 submesh で同じ lease のとき、変形は 1 回で出力の頂点の数は 1 倍、2 つのインスタンスが同じ `VertexBase` を持ち範囲はそれぞれの値のまま。lease の違う 2 component では範囲が重ならない。上限を超える component は submesh の数によらず 1 つとして外す。2 材質のパネルの撮影(下の verify。起動を戻した後に回す)で、材質の色の判定が result=pass のままであること。
 - verify: `cmake --build build --config Debug --target Game SkinnedRenderPathContractTest SkinnedSubmeshDrawContractTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^(SkinnedRenderPathContractTest|SkinnedSubmeshDrawContractTest)$" --no-tests=error --output-on-failure --timeout 180`
@@ -4587,7 +4587,7 @@
 - from: G2-MATERIAL-SELECTION-INTEGRATION
 
 ## G2-S6-ASSET-SET-P1: `CookManagedBootstrapTest` が `rename_no_replace`(win32 5)のあと止まり、300 秒でタイムアウトする原因を直す
-- status: todo
+- status: done
 - done-when: この機で `CookManagedBootstrapTest` を単独で回すと、182 行の `InitializeNewCookManagedStore` の前に `rename_no_replace; win32_hex=5`(ERROR_ACCESS_DENIED)が出て、そのまま 300 秒でタイムアウトする。原因を特定して PROGRESS.md に書く。調べる候補: fixture を `GetTempPathW` の下(共有の TEMP)に作っていること、改名する項目やその子の handle が `FILE_SHARE_DELETE` 無しで開いたままであること、TEMP を見張る外部のソフト。原因が製品の側にあれば製品を直し、試験の置き場の側にあれば fixture を ctest の作業ディレクトリの下へ移す(`RigSplitCookTest` と同じ形)。そのうえで次の 2 つを満たす。(1) 失敗のときは止まらず、数秒のうちに 0 でない終了コードで終わる。(2) `ctest -R "^CookManagedBootstrapTest$" --timeout 180` が単独で Passed になる。復旧で `RolledBack` を期待する箇所など、期待そのものは弱めない。timeout を延ばして通すこともしない。`ManagedTextureAssetSetCli.md` の 2026-11-02 の受入れの節に、Bootstrap の結果を書き足す。
 - verify: `cmake --build build --config Debug --target CookedMeshTest AssetCook -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^CookManagedBootstrapTest$" --no-tests=error --output-on-failure --timeout 180`
@@ -4607,7 +4607,7 @@
 - stop-when: 説明できない差があるのに基準を更新する、source の下への出力の拒否を外す。
 
 ## G2-S6-ASSET-SET-P3: `windows-assetcook.yml` を手動で起動し、直した `VerifyTextureAssetSet.py` の全体が CI で完走することを確かめる
-- status: blocked
+- status: todo
 - done-when: 盤面が既にプッシュした統合ブランチ `feature/scene-launcher` を対象に、`gh workflow run windows-assetcook.yml --ref feature/scene-launcher` で 1 回だけ起動する。起動する前に、そのブランチの head に `66499489`(照合の直し)が含まれることを確かめる。ワーカーはプッシュしない。run が終わったら、結論が success であることを確かめる。あわせて、`VerifyTextureAssetSet.py` の段(失敗のときの検査を含む)と `texture_parity` が最後まで走ったことを、ジョブのログで確かめる。run の ID・URL・head の SHA・各段の結果を、PROGRESS.md と `ManagedTextureAssetSetCli.md` の受入れの節に書く。失敗したときは、原因とログの該当行を書き、直しは `要起票:` で残す(このタスクの中で再プッシュはしない)。
 - verify: `python -c "import json,subprocess,sys; r=json.loads(subprocess.check_output(['gh','run','list','--workflow','windows-assetcook.yml','--branch','feature/scene-launcher','--event','workflow_dispatch','--limit','1','--json','conclusion,headSha,url'])); print(r); sys.exit(0 if r and r[0]['conclusion']=='success' and subprocess.call(['git','merge-base','--is-ancestor','66499489',r[0]['headSha']])==0 else 1)"`
 - paths: Docs/Architecture/ManagedTextureAssetSetCli.md, TASKS.md, PROGRESS.md
@@ -4657,8 +4657,30 @@
 - from: SCN-WL-CLIFF-GEN-TALUS
 
 ## SCN-WL-CLIFF-GEN-TALUS-CHECK-P1: 壁から崖錐へ移る所の崩れた大きな塊（数 m〜十数 m）を、岩の物として崖の生成の 7 範囲の壁の足元に置く
-- status: todo
-- done-when: 2026-11-02 の人の判断（cc21c026、SCN-WL-CLIFF-GEN-TALUS の案 A）で、崩れた塊は高さの場ではなく物の岩として置く別の項目にすると決まった。地形のクック（崖の細部の版 19）は変えない。
+- status: done
+- done-when: 2026-11-02 の人の判断（cc21c026、SCN-WL-CLIFF-GEN-TALUS の案 A）で、崩れた塊は高さの場ではなく物の岩として置く別の項目にすると決まった。地形のクック（崖の細部の版 19）は変えない。判断役の判断（2026-11-02、`blocked/SCN-WL-CLIFF-GEN-TALUS-CHECK-P1.md` の案 2）で、塊を置く範囲を接地用の格子の中の near の 2 範囲に絞った。
+  すること:
+  (1) 塊の素材を決め、選んだ素材と理由を記録する。今ある崖錐のスキャンの岩（boulder_01・rock_09）を大きく使うか、Blender で数 m〜十数 m の崩れた砂岩の塊を作って `Assets/AssetSets/WastelandCliffBlocks.json` からクックする。
+  (2) `Scripts/Terrain/ShapeRegions.json` の `cliff-gen` の 7 範囲のうち、接地用の格子 `WastelandPlacementGround.bin`（X −2600〜2099・Z −2499〜2100）の中にある near の 2 範囲（cliff_near_2_rooster_butte・cliff_near_3_setting_hen_butte）の壁の足（急な面が崖錐へ移る所）に、塊を写真の大きさで置く規則を荒野の置き方に足す。
+  - castle の 5 範囲は格子の外で根元の高さが取れないので、この項目では置かない。遠景の別の項目にするため、`PROGRESS.md` の Notes に `要起票:` で残す。
+  - 根元の高さは、接地用の格子の焼いた面から取る。
+  - 置いた塊は、置き方の書き出し（`wasteland-export-placement`）に新しい種類として出し、`CheckPlacement.py --range-group cliff-gen` の接地の検査の組に入れる。
+  (3) 塊の効きの合否の仕様 `Scripts/Terrain/ExpectSpecs/shape-cliff-blocks.json` を、置く前に書いてコミットする（8ca012a5 で済み）。
+  - 中身は、写真の内部の折れ線のうち、壁の足と崩れた塊の稜線の一致。物を含めて測るので `--terrain-only` は付けない。
+  - 基準は、版 15 の撮影（shape・shape-retake-1〜3）から取る。
+  - far_01 の行（wall_foot ≥ 0.356）は外し、`moved_rows` に元の値と理由を残す（判定には使わない）。理由は、注釈が格子の外の castle_0・castle_1 にだけあること。
+  - 残る 4 行（far_02 の wall_foot ≥ 0.179・block_ridge ≥ 0.303、ground_02 の wall_foot ≥ 0.28・block_ridge ≥ 0.814）の下限と sha256 は変えない。
+  - これ以外には、置いた後に仕様を変えない。
+  合否:
+  - ビルド（Debug・RelWithDebInfo）が通る。
+  - 起動の確かめ:
+    - (A) `shape-cliff-blocks.json` の残る 4 行がすべて通る。
+    - (B) `shape-cliff-talus.json`（地形だけ）の行が通る。
+    - (C) 接地: 新しい種類の塊は、違反が物の数の 0.5 % 以下で、測り切れない物が 0。ほかの種類は SCN-WL-CLIFF-PLACEMENT-CHECK の記録を、物の数の 0.5 % を超えて上回らない。
+    - (D) ページの要求の溢れ・失敗が 0。VRAM が予算の 90 % 以下。
+    - (E) look の 3 視点を写真と並べて開き、壁の足に崩れた塊が見えることを確かめる。
+    - (F) ログの `WASTELAND_CLIFF_BLOCKS` で、near_2・near_3 のそれぞれに塊が 1 個以上ある。
+  - 結果は `Docs/RenderingValidation/WastelandShape.md` に書く。
 
   すること:
 
@@ -4750,7 +4772,7 @@
   - verify は 1 行 10 分未満。
 
 ## SCN-WL-CLIFF-GEN-TALUS-CHECK-P3: 地形の項目のクックの印を AssetCook.exe のハッシュから切り離し、地形に関わらない取り込みで地形の全項目を焼き直さない
-- status: todo
+- status: done
 - done-when: SCN-WL-CLIFF-GEN-TALUS の反復 4（PROGRESS.md）で、地形に関わらない取り込みのたびに地形の全項目を焼き直すことになった。
   - 取り込んだのはリグ・VFX のクックの変更だけだったが、AssetCook.exe のハッシュが変わった。
   - `Scripts/CookAssets.ps1` の印は `assetcook=<exe の SHA-256>` を含むので、地形の 214 項目すべての印が stale になった。
@@ -4811,7 +4833,7 @@
 - stop-when: プッシュする、workflow を起動する、凍結基準の照合段を削除する。
 
 ## G2-MATERIAL-SELECTION-INTEGRATION-P1-P1: ほかの枠の cook と重なっても cook の試験が `volume_busy` で落ちないよう、宛先 volume のロックに試験の環境だけで使う上限つきの待ちを足す
-- status: todo
+- status: done
 - done-when: `Tools/AssetCook/CookDestinationLock.cpp` の `WithCookDestinationLock` を次のように変える。
   - 環境変数 `NORVES_COOK_LOCK_WAIT_MS` が無い・空・不正(整数でない、0 以下、600000 超)のときは、今と同じく待ち 0 で `Busy` を返す。
   - 1〜600000 の整数のときは、その時間まで `WaitForSingleObject` で待って取得する。待ちきっても取れなければ `Busy` を返す。mutex の名前・volume 単位・再観測・`WAIT_ABANDONED` の扱いは変えない。
@@ -4835,3 +4857,168 @@
 - verify: `python -c "import pathlib,sys; t=pathlib.Path('Docs/Architecture/NVSKELMigrationInventory.md').read_text(encoding='utf-8'); b=[s for s in ['\u5168\u4f53\u306e\u5b9f\u884c\u306f\u672a\u691c\u8a3c','\u5b9f\u884c\u306f\u307e\u3060\u672a\u691c\u8a3c','\u4f9d\u5b58\u3067\u672a\u5b9f\u884c'] if s in t]; print(ascii(b)); sys.exit(1 if b else 0)"`
 - paths: Docs/Architecture/NVSKELMigrationInventory.md, TASKS.md, PROGRESS.md
 - from: TEST-FULL-CTEST-BASELINE-CHECK
+
+## G2-GR32-GPU-ACCEPTANCE-P1-CHECK: スキニングの計算と出力の頂点の範囲を、submesh ごとでなく component ごとに 1 回にする(後回しにしたアプリの起動の確かめ)
+- status: todo
+- check: launch
+- gpu: exclusive
+- done-when: G2-GR32-GPU-ACCEPTANCE-P1 で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、G2-GR32-GPU-ACCEPTANCE-P1 の done-when を満たすことを確かめる。満たさなければ G2-GR32-GPU-ACCEPTANCE-P1 の done-when と paths の範囲で直す。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -SkinnedProbe -SkinnedProbeMaterials 2 -VisibilityBuffer On -OutDir .harness/runs/startup-capture/G2-GR32-GPU-ACCEPTANCE-P1-2mat-vb`
+- paths: Library/Core/Private/Rendering/SkinningComputePass.cpp, Library/Core/Public/Rendering/SkinningComputePass.h, Test/Core/Rendering/SkinnedRenderPathContractTest.cpp, TASKS.md, PROGRESS.md
+- from: G2-GR32-GPU-ACCEPTANCE-P1
+
+## G2-MATERIAL-SELECTION-INTEGRATION-P1-P1-P1: `Busy` を期待する cook の試験で、前提のロックの取得だけ上限つきで待ち、`Busy` を確かめる取得は待ち 0 のままにする
+- status: done
+- done-when: 次の 4 点を満たす。
+  - **前提の取得は待つ。** `CookDestinationLockTest`・`CookManagedBootstrapTest`・`CookManagedUpdateTest` では、各試験の頭で `NORVES_COOK_LOCK_WAIT_MS=120000` をプロセスの中だけで立て、試験の終わりに元の値へ戻す(`CookLockWaitTestScope.h` の範囲つきの仕組み)。試験が自分でロックを取る所(`f.Run`・回復・解放後の取り直し・子プロセスの取得)は、上限つきで待つ。
+  - **`Busy` を確かめる取得だけは待ち 0 にする。** 対象は Bootstrap の `ProbeBusy`/`TryBusy`、Update の `BusyPoint`/`TryBusy`、DestinationLock の入れ子の peer と子プロセスが持っている間の親の取得、`WaitOption` の「待ちなし」の側。取得の直前に環境変数を消し、確かめた後に戻す。どれも待ち 0 で `Busy` を返し、今の期待(`Busy`・callback の呼び出しが 0 回)のまま通る。
+  - **本体と、CTest の待ちの設定は変えない。** `Tools/AssetCook/` の既定の待ち・mutex の名前・volume 単位は変えない。上の 3 つの試験の CTest の `ENVIRONMENT` に `NORVES_COOK_LOCK_WAIT_MS` を足さない。
+  - **並列の ctest でも通る。** 宛先 volume のロックを取る cook の試験(少なくとも `CookDestinationLockTest`・`CookManagedBootstrapTest`・`CookManagedUpdateTest`・`RigSplitCookTest`・`TextureManagedCliTest`・`CookManagedStoreObservationTest`・`CookManagedStoreInitializationTest`)に、`Test/Core/Asset/CMakeLists.txt` で `RESOURCE_LOCK cook_destination_volume` を付ける。`ctest -j 4` で回すと、これらは 1 本ずつ流れて全部通る。独り占めの検査(同名の event・abandoned の観測・全 handle の後の ordinary)は、検査も期待も変えない。
+
+    これらでは、取得の直前に環境変数を消し、確かめた後に元へ戻す。どれも待ち 0 で `Busy` を返し、今の期待(`Busy`・callback の呼び出しが 0 回)のまま通る。
+  - **本体と CTest の設定は変えない。** `Tools/AssetCook/` の既定の待ち・mutex の名前・volume 単位は変えない。この 3 つの試験の CTest の `ENVIRONMENT` にも `NORVES_COOK_LOCK_WAIT_MS` を足さない。
+  - **並列でも通る。** 4 つの試験を `-j 4` で同時に回しても(同じ volume のロックを取り合う)、`volume_busy`・`Busy` による前提の失敗が出ない。
+- verify: `cmake --build build --config Debug --target CookedMeshTest AssetCook -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^(CookDestinationLockTest|CookManagedBootstrapTest|CookManagedUpdateTest)$" --no-tests=error --output-on-failure --timeout 180`
+- verify: `ctest --test-dir build -C Debug -j 4 -R "^(CookDestinationLockTest|CookManagedBootstrapTest|CookManagedUpdateTest|RigSplitCookTest)$" --no-tests=error --output-on-failure --timeout 300`
+- verify: `python -c "import json,subprocess,sys; d=json.loads(subprocess.check_output(['ctest','--test-dir','build','-C','Debug','-R','^(CookDestinationLockTest|CookManagedBootstrapTest|CookManagedUpdateTest)$','--show-only=json-v1'])); e={t['name']:[v for p in t.get('properties',[]) if p['name']=='ENVIRONMENT' for v in p['value']] for t in d['tests']}; k='NORVES_COOK_LOCK_WAIT_MS='; print(e); sys.exit(0 if len(e)==3 and not any(v.startswith(k) for vs in e.values() for v in vs) else 1)"`
+- verify: `python -c "import json,subprocess,sys; n=['CookDestinationLockTest','CookManagedBootstrapTest','CookManagedUpdateTest','RigSplitCookTest','TextureManagedCliTest','CookManagedStoreObservationTest','CookManagedStoreInitializationTest']; d=json.loads(subprocess.check_output(['ctest','--test-dir','build','-C','Debug','-R','^('+'|'.join(n)+')$','--show-only=json-v1'])); r={t['name']:[x for p in t.get('properties',[]) if p['name']=='RESOURCE_LOCK' for x in (p['value'] if isinstance(p['value'],list) else [p['value']])] for t in d['tests']}; print(r); sys.exit(0 if sorted(r)==sorted(n) and all('cook_destination_volume' in v for v in r.values()) else 1)"`
+- paths: Test/Core/Asset/CookDestinationLockTest.cpp, Test/Core/Asset/CookManagedBootstrapTest.cpp, Test/Core/Asset/CookManagedUpdateTest.cpp, Test/Core/Asset/CookLockWaitTestScope.h, Test/Core/Asset/CMakeLists.txt, TASKS.md, PROGRESS.md
+- after: G2-S6-ASSET-SET-P1
+- from: G2-MATERIAL-SELECTION-INTEGRATION-P1-P1
+- stop-when: 次のどれかが要るなら止める。
+  - `Busy` を確かめる取得に待ちを残したまま通す
+  - `Tools/AssetCook/` の既定の待ち・mutex の名前・volume 単位を変える
+  - 試験のために mutex の名前や volume を差し替える口を本体に足す
+  - `Busy` の期待や callback の回数の期待を弱める
+
+## SCN-MEGA-FIX-STRESS-GPU-CHECK-P1-CHECK: RT と GI を切って撮る開発用の起動引数 `--rt-gi=off` を足す(後回しにしたアプリの起動の確かめ)
+- status: todo
+- check: launch
+- gpu: exclusive
+- done-when: SCN-MEGA-FIX-STRESS-GPU-CHECK-P1 で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、SCN-MEGA-FIX-STRESS-GPU-CHECK-P1 の done-when を満たすことを確かめる。満たさなければ SCN-MEGA-FIX-STRESS-GPU-CHECK-P1 の done-when と paths の範囲で直す。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -Views overview -Build -RequireAssets -Configuration RelWithDebInfo -GameArgs rt-gi=off -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-STRESS-GPU-CHECK-P1`
+- verify: `python -c "import sys; t=open(sys.argv[1],encoding='utf-8',errors='replace').read(); sys.exit(0 if 'RT_GI_STATE off' in t else 1)" .harness/runs/scene-capture/SCN-MEGA-FIX-STRESS-GPU-CHECK-P1/overview.Game.log`
+- paths: Game/GameApplicationHandler.cpp, Game/GameApplicationHandler.h, Library/Core/Public/Rendering/RenderingCoordinator.h, Library/Core/Private/Rendering/RenderingCoordinator.cpp, TASKS.md, PROGRESS.md
+- from: SCN-MEGA-FIX-STRESS-GPU-CHECK-P1
+
+## G2-MATERIAL-SELECTION-INTEGRATION-P1-P1-P1-P1: cook のロックの 3 本の試験を試験だけの mutex の名前空間で走らせ、別の枠の cook と取り合わないようにする
+- status: done
+- done-when: 次の 4 点を満たす。
+  - **口は試験のコードからしか届かない。** `Tools/AssetCook/CookDestinationLockTestAccess.h` に、プロセスの中だけで効く試験用の名前空間の設定を足す。置き方は今の `WithCookDestinationLockForTest`・`InspectCookDestinationMutexNameForTest` と同じ `Detail::...ForTest` で、範囲つきで戻せる形にする。
+    - 設定している間は、宛先ロックの mutex の名前に試験用の区切りが入る。
+    - 外すと今と同じ名前(`Global\NorvesLib.AssetCook.DestinationVolumeLock.v1.<小文字の volume GUID>`)に戻る。
+    - 本体は新しい環境変数もコマンドライン引数も読まない。`CookDestinationLock.cpp` の `GetEnvironmentVariable` は今の `NORVES_COOK_LOCK_WAIT_MS` の 1 か所のまま。
+    - 既定の名前・待ち・volume 単位は変えない。
+  - **3 本の試験は名前空間の中で走る。** `CookDestinationLockTest`・`CookManagedBootstrapTest`・`CookManagedUpdateTest` は、頭で実行ごとに一意の名前空間を立てる。自分で起動する子プロセス(`--lock-child`・`--bootstrap-child`・`--update-child`・`--recovery-child`)にも同じ名前空間を渡す。
+    - 独り占めの検査(同名の event・abandoned の観測・全 handle の後の ordinary)も含め、試験の中の取得はすべてその名前で走る。
+    - 検査も期待も変えない(`Busy`・callback の呼び出し回数・`bAbandoned`・同名 event のときの `Error`)。
+  - **製品の名前の形は確かめ続ける。** `CookDestinationLockTest` は名前空間を外した状態で、`InspectCookDestinationMutexNameForTest` が `Global\NorvesLib.AssetCook.DestinationVolumeLock.v1.` に 36 文字の GUID が続く名前を返すことを確かめる。
+  - **別の枠の cook と重なっても通る。** 別のプロセスが製品の名前の mutex を持っている間も、3 本が通る(verify の 3 行目で、別の枠の cook を模す)。直列の行と `-j 4` の行も今どおり通る。`Test/Core/Asset/CMakeLists.txt` の `RESOURCE_LOCK`・`ENVIRONMENT` は変えない。
+- verify: `cmake --build build --config Debug --target CookedMeshTest AssetCook -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^(CookDestinationLockTest|CookManagedBootstrapTest|CookManagedUpdateTest)$" --no-tests=error --output-on-failure --timeout 180`
+- verify: `python -c "import ctypes,os,subprocess,sys; k=ctypes.WinDLL('kernel32'); k.CreateMutexW.restype=ctypes.c_void_p; k.WaitForSingleObject.argtypes=[ctypes.c_void_p,ctypes.c_uint32]; k.ReleaseMutex.argtypes=[ctypes.c_void_p]; b=ctypes.create_unicode_buffer(64); g=lambda p:(k.GetVolumeNameForVolumeMountPointW(os.path.splitdrive(os.path.abspath(p))[0]+'\\',b,64),b.value[11:47].lower())[1]; v={g(p) for p in ('build',os.environ['TEMP'])}; n=['Global\\NorvesLib.AssetCook.DestinationVolumeLock.v1.'+x for x in sorted(v)]; h=[k.CreateMutexW(None,False,x) for x in n]; w=[k.WaitForSingleObject(x,0) for x in h]; print(n,w); r=subprocess.call(['ctest','--test-dir','build','-C','Debug','-R','^(CookDestinationLockTest|CookManagedBootstrapTest|CookManagedUpdateTest)$','--no-tests=error','--output-on-failure','--timeout','180']); [k.ReleaseMutex(x) for x,y in zip(h,w) if y in (0,128)]; sys.exit(r if all(h) and all(len(x)==36 for x in v) else 1)"`
+- verify: `ctest --test-dir build -C Debug -j 4 -R "^(CookDestinationLockTest|CookManagedBootstrapTest|CookManagedUpdateTest|RigSplitCookTest)$" --no-tests=error --output-on-failure --timeout 300`
+- verify: `python -c "import sys; t=open('Tools/AssetCook/CookDestinationLock.cpp',encoding='utf-8-sig').read(); c=t.count('GetEnvironmentVariable'); print(c); sys.exit(0 if c==1 else 1)"`
+- paths: Tools/AssetCook/CookDestinationLock.cpp, Tools/AssetCook/CookDestinationLockTestAccess.h, Test/Core/Asset/CookDestinationLockTest.cpp, Test/Core/Asset/CookManagedBootstrapTest.cpp, Test/Core/Asset/CookManagedUpdateTest.cpp, Test/Core/Asset/CookLockWaitTestScope.h, TASKS.md, PROGRESS.md
+- from: G2-MATERIAL-SELECTION-INTEGRATION-P1-P1-P1
+
+判断:
+- P1: TASK G2-MATERIAL-SELECTION-INTEGRATION-P1-P1-P1-P1
+
+## G2-S6-ASSET-SET-P5: `windows-assetcook.yml` の CPU 契約で落ちる `MegaGeometryResourcesTest`(1989 行)と `ModelResourcesAssetRuntimeTest`(323 行)を、今の契約に合わせて通す
+- status: done
+- done-when: 次の 4 点をすべて満たす。
+  - まず、ローカルで 2 本の失敗が Release と Debug の両方で起きるかを確かめる(`ctest --test-dir build -C <構成> --output-on-failure -R ...`)。構成ごとの結果と落ちた行を PROGRESS.md に書く。
+  - `MegaGeometryResourcesTest.cpp` の `TestGroupBvhRegionIsUploadedAndValidated` の「BVH の無いメッシュは BVH の領域を持たない」という検査(1987〜1989 行)を直す。PROGRESS.md の SCN-WL-GEOMETRY-PAGE-THRASH の Notes に、実行時に BVH を作る変更(e806a3c9、SCN-MEGA-BVH-LEAF-SPLIT)の後も古い前提が残っていると書かれている。焼いた BVH を持たないメッシュに実行時の BVH ができるという今の契約を確かめる検査に置き換える。今の契約として言えることが無い、ただ実装を写しただけの検査なら消す。壊れた BVH を拒否する検査(1992 行以降)は変えない。
+  - `ModelResourcesAssetRuntimeTest.cpp` の `TestCancelClearAndShutdownAdmission` で、`ClearAllResources()` の中で `OnBufferDestroyed` が呼ばれない理由(提出が終わるまで破棄を遅らせる SCN-ECS-FIF-DEFERRED-DESTROY-MEMORY の後に、破棄の時期が変わったなど)を突き止め、PROGRESS.md に書く。破棄の時期の変化だけが原因なら、試験の駆動を今の破棄の時期に合わせる。そのうえで、「Clear と Shutdown の最中に頼まれた読み込みは 0 を返して受け付けない」という検査(`requestDuringClear == 0`)が空振りせずに走るようにする。Clear で資源を手放していないのが原因なら、`RenderResources.cpp` か `ModelAssetRuntime.cpp` を直す。受付を締める検査そのものは緩めない。
+  - `windows-assetcook.yml` の ctest の `-R` から 2 本を外さない。CI の起動・プッシュはしない(再確認は G2-S6-ASSET-SET-P3 が受け持つ)。下の verify が Release と Debug の両方で終了コード 0 になる。
+- verify: `cmake --build build --config Release --target MegaGeometryResourcesTest ModelResourcesAssetRuntimeTest -- -m:1 && ctest --test-dir build -C Release --output-on-failure -R "^(MegaGeometryResourcesTest|ModelResourcesAssetRuntimeTest|ModelHandleCacheTest|ModelAsyncLoadQueueTest)$" && cmake --build build --config Debug --target MegaGeometryResourcesTest ModelResourcesAssetRuntimeTest -- -m:1 && ctest --test-dir build -C Debug --output-on-failure -R "^(MegaGeometryResourcesTest|ModelResourcesAssetRuntimeTest|ModelHandleCacheTest|ModelAsyncLoadQueueTest)$"`
+- paths: Test/Core/Rendering/MegaGeometryResourcesTest.cpp, Test/Core/Rendering/ModelResourcesAssetRuntimeTest.cpp, Library/Core/Private/Rendering/RenderResources.cpp, Library/Core/Private/Resource/ModelAssetRuntime.cpp, TASKS.md, PROGRESS.md
+- from: G2-S6-ASSET-SET-P3
+- stop-when: 2 本を ctest の対象や CI の `-R` から外して通す、受付を締める検査(`requestDuringClear == 0`)を緩める・消す、プッシュする、workflow を起動する。
+
+## SCN-WL-CLIFF-GEN-TALUS-CHECK-P1-CHECK: 壁から崖錐へ移る所の崩れた大きな塊（数 m〜十数 m）を、岩の物として崖の生成の 7 範囲の壁の足元に置く(後回しにしたアプリの起動の確かめ)
+- status: todo
+- check: launch
+- gpu: exclusive
+- done-when: SCN-WL-CLIFF-GEN-TALUS-CHECK-P1 で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、SCN-WL-CLIFF-GEN-TALUS-CHECK-P1 の done-when を満たすことを確かめる。満たさなければ SCN-WL-CLIFF-GEN-TALUS-CHECK-P1 の done-when と paths の範囲で直す。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Hdr -Aov -Views ref_far_01,ref_far_02,ref_ground_02 -GameArgs wasteland-common-light,wasteland-hide=clouds+foliage+gravel+buildings+aerial+fog,wasteland-gray-material,wasteland-aa=fxaa,wasteland-talus-limit=off -OutDir .harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS-CHECK-P1/shape`
+- verify: `python Scripts/Terrain/CompareReference.py --capture .harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS-CHECK-P1/shape --photos far_01,far_02,ground_02 --shape --expect Scripts/Terrain/ExpectSpecs/shape-cliff-blocks.json --verify`
+- verify: `python Scripts/Terrain/CompareReference.py --capture .harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS-CHECK-P1/shape --photos far_01,far_02,ground_02 --shape --terrain-only --expect Scripts/Terrain/ExpectSpecs/shape-cliff-talus.json --verify`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Views ref_cliff_01 -GameArgs wasteland-export-placement=.harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS-CHECK-P1/placement/placement.json -OutDir .harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS-CHECK-P1/placement`
+- verify: `python Scripts/Terrain/CheckPlacement.py --placement .harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS-CHECK-P1/placement/placement.json --asset-cook build/Tools/AssetCook/RelWithDebInfo/AssetCook.exe --regions Scripts/Terrain/ShapeRegions.json --range-group cliff-gen --baseline .harness/runs/scene-capture/SCN-WL-CLIFF-PLACEMENT-CHECK/placement_check.record.json --verify`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Views ref_far_01,ref_far_02,ref_ground_02 -OutDir .harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS-CHECK-P1/look`
+- verify: `python Scripts/Terrain/ReferenceCheck.py --geom-requests --capture .harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS-CHECK-P1/look --verify`
+- verify: `python Scripts/Terrain/CompareReference.py --capture .harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS-CHECK-P1/look --photos far_01,far_02,ground_02 --verify`
+- paths: Game/GameModes/Wasteland, Game/CMakeLists.txt, Assets/AssetSets/WastelandCliffBlocks.json, Assets/Models/WastelandCliffBlocks, Scripts/Terrain/CheckPlacement.py, Scripts/Terrain/ExpectSpecs, Docs/RenderingValidation/WastelandShape.md, TASKS.md, PROGRESS.md
+- from: SCN-WL-CLIFF-GEN-TALUS-CHECK-P1
+
+## SCN-WL-CLIFF-BLOCKS-CASTLE: 崖の生成の castle の 5 範囲（ref_far_01、5〜9 km）の壁の足に、崩れた塊を物の岩として置き、far_01 の壁の足の一致を上げる
+- status: done
+- after: SCN-WL-CLIFF-GEN-TALUS-CHECK-P1
+- done-when: 2026-11-02 の人の判断（cc21c026、SCN-WL-CLIFF-GEN-TALUS の案 A）で、崩れた塊は高さの場ではなく物の岩として置くと決まっている。高さの場で塊を足す形は版 16〜18 で 3 回とも届かなかったので、提案にある「遠景の格子の崖の生成（式）」は採らない。SCN-WL-CLIFF-GEN-TALUS-CHECK-P1 の物の岩の散布（`WastelandTalus::BuildCliffBlocks`、boulder_01・rock_09 を高さ 3〜14 m に拡大）を castle の 5 範囲へ広げる。地形のクック（崖の細部の版 19）は変えない。
+  すること:
+  (1) 根元の高さを castle の 5 範囲でも取れるようにする。今の接地用の格子 `WastelandPlacementGround.bin` は近景の DEM の格子（X −2600〜2099・Z −2499〜2100）だけを覆い、castle の範囲では根元が取れない（P1 で塊が構造上 0 個になった原因）。`AssetCook --write-placement-ground` に、遠景の castle の段の焼いた面（`--horizon-level castle` と同じ読み方）から castle の 5 範囲を覆う接地の高さを書く処理を足し、形式の版を上げる。
+  - 今の 8 m の塊・0.25 m 間隔で 5 範囲（約 8 km²）を覆うと約 550 MB になる。壁の足の帯に絞る、間隔を castle の段の格子（1〜2 m）に合わせる、などで大きさを抑え、ファイルの大きさと書き出しの時間を記録する。
+  - Game の読み込み（`TerrainPlacementGround::Load` と `SampleGround`）は、新しい範囲を近景と同じ口で引けるようにする。
+  (2) `kCliffBlockRegions` に castle の 5 範囲を足す（`kCliffBlockRegionCount` = 7）。5〜9 km 先では塊は数画素なので、写真の大きさ（数 m〜十数 m）で置き、数を目標にしない。ログの `WASTELAND_CLIFF_BLOCKS` に範囲ごとの数と no_ground を出す。
+  (3) `CheckPlacement.py` が castle の範囲にある物の足元の点を、遠景の castle の段の焼いた面で測れるようにする（`--sample-cooked-terrain` に castle の段を問わせる）。
+  (4) 置く前に、合否の仕様 `Scripts/Terrain/ExpectSpecs/shape-cliff-blocks-castle.json` を書いてコミットする。中身は far_01 の `fold_kinds.wall_foot.fold_match` ≥ 0.356 の 1 行で、下限は `shape-cliff-blocks.json` の `moved_rows` の値のまま、2 つの sha256 も同じにする。物を含めて測るので `--terrain-only` は付けない。置いた後に仕様を変えない。`shape-cliff-blocks.json` は変えない。
+  合否:
+  - ビルド（Debug・RelWithDebInfo の Game、RelWithDebInfo の AssetCook）が通る。
+  - 地形のクックの行で、地形の項目を焼き直さず（cooked=0）、接地用の格子の書き出しの要約で castle の 5 範囲が覆われていることが読める。
+  - 起動の確かめ:
+    - (A) `shape-cliff-blocks-castle.json` の行が通る。
+    - (B) 接地: `cliff_block` は違反が物の数の 0.5 % 以下で、castle の範囲も含めて測り切れない物が 0。ほかの種類は SCN-WL-CLIFF-PLACEMENT-CHECK の記録を、物の数の 0.5 % を超えて上回らない。
+    - (C) ページの要求の溢れ・失敗が 0。VRAM が予算の 90 % 以下。
+    - (D) look の ref_far_01 を写真と並べて開き、奥の崖の足に崩れた塊が読めること、点が並んだような不自然な模様が無いことを確かめる。
+    - (E) ログの `WASTELAND_CLIFF_BLOCKS` で、castle_0・castle_1 のそれぞれに塊が 1 個以上あり、no_ground が 0。
+  - 結果は `Docs/RenderingValidation/WastelandShape.md` の「崖の壁の足の崩れた塊（物の岩）」に書く。
+  - 危険地帯（アセットロード: 接地用の格子の形式と読み込み）として扱う。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `cmake --build build --config RelWithDebInfo --target AssetCook -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CookAssets.ps1 -AssetCookExe build/Tools/AssetCook/RelWithDebInfo/AssetCook.exe -OnlyLogicalPath "Assets/Models/WastelandTerrain/*"`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Hdr -Aov -Views ref_far_01 -GameArgs wasteland-common-light,wasteland-hide=clouds+foliage+gravel+buildings+aerial+fog,wasteland-gray-material,wasteland-aa=fxaa,wasteland-talus-limit=off -OutDir .harness/runs/scene-capture/SCN-WL-CLIFF-BLOCKS-CASTLE/shape`
+- verify: `python Scripts/Terrain/CompareReference.py --capture .harness/runs/scene-capture/SCN-WL-CLIFF-BLOCKS-CASTLE/shape --photos far_01 --shape --expect Scripts/Terrain/ExpectSpecs/shape-cliff-blocks-castle.json --verify`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Views ref_cliff_01 -GameArgs wasteland-export-placement=.harness/runs/scene-capture/SCN-WL-CLIFF-BLOCKS-CASTLE/placement/placement.json -OutDir .harness/runs/scene-capture/SCN-WL-CLIFF-BLOCKS-CASTLE/placement`
+- verify: `python Scripts/Terrain/CheckPlacement.py --placement .harness/runs/scene-capture/SCN-WL-CLIFF-BLOCKS-CASTLE/placement/placement.json --asset-cook build/Tools/AssetCook/RelWithDebInfo/AssetCook.exe --regions Scripts/Terrain/ShapeRegions.json --range-group cliff-gen --baseline .harness/runs/scene-capture/SCN-WL-CLIFF-PLACEMENT-CHECK/placement_check.record.json --verify`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Views ref_far_01 -OutDir .harness/runs/scene-capture/SCN-WL-CLIFF-BLOCKS-CASTLE/look`
+- verify: `python Scripts/Terrain/ReferenceCheck.py --geom-requests --capture .harness/runs/scene-capture/SCN-WL-CLIFF-BLOCKS-CASTLE/look --verify`
+- verify: `python Scripts/Terrain/CompareReference.py --capture .harness/runs/scene-capture/SCN-WL-CLIFF-BLOCKS-CASTLE/look --photos far_01 --verify`
+- paths: Game/GameModes/Wasteland, Tools/AssetCook/CookedTerrainQuery.cpp, Tools/AssetCook/CookedTerrainQuery.h, Library/Core/Public/Rendering/Terrain/TerrainPlacementGround.h, Library/Core/Private/Rendering/Terrain/TerrainPlacementGround.cpp, Scripts/Terrain/CheckPlacement.py, Scripts/Terrain/ExpectSpecs/shape-cliff-blocks-castle.json, Docs/RenderingValidation/WastelandShape.md, TASKS.md, PROGRESS.md
+- from: SCN-WL-CLIFF-GEN-TALUS-CHECK-P1-CHECK
+
+## G2-MATERIAL-SELECTION-INTEGRATION-P1-P1-P1-P1-P1: CookManagedBootstrapTest のクラッシュの子が止める点の前で 91 を返すときの理由を親の出力に残し、間欠的な失敗の原因を直す
+- status: done
+- done-when: 次の 3 点を満たす。
+  - **子の理由が親の出力に残る。** `Test/Core/Asset/CookManagedBootstrapTest.cpp` の `Crash` は、`CookManagedUpdateTest.cpp` の `Crash`(469〜482 行)と同じ形で子に stderr を渡す。親の stderr を継承できる形に複製し、`STARTF_USESTDHANDLES` で `hStdInput`・`hStdOutput`・`hStdError` に入れ、`bInheritHandles=TRUE` で起動し、起動の後に複製を閉じる。
+    - 子が 73 以外で終わったとき、子の出す行(`BOOTSTRAP_RESULT`・`VOLUME_BUSY_RETRY`・`child did not exit:`)が、親の `child recovery=... point=... wait=... exit=...` の行と一緒に ctest の `--output-on-failure` の出力に出る。
+  - **直列の 20 回の繰り返しで通る。** 繰り返しの中で 91 が再現したら、子の出力で原因を 1 つ確かめて直し、原因(子の出力の行)をコミット本文に書く。直すのは `CookManagedBootstrap.cpp` か試験の側。
+    - 試験の期待(各 point の `Recovery` の結果・`crashes == 16`・`bAbandoned`)は変えない。
+    - ロックの試験の名前空間(`ScopedChildCookLockTestNamespace`)は変えない。
+    - `RetryVolumeBusy` の上限 90000 ms は緩めない。
+    - `Test/Core/Asset/CMakeLists.txt` の `RESOURCE_LOCK`・`ENVIRONMENT` は変えない。
+  - **今の行も通る。** 3 本の試験と `RigSplitCookTest` を `-j 4` で流す行も、今どおり通る。
+- verify: `cmake --build build --config Debug --target CookedMeshTest -- /m:1`
+- verify: `python -c "import sys; t=open('Test/Core/Asset/CookManagedBootstrapTest.cpp',encoding='utf-8-sig').read(); b=t[t.index('void Crash('):t.index('int Child(')]; ok='STARTF_USESTDHANDLES' in b and 'hStdError' in b; print(ok); sys.exit(0 if ok else 1)"`
+- verify: `ctest --test-dir build -C Debug -R "^CookManagedBootstrapTest$" --repeat until-fail:20 --no-tests=error --output-on-failure --timeout 180`
+- verify: `ctest --test-dir build -C Debug -j 4 -R "^(CookDestinationLockTest|CookManagedBootstrapTest|CookManagedUpdateTest|RigSplitCookTest)$" --no-tests=error --output-on-failure --timeout 300`
+- paths: Test/Core/Asset/CookManagedBootstrapTest.cpp, Tools/AssetCook/CookManagedBootstrap.cpp, TASKS.md, PROGRESS.md
+- from: G2-MATERIAL-SELECTION-INTEGRATION-P1-P1-P1-P1
+
+## SCN-WL-CLIFF-BLOCKS-CASTLE-CHECK: 崖の生成の castle の 5 範囲（ref_far_01、5〜9 km）の壁の足に、崩れた塊を物の岩として置き、far_01 の壁の足の一致を上げる(後回しにしたアプリの起動の確かめ)
+- status: todo
+- check: launch
+- gpu: exclusive
+- done-when: SCN-WL-CLIFF-BLOCKS-CASTLE で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、SCN-WL-CLIFF-BLOCKS-CASTLE の done-when を満たすことを確かめる。満たさなければ SCN-WL-CLIFF-BLOCKS-CASTLE の done-when と paths の範囲で直す。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Hdr -Aov -Views ref_far_01 -GameArgs wasteland-common-light,wasteland-hide=clouds+foliage+gravel+buildings+aerial+fog,wasteland-gray-material,wasteland-aa=fxaa,wasteland-talus-limit=off -OutDir .harness/runs/scene-capture/SCN-WL-CLIFF-BLOCKS-CASTLE/shape`
+- verify: `python Scripts/Terrain/CompareReference.py --capture .harness/runs/scene-capture/SCN-WL-CLIFF-BLOCKS-CASTLE/shape --photos far_01 --shape --expect Scripts/Terrain/ExpectSpecs/shape-cliff-blocks-castle.json --verify`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Views ref_cliff_01 -GameArgs wasteland-export-placement=.harness/runs/scene-capture/SCN-WL-CLIFF-BLOCKS-CASTLE/placement/placement.json -OutDir .harness/runs/scene-capture/SCN-WL-CLIFF-BLOCKS-CASTLE/placement`
+- verify: `python Scripts/Terrain/CheckPlacement.py --placement .harness/runs/scene-capture/SCN-WL-CLIFF-BLOCKS-CASTLE/placement/placement.json --asset-cook build/Tools/AssetCook/RelWithDebInfo/AssetCook.exe --regions Scripts/Terrain/ShapeRegions.json --range-group cliff-gen --baseline .harness/runs/scene-capture/SCN-WL-CLIFF-PLACEMENT-CHECK/placement_check.record.json --verify`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Views ref_far_01 -OutDir .harness/runs/scene-capture/SCN-WL-CLIFF-BLOCKS-CASTLE/look`
+- verify: `python Scripts/Terrain/ReferenceCheck.py --geom-requests --capture .harness/runs/scene-capture/SCN-WL-CLIFF-BLOCKS-CASTLE/look --verify`
+- verify: `python Scripts/Terrain/CompareReference.py --capture .harness/runs/scene-capture/SCN-WL-CLIFF-BLOCKS-CASTLE/look --photos far_01 --verify`
+- paths: Game/GameModes/Wasteland, Tools/AssetCook/CookedTerrainQuery.cpp, Tools/AssetCook/CookedTerrainQuery.h, Library/Core/Public/Rendering/Terrain/TerrainPlacementGround.h, Library/Core/Private/Rendering/Terrain/TerrainPlacementGround.cpp, Scripts/Terrain/CheckPlacement.py, Scripts/Terrain/ExpectSpecs/shape-cliff-blocks-castle.json, Docs/RenderingValidation/WastelandShape.md, TASKS.md, PROGRESS.md
+- from: SCN-WL-CLIFF-BLOCKS-CASTLE

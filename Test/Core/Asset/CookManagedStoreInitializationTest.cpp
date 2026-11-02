@@ -60,15 +60,48 @@ namespace StoreInitTest
         return s;
     }
 #if defined(_WIN32)
+    // 同一プロセスの待機時間を全呼び出しで共有し、上限を超えたら最後の Busy を返す。
+    ULONGLONG gVolumeBusyWaitedMs = 0;
+    ULONGLONG gPendingRetryWaitedMs = 0;
+    void ReportVolumeBusyRetry()
+    {
+        if (gPendingRetryWaitedMs != 0)
+        {
+            std::fprintf(stderr, "VOLUME_BUSY_RETRY waited_ms=%llu\n", gPendingRetryWaitedMs);
+            gPendingRetryWaitedMs = 0;
+        }
+    }
+    template <class F> auto RetryVolumeBusy(F&& operation)
+    {
+        constexpr ULONGLONG MaximumWaitMs = 90000;
+        constexpr DWORD WaitStepMs = 50;
+        auto result = operation();
+        while (result == decltype(result)::Busy && gVolumeBusyWaitedMs <= MaximumWaitMs - WaitStepMs)
+        {
+            const auto start = GetTickCount64();
+            Sleep(WaitStepMs);
+            const auto elapsed = GetTickCount64() - start;
+            gPendingRetryWaitedMs += elapsed;
+            gVolumeBusyWaitedMs += elapsed;
+            if (gVolumeBusyWaitedMs >= MaximumWaitMs)
+            {
+                break;
+            }
+            result = operation();
+        }
+        ReportVolumeBusyRetry();
+        return result;
+    }
     struct Fixture
     {
         std::filesystem::path Root, Spec;
         Fixture()
         {
             char name[96];
-            std::snprintf(name, sizeof(name), "norves-store-init-%lu-%llu", GetCurrentProcessId(),
+            std::snprintf(name, sizeof(name), "nms-%lu-%llu", GetCurrentProcessId(),
                           static_cast<unsigned long long>(GetTickCount64()));
-            Root = std::filesystem::temp_directory_path() / name;
+            // 管理ストアは RuntimeRoot の祖先を列挙するため、項目の多い共有の TEMP の外に置く。
+            Root = std::filesystem::current_path() / name;
             CHECK(std::filesystem::create_directory(Root));
             Spec = Root / "spec.json";
             Write(Spec, "{}");
@@ -302,7 +335,7 @@ namespace StoreInitTest
         CookManagedStoreObservation out;
         out.CurrentRootClaimId = "held";
         Text error;
-        auto result = ObserveCookManagedStore(r, out, error);
+        auto result = RetryVolumeBusy([&]() { return ObserveCookManagedStore(r, out, error); });
         if (result != expected)
         {
             std::fprintf(stderr, "expected %u got %u: %s\n", unsigned(expected), unsigned(result), error.c_str());
@@ -401,8 +434,11 @@ namespace StoreInitTest
         CookManagedStoreObservation out;
         out.CurrentRootClaimId = "held";
         Text error;
-        const auto result = probe ? Access::InitializeNewCookManagedStoreForTest(r, *probe, out, error)
-                                  : InitializeNewCookManagedStore(r, out, error);
+        const auto result = RetryVolumeBusy([&]()
+        {
+            return probe ? Access::InitializeNewCookManagedStoreForTest(r, *probe, out, error)
+                         : InitializeNewCookManagedStore(r, out, error);
+        });
         if (result != expected)
         {
             std::fprintf(stderr, "init expected=%u actual=%u error=%s\n", unsigned(expected), unsigned(result),
@@ -506,6 +542,8 @@ namespace StoreInitTest
     {
         if (point == *static_cast<Point*>(data))
         {
+            // 子プロセスの強制終了前に、実施した待機を記録する。
+            ReportVolumeBusyRetry();
             ExitProcess(73);
         }
     }
@@ -528,7 +566,7 @@ namespace StoreInitTest
         probe.Context = &point;
         CookManagedStoreObservation out;
         Text error;
-        (void)Access::InitializeNewCookManagedStoreForTest(request, probe, out, error);
+        (void)RetryVolumeBusy([&]() { return Access::InitializeNewCookManagedStoreForTest(request, probe, out, error); });
         std::fprintf(stderr, "crash checkpoint not reached: %s\n", error.c_str());
         return 4;
     }
@@ -563,11 +601,23 @@ namespace StoreInitTest
         command.push_back(0);
         STARTUPINFOW startup{};
         startup.cb = sizeof(startup);
+        // 強制終了する子の待機ログを親の標準エラーへ渡す。
+        HANDLE childError = nullptr;
+        const HANDLE parentError = GetStdHandle(STD_ERROR_HANDLE);
+        CHECK(parentError && parentError != INVALID_HANDLE_VALUE);
+        CHECK(DuplicateHandle(GetCurrentProcess(), parentError, GetCurrentProcess(), &childError, 0, TRUE,
+                              DUPLICATE_SAME_ACCESS));
+        startup.dwFlags = STARTF_USESTDHANDLES;
+        startup.hStdInput = childError;
+        startup.hStdOutput = childError;
+        startup.hStdError = childError;
         PROCESS_INFORMATION process{};
-        CHECK(CreateProcessW(exe, command.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &startup,
-                             &process));
+        const BOOL bStarted = CreateProcessW(exe, command.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr,
+                                             nullptr, &startup, &process);
+        CHECK(CloseHandle(childError));
+        CHECK(bStarted);
         CHECK(CloseHandle(process.hThread));
-        const DWORD wait = WaitForSingleObject(process.hProcess, 60000);
+        const DWORD wait = WaitForSingleObject(process.hProcess, 120000);
         if (wait != WAIT_OBJECT_0)
         {
             (void)TerminateProcess(process.hProcess, 99);
@@ -801,7 +851,10 @@ namespace StoreInitTest
             CookManagedStoreObservation held;
             held.CurrentRootClaimId = "held";
             Text error;
-            const auto result = Access::InitializeNewCookManagedStoreForTest(request, probe, held, error);
+            const auto result = RetryVolumeBusy([&]()
+            {
+                return Access::InitializeNewCookManagedStoreForTest(request, probe, held, error);
+            });
             bStageAlias = aliasProbe.bPresent;
             if (bStageAlias)
             {
@@ -836,7 +889,7 @@ namespace StoreInitTest
             CookManagedStoreObservation held;
             held.CurrentRootClaimId = "held";
             Text error;
-            const auto result = InitializeNewCookManagedStore(request, held, error);
+            const auto result = RetryVolumeBusy([&]() { return InitializeNewCookManagedStore(request, held, error); });
             bStoreAlias = std::filesystem::exists(request.FinalRuntimeRoot);
             if (bStoreAlias)
             {
