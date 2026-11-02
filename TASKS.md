@@ -3752,7 +3752,7 @@
 - notes: SS-CONTACT-SHADOWの反復（2026-10-02）で見つけた。lowの段で`mean_flip=0.396656647`（上限0.02）・`raw_max=163`・`maximum_channel=19`で落ちる。接触影を切ったシェーダーでも同じ値（`.harness/runs/20261002-084328/check-SS-CONTACT-SHADOW-r3-density-contact-off.txt`）なので、それより前の変更による。ctestには入っていない。
 
 ## TEST-FULL-CTEST-BASELINE: 全体CTestの既存の失敗を直す
-- status: todo
+- status: done
 - after: TEST-ASSERT-NO-DIALOG
 - done-when: 2026-09-25 の全体 CTest で落ちていた試験のうち、今も登録があり実行から外していないもの（`RenderResourcesDomainContractTest`・`ViewportCameraIdRenderPlanTest`・`BoardComponentRoutingTest`・`SkeletalFramePacketSnapshotTest`・`FrameCaptureReadbackHelperTest`・`WorldSyncDifferentialTest`・`CanvasViewRenderTest`）を Debug で回し、今も落ちる・止まるものを `Docs/Testing.md` の扱いで分ける: 製品のコードの不具合（例: GPU デバイスの無い試験で `RenderingCoordinator::GenerateDrawCommands` が `m_Device->GetCapabilities()` を null 参照する）は直す。実装の写し（数・並びの決め打ち。例: `WaitIdleWithoutResultCheck(` の数）の検査は、期待値を書き直さずに `set_tests_properties(... DISABLED TRUE)` で外し、理由を CMake のコメントと `Docs/Testing.md` の「外したもの」に書く。`VolumetricsPassContractTest`・`ComponentDataRegistryTest` は登録が無くなり、`RenderGraphTextureUsageContractTest` は 2026-11-01 に外したので対象外。上の 7 本の ctest が通る（外したものは Not Run）。`M9WorldAcceptanceTest` と全体の CTest（GPU の試験を含む）は、起動を戻した後の `TEST-FULL-CTEST-BASELINE-CHECK` で回し、残った失敗の理由と扱いを記録する。
 - verify: `cmake --build build --config Debug --target RenderResourcesDomainContractTest ViewportCameraIdRenderPlanTest BoardComponentRoutingTest SkeletalFramePacketSnapshotTest FrameCaptureReadbackHelperTest WorldSyncDifferentialTest CanvasViewRenderTest -- /m:1`
