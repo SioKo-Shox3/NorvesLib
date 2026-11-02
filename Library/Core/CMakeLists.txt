@@ -55,6 +55,7 @@ set(PRIVATE_SOURCES
     Private/Particle/VfxSchema.cpp
     Private/Particle/VfxEffectSerialization.cpp
     Private/Particle/VfxEffectSystem.cpp
+    Private/Particle/DefeatBloodSequence.cpp
     # Animation
     Private/Animation/AnimationClipResource.cpp
     Private/Animation/SkeletalJointIndex.h
@@ -522,6 +523,7 @@ set(PUBLIC_HEADERS
     Public/Particle/VfxSchema.h
     Public/Particle/VfxEffectSerialization.h
     Public/Particle/VfxEffectSystem.h
+    Public/Particle/DefeatBloodSequence.h
     Public/Engine/ApplicationProcessor.h
     Public/Engine/FixedStepSettings.h
     # Animation

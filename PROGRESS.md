@@ -8725,3 +8725,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Done: 実装の 4 単位（型とプール・受け渡し・パスとシェーダー・GPU の試験）は前のランで着地済み。前のランの評価が枠切れで行われず doing に戻っていたので、差分は変えずに done に戻した（評価はこの反復の後に回る）
 - 検証: 起動しない verify の 3 行は着地の確かめで EXIT=0（`Game`・`DecalPoolEvictionTest` のビルド、`DecalPoolEvictionTest` 1/1 Passed、`DecalGBufferVulkanTest` のビルド）。その後のコミットは TASKS.md と PROGRESS.md だけでコードは変わっていない
 - Next: 起動の確かめは後回し。`GAME-GR133-VFX-CHECK` で `DecalGBufferVulkanTest` の ctest（`--timeout 600`）を回す
+- U1 撃破の血の時間割の型と CPU の試験: 着地(直し 0 回)
