@@ -4802,7 +4802,7 @@
 - after: G2-GR82-B4-STATIC-ROOT-FRAME128-P1
 
 ## G2-S6-ASSET-SET-P4: `windows-assetcook.yml` の手動起動を、統合の検証と同じ範囲で通るようにする
-- status: todo
+- status: done
 - done-when: `workflow_dispatch.inputs.frozen_parity`(boolean、既定 false)を足す。`NORVES_MERGE_VALIDATION` は、`[validate-merge]` のときか「手動起動で `frozen_parity` が false」のときに true にする。凍結基準の照合段は消さず、`-f frozen_parity=true` で今までどおり走らせる。段 4・5 の凍結 hash の照合と、段 6 の在庫 79 件の照合は残す。push の `[validate-assets]`/`[validate-merge]` の挙動は変えない。理由を日本語のコメントで書く。結果として、既定の引数で手動起動すると段 6 は recipe を照合せずに在庫 79 件だけを照合し、段 17・18 は skipped になる。`frozen_parity=true` で起動すると従来の照合が走る。手動起動で何を検証するかを `ManagedTextureAssetSetCli.md` に書く。プッシュも workflow の起動もしない。
 - verify: `python -c "import pathlib,sys; t=pathlib.Path('.github/workflows/windows-assetcook.yml').read_text(encoding='utf-8'); l=t.split('NORVES_MERGE_VALIDATION:')[1].splitlines()[0]; sys.exit(0 if 'frozen_parity' in t and 'Frozen recipe mismatch' in t and 'workflow_dispatch' in l else 1)"`
 - paths: .github/workflows/windows-assetcook.yml, Docs/Architecture/ManagedTextureAssetSetCli.md, TASKS.md, PROGRESS.md
