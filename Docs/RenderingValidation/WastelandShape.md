@@ -761,7 +761,7 @@ SCN-WL-SHAPE-BASELINE の撮り直しの置き場（`scene-capture/SCN-WL-SHAPE-
 
 ## 壁の足元の崩れた塊（SCN-WL-CLIFF-GEN-TALUS）
 
-- 合否の仕様: `Scripts/Terrain/ExpectSpecs/shape-cliff-talus.json`（地形を変える前に書いた）。棚・角・外形の行と範囲ごとの行は `shape-cliff-caprock.json` と同じ。内部の折れ線は写真の担当の範囲ごとの 5 組で、一致は前の基準（SCN-WL-SHAPE-BASELINE）以上・局所の欠けは + 2 画素まで・余分な折れは前の基準以下、塊が折れを足したことは組 `fold_gain`（版 15 の一致 + 0.03 以上が 5 組のうち 3 組以上）で求める。版 15 の撮影（`scene-capture/SCN-WL-CLIFF-GEN-CAPROCK/shape`）では `fold_gain` だけが落ちる（`.harness/runs/20261026-002702/aux-SCN-WL-CLIFF-GEN-TALUS-spec-on-v15.txt`）
+- 当初の合否の仕様: `Scripts/Terrain/ExpectSpecs/shape-cliff-talus.json`（地形を変える前に書いた）。棚・角・外形の行と範囲ごとの行は `shape-cliff-caprock.json` と同じ。内部の折れ線は写真の担当の範囲ごとの 5 組で、一致は前の基準（SCN-WL-SHAPE-BASELINE）以上・局所の欠けは + 2 画素まで・余分な折れは前の基準以下、塊が折れを足したことは組 `fold_gain`（版 15 の一致 + 0.03 以上が 5 組のうち 3 組以上）で求める。版 15 の撮影（`scene-capture/SCN-WL-CLIFF-GEN-CAPROCK/shape`）では `fold_gain` だけが落ちる（`.harness/runs/20261026-002702/aux-SCN-WL-CLIFF-GEN-TALUS-spec-on-v15.txt`）
 - 生成（`TerrainCliffDetail.cpp` の `TalusBlockRise`、版 18）: 崖錐の側の 38 度より緩い升目で、内側 20 m 以内に壁の足があり、
   外側 10 m も緩いまま続く所に、間隔 9 m の Voronoi の塊ごと 0〜4 m の高さで面を持ち上げる。
   足から 10 m までは高さが満ち、18 m で 0 になる。塊の升目とその周り 1 升目を細分する
@@ -802,6 +802,18 @@ SCN-WL-SHAPE-BASELINE の撮り直しの置き場（`scene-capture/SCN-WL-SHAPE-
   ground_02 の Rooster Butte で 0.156 下がった。Castle Butte の局所の欠けは版 15 より
   23.0 画素増え、ground_02 の Rooster Butte は 1.001 画素増えて上限を 0.0265 画素超えた。
   置いた物の接地は未検証
+
+- 版 19: 版 18 の崖錐の塊の持ち上げを外し、版の番号は 19 に上げ（番号は戻さない）、出力を版 15 と同じ形に戻した。
+  214 項目の並列クックは 2065 秒、地形の三角形は 326,092,012 個（版 15 と同じ、版 18 より 13,648,233 個少ない）。
+  接地用の格子の書き出しは 875.25 秒。崖の細部は版 19、担当の 27 区画の印はすべて一致し、
+  地形 214 項目に古い印は無い
+- 閉じた形（未達）: 1 m 間隔の高さの場を持ち上げて作る塊は、壁の側（版 16・17）でも崖錐の側（版 18）でも
+  棚の線を崩すだけで写真の崩れた塊の折れ線に寄らず、3 回とも形の判定は版 15 を下回った。
+  数 m〜十数 m の崩れた塊は、スキャンの岩・Blender の大きな岩の物として置く形で別に扱う。
+  合否の仕様は塊を求める組 `fold_gain` を外し、版 15 の値に戻ることを確かめる形にした
+- 版 19 の形・範囲ごとの量・置いた物の接地・ページの要求と VRAM・写真との比べは撮影で確かめる（未撮影）
+- 遮蔽の比べの Cycles の正解は版 19 と異なる 10 月 18 日の地形から描いたため、
+  同じ面で比べるには地形の書き出しと描き直しが要る
 
 ## 既知の限界
 
