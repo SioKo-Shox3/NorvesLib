@@ -20,6 +20,7 @@
 #include "Core/Public/Object/Entity.h"
 #include "Core/Public/Object/World.h"
 #include "Core/Public/Particle/ParticleSystem.h"
+#include "Core/Public/Particle/VfxSchema.h"
 #include "Core/Public/Rendering/CanvasView.h"
 #include "Core/Public/Rendering/ImpostorBake.h"
 #include "Core/Public/Rendering/MegaGeometryPass.h"
@@ -1987,18 +1988,61 @@ namespace Game::GameModes
 
         if (!data.m_M9WorldAcceptance || !data.m_M9WorldAcceptance->bRequested)
         {
-            NorvesLib::Core::Particle::ParticleEmitterDesc particleDesc;
-            particleDesc.Position = Math::Vector3(96.0f, 72.0f, 0.0f);
-            particleDesc.VelocityMin = Math::Vector3(-16.0f, -28.0f, 0.0f);
-            particleDesc.VelocityMax = Math::Vector3(16.0f, -12.0f, 0.0f);
-            particleDesc.Gravity = Math::Vector3(0.0f, 16.0f, 0.0f);
-            particleDesc.SpawnRate = 12.0f;
-            particleDesc.Lifetime = 1.5f;
-            particleDesc.MaxCount = 24u;
-            particleDesc.Color = Math::Vector4(1.0f, 0.45f, 0.1f, 0.85f);
-            particleDesc.SizePx = Math::Vector2(14.0f, 14.0f);
-            data.m_ParticleEmitter = ctx.EngineRef.GetParticleSystem().CreateEmitter(particleDesc);
-            LOG_INFO("Rendering3DTest particle emitter created valid=%d", data.m_ParticleEmitter.IsValid());
+            using namespace NorvesLib::Core::Particle;
+            VfxEffectAsset effect;
+            effect.Name = "Rendering3DTestEmbers";
+            VfxEmitterAsset emitter = MakeVfxDefaultEmitter("Embers");
+            VfxModule spawnRate = MakeVfxDefaultModule(VfxModuleType::SpawnRate);
+            VfxModule velocity = MakeVfxDefaultModule(VfxModuleType::InitVelocityBox);
+            VfxModule lifetime = MakeVfxDefaultModule(VfxModuleType::InitLifetime);
+            VfxModule color = MakeVfxDefaultModule(VfxModuleType::InitColor);
+            VfxModule size = MakeVfxDefaultModule(VfxModuleType::InitSize);
+            VfxModule acceleration = MakeVfxDefaultModule(VfxModuleType::Acceleration);
+            VfxModule renderer = MakeVfxDefaultModule(VfxModuleType::SpriteRenderer);
+            Container::String error;
+            // UI は VFX スキーマの列挙値 2 で指定する。
+            const bool bConfigured =
+                SetVfxEmitterProperty(emitter, "MaxParticles", VfxValue::MakeUInt(24u), &error) &&
+                SetVfxEmitterProperty(emitter, "Space", VfxValue::MakeEnum(static_cast<uint32_t>(VfxSimulationSpace::Screen)), &error) &&
+                SetVfxEmitterProperty(emitter, "Seed", VfxValue::MakeUInt(0u), &error) &&
+                SetVfxModuleParameter(spawnRate, "Rate", VfxValue::MakeFloat(12.0f), &error) &&
+                SetVfxModuleParameter(velocity, "Min", VfxValue::MakeVector3(Math::Vector3(-16.0f, -28.0f, 0.0f)), &error) &&
+                SetVfxModuleParameter(velocity, "Max", VfxValue::MakeVector3(Math::Vector3(16.0f, -12.0f, 0.0f)), &error) &&
+                SetVfxModuleParameter(lifetime, "Lifetime", VfxValue::MakeFloat(1.5f), &error) &&
+                SetVfxModuleParameter(color, "Color", VfxValue::MakeColor(Math::Vector4(1.0f, 0.45f, 0.1f, 0.85f)), &error) &&
+                SetVfxModuleParameter(size, "Size", VfxValue::MakeVector2(Math::Vector2(14.0f, 14.0f)), &error) &&
+                SetVfxModuleParameter(acceleration, "Acceleration", VfxValue::MakeVector3(Math::Vector3(0.0f, 16.0f, 0.0f)), &error) &&
+                SetVfxModuleParameter(renderer, "Layer", VfxValue::MakeEnum(2u), &error) &&
+                SetVfxModuleParameter(renderer, "Blend", VfxValue::MakeEnum(static_cast<uint32_t>(BlendMode::Translucent)), &error) &&
+                SetVfxModuleParameter(renderer, "SortKey", VfxValue::MakeUInt(0u), &error) &&
+                SetVfxModuleParameter(renderer, "Flipbook", VfxValue::MakeName(""), &error);
+            if (!bConfigured)
+            {
+                LOG_ERROR("Rendering3DTest VFX の設定に失敗しました: %s", error.c_str());
+            }
+            else
+            {
+                emitter.Modules.push_back(spawnRate);
+                emitter.Modules.push_back(velocity);
+                emitter.Modules.push_back(lifetime);
+                emitter.Modules.push_back(color);
+                emitter.Modules.push_back(size);
+                emitter.Modules.push_back(acceleration);
+                emitter.Modules.push_back(renderer);
+                effect.Emitters.push_back(emitter);
+
+                VfxInstanceDesc instanceDesc;
+                instanceDesc.Position = Math::Vector3(96.0f, 72.0f, 0.0f);
+                instanceDesc.Seed = 0xC001D00Du;
+                instanceDesc.Texture = TextureHandle::Invalid();
+                instanceDesc.bEnabled = true;
+                data.m_VfxEmbers = ctx.EngineRef.GetParticleSystem().GetVfxEffects().CreateInstance(effect, instanceDesc, &error);
+                if (!data.m_VfxEmbers.IsValid())
+                {
+                    LOG_ERROR("Rendering3DTest VFX の生成に失敗しました: %s", error.c_str());
+                }
+            }
+            LOG_INFO("Rendering3DTest vfx effect created valid=%d", data.m_VfxEmbers.IsValid());
         }
 
         // ========================================
@@ -4160,10 +4204,10 @@ namespace Game::GameModes
         data.m_PendingMaterialUpdates.clear();
         data.m_CookedStartupModelLoads.clear();
 
-        if (data.m_ParticleEmitter.IsValid())
+        if (data.m_VfxEmbers.IsValid())
         {
-            ctx.EngineRef.GetParticleSystem().DestroyEmitter(data.m_ParticleEmitter);
-            data.m_ParticleEmitter = {};
+            ctx.EngineRef.GetParticleSystem().GetVfxEffects().DestroyInstance(data.m_VfxEmbers);
+            data.m_VfxEmbers = {};
         }
     }
 

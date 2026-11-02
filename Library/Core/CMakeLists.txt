@@ -51,6 +51,9 @@ set(PRIVATE_SOURCES
     Private/Object/ResourceRegistry.cpp
     Private/Object/World.cpp
     Private/Particle/ParticleSystem.cpp
+    Private/Particle/VfxSchema.cpp
+    Private/Particle/VfxEffectSerialization.cpp
+    Private/Particle/VfxEffectSystem.cpp
     # Animation
     Private/Animation/AnimationClipResource.cpp
     Private/Animation/SkeletalJointIndex.h
@@ -512,6 +515,10 @@ set(PUBLIC_HEADERS
     Public/Application/ApplicationHandlerBase.h
     Public/Engine/Engine.h
     Public/Particle/ParticleSystem.h
+    Public/Particle/VfxEffectTypes.h
+    Public/Particle/VfxSchema.h
+    Public/Particle/VfxEffectSerialization.h
+    Public/Particle/VfxEffectSystem.h
     Public/Engine/ApplicationProcessor.h
     Public/Engine/FixedStepSettings.h
     # Animation
