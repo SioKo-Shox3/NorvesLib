@@ -9090,3 +9090,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U5 接地の検査で castle の範囲の足元を castle の段の焼いた面で測る: 着地(直し 0 回)
 - U3 接地用の格子の書き出しに castle の層を足す: 着地(直し 0 回)
 - U4 荒野で castle の 5 範囲にも崖の塊を置く: 着地(直し 0 回)
+- U6 記録を書き、ビルドとクックの verify を通す: 着地(直し 0 回)
