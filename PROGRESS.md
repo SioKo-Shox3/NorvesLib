@@ -8592,3 +8592,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Done: 方式と前提の境界をロードマップ（`Docs/Plans/GameFeatureRoadmap.md` の「GR133 デカール」の節。リポジトリ管理外）に書いた。推奨の案で進める: 画面空間の遅延デカール（箱の投影）を草（FoliagePass）の前に 1 本置き、GBuffer の Albedo と Normal の RGB だけを α で混ぜて書き換える（Material・Emissive・Velocity・各 A は変えない）。既定では草（Material.A が 0.125〜0.375）に描かない。ゲーム側の `DecalPool`（上限の既定 256、超えたら足した順で最古を消す、寿命と薄れ）の写しを `RenderWorld::SetDecals` で草と同じ道で渡す。理由: GR25（ゲーム定義のパスの口）・GR26（シェーディングモデルの ID）が無い今のエンジンで、既存の GBuffer の印（草の Material.A・地形の Normal.A）だけで受け手を選べ、パスの登録をエンジンの遅延の段に直に置けば前提を待たずに作れる。前提が要る部分（粗さ・濡れの書き換え、地形の層ごとの受け、テクスチャ・アトラスとクック、GR25 の口への移し替え）は完了を宣言しない範囲として節に残した
 - Done: デカールの描画値 `DecalInstance`・一覧 `DecalScene`（`Rendering/DecalTypes.h`）と `Particle::DecalPool` を足し、`DecalPoolEvictionTest`（3 点は `Docs/Testing.md`）が Passed
 - Next: 受け渡し（U2）→ DecalPass とシェーダー（U3）→ `DecalGBufferVulkanTest` を作るだけ・起動しない verify（U4）
+- U2 デカールの一覧を GameThread から RenderThread へ渡す: 着地(直し 0 回)
