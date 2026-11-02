@@ -8888,3 +8888,10 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 検証: `cmake --build build --config Debug --target Game CanvasTransientBoardSnapshotTest SceneViewWorldBoardDrawCommandTest HitEffectEmissionTest -- /m:1` 終了コード 0、`ctest -R "^(ParticleFrameSnapshotTest|CanvasTransientBoardSnapshotTest|SceneViewWorldBoardDrawCommandTest|HitEffectEmissionTest|BoardComponentRoutingTest)$"` 5/5 Passed（`.harness/runs/20261102-191023/verify-GAME-GR131-VFX-P1-final.txt`）。足した検査は `SceneViewWorldBoardDrawCommandTest`（境界の無いワールドの一時の板が 1 回だけ載り、スクリーンの板は載らず、空の列の後は残らず、常駐の板は 1 回のまま）と `ParticleFrameSnapshotTest`（`ParticleSystem` の VFX から実際に出したワールドの板が SceneView にだけ、エミッタのスクリーンの板がキャンバスにだけ載り、次のフレームはどちらにも残らない）。足す理由の 3 点は `Docs/Testing.md`
 - Next: 起動の確かめは後回し。当たりを出す場面で火花と衝撃が 3D の view に出ること（`GAME-GR131-VFX-CHECK`）を撮って確かめる
 - Notes: `ParticleSystem` の通常のエミッタの板と Text のグリフの板は今もいつも `ScreenSpace` で、ワールドの空間に出るのは VFX（`VfxSimulationSpace::World`）の板だけ
+
+## 2026-11-02 GAME-GR131-VFX-P1（run 20261102-191023 の反復 2）
+
+- Done: 反復 1 の再検証の失敗（`BoardComponentRoutingTest.exe` が無く Not Run）を解いた。原因は実装ではなく、verify のビルド行が `BoardComponentRoutingTest` のターゲットを含まず、この枠の `build` にその実行ファイルが作られていなかったこと。`cmake --build build --config Debug --target BoardComponentRoutingTest -- /m:1` で作った（終了コード 0）
+- 検証: verify の 2 行をこの枠の `build` で回し直し、ビルド 終了コード 0、ctest 5/5 Passed（BoardComponentRoutingTest・SceneViewWorldBoardDrawCommandTest・HitEffectEmissionTest・ParticleFrameSnapshotTest・CanvasTransientBoardSnapshotTest。`.harness/runs/20261102-191023/verify-GAME-GR131-VFX-P1-iter2.txt`）
+- Next: 起動の確かめは後回し（`GAME-GR131-VFX-CHECK`）
+- Notes: 要起票: GAME-GR131-VFX-P1 の verify のビルド行に `BoardComponentRoutingTest` のターゲットが無く、新しい `build` では ctest の行が Not Run で落ちる（ビルド行へターゲットを足すのが推奨）
