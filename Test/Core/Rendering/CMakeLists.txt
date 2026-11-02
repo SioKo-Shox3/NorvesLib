@@ -2215,6 +2215,7 @@ add_executable(SkeletalAnimationSamplingTest
     AnimPoseOpsTest.cpp
     AnimGraphRuntimeTest.cpp
     RootMotionMathTest.cpp
+    AnimatorIntegrationTest.cpp
     PoseEvaluationTest.cpp
     ClipChannelSearchTest.cpp
     LegacyPoseOracle.cpp
