@@ -8973,3 +8973,11 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 補間を要求していない（描画の変換の列を持たない）付けた Entity は前のまま（シミュレーションの変換で描く）。付け先だけ補間すると手とずれるので、付ける側も `SetRenderInterpolationEnabled(true)` にする前提。外したフレームは履歴が今の姿勢から始め直すので、外した瞬間に最大 1 ステップ分の段差が出うる
 - Notes: `UpdateRenderRows` は補間の行ごとに親の鎖をたどって `SocketAttachmentComponent` を探す。補間の行が大量になる場面では計測で確かめる
 - U1 GPU スキニングの法線行列の退化判定を尺度不変にし、小さな一様スケールの骨の検査を足す: 着地(直し 0 回)
+
+## 2026-11-02 FIX-NORMAL-MATRIX-SCALE-CHECK-P1（run 20261102-195420 の反復 1。完了）
+- Done: `skinning_compute.comp` の `NormalMatrixOf` を `MatrixUtils::CreateNormalMatrix` と同じ尺度不変の規則にした（軸の長さの積 = GLSL の列 `m[0..2]` の長さの積。CPU の行優先の行列をそのまま std430 の mat4 に載せるので GLSL の列が CPU の行にあたる。積が 0・非有限、または `|det| < EPSILON × 積` で単位行列）。`SingularDeterminant` は消した。`ComputeSkinningVulkanTest` の `TransformNormal` の写しも CPU の行の長さで同じ規則にした
+- Done: `ComputeSkinningVulkanTest` にインスタンス D（一様スケール 0.001〜0.005 × 回転の骨 2 本と変換、3 頂点）を足した。GPU の出力は既存の流れで CPU の写しと比べ、さらに今・前の骨の空間の法線が `SkeletalAnimationSampler::SkinVertex` と許容 1e-4 で一致すること、単独の骨の頂点の法線が入力の向きから回転していること（内積 < 0.99）を確かめる
+- Done: アプリを起動しない確かめを回した: `glslangValidator -V --target-env vulkan1.2` で `skinning_compute.comp` のコンパイルが通る、`cmake --build build --config Debug --target RHITextureUpdateVulkanTest MathGeometryTest SkinnedRenderPathContractTest -- /m:1` 終了コード 0、ctest `MatrixAbstractionTest` Passed（`.harness/runs/20261102-195420/FIX-NORMAL-MATRIX-SCALE-CHECK-P1-U1-verify.txt`）
+- Next: 起動の確かめは後回し。`FIX-NORMAL-MATRIX-SCALE-CHECK-P1-CHECK` で `cmake --build build --config Debug --target Game RHITextureUpdateVulkanTest MathGeometryTest -- /m:1` と `ctest --test-dir build -C Debug -R "^ComputeSkinningVulkanTest$" --no-tests=error --output-on-failure --timeout 600` を回し、インスタンス A〜D の GPU の出力が CPU の参照と一致し、D の 2 種の検査が通ることを確かめる
+- Notes: verify の ctest のうち `SkinnedRenderPathContractTest` は終了コード 3 で落ちるが、変更前のシェーダー（ac1e5680 の `skinning_compute.comp`）に戻して同じ実行ファイルを走らせても同じ箇所・同じ終了コードで落ちる（`FIX-NORMAL-MATRIX-SCALE-CHECK-P1-contract-base-shader.txt` と `-contract-new-shader.txt`）。この試験の実行ファイルは `ComputeSkinningVulkanTest.cpp` を含まないので、今回の変更とは関係しない前からの失敗
+- Notes: 要起票: `SkinnedRenderPathContractTest` が `TestChunkFailureKeepsGBufferAndShadowDrawAndLogsOnce` の後（`TestInitializedPassesExecuteThroughFrameCommandsAndSceneRenderer` の中）で assert の文言を出さずに終了コード 3 で終わる（ac1e5680 の Debug ビルド）
