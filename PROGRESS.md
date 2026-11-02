@@ -8727,3 +8727,10 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: 起動の確かめは後回し。`GAME-GR133-VFX-CHECK` で `DecalGBufferVulkanTest` の ctest（`--timeout 600`）を回す
 - U1 撃破の血の時間割の型と CPU の試験: 着地(直し 0 回)
 - U2 合図を GR136 の粒と GR133 のデカールへ写す: 着地(直し 0 回)
+
+## 2026-11-02 GAME-GR132-VFX（run 20261102-152003 の反復 1）
+- 方式（推奨を採った）: 撃破の合図 1 回から、血しぶき → 滲み → 消滅 → 終わりの 4 つの合図を、合図からの相対の時刻の時間割（`DefeatBloodTimeline`）で決め、Core の純粋な CPU の型 `Particle/DefeatBloodSequence` が呼び手の固定の刻みで進める。合図の時刻は刻みの幅によらず時間割の値そのもの。滲みのマスクは 1−(1−t)^2 で単調に広がり、消滅の間も縮めず不透明度で薄れる。`Particle/DefeatBloodPresenter` が、しぶきを GR136 の `VfxEffectSystem` のイベント（コードで組む既定の赤い粒、ワールドの空間）へ、滲みと消滅を GR133 の `DecalPool` のデカール（半径と不透明度を毎刻み更新し、終わりで消す。`DecalPool::SetAppearance` を足した）へ写す。理由: いまある 2 つの道に載せれば前提の GR を待たずに作れ、時間割を 1 つにすれば体の滲み（GR26）・ディゾルブ（GR60）も同じ合図と値で後から繋げられる
+- 垂直スライス（G8）: 粒と地面の滲み（デカール）までを G8 に入れるのを推奨した。どちらもいまのエンジンで動き、時間割を共有するので粒だけに絞っても作業はほとんど減らない。粒だけにするなら滲みを使わない設定で済む。体の滲み・ディゾルブとの連動・白い質感の上の見え方は G10
+- 方式と前提の境界の記録: `Docs/Plans/GameFeatureRoadmap.md`（メイン側・管理外）の「GR132 シ者を倒したときの赤い血」の節。完了を宣言しない範囲: 撃破を出す側（GR17。今は呼び手が `Trigger` を直接呼び、Game からは呼ばない）、GPU の粒（GR57）、濡れと体の表面の滲み（GR26）、ディゾルブ（GR60）、白い面の上の見え方（GR65）、しぶきの向き（GR131 の向きつきのイベントの統合後）、時間のチャンネル（GR02）
+- 検証: verify の 2 行を回した。`Game`・`DefeatBloodSequenceTest`（と `DecalPoolEvictionTest`・`VfxEffectSystemTest`）の Debug のビルド EXIT=0、`DefeatBloodSequenceTest` 1/1 Passed、`DecalPoolEvictionTest`・`VfxEffectSystemTest` 2/2 Passed（`.harness/runs/20261102-152003/verify-GAME-GR132-VFX-U2.txt`）。numstat は 2 通りで一致
+- Next: Game に撃破の場面が無いので起動画面の見た目は変わらず、起動の確かめは無い。粒とデカールの見た目（色・数・大きさ・時間割の仮の値、ワールドの空間の粒が今の描画で出るか）は、GR17 の撃破の場面ができてから撮影で確かめて合わせる
