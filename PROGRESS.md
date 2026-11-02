@@ -9087,3 +9087,10 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 要起票: castle の 5 範囲（ref_far_01、5〜9 km）の壁の足から崖錐への移り（far_01 の wall_foot。版 15 で 0.334〜0.344、外した下限 0.356）を、遠景の格子の崖の生成（式）か MegaGeometry の散布で上げる
 - U1 Clear・Shutdown の受付を締める試験を今の破棄の時期で空振りせずに走らせる: 着地(直し 1 回)
 - U2 焼いた BVH を持たないメッシュに実行時の BVH ができる契約へ検査を置き換え、タスクの verify を通す: 着地(直し 1 回)
+
+## 2026-11-03 G2-S6-ASSET-SET-P5（run 20261103-004713 の反復 1）
+- 変更前の結果（ローカル）: Release・Debug の両方で同じ 2 本が落ちた。ModelResourcesAssetRuntimeTest は 323 行 `bDestroyHookRan`、MegaGeometryResourcesTest は 1989 行（BVH の無いメッシュは BVH の領域を持たない）。両試験とも独自の assert で、Release でも検査は有効
+- ClearAllResources で OnBufferDestroyed が呼ばれない理由: be18928f でメッシュの区画が共有のジオメトリのプールへ移り、Clear は区画を手放して GpuRetireQueue へ返すが、共有のバッファはプールが持ち続ける（試験では serial 0 で区画はその場で返る）。VulkanDevice の破棄の遅延（SCN-ECS-FIF-DEFERRED-DESTROY-MEMORY）は関係ない。Clear が資源を手放していないのではないので、実装は直さず試験の駆動を合わせた: GpuResourceStore に観測用のバッファを置き、Clear がその場で破棄する時点（受付を締めてから ReopenAfterClear までの間）で hook を走らせて `requestDuringClear == 0` を確かめる。Shutdown 側は GeometryBuffers の破棄で hook が走る
+- 前の失敗で隠れていた同じ形の失敗も直した: TestGenerationGatesAndLostPublishCleanup（アップロードが後のフレームへ移り、FakeBuffer の Update の hook が公開の最中に走らない。世代を進める hook をプールの塊の作成の時点へ移し、走ったことを assert。解放の確かめを FakeBuffer の数からモデル数・プールの使用バイト数・区画数・アップロード待ちへ置き換え）、MegaGeometryResourcesTest の TestCreateFailureDoesNotRegister（プールの確保の再試行で単発の失敗の注入が空振り。Initialize 後からの相対の番号以降を失敗させ、注入が当たったことと資源が増えないことを assert）
+- MegaGeometryResourcesTest の BVH の無いメッシュの検査は、実行時に作る BVH（e806a3c9）の契約に置き換えた: 節数・葉の数・段の節数の合計、バイト数 = 節 × 32 + クラスタ数 × 4、256 整列でインデックス・クラスタの後ろ、葉に LEAF と CLUSTER_ORDER の印・範囲が表の中、表がクラスタ番号の置換、クラスタの記録は焼いた BVH の版とバイト単位で同じ。壊れた BVH を拒否する検査は変えていない
+- 証拠: `.harness/runs/20261103-004713/u2-unit-verify.txt`（タスクの verify。Release・Debug とも 4 本 Passed、終了コード 0）。windows-assetcook.yml の `-R` は変えていない。CI の再確認は G2-S6-ASSET-SET-P3
