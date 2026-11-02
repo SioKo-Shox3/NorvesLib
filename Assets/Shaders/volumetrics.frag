@@ -34,7 +34,7 @@ void main()
     }
 
     vec3 rayDirection = viewVector / rayDistance;
-    VolumetricsRayResult ray = EvaluateVolumetricsRay(rayDirection, rayDistance);
+    VolumetricsRayResult ray = EvaluateVolumetricsRay(rayDirection, rayDistance, gl_FragCoord.xy, true);
     float transmittance = ray.FogTransmittance;
     float opacity = ray.FogOpacity;
     vec3 fogLight = vec3(0.0);

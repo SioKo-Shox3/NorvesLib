@@ -49,9 +49,11 @@ namespace NorvesLib::Core::Rendering
             float AerialScattering[4];
             // 空気遠近の高度ごとの表（SkyAerialProfile）。[i] = 太陽の照度 × 透過率、[SkyAerialProfileSize + i] = 太陽の照度 × Ψ_ms
             float AerialProfile[2u * SkyAerialProfileSize][4];
+            // x=霧の距離の上限（m、0 で視線全体）、y=周りの光の倍率、zw=未使用
+            float FogRange[4];
         };
 
-        static_assert(sizeof(GPUVolumetricsParams) == 784u + 2u * SkyAerialProfileSize * 16u);
+        static_assert(sizeof(GPUVolumetricsParams) == 800u + 2u * SkyAerialProfileSize * 16u);
 
         RHI::DescriptorSetDesc CreateVolumetricsDescriptorSetDesc(bool bUseVsm)
         {
@@ -292,6 +294,8 @@ namespace NorvesLib::Core::Rendering
             outParams.FogParameters[1] = fog.BaseHeight;
             outParams.FogParameters[2] = fog.HeightFalloffPerUnit;
             outParams.FogParameters[3] = skyRadianceTexture ? 1.0f : 0.0f;
+            outParams.FogRange[0] = fog.MaxDistanceMeters;
+            outParams.FogRange[1] = fog.AmbientScale;
 
             const SceneProxy* scene = context.SnapshotScene;
             outParams.FallbackFogColor[0] = scene ? SafeFogColorChannel(scene->FogColorR) : 0.0f;
