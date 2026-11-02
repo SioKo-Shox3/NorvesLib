@@ -2211,6 +2211,7 @@ add_test(NAME GLTFSkeletalAnalyzerTest COMMAND GLTFSkeletalAnalyzerTest)
 
 add_executable(SkeletalAnimationSamplingTest
     SkeletalAnimationSamplingTest.cpp
+    SocketOracleTest.cpp
     SkeletalSamplerBaseline.cpp
     AnimPoseOpsTest.cpp
     AnimGraphRuntimeTest.cpp
