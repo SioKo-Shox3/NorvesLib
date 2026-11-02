@@ -8712,3 +8712,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 当たりの型・表・要求の列（HitEffectEmitter）: 着地(直し 0 回)
 - U2 VFX の向きつきのイベント: 着地(直し 0 回)
 - U3 HitEffectEmissionTest と Docs/Testing.md の 3 点: 着地(直し 0 回)
+- U4 再生（VFX へ流す）・既定の火花と衝撃・ParticleSystem への組み込み: 着地(直し 0 回)

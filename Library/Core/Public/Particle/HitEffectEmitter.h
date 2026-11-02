@@ -1,7 +1,7 @@
 ﻿// 当たりから表面に応じたエフェクトの放出要求を蓄積する型と CPU 部品を定義する。
 #pragma once
 
-#include "Particle/VfxEffectTypes.h"
+#include "Particle/VfxEffectSystem.h"
 
 namespace NorvesLib::Core::Particle
 {
@@ -55,6 +55,13 @@ namespace NorvesLib::Core::Particle
         static constexpr uint32_t InvalidEffectIndex = 0xFFFFFFFFu;
         /** @brief 待機できる放出要求の上限。 */
         static constexpr uint32_t DefaultMaxPendingRequests = 256u;
+        /** @brief 当たりの放出に使うイベント名。 */
+        static constexpr const char* HitEventName = "Hit";
+
+        /** @brief 火花と衝撃の既定表を設定する。 */
+        HitEffectEmitter();
+        /** @brief 火花と衝撃の既定表を作る。 */
+        static HitEffectTable MakeDefaultTable();
 
         /** @brief 検証に成功した表だけを設定し、失敗時は理由を返す。 */
         bool SetTable(const HitEffectTable& table, Container::String* outError = nullptr);
@@ -68,6 +75,12 @@ namespace NorvesLib::Core::Particle
         const VariableArray<HitEffectEmitRequest>& GetPendingRequests() const;
         /** @brief 出力を待機列で置き換え、待機列を空にする。 */
         void ConsumeRequests(VariableArray<HitEffectEmitRequest>& outRequests);
+        /** @brief 待機列を積んだ順に VFX へ送り、空にする。 */
+        void Dispatch(VfxEffectSystem& effects);
+        /** @brief VFX の Clear 後にハンドルと待機列を忘れる。 */
+        void ResetInstances();
+        /** @brief エフェクトに対応するハンドルを取得する。未作成なら無効値を返す。 */
+        VfxEffectHandle GetInstanceHandle(uint32_t effectIndex) const;
         /** @brief 落とした数を保ったまま待機列を空にする。 */
         void ClearRequests();
         /** @brief 上限に達して積めなかった要求の累計を取得する。 */
@@ -78,6 +91,10 @@ namespace NorvesLib::Core::Particle
         HitEffectTable m_Table;
         /** @brief 消費を待つ放出要求の列。 */
         VariableArray<HitEffectEmitRequest> m_PendingRequests;
+        /** @brief エフェクトの添字ごとに遅延作成するインスタンス。 */
+        VariableArray<VfxEffectHandle> m_InstanceHandles;
+        /** @brief 表の差し替えで古いインスタンスの破棄が必要かどうか。 */
+        bool m_bInstancesNeedReset = false;
         /** @brief 待機列の上限で落とした要求の累計。 */
         uint32_t m_DroppedRequestCount = 0u;
         /** @brief 有効な表が設定済みかどうか。 */
