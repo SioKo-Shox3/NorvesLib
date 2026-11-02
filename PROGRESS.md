@@ -8995,3 +8995,7 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261102-200220/u5-unit-verify.txt`（Debug・RelWithDebInfo の Game のビルド EXIT=0、仕様の JSON の読み込み・CheckPlacement.py の構文 EXIT=0、numstat 一致）
 - Next: 起動の確かめは後回し（SCN-WL-CLIFF-GEN-TALUS-CHECK-P1-CHECK）。verify の 3〜10 行目で (A) 塊の仕様の行が基準を超える・(B) 地形だけの仕様が通る・(C) 接地・(D) ページの要求と VRAM・(E) look の 3 視点を写真と並べて壁の足に塊が見える、を確かめる。ログの `WASTELAND_CLIFF_BLOCKS`（範囲ごとの数・no_ground）で、遠い castle の範囲に塊が出ているかも見る
 - Notes: 遮蔽の組の視点 contact_near・ref_cliff_01 から 7 範囲までの最短距離は 2642.5 m・2400 m で、塊は遮蔽の小物の書き出し（300 m）に入らない（遮蔽の Cycles の正解は古くならない）。壁の検出の閾値（38°・55°・3 m）と塊の見た目は起動の確かめまで未検証。BuildTalusRocks の出力は同じ乱数・同じ順の共有化で変わらない作りだが、実行での一致は未確認
+
+## 2026-11-02 SCN-WL-CLIFF-GEN-TALUS-CHECK-P1（run 20261102-200220 の反復 2、人の判断待ち）
+- Notes: castle の 5 範囲（z −3950 以南・x −4250 以西）は接地用の格子 WastelandPlacementGround.bin（x −2600〜2099、z −2499〜2100）の外で、塊は構造上 0 個になる。shape-cliff-blocks.json の far_01 の行（wall_foot ≥ 0.356）の注釈は castle_0・castle_1 にだけあるので (A) が必ず落ちる。done-when の「根元は接地用の格子から取る」と「仕様を置いた後に変えない」がぶつかるため、案（遠景の格子から根元を取る / 塊を near の 2 範囲に絞り far_01 の行を移す）を人の判断に回した。
+- Next: 人が案を決めて status を todo に戻したら再開する。

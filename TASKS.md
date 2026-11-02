@@ -4656,7 +4656,7 @@
 - from: SCN-WL-CLIFF-GEN-TALUS
 
 ## SCN-WL-CLIFF-GEN-TALUS-CHECK-P1: 壁から崖錐へ移る所の崩れた大きな塊（数 m〜十数 m）を、岩の物として崖の生成の 7 範囲の壁の足元に置く
-- status: done
+- status: blocked
 - done-when: 2026-11-02 の人の判断（cc21c026、SCN-WL-CLIFF-GEN-TALUS の案 A）で、崩れた塊は高さの場ではなく物の岩として置く別の項目にすると決まった。地形のクック（崖の細部の版 19）は変えない。
 
   すること:
