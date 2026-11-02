@@ -48,6 +48,8 @@ namespace NorvesLib::Core::Particle
         bool IsAlive(DecalHandle handle) const;
         /// ワールド位置[m]と局所からワールドへの四元数（x, y, z, w）を更新する
         bool SetTransform(DecalHandle handle, const float position[3], const float rotation[4]);
+        /// 箱の半分の大きさと線形の色を更新する。不正な値や死んだハンドルでは変更しない
+        bool SetAppearance(DecalHandle handle, const float halfExtents[3], const float color[4]);
         /// 呼び手の経過時間[s]で年齢を進める。負・非有限の値は 0 とする
         void Tick(float deltaSeconds);
         uint32_t GetCount() const;
