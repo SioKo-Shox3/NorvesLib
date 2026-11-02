@@ -1,5 +1,5 @@
 ﻿{
-  "description": "高さの場で塊を足す形は版 16〜18 で版 15 を超えなかったため、崩れた塊の項目（SCN-WL-CLIFF-GEN-TALUS）は未達とし、塊を求める行を外す。この形の合否は、版 19（版 15 と同じ形）が版 15 の値に戻ることを確かめる。棚・角・外形の 27 行と region_rows は shape-cliff-caprock.json と同じ（moved_to と retake_jitter を含む）。内部の折れ線の 5 組 × 3 行は版 15 の 4 回の撮影（shape・shape-retake-1〜3）の実測に合わせ、一致は最小を小数 3 桁で切り捨てた値以上、欠けは最大を小数 1 桁で切り上げた値以下、余分は最大を小数 3 桁で切り上げた値以下とする。従来の閾値がより厳しい行はその値を保つ。",
+  "description": "高さの場で塊を足す形は版 16〜18 で版 15 を超えなかったため、崩れた塊の項目（SCN-WL-CLIFF-GEN-TALUS）は未達とし、塊を求める行を外す。この形の合否は、版 19（版 15 と同じ形）が版 15 の値に戻ることを確かめる。moved_to の付いた行と region_rows は shape-cliff-caprock.json と同じ。moved_to のない棚・角・外形の行と内部の折れ線の 5 組 × 3 行は版 15 の 4 回の撮影（shape・shape-retake-1〜3）の実測に合わせ、一致は最小を小数 3 桁で切り捨てた値以上、欠けは最大を小数 1 桁で切り上げた値以下、余分は最大を小数 3 桁で切り上げた値以下とする。従来の閾値がより厳しい行はその値を保つ。",
   "annotations_sha256": "9db8b9b5afac738e970f4fb0ea925ac9d48ea8f94c4afd2e6e09c4359f5c72a2",
   "fold_annotations_sha256": "36a0a53890a6f32558289aec25368e7657fee0aee2f25043d0643db58d26914c",
   "rows": [
@@ -15,8 +15,8 @@
       "photo": "far_01",
       "cliff": "Castle Butte",
       "quantity": "outline_residual_median_px",
-      "max": 8.0,
-      "note": "版 12 2.8。絶対の基準"
+      "max": 2.9,
+      "note": "版 15 の 4 回の実測 2.8284271247461903〜2.8284271247461903 から 最大を小数 1 桁で切り上げた値以下とする。"
     },
     {
       "photo": "far_01",
@@ -30,15 +30,15 @@
       "photo": "far_01",
       "cliff": "Castle Butte",
       "quantity": "shelf_extra_ratio",
-      "max": 3.489,
-      "note": "版 12 3.389 + 0.1"
+      "max": 3.150,
+      "note": "版 15 の 4 回の実測 3.1249999999999996〜3.149801587301587 から 最大を小数 3 桁で切り上げた値以下とする。"
     },
     {
       "photo": "far_01",
       "cliff": "Castle Butte",
       "quantity": "shelf_gap_max_px",
-      "max": 77.1,
-      "note": "版 12 75.1 + 2 画素"
+      "max": 69.1,
+      "note": "版 15 の 4 回の実測 69.06540284360189〜69.06540284360189 から 最大を小数 1 桁で切り上げた値以下とする。"
     },
     {
       "photo": "far_01",
@@ -52,8 +52,8 @@
       "photo": "far_01",
       "cliff": "2 本の尖塔",
       "quantity": "outline_residual_median_px",
-      "max": 8.0,
-      "note": "版 12 2.8。絶対の基準"
+      "max": 2.3,
+      "note": "版 15 の 4 回の実測 2.23606797749979〜2.23606797749979 から 最大を小数 1 桁で切り上げた値以下とする。"
     },
     {
       "photo": "far_01",
@@ -67,29 +67,29 @@
       "photo": "far_01",
       "cliff": "Cedar Mesa の縁（右）",
       "quantity": "outline_residual_median_px",
-      "max": 8.0,
-      "note": "版 12 5.0。絶対の基準"
+      "max": 4.5,
+      "note": "版 15 の 4 回の実測 4.47213595499958〜4.47213595499958 から 最大を小数 1 桁で切り上げた値以下とする。"
     },
     {
       "photo": "far_01",
       "cliff": "Cedar Mesa の縁（右）",
       "quantity": "shelf_match",
-      "min": 0.39,
-      "note": "版 12 0.420 − 揺れ 0.03"
+      "min": 0.402,
+      "note": "版 15 の 4 回の実測 0.40270237706752116〜0.42005690311822014 から 最小を小数 3 桁で切り捨てた値以上とする。"
     },
     {
       "photo": "far_01",
       "cliff": "Cedar Mesa の縁（右）",
       "quantity": "shelf_extra_ratio",
-      "max": 2.653,
-      "note": "版 12 2.553 + 0.1"
+      "max": 2.266,
+      "note": "版 15 の 4 回の実測 2.2487207602339185〜2.2656250000000004 から 最大を小数 3 桁で切り上げた値以下とする。"
     },
     {
       "photo": "far_01",
       "cliff": "Cedar Mesa の縁（右）",
       "quantity": "shelf_gap_max_px",
-      "max": 171.2,
-      "note": "版 12 169.2 + 2 画素"
+      "max": 167.3,
+      "note": "版 15 の 4 回の実測 128.1841726618705〜167.24028776978415 から 最大を小数 1 桁で切り上げた値以下とする。"
     },
     {
       "photo": "far_02",
@@ -119,8 +119,8 @@
       "photo": "far_02",
       "cliff": "Setting Hen Butte",
       "quantity": "shelf_extra_ratio",
-      "max": 1.985,
-      "note": "版 12 1.885 + 0.1"
+      "max": 1.732,
+      "note": "版 15 の 4 回の実測 1.727561090225564〜1.7314771303258145 から 最大を小数 3 桁で切り上げた値以下とする。"
     },
     {
       "photo": "far_02",
@@ -142,22 +142,22 @@
       "photo": "far_02",
       "cliff": "Rooster Butte",
       "quantity": "outline_residual_median_px",
-      "max": 8.0,
-      "note": "版 12 5.1。絶対の基準"
+      "max": 5.0,
+      "note": "版 15 の 4 回の実測 5.0〜5.0 から 最大を小数 1 桁で切り上げた値以下とする。"
     },
     {
       "photo": "far_02",
       "cliff": "Rooster Butte",
       "quantity": "shelf_match",
-      "min": 0.369,
-      "note": "版 12 0.399 − 揺れ 0.03"
+      "min": 0.394,
+      "note": "版 15 の 4 回の実測 0.39440088881435525〜0.395952121415395 から 最小を小数 3 桁で切り捨てた値以上とする。"
     },
     {
       "photo": "far_02",
       "cliff": "Rooster Butte",
       "quantity": "shelf_extra_ratio",
-      "max": 2.454,
-      "note": "版 12 2.354 + 0.1"
+      "max": 2.152,
+      "note": "版 15 の 4 回の実測 2.151741293532339〜2.151741293532339 から 最大を小数 3 桁で切り上げた値以下とする。"
     },
     {
       "photo": "far_02",
@@ -171,37 +171,37 @@
       "photo": "ground_02",
       "cliff": "Rooster Butte",
       "quantity": "corner_match",
-      "min": 0.5,
-      "note": "版 12 0.667。絶対の基準。版 15 は同じ焼きの 4 回の撮影で 0.333・0.667・0.667・0.667（3 つの角の 1 点が撮影ごとに入れ替わる。撮り直しの揺れ 0.333）で、版 12 との差が揺れの内（WastelandShape.md の「崖の上端の帽岩」）",
+      "min": 0.666,
+      "note": "版 15 の 4 回の実測 0.6666666666666666〜0.6666666666666666 から 最小を小数 3 桁で切り捨てた値以上とする。撮り直しの揺れは 0.3333。",
       "retake_jitter": 0.3333
     },
     {
       "photo": "ground_02",
       "cliff": "Rooster Butte",
       "quantity": "outline_residual_median_px",
-      "max": 8.0,
-      "note": "版 12 3.2。絶対の基準"
+      "max": 3.0,
+      "note": "版 15 の 4 回の実測 3.0〜3.0 から 最大を小数 1 桁で切り上げた値以下とする。"
     },
     {
       "photo": "ground_02",
       "cliff": "Rooster Butte",
       "quantity": "shelf_match",
-      "min": 0.701,
-      "note": "版 12 0.731 − 揺れ 0.03"
+      "min": 0.816,
+      "note": "版 15 の 4 回の実測 0.8160377358490565〜0.8160377358490565 から 最小を小数 3 桁で切り捨てた値以上とする。"
     },
     {
       "photo": "ground_02",
       "cliff": "Rooster Butte",
       "quantity": "shelf_extra_ratio",
-      "max": 2.098,
-      "note": "版 12 1.998 + 0.1"
+      "max": 1.710,
+      "note": "版 15 の 4 回の実測 1.7069128787878787〜1.709280303030303 から 最大を小数 3 桁で切り上げた値以下とする。"
     },
     {
       "photo": "ground_02",
       "cliff": "Rooster Butte",
       "quantity": "shelf_gap_max_px",
-      "max": 28.0,
-      "note": "版 12 26.0 + 2 画素"
+      "max": 27.1,
+      "note": "版 15 の 4 回の実測 27.025592417061613〜27.025592417061613 から 最大を小数 1 桁で切り上げた値以下とする。"
     },
     {
       "photo": "far_01",
