@@ -182,7 +182,7 @@ namespace NorvesLib::Core::Locomotion
                     s.bPivot = true;
                 const float slopeScale = ground.bGrounded ? SlopeSpeedScale(p, ground.Normal, Forward(s.Yaw)) : 1;
                 double target = magnitude * (intent.bSprint ? p.Gaits[3].SpeedMax : p.Gaits[1].SpeedMax) * slopeScale;
-                if (s.bPivot || s.LandingRemaining > 0)
+                if (s.bPivot)
                     target = 0;
                 if (!std::isfinite(target) || target > std::numeric_limits<float>::max() ||
                     !Math::TryCriticalDamp(s.SmoothedTarget, s.TargetDerivative, static_cast<float>(target),
@@ -197,9 +197,14 @@ namespace NorvesLib::Core::Locomotion
                 const double turn = moving ? std::clamp(error, -cap * h, cap * h) : 0;
                 const double turnFraction = cap > 0 ? std::fabs(turn) / (cap * h) : 0;
                 const bool braking = moving && std::cos(error) < -1e-6;
-                const double adjustedTarget = braking ? 0
-                                                      : std::max(0.0, static_cast<double>(s.SmoothedTarget)) *
-                                                            (1 - p.TurnSlowdown * turnFraction * turnFraction);
+                double adjustedTarget = braking ? 0
+                                                : std::max(0.0, static_cast<double>(s.SmoothedTarget)) *
+                                                      (1 - p.TurnSlowdown * turnFraction * turnFraction);
+                // 着地回復中は加速を抑え、入力に応じた減速は維持する。
+                if (s.LandingRemaining > 0)
+                {
+                    adjustedTarget = std::min(adjustedTarget, static_cast<double>(s.Speed));
+                }
                 const double rate = (braking                    ? gait.Brake
                                      : adjustedTarget > s.Speed ? gait.Acceleration
                                                                 : gait.Deceleration) *
