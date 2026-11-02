@@ -98,6 +98,16 @@ namespace NorvesLib::Core::Particle
         return true;
     }
 
+    VfxEffectSystem& ParticleSystem::GetVfxEffects()
+    {
+        return m_VfxEffects;
+    }
+
+    const VfxEffectSystem& ParticleSystem::GetVfxEffects() const
+    {
+        return m_VfxEffects;
+    }
+
     void ParticleSystem::Clear()
     {
         for (uint32_t index = 0u; index < m_Emitters.size(); ++index)
@@ -107,6 +117,7 @@ namespace NorvesLib::Core::Particle
                 ReleaseSlot(index);
             }
         }
+        m_VfxEffects.Clear();
     }
 
     void ParticleSystem::Tick(float deltaTime)
@@ -161,6 +172,7 @@ namespace NorvesLib::Core::Particle
                 slot.Particles.push_back(particle);
             }
         }
+        m_VfxEffects.Tick(deltaTime);
     }
 
     void ParticleSystem::AppendBoardProxies(VariableArray<Rendering::BoardProxy>& outProxies) const
@@ -195,6 +207,7 @@ namespace NorvesLib::Core::Particle
                 outProxies.push_back(proxy);
             }
         }
+        m_VfxEffects.AppendBoardProxies(outProxies);
     }
 
     bool ParticleSystem::IsValidDesc(const ParticleEmitterDesc& desc)

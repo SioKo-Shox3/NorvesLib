@@ -8559,3 +8559,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U3 CPU のシミュレーション（実行時のインスタンス・イベント・フリップブック・板の出力）: 着地(直し 0 回)
 - U4 VfxEffectSystemTest と Docs/Testing.md の 3 点: 着地(直し 0 回)
 - U5 AssetCook の --cook-vfx: 着地(直し 0 回)
+- U6 ParticleSystem への組み込みと Rendering3DTest の橙の粒の置き換え（最後の確かめ）: 着地(直し 0 回)

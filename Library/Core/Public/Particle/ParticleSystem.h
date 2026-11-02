@@ -4,6 +4,7 @@
 #include "Math/Vector2.h"
 #include "Math/Vector3.h"
 #include "Math/Vector4.h"
+#include "Particle/VfxEffectSystem.h"
 #include "Rendering/MaterialTypes.h"
 #include "Rendering/RenderTypes.h"
 
@@ -59,6 +60,8 @@ namespace NorvesLib::Core::Particle
         bool UpdateEmitter(ParticleEmitterHandle handle, const ParticleEmitterDesc& desc);
         bool SetEmitterEnabled(ParticleEmitterHandle handle, bool bEnabled);
         bool DestroyEmitter(ParticleEmitterHandle handle);
+        VfxEffectSystem& GetVfxEffects();
+        const VfxEffectSystem& GetVfxEffects() const;
         void Clear();
         void Tick(float deltaTime);
         void AppendBoardProxies(VariableArray<Rendering::BoardProxy>& outProxies) const;
@@ -94,6 +97,7 @@ namespace NorvesLib::Core::Particle
         uint32_t m_Seed;
         VariableArray<EmitterSlot> m_Emitters;
         VariableArray<uint32_t> m_FreeEmitterIndices;
+        VfxEffectSystem m_VfxEffects;
 
         friend class ParticleSystemTestAccess;
     };
