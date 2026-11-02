@@ -20,6 +20,7 @@
 namespace NorvesLib::Core::Rendering
 {
     class SceneRenderer;
+    class CanvasView;
 
     /**
      * @brief SceneView設定
@@ -153,6 +154,11 @@ namespace NorvesLib::Core::Rendering
          * @param proxy 更新するProxy（ComponentIdで照合）
          */
         void UpdateBoardProxy(const BoardProxy &proxy);
+
+        /**
+         * @brief このフレームの有効なワールド空間の一時の板で置き換える
+         */
+        void SetTransientBoardProxies(const Container::VariableArray<BoardProxy>& proxies);
 
         /**
          * @brief BoardProxyを削除
@@ -454,6 +460,11 @@ namespace NorvesLib::Core::Rendering
         const Container::VariableArray<BoardProxy> &GetBoardProxies() const { return m_BoardProxies; }
 
         /**
+         * @brief このフレームのワールド空間の一時の板を取得
+         */
+        const Container::VariableArray<BoardProxy>& GetTransientBoardProxies() const { return m_TransientBoardProxies; }
+
+        /**
          * @brief 可視MeshProxyを取得
          */
         const Container::VariableArray<MeshProxy *> &GetVisibleMeshProxies() const { return m_VisibleMeshProxies; }
@@ -536,6 +547,12 @@ namespace NorvesLib::Core::Rendering
         bool DistanceCull(const MeshProxy &proxy, const Math::Vector3 &cameraPosition) const;
         bool DistanceCull(const BoardProxy &proxy, const Math::Vector3 &cameraPosition) const;
 
+        void CullBoardProxy(BoardProxy& proxy,
+                            const CameraProxy& camera,
+                            const Math::Matrix4x4& viewProjection,
+                            const Math::Vector3& cameraPosition,
+                            Container::UnorderedSet<uint64_t>& suppressedMeshComponentIds);
+
         void AppendWorldBoardDrawCommands();
 
         /**
@@ -553,6 +570,7 @@ namespace NorvesLib::Core::Rendering
         Container::VariableArray<MeshProxy> m_MeshProxies;
         Container::VariableArray<SkinnedMeshProxy> m_SkinnedMeshProxies;
         Container::VariableArray<BoardProxy> m_BoardProxies;
+        Container::VariableArray<BoardProxy> m_TransientBoardProxies;
         Container::VariableArray<MegaGeometryProxy> m_MegaGeometryProxies;
         Container::VariableArray<LightProxy> m_LightProxies;
         Container::UnorderedMap<uint64_t, uint32_t> m_MeshProxyIndex;
@@ -616,5 +634,14 @@ namespace NorvesLib::Core::Rendering
         // 統計
         SceneViewStats m_Stats;
     };
+
+    /**
+     * @brief 一時の板を空間で分け、ワールド空間は SceneView、スクリーン空間は CanvasView に渡す
+     *
+     * 空の列も毎回渡して前フレームの板を消し、同じ板を両方のビューで描かない。
+     */
+    void DistributeTransientBoardProxies(const Container::VariableArray<BoardProxy>& frameProxies,
+                                         SceneView* sceneView,
+                                         CanvasView* canvasView);
 
 } // namespace NorvesLib::Core::Rendering

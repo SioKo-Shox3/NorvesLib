@@ -23,6 +23,7 @@ namespace NorvesLib::Core::Rendering
         // シェーダーの SkinningParams（uvec4 counts）と同じ並び
         constexpr uint32_t ParamsBytes = 16;
         constexpr uint64_t OutputVertexBytes = sizeof(SkinnedOutputVertex);
+        constexpr uint64_t MaxComponentVertices = SKINNING_MAX_BINDING_BYTES / sizeof(SkinnedMeshVertex);
 
         // 変形の対象を選ぶ描画の一覧。影の描画が読むときは影の描画（CSM）と同じ全描画、でなければ不透明のみ。
         // Declare と記録で同じ一覧を使う（計画の描画の番号がこの一覧の添字）
@@ -86,6 +87,90 @@ namespace NorvesLib::Core::Rendering
             }
         }
     } // namespace
+
+    void BuildSkinningComputePlan(const SkinningComputePlanDraw* draws,
+                                  uint32_t drawCount,
+                                  bool bShadowCastersOnly,
+                                  uint32_t maxOutputVertices,
+                                  SkinningComputePlan& outPlan)
+    {
+        outPlan.Clear();
+        if (!draws)
+        {
+            return;
+        }
+
+        // 最初に現れた順にコンポーネントを決め、外したリースも記録して重複して数えない。
+        for (uint32_t drawIndex = 0; drawIndex < drawCount; ++drawIndex)
+        {
+            const SkinningComputePlanDraw& draw = draws[drawIndex];
+            if (bShadowCastersOnly && !draw.bCastShadow)
+            {
+                continue;
+            }
+
+            auto [entry, bInserted] = outPlan.ComponentByLease.try_emplace(draw.FrameLeaseIndex, UINT32_MAX);
+            if (bInserted)
+            {
+                if (draw.VertexCount == 0)
+                {
+                    continue;
+                }
+                if (draw.VertexCount > MaxComponentVertices ||
+                    draw.VertexCount > static_cast<uint64_t>(maxOutputVertices) - outPlan.TotalVertices)
+                {
+                    ++outPlan.DroppedComponentCount;
+                    continue;
+                }
+
+                entry->second = static_cast<uint32_t>(outPlan.Components.size());
+                SkinningComputePlanComponent component;
+                component.FrameLeaseIndex = draw.FrameLeaseIndex;
+                component.VertexBase = static_cast<uint32_t>(outPlan.TotalVertices);
+                component.VertexCount = static_cast<uint32_t>(draw.VertexCount);
+                outPlan.Components.push_back(component);
+                outPlan.TotalVertices += draw.VertexCount;
+            }
+            if (entry->second != UINT32_MAX)
+            {
+                ++outPlan.Components[entry->second].DrawCount;
+            }
+        }
+
+        // コンポーネントごとの連続した区間を確保し、元の順序で描画を書き込む。
+        uint32_t firstDraw = 0;
+        for (SkinningComputePlanComponent& component : outPlan.Components)
+        {
+            component.FirstDraw = firstDraw;
+            outPlan.NextDraw.push_back(firstDraw);
+            firstDraw += component.DrawCount;
+        }
+        outPlan.Draws.resize(firstDraw);
+        for (uint32_t drawIndex = 0; drawIndex < drawCount; ++drawIndex)
+        {
+            const SkinningComputePlanDraw& draw = draws[drawIndex];
+            if (bShadowCastersOnly && !draw.bCastShadow)
+            {
+                continue;
+            }
+            const auto entry = outPlan.ComponentByLease.find(draw.FrameLeaseIndex);
+            if (entry == outPlan.ComponentByLease.end() || entry->second == UINT32_MAX)
+            {
+                continue;
+            }
+            const uint32_t componentIndex = entry->second;
+            const SkinningComputePlanComponent& component = outPlan.Components[componentIndex];
+            SkinningComputePlannedDraw& planned = outPlan.Draws[outPlan.NextDraw[componentIndex]++];
+            planned.CommandIndex = draw.CommandIndex;
+            planned.FrameLeaseIndex = draw.FrameLeaseIndex;
+            planned.ComponentIndex = componentIndex;
+            planned.VertexBase = component.VertexBase;
+            planned.VertexCount = component.VertexCount;
+            planned.SourceFirstIndex = draw.SourceFirstIndex;
+            planned.SourceIndexCount = draw.SourceIndexCount;
+            planned.bCastShadow = draw.bCastShadow;
+        }
+    }
 
     // ========================================
     // SkinningCompute
@@ -270,7 +355,8 @@ namespace NorvesLib::Core::Rendering
         m_Compute.Shutdown();
         m_CurrentHandle = {};
         m_PreviousHandle = {};
-        m_Plan.clear();
+        m_PlanDraws.clear();
+        m_Plan.Clear();
         m_Instances.clear();
         m_DroppedInstanceCount = 0;
         m_FrameDroppedSerial = 0;
@@ -307,7 +393,8 @@ namespace NorvesLib::Core::Rendering
     {
         m_CurrentHandle = {};
         m_PreviousHandle = {};
-        m_Plan.clear();
+        m_PlanDraws.clear();
+        m_Plan.Clear();
         m_DroppedInstanceCount = 0;
 
         const ViewRenderContext* context = builder.GetContext();
@@ -323,22 +410,14 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        // スキニングの 1 描画（非インスタンス）を集め、頂点を詰めて出力の範囲を割り当てる。対象の一覧は SelectCommands。
-        // 入力の頂点 1 本の束縛と、出力の今・前のバッファの合計が上限を超えるインスタンスは外し、数を残す。
-        constexpr uint64_t MaxInstanceVertices = SKINNING_MAX_BINDING_BYTES / sizeof(SkinnedMeshVertex);
+        // 対象の一覧から有効なスキニングの描画を集め、同じリースの描画には同じ出力範囲を割り当てる。
         const DrawCommandView commands = SelectCommands(*context, m_bShadowCasterOutput);
-        uint64_t totalVertices = 0;
         for (uint32_t commandIndex = 0; commandIndex < commands.Count; ++commandIndex)
         {
             const DrawCommand& command = commands.Data[commandIndex];
             if (command.Draw.PayloadKind != DrawPayloadKind::Skinned || command.Draw.bInstanced ||
                 command.Draw.InstanceCount != 1 ||
                 command.Skinned.FrameLeaseIndex >= context->SnapshotSkinnedMeshFrameLeases->size())
-            {
-                continue;
-            }
-            // 解決が使えないフレームは影の描画だけが読むので、影を落とさない描画は変形しない
-            if (!bResolveUsable && !command.Draw.bCastShadow)
             {
                 continue;
             }
@@ -352,19 +431,19 @@ namespace NorvesLib::Core::Rendering
             {
                 continue;
             }
-            if (vertexCount > MaxInstanceVertices || totalVertices + vertexCount > m_MaxOutputVertices)
-            {
-                ++m_DroppedInstanceCount;
-                continue;
-            }
 
-            PlannedInstance planned;
-            planned.CommandIndex = commandIndex;
-            planned.VertexBase = static_cast<uint32_t>(totalVertices);
-            planned.VertexCount = static_cast<uint32_t>(vertexCount);
-            m_Plan.push_back(planned);
-            totalVertices += vertexCount;
+            SkinningComputePlanDraw draw;
+            draw.CommandIndex = commandIndex;
+            draw.FrameLeaseIndex = command.Skinned.FrameLeaseIndex;
+            draw.VertexCount = vertexCount;
+            draw.SourceFirstIndex = command.Draw.IndexOffset;
+            draw.SourceIndexCount = command.Draw.IndexCount;
+            draw.bCastShadow = command.Draw.bCastShadow;
+            m_PlanDraws.push_back(draw);
         }
+        BuildSkinningComputePlan(m_PlanDraws.data(), static_cast<uint32_t>(m_PlanDraws.size()),
+                                 !bResolveUsable, m_MaxOutputVertices, m_Plan);
+        m_DroppedInstanceCount = m_Plan.DroppedComponentCount;
         // 外した数はフレームの通し番号ごとに持ち、RenderingCoordinator が GetDroppedInstanceCountForFrame の合算を
         // 統計（SkinningComputeDroppedInstances）へ設定する。ログは初回だけ。
         // 同じフレームの別のビューポートの Declare とは通し番号で合算する。
@@ -373,19 +452,19 @@ namespace NorvesLib::Core::Rendering
         {
             m_bLoggedDrop = true;
             NORVES_LOG_WARNING("SkinningComputePass",
-                               "計算スキニングへ載せられないインスタンスを %u 個外した（頂点の合計の上限 %u 頂点、1 インスタンスの上限 %llu 頂点）。数は毎フレーム統計の SkinningComputeDroppedInstances に出す（このログは 1 回だけ）",
+                               "計算スキニングへ載せられないコンポーネントを %u 個外した（頂点の合計の上限 %u 頂点、1 コンポーネントの上限 %llu 頂点）。数は毎フレーム統計の SkinningComputeDroppedInstances に出す（このログは 1 回だけ）",
                                m_DroppedInstanceCount,
                                m_MaxOutputVertices,
-                               static_cast<unsigned long long>(MaxInstanceVertices));
+                               static_cast<unsigned long long>(MaxComponentVertices));
         }
-        if (m_Plan.empty() || totalVertices == 0)
+        if (m_Plan.Components.empty() || m_Plan.TotalVertices == 0)
         {
             return;
         }
 
         // 今・前のフレームの頂点を詰めた 2 本のバッファ。計算シェーダーが書き、後のパスがアドレスか storage で読む。
         RGBufferDesc desc;
-        desc.Size = totalVertices * OutputVertexBytes;
+        desc.Size = m_Plan.TotalVertices * OutputVertexBytes;
         desc.Usage = RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::ShaderRead |
                      RHI::ResourceUsage::BufferDeviceAddress;
         desc.bCPUAccessible = false;
@@ -404,7 +483,7 @@ namespace NorvesLib::Core::Rendering
         {
             m_CurrentHandle = {};
             m_PreviousHandle = {};
-            m_Plan.clear();
+            m_Plan.Clear();
             return;
         }
         builder.PreserveInsertionOrder();
@@ -413,7 +492,7 @@ namespace NorvesLib::Core::Rendering
     void SkinningComputePass::Execute(RenderGraphResources& resources, ViewRenderContext& context)
     {
         m_Instances.clear();
-        if (m_Plan.empty() || !m_CurrentHandle.IsValid() || !m_PreviousHandle.IsValid() || !context.CommandList)
+        if (m_Plan.Components.empty() || !m_CurrentHandle.IsValid() || !m_PreviousHandle.IsValid() || !context.CommandList)
         {
             return;
         }
@@ -440,19 +519,28 @@ namespace NorvesLib::Core::Rendering
         const DrawCommandView commands = SelectCommands(context, m_bShadowCasterOutput);
         const DrawCommandView opaqueCommands = context.GetActiveOpaqueCommands();
         m_Compute.BeginFrame(context.FrameIndex, context.ResolveRenderFrameSerial());
-        for (const PlannedInstance& planned : m_Plan)
+        for (uint32_t componentIndex = 0; componentIndex < m_Plan.Components.size(); ++componentIndex)
         {
-            if (planned.CommandIndex >= commands.Count)
+            const SkinningComputePlanComponent& component = m_Plan.Components[componentIndex];
+            if (component.DrawCount == 0 || component.FirstDraw >= m_Plan.Draws.size() ||
+                component.DrawCount > m_Plan.Draws.size() - component.FirstDraw ||
+                component.FrameLeaseIndex >= context.SnapshotSkinnedMeshFrameLeases->size())
             {
                 continue;
             }
-            const DrawCommand& source = commands.Data[planned.CommandIndex];
-            if (source.Draw.PayloadKind != DrawPayloadKind::Skinned ||
-                source.Skinned.FrameLeaseIndex >= context.SnapshotSkinnedMeshFrameLeases->size())
+            const SkinningComputePlannedDraw& firstDraw = m_Plan.Draws[component.FirstDraw];
+            if (firstDraw.ComponentIndex != componentIndex || firstDraw.FrameLeaseIndex != component.FrameLeaseIndex ||
+                firstDraw.CommandIndex >= commands.Count)
             {
                 continue;
             }
-            const auto& frameLease = (*context.SnapshotSkinnedMeshFrameLeases)[source.Skinned.FrameLeaseIndex];
+            const DrawCommand& source = commands.Data[firstDraw.CommandIndex];
+            if (source.Draw.PayloadKind != DrawPayloadKind::Skinned || source.Draw.bInstanced ||
+                source.Draw.InstanceCount != 1 || source.Skinned.FrameLeaseIndex != component.FrameLeaseIndex)
+            {
+                continue;
+            }
+            const auto& frameLease = (*context.SnapshotSkinnedMeshFrameLeases)[component.FrameLeaseIndex];
             if (!frameLease || !frameLease->IsValid())
             {
                 continue;
@@ -486,33 +574,55 @@ namespace NorvesLib::Core::Rendering
             dispatch.PreviousPalette = prepared.PreviousPaletteBuffer;
             dispatch.CurrentVertices = currentVertices;
             dispatch.PreviousVertices = previousVertices;
-            dispatch.VertexCount = planned.VertexCount;
-            dispatch.OutputVertexBase = planned.VertexBase;
+            dispatch.VertexCount = component.VertexCount;
+            dispatch.OutputVertexBase = component.VertexBase;
             if (!m_Compute.Record(context.CommandList, dispatch))
             {
                 continue;
             }
 
-            SkinningComputeInstance instance;
-            instance.MeshHandle = prepared.MeshHandle;
-            instance.ObjectId = source.Draw.ObjectId;
-            instance.SourceMeshComponentId = source.Draw.SourceMeshComponentId;
-            instance.MaterialIndex = source.Draw.MaterialIndex;
-            instance.Material = source.Draw.MaterialHandle;
-            instance.bOpaque = &source >= opaqueCommands.Data && &source < opaqueCommands.Data + opaqueCommands.Count;
-            instance.bCastShadow = source.Draw.bCastShadow;
-            instance.SourceFirstIndex = source.Draw.IndexOffset;
-            instance.SourceIndexCount = source.Draw.IndexCount;
-            instance.VertexBase = planned.VertexBase;
-            instance.VertexCount = planned.VertexCount;
-            instance.IndexCount = prepared.IndexCount;
-            instance.IndexBuffer = prepared.IndexBuffer;
             const uint64_t currentAddress = currentVertices->GetDeviceAddress();
             const uint64_t previousAddress = previousVertices->GetDeviceAddress();
-            const uint64_t byteOffset = static_cast<uint64_t>(planned.VertexBase) * OutputVertexBytes;
-            instance.CurrentVertexAddress = currentAddress != 0 ? currentAddress + byteOffset : 0;
-            instance.PreviousVertexAddress = previousAddress != 0 ? previousAddress + byteOffset : 0;
-            m_Instances.push_back(instance);
+            const uint64_t byteOffset = static_cast<uint64_t>(component.VertexBase) * OutputVertexBytes;
+            for (uint32_t drawOffset = 0; drawOffset < component.DrawCount; ++drawOffset)
+            {
+                const SkinningComputePlannedDraw& planned = m_Plan.Draws[component.FirstDraw + drawOffset];
+                if (planned.ComponentIndex != componentIndex || planned.FrameLeaseIndex != component.FrameLeaseIndex ||
+                    planned.CommandIndex >= commands.Count)
+                {
+                    continue;
+                }
+                const DrawCommand& draw = commands.Data[planned.CommandIndex];
+                if (draw.Draw.PayloadKind != DrawPayloadKind::Skinned || draw.Draw.bInstanced ||
+                    draw.Draw.InstanceCount != 1 || draw.Skinned.FrameLeaseIndex != component.FrameLeaseIndex ||
+                    draw.Skinned.FrameLeaseIndex >= context.SnapshotSkinnedMeshFrameLeases->size())
+                {
+                    continue;
+                }
+                const auto& drawLease = (*context.SnapshotSkinnedMeshFrameLeases)[draw.Skinned.FrameLeaseIndex];
+                if (!drawLease || !drawLease->IsValid())
+                {
+                    continue;
+                }
+
+                SkinningComputeInstance instance;
+                instance.MeshHandle = prepared.MeshHandle;
+                instance.ObjectId = draw.Draw.ObjectId;
+                instance.SourceMeshComponentId = draw.Draw.SourceMeshComponentId;
+                instance.MaterialIndex = draw.Draw.MaterialIndex;
+                instance.Material = draw.Draw.MaterialHandle;
+                instance.bOpaque = &draw >= opaqueCommands.Data && &draw < opaqueCommands.Data + opaqueCommands.Count;
+                instance.bCastShadow = draw.Draw.bCastShadow;
+                instance.SourceFirstIndex = draw.Draw.IndexOffset;
+                instance.SourceIndexCount = draw.Draw.IndexCount;
+                instance.VertexBase = component.VertexBase;
+                instance.VertexCount = component.VertexCount;
+                instance.IndexCount = prepared.IndexCount;
+                instance.IndexBuffer = prepared.IndexBuffer;
+                instance.CurrentVertexAddress = currentAddress != 0 ? currentAddress + byteOffset : 0;
+                instance.PreviousVertexAddress = previousAddress != 0 ? previousAddress + byteOffset : 0;
+                m_Instances.push_back(instance);
+            }
         }
     }
 

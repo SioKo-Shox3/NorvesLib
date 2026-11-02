@@ -56,7 +56,76 @@ namespace NorvesLib::Core::Rendering
     constexpr uint32_t SKINNING_MAX_OUTPUT_VERTICES =
         static_cast<uint32_t>(SKINNING_MAX_BINDING_BYTES / sizeof(SkinnedOutputVertex));
 
-    /** @brief 1 回の dispatch（1 インスタンスぶん）の入力と出力の範囲 */
+    /** @brief 計画へ渡す、検証済みのスキニングの 1 描画 */
+    struct SkinningComputePlanDraw
+    {
+        uint32_t CommandIndex = 0;
+        uint32_t FrameLeaseIndex = 0;
+        uint64_t VertexCount = 0;
+        uint32_t SourceFirstIndex = 0;
+        uint32_t SourceIndexCount = 0;
+        bool bCastShadow = true;
+    };
+
+    /** @brief コンポーネントの出力範囲を割り当てた 1 描画 */
+    struct SkinningComputePlannedDraw
+    {
+        uint32_t CommandIndex = 0;
+        uint32_t FrameLeaseIndex = 0;
+        uint32_t ComponentIndex = 0;
+        uint32_t VertexBase = 0;
+        uint32_t VertexCount = 0;
+        uint32_t SourceFirstIndex = 0;
+        uint32_t SourceIndexCount = 0;
+        bool bCastShadow = true;
+    };
+
+    /** @brief 1 回の変形と、それを共有する描画の範囲 */
+    struct SkinningComputePlanComponent
+    {
+        uint32_t FrameLeaseIndex = 0;
+        uint32_t VertexBase = 0;
+        uint32_t VertexCount = 0;
+        uint32_t FirstDraw = 0;
+        uint32_t DrawCount = 0;
+    };
+
+    /** @brief コンポーネントごとの変形と描画の計画。作業領域もフレーム間で再利用する */
+    struct SkinningComputePlan
+    {
+        Container::VariableArray<SkinningComputePlanComponent> Components;
+        Container::VariableArray<SkinningComputePlannedDraw> Draws;
+        uint64_t TotalVertices = 0;
+        uint32_t DroppedComponentCount = 0;
+
+        /** @brief 計画の内容を消し、作業領域の容量を再利用できる状態にする */
+        void Clear()
+        {
+            Components.clear();
+            Draws.clear();
+            TotalVertices = 0;
+            DroppedComponentCount = 0;
+            ComponentByLease.clear();
+            NextDraw.clear();
+        }
+
+        Container::UnorderedMap<uint32_t, uint32_t> ComponentByLease;
+        Container::VariableArray<uint32_t> NextDraw;
+    };
+
+    /**
+     * @brief リースが同じ描画をまとめ、コンポーネントごとに出力範囲を割り当てる
+     *
+     * 同じリースの描画は同じ頂点数を持つ。影だけを対象にするときは影を落とす描画だけを含める。
+     * 上限に収まらないコンポーネントは描画の数にかかわらず 1 個として数える。
+     */
+    void BuildSkinningComputePlan(const SkinningComputePlanDraw* draws,
+                                  uint32_t drawCount,
+                                  bool bShadowCastersOnly,
+                                  uint32_t maxOutputVertices,
+                                  SkinningComputePlan& outPlan);
+
+    /** @brief 1 回の dispatch（1 コンポーネントぶん）の入力と出力の範囲 */
     struct SkinningComputeDispatch
     {
         /** @brief 入力の頂点（SkinnedMeshVertex の列） */
@@ -70,7 +139,7 @@ namespace NorvesLib::Core::Rendering
         /** @brief 直前のフレームの頂点の書き込み先（storage） */
         RHI::BufferPtr PreviousVertices;
         uint32_t VertexCount = 0;
-        /** @brief 出力バッファの中で、このインスタンスが書き始める頂点の番号 */
+        /** @brief 出力バッファの中で、このコンポーネントが書き始める頂点の番号 */
         uint32_t OutputVertexBase = 0;
         /** @brief dispatch の 1 次元目のグループ数の上限（実機では SKINNING_MAX_GROUP_COUNT。小さくして 2 次元目へ広げる動きを試せる） */
         uint32_t GroupCountXLimit = SKINNING_MAX_GROUP_COUNT;
@@ -137,7 +206,7 @@ namespace NorvesLib::Core::Rendering
         FrameUseRing<Use> m_Uses;
     };
 
-    /** @brief 計算シェーダーでスキニングしたインスタンス 1 つぶんの結果（後のパスが読む） */
+    /** @brief 計算シェーダーでスキニングした描画 1 つぶんの結果（後のパスが読む） */
     struct SkinningComputeInstance
     {
         SkinnedMeshHandle MeshHandle;
@@ -151,7 +220,7 @@ namespace NorvesLib::Core::Rendering
         bool bOpaque = true;
         /** @brief 元の描画が影を落とすか */
         bool bCastShadow = true;
-        /** @brief 出力バッファの中の先頭の頂点番号と頂点数（今・前で同じ） */
+        /** @brief 出力バッファの先頭の頂点番号と頂点数。今・前で同じで、同じコンポーネントの描画は範囲を共有する */
         uint32_t VertexBase = 0;
         uint32_t VertexCount = 0;
         uint32_t IndexCount = 0;
@@ -166,9 +235,9 @@ namespace NorvesLib::Core::Rendering
     };
 
     /**
-     * @brief スキニングのインスタンスごとに、今と前のフレームの頂点を計算シェーダーで作る RenderGraph のパス
+     * @brief スキニングのコンポーネントごとに、今と前のフレームの頂点を計算シェーダーで作る RenderGraph のパス
      *
-     * そのフレームの不透明描画のうちスキニングのものを集め、全インスタンスの頂点を詰めた 2 本の
+     * そのフレームの不透明描画のうちスキニングのものを集め、全コンポーネントの頂点を詰めた 2 本の
      * フレームごとのバッファ（今・前。storage・BDA）を RenderGraph の資源として宣言して書く。後のビジビリティバッファの
      * ラスタと材質の解決は、名前付きの資源（SkinningCurrentVertices・SkinningPreviousVertices）を Read して
      * GetInstances() の範囲を読む。今の GBuffer の経路は頂点シェーダーのスキニングのままで、このパスには依存しない。
@@ -194,14 +263,16 @@ namespace NorvesLib::Core::Rendering
         /**
          * @brief 出力バッファに詰める頂点の合計の上限（既定は SKINNING_MAX_OUTPUT_VERTICES。小さくして溢れた動きを試せる）
          *
-         * 超える値は SKINNING_MAX_OUTPUT_VERTICES に抑える。
+         * 同じコンポーネントの描画は頂点の範囲を共有し、上限はコンポーネントごとに判定する。
+         * 指定値は SKINNING_MAX_OUTPUT_VERTICES 以下に抑える。
          */
         void SetMaxOutputVertices(uint32_t maxOutputVertices);
 
         /**
-         * @brief 最後の Declare が、頂点の合計の上限か束縛の大きさの上限のために計算スキニングから外したインスタンスの数
+         * @brief 最後の Declare が、頂点の合計か束縛の大きさの上限のために計算スキニングから外したコンポーネントの数
          *
-         * 外したインスタンスは、このパスの出力に載らない（GetInstances() にも入らない）。毎回の Declare で数え直す
+         * 同じコンポーネントに複数の描画があっても 1 回数える。外したコンポーネントの描画は GetInstances() にも入らない。
+         * 毎回の Declare で数え直す
          * （累計ではない）。統計へ渡る数ではない（1 つの SceneView が複数のビューポートを描くときは最後の Declare の数だけに
          * なる）。統計は GetDroppedInstanceCountForFrame の合算を RenderingCoordinator が
          * RenderingStats::SkinningComputeDroppedInstances へ設定する。ログはパスの寿命で初めて外したときに 1 回だけ出す。
@@ -209,9 +280,10 @@ namespace NorvesLib::Core::Rendering
         uint32_t GetDroppedInstanceCount() const { return m_DroppedInstanceCount; }
 
         /**
-         * @brief フレームの通し番号 frameSerial の Declare で外したインスタンスの数の合計
+         * @brief フレームの通し番号 frameSerial の Declare で外したコンポーネントの数の合計
          *
-         * 1 つの SceneView が複数のビューポートを描くとき Declare はビューポートごとに呼ばれるので、同じ通し番号の数は足し合わせる。
+         * 各 Declare は同じコンポーネントの複数の描画を 1 回数える。1 つの SceneView が複数のビューポートを描くとき
+         * Declare はビューポートごとに呼ばれるので、同じ通し番号の数は足し合わせる。
          * 通し番号が違う（このフレームに Declare が呼ばれなかった。ビューが無効・描ける大きさが無い・描画の失敗）ときは 0 を返し、
          * 古い数を足し続けない。
          */
@@ -228,7 +300,7 @@ namespace NorvesLib::Core::Rendering
          */
         void AccumulateFrameDroppedInstances(uint64_t frameSerial, uint32_t count);
 
-        /** @brief 最後の Execute で変形を記録したインスタンス（記録できなかったフレームは空） */
+        /** @brief 最後の Execute で変形を記録した描画（同じコンポーネントの描画は頂点の範囲を共有する） */
         const Container::VariableArray<SkinningComputeInstance>& GetInstances() const { return m_Instances; }
         /** @brief 計算スキニングのパイプラインが作れているか（false のとき Declare は何も宣言せず、スキニングの頂点は作られない） */
         bool IsComputeReady() const { return m_Compute.IsReady(); }
@@ -257,14 +329,6 @@ namespace NorvesLib::Core::Rendering
         void RecordInstances(ViewRenderContext& context,
                              const RHI::BufferPtr& currentVertices,
                              const RHI::BufferPtr& previousVertices);
-        /** @brief Declare が決めた、不透明描画の中のスキニングの 1 描画と出力の範囲 */
-        struct PlannedInstance
-        {
-            uint32_t CommandIndex = 0;
-            uint32_t VertexBase = 0;
-            uint32_t VertexCount = 0;
-        };
-
         SkinningCompute m_Compute;
         const VisibilityResolvePass* m_ResolvePass = nullptr;
         bool m_bShadowCasterOutput = false;
@@ -275,7 +339,8 @@ namespace NorvesLib::Core::Rendering
         bool m_bLoggedDrop = false;
         RGBufferHandle m_CurrentHandle;
         RGBufferHandle m_PreviousHandle;
-        Container::VariableArray<PlannedInstance> m_Plan;
+        Container::VariableArray<SkinningComputePlanDraw> m_PlanDraws;
+        SkinningComputePlan m_Plan;
         Container::VariableArray<SkinningComputeInstance> m_Instances;
     };
 

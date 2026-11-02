@@ -47,6 +47,42 @@ namespace NorvesLib::Core::Component
         SetTickGroup(ETickGroup::PostPhysics);
     }
     SocketAttachmentComponent::~SocketAttachmentComponent() = default;
+    Entity* SocketAttachmentComponent::GetRenderTarget() const
+    {
+        return m_State != AttachState::Detached && m_bLastSuccess && !m_bRenderUpdateRejected ? ResolveTarget() : nullptr;
+    }
+    bool SocketAttachmentComponent::TryBuildRenderWorldTransform(const Math::Transform& targetRender,
+                                                                 Math::Transform& out) const
+    {
+        auto* target = GetRenderTarget();
+        auto* mesh = target ? target->GetComponent<SkinnedMeshComponent>() : nullptr;
+        if (!mesh || mesh->IsPendingDestroy() || !mesh->IsActive() || !mesh->IsPoseCurrent())
+        {
+            return false;
+        }
+        const auto& asset = mesh->GetSkeletalAsset();
+        if (!asset || !asset->GetSkeleton())
+        {
+            return false;
+        }
+        const auto* socket = asset->GetSkeleton()->FindSocket(m_Socket);
+        if (!socket)
+        {
+            return false;
+        }
+        Math::Matrix4x4 joint;
+        Math::Transform socketRender, wanted;
+        if (!mesh->TryGetJointModelMatrix(socket->ParentJoint, joint) ||
+            !Animation::BuildSocketWorldTransform(joint, socket->Offset, targetRender, socketRender) ||
+            !Animation::ComposeSocketAttachment(socketRender, m_ProfileCurrent, m_Grip, wanted))
+        {
+            return false;
+        }
+        out = m_AttachDuration > 0 && m_AttachElapsed < m_AttachDuration
+                  ? Mix(m_AttachFrom, wanted, m_AttachElapsed / m_AttachDuration)
+                  : wanted;
+        return true;
+    }
     Entity* SocketAttachmentComponent::ResolveTarget() const
     {
         auto* owner = GetOwner();
@@ -286,14 +322,21 @@ namespace NorvesLib::Core::Component
     }
     bool SocketAttachmentComponent::UpdateAttachment(float dt, uint64_t frame, uint32_t depth)
     {
+        m_bRenderUpdateRejected = false;
         if (m_State == AttachState::Detached)
             return true;
         if (m_bVisiting || depth >= 64)
+        {
+            m_bRenderUpdateRejected = true;
             return false;
+        }
         if (m_LastFrame == frame)
             return m_bLastSuccess;
         if (!std::isfinite(dt) || dt < 0)
+        {
+            m_bRenderUpdateRejected = true;
             return false;
+        }
         m_LastFrame = frame;
         m_bLastSuccess = false;
         struct Guard

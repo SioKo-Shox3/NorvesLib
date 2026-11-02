@@ -4563,7 +4563,7 @@
 - from: SCN-MEGA-FIX-STRESS-GPU-CHECK
 
 ## G2-GR32-GPU-ACCEPTANCE-P1: スキニングの計算と出力の頂点の範囲を、submesh ごとでなく component ごとに 1 回にする
-- status: todo
+- status: done
 - done-when: `SkinningComputePass::Declare` は、同じ `Skinned.FrameLeaseIndex`(同じ component)から出た複数の submesh の描画を 1 回だけ変形し、出力の頂点の範囲も 1 回だけ取る。その submesh の `SkinningComputeInstance` は、どれも同じ `VertexBase`・`VertexCount`・頂点のアドレスを指し、`MaterialIndex`・`Material`・`SourceFirstIndex`・`SourceIndexCount`・`bOpaque`・`bCastShadow` はそれぞれの submesh の値を保つ。頂点の合計の上限と、外したインスタンスの数(`SkinningComputeDroppedInstances`)は component ごとに 1 回数える。解決が使えず影の描画だけが読むフレームでは、影を落とす submesh が 1 つでもある component だけを変形する。計画を作る部分は GPU の無い試験から呼べる関数に分け、既存の `SkinnedRenderPathContractTest` に次の検査を足す(新しい exe は作らない。足す前に `Docs/Testing.md` の 3 点を書く): 2 submesh で同じ lease のとき、変形は 1 回で出力の頂点の数は 1 倍、2 つのインスタンスが同じ `VertexBase` を持ち範囲はそれぞれの値のまま。lease の違う 2 component では範囲が重ならない。上限を超える component は submesh の数によらず 1 つとして外す。2 材質のパネルの撮影(下の verify。起動を戻した後に回す)で、材質の色の判定が result=pass のままであること。
 - verify: `cmake --build build --config Debug --target Game SkinnedRenderPathContractTest SkinnedSubmeshDrawContractTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^(SkinnedRenderPathContractTest|SkinnedSubmeshDrawContractTest)$" --no-tests=error --output-on-failure --timeout 180`
@@ -4624,7 +4624,7 @@
 - from: FIX-NORMAL-MATRIX-SCALE-CHECK
 
 ## GAME-GR131-VFX-P1: ワールドの空間の粒子の板を 3D の view へ渡し、当たりのエフェクトなどを画面に出す
-- status: todo
+- status: done
 - done-when: `ApplicationProcessor.cpp` の毎フレームの板の受け渡し(2200 行付近)では今、Text のグリフと粒子の板を、空間によらずキャンバスの view にだけ渡している。これを空間で分ける。`BoardSpace::WorldSpace` の一時の板(粒子の板、Text のグリフのうちワールドの空間のもの)は、そのフレームだけ 3D の scene view へ渡す。経路は `FramePacket` のスナップショットを越えるものに限り、RenderThread から GameThread の値を直接読まない。描き方と並べ方は、常駐のワールドの板と同じ。`ScreenSpace` の板は、今までどおりキャンバスへだけ渡す。同じ板を両方に描かない。一時の板が無いフレームでは、前のフレームの板を残さない。常駐の板(`BoardComponent`)の受け渡しと見た目は変えない。既存の試験に次の検査を足す(新しい exe は作らない。足す前に `Docs/Testing.md` の 3 点を書く): `ParticleFrameSnapshotTest` と `SceneViewWorldBoardDrawCommandTest` で、ワールドの空間の粒子の板 1 枚がそのフレームの 3D の view の描画コマンドに 1 回だけ載ってキャンバスには載らない。スクリーンの空間の板はキャンバスにだけ載る。次のフレームに放出が無ければ、どちらにも残らない。
 - verify: `cmake --build build --config Debug --target Game CanvasTransientBoardSnapshotTest SceneViewWorldBoardDrawCommandTest HitEffectEmissionTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^(ParticleFrameSnapshotTest|CanvasTransientBoardSnapshotTest|SceneViewWorldBoardDrawCommandTest|HitEffectEmissionTest|BoardComponentRoutingTest)$" --no-tests=error --output-on-failure --timeout 180`
@@ -4632,7 +4632,7 @@
 - from: GAME-GR131-VFX
 
 ## GAME-GR130-VFX-CHECK-P1: ソケットに付けた Entity の描画の補間を、親の描画の変換から求める
-- status: todo
+- status: done
 - done-when: `SocketAttachmentComponent` は今、PostPhysics の段(固定ステップの外)でワールドの変換を書き換えている。そのため、付けた Entity の補間の履歴が毎フレーム戻されている。これをやめ、描画用の変換を次の形で求める: 親(スキンのメッシュ)の補間した描画の変換 × ソケットの相対の変換(骨のソケット × grip・profile の offset。移り変わりの混ぜを含む)。補間の履歴は、固定ステップの外の書き換えで戻さない。シミュレーションの変換(攻撃の判定 GR16 が読むもの)の値は変えない。既存の `WorldRenderInterpolationTest`(`EntityTreeTest` の束)に次の検査を足す(新しい exe は作らない。足す前に `Docs/Testing.md` の 3 点を書く): 親が一定の速さで動き、固定ステップが 0・1・2 回のフレームが混ざる列で、付けた Entity の描画の位置が、親の描画の位置 + offset と 1e-4 以内で一致し、フレームの間で跳ばない。`SwordTrailRibbonTest` と `SkeletalAnimationSamplingTest` は通ったまま。
 - verify: `cmake --build build --config Debug --target Game EntityTreeTest SwordTrailRibbonTest SkeletalAnimationSamplingTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^(WorldRenderInterpolationTest|SwordTrailRibbonTest|SkeletalAnimationSamplingTest)$" --no-tests=error --output-on-failure --timeout 180`
@@ -4825,7 +4825,7 @@
 - stop-when: 既定の待ちを 0 から変える、ロックの単位(volume ごと)や mutex の名前を変える、`Busy` を期待する試験に待ちを付けて通す。
 
 ## TEST-FULL-CTEST-BASELINE-CHECK-P1: `NVSKELMigrationInventory.md` の reader・Resource・packet の native 回帰の「未検証・未実行」の 3 行を、Windows での実行記録か、回す先を書いた未実行に直す
-- status: todo
+- status: done
 - done-when: `Docs/Architecture/NVSKELMigrationInventory.md` の次の 3 行(今の 151・166・196 行)を直す。
   - 対象は「readerのnative回帰は登録済みだがWindows/Core全体の実行は未検証」「native Resource/Core/描画のWindows実行はまだ未検証」「このnative回帰もWindows依存で未実行」の 3 行。それぞれが指す登録済みの試験の名前を挙げる。
   - アプリを起動せず GPU も使わない試験は、Windows Debug でビルドと ctest(`-R` で名指し)を回す。結果は、同じ文書の `CookedSkeletalAssetTest`・`SkeletalFramePacketSnapshotTest` の行と同じ形で書く(日付・HEAD・コマンド・結果・PROGRESS.md の記録の場所)。packet の回帰には、2026-11-02 の `SkeletalFramePacketSnapshotTest` の Passed を使ってよい。
@@ -4834,3 +4834,12 @@
 - verify: `python -c "import pathlib,sys; t=pathlib.Path('Docs/Architecture/NVSKELMigrationInventory.md').read_text(encoding='utf-8'); b=[s for s in ['\u5168\u4f53\u306e\u5b9f\u884c\u306f\u672a\u691c\u8a3c','\u5b9f\u884c\u306f\u307e\u3060\u672a\u691c\u8a3c','\u4f9d\u5b58\u3067\u672a\u5b9f\u884c'] if s in t]; print(ascii(b)); sys.exit(1 if b else 0)"`
 - paths: Docs/Architecture/NVSKELMigrationInventory.md, TASKS.md, PROGRESS.md
 - from: TEST-FULL-CTEST-BASELINE-CHECK
+
+## G2-GR32-GPU-ACCEPTANCE-P1-CHECK: スキニングの計算と出力の頂点の範囲を、submesh ごとでなく component ごとに 1 回にする(後回しにしたアプリの起動の確かめ)
+- status: todo
+- check: launch
+- gpu: exclusive
+- done-when: G2-GR32-GPU-ACCEPTANCE-P1 で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、G2-GR32-GPU-ACCEPTANCE-P1 の done-when を満たすことを確かめる。満たさなければ G2-GR32-GPU-ACCEPTANCE-P1 の done-when と paths の範囲で直す。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -SkinnedProbe -SkinnedProbeMaterials 2 -VisibilityBuffer On -OutDir .harness/runs/startup-capture/G2-GR32-GPU-ACCEPTANCE-P1-2mat-vb`
+- paths: Library/Core/Private/Rendering/SkinningComputePass.cpp, Library/Core/Public/Rendering/SkinningComputePass.h, Test/Core/Rendering/SkinnedRenderPathContractTest.cpp, TASKS.md, PROGRESS.md
+- from: G2-GR32-GPU-ACCEPTANCE-P1

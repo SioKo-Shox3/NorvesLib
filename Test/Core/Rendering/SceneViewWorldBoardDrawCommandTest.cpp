@@ -142,6 +142,71 @@ namespace
         std::cout << "TestFrustumCullsWorldBoards passed\n";
     }
 
+    void TestTransientWorldBoardsAreCulledAndReplaced()
+    {
+        constexpr uint64_t residentObjectId = 101u;
+        constexpr uint64_t worldObjectId = 102u;
+        constexpr uint64_t screenObjectId = 103u;
+
+        SceneView sceneView;
+        InitializeSceneView(sceneView, true, true);
+        sceneView.UpdateBoardProxy(MakeWorldBoard(residentObjectId, 1010u, 0.0f, 0.0f, -3.0f,
+                                                 RenderLayer::Default, BlendMode::Translucent));
+
+        BoardProxy worldBoard;
+        worldBoard.ObjectId = worldObjectId;
+        worldBoard.ComponentId = 1020u;
+        worldBoard.Space = BoardSpace::WorldSpace;
+        worldBoard.LayerMask = RenderLayer::Default;
+        worldBoard.WorldTransform = Math::Matrix4x4::Identity;
+        worldBoard.WorldTransform.SetTranslationRow(Math::Vector3(0.0f, 0.0f, -2.0f));
+        worldBoard.SizeWorld = Math::Vector2(1.0f, 1.0f);
+        assert(worldBoard.WorldBounds.Radius == 0.0f);
+
+        BoardProxy screenBoard;
+        screenBoard.ObjectId = screenObjectId;
+        screenBoard.ComponentId = 1030u;
+        screenBoard.Space = BoardSpace::ScreenSpace;
+        NorvesLib::Core::Container::VariableArray<BoardProxy> transientBoards;
+        transientBoards.push_back(worldBoard);
+        transientBoards.push_back(screenBoard);
+        sceneView.SetTransientBoardProxies(transientBoards);
+        assert(sceneView.GetTransientBoardProxies().size() == 1u);
+        assert(sceneView.GetTransientBoardProxies()[0].ObjectId == worldObjectId);
+        assert(sceneView.GetTransientBoardProxies()[0].WorldBounds.CenterZ == -2.0f);
+        assert(sceneView.GetTransientBoardProxies()[0].WorldBounds.Radius > 0.0f);
+
+        const auto countObject = [](const auto& commands, uint64_t objectId)
+        {
+            uint32_t count = 0u;
+            for (const DrawCommand& command : commands)
+            {
+                if (command.Draw.ObjectId == objectId)
+                {
+                    ++count;
+                }
+            }
+            return count;
+        };
+
+        sceneView.PrepareDrawCommandsForViewport(MakeViewport(RenderLayer::All));
+        assert(sceneView.GetTransparentCommands().size() == 2u);
+        assert(countObject(sceneView.GetTransparentCommands(), worldObjectId) == 1u);
+        assert(countObject(sceneView.GetTransparentCommands(), residentObjectId) == 1u);
+        assert(countObject(sceneView.GetTransparentCommands(), screenObjectId) == 0u);
+
+        transientBoards.clear();
+        sceneView.SetTransientBoardProxies(transientBoards);
+        sceneView.PrepareDrawCommandsForViewport(MakeViewport(RenderLayer::All));
+        assert(sceneView.GetTransientBoardProxies().empty());
+        assert(sceneView.GetTransparentCommands().size() == 1u);
+        assert(countObject(sceneView.GetTransparentCommands(), worldObjectId) == 0u);
+        assert(countObject(sceneView.GetTransparentCommands(), residentObjectId) == 1u);
+
+        sceneView.Shutdown();
+        std::cout << "一時のワールドの板の描画と置き換えを確認\n";
+    }
+
     void TestWorldBoardCommandsUseBoardPayloadAndTransparentRange()
     {
         SceneView sceneView;
@@ -184,6 +249,7 @@ int main()
     TestNoCameraAndCullingMaskFilterWorldBoards();
     TestDistanceCullsWorldBoards();
     TestFrustumCullsWorldBoards();
+    TestTransientWorldBoardsAreCulledAndReplaced();
     TestWorldBoardCommandsUseBoardPayloadAndTransparentRange();
     std::cout << "SceneViewWorldBoardDrawCommandTest passed\n";
     return 0;

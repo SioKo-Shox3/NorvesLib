@@ -1,8 +1,13 @@
-﻿#include "Component/CameraComponent.h"
+﻿#include "Animation/SkeletalAssetResource.h"
+#include "Animation/SkeletonResource.h"
+#include "Component/CameraComponent.h"
 #include "Component/MeshComponent.h"
+#include "Component/SkinnedMeshComponent.h"
+#include "Component/SocketAttachmentComponent.h"
 #include "Component/SpringArmComponent.h"
 #include "Ecs/EcsWorld.h"
 #include "Game/CameraLateUpdate.h"
+#include "Object/ResourceRegistry.h"
 #include "Object/World.h"
 #include "Rendering/SceneView.h"
 #ifdef NDEBUG
@@ -11,6 +16,7 @@
 #include <cassert>
 #include <cmath>
 #include <iostream>
+#include <utility>
 using namespace NorvesLib;
 using namespace NorvesLib::Core;
 namespace
@@ -170,6 +176,130 @@ namespace
         assert(child->GetRenderTransformVersion() == version);
         world.Finalize();
     }
+    // 固定ステップの回数が揺れても、ソケットに付けた剣は付け先の描画姿勢に追従する
+    void TestSocketAttachmentFollowsParentRender()
+    {
+        ResourceRegistry registry;
+        assert(registry.Initialize());
+        auto skeleton = registry.CreateTransient<SkeletonResource>("InterpolationSkeleton");
+        auto meshResource = registry.CreateTransient<SkinnedMeshResource>("InterpolationMesh");
+        auto clipResource = registry.CreateTransient<AnimationClipResource>("InterpolationClip");
+        auto asset = registry.CreateTransient<SkeletalAssetResource>("InterpolationAsset");
+        assert(skeleton && meshResource && clipResource && asset);
+
+        Container::VariableArray<Skeletal::SkeletalJoint> joints(2);
+        joints[0].Name = "Root";
+        joints[1].Name = "Child";
+        joints[1].ParentIndex = 0;
+        for (auto& joint : joints)
+        {
+            joint.InverseBindMatrix.fill(0);
+            for (unsigned i = 0; i < 4; ++i)
+                joint.InverseBindMatrix[i * 5] = 1;
+        }
+        skeleton->SetJoints(std::move(joints));
+        assert(skeleton->Load());
+        Animation::SocketReport report;
+        assert(skeleton->ApplySocketsJson(
+            Container::String(R"({"sockets":[{"name":"Mouth","parent":"Root","position":[1,0,0]}]})"), report));
+
+        Container::VariableArray<Skeletal::SkeletalVertex> vertices(1);
+        vertices[0].Normal = {0, 1, 0};
+        vertices[0].JointIndices[0] = 1;
+        vertices[0].JointWeights[0] = 1;
+        meshResource->SetVertices(std::move(vertices));
+        meshResource->SetIndices(Container::VariableArray<uint32_t>{0, 0, 0});
+        assert(meshResource->Load());
+
+        Skeletal::SkeletalAnimationClip clip;
+        clip.Name = "Still";
+        clip.DurationSeconds = 1;
+        Skeletal::SkeletalAnimationChannel channel;
+        channel.JointIndex = 0;
+        channel.Path = Skeletal::SkeletalAnimationPath::Translation;
+        channel.Samples.push_back({0, {0, 0, 0, 0}});
+        channel.Samples.push_back({1, {0, 0, 0, 0}});
+        clip.Channels.push_back(std::move(channel));
+        clipResource->SetClip(std::move(clip));
+        assert(clipResource->Load());
+        asset->SetClipResources(meshResource, skeleton, {clipResource});
+        assert(asset->Load());
+
+        World world;
+        world.Initialize();
+        // 剣を先に作り、描画の変換は生成順ではなく付け先の後に求める。
+        auto* sword = world.SpawnEntity<Entity>();
+        auto* target = world.SpawnEntity<Entity>();
+        assert(sword && target);
+        auto* mesh = world.CreateComponent<Component::SkinnedMeshComponent>(target);
+        auto* attachment = world.CreateComponent<Component::SocketAttachmentComponent>(sword);
+        assert(mesh && attachment);
+        mesh->SetSkeletalAsset(asset);
+        mesh->SetPlaying(false);
+        target->SetRenderInterpolationEnabled(true);
+        sword->SetRenderInterpolationEnabled(true);
+        assert(attachment->Attach(target->GetObjectId(), Identity("Mouth"), {}, 0));
+        world.Tick(0);
+        world.LateTick(0);
+        assert(mesh->IsPoseCurrent() && attachment->GetRenderTarget() == target);
+
+        constexpr float h = 1.f / 60.f;
+        constexpr float v = 3.f;
+        constexpr float frameFractions[] = {
+            .5f, 1.f, 1.5f, .25f, 2.f, .75f, .5f, 1.25f,
+            .75f, 1.5f, .5f, 1.25f, .25f, 2.f, .75f, .5f,
+            1.25f, .5f, 1.f, 1.5f, .25f, 2.f, .75f, .5f,
+        };
+        float acc = 0;
+        float x = 0;
+        float previousSwordX = sword->GetRenderWorldTransform().position.x;
+        bool sawZero = false, sawOne = false, sawTwo = false, sawInterpolated = false;
+        unsigned frame = 0;
+        for (float fraction : frameFractions)
+        {
+            const float dt = fraction * h;
+            acc += dt;
+            unsigned steps = 0;
+            while (acc >= h)
+            {
+                world.BeginFixedStep();
+                x += v * h;
+                target->SetLocalPosition(x, 0, 0);
+                world.EndFixedStep();
+                acc -= h;
+                ++steps;
+            }
+            assert(steps <= 2);
+            sawZero |= steps == 0;
+            sawOne |= steps == 1;
+            sawTwo |= steps == 2;
+            const float alpha = acc / h;
+            assert(world.SetRenderInterpolationAlpha(alpha));
+            world.Tick(dt);
+            world.LateTick(dt);
+
+            const auto targetRender = target->GetRenderWorldTransform().position;
+            const auto swordRender = sword->GetRenderWorldTransform().position;
+            const auto targetWorld = target->GetWorldTransform().position;
+            const auto swordWorld = sword->GetWorldTransform().position;
+            assert(Near(swordRender.x, targetRender.x + 1));
+            assert(Near(swordRender.y, targetRender.y));
+            assert(Near(swordRender.z, targetRender.z));
+            assert(Near(swordWorld.x, targetWorld.x + 1));
+            assert(Near(swordWorld.y, targetWorld.y));
+            assert(Near(swordWorld.z, targetWorld.z));
+            sawInterpolated |= alpha < 1 && !Near(targetRender.x, targetWorld.x);
+            if (frame >= 2)
+                assert(Near(swordRender.x - previousSwordX, v * dt));
+            previousSwordX = swordRender.x;
+            ++frame;
+            uint32_t count = 0;
+            assert(world.VerifyEcsRenderTransform(&count));
+            assert(count == 2);
+        }
+        assert(sawZero && sawOne && sawTwo && sawInterpolated);
+        world.Finalize();
+    }
 } // namespace
 int main()
 {
@@ -274,6 +404,7 @@ int main()
     world.Finalize();
     TestRenderRowsAreIncremental();
     TestPendingDestroyAncestorKeepsRender();
+    TestSocketAttachmentFollowsParentRender();
     std::cout << "WorldRenderInterpolationTest PASS\n";
     return 0;
 }
