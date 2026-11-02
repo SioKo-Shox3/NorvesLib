@@ -8881,3 +8881,10 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 要起票: AssetCook のソースが変わる取り込みのたびに、検証を回す作業ツリーの exe のハッシュが変わって地形の全項目の焼き直し（並列で約 31 分）が要る。印に exe のハッシュではなく地形の生成の版を使う形は Scripts の設計変更になるので、この項目では変えていない
 - U1 SceneView に一時のワールドの板を持たせ、毎フレームの板を空間で振り分ける: 着地(直し 0 回)
 - U2 振り分けの検査を既存の 2 本の試験に足し、タスクの verify を回す: 着地(直し 0 回)
+
+## 2026-11-02 GAME-GR131-VFX-P1（run 20261102-191023 の反復 1）
+
+- Done: 毎フレームの一時の板を空間で分けた。`Rendering::DistributeTransientBoardProxies`（`SceneView.h`）が `WorldSpace` の板を main の SceneView の `SetTransientBoardProxies` へ、`ScreenSpace` の板をキャンバスへ渡し、空の列でも毎フレーム置き換える。SceneView は一時の板を常駐の板と同じ判定（`CullBoardProxy` に括り出し、2 つの `CullProxies` の両方）で可視列へ足し、描画コマンドは常駐の板と同じ `AppendWorldBoardDrawCommands` と並べ替えで作る。描画コマンドは GameThread の RenderingCoordinator が書き込み中の `FramePacket` へ写すので、RenderThread は SceneView を読まない。境界を持たない VFX の板（半径 0）は `BillboardComponent` と同じ式で境界を作ってから視錐台に掛ける
+- 検証: `cmake --build build --config Debug --target Game CanvasTransientBoardSnapshotTest SceneViewWorldBoardDrawCommandTest HitEffectEmissionTest -- /m:1` 終了コード 0、`ctest -R "^(ParticleFrameSnapshotTest|CanvasTransientBoardSnapshotTest|SceneViewWorldBoardDrawCommandTest|HitEffectEmissionTest|BoardComponentRoutingTest)$"` 5/5 Passed（`.harness/runs/20261102-191023/verify-GAME-GR131-VFX-P1-final.txt`）。足した検査は `SceneViewWorldBoardDrawCommandTest`（境界の無いワールドの一時の板が 1 回だけ載り、スクリーンの板は載らず、空の列の後は残らず、常駐の板は 1 回のまま）と `ParticleFrameSnapshotTest`（`ParticleSystem` の VFX から実際に出したワールドの板が SceneView にだけ、エミッタのスクリーンの板がキャンバスにだけ載り、次のフレームはどちらにも残らない）。足す理由の 3 点は `Docs/Testing.md`
+- Next: 起動の確かめは後回し。当たりを出す場面で火花と衝撃が 3D の view に出ること（`GAME-GR131-VFX-CHECK`）を撮って確かめる
+- Notes: `ParticleSystem` の通常のエミッタの板と Text のグリフの板は今もいつも `ScreenSpace` で、ワールドの空間に出るのは VFX（`VfxSimulationSpace::World`）の板だけ
