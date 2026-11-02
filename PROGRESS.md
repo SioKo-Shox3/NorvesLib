@@ -8706,3 +8706,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 評価の残課題のうち、-LegacyNvskelCompare が RTGI の面を含む 9 面すべてで全画素一致を求める扱いと、Test-M9World.ps1 が M9_WORLD_COMPARE stage=assets_ready の印を照合しない点は、確かめのタスクで実行の結果を見て決める
 - U1 MeshRenderer のモジュールとメッシュのインスタンスの記録: 着地(直し 0 回)
 - U2 溶けの式の include と試験用のシェーダー: 着地(直し 0 回)
+- U3 MeshParticleInstanceTest と試験の理由: 着地(直し 1 回)

@@ -2077,6 +2077,12 @@ target_link_libraries(VfxEffectSystemTest PRIVATE Core)
 set_target_properties(VfxEffectSystemTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME VfxEffectSystemTest COMMAND VfxEffectSystemTest)
 
+# メッシュの粒子の記録と溶けの閾値を確かめる。
+add_executable(MeshParticleInstanceTest MeshParticleInstanceTest.cpp)
+target_link_libraries(MeshParticleInstanceTest PRIVATE Core)
+set_target_properties(MeshParticleInstanceTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME MeshParticleInstanceTest COMMAND MeshParticleInstanceTest)
+
 add_test(NAME ParticleFrameSnapshotTest COMMAND CanvasTransientBoardSnapshotTest --test=ParticleFrameSnapshotTest)
 
 
