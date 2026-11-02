@@ -4656,7 +4656,7 @@
 - from: SCN-WL-CLIFF-GEN-TALUS
 
 ## SCN-WL-CLIFF-GEN-TALUS-CHECK-P1: 壁から崖錐へ移る所の崩れた大きな塊（数 m〜十数 m）を、岩の物として崖の生成の 7 範囲の壁の足元に置く
-- status: todo
+- status: done
 - done-when: 2026-11-02 の人の判断（cc21c026、SCN-WL-CLIFF-GEN-TALUS の案 A）で、崩れた塊は高さの場ではなく物の岩として置く別の項目にすると決まった。地形のクック（崖の細部の版 19）は変えない。判断役の判断（2026-11-02、`blocked/SCN-WL-CLIFF-GEN-TALUS-CHECK-P1.md` の案 2）で、塊を置く範囲を接地用の格子の中の near の 2 範囲に絞った。
   すること:
   (1) 塊の素材を決め、選んだ素材と理由を記録する。今ある崖錐のスキャンの岩（boulder_01・rock_09）を大きく使うか、Blender で数 m〜十数 m の崩れた砂岩の塊を作って `Assets/AssetSets/WastelandCliffBlocks.json` からクックする。
