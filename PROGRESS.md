@@ -8704,3 +8704,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261102-105745/verify-G2-GR32-GPU-ACCEPTANCE-iter3.txt`（範囲の検算で全範囲を隙間・重複なく覆い、slot 0 が列 0〜3・slot 1 が列 4〜7 の表裏 64 三角形ずつ。`cmake --build build --config Debug --target Game AssetCook SkinnedSubmeshDrawContractTest -- -m:1` 終了コード 0、`SkinnedSubmeshDrawContractTest.exe` PASS・終了コード 0。numstat 2 通り一致）
 - Next: 起動の確かめは後回し。`G2-GR32-GPU-ACCEPTANCE-CHECK` で verify の 3〜6 行目を回し、PNG・metrics.json・result.json を開いて確かめる（2 材質の撮影は STARTUP_SKINNED_PROBE_SKIPPED が出ないことと体の数も見る）
 - Notes: 評価の残課題のうち、-LegacyNvskelCompare が RTGI の面を含む 9 面すべてで全画素一致を求める扱いと、Test-M9World.ps1 が M9_WORLD_COMPARE stage=assets_ready の印を照合しない点は、確かめのタスクで実行の結果を見て決める
+- U1 MeshRenderer のモジュールとメッシュのインスタンスの記録: 着地(直し 0 回)
