@@ -3299,7 +3299,7 @@
 - notes: 危険地帯（描画）。`Assets/Shaders/volumetrics.frag` 103〜135 行付近は CSM の影の地図（`cascadedShadowMap`）を読む。太陽の影が VSM のときに霧の影が効いているかを先に確かめる。 2026-10-12 親: 計測の見直し（ユーザーの指摘「節目に計測を入れても意味があるのかを考えるべき」。計測ごとに、問い・結果で変わる判断・測らずに分からないかの 3 点を書き、書けないものは置かない。Sol の批評を反映）。 2026-10-15 ユーザー: 室内の光は「ほぼ実写」の美しさを見るシーン。SCN-INT-REFERENCE-SELECT の写真と並べた比較画像（1920×1080）と、同じ視点のパストレースの正解で判断する。速さの条件は無い。 2026-10-19 親: verify を RelWithDebInfo に揃え、周回の試験を 1 コマンド 10 分に収まる形にした（Debug の撮影は約 11 分、3 周は 928 秒の実測）。 2026-10-23（親）: 順を保つため after を足した（先に走ると後の変更で撮り直しになる）。
 
 ## SCN-THUMBNAILS: ランチャーのカードに各シーンの見本画像を出す
-- status: todo
+- status: done
 - done-when: `Scripts/CaptureLauncherThumbnails.ps1` を作る: 各シーンの見本用の視点（シーンの一覧に書く。既定は `overview`）を `Scripts/CaptureScene.ps1` で `-WorkDir`（`.harness/runs/scene-capture/` の下）へ撮り、640×360 程度に縮めて `Assets/Textures/Launcher/<id>.png` に書く（追跡する）。ランチャーは `Assets/Textures/Launcher/<id>.png` を読み込んでカードに出し、ファイルが無いカードは今の表示のままにする（落ちない。警告は 1 行）。1920×1080 でカードの説明文が右の縁からはみ出さないよう、折り返しの幅からカードの内側の余白を引き、カードが 1 行に収まらないときの並び（折り返しかスクロール）を決める。起動せずに確かめるのは、Debug の Game のビルドと `LauncherMenuTest` が通ること。台本の実行（見本画像の生成）と、ランチャーの撮影を開いて見本画像が正しいカードに出て選択の強調が分かることは、起動を戻した後の `SCN-THUMBNAILS-CHECK` で確かめる（見本画像は各シーンの見た目が決まった後に撮り直す）。
 - verify: `cmake --build build --config Debug --target Game LauncherMenuTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^LauncherMenuTest$" --no-tests=error --output-on-failure --timeout 180`
