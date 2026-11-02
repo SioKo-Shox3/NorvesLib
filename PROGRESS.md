@@ -8560,3 +8560,8 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U4 VfxEffectSystemTest と Docs/Testing.md の 3 点: 着地(直し 0 回)
 - U5 AssetCook の --cook-vfx: 着地(直し 0 回)
 - U6 ParticleSystem への組み込みと Rendering3DTest の橙の粒の置き換え（最後の確かめ）: 着地(直し 0 回)
+- Done: 起動せずに確かめる完了の条件 (1)〜(6) を `VfxEffectSystemTest`（CPU の試験。足す理由の 3 点は `Docs/Testing.md`）で確かめた。`cmake --build build --config Debug --target Game VfxEffectSystemTest ParticleSystemTest -- /m:1` は終了コード 0、`ctest -R "^(VfxEffectSystemTest|ParticleSystemTest)$"` は 2 件とも Passed。AssetCook の `--cook-vfx` は正常の入力で終了コード 0（`vfx_cooked bytes=96 emitters=1`）、Rate −1 の入力で終了コード 1（`out_of_range SpawnRate.Rate`）
+- Done: Rendering3DTest の橙の粒を VFX のエフェクト `Rendering3DTestEmbers` で組み直した。値（位置・速度の箱・重力・生成の速さ・寿命・最大数・色・大きさ・層・混合）と乱数の種（0xC001D00D）は前の 2D のエミッタと同じで、前のエミッタが粒子系の添字 0・世代 1 だったなら乱数の列も一致する。エンジンの `ParticleSystem` が `VfxEffectSystem` を持ち、Tick・板の収集・Clear で回す
+- Next: 起動の確かめは後回し。`GAME-GR136-VFX-CHECK` で `Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo` を撮り、起動画面の橙の粒の見た目が前と変わらないことを確かめる
+- Notes: 完了を宣言しない範囲は着手時の記録のとおり（GR57 の GPU の実行先・3D の粒子の描画パス、GR02 の時間のチャンネル、GR12/GR13/GR19 のボーン・表面のエミッタ、GR96 の asset-set・依存の追跡とテクスチャのパスの解決、GR126 の並列化の後の順序、GR72 の音、Editor の編集の画面、寿命の曲線のモジュール）
+- Notes: VFX のインスタンスの合成 ID は 2D のエミッタの ID と別の帯（ビット 63・62）を使う。イベントの位置はエミッタの空間の絶対位置で、インスタンスの位置を足さない
