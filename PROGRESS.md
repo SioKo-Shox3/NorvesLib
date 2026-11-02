@@ -8852,3 +8852,7 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 再確認（run 20261102-173054 の反復 2）: 反復 1 の差し戻し（RigSplitCookTest の `cook_managed_store: volume_busy`）はコードの不具合ではなく、宛先ロックが C: のボリューム単位の Global 名前付きミューテックスを待たずに取るため、同時に走っていたほかの枠の AssetCook（NorvesLib-6 の地形の焼き）とぶつかったもの。ほかの枠の AssetCook が止んだ後に verify を回し直し、ビルド終了コード 0・ctest 4 本 Passed（`.harness/runs/20261102-173054/verify-build-iter2.txt`・`verify-ctest-iter2-wait-1.txt`）
 - Notes: 要起票: cook の試験（RigSplitCookTest など宛先ロックを取るもの）は、同じボリュームでほかの枠の AssetCook や cook の試験が走っていると `volume_busy` で落ちる（ロックの待ち時間 0）。盤面の並列の枠では verify の再実行が環境で落ちうる
 - U3 分割 cook の試験で、ボリュームのロックが他のプロセスに取られているときは待ってやり直す(作業ツリーを取られた U2 の切り直し): 着地(直し 0 回)
+- Done（run 20261102-191021）: 差し戻しの `mixed rig ... cook_managed_store: volume_busy` を直した。原因は機械全体の宛先ボリュームのロック（`Global\NorvesLib.AssetCook.DestinationVolumeLock.v1.<volume GUID>`、待たずに取る）を並列の枠の cook が同じ C: で握っていたこと。`RigSplitCookTest` の retarget と mixed rig の cook を、結果が Busy かつ期待が Busy でない間だけ 100 ms 間隔・合計 120 秒まで待ってやり直す形にした（検査の数は 120 件のまま）。外のプロセスでロックを 5.5 秒握った状態でも合格。
+- 証拠: 単位の作業ツリー（NorvesLib-2-u1）の `.harness/unit-verify.txt`（`cmake --build build --config Debug --target CookedMeshTest AssetCook -- /m:1` 終了コード 0、4 試験の ctest 終了コード 0・100% passed。RigSplitCookTest は待ちが無くても 50 秒前後かかる）
+- Next: なし（アプリを起動する確かめは無い）
+- Notes: ほかの枠が 120 秒より長くロックを握る cook（重い AssetCook など）と重なると、この試験は今も Busy で落ちる。待ちの上限を超えたら前の要起票（宛先ロックを取る cook の試験の取り合い）で扱う。

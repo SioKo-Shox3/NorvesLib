@@ -4579,7 +4579,7 @@
 - from: G2-GR32-GPU-ACCEPTANCE
 
 ## G2-MATERIAL-SELECTION-INTEGRATION-P1: 骨格の分割 cook で、材質の設定の解決に失敗したとき設定名のエラーを返す
-- status: doing
+- status: done
 - done-when: `Tools/AssetCook/RigSplitCook.cpp` の材質の解決(338 行付近)を NVMESH v1(`MeshMaterialV1Plan.cpp` の 470〜477 行)と同じ形にする。`ResolveMaterialImportPlan` の状態が `SettingsFailed` のときは `MaterialSettingsErrorKey(resolved.Settings)` を返し、それ以外の照合の失敗は `split_material_selector_or_settings` のまま返す。元の catalog を読めないときも、今と同じく区別できる名前で返す。増分の preflight も cook と同じ名前を返す(`CookCacheDecisionTest` の 575 行付近の期待は、この変更で変わる場合だけ直す)。`RigSplitCookTest` に、設定の失敗 1 件(例: 未一致の指定)で返る名前が設定名のキーと一致し、照合の失敗はこれまでの名前のままであることの検査を足す(新しい exe は作らない。足す前に `Docs/Testing.md` の 3 点を書く)。
 - verify: `cmake --build build --config Debug --target CookedMeshTest AssetCook -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^(RigSplitCookTest|CookCacheDecisionTest|SkeletalMaterialBindingsTest|MaterialSelectionTest)$" --no-tests=error --output-on-failure --timeout 180`
