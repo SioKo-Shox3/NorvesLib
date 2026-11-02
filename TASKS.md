@@ -4902,7 +4902,7 @@
 - from: SCN-MEGA-FIX-STRESS-GPU-CHECK-P1
 
 ## G2-MATERIAL-SELECTION-INTEGRATION-P1-P1-P1-P1: cook のロックの 3 本の試験を試験だけの mutex の名前空間で走らせ、別の枠の cook と取り合わないようにする
-- status: done
+- status: doing
 - done-when: 次の 4 点を満たす。
   - **口は試験のコードからしか届かない。** `Tools/AssetCook/CookDestinationLockTestAccess.h` に、プロセスの中だけで効く試験用の名前空間の設定を足す。置き方は今の `WithCookDestinationLockForTest`・`InspectCookDestinationMutexNameForTest` と同じ `Detail::...ForTest` で、範囲つきで戻せる形にする。
     - 設定している間は、宛先ロックの mutex の名前に試験用の区切りが入る。
