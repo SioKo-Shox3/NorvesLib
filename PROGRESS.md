@@ -9157,3 +9157,10 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Done: ランナーの再検証はこの作業ツリーの `build/` にある取り込み前（10 月 29 日）の試験の実行ファイルを回して `SkinnedRenderPathContractTest` が落ちていた。この木で `cmake --build build --config Debug --target MathGeometryTest SkinnedRenderPathContractTest RHITextureUpdateVulkanTest -- /m:1` を回して終了コード 0（`.harness/runs/20261103-065137/iter-2-build.txt`）、続けて verify の ctest `MatrixAbstractionTest`・`SkinnedRenderPathContractTest` が 2/2 Passed（`.harness/runs/20261103-065137/iter-2-ctest.txt`）
 - Next: 起動の確かめは後回し。`FIX-NORMAL-MATRIX-SCALE-CHECK-P1-CHECK` で `Game` を含むビルドと ctest `ComputeSkinningVulkanTest` を回す
 - Notes: verify のビルドの行は `Game` を含むので後回しにされ、作業ツリーの `build/` の試験の実行ファイルが古いまま ctest の行だけが再検証される。試験の実行ファイルは反復の中で先にビルドしておく
+
+## 2026-11-03 G4-GR05-MODEL-CASES（run 20261103-070131 の反復 1。進行中）
+
+- 試験の 3 点（Docs/Testing.md）: 反証する契約は、QuadrupedLocomotionModel が要件 GR05 の受け入れ確認 (a)〜(j) の式（歩様のヒステリシスと最短滞在、最小旋回半径 max(v/ω_cap, v²/a_lat)、加減速の到達時間と停止距離と制動の率、斜面の係数の単調と下限と下りの増分、ジャンプの頂点・滞空・先行入力・コヨーテ・着地のペナルティ・空中の制限、dt=1/30・1/60・1/144 での位置と向きの一致、極端な dt での NaN の無さと拒否時の state/out の保持、入力ゼロで向きが回らない、その場旋回の入りと抜け、バンクの符号と上限）どおりに動くこと。
+- ほかの手段で気づけるか: 気づきにくい。犬の動きの撮影は 1 枚で、旋回半径の数 % のずれ、最短滞在の破り、境界の 1 フレームの差、フレームレートでの向きのずれは絵にもログにも出ない。犬の実機の受け入れ（G4-GR07 の煙試験）はまだ無い。
+- 失敗が黙って起きるか: 起きる。式から外れても犬は何かしら動き、エラーもログも出ない。
+- 方針: 試験は既定値ではなく試験の中で決めたパラメータで式と比べる。(d) は SlopeLimit を 60° より大きくして 0〜60° を見る（SlopeLimit を越えた登りは登れないとして 0 を返す設計のまま）。(e) の着地は「LandingRecovery の間は加速せず、速さは着地直後の v·(1−LandingSpeedLoss·impact) を保つ（減速・制動・その場旋回は通常どおり）」とし、今の「回復中は目標 0 で減速し続ける」を直す。
