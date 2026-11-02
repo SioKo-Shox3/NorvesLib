@@ -4990,7 +4990,7 @@
 - from: SCN-WL-CLIFF-GEN-TALUS-CHECK-P1-CHECK
 
 ## G2-MATERIAL-SELECTION-INTEGRATION-P1-P1-P1-P1-P1: CookManagedBootstrapTest のクラッシュの子が止める点の前で 91 を返すときの理由を親の出力に残し、間欠的な失敗の原因を直す
-- status: todo
+- status: done
 - done-when: 次の 3 点を満たす。
   - **子の理由が親の出力に残る。** `Test/Core/Asset/CookManagedBootstrapTest.cpp` の `Crash` は、`CookManagedUpdateTest.cpp` の `Crash`(469〜482 行)と同じ形で子に stderr を渡す。親の stderr を継承できる形に複製し、`STARTF_USESTDHANDLES` で `hStdInput`・`hStdOutput`・`hStdError` に入れ、`bInheritHandles=TRUE` で起動し、起動の後に複製を閉じる。
     - 子が 73 以外で終わったとき、子の出す行(`BOOTSTRAP_RESULT`・`VOLUME_BUSY_RETRY`・`child did not exit:`)が、親の `child recovery=... point=... wait=... exit=...` の行と一緒に ctest の `--output-on-failure` の出力に出る。
