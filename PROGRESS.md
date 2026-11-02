@@ -8999,3 +8999,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 ## 2026-11-02 SCN-WL-CLIFF-GEN-TALUS-CHECK-P1（run 20261102-200220 の反復 2、人の判断待ち）
 - Notes: castle の 5 範囲（z −3950 以南・x −4250 以西）は接地用の格子 WastelandPlacementGround.bin（x −2600〜2099、z −2499〜2100）の外で、塊は構造上 0 個になる。shape-cliff-blocks.json の far_01 の行（wall_foot ≥ 0.356）の注釈は castle_0・castle_1 にだけあるので (A) が必ず落ちる。done-when の「根元は接地用の格子から取る」と「仕様を置いた後に変えない」がぶつかるため、案（遠景の格子から根元を取る / 塊を near の 2 範囲に絞り far_01 の行を移す）を人の判断に回した。
 - Next: 人が案を決めて status を todo に戻したら再開する。
+- U6 仕様 shape-cliff-blocks.json から far_01 の行を外し moved_rows に残す: 着地(直し 0 回)
