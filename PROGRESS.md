@@ -8927,3 +8927,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: 単位の作業ツリー（NorvesLib-2-u1）の `.harness/unit-verify.txt`（`cmake --build build --config Debug --target CookedMeshTest AssetCook -- /m:1` 終了コード 0、4 試験の ctest 終了コード 0・100% passed。RigSplitCookTest は待ちが無くても 50 秒前後かかる）
 - Next: なし（アプリを起動する確かめは無い）
 - Notes: ほかの枠が 120 秒より長くロックを握る cook（重い AssetCook など）と重なると、この試験は今も Busy で落ちる。待ちの上限を超えたら前の要起票（宛先ロックを取る cook の試験の取り合い）で扱う。
+- U1 手動起動の既定を統合の検証の範囲にし、frozen_parity で従来の照合を選べるようにする: 着地(直し 0 回)
