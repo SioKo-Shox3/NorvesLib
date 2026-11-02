@@ -1,4 +1,5 @@
 ﻿#include "RigRetargetCook.h"
+#include "RigSingleCook.h"
 #include "Asset/AssetPackageFormat.h"
 #include "Asset/CookedSkeletalNameCodec.h"
 #include "NativeCookPath.h"
@@ -73,6 +74,10 @@ namespace NorvesLib::Tools::AssetCook::Detail
                                                    document.RawSourceBytes, document.bPresent))
             {
                 return Fail(error, "retarget_sidecar_snapshot");
+            }
+            if (bTarget && !ValidateClipMaterialSettings(bytes, document, {}, error))
+            {
+                return false;
             }
             I::LoadedImportSettings geometry;
             geometry.Settings = document.Settings.Geometry;

@@ -3944,7 +3944,7 @@
 - stop-when: 手元確認用CookAssets.ps1/StartupMaterialsを対象に戻す、PS側へ増分判定を重複実装、Windows実byte比較を未実施で完了とする。
 
 ## G2-MATERIAL-SELECTION-INTEGRATION: 共通照合を設定とslot名へ接続する
-- status: todo
+- status: done
 - after: G2-GR79-IMPORT-POLICY-CONNECTION
 - done-when: GR79 ARM/発光、GR78 材質→SurfaceName、GR32 slot名が同じResolveMaterialSelectionを使う。元catalog/生成slotを明示し、全設定の未一致/二重指定をcookと増分preflight双方で拒否。同名GLBは元での改名推奨を資産名付きで警告する。 verify の文章にあった場合（raw の無名 1 個・Blender の Material_0、primitive の逆順・同名・生成名の衝突、name と index の二重指定、不在、unicode の名前、増分の skip で検証を迂回しないこと、設定値・SurfaceName・slot への実際の到達）は、既存の試験（`MaterialSelectionTest`・`MaterialImportDocumentTest`・`SkeletalMaterialBindingsTest`）の検査として足す（足す前に `Docs/Testing.md` の 3 点を書く）。
 - verify: `cmake --build build --config Debug --target CookedMeshTest AssetCook -- /m:1`
