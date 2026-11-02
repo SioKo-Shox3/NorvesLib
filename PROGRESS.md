@@ -8704,3 +8704,9 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261102-105745/verify-G2-GR32-GPU-ACCEPTANCE-iter3.txt`（範囲の検算で全範囲を隙間・重複なく覆い、slot 0 が列 0〜3・slot 1 が列 4〜7 の表裏 64 三角形ずつ。`cmake --build build --config Debug --target Game AssetCook SkinnedSubmeshDrawContractTest -- -m:1` 終了コード 0、`SkinnedSubmeshDrawContractTest.exe` PASS・終了コード 0。numstat 2 通り一致）
 - Next: 起動の確かめは後回し。`G2-GR32-GPU-ACCEPTANCE-CHECK` で verify の 3〜6 行目を回し、PNG・metrics.json・result.json を開いて確かめる（2 材質の撮影は STARTUP_SKINNED_PROBE_SKIPPED が出ないことと体の数も見る）
 - Notes: 評価の残課題のうち、-LegacyNvskelCompare が RTGI の面を含む 9 面すべてで全画素一致を求める扱いと、Test-M9World.ps1 が M9_WORLD_COMPARE stage=assets_ready の印を照合しない点は、確かめのタスクで実行の結果を見て決める
+
+## 2026-11-02 GAME-GR130-VFX（run 20261102-145119 の反復 1。着手）
+- 方式（推奨を採った）: トレイルは描画用に補間された剣の変換（GR02 の `Entity::GetRenderWorldTransform`。ソケットに付けた剣は GR13 の変換の補間）を、描画のフレームごとに 1 回読む。固定ステップごとに点を足すと、ステップ 0 回のフレームで帯が止まり 2 回のフレームで点が詰まって、描画の剣と帯の先がずれるため。帯は刃の根元と切っ先の 2 縁で、前の標本との回転の差が折れ目の上限（既定 10 度）を超えたら回転を slerp・位置を線形補間して点を足す（曲線で縁を滑らかにする形は最新の点が 1 フレーム遅れ、ねじれも抑えないので採らない）。寿命（既定 0.25 秒）と点の上限（既定 128）で古い点から捨てる。描画は専用の小さな描画器を `ForwardPass` の半透明の段（ワールドの板の後）から呼び、頂点は `RenderWorld::SetRibbonTrails` から FramePacket の Scene に写して渡す（草の `SetFoliage` と同じ道）
+- 方式と前提の境界の記録: `Docs/Plans/GameFeatureRoadmap.md`（メイン側・管理外）の「GR130 剣のトレイル（リボン）の方式と境界」の節
+- 完了を宣言しない範囲: GR57 の共有の半透明のキュー（並べ替え・ソフトな縁・霧・照明）、GR30 の TAA の整合（半透明の速度・反応度のマスク）、GR136 の VFX の定義のリボンのエミッタ（スキーマ・クック）、GR16・G8 の攻撃の窓に合わせた出し止め、Editor の編集の画面。帯を付けるのは明示の調整の場面（`--animation-debug`）の剣だけで、既定の起動画面とランチャーの各シーンには置かない
+- Notes: 新しい Core のソースの登録のため `Library/Core/CMakeLists.txt` と、試験の理由の `Docs/Testing.md` を paths の外だが触る（ソースの並びに足すだけ・done-when が名指し）
