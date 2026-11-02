@@ -8995,3 +8995,20 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: なし（アプリを起動する確かめは無い）
 - Notes: 確かめの途中、ほかの枠の AssetCook.exe が C: のロックを握っている間は、待ちを付けない `CookManagedBootstrapTest`・`CookManagedUpdateTest`（fixture の `InitializeNewCookManagedStore == Created`）と `CookDestinationLockTest` の既存の `GoodPeer` が落ちた。この 3 つは変更前と同じ待ち 0 の挙動で、ロックが空いた後の CookDestinationLockTest は Passed
 - Notes: 要起票: Busy を期待する cook の試験（CookDestinationLockTest・CookManagedBootstrapTest・CookManagedUpdateTest）は、ほかの枠の AssetCook が同じボリュームで走っていると前提の取得が Busy になって落ちる（待ちを付けられない）。試験だけ別の volume の名前に分けるなどの扱いが要る
+
+- U1 地形の項目の印を exe のハッシュから切り離し、旧の印からの移行と照合を入れる: 着地(直し 1 回)
+- U2 --cook-coverage に代表の区画の焼き比べを足し、報告を今の形に直して、共有の状態を移行して verify を回す: 着地(直し 0 回)
+
+## 2026-11-02 SCN-WL-CLIFF-GEN-TALUS-CHECK-P3（run 20261102-191441 の反復 2、完了）
+- Done: 地形の項目（generate が terrain-tile:）のクックの印を AssetCook.exe のハッシュから切り離した。印の元は崖の細部の版（kTerrainCliffDetailVersion=19）と地形のクックの経路のソース 67 ファイルの内容の SHA-256（`CookAssets.ps1` の `$TerrainStampSourcePaths`）で、状態の新しい欄 `terrain_stamp` に持つ。旧の欄 `stamp` は exe を含む旧の形で書き続けて残し、旧い `CookAssets.ps1` も読める。`terrain_stamp` が無く旧の印が今の exe で合う項目は焼かずに書き足す（共有の置き場を NorvesLib-6 の exe で移行し `terrain_stamp_migrated=214`・`cooked=0 skipped=214`）。地形を実際に焼くときは exe が地形のソースより古ければ止める。`--cook-coverage` に代表の区画（掛かる近景の範囲が最も多く、同数なら名前順の先頭。今は WastelandDem_7_7）を一時の置き場で焼き直して共有の `cooked_hash` と比べる検査を足し、報告の印の元を版とソースの一覧に直した。地形以外の項目の印は今のまま exe のハッシュを含む
+- 検証: AssetCook のビルド EXIT=0。verify のクックの行は `cooked=0 skipped=214`（8.9 秒）。`--cook-coverage --verify` は `tiles=27 cooked=27 result=pass`・`recook tile=WastelandDem_7_7 match=true seconds=152.002`。末尾に 1 バイト足した exe の写しで `terrain_stamps 214 ['match']`。`Tools/AssetCook/TerrainCliffDetail.cpp` に 1 行足すと地形の 214 項目が stale、内容と更新時刻を戻すと 214 match。代表の区画は別々の一時の置き場で 2 回焼いて `cooked_hash` が同じ（65fb1ace6c72204e）。出力は `.harness/runs/20261102-191441/verify-SCN-WL-CLIFF-GEN-TALUS-CHECK-P3-U2.txt`。アプリは起動していない。新しい試験は足していない
+- Next: なし
+- Notes: 焼き比べは代表の 1 区画だけで、その区画の出力に効かない入力の漏れ（遠景の段だけに効くソースなど）は検出できない。焼き比べで `--cook-coverage` が約 2.5 分長くなった
+- U3 地形の書き出しの記録が読む欄を、網羅の報告の新しい印の元に替える: 着地(直し 0 回)
+
+## 2026-11-02 SCN-WL-CLIFF-GEN-TALUS-CHECK-P3（run 20261102-191441 の反復 3、差し戻しの直し・完了）
+- Done: 網羅の報告 `cook_coverage.cliff-gen.json` の最上位から `asset_cook_sha256` が消えたため `OcclusionSets.py --export-terrain` が KeyError で必ず失敗していたのを直した。書き出しは報告の `terrain_sources_sha256`（地形の印の元）を読み、`export_record.json` にも同じ名前で記録する
+- 検証: `capture_set` を終了コード 1 に差し替えて `run_export_terrain` を呼ぶと、失敗の理由が撮影の終了コード 1 になり報告の読みを通り過ぎる（`cliff_detail_version=19 head_cliff_detail_version=19`）。タスクの verify 4 行を回し直した: AssetCook のビルド EXIT=0、クックの行 `cooked=0 skipped=214`（9 秒）、`--cook-coverage --verify` は `result=pass`・`recook tile=WastelandDem_7_7 match=true`（171 秒）、1 バイト足した exe の写しで `terrain_stamps 214 ['match']`。出力は `.harness/runs/20261102-191441/verify-SCN-WL-CLIFF-GEN-TALUS-CHECK-P3-iter3.txt`。アプリは起動していない。新しい試験は足していない
+- Next: なし（`--export-terrain` を実際に回すのは Game を起動する SCN-WL-CLIFF-GEN-TALUS-CHECK-P2 の verify で確かめる）
+- Notes: 移行と飛ばしの経路には exe がソースより新しいかの検査が掛からない（焼くときだけ掛かる）。共有の状態は移行済みで、旧いスクリプトが焼き直して `terrain_stamp` を落としたときだけ起こり得る
+- Notes: 要起票: `Tools/AssetCook/MeshCooker.cpp` の 2942〜2943 行目のコメント「高さ場の関数の変更は AssetCook の実行ファイルの変更として CookAssets が検出する」が、地形の印をソースの内容で求める今の仕組みと合わない
