@@ -8714,3 +8714,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 要起票: NorvesEditor の Bridge SDK と仕様に、資産のプロパティの一覧・設定・保存と決定的な撮影のメソッドを足し、MCP の道具から呼ぶ（NorvesEditor 側）
 - U1 エフェクトの資産を JSON へ書き出す: 着地(直し 0 回)
 - U4 Bridge の決定的な撮影の部品: 着地(直し 0 回)
+- U2 Bridge の資産のプロパティの編集の部品: 着地(直し 0 回)
