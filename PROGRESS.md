@@ -9372,3 +9372,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 重力の倍率・滑り落ち・昇降足場のケースを足し、外れたら本体を直す: 着地(直し 0 回)
 - U6 足場の離脱速度のケースを足し、空中で足場の水平速度を引き継ぐ(切り直し): 着地(直し 0 回)
 - U3 External の間は MoveDelta だけが効くようにし、ケースを足す: 着地(直し 0 回)
+- U4 近くの Dynamic の球を押すケースを足し、押し出しを入れる: 着地(直し 0 回)

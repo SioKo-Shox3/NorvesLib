@@ -265,6 +265,8 @@ namespace NorvesLib::Modules::Physics
                 request.bWasGrounded = false;
             }
             const float gravity = 9.81f * c->m_Settings.GravityScale;
+            const Math::Vector3 pushVelocity(c->m_DesiredVelocity.x + c->m_PendingDisplacement.x / dt, 0,
+                                            c->m_DesiredVelocity.z + c->m_PendingDisplacement.z / dt);
             request.Displacement = c->m_DesiredVelocity * dt + c->m_PendingDisplacement;
             if (!c->m_State.bGrounded)
             {
@@ -297,6 +299,37 @@ namespace NorvesLib::Modules::Physics
                 c->ResetMotion(false);
                 c->m_State.Result = EPhysicsResult::InvalidArgument;
                 continue;
+            }
+            // SkinWidth の隙間越しに要求速度を渡し、次の積分で小物が先に動けるようにする。
+            PhysicsShapeProxy pushShape = *self;
+            pushShape.Capsule = moved.Shape;
+            pushShape.Capsule.Radius += 2.0f * c->m_Settings.Movement.SkinWidth;
+            for (const auto& proxy : m_CharacterQueryProxies)
+            {
+                if (proxy.bTrigger || proxy.Body == self->Body || !proxy.Body.IsValid() ||
+                    proxy.Body.Index >= m_BodySlots.size())
+                {
+                    continue;
+                }
+                auto& pushedBody = m_BodySlots[proxy.Body.Index];
+                if (!pushedBody.bActive || pushedBody.Generation != proxy.Body.Generation ||
+                    !IsBodyLifecycleActive(pushedBody) ||
+                    pushedBody.Component->m_BodyType != EPhysicsBodyType::Dynamic)
+                {
+                    continue;
+                }
+                Math::GeometryContact contact;
+                if (!PhysicsBroadphase::ComputeContact(pushShape, proxy, contact))
+                {
+                    continue;
+                }
+                const float push = Math::VectorUtils::Dot(pushVelocity, contact.Normal);
+                if (std::isfinite(push) && push > 0.0f)
+                {
+                    auto& pushedVelocity = pushedBody.Component->m_LinearVelocity;
+                    const float normalVelocity = Math::VectorUtils::Dot(pushedVelocity, contact.Normal);
+                    pushedVelocity += contact.Normal * std::fmax(0.0f, push - normalVelocity);
+                }
             }
             const bool landed = !c->m_State.bGrounded && moved.bGrounded;
             if (moved.bGrounded)

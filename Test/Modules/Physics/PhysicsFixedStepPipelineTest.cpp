@@ -182,7 +182,7 @@ namespace
     static_assert(!std::is_standard_layout_v<FramePacketType>);
     static_assert(!std::is_standard_layout_v<SceneProxyType>);
 
-    constexpr uint32_t kCaseCount = 25;
+    constexpr uint32_t kCaseCount = 26;
     constexpr float kFixedDeltaTime = 1.0f / 60.0f;
 
     struct Fixture
@@ -1748,6 +1748,69 @@ namespace
                std::isfinite(falling.y) && falling.y < moved.y - 1e-4f;
     }
 
+    bool TestCharacterPushDynamicSphere(ApplicationProcessor& processor)
+    {
+        auto& world = GEngine->GetWorld();
+        CharacterFixture value;
+        if (!CreateCharacterFloor() || !CreateCharacter(value, Math::Vector3::Zero))
+        {
+            return false;
+        }
+        Entity* sphere = world.SpawnEntity<Entity>();
+        auto* collider = sphere ? world.CreateComponent<ColliderComponent>(sphere) : nullptr;
+        auto* body = sphere ? world.CreateComponent<RigidBodyComponent>(sphere) : nullptr;
+        if (!collider || !body || collider->SetSphere(.25f) != EPhysicsResult::Success ||
+            body->SetBodyType(EPhysicsBodyType::Dynamic) != EPhysicsResult::Success)
+        {
+            return false;
+        }
+        sphere->SetPosition(Math::Vector3(1.5f, .3f, 0));
+        for (unsigned step = 0; step < 12; ++step)
+        {
+            if (!StepCharacter(processor))
+            {
+                return false;
+            }
+        }
+        const float sphereStart = sphere->GetPosition().x;
+        const float characterStart = value.Owner->GetPosition().x;
+        if (!value.Character->GetState().bReady || !value.Character->GetState().bGrounded ||
+            value.Character->SetDesiredVelocity(Math::Vector3(2, 0, 0)) != EPhysicsResult::Success)
+        {
+            return false;
+        }
+        Container::VariableArray<PhysicsOverlapHit> hits;
+        for (unsigned step = 0; step < 90; ++step)
+        {
+            if (!StepCharacter(processor) || !value.Character->GetState().bReady)
+            {
+                return false;
+            }
+            PhysicsShapeProxy proxy;
+            if (!PhysicsModuleTestAccess::CopyPublishedProxy(*GFixture->Physics,
+                    value.Collider->GetColliderHandle(), proxy) || proxy.Shape != EPhysicsProxyShape::Capsule ||
+                GEngine->GetSceneQuery().OverlapCapsule(proxy.Capsule, hits) != EPhysicsSceneQueryResult::Success)
+            {
+                return false;
+            }
+            for (const auto& hit : hits)
+            {
+                if (hit.Collider == collider->GetColliderHandle() &&
+                    (!std::isfinite(hit.Contact.Depth) || hit.Contact.Depth > 1e-3f))
+                {
+                    std::cout << "DYNAMIC_PUSH_CONTACT step=" << step << " depth=" << hit.Contact.Depth << '\n';
+                    return false;
+                }
+            }
+        }
+        const float sphereDistance = sphere->GetPosition().x - sphereStart;
+        const float characterDistance = value.Owner->GetPosition().x - characterStart;
+        std::cout << "DYNAMIC_PUSH sphere_distance=" << sphereDistance
+                  << " character_distance=" << characterDistance << '\n';
+        return std::isfinite(sphereDistance) && std::isfinite(characterDistance) &&
+               sphereDistance >= 1.0f && characterDistance >= 1.0f;
+    }
+
     bool RunCase(uint32_t caseIndex, ApplicationProcessor& processor)
     {
         switch (caseIndex)
@@ -1802,6 +1865,8 @@ namespace
             return TestCharacterPlatformDepartureVelocity(processor);
         case 24:
             return TestCharacterExternalMovement(processor);
+        case 25:
+            return TestCharacterPushDynamicSphere(processor);
         default:
             return false;
         }
