@@ -200,6 +200,7 @@ set(PRIVATE_SOURCES
     Private/Engine/ApplicationProcessor.cpp
     # Scene
     Private/Scene/SceneQuery.cpp
+    Private/Scene/PhysicsLayerTable.cpp
     Private/Scene/RenderTransformHistory.cpp
     Private/Scene/SceneSerializer.cpp
     # GameMode
@@ -564,6 +565,7 @@ set(PUBLIC_HEADERS
     Public/Scene/SceneQuery.h
     Public/Scene/RenderTransformHistory.h
     Public/Scene/PhysicsQueryTypes.h
+    Public/Scene/PhysicsLayerTable.h
     Public/Scene/SceneSerializer.h
     # Module
     Public/Module/ModuleExport.h
