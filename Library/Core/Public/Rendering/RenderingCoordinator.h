@@ -448,6 +448,11 @@ namespace NorvesLib::Core::Rendering
         void SetFoliage(const FoliageScene& foliage);
         const FoliageScene& GetFoliage() const { return m_Foliage; }
 
+        /** @brief 不変の草の場の描画データを設定する（GameThread） */
+        void SetGrassField(Container::TSharedPtr<const GrassFieldRenderData> grassField);
+        /** @brief 設定された草の場の描画データを取得する（GameThread） */
+        const Container::TSharedPtr<const GrassFieldRenderData>& GetGrassField() const { return m_GrassField; }
+
         /**
          * @brief このフレームの帯の頂点と描画範囲を設定する（GameThread）
          * @param trails 描画コマンド生成前に設定し、FramePacket へ値コピーした後は保持を空にする
@@ -597,6 +602,7 @@ namespace NorvesLib::Core::Rendering
 
     private:
         friend struct DDGISnapshotContractTestAccess;
+        friend struct GrassFieldSnapshotContractTestAccess;
 
         // CPUのpacket生成は実capability値を受け取る。GPU操作は行わない。
         void GenerateDrawCommands(const RHI::DeviceCapabilities& capabilities);
@@ -694,6 +700,7 @@ namespace NorvesLib::Core::Rendering
         AerialPerspectiveParameters m_AerialPerspective;
         CloudLayerParameters m_CloudLayer;
         FoliageScene m_Foliage;
+        Container::TSharedPtr<const GrassFieldRenderData> m_GrassField;
         RibbonTrailScene m_RibbonTrails;
         DecalScene m_Decals;
         DistortionScene m_Distortions;

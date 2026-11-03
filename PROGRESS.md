@@ -9418,3 +9418,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Done: 前の反復の評価が利用枠で回らず doing に戻っていた。着地した後の変更は TASKS.md・PROGRESS.md だけで、コードは確かめの出力（U3 の verify: ビルド EXIT=0、ctest 6 本 100% Passed）を取った版と同じなので、status を done に戻す。
 - Next: ランナーの評価者がこの差分（3f13dfe8・20381f35・f896b040）を見る。
 - U1 草の種別の表 GrassSpecies と JSON を足す: 着地(直し 0 回)
+- U2 GrassFieldRenderData を FramePacket へ値で渡す経路を足す: 着地(直し 0 回)

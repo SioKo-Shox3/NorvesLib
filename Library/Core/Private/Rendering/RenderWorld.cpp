@@ -8,6 +8,7 @@
 #include "Debug/Stats.h"
 #include "Logging/LogMacros.h"
 #include <chrono>
+#include <utility>
 
 using namespace NorvesLib::Core::Container;
 
@@ -362,6 +363,11 @@ namespace NorvesLib::Core::Rendering
     void RenderWorld::SetFoliage(const FoliageScene& foliage)
     {
         m_RenderingCoordinator.SetFoliage(foliage);
+    }
+
+    void RenderWorld::SetGrassField(Container::TSharedPtr<const GrassFieldRenderData> grassField)
+    {
+        m_RenderingCoordinator.SetGrassField(std::move(grassField));
     }
 
     void RenderWorld::SetRibbonTrails(const RibbonTrailScene& trails)
