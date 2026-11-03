@@ -9259,3 +9259,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: N の式の「動き」は 2 体の相対の動きの上界として両者の動きの和にした（片方だけ動く場合は done-when の式と同じ）
 - U2 割り当て表の漏れを止める台本と ctest の登録: 着地(直し 0 回)
 - U1 TickStages.md を ECS 化後の登録の仕組み・全型の割り当て表・今の段の名前で書き直す: 着地(直し 1 回)
+- U3 verify を回して GameFoundationValidation.md と InputFoundation.md の未確認の行を結果に直す: 着地(直し 0 回)
