@@ -9224,6 +9224,15 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261103-113136/verify-G4-GR05-MODEL-CASES-build.txt`（`cmake --build build --config Debug --target LoggerSinkTest PhysicsDynamicsTest -- /m:1` 終了コード 0）、`.harness/runs/20261103-113136/verify-G4-GR05-MODEL-CASES-ctest.txt`（`QuadrupedLocomotionModelTest`・`LocomotionProfileReloadTest`・`PhysicsFixedStepPipelineTest` の 3 本 Passed、終了コード 0）。
 - Next: 評価者による差分の評価（前の run では未実施）。
 - Notes: アプリの起動を要する確かめは無い。
+
+## 2026-11-03 G4-GR128-PROCESSING-CASES（run 20261103-114107 の反復 1〜2、完了）
+
 - U1 Docs/Testing.md に MotionProcessingTest を足す理由の 3 点を書く: 着地(直し 0 回)
 - U2 MotionProcessingTest を束へ足し、外れ値・平滑・ループ・周期の平均の試験 (i)(iv)(v) を通す: 着地(直し 1 回)
 - U3 符号の連続・再サンプル往復・時間の補正・heading の試験 (ii)(iii)(vi)(vii) を足して通し、タスクの verify を回す: 着地(直し 0 回)
+- Done: `CookedMeshTest` の束へ `MEMBER MotionProcessingTest`（`Test/Core/Asset/MotionProcessingTest.cpp`）を足し、`ProcessSkeletalClip` を合成のクリップで (i)〜(vii) 確かめた。足す理由の 3 点は `Docs/Testing.md`。
+- Done: 外れて直した所: 外れ値の置き換えが前後のコマを誤って置き換える・平均の前の継ぎ目の報告・倍周期の選択（U2）、出力の四元数が入力の符号の反転をそのまま持ち込み隣のキーと 180° を越えて飛ぶ（U3。前のキーとの内積が負なら反転。ループの末尾を先頭と float32 で一致させる扱いは保つ）。
+- 実測: スパイク replaced=3・周期 12.4968 コマ、ループ 3 周期の平均で継ぎ目の誤差 0.000793→0.000185 rad、平滑で粗さ 0.1486→0.0815、符号を区別した隣の最大角 0.0249 rad・入力との差 4.2e-8 rad、30→16→30 Hz の往復の最大差 0.0751°、TimeScale=2 で長さ 2→4 秒・距離 4.4721 m のまま・速さ 2.236→1.118 m/s、根の heading の最大 0。
+- 証拠: `.harness/runs/20261103-114107/G4-GR128-PROCESSING-CASES-u3-unit-verify.txt`（`cmake --build build --config Debug --target CookedMeshTest -- /m:1` 成功、ctest の 6 本 `MotionProcessingTest`・`SkeletalBvhClipImportTest`・`SkeletalBvhClipTimeTest`・`BvhDecodeTest`・`BvhEvaluateTest`・`RigStaticRootFrameWireTest` Passed、numstat の 2 通りが一致）。
+- Next: なし（アプリを起動する確かめは無い）。
+- Notes: ループの出力で、1 周期の間に関節が 360° 回る（四元数が -q に戻る）入力では、末尾のキーを先頭と同じ値にする扱いのため末尾の手前と末尾の間だけ符号が逆になりうる。歩容の関節では起きないので直していない。
