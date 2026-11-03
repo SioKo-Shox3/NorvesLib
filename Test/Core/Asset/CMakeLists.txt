@@ -123,6 +123,7 @@ norves_add_test_bundle(CookedMeshTest
     MEMBER GltfBufferUriTest GltfBufferUriTest.cpp
     MEMBER Base64DecodeTest Base64DecodeTest.cpp
     MEMBER CookedTextureTest CookedTextureTest.cpp
+    MEMBER CookedTerrainTest CookedTerrainTest.cpp
     MEMBER AudioCookedAssetTest AudioCookedAssetTest.cpp
     MEMBER CookedSkeletalAssetTest CookedSkeletalAssetTest.cpp
 )
@@ -141,6 +142,7 @@ add_test(NAME PackageFormatTest COMMAND AssetSystemTest --test=PackageFormatTest
 add_test(NAME AssetManifestTest COMMAND AssetSystemTest --test=AssetManifestTest)
 add_test(NAME AssetSystemTest COMMAND AssetSystemTest)
 add_test(NAME CookedTextureTest COMMAND CookedMeshTest --test=CookedTextureTest)
+add_test(NAME CookedTerrainTest COMMAND CookedMeshTest --test=CookedTerrainTest)
 add_test(NAME CookedMeshTest COMMAND CookedMeshTest)
 add_test(NAME SkeletalSubmeshLayoutTest COMMAND CookedMeshTest --test=SkeletalSubmeshLayoutTest)
 add_test(NAME SkeletalMaterialBindingsTest COMMAND CookedMeshTest --test=SkeletalMaterialBindingsTest)
