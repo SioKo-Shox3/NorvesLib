@@ -201,6 +201,158 @@ namespace
                 MOVE_CHECK(!result.bGrounded && result.Shape.PointA.x < .1f && result.Shape.PointA.y <= initial + .01f);
         }
     }
+    C::VariableArray<CharacterMoveResult> RunPerStep(
+        C::Span<const PhysicsShapeProxy> proxies, CharacterMoveRequest request, unsigned count,
+        void (*update)(unsigned, CharacterMoveRequest&) = nullptr)
+    {
+        CharacterMoveScratch scratch;
+        C::VariableArray<CharacterMoveResult> results;
+        results.resize(count);
+        for (unsigned frame = 0; frame < count; ++frame)
+        {
+            if (update)
+            {
+                update(frame, request);
+            }
+            auto& result = results[frame];
+            MOVE_CHECK(CharacterMover::Move(proxies, {}, request, scratch, result) ==
+                       S::EPhysicsSceneQueryResult::Success);
+            MOVE_CHECK(!result.bStuck);
+            request.Shape = result.Shape;
+            request.bWasGrounded = result.bGrounded;
+        }
+        return results;
+    }
+    float MaximumDepth(C::Span<const PhysicsShapeProxy> proxies, const M::Capsule& shape)
+    {
+        S::PhysicsQueryDesc query;
+        query.Kind = S::EPhysicsQueryKind::OverlapCapsule;
+        query.Capsule = shape;
+        query.Filter.TriggerPolicy = S::EPhysicsQueryTriggerPolicy::Exclude;
+        C::VariableArray<S::PhysicsQueryHit> hits;
+        hits.resize(proxies.size());
+        size_t count = 0;
+        const auto status = PhysicsBroadphase::ExecuteQueryOverProxies(proxies, query, hits, count);
+        MOVE_CHECK(status == S::EPhysicsSceneQueryResult::Success || status == S::EPhysicsSceneQueryResult::NoHit);
+        float depth = 0;
+        for (size_t i = 0; i < count; ++i)
+        {
+            if (hits[i].Depth > depth)
+            {
+                depth = hits[i].Depth;
+            }
+        }
+        return depth;
+    }
+    void FlatPerStep()
+    {
+        const auto floor = Box(0, {0, -.5f, 0}, {20, .5f, 20});
+        auto request = Start();
+        request.Displacement = {5.f / 60, -.01f, 0};
+        const auto results = RunPerStep({&floor, 1}, request, 60);
+        float maximumHeightError = 0;
+        for (size_t frame = 0; frame < results.size(); ++frame)
+        {
+            const auto& result = results[frame];
+            const float heightError = std::fabs(result.Shape.PointA.y - result.Shape.Radius);
+            if (heightError > maximumHeightError)
+            {
+                maximumHeightError = heightError;
+            }
+            std::fprintf(stderr, "CHARACTER_FLAT frame=%zu x=%.9f height_error=%.9f grounded=%d\n", frame,
+                         result.Shape.PointA.x, heightError, result.bGrounded);
+            MOVE_CHECK(frame == 0 || result.bGrounded);
+            MOVE_CHECK(heightError <= .02f);
+        }
+        std::fprintf(stderr, "CHARACTER_FLAT final_x=%.9f maximum_height_error=%.9f\n",
+                     results[59].Shape.PointA.x, maximumHeightError);
+        MOVE_CHECK(std::fabs(results[59].Shape.PointA.x - 5.f) <= .01f);
+    }
+    void DiagonalWallPerStep()
+    {
+        const float a = std::sqrt(.5f);
+        PhysicsShapeProxy proxies[] = {Box(0, {0, -.5f, 0}, {20, .5f, 20}), Box(1, {}, {})};
+        const M::Vector3 normal(-a, 0, a);
+        proxies[1].Box =
+            M::OBB(normal * -.325f + M::Vector3(0, 1, 0), {.025f, 2, 20}, normal, M::Vector3::UnitY, {-a, 0, -a});
+        auto request = Start();
+        request.Displacement = {5.f / 60, -.01f, 0};
+        const auto results = RunPerStep(proxies, request, 60);
+        for (size_t frame = 0; frame < results.size(); ++frame)
+        {
+            const float floorDepth = MaximumDepth({proxies, 1}, results[frame].Shape);
+            const float wallDepth = MaximumDepth({proxies + 1, 1}, results[frame].Shape);
+            std::fprintf(stderr, "CHARACTER_DIAGONAL frame=%zu floor_depth=%.9f wall_depth=%.9f\n", frame,
+                         floorDepth, wallDepth);
+            MOVE_CHECK(floorDepth <= 1e-3f && wallDepth <= 1e-3f);
+        }
+        const auto& point = results[59].Shape.PointA;
+        const float distance = std::sqrt(point.x * point.x + point.z * point.z);
+        std::fprintf(stderr, "CHARACTER_DIAGONAL distance=%.9f\n", distance);
+        MOVE_CHECK(std::fabs(distance - 3.54f) <= .05f);
+    }
+    void FastThinWall()
+    {
+        const PhysicsShapeProxy proxies[] = {Box(0, {0, -.5f, 0}, {20, .5f, 20}),
+                                             Box(1, {1, 1, 0}, {.025f, 1, 2})};
+        auto request = Start();
+        request.Displacement = {50.f / 60, -.01f, 0};
+        const auto results = RunPerStep(proxies, request, 10);
+        for (size_t frame = 0; frame < results.size(); ++frame)
+        {
+            const float front = results[frame].Shape.PointA.x + results[frame].Shape.Radius;
+            std::fprintf(stderr, "CHARACTER_FAST_WALL frame=%zu front=%.9f\n", frame, front);
+            MOVE_CHECK(front <= .975f + 1e-3f);
+        }
+    }
+    void StartPenetrating()
+    {
+        const PhysicsShapeProxy proxies[] = {Box(0, {0, -.5f, 0}, {20, .5f, 20}),
+                                             Box(1, {1, 1, 0}, {.5f, 1, 2})};
+        auto request = Start();
+        request.Shape.PointA.x = request.Shape.PointB.x = .3f;
+        request.Displacement = {0, -.01f, 0};
+        const auto results = RunPerStep(proxies, request, 6);
+        auto previous = request.Shape.PointA;
+        for (size_t frame = 0; frame < results.size(); ++frame)
+        {
+            const auto& result = results[frame];
+            const float depth = MaximumDepth(proxies, result.Shape);
+            const float distance = (result.Shape.PointA - previous).Length();
+            std::fprintf(stderr, "CHARACTER_PENETRATING frame=%zu depth=%.9f distance=%.9f stuck=%d\n", frame,
+                         depth, distance, result.bStuck);
+            MOVE_CHECK(distance <= .15f);
+            MOVE_CHECK(!result.bStuck);
+            MOVE_CHECK(frame < 3 || depth <= 1e-3f);
+            previous = result.Shape.PointA;
+        }
+    }
+    void DeterministicPerStep()
+    {
+        const PhysicsShapeProxy proxies[] = {Box(0, {0, -.5f, 0}, {20, .5f, 20}),
+                                             Box(1, {1, 1, 0}, {.025f, 1, 2}),
+                                             Box(2, {-1.5f, .1f, 0}, {.3f, .1f, 2})};
+        const auto update = [](unsigned frame, CharacterMoveRequest& request)
+        {
+            const float angle = .05f * frame;
+            request.Displacement = {std::cos(angle) * (5.f / 60), -.01f, std::sin(angle) * (5.f / 60)};
+        };
+        const auto first = RunPerStep(proxies, Start(), 120, update);
+        const auto second = RunPerStep(proxies, Start(), 120, update);
+        for (size_t frame = 0; frame < first.size(); ++frame)
+        {
+            const auto& a = first[frame];
+            const auto& b = second[frame];
+            MOVE_CHECK(std::bit_cast<uint32_t>(a.Shape.PointA.x) == std::bit_cast<uint32_t>(b.Shape.PointA.x));
+            MOVE_CHECK(std::bit_cast<uint32_t>(a.Shape.PointA.y) == std::bit_cast<uint32_t>(b.Shape.PointA.y));
+            MOVE_CHECK(std::bit_cast<uint32_t>(a.Shape.PointA.z) == std::bit_cast<uint32_t>(b.Shape.PointA.z));
+            MOVE_CHECK(std::bit_cast<uint32_t>(a.Shape.PointB.x) == std::bit_cast<uint32_t>(b.Shape.PointB.x));
+            MOVE_CHECK(std::bit_cast<uint32_t>(a.Shape.PointB.y) == std::bit_cast<uint32_t>(b.Shape.PointB.y));
+            MOVE_CHECK(std::bit_cast<uint32_t>(a.Shape.PointB.z) == std::bit_cast<uint32_t>(b.Shape.PointB.z));
+            MOVE_CHECK(a.bGrounded == b.bGrounded);
+        }
+        std::fprintf(stderr, "CHARACTER_DETERMINISTIC matched_steps=%zu\n", first.size());
+    }
 } // namespace
 int main()
 {
@@ -211,6 +363,11 @@ int main()
     DiagonalWallAndSteepSlope();
     AirborneAndPlatformDelta();
     WalkableSlopeLimit();
+    FlatPerStep();
+    DiagonalWallPerStep();
+    FastThinWall();
+    StartPenetrating();
+    DeterministicPerStep();
     std::puts("PhysicsCharacterMoveTest PASS");
     return 0;
 }
