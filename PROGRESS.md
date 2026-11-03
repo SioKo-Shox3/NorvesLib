@@ -9374,3 +9374,8 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U3 External の間は MoveDelta だけが効くようにし、ケースを足す: 着地(直し 0 回)
 - U4 近くの Dynamic の球を押すケースを足し、押し出しを入れる: 着地(直し 0 回)
 - U5 速度の一致と瞬間移動の除外のケースを足し、タスクの verify を回す: 着地(直し 0 回)
+- Done: PhysicsFixedStepPipelineTest にケース 20〜26 を足し、全部通る（重力の倍率・60° の坂の滑り落ち・昇降足場のジッタ・足場の離脱速度・External・小物を押す・速度の一致）。本体の直し: 足場を離れた後に足場の水平速度を空中で保つ、External の間は MoveDelta の変位と回転だけを衝突なしで適用する、歩いて接した Dynamic の体へ要求の水平速度の法線成分を渡す、めり込みの解消の変位を速度から除く
+- 確かめ（タスクの verify）: `cmake --build build --config Debug --target PhysicsDynamicsTest -- /m:1` は exit 0。`ctest ... -R "^(PhysicsFixedStepPipelineTest|PhysicsCharacterMoveTest|CharacterPlatformMotionTest|PhysicsLifecycleEventTest|PhysicsDynamicsTest)$"` は 5/5 Passed（PhysicsFixedStepPipelineTest 0.91 秒、合計 1.11 秒）。既存のケース 0〜19 の試験は変えていない
+- 測った量: 昇降足場のジッタは SceneQuery::RefreshDynamicSnapshot を通す組・通さない組（負の対照）とも 0 m（`ELEVATOR_JITTER refresh=0 norefresh=0`）で、今の経路では差が出ない。球を押すケースは 90 ステップで球 2.02 m・キャラクター 2.97 m 進む。めり込みの解消は直す前に 0.052 m の押し出しが 3.12 m/s として速度に乗っていた
+- Notes: External は衝突を見ずに変位を適用する（拘束側が位置の権限を持つ形。GR20 のしがみつき側で壁の中へ入れない責任を持つ）。小物を押すのは速度の法線成分を上げるだけで、質量・摩擦は扱わない。めり込みの解消の変位は、重なるステップだけ移動 0 の CharacterMover::Move をもう 1 回呼んで求めるので、足場で運ばれてから重なる場合は運搬の分だけ解消の量が違いうる。足場の離脱速度の引き継ぎは縁からの自然落下・可変駆動の足場からの離脱を個別には試していない
+- Next: G4-GR05-COMPONENT-CASES（同じ試験ファイルを触るのでこのタスクの後）
