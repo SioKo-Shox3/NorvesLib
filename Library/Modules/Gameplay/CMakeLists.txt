@@ -4,10 +4,16 @@ set(GAMEPLAY_PUBLIC_HEADERS
     Public/Gameplay/IGameplayModule.h
     Public/Gameplay/Combat/DamageTypes.h
     Public/Gameplay/Combat/HealthComponent.h
+    Public/Gameplay/Progression/GameplayStableId.h
+    Public/Gameplay/Progression/ProgressionState.h
+    Public/Gameplay/Progression/DefeatGate.h
 )
 
 set(GAMEPLAY_PRIVATE_SOURCES
     Private/Gameplay/Combat/HealthComponent.cpp
+    Private/Gameplay/Progression/GameplayStableId.cpp
+    Private/Gameplay/Progression/ProgressionState.cpp
+    Private/Gameplay/Progression/DefeatGate.cpp
     Private/Gameplay/Combat/CombatGeometry.h
     Private/Gameplay/Combat/CombatGeometry.cpp
     Private/Gameplay/GameplayModule.h

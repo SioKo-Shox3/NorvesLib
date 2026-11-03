@@ -9259,3 +9259,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: N の式の「動き」は 2 体の相対の動きの上界として両者の動きの和にした（片方だけ動く場合は done-when の式と同じ）
 - U1 Core にヘッダだけの TStateMachine と TStateMachineTest を足す: 着地(直し 0 回)
 - U2 Gameplay モジュールに HealthComponent と HealthComponentTest を足す: 着地(直し 0 回)
+- U3 ProgressionState・DefeatGate を GameplayModule のサービスにし、progression.json と試験 2 本を足す: 着地(直し 0 回)
