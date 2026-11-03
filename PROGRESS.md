@@ -9213,3 +9213,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
   - 失敗が黙って起きるか: 起きる
 - Notes: FramePacket の DeltaTime・TotalTime は RenderingCoordinator::BeginFrame が自前の壁時計で作るので、done-when (2) を満たすために paths の外の RenderWorld・RenderingCoordinator に固定刻みの値を受け取る 1 メソッドを足す（決定的な撮影の経路は変えない）
 - Notes: `--capture-deterministic` と `--fixed-frame-dt=` を同時に指定したときは決定的な撮影の 1/60 を優先し、`--fixed-frame-dt` は警告して無視する（刻みを選べる決定的な撮影は G14・G7 の側で要るときに足す）
+- U1 固定刻みのフレームの時計の型と刻みの文字列の解釈を足す: 着地(直し 0 回)
