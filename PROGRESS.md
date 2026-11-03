@@ -9204,3 +9204,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 AssetKind に World = 7 を足し、manifest と AssetSystem の試験で押さえる: 着地(直し 0 回)
 - U2 NVTRN v0 の公開ヘッダと書き手 WriteCookedTerrain: 着地(直し 0 回)
 - U3 読み手 ParseCookedTerrain: 着地(直し 0 回)
+- U5 形式の文書 Docs/Architecture/NVTRNv0.md: 着地(直し 1 回)
