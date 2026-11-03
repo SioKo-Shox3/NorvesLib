@@ -176,7 +176,7 @@ add_library(AssetCookLib STATIC
 target_link_libraries(AssetCookLib PUBLIC Core AssetCookTextureCooker AssetCookMeshOptimizer)
 target_link_libraries(AssetCookLib PRIVATE NorvesThirdParty_TinyEXR)
 if(WIN32)
-    target_link_libraries(AssetCookLib PRIVATE bcrypt shell32)
+    target_link_libraries(AssetCookLib PRIVATE bcrypt shell32 psapi)
 endif()
 target_include_directories(AssetCookLib
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
@@ -246,6 +246,15 @@ add_test(NAME AssetCookMeshSmoke
         -DSMOKE_DIR=${ASSET_COOK_MESH_SMOKE_DIR}
         -DDAG_SMOKE_EXE=$<TARGET_FILE:AssetCookMeshSimplifySmoke>
         -P "${CMAKE_CURRENT_SOURCE_DIR}/AssetCookMeshSmoke.cmake.in"
+)
+
+set(ASSET_COOK_TERRAIN_SMOKE_DIR "${CMAKE_BINARY_DIR}/AssetCookSmoke/$<CONFIG>/Terrain")
+add_test(NAME AssetCookTerrainSmoke
+    COMMAND ${CMAKE_COMMAND}
+        -DASSET_COOK_EXE=$<TARGET_FILE:AssetCook>
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -DSMOKE_DIR=${ASSET_COOK_TERRAIN_SMOKE_DIR}
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/AssetCookTerrainSmoke.cmake.in"
 )
 
 add_custom_target(AssetCookAudioSmoke DEPENDS AssetCook)

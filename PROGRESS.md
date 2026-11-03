@@ -9310,3 +9310,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U2 TerrainCooker（全体の法線・量子化・タイル切り・LOD 誤差・AABB・NRM0・NVTRN の書き出し）: 着地(直し 0 回)
 - U3 TerrainSpec（スペック JSON の解析と cook の取りまとめ・source_hash）: 着地(直し 0 回)
 - U9 草原の検証用の地形の入力（U6 の成果から始め、崖の端を丸める）: 着地(直し 0 回)
+- U4 AssetCook の --kind world の経路と AssetCookTerrainSmoke: 着地(直し 0 回)

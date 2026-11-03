@@ -247,6 +247,14 @@ namespace NorvesLib::Tools::AssetCook::Detail
         const NorvesLib::Core::Container::VariableArray<uint8_t>& expectedPayload,
         std::string& error);
 
+    bool ValidateWorldAssetSystemOutput(
+        const std::filesystem::path& manifestPath,
+        const NorvesLib::Core::Container::AnsiString& manifestJson,
+        const NorvesLib::Core::Container::AnsiString& logicalPath,
+        const NorvesLib::Core::Container::AnsiString& variant,
+        const NorvesLib::Core::Container::VariableArray<uint8_t>& expectedPayload,
+        std::string& error);
+
     bool ValidateAudioAssetSystemOutput(
         const std::filesystem::path& manifestPath,
         const NorvesLib::Core::Container::AnsiString& manifestJson,
