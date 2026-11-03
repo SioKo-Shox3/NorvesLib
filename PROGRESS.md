@@ -9328,3 +9328,10 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 累積は切り捨てでなく切り上げにした（切り捨てだと 1/30 の最初のフレームが 33'333'333 ns で 60 Hz の 2 ステップに 1 ns 届かず 1・2・3 の並びになり done-when の「毎フレーム 2」を満たさない）。整数刻み（分母 1）のふるまいは変わらない
 - Notes: FramePacket に載る値は試験では時計の delta・累積として記録し、パケット自体は作っていない。Game を起動しての確かめ（`--fixed-frame-dt=1/24` で撮影・録画の時刻が刻みどおりに進むこと）は後回し
 - Next: G14（GR66 の連番の録画・GR127）と G7（2 回撮った FLIP）がこの時計を使う
+
+## G8-GR17-HEALTH-PROGRESSION（2026-11-03）
+
+- Done: `HealthComponent`（体力・無敵・撃破のラッチ・スタッガの計）、Core のヘッダだけの `TStateMachine<TContext, TStateId>`（要求を Update の安全点で適用）、Gameplay モジュールのサービス `ProgressionState`（安定 ID の撃破集合と解放の条件、`Assets/Gameplay/progression.json`）と `DefeatGate`（保留と持ち主の破棄の検出）、試験 `HealthComponentTest`・`ProgressionStateTest`・`DefeatGateTest`・`TStateMachineTest`
+- Done: 統合ブランチ `feature/scene-launcher` を取り込み、`Docs/Architecture/TickStages.md`（統合側の割り当て表に HealthComponent と GameplayModule の 2 行を足す）と `Docs/Testing.md`（両方の試験の理由を残す）の衝突を解いた。verify のビルド（Game・PhysicsDynamicsTest・GameModeStateMachineTest）が EXIT=0、ctest の 7 本と `TickContractTableTest` が合格
+- Notes: アプリを起動する確かめは無い
+- Next: G8-GR17-ENEMY-COMPONENT（敵の基底と状態の遷移）がこの状態機械と撃破の保留を使う
