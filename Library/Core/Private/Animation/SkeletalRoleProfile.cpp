@@ -369,12 +369,24 @@ namespace NorvesLib::Core::Animation
                     return Fail(Status::InvalidSettings, "processing");
                 }
                 double spikeDegrees = 0, spikeWindow = p.SpikeWindowRadius, smoothing = p.SmoothingRadius;
-                if (!read("spike_threshold_degrees", spikeDegrees) || !read("spike_window", spikeWindow) ||
-                    !read("smoothing_radius", smoothing) || !read("time_scale", p.TimeScale) || spikeDegrees < 0 ||
-                    spikeDegrees > 180 || spikeWindow < 1 || spikeWindow > 16 || smoothing < 0 || smoothing > 16 ||
-                    std::floor(spikeWindow) != spikeWindow || std::floor(smoothing) != smoothing || p.TimeScale <= 0 ||
-                    p.TimeScale > 1000)
-                    return Fail(Status::InvalidSettings, "processing.cleanup");
+                if (!read("spike_threshold_degrees", spikeDegrees) || spikeDegrees < 0 || spikeDegrees > 180)
+                {
+                    return Fail(Status::InvalidSettings, "processing.spike_threshold_degrees");
+                }
+                if (!read("spike_window", spikeWindow) || spikeWindow < 1 || spikeWindow > 16 ||
+                    std::floor(spikeWindow) != spikeWindow)
+                {
+                    return Fail(Status::InvalidSettings, "processing.spike_window");
+                }
+                if (!read("smoothing_radius", smoothing) || smoothing < 0 || smoothing > 16 ||
+                    std::floor(smoothing) != smoothing)
+                {
+                    return Fail(Status::InvalidSettings, "processing.smoothing_radius");
+                }
+                if (!read("time_scale", p.TimeScale) || p.TimeScale <= 0 || p.TimeScale > 1000)
+                {
+                    return Fail(Status::InvalidSettings, "processing.time_scale");
+                }
                 p.SpikeThresholdRadians = spikeDegrees * 3.14159265358979323846 / 180;
                 p.SpikeWindowRadius = uint32_t(spikeWindow);
                 p.SmoothingRadius = uint32_t(smoothing);

@@ -1,5 +1,6 @@
 ﻿#include "RigMotionCleanup.h"
 #include "Animation/PoseTypes.h"
+#include "Animation/MotionAnalysis.h"
 #include "Animation/SkeletalClipSampling.h"
 #include "SkeletalRoleFileInput.h"
 #include <algorithm>
@@ -90,6 +91,18 @@ namespace NorvesLib::Tools::AssetCook::Detail
         C::VariableArray<uint32_t> order;
         C::VariableArray<uint8_t> ready(joints, 0);
         uint32_t root = UINT32_MAX;
+        for (uint32_t i = 0; i < joints; ++i)
+        {
+            if (data->Geometry.Joints[i].ParentIndex < 0)
+            {
+                root = i;
+            }
+        }
+        if (root == UINT32_MAX)
+        {
+            error = "cleanup_root";
+            return false;
+        }
         while (order.size() < joints)
         {
             const auto before = order.size();
@@ -164,6 +177,7 @@ namespace NorvesLib::Tools::AssetCook::Detail
                 foot.Positions[sample] = {model.m30 - rootModel.m30, model.m31, model.m32 - rootModel.m32};
             }
         }
+        const A::FootContactOptions contactOptions{};
         C::VariableArray<Window> windows;
         C::VariableArray<Math::Vector3> groundVelocities;
         double ground = std::numeric_limits<double>::max();
@@ -176,7 +190,7 @@ namespace NorvesLib::Tools::AssetCook::Detail
             ground = std::min(ground, double(minimum));
             size_t begin = SIZE_MAX;
             const auto close = [&](size_t end) {
-                if (begin != SIZE_MAX && (end - begin) * dt >= .05)
+                if (begin != SIZE_MAX && (end - begin) * dt >= contactOptions.MinimumWindowSeconds)
                 {
                     windows.push_back({footIndex, float(begin * dt), float(end * dt)});
                     for (size_t i = begin; i < end; ++i)
@@ -188,7 +202,8 @@ namespace NorvesLib::Tools::AssetCook::Detail
             {
                 const double hysteresis = begin == SIZE_MAX ? 1 : 1.5;
                 const double vertical = std::abs(double(positions[i + 1].y) - positions[i].y) / dt;
-                if (positions[i].y - minimum <= .03 * hysteresis && vertical <= .15 * hysteresis)
+                if (positions[i].y - minimum <= contactOptions.HeightThreshold * hysteresis &&
+                    vertical <= contactOptions.VerticalSpeedThreshold * hysteresis)
                 {
                     if (begin == SIZE_MAX)
                         begin = i;
@@ -224,16 +239,44 @@ namespace NorvesLib::Tools::AssetCook::Detail
                 for (size_t i = 0; i < feet.size(); ++i)
                 {
                     const Window* largest = nullptr;
+                    const Window* first = nullptr;
+                    const Window* last = nullptr;
                     for (const auto& window : windows)
-                        if (window.FootIndex == i &&
-                            (!largest || window.End - window.Start > largest->End - largest->Start))
+                    {
+                        if (window.FootIndex != i)
+                        {
+                            continue;
+                        }
+                        if (!largest || window.End - window.Start > largest->End - largest->Start)
+                        {
                             largest = &window;
+                        }
+                        if (window.Start == 0)
+                        {
+                            first = &window;
+                        }
+                        if (window.End == clip.DurationSeconds)
+                        {
+                            last = &window;
+                        }
+                    }
                     if (!largest)
+                    {
                         continue;
+                    }
+                    float down = largest->Start, up = largest->End;
+                    // 自動選択で検出した周期は Metadata に転記されないため、processing のループ指定も使う。
+                    const bool bLoop = clip.Metadata.Loop.bEnabled || options.Loop != A::SkeletalLoopSelection::None;
+                    if (bLoop && first && last && first != last &&
+                        clip.DurationSeconds - last->Start + first->End >= largest->End - largest->Start)
+                    {
+                        down = last->Start;
+                        up = first->End;
+                    }
                     const C::AnsiString name = feet[i].Name;
-                    clip.Metadata.Markers.push_back({Core::Identity((name + "_down").c_str()), largest->Start});
+                    clip.Metadata.Markers.push_back({Core::Identity((name + "_down").c_str()), down});
                     clip.Metadata.Markers.push_back({Core::Identity((name + "_up").c_str()),
-                                                     largest->End >= clip.DurationSeconds ? 0 : largest->End});
+                                                     up >= clip.DurationSeconds ? 0 : up});
                 }
                 std::stable_sort(clip.Metadata.Markers.begin(), clip.Metadata.Markers.end(),
                                  [](const auto& a, const auto& b) { return a.Time < b.Time; });

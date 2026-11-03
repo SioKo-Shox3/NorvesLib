@@ -71,6 +71,7 @@ norves_add_test_bundle(CookedMeshTest
     MEMBER RigStaticRootFrameImportTest RigStaticRootFrameImportTest.cpp
     MEMBER RigStaticRootFrameWireTest RigStaticRootFrameWireTest.cpp
     MEMBER RigStaticRootFrameRuntimeTest RigStaticRootFrameRuntimeTest.cpp
+    MEMBER RigMotionCleanupTest RigMotionCleanupTest.cpp
     MEMBER SkeletalClipBankBindingTest SkeletalClipBankBindingTest.cpp
     MEMBER BvhEvaluateTest BvhEvaluateTest.cpp
     MEMBER BvhDecodeTest BvhDecodeTest.cpp
@@ -347,6 +348,7 @@ add_test(NAME RigStaticRootFrameImportTest COMMAND CookedMeshTest --test=RigStat
 add_test(NAME RigStaticRootFrameWireTest COMMAND CookedMeshTest --test=RigStaticRootFrameWireTest)
 
 add_test(NAME RigStaticRootFrameRuntimeTest COMMAND CookedMeshTest --test=RigStaticRootFrameRuntimeTest)
+add_test(NAME RigMotionCleanupTest COMMAND CookedMeshTest --test=RigMotionCleanupTest)
 
 # 並列の枠の cook と宛先 volume のロックを取り合っても落ちないよう、
 # 試験の環境だけで上限付きで待つ。Busy を期待する試験には付けない。
