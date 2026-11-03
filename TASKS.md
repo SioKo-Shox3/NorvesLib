@@ -8109,3 +8109,12 @@
   - **名前:** 線の上の名前は `Docs/Plans/GameFeatureRoadmap.md` の GR137 の節と、E4-003 が決めた schema に合わせる。
   - **評価者:** Bridge のプロトコルの境界とファイルの書き出しの場所の検査を扱うので、評価者を通す。
   - **起動しない:** 実 GPU での撮影セッションの確かめは GAME-GR137-VFX-CHECK の `BridgeDeterministicCaptureVulkanTest` が受け持つ。このタスクでは起動しない。
+
+## G8-GR17-ENEMY-COMPONENT-P1: 撃破済みの Id を明示で受け付け直す口を DefeatGate に足し、進行に数えない撃破を ProgressionState へ流さない経路を作る
+- status: todo
+- after: G8-GR17-ENEMY-COMPONENT
+- done-when: (1) 受け付け直し: 完了した Id を明示で受け付け直す口(例 `DefeatGate::Rearm(enemyId)`)を足す。`EnemyComponent` は生成(BeginPlay)のときに自分の EnemyId でこれを呼ぶ。ランチャーから同じシーンへ入り直すときと、セーブからのやり直しで同じ Id の敵がまた出たとき、その敵を倒せないまま進行が止まらないようにするためである。受け付け直した後の `BeginDefeat` は受け付けて、`OnDefeatCompleted` をもう 1 回だけ出す。次の 2 つは今と同じく無視し、`GetIgnoredBeginCount` を増やす: 受け付け直していない完了済みの Id への `BeginDefeat`、保留中(未完了)の Id への受け付け直し。`ProgressionState` は同じ Id を二重に記録せず、`OnFinalUnlocked` を出し直さない。(2) 進行への経路: `BeginDefeat` で「進行に数えるか」を渡せるようにする。既定は「数える」にして、今ある呼び出しの動きは変えない。`EnemyComponent` は EnemyDefinition の項目(例 `countsForProgression`、既定 true)からこの値を渡す。GameplayModule は数える撃破の完了だけを `ProgressionState::MarkDefeated` へ流す。数えない撃破は `OnDefeatCompleted` と領域の `MarkCleared` には届くが、`ProgressionState::GetIgnoredIdCount` を増やさず、警告も出さない。数える撃破なのに進行の定義に無い Id は、今と同じく警告を出して診断の数を増やす(シ者の Id の綴り違いを黙らせない)。(3) 試験は今ある束に足し、新しい実行ファイルは作らない。`DefeatGateTest` に足すケース: 受け付け直した後に同じ Id の完了が 2 回目も 1 回だけ出る、受け付け直していない 2 回目は無視される、保留中の受け付け直しは無視される、数えない撃破の完了では ProgressionState の診断の数が増えない。`EnemyStateMachineTest` に足すケース: 同じ EnemyId の敵を破棄して作り直すと、もう一度倒せて完了が出る。`EnemyDefinitionLoadTest` に足すケース: 新しい項目の型の誤りを、ファイルとキーの分かるエラーで拒否する。
+- verify: `cmake --build build --config Debug --target Game PhysicsDynamicsTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^(DefeatGateTest|ProgressionStateTest|EnemyStateMachineTest|EnemyDefinitionLoadTest|HealthComponentTest)$" --no-tests=error --output-on-failure --timeout 300`
+- paths: Library/Modules/Gameplay/Public/Gameplay/Progression, Library/Modules/Gameplay/Private/Gameplay/Progression, Library/Modules/Gameplay/Private/Gameplay/GameplayModule.cpp, Library/Modules/Gameplay/Private/Gameplay/GameplayModule.h, Library/Modules/Gameplay/Public/Gameplay/Enemy, Library/Modules/Gameplay/Private/Gameplay/Enemy, Assets/Gameplay/enemies, Test/Modules/Gameplay/DefeatGateTest.cpp, Test/Modules/Gameplay/ProgressionStateTest.cpp, Test/Modules/Gameplay/EnemyStateMachineTest.cpp, Test/Modules/Gameplay/EnemyDefinitionLoadTest.cpp, TASKS.md, PROGRESS.md
+- from: G8-GR17-ENEMY-COMPONENT
