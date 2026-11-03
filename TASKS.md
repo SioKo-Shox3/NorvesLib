@@ -7995,3 +7995,39 @@
 - verify: `ctest --test-dir build -C Debug -R "^(RenderingFurWetnessVulkanTest|RenderingFurShellVulkanTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$" --no-tests=error --output-on-failure --timeout 300`
 - paths: Docs/RenderingValidation/FurAcceptance.md, TASKS.md, PROGRESS.md
 - notes: 確かめの対象はロードマップ 1494 行（撮影）。犬が届くまではファントムで撮る（ロードマップ 1494 行の「ファントム（犬が届いたら犬）」）。色の値は企画で未定の提案の値で、照らし合わせて記録するだけで既定を決めない。数字の比べ（平均の輝度の単調さ）は metrics.json で行い、目視は束感とハイライトの見え方だけに使う。要件 `#### GR35`。
+
+## G12-GR93-PAINT: 配置の画面のブラシで、地形の当たった位置に草の密度と枯れのマスクを塗り、地形のマスクの cook へ渡せる PNG に書く
+- status: todo
+- after: G12-GR93-EDIT-VIEW, G5-GR42-GRASS-FIELD-CORE, G5-GR42-GRASS-FIELD-ASSET, G12-GR45-DRYNESS-CPU, G12-GR45-DRYNESS-FIELD, G12-GR45-GRASS-DRYNESS, G12-GR45-WITHER-GAMEPLAY, G5-GR89-NVTRN-FORMAT, G5-GR89-TERRAIN-COOKER, G5-GR89-TERRAIN-MASKS
+- gr: GR93
+- needs-gr: GR42, GR45, GR89
+- done-when: (1) `LevelEditOperations` に、ワールドに整列した R8 のマスクのタイル（`Assets/Levels/<地域>/Masks/*.png`。座標は GR89 の地形の変換の情報に合わせる）へ、地面の当たった位置を中心に円形のブラシ（半径・強さ・減衰）で塗る・消す・保存する操作があり、`LevelEditView` から使える。書いた PNG は GR89 の地形のマスクの cook（`G5-GR89-TERRAIN-MASKS` の入力）がそのまま読める。(2) 枯れのマスクは、持ち場のマーカーと GR45 の枯れのソースから手続きで作った初期値（smoothstep とノイズ）を、手で上書きできる。(3) 試験: `PhysicsDynamicsTest` の束の `LevelEditOperationsTest` にブラシのケースを足す（既知の 2 点を塗ってマスクを読み戻すと、GR89 の変換の情報で世界の座標に 1 テクセル以内で対応、タイルの境をまたぐブラシが両方のタイルに同じ値を書く、消すで元に戻る、保存した PNG が R8 で寸法がタイルの寸法）。`AssetCook` の地形のマスクの cook の試験（GR89 の束）がこの PNG を入力にして通る。
+- verify: `cmake --build build --config Debug --target Game PhysicsDynamicsTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^(LevelEditOperationsTest|GameplayMarkerSchemaTest|LevelSnapTest)$" --no-tests=error --output-on-failure --timeout 300`
+- paths: Library/Modules/Gameplay, Game/Gameplay/Level, Test/Modules/Gameplay, Assets/Levels, TASKS.md, PROGRESS.md
+- notes: 設計はロードマップ 2363 行（GR93 の 5. 草の密度・枯れのペイント）。マスクの形式は GR42（草の場）・GR45（枯れ度の地図）・GR89（地形のマスクの cook）で決まるので needs-gr に入れた（ロードマップ 2761 行のリスク）。G5 の `G5-GR42-GRASS-FIELD-ASSET` と `G5-GR89-TERRAIN-MASKS` が採った層の名前と寸法に合わせ、新しい形式を作らない。作者の方針（企画で保留の提案もエンジンの機能として採る）により、『枯れた草地』も採る前提で枯れのマスクの初期値の生成を入れる。GR89 の cook の試験の名前は、その束が決めた名前で verify に足してよい。やらないこと: 草の描画（GR43）、枯れ度の実行時の評価（GR45）。
+
+## G12-GR48-LAYER-SHADOW: 大規模の配置の層の遠い個体をインポスターで描き、インポスターが切り抜いた形の影を太陽の影へ落とす
+- status: todo
+- after: G12-GR48-CROSSFADE, G12-GR47-INSTANCE-VARIATION, G12-GR47-PLACEMENT-COOK, G12-GR47-SCATTER-COLLIDERS
+- gr: GR48
+- needs-gr: GR47
+- done-when: (1) G12 前半の GR47 の配置の層（森・岩・枯れ木・低木の静的なインスタンス）の個体が、チャンクの距離の帯で G12-GR48-MESH-LOD-SELECT と同じ画面の大きさの式で段を選び、最後の段の個体を `ImpostorBatch` として `ImpostorGBufferPass` で描き、遷移の帯は G12-GR48-CROSSFADE のディザでつなぐ。層の個体ごとに Entity を作らない。(2) インポスターが太陽の VSM（と、検証の場面が使う CSM）へ、coverage で切り抜いた深度を落とす。投影物の選び方は株の VSM の投影物（`Library/Core/Public/Rendering/VirtualShadowMapFoliageCasters.h`）の形に倣い、影の到達距離の外のインスタンスは投影物にしない。影は遷移させず、片方の段だけで落とす。(3) 試験: GR47 の層の試験の束に、遠い帯の個体が `ImpostorBatch` へ入り近い帯の個体はメッシュの描画へ入る・帯の境のヒステリシス・同じ入力で同じ振り分け、のケースを足す。`RHITextureUpdateVulkanTest` の束へ `ImpostorShadowVulkanTest` を MEMBER で足す（地面の上の 1 本のインポスターが、低い太陽で地面に影を落とし、影の形の被覆が実メッシュの影と閾値の内で一致、coverage の 0 の画素は影を落とさない）。既存の `VirtualShadowMapVulkanTest`・`ImpostorGBufferVulkanTest`・`LodCrossfadeVulkanTest` と GR47 の層の試験が通る。
+- verify: `cmake --build build --config Debug --target Game RHITextureUpdateVulkanTest SceneViewProxyLookupTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^(ImpostorShadowVulkanTest|ImpostorGBufferVulkanTest|LodCrossfadeVulkanTest|MeshLODSelectionTest|VirtualShadowMapVulkanTest|VirtualShadowMapClipmapTest)$" --no-tests=error --output-on-failure --timeout 600`
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 設計はロードマップ 2267 行（配置の層の個体は距離の帯で同じ判定）と 2277・2279 行（GBuffer のインポスター、影はクロスフェードしない）。要件の「GBuffer への書き込み（ライティング・影・霧に参加）」の影を、受けるだけでなく落とすまで含めて採る（作者の方針: 必要な機能は全部やる）。配置の層の形式と描画の経路は G12 前半の GR47 が決めるので needs-gr に入れ、層のファイル・関数の名前はその形に合わせる（paths の `Library/Core/{Public,Private}/Rendering` の中で、GR47 が置いた層のファイルだけを触る）。GR47 の試験の束の名前は GR47 のタスクが決めた名前で verify に足す。インポスターは RT（TLAS）には入れない（遠景は TLAS の範囲の外。ロードマップ 2741 行）。危険地帯（GBuffer・VSM・RenderThread）なので評価者を通す。やらないこと: 実の AI の木の調整（G12-GR48-CHECK）。
+
+## G12-GR48-CHECK: 木の LOD とインポスターの場面を起動して距離のスイープを撮り、ポッピング・明るさの跳び・検証レイヤーの誤りが無く、ベイクの時間とアトラスの VRAM を記録する
+- status: todo
+- after: G12-GR48-LAYER-SHADOW
+- gr: GR48
+- check: launch
+- gpu: exclusive
+- done-when: (1) 生成 AI の木（針葉樹 1 種・枯れ木 1 種。`Tools/ComfyWorkflows` の生成の経路で `Assets/Models/Generated/` へ作る。このフォルダは `.gitignore` の 150 行で git の管理の外なので、資産そのものはコミットしない）を cook し、`ImpostorBaker` で焼いて、`--load-scene` の木の場面（`Assets/Levels/Sample/Trees.scene.json`）に 100 本置く。(2) カメラの台本 `tree-lod-sweep.txt` で 50m → 400m を連続して撮り、`LodSweepCheck.py` で隣り合う距離の被覆率と平均の輝度が連続（しきい値の表の内）、クロスフェードの間の被覆の和が一定（2% 以内）。(3) 撮影を開いて、近景のメッシュとインポスターの境で明るさが跳ばず、霧の中の遠景の木が霧に沈み、インポスターが地面に影を落とすことを目で確かめる。(4) `--exit-after-rendered-frames=120` の起動で Vulkan の検証レイヤーの誤り（VUID）が 0 件。(5) 1 樹種あたりのベイクの時間とアトラスの VRAM を `Docs/RenderingValidation/TreeLodImpostorAcceptance.md` に書く。hemi-octahedral の既定で水平の付近の方位の分解能が足りないと見えたら、全球の八面体と比べた撮影も残す。(6) 既定の起動画面の撮影が着手前と変わらない。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene sandbox -OutDir .harness/runs/scene-capture/G12-GR48-CHECK/sweep -Configuration RelWithDebInfo -Build -GameArgs '--load-scene=Levels/Sample/Trees.scene.json','--camera-script=Scripts/CameraScripts/tree-lod-sweep.txt'`
+- verify: `python Scripts/Lod/LodSweepCheck.py --sweep .harness/runs/scene-capture/G12-GR48-CHECK/sweep --thresholds Test/Core/Rendering/Thresholds/RenderingValidation/TreeLodSweep.tsv --verify`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene sandbox -OutDir .harness/runs/scene-capture/G12-GR48-CHECK/validation -Configuration Debug -GameArgs '--load-scene=Levels/Sample/Trees.scene.json','--exit-after-rendered-frames=120'`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/G12-GR48-CHECK -Configuration RelWithDebInfo -Deterministic`
+- paths: Assets/Models/Generated, Assets/Levels/Sample, Assets/AssetSets, Docs/RenderingValidation/TreeLodImpostorAcceptance.md, Library/Core/Private/Rendering, Assets/Shaders, Scripts/Lod, TASKS.md, PROGRESS.md
+- notes: 要件 `#### GR48` の受け入れ確認の遷移のスイープ・検証レイヤー・記録（ロードマップ 2626・2627 行）と段取りの P5（実際の AI の木での見た目の調整。2283 行）。木の樹種（針葉樹・枯れ木）は画像の生成の指示の記述で、企画は未決なので見本の 2 種にする。AI の高ポリのメッシュの LOD の鎖（GR80、G17）がまだ無いときは、近景と中景を MegaGeometry のクラスタの LOD で描き（G12-GR48-MESH-LOD-SELECT の notes）、遠景だけをインポスターにする。重い処理（ComfyUI での 3D の生成）は GPU を使うので、Game の撮影と同時に走らせない。撮影を開いて目で確かめる。違ったら GR48 の各タスクの paths の範囲で直す。
