@@ -21,7 +21,8 @@ namespace NorvesLib::Core::Asset
         Raw = 3,
         Audio = 4,
         Skeleton = 5,
-        Animation = 6
+        Animation = 6,
+        World = 7
     };
 
     enum class AssetManifestParseStatus : uint8_t

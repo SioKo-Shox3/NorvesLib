@@ -1,4 +1,4 @@
-#include "Asset/AssetManifest.h"
+﻿#include "Asset/AssetManifest.h"
 
 #include <cassert>
 #include <cstdlib>
@@ -144,6 +144,123 @@ int main()
         assert(result.Status == AssetManifestResolveStatus::CookedReferenceFound);
         assert(result.ShouldUseCooked());
         assert(result.Reference.CookedPackage == "Cooked/Textures.nvpkg");
+    }
+
+    {
+        static_assert(static_cast<uint8_t>(AssetKind::Skeleton) == 5);
+        static_assert(static_cast<uint8_t>(AssetKind::Animation) == 6);
+        static_assert(static_cast<uint8_t>(AssetKind::World) == 7);
+
+        const auto json = T(_T("{")
+                            _T("\"version\":1,")
+                            _T("\"assets\":[{")
+                            _T("\"logical_path\":\"Worlds/Valley.terrain\",")
+                            _T("\"kind\":\"world\",")
+                            _T("\"source_hash\":\"0000000000000001\",")
+                            _T("\"variant\":\"terrain\",")
+                            _T("\"format\":\"nvtrn.v0.height16\",")
+                            _T("\"cooked_package\":\"Cooked/Worlds.nvpkg\",")
+                            _T("\"entry_name\":\"Worlds/Valley.nvtrn\",")
+                            _T("\"entry_type\":\"Trn0\",")
+                            _T("\"cooked_hash\":\"0000000000000002\",")
+                            _T("\"cooked_version\":0}]}"));
+        AssetManifest manifest;
+        assert(LoadManifestText(json, manifest));
+        assert(manifest.GetReferenceCount() == 1);
+        const AssetCookedReference &reference = manifest.GetReference(0);
+        assert(reference.Kind == AssetKind::World);
+        assert(reference.EntryType == MakeAssetPackageFourCC('T', 'r', 'n', '0'));
+        assert(reference.Format == "nvtrn.v0.height16");
+        assert(GetAssetKindName(AssetKind::World) == "world");
+        AssetKind parsedKind = AssetKind::Unknown;
+        assert(TryParseAssetKind("world", parsedKind));
+        assert(parsedKind == AssetKind::World);
+
+        const AssetManifestResolveResult result = manifest.Resolve("Worlds/Valley.terrain", AssetKind::World, "terrain");
+        assert(result.Status == AssetManifestResolveStatus::CookedReferenceFound);
+        assert(result.Reference.Kind == AssetKind::World);
+        assert(result.Reference.EntryType == MakeAssetPackageFourCC('T', 'r', 'n', '0'));
+        assert(result.Reference.Format == "nvtrn.v0.height16");
+        const AssetManifestResolveResult otherKind = manifest.Resolve("Worlds/Valley.terrain", AssetKind::Model, "terrain");
+        assert(otherKind.Status == AssetManifestResolveStatus::LooseFallbackVariantMissing);
+        assert(!otherKind.ShouldUseCooked());
+    }
+
+    {
+        // world が無い旧 manifest でも既存種別を保持し、異なる種別では解決しない。
+        const auto json = T(_T("{")
+                            _T("\"version\":1,")
+                            _T("\"assets\":[{")
+                            _T("\"logical_path\":\"Textures/Stone.png\",")
+                            _T("\"kind\":\"texture\",")
+                            _T("\"source_hash\":\"0000000000000001\",")
+                            _T("\"variant\":\"default\",")
+                            _T("\"format\":\"nvtex.v0.rgba8.srgb\",")
+                            _T("\"cooked_package\":\"Cooked/Legacy.nvpkg\",")
+                            _T("\"entry_name\":\"Textures/Stone.nvtex\",")
+                            _T("\"entry_type\":\"Tex0\",")
+                            _T("\"cooked_hash\":\"0000000000000002\",")
+                            _T("\"cooked_version\":0},{")
+                            _T("\"logical_path\":\"Models/Stone.glb\",")
+                            _T("\"kind\":\"model\",")
+                            _T("\"source_hash\":\"0000000000000003\",")
+                            _T("\"variant\":\"default\",")
+                            _T("\"format\":\"nvmesh.v0\",")
+                            _T("\"cooked_package\":\"Cooked/Legacy.nvpkg\",")
+                            _T("\"entry_name\":\"Models/Stone.nvmesh\",")
+                            _T("\"entry_type\":\"Msh0\",")
+                            _T("\"cooked_hash\":\"0000000000000004\",")
+                            _T("\"cooked_version\":0},{")
+                            _T("\"logical_path\":\"Skeletons/Rig\",")
+                            _T("\"kind\":\"skeleton\",")
+                            _T("\"source_hash\":\"0000000000000005\",")
+                            _T("\"variant\":\"default\",")
+                            _T("\"format\":\"nvskel.v1.skeleton\",")
+                            _T("\"cooked_package\":\"Cooked/Legacy.nvpkg\",")
+                            _T("\"entry_name\":\"Skeletons/Rig.nvskel\",")
+                            _T("\"entry_type\":\"Ske1\",")
+                            _T("\"cooked_hash\":\"0000000000000006\",")
+                            _T("\"cooked_version\":1,")
+                            _T("\"metadata\":{\"skeleton_id\":\"0000000000000001\",\"profile\":1,\"joint_count\":1}},{")
+                            _T("\"logical_path\":\"Animations/Run\",")
+                            _T("\"kind\":\"animation\",")
+                            _T("\"source_hash\":\"0000000000000007\",")
+                            _T("\"variant\":\"default\",")
+                            _T("\"format\":\"nvskel.v1.clips\",")
+                            _T("\"cooked_package\":\"Cooked/Legacy.nvpkg\",")
+                            _T("\"entry_name\":\"Animations/Run.nvclip\",")
+                            _T("\"entry_type\":\"Anm1\",")
+                            _T("\"cooked_hash\":\"0000000000000008\",")
+                            _T("\"cooked_version\":1,")
+                            _T("\"metadata\":{\"skeleton_id\":\"0000000000000001\",\"profile\":1,\"joint_count\":1,")
+                            _T("\"clip_count\":1,\"snapshot_count\":1,\"channel_count\":1,\"sample_count\":1}}]}"));
+
+        AssetManifest manifest;
+        assert(LoadManifestText(json, manifest));
+        assert(manifest.GetReferenceCount() == 4);
+
+        const AssetCookedReference &texture = manifest.GetReference(0);
+        assert(texture.LogicalPath == "Textures/Stone.png");
+        assert(texture.Kind == AssetKind::Texture);
+        assert(texture.EntryType == MakeAssetPackageFourCC('T', 'e', 'x', '0'));
+        const AssetCookedReference &model = manifest.GetReference(1);
+        assert(model.LogicalPath == "Models/Stone.glb");
+        assert(model.Kind == AssetKind::Model);
+        assert(model.EntryType == MakeAssetPackageFourCC('M', 's', 'h', '0'));
+        const AssetCookedReference &skeleton = manifest.GetReference(2);
+        assert(skeleton.LogicalPath == "Skeletons/Rig");
+        assert(skeleton.Kind == AssetKind::Skeleton);
+        assert(skeleton.EntryType == MakeAssetPackageFourCC('S', 'k', 'e', '1'));
+        const AssetCookedReference &animation = manifest.GetReference(3);
+        assert(animation.LogicalPath == "Animations/Run");
+        assert(animation.Kind == AssetKind::Animation);
+        assert(animation.EntryType == MakeAssetPackageFourCC('A', 'n', 'm', '1'));
+
+        const AssetManifestResolveResult textureResult = manifest.Resolve("Textures/Stone.png", AssetKind::Texture);
+        assert(textureResult.Status == AssetManifestResolveStatus::CookedReferenceFound);
+        const AssetManifestResolveResult worldResult = manifest.Resolve("Textures/Stone.png", AssetKind::World);
+        assert(worldResult.Status == AssetManifestResolveStatus::LooseFallbackVariantMissing);
+        assert(!worldResult.ShouldUseCooked());
     }
 
     {

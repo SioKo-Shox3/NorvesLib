@@ -9258,24 +9258,73 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: なし（アプリを起動する確かめは無い）。hitbox・hurtbox の Component・判定窓・通知は G8-GR16-COMBAT-RUNTIME
 - Notes: N の式の「動き」は 2 体の相対の動きの上界として両者の動きの和にした（片方だけ動く場合は done-when の式と同じ）
 
-## 2026-11-03 G4-GR128-PROCESSING-CASES（run 20261103-114107 の反復 1〜2、完了）
+## G4-GR06-FOLLOW-CASES 統合ブランチの取り込み（2026-11-03）
 
-- U1 Docs/Testing.md に MotionProcessingTest を足す理由の 3 点を書く: 着地(直し 0 回)
-- U2 MotionProcessingTest を束へ足し、外れ値・平滑・ループ・周期の平均の試験 (i)(iv)(v) を通す: 着地(直し 1 回)
-- U3 符号の連続・再サンプル往復・時間の補正・heading の試験 (ii)(iii)(vi)(vii) を足して通し、タスクの verify を回す: 着地(直し 0 回)
-- Done: `CookedMeshTest` の束へ `MEMBER MotionProcessingTest`（`Test/Core/Asset/MotionProcessingTest.cpp`）を足し、`ProcessSkeletalClip` を合成のクリップで (i)〜(vii) 確かめた。足す理由の 3 点は `Docs/Testing.md`。
-- Done: 外れて直した所: 外れ値の置き換えが前後のコマを誤って置き換える・平均の前の継ぎ目の報告・倍周期の選択（U2）、出力の四元数が入力の符号の反転をそのまま持ち込み隣のキーと 180° を越えて飛ぶ（U3。前のキーとの内積が負なら反転。ループの末尾を先頭と float32 で一致させる扱いは保つ）。
-- 実測: スパイク replaced=3・周期 12.4968 コマ、ループ 3 周期の平均で継ぎ目の誤差 0.000793→0.000185 rad、平滑で粗さ 0.1486→0.0815、符号を区別した隣の最大角 0.0249 rad・入力との差 4.2e-8 rad、30→16→30 Hz の往復の最大差 0.0751°、TimeScale=2 で長さ 2→4 秒・距離 4.4721 m のまま・速さ 2.236→1.118 m/s、根の heading の最大 0。
-- 証拠: `.harness/runs/20261103-114107/G4-GR128-PROCESSING-CASES-u3-unit-verify.txt`（`cmake --build build --config Debug --target CookedMeshTest -- /m:1` 成功、ctest の 6 本 `MotionProcessingTest`・`SkeletalBvhClipImportTest`・`SkeletalBvhClipTimeTest`・`BvhDecodeTest`・`BvhEvaluateTest`・`RigStaticRootFrameWireTest` Passed、numstat の 2 通りが一致）。
-- Next: なし（アプリを起動する確かめは無い）。
-- Notes: ループの出力で、1 周期の間に関節が 360° 回る（四元数が -q に戻る）入力では、末尾のキーを先頭と同じ値にする扱いのため末尾の手前と末尾の間だけ符号が逆になりうる。歩容の関節では起きないので直していない。
-- U5 レビュー済みの U4 の差分を当て直し、タスクの verify を回す: 着地(直し 0 回)
+- Done: `feature/scene-launcher` を取り込み、`Test/Modules/Physics/CMakeLists.txt` の衝突を `FollowCameraBehaviorTest` と `CombatSweepTest` の両方の MEMBER・add_test を残して解いた
+- 証拠: `.harness/runs/20261103-223637/verify-build.txt`（Debug の PhysicsDynamicsTest・LoggerSinkTest・Game のビルド EXIT=0）、`.harness/runs/20261103-223637/verify-ctest.txt`（FollowCameraBehaviorTest・CriticalDampingTest・CameraCollisionSolverTest・PhysicsFixedStepPipelineTest が 100% Passed）。同じ束の CombatSweepTest も Passed
+- Next: なし（アプリを起動する確かめは無い）
+- U1 臨界減衰のオーバーシュート・不規則な dt・動く目標の速度の連続を試験する: 着地(直し 0 回)
+- U3 FollowCameraBehaviorTest の土台を今の先頭に入れ直し、速度演出・ロックオン・自動の焦点を試験する: 着地(直し 0 回)
+- U4 固定ステップが揺れても震えないことと自身の除外を試験し、タスクの verify を回す: 着地(直し 1 回)
+## 2026-11-03 G4-GR06-FOLLOW-CASES（run 20261103-113138 の反復 2、完了）
+- Done: (A) CriticalDampingTest にオーバーシュートなし（1/30・1/60・1/144）、不規則な dt の一括の解との一致（位置 9.7e-8・速度 2.0e-7）、動く目標の速度の連続を足した。(B) PhysicsDynamicsTest の束に MEMBER FollowCameraBehaviorTest を足し、(1)〜(10) を通した。外れて直したのは 2 点: 無効なジョイントの指定でロックオンを外す、追従を「区間の間に等速で動く目標への臨界減衰の厳密解」（`Math::TryCriticalDampMovingTarget`）にした。後者で固定ステップの回数 0/1/2（86/412/94 回）が揺れるフレームの列でも、カメラの位置−対象の描画の位置の 2 階差分の最大は 7.6e-6 m（前の式は 4.8e-3 m）。Default 群の比較用 Component がシミュレーションの位置を追うと 9.2e-3 m。減衰は絶対の速度のままなので、等速で走るときの後ろへの遅れと、止まったときに行き過ぎない性質は前と同じ
+- (10) 自身の除外: 距離 0 の当たりは、除外ありで実効長 5 m・Success、除外なしで 0 m に潰れる。開始時の貫通の印（bStartPenetrating）付きの当たりは、除外なしでは solver の決まりで StartOverlapping になり前の長さを保つ（潰れない）ので、その組は結果が Success でないことで検出する
+- 証拠: `.harness/runs/20261103-113138/verify-G4-GR06-FOLLOW-CASES.txt`（Debug の PhysicsDynamicsTest・LoggerSinkTest・Game のビルド 終了コード 0、ctest 4 本 Passed 100%）
+- Next: G4-GR06-CLING-LOCKON
+- Notes: `TryCriticalDampMovingTarget` は 1 つの区間の内部を float の相対の座標で解くので、極端に短い dt で目標が動くと（目標の速さ/ω が大きくなり）精度が落ちる。フレームの dt の範囲では問題にならない
+- 2026-11-03 run 20261103-163355 の反復 1: 前の反復の評価が枠切れで行われず状態が doing に戻っていた。着地後にコードの変更は無く、最後の確かめ（ビルド終了コード 0・ctest 4 本 Passed）のまま done に戻した。評価はランナーが回す。
+- 2026-11-03 run 20261103-223637 の反復 1: 評価（PASS）の後に統合ブランチの取り込みが途中で止まり、状態が doing に戻っていた。着地後にコードの変更は無く、最後の確かめ（`.harness/runs/20261103-163355/recheck-G4-GR06-FOLLOW-CASES-1-1.txt` のビルド exit=0、`-1-2.txt` の ctest 4 本 Passed）のまま done に戻した。統合ブランチとは `Test/Modules/Physics/CMakeLists.txt` の add_test の末尾（CombatSweepTest）と PROGRESS.md で衝突するので、取り込みでは両方の行を残す。
 
-## 2026-11-03 G4-GR128-PROCESSING-CASES（run 20261103-163403 の反復 1、差し戻しへの対応、完了）
+- U2 割り当て表の漏れを止める台本と ctest の登録: 着地(直し 0 回)
+- U1 TickStages.md を ECS 化後の登録の仕組み・全型の割り当て表・今の段の名前で書き直す: 着地(直し 1 回)
+- U3 verify を回して GameFoundationValidation.md と InputFoundation.md の未確認の行を結果に直す: 着地(直し 0 回)
 
-- 差し戻し（既定の設定で遅い・振幅の小さいループが検出されない退行）を直した: 周期の候補を短い順に見て、受け入れの判定（RMS ≤ LoopRms、motion ≥ MinimumMotion、RMS ≤ 0.2·motion）を通る最短の候補を選ぶ。どれも通らなければ従来の best×1.25 の規則で選ぶ（検出なし）。
-- `MotionProcessingTest` に 0.07 rad・周期 1 s・長さ 3 s・30 Hz・既定設定の 1 件を足した（直す前は detected=0、直した後は period=0.999999 s・detected=1）。
-- (v) の指標を雑音のない正弦との二乗誤差に変えたところ、三角の重みの平滑は振幅を縮めて誤差を増やしていた（0.0171→0.0840）。半径 2 以上の平滑を局所二次近似の重みにして 0.0171→0.0132 に下がる。
-- 証拠: `.harness/runs/20261103-163403/G4-GR128-PROCESSING-CASES-u5-unit-verify.txt`（`cmake --build build --config Debug --target CookedMeshTest -- /m:1` 終了コード 0、ctest の 6 本 Passed、numstat の 2 通りが一致）。
-- Next: なし（アプリを起動する確かめは無い）。
-- Notes: 局所二次近似の重みは端で負になるため、急変する入力では行き過ぎが出うる（試験していない）。スパイクの候補を極大に限っているため、2 コマ続く外れ値では片方しか置き換えないことがありうる（done-when の外）。
+## 2026-11-03 G1-GR01-TICK-CONTRACT-DOC（run 20261103-223649 の反復 1、完了）
+- Done: `Docs/Architecture/TickStages.md` を今のコードに合わせて書き直した。型ごとの登録 `World::RegisterComponentTick` と `ComponentTickRegistration` の各欄、World の順序付きの系 3 本、`RegisterComponentTick` を呼ぶ 20 型の割り当て表（群・処理・時間の channel・ポーズの分類・登録の場所）、Collider・RigidBody は登録が無く物理は PhysicsModule の固定ステップの段で走ること、PostAnimation の群は無くアニメの姿勢を読む処理は PostPhysics に置くこと、Unscaled の channel もシミュレーションの停止中は呼ばれないこと、`ApplicationProcessor` の今の段（PreUpdate〜PostUpdate）でのフレームの順。最終のカメラの確定点は Handler の `OnLateUpdate` のまま、G14・G16 の受け渡しの節の意味は変えていない。消えた API の名前は文書に残していない
+- Done: `Scripts/CheckTickContractTable.ps1` と ctest `TickContractTableTest`（`Test/Core/Object/CMakeLists.txt`、`powershell -File` の形）を足し、理由の 3 点を `Docs/Testing.md` に書いた。Library・Game の .cpp の登録の型が表の 1 列目に無いか、文書に消えた API の名前があれば終了コード 1
+- Done: `GameFoundationValidation.md` の GR01・GR03・GR04 の行と `InputFoundation.md` の「Windows.h 依存で未確認」の行を、Windows Debug（09b4fb9b）の結果に直した。GR08 は `PhysicsQueries.md` を正とすると書いた
+- 証拠: `.harness/runs/20261103-223649/u3-unit-verify.txt`（verify の 3 行: Debug の 5 ターゲットのビルド EXIT=0、ctest 13 本中 13 本 pass、36 本中 36 本 pass、`TICK_CONTRACT_TABLE result=pass types=20`）。台本の失敗の確かめ（1 型を消す・禁止の語を足す・表が無い）は `u2-unit-verify.txt`
+- Next: 起動の確かめは後回し（TICK_STAGE_SMOKE の実ログ、実機の Alt+Tab・Raw mouse・cursor・実パッドの接続と振動は未確認のまま文書に残した）
+- Notes: 台本の ThirdParty の除外は区切りの `/` と `\` の食い違いで効いておらず、`Library/ThirdParty` の .cpp も走査している（結果は変わらず遅くなるだけ）
+
+- U1 AssetKind に World = 7 を足し、manifest と AssetSystem の試験で押さえる: 着地(直し 0 回)
+- U2 NVTRN v0 の公開ヘッダと書き手 WriteCookedTerrain: 着地(直し 0 回)
+- U3 読み手 ParseCookedTerrain: 着地(直し 0 回)
+- U5 形式の文書 Docs/Architecture/NVTRNv0.md: 着地(直し 1 回)
+- U4 CookedTerrainTest(往復と拒否の種別)とタスクの verify: 着地(直し 0 回)
+
+## 2026-11-03 G5-GR89-NVTRN-FORMAT（run 20261103-113139 の反復 1、完了）
+- Done: 地形の cook 済み形式 NVTRN v0 を足した。公開ヘッダ `CookedTerrainFormat.h`（192 バイトのヘッダ・32 バイトのレイヤ表・80 + 24×レイヤ数のタイル表・文字列表・64 バイト境界のペイロード。高さ HGT0 は生の uint16 で (tile_cells+1)² 標本、ほかのレイヤは埋め込みの NVTEX）、書き手 `WriteCookedTerrain`（入力を全部検査し、タイルを座標順に並べて書く）、読み手 `ParseCookedTerrain`（拒否の理由を `CookedTerrainParseStatus` で返す）。PayloadHash は自分の 8 バイトを除くファイル全体の FNV-1a64、各レイヤに DataHash。`AssetKind::World = 7`（`"world"`）を足し、entry type Trn0・format nvtrn.v0.height16 の entry の解決を AssetManifestTest・AssetSystemTest で押さえた。形式は `Docs/Architecture/NVTRNv0.md`。
+- 証拠: `.harness/runs/20261103-113139/verify-G5-GR89-NVTRN-FORMAT-U4.txt`（CookedMeshTest・AssetSystemTest の Debug ビルド exit=0、ctest で AssetManifestTest・AssetSystemTest・CookedTextureTest・CookedTerrainTest の 4 件 100% Passed。重複の検査を一時的に外すと CookedTerrainTest が落ちることも確認）。
+- Next: なし（アプリの起動の確かめは無い）。cook の本体は G5-GR89-TERRAIN-COOKER。
+- Notes: 読み手はペイロードをタイル表の順 × レイヤ順に 64 バイト境界で詰めた並びとして厳密に求める（違えば TableLayoutMismatch）。高さの DataSize を 1 増やす改ざんは区間がペイロード内に収まるので HeightSizeMismatch で拒否される。使わない LOD 欄が 0 でないものは、読み手は ReservedFieldNonZero、書き手は InvalidTileBounds で拒否する。
+- U6 AssetManifestTest に world の無い旧 manifest の読み込みを足し、タスクの verify を回す: 着地(直し 0 回)
+
+## 2026-11-03 G5-GR89-NVTRN-FORMAT（run 20261103-163359 の反復 1、完了）
+- Done: done-when の「world の無い旧 manifest の読み込み」の試験が抜けていたので足した。kind が texture・model・skeleton・animation だけの version 1 manifest が読めて、各 entry の Kind・EntryType が変わらず、texture の論理パスを AssetKind::World で引くと cooked を使わない（LooseFallbackVariantMissing）ことを AssetManifestTest で押さえた。
+- 証拠: `.harness/runs/20261103-163359/verify-G5-GR89-NVTRN-FORMAT-U6.txt`（CookedMeshTest・AssetSystemTest の Debug ビルド exit=0、ctest で AssetManifestTest・AssetSystemTest・CookedTextureTest・CookedTerrainTest の 4 件 100% Passed）
+- Next: なし（アプリの起動の確かめは無い）。前の反復の差分は評価者が枠切れで未評価なので、この反復の後の評価で全体を見る。
+- Notes: AssetManifestTest.cpp は日本語のコメントを MSVC が読めるよう UTF-8 BOM を付けた（行末は元の LF のまま）。
+
+## 2026-11-03 G4-GR02-FIXED-FRAME-CLOCK（run 20261103-113728 の反復 1、着手）
+- 試験の 3 点（ApplicationFixedStepPipelineTest の固定刻みの時計のケース）:
+  - 反証する契約: `--fixed-frame-dt=` の刻み（1/24・1/30）で回すと、60 Hz の固定ステップの回数が決まった並び（1/24 は 2・3 で合計 120、1/30 は毎フレーム 2）になり、端数の持ち越しで累積がずれず、2 回の新しい実行で各フレームの実行ステップ数・余り・TimeSystem の時刻・FramePacket に載る delta と累積が bit で一致する
+  - ほかの手段で気づけるか: 気づけない。1 ns の端数の落としや並びの入れ替わりは 1 枚の撮影にもログにも出ず、連番の録画（GR66）や 2 回撮った FLIP（G7）でだけ遅れて食い違う
+  - 失敗が黙って起きるか: 起きる。時計が壁時計へ戻っても、刻みの端数を捨てても、エラーにならず時刻が少しずつずれるだけ
+- 試験の 3 点（WorldRenderInterpolationTest の生成直後の補間のケース）:
+  - 反証する契約: 原点でない位置に生成した補間の Entity は、最初のフレーム（0 ステップと 1 ステップ）で描画の位置・MeshProxy の現在と前の変換が生成の位置になり、原点から補間されない
+  - ほかの手段で気づけるか: 気づきにくい。生成の 1〜2 フレームだけ原点の方から滑って見え、落ち着いた後の撮影には出ない
+  - 失敗が黙って起きるか: 起きる
+- Notes: FramePacket の DeltaTime・TotalTime は RenderingCoordinator::BeginFrame が自前の壁時計で作るので、done-when (2) を満たすために paths の外の RenderWorld・RenderingCoordinator に固定刻みの値を受け取る 1 メソッドを足す（決定的な撮影の経路は変えない）
+- Notes: `--capture-deterministic` と `--fixed-frame-dt=` を同時に指定したときは決定的な撮影の 1/60 を優先し、`--fixed-frame-dt` は警告して無視する（刻みを選べる決定的な撮影は G14・G7 の側で要るときに足す）
+- U1 固定刻みのフレームの時計の型と刻みの文字列の解釈を足す: 着地(直し 0 回)
+- U2 原点でない位置に生成した補間の Entity が最初のフレームで原点から補間されないことを押さえる: 着地(直し 0 回)
+- U3 フレームの経過時間を 1 つの差し替えられる口にし、--fixed-frame-dt= を解釈して FramePacket の時間へ渡す: 着地(直し 1 回)
+- U6 レビュー済みの U5 の差分を当て直し、タスクの verify を回す（最後の単位）: 着地(直し 0 回)
+
+## 2026-11-03 G4-GR02-FIXED-FRAME-CLOCK（run 20261103-223641 の反復 1、完了）
+- Done: `FixedFrameClock`（DeterministicCapture.h。刻みを有理数の ns で持ち、累積を切り上げて k フレーム後の合計 = ceil(k×刻み)、誤差 1 ns 未満）と `--fixed-frame-dt=` の解釈（不正値は警告して無視）、ApplicationProcessor の経過時間を `AcquireFrameDeltaNanoseconds` の 1 つの口にし `--capture-deterministic` は 16'666'667 ns の整数刻みで同じ口を使う。固定刻みのときは FramePacket の DeltaTime・TotalTime を時計の値にする
+- 試験: ApplicationFixedStepPipelineTest のケース 21（1/24 × 48 で 2・3 の交互・合計 120、2 回の子プロセスの記録が bit 一致）・ケース 22（1/30 で毎フレーム 2）、WorldRenderInterpolationTest の生成直後の補間。verify のビルド終了コード 0・ctest 7 件 Passed
+- Notes: 累積は切り捨てでなく切り上げにした（切り捨てだと 1/30 の最初のフレームが 33'333'333 ns で 60 Hz の 2 ステップに 1 ns 届かず 1・2・3 の並びになり done-when の「毎フレーム 2」を満たさない）。整数刻み（分母 1）のふるまいは変わらない
+- Notes: FramePacket に載る値は試験では時計の delta・累積として記録し、パケット自体は作っていない。Game を起動しての確かめ（`--fixed-frame-dt=1/24` で撮影・録画の時刻が刻みどおりに進むこと）は後回し
+- Next: G14（GR66 の連番の録画・GR127）と G7（2 回撮った FLIP）がこの時計を使う

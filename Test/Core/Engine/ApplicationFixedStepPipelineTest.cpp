@@ -13,11 +13,17 @@
 #include "Rendering/SceneView.h"
 
 #include <Windows.h>
+#include <shellapi.h>
 
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <cwchar>
 #include <iostream>
 #include <thread>
+
+#pragma execution_character_set("utf-8")
+#pragma comment(lib, "Shell32.lib")
 
 namespace NorvesLib::Core::Engine
 {
@@ -53,6 +59,29 @@ namespace NorvesLib::Core::Engine
                 processor.ClampVariableDeltaTime(rawDeltaNanoseconds), bAdvanceSimulation, handler);
         }
 
+        static bool SetFixedFrameClock(ApplicationProcessor& processor, const char* step)
+        {
+            int64_t numeratorNanoseconds = 0;
+            int64_t denominator = 0;
+            if (!TryParseFixedFrameDelta(step, std::strlen(step), numeratorNanoseconds, denominator) ||
+                !processor.m_FixedFrameClock.SetStep(numeratorNanoseconds, denominator))
+            {
+                return false;
+            }
+            processor.m_FixedFrameClock.Reset();
+            return true;
+        }
+
+        static int64_t AcquireFrameDeltaNanoseconds(ApplicationProcessor& processor)
+        {
+            return processor.AcquireFrameDeltaNanoseconds();
+        }
+
+        static const FixedFrameClock& GetFixedFrameClock(const ApplicationProcessor& processor)
+        {
+            return processor.m_FixedFrameClock;
+        }
+
         static float ClampVariableDeltaTime(ApplicationProcessor& processor, int64_t rawDeltaNanoseconds)
         {
             return processor.ClampVariableDeltaTime(rawDeltaNanoseconds);
@@ -64,7 +93,23 @@ namespace
 {
     using namespace NorvesLib::Core;
 
-    constexpr uint32_t kCaseCount = 21;
+    constexpr uint32_t kCaseCount = 23;
+    constexpr uint32_t kFixedFrame24Case = 21;
+    constexpr uint32_t kFixedFrame24Count = 48;
+
+    struct FixedFrameRecord
+    {
+        uint64_t ExecutedSteps;
+        uint64_t RemainderScaledUnits;
+        int64_t ElapsedNanoseconds;
+        int64_t PhysicsDeltaNanoseconds;
+        float DeltaSeconds;
+        double TotalSeconds;
+    };
+
+    constexpr DWORD kFixedFrameRecordSize = sizeof(uint64_t) * 2 + sizeof(int64_t) * 2 +
+        sizeof(float) + sizeof(double);
+    constexpr DWORD kFixedFrameRecordsSize = kFixedFrameRecordSize * kFixedFrame24Count;
 
     struct DynamicFixture
     {
@@ -876,6 +921,115 @@ namespace
                probes[0]->Delta > 0 && probes[1]->Delta > 0 && probes[3]->Calls == calls + 1;
     }
 
+    // 構造体の未初期化パディングを含めず、浮動小数点もそのままのビット列で保存する。
+    bool WriteFixedFrameRecord(HANDLE file, const FixedFrameRecord& record)
+    {
+        unsigned char bytes[kFixedFrameRecordSize]{};
+        size_t offset = 0;
+        const auto append = [&bytes, &offset](const auto& value)
+        {
+            std::memcpy(bytes + offset, &value, sizeof(value));
+            offset += sizeof(value);
+        };
+        append(record.ExecutedSteps);
+        append(record.RemainderScaledUnits);
+        append(record.ElapsedNanoseconds);
+        append(record.PhysicsDeltaNanoseconds);
+        append(record.DeltaSeconds);
+        append(record.TotalSeconds);
+        DWORD written = 0;
+        return WriteFile(file, bytes, sizeof(bytes), &written, nullptr) != FALSE && written == sizeof(bytes);
+    }
+
+    bool TestFixedFrame24Pipeline(Engine::ApplicationProcessor& processor, HANDLE recordFile)
+    {
+        using namespace Engine;
+        if (!ApplicationFixedStepTestAccess::ResetRun(processor, 60) ||
+            !ApplicationFixedStepTestAccess::SetFixedFrameClock(processor, "1/24"))
+        {
+            return false;
+        }
+
+        const auto& fixedClock = ApplicationFixedStepTestAccess::GetFixedFrameClock(processor);
+        auto& timeSystem = NorvesLib::Core::Engine::GEngine->GetTimeSystem();
+        constexpr int64_t nanosecondsPerSecond = 1'000'000'000;
+        int64_t previousExpectedTime = 0;
+        uint64_t previousExpectedSteps = 0;
+        uint64_t totalSteps = 0;
+        bool bPassed = true;
+        bool bReportedFailure = false;
+        std::cout << "ケース21 ステップ数:";
+        for (uint32_t frame = 1; frame <= kFixedFrame24Count; ++frame)
+        {
+            const int64_t raw = ApplicationFixedStepTestAccess::AcquireFrameDeltaNanoseconds(processor);
+            const auto result = ApplicationFixedStepTestAccess::Simulate(processor, raw, true, nullptr);
+            const FixedFrameRecord record{result.ExecutedSteps, result.RemainderScaledUnits,
+                timeSystem.GetElapsedNanoseconds(), timeSystem.GetFrameTimes().PhysicsDeltaNanoseconds,
+                fixedClock.GetDeltaSeconds(), fixedClock.GetTotalSeconds()};
+            std::cout << ' ' << record.ExecutedSteps;
+            totalSteps += record.ExecutedSteps;
+
+            // 時刻とステップの有理数を、フレーム番号から直接求める。
+            const int64_t expectedTime = (static_cast<int64_t>(frame) * nanosecondsPerSecond + 23) / 24;
+            const uint64_t scaledTime = static_cast<uint64_t>(expectedTime) * 60;
+            const uint64_t expectedSteps = scaledTime / nanosecondsPerSecond;
+            const uint64_t expectedFrameSteps = expectedSteps - previousExpectedSteps;
+            const bool bFramePassed = result.Status == EFixedStepAdvanceStatus::Advanced &&
+                result.DroppedSteps == 0 && (record.ExecutedSteps == 2 || record.ExecutedSteps == 3) &&
+                record.ExecutedSteps == expectedFrameSteps &&
+                record.RemainderScaledUnits == scaledTime % nanosecondsPerSecond &&
+                raw == expectedTime - previousExpectedTime &&
+                record.ElapsedNanoseconds == fixedClock.GetTotalNanoseconds() &&
+                record.ElapsedNanoseconds == expectedTime && record.PhysicsDeltaNanoseconds == raw &&
+                std::fabs(static_cast<double>(record.DeltaSeconds) -
+                    static_cast<double>(raw) / nanosecondsPerSecond) < 1e-8 &&
+                std::fabs(record.TotalSeconds - static_cast<double>(expectedTime) / nanosecondsPerSecond) < 1e-15;
+            if (!bFramePassed && !bReportedFailure)
+            {
+                std::cerr << "ケース21 不一致: フレーム=" << frame << " 実行=" << record.ExecutedSteps
+                    << " 期待=" << expectedFrameSteps << " 経過ns=" << record.ElapsedNanoseconds
+                    << " 期待ns=" << expectedTime << '\n';
+                bReportedFailure = true;
+            }
+            bPassed &= bFramePassed;
+            if (recordFile != INVALID_HANDLE_VALUE)
+            {
+                bPassed &= WriteFixedFrameRecord(recordFile, record);
+            }
+            previousExpectedTime = expectedTime;
+            previousExpectedSteps = expectedSteps;
+        }
+        std::cout << " 合計=" << totalSteps << '\n';
+        return bPassed && totalSteps == 120 &&
+            std::llabs(fixedClock.GetTotalNanoseconds() - 2'000'000'000LL) <= 1 &&
+            timeSystem.GetElapsedNanoseconds() == fixedClock.GetTotalNanoseconds();
+    }
+
+    bool TestFixedFrame30Pipeline(Engine::ApplicationProcessor& processor)
+    {
+        using namespace Engine;
+        if (!ApplicationFixedStepTestAccess::ResetRun(processor, 60) ||
+            !ApplicationFixedStepTestAccess::SetFixedFrameClock(processor, "1/30"))
+        {
+            return false;
+        }
+
+        uint64_t totalSteps = 0;
+        bool bPassed = true;
+        std::cout << "ケース22 ステップ数:";
+        for (uint32_t frame = 0; frame < 30; ++frame)
+        {
+            const int64_t raw = ApplicationFixedStepTestAccess::AcquireFrameDeltaNanoseconds(processor);
+            const auto result = ApplicationFixedStepTestAccess::Simulate(processor, raw, true, nullptr);
+            std::cout << ' ' << result.ExecutedSteps;
+            totalSteps += result.ExecutedSteps;
+            bPassed &= result.Status == EFixedStepAdvanceStatus::Advanced &&
+                result.DroppedSteps == 0 && result.ExecutedSteps == 2;
+        }
+        std::cout << " 合計=" << totalSteps << '\n';
+        return bPassed && totalSteps == 60;
+    }
+
     // 試験の型の本体と、固定ステップの段のシステムを World へ登録する
     bool RegisterWorldProbes(World& world)
     {
@@ -895,7 +1049,7 @@ namespace
         return scheduler.RegisterSystem(desc) != Ecs::kInvalidEcsSystem;
     }
 
-    bool RunCase(uint32_t caseIndex, Engine::ApplicationProcessor& processor)
+    bool RunCase(uint32_t caseIndex, Engine::ApplicationProcessor& processor, HANDLE recordFile)
     {
         switch (caseIndex)
         {
@@ -942,12 +1096,16 @@ namespace
             return TestHitStopTimeChannels(processor, 60);
         case 20:
             return TestHitStopTimeChannels(processor, 120);
+        case 21:
+            return TestFixedFrame24Pipeline(processor, recordFile);
+        case 22:
+            return TestFixedFrame30Pipeline(processor);
         default:
             return false;
         }
     }
 
-    bool RunChild(uint32_t caseIndex)
+    bool RunChild(uint32_t caseIndex, HANDLE recordFile = INVALID_HANDLE_VALUE)
     {
         DynamicFixture fixture;
         Engine::ApplicationProcessor processor;
@@ -957,21 +1115,25 @@ namespace
             return false;
         }
 
-        const bool bPassed = RunCase(caseIndex, processor);
+        const bool bPassed = RunCase(caseIndex, processor, recordFile);
         TeardownDynamicFixture(processor);
         return bPassed;
     }
 
-    bool RunChildProcess(uint32_t caseIndex)
+    bool RunChildProcess(uint32_t caseIndex, const wchar_t* recordPath = nullptr)
     {
         wchar_t executablePath[MAX_PATH]{};
-        if (GetModuleFileNameW(nullptr, executablePath, MAX_PATH) == 0)
+        const DWORD executableLength = GetModuleFileNameW(nullptr, executablePath, MAX_PATH);
+        if (executableLength == 0 || executableLength >= MAX_PATH)
         {
             return false;
         }
 
-        wchar_t commandLine[MAX_PATH + 64]{};
-        if (swprintf_s(commandLine, L"\"%s\" --child=%u", executablePath, caseIndex) <= 0)
+        wchar_t commandLine[MAX_PATH * 2 + 64]{};
+        const int commandLength = recordPath
+            ? swprintf_s(commandLine, L"\"%s\" --child=%u \"--record=%s\"", executablePath, caseIndex, recordPath)
+            : swprintf_s(commandLine, L"\"%s\" --child=%u", executablePath, caseIndex);
+        if (commandLength <= 0)
         {
             return false;
         }
@@ -991,6 +1153,72 @@ namespace
         CloseHandle(processInfo.hThread);
         CloseHandle(processInfo.hProcess);
         return waitResult == WAIT_OBJECT_0 && bReadExitCode && exitCode == EXIT_SUCCESS;
+    }
+
+    bool CompareFixedFrameRecords(const wchar_t* firstPath, const wchar_t* secondPath)
+    {
+        HANDLE first = CreateFileW(firstPath, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
+            FILE_ATTRIBUTE_NORMAL, nullptr);
+        HANDLE second = CreateFileW(secondPath, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
+            FILE_ATTRIBUTE_NORMAL, nullptr);
+        bool bPassed = false;
+        if (first != INVALID_HANDLE_VALUE && second != INVALID_HANDLE_VALUE)
+        {
+            LARGE_INTEGER firstSize{};
+            LARGE_INTEGER secondSize{};
+            unsigned char firstBytes[kFixedFrameRecordsSize]{};
+            unsigned char secondBytes[kFixedFrameRecordsSize]{};
+            DWORD firstRead = 0;
+            DWORD secondRead = 0;
+            bPassed = GetFileSizeEx(first, &firstSize) != FALSE &&
+                GetFileSizeEx(second, &secondSize) != FALSE &&
+                firstSize.QuadPart == kFixedFrameRecordsSize && secondSize.QuadPart == kFixedFrameRecordsSize &&
+                ReadFile(first, firstBytes, sizeof(firstBytes), &firstRead, nullptr) != FALSE &&
+                ReadFile(second, secondBytes, sizeof(secondBytes), &secondRead, nullptr) != FALSE &&
+                firstRead == sizeof(firstBytes) && secondRead == sizeof(secondBytes) &&
+                std::memcmp(firstBytes, secondBytes, sizeof(firstBytes)) == 0;
+        }
+        if (first != INVALID_HANDLE_VALUE)
+        {
+            bPassed &= CloseHandle(first) != FALSE;
+        }
+        if (second != INVALID_HANDLE_VALUE)
+        {
+            bPassed &= CloseHandle(second) != FALSE;
+        }
+        return bPassed;
+    }
+
+    bool RunFixedFrame24Twice()
+    {
+        wchar_t directory[MAX_PATH]{};
+        const DWORD length = GetTempPathW(MAX_PATH, directory);
+        if (length == 0 || length >= MAX_PATH)
+        {
+            return false;
+        }
+        wchar_t firstPath[MAX_PATH]{};
+        wchar_t secondPath[MAX_PATH]{};
+        const bool bFirstCreated = GetTempFileNameW(directory, L"NFS", 0, firstPath) != 0;
+        const bool bSecondCreated = GetTempFileNameW(directory, L"NFS", 0, secondPath) != 0;
+        bool bPassed = false;
+        if (bFirstCreated && bSecondCreated)
+        {
+            const bool bFirstPassed = RunChildProcess(kFixedFrame24Case, firstPath);
+            const bool bSecondPassed = RunChildProcess(kFixedFrame24Case, secondPath);
+            const bool bRecordsMatch = CompareFixedFrameRecords(firstPath, secondPath);
+            std::cout << "ケース21 ２実行の記録: " << (bRecordsMatch ? "一致" : "不一致") << '\n';
+            bPassed = bFirstPassed && bSecondPassed && bRecordsMatch;
+        }
+        if (bFirstCreated)
+        {
+            bPassed &= DeleteFileW(firstPath) != FALSE;
+        }
+        if (bSecondCreated)
+        {
+            bPassed &= DeleteFileW(secondPath) != FALSE;
+        }
+        return bPassed;
     }
 
     bool TryParseChildCase(const char* argument, uint32_t& outCaseIndex)
@@ -1022,6 +1250,50 @@ int main(int argumentCount, char** arguments)
             : EXIT_FAILURE;
     }
 
+    if (argumentCount == 3)
+    {
+        uint32_t caseIndex = 0;
+        constexpr const char* recordPrefix = "--record=";
+        if (!TryParseChildCase(arguments[1], caseIndex) || caseIndex != kFixedFrame24Case ||
+            std::strncmp(arguments[2], recordPrefix, std::strlen(recordPrefix)) != 0)
+        {
+            return EXIT_FAILURE;
+        }
+
+        // 狭い文字列への変換で失われる一時パスを避け、元の Unicode 引数を使う。
+        int wideCount = 0;
+        wchar_t** wideArguments = CommandLineToArgvW(GetCommandLineW(), &wideCount);
+        if (!wideArguments)
+        {
+            return EXIT_FAILURE;
+        }
+        constexpr const wchar_t* widePrefix = L"--record=";
+        const wchar_t* recordPath = nullptr;
+        bool bDuplicate = false;
+        for (int index = 1; index < wideCount; ++index)
+        {
+            if (std::wcsncmp(wideArguments[index], widePrefix, std::wcslen(widePrefix)) == 0)
+            {
+                bDuplicate |= recordPath != nullptr;
+                recordPath = wideArguments[index] + std::wcslen(widePrefix);
+            }
+        }
+        HANDLE recordFile = INVALID_HANDLE_VALUE;
+        if (recordPath && *recordPath && !bDuplicate)
+        {
+            recordFile = CreateFileW(recordPath, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
+                FILE_ATTRIBUTE_NORMAL, nullptr);
+        }
+        LocalFree(wideArguments);
+        if (recordFile == INVALID_HANDLE_VALUE)
+        {
+            return EXIT_FAILURE;
+        }
+        const bool bPassed = RunChild(caseIndex, recordFile);
+        const bool bClosed = CloseHandle(recordFile) != FALSE;
+        return bPassed && bClosed ? EXIT_SUCCESS : EXIT_FAILURE;
+    }
+
     if (argumentCount != 1)
     {
         return EXIT_FAILURE;
@@ -1030,7 +1302,9 @@ int main(int argumentCount, char** arguments)
     bool bPassed = true;
     for (uint32_t caseIndex = 0; caseIndex < kCaseCount; ++caseIndex)
     {
-        bPassed &= RunChildProcess(caseIndex);
+        bPassed &= caseIndex == kFixedFrame24Case
+            ? RunFixedFrame24Twice()
+            : RunChildProcess(caseIndex);
     }
     std::cout << (bPassed ? "ApplicationFixedStepPipelineTest passed\n" : "ApplicationFixedStepPipelineTest failed\n");
     return bPassed ? EXIT_SUCCESS : EXIT_FAILURE;
