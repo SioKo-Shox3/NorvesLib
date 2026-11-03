@@ -33,7 +33,8 @@ namespace Game::Gameplay
     {
         m_Input = nullptr;
         m_Query = nullptr;
-        m_PhysicsRootId = m_ViewSourceId = m_LockOnId = 0;
+        m_PhysicsRootId = m_ViewSourceId = 0;
+        ClearLockOn();
         m_bFollowInitialized = false;
         m_bPreviousSubjectValid = false;
         m_bHasPose = false;
@@ -161,7 +162,7 @@ namespace Game::Gameplay
             }
         if (m_PhysicsRootId && (!visual || visual == physical || !descendant))
             return;
-        if (physical && !m_LockOnId && m_TimeSinceLook >= m_Profile.YawReturnDelay &&
+        if (physical && !IsLockedOn() && m_TimeSinceLook >= m_Profile.YawReturnDelay &&
             SubjectSpeed() >= m_Profile.MinimumYawSpeed)
         {
             const auto forward = physical->GetWorldTransform().rotation * Math::Vector3::UnitZ;
@@ -238,27 +239,21 @@ namespace Game::Gameplay
         const float speed = std::clamp(SubjectSpeed() / m_Profile.SpeedReference, 0.f, 1.f);
         request.DesiredLength = GetArmLength() + m_Profile.ArmGain * speed * m_Profile.SpeedEffectsStrength;
         auto* camera = owner->GetComponent<Core::Component::CameraComponent>();
-        auto* locked = Resolve(m_LockOnId);
+        auto target = m_LockOn.lock();
+        auto* world = owner->GetWorld();
+        Core::Camera::LockOnPoint point;
+        bool locked = false;
         Math::Vector3 focusPoint = subject;
-        if (locked)
+        if (target && world && target->TryResolve(*world, point))
         {
-            focusPoint = locked->GetRenderWorldTransform().position;
-            if (m_LockJoint != UINT32_MAX)
-            {
-                auto* mesh = locked->GetComponent<Core::Component::SkinnedMeshComponent>();
-                Math::Transform joint;
-                if (mesh && mesh->TryGetJointWorldTransform(m_LockJoint, joint))
-                    focusPoint = joint.position + locked->GetRenderWorldTransform().position -
-                                 locked->GetWorldTransform().position;
-                else
-                    ClearLockOn();
-            }
+            locked = true;
+            focusPoint = point.Position;
             const auto offset = focusPoint - subject;
             const float distance = offset.Length();
             const float fov = camera ? camera->GetFieldOfView() : m_Profile.BaseFov;
             const float screenLimit = GetArmLength() * std::tan(fov * .4f * .01745329252f);
             request.Pivot += offset * std::min(m_Profile.LockBias, screenLimit / std::max(distance, .01f));
-            request.DesiredLength += distance * m_Profile.LockArmGain + m_LockRadius;
+            request.DesiredLength += distance * m_Profile.LockArmGain + point.Radius;
             if (offset.x * offset.x + offset.z * offset.z > 1e-6f)
             {
                 const float target = float(std::atan2(offset.x, offset.z) * 57.29577951308232 + 180);
@@ -269,7 +264,7 @@ namespace Game::Gameplay
             }
         }
         else
-            m_LockOnId = 0;
+            ClearLockOn();
         request.Direction = ComputeArmOffset();
         request.DesiredLength = std::min(request.DesiredLength, m_Profile.MaximumArmLength);
         auto candidate = m_State;
@@ -400,6 +395,20 @@ namespace Game::Gameplay
         const auto v = body->GetState().Velocity - body->GetState().PlatformVelocity;
         return std::hypot(v.x, v.z);
     }
+    bool FollowCameraComponent::SetLockOn(Core::Container::TWeakPtr<const Core::Camera::ILockOnTarget> target)
+    {
+        auto resolved = target.lock();
+        if (!resolved)
+            return false;
+        m_LockOn = target;
+        m_OwnedLockOn.reset();
+        m_YawVelocity = 0;
+        return true;
+    }
+    bool FollowCameraComponent::IsLockedOn() const
+    {
+        return !m_LockOn.expired();
+    }
     bool FollowCameraComponent::SetLockOnTarget(Core::Entity* target, float radius)
     {
         if (!std::isfinite(radius) || radius < 0)
@@ -408,9 +417,13 @@ namespace Game::Gameplay
         if (target && (!owner || target->GetWorld() != owner->GetWorld() || target == owner ||
                        target->IsPendingDestroy() || target->GetObjectId() == m_PhysicsRootId))
             return false;
-        m_LockOnId = target ? target->GetObjectId() : 0;
-        m_LockJoint = UINT32_MAX;
-        m_LockRadius = radius;
+        if (!target)
+        {
+            ClearLockOn();
+            return true;
+        }
+        m_OwnedLockOn = Core::Container::MakeShared<Core::Camera::EntityLockOnTarget>(target->GetObjectId(), radius);
+        m_LockOn = m_OwnedLockOn;
         m_YawVelocity = 0;
         return true;
     }
@@ -425,7 +438,10 @@ namespace Game::Gameplay
         }
         if (!SetLockOnTarget(target, radius))
             return false;
-        m_LockJoint = jointIndex;
+        m_OwnedLockOn =
+            Core::Container::MakeShared<Core::Camera::JointLockOnTarget>(target->GetObjectId(), jointIndex, radius);
+        m_LockOn = m_OwnedLockOn;
+        m_YawVelocity = 0;
         return true;
     }
     void FollowCameraComponent::AddTrauma(float amount)

@@ -43,7 +43,11 @@ namespace Game::Gameplay
             camera.m_YawVelocity = 0;
         }
         static float Trauma(const FollowCameraComponent& camera) { return camera.m_Trauma; }
-        static uint64_t LockOnId(const FollowCameraComponent& camera) { return camera.m_LockOnId; }
+        static uint64_t LockOnId(const FollowCameraComponent& camera)
+        {
+            auto t = camera.m_LockOn.lock();
+            return t ? t->GetEntityId() : 0;
+        }
     };
 } // namespace Game::Gameplay
 
@@ -550,6 +554,64 @@ namespace
         std::puts("ロックオン: 有効関節の姿勢無効化と存在しない関節の指定で解除");
     }
 
+    class FakeSurfaceAnchor final : public Core::Camera::ILockOnTarget
+    {
+      public:
+        Math::Vector3 Position;
+        float Radius = 0;
+
+        bool TryResolve(const Core::World&, Core::Camera::LockOnPoint& out) const override
+        {
+            out.Position = Position;
+            out.Radius = Radius;
+            return true;
+        }
+        uint64_t GetEntityId() const override { return 0; }
+    };
+
+    // 外部のアンカーが対象の周囲を動いても、弱参照を保ちヨーを追従させる。
+    void TestLockOnMovingSurfaceAnchor()
+    {
+        CameraFixture fixture;
+        auto anchor = Core::Container::MakeShared<FakeSurfaceAnchor>();
+        const auto subject = fixture.Visual->GetRenderWorldTransform().position + fixture.Follow->GetTargetOffset();
+        anchor->Position = subject + Math::Vector3{5, 0, 0};
+        anchor->Radius = .35f;
+        CAMERA_CHECK(fixture.Follow->SetLockOn(anchor));
+        for (unsigned frame = 0; frame < 600; ++frame)
+        {
+            // 移動を滑らかに減速し、終端では既存の静止目標と同じ角度の許容で確かめる。
+            const float elapsed = static_cast<float>(frame + 1) * FrameDelta;
+            const float angle = (1.f - std::exp(-elapsed)) * Math::Constants::PI * .5f;
+            anchor->Position = subject + Math::Vector3{5 * std::cos(angle), 0, 5 * std::sin(angle)};
+            fixture.Step();
+            CAMERA_CHECK(fixture.Follow->IsLockedOn());
+        }
+        const auto direction = anchor->Position - fixture.Owner->GetWorldTransform().position;
+        const float targetYaw = float(std::atan2(direction.x, direction.z) * 57.29577951308232 + 180);
+        CAMERA_NEAR(AngleDelta(fixture.Follow->GetYaw(), targetYaw), 0, .05f);
+        std::puts("表面アンカー: 移動中もロックを維持しヨーが追従");
+    }
+
+    // アンカーの持ち主が先に消えても安全に解除し、切れた弱参照の設定は拒否する。
+    void TestLockOnDestroyedSurfaceAnchor()
+    {
+        CameraFixture fixture;
+        auto anchor = Core::Container::MakeShared<FakeSurfaceAnchor>();
+        anchor->Position = {5, .4f, 0};
+        Core::Container::TWeakPtr<const Core::Camera::ILockOnTarget> target = anchor;
+        CAMERA_CHECK(fixture.Follow->SetLockOn(target));
+        fixture.Advance(10);
+        CAMERA_CHECK(fixture.Follow->IsLockedOn());
+        anchor.reset();
+        fixture.Step();
+        CAMERA_CHECK(!fixture.Follow->IsLockedOn());
+        fixture.Advance(10);
+        CAMERA_CHECK(!fixture.Follow->SetLockOn(target));
+        CAMERA_CHECK(!fixture.Follow->IsLockedOn());
+        std::puts("表面アンカー: 持ち主の破棄後に安全に解除し切れた弱参照を拒否");
+    }
+
     // 自動焦点はレイの距離とロック目標の前方射影へ収束し、無効時は初期値を保つ。
     void TestAutoFocus()
     {
@@ -825,6 +887,8 @@ int main()
     TestLockOnLookBreak();
     TestLockOnDestroyedTarget();
     TestLockOnJoint();
+    TestLockOnMovingSurfaceAnchor();
+    TestLockOnDestroyedSurfaceAnchor();
     TestAutoFocus();
     TestProfileParsing();
     TestVariableFixedSteps();

@@ -1,6 +1,10 @@
-﻿#pragma once
+﻿// カメラは目標を弱参照し、毎フレーム解決する。参照が切れたらロックを外す。
+// アンカーの持ち主はカメラより先に破棄してよい。組み込みの目標もEntityは所有しない。
+#pragma once
 #include "Asset/TextAssetReloadTracker.h"
 #include "Camera/CameraCollisionSolver.h"
+#include "Camera/LockOnTarget.h"
+#include "Container/PointerTypes.h"
 #include "Component/SpringArmComponent.h"
 #include "Gameplay/Camera/FollowCameraProfile.h"
 #include "Input/InputMapper.h"
@@ -46,10 +50,12 @@ namespace Game::Gameplay
         bool SetProfilePath(NorvesLib::Core::Container::AnsiStringView path);
         bool SetLockOnTarget(NorvesLib::Core::Entity* target, float radius = 0);
         bool SetLockOnJoint(NorvesLib::Core::Entity* target, uint32_t jointIndex, float radius = 0);
+        bool SetLockOn(NorvesLib::Core::Container::TWeakPtr<const NorvesLib::Core::Camera::ILockOnTarget> target);
+        bool IsLockedOn() const;
         void ClearLockOn()
         {
-            m_LockOnId = 0;
-            m_LockJoint = UINT32_MAX;
+            m_LockOn.reset();
+            m_OwnedLockOn.reset();
         }
         void AddTrauma(float amount);
         float GetSubjectFade() const
@@ -99,9 +105,8 @@ namespace Game::Gameplay
         uint64_t m_CameraTickCount = 0;
         FollowCameraProfile m_Profile;
         NorvesLib::Core::Asset::TextAssetReloadTracker m_ProfileReload;
-        uint64_t m_LockOnId = 0;
-        uint32_t m_LockJoint = UINT32_MAX;
-        float m_LockRadius = 0;
+        NorvesLib::Core::Container::TWeakPtr<const NorvesLib::Core::Camera::ILockOnTarget> m_LockOn;
+        NorvesLib::Core::Container::TSharedPtr<const NorvesLib::Core::Camera::ILockOnTarget> m_OwnedLockOn;
         NorvesLib::Math::Vector3 m_FollowPosition, m_FollowVelocity, m_PreviousSubject;
         float m_TimeSinceLook = 0, m_YawVelocity = 0, m_FovVelocity = 0, m_FocusVelocity = 0;
         float m_Trauma = 0, m_ShakeTime = 0, m_SubjectFade = 1;
