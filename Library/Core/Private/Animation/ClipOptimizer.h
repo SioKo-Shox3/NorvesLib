@@ -27,6 +27,12 @@ namespace NorvesLib::Core::Animation
         double MaxRotationErrorDegrees = 0;
     };
 
+    struct ClipDeviation
+    {
+        Container::VariableArray<ClipJointErrorReport> Joints; // 関節番号の昇順
+        double MaxVertexErrorMeters = 0;
+    };
+
     struct ClipCompressionClipReport
     {
         Container::String Name;
@@ -51,6 +57,10 @@ namespace NorvesLib::Core::Animation
     [[nodiscard]] bool BuildLegacyClipOptimizeDefaultLocal(
         Container::Span<const Skeletal::SkeletalJoint> joints,
         Container::VariableArray<Skeletal::SkeletalRestTransform>& out);
+
+    // a のキー時刻と各区間の 1/3・1/2・2/3 で、両クリップを同じ評価経路で比較する。
+    [[nodiscard]] bool MeasureClipDeviation(const ClipOptimizeRig& rig, const Skeletal::SkeletalAnimationClip& a,
+                                            const Skeletal::SkeletalAnimationClip& b, ClipDeviation& out);
 
     // 成功時だけ出力を置き換え、成否にかかわらず報告を更新する。
     [[nodiscard]] bool OptimizeSkeletalClips(const ClipOptimizeRig& rig,

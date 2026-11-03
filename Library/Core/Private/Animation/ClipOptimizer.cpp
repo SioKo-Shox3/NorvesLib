@@ -1,8 +1,12 @@
 ﻿#include "Animation/ClipOptimizer.h"
 
+#include "Animation/ClipChannelSampler.h"
 #include "Animation/PoseTypes.h"
+#include "Animation/SkeletalAnimationSampler.h"
 #include "Animation/SkeletalBindRowMath.h"
 #include "Animation/SkeletalClipSampling.h"
+#include "Animation/SkeletalJointGlobalRowMath.h"
+#include "Animation/SkeletalPoseRuntimeBuild.h"
 #include "Text/JsonWriter.h"
 #include <algorithm>
 #include <cmath>
@@ -387,6 +391,262 @@ namespace NorvesLib::Core::Animation
             }
         }
 
+        struct EvaluationRig
+        {
+            LocalPose DefaultLocal;
+            Container::VariableArray<uint32_t> Order;
+            Container::VariableArray<Math::Matrix4x4> InverseBind;
+        };
+
+        struct EvaluatedPose
+        {
+            LocalPose Local;
+            Container::VariableArray<Math::Matrix4x4> LocalMatrices;
+            Container::VariableArray<Math::Matrix4x4> GlobalMatrices;
+            Container::VariableArray<Math::Matrix4x4> Palette;
+            Container::VariableArray<uint8_t> VisitState;
+            Container::VariableArray<Math::Vector3> JointPositions;
+            Container::VariableArray<Math::Quaternion> JointRotations;
+            Container::VariableArray<Math::Vector3> VertexPositions;
+        };
+
+        bool IsFinite(const Math::Vector3& value)
+        {
+            return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z);
+        }
+
+        bool IsFinite(const Math::Quaternion& value)
+        {
+            return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z) &&
+                   std::isfinite(value.w);
+        }
+
+        // 親を先に評価する順を作り、深い階層でも大域行列の再帰を深くしない。
+        bool PrepareEvaluationRig(const ClipOptimizeRig& rig, EvaluationRig& out)
+        {
+            const size_t count = rig.Joints.size();
+            if (count > std::numeric_limits<uint32_t>::max() || rig.DefaultLocal.size() != count)
+            {
+                return false;
+            }
+            Container::VariableArray<uint8_t> states(count, 0);
+            Container::VariableArray<uint32_t> chain;
+            out.Order.reserve(count);
+            for (size_t first = 0; first < count; ++first)
+            {
+                chain.clear();
+                int64_t current = static_cast<int64_t>(first);
+                while (current >= 0 && states[static_cast<size_t>(current)] == 0)
+                {
+                    const size_t index = static_cast<size_t>(current);
+                    states[index] = 1;
+                    chain.push_back(static_cast<uint32_t>(index));
+                    const int32_t parent = rig.Joints[index].ParentIndex;
+                    if (parent < -1 || (parent >= 0 && static_cast<size_t>(parent) >= count))
+                    {
+                        return false;
+                    }
+                    current = parent;
+                }
+                if (current >= 0 && states[static_cast<size_t>(current)] == 1)
+                {
+                    return false;
+                }
+                while (!chain.empty())
+                {
+                    const uint32_t index = chain.back();
+                    chain.pop_back();
+                    states[index] = 2;
+                    out.Order.push_back(index);
+                }
+            }
+
+            out.DefaultLocal.resize(count);
+            if (!rig.Vertices.empty())
+            {
+                out.InverseBind.resize(count);
+            }
+            for (size_t i = 0; i < count; ++i)
+            {
+                const auto& rest = rig.DefaultLocal[i];
+                if (!IsFinite(rest.Translation) || !IsFinite(rest.Rotation) || !IsFinite(rest.Scale))
+                {
+                    return false;
+                }
+                auto& local = out.DefaultLocal[i];
+                local.Translation = {rest.Translation.X, rest.Translation.Y, rest.Translation.Z};
+                local.Rotation = Detail::NormalizeQuaternion(
+                    {rest.Rotation.X, rest.Rotation.Y, rest.Rotation.Z, rest.Rotation.W});
+                local.Scale = {rest.Scale.X, rest.Scale.Y, rest.Scale.Z};
+                if (!rig.Vertices.empty())
+                {
+                    out.InverseBind[i] = Matrix(rig.Joints[i].InverseBindMatrix);
+                    if (!Detail::IsFiniteMatrix(out.InverseBind[i]))
+                    {
+                        return false;
+                    }
+                }
+            }
+            return true;
+        }
+
+        // 既定姿勢への上書きと行列化は実行時の姿勢構築と同じ規約を使う。
+        bool EvaluateClip(const ClipOptimizeRig& rig, const EvaluationRig& prepared,
+                          const Skeletal::SkeletalAnimationClip& clip, const ClipPoseRuntime& runtime,
+                          float timeSeconds, EvaluatedPose& out)
+        {
+            const size_t count = rig.Joints.size();
+            out.Local = prepared.DefaultLocal;
+            const float time = std::fmax(0.0f, std::fmin(timeSeconds, clip.DurationSeconds));
+            for (const auto& selection : runtime.Joints)
+            {
+                if (selection.JointIndex >= count)
+                {
+                    continue;
+                }
+                auto& local = out.Local[selection.JointIndex];
+                for (size_t path = 0; path < 3; ++path)
+                {
+                    const size_t selected = selection.Channels[path];
+                    if (selected == SIZE_MAX)
+                    {
+                        continue;
+                    }
+                    const auto value = ClipChannelSampler::Sample(clip.Channels[selected], time);
+                    if (path == 0)
+                    {
+                        local.Translation = {value.X, value.Y, value.Z};
+                    }
+                    else if (path == 1)
+                    {
+                        local.Rotation = Detail::NormalizeQuaternion({value.X, value.Y, value.Z, value.W});
+                    }
+                    else
+                    {
+                        local.Scale = {value.X, value.Y, value.Z};
+                    }
+                }
+            }
+
+            out.LocalMatrices.resize(count);
+            out.GlobalMatrices.resize(count);
+            out.VisitState.assign(count, 0);
+            out.JointPositions.resize(count);
+            out.JointRotations.resize(count);
+            for (size_t i = 0; i < count; ++i)
+            {
+                out.LocalMatrices[i] = ToRowMatrix(out.Local[i]);
+                if (!Detail::IsFiniteMatrix(out.LocalMatrices[i]))
+                {
+                    return false;
+                }
+            }
+            const auto parentAt = [&rig](uint32_t joint) noexcept -> int32_t
+            {
+                return rig.Joints[joint].ParentIndex;
+            };
+            for (uint32_t joint : prepared.Order)
+            {
+                if (!Detail::BuildJointGlobalRow(joint, parentAt, out.LocalMatrices, out.GlobalMatrices,
+                                                 out.VisitState))
+                {
+                    return false;
+                }
+                // 行規約の回転どうしの内積は、両方を列規約へ共役にしても変わらない。
+                const auto global = Detail::DecomposeRowTransform(out.GlobalMatrices[joint]);
+                if (!IsFinite(global.Translation) || !IsFinite(global.Rotation))
+                {
+                    return false;
+                }
+                out.JointPositions[joint] = global.Translation;
+                out.JointRotations[joint] = global.Rotation;
+            }
+            if (!rig.Vertices.empty())
+            {
+                out.Palette.resize(count);
+                for (size_t i = 0; i < count; ++i)
+                {
+                    out.Palette[i] = prepared.InverseBind[i] * out.GlobalMatrices[i];
+                    if (!Detail::IsFiniteMatrix(out.Palette[i]))
+                    {
+                        return false;
+                    }
+                }
+                out.VertexPositions.resize(rig.Vertices.size());
+                for (size_t i = 0; i < rig.Vertices.size(); ++i)
+                {
+                    out.VertexPositions[i] = SkeletalAnimationSampler::SkinVertex(rig.Vertices[i], out.Palette).Position;
+                    if (!IsFinite(out.VertexPositions[i]))
+                    {
+                        return false;
+                    }
+                }
+            }
+            return true;
+        }
+
+        enum class ExcessKind
+        {
+            JointPosition,
+            JointRotation,
+            VertexPosition
+        };
+
+        struct LargestExcess
+        {
+            ExcessKind Kind = ExcessKind::JointPosition;
+            uint32_t Joint = 0;
+            double Value = 0;
+            double Limit = 0;
+            double Amount = 0;
+        };
+
+        bool FindLargestExcess(const ClipCompressionClipReport& report, const ClipOptimizeSettings& settings,
+                               LargestExcess& out)
+        {
+            bool bExceeded = false;
+            const auto consider = [&out, &bExceeded](ExcessKind kind, uint32_t joint, double value, double limit)
+            {
+                const double amount = value - limit;
+                if (value > limit && (!bExceeded || amount > out.Amount))
+                {
+                    out = {kind, joint, value, limit, amount};
+                    bExceeded = true;
+                }
+            };
+            for (const auto& joint : report.Joints)
+            {
+                consider(ExcessKind::JointPosition, joint.JointIndex, joint.MaxPositionErrorMeters,
+                         settings.MaxJointErrorMeters);
+                consider(ExcessKind::JointRotation, joint.JointIndex, joint.MaxRotationErrorDegrees,
+                         settings.MaxRotationErrorDegrees);
+            }
+            consider(ExcessKind::VertexPosition, 0, report.MaxVertexErrorMeters, settings.MaxVertexErrorMeters);
+            return bExceeded;
+        }
+
+        Container::String FormatExcess(const Container::String& name, const LargestExcess& excess)
+        {
+            Container::StringBuilder message(_T("クリップ "));
+            message.Append(name);
+            message.Append(_T(" が許容を超えた: "));
+            if (excess.Kind == ExcessKind::JointPosition)
+            {
+                message.AppendFormat(_T("関節 %u の位置 %.17g m（上限 %.17g m）"),
+                                     excess.Joint, excess.Value, excess.Limit);
+            }
+            else if (excess.Kind == ExcessKind::JointRotation)
+            {
+                message.AppendFormat(_T("関節 %u の回転 %.17g 度（上限 %.17g 度）"),
+                                     excess.Joint, excess.Value, excess.Limit);
+            }
+            else
+            {
+                message.AppendFormat(_T("頂点位置 %.17g m（上限 %.17g m）"), excess.Value, excess.Limit);
+            }
+            return message.ToString();
+        }
+
         void OptimizeClip(const ClipOptimizeRig& rig, const Skeletal::SkeletalAnimationClip& input,
                           const Container::VariableArray<double>& radii, const ClipOptimizeSettings& settings,
                           double scale, Skeletal::SkeletalAnimationClip& output, ClipCompressionClipReport& report)
@@ -553,6 +813,92 @@ namespace NorvesLib::Core::Animation
         return true;
     }
 
+    bool MeasureClipDeviation(const ClipOptimizeRig& rig, const Skeletal::SkeletalAnimationClip& a,
+                              const Skeletal::SkeletalAnimationClip& b, ClipDeviation& out)
+    {
+        EvaluationRig prepared;
+        ClipPoseRuntime runtimeA, runtimeB;
+        Detail::BuildClipPoseRuntime(a, runtimeA);
+        Detail::BuildClipPoseRuntime(b, runtimeB);
+        if (!runtimeA.bLegacyValid || !runtimeB.bLegacyValid || !PrepareEvaluationRig(rig, prepared))
+        {
+            return false;
+        }
+
+        Container::VariableArray<float> keys;
+        keys.push_back(0.0f);
+        keys.push_back(a.DurationSeconds);
+        for (const auto& channel : a.Channels)
+        {
+            for (const auto& sample : channel.Samples)
+            {
+                keys.push_back(std::clamp(sample.TimeSeconds, 0.0f, a.DurationSeconds));
+            }
+        }
+        std::sort(keys.begin(), keys.end());
+        keys.erase(std::unique(keys.begin(), keys.end()), keys.end());
+
+        ClipDeviation result;
+        result.Joints.reserve(rig.Joints.size());
+        for (size_t joint = 0; joint < rig.Joints.size(); ++joint)
+        {
+            result.Joints.push_back({static_cast<uint32_t>(joint), 0, 0});
+        }
+        EvaluatedPose poseA, poseB;
+        const auto measureAt = [&](float time)
+        {
+            if (!EvaluateClip(rig, prepared, a, runtimeA, time, poseA) ||
+                !EvaluateClip(rig, prepared, b, runtimeB, time, poseB))
+            {
+                return false;
+            }
+            constexpr double RadiansToDegrees = 57.295779513082320876798154814105;
+            for (size_t i = 0; i < result.Joints.size(); ++i)
+            {
+                const auto& left = poseA.JointPositions[i];
+                const auto& right = poseB.JointPositions[i];
+                auto& joint = result.Joints[i];
+                joint.MaxPositionErrorMeters =
+                    std::max(joint.MaxPositionErrorMeters, Distance(left.x, left.y, left.z, right.x, right.y, right.z));
+                const auto& leftRotation = poseA.JointRotations[i];
+                const auto& rightRotation = poseB.JointRotations[i];
+                const Value leftValue{leftRotation.x, leftRotation.y, leftRotation.z, leftRotation.w};
+                const Value rightValue{rightRotation.x, rightRotation.y, rightRotation.z, rightRotation.w};
+                joint.MaxRotationErrorDegrees = std::max(joint.MaxRotationErrorDegrees,
+                    RotationDistance(leftValue, rightValue) * RadiansToDegrees);
+            }
+            for (size_t i = 0; i < rig.Vertices.size(); ++i)
+            {
+                const auto& left = poseA.VertexPositions[i];
+                const auto& right = poseB.VertexPositions[i];
+                result.MaxVertexErrorMeters = std::max(result.MaxVertexErrorMeters,
+                    Distance(left.x, left.y, left.z, right.x, right.y, right.z));
+            }
+            return true;
+        };
+
+        for (size_t i = 0; i < keys.size(); ++i)
+        {
+            if (!measureAt(keys[i]))
+            {
+                return false;
+            }
+            if (i + 1 < keys.size())
+            {
+                const double first = keys[i];
+                const double interval = double(keys[i + 1]) - first;
+                if (!measureAt(static_cast<float>(first + interval / 3.0)) ||
+                    !measureAt(static_cast<float>(first + interval / 2.0)) ||
+                    !measureAt(static_cast<float>(first + 2.0 * interval / 3.0)))
+                {
+                    return false;
+                }
+            }
+        }
+        out = std::move(result);
+        return true;
+    }
+
     bool OptimizeSkeletalClips(const ClipOptimizeRig& rig, Container::Span<const Skeletal::SkeletalAnimationClip> clips,
                                Container::VariableArray<Skeletal::SkeletalAnimationClip>& out,
                                const ClipOptimizeSettings& settings, ClipCompressionReport& report)
@@ -627,11 +973,45 @@ namespace NorvesLib::Core::Animation
         Container::VariableArray<Skeletal::SkeletalAnimationClip> result;
         result.reserve(clips.size());
         report.Clips.reserve(clips.size());
+        constexpr double Scales[] = {1.0, 0.7, 0.49, 0.343, 0.2401};
         for (const auto& clip : clips)
         {
             result.push_back({});
             report.Clips.push_back({});
-            OptimizeClip(rig, clip, radii, requested, 1.0, result.back(), report.Clips.back());
+            bool bPassed = false;
+            for (uint32_t attempt = 0; attempt < 5; ++attempt)
+            {
+                ClipCompressionClipReport attemptReport;
+                OptimizeClip(rig, clip, radii, requested, Scales[attempt], result.back(), attemptReport);
+                attemptReport.Attempts = attempt + 1;
+                ClipDeviation deviation;
+                if (!MeasureClipDeviation(rig, clip, result.back(), deviation))
+                {
+                    report.Clips.back() = std::move(attemptReport);
+                    Container::StringBuilder message(_T("クリップ "));
+                    message.Append(clip.Name);
+                    message.Append(_T(" の大域評価に失敗しました。"));
+                    report.FailureReason = message.ToString();
+                    return false;
+                }
+                attemptReport.Joints = std::move(deviation.Joints);
+                attemptReport.MaxVertexErrorMeters = deviation.MaxVertexErrorMeters;
+                report.Clips.back() = std::move(attemptReport);
+                LargestExcess excess;
+                if (!FindLargestExcess(report.Clips.back(), requested, excess))
+                {
+                    bPassed = true;
+                    break;
+                }
+                if (attempt == 4)
+                {
+                    report.FailureReason = FormatExcess(clip.Name, excess);
+                }
+            }
+            if (!bPassed)
+            {
+                return false;
+            }
         }
         out = std::move(result);
         report.bSucceeded = true;
