@@ -9204,3 +9204,10 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 臨界減衰のオーバーシュート・不規則な dt・動く目標の速度の連続を試験する: 着地(直し 0 回)
 - U3 FollowCameraBehaviorTest の土台を今の先頭に入れ直し、速度演出・ロックオン・自動の焦点を試験する: 着地(直し 0 回)
 - U4 固定ステップが揺れても震えないことと自身の除外を試験し、タスクの verify を回す: 着地(直し 1 回)
+
+## 2026-11-03 G4-GR06-FOLLOW-CASES（run 20261103-113138 の反復 2、完了）
+- Done: (A) CriticalDampingTest にオーバーシュートなし（1/30・1/60・1/144）、不規則な dt の一括の解との一致（位置 9.7e-8・速度 2.0e-7）、動く目標の速度の連続を足した。(B) PhysicsDynamicsTest の束に MEMBER FollowCameraBehaviorTest を足し、(1)〜(10) を通した。外れて直したのは 2 点: 無効なジョイントの指定でロックオンを外す、追従を「区間の間に等速で動く目標への臨界減衰の厳密解」（`Math::TryCriticalDampMovingTarget`）にした。後者で固定ステップの回数 0/1/2（86/412/94 回）が揺れるフレームの列でも、カメラの位置−対象の描画の位置の 2 階差分の最大は 7.6e-6 m（前の式は 4.8e-3 m）。Default 群の比較用 Component がシミュレーションの位置を追うと 9.2e-3 m。減衰は絶対の速度のままなので、等速で走るときの後ろへの遅れと、止まったときに行き過ぎない性質は前と同じ
+- (10) 自身の除外: 距離 0 の当たりは、除外ありで実効長 5 m・Success、除外なしで 0 m に潰れる。開始時の貫通の印（bStartPenetrating）付きの当たりは、除外なしでは solver の決まりで StartOverlapping になり前の長さを保つ（潰れない）ので、その組は結果が Success でないことで検出する
+- 証拠: `.harness/runs/20261103-113138/verify-G4-GR06-FOLLOW-CASES.txt`（Debug の PhysicsDynamicsTest・LoggerSinkTest・Game のビルド 終了コード 0、ctest 4 本 Passed 100%）
+- Next: G4-GR06-CLING-LOCKON
+- Notes: `TryCriticalDampMovingTarget` は 1 つの区間の内部を float の相対の座標で解くので、極端に短い dt で目標が動くと（目標の速さ/ω が大きくなり）精度が落ちる。フレームの dt の範囲では問題にならない
