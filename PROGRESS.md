@@ -9237,3 +9237,12 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: なし（アプリを起動する確かめは無い）。
 - Notes: ループの出力で、1 周期の間に関節が 360° 回る（四元数が -q に戻る）入力では、末尾のキーを先頭と同じ値にする扱いのため末尾の手前と末尾の間だけ符号が逆になりうる。歩容の関節では起きないので直していない。
 - U5 レビュー済みの U4 の差分を当て直し、タスクの verify を回す: 着地(直し 0 回)
+
+## 2026-11-03 G4-GR128-PROCESSING-CASES（run 20261103-163403 の反復 1、差し戻しへの対応、完了）
+
+- 差し戻し（既定の設定で遅い・振幅の小さいループが検出されない退行）を直した: 周期の候補を短い順に見て、受け入れの判定（RMS ≤ LoopRms、motion ≥ MinimumMotion、RMS ≤ 0.2·motion）を通る最短の候補を選ぶ。どれも通らなければ従来の best×1.25 の規則で選ぶ（検出なし）。
+- `MotionProcessingTest` に 0.07 rad・周期 1 s・長さ 3 s・30 Hz・既定設定の 1 件を足した（直す前は detected=0、直した後は period=0.999999 s・detected=1）。
+- (v) の指標を雑音のない正弦との二乗誤差に変えたところ、三角の重みの平滑は振幅を縮めて誤差を増やしていた（0.0171→0.0840）。半径 2 以上の平滑を局所二次近似の重みにして 0.0171→0.0132 に下がる。
+- 証拠: `.harness/runs/20261103-163403/G4-GR128-PROCESSING-CASES-u5-unit-verify.txt`（`cmake --build build --config Debug --target CookedMeshTest -- /m:1` 終了コード 0、ctest の 6 本 Passed、numstat の 2 通りが一致）。
+- Next: なし（アプリを起動する確かめは無い）。
+- Notes: 局所二次近似の重みは端で負になるため、急変する入力では行き過ぎが出うる（試験していない）。スパイクの候補を極大に限っているため、2 コマ続く外れ値では片方しか置き換えないことがありうる（done-when の外）。
