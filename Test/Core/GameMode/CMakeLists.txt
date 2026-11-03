@@ -7,6 +7,7 @@ norves_add_test_bundle(GameModeStateMachineTest
     MEMBER GameModeStateMachineTest GameModeStateMachineTest.cpp
     MEMBER GameModeRegistryTest GameModeRegistryTest.cpp
     MEMBER SubRoutineTest SubRoutineTest.cpp
+    MEMBER TStateMachineTest TStateMachineTest.cpp
 )
 target_link_libraries(GameModeStateMachineTest PRIVATE Core)
 target_include_directories(GameModeStateMachineTest PRIVATE
@@ -16,3 +17,5 @@ target_include_directories(GameModeStateMachineTest PRIVATE
 add_test(NAME GameModeStateMachineTest COMMAND GameModeStateMachineTest)
 
 add_test(NAME SubRoutineTest COMMAND GameModeStateMachineTest --test=SubRoutineTest)
+
+add_test(NAME TStateMachineTest COMMAND GameModeStateMachineTest --test=TStateMachineTest)

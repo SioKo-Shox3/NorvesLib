@@ -9257,3 +9257,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261103-113141/u4-unit-verify.txt`（verify の 2 行: Debug の Game・PhysicsDynamicsTest のビルド EXIT=0、ctest の CombatSweepTest・PhysicsModuleLinkTest・PhysicsDynamicsTest・PhysicsLifecycleEventTest が 100% Passed）
 - Next: なし（アプリを起動する確かめは無い）。hitbox・hurtbox の Component・判定窓・通知は G8-GR16-COMBAT-RUNTIME
 - Notes: N の式の「動き」は 2 体の相対の動きの上界として両者の動きの和にした（片方だけ動く場合は done-when の式と同じ）
+- U1 Core にヘッダだけの TStateMachine と TStateMachineTest を足す: 着地(直し 0 回)
