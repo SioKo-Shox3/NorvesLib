@@ -5,6 +5,8 @@ set(GAMEPLAY_PUBLIC_HEADERS
 )
 
 set(GAMEPLAY_PRIVATE_SOURCES
+    Private/Gameplay/Combat/CombatGeometry.h
+    Private/Gameplay/Combat/CombatGeometry.cpp
     Private/Gameplay/GameplayModule.h
     Private/Gameplay/GameplayModule.cpp
 )
