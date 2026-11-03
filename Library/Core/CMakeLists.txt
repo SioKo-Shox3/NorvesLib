@@ -11,6 +11,7 @@ set(PRIVATE_SOURCES
     Private/CoreModule.cpp
     Private/Math/GeometryIntersection.cpp
     Private/Camera/CameraCollisionSolver.cpp
+    Private/Camera/LockOnTarget.cpp
     Private/Camera/SceneCameraProbe.cpp
     Private/Locomotion/QuadrupedLocomotionModel.cpp
     Private/Locomotion/QuadrupedLocomotionJson.cpp
@@ -769,6 +770,7 @@ set(PUBLIC_HEADERS
     Public/Math/VectorUtils.h
     Public/Math/CriticalDamping.h
     Public/Camera/CameraCollisionSolver.h
+    Public/Camera/LockOnTarget.h
     Public/Camera/SceneCameraProbe.h
     Public/Locomotion/QuadrupedLocomotionModel.h
     Public/Locomotion/QuadrupedLocomotionParams.h
