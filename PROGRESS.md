@@ -9309,3 +9309,10 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U2 FollowCameraProfile にしがみつきの節(cling)を足す: 着地(直し 0 回)
 - U3 FollowCameraComponent のロックオンを ILockOnTarget 経由に組み替え、表面のアンカーの口を足す: 着地(直し 0 回)
 - U4 しがみつき中のヨーの補正(低域通過・角速度と角加速度の上限・抜けの継続)と試験: 着地(直し 1 回)
+
+## 2026-11-03 G4-GR06-CLING-LOCKON（run 20261103-231220 の反復 2、完了）
+- Done: ロックオンの目標を Core の読み取り専用の口 `ILockOnTarget`（`Library/Core/Public/Camera/LockOnTarget.h`。描画の空間の注視点と半径を `TryResolve` で返す）で受けるようにした。組み込みの実装は `EntityLockOnTarget`（Entity の点）と `JointLockOnTarget`（骨格のジョイント）で、`SetLockOnTarget`・`SetLockOnJoint` はそれを作る形で同じふるまいを保つ。外部の目標（表面のアンカー GR19）は `SetLockOn(TWeakPtr<const ILockOnTarget>)` で受け、試験の偽の実装で動く。しがみつきの状態を `SetClinging`/`IsClinging` で受け、その間はヨーを対象（ロック中は目標）の水平の向きへ臨界減衰で追わせ、角速度と 1 フレームの角速度の変化を `FollowCameraProfile` の `cling`（`yawHalfLife` 既定 0.25 s・`maximumYawSpeed` 既定 90 度/秒。値は仮）で抑える。入りは実測の角速度から始め、抜けは残りの角速度を同じ上限で 0 へ減らす間ヨーの戻しとロックオンのヨーの向けを止める（視点の入力で継続は終わる）。カメラの上方向は世界の上向きのまま。
+- 所有と破棄の順: カメラは目標を所有しない。外部の目標は弱い参照だけを持ち、Camera 群の毎フレームに `lock()` して World から解決する。参照が切れた・Entity が消えた（PendingDestroy・非アクティブ）・ジョイントが無効なら、そのフレームはロックしていない扱いで `ClearLockOn()` する。組み込みの目標はカメラが `TSharedPtr` で持つが、中身は Entity の id とジョイントの番号だけで Entity は所有しない。したがってアンカーの持ち主・目標の Entity はカメラより先に破棄してよく、カメラの `Finalize` はロックとしがみつきの状態を消すだけ。
+- 証拠: `.harness/runs/20261103-231220/verify-G4-GR06-CLING-LOCKON-U4.txt`（PhysicsDynamicsTest・LoggerSinkTest・Game の Debug ビルド成功、ctest で FollowCameraBehaviorTest・CriticalDampingTest・CameraCollisionSolverTest・PhysicsFixedStepPipelineTest の 4 件 100% Passed。新しいケースの出力: 上方向の最大偏差 0 度、10 Hz ±30° の揺れでヨーの角速度の最大 2.11 度/秒・振幅 0.224 度、出入りの角速度の差の最大 1.50 度/秒）。
+- Next: なし（アプリの起動の確かめは無い）。しがみつきの状態の出どころ（GR20 の拘束）と表面のアンカーの解決（GR19）は G10。
+- Notes: しがみつきの補正・角速度の実測は dt が有限で正のときだけ動く（しがみつきでないときの dt ≤ 0 のふるまいは前のまま）。しがみつき中に `SetLockOn` 等を呼んでもヨーの速度は 0 に戻さない（入りの連続を保つため）。
