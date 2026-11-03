@@ -9350,3 +9350,7 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 平地・45° の壁・すり抜け・めり込み開始・決定性のケースを足す: 着地(直し 0 回)
 - U2 段差の進みと坂の沿面の速さのケースを足し、外れを直す: 着地(直し 0 回)
 - U3 階段下りと共面の継ぎ目のケースを足し、外れを直してタスクの確かめを回す: 着地(直し 0 回)
+- Done: GR07 の受け入れ確認の 9 ケース（平地・45° の壁・段差・坂・階段下り・すり抜け・めり込み開始・決定性・共面の継ぎ目）を PhysicsCharacterMoveTest に足し、全部通る。外れた 3 つを CharacterMover で直した: 段差 0.20 m の進み（直す前 0.418 m/要求 0.5 m → 0.471 m。縁に当たったら同じ物体の上面の法線で乗るかを決める）、40° の沿面の速さ（直す前 0.766 倍 → 1.000 倍。接地中に歩ける面へ当たったら水平の要求の長さを沿面の移動量に保つ）、階段下りの接地（直す前 10/60 ステップ → 60/60。下降と接地のスナップで縁の丸みに当たったら上面の法線で接地を決める）。残りの 6 ケースは直す前から通った
+- 証拠: `.harness/runs/20261103-233036/G4-GR07-MOVER-CASES-U3-verify.txt`（verify の 2 行: Debug の PhysicsDynamicsTest のビルド EXIT=0、ctest の PhysicsCharacterMoveTest・CharacterPlatformMotionTest・PhysicsFixedStepPipelineTest・PhysicsBroadphaseQueryTest・PhysicsDynamicsTest・PhysicsLifecycleEventTest が 100% Passed）
+- Next: 重力つきの坂の滑り落ちと着地は G4-GR07-BODY-CASES。起動の確かめは無し（試験だけで閉じる）
+- Notes: 縁の丸みの接触を上面の法線で接地にしたので、カプセルの下の球が段の角に乗っている間は、中心が縁の外へ出ていても接地のまま落ちない（水平に動けば落ちる）。重力つきの縁の振る舞いは BODY-CASES で見る。既定の SkinWidth 0.002・MaximumDepenetrationDistance 1 m は変えずに (1)(7) が通った（めり込み開始の 1 ステップの押し出しは 0.102 m）
