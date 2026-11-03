@@ -2,6 +2,7 @@
 
 #include "Container/Containers.h"
 #include "Engine/Engine.h"
+#include "Gameplay/Combat/HealthComponent.h"
 
 namespace NorvesLib::Modules::Gameplay
 {
@@ -44,7 +45,7 @@ namespace NorvesLib::Modules::Gameplay
 
     void GameplayModule::RegisterReflectedTypes()
     {
-        // Component を追加したら、ここで型を登録する。
+        Core::ClassRegistry::Get().RegisterClass(Combat::HealthComponent::StaticClass());
     }
 
     bool GameplayModule::Initialize()

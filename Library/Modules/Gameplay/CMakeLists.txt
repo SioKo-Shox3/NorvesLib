@@ -2,9 +2,12 @@
 
 set(GAMEPLAY_PUBLIC_HEADERS
     Public/Gameplay/IGameplayModule.h
+    Public/Gameplay/Combat/DamageTypes.h
+    Public/Gameplay/Combat/HealthComponent.h
 )
 
 set(GAMEPLAY_PRIVATE_SOURCES
+    Private/Gameplay/Combat/HealthComponent.cpp
     Private/Gameplay/Combat/CombatGeometry.h
     Private/Gameplay/Combat/CombatGeometry.cpp
     Private/Gameplay/GameplayModule.h
