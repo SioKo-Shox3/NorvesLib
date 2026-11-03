@@ -32,6 +32,7 @@ set(PRIVATE_SOURCES
     Private/Resource/GltfMaterialSource.cpp
     Private/Resource/GltfMaterialSourceJson.cpp
     Private/Asset/CookedTextureLoader.cpp
+    Private/Asset/CookedTerrainWriter.cpp
     Private/Asset/AssetFileReader.cpp
     Private/Asset/TextAssetReloadTracker.cpp
     Private/Asset/AssetManifest.cpp
@@ -471,6 +472,7 @@ set(PUBLIC_HEADERS
     Public/Asset/CookedMaterialFormat.h
     Public/Asset/CookedSkeletalWireFormat.h
     Public/Asset/CookedTextureFormat.h
+    Public/Asset/CookedTerrainFormat.h
     Public/Asset/AssetFileReader.h
     Public/Asset/TextAssetReloadTracker.h
     Public/Asset/AssetManifest.h
