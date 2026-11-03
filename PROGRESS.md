@@ -9244,3 +9244,16 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: 作業単位の確かめの出力（`cmake --build build --config Debug --target SkeletalAnimationSamplingTest -- /m:1` 終了コード 0、`ctest ... -R "^(SkeletalAnimationSamplingTest)$"` 1 本 Passed、実行ファイルの直接実行で `TwoBoneIKTest PASS`）
 - Next: なし（アプリの起動を要する確かめは無い）。関節ローカルへの戻しは呼び出し側（G9-GR15-POSE-MODIFIER-BASE・G9-GR85-FOOT-REPLANT）がする
 - Notes: ポールが軸と平行かの判定は射影長の絶対値 1e-6。非有限な関節位置は非有限成分を 0 に置き換える。反平行に近い区間の回転は 180° の代替軸を使う
+
+- U1 Gameplay モジュールの骨組みと Game への登録: 着地(直し 0 回)
+- U2 Docs/Testing.md に CombatSweepTest を足す理由の 3 点を書く: 着地(直し 0 回)
+- U3 攻撃判定のスイープの純関数 CombatGeometry: 着地(直し 0 回)
+- U4 CombatSweepTest を PhysicsDynamicsTest の束に足す(最後の単位): 着地(直し 0 回)
+
+## 2026-11-03 G8-GR16-GAMEPLAY-MODULE（run 20261103-113141 の反復 1、完了）
+- Done: `Library/Modules/Gameplay` に static lib `NorvesModule_Gameplay`（Core へ PRIVATE、Physics にリンクしない）を足し、`IGameplayModule`・`RegisterGameplayModule`・`FindGameplayModule`・`RegisterReflectedTypes`・`RegisterWorldSystems` を Physics と同じ形で持たせた（Component が無いので登録する型・システムは無く、毎フレームの処理も無い）。`NorvesGameSources` にリンクし、`OnPreInitialize` で Physics の登録の直後に登録する
+- Done: `Private/Gameplay/Combat/CombatGeometry.*` に攻撃判定のスイープの純関数を置いた。T0・T1 の姿勢の補間（位置は線形・回転は Slerp）、N = clamp(ceil(動き / (0.5 × max(min 半径, MinRadius))), 1, MaxSubsteps)（動きは hitbox と hurtbox それぞれの max(代表点の移動, 角度×到達距離) の和）、原点±到達距離の掃引の AABB で間引き、ComputeContact に無い向き（Box-Sphere・Box-Capsule・Sphere-Capsule）は入れ替えて呼ぶ、最初に当たったサブステップの区間を二分で詰めた s の接触を返し、法線は hurtbox→hitbox。有限でない値・長さ 0 の四元数・0 以下の半径と半辺長・MaxSubsteps 0・MinRadius が 0 以下か有限でない設定を拒否する
+- Done: `CombatSweepTest`（`PhysicsDynamicsTest` の束、ソースは `Test/Modules/Gameplay/`）を足し、理由の 3 点を `Docs/Testing.md` に書いた。1 フレーム 0.5 m の刀身が T1 の離散判定ではすり抜ける半径 0.05 m の球に 13 通りの位置で必ず当たり位置が 0.025 m 以内、±60° の振りで端点の線形補間は全サブステップで外れ Slerp では解析の s と 1e-4 以内で当たる、N の上限と MinRadius、両方が動く場合の同じ s、向きの入れ替えの法線、壊れた入力で出力を変えない、を確かめる。Slerp を正規化 Lerp に替える一時の改変で試験が落ちることを確かめて戻した
+- 証拠: `.harness/runs/20261103-113141/u4-unit-verify.txt`（verify の 2 行: Debug の Game・PhysicsDynamicsTest のビルド EXIT=0、ctest の CombatSweepTest・PhysicsModuleLinkTest・PhysicsDynamicsTest・PhysicsLifecycleEventTest が 100% Passed）
+- Next: なし（アプリを起動する確かめは無い）。hitbox・hurtbox の Component・判定窓・通知は G8-GR16-COMBAT-RUNTIME
+- Notes: N の式の「動き」は 2 体の相対の動きの上界として両者の動きの和にした（片方だけ動く場合は done-when の式と同じ）
