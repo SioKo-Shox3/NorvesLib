@@ -91,7 +91,14 @@ namespace NorvesLib::Core::Animation
         void SmoothChannels(S::SkeletalAnimationClip& clip, uint32_t radius, bool loop, uint32_t& count)
         {
             if (!radius)
+            {
                 return;
+            }
+            // 局所二次近似の中心値で平滑化し、単純平均による周期運動の振幅の縮みを抑える。
+            const double r = radius, points = 2 * r + 1;
+            const double secondMoment = r * (r + 1) * (2 * r + 1) / 3;
+            const double fourthMoment = r * (r + 1) * (2 * r + 1) * (3 * r * r + 3 * r - 1) / 15;
+            const double denominator = points * fourthMoment - secondMoment * secondMoment;
             for (auto& channel : clip.Channels)
             {
                 const auto original = channel.Samples;
@@ -107,7 +114,9 @@ namespace NorvesLib::Core::Animation
                         int64_t index = int64_t(i) + k;
                         index = loop ? (index % int64_t(samples) + samples) % samples
                                      : std::clamp<int64_t>(index, 0, samples - 1);
-                        const double weight = radius + 1 - std::abs(k);
+                        const double weight = radius >= 2
+                                                  ? (fourthMoment - secondMoment * double(k) * k) / denominator
+                                                  : radius + 1 - std::abs(k);
                         auto value = original[size_t(index)].Value;
                         if (channel.Path == S::SkeletalAnimationPath::Rotation)
                         {
@@ -547,28 +556,23 @@ namespace NorvesLib::Core::Animation
                     best = std::min(best, score);
                 }
                 size_t selected = SIZE_MAX;
-                // 入力格子の補間差で倍周期だけが有利でも、許容RMS内なら最短の極小を選ぶ。
-                const double equivalentError = std::max(best * 1.25 + 1e-4, settings.LoopRmsThresholdRadians);
+                // 倍周期を避けつつ、受け入れられない短い候補で検出を落とさないよう、
+                // 受け入れの判定を通る最短の候補を選ぶ。
                 for (size_t i = 0; i < periods.size(); ++i)
                 {
-                    if (refinedScores[i] <= equivalentError)
+                    const double score = refinedScores[i];
+                    if (score > settings.LoopRmsThresholdRadians)
                     {
-                        selected = i;
-                        break;
+                        continue;
                     }
-                }
-                if (selected != SIZE_MAX)
-                {
-                    const double period = periods[selected];
-                    report.RecurrenceRmsRadians = refinedScores[selected];
                     double motion = 0;
                     if (!eval.At(0, start))
                     {
                         return eval.Failure;
                     }
-                    for (uint32_t i = 1; i <= 16; ++i)
+                    for (uint32_t sample = 1; sample <= 16; ++sample)
                     {
-                        if (!eval.At(period * i / 16, a))
+                        if (!eval.At(periods[i] * sample / 16, a))
                         {
                             return eval.Failure;
                         }
@@ -578,10 +582,30 @@ namespace NorvesLib::Core::Animation
                     {
                         return eval.Failure;
                     }
-                    if (report.RecurrenceRmsRadians <= settings.LoopRmsThresholdRadians &&
-                        motion >= settings.MinimumMotionRadians && report.RecurrenceRmsRadians <= motion * 0.2)
+                    if (motion >= settings.MinimumMotionRadians && score <= motion * 0.2)
                     {
+                        selected = i;
                         report.bLoopDetected = true;
+                        break;
+                    }
+                }
+                if (selected == SIZE_MAX)
+                {
+                    for (size_t i = 0; i < periods.size(); ++i)
+                    {
+                        if (refinedScores[i] <= best * 1.25 + 1e-4)
+                        {
+                            selected = i;
+                            break;
+                        }
+                    }
+                }
+                if (selected != SIZE_MAX)
+                {
+                    const double period = periods[selected];
+                    report.RecurrenceRmsRadians = refinedScores[selected];
+                    if (report.bLoopDetected)
+                    {
                         double seam = std::numeric_limits<double>::infinity();
                         for (uint32_t i = 0; i < 32; ++i)
                         {

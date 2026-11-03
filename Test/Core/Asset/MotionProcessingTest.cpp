@@ -174,6 +174,33 @@ namespace
               A::SkeletalClipProcessingStatus::Success);
         return result;
     }
+    void TestSlowSmallLoop()
+    {
+        uint32_t joints[2] = {0, 1};
+        double weights[2] = {0, 1};
+        A::SkeletalClipPoseSource source;
+        source.Name = C::String("SlowSmallLoop");
+        source.DurationSeconds = 3;
+        source.SourceIntervalSeconds = 1.0 / 30;
+        source.JointIndices = joints;
+        source.RotationWeights = weights;
+        source.RootJoint = 0;
+        source.Sample = [](double time, C::Span<S::SkeletalValue> rotations, S::SkeletalPosition& position, void*)
+        {
+            const auto q = Rotation(0.07 * std::sin(2 * Pi * time));
+            rotations[0] = {0, 0, 0, 1};
+            rotations[1] = {q.x, q.y, q.z, q.w};
+            position = {0, 0, 0};
+            return true;
+        };
+        A::SkeletalClipProcessingSettings settings;
+        settings.OutputFps = 30;
+        const auto result = Process(source, settings);
+        std::fprintf(stderr, "MOTION_SLOW_LOOP period=%.9f rms=%.9f detected=%d\n", result.Report.PeriodSeconds,
+                     result.Report.RecurrenceRmsRadians, int(result.Report.bLoopDetected));
+        CHECK(result.Report.bLoopDetected);
+        CHECK(std::abs(result.Report.PeriodSeconds - 1.0) * 30 <= 0.05);
+    }
     void TestQuaternionContinuity()
     {
         SampledMotionSource source;
@@ -402,15 +429,17 @@ namespace
         CheckLoop(single);
         CheckLoop(averaged);
     }
-    double Roughness(const Result& result)
+    double NoiseError(const Result& result, double outputFps)
     {
         const auto& keys = result.Clip.Channels[1].Samples;
         double sum = 0;
-        for (size_t i = 1; i + 1 < keys.size(); ++i)
+        for (size_t i = 0; i < keys.size(); ++i)
         {
-            const auto angle = [](const S::SkeletalValue& q) { return 2 * std::atan2(double(q.Z), double(q.W)); };
-            const double second = angle(keys[i - 1].Value) - 2 * angle(keys[i].Value) + angle(keys[i + 1].Value);
-            sum += second * second;
+            const auto& q = keys[i].Value;
+            const double time = result.Report.StartSeconds + i / outputFps;
+            const double expected = 0.6 * std::sin(2 * Pi * time / Period);
+            const double error = 2 * std::atan2(double(q.Z), double(q.W)) - expected;
+            sum += error * error;
         }
         return sum;
     }
@@ -421,11 +450,12 @@ namespace
         const auto original = Process(source, settings);
         settings.SmoothingRadius = 2;
         const auto smoothed = Process(source, settings);
-        std::fprintf(stderr, "MOTION_SMOOTH roughness_before=%.9f roughness_after=%.9f channels=%u\n",
-                     Roughness(original), Roughness(smoothed), smoothed.Report.SmoothedChannels);
+        std::fprintf(stderr, "MOTION_SMOOTH noise_error_before=%.9f noise_error_after=%.9f channels=%u\n",
+                     NoiseError(original, settings.OutputFps), NoiseError(smoothed, settings.OutputFps),
+                     smoothed.Report.SmoothedChannels);
         CHECK(smoothed.Report.SmoothedChannels > 0);
         CHECK(original.Report.SmoothedChannels == 0);
-        CHECK(Roughness(smoothed) < Roughness(original));
+        CHECK(NoiseError(smoothed, settings.OutputFps) < NoiseError(original, settings.OutputFps));
         CheckPeriod(original);
         CheckPeriod(smoothed);
         CHECK(std::abs(smoothed.Report.PeriodSeconds - original.Report.PeriodSeconds) * Fps <= 0.05);
@@ -434,6 +464,7 @@ namespace
 
 int main()
 {
+    TestSlowSmallLoop();
     TestSpikes();
     TestLoopAndAverageCycles();
     TestSmoothing();
