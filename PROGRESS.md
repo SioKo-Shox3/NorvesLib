@@ -9316,3 +9316,9 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261103-231220/verify-G4-GR06-CLING-LOCKON-U4.txt`（PhysicsDynamicsTest・LoggerSinkTest・Game の Debug ビルド成功、ctest で FollowCameraBehaviorTest・CriticalDampingTest・CameraCollisionSolverTest・PhysicsFixedStepPipelineTest の 4 件 100% Passed。新しいケースの出力: 上方向の最大偏差 0 度、10 Hz ±30° の揺れでヨーの角速度の最大 2.11 度/秒・振幅 0.224 度、出入りの角速度の差の最大 1.50 度/秒）。
 - Next: なし（アプリの起動の確かめは無い）。しがみつきの状態の出どころ（GR20 の拘束）と表面のアンカーの解決（GR19）は G10。
 - Notes: しがみつきの補正・角速度の実測は dt が有限で正のときだけ動く（しがみつきでないときの dt ≤ 0 のふるまいは前のまま）。しがみつき中に `SetLockOn` 等を呼んでもヨーの速度は 0 に戻さない（入りの連続を保つため）。
+
+## 2026-11-04 G4-GR06-CLING-LOCKON（run 20261104-082804 の反復 1、完了に戻す）
+- Done: 前の run（20261103-231220）で全単位を着地し完了にしたが、評価者が枠切れ（429）で未評価のまま doing に戻されていた。実装は変えずに done に戻し、評価をランナーへ渡す。
+- 証拠: 着地した版（ソース 9 ファイルがこの枝と一致）で取った `.harness/runs/20261103-231220/verify-G4-GR06-CLING-LOCKON-U4.txt` と単位の作業ツリーの `unit-verify.txt`（PhysicsDynamicsTest・LoggerSinkTest・Game の Debug ビルド成功、ctest 4 件 100% Passed）。
+- Next: ランナーの評価者の反証（Public API と Object の寿命に触れる危険地帯）。
+- Notes: 起動の要る確かめは無い。
