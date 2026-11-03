@@ -86,6 +86,8 @@
 | Camera | SpringArmComponent | 固定更新後のTransformから追従姿勢を更新 |
 | PreRender | 明示割当なし | World Lateの最後。Module/HandlerのLateはこの群外 |
 
+- HealthComponentは可変Tickを持たず、ApplyDamageを呼んだ側のTickの中でOnDamaged・OnStaggerBroken・OnDefeatedを通知する。
+- GameplayModule::Tick（通常のModule Tick）はDefeatGate::Updateの安全点で、持ち主の破棄を検出して保留を外し、保留のない撃破をOnDefeatCompleted → ProgressionState::MarkDefeatedへ渡す。
 - 全型の現在の優先度は0。CameraComponentの可変Tickはno-opで、名前だけを理由にCamera群へ変更しない。Collider/RigidBodyも可変Tickは継承no-op、物理更新本体はPhysicsModuleのPreFixedTick/FixedTickにある
 - 根拠はComponent/TickGroup.hの既定値、SkinnedMeshComponent全constructorとOnTickGroup、SpringArmComponent全constructor。主群/優先度による順序は可変群だけに適用し、FixedTickは収集されたEntity深さ優先・Component登録順のまま
 - 今後Componentを追加・群変更するときは、この表に型名、群、処理、通常/ポーズ時の分類を同じ変更で登録する。複数群では実行責務と二重更新防止を明記し、依存はDelegateで通知する。名前やModule登録順から依存グラフを暗黙生成しない

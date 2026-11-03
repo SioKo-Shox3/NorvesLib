@@ -9260,3 +9260,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 Core にヘッダだけの TStateMachine と TStateMachineTest を足す: 着地(直し 0 回)
 - U2 Gameplay モジュールに HealthComponent と HealthComponentTest を足す: 着地(直し 0 回)
 - U3 ProgressionState・DefeatGate を GameplayModule のサービスにし、progression.json と試験 2 本を足す: 着地(直し 0 回)
+- U4 文書(Testing.md・TickStages.md)を足し、タスクの verify を回す: 着地(直し 0 回)
