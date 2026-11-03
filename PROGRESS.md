@@ -9306,3 +9306,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: なし（アプリの起動の確かめは無い）。前の反復の差分は評価者が枠切れで未評価なので、この反復の後の評価で全体を見る。
 - Notes: AssetManifestTest.cpp は日本語のコメントを MSVC が読めるよう UTF-8 BOM を付けた（行末は元の LF のまま）。
 - U1 Core にロックオンの目標の口 ILockOnTarget と組み込みの 2 実装を足す: 着地(直し 0 回)
+- U2 FollowCameraProfile にしがみつきの節(cling)を足す: 着地(直し 0 回)
