@@ -182,7 +182,7 @@ namespace
     static_assert(!std::is_standard_layout_v<FramePacketType>);
     static_assert(!std::is_standard_layout_v<SceneProxyType>);
 
-    constexpr uint32_t kCaseCount = 26;
+    constexpr uint32_t kCaseCount = 27;
     constexpr float kFixedDeltaTime = 1.0f / 60.0f;
 
     struct Fixture
@@ -1811,6 +1811,137 @@ namespace
                sphereDistance >= 1.0f && characterDistance >= 1.0f;
     }
 
+    bool TestCharacterVelocityAndDepenetration(ApplicationProcessor& processor)
+    {
+        auto& world = GEngine->GetWorld();
+        CharacterFixture value;
+        if (!CreateCharacterFloor() || !CreateCharacter(value, Math::Vector3::Zero))
+        {
+            return false;
+        }
+
+        unsigned step = 0;
+        const auto checkStep = [&]()
+        {
+            const auto before = value.Owner->GetPosition();
+            if (!StepCharacter(processor) || !value.Character->GetState().bReady)
+            {
+                return false;
+            }
+            ++step;
+            const auto displacementVelocity = (value.Owner->GetPosition() - before) / kFixedDeltaTime;
+            const auto bodyVelocity = value.Body->GetLinearVelocity();
+            const float error = (bodyVelocity - displacementVelocity).Length();
+            if (!std::isfinite(error) || error > .005f)
+            {
+                std::cout << "CHARACTER_VELOCITY step=" << step << " error=" << error << '\n';
+                return false;
+            }
+            return true;
+        };
+
+        if (!checkStep() || !value.Character->GetState().bGrounded ||
+            value.Character->SetDesiredVelocity(Math::Vector3(3, 0, 0)) != EPhysicsResult::Success)
+        {
+            return false;
+        }
+        const auto straightStart = value.Owner->GetPosition();
+        for (unsigned i = 0; i < 30; ++i)
+        {
+            if (!checkStep() || !value.Character->GetState().bGrounded)
+            {
+                return false;
+            }
+        }
+        const auto straightEnd = value.Owner->GetPosition();
+        if (std::fabs(straightEnd.x - straightStart.x - 1.5f) > .02f ||
+            value.Character->SetDesiredVelocity(Math::Vector3(-1.5f, 0, 2)) != EPhysicsResult::Success)
+        {
+            return false;
+        }
+        for (unsigned i = 0; i < 30; ++i)
+        {
+            if (!checkStep() || !value.Character->GetState().bGrounded)
+            {
+                return false;
+            }
+        }
+        const auto diagonalEnd = value.Owner->GetPosition();
+        if (std::fabs(diagonalEnd.x - straightEnd.x + .75f) > .02f ||
+            std::fabs(diagonalEnd.z - straightEnd.z - 1.0f) > .02f ||
+            value.Character->SetDesiredVelocity(Math::Vector3::Zero) != EPhysicsResult::Success)
+        {
+            return false;
+        }
+        for (unsigned i = 0; i < 10; ++i)
+        {
+            if (!checkStep() || !value.Character->GetState().bGrounded)
+            {
+                return false;
+            }
+        }
+        if (value.Character->Jump(5) != EPhysicsResult::Success)
+        {
+            return false;
+        }
+        bool bAirborne = false;
+        bool bLanded = false;
+        for (unsigned i = 0; i < 120; ++i)
+        {
+            if (!checkStep())
+            {
+                return false;
+            }
+            if (!value.Character->GetState().bGrounded)
+            {
+                bAirborne = true;
+            }
+            else if (bAirborne)
+            {
+                bLanded = true;
+                break;
+            }
+        }
+        if (!bAirborne || !bLanded ||
+            value.Character->Teleport(Math::Vector3(10, 0, 0)) != EPhysicsResult::Success ||
+            !StepCharacter(processor) || !value.Character->GetState().bReady ||
+            !value.Character->GetState().bGrounded)
+        {
+            return false;
+        }
+        const float teleportError = (value.Owner->GetPosition() - Math::Vector3(10, 0, 0)).Length();
+        const float teleportSpeed = value.Body->GetLinearVelocity().Length();
+        if (!std::isfinite(teleportError) || !std::isfinite(teleportSpeed) ||
+            teleportError > .001f || teleportSpeed > .001f)
+        {
+            std::cout << "CHARACTER_TELEPORT error=" << teleportError << " speed=" << teleportSpeed << '\n';
+            return false;
+        }
+
+        // 左側の面をカプセルへ 0.05 m 食い込ませる。
+        Entity* wall = world.SpawnEntity<Entity>();
+        auto* wallCollider = wall ? world.CreateComponent<ColliderComponent>(wall) : nullptr;
+        if (!wallCollider || wallCollider->SetBox(Math::Vector3(.5f, 1, 1)) != EPhysicsResult::Success)
+        {
+            return false;
+        }
+        wall->SetPosition(Math::Vector3(10.75f, 1, 0));
+        const auto beforePush = value.Owner->GetPosition();
+        if (!StepCharacter(processor) || !value.Character->GetState().bReady ||
+            !value.Character->GetState().bGrounded)
+        {
+            return false;
+        }
+        const auto displacement = value.Owner->GetPosition() - beforePush;
+        const float speed = value.Body->GetLinearVelocity().Length();
+        if (!std::isfinite(displacement.Length()) || !std::isfinite(speed) || displacement.x > -.05f || speed > .001f)
+        {
+            std::cout << "CHARACTER_DEPENETRATION displacement_x=" << displacement.x << " speed=" << speed << '\n';
+            return false;
+        }
+        return true;
+    }
+
     bool RunCase(uint32_t caseIndex, ApplicationProcessor& processor)
     {
         switch (caseIndex)
@@ -1867,6 +1998,8 @@ namespace
             return TestCharacterExternalMovement(processor);
         case 25:
             return TestCharacterPushDynamicSphere(processor);
+        case 26:
+            return TestCharacterVelocityAndDepenetration(processor);
         default:
             return false;
         }

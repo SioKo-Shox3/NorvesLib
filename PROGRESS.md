@@ -9373,3 +9373,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U6 足場の離脱速度のケースを足し、空中で足場の水平速度を引き継ぐ(切り直し): 着地(直し 0 回)
 - U3 External の間は MoveDelta だけが効くようにし、ケースを足す: 着地(直し 0 回)
 - U4 近くの Dynamic の球を押すケースを足し、押し出しを入れる: 着地(直し 0 回)
+- U5 速度の一致と瞬間移動の除外のケースを足し、タスクの verify を回す: 着地(直し 0 回)

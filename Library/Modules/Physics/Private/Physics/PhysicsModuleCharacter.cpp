@@ -280,6 +280,42 @@ namespace NorvesLib::Modules::Physics
             c->m_PendingYaw = 0;
             c->m_bJump = false;
             c->m_bLaunch = false;
+            Math::Vector3 depenetration;
+            bool bPenetrating = false;
+            for (const auto& proxy : m_CharacterQueryProxies)
+            {
+                if (proxy.bTrigger || proxy.Collider == self->Collider || proxy.Body == self->Body)
+                {
+                    continue;
+                }
+                Math::GeometryContact contact;
+                if (PhysicsBroadphase::ComputeContact(*self, proxy, contact) && contact.Depth > 0.0f)
+                {
+                    bPenetrating = true;
+                    break;
+                }
+            }
+            if (bPenetrating)
+            {
+                // 通常の移動と足場の運搬を除き、めり込み解消だけの変位を求める。
+                auto recoveryRequest = request;
+                recoveryRequest.Displacement = {};
+                recoveryRequest.PlatformDisplacement = {};
+                recoveryRequest.bWasGrounded = false;
+                recoveryRequest.bAllowGroundSnap = false;
+                recoveryRequest.bAllowStep = false;
+                CharacterMoveResult recovered;
+                const auto recoveryStatus = CharacterMover::Move(m_CharacterQueryProxies, c->m_Settings.Movement,
+                                                                  recoveryRequest, m_CharacterScratch, recovered);
+                if (recoveryStatus != Core::Scene::EPhysicsSceneQueryResult::Success)
+                {
+                    c->ResetMotion(false);
+                    c->m_State.Result = EPhysicsResult::InvalidState;
+                    c->m_State.QueryResult = recoveryStatus;
+                    continue;
+                }
+                depenetration = recovered.Displacement;
+            }
             CharacterMoveResult moved;
             const auto status = CharacterMover::Move(m_CharacterQueryProxies, c->m_Settings.Movement, request,
                                                      m_CharacterScratch, moved);
@@ -293,7 +329,7 @@ namespace NorvesLib::Modules::Physics
             auto target = initial;
             target.position += moved.Displacement;
             target.rotation = Math::Quaternion(Math::Vector3::UnitY, requestedYaw) * target.rotation;
-            const auto velocity = body.Component->m_LinearVelocity + moved.Displacement / dt;
+            const auto velocity = body.Component->m_LinearVelocity + (moved.Displacement - depenetration) / dt;
             if (!FiniteCharacterVector(target.position) || !FiniteCharacterVector(velocity))
             {
                 c->ResetMotion(false);
