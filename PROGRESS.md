@@ -9305,3 +9305,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261103-163359/verify-G5-GR89-NVTRN-FORMAT-U6.txt`（CookedMeshTest・AssetSystemTest の Debug ビルド exit=0、ctest で AssetManifestTest・AssetSystemTest・CookedTextureTest・CookedTerrainTest の 4 件 100% Passed）
 - Next: なし（アプリの起動の確かめは無い）。前の反復の差分は評価者が枠切れで未評価なので、この反復の後の評価で全体を見る。
 - Notes: AssetManifestTest.cpp は日本語のコメントを MSVC が読めるよう UTF-8 BOM を付けた（行末は元の LF のまま）。
+- U0 試験と煙の確かめが共用する小さな PNG16 のフィクスチャ: 着地(直し 0 回)
