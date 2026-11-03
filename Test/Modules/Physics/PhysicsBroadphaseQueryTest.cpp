@@ -1,5 +1,12 @@
 ﻿// PhysicsBroadphaseQueryTest — Physics private SAP と値型 snapshot query の契約を検証する。
 
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+
 #include "Physics/PhysicsBroadphase.h"
 #include "Physics/IPhysicsModule.h"
 #include "Physics/PhysicsModule.h"
@@ -16,9 +23,15 @@
 #endif
 #include <cassert>
 #include <cmath>
+#include <cstdlib>
+#include <cstring>
+#include <cwchar>
+#include <crtdbg.h>
 #include <iostream>
 #include <limits>
 #include <type_traits>
+
+#include <Windows.h>
 
 using namespace NorvesLib;
 using namespace NorvesLib::Core;
@@ -227,7 +240,8 @@ namespace
         {
             Physics = RegisterPhysicsModule(Registry);
             assert(Physics != nullptr);
-            assert(Registry.InstallAll(Engine));
+            const bool bInstalled = Registry.InstallAll(Engine);
+            assert(bInstalled);
             World.Initialize();
         }
 
@@ -911,23 +925,149 @@ namespace
         fixture.Physics->StepFixed(1.0f / 60.0f);
         assert(query.Raycast(ray, 10.0f, hit) == EPhysicsSceneQueryResult::Success);
     }
+
+    struct TestCase
+    {
+        const char* Name;
+        void (*Run)();
+    };
+
+    constexpr uint32_t kCaseCount = 12;
+    constexpr TestCase kCases[] = {
+        {"TestSapTouchingPermutationAndUnregister", &TestSapTouchingPermutationAndUnregister},
+        {"TestValueOverlapAllShapes", &TestValueOverlapAllShapes},
+        {"TestLegacyAppendContract", &TestLegacyAppendContract},
+        {"TestSnapshotScaleAndRayContract", &TestSnapshotScaleAndRayContract},
+        {"TestColliderMetadataSnapshot", &TestColliderMetadataSnapshot},
+        {"TestColliderLocalPoseSnapshot", &TestColliderLocalPoseSnapshot},
+        {"TestUnifiedPublishedQuery", &TestUnifiedPublishedQuery},
+        {"TestPublishedQueryBatch", &TestPublishedQueryBatch},
+        {"TestLayerMaskCandidatePairs", &TestLayerMaskCandidatePairs},
+        {"TestLayerMaskContactsAndEvents", &TestLayerMaskContactsAndEvents},
+        {"TestExplicitSnapshotRefresh", &TestExplicitSnapshotRefresh},
+        {"TestRefreshRejectedDuringPhysicsNotification", &TestRefreshRejectedDuringPhysicsNotification},
+    };
+    static_assert(sizeof(kCases) / sizeof(kCases[0]) == kCaseCount);
+
+    bool TryParseChildCase(const char* argument, uint32_t& outCaseIndex)
+    {
+        constexpr const char* prefix = "--child=";
+        constexpr size_t prefixLength = 8;
+        if (std::strncmp(argument, prefix, prefixLength) != 0 || argument[prefixLength] == '\0')
+        {
+            return false;
+        }
+
+        uint32_t caseIndex = 0;
+        for (const char* digit = argument + prefixLength; *digit != '\0'; ++digit)
+        {
+            if (*digit < '0' || *digit > '9')
+            {
+                return false;
+            }
+            caseIndex = caseIndex * 10 + static_cast<uint32_t>(*digit - '0');
+            if (caseIndex >= kCaseCount)
+            {
+                return false;
+            }
+        }
+        outCaseIndex = caseIndex;
+        return true;
+    }
+
+    bool RunChildProcess(uint32_t caseIndex, DWORD& outExitCode)
+    {
+        outExitCode = EXIT_FAILURE;
+        wchar_t executablePath[MAX_PATH]{};
+        const DWORD pathLength = GetModuleFileNameW(nullptr, executablePath, MAX_PATH);
+        if (pathLength == 0 || pathLength >= MAX_PATH)
+        {
+            std::cerr << "実行ファイルのパスを取得できません: " << GetLastError() << std::endl;
+            return false;
+        }
+
+        wchar_t commandLine[MAX_PATH + 64]{};
+        if (swprintf_s(commandLine, L"\"%s\" --child=%u", executablePath, caseIndex) <= 0)
+        {
+            return false;
+        }
+
+        STARTUPINFOW startupInfo{};
+        startupInfo.cb = sizeof(startupInfo);
+        startupInfo.dwFlags = STARTF_USESTDHANDLES;
+        startupInfo.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+        startupInfo.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);
+        startupInfo.hStdError = GetStdHandle(STD_ERROR_HANDLE);
+        PROCESS_INFORMATION processInfo{};
+        if (CreateProcessW(executablePath, commandLine, nullptr, nullptr, TRUE, 0, nullptr, nullptr,
+            &startupInfo, &processInfo) == FALSE)
+        {
+            std::cerr << "子プロセスを起動できません: " << GetLastError() << std::endl;
+            return false;
+        }
+
+        // 全12ケースが停止しても、ctestの300秒制限より先に終了する。
+        constexpr DWORD caseTimeoutMilliseconds = 20000;
+        const DWORD waitResult = WaitForSingleObject(processInfo.hProcess, caseTimeoutMilliseconds);
+        if (waitResult != WAIT_OBJECT_0)
+        {
+            std::cerr << "子プロセスの待機に失敗しました: " << waitResult << std::endl;
+            TerminateProcess(processInfo.hProcess, ERROR_TIMEOUT);
+            WaitForSingleObject(processInfo.hProcess, 1000);
+            outExitCode = ERROR_TIMEOUT;
+        }
+        const bool bReadExitCode = waitResult == WAIT_OBJECT_0
+            && GetExitCodeProcess(processInfo.hProcess, &outExitCode) != FALSE;
+        CloseHandle(processInfo.hThread);
+        CloseHandle(processInfo.hProcess);
+        return waitResult == WAIT_OBJECT_0 && bReadExitCode && outExitCode == EXIT_SUCCESS;
+    }
 } // namespace
 
-int main()
+int main(int argumentCount, char** arguments)
 {
-    std::cout << "PhysicsBroadphaseQueryTest start\n";
-    TestSapTouchingPermutationAndUnregister();
-    TestValueOverlapAllShapes();
-    TestLegacyAppendContract();
-    TestSnapshotScaleAndRayContract();
-    TestColliderMetadataSnapshot();
-    TestColliderLocalPoseSnapshot();
-    TestUnifiedPublishedQuery();
-    TestPublishedQueryBatch();
-    TestLayerMaskCandidatePairs();
-    TestLayerMaskContactsAndEvents();
-    TestExplicitSnapshotRefresh();
-    TestRefreshRejectedDuringPhysicsNotification();
-    std::cout << "PhysicsBroadphaseQueryTest passed\n";
-    return 0;
+    if (argumentCount == 2)
+    {
+        uint32_t caseIndex = 0;
+        if (!TryParseChildCase(arguments[1], caseIndex))
+        {
+            std::cerr << "不正なケース引数です" << std::endl;
+            return EXIT_FAILURE;
+        }
+
+        // assert失敗時はダイアログで待たず、診断をstderrへ出して終了する。
+        SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
+        _set_error_mode(_OUT_TO_STDERR);
+        _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+#ifdef _DEBUG
+        _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE);
+        _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
+        _CrtSetReportMode(_CRT_ERROR, _CRTDBG_MODE_FILE);
+        _CrtSetReportFile(_CRT_ERROR, _CRTDBG_FILE_STDERR);
+#endif
+        kCases[caseIndex].Run();
+        return EXIT_SUCCESS;
+    }
+    if (argumentCount != 1)
+    {
+        std::cerr << "不正な引数です" << std::endl;
+        return EXIT_FAILURE;
+    }
+
+    std::cout << "PhysicsBroadphaseQueryTest start" << std::endl;
+    bool bPassed = true;
+    for (uint32_t caseIndex = 0; caseIndex < kCaseCount; ++caseIndex)
+    {
+        DWORD exitCode = EXIT_FAILURE;
+        const bool bCasePassed = RunChildProcess(caseIndex, exitCode);
+        std::ostream& output = bCasePassed ? std::cout : std::cerr;
+        output << kCases[caseIndex].Name << (bCasePassed ? " passed" : " failed")
+            << " (exit_code=" << exitCode << ")" << std::endl;
+        bPassed &= bCasePassed;
+    }
+    if (bPassed)
+    {
+        std::cout << "PhysicsBroadphaseQueryTest passed" << std::endl;
+    }
+    return bPassed ? EXIT_SUCCESS : EXIT_FAILURE;
 }
