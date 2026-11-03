@@ -149,6 +149,9 @@ namespace NorvesLib::Core::Rendering
          */
         void BeginFrame();
 
+        /** @brief GameThread から次の BeginFrame へ、1 回だけ使う固定刻みの経過時間と累積秒を渡す */
+        void SetFixedFrameTime(float deltaSeconds, double totalSeconds);
+
         /**
          * @brief 描画実行
          *

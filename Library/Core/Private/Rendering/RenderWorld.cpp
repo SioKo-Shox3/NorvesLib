@@ -185,6 +185,11 @@ namespace NorvesLib::Core::Rendering
         m_bAsyncAssetProducersQuiesced = true;
     }
 
+    void RenderWorld::SetFixedFrameTime(float deltaSeconds, double totalSeconds)
+    {
+        m_RenderingCoordinator.SetFixedFrameTime(deltaSeconds, totalSeconds);
+    }
+
     void RenderWorld::BeginFrame()
     {
         if (!m_bInitialized)

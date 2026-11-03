@@ -4460,6 +4460,13 @@ namespace NorvesLib::Core::Rendering
         return true;
     }
 
+    void RenderingCoordinator::SetFixedFrameTime(float deltaSeconds, double totalSeconds)
+    {
+        m_FixedFrameDeltaSeconds = deltaSeconds;
+        m_FixedFrameTotalSeconds = totalSeconds;
+        m_bFixedFrameTimePending = true;
+    }
+
     void RenderingCoordinator::BeginFrame()
     {
         if (!m_bInitialized)
@@ -4496,7 +4503,16 @@ namespace NorvesLib::Core::Rendering
                 ++m_DeterministicEpochFrames;
             }
         }
-        m_TotalTime += deltaTime;
+        if (!m_bDeterministicCapture && m_bFixedFrameTimePending)
+        {
+            deltaTime = m_FixedFrameDeltaSeconds;
+            m_TotalTime = m_FixedFrameTotalSeconds;
+        }
+        else
+        {
+            m_TotalTime += deltaTime;
+        }
+        m_bFixedFrameTimePending = false;
 
         // ST経路ではReadyパケットがRTに消費されないため、フレーム開始時に再利用する。
         // MT経路ではReady→QueuedのハンドオフをRT側が行うため、ここでは触らない。
