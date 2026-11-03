@@ -9235,3 +9235,11 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 子プロセスの待ちは 1 ケース 20 秒で打ち切る（12 ケースの合計は Debug で約 0.5 秒）。SceneQueryRaycastTest・SceneQueryOverlapTest・PhysicsModuleLinkTest もこの枠の Debug で Passed
 - U1 二関節 IK の解析解の純関数を Core に足す: 着地(直し 0 回)
 - U2 TwoBoneIKTest を SkeletalAnimationSamplingTest に足し、タスクの verify を通す: 着地(直し 0 回)
+
+## 2026-11-03 G9-GR14-TWO-BONE-IK（run 20261103-115307 の反復 2、完了）
+- Done: `Library/Core/Public/Animation/TwoBoneIK.h` に `SolveTwoBoneIK`（`TwoBoneIKInput`・`TwoBoneIKResult`）を足した。モデル空間の根・中間・端・目標・ポールの方向・maxStretch・soft limit の幅を受け、新しい中間・端の位置と、根と中間の区間の「今の向き→新しい向き」の最小回転の差分（ねじれなし）を返す。内部は double、ヒープ確保・反復・時計・乱数なし。到達距離のクランプ、完全伸展の手前の soft limit、退化（目標＝根・ポールが軸と平行・区間長 0）では FallbackPole で代えて有限値を返し、使った曲げの方向を `PoleUsed` で返す（次回の FallbackPole に渡せる）
+- Done: `TwoBoneIKTest`（`SkeletalAnimationSamplingTest` の中）を足した。固定の種で 1 万件の到達可能な目標について、端の到達・区間長・届かない目標の完全伸展・ポールの 720 段の掃引で膝がポールの側・退化 8 件で全成分が有限・ねじれと差分の作用方向を確かめる
+- 実測: 端の誤差 0 m、区間長の相対誤差 4.7e-7／5.7e-7、届かない目標の端の誤差 1.8e-7 m、ねじれ 2.1e-6／5.3e-6 rad、差分の作用方向の誤差 9.4e-8／9.8e-8、ポール掃引の最小内積 0.19（正）
+- 証拠: 作業単位の確かめの出力（`cmake --build build --config Debug --target SkeletalAnimationSamplingTest -- /m:1` 終了コード 0、`ctest ... -R "^(SkeletalAnimationSamplingTest)$"` 1 本 Passed、実行ファイルの直接実行で `TwoBoneIKTest PASS`）
+- Next: なし（アプリの起動を要する確かめは無い）。関節ローカルへの戻しは呼び出し側（G9-GR15-POSE-MODIFIER-BASE・G9-GR85-FOOT-REPLANT）がする
+- Notes: ポールが軸と平行かの判定は射影長の絶対値 1e-6。非有限な関節位置は非有限成分を 0 に置き換える。反平行に近い区間の回転は 180° の代替軸を使う
