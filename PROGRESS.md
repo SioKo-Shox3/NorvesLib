@@ -9257,3 +9257,9 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261103-113141/u4-unit-verify.txt`（verify の 2 行: Debug の Game・PhysicsDynamicsTest のビルド EXIT=0、ctest の CombatSweepTest・PhysicsModuleLinkTest・PhysicsDynamicsTest・PhysicsLifecycleEventTest が 100% Passed）
 - Next: なし（アプリを起動する確かめは無い）。hitbox・hurtbox の Component・判定窓・通知は G8-GR16-COMBAT-RUNTIME
 - Notes: N の式の「動き」は 2 体の相対の動きの上界として両者の動きの和にした（片方だけ動く場合は done-when の式と同じ）
+
+## G4-GR06-FOLLOW-CASES 統合ブランチの取り込み（2026-11-03）
+
+- Done: `feature/scene-launcher` を取り込み、`Test/Modules/Physics/CMakeLists.txt` の衝突を `FollowCameraBehaviorTest` と `CombatSweepTest` の両方の MEMBER・add_test を残して解いた
+- 証拠: `.harness/runs/20261103-223637/verify-build.txt`（Debug の PhysicsDynamicsTest・LoggerSinkTest・Game のビルド EXIT=0）、`.harness/runs/20261103-223637/verify-ctest.txt`（FollowCameraBehaviorTest・CriticalDampingTest・CameraCollisionSolverTest・PhysicsFixedStepPipelineTest が 100% Passed）。同じ束の CombatSweepTest も Passed
+- Next: なし（アプリを起動する確かめは無い）
