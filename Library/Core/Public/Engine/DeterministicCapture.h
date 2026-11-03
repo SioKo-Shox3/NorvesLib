@@ -64,9 +64,12 @@ namespace NorvesLib::Core::Engine
                 return 0;
             }
 
-            m_Carry += m_StepNumeratorNanoseconds;
-            m_DeltaNanoseconds = m_Carry / m_StepDenominator;
-            m_Carry -= m_DeltaNanoseconds * m_StepDenominator;
+            // 累積を切り上げ、k×刻み以上かつ超過を 1 ns 未満に保つ。
+            // 持ち越しは超過×分母であり、0 以上かつ分母未満となる。
+            // need が 0 以下となる 1 ns 未満の刻みも、差分 0 として扱う。
+            const int64_t need = m_StepNumeratorNanoseconds - m_Carry;
+            m_DeltaNanoseconds = (need + m_StepDenominator - 1) / m_StepDenominator;
+            m_Carry = m_DeltaNanoseconds * m_StepDenominator - need;
             m_TotalNanoseconds += m_DeltaNanoseconds;
             return m_DeltaNanoseconds;
         }

@@ -9216,3 +9216,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 固定刻みのフレームの時計の型と刻みの文字列の解釈を足す: 着地(直し 0 回)
 - U2 原点でない位置に生成した補間の Entity が最初のフレームで原点から補間されないことを押さえる: 着地(直し 0 回)
 - U3 フレームの経過時間を 1 つの差し替えられる口にし、--fixed-frame-dt= を解釈して FramePacket の時間へ渡す: 着地(直し 1 回)
+- U6 レビュー済みの U5 の差分を当て直し、タスクの verify を回す（最後の単位）: 着地(直し 0 回)
