@@ -6,6 +6,10 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#ifdef NORVES_MOTION_SAMPLE_REGRESSION_TEST
+#include "Animation/SkeletalClipRetarget.h"
+#include "Animation/SkeletalClipSampling.h"
+#endif
 
 #define CHECK(x)                                                                                                       \
     do                                                                                                                 \
@@ -403,6 +407,7 @@ namespace
     }
 } // namespace
 
+#ifndef NORVES_MOTION_SAMPLE_REGRESSION_TEST
 int main()
 {
     TestProfileRanges();
@@ -413,3 +418,297 @@ int main()
     std::puts("RIG_MOTION_CLEANUP result=pass");
     return 0;
 }
+
+#else
+namespace
+{
+    constexpr double Degrees = 180 / 3.14159265358979323846;
+    // V01fullを許容0.5 radで測った再帰誤差は6.76403533度。
+    // 約1.25倍の8.455度を8.5度に丸めて固定し、10度を超えない。
+    constexpr double SampleLoopRmsThresholdRadians = 8.5 / Degrees;
+
+    C::AnsiString SampleJointName(const Core::Bvh::Joint& joint)
+    {
+        return C::AnsiString(C::AnsiStringView(reinterpret_cast<const char*>(joint.Name.data()), joint.Name.size()));
+    }
+
+    C::AnsiString SampleTarget(F::Fixture& f, const Core::Bvh::BvhDocument& bvh)
+    {
+        auto binary = f.Binary;
+        binary.resize(224 + bvh.Joints.size() * 64, 0);
+        C::VariableArray<Core::Bvh::Vector3d> positions(bvh.Joints.size());
+        Core::JsonWriter json;
+        json.BeginObject();
+        json.BeginArray("nodes");
+        for (size_t i = 0; i < bvh.Joints.size(); ++i)
+        {
+            const auto& joint = bvh.Joints[i];
+            auto world = joint.Offset;
+            if (joint.Parent != UINT32_MAX)
+            {
+                CHECK(joint.Parent < i);
+                world.X += positions[joint.Parent].X;
+                world.Y += positions[joint.Parent].Y;
+                world.Z += positions[joint.Parent].Z;
+            }
+            positions[i] = world;
+            // OFFSETだけのrestなので、逆バインド行列は累積平行移動の逆になる。
+            for (size_t k = 0; k < 16; ++k)
+                F::Float(binary, 224 + i * 64 + k * 4, k % 5 == 0 ? 1.f : 0.f);
+            F::Float(binary, 224 + i * 64 + 48, float(-world.X));
+            F::Float(binary, 224 + i * 64 + 52, float(-world.Y));
+            F::Float(binary, 224 + i * 64 + 56, float(-world.Z));
+            json.BeginObject();
+            json.WriteString("name", SampleJointName(joint).c_str());
+            json.BeginArray("translation");
+            for (double v : {joint.Offset.X, joint.Offset.Y, joint.Offset.Z})
+                json.WriteNumberElement(v);
+            json.EndArray();
+            json.BeginArray("children");
+            for (size_t child = i + 1; child < bvh.Joints.size(); ++child)
+                if (bvh.Joints[child].Parent == i)
+                    json.WriteNumberElement(double(child));
+            json.EndArray();
+            json.EndObject();
+        }
+        json.BeginObject();
+        json.WriteString("name", "SampleMesh");
+        json.WriteUInt64("mesh", 0);
+        json.WriteUInt64("skin", 0);
+        json.EndObject();
+        json.EndArray();
+        json.BeginArray("skins");
+        json.BeginObject();
+        json.WriteUInt64("inverseBindMatrices", 9);
+        json.WriteUInt64("skeleton", 0);
+        json.BeginArray("joints");
+        for (size_t i = 0; i < bvh.Joints.size(); ++i)
+            json.WriteNumberElement(double(i));
+        json.EndArray();
+        json.EndObject();
+        json.EndArray();
+        json.WriteUInt64("scene", 0);
+        json.BeginArray("scenes");
+        json.BeginObject();
+        json.BeginArray("nodes");
+        json.WriteNumberElement(0);
+        json.WriteNumberElement(double(bvh.Joints.size()));
+        json.EndArray();
+        json.EndObject();
+        json.EndArray();
+        json.EndObject();
+        CHECK(json.IsComplete());
+        // 合成三角形の頂点データだけを再利用し、骨格とIBMとsceneはBVHから生成する。
+        const auto begin = f.Json.find(C::AnsiStringView("\"buffers\":"));
+        const auto end = f.Json.find(C::AnsiStringView("\"skins\":"));
+        CHECK(begin != C::AnsiString::npos && end > begin);
+        char length[64], matrices[64], count[64];
+        std::snprintf(length, sizeof(length), "\"byteLength\":%zu", binary.size());
+        std::snprintf(matrices, sizeof(matrices), "\"byteLength\":%zu", bvh.Joints.size() * 64);
+        std::snprintf(count, sizeof(count), "\"count\":%zu,\"type\":\"MAT4\"", bvh.Joints.size());
+        auto resources = F::Replace(f.Json.substr(begin, end - begin), "\"byteLength\":416", length);
+        resources = F::Replace(resources, "\"byteLength\":128", matrices);
+        resources = F::Replace(resources, "\"count\":2,\"type\":\"MAT4\"", count);
+        const C::AnsiString generated(json.ToString().c_str());
+        auto target = C::AnsiString("{\"asset\":{\"version\":\"2.0\"},") + resources + generated.substr(1);
+        f.SetBuffer(binary);
+        F::WriteBytes(f.Root / "RigV1Fixture/target.gltf", F::Bytes(target.begin(), target.end()));
+        return target;
+    }
+
+    C::AnsiString SampleProfile(const Core::Bvh::BvhDocument& bvh, bool loop, bool spikes)
+    {
+        Core::JsonWriter json;
+        json.BeginObject();
+        json.WriteUInt64("version", 1);
+        json.WriteString("vocabulary", "quadruped_v1");
+        json.BeginObject("axes");
+        json.WriteString("up", "+Y");
+        json.WriteString("forward", "+Z");
+        json.WriteString("handedness", "right");
+        json.EndObject();
+        json.BeginObject("units");
+        json.WriteNumber("position_scale", 1);
+        json.EndObject();
+        json.WriteString("position_convention", "additive");
+        json.BeginObject("time");
+        json.WriteString("mode", "header_frame_time");
+        json.EndObject();
+        // 同一骨格の恒等写像。可変長のspine枠で、root以外も省略せず全関節を写す。
+        // 接地の役割解析はこの回帰の対象外なので有効にしない。
+        for (bool target : {false, true})
+        {
+            json.BeginObject(target ? "target_roles" : "source_roles");
+            for (bool root : {true, false})
+            {
+                json.BeginArray(root ? "root" : "spine");
+                for (size_t i = root ? 0 : 1; i < (root ? 1 : bvh.Joints.size()); ++i)
+                {
+                    const auto name = SampleJointName(bvh.Joints[i]);
+                    if (target)
+                    {
+                        json.BeginObject();
+                        json.WriteString("joint", name.c_str());
+                        json.BeginArray("C");
+                        for (size_t k = 0; k < 9; ++k)
+                            json.WriteNumberElement(k % 4 == 0 ? 1 : 0);
+                        json.EndArray();
+                        json.EndObject();
+                    }
+                    else
+                        json.WriteStringElement(C::String(name.c_str()));
+                }
+                json.EndArray();
+            }
+            json.EndObject();
+        }
+        json.BeginObject("processing");
+        // ヘッダの丸められたFrame Timeを逆数にせず、30 Hzの出力格子を使う。
+        // 逆数だとfloatのDurationと最終キーが同時刻に丸まり、処理が拒否される。
+        json.WriteNumber("output_fps", 30);
+        json.WriteString("loop_mode", loop ? "auto" : "none");
+        json.WriteBool("average_cycles", loop);
+        json.WriteUInt64("smoothing_radius", 0);
+        // 判定量はコマ間の回転量ではなく、前後のslerp中点からの補間誤差。
+        // 15度は21コマ目の23.34度より小さく、近傍の統計による閾値約4.9度より大きい。
+        json.WriteNumber("spike_threshold_degrees", spikes ? 15 : 0);
+        json.WriteUInt64("spike_window", 2);
+        json.EndObject();
+        json.EndObject();
+        CHECK(json.IsComplete());
+        return C::AnsiString(json.ToString().c_str());
+    }
+
+    S::SkeletalValue SampleRotation(const S::SkeletalAnimationClip& clip, uint32_t joint, double seconds)
+    {
+        for (const auto& channel : clip.Channels)
+        {
+            if (channel.JointIndex != joint || channel.Path != S::SkeletalAnimationPath::Rotation)
+                continue;
+            CHECK(!channel.Samples.empty());
+            const float time = float(seconds);
+            if (time <= channel.Samples.front().TimeSeconds)
+                return channel.Samples.front().Value;
+            if (time >= channel.Samples.back().TimeSeconds)
+                return channel.Samples.back().Value;
+            const auto next = std::lower_bound(channel.Samples.begin(), channel.Samples.end(), time,
+                                               [](const auto& sample, float t) { return sample.TimeSeconds < t; });
+            return A::Detail::SampleSkeletalChannelInterval(channel, *(next - 1), *next, time);
+        }
+        CHECK(false);
+        return {};
+    }
+
+    double SampleAngle(const S::SkeletalValue& a, const S::SkeletalValue& b)
+    {
+        const double dot = double(a.X) * b.X + double(a.Y) * b.Y + double(a.Z) * b.Z + double(a.W) * b.W;
+        const double aa = double(a.X) * a.X + double(a.Y) * a.Y + double(a.Z) * a.Z + double(a.W) * a.W;
+        const double bb = double(b.X) * b.X + double(b.Y) * b.Y + double(b.Z) * b.Z + double(b.W) * b.W;
+        CHECK(aa > 0 && bb > 0);
+        return 2 * std::acos(std::clamp(std::abs(dot) / std::sqrt(aa * bb), 0., 1.)) * Degrees;
+    }
+
+    double SampleInterpolationError(const S::SkeletalAnimationClip& clip, uint32_t joint, double time, double interval)
+    {
+        const auto previous = SampleRotation(clip, joint, time - interval);
+        const auto next = SampleRotation(clip, joint, time + interval);
+        const auto midpoint = A::Detail::Slerp({previous.X, previous.Y, previous.Z, previous.W},
+                                              {next.X, next.Y, next.Z, next.W}, .5f);
+        return SampleAngle(SampleRotation(clip, joint, time), {midpoint.x, midpoint.y, midpoint.z, midpoint.w});
+    }
+
+    struct SampleResult
+    {
+        S::SkeletalAnimationClip Clip;
+        A::SkeletalClipRetargetReport Report;
+    };
+    SampleResult ProcessSample(const A::SkeletalRetargetClipSource& source, const S::RigAuthoringCpu& target,
+                               const A::SkeletalRoleProfile& profile)
+    {
+        A::SkeletalClipRetargetSettings settings;
+        settings.Processing = profile.Processing;
+        if (settings.Processing.Loop == A::SkeletalLoopSelection::Auto)
+            settings.Processing.LoopRmsThresholdRadians = SampleLoopRmsThresholdRadians;
+        SampleResult result;
+        C::AnsiString error;
+        const bool success = A::RetargetSkeletalClip(source, target, profile, settings, result.Clip, result.Report, error);
+        if (!success)
+            std::fprintf(stderr, "実物の写像が拒否された: %s\n", error.c_str());
+        CHECK(success);
+        CHECK(result.Report.UnmappedSource == 0 && result.Report.UnmappedTarget == 0);
+        Run(target, profile, result.Clip);
+        return result;
+    }
+}
+
+int main()
+{
+    const char* directory = std::getenv("NORVES_MOTION_SAMPLE_DIR");
+    if (!directory || !*directory)
+        return 125;
+    // 外部BVHは直接読むだけで、試験の一時領域にも複製しない。
+    const auto inputPath = std::filesystem::absolute(std::filesystem::path(directory) /
+                                                   "Dog#V01full/Dog_Dog_rot6d_pred.bvh");
+    const auto bytes = F::ReadBytes(inputPath);
+    Core::Bvh::BvhDocument bvh;
+    CHECK(Core::Bvh::DecodeBvh(bytes, {}, bvh).Succeeded());
+    CHECK(bvh.Joints.size() == 53 && bvh.FrameCount == 67 && bvh.FrameTimeSeconds > 0);
+    F::Fixture f;
+    const auto targetJson = SampleTarget(f, bvh);
+    const auto target = f.Import(targetJson, "RigV1Fixture/target.gltf");
+    const auto profileText = SampleProfile(bvh, true, true);
+    A::SkeletalRoleProfile profile;
+    CHECK(A::ParseSkeletalRoleProfile(F::View(profileText), {}, profile).Succeeded());
+    A::SkeletalRetargetClipSource source;
+    C::AnsiString error;
+    CHECK(A::MakeBvhRetargetClipSource(bvh, profile.Settings, C::String("MotionSample"), source, error));
+    const auto loop = ProcessSample(source, target, profile);
+
+    // cookと同じ写像・後処理を通したクリップの全関節で閉じを測る。
+    const auto& output = loop.Clip;
+    double seamMean = 0, seamMax = 0;
+    for (uint32_t joint = 0; joint < bvh.Joints.size(); ++joint)
+    {
+        const double angle = SampleAngle(SampleRotation(output, joint, 0),
+                                         SampleRotation(output, joint, output.DurationSeconds));
+        seamMean += angle;
+        seamMax = std::max(seamMax, angle);
+    }
+    seamMean /= bvh.Joints.size();
+
+    A::SkeletalRoleProfile spikeProfile, rawProfile;
+    CHECK(A::ParseSkeletalRoleProfile(F::View(SampleProfile(bvh, false, true)), {}, spikeProfile).Succeeded());
+    CHECK(A::ParseSkeletalRoleProfile(F::View(SampleProfile(bvh, false, false)), {}, rawProfile).Succeeded());
+    const auto spike = ProcessSample(source, target, spikeProfile);
+    const auto raw = ProcessSample(source, target, rawProfile);
+    uint32_t finger = UINT32_MAX;
+    for (uint32_t joint = 0; joint < target.GetData()->Geometry.Joints.size(); ++joint)
+        if (target.GetData()->Geometry.Joints[joint].Name == C::String("Bip01_L_Finger0"))
+            finger = joint;
+    CHECK(finger != UINT32_MAX);
+    const double time = 21 * bvh.FrameTimeSeconds;
+    const double errorBefore = SampleInterpolationError(raw.Clip, finger, time, bvh.FrameTimeSeconds);
+    const double errorAfter = SampleInterpolationError(spike.Clip, finger, time, bvh.FrameTimeSeconds);
+    const auto& report = loop.Report.Processing;
+    const double periodFrames = report.PeriodSeconds / bvh.FrameTimeSeconds;
+    std::printf("MOTION_SAMPLE period_frames=%.9g recurrence_rms_degrees=%.9g loop_rms_threshold_degrees=%.9g "
+                "seam_mean_degrees=%.9g seam_max_degrees=%.9g seam_before_degrees=%.9g seam_after_degrees=%.9g "
+                "replaced_spikes=%u averaged_cycles=%u spike_replaced_spikes=%u spike_frame=21 "
+                "spike_time_seconds=%.9g spike_error_before_degrees=%.9g spike_error_after_degrees=%.9g\n",
+                periodFrames, report.RecurrenceRmsRadians * Degrees, SampleLoopRmsThresholdRadians * Degrees,
+                seamMean, seamMax, report.SeamBeforeRadians * Degrees, report.SeamAfterRadians * Degrees,
+                report.ReplacedSpikes, report.AveragedCycles, spike.Report.Processing.ReplacedSpikes, time,
+                errorBefore, errorAfter);
+    std::fflush(stdout);
+    // 未整形の21コマ目が既知の補間誤差付近に無ければ、格子のずれとして止める。
+    CHECK(std::abs(errorBefore - 23.34) <= 1);
+    CHECK(report.bLoopDetected && report.AveragedCycles > 1);
+    CHECK(periodFrames >= 12 && periodFrames <= 13);
+    CHECK(seamMean <= 1 && seamMax <= 3);
+    CHECK(seamMean < report.SeamBeforeRadians * Degrees);
+    CHECK(report.SeamAfterRadians < report.SeamBeforeRadians);
+    CHECK(spike.Report.Processing.ReplacedSpikes >= 1);
+    CHECK(errorAfter < errorBefore && errorAfter < 15);
+    return 0;
+}
+#endif
