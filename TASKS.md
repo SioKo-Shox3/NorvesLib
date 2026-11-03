@@ -5294,7 +5294,7 @@
 - notes: 確かめ直しのうち起動の要る分。GR01 の受け入れ確認「Game 実機で TICK_STAGE_SMOKE order=ok をログに出す」(ロードマップ 145 行、要件 GameFeatureRequirements.md:369)は、印を出すコードはある(`Rendering3DTestRoutine.cpp:3408-3415`。後段のカメラの送信が成功したとき、`CAMERA_COMPONENT_SMOKE stage=sync` と同じ所で 1 回)が、実ログで見た記録が無く(`TickStages.md:73`、`GameFoundationValidation.md:55`)、どの台本も照らしていない。同じ所の sync の印は Test-CameraWorld が照らすので、そこへ足して以後の起動でも崩れたら止まるようにする。M9 のスモーク(`M9WorldAcceptanceTest`)は既存の `TEST-FULL-CTEST-BASELINE-CHECK` が全体の CTest で回すので、ここでは回さない。起動画面の 3 視点が「G1 の着手前と同じ」かの比較はしない(後段のカメラ確定の移設は 2026-10-02 で、その後の起動画面の作業が基準の撮影を何度も取り直しており、着手前の基準に意味が無い)。人の手でしか確かめられない実機の確認(ロック中に画面端を越えても視点が止まらない、Alt+Tab で押しっぱなしにならない、再アクティブでロックが戻る、窓の移動・大きさの変更でクリップが追う、--imgui のロック解除キー、実パッドの接続・抜き差し・振動、非アクティブで振動が止まる)はこのタスクに入れない(作者の確認に回す。純ロジックは InputFocusPipelineTest・HapticsFramePipelineTest などが押さえている)。G1 の Rendering3DTest の後段のカメラ(選定課題 G1-S3 は (a)、実装済み)を変えない。
 
 ## G4-GR07-MOVER-CASES: カプセル移動の核（CharacterMover）を受け入れ確認の数値で試験し、外れた所を直す
-- status: done
+- status: doing
 - after: G1-GR08-BROADPHASE-INTEGRATION, G1-GR08-LAYER-TABLE
 - gr: GR07
 - needs-gr: GR08
