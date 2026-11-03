@@ -5059,7 +5059,7 @@
 - paths: Test/Core/Rendering/SocketOracleTest.cpp, Test/Core/Rendering/SkeletalAnimationSamplingTest.cpp, Test/Core/Rendering/CMakeLists.txt, Library/Core/Public/Component/SocketAttachmentComponent.h, Library/Core/Private/Component/SocketAttachmentComponent.cpp, Library/Core/Public/Component/SkinnedMeshComponent.h, Library/Core/Private/Component/SkinnedMeshComponent.cpp, Library/Core/Public/Animation, Library/Core/Private/Animation, Docs/Architecture/AnimationRuntime.md, Docs/Testing.md, TASKS.md, PROGRESS.md
 
 ## G4-GR05-MODEL-CASES: 四足の運動モデル（QuadrupedLocomotionModel）を受け入れ確認の数値で試験し、外れた所を直す
-- status: todo
+- status: done
 - gr: GR05
 - done-when: `Test/Core/Locomotion/QuadrupedLocomotionModelTest.cpp`（`LoggerSinkTest` の束。純ロジック）に次のケースを足し、全部が通る（足す前に `Docs/Testing.md` の 3 点を PROGRESS.md に書く）。外れたら `QuadrupedLocomotionModel` を直す。(a) 歩様の切り替え: 閾値の ±2% を往復する速度の列で切り替えが 1 回以内（今のケース）に加え、`MinDwell` より短い間に閾値を越えても切り替わらず、`MinDwell` を過ぎてから切り替わる。全歩様（0〜3）の上りと下りの両方。(b) 最小旋回半径: 一定の速さの全力旋回を 3 秒続けた軌跡の半径が max(v/ω_cap, v²/a_lat) の ±5%。v/ω_cap が勝つ場合と v²/a_lat が勝つ場合の両方。(c) 加減速: 0 から目標速度への到達時間が (目標/Acceleration) の ±2%、入力を離したときの停止距離が v²/(2×Deceleration) の ±2%、逆向きの入力での制動が `Brake` を使う。(d) 斜面: 0〜60° で速度の係数が単調で `MinimumSlopeScale` を下回らず、下りの係数が `DownhillBoost` の分だけ 1 を超える。(e) ジャンプ: 頂点の高さと滞空が解析値の ±2%（今のケース）に加え、先行入力が `JumpBuffer` の境界の内側で効き外側で効かない、コヨーテが `CoyoteTime` の境界で同じく分かれる、着地の直後 `LandingRecovery` の間だけ速さが `LandingSpeedLoss` の分下がる、空中で `AirControl` と `AirTurnRate` を越えて向きと速さが変わらない。(f) フレームレート非依存: 旋回と加減速を含む同じ 3 秒の入力列を dt=1/30・1/60・1/144 で与え、最終の位置が 0.02 m 以内、向きが 0.01 rad 以内で一致する。(g) dt=0、dt=1e-7、dt=1（上限）、上限超え（拒否）で NaN・無限が出ず、拒否のとき state と out が変わらない。(h) 入力ゼロで 600 ステップ置いても向きが変わらない。(i) その場旋回: 速さが `PivotSpeed` 未満で進む向きと `PivotEnterAngle` 以上ずれた入力を与えると `bPivot` に入り、`PivotExitAngle` 未満で抜ける。(j) 傾き: 旋回中のバンクが atan(v·ω/g) と同じ符号で `MaximumBank` を越えない。`LocomotionProfileReloadTest` も通る。
 - verify: `cmake --build build --config Debug --target LoggerSinkTest PhysicsDynamicsTest -- /m:1`
@@ -6154,3 +6154,15 @@
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Views grass,ground -CompareWith .harness/runs/scene-capture/G5-BASE/wasteland -OutDir .harness/runs/scene-capture/G5-GR113-CLEARANCE-CHECK/wasteland`
 - paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Library/Core/Public/Component, Library/Core/Private/Component, Assets/Shaders, Game/GameModes/Grassland, Scripts/Grass, Test/Core/Rendering, Docs/RenderingValidation/R113ViewClearance.md, TASKS.md, PROGRESS.md
 - notes: before の撮影が無ければ G5-GR37-TERRAIN-CHECK の notes の手順で撮る。視点 clear_06・clear_10・clear_16（スプリングアームのカメラの高さ別。主人公は草の中に立つ犬の代わりの体）と引数 `grassland-view-clearance=off|cinematic`、解析の台本 `Scripts/Grass/ViewClearanceCaptureCheck.py` が無ければこの項目で足す。静止の 2 フレームの比べ方は、CaptureScene に `CaptureStartupScene.ps1` の `-StillRenderedFrames` に当たる仕組みが無ければ同じ視点を 2 回撮って比べる。しきい値は初回の実測で TSV に置き、根拠を PROGRESS に書く（先に数字を決めない）。切り抜きの半径の既定を変えたら、その理由（「草で視界が遮られる」をどこまで残したか）も書く。
+
+## G2-S6-ASSET-SET-P6: `VerifyTextureAssetSet.py` の serializer probe で、PowerShell の版の完全一致の固定をやめて記録にし、byte の照合は残す
+- status: todo
+- done-when: 次の 4 点をすべて満たす。
+  - `Scripts/VerifyTextureAssetSet.py` の serializer probe の包み(192 行の `$PSVersionTable.PSVersion.ToString() -ne "5.1.20348.5622"`)を、Windows PowerShell 5.1 であること(`PSVersion.Major -eq 5` かつ `PSVersion.Minor -eq 1`。`CaptureTextureAssetSetBaseline.py` の 16 行と同じ規則)の検査に替える。完全な版の文字列は包みの標準出力に書き、`ps-probe.stdout.log` と `verification.json` の `powershell_version` に記録する。GitHub のランナーのイメージ(20261026.347.1 など)で PS5.1 の小さな版が上がっても、版の違いだけでは止まらない。
+  - probe の契約は変えない。同じランナーの PS5.1 の `ConvertTo-Json` の出力と native の `manifest.json` の byte の一致の照合(202〜203 行。不一致なら `PS5.1 ASCII escape/format probe不一致`)は残し、正規化しない。`powershell.exe` の binary の hash の照合(72〜73 行、`receipt["powershell_sha256"]`)と凍結基準の `Docs/AssetCookTextureFrozenBaseline.json` は変えない。
+  - `Docs/Architecture/TextureAssetSetCook.md` の「PS5.1との互換」の節に、probe は PS の版を固定せず記録し、互換は byte の照合と binary の hash で保つことを 1〜2 文で書く。PROGRESS.md に、変えた理由(ランナーのイメージの更新で `PowerShell version changed` が出たこと)と、CI での再確認は G2-S6-ASSET-SET-P3 が受け持つことを書く。
+  - CI の起動とプッシュはしない。下の verify が終了コード 0 になる。
+- verify: `python -c "import pathlib,sys; t=pathlib.Path('Scripts/VerifyTextureAssetSet.py').read_text(encoding='utf-8'); sys.exit(0 if '5.1.20348.5622' not in t and 'PSVersion.Major' in t and 'PSVersion.Minor' in t and 'powershell_version' in t and 'ps_output.read_bytes()' in t and 'probe不一致' in t and 'powershell_sha256' in t else 1)" && python -B Test/Tools/TextureAssetSetVerifyTest.py -v`
+- paths: Scripts/VerifyTextureAssetSet.py, Docs/Architecture/TextureAssetSetCook.md, TASKS.md, PROGRESS.md
+- from: G2-S6-ASSET-SET-P3
+- stop-when: プッシュする、workflow を起動する、byte の照合を外す・正規化する、`powershell.exe` の binary の hash の照合を外す、凍結基準の JSON を書き換える。
