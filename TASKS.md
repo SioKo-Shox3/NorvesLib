@@ -5184,7 +5184,7 @@
 - notes: 確かめ直しの (c) と、(b) の小さな残り。GR02 の本体は済んでいる: 倍率の積・期限・フェード・倍率 0・ポーズ・刻みの分割に依らない合計（TimeSystemTest、TimeScaleMathTest）、ヒットストップで固定ステップ 0 回のまま Unscaled の群が動き、ポーズを挟んでも余りが保たれ、期限後に再開する（ApplicationFixedStepPipelineTest.cpp 822-877 行）、補間の式・回転・子の追従・固定ステップ外の移動で切る・0 ステップのフレームでも MeshProxy が更新される（WorldRenderInterpolationTest.cpp 304-405 行）、144 Hz の刻みで補間ありは一様・なしは階段（RenderInterpolationCadenceTest、PhysicsFixedStepPipelineTest.cpp 1354-1398 行）。足りないのは、ロードマップ 4455 行の「G4 / GR02」の直す点: G14（GR66 の連番の録画、GR127 のラスタ蓄積）と G7（同じ条件で 2 回撮った FLIP）が前提にする固定刻みの仮想の時計。今は `--capture-deterministic` の 1/60 だけで、刻みを選べない。生成の直後の補間は `RenderTransformHistoryTest` の履歴の単体では見ている（Prepare の前は Evaluate が開始の値を返す）が、World を通しては見ていない。ApplicationProcessor.cpp は他の作業も触る大きなファイルなので、差分は時間の口と引数の解釈に絞る。やらないこと: 撮影の台本（Scripts）の変更、オフライン描画（GR127）、ヒットストップの数値の決定（0.05〜0.1 秒は仮のまま）。
 
 ## G4-GR128-PROCESSING-CASES: 動画由来の動きの共通処理（外れ値の置き換え・平滑・周期の平均・時間の補正・ループの継ぎ目）を合成のクリップで試験し、外れた所を直す
-- status: todo
+- status: done
 - gr: GR128
 - needs-gr: GR84
 - done-when: `CookedMeshTest` の束へ `MEMBER MotionProcessingTest`（新しい `Test/Core/Asset/MotionProcessingTest.cpp`。新しい exe は作らない。足す前に `Docs/Testing.md` に 3 点を書く）を足し、`ProcessSkeletalClip`（Library/Core/Private/Animation/SkeletalClipProcessing.h）を正解の分かる合成のクリップで確かめて通る。外れたら処理を直す。(i) 周期 12.5 コマ（16 fps）の正弦の歩容に小さな雑音と 50° のスパイク 3 個を足し、`SpikeThresholdRadians` を与えると周期を ±0.05 コマで当て、`ReplacedSpikes==3`、置き換えた所の値が前後の補間と 1° 以内。閾値 0 では置き換えない（従来の経路）。(ii) Y=-89° 付近を通る回転の列で、出力のコマの間の回転量が 180° を越えない（四元数の符号の連続）、入力の回転との差が 1e-4 rad 以下。(iii) 30 Hz から 16 Hz、16 Hz から 30 Hz への再サンプルの往復で、関節の回転の差が 0.5° 以下。(iv) ループ: 出力の先頭と末尾のキーが float32 で一致し、継ぎ目の角速度が全体の中央値の 1.5 倍以内。`bAverageCycles` で複数周期を平均すると `AveragedCycles` が周期の数になり、継ぎ目の前の誤差（SeamBeforeRadians）が平均しないときより小さい。(v) `SmoothingRadius` を与えると高い周波数の雑音の量が下がり、周期の検出の結果が変わらない。(vi) `TimeScale=2` で長さが 2 倍、根の移動の総距離が変わらず平均の速さが半分。(vii) ルートの抽出の後、根のヨーの向き（heading）が全コマで 0 の ±1e-4 rad。既存の `SkeletalBvhClipImportTest`・`SkeletalBvhClipTimeTest`・`BvhDecodeTest`・`BvhEvaluateTest`・`RigStaticRootFrameWireTest` は試験を変えずに通る。
@@ -5223,7 +5223,7 @@
 - notes: 決定（G5 に選定課題の行は無いが、ロードマップ GR29・GR88 のリスクに「外部依存の追加は本人の判断事項」とある件）: BC6H の符号化は DirectXTex（Microsoft、MIT）の BC6H/BC7 の CPU の符号化を採る。理由: Windows 専用のエンジンと合い、復号も同じ所にあって試験の参照にでき、bc7enc_rdo は BC6H を持たない。取得元から得られない・ライセンスが MIT/BSD/パブリックドメインのどれでもない・必要なファイルだけを切り出せない（DirectXMath 以外の大きな依存を引く）ときは、調べた事実を記録して止める（VTG1-BC7ENC-VENDOR の stop-when と同じ扱い）。UNCERTAIN: DirectXTex の BC6H の符号化を DirectXTex の内部の共通ヘッダごと最小に切り出せるかは未確認（取り込みの最初に確かめる）。BC6H の消費者（GR54 など）はまだ無いが、作者の決定（必要な機能は全部やる）で今入れる。GPU での BC6H/BC3 の標本は G5-GR29-RHI-FORMATS の手組みのブロックで確かめるので、ここは CPU の符号化と復号まで。符号化は帯ごとのスレッド並列（既存の BlockCompressor の作法）。危険地帯（アセットロード）なので評価者を通す。ロードマップ GR88（342〜392 行）の設計(5)(9)・GR29 の設計(7)、完了条件の GR88【画質ゲート】、要件 `#### GR88`。
 
 ## G8-GR17-HEALTH-PROGRESSION: 体力・汎用の状態機械・撃破の保留・進行の条件(全シ者の撃破で最初のシ者を解放)を作る
-- status: todo
+- status: done
 - after: G8-GR16-GAMEPLAY-MODULE
 - gr: GR17
 - done-when: (1) `HealthComponent`(PROPERTY: MaxHealth・Health。`ApplyDamage(DamageInfo)` → `DamageResult`、0 へのクランプ、無敵の印、撃破のラッチ(`OnDefeated` は 1 回だけ)、撃破の後のダメージを無視、負値・NaN・無限大を拒否、同じフレームの複数のダメージ、`OnDamaged`。スタッガの計(任意)を同居させ、閾値を超えたら `OnStaggerBroken`)。部位の倍率は GR16 の hurtbox の damageScale を掛けた値を受ける。(2) Core にヘッダだけの `TStateMachine<TContext, TStateId>`(`Library/Core/Public/GameMode/TStateMachine.h`): 状態の表 {Enter, Update, Exit}、遷移は「要求 → 更新の安全点で適用」(`GameModeStateMachine` の RequestChange / DrainPendingQueue と同じ規律)、Update の中の要求で再入しない、無効な遷移の要求は無視して診断を残す、毎フレームの確保をしない。(3) `ProgressionState`(GameplayModule のサービス。撃破済みの EnemyId の集合と RequiredShishaIds。`IsFinalUnlocked()` = Required ⊆ Defeated、`OnFinalUnlocked` は 1 回だけ、未知の Id は診断を残して無視、JSON の入出力(`Assets/Gameplay/progression.json` の形))と `DefeatGate`(`AddHold` / `Release`。保留の間は `OnDefeatCompleted` を出さず、全部の解放で 1 回だけ出す。保留したまま保留の持ち主の Entity が破棄されても詰まらない)。Id は安定 ID の文字列で、ObjectId を使わない。(4) 試験: `HealthComponentTest`・`ProgressionStateTest`・`DefeatGateTest`(PhysicsDynamicsTest の束)、`TStateMachineTest`(GameModeStateMachineTest の束。Core だけをリンク)。既存の `GameModeStateMachineTest`・`SubRoutineTest` が通る。
@@ -8109,3 +8109,20 @@
   - **名前:** 線の上の名前は `Docs/Plans/GameFeatureRoadmap.md` の GR137 の節と、E4-003 が決めた schema に合わせる。
   - **評価者:** Bridge のプロトコルの境界とファイルの書き出しの場所の検査を扱うので、評価者を通す。
   - **起動しない:** 実 GPU での撮影セッションの確かめは GAME-GR137-VFX-CHECK の `BridgeDeterministicCaptureVulkanTest` が受け持つ。このタスクでは起動しない。
+
+## G8-GR17-ENEMY-COMPONENT-P1: 撃破済みの Id を明示で受け付け直す口を DefeatGate に足し、進行に数えない撃破を ProgressionState へ流さない経路を作る
+- status: todo
+- after: G8-GR17-ENEMY-COMPONENT
+- done-when: (1) 受け付け直し: 完了した Id を明示で受け付け直す口(例 `DefeatGate::Rearm(enemyId)`)を足す。`EnemyComponent` は生成(BeginPlay)のときに自分の EnemyId でこれを呼ぶ。ランチャーから同じシーンへ入り直すときと、セーブからのやり直しで同じ Id の敵がまた出たとき、その敵を倒せないまま進行が止まらないようにするためである。受け付け直した後の `BeginDefeat` は受け付けて、`OnDefeatCompleted` をもう 1 回だけ出す。次の 2 つは今と同じく無視し、`GetIgnoredBeginCount` を増やす: 受け付け直していない完了済みの Id への `BeginDefeat`、保留中(未完了)の Id への受け付け直し。`ProgressionState` は同じ Id を二重に記録せず、`OnFinalUnlocked` を出し直さない。(2) 進行への経路: `BeginDefeat` で「進行に数えるか」を渡せるようにする。既定は「数える」にして、今ある呼び出しの動きは変えない。`EnemyComponent` は EnemyDefinition の項目(例 `countsForProgression`、既定 true)からこの値を渡す。GameplayModule は数える撃破の完了だけを `ProgressionState::MarkDefeated` へ流す。数えない撃破は `OnDefeatCompleted` と領域の `MarkCleared` には届くが、`ProgressionState::GetIgnoredIdCount` を増やさず、警告も出さない。数える撃破なのに進行の定義に無い Id は、今と同じく警告を出して診断の数を増やす(シ者の Id の綴り違いを黙らせない)。(3) 試験は今ある束に足し、新しい実行ファイルは作らない。`DefeatGateTest` に足すケース: 受け付け直した後に同じ Id の完了が 2 回目も 1 回だけ出る、受け付け直していない 2 回目は無視される、保留中の受け付け直しは無視される、数えない撃破の完了では ProgressionState の診断の数が増えない。`EnemyStateMachineTest` に足すケース: 同じ EnemyId の敵を破棄して作り直すと、もう一度倒せて完了が出る。`EnemyDefinitionLoadTest` に足すケース: 新しい項目の型の誤りを、ファイルとキーの分かるエラーで拒否する。
+- verify: `cmake --build build --config Debug --target Game PhysicsDynamicsTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^(DefeatGateTest|ProgressionStateTest|EnemyStateMachineTest|EnemyDefinitionLoadTest|HealthComponentTest)$" --no-tests=error --output-on-failure --timeout 300`
+- paths: Library/Modules/Gameplay/Public/Gameplay/Progression, Library/Modules/Gameplay/Private/Gameplay/Progression, Library/Modules/Gameplay/Private/Gameplay/GameplayModule.cpp, Library/Modules/Gameplay/Private/Gameplay/GameplayModule.h, Library/Modules/Gameplay/Public/Gameplay/Enemy, Library/Modules/Gameplay/Private/Gameplay/Enemy, Assets/Gameplay/enemies, Test/Modules/Gameplay/DefeatGateTest.cpp, Test/Modules/Gameplay/ProgressionStateTest.cpp, Test/Modules/Gameplay/EnemyStateMachineTest.cpp, Test/Modules/Gameplay/EnemyDefinitionLoadTest.cpp, TASKS.md, PROGRESS.md
+- from: G8-GR17-ENEMY-COMPONENT
+
+## G4-GR128-PROCESSING-CASES-P1: ループのときの平滑（`SmoothChannels`）で、近傍を時刻で取り、周期 P で折り返して、継ぎ目のキーをゆがめないようにする
+- status: todo
+- done-when: `SmoothChannels`（`Library/Core/Private/Animation/SkeletalClipProcessing.cpp` 91 行）がループのクリップで近傍のキーを添字ではなく時刻で選び、周期 P（`outputDuration`）で折り返す。こうすると、出力の格子の末尾の間隔が短いとき（`sample + 1 == samples` で `outputDuration` に置く 691 行の扱い）でも、等間隔とみなして折り返すことがなくなる。`MotionProcessingTest` の `TestSmoothing` で、周期が整数のコマにならない合成のクリップ（12.5 コマ）を `SmoothingRadius = 2` で処理し、その結果に `CheckLoop` を掛けて通す。`CheckLoop` が見るのは、先頭と末尾のキーが float32 で一致すること、継ぎ目の入りと出の角速度が全体の中央値の 1.5 倍以内であること（今は 2.32 倍で落ちる）。継ぎ目から離れた内側のキーは、直す前の値と 1e-6 rad 以内で一致する。ループでないクリップの平滑の結果は変えない。`MotionProcessingTest` の他の検査と、`SkeletalBvhClipImportTest`・`SkeletalBvhClipTimeTest`・`BvhDecodeTest`・`BvhEvaluateTest`・`RigStaticRootFrameWireTest` は試験を変えずに通る。
+- verify: `cmake --build build --config Debug --target CookedMeshTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^(MotionProcessingTest|SkeletalBvhClipImportTest|SkeletalBvhClipTimeTest|BvhDecodeTest|BvhEvaluateTest|RigStaticRootFrameWireTest)$" --no-tests=error --output-on-failure --timeout 300`
+- paths: Library/Core/Private/Animation/SkeletalClipProcessing.cpp, Test/Core/Asset/MotionProcessingTest.cpp
+- from: G4-GR128-PROCESSING-CASES

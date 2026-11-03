@@ -91,7 +91,14 @@ namespace NorvesLib::Core::Animation
         void SmoothChannels(S::SkeletalAnimationClip& clip, uint32_t radius, bool loop, uint32_t& count)
         {
             if (!radius)
+            {
                 return;
+            }
+            // 局所二次近似の中心値で平滑化し、単純平均による周期運動の振幅の縮みを抑える。
+            const double r = radius, points = 2 * r + 1;
+            const double secondMoment = r * (r + 1) * (2 * r + 1) / 3;
+            const double fourthMoment = r * (r + 1) * (2 * r + 1) * (3 * r * r + 3 * r - 1) / 15;
+            const double denominator = points * fourthMoment - secondMoment * secondMoment;
             for (auto& channel : clip.Channels)
             {
                 const auto original = channel.Samples;
@@ -107,7 +114,9 @@ namespace NorvesLib::Core::Animation
                         int64_t index = int64_t(i) + k;
                         index = loop ? (index % int64_t(samples) + samples) % samples
                                      : std::clamp<int64_t>(index, 0, samples - 1);
-                        const double weight = radius + 1 - std::abs(k);
+                        const double weight = radius >= 2
+                                                  ? (fourthMoment - secondMoment * double(k) * k) / denominator
+                                                  : radius + 1 - std::abs(k);
                         auto value = original[size_t(index)].Value;
                         if (channel.Path == S::SkeletalAnimationPath::Rotation)
                         {
@@ -235,6 +244,31 @@ namespace NorvesLib::Core::Animation
                     {
                         Failure = Status::InvalidPose;
                         return false;
+                    }
+                }
+                return true;
+            }
+            bool AverageAt(double time, double period, uint32_t cycles, Pose& pose, Pose& scratch)
+            {
+                if (!At(time, pose))
+                {
+                    return false;
+                }
+                for (uint32_t cycle = 1; cycle < cycles; ++cycle)
+                {
+                    if (!At(std::min(Source.DurationSeconds, time + cycle * period), scratch))
+                    {
+                        return false;
+                    }
+                    for (size_t joint = 0; joint < Source.JointIndices.size(); ++joint)
+                    {
+                        // 根の移動と向きは元の周期から抽出し、子の歩容だけを平均する。
+                        if (joint != RootSlot)
+                        {
+                            pose.Rotations[joint] = Value(Detail::Slerp(
+                                Quaternion(pose.Rotations[joint]), Quaternion(scratch.Rotations[joint]),
+                                1.f / (cycle + 1)));
+                        }
                     }
                 }
                 return true;
@@ -388,19 +422,37 @@ namespace NorvesLib::Core::Animation
                     quaternions.push_back(Quaternion(pose.Rotations[joint]));
                 C::VariableArray<double> errors(count, 0);
                 for (size_t i = 1; i + 1 < count; ++i)
+                {
                     errors[i] = Distance(quaternions[i], Detail::Slerp(quaternions[i - 1], quaternions[i + 1], .5f));
+                }
                 for (size_t i = 1; i + 1 < count; ++i)
                 {
+                    // 孤立した外れ値の前後にも補間誤差が出るため、極大だけを候補にする。
+                    if (errors[i] <= errors[i - 1] || errors[i] <= errors[i + 1])
+                    {
+                        continue;
+                    }
                     C::VariableArray<double> neighborhood;
                     const size_t first = i > settings.SpikeWindowRadius ? i - settings.SpikeWindowRadius : 0;
                     const size_t last = std::min(count - 1, i + settings.SpikeWindowRadius);
                     for (size_t k = first; k <= last; ++k)
-                        neighborhood.push_back(errors[k]);
-                    const double median = Median(neighborhood);
-                    for (auto& value : neighborhood)
-                        value = std::abs(value - median);
-                    const double threshold =
-                        std::max(settings.SpikeThresholdRadians, median + 3 * 1.4826 * Median(neighborhood));
+                    {
+                        // 候補自身と、その候補を補間に含む前後は背景の統計に混ぜない。
+                        if (k + 1 < i || k > i + 1)
+                        {
+                            neighborhood.push_back(errors[k]);
+                        }
+                    }
+                    double threshold = settings.SpikeThresholdRadians;
+                    if (!neighborhood.empty())
+                    {
+                        const double median = Median(neighborhood);
+                        for (auto& value : neighborhood)
+                        {
+                            value = std::abs(value - median);
+                        }
+                        threshold = std::max(threshold, median + 3 * 1.4826 * Median(neighborhood));
+                    }
                     if (errors[i] > threshold)
                     {
                         cache.Frames[i].Rotations[joint] =
@@ -504,26 +556,23 @@ namespace NorvesLib::Core::Animation
                     best = std::min(best, score);
                 }
                 size_t selected = SIZE_MAX;
+                // 倍周期を避けつつ、受け入れられない短い候補で検出を落とさないよう、
+                // 受け入れの判定を通る最短の候補を選ぶ。
                 for (size_t i = 0; i < periods.size(); ++i)
                 {
-                    if (refinedScores[i] <= best * 1.25 + 1e-4)
+                    const double score = refinedScores[i];
+                    if (score > settings.LoopRmsThresholdRadians)
                     {
-                        selected = i;
-                        break;
+                        continue;
                     }
-                }
-                if (selected != SIZE_MAX)
-                {
-                    const double period = periods[selected];
-                    report.RecurrenceRmsRadians = refinedScores[selected];
                     double motion = 0;
                     if (!eval.At(0, start))
                     {
                         return eval.Failure;
                     }
-                    for (uint32_t i = 1; i <= 16; ++i)
+                    for (uint32_t sample = 1; sample <= 16; ++sample)
                     {
-                        if (!eval.At(period * i / 16, a))
+                        if (!eval.At(periods[i] * sample / 16, a))
                         {
                             return eval.Failure;
                         }
@@ -533,10 +582,30 @@ namespace NorvesLib::Core::Animation
                     {
                         return eval.Failure;
                     }
-                    if (report.RecurrenceRmsRadians <= settings.LoopRmsThresholdRadians &&
-                        motion >= settings.MinimumMotionRadians && report.RecurrenceRmsRadians <= motion * 0.2)
+                    if (motion >= settings.MinimumMotionRadians && score <= motion * 0.2)
                     {
+                        selected = i;
                         report.bLoopDetected = true;
+                        break;
+                    }
+                }
+                if (selected == SIZE_MAX)
+                {
+                    for (size_t i = 0; i < periods.size(); ++i)
+                    {
+                        if (refinedScores[i] <= best * 1.25 + 1e-4)
+                        {
+                            selected = i;
+                            break;
+                        }
+                    }
+                }
+                if (selected != SIZE_MAX)
+                {
+                    const double period = periods[selected];
+                    report.RecurrenceRmsRadians = refinedScores[selected];
+                    if (report.bLoopDetected)
+                    {
                         double seam = std::numeric_limits<double>::infinity();
                         for (uint32_t i = 0; i < 32; ++i)
                         {
@@ -574,11 +643,19 @@ namespace NorvesLib::Core::Animation
             return Status::LimitExceeded;
         }
         const size_t samples = size_t(grid) + 1;
-        if (!eval.At(report.StartSeconds, start) || !eval.At(report.EndSeconds, finish))
+        const bool loop = report.bLoopDetected || report.bRangeSelected;
+        const uint32_t cycles =
+            settings.bAverageCycles && loop
+                ? uint32_t(std::clamp(std::floor((source.DurationSeconds - report.StartSeconds) / duration), 1.0, 16.0))
+                : 1;
+        report.AveragedCycles = cycles;
+        Pose cyclePose(source.JointIndices.size());
+        // 報告と継ぎ目の補正は、出力と同じ周期平均後の端点を使う。
+        if (!eval.AverageAt(report.StartSeconds, duration, cycles, start, cyclePose) ||
+            !eval.AverageAt(report.EndSeconds, duration, cycles, finish, cyclePose))
         {
             return eval.Failure;
         }
-        const bool loop = report.bLoopDetected || report.bRangeSelected;
         report.PeriodSeconds = loop ? outputDuration : 0;
         report.SeamBeforeRadians = eval.Error(start, finish);
         report.SeamVelocityDifferenceRadiansPerSecond = eval.VelocityError(report.StartSeconds, report.EndSeconds);
@@ -606,12 +683,6 @@ namespace NorvesLib::Core::Animation
             clip.RootMotionJoint = source.RootJoint;
             clip.RootMotion.reserve(samples);
         }
-        const uint32_t cycles =
-            settings.bAverageCycles && loop
-                ? uint32_t(std::clamp(std::floor((source.DurationSeconds - report.StartSeconds) / duration), 1.0, 16.0))
-                : 1;
-        report.AveragedCycles = cycles;
-        Pose cyclePose(source.JointIndices.size());
         double lastYaw = start.Heading, unwrapped = 0, previousX = 0, previousZ = 0;
         const double headingAngle = eval.BindYaw - start.Heading;
         const double headingCos = std::cos(headingAngle), headingSin = std::sin(headingAngle);
@@ -624,18 +695,9 @@ namespace NorvesLib::Core::Animation
             {
                 return Status::LimitExceeded;
             }
-            if (!eval.At(report.StartSeconds + t, a))
+            if (!eval.AverageAt(report.StartSeconds + t, duration, cycles, a, cyclePose))
             {
                 return eval.Failure;
-            }
-            for (uint32_t cycle = 1; cycle < cycles; ++cycle)
-            {
-                if (!eval.At(std::min(source.DurationSeconds, report.StartSeconds + cycle * duration + t), cyclePose))
-                    return eval.Failure;
-                for (size_t joint = 0; joint < source.JointIndices.size(); ++joint)
-                    if (joint != eval.RootSlot)
-                        a.Rotations[joint] = Value(Detail::Slerp(
-                            Quaternion(a.Rotations[joint]), Quaternion(cyclePose.Rotations[joint]), 1.f / (cycle + 1)));
             }
             const float alpha = float(t / duration);
             for (size_t i = 0; i < source.JointIndices.size(); ++i)
@@ -659,6 +721,17 @@ namespace NorvesLib::Core::Animation
                         return Status::DegenerateHeading;
                     }
                     q = Detail::NormalizeQuaternion(Inverse(eval.Frame) * Yaw(eval.BindYaw - yaw) * world);
+                }
+                if (sample)
+                {
+                    // 同じ回転を表す符号を前のキーへそろえ、4次元での飛びを防ぐ。
+                    const auto& previous = clip.Channels[i].Samples.back().Value;
+                    const double dot = double(previous.X) * q.x + double(previous.Y) * q.y +
+                                       double(previous.Z) * q.z + double(previous.W) * q.w;
+                    if (dot < 0)
+                    {
+                        q = Q(-q.x, -q.y, -q.z, -q.w);
+                    }
                 }
                 const auto value = loop && sample + 1 == samples ? clip.Channels[i].Samples.front().Value : Value(q);
                 clip.Channels[i].Samples.push_back({stored, value});
