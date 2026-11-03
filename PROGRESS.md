@@ -9354,3 +9354,7 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261103-233036/G4-GR07-MOVER-CASES-U3-verify.txt`（verify の 2 行: Debug の PhysicsDynamicsTest のビルド EXIT=0、ctest の PhysicsCharacterMoveTest・CharacterPlatformMotionTest・PhysicsFixedStepPipelineTest・PhysicsBroadphaseQueryTest・PhysicsDynamicsTest・PhysicsLifecycleEventTest が 100% Passed）
 - Next: 重力つきの坂の滑り落ちと着地は G4-GR07-BODY-CASES。起動の確かめは無し（試験だけで閉じる）
 - Notes: 縁の丸みの接触を上面の法線で接地にしたので、カプセルの下の球が段の角に乗っている間は、中心が縁の外へ出ていても接地のまま落ちない（水平に動けば落ちる）。重力つきの縁の振る舞いは BODY-CASES で見る。既定の SkinWidth 0.002・MaximumDepenetrationDistance 1 m は変えずに (1)(7) が通った（めり込み開始の 1 ステップの押し出しは 0.102 m）
+
+## 2026-11-04 G4-GR07-MOVER-CASES（run 20261104-082805 の反復 1、完了に戻す）
+- Done: 前の反復の評価が利用枠で回らず doing に戻っていた。着地した後の変更は TASKS.md・PROGRESS.md だけで、コードは確かめの出力（U3 の verify: ビルド EXIT=0、ctest 6 本 100% Passed）を取った版と同じなので、status を done に戻す。
+- Next: ランナーの評価者がこの差分（3f13dfe8・20381f35・f896b040）を見る。
