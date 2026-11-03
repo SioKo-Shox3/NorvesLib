@@ -9202,3 +9202,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: なし
 - Notes: 要起票: この項目の verify は ctest で SkinnedRenderPathContractTest を回すのにビルド行がそのターゲットを作らないので、新しい枠・消した build では再検証が Not Run で落ちる。ビルド行に `--target SkinnedRenderPathContractTest` を足すかは計画が決める
 - U1 PhysicsBroadphaseQueryTest の 12 ケースをケースごとの子プロセスで走らせ、落ちたケースは製品の側を直す: 着地(直し 0 回)
+- U2 PhysicsQueries.md の「Windows.h 依存で未確認」の記録を Windows の Debug で回した記録に直し、タスクの verify を通す: 着地(直し 0 回)
