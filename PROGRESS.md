@@ -9260,3 +9260,11 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U2 割り当て表の漏れを止める台本と ctest の登録: 着地(直し 0 回)
 - U1 TickStages.md を ECS 化後の登録の仕組み・全型の割り当て表・今の段の名前で書き直す: 着地(直し 1 回)
 - U3 verify を回して GameFoundationValidation.md と InputFoundation.md の未確認の行を結果に直す: 着地(直し 0 回)
+
+## 2026-11-03 G1-GR01-TICK-CONTRACT-DOC（run 20261103-223649 の反復 1、完了）
+- Done: `Docs/Architecture/TickStages.md` を今のコードに合わせて書き直した。型ごとの登録 `World::RegisterComponentTick` と `ComponentTickRegistration` の各欄、World の順序付きの系 3 本、`RegisterComponentTick` を呼ぶ 20 型の割り当て表（群・処理・時間の channel・ポーズの分類・登録の場所）、Collider・RigidBody は登録が無く物理は PhysicsModule の固定ステップの段で走ること、PostAnimation の群は無くアニメの姿勢を読む処理は PostPhysics に置くこと、Unscaled の channel もシミュレーションの停止中は呼ばれないこと、`ApplicationProcessor` の今の段（PreUpdate〜PostUpdate）でのフレームの順。最終のカメラの確定点は Handler の `OnLateUpdate` のまま、G14・G16 の受け渡しの節の意味は変えていない。消えた API の名前は文書に残していない
+- Done: `Scripts/CheckTickContractTable.ps1` と ctest `TickContractTableTest`（`Test/Core/Object/CMakeLists.txt`、`powershell -File` の形）を足し、理由の 3 点を `Docs/Testing.md` に書いた。Library・Game の .cpp の登録の型が表の 1 列目に無いか、文書に消えた API の名前があれば終了コード 1
+- Done: `GameFoundationValidation.md` の GR01・GR03・GR04 の行と `InputFoundation.md` の「Windows.h 依存で未確認」の行を、Windows Debug（09b4fb9b）の結果に直した。GR08 は `PhysicsQueries.md` を正とすると書いた
+- 証拠: `.harness/runs/20261103-223649/u3-unit-verify.txt`（verify の 3 行: Debug の 5 ターゲットのビルド EXIT=0、ctest 13 本中 13 本 pass、36 本中 36 本 pass、`TICK_CONTRACT_TABLE result=pass types=20`）。台本の失敗の確かめ（1 型を消す・禁止の語を足す・表が無い）は `u2-unit-verify.txt`
+- Next: 起動の確かめは後回し（TICK_STAGE_SMOKE の実ログ、実機の Alt+Tab・Raw mouse・cursor・実パッドの接続と振動は未確認のまま文書に残した）
+- Notes: 台本の ThirdParty の除外は区切りの `/` と `\` の食い違いで効いておらず、`Library/ThirdParty` の .cpp も走査している（結果は変わらず遅くなるだけ）
