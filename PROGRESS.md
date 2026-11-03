@@ -9204,3 +9204,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 Gameplay モジュールの骨組みと Game への登録: 着地(直し 0 回)
 - U2 Docs/Testing.md に CombatSweepTest を足す理由の 3 点を書く: 着地(直し 0 回)
 - U3 攻撃判定のスイープの純関数 CombatGeometry: 着地(直し 0 回)
+- U4 CombatSweepTest を PhysicsDynamicsTest の束に足す(最後の単位): 着地(直し 0 回)
