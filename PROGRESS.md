@@ -9226,3 +9226,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: アプリの起動を要する確かめは無い。
 - U1 Docs/Testing.md に MotionProcessingTest を足す理由の 3 点を書く: 着地(直し 0 回)
 - U2 MotionProcessingTest を束へ足し、外れ値・平滑・ループ・周期の平均の試験 (i)(iv)(v) を通す: 着地(直し 1 回)
+- U3 符号の連続・再サンプル往復・時間の補正・heading の試験 (ii)(iii)(vi)(vii) を足して通し、タスクの verify を回す: 着地(直し 0 回)

@@ -698,6 +698,17 @@ namespace NorvesLib::Core::Animation
                     }
                     q = Detail::NormalizeQuaternion(Inverse(eval.Frame) * Yaw(eval.BindYaw - yaw) * world);
                 }
+                if (sample)
+                {
+                    // 同じ回転を表す符号を前のキーへそろえ、4次元での飛びを防ぐ。
+                    const auto& previous = clip.Channels[i].Samples.back().Value;
+                    const double dot = double(previous.X) * q.x + double(previous.Y) * q.y +
+                                       double(previous.Z) * q.z + double(previous.W) * q.w;
+                    if (dot < 0)
+                    {
+                        q = Q(-q.x, -q.y, -q.z, -q.w);
+                    }
+                }
                 const auto value = loop && sample + 1 == samples ? clip.Channels[i].Samples.front().Value : Value(q);
                 clip.Channels[i].Samples.push_back({stored, value});
             }
