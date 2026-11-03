@@ -5232,7 +5232,7 @@
 - notes: 設計はロードマップ 1652〜1666 行(1)(2)(5)(6)。選定課題 G8-S5(汎用の状態機械の置き場。G13-S3 の付随の問い「GR17 の StateMachine を BehaviorMachine の土台にするか、Core へ移すか」と同じ)を決めた: ヘッダだけで Core の `GameMode/` に置く。理由: ヘッダだけなので Core に置く費用が無く、G13 の AI のモジュールが Gameplay へリンクせずに同じ土台を使える。選定課題 G8-S13(安定 ID の命名)を決めた: 小文字の ASCII・数字・`_` をドットで区切る(例 `shisha.forest_01`)。読み込みで外れた ID を拒否する。理由: ObjectId はロードで採番し直される(`SceneSerializer.h:121-123`)ので保存に使えず、GR76 のセーブと GR93 の配置データが同じ名前で突き合わせる(ロードマップ 1888 行)。ProgressionState は GameMode の Data に置かない(`TGameMode` は Data を値のメンバに持ち、モードの遷移で消える。1666 行)。シ者の数と内訳は未決なので、数をコードに埋めない。やらないこと: 敵の基底と状態の遷移(G8-GR17-ENEMY-COMPONENT)、セーブへの保存(GR76)。
 
 ## G9-GR14-TWO-BONE-IK: 二関節 IK の解析解を、実行時の足 IK と cook 時の再接地が共有する純関数として足す
-- status: todo
+- status: done
 - gr: GR14
 - done-when: `Library/Core/Public/Animation/TwoBoneIK.h` に、根 A・中間 B・端 C のモデル空間の位置、目標 T、ポールの方向 P、maxStretch、soft limit の幅を受け、新しい B・C の位置と、根と中間の区間に掛けるグローバル回転の差分（「今の向き→新しい向き」の最小回転。軸まわりのねじれを足さない）を返す純関数を作る。ヒープ確保をせず、時計・乱数・反復を使わない。到達距離は [|l1-l2|+ε, (l1+l2)·maxStretch] へクランプし、完全伸展の手前は soft limit で和らげる。退化（目標が根と一致、ポールが区間の軸と平行、区間の長さ 0）では直前のポール（呼び出し側が渡す）で代え、有限値を返す。試験（固定の種の乱数で 1 万件の到達可能な目標）で、端が目標から 1e-4 m 以内に届く、区間の長さが相対 1e-5 以内で保たれる、届かない目標で完全伸展にクランプされる、ポールを掃引しても膝がポールの側から反転しない、退化の入力で NaN・Inf が出ない、区間の軸まわりの回転成分（ねじれ）が 1e-4 rad 以内で保たれることを確かめる。下の verify が通る。
 - verify: `cmake --build build --config Debug --target SkeletalAnimationSamplingTest -- /m:1`
