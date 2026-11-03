@@ -5,6 +5,7 @@
 #include "Gameplay/Camera/FollowCameraProfile.h"
 #include "Input/InputMapper.h"
 #include "Math/Transform.h"
+#include "Scene/PhysicsQueryTypes.h"
 namespace NorvesLib::Core
 {
     class World;
@@ -75,6 +76,11 @@ namespace Game::Gameplay
         void DriveOwnerTransform(const NorvesLib::Core::Entity& pivot) override;
 
       private:
+        friend class FollowCameraTestAccess;
+        // 試験からの差し込み専用。既定では使わない。
+        float m_SubjectSpeedOverride = -1;
+        NorvesLib::Core::Scene::ColliderHandle m_SubjectColliderOverride;
+        NorvesLib::Core::Scene::BodyHandle m_SubjectBodyOverride;
         NorvesLib::Core::Entity* Resolve(uint64_t id) const;
         void ReadLook(float dt);
         void ReloadProfile(float dt);

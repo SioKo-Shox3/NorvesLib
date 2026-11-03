@@ -205,6 +205,10 @@ namespace Game::Gameplay
             filter.IgnoreBodies[0] = body->GetBodyHandle();
         if (auto* collider = physical->GetComponent<Physics::ColliderComponent>())
             filter.IgnoreColliders[0] = collider->GetColliderHandle();
+        if (m_SubjectBodyOverride.IsValid())
+            filter.IgnoreBodies[0] = m_SubjectBodyOverride;
+        if (m_SubjectColliderOverride.IsValid())
+            filter.IgnoreColliders[0] = m_SubjectColliderOverride;
         Core::Camera::SceneCameraProbe probe(*m_Query, filter);
         Core::Camera::CameraCollisionRequest request;
         const auto subject = visual->GetRenderWorldTransform().position + GetTargetOffset();
@@ -371,6 +375,8 @@ namespace Game::Gameplay
     }
     float FollowCameraComponent::SubjectSpeed() const
     {
+        if (m_SubjectSpeedOverride >= 0)
+            return m_SubjectSpeedOverride;
         auto* physical = Resolve(m_PhysicsRootId);
         auto* body = physical ? physical->GetComponent<Physics::CharacterBodyComponent>() : nullptr;
         if (!body || !body->GetState().bReady)
@@ -396,7 +402,12 @@ namespace Game::Gameplay
     {
         auto* mesh = target ? target->GetComponent<Core::Component::SkinnedMeshComponent>() : nullptr;
         Math::Transform joint;
-        if (!mesh || !mesh->TryGetJointWorldTransform(jointIndex, joint) || !SetLockOnTarget(target, radius))
+        if (!mesh || !mesh->TryGetJointWorldTransform(jointIndex, joint))
+        {
+            ClearLockOn();
+            return false;
+        }
+        if (!SetLockOnTarget(target, radius))
             return false;
         m_LockJoint = jointIndex;
         return true;
