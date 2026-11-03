@@ -9286,3 +9286,22 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261103-223649/u3-unit-verify.txt`（verify の 3 行: Debug の 5 ターゲットのビルド EXIT=0、ctest 13 本中 13 本 pass、36 本中 36 本 pass、`TICK_CONTRACT_TABLE result=pass types=20`）。台本の失敗の確かめ（1 型を消す・禁止の語を足す・表が無い）は `u2-unit-verify.txt`
 - Next: 起動の確かめは後回し（TICK_STAGE_SMOKE の実ログ、実機の Alt+Tab・Raw mouse・cursor・実パッドの接続と振動は未確認のまま文書に残した）
 - Notes: 台本の ThirdParty の除外は区切りの `/` と `\` の食い違いで効いておらず、`Library/ThirdParty` の .cpp も走査している（結果は変わらず遅くなるだけ）
+
+- U1 AssetKind に World = 7 を足し、manifest と AssetSystem の試験で押さえる: 着地(直し 0 回)
+- U2 NVTRN v0 の公開ヘッダと書き手 WriteCookedTerrain: 着地(直し 0 回)
+- U3 読み手 ParseCookedTerrain: 着地(直し 0 回)
+- U5 形式の文書 Docs/Architecture/NVTRNv0.md: 着地(直し 1 回)
+- U4 CookedTerrainTest(往復と拒否の種別)とタスクの verify: 着地(直し 0 回)
+
+## 2026-11-03 G5-GR89-NVTRN-FORMAT（run 20261103-113139 の反復 1、完了）
+- Done: 地形の cook 済み形式 NVTRN v0 を足した。公開ヘッダ `CookedTerrainFormat.h`（192 バイトのヘッダ・32 バイトのレイヤ表・80 + 24×レイヤ数のタイル表・文字列表・64 バイト境界のペイロード。高さ HGT0 は生の uint16 で (tile_cells+1)² 標本、ほかのレイヤは埋め込みの NVTEX）、書き手 `WriteCookedTerrain`（入力を全部検査し、タイルを座標順に並べて書く）、読み手 `ParseCookedTerrain`（拒否の理由を `CookedTerrainParseStatus` で返す）。PayloadHash は自分の 8 バイトを除くファイル全体の FNV-1a64、各レイヤに DataHash。`AssetKind::World = 7`（`"world"`）を足し、entry type Trn0・format nvtrn.v0.height16 の entry の解決を AssetManifestTest・AssetSystemTest で押さえた。形式は `Docs/Architecture/NVTRNv0.md`。
+- 証拠: `.harness/runs/20261103-113139/verify-G5-GR89-NVTRN-FORMAT-U4.txt`（CookedMeshTest・AssetSystemTest の Debug ビルド exit=0、ctest で AssetManifestTest・AssetSystemTest・CookedTextureTest・CookedTerrainTest の 4 件 100% Passed。重複の検査を一時的に外すと CookedTerrainTest が落ちることも確認）。
+- Next: なし（アプリの起動の確かめは無い）。cook の本体は G5-GR89-TERRAIN-COOKER。
+- Notes: 読み手はペイロードをタイル表の順 × レイヤ順に 64 バイト境界で詰めた並びとして厳密に求める（違えば TableLayoutMismatch）。高さの DataSize を 1 増やす改ざんは区間がペイロード内に収まるので HeightSizeMismatch で拒否される。使わない LOD 欄が 0 でないものは、読み手は ReservedFieldNonZero、書き手は InvalidTileBounds で拒否する。
+- U6 AssetManifestTest に world の無い旧 manifest の読み込みを足し、タスクの verify を回す: 着地(直し 0 回)
+
+## 2026-11-03 G5-GR89-NVTRN-FORMAT（run 20261103-163359 の反復 1、完了）
+- Done: done-when の「world の無い旧 manifest の読み込み」の試験が抜けていたので足した。kind が texture・model・skeleton・animation だけの version 1 manifest が読めて、各 entry の Kind・EntryType が変わらず、texture の論理パスを AssetKind::World で引くと cooked を使わない（LooseFallbackVariantMissing）ことを AssetManifestTest で押さえた。
+- 証拠: `.harness/runs/20261103-163359/verify-G5-GR89-NVTRN-FORMAT-U6.txt`（CookedMeshTest・AssetSystemTest の Debug ビルド exit=0、ctest で AssetManifestTest・AssetSystemTest・CookedTextureTest・CookedTerrainTest の 4 件 100% Passed）
+- Next: なし（アプリの起動の確かめは無い）。前の反復の差分は評価者が枠切れで未評価なので、この反復の後の評価で全体を見る。
+- Notes: AssetManifestTest.cpp は日本語のコメントを MSVC が読めるよう UTF-8 BOM を付けた（行末は元の LF のまま）。
