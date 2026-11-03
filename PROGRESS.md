@@ -9362,3 +9362,41 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: DefeatGate は完了した Id の記録を残し、同じ Id の 2 回目の BeginDefeat を無視する。同じ安定 ID で再び出る敵（再配置・雑魚の再出現）を扱うときは、完了済みの Id の BeginDefeat を受け付け直す形が要る
 - Notes: GameplayModule は DefeatGate の完了を全部 ProgressionState へ流すので、進行の定義に無い敵（シ者でない敵）の撃破ごとに警告が 1 行出て診断の数が増える。敵の基底を作るときに、シ者だけを流すか警告を出さない形にするかを決める
 - 要起票: G8-GR17-ENEMY-COMPONENT で、DefeatGate の完了済み Id の再受付と、シ者でない敵の撃破を ProgressionState へ流さない経路を決める
+
+## 2026-11-03 G4-GR128-PROCESSING-CASES 統合ブランチの取り込み（run 20261103-232719 の反復 1、完了）
+
+- 統合ブランチ feature/scene-launcher を取り込み、Docs/Testing.md の衝突は MotionProcessingTest と FollowCameraBehaviorTest の両方の節を残して解いた。実装は変えていない
+- verify: `cmake --build build --config Debug --target CookedMeshTest -- /m:1` 終了コード 0（`.harness/runs/20261103-232719/verify-build.txt`）、ctest 6 件 Passed（MotionProcessingTest・SkeletalBvhClipImportTest・SkeletalBvhClipTimeTest・BvhDecodeTest・BvhEvaluateTest・RigStaticRootFrameWireTest、`.harness/runs/20261103-232719/verify-ctest.txt`）
+- Notes: 要起票: ループのときの平滑（`SmoothChannels`）が、末尾の間隔が短いのに等間隔とみなして折り返すため、継ぎ目のキーを約 2° ゆがめる（平滑ありで継ぎ目の速さが中央値の 2.32 倍。前からある欠陥。近傍を時刻で取り、周期 P で折り返す）
+- U1 Docs/Testing.md に MotionProcessingTest を足す理由の 3 点を書く: 着地(直し 0 回)
+- U2 MotionProcessingTest を束へ足し、外れ値・平滑・ループ・周期の平均の試験 (i)(iv)(v) を通す: 着地(直し 1 回)
+- U3 符号の連続・再サンプル往復・時間の補正・heading の試験 (ii)(iii)(vi)(vii) を足して通し、タスクの verify を回す: 着地(直し 0 回)
+## 2026-11-03 G4-GR128-PROCESSING-CASES（run 20261103-114107 の反復 1〜2、完了）
+- Done: `CookedMeshTest` の束へ `MEMBER MotionProcessingTest`（`Test/Core/Asset/MotionProcessingTest.cpp`）を足し、`ProcessSkeletalClip` を合成のクリップで (i)〜(vii) 確かめた。足す理由の 3 点は `Docs/Testing.md`。
+- Done: 外れて直した所: 外れ値の置き換えが前後のコマを誤って置き換える・平均の前の継ぎ目の報告・倍周期の選択（U2）、出力の四元数が入力の符号の反転をそのまま持ち込み隣のキーと 180° を越えて飛ぶ（U3。前のキーとの内積が負なら反転。ループの末尾を先頭と float32 で一致させる扱いは保つ）。
+- 実測: スパイク replaced=3・周期 12.4968 コマ、ループ 3 周期の平均で継ぎ目の誤差 0.000793→0.000185 rad、平滑で粗さ 0.1486→0.0815、符号を区別した隣の最大角 0.0249 rad・入力との差 4.2e-8 rad、30→16→30 Hz の往復の最大差 0.0751°、TimeScale=2 で長さ 2→4 秒・距離 4.4721 m のまま・速さ 2.236→1.118 m/s、根の heading の最大 0。
+- 証拠: `.harness/runs/20261103-114107/G4-GR128-PROCESSING-CASES-u3-unit-verify.txt`（`cmake --build build --config Debug --target CookedMeshTest -- /m:1` 成功、ctest の 6 本 `MotionProcessingTest`・`SkeletalBvhClipImportTest`・`SkeletalBvhClipTimeTest`・`BvhDecodeTest`・`BvhEvaluateTest`・`RigStaticRootFrameWireTest` Passed、numstat の 2 通りが一致）。
+- Notes: ループの出力で、1 周期の間に関節が 360° 回る（四元数が -q に戻る）入力では、末尾のキーを先頭と同じ値にする扱いのため末尾の手前と末尾の間だけ符号が逆になりうる。歩容の関節では起きないので直していない。
+- U5 レビュー済みの U4 の差分を当て直し、タスクの verify を回す: 着地(直し 0 回)
+## 2026-11-03 G4-GR128-PROCESSING-CASES（run 20261103-163403 の反復 1、差し戻しへの対応、完了）
+- 差し戻し（既定の設定で遅い・振幅の小さいループが検出されない退行）を直した: 周期の候補を短い順に見て、受け入れの判定（RMS ≤ LoopRms、motion ≥ MinimumMotion、RMS ≤ 0.2·motion）を通る最短の候補を選ぶ。どれも通らなければ従来の best×1.25 の規則で選ぶ（検出なし）。
+- `MotionProcessingTest` に 0.07 rad・周期 1 s・長さ 3 s・30 Hz・既定設定の 1 件を足した（直す前は detected=0、直した後は period=0.999999 s・detected=1）。
+- (v) の指標を雑音のない正弦との二乗誤差に変えたところ、三角の重みの平滑は振幅を縮めて誤差を増やしていた（0.0171→0.0840）。半径 2 以上の平滑を局所二次近似の重みにして 0.0171→0.0132 に下がる。
+- 証拠: `.harness/runs/20261103-163403/G4-GR128-PROCESSING-CASES-u5-unit-verify.txt`（`cmake --build build --config Debug --target CookedMeshTest -- /m:1` 終了コード 0、ctest の 6 本 Passed、numstat の 2 通りが一致）。
+- Notes: 局所二次近似の重みは端で負になるため、急変する入力では行き過ぎが出うる（試験していない）。スパイクの候補を極大に限っているため、2 コマ続く外れ値では片方しか置き換えないことがありうる（done-when の外）。
+## 2026-11-03 G4-GR128-PROCESSING-CASES（run 20261103-114107 の反復 1〜2、完了）
+- U1 Docs/Testing.md に MotionProcessingTest を足す理由の 3 点を書く: 着地(直し 0 回)
+- U2 MotionProcessingTest を束へ足し、外れ値・平滑・ループ・周期の平均の試験 (i)(iv)(v) を通す: 着地(直し 1 回)
+- U3 符号の連続・再サンプル往復・時間の補正・heading の試験 (ii)(iii)(vi)(vii) を足して通し、タスクの verify を回す: 着地(直し 0 回)
+- Done: `CookedMeshTest` の束へ `MEMBER MotionProcessingTest`（`Test/Core/Asset/MotionProcessingTest.cpp`）を足し、`ProcessSkeletalClip` を合成のクリップで (i)〜(vii) 確かめた。足す理由の 3 点は `Docs/Testing.md`。
+- Done: 外れて直した所: 外れ値の置き換えが前後のコマを誤って置き換える・平均の前の継ぎ目の報告・倍周期の選択（U2）、出力の四元数が入力の符号の反転をそのまま持ち込み隣のキーと 180° を越えて飛ぶ（U3。前のキーとの内積が負なら反転。ループの末尾を先頭と float32 で一致させる扱いは保つ）。
+- 実測: スパイク replaced=3・周期 12.4968 コマ、ループ 3 周期の平均で継ぎ目の誤差 0.000793→0.000185 rad、平滑で粗さ 0.1486→0.0815、符号を区別した隣の最大角 0.0249 rad・入力との差 4.2e-8 rad、30→16→30 Hz の往復の最大差 0.0751°、TimeScale=2 で長さ 2→4 秒・距離 4.4721 m のまま・速さ 2.236→1.118 m/s、根の heading の最大 0。
+- 証拠: `.harness/runs/20261103-114107/G4-GR128-PROCESSING-CASES-u3-unit-verify.txt`（`cmake --build build --config Debug --target CookedMeshTest -- /m:1` 成功、ctest の 6 本 `MotionProcessingTest`・`SkeletalBvhClipImportTest`・`SkeletalBvhClipTimeTest`・`BvhDecodeTest`・`BvhEvaluateTest`・`RigStaticRootFrameWireTest` Passed、numstat の 2 通りが一致）。
+- Notes: ループの出力で、1 周期の間に関節が 360° 回る（四元数が -q に戻る）入力では、末尾のキーを先頭と同じ値にする扱いのため末尾の手前と末尾の間だけ符号が逆になりうる。歩容の関節では起きないので直していない。
+- U5 レビュー済みの U4 の差分を当て直し、タスクの verify を回す: 着地(直し 0 回)
+## 2026-11-03 G4-GR128-PROCESSING-CASES（run 20261103-163403 の反復 1、差し戻しへの対応、完了）
+- 差し戻し（既定の設定で遅い・振幅の小さいループが検出されない退行）を直した: 周期の候補を短い順に見て、受け入れの判定（RMS ≤ LoopRms、motion ≥ MinimumMotion、RMS ≤ 0.2·motion）を通る最短の候補を選ぶ。どれも通らなければ従来の best×1.25 の規則で選ぶ（検出なし）。
+- `MotionProcessingTest` に 0.07 rad・周期 1 s・長さ 3 s・30 Hz・既定設定の 1 件を足した（直す前は detected=0、直した後は period=0.999999 s・detected=1）。
+- (v) の指標を雑音のない正弦との二乗誤差に変えたところ、三角の重みの平滑は振幅を縮めて誤差を増やしていた（0.0171→0.0840）。半径 2 以上の平滑を局所二次近似の重みにして 0.0171→0.0132 に下がる。
+- 証拠: `.harness/runs/20261103-163403/G4-GR128-PROCESSING-CASES-u5-unit-verify.txt`（`cmake --build build --config Debug --target CookedMeshTest -- /m:1` 終了コード 0、ctest の 6 本 Passed、numstat の 2 通りが一致）。
+- Notes: 局所二次近似の重みは端で負になるため、急変する入力では行き過ぎが出うる（試験していない）。スパイクの候補を極大に限っているため、2 コマ続く外れ値では片方しか置き換えないことがありうる（done-when の外）。
