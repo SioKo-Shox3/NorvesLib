@@ -9201,3 +9201,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261103-065438/build-G3-GR10.txt`（両ターゲットのビルド EXIT=0）・`.harness/runs/20261103-065438/verify-G3-GR10-ctest.txt`（SkeletalAnimationSamplingTest 0.25 sec・SkinnedRenderPathContractTest 18.51 sec Passed、100%）
 - Next: なし
 - Notes: 要起票: この項目の verify は ctest で SkinnedRenderPathContractTest を回すのにビルド行がそのターゲットを作らないので、新しい枠・消した build では再検証が Not Run で落ちる。ビルド行に `--target SkinnedRenderPathContractTest` を足すかは計画が決める
+- U1 AssetKind に World = 7 を足し、manifest と AssetSystem の試験で押さえる: 着地(直し 0 回)

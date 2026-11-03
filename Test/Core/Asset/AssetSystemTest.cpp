@@ -289,6 +289,33 @@ int main()
     }
 
     {
+        const std::vector<uint8_t> worldPayload = {0x00, 0x10, 0x80, 0xff, 0x42};
+        const uint64_t worldHash = ComputeAssetPackagePayloadHash(worldPayload.data(), worldPayload.size());
+        const AssetPackageFourCC worldType = MakeAssetPackageFourCC('T', 'r', 'n', '0');
+        WriteBinaryFile(root / "Cooked" / "Worlds.nvpkg",
+                        BuildPackage({{"Worlds/Valley.nvtrn", worldType, worldPayload}}));
+
+        AssetSystem system = CreateSystem(root);
+        assert(system.LoadManifestFromJsonText(BuildManifest("Worlds/Valley.terrain",
+                                                             "Cooked/Worlds.nvpkg",
+                                                             "Worlds/Valley.nvtrn",
+                                                             worldType,
+                                                             worldHash,
+                                                             "terrain",
+                                                             "world",
+                                                             "nvtrn.v0.height16")));
+        const AssetResolveResult result = system.ResolveAsset("Worlds/Valley.terrain", AssetKind::World, "terrain");
+        assert(result.Succeeded());
+        assert(result.UsedCooked());
+        assert(result.Status == AssetResolveStatus::SuccessCooked);
+        assert(result.ManifestStatus == AssetManifestResolveStatus::CookedReferenceFound);
+        assert(result.CookedReference.Kind == AssetKind::World);
+        assert(result.CookedReference.Format == "nvtrn.v0.height16");
+        assert(result.Entry.Type == worldType);
+        AssertBlobBytes(result.Blob, worldPayload);
+    }
+
+    {
         AssetSystem system = CreateSystem(root);
         assert(system.LoadManifestFromJsonText(BuildManifest("Textures/Silver.png",
                                                              "Cooked/Textures.nvpkg",

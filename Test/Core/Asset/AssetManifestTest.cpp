@@ -147,6 +147,46 @@ int main()
     }
 
     {
+        static_assert(static_cast<uint8_t>(AssetKind::Skeleton) == 5);
+        static_assert(static_cast<uint8_t>(AssetKind::Animation) == 6);
+        static_assert(static_cast<uint8_t>(AssetKind::World) == 7);
+
+        const auto json = T(_T("{")
+                            _T("\"version\":1,")
+                            _T("\"assets\":[{")
+                            _T("\"logical_path\":\"Worlds/Valley.terrain\",")
+                            _T("\"kind\":\"world\",")
+                            _T("\"source_hash\":\"0000000000000001\",")
+                            _T("\"variant\":\"terrain\",")
+                            _T("\"format\":\"nvtrn.v0.height16\",")
+                            _T("\"cooked_package\":\"Cooked/Worlds.nvpkg\",")
+                            _T("\"entry_name\":\"Worlds/Valley.nvtrn\",")
+                            _T("\"entry_type\":\"Trn0\",")
+                            _T("\"cooked_hash\":\"0000000000000002\",")
+                            _T("\"cooked_version\":0}]}"));
+        AssetManifest manifest;
+        assert(LoadManifestText(json, manifest));
+        assert(manifest.GetReferenceCount() == 1);
+        const AssetCookedReference &reference = manifest.GetReference(0);
+        assert(reference.Kind == AssetKind::World);
+        assert(reference.EntryType == MakeAssetPackageFourCC('T', 'r', 'n', '0'));
+        assert(reference.Format == "nvtrn.v0.height16");
+        assert(GetAssetKindName(AssetKind::World) == "world");
+        AssetKind parsedKind = AssetKind::Unknown;
+        assert(TryParseAssetKind("world", parsedKind));
+        assert(parsedKind == AssetKind::World);
+
+        const AssetManifestResolveResult result = manifest.Resolve("Worlds/Valley.terrain", AssetKind::World, "terrain");
+        assert(result.Status == AssetManifestResolveStatus::CookedReferenceFound);
+        assert(result.Reference.Kind == AssetKind::World);
+        assert(result.Reference.EntryType == MakeAssetPackageFourCC('T', 'r', 'n', '0'));
+        assert(result.Reference.Format == "nvtrn.v0.height16");
+        const AssetManifestResolveResult otherKind = manifest.Resolve("Worlds/Valley.terrain", AssetKind::Model, "terrain");
+        assert(otherKind.Status == AssetManifestResolveStatus::LooseFallbackVariantMissing);
+        assert(!otherKind.ShouldUseCooked());
+    }
+
+    {
         AssetManifest manifest;
         assert(LoadManifestText(SkeletalManifest(), manifest));
         const AssetCookedReference &reference = manifest.GetReference(0);
