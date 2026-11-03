@@ -170,6 +170,52 @@ namespace
             R"({"version":1,"nodes":[{"id":"a","type":"clip","clip":"a"},{"id":"m","type":"stateMachine","states":[{"name":"Idle","node":"a"}],"transitions":[{"from":"Idle","to":"Missing"}]}],"root":"m"})",
             A::AnimGraphError::InvalidTransition);
     }
+    void TestGraphMaskRoots()
+    {
+        GraphFixture f(5);
+        // このケースだけ Root から Child と Joint2 の二枝に分ける。
+        auto joints = f.Skeleton->GetJoints();
+        joints[2].ParentIndex = 0;
+        f.Skeleton->SetJoints(std::move(joints));
+        auto graph = f.Graph(
+            R"({"version":1,"masks":[{"name":"Branches","roots":["Child","Joint2"]}],"nodes":[{"id":"a","type":"clip","clip":"a"}],"root":"a"})");
+        const auto& weights = graph->GetData()->Masks[0].Weights;
+        GRAPH_CHECK(weights.size() == 5);
+        NearGraph(weights[0], 0);
+        for (size_t i = 1; i < weights.size(); ++i)
+        {
+            NearGraph(weights[i], 1);
+        }
+        auto faded = f.Graph(
+            R"({"version":1,"masks":[{"name":"Overlap","roots":["Joint3","Joint2"],"fadeDepth":3}],"nodes":[{"id":"a","type":"clip","clip":"a"}],"root":"a"})");
+        const auto& fadeWeights = faded->GetData()->Masks[0].Weights;
+        GRAPH_CHECK(fadeWeights.size() == 5);
+        NearGraph(fadeWeights[0], 0);
+        NearGraph(fadeWeights[1], 0);
+        NearGraph(fadeWeights[2], 1.f / 3);
+        NearGraph(fadeWeights[3], 2.f / 3);
+        NearGraph(fadeWeights[4], 1);
+        auto single = f.Graph(
+            R"({"version":1,"masks":[{"name":"Legacy","root":"Joint2","fadeDepth":3},{"name":"Single","roots":["Joint2"],"fadeDepth":3}],"nodes":[{"id":"a","type":"clip","clip":"a"}],"root":"a"})");
+        const auto& masks = single->GetData()->Masks;
+        GRAPH_CHECK(masks[0].Weights.size() == masks[1].Weights.size());
+        for (size_t i = 0; i < masks[0].Weights.size(); ++i)
+        {
+            GRAPH_CHECK(masks[0].Weights[i] == masks[1].Weights[i]);
+        }
+        f.Reject(
+            R"({"version":1,"masks":[{"name":"Both","root":"Child","roots":["Joint2"]}],"nodes":[{"id":"a","type":"clip","clip":"a"}],"root":"a"})",
+            A::AnimGraphError::InvalidSchema);
+        f.Reject(
+            R"({"version":1,"masks":[{"name":"Empty","roots":[]}],"nodes":[{"id":"a","type":"clip","clip":"a"}],"root":"a"})",
+            A::AnimGraphError::InvalidSchema);
+        f.Reject(
+            R"({"version":1,"masks":[{"name":"Duplicate","roots":["Child","Child"]}],"nodes":[{"id":"a","type":"clip","clip":"a"}],"root":"a"})",
+            A::AnimGraphError::DuplicateName);
+        f.Reject(
+            R"({"version":1,"masks":[{"name":"Unknown","roots":["Child","Missing"]}],"nodes":[{"id":"a","type":"clip","clip":"a"}],"root":"a"})",
+            A::AnimGraphError::UnknownJoint);
+    }
     void TestGraphNodeKinds()
     {
         GraphFixture f;
@@ -197,6 +243,70 @@ namespace
         GRAPH_CHECK(select.Initialize(*selected, *f.Skeleton, *f.Mesh, M::Matrix4x4::Identity));
         GRAPH_CHECK(select.Update(.25f) && select.Evaluate());
         NearGraph(select.GetLocalPose()[0].Translation.x, 10.5f);
+    }
+    void TestGraphNominalSpeedPositions()
+    {
+        GraphFixture f;
+        A::ClipMetadataReport report;
+        GRAPH_CHECK(f.AClip->ApplyMetadataJson(C::String(R"({"rootMotion":{"nominalSpeed":1}})"), report));
+        GRAPH_CHECK(f.BClip->ApplyMetadataJson(C::String(R"({"rootMotion":{"nominalSpeed":3}})"), report));
+        // mix を先に置き、Clip の前方参照も含めて公称速度の位置を解く。
+        constexpr const char* json =
+            R"({"version":1,"params":[{"name":"X","type":"float","value":2}],"nodes":[{"id":"mix","type":"blend1d","x":"X","samples":[{"position":"nominalSpeed","node":"a"},{"position":"nominalSpeed","node":"b"}]},{"id":"a","type":"clip","clip":"a"},{"id":"b","type":"clip","clip":"b"}],"root":"mix"})";
+        auto graph = f.Graph(json);
+        A::AnimGraphInstance instance;
+        GRAPH_CHECK(instance.Initialize(*graph, *f.Skeleton, *f.Mesh, M::Matrix4x4::Identity));
+        NearGraph(instance.GetLocalPose()[0].Translation.x, 5);
+        NearGraph(instance.GetNodeWeights()[1], .5f);
+        NearGraph(instance.GetNodeWeights()[2], .5f);
+
+        GRAPH_CHECK(f.BClip->ApplyMetadataJson(C::String(R"({"rootMotion":{"nominalSpeed":5}})"), report));
+        GRAPH_CHECK(instance.Update(0) && instance.Evaluate());
+        NearGraph(instance.GetLocalPose()[0].Translation.x, 2.5f);
+        NearGraph(instance.GetNodeWeights()[2], .25f);
+        // 不正な順序・ゼロ速度が続く間は拒否し、直前の姿勢と重みを保つ。
+        for (const char* invalid : {R"({"rootMotion":{"nominalSpeed":0.5}})",
+                                    R"({"rootMotion":{"nominalSpeed":0}})"})
+        {
+            GRAPH_CHECK(f.BClip->ApplyMetadataJson(C::String(invalid), report));
+            GRAPH_CHECK(!instance.Update(0) && !instance.Evaluate());
+            GRAPH_CHECK(!instance.Update(0) && !instance.Evaluate());
+            NearGraph(instance.GetLocalPose()[0].Translation.x, 2.5f);
+            NearGraph(instance.GetNodeWeights()[2], .25f);
+            GRAPH_CHECK(f.BClip->ApplyMetadataJson(C::String(R"({"rootMotion":{"nominalSpeed":5}})"), report));
+            GRAPH_CHECK(instance.Update(0) && instance.Evaluate());
+            NearGraph(instance.GetLocalPose()[0].Translation.x, 2.5f);
+            NearGraph(instance.GetNodeWeights()[2], .25f);
+        }
+
+        f.Reject(
+            R"({"version":1,"nodes":[{"id":"mix","type":"blend1d","samples":[{"position":"nominalSpeed","node":"pair"}]},{"id":"pair","type":"blend2","children":["a","a"]},{"id":"a","type":"clip","clip":"a"}],"root":"mix"})",
+            A::AnimGraphError::InvalidSchema);
+        GRAPH_CHECK(f.BClip->ApplyMetadataJson(C::String(R"({"rootMotion":{"nominalSpeed":0}})"), report));
+        f.Reject(json, A::AnimGraphError::InvalidNominalSpeed);
+        GRAPH_CHECK(f.BClip->ApplyMetadataJson(C::String(R"({"rootMotion":{"nominalSpeed":1}})"), report));
+        f.Reject(json, A::AnimGraphError::InvalidSchema);
+        f.Reject(
+            R"({"version":1,"nodes":[{"id":"mix","type":"blend1d","samples":[{"position":2,"node":"a"},{"position":"nominalSpeed","node":"b"}]},{"id":"a","type":"clip","clip":"a"},{"id":"b","type":"clip","clip":"b"}],"root":"mix"})",
+            A::AnimGraphError::InvalidSchema);
+
+        // root の移動は毎秒 2。明示値がない a はインスタンスと同じ推定速度を使う。
+        GRAPH_CHECK(f.AClip->ApplyMetadataJson(C::String(R"({"rootMotion":{"mode":"inPlace"}})"), report));
+        GRAPH_CHECK(f.BClip->ApplyMetadataJson(C::String(R"({"rootMotion":{"nominalSpeed":6}})"), report));
+        auto estimated = f.Graph(json);
+        A::AnimGraphInstance inferred;
+        GRAPH_CHECK(inferred.Initialize(*estimated, *f.Skeleton, *f.Mesh, M::Matrix4x4::Identity));
+        const float speed = inferred.GetNominalSpeed(0);
+        NearGraph(speed, 2);
+        GRAPH_CHECK(inferred.Parameters().SetFloat(0, speed + (inferred.GetNominalSpeed(1) - speed) * .25f));
+        GRAPH_CHECK(inferred.Update(0) && inferred.Evaluate());
+        NearGraph(inferred.GetNodeWeights()[2], .25f);
+        NearGraph(inferred.GetLocalPose()[0].Translation.x, 2.5f);
+        // 推定値を解けても速度がゼロなら初期化を拒否する。
+        f.AClip->ClearRuntimeMetadata();
+        A::AnimGraphInstance stationary;
+        GRAPH_CHECK(!stationary.Initialize(*estimated, *f.Skeleton, *f.Mesh, M::Matrix4x4::Identity));
+        f.BClip->ClearRuntimeMetadata();
     }
     void TestGraphStateMachine()
     {
@@ -421,10 +531,10 @@ namespace
         }
     }
 
-    void TestAnimatorScriptParameter()
+    void TestAnimatorScriptParameter(const char* json = BlendJson, float expected = .75f)
     {
         GraphFixture f;
-        auto graph = f.Graph(BlendJson);
+        auto graph = f.Graph(json);
         World world;
         world.Initialize();
         GRAPH_CHECK(GEngine.GetScriptRuntime().Initialize(world) == EScriptRuntimeResult::Success);
@@ -443,9 +553,53 @@ namespace
         Component::AnimatorDebugSnapshot snapshot;
         animator->BuildDebugSnapshot(snapshot);
         GRAPH_CHECK(snapshot.Parameters.size() == 1);
-        NearGraph(snapshot.Parameters[0].Value.Float, .75f);
+        NearGraph(snapshot.Parameters[0].Value.Float, expected);
         world.Finalize();
         GRAPH_CHECK(GEngine.GetScriptRuntime().Shutdown() == EScriptRuntimeResult::Success);
+    }
+
+    void TestGraphParamRange()
+    {
+        GraphFixture f;
+        auto graph = f.Graph(
+            R"({"version":1,"params":[{"name":"Float","type":"float","min":-1.5,"max":1.5},{"name":"Int","type":"int","min":-2,"max":3},{"name":"Speed","type":"float","bind":"speed","max":0.5}],"nodes":[{"id":"a","type":"clip","clip":"a"}],"root":"a"})");
+        A::AnimGraphInstance instance;
+        GRAPH_CHECK(instance.Initialize(*graph, *f.Skeleton, *f.Mesh, M::Matrix4x4::Identity));
+        const auto floatParam = instance.Parameters().Find(Identity("Float"));
+        const auto intParam = instance.Parameters().Find(Identity("Int"));
+        const auto speedParam = instance.Parameters().Find(Identity("Speed"));
+        GRAPH_CHECK(floatParam != A::InvalidAnimParam && intParam != A::InvalidAnimParam &&
+                    speedParam != A::InvalidAnimParam);
+        GRAPH_CHECK(instance.Parameters().SetFloat(floatParam, 9));
+        NearGraph(instance.Parameters().Get(floatParam)->Float, 1.5f);
+        GRAPH_CHECK(instance.Parameters().SetFloat(floatParam, -9));
+        NearGraph(instance.Parameters().Get(floatParam)->Float, -1.5f);
+        GRAPH_CHECK(instance.Parameters().SetInt(intParam, 9));
+        GRAPH_CHECK(instance.Parameters().Get(intParam)->Int == 3);
+        GRAPH_CHECK(instance.Parameters().SetInt(intParam, -9));
+        GRAPH_CHECK(instance.Parameters().Get(intParam)->Int == -2);
+        A::AnimDriveSignals signals;
+        signals.Speed = 9;
+        GRAPH_CHECK(instance.Parameters().ApplyDriveSignals(signals));
+        NearGraph(instance.Parameters().Get(speedParam)->Float, .5f);
+        TestAnimatorScriptParameter(
+            R"({"version":1,"params":[{"name":"Speed","type":"float","value":0.25,"bind":"speed","max":0.5}],"nodes":[{"id":"a","type":"clip","clip":"a"},{"id":"b","type":"clip","clip":"b"},{"id":"mix","type":"blend2","children":["a","b"],"weight":"Speed"}],"root":"mix"})",
+            .5f);
+        f.Reject(
+            R"({"version":1,"params":[{"name":"Float","type":"float","value":2,"max":1}],"nodes":[{"id":"a","type":"clip","clip":"a"}],"root":"a"})",
+            A::AnimGraphError::InvalidSchema);
+        f.Reject(
+            R"({"version":1,"params":[{"name":"Float","type":"float","min":2,"max":1}],"nodes":[{"id":"a","type":"clip","clip":"a"}],"root":"a"})",
+            A::AnimGraphError::InvalidSchema);
+        f.Reject(
+            R"({"version":1,"params":[{"name":"Bool","type":"bool","min":0}],"nodes":[{"id":"a","type":"clip","clip":"a"}],"root":"a"})",
+            A::AnimGraphError::InvalidSchema);
+        f.Reject(
+            R"({"version":1,"params":[{"name":"Trigger","type":"trigger","max":1}],"nodes":[{"id":"a","type":"clip","clip":"a"}],"root":"a"})",
+            A::AnimGraphError::InvalidSchema);
+        f.Reject(
+            R"({"version":1,"params":[{"name":"Int","type":"int","min":0.5}],"nodes":[{"id":"a","type":"clip","clip":"a"}],"root":"a"})",
+            A::AnimGraphError::InvalidSchema);
     }
 
     void TestGraphPlaybackRegressions()
@@ -1349,7 +1503,9 @@ namespace
 void TestAnimGraphRuntime()
 {
     TestGraphBlendAndLoad();
+    TestGraphMaskRoots();
     TestGraphNodeKinds();
+    TestGraphNominalSpeedPositions();
     TestClipMetadataRuntime();
     TestAnimationEventRuntime();
     TestRootMotionRuntime();
@@ -1364,6 +1520,7 @@ void TestAnimGraphRuntime()
     TestGraphPlaybackRegressions();
     TestAnimatorConnection();
     TestAnimatorScriptParameter();
+    TestGraphParamRange();
     TestSocketsAndHoldSlots();
     TestSocketAttachmentRuntime();
     TestSocketDependencyOrder();

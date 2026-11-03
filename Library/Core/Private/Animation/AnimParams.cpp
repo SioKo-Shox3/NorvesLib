@@ -2,6 +2,21 @@
 #include <cmath>
 namespace NorvesLib::Core::Animation
 {
+    namespace
+    {
+        template <typename T> T ClampParam(T value, T minimum, T maximum, bool bHasMin, bool bHasMax)
+        {
+            if (bHasMin && value < minimum)
+            {
+                return minimum;
+            }
+            if (bHasMax && value > maximum)
+            {
+                return maximum;
+            }
+            return value;
+        }
+    } // 無名名前空間
     bool AnimParamSet::Initialize(Container::Span<const AnimParamDefinition> definitions)
     {
         if (definitions.size() >= InvalidAnimParam)
@@ -14,6 +29,23 @@ namespace NorvesLib::Core::Animation
             if (!d.Name.IsValid() || uint8_t(d.Type) > uint8_t(AnimParamType::Trigger) ||
                 uint8_t(d.Binding) > uint8_t(AnimSignalBinding::GroundNormalZ) ||
                 (d.Type == AnimParamType::Float && !std::isfinite(d.Default.Float)))
+            {
+                return false;
+            }
+            if (d.Type != AnimParamType::Float && d.Type != AnimParamType::Int && (d.bHasMin || d.bHasMax))
+            {
+                return false;
+            }
+            if (d.Type == AnimParamType::Float &&
+                ((d.bHasMin && (!std::isfinite(d.Min.Float) || d.Default.Float < d.Min.Float)) ||
+                 (d.bHasMax && (!std::isfinite(d.Max.Float) || d.Default.Float > d.Max.Float)) ||
+                 (d.bHasMin && d.bHasMax && d.Min.Float > d.Max.Float)))
+            {
+                return false;
+            }
+            if (d.Type == AnimParamType::Int &&
+                ((d.bHasMin && d.Default.Int < d.Min.Int) || (d.bHasMax && d.Default.Int > d.Max.Int) ||
+                 (d.bHasMin && d.bHasMax && d.Min.Int > d.Max.Int)))
             {
                 return false;
             }
@@ -61,7 +93,8 @@ namespace NorvesLib::Core::Animation
         {
             return false;
         }
-        m_Values[h].Float = value;
+        const auto& d = m_Definitions[h];
+        m_Values[h].Float = ClampParam(value, d.Min.Float, d.Max.Float, d.bHasMin, d.bHasMax);
         return true;
     }
     bool AnimParamSet::SetInt(AnimParamHandle h, int32_t value)
@@ -70,7 +103,8 @@ namespace NorvesLib::Core::Animation
         {
             return false;
         }
-        m_Values[h].Int = value;
+        const auto& d = m_Definitions[h];
+        m_Values[h].Int = ClampParam(value, d.Min.Int, d.Max.Int, d.bHasMin, d.bHasMax);
         return true;
     }
     bool AnimParamSet::SetBool(AnimParamHandle h, bool value)
@@ -140,7 +174,9 @@ namespace NorvesLib::Core::Animation
             }
             else if (binding != AnimSignalBinding::None)
             {
-                m_Values[i].Float = values[uint8_t(binding) - 1];
+                const auto& d = m_Definitions[i];
+                m_Values[i].Float = ClampParam(values[uint8_t(binding) - 1], d.Min.Float, d.Max.Float,
+                                               d.bHasMin, d.bHasMax);
             }
         }
         return true;

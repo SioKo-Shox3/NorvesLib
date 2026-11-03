@@ -78,6 +78,8 @@ namespace NorvesLib::Core::Component
         [[nodiscard]] bool SetPoseBoundsSettings(const Animation::PoseBoundsSettings& settings);
         const Animation::PoseBoundsSettings& GetPoseBoundsSettings() const noexcept { return m_PoseBoundsSettings; }
         uint64_t GetPoseSerial() const { return m_PoseSerial; }
+        // 作業配列の再確保を試験・診断するため、姿勢を自動評価せず読み取り専用で返す。dirty は IsPoseCurrent() で確認する。
+        const Animation::SkeletalPoseSnapshot& GetPoseSnapshot() const noexcept { return m_Pose; }
         int32_t FindJointIndex(Identity name) const;
         // 自動評価しない。未評価/dirty/無効資産/範囲外はfalseで出力を変更しない。
         [[nodiscard]] bool TryGetJointModelMatrix(uint32_t index, Math::Matrix4x4& outMatrix) const;

@@ -85,6 +85,8 @@ namespace NorvesLib::Core::Animation
         swap(m_SyncPhases, other.m_SyncPhases);
         swap(m_SyncOffsets, other.m_SyncOffsets);
         swap(m_RootClips, other.m_RootClips);
+        swap(m_BlendAxes, other.m_BlendAxes);
+        swap(m_BlendAxisScratch, other.m_BlendAxisScratch);
         swap(m_NodeMotion, other.m_NodeMotion);
         swap(m_MotionScratch, other.m_MotionScratch);
         swap(m_MotionModels, other.m_MotionModels);
@@ -121,6 +123,8 @@ namespace NorvesLib::Core::Animation
         m_SyncPhases.clear();
         m_SyncOffsets.clear();
         m_RootClips.clear();
+        m_BlendAxes.clear();
+        m_BlendAxisScratch.clear();
         m_NodeMotion.clear();
         m_MotionModels.clear();
         m_MotionScratch = {};
@@ -188,6 +192,8 @@ namespace NorvesLib::Core::Animation
         }
         const size_t count = data->Nodes.size(), joints = data->Parents.size();
         m_Runtime.resize(count);
+        m_BlendAxes.resize(count);
+        m_BlendAxisScratch.resize(count);
         m_Poses.resize(count);
         m_Reference.resize(count);
         m_Weights.resize(count, 0);
@@ -212,7 +218,11 @@ namespace NorvesLib::Core::Animation
             rt.SavedReference.resize(joints);
             m_Poses[i].resize(joints);
             m_Reference[i].resize(joints);
-            Edges(uint32_t(i));
+            // 公称速度由来の重みは、位置を解いた RefreshRootMetadata で初期化する。
+            if (data->Nodes[i].AxisFromNominalSpeed.empty())
+            {
+                Edges(uint32_t(i));
+            }
         }
         for (uint32_t i : data->EvaluationOrder)
         {
@@ -323,7 +333,8 @@ namespace NorvesLib::Core::Animation
         case AnimNodeKind::BlendSpace1D:
         {
             float a = 0;
-            const auto first = AxisInterval(n.AxisX, n.X.Read(m_Parameters), a);
+            const auto& axis = n.AxisFromNominalSpeed.empty() ? n.AxisX : m_BlendAxes[index];
+            const auto first = AxisInterval(axis, n.X.Read(m_Parameters), a);
             w[first] = 1 - a;
             if (first + 1 < w.size())
             {

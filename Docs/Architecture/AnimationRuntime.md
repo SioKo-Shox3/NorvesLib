@@ -14,10 +14,10 @@ AnimatorはAnimation群でUpdate、PoseFinalize群でEvaluate・modifier・Submi
 
 最上位はversion=1、nodes配列、root（nodeのid）。paramsとmasksは任意。
 
-- params: name、type(float/int/bool/trigger)、value、任意bind。bindはspeed、velocityX/Y/Z、accelerationX/Y/Z、turnRate、grounded、groundNormalX/Y/Z。型を厳密に合わせる。実行時は添字でアクセスする
-- masks: name、root（関節名）、fadeDepth。0は枝の全関節が1、正値は根から深くなるほど1へ立ち上げる。親が後ろに並ぶ骨格も扱う
+- params: name、type(float/int/bool/trigger)、value（省略時0）、任意bind。bindはspeed、velocityX/Y/Z、accelerationX/Y/Z、turnRate、grounded、groundNormalX/Y/Z。型を厳密に合わせる。float/intだけ任意min/max（intは整数）を片方または両方指定できる。SetFloat/SetInt・bindの書き込み・スクリプトのSetAnimFloatByIndex/SetAnimIntByIndexは範囲へ丸める。既定値が範囲外、min>max、bool/triggerへのmin/max指定はInvalidSchemaで読込失敗。実行時は添字でアクセスする
+- masks: name、root（関節名1つ）かroots（関節名の配列）のどちらか一方、fadeDepth。0は枝の全関節が1、正値は根から深くなるほど1へ立ち上げる。rootsは各根の枝の重みの関節ごとの最大を取り、fadeDepthは各根に同じく効く。root/rootsの両方の指定・空配列はInvalidSchema、重複はDuplicateName、未知の関節名はUnknownJoint。親が後ろに並ぶ骨格も扱う
 - clip: clip（IClipResolverで解決する名前）、loop（既定true）、rate（既定1）。負のnonloopは末尾から開始
-- blend1d: x（float値またはfloatパラメータ名）、samples（position/node）。positionは厳密増加、範囲外はクランプ
+- blend1d: x（float値またはfloatパラメータ名）、samples（position/node）。positionは数値か文字列"nominalSpeed"。"nominalSpeed"は子のClipノードのクリップの公称速度（metadataの明示値、無ければrootの移動から推定。AnimGraphInstance::GetNominalSpeedと同じ値）を位置にする。子がClipノードでないとInvalidSchema、明示の公称速度が正でないとInvalidNominalSpeed、解決後の位置が厳密に増加しないとInvalidSchemaで読込失敗。推定値はインスタンスのmeshの変換に依存するため、推定に頼る位置はインスタンスのInitializeで確かめ、不正ならInitializeが失敗する。実行時のApplyMetadataJsonで公称速度が変わったら次のUpdateで位置を解き直し、不正ならUpdateがfalseを返して前の位置を保つ。範囲外はクランプ
 - blend2d: x/y、axisX/axisY（各2点以上の等間隔格子）、children（行優先）。双線形で混ぜる。軸は明示値で指定し、公称速度からの自動配置は行わない
 - blend2: childrenが2件、weight（float値またはfloatパラメータ名、既定0.5）
 - layered: base、layers（node、weight、任意mask、mode=override/additive）。加算の基準は各clipの先頭frameを現在の選択・ブレンド重みで合成した姿勢。平行移動・scaleは差分、回転はtarget×inverse(reference)の差を加える
@@ -26,7 +26,7 @@ AnimatorはAnimation群でUpdate、PoseFinalize群でEvaluate・modifier・Submi
 
 Triggerは全状態機械が評価した後に一度消費する。スクリプトはEntityRefのSetAnimFloatByIndex/SetAnimIntByIndex/SetAnimBoolByIndex/SetAnimTriggerByIndexを使う。保持したEntityRefが失効した場合や型・添字が異なる場合はfalse。
 
-グラフは未知のclip・parameter・node・mask・関節、循環、遷移先不在、重複id、数値不正、未対応versionを区別して拒否する。cookは既存raw.v0でJSONを保持する。同期・metadataの契約は別のクリップメタデータ層が担当する。
+グラフは未知のclip・parameter・node・mask・関節、循環、遷移先不在、重複id、数値不正、公称速度の不正（InvalidNominalSpeed）、未対応versionを区別して拒否する。cookは既存raw.v0でJSONを保持する。同期・metadataの契約は別のクリップメタデータ層が担当する。
 
 ## 診断と検証範囲
 

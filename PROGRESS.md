@@ -9158,25 +9158,46 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: 起動の確かめは後回し。`FIX-NORMAL-MATRIX-SCALE-CHECK-P1-CHECK` で `Game` を含むビルドと ctest `ComputeSkinningVulkanTest` を回す
 - Notes: verify のビルドの行は `Game` を含むので後回しにされ、作業ツリーの `build/` の試験の実行ファイルが古いまま ctest の行だけが再検証される。試験の実行ファイルは反復の中で先にビルドしておく
 
-## 2026-11-03 G4-GR05-MODEL-CASES（run 20261103-070131 の反復 1。完了）
+- U1 ソケットの向きのオラクル・関節の scale・JSON の拒否の試験を足す: 着地(直し 0 回)
+- U2 再生中の姿勢と Animator 駆動で、付けた Entity が同じフレームのソケットに付くことの試験を足し、タスクの verify を回す: 着地(直し 0 回)
 
-- 試験の 3 点（Docs/Testing.md）: 反証する契約は、QuadrupedLocomotionModel が要件 GR05 の受け入れ確認 (a)〜(j) の式（歩様のヒステリシスと最短滞在、最小旋回半径 max(v/ω_cap, v²/a_lat)、加減速の到達時間と停止距離と制動の率、斜面の係数の単調と下限と下りの増分、ジャンプの頂点・滞空・先行入力・コヨーテ・着地のペナルティ・空中の制限、dt=1/30・1/60・1/144 での位置と向きの一致、極端な dt での NaN の無さと拒否時の state/out の保持、入力ゼロで向きが回らない、その場旋回の入りと抜け、バンクの符号と上限）どおりに動くこと。
-- ほかの手段で気づけるか: 気づきにくい。犬の動きの撮影は 1 枚で、旋回半径の数 % のずれ、最短滞在の破り、境界の 1 フレームの差、フレームレートでの向きのずれは絵にもログにも出ない。犬の実機の受け入れ（G4-GR07 の煙試験）はまだ無い。
-- 失敗が黙って起きるか: 起きる。式から外れても犬は何かしら動き、エラーもログも出ない。
-- 方針: 試験は既定値ではなく試験の中で決めたパラメータで式と比べる。(d) は SlopeLimit を 60° より大きくして 0〜60° を見る（SlopeLimit を越えた登りは登れないとして 0 を返す設計のまま）。(e) の着地は「LandingRecovery の間は加速せず、速さは着地直後の v·(1−LandingSpeedLoss·impact) を保つ（減速・制動・その場旋回は通常どおり）」とし、今の「回復中は目標 0 で減速し続ける」を直す。
-- U1 歩様・旋回半径・加減速・斜面のケースを足し、外れたらモデルを直す: 着地(直し 0 回)
-- U2 ジャンプ・極端な dt・入力ゼロのケースを足し、着地の回復を直す: 着地(直し 0 回)
-- U3 フレームレート非依存・その場旋回・バンクのケースを足し、タスクの verify を通す: 着地(直し 0 回)
-- Done: `QuadrupedLocomotionModelTest` に受け入れ確認 (a)〜(j) のケース 12 本を足した（`CaseGaitMinDwell`・`CaseMinimumTurnRadius`・`CaseAccelerationAndStopping`・`CaseSlopeScale`・`CaseJumpTiming`・`CaseLandingRecovery`・`CaseAirControl`・`CaseExtremeTimeSteps`・`CaseZeroInputHoldsYaw`・`CaseFrameRateIndependence`・`CasePivotTurn`・`CaseTurnBank`）。パラメータは試験の中の `MakeTestParams()` で決め、既定値に依存しない。今あった検査は `CaseExistingBaseline` に移して値と許容差はそのまま。
-- Done: 外れていたのは着地の回復だけだった。回復中に目標を 0 にして Deceleration で減り続けていた（期待 3.4 m/s に対して 3.37656 m/s）のを、回復中は加速だけを止めて着地直後の v·(1−LandingSpeedLoss·impact) を保つ形に直した（減速・制動・その場旋回は通常どおり）。
-- 実測: 最短滞在 0.2 秒に対して 6 遷移とも 0.202083 秒（1 刻み以内）、旋回半径 4.000→3.99995 m（ω_cap 側）・6.000→6.00001 m（a_lat 側）、到達時間 1.5→1.5 秒、停止距離 3.0→3.00004 m、逆向き入力の 1 刻みの減り = Brake×dt、斜面の式との差 1.2e-7 以下、フレームレートの 3 組の最大差は位置 0.0055 m・向き 0.0035 rad、その場旋回は 65 刻みで抜け残りのずれ 0.246 < 0.25 rad、バンクは非飽和 ±0.2968 rad・飽和 ±0.45 rad（MaximumBank）。
-- 証拠: `.harness/runs/20261103-070131/G4-GR05-MODEL-CASES-u3-unit-verify.txt`（`cmake --build build --config Debug --target LoggerSinkTest PhysicsDynamicsTest -- /m:1` 終了コード 0、ctest の `QuadrupedLocomotionModelTest`・`LocomotionProfileReloadTest`・`PhysicsFixedStepPipelineTest` の 3 本 Passed、各ケースの期待値と実測値の行）
-- Next: なし（アプリを起動する確かめは無い）。
-- Notes: 歩様の表の形・JSON（`QuadrupedLocomotionJson.cpp`）は変えていない。斜面は SlopeLimit を越えた登りは 0（登れない）を返す設計のままで、(d) は SlopeLimit を 60° より大きくした試験のパラメータで見た。
+## 2026-11-03 G3-GR13-SOCKET-ORACLE-TIMING（run 20261103-065450 の反復 1、完了）
+- Done: `SkeletalAnimationSamplingTest` に `Test/Core/Rendering/SocketOracleTest.cpp` を足した。(1) 向き: +90°Z と任意の回転・平行移動の子の関節、恒等でない剛体のメッシュノード行列 M、回転・平行移動・一様 scale 1.7 のオーナーで、ウェイト 1 の頂点の CPU スキニング（`SkinPosition` と palette、続けてオーナーのワールド）と、ソケットのローカルの原点と 3 軸の点（0.5）をソケットのワールド変換で写した点が 1e-4 で一致する。(2) 子の関節の scale 2 でソケットの scale はオーナーの 1.7 になり、原点はスキニングと一致する。(3) 時刻: `SetPlaying(true)` の再生と `AnimatorComponent`（clip ノード 1 つのグラフ）× 追従する Entity を骨格の前・後に作る 4 通りで、`World::Tick`・`World::LateTick` の後の追従する Entity の位置と回転が同じフレームの `GetSocketWorldTransform` と一致し、ソケットはフレームごとに 1e-3 より大きく動く（6 フレーム）。(4) `ApplySocketsJson` は `1e400`・単位でない回転・scale 2・空の名前を拒否し、有効な候補を先に並べても前の定義（親と offset）を保つ。どれも最初から通り、製品のコードは変えていない
+- 証拠: `.harness/runs/20261103-065450/u2-unit-verify.txt`（verify のビルド 3 ターゲットの終了コード 0、ctest の SkeletalAnimationSamplingTest・CookedSkeletonV1Test・WorldRenderInterpolationTest・WorldTickGroupTest の 4 本 Passed）
+- Next: なし（この項目は完了。アプリを起動する確かめは無い）
+- Notes: 関節の scale はソケットが捨てる約束なので、関節が scale を持ちソケットの offset の位置が 0 でないときは、ソケットの原点とスキニングの点は一致しない（試験の (2) は offset の位置を 0 にして比べた）。M に scale がある場合も同じ
 
-## 2026-11-03 G4-GR05-MODEL-CASES（run 20261103-113136 の反復 1。完了を付け直す）
+- U1 AnimEventPropertyTest.cpp を足し、イベントの配送の性質 (1)〜(4) を AnimGraphInstance 経由で確かめる: 着地(直し 0 回)
+- U2 metadata の拒否・ルートモーション・接地解析の性質 (5)〜(7) を足し、タスクの verify を回す: 着地(直し 1 回)
 
-- Done: 前の run で試験のケース (a)〜(j) と着地の回復の直しを着地済み。評価が枠切れで回らなかったため状態が doing に戻っていたので、今の HEAD で verify を回し直して done に戻した。
-- 証拠: `.harness/runs/20261103-113136/verify-G4-GR05-MODEL-CASES-build.txt`（`cmake --build build --config Debug --target LoggerSinkTest PhysicsDynamicsTest -- /m:1` 終了コード 0）、`.harness/runs/20261103-113136/verify-G4-GR05-MODEL-CASES-ctest.txt`（`QuadrupedLocomotionModelTest`・`LocomotionProfileReloadTest`・`PhysicsFixedStepPipelineTest` の 3 本 Passed、終了コード 0）。
-- Next: 評価者による差分の評価（前の run では未実施）。
-- Notes: アプリの起動を要する確かめは無い。
+## 2026-11-03 G3-GR11-EVENT-PROPERTIES（run 20261103-065440 の反復 2、完了）
+- Done: `Test/Core/Rendering/AnimEventPropertyTest.cpp` を `SkeletalAnimationSamplingTest` に足し、`AnimGraphInstance` 経由で GR11 の残りの受け入れ確認を押さえた。(1) ループの点・窓イベントと 2 クリップの Blend2・同期グループを 1/60×N・1/30×N/2・種固定の乱数の dt 列で回して、配送の集合と順序（名前・種類・周回・窓の Begin と End の組）が一致 (2) (prev, cur] の境界・逆再生・1 回の Update での 2 周跨ぎ (3) 点イベントの `minWeight` の閾値と、状態の遷移で抜けた窓の `bInterrupted` の End が 1 回だけ (4) 64 件の配送領域の溢れで `DroppedCount()` の増加・警告・Begin だけ残る窓が無い (5) metadata の時刻が減る並び・空の名前・`1e400` の拒否（extras とサイドカーの両方）、未知キーは extras で無視・サイドカーで警告して読む、extras の基底とサイドカーを空の基底に重ねた結果が `SameClipMetadata` で一致 (6) `inPlace` で root の水平の移動が除かれ `ConsumeRootMotion` が 0、extract の 2 クリップの Blend2（重み 0.25・0.7）の差分が試験の中で独立に求めた値と一致 (7) 振幅が鉛直速度のしきい値の半分に当たる種固定の雑音を足した足の軌跡で、接地窓 2 つを ±1 コマで復元し余分な窓なし。製品のコードは外れが無く変えていない。既存のケースは期待を変えずに通る
+- 証拠: `.harness/runs/20261103-065440/u2-unit-verify.txt`（Debug の `SkeletalAnimationSamplingTest`・`CookedMeshTest` のビルドの終了コード 0、ctest の `SkeletalAnimationSamplingTest`・`CookedClipBankV1Test`・`SkeletalClipBankBindingTest` が Passed・終了コード 0）
+- Notes: `1e400` は `JsonDocument` の数値の解析で読込失敗になり、metadata は `InvalidJson` で拒否される（無限大として読む経路ではない）
+- Notes: ルートモーションの Blend2 の契約は、各クリップの差分を始点の向きで回した X・Z と Yaw の成分ごとの線形の重み付け和
+- Next: なし（アプリを起動する確かめは無い）
+
+- U1 Animator と SkinnedMesh の作業配列を読む const の口を足す: 着地(直し 0 回)
+- U2 AnimatorIntegrationTest を足し、単一クリップの Sample 一致と部分マスクの Layered を確かめる: 着地(直し 0 回)
+- U3 定常で作業配列を確保し直さないことと、パラメータからの遷移・SetDriveSignals を確かめる: 着地(直し 0 回)
+- Done: G3-GR10-ANIMATOR-ORACLE — `SkeletalAnimationSamplingTest` に `AnimatorIntegrationTest.cpp` を足した。World の上の Animator（作る順は両方）が、親が後ろに並ぶ関節と根 2 つの骨格・回転と一様でない scale を含む M で、単一クリップの `Sample` と BonePalette・JointModelMatrices の全要素で相対 1e-5 で一致（何もしない modifier ありでも一致）。Blend2＋状態機械で 1000 コマ（遷移中 350 コマ）回して 8 つの作業配列の capacity・data が不変。SetFloat の遷移は上限 8 コマ中 6 コマ、SetDriveSignals は bind した値だけへ書く。Spine を根にした fadeDepth 2 のマスク（重み 0・0.5・1）の override と additive が手計算と一致。製品の不一致・再確保は見つからず、製品のコードは読む const の口を足しただけ
+- 検証: verify の 2 行（4 ターゲットのビルド、ctest 4 件 100% Passed）。M を恒等に替える改変と FinalPose の容量を増やす改変で試験が落ちることを確かめて戻した
+- Next: なし（GPU の表示・ImGui の目視は G3-ANIM-DEBUG-LAUNCH-CHECK）
+
+- U1 params の min/max（float・int）を読み、全ての書き込み口で丸める: 着地(直し 1 回)
+- U4 animgraph.json v1 の仕様を文書に書く: 着地(直し 1 回)
+- U2 masks の roots（複数の根）を読む: 着地(直し 0 回)
+- U3 blend1d の position に "nominalSpeed" を許し、実行時に解き直す（最後の単位）: 着地(直し 0 回)
+- U3 blend1d の position に "nominalSpeed" を許し、実行時に解き直す: 着地(直し 0 回)
+
+## 2026-11-03 G3-GR10-GRAPH-FORMAT-GAPS（run 20261103-065438 の反復 3、完了）
+- Done: animgraph.json v1 に要件の形式の 3 つの欄を足した。(1) params の float・int の `min`・`max`（`SetFloat`・`SetInt`・`bind`・スクリプトの `SetAnim*ByIndex` で丸める。既定値が範囲外・min>max・bool/trigger への指定は読込失敗）。(2) masks の `roots`（各根の枝の重みの最大。`root` 1 つは今と同じ。同時指定・空・重複は InvalidSchema、未知は UnknownJoint）。(3) blend1d の sample の `"position":"nominalSpeed"`（子の Clip の公称速度。子が Clip でない・明示値 0 は読込失敗〔`InvalidNominalSpeed` を足した〕、位置の分かる sample どうしの厳密増加を読込で確かめ、推定の公称速度はインスタンスの RefreshRootMetadata で解く。metadata の差し替えで不正になると Update/Evaluate が false で前の位置を保つ）。仕様は `Docs/Architecture/AnimationRuntime.md` の「animgraph.json v1」
+- 証拠: `.harness/runs/20261103-065438/u3-unit-verify.txt`（Debug の SkeletalAnimationSamplingTest のビルド、ctest で SkeletalAnimationSamplingTest・SkinnedRenderPathContractTest の 2 本 Passed）
+- Next: なし（アプリの起動の確かめは無い）
+- Notes: 公称速度由来の位置を持つ blend1d は RefreshRootMetadata の後に重みを直ちに求め直すので、Update を挟まず Evaluate だけを呼んでもパラメータの今の値が重みに入る（数値の位置だけの blend1d は Update まで前の重み）。blend2d の軸は明示値のまま
+
+## 2026-11-03 G3-GR10-GRAPH-FORMAT-GAPS（run 20261103-065438 の反復 4、完了）
+- Done: 反復 3 の再検証の失敗は、この枠の build に `SkinnedRenderPathContractTest.exe` が無かったため（verify のビルド行は SkeletalAnimationSamplingTest だけを作る）。コードの変更は無く、この枠で両方のターゲットをビルドして verify の ctest を回し直し、2 本とも Passed
+- 証拠: `.harness/runs/20261103-065438/build-G3-GR10.txt`（両ターゲットのビルド EXIT=0）・`.harness/runs/20261103-065438/verify-G3-GR10-ctest.txt`（SkeletalAnimationSamplingTest 0.25 sec・SkinnedRenderPathContractTest 18.51 sec Passed、100%）
+- Next: なし
+- Notes: 要起票: この項目の verify は ctest で SkinnedRenderPathContractTest を回すのにビルド行がそのターゲットを作らないので、新しい枠・消した build では再検証が Not Run で落ちる。ビルド行に `--target SkinnedRenderPathContractTest` を足すかは計画が決める

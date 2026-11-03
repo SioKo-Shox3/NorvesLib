@@ -2211,10 +2211,13 @@ add_test(NAME GLTFSkeletalAnalyzerTest COMMAND GLTFSkeletalAnalyzerTest)
 
 add_executable(SkeletalAnimationSamplingTest
     SkeletalAnimationSamplingTest.cpp
+    SocketOracleTest.cpp
     SkeletalSamplerBaseline.cpp
     AnimPoseOpsTest.cpp
     AnimGraphRuntimeTest.cpp
+    AnimEventPropertyTest.cpp
     RootMotionMathTest.cpp
+    AnimatorIntegrationTest.cpp
     PoseEvaluationTest.cpp
     ClipChannelSearchTest.cpp
     LegacyPoseOracle.cpp
