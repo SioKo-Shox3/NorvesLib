@@ -1,7 +1,10 @@
 ﻿#include "Gameplay/GameplayModule.h"
 
+#include "Asset/AssetFileReader.h"
 #include "Container/Containers.h"
 #include "Engine/Engine.h"
+#include "Gameplay/Combat/HealthComponent.h"
+#include "Logging/LogMacros.h"
 
 namespace NorvesLib::Modules::Gameplay
 {
@@ -11,8 +14,10 @@ namespace NorvesLib::Modules::Gameplay
     }
 
     GameplayModule::GameplayModule()
-        : m_OwnerThreadId(Thread::Thread::GetCurrentThreadId())
+        : m_OwnerThreadId(Thread::Thread::GetCurrentThreadId()),
+          m_IsDefeatHoldOwnerAlive(this, &GameplayModule::IsDefeatHoldOwnerAlive)
     {
+        m_DefeatGate.OnDefeatCompleted.Add(&m_ProgressionState, &ProgressionState::MarkDefeated);
     }
 
     Core::Identity GameplayModule::GetModuleId() const
@@ -44,17 +49,48 @@ namespace NorvesLib::Modules::Gameplay
 
     void GameplayModule::RegisterReflectedTypes()
     {
-        // Component を追加したら、ここで型を登録する。
+        Core::ClassRegistry::Get().RegisterClass(Combat::HealthComponent::StaticClass());
     }
 
     bool GameplayModule::Initialize()
     {
         m_bInitialized = m_Engine != nullptr;
-        return m_bInitialized;
+        if (!m_bInitialized)
+        {
+            return false;
+        }
+
+        const auto definition = Core::Asset::AssetFileReader().Read("Gameplay/progression.json");
+        if (!definition.Succeeded())
+        {
+            NORVES_LOG_WARNING("Gameplay", "進行条件の資産を読み込めませんでした。");
+        }
+        else
+        {
+            Core::Container::String text;
+            if (definition.Blob.GetSize() != 0)
+            {
+                text.append(reinterpret_cast<const char*>(definition.Blob.GetData()), definition.Blob.GetSize());
+            }
+            if (!m_ProgressionState.LoadDefinitionFromJson(text))
+            {
+                NORVES_LOG_WARNING("Gameplay", "進行条件を適用できませんでした。");
+            }
+        }
+        return true;
     }
 
     void GameplayModule::Tick(float)
     {
+        if (m_bInitialized && m_Engine != nullptr)
+        {
+            m_DefeatGate.Update(m_IsDefeatHoldOwnerAlive);
+        }
+    }
+
+    bool GameplayModule::IsDefeatHoldOwnerAlive(Core::EntityHandle owner) const
+    {
+        return m_Engine != nullptr && m_Engine->GetWorld().ResolveEntityHandle(owner) != nullptr;
     }
 
     void GameplayModule::Shutdown()
