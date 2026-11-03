@@ -9341,3 +9341,9 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261103-223716/G1-GR08-LAYER-TABLE-U4-verify.txt`（verify の 2 行: Debug の SceneQueryRaycastTest・Game のビルド EXIT=0、ctest の PhysicsLayerTableTest・PhysicsQueryTypesTest・SceneQueryPhysicsFacadeTest・SceneQueryRaycastTest が 100% Passed）
 - Next: なし。起動時に表が読めたこと（警告が出ないこと）は Game の起動の確かめで見る（後回し）。使う側の書き換えはカメラの遮蔽（G4 の GR06）・攻撃判定（G8 の GR16）・取り込み設定（G17 の GR81）・知覚（G13）の各段階
 - Notes: 既定のデータは既存の `HapticsEffects.json` にそろえて BOM なし・LF で置いた（読み込みは先頭の BOM も受ける）
+
+## 2026-11-03 G4-GR07-MOVER-CASES（run 20261103-233036 の反復 1、着手）
+- 試験の 3 点（Docs/Testing.md）: 反証する契約は、CharacterMover が GR07 の受け入れ確認の数値どおりに動くこと（平地の接地と足元の高さ、45° の壁沿いの移動量と毎ステップのめり込み、段差の登りの進みと止まり、坂の沿面の速さと限界角、階段下りの接地の割合、50 m/s で薄い壁を抜けない、めり込み開始からの押し出しの速さと 1 ステップの上限、全ステップの bit 一致、共面の継ぎ目で止まらない）。
+- ほかの手段で気づけるか: 気づきにくい。犬の移動の撮影は 1 枚で、段差や継ぎ目での数フレームの引っかかり、坂での沿面の速さの 2 割落ち、階段下りの接地の 1 フレームの切れ、数 mm のめり込みは絵にもログにも出ない。実機の移動の確かめ（煙試験）はまだ無い。
+- 失敗が黙って起きるか: 起きる。数値から外れてもキャラクターは何かしら動き、エラーもログも出ない（接地が 1 フレーム切れると上の層で落下や着地の判定が誤るだけ）。
+- 方針: 期待値は受け入れ確認の数値のまま書き、外れたら CharacterMover を直す。既存のケースと他の 5 本の試験は変えない。測り方の細部（段差・階段の寸法、沿面の速さは毎ステップの 3 次元の移動量÷要求の水平の量）は計画（.harness/relay）で決める。
