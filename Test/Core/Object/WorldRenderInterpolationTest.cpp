@@ -146,6 +146,63 @@ namespace
         world.Finalize();
     }
 
+    // 生成直後の履歴は生成位置から始まり、その後の移動だけを補間する。
+    void TestSpawnedInterpolatedEntityStartsAtSpawnPosition()
+    {
+        World world;
+        world.Initialize();
+        Rendering::SceneView view;
+        Rendering::SceneViewSettings settings;
+        assert(view.Initialize(settings));
+        world.SetSceneView(&view);
+
+        const Math::Vector3 spawnPosition(7, 3, -5);
+        auto* entity = world.SpawnEntity<Entity>();
+        assert(entity);
+        entity->SetLocalPosition(spawnPosition.x, spawnPosition.y, spawnPosition.z);
+        entity->SetLocalRotation(Math::Quaternion(Math::Vector3::UnitY, .7f));
+        entity->SetRenderInterpolationEnabled(true);
+        auto* mesh = world.CreateComponent<Component::MeshComponent>(entity);
+        assert(mesh);
+        Rendering::MeshDataHandle handle;
+        handle.Id = 101;
+        mesh->SetMeshHandle(handle);
+
+        auto assertPosition = [](const Math::Vector3& actual, const Math::Vector3& expected) {
+            assert(Near(actual.x, expected.x));
+            assert(Near(actual.y, expected.y));
+            assert(Near(actual.z, expected.z));
+        };
+        auto assertCurrentPositions = [&](const Math::Vector3& expected) {
+            assertPosition(entity->GetRenderWorldTransform().position, expected);
+            assertPosition(Proxy(view, entity->GetObjectId()).WorldTransform.GetTranslationRow(), expected);
+        };
+
+        // 固定ステップの前でも、現在と前回の描画位置は生成位置になる。
+        assert(world.SetRenderInterpolationAlpha(.5f));
+        world.SyncToSceneView();
+        assertCurrentPositions(spawnPosition);
+        assertPosition(Proxy(view, entity->GetObjectId()).PreviousWorldTransform.GetTranslationRow(), spawnPosition);
+
+        // 最初の固定ステップで動かなければ、位置は変わらない。
+        world.PrepareRenderInterpolationStep();
+        world.UpdateWorldTransforms();
+        world.CaptureRenderInterpolationStep();
+        assert(world.SetRenderInterpolationAlpha(.5f));
+        world.SyncToSceneView();
+        assertCurrentPositions(spawnPosition);
+
+        // 次の固定ステップで動かしたときは、前後の位置の中点になる。
+        world.PrepareRenderInterpolationStep();
+        entity->SetLocalPosition(9, 3, -5);
+        world.UpdateWorldTransforms();
+        world.CaptureRenderInterpolationStep();
+        assert(world.SetRenderInterpolationAlpha(.5f));
+        world.SyncToSceneView();
+        assertCurrentPositions(Math::Vector3(8, 3, -5));
+        world.Finalize();
+    }
+
     // 親が破棄予約になったら、回収前でも補間する子孫の履歴・描画の変換・版を更新しない（旧の再帰と同じ）
     void TestPendingDestroyAncestorKeepsRender()
     {
@@ -405,6 +462,7 @@ int main()
     TestRenderRowsAreIncremental();
     TestPendingDestroyAncestorKeepsRender();
     TestSocketAttachmentFollowsParentRender();
+    TestSpawnedInterpolatedEntityStartsAtSpawnPosition();
     std::cout << "WorldRenderInterpolationTest PASS\n";
     return 0;
 }

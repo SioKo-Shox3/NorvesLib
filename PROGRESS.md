@@ -9306,15 +9306,25 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: なし（アプリの起動の確かめは無い）。前の反復の差分は評価者が枠切れで未評価なので、この反復の後の評価で全体を見る。
 - Notes: AssetManifestTest.cpp は日本語のコメントを MSVC が読めるよう UTF-8 BOM を付けた（行末は元の LF のまま）。
 
-- U1 Core に PhysicsLayerTable と JSON の読み込み、既定のデータを足す: 着地(直し 0 回)
-- U2 PhysicsLayerTableTest を足す: 着地(直し 0 回)
-- U3 Game が起動時に既定のレイヤー表を読む: 着地(直し 0 回)
-- U4 文書を足し、タスクの確かめを回す: 着地(直し 0 回)
+## 2026-11-03 G4-GR02-FIXED-FRAME-CLOCK（run 20261103-113728 の反復 1、着手）
+- 試験の 3 点（ApplicationFixedStepPipelineTest の固定刻みの時計のケース）:
+  - 反証する契約: `--fixed-frame-dt=` の刻み（1/24・1/30）で回すと、60 Hz の固定ステップの回数が決まった並び（1/24 は 2・3 で合計 120、1/30 は毎フレーム 2）になり、端数の持ち越しで累積がずれず、2 回の新しい実行で各フレームの実行ステップ数・余り・TimeSystem の時刻・FramePacket に載る delta と累積が bit で一致する
+  - ほかの手段で気づけるか: 気づけない。1 ns の端数の落としや並びの入れ替わりは 1 枚の撮影にもログにも出ず、連番の録画（GR66）や 2 回撮った FLIP（G7）でだけ遅れて食い違う
+  - 失敗が黙って起きるか: 起きる。時計が壁時計へ戻っても、刻みの端数を捨てても、エラーにならず時刻が少しずつずれるだけ
+- 試験の 3 点（WorldRenderInterpolationTest の生成直後の補間のケース）:
+  - 反証する契約: 原点でない位置に生成した補間の Entity は、最初のフレーム（0 ステップと 1 ステップ）で描画の位置・MeshProxy の現在と前の変換が生成の位置になり、原点から補間されない
+  - ほかの手段で気づけるか: 気づきにくい。生成の 1〜2 フレームだけ原点の方から滑って見え、落ち着いた後の撮影には出ない
+  - 失敗が黙って起きるか: 起きる
+- Notes: FramePacket の DeltaTime・TotalTime は RenderingCoordinator::BeginFrame が自前の壁時計で作るので、done-when (2) を満たすために paths の外の RenderWorld・RenderingCoordinator に固定刻みの値を受け取る 1 メソッドを足す（決定的な撮影の経路は変えない）
+- Notes: `--capture-deterministic` と `--fixed-frame-dt=` を同時に指定したときは決定的な撮影の 1/60 を優先し、`--fixed-frame-dt` は警告して無視する（刻みを選べる決定的な撮影は G14・G7 の側で要るときに足す）
+- U1 固定刻みのフレームの時計の型と刻みの文字列の解釈を足す: 着地(直し 0 回)
+- U2 原点でない位置に生成した補間の Entity が最初のフレームで原点から補間されないことを押さえる: 着地(直し 0 回)
+- U3 フレームの経過時間を 1 つの差し替えられる口にし、--fixed-frame-dt= を解釈して FramePacket の時間へ渡す: 着地(直し 1 回)
+- U6 レビュー済みの U5 の差分を当て直し、タスクの verify を回す（最後の単位）: 着地(直し 0 回)
 
-## 2026-11-03 G1-GR08-LAYER-TABLE（run 20261103-223716 の反復 1、完了）
-- Done: Core に `PhysicsLayerTable`（`Library/Core/Public/Scene/PhysicsLayerTable.h`）を足した。初期は `Default` = bit 0 だけ。`LoadFromJson`（`collision-layers.v1`、`layers` の `name`・`bit`）は全体を候補に組んで検査し、成功したときだけ置き換える。名前・ビットの重複、0〜31 の外・整数でない bit、空の名前、`Default` の欠けと bit 0 以外、壊れた JSON、schema の違いは false で前の表を保ち、例外を出さない。未知のフィールドは無視する。`TryGetLayerMask`（名前→1 ビット）と `TryBuildMask`（名前の列→論理和、空の列は 0）は未知の名前で false を返し出力を変えない
-- Done: 既定のデータ `Assets/Config/CollisionLayers.json` に仮の 12 の名前（Default 0〜Perception 11）を置いた。Game は `Game/Gameplay/Physics/GamePhysicsLayers.*` で `Config/HapticsEffects.json` と同じ読み方で読み、`GameApplicationHandler::OnInitialize` で `m_PhysicsLayers` に持つ。失敗なら警告を出して `Default` だけの表で続ける。使う側（カメラの遮蔽など）とコライダーの既定・クエリは変えていない
-- Done: `PhysicsLayerTableTest`（`SceneQueryRaycastTest` の束）を足し、理由の 3 点を `Docs/Testing.md` に、表の節を `Docs/Architecture/PhysicsQueries.md` に書いた
-- 証拠: `.harness/runs/20261103-223716/G1-GR08-LAYER-TABLE-U4-verify.txt`（verify の 2 行: Debug の SceneQueryRaycastTest・Game のビルド EXIT=0、ctest の PhysicsLayerTableTest・PhysicsQueryTypesTest・SceneQueryPhysicsFacadeTest・SceneQueryRaycastTest が 100% Passed）
-- Next: なし。起動時に表が読めたこと（警告が出ないこと）は Game の起動の確かめで見る（後回し）。使う側の書き換えはカメラの遮蔽（G4 の GR06）・攻撃判定（G8 の GR16）・取り込み設定（G17 の GR81）・知覚（G13）の各段階
-- Notes: 既定のデータは既存の `HapticsEffects.json` にそろえて BOM なし・LF で置いた（読み込みは先頭の BOM も受ける）
+## 2026-11-03 G4-GR02-FIXED-FRAME-CLOCK（run 20261103-223641 の反復 1、完了）
+- Done: `FixedFrameClock`（DeterministicCapture.h。刻みを有理数の ns で持ち、累積を切り上げて k フレーム後の合計 = ceil(k×刻み)、誤差 1 ns 未満）と `--fixed-frame-dt=` の解釈（不正値は警告して無視）、ApplicationProcessor の経過時間を `AcquireFrameDeltaNanoseconds` の 1 つの口にし `--capture-deterministic` は 16'666'667 ns の整数刻みで同じ口を使う。固定刻みのときは FramePacket の DeltaTime・TotalTime を時計の値にする
+- 試験: ApplicationFixedStepPipelineTest のケース 21（1/24 × 48 で 2・3 の交互・合計 120、2 回の子プロセスの記録が bit 一致）・ケース 22（1/30 で毎フレーム 2）、WorldRenderInterpolationTest の生成直後の補間。verify のビルド終了コード 0・ctest 7 件 Passed
+- Notes: 累積は切り捨てでなく切り上げにした（切り捨てだと 1/30 の最初のフレームが 33'333'333 ns で 60 Hz の 2 ステップに 1 ns 届かず 1・2・3 の並びになり done-when の「毎フレーム 2」を満たさない）。整数刻み（分母 1）のふるまいは変わらない
+- Notes: FramePacket に載る値は試験では時計の delta・累積として記録し、パケット自体は作っていない。Game を起動しての確かめ（`--fixed-frame-dt=1/24` で撮影・録画の時刻が刻みどおりに進むこと）は後回し
+- Next: G14（GR66 の連番の録画・GR127）と G7（2 回撮った FLIP）がこの時計を使う
