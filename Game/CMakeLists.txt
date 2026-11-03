@@ -36,6 +36,7 @@ target_link_libraries(NorvesGameSources
         # DummyModule/*.h も解決)。フラグ無しでは登録されず seam は no-op。
         NorvesModule_Dummy
         NorvesModule_Physics
+        NorvesModule_Gameplay
         # Memory # Core に統合されました
         # Random # Core に統合されました
         # FileStream # Core に統合されました
