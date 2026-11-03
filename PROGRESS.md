@@ -9212,3 +9212,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261103-113139/verify-G5-GR89-NVTRN-FORMAT-U4.txt`（CookedMeshTest・AssetSystemTest の Debug ビルド exit=0、ctest で AssetManifestTest・AssetSystemTest・CookedTextureTest・CookedTerrainTest の 4 件 100% Passed。重複の検査を一時的に外すと CookedTerrainTest が落ちることも確認）。
 - Next: なし（アプリの起動の確かめは無い）。cook の本体は G5-GR89-TERRAIN-COOKER。
 - Notes: 読み手はペイロードをタイル表の順 × レイヤ順に 64 バイト境界で詰めた並びとして厳密に求める（違えば TableLayoutMismatch）。高さの DataSize を 1 増やす改ざんは区間がペイロード内に収まるので HeightSizeMismatch で拒否される。使わない LOD 欄が 0 でないものは、読み手は ReservedFieldNonZero、書き手は InvalidTileBounds で拒否する。
+- U6 AssetManifestTest に world の無い旧 manifest の読み込みを足し、タスクの verify を回す: 着地(直し 0 回)
