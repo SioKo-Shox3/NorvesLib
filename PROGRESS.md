@@ -9224,3 +9224,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261103-113136/verify-G4-GR05-MODEL-CASES-build.txt`（`cmake --build build --config Debug --target LoggerSinkTest PhysicsDynamicsTest -- /m:1` 終了コード 0）、`.harness/runs/20261103-113136/verify-G4-GR05-MODEL-CASES-ctest.txt`（`QuadrupedLocomotionModelTest`・`LocomotionProfileReloadTest`・`PhysicsFixedStepPipelineTest` の 3 本 Passed、終了コード 0）。
 - Next: 評価者による差分の評価（前の run では未実施）。
 - Notes: アプリの起動を要する確かめは無い。
+- U1 Docs/Testing.md に MotionProcessingTest を足す理由の 3 点を書く: 着地(直し 0 回)
