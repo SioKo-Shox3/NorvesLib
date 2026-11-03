@@ -9217,3 +9217,10 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U2 原点でない位置に生成した補間の Entity が最初のフレームで原点から補間されないことを押さえる: 着地(直し 0 回)
 - U3 フレームの経過時間を 1 つの差し替えられる口にし、--fixed-frame-dt= を解釈して FramePacket の時間へ渡す: 着地(直し 1 回)
 - U6 レビュー済みの U5 の差分を当て直し、タスクの verify を回す（最後の単位）: 着地(直し 0 回)
+
+## 2026-11-03 G4-GR02-FIXED-FRAME-CLOCK（run 20261103-223641 の反復 1、完了）
+- Done: `FixedFrameClock`（DeterministicCapture.h。刻みを有理数の ns で持ち、累積を切り上げて k フレーム後の合計 = ceil(k×刻み)、誤差 1 ns 未満）と `--fixed-frame-dt=` の解釈（不正値は警告して無視）、ApplicationProcessor の経過時間を `AcquireFrameDeltaNanoseconds` の 1 つの口にし `--capture-deterministic` は 16'666'667 ns の整数刻みで同じ口を使う。固定刻みのときは FramePacket の DeltaTime・TotalTime を時計の値にする
+- 試験: ApplicationFixedStepPipelineTest のケース 21（1/24 × 48 で 2・3 の交互・合計 120、2 回の子プロセスの記録が bit 一致）・ケース 22（1/30 で毎フレーム 2）、WorldRenderInterpolationTest の生成直後の補間。verify のビルド終了コード 0・ctest 7 件 Passed
+- Notes: 累積は切り捨てでなく切り上げにした（切り捨てだと 1/30 の最初のフレームが 33'333'333 ns で 60 Hz の 2 ステップに 1 ns 届かず 1・2・3 の並びになり done-when の「毎フレーム 2」を満たさない）。整数刻み（分母 1）のふるまいは変わらない
+- Notes: FramePacket に載る値は試験では時計の delta・累積として記録し、パケット自体は作っていない。Game を起動しての確かめ（`--fixed-frame-dt=1/24` で撮影・録画の時刻が刻みどおりに進むこと）は後回し
+- Next: G14（GR66 の連番の録画・GR127）と G7（2 回撮った FLIP）がこの時計を使う
