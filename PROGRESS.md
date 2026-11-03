@@ -9341,3 +9341,24 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261103-223716/G1-GR08-LAYER-TABLE-U4-verify.txt`（verify の 2 行: Debug の SceneQueryRaycastTest・Game のビルド EXIT=0、ctest の PhysicsLayerTableTest・PhysicsQueryTypesTest・SceneQueryPhysicsFacadeTest・SceneQueryRaycastTest が 100% Passed）
 - Next: なし。起動時に表が読めたこと（警告が出ないこと）は Game の起動の確かめで見る（後回し）。使う側の書き換えはカメラの遮蔽（G4 の GR06）・攻撃判定（G8 の GR16）・取り込み設定（G17 の GR81）・知覚（G13）の各段階
 - Notes: 既定のデータは既存の `HapticsEffects.json` にそろえて BOM なし・LF で置いた（読み込みは先頭の BOM も受ける）
+
+## G8-GR17-HEALTH-PROGRESSION（2026-11-03）
+
+- Done: `HealthComponent`（体力・無敵・撃破のラッチ・スタッガの計）、Core のヘッダだけの `TStateMachine<TContext, TStateId>`（要求を Update の安全点で適用）、Gameplay モジュールのサービス `ProgressionState`（安定 ID の撃破集合と解放の条件、`Assets/Gameplay/progression.json`）と `DefeatGate`（保留と持ち主の破棄の検出）、試験 `HealthComponentTest`・`ProgressionStateTest`・`DefeatGateTest`・`TStateMachineTest`
+- Done: 統合ブランチ `feature/scene-launcher` を取り込み、`Docs/Architecture/TickStages.md`（統合側の割り当て表に HealthComponent と GameplayModule の 2 行を足す）と `Docs/Testing.md`（両方の試験の理由を残す）の衝突を解いた。verify のビルド（Game・PhysicsDynamicsTest・GameModeStateMachineTest）が EXIT=0、ctest の 7 本と `TickContractTableTest` が合格
+- Notes: アプリを起動する確かめは無い
+- Next: G8-GR17-ENEMY-COMPONENT（敵の基底と状態の遷移）がこの状態機械と撃破の保留を使う
+- U1 Core にヘッダだけの TStateMachine と TStateMachineTest を足す: 着地(直し 0 回)
+- U2 Gameplay モジュールに HealthComponent と HealthComponentTest を足す: 着地(直し 0 回)
+- U3 ProgressionState・DefeatGate を GameplayModule のサービスにし、progression.json と試験 2 本を足す: 着地(直し 0 回)
+- U4 文書(Testing.md・TickStages.md)を足し、タスクの verify を回す: 着地(直し 0 回)
+## 2026-11-03 G8-GR17-HEALTH-PROGRESSION（run 20261103-223645 の反復 1、完了）
+- Done: Core に依存なしのヘッダだけの `TStateMachine<TContext, TStateId>`（`Library/Core/Public/GameMode/TStateMachine.h`）を置いた。状態の表は {Enter, Update, Exit}、遷移の要求は固定容量の列に積んで Update の先頭（安全点）で FIFO に適用し、Update の中の要求で再入しない。未登録・範囲外・満杯の要求は無視して診断の数と警告を残す。状態の表と列はインラインの配列で、毎フレームの確保をしない
+- Done: Gameplay に `HealthComponent`（PROPERTY: MaxHealth・Health・StaggerThreshold）と `DamageInfo`・`DamageResult`・`EDamageOutcome` を足した。`ApplyDamage` は 0 へのクランプ、無敵、撃破のラッチ（OnDefeated は 1 回だけ、撃破の後は IgnoredAlreadyDefeated）、負値・NaN・無限大の拒否、呼び出しごとの順の減算、任意のスタッガの計（閾値以上で OnStaggerBroken、計を 0 へ）。通知の順は OnDamaged → OnStaggerBroken → OnDefeated。部位の倍率は掛け終えた値（`DamageInfo::Amount`）を受ける。`GameplayModule::RegisterReflectedTypes` で型を登録した
+- Done: `ProgressionState`（Required ⊆ Defeated で解放、Required が空なら解放しない、OnFinalUnlocked は 1 回だけで状態の読込で満たしていた場合は通知しない、未知・規則外の Id は診断の数と警告で無視、定義・状態の JSON の読込は全部か無し）と `DefeatGate`（BeginDefeat → AddHold/Release、GameplayModule::Tick の Update で持ち主の Entity が解決できない保留を外し、保留の無い撃破に OnDefeatCompleted を 1 回だけ）を GameplayModule のサービスにした（`IGameplayModule::GetProgressionState`・`GetDefeatGate`）。DefeatGate の完了を ProgressionState::MarkDefeated へ結線し、Initialize で `Assets/Gameplay/progression.json`（数と名前は未決なので空）を読む。安定 ID の規則（小文字の ASCII・数字・`_` をドットで区切る、128 文字以下）は `IsValidGameplayStableId`
+- Done: 試験 `TStateMachineTest`（GameModeStateMachineTest の束）・`HealthComponentTest`・`ProgressionStateTest`・`DefeatGateTest`（PhysicsDynamicsTest の束）を足し、理由を `Docs/Testing.md` に、HealthComponent の通知の位置と DefeatGate の安全点を `Docs/Architecture/TickStages.md` に書いた
+- 証拠: `.harness/runs/20261103-223645/verify-G8-GR17-HEALTH-PROGRESSION.txt`（verify の 2 行: Debug の Game・PhysicsDynamicsTest・GameModeStateMachineTest のビルド成功、ctest の HealthComponentTest・ProgressionStateTest・DefeatGateTest・TStateMachineTest・GameModeStateMachineTest・SubRoutineTest・GameModeRegistryTest が 7 本とも Passed）
+- Next: なし（アプリを起動する確かめは無い。Game に撃破の場面はまだ無い）。敵の基底と状態の遷移は G8-GR17-ENEMY-COMPONENT、撃破済みの集合のセーブは GR76
+- Notes: DefeatGate は完了した Id の記録を残し、同じ Id の 2 回目の BeginDefeat を無視する。同じ安定 ID で再び出る敵（再配置・雑魚の再出現）を扱うときは、完了済みの Id の BeginDefeat を受け付け直す形が要る
+- Notes: GameplayModule は DefeatGate の完了を全部 ProgressionState へ流すので、進行の定義に無い敵（シ者でない敵）の撃破ごとに警告が 1 行出て診断の数が増える。敵の基底を作るときに、シ者だけを流すか警告を出さない形にするかを決める
+- 要起票: G8-GR17-ENEMY-COMPONENT で、DefeatGate の完了済み Id の再受付と、シ者でない敵の撃破を ProgressionState へ流さない経路を決める
