@@ -68,16 +68,18 @@ norves_add_test_bundle(PhysicsDynamicsTest
     MEMBER PhysicsLifecycleEventTest PhysicsLifecycleEventTest.cpp
     MEMBER PhysicsFixedStepPipelineTest PhysicsFixedStepPipelineTest.cpp
     MEMBER FollowCameraBehaviorTest FollowCameraBehaviorTest.cpp
+    MEMBER CombatSweepTest ${CMAKE_SOURCE_DIR}/Test/Modules/Gameplay/CombatSweepTest.cpp
     SOURCES
         ${CMAKE_SOURCE_DIR}/Game/Gameplay/Locomotion/QuadrupedLocomotionComponent.cpp
         ${CMAKE_SOURCE_DIR}/Game/Gameplay/Camera/FollowCameraComponent.cpp
         ${CMAKE_SOURCE_DIR}/Game/Gameplay/Camera/FollowCameraProfile.cpp
 )
-target_link_libraries(PhysicsDynamicsTest PRIVATE Core NorvesModule_Physics)
+target_link_libraries(PhysicsDynamicsTest PRIVATE Core NorvesModule_Physics NorvesModule_Gameplay)
 target_include_directories(PhysicsDynamicsTest PRIVATE
     ${CMAKE_SOURCE_DIR}
     ${CMAKE_SOURCE_DIR}/Game
     ${CMAKE_SOURCE_DIR}/Library/Modules/Physics/Private
+    ${CMAKE_SOURCE_DIR}/Library/Modules/Gameplay/Private
     ${CMAKE_SOURCE_DIR}/Library/Core/Private
 )
 target_compile_definitions(PhysicsDynamicsTest PRIVATE
@@ -107,3 +109,4 @@ add_test(NAME CharacterDriveOptionsTest COMMAND PhysicsDynamicsTest --test=Chara
 add_test(NAME DogMovementSmokeGeometryTest COMMAND PhysicsDynamicsTest --test=DogMovementSmokeGeometryTest)
 
 add_test(NAME FollowCameraBehaviorTest COMMAND PhysicsDynamicsTest --test=FollowCameraBehaviorTest)
+add_test(NAME CombatSweepTest COMMAND PhysicsDynamicsTest --test=CombatSweepTest)

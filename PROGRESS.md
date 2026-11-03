@@ -9201,15 +9201,59 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261103-065438/build-G3-GR10.txt`（両ターゲットのビルド EXIT=0）・`.harness/runs/20261103-065438/verify-G3-GR10-ctest.txt`（SkeletalAnimationSamplingTest 0.25 sec・SkinnedRenderPathContractTest 18.51 sec Passed、100%）
 - Next: なし
 - Notes: 要起票: この項目の verify は ctest で SkinnedRenderPathContractTest を回すのにビルド行がそのターゲットを作らないので、新しい枠・消した build では再検証が Not Run で落ちる。ビルド行に `--target SkinnedRenderPathContractTest` を足すかは計画が決める
-- U1 臨界減衰のオーバーシュート・不規則な dt・動く目標の速度の連続を試験する: 着地(直し 0 回)
-- U3 FollowCameraBehaviorTest の土台を今の先頭に入れ直し、速度演出・ロックオン・自動の焦点を試験する: 着地(直し 0 回)
-- U4 固定ステップが揺れても震えないことと自身の除外を試験し、タスクの verify を回す: 着地(直し 1 回)
 
-## 2026-11-03 G4-GR06-FOLLOW-CASES（run 20261103-113138 の反復 2、完了）
-- Done: (A) CriticalDampingTest にオーバーシュートなし（1/30・1/60・1/144）、不規則な dt の一括の解との一致（位置 9.7e-8・速度 2.0e-7）、動く目標の速度の連続を足した。(B) PhysicsDynamicsTest の束に MEMBER FollowCameraBehaviorTest を足し、(1)〜(10) を通した。外れて直したのは 2 点: 無効なジョイントの指定でロックオンを外す、追従を「区間の間に等速で動く目標への臨界減衰の厳密解」（`Math::TryCriticalDampMovingTarget`）にした。後者で固定ステップの回数 0/1/2（86/412/94 回）が揺れるフレームの列でも、カメラの位置−対象の描画の位置の 2 階差分の最大は 7.6e-6 m（前の式は 4.8e-3 m）。Default 群の比較用 Component がシミュレーションの位置を追うと 9.2e-3 m。減衰は絶対の速度のままなので、等速で走るときの後ろへの遅れと、止まったときに行き過ぎない性質は前と同じ
-- (10) 自身の除外: 距離 0 の当たりは、除外ありで実効長 5 m・Success、除外なしで 0 m に潰れる。開始時の貫通の印（bStartPenetrating）付きの当たりは、除外なしでは solver の決まりで StartOverlapping になり前の長さを保つ（潰れない）ので、その組は結果が Success でないことで検出する
-- 証拠: `.harness/runs/20261103-113138/verify-G4-GR06-FOLLOW-CASES.txt`（Debug の PhysicsDynamicsTest・LoggerSinkTest・Game のビルド 終了コード 0、ctest 4 本 Passed 100%）
-- Next: G4-GR06-CLING-LOCKON
-- Notes: `TryCriticalDampMovingTarget` は 1 つの区間の内部を float の相対の座標で解くので、極端に短い dt で目標が動くと（目標の速さ/ω が大きくなり）精度が落ちる。フレームの dt の範囲では問題にならない
-- 2026-11-03 run 20261103-163355 の反復 1: 前の反復の評価が枠切れで行われず状態が doing に戻っていた。着地後にコードの変更は無く、最後の確かめ（ビルド終了コード 0・ctest 4 本 Passed）のまま done に戻した。評価はランナーが回す。
-- 2026-11-03 run 20261103-223637 の反復 1: 評価（PASS）の後に統合ブランチの取り込みが途中で止まり、状態が doing に戻っていた。着地後にコードの変更は無く、最後の確かめ（`.harness/runs/20261103-163355/recheck-G4-GR06-FOLLOW-CASES-1-1.txt` のビルド exit=0、`-1-2.txt` の ctest 4 本 Passed）のまま done に戻した。統合ブランチとは `Test/Modules/Physics/CMakeLists.txt` の add_test の末尾（CombatSweepTest）と PROGRESS.md で衝突するので、取り込みでは両方の行を残す。
+## 2026-11-03 G4-GR05-MODEL-CASES（run 20261103-070131 の反復 1。完了）
+
+- 試験の 3 点（Docs/Testing.md）: 反証する契約は、QuadrupedLocomotionModel が要件 GR05 の受け入れ確認 (a)〜(j) の式（歩様のヒステリシスと最短滞在、最小旋回半径 max(v/ω_cap, v²/a_lat)、加減速の到達時間と停止距離と制動の率、斜面の係数の単調と下限と下りの増分、ジャンプの頂点・滞空・先行入力・コヨーテ・着地のペナルティ・空中の制限、dt=1/30・1/60・1/144 での位置と向きの一致、極端な dt での NaN の無さと拒否時の state/out の保持、入力ゼロで向きが回らない、その場旋回の入りと抜け、バンクの符号と上限）どおりに動くこと。
+- ほかの手段で気づけるか: 気づきにくい。犬の動きの撮影は 1 枚で、旋回半径の数 % のずれ、最短滞在の破り、境界の 1 フレームの差、フレームレートでの向きのずれは絵にもログにも出ない。犬の実機の受け入れ（G4-GR07 の煙試験）はまだ無い。
+- 失敗が黙って起きるか: 起きる。式から外れても犬は何かしら動き、エラーもログも出ない。
+- 方針: 試験は既定値ではなく試験の中で決めたパラメータで式と比べる。(d) は SlopeLimit を 60° より大きくして 0〜60° を見る（SlopeLimit を越えた登りは登れないとして 0 を返す設計のまま）。(e) の着地は「LandingRecovery の間は加速せず、速さは着地直後の v·(1−LandingSpeedLoss·impact) を保つ（減速・制動・その場旋回は通常どおり）」とし、今の「回復中は目標 0 で減速し続ける」を直す。
+- U1 歩様・旋回半径・加減速・斜面のケースを足し、外れたらモデルを直す: 着地(直し 0 回)
+- U2 ジャンプ・極端な dt・入力ゼロのケースを足し、着地の回復を直す: 着地(直し 0 回)
+- U3 フレームレート非依存・その場旋回・バンクのケースを足し、タスクの verify を通す: 着地(直し 0 回)
+- Done: `QuadrupedLocomotionModelTest` に受け入れ確認 (a)〜(j) のケース 12 本を足した（`CaseGaitMinDwell`・`CaseMinimumTurnRadius`・`CaseAccelerationAndStopping`・`CaseSlopeScale`・`CaseJumpTiming`・`CaseLandingRecovery`・`CaseAirControl`・`CaseExtremeTimeSteps`・`CaseZeroInputHoldsYaw`・`CaseFrameRateIndependence`・`CasePivotTurn`・`CaseTurnBank`）。パラメータは試験の中の `MakeTestParams()` で決め、既定値に依存しない。今あった検査は `CaseExistingBaseline` に移して値と許容差はそのまま。
+- Done: 外れていたのは着地の回復だけだった。回復中に目標を 0 にして Deceleration で減り続けていた（期待 3.4 m/s に対して 3.37656 m/s）のを、回復中は加速だけを止めて着地直後の v·(1−LandingSpeedLoss·impact) を保つ形に直した（減速・制動・その場旋回は通常どおり）。
+- 実測: 最短滞在 0.2 秒に対して 6 遷移とも 0.202083 秒（1 刻み以内）、旋回半径 4.000→3.99995 m（ω_cap 側）・6.000→6.00001 m（a_lat 側）、到達時間 1.5→1.5 秒、停止距離 3.0→3.00004 m、逆向き入力の 1 刻みの減り = Brake×dt、斜面の式との差 1.2e-7 以下、フレームレートの 3 組の最大差は位置 0.0055 m・向き 0.0035 rad、その場旋回は 65 刻みで抜け残りのずれ 0.246 < 0.25 rad、バンクは非飽和 ±0.2968 rad・飽和 ±0.45 rad（MaximumBank）。
+- 証拠: `.harness/runs/20261103-070131/G4-GR05-MODEL-CASES-u3-unit-verify.txt`（`cmake --build build --config Debug --target LoggerSinkTest PhysicsDynamicsTest -- /m:1` 終了コード 0、ctest の `QuadrupedLocomotionModelTest`・`LocomotionProfileReloadTest`・`PhysicsFixedStepPipelineTest` の 3 本 Passed、各ケースの期待値と実測値の行）
+- Next: なし（アプリを起動する確かめは無い）。
+- Notes: 歩様の表の形・JSON（`QuadrupedLocomotionJson.cpp`）は変えていない。斜面は SlopeLimit を越えた登りは 0（登れない）を返す設計のままで、(d) は SlopeLimit を 60° より大きくした試験のパラメータで見た。
+
+## 2026-11-03 G4-GR05-MODEL-CASES（run 20261103-113136 の反復 1。完了を付け直す）
+
+- Done: 前の run で試験のケース (a)〜(j) と着地の回復の直しを着地済み。評価が枠切れで回らなかったため状態が doing に戻っていたので、今の HEAD で verify を回し直して done に戻した。
+- 証拠: `.harness/runs/20261103-113136/verify-G4-GR05-MODEL-CASES-build.txt`（`cmake --build build --config Debug --target LoggerSinkTest PhysicsDynamicsTest -- /m:1` 終了コード 0）、`.harness/runs/20261103-113136/verify-G4-GR05-MODEL-CASES-ctest.txt`（`QuadrupedLocomotionModelTest`・`LocomotionProfileReloadTest`・`PhysicsFixedStepPipelineTest` の 3 本 Passed、終了コード 0）。
+- Next: 評価者による差分の評価（前の run では未実施）。
+- Notes: アプリの起動を要する確かめは無い。
+
+- U1 PhysicsBroadphaseQueryTest の 12 ケースをケースごとの子プロセスで走らせ、落ちたケースは製品の側を直す: 着地(直し 0 回)
+- U2 PhysicsQueries.md の「Windows.h 依存で未確認」の記録を Windows の Debug で回した記録に直し、タスクの verify を通す: 着地(直し 0 回)
+
+## 2026-11-03 G1-GR08-BROADPHASE-INTEGRATION（run 20261103-113143 の反復 1、完了）
+- Done: `PhysicsBroadphaseQueryTest` の 12 ケースを、`ApplicationFixedStepPipelineTest` の前例どおりケースごとの子プロセス（`--child=<n>`）で走らせる形にした。大域の ModuleRegistry を入れ直す 2 個目の fixture で assert が落ちて止まる問題が解け、GR08 の統合のケース（metadata の公開時点・統合クエリ 7 種・ExecuteBatch・Layer/Mask の接触とイベント・明示 refresh・通知中の refresh 拒否）が初めて実モジュールで走り、製品の側を直さずに全部通った。`InstallAll` は assert の外へ出した。ModuleRegistry の冪等のガードは変えていない。`Docs/Architecture/PhysicsQueries.md` の「Windows.h 依存で未確認」の記録を、Windows の Debug で 12 ケースを通した記録に直した
+- 証拠: `.harness/runs/20261103-113143/G1-GR08-BROADPHASE-INTEGRATION-U2-verify.txt`（verify のビルド EXIT=0、verify の ctest 17 本 Passed、G4 の 5 本〔PhysicsCharacterMoveTest・ColliderLocalPoseTest・CharacterPlatformMotionTest・CharacterDriveOptionsTest・DogMovementSmokeGeometryTest〕Passed）
+- Next: なし（アプリの起動の確かめは無い。Release 構成での実行は要件の注のとおり許可が出たときに 1 回）
+- Notes: 子プロセスの待ちは 1 ケース 20 秒で打ち切る（12 ケースの合計は Debug で約 0.5 秒）。SceneQueryRaycastTest・SceneQueryOverlapTest・PhysicsModuleLinkTest もこの枠の Debug で Passed
+
+- U1 二関節 IK の解析解の純関数を Core に足す: 着地(直し 0 回)
+- U2 TwoBoneIKTest を SkeletalAnimationSamplingTest に足し、タスクの verify を通す: 着地(直し 0 回)
+
+## 2026-11-03 G9-GR14-TWO-BONE-IK（run 20261103-115307 の反復 2、完了）
+- Done: `Library/Core/Public/Animation/TwoBoneIK.h` に `SolveTwoBoneIK`（`TwoBoneIKInput`・`TwoBoneIKResult`）を足した。モデル空間の根・中間・端・目標・ポールの方向・maxStretch・soft limit の幅を受け、新しい中間・端の位置と、根と中間の区間の「今の向き→新しい向き」の最小回転の差分（ねじれなし）を返す。内部は double、ヒープ確保・反復・時計・乱数なし。到達距離のクランプ、完全伸展の手前の soft limit、退化（目標＝根・ポールが軸と平行・区間長 0）では FallbackPole で代えて有限値を返し、使った曲げの方向を `PoleUsed` で返す（次回の FallbackPole に渡せる）
+- Done: `TwoBoneIKTest`（`SkeletalAnimationSamplingTest` の中）を足した。固定の種で 1 万件の到達可能な目標について、端の到達・区間長・届かない目標の完全伸展・ポールの 720 段の掃引で膝がポールの側・退化 8 件で全成分が有限・ねじれと差分の作用方向を確かめる
+- 実測: 端の誤差 0 m、区間長の相対誤差 4.7e-7／5.7e-7、届かない目標の端の誤差 1.8e-7 m、ねじれ 2.1e-6／5.3e-6 rad、差分の作用方向の誤差 9.4e-8／9.8e-8、ポール掃引の最小内積 0.19（正）
+- 証拠: 作業単位の確かめの出力（`cmake --build build --config Debug --target SkeletalAnimationSamplingTest -- /m:1` 終了コード 0、`ctest ... -R "^(SkeletalAnimationSamplingTest)$"` 1 本 Passed、実行ファイルの直接実行で `TwoBoneIKTest PASS`）
+- Next: なし（アプリの起動を要する確かめは無い）。関節ローカルへの戻しは呼び出し側（G9-GR15-POSE-MODIFIER-BASE・G9-GR85-FOOT-REPLANT）がする
+- Notes: ポールが軸と平行かの判定は射影長の絶対値 1e-6。非有限な関節位置は非有限成分を 0 に置き換える。反平行に近い区間の回転は 180° の代替軸を使う
+
+- U1 Gameplay モジュールの骨組みと Game への登録: 着地(直し 0 回)
+- U2 Docs/Testing.md に CombatSweepTest を足す理由の 3 点を書く: 着地(直し 0 回)
+- U3 攻撃判定のスイープの純関数 CombatGeometry: 着地(直し 0 回)
+- U4 CombatSweepTest を PhysicsDynamicsTest の束に足す(最後の単位): 着地(直し 0 回)
+
+## 2026-11-03 G8-GR16-GAMEPLAY-MODULE（run 20261103-113141 の反復 1、完了）
+- Done: `Library/Modules/Gameplay` に static lib `NorvesModule_Gameplay`（Core へ PRIVATE、Physics にリンクしない）を足し、`IGameplayModule`・`RegisterGameplayModule`・`FindGameplayModule`・`RegisterReflectedTypes`・`RegisterWorldSystems` を Physics と同じ形で持たせた（Component が無いので登録する型・システムは無く、毎フレームの処理も無い）。`NorvesGameSources` にリンクし、`OnPreInitialize` で Physics の登録の直後に登録する
+- Done: `Private/Gameplay/Combat/CombatGeometry.*` に攻撃判定のスイープの純関数を置いた。T0・T1 の姿勢の補間（位置は線形・回転は Slerp）、N = clamp(ceil(動き / (0.5 × max(min 半径, MinRadius))), 1, MaxSubsteps)（動きは hitbox と hurtbox それぞれの max(代表点の移動, 角度×到達距離) の和）、原点±到達距離の掃引の AABB で間引き、ComputeContact に無い向き（Box-Sphere・Box-Capsule・Sphere-Capsule）は入れ替えて呼ぶ、最初に当たったサブステップの区間を二分で詰めた s の接触を返し、法線は hurtbox→hitbox。有限でない値・長さ 0 の四元数・0 以下の半径と半辺長・MaxSubsteps 0・MinRadius が 0 以下か有限でない設定を拒否する
+- Done: `CombatSweepTest`（`PhysicsDynamicsTest` の束、ソースは `Test/Modules/Gameplay/`）を足し、理由の 3 点を `Docs/Testing.md` に書いた。1 フレーム 0.5 m の刀身が T1 の離散判定ではすり抜ける半径 0.05 m の球に 13 通りの位置で必ず当たり位置が 0.025 m 以内、±60° の振りで端点の線形補間は全サブステップで外れ Slerp では解析の s と 1e-4 以内で当たる、N の上限と MinRadius、両方が動く場合の同じ s、向きの入れ替えの法線、壊れた入力で出力を変えない、を確かめる。Slerp を正規化 Lerp に替える一時の改変で試験が落ちることを確かめて戻した
+- 証拠: `.harness/runs/20261103-113141/u4-unit-verify.txt`（verify の 2 行: Debug の Game・PhysicsDynamicsTest のビルド EXIT=0、ctest の CombatSweepTest・PhysicsModuleLinkTest・PhysicsDynamicsTest・PhysicsLifecycleEventTest が 100% Passed）
+- Next: なし（アプリを起動する確かめは無い）。hitbox・hurtbox の Component・判定窓・通知は G8-GR16-COMBAT-RUNTIME
+- Notes: N の式の「動き」は 2 体の相対の動きの上界として両者の動きの和にした（片方だけ動く場合は done-when の式と同じ）

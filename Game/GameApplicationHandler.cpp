@@ -61,6 +61,7 @@
 #include "Core/Public/Module/ModuleRegistry.h"
 #include "DummyModule/DummyRenderModule.h"
 #include "Physics/IPhysicsModule.h"
+#include "Gameplay/IGameplayModule.h"
 
 #if defined(NORVES_GAME_AUDIO)
 #include "Audio/AudioClipResource.h"
@@ -782,6 +783,13 @@ namespace Game
                 NorvesLib::Core::Module::GetModuleRegistry()) == nullptr)
         {
             LOG_ERROR("Physics module registration failed");
+            return false;
+        }
+
+        if (NorvesLib::Modules::Gameplay::RegisterGameplayModule(
+                NorvesLib::Core::Module::GetModuleRegistry()) == nullptr)
+        {
+            LOG_ERROR("Gameplay module registration failed");
             return false;
         }
 
