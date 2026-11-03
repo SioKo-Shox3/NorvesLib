@@ -9257,15 +9257,51 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261103-113141/u4-unit-verify.txt`（verify の 2 行: Debug の Game・PhysicsDynamicsTest のビルド EXIT=0、ctest の CombatSweepTest・PhysicsModuleLinkTest・PhysicsDynamicsTest・PhysicsLifecycleEventTest が 100% Passed）
 - Next: なし（アプリを起動する確かめは無い）。hitbox・hurtbox の Component・判定窓・通知は G8-GR16-COMBAT-RUNTIME
 - Notes: N の式の「動き」は 2 体の相対の動きの上界として両者の動きの和にした（片方だけ動く場合は done-when の式と同じ）
-- U1 Core に PhysicsLayerTable と JSON の読み込み、既定のデータを足す: 着地(直し 0 回)
-- U2 PhysicsLayerTableTest を足す: 着地(直し 0 回)
-- U3 Game が起動時に既定のレイヤー表を読む: 着地(直し 0 回)
-- U4 文書を足し、タスクの確かめを回す: 着地(直し 0 回)
 
-## 2026-11-03 G1-GR08-LAYER-TABLE（run 20261103-223716 の反復 1、完了）
-- Done: Core に `PhysicsLayerTable`（`Library/Core/Public/Scene/PhysicsLayerTable.h`）を足した。初期は `Default` = bit 0 だけ。`LoadFromJson`（`collision-layers.v1`、`layers` の `name`・`bit`）は全体を候補に組んで検査し、成功したときだけ置き換える。名前・ビットの重複、0〜31 の外・整数でない bit、空の名前、`Default` の欠けと bit 0 以外、壊れた JSON、schema の違いは false で前の表を保ち、例外を出さない。未知のフィールドは無視する。`TryGetLayerMask`（名前→1 ビット）と `TryBuildMask`（名前の列→論理和、空の列は 0）は未知の名前で false を返し出力を変えない
-- Done: 既定のデータ `Assets/Config/CollisionLayers.json` に仮の 12 の名前（Default 0〜Perception 11）を置いた。Game は `Game/Gameplay/Physics/GamePhysicsLayers.*` で `Config/HapticsEffects.json` と同じ読み方で読み、`GameApplicationHandler::OnInitialize` で `m_PhysicsLayers` に持つ。失敗なら警告を出して `Default` だけの表で続ける。使う側（カメラの遮蔽など）とコライダーの既定・クエリは変えていない
-- Done: `PhysicsLayerTableTest`（`SceneQueryRaycastTest` の束）を足し、理由の 3 点を `Docs/Testing.md` に、表の節を `Docs/Architecture/PhysicsQueries.md` に書いた
-- 証拠: `.harness/runs/20261103-223716/G1-GR08-LAYER-TABLE-U4-verify.txt`（verify の 2 行: Debug の SceneQueryRaycastTest・Game のビルド EXIT=0、ctest の PhysicsLayerTableTest・PhysicsQueryTypesTest・SceneQueryPhysicsFacadeTest・SceneQueryRaycastTest が 100% Passed）
-- Next: なし。起動時に表が読めたこと（警告が出ないこと）は Game の起動の確かめで見る（後回し）。使う側の書き換えはカメラの遮蔽（G4 の GR06）・攻撃判定（G8 の GR16）・取り込み設定（G17 の GR81）・知覚（G13）の各段階
-- Notes: 既定のデータは既存の `HapticsEffects.json` にそろえて BOM なし・LF で置いた（読み込みは先頭の BOM も受ける）
+## G4-GR06-FOLLOW-CASES 統合ブランチの取り込み（2026-11-03）
+
+- Done: `feature/scene-launcher` を取り込み、`Test/Modules/Physics/CMakeLists.txt` の衝突を `FollowCameraBehaviorTest` と `CombatSweepTest` の両方の MEMBER・add_test を残して解いた
+- 証拠: `.harness/runs/20261103-223637/verify-build.txt`（Debug の PhysicsDynamicsTest・LoggerSinkTest・Game のビルド EXIT=0）、`.harness/runs/20261103-223637/verify-ctest.txt`（FollowCameraBehaviorTest・CriticalDampingTest・CameraCollisionSolverTest・PhysicsFixedStepPipelineTest が 100% Passed）。同じ束の CombatSweepTest も Passed
+- Next: なし（アプリを起動する確かめは無い）
+- U1 臨界減衰のオーバーシュート・不規則な dt・動く目標の速度の連続を試験する: 着地(直し 0 回)
+- U3 FollowCameraBehaviorTest の土台を今の先頭に入れ直し、速度演出・ロックオン・自動の焦点を試験する: 着地(直し 0 回)
+- U4 固定ステップが揺れても震えないことと自身の除外を試験し、タスクの verify を回す: 着地(直し 1 回)
+## 2026-11-03 G4-GR06-FOLLOW-CASES（run 20261103-113138 の反復 2、完了）
+- Done: (A) CriticalDampingTest にオーバーシュートなし（1/30・1/60・1/144）、不規則な dt の一括の解との一致（位置 9.7e-8・速度 2.0e-7）、動く目標の速度の連続を足した。(B) PhysicsDynamicsTest の束に MEMBER FollowCameraBehaviorTest を足し、(1)〜(10) を通した。外れて直したのは 2 点: 無効なジョイントの指定でロックオンを外す、追従を「区間の間に等速で動く目標への臨界減衰の厳密解」（`Math::TryCriticalDampMovingTarget`）にした。後者で固定ステップの回数 0/1/2（86/412/94 回）が揺れるフレームの列でも、カメラの位置−対象の描画の位置の 2 階差分の最大は 7.6e-6 m（前の式は 4.8e-3 m）。Default 群の比較用 Component がシミュレーションの位置を追うと 9.2e-3 m。減衰は絶対の速度のままなので、等速で走るときの後ろへの遅れと、止まったときに行き過ぎない性質は前と同じ
+- (10) 自身の除外: 距離 0 の当たりは、除外ありで実効長 5 m・Success、除外なしで 0 m に潰れる。開始時の貫通の印（bStartPenetrating）付きの当たりは、除外なしでは solver の決まりで StartOverlapping になり前の長さを保つ（潰れない）ので、その組は結果が Success でないことで検出する
+- 証拠: `.harness/runs/20261103-113138/verify-G4-GR06-FOLLOW-CASES.txt`（Debug の PhysicsDynamicsTest・LoggerSinkTest・Game のビルド 終了コード 0、ctest 4 本 Passed 100%）
+- Next: G4-GR06-CLING-LOCKON
+- Notes: `TryCriticalDampMovingTarget` は 1 つの区間の内部を float の相対の座標で解くので、極端に短い dt で目標が動くと（目標の速さ/ω が大きくなり）精度が落ちる。フレームの dt の範囲では問題にならない
+- 2026-11-03 run 20261103-163355 の反復 1: 前の反復の評価が枠切れで行われず状態が doing に戻っていた。着地後にコードの変更は無く、最後の確かめ（ビルド終了コード 0・ctest 4 本 Passed）のまま done に戻した。評価はランナーが回す。
+- 2026-11-03 run 20261103-223637 の反復 1: 評価（PASS）の後に統合ブランチの取り込みが途中で止まり、状態が doing に戻っていた。着地後にコードの変更は無く、最後の確かめ（`.harness/runs/20261103-163355/recheck-G4-GR06-FOLLOW-CASES-1-1.txt` のビルド exit=0、`-1-2.txt` の ctest 4 本 Passed）のまま done に戻した。統合ブランチとは `Test/Modules/Physics/CMakeLists.txt` の add_test の末尾（CombatSweepTest）と PROGRESS.md で衝突するので、取り込みでは両方の行を残す。
+
+- U2 割り当て表の漏れを止める台本と ctest の登録: 着地(直し 0 回)
+- U1 TickStages.md を ECS 化後の登録の仕組み・全型の割り当て表・今の段の名前で書き直す: 着地(直し 1 回)
+- U3 verify を回して GameFoundationValidation.md と InputFoundation.md の未確認の行を結果に直す: 着地(直し 0 回)
+
+## 2026-11-03 G1-GR01-TICK-CONTRACT-DOC（run 20261103-223649 の反復 1、完了）
+- Done: `Docs/Architecture/TickStages.md` を今のコードに合わせて書き直した。型ごとの登録 `World::RegisterComponentTick` と `ComponentTickRegistration` の各欄、World の順序付きの系 3 本、`RegisterComponentTick` を呼ぶ 20 型の割り当て表（群・処理・時間の channel・ポーズの分類・登録の場所）、Collider・RigidBody は登録が無く物理は PhysicsModule の固定ステップの段で走ること、PostAnimation の群は無くアニメの姿勢を読む処理は PostPhysics に置くこと、Unscaled の channel もシミュレーションの停止中は呼ばれないこと、`ApplicationProcessor` の今の段（PreUpdate〜PostUpdate）でのフレームの順。最終のカメラの確定点は Handler の `OnLateUpdate` のまま、G14・G16 の受け渡しの節の意味は変えていない。消えた API の名前は文書に残していない
+- Done: `Scripts/CheckTickContractTable.ps1` と ctest `TickContractTableTest`（`Test/Core/Object/CMakeLists.txt`、`powershell -File` の形）を足し、理由の 3 点を `Docs/Testing.md` に書いた。Library・Game の .cpp の登録の型が表の 1 列目に無いか、文書に消えた API の名前があれば終了コード 1
+- Done: `GameFoundationValidation.md` の GR01・GR03・GR04 の行と `InputFoundation.md` の「Windows.h 依存で未確認」の行を、Windows Debug（09b4fb9b）の結果に直した。GR08 は `PhysicsQueries.md` を正とすると書いた
+- 証拠: `.harness/runs/20261103-223649/u3-unit-verify.txt`（verify の 3 行: Debug の 5 ターゲットのビルド EXIT=0、ctest 13 本中 13 本 pass、36 本中 36 本 pass、`TICK_CONTRACT_TABLE result=pass types=20`）。台本の失敗の確かめ（1 型を消す・禁止の語を足す・表が無い）は `u2-unit-verify.txt`
+- Next: 起動の確かめは後回し（TICK_STAGE_SMOKE の実ログ、実機の Alt+Tab・Raw mouse・cursor・実パッドの接続と振動は未確認のまま文書に残した）
+- Notes: 台本の ThirdParty の除外は区切りの `/` と `\` の食い違いで効いておらず、`Library/ThirdParty` の .cpp も走査している（結果は変わらず遅くなるだけ）
+
+- U1 AssetKind に World = 7 を足し、manifest と AssetSystem の試験で押さえる: 着地(直し 0 回)
+- U2 NVTRN v0 の公開ヘッダと書き手 WriteCookedTerrain: 着地(直し 0 回)
+- U3 読み手 ParseCookedTerrain: 着地(直し 0 回)
+- U5 形式の文書 Docs/Architecture/NVTRNv0.md: 着地(直し 1 回)
+- U4 CookedTerrainTest(往復と拒否の種別)とタスクの verify: 着地(直し 0 回)
+
+## 2026-11-03 G5-GR89-NVTRN-FORMAT（run 20261103-113139 の反復 1、完了）
+- Done: 地形の cook 済み形式 NVTRN v0 を足した。公開ヘッダ `CookedTerrainFormat.h`（192 バイトのヘッダ・32 バイトのレイヤ表・80 + 24×レイヤ数のタイル表・文字列表・64 バイト境界のペイロード。高さ HGT0 は生の uint16 で (tile_cells+1)² 標本、ほかのレイヤは埋め込みの NVTEX）、書き手 `WriteCookedTerrain`（入力を全部検査し、タイルを座標順に並べて書く）、読み手 `ParseCookedTerrain`（拒否の理由を `CookedTerrainParseStatus` で返す）。PayloadHash は自分の 8 バイトを除くファイル全体の FNV-1a64、各レイヤに DataHash。`AssetKind::World = 7`（`"world"`）を足し、entry type Trn0・format nvtrn.v0.height16 の entry の解決を AssetManifestTest・AssetSystemTest で押さえた。形式は `Docs/Architecture/NVTRNv0.md`。
+- 証拠: `.harness/runs/20261103-113139/verify-G5-GR89-NVTRN-FORMAT-U4.txt`（CookedMeshTest・AssetSystemTest の Debug ビルド exit=0、ctest で AssetManifestTest・AssetSystemTest・CookedTextureTest・CookedTerrainTest の 4 件 100% Passed。重複の検査を一時的に外すと CookedTerrainTest が落ちることも確認）。
+- Next: なし（アプリの起動の確かめは無い）。cook の本体は G5-GR89-TERRAIN-COOKER。
+- Notes: 読み手はペイロードをタイル表の順 × レイヤ順に 64 バイト境界で詰めた並びとして厳密に求める（違えば TableLayoutMismatch）。高さの DataSize を 1 増やす改ざんは区間がペイロード内に収まるので HeightSizeMismatch で拒否される。使わない LOD 欄が 0 でないものは、読み手は ReservedFieldNonZero、書き手は InvalidTileBounds で拒否する。
+- U6 AssetManifestTest に world の無い旧 manifest の読み込みを足し、タスクの verify を回す: 着地(直し 0 回)
+
+## 2026-11-03 G5-GR89-NVTRN-FORMAT（run 20261103-163359 の反復 1、完了）
+- Done: done-when の「world の無い旧 manifest の読み込み」の試験が抜けていたので足した。kind が texture・model・skeleton・animation だけの version 1 manifest が読めて、各 entry の Kind・EntryType が変わらず、texture の論理パスを AssetKind::World で引くと cooked を使わない（LooseFallbackVariantMissing）ことを AssetManifestTest で押さえた。
+- 証拠: `.harness/runs/20261103-163359/verify-G5-GR89-NVTRN-FORMAT-U6.txt`（CookedMeshTest・AssetSystemTest の Debug ビルド exit=0、ctest で AssetManifestTest・AssetSystemTest・CookedTextureTest・CookedTerrainTest の 4 件 100% Passed）
+- Next: なし（アプリの起動の確かめは無い）。前の反復の差分は評価者が枠切れで未評価なので、この反復の後の評価で全体を見る。
+- Notes: AssetManifestTest.cpp は日本語のコメントを MSVC が読めるよう UTF-8 BOM を付けた（行末は元の LF のまま）。
