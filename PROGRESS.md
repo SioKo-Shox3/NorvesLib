@@ -9307,3 +9307,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: AssetManifestTest.cpp は日本語のコメントを MSVC が読めるよう UTF-8 BOM を付けた（行末は元の LF のまま）。
 - U0 試験と煙の確かめが共用する小さな PNG16 のフィクスチャ: 着地(直し 0 回)
 - U1 高さの取り込み HeightfieldImport と、地形 cook の API の宣言・CMake: 着地(直し 1 回)
+- U2 TerrainCooker（全体の法線・量子化・タイル切り・LOD 誤差・AABB・NRM0・NVTRN の書き出し）: 着地(直し 0 回)
