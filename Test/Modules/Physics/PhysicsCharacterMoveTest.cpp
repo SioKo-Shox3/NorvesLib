@@ -353,6 +353,100 @@ namespace
         }
         std::fprintf(stderr, "CHARACTER_DETERMINISTIC matched_steps=%zu\n", first.size());
     }
+    bool StepProgress()
+    {
+        bool lowValid = false;
+        bool highValid = false;
+        for (float height : {.20f, .40f})
+        {
+            const PhysicsShapeProxy proxies[] = {Box(0, {0, -.5f, 0}, {20, .5f, 20}),
+                                                 Box(1, {1.5f, height / 2, 0}, {.5f, height / 2, 2})};
+            auto request = Start();
+            request.Shape.PointA.x = request.Shape.PointB.x = .65f;
+            request.Displacement = {5.f / 60, -.01f, 0};
+            const auto results = RunPerStep(proxies, request, height < .3f ? 6 : 12);
+            const auto& last = results[results.size() - 1];
+            if (height < .3f)
+            {
+                const float progress = last.Shape.PointA.x - request.Shape.PointA.x;
+                const float footHeight = last.Shape.PointA.y - last.Shape.Radius;
+                std::fprintf(stderr, "CHARACTER_STEP_PROGRESS height=%.2f progress=%.9f foot_height=%.9f grounded=%d\n",
+                             height, progress, footHeight, last.bGrounded);
+                lowValid = progress >= .45f && std::fabs(footHeight - height) <= .02f && last.bGrounded;
+            }
+            else
+            {
+                float maxHeightError = 0;
+                float maxFront = 0;
+                highValid = true;
+                for (size_t frame = 0; frame < results.size(); ++frame)
+                {
+                    const auto& shape = results[frame].Shape;
+                    const float heightError = std::fabs(shape.PointA.y - request.Shape.PointA.y);
+                    const float front = shape.PointA.x + shape.Radius;
+                    if (heightError > maxHeightError)
+                        maxHeightError = heightError;
+                    if (front > maxFront)
+                        maxFront = front;
+                    highValid = highValid && heightError <= 1e-4f && front <= 1.f + 1e-3f;
+                }
+                std::fprintf(stderr, "CHARACTER_STEP_PROGRESS height=%.2f max_height_error=%.9f max_front=%.9f\n",
+                             height, maxHeightError, maxFront);
+            }
+        }
+        return lowValid && highValid;
+    }
+    bool SlopeSurfaceSpeed()
+    {
+        bool walkableValid = false;
+        bool steepValid = false;
+        for (float degrees : {40.f, 60.f})
+        {
+            const float radians = degrees * M::Constants::PI / 180.f;
+            const M::Vector3 up(-std::sin(radians), std::cos(radians), 0);
+            const M::Vector3 right(std::cos(radians), std::sin(radians), 0);
+            auto slope = Box(9, {}, {});
+            slope.Box = M::OBB(up * -.5f, {20, .5f, 20}, right, up, M::Vector3::UnitZ);
+            auto request = Start();
+            const float initial = .302f / up.y;
+            request.Shape.PointA.y = initial;
+            request.Shape.PointB.y = initial + .2f;
+            request.Displacement = {5.f / 60, -.01f, 0};
+            const auto results = RunPerStep({&slope, 1}, request, 60);
+            auto previous = request.Shape.PointA;
+            float minimumRatio = 100;
+            float maximumRatio = 0;
+            unsigned groundedCount = 0;
+            bool valid = true;
+            for (size_t frame = 0; frame < results.size(); ++frame)
+            {
+                const auto& result = results[frame];
+                const float ratio = (result.Shape.PointA - previous).Length() / (5.f / 60);
+                if (result.bGrounded)
+                    ++groundedCount;
+                if (frame >= 2)
+                {
+                    if (ratio < minimumRatio)
+                        minimumRatio = ratio;
+                    if (ratio > maximumRatio)
+                        maximumRatio = ratio;
+                    if (degrees < 50)
+                        valid = valid && ratio >= .95f && ratio <= 1.05f && result.bGrounded;
+                }
+                if (degrees > 50)
+                    valid = valid && !result.bGrounded;
+                previous = result.Shape.PointA;
+            }
+            const float progress = results[59].Shape.PointA.x - request.Shape.PointA.x;
+            std::fprintf(stderr, "CHARACTER_SLOPE_SPEED degrees=%.0f min_ratio=%.9f max_ratio=%.9f progress=%.9f grounded_steps=%u\n",
+                         degrees, minimumRatio, maximumRatio, progress, groundedCount);
+            if (degrees < 50)
+                walkableValid = valid;
+            else
+                steepValid = valid && progress < .1f;
+        }
+        return walkableValid && steepValid;
+    }
 } // namespace
 int main()
 {
@@ -368,6 +462,10 @@ int main()
     FastThinWall();
     StartPenetrating();
     DeterministicPerStep();
+    const bool stepProgressPassed = StepProgress();
+    const bool slopeSurfaceSpeedPassed = SlopeSurfaceSpeed();
+    MOVE_CHECK(stepProgressPassed);
+    MOVE_CHECK(slopeSurfaceSpeedPassed);
     std::puts("PhysicsCharacterMoveTest PASS");
     return 0;
 }
