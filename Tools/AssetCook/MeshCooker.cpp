@@ -1,4 +1,5 @@
 ﻿#include "MeshCooker.h"
+#include "ClipOptimizeCliOptions.h"
 #include "SkeletalBvhCook.h"
 #include "MeshMaterialV1Plan.h"
 #include "Resource/GltfNativePath.h"
@@ -243,6 +244,15 @@ namespace NorvesLib::Tools::AssetCook
                 bytes[index] = static_cast<uint8_t>((value >> (index * 8)) & 0xffull);
             }
             return Fnv1a64Update(hash, bytes, sizeof(bytes));
+        }
+
+        uint64_t AppendClipOptimizeHash(uint64_t hash, const ClipOptimizeCookOptions& options)
+        {
+            constexpr char tag[] = "norves.clip-optimize.v1";
+            hash = Fnv1a64Update(hash, reinterpret_cast<const uint8_t*>(tag), sizeof(tag));
+            hash = Fnv1a64UpdateLe64(hash, std::bit_cast<uint64_t>(options.Settings.MaxVertexErrorMeters));
+            hash = Fnv1a64UpdateLe64(hash, std::bit_cast<uint64_t>(options.Settings.MaxJointErrorMeters));
+            return Fnv1a64UpdateLe64(hash, std::bit_cast<uint64_t>(options.Settings.MaxRotationErrorDegrees));
         }
 
         // 埋込みbufferは元sourceに含まれる。外部bufferは余剰を含む全量をJSON順で加える。
@@ -4037,7 +4047,8 @@ namespace NorvesLib::Tools::AssetCook
                                       AnsiString& error,
                           const Core::AssetImport::ImportSettingsFileOptions* importOptions,
                           const Core::Skeletal::SkeletalGltfDecodeOptions* decodeOptions, SkeletalCookDiagnostics& diagnostics,
-                          const SkeletalBvhCookRequest* bvhRequest = nullptr, SkeletalBvhCookResult* bvhResult = nullptr)
+                          const SkeletalBvhCookRequest* bvhRequest = nullptr, SkeletalBvhCookResult* bvhResult = nullptr,
+                          const ClipOptimizeCookOptions* clipOptimize = nullptr)
         {
             if (format != SupportedSkeletalFormat)
             {
@@ -4118,6 +4129,23 @@ namespace NorvesLib::Tools::AssetCook
             {
                 return false;
             }
+            if (clipOptimize && clipOptimize->bEnabled)
+            {
+                Core::Container::VariableArray<Core::Skeletal::SkeletalRestTransform> defaultLocal;
+                if (!Core::Animation::BuildLegacyClipOptimizeDefaultLocal(decoded.Data.Joints, defaultLocal))
+                {
+                    error = reinterpret_cast<const char*>(u8"クリップの最適化に失敗した: 既定ローカルの構築に失敗しました");
+                    return false;
+                }
+                const Core::Animation::ClipOptimizeRig rig{decoded.Data.Joints, defaultLocal, decoded.Data.Vertices};
+                std::string reason;
+                if (!RunClipOptimizeStage(*clipOptimize, rig, decoded.Data.Clips, reason))
+                {
+                    error = AnsiString(reinterpret_cast<const char*>(u8"クリップの最適化に失敗した: ")) +
+                            AnsiString(reason.c_str());
+                    return false;
+                }
+            }
             SkeletalCookResult result;
             if (!BuildNvskelBytes(decoded.Data, result.NvskelBytes, error,
                     bvhRequest != nullptr ? bvhRequest->MaxNvskelBytes : UINT64_MAX))
@@ -4196,6 +4224,10 @@ namespace NorvesLib::Tools::AssetCook
                 return false;
             }
             result.SourceHash = policyHash.Value;
+            if (clipOptimize && clipOptimize->bEnabled)
+            {
+                result.SourceHash = AppendClipOptimizeHash(result.SourceHash, *clipOptimize);
+            }
             if (bvhRequest != nullptr)
             {
                 if (!Detail::AppendBvhCookHash(result.SourceHash, *bvhRequest, result.SourceHash))
@@ -4323,14 +4355,23 @@ namespace NorvesLib::Tools::AssetCook
                                               Core::Container::AnsiStringView logicalPath,
                                               ModelCookFingerprint& outResult, Core::Container::AnsiString& error,
                                               const Core::AssetImport::ImportSettingsFileOptions* importOptions,
-                                              const Core::Skeletal::SkeletalGltfDecodeOptions* decodeOptions)
+                                              const Core::Skeletal::SkeletalGltfDecodeOptions* decodeOptions,
+                                              const ClipOptimizeCookOptions* clipOptimize)
     {
         if (!ValidateNativeCookPaths(sourcePath, importOptions, error))
         {
             return false;
         }
-        return FingerprintModelCookSourceInternal(sourceBytes, sourceSize, format, sourcePath, logicalPath, outResult,
-                                                  error, importOptions, decodeOptions);
+        if (!FingerprintModelCookSourceInternal(sourceBytes, sourceSize, format, sourcePath, logicalPath, outResult,
+                                                error, importOptions, decodeOptions))
+        {
+            return false;
+        }
+        if (clipOptimize && clipOptimize->bEnabled)
+        {
+            outResult.SourceHash = AppendClipOptimizeHash(outResult.SourceHash, *clipOptimize);
+        }
+        return true;
     }
 
     bool CookGltfToNvmeshNativePath(const uint8_t *sourceBytes, size_t sourceSize,
@@ -4359,7 +4400,8 @@ namespace NorvesLib::Tools::AssetCook
                                     SkeletalCookResult& outResult, Core::Container::AnsiString& error,
                                     const Core::AssetImport::ImportSettingsFileOptions* importOptions,
                                     const Core::Skeletal::SkeletalGltfDecodeOptions* decodeOptions,
-                                    SkeletalCookDiagnostics* outDiagnostics)
+                                    SkeletalCookDiagnostics* outDiagnostics,
+                                    const ClipOptimizeCookOptions* clipOptimize)
     {
         if (outDiagnostics)
         {
@@ -4372,7 +4414,7 @@ namespace NorvesLib::Tools::AssetCook
         AnsiString internalError;
         SkeletalCookDiagnostics diagnostics;
         if (!CookGltfToNvskelInternal(sourceBytes, sourceSize, format, sourcePath, outResult, internalError,
-                                      importOptions, decodeOptions, diagnostics))
+                                      importOptions, decodeOptions, diagnostics, nullptr, nullptr, clipOptimize))
         {
             if (outDiagnostics)
             {

@@ -165,6 +165,20 @@ namespace
                 return ReadNextValue(argc, argv, index, value, error);
             };
 
+            bool clipConsumed = false;
+            const char* clipValue = equals != std::string::npos ? value.c_str() :
+                (argument == "--clip-optimize" || index + 1 >= argc ? nullptr : argv[index + 1]);
+            if (!NorvesLib::Tools::AssetCook::TryParseClipOptimizeArgument(
+                    argument, clipValue, outOptions.ClipOptimize, clipConsumed, error))
+            {
+                return false;
+            }
+            if (clipConsumed)
+            {
+                if (argument != "--clip-optimize" && equals == std::string::npos) ++index;
+                continue;
+            }
+
             if (argument == "--input")
             {
                 if (!readValue())
@@ -556,7 +570,9 @@ namespace
             << "Skeletal import: [--skin-influences strict|reduce] [--skin-warn-dropped-weight 0..1] [--skin-fail-dropped-weight 0..1]\n"
             << "Cubic bake: [--cubicspline reject|bake] [--cubic-translation-tolerance meters] [--cubic-rotation-tolerance-deg degrees] [--cubic-scale-tolerance value]\n"
             << "Bake budgets: [--cubic-max-depth 0..24] [--cubic-max-channel-samples 2..1048576] [--cubic-max-asset-samples 2..4194304]\n"
-            << "Morph import: [--morph reject|drop]\n";
+            << "Morph import: [--morph reject|drop]\n"
+            << reinterpret_cast<const char*>(u8"クリップ最適化: [--clip-optimize] [--clip-max-vertex-error-m <m>] [--clip-max-joint-error-m <m>] ")
+            << "[--clip-max-rotation-error-deg <deg>] [--clip-report <path>]\n";
     }
 
     bool InspectModelFile(const std::filesystem::path& input, auto& error)

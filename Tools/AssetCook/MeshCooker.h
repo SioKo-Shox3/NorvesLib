@@ -18,6 +18,8 @@ namespace NorvesLib::Core::AssetImport
 
 namespace NorvesLib::Tools::AssetCook
 {
+    struct ClipOptimizeCookOptions;
+
     enum class MeshImageRole : uint8_t
     {
         Albedo = 1,
@@ -228,7 +230,8 @@ namespace NorvesLib::Tools::AssetCook
         Core::Container::AnsiStringView logicalPath, ModelCookFingerprint& outResult,
         Core::Container::AnsiString& error,
         const Core::AssetImport::ImportSettingsFileOptions* importOptions = nullptr,
-        const Core::Skeletal::SkeletalGltfDecodeOptions* decodeOptions = nullptr);
+        const Core::Skeletal::SkeletalGltfDecodeOptions* decodeOptions = nullptr,
+        const ClipOptimizeCookOptions* clipOptimize = nullptr);
     [[nodiscard]] bool CookGltfToNvmeshNativePath(
         const uint8_t *sourceBytes, size_t sourceSize, Core::Container::AnsiStringView format,
         const std::filesystem::path &sourcePath, Core::Container::AnsiStringView logicalPath, MeshCookResult &outResult,
@@ -239,5 +242,6 @@ namespace NorvesLib::Tools::AssetCook
         SkeletalCookResult& outResult, Core::Container::AnsiString& error,
         const Core::AssetImport::ImportSettingsFileOptions* importOptions = nullptr,
         const Core::Skeletal::SkeletalGltfDecodeOptions* decodeOptions = nullptr,
-        SkeletalCookDiagnostics* outDiagnostics = nullptr);
+        SkeletalCookDiagnostics* outDiagnostics = nullptr,
+        const ClipOptimizeCookOptions* clipOptimize = nullptr);
 } // namespace NorvesLib::Tools::AssetCook

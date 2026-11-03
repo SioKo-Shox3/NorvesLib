@@ -627,22 +627,22 @@ namespace NorvesLib::Core::Animation
 
         Container::String FormatExcess(const Container::String& name, const LargestExcess& excess)
         {
-            Container::StringBuilder message(_T("クリップ "));
+            Container::StringBuilder message(reinterpret_cast<const char*>(u8"クリップ "));
             message.Append(name);
-            message.Append(_T(" が許容を超えた: "));
+            message.Append(reinterpret_cast<const char*>(u8" が許容を超えた: "));
             if (excess.Kind == ExcessKind::JointPosition)
             {
-                message.AppendFormat(_T("関節 %u の位置 %.17g m（上限 %.17g m）"),
+                message.AppendFormat(reinterpret_cast<const char*>(u8"関節 %u の位置 %.17g m（上限 %.17g m）"),
                                      excess.Joint, excess.Value, excess.Limit);
             }
             else if (excess.Kind == ExcessKind::JointRotation)
             {
-                message.AppendFormat(_T("関節 %u の回転 %.17g 度（上限 %.17g 度）"),
+                message.AppendFormat(reinterpret_cast<const char*>(u8"関節 %u の回転 %.17g 度（上限 %.17g 度）"),
                                      excess.Joint, excess.Value, excess.Limit);
             }
             else
             {
-                message.AppendFormat(_T("頂点位置 %.17g m（上限 %.17g m）"), excess.Value, excess.Limit);
+                message.AppendFormat(reinterpret_cast<const char*>(u8"頂点位置 %.17g m（上限 %.17g m）"), excess.Value, excess.Limit);
             }
             return message.ToString();
         }
@@ -910,19 +910,19 @@ namespace NorvesLib::Core::Animation
             !std::isfinite(requested.MaxJointErrorMeters) || requested.MaxJointErrorMeters <= 0 ||
             !std::isfinite(requested.MaxRotationErrorDegrees) || requested.MaxRotationErrorDegrees <= 0)
         {
-            report.FailureReason = _T("誤差の上限は有限の正の値で指定してください。");
+            report.FailureReason = reinterpret_cast<const char*>(u8"誤差の上限は有限の正の値で指定してください。");
             return false;
         }
         if (rig.DefaultLocal.size() != rig.Joints.size())
         {
-            report.FailureReason = _T("既定ローカルの数が関節数と一致しません。");
+            report.FailureReason = reinterpret_cast<const char*>(u8"既定ローカルの数が関節数と一致しません。");
             return false;
         }
         for (const auto& rest : rig.DefaultLocal)
         {
             if (!IsFinite(rest.Translation) || !IsFinite(rest.Rotation) || !IsFinite(rest.Scale))
             {
-                report.FailureReason = _T("既定ローカルに有限でない値があります。");
+                report.FailureReason = reinterpret_cast<const char*>(u8"既定ローカルに有限でない値があります。");
                 return false;
             }
         }
@@ -931,7 +931,7 @@ namespace NorvesLib::Core::Animation
             if (!std::isfinite(clip.DurationSeconds) || clip.DurationSeconds < 0 || clip.Channels.empty() ||
                 clip.Channels.size() > std::numeric_limits<uint32_t>::max())
             {
-                report.FailureReason = _T("クリップの長さまたはチャンネル数が不正です。");
+                report.FailureReason = reinterpret_cast<const char*>(u8"クリップの長さまたはチャンネル数が不正です。");
                 return false;
             }
             uint64_t keys = 0;
@@ -940,12 +940,12 @@ namespace NorvesLib::Core::Animation
                 if (channel.JointIndex >= rig.Joints.size() || static_cast<uint32_t>(channel.Path) > 2 ||
                     static_cast<uint32_t>(channel.Interpolation) > 1)
                 {
-                    report.FailureReason = _T("チャンネルの関節番号または種類が不正です。");
+                    report.FailureReason = reinterpret_cast<const char*>(u8"チャンネルの関節番号または種類が不正です。");
                     return false;
                 }
                 if (channel.Samples.size() > std::numeric_limits<uint64_t>::max() / 20 - keys)
                 {
-                    report.FailureReason = _T("クリップのキー数が大きすぎます。");
+                    report.FailureReason = reinterpret_cast<const char*>(u8"クリップのキー数が大きすぎます。");
                     return false;
                 }
                 keys += channel.Samples.size();
@@ -956,7 +956,7 @@ namespace NorvesLib::Core::Animation
                     if (!std::isfinite(sample.TimeSeconds) || !IsFinite(sample.Value) ||
                         (!bFirst && !(sample.TimeSeconds > previous)))
                     {
-                        report.FailureReason = _T("キーの値または時刻が不正です。");
+                        report.FailureReason = reinterpret_cast<const char*>(u8"キーの値または時刻が不正です。");
                         return false;
                     }
                     bFirst = false;
@@ -967,7 +967,7 @@ namespace NorvesLib::Core::Animation
         Container::VariableArray<double> radii;
         if (!BuildJointRadii(rig, radii))
         {
-            report.FailureReason = _T("骨格または頂点のバインド情報が不正です。");
+            report.FailureReason = reinterpret_cast<const char*>(u8"骨格または頂点のバインド情報が不正です。");
             return false;
         }
         Container::VariableArray<Skeletal::SkeletalAnimationClip> result;
@@ -988,9 +988,9 @@ namespace NorvesLib::Core::Animation
                 if (!MeasureClipDeviation(rig, clip, result.back(), deviation))
                 {
                     report.Clips.back() = std::move(attemptReport);
-                    Container::StringBuilder message(_T("クリップ "));
+                    Container::StringBuilder message(reinterpret_cast<const char*>(u8"クリップ "));
                     message.Append(clip.Name);
-                    message.Append(_T(" の大域評価に失敗しました。"));
+                    message.Append(reinterpret_cast<const char*>(u8" の大域評価に失敗しました。"));
                     report.FailureReason = message.ToString();
                     return false;
                 }
