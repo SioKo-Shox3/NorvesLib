@@ -232,6 +232,7 @@ namespace NorvesLib::Modules::Physics
         const auto serial = m_State.StepSerial;
         m_State = {};
         m_State.StepSerial = serial;
+        m_InheritedVelocity = {};
         m_VerticalSpeed = 0;
         m_bAnchor = false;
         m_bLandedEvent = false;

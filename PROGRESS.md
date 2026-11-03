@@ -9370,3 +9370,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
   - 失敗が黙って起きるか: 起きる。どれも外れてもキャラクターは何かしら動き、エラーもログも出ない
 - 計画: 試験ファイルと PhysicsModuleCharacter.cpp を全単位が触るので、単位は直列に回す（U1 重力の倍率・滑り落ち・昇降足場 → U2 足場の離脱速度 → U3 External → U4 小物を押す → U5 速度の一致とタスクの verify）
 - U1 重力の倍率・滑り落ち・昇降足場のケースを足し、外れたら本体を直す: 着地(直し 0 回)
+- U6 足場の離脱速度のケースを足し、空中で足場の水平速度を引き継ぐ(切り直し): 着地(直し 0 回)

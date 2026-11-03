@@ -78,6 +78,8 @@ namespace NorvesLib::Modules::Physics
         bool m_bLaunch = false;
         CharacterMovementMode m_Mode = CharacterMovementMode::Walking;
         Math::Vector3 m_DesiredVelocity;
+        // 足場の離脱後は水平速度を空中で保つ。
+        Math::Vector3 m_InheritedVelocity = {};
         Math::Vector3 m_PendingDisplacement;
         Math::Vector3 m_PendingTeleport;
         Math::Vector3 m_AnchorLocal;

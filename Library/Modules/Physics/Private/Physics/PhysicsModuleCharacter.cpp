@@ -150,6 +150,7 @@ namespace NorvesLib::Modules::Physics
                 const auto serial = c->m_State.StepSerial;
                 c->m_State = {};
                 c->m_State.StepSerial = serial;
+                c->m_InheritedVelocity = {};
                 c->m_VerticalSpeed = 0;
                 c->m_bAnchor = false;
                 c->m_bJump = false;
@@ -247,6 +248,10 @@ namespace NorvesLib::Modules::Physics
             }
             const float gravity = 9.81f * c->m_Settings.GravityScale;
             request.Displacement = c->m_DesiredVelocity * dt + c->m_PendingDisplacement;
+            if (!c->m_State.bGrounded)
+            {
+                request.Displacement += c->m_InheritedVelocity * dt;
+            }
             request.Displacement.y += vertical * dt - .5f * gravity * dt * dt;
             request.bAllowGroundSnap = !jumping && !c->m_bTeleportedStep;
             request.bAllowStep = !jumping;
@@ -276,6 +281,15 @@ namespace NorvesLib::Modules::Physics
                 continue;
             }
             const bool landed = !c->m_State.bGrounded && moved.bGrounded;
+            if (moved.bGrounded)
+            {
+                c->m_InheritedVelocity = {};
+            }
+            else if (c->m_State.bGrounded)
+            {
+                c->m_InheritedVelocity = c->m_State.PlatformVelocity;
+                c->m_InheritedVelocity.y = 0;
+            }
             body.Owner->SetWorldTransform(target);
             // IntegrateDynamicsが記録した通常kinematic移動に、characterの移動分だけ足す。
             body.Component->m_LinearVelocity = velocity;

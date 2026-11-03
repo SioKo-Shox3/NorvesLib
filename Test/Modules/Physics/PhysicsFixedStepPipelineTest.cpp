@@ -182,7 +182,7 @@ namespace
     static_assert(!std::is_standard_layout_v<FramePacketType>);
     static_assert(!std::is_standard_layout_v<SceneProxyType>);
 
-    constexpr uint32_t kCaseCount = 23;
+    constexpr uint32_t kCaseCount = 24;
     constexpr float kFixedDeltaTime = 1.0f / 60.0f;
 
     struct Fixture
@@ -1547,6 +1547,106 @@ namespace
                platformsMoved && refresh < .01f;
     }
 
+    bool TestCharacterPlatformDepartureVelocity(ApplicationProcessor& processor)
+    {
+        auto& world = GEngine->GetWorld();
+        Entity* floor = CreateCharacterFloor(4);
+        auto* body = floor ? world.CreateComponent<RigidBodyComponent>(floor) : nullptr;
+        auto* mover = floor ? world.CreateComponent<CharacterPlatformTick>(floor) : nullptr;
+        CharacterFixture value;
+        if (!body || !mover || body->SetBodyType(EPhysicsBodyType::Kinematic) != EPhysicsResult::Success ||
+            !CreateCharacter(value, Math::Vector3(1, 0, 0)) ||
+            value.Character->SetDesiredVelocity(Math::Vector3::Zero) != EPhysicsResult::Success)
+        {
+            return false;
+        }
+
+        const auto platformTransform = [](unsigned frame)
+        {
+            const unsigned phase = frame % 120;
+            const float distance = static_cast<float>(phase <= 60 ? phase : 120 - phase) * 2.0f * kFixedDeltaTime;
+            const float angle = static_cast<float>(frame) * kFixedDeltaTime * Math::Constants::PI / 6.0f;
+            return Math::Transform(Math::Vector3(distance, -.5f, 0), Math::Quaternion(Math::Vector3::UnitY, angle));
+        };
+        const auto horizontalError = [](const Math::Vector3& a, const Math::Vector3& b)
+        {
+            const float dx = a.x - b.x;
+            const float dz = a.z - b.z;
+            return std::sqrt(dx * dx + dz * dz);
+        };
+
+        mover->Target = platformTransform(0);
+        if (!StepCharacter(processor) || !value.Character->GetState().bReady ||
+            !value.Character->GetState().bGrounded)
+        {
+            return false;
+        }
+        const auto initialLocal = value.Owner->GetPosition() - floor->GetPosition();
+
+        // 120 ステップの追従後、折り返しから 15 ステップ離れた位置で離脱する。
+        constexpr unsigned departureFrame = 135;
+        for (unsigned frame = 1; frame <= departureFrame; ++frame)
+        {
+            mover->Target = platformTransform(frame);
+            if (!StepCharacter(processor) || !value.Character->GetState().bReady ||
+                !value.Character->GetState().bGrounded)
+            {
+                std::cout << "PLATFORM_GROUNDED frame=" << frame << '\n';
+                return false;
+            }
+            const float angle = static_cast<float>(frame) * kFixedDeltaTime * Math::Constants::PI / 6.0f;
+            const auto local = Math::Quaternion(Math::Vector3::UnitY, -angle) *
+                               (value.Owner->GetPosition() - floor->GetPosition());
+            const float drift = (local - initialLocal).Length();
+            if (!std::isfinite(drift) || drift >= .02f)
+            {
+                std::cout << "PLATFORM_LOCAL_DRIFT frame=" << frame << " distance=" << drift << '\n';
+                return false;
+            }
+        }
+
+        const auto expected = value.Character->GetState().PlatformVelocity;
+        const auto analytical = (platformTransform(departureFrame).TransformPoint(initialLocal) -
+                                 platformTransform(departureFrame - 1).TransformPoint(initialLocal)) /
+                                kFixedDeltaTime;
+        const float analyticalError = horizontalError(expected, analytical);
+        if (!std::isfinite(analyticalError) || analyticalError > .05f ||
+            horizontalError(analytical, Math::Vector3(2, 0, 0)) < .45f)
+        {
+            std::cout << "PLATFORM_VELOCITY expected_x=" << expected.x << " expected_z=" << expected.z
+                      << " analytical_x=" << analytical.x << " analytical_z=" << analytical.z << '\n';
+            return false;
+        }
+        if (value.Character->Jump(5) != EPhysicsResult::Success)
+        {
+            return false;
+        }
+        for (unsigned frame = departureFrame + 1; frame <= departureFrame + 2; ++frame)
+        {
+            const auto before = value.Owner->GetPosition();
+            mover->Target = platformTransform(frame);
+            if (!StepCharacter(processor) || !value.Character->GetState().bReady ||
+                value.Character->GetState().bGrounded)
+            {
+                return false;
+            }
+            const auto observed = value.Body->GetLinearVelocity();
+            const auto displacementVelocity = (value.Owner->GetPosition() - before) / kFixedDeltaTime;
+            const float bodyError = horizontalError(observed, expected);
+            const float displacementError = horizontalError(displacementVelocity, expected);
+            if (!std::isfinite(bodyError) || !std::isfinite(displacementError) ||
+                bodyError > .05f || displacementError > .05f)
+            {
+                std::cout << "PLATFORM_DEPARTURE frame=" << frame << " body_error=" << bodyError
+                          << " displacement_error=" << displacementError << " expected_x=" << expected.x
+                          << " expected_z=" << expected.z << " observed_x=" << observed.x
+                          << " observed_z=" << observed.z << '\n';
+                return false;
+            }
+        }
+        return true;
+    }
+
     bool RunCase(uint32_t caseIndex, ApplicationProcessor& processor)
     {
         switch (caseIndex)
@@ -1597,6 +1697,8 @@ namespace
             return TestCharacterSteepSlopeSlide(processor);
         case 22:
             return TestCharacterElevatorJitter(processor);
+        case 23:
+            return TestCharacterPlatformDepartureVelocity(processor);
         default:
             return false;
         }
