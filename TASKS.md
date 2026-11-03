@@ -8118,3 +8118,11 @@
 - verify: `ctest --test-dir build -C Debug -R "^(DefeatGateTest|ProgressionStateTest|EnemyStateMachineTest|EnemyDefinitionLoadTest|HealthComponentTest)$" --no-tests=error --output-on-failure --timeout 300`
 - paths: Library/Modules/Gameplay/Public/Gameplay/Progression, Library/Modules/Gameplay/Private/Gameplay/Progression, Library/Modules/Gameplay/Private/Gameplay/GameplayModule.cpp, Library/Modules/Gameplay/Private/Gameplay/GameplayModule.h, Library/Modules/Gameplay/Public/Gameplay/Enemy, Library/Modules/Gameplay/Private/Gameplay/Enemy, Assets/Gameplay/enemies, Test/Modules/Gameplay/DefeatGateTest.cpp, Test/Modules/Gameplay/ProgressionStateTest.cpp, Test/Modules/Gameplay/EnemyStateMachineTest.cpp, Test/Modules/Gameplay/EnemyDefinitionLoadTest.cpp, TASKS.md, PROGRESS.md
 - from: G8-GR17-ENEMY-COMPONENT
+
+## G4-GR128-PROCESSING-CASES-P1: ループのときの平滑（`SmoothChannels`）で、近傍を時刻で取り、周期 P で折り返して、継ぎ目のキーをゆがめないようにする
+- status: todo
+- done-when: `SmoothChannels`（`Library/Core/Private/Animation/SkeletalClipProcessing.cpp` 91 行）がループのクリップで近傍のキーを添字ではなく時刻で選び、周期 P（`outputDuration`）で折り返す。こうすると、出力の格子の末尾の間隔が短いとき（`sample + 1 == samples` で `outputDuration` に置く 691 行の扱い）でも、等間隔とみなして折り返すことがなくなる。`MotionProcessingTest` の `TestSmoothing` で、周期が整数のコマにならない合成のクリップ（12.5 コマ）を `SmoothingRadius = 2` で処理し、その結果に `CheckLoop` を掛けて通す。`CheckLoop` が見るのは、先頭と末尾のキーが float32 で一致すること、継ぎ目の入りと出の角速度が全体の中央値の 1.5 倍以内であること（今は 2.32 倍で落ちる）。継ぎ目から離れた内側のキーは、直す前の値と 1e-6 rad 以内で一致する。ループでないクリップの平滑の結果は変えない。`MotionProcessingTest` の他の検査と、`SkeletalBvhClipImportTest`・`SkeletalBvhClipTimeTest`・`BvhDecodeTest`・`BvhEvaluateTest`・`RigStaticRootFrameWireTest` は試験を変えずに通る。
+- verify: `cmake --build build --config Debug --target CookedMeshTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^(MotionProcessingTest|SkeletalBvhClipImportTest|SkeletalBvhClipTimeTest|BvhDecodeTest|BvhEvaluateTest|RigStaticRootFrameWireTest)$" --no-tests=error --output-on-failure --timeout 300`
+- paths: Library/Core/Private/Animation/SkeletalClipProcessing.cpp, Test/Core/Asset/MotionProcessingTest.cpp
+- from: G4-GR128-PROCESSING-CASES
