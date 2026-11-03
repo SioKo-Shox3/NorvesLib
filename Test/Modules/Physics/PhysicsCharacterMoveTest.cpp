@@ -447,6 +447,70 @@ namespace
         }
         return walkableValid && steepValid;
     }
+    bool StairsDown()
+    {
+        PhysicsShapeProxy proxies[12];
+        proxies[0] = Box(0, {-1, .5f, 0}, {1, 1, 2});
+        for (uint32_t i = 1; i <= 10; ++i)
+        {
+            const float top = 1.5f - .15f * i;
+            proxies[i] = Box(i, {.3f * (i - .5f), (top - .5f) / 2, 0},
+                             {.15f, (top + .5f) / 2, 2});
+        }
+        proxies[11] = Box(11, {5, -.25f, 0}, {2, .25f, 2});
+        auto request = Start(1.502f);
+        request.Shape.PointA.x = request.Shape.PointB.x = -.5f;
+        request.Displacement = {4.f / 60, -.01f, 0};
+        const auto results = RunPerStep(proxies, request, 60);
+        unsigned groundedCount = 0;
+        bool valid = true;
+        for (size_t frame = 0; frame < results.size(); ++frame)
+        {
+            const auto& result = results[frame];
+            if (result.bGrounded)
+            {
+                ++groundedCount;
+            }
+            valid = valid && !result.bStuck;
+            std::fprintf(stderr, "CHARACTER_STAIRS_DOWN frame=%zu x=%.9f foot=%.9f grounded=%d stuck=%d\n",
+                         frame, result.Shape.PointA.x, result.Shape.PointA.y - result.Shape.Radius,
+                         result.bGrounded, result.bStuck);
+        }
+        const float ratio = static_cast<float>(groundedCount) / 60;
+        const auto& last = results[59];
+        const float foot = last.Shape.PointA.y - last.Shape.Radius;
+        std::fprintf(stderr, "CHARACTER_STAIRS_DOWN grounded_steps=%u grounded_ratio=%.9f final_x=%.9f final_foot=%.9f\n",
+                     groundedCount, ratio, last.Shape.PointA.x, foot);
+        return valid && ratio >= .99f && std::fabs(foot) <= .02f;
+    }
+    bool CoplanarSeam()
+    {
+        const PhysicsShapeProxy proxies[] = {Box(0, {-5, -.5f, 0}, {5, .5f, 5}),
+                                             Box(1, {5, -.5f, 0}, {5, .5f, 5})};
+        auto request = Start();
+        request.Shape.PointA.x = request.Shape.PointB.x = -1;
+        request.Displacement = {5.f / 60, -.01f, 0};
+        const auto results = RunPerStep(proxies, request, 30);
+        float previous = request.Shape.PointA.x;
+        float minimumProgress = 5.f / 60;
+        bool valid = true;
+        for (size_t frame = 0; frame < results.size(); ++frame)
+        {
+            const auto& result = results[frame];
+            const float progress = result.Shape.PointA.x - previous;
+            if (progress < minimumProgress)
+            {
+                minimumProgress = progress;
+            }
+            valid = valid && progress >= .95f * (5.f / 60) && !result.bStuck && result.bGrounded;
+            std::fprintf(stderr, "CHARACTER_SEAM frame=%zu progress=%.9f grounded=%d stuck=%d\n",
+                         frame, progress, result.bGrounded, result.bStuck);
+            previous = result.Shape.PointA.x;
+        }
+        std::fprintf(stderr, "CHARACTER_SEAM min_progress=%.9f final_x=%.9f valid=%d\n",
+                     minimumProgress, previous, valid);
+        return valid;
+    }
 } // namespace
 int main()
 {
@@ -466,6 +530,10 @@ int main()
     const bool slopeSurfaceSpeedPassed = SlopeSurfaceSpeed();
     MOVE_CHECK(stepProgressPassed);
     MOVE_CHECK(slopeSurfaceSpeedPassed);
+    const bool stairsDownPassed = StairsDown();
+    const bool coplanarSeamPassed = CoplanarSeam();
+    MOVE_CHECK(stairsDownPassed);
+    MOVE_CHECK(coplanarSeamPassed);
     std::puts("PhysicsCharacterMoveTest PASS");
     return 0;
 }

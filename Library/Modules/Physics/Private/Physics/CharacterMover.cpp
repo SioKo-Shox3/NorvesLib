@@ -262,6 +262,41 @@ namespace NorvesLib::Modules::Physics
                 Ground(hit, result);
                 return true;
             }
+            bool GroundSurface(PhysicsQueryHit& hit, bool& walkable)
+            {
+                walkable = hit.Normal.y >= WalkableCos;
+                if (walkable || hit.Normal.y <= MotionEpsilon)
+                {
+                    return true;
+                }
+                // 縁の丸みの法線と、同じ物体の上面の法線を分けて判定する。
+                Vector3 inward(-hit.Normal.x, 0, -hit.Normal.z);
+                inward.Normalize();
+                Vector3 origin = hit.Point + inward * Settings.SkinWidth;
+                origin.y = hit.Point.y + 2 * Settings.SkinWidth;
+                Core::Scene::PhysicsQueryDesc query;
+                query.Kind = EPhysicsQueryKind::RaycastClosest;
+                query.Ray = Math::Ray(origin, Vector3(0, -1, 0));
+                query.MaxDistance = 4 * Settings.SkinWidth;
+                query.Filter = Request.Filter;
+                size_t count = 0;
+                Error = PhysicsBroadphase::ExecuteQueryOverProxies(Proxies, query, Scratch.Hits, count);
+                if (Error == EPhysicsSceneQueryResult::NoHit)
+                {
+                    Error = EPhysicsSceneQueryResult::Success;
+                    return true;
+                }
+                if (Error != EPhysicsSceneQueryResult::Success)
+                {
+                    return false;
+                }
+                if (count && Scratch.Hits[0].Collider == hit.Collider && Scratch.Hits[0].Normal.y >= WalkableCos)
+                {
+                    hit = Scratch.Hits[0];
+                    walkable = true;
+                }
+                return true;
+            }
             bool Vertical(Math::Capsule& shape, float distance, CharacterMoveResult& result)
             {
                 PhysicsQueryHit hit;
@@ -278,13 +313,25 @@ namespace NorvesLib::Modules::Physics
                 const Vector3 advance(0, std::copysign(travel, distance), 0);
                 Translate(shape, advance);
                 if (distance > 0)
+                {
                     result.bHitCeiling = true;
-                else if (hit.Normal.y >= WalkableCos)
-                    Ground(hit, result);
+                }
                 else
                 {
-                    // 歩けない斜面は足場にせず、残りの下降を面に沿って滑らせる。
-                    return Slide(shape, move - advance, false, &result);
+                    bool walkable;
+                    if (!GroundSurface(hit, walkable))
+                    {
+                        return false;
+                    }
+                    if (walkable)
+                    {
+                        Ground(hit, result);
+                    }
+                    else
+                    {
+                        // 歩けない斜面は足場にせず、残りの下降を面に沿って滑らせる。
+                        return Slide(shape, move - advance, false, &result);
+                    }
                 }
                 return true;
             }
@@ -340,10 +387,19 @@ namespace NorvesLib::Modules::Physics
                 bool blocked;
                 if (!solver.Sweep(result.Shape, Vector3(0, -settings.GroundSnapDistance, 0), hit, blocked))
                     return solver.Error;
-                if (blocked && hit.Normal.y >= solver.WalkableCos)
+                if (blocked)
                 {
-                    Translate(result.Shape, Vector3(0, -std::max(0.f, hit.Distance - settings.SkinWidth), 0));
-                    solver.Ground(hit, result);
+                    const float distance = hit.Distance;
+                    bool walkable;
+                    if (!solver.GroundSurface(hit, walkable))
+                    {
+                        return solver.Error;
+                    }
+                    if (walkable)
+                    {
+                        Translate(result.Shape, Vector3(0, -std::max(0.f, distance - settings.SkinWidth), 0));
+                        solver.Ground(hit, result);
+                    }
                 }
             }
         }
