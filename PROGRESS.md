@@ -9213,3 +9213,9 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: なし（アプリの起動の確かめは無い）。cook の本体は G5-GR89-TERRAIN-COOKER。
 - Notes: 読み手はペイロードをタイル表の順 × レイヤ順に 64 バイト境界で詰めた並びとして厳密に求める（違えば TableLayoutMismatch）。高さの DataSize を 1 増やす改ざんは区間がペイロード内に収まるので HeightSizeMismatch で拒否される。使わない LOD 欄が 0 でないものは、読み手は ReservedFieldNonZero、書き手は InvalidTileBounds で拒否する。
 - U6 AssetManifestTest に world の無い旧 manifest の読み込みを足し、タスクの verify を回す: 着地(直し 0 回)
+
+## 2026-11-03 G5-GR89-NVTRN-FORMAT（run 20261103-163359 の反復 1、完了）
+- Done: done-when の「world の無い旧 manifest の読み込み」の試験が抜けていたので足した。kind が texture・model・skeleton・animation だけの version 1 manifest が読めて、各 entry の Kind・EntryType が変わらず、texture の論理パスを AssetKind::World で引くと cooked を使わない（LooseFallbackVariantMissing）ことを AssetManifestTest で押さえた。
+- 証拠: `.harness/runs/20261103-163359/verify-G5-GR89-NVTRN-FORMAT-U6.txt`（CookedMeshTest・AssetSystemTest の Debug ビルド exit=0、ctest で AssetManifestTest・AssetSystemTest・CookedTextureTest・CookedTerrainTest の 4 件 100% Passed）
+- Next: なし（アプリの起動の確かめは無い）。前の反復の差分は評価者が枠切れで未評価なので、この反復の後の評価で全体を見る。
+- Notes: AssetManifestTest.cpp は日本語のコメントを MSVC が読めるよう UTF-8 BOM を付けた（行末は元の LF のまま）。
