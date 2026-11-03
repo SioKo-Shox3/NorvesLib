@@ -9233,6 +9233,7 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261103-113143/G1-GR08-BROADPHASE-INTEGRATION-U2-verify.txt`（verify のビルド EXIT=0、verify の ctest 17 本 Passed、G4 の 5 本〔PhysicsCharacterMoveTest・ColliderLocalPoseTest・CharacterPlatformMotionTest・CharacterDriveOptionsTest・DogMovementSmokeGeometryTest〕Passed）
 - Next: なし（アプリの起動の確かめは無い。Release 構成での実行は要件の注のとおり許可が出たときに 1 回）
 - Notes: 子プロセスの待ちは 1 ケース 20 秒で打ち切る（12 ケースの合計は Debug で約 0.5 秒）。SceneQueryRaycastTest・SceneQueryOverlapTest・PhysicsModuleLinkTest もこの枠の Debug で Passed
+
 - U1 二関節 IK の解析解の純関数を Core に足す: 着地(直し 0 回)
 - U2 TwoBoneIKTest を SkeletalAnimationSamplingTest に足し、タスクの verify を通す: 着地(直し 0 回)
 
