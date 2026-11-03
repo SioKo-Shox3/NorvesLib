@@ -9201,3 +9201,15 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261103-065438/build-G3-GR10.txt`（両ターゲットのビルド EXIT=0）・`.harness/runs/20261103-065438/verify-G3-GR10-ctest.txt`（SkeletalAnimationSamplingTest 0.25 sec・SkinnedRenderPathContractTest 18.51 sec Passed、100%）
 - Next: なし
 - Notes: 要起票: この項目の verify は ctest で SkinnedRenderPathContractTest を回すのにビルド行がそのターゲットを作らないので、新しい枠・消した build では再検証が Not Run で落ちる。ビルド行に `--target SkinnedRenderPathContractTest` を足すかは計画が決める
+
+## 2026-11-03 G4-GR02-FIXED-FRAME-CLOCK（run 20261103-113728 の反復 1、着手）
+- 試験の 3 点（ApplicationFixedStepPipelineTest の固定刻みの時計のケース）:
+  - 反証する契約: `--fixed-frame-dt=` の刻み（1/24・1/30）で回すと、60 Hz の固定ステップの回数が決まった並び（1/24 は 2・3 で合計 120、1/30 は毎フレーム 2）になり、端数の持ち越しで累積がずれず、2 回の新しい実行で各フレームの実行ステップ数・余り・TimeSystem の時刻・FramePacket に載る delta と累積が bit で一致する
+  - ほかの手段で気づけるか: 気づけない。1 ns の端数の落としや並びの入れ替わりは 1 枚の撮影にもログにも出ず、連番の録画（GR66）や 2 回撮った FLIP（G7）でだけ遅れて食い違う
+  - 失敗が黙って起きるか: 起きる。時計が壁時計へ戻っても、刻みの端数を捨てても、エラーにならず時刻が少しずつずれるだけ
+- 試験の 3 点（WorldRenderInterpolationTest の生成直後の補間のケース）:
+  - 反証する契約: 原点でない位置に生成した補間の Entity は、最初のフレーム（0 ステップと 1 ステップ）で描画の位置・MeshProxy の現在と前の変換が生成の位置になり、原点から補間されない
+  - ほかの手段で気づけるか: 気づきにくい。生成の 1〜2 フレームだけ原点の方から滑って見え、落ち着いた後の撮影には出ない
+  - 失敗が黙って起きるか: 起きる
+- Notes: FramePacket の DeltaTime・TotalTime は RenderingCoordinator::BeginFrame が自前の壁時計で作るので、done-when (2) を満たすために paths の外の RenderWorld・RenderingCoordinator に固定刻みの値を受け取る 1 メソッドを足す（決定的な撮影の経路は変えない）
+- Notes: `--capture-deterministic` と `--fixed-frame-dt=` を同時に指定したときは決定的な撮影の 1/60 を優先し、`--fixed-frame-dt` は警告して無視する（刻みを選べる決定的な撮影は G14・G7 の側で要るときに足す）
