@@ -9173,3 +9173,10 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261103-070131/G4-GR05-MODEL-CASES-u3-unit-verify.txt`（`cmake --build build --config Debug --target LoggerSinkTest PhysicsDynamicsTest -- /m:1` 終了コード 0、ctest の `QuadrupedLocomotionModelTest`・`LocomotionProfileReloadTest`・`PhysicsFixedStepPipelineTest` の 3 本 Passed、各ケースの期待値と実測値の行）
 - Next: なし（アプリを起動する確かめは無い）。
 - Notes: 歩様の表の形・JSON（`QuadrupedLocomotionJson.cpp`）は変えていない。斜面は SlopeLimit を越えた登りは 0（登れない）を返す設計のままで、(d) は SlopeLimit を 60° より大きくした試験のパラメータで見た。
+
+## 2026-11-03 G4-GR05-MODEL-CASES（run 20261103-113136 の反復 1。完了を付け直す）
+
+- Done: 前の run で試験のケース (a)〜(j) と着地の回復の直しを着地済み。評価が枠切れで回らなかったため状態が doing に戻っていたので、今の HEAD で verify を回し直して done に戻した。
+- 証拠: `.harness/runs/20261103-113136/verify-G4-GR05-MODEL-CASES-build.txt`（`cmake --build build --config Debug --target LoggerSinkTest PhysicsDynamicsTest -- /m:1` 終了コード 0）、`.harness/runs/20261103-113136/verify-G4-GR05-MODEL-CASES-ctest.txt`（`QuadrupedLocomotionModelTest`・`LocomotionProfileReloadTest`・`PhysicsFixedStepPipelineTest` の 3 本 Passed、終了コード 0）。
+- Next: 評価者による差分の評価（前の run では未実施）。
+- Notes: アプリの起動を要する確かめは無い。
