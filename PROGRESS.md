@@ -9202,3 +9202,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: なし
 - Notes: 要起票: この項目の verify は ctest で SkinnedRenderPathContractTest を回すのにビルド行がそのターゲットを作らないので、新しい枠・消した build では再検証が Not Run で落ちる。ビルド行に `--target SkinnedRenderPathContractTest` を足すかは計画が決める
 - U1 Gameplay モジュールの骨組みと Game への登録: 着地(直し 0 回)
+- U2 Docs/Testing.md に CombatSweepTest を足す理由の 3 点を書く: 着地(直し 0 回)
