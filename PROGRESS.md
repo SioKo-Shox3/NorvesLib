@@ -9203,3 +9203,9 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 要起票: この項目の verify は ctest で SkinnedRenderPathContractTest を回すのにビルド行がそのターゲットを作らないので、新しい枠・消した build では再検証が Not Run で落ちる。ビルド行に `--target SkinnedRenderPathContractTest` を足すかは計画が決める
 - U1 PhysicsBroadphaseQueryTest の 12 ケースをケースごとの子プロセスで走らせ、落ちたケースは製品の側を直す: 着地(直し 0 回)
 - U2 PhysicsQueries.md の「Windows.h 依存で未確認」の記録を Windows の Debug で回した記録に直し、タスクの verify を通す: 着地(直し 0 回)
+
+## 2026-11-03 G1-GR08-BROADPHASE-INTEGRATION（run 20261103-113143 の反復 1、完了）
+- Done: `PhysicsBroadphaseQueryTest` の 12 ケースを、`ApplicationFixedStepPipelineTest` の前例どおりケースごとの子プロセス（`--child=<n>`）で走らせる形にした。大域の ModuleRegistry を入れ直す 2 個目の fixture で assert が落ちて止まる問題が解け、GR08 の統合のケース（metadata の公開時点・統合クエリ 7 種・ExecuteBatch・Layer/Mask の接触とイベント・明示 refresh・通知中の refresh 拒否）が初めて実モジュールで走り、製品の側を直さずに全部通った。`InstallAll` は assert の外へ出した。ModuleRegistry の冪等のガードは変えていない。`Docs/Architecture/PhysicsQueries.md` の「Windows.h 依存で未確認」の記録を、Windows の Debug で 12 ケースを通した記録に直した
+- 証拠: `.harness/runs/20261103-113143/G1-GR08-BROADPHASE-INTEGRATION-U2-verify.txt`（verify のビルド EXIT=0、verify の ctest 17 本 Passed、G4 の 5 本〔PhysicsCharacterMoveTest・ColliderLocalPoseTest・CharacterPlatformMotionTest・CharacterDriveOptionsTest・DogMovementSmokeGeometryTest〕Passed）
+- Next: なし（アプリの起動の確かめは無い。Release 構成での実行は要件の注のとおり許可が出たときに 1 回）
+- Notes: 子プロセスの待ちは 1 ケース 20 秒で打ち切る（12 ケースの合計は Debug で約 0.5 秒）。SceneQueryRaycastTest・SceneQueryOverlapTest・PhysicsModuleLinkTest もこの枠の Debug で Passed
