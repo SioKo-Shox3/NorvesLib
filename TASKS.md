@@ -8033,3 +8033,27 @@
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/G12-GR48-CHECK -Configuration RelWithDebInfo -Deterministic`
 - paths: Assets/Models/Generated, Assets/Levels/Sample, Assets/AssetSets, Docs/RenderingValidation/TreeLodImpostorAcceptance.md, Library/Core/Private/Rendering, Assets/Shaders, Scripts/Lod, TASKS.md, PROGRESS.md
 - notes: 要件 `#### GR48` の受け入れ確認の遷移のスイープ・検証レイヤー・記録（ロードマップ 2626・2627 行）と段取りの P5（実際の AI の木での見た目の調整。2283 行）。木の樹種（針葉樹・枯れ木）は画像の生成の指示の記述で、企画は未決なので見本の 2 種にする。AI の高ポリのメッシュの LOD の鎖（GR80、G17）がまだ無いときは、近景と中景を MegaGeometry のクラスタの LOD で描き（G12-GR48-MESH-LOD-SELECT の notes）、遠景だけをインポスターにする。重い処理（ComfyUI での 3D の生成）は GPU を使うので、Game の撮影と同時に走らせない。撮影を開いて目で確かめる。違ったら GR48 の各タスクの paths の範囲で直す。
+
+## G12-GR40-SCENE-PAYLOAD: セルの中身にシーンの JSON の部分木を使えるようにし、読み・解析をワーカーで、生成を GameThread で予算ごとに行う
+- status: todo
+- after: G12-GR40-WORLD-PAYLOADS, G12-GR92-ASSETREF-SCENE-V3, G12-GR92-ASSET-BIND, G12-GR92-PREFAB-FILE, G12-GR92-BRIDGE-SCENE
+- gr: GR40
+- needs-gr: GR92
+- done-when: `SceneSerializer::LoadIntoWorld`（SceneSerializer.cpp:1731〜。読み → `TryParseJson`（1511）→ `ReconcileWithSchema`（1599）→ ルートごとの SpawnPrefab）を、(a) ワーカーで動くファイルの読みと `TryParseJson`、(b) GameThread の `ReconcileWithSchema`（ClassRegistry・TypeRegistry を引くので、スレッド安全が確かめられるまで GameThread）、(c) ルート 1 つずつの生成（予算のカーソルで止められる）の 3 つの関数に分け、今の `LoadIntoWorld` はそれを順に呼ぶ形にして結果を変えない。ルートの Entity を返す読み込み（GR92 が足す。ロードマップ 2630 行）を使い、セルがルートを所有する。payload の種類 `scene` を足し、セルのマニフェストの論理パスのシーンをこの 3 段で読む。休眠と解放は G12-GR40-WORLD-PAYLOADS の `placement` と同じ（ルートの `SetActive`・ルートの破棄）。新設の `StreamingScenePayloadTest`（`SceneSerializerTest` の束へ MEMBER）が通る: 3 段に分けて別のスレッドで解析し、何フレームかに分けて生成した結果が、`LoadIntoWorld` 1 回の結果と Entity・Component・プロパティの単位で一致する。解析の後・生成の途中で取り消すと World に何も残らない（途中まで作ったルートも消える）。資産の参照（GR92 の `AssetRef`）が生成のときに要求され、GameModeScope の Cleanup で外れる。既存の `SceneSerializerTest`・`SceneFileRoundTripTest` と G12-GR40-WORLD-PAYLOADS の試験が通る。
+- verify: `cmake --build build --config Debug --target SceneSerializerTest EntityTreeTest Game -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^(StreamingScenePayloadTest|SceneSerializerTest|SceneFileRoundTripTest|StreamingPayloadTest|StreamingCellStateMachineTest)$" --no-tests=error --output-on-failure --timeout 300`
+- paths: Library/Core/Public/Scene/SceneSerializer.h, Library/Core/Private/Scene/SceneSerializer.cpp, Library/Core/Public/Streaming, Library/Core/Private/Streaming, Test/Core/Object/StreamingScenePayloadTest.cpp, Test/Core/Object/CMakeLists.txt, TASKS.md, PROGRESS.md
+- notes: 設計はロードマップ 2151・2153 行（GR40 の 1・2）、リスクは 2710〜2711 行。シーンの保存は今 MeshHandle などの資源の参照を持てない（ロードマップ 2151 行）ので、シーンの部分木を payload にできるのは GR92（G12 の後半の計画役）の後。ルートを返す読み込みは GR92 の完了条件（ロードマップ 2630 行）にあり、G12 の後半の G12-GR92-ASSETREF-SCENE-V3（シーンの形式 v3・読み込みの戻り値）が作るので、ここでは作らず使う。`SceneSerializer.cpp` は GR92 と同じファイルなので、分割は関数の切り出しだけにして差分を小さくする。試験を足す理由: 反証する契約は「分けて読んだ結果が 1 回で読んだ結果と同じで、取り消しで何も残らない」こと。破れるとセルの出入りで小物が二重に出る・半端に残るとして、まれにしか出ず、撮影・ログでは気づけず黙って起きる。危険地帯（Object の寿命・アセットロード）なので評価者を通す。
+
+## G12-GR40-STREAM-CHECK: セルの出し入れとスナップロードを起動して確かめ、ヒッチの数・読み込みの時間・フレームの時間を記録する
+- status: todo
+- after: G12-GR40-SNAP-PREFETCH, G12-GR40-SCENE-PAYLOAD, G12-GR39-TERRAIN-CHECK
+- gr: GR40
+- check: launch
+- gpu: exclusive
+- done-when: grassland を `--grassland-streaming` で、秒速 10 m で往復する台本（`Scripts/CameraScripts/grassland-course-4km.txt` の往復版。この項目で作る）で撮り、ログで (1) 焦点から Ra 以内のセルが常に Active（`STREAMING_CELL` の状態の記録から機械で数える。違反 0）、(2) 進行方向の側のセルが後ろより先に Dormant まで読まれる、(3) 周回ごとに World の Entity・散布の行・コライダーの数が基準に戻る（`MASS_RANGES` も pass）、を確かめる。`STREAMING_HITCH` の数、セルごとの準備とコミットの時間、`--streaming-snap-test` の `STREAMING_SNAP ready_ms` を RelWithDebInfo で測り、gt・rt・GPU の median と p95 を添えて `Docs/Performance/WorldStreamingBaseline.md` に書く（合否は 1 と 3。時間は記録）。PNG を開いて、セルの出入りで穴・飛び出し（ポップ）が近景に見えないことを確かめる。
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene grassland -Views low -Configuration RelWithDebInfo -OutDir .harness/runs/scene-capture/G12-GR40-STREAM-CHECK/course -GameArgs grassland-streaming,camera-script=Scripts/CameraScripts/grassland-course-4km-loop.txt -GpuTimingFrames 3000`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene grassland -Views low -Configuration RelWithDebInfo -OutDir .harness/runs/scene-capture/G12-GR40-STREAM-CHECK/snap -GameArgs grassland-streaming,streaming-snap-test=1500,1500`
+- paths: Scripts/CameraScripts/grassland-course-4km-loop.txt, Docs/Performance/WorldStreamingBaseline.md, TASKS.md, PROGRESS.md
+- notes: 完了条件はロードマップ 2599〜2602 行の撮影の部分。計測は RelWithDebInfo（AGENTS.md の絶対規則 8）。GPU とフレームの時間を測るので占有する。直す必要が出たら、この項目では直さずに `G12-GR40-FIX-<名前>` を足す。`STREAMING_CELL` の記録の形は G12-GR40-CELL-CORE で決める（無ければこの項目でログの読み方を足すだけにし、ライブラリは変えない）。UNCERTAIN: スナップの座標（1500,1500）は grassland の地形の範囲に依る仮の値で、着手時に範囲の中の遠い点に置き直す。
