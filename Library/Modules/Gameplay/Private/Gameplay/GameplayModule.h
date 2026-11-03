@@ -1,6 +1,8 @@
 ﻿#pragma once
 
 #include "Gameplay/IGameplayModule.h"
+#include "Gameplay/Progression/DefeatGate.h"
+#include "Gameplay/Progression/ProgressionState.h"
 #include "Thread/Thread.h"
 
 namespace NorvesLib::Core
@@ -26,11 +28,18 @@ namespace NorvesLib::Modules::Gameplay
         void Shutdown() override;
         void Uninstall(Core::Engine::Engine& engine) override;
 
+        ProgressionState& GetProgressionState() override { return m_ProgressionState; }
+        DefeatGate& GetDefeatGate() override { return m_DefeatGate; }
+
     private:
         void RegisterWorldSystems(Core::World& world);
+        bool IsDefeatHoldOwnerAlive(Core::EntityHandle owner) const;
 
         Core::Engine::Engine* m_Engine = nullptr;
         Thread::Thread::ThreadId m_OwnerThreadId;
         bool m_bInitialized = false;
+        ProgressionState m_ProgressionState;
+        DefeatGate m_DefeatGate;
+        Core::Delegate<bool, Core::EntityHandle> m_IsDefeatHoldOwnerAlive;
     };
 }

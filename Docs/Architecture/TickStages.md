@@ -61,6 +61,8 @@
 - `ColliderComponent` と `RigidBodyComponent` は毎フレーム処理の登録がない。物理は `PhysicsModule` が登録した World の固定ステップの段で動き、`FixedBegin` の `Physics.FixedPre` が `StepPreFixed`、`FixedTick` の `Physics.FixedStep` が `StepFixed` を呼ぶ。Module の `PreFixedTick` と `FixedTick` は、それぞれ `FixedModulePre` と `FixedModulePost` で別に呼ばれる。
 - PostAnimation という群はない。アニメの姿勢を読んで付ける処理は `SocketAttachmentComponent`・`HoldSlotComponent` と同じ PostPhysics に置く。
 - 新しく `RegisterComponentTick` で登録する型は、同じ変更でこの表に足す。漏れは ctest `TickContractTableTest`(`Scripts/CheckTickContractTable.ps1`)が止める。台本は `Library` と `Game` の `.cpp` から `RegisterComponentTick(<型>::StaticClass()` と `RegisterComponentTick(StaticClass()`(後者はファイル名の型)を集め、この表の 1 列目(バッククォートで囲んだ型名)に無い型、または文書に消えた API の名前があれば失敗する。表の 1 列目は型名をバッククォートで囲んだもの 1 つだけにする。
+- HealthComponentは可変Tickを持たず、ApplyDamageを呼んだ側のTickの中でOnDamaged・OnStaggerBroken・OnDefeatedを通知する。
+- GameplayModule::Tick（通常のModule Tick）はDefeatGate::Updateの安全点で、持ち主の破棄を検出して保留を外し、保留のない撃破をOnDefeatCompleted → ProgressionState::MarkDefeatedへ渡す。
 
 ## Bridge進行とポーズの3分類
 

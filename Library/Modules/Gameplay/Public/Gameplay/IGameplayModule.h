@@ -5,6 +5,9 @@
 
 namespace NorvesLib::Modules::Gameplay
 {
+    class ProgressionState;
+    class DefeatGate;
+
     /**
      * @brief 攻撃判定・遭遇領域・体力などのゲームプレイの汎用部分を扱うモジュール。
      * Physics へのリンクは持たない。
@@ -13,6 +16,9 @@ namespace NorvesLib::Modules::Gameplay
     {
     public:
         virtual ~IGameplayModule() = default;
+
+        virtual ProgressionState& GetProgressionState() = 0;
+        virtual DefeatGate& GetDefeatGate() = 0;
     };
 
     /**

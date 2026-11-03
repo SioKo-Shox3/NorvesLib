@@ -25,6 +25,7 @@
 #include "GameModes/DogMovementSmoke/DogMovementSmokeMode.h"
 #include "Gameplay/Camera/FollowCameraComponent.h"
 #include "Gameplay/Locomotion/QuadrupedLocomotionComponent.h"
+#include "Gameplay/Physics/GamePhysicsLayers.h"
 #include "Input/GameHapticsSettings.h"
 #include "Input/GameInputActions.h"
 #include <cmath>
@@ -2995,6 +2996,12 @@ namespace Game
             {
                 LOG_WARNING_F("振動効果を適用できません。既存設定で続行します: %s",
                     hapticsError.empty() ? "" : hapticsError.c_str());
+            }
+            NorvesLib::Core::Container::String physicsLayersError;
+            if (!Game::Gameplay::InitializeGamePhysicsLayers(m_PhysicsLayers, physicsLayersError))
+            {
+                LOG_WARNING_F("コリジョンレイヤーの表を読めません。Default だけの表で続行します: %s",
+                    physicsLayersError.empty() ? "" : physicsLayersError.c_str());
             }
             if (!m_InputSettings.Initialize(engine->GetInputMapper()))
             {
