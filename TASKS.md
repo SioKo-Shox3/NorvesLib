@@ -8070,3 +8070,42 @@
 - paths: Game/Bridge/NorvesLibBridgeAdapter.h, Game/Bridge/NorvesLibBridgeAdapter.cpp, Game/Bridge/BridgeAssetEditProtocol.h, Game/Bridge/BridgeAssetEditProtocol.cpp, Game/Bridge/BridgeAssetPropertyEditor.h, Game/Bridge/BridgeAssetPropertyEditor.cpp, Game/CMakeLists.txt, Test/Game/Bridge/BridgeAssetPropertyEditTest.cpp, Test/Game/Bridge/CMakeLists.txt
 - from: NorvesEditor/E4-001
 - notes: SDK の仮想関数 `assetGetProperties`・`assetSetProperty`・`assetSave` は、今は NorvesEditor のブランチ `task/E4-001`(7537f47)にしかない。E4-001 は blocked で、統合ブランチにはまだ入っていない。NorvesLib のビルドが読む `NORVES_BRIDGE_SDK_DIR`(NorvesEditor のメインの作業ツリー)にこの口が無いうちは verify の 1 行目が落ちる。その場合は NorvesEditor を書き換えず、理由を書いてこのタスクを blocked にする。E4-001 が統合された後で todo に戻す。線の上の名前は `Docs/Plans/GameFeatureRoadmap.md` の GR137 の節に合わせる。Bridge のプロトコルの境界なので評価者を通す。
+
+## GAME-GR137-CAPTURE-WIRE: NorvesLibBridgeAdapter に決定的な撮影(`viewport.captureDeterministic` と完了イベント `viewport.captureCompleted`)をつなぎ、能力 `viewport.capture` を広告する
+- status: todo
+- done-when: SDK の `IBridgeEngineAdapter` に入った `viewportCaptureDeterministic` を `NorvesLibBridgeAdapter` で上書きする。線の上のメソッド名・欄・エラーコードは、NorvesEditor の `bridge/spec/schema` にある `viewport.captureDeterministic` と `viewport.captureCompleted` の定義に合わせる。
+
+  **(1) 受け付け**
+  - params(settleFrames・maxWidth/maxHeight・エディタが決める撮影用ディレクトリ・出力名)を検査し、受け付けの応答 `{captureId}` だけを返す。画像は Bridge に載せない。
+  - 次の要求は受け付けの時点で理由コード付きで拒否する。
+    - 出力名に区切り文字・`..`・絶対パスを含むもの
+    - 存在しないディレクトリ
+    - 上限を超える寸法(上限は既存の `ValidateBridgeDeterministicCaptureRequest` を使う)
+  - `--capture-deterministic` で起動していない Game では、`getCapabilities` に `viewport.capture` を出さず、要求を拒否する。
+
+  **(2) 撮影の進行**
+  - 既存の `BridgeDeterministicCaptureSession` を、GameThread の毎フレームに進める。時期は `RenderWorld::EndFrame` の後、次の `AdvanceFrame` の前。
+  - 完了したら、PNG を指定のディレクトリの出力名に書き終えてから、`viewport.captureCompleted` を既存の `BridgeServerHost::EmitEvent` で 1 回だけ送る。中身は captureId・ファイルの場所・寸法・エポックのフレーム番号・PixelHash と PngHash・失敗の理由。
+  - 失敗(時間切れ・場面の不在・書き込みの失敗)も、同じイベントで理由付きで送る。
+
+  **(3) 撮影の専有**
+  - 撮影中に来た 2 件目の撮影と `viewport.getThumbnail` は、busy の理由で拒否する。
+  - 時間切れの後に残った撮影の結果は回収し、次の撮影やサムネイルへ渡さない。
+
+  **(4) 試験**
+  - SDK に依らない部分を `BridgeCaptureProtocol` に分ける。対象は params と場所の検査、captureId の発行、完了イベントの中身の組み立て、セッションの駆動。
+  - 偽の `BridgeDeterministicFrameSource` を使う CPU の試験で、次を確かめる。
+    - 場所の外・`..`・区切り文字を含む出力名が拒否される。
+    - 撮影中の 2 件目が拒否される。
+    - 完了イベントの captureId が受け付けの応答と一致する。
+    - 時間切れが理由付きの完了イベントになり、残った結果が次の撮影へ漏れない。
+- verify: `powershell -NoProfile -Command "if (-not (Select-String -Path 'C:/Users/KINGkawamura/Documents/NorvesEditor/bridge/cpp/engine-sdk/include/Norves/Bridge/adapter.hpp' -Pattern 'viewportCaptureDeterministic' -Quiet)) { exit 1 }"`
+- verify: `cmake --build build --config Debug --target Game BridgeCaptureProtocolTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^BridgeCaptureProtocolTest$" --no-tests=error --output-on-failure --timeout 180`
+- paths: Game/Bridge/NorvesLibBridgeAdapter.h, Game/Bridge/NorvesLibBridgeAdapter.cpp, Game/Bridge/BridgeDeterministicCapture.h, Game/Bridge/BridgeDeterministicCapture.cpp, Game/Bridge/BridgeCaptureProtocol.h, Game/Bridge/BridgeCaptureProtocol.cpp, Game/GameApplicationHandler.h, Game/GameApplicationHandler.cpp, Game/CMakeLists.txt, Test/Game/Bridge/BridgeCaptureProtocolTest.cpp, Test/Game/Bridge/CMakeLists.txt
+- from: NorvesEditor/E4-003
+- notes:
+  - **SDK の前提:** SDK の仮想関数 `viewportCaptureDeterministic` と完了イベントの schema は NorvesEditor の E4-003 が足す(今は todo)。今の `adapter.hpp` にはまだ無い。NorvesLib のビルドが読む `NORVES_BRIDGE_SDK_DIR` にこの口が無いうちは、verify の 1 行目が落ちる。その場合は NorvesEditor を書き換えず、理由を書いてこのタスクを blocked にし、E4-003 が統合された後で todo に戻す。
+  - **名前:** 線の上の名前は `Docs/Plans/GameFeatureRoadmap.md` の GR137 の節と、E4-003 が決めた schema に合わせる。
+  - **評価者:** Bridge のプロトコルの境界とファイルの書き出しの場所の検査を扱うので、評価者を通す。
+  - **起動しない:** 実 GPU での撮影セッションの確かめは GAME-GR137-VFX-CHECK の `BridgeDeterministicCaptureVulkanTest` が受け持つ。このタスクでは起動しない。
