@@ -612,6 +612,147 @@ namespace
         std::puts("表面アンカー: 持ち主の破棄後に安全に解除し切れた弱参照を拒否");
     }
 
+    // 対象のロールにかかわらず、カメラの基本姿勢の上方向を世界上向きに保つ。
+    void TestClingWorldUp()
+    {
+        CameraFixture fixture;
+        fixture.Physical->SetRotation(Math::Quaternion(Math::Vector3::UnitY, .5f) *
+                                      Math::Quaternion(Math::Vector3::UnitZ, Math::Constants::PI * .5f));
+        fixture.Follow->SetClinging(true);
+        CAMERA_CHECK(fixture.Follow->IsClinging());
+        float maximumAngle = 0;
+        for (unsigned frame = 0; frame < 240; ++frame)
+        {
+            fixture.Step();
+            const auto up = fixture.Owner->GetWorldTransform().rotation * Math::Vector3::UnitY;
+            const float cosine = std::clamp(Math::Vector3::Dot(up.Normalized(), Math::Vector3::UnitY), -1.f, 1.f);
+            const float angle = std::acos(cosine) * 180 / Math::Constants::PI;
+            maximumAngle = std::max(maximumAngle, angle);
+            CAMERA_CHECK(std::isfinite(angle) && angle <= 1.f);
+        }
+        std::printf("しがみつきの上方向: 最大偏差=%g度\n", maximumAngle);
+    }
+
+    // 高周波の対象には低域通過で追従する。
+    void TestClingYawFiltering()
+    {
+        CameraFixture fixture;
+        fixture.Follow->SetYaw(180);
+        fixture.Step();
+        fixture.Follow->SetClinging(true);
+        const float maximumSpeed = Access::Profile(*fixture.Follow).ClingMaximumYawSpeed;
+        float minimumYaw = 360, maximumYaw = -360, maximumRate = 0;
+        for (unsigned frame = 0; frame < 240; ++frame)
+        {
+            const float time = static_cast<float>(frame + 1) * FrameDelta;
+            fixture.SetSubjectYaw(30 * std::sin(2 * Math::Constants::PI * 10 * time));
+            const float previous = fixture.Follow->GetYaw();
+            fixture.Step();
+            const float rate = AngleDelta(previous, fixture.Follow->GetYaw()) / FrameDelta;
+            if (frame >= 30)
+            {
+                const float yaw = AngleDelta(180, fixture.Follow->GetYaw());
+                minimumYaw = std::min(minimumYaw, yaw);
+                maximumYaw = std::max(maximumYaw, yaw);
+                maximumRate = std::max(maximumRate, std::fabs(rate));
+                CAMERA_CHECK(std::fabs(rate) <= maximumSpeed + .005f);
+            }
+        }
+        const float amplitude = (maximumYaw - minimumYaw) * .5f;
+        CAMERA_CHECK(amplitude <= 7.5f);
+
+        std::printf("しがみつきの低域通過: 最大角速度=%g度/秒 振幅=%g度\n",
+                    maximumRate, amplitude);
+    }
+
+    // 出入りで角速度が跳ばず、上限超過からも滑らかに減速する。
+    void TestClingYawTransitions()
+    {
+        CameraFixture fixture;
+        auto& camera = *fixture.Follow;
+        const auto& profile = Access::Profile(camera);
+        const float rateChange = profile.ClingMaximumYawSpeed * FrameDelta;
+        constexpr float tolerance = .005f;
+        fixture.SetSubjectYaw(0);
+        fixture.Advance(120);
+        CAMERA_NEAR(camera.GetYaw(), 0);
+        const float beforeEntry = camera.GetYaw();
+        fixture.Step();
+        float previousRate = AngleDelta(beforeEntry, camera.GetYaw()) / FrameDelta;
+        fixture.SetSubjectYaw(90);
+        Access::Profile(camera).YawReturnDelay = 0;
+        Access::SetSubjectSpeed(camera, profile.MinimumYawSpeed + 1);
+        camera.SetClinging(true);
+        CAMERA_CHECK(camera.IsClinging());
+        bool moved = false;
+        float maximumChange = 0;
+        for (unsigned frame = 0; frame < 45; ++frame)
+        {
+            const float previous = camera.GetYaw();
+            fixture.Step();
+            const float rate = AngleDelta(previous, camera.GetYaw()) / FrameDelta;
+            maximumChange = std::max(maximumChange, std::fabs(rate - previousRate));
+            CAMERA_CHECK(std::fabs(rate - previousRate) <= rateChange + tolerance);
+            moved |= std::fabs(rate) > tolerance;
+            previousRate = rate;
+        }
+        CAMERA_CHECK(moved && std::fabs(previousRate) > rateChange);
+        camera.SetClinging(false);
+        CAMERA_CHECK(!camera.IsClinging());
+        auto* target = fixture.World.SpawnEntity<Core::Entity>();
+        CAMERA_CHECK(target);
+        target->SetPosition({-5, .4f, 0});
+        bool stopped = false;
+        for (unsigned frame = 0; frame < 120; ++frame)
+        {
+            if (frame == 5)
+                CAMERA_CHECK(camera.SetLockOnTarget(target));
+            const float previous = camera.GetYaw();
+            fixture.Step();
+            const float rate = AngleDelta(previous, camera.GetYaw()) / FrameDelta;
+            maximumChange = std::max(maximumChange, std::fabs(rate - previousRate));
+            CAMERA_CHECK(std::fabs(rate - previousRate) <= rateChange + tolerance);
+            if (std::fabs(rate) <= tolerance)
+            {
+                stopped = true;
+                break;
+            }
+            previousRate = rate;
+        }
+        CAMERA_CHECK(stopped);
+
+        CameraFixture fast;
+        fast.Follow->SetYaw(359);
+        fast.Step();
+        Core::Component::SpringArmIntent intent;
+        intent.YawDelta = 5;
+        fast.Follow->ApplyIntent(intent);
+        fast.Step();
+        float fastRate = 5 / FrameDelta;
+        fast.Follow->SetClinging(true);
+        bool reachedMaximum = false;
+        for (unsigned frame = 0; frame < 160; ++frame)
+        {
+            const float previous = fast.Follow->GetYaw();
+            fast.Step();
+            const float rate = AngleDelta(previous, fast.Follow->GetYaw()) / FrameDelta;
+            CAMERA_CHECK(std::fabs(rate - fastRate) <= rateChange + tolerance);
+            if (fastRate > profile.ClingMaximumYawSpeed + rateChange + tolerance)
+                CAMERA_NEAR(rate, fastRate - rateChange, tolerance);
+            else
+            {
+                CAMERA_CHECK(std::fabs(rate) <= profile.ClingMaximumYawSpeed + tolerance);
+                reachedMaximum = true;
+                break;
+            }
+            fastRate = rate;
+        }
+        CAMERA_CHECK(reachedMaximum);
+
+        std::printf("しがみつきの出入り: 最大角速度差=%g度/秒 上限超過を確認\n",
+                    maximumChange);
+    }
+
     // 自動焦点はレイの距離とロック目標の前方射影へ収束し、無効時は初期値を保つ。
     void TestAutoFocus()
     {
@@ -889,6 +1030,9 @@ int main()
     TestLockOnJoint();
     TestLockOnMovingSurfaceAnchor();
     TestLockOnDestroyedSurfaceAnchor();
+    TestClingWorldUp();
+    TestClingYawFiltering();
+    TestClingYawTransitions();
     TestAutoFocus();
     TestProfileParsing();
     TestVariableFixedSteps();

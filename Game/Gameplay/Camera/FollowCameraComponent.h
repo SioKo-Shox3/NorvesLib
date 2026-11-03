@@ -52,6 +52,8 @@ namespace Game::Gameplay
         bool SetLockOnJoint(NorvesLib::Core::Entity* target, uint32_t jointIndex, float radius = 0);
         bool SetLockOn(NorvesLib::Core::Container::TWeakPtr<const NorvesLib::Core::Camera::ILockOnTarget> target);
         bool IsLockedOn() const;
+        void SetClinging(bool clinging);
+        bool IsClinging() const;
         void ClearLockOn()
         {
             m_LockOn.reset();
@@ -109,7 +111,9 @@ namespace Game::Gameplay
         NorvesLib::Core::Container::TSharedPtr<const NorvesLib::Core::Camera::ILockOnTarget> m_OwnedLockOn;
         NorvesLib::Math::Vector3 m_FollowPosition, m_FollowVelocity, m_PreviousSubject;
         float m_TimeSinceLook = 0, m_YawVelocity = 0, m_FovVelocity = 0, m_FocusVelocity = 0;
+        float m_MeasuredYawRate = 0, m_PreviousTickYaw = 0, m_PreviousClingTargetYaw = 0;
         float m_Trauma = 0, m_ShakeTime = 0, m_SubjectFade = 1;
         bool m_bFollowInitialized = false, m_bPreviousSubjectValid = false, m_bProfileReadFailed = false;
+        bool m_bClinging = false, m_bClingContinuing = false, m_bPreviousTickYawValid = false;
     };
 } // namespace Game::Gameplay

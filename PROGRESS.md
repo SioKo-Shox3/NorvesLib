@@ -9308,3 +9308,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 Core にロックオンの目標の口 ILockOnTarget と組み込みの 2 実装を足す: 着地(直し 0 回)
 - U2 FollowCameraProfile にしがみつきの節(cling)を足す: 着地(直し 0 回)
 - U3 FollowCameraComponent のロックオンを ILockOnTarget 経由に組み替え、表面のアンカーの口を足す: 着地(直し 0 回)
+- U4 しがみつき中のヨーの補正(低域通過・角速度と角加速度の上限・抜けの継続)と試験: 着地(直し 1 回)
