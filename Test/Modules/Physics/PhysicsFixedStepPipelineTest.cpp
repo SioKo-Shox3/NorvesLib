@@ -28,6 +28,7 @@
 
 #include <Windows.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cstddef>
 #include <cmath>
@@ -181,7 +182,7 @@ namespace
     static_assert(!std::is_standard_layout_v<FramePacketType>);
     static_assert(!std::is_standard_layout_v<SceneProxyType>);
 
-    constexpr uint32_t kCaseCount = 20;
+    constexpr uint32_t kCaseCount = 23;
     constexpr float kFixedDeltaTime = 1.0f / 60.0f;
 
     struct Fixture
@@ -1397,6 +1398,155 @@ namespace
         return unsmoothedZeroFrames >= (rate == 60 ? 65u : 15u);
     }
 
+    bool TestCharacterGravityScale(ApplicationProcessor& processor)
+    {
+        CharacterFixture value;
+        if (!CreateCharacter(value, Math::Vector3(0, 100, 0)))
+            return false;
+        // 初回の準備を無重力で行い、計測開始時の鉛直速度をゼロにする。
+        CharacterBodySettings settings;
+        settings.GravityScale = 0;
+        if (value.Character->SetSettings(settings) != EPhysicsResult::Success)
+            return false;
+        for (unsigned step = 0; step < 120 && !value.Character->GetState().bReady; ++step)
+            if (!StepCharacter(processor))
+                return false;
+        if (!value.Character->GetState().bReady)
+            return false;
+        const float initialHeight = value.Owner->GetPosition().y;
+        settings.GravityScale = .5f;
+        if (value.Character->SetSettings(settings) != EPhysicsResult::Success)
+            return false;
+        for (unsigned step = 0; step < 60; ++step)
+            if (!StepCharacter(processor) || !value.Character->GetState().bReady)
+                return false;
+        constexpr float expected = 9.81f * .5f * .5f;
+        const float descent = initialHeight - value.Owner->GetPosition().y;
+        if (!std::isfinite(descent) || std::fabs(descent - expected) > expected * .02f)
+        {
+            std::cout << "GRAVITY_SCALE descent=" << descent << " expected=" << expected << '\n';
+            return false;
+        }
+        return true;
+    }
+
+    bool TestCharacterSteepSlopeSlide(ApplicationProcessor& processor)
+    {
+        Entity* slope = CreateCharacterFloor(20);
+        if (!slope)
+            return false;
+        const float angle = 60.0f * Math::Constants::PI / 180.0f;
+        const Math::Quaternion rotation(Math::Vector3::UnitZ, angle);
+        const Math::Vector3 normal = rotation * Math::Vector3::UnitY;
+        slope->SetPosition(normal * -.5f);
+        slope->SetRotation(rotation);
+        CharacterFixture value;
+        // 半径 .3 の球端が斜面にほぼ接する位置から始める。
+        if (!CreateCharacter(value, Math::Vector3(0, .301f, 0)) ||
+            value.Character->SetDesiredVelocity(Math::Vector3::Zero) != EPhysicsResult::Success)
+            return false;
+        const auto initial = value.Owner->GetPosition();
+        for (unsigned step = 0; step < 60; ++step)
+            if (!StepCharacter(processor) || !value.Character->GetState().bReady)
+                return false;
+        const auto final = value.Owner->GetPosition();
+        if (!std::isfinite(final.x) || !std::isfinite(final.y) || final.x > initial.x - .05f ||
+            final.y >= initial.y || value.Character->GetState().bGrounded)
+        {
+            std::cout << "STEEP_SLOPE dx=" << final.x - initial.x << " dy=" << final.y - initial.y
+                      << " grounded=" << value.Character->GetState().bGrounded << '\n';
+            return false;
+        }
+        return true;
+    }
+
+    class CharacterElevatorTick final : public Component::Component, public IFixedProbe
+    {
+      public:
+        bool bMoving = false;
+        bool bRefresh = false;
+        bool bRefreshSucceeded = true;
+        unsigned Step = 0;
+        void OnFixed(float fixedDeltaTime) override
+        {
+            if (!bMoving)
+                return;
+            auto target = GetOwner()->GetWorldTransform();
+            const float direction = (Step / 10) % 2 == 0 ? 1.0f : -1.0f;
+            target.position.y += direction * 3.0f * fixedDeltaTime;
+            GetOwner()->SetWorldTransform(target);
+            ++Step;
+            if (bRefresh && GEngine->GetSceneQuery().RefreshDynamicSnapshot() != EPhysicsSceneQueryResult::Success)
+                bRefreshSucceeded = false;
+        }
+    };
+
+    bool TestCharacterElevatorJitter(ApplicationProcessor& processor)
+    {
+        auto& world = GEngine->GetWorld();
+        Entity* floors[2] = {CreateCharacterFloor(4), CreateCharacterFloor(4)};
+        CharacterElevatorTick* movers[2] = {};
+        CharacterFixture characters[2];
+        if (!floors[0] || !floors[1])
+            return false;
+        floors[1]->SetPosition(Math::Vector3(20, -.5f, 0));
+        for (unsigned i = 0; i < 2; ++i)
+        {
+            auto* body = world.CreateComponent<RigidBodyComponent>(floors[i]);
+            movers[i] = world.CreateComponent<CharacterElevatorTick>(floors[i]);
+            if (!body || !movers[i] || body->SetBodyType(EPhysicsBodyType::Kinematic) != EPhysicsResult::Success ||
+                !CreateCharacter(characters[i], Math::Vector3(static_cast<float>(i) * 20, 0, 0)))
+                return false;
+        }
+        // 更新ありの足場を先に処理し、更新なしの足場はその後に動かす。
+        movers[0]->bRefresh = true;
+        for (unsigned step = 0; step < 10; ++step)
+            if (!StepCharacter(processor))
+                return false;
+        for (unsigned i = 0; i < 2; ++i)
+        {
+            if (!characters[i].Character->GetState().bReady || !characters[i].Character->GetState().bGrounded)
+                return false;
+            movers[i]->bMoving = true;
+        }
+        float minimum[2] = {std::numeric_limits<float>::max(), std::numeric_limits<float>::max()};
+        float maximum[2] = {std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest()};
+        float floorMinimum[2] = {floors[0]->GetPosition().y, floors[1]->GetPosition().y};
+        float floorMaximum[2] = {floorMinimum[0], floorMinimum[1]};
+        for (unsigned step = 0; step < 120; ++step)
+        {
+            if (!StepCharacter(processor))
+                return false;
+            for (unsigned i = 0; i < 2; ++i)
+            {
+                if (i == 0 && !characters[i].Character->GetState().bReady)
+                    return false;
+                const float floorHeight = floors[i]->GetPosition().y;
+                const float gap = characters[i].Owner->GetPosition().y - (floorHeight + .5f);
+                if (!std::isfinite(gap))
+                {
+                    if (i == 0)
+                        return false;
+                    minimum[i] = maximum[i] = std::numeric_limits<float>::quiet_NaN();
+                }
+                else
+                {
+                    minimum[i] = std::min(minimum[i], gap);
+                    maximum[i] = std::max(maximum[i], gap);
+                }
+                floorMinimum[i] = std::min(floorMinimum[i], floorHeight);
+                floorMaximum[i] = std::max(floorMaximum[i], floorHeight);
+            }
+        }
+        const float refresh = maximum[0] - minimum[0];
+        const float noRefresh = maximum[1] - minimum[1];
+        std::cout << "ELEVATOR_JITTER refresh=" << refresh << " norefresh=" << noRefresh << '\n';
+        const bool platformsMoved = std::fabs(floorMaximum[0] - floorMinimum[0] - .5f) < .001f &&
+                                    std::fabs(floorMaximum[1] - floorMinimum[1] - .5f) < .001f;
+        return movers[0]->bRefreshSucceeded && movers[0]->Step == 120 && movers[1]->Step == 120 &&
+               platformsMoved && refresh < .01f;
+    }
+
     bool RunCase(uint32_t caseIndex, ApplicationProcessor& processor)
     {
         switch (caseIndex)
@@ -1441,6 +1591,12 @@ namespace
             return TestDynamicInterpolationAt144Hz(processor, 120);
         case 19:
             return TestCharacterAddedAfterTickJoinsNextCollection(processor);
+        case 20:
+            return TestCharacterGravityScale(processor);
+        case 21:
+            return TestCharacterSteepSlopeSlide(processor);
+        case 22:
+            return TestCharacterElevatorJitter(processor);
         default:
             return false;
         }
