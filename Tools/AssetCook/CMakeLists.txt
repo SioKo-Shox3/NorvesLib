@@ -110,6 +110,12 @@ add_library(AssetCookLib STATIC
     AudioCooker.cpp
     AudioCooker.h
     MeshCooker.cpp
+    HeightfieldImport.cpp
+    HeightfieldImport.h
+    TerrainCooker.cpp
+    TerrainCooker.h
+    TerrainSpec.cpp
+    TerrainSpec.h
     TerrainCliffDetail.cpp
     TerrainCliffDetail.h
     CookedTerrainQuery.cpp
@@ -168,6 +174,7 @@ add_library(AssetCookLib STATIC
     VfxEffectCookCli.h
 )
 target_link_libraries(AssetCookLib PUBLIC Core AssetCookTextureCooker AssetCookMeshOptimizer)
+target_link_libraries(AssetCookLib PRIVATE NorvesThirdParty_TinyEXR)
 if(WIN32)
     target_link_libraries(AssetCookLib PRIVATE bcrypt shell32)
 endif()
@@ -176,6 +183,7 @@ target_include_directories(AssetCookLib
     PRIVATE
         ${CMAKE_SOURCE_DIR}/Library/Core/Private
         ${CMAKE_SOURCE_DIR}/Library/ThirdParty/stb
+        ${CMAKE_SOURCE_DIR}/Library/ThirdParty/tinyexr/include
 )
 
 add_executable(AssetCook Main.cpp)
