@@ -9259,3 +9259,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: N の式の「動き」は 2 体の相対の動きの上界として両者の動きの和にした（片方だけ動く場合は done-when の式と同じ）
 - U1 ClipOptimizer の型とチャンネル単位の削減・報告の JSON: 着地(直し 0 回)
 - U2 同じ評価の経路での大域検証と許容のやり直し: 着地(直し 1 回)
+- U3 ClipOptimizerTest の (a)〜(e): 着地(直し 0 回)

@@ -60,6 +60,7 @@ norves_add_test_bundle(CookedMeshTest
     MEMBER SkeletalAssetPublicationTest SkeletalAssetPublicationTest.cpp
     MEMBER SkeletalAssetRuntimeTest SkeletalAssetRuntimeTest.cpp
     MEMBER SkeletalAssetSessionTest SkeletalAssetSessionTest.cpp
+    MEMBER ClipOptimizerTest ClipOptimizerTest.cpp
     MEMBER CookedClipBankV1Test CookedClipBankV1Test.cpp
     MEMBER CookedSkeletonV1Test CookedSkeletonV1Test.cpp
     MEMBER CookedSkinMeshV1Test CookedSkinMeshV1Test.cpp
@@ -140,6 +141,7 @@ add_test(NAME AssetFileReaderTest COMMAND AssetSystemTest --test=AssetFileReader
 add_test(NAME PackageFormatTest COMMAND AssetSystemTest --test=PackageFormatTest)
 add_test(NAME AssetManifestTest COMMAND AssetSystemTest --test=AssetManifestTest)
 add_test(NAME AssetSystemTest COMMAND AssetSystemTest)
+add_test(NAME ClipOptimizerTest COMMAND CookedMeshTest --test=ClipOptimizerTest)
 add_test(NAME CookedTextureTest COMMAND CookedMeshTest --test=CookedTextureTest)
 add_test(NAME CookedMeshTest COMMAND CookedMeshTest)
 add_test(NAME SkeletalSubmeshLayoutTest COMMAND CookedMeshTest --test=SkeletalSubmeshLayoutTest)
