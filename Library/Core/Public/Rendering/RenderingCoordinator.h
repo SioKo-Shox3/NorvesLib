@@ -238,6 +238,9 @@ namespace NorvesLib::Core::Rendering
          */
         void BeginFrame();
 
+        /** @brief GameThread から次の BeginFrame へ、1 回だけ使う固定刻みの経過時間と累積秒を渡す */
+        void SetFixedFrameTime(float deltaSeconds, double totalSeconds);
+
         /**
          * @brief シーン収集
          *
@@ -884,6 +887,10 @@ namespace NorvesLib::Core::Rendering
         // フレームタイミング
         double m_LastFrameTime = 0.0;
         double m_TotalTime = 0.0;
+        // GameThread 専用。次の BeginFrame で消費する固定刻みの時間。
+        float m_FixedFrameDeltaSeconds = 0.0f;
+        double m_FixedFrameTotalSeconds = 0.0;
+        bool m_bFixedFrameTimePending = false;
 
         // 決定的な撮影（GameThread専用）。エポックの 0 番のフレームから数えたフレーム数を FramePacket へ載せる。
         bool m_bDeterministicCapture = false;
