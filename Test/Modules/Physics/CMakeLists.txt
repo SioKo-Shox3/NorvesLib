@@ -67,6 +67,7 @@ norves_add_test_bundle(PhysicsDynamicsTest
     MEMBER PhysicsLegacyQueryTest PhysicsLegacyQueryTest.cpp
     MEMBER PhysicsLifecycleEventTest PhysicsLifecycleEventTest.cpp
     MEMBER PhysicsFixedStepPipelineTest PhysicsFixedStepPipelineTest.cpp
+    MEMBER FollowCameraBehaviorTest FollowCameraBehaviorTest.cpp
     MEMBER CombatSweepTest ${CMAKE_SOURCE_DIR}/Test/Modules/Gameplay/CombatSweepTest.cpp
     SOURCES
         ${CMAKE_SOURCE_DIR}/Game/Gameplay/Locomotion/QuadrupedLocomotionComponent.cpp
@@ -107,4 +108,5 @@ add_test(NAME CharacterPlatformMotionTest COMMAND PhysicsDynamicsTest --test=Cha
 add_test(NAME CharacterDriveOptionsTest COMMAND PhysicsDynamicsTest --test=CharacterDriveOptionsTest)
 add_test(NAME DogMovementSmokeGeometryTest COMMAND PhysicsDynamicsTest --test=DogMovementSmokeGeometryTest)
 
+add_test(NAME FollowCameraBehaviorTest COMMAND PhysicsDynamicsTest --test=FollowCameraBehaviorTest)
 add_test(NAME CombatSweepTest COMMAND PhysicsDynamicsTest --test=CombatSweepTest)

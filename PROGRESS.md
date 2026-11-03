@@ -9257,14 +9257,20 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261103-113141/u4-unit-verify.txt`（verify の 2 行: Debug の Game・PhysicsDynamicsTest のビルド EXIT=0、ctest の CombatSweepTest・PhysicsModuleLinkTest・PhysicsDynamicsTest・PhysicsLifecycleEventTest が 100% Passed）
 - Next: なし（アプリを起動する確かめは無い）。hitbox・hurtbox の Component・判定窓・通知は G8-GR16-COMBAT-RUNTIME
 - Notes: N の式の「動き」は 2 体の相対の動きの上界として両者の動きの和にした（片方だけ動く場合は done-when の式と同じ）
-- U2 割り当て表の漏れを止める台本と ctest の登録: 着地(直し 0 回)
-- U1 TickStages.md を ECS 化後の登録の仕組み・全型の割り当て表・今の段の名前で書き直す: 着地(直し 1 回)
-- U3 verify を回して GameFoundationValidation.md と InputFoundation.md の未確認の行を結果に直す: 着地(直し 0 回)
 
-## 2026-11-03 G1-GR01-TICK-CONTRACT-DOC（run 20261103-223649 の反復 1、完了）
-- Done: `Docs/Architecture/TickStages.md` を今のコードに合わせて書き直した。型ごとの登録 `World::RegisterComponentTick` と `ComponentTickRegistration` の各欄、World の順序付きの系 3 本、`RegisterComponentTick` を呼ぶ 20 型の割り当て表（群・処理・時間の channel・ポーズの分類・登録の場所）、Collider・RigidBody は登録が無く物理は PhysicsModule の固定ステップの段で走ること、PostAnimation の群は無くアニメの姿勢を読む処理は PostPhysics に置くこと、Unscaled の channel もシミュレーションの停止中は呼ばれないこと、`ApplicationProcessor` の今の段（PreUpdate〜PostUpdate）でのフレームの順。最終のカメラの確定点は Handler の `OnLateUpdate` のまま、G14・G16 の受け渡しの節の意味は変えていない。消えた API の名前は文書に残していない
-- Done: `Scripts/CheckTickContractTable.ps1` と ctest `TickContractTableTest`（`Test/Core/Object/CMakeLists.txt`、`powershell -File` の形）を足し、理由の 3 点を `Docs/Testing.md` に書いた。Library・Game の .cpp の登録の型が表の 1 列目に無いか、文書に消えた API の名前があれば終了コード 1
-- Done: `GameFoundationValidation.md` の GR01・GR03・GR04 の行と `InputFoundation.md` の「Windows.h 依存で未確認」の行を、Windows Debug（09b4fb9b）の結果に直した。GR08 は `PhysicsQueries.md` を正とすると書いた
-- 証拠: `.harness/runs/20261103-223649/u3-unit-verify.txt`（verify の 3 行: Debug の 5 ターゲットのビルド EXIT=0、ctest 13 本中 13 本 pass、36 本中 36 本 pass、`TICK_CONTRACT_TABLE result=pass types=20`）。台本の失敗の確かめ（1 型を消す・禁止の語を足す・表が無い）は `u2-unit-verify.txt`
-- Next: 起動の確かめは後回し（TICK_STAGE_SMOKE の実ログ、実機の Alt+Tab・Raw mouse・cursor・実パッドの接続と振動は未確認のまま文書に残した）
-- Notes: 台本の ThirdParty の除外は区切りの `/` と `\` の食い違いで効いておらず、`Library/ThirdParty` の .cpp も走査している（結果は変わらず遅くなるだけ）
+## G4-GR06-FOLLOW-CASES 統合ブランチの取り込み（2026-11-03）
+
+- Done: `feature/scene-launcher` を取り込み、`Test/Modules/Physics/CMakeLists.txt` の衝突を `FollowCameraBehaviorTest` と `CombatSweepTest` の両方の MEMBER・add_test を残して解いた
+- 証拠: `.harness/runs/20261103-223637/verify-build.txt`（Debug の PhysicsDynamicsTest・LoggerSinkTest・Game のビルド EXIT=0）、`.harness/runs/20261103-223637/verify-ctest.txt`（FollowCameraBehaviorTest・CriticalDampingTest・CameraCollisionSolverTest・PhysicsFixedStepPipelineTest が 100% Passed）。同じ束の CombatSweepTest も Passed
+- Next: なし（アプリを起動する確かめは無い）
+- U1 臨界減衰のオーバーシュート・不規則な dt・動く目標の速度の連続を試験する: 着地(直し 0 回)
+- U3 FollowCameraBehaviorTest の土台を今の先頭に入れ直し、速度演出・ロックオン・自動の焦点を試験する: 着地(直し 0 回)
+- U4 固定ステップが揺れても震えないことと自身の除外を試験し、タスクの verify を回す: 着地(直し 1 回)
+## 2026-11-03 G4-GR06-FOLLOW-CASES（run 20261103-113138 の反復 2、完了）
+- Done: (A) CriticalDampingTest にオーバーシュートなし（1/30・1/60・1/144）、不規則な dt の一括の解との一致（位置 9.7e-8・速度 2.0e-7）、動く目標の速度の連続を足した。(B) PhysicsDynamicsTest の束に MEMBER FollowCameraBehaviorTest を足し、(1)〜(10) を通した。外れて直したのは 2 点: 無効なジョイントの指定でロックオンを外す、追従を「区間の間に等速で動く目標への臨界減衰の厳密解」（`Math::TryCriticalDampMovingTarget`）にした。後者で固定ステップの回数 0/1/2（86/412/94 回）が揺れるフレームの列でも、カメラの位置−対象の描画の位置の 2 階差分の最大は 7.6e-6 m（前の式は 4.8e-3 m）。Default 群の比較用 Component がシミュレーションの位置を追うと 9.2e-3 m。減衰は絶対の速度のままなので、等速で走るときの後ろへの遅れと、止まったときに行き過ぎない性質は前と同じ
+- (10) 自身の除外: 距離 0 の当たりは、除外ありで実効長 5 m・Success、除外なしで 0 m に潰れる。開始時の貫通の印（bStartPenetrating）付きの当たりは、除外なしでは solver の決まりで StartOverlapping になり前の長さを保つ（潰れない）ので、その組は結果が Success でないことで検出する
+- 証拠: `.harness/runs/20261103-113138/verify-G4-GR06-FOLLOW-CASES.txt`（Debug の PhysicsDynamicsTest・LoggerSinkTest・Game のビルド 終了コード 0、ctest 4 本 Passed 100%）
+- Next: G4-GR06-CLING-LOCKON
+- Notes: `TryCriticalDampMovingTarget` は 1 つの区間の内部を float の相対の座標で解くので、極端に短い dt で目標が動くと（目標の速さ/ω が大きくなり）精度が落ちる。フレームの dt の範囲では問題にならない
+- 2026-11-03 run 20261103-163355 の反復 1: 前の反復の評価が枠切れで行われず状態が doing に戻っていた。着地後にコードの変更は無く、最後の確かめ（ビルド終了コード 0・ctest 4 本 Passed）のまま done に戻した。評価はランナーが回す。
+- 2026-11-03 run 20261103-223637 の反復 1: 評価（PASS）の後に統合ブランチの取り込みが途中で止まり、状態が doing に戻っていた。着地後にコードの変更は無く、最後の確かめ（`.harness/runs/20261103-163355/recheck-G4-GR06-FOLLOW-CASES-1-1.txt` のビルド exit=0、`-1-2.txt` の ctest 4 本 Passed）のまま done に戻した。統合ブランチとは `Test/Modules/Physics/CMakeLists.txt` の add_test の末尾（CombatSweepTest）と PROGRESS.md で衝突するので、取り込みでは両方の行を残す。
