@@ -9308,3 +9308,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U0 試験と煙の確かめが共用する小さな PNG16 のフィクスチャ: 着地(直し 0 回)
 - U1 高さの取り込み HeightfieldImport と、地形 cook の API の宣言・CMake: 着地(直し 1 回)
 - U2 TerrainCooker（全体の法線・量子化・タイル切り・LOD 誤差・AABB・NRM0・NVTRN の書き出し）: 着地(直し 0 回)
+- U3 TerrainSpec（スペック JSON の解析と cook の取りまとめ・source_hash）: 着地(直し 0 回)
