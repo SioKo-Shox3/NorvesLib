@@ -54,6 +54,7 @@ set(PRIVATE_SOURCES
     Private/Object/World.cpp
     Private/Particle/ParticleSystem.cpp
     Private/Vegetation/GrassSpecies.cpp
+    Private/Vegetation/GrassField.cpp
     Private/Particle/SwordTrailRibbon.cpp
     Private/Particle/DecalPool.cpp
     Private/Particle/VfxSchema.cpp
@@ -530,6 +531,9 @@ set(PUBLIC_HEADERS
     Public/Engine/Engine.h
     Public/Particle/ParticleSystem.h
     Public/Vegetation/GrassSpecies.h
+    Public/Vegetation/GrassField.h
+    Public/Vegetation/GroundHeightSource.h
+    Public/Rendering/GrassFieldRenderData.h
     Public/Particle/SwordTrailRibbon.h
     Public/Particle/DecalPool.h
     Public/Particle/VfxEffectTypes.h

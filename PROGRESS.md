@@ -9419,3 +9419,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: ランナーの評価者がこの差分（3f13dfe8・20381f35・f896b040）を見る。
 - U1 草の種別の表 GrassSpecies と JSON を足す: 着地(直し 0 回)
 - U2 GrassFieldRenderData を FramePacket へ値で渡す経路を足す: 着地(直し 0 回)
+- U3 GrassField の格納と CPU のクエリを足す: 着地(直し 0 回)
