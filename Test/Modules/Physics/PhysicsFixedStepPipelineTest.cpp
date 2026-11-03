@@ -182,7 +182,7 @@ namespace
     static_assert(!std::is_standard_layout_v<FramePacketType>);
     static_assert(!std::is_standard_layout_v<SceneProxyType>);
 
-    constexpr uint32_t kCaseCount = 24;
+    constexpr uint32_t kCaseCount = 25;
     constexpr float kFixedDeltaTime = 1.0f / 60.0f;
 
     struct Fixture
@@ -1647,6 +1647,107 @@ namespace
         return true;
     }
 
+    bool TestCharacterExternalMovement(ApplicationProcessor& processor)
+    {
+        CharacterFixture value;
+        if (!CreateCharacterFloor() || !CreateCharacter(value, Math::Vector3::Zero) ||
+            !StepCharacter(processor) || !value.Character->GetState().bGrounded)
+        {
+            return false;
+        }
+        // モード切り替えは保留中の Teleport を破棄するため、先に固定ステップで反映する。
+        if (value.Character->Teleport(Math::Vector3(0, 2, 0)) != EPhysicsResult::Success ||
+            !StepCharacter(processor))
+        {
+            return false;
+        }
+        const auto start = value.Owner->GetPosition();
+        const auto isNear = [](float actual, float expected, float tolerance)
+        {
+            return std::isfinite(actual) && std::fabs(actual - expected) <= tolerance;
+        };
+        const auto nearVector = [&](const Math::Vector3& actual, const Math::Vector3& expected, float tolerance)
+        {
+            return isNear(actual.x, expected.x, tolerance) && isNear(actual.y, expected.y, tolerance) &&
+                   isNear(actual.z, expected.z, tolerance);
+        };
+        if (!nearVector(start, Math::Vector3(0, 2, 0), .005f) ||
+            value.Character->SetMovementMode(CharacterMovementMode::External) != EPhysicsResult::Success ||
+            value.Character->SetDesiredVelocity(Math::Vector3(5, 0, 0)) != EPhysicsResult::Success ||
+            value.Character->Jump(5) != EPhysicsResult::InvalidState ||
+            value.Character->LaunchVertical(5) != EPhysicsResult::InvalidState)
+        {
+            return false;
+        }
+        const auto serial = value.Character->GetState().StepSerial;
+        const auto generation = value.Character->GetMotionGeneration();
+        for (unsigned step = 0; step < 30; ++step)
+        {
+            if (!StepCharacter(processor))
+            {
+                return false;
+            }
+            const auto& state = value.Character->GetState();
+            if (!nearVector(value.Owner->GetPosition(), start, 1e-4f) || !state.bReady || state.bGrounded ||
+                state.Result != EPhysicsResult::Success || state.StepSerial != serial + step + 1 ||
+                value.Character->GetMotionGeneration() != generation)
+            {
+                std::cout << "EXTERNAL_REST step=" << step << '\n';
+                return false;
+            }
+        }
+        if (value.Character->MoveDelta(Math::Vector3::Zero, .1f) != EPhysicsResult::Success ||
+            value.Character->MoveDelta(Math::Vector3(1, 0, 0), .15f) != EPhysicsResult::Success ||
+            !StepCharacter(processor))
+        {
+            return false;
+        }
+        const auto moved = start + Math::Vector3(1, 0, 0);
+        const auto expectedForward = Math::Quaternion(Math::Vector3::UnitY, .25f) * Math::Vector3::UnitZ;
+        const auto actualForward = value.Owner->GetWorldTransform().rotation * Math::Vector3::UnitZ;
+        const auto& state = value.Character->GetState();
+        if (!nearVector(value.Owner->GetPosition(), moved, 1e-4f) ||
+            !nearVector(value.Body->GetLinearVelocity(), Math::Vector3(60, 0, 0), .01f) ||
+            !nearVector(state.Velocity, Math::Vector3(60, 0, 0), .01f) ||
+            !nearVector(actualForward, expectedForward, 1e-4f) || !state.bReady || state.bGrounded ||
+            state.Result != EPhysicsResult::Success || state.StepSerial != serial + 31)
+        {
+            std::cout << "EXTERNAL_MOVE x=" << value.Owner->GetPosition().x
+                      << " velocity_x=" << value.Body->GetLinearVelocity().x << '\n';
+            return false;
+        }
+        // 移動と回転は一度だけ消費し、床を横切る要求も衝突で制限しない。
+        if (!StepCharacter(processor) || !nearVector(value.Owner->GetPosition(), moved, 1e-4f) ||
+            !nearVector(value.Owner->GetWorldTransform().rotation * Math::Vector3::UnitZ, expectedForward, 1e-4f) ||
+            !nearVector(value.Body->GetLinearVelocity(), Math::Vector3::Zero, .01f) ||
+            value.Character->MoveDelta(Math::Vector3(0, -3, 0)) != EPhysicsResult::Success ||
+            !StepCharacter(processor) ||
+            !nearVector(value.Owner->GetPosition(), moved + Math::Vector3(0, -3, 0), 1e-4f))
+        {
+            return false;
+        }
+        // External 中の Teleport は瞬間移動分を速度に含めず、切り替え時には保留入力を破棄する。
+        if (value.Character->Teleport(moved) != EPhysicsResult::Success || !StepCharacter(processor) ||
+            !nearVector(value.Owner->GetPosition(), moved, 1e-4f) ||
+            !nearVector(value.Body->GetLinearVelocity(), Math::Vector3::Zero, .01f) ||
+            value.Character->MoveDelta(Math::Vector3(2, 0, 0)) != EPhysicsResult::Success ||
+            value.Character->SetMovementMode(CharacterMovementMode::Walking) != EPhysicsResult::Success ||
+            value.Character->SetDesiredVelocity(Math::Vector3::Zero) != EPhysicsResult::Success)
+        {
+            return false;
+        }
+        for (unsigned step = 0; step < 3; ++step)
+        {
+            if (!StepCharacter(processor))
+            {
+                return false;
+            }
+        }
+        const auto falling = value.Owner->GetPosition();
+        return isNear(falling.x, moved.x, 1e-4f) && isNear(falling.z, moved.z, 1e-4f) &&
+               std::isfinite(falling.y) && falling.y < moved.y - 1e-4f;
+    }
+
     bool RunCase(uint32_t caseIndex, ApplicationProcessor& processor)
     {
         switch (caseIndex)
@@ -1699,6 +1800,8 @@ namespace
             return TestCharacterElevatorJitter(processor);
         case 23:
             return TestCharacterPlatformDepartureVelocity(processor);
+        case 24:
+            return TestCharacterExternalMovement(processor);
         default:
             return false;
         }

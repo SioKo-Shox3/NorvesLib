@@ -171,10 +171,28 @@ namespace NorvesLib::Modules::Physics
             c->m_bFixedRequest = false;
             if (c->m_Mode == CharacterMovementMode::External)
             {
-                c->ResetMotion(false);
+                // 拘束側が位置を決めるため、保留された変位と回転を衝突判定なしで適用する。
+                auto target = GetFreshWorldTransform(*body.Owner);
+                target.position += c->m_PendingDisplacement;
+                target.rotation = Math::Quaternion(Math::Vector3::UnitY, c->m_PendingYaw) * target.rotation;
+                const auto velocity = body.Component->m_LinearVelocity + c->m_PendingDisplacement / dt;
+                if (!FiniteCharacterVector(target.position) || !FiniteCharacterVector(velocity))
+                {
+                    c->ResetMotion(false);
+                    c->m_State.Result = EPhysicsResult::InvalidArgument;
+                    continue;
+                }
+                body.Owner->SetWorldTransform(target);
+                c->m_PendingDisplacement = {};
+                c->m_PendingYaw = 0;
+                c->ResetSimulationState();
+                c->m_AnchorLocal = {};
+                c->m_PreviousAnchorWorld = {};
+                c->m_PlatformYaw = 0;
+                body.Component->m_LinearVelocity = velocity;
                 c->m_State.bReady = true;
                 c->m_State.Result = EPhysicsResult::Success;
-                c->m_State.Velocity = body.Component->m_LinearVelocity;
+                c->m_State.Velocity = velocity;
                 if (c->m_State.StepSerial != UINT64_MAX)
                     ++c->m_State.StepSerial;
                 continue;
