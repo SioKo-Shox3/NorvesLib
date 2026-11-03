@@ -9201,3 +9201,26 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261103-065438/build-G3-GR10.txt`（両ターゲットのビルド EXIT=0）・`.harness/runs/20261103-065438/verify-G3-GR10-ctest.txt`（SkeletalAnimationSamplingTest 0.25 sec・SkinnedRenderPathContractTest 18.51 sec Passed、100%）
 - Next: なし
 - Notes: 要起票: この項目の verify は ctest で SkinnedRenderPathContractTest を回すのにビルド行がそのターゲットを作らないので、新しい枠・消した build では再検証が Not Run で落ちる。ビルド行に `--target SkinnedRenderPathContractTest` を足すかは計画が決める
+
+## 2026-11-03 G4-GR05-MODEL-CASES（run 20261103-070131 の反復 1。完了）
+
+- 試験の 3 点（Docs/Testing.md）: 反証する契約は、QuadrupedLocomotionModel が要件 GR05 の受け入れ確認 (a)〜(j) の式（歩様のヒステリシスと最短滞在、最小旋回半径 max(v/ω_cap, v²/a_lat)、加減速の到達時間と停止距離と制動の率、斜面の係数の単調と下限と下りの増分、ジャンプの頂点・滞空・先行入力・コヨーテ・着地のペナルティ・空中の制限、dt=1/30・1/60・1/144 での位置と向きの一致、極端な dt での NaN の無さと拒否時の state/out の保持、入力ゼロで向きが回らない、その場旋回の入りと抜け、バンクの符号と上限）どおりに動くこと。
+- ほかの手段で気づけるか: 気づきにくい。犬の動きの撮影は 1 枚で、旋回半径の数 % のずれ、最短滞在の破り、境界の 1 フレームの差、フレームレートでの向きのずれは絵にもログにも出ない。犬の実機の受け入れ（G4-GR07 の煙試験）はまだ無い。
+- 失敗が黙って起きるか: 起きる。式から外れても犬は何かしら動き、エラーもログも出ない。
+- 方針: 試験は既定値ではなく試験の中で決めたパラメータで式と比べる。(d) は SlopeLimit を 60° より大きくして 0〜60° を見る（SlopeLimit を越えた登りは登れないとして 0 を返す設計のまま）。(e) の着地は「LandingRecovery の間は加速せず、速さは着地直後の v·(1−LandingSpeedLoss·impact) を保つ（減速・制動・その場旋回は通常どおり）」とし、今の「回復中は目標 0 で減速し続ける」を直す。
+- U1 歩様・旋回半径・加減速・斜面のケースを足し、外れたらモデルを直す: 着地(直し 0 回)
+- U2 ジャンプ・極端な dt・入力ゼロのケースを足し、着地の回復を直す: 着地(直し 0 回)
+- U3 フレームレート非依存・その場旋回・バンクのケースを足し、タスクの verify を通す: 着地(直し 0 回)
+- Done: `QuadrupedLocomotionModelTest` に受け入れ確認 (a)〜(j) のケース 12 本を足した（`CaseGaitMinDwell`・`CaseMinimumTurnRadius`・`CaseAccelerationAndStopping`・`CaseSlopeScale`・`CaseJumpTiming`・`CaseLandingRecovery`・`CaseAirControl`・`CaseExtremeTimeSteps`・`CaseZeroInputHoldsYaw`・`CaseFrameRateIndependence`・`CasePivotTurn`・`CaseTurnBank`）。パラメータは試験の中の `MakeTestParams()` で決め、既定値に依存しない。今あった検査は `CaseExistingBaseline` に移して値と許容差はそのまま。
+- Done: 外れていたのは着地の回復だけだった。回復中に目標を 0 にして Deceleration で減り続けていた（期待 3.4 m/s に対して 3.37656 m/s）のを、回復中は加速だけを止めて着地直後の v·(1−LandingSpeedLoss·impact) を保つ形に直した（減速・制動・その場旋回は通常どおり）。
+- 実測: 最短滞在 0.2 秒に対して 6 遷移とも 0.202083 秒（1 刻み以内）、旋回半径 4.000→3.99995 m（ω_cap 側）・6.000→6.00001 m（a_lat 側）、到達時間 1.5→1.5 秒、停止距離 3.0→3.00004 m、逆向き入力の 1 刻みの減り = Brake×dt、斜面の式との差 1.2e-7 以下、フレームレートの 3 組の最大差は位置 0.0055 m・向き 0.0035 rad、その場旋回は 65 刻みで抜け残りのずれ 0.246 < 0.25 rad、バンクは非飽和 ±0.2968 rad・飽和 ±0.45 rad（MaximumBank）。
+- 証拠: `.harness/runs/20261103-070131/G4-GR05-MODEL-CASES-u3-unit-verify.txt`（`cmake --build build --config Debug --target LoggerSinkTest PhysicsDynamicsTest -- /m:1` 終了コード 0、ctest の `QuadrupedLocomotionModelTest`・`LocomotionProfileReloadTest`・`PhysicsFixedStepPipelineTest` の 3 本 Passed、各ケースの期待値と実測値の行）
+- Next: なし（アプリを起動する確かめは無い）。
+- Notes: 歩様の表の形・JSON（`QuadrupedLocomotionJson.cpp`）は変えていない。斜面は SlopeLimit を越えた登りは 0（登れない）を返す設計のままで、(d) は SlopeLimit を 60° より大きくした試験のパラメータで見た。
+
+## 2026-11-03 G4-GR05-MODEL-CASES（run 20261103-113136 の反復 1。完了を付け直す）
+
+- Done: 前の run で試験のケース (a)〜(j) と着地の回復の直しを着地済み。評価が枠切れで回らなかったため状態が doing に戻っていたので、今の HEAD で verify を回し直して done に戻した。
+- 証拠: `.harness/runs/20261103-113136/verify-G4-GR05-MODEL-CASES-build.txt`（`cmake --build build --config Debug --target LoggerSinkTest PhysicsDynamicsTest -- /m:1` 終了コード 0）、`.harness/runs/20261103-113136/verify-G4-GR05-MODEL-CASES-ctest.txt`（`QuadrupedLocomotionModelTest`・`LocomotionProfileReloadTest`・`PhysicsFixedStepPipelineTest` の 3 本 Passed、終了コード 0）。
+- Next: 評価者による差分の評価（前の run では未実施）。
+- Notes: アプリの起動を要する確かめは無い。
