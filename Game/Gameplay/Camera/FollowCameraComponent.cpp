@@ -35,6 +35,7 @@ namespace Game::Gameplay
         m_Query = nullptr;
         m_PhysicsRootId = m_ViewSourceId = m_LockOnId = 0;
         m_bFollowInitialized = false;
+        m_bPreviousSubjectValid = false;
         m_bHasPose = false;
         Core::Component::SpringArmComponent::Finalize();
     }
@@ -66,6 +67,7 @@ namespace Game::Gameplay
             return false;
         m_PhysicsRootId = physical->GetObjectId();
         m_bFollowInitialized = false;
+        m_bPreviousSubjectValid = false;
         m_FollowVelocity = {};
         m_State = {};
         m_bHasPose = false;
@@ -182,6 +184,9 @@ namespace Game::Gameplay
     }
     void FollowCameraComponent::UpdateCamera(float dt)
     {
+        // 途中で更新に失敗した場合、古い目標位置を次の区間に使わない。
+        const bool bPreviousSubjectValid = m_bPreviousSubjectValid;
+        m_bPreviousSubjectValid = false;
         auto* owner = GetOwner();
         auto* visual = ResolvePivot();
         auto* physical = Resolve(m_PhysicsRootId);
@@ -218,8 +223,17 @@ namespace Game::Gameplay
             followPosition = subject;
             followVelocity = {};
         }
-        else if (!Math::TryCriticalDamp(followPosition, followVelocity, subject, m_Profile.PositionHalfLives, dt))
-            return;
+        else
+        {
+            const bool bDamped = bPreviousSubjectValid
+                ? Math::TryCriticalDampMovingTarget(followPosition, followVelocity, m_PreviousSubject, subject,
+                                                    m_Profile.PositionHalfLives, dt)
+                : Math::TryCriticalDamp(followPosition, followVelocity, subject, m_Profile.PositionHalfLives, dt);
+            if (!bDamped)
+            {
+                return;
+            }
+        }
         request.Pivot = followPosition;
         const float speed = std::clamp(SubjectSpeed() / m_Profile.SpeedReference, 0.f, 1.f);
         request.DesiredLength = GetArmLength() + m_Profile.ArmGain * speed * m_Profile.SpeedEffectsStrength;
@@ -334,6 +348,8 @@ namespace Game::Gameplay
         m_CachedPose = pose;
         m_bHasPose = true;
         DriveOwnerTransform(*visual);
+        m_PreviousSubject = subject;
+        m_bPreviousSubjectValid = true;
     }
     bool FollowCameraComponent::SetFollowSmoothing(float horizontalHalfLife, float verticalHalfLife)
     {

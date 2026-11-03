@@ -102,9 +102,9 @@ namespace Game::Gameplay
         uint64_t m_LockOnId = 0;
         uint32_t m_LockJoint = UINT32_MAX;
         float m_LockRadius = 0;
-        NorvesLib::Math::Vector3 m_FollowPosition, m_FollowVelocity;
+        NorvesLib::Math::Vector3 m_FollowPosition, m_FollowVelocity, m_PreviousSubject;
         float m_TimeSinceLook = 0, m_YawVelocity = 0, m_FovVelocity = 0, m_FocusVelocity = 0;
         float m_Trauma = 0, m_ShakeTime = 0, m_SubjectFade = 1;
-        bool m_bFollowInitialized = false, m_bProfileReadFailed = false;
+        bool m_bFollowInitialized = false, m_bPreviousSubjectValid = false, m_bProfileReadFailed = false;
     };
 } // namespace Game::Gameplay

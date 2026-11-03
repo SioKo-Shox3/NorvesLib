@@ -7,15 +7,18 @@
 #include "Game/Input/GameInputActions.h"
 #include "Input/InputRouter.h"
 #include "Input/InputSystem.h"
+#include "Math/CriticalDamping.h"
 #include "Math/MathTypes.h"
 #include "Object/Entity.h"
 #include "Object/ResourceRegistry.h"
 #include "Object/World.h"
 #include "Scene/SceneQuery.h"
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <random>
 #include <utility>
 
 namespace Game::Gameplay
@@ -590,6 +593,174 @@ namespace
         std::printf("自動焦点: 無効時の初期値=%.6f 指定値=%.6f\n", initial, disabled.Camera->GetFocusDistance());
     }
 
+    using ComparisonComponentBase = Core::Component::Component;
+    class SimulationPositionFollower : public ComparisonComponentBase
+    {
+        REFLECTION_CLASS(SimulationPositionFollower, ComparisonComponentBase)
+
+      public:
+        Core::Entity* Physical = nullptr;
+        Math::Vector3 HalfLives, Position, Velocity;
+        unsigned Calls = 0;
+        bool bInitialized = false;
+
+        static void RunTick(ComparisonComponentBase& component, float dt)
+        {
+            auto& self = static_cast<SimulationPositionFollower&>(component);
+            CAMERA_CHECK(self.Physical);
+            const auto target = self.Physical->GetPosition();
+            if (!self.bInitialized)
+            {
+                self.Position = target;
+                self.bInitialized = true;
+            }
+            else
+            {
+                CAMERA_CHECK(Math::TryCriticalDamp(self.Position, self.Velocity, target, self.HalfLives, dt));
+            }
+            ++self.Calls;
+        }
+    };
+    IMPLEMENT_CLASS(SimulationPositionFollower, ComparisonComponentBase)
+
+    // 固定ステップの回数が揺れても、描画位置に対するカメラの追従は震えない。
+    void TestVariableFixedSteps()
+    {
+        CameraFixture fixture;
+        auto& world = fixture.World;
+        FollowCameraComponent::RegisterTick(world);
+        Core::Component::ComponentTickRegistration registration;
+        registration.Name = "Test.SimulationPositionFollower";
+        registration.Run = &SimulationPositionFollower::RunTick;
+        world.RegisterComponentTick(SimulationPositionFollower::StaticClass(), registration);
+        auto* comparison = world.CreateComponent<SimulationPositionFollower>(fixture.Owner);
+        CAMERA_CHECK(comparison);
+        CAMERA_CHECK(comparison->GetTickGroup() == Core::Component::ETickGroup::Default);
+        comparison->Physical = fixture.Physical;
+        comparison->HalfLives = Access::Profile(*fixture.Follow).PositionHalfLives;
+
+        constexpr double h = 1.0 / 60.0;
+        constexpr double speed = 6.0;
+        std::mt19937 random(0x1234u);
+        double accumulator = 0, elapsed = 0;
+        unsigned fixedIndex = 0, frame = 0, samples = 0, stepCounts[3]{};
+        Math::Vector3 cameraPrevious, cameraBeforePrevious, comparisonPrevious, comparisonBeforePrevious;
+        float cameraMaximum = 0, comparisonMaximum = 0;
+        while (elapsed < 10.0)
+        {
+            const float dt = static_cast<float>(h * (0.4 + 1.2 * static_cast<double>(random()) / 4294967296.0));
+            accumulator += dt;
+            elapsed += dt;
+            unsigned steps = 0;
+            while (accumulator >= h)
+            {
+                world.PrepareRenderInterpolationStep();
+                ++fixedIndex;
+                fixture.Physical->SetPosition({static_cast<float>(fixedIndex * speed * h), 0, 0});
+                world.UpdateWorldTransforms();
+                world.CaptureRenderInterpolationStep();
+                accumulator -= h;
+                ++steps;
+            }
+            CAMERA_CHECK(steps <= 2);
+            ++stepCounts[steps];
+            CAMERA_CHECK(world.SetRenderInterpolationAlpha(static_cast<float>(accumulator / h)));
+            world.Tick(dt);
+            world.LateTick(dt);
+            world.UpdateWorldTransforms();
+            ++frame;
+            CAMERA_CHECK(comparison->Calls == frame);
+            CAMERA_CHECK(fixture.Follow->GetCameraTickCount() == frame);
+            CAMERA_CHECK(fixture.Follow->GetLastCollisionResult() == Core::Camera::CameraCollisionResult::Success);
+            const auto visual = fixture.Visual->GetRenderWorldTransform().position;
+            const auto cameraDifference = fixture.Owner->GetWorldTransform().position - visual;
+            const auto comparisonDifference = comparison->Position - visual;
+            if (elapsed >= 5.0 && frame >= 3)
+            {
+                const float cameraSecondDifference = (cameraDifference - cameraPrevious * 2.f + cameraBeforePrevious).Length();
+                const float comparisonSecondDifference =
+                    (comparisonDifference - comparisonPrevious * 2.f + comparisonBeforePrevious).Length();
+                CAMERA_CHECK(std::isfinite(cameraSecondDifference) && std::isfinite(comparisonSecondDifference));
+                cameraMaximum = std::max(cameraMaximum, cameraSecondDifference);
+                comparisonMaximum = std::max(comparisonMaximum, comparisonSecondDifference);
+                ++samples;
+            }
+            cameraBeforePrevious = cameraPrevious;
+            cameraPrevious = cameraDifference;
+            comparisonBeforePrevious = comparisonPrevious;
+            comparisonPrevious = comparisonDifference;
+        }
+        std::printf("固定ステップの揺れ: カメラ最大=%.9g m 比較最大=%.9g m 0回=%u 1回=%u 2回=%u 測定=%u\n",
+                    cameraMaximum, comparisonMaximum, stepCounts[0], stepCounts[1], stepCounts[2], samples);
+        std::fflush(stdout);
+        CAMERA_CHECK(stepCounts[0] && stepCounts[1] && stepCounts[2] && samples >= 2);
+        CAMERA_CHECK(cameraMaximum <= 1e-4f);
+        CAMERA_CHECK(comparisonMaximum > 1e-3f);
+    }
+
+    // 対象自身の開始時の重なりを照会から除外し、アームを保つ。
+    void TestSubjectCollisionExclusion()
+    {
+        CameraFixture excluded, included;
+        excluded.Step();
+        included.Step();
+        const ColliderHandle collider{7, 1};
+        const BodyHandle body{7, 1};
+        QueryObstacle self;
+        self.Hit.Collider = collider;
+        self.Hit.Body = body;
+        self.Hit.Distance = 0;
+        self.Hit.bStartPenetrating = true;
+        excluded.Physics.Obstacles.push_back(self);
+        included.Physics.Obstacles.push_back(self);
+        Access::SetSubjectHandles(*excluded.Follow, collider, body);
+        const float previousLength = included.Follow->GetCollisionOutput().EffectiveLength;
+        excluded.Step();
+        CAMERA_CHECK(excluded.Physics.Last.Filter.IgnoreColliders[0] == collider);
+        CAMERA_CHECK(excluded.Physics.Last.Filter.IgnoreBodies[0] == body);
+        CAMERA_NEAR(excluded.Follow->GetCollisionOutput().EffectiveLength, excluded.Follow->GetArmLength());
+
+        included.World.UpdateRenderTransforms();
+        included.Follow->TickInputGroup(FrameDelta);
+        included.Follow->TickCameraGroup(FrameDelta);
+        included.World.UpdateWorldTransforms();
+        const auto result = included.Follow->GetLastCollisionResult();
+        const float includedLength = included.Follow->GetCollisionOutput().EffectiveLength;
+        std::printf("対象自身の除外: 除外あり 実効長=%.6f 結果=Success 除外なし 実効長=%.6f 結果=%s (%d)\n",
+                    excluded.Follow->GetCollisionOutput().EffectiveLength, includedLength,
+                    result == Core::Camera::CameraCollisionResult::StartOverlapping ? "StartOverlapping" : "その他",
+                    static_cast<int>(result));
+        CAMERA_CHECK(result == Core::Camera::CameraCollisionResult::StartOverlapping);
+        CAMERA_NEAR(includedLength, previousLength);
+
+        CameraFixture contactExcluded, contactIncluded;
+        contactExcluded.Step();
+        contactIncluded.Step();
+        self.Hit.bStartPenetrating = false;
+        contactExcluded.Physics.Obstacles.push_back(self);
+        contactIncluded.Physics.Obstacles.push_back(self);
+        Access::SetSubjectHandles(*contactExcluded.Follow, collider, body);
+        contactExcluded.Step();
+        CAMERA_CHECK(contactExcluded.Physics.Last.Filter.IgnoreColliders[0] == collider);
+        CAMERA_CHECK(contactExcluded.Physics.Last.Filter.IgnoreBodies[0] == body);
+        CAMERA_NEAR(contactExcluded.Follow->GetCollisionOutput().EffectiveLength,
+                    contactExcluded.Follow->GetArmLength());
+
+        contactIncluded.World.UpdateRenderTransforms();
+        contactIncluded.Follow->TickInputGroup(FrameDelta);
+        contactIncluded.Follow->TickCameraGroup(FrameDelta);
+        contactIncluded.World.UpdateWorldTransforms();
+        const auto contactResult = contactIncluded.Follow->GetLastCollisionResult();
+        const float contactLength = contactIncluded.Follow->GetCollisionOutput().EffectiveLength;
+        std::printf("対象自身の除外（距離0の接触）: 除外あり 実効長=%.6f 結果=Success 除外なし 実効長=%.6f 結果=%s (%d)\n",
+                    contactExcluded.Follow->GetCollisionOutput().EffectiveLength, contactLength,
+                    contactResult == Core::Camera::CameraCollisionResult::Success ? "Success" : "その他",
+                    static_cast<int>(contactResult));
+        std::fflush(stdout);
+        CAMERA_CHECK(contactResult == Core::Camera::CameraCollisionResult::Success);
+        CAMERA_CHECK(contactLength <= 1e-4f);
+    }
+
     void SameProfile(const FollowCameraProfile& actual, const FollowCameraProfile& expected)
     {
 #define PROFILE_FIELD(field) CAMERA_CHECK(actual.field == expected.field)
@@ -656,6 +827,8 @@ int main()
     TestLockOnJoint();
     TestAutoFocus();
     TestProfileParsing();
+    TestVariableFixedSteps();
+    TestSubjectCollisionExclusion();
     std::puts("FollowCameraBehaviorTest PASS");
     return 0;
 }
