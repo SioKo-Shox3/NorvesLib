@@ -9258,3 +9258,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: なし（アプリを起動する確かめは無い）。hitbox・hurtbox の Component・判定窓・通知は G8-GR16-COMBAT-RUNTIME
 - Notes: N の式の「動き」は 2 体の相対の動きの上界として両者の動きの和にした（片方だけ動く場合は done-when の式と同じ）
 - U1 Core に PhysicsLayerTable と JSON の読み込み、既定のデータを足す: 着地(直し 0 回)
+- U2 PhysicsLayerTableTest を足す: 着地(直し 0 回)
