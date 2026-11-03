@@ -9260,3 +9260,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 Core に PhysicsLayerTable と JSON の読み込み、既定のデータを足す: 着地(直し 0 回)
 - U2 PhysicsLayerTableTest を足す: 着地(直し 0 回)
 - U3 Game が起動時に既定のレイヤー表を読む: 着地(直し 0 回)
+- U4 文書を足し、タスクの確かめを回す: 着地(直し 0 回)
