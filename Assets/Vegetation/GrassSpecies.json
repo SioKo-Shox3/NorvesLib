@@ -1,0 +1,53 @@
+﻿{
+  "version": 0,
+  "species": [
+    {
+      "name": "wet_grass",
+      "heightMinMeters": 0.4,
+      "heightMaxMeters": 1.6,
+      "bladeWidthMeters": 0.012,
+      "bend": 0.35,
+      "stiffness": 0.4,
+      "rootColor": "#3E4D35",
+      "tipColor": "#55684A",
+      "roughness": 0.6,
+      "windResponse": 1.0,
+      "trampleResponse": 1.0,
+      "wetColor": "#45573C",
+      "wetRoughness": 0.3,
+      "wetDroop": 0.25,
+      "opacity": 1.0,
+      "bladesPerSquareMeter": 400,
+      "lod": [
+        { "distanceMeters": 0, "keepFraction": 1.0 },
+        { "distanceMeters": 20, "keepFraction": 0.5 },
+        { "distanceMeters": 60, "keepFraction": 0.15 },
+        { "distanceMeters": 150, "keepFraction": 0.0 }
+      ]
+    },
+    {
+      "name": "dry_grass",
+      "heightMinMeters": 0.3,
+      "heightMaxMeters": 1.2,
+      "bladeWidthMeters": 0.01,
+      "bend": 0.3,
+      "stiffness": 0.5,
+      "rootColor": "#514F43",
+      "tipColor": "#6D6A5C",
+      "roughness": 0.6,
+      "windResponse": 1.0,
+      "trampleResponse": 1.0,
+      "wetColor": "#555347",
+      "wetRoughness": 0.3,
+      "wetDroop": 0.2,
+      "opacity": 1.0,
+      "bladesPerSquareMeter": 400,
+      "lod": [
+        { "distanceMeters": 0, "keepFraction": 1.0 },
+        { "distanceMeters": 20, "keepFraction": 0.5 },
+        { "distanceMeters": 60, "keepFraction": 0.15 },
+        { "distanceMeters": 150, "keepFraction": 0.0 }
+      ]
+    }
+  ]
+}
