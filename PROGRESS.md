@@ -9328,3 +9328,9 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 累積は切り捨てでなく切り上げにした（切り捨てだと 1/30 の最初のフレームが 33'333'333 ns で 60 Hz の 2 ステップに 1 ns 届かず 1・2・3 の並びになり done-when の「毎フレーム 2」を満たさない）。整数刻み（分母 1）のふるまいは変わらない
 - Notes: FramePacket に載る値は試験では時計の delta・累積として記録し、パケット自体は作っていない。Game を起動しての確かめ（`--fixed-frame-dt=1/24` で撮影・録画の時刻が刻みどおりに進むこと）は後回し
 - Next: G14（GR66 の連番の録画・GR127）と G7（2 回撮った FLIP）がこの時計を使う
+
+## 2026-11-03 G4-GR128-PROCESSING-CASES 統合ブランチの取り込み（run 20261103-232719 の反復 1、完了）
+
+- 統合ブランチ feature/scene-launcher を取り込み、Docs/Testing.md の衝突は MotionProcessingTest と FollowCameraBehaviorTest の両方の節を残して解いた。実装は変えていない
+- verify: `cmake --build build --config Debug --target CookedMeshTest -- /m:1` 終了コード 0（`.harness/runs/20261103-232719/verify-build.txt`）、ctest 6 件 Passed（MotionProcessingTest・SkeletalBvhClipImportTest・SkeletalBvhClipTimeTest・BvhDecodeTest・BvhEvaluateTest・RigStaticRootFrameWireTest、`.harness/runs/20261103-232719/verify-ctest.txt`）
+- Notes: 要起票: ループのときの平滑（`SmoothChannels`）が、末尾の間隔が短いのに等間隔とみなして折り返すため、継ぎ目のキーを約 2° ゆがめる（平滑ありで継ぎ目の速さが中央値の 2.32 倍。前からある欠陥。近傍を時刻で取り、周期 P で折り返す）
