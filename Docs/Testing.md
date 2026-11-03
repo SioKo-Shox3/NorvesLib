@@ -167,6 +167,11 @@ GPUを使うテストは、Vulkanを使えない環境ではskip（終了コー�
 - ほかの手段で気づけるか: 気づけない。当たりを出す Component がまだ無く、起動画面に当たりは出ない。出るようになっても、フレームレートや振りの速さで 1 回当たり損ねることは撮影 1 枚にもログにも出ない。
 - 失敗が黙って起きるか: 起きる。すり抜けても、法線の向きを取り違えても、落ちずに当たらないか別の向きに飛ぶだけになる。
 
+`TickContractTableTest`（`Scripts/CheckTickContractTable.ps1`）を足す理由:
+- 反証する契約: `RegisterComponentTick` で登録した型（Library と Game の両方）は、全部が `Docs/Architecture/TickStages.md` の割り当て表に群・処理・時間の channel・ポーズの分類つきで載っていて、表は消えた API（`OnTickGroup`・`Entity::Tick`）を書いていない。
+- ほかの手段で気づけるか: 気づけない。表の漏れは撮影・ログ・検証レイヤーに出ない。
+- 失敗が黙って起きるか: 起きる。後の段階が古い表を読んで群や順序を取り違え、コードは動いたまま誤った群に処理を置く。
+
 ## Animator の結合の試験（AnimatorIntegrationTest）
 
 - 反証する契約: Animator 経由の姿勢が単一クリップの `SkeletalAnimationSampler::Sample` と全関節で一致し、定常で作業配列を確保せず、途中の関節を根にした fadeDepth 付きの部分マスクが関節ごとに上書き・加算へ効くこと。
