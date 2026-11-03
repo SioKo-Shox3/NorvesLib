@@ -9206,3 +9206,9 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U3 読み手 ParseCookedTerrain: 着地(直し 0 回)
 - U5 形式の文書 Docs/Architecture/NVTRNv0.md: 着地(直し 1 回)
 - U4 CookedTerrainTest(往復と拒否の種別)とタスクの verify: 着地(直し 0 回)
+
+## 2026-11-03 G5-GR89-NVTRN-FORMAT（run 20261103-113139 の反復 1、完了）
+- Done: 地形の cook 済み形式 NVTRN v0 を足した。公開ヘッダ `CookedTerrainFormat.h`（192 バイトのヘッダ・32 バイトのレイヤ表・80 + 24×レイヤ数のタイル表・文字列表・64 バイト境界のペイロード。高さ HGT0 は生の uint16 で (tile_cells+1)² 標本、ほかのレイヤは埋め込みの NVTEX）、書き手 `WriteCookedTerrain`（入力を全部検査し、タイルを座標順に並べて書く）、読み手 `ParseCookedTerrain`（拒否の理由を `CookedTerrainParseStatus` で返す）。PayloadHash は自分の 8 バイトを除くファイル全体の FNV-1a64、各レイヤに DataHash。`AssetKind::World = 7`（`"world"`）を足し、entry type Trn0・format nvtrn.v0.height16 の entry の解決を AssetManifestTest・AssetSystemTest で押さえた。形式は `Docs/Architecture/NVTRNv0.md`。
+- 証拠: `.harness/runs/20261103-113139/verify-G5-GR89-NVTRN-FORMAT-U4.txt`（CookedMeshTest・AssetSystemTest の Debug ビルド exit=0、ctest で AssetManifestTest・AssetSystemTest・CookedTextureTest・CookedTerrainTest の 4 件 100% Passed。重複の検査を一時的に外すと CookedTerrainTest が落ちることも確認）。
+- Next: なし（アプリの起動の確かめは無い）。cook の本体は G5-GR89-TERRAIN-COOKER。
+- Notes: 読み手はペイロードをタイル表の順 × レイヤ順に 64 バイト境界で詰めた並びとして厳密に求める（違えば TableLayoutMismatch）。高さの DataSize を 1 増やす改ざんは区間がペイロード内に収まるので HeightSizeMismatch で拒否される。使わない LOD 欄が 0 でないものは、読み手は ReservedFieldNonZero、書き手は InvalidTileBounds で拒否する。
