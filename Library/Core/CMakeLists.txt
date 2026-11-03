@@ -33,6 +33,7 @@ set(PRIVATE_SOURCES
     Private/Resource/GltfMaterialSourceJson.cpp
     Private/Asset/CookedTextureLoader.cpp
     Private/Asset/CookedTerrainWriter.cpp
+    Private/Asset/CookedTerrainLoader.cpp
     Private/Asset/AssetFileReader.cpp
     Private/Asset/TextAssetReloadTracker.cpp
     Private/Asset/AssetManifest.cpp
