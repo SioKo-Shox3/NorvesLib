@@ -2217,6 +2217,7 @@ add_executable(SkeletalAnimationSamplingTest
     AnimGraphRuntimeTest.cpp
     AnimEventPropertyTest.cpp
     RootMotionMathTest.cpp
+    TwoBoneIKTest.cpp
     AnimatorIntegrationTest.cpp
     PoseEvaluationTest.cpp
     ClipChannelSearchTest.cpp
