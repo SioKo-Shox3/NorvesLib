@@ -9212,3 +9212,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: G4-GR06-CLING-LOCKON
 - Notes: `TryCriticalDampMovingTarget` は 1 つの区間の内部を float の相対の座標で解くので、極端に短い dt で目標が動くと（目標の速さ/ω が大きくなり）精度が落ちる。フレームの dt の範囲では問題にならない
 - 2026-11-03 run 20261103-163355 の反復 1: 前の反復の評価が枠切れで行われず状態が doing に戻っていた。着地後にコードの変更は無く、最後の確かめ（ビルド終了コード 0・ctest 4 本 Passed）のまま done に戻した。評価はランナーが回す。
+- 2026-11-03 run 20261103-223637 の反復 1: 評価（PASS）の後に統合ブランチの取り込みが途中で止まり、状態が doing に戻っていた。着地後にコードの変更は無く、最後の確かめ（`.harness/runs/20261103-163355/recheck-G4-GR06-FOLLOW-CASES-1-1.txt` のビルド exit=0、`-1-2.txt` の ctest 4 本 Passed）のまま done に戻した。統合ブランチとは `Test/Modules/Physics/CMakeLists.txt` の add_test の末尾（CombatSweepTest）と PROGRESS.md で衝突するので、取り込みでは両方の行を残す。
